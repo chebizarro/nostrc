@@ -59,6 +59,30 @@ void gnostr_neg_sync_kinds_async(const char *relay_url,
                                   gpointer user_data);
 
 /**
+ * gnostr_neg_sync_kinds_for_authors_async:
+ * @relay_url: WebSocket URL of the relay to sync with
+ * @kinds: (array length=kind_count): event kinds to sync
+ * @kind_count: number of elements in @kinds
+ * @authors: (array length=author_count) (nullable): author pubkeys to scope sync
+ * @author_count: number of elements in @authors
+ * @cancellable: (nullable): optional cancellable
+ * @callback: async callback
+ * @user_data: user data for callback
+ *
+ * Run a negentropy sync session scoped to one or more author pubkeys.
+ * This is the preferred API for replaceable-event sync because it keeps
+ * both the local NDB query and remote NEG-OPEN filter bounded.
+ */
+void gnostr_neg_sync_kinds_for_authors_async(const char *relay_url,
+                                             const int *kinds,
+                                             size_t kind_count,
+                                             const char * const *authors,
+                                             size_t author_count,
+                                             GCancellable *cancellable,
+                                             GAsyncReadyCallback callback,
+                                             gpointer user_data);
+
+/**
  * gnostr_neg_sync_kinds_finish:
  * @result: async result from callback
  * @stats_out: (out) (optional): sync statistics

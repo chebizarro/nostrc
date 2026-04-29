@@ -52,12 +52,15 @@ typedef struct _NostrSimplePool {
     struct NostrSubscription **subs;
     size_t subs_count;
     NostrFilters *filters_shared; /* shared among current subs; owned */
-    /* De-duplication (when enabled via API param) */
+    /* De-duplication (enabled by default; API param can disable) */
     bool dedup_unique;
     size_t dedup_cap;      /* max remembered IDs */
-    char **dedup_ring;     /* circular buffer of last IDs */
-    size_t dedup_len;
-    size_t dedup_head;
+    char **dedup_hash;     /* open-addressed set of remembered IDs */
+    size_t dedup_hash_sz;
+    size_t dedup_count;
+    char **dedup_evict;    /* FIFO eviction ring, pointers owned by hash */
+    size_t dedup_evict_head;
+    size_t dedup_tombstones;
     /* Behavior flags */
     bool auto_unsub_on_eose; /* if true, unsubscribe subs upon EOSE (default: false) */
     

@@ -136,6 +136,23 @@ struct NostrSubscription *nostr_relay_prepare_subscription(NostrRelay *relay, Go
 void        nostr_relay_publish(NostrRelay *relay, NostrEvent *event);
 
 /**
+ * nostr_relay_publish_and_wait:
+ * @relay: (nullable): relay
+ * @event: (nullable): event
+ * @timeout_ms: timeout in milliseconds; 0 uses the default 30s deadline
+ * @err: (out) (optional) (nullable): error out param
+ *
+ * Publishes @event and waits for the relay's NIP-01 OK acknowledgement for
+ * that event id. Existing nostr_relay_publish() remains transport-level and
+ * backward-compatible; callers that require relay acceptance should use this
+ * additive helper.
+ *
+ * Returns: true only when the relay sends OK with ok=true.
+ */
+bool        nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent *event,
+                                         uint64_t timeout_ms, Error **err);
+
+/**
  * nostr_relay_auth:
  * @relay: (nullable): relay
  * @sign: (nullable): sign callback

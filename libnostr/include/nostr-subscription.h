@@ -206,6 +206,18 @@ bool          nostr_subscription_is_eosed(const NostrSubscription *sub);
  */
 bool          nostr_subscription_is_closed(const NostrSubscription *sub);
 
+/**
+ * nostr_subscription_get_last_seen_created_at:
+ * @sub: (nullable): subscription
+ *
+ * Returns the highest event created_at timestamp successfully dispatched to
+ * this subscription. Used to resume subscriptions after reconnect without
+ * replaying already-delivered events.
+ *
+ * Returns: Unix timestamp, or 0 if no event has been seen.
+ */
+int64_t       nostr_subscription_get_last_seen_created_at(const NostrSubscription *sub);
+
 /* Instrumentation: counters */
 /**
  * nostr_subscription_events_enqueued:

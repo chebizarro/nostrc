@@ -9,11 +9,15 @@
  * 5. Sampled metrics to reduce hot path overhead
  */
 
-#include "relay.h"
+#include "nostr-relay.h"
+#include "nostr-subscription.h"
 #include "relay-private.h"
 #include "subscription-private.h"
-#include "envelope.h"
-#include "connection.h"
+#include "nostr-envelope.h"
+#include "nostr-connection.h"
+#include "connection-private.h"
+#include "nostr-utils.h"
+#include "nostr/metrics.h"
 #include "go.h"
 #include <string.h>
 #include <stdlib.h>
@@ -61,7 +65,7 @@ typedef struct {
 } OptimizedRelayChannels;
 
 // Initialize performance parameters from environment
-static void init_perf_params() {
+static void init_perf_params(void) {
     if (env_cached) return;
     
     const char *val;
@@ -195,23 +199,8 @@ static void process_envelope(NostrRelay *r, NostrEnvelope *envelope,
                             OptimizedRelayChannels *channels) {
     switch (envelope->type) {
     case NOSTR_ENVELOPE_EOSE: {
-        NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)envelope;
         atomic_fetch_add(&channels->eose_count, 1);
-        
-        if (env->message) {
-            int serial = nostr_sub_id_to_serial(env->message);
-            NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, serial);
-            if (subscription) {
-                if (debug_eose) {
-                    fprintf(stderr, "[EOSE_DISPATCH] relay=%s sid=%s serial=%d\n",
-                            r->url ? r->url : "unknown", env->message, serial);
-                }
-                nostr_subscription_dispatch_eose(subscription);
-            } else {
-                fprintf(stderr, "[EOSE_LATE] relay=%s sid=%s serial=%d\n",
-                        r->url ? r->url : "unknown", env->message, serial);
-            }
-        }
+        nostr_relay_dispatch_control_envelope(r, envelope);
         break;
     }
     
@@ -277,8 +266,7 @@ static void process_envelope(NostrRelay *r, NostrEnvelope *envelope,
     case NOSTR_ENVELOPE_CLOSED:
     case NOSTR_ENVELOPE_AUTH:
     case NOSTR_ENVELOPE_COUNT:
-        // Handle other control messages (simplified for brevity)
-        // ... existing handling code ...
+        nostr_relay_dispatch_control_envelope(r, envelope);
         break;
         
     default:
@@ -404,8 +392,8 @@ static void *batch_collector(void *arg) {
             GoSelectCase cases[] = {
                 {GO_SELECT_RECEIVE, ctx->input, NULL, (void **)&msg},
             };
-            int idx = go_select_timeout(cases, 1, 5); /* 5ms window */
-            if (idx < 0) {
+            GoSelectResult sel = go_select_timeout(cases, 1, 5); /* 5ms window */
+            if (sel.selected_case < 0) {
                 /* Timeout or closed — flush what we have */
                 go_channel_send(ctx->output, current);
                 current = create_batch(BATCH_SIZE);

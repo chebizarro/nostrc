@@ -17,6 +17,7 @@
 #include "gnostr-sync-service.h"
 #include "../../apps/gnostr/src/sync/neg-client.h"
 #include <nostr-gobject-1.0/nostr_event_bus.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <string.h>
 
 /* Adaptive interval bounds (seconds) */
@@ -211,6 +212,35 @@ schedule_next_sync(GNostrSyncService *self)
  * ============================================================================ */
 
 static gchar *
+get_current_user_pubkey_hex(void)
+{
+  g_autoptr(GSettings) settings = NULL;
+  GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+  if (!src) return NULL;
+
+  GSettingsSchema *schema = g_settings_schema_source_lookup(src, "org.gnostr.Client", TRUE);
+  if (!schema) return NULL;
+  if (!g_settings_schema_has_key(schema, "current-npub")) {
+    g_settings_schema_unref(schema);
+    return NULL;
+  }
+  settings = g_settings_new("org.gnostr.Client");
+  g_settings_schema_unref(schema);
+
+  g_autofree gchar *npub = g_settings_get_string(settings, "current-npub");
+  if (!npub || !*npub) return NULL;
+
+  if (strlen(npub) == 64 && !g_str_has_prefix(npub, "npub1"))
+    return g_strdup(npub);
+
+  g_autoptr(GNostrNip19) decoded = gnostr_nip19_decode(npub, NULL);
+  if (!decoded) return NULL;
+
+  const char *hex = gnostr_nip19_get_pubkey(decoded);
+  return hex && *hex ? g_strdup(hex) : NULL;
+}
+
+static gchar *
 get_first_relay_url(GNostrSyncService *self)
 {
   if (!self->relay_provider) {
@@ -243,6 +273,15 @@ do_sync(GNostrSyncService *self)
     return;
   }
 
+  g_autofree gchar *author_hex = get_current_user_pubkey_hex();
+  if (!author_hex) {
+    const char *msg = "No current user pubkey; skipping scoped negentropy sync";
+    g_warning("[SYNC] %s", msg);
+    emit_bus_event(GNOSTR_SYNC_TOPIC_ERROR, msg);
+    schedule_next_sync(self);
+    return;
+  }
+
   self->state = GNOSTR_SYNC_RUNNING;
 
   /* Cancel any previous pending operation */
@@ -256,9 +295,11 @@ do_sync(GNostrSyncService *self)
 
   emit_bus_event(GNOSTR_SYNC_TOPIC_STARTED, relay_url);
 
-  gnostr_neg_sync_kinds_async(relay_url, SYNC_KINDS, SYNC_KIND_COUNT,
-                               self->cancellable,
-                               on_sync_done, g_object_ref(self));
+  const char *authors[1] = { author_hex };
+  gnostr_neg_sync_kinds_for_authors_async(relay_url, SYNC_KINDS, SYNC_KIND_COUNT,
+                                          authors, 1,
+                                          self->cancellable,
+                                          on_sync_done, g_object_ref(self));
 }
 
 static void

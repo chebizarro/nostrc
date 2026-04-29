@@ -64,6 +64,8 @@ typedef struct _SubscriptionPrivate {
     _Atomic bool eosed;
     _Atomic bool closed;
     _Atomic bool unsubbed;
+    _Atomic bool events_channel_closed;
+    _Atomic int64_t last_seen_created_at;
     CancelFunc cancel;
 
     /* Refcount for safe concurrent access (nostrc-nr96).
@@ -87,5 +89,6 @@ void *nostr_subscription_start(void *arg);
 void nostr_subscription_dispatch_event(struct NostrSubscription *sub, NostrEvent *event);
 void nostr_subscription_dispatch_eose(struct NostrSubscription *sub);
 void nostr_subscription_dispatch_closed(struct NostrSubscription *sub, const char *reason);
+bool nostr_subscription_refire_since(struct NostrSubscription *sub, int64_t since, Error **err);
 
 #endif // NOSTR_SUBSCRIPTION_PRIVATE_H

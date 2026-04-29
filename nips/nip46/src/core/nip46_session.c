@@ -602,42 +602,18 @@ static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
     fprintf(stderr, "[nip46] persistent_cb: dispatched response to pending request\n");
 }
 
-/* nostrc-gj36: Connection monitor for channel-based relay wait.
- * Checks relay connectivity every 50ms and signals via channel. */
-typedef struct {
-    NostrSimplePool *pool;
-    GoChannel *chan;
-} ConnectMonitorCtx;
-
-/* nostrc-b0h: REPLACED 50ms nanosleep polling loop.
- * Each relay has a state callback mechanism. Instead of polling
- * is_connected in a tight loop, we check once upfront, and if no
- * relay is connected yet, use go_select_timeout on the monitor
- * channel with a 50ms window to avoid busy-looping. The relay
- * connection callbacks (or pool's state-changed signal) will
- * eventually trigger the channel send from elsewhere. */
-static void *connect_monitor_thread(void *arg) {
-    ConnectMonitorCtx *m = (ConnectMonitorCtx *)arg;
-    for (;;) {
-        if (go_channel_is_closed(m->chan)) break;
-        for (size_t r = 0; r < m->pool->relay_count; r++) {
-            if (m->pool->relays[r] &&
-                nostr_relay_is_connected(m->pool->relays[r])) {
-                go_channel_try_send(m->chan, (void *)(intptr_t)1);
-                return NULL;
-            }
-        }
-        /* Wait for the channel to be closed (timeout scenario) rather
-         * than burning CPU in a polling loop. 200ms check interval is
-         * acceptable for initial connection establishment. */
-        GoSelectCase cases[] = {
-            { .op = GO_SELECT_RECEIVE, .chan = m->chan },
-        };
-        GoSelectResult sel = go_select_timeout(cases, 1, 200);
-        if (sel.selected_case == 0) break; /* Channel received or closed */
-        /* sel.selected_case < 0 = timeout, loop back and re-check relay states */
+/* nostrc-4cp/F25: Relay connection readiness is signaled by libnostr's
+ * relay state callback instead of a polling monitor thread. */
+static void nip46_relay_state_cb(NostrRelay *relay,
+                                 NostrRelayConnectionState old_state,
+                                 NostrRelayConnectionState new_state,
+                                 void *user_data) {
+    (void)relay;
+    (void)old_state;
+    GoChannel *chan = (GoChannel *)user_data;
+    if (chan && new_state == NOSTR_RELAY_STATE_CONNECTED) {
+        go_channel_try_send(chan, (void *)(intptr_t)1);
     }
-    return NULL;
 }
 
 /* nostrc-32yf: Query session state (internal) */
@@ -689,28 +665,29 @@ int nostr_nip46_client_start(NostrNip46Session *s) {
 
     nostr_simple_pool_set_event_middleware(s->client_pool, nip46_persistent_client_cb);
 
-    /* Connect to all relays */
-    for (size_t i = 0; i < s->n_relays; i++) {
-        nostr_simple_pool_ensure_relay(s->client_pool, s->relays[i]);
-    }
-
-    /* Start pool and wait for connection using channel select.
-     * nostrc-gj36: Replaced usleep polling with go_select_timeout.
-     * A monitor thread checks relay connectivity and signals via channel. */
-    nostr_simple_pool_start(s->client_pool);
-
     GoChannel *connect_chan = go_channel_create(1);
     if (!connect_chan) {
         fprintf(stderr, "[nip46] client_start: ERROR: failed to create connect channel\n");
-        nostr_simple_pool_stop(s->client_pool);
         nostr_simple_pool_free(s->client_pool);
         s->client_pool = NULL;
         return -1;
     }
 
-    ConnectMonitorCtx mon = { .pool = s->client_pool, .chan = connect_chan };
-    pthread_t mon_tid;
-    pthread_create(&mon_tid, NULL, connect_monitor_thread, &mon);
+    /* Connect to all relays and register event-driven state callbacks before
+     * starting the pool so the first CONNECTED transition cannot be missed. */
+    for (size_t i = 0; i < s->n_relays; i++) {
+        nostr_simple_pool_ensure_relay(s->client_pool, s->relays[i]);
+    }
+    for (size_t i = 0; i < s->client_pool->relay_count; i++) {
+        NostrRelay *relay = s->client_pool->relays[i];
+        if (!relay) continue;
+        nostr_relay_set_state_callback(relay, nip46_relay_state_cb, connect_chan);
+        if (nostr_relay_is_connected(relay)) {
+            go_channel_try_send(connect_chan, (void *)(intptr_t)1);
+        }
+    }
+
+    nostr_simple_pool_start(s->client_pool);
 
     /* Wait for connection signal via channel select with 5s timeout */
     GoSelectCase connect_cases[1];
@@ -723,9 +700,12 @@ int nostr_nip46_client_start(NostrNip46Session *s) {
 
     int connected = (conn_sel.selected_case == 0 && conn_sel.ok);
 
-    /* Cleanup monitor thread */
+    for (size_t i = 0; i < s->client_pool->relay_count; i++) {
+        if (s->client_pool->relays[i]) {
+            nostr_relay_set_state_callback(s->client_pool->relays[i], NULL, NULL);
+        }
+    }
     go_channel_close(connect_chan);
-    pthread_join(mon_tid, NULL);
     go_channel_free(connect_chan);
 
     if (!connected) {
@@ -1043,17 +1023,26 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
         return NULL;
     }
 
-    /* Wait for response on channel — no timeout.  NIP-46 is relay-based:
-     * the signer publishes a response event when ready, and the persistent
-     * subscription delivers it to pr->response_chan.  Timeouts are wrong
-     * here because they turn a relay subscription into a REST-style call
-     * that fails even when the signer does respond (just slowly). */
-    fprintf(stderr, "[nip46] %s: waiting for response on relay subscription\n", method);
+    /* Wait for response on channel with the configured per-session timeout. */
+    fprintf(stderr, "[nip46] %s: waiting for response on relay subscription (timeout=%u ms)\n",
+            method, pr->timeout_ms);
 
     void *recv_buf = NULL;
-    int recv_ok = go_channel_receive(pr->response_chan, &recv_buf);
+    GoSelectCase response_cases[1];
+    response_cases[0].op = GO_SELECT_RECEIVE;
+    response_cases[0].chan = pr->response_chan;
+    response_cases[0].recv_buf = &recv_buf;
+
+    GoSelectResult response_sel = go_select_timeout(response_cases, 1, pr->timeout_ms);
+    if (response_sel.selected_case < 0) {
+        fprintf(stderr, "[nip46] %s: timed out waiting for response after %u ms\n",
+                method, pr->timeout_ms);
+        pending_request_cancel(s, req_id);
+        return NULL;
+    }
 
     char *result = NULL;
+    int recv_ok = (response_sel.selected_case == 0 && response_sel.ok) ? 0 : -1;
     if (recv_ok != 0 || !recv_buf) {
         /* Channel closed without response (session shutdown or relay disconnect) */
         fprintf(stderr, "[nip46] %s: channel closed without response\n", method);

@@ -31,6 +31,80 @@ static GSettings *relays_settings_new(void) {
   return settings;
 }
 
+
+static gboolean
+settings_schema_has_key(const gchar *key)
+{
+  if (!s_relays_schema_id || !key) return FALSE;
+  GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+  if (!src) return FALSE;
+  GSettingsSchema *schema = g_settings_schema_source_lookup(src, s_relays_schema_id, TRUE);
+  if (!schema) return FALSE;
+  gboolean has_key = g_settings_schema_has_key(schema, key);
+  g_settings_schema_unref(schema);
+  return has_key;
+}
+
+static void
+append_unique_url(GPtrArray *out, const gchar *url)
+{
+  if (!out || !url || !*url) return;
+  for (guint i = 0; i < out->len; i++) {
+    if (g_strcmp0(g_ptr_array_index(out, i), url) == 0)
+      return;
+  }
+  g_ptr_array_add(out, g_strdup(url));
+}
+
+static void
+load_profile_indexer_relays_into(GPtrArray *out)
+{
+  if (!out) return;
+  gboolean loaded = FALSE;
+
+  GSettings *settings = relays_settings_new();
+  if (settings && settings_schema_has_key("profile-indexer-relays")) {
+    g_auto(GStrv) arr = g_settings_get_strv(settings, "profile-indexer-relays");
+    for (gsize i = 0; arr && arr[i]; i++) {
+      if (gnostr_is_valid_relay_url(arr[i])) {
+        append_unique_url(out, arr[i]);
+        loaded = TRUE;
+      }
+    }
+  }
+  if (settings) g_object_unref(settings);
+
+  if (!loaded) {
+    g_autofree gchar *cfg = gnostr_config_path();
+    g_autoptr(GKeyFile) kf = g_key_file_new();
+    gsize n = 0;
+    if (g_key_file_load_from_file(kf, cfg, G_KEY_FILE_NONE, NULL)) {
+      g_auto(GStrv) urls = g_key_file_get_string_list(kf, "profile-indexers", "urls", &n, NULL);
+      for (gsize i = 0; urls && i < n; i++) {
+        if (gnostr_is_valid_relay_url(urls[i])) {
+          append_unique_url(out, urls[i]);
+          loaded = TRUE;
+        }
+      }
+    }
+  }
+
+  if (!loaded) {
+    /* Configurable fallback defaults. Users/distributions can override via
+     * [profile-indexers] urls=... in the keyfile, or by adding the optional
+     * GSettings key to their schema. */
+    static const char *defaults[] = {
+      "wss://purplepag.es",
+      "wss://relay.nostr.band",
+      "wss://nos.lol",
+      NULL
+    };
+    for (int i = 0; defaults[i]; i++)
+      append_unique_url(out, defaults[i]);
+  }
+}
+
+
 /* -- Settings persistence (GKeyFile) -- */
 gchar *gnostr_config_path(void) {
   const char *override = g_getenv("GNOSTR_CONFIG_PATH");
@@ -357,28 +431,42 @@ GPtrArray *gnostr_get_profile_fetch_relay_urls(GPtrArray *nip65_relays) {
 
   gnostr_get_read_relay_urls_into(result);
 
-  static const char *profile_relays[] = {
-    "wss://purplepag.es",
-    "wss://relay.nostr.band",
-    "wss://nos.lol",
-    NULL
-  };
-  for (int i = 0; profile_relays[i]; i++) {
-    gboolean found = FALSE;
-    for (guint j = 0; j < result->len; j++) {
-      if (g_strcmp0(g_ptr_array_index(result, j), profile_relays[i]) == 0) {
-        found = TRUE;
-        break;
-      }
-    }
-    if (!found)
-      g_ptr_array_add(result, g_strdup(profile_relays[i]));
-  }
+  load_profile_indexer_relays_into(result);
 
   return result;
 }
 
 #ifndef GNOSTR_RELAY_TEST_ONLY
+
+static GMutex s_pool_sync_mutex;
+
+static gboolean
+cached_urls_equal(GStrv cached, const gchar **urls, guint len)
+{
+  guint cached_len = cached ? g_strv_length(cached) : 0;
+  if (cached_len != len) return FALSE;
+  for (guint i = 0; i < len; i++) {
+    if (g_strcmp0(cached[i], urls[i]) != 0)
+      return FALSE;
+  }
+  return TRUE;
+}
+
+static void
+sync_pool_relays_if_changed(GNostrPool *pool, const gchar **urls, guint len, GStrv *cache)
+{
+  if (!pool || !urls || !cache) return;
+  g_mutex_lock(&s_pool_sync_mutex);
+  if (!cached_urls_equal(*cache, urls, len)) {
+    gnostr_pool_sync_relays(pool, urls, len);
+    g_strfreev(*cache);
+    *cache = g_new0(gchar *, len + 1);
+    for (guint i = 0; i < len; i++)
+      (*cache)[i] = g_strdup(urls[i]);
+  }
+  g_mutex_unlock(&s_pool_sync_mutex);
+}
+
 /* Async NIP-65 fetch context - requires SimplePool */
 typedef struct {
   gchar *pubkey_hex;
@@ -471,30 +559,12 @@ gnostr_nip65_fetch_relays_with_sources_async(const gchar *pubkey_hex,
   } else {
     gnostr_load_relays_into(relay_arr);
 
-    /* nostrc-profile-fix: Add profile-indexing relays for 10002 discovery.
-     * These relays index all profiles and relay lists, ensuring we can find
-     * a user's 10002 even if they use different relays than our defaults. */
-    static const char *profile_indexers[] = {
-      "wss://purplepag.es",
-      "wss://relay.nostr.band",
-      NULL
-    };
-    for (int i = 0; profile_indexers[i]; i++) {
-      gboolean already_present = FALSE;
-      for (guint j = 0; j < relay_arr->len; j++) {
-        if (g_strcmp0(g_ptr_array_index(relay_arr, j), profile_indexers[i]) == 0) {
-          already_present = TRUE;
-          break;
-        }
-      }
-      if (!already_present) {
-        g_ptr_array_add(relay_arr, g_strdup(profile_indexers[i]));
-      }
-    }
+    /* Add configured profile-indexing relays for 10002 discovery. */
+    load_profile_indexer_relays_into(relay_arr);
   }
 
   /* Build URL array */
-  const char **urls = g_new0(const char*, relay_arr->len);
+  const char **urls = g_new0(const char*, relay_arr->len + 1);
   for (guint i = 0; i < relay_arr->len; i++) {
     urls[i] = g_ptr_array_index(relay_arr, i);
   }
@@ -506,7 +576,8 @@ gnostr_nip65_fetch_relays_with_sources_async(const gchar *pubkey_hex,
     g_once_init_leave((gsize *)&nip65_pool, (gsize)p);
   }
 
-  gnostr_pool_sync_relays(nip65_pool, (const gchar **)urls, relay_arr->len);
+  static GStrv nip65_pool_urls = NULL;
+  sync_pool_relays_if_changed(nip65_pool, (const gchar **)urls, relay_arr->len, &nip65_pool_urls);
 
   NostrFilters *_qf = nostr_filters_new();
   nostr_filters_add(_qf, filter);
@@ -810,16 +881,20 @@ void gnostr_nip17_fetch_dm_relays_async(const gchar *pubkey_hex,
   /* Relays come from GSettings with defaults configured in schema */
 
   /* Build URL array */
-  const char **urls = g_new0(const char*, relay_arr->len);
+  const char **urls = g_new0(const char*, relay_arr->len + 1);
   for (guint i = 0; i < relay_arr->len; i++) {
     urls[i] = g_ptr_array_index(relay_arr, i);
   }
 
-  /* Use static pool for NIP-17 queries */
+  /* Use static pool for NIP-17 queries (thread-safe one-time init). */
   static GNostrPool *nip17_dm_pool = NULL;
-  if (!nip17_dm_pool) nip17_dm_pool = gnostr_pool_new();
+  if (g_once_init_enter((gsize *)&nip17_dm_pool)) {
+    GNostrPool *p = gnostr_pool_new();
+    g_once_init_leave((gsize *)&nip17_dm_pool, (gsize)p);
+  }
 
-    gnostr_pool_sync_relays(nip17_dm_pool, (const gchar **)urls, relay_arr->len);
+  static GStrv nip17_dm_pool_urls = NULL;
+  sync_pool_relays_if_changed(nip17_dm_pool, (const gchar **)urls, relay_arr->len, &nip17_dm_pool_urls);
   {
     NostrFilters *_qf = nostr_filters_new();
     nostr_filters_add(_qf, filter);

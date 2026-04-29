@@ -43,6 +43,34 @@
  */
 #define FLUSH_DELAY_MS 3000
 
+typedef enum {
+  GNOSTR_FILTER_SET_SYNC_REMOTE_ERROR_NOT_FOUND,
+  GNOSTR_FILTER_SET_SYNC_REMOTE_ERROR_FAILED
+} GnostrFilterSetSyncRemoteError;
+
+static GQuark
+gnostr_filter_set_sync_remote_error_quark(void)
+{
+  return g_quark_from_static_string("gnostr-filter-set-sync-remote-error");
+}
+
+#define GNOSTR_FILTER_SET_SYNC_REMOTE_ERROR (gnostr_filter_set_sync_remote_error_quark())
+
+static GError *
+remote_error_from_app_data_status(const gchar *error_message)
+{
+  if (g_strcmp0(error_message, "No matching data found") == 0 ||
+      g_strcmp0(error_message, "No app data") == 0) {
+    return g_error_new_literal(GNOSTR_FILTER_SET_SYNC_REMOTE_ERROR,
+                               GNOSTR_FILTER_SET_SYNC_REMOTE_ERROR_NOT_FOUND,
+                               error_message ? error_message : "remote data not found");
+  }
+
+  return g_error_new_literal(GNOSTR_FILTER_SET_SYNC_REMOTE_ERROR,
+                             GNOSTR_FILTER_SET_SYNC_REMOTE_ERROR_FAILED,
+                             error_message ? error_message : "unknown remote error");
+}
+
 /* ------------------------------------------------------------------------
  * Shared state
  * ------------------------------------------------------------------------ */
@@ -486,27 +514,21 @@ on_custom_data_fetched(GnostrAppDataManager *manager,
 
   if (!success) {
     /* Not finding an event is expected on a fresh account — treat it
-     * as a successful no-op rather than a hard error.
-     *
-     * FRAGILITY: #GnostrAppDataManager does not currently expose
-     * typed GError domains, so we sniff the string instead. If the
-     * upstream message text ever changes or gets localized this
-     * branch stops firing and we surface a spurious failure to the
-     * caller (still non-fatal — see on_initial_pull_done). The
-     * long-term fix is a GError code like APP_DATA_ERROR_NOT_FOUND
-     * exported by gnostr-app-data-manager.h and matched via
-     * g_error_matches() here. Tracked informally with yg8j.9. */
-    if (error_message && (strstr(error_message, "No matching data") ||
-                          strstr(error_message, "No app data"))) {
+     * as a successful no-op rather than a hard error. Convert the legacy
+     * app-data callback status to a local typed GError once, then branch
+     * on domain/code instead of sniffing substrings at the call site. */
+    g_autoptr(GError) remote_error = remote_error_from_app_data_status(error_message);
+    if (g_error_matches(remote_error,
+                        GNOSTR_FILTER_SET_SYNC_REMOTE_ERROR,
+                        GNOSTR_FILTER_SET_SYNC_REMOTE_ERROR_NOT_FOUND)) {
       g_debug("filter-set-sync: no remote filter sets for this user yet");
       sync_op_ctx_report(ctx, TRUE, NULL);
       return;
     }
     /* Downgrade to debug: unreachable relays during login are common
      * and we don't want to spam the console on every cold start. */
-    g_debug("filter-set-sync: pull failed: %s",
-            error_message ? error_message : "unknown");
-    sync_op_ctx_report(ctx, FALSE, error_message);
+    g_debug("filter-set-sync: pull failed: %s", remote_error->message);
+    sync_op_ctx_report(ctx, FALSE, remote_error->message);
     return;
   }
 

@@ -87,6 +87,27 @@ hex_to_bytes(const char *hex, unsigned char *out, size_t n)
   return TRUE;
 }
 
+static gboolean
+append_authors_json(GString *json, const char * const *authors, size_t author_count)
+{
+  if (!json || !authors || author_count == 0) return FALSE;
+
+  size_t appended = 0;
+  for (size_t i = 0; i < author_count; i++) {
+    if (!authors[i] || !*authors[i]) continue;
+    if (appended == 0)
+      g_string_append(json, ",\"authors\":[");
+    else
+      g_string_append_c(json, ',');
+    g_string_append_printf(json, "\"%s\"", authors[i]);
+    appended++;
+  }
+
+  if (appended > 0)
+    g_string_append_c(json, ']');
+  return appended > 0;
+}
+
 /**
  * Build sorted (created_at, id) datasource from local NDB events of
  * specified kinds. This is the "local state fingerprint" that the
@@ -94,6 +115,7 @@ hex_to_bytes(const char *hex, unsigned char *out, size_t n)
  */
 static gboolean
 build_kind_datasource(const int *kinds, size_t kind_count,
+                      const char * const *authors, size_t author_count,
                       NostrNegDataSource *ds_out,
                       KindFilteredDS *ctx_out,
                       guint *local_count)
@@ -103,7 +125,9 @@ build_kind_datasource(const int *kinds, size_t kind_count,
     if (i > 0) g_string_append_c(filt, ',');
     g_string_append_printf(filt, "%d", kinds[i]);
   }
-  g_string_append(filt, "]}]");
+  g_string_append(filt, "]");
+  append_authors_json(filt, authors, author_count);
+  g_string_append(filt, "}]");
 
   void *txn = NULL;
   int rc = storage_ndb_begin_query_retry(&txn, 3, 10, NULL);
@@ -158,87 +182,173 @@ build_kind_datasource(const int *kinds, size_t kind_count,
 }
 
 /* ============================================================================
- * NEG-MSG Receive Channel
+ * Per-session NEG-MSG Receive Context
  *
- * Global state for receiving NEG-MSG/NEG-ERR from the relay's custom_handler.
- * V1 limitation: one sync session at a time.
+ * libnostr's custom_handler currently has no user_data, so we keep only a
+ * small process-wide registry from subscription id to per-session context.
+ * The mutable protocol state itself lives on NegSessionContext, allowing
+ * concurrent sync sessions without sharing response slots.
  * ============================================================================ */
 
-static GMutex g_neg_mu;
-static GCond  g_neg_cond;
-static gchar *g_neg_hex;
-static gchar *g_neg_err_reason;
-static gboolean g_neg_got_msg;
-static gboolean g_neg_got_err;
-static gchar *g_neg_sub_id;
+typedef struct {
+  GMutex mu;
+  GCond  cond;
+  gchar *sub_id;
+  gchar *hex;
+  gchar *err_reason;
+  gboolean got_msg;
+  gboolean got_err;
+  gboolean saw_auth;
+} NegSessionContext;
+
+static GMutex g_neg_sessions_mu;
+static GHashTable *g_neg_sessions_by_sub_id;
+
+static void
+neg_session_context_init(NegSessionContext *ctx, const char *sub_id)
+{
+  g_mutex_init(&ctx->mu);
+  g_cond_init(&ctx->cond);
+  ctx->sub_id = g_strdup(sub_id);
+}
+
+static void
+neg_session_context_clear(NegSessionContext *ctx)
+{
+  if (!ctx) return;
+  g_clear_pointer(&ctx->sub_id, g_free);
+  g_clear_pointer(&ctx->hex, g_free);
+  g_clear_pointer(&ctx->err_reason, g_free);
+  g_cond_clear(&ctx->cond);
+  g_mutex_clear(&ctx->mu);
+}
+
+static void
+neg_sessions_register(NegSessionContext *ctx)
+{
+  g_mutex_lock(&g_neg_sessions_mu);
+  if (!g_neg_sessions_by_sub_id)
+    g_neg_sessions_by_sub_id = g_hash_table_new(g_str_hash, g_str_equal);
+  g_hash_table_insert(g_neg_sessions_by_sub_id, ctx->sub_id, ctx);
+  g_mutex_unlock(&g_neg_sessions_mu);
+}
+
+static void
+neg_sessions_unregister(NegSessionContext *ctx)
+{
+  g_mutex_lock(&g_neg_sessions_mu);
+  if (g_neg_sessions_by_sub_id && ctx && ctx->sub_id)
+    g_hash_table_remove(g_neg_sessions_by_sub_id, ctx->sub_id);
+  g_mutex_unlock(&g_neg_sessions_mu);
+}
+
+static void
+neg_session_set_error(NegSessionContext *ctx, const char *reason)
+{
+  if (!ctx) return;
+  g_mutex_lock(&ctx->mu);
+  g_free(ctx->err_reason);
+  ctx->err_reason = g_strdup(reason ? reason : "unknown protocol error");
+  ctx->got_err = TRUE;
+  g_cond_signal(&ctx->cond);
+  g_mutex_unlock(&ctx->mu);
+}
+
+static void
+neg_session_set_auth_required(NegSessionContext *ctx, const char *challenge)
+{
+  /* TODO(F06): once Bucket 2 lands nip42_parse_challenge() and
+   * nip42_build_auth_response(), call them here, sign the kind-22242 AUTH
+   * event via the app signer, and send the returned ["AUTH", <event>]
+   * frame on this session's relay before continuing the NEG exchange.
+   * Until those helpers are available in this bucket, fail loudly instead
+   * of silently dropping AUTH and returning an empty sync result. */
+  g_autofree gchar *msg = g_strdup_printf(
+      "Relay requested NIP-42 AUTH%s%s, but nip42 auth helpers are not available in this build",
+      challenge && *challenge ? ": " : "",
+      challenge && *challenge ? challenge : "");
+  if (ctx) {
+    g_mutex_lock(&ctx->mu);
+    ctx->saw_auth = TRUE;
+    g_mutex_unlock(&ctx->mu);
+  }
+  neg_session_set_error(ctx, msg);
+}
 
 static bool
 neg_handler(const char *raw)
 {
   if (!raw) return false;
 
-  /* Fast reject: look for "NEG-" after first quote */
-  const char *q = strchr(raw, '"');
-  if (!q || strncmp(q + 1, "NEG-", 4) != 0) return false;
-
-  char *type = NULL;
-  if ((type = gnostr_json_get_array_string(raw, NULL, 0, NULL)) == NULL)
-    return false;
+  char *type = gnostr_json_get_array_string(raw, NULL, 0, NULL);
+  if (!type) return false;
 
   gboolean is_msg = (strcmp(type, "NEG-MSG") == 0);
   gboolean is_err = (strcmp(type, "NEG-ERR") == 0);
+  gboolean is_auth = (strcmp(type, "AUTH") == 0);
   free(type);
+
+  if (is_auth) {
+    char *challenge = gnostr_json_get_array_string(raw, NULL, 1, NULL);
+    /* AUTH frames are connection-scoped. The auth callback with userdata is
+     * the normal path; this fallback handles relays that route AUTH through
+     * the extension handler by notifying all active sessions. */
+    g_mutex_lock(&g_neg_sessions_mu);
+    if (g_neg_sessions_by_sub_id) {
+      GHashTableIter iter;
+      gpointer key, value;
+      g_hash_table_iter_init(&iter, g_neg_sessions_by_sub_id);
+      while (g_hash_table_iter_next(&iter, &key, &value))
+        neg_session_set_auth_required((NegSessionContext *)value, challenge);
+    }
+    g_mutex_unlock(&g_neg_sessions_mu);
+    if (challenge) free(challenge);
+    return true;
+  }
+
   if (!is_msg && !is_err) return false;
 
-  char *sub = NULL;
-  sub = gnostr_json_get_array_string(raw, NULL, 1, NULL);
+  char *sub = gnostr_json_get_array_string(raw, NULL, 1, NULL);
+  char *val = gnostr_json_get_array_string(raw, NULL, 2, NULL);
+  gboolean match = FALSE;
 
-  g_mutex_lock(&g_neg_mu);
-  gboolean match = (sub && g_neg_sub_id && strcmp(sub, g_neg_sub_id) == 0);
-  if (match) {
-    char *val = NULL;
-    val = gnostr_json_get_array_string(raw, NULL, 2, NULL);
+  g_mutex_lock(&g_neg_sessions_mu);
+  NegSessionContext *ctx = NULL;
+  if (g_neg_sessions_by_sub_id && sub)
+    ctx = g_hash_table_lookup(g_neg_sessions_by_sub_id, sub);
+  if (ctx) {
+    match = TRUE;
+    g_mutex_lock(&ctx->mu);
     if (is_msg) {
-      g_free(g_neg_hex);
-      g_neg_hex = val ? g_strdup(val) : NULL;
-      g_neg_got_msg = TRUE;
+      if (val && *val) {
+        g_free(ctx->hex);
+        ctx->hex = g_strdup(val);
+        ctx->got_msg = TRUE;
+      } else {
+        g_free(ctx->err_reason);
+        ctx->err_reason = g_strdup("NEG-MSG missing payload");
+        ctx->got_err = TRUE;
+      }
     } else {
-      g_free(g_neg_err_reason);
-      g_neg_err_reason = val ? g_strdup(val) : g_strdup("unknown");
-      g_neg_got_err = TRUE;
+      g_free(ctx->err_reason);
+      ctx->err_reason = val ? g_strdup(val) : g_strdup("unknown");
+      ctx->got_err = TRUE;
     }
-    if (val) free(val);
-    g_cond_signal(&g_neg_cond);
+    g_cond_signal(&ctx->cond);
+    g_mutex_unlock(&ctx->mu);
   }
-  g_mutex_unlock(&g_neg_mu);
+  g_mutex_unlock(&g_neg_sessions_mu);
 
-  free(sub);
+  if (val) free(val);
+  if (sub) free(sub);
   return match;
 }
 
 static void
-reset_neg_state(const char *sub_id)
+neg_auth_callback(NostrRelay *relay, const char *challenge, void *user_data)
 {
-  g_mutex_lock(&g_neg_mu);
-  g_clear_pointer(&g_neg_hex, g_free);
-  g_clear_pointer(&g_neg_err_reason, g_free);
-  g_free(g_neg_sub_id);
-  g_neg_sub_id = g_strdup(sub_id);
-  g_neg_got_msg = FALSE;
-  g_neg_got_err = FALSE;
-  g_mutex_unlock(&g_neg_mu);
-}
-
-static void
-cleanup_neg_state(void)
-{
-  g_mutex_lock(&g_neg_mu);
-  g_clear_pointer(&g_neg_hex, g_free);
-  g_clear_pointer(&g_neg_err_reason, g_free);
-  g_clear_pointer(&g_neg_sub_id, g_free);
-  g_neg_got_msg = FALSE;
-  g_neg_got_err = FALSE;
-  g_mutex_unlock(&g_neg_mu);
+  (void)relay;
+  neg_session_set_auth_required((NegSessionContext *)user_data, challenge);
 }
 
 /**
@@ -246,30 +356,31 @@ cleanup_neg_state(void)
  * Returns hex payload on success, sets error on failure.
  */
 static gboolean
-wait_neg_response(gchar **hex_out, gint64 deadline_us, GError **error)
+wait_neg_response(NegSessionContext *ctx, gchar **hex_out, gint64 deadline_us, GError **error)
 {
-  g_mutex_lock(&g_neg_mu);
-  while (!g_neg_got_msg && !g_neg_got_err) {
-    if (!g_cond_wait_until(&g_neg_cond, &g_neg_mu, deadline_us)) {
-      g_mutex_unlock(&g_neg_mu);
+  g_mutex_lock(&ctx->mu);
+  while (!ctx->got_msg && !ctx->got_err) {
+    if (!g_cond_wait_until(&ctx->cond, &ctx->mu, deadline_us)) {
+      g_mutex_unlock(&ctx->mu);
       g_set_error_literal(error, GNOSTR_NEG_ERROR, GNOSTR_NEG_ERROR_TIMEOUT,
                           "Relay did not respond (NIP-77 may not be supported)");
       return FALSE;
     }
   }
 
-  if (g_neg_got_err) {
-    g_autofree gchar *reason = g_steal_pointer(&g_neg_err_reason);
-    g_neg_got_err = FALSE;
-    g_mutex_unlock(&g_neg_mu);
-    g_set_error(error, GNOSTR_NEG_ERROR, GNOSTR_NEG_ERROR_UNSUPPORTED,
-                "Relay sent NEG-ERR: %s", reason);
+  if (ctx->got_err) {
+    g_autofree gchar *reason = g_steal_pointer(&ctx->err_reason);
+    ctx->got_err = FALSE;
+    g_mutex_unlock(&ctx->mu);
+    g_set_error(error, GNOSTR_NEG_ERROR,
+                ctx->saw_auth ? GNOSTR_NEG_ERROR_CONNECTION : GNOSTR_NEG_ERROR_UNSUPPORTED,
+                "%s", reason ? reason : "unknown relay error");
     return FALSE;
   }
 
-  *hex_out = g_steal_pointer(&g_neg_hex);
-  g_neg_got_msg = FALSE;
-  g_mutex_unlock(&g_neg_mu);
+  *hex_out = g_steal_pointer(&ctx->hex);
+  ctx->got_msg = FALSE;
+  g_mutex_unlock(&ctx->mu);
   return TRUE;
 }
 
@@ -401,6 +512,8 @@ typedef struct {
   gchar *relay_url;
   int   *kinds;
   size_t kind_count;
+  gchar **authors;
+  size_t author_count;
 } SyncTaskData;
 
 static void
@@ -409,6 +522,7 @@ task_data_free(gpointer p)
   SyncTaskData *d = p;
   g_free(d->relay_url);
   g_free(d->kinds);
+  g_strfreev(d->authors);
   g_free(d);
 }
 
@@ -438,7 +552,9 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
   /* === Phase 1: Build local fingerprint datasource === */
   KindFilteredDS ds_ctx = {0};
   NostrNegDataSource ds = {0};
-  if (!build_kind_datasource(td->kinds, td->kind_count, &ds, &ds_ctx,
+  if (!build_kind_datasource(td->kinds, td->kind_count,
+                             (const char * const *)td->authors, td->author_count,
+                             &ds, &ds_ctx,
                              &stats->local_count)) {
     g_task_return_new_error(task, GNOSTR_NEG_ERROR, GNOSTR_NEG_ERROR_LOCAL,
                             "Failed to query local event index");
@@ -491,10 +607,13 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
 
   nostr_relay_set_auto_reconnect(relay, false);
 
-  /* Set up NEG-MSG handler and subscription ID */
+  /* Set up per-session NEG-MSG/AUTH handlers and subscription ID */
   gchar *sub_id = g_strdup_printf("neg-%04x", g_random_int_range(0, 0xFFFF));
-  reset_neg_state(sub_id);
+  NegSessionContext neg_ctx = {0};
+  neg_session_context_init(&neg_ctx, sub_id);
+  neg_sessions_register(&neg_ctx);
   nostr_relay_set_custom_handler(relay, neg_handler);
+  nostr_relay_set_auth_callback(relay, neg_auth_callback, &neg_ctx);
 
   if (!nostr_relay_connect(relay, &relay_err)) {
     g_task_return_new_error(task, GNOSTR_NEG_ERROR, GNOSTR_NEG_ERROR_CONNECTION,
@@ -535,7 +654,9 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
       if (i > 0) g_string_append_c(filt_json, ',');
       g_string_append_printf(filt_json, "%d", td->kinds[i]);
     }
-    g_string_append(filt_json, "]}");
+    g_string_append(filt_json, "]");
+    append_authors_json(filt_json, (const char * const *)td->authors, td->author_count);
+    g_string_append_c(filt_json, '}');
 
     gchar *neg_open = g_strdup_printf("[\"NEG-OPEN\",\"%s\",%s,\"%s\"]",
                                        sub_id, filt_json->str, initial_hex);
@@ -558,8 +679,14 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
 
     while (!g_cancellable_is_cancelled(cancel)) {
       gchar *response_hex = NULL;
-      if (!wait_neg_response(&response_hex, deadline, &proto_err))
+      if (!wait_neg_response(&neg_ctx, &response_hex, deadline, &proto_err))
         break;
+      if (!response_hex) {
+        g_set_error_literal(&proto_err, GNOSTR_NEG_ERROR,
+                            GNOSTR_NEG_ERROR_PROTOCOL,
+                            "NEG-MSG had no payload");
+        break;
+      }
 
       int rc = nostr_neg_handle_peer_hex(neg, response_hex);
       g_free(response_hex);
@@ -626,19 +753,25 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
           stats->rounds, stats->in_sync, stats->local_count);
 
   /* Disconnect relay and return results */
+  nostr_relay_set_auth_callback(relay, NULL, NULL);
+  nostr_relay_set_custom_handler(relay, NULL);
   nostr_relay_disconnect(relay);
   nostr_relay_free(relay);
   nostr_neg_session_free(neg);
   g_free(ds_ctx.items);
   g_free(sub_id);
-  cleanup_neg_state();
+  neg_sessions_unregister(&neg_ctx);
+  neg_session_context_clear(&neg_ctx);
 
   g_task_return_pointer(task, stats, g_free);
   return;
 
 cleanup:
   free(initial_hex);
-  cleanup_neg_state();
+  nostr_relay_set_auth_callback(relay, NULL, NULL);
+  nostr_relay_set_custom_handler(relay, NULL);
+  neg_sessions_unregister(&neg_ctx);
+  neg_session_context_clear(&neg_ctx);
   nostr_relay_disconnect(relay);
   nostr_relay_free(relay);
   nostr_neg_session_free(neg);
@@ -658,6 +791,20 @@ gnostr_neg_sync_kinds_async(const char *relay_url,
                              GAsyncReadyCallback callback,
                              gpointer user_data)
 {
+  gnostr_neg_sync_kinds_for_authors_async(relay_url, kinds, kind_count,
+                                          NULL, 0, cancellable,
+                                          callback, user_data);
+}
+
+void
+gnostr_neg_sync_kinds_for_authors_async(const char *relay_url,
+                                         const int *kinds, size_t kind_count,
+                                         const char * const *authors,
+                                         size_t author_count,
+                                         GCancellable *cancellable,
+                                         GAsyncReadyCallback callback,
+                                         gpointer user_data)
+{
   g_return_if_fail(relay_url != NULL);
   g_return_if_fail(kinds != NULL && kind_count > 0);
 
@@ -665,6 +812,12 @@ gnostr_neg_sync_kinds_async(const char *relay_url,
   td->relay_url = g_strdup(relay_url);
   td->kinds = g_memdup2(kinds, kind_count * sizeof(int));
   td->kind_count = kind_count;
+  if (authors && author_count > 0) {
+    td->authors = g_new0(gchar *, author_count + 1);
+    for (size_t i = 0; i < author_count; i++)
+      td->authors[i] = g_strdup(authors[i]);
+    td->author_count = author_count;
+  }
 
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
   g_task_set_task_data(task, td, task_data_free);

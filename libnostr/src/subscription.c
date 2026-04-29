@@ -134,6 +134,8 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     sub->priv->eosed = false;
     sub->priv->closed = false;
     sub->priv->unsubbed = false;
+    atomic_store(&sub->priv->events_channel_closed, false);
+    atomic_store(&sub->priv->last_seen_created_at, 0);
 
     // Initialize queue metrics (nostrc-sjv)
     QueueMetrics *m = &sub->priv->metrics;
@@ -202,19 +204,14 @@ static void subscription_destroy(NostrSubscription *sub) {
         sub->priv->cancel = NULL;
     }
 
-    /* hq-hbvok: Close channels BEFORE wait.  The lifecycle worker or
-     * dispatchers may be blocked on go_channel_send to these channels.
-     * go_channel_close is the ONLY way to unblock a stuck send.
-     * go_channel_close is idempotent — safe even if the lifecycle worker
-     * already closed the events channel. */
+    /* Control channels are owned by destroy.  The events channel is closed by
+     * the lifecycle worker after cancellation so there is a single owner for
+     * event-stream close semantics. */
     if (sub->end_of_stored_events) {
         go_channel_close(sub->end_of_stored_events);
     }
     if (sub->closed_reason) {
         go_channel_close(sub->closed_reason);
-    }
-    if (sub->events) {
-        go_channel_close(sub->events);
     }
 
     // Now wait for the lifecycle worker — it can proceed since channels are closed
@@ -238,6 +235,11 @@ static void subscription_destroy(NostrSubscription *sub) {
     go_channel_free(sub->events);
     go_channel_free(sub->end_of_stored_events);
     go_channel_free(sub->closed_reason);
+    if (sub->priv->count_result) {
+        go_channel_close(sub->priv->count_result);
+        go_channel_free(sub->priv->count_result);
+        sub->priv->count_result = NULL;
+    }
     free(sub->priv->id);
     go_wait_group_destroy(&sub->priv->wg);
     free(sub->priv);
@@ -317,8 +319,10 @@ void *nostr_subscription_start(void *arg) {
     // Lock the subscription to avoid race conditions
     nsync_mu_lock(&sub->priv->sub_mutex);
 
-    // Close the events channel
-    go_channel_close(sub->events);
+    // Close the events channel (lifecycle thread is the sole close owner)
+    if (!atomic_exchange(&sub->priv->events_channel_closed, true)) {
+        go_channel_close(sub->events);
+    }
 
     // Unlock the mutex after the events channel is closed
     nsync_mu_unlock(&sub->priv->sub_mutex);
@@ -361,6 +365,15 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
             int64_t now_us = get_time_us();
             atomic_fetch_add(&m->events_enqueued, 1);
             atomic_store(&m->last_enqueue_time_us, now_us);
+
+            int64_t ev_created_at = event->created_at;
+            int64_t old_seen = atomic_load(&sub->priv->last_seen_created_at);
+            while (ev_created_at > old_seen) {
+                if (atomic_compare_exchange_weak(&sub->priv->last_seen_created_at,
+                                                 &old_seen, ev_created_at)) {
+                    break;
+                }
+            }
 
             /* Get actual channel depth for warnings (nostrc-dw3)
              * Note: m->current_depth was removed because consumers never called
@@ -473,11 +486,11 @@ void nostr_subscription_dispatch_closed(NostrSubscription *sub, const char *reas
             return;
         }
         
-        // Non-blocking send to avoid deadlock (SHUTDOWN.md line 35)
-        if (go_channel_try_send(sub->closed_reason, (void *)reason_copy) != 0) {
-            // Channel full or closed - log but don't block
+        // First CLOSED carries protocol-critical reason; use blocking send.
+        if (go_channel_send(sub->closed_reason, (void *)reason_copy) != 0) {
+            // Channel closed - log and free the copy
             if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
-                fprintf(stderr, "[sub %s] dispatch_closed: channel full/closed, dropping reason\n", sub->priv->id);
+                fprintf(stderr, "[sub %s] dispatch_closed: channel closed, dropping reason\n", sub->priv->id);
             }
             free(reason_copy);  // Free the copy since we couldn't send it
         } else {
@@ -769,6 +782,45 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
     return true;
 }
 
+bool nostr_subscription_refire_since(NostrSubscription *sub, int64_t since, Error **err) {
+    if (!sub || !sub->filters || since <= 0) {
+        return nostr_subscription_fire(sub, err);
+    }
+
+    NostrFilters *copy = nostr_filters_new();
+    if (!copy) {
+        if (err) *err = new_error(1, "failed to allocate refire filters");
+        return false;
+    }
+
+    for (size_t i = 0; i < sub->filters->count; i++) {
+        NostrFilter *dup = nostr_filter_copy(&sub->filters->filters[i]);
+        if (!dup) {
+            nostr_filters_free(copy);
+            if (err) *err = new_error(1, "failed to copy refire filter");
+            return false;
+        }
+        if (dup->since == 0 || dup->since < since) {
+            dup->since = since;
+        }
+        NostrFilter tmp = *dup;
+        free(dup);
+        if (!nostr_filters_add(copy, &tmp)) {
+            nostr_filter_clear(&tmp);
+            nostr_filters_free(copy);
+            if (err) *err = new_error(1, "failed to append refire filter");
+            return false;
+        }
+    }
+
+    NostrFilters *orig = sub->filters;
+    sub->filters = copy;
+    bool ok = nostr_subscription_fire(sub, err);
+    sub->filters = orig;
+    nostr_filters_free(copy);
+    return ok;
+}
+
 /* Accessors (formerly in wrapper) */
 
 const char *nostr_subscription_get_id_const(const NostrSubscription *sub) {
@@ -820,6 +872,11 @@ bool nostr_subscription_is_eosed(const NostrSubscription *sub) {
 bool nostr_subscription_is_closed(const NostrSubscription *sub) {
     if (!sub || !sub->priv) return false;
     return atomic_load(&sub->priv->closed);
+}
+
+int64_t nostr_subscription_get_last_seen_created_at(const NostrSubscription *sub) {
+    if (!sub || !sub->priv) return 0;
+    return atomic_load(&sub->priv->last_seen_created_at);
 }
 
 unsigned long long nostr_subscription_events_enqueued(const NostrSubscription *sub) {

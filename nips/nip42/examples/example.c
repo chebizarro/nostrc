@@ -1,9 +1,10 @@
 #include "nip42.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 int main() {
     // Create an unsigned authentication event
-    nip42_Event* auth_event = nip42_create_unsigned_auth_event("challenge-string", "public-key", "https://relay.example.com");
+    nip42_Event* auth_event = nip42_create_unsigned_auth_event("challenge-string", "public-key", "wss://relay.example.com");
     if (!auth_event) {
         printf("Failed to create authentication event.\n");
         return 1;
@@ -11,7 +12,7 @@ int main() {
 
     // Validate the authentication event
     char* pubkey = NULL;
-    if (nip42_validate_auth_event(auth_event, "challenge-string", "https://relay.example.com", &pubkey)) {
+    if (nip42_validate_auth_event(auth_event, "challenge-string", "wss://relay.example.com", &pubkey)) {
         printf("Authentication event is valid. Pubkey: %s\n", pubkey);
         free(pubkey);
     } else {

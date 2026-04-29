@@ -2,6 +2,7 @@
 #define NOSTR_RELAY_PRIVATE_H
 
 #include "go.h"
+#include "nostr-envelope.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -40,10 +41,11 @@ struct _NostrRelayPrivate {
     char *challenge;
     void (*notice_handler)(const char *);
     bool (*custom_handler)(const char *);
-    GoHashMap *ok_callbacks;
+    GoHashMap *ok_callbacks; /* event_id -> NostrRelayOkWaiter* */
     GoChannel *write_queue;
     GoChannel *subscription_channel_close_queue;
     GoChannel *debug_raw; // optional: emits summary/raw strings for debugging
+    GoChannel *reconnect_now; // buffered wake channel for immediate reconnect
     GoWaitGroup workers;
     /* Security: invalid signature tracker (pubkey->counters/bans). Impl in relay.c */
     void *invalid_sig_head;
@@ -76,6 +78,24 @@ typedef struct _NostrRelayWriteRequest {
 } NostrRelayWriteRequest;
 
 typedef void (*NostrRelayOkCallback)(bool, char *);
+
+typedef struct _NostrRelayOkResult {
+    bool ok;
+    char *reason;
+} NostrRelayOkResult;
+
+typedef struct _NostrRelayOkWaiter {
+    GoChannel *done; /* carries NostrRelayOkResult* */
+} NostrRelayOkWaiter;
+
+/* Shared relay control-frame dispatch used by relay.c and relay_optimized.c.
+ * Handles NOTICE, EOSE, AUTH, CLOSED, OK, and COUNT. EVENT remains on each
+ * receive path so optimized event verification/batching can stay local. */
+void nostr_relay_dispatch_control_envelope(struct NostrRelay *relay,
+                                           NostrEnvelope *envelope);
+
+int nostr_invalidsig_is_banned(struct NostrRelay *relay, const char *pk);
+void nostr_invalidsig_record_fail(struct NostrRelay *relay, const char *pk);
 
 /* Worker thread argument struct (nostrc-o56)
  * Used to pass a pre-ref'd context to worker threads to eliminate the race

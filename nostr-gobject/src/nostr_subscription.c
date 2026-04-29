@@ -20,7 +20,7 @@
 #include "json.h"                 /* nostr_event_serialize */
 #include "context.h"              /* GoContext */
 #include "channel.h"              /* GoChannel, go_channel_try_receive */
-/* select.h removed - using polling instead of go_select due to race condition */
+#include "select.h"               /* go_select_timeout */
 #include "error.h"                /* Error, free_error */
 
 /* GObject wrapper headers */
@@ -217,6 +217,36 @@ drain_event_queue_destroy(gpointer data)
     g_object_unref(GNOSTR_SUBSCRIPTION(data));
 }
 
+static void
+queue_event_for_main(GNostrSubscription *self, NostrEvent *ev)
+{
+    if (!ev) return;
+    char *json = nostr_event_serialize(ev);
+    nostr_event_free(ev);
+    if (!json) return;
+
+    g_mutex_lock(&self->event_queue_mutex);
+
+    /* nostrc-75o3: Bound event queue — drop oldest when at capacity.
+     * NDB persistence already stores all events via the ingest path, so
+     * UI-level drops are safe; the UI will catch up on the next query. */
+    while (self->event_queue->len >= EVENT_QUEUE_CAPACITY) {
+        gchar *oldest = g_ptr_array_index(self->event_queue, 0);
+        g_free(oldest);
+        g_ptr_array_remove_index(self->event_queue, 0);
+    }
+
+    g_ptr_array_add(self->event_queue, json);
+    if (!self->event_idle_scheduled) {
+        self->event_idle_scheduled = TRUE;
+        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+                        drain_event_queue_on_main,
+                        g_object_ref(self),
+                        drain_event_queue_destroy);
+    }
+    g_mutex_unlock(&self->event_queue_mutex);
+}
+
 static gboolean
 emit_eose_on_main(gpointer data)
 {
@@ -249,10 +279,11 @@ emit_closed_on_main(gpointer data)
 
 /* --- Monitor thread --- */
 
-/* nostrc-b0h-revert: Reverted to polling loop due to go_select race condition.
- * The go_select implementation has a race where websocket messages arrive
- * before select waiters are registered, causing indefinite blocking.
- * Polling with 1ms backoff is reliable and has negligible CPU overhead. */
+/* go_select_timeout now performs a fast pre-registration check and a
+ * post-registration double-check, which fixes the historical missed-wakeup
+ * race that forced this monitor to poll every 1ms.  Use a blocking select
+ * with a bounded timeout so cancellation via monitor_running is still seen
+ * promptly even if a channel close is delayed. */
 static gpointer
 subscription_monitor_thread(gpointer data)
 {
@@ -264,67 +295,79 @@ subscription_monitor_thread(gpointer data)
     GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
 
     while (__atomic_load_n(&self->monitor_running, __ATOMIC_SEQ_CST)) {
-        gboolean any_activity = FALSE;
+        void *selected_event = NULL;
+        void *selected_reason = NULL;
+        GoSelectCase cases[3];
+        enum { CASE_EVENTS, CASE_EOSE, CASE_CLOSED } case_kinds[3];
+        size_t n_cases = 0;
 
-        /* Drain events channel into batched queue */
+        if (ch_events) {
+            case_kinds[n_cases] = CASE_EVENTS;
+            cases[n_cases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ch_events,
+                                                .recv_buf = &selected_event };
+        }
+        if (ch_eose) {
+            case_kinds[n_cases] = CASE_EOSE;
+            cases[n_cases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ch_eose,
+                                                .recv_buf = NULL };
+        }
+        if (ch_closed) {
+            case_kinds[n_cases] = CASE_CLOSED;
+            cases[n_cases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = ch_closed,
+                                                .recv_buf = &selected_reason };
+        }
+
+        if (n_cases == 0)
+            break;
+
+        GoSelectResult sel = go_select_timeout(cases, n_cases, 250);
+        if (sel.selected_case < 0)
+            continue; /* timeout: re-check monitor_running */
+
+        switch (case_kinds[sel.selected_case]) {
+        case CASE_EVENTS:
+            queue_event_for_main(self, (NostrEvent *)selected_event);
+            break;
+        case CASE_EOSE: {
+            EoseSignalData *sdata = g_new(EoseSignalData, 1);
+            sdata->self = g_object_ref(self);
+            g_idle_add_full(G_PRIORITY_DEFAULT, emit_eose_on_main, sdata, NULL);
+            break;
+        }
+        case CASE_CLOSED: {
+            ClosedSignalData *sdata = g_new(ClosedSignalData, 1);
+            sdata->self = g_object_ref(self);
+            sdata->reason = selected_reason ? g_strdup((const char *)selected_reason) : NULL;
+            g_idle_add_full(G_PRIORITY_DEFAULT, emit_closed_on_main, sdata, NULL);
+            goto monitor_done;
+        }
+        }
+
+        /* Drain any burst that arrived with the selected item. */
         void *msg = NULL;
         while (ch_events && go_channel_try_receive(ch_events, &msg) == 0) {
-            any_activity = TRUE;
-            if (msg) {
-                NostrEvent *ev = (NostrEvent *)msg;
-                char *json = nostr_event_serialize(ev);
-                nostr_event_free(ev);
-                if (json) {
-                    g_mutex_lock(&self->event_queue_mutex);
-
-                    /* nostrc-75o3: Bound event queue — drop oldest when
-                     * at capacity.  NDB persistence already stores all
-                     * events via the ingest path, so UI-level drops are
-                     * safe; the UI will catch up on the next query. */
-                    while (self->event_queue->len >= EVENT_QUEUE_CAPACITY) {
-                        gchar *oldest = g_ptr_array_index(self->event_queue, 0);
-                        g_free(oldest);
-                        g_ptr_array_remove_index(self->event_queue, 0);
-                    }
-
-                    g_ptr_array_add(self->event_queue, json);
-                    if (!self->event_idle_scheduled) {
-                        self->event_idle_scheduled = TRUE;
-                        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
-                                        drain_event_queue_on_main,
-                                        g_object_ref(self),
-                                        drain_event_queue_destroy);
-                    }
-                    g_mutex_unlock(&self->event_queue_mutex);
-                }
-            }
+            if (msg)
+                queue_event_for_main(self, (NostrEvent *)msg);
             msg = NULL;
         }
 
-        /* Check EOSE channel */
-        if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
-            any_activity = TRUE;
+        while (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
             EoseSignalData *sdata = g_new(EoseSignalData, 1);
             sdata->self = g_object_ref(self);
             g_idle_add_full(G_PRIORITY_DEFAULT, emit_eose_on_main, sdata, NULL);
         }
 
-        /* Check CLOSED channel */
         void *reason = NULL;
         if (ch_closed && go_channel_try_receive(ch_closed, &reason) == 0) {
-            any_activity = TRUE;
             ClosedSignalData *sdata = g_new(ClosedSignalData, 1);
             sdata->self = g_object_ref(self);
             sdata->reason = reason ? g_strdup((const char *)reason) : NULL;
             g_idle_add_full(G_PRIORITY_DEFAULT, emit_closed_on_main, sdata, NULL);
-            /* Subscription was closed by relay - stop monitoring */
             break;
         }
-
-        if (!any_activity)
-            g_usleep(1000); /* 1ms backoff */
     }
 
+monitor_done:
     g_object_unref(self); /* Release monitor thread's ref */
     return NULL;
 }

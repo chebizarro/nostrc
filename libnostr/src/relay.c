@@ -178,6 +178,199 @@ static void relay_debug_emit(NostrRelay *r, const char *s) {
     (void)go_channel_try_send(r->priv->debug_raw, copy);
 }
 
+static void relay_ok_result_free(NostrRelayOkResult *res) {
+    if (!res) return;
+    free(res->reason);
+    free(res);
+}
+
+static void relay_ok_waiter_free(NostrRelayOkWaiter *waiter) {
+    if (!waiter) return;
+    if (waiter->done) {
+        go_channel_close(waiter->done);
+        go_channel_free(waiter->done);
+    }
+    free(waiter);
+}
+
+static NostrRelayOkResult *relay_ok_result_new(bool ok, const char *reason) {
+    NostrRelayOkResult *res = (NostrRelayOkResult *)calloc(1, sizeof(*res));
+    if (!res) return NULL;
+    res->ok = ok;
+    res->reason = strdup(reason ? reason : "");
+    return res;
+}
+
+static bool relay_pending_ok_fail_cb(HashKey *key, void *value, void *user_data) {
+    (void)key;
+    const char *reason = (const char *)user_data;
+    NostrRelayOkWaiter *waiter = (NostrRelayOkWaiter *)value;
+    if (waiter && waiter->done) {
+        NostrRelayOkResult *res = relay_ok_result_new(false, reason);
+        if (res) (void)go_channel_send(waiter->done, res);
+    }
+    return true;
+}
+
+static bool relay_pending_ok_free_cb(HashKey *key, void *value, void *user_data) {
+    (void)key;
+    (void)user_data;
+    relay_ok_waiter_free((NostrRelayOkWaiter *)value);
+    return true;
+}
+
+static void relay_fail_pending_ok(NostrRelay *r, const char *reason) {
+    if (!r || !r->priv) return;
+
+    nsync_mu_lock(&r->priv->mutex);
+    GoHashMap *old = r->priv->ok_callbacks;
+    r->priv->ok_callbacks = go_hash_map_create(64);
+    nsync_mu_unlock(&r->priv->mutex);
+
+    if (old) {
+        go_hash_map_for_each_with_data(old, relay_pending_ok_fail_cb,
+                                       (void *)(reason ? reason : "relay disconnected"));
+        go_hash_map_destroy(old);
+    }
+}
+
+void nostr_relay_dispatch_control_envelope(NostrRelay *r, NostrEnvelope *envelope) {
+    if (!r || !r->priv || !envelope) return;
+
+    switch (envelope->type) {
+    case NOSTR_ENVELOPE_NOTICE: {
+        NostrNoticeEnvelope *ne = (NostrNoticeEnvelope *)envelope;
+        if (r->priv->notice_handler) r->priv->notice_handler(ne->message);
+        fprintf(stderr, "[RELAY_NOTICE] relay=%s message=\"%s\"\n",
+                r->url ? r->url : "unknown", ne->message ? ne->message : "");
+        char tmp[256]; snprintf(tmp, sizeof(tmp), "NOTICE: %s", ne->message ? ne->message : "");
+        relay_debug_emit(r, tmp);
+        break; }
+    case NOSTR_ENVELOPE_EOSE: {
+        NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)envelope;
+        if (env->message) {
+            int serial = nostr_sub_id_to_serial(env->message);
+            if (serial < 0) {
+                if (getenv("NOSTR_DEBUG_EOSE") || getenv("NOSTR_DEBUG_LIFECYCLE")) {
+                    fprintf(stderr, "[EOSE_ERROR] relay=%s - failed to parse subscription ID from '%s'\n",
+                            r->url ? r->url : "unknown", env->message);
+                }
+                nostr_metric_counter_add("eose_parse_error", 1);
+            } else {
+                NostrSubscription *subscription = relay_get_subscription_ref(r, serial);
+                if (subscription) {
+                    if (getenv("NOSTR_DEBUG_EOSE")) {
+                        fprintf(stderr, "[EOSE_DISPATCH] relay=%s sid=%s serial=%d - dispatching to subscription\n",
+                                r->url ? r->url : "unknown", env->message, serial);
+                    }
+                    nostr_subscription_dispatch_eose(subscription);
+                    nostr_subscription_unref(subscription);
+                } else {
+                    if (getenv("NOSTR_DEBUG_EOSE") || getenv("NOSTR_DEBUG_LIFECYCLE")) {
+                        fprintf(stderr, "[SUB_LIFECYCLE] EOSE_LATE relay=%s sid=%s serial=%d (subscription already freed - normal for slow relays)\n",
+                                r->url ? r->url : "unknown", env->message, serial);
+                    }
+                    nostr_metric_counter_add("eose_late_arrival", 1);
+                }
+            }
+        } else if (getenv("NOSTR_DEBUG_EOSE")) {
+            fprintf(stderr, "[EOSE_ERROR] relay=%s - EOSE with NULL subscription ID\n",
+                    r->url ? r->url : "unknown");
+        }
+        char tmp[128]; snprintf(tmp, sizeof(tmp), "EOSE sid=%s", env->message ? env->message : "");
+        relay_debug_emit(r, tmp);
+        break; }
+    case NOSTR_ENVELOPE_AUTH: {
+        const char *ch = ((NostrAuthEnvelope *)envelope)->challenge;
+        NostrRelayAuthCallback auth_cb = NULL;
+        void *auth_cb_data = NULL;
+        char *challenge_copy = ch ? strdup(ch) : NULL;
+
+        nsync_mu_lock(&r->priv->mutex);
+        if (r->priv->challenge) free(r->priv->challenge);
+        r->priv->challenge = challenge_copy;
+        challenge_copy = NULL;
+        auth_cb = r->priv->auth_callback;
+        auth_cb_data = r->priv->auth_callback_user_data;
+        nsync_mu_unlock(&r->priv->mutex);
+
+        char tmp[256]; snprintf(tmp, sizeof(tmp), "AUTH challenge=%s", r->priv->challenge ? r->priv->challenge : "");
+        relay_debug_emit(r, tmp);
+        if (auth_cb && r->priv->challenge) auth_cb(r, r->priv->challenge, auth_cb_data);
+        break; }
+    case NOSTR_ENVELOPE_CLOSED: {
+        NostrClosedEnvelope *env = (NostrClosedEnvelope *)envelope;
+        NostrSubscription *subscription = relay_get_subscription_ref(r, nostr_sub_id_to_serial(env->subscription_id));
+        if (subscription) {
+            nostr_subscription_dispatch_closed(subscription, env->reason);
+            nostr_subscription_unref(subscription);
+        }
+        fprintf(stderr, "[RELAY_CLOSED] relay=%s subscription=%s reason=\"%s\"\n",
+                r->url ? r->url : "unknown",
+                env->subscription_id ? env->subscription_id : "",
+                env->reason ? env->reason : "");
+        char tmp[256]; snprintf(tmp, sizeof(tmp), "CLOSED sid=%s reason=%s",
+                               env->subscription_id ? env->subscription_id : "",
+                               env->reason ? env->reason : "");
+        relay_debug_emit(r, tmp);
+        break; }
+    case NOSTR_ENVELOPE_OK: {
+        NostrOKEnvelope *oe = (NostrOKEnvelope *)envelope;
+        void (*ok_cb)(const char *, bool, const char *, void *) = NULL;
+        void *ok_cb_data = NULL;
+
+        if (!oe->ok) {
+            fprintf(stderr, "[RELAY_OK_FAIL] relay=%s event=%s reason=\"%s\"\n",
+                    r->url ? r->url : "unknown",
+                    oe->event_id ? oe->event_id : "",
+                    oe->reason ? oe->reason : "");
+        }
+
+        nsync_mu_lock(&r->priv->mutex);
+        NostrRelayOkWaiter *waiter =
+            r->priv->ok_callbacks ? go_hash_map_get_string(r->priv->ok_callbacks, oe->event_id) : NULL;
+        if (waiter && waiter->done) {
+            NostrRelayOkResult *res = relay_ok_result_new(oe->ok, oe->reason);
+            if (res) (void)go_channel_send(waiter->done, res);
+            go_hash_map_remove_str(r->priv->ok_callbacks, oe->event_id);
+        }
+        ok_cb = r->priv->ok_response_callback;
+        ok_cb_data = r->priv->ok_response_callback_user_data;
+        nsync_mu_unlock(&r->priv->mutex);
+
+        if (ok_cb) {
+            ok_cb(oe->event_id ? oe->event_id : "",
+                  oe->ok,
+                  oe->reason ? oe->reason : "",
+                  ok_cb_data);
+        }
+        char tmp[256]; snprintf(tmp, sizeof(tmp), "OK id=%s ok=%s reason=%s",
+                               oe->event_id ? oe->event_id : "",
+                               oe->ok ? "true" : "false",
+                               oe->reason ? oe->reason : "");
+        relay_debug_emit(r, tmp);
+        break; }
+    case NOSTR_ENVELOPE_COUNT: {
+        NostrCountEnvelope *ce = (NostrCountEnvelope *)envelope;
+        NostrSubscription *subscription = relay_get_subscription_ref(r, nostr_sub_id_to_serial(ce->subscription_id));
+        if (subscription && subscription->priv->count_result) {
+            int64_t *val = (int64_t *)malloc(sizeof(int64_t));
+            if (val) {
+                *val = (int64_t)ce->count;
+                go_channel_send(subscription->priv->count_result, val);
+            }
+            nostr_subscription_unref(subscription);
+        } else if (subscription) {
+            nostr_subscription_unref(subscription);
+        }
+        char tmp[64]; snprintf(tmp, sizeof(tmp), "COUNT=%d", ce->count);
+        relay_debug_emit(r, tmp);
+        break; }
+    default:
+        break;
+    }
+}
+
 void nostr_relay_enable_debug_raw(NostrRelay *relay, int enable) {
     if (!relay || !relay->priv) return;
     nsync_mu_lock(&relay->priv->mutex);
@@ -280,10 +473,11 @@ NostrRelay *nostr_relay_new(GoContext *context, const char *url, Error **err) {
     nsync_mu_init(&relay->priv->mutex);
     relay->priv->connection_context = cancellabe.context;
     relay->priv->connection_context_cancel = cancellabe.cancel;
-    relay->priv->ok_callbacks = go_hash_map_create(16);
+    relay->priv->ok_callbacks = go_hash_map_create(64);
     relay->priv->write_queue = go_channel_create(16);
     relay->priv->subscription_channel_close_queue = go_channel_create(16);
     relay->priv->debug_raw = NULL;
+    relay->priv->reconnect_now = go_channel_create(1);
     go_wait_group_init(&relay->priv->workers);
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_new: initialized workers and queues for %s\n", relay->url);
     // request_header
@@ -327,6 +521,7 @@ static void relay_free_impl(NostrRelay *relay) {
         if (relay->priv->write_queue) go_channel_close(relay->priv->write_queue);
         if (relay->priv->subscription_channel_close_queue) go_channel_close(relay->priv->subscription_channel_close_queue);
         if (relay->priv->debug_raw) go_channel_close(relay->priv->debug_raw);
+        if (relay->priv->reconnect_now) go_channel_close(relay->priv->reconnect_now);
     }
     // Snapshot and NULL out connection BEFORE waiting for workers.
     // Workers read relay->connection under priv->mutex (write_operations line 494);
@@ -390,7 +585,12 @@ static void relay_free_impl(NostrRelay *relay) {
         if (relay->priv->write_queue) { go_channel_free(relay->priv->write_queue); relay->priv->write_queue = NULL; }
         if (relay->priv->subscription_channel_close_queue) { go_channel_free(relay->priv->subscription_channel_close_queue); relay->priv->subscription_channel_close_queue = NULL; }
         if (relay->priv->debug_raw) { go_channel_free(relay->priv->debug_raw); relay->priv->debug_raw = NULL; }
-        if (relay->priv->ok_callbacks) { go_hash_map_destroy(relay->priv->ok_callbacks); relay->priv->ok_callbacks = NULL; }
+        if (relay->priv->reconnect_now) { go_channel_free(relay->priv->reconnect_now); relay->priv->reconnect_now = NULL; }
+        if (relay->priv->ok_callbacks) {
+            go_hash_map_for_each_with_data(relay->priv->ok_callbacks, relay_pending_ok_free_cb, NULL);
+            go_hash_map_destroy(relay->priv->ok_callbacks);
+            relay->priv->ok_callbacks = NULL;
+        }
         if (relay->priv->challenge) { free(relay->priv->challenge); relay->priv->challenge = NULL; }
         // Free invalid signature tracking linked list
         InvalidSigNode *node = (InvalidSigNode *)relay->priv->invalid_sig_head;
@@ -685,12 +885,17 @@ static void relay_refire_subscriptions(NostrRelay *r) {
             continue;
         }
 
+        int64_t last_seen = atomic_load(&sub->priv->last_seen_created_at);
         Error *err = NULL;
-        if (nostr_subscription_fire(sub, &err)) {
+        bool fired = last_seen > 0
+            ? nostr_subscription_refire_since(sub, last_seen + 1, &err)
+            : nostr_subscription_fire(sub, &err);
+        if (fired) {
             refire_count++;
             if (debug) {
-                fprintf(stderr, "[RECONNECT] Re-fired subscription sid=%s\n",
-                        sub->priv && sub->priv->id ? sub->priv->id : "?");
+                fprintf(stderr, "[RECONNECT] Re-fired subscription sid=%s since=%lld\n",
+                        sub->priv && sub->priv->id ? sub->priv->id : "?",
+                        (long long)last_seen);
             }
         } else {
             if (debug) {
@@ -911,76 +1116,11 @@ static void *message_loop(void *arg) {
         }
 
         switch (envelope->type) {
-        case NOSTR_ENVELOPE_NOTICE: {
-            NostrNoticeEnvelope *ne = (NostrNoticeEnvelope *)envelope;
-            if (r->priv->notice_handler) r->priv->notice_handler(ne->message);
-            /* nostrc-95c: Log NOTICE messages at INFO level for debugging relay issues */
-            fprintf(stderr, "[RELAY_NOTICE] relay=%s message=\"%s\"\n",
-                    r->url ? r->url : "unknown", ne->message ? ne->message : "");
-            char tmp[256]; snprintf(tmp, sizeof(tmp), "NOTICE: %s", ne->message ? ne->message : "");
-            relay_debug_emit(r, tmp);
-            break; }
-        case NOSTR_ENVELOPE_EOSE: {
-            NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)envelope;
-            if (env->message) {
-                int serial = nostr_sub_id_to_serial(env->message);
-                if (serial < 0) {
-                    /* hq-3xato: Log when subscription ID fails to parse - this would prevent EOSE dispatch */
-                    if (debug_eose_cached || getenv("NOSTR_DEBUG_LIFECYCLE")) {
-                        fprintf(stderr, "[EOSE_ERROR] relay=%s - failed to parse subscription ID from '%s'\n",
-                                r->url ? r->url : "unknown", env->message);
-                    }
-                    nostr_metric_counter_add("eose_parse_error", 1);
-                } else {
-                    NostrSubscription *subscription = relay_get_subscription_ref(r, serial);
-                    if (subscription) {
-                        if (debug_eose_cached) {
-                            fprintf(stderr, "[EOSE_DISPATCH] relay=%s sid=%s serial=%d - dispatching to subscription\n",
-                                    r->url ? r->url : "unknown", env->message, serial);
-                        }
-                        nostr_subscription_dispatch_eose(subscription);
-                        nostr_subscription_unref(subscription);
-                    } else {
-                        /* This is NORMAL when a subscription is closed due to timeout before EOSE arrives.
-                         * The subscription_free removes from the map, then EOSE arrives from the relay.
-                         * Only log in debug mode to avoid noise during normal operation. */
-                        if (debug_eose_cached || getenv("NOSTR_DEBUG_LIFECYCLE")) {
-                            fprintf(stderr, "[SUB_LIFECYCLE] EOSE_LATE relay=%s sid=%s serial=%d (subscription already freed - normal for slow relays)\n",
-                                    r->url ? r->url : "unknown", env->message, serial);
-                        }
-                        nostr_metric_counter_add("eose_late_arrival", 1);
-                    }
-                }
-            } else {
-                /* hq-3xato: Log when EOSE has no subscription ID */
-                if (debug_eose_cached) {
-                    fprintf(stderr, "[EOSE_ERROR] relay=%s - EOSE with NULL subscription ID\n",
-                            r->url ? r->url : "unknown");
-                }
-            }
-            char tmp[128]; snprintf(tmp, sizeof(tmp), "EOSE sid=%s", env->message ? env->message : "");
-            relay_debug_emit(r, tmp);
-            break; }
-        case NOSTR_ENVELOPE_AUTH: {
-            // Free previous challenge if any
-            if (r->priv->challenge) { free(r->priv->challenge); r->priv->challenge = NULL; }
-            // Copy challenge string (don't alias envelope's string that will be freed)
-            const char *ch = ((NostrAuthEnvelope *)envelope)->challenge;
-            r->priv->challenge = ch ? strdup(ch) : NULL;
-            char tmp[256]; snprintf(tmp, sizeof(tmp), "AUTH challenge=%s", r->priv->challenge ? r->priv->challenge : "");
-            relay_debug_emit(r, tmp);
-
-            // Invoke auth callback if registered (nostrc-7og)
-            NostrRelayAuthCallback auth_cb = NULL;
-            void *auth_cb_data = NULL;
-            nsync_mu_lock(&r->priv->mutex);
-            auth_cb = r->priv->auth_callback;
-            auth_cb_data = r->priv->auth_callback_user_data;
-            nsync_mu_unlock(&r->priv->mutex);
-            if (auth_cb && r->priv->challenge) {
-                auth_cb(r, r->priv->challenge, auth_cb_data);
-            }
-            break; }
+        case NOSTR_ENVELOPE_NOTICE:
+        case NOSTR_ENVELOPE_EOSE:
+        case NOSTR_ENVELOPE_AUTH:
+            nostr_relay_dispatch_control_envelope(r, envelope);
+            break;
         case NOSTR_ENVELOPE_EVENT: {
             NostrEventEnvelope *env = (NostrEventEnvelope *)envelope;
             // Emit summary BEFORE handing event to subscription
@@ -1089,59 +1229,11 @@ static void *message_loop(void *arg) {
                 nostr_subscription_unref(subscription);
             }
             break; }
-        case NOSTR_ENVELOPE_CLOSED: {
-            NostrClosedEnvelope *env = (NostrClosedEnvelope *)envelope;
-            NostrSubscription *subscription = relay_get_subscription_ref(r, nostr_sub_id_to_serial(env->subscription_id));
-            if (subscription) {
-                nostr_subscription_dispatch_closed(subscription, env->reason);
-                nostr_subscription_unref(subscription);
-            }
-            /* nostrc-95c: Log CLOSED with reason to help debug subscription issues */
-            fprintf(stderr, "[RELAY_CLOSED] relay=%s subscription=%s reason=\"%s\"\n",
-                    r->url ? r->url : "unknown",
-                    env->subscription_id ? env->subscription_id : "",
-                    env->reason ? env->reason : "");
-            char tmp[256]; snprintf(tmp, sizeof(tmp), "CLOSED sid=%s reason=%s",
-                                   env->subscription_id ? env->subscription_id : "",
-                                   env->reason ? env->reason : "");
-            relay_debug_emit(r, tmp);
-            break; }
-        case NOSTR_ENVELOPE_OK: {
-            NostrOKEnvelope *oe = (NostrOKEnvelope *)envelope;
-            /* nostrc-95c: Log OK failures at WARN level to surface publish rejections */
-            if (!oe->ok) {
-                fprintf(stderr, "[RELAY_OK_FAIL] relay=%s event=%s reason=\"%s\"\n",
-                        r->url ? r->url : "unknown",
-                        oe->event_id ? oe->event_id : "",
-                        oe->reason ? oe->reason : "");
-            }
-            /* Fire OK response callback (used by NIP-42 to wait for auth confirmation) */
-            if (r->priv->ok_response_callback) {
-                r->priv->ok_response_callback(
-                    oe->event_id ? oe->event_id : "",
-                    oe->ok,
-                    oe->reason ? oe->reason : "",
-                    r->priv->ok_response_callback_user_data);
-            }
-            char tmp[256]; snprintf(tmp, sizeof(tmp), "OK id=%s ok=%s reason=%s",
-                                   oe->event_id ? oe->event_id : "",
-                                   oe->ok ? "true" : "false",
-                                   oe->reason ? oe->reason : "");
-            relay_debug_emit(r, tmp);
-            break; }
-        case NOSTR_ENVELOPE_COUNT: {
-            NostrCountEnvelope *ce = (NostrCountEnvelope *)envelope;
-            NostrSubscription *subscription = relay_get_subscription_ref(r, nostr_sub_id_to_serial(ce->subscription_id));
-            if (subscription && subscription->priv->count_result) {
-                int64_t *val = (int64_t *)malloc(sizeof(int64_t));
-                if (val) { *val = (int64_t)ce->count; go_channel_send(subscription->priv->count_result, val); }
-                nostr_subscription_unref(subscription);
-            } else if (subscription) {
-                nostr_subscription_unref(subscription);
-            }
-            char tmp[64]; snprintf(tmp, sizeof(tmp), "COUNT=%d", ce->count);
-            relay_debug_emit(r, tmp);
-            break; }
+        case NOSTR_ENVELOPE_CLOSED:
+        case NOSTR_ENVELOPE_OK:
+        case NOSTR_ENVELOPE_COUNT:
+            nostr_relay_dispatch_control_envelope(r, envelope);
+            break;
         default:
             break;
         }
@@ -1177,6 +1269,7 @@ static void *message_loop(void *arg) {
 
         /* Connection lost, attempt reconnection with backoff */
         relay_set_state(r, NOSTR_RELAY_STATE_DISCONNECTED);
+        relay_fail_pending_ok(r, "relay disconnected before OK");
 
         /* Increment reconnect attempt counter */
         nsync_mu_lock(&r->priv->mutex);
@@ -1198,32 +1291,30 @@ static void *message_loop(void *arg) {
         nsync_mu_unlock(&r->priv->mutex);
         relay_set_state(r, NOSTR_RELAY_STATE_BACKOFF);
 
-        /* nostrc-b0h: Event-driven backoff wait.
-         * REPLACED: usleep(100ms) polling loop checking for cancellation.
-         * NOW: go_select_timeout on the context's done channel. Wakes
-         * instantly on cancellation, otherwise waits for the full backoff
-         * period with zero CPU usage.
-         *
-         * NOTE: The old code checked reconnect_requested to skip remaining
-         * backoff. With event-driven wait, we'd need a separate channel to
-         * wake early. For now, reconnect_requested is cleared but not acted
-         * upon — the full backoff elapses. This is acceptable because:
-         * (a) backoff is typically short (100ms-5s)
-         * (b) immediate reconnect requests are rare
-         * (c) adding a reconnect channel adds complexity for little benefit */
+        /* Event-driven backoff wait.  Wake on cancellation or on the
+         * reconnect_now channel so nostr_relay_reconnect_now() actually
+         * bypasses the remaining backoff. */
         {
             GoChannel *done_ch = go_context_done(ctx);
-            GoSelectCase backoff_cases[] = {
-                { .op = GO_SELECT_RECEIVE, .chan = done_ch },
-            };
-            GoSelectResult sel = go_select_timeout(backoff_cases, done_ch ? 1 : 0,
+            GoSelectCase backoff_cases[2];
+            size_t ncases = 0;
+            int done_idx = -1, reconnect_idx = -1;
+            if (done_ch) {
+                done_idx = (int)ncases;
+                backoff_cases[ncases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = done_ch };
+            }
+            if (r->priv->reconnect_now) {
+                reconnect_idx = (int)ncases;
+                backoff_cases[ncases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = r->priv->reconnect_now };
+            }
+            GoSelectResult sel = go_select_timeout(backoff_cases, ncases,
                                                     (uint64_t)backoff_ms);
-            if (sel.selected_case == 0) {
+            if (sel.selected_case == done_idx) {
                 /* Done channel fired — context canceled */
                 context_canceled = true;
+            } else if (sel.selected_case == reconnect_idx) {
+                nostr_metric_counter_add("relay_reconnect_now_wakeup", 1);
             }
-            /* Clear reconnect_requested flag (consumed but not acted upon —
-             * see NOTE above about why early-exit isn't implemented) */
             nsync_mu_lock(&r->priv->mutex);
             r->priv->reconnect_requested = false;
             nsync_mu_unlock(&r->priv->mutex);
@@ -1331,9 +1422,11 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
         return;
     }
 
-    /* Log the EVENT being sent for debugging (matching nostr_subscription_fire style) */
-    fprintf(stderr, "[nostr_relay_publish] sending to %s: %s\n",
-            relay->url ? relay->url : "(null)", frame);
+    /* Full event JSON can contain sensitive content; only emit under explicit debug. */
+    if (getenv("NOSTR_DEBUG")) {
+        fprintf(stderr, "[nostr_relay_publish] sending to %s: %s\n",
+                relay->url ? relay->url : "(null)", frame);
+    }
 
     nostr_metric_counter_add("ws_tx_bytes", (uint64_t)nw);
 
@@ -1373,6 +1466,71 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
         go_channel_close(write_ch);
         go_channel_unref(write_ch);
     }
+}
+
+bool nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent *event,
+                                  uint64_t timeout_ms, Error **err) {
+    if (!relay || !relay->priv) {
+        if (err) *err = new_error(1, "relay is NULL");
+        return false;
+    }
+    if (!event) {
+        if (err) *err = new_error(1, "event is NULL");
+        return false;
+    }
+
+    char *event_id = nostr_event_get_id(event);
+    if (!event_id || !*event_id) {
+        free(event_id);
+        if (err) *err = new_error(1, "event id is unavailable");
+        return false;
+    }
+
+    NostrRelayOkWaiter *waiter = (NostrRelayOkWaiter *)calloc(1, sizeof(*waiter));
+    if (!waiter) {
+        free(event_id);
+        if (err) *err = new_error(1, "failed to allocate OK waiter");
+        return false;
+    }
+    waiter->done = go_channel_create(1);
+    if (!waiter->done) {
+        free(event_id);
+        relay_ok_waiter_free(waiter);
+        if (err) *err = new_error(1, "failed to allocate OK waiter channel");
+        return false;
+    }
+
+    nsync_mu_lock(&relay->priv->mutex);
+    go_hash_map_insert_str(relay->priv->ok_callbacks, event_id, waiter);
+    nsync_mu_unlock(&relay->priv->mutex);
+
+    nostr_relay_publish(relay, event);
+
+    if (timeout_ms == 0) timeout_ms = 30000;
+    NostrRelayOkResult *ok_res = NULL;
+    GoSelectCase cases[] = {
+        { .op = GO_SELECT_RECEIVE, .chan = waiter->done, .recv_buf = (void **)&ok_res },
+    };
+    GoSelectResult result = go_select_timeout(cases, 1, timeout_ms);
+
+    bool accepted = false;
+    if (result.selected_case == 0 && ok_res) {
+        accepted = ok_res->ok;
+        if (!accepted && err) {
+            *err = new_error(1, "relay rejected event %s: %s",
+                             event_id, ok_res->reason ? ok_res->reason : "");
+        }
+        relay_ok_result_free(ok_res);
+    } else {
+        nsync_mu_lock(&relay->priv->mutex);
+        go_hash_map_remove_str(relay->priv->ok_callbacks, event_id);
+        nsync_mu_unlock(&relay->priv->mutex);
+        if (err) *err = new_error(1, "timed out waiting for relay OK for event %s", event_id);
+    }
+
+    relay_ok_waiter_free(waiter);
+    free(event_id);
+    return accepted;
 }
 
 void nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err) {
@@ -1601,18 +1759,48 @@ int64_t nostr_relay_count(NostrRelay *relay, GoContext *ctx, NostrFilter *filter
     // Fire the subscription (send REQ)
     if (!nostr_subscription_fire(subscription, err)) {
         if (err) *err = new_error(1, "failed to send subscription request");
+        nostr_subscription_free(subscription);
         return -1;
     }
 
     // Wait for count result
     int64_t *count = NULL;
-    if (go_channel_receive(subscription->priv->count_result, (void **)&count) != 0 || !count) {
-        if (err) *err = new_error(1, "failed to receive count result");
-        return -1;
+    char *closed_reason = NULL;
+    GoChannel *done_ch = ctx ? go_context_done(ctx) : NULL;
+    GoSelectCase cases[3];
+    size_t ncases = 0;
+    int count_idx = (int)ncases;
+    cases[ncases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = subscription->priv->count_result, .recv_buf = (void **)&count };
+    int done_idx = -1;
+    if (done_ch) {
+        done_idx = (int)ncases;
+        cases[ncases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = done_ch };
     }
-    int64_t result = *count;
-    free(count);
-    return result;
+    int closed_idx = (int)ncases;
+    cases[ncases++] = (GoSelectCase){ .op = GO_SELECT_RECEIVE, .chan = subscription->closed_reason, .recv_buf = (void **)&closed_reason };
+
+    GoSelectResult sel = go_select_timeout(cases, ncases, 30000);
+    if (sel.selected_case == count_idx && count) {
+        int64_t result = *count;
+        free(count);
+        nostr_subscription_unsubscribe(subscription);
+        nostr_subscription_free(subscription);
+        return result;
+    }
+
+    if (sel.selected_case == done_idx) {
+        if (err) *err = new_error(1, "COUNT canceled before relay response");
+    } else if (sel.selected_case == closed_idx) {
+        if (err) *err = new_error(1, "COUNT subscription closed by relay: %s",
+                                  closed_reason ? closed_reason : "");
+    } else {
+        if (err) *err = new_error(1, "timed out waiting for COUNT response");
+    }
+    free(closed_reason);
+    if (count) free(count);
+    nostr_subscription_unsubscribe(subscription);
+    nostr_subscription_free(subscription);
+    return -1;
 }
 
 bool nostr_relay_close(NostrRelay *r, Error **err) {
@@ -1828,13 +2016,18 @@ uint64_t nostr_relay_get_next_reconnect_ms(NostrRelay *relay) {
 
 void nostr_relay_reconnect_now(NostrRelay *relay) {
     if (!relay || !relay->priv) return;
+    bool should_wake = false;
     nsync_mu_lock(&relay->priv->mutex);
     NostrRelayConnectionState state = relay->priv->connection_state;
     if (state == NOSTR_RELAY_STATE_DISCONNECTED || state == NOSTR_RELAY_STATE_BACKOFF) {
         relay->priv->reconnect_requested = true;
         relay->priv->next_reconnect_time_ms = 0;  /* Clear backoff delay */
+        should_wake = true;
     }
     nsync_mu_unlock(&relay->priv->mutex);
+    if (should_wake && relay->priv->reconnect_now) {
+        (void)go_channel_try_send(relay->priv->reconnect_now, (void *)(uintptr_t)1);
+    }
 }
 
 void nostr_relay_set_custom_handler(NostrRelay *relay, bool (*handler)(const char *)) {

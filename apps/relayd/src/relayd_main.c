@@ -211,9 +211,8 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
         /* Init rate limiter */
         rate_limit_init_conn(cs, ctx);
         if (ctx && strcmp(ctx->cfg.auth, "off") != 0) {
-          /* Build a simple challenge (timestamp-based); prod: random nonce */
-          snprintf(cs->auth_chal, sizeof(cs->auth_chal), "%lu", (unsigned long)time(NULL));
-          cs->need_auth_chal = 1;
+          gen_nonce(cs->auth_chal, sizeof(cs->auth_chal));
+          cs->need_auth_chal = (cs->auth_chal[0] != '\0');
           lws_callback_on_writable(wsi);
         }
         /* IP block enforcement (NIP-86) */
@@ -267,11 +266,14 @@ int main(int argc, char **argv) {
   const char *env_ttl = getenv("NOSTR_RELAY_REPLAY_TTL");
   const char *env_skew_f = getenv("NOSTR_RELAY_SKEW_FUTURE");
   const char *env_skew_p = getenv("NOSTR_RELAY_SKEW_PAST");
-  int ttl = env_ttl ? atoi(env_ttl) : 0;
+  int ttl = env_ttl ? atoi(env_ttl) : nostr_relay_get_replay_ttl();
   int skew_f = env_skew_f ? atoi(env_skew_f) : 0;
   int skew_p = env_skew_p ? atoi(env_skew_p) : 0;
-  if (ttl > 0) {
+  if (env_ttl) {
     nostr_relay_set_replay_ttl(ttl);
+    ttl = nostr_relay_get_replay_ttl();
+  }
+  if (ttl > 0) {
     fprintf(stderr, "nostrc-relayd: replay TTL enabled: %d seconds\n", ttl);
   }
   if (skew_f > 0 || skew_p > 0) {
@@ -279,7 +281,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "nostrc-relayd: timestamp skew enforcement: +%ds future, -%ds past\n", skew_f, skew_p);
   }
   /* One-line posture banner */
-  int eff_ttl=0, eff_skew_f=0, eff_skew_p=0; eff_ttl = ttl; eff_skew_f = skew_f; eff_skew_p = skew_p;
+  int eff_ttl=0, eff_skew_f=0, eff_skew_p=0; eff_ttl = nostr_relay_get_replay_ttl(); eff_skew_f = skew_f; eff_skew_p = skew_p;
   fprintf(stderr, "nostrc-relayd: security AEAD=v2 replayTTL=%ds skew=+%d/-%d\n", eff_ttl, eff_skew_f, eff_skew_p);
 
   /* Instantiate storage (driver from config) */

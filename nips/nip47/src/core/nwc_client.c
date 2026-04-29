@@ -1,10 +1,16 @@
 #include "nostr/nip47/nwc_client.h"
 #include "nostr/nip44/nip44.h"
 #include "nostr/nip04.h"
+#include "nostr-event.h"
+#include "nostr-filter.h"
+#include "nostr-keys.h"
+#include "nostr-simple-pool.h"
+#include "nostr-tag.h"
 #include "secure_buf.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 
 /* Local hex helpers (mirrors NIP-46 impl) */
 static int hex_nibble(char c){
@@ -34,6 +40,45 @@ static int parse_peer_xonly32(const char *hex, unsigned char out32[32]){
 }
 static int parse_sk32(const char *hex, unsigned char out32[32]){ if (!hex||!out32) return -1; return hex_to_bytes_exact(hex,out32,32); }
 
+static const char *nwc_enc_label(NostrNwcEncryption enc) {
+  switch (enc) {
+    case NOSTR_NWC_ENC_NIP44_V2: return "nip44-v2";
+    case NOSTR_NWC_ENC_NIP04: return "nip04";
+    default: return "nip44-v2";
+  }
+}
+
+static char *nwc_json_quote_token(const char *s) {
+  if (!s) return NULL;
+  size_t n = strlen(s);
+  char *out = (char *)malloc(n + 3);
+  if (!out) return NULL;
+  out[0] = '"'; memcpy(out + 1, s, n); out[1 + n] = '"'; out[2 + n] = '\0';
+  return out;
+}
+
+static void nwc_response_middleware(NostrIncomingEvent *incoming, void *user_data) {
+  NostrNwcClientSession *s = (NostrNwcClientSession *)user_data;
+  if (!s || !incoming || !incoming->event || !s->response_cb) return;
+  if (nostr_event_get_kind(incoming->event) != NOSTR_EVENT_KIND_NWC_RESPONSE) return;
+
+  char *event_json = nostr_event_serialize_compact(incoming->event);
+  if (!event_json) return;
+
+  char *client_pub = NULL;
+  char *req_id = NULL;
+  NostrNwcResponseBody body = {0};
+  if (nostr_nwc_response_parse(event_json, &client_pub, &req_id, NULL, &body) == 0) {
+    if (!s->client_pub_hex || !client_pub || strcmp(client_pub, s->client_pub_hex) == 0) {
+      s->response_cb(event_json, req_id, &body, s->response_cb_data);
+    }
+  }
+  free(client_pub);
+  free(req_id);
+  nostr_nwc_response_body_clear(&body);
+  free(event_json);
+}
+
 int nostr_nwc_client_session_init(NostrNwcClientSession *s,
                                   const char *wallet_pub_hex,
                                   const char **client_supported, size_t client_n,
@@ -52,6 +97,7 @@ int nostr_nwc_client_session_init(NostrNwcClientSession *s,
 
 void nostr_nwc_client_session_clear(NostrNwcClientSession *s) {
   if (!s) return;
+  nostr_nwc_client_stop_response_subscription(s);
   free(s->wallet_pub_hex);
   memset(s, 0, sizeof(*s));
 }
@@ -61,6 +107,116 @@ int nostr_nwc_client_build_request(const NostrNwcClientSession *s,
                                    char **out_event_json) {
   if (!s || !s->wallet_pub_hex) return -1;
   return nostr_nwc_request_build(s->wallet_pub_hex, s->enc, body, out_event_json);
+}
+
+int nostr_nwc_client_build_signed_request(const NostrNwcClientSession *s,
+                                          const char *client_sk_hex,
+                                          const NostrNwcRequestBody *body,
+                                          char **out_event_json) {
+  if (!s || !s->wallet_pub_hex || !client_sk_hex || !body || !body->method || !out_event_json) return -1;
+  *out_event_json = NULL;
+
+  int rc = -1;
+  char *mqt = NULL;
+  char *plaintext = NULL;
+  char *ciphertext = NULL;
+  NostrEvent *ev = NULL;
+
+  mqt = nwc_json_quote_token(body->method);
+  if (!mqt) goto out;
+  const char *params = body->params_json && *body->params_json ? body->params_json : "{}";
+  size_t plen = strlen(mqt) + strlen(params) + 32;
+  plaintext = (char *)malloc(plen);
+  if (!plaintext) goto out;
+  snprintf(plaintext, plen, "{\"method\":%s,\"params\":%s}", mqt, params);
+
+  if (nostr_nwc_client_encrypt(s, client_sk_hex, s->wallet_pub_hex, plaintext, &ciphertext) != 0 || !ciphertext) goto out;
+
+  ev = nostr_event_new();
+  if (!ev) goto out;
+  nostr_event_set_kind(ev, NOSTR_EVENT_KIND_NWC_REQUEST);
+  nostr_event_set_created_at(ev, (int64_t)time(NULL));
+  nostr_event_set_content(ev, ciphertext);
+
+  NostrTags *tags = nostr_tags_new(0);
+  if (!tags) goto out;
+  NostrTag *p = nostr_tag_new("p", s->wallet_pub_hex, NULL);
+  NostrTag *enc = nostr_tag_new("encryption", nwc_enc_label(s->enc), NULL);
+  if (!p || !enc) {
+    if (p) nostr_tag_free(p);
+    if (enc) nostr_tag_free(enc);
+    nostr_tags_free(tags);
+    goto out;
+  }
+  nostr_tags_append(tags, p);
+  nostr_tags_append(tags, enc);
+  nostr_event_set_tags(ev, tags);
+
+  if (nostr_event_sign(ev, client_sk_hex) != 0) goto out;
+  *out_event_json = nostr_event_serialize_compact(ev);
+  rc = *out_event_json ? 0 : -1;
+
+out:
+  if (ev) nostr_event_free(ev);
+  free(mqt);
+  free(plaintext);
+  free(ciphertext);
+  return rc;
+}
+
+int nostr_nwc_client_start_response_subscription(NostrNwcClientSession *s,
+                                                 const char **relays,
+                                                 size_t n_relays,
+                                                 const char *client_pub_hex,
+                                                 NostrNwcResponseCallback cb,
+                                                 void *user_data) {
+  if (!s || !relays || n_relays == 0 || !client_pub_hex || !cb) return -1;
+
+  nostr_nwc_client_stop_response_subscription(s);
+
+  s->client_pub_hex = strdup(client_pub_hex);
+  if (!s->client_pub_hex) return -1;
+  s->response_cb = cb;
+  s->response_cb_data = user_data;
+  s->response_pool = nostr_simple_pool_new();
+  if (!s->response_pool) {
+    nostr_nwc_client_stop_response_subscription(s);
+    return -1;
+  }
+
+  nostr_simple_pool_set_event_middleware_ex(s->response_pool, nwc_response_middleware, s);
+  nostr_simple_pool_set_auto_unsub_on_eose(s->response_pool, false);
+  nostr_simple_pool_start(s->response_pool);
+
+  NostrFilter *filter = nostr_filter_new();
+  if (!filter) {
+    nostr_nwc_client_stop_response_subscription(s);
+    return -1;
+  }
+  nostr_filter_add_kind(filter, NOSTR_EVENT_KIND_NWC_RESPONSE);
+  nostr_filter_tags_append(filter, "p", client_pub_hex, NULL);
+  nostr_filter_set_since_i64(filter, (int64_t)time(NULL));
+
+  NostrFilters filters = {0};
+  filters.filters = filter;
+  filters.count = 1;
+  filters.capacity = 1;
+  nostr_simple_pool_subscribe(s->response_pool, relays, n_relays, filters, true);
+  nostr_filter_free(filter);
+  return 0;
+}
+
+void nostr_nwc_client_stop_response_subscription(NostrNwcClientSession *s) {
+  if (!s) return;
+  if (s->response_pool) {
+    nostr_simple_pool_stop(s->response_pool);
+    nostr_simple_pool_free(s->response_pool);
+    s->response_pool = NULL;
+  }
+  free(s->client_pub_hex);
+  s->client_pub_hex = NULL;
+  s->response_cb = NULL;
+  s->response_cb_data = NULL;
 }
 
 int nostr_nwc_client_encrypt(const NostrNwcClientSession *s,

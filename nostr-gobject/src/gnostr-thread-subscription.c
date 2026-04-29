@@ -41,6 +41,7 @@ struct _GNostrThreadSubscription {
     /* State */
     gboolean active;
     gboolean disposed;
+    gboolean eose_emitted;
 };
 
 enum {
@@ -62,6 +63,8 @@ static void on_event_bus_kind1111(const gchar *topic, gpointer event_data, gpoin
 static gboolean filter_thread_note(const gchar *topic, gpointer event_data, gpointer user_data);
 static gboolean filter_thread_reaction(const gchar *topic, gpointer event_data, gpointer user_data);
 static void on_ndb_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
+static gchar *build_ndb_filter_json(GNostrThreadSubscription *self);
+static void resubscribe_ndb(GNostrThreadSubscription *self);
 
 /* ========== Helpers ========== */
 
@@ -93,6 +96,60 @@ static gboolean event_references_monitored(const NostrEvent *ev, GHashTable *mon
     }
 
     return FALSE;
+}
+
+
+static void
+emit_thread_eose_once(GNostrThreadSubscription *self)
+{
+    if (!self || self->disposed || self->eose_emitted) return;
+    self->eose_emitted = TRUE;
+    g_signal_emit(self, signals[SIGNAL_EOSE], 0);
+}
+
+static gchar *
+build_ndb_filter_json(GNostrThreadSubscription *self)
+{
+    GString *ids = g_string_new(NULL);
+    GHashTableIter iter;
+    gpointer key, value;
+    gboolean first = TRUE;
+
+    g_hash_table_iter_init(&iter, self->monitored_ids);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        const char *id = key;
+        (void)value;
+        if (!id || strlen(id) != 64) continue;
+        if (!first) g_string_append_c(ids, ',');
+        g_string_append_printf(ids, "\"%s\"", id);
+        first = FALSE;
+    }
+
+    if (first && self->root_event_id)
+        g_string_append_printf(ids, "\"%s\"", self->root_event_id);
+
+    gchar *json = g_strdup_printf("{\"kinds\":[1,7,1111],\"#e\":[%s],\"#E\":[%s],\"limit\":%d}",
+                                  ids->str, ids->str, THREAD_SUB_NDB_LIMIT);
+    g_string_free(ids, TRUE);
+    return json;
+}
+
+static void
+resubscribe_ndb(GNostrThreadSubscription *self)
+{
+    if (!self || self->disposed) return;
+
+    if (self->ndb_sub_id > 0) {
+        gn_ndb_unsubscribe(self->ndb_sub_id);
+        self->ndb_sub_id = 0;
+    }
+
+    void *txn_check = NULL;
+    if (storage_ndb_begin_query(&txn_check, NULL) == 0 && txn_check) {
+        storage_ndb_end_query(txn_check);
+        g_autofree gchar *filter_json = build_ndb_filter_json(self);
+        self->ndb_sub_id = gn_ndb_subscribe(filter_json, on_ndb_batch, self, NULL);
+    }
 }
 
 /* ========== EventBus filter predicates ========== */
@@ -215,8 +272,13 @@ static void on_ndb_batch(uint64_t subid, const uint64_t *note_keys,
                           guint n_keys, gpointer user_data) {
     (void)subid;
     GNostrThreadSubscription *self = GNOSTR_THREAD_SUBSCRIPTION(user_data);
-    if (!GNOSTR_IS_THREAD_SUBSCRIPTION(self) || !note_keys || n_keys == 0) return;
+    if (!GNOSTR_IS_THREAD_SUBSCRIPTION(self)) return;
     if (self->disposed) return;
+    if (n_keys == 0) {
+        emit_thread_eose_once(self);
+        return;
+    }
+    if (!note_keys) return;
 
     void *txn = NULL;
     if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return;
@@ -268,6 +330,7 @@ static void on_ndb_batch(uint64_t subid, const uint64_t *note_keys,
     }
 
     storage_ndb_end_query(txn);
+    emit_thread_eose_once(self);
 }
 
 /* ========== GObject lifecycle ========== */
@@ -355,6 +418,7 @@ static void gnostr_thread_subscription_init(GNostrThreadSubscription *self) {
     self->seen_events = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     self->active = FALSE;
     self->disposed = FALSE;
+    self->eose_emitted = FALSE;
 }
 
 /* ========== Public API ========== */
@@ -400,19 +464,10 @@ void gnostr_thread_subscription_start(GNostrThreadSubscription *self) {
         on_event_bus_kind1111,
         self, NULL);
 
-    /* Set up nostrdb subscription for local storage events.
-     * Guard with begin_query to check if NDB is initialized. */
-    void *txn_check = NULL;
-    if (storage_ndb_begin_query(&txn_check, NULL) == 0 && txn_check) {
-        storage_ndb_end_query(txn_check);
-
-        char filter_json[256];
-        snprintf(filter_json, sizeof(filter_json),
-                 "{\"kinds\":[1,7,1111],\"#e\":[\"%s\"],\"limit\":%d}",
-                 self->root_event_id, THREAD_SUB_NDB_LIMIT);
-
-        self->ndb_sub_id = gn_ndb_subscribe(filter_json, on_ndb_batch, self, NULL);
-    }
+    /* Set up nostrdb subscription for local storage events. The #e filter
+     * includes every monitored id, not only the root, so focused subthreads
+     * are fetched from local storage as they are added. */
+    resubscribe_ndb(self);
 
     self->active = TRUE;
 
@@ -463,6 +518,10 @@ void gnostr_thread_subscription_add_monitored_id(GNostrThreadSubscription *self,
     if (!g_hash_table_contains(self->monitored_ids, event_id)) {
         g_hash_table_insert(self->monitored_ids,
                             g_strdup(event_id), GINT_TO_POINTER(TRUE));
+        if (self->active) {
+            self->eose_emitted = FALSE;
+            resubscribe_ndb(self);
+        }
         g_debug("[THREAD_SUB] Added monitored ID %.16s... (now %u total)",
                 event_id, g_hash_table_size(self->monitored_ids));
     }

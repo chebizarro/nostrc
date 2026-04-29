@@ -18,6 +18,10 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/time.h>
+#include <sys/types.h>
+
+static char g_dedup_tombstone;
+#define DEDUP_TOMBSTONE ((char *)&g_dedup_tombstone)
 
 /* ========================================================================
  * PHASE 2: SUBSCRIPTION REGISTRY - Pool-level lifecycle management
@@ -259,11 +263,14 @@ NostrSimplePool *nostr_simple_pool_new(void) {
     pool->subs = NULL;
     pool->subs_count = 0;
     pool->filters_shared = NULL;  /* nostrc-ey0f: prevent use-after-free on uninitialized pointer */
-    pool->dedup_unique = false;
+    pool->dedup_unique = true;
     pool->dedup_cap = 65536; /* align with GObject reference scale */
-    pool->dedup_ring = NULL;
-    pool->dedup_len = 0;
-    pool->dedup_head = 0;
+    pool->dedup_hash = NULL;
+    pool->dedup_hash_sz = 0;
+    pool->dedup_count = 0;
+    pool->dedup_evict = NULL;
+    pool->dedup_evict_head = 0;
+    pool->dedup_tombstones = 0;
     // Behavior: auto-unsub on EOSE is off by default; env can enable
     pool->auto_unsub_on_eose = false;
     const char *auto_env = getenv("NOSTR_SIMPLE_POOL_AUTO_UNSUB_EOSE");
@@ -415,10 +422,17 @@ void nostr_simple_pool_free(NostrSimplePool *pool) {
         free(pool->subs);
     }
 
-    /* Free dedup ring */
-    if (pool->dedup_ring) {
-        for (size_t i = 0; i < pool->dedup_len; i++) free(pool->dedup_ring[i]);
-        free(pool->dedup_ring);
+    /* Free dedup hash and eviction ring */
+    if (pool->dedup_hash) {
+        for (size_t i = 0; i < pool->dedup_hash_sz; i++) {
+            if (pool->dedup_hash[i] && pool->dedup_hash[i] != DEDUP_TOMBSTONE) {
+                free(pool->dedup_hash[i]);
+            }
+        }
+        free(pool->dedup_hash);
+    }
+    if (pool->dedup_evict) {
+        free(pool->dedup_evict);
     }
 
     if (pool->filters_shared) {
@@ -612,31 +626,112 @@ void nostr_simple_pool_disconnect_all(NostrSimplePool *pool) {
 }
 
 // Thread function for SimplePool
+static uint64_t dedup_hash_id(const char *id) {
+    uint64_t h = 1469598103934665603ULL;
+    const unsigned char *p = (const unsigned char *)id;
+    while (p && *p) {
+        h ^= (uint64_t)*p++;
+        h *= 1099511628211ULL;
+    }
+    return h ? h : 1;
+}
+
+static size_t dedup_next_pow2(size_t n) {
+    size_t p = 1;
+    while (p < n) p <<= 1;
+    return p;
+}
+
+static int pool_dedup_init(NostrSimplePool *pool) {
+    if (!pool || pool->dedup_cap == 0) return 0;
+    if (pool->dedup_hash && pool->dedup_evict) return 1;
+
+    size_t hash_sz = dedup_next_pow2(pool->dedup_cap * 2);
+    if (hash_sz < 16) hash_sz = 16;
+    pool->dedup_hash = (char **)calloc(hash_sz, sizeof(char *));
+    pool->dedup_evict = (char **)calloc(pool->dedup_cap, sizeof(char *));
+    if (!pool->dedup_hash || !pool->dedup_evict) {
+        free(pool->dedup_hash);
+        free(pool->dedup_evict);
+        pool->dedup_hash = NULL;
+        pool->dedup_evict = NULL;
+        pool->dedup_hash_sz = 0;
+        return 0;
+    }
+    pool->dedup_hash_sz = hash_sz;
+    pool->dedup_count = 0;
+    pool->dedup_evict_head = 0;
+    pool->dedup_tombstones = 0;
+    return 1;
+}
+
+static ssize_t dedup_find_slot(NostrSimplePool *pool, const char *id, int *found) {
+    if (!pool || !pool->dedup_hash || pool->dedup_hash_sz == 0 || !id) return -1;
+    size_t mask = pool->dedup_hash_sz - 1;
+    size_t idx = (size_t)dedup_hash_id(id) & mask;
+    ssize_t first_tombstone = -1;
+
+    for (size_t probes = 0; probes < pool->dedup_hash_sz; probes++) {
+        char *cur = pool->dedup_hash[idx];
+        if (!cur) {
+            *found = 0;
+            return first_tombstone >= 0 ? first_tombstone : (ssize_t)idx;
+        }
+        if (cur == DEDUP_TOMBSTONE) {
+            if (first_tombstone < 0) first_tombstone = (ssize_t)idx;
+        } else if (strcmp(cur, id) == 0) {
+            *found = 1;
+            return (ssize_t)idx;
+        }
+        idx = (idx + 1) & mask;
+    }
+
+    *found = 0;
+    return first_tombstone;
+}
+
 static int pool_seen(NostrSimplePool *pool, const char *id) {
     if (!pool->dedup_unique || !id || !*id) return 0;
-    /* Linear scan in ring buffer (small cap) */
-    for (size_t i = 0; i < pool->dedup_len; i++) {
-        size_t idx = (pool->dedup_head + pool->dedup_len - 1 - i) % (pool->dedup_cap ? pool->dedup_cap : 1);
-        const char *v = pool->dedup_ring ? pool->dedup_ring[idx] : NULL;
-        if (v && strcmp(v, id) == 0) return 1;
-    }
-    /* Insert */
-    if (!pool->dedup_ring && pool->dedup_cap > 0) {
-        pool->dedup_ring = (char **)calloc(pool->dedup_cap, sizeof(char *));
-        pool->dedup_len = 0;
-        pool->dedup_head = 0;
-    }
-    if (pool->dedup_cap > 0) {
-        if (pool->dedup_len < pool->dedup_cap) {
-            size_t pos = (pool->dedup_head + pool->dedup_len) % pool->dedup_cap;
-            pool->dedup_ring[pos] = strdup(id);
-            pool->dedup_len++;
-        } else {
-            /* evict head */
-            if (pool->dedup_ring[pool->dedup_head]) free(pool->dedup_ring[pool->dedup_head]);
-            pool->dedup_ring[pool->dedup_head] = strdup(id);
-            pool->dedup_head = (pool->dedup_head + 1) % pool->dedup_cap;
+    if (pool->dedup_cap == 0 || !pool_dedup_init(pool)) return 0;
+
+    int found = 0;
+    ssize_t slot = dedup_find_slot(pool, id, &found);
+    if (found) return 1;
+    if (slot < 0) return 0;
+
+    size_t evict_insert_pos = (size_t)-1;
+    if (pool->dedup_count == pool->dedup_cap) {
+        evict_insert_pos = pool->dedup_evict_head;
+        char *evict = pool->dedup_evict[pool->dedup_evict_head];
+        if (evict) {
+            int evict_found = 0;
+            ssize_t evict_slot = dedup_find_slot(pool, evict, &evict_found);
+            if (evict_found && evict_slot >= 0) {
+                pool->dedup_hash[evict_slot] = DEDUP_TOMBSTONE;
+                pool->dedup_tombstones++;
+            }
+            free(evict);
+            pool->dedup_evict[pool->dedup_evict_head] = NULL;
         }
+        pool->dedup_count--;
+        slot = dedup_find_slot(pool, id, &found);
+        if (found) return 1;
+        if (slot < 0) return 0;
+    }
+
+    char *copy = strdup(id);
+    if (!copy) return 0;
+    if (pool->dedup_hash[slot] == DEDUP_TOMBSTONE && pool->dedup_tombstones > 0) {
+        pool->dedup_tombstones--;
+    }
+    pool->dedup_hash[slot] = copy;
+    size_t pos = (evict_insert_pos != (size_t)-1)
+        ? evict_insert_pos
+        : (pool->dedup_evict_head + pool->dedup_count) % pool->dedup_cap;
+    pool->dedup_evict[pos] = copy;
+    pool->dedup_count++;
+    if (evict_insert_pos != (size_t)-1) {
+        pool->dedup_evict_head = (evict_insert_pos + 1) % pool->dedup_cap;
     }
     return 0;
 }

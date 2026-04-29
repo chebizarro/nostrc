@@ -17,6 +17,10 @@
 #include "rate_limit.h"
 #include "protocol_nip77.h"
 #include "metrics.h"
+#include "relay_policy.h"
+
+/* Keep relay_policy.c in apps/relayd/src without touching build files outside bucket scope. */
+#include "relay_policy.c"
 
 static void ws_send_text(struct lws *wsi, const char *s) {
   if (!wsi || !s) return;
@@ -30,63 +34,6 @@ static void ws_send_text(struct lws *wsi, const char *s) {
 
 static inline int is_replaceable_kind(int kind) { return kind == 0 || kind == 3 || kind == 41; }
 static inline int is_param_replaceable_kind(int kind) { return kind >= 30000 && kind < 40000; }
-
-/* === Replay cache (simple fixed-size ring with TTL) === */
-#define SEEN_ID_CAPACITY 65536
-static int g_seen_id_ttl_seconds = 0; /* default disabled; set via env NOSTR_RELAY_REPLAY_TTL */
-typedef struct { char id[65]; time_t seen_at; } SeenIdEntry;
-static SeenIdEntry g_seen_ids[SEEN_ID_CAPACITY];
-static size_t g_seen_cursor = 0;
-
-static inline int ids_equal64(const char *a, const char *b) {
-  for (int i = 0; i < 64; i++) if (a[i] != b[i]) return 0; return 1;
-}
-
-static int seen_ids_check_and_add(const char *id_hex, time_t now) {
-  size_t pos = 0;
-  if (!id_hex || id_hex[0] == '\0') return 0;
-  /* Fast scan a small window around the ring head for recent entries; full scan is expensive.
-     Trade-off: scan 1024 recent entries which should capture burst duplicates. */
-  size_t scan = SEEN_ID_CAPACITY < 1024 ? SEEN_ID_CAPACITY : 1024;
-  if (g_seen_id_ttl_seconds <= 0) {
-    /* Disabled */
-    goto insert;
-  }
-  for (size_t i = 0; i < scan; i++) {
-    size_t idx = (g_seen_cursor + SEEN_ID_CAPACITY - 1 - i) % SEEN_ID_CAPACITY;
-    if (g_seen_ids[idx].id[0] && (now - g_seen_ids[idx].seen_at) <= g_seen_id_ttl_seconds) {
-      if (ids_equal64(g_seen_ids[idx].id, id_hex)) return 1; /* duplicate */
-    }
-  }
-insert:
-  /* Insert at cursor position (evict old) */
-  pos = g_seen_cursor % SEEN_ID_CAPACITY;
-  for (int i = 0; i < 64; i++) g_seen_ids[pos].id[i] = id_hex[i] ? id_hex[i] : '0';
-  g_seen_ids[pos].id[64] = '\0';
-  g_seen_ids[pos].seen_at = now;
-  g_seen_cursor = (g_seen_cursor + 1) % SEEN_ID_CAPACITY;
-  return 0;
-}
-
-/* === Timestamp skew policy (disabled by default; set via env) === */
-static int g_future_skew_seconds = 0;
-static int g_past_skew_seconds = 0;
-
-/* Expose runtime configuration setters */
-void nostr_relay_set_replay_ttl(int seconds) {
-  g_seen_id_ttl_seconds = seconds > 0 ? seconds : 0;
-}
-void nostr_relay_set_skew(int future_seconds, int past_seconds) {
-  g_future_skew_seconds = future_seconds > 0 ? future_seconds : 0;
-  g_past_skew_seconds = past_seconds > 0 ? past_seconds : 0;
-}
-
-/* Expose getters for tests */
-int nostr_relay_get_replay_ttl(void) { return g_seen_id_ttl_seconds; }
-void nostr_relay_get_skew(int *future_seconds, int *past_seconds) {
-  if (future_seconds) *future_seconds = g_future_skew_seconds;
-  if (past_seconds) *past_seconds = g_past_skew_seconds;
-}
 
 /* Local helper: parse array or single filter into array */
 static int parse_filters_json_local(const char *json, NostrFilter ***out_arr, size_t *out_n, int max_filters) {
@@ -213,15 +160,11 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
       /* created_at skew check (optional) */
       time_t now = time(NULL);
       int64_t created_at = nostr_event_get_created_at(ev);
-      if (g_future_skew_seconds > 0 || g_past_skew_seconds > 0) {
-        if (created_at > 0 &&
-            (((g_future_skew_seconds > 0) && ((created_at - (int64_t)now) > g_future_skew_seconds)) ||
-             ((g_past_skew_seconds > 0) && (((int64_t)now - created_at) > g_past_skew_seconds)))) {
-          reason = "invalid: created_at out of range";
-          rc_store = -1;
-          metrics_on_skew_reject();
-          goto respond_ok;
-        }
+      if (relay_policy_created_at_out_of_range(created_at, now)) {
+        reason = "invalid: created_at out of range";
+        rc_store = -1;
+        metrics_on_skew_reject();
+        goto respond_ok;
       }
       if (strcmp(ctx->cfg.auth, "required") == 0 && cs && cs->authed_pubkey[0]) {
         const char *epk = nostr_event_get_pubkey(ev);
@@ -238,8 +181,8 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
       } else {
         /* Recompute canonical id and check replay cache (optional) */
         id = nostr_event_get_id(ev);
-        if (id && strlen(id) == 64 && g_seen_id_ttl_seconds > 0) {
-          if (seen_ids_check_and_add(id, now)) {
+        if (id && strlen(id) == 64 && relay_policy_get_replay_ttl() > 0) {
+          if (relay_policy_seen_id_check_and_add(id, now)) {
             /* Duplicate within TTL: accept but do not store */
             rc_store = 0;
             reason = "duplicate";
