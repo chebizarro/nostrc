@@ -281,6 +281,91 @@ static void test_validate_null_event(void)
            == HANAMI_BUD02_ERR_NULL_PARAM);
 }
 
+static void test_validate_pubkey_match(void)
+{
+    const char *hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
+    NostrEvent *ev = hanami_bud02_create_auth_event(
+        HANAMI_BUD02_ACTION_UPLOAD, hash, 0, NULL);
+    assert(ev != NULL);
+    assert(nostr_event_sign(ev, TEST_PRIVATE_KEY) == 0);
+
+    /* Get the pubkey from the signed event */
+    const char *pubkey = nostr_event_get_pubkey(ev);
+    assert(pubkey != NULL);
+
+    /* Validate with matching pubkey */
+    hanami_bud02_validate_options_t opts = {
+        .expected_sha256 = NULL,
+        .expected_pubkey = pubkey,
+        .now_override = 0
+    };
+    hanami_bud02_result_t res = hanami_bud02_validate_auth_event(
+        ev, HANAMI_BUD02_ACTION_UPLOAD, &opts);
+    assert(res == HANAMI_BUD02_OK);
+
+    nostr_event_free(ev);
+}
+
+static void test_validate_pubkey_mismatch(void)
+{
+    const char *hash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
+    NostrEvent *ev = hanami_bud02_create_auth_event(
+        HANAMI_BUD02_ACTION_UPLOAD, hash, 0, NULL);
+    assert(ev != NULL);
+    assert(nostr_event_sign(ev, TEST_PRIVATE_KEY) == 0);
+
+    /* Use a different pubkey */
+    const char *wrong_pubkey = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    hanami_bud02_validate_options_t opts = {
+        .expected_sha256 = NULL,
+        .expected_pubkey = wrong_pubkey,
+        .now_override = 0
+    };
+    hanami_bud02_result_t res = hanami_bud02_validate_auth_event(
+        ev, HANAMI_BUD02_ACTION_UPLOAD, &opts);
+    assert(res == HANAMI_BUD02_ERR_PUBKEY_MISMATCH);
+
+    nostr_event_free(ev);
+}
+
+static void test_validate_missing_expiration(void)
+{
+    /* Manually create an event without expiration tag */
+    NostrEvent *ev = nostr_event_new();
+    assert(ev != NULL);
+    
+    int64_t now = (int64_t)time(NULL);
+    nostr_event_set_kind(ev, HANAMI_BUD02_KIND);
+    nostr_event_set_created_at(ev, now);
+    nostr_event_set_content(ev, "Authorize");
+    
+    /* Create tags with only "t" tag, no expiration */
+    NostrTags *tags = malloc(sizeof(NostrTags));
+    assert(tags != NULL);
+    tags->data = malloc(sizeof(StringArray *));
+    assert(tags->data != NULL);
+    tags->count = 0;
+    tags->capacity = 1;
+    
+    /* Add only [t, upload] tag */
+    StringArray *t_tag = new_string_array(2);
+    assert(t_tag != NULL);
+    string_array_add(t_tag, "t");
+    string_array_add(t_tag, "upload");
+    tags->data[tags->count++] = t_tag;
+    
+    nostr_event_set_tags(ev, tags);
+    assert(nostr_event_sign(ev, TEST_PRIVATE_KEY) == 0);
+    
+    /* Validation should fail with missing expiration */
+    hanami_bud02_result_t res = hanami_bud02_validate_auth_event(
+        ev, HANAMI_BUD02_ACTION_UPLOAD, NULL);
+    assert(res == HANAMI_BUD02_ERR_MISSING_EXPIRATION);
+    
+    nostr_event_free(ev);
+}
+
 /* ---- Error strings ---- */
 
 static void test_strerror(void)
@@ -292,6 +377,10 @@ static void test_strerror(void)
                  "Invalid event kind (expected 24242)") == 0);
     assert(strcmp(hanami_bud02_strerror(HANAMI_BUD02_ERR_EXPIRED),
                  "Authorization event has expired") == 0);
+    assert(strcmp(hanami_bud02_strerror(HANAMI_BUD02_ERR_PUBKEY_MISMATCH),
+                 "Event pubkey does not match expected pubkey") == 0);
+    assert(strcmp(hanami_bud02_strerror(HANAMI_BUD02_ERR_MISSING_EXPIRATION),
+                 "Expiration tag is missing (required by BUD-02)") == 0);
     /* Unknown code */
     const char *unk = hanami_bud02_strerror((hanami_bud02_result_t)-999);
     assert(unk != NULL);
@@ -326,6 +415,9 @@ int main(void)
     TEST(validate_expired);
     TEST(validate_hash_mismatch);
     TEST(validate_null_event);
+    TEST(validate_pubkey_match);
+    TEST(validate_pubkey_mismatch);
+    TEST(validate_missing_expiration);
 
     /* Error strings */
     TEST(strerror);

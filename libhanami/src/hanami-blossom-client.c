@@ -180,18 +180,62 @@ static hanami_error_t make_auth_header(const hanami_blossom_client_t *c,
  * Simple JSON helpers for blob descriptor parsing
  * ========================================================================= */
 
+/* Escape a string for safe inclusion in JSON. Returns malloc'd string or NULL. */
+static char *json_escape_string(const char *str)
+{
+    if (!str) return NULL;
+
+    /* First pass: calculate required size */
+    size_t len = 0;
+    for (const char *p = str; *p; p++) {
+        if (*p == '"' || *p == '\\')
+            len += 2; /* \" or \\ */
+        else if (*p >= 0x00 && *p <= 0x1F)
+            len += 6; /* \uXXXX */
+        else
+            len += 1;
+    }
+
+    char *escaped = malloc(len + 1);
+    if (!escaped) return NULL;
+
+    /* Second pass: build escaped string */
+    char *out = escaped;
+    for (const char *p = str; *p; p++) {
+        if (*p == '"') {
+            *out++ = '\\';
+            *out++ = '"';
+        } else if (*p == '\\') {
+            *out++ = '\\';
+            *out++ = '\\';
+        } else if (*p >= 0x00 && *p <= 0x1F) {
+            /* Escape control chars as \uXXXX */
+            sprintf(out, "\\u%04x", (unsigned char)*p);
+            out += 6;
+        } else {
+            *out++ = *p;
+        }
+    }
+    *out = '\0';
+    return escaped;
+}
+
 /* Find a JSON string value for a key. Returns malloc'd string or NULL. */
 static char *json_get_string(const char *json, const char *key)
 {
     if (!json || !key) return NULL;
 
-    /* Search for "key": */
-    char search[128];
-    snprintf(search, sizeof(search), "\"%s\"", key);
+    /* Search for "key": - use dynamic allocation to avoid truncation */
+    size_t key_len = strlen(key);
+    char *search = malloc(key_len + 3); /* "key" + NUL */
+    if (!search) return NULL;
+    snprintf(search, key_len + 3, "\"%s\"", key);
+    
     const char *p = strstr(json, search);
+    free(search);
     if (!p) return NULL;
 
-    p += strlen(search);
+    p += key_len + 2; /* skip "key" */
     /* Skip whitespace and colon */
     while (*p && (*p == ' ' || *p == '\t' || *p == ':'))
         p++;
@@ -200,7 +244,14 @@ static char *json_get_string(const char *json, const char *key)
 
     const char *end = p;
     while (*end && *end != '"') {
-        if (*end == '\\') end++; /* skip escaped char */
+        if (*end == '\\') {
+            end++; /* skip backslash */
+            if (*end == 'u') {
+                /* \uXXXX - skip 4 hex digits */
+                for (int i = 0; i < 4 && end[1]; i++)
+                    end++;
+            }
+        }
         if (*end) end++;
     }
 
@@ -217,12 +268,17 @@ static int64_t json_get_int(const char *json, const char *key)
 {
     if (!json || !key) return 0;
 
-    char search[128];
-    snprintf(search, sizeof(search), "\"%s\"", key);
+    /* Use dynamic allocation to avoid truncation */
+    size_t key_len = strlen(key);
+    char *search = malloc(key_len + 3); /* "key" + NUL */
+    if (!search) return 0;
+    snprintf(search, key_len + 3, "\"%s\"", key);
+    
     const char *p = strstr(json, search);
+    free(search);
     if (!p) return 0;
 
-    p += strlen(search);
+    p += key_len + 2; /* skip "key" */
     while (*p && (*p == ' ' || *p == '\t' || *p == ':'))
         p++;
 
@@ -671,8 +727,25 @@ hanami_error_t hanami_blossom_mirror(hanami_blossom_client_t *client,
     }
 
     /* PUT /mirror with JSON body containing the source URL */
-    char body[2048];
-    snprintf(body, sizeof(body), "{\"url\":\"%s\"}", source_url);
+    char *escaped_url = json_escape_string(source_url);
+    if (!escaped_url) {
+        curl_easy_cleanup(curl);
+        free(url);
+        free(auth_header);
+        return HANAMI_ERR_NOMEM;
+    }
+    
+    size_t body_len = 9 + strlen(escaped_url) + 2; /* {"url":""} + NUL */
+    char *body = malloc(body_len);
+    if (!body) {
+        free(escaped_url);
+        curl_easy_cleanup(curl);
+        free(url);
+        free(auth_header);
+        return HANAMI_ERR_NOMEM;
+    }
+    snprintf(body, body_len, "{\"url\":\"%s\"}", escaped_url);
+    free(escaped_url);
 
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
@@ -690,6 +763,7 @@ hanami_error_t hanami_blossom_mirror(hanami_blossom_client_t *client,
     CURLcode res = curl_easy_perform(curl);
     free(url);
     free(auth_header);
+    free(body);
 
     if (res != CURLE_OK) {
         curl_slist_free_all(headers);

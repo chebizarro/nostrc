@@ -601,39 +601,7 @@ hanami_error_t hanami_push_to_grasp(git_repository *repo,
         }
     }
 
-    /* Step 2: Publish kind 30618 state BEFORE push (GRASP authorization) */
-    hanami_nostr_ctx_t *nostr_ctx = NULL;
-    err = hanami_nostr_ctx_new(opts->relay_urls, opts->signer, &nostr_ctx);
-    if (err != HANAMI_OK) {
-        free_ref_array(refs, ref_count);
-        return err;
-    }
-
-    /* Build ref array without HEAD for the state event */
-    size_t state_ref_count = 0;
-    nip34_ref_t *state_refs = calloc(ref_count, sizeof(nip34_ref_t));
-    if (state_refs) {
-        for (size_t i = 0; i < ref_count; i++) {
-            if (refs[i].refname && strcmp(refs[i].refname, "HEAD") != 0) {
-                state_refs[state_ref_count].refname = refs[i].refname;
-                state_refs[state_ref_count].target = refs[i].target;
-                state_ref_count++;
-            }
-        }
-    }
-
-    err = hanami_nostr_publish_state(nostr_ctx, opts->repo_id,
-                                     state_refs, state_ref_count,
-                                     head_value);
-    free(state_refs);
-    hanami_nostr_ctx_free(nostr_ctx);
-
-    if (err != HANAMI_OK) {
-        free_ref_array(refs, ref_count);
-        return err;
-    }
-
-    /* Step 3: Push via standard Git Smart HTTP */
+    /* Step 2: Push via standard Git Smart HTTP (moved BEFORE state publish) */
     const char *remote_name = opts->remote_name ? opts->remote_name : "grasp";
 
     /* Create/update remote with the GRASP clone URL */
@@ -664,9 +632,52 @@ hanami_error_t hanami_push_to_grasp(git_repository *repo,
     rc = git_remote_push(remote, &push_refspecs, &push_opts);
 
     git_remote_free(remote);
+
+    /* If push failed, abort before publishing state */
+    if (rc != 0) {
+        free_ref_array(refs, ref_count);
+        return HANAMI_ERR_NETWORK;
+    }
+
+    /* Step 3: Publish kind 30618 state AFTER successful push */
+    hanami_nostr_ctx_t *nostr_ctx = NULL;
+    err = hanami_nostr_ctx_new(opts->relay_urls, opts->signer, &nostr_ctx);
+    if (err != HANAMI_OK) {
+        /* Push succeeded but state publish setup failed.
+         * Log warning but return success since data is on server. */
+        free_ref_array(refs, ref_count);
+        fprintf(stderr, "Warning: Push succeeded but failed to initialize Nostr context for state event\n");
+        return HANAMI_OK;
+    }
+
+    /* Build ref array without HEAD for the state event */
+    size_t state_ref_count = 0;
+    nip34_ref_t *state_refs = calloc(ref_count, sizeof(nip34_ref_t));
+    if (state_refs) {
+        for (size_t i = 0; i < ref_count; i++) {
+            if (refs[i].refname && strcmp(refs[i].refname, "HEAD") != 0) {
+                state_refs[state_ref_count].refname = refs[i].refname;
+                state_refs[state_ref_count].target = refs[i].target;
+                state_ref_count++;
+            }
+        }
+    }
+
+    err = hanami_nostr_publish_state(nostr_ctx, opts->repo_id,
+                                     state_refs, state_ref_count,
+                                     head_value);
+    free(state_refs);
+    hanami_nostr_ctx_free(nostr_ctx);
     free_ref_array(refs, ref_count);
 
-    return (rc == 0) ? HANAMI_OK : HANAMI_ERR_NETWORK;
+    if (err != HANAMI_OK) {
+        /* Push succeeded but state publish failed.
+         * Log warning but return success since data is on server. */
+        fprintf(stderr, "Warning: Push succeeded but failed to publish state event to Nostr\n");
+        return HANAMI_OK;
+    }
+
+    return HANAMI_OK;
 }
 
 /* =========================================================================
@@ -691,6 +702,11 @@ hanami_error_t hanami_grasp_fetch(git_repository *repo,
     if (!repo)
         return HANAMI_OK; /* Info-only validation */
 
+    /*
+     * TODO: Use relay_urls/relay_count to query kind 30618 state event
+     * and verify ref consistency after fetch. Currently unused as GRASP
+     * serves standard Git Smart HTTP without requiring Nostr verification.
+     */
     (void)relay_urls;
     (void)relay_count;
 

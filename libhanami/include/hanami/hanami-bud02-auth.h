@@ -70,6 +70,8 @@ typedef enum {
     HANAMI_BUD02_ERR_DECODE          = -10,
     HANAMI_BUD02_ERR_INVALID_HEADER  = -11,
     HANAMI_BUD02_ERR_INVALID_ACTION  = -12,
+    HANAMI_BUD02_ERR_PUBKEY_MISMATCH = -13,
+    HANAMI_BUD02_ERR_MISSING_EXPIRATION = -14,
 } hanami_bud02_result_t;
 
 /**
@@ -79,6 +81,8 @@ typedef enum {
 typedef struct {
     /** Expected SHA-256 blob hash (hex, 64 chars), or NULL to skip check */
     const char *expected_sha256;
+    /** Expected pubkey (hex, 64 chars), or NULL to skip check */
+    const char *expected_pubkey;
     /** If nonzero, override "now" for expiration check (for testing) */
     int64_t     now_override;
 } hanami_bud02_validate_options_t;
@@ -143,9 +147,10 @@ hanami_bud02_result_t hanami_bud02_parse_auth_header(const char *header,
  * Validates:
  * 1. Kind is 24242
  * 2. "t" tag matches expected action
- * 3. "expiration" tag is in the future
+ * 3. "expiration" tag exists and is in the future (mandatory)
  * 4. Optional: "x" tag matches expected SHA-256
  * 5. Signature is valid
+ * 6. Optional: pubkey matches expected pubkey
  *
  * Returns: HANAMI_BUD02_OK on success, specific error code otherwise
  */

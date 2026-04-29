@@ -376,18 +376,17 @@ hanami_bud02_result_t hanami_bud02_validate_auth_event(
     if (strcmp(t_val, expected_str) != 0)
         return HANAMI_BUD02_ERR_ACTION_MISMATCH;
 
-    /* 3. Check expiration */
+    /* 3. Check expiration (mandatory per BUD-02 spec) */
     const char *exp_val = find_tag_value(event, "expiration");
-    if (exp_val) {
-        int64_t exp_ts = strtoll(exp_val, NULL, 10);
-        int64_t now = (options && options->now_override > 0)
-                          ? options->now_override
-                          : (int64_t)time(NULL);
-        if (exp_ts <= now)
-            return HANAMI_BUD02_ERR_EXPIRED;
-    }
-    /* Note: BUD-02 spec requires expiration, but we tolerate missing for
-     * forward compatibility — the server can enforce this policy. */
+    if (!exp_val)
+        return HANAMI_BUD02_ERR_MISSING_EXPIRATION;
+    
+    int64_t exp_ts = strtoll(exp_val, NULL, 10);
+    int64_t now = (options && options->now_override > 0)
+                      ? options->now_override
+                      : (int64_t)time(NULL);
+    if (exp_ts <= now)
+        return HANAMI_BUD02_ERR_EXPIRED;
 
     /* 4. Optional: check "x" hash tag */
     if (options && options->expected_sha256) {
@@ -401,6 +400,13 @@ hanami_bud02_result_t hanami_bud02_validate_auth_event(
     /* 5. Check signature */
     if (!nostr_event_check_signature((NostrEvent *)event))
         return HANAMI_BUD02_ERR_SIGNATURE;
+
+    /* 6. Optional: check pubkey */
+    if (options && options->expected_pubkey) {
+        const char *event_pubkey = nostr_event_get_pubkey(event);
+        if (!event_pubkey || strcmp(event_pubkey, options->expected_pubkey) != 0)
+            return HANAMI_BUD02_ERR_PUBKEY_MISMATCH;
+    }
 
     return HANAMI_BUD02_OK;
 }
@@ -455,6 +461,10 @@ const char *hanami_bud02_strerror(hanami_bud02_result_t result)
         return "Invalid Authorization header format";
     case HANAMI_BUD02_ERR_INVALID_ACTION:
         return "Invalid BUD-02 action string";
+    case HANAMI_BUD02_ERR_PUBKEY_MISMATCH:
+        return "Event pubkey does not match expected pubkey";
+    case HANAMI_BUD02_ERR_MISSING_EXPIRATION:
+        return "Expiration tag is missing (required by BUD-02)";
     default:                            return "Unknown BUD-02 error";
     }
 }

@@ -111,38 +111,34 @@ void hanami_blob_descriptor_free(hanami_blob_descriptor_t *desc)
 #include <nip34.h>
 #include <time.h>
 
-hanami_error_t hanami_repo_open(git_repository **out,
-                                const char *endpoint,
-                                const char **relay_urls,
-                                const char *repo_id,
-                                const char *owner_pubkey,
-                                const hanami_signer_t *signer,
-                                const hanami_config_t *config)
+/*
+ * attach_blossom_backends:
+ * Helper to attach Blossom ODB + Nostr RefDB backends to a repository.
+ * This is shared by hanami_repo_open (for bare temp repos) and
+ * hanami_clone (for working repos at a specific local path).
+ */
+static hanami_error_t attach_blossom_backends(
+    git_repository *repo,
+    const char *endpoint,
+    const char **relay_urls,
+    const char *repo_id,
+    const char *owner_pubkey,
+    const hanami_signer_t *signer,
+    const hanami_config_t *config)
 {
-    if (!out || !endpoint || !relay_urls || !repo_id || !owner_pubkey)
+    if (!repo || !endpoint || !relay_urls || !repo_id || !owner_pubkey)
         return HANAMI_ERR_INVALID_ARG;
 
-    *out = NULL;
     hanami_error_t err;
 
-    /* 1. Create bare repository in a unique temp directory */
-    char tmpdir[] = "/tmp/hanami-repo-XXXXXX";
-    if (!mkdtemp(tmpdir))
-        return HANAMI_ERR_IO;
-
-    git_repository *repo = NULL;
-    if (git_repository_init(&repo, tmpdir, 1) < 0)
-        return HANAMI_ERR_LIBGIT2;
-
-    /* 2. Open index for OID ↔ Blossom hash mapping */
+    /* 1. Open index for OID ↔ Blossom hash mapping */
     hanami_index_t *index = NULL;
     err = hanami_index_open(&index, ":memory:", NULL);
     if (err != HANAMI_OK) {
-        git_repository_free(repo);
         return err;
     }
 
-    /* 3. Create Blossom client */
+    /* 2. Create Blossom client */
     hanami_blossom_client_opts_t blossom_opts = {
         .endpoint = endpoint,
         .timeout_seconds = 30,
@@ -152,11 +148,10 @@ hanami_error_t hanami_repo_open(git_repository **out,
     err = hanami_blossom_client_new(&blossom_opts, signer, &client);
     if (err != HANAMI_OK) {
         hanami_index_close(index);
-        git_repository_free(repo);
         return err;
     }
 
-    /* 4. Create ODB backend */
+    /* 3. Create ODB backend */
     bool verify = config ? hanami_config_get_verify_on_read(config) : true;
     hanami_odb_backend_opts_t odb_opts = {
         .index = index,
@@ -168,11 +163,10 @@ hanami_error_t hanami_repo_open(git_repository **out,
     if (err != HANAMI_OK) {
         hanami_blossom_client_free(client);
         hanami_index_close(index);
-        git_repository_free(repo);
         return err;
     }
 
-    /* 5. Attach ODB backend */
+    /* 4. Attach ODB backend */
     git_odb *odb = NULL;
     if (git_repository_odb(&odb, repo) == 0) {
         git_odb_add_backend(odb, odb_be, 1);
@@ -182,7 +176,7 @@ hanami_error_t hanami_repo_open(git_repository **out,
         odb_be->free(odb_be);
     }
 
-    /* 6. Create Nostr context */
+    /* 5. Create Nostr context */
     hanami_nostr_ctx_t *nostr_ctx = NULL;
     err = hanami_nostr_ctx_new(
         (const char *const *)relay_urls, signer, &nostr_ctx);
@@ -191,7 +185,7 @@ hanami_error_t hanami_repo_open(git_repository **out,
         nostr_ctx = NULL;
     }
 
-    /* 7. Create RefDB backend (if we have nostr context) */
+    /* 6. Create RefDB backend (if we have nostr context) */
     if (nostr_ctx) {
         hanami_refdb_backend_opts_t refdb_opts = {
             .nostr_ctx = nostr_ctx,
@@ -216,6 +210,39 @@ hanami_error_t hanami_repo_open(git_repository **out,
         }
     }
 
+    return HANAMI_OK;
+}
+
+hanami_error_t hanami_repo_open(git_repository **out,
+                                const char *endpoint,
+                                const char **relay_urls,
+                                const char *repo_id,
+                                const char *owner_pubkey,
+                                const hanami_signer_t *signer,
+                                const hanami_config_t *config)
+{
+    if (!out || !endpoint || !relay_urls || !repo_id || !owner_pubkey)
+        return HANAMI_ERR_INVALID_ARG;
+
+    *out = NULL;
+
+    /* 1. Create bare repository in a unique temp directory */
+    char tmpdir[] = "/tmp/hanami-repo-XXXXXX";
+    if (!mkdtemp(tmpdir))
+        return HANAMI_ERR_IO;
+
+    git_repository *repo = NULL;
+    if (git_repository_init(&repo, tmpdir, 1) < 0)
+        return HANAMI_ERR_LIBGIT2;
+
+    /* 2. Attach Blossom ODB + Nostr RefDB backends */
+    hanami_error_t err = attach_blossom_backends(
+        repo, endpoint, relay_urls, repo_id, owner_pubkey, signer, config);
+    if (err != HANAMI_OK) {
+        git_repository_free(repo);
+        return err;
+    }
+
     *out = repo;
     return HANAMI_OK;
 }
@@ -226,8 +253,6 @@ hanami_error_t hanami_clone(git_repository **out,
                             const hanami_signer_t *signer,
                             const hanami_config_t *config)
 {
-    (void)config;
-
     if (!out || !nostr_uri || !local_path)
         return HANAMI_ERR_INVALID_ARG;
 
@@ -306,36 +331,57 @@ hanami_error_t hanami_clone(git_repository **out,
         relay_urls = (const char **)repo_info->relays;
     }
 
-    /* Open the repository with Blossom + Nostr backends */
-    err = hanami_repo_open(out, endpoint, (const char **)relay_urls,
-                           repo_id, owner_pubkey, signer, config);
+    /*
+     * Clone flow:
+     * 1. Create a local working repository at local_path
+     * 2. Attach Blossom ODB + Nostr RefDB backends
+     * 3. Refs are fetched automatically when RefDB connects
+     * 4. Check out HEAD to populate working tree
+     */
 
+    /* Step 1: Create local working repo (non-bare) */
+    git_repository *local_repo = NULL;
+    int rc = git_repository_init(&local_repo, local_path, 0);
+    if (rc < 0) {
+        nip34_repository_free(repo_info);
+        hanami_nostr_ctx_free(ctx);
+        free(owner_pubkey);
+        return HANAMI_ERR_LIBGIT2;
+    }
+
+    /* Step 2: Attach Blossom ODB + Nostr RefDB backends */
+    err = attach_blossom_backends(
+        local_repo, endpoint, relay_urls, repo_id, owner_pubkey, signer, config);
+    if (err != HANAMI_OK) {
+        git_repository_free(local_repo);
+        nip34_repository_free(repo_info);
+        hanami_nostr_ctx_free(ctx);
+        free(owner_pubkey);
+        return err;
+    }
+
+    /* Clean up temporary resources */
     nip34_repository_free(repo_info);
     hanami_nostr_ctx_free(ctx);
     free(owner_pubkey);
 
-    if (err != HANAMI_OK)
-        return err;
+    /* Step 3: Refs are populated when RefDB backend connects (already done) */
 
-    /* Clone into local_path: init a working repo and fetch */
-    git_repository *local_repo = NULL;
-    int rc = git_clone(&local_repo, endpoint, local_path, NULL);
-    if (rc < 0) {
-        /* Fallback: create local repo and set up remote for later fetch */
-        rc = git_repository_init(&local_repo, local_path, 0);
-        if (rc < 0) {
-            git_repository_free(*out);
-            *out = NULL;
-            return HANAMI_ERR_LIBGIT2;
+    /* Step 4: Check out HEAD if it points to a branch */
+    git_reference *head_ref = NULL;
+    git_object *head_obj = NULL;
+    if (git_repository_head(&head_ref, local_repo) == 0) {
+        if (git_reference_peel(&head_obj, head_ref, GIT_OBJECT_COMMIT) == 0) {
+            git_checkout_options co_opts = GIT_CHECKOUT_OPTIONS_INIT;
+            co_opts.checkout_strategy = GIT_CHECKOUT_FORCE;
+            git_checkout_tree(local_repo, head_obj, &co_opts);
+            git_object_free(head_obj);
         }
+        git_reference_free(head_ref);
     }
+    /* Note: Checkout failure is non-fatal (repo may be empty or HEAD unborn) */
 
-    /* The caller gets the Blossom-backed repo for remote operations.
-     * The local_repo clone is at local_path for working tree access. */
-    if (local_repo && local_repo != *out) {
-        git_repository_free(local_repo);
-    }
-
+    *out = local_repo;
     return HANAMI_OK;
 }
 

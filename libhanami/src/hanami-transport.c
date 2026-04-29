@@ -129,6 +129,9 @@ typedef struct {
     bool connected;
     int direction;
 
+    /* Repository reference (captured from callbacks) */
+    git_repository *repo;
+
     /* Ref advertisement (cached from NIP-34 state) */
     git_remote_head **refs;
     size_t ref_count;
@@ -304,9 +307,12 @@ static int blossom_negotiate_fetch(git_transport *_transport,
                                    git_repository *repo,
                                    const git_fetch_negotiation *fetch_data)
 {
-    (void)_transport;
-    (void)repo;
+    hanami_transport_t *t = (hanami_transport_t *)_transport;
     (void)fetch_data;
+    
+    /* Store repo reference for later use (e.g., in push) */
+    t->repo = repo;
+    
     /* Blossom uses a lazy-fetch model: objects are downloaded on demand
      * when the ODB backend's read() is called. Negotiation is a no-op
      * because all wanted objects will be fetched individually by hash
@@ -334,8 +340,10 @@ static int blossom_download_pack(git_transport *_transport,
                                  git_repository *repo,
                                  git_indexer_progress *stats)
 {
-    (void)_transport;
-    (void)repo;
+    hanami_transport_t *t = (hanami_transport_t *)_transport;
+    
+    /* Store repo reference for later use (e.g., in push) */
+    t->repo = repo;
 
     /* Blossom uses a lazy-fetch architecture: no pack download needed.
      * Objects are fetched individually via the ODB backend's read() when
@@ -371,38 +379,100 @@ static int blossom_push(git_transport *_transport, git_push *push)
     if (!t->nostr_ctx || !t->repo_id)
         return 0; /* Can't publish state without context */
 
-    /* Publish updated ref state from our cached refs */
-    if (t->refs && t->ref_count > 0) {
-        nip34_ref_t *state_refs = calloc(t->ref_count, sizeof(nip34_ref_t));
-        if (!state_refs)
-            return -1;
+    /* Access the repository from the transport */
+    git_repository *repo = t->repo;
+    if (!repo)
+        return -1; /* Need repository to read current refs */
 
-        size_t state_count = 0;
-        const char *head_value = NULL;
+    /* Read actual current refs from the repository (not stale cached refs) */
+    git_reference_iterator *iter = NULL;
+    if (git_reference_iterator_new(&iter, repo) != 0)
+        return -1;
 
-        for (size_t i = 0; i < t->ref_count; i++) {
-            if (!t->refs[i] || !t->refs[i]->name)
-                continue;
-            if (strcmp(t->refs[i]->name, "HEAD") == 0) {
-                /* HEAD is handled separately in state event */
-                continue;
-            }
-            state_refs[state_count].refname = t->refs[i]->name;
-            char oid_hex[41] = {0};
-            git_oid_tostr(oid_hex, sizeof(oid_hex), &t->refs[i]->oid);
-            state_refs[state_count].target = strdup(oid_hex);
-            state_count++;
-        }
-
-        hanami_nostr_publish_state(t->nostr_ctx, t->repo_id,
-                                   state_refs, state_count, head_value);
-
-        for (size_t i = 0; i < state_count; i++)
-            free(state_refs[i].target);
-        free(state_refs);
+    /* Allocate initial ref array */
+    size_t cap = 16;
+    nip34_ref_t *state_refs = calloc(cap, sizeof(nip34_ref_t));
+    if (!state_refs) {
+        git_reference_iterator_free(iter);
+        return -1;
     }
 
-    return 0;
+    size_t state_count = 0;
+    git_reference *ref = NULL;
+    
+    /* Iterate over all refs (except symbolic refs like HEAD) */
+    while (git_reference_next(&ref, iter) == 0) {
+        if (git_reference_type(ref) == GIT_REFERENCE_SYMBOLIC) {
+            git_reference_free(ref);
+            continue;
+        }
+
+        /* Expand array if needed */
+        if (state_count >= cap) {
+            size_t new_cap = cap * 2;
+            nip34_ref_t *tmp = realloc(state_refs, new_cap * sizeof(nip34_ref_t));
+            if (!tmp) {
+                git_reference_free(ref);
+                break;
+            }
+            state_refs = tmp;
+            cap = new_cap;
+        }
+
+        /* Store ref name and OID */
+        state_refs[state_count].refname = strdup(git_reference_name(ref));
+        if (!state_refs[state_count].refname) {
+            git_reference_free(ref);
+            break;
+        }
+        char oid_hex[41] = {0};
+        git_oid_tostr(oid_hex, sizeof(oid_hex), git_reference_target(ref));
+        state_refs[state_count].target = strdup(oid_hex);
+        if (!state_refs[state_count].target) {
+            git_reference_free(ref);
+            break;
+        }
+        state_count++;
+        git_reference_free(ref);
+    }
+    git_reference_iterator_free(iter);
+
+    /* Look up HEAD to get its value */
+    char *head_value = NULL;
+    git_reference *head = NULL;
+    if (git_repository_head(&head, repo) == 0) {
+        const char *symbolic_target = git_reference_symbolic_target(head);
+        if (symbolic_target) {
+            /* Symbolic HEAD: format as "ref: refs/heads/main" */
+            size_t hlen = 5 + strlen(symbolic_target) + 1;
+            head_value = malloc(hlen);
+            if (head_value)
+                snprintf(head_value, hlen, "ref: %s", symbolic_target);
+        } else {
+            /* Detached HEAD: format OID as hex */
+            head_value = malloc(41);
+            if (head_value) {
+                git_oid_tostr(head_value, 41, git_reference_target(head));
+            }
+        }
+        git_reference_free(head);
+    }
+
+    /* Publish the state event to Nostr */
+    hanami_error_t err = hanami_nostr_publish_state(t->nostr_ctx, t->repo_id,
+                                                     state_refs, state_count,
+                                                     head_value);
+
+    /* Clean up */
+    for (size_t i = 0; i < state_count; i++) {
+        free(state_refs[i].refname);
+        free(state_refs[i].target);
+    }
+    free(state_refs);
+    free(head_value);
+
+    /* Return -1 if state publication failed */
+    return (err == HANAMI_OK) ? 0 : -1;
 }
 
 /* =========================================================================
