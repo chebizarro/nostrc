@@ -225,6 +225,7 @@ static int publish_state(hanami_refdb_nostr_t *be)
 
     size_t ref_count = 0;
     const char *head_value = NULL;
+    bool head_is_symbolic = false;
 
     for (size_t i = 0; i < be->ref_count; i++) {
         hanami_cached_ref_t *cr = &be->refs[i];
@@ -232,10 +233,14 @@ static int publish_state(hanami_refdb_nostr_t *be)
             continue;
 
         if (strcmp(cr->refname, "HEAD") == 0) {
-            /* HEAD handled separately */
+            /* HEAD handled separately in the state event */
             if (cr->is_symbolic && cr->sym_target) {
-                /* We'll construct "ref: X" for the head param */
-                head_value = cr->sym_target; /* will be used with "ref: " prefix below */
+                head_value = cr->sym_target;
+                head_is_symbolic = true;
+            } else if (!cr->is_symbolic) {
+                /* Detached HEAD — will convert OID to hex below */
+                head_value = "detached"; /* sentinel, replaced below */
+                head_is_symbolic = false;
             }
             continue;
         }
@@ -246,16 +251,16 @@ static int publish_state(hanami_refdb_nostr_t *be)
             /* Encode as "ref: <target>" */
             size_t len = 5 + strlen(cr->sym_target) + 1;
             char *buf = malloc(len);
-            if (buf) {
-                snprintf(buf, len, "ref: %s", cr->sym_target);
-                r->target = buf;
-            }
+            if (!buf)
+                continue;  /* skip ref on alloc failure rather than sending NULL */
+            snprintf(buf, len, "ref: %s", cr->sym_target);
+            r->target = buf;
         } else {
             char *hex = malloc(65);
-            if (hex) {
-                git_oid_tostr(hex, 65, &cr->oid);
-                r->target = hex;
-            }
+            if (!hex)
+                continue;  /* skip ref on alloc failure rather than sending NULL */
+            git_oid_tostr(hex, 65, &cr->oid);
+            r->target = hex;
         }
         ref_count++;
     }
@@ -263,10 +268,21 @@ static int publish_state(hanami_refdb_nostr_t *be)
     /* Build head string */
     char *head_str = NULL;
     if (head_value) {
-        size_t hlen = 5 + strlen(head_value) + 1;
-        head_str = malloc(hlen);
-        if (head_str)
-            snprintf(head_str, hlen, "ref: %s", head_value);
+        if (head_is_symbolic) {
+            /* Symbolic HEAD: "ref: refs/heads/main" */
+            size_t hlen = 5 + strlen(head_value) + 1;
+            head_str = malloc(hlen);
+            if (head_str)
+                snprintf(head_str, hlen, "ref: %s", head_value);
+        } else {
+            /* Detached HEAD: find OID from cache */
+            hanami_cached_ref_t *head_ref = cache_find(be, "HEAD");
+            if (head_ref) {
+                head_str = malloc(65);
+                if (head_str)
+                    git_oid_tostr(head_str, 65, &head_ref->oid);
+            }
+        }
     }
 
     hanami_error_t err = hanami_nostr_publish_state(be->nostr_ctx,

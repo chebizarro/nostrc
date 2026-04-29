@@ -477,11 +477,9 @@ hanami_error_t hanami_blossom_upload(hanami_blossom_client_t *client,
         return HANAMI_ERR_NOMEM;
     }
 
-    /* PUT with binary body */
-    curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
-    curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)len);
-
-    /* Use POSTFIELDS for simplicity with the data buffer */
+    /* PUT with binary body.
+     * Use CUSTOMREQUEST + POSTFIELDS (not CURLOPT_UPLOAD which expects
+     * a read callback and conflicts with POSTFIELDS). */
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)len);

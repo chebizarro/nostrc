@@ -177,6 +177,9 @@ hanami_error_t hanami_repo_open(git_repository **out,
     if (git_repository_odb(&odb, repo) == 0) {
         git_odb_add_backend(odb, odb_be, 1);
         git_odb_free(odb);
+    } else {
+        /* ODB attach failed — free the backend to prevent leak */
+        odb_be->free(odb_be);
     }
 
     /* 6. Create Nostr context */
@@ -202,7 +205,14 @@ hanami_error_t hanami_repo_open(git_repository **out,
             if (git_repository_refdb(&refdb, repo) == 0) {
                 git_refdb_set_backend(refdb, refdb_be);
                 git_refdb_free(refdb);
+            } else {
+                /* RefDB attach failed — free the backend */
+                refdb_be->free(refdb_be);
             }
+        } else {
+            /* RefDB creation failed — free the nostr context */
+            hanami_nostr_ctx_free(nostr_ctx);
+            nostr_ctx = NULL;
         }
     }
 
@@ -329,6 +339,65 @@ hanami_error_t hanami_clone(git_repository **out,
     return HANAMI_OK;
 }
 
+/* =========================================================================
+ * Push helpers: upload all ODB objects to Blossom
+ * ========================================================================= */
+
+typedef struct {
+    git_odb *odb;
+    hanami_blossom_client_t *client;
+    hanami_index_t *index;
+    bool upload_failed;
+} push_upload_ctx_t;
+
+/* Callback for git_odb_foreach — uploads each object to Blossom */
+static int push_upload_object_cb(const git_oid *oid, void *payload)
+{
+    push_upload_ctx_t *ctx = (push_upload_ctx_t *)payload;
+    if (ctx->upload_failed)
+        return -1; /* stop iteration */
+
+    git_odb_object *obj = NULL;
+    if (git_odb_read(&obj, ctx->odb, oid) != 0)
+        return 0; /* skip unreadable, continue */
+
+    const void *data = git_odb_object_data(obj);
+    size_t size = git_odb_object_size(obj);
+
+    char blossom_hash[65];
+    if (hanami_hash_blossom(data, size, blossom_hash) == HANAMI_OK) {
+        /* Check if already on server */
+        bool exists = false;
+        hanami_blossom_head(ctx->client, blossom_hash, &exists);
+
+        if (!exists) {
+            hanami_error_t uerr = hanami_blossom_upload(
+                ctx->client, (const uint8_t *)data, size,
+                blossom_hash, NULL);
+            if (uerr != HANAMI_OK) {
+                ctx->upload_failed = true;
+                git_odb_object_free(obj);
+                return -1;
+            }
+        }
+
+        /* Track in index */
+        char oid_hex[65];
+        git_oid_tostr(oid_hex, sizeof(oid_hex), oid);
+        hanami_index_entry_t entry = {0};
+        strncpy(entry.git_oid, oid_hex, sizeof(entry.git_oid) - 1);
+        strncpy(entry.blossom_hash, blossom_hash,
+                sizeof(entry.blossom_hash) - 1);
+        entry.type = git_odb_object_type(obj);
+        entry.size = size;
+        entry.timestamp = (int64_t)time(NULL);
+        hanami_index_put(ctx->index, &entry);
+    }
+
+    git_odb_object_free(obj);
+    return 0;
+}
+
 hanami_error_t hanami_push_to_blossom(git_repository *repo,
                                       const char *endpoint,
                                       const hanami_signer_t *signer,
@@ -359,7 +428,11 @@ hanami_error_t hanami_push_to_blossom(git_repository *repo,
         return err;
     }
 
-    /* 3. Walk all reachable objects and upload to Blossom */
+    /* 3. Walk all reachable objects and upload to Blossom.
+     *
+     * We use git_odb_foreach to enumerate every object in the ODB.
+     * This covers commits, trees, blobs, and tags — the revwalk-only
+     * approach missed trees and blobs entirely (see nostrc-6xd). */
     git_odb *odb = NULL;
     if (git_repository_odb(&odb, repo) < 0) {
         hanami_index_close(index);
@@ -367,61 +440,15 @@ hanami_error_t hanami_push_to_blossom(git_repository *repo,
         return HANAMI_ERR_LIBGIT2;
     }
 
-    git_revwalk *walker = NULL;
-    if (git_revwalk_new(&walker, repo) < 0) {
-        git_odb_free(odb);
-        hanami_index_close(index);
-        hanami_blossom_client_free(client);
-        return HANAMI_ERR_LIBGIT2;
-    }
+    push_upload_ctx_t upload_ctx = {
+        .odb = odb,
+        .client = client,
+        .index = index,
+        .upload_failed = false
+    };
+    git_odb_foreach(odb, push_upload_object_cb, &upload_ctx);
+    bool upload_failed = upload_ctx.upload_failed;
 
-    /* Push all refs to the walk */
-    git_revwalk_push_glob(walker, "refs/*");
-
-    git_oid commit_oid;
-    bool upload_failed = false;
-
-    while (git_revwalk_next(&commit_oid, walker) == 0 && !upload_failed) {
-        /* For each commit, upload the commit object and its tree recursively */
-        git_odb_object *obj = NULL;
-        if (git_odb_read(&obj, odb, &commit_oid) != 0)
-            continue;
-
-        const void *data = git_odb_object_data(obj);
-        size_t size = git_odb_object_size(obj);
-
-        /* Compute Blossom hash */
-        char blossom_hash[65];
-        if (hanami_hash_blossom(data, size, blossom_hash) == HANAMI_OK) {
-            /* Check if already on server */
-            bool exists = false;
-            hanami_blossom_head(client, blossom_hash, &exists);
-
-            if (!exists) {
-                err = hanami_blossom_upload(client, (const uint8_t *)data,
-                                           size, blossom_hash, NULL);
-                if (err != HANAMI_OK) {
-                    upload_failed = true;
-                }
-            }
-
-            /* Track in index */
-            char oid_hex[65];
-            git_oid_tostr(oid_hex, sizeof(oid_hex), &commit_oid);
-            hanami_index_entry_t entry = {0};
-            strncpy(entry.git_oid, oid_hex, sizeof(entry.git_oid) - 1);
-            strncpy(entry.blossom_hash, blossom_hash,
-                    sizeof(entry.blossom_hash) - 1);
-            entry.type = git_odb_object_type(obj);
-            entry.size = size;
-            entry.timestamp = (int64_t)time(NULL);
-            hanami_index_put(index, &entry);
-        }
-
-        git_odb_object_free(obj);
-    }
-
-    git_revwalk_free(walker);
     git_odb_free(odb);
     hanami_index_close(index);
     hanami_blossom_client_free(client);

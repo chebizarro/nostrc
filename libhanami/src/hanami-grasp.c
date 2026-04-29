@@ -463,13 +463,14 @@ static nip34_ref_t *collect_local_refs(git_repository *repo,
             }
 
             if (count >= cap) {
-                cap *= 2;
-                nip34_ref_t *tmp = realloc(refs, cap * sizeof(nip34_ref_t));
+                size_t new_cap = cap * 2;
+                nip34_ref_t *tmp = realloc(refs, new_cap * sizeof(nip34_ref_t));
                 if (!tmp) {
                     git_reference_free(ref);
-                    break;
+                    break;  /* cap unchanged — bounds checks below remain valid */
                 }
                 refs = tmp;
+                cap = new_cap;  /* only update cap after successful realloc */
             }
 
             refs[count].refname = strdup(git_reference_name(ref));

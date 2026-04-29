@@ -13,6 +13,7 @@
 #include "nostr-kinds.h"
 #include "channel.h"
 #include "context.h"
+#include "error.h"
 #include <nip34.h>
 
 #include <stdlib.h>
@@ -126,9 +127,11 @@ static hanami_error_t ensure_relays(hanami_nostr_ctx_t *ctx)
     for (size_t i = 0; i < ctx->relay_count; i++) {
         Error *err = NULL;
         ctx->relays[i] = nostr_relay_new(NULL, ctx->relay_urls[i], &err);
-        if (ctx->relays[i])
+        if (ctx->relays[i]) {
             any_connected = true;
-        /* Ignore individual relay connection failures — best-effort */
+        } else if (err) {
+            free_error(err);  /* prevent leak on connection failure */
+        }
     }
 
     ctx->relays_connected = true;
@@ -176,8 +179,10 @@ static hanami_error_t sign_event(hanami_nostr_ctx_t *ctx, NostrEvent *event)
     free(signed_json);
 
     /* Copy signed fields back to original event */
-    if (signed_ev->id)
+    if (signed_ev->id) {
+        free(event->id);  /* free old id to prevent leak */
         event->id = strdup(signed_ev->id);
+    }
     if (signed_ev->sig)
         nostr_event_set_sig(event, signed_ev->sig);
     if (signed_ev->pubkey)
