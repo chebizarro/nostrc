@@ -78,8 +78,13 @@ static char *npub_to_hex(const char *npub)
         }
     }
 
+    /* Validate: npub must decode to exactly 32 bytes (pubkey length) */
     if (out_idx != 32)
         return NULL;
+
+    /* Note: This implementation does not verify the bech32 checksum.
+     * For production use, consider using nostr_nip19_decode_npub from
+     * the nip19 library which includes full checksum validation. */
 
     /* Convert to hex */
     static const char hex[] = "0123456789abcdef";

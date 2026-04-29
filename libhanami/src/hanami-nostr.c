@@ -16,6 +16,7 @@
 #include "error.h"
 #include <nip34.h>
 
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -33,6 +34,7 @@ struct hanami_nostr_ctx {
     /* Lazily connected relays */
     NostrRelay **relays;    /* Owned array, NULL until connected */
     bool relays_connected;
+    pthread_mutex_t relay_mutex;
 };
 
 /* =========================================================================
@@ -83,6 +85,8 @@ hanami_error_t hanami_nostr_ctx_new(const char *const *relay_urls,
         ctx->has_signer = true;
     }
 
+    pthread_mutex_init(&ctx->relay_mutex, NULL);
+
     *out = ctx;
     return HANAMI_OK;
 }
@@ -107,6 +111,8 @@ void hanami_nostr_ctx_free(hanami_nostr_ctx_t *ctx)
         free(ctx->relay_urls);
     }
 
+    pthread_mutex_destroy(&ctx->relay_mutex);
+
     free(ctx);
 }
 
@@ -116,12 +122,18 @@ void hanami_nostr_ctx_free(hanami_nostr_ctx_t *ctx)
 
 static hanami_error_t ensure_relays(hanami_nostr_ctx_t *ctx)
 {
-    if (ctx->relays_connected)
+    pthread_mutex_lock(&ctx->relay_mutex);
+
+    if (ctx->relays_connected) {
+        pthread_mutex_unlock(&ctx->relay_mutex);
         return HANAMI_OK;
+    }
 
     ctx->relays = calloc(ctx->relay_count, sizeof(NostrRelay *));
-    if (!ctx->relays)
+    if (!ctx->relays) {
+        pthread_mutex_unlock(&ctx->relay_mutex);
         return HANAMI_ERR_NOMEM;
+    }
 
     bool any_connected = false;
     for (size_t i = 0; i < ctx->relay_count; i++) {
@@ -135,6 +147,7 @@ static hanami_error_t ensure_relays(hanami_nostr_ctx_t *ctx)
     }
 
     ctx->relays_connected = true;
+    pthread_mutex_unlock(&ctx->relay_mutex);
     return any_connected ? HANAMI_OK : HANAMI_ERR_NETWORK;
 }
 

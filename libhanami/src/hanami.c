@@ -7,6 +7,7 @@
 #include "hanami/hanami.h"
 #include <git2/sys/odb_backend.h>
 #include <git2/sys/refdb_backend.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -17,7 +18,7 @@
 #define HANAMI_VERSION_PATCH 0
 #define HANAMI_VERSION_STRING "0.1.0"
 
-static int hanami_ref_count = 0;
+static _Atomic int hanami_ref_count = 0;
 
 /* =========================================================================
  * Error strings
@@ -51,7 +52,7 @@ const char *hanami_strerror(hanami_error_t err)
 
 hanami_error_t hanami_init(void)
 {
-    if (hanami_ref_count++ > 0)
+    if (atomic_fetch_add(&hanami_ref_count, 1) > 0)
         return HANAMI_OK;
 
     /* Future: initialize curl, index, etc. */
@@ -60,7 +61,7 @@ hanami_error_t hanami_init(void)
 
 void hanami_shutdown(void)
 {
-    if (--hanami_ref_count > 0)
+    if (atomic_fetch_sub(&hanami_ref_count, 1) > 1)
         return;
 
     /* Future: cleanup curl, index, etc. */

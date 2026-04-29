@@ -85,6 +85,7 @@ target_link_libraries(hanami
     CURL::libcurl
     PkgConfig::SQLITE3
     OpenSSL::Crypto
+    pthread            # POSIX threads for relay connection mutex
 )
 
 # NIP-34 (required — Git collaboration protocol)
