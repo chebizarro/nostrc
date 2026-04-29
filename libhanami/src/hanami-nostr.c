@@ -219,10 +219,13 @@ hanami_error_t hanami_nostr_publish_event(hanami_nostr_ctx_t *ctx,
     if (err != HANAMI_OK)
         return err;
 
-    /* Publish to all connected relays (best-effort) */
+    /* Publish to all connected relays (best-effort).
+     * Only publish to relays that are actually connected — calling
+     * nostr_relay_publish on an unconnected relay blocks for 5s waiting
+     * on a write channel that has no consumer. */
     bool any_published = false;
     for (size_t i = 0; i < ctx->relay_count; i++) {
-        if (ctx->relays[i]) {
+        if (ctx->relays[i] && nostr_relay_is_connected(ctx->relays[i])) {
             nostr_relay_publish(ctx->relays[i], event);
             any_published = true;
         }

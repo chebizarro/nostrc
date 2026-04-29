@@ -296,7 +296,15 @@ static int publish_state(hanami_refdb_nostr_t *be)
     free(refs);
     free(head_str);
 
-    return (err == HANAMI_OK) ? 0 : -1;
+    /* Relay publish is best-effort — the cache (source of truth) is already
+     * updated before publish_state is called.  A failed relay publish means
+     * the ref state isn't replicated to Nostr yet, but local operations
+     * continue correctly.  Log and move on. */
+    if (err != HANAMI_OK && err != HANAMI_ERR_NETWORK) {
+        fprintf(stderr, "[hanami-refdb] warning: relay state publish failed (%d)\n",
+                (int)err);
+    }
+    return 0;
 }
 
 /* =========================================================================
