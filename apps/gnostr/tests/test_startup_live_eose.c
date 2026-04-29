@@ -55,6 +55,25 @@ test_startup_live_eose_single_relay_sets_first_and_all(void)
   g_assert_cmpuint(g_hash_table_size(seen), ==, 1);
 }
 
+/* F36 error-path test: Relay never sends EOSE */
+static void
+test_startup_live_eose_incomplete_never_sets_all(void)
+{
+  g_autoptr(GHashTable) seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+  /* Configure for 3 relays total */
+  guint flags = gnostr_main_window_track_startup_live_eose_internal(seen, 3, "wss://relay-one.example");
+  g_assert_cmpuint(flags, ==, GNOSTR_STARTUP_LIVE_EOSE_FLAG_FIRST);
+  g_assert_cmpuint(g_hash_table_size(seen), ==, 1);
+
+  flags = gnostr_main_window_track_startup_live_eose_internal(seen, 3, "wss://relay-two.example");
+  g_assert_cmpuint(flags, ==, GNOSTR_STARTUP_LIVE_EOSE_FLAG_NONE);
+  g_assert_cmpuint(g_hash_table_size(seen), ==, 2);
+
+  /* Third relay never sends EOSE - verify ALL flag is never set */
+  g_assert_cmpuint(flags & GNOSTR_STARTUP_LIVE_EOSE_FLAG_ALL, ==, 0);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -63,6 +82,7 @@ main(int argc, char *argv[])
   g_test_add_func("/gnostr/startup-live-eose/first-and-all", test_startup_live_eose_tracks_first_and_all);
   g_test_add_func("/gnostr/startup-live-eose/duplicate-relay", test_startup_live_eose_ignores_duplicates);
   g_test_add_func("/gnostr/startup-live-eose/single-relay", test_startup_live_eose_single_relay_sets_first_and_all);
+  g_test_add_func("/gnostr/startup-live-eose/incomplete-eose", test_startup_live_eose_incomplete_never_sets_all);
 
   return g_test_run();
 }

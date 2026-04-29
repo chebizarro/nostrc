@@ -238,6 +238,54 @@ static void test_nip17_parse_wrong_kind(void) {
   g_assert_null(relays);
 }
 
+/* F39 NIP-65 edge case: Publish uses only write-capable relays */
+static void test_nip65_publish_uses_only_write_relays(void) {
+  GPtrArray *nip65_relays = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_nip65_relay_free);
+
+  /* Set up 3-relay NIP-65 list: read-only, write-only, read+write */
+  GnostrNip65Relay *read_only = g_new0(GnostrNip65Relay, 1);
+  read_only->url = g_strdup("wss://read-only.example");
+  read_only->type = GNOSTR_RELAY_READ;
+  g_ptr_array_add(nip65_relays, read_only);
+
+  GnostrNip65Relay *write_only = g_new0(GnostrNip65Relay, 1);
+  write_only->url = g_strdup("wss://write-only.example");
+  write_only->type = GNOSTR_RELAY_WRITE;
+  g_ptr_array_add(nip65_relays, write_only);
+
+  GnostrNip65Relay *readwrite = g_new0(GnostrNip65Relay, 1);
+  readwrite->url = g_strdup("wss://readwrite.example");
+  readwrite->type = GNOSTR_RELAY_READWRITE;
+  g_ptr_array_add(nip65_relays, readwrite);
+
+  /* Get write relays for publishing - should only include write-only and readwrite */
+  GPtrArray *write_relays = gnostr_nip65_get_write_relays(nip65_relays);
+  g_assert_nonnull(write_relays);
+  g_assert_cmpuint(write_relays->len, ==, 2);
+
+  /* Verify read-only relay is excluded */
+  gboolean found_read_only = FALSE;
+  gboolean found_write_only = FALSE;
+  gboolean found_readwrite = FALSE;
+
+  for (guint i = 0; i < write_relays->len; i++) {
+    const char *url = g_ptr_array_index(write_relays, i);
+    if (g_strcmp0(url, "wss://read-only.example") == 0)
+      found_read_only = TRUE;
+    if (g_strcmp0(url, "wss://write-only.example") == 0)
+      found_write_only = TRUE;
+    if (g_strcmp0(url, "wss://readwrite.example") == 0)
+      found_readwrite = TRUE;
+  }
+
+  g_assert_false(found_read_only);  /* Must NOT include read-only relay */
+  g_assert_true(found_write_only);  /* Must include write-only relay */
+  g_assert_true(found_readwrite);   /* Must include readwrite relay */
+
+  g_ptr_array_unref(write_relays);
+  g_ptr_array_unref(nip65_relays);
+}
+
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/relays/valid_url", test_valid_url);
@@ -249,5 +297,6 @@ int main(int argc, char **argv) {
   g_test_add_func("/relays/profile_fetch_relays_prefer_nip65_reads", test_profile_fetch_relays_prefer_nip65_reads);
   g_test_add_func("/relays/nip17_parse_dm_relays", test_nip17_parse_dm_relays);
   g_test_add_func("/relays/nip17_parse_wrong_kind", test_nip17_parse_wrong_kind);
+  g_test_add_func("/relays/nip65_publish_uses_only_write_relays", test_nip65_publish_uses_only_write_relays);
   return g_test_run();
 }

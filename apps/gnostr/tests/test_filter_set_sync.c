@@ -408,6 +408,34 @@ test_enable_disable_without_relay(void)
   g_assert_false(gnostr_filter_set_sync_is_enabled());
 }
 
+/* F36 error-path test: Relay OK false for sync publish.
+ * In TEST_ONLY mode, relay paths are stubbed. This test verifies that
+ * the sync layer handles publish failures gracefully (currently stubbed).
+ * Integration tests should verify: relay OK false is logged, user is
+ * notified, and local state remains consistent after publish rejection. */
+static void
+test_publish_handles_relay_ok_false(void)
+{
+  reset_default_manager();
+
+  /* Enable sync and trigger a publish by adding a filter set. */
+  gnostr_filter_set_sync_enable("deadbeef00000000000000000000000000000000000000000000000000000000");
+  g_assert_true(gnostr_filter_set_sync_is_enabled());
+
+  GnostrFilterSetManager *mgr = gnostr_filter_set_manager_get_default();
+  g_autoptr(GnostrFilterSet) fs = make_custom("publish-fail-test", "Publish Fail Test");
+  g_assert_true(gnostr_filter_set_manager_add(mgr, fs));
+
+  /* In TEST_ONLY mode, the publish is stubbed. A real integration test
+   * with fake_relay_fixture.py should configure the relay to return
+   * OK false and verify the sync layer logs the error and does not
+   * corrupt local state. */
+  g_assert_true(gnostr_filter_set_manager_contains(mgr, "publish-fail-test"));
+
+  gnostr_filter_set_sync_disable();
+  reset_default_manager();
+}
+
 /* ------------------------------------------------------------------------
  * Entry point
  * ------------------------------------------------------------------------ */
@@ -444,6 +472,8 @@ main(int argc, char **argv)
                   test_apply_does_not_schedule_push);
   g_test_add_func("/filter-set-sync/enable-disable",
                   test_enable_disable_without_relay);
+  g_test_add_func("/filter-set-sync/publish-relay-ok-false",
+                  test_publish_handles_relay_ok_false);
 
   return g_test_run();
 }

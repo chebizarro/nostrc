@@ -28,6 +28,9 @@ extern "C" {
 /** Kind number for NIP-65 relay list metadata events */
 #define NOSTR_NIP65_KIND 10002
 
+/** Maximum number of relays allowed in a relay list (F46: DoS protection) */
+#define NOSTR_NIP65_MAX_RELAYS 100
+
 /**
  * NostrRelayPermission:
  * Defines the read/write permissions for a relay entry.
@@ -150,7 +153,8 @@ NostrRelayList *nostr_nip65_list_copy(const NostrRelayList *list);
  * Adds a relay to the list. If the URL already exists, updates its permission.
  * The URL is normalized (lowercased, trailing slash removed) before adding.
  *
- * Returns: 0 on success, -EINVAL on invalid arguments, -ENOMEM on allocation failure
+ * Returns: 0 on success, -EINVAL on invalid arguments, -ENOMEM on allocation failure,
+ *          -ENOSPC if relay count would exceed NOSTR_NIP65_MAX_RELAYS
  */
 int nostr_nip65_add_relay(NostrRelayList *list,
                           const char *url,

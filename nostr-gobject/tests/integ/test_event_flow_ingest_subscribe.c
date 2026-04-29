@@ -147,8 +147,7 @@ test_poll_is_consumed(void)
     for (guint i = 0; i < events->len; i++) {
         gn_test_ndb_ingest_json(test_ndb, g_ptr_array_index(events, i));
     }
-    gn_test_drain_main_loop();
-    g_usleep(200000);
+    gn_test_ndb_wait_for_ingest();
     gn_test_drain_main_loop();
 
     g_autoptr(GNostrNdbStore) store = gnostr_ndb_store_new();
@@ -188,8 +187,7 @@ test_unsubscribe_stops_delivery(void)
     for (guint i = 0; i < events->len; i++) {
         gn_test_ndb_ingest_json(test_ndb, g_ptr_array_index(events, i));
     }
-    gn_test_drain_main_loop();
-    g_usleep(200000);
+    gn_test_ndb_wait_for_ingest();
     gn_test_drain_main_loop();
 
     guint64 keys[50];
@@ -221,8 +219,8 @@ test_note_counts_read_write(void)
     gboolean wrote = gnostr_store_write_note_counts(GNOSTR_STORE(store), test_id, &counts);
     
     /* Note counts read path has a bug - write succeeds but read fails.
-     * Skip this test until the read implementation is fixed. */
-    g_test_skip("Note counts read path incomplete - write succeeds but read fails");
+     * Mark incomplete until the read implementation is fixed. */
+    g_test_incomplete("Note counts read path needs fix — see audit F15");
     (void)wrote;
 
     teardown();

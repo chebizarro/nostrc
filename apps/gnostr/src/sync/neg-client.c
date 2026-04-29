@@ -16,6 +16,7 @@
 #include "neg-client.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include <nostr/nip77/negentropy.h>
+#include <nostr/nip11/nip11.h>
 #include <nostr-relay.h>
 #include <nostr-json.h>
 #include <nostr-subscription.h>
@@ -588,6 +589,40 @@ sync_task(GTask *task, gpointer src, gpointer data, GCancellable *cancel)
                             "Failed to build initial fingerprint");
     g_free(stats);
     return;
+  }
+
+  /* === Phase 2.5: Probe NIP-11 relay capabilities (F23) === */
+  RelayInformationDocument *nip11_info = nostr_nip11_fetch_info(td->relay_url);
+  if (nip11_info) {
+    gboolean supports_negentropy = FALSE;
+    for (int i = 0; i < nip11_info->supported_nips_count; i++) {
+      if (nip11_info->supported_nips[i] == 77) {
+        supports_negentropy = TRUE;
+        break;
+      }
+    }
+
+    if (!supports_negentropy) {
+      g_warning("[NEG] Relay %s does not advertise NIP-77 (negentropy) support",
+                td->relay_url);
+      nostr_nip11_free_info(nip11_info);
+      free(initial_hex);
+      nostr_neg_session_free(neg);
+      g_free(ds_ctx.items);
+      g_task_return_new_error(task, GNOSTR_NEG_ERROR, GNOSTR_NEG_ERROR_UNSUPPORTED,
+                              "Relay does not support NIP-77 negentropy");
+      g_free(stats);
+      return;
+    }
+
+    if (nip11_info->limitation && nip11_info->limitation->auth_required) {
+      g_info("[NEG] Relay %s requires NIP-42 authentication", td->relay_url);
+    }
+
+    nostr_nip11_free_info(nip11_info);
+  } else {
+    g_debug("[NEG] NIP-11 info not available for %s, proceeding anyway",
+            td->relay_url);
   }
 
   /* === Phase 3: Connect to relay === */

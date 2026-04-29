@@ -153,6 +153,11 @@ int nostr_nip65_add_relay(NostrRelayList *list,
         return 0;
     }
 
+    /* F46: Cap relay count to prevent resource exhaustion */
+    if (list->count >= NOSTR_NIP65_MAX_RELAYS) {
+        return -ENOSPC;
+    }
+
     /* Add new entry */
     NostrRelayEntry *new_entries = realloc(list->entries,
                                            (list->count + 1) * sizeof(NostrRelayEntry));
