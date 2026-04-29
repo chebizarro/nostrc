@@ -346,6 +346,71 @@ static void test_empty_list(void) {
     printf("OK\n");
 }
 
+static void test_event_freshness_ordering(void) {
+    printf("test_event_freshness_ordering... ");
+
+    unsigned char author[32];
+    fill32(author, 0xAA);
+
+    /* Create older event (timestamp 1700000000) */
+    NostrRelayList *old_list = nostr_nip65_list_new();
+    nostr_nip65_add_relay(old_list, "wss://old.relay.com", NOSTR_RELAY_PERM_READWRITE);
+    nostr_nip65_add_relay(old_list, "wss://stale.relay.com", NOSTR_RELAY_PERM_READ);
+
+    NostrEvent *old_ev = nostr_event_new();
+    int rc = nostr_nip65_create_relay_list(old_ev, author, old_list, 1700000000);
+    assert(rc == 0);
+    assert(nostr_event_get_created_at(old_ev) == 1700000000);
+
+    /* Create newer event (timestamp 1700001000) */
+    NostrRelayList *new_list = nostr_nip65_list_new();
+    nostr_nip65_add_relay(new_list, "wss://new.relay.com", NOSTR_RELAY_PERM_READWRITE);
+    nostr_nip65_add_relay(new_list, "wss://fresh.relay.com", NOSTR_RELAY_PERM_WRITE);
+
+    NostrEvent *new_ev = nostr_event_new();
+    rc = nostr_nip65_create_relay_list(new_ev, author, new_list, 1700001000);
+    assert(rc == 0);
+    assert(nostr_event_get_created_at(new_ev) == 1700001000);
+
+    /* Verify newer event has later timestamp */
+    assert(nostr_event_get_created_at(new_ev) > nostr_event_get_created_at(old_ev));
+
+    /* In a real implementation, when processing these events:
+     * 1. If newer event arrives first, older should be ignored
+     * 2. If older event arrives first, newer should replace it
+     *
+     * This test verifies the events have correct timestamps for such logic.
+     * The actual replacement logic would be in the relay list manager/store.
+     */
+
+    /* Parse both and verify they contain different relay sets */
+    NostrRelayList *parsed_old = NULL;
+    rc = nostr_nip65_parse_relay_list(old_ev, &parsed_old);
+    assert(rc == 0);
+    assert(parsed_old->count == 2);
+    assert(nostr_nip65_find_relay(parsed_old, "wss://old.relay.com") != NULL);
+    assert(nostr_nip65_find_relay(parsed_old, "wss://stale.relay.com") != NULL);
+    assert(nostr_nip65_find_relay(parsed_old, "wss://new.relay.com") == NULL);
+
+    NostrRelayList *parsed_new = NULL;
+    rc = nostr_nip65_parse_relay_list(new_ev, &parsed_new);
+    assert(rc == 0);
+    assert(parsed_new->count == 2);
+    assert(nostr_nip65_find_relay(parsed_new, "wss://new.relay.com") != NULL);
+    assert(nostr_nip65_find_relay(parsed_new, "wss://fresh.relay.com") != NULL);
+    assert(nostr_nip65_find_relay(parsed_new, "wss://old.relay.com") == NULL);
+
+    /* Cleanup */
+    nostr_nip65_list_free(old_list);
+    nostr_nip65_list_free(new_list);
+    nostr_nip65_list_free(parsed_old);
+    nostr_nip65_list_free(parsed_new);
+    nostr_event_free(old_ev);
+    nostr_event_free(new_ev);
+
+    printf("OK\n");
+}
+
 int main(void) {
     printf("Running NIP-65 tests...\n");
 
@@ -358,6 +423,7 @@ int main(void) {
     test_event_update();
     test_parse_wrong_kind();
     test_empty_list();
+    test_event_freshness_ordering();
 
     printf("\nAll NIP-65 tests passed!\n");
     return 0;

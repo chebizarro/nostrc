@@ -11,6 +11,9 @@
  *
  * The tests use a mock NIP-46 bunker that simulates the remote signer behavior
  * without requiring a real relay connection.
+ *
+ * NOTE: These tests exercise URI parsing and session state only, NOT relay protocol.
+ * Relay protocol behavior is NOT tested here — see nips/nip46/tests/ for protocol-level tests.
  */
 
 #include <stdio.h>

@@ -25,9 +25,10 @@ int main(void) {
   const char *ep = getenv("NOSTR_SIGNER_ENDPOINT");
   const char *tok = getenv("NOSTR_SIGNER_TOKEN");
   if (!ep || strncmp(ep, "tcp:", 4) != 0 || !tok || !*tok) {
-    /* Signal SKIP to CTest (set in CMake) */
-    fprintf(stderr, "Skipping (no tcp endpoint/token)\n");
-    return 77;
+    /* NOTE: For in-process loopback testing without env vars, see test_nip5f_loopback.c */
+    fprintf(stderr, "Skipping TCP test (no tcp endpoint/token configured)\n");
+    fprintf(stderr, "For in-process testing, run test_nip5f_loopback instead\n");
+    return 77;  /* Signal SKIP to CTest */
   }
   /* Parse tcp:HOST:PORT */
   const char *spec = ep + 4;

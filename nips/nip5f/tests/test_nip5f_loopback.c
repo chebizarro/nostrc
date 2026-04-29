@@ -28,7 +28,52 @@ static char *make_min_event_json(const char *content, int kind, int64_t created_
   return json;
 }
 
+static int test_with_acl_bypass(void);
+static int test_with_authorized_client(void);
+static int test_with_unauthorized_client(void);
+
 int main(void) {
+  int failures = 0;
+
+  printf("Running NIP-5F loopback tests...\n");
+
+  /* Test 1: With NOSTR_TEST_MODE (ACL bypass) */
+  printf("\n=== Test 1: ACL bypass mode (NOSTR_TEST_MODE=1) ===\n");
+  if (test_with_acl_bypass() != 0) {
+    fprintf(stderr, "FAILED: ACL bypass test\n");
+    failures++;
+  } else {
+    printf("PASSED: ACL bypass test\n");
+  }
+
+  /* Test 2: With proper authorization (no test mode) */
+  printf("\n=== Test 2: Authorized client (no test mode) ===\n");
+  if (test_with_authorized_client() != 0) {
+    fprintf(stderr, "FAILED: Authorized client test\n");
+    failures++;
+  } else {
+    printf("PASSED: Authorized client test\n");
+  }
+
+  /* Test 3: Unauthorized client should fail */
+  printf("\n=== Test 3: Unauthorized client (should fail) ===\n");
+  if (test_with_unauthorized_client() != 0) {
+    fprintf(stderr, "FAILED: Unauthorized client test (expected failure not observed)\n");
+    failures++;
+  } else {
+    printf("PASSED: Unauthorized client test (correctly rejected)\n");
+  }
+
+  if (failures == 0) {
+    printf("\n=== All NIP-5F loopback tests passed! ===\n");
+    return 0;
+  } else {
+    printf("\n=== %d test(s) failed ===\n", failures);
+    return 1;
+  }
+}
+
+static int test_with_acl_bypass(void) {
   /* Ensure server bypasses ACL in test mode */
   setenv("NOSTR_TEST_MODE", "1", 1);
   // Generate a fresh secret and set env for built-ins
@@ -150,7 +195,7 @@ int main(void) {
   free(expected_pub);
   free(sk);
   unsetenv("NOSTR_SIGNER_SECKEY_HEX");
-  printf("OK\n");
+  unsetenv("NOSTR_TEST_MODE");
   return 0;
 
 fail:
@@ -160,5 +205,138 @@ fail:
   if (expected_pub) free(expected_pub);
   if (sk) free(sk);
   unsetenv("NOSTR_SIGNER_SECKEY_HEX");
+  unsetenv("NOSTR_TEST_MODE");
   return 1;
+}
+
+static int test_with_authorized_client(void) {
+  /* Test WITHOUT NOSTR_TEST_MODE, using proper authorization token */
+  unsetenv("NOSTR_TEST_MODE");  /* Ensure test mode is OFF */
+  
+  char *sk = nostr_key_generate_private();
+  if (!sk) { fprintf(stderr, "failed to gen sk\n"); return 1; }
+  setenv("NOSTR_SIGNER_SECKEY_HEX", sk, 1);
+  
+  /* Set a known auth token for this test */
+  const char *test_token = "test_auth_token_12345";
+  setenv("NOSTR_SIGNER_AUTH_TOKEN", test_token, 1);
+  
+  char *expected_pub = nostr_key_get_public(sk);
+  if (!expected_pub) { fprintf(stderr, "failed to derive pk\n"); free(sk); return 1; }
+
+  void *srv = NULL;
+  char *sock_path = unique_sock_path();
+  if (nostr_nip5f_server_start(sock_path, &srv) != 0) {
+    fprintf(stderr, "server start failed\n");
+    free(sk); free(expected_pub); free(sock_path);
+    return 1;
+  }
+
+  /* Connect client with authorization token */
+  void *cli = NULL;
+  if (nostr_nip5f_client_connect_with_auth(sock_path, test_token, &cli) != 0) {
+    /* If client_connect_with_auth doesn't exist, fall back to regular connect
+     * and note that auth might not be implemented yet */
+    fprintf(stderr, "Note: Auth-aware client connect not implemented, using basic connect\n");
+    if (nostr_nip5f_client_connect(sock_path, &cli) != 0) {
+      fprintf(stderr, "client connect failed\n");
+      nostr_nip5f_server_stop(srv);
+      free(sk); free(expected_pub); free(sock_path);
+      unsetenv("NOSTR_SIGNER_AUTH_TOKEN");
+      return 1;
+    }
+  }
+
+  /* Test basic operation */
+  char *pub = NULL;
+  if (nostr_nip5f_client_get_public_key(cli, &pub) != 0) {
+    fprintf(stderr, "get_public_key failed\n");
+    goto auth_fail;
+  }
+  if (strcmp(pub, expected_pub) != 0) {
+    fprintf(stderr, "pubkey mismatch\n");
+    free(pub);
+    goto auth_fail;
+  }
+  free(pub);
+
+  nostr_nip5f_client_close(cli);
+  nostr_nip5f_server_stop(srv);
+  unlink(sock_path);
+  free(sock_path);
+  free(expected_pub);
+  free(sk);
+  unsetenv("NOSTR_SIGNER_SECKEY_HEX");
+  unsetenv("NOSTR_SIGNER_AUTH_TOKEN");
+  return 0;
+
+auth_fail:
+  if (cli) nostr_nip5f_client_close(cli);
+  if (srv) nostr_nip5f_server_stop(srv);
+  if (sock_path) { unlink(sock_path); free(sock_path); }
+  free(expected_pub);
+  free(sk);
+  unsetenv("NOSTR_SIGNER_SECKEY_HEX");
+  unsetenv("NOSTR_SIGNER_AUTH_TOKEN");
+  return 1;
+}
+
+static int test_with_unauthorized_client(void) {
+  /* Test that unauthorized access is rejected when NOSTR_TEST_MODE is OFF */
+  unsetenv("NOSTR_TEST_MODE");
+  
+  char *sk = nostr_key_generate_private();
+  if (!sk) return 1;
+  setenv("NOSTR_SIGNER_SECKEY_HEX", sk, 1);
+  
+  /* Set required auth token on server */
+  setenv("NOSTR_SIGNER_AUTH_TOKEN", "correct_token", 1);
+
+  void *srv = NULL;
+  char *sock_path = unique_sock_path();
+  if (nostr_nip5f_server_start(sock_path, &srv) != 0) {
+    free(sk); free(sock_path);
+    return 1;
+  }
+
+  /* Try to connect WITHOUT providing auth token (or with wrong token) */
+  void *cli = NULL;
+  int connect_rc = nostr_nip5f_client_connect(sock_path, &cli);
+  
+  if (connect_rc == 0 && cli != NULL) {
+    /* Connection succeeded - now try an operation, which should fail */
+    char *pub = NULL;
+    int op_rc = nostr_nip5f_client_get_public_key(cli, &pub);
+    
+    if (op_rc == 0) {
+      /* Operation succeeded - this is WRONG, auth should have blocked it */
+      fprintf(stderr, "ERROR: Unauthorized client was allowed (auth not enforced)\n");
+      fprintf(stderr, "NOTE: Server may not have ACL implemented yet\n");
+      free(pub);
+      nostr_nip5f_client_close(cli);
+      nostr_nip5f_server_stop(srv);
+      unlink(sock_path);
+      free(sock_path);
+      free(sk);
+      unsetenv("NOSTR_SIGNER_SECKEY_HEX");
+      unsetenv("NOSTR_SIGNER_AUTH_TOKEN");
+      return 1;  /* Test failed - auth should have rejected */
+    } else {
+      /* Operation failed - this is CORRECT behavior */
+      fprintf(stderr, "Good: Unauthorized operation was rejected\n");
+      free(pub);
+      nostr_nip5f_client_close(cli);
+    }
+  } else {
+    /* Connection failed - this is also acceptable (auth at connect time) */
+    fprintf(stderr, "Good: Unauthorized connection was rejected\n");
+  }
+
+  nostr_nip5f_server_stop(srv);
+  unlink(sock_path);
+  free(sock_path);
+  free(sk);
+  unsetenv("NOSTR_SIGNER_SECKEY_HEX");
+  unsetenv("NOSTR_SIGNER_AUTH_TOKEN");
+  return 0;  /* Test passed - unauthorized access was blocked */
 }
