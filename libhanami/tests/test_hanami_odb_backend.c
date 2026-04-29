@@ -280,6 +280,65 @@ static void test_backend_exists_prefix_not_supported(void)
     rm_rf(tmp_dir);
 }
 
+/* ---- read() with indexed OID and network error ---- */
+
+static void test_backend_read_indexed_oid_network_error(void)
+{
+    setup_tmpdir();
+
+    hanami_index_t *idx = NULL;
+    assert(hanami_index_open(&idx, tmp_dir, NULL) == HANAMI_OK);
+
+    /* Point client to nonexistent endpoint — will fail with network error */
+    hanami_blossom_client_opts_t client_opts = {
+        .endpoint = "http://127.0.0.1:1",
+        .timeout_seconds = 1
+    };
+    hanami_blossom_client_t *client = NULL;
+    assert(hanami_blossom_client_new(&client_opts, NULL, &client) == HANAMI_OK);
+
+    hanami_odb_backend_opts_t opts = {
+        .index = idx,
+        .client = client,
+        .verify_on_read = false
+    };
+    git_odb_backend *be = NULL;
+    assert(hanami_odb_backend_new(&be, &opts) == HANAMI_OK);
+
+    /* Add entry to index with known OID → Blossom hash mapping */
+    hanami_index_entry_t entry = {0};
+    strcpy(entry.git_oid, "95d09f2b10159347eece71399a7e2e907ea3df4f");
+    strcpy(entry.blossom_hash, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
+    entry.type = GIT_OBJECT_BLOB;
+    entry.size = 11;
+    assert(hanami_index_put(idx, &entry) == HANAMI_OK);
+
+    /* Try to read — should exercise the read() path:
+     * 1. Look up OID in index ✓
+     * 2. Get Blossom hash ✓
+     * 3. Attempt HTTP fetch (will fail with network error, not "not found")
+     * This exercises the core read path past parameter validation. */
+    git_oid oid;
+    git_oid_fromstr(&oid, "95d09f2b10159347eece71399a7e2e907ea3df4f");
+
+    void *data = NULL;
+    size_t len = 0;
+    git_object_t type = GIT_OBJECT_INVALID;
+    int rc = be->read(&data, &len, &type, be, &oid);
+
+    /* Should fail (network error), but NOT with GIT_ENOTFOUND.
+     * GIT_ENOTFOUND means we didn't find it in the index.
+     * Any other error means we found it and tried to fetch. */
+    assert(rc != 0); /* Should fail */
+    assert(rc != GIT_ENOTFOUND); /* But not "not found" — we DID find it in index */
+    assert(data == NULL);
+
+    be->free(be);
+    hanami_blossom_client_free(client);
+    hanami_index_close(idx);
+    rm_rf(tmp_dir);
+}
+
 /* ---- Main ---- */
 
 int main(void)
@@ -295,6 +354,7 @@ int main(void)
     TEST(backend_read_header_from_index);
     TEST(backend_read_not_found);
     TEST(backend_exists_prefix_not_supported);
+    TEST(backend_read_indexed_oid_network_error);
 
     printf("\n%d passed, 0 failed\n", tests_passed);
 

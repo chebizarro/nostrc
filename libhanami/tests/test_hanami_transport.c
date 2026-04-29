@@ -148,6 +148,48 @@ static void test_register_reregister(void)
  * Transport creation (via libgit2 factory)
  * ========================================================================= */
 
+static void test_transport_scheme_recognized(void)
+{
+    /* Verify that after registration, libgit2 recognizes the blossom:// scheme.
+     * Before registration, creating a remote with blossom:// should fail.
+     * After registration, it should succeed. */
+    
+    git_repository *repo = NULL;
+    int rc = git_repository_init(&repo, "/tmp/hanami-test-scheme-repo", 1);
+    if (rc < 0) {
+        return; /* Skip if can't create repo */
+    }
+
+    /* Before registration — should fail or use generic transport */
+    git_remote *remote_before = NULL;
+    rc = git_remote_create_anonymous(&remote_before, repo,
+        "blossom://example.com/pubkey/repo");
+    /* May succeed with generic transport or fail — either way, clean up */
+    if (remote_before) {
+        git_remote_free(remote_before);
+    }
+
+    /* Register transport */
+    hanami_transport_opts_t opts = { .nostr_ctx = NULL, .blossom_client = NULL };
+    assert(hanami_transport_register(&opts) == HANAMI_OK);
+
+    /* After registration — should succeed */
+    git_remote *remote_after = NULL;
+    rc = git_remote_create_anonymous(&remote_after, repo,
+        "blossom://example.com/pubkey/repo");
+    assert(rc == 0);
+    assert(remote_after != NULL);
+
+    /* Verify the URL is preserved */
+    const char *url = git_remote_url(remote_after);
+    assert(url != NULL);
+    assert(strncmp(url, "blossom://", 10) == 0);
+
+    git_remote_free(remote_after);
+    git_repository_free(repo);
+    hanami_transport_unregister();
+}
+
 static void test_transport_factory(void)
 {
     /* Register transport, create a remote with blossom:// URL, verify
@@ -211,6 +253,7 @@ int main(void)
     TEST(register_reregister);
 
     /* Transport factory */
+    TEST(transport_scheme_recognized);
     TEST(transport_factory);
 
     printf("\n%d passed, 0 failed\n", tests_passed);

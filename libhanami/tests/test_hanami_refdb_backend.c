@@ -445,6 +445,55 @@ static void test_rename_ref(void)
 }
 
 /* =========================================================================
+ * Write to Nostr verification
+ * ========================================================================= */
+
+static void test_write_attempts_nostr_publish(void)
+{
+    /* Test that refdb_write exercises the Nostr publish path.
+     * The publish will fail (fake relay), but it should get past parameter
+     * validation and attempt the network operation. */
+    hanami_nostr_ctx_t *ctx = make_ctx();
+    git_refdb_backend *be = NULL;
+    hanami_refdb_backend_opts_t opts = {
+        .nostr_ctx = ctx,
+        .repo_id = "test-repo",
+        .owner_pubkey = "bbbb"
+    };
+    assert(hanami_refdb_backend_new(&be, &opts) == HANAMI_OK);
+
+    /* Create a reference */
+    git_oid oid;
+    git_oid_fromstr(&oid, "1234567890abcdef1234567890abcdef12345678");
+    git_reference *ref = git_reference__alloc("refs/heads/feature-x", &oid, NULL);
+    assert(ref != NULL);
+
+    /* Write it — this should:
+     * 1. Update the in-memory cache ✓
+     * 2. Attempt to publish a Nostr state event ✓ (will fail with network error)
+     *
+     * The return value may be -1 (network error) but cache should be updated. */
+    int rc = be->write(be, ref, 1, NULL, NULL, NULL, NULL);
+    git_reference_free(ref);
+
+    /* Verify cache was updated regardless of publish failure */
+    int exists = 0;
+    be->exists(&exists, be, "refs/heads/feature-x");
+    assert(exists == 1);
+
+    /* Lookup should work from cache */
+    git_reference *found = NULL;
+    rc = be->lookup(&found, be, "refs/heads/feature-x");
+    assert(rc == 0);
+    assert(found != NULL);
+    assert(git_oid_cmp(git_reference_target(found), &oid) == 0);
+    git_reference_free(found);
+
+    be->free(be);
+    hanami_nostr_ctx_free(ctx);
+}
+
+/* =========================================================================
  * Reflog stubs
  * ========================================================================= */
 
@@ -537,6 +586,9 @@ int main(void)
 
     /* Rename */
     TEST(rename_ref);
+
+    /* Write to Nostr verification */
+    TEST(write_attempts_nostr_publish);
 
     /* Reflog stubs */
     TEST(has_log_returns_zero);

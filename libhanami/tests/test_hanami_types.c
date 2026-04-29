@@ -31,9 +31,21 @@ static void test_version(void)
     const char *v = hanami_version(&major, &minor, &patch);
     assert(v != NULL);
     assert(strlen(v) > 0);
+    
+    /* Version components should be non-negative */
     assert(major >= 0);
     assert(minor >= 0);
     assert(patch >= 0);
+    
+    /* Version string should have format like "X.Y.Z" or "X.Y.Z-suffix"
+     * Check that it starts with digits and contains dots */
+    assert(v[0] >= '0' && v[0] <= '9'); /* First char is a digit */
+    assert(strchr(v, '.') != NULL);     /* Contains at least one dot */
+    
+    /* Verify the version string matches the components (at least the major version) */
+    char expected_start[16];
+    snprintf(expected_start, sizeof(expected_start), "%d.", major);
+    assert(strncmp(v, expected_start, strlen(expected_start)) == 0);
 }
 
 static void test_init_shutdown(void)

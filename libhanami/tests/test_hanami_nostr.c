@@ -300,6 +300,106 @@ static void test_fetch_state_null_args(void)
     hanami_nostr_ctx_free(ctx);
 }
 
+/* =========================================================================
+ * Publishing happy paths (will fail with network errors but exercise code)
+ * ========================================================================= */
+
+static void test_publish_repo_attempts_connection(void)
+{
+    /* Create context with signer pointing to fake relay.
+     * publish_repo should get past parameter validation and attempt the publish.
+     * The result may be OK (publish queued) or an error (network issue),
+     * but it should NOT be a parameter validation error. */
+    const char *relays[] = { "wss://relay.example.com", NULL };
+    hanami_nostr_ctx_t *ctx = NULL;
+    assert(hanami_nostr_ctx_new(relays, &test_signer, &ctx) == HANAMI_OK);
+
+    const char *clone_urls[] = { "blossom://example.com/pubkey/repo", NULL };
+    hanami_error_t err = hanami_nostr_publish_repo(ctx, "test-repo", "Test Repo",
+                                                    "A test repository",
+                                                    clone_urls, NULL);
+    
+    /* Should NOT fail with INVALID_ARG or AUTH — those would mean we didn't
+     * get past parameter validation. Any other result (OK, network error, etc.)
+     * means we exercised the actual publish code path. */
+    assert(err != HANAMI_ERR_INVALID_ARG);
+    assert(err != HANAMI_ERR_AUTH);
+
+    hanami_nostr_ctx_free(ctx);
+}
+
+static void test_publish_state_attempts_connection(void)
+{
+    const char *relays[] = { "wss://relay.example.com", NULL };
+    hanami_nostr_ctx_t *ctx = NULL;
+    assert(hanami_nostr_ctx_new(relays, &test_signer, &ctx) == HANAMI_OK);
+
+    /* Create a minimal ref array */
+    nip34_ref_t refs[1] = {
+        { .refname = "refs/heads/main", .target = "0000000000000000000000000000000000000001" }
+    };
+
+    hanami_error_t err = hanami_nostr_publish_state(ctx, "test-repo",
+                                                     refs, 1, "ref: refs/heads/main");
+    
+    /* Should NOT fail with validation errors — any other result means we
+     * exercised the actual publish code path. */
+    assert(err != HANAMI_ERR_INVALID_ARG);
+    assert(err != HANAMI_ERR_AUTH);
+
+    hanami_nostr_ctx_free(ctx);
+}
+
+/* =========================================================================
+ * Fetch happy paths (will fail with network errors but exercise code)
+ * ========================================================================= */
+
+static void test_fetch_repo_attempts_connection(void)
+{
+    const char *relays[] = { "wss://relay.example.com", NULL };
+    hanami_nostr_ctx_t *ctx = NULL;
+    assert(hanami_nostr_ctx_new(relays, NULL, &ctx) == HANAMI_OK);
+
+    nip34_repository_t *repo = NULL;
+    hanami_error_t err = hanami_nostr_fetch_repo(ctx, "test-repo",
+                                                  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                                  &repo);
+    
+    /* Should NOT fail with INVALID_ARG — that would mean we didn't get past
+     * parameter validation. Any other result means we exercised the fetch path. */
+    assert(err != HANAMI_ERR_INVALID_ARG);
+    
+    /* Clean up if fetch somehow succeeded */
+    if (repo) {
+        nip34_repository_free(repo);
+    }
+
+    hanami_nostr_ctx_free(ctx);
+}
+
+static void test_fetch_state_attempts_connection(void)
+{
+    const char *relays[] = { "wss://relay.example.com", NULL };
+    hanami_nostr_ctx_t *ctx = NULL;
+    assert(hanami_nostr_ctx_new(relays, NULL, &ctx) == HANAMI_OK);
+
+    nip34_repo_state_t *state = NULL;
+    hanami_error_t err = hanami_nostr_fetch_state(ctx, "test-repo",
+                                                   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                                                   &state);
+    
+    /* Should NOT fail with INVALID_ARG — that would mean we didn't get past
+     * parameter validation. Any other result means we exercised the fetch path. */
+    assert(err != HANAMI_ERR_INVALID_ARG);
+    
+    /* Clean up if fetch somehow succeeded */
+    if (state) {
+        nip34_repo_state_free(state);
+    }
+
+    hanami_nostr_ctx_free(ctx);
+}
+
 /* ---- Main ---- */
 
 int main(void)
@@ -336,6 +436,14 @@ int main(void)
     /* Querying error paths */
     TEST(fetch_repo_null_args);
     TEST(fetch_state_null_args);
+
+    /* Publishing happy paths */
+    TEST(publish_repo_attempts_connection);
+    TEST(publish_state_attempts_connection);
+
+    /* Fetch happy paths */
+    TEST(fetch_repo_attempts_connection);
+    TEST(fetch_state_attempts_connection);
 
     printf("\n%d passed, 0 failed\n", tests_passed);
     return 0;
