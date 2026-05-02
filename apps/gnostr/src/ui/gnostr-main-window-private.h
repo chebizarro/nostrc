@@ -25,6 +25,7 @@ typedef struct _GnostrClassifiedsView GnostrClassifiedsView;
 typedef struct _GnostrRepoBrowser GnostrRepoBrowser;
 typedef struct _GnostrSignerService GnostrSignerService;
 typedef struct _NostrGtkTimelineView NostrGtkTimelineView;
+typedef struct _GnostrThreadPrefetch GnostrThreadPrefetch;
 
 typedef enum {
   COMPOSE_CONTEXT_NONE,
@@ -189,6 +190,11 @@ struct _GnostrMainWindow {
   GAsyncQueue     *ingest_queue;           /* owned; char* JSON strings */
   GThread         *ingest_thread;          /* owned; background ingestion worker */
   gboolean         ingest_running;         /* atomic; FALSE signals thread to exit */
+
+  /* nostrc-4bk: Eager thread ancestor prefetching. Watches live kind:1/1111
+   * events, extracts NIP-10 root/parent refs, and pre-fetches missing
+   * ancestors from relays so thread panels render instantly. */
+  GnostrThreadPrefetch *thread_prefetch;   /* owned; NULL until startup */
 };
 
 

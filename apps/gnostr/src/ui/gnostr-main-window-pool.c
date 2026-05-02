@@ -8,6 +8,7 @@
 #include "gnostr-tray-icon.h"
 
 #include "../util/follow_list.h"
+#include "../util/gnostr-thread-prefetch.h"
 #include <nostr-gobject-1.0/gnostr-mute-list.h>
 #include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/nostr_pool.h>
@@ -492,6 +493,12 @@ on_multi_sub_event(GNostrPoolMultiSub *multi_sub,
         g_free(copy);
     } else {
         g_debug("[RELAY] Event from %s (kind %d)", relay_url, kind);
+
+        /* nostrc-4bk: For thread-capable events, eagerly prefetch root and
+         * ancestor events so the thread panel can render instantly. */
+        if ((kind == 1 || kind == 1111) && self->thread_prefetch)
+            gnostr_thread_prefetch_observe_event(self->thread_prefetch,
+                                                 event_json, relay_url);
     }
 
     trigger_live_state_refresh(self, relay_url, event_json);

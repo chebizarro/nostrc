@@ -5,6 +5,7 @@
 #include "gnostr-session-view.h"
 #include "gnostr-login.h"
 #include "gnostr-dm-service.h"
+#include "../util/gnostr-thread-prefetch.h"
 
 #include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/nostr_pool.h>
@@ -88,6 +89,13 @@ gnostr_main_window_dispose_internal(GObject *object)
 {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(object);
   g_debug("main-window: dispose");
+
+  /* nostrc-4bk: Destroy thread prefetch BEFORE ingest queue/thread teardown
+   * to prevent late async callbacks from enqueueing into torn-down state. */
+  if (self->thread_prefetch) {
+    gnostr_thread_prefetch_free(self->thread_prefetch);
+    self->thread_prefetch = NULL;
+  }
 
   if (self->ingest_thread) {
     __atomic_store_n(&self->ingest_running, FALSE, __ATOMIC_SEQ_CST);

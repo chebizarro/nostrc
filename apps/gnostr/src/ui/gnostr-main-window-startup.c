@@ -6,6 +6,7 @@
 #include <nostr-gtk-1.0/gnostr-timeline-view.h>
 #include "gnostr-avatar-cache.h"
 #include "gnostr-startup-live-eose.h"
+#include "../util/gnostr-thread-prefetch.h"
 
 #include "../model/gn-nostr-event-model.h"
 #include "../util/blossom_settings.h"
@@ -24,6 +25,16 @@
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <nostr-gobject-1.0/nostr_profile_service.h>
 #include <nostr-gtk-1.0/gnostr-profile-pane.h>
+
+/* nostrc-4bk: Type-safe adapter between GnostrThreadPrefetchIngestFunc
+ * (gpointer, gchar*) and gnostr_main_window_ingest_queue_push_internal
+ * (GnostrMainWindow*, gchar*). */
+static gboolean
+prefetch_ingest_adapter(gpointer user_data, gchar *event_json_owned)
+{
+  return gnostr_main_window_ingest_queue_push_internal(
+      GNOSTR_MAIN_WINDOW(user_data), event_json_owned);
+}
 
 static gboolean
 profile_provider_log_stats_cb_local(gpointer data)
@@ -197,6 +208,11 @@ gnostr_main_window_run_startup_bootstrap_internal(GnostrMainWindow *self,
   self->ingest_queue = g_async_queue_new_full(g_free);
   __atomic_store_n(&self->ingest_running, TRUE, __ATOMIC_SEQ_CST);
   self->ingest_thread = g_thread_new("ndb-ingest", gnostr_main_window_ingest_thread_func_internal, self);
+
+  /* nostrc-4bk: Create thread prefetch service after ingest queue exists
+   * but before live relay subscriptions start delivering events. */
+  self->thread_prefetch = gnostr_thread_prefetch_new(
+      prefetch_ingest_adapter, self);
 
   gnostr_profile_provider_init(0);
   gnostr_profile_provider_set_follow_list_provider(gnostr_follow_list_get_pubkeys_cached);
