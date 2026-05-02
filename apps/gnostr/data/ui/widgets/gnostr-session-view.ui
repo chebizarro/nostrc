@@ -512,6 +512,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <property name="hexpand">true</property>
                                 <property name="vexpand">true</property>
                                 <property name="halign">0</property>
+                                <style>
+                                  <class name="middle-clamp"/>
+                                </style>
                                 <property name="child">
                                   <object class="AdwViewStack" id="stack">
                                     <property name="hexpand">true</property>

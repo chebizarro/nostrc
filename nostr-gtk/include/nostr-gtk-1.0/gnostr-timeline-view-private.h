@@ -72,6 +72,19 @@ struct _NostrGtkTimelineView {
   gboolean is_fast_scrolling;
   guint scroll_idle_id;
 
+  /* nostrc-2au: Prepend-aware scroll stabilization.
+   * When items are prepended at position 0 and the user is scrolled away
+   * from the top, we arm a post-layout fixup that compensates for any
+   * residual scroll-position drift that GTK's built-in anchoring missed. */
+  gulong model_items_changed_handler_id;
+  GListModel *observed_model;  /* weak-ish ref to the model we track items-changed on */
+  gdouble prev_adj_upper;
+  gboolean prepend_fixup_armed;
+  gboolean prepend_fixup_pending;
+  gdouble prepend_fixup_pre_value;
+  gdouble prepend_fixup_accumulated_delta;
+  guint prepend_fixup_id;
+
   /* nostrc-hiei: GNostr-specific metadata batching state previously
    * lived here (pending_metadata_items, metadata_batch_idle_id) and was
    * used only by the app factory. That state now lives in

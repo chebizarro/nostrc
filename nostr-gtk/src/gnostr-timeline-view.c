@@ -176,6 +176,56 @@ static void on_tabs_tab_selected(NostrGtkTimelineTabs *tabs_widget, guint index,
                 (guint)type, filter_value);
 }
 
+/* nostrc-2au: forward declarations for scroll stabilization */
+static void clear_prepend_fixup(NostrGtkTimelineView *self);
+static void on_model_items_changed_scroll(GListModel *model, guint position,
+                                          guint removed, guint added,
+                                          gpointer user_data);
+static void on_vadj_upper_notify(GObject *obj, GParamSpec *pspec, gpointer data);
+static gboolean prepend_fixup_idle_cb(gpointer data);
+
+/* nostrc-2au: Disconnect the currently observed model's items-changed signal
+ * and reset all fixup state.  Safe to call when no model is observed. */
+static void
+disconnect_model_scroll_tracking(NostrGtkTimelineView *self)
+{
+  clear_prepend_fixup(self);
+  if (self->model_items_changed_handler_id > 0 && self->observed_model) {
+    if (g_signal_handler_is_connected(G_OBJECT(self->observed_model),
+                                      self->model_items_changed_handler_id))
+      g_signal_handler_disconnect(self->observed_model,
+                                  self->model_items_changed_handler_id);
+  }
+  self->model_items_changed_handler_id = 0;
+  self->observed_model = NULL;  /* not owned, just tracked */
+}
+
+/* nostrc-2au: Connect items-changed on the underlying GListModel of a
+ * selection wrapper, for prepend scroll stabilization. */
+static void
+connect_model_scroll_tracking(NostrGtkTimelineView *self, GtkSelectionModel *sel)
+{
+  GListModel *underlying = NULL;
+  if (GTK_IS_SINGLE_SELECTION(sel))
+    underlying = gtk_single_selection_get_model(GTK_SINGLE_SELECTION(sel));
+  else if (GTK_IS_NO_SELECTION(sel))
+    underlying = gtk_no_selection_get_model(GTK_NO_SELECTION(sel));
+  if (!underlying) return;
+
+  self->observed_model = underlying;  /* not ref'd — outlived by selection_model */
+  self->model_items_changed_handler_id = g_signal_connect(
+      underlying, "items-changed",
+      G_CALLBACK(on_model_items_changed_scroll), self);
+
+  /* Initialize upper tracking */
+  if (self->root_scroller && GTK_IS_SCROLLED_WINDOW(self->root_scroller)) {
+    GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(
+        GTK_SCROLLED_WINDOW(self->root_scroller));
+    if (vadj)
+      self->prev_adj_upper = gtk_adjustment_get_upper(vadj);
+  }
+}
+
 static void nostr_gtk_timeline_view_dispose(GObject *obj) {
   NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(obj);
 
@@ -183,6 +233,9 @@ static void nostr_gtk_timeline_view_dispose(GObject *obj) {
     g_source_remove(self->scroll_idle_id);
     self->scroll_idle_id = 0;
   }
+
+  /* nostrc-2au: Clean up scroll stabilization state */
+  disconnect_model_scroll_tracking(self);
 
   if (self->list_view && GTK_IS_LIST_VIEW(self->list_view)) {
     gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), NULL);
@@ -271,6 +324,144 @@ static void ensure_list_model(NostrGtkTimelineView *self) {
 
 /* ============== GObject Class ============== */
 
+/* ============== nostrc-2au: Prepend-aware scroll stabilization ============== */
+
+#define SCROLL_TOP_THRESHOLD 1.0    /* px — considered "at the top" */
+#define SCROLL_FIXUP_EPSILON 1.0    /* px — minimum residual to correct */
+
+static void
+clear_prepend_fixup(NostrGtkTimelineView *self)
+{
+  if (self->prepend_fixup_id > 0) {
+    g_source_remove(self->prepend_fixup_id);
+    self->prepend_fixup_id = 0;
+  }
+  self->prepend_fixup_armed = FALSE;
+  self->prepend_fixup_pending = FALSE;
+  self->prepend_fixup_pre_value = 0;
+  self->prepend_fixup_accumulated_delta = 0;
+}
+
+/* Called when the bound selection model's underlying list changes.
+ * Arms the scroll fixup only for prepend-at-0 operations when the user
+ * is scrolled away from the top. */
+static void
+on_model_items_changed_scroll(GListModel *model, guint position,
+                               guint removed, guint added,
+                               gpointer user_data)
+{
+  (void)model;
+  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(user_data);
+
+  /* Only care about pure prepend at position 0 */
+  if (position != 0 || removed != 0 || added == 0)
+    return;
+
+  if (!self->root_scroller || !GTK_IS_SCROLLED_WINDOW(self->root_scroller))
+    return;
+
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment(
+      GTK_SCROLLED_WINDOW(self->root_scroller));
+  if (!adj) return;
+
+  gdouble value = gtk_adjustment_get_value(adj);
+
+  /* If user is at (or near) the top, let them follow live content */
+  if (value <= SCROLL_TOP_THRESHOLD)
+    return;
+
+  /* Arm the fixup — save pre-change scroll position */
+  if (!self->prepend_fixup_armed) {
+    self->prepend_fixup_armed = TRUE;
+    self->prepend_fixup_pre_value = value;
+    self->prepend_fixup_accumulated_delta = 0;
+  }
+  /* If already armed from a previous prepend in the same burst,
+   * keep the original pre_value. */
+}
+
+/* Called when the adjustment's upper (total content height) changes.
+ * Accumulates positive growth deltas while a prepend fixup is armed,
+ * then schedules a high-idle callback to apply the residual correction
+ * after GTK's built-in scroll anchoring has run. */
+static void
+on_vadj_upper_notify(GObject *obj, GParamSpec *pspec, gpointer data)
+{
+  (void)pspec;
+  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(data);
+  GtkAdjustment *adj = GTK_ADJUSTMENT(obj);
+  gdouble new_upper = gtk_adjustment_get_upper(adj);
+  gdouble delta = new_upper - self->prev_adj_upper;
+
+  /* Always track the latest upper */
+  self->prev_adj_upper = new_upper;
+
+  if (!self->prepend_fixup_armed)
+    return;
+
+  /* Ignore shrink (tail eviction, etc.) */
+  if (delta <= 0)
+    return;
+
+  self->prepend_fixup_accumulated_delta += delta;
+
+  /* Schedule a single idle to run after GTK's anchor pass */
+  if (!self->prepend_fixup_pending) {
+    self->prepend_fixup_pending = TRUE;
+    self->prepend_fixup_id = g_idle_add_full(
+        G_PRIORITY_HIGH_IDLE, prepend_fixup_idle_cb, self, NULL);
+  }
+}
+
+/* Post-layout idle: check how much GTK compensated and apply the remainder. */
+static gboolean
+prepend_fixup_idle_cb(gpointer data)
+{
+  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(data);
+  self->prepend_fixup_pending = FALSE;
+  self->prepend_fixup_id = 0;
+
+  if (!self->prepend_fixup_armed)
+    return G_SOURCE_REMOVE;
+
+  if (!self->root_scroller || !GTK_IS_SCROLLED_WINDOW(self->root_scroller)) {
+    clear_prepend_fixup(self);
+    return G_SOURCE_REMOVE;
+  }
+
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment(
+      GTK_SCROLLED_WINDOW(self->root_scroller));
+  if (!adj) {
+    clear_prepend_fixup(self);
+    return G_SOURCE_REMOVE;
+  }
+
+  gdouble current_value = gtk_adjustment_get_value(adj);
+  gdouble upper = gtk_adjustment_get_upper(adj);
+  gdouble page = gtk_adjustment_get_page_size(adj);
+
+  /* How much did GTK already compensate? */
+  gdouble gtk_compensated = current_value - self->prepend_fixup_pre_value;
+  gdouble remaining = self->prepend_fixup_accumulated_delta - gtk_compensated;
+
+  if (remaining > SCROLL_FIXUP_EPSILON) {
+    gdouble target = current_value + remaining;
+    /* Clamp to valid range */
+    gdouble max_value = upper - page;
+    if (target > max_value) target = max_value;
+    if (target < 0) target = 0;
+
+    gtk_adjustment_set_value(adj, target);
+    g_debug("[SCROLL-FIX] Compensated %.0fpx residual (GTK handled %.0f of %.0f)",
+            remaining, gtk_compensated,
+            self->prepend_fixup_accumulated_delta);
+  }
+
+  /* Disarm — one correction per prepend burst */
+  clear_prepend_fixup(self);
+  return G_SOURCE_REMOVE;
+}
+
 /* Fix horizontal expansion: clamp minimum width to 0 so AdwClamp can constrain */
 static void nostr_gtk_timeline_view_measure(GtkWidget      *widget,
                                             GtkOrientation  orientation,
@@ -330,6 +521,9 @@ static void nostr_gtk_timeline_view_init(NostrGtkTimelineView *self) {
     GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->root_scroller));
     if (vadj) {
       g_signal_connect(vadj, "value-changed", G_CALLBACK(on_scroll_value_changed), self);
+      /* nostrc-2au: Track adjustment upper for prepend scroll stabilization */
+      g_signal_connect(vadj, "notify::upper", G_CALLBACK(on_vadj_upper_notify), self);
+      self->prev_adj_upper = gtk_adjustment_get_upper(vadj);
     }
   }
 
@@ -370,11 +564,19 @@ void nostr_gtk_timeline_view_set_factory(NostrGtkTimelineView *self, GtkListItem
 void nostr_gtk_timeline_view_set_model(NostrGtkTimelineView *self, GtkSelectionModel *model) {
   g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
   if (self->selection_model == model) return;
+
+  /* nostrc-2au: Disconnect old model's items-changed and reset fixup state */
+  disconnect_model_scroll_tracking(self);
+
   if (self->selection_model) g_clear_object(&self->selection_model);
   if (self->list_model) g_clear_object(&self->list_model);
   if (self->tree_model) g_clear_object(&self->tree_model);
   self->selection_model = model ? g_object_ref(model) : NULL;
   gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), self->selection_model);
+
+  /* nostrc-2au: Connect scroll tracking on the new model */
+  if (self->selection_model)
+    connect_model_scroll_tracking(self, self->selection_model);
 }
 
 /* Forward declaration */
@@ -420,6 +622,9 @@ static void populate_flattened_model(NostrGtkTimelineView *self, GListModel *roo
 void nostr_gtk_timeline_view_set_tree_roots(NostrGtkTimelineView *self, GListModel *roots) {
   g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
 
+  /* nostrc-2au: Disconnect old model tracking before swapping */
+  disconnect_model_scroll_tracking(self);
+
   if (roots) {
     g_signal_connect(roots, "items-changed", G_CALLBACK(on_root_items_changed), self);
   }
@@ -447,6 +652,10 @@ void nostr_gtk_timeline_view_set_tree_roots(NostrGtkTimelineView *self, GListMod
   }
 
   gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), self->selection_model);
+
+  /* nostrc-2au: Connect scroll tracking on the new model */
+  if (self->selection_model)
+    connect_model_scroll_tracking(self, self->selection_model);
 }
 
 void nostr_gtk_timeline_view_prepend_text(NostrGtkTimelineView *self, const char *text) {
