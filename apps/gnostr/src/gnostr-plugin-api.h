@@ -4,7 +4,7 @@
  * This header defines the stable plugin API for extending Gnostr with
  * NIP implementations and custom features. Plugins are loaded via libpeas 2.
  *
- * API Version: 1.0
+ * API Version: 1.2
  * Stability: Stable API functions are marked @stability: Stable
  *            Experimental functions are marked @stability: Experimental
  *
@@ -27,7 +27,7 @@ G_BEGIN_DECLS
  */
 
 #define GNOSTR_PLUGIN_API_MAJOR_VERSION 1
-#define GNOSTR_PLUGIN_API_MINOR_VERSION 1
+#define GNOSTR_PLUGIN_API_MINOR_VERSION 2
 
 /**
  * gnostr_plugin_api_check_version:
@@ -845,6 +845,129 @@ void gnostr_plugin_context_request_relay_events_async(GnostrPluginContext *conte
 gboolean gnostr_plugin_context_request_relay_events_finish(GnostrPluginContext *context,
                                                            GAsyncResult        *result,
                                                            GError             **error);
+
+/**
+ * GnostrPluginRelayQuery:
+ * @relay_urls: (array length=n_relay_urls): Authoritative relay URLs to query/subscribe.
+ * @n_relay_urls: Number of relay URLs.
+ * @filter_json: NIP-01 filter JSON object (for example, {"kinds":[9],"#h":["group"]}).
+ *
+ * Describes a raw relay-scoped operation. Unlike
+ * gnostr_plugin_context_request_relay_events_async(), these APIs do not ingest
+ * events into local storage and preserve relay provenance for each event.
+ *
+ * @stability: Experimental
+ */
+typedef struct {
+  const char * const *relay_urls;
+  gsize               n_relay_urls;
+  const char         *filter_json;
+} GnostrPluginRelayQuery;
+
+/**
+ * GnostrPluginRelayEvent:
+ * @relay_url: Relay URL that returned or delivered @event_json.
+ * @event_json: Raw Nostr event JSON.
+ *
+ * Raw relay event with provenance. Free with gnostr_plugin_relay_event_free().
+ *
+ * @stability: Experimental
+ */
+typedef struct {
+  char *relay_url;
+  char *event_json;
+} GnostrPluginRelayEvent;
+
+GnostrPluginRelayEvent *gnostr_plugin_relay_event_copy(const GnostrPluginRelayEvent *event);
+void gnostr_plugin_relay_event_free(GnostrPluginRelayEvent *event);
+
+/**
+ * GnostrPluginRelayEventFunc:
+ * @context: Plugin context that owns the subscription.
+ * @subscription_id: Subscription ID returned by gnostr_plugin_context_subscribe_relays().
+ * @relay_url: Relay URL that delivered the event.
+ * @event_json: Raw Nostr event JSON.
+ * @user_data: User data supplied at subscription time.
+ *
+ * Callback for raw live relay events. Invoked on the main thread.
+ *
+ * @stability: Experimental
+ */
+typedef void (*GnostrPluginRelayEventFunc)(GnostrPluginContext *context,
+                                           guint64              subscription_id,
+                                           const char          *relay_url,
+                                           const char          *event_json,
+                                           gpointer             user_data);
+
+/**
+ * GnostrPluginRelayEoseFunc:
+ * @context: Plugin context that owns the subscription.
+ * @subscription_id: Subscription ID returned by gnostr_plugin_context_subscribe_relays().
+ * @relay_url: Relay URL that sent EOSE.
+ * @user_data: User data supplied at subscription time.
+ *
+ * Callback for raw live relay EOSE notifications. Invoked on the main thread.
+ *
+ * @stability: Experimental
+ */
+typedef void (*GnostrPluginRelayEoseFunc)(GnostrPluginContext *context,
+                                          guint64              subscription_id,
+                                          const char          *relay_url,
+                                          gpointer             user_data);
+
+/**
+ * gnostr_plugin_context_query_relays_async:
+ * @context: A #GnostrPluginContext
+ * @query: Raw relay query description.
+ * @cancellable: (nullable): Optional cancellable.
+ * @callback: Callback when complete.
+ * @user_data: User data for callback.
+ *
+ * Query specific relays and return raw events with relay provenance. Results
+ * are not written to local storage. The finish function returns a #GPtrArray
+ * of #GnostrPluginRelayEvent values.
+ *
+ * @stability: Experimental
+ */
+void gnostr_plugin_context_query_relays_async(GnostrPluginContext       *context,
+                                              const GnostrPluginRelayQuery *query,
+                                              GCancellable             *cancellable,
+                                              GAsyncReadyCallback       callback,
+                                              gpointer                  user_data);
+
+GPtrArray *gnostr_plugin_context_query_relays_finish(GnostrPluginContext *context,
+                                                     GAsyncResult        *result,
+                                                     GError             **error);
+
+/**
+ * gnostr_plugin_context_subscribe_relays:
+ * @context: A #GnostrPluginContext
+ * @query: Raw relay subscription description.
+ * @event_callback: Event callback invoked with relay provenance.
+ * @eose_callback: (nullable): EOSE callback invoked with relay provenance.
+ * @user_data: User data for callbacks.
+ * @destroy_notify: (nullable): Destroy function for @user_data.
+ * @error: (out) (optional): Return location for error.
+ *
+ * Start a live subscription on specific relays. Events are not written to local
+ * storage. Use gnostr_plugin_context_unsubscribe_relays() to cancel. The host
+ * also cancels outstanding subscriptions when the plugin context is freed.
+ * Relay connections are established asynchronously; a valid ID means setup was
+ * accepted, while connection failures produce no events for failed relays.
+ *
+ * Returns: Subscription ID (>0), or 0 if setup validation fails.
+ * @stability: Experimental
+ */
+guint64 gnostr_plugin_context_subscribe_relays(GnostrPluginContext       *context,
+                                               const GnostrPluginRelayQuery *query,
+                                               GnostrPluginRelayEventFunc event_callback,
+                                               GnostrPluginRelayEoseFunc  eose_callback,
+                                               gpointer                  user_data,
+                                               GDestroyNotify            destroy_notify,
+                                               GError                  **error);
+
+void gnostr_plugin_context_unsubscribe_relays(GnostrPluginContext *context,
+                                              guint64              subscription_id);
 
 /* --- Storage Access --- */
 

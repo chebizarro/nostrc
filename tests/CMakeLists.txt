@@ -97,9 +97,6 @@ add_executable(test_event_canonical test_event_canonical.c)
 add_executable(test_event_priority test_event_priority.c)
 add_executable(test_json_parse test_json_parse.c)
 add_executable(test_nip04_aead test_nip04_aead.c)
-if(TARGET relayd_core)
-add_executable(test_relay_ingress_policy test_relay_ingress_policy.c)
-
 # Link OpenSSL, libsecp256k1, nsync, and project libraries
 target_link_libraries(test_nostr PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 
@@ -133,6 +130,9 @@ target_link_libraries(test_event_canonical PRIVATE libnostr ${NSYNC_LIB} nostr_j
 target_link_libraries(test_event_priority PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(test_nip04_aead PRIVATE nip04 libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_include_directories(test_nip04_aead PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip04/include)
+
+if(TARGET relayd_core)
+add_executable(test_relay_ingress_policy test_relay_ingress_policy.c)
 target_link_libraries(test_relay_ingress_policy PRIVATE relayd_core libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_include_directories(test_relay_ingress_policy PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/apps/relayd/include)
 endif()

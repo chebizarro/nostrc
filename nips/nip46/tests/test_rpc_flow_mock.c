@@ -14,6 +14,7 @@
 #include "nostr/nip04.h"
 #include "nostr-keys.h"
 #include "nostr-event.h"
+#include "json.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

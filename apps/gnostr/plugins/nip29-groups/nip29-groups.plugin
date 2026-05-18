@@ -1,0 +1,10 @@
+[Plugin]
+Module=nip29-groups
+Name=NIP-29 Relay Groups
+Description=Relay-authoritative NIP-29 group chat support for Gnostr.
+Authors=Gnostr Contributors
+Version=0.1
+Copyright=Copyright © 2026 Gnostr Contributors
+Website=https://github.com/gnostr
+Loader=c
+Builtin=true

@@ -48,6 +48,9 @@ struct _GnostrPluginManager
   /* Track loaded plugins */
   GHashTable *loaded_plugins; /* plugin_id -> GnostrPlugin* */
 
+  /* Track sidebar panel IDs contributed by each plugin for unload cleanup */
+  GHashTable *plugin_sidebar_items; /* plugin_id -> GPtrArray<char*> */
+
   /* Shared state for contexts */
   GtkWindow *main_window;
 
@@ -69,6 +72,53 @@ static void on_extension_removed(PeasExtensionSet *set, PeasPluginInfo *info,
 static GnostrPluginManager *s_default_manager = NULL;
 
 static void
+track_plugin_sidebar_item(GnostrPluginManager *manager,
+                          const char          *plugin_id,
+                          const char          *panel_id)
+{
+  if (!manager || !plugin_id || !panel_id)
+    return;
+
+  GPtrArray *items = g_hash_table_lookup(manager->plugin_sidebar_items, plugin_id);
+  if (!items) {
+    items = g_ptr_array_new_with_free_func(g_free);
+    g_hash_table_insert(manager->plugin_sidebar_items, g_strdup(plugin_id), items);
+  }
+
+  for (guint i = 0; i < items->len; i++) {
+    if (g_strcmp0(g_ptr_array_index(items, i), panel_id) == 0)
+      return;
+  }
+
+  g_ptr_array_add(items, g_strdup(panel_id));
+}
+
+static void
+remove_plugin_sidebar_items(GnostrPluginManager *manager,
+                            const char          *plugin_id)
+{
+  if (!manager || !plugin_id)
+    return;
+
+  GPtrArray *items = g_hash_table_lookup(manager->plugin_sidebar_items, plugin_id);
+  if (!items)
+    return;
+
+  if (manager->main_window && GNOSTR_IS_MAIN_WINDOW(manager->main_window)) {
+    GnostrSessionView *session_view = gnostr_main_window_get_session_view(
+        GNOSTR_MAIN_WINDOW(manager->main_window));
+    if (session_view) {
+      for (guint i = 0; i < items->len; i++) {
+        const char *panel_id = g_ptr_array_index(items, i);
+        gnostr_session_view_remove_plugin_sidebar_item(session_view, panel_id);
+      }
+    }
+  }
+
+  g_hash_table_remove(manager->plugin_sidebar_items, plugin_id);
+}
+
+static void
 gnostr_plugin_manager_dispose(GObject *obj)
 {
   GnostrPluginManager *self = GNOSTR_PLUGIN_MANAGER(obj);
@@ -79,6 +129,7 @@ gnostr_plugin_manager_dispose(GObject *obj)
 
   g_clear_object(&self->settings);
   g_clear_pointer(&self->loaded_plugins, g_hash_table_unref);
+  g_clear_pointer(&self->plugin_sidebar_items, g_hash_table_unref);
 
   /* Free all plugin contexts */
   g_clear_pointer(&self->plugin_contexts, g_hash_table_unref);
@@ -105,6 +156,8 @@ gnostr_plugin_manager_init(GnostrPluginManager *self)
                                                g_free, g_object_unref);
   self->plugin_contexts = g_hash_table_new_full(g_str_hash, g_str_equal,
                                                  g_free, (GDestroyNotify)gnostr_plugin_context_free);
+  self->plugin_sidebar_items = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                     g_free, (GDestroyNotify)g_ptr_array_unref);
   self->initialized = FALSE;
   self->shutdown = FALSE;
 
@@ -554,6 +607,7 @@ on_extension_added(PeasExtensionSet *set,
               item->position,
               ui_ext,
               ctx);
+          track_plugin_sidebar_item(manager, id, item->id);
           g_debug("[PLUGIN] Added sidebar item: %s", item->label);
         }
         g_list_free_full(sidebar_items, (GDestroyNotify)gnostr_sidebar_item_free);
@@ -579,6 +633,9 @@ on_extension_removed(PeasExtensionSet *set,
 
     /* Get the plugin's context */
     GnostrPluginContext *ctx = g_hash_table_lookup(manager->plugin_contexts, id);
+
+    /* Remove UI contributions before the module can be unloaded. */
+    remove_plugin_sidebar_items(manager, id);
 
     /* Deactivate the plugin */
     if (ctx) {
@@ -643,6 +700,7 @@ gnostr_plugin_manager_set_main_window(GnostrPluginManager *manager,
                   item->position,
                   ui_ext,
                   ctx);
+              track_plugin_sidebar_item(manager, plugin_id, item->id);
               g_debug("[PLUGIN] Added sidebar item (deferred): %s", item->label);
             }
             g_list_free_full(sidebar_items, (GDestroyNotify)gnostr_sidebar_item_free);

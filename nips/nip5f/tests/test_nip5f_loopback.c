@@ -232,19 +232,14 @@ static int test_with_authorized_client(void) {
     return 1;
   }
 
-  /* Connect client with authorization token */
+  /* Connect client (auth token is passed via env var NOSTR_SIGNER_AUTH_TOKEN) */
   void *cli = NULL;
-  if (nostr_nip5f_client_connect_with_auth(sock_path, test_token, &cli) != 0) {
-    /* If client_connect_with_auth doesn't exist, fall back to regular connect
-     * and note that auth might not be implemented yet */
-    fprintf(stderr, "Note: Auth-aware client connect not implemented, using basic connect\n");
-    if (nostr_nip5f_client_connect(sock_path, &cli) != 0) {
-      fprintf(stderr, "client connect failed\n");
-      nostr_nip5f_server_stop(srv);
-      free(sk); free(expected_pub); free(sock_path);
-      unsetenv("NOSTR_SIGNER_AUTH_TOKEN");
-      return 1;
-    }
+  if (nostr_nip5f_client_connect(sock_path, &cli) != 0) {
+    fprintf(stderr, "client connect failed\n");
+    nostr_nip5f_server_stop(srv);
+    free(sk); free(expected_pub); free(sock_path);
+    unsetenv("NOSTR_SIGNER_AUTH_TOKEN");
+    return 1;
   }
 
   /* Test basic operation */

@@ -51,6 +51,11 @@ struct _GnostrPluginContext
   GHashTable     *subscriptions;  /* subid (guint64) -> PluginSubscription* */
   guint64         next_sub_id;
 
+  /* Raw relay operations (nostrc-8rw) */
+  GHashTable     *relay_subscriptions;  /* subid (guint64*) -> PluginRelaySubscription* */
+  GHashTable     *relay_queries;        /* PluginRelayQueryAsync* -> same, no ownership */
+  guint64         next_relay_sub_id;
+
   /* Action handlers */
   GHashTable     *actions;  /* action_name (char*) -> PluginAction* */
 };
@@ -80,6 +85,13 @@ typedef struct
   GDestroyNotify   destroy_notify;
 } PluginSubscription;
 
+typedef struct _PluginRelaySubscription PluginRelaySubscription;
+typedef struct _PluginRelayQueryAsync PluginRelayQueryAsync;
+
+static void plugin_relay_subscription_unref(PluginRelaySubscription *sub);
+static void plugin_relay_subscription_close_and_unref(PluginRelaySubscription *sub);
+static void plugin_relay_query_cancel_for_context_free(PluginRelayQueryAsync *data);
+
 static void
 plugin_subscription_free(PluginSubscription *sub)
 {
@@ -106,9 +118,13 @@ gnostr_plugin_context_new(GtkApplication *app, const char *plugin_id)
   ctx->plugin_id = g_strdup(plugin_id ? plugin_id : "unknown");
   ctx->subscriptions = g_hash_table_new_full(g_int64_hash, g_int64_equal,
                                               NULL, (GDestroyNotify)plugin_subscription_free);
+  ctx->relay_subscriptions = g_hash_table_new_full(g_int64_hash, g_int64_equal,
+                                                   g_free, (GDestroyNotify)plugin_relay_subscription_close_and_unref);
+  ctx->relay_queries = g_hash_table_new(g_direct_hash, g_direct_equal);
   ctx->actions = g_hash_table_new_full(g_str_hash, g_str_equal,
                                         NULL, (GDestroyNotify)plugin_action_free);
   ctx->next_sub_id = 1;
+  ctx->next_relay_sub_id = 1;
   return ctx;
 }
 
@@ -116,6 +132,19 @@ void
 gnostr_plugin_context_free(GnostrPluginContext *ctx)
 {
   if (!ctx) return;
+
+  if (ctx->relay_queries) {
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, ctx->relay_queries);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+      plugin_relay_query_cancel_for_context_free((PluginRelayQueryAsync *)value);
+    }
+    g_hash_table_remove_all(ctx->relay_queries);
+    g_clear_pointer(&ctx->relay_queries, g_hash_table_unref);
+  }
+
+  g_clear_pointer(&ctx->relay_subscriptions, g_hash_table_unref);
   g_clear_pointer(&ctx->subscriptions, g_hash_table_unref);
   g_clear_pointer(&ctx->actions, g_hash_table_unref);
   g_clear_pointer(&ctx->plugin_id, g_free);
@@ -923,6 +952,520 @@ gnostr_plugin_context_request_relay_events_finish(GnostrPluginContext *context,
   (void)context;
   g_return_val_if_fail(G_IS_TASK(result), FALSE);
   return g_task_propagate_boolean(G_TASK(result), error);
+}
+
+/* --- Raw Relay Query/Subscription API (nostrc-8rw) --- */
+
+GnostrPluginRelayEvent *
+gnostr_plugin_relay_event_copy(const GnostrPluginRelayEvent *event)
+{
+  if (!event) return NULL;
+
+  GnostrPluginRelayEvent *copy = g_new0(GnostrPluginRelayEvent, 1);
+  copy->relay_url = g_strdup(event->relay_url);
+  copy->event_json = g_strdup(event->event_json);
+  return copy;
+}
+
+void
+gnostr_plugin_relay_event_free(GnostrPluginRelayEvent *event)
+{
+  if (!event) return;
+  g_clear_pointer(&event->relay_url, g_free);
+  g_clear_pointer(&event->event_json, g_free);
+  g_free(event);
+}
+
+struct _PluginRelayQueryAsync
+{
+  GnostrPluginContext *context;
+  GTask               *task;
+  GPtrArray           *results;  /* GnostrPluginRelayEvent* */
+  GCancellable        *cancellable;
+  GCancellable        *external_cancellable;
+  gulong               external_cancel_handler;
+  GAsyncReadyCallback  callback;
+  gpointer             user_data;
+  guint                pending;
+  gboolean             suppress_callback;
+  GError              *first_error;
+};
+
+typedef struct
+{
+  PluginRelayQueryAsync *parent;
+  char                  *relay_url;
+  GNostrPool            *pool;
+} PluginRelayQueryOp;
+
+static void
+plugin_relay_query_op_free(PluginRelayQueryOp *op)
+{
+  if (!op) return;
+  g_clear_pointer(&op->relay_url, g_free);
+  g_clear_object(&op->pool);
+  g_free(op);
+}
+
+static NostrFilters *
+plugin_relay_query_build_filters(const GnostrPluginRelayQuery *query,
+                                 GError                     **error)
+{
+  if (!query || !query->filter_json || !*query->filter_json) {
+    g_set_error(error, GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_INVALID_DATA,
+                "Raw relay query requires filter_json");
+    return NULL;
+  }
+
+  NostrFilter *filter = nostr_filter_new();
+  if (!filter) {
+    g_set_error(error, GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_INVALID_DATA,
+                "Failed to allocate relay filter");
+    return NULL;
+  }
+
+  if (nostr_filter_deserialize(filter, query->filter_json) != 0) {
+    nostr_filter_free(filter);
+    g_set_error(error, GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_INVALID_DATA,
+                "Failed to parse relay filter JSON");
+    return NULL;
+  }
+
+  NostrFilters *filters = nostr_filters_new();
+  if (!filters || !nostr_filters_add(filters, filter)) {
+    nostr_filter_free(filter);
+    if (filters) nostr_filters_free(filters);
+    g_set_error(error, GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_INVALID_DATA,
+                "Failed to build relay filter set");
+    return NULL;
+  }
+
+  nostr_filter_free(filter);
+  return filters;
+}
+
+static char **
+plugin_relay_query_dup_urls(const GnostrPluginRelayQuery *query,
+                            gsize                       *out_count,
+                            GError                     **error)
+{
+  gsize count = query ? query->n_relay_urls : 0;
+  if (count == 0 && query && query->relay_urls) {
+    while (query->relay_urls[count] != NULL)
+      count++;
+  }
+
+  if (!query || !query->relay_urls || count == 0) {
+    g_set_error(error, GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_INVALID_DATA,
+                "Raw relay query requires at least one relay URL");
+    return NULL;
+  }
+
+  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
+  for (gsize i = 0; i < count; i++) {
+    const char *url = query->relay_urls[i];
+    if (url && *url)
+      g_ptr_array_add(urls, g_strdup(url));
+  }
+
+  if (urls->len == 0) {
+    g_ptr_array_unref(urls);
+    g_set_error(error, GNOSTR_PLUGIN_ERROR, GNOSTR_PLUGIN_ERROR_INVALID_DATA,
+                "Raw relay query relay URLs were empty");
+    return NULL;
+  }
+
+  if (out_count) *out_count = urls->len;
+  g_ptr_array_add(urls, NULL);
+  return (char **)g_ptr_array_free(urls, FALSE);
+}
+
+static void
+plugin_relay_query_async_free(PluginRelayQueryAsync *data)
+{
+  if (!data) return;
+
+  if (data->context && data->context->relay_queries)
+    g_hash_table_remove(data->context->relay_queries, data);
+
+  if (data->external_cancellable && data->external_cancel_handler > 0)
+    g_cancellable_disconnect(data->external_cancellable, data->external_cancel_handler);
+
+  g_clear_object(&data->external_cancellable);
+  g_clear_object(&data->cancellable);
+  g_clear_error(&data->first_error);
+  g_clear_pointer(&data->results, g_ptr_array_unref);
+  g_clear_object(&data->task);
+  g_free(data);
+}
+
+static void
+plugin_relay_query_complete(PluginRelayQueryAsync *data)
+{
+  if (!data) return;
+
+  if (data->context && data->context->relay_queries)
+    g_hash_table_remove(data->context->relay_queries, data);
+
+  if (data->first_error && (!data->results || data->results->len == 0)) {
+    g_task_return_error(data->task, g_steal_pointer(&data->first_error));
+  } else if (data->cancellable && g_cancellable_is_cancelled(data->cancellable) &&
+             (!data->results || data->results->len == 0)) {
+    g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                            "Raw relay query cancelled");
+  } else {
+    GPtrArray *results = g_steal_pointer(&data->results);
+    if (!results)
+      results = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_plugin_relay_event_free);
+    g_task_return_pointer(data->task, results, (GDestroyNotify)g_ptr_array_unref);
+  }
+
+  /* The callback may unload the plugin and free the context. Do not dereference
+   * data->context after dispatching it. */
+  data->context = NULL;
+  if (!data->suppress_callback && data->callback)
+    data->callback(NULL, G_ASYNC_RESULT(data->task), data->user_data);
+
+  plugin_relay_query_async_free(data);
+}
+
+static void
+on_plugin_relay_query_external_cancelled(GCancellable *cancellable,
+                                         gpointer      user_data)
+{
+  (void)cancellable;
+  PluginRelayQueryAsync *data = user_data;
+  if (data && data->cancellable)
+    g_cancellable_cancel(data->cancellable);
+}
+
+static void
+plugin_relay_query_cancel_for_context_free(PluginRelayQueryAsync *data)
+{
+  if (!data) return;
+
+  data->suppress_callback = TRUE;
+  data->callback = NULL;
+  data->context = NULL;
+  if (data->cancellable)
+    g_cancellable_cancel(data->cancellable);
+}
+
+static void
+on_plugin_relay_query_done(GObject      *source,
+                           GAsyncResult *res,
+                           gpointer      user_data)
+{
+  PluginRelayQueryOp *op = user_data;
+  PluginRelayQueryAsync *data = op->parent;
+  GError *error = NULL;
+
+  GPtrArray *events = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &error);
+  if (error) {
+    if (!data->first_error)
+      data->first_error = error;
+    else
+      g_error_free(error);
+  } else {
+    for (guint i = 0; events && i < events->len; i++) {
+      const char *event_json = g_ptr_array_index(events, i);
+      if (!event_json) continue;
+
+      GnostrPluginRelayEvent *event = g_new0(GnostrPluginRelayEvent, 1);
+      event->relay_url = g_strdup(op->relay_url);
+      event->event_json = g_strdup(event_json);
+      g_ptr_array_add(data->results, event);
+    }
+  }
+
+  if (events)
+    g_ptr_array_unref(events);
+
+  if (data->pending > 0)
+    data->pending--;
+
+  gboolean done = (data->pending == 0);
+  plugin_relay_query_op_free(op);
+
+  if (done)
+    plugin_relay_query_complete(data);
+}
+
+void
+gnostr_plugin_context_query_relays_async(GnostrPluginContext          *context,
+                                         const GnostrPluginRelayQuery *query,
+                                         GCancellable                 *cancellable,
+                                         GAsyncReadyCallback           callback,
+                                         gpointer                      user_data)
+{
+  g_return_if_fail(context != NULL);
+
+  GTask *task = g_task_new(NULL, NULL, NULL, NULL);
+  g_task_set_source_tag(task, gnostr_plugin_context_query_relays_async);
+
+  GError *error = NULL;
+  gsize n_urls = 0;
+  char **urls = plugin_relay_query_dup_urls(query, &n_urls, &error);
+  if (!urls) {
+    g_task_return_error(task, error);
+    if (callback)
+      callback(NULL, G_ASYNC_RESULT(task), user_data);
+    g_object_unref(task);
+    return;
+  }
+
+  PluginRelayQueryAsync *data = g_new0(PluginRelayQueryAsync, 1);
+  data->context = context;
+  data->task = task;
+  data->results = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_plugin_relay_event_free);
+  data->cancellable = g_cancellable_new();
+  data->callback = callback;
+  data->user_data = user_data;
+  data->pending = (guint)n_urls;
+
+  if (cancellable) {
+    data->external_cancellable = g_object_ref(cancellable);
+    data->external_cancel_handler = g_cancellable_connect(cancellable,
+        G_CALLBACK(on_plugin_relay_query_external_cancelled), data, NULL);
+    if (g_cancellable_is_cancelled(cancellable))
+      g_cancellable_cancel(data->cancellable);
+  }
+
+  if (context->relay_queries)
+    g_hash_table_insert(context->relay_queries, data, data);
+
+  for (gsize i = 0; i < n_urls; i++) {
+    NostrFilters *filters = plugin_relay_query_build_filters(query, &error);
+    if (!filters) {
+      if (!data->first_error)
+        data->first_error = error;
+      else
+        g_clear_error(&error);
+      data->pending--;
+      continue;
+    }
+
+    PluginRelayQueryOp *op = g_new0(PluginRelayQueryOp, 1);
+    op->parent = data;
+    op->relay_url = g_strdup(urls[i]);
+    op->pool = gnostr_pool_new();
+
+    const gchar *single_url[1] = { urls[i] };
+    gnostr_pool_query_urls_async(op->pool,
+                                 single_url,
+                                 1,
+                                 filters,
+                                 data->cancellable,
+                                 on_plugin_relay_query_done,
+                                 op);
+  }
+
+  g_strfreev(urls);
+
+  if (data->pending == 0)
+    plugin_relay_query_complete(data);
+}
+
+GPtrArray *
+gnostr_plugin_context_query_relays_finish(GnostrPluginContext *context,
+                                          GAsyncResult        *result,
+                                          GError             **error)
+{
+  (void)context;
+  g_return_val_if_fail(G_IS_TASK(result), NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+struct _PluginRelaySubscription
+{
+  gint                       ref_count;
+  guint64                    id;
+  GnostrPluginContext       *context;
+  GNostrPool                *pool;
+  NostrFilters              *filters;
+  GNostrPoolMultiSub        *multi_sub;
+  GCancellable              *connect_cancellable;
+  GnostrPluginRelayEventFunc event_callback;
+  GnostrPluginRelayEoseFunc  eose_callback;
+  gpointer                   user_data;
+  GDestroyNotify             destroy_notify;
+  gboolean                   closed;
+};
+
+static PluginRelaySubscription *
+plugin_relay_subscription_ref(PluginRelaySubscription *sub)
+{
+  if (sub)
+    g_atomic_int_inc(&sub->ref_count);
+  return sub;
+}
+
+static void
+plugin_relay_subscription_close(PluginRelaySubscription *sub)
+{
+  if (!sub || sub->closed)
+    return;
+
+  sub->closed = TRUE;
+  if (sub->connect_cancellable)
+    g_cancellable_cancel(sub->connect_cancellable);
+  if (sub->multi_sub) {
+    gnostr_pool_multi_sub_close(sub->multi_sub);
+    sub->multi_sub = NULL;
+  }
+  if (sub->filters) {
+    nostr_filters_free(sub->filters);
+    sub->filters = NULL;
+  }
+}
+
+static void
+plugin_relay_subscription_unref(PluginRelaySubscription *sub)
+{
+  if (!sub || !g_atomic_int_dec_and_test(&sub->ref_count))
+    return;
+
+  plugin_relay_subscription_close(sub);
+  if (sub->destroy_notify && sub->user_data)
+    sub->destroy_notify(sub->user_data);
+  g_clear_object(&sub->connect_cancellable);
+  g_clear_object(&sub->pool);
+  g_free(sub);
+}
+
+static void
+plugin_relay_subscription_close_and_unref(PluginRelaySubscription *sub)
+{
+  plugin_relay_subscription_close(sub);
+  plugin_relay_subscription_unref(sub);
+}
+
+static void
+on_plugin_relay_sub_event(GNostrPoolMultiSub *multi_sub,
+                          const gchar        *relay_url,
+                          const gchar        *event_json,
+                          gpointer            user_data)
+{
+  (void)multi_sub;
+  PluginRelaySubscription *sub = user_data;
+  if (!sub || sub->closed || !sub->event_callback)
+    return;
+
+  sub->event_callback(sub->context, sub->id, relay_url, event_json, sub->user_data);
+}
+
+static void
+on_plugin_relay_sub_eose(GNostrPoolMultiSub *multi_sub,
+                         const gchar        *relay_url,
+                         gpointer            user_data)
+{
+  (void)multi_sub;
+  PluginRelaySubscription *sub = user_data;
+  if (!sub || sub->closed || !sub->eose_callback)
+    return;
+
+  sub->eose_callback(sub->context, sub->id, relay_url, sub->user_data);
+}
+
+static void
+on_plugin_relay_sub_connected(GObject      *source,
+                              GAsyncResult *res,
+                              gpointer      user_data)
+{
+  PluginRelaySubscription *sub = user_data;
+  GError *error = NULL;
+
+  if (!sub || sub->closed)
+    goto out;
+
+  if (!gnostr_pool_connect_all_finish(GNOSTR_POOL(source), res, &error)) {
+    g_debug("[plugin-api] Raw relay subscription %lu connect failed: %s",
+            (unsigned long)sub->id, error ? error->message : "unknown");
+    g_clear_error(&error);
+    goto out;
+  }
+
+  sub->multi_sub = gnostr_pool_subscribe_multi(sub->pool,
+                                               sub->filters,
+                                               on_plugin_relay_sub_event,
+                                               on_plugin_relay_sub_eose,
+                                               sub,
+                                               NULL,
+                                               &error);
+  if (!sub->multi_sub) {
+    g_debug("[plugin-api] Raw relay subscription %lu start failed: %s",
+            (unsigned long)sub->id, error ? error->message : "unknown");
+    g_clear_error(&error);
+  }
+
+  if (sub->filters) {
+    nostr_filters_free(sub->filters);
+    sub->filters = NULL;
+  }
+
+out:
+  plugin_relay_subscription_unref(sub);
+}
+
+guint64
+gnostr_plugin_context_subscribe_relays(GnostrPluginContext          *context,
+                                       const GnostrPluginRelayQuery *query,
+                                       GnostrPluginRelayEventFunc    event_callback,
+                                       GnostrPluginRelayEoseFunc     eose_callback,
+                                       gpointer                      user_data,
+                                       GDestroyNotify                destroy_notify,
+                                       GError                      **error)
+{
+  g_return_val_if_fail(context != NULL, 0);
+  g_return_val_if_fail(event_callback != NULL, 0);
+
+  gsize n_urls = 0;
+  char **urls = plugin_relay_query_dup_urls(query, &n_urls, error);
+  if (!urls)
+    return 0;
+
+  NostrFilters *filters = plugin_relay_query_build_filters(query, error);
+  if (!filters) {
+    g_strfreev(urls);
+    return 0;
+  }
+
+  PluginRelaySubscription *sub = g_new0(PluginRelaySubscription, 1);
+  sub->ref_count = 1;
+  sub->id = context->next_relay_sub_id++;
+  sub->context = context;
+  sub->pool = gnostr_pool_new();
+  sub->filters = filters;
+  sub->connect_cancellable = g_cancellable_new();
+  sub->event_callback = event_callback;
+  sub->eose_callback = eose_callback;
+  sub->user_data = user_data;
+  sub->destroy_notify = destroy_notify;
+
+  gnostr_pool_sync_relays(sub->pool, (const gchar **)urls, n_urls);
+  g_strfreev(urls);
+
+  guint64 *key = g_new(guint64, 1);
+  *key = sub->id;
+  g_hash_table_insert(context->relay_subscriptions, key, sub);
+
+  gnostr_pool_connect_all_async(sub->pool,
+                                sub->connect_cancellable,
+                                on_plugin_relay_sub_connected,
+                                plugin_relay_subscription_ref(sub));
+
+  return sub->id;
+}
+
+void
+gnostr_plugin_context_unsubscribe_relays(GnostrPluginContext *context,
+                                         guint64              subscription_id)
+{
+  g_return_if_fail(context != NULL);
+  if (!context->relay_subscriptions)
+    return;
+
+  g_hash_table_remove(context->relay_subscriptions, &subscription_id);
 }
 
 /* --- Storage Access --- */

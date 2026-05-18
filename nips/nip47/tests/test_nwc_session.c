@@ -5,6 +5,7 @@
 
 #include "nostr/nip47/nwc_client.h"
 #include "nostr/nip47/nwc_wallet.h"
+#include "json.h"
 
 int main(void) {
   const char *client_supported[] = {"nip44-v2", "nip04"};

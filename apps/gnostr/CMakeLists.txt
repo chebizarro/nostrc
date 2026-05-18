@@ -346,6 +346,11 @@ add_subdirectory(plugins/nip34-git)
 add_subdirectory(plugins/nip64-chess)
 add_subdirectory(plugins/nip99-marketplace)
 add_subdirectory(plugins/mls-groups)
+if (TARGET nip29)
+  add_subdirectory(plugins/nip29-groups)
+else()
+  message(STATUS "nip29 target not found — skipping nip29-groups plugin (enable ENABLE_NIP29=ON to build it)")
+endif()
 
 # Make gnostr depend on plugins so they're built together
 add_dependencies(${APP_CLIENT_BIN}
@@ -361,6 +366,9 @@ add_dependencies(${APP_CLIENT_BIN}
   nip99-marketplace
   mls-groups
 )
+if (TARGET nip29-groups)
+  add_dependencies(${APP_CLIENT_BIN} nip29-groups)
+endif()
 
 # ---- OpenSSL for DM file encryption (AES-GCM) ----
 # OpenSSL is already found at the top-level CMakeLists.txt
@@ -699,6 +707,34 @@ if (BUILD_TESTING)
   set_tests_properties(gnostr-test-profile-event-validation PROPERTIES
     TIMEOUT 30
     LABELS "profile;validation;unit;gnostr")
+
+  add_executable(gnostr-test-plugin-raw-relay-api
+    tests/test_plugin_raw_relay_api.c
+    src/gnostr-plugin-api.c)
+  target_compile_features(gnostr-test-plugin-raw-relay-api PRIVATE c_std_11)
+  target_include_directories(gnostr-test-plugin-raw-relay-api PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include
+    ${PROJECT_ROOT}/nostr-gtk/include
+    ${PROJECT_ROOT}/libnostr/include
+    ${PROJECT_ROOT}/libgo/include
+    ${_NOSTR_CONFIG_DIR})
+  target_link_libraries(gnostr-test-plugin-raw-relay-api PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO PkgConfig::GTK4 PkgConfig::ADWAITA
+    PkgConfig::JSON_GLIB nostr_gobject nostr_gtk)
+  if (TARGET nostr_json)
+    target_link_libraries(gnostr-test-plugin-raw-relay-api PRIVATE nostr_json)
+  endif()
+  if (APPLE)
+    target_link_options(gnostr-test-plugin-raw-relay-api PRIVATE -Wl,-undefined,dynamic_lookup)
+  else()
+    target_link_options(gnostr-test-plugin-raw-relay-api PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+  endif()
+  _gnostr_apply_sanitizers(gnostr-test-plugin-raw-relay-api)
+  add_test(NAME gnostr-test-plugin-raw-relay-api COMMAND gnostr-test-plugin-raw-relay-api)
+  set_tests_properties(gnostr-test-plugin-raw-relay-api PROPERTIES
+    TIMEOUT 30
+    LABELS "plugin;relay;unit;gnostr")
 
   add_executable(gnostr-test-dm-gift-wrap-validation
     tests/test_dm_gift_wrap_validation.c

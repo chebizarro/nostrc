@@ -162,7 +162,9 @@ struct _GnostrSessionView {
   GHashTable *plugin_contexts;    /* panel_id -> GnostrPluginContext* */
   GHashTable *plugin_labels;      /* panel_id -> char* (display label) */
   GHashTable *plugin_auth_required; /* panel_id -> GINT_TO_POINTER(gboolean) */
-  GtkWidget *plugin_separator;    /* Separator before plugin items */
+  GHashTable *plugin_positions;   /* panel_id -> GINT_TO_POINTER(position) */
+  GtkWidget *plugin_separator;    /* Separator widget before plugin items */
+  GtkWidget *plugin_separator_row; /* Whole non-activatable "More" row */
 
   /* Optional toast forwarding (weak) */
   GWeakRef toast_overlay_ref;
@@ -828,6 +830,7 @@ static void gnostr_session_view_dispose(GObject *object) {
   g_clear_pointer(&self->plugin_contexts, g_hash_table_unref);
   g_clear_pointer(&self->plugin_labels, g_hash_table_unref);
   g_clear_pointer(&self->plugin_auth_required, g_hash_table_unref);
+  g_clear_pointer(&self->plugin_positions, g_hash_table_unref);
 
   G_OBJECT_CLASS(gnostr_session_view_parent_class)->dispose(object);
 }
@@ -1126,7 +1129,9 @@ static void gnostr_session_view_init(GnostrSessionView *self) {
   self->plugin_contexts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->plugin_labels = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   self->plugin_auth_required = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->plugin_positions = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->plugin_separator = NULL;
+  self->plugin_separator_row = NULL;
 
   gtk_widget_init_template(GTK_WIDGET(self));
 
@@ -1763,7 +1768,7 @@ static GtkWidget *create_plugin_sidebar_row(const char *label, const char *icon_
 
 /* Helper: Ensure the plugin separator exists in the sidebar */
 static void ensure_plugin_separator(GnostrSessionView *self) {
-  if (self->plugin_separator) return;
+  if (self->plugin_separator_row) return;
   if (!self->sidebar_list) return;
 
   /* Build a section header: thin separator + "More" label */
@@ -1794,6 +1799,27 @@ static void ensure_plugin_separator(GnostrSessionView *self) {
 
   /* Add after the last fixed row */
   gtk_list_box_append(self->sidebar_list, sep_row);
+  self->plugin_separator_row = sep_row;
+}
+
+static int plugin_sidebar_insert_index(GnostrSessionView *self, int position) {
+  if (!self->plugin_separator_row)
+    return -1;
+
+  int effective_position = (position < 0) ? G_MAXINT : position;
+  int index = gtk_list_box_row_get_index(GTK_LIST_BOX_ROW(self->plugin_separator_row)) + 1;
+  if (self->plugin_positions) {
+    GHashTableIter iter;
+    gpointer key, value;
+    g_hash_table_iter_init(&iter, self->plugin_positions);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+      int existing_position = GPOINTER_TO_INT(value);
+      int existing_effective = (existing_position < 0) ? G_MAXINT : existing_position;
+      if (existing_effective <= effective_position)
+        index++;
+    }
+  }
+  return index;
 }
 
 void gnostr_session_view_add_plugin_sidebar_item(GnostrSessionView *self,
@@ -1833,13 +1859,16 @@ void gnostr_session_view_add_plugin_sidebar_item(GnostrSessionView *self,
     g_hash_table_insert(self->plugin_contexts, g_strdup(panel_id), context);
   }
 
-  /* Add to sidebar_list */
+  /* Add to sidebar_list within the dedicated plugin section only. */
   if (self->sidebar_list) {
-    /* Position: 0 means first plugin item (after separator), -1 means end */
-    /* For now, we just append - position handling could be improved */
-    (void)position;  /* Unused for now - append at end */
-    gtk_list_box_append(self->sidebar_list, row);
+    int insert_index = plugin_sidebar_insert_index(self, position);
+    if (insert_index >= 0)
+      gtk_list_box_insert(self->sidebar_list, row, insert_index);
+    else
+      gtk_list_box_append(self->sidebar_list, row);
   }
+
+  g_hash_table_insert(self->plugin_positions, g_strdup(panel_id), GINT_TO_POINTER(position));
 
   /* Apply auth gating if needed */
   if (requires_auth && !self->authenticated) {
@@ -1853,6 +1882,14 @@ void gnostr_session_view_remove_plugin_sidebar_item(GnostrSessionView *self,
                                                      const char *panel_id) {
   g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
   g_return_if_fail(panel_id != NULL);
+
+  /* If the removed plugin panel is active, leave it before destroying the row
+   * or stack child so sidebar selection/title remain valid. */
+  if (self->stack) {
+    const char *visible = adw_view_stack_get_visible_child_name(self->stack);
+    if (g_strcmp0(visible, panel_id) == 0)
+      gnostr_session_view_show_page(self, "timeline");
+  }
 
   /* Remove the sidebar row */
   GtkWidget *row = g_hash_table_lookup(self->plugin_rows, panel_id);
@@ -1873,14 +1910,14 @@ void gnostr_session_view_remove_plugin_sidebar_item(GnostrSessionView *self,
   g_hash_table_remove(self->plugin_contexts, panel_id);
   g_hash_table_remove(self->plugin_labels, panel_id);
   g_hash_table_remove(self->plugin_auth_required, panel_id);
+  g_hash_table_remove(self->plugin_positions, panel_id);
 
-  /* If no more plugin items, remove the separator */
-  if (g_hash_table_size(self->plugin_rows) == 0 && self->plugin_separator) {
-    GtkWidget *sep_row = gtk_widget_get_parent(self->plugin_separator);
-    if (sep_row && self->sidebar_list) {
-      gtk_list_box_remove(self->sidebar_list, sep_row);
-    }
+  /* If no more plugin items, remove the whole separator row. */
+  if (g_hash_table_size(self->plugin_rows) == 0 && self->plugin_separator_row) {
+    if (self->sidebar_list)
+      gtk_list_box_remove(self->sidebar_list, self->plugin_separator_row);
     self->plugin_separator = NULL;
+    self->plugin_separator_row = NULL;
   }
 
   g_debug("Removed plugin sidebar item: %s", panel_id);
