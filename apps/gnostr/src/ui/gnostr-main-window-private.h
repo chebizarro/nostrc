@@ -315,6 +315,7 @@ void gnostr_main_window_setup_initial_tabs_internal(GnostrMainWindow *self);
  * known user pubkey without requiring user interaction.
  * nostrc-e03f.4. */
 void gnostr_main_window_refresh_current_tab_filter_internal(GnostrMainWindow *self);
+void gnostr_main_window_refresh_card_visibility_policy_internal(GnostrMainWindow *self);
 
 /* Open or focus a CUSTOM timeline tab backed by the filter set with the
  * given id. Idempotent per id: calling with a filter-set id that already

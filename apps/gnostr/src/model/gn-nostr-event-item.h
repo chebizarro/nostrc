@@ -39,6 +39,7 @@ gint gn_nostr_event_item_get_kind(GnNostrEventItem *self);
 const gchar *gn_nostr_event_item_get_alt_text(GnNostrEventItem *self);
 
 GNostrProfile *gn_nostr_event_item_get_profile(GnNostrEventItem *self);
+gboolean gn_nostr_event_item_get_explicitly_loaded(GnNostrEventItem *self);
 const char *gn_nostr_event_item_get_thread_root_id(GnNostrEventItem *self);
 const char *gn_nostr_event_item_get_parent_id(GnNostrEventItem *self);
 guint gn_nostr_event_item_get_reply_depth(GnNostrEventItem *self);
@@ -56,6 +57,7 @@ gboolean gn_nostr_event_item_get_revealing(GnNostrEventItem *self);
 void gn_nostr_event_item_set_revealing(GnNostrEventItem *self, gboolean revealing);
 
 void gn_nostr_event_item_set_profile(GnNostrEventItem *self, GNostrProfile *profile);
+void gn_nostr_event_item_set_explicitly_loaded(GnNostrEventItem *self, gboolean explicitly_loaded);
 void gn_nostr_event_item_set_thread_info(GnNostrEventItem *self,
 					 const char *root_id,
 					 const char *parent_id,

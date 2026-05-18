@@ -39,6 +39,7 @@ on_follow_save_complete(GnostrContactList *cl,
     return;
 
   if (success) {
+    gnostr_main_window_refresh_card_visibility_policy_internal(ctx->self);
     gnostr_main_window_show_toast(GTK_WIDGET(ctx->self),
                                   ctx->was_following ? "Unfollowed" : "Followed");
   } else {

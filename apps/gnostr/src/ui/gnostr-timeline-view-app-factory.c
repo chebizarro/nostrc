@@ -1,6 +1,7 @@
 #include "gnostr-timeline-view-app-factory.h"
 #include "gnostr-avatar-cache.h"
 #include <nostr-gtk-1.0/gn-timeline-tabs.h>
+#include <nostr-gtk-1.0/gnostr-card-visibility-policy.h>
 /* nostrc-hqtn: gnostr-main-window.h moved to gnostr-timeline-action-relay.c */
 #include <nostr-gtk-1.0/nostr-note-card-row.h>
 /* nostrc-hqtn: gnostr-zap-dialog.h moved to gnostr-timeline-action-relay.c */
@@ -60,7 +61,27 @@
 
 static NostrGtkNoteCardRow *get_bound_note_card_row_for_item(gpointer user_data, GObject *expected_item);
 
-/* Callback when profile is loaded for an event item - show the row */
+static gboolean
+timeline_row_should_be_visible(NostrGtkTimelineView *view, GnNostrEventItem *item)
+{
+  if (!GN_IS_NOSTR_EVENT_ITEM(item))
+    return FALSE;
+
+  GnostrCardVisibilityPolicy *policy = NULL;
+  if (view && NOSTR_GTK_IS_TIMELINE_VIEW(view))
+    policy = g_object_get_data(G_OBJECT(view), "gnostr-card-visibility-policy");
+
+  const char *author_pubkey = gn_nostr_event_item_get_pubkey(item);
+  gboolean has_profile = (gn_nostr_event_item_get_profile(item) != NULL);
+  gboolean explicitly_loaded = gn_nostr_event_item_get_explicitly_loaded(item);
+
+  return gnostr_card_visibility_policy_should_show(policy,
+                                                   author_pubkey,
+                                                   has_profile,
+                                                   explicitly_loaded);
+}
+
+/* Callback when profile is loaded for an event item - update the row and re-evaluate visibility */
 static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec, gpointer user_data) {
   (void)pspec;
 
@@ -89,7 +110,6 @@ static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec
 
     if (NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
       nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row), display, handle, avatar_url);
-      gtk_widget_set_visible(row, TRUE);
 
       /* NIP-05: Set verification identifier if available */
       if (nip05 && *nip05) {
@@ -108,6 +128,15 @@ static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec
     g_free(nip05);
     g_object_unref(profile);
   }
+
+  GtkListItem *list_item = GTK_LIST_ITEM(user_data);
+  gpointer view = g_object_get_data(G_OBJECT(list_item), "tv-timeline-view");
+  NostrGtkTimelineView *timeline_view = NOSTR_GTK_IS_TIMELINE_VIEW(view)
+      ? NOSTR_GTK_TIMELINE_VIEW(view)
+      : NULL;
+  gtk_widget_set_visible(row,
+                         timeline_row_should_be_visible(timeline_view,
+                                                        GN_NOSTR_EVENT_ITEM(event_item)));
 }
 
 /* Handler for search-hashtag signal from note card rows */
@@ -327,6 +356,7 @@ static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gp
       g_signal_handlers_disconnect_by_data(bound_item, row);
   }
   g_object_set_data(G_OBJECT(item), "tv-bound-item", NULL);
+  g_object_set_data(G_OBJECT(item), "tv-timeline-view", NULL);
 
   cleanup_bound_row(row);
 }
@@ -566,6 +596,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
   g_object_set_data_full(G_OBJECT(item), "tv-bound-item",
                          g_object_ref(obj), g_object_unref);
+  g_object_set_data(G_OBJECT(item), "tv-timeline-view", self);
   
   gchar *display = NULL, *handle = NULL, *ts = NULL, *content = NULL, *root_id = NULL, *avatar_url = NULL;
   gchar *pubkey = NULL, *id_hex = NULL, *parent_id = NULL, *parent_pubkey = NULL, *nip05 = NULL;
@@ -629,6 +660,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
      * cancellable. Must be called BEFORE populating the row with data.
      * nostrc-o7pp: Matches NoteCardFactory pattern. */
     nostr_gtk_note_card_row_prepare_for_bind(NOSTR_GTK_NOTE_CARD_ROW(row));
+    gtk_widget_set_visible(row, FALSE);
 
     /* Use pubkey prefix as fallback if no profile info available */
     g_autofree gchar *display_fallback = NULL;
@@ -1074,15 +1106,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
     g_free(user_pubkey);
 
-    /* Always show row - use fallback display if no profile */
-    gtk_widget_set_visible(row, TRUE);
+    gtk_widget_set_visible(row, timeline_row_should_be_visible(self, GN_NOSTR_EVENT_ITEM(obj)));
 
     /* Connect to profile change notification to update author when profile loads.
      * Use plain g_signal_connect (NOT g_signal_connect_object) because unbind
      * explicitly disconnects via disconnect_by_data. Combining explicit disconnect
      * with g_signal_connect_object causes double-removal of invalidation notifiers
      * → "unable to remove uninstalled invalidation notifier" → SIGABRT. */
-    if (!display && !handle) {
+    if (gn_nostr_event_item_get_profile(GN_NOSTR_EVENT_ITEM(obj)) == NULL) {
       g_signal_connect(obj, "notify::profile",
                        G_CALLBACK(on_event_item_profile_changed), item);
     }
@@ -1137,6 +1168,7 @@ static void factory_teardown_cb(GtkSignalListItemFactory *f, GtkListItem *item, 
       g_signal_handlers_disconnect_by_data(bound_item, row);
   }
   g_object_set_data(G_OBJECT(item), "tv-bound-item", NULL);
+  g_object_set_data(G_OBJECT(item), "tv-timeline-view", NULL);
 
   cleanup_bound_row(row);
 }

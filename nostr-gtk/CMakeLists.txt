@@ -90,6 +90,7 @@ set(NOSTR_GTK_SOURCES
   src/gnostr-thread-view.c
   src/gnostr-composer.c
   src/gnostr-profile-pane.c
+  src/gnostr-card-visibility-policy.c
   src/nostr-note-card-row.c
   src/note-card-binding-ctx.c
   src/note-card-data.c
@@ -106,6 +107,7 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/gnostr-thread-view.h
   include/nostr-gtk-1.0/gnostr-composer.h
   include/nostr-gtk-1.0/gnostr-profile-pane.h
+  include/nostr-gtk-1.0/gnostr-card-visibility-policy.h
   include/nostr-gtk-1.0/nostr-note-card-row.h
   include/nostr-gtk-1.0/gn-timeline-tabs.h
   include/nostr-gtk-1.0/gnostr-timeline-view.h

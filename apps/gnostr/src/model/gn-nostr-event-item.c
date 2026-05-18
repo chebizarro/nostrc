@@ -28,6 +28,9 @@ struct _GnNostrEventItem {
   /* Profile object */
   GNostrProfile *profile;
 
+  /* Runtime-only marker for events loaded by explicit user navigation. */
+  gboolean explicitly_loaded;
+
   /* Thread info (stored, not fetched from nostrdb) */
   char *thread_root_id;
   char *parent_id;
@@ -603,6 +606,11 @@ GNostrProfile *gn_nostr_event_item_get_profile(GnNostrEventItem *self) {
   return self->profile;
 }
 
+gboolean gn_nostr_event_item_get_explicitly_loaded(GnNostrEventItem *self) {
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), FALSE);
+  return self->explicitly_loaded;
+}
+
 const char *gn_nostr_event_item_get_thread_root_id(GnNostrEventItem *self) {
   g_return_val_if_fail(GN_IS_NOSTR_EVENT_ITEM(self), NULL);
   return self->thread_root_id;
@@ -648,6 +656,11 @@ void gn_nostr_event_item_set_profile(GnNostrEventItem *self, GNostrProfile *prof
    * This caused timeline profile display to not update when profiles arrived. */
   g_set_object(&self->profile, profile);
   g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_PROFILE]);
+}
+
+void gn_nostr_event_item_set_explicitly_loaded(GnNostrEventItem *self, gboolean explicitly_loaded) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(self));
+  self->explicitly_loaded = explicitly_loaded;
 }
 
 void gn_nostr_event_item_set_thread_info(GnNostrEventItem *self,

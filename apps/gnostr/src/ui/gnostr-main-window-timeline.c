@@ -5,6 +5,9 @@
 #include "gnostr-session-view.h"
 #include "gnostr-filter-switcher.h"
 #include <nostr-gtk-1.0/gnostr-timeline-view.h>
+#include <nostr-gtk-1.0/gnostr-card-visibility-policy.h>
+#include <nostr-gtk-1.0/gnostr-profile-pane.h>
+#include <nostr-gtk-1.0/gnostr-thread-view.h>
 
 #include "../model/gn-nostr-event-model.h"
 #include "../model/gnostr-filter-set.h"
@@ -16,6 +19,91 @@
 #include <nostr-gtk-1.0/gn-timeline-tabs.h>
 
 #include <string.h>
+
+#define GNOSTR_CARD_VISIBILITY_POLICY_DATA_KEY "gnostr-card-visibility-policy"
+
+static char **
+load_followed_pubkeys_snapshot(const char *viewer_pubkey_hex, gsize *out_count)
+{
+  if (out_count)
+    *out_count = 0;
+
+  if (!viewer_pubkey_hex || !*viewer_pubkey_hex)
+    return NULL;
+
+  char **followed = storage_ndb_get_followed_pubkeys(viewer_pubkey_hex);
+  if (followed && out_count)
+    *out_count = g_strv_length(followed);
+
+  return followed;
+}
+
+static GnostrCardVisibilityPolicy *
+get_or_create_card_visibility_policy(GnostrMainWindow *self)
+{
+  GnostrCardVisibilityPolicy *policy = g_object_get_data(
+      G_OBJECT(self), GNOSTR_CARD_VISIBILITY_POLICY_DATA_KEY);
+  if (policy)
+    return policy;
+
+  policy = gnostr_card_visibility_policy_new();
+  g_object_set_data_full(G_OBJECT(self),
+                         GNOSTR_CARD_VISIBILITY_POLICY_DATA_KEY,
+                         policy,
+                         g_object_unref);
+  return policy;
+}
+
+void
+gnostr_main_window_refresh_card_visibility_policy_internal(GnostrMainWindow *self)
+{
+  if (!GNOSTR_IS_MAIN_WINDOW(self))
+    return;
+
+  GnostrCardVisibilityPolicy *policy = get_or_create_card_visibility_policy(self);
+  if (!policy)
+    return;
+
+  gsize n_followed = 0;
+  g_auto(GStrv) followed = load_followed_pubkeys_snapshot(self->user_pubkey_hex, &n_followed);
+
+  gboolean changed = gnostr_card_visibility_policy_replace_follow_snapshot(
+      policy,
+      self->user_pubkey_hex,
+      (const char * const *)followed);
+
+  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view)) {
+    GtkWidget *timeline = gnostr_session_view_get_timeline(self->session_view);
+    if (timeline && NOSTR_GTK_IS_TIMELINE_VIEW(timeline))
+      g_object_set_data_full(G_OBJECT(timeline),
+                             GNOSTR_CARD_VISIBILITY_POLICY_DATA_KEY,
+                             g_object_ref(policy),
+                             g_object_unref);
+
+    GtkWidget *thread_view = gnostr_session_view_get_thread_view(self->session_view);
+    if (thread_view && NOSTR_GTK_IS_THREAD_VIEW(thread_view))
+      g_object_set_data_full(G_OBJECT(thread_view),
+                             GNOSTR_CARD_VISIBILITY_POLICY_DATA_KEY,
+                             g_object_ref(policy),
+                             g_object_unref);
+
+    GtkWidget *profile_pane = gnostr_session_view_get_profile_pane(self->session_view);
+    if (profile_pane && NOSTR_GTK_IS_PROFILE_PANE(profile_pane))
+      g_object_set_data_full(G_OBJECT(profile_pane),
+                             GNOSTR_CARD_VISIBILITY_POLICY_DATA_KEY,
+                             g_object_ref(policy),
+                             g_object_unref);
+  }
+
+  if (changed) {
+    g_debug("[CARD_VISIBILITY] refreshed follow snapshot for %s: %zu followed pubkeys",
+            self->user_pubkey_hex ? self->user_pubkey_hex : "(none)",
+            n_followed);
+
+    if (self->event_model && GN_IS_NOSTR_EVENT_MODEL(self->event_model))
+      gn_nostr_event_model_rebind_all(self->event_model);
+  }
+}
 
 void
 gnostr_main_window_on_event_model_need_profile_internal(GnNostrEventModel *model,
@@ -115,17 +203,11 @@ gnostr_main_window_on_timeline_tab_filter_changed_internal(NostrGtkTimelineView 
 
     case GN_TIMELINE_TAB_FOLLOWING:
       if (self->user_pubkey_hex && *self->user_pubkey_hex) {
-        char **followed = storage_ndb_get_followed_pubkeys(self->user_pubkey_hex);
-        if (followed) {
-          gsize n_followed = 0;
-          for (char **p = followed; *p; p++)
-            n_followed++;
-
-          if (n_followed > 0) {
-            query = gnostr_timeline_query_new_for_authors((const char **)followed, n_followed);
-            g_debug("[TAB_FILTER] Following tab: %zu followed pubkeys", n_followed);
-          }
-          g_strfreev(followed);
+        gsize n_followed = 0;
+        g_auto(GStrv) followed = load_followed_pubkeys_snapshot(self->user_pubkey_hex, &n_followed);
+        if (followed && n_followed > 0) {
+          query = gnostr_timeline_query_new_for_authors((const char **)followed, n_followed);
+          g_debug("[TAB_FILTER] Following tab: %zu followed pubkeys", n_followed);
         }
       }
       if (!query) {
@@ -397,6 +479,11 @@ gnostr_main_window_setup_initial_tabs_internal(GnostrMainWindow *self)
                             self,
                             G_CONNECT_DEFAULT);
   }
+
+  /* Ensure all card-producing child widgets can see the shared policy as
+   * soon as the session widget tree exists. Later identity/follow changes
+   * refresh the same object in-place. nostrc-erw.3 */
+  gnostr_main_window_refresh_card_visibility_policy_internal(self);
 }
 
 /* Open (or focus) a custom tab backed by the filter set with the given

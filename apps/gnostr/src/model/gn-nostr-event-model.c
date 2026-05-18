@@ -3176,6 +3176,16 @@ void gn_nostr_event_model_check_pending_for_profile(GnNostrEventModel *self, con
   (void)pubkey;
 }
 
+void gn_nostr_event_model_rebind_all(GnNostrEventModel *self) {
+  g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
+
+  guint n_items = self->notes ? self->notes->len : 0;
+  if (n_items == 0)
+    return;
+
+  emit_items_changed_safe(self, 0, n_items, n_items);
+}
+
 void gn_nostr_event_model_clear(GnNostrEventModel *self) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 

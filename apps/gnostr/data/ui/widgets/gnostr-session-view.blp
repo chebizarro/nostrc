@@ -472,9 +472,7 @@ template $GnostrSessionView: Adw.Bin {
                         max-sidebar-width: 480;
 
                         content: Overlay content_root {
-                            Adw.Clamp middle_clamp {
-                                maximum-size: 960;
-                                tightening-threshold: 720;
+                            Box middle_clamp {
                                 hexpand: true;
                                 vexpand: true;
                                 halign: fill;
@@ -483,7 +481,7 @@ template $GnostrSessionView: Adw.Bin {
                                     "middle-clamp",
                                 ]
 
-                                child: Adw.ViewStack stack {
+                                Adw.ViewStack stack {
                                     hexpand: true;
                                     vexpand: true;
 
@@ -582,7 +580,7 @@ template $GnostrSessionView: Adw.Bin {
                                             vexpand: true;
                                         };
                                     }
-                                };
+                                }
                             }
 
                             [overlay]

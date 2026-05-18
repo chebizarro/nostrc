@@ -19,6 +19,7 @@
 /* Widget headers */
 #include "content_renderer.h"
 #include "gn-timeline-tabs.h"
+#include "gnostr-card-visibility-policy.h"
 #include "gnostr-composer.h"
 #include "gnostr-note-embed.h"
 #include "gnostr-profile-pane.h"

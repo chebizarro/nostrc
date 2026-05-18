@@ -1,5 +1,6 @@
 /* nostrc-lx36: NostrGtkProfilePane — moved from apps/gnostr/src/ui/ to nostr-gtk */
 #include <nostr-gtk-1.0/gnostr-profile-pane.h>
+#include <nostr-gtk-1.0/gnostr-card-visibility-policy.h>
 
 /* App-specific UI widgets — temporary cross-includes until fully decoupled */
 #include "gnostr-profile-edit.h"
@@ -992,11 +993,25 @@ static void pp_on_navigate(const char *note_id, gpointer user_data) {
   if (event_json) free(event_json);
 }
 
+static gboolean
+profile_post_row_should_be_visible(NostrGtkProfilePane *self, ProfilePostItem *post)
+{
+  GnostrCardVisibilityPolicy *policy = NULL;
+  if (self && NOSTR_GTK_IS_PROFILE_PANE(self))
+    policy = g_object_get_data(G_OBJECT(self), "gnostr-card-visibility-policy");
+
+  return gnostr_card_visibility_policy_should_show(policy,
+                                                   post ? post->pubkey_hex : NULL,
+                                                   FALSE,
+                                                   TRUE);
+}
+
 /* nostrc-o7pp: Custom bind callback for profile posts using NoteCardFactory.
  * This callback is called by NoteCardFactory after prepare_for_bind. */
 static void posts_bind_callback(NostrGtkNoteCardRow *row, GObject *obj, gpointer user_data) {
-  (void)user_data;
-
+  NostrGtkProfilePane *self = (user_data && NOSTR_GTK_IS_PROFILE_PANE(user_data))
+                              ? NOSTR_GTK_PROFILE_PANE(user_data)
+                              : NULL;
   ProfilePostItem *post = (ProfilePostItem*)obj;
 
   /* Set author info from stored profile data */
@@ -1058,6 +1073,11 @@ static void posts_bind_callback(NostrGtkNoteCardRow *row, GObject *obj, gpointer
       g_free(user_pk);
     }
   }
+
+  /* Profile panes are opened by explicit user navigation. Keep their posts
+   * visible via the shared card visibility policy, with explicit=true and
+   * has_profile=false per the custom-bind contract. */
+  gtk_widget_set_visible(GTK_WIDGET(row), profile_post_row_should_be_visible(self, post));
 }
 
 /* Handle post activation (click) */
@@ -1409,7 +1429,7 @@ static void setup_posts_list(NostrGtkProfilePane *self) {
    * nostrc-mizr: Enable ALL signals so action buttons work identically to timeline. */
   if (!self->posts_note_factory) {
     self->posts_note_factory = note_card_factory_new(NOTE_CARD_BIND_BASIC, NOTE_CARD_SIGNAL_ALL);
-    note_card_factory_set_bind_callback(self->posts_note_factory, posts_bind_callback, NULL);
+    note_card_factory_set_bind_callback(self->posts_note_factory, posts_bind_callback, self);
 
     /* nostrc-mizr: Register relay callbacks so action buttons reach the main window.
      * Pass `self` as user_data — callbacks walk up from the profile pane widget

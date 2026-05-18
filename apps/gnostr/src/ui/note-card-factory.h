@@ -301,10 +301,11 @@ void note_card_factory_connect_navigate(NoteCardFactory *self,
  * @user_data: user data from note_card_factory_set_bind_callback
  *
  * Custom callback for populating NoteCardRow from model item.
- * Called after prepare_for_bind but before visibility is set.
+ * Called after prepare_for_bind with the row initially hidden.
  *
  * Views with custom data models can use this to handle their own
- * data binding logic instead of relying on the default binding.
+ * data binding logic instead of relying on the default binding. Custom
+ * callbacks must set the final row visibility explicitly before returning.
  */
 typedef void (*NoteCardBindCallback)(NostrGtkNoteCardRow *row,
                                      GObject *item,
@@ -318,7 +319,8 @@ typedef void (*NoteCardBindCallback)(NostrGtkNoteCardRow *row,
  *
  * Set a custom bind callback for populating rows from model items.
  * If set, the factory will call this instead of the default binding logic.
- * The callback is called after prepare_for_bind.
+ * The callback is called after prepare_for_bind with the row hidden, and is
+ * responsible for setting the final row visibility explicitly.
  */
 void note_card_factory_set_bind_callback(NoteCardFactory *self,
                                          NoteCardBindCallback callback,

@@ -530,10 +530,12 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
   g_object_set_data(G_OBJECT(row), "profile-handler-id", GSIZE_TO_POINTER(0));
 
   /* If custom bind callback is set, use it instead of default binding.
-   * Custom callbacks handle their own tiering (or do full bind). */
+   * Custom callbacks handle their own tiering (or do full bind) and must set
+   * the final row visibility explicitly. Start hidden so recycled rows cannot
+   * flash visible before the callback applies its policy. */
   if (self->bind_cb) {
+    gtk_widget_set_visible(row, FALSE);
     self->bind_cb(NOSTR_GTK_NOTE_CARD_ROW(row), obj, self->bind_cb_data);
-    gtk_widget_set_visible(row, TRUE);
     return;
   }
 

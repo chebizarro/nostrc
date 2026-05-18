@@ -1,5 +1,6 @@
 #include "gnostr-thread-view.h"
 #include "nostr-note-card-row.h"
+#include <nostr-gtk-1.0/gnostr-card-visibility-policy.h>
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
@@ -1553,6 +1554,26 @@ static void thread_factory_setup_cb(GtkSignalListItemFactory *factory,
   gtk_list_item_set_child(item, row);
 }
 
+static gboolean
+thread_row_should_be_visible(NostrGtkThreadView *self, GnNostrEventItem *event_item)
+{
+  if (!GN_IS_NOSTR_EVENT_ITEM(event_item))
+    return FALSE;
+
+  GnostrCardVisibilityPolicy *policy = NULL;
+  if (self && NOSTR_GTK_IS_THREAD_VIEW(self))
+    policy = g_object_get_data(G_OBJECT(self), "gnostr-card-visibility-policy");
+
+  const char *author_pubkey = gn_nostr_event_item_get_pubkey(event_item);
+  gboolean has_profile = (gn_nostr_event_item_get_profile(event_item) != NULL);
+  gboolean explicitly_loaded = gn_nostr_event_item_get_explicitly_loaded(event_item);
+
+  return gnostr_card_visibility_policy_should_show(policy,
+                                                   author_pubkey,
+                                                   has_profile,
+                                                   explicitly_loaded);
+}
+
 /* nostrc-evz1: Factory bind callback - binds GnNostrEventItem to NostrGtkNoteCardRow */
 /*
  * nostrc-sbqe.3: Tier 2 map handler for thread view.
@@ -1650,6 +1671,11 @@ static void thread_factory_bind_cb(GtkSignalListItemFactory *factory,
   GnNostrEventItem *event_item = GN_NOSTR_EVENT_ITEM(obj);
   NostrGtkNoteCardRow *card = NOSTR_GTK_NOTE_CARD_ROW(row);
 
+  /* Fail closed for recycled rows until this bind has evaluated the shared
+   * visibility policy. Thread rows are explicit user-loaded, so they normally
+   * become visible again at the end of bind. */
+  gtk_widget_set_visible(row, FALSE);
+
   /* nostrc-7t5x: CRITICAL - Prepare row for binding. Sets binding_id which gates
    * all setter functions. Without this, set_content/set_author/etc return early
    * and the card displays no content. Matches timeline-view pattern (nostrc-o7pp). */
@@ -1707,10 +1733,16 @@ static void thread_factory_bind_cb(GtkSignalListItemFactory *factory,
   g_object_set_data(G_OBJECT(item), "tier2-map-handler-id",
                     GSIZE_TO_POINTER((gsize)map_handler_id));
 
-  /* If already mapped, run Tier 2 immediately */
+  /* If already mapped, run Tier 2 immediately. Rows are pre-hidden above, so
+   * this only fires for unusual callers that keep a row mapped through bind. */
   if (gtk_widget_get_mapped(row)) {
     on_thread_row_mapped_tier2(row, item);
   }
+
+  /* Apply the shared card visibility policy. Thread content is marked as
+   * explicit user-loaded in rebuild_thread_ui(), so policy fallback keeps
+   * directly opened threads visible even before profile pairing arrives. */
+  gtk_widget_set_visible(row, thread_row_should_be_visible(self, event_item));
 }
 
 /* nostrc-evz1: Factory unbind callback - cleans up CSS classes */
@@ -1811,6 +1843,11 @@ static void rebuild_thread_ui(NostrGtkThreadView *self) {
                                          item->root_id,
                                          item->parent_id,
                                          item->depth);
+
+    /* The thread sidebar is opened by explicit user navigation; all rows in
+     * this fulfilled thread load should remain visible under the shared card
+     * visibility policy even before profile pairing is available. */
+    gn_nostr_event_item_set_explicitly_loaded(event_item, TRUE);
 
     /* Create and set profile if we have profile data */
     if (item->display_name || item->handle || item->avatar_url || item->nip05) {

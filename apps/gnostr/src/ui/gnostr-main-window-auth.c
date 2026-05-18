@@ -244,6 +244,7 @@ gnostr_main_window_start_gift_wrap_subscription_internal(GnostrMainWindow *self)
 
   g_free(self->user_pubkey_hex);
   self->user_pubkey_hex = pubkey_hex;
+  gnostr_main_window_refresh_card_visibility_policy_internal(self);
 
   if (self->dm_service) {
     gnostr_dm_service_set_user_pubkey(self->dm_service, pubkey_hex);
@@ -281,6 +282,7 @@ gnostr_main_window_stop_gift_wrap_subscription_internal(GnostrMainWindow *self)
 
   g_free(self->user_pubkey_hex);
   self->user_pubkey_hex = NULL;
+  gnostr_main_window_refresh_card_visibility_policy_internal(self);
 }
 
 void
@@ -564,6 +566,8 @@ on_login_signed_in_local(GnostrLogin *login, const char *npub, gpointer user_dat
           GNOSTR_FILTER_SWITCHER(fs_switcher), self->user_pubkey_hex);
   }
 
+  gnostr_main_window_refresh_card_visibility_policy_internal(self);
+
   if (self->user_pubkey_hex) {
     if (self->dm_service) {
       gnostr_dm_service_set_user_pubkey(self->dm_service, self->user_pubkey_hex);
@@ -701,6 +705,7 @@ gnostr_main_window_on_signer_state_changed_internal(GnostrSignerService *signer,
    * multiple times per login. */
   if (new_state == GNOSTR_SIGNER_STATE_CONNECTED ||
       new_state == GNOSTR_SIGNER_STATE_DISCONNECTED) {
+    gnostr_main_window_refresh_card_visibility_policy_internal(self);
     gnostr_main_window_refresh_current_tab_filter_internal(self);
   }
 }
@@ -882,8 +887,11 @@ gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self)
 
   if (!(signed_in && self->user_pubkey_hex)) {
     gnostr_sync_bridge_set_user_pubkey(NULL);
+    gnostr_main_window_refresh_card_visibility_policy_internal(self);
     return;
   }
+
+  gnostr_main_window_refresh_card_visibility_policy_internal(self);
 
   if (self->dm_service) {
     gnostr_dm_service_set_user_pubkey(self->dm_service, self->user_pubkey_hex);
