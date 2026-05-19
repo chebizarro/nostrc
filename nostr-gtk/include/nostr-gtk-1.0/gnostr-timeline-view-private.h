@@ -72,18 +72,21 @@ struct _NostrGtkTimelineView {
   gboolean is_fast_scrolling;
   guint scroll_idle_id;
 
-  /* nostrc-2au: Prepend-aware scroll stabilization.
-   * When items are prepended at position 0 and the user is scrolled away
-   * from the top, we arm a post-layout fixup that compensates for any
-   * residual scroll-position drift that GTK's built-in anchoring missed. */
-  gulong model_items_changed_handler_id;
-  GListModel *observed_model;  /* weak-ish ref to the model we track items-changed on */
+  /* nostrc-2au / nostrc-hci: Scroll stabilization.
+   * Compensates for ANY content-height growth above the viewport so that
+   * visible cards stay locked in place.  Handles new-event prepends,
+   * profile-load height changes, media expansion, and re-flow.
+   * The items-changed handler is no longer needed — notify::upper
+   * handles everything directly. Fields below are retained for ABI
+   * but only prev_adj_upper and prepend_fixup_id are actively used. */
+  gulong model_items_changed_handler_id;  /* unused — retained for ABI */
+  GListModel *observed_model;             /* unused — retained for ABI */
   gdouble prev_adj_upper;
-  gboolean prepend_fixup_armed;
-  gboolean prepend_fixup_pending;
-  gdouble prepend_fixup_pre_value;
-  gdouble prepend_fixup_accumulated_delta;
-  guint prepend_fixup_id;
+  gboolean prepend_fixup_armed;           /* unused — retained for ABI */
+  gboolean prepend_fixup_pending;         /* unused — retained for ABI */
+  gdouble prepend_fixup_pre_value;        /* unused — retained for ABI */
+  gdouble prepend_fixup_accumulated_delta;/* unused — retained for ABI */
+  guint prepend_fixup_id;                 /* unused — retained for ABI */
 
   /* nostrc-hiei: GNostr-specific metadata batching state previously
    * lived here (pending_metadata_items, metadata_batch_idle_id) and was

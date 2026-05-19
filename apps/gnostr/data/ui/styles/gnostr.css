@@ -69,15 +69,12 @@ viewstack > box {
 
 /* Content views should fill available space naturally */
 
-/* REPOMARK:SCOPE: 1 - Add .middle-clamp padding and scoped note-card margin overrides near layout rules to provide consistent insets in the clamped middle column */
-.middle-clamp {
-	padding-left: 12px;
-	padding-right: 12px;
-}
-
+/* nostrc-hci: Uniform card margins inside the clamped middle column.
+	The clamp itself has no padding — all spacing comes from the card margin
+	so there is a single 8px inset on every side.  Between adjacent cards
+	the vertical gap is 16px (8 + 8). */
 .middle-clamp .note-card {
-	margin-left: 0;
-	margin-right: 0;
+	margin: 8px;
 }
 
 headerbar button {

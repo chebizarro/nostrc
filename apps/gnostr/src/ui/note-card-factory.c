@@ -364,6 +364,11 @@ factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
     g_signal_connect(row, "navigate-to-note", G_CALLBACK(on_navigate_relay), self);
   }
 
+  /* nostrc-hci: Hide the row until bind populates it. Without this,
+   * freshly-created rows appear as blank cards in the viewport until
+   * factory_bind_cb runs and fills in the content. */
+  gtk_widget_set_visible(row, FALSE);
+
   gtk_list_item_set_child(item, row);
 }
 
