@@ -35,6 +35,31 @@ static GHashTable *s_avatar_bad_urls = NULL;      /* negative cache: URLs that r
 /* Metrics */
 static GnostrAvatarMetrics s_avatar_metrics = {0};
 
+#define GNOSTR_AVATAR_EXPECTED_URL_KEY "gnostr-avatar-expected-url"
+
+static void
+avatar_widget_set_expected_url(GtkWidget *image,
+                               const char *url)
+{
+  if (!image || !GTK_IS_WIDGET(image))
+    return;
+  g_object_set_data_full(G_OBJECT(image),
+                         GNOSTR_AVATAR_EXPECTED_URL_KEY,
+                         g_strdup(url ? url : ""),
+                         g_free);
+}
+
+static gboolean
+avatar_widget_still_expects_url(GtkWidget *image,
+                                const char *url)
+{
+  if (!image || !GTK_IS_WIDGET(image))
+    return FALSE;
+
+  const char *expected = g_object_get_data(G_OBJECT(image), GNOSTR_AVATAR_EXPECTED_URL_KEY);
+  return !expected || g_strcmp0(expected, url) == 0;
+}
+
 /* --- Concurrent Request Limiter --- */
 /* nostrc-img1: Reduced from 12 to 6 — avatar fetches were consuming half the
  * SoupSession's 24-connection pool, starving timeline media image loads. */
@@ -460,12 +485,13 @@ static void process_pending_fetch_queue(void) {
       GdkTexture *cached = g_hash_table_lookup(avatar_texture_cache, pf->url);
       GtkWidget *image = g_weak_ref_get(&pf->image_ref);
       GtkWidget *initials = g_weak_ref_get(&pf->initials_ref);
-      if (image && GTK_IS_PICTURE(image) && gtk_widget_get_native(image)) {
+      if (image && GTK_IS_PICTURE(image) && gtk_widget_get_native(image) &&
+          avatar_widget_still_expects_url(image, pf->url)) {
         gtk_picture_set_paintable(GTK_PICTURE(image), GDK_PAINTABLE(cached));
         gtk_widget_set_visible(image, TRUE);
-      }
-      if (initials && GTK_IS_WIDGET(initials) && gtk_widget_get_native(initials)) {
-        gtk_widget_set_visible(initials, FALSE);
+        if (initials && GTK_IS_WIDGET(initials) && gtk_widget_get_native(initials)) {
+          gtk_widget_set_visible(initials, FALSE);
+        }
       }
       if (image) g_object_unref(image);
       if (initials) g_object_unref(initials);
@@ -598,6 +624,7 @@ void gnostr_avatar_cache_set_startup_mode(gboolean enabled) {
 void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials) {
     #ifdef HAVE_SOUP3
       if (!url || !*url || !str_has_prefix_http(url)) return;
+      avatar_widget_set_expected_url(image, url);
 
       /* Skip URLs known to return invalid data */
       if (s_avatar_bad_urls && g_hash_table_contains(s_avatar_bad_urls, url))
@@ -613,12 +640,13 @@ void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *
       if (cached) {
         s_avatar_metrics.mem_cache_hits++;
         avatar_lru_touch(url);
-        if (image && GTK_IS_PICTURE(image) && gtk_widget_get_native(image) != NULL) {
+        if (image && GTK_IS_PICTURE(image) && gtk_widget_get_native(image) != NULL &&
+          avatar_widget_still_expects_url(image, url)) {
           gtk_picture_set_paintable(GTK_PICTURE(image), GDK_PAINTABLE(cached));
           gtk_widget_set_visible(image, TRUE);
-        }
-        if (initials && GTK_IS_WIDGET(initials) && gtk_widget_get_native(initials) != NULL) {
-          gtk_widget_set_visible(initials, FALSE);
+          if (initials && GTK_IS_WIDGET(initials) && gtk_widget_get_native(initials) != NULL) {
+            gtk_widget_set_visible(initials, FALSE);
+          }
         }
         return;
       }
@@ -629,12 +657,13 @@ void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *
         g_hash_table_replace(avatar_texture_cache, g_strdup(url), g_object_ref(disk_tex));
         avatar_lru_insert(url);
         avatar_lru_evict_if_needed();
-        if (image && GTK_IS_PICTURE(image) && gtk_widget_get_native(image) != NULL) {
+        if (image && GTK_IS_PICTURE(image) && gtk_widget_get_native(image) != NULL &&
+            avatar_widget_still_expects_url(image, url)) {
           gtk_picture_set_paintable(GTK_PICTURE(image), GDK_PAINTABLE(disk_tex));
           gtk_widget_set_visible(image, TRUE);
-        }
-        if (initials && GTK_IS_WIDGET(initials) && gtk_widget_get_native(initials) != NULL) {
-          gtk_widget_set_visible(initials, FALSE);
+          if (initials && GTK_IS_WIDGET(initials) && gtk_widget_get_native(initials) != NULL) {
+            gtk_widget_set_visible(initials, FALSE);
+          }
         }
         g_object_unref(disk_tex);
         return;
@@ -779,7 +808,8 @@ static void on_avatar_decode_done(GObject *source, GAsyncResult *res, gpointer u
      * Setting paintable on unmapped widgets can corrupt GtkImageDefinition */
     if (GTK_IS_PICTURE(image) && 
         gtk_widget_get_native(image) != NULL &&
-        gtk_widget_get_mapped(image)) {
+        gtk_widget_get_mapped(image) &&
+        avatar_widget_still_expects_url(image, ctx->url)) {
       gtk_picture_set_paintable(GTK_PICTURE(image), GDK_PAINTABLE(tex));
       gtk_widget_set_visible(image, TRUE);
     } else {

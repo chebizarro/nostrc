@@ -42,6 +42,7 @@
 #endif
 
 #define UI_RESOURCE "/org/nostr/gtk/ui/nostr-note-card-row.ui"
+#define GNOSTR_AVATAR_EXPECTED_URL_KEY "gnostr-avatar-expected-url"
 
 static gboolean remote_media_loading_enabled(void);
 
@@ -2783,6 +2784,12 @@ void nostr_gtk_note_card_row_set_author(NostrGtkNoteCardRow *self, const char *d
   }
   g_clear_pointer(&self->avatar_url, g_free);
   self->avatar_url = g_strdup(avatar_url);
+  if (GTK_IS_WIDGET(self->avatar_image)) {
+    g_object_set_data_full(G_OBJECT(self->avatar_image),
+                           GNOSTR_AVATAR_EXPECTED_URL_KEY,
+                           g_strdup(avatar_url ? avatar_url : ""),
+                           g_free);
+  }
   set_avatar_initials(self, display_name, handle);
   
 #ifdef HAVE_SOUP3
@@ -2801,10 +2808,15 @@ void nostr_gtk_note_card_row_set_author(NostrGtkNoteCardRow *self, const char *d
       }
       g_object_unref(cached);
     } else {
-      g_debug("note_card: avatar cache MISS, keeping initials for url=%s", avatar_url);
+      g_debug("note_card: avatar cache MISS, downloading url=%s", avatar_url);
       gtk_widget_set_visible(self->avatar_image, FALSE);
       if (GTK_IS_WIDGET(self->avatar_initials)) {
         gtk_widget_set_visible(self->avatar_initials, TRUE);
+      }
+      if (remote_media_loading_enabled()) {
+        gnostr_avatar_download_async(avatar_url,
+                                     GTK_WIDGET(self->avatar_image),
+                                     GTK_IS_WIDGET(self->avatar_initials) ? GTK_WIDGET(self->avatar_initials) : NULL);
       }
     }
   } else {
@@ -2867,6 +2879,12 @@ void nostr_gtk_note_card_row_set_avatar(NostrGtkNoteCardRow *self,
 
   g_clear_pointer(&self->avatar_url, g_free);
   self->avatar_url = g_strdup(avatar_url);
+  if (GTK_IS_WIDGET(self->avatar_image)) {
+    g_object_set_data_full(G_OBJECT(self->avatar_image),
+                           GNOSTR_AVATAR_EXPECTED_URL_KEY,
+                           g_strdup(avatar_url ? avatar_url : ""),
+                           g_free);
+  }
 
 #ifdef HAVE_SOUP3
   if (avatar_url && *avatar_url && GTK_IS_PICTURE(self->avatar_image)) {
@@ -2883,6 +2901,9 @@ void nostr_gtk_note_card_row_set_avatar(NostrGtkNoteCardRow *self,
       if (GTK_IS_WIDGET(self->avatar_initials)) {
         gtk_widget_set_visible(self->avatar_initials, TRUE);
       }
+      gnostr_avatar_download_async(avatar_url,
+                                   GTK_WIDGET(self->avatar_image),
+                                   GTK_IS_WIDGET(self->avatar_initials) ? GTK_WIDGET(self->avatar_initials) : NULL);
     }
     /* else: remote media disabled — keep initials visible as placeholder */
   }

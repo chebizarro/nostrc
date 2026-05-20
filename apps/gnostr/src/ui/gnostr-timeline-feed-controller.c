@@ -557,6 +557,13 @@ compose_snapshot(GnostrTimelineFeedController *self)
     if (g_hash_table_contains(self->pending_head, entry->event_id))
       continue;
 
+    /* Do not publish unhydrated author rows into the reading surface.  A row
+     * with no profile payload renders as a tiny fallback header/spacer and then
+     * reflows when the profile patch arrives.  Keep it in the working set and
+     * let profile hydration reveal it in a later, intentional snapshot. */
+    if (!entry->has_profile && !entry->display_name && !entry->handle && !entry->avatar_url)
+      continue;
+
     g_ptr_array_add(rows, snapshot_row_from_entry(self, entry));
   }
 
@@ -1225,9 +1232,11 @@ gnostr_timeline_feed_controller_record_geometry(GnostrTimelineFeedController *se
                                             snapshot_generation);
   g_hash_table_replace(self->geometry, g_strdup(geometry_token), entry);
 
-  /* Measurements refine future editions.  Preserve the reader's current anchor
-   * because footprint changes are compositor-driven, not user navigation. */
-  schedule_compose(self, TRUE, FALSE);
+  /* Measurements refine future editions only.  Replacing the currently visible
+   * snapshot in response to row measurement creates a feedback loop: GTK
+   * measures, the compositor republishes, scroll anchoring restores, GTK
+   * measures again.  That is visible jitter.  Cache this geometry for the next
+   * intentional compose instead of mutating the active reading surface. */
 }
 
 void

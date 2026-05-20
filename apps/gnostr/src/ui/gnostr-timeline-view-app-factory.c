@@ -798,6 +798,9 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     nostr_gtk_note_card_row_set_author_name_only(NOSTR_GTK_NOTE_CARD_ROW(row),
                                                display ? display : display_fallback,
                                                handle);
+    if (is_snapshot_row && avatar_url && *avatar_url) {
+      nostr_gtk_note_card_row_set_avatar(NOSTR_GTK_NOTE_CARD_ROW(row), avatar_url);
+    }
     nostr_gtk_note_card_row_set_timestamp(NOSTR_GTK_NOTE_CARD_ROW(row), created_at, ts);
 
     /* Connect embed request signal EARLY — before content setting, because
