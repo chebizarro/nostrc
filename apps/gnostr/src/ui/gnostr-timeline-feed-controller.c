@@ -1,48 +1,17 @@
 #define G_LOG_DOMAIN "gnostr-timeline-feed-controller"
 
 #include "gnostr-timeline-feed-controller.h"
+#include "../model/gnostr-timeline-geometry.h"
+#include "../model/gnostr-timeline-hydrator.h"
 
 #include <string.h>
 
-#define DEFAULT_ROW_ESTIMATE_PX 360.0
-#define DEFAULT_WIDTH_BUCKET    480u
 #define COMPOSE_DEBOUNCE_MS     50u
 #define AT_TOP_EPSILON_PX       1.0
-#define LAYOUT_SIGNATURE        "timeline-v1"
 
 typedef struct {
-  char    *event_id;
-  char    *note_key;
-  char    *pubkey;
-  char    *tie_breaker;
-  char    *content;
-  char    *display_name;
-  char    *handle;
-  char    *avatar_url;
-  char    *nip05;
-  char    *root_id;
-  char    *reply_id;
-  char    *quoted_event_id;
-  char    *reposted_event_id;
-  char   **hashtags;
-  guint    like_count;
-  gboolean is_liked;
-  guint    repost_count;
-  guint    reply_count;
-  guint    zap_count;
-  gint64   zap_total_msat;
-  guint64  note_key_u64;
-  gint64   created_at;
-  gint     kind;
-  gboolean has_profile;
+  GnostrTimelineItemViewModel *vm;
 } WorkingEntry;
-
-typedef struct {
-  double measured_height;
-  guint  width_bucket;
-  char  *layout_signature;
-  guint64 snapshot_generation;
-} GeometryEntry;
 
 struct _GnostrTimelineFeedController {
   GObject parent_instance;
@@ -52,12 +21,13 @@ struct _GnostrTimelineFeedController {
   guint64 query_generation;
   guint64 snapshot_generation;
 
+  GnostrTimelineHydrator *hydrator;
   GnostrTimelineSnapshotModel *model;
 
   GPtrArray *working;       /* element-type: WorkingEntry* */
   GHashTable *by_event_id;  /* char* -> WorkingEntry* (borrowed value) */
   GHashTable *pending_head; /* char* set of event ids hidden from visible snapshots */
-  GHashTable *geometry;     /* char* geometry-token -> GeometryEntry* */
+  GnostrTimelineGeometryResolver *geometry;
 
   gboolean user_at_top;
   double scroll_y;
@@ -92,64 +62,13 @@ static void compose_and_publish(GnostrTimelineFeedController *self,
                                 gboolean preserve_anchor,
                                 gboolean scroll_to_top);
 
-static void
-bytes_to_hex32(const guint8 bytes[32],
-               char out[65])
-{
-  static const char hexdigits[] = "0123456789abcdef";
-  for (guint i = 0; i < 32; i++) {
-    out[i * 2] = hexdigits[(bytes[i] >> 4) & 0x0f];
-    out[i * 2 + 1] = hexdigits[bytes[i] & 0x0f];
-  }
-  out[64] = '\0';
-}
-
-static gboolean
-bytes32_all_zero(const guint8 bytes[32])
-{
-  for (guint i = 0; i < 32; i++) {
-    if (bytes[i] != 0)
-      return FALSE;
-  }
-  return TRUE;
-}
-
 static WorkingEntry *
-working_entry_new_from_batch_entry(const GnostrTimelineBatchEntry *entry)
+working_entry_new_from_vm(GnostrTimelineItemViewModel *vm)
 {
-  g_return_val_if_fail(entry != NULL, NULL);
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_ITEM_VIEW_MODEL(vm), NULL);
 
   WorkingEntry *we = g_new0(WorkingEntry, 1);
-  we->note_key_u64 = entry->note_key;
-  we->created_at = entry->created_at;
-  we->kind = entry->kind;
-  we->has_profile = entry->has_profile;
-
-  char event_id[65];
-  if (!bytes32_all_zero(entry->event_id)) {
-    bytes_to_hex32(entry->event_id, event_id);
-    we->event_id = g_strdup(event_id);
-  } else {
-    /* The source should normally provide the event id.  Keep a deterministic
-     * fallback so the hidden set can still dedupe/order test and bootstrap rows
-     * rather than collapsing every zero-id row into a single snapshot item. */
-    we->event_id = g_strdup_printf("note-key-%" G_GUINT64_FORMAT, entry->note_key);
-  }
-
-  we->note_key = g_strdup_printf("%" G_GUINT64_FORMAT, entry->note_key);
-  we->pubkey = g_strdup(entry->pubkey_hex);
-  we->tie_breaker = g_strdup(we->event_id);
-  we->content = g_strdup(entry->content ? entry->content : "");
-  we->display_name = g_strdup(entry->display_name);
-  we->handle = g_strdup(entry->handle);
-  we->avatar_url = g_strdup(entry->avatar_url);
-  we->nip05 = g_strdup(entry->nip05);
-  we->root_id = g_strdup(entry->root_id);
-  we->reply_id = g_strdup(entry->reply_id);
-  we->quoted_event_id = g_strdup(entry->quoted_event_id);
-  we->reposted_event_id = g_strdup(entry->reposted_event_id);
-  we->hashtags = g_strdupv(entry->hashtags);
-
+  we->vm = g_object_ref(vm);
   return we;
 }
 
@@ -158,155 +77,17 @@ working_entry_free(WorkingEntry *we)
 {
   if (!we)
     return;
-  g_free(we->event_id);
-  g_free(we->note_key);
-  g_free(we->pubkey);
-  g_free(we->tie_breaker);
-  g_free(we->content);
-  g_free(we->display_name);
-  g_free(we->handle);
-  g_free(we->avatar_url);
-  g_free(we->nip05);
-  g_free(we->root_id);
-  g_free(we->reply_id);
-  g_free(we->quoted_event_id);
-  g_free(we->reposted_event_id);
-  g_strfreev(we->hashtags);
+  g_clear_object(&we->vm);
   g_free(we);
 }
 
 static void
-working_entry_update_from_batch_entry(WorkingEntry *we,
-                                      const GnostrTimelineBatchEntry *entry)
+working_entry_replace_vm(WorkingEntry *we,
+                         GnostrTimelineItemViewModel *vm)
 {
-  if (!we || !entry)
+  if (!we || !GNOSTR_IS_TIMELINE_ITEM_VIEW_MODEL(vm))
     return;
-
-  we->note_key_u64 = entry->note_key;
-  we->created_at = entry->created_at;
-  we->kind = entry->kind;
-  we->has_profile = entry->has_profile;
-
-  g_free(we->note_key);
-  we->note_key = g_strdup_printf("%" G_GUINT64_FORMAT, entry->note_key);
-
-  if (entry->pubkey_hex) {
-    g_free(we->pubkey);
-    we->pubkey = g_strdup(entry->pubkey_hex);
-  }
-  if (entry->content) {
-    g_free(we->content);
-    we->content = g_strdup(entry->content);
-  }
-  if (entry->display_name) {
-    g_free(we->display_name);
-    we->display_name = g_strdup(entry->display_name);
-  }
-  if (entry->handle) {
-    g_free(we->handle);
-    we->handle = g_strdup(entry->handle);
-  }
-  if (entry->avatar_url) {
-    g_free(we->avatar_url);
-    we->avatar_url = g_strdup(entry->avatar_url);
-  }
-  if (entry->nip05) {
-    g_free(we->nip05);
-    we->nip05 = g_strdup(entry->nip05);
-  }
-  if (entry->root_id) {
-    g_free(we->root_id);
-    we->root_id = g_strdup(entry->root_id);
-  }
-  if (entry->reply_id) {
-    g_free(we->reply_id);
-    we->reply_id = g_strdup(entry->reply_id);
-  }
-  if (entry->quoted_event_id) {
-    g_free(we->quoted_event_id);
-    we->quoted_event_id = g_strdup(entry->quoted_event_id);
-  }
-  if (entry->reposted_event_id) {
-    g_free(we->reposted_event_id);
-    we->reposted_event_id = g_strdup(entry->reposted_event_id);
-  }
-  if (entry->hashtags) {
-    g_strfreev(we->hashtags);
-    we->hashtags = g_strdupv(entry->hashtags);
-  }
-}
-
-static GeometryEntry *
-geometry_entry_new(guint width_bucket,
-                   const char *layout_signature,
-                   double measured_height,
-                   guint64 snapshot_generation)
-{
-  GeometryEntry *entry = g_new0(GeometryEntry, 1);
-  entry->width_bucket = width_bucket;
-  entry->layout_signature = g_strdup(layout_signature ? layout_signature : LAYOUT_SIGNATURE);
-  entry->measured_height = measured_height;
-  entry->snapshot_generation = snapshot_generation;
-  return entry;
-}
-
-static void
-geometry_entry_free(GeometryEntry *entry)
-{
-  if (!entry)
-    return;
-  g_free(entry->layout_signature);
-  g_free(entry);
-}
-
-static guint
-width_to_bucket(guint width_px)
-{
-  if (width_px == 0)
-    return DEFAULT_WIDTH_BUCKET;
-
-  /* Bucket by 80px increments so small resize jitter does not invalidate every
-   * geometry entry, while material layout width changes still get distinct keys. */
-  guint bucket = ((width_px + 39u) / 80u) * 80u;
-  return MAX(bucket, 80u);
-}
-
-static char *
-geometry_token_new(const char *event_id,
-                   guint width_bucket,
-                   const char *layout_signature)
-{
-  return g_strdup_printf("%s|%u|%s",
-                         event_id ? event_id : "",
-                         width_bucket,
-                         layout_signature ? layout_signature : LAYOUT_SIGNATURE);
-}
-
-static gboolean
-geometry_token_parse(const char *token,
-                     char **out_event_id,
-                     guint *out_width_bucket,
-                     char **out_layout_signature)
-{
-  if (!token || !*token)
-    return FALSE;
-
-  g_auto(GStrv) parts = g_strsplit(token, "|", 3);
-  if (!parts[0] || !*parts[0] || !parts[1] || !parts[2])
-    return FALSE;
-
-  guint64 width = g_ascii_strtoull(parts[1], NULL, 10);
-  if (width == 0 || width > G_MAXUINT)
-    return FALSE;
-
-  if (out_event_id)
-    *out_event_id = g_strdup(parts[0]);
-  if (out_width_bucket)
-    *out_width_bucket = (guint)width;
-  if (out_layout_signature)
-    *out_layout_signature = g_strdup(parts[2]);
-
-  return TRUE;
+  g_set_object(&we->vm, vm);
 }
 
 static gboolean
@@ -342,36 +123,37 @@ lookup_working(GnostrTimelineFeedController *self,
 }
 
 static WorkingEntry *
-merge_batch_entry(GnostrTimelineFeedController *self,
-                  const GnostrTimelineBatchEntry *entry,
+merge_hydrated_vm(GnostrTimelineFeedController *self,
+                  GnostrTimelineItemViewModel *vm,
                   gboolean *out_inserted)
 {
-  g_return_val_if_fail(entry != NULL, NULL);
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_ITEM_VIEW_MODEL(vm), NULL);
 
-  g_autofree char *event_id = NULL;
-  if (!bytes32_all_zero(entry->event_id)) {
-    char hex[65];
-    bytes_to_hex32(entry->event_id, hex);
-    event_id = g_strdup(hex);
-  } else {
-    event_id = g_strdup_printf("note-key-%" G_GUINT64_FORMAT, entry->note_key);
-  }
-
+  const char *event_id = gnostr_timeline_item_view_model_get_event_id(vm);
   WorkingEntry *existing = lookup_working(self, event_id);
   if (existing) {
-    working_entry_update_from_batch_entry(existing, entry);
+    working_entry_replace_vm(existing, vm);
     if (out_inserted)
       *out_inserted = FALSE;
     return existing;
   }
 
-  WorkingEntry *created = working_entry_new_from_batch_entry(entry);
+  WorkingEntry *created = working_entry_new_from_vm(vm);
   g_ptr_array_add(self->working, created);
-  g_hash_table_insert(self->by_event_id, g_strdup(created->event_id), created);
+  g_hash_table_insert(self->by_event_id, g_strdup(event_id), created);
 
   if (out_inserted)
     *out_inserted = TRUE;
   return created;
+}
+
+static GPtrArray *
+hydrate_batch_items(GnostrTimelineFeedController *self,
+                    GnostrTimelineBatch *batch)
+{
+  if (self->hydrator)
+    gnostr_timeline_hydrator_set_generation(self->hydrator, self->query_generation);
+  return gnostr_timeline_hydrator_hydrate_batch(self->hydrator, batch);
 }
 
 static void
@@ -523,66 +305,69 @@ restore_anchor_scroll(GnostrTimelineSnapshot *old_snapshot,
   return FALSE;
 }
 
-static double
-entry_effective_height(GnostrTimelineFeedController *self,
-                       WorkingEntry *entry,
-                       double *out_measured,
-                       gboolean *out_geometry_measured)
+static void
+entry_resolve_footprint(GnostrTimelineFeedController *self,
+                        WorkingEntry *entry,
+                        GnostrTimelineRowFootprint *out_footprint)
 {
-  /* The active reading surface must not adopt measurements taken from live
-   * widgets.  Those measurements include late avatar/media/embed/profile
-   * mutations and turn asynchronous layout growth into a new snapshot height,
-   * which visibly pushes surrounding cards and fights scroll position.
-   *
-   * Until hydration predicts geometry before publication, keep a stable reserved
-   * footprint for every snapshot row.  The row widget clips/fills within that
-   * footprint instead of changing the document geometry after reveal. */
-  (void)entry;
+  g_return_if_fail(out_footprint != NULL);
 
-  if (out_measured)
-    *out_measured = 0.0;
-  if (out_geometry_measured)
-    *out_geometry_measured = FALSE;
-  return DEFAULT_ROW_ESTIMATE_PX;
+  GnostrTimelineItemViewModel *vm = entry ? entry->vm : NULL;
+  GnostrTimelineGeometryInput input = {
+    .event_id = vm ? gnostr_timeline_item_view_model_get_event_id(vm) : NULL,
+    .content = vm ? gnostr_timeline_item_view_model_get_content(vm) : NULL,
+    .root_id = vm ? gnostr_timeline_item_view_model_get_root_id(vm) : NULL,
+    .reply_id = vm ? gnostr_timeline_item_view_model_get_reply_id(vm) : NULL,
+    .quoted_event_id = vm ? gnostr_timeline_item_view_model_get_quoted_event_id(vm) : NULL,
+    .reposted_event_id = vm ? gnostr_timeline_item_view_model_get_reposted_event_id(vm) : NULL,
+    .geometry_signature = vm ? gnostr_timeline_item_view_model_get_geometry_signature(vm) : NULL,
+    .kind = vm ? gnostr_timeline_item_view_model_get_kind(vm) : 1,
+    .has_profile = vm ? gnostr_timeline_item_view_model_get_has_profile(vm) : FALSE,
+    .moderation_state = vm ? gnostr_timeline_item_view_model_get_moderation_state(vm) : 0,
+    .has_content_warning = vm ? (gnostr_timeline_item_view_model_get_content_warning(vm) != NULL) : FALSE,
+    .media_reservation_count = vm ? gnostr_timeline_item_view_model_get_media_reservation_count(vm) : 0,
+    .media_reserved_height = vm ? gnostr_timeline_item_view_model_get_media_reserved_height(vm) : 0.0,
+    .link_preview_reservation_count = vm ? gnostr_timeline_item_view_model_get_link_preview_reservation_count(vm) : 0,
+    .link_preview_reserved_height = vm ? gnostr_timeline_item_view_model_get_link_preview_reserved_height(vm) : 0.0,
+    .has_reply_context_reservation = vm ? gnostr_timeline_item_view_model_get_has_reply_context_reservation(vm) : FALSE,
+    .has_repost_context_reservation = vm ? gnostr_timeline_item_view_model_get_has_repost_context_reservation(vm) : FALSE,
+    .has_quote_context_reservation = vm ? gnostr_timeline_item_view_model_get_has_quote_context_reservation(vm) : FALSE,
+    .has_footer_action_reservation = TRUE,
+    .initial_reserved_height = vm ? gnostr_timeline_item_view_model_get_initial_reserved_height(vm) : 0.0,
+    .like_count = vm ? gnostr_timeline_item_view_model_get_like_count(vm) : 0,
+    .repost_count = vm ? gnostr_timeline_item_view_model_get_repost_count(vm) : 0,
+    .reply_count = vm ? gnostr_timeline_item_view_model_get_reply_count(vm) : 0,
+    .zap_count = vm ? gnostr_timeline_item_view_model_get_zap_count(vm) : 0,
+    .explicit_expanded = FALSE,
+  };
+
+  gnostr_timeline_geometry_resolver_resolve(self->geometry,
+                                            &input,
+                                            self->width_bucket,
+                                            out_footprint);
 }
 
 static GnostrTimelineSnapshotRow *
 snapshot_row_from_entry(GnostrTimelineFeedController *self,
                         WorkingEntry *entry)
 {
-  double measured = 0.0;
-  gboolean geometry_measured = FALSE;
-  double effective = entry_effective_height(self, entry, &measured, &geometry_measured);
+  if (!entry || !entry->vm)
+    return NULL;
 
-  return gnostr_timeline_snapshot_row_new_full(entry->event_id,
-                                               entry->note_key,
-                                               entry->pubkey,
-                                               entry->created_at,
-                                               entry->tie_breaker,
-                                               entry->content,
-                                               entry->display_name,
-                                               entry->handle,
-                                               entry->avatar_url,
-                                               entry->nip05,
-                                               entry->root_id,
-                                               entry->reply_id,
-                                               entry->quoted_event_id,
-                                               entry->reposted_event_id,
-                                               (const char * const *)entry->hashtags,
-                                               entry->kind,
-                                               entry->has_profile,
-                                               entry->like_count,
-                                               entry->is_liked,
-                                               entry->repost_count,
-                                               entry->reply_count,
-                                               entry->zap_count,
-                                               entry->zap_total_msat,
-                                               DEFAULT_ROW_ESTIMATE_PX,
-                                               measured,
-                                               effective,
-                                               self->width_bucket,
-                                               LAYOUT_SIGNATURE,
-                                               geometry_measured);
+  GnostrTimelineItemViewModel *vm = entry->vm;
+  GnostrTimelineRowFootprint footprint = { 0 };
+  entry_resolve_footprint(self, entry, &footprint);
+
+  GnostrTimelineSnapshotRow *row =
+    gnostr_timeline_snapshot_row_new_from_view_model(vm,
+                                                     footprint.estimated_height,
+                                                     footprint.measured_height,
+                                                     footprint.effective_height,
+                                                     footprint.width_bucket,
+                                                     footprint.layout_signature,
+                                                     footprint.geometry_measured);
+  gnostr_timeline_row_footprint_clear(&footprint);
+  return row;
 }
 
 static GnostrTimelineSnapshot *
@@ -592,19 +377,16 @@ compose_snapshot(GnostrTimelineFeedController *self)
 
   for (guint i = 0; i < self->working->len; i++) {
     WorkingEntry *entry = g_ptr_array_index(self->working, i);
-    if (!entry || !entry->event_id)
+    GnostrTimelineItemViewModel *vm = entry ? entry->vm : NULL;
+    const char *event_id = vm ? gnostr_timeline_item_view_model_get_event_id(vm) : NULL;
+    if (!event_id || !*event_id)
       continue;
-    if (g_hash_table_contains(self->pending_head, entry->event_id))
-      continue;
-
-    /* Do not publish unhydrated author rows into the reading surface.  A row
-     * with no profile payload renders as a tiny fallback header/spacer and then
-     * reflows when the profile patch arrives.  Keep it in the working set and
-     * let profile hydration reveal it in a later, intentional snapshot. */
-    if (!entry->has_profile && !entry->display_name && !entry->handle && !entry->avatar_url)
+    if (g_hash_table_contains(self->pending_head, event_id))
       continue;
 
-    g_ptr_array_add(rows, snapshot_row_from_entry(self, entry));
+    GnostrTimelineSnapshotRow *row = snapshot_row_from_entry(self, entry);
+    if (row)
+      g_ptr_array_add(rows, row);
   }
 
   self->snapshot_generation++;
@@ -694,33 +476,39 @@ apply_metadata_patch(GnostrTimelineFeedController *self,
     return FALSE;
 
   WorkingEntry *entry = lookup_working(self, patch->event_id);
-  if (!entry)
+  if (!entry || !entry->vm)
     return FALSE;
 
   gboolean changed = FALSE;
-  if (patch->has_like_count && entry->like_count != patch->like_count) {
-    entry->like_count = patch->like_count;
-    changed = TRUE;
-  }
-  if (patch->has_is_liked && entry->is_liked != patch->is_liked) {
-    entry->is_liked = patch->is_liked;
-    changed = TRUE;
-  }
-  if (patch->has_repost_count && entry->repost_count != patch->repost_count) {
-    entry->repost_count = patch->repost_count;
-    changed = TRUE;
-  }
-  if (patch->has_reply_count && entry->reply_count != patch->reply_count) {
-    entry->reply_count = patch->reply_count;
-    changed = TRUE;
-  }
-  if (patch->has_zap_count && entry->zap_count != patch->zap_count) {
-    entry->zap_count = patch->zap_count;
-    changed = TRUE;
-  }
-  if (patch->has_zap_total_msat && entry->zap_total_msat != patch->zap_total_msat) {
-    entry->zap_total_msat = patch->zap_total_msat;
-    changed = TRUE;
+  changed |= patch->has_like_count &&
+    gnostr_timeline_item_view_model_get_like_count(entry->vm) != patch->like_count;
+  changed |= patch->has_is_liked &&
+    gnostr_timeline_item_view_model_get_is_liked(entry->vm) != patch->is_liked;
+  changed |= patch->has_repost_count &&
+    gnostr_timeline_item_view_model_get_repost_count(entry->vm) != patch->repost_count;
+  changed |= patch->has_reply_count &&
+    gnostr_timeline_item_view_model_get_reply_count(entry->vm) != patch->reply_count;
+  changed |= patch->has_zap_count &&
+    gnostr_timeline_item_view_model_get_zap_count(entry->vm) != patch->zap_count;
+  changed |= patch->has_zap_total_msat &&
+    gnostr_timeline_item_view_model_get_zap_total_msat(entry->vm) != patch->zap_total_msat;
+
+  if (changed) {
+    g_autoptr(GnostrTimelineItemViewModel) replacement =
+      gnostr_timeline_item_view_model_copy_with_interactions(entry->vm,
+                                                             patch->has_like_count,
+                                                             patch->like_count,
+                                                             patch->has_is_liked,
+                                                             patch->is_liked,
+                                                             patch->has_repost_count,
+                                                             patch->repost_count,
+                                                             patch->has_reply_count,
+                                                             patch->reply_count,
+                                                             patch->has_zap_count,
+                                                             patch->zap_count,
+                                                             patch->has_zap_total_msat,
+                                                             patch->zap_total_msat);
+    working_entry_replace_vm(entry, replacement);
   }
 
   return changed;
@@ -736,30 +524,28 @@ apply_profile_patch(GnostrTimelineFeedController *self,
   gboolean changed = FALSE;
   for (guint i = 0; i < self->working->len; i++) {
     WorkingEntry *entry = g_ptr_array_index(self->working, i);
-    if (!entry || g_strcmp0(entry->pubkey, patch->pubkey_hex) != 0)
+    if (!entry || !entry->vm ||
+        g_strcmp0(gnostr_timeline_item_view_model_get_pubkey(entry->vm), patch->pubkey_hex) != 0)
       continue;
 
-    if (g_strcmp0(entry->display_name, patch->display_name) != 0) {
-      g_free(entry->display_name);
-      entry->display_name = g_strdup(patch->display_name);
+    gboolean row_changed = FALSE;
+    row_changed |= g_strcmp0(gnostr_timeline_item_view_model_get_display_name(entry->vm), patch->display_name) != 0;
+    row_changed |= g_strcmp0(gnostr_timeline_item_view_model_get_handle(entry->vm), patch->handle) != 0;
+    row_changed |= g_strcmp0(gnostr_timeline_item_view_model_get_avatar_url(entry->vm), patch->avatar_url) != 0;
+    row_changed |= g_strcmp0(gnostr_timeline_item_view_model_get_nip05(entry->vm), patch->nip05) != 0;
+    row_changed |= !gnostr_timeline_item_view_model_get_has_profile(entry->vm);
+
+    if (row_changed) {
+      g_autoptr(GnostrTimelineItemViewModel) replacement =
+        gnostr_timeline_item_view_model_copy_with_profile(entry->vm,
+                                                          patch->display_name,
+                                                          patch->handle,
+                                                          patch->avatar_url,
+                                                          patch->nip05,
+                                                          TRUE);
+      working_entry_replace_vm(entry, replacement);
       changed = TRUE;
     }
-    if (g_strcmp0(entry->handle, patch->handle) != 0) {
-      g_free(entry->handle);
-      entry->handle = g_strdup(patch->handle);
-      changed = TRUE;
-    }
-    if (g_strcmp0(entry->avatar_url, patch->avatar_url) != 0) {
-      g_free(entry->avatar_url);
-      entry->avatar_url = g_strdup(patch->avatar_url);
-      changed = TRUE;
-    }
-    if (g_strcmp0(entry->nip05, patch->nip05) != 0) {
-      g_free(entry->nip05);
-      entry->nip05 = g_strdup(patch->nip05);
-      changed = TRUE;
-    }
-    entry->has_profile = TRUE;
   }
 
   return changed;
@@ -789,11 +575,12 @@ gnostr_timeline_feed_controller_dispose(GObject *object)
   }
 
   g_clear_object(&self->source);
+  g_clear_object(&self->hydrator);
   g_clear_object(&self->model);
   g_clear_pointer(&self->working, g_ptr_array_unref);
   g_clear_pointer(&self->by_event_id, g_hash_table_unref);
   g_clear_pointer(&self->pending_head, g_hash_table_unref);
-  g_clear_pointer(&self->geometry, g_hash_table_unref);
+  g_clear_pointer(&self->geometry, gnostr_timeline_geometry_resolver_free);
 
   G_OBJECT_CLASS(gnostr_timeline_feed_controller_parent_class)->dispose(object);
 }
@@ -854,15 +641,16 @@ gnostr_timeline_feed_controller_init(GnostrTimelineFeedController *self)
 {
   self->query_generation = 1;
   self->snapshot_generation = 0;
+  self->hydrator = gnostr_timeline_hydrator_new(self->query_generation);
   self->model = gnostr_timeline_snapshot_model_new();
   self->working = g_ptr_array_new_with_free_func((GDestroyNotify)working_entry_free);
   self->by_event_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->pending_head = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  self->geometry = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)geometry_entry_free);
+  self->geometry = gnostr_timeline_geometry_resolver_new();
   self->user_at_top = TRUE;
   self->scroll_y = 0.0;
   self->viewport_height = 0.0;
-  self->width_bucket = DEFAULT_WIDTH_BUCKET;
+  self->width_bucket = GNOSTR_TIMELINE_GEOMETRY_DEFAULT_WIDTH_BUCKET;
 }
 
 GnostrTimelineFeedController *
@@ -917,6 +705,8 @@ gnostr_timeline_feed_controller_set_source(GnostrTimelineFeedController *self,
 #ifndef GNOSTR_TIMELINE_FEED_CONTROLLER_NO_SOURCE
   if (self->source) {
     self->query_generation = gnostr_timeline_source_get_generation(self->source);
+    if (self->hydrator)
+      gnostr_timeline_hydrator_set_generation(self->hydrator, self->query_generation);
     self->source_batch_handler = g_signal_connect(self->source,
                                                    "batch",
                                                    G_CALLBACK(on_source_batch),
@@ -946,6 +736,8 @@ gnostr_timeline_feed_controller_set_query(GnostrTimelineFeedController *self,
   if (self->query_generation == 0)
     self->query_generation = 1;
 #endif
+  if (self->hydrator)
+    gnostr_timeline_hydrator_set_generation(self->hydrator, self->query_generation);
   self->loading_older = FALSE;
   self->loading_newer = FALSE;
   clear_working_set(self);
@@ -1029,28 +821,30 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
   guint n_entries = gnostr_timeline_batch_get_n_entries(batch);
 
   switch (kind) {
-    case GNOSTR_TIMELINE_BATCH_REFRESH:
+    case GNOSTR_TIMELINE_BATCH_REFRESH: {
+      g_autoptr(GPtrArray) items = hydrate_batch_items(self, batch);
+      if (!items)
+        return;
       clear_working_set(self);
-      for (guint i = 0; i < n_entries; i++) {
-        const GnostrTimelineBatchEntry *entry = gnostr_timeline_batch_get_entry(batch, i);
-        if (entry)
-          merge_batch_entry(self, entry, NULL);
-      }
+      for (guint i = 0; i < items->len; i++)
+        merge_hydrated_vm(self, g_ptr_array_index(items, i), NULL);
       emit_pending_count(self);
       schedule_compose(self, FALSE, TRUE);
       break;
+    }
 
     case GNOSTR_TIMELINE_BATCH_LIVE_HEAD: {
+      g_autoptr(GPtrArray) items = hydrate_batch_items(self, batch);
+      if (!items)
+        return;
       gboolean pending_changed = FALSE;
-      for (guint i = 0; i < n_entries; i++) {
-        const GnostrTimelineBatchEntry *entry = gnostr_timeline_batch_get_entry(batch, i);
-        if (!entry)
-          continue;
-
+      for (guint i = 0; i < items->len; i++) {
+        GnostrTimelineItemViewModel *vm = g_ptr_array_index(items, i);
         gboolean inserted = FALSE;
-        WorkingEntry *we = merge_batch_entry(self, entry, &inserted);
-        if (!self->user_at_top && we && inserted && !g_hash_table_contains(self->pending_head, we->event_id)) {
-          g_hash_table_add(self->pending_head, g_strdup(we->event_id));
+        WorkingEntry *we = merge_hydrated_vm(self, vm, &inserted);
+        const char *event_id = (we && we->vm) ? gnostr_timeline_item_view_model_get_event_id(we->vm) : NULL;
+        if (!self->user_at_top && event_id && inserted && !g_hash_table_contains(self->pending_head, event_id)) {
+          g_hash_table_add(self->pending_head, g_strdup(event_id));
           pending_changed = TRUE;
         }
       }
@@ -1063,25 +857,27 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
       break;
     }
 
-    case GNOSTR_TIMELINE_BATCH_PAGE_OLDER:
+    case GNOSTR_TIMELINE_BATCH_PAGE_OLDER: {
+      g_autoptr(GPtrArray) items = hydrate_batch_items(self, batch);
+      if (!items)
+        return;
       self->loading_older = FALSE;
-      for (guint i = 0; i < n_entries; i++) {
-        const GnostrTimelineBatchEntry *entry = gnostr_timeline_batch_get_entry(batch, i);
-        if (entry)
-          merge_batch_entry(self, entry, NULL);
-      }
+      for (guint i = 0; i < items->len; i++)
+        merge_hydrated_vm(self, g_ptr_array_index(items, i), NULL);
       schedule_compose(self, TRUE, FALSE);
       break;
+    }
 
-    case GNOSTR_TIMELINE_BATCH_PAGE_NEWER:
+    case GNOSTR_TIMELINE_BATCH_PAGE_NEWER: {
+      g_autoptr(GPtrArray) items = hydrate_batch_items(self, batch);
+      if (!items)
+        return;
       self->loading_newer = FALSE;
-      for (guint i = 0; i < n_entries; i++) {
-        const GnostrTimelineBatchEntry *entry = gnostr_timeline_batch_get_entry(batch, i);
-        if (entry)
-          merge_batch_entry(self, entry, NULL);
-      }
+      for (guint i = 0; i < items->len; i++)
+        merge_hydrated_vm(self, g_ptr_array_index(items, i), NULL);
       schedule_compose(self, TRUE, FALSE);
       break;
+    }
 
     case GNOSTR_TIMELINE_BATCH_DELETE: {
       gboolean changed = FALSE;
@@ -1151,7 +947,7 @@ gnostr_timeline_feed_controller_set_viewport(GnostrTimelineFeedController *self,
   guint old_bucket = self->width_bucket;
   self->scroll_y = MAX(scroll_y, 0.0);
   self->viewport_height = MAX(viewport_height, 0.0);
-  self->width_bucket = width_to_bucket(width_px);
+  self->width_bucket = gnostr_timeline_geometry_width_to_bucket(width_px);
   self->user_at_top = self->scroll_y <= AT_TOP_EPSILON_PX;
 
   if (old_bucket != self->width_bucket)
@@ -1217,9 +1013,9 @@ gnostr_timeline_feed_controller_dup_geometry_token_for_row(GnostrTimelineSnapsho
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(row), NULL);
 
-  return geometry_token_new(gnostr_timeline_snapshot_row_get_event_id(row),
-                            gnostr_timeline_snapshot_row_get_width_bucket(row),
-                            gnostr_timeline_snapshot_row_get_layout_signature(row));
+  return gnostr_timeline_geometry_dup_cache_key(gnostr_timeline_snapshot_row_get_event_id(row),
+                                                gnostr_timeline_snapshot_row_get_width_bucket(row),
+                                                gnostr_timeline_snapshot_row_get_layout_signature(row));
 }
 
 void
@@ -1237,10 +1033,13 @@ gnostr_timeline_feed_controller_record_geometry(GnostrTimelineFeedController *se
   g_autofree char *event_id = NULL;
   g_autofree char *layout_signature = NULL;
   guint token_width_bucket = 0;
-  if (!geometry_token_parse(geometry_token, &event_id, &token_width_bucket, &layout_signature))
+  if (!gnostr_timeline_geometry_parse_cache_key(geometry_token,
+                                                &event_id,
+                                                &token_width_bucket,
+                                                &layout_signature))
     return;
 
-  guint actual_width_bucket = width_to_bucket((guint)MAX(width_px, 0));
+  guint actual_width_bucket = gnostr_timeline_geometry_width_to_bucket((guint)MAX(width_px, 0));
   if (actual_width_bucket != token_width_bucket) {
     g_debug("[COMPOSITOR] Ignoring geometry token width mismatch token=%u actual=%u",
             token_width_bucket,
@@ -1254,23 +1053,11 @@ gnostr_timeline_feed_controller_record_geometry(GnostrTimelineFeedController *se
   if (snapshot_generation > 0 && current_generation > 0 && snapshot_generation < current_generation)
     return;
 
-  GeometryEntry *existing = g_hash_table_lookup(self->geometry, geometry_token);
-  if (existing) {
-    if (existing->snapshot_generation > snapshot_generation)
-      return;
-    if (existing->width_bucket == token_width_bucket &&
-        existing->measured_height == (double)height_px &&
-        g_strcmp0(existing->layout_signature, layout_signature) == 0) {
-      existing->snapshot_generation = MAX(existing->snapshot_generation, snapshot_generation);
-      return;
-    }
-  }
-
-  GeometryEntry *entry = geometry_entry_new(token_width_bucket,
-                                            layout_signature,
-                                            (double)height_px,
-                                            snapshot_generation);
-  g_hash_table_replace(self->geometry, g_strdup(geometry_token), entry);
+  gnostr_timeline_geometry_resolver_record_measurement(self->geometry,
+                                                       event_id,
+                                                       token_width_bucket,
+                                                       layout_signature,
+                                                       (double)height_px);
 
   /* Measurements refine future editions only.  Replacing the currently visible
    * snapshot in response to row measurement creates a feedback loop: GTK

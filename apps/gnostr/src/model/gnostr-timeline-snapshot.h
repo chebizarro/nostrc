@@ -3,6 +3,8 @@
 
 #include <gio/gio.h>
 
+#include "gnostr-timeline-item-view-model.h"
+
 G_BEGIN_DECLS
 
 #define GNOSTR_TYPE_TIMELINE_SNAPSHOT_ROW (gnostr_timeline_snapshot_row_get_type())
@@ -54,6 +56,14 @@ GnostrTimelineSnapshotRow *gnostr_timeline_snapshot_row_new_full(const char *eve
                                                                  const char *layout_signature,
                                                                  gboolean geometry_measured);
 
+GnostrTimelineSnapshotRow *gnostr_timeline_snapshot_row_new_from_view_model(GnostrTimelineItemViewModel *view_model,
+                                                                            double estimated_height,
+                                                                            double measured_height,
+                                                                            double effective_height,
+                                                                            guint width_bucket,
+                                                                            const char *layout_signature,
+                                                                            gboolean geometry_measured);
+
 const char *gnostr_timeline_snapshot_row_get_event_id(GnostrTimelineSnapshotRow *self);
 const char *gnostr_timeline_snapshot_row_get_note_key(GnostrTimelineSnapshotRow *self);
 const char *gnostr_timeline_snapshot_row_get_pubkey(GnostrTimelineSnapshotRow *self);
@@ -83,6 +93,7 @@ double      gnostr_timeline_snapshot_row_get_effective_height(GnostrTimelineSnap
 guint       gnostr_timeline_snapshot_row_get_width_bucket(GnostrTimelineSnapshotRow *self);
 const char *gnostr_timeline_snapshot_row_get_layout_signature(GnostrTimelineSnapshotRow *self);
 gboolean    gnostr_timeline_snapshot_row_get_geometry_measured(GnostrTimelineSnapshotRow *self);
+GnostrTimelineItemViewModel *gnostr_timeline_snapshot_row_dup_view_model(GnostrTimelineSnapshotRow *self);
 
 GnostrTimelineSnapshot *gnostr_timeline_snapshot_new(guint64 generation,
                                                       guint64 query_generation,

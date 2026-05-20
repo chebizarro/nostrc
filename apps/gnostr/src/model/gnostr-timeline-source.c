@@ -585,6 +585,20 @@ source_emit_delete_batch(GnostrTimelineSource *self,
   g_object_unref(batch);
 }
 
+static gboolean
+strv_contains_string(GPtrArray *array,
+                     const char *value)
+{
+  if (!array || !value)
+    return FALSE;
+
+  for (guint i = 0; i < array->len; i++) {
+    if (g_strcmp0(g_ptr_array_index(array, i), value) == 0)
+      return TRUE;
+  }
+  return FALSE;
+}
+
 static void
 source_emit_note_key_patch_batch(GnostrTimelineSource *self,
                                  GnostrTimelineBatchKind kind,
@@ -599,6 +613,9 @@ source_emit_note_key_patch_batch(GnostrTimelineSource *self,
   void *txn = NULL;
   gboolean have_txn = (storage_ndb_begin_query(&txn, NULL) == 0 && txn != NULL);
   if (have_txn) {
+    GPtrArray *metadata_target_ids = kind == GNOSTR_TIMELINE_BATCH_METADATA_PATCH ?
+      g_ptr_array_new_with_free_func(g_free) : NULL;
+
     for (guint i = 0; i < n_keys; i++) {
       storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_keys[i]);
       if (!note)
@@ -609,6 +626,35 @@ source_emit_note_key_patch_batch(GnostrTimelineSource *self,
       if (pk32)
         storage_ndb_hex_encode(pk32, pubkey_hex);
 
+      if (kind == GNOSTR_TIMELINE_BATCH_PROFILE_PATCH && pk32) {
+        g_autofree char *display_name = NULL;
+        g_autofree char *handle = NULL;
+        g_autofree char *avatar_url = NULL;
+        g_autofree char *nip05 = NULL;
+        hydrate_profile_fields_from_db(txn,
+                                       pk32,
+                                       pubkey_hex,
+                                       &display_name,
+                                       &handle,
+                                       &avatar_url,
+                                       &nip05);
+        GnostrTimelineProfilePatch patch = {
+          .pubkey_hex = pubkey_hex,
+          .display_name = display_name,
+          .handle = handle,
+          .avatar_url = avatar_url,
+          .nip05 = nip05,
+        };
+        gnostr_timeline_batch_add_profile_patch(batch, &patch);
+      } else if (kind == GNOSTR_TIMELINE_BATCH_METADATA_PATCH && metadata_target_ids) {
+        g_autofree char *target_id = storage_ndb_note_get_last_etag(note);
+        if (target_id && *target_id && !strv_contains_string(metadata_target_ids, target_id))
+          g_ptr_array_add(metadata_target_ids, g_strdup(target_id));
+      }
+
+      /* Preserve the original patch-event entry payload for compatibility with
+       * legacy source consumers.  The compositor consumes the structured patch
+       * arrays populated above. */
       gnostr_timeline_batch_add_note(batch,
                                      note_keys[i],
                                      (gint64)storage_ndb_note_created_at(note),
@@ -624,10 +670,59 @@ source_emit_note_key_patch_batch(GnostrTimelineSource *self,
                                      (gint)storage_ndb_note_kind(note),
                                      TRUE);
     }
+
+    if (metadata_target_ids && metadata_target_ids->len > 0) {
+      g_ptr_array_add(metadata_target_ids, NULL);
+      const char * const *target_ids = (const char * const *)metadata_target_ids->pdata;
+      guint n_targets = metadata_target_ids->len - 1;
+      g_autoptr(GHashTable) reaction_counts = storage_ndb_count_reactions_batch(target_ids, n_targets);
+      g_autoptr(GHashTable) zap_stats = storage_ndb_get_zap_stats_batch(target_ids, n_targets);
+      g_autoptr(GHashTable) repost_counts = storage_ndb_count_reposts_batch(target_ids, n_targets);
+      g_autoptr(GHashTable) reply_counts = storage_ndb_count_replies_batch(target_ids, n_targets);
+
+      for (guint i = 0; i < n_targets; i++) {
+        const char *target_id = g_ptr_array_index(metadata_target_ids, i);
+        GnostrTimelineMetadataPatch patch = {
+          .event_id = (char *)target_id,
+          .has_like_count = TRUE,
+          .like_count = 0,
+          .has_zap_count = TRUE,
+          .zap_count = 0,
+          .has_zap_total_msat = TRUE,
+          .zap_total_msat = 0,
+          .has_repost_count = TRUE,
+          .repost_count = 0,
+          .has_reply_count = TRUE,
+          .reply_count = 0,
+        };
+
+        gpointer val = reaction_counts ? g_hash_table_lookup(reaction_counts, target_id) : NULL;
+        if (val)
+          patch.like_count = GPOINTER_TO_UINT(val);
+        StorageNdbZapStats *zs = zap_stats ? g_hash_table_lookup(zap_stats, target_id) : NULL;
+        if (zs) {
+          patch.zap_count = zs->zap_count;
+          patch.zap_total_msat = zs->total_msat;
+        }
+        gpointer rval = repost_counts ? g_hash_table_lookup(repost_counts, target_id) : NULL;
+        if (rval)
+          patch.repost_count = GPOINTER_TO_UINT(rval);
+        gpointer rpval = reply_counts ? g_hash_table_lookup(reply_counts, target_id) : NULL;
+        if (rpval)
+          patch.reply_count = GPOINTER_TO_UINT(rpval);
+
+        gnostr_timeline_batch_add_metadata_patch(batch, &patch);
+      }
+    }
+
+    if (metadata_target_ids)
+      g_ptr_array_unref(metadata_target_ids);
     storage_ndb_end_query(txn);
   }
 
-  if (gnostr_timeline_batch_get_n_entries(batch) > 0)
+  if (gnostr_timeline_batch_get_n_entries(batch) > 0 ||
+      gnostr_timeline_batch_get_n_profile_patches(batch) > 0 ||
+      gnostr_timeline_batch_get_n_metadata_patches(batch) > 0)
     g_signal_emit(self, signals[SIGNAL_BATCH], 0, batch);
 
   g_object_unref(batch);

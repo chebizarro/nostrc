@@ -332,6 +332,7 @@ struct _NostrGtkNoteCardRow {
 
   /* Compositor geometry reservation/measurement state. */
   gint reserved_height;
+  gboolean explicit_footprint_expansion;
   gchar *geometry_token;
   guint64 snapshot_generation;
   gint last_reported_width;
@@ -1835,6 +1836,7 @@ static void on_show_sensitive_clicked(GtkButton *btn, gpointer user_data) {
 
   /* Mark sensitive content as revealed */
   self->sensitive_content_revealed = TRUE;
+  nostr_gtk_note_card_row_set_explicit_footprint_expansion(self, TRUE);
 
   /* Hide the overlay and show the content */
   if (self->sensitive_content_overlay && GTK_IS_WIDGET(self->sensitive_content_overlay)) {
@@ -1865,6 +1867,11 @@ nostr_gtk_note_card_row_maybe_emit_measured_geometry(NostrGtkNoteCardRow *self,
   if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
   if (self->disposed || !self->geometry_token || !*self->geometry_token) return;
   if (width <= 0 || height <= 0) return;
+  if (self->explicit_footprint_expansion) {
+    /* Expanded allocations are caused by explicit user action and must not
+     * poison the passive geometry cache that future collapsed snapshots reuse. */
+    return;
+  }
 
   if (self->last_reported_width == width &&
       self->last_reported_height == height &&
@@ -1931,9 +1938,13 @@ nostr_gtk_note_card_row_measure(GtkWidget      *widget,
   } else if (self->reserved_height > 0) {
     /* Compositor-published rows have a fixed footprint.  Late async content
      * must fill or clip inside this allocation; it must not increase the row's
-     * requested height and push the visible document around. */
+     * requested height and push the visible document around.  Only deliberate
+     * user expansion may opt back into the natural height. */
     *minimum = self->reserved_height;
-    *natural = self->reserved_height;
+    if (self->explicit_footprint_expansion)
+      *natural = MAX(*natural, self->reserved_height);
+    else
+      *natural = self->reserved_height;
   }
 }
 
@@ -2264,6 +2275,20 @@ nostr_gtk_note_card_row_set_geometry_token(NostrGtkNoteCardRow *self,
   g_clear_pointer(&self->last_reported_geometry_token, g_free);
 }
 
+void
+nostr_gtk_note_card_row_set_explicit_footprint_expansion(NostrGtkNoteCardRow *self,
+                                                         gboolean allow_expansion)
+{
+  g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
+
+  allow_expansion = !!allow_expansion;
+  if (self->explicit_footprint_expansion == allow_expansion)
+    return;
+
+  self->explicit_footprint_expansion = allow_expansion;
+  gtk_widget_queue_resize(GTK_WIDGET(self));
+}
+
 gint
 nostr_gtk_note_card_row_get_reserved_height(NostrGtkNoteCardRow *self)
 {
@@ -2283,6 +2308,13 @@ nostr_gtk_note_card_row_get_snapshot_generation(NostrGtkNoteCardRow *self)
 {
   g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), 0);
   return self->snapshot_generation;
+}
+
+gboolean
+nostr_gtk_note_card_row_get_explicit_footprint_expansion(NostrGtkNoteCardRow *self)
+{
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), FALSE);
+  return self->explicit_footprint_expansion;
 }
 
 static void set_avatar_initials(NostrGtkNoteCardRow *self, const char *display, const char *handle) {
@@ -4973,6 +5005,7 @@ void nostr_gtk_note_card_row_reveal_sensitive_content(NostrGtkNoteCardRow *self)
 
   /* Mark as revealed and trigger the same logic as clicking the button */
   self->sensitive_content_revealed = TRUE;
+  nostr_gtk_note_card_row_set_explicit_footprint_expansion(self, TRUE);
 
   /* Hide the overlay */
   if (GTK_IS_WIDGET(self->sensitive_content_overlay)) {
@@ -6628,6 +6661,7 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
    * set a fresh token/reservation before revealing content; legacy bindings
    * keep the default no-token/no-reservation behavior. */
   self->reserved_height = 0;
+  self->explicit_footprint_expansion = FALSE;
   g_clear_pointer(&self->geometry_token, g_free);
   self->snapshot_generation = 0;
   self->last_reported_width = 0;

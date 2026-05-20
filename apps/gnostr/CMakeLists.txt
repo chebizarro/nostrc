@@ -1034,6 +1034,7 @@ if (BUILD_TESTING)
   # Timeline snapshot primitive unit tests (nostrc-2e5.2)
   add_executable(gnostr-test-timeline-snapshot
     tests/test_timeline_snapshot.c
+    src/model/gnostr-timeline-item-view-model.c
     src/model/gnostr-timeline-snapshot.c
     src/model/gnostr-timeline-snapshot-model.c)
   target_compile_features(gnostr-test-timeline-snapshot PRIVATE c_std_11)
@@ -1046,10 +1047,43 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "timeline;snapshot;model;unit;gnostr")
 
+  # Timeline geometry resolver unit tests (nostrc-75h.3)
+  add_executable(gnostr-test-timeline-geometry
+    tests/test_timeline_geometry.c
+    src/model/gnostr-timeline-geometry.c)
+  target_compile_features(gnostr-test-timeline-geometry PRIVATE c_std_11)
+  target_include_directories(gnostr-test-timeline-geometry PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(gnostr-test-timeline-geometry PRIVATE PkgConfig::GLIB)
+  _gnostr_apply_sanitizers(gnostr-test-timeline-geometry)
+  add_test(NAME gnostr-test-timeline-geometry COMMAND gnostr-test-timeline-geometry)
+  set_tests_properties(gnostr-test-timeline-geometry PROPERTIES
+    TIMEOUT 30
+    LABELS "timeline;geometry;unit;gnostr")
+
+  # Timeline hydrator/view-model unit tests (nostrc-75h.2)
+  add_executable(gnostr-test-timeline-hydrator
+    tests/test_timeline_hydrator.c
+    src/model/gnostr-timeline-batch.c
+    src/model/gnostr-timeline-hydrator.c
+    src/model/gnostr-timeline-item-view-model.c)
+  target_compile_features(gnostr-test-timeline-hydrator PRIVATE c_std_11)
+  target_include_directories(gnostr-test-timeline-hydrator PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(gnostr-test-timeline-hydrator PRIVATE PkgConfig::GLIB PkgConfig::GIO)
+  _gnostr_apply_sanitizers(gnostr-test-timeline-hydrator)
+  add_test(NAME gnostr-test-timeline-hydrator COMMAND gnostr-test-timeline-hydrator)
+  set_tests_properties(gnostr-test-timeline-hydrator PROPERTIES
+    TIMEOUT 30
+    LABELS "timeline;hydrator;view-model;unit;gnostr")
+
   # Timeline feed compositor/controller unit tests (nostrc-2e5.4)
   add_executable(gnostr-test-timeline-feed-controller
     tests/test_timeline_feed_controller.c
     src/ui/gnostr-timeline-feed-controller.c
+    src/model/gnostr-timeline-geometry.c
+    src/model/gnostr-timeline-hydrator.c
+    src/model/gnostr-timeline-item-view-model.c
     src/model/gnostr-timeline-batch.c
     src/model/gnostr-timeline-snapshot.c
     src/model/gnostr-timeline-snapshot-model.c)

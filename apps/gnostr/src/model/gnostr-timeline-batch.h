@@ -33,9 +33,38 @@ typedef struct {
   char    *reply_id;
   char    *quoted_event_id;
   char    *reposted_event_id;
+  char    *parent_pubkey;
+  char    *parent_display_name;
+  char    *parent_avatar_url;
+  char    *parent_nip05;
+  char    *quoted_pubkey;
+  char    *quoted_display_name;
+  char    *quoted_content;
+  gint64   quoted_created_at;
+  gint     quoted_kind;
+  gboolean quoted_resolved;
+  char    *reposted_pubkey;
+  char    *reposted_display_name;
+  char    *reposted_avatar_url;
+  char    *reposted_nip05;
+  char    *reposted_content;
+  gint64   reposted_created_at;
+  gint     reposted_kind;
+  gboolean reposted_resolved;
+  gboolean is_own_note;
+  gboolean logged_in;
+  gboolean is_bookmarked;
+  gboolean is_pinned;
+  char    *zap_target;
   char   **hashtags;
+  char   **mentions;
+  char   **links;
+  char   **media_urls;
+  char    *content_warning;
+  char    *relay_hint;
   gint     kind;
   gboolean has_profile;
+  gboolean is_muted;
 } GnostrTimelineBatchEntry;
 
 typedef struct {

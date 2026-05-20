@@ -31,7 +31,25 @@ gnostr_timeline_batch_entry_clear(gpointer data)
   g_free(entry->reply_id);
   g_free(entry->quoted_event_id);
   g_free(entry->reposted_event_id);
+  g_free(entry->parent_pubkey);
+  g_free(entry->parent_display_name);
+  g_free(entry->parent_avatar_url);
+  g_free(entry->parent_nip05);
+  g_free(entry->quoted_pubkey);
+  g_free(entry->quoted_display_name);
+  g_free(entry->quoted_content);
+  g_free(entry->reposted_pubkey);
+  g_free(entry->reposted_display_name);
+  g_free(entry->reposted_avatar_url);
+  g_free(entry->reposted_nip05);
+  g_free(entry->reposted_content);
+  g_free(entry->zap_target);
   g_strfreev(entry->hashtags);
+  g_strfreev(entry->mentions);
+  g_strfreev(entry->links);
+  g_strfreev(entry->media_urls);
+  g_free(entry->content_warning);
+  g_free(entry->relay_hint);
 }
 
 static void
@@ -156,9 +174,38 @@ gnostr_timeline_batch_add_entry(GnostrTimelineBatch *self,
   copy.reply_id = g_strdup(entry->reply_id);
   copy.quoted_event_id = g_strdup(entry->quoted_event_id);
   copy.reposted_event_id = g_strdup(entry->reposted_event_id);
+  copy.parent_pubkey = g_strdup(entry->parent_pubkey);
+  copy.parent_display_name = g_strdup(entry->parent_display_name);
+  copy.parent_avatar_url = g_strdup(entry->parent_avatar_url);
+  copy.parent_nip05 = g_strdup(entry->parent_nip05);
+  copy.quoted_pubkey = g_strdup(entry->quoted_pubkey);
+  copy.quoted_display_name = g_strdup(entry->quoted_display_name);
+  copy.quoted_content = g_strdup(entry->quoted_content);
+  copy.quoted_created_at = entry->quoted_created_at;
+  copy.quoted_kind = entry->quoted_kind;
+  copy.quoted_resolved = entry->quoted_resolved;
+  copy.reposted_pubkey = g_strdup(entry->reposted_pubkey);
+  copy.reposted_display_name = g_strdup(entry->reposted_display_name);
+  copy.reposted_avatar_url = g_strdup(entry->reposted_avatar_url);
+  copy.reposted_nip05 = g_strdup(entry->reposted_nip05);
+  copy.reposted_content = g_strdup(entry->reposted_content);
+  copy.reposted_created_at = entry->reposted_created_at;
+  copy.reposted_kind = entry->reposted_kind;
+  copy.reposted_resolved = entry->reposted_resolved;
+  copy.is_own_note = entry->is_own_note;
+  copy.logged_in = entry->logged_in;
+  copy.is_bookmarked = entry->is_bookmarked;
+  copy.is_pinned = entry->is_pinned;
+  copy.zap_target = g_strdup(entry->zap_target);
   copy.hashtags = g_strdupv(entry->hashtags);
+  copy.mentions = g_strdupv(entry->mentions);
+  copy.links = g_strdupv(entry->links);
+  copy.media_urls = g_strdupv(entry->media_urls);
+  copy.content_warning = g_strdup(entry->content_warning);
+  copy.relay_hint = g_strdup(entry->relay_hint);
   copy.kind = entry->kind;
   copy.has_profile = entry->has_profile;
+  copy.is_muted = entry->is_muted;
 
   g_array_append_val(self->entries, copy);
 }

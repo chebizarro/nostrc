@@ -83,9 +83,22 @@ void nostr_gtk_note_card_row_set_geometry_token(NostrGtkNoteCardRow *self,
                                                 const gchar *geometry_token,
                                                 guint64 snapshot_generation);
 
+/**
+ * nostr_gtk_note_card_row_set_explicit_footprint_expansion:
+ * @self: note card row
+ * @allow_expansion: whether explicit user action may grow the row footprint
+ *
+ * Snapshot-bound rows are fixed to their reserved height by default.  Set this
+ * only from deliberate user actions (for example revealing hidden content) to
+ * allow GTK's natural height to exceed the reserved footprint.
+ */
+void nostr_gtk_note_card_row_set_explicit_footprint_expansion(NostrGtkNoteCardRow *self,
+                                                              gboolean allow_expansion);
+
 gint nostr_gtk_note_card_row_get_reserved_height(NostrGtkNoteCardRow *self);
 const gchar *nostr_gtk_note_card_row_get_geometry_token(NostrGtkNoteCardRow *self);
 guint64 nostr_gtk_note_card_row_get_snapshot_generation(NostrGtkNoteCardRow *self);
+gboolean nostr_gtk_note_card_row_get_explicit_footprint_expansion(NostrGtkNoteCardRow *self);
 
 /**
  * NostrGtkContentSubstType:

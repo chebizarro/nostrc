@@ -16,6 +16,7 @@
 #include <gtk/gtk.h>
 #include <adwaita.h>
 #include <glib.h>
+#include <nostr-gtk-1.0/nostr-note-card-row.h>
 
 /* ── Size thresholds (in pixels) ──────────────────────────────────── */
 /* These should be adjusted based on the actual design requirements.
@@ -275,6 +276,57 @@ test_listview_row_heights_bounded(void)
     }
 }
 
+static void
+test_note_card_reserved_height_blocks_passive_expansion(void)
+{
+    NostrGtkNoteCardRow *row = nostr_gtk_note_card_row_new();
+    const char *long_content =
+        "This content is intentionally long enough to need much more than the "
+        "reserved row height when GTK measures it naturally. "
+        "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\n"
+        "line 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\n";
+
+    nostr_gtk_note_card_row_set_content(row, long_content);
+    nostr_gtk_note_card_row_set_reserved_height(row, 180);
+
+    int min_h = 0, nat_h = 0;
+    gtk_widget_measure(GTK_WIDGET(row), GTK_ORIENTATION_VERTICAL,
+                       REFERENCE_WIDTH_PX, &min_h, &nat_h, NULL, NULL);
+
+    g_assert_cmpint(min_h, ==, 180);
+    g_assert_cmpint(nat_h, ==, 180);
+
+    g_object_ref_sink(row);
+    g_object_unref(row);
+}
+
+static void
+test_note_card_explicit_expansion_allows_natural_height(void)
+{
+    NostrGtkNoteCardRow *row = nostr_gtk_note_card_row_new();
+    const char *long_content =
+        "This content is intentionally long enough to exceed the reserved "
+        "height after the user explicitly expands the row. "
+        "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\n"
+        "line 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\n"
+        "line 16\nline 17\nline 18\nline 19\nline 20\n";
+
+    nostr_gtk_note_card_row_set_content(row, long_content);
+    nostr_gtk_note_card_row_set_reserved_height(row, 120);
+    nostr_gtk_note_card_row_set_explicit_footprint_expansion(row, TRUE);
+
+    int min_h = 0, nat_h = 0;
+    gtk_widget_measure(GTK_WIDGET(row), GTK_ORIENTATION_VERTICAL,
+                       REFERENCE_WIDTH_PX, &min_h, &nat_h, NULL, NULL);
+
+    g_assert_cmpint(min_h, ==, 120);
+    g_assert_cmpint(nat_h, >=, 120);
+    g_assert_true(nostr_gtk_note_card_row_get_explicit_footprint_expansion(row));
+
+    g_object_ref_sink(row);
+    g_object_unref(row);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -288,6 +340,10 @@ main(int argc, char *argv[])
                     test_adw_clamp_bounds_natural_width);
     g_test_add_func("/nostr-gtk/sizing/listview-row-heights",
                     test_listview_row_heights_bounded);
+    g_test_add_func("/nostr-gtk/sizing/note-card-reserved-height-fixed",
+                    test_note_card_reserved_height_blocks_passive_expansion);
+    g_test_add_func("/nostr-gtk/sizing/note-card-explicit-expansion",
+                    test_note_card_explicit_expansion_allows_natural_height);
 
     return g_test_run();
 }
