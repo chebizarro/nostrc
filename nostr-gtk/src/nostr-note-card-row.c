@@ -1929,8 +1929,11 @@ nostr_gtk_note_card_row_measure(GtkWidget      *widget,
     *minimum = 0;
     *natural = 0;
   } else if (self->reserved_height > 0) {
-    *minimum = MAX(*minimum, self->reserved_height);
-    *natural = MAX(*natural, self->reserved_height);
+    /* Compositor-published rows have a fixed footprint.  Late async content
+     * must fill or clip inside this allocation; it must not increase the row's
+     * requested height and push the visible document around. */
+    *minimum = self->reserved_height;
+    *natural = self->reserved_height;
   }
 }
 

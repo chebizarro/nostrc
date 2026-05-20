@@ -288,7 +288,7 @@ test_page_older_preserves_viewport_anchor(void)
   restore.value = 0.0;
   restore.emissions = 0;
 
-  /* Default compositor estimate is 160px.  This anchors 10px into row 2. */
+  /* Stable compositor estimate is fixed; this anchors into the visible document. */
   gnostr_timeline_feed_controller_set_viewport(controller, 170.0, 400.0, 480);
 
   GnostrTimelineBatch *older = batch_new(GNOSTR_TIMELINE_BATCH_PAGE_OLDER, 1);
@@ -675,8 +675,10 @@ test_geometry_measurement_recomposes_with_cached_height(void)
 
   g_autoptr(GnostrTimelineSnapshot) measured = dup_controller_snapshot(controller);
   GnostrTimelineSnapshotRow *measured_row = gnostr_timeline_snapshot_get_row(measured, 0);
-  g_assert_true(gnostr_timeline_snapshot_row_get_geometry_measured(measured_row));
-  g_assert_cmpfloat_with_epsilon(gnostr_timeline_snapshot_row_get_effective_height(measured_row), 222.0, 0.001);
+  g_assert_false(gnostr_timeline_snapshot_row_get_geometry_measured(measured_row));
+  g_assert_cmpfloat_with_epsilon(gnostr_timeline_snapshot_row_get_effective_height(measured_row),
+                                 gnostr_timeline_snapshot_row_get_effective_height(initial_row),
+                                 0.001);
   g_assert_cmpuint(published.emissions, ==, 1);
 
   g_autofree char *measured_token =

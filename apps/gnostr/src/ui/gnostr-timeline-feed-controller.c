@@ -4,7 +4,7 @@
 
 #include <string.h>
 
-#define DEFAULT_ROW_ESTIMATE_PX 160.0
+#define DEFAULT_ROW_ESTIMATE_PX 360.0
 #define DEFAULT_WIDTH_BUCKET    480u
 #define COMPOSE_DEBOUNCE_MS     50u
 #define AT_TOP_EPSILON_PX       1.0
@@ -529,16 +529,15 @@ entry_effective_height(GnostrTimelineFeedController *self,
                        double *out_measured,
                        gboolean *out_geometry_measured)
 {
-  g_autofree char *token = geometry_token_new(entry->event_id, self->width_bucket, LAYOUT_SIGNATURE);
-  GeometryEntry *geometry = g_hash_table_lookup(self->geometry, token);
-
-  if (geometry && geometry->measured_height > 0.0) {
-    if (out_measured)
-      *out_measured = geometry->measured_height;
-    if (out_geometry_measured)
-      *out_geometry_measured = TRUE;
-    return geometry->measured_height;
-  }
+  /* The active reading surface must not adopt measurements taken from live
+   * widgets.  Those measurements include late avatar/media/embed/profile
+   * mutations and turn asynchronous layout growth into a new snapshot height,
+   * which visibly pushes surrounding cards and fights scroll position.
+   *
+   * Until hydration predicts geometry before publication, keep a stable reserved
+   * footprint for every snapshot row.  The row widget clips/fills within that
+   * footprint instead of changing the document geometry after reveal. */
+  (void)entry;
 
   if (out_measured)
     *out_measured = 0.0;
@@ -1056,7 +1055,7 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
         }
       }
 
-      if (self->user_at_top) {
+      if (self->user_at_top && self->scroll_y <= AT_TOP_EPSILON_PX) {
         schedule_compose(self, FALSE, TRUE);
       } else if (pending_changed) {
         emit_pending_count(self);
@@ -1113,8 +1112,8 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
           gnostr_timeline_batch_get_profile_patch(batch, i);
         changed |= apply_profile_patch(self, patch);
       }
-      if (changed)
-        schedule_compose(self, TRUE, FALSE);
+      if (changed && self->user_at_top && self->scroll_y <= AT_TOP_EPSILON_PX)
+        schedule_compose(self, FALSE, FALSE);
       else if (n_patches == 0 && n_entries > 0)
         g_debug("[COMPOSITOR] Ignoring profile patch batch with no projected profile payload (%u entries)",
                 n_entries);
@@ -1129,8 +1128,8 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
           gnostr_timeline_batch_get_metadata_patch(batch, i);
         changed |= apply_metadata_patch(self, patch);
       }
-      if (changed)
-        schedule_compose(self, TRUE, FALSE);
+      if (changed && self->user_at_top && self->scroll_y <= AT_TOP_EPSILON_PX)
+        schedule_compose(self, FALSE, FALSE);
       else if (n_patches == 0 && n_entries > 0)
         g_debug("[COMPOSITOR] Ignoring metadata patch batch with no target-row payload (%u entries)",
                 n_entries);
