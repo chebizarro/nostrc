@@ -3,6 +3,7 @@
 #include "gnostr-timeline-source.h"
 
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
+#include <nostr-gobject-1.0/gn-nostr-profile.h>
 #include <nostr-gobject-1.0/gnostr-mute-list.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include <nostr.h>
@@ -163,6 +164,58 @@ note_is_muted_by_fields(storage_ndb_note *note,
                                                hashtags);
 }
 
+static void
+hydrate_profile_fields_from_db(void *txn,
+                               const unsigned char pk32[32],
+                               const char *pubkey_hex,
+                               char **out_display_name,
+                               char **out_handle,
+                               char **out_avatar_url,
+                               char **out_nip05)
+{
+  if (out_display_name) *out_display_name = NULL;
+  if (out_handle) *out_handle = NULL;
+  if (out_avatar_url) *out_avatar_url = NULL;
+  if (out_nip05) *out_nip05 = NULL;
+  if (!txn || !pk32 || !pubkey_hex)
+    return;
+
+  char *evt_json = NULL;
+  int evt_len = 0;
+  int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &evt_json, &evt_len, NULL);
+  if (rc != 0 || !evt_json || evt_len <= 0) {
+    if (evt_json)
+      free(evt_json);
+    return;
+  }
+
+  NostrEvent *evt = nostr_event_new();
+  if (!evt) {
+    free(evt_json);
+    return;
+  }
+
+  if (nostr_event_deserialize(evt, evt_json) == 0 && nostr_event_get_kind(evt) == 0) {
+    const char *profile_json = nostr_event_get_content(evt);
+    if (profile_json && *profile_json) {
+      GNostrProfile *profile = gnostr_profile_new(pubkey_hex);
+      gnostr_profile_update_from_json(profile, profile_json);
+      if (out_display_name)
+        *out_display_name = g_strdup(gnostr_profile_get_display_name(profile));
+      if (out_handle)
+        *out_handle = g_strdup(gnostr_profile_get_name(profile));
+      if (out_avatar_url)
+        *out_avatar_url = g_strdup(gnostr_profile_get_picture_url(profile));
+      if (out_nip05)
+        *out_nip05 = g_strdup(gnostr_profile_get_nip05(profile));
+      g_object_unref(profile);
+    }
+  }
+
+  nostr_event_free(evt);
+  free(evt_json);
+}
+
 static gboolean
 db_has_profile_event_for_pubkey(void *txn, const unsigned char pk32[32])
 {
@@ -217,7 +270,24 @@ add_note_key_to_batch_from_txn(GnostrTimelineBatch *batch,
   char *reply_id = NULL;
   storage_ndb_note_get_nip10_thread(note, &root_id, &reply_id);
 
-  gboolean has_profile = db_has_profile_event_for_pubkey(txn, pk32);
+  const char *content_ptr = storage_ndb_note_content(note);
+  uint32_t content_len = content_ptr ? storage_ndb_note_content_length(note) : 0;
+  g_autofree char *content = content_ptr ? g_strndup(content_ptr, content_len) : NULL;
+
+  g_autofree char *display_name = NULL;
+  g_autofree char *handle = NULL;
+  g_autofree char *avatar_url = NULL;
+  g_autofree char *nip05 = NULL;
+  hydrate_profile_fields_from_db(txn,
+                                 pk32,
+                                 pubkey_hex,
+                                 &display_name,
+                                 &handle,
+                                 &avatar_url,
+                                 &nip05);
+
+  gboolean has_profile = (display_name || handle || avatar_url || nip05 ||
+                          db_has_profile_event_for_pubkey(txn, pk32));
   if (!has_profile)
     gnostr_timeline_batch_add_profile_request(batch, pubkey_hex);
 
@@ -226,6 +296,11 @@ add_note_key_to_batch_from_txn(GnostrTimelineBatch *batch,
                                  created_at,
                                  storage_ndb_note_id(note),
                                  pubkey_hex,
+                                 content,
+                                 display_name,
+                                 handle,
+                                 avatar_url,
+                                 nip05,
                                  root_id,
                                  reply_id,
                                  kind,
@@ -473,6 +548,11 @@ source_emit_delete_batch(GnostrTimelineSource *self,
                                      delete_pk32 ? delete_pubkey_hex : NULL,
                                      NULL,
                                      NULL,
+                                     NULL,
+                                     NULL,
+                                     NULL,
+                                     NULL,
+                                     NULL,
                                      5,
                                      TRUE);
 
@@ -528,6 +608,11 @@ source_emit_note_key_patch_batch(GnostrTimelineSource *self,
                                      (gint64)storage_ndb_note_created_at(note),
                                      storage_ndb_note_id(note),
                                      pk32 ? pubkey_hex : NULL,
+                                     NULL,
+                                     NULL,
+                                     NULL,
+                                     NULL,
+                                     NULL,
                                      NULL,
                                      NULL,
                                      (gint)storage_ndb_note_kind(note),

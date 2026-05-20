@@ -134,7 +134,11 @@ working_entry_new_from_batch_entry(const GnostrTimelineBatchEntry *entry)
   we->note_key = g_strdup_printf("%" G_GUINT64_FORMAT, entry->note_key);
   we->pubkey = g_strdup(entry->pubkey_hex);
   we->tie_breaker = g_strdup(we->event_id);
-  we->content = g_strdup("");
+  we->content = g_strdup(entry->content ? entry->content : "");
+  we->display_name = g_strdup(entry->display_name);
+  we->handle = g_strdup(entry->handle);
+  we->avatar_url = g_strdup(entry->avatar_url);
+  we->nip05 = g_strdup(entry->nip05);
 
   return we;
 }
@@ -174,6 +178,26 @@ working_entry_update_from_batch_entry(WorkingEntry *we,
   if (entry->pubkey_hex) {
     g_free(we->pubkey);
     we->pubkey = g_strdup(entry->pubkey_hex);
+  }
+  if (entry->content) {
+    g_free(we->content);
+    we->content = g_strdup(entry->content);
+  }
+  if (entry->display_name) {
+    g_free(we->display_name);
+    we->display_name = g_strdup(entry->display_name);
+  }
+  if (entry->handle) {
+    g_free(we->handle);
+    we->handle = g_strdup(entry->handle);
+  }
+  if (entry->avatar_url) {
+    g_free(we->avatar_url);
+    we->avatar_url = g_strdup(entry->avatar_url);
+  }
+  if (entry->nip05) {
+    g_free(we->nip05);
+    we->nip05 = g_strdup(entry->nip05);
   }
 }
 

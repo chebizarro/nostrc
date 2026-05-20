@@ -31,6 +31,11 @@ batch_add(GnostrTimelineBatch *batch,
                                  created_at,
                                  id,
                                  "pubkey",
+                                 "note body",
+                                 "Display Name",
+                                 "handle",
+                                 "https://example.test/avatar.png",
+                                 "name@example.test",
                                  NULL,
                                  NULL,
                                  1,
@@ -145,6 +150,12 @@ test_live_head_pending_while_scrolled_down(void)
   g_autoptr(GnostrTimelineSnapshot) initial = dup_controller_snapshot(controller);
   g_assert_nonnull(initial);
   g_assert_cmpuint(gnostr_timeline_snapshot_get_n_rows(initial), ==, 2);
+  GnostrTimelineSnapshotRow *initial_row = gnostr_timeline_snapshot_get_row(initial, 0);
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_content(initial_row), ==, "note body");
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_display_name(initial_row), ==, "Display Name");
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_handle(initial_row), ==, "handle");
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_avatar_url(initial_row), ==, "https://example.test/avatar.png");
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_nip05(initial_row), ==, "name@example.test");
 
   gnostr_timeline_feed_controller_set_viewport(controller, 48.0, 400.0, 480);
   g_assert_false(gnostr_timeline_feed_controller_get_user_at_top(controller));

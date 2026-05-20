@@ -24,6 +24,11 @@ typedef struct {
   gint64   created_at;
   uint8_t  event_id[32];
   char    *pubkey_hex;
+  char    *content;
+  char    *display_name;
+  char    *handle;
+  char    *avatar_url;
+  char    *nip05;
   char    *root_id;
   char    *reply_id;
   gint     kind;
@@ -75,6 +80,11 @@ void gnostr_timeline_batch_add_note(GnostrTimelineBatch *self,
                                     gint64 created_at,
                                     const uint8_t event_id[32],
                                     const char *pubkey_hex,
+                                    const char *content,
+                                    const char *display_name,
+                                    const char *handle,
+                                    const char *avatar_url,
+                                    const char *nip05,
                                     const char *root_id,
                                     const char *reply_id,
                                     gint kind,

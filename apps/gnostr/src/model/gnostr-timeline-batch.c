@@ -22,6 +22,11 @@ gnostr_timeline_batch_entry_clear(gpointer data)
 {
   GnostrTimelineBatchEntry *entry = data;
   g_free(entry->pubkey_hex);
+  g_free(entry->content);
+  g_free(entry->display_name);
+  g_free(entry->handle);
+  g_free(entry->avatar_url);
+  g_free(entry->nip05);
   g_free(entry->root_id);
   g_free(entry->reply_id);
 }
@@ -139,6 +144,11 @@ gnostr_timeline_batch_add_entry(GnostrTimelineBatch *self,
   copy.created_at = entry->created_at;
   memcpy(copy.event_id, entry->event_id, sizeof(copy.event_id));
   copy.pubkey_hex = g_strdup(entry->pubkey_hex);
+  copy.content = g_strdup(entry->content);
+  copy.display_name = g_strdup(entry->display_name);
+  copy.handle = g_strdup(entry->handle);
+  copy.avatar_url = g_strdup(entry->avatar_url);
+  copy.nip05 = g_strdup(entry->nip05);
   copy.root_id = g_strdup(entry->root_id);
   copy.reply_id = g_strdup(entry->reply_id);
   copy.kind = entry->kind;
@@ -153,6 +163,11 @@ gnostr_timeline_batch_add_note(GnostrTimelineBatch *self,
                                gint64 created_at,
                                const uint8_t event_id[32],
                                const char *pubkey_hex,
+                               const char *content,
+                               const char *display_name,
+                               const char *handle,
+                               const char *avatar_url,
+                               const char *nip05,
                                const char *root_id,
                                const char *reply_id,
                                gint kind,
@@ -167,6 +182,11 @@ gnostr_timeline_batch_add_note(GnostrTimelineBatch *self,
   if (event_id)
     memcpy(entry.event_id, event_id, sizeof(entry.event_id));
   entry.pubkey_hex = (char *)pubkey_hex;
+  entry.content = (char *)content;
+  entry.display_name = (char *)display_name;
+  entry.handle = (char *)handle;
+  entry.avatar_url = (char *)avatar_url;
+  entry.nip05 = (char *)nip05;
   entry.root_id = (char *)root_id;
   entry.reply_id = (char *)reply_id;
   gnostr_timeline_batch_add_entry(self, &entry);
