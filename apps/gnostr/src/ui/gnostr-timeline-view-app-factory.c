@@ -597,6 +597,42 @@ static void schedule_metadata_batch(NostrGtkTimelineView *self, GnNostrEventItem
  * the main thread and causing freezes when scrolling to events with embeds.
  * One-shot: disconnects itself after first run.
  */
+static gboolean
+string_is_hex64(const char *s)
+{
+  if (!s || strlen(s) != 64)
+    return FALSE;
+  for (guint i = 0; i < 64; i++) {
+    if (!g_ascii_isxdigit(s[i]))
+      return FALSE;
+  }
+  return TRUE;
+}
+
+static gboolean
+looks_like_lud16_or_lnurl(const char *s)
+{
+  if (!s || !*s || string_is_hex64(s))
+    return FALSE;
+  return strchr(s, '@') != NULL ||
+         g_ascii_strncasecmp(s, "lnurl", 5) == 0 ||
+         g_ascii_strncasecmp(s, "lightning:", 10) == 0;
+}
+
+static gchar *
+format_timestamp(gint64 created_at)
+{
+  if (created_at <= 0)
+    return NULL;
+  time_t t = (time_t)created_at;
+  struct tm *tm_info = localtime(&t);
+  if (!tm_info)
+    return NULL;
+  char buf[64];
+  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", tm_info);
+  return g_strdup(buf);
+}
+
 static void
 on_tv_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
 {
@@ -687,28 +723,44 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   /* Check if this is a GnNostrEventItem (legacy live model) or immutable snapshot row. */
   extern GType gn_nostr_event_item_get_type(void);
   gboolean is_snapshot_row = GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(obj);
+  g_autoptr(GnostrTimelineItemViewModel) snapshot_vm = NULL;
   if (is_snapshot_row) {
     GnostrTimelineSnapshotRow *snapshot_row = GNOSTR_TIMELINE_SNAPSHOT_ROW(obj);
+    snapshot_vm = gnostr_timeline_snapshot_row_dup_view_model(snapshot_row);
 
-    id_hex = g_strdup(gnostr_timeline_snapshot_row_get_event_id(snapshot_row));
-    pubkey = g_strdup(gnostr_timeline_snapshot_row_get_pubkey(snapshot_row));
-    created_at = gnostr_timeline_snapshot_row_get_created_at(snapshot_row);
-    content = g_strdup(gnostr_timeline_snapshot_row_get_content(snapshot_row));
-    display = g_strdup(gnostr_timeline_snapshot_row_get_display_name(snapshot_row));
-    handle = g_strdup(gnostr_timeline_snapshot_row_get_handle(snapshot_row));
-    avatar_url = g_strdup(gnostr_timeline_snapshot_row_get_avatar_url(snapshot_row));
-    nip05 = g_strdup(gnostr_timeline_snapshot_row_get_nip05(snapshot_row));
-    root_id = g_strdup(gnostr_timeline_snapshot_row_get_root_id(snapshot_row));
-    parent_id = g_strdup(gnostr_timeline_snapshot_row_get_reply_id(snapshot_row));
+    id_hex = g_strdup(snapshot_vm
+                      ? gnostr_timeline_item_view_model_get_event_id(snapshot_vm)
+                      : gnostr_timeline_snapshot_row_get_event_id(snapshot_row));
+    pubkey = g_strdup(snapshot_vm
+                      ? gnostr_timeline_item_view_model_get_pubkey(snapshot_vm)
+                      : gnostr_timeline_snapshot_row_get_pubkey(snapshot_row));
+    created_at = snapshot_vm
+      ? gnostr_timeline_item_view_model_get_created_at(snapshot_vm)
+      : gnostr_timeline_snapshot_row_get_created_at(snapshot_row);
+    content = g_strdup(snapshot_vm
+                       ? gnostr_timeline_item_view_model_get_content(snapshot_vm)
+                       : gnostr_timeline_snapshot_row_get_content(snapshot_row));
+    display = g_strdup(snapshot_vm
+                       ? gnostr_timeline_item_view_model_get_display_name(snapshot_vm)
+                       : gnostr_timeline_snapshot_row_get_display_name(snapshot_row));
+    handle = g_strdup(snapshot_vm
+                      ? gnostr_timeline_item_view_model_get_handle(snapshot_vm)
+                      : gnostr_timeline_snapshot_row_get_handle(snapshot_row));
+    avatar_url = g_strdup(snapshot_vm
+                          ? gnostr_timeline_item_view_model_get_avatar_url(snapshot_vm)
+                          : gnostr_timeline_snapshot_row_get_avatar_url(snapshot_row));
+    nip05 = g_strdup(snapshot_vm
+                     ? gnostr_timeline_item_view_model_get_nip05(snapshot_vm)
+                     : gnostr_timeline_snapshot_row_get_nip05(snapshot_row));
+    root_id = g_strdup(snapshot_vm
+                       ? gnostr_timeline_item_view_model_get_root_id(snapshot_vm)
+                       : gnostr_timeline_snapshot_row_get_root_id(snapshot_row));
+    parent_id = g_strdup(snapshot_vm
+                         ? gnostr_timeline_item_view_model_get_reply_id(snapshot_vm)
+                         : gnostr_timeline_snapshot_row_get_reply_id(snapshot_row));
     is_reply = (parent_id != NULL && *parent_id != '\0');
 
-    if (created_at > 0) {
-      time_t t = (time_t)created_at;
-      struct tm *tm_info = localtime(&t);
-      char buf[64];
-      strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", tm_info);
-      ts = g_strdup(buf);
-    }
+    ts = format_timestamp(created_at);
   } else if (G_IS_OBJECT(obj) && G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
     /* NEW: GnNostrEventItem binding */
     gboolean item_is_reply = FALSE;
@@ -739,13 +791,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     }
 
     /* Format timestamp */
-    if (created_at > 0) {
-      time_t t = (time_t)created_at;
-      struct tm *tm_info = localtime(&t);
-      char buf[64];
-      strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", tm_info);
-      ts = g_strdup(buf);
-    }
+    ts = format_timestamp(created_at);
     /* Debug logging removed - too verbose for per-item binding */
   }
   /* nostrc-lkoa: Legacy `TimelineItem` bind fallback was removed here.
@@ -955,37 +1001,60 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
           nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
         }
       } else {
-        g_autoptr(GError) render_error = NULL;
-        GnContentRenderResult *render = gnostr_render_content(content, content ? (int)strlen(content) : 0, &render_error);
-        if (render) {
-          /* Snapshot rows bind markup only.  Creating media/OG/embed widgets
-           * here would start async work from row bind and can alter the row
-           * footprint.  Hydrator/geometry beads must provide pre-reserved rich
-           * content before snapshots can safely render those areas. */
-          nostr_gtk_note_card_row_set_content_markup_only(NOSTR_GTK_NOTE_CARD_ROW(row), content, render);
-          gnostr_content_render_result_free(render);
-        } else {
-          /* Snapshot render failure fallback: bind sanitized text only.  Do not
-           * call set_content(), which can participate in lazy rich/embed/media
-           * behavior outside the compositor geometry contract. */
-          nostr_gtk_note_card_row_set_content_markup_only(NOSTR_GTK_NOTE_CARD_ROW(row),
-                                                          content,
-                                                          NULL);
+        /* Snapshot rows bind rich areas only from immutable VM data.  This path
+         * intentionally avoids bind-time content parsing, DB lookups, and
+         * request-embed emission. */
+        nostr_gtk_note_card_row_set_precomputed_markup(
+          NOSTR_GTK_NOTE_CARD_ROW(row),
+          content,
+          snapshot_vm ? gnostr_timeline_item_view_model_get_rendered_content(snapshot_vm) : NULL);
+        if (snapshot_vm) {
+          nostr_gtk_note_card_row_set_media_urls_reserved(
+            NOSTR_GTK_NOTE_CARD_ROW(row),
+            gnostr_timeline_item_view_model_get_media_urls(snapshot_vm),
+            gnostr_timeline_item_view_model_get_media_reserved_height(snapshot_vm));
+          nostr_gtk_note_card_row_set_link_preview_urls_reserved(
+            NOSTR_GTK_NOTE_CARD_ROW(row),
+            gnostr_timeline_item_view_model_get_links(snapshot_vm),
+            gnostr_timeline_item_view_model_get_link_preview_reserved_height(snapshot_vm));
         }
       }
     }
     nostr_gtk_note_card_row_set_depth(NOSTR_GTK_NOTE_CARD_ROW(row), depth);
-    nostr_gtk_note_card_row_set_ids(NOSTR_GTK_NOTE_CARD_ROW(row), id_hex, root_id, pubkey);
+    const char *action_id_hex = id_hex;
+    const char *action_pubkey = pubkey;
+    if (snapshot_vm) {
+      const char *vm_action_id = gnostr_timeline_item_view_model_get_action_event_id(snapshot_vm);
+      const char *vm_action_pubkey = gnostr_timeline_item_view_model_get_action_pubkey(snapshot_vm);
+      if (vm_action_id && *vm_action_id)
+        action_id_hex = vm_action_id;
+      if (vm_action_pubkey && *vm_action_pubkey)
+        action_pubkey = vm_action_pubkey;
+    }
+    nostr_gtk_note_card_row_set_ids(NOSTR_GTK_NOTE_CARD_ROW(row), action_id_hex, root_id, action_pubkey);
+
+    const char *parent_author_name = NULL;
+    if (snapshot_vm) {
+      parent_author_name = gnostr_timeline_item_view_model_get_parent_display_name(snapshot_vm);
+      if (!parent_author_name || !*parent_author_name)
+        parent_author_name = gnostr_timeline_item_view_model_get_parent_fallback_label(snapshot_vm);
+    }
 
     /* Set NIP-10 thread info (reply indicator, view thread button) */
     nostr_gtk_note_card_row_set_thread_info(NOSTR_GTK_NOTE_CARD_ROW(row),
                                           root_id,
                                           parent_id,
-                                          NULL, /* parent_author_name - will be resolved asynchronously if needed */
+                                          parent_author_name,
                                           is_reply);
 
     if (snapshot_hashtags && snapshot_hashtags[0]) {
       nostr_gtk_note_card_row_set_hashtags(NOSTR_GTK_NOTE_CARD_ROW(row), snapshot_hashtags);
+    }
+    if (snapshot_vm) {
+      const char *content_warning = gnostr_timeline_item_view_model_get_content_warning(snapshot_vm);
+      if (gnostr_timeline_item_view_model_get_moderation_state(snapshot_vm) ==
+          GNOSTR_TIMELINE_MODERATION_CONTENT_WARNING)
+        nostr_gtk_note_card_row_set_content_warning(NOSTR_GTK_NOTE_CARD_ROW(row), content_warning ? content_warning : "");
     }
 
     /* NIP-18: Handle GnNostrEventItem kind 6 reposts and q-tag quote reposts.
@@ -1014,9 +1083,45 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                                 created_at); /* repost timestamp */
 
           if (is_snapshot_row) {
-            /* Snapshot rows must not synchronously query DB or request async
-             * embeds from bind.  Rendering the reposted note requires the
-             * hydrator to include original-note VM data plus reserved geometry. */
+            if (snapshot_vm) {
+              GnostrTimelinePreviewState repost_state =
+                gnostr_timeline_item_view_model_get_repost_state(snapshot_vm);
+              const char *orig_id = gnostr_timeline_item_view_model_get_reposted_event_id(snapshot_vm);
+              const char *orig_pubkey = gnostr_timeline_item_view_model_get_reposted_pubkey(snapshot_vm);
+              const char *orig_display = gnostr_timeline_item_view_model_get_reposted_display_name(snapshot_vm);
+              const char *orig_avatar = gnostr_timeline_item_view_model_get_reposted_avatar_url(snapshot_vm);
+              const char *orig_content = gnostr_timeline_item_view_model_get_reposted_content(snapshot_vm);
+              const char *orig_markup = gnostr_timeline_item_view_model_get_reposted_rendered_content(snapshot_vm);
+              gint64 orig_created_at = gnostr_timeline_item_view_model_get_reposted_created_at(snapshot_vm);
+
+              if (repost_state == GNOSTR_TIMELINE_PREVIEW_RESOLVED && orig_id && *orig_id) {
+                g_autofree char *orig_fallback = NULL;
+                if ((!orig_display || !*orig_display) && orig_pubkey && strlen(orig_pubkey) >= 8)
+                  orig_fallback = g_strdup_printf("%.8s...", orig_pubkey);
+                nostr_gtk_note_card_row_set_author_name_only(NOSTR_GTK_NOTE_CARD_ROW(row),
+                                                             (orig_display && *orig_display) ? orig_display : orig_fallback,
+                                                             NULL);
+                if (orig_avatar && *orig_avatar)
+                  nostr_gtk_note_card_row_set_avatar(NOSTR_GTK_NOTE_CARD_ROW(row), orig_avatar);
+                nostr_gtk_note_card_row_set_precomputed_markup(NOSTR_GTK_NOTE_CARD_ROW(row),
+                                                               orig_content,
+                                                               orig_markup);
+                g_autofree gchar *orig_ts = format_timestamp(orig_created_at);
+                nostr_gtk_note_card_row_set_timestamp(NOSTR_GTK_NOTE_CARD_ROW(row),
+                                                      orig_created_at,
+                                                      orig_ts);
+                if (orig_pubkey && *orig_pubkey)
+                  nostr_gtk_note_card_row_set_ids(NOSTR_GTK_NOTE_CARD_ROW(row),
+                                                  orig_id,
+                                                  root_id,
+                                                  orig_pubkey);
+              } else if (repost_state == GNOSTR_TIMELINE_PREVIEW_MISSING) {
+                nostr_gtk_note_card_row_set_embed_rich(NOSTR_GTK_NOTE_CARD_ROW(row),
+                                                       "Reposted note",
+                                                       reposted_id,
+                                                       "Preview unavailable");
+              }
+            }
           } else {
             /* Try to fetch the original note from local storage */
             char *orig_json = NULL;
@@ -1126,9 +1231,24 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
            : NULL);
       if (!quote_is_repost && quoted_id) {
         if (is_snapshot_row) {
-          /* Snapshot rows cannot fetch quoted-note/profile data during bind.
-           * Hydrator/geometry beads must supply quote preview content and a
-           * reserved quote box before publication. */
+          if (snapshot_vm) {
+            GnostrTimelinePreviewState quote_state =
+              gnostr_timeline_item_view_model_get_quote_state(snapshot_vm);
+            const char *quoted_content = quote_state == GNOSTR_TIMELINE_PREVIEW_RESOLVED
+              ? gnostr_timeline_item_view_model_get_quoted_content(snapshot_vm)
+              : NULL;
+            const char *quoted_author = gnostr_timeline_item_view_model_get_quoted_display_name(snapshot_vm);
+            g_autofree char *quoted_fallback = NULL;
+            const char *quoted_pubkey = gnostr_timeline_item_view_model_get_quoted_pubkey(snapshot_vm);
+            if ((!quoted_author || !*quoted_author) && quoted_pubkey && strlen(quoted_pubkey) >= 8) {
+              quoted_fallback = g_strdup_printf("%.8s...", quoted_pubkey);
+              quoted_author = quoted_fallback;
+            }
+            nostr_gtk_note_card_row_set_quote_info(NOSTR_GTK_NOTE_CARD_ROW(row),
+                                                   quoted_id,
+                                                   quoted_content,
+                                                   quoted_author);
+          }
         } else {
           char *quoted_json = NULL;
           int quoted_len = 0;
@@ -1213,30 +1333,51 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       nostr_gtk_note_card_row_set_nip05(NOSTR_GTK_NOTE_CARD_ROW(row), nip05, pubkey);
     }
 
-    /* NIP-51: Set bookmark and pin state from local cache */
-    if (id_hex && strlen(id_hex) == 64) {
-      GnostrBookmarks *bookmarks = gnostr_bookmarks_get_default();
-      if (bookmarks) {
-        gboolean is_bookmarked = gnostr_bookmarks_is_bookmarked(bookmarks, id_hex);
-        nostr_gtk_note_card_row_set_bookmarked(NOSTR_GTK_NOTE_CARD_ROW(row), is_bookmarked);
-      }
-      GnostrPinList *pin_list = gnostr_pin_list_get_default();
-      if (pin_list) {
-        gboolean is_pinned = gnostr_pin_list_is_pinned(pin_list, id_hex);
-        nostr_gtk_note_card_row_set_pinned(NOSTR_GTK_NOTE_CARD_ROW(row), is_pinned);
-      }
-    }
-
-    /* NIP-09: Check if this is the current user's own note (enables delete option) */
-    /* Also set login state for authentication-required buttons */
-    gchar *user_pubkey = gnostr_timeline_embed_get_current_user_pubkey_hex();
-    gboolean is_logged_in = (user_pubkey != NULL);
-    nostr_gtk_note_card_row_set_logged_in(NOSTR_GTK_NOTE_CARD_ROW(row), is_logged_in);
-    if (pubkey && strlen(pubkey) == 64 && user_pubkey) {
-      gboolean is_own = (g_ascii_strcasecmp(pubkey, user_pubkey) == 0);
-      nostr_gtk_note_card_row_set_is_own_note(NOSTR_GTK_NOTE_CARD_ROW(row), is_own);
+    gchar *user_pubkey = NULL;
+    if (snapshot_vm) {
+      /* Snapshot rows use compositor-published action state only; no bind-time
+       * bookmark/pin/current-user cache reads on the visible snapshot path. */
+      nostr_gtk_note_card_row_set_bookmarked(
+        NOSTR_GTK_NOTE_CARD_ROW(row),
+        gnostr_timeline_item_view_model_get_action_is_bookmarked(snapshot_vm));
+      nostr_gtk_note_card_row_set_pinned(
+        NOSTR_GTK_NOTE_CARD_ROW(row),
+        gnostr_timeline_item_view_model_get_action_is_pinned(snapshot_vm));
+      nostr_gtk_note_card_row_set_is_own_note(
+        NOSTR_GTK_NOTE_CARD_ROW(row),
+        gnostr_timeline_item_view_model_get_action_is_own_note(snapshot_vm));
+      nostr_gtk_note_card_row_set_logged_in(
+        NOSTR_GTK_NOTE_CARD_ROW(row),
+        gnostr_timeline_item_view_model_get_action_logged_in(snapshot_vm));
+      const char *zap_target = gnostr_timeline_item_view_model_get_action_zap_target(snapshot_vm);
+      if (looks_like_lud16_or_lnurl(zap_target))
+        nostr_gtk_note_card_row_set_author_lud16(NOSTR_GTK_NOTE_CARD_ROW(row), zap_target);
     } else {
-      nostr_gtk_note_card_row_set_is_own_note(NOSTR_GTK_NOTE_CARD_ROW(row), FALSE);
+      /* NIP-51: Set bookmark and pin state from local cache */
+      if (id_hex && strlen(id_hex) == 64) {
+        GnostrBookmarks *bookmarks = gnostr_bookmarks_get_default();
+        if (bookmarks) {
+          gboolean is_bookmarked = gnostr_bookmarks_is_bookmarked(bookmarks, id_hex);
+          nostr_gtk_note_card_row_set_bookmarked(NOSTR_GTK_NOTE_CARD_ROW(row), is_bookmarked);
+        }
+        GnostrPinList *pin_list = gnostr_pin_list_get_default();
+        if (pin_list) {
+          gboolean is_pinned = gnostr_pin_list_is_pinned(pin_list, id_hex);
+          nostr_gtk_note_card_row_set_pinned(NOSTR_GTK_NOTE_CARD_ROW(row), is_pinned);
+        }
+      }
+
+      /* NIP-09: Check if this is the current user's own note (enables delete option) */
+      /* Also set login state for authentication-required buttons */
+      user_pubkey = gnostr_timeline_embed_get_current_user_pubkey_hex();
+      gboolean is_logged_in = (user_pubkey != NULL);
+      nostr_gtk_note_card_row_set_logged_in(NOSTR_GTK_NOTE_CARD_ROW(row), is_logged_in);
+      if (pubkey && strlen(pubkey) == 64 && user_pubkey) {
+        gboolean is_own = (g_ascii_strcasecmp(pubkey, user_pubkey) == 0);
+        nostr_gtk_note_card_row_set_is_own_note(NOSTR_GTK_NOTE_CARD_ROW(row), is_own);
+      } else {
+        nostr_gtk_note_card_row_set_is_own_note(NOSTR_GTK_NOTE_CARD_ROW(row), FALSE);
+      }
     }
 
     /* nostrc-7o7: Apply no-animation class if item was added outside visible viewport */
@@ -1289,12 +1430,24 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       nostr_gtk_note_card_row_set_zap_stats(NOSTR_GTK_NOTE_CARD_ROW(row), zap_count, zap_total);
     } else if (is_snapshot_row) {
       GnostrTimelineSnapshotRow *snapshot_row = GNOSTR_TIMELINE_SNAPSHOT_ROW(obj);
-      guint like_count = gnostr_timeline_snapshot_row_get_like_count(snapshot_row);
-      gboolean is_liked = gnostr_timeline_snapshot_row_get_is_liked(snapshot_row);
-      guint repost_count = gnostr_timeline_snapshot_row_get_repost_count(snapshot_row);
-      guint reply_count = gnostr_timeline_snapshot_row_get_reply_count(snapshot_row);
-      guint zap_count = gnostr_timeline_snapshot_row_get_zap_count(snapshot_row);
-      gint64 zap_total = gnostr_timeline_snapshot_row_get_zap_total_msat(snapshot_row);
+      guint like_count = snapshot_vm
+        ? gnostr_timeline_item_view_model_get_like_count(snapshot_vm)
+        : gnostr_timeline_snapshot_row_get_like_count(snapshot_row);
+      gboolean is_liked = snapshot_vm
+        ? gnostr_timeline_item_view_model_get_is_liked(snapshot_vm)
+        : gnostr_timeline_snapshot_row_get_is_liked(snapshot_row);
+      guint repost_count = snapshot_vm
+        ? gnostr_timeline_item_view_model_get_repost_count(snapshot_vm)
+        : gnostr_timeline_snapshot_row_get_repost_count(snapshot_row);
+      guint reply_count = snapshot_vm
+        ? gnostr_timeline_item_view_model_get_reply_count(snapshot_vm)
+        : gnostr_timeline_snapshot_row_get_reply_count(snapshot_row);
+      guint zap_count = snapshot_vm
+        ? gnostr_timeline_item_view_model_get_zap_count(snapshot_vm)
+        : gnostr_timeline_snapshot_row_get_zap_count(snapshot_row);
+      gint64 zap_total = snapshot_vm
+        ? gnostr_timeline_item_view_model_get_zap_total_msat(snapshot_vm)
+        : gnostr_timeline_snapshot_row_get_zap_total_msat(snapshot_row);
 
       /* Bind snapshot counts exactly as published.  Do not schedule row-driven
        * metadata refreshes from the visible main-feed path; that belongs in the

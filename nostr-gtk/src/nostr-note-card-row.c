@@ -3536,6 +3536,144 @@ void nostr_gtk_note_card_row_set_content_markup_only(NostrGtkNoteCardRow *self,
   }
 }
 
+void nostr_gtk_note_card_row_set_precomputed_markup(NostrGtkNoteCardRow *self,
+                                                    const char *content,
+                                                    const char *markup) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self) || !GTK_IS_LABEL(self->content_label)) return;
+  if (self->disposed) return;
+  if (self->binding_id == 0) return;
+
+  gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "alt-text");
+  gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "placeholder-text");
+
+  g_autofree gchar *safe_text = gnostr_sanitize_utf8(content ? content : "");
+  g_clear_pointer(&self->content_text, g_free);
+  self->content_text = g_strdup(safe_text);
+
+  if (markup && *markup) {
+    gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
+    gnostr_safe_set_markup(GTK_LABEL(self->content_label), markup);
+  } else {
+    gtk_label_set_use_markup(GTK_LABEL(self->content_label), FALSE);
+    gtk_label_set_text(GTK_LABEL(self->content_label), safe_text);
+  }
+}
+
+static guint
+count_media_urls(const char * const *media_urls)
+{
+  guint count = 0;
+  for (guint i = 0; media_urls && media_urls[i]; i++) {
+    if (is_media_url(media_urls[i]))
+      count++;
+  }
+  return count;
+}
+
+void nostr_gtk_note_card_row_set_media_urls_reserved(NostrGtkNoteCardRow *self,
+                                                     const char * const *media_urls,
+                                                     double reserved_height) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;
+  if (self->binding_id == 0) return;
+  if (!self->media_box || !GTK_IS_BOX(self->media_box)) return;
+
+  if (self->media_map_handler_id > 0) {
+    g_signal_handler_disconnect(self->media_box, self->media_map_handler_id);
+    self->media_map_handler_id = 0;
+  }
+
+  GtkWidget *child = gtk_widget_get_first_child(self->media_box);
+  while (child) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    gtk_box_remove(GTK_BOX(self->media_box), child);
+    child = next;
+  }
+
+  g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+  self->media_widgets_created = FALSE;
+
+  guint count = count_media_urls(media_urls);
+  if (count == 0 || reserved_height <= 0.0) {
+    gtk_widget_set_size_request(self->media_box, -1, -1);
+    gtk_widget_set_visible(self->media_box, FALSE);
+    return;
+  }
+
+  gint reserved_px = (gint)(reserved_height + 0.999999);
+  gint per_item_height = MAX(1, reserved_px / (gint)count);
+  gtk_widget_set_size_request(self->media_box, -1, reserved_px);
+
+  self->pending_media_items = g_ptr_array_new_with_free_func(pending_media_item_free);
+  for (guint i = 0; media_urls && media_urls[i]; i++) {
+    const char *url = media_urls[i];
+    if (!url || !*url || !is_media_url(url))
+      continue;
+    gboolean is_video = is_video_url(url);
+    g_ptr_array_add(self->pending_media_items,
+                    pending_media_item_new(url,
+                                           per_item_height,
+                                           is_video ? 608 : 0,
+                                           NULL,
+                                           is_video));
+  }
+
+  defer_media_widget_creation(self);
+}
+
+static const char *
+first_preview_link(const char * const *links)
+{
+  for (guint i = 0; links && links[i]; i++) {
+    const char *url = links[i];
+    if (!url || !*url || is_media_url(url))
+      continue;
+    if (g_str_has_prefix(url, "http://") ||
+        g_str_has_prefix(url, "https://"))
+      return url;
+  }
+  return NULL;
+}
+
+void nostr_gtk_note_card_row_set_link_preview_urls_reserved(NostrGtkNoteCardRow *self,
+                                                            const char * const *links,
+                                                            double reserved_height) {
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed) return;
+  if (self->binding_id == 0) return;
+  if (!self->og_preview_container || !GTK_IS_BOX(self->og_preview_container)) return;
+
+  if (self->og_preview) {
+    gtk_box_remove(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
+    self->og_preview = NULL;
+  }
+
+  GtkWidget *child = gtk_widget_get_first_child(self->og_preview_container);
+  while (child) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    gtk_box_remove(GTK_BOX(self->og_preview_container), child);
+    child = next;
+  }
+
+  const char *url = first_preview_link(links);
+  if (!url || reserved_height <= 0.0) {
+    gtk_widget_set_size_request(self->og_preview_container, -1, -1);
+    gtk_widget_set_visible(self->og_preview_container, FALSE);
+    return;
+  }
+
+  gint reserved_px = (gint)(reserved_height + 0.999999);
+  gtk_widget_set_size_request(self->og_preview_container, -1, reserved_px);
+
+  self->og_preview = og_preview_widget_new();
+  gtk_widget_set_size_request(GTK_WIDGET(self->og_preview), -1, reserved_px);
+  gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
+  gtk_widget_set_visible(self->og_preview_container, TRUE);
+
+  if (remote_media_loading_enabled())
+    og_preview_widget_set_url_with_cancellable(self->og_preview, url, self->async_cancellable);
+}
+
 /**
  * nostr_gtk_note_card_row_apply_deferred_content:
  *

@@ -171,6 +171,45 @@ void nostr_gtk_note_card_row_set_content_tagged_markup_only(NostrGtkNoteCardRow 
                                                          const GnContentRenderResult *render);
 
 /**
+ * nostr_gtk_note_card_row_set_precomputed_markup:
+ * @self: note card row
+ * @content: (nullable): raw text content for clipboard/copy fallback
+ * @markup: (nullable): trusted precomputed Pango markup from an immutable
+ *   timeline view model
+ *
+ * Binds text from compositor-published VM data without parsing content or
+ * creating lazy rich widgets during row bind.
+ */
+void nostr_gtk_note_card_row_set_precomputed_markup(NostrGtkNoteCardRow *self,
+                                                    const char *content,
+                                                    const char *markup);
+
+/**
+ * nostr_gtk_note_card_row_set_media_urls_reserved:
+ * @self: note card row
+ * @media_urls: (nullable): NULL-terminated media URL array from an immutable VM
+ * @reserved_height: reserved media area height in pixels
+ *
+ * Reserves the media area immediately and lets async media loading fill only
+ * the reserved boxes.
+ */
+void nostr_gtk_note_card_row_set_media_urls_reserved(NostrGtkNoteCardRow *self,
+                                                     const char * const *media_urls,
+                                                     double reserved_height);
+
+/**
+ * nostr_gtk_note_card_row_set_link_preview_urls_reserved:
+ * @self: note card row
+ * @links: (nullable): NULL-terminated URL array from an immutable VM
+ * @reserved_height: reserved link preview area height in pixels
+ *
+ * Reserves and renders a link preview area without emitting request-embed.
+ */
+void nostr_gtk_note_card_row_set_link_preview_urls_reserved(NostrGtkNoteCardRow *self,
+                                                            const char * const *links,
+                                                            double reserved_height);
+
+/**
  * nostr_gtk_note_card_row_apply_deferred_content:
  * @self: note card row
  * @render: (transfer none): pre-rendered content result

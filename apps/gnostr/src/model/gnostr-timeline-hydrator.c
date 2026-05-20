@@ -121,6 +121,108 @@ str_has_media_suffix(const char *url)
 }
 
 static gboolean
+is_nostr_bech32_token(const char *token)
+{
+  return token &&
+    (g_str_has_prefix(token, "nostr:") ||
+     g_str_has_prefix(token, "note1") ||
+     g_str_has_prefix(token, "npub1") ||
+     g_str_has_prefix(token, "nevent1") ||
+     g_str_has_prefix(token, "nprofile1") ||
+     g_str_has_prefix(token, "naddr1"));
+}
+
+static gboolean
+is_http_token(const char *token)
+{
+  return token &&
+    (g_str_has_prefix(token, "http://") ||
+     g_str_has_prefix(token, "https://") ||
+     g_str_has_prefix(token, "www."));
+}
+
+static gsize
+trim_trailing_token_punctuation(const char *token,
+                                gsize len)
+{
+  while (len > 0) {
+    char c = token[len - 1];
+    if (c == '.' || c == ',' || c == ';' || c == ':' ||
+        c == '!' || c == '?' || c == ')' || c == ']' || c == '}')
+      len--;
+    else
+      break;
+  }
+  return len;
+}
+
+static void
+append_markup_for_token(GString *out,
+                        const char *token,
+                        gsize len)
+{
+  if (len == 0)
+    return;
+
+  gsize core_len = trim_trailing_token_punctuation(token, len);
+  const char *suffix = token + core_len;
+  gsize suffix_len = len - core_len;
+  g_autofree char *core = g_strndup(token, core_len);
+
+  if (core_len > 1 && core[0] == '#') {
+    g_autofree char *tag = g_strdup(core + 1);
+    g_autofree char *esc_tag = g_markup_escape_text(tag, -1);
+    g_autofree char *esc_href = g_markup_escape_text(tag, -1);
+    g_string_append_printf(out, "<a href=\"hashtag:%s\">#%s</a>", esc_href, esc_tag);
+  } else if (is_http_token(core)) {
+    g_autofree char *href = g_str_has_prefix(core, "www.")
+      ? g_strdup_printf("https://%s", core)
+      : g_strdup(core);
+    g_autofree char *esc_href = g_markup_escape_text(href, -1);
+    g_autofree char *esc_display = g_markup_escape_text(core, -1);
+    g_string_append_printf(out, "<a href=\"%s\">%s</a>", esc_href, esc_display);
+  } else if (is_nostr_bech32_token(core)) {
+    g_autofree char *href = g_str_has_prefix(core, "nostr:")
+      ? g_strdup(core)
+      : g_strdup_printf("nostr:%s", core);
+    g_autofree char *esc_href = g_markup_escape_text(href, -1);
+    g_autofree char *esc_display = g_markup_escape_text(core, -1);
+    g_string_append_printf(out, "<a href=\"%s\">%s</a>", esc_href, esc_display);
+  } else {
+    g_autofree char *escaped = g_markup_escape_text(core, -1);
+    g_string_append(out, escaped);
+  }
+
+  if (suffix_len > 0) {
+    g_autofree char *escaped_suffix = g_markup_escape_text(suffix, suffix_len);
+    g_string_append(out, escaped_suffix);
+  }
+}
+
+static char *
+render_markup_from_content(const char *content)
+{
+  if (!content || !*content)
+    return g_strdup("");
+
+  GString *out = g_string_new(NULL);
+  const char *p = content;
+  while (*p) {
+    if (g_ascii_isspace(*p)) {
+      g_string_append_c(out, *p++);
+      continue;
+    }
+
+    const char *start = p;
+    while (*p && !g_ascii_isspace(*p))
+      p++;
+    append_markup_for_token(out, start, (gsize)(p - start));
+  }
+
+  return g_string_free(out, FALSE);
+}
+
+static gboolean
 ptr_array_contains_string(GPtrArray *array,
                           const char *value)
 {
@@ -308,12 +410,12 @@ gnostr_timeline_hydrator_hydrate_entry(GnostrTimelineHydrator *self,
 
   g_autofree char *event_id = event_id_for_entry(entry);
   g_autofree char *note_key = g_strdup_printf("%" G_GUINT64_FORMAT, entry->note_key);
-  g_autofree char *rendered_content = g_markup_escape_text(entry->content ? entry->content : "", -1);
+  g_autofree char *rendered_content = render_markup_from_content(entry->content);
   g_autofree char *parent_fallback = author_fallback_label(entry->parent_pubkey);
   g_autofree char *quoted_snippet = content_snippet(entry->quoted_content);
-  g_autofree char *quoted_rendered = g_markup_escape_text(quoted_snippet ? quoted_snippet : "", -1);
+  g_autofree char *quoted_rendered = render_markup_from_content(quoted_snippet);
   g_autofree char *reposted_snippet = content_snippet(entry->reposted_content);
-  g_autofree char *reposted_rendered = g_markup_escape_text(reposted_snippet ? reposted_snippet : "", -1);
+  g_autofree char *reposted_rendered = render_markup_from_content(reposted_snippet);
   GnostrTimelinePreviewState quote_state = preview_state_for(entry->quoted_event_id,
                                                              entry->quoted_resolved,
                                                              entry->quoted_content,
