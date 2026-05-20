@@ -11,6 +11,7 @@
 #include "../../../../nostr-gtk/src/note-card-binding-ctx.h"  /* Internal: NoteCardBindingContext API */
 #include "../model/gn-nostr-event-item.h"
 #include <nostr-gobject-1.0/gn-nostr-profile.h>
+#include "gnostr-avatar-cache.h"  /* nostrc-hci: avatar download API */
 #include <glib/gi18n.h>
 #include <string.h>
 
@@ -402,6 +403,17 @@ on_item_profile_changed(GObject *obj, GParamSpec *pspec, gpointer user_data)
     nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row),
                                      display_name, handle, avatar_url);
 
+    /* nostrc-hci: set_author only checks the cache — trigger async download
+     * when a profile arrives with an avatar URL that isn't cached yet. */
+    if (avatar_url && *avatar_url) {
+      GtkWidget *av_img = NULL, *av_init = NULL;
+      nostr_gtk_note_card_row_get_avatar_widgets(NOSTR_GTK_NOTE_CARD_ROW(row),
+                                                  &av_img, &av_init);
+      if (av_img && !gtk_widget_get_visible(av_img)) {
+        gnostr_avatar_download_async(avatar_url, av_img, av_init);
+      }
+    }
+
     /* Update NIP-05 if available */
     if (nip05) {
       gchar *pubkey = NULL;
@@ -463,6 +475,17 @@ on_ncf_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
     if (profile) {
       const gchar *avatar_url = gnostr_profile_get_picture_url(profile);
       nostr_gtk_note_card_row_set_avatar(card, avatar_url);
+
+      /* nostrc-hci: set_avatar only checks the cache — if there was a miss,
+       * trigger an async download via the app-level avatar cache. The download
+       * function uses GWeakRef internally so it's safe for recycled rows. */
+      if (avatar_url && *avatar_url) {
+        GtkWidget *av_img = NULL, *av_init = NULL;
+        nostr_gtk_note_card_row_get_avatar_widgets(card, &av_img, &av_init);
+        if (av_img && !gtk_widget_get_visible(av_img)) {
+          gnostr_avatar_download_async(avatar_url, av_img, av_init);
+        }
+      }
 
       const gchar *nip05 = gnostr_profile_get_nip05(profile);
       if (nip05 && pubkey) {

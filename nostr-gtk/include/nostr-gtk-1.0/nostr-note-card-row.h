@@ -294,6 +294,19 @@ void nostr_gtk_note_card_row_set_external_ids(NostrGtkNoteCardRow *self, const c
 gboolean nostr_gtk_note_card_row_has_external_ids(NostrGtkNoteCardRow *self);
 void nostr_gtk_note_card_row_clear_external_ids(NostrGtkNoteCardRow *self);
 
+/**
+ * nostr_gtk_note_card_row_get_avatar_widgets:
+ * @self: note card row
+ * @out_image: (out) (optional): the avatar GtkPicture widget
+ * @out_initials: (out) (optional): the avatar initials GtkLabel widget
+ *
+ * Returns the internal avatar image and initials widgets so the app-level
+ * factory can trigger async downloads on cache miss.
+ */
+void nostr_gtk_note_card_row_get_avatar_widgets(NostrGtkNoteCardRow *self,
+                                                GtkWidget **out_image,
+                                                GtkWidget **out_initials);
+
 GCancellable *nostr_gtk_note_card_row_get_cancellable(NostrGtkNoteCardRow *self);
 void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self);
 void nostr_gtk_note_card_row_prepare_for_unbind(NostrGtkNoteCardRow *self);

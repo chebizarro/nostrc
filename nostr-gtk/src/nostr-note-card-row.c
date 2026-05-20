@@ -6444,6 +6444,20 @@ void nostr_gtk_note_card_row_clear_external_ids(NostrGtkNoteCardRow *self) {
 }
 
 /**
+ * nostr_gtk_note_card_row_get_avatar_widgets:
+ *
+ * nostrc-hci: Exposes the avatar image (GtkPicture) and initials (GtkLabel)
+ * widgets so the app-layer factory can trigger async downloads on cache miss.
+ */
+void nostr_gtk_note_card_row_get_avatar_widgets(NostrGtkNoteCardRow *self,
+                                                GtkWidget **out_image,
+                                                GtkWidget **out_initials) {
+  g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
+  if (out_image) *out_image = self->avatar_image;
+  if (out_initials) *out_initials = self->avatar_initials;
+}
+
+/**
  * nostr_gtk_note_card_row_get_cancellable:
  *
  * Returns the shared cancellable for all async operations on this note card.
