@@ -22,6 +22,9 @@ typedef struct {
   char    *nip05;
   char    *root_id;
   char    *reply_id;
+  char    *quoted_event_id;
+  char    *reposted_event_id;
+  char   **hashtags;
   guint    like_count;
   gboolean is_liked;
   guint    repost_count;
@@ -143,6 +146,9 @@ working_entry_new_from_batch_entry(const GnostrTimelineBatchEntry *entry)
   we->nip05 = g_strdup(entry->nip05);
   we->root_id = g_strdup(entry->root_id);
   we->reply_id = g_strdup(entry->reply_id);
+  we->quoted_event_id = g_strdup(entry->quoted_event_id);
+  we->reposted_event_id = g_strdup(entry->reposted_event_id);
+  we->hashtags = g_strdupv(entry->hashtags);
 
   return we;
 }
@@ -163,6 +169,9 @@ working_entry_free(WorkingEntry *we)
   g_free(we->nip05);
   g_free(we->root_id);
   g_free(we->reply_id);
+  g_free(we->quoted_event_id);
+  g_free(we->reposted_event_id);
+  g_strfreev(we->hashtags);
   g_free(we);
 }
 
@@ -212,6 +221,18 @@ working_entry_update_from_batch_entry(WorkingEntry *we,
   if (entry->reply_id) {
     g_free(we->reply_id);
     we->reply_id = g_strdup(entry->reply_id);
+  }
+  if (entry->quoted_event_id) {
+    g_free(we->quoted_event_id);
+    we->quoted_event_id = g_strdup(entry->quoted_event_id);
+  }
+  if (entry->reposted_event_id) {
+    g_free(we->reposted_event_id);
+    we->reposted_event_id = g_strdup(entry->reposted_event_id);
+  }
+  if (entry->hashtags) {
+    g_strfreev(we->hashtags);
+    we->hashtags = g_strdupv(entry->hashtags);
   }
 }
 
@@ -546,6 +567,9 @@ snapshot_row_from_entry(GnostrTimelineFeedController *self,
                                                entry->nip05,
                                                entry->root_id,
                                                entry->reply_id,
+                                               entry->quoted_event_id,
+                                               entry->reposted_event_id,
+                                               (const char * const *)entry->hashtags,
                                                entry->kind,
                                                entry->has_profile,
                                                entry->like_count,

@@ -31,6 +31,9 @@ typedef struct {
   char    *nip05;
   char    *root_id;
   char    *reply_id;
+  char    *quoted_event_id;
+  char    *reposted_event_id;
+  char   **hashtags;
   gint     kind;
   gboolean has_profile;
 } GnostrTimelineBatchEntry;
@@ -89,6 +92,23 @@ void gnostr_timeline_batch_add_note(GnostrTimelineBatch *self,
                                     const char *reply_id,
                                     gint kind,
                                     gboolean has_profile);
+void gnostr_timeline_batch_add_note_full(GnostrTimelineBatch *self,
+                                         uint64_t note_key,
+                                         gint64 created_at,
+                                         const uint8_t event_id[32],
+                                         const char *pubkey_hex,
+                                         const char *content,
+                                         const char *display_name,
+                                         const char *handle,
+                                         const char *avatar_url,
+                                         const char *nip05,
+                                         const char *root_id,
+                                         const char *reply_id,
+                                         const char *quoted_event_id,
+                                         const char *reposted_event_id,
+                                         const char * const *hashtags,
+                                         gint kind,
+                                         gboolean has_profile);
 
 void gnostr_timeline_batch_add_profile_request(GnostrTimelineBatch *self,
                                                const char *pubkey_hex);

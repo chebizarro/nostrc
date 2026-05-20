@@ -816,9 +816,16 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
     /* NIP-92: Use imeta-aware setter if this is a GnNostrEventItem */
     const char *tags_json = NULL;
+    const char *snapshot_quoted_id = NULL;
+    const char *snapshot_reposted_id = NULL;
+    const char * const *snapshot_hashtags = NULL;
     gint event_kind = 1;  /* Default to kind 1 text note */
     if (is_snapshot_row) {
-      event_kind = gnostr_timeline_snapshot_row_get_kind(GNOSTR_TIMELINE_SNAPSHOT_ROW(obj));
+      GnostrTimelineSnapshotRow *snapshot_row = GNOSTR_TIMELINE_SNAPSHOT_ROW(obj);
+      event_kind = gnostr_timeline_snapshot_row_get_kind(snapshot_row);
+      snapshot_quoted_id = gnostr_timeline_snapshot_row_get_quoted_event_id(snapshot_row);
+      snapshot_reposted_id = gnostr_timeline_snapshot_row_get_reposted_event_id(snapshot_row);
+      snapshot_hashtags = gnostr_timeline_snapshot_row_get_hashtags(snapshot_row);
     } else if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
       tags_json = gn_nostr_event_item_get_tags_json(GN_NOSTR_EVENT_ITEM(obj));
       g_object_get(obj, "kind", &event_kind, NULL);
@@ -977,14 +984,27 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                           NULL, /* parent_author_name - will be resolved asynchronously if needed */
                                           is_reply);
 
+    if (snapshot_hashtags && snapshot_hashtags[0]) {
+      nostr_gtk_note_card_row_set_hashtags(NOSTR_GTK_NOTE_CARD_ROW(row), snapshot_hashtags);
+    }
+
     /* NIP-18: Handle GnNostrEventItem kind 6 reposts and q-tag quote reposts.
      * nostrc-lkoa: Repost state sourced from GnNostrEventItem.
      * nostrc-cj8p: Quote repost state (q-tag) now modelled on GnNostrEventItem. */
-    if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
-      gboolean is_repost = gn_nostr_event_item_get_is_repost(GN_NOSTR_EVENT_ITEM(obj));
+    {
+      gboolean is_repost = FALSE;
+      g_autofree char *legacy_reposted_id = NULL;
+      const char *reposted_id = NULL;
+      if (is_snapshot_row) {
+        is_repost = (event_kind == 6 && snapshot_reposted_id && *snapshot_reposted_id);
+        reposted_id = snapshot_reposted_id;
+      } else if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+        is_repost = gn_nostr_event_item_get_is_repost(GN_NOSTR_EVENT_ITEM(obj));
+        if (is_repost)
+          legacy_reposted_id = gn_nostr_event_item_get_reposted_event_id(GN_NOSTR_EVENT_ITEM(obj));
+        reposted_id = legacy_reposted_id;
+      }
       if (is_repost) {
-        /* Get the referenced event ID from the repost's tags */
-        char *reposted_id = gn_nostr_event_item_get_reposted_event_id(GN_NOSTR_EVENT_ITEM(obj));
         if (reposted_id) {
           /* Mark this as a repost and set reposter info */
           nostr_gtk_note_card_row_set_is_repost(NOSTR_GTK_NOTE_CARD_ROW(row), TRUE);
@@ -1080,7 +1100,6 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
             g_autofree gchar *nostr_uri = g_strdup_printf("nostr:note1%s", reposted_id);
             g_signal_emit_by_name(row, "request-embed", nostr_uri);
           }
-          g_free(reposted_id);
         }
       }
     }
@@ -1089,10 +1108,17 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
      * Any note (not just kind 6) can contain a "q" tag referencing a quoted note.
      * Fetch the quoted note from local storage and render inline.
      * Skip when is_repost (kind 6) — the repost block above already handles those. */
-    if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type()) &&
-        !gn_nostr_event_item_get_is_repost(GN_NOSTR_EVENT_ITEM(obj))) {
-      const char *quoted_id = gn_nostr_event_item_get_quoted_event_id(GN_NOSTR_EVENT_ITEM(obj));
-      if (quoted_id) {
+    {
+      gboolean quote_is_repost = is_snapshot_row
+        ? (event_kind == 6)
+        : (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type()) &&
+           gn_nostr_event_item_get_is_repost(GN_NOSTR_EVENT_ITEM(obj)));
+      const char *quoted_id = is_snapshot_row
+        ? snapshot_quoted_id
+        : (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())
+           ? gn_nostr_event_item_get_quoted_event_id(GN_NOSTR_EVENT_ITEM(obj))
+           : NULL);
+      if (!quote_is_repost && quoted_id) {
         char *quoted_json = NULL;
         int quoted_len = 0;
         const char *quoted_content = NULL;
@@ -1151,12 +1177,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     }
 
     /* NIP-57: Handle zap receipt events (kind 9735) */
-    if (event_kind == 9735 && G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+    if (event_kind == 9735 && (is_snapshot_row || G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type()))) {
       /* For zap receipts, mark them as such and set up the indicator */
       nostr_gtk_note_card_row_set_is_zap_receipt(NOSTR_GTK_NOTE_CARD_ROW(row), TRUE);
 
       /* Get zap stats from the event item if available */
-      gint64 zap_total = gn_nostr_event_item_get_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj));
+      gint64 zap_total = is_snapshot_row
+        ? gnostr_timeline_snapshot_row_get_zap_total_msat(GNOSTR_TIMELINE_SNAPSHOT_ROW(obj))
+        : gn_nostr_event_item_get_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj));
 
       /* Simple zap display - show "⚡ Zap" with amount if available */
       nostr_gtk_note_card_row_set_zap_receipt_info(NOSTR_GTK_NOTE_CARD_ROW(row),
@@ -1214,7 +1242,9 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       guint repost_count = gn_nostr_event_item_get_repost_count(GN_NOSTR_EVENT_ITEM(obj));
       guint reply_count = gn_nostr_event_item_get_reply_count(GN_NOSTR_EVENT_ITEM(obj));
       guint zap_count = gn_nostr_event_item_get_zap_count(GN_NOSTR_EVENT_ITEM(obj));
-      gint64 zap_total = gn_nostr_event_item_get_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj));
+      gint64 zap_total = is_snapshot_row
+        ? gnostr_timeline_snapshot_row_get_zap_total_msat(GNOSTR_TIMELINE_SNAPSHOT_ROW(obj))
+        : gn_nostr_event_item_get_zap_total_msat(GN_NOSTR_EVENT_ITEM(obj));
 
       /* nostrc-nke8: Skip expensive DB lookups and network fetches for off-screen items
        * Defer if: (1) fast scrolling OR (2) item position is outside visible range */

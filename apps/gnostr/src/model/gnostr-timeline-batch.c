@@ -29,6 +29,9 @@ gnostr_timeline_batch_entry_clear(gpointer data)
   g_free(entry->nip05);
   g_free(entry->root_id);
   g_free(entry->reply_id);
+  g_free(entry->quoted_event_id);
+  g_free(entry->reposted_event_id);
+  g_strfreev(entry->hashtags);
 }
 
 static void
@@ -151,10 +154,54 @@ gnostr_timeline_batch_add_entry(GnostrTimelineBatch *self,
   copy.nip05 = g_strdup(entry->nip05);
   copy.root_id = g_strdup(entry->root_id);
   copy.reply_id = g_strdup(entry->reply_id);
+  copy.quoted_event_id = g_strdup(entry->quoted_event_id);
+  copy.reposted_event_id = g_strdup(entry->reposted_event_id);
+  copy.hashtags = g_strdupv(entry->hashtags);
   copy.kind = entry->kind;
   copy.has_profile = entry->has_profile;
 
   g_array_append_val(self->entries, copy);
+}
+
+void
+gnostr_timeline_batch_add_note_full(GnostrTimelineBatch *self,
+                                    uint64_t note_key,
+                                    gint64 created_at,
+                                    const uint8_t event_id[32],
+                                    const char *pubkey_hex,
+                                    const char *content,
+                                    const char *display_name,
+                                    const char *handle,
+                                    const char *avatar_url,
+                                    const char *nip05,
+                                    const char *root_id,
+                                    const char *reply_id,
+                                    const char *quoted_event_id,
+                                    const char *reposted_event_id,
+                                    const char * const *hashtags,
+                                    gint kind,
+                                    gboolean has_profile)
+{
+  GnostrTimelineBatchEntry entry = {
+    .note_key = note_key,
+    .created_at = created_at,
+    .kind = kind,
+    .has_profile = has_profile,
+  };
+  if (event_id)
+    memcpy(entry.event_id, event_id, sizeof(entry.event_id));
+  entry.pubkey_hex = (char *)pubkey_hex;
+  entry.content = (char *)content;
+  entry.display_name = (char *)display_name;
+  entry.handle = (char *)handle;
+  entry.avatar_url = (char *)avatar_url;
+  entry.nip05 = (char *)nip05;
+  entry.root_id = (char *)root_id;
+  entry.reply_id = (char *)reply_id;
+  entry.quoted_event_id = (char *)quoted_event_id;
+  entry.reposted_event_id = (char *)reposted_event_id;
+  entry.hashtags = (char **)hashtags;
+  gnostr_timeline_batch_add_entry(self, &entry);
 }
 
 void
@@ -173,23 +220,10 @@ gnostr_timeline_batch_add_note(GnostrTimelineBatch *self,
                                gint kind,
                                gboolean has_profile)
 {
-  GnostrTimelineBatchEntry entry = {
-    .note_key = note_key,
-    .created_at = created_at,
-    .kind = kind,
-    .has_profile = has_profile,
-  };
-  if (event_id)
-    memcpy(entry.event_id, event_id, sizeof(entry.event_id));
-  entry.pubkey_hex = (char *)pubkey_hex;
-  entry.content = (char *)content;
-  entry.display_name = (char *)display_name;
-  entry.handle = (char *)handle;
-  entry.avatar_url = (char *)avatar_url;
-  entry.nip05 = (char *)nip05;
-  entry.root_id = (char *)root_id;
-  entry.reply_id = (char *)reply_id;
-  gnostr_timeline_batch_add_entry(self, &entry);
+  gnostr_timeline_batch_add_note_full(self, note_key, created_at, event_id,
+                                      pubkey_hex, content, display_name, handle,
+                                      avatar_url, nip05, root_id, reply_id,
+                                      NULL, NULL, NULL, kind, has_profile);
 }
 
 void

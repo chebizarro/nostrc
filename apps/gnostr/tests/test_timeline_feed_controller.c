@@ -560,6 +560,54 @@ test_snapshot_rows_preserve_thread_and_kind_metadata(void)
 }
 
 static void
+test_snapshot_rows_preserve_quote_repost_and_hashtag_metadata(void)
+{
+  GnostrTimelineFeedController *controller =
+    gnostr_timeline_feed_controller_new(NULL);
+
+  guint8 id[32];
+  fill_id(id, 0x44);
+  const char *hashtags[] = { "nostr", "gtk", NULL };
+
+  GnostrTimelineBatch *refresh = batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 1);
+  gnostr_timeline_batch_add_note_full(refresh,
+                                      1,
+                                      100,
+                                      id,
+                                      "pubkey",
+                                      "note body",
+                                      "Display Name",
+                                      "handle",
+                                      "https://example.test/avatar.png",
+                                      "name@example.test",
+                                      NULL,
+                                      NULL,
+                                      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                                      hashtags,
+                                      6,
+                                      TRUE);
+  gnostr_timeline_feed_controller_ingest_batch(controller, refresh);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(refresh);
+
+  g_autoptr(GnostrTimelineSnapshot) snapshot = dup_controller_snapshot(controller);
+  g_assert_cmpuint(gnostr_timeline_snapshot_get_n_rows(snapshot), ==, 1);
+  GnostrTimelineSnapshotRow *row = gnostr_timeline_snapshot_get_row(snapshot, 0);
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_quoted_event_id(row), ==,
+                  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_reposted_event_id(row), ==,
+                  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+  const char * const *row_hashtags = gnostr_timeline_snapshot_row_get_hashtags(row);
+  g_assert_nonnull(row_hashtags);
+  g_assert_cmpstr(row_hashtags[0], ==, "nostr");
+  g_assert_cmpstr(row_hashtags[1], ==, "gtk");
+  g_assert_null(row_hashtags[2]);
+
+  g_object_unref(controller);
+}
+
+static void
 test_unprofiled_rows_wait_for_profile_hydration(void)
 {
   GnostrTimelineFeedController *controller =
@@ -668,6 +716,8 @@ main(int argc,
                   test_metadata_and_profile_patches_replace_rows_without_footprint_change);
   g_test_add_func("/gnostr/timeline-feed-controller/snapshot-thread-kind-metadata",
                   test_snapshot_rows_preserve_thread_and_kind_metadata);
+  g_test_add_func("/gnostr/timeline-feed-controller/snapshot-quote-repost-hashtag-metadata",
+                  test_snapshot_rows_preserve_quote_repost_and_hashtag_metadata);
   g_test_add_func("/gnostr/timeline-feed-controller/unprofiled-rows-wait-for-hydration",
                   test_unprofiled_rows_wait_for_profile_hydration);
   g_test_add_func("/gnostr/timeline-feed-controller/geometry-measurement",
