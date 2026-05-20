@@ -177,21 +177,10 @@ gnostr_main_window_run_startup_bootstrap_internal(GnostrMainWindow *self,
 {
   g_return_if_fail(GNOSTR_IS_MAIN_WINDOW(self));
 
-  if (!self->event_model) {
-    self->event_model = gn_nostr_event_model_new();
-
-    GnNostrQueryParams params = {
-      .kinds = (gint[]){1},
-      .n_kinds = 1,
-      .authors = NULL,
-      .n_authors = 0,
-      .since = 0,
-      .until = 0,
-      .limit = 500
-    };
-    gn_nostr_event_model_set_query(self->event_model, &params);
-    g_signal_connect_object(self->event_model, "need-profile", need_profile_cb, self, G_CONNECT_DEFAULT);
-  }
+  /* nostrc-75h.1: Do not create or wire the legacy live GnNostrEventModel for
+   * the main feed.  Visible timeline state is owned by the compositor snapshot
+   * model below; legacy models may still be used by non-migrated secondary
+   * views that instantiate them locally. */
 
   if (!self->timeline_feed_controller)
     self->timeline_feed_controller = gnostr_timeline_feed_controller_new(NULL);
@@ -207,6 +196,11 @@ gnostr_main_window_run_startup_bootstrap_internal(GnostrMainWindow *self,
 
   GtkWidget *timeline = self->session_view ? gnostr_session_view_get_timeline(self->session_view) : NULL;
   if (timeline && G_TYPE_CHECK_INSTANCE_TYPE(timeline, NOSTR_GTK_TYPE_TIMELINE_VIEW)) {
+    g_object_set_data_full(G_OBJECT(timeline),
+                           "timeline-feed-controller",
+                           g_object_ref(self->timeline_feed_controller),
+                           g_object_unref);
+
     GnostrTimelineSnapshotModel *model =
       gnostr_timeline_feed_controller_get_model(self->timeline_feed_controller);
     GtkSelectionModel *selection = GTK_SELECTION_MODEL(
@@ -214,11 +208,6 @@ gnostr_main_window_run_startup_bootstrap_internal(GnostrMainWindow *self,
     );
     nostr_gtk_timeline_view_set_model(NOSTR_GTK_TIMELINE_VIEW(timeline), selection);
     g_object_unref(selection);
-
-    g_object_set_data_full(G_OBJECT(timeline),
-                           "timeline-feed-controller",
-                           g_object_ref(self->timeline_feed_controller),
-                           g_object_unref);
 
     GtkWidget *scroller = nostr_gtk_timeline_view_get_scrolled_window(NOSTR_GTK_TIMELINE_VIEW(timeline));
     if (scroller && GTK_IS_SCROLLED_WINDOW(scroller)) {

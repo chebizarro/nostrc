@@ -20,6 +20,7 @@
 #include <string.h>
 
 #define UI_RESOURCE "/org/nostr/gtk/ui/widgets/gnostr-timeline-view.ui"
+#define GNOSTR_TIMELINE_FEED_CONTROLLER_DATA_KEY "timeline-feed-controller"
 
 /* ============== TimelineItem GObject ============== */
 
@@ -176,7 +177,7 @@ static void on_tabs_tab_selected(NostrGtkTimelineTabs *tabs_widget, guint index,
                 (guint)type, filter_value);
 }
 
-/* nostrc-2au / nostrc-hci: forward declarations for scroll stabilization */
+/* nostrc-2au / nostrc-hci: forward declarations for scroll stabilization. */
 static void clear_prepend_fixup(NostrGtkTimelineView *self);
 static void on_vadj_upper_notify(GObject *obj, GParamSpec *pspec, gpointer data);
 
@@ -305,9 +306,6 @@ static void ensure_list_model(NostrGtkTimelineView *self) {
 
 /* ============== nostrc-2au: Prepend-aware scroll stabilization ============== */
 
-#define SCROLL_TOP_THRESHOLD 1.0    /* px — considered "at the top" */
-#define SCROLL_FIXUP_EPSILON 1.0    /* px — minimum residual to correct */
-
 static void
 clear_prepend_fixup(NostrGtkTimelineView *self)
 {
@@ -321,14 +319,17 @@ clear_prepend_fixup(NostrGtkTimelineView *self)
   self->prepend_fixup_accumulated_delta = 0;
 }
 
-/* nostrc-hci: Called when the adjustment's upper (total content height) changes.
- * Immediately compensates for ANY positive upper growth when the user is
- * scrolled past the top.  This catches new-event prepends, profile-load
- * height changes, media expansion, and content re-flow — all in one place,
- * without requiring items-changed to arm a deferred fixup.
- *
- * The value-changed handler is temporarily blocked during the compensation
- * so the velocity tracker does not see the programmatic jump as user scroll. */
+#define SCROLL_TOP_THRESHOLD 1.0    /* px — considered "at the top" */
+
+static gboolean
+timeline_view_has_compositor_controller(NostrGtkTimelineView *self)
+{
+  return self && g_object_get_data(G_OBJECT(self), GNOSTR_TIMELINE_FEED_CONTROLLER_DATA_KEY) != NULL;
+}
+
+/* Legacy scroll stabilization for non-compositor timelines.  The compositor
+ * main feed owns anchoring in GnostrTimelineFeedController, so views with an
+ * attached feed-controller qdata intentionally ignore adjustment upper growth. */
 static void
 on_vadj_upper_notify(GObject *obj, GParamSpec *pspec, gpointer data)
 {
@@ -338,46 +339,26 @@ on_vadj_upper_notify(GObject *obj, GParamSpec *pspec, gpointer data)
   gdouble new_upper = gtk_adjustment_get_upper(adj);
   gdouble delta = new_upper - self->prev_adj_upper;
 
-  /* Always track the latest upper */
   self->prev_adj_upper = new_upper;
 
-  /* Ignore shrink or no change */
+  if (timeline_view_has_compositor_controller(self))
+    return;
   if (delta <= 0)
     return;
 
   gdouble value = gtk_adjustment_get_value(adj);
-
-  /* If user is at (or near) the top, let them follow live content */
   if (value <= SCROLL_TOP_THRESHOLD)
     return;
 
-  /* Compensate immediately — shift viewport down by the growth amount
-   * so the same content stays visible.
-   *
-   * Design note: an earlier version deferred to a post-layout idle, but
-   * that introduced a window where user scrolls could pollute the
-   * baseline and cause under/over-compensation.  GTK4's GtkListView
-   * does not auto-adjust `value` in response to `upper` changes, so
-   * immediate compensation is safe and avoids that race.
-   *
-   * Trade-off: if content grows BELOW the viewport (lazy media load on
-   * an off-screen card), we over-compensate by shifting the viewport
-   * down.  In practice this is rare because new events are prepended at
-   * position 0 (above), and cards below the viewport are usually fully
-   * rendered by the time the user scrolls past them. */
   gdouble target = value + delta;
   gdouble page = gtk_adjustment_get_page_size(adj);
   gdouble max_value = new_upper - page;
   if (target > max_value) target = max_value;
   if (target < 0) target = 0;
 
-  /* Block the value-changed handler so velocity tracking ignores this jump */
   g_signal_handlers_block_by_func(adj, on_scroll_value_changed, self);
   gtk_adjustment_set_value(adj, target);
   g_signal_handlers_unblock_by_func(adj, on_scroll_value_changed, self);
-
-  /* Update the velocity tracker's baseline so the next real user scroll
-   * doesn't see a phantom delta from our fixup. */
   self->last_scroll_value = target;
 
   g_debug("[SCROLL-FIX] Compensated %.0fpx upper growth (value %.0f -> %.0f)",
@@ -443,7 +424,6 @@ static void nostr_gtk_timeline_view_init(NostrGtkTimelineView *self) {
     GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->root_scroller));
     if (vadj) {
       g_signal_connect(vadj, "value-changed", G_CALLBACK(on_scroll_value_changed), self);
-      /* nostrc-2au: Track adjustment upper for prepend scroll stabilization */
       g_signal_connect(vadj, "notify::upper", G_CALLBACK(on_vadj_upper_notify), self);
       self->prev_adj_upper = gtk_adjustment_get_upper(vadj);
     }

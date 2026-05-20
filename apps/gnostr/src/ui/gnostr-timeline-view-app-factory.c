@@ -584,17 +584,10 @@ static void schedule_metadata_batch(NostrGtkTimelineView *self, GnNostrEventItem
   gnostr_timeline_metadata_controller_schedule(ctrl, item);
 }
 
-static void schedule_snapshot_metadata_batch(NostrGtkTimelineView *self, GnostrTimelineSnapshotRow *row)
-{
-  GnostrTimelineFeedController *feed_controller =
-      g_object_get_data(G_OBJECT(self), "timeline-feed-controller");
-  if (!GNOSTR_IS_TIMELINE_FEED_CONTROLLER(feed_controller))
-    return;
-
-  GnostrTimelineMetadataController *ctrl =
-      gnostr_timeline_metadata_controller_ensure(G_OBJECT(self));
-  gnostr_timeline_metadata_controller_schedule_snapshot_row(ctrl, row, feed_controller);
-}
+/* Snapshot rows are compositor-published view data.  The main feed bind path
+ * must not start asynchronous metadata work that later republishes/mutates the
+ * visible snapshot; a future hydrator/compositor pass should populate counts
+ * before publication or admit stable patches outside this row factory. */
 
 /*
  * Tier 2 map handler for timeline view: creates embeds/media/OG when the row
@@ -806,13 +799,11 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     }
     nostr_gtk_note_card_row_set_timestamp(NOSTR_GTK_NOTE_CARD_ROW(row), created_at, ts);
 
-    /* Connect embed request signal EARLY — before content setting, because
-     * the Tier 2 map handler may fire immediately during bind (if row is
-     * already mapped) and emit request-embed before we reach the signal
-     * connection point at the end of bind.  Must be connected before
-     * any code path that creates NoteEmbed widgets.
-     * Disconnected in factory_unbind_cb to prevent accumulation. */
-    g_signal_connect(row, "request-embed", G_CALLBACK(gnostr_timeline_embed_on_row_request_embed), NULL);
+    /* Legacy GnNostrEventItem rows may still request async embeds.  Snapshot
+     * rows are the main-feed compositor path and must not emit bind-time
+     * request-embed/profile work that can expand row footprint after reveal. */
+    if (!is_snapshot_row)
+      g_signal_connect(row, "request-embed", G_CALLBACK(gnostr_timeline_embed_on_row_request_embed), NULL);
 
     /* NIP-92: Use imeta-aware setter if this is a GnNostrEventItem */
     const char *tags_json = NULL;
@@ -967,10 +958,19 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
         g_autoptr(GError) render_error = NULL;
         GnContentRenderResult *render = gnostr_render_content(content, content ? (int)strlen(content) : 0, &render_error);
         if (render) {
-          nostr_gtk_note_card_row_set_content_rendered(NOSTR_GTK_NOTE_CARD_ROW(row), content, render);
+          /* Snapshot rows bind markup only.  Creating media/OG/embed widgets
+           * here would start async work from row bind and can alter the row
+           * footprint.  Hydrator/geometry beads must provide pre-reserved rich
+           * content before snapshots can safely render those areas. */
+          nostr_gtk_note_card_row_set_content_markup_only(NOSTR_GTK_NOTE_CARD_ROW(row), content, render);
           gnostr_content_render_result_free(render);
         } else {
-          nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
+          /* Snapshot render failure fallback: bind sanitized text only.  Do not
+           * call set_content(), which can participate in lazy rich/embed/media
+           * behavior outside the compositor geometry contract. */
+          nostr_gtk_note_card_row_set_content_markup_only(NOSTR_GTK_NOTE_CARD_ROW(row),
+                                                          content,
+                                                          NULL);
         }
       }
     }
@@ -1013,10 +1013,15 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                                 display ? display : (handle ? handle : NULL), /* reposter name */
                                                 created_at); /* repost timestamp */
 
-          /* Try to fetch the original note from local storage */
-          char *orig_json = NULL;
-          int orig_len = 0;
-          if (storage_ndb_get_note_by_id_nontxn(reposted_id, &orig_json, &orig_len) == 0 && orig_json) {
+          if (is_snapshot_row) {
+            /* Snapshot rows must not synchronously query DB or request async
+             * embeds from bind.  Rendering the reposted note requires the
+             * hydrator to include original-note VM data plus reserved geometry. */
+          } else {
+            /* Try to fetch the original note from local storage */
+            char *orig_json = NULL;
+            int orig_len = 0;
+            if (storage_ndb_get_note_by_id_nontxn(reposted_id, &orig_json, &orig_len) == 0 && orig_json) {
             /* Parse the original event to get author and content */
             NostrEvent *orig_evt = nostr_event_new();
             if (orig_evt && nostr_event_deserialize(orig_evt, orig_json) == 0) {
@@ -1095,10 +1100,11 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
               }
             }
             if (orig_evt) nostr_event_free(orig_evt);
-          } else {
-            /* Original note not in local storage - request embed fetch */
-            g_autofree gchar *nostr_uri = g_strdup_printf("nostr:note1%s", reposted_id);
-            g_signal_emit_by_name(row, "request-embed", nostr_uri);
+            } else {
+              /* Original note not in local storage - request embed fetch */
+              g_autofree gchar *nostr_uri = g_strdup_printf("nostr:note1%s", reposted_id);
+              g_signal_emit_by_name(row, "request-embed", nostr_uri);
+            }
           }
         }
       }
@@ -1119,12 +1125,17 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
            ? gn_nostr_event_item_get_quoted_event_id(GN_NOSTR_EVENT_ITEM(obj))
            : NULL);
       if (!quote_is_repost && quoted_id) {
-        char *quoted_json = NULL;
-        int quoted_len = 0;
-        const char *quoted_content = NULL;
-        const char *quoted_author = NULL;
+        if (is_snapshot_row) {
+          /* Snapshot rows cannot fetch quoted-note/profile data during bind.
+           * Hydrator/geometry beads must supply quote preview content and a
+           * reserved quote box before publication. */
+        } else {
+          char *quoted_json = NULL;
+          int quoted_len = 0;
+          const char *quoted_content = NULL;
+          const char *quoted_author = NULL;
 
-        if (storage_ndb_get_note_by_id_nontxn(quoted_id, &quoted_json, &quoted_len) == 0 && quoted_json) {
+          if (storage_ndb_get_note_by_id_nontxn(quoted_id, &quoted_json, &quoted_len) == 0 && quoted_json) {
           NostrEvent *quoted_evt = nostr_event_new();
           if (quoted_evt && nostr_event_deserialize(quoted_evt, quoted_json) == 0) {
             quoted_content = nostr_event_get_content(quoted_evt);
@@ -1168,10 +1179,11 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
           }
           if (quoted_evt) nostr_event_free(quoted_evt);
           free(quoted_json);
-        } else {
-          /* Quoted note not in local storage — request async fetch via embed mechanism */
-          g_autofree gchar *nostr_uri = g_strdup_printf("nostr:note1%s", quoted_id);
-          g_signal_emit_by_name(row, "request-embed", nostr_uri);
+          } else {
+            /* Quoted note not in local storage — request async fetch via embed mechanism */
+            g_autofree gchar *nostr_uri = g_strdup_printf("nostr:note1%s", quoted_id);
+            g_signal_emit_by_name(row, "request-embed", nostr_uri);
+          }
         }
       }
     }
@@ -1284,16 +1296,10 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       guint zap_count = gnostr_timeline_snapshot_row_get_zap_count(snapshot_row);
       gint64 zap_total = gnostr_timeline_snapshot_row_get_zap_total_msat(snapshot_row);
 
-      guint item_position = gtk_list_item_get_position(item);
-      gboolean is_visible = nostr_gtk_timeline_view_is_item_visible(self, item_position);
-      gboolean defer_metadata = self && (nostr_gtk_timeline_view_is_fast_scrolling(self) || !is_visible);
-      if (!defer_metadata && id_hex && strlen(id_hex) == 64 &&
-          (like_count == 0 || zap_count == 0 || repost_count == 0 || reply_count == 0)) {
-        schedule_snapshot_metadata_batch(self, snapshot_row);
-        gtk_widget_remove_css_class(row, "needs-metadata-refresh");
-      } else if (defer_metadata) {
-        gtk_widget_add_css_class(row, "needs-metadata-refresh");
-      }
+      /* Bind snapshot counts exactly as published.  Do not schedule row-driven
+       * metadata refreshes from the visible main-feed path; that belongs in the
+       * hydrator/compositor pipeline with a stable geometry contract. */
+      gtk_widget_remove_css_class(row, "needs-metadata-refresh");
 
       nostr_gtk_note_card_row_set_like_count(NOSTR_GTK_NOTE_CARD_ROW(row), like_count);
       nostr_gtk_note_card_row_set_liked(NOSTR_GTK_NOTE_CARD_ROW(row), is_liked);

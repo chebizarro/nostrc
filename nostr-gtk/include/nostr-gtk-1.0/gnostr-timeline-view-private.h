@@ -72,13 +72,11 @@ struct _NostrGtkTimelineView {
   gboolean is_fast_scrolling;
   guint scroll_idle_id;
 
-  /* nostrc-2au / nostrc-hci: Scroll stabilization.
-   * Compensates for ANY content-height growth above the viewport so that
-   * visible cards stay locked in place.  Handles new-event prepends,
-   * profile-load height changes, media expansion, and re-flow.
-   * The items-changed handler is no longer needed — notify::upper
-   * handles everything directly. Fields below are retained for ABI
-   * but only prev_adj_upper and prepend_fixup_id are actively used. */
+  /* nostrc-75h.1: Legacy prepend/upper scroll stabilization state.
+   * GtkAdjustment::upper compensation is skipped for compositor-backed views;
+   * main-feed scroll anchoring belongs to the feed controller, not live
+   * event-model insertion/drain or lazy row-height changes. Fields are
+   * retained for ABI/state-layout compatibility. */
   gulong model_items_changed_handler_id;  /* unused — retained for ABI */
   GListModel *observed_model;             /* unused — retained for ABI */
   gdouble prev_adj_upper;

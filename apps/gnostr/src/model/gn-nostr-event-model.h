@@ -13,7 +13,9 @@ G_DECLARE_FINAL_TYPE(GnNostrEventModel, gn_nostr_event_model, GN, NOSTR_EVENT_MO
 /*
  * GnNostrEventModel
  *
- * Subscription-driven GListModel over nostrdb note keys.
+ * Legacy subscription-driven GListModel over nostrdb note keys.
+ * The GNostr main feed must not attach this as its visible model; it uses
+ * GnostrTimelineFeedController/GnostrTimelineSnapshotModel instead.
  *
  * Key behaviors:
  * - Maintains lifetime subscriptions to kinds {0,1,5,6} via gn-ndb-sub-dispatcher.

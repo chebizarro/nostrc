@@ -102,8 +102,10 @@ gnostr_main_window_refresh_card_visibility_policy_internal(GnostrMainWindow *sel
             self->user_pubkey_hex ? self->user_pubkey_hex : "(none)",
             n_followed);
 
-    if (self->event_model && GN_IS_NOSTR_EVENT_MODEL(self->event_model))
-      gn_nostr_event_model_rebind_all(self->event_model);
+    /* Main feed rows are compositor snapshots, not the legacy live event model.
+     * Recompose through the feed controller rather than forcing a legacy rebind. */
+    if (GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self->timeline_feed_controller))
+      gnostr_timeline_feed_controller_refresh(self->timeline_feed_controller);
   }
 }
 

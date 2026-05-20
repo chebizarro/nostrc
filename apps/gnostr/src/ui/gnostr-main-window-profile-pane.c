@@ -3,6 +3,7 @@
 #include "gnostr-main-window-private.h"
 
 #include "gnostr-session-view.h"
+#include "gnostr-timeline-feed-controller.h"
 #include "../ipc/gnostr-signer-service.h"
 #include "../model/gn-nostr-event-model.h"
 #include "../util/nip02_contacts.h"
@@ -78,7 +79,9 @@ gnostr_main_window_on_profile_pane_mute_user_requested_internal(NostrGtkProfileP
   GNostrMuteList *mute_list = gnostr_mute_list_get_default();
   gnostr_mute_list_add_pubkey(mute_list, pubkey_hex, FALSE);
 
-  if (self->event_model)
+  if (GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self->timeline_feed_controller))
+    gnostr_timeline_feed_controller_refresh(self->timeline_feed_controller);
+  else if (self->event_model)
     gn_nostr_event_model_refresh_async(GN_NOSTR_EVENT_MODEL(self->event_model));
 
   gnostr_main_window_show_toast(GTK_WIDGET(self), "User muted");
