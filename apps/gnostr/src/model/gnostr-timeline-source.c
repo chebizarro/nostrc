@@ -50,6 +50,7 @@ typedef struct {
 } SourceBatchRequest;
 
 static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]);
+static void source_emit_delete_batch(GnostrTimelineSource *self, const uint64_t *note_keys, guint n_keys);
 static void on_sub_timeline_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
 static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
 static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
@@ -363,6 +364,142 @@ source_start_key_batch(GnostrTimelineSource *self,
 }
 
 static void
+source_add_authorized_delete_targets_from_json(GnostrTimelineBatch *batch,
+                                               void *txn,
+                                               const char *delete_event_json)
+{
+  if (!batch || !txn || !delete_event_json)
+    return;
+
+  NostrEvent *evt = nostr_event_new();
+  if (!evt)
+    return;
+
+  if (nostr_event_deserialize(evt, delete_event_json) != 0) {
+    nostr_event_free(evt);
+    return;
+  }
+
+  char *delete_event_id_tmp = nostr_event_get_id(evt);
+  g_autofree char *delete_event_id = delete_event_id_tmp ? g_strdup(delete_event_id_tmp) : NULL;
+  free(delete_event_id_tmp);
+
+  const char *deletion_pubkey = nostr_event_get_pubkey(evt);
+  uint8_t deletion_pk32[32];
+  gboolean have_deletion_pk = hex_to_bytes32(deletion_pubkey, deletion_pk32);
+  if (!have_deletion_pk) {
+    nostr_event_free(evt);
+    return;
+  }
+
+  NostrTags *tags = nostr_event_get_tags(evt);
+  if (!tags) {
+    nostr_event_free(evt);
+    return;
+  }
+
+  for (size_t i = 0; i < nostr_tags_size(tags); i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (!tag || nostr_tag_size(tag) < 2)
+      continue;
+
+    const char *tag_name = nostr_tag_get(tag, 0);
+    const char *target_id = nostr_tag_get(tag, 1);
+    if (g_strcmp0(tag_name, "e") != 0 || !target_id)
+      continue;
+
+    uint8_t target_id32[32];
+    if (!hex_to_bytes32(target_id, target_id32))
+      continue;
+
+    storage_ndb_note *target_note = NULL;
+    uint64_t target_key = storage_ndb_get_note_key_by_id(txn, target_id32, &target_note);
+    if (target_key == 0 || !target_note)
+      continue;
+
+    const unsigned char *target_pk32 = storage_ndb_note_pubkey(target_note);
+    if (!target_pk32 || memcmp(deletion_pk32, target_pk32, 32) != 0) {
+      g_debug("[SOURCE] Ignoring unauthorized delete target %s from delete %s",
+              target_id,
+              delete_event_id ? delete_event_id : "unknown");
+      continue;
+    }
+
+    GnostrTimelineDeleteTarget target = {
+      .target_event_id = (char *)target_id,
+      .delete_event_id = delete_event_id,
+    };
+    gnostr_timeline_batch_add_delete_target(batch, &target);
+  }
+
+  nostr_event_free(evt);
+}
+
+static void
+source_emit_delete_batch(GnostrTimelineSource *self,
+                         const uint64_t *note_keys,
+                         guint n_keys)
+{
+  if (!note_keys || n_keys == 0)
+    return;
+
+  GnostrTimelineBatch *batch = gnostr_timeline_batch_new(GNOSTR_TIMELINE_BATCH_DELETE,
+                                                         self->generation);
+
+  void *txn = NULL;
+  gboolean have_txn = (storage_ndb_begin_query(&txn, NULL) == 0 && txn != NULL);
+  if (have_txn) {
+    for (guint i = 0; i < n_keys; i++) {
+      storage_ndb_note *note = storage_ndb_get_note_ptr(txn, note_keys[i]);
+      if (!note || storage_ndb_note_kind(note) != 5)
+        continue;
+
+      const unsigned char *delete_id32 = storage_ndb_note_id(note);
+      if (!delete_id32)
+        continue;
+
+      const unsigned char *delete_pk32 = storage_ndb_note_pubkey(note);
+      char delete_pubkey_hex[65] = {0};
+      if (delete_pk32)
+        storage_ndb_hex_encode(delete_pk32, delete_pubkey_hex);
+
+      /* Preserve the original delete-event entry payload for legacy source
+       * consumers while also projecting resolved NIP-09 target ids for the
+       * compositor path. */
+      gnostr_timeline_batch_add_note(batch,
+                                     note_keys[i],
+                                     (gint64)storage_ndb_note_created_at(note),
+                                     delete_id32,
+                                     delete_pk32 ? delete_pubkey_hex : NULL,
+                                     NULL,
+                                     NULL,
+                                     5,
+                                     TRUE);
+
+      char delete_id[65];
+      storage_ndb_hex_encode(delete_id32, delete_id);
+      g_autofree char *filter = g_strdup_printf("{\"ids\":[\"%s\"]}", delete_id);
+
+      char **json_results = NULL;
+      int result_count = 0;
+      int rc = storage_ndb_query(txn, filter, &json_results, &result_count, NULL);
+      if (rc == 0 && json_results && result_count > 0) {
+        for (int j = 0; j < result_count; j++)
+          source_add_authorized_delete_targets_from_json(batch, txn, json_results[j]);
+        storage_ndb_free_results(json_results, result_count);
+      }
+    }
+    storage_ndb_end_query(txn);
+  }
+
+  if (gnostr_timeline_batch_get_n_entries(batch) > 0 ||
+      gnostr_timeline_batch_get_n_delete_targets(batch) > 0)
+    g_signal_emit(self, signals[SIGNAL_BATCH], 0, batch);
+
+  g_object_unref(batch);
+}
+
+static void
 source_emit_note_key_patch_batch(GnostrTimelineSource *self,
                                  GnostrTimelineBatchKind kind,
                                  const uint64_t *note_keys,
@@ -441,7 +578,7 @@ on_sub_deletes_batch(uint64_t subid G_GNUC_UNUSED,
   if (!GNOSTR_IS_TIMELINE_SOURCE(self))
     return;
 
-  source_emit_note_key_patch_batch(self, GNOSTR_TIMELINE_BATCH_DELETE, note_keys, n_keys);
+  source_emit_delete_batch(self, note_keys, n_keys);
 }
 
 static void

@@ -12,6 +12,7 @@ struct _GnostrTimelineBatch {
   GPtrArray *profile_requests; /* element-type: char* */
   GArray *metadata_patches; /* element-type: GnostrTimelineMetadataPatch */
   GArray *profile_patches;  /* element-type: GnostrTimelineProfilePatch */
+  GArray *delete_targets;   /* element-type: GnostrTimelineDeleteTarget */
 };
 
 G_DEFINE_TYPE(GnostrTimelineBatch, gnostr_timeline_batch, G_TYPE_OBJECT)
@@ -44,6 +45,14 @@ gnostr_timeline_profile_patch_clear(gpointer data)
 }
 
 static void
+gnostr_timeline_delete_target_clear(gpointer data)
+{
+  GnostrTimelineDeleteTarget *target = data;
+  g_free(target->target_event_id);
+  g_free(target->delete_event_id);
+}
+
+static void
 gnostr_timeline_batch_finalize(GObject *object)
 {
   GnostrTimelineBatch *self = GNOSTR_TIMELINE_BATCH(object);
@@ -52,6 +61,7 @@ gnostr_timeline_batch_finalize(GObject *object)
   g_clear_pointer(&self->profile_requests, g_ptr_array_unref);
   g_clear_pointer(&self->metadata_patches, g_array_unref);
   g_clear_pointer(&self->profile_patches, g_array_unref);
+  g_clear_pointer(&self->delete_targets, g_array_unref);
 
   G_OBJECT_CLASS(gnostr_timeline_batch_parent_class)->finalize(object);
 }
@@ -73,6 +83,8 @@ gnostr_timeline_batch_init(GnostrTimelineBatch *self)
   g_array_set_clear_func(self->metadata_patches, gnostr_timeline_metadata_patch_clear);
   self->profile_patches = g_array_new(FALSE, FALSE, sizeof(GnostrTimelineProfilePatch));
   g_array_set_clear_func(self->profile_patches, gnostr_timeline_profile_patch_clear);
+  self->delete_targets = g_array_new(FALSE, FALSE, sizeof(GnostrTimelineDeleteTarget));
+  g_array_set_clear_func(self->delete_targets, gnostr_timeline_delete_target_clear);
 }
 
 GnostrTimelineBatch *
@@ -255,6 +267,37 @@ gnostr_timeline_batch_get_profile_patch(GnostrTimelineBatch *self,
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_BATCH(self), NULL);
   g_return_val_if_fail(index < self->profile_patches->len, NULL);
   return &g_array_index(self->profile_patches, GnostrTimelineProfilePatch, index);
+}
+
+void
+gnostr_timeline_batch_add_delete_target(GnostrTimelineBatch *self,
+                                        const GnostrTimelineDeleteTarget *target)
+{
+  g_return_if_fail(GNOSTR_IS_TIMELINE_BATCH(self));
+  g_return_if_fail(target != NULL);
+  if (!target->target_event_id || !*target->target_event_id)
+    return;
+
+  GnostrTimelineDeleteTarget copy = { 0 };
+  copy.target_event_id = g_strdup(target->target_event_id);
+  copy.delete_event_id = g_strdup(target->delete_event_id);
+  g_array_append_val(self->delete_targets, copy);
+}
+
+guint
+gnostr_timeline_batch_get_n_delete_targets(GnostrTimelineBatch *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_BATCH(self), 0);
+  return self->delete_targets ? self->delete_targets->len : 0;
+}
+
+const GnostrTimelineDeleteTarget *
+gnostr_timeline_batch_get_delete_target(GnostrTimelineBatch *self,
+                                        guint index)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_BATCH(self), NULL);
+  g_return_val_if_fail(index < self->delete_targets->len, NULL);
+  return &g_array_index(self->delete_targets, GnostrTimelineDeleteTarget, index);
 }
 
 const char *

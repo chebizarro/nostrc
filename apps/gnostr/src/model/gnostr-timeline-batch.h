@@ -54,6 +54,11 @@ typedef struct {
   char *nip05;
 } GnostrTimelineProfilePatch;
 
+typedef struct {
+  char *target_event_id;
+  char *delete_event_id;
+} GnostrTimelineDeleteTarget;
+
 GnostrTimelineBatch *gnostr_timeline_batch_new(GnostrTimelineBatchKind kind,
                                                guint64 generation);
 
@@ -91,6 +96,12 @@ void gnostr_timeline_batch_add_profile_patch(GnostrTimelineBatch *self,
                                              const GnostrTimelineProfilePatch *patch);
 guint gnostr_timeline_batch_get_n_profile_patches(GnostrTimelineBatch *self);
 const GnostrTimelineProfilePatch *gnostr_timeline_batch_get_profile_patch(GnostrTimelineBatch *self,
+                                                                          guint index);
+
+void gnostr_timeline_batch_add_delete_target(GnostrTimelineBatch *self,
+                                             const GnostrTimelineDeleteTarget *target);
+guint gnostr_timeline_batch_get_n_delete_targets(GnostrTimelineBatch *self);
+const GnostrTimelineDeleteTarget *gnostr_timeline_batch_get_delete_target(GnostrTimelineBatch *self,
                                                                           guint index);
 
 const char *gnostr_timeline_batch_kind_to_string(GnostrTimelineBatchKind kind);

@@ -323,6 +323,33 @@ clear_working_set(GnostrTimelineFeedController *self)
   g_hash_table_remove_all(self->pending_head);
 }
 
+static gboolean
+remove_working_event(GnostrTimelineFeedController *self,
+                     const char *event_id,
+                     gboolean *out_pending_changed)
+{
+  if (!event_id || !*event_id)
+    return FALSE;
+
+  WorkingEntry *entry = lookup_working(self, event_id);
+  if (!entry)
+    return FALSE;
+
+  if (g_hash_table_remove(self->pending_head, event_id) && out_pending_changed)
+    *out_pending_changed = TRUE;
+
+  g_hash_table_remove(self->by_event_id, event_id);
+
+  for (guint i = 0; i < self->working->len; i++) {
+    if (g_ptr_array_index(self->working, i) == entry) {
+      g_ptr_array_remove_index(self->working, i);
+      return TRUE;
+    }
+  }
+
+  return TRUE;
+}
+
 static guint
 pending_count(GnostrTimelineFeedController *self)
 {
@@ -985,12 +1012,26 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
       schedule_compose(self, TRUE, FALSE);
       break;
 
-    case GNOSTR_TIMELINE_BATCH_DELETE:
-      /* The current source batch entry identifies the delete event itself, not
-       * the NIP-09 target(s).  Do not remove or insert anything until the patch
-       * conversion layer carries explicit target event ids. */
-      g_debug("[COMPOSITOR] Ignoring delete batch without target ids (%u entries)", n_entries);
+    case GNOSTR_TIMELINE_BATCH_DELETE: {
+      gboolean changed = FALSE;
+      gboolean pending_changed = FALSE;
+      guint n_targets = gnostr_timeline_batch_get_n_delete_targets(batch);
+      for (guint i = 0; i < n_targets; i++) {
+        const GnostrTimelineDeleteTarget *target =
+          gnostr_timeline_batch_get_delete_target(batch, i);
+        if (target)
+          changed |= remove_working_event(self, target->target_event_id, &pending_changed);
+      }
+
+      if (pending_changed)
+        emit_pending_count(self);
+      if (changed)
+        schedule_compose(self, TRUE, FALSE);
+      else if (n_targets == 0 && n_entries > 0)
+        g_debug("[COMPOSITOR] Ignoring delete batch with no resolved NIP-09 targets (%u entries)",
+                n_entries);
       break;
+    }
 
     case GNOSTR_TIMELINE_BATCH_PROFILE_PATCH: {
       gboolean changed = FALSE;

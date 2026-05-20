@@ -37,6 +37,30 @@ batch_add(GnostrTimelineBatch *batch,
                                  TRUE);
 }
 
+static char *
+event_id_hex_for_byte(guint8 byte)
+{
+  guint8 id[32];
+  fill_id(id, byte);
+
+  char *hex = g_malloc0(65);
+  for (guint i = 0; i < 32; i++)
+    g_snprintf(hex + (i * 2), 3, "%02x", id[i]);
+  return hex;
+}
+
+static void
+batch_add_delete_target(GnostrTimelineBatch *batch,
+                        guint8 target_id_byte)
+{
+  g_autofree char *target_id = event_id_hex_for_byte(target_id_byte);
+  GnostrTimelineDeleteTarget target = {
+    .target_event_id = target_id,
+    .delete_event_id = "delete-event",
+  };
+  gnostr_timeline_batch_add_delete_target(batch, &target);
+}
+
 static GnostrTimelineSnapshot *
 dup_controller_snapshot(GnostrTimelineFeedController *controller)
 {
@@ -287,6 +311,89 @@ test_patch_and_delete_batches_do_not_publish_patch_rows(void)
 }
 
 static void
+test_delete_target_removes_visible_row_and_preserves_anchor(void)
+{
+  GnostrTimelineFeedController *controller =
+    gnostr_timeline_feed_controller_new(NULL);
+  RestoreCapture restore = { 0.0, 0 };
+  g_signal_connect(controller, "restore-scroll",
+                   G_CALLBACK(on_restore_scroll), &restore);
+
+  GnostrTimelineBatch *refresh = batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 1);
+  batch_add(refresh, 1, 300, 0x11);
+  batch_add(refresh, 2, 200, 0x22);
+  batch_add(refresh, 3, 100, 0x33);
+  gnostr_timeline_feed_controller_ingest_batch(controller, refresh);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(refresh);
+  restore.value = 0.0;
+  restore.emissions = 0;
+
+  /* Anchor 10px into the second row. Delete an older visible row. */
+  gnostr_timeline_feed_controller_set_viewport(controller, 170.0, 400.0, 480);
+
+  GnostrTimelineBatch *delete_batch = batch_new(GNOSTR_TIMELINE_BATCH_DELETE, 1);
+  batch_add_delete_target(delete_batch, 0x33);
+  gnostr_timeline_feed_controller_ingest_batch(controller, delete_batch);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(delete_batch);
+
+  g_assert_cmpuint(restore.emissions, ==, 1);
+  g_assert_cmpfloat_with_epsilon(restore.value, 170.0, 0.001);
+
+  g_autoptr(GnostrTimelineSnapshot) snapshot = dup_controller_snapshot(controller);
+  g_assert_cmpuint(gnostr_timeline_snapshot_get_n_rows(snapshot), ==, 2);
+  g_autofree char *deleted_id = event_id_hex_for_byte(0x33);
+  guint index = 0;
+  g_assert_false(gnostr_timeline_snapshot_lookup_event(snapshot, deleted_id, &index));
+
+  g_object_unref(controller);
+}
+
+static void
+test_delete_target_removes_pending_head_and_updates_count(void)
+{
+  GnostrTimelineFeedController *controller =
+    gnostr_timeline_feed_controller_new(NULL);
+  PendingCapture pending = { 0, 0 };
+  g_signal_connect(controller, "pending-count-changed",
+                   G_CALLBACK(on_pending_count_changed), &pending);
+
+  GnostrTimelineBatch *refresh = batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 1);
+  batch_add(refresh, 1, 100, 0x11);
+  gnostr_timeline_feed_controller_ingest_batch(controller, refresh);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(refresh);
+
+  gnostr_timeline_feed_controller_set_viewport(controller, 48.0, 400.0, 480);
+
+  GnostrTimelineBatch *live = batch_new(GNOSTR_TIMELINE_BATCH_LIVE_HEAD, 1);
+  batch_add(live, 2, 200, 0x22);
+  gnostr_timeline_feed_controller_ingest_batch(controller, live);
+  g_object_unref(live);
+  g_assert_cmpuint(gnostr_timeline_feed_controller_get_pending_count(controller), ==, 1);
+
+  GnostrTimelineBatch *delete_batch = batch_new(GNOSTR_TIMELINE_BATCH_DELETE, 1);
+  batch_add_delete_target(delete_batch, 0x22);
+  gnostr_timeline_feed_controller_ingest_batch(controller, delete_batch);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(delete_batch);
+
+  g_assert_cmpuint(gnostr_timeline_feed_controller_get_pending_count(controller), ==, 0);
+  g_assert_cmpuint(pending.count, ==, 0);
+
+  g_autoptr(GnostrTimelineSnapshot) snapshot = dup_controller_snapshot(controller);
+  g_assert_cmpuint(gnostr_timeline_snapshot_get_n_rows(snapshot), ==, 1);
+  GnostrTimelineSnapshotRow *row = gnostr_timeline_snapshot_get_row(snapshot, 0);
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_note_key(row), ==, "1");
+  g_autofree char *deleted_id = event_id_hex_for_byte(0x22);
+  guint index = 0;
+  g_assert_false(gnostr_timeline_snapshot_lookup_event(snapshot, deleted_id, &index));
+
+  g_object_unref(controller);
+}
+
+static void
 test_metadata_and_profile_patches_replace_rows_without_footprint_change(void)
 {
   GnostrTimelineFeedController *controller =
@@ -425,6 +532,10 @@ main(int argc,
                   test_stale_generation_is_dropped);
   g_test_add_func("/gnostr/timeline-feed-controller/patch-delete-no-visible-rows",
                   test_patch_and_delete_batches_do_not_publish_patch_rows);
+  g_test_add_func("/gnostr/timeline-feed-controller/delete-target-removes-visible-row",
+                  test_delete_target_removes_visible_row_and_preserves_anchor);
+  g_test_add_func("/gnostr/timeline-feed-controller/delete-target-removes-pending-head",
+                  test_delete_target_removes_pending_head_and_updates_count);
   g_test_add_func("/gnostr/timeline-feed-controller/metadata-profile-patches",
                   test_metadata_and_profile_patches_replace_rows_without_footprint_change);
   g_test_add_func("/gnostr/timeline-feed-controller/geometry-measurement",
