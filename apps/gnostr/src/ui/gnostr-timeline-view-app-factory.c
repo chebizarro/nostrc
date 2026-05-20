@@ -705,6 +705,9 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     handle = g_strdup(gnostr_timeline_snapshot_row_get_handle(snapshot_row));
     avatar_url = g_strdup(gnostr_timeline_snapshot_row_get_avatar_url(snapshot_row));
     nip05 = g_strdup(gnostr_timeline_snapshot_row_get_nip05(snapshot_row));
+    root_id = g_strdup(gnostr_timeline_snapshot_row_get_root_id(snapshot_row));
+    parent_id = g_strdup(gnostr_timeline_snapshot_row_get_reply_id(snapshot_row));
+    is_reply = (parent_id != NULL && *parent_id != '\0');
 
     if (created_at > 0) {
       time_t t = (time_t)created_at;
@@ -814,10 +817,13 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     /* NIP-92: Use imeta-aware setter if this is a GnNostrEventItem */
     const char *tags_json = NULL;
     gint event_kind = 1;  /* Default to kind 1 text note */
-    if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+    if (is_snapshot_row) {
+      event_kind = gnostr_timeline_snapshot_row_get_kind(GNOSTR_TIMELINE_SNAPSHOT_ROW(obj));
+    } else if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
       tags_json = gn_nostr_event_item_get_tags_json(GN_NOSTR_EVENT_ITEM(obj));
       g_object_get(obj, "kind", &event_kind, NULL);
     }
+    nostr_gtk_note_card_row_set_event_kind(NOSTR_GTK_NOTE_CARD_ROW(row), event_kind);
 
     /* NIP-23: Handle long-form content (kind 30023) */
     if (gnostr_article_is_article(event_kind) && tags_json) {
@@ -951,7 +957,14 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
           nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
         }
       } else {
-        nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
+        g_autoptr(GError) render_error = NULL;
+        GnContentRenderResult *render = gnostr_render_content(content, content ? (int)strlen(content) : 0, &render_error);
+        if (render) {
+          nostr_gtk_note_card_row_set_content_rendered(NOSTR_GTK_NOTE_CARD_ROW(row), content, render);
+          gnostr_content_render_result_free(render);
+        } else {
+          nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
+        }
       }
     }
     nostr_gtk_note_card_row_set_depth(NOSTR_GTK_NOTE_CARD_ROW(row), depth);

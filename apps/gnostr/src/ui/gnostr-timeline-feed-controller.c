@@ -20,6 +20,8 @@ typedef struct {
   char    *handle;
   char    *avatar_url;
   char    *nip05;
+  char    *root_id;
+  char    *reply_id;
   guint    like_count;
   gboolean is_liked;
   guint    repost_count;
@@ -139,6 +141,8 @@ working_entry_new_from_batch_entry(const GnostrTimelineBatchEntry *entry)
   we->handle = g_strdup(entry->handle);
   we->avatar_url = g_strdup(entry->avatar_url);
   we->nip05 = g_strdup(entry->nip05);
+  we->root_id = g_strdup(entry->root_id);
+  we->reply_id = g_strdup(entry->reply_id);
 
   return we;
 }
@@ -157,6 +161,8 @@ working_entry_free(WorkingEntry *we)
   g_free(we->handle);
   g_free(we->avatar_url);
   g_free(we->nip05);
+  g_free(we->root_id);
+  g_free(we->reply_id);
   g_free(we);
 }
 
@@ -198,6 +204,14 @@ working_entry_update_from_batch_entry(WorkingEntry *we,
   if (entry->nip05) {
     g_free(we->nip05);
     we->nip05 = g_strdup(entry->nip05);
+  }
+  if (entry->root_id) {
+    g_free(we->root_id);
+    we->root_id = g_strdup(entry->root_id);
+  }
+  if (entry->reply_id) {
+    g_free(we->reply_id);
+    we->reply_id = g_strdup(entry->reply_id);
   }
 }
 
@@ -530,6 +544,9 @@ snapshot_row_from_entry(GnostrTimelineFeedController *self,
                                                entry->handle,
                                                entry->avatar_url,
                                                entry->nip05,
+                                               entry->root_id,
+                                               entry->reply_id,
+                                               entry->kind,
                                                entry->has_profile,
                                                entry->like_count,
                                                entry->is_liked,

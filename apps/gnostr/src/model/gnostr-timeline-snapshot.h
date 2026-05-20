@@ -34,6 +34,9 @@ GnostrTimelineSnapshotRow *gnostr_timeline_snapshot_row_new_full(const char *eve
                                                                  const char *handle,
                                                                  const char *avatar_url,
                                                                  const char *nip05,
+                                                                 const char *root_id,
+                                                                 const char *reply_id,
+                                                                 gint kind,
                                                                  gboolean has_profile,
                                                                  guint like_count,
                                                                  gboolean is_liked,
@@ -58,6 +61,9 @@ const char *gnostr_timeline_snapshot_row_get_display_name(GnostrTimelineSnapshot
 const char *gnostr_timeline_snapshot_row_get_handle(GnostrTimelineSnapshotRow *self);
 const char *gnostr_timeline_snapshot_row_get_avatar_url(GnostrTimelineSnapshotRow *self);
 const char *gnostr_timeline_snapshot_row_get_nip05(GnostrTimelineSnapshotRow *self);
+const char *gnostr_timeline_snapshot_row_get_root_id(GnostrTimelineSnapshotRow *self);
+const char *gnostr_timeline_snapshot_row_get_reply_id(GnostrTimelineSnapshotRow *self);
+gint        gnostr_timeline_snapshot_row_get_kind(GnostrTimelineSnapshotRow *self);
 gboolean    gnostr_timeline_snapshot_row_get_has_profile(GnostrTimelineSnapshotRow *self);
 guint       gnostr_timeline_snapshot_row_get_like_count(GnostrTimelineSnapshotRow *self);
 gboolean    gnostr_timeline_snapshot_row_get_is_liked(GnostrTimelineSnapshotRow *self);

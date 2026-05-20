@@ -15,6 +15,9 @@ struct _GnostrTimelineSnapshotRow {
   char *handle;
   char *avatar_url;
   char *nip05;
+  char *root_id;
+  char *reply_id;
+  gint kind;
   gboolean has_profile;
   guint like_count;
   gboolean is_liked;
@@ -47,6 +50,8 @@ gnostr_timeline_snapshot_row_finalize(GObject *object)
   g_free(self->handle);
   g_free(self->avatar_url);
   g_free(self->nip05);
+  g_free(self->root_id);
+  g_free(self->reply_id);
   g_free(self->layout_signature);
 
   G_OBJECT_CLASS(gnostr_timeline_snapshot_row_parent_class)->finalize(object);
@@ -89,6 +94,9 @@ gnostr_timeline_snapshot_row_new(const char *event_id,
                                                NULL,
                                                NULL,
                                                NULL,
+                                               NULL,
+                                               NULL,
+                                               1,
                                                FALSE,
                                                0,
                                                FALSE,
@@ -115,6 +123,9 @@ gnostr_timeline_snapshot_row_new_full(const char *event_id,
                                        const char *handle,
                                        const char *avatar_url,
                                        const char *nip05,
+                                       const char *root_id,
+                                       const char *reply_id,
+                                       gint kind,
                                        gboolean has_profile,
                                        guint like_count,
                                        gboolean is_liked,
@@ -141,6 +152,9 @@ gnostr_timeline_snapshot_row_new_full(const char *event_id,
   self->handle = g_strdup(handle);
   self->avatar_url = g_strdup(avatar_url);
   self->nip05 = g_strdup(nip05);
+  self->root_id = g_strdup(root_id);
+  self->reply_id = g_strdup(reply_id);
+  self->kind = kind;
   self->has_profile = has_profile;
   self->like_count = like_count;
   self->is_liked = is_liked;
@@ -216,6 +230,24 @@ const char *gnostr_timeline_snapshot_row_get_nip05(GnostrTimelineSnapshotRow *se
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
   return self->nip05;
+}
+
+const char *gnostr_timeline_snapshot_row_get_root_id(GnostrTimelineSnapshotRow *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
+  return self->root_id;
+}
+
+const char *gnostr_timeline_snapshot_row_get_reply_id(GnostrTimelineSnapshotRow *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
+  return self->reply_id;
+}
+
+gint gnostr_timeline_snapshot_row_get_kind(GnostrTimelineSnapshotRow *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 1);
+  return self->kind;
 }
 
 gboolean gnostr_timeline_snapshot_row_get_has_profile(GnostrTimelineSnapshotRow *self)

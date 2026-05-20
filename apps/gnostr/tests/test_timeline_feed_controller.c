@@ -43,6 +43,32 @@ batch_add(GnostrTimelineBatch *batch,
 }
 
 static void
+batch_add_reply(GnostrTimelineBatch *batch,
+                guint64 note_key,
+                gint64 created_at,
+                guint8 id_byte,
+                const char *root_id,
+                const char *reply_id)
+{
+  guint8 id[32];
+  fill_id(id, id_byte);
+  gnostr_timeline_batch_add_note(batch,
+                                 note_key,
+                                 created_at,
+                                 id,
+                                 "pubkey",
+                                 "note body",
+                                 "Display Name",
+                                 "handle",
+                                 "https://example.test/avatar.png",
+                                 "name@example.test",
+                                 root_id,
+                                 reply_id,
+                                 1111,
+                                 TRUE);
+}
+
+static void
 batch_add_unprofiled(GnostrTimelineBatch *batch,
                      guint64 note_key,
                      gint64 created_at,
@@ -505,6 +531,35 @@ test_metadata_and_profile_patches_replace_rows_without_footprint_change(void)
 }
 
 static void
+test_snapshot_rows_preserve_thread_and_kind_metadata(void)
+{
+  GnostrTimelineFeedController *controller =
+    gnostr_timeline_feed_controller_new(NULL);
+
+  GnostrTimelineBatch *refresh = batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 1);
+  batch_add_reply(refresh,
+                  1,
+                  100,
+                  0x11,
+                  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+  gnostr_timeline_feed_controller_ingest_batch(controller, refresh);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(refresh);
+
+  g_autoptr(GnostrTimelineSnapshot) snapshot = dup_controller_snapshot(controller);
+  g_assert_cmpuint(gnostr_timeline_snapshot_get_n_rows(snapshot), ==, 1);
+  GnostrTimelineSnapshotRow *row = gnostr_timeline_snapshot_get_row(snapshot, 0);
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_root_id(row), ==,
+                  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_reply_id(row), ==,
+                  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+  g_assert_cmpint(gnostr_timeline_snapshot_row_get_kind(row), ==, 1111);
+
+  g_object_unref(controller);
+}
+
+static void
 test_unprofiled_rows_wait_for_profile_hydration(void)
 {
   GnostrTimelineFeedController *controller =
@@ -611,6 +666,8 @@ main(int argc,
                   test_delete_target_removes_pending_head_and_updates_count);
   g_test_add_func("/gnostr/timeline-feed-controller/metadata-profile-patches",
                   test_metadata_and_profile_patches_replace_rows_without_footprint_change);
+  g_test_add_func("/gnostr/timeline-feed-controller/snapshot-thread-kind-metadata",
+                  test_snapshot_rows_preserve_thread_and_kind_metadata);
   g_test_add_func("/gnostr/timeline-feed-controller/unprofiled-rows-wait-for-hydration",
                   test_unprofiled_rows_wait_for_profile_hydration);
   g_test_add_func("/gnostr/timeline-feed-controller/geometry-measurement",
