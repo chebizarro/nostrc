@@ -162,10 +162,87 @@ gnostr_timeline_item_view_model_init(GnostrTimelineItemViewModel *self)
   self->moderation_state = GNOSTR_TIMELINE_MODERATION_VISIBLE;
 }
 
+#define DEFAULT_BASE_RESERVED_HEIGHT 180.0
+#define DEFAULT_CONTEXT_RESERVED_HEIGHT 48.0
+#define DEFAULT_QUOTE_RESERVED_HEIGHT 96.0
+#define DEFAULT_REPOST_RESERVED_HEIGHT 44.0
+#define DEFAULT_MEDIA_RESERVED_HEIGHT 240.0
+#define DEFAULT_LINK_PREVIEW_RESERVED_HEIGHT 120.0
+#define MAX_TEXT_RESERVED_HEIGHT 240.0
+
 static char **
 dup_strv_or_null(const char * const *values)
 {
   return values ? g_strdupv((char **)values) : NULL;
+}
+
+static guint
+strv_length_const(const char * const *values)
+{
+  if (!values)
+    return 0;
+
+  guint n = 0;
+  while (values[n])
+    n++;
+  return n;
+}
+
+char *
+gnostr_timeline_item_view_model_spec_recompute_derived_fields(GnostrTimelineItemViewModelSpec *spec)
+{
+  g_return_val_if_fail(spec != NULL, NULL);
+
+  guint media_count = strv_length_const(spec->media_urls);
+  guint link_count = strv_length_const(spec->links);
+  gboolean has_reply_context = (spec->root_id && *spec->root_id) ||
+    (spec->reply_id && *spec->reply_id);
+  gboolean has_quote_context = spec->quote_state != GNOSTR_TIMELINE_PREVIEW_ABSENT;
+  gboolean has_repost_context = (spec->kind == 6) ||
+    spec->repost_state != GNOSTR_TIMELINE_PREVIEW_ABSENT;
+  gboolean has_content_warning = spec->content_warning && *spec->content_warning;
+
+  guint content_len = spec->content ? (guint)g_utf8_strlen(spec->content, -1) : 0;
+  double text_reserved = MIN(MAX_TEXT_RESERVED_HEIGHT,
+                             24.0 + ((content_len + 79u) / 80u) * 22.0);
+  double media_reserved = media_count * DEFAULT_MEDIA_RESERVED_HEIGHT;
+  double link_reserved = link_count * DEFAULT_LINK_PREVIEW_RESERVED_HEIGHT;
+  double initial_reserved = DEFAULT_BASE_RESERVED_HEIGHT + text_reserved +
+    media_reserved + link_reserved;
+  if (has_reply_context)
+    initial_reserved += DEFAULT_CONTEXT_RESERVED_HEIGHT;
+  if (has_quote_context)
+    initial_reserved += DEFAULT_QUOTE_RESERVED_HEIGHT;
+  if (has_repost_context)
+    initial_reserved += DEFAULT_REPOST_RESERVED_HEIGHT;
+  if (has_content_warning)
+    initial_reserved += DEFAULT_CONTEXT_RESERVED_HEIGHT;
+
+  spec->avatar_state = (spec->avatar_url && *spec->avatar_url) ?
+    GNOSTR_TIMELINE_AVATAR_URL : GNOSTR_TIMELINE_AVATAR_FALLBACK;
+  spec->media_reservation_count = media_count;
+  spec->media_reserved_height = media_reserved;
+  spec->link_preview_reservation_count = link_count;
+  spec->link_preview_reserved_height = link_reserved;
+  spec->has_reply_context_reservation = has_reply_context;
+  spec->has_repost_context_reservation = has_repost_context;
+  spec->has_quote_context_reservation = has_quote_context;
+  spec->context_reservation_count = has_reply_context ? 1u : 0u;
+  spec->quote_preview_reservation_count = has_quote_context ? 1u : 0u;
+  spec->repost_preview_reservation_count = has_repost_context ? 1u : 0u;
+  spec->footer_action_reservation_count = 1u;
+  spec->initial_reserved_height = initial_reserved;
+
+  char *geometry_signature = g_strdup_printf("vm-v1:k%d:r%d:q%d:p%d:m%u:l%u:cw%d",
+                                             spec->kind,
+                                             has_reply_context,
+                                             has_quote_context,
+                                             has_repost_context,
+                                             media_count,
+                                             link_count,
+                                             has_content_warning);
+  spec->geometry_signature = geometry_signature;
+  return geometry_signature;
 }
 
 GnostrTimelineItemViewModel *
@@ -367,8 +444,9 @@ gnostr_timeline_item_view_model_copy_with_profile(GnostrTimelineItemViewModel *s
   spec.avatar_url = avatar_url ? avatar_url : self->avatar_url;
   spec.nip05 = nip05 ? nip05 : self->nip05;
   spec.has_profile = has_profile;
-  spec.avatar_state = (spec.avatar_url && *spec.avatar_url) ?
-    GNOSTR_TIMELINE_AVATAR_URL : GNOSTR_TIMELINE_AVATAR_FALLBACK;
+  g_autofree char *geometry_signature =
+    gnostr_timeline_item_view_model_spec_recompute_derived_fields(&spec);
+  (void)geometry_signature;
   return gnostr_timeline_item_view_model_new(&spec);
 }
 
@@ -403,6 +481,9 @@ gnostr_timeline_item_view_model_copy_with_interactions(GnostrTimelineItemViewMod
     spec.zap_count = zap_count;
   if (has_zap_total_msat)
     spec.zap_total_msat = zap_total_msat;
+  g_autofree char *geometry_signature =
+    gnostr_timeline_item_view_model_spec_recompute_derived_fields(&spec);
+  (void)geometry_signature;
   return gnostr_timeline_item_view_model_new(&spec);
 }
 

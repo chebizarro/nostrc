@@ -188,8 +188,10 @@ test_rich_areas_reserve_additional_height(void)
   g_assert_nonnull(strstr(rich_footprint.layout_signature, "replyctx1"));
   g_assert_nonnull(strstr(rich_footprint.layout_signature, "repostctx1"));
   g_assert_nonnull(strstr(rich_footprint.layout_signature, "quotectx1"));
-  g_assert_nonnull(strstr(rich_footprint.layout_signature, "media2@440"));
-  g_assert_nonnull(strstr(rich_footprint.layout_signature, "link1@128"));
+  g_assert_nonnull(strstr(rich_footprint.layout_signature, "m2"));
+  g_assert_nonnull(strstr(rich_footprint.layout_signature, "l1"));
+  g_assert_cmpfloat(rich_footprint.media_reserved_height, !=, rich.media_reserved_height);
+  g_assert_cmpfloat(rich_footprint.link_preview_reserved_height, !=, rich.link_preview_reserved_height);
   g_assert_nonnull(strstr(rich_footprint.layout_signature, "cw1"));
   g_assert_nonnull(strstr(rich_footprint.layout_signature, "mod1"));
   g_assert_nonnull(strstr(rich_footprint.layout_signature, "footer1"));
@@ -220,10 +222,10 @@ test_explicit_reservation_fields_control_height_not_url_sniffing(void)
   gnostr_timeline_geometry_resolver_resolve(resolver, &explicit_media, 480, &explicit_footprint);
 
   g_assert_cmpfloat(explicit_footprint.estimated_height, >, url_footprint.estimated_height);
-  g_assert_nonnull(strstr(explicit_footprint.layout_signature, "media1@220"));
-  g_assert_nonnull(strstr(explicit_footprint.layout_signature, "link1@120"));
-  g_assert_null(strstr(url_footprint.layout_signature, "media1@"));
-  g_assert_null(strstr(url_footprint.layout_signature, "link1@"));
+  g_assert_nonnull(strstr(explicit_footprint.layout_signature, "m1"));
+  g_assert_nonnull(strstr(explicit_footprint.layout_signature, "l1"));
+  g_assert_null(strstr(url_footprint.layout_signature, "m1"));
+  g_assert_null(strstr(url_footprint.layout_signature, "l1"));
 
   gnostr_timeline_row_footprint_clear(&url_footprint);
   gnostr_timeline_row_footprint_clear(&explicit_footprint);

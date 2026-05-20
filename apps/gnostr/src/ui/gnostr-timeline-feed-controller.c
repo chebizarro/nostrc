@@ -14,6 +14,12 @@ typedef struct {
   GnostrTimelineItemViewModel *vm;
 } WorkingEntry;
 
+typedef enum {
+  GNOSTR_COMPOSE_SCROLL_KEEP_VIEWPORT = 0,
+  GNOSTR_COMPOSE_SCROLL_RESTORE_ANCHOR,
+  GNOSTR_COMPOSE_SCROLL_TO_TOP,
+} GnostrComposeScrollPolicy;
+
 struct _GnostrTimelineFeedController {
   GObject parent_instance;
 
@@ -41,8 +47,7 @@ struct _GnostrTimelineFeedController {
   guint width_bucket;
 
   guint compose_source_id;
-  gboolean scheduled_preserve_anchor;
-  gboolean scheduled_scroll_to_top;
+  GnostrComposeScrollPolicy scheduled_scroll_policy;
   gboolean loading_older;
   gboolean loading_newer;
 };
@@ -62,11 +67,9 @@ enum {
 static guint signals[N_SIGNALS];
 
 static void schedule_compose(GnostrTimelineFeedController *self,
-                             gboolean preserve_anchor,
-                             gboolean scroll_to_top);
+                             GnostrComposeScrollPolicy policy);
 static void compose_and_publish(GnostrTimelineFeedController *self,
-                                gboolean preserve_anchor,
-                                gboolean scroll_to_top);
+                                GnostrComposeScrollPolicy policy);
 
 static WorkingEntry *
 working_entry_new_from_vm(GnostrTimelineItemViewModel *vm)
@@ -424,9 +427,38 @@ sort_working_entries_cb(gconstpointer a,
   return gnostr_timeline_item_view_model_compare(entry_a->vm, entry_b->vm);
 }
 
+static gboolean
+row_matches_entry_footprint(GnostrTimelineSnapshotRow *row,
+                            WorkingEntry *entry,
+                            const GnostrTimelineRowFootprint *footprint)
+{
+  if (!row || !entry || !entry->vm || !footprint)
+    return FALSE;
+
+  g_autoptr(GnostrTimelineItemViewModel) row_vm =
+    gnostr_timeline_snapshot_row_dup_view_model(row);
+  if (row_vm != entry->vm)
+    return FALSE;
+
+  return ABS(gnostr_timeline_snapshot_row_get_estimated_height(row) -
+             footprint->estimated_height) < 0.001 &&
+         ABS(gnostr_timeline_snapshot_row_get_measured_height(row) -
+             footprint->measured_height) < 0.001 &&
+         ABS(gnostr_timeline_snapshot_row_get_effective_height(row) -
+             footprint->effective_height) < 0.001 &&
+         gnostr_timeline_snapshot_row_get_width_bucket(row) == footprint->width_bucket &&
+         g_strcmp0(gnostr_timeline_snapshot_row_get_layout_signature(row),
+                   footprint->layout_signature) == 0 &&
+         ABS(gnostr_timeline_snapshot_row_get_media_reserved_height(row) -
+             footprint->media_reserved_height) < 0.001 &&
+         ABS(gnostr_timeline_snapshot_row_get_link_preview_reserved_height(row) -
+             footprint->link_preview_reserved_height) < 0.001;
+}
+
 static GnostrTimelineSnapshotRow *
 snapshot_row_from_entry(GnostrTimelineFeedController *self,
-                        WorkingEntry *entry)
+                        WorkingEntry *entry,
+                        GnostrTimelineSnapshot *old_snapshot)
 {
   if (!entry || !entry->vm)
     return NULL;
@@ -435,11 +467,27 @@ snapshot_row_from_entry(GnostrTimelineFeedController *self,
   GnostrTimelineRowFootprint footprint = { 0 };
   entry_resolve_footprint(self, entry, &footprint);
 
+  if (old_snapshot) {
+    guint old_index = 0;
+    const char *event_id = gnostr_timeline_item_view_model_get_event_id(vm);
+    if (event_id &&
+        gnostr_timeline_snapshot_lookup_event(old_snapshot, event_id, &old_index)) {
+      GnostrTimelineSnapshotRow *old_row =
+        gnostr_timeline_snapshot_get_row(old_snapshot, old_index);
+      if (row_matches_entry_footprint(old_row, entry, &footprint)) {
+        gnostr_timeline_row_footprint_clear(&footprint);
+        return g_object_ref(old_row);
+      }
+    }
+  }
+
   GnostrTimelineSnapshotRow *row =
     gnostr_timeline_snapshot_row_new_from_view_model(vm,
                                                      footprint.estimated_height,
                                                      footprint.measured_height,
                                                      footprint.effective_height,
+                                                     footprint.media_reserved_height,
+                                                     footprint.link_preview_reserved_height,
                                                      footprint.width_bucket,
                                                      footprint.layout_signature,
                                                      footprint.geometry_measured);
@@ -448,7 +496,8 @@ snapshot_row_from_entry(GnostrTimelineFeedController *self,
 }
 
 static GnostrTimelineSnapshot *
-compose_snapshot(GnostrTimelineFeedController *self)
+compose_snapshot(GnostrTimelineFeedController *self,
+                 GnostrTimelineSnapshot *old_snapshot)
 {
   GPtrArray *rows = g_ptr_array_new_with_free_func(g_object_unref);
   GPtrArray *eligible = g_ptr_array_new();
@@ -470,7 +519,7 @@ compose_snapshot(GnostrTimelineFeedController *self)
   guint n_visible = MIN(self->visible_limit, eligible->len);
   for (guint i = 0; i < n_visible; i++) {
     WorkingEntry *entry = g_ptr_array_index(eligible, i);
-    GnostrTimelineSnapshotRow *row = snapshot_row_from_entry(self, entry);
+    GnostrTimelineSnapshotRow *row = snapshot_row_from_entry(self, entry, old_snapshot);
     if (row)
       g_ptr_array_add(rows, row);
   }
@@ -495,24 +544,21 @@ compose_timeout_cb(gpointer user_data)
   GnostrTimelineFeedController *self = GNOSTR_TIMELINE_FEED_CONTROLLER(user_data);
   self->compose_source_id = 0;
 
-  gboolean preserve_anchor = self->scheduled_preserve_anchor;
-  gboolean scroll_to_top = self->scheduled_scroll_to_top;
-  self->scheduled_preserve_anchor = FALSE;
-  self->scheduled_scroll_to_top = FALSE;
+  GnostrComposeScrollPolicy policy = self->scheduled_scroll_policy;
+  self->scheduled_scroll_policy = GNOSTR_COMPOSE_SCROLL_KEEP_VIEWPORT;
 
-  compose_and_publish(self, preserve_anchor, scroll_to_top);
+  compose_and_publish(self, policy);
   return G_SOURCE_REMOVE;
 }
 
 static void
 schedule_compose(GnostrTimelineFeedController *self,
-                 gboolean preserve_anchor,
-                 gboolean scroll_to_top)
+                 GnostrComposeScrollPolicy policy)
 {
   g_return_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self));
 
-  self->scheduled_preserve_anchor |= preserve_anchor;
-  self->scheduled_scroll_to_top |= scroll_to_top;
+  if (policy > self->scheduled_scroll_policy)
+    self->scheduled_scroll_policy = policy;
 
   if (self->compose_source_id != 0)
     return;
@@ -526,20 +572,19 @@ schedule_compose(GnostrTimelineFeedController *self,
 
 static void
 compose_and_publish(GnostrTimelineFeedController *self,
-                    gboolean preserve_anchor,
-                    gboolean scroll_to_top)
+                    GnostrComposeScrollPolicy policy)
 {
   g_autoptr(GnostrTimelineSnapshot) old_snapshot = dup_current_snapshot(self);
   GnostrTimelineAnchor anchor = { 0 };
   gboolean have_anchor = FALSE;
 
-  if (preserve_anchor && !scroll_to_top)
+  if (policy == GNOSTR_COMPOSE_SCROLL_RESTORE_ANCHOR)
     have_anchor = capture_anchor(self, old_snapshot, &anchor);
 
-  g_autoptr(GnostrTimelineSnapshot) snapshot = compose_snapshot(self);
+  g_autoptr(GnostrTimelineSnapshot) snapshot = compose_snapshot(self, old_snapshot);
   gnostr_timeline_snapshot_model_replace_snapshot(self->model, snapshot);
 
-  if (scroll_to_top) {
+  if (policy == GNOSTR_COMPOSE_SCROLL_TO_TOP) {
     self->scroll_y = 0.0;
     g_signal_emit(self, signals[SIGNAL_RESTORE_SCROLL], 0, 0.0);
   } else if (have_anchor) {
@@ -926,6 +971,7 @@ gnostr_timeline_feed_controller_init(GnostrTimelineFeedController *self)
   self->geometry = gnostr_timeline_geometry_resolver_new();
   self->page_size = DEFAULT_VISIBLE_PAGE_SIZE;
   self->visible_limit = 0;
+  self->scheduled_scroll_policy = GNOSTR_COMPOSE_SCROLL_KEEP_VIEWPORT;
   self->user_at_top = TRUE;
   self->scroll_y = 0.0;
   self->viewport_height = 0.0;
@@ -1021,7 +1067,7 @@ gnostr_timeline_feed_controller_set_query(GnostrTimelineFeedController *self,
   self->loading_newer = FALSE;
   clear_working_set(self);
   emit_pending_count(self);
-  compose_and_publish(self, FALSE, TRUE);
+  compose_and_publish(self, GNOSTR_COMPOSE_SCROLL_TO_TOP);
 }
 
 void
@@ -1109,7 +1155,7 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
         merge_hydrated_vm(self, g_ptr_array_index(items, i), NULL);
       set_initial_visible_limit(self);
       emit_pending_count(self);
-      schedule_compose(self, FALSE, TRUE);
+      schedule_compose(self, GNOSTR_COMPOSE_SCROLL_TO_TOP);
       break;
     }
 
@@ -1138,16 +1184,16 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
       if (self->user_at_top && self->scroll_y <= AT_TOP_EPSILON_PX) {
         expand_visible_limit(self, visible_increment);
         if (visible_increment > 0)
-          schedule_compose(self, FALSE, TRUE);
+          schedule_compose(self, GNOSTR_COMPOSE_SCROLL_TO_TOP);
         else if (admission == PATCH_ADMISSION_PUBLISH)
-          schedule_compose(self, TRUE, FALSE);
+          schedule_compose(self, GNOSTR_COMPOSE_SCROLL_KEEP_VIEWPORT);
         else if (admission == PATCH_ADMISSION_BLOCKED)
           g_debug("[COMPOSITOR] Deferring live replacement publication for visible geometry-unsafe rows");
       } else {
         if (pending_changed)
           emit_pending_count(self);
         if (admission == PATCH_ADMISSION_PUBLISH)
-          schedule_compose(self, TRUE, FALSE);
+          schedule_compose(self, GNOSTR_COMPOSE_SCROLL_KEEP_VIEWPORT);
         else if (admission == PATCH_ADMISSION_BLOCKED)
           g_debug("[COMPOSITOR] Deferring live replacement publication for visible geometry-unsafe rows");
       }
@@ -1166,7 +1212,7 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
         admission = patch_admission_combine(admission, item_admission);
       }
       expand_visible_limit(self, items->len);
-      schedule_compose(self, TRUE, FALSE);
+      schedule_compose(self, GNOSTR_COMPOSE_SCROLL_RESTORE_ANCHOR);
       if (admission == PATCH_ADMISSION_BLOCKED)
         g_debug("[COMPOSITOR] Deferring older-page replacement publication for visible geometry-unsafe rows");
       break;
@@ -1184,7 +1230,7 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
         admission = patch_admission_combine(admission, item_admission);
       }
       expand_visible_limit(self, items->len);
-      schedule_compose(self, TRUE, FALSE);
+      schedule_compose(self, GNOSTR_COMPOSE_SCROLL_RESTORE_ANCHOR);
       if (admission == PATCH_ADMISSION_BLOCKED)
         g_debug("[COMPOSITOR] Deferring newer-page replacement publication for visible geometry-unsafe rows");
       break;
@@ -1215,7 +1261,7 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
         emit_pending_count(self);
       clamp_visible_limit(self);
       if (visible_changed)
-        schedule_compose(self, TRUE, FALSE);
+        schedule_compose(self, GNOSTR_COMPOSE_SCROLL_RESTORE_ANCHOR);
       else if (n_targets == 0 && n_entries > 0)
         g_debug("[COMPOSITOR] Ignoring delete batch with no resolved NIP-09 targets (%u entries)",
                 n_entries);
@@ -1231,7 +1277,7 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
         admission = patch_admission_combine(admission, apply_profile_patch(self, patch));
       }
       if (admission == PATCH_ADMISSION_PUBLISH)
-        schedule_compose(self, TRUE, FALSE);
+        schedule_compose(self, GNOSTR_COMPOSE_SCROLL_KEEP_VIEWPORT);
       else if (admission == PATCH_ADMISSION_BLOCKED)
         g_debug("[COMPOSITOR] Deferring profile patch publication for visible geometry-unsafe rows");
       else if (n_patches == 0 && n_entries > 0)
@@ -1249,7 +1295,7 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
         admission = patch_admission_combine(admission, apply_metadata_patch(self, patch));
       }
       if (admission == PATCH_ADMISSION_PUBLISH)
-        schedule_compose(self, TRUE, FALSE);
+        schedule_compose(self, GNOSTR_COMPOSE_SCROLL_KEEP_VIEWPORT);
       else if (admission == PATCH_ADMISSION_BLOCKED)
         g_debug("[COMPOSITOR] Deferring metadata patch publication for visible geometry-unsafe rows");
       else if (n_patches == 0 && n_entries > 0)
@@ -1277,9 +1323,9 @@ gnostr_timeline_feed_controller_set_viewport(GnostrTimelineFeedController *self,
   self->user_at_top = self->scroll_y <= AT_TOP_EPSILON_PX;
 
   if (old_bucket != self->width_bucket)
-    schedule_compose(self, TRUE, FALSE);
+    schedule_compose(self, GNOSTR_COMPOSE_SCROLL_KEEP_VIEWPORT);
   else if (reevaluate_deferred_patch_events(self))
-    schedule_compose(self, TRUE, FALSE);
+    schedule_compose(self, GNOSTR_COMPOSE_SCROLL_KEEP_VIEWPORT);
 }
 
 void
@@ -1317,7 +1363,9 @@ gnostr_timeline_feed_controller_admit_pending_head(GnostrTimelineFeedController 
   g_hash_table_remove_all(self->pending_head);
   expand_visible_limit(self, admitted);
   emit_pending_count(self);
-  schedule_compose(self, !scroll_to_top, scroll_to_top);
+  schedule_compose(self,
+                   scroll_to_top ? GNOSTR_COMPOSE_SCROLL_TO_TOP :
+                                   GNOSTR_COMPOSE_SCROLL_RESTORE_ANCHOR);
 }
 
 void
@@ -1325,17 +1373,15 @@ gnostr_timeline_feed_controller_compose_now(GnostrTimelineFeedController *self)
 {
   g_return_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self));
 
-  gboolean preserve_anchor = self->scheduled_preserve_anchor;
-  gboolean scroll_to_top = self->scheduled_scroll_to_top;
-  self->scheduled_preserve_anchor = FALSE;
-  self->scheduled_scroll_to_top = FALSE;
+  GnostrComposeScrollPolicy policy = self->scheduled_scroll_policy;
+  self->scheduled_scroll_policy = GNOSTR_COMPOSE_SCROLL_KEEP_VIEWPORT;
 
   if (self->compose_source_id != 0) {
     g_source_remove(self->compose_source_id);
     self->compose_source_id = 0;
   }
 
-  compose_and_publish(self, preserve_anchor, scroll_to_top);
+  compose_and_publish(self, policy);
 }
 
 char *

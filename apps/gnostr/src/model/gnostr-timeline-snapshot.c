@@ -33,6 +33,8 @@ struct _GnostrTimelineSnapshotRow {
   double estimated_height;
   double measured_height;
   double effective_height;
+  double media_reserved_height;
+  double link_preview_reserved_height;
   guint width_bucket;
   char *layout_signature;
   gboolean geometry_measured;
@@ -88,6 +90,8 @@ gnostr_timeline_snapshot_row_new(const char *event_id,
                                   double estimated_height,
                                   double measured_height,
                                   double effective_height,
+                                  double media_reserved_height,
+                                  double link_preview_reserved_height,
                                   guint width_bucket,
                                   const char *layout_signature,
                                   gboolean geometry_measured)
@@ -118,6 +122,8 @@ gnostr_timeline_snapshot_row_new(const char *event_id,
                                                estimated_height,
                                                measured_height,
                                                effective_height,
+                                               media_reserved_height,
+                                               link_preview_reserved_height,
                                                width_bucket,
                                                layout_signature,
                                                geometry_measured);
@@ -150,6 +156,8 @@ gnostr_timeline_snapshot_row_new_full(const char *event_id,
                                        double estimated_height,
                                        double measured_height,
                                        double effective_height,
+                                       double media_reserved_height,
+                                       double link_preview_reserved_height,
                                        guint width_bucket,
                                        const char *layout_signature,
                                        gboolean geometry_measured)
@@ -182,6 +190,8 @@ gnostr_timeline_snapshot_row_new_full(const char *event_id,
   self->estimated_height = estimated_height;
   self->measured_height = measured_height;
   self->effective_height = effective_height > 0.0 ? effective_height : estimated_height;
+  self->media_reserved_height = media_reserved_height;
+  self->link_preview_reserved_height = link_preview_reserved_height;
   self->width_bucket = width_bucket;
   self->layout_signature = g_strdup(layout_signature);
   self->geometry_measured = geometry_measured;
@@ -194,6 +204,8 @@ gnostr_timeline_snapshot_row_new_from_view_model(GnostrTimelineItemViewModel *vi
                                                   double estimated_height,
                                                   double measured_height,
                                                   double effective_height,
+                                                  double media_reserved_height,
+                                                  double link_preview_reserved_height,
                                                   guint width_bucket,
                                                   const char *layout_signature,
                                                   gboolean geometry_measured)
@@ -227,6 +239,8 @@ gnostr_timeline_snapshot_row_new_from_view_model(GnostrTimelineItemViewModel *vi
                                           estimated_height,
                                           measured_height,
                                           effective_height,
+                                          media_reserved_height,
+                                          link_preview_reserved_height,
                                           width_bucket,
                                           layout_signature,
                                           geometry_measured);
@@ -388,6 +402,18 @@ double gnostr_timeline_snapshot_row_get_effective_height(GnostrTimelineSnapshotR
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 0.0);
   return self->effective_height;
+}
+
+double gnostr_timeline_snapshot_row_get_media_reserved_height(GnostrTimelineSnapshotRow *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 0.0);
+  return self->media_reserved_height;
+}
+
+double gnostr_timeline_snapshot_row_get_link_preview_reserved_height(GnostrTimelineSnapshotRow *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 0.0);
+  return self->link_preview_reserved_height;
 }
 
 guint gnostr_timeline_snapshot_row_get_width_bucket(GnostrTimelineSnapshotRow *self)

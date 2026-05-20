@@ -228,17 +228,12 @@ static void on_note_card_search_hashtag(NostrGtkNoteCardRow *row, const char *ha
 static GtkWidget *create_timeline_note_card_row(NostrGtkTimelineView *self) {
   GtkWidget *row = GTK_WIDGET(nostr_gtk_note_card_row_new());
 
-  /* nostrc-hqtn: Connect all 17 main-window-bound action signals via the
-   * relay GObject. The relay is attached to the view via qdata in
-   * gnostr_timeline_view_setup_app_factory() and is used as user_data
-   * for all action signals, enabling single-call disconnect in
-   * cleanup_bound_row() via g_signal_handlers_disconnect_by_data(). */
+  /* nostrc-hqtn: Connect all main-window-bound action signals once for the
+   * row lifetime. Bind/unbind only manages per-item signals. */
   GnostrTimelineActionRelay *relay =
       g_object_get_data(G_OBJECT(self), "gnostr-action-relay");
   if (relay) {
     gnostr_timeline_action_relay_connect_row(relay, NOSTR_GTK_NOTE_CARD_ROW(row));
-    /* Store a borrowed (non-owning) pointer on the row so cleanup_bound_row()
-     * can disconnect all relay signals via g_signal_handlers_disconnect_by_data(). */
     g_object_set_data(G_OBJECT(row), "gnostr-action-relay", relay);
   }
 
@@ -253,8 +248,16 @@ static GtkWidget *create_timeline_note_card_row(NostrGtkTimelineView *self) {
 
 static void factory_setup_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f;
-  (void)item;
-  (void)data;
+  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(data);
+  GtkWidget *row = create_timeline_note_card_row(self);
+
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
+    g_signal_connect(row, "measured-geometry",
+                     G_CALLBACK(on_snapshot_row_measured_geometry), self);
+  }
+
+  gtk_widget_set_visible(row, FALSE);
+  gtk_list_item_set_child(item, row);
 }
 
 /* Avatar loading now handled by centralized gnostr-avatar-cache module */
@@ -391,14 +394,6 @@ cleanup_bound_row(GtkWidget *row)
   if (!row || !GTK_IS_WIDGET(row))
     return;
 
-  /* nostrc-hqtn: Disconnect all relay-connected action signals in one call.
-   * The relay pointer is borrowed (non-owning) from the timeline view qdata;
-   * the relay's lifetime exceeds any individual row. */
-  GnostrTimelineActionRelay *relay =
-      g_object_get_data(G_OBJECT(row), "gnostr-action-relay");
-  if (relay)
-    g_signal_handlers_disconnect_by_data(row, relay);
-
   g_signal_handlers_disconnect_by_func(row, G_CALLBACK(gnostr_timeline_embed_on_row_request_embed), NULL);
 
   gulong map_id = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "tv-tier2-map-id"));
@@ -407,11 +402,6 @@ cleanup_bound_row(GtkWidget *row)
   }
   g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER(0));
 
-  gulong measured_geometry_id = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "tv-measured-geometry-id"));
-  if (measured_geometry_id > 0 && g_signal_handler_is_connected(G_OBJECT(row), measured_geometry_id)) {
-    g_signal_handler_disconnect(row, measured_geometry_id);
-  }
-  g_object_set_data(G_OBJECT(row), "tv-measured-geometry-id", GSIZE_TO_POINTER(0));
 
   gnostr_timeline_embed_inflight_detach_row(row);
 
@@ -420,11 +410,10 @@ cleanup_bound_row(GtkWidget *row)
   }
 }
 
-/* Unbind cleanup: disconnect signal handlers and detach inflight operations. */
+/* Unbind cleanup: disconnect bind-scoped handlers and detach inflight operations. */
 static void factory_unbind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
   GtkWidget *row = gtk_list_item_get_child(item);
-  gpointer item_ptr = gtk_list_item_get_item(item);
 
   /* Disconnect handlers from the source object bound during the last bind.
    * Use the saved object, not gtk_list_item_get_item(), because GTK may already
@@ -695,22 +684,15 @@ on_tv_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
   g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER(0));
 }
 
-static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
-  (void)f;
-  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(data);
-  GObject *obj = gtk_list_item_get_item(item);
-  
-  if (!obj) {
+static void
+bind_row_common(NostrGtkTimelineView *self,
+                GtkListItem *item,
+                GObject *obj,
+                gboolean is_snapshot_row)
+{
+  GtkWidget *row = gtk_list_item_get_child(item);
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(row))
     return;
-  }
-
-  /* The app factory supports the legacy live GnNostrEventItem model and the
-   * compositor snapshot model. Other item types are still programmer errors. */
-  if (!GN_IS_NOSTR_EVENT_ITEM(obj) && !GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(obj)) {
-    g_critical("factory_bind_cb: unexpected item type %s — expected GnNostrEventItem or GnostrTimelineSnapshotRow",
-               G_OBJECT_TYPE_NAME(obj));
-    return;
-  }
 
   g_object_set_data_full(G_OBJECT(item), "tv-bound-item",
                          g_object_ref(obj), g_object_unref);
@@ -722,7 +704,6 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   
   /* Check if this is a GnNostrEventItem (legacy live model) or immutable snapshot row. */
   extern GType gn_nostr_event_item_get_type(void);
-  gboolean is_snapshot_row = GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(obj);
   g_autoptr(GnostrTimelineItemViewModel) snapshot_vm = NULL;
   if (is_snapshot_row) {
     GnostrTimelineSnapshotRow *snapshot_row = GNOSTR_TIMELINE_SNAPSHOT_ROW(obj);
@@ -797,14 +778,6 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   /* nostrc-lkoa: Legacy `TimelineItem` bind fallback was removed here.
    * The app only binds `GnNostrEventItem` rows; anything else is a
    * programmer error and will fall through to an unpopulated row. */
-  GtkWidget *row = gtk_list_item_get_child(item);
-  if (GTK_IS_WIDGET(row)) {
-    cleanup_bound_row(row);
-  }
-
-  row = create_timeline_note_card_row(self);
-  gtk_list_item_set_child(item, row);
-
   if (!GTK_IS_WIDGET(row)) return;
   if (NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
     /* CRITICAL: Prepare row for binding - resets disposed flag and creates fresh
@@ -825,10 +798,6 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
                                                  snapshot_generation_for_list_item(self, item));
       nostr_gtk_note_card_row_set_reserved_height(NOSTR_GTK_NOTE_CARD_ROW(row),
                                                   reserved_height > 0.0 ? (gint)(reserved_height + 0.999999) : 0);
-      gulong measured_geometry_id = g_signal_connect(row, "measured-geometry",
-                                                     G_CALLBACK(on_snapshot_row_measured_geometry), self);
-      g_object_set_data(G_OBJECT(row), "tv-measured-geometry-id",
-                        GSIZE_TO_POINTER((gsize)measured_geometry_id));
     }
 
     /* Use pubkey prefix as fallback if no profile info available */
@@ -1010,14 +979,15 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
           content,
           snapshot_vm ? gnostr_timeline_item_view_model_get_rendered_content(snapshot_vm) : NULL);
         if (snapshot_vm) {
+          GnostrTimelineSnapshotRow *snapshot_row = GNOSTR_TIMELINE_SNAPSHOT_ROW(obj);
           nostr_gtk_note_card_row_set_media_urls_reserved(
             NOSTR_GTK_NOTE_CARD_ROW(row),
             gnostr_timeline_item_view_model_get_media_urls(snapshot_vm),
-            gnostr_timeline_item_view_model_get_media_reserved_height(snapshot_vm));
+            gnostr_timeline_snapshot_row_get_media_reserved_height(snapshot_row));
           nostr_gtk_note_card_row_set_link_preview_urls_reserved(
             NOSTR_GTK_NOTE_CARD_ROW(row),
             gnostr_timeline_item_view_model_get_links(snapshot_vm),
-            gnostr_timeline_item_view_model_get_link_preview_reserved_height(snapshot_vm));
+            gnostr_timeline_snapshot_row_get_link_preview_reserved_height(snapshot_row));
         }
       }
     }
@@ -1491,7 +1461,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
 
   /* Connect reactive updates so that later metadata changes update UI.
    * Use the GtkListItem as the per-bind cookie and disconnect by that same
-   * cookie in unbind/teardown. This avoids mixing g_signal_connect_object()
+   * cookie in unbind. This avoids mixing g_signal_connect_object()
    * invalidation notifiers with explicit disconnects on recycled rows. */
   if (obj && G_IS_OBJECT(obj) && !is_snapshot_row && GTK_IS_WIDGET(row)) {
     g_signal_connect(obj, "notify::display-name", G_CALLBACK(on_item_notify_display_name), item);
@@ -1514,24 +1484,48 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   }
 }
 
-/* nostrc-heap-fix: Teardown handler to ensure signal handlers are disconnected
- * when items are removed from the model. GTK may call teardown without unbind
- * during rapid model changes, causing heap corruption in closure_array_destroy_all. */
+static void
+bind_snapshot_row(NostrGtkTimelineView *self, GtkListItem *item, GnostrTimelineSnapshotRow *row)
+{
+  bind_row_common(self, item, G_OBJECT(row), TRUE);
+}
+
+static void
+bind_legacy_event_item(NostrGtkTimelineView *self, GtkListItem *item, GnNostrEventItem *event_item)
+{
+  bind_row_common(self, item, G_OBJECT(event_item), FALSE);
+}
+
+static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
+  (void)f;
+  NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(data);
+  GObject *obj = gtk_list_item_get_item(item);
+
+  if (!obj)
+    return;
+
+  if (GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(obj)) {
+    bind_snapshot_row(self, item, GNOSTR_TIMELINE_SNAPSHOT_ROW(obj));
+  } else if (GN_IS_NOSTR_EVENT_ITEM(obj)) {
+    bind_legacy_event_item(self, item, GN_NOSTR_EVENT_ITEM(obj));
+  } else {
+    g_critical("factory_bind_cb: unexpected item type %s — expected GnNostrEventItem or GnostrTimelineSnapshotRow",
+               G_OBJECT_TYPE_NAME(obj));
+  }
+}
+
 static void factory_teardown_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
   (void)f; (void)data;
   GtkWidget *row = gtk_list_item_get_child(item);
 
-  /* Disconnect from the source object saved during bind. */
-  GObject *bound_item = g_object_get_data(G_OBJECT(item), "tv-bound-item");
-  if (bound_item && G_IS_OBJECT(bound_item)) {
-    g_signal_handlers_disconnect_by_data(bound_item, item);
-    if (row && GTK_IS_WIDGET(row))
-      g_signal_handlers_disconnect_by_data(bound_item, row);
+  if (NOSTR_GTK_IS_NOTE_CARD_ROW(row) &&
+      !nostr_gtk_note_card_row_is_disposed(NOSTR_GTK_NOTE_CARD_ROW(row))) {
+    nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(row));
   }
+
   g_object_set_data(G_OBJECT(item), "tv-bound-item", NULL);
   g_object_set_data(G_OBJECT(item), "tv-timeline-view", NULL);
-
-  cleanup_bound_row(row);
+  gtk_list_item_set_child(item, NULL);
 }
 
 void gnostr_timeline_view_setup_app_factory(NostrGtkTimelineView *self) {
@@ -1543,9 +1537,10 @@ void gnostr_timeline_view_setup_app_factory(NostrGtkTimelineView *self) {
   (void)gnostr_timeline_metadata_controller_ensure(G_OBJECT(self));
 
   /* nostrc-hqtn: Create the action relay and attach to the view.
-   * The relay is the central user_data for all 17 NoteCardRow action
-   * signals, enabling single-call disconnect in cleanup_bound_row().
-   * Destroy notify unrefs the relay when the view disposes. */
+   * The relay is the central user_data for NoteCardRow action signals.
+   * Rows connect to it once during factory setup; bind/unbind only manages
+   * bind-scoped source/map/embed handlers. Destroy notify unrefs the relay
+   * when the view disposes. */
   GnostrTimelineActionRelay *relay = gnostr_timeline_action_relay_new();
   g_object_set_data_full(G_OBJECT(self), "gnostr-action-relay",
                          relay, g_object_unref);

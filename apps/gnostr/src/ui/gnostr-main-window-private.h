@@ -74,6 +74,7 @@ struct _GnostrMainWindow {
   /* Timeline feed models */
   GnNostrEventModel *event_model; /* owned legacy reactive model; not used by main feed */
   GnostrTimelineFeedController *timeline_feed_controller; /* owned; main feed compositor */
+  guint timeline_scroll_restore_depth; /* suppress viewport feedback during controller scroll restores */
   guint model_refresh_pending;    /* debounced refresh source id, 0 if none */
 
   /* REMOVED: avatar_tex_cache was dead code - never populated.

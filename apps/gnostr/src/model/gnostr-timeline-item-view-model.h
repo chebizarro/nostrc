@@ -116,6 +116,9 @@ typedef struct {
   const char *geometry_signature;
 } GnostrTimelineItemViewModelSpec;
 
+char *
+gnostr_timeline_item_view_model_spec_recompute_derived_fields(GnostrTimelineItemViewModelSpec *spec);
+
 GnostrTimelineItemViewModel *
 gnostr_timeline_item_view_model_new(const GnostrTimelineItemViewModelSpec *spec);
 

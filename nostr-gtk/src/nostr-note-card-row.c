@@ -593,6 +593,96 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
       }
       self->emoji_box = NULL;
     }
+
+    /* Reset reusable visual state that is not guaranteed to be overwritten by
+     * every bind path. Geometry fields stay bind-side resets in
+     * prepare_for_bind(); unbind only cancels async work and hides/removes
+     * per-item adornments that would otherwise bleed into a recycled row. */
+    self->is_repost = FALSE;
+    self->is_zap_receipt = FALSE;
+    self->is_sensitive = FALSE;
+    self->sensitive_content_revealed = FALSE;
+    g_clear_pointer(&self->reposter_pubkey, g_free);
+    g_clear_pointer(&self->reposter_display_name, g_free);
+    g_clear_pointer(&self->zap_sender_pubkey, g_free);
+    g_clear_pointer(&self->zap_recipient_pubkey, g_free);
+    g_clear_pointer(&self->zap_target_event_id, g_free);
+    g_clear_pointer(&self->quoted_event_id, g_free);
+    g_clear_pointer(&self->content_warning_reason, g_free);
+
+    gtk_widget_remove_css_class(GTK_WIDGET(self), "repost");
+    gtk_widget_remove_css_class(GTK_WIDGET(self), "zap-receipt");
+    gtk_widget_remove_css_class(GTK_WIDGET(self), "sensitive-content");
+    if (self->root && GTK_IS_WIDGET(self->root))
+      gtk_widget_remove_css_class(self->root, "article-card");
+    if (self->content_label && GTK_IS_WIDGET(self->content_label)) {
+      gtk_widget_remove_css_class(self->content_label, "content-blurred");
+      gtk_widget_remove_css_class(self->content_label, "article-summary");
+    }
+    if (self->media_box && GTK_IS_WIDGET(self->media_box))
+      gtk_widget_remove_css_class(self->media_box, "content-blurred");
+    if (self->embed_box && GTK_IS_WIDGET(self->embed_box))
+      gtk_widget_remove_css_class(self->embed_box, "content-blurred");
+    if (self->og_preview_container && GTK_IS_WIDGET(self->og_preview_container))
+      gtk_widget_remove_css_class(self->og_preview_container, "content-blurred");
+
+    if (self->repost_indicator_box && GTK_IS_WIDGET(self->repost_indicator_box))
+      gtk_widget_set_visible(self->repost_indicator_box, FALSE);
+    if (self->zap_indicator_box && GTK_IS_WIDGET(self->zap_indicator_box))
+      gtk_widget_set_visible(self->zap_indicator_box, FALSE);
+    if (self->quote_embed_box && GTK_IS_WIDGET(self->quote_embed_box))
+      gtk_widget_set_visible(self->quote_embed_box, FALSE);
+    if (self->sensitive_content_overlay && GTK_IS_WIDGET(self->sensitive_content_overlay))
+      gtk_widget_set_visible(self->sensitive_content_overlay, FALSE);
+    if (self->subject_label && GTK_IS_WIDGET(self->subject_label))
+      gtk_widget_set_visible(self->subject_label, FALSE);
+
+    if (self->hashtags_box && GTK_IS_FLOW_BOX(self->hashtags_box)) {
+      GtkWidget *child = gtk_widget_get_first_child(self->hashtags_box);
+      while (child) {
+        GtkWidget *next = gtk_widget_get_next_sibling(child);
+        gtk_flow_box_remove(GTK_FLOW_BOX(self->hashtags_box), child);
+        child = next;
+      }
+      gtk_widget_set_visible(self->hashtags_box, FALSE);
+    }
+    if (self->labels_box && GTK_IS_FLOW_BOX(self->labels_box)) {
+      GtkWidget *child = gtk_widget_get_first_child(self->labels_box);
+      while (child) {
+        GtkWidget *next = gtk_widget_get_next_sibling(child);
+        gtk_flow_box_remove(GTK_FLOW_BOX(self->labels_box), child);
+        child = next;
+      }
+      gtk_widget_set_visible(self->labels_box, FALSE);
+    }
+
+    self->is_article = FALSE;
+    self->is_video = FALSE;
+    g_clear_pointer(&self->article_d_tag, g_free);
+    g_clear_pointer(&self->article_title, g_free);
+    g_clear_pointer(&self->article_image_url, g_free);
+    g_clear_pointer(&self->video_d_tag, g_free);
+    g_clear_pointer(&self->video_url, g_free);
+    g_clear_pointer(&self->video_thumb_url, g_free);
+    g_clear_pointer(&self->video_title, g_free);
+    if (self->article_title_label && GTK_IS_WIDGET(self->article_title_label))
+      gtk_widget_set_visible(self->article_title_label, FALSE);
+    if (self->article_image_box && GTK_IS_WIDGET(self->article_image_box))
+      gtk_widget_set_visible(self->article_image_box, FALSE);
+    if (self->article_hashtags_box && GTK_IS_WIDGET(self->article_hashtags_box))
+      gtk_widget_set_visible(self->article_hashtags_box, FALSE);
+    if (self->article_reading_time && GTK_IS_WIDGET(self->article_reading_time))
+      gtk_widget_set_visible(self->article_reading_time, FALSE);
+    if (self->video_title_label && GTK_IS_WIDGET(self->video_title_label))
+      gtk_widget_set_visible(self->video_title_label, FALSE);
+    if (self->video_overlay && GTK_IS_WIDGET(self->video_overlay))
+      gtk_widget_set_visible(self->video_overlay, FALSE);
+    if (self->video_hashtags_box && GTK_IS_WIDGET(self->video_hashtags_box))
+      gtk_widget_set_visible(self->video_hashtags_box, FALSE);
+    if (self->btn_reply && GTK_IS_WIDGET(self->btn_reply))
+      gtk_widget_set_visible(self->btn_reply, TRUE);
+    if (self->btn_repost && GTK_IS_WIDGET(self->btn_repost))
+      gtk_widget_set_visible(self->btn_repost, TRUE);
   }
 
   /* Never dereference cached child pointers during teardown. */

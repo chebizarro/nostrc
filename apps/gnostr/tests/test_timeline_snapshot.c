@@ -19,6 +19,8 @@ row_new(const char *event_id,
                                           height,
                                           0.0,
                                           height,
+                                          0.0,
+                                          0.0,
                                           480,
                                           "layout-v1",
                                           FALSE);
@@ -66,10 +68,10 @@ test_row_replacement_is_object_replacement(void)
 {
   GnostrTimelineSnapshotRow *first = gnostr_timeline_snapshot_row_new("event-a", "note-a", "pubkey-a",
                                                                       100, "event-a", "first", 10.0,
-                                                                      0.0, 10.0, 480, "layout-v1", FALSE);
+                                                                      0.0, 10.0, 0.0, 0.0, 480, "layout-v1", FALSE);
   GnostrTimelineSnapshotRow *replacement = gnostr_timeline_snapshot_row_new("event-a", "note-a", "pubkey-a",
                                                                             100, "event-a", "replacement", 20.0,
-                                                                            20.0, 20.0, 480, "layout-v2", TRUE);
+                                                                            20.0, 20.0, 0.0, 0.0, 480, "layout-v2", TRUE);
   GnostrTimelineSnapshotRow *first_rows[] = { first };
   GnostrTimelineSnapshotRow *replacement_rows[] = { replacement };
   GnostrTimelineSnapshot *snapshot_1 = gnostr_timeline_snapshot_new(1, 1, first_rows, 1, 0);

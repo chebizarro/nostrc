@@ -17,6 +17,13 @@
 #define MAX_COLLAPSED_LINES     12u
 #define HEIGHT_QUANTUM_PX       8.0
 
+/* Derived from NostrGtkNoteCardRow's template: main_content has
+ * margin-start=16 and margin-end=16. Rich placeholders live inside that
+ * content column, so width_bucket minus this inset is their layout width. */
+#define NOTE_CARD_MAIN_CONTENT_MARGIN_START_PX 16u
+#define NOTE_CARD_MAIN_CONTENT_MARGIN_END_PX   16u
+#define NOTE_CARD_MEDIA_SPACING_PX             6.0
+
 typedef struct {
   double measured_height;
 } CachedMeasurement;
@@ -45,13 +52,22 @@ content_text_bucket(const char *content)
 }
 
 static guint
+content_width_for_bucket(guint width_bucket)
+{
+  guint inset = NOTE_CARD_MAIN_CONTENT_MARGIN_START_PX + NOTE_CARD_MAIN_CONTENT_MARGIN_END_PX;
+  if (width_bucket > inset)
+    return MAX(160u, width_bucket - inset);
+  return 160u;
+}
+
+static guint
 estimate_text_lines(const char *content,
                     guint width_bucket)
 {
   if (!content || !*content)
     return 1;
 
-  guint content_width = width_bucket > 112 ? width_bucket - 112 : 160;
+  guint content_width = content_width_for_bucket(width_bucket);
   guint chars_per_line = MAX(20u, content_width / 7u);
   glong chars = g_utf8_strlen(content, -1);
   if (chars <= 0)
@@ -108,6 +124,8 @@ gnostr_timeline_row_footprint_clear(GnostrTimelineRowFootprint *footprint)
   footprint->estimated_height = 0.0;
   footprint->measured_height = 0.0;
   footprint->effective_height = 0.0;
+  footprint->media_reserved_height = 0.0;
+  footprint->link_preview_reserved_height = 0.0;
   footprint->width_bucket = 0;
   footprint->geometry_measured = FALSE;
 }
@@ -130,11 +148,6 @@ gnostr_timeline_geometry_dup_layout_signature(const GnostrTimelineGeometryInput 
 {
   (void)width_bucket;
 
-  if (input && input->geometry_signature && *input->geometry_signature) {
-    return g_strdup_printf("%s:%s", GNOSTR_TIMELINE_GEOMETRY_LAYOUT_VERSION,
-                           input->geometry_signature);
-  }
-
   gboolean has_thread = input && input->has_reply_context_reservation;
   gboolean has_repost = input && input->has_repost_context_reservation;
   gboolean has_quote = input && input->has_quote_context_reservation;
@@ -142,21 +155,28 @@ gnostr_timeline_geometry_dup_layout_signature(const GnostrTimelineGeometryInput 
   guint media_count = input ? input->media_reservation_count : 0;
   guint link_count = input ? input->link_preview_reservation_count : 0;
   guint text_bucket = input ? content_text_bucket(input->content) : 0;
+  const char *semantic_signature = (input && input->geometry_signature && *input->geometry_signature) ?
+    input->geometry_signature : NULL;
+  g_autofree char *fallback_signature = NULL;
+  if (!semantic_signature) {
+    fallback_signature = g_strdup_printf("text%u:replyctx%d:repostctx%d:quotectx%d:kind%d",
+                                         text_bucket,
+                                         has_thread ? 1 : 0,
+                                         has_repost ? 1 : 0,
+                                         has_quote ? 1 : 0,
+                                         input ? input->kind : 1);
+    semantic_signature = fallback_signature;
+  }
 
-  return g_strdup_printf("%s:text%u:replyctx%d:repostctx%d:quotectx%d:media%u@%.0f:link%u@%.0f:footer%d:cw%d:mod%d:kind%d",
+  return g_strdup_printf("%s:%s:profile%d:mod%d:cw%d:m%u:l%u:footer%d",
                          GNOSTR_TIMELINE_GEOMETRY_LAYOUT_VERSION,
-                         text_bucket,
-                         has_thread ? 1 : 0,
-                         has_repost ? 1 : 0,
-                         has_quote ? 1 : 0,
-                         media_count,
-                         input ? input->media_reserved_height : 0.0,
-                         link_count,
-                         input ? input->link_preview_reserved_height : 0.0,
-                         has_footer ? 1 : 0,
-                         (input && input->has_content_warning) ? 1 : 0,
+                         semantic_signature,
+                         (input && input->has_profile) ? 1 : 0,
                          input ? input->moderation_state : 0,
-                         input ? input->kind : 1);
+                         (input && input->has_content_warning) ? 1 : 0,
+                         media_count,
+                         link_count,
+                         has_footer ? 1 : 0);
 }
 
 char *
@@ -251,6 +271,44 @@ gnostr_timeline_geometry_resolver_lookup_measurement(GnostrTimelineGeometryResol
   return TRUE;
 }
 
+static double
+resolve_media_reserved_height(guint media_count,
+                              guint width_bucket)
+{
+  if (media_count == 0)
+    return 0.0;
+
+  double content_width = (double)content_width_for_bucket(width_bucket);
+  double height = 0.0;
+
+  if (media_count == 1) {
+    height = CLAMP(content_width * 9.0 / 16.0, 180.0, 520.0);
+  } else {
+    guint columns = media_count == 2 ? 2u : 2u;
+    guint rows = (media_count + columns - 1u) / columns;
+    double cell = (content_width - ((double)(columns - 1u) * NOTE_CARD_MEDIA_SPACING_PX)) /
+      (double)columns;
+    cell = CLAMP(cell, 120.0, 280.0);
+    height = ((double)rows * cell) + ((double)(rows - 1u) * NOTE_CARD_MEDIA_SPACING_PX);
+  }
+
+  return quantize_height(height);
+}
+
+static double
+resolve_link_preview_reserved_height(guint link_count,
+                                     guint width_bucket)
+{
+  if (link_count == 0)
+    return 0.0;
+
+  double content_width = (double)content_width_for_bucket(width_bucket);
+  double per_preview = CLAMP(content_width * 0.35, 120.0, 220.0);
+  double height = ((double)link_count * per_preview) +
+    ((double)(link_count - 1u) * NOTE_CARD_MEDIA_SPACING_PX);
+  return quantize_height(height);
+}
+
 void
 gnostr_timeline_geometry_resolver_resolve(GnostrTimelineGeometryResolver *self,
                                           const GnostrTimelineGeometryInput *input,
@@ -265,6 +323,10 @@ gnostr_timeline_geometry_resolver_resolve(GnostrTimelineGeometryResolver *self,
     width_bucket = GNOSTR_TIMELINE_GEOMETRY_DEFAULT_WIDTH_BUCKET;
 
   out_footprint->width_bucket = width_bucket;
+  out_footprint->media_reserved_height = input ?
+    resolve_media_reserved_height(input->media_reservation_count, width_bucket) : 0.0;
+  out_footprint->link_preview_reserved_height = input ?
+    resolve_link_preview_reserved_height(input->link_preview_reservation_count, width_bucket) : 0.0;
   out_footprint->layout_signature =
     gnostr_timeline_geometry_dup_layout_signature(input, width_bucket);
 
@@ -274,6 +336,12 @@ gnostr_timeline_geometry_resolver_resolve(GnostrTimelineGeometryResolver *self,
   gboolean has_footer = !input || input->has_footer_action_reservation;
 
   double estimate = input ? input->initial_reserved_height : 0.0;
+  if (input && estimate > 0.0) {
+    if (input->media_reservation_count > 0)
+      estimate += out_footprint->media_reserved_height - input->media_reserved_height;
+    if (input->link_preview_reservation_count > 0)
+      estimate += out_footprint->link_preview_reserved_height - input->link_preview_reserved_height;
+  }
 
   if (estimate <= 0.0) {
     estimate = ROW_CHROME_PX + AVATAR_HEADER_PX + PROFILE_FALLBACK_PX;
@@ -288,9 +356,9 @@ gnostr_timeline_geometry_resolver_resolve(GnostrTimelineGeometryResolver *self,
     if (has_quote)
       estimate += QUOTE_CONTEXT_PX;
     if (input && input->media_reservation_count > 0)
-      estimate += input->media_reserved_height;
+      estimate += out_footprint->media_reserved_height;
     if (input && input->link_preview_reservation_count > 0)
-      estimate += input->link_preview_reserved_height;
+      estimate += out_footprint->link_preview_reserved_height;
     if (input && input->has_content_warning)
       estimate += CONTENT_WARNING_PX;
     if (input && input->moderation_state != 0)

@@ -4,14 +4,6 @@
 
 #include <string.h>
 
-#define DEFAULT_BASE_RESERVED_HEIGHT 180.0
-#define DEFAULT_CONTEXT_RESERVED_HEIGHT 48.0
-#define DEFAULT_QUOTE_RESERVED_HEIGHT 96.0
-#define DEFAULT_REPOST_RESERVED_HEIGHT 44.0
-#define DEFAULT_MEDIA_RESERVED_HEIGHT 240.0
-#define DEFAULT_LINK_PREVIEW_RESERVED_HEIGHT 120.0
-#define MAX_TEXT_RESERVED_HEIGHT 240.0
-
 struct _GnostrTimelineHydrator {
   GObject parent_instance;
   guint64 generation;
@@ -362,17 +354,6 @@ avatar_fallback_label_for_author(const char *display,
   return g_strdup(buf);
 }
 
-static guint
-strv_length(char **values)
-{
-  if (!values)
-    return 0;
-  guint n = 0;
-  while (values[n])
-    n++;
-  return n;
-}
-
 static char *
 content_snippet(const char *content)
 {
@@ -451,35 +432,7 @@ gnostr_timeline_hydrator_hydrate_entry(GnostrTimelineHydrator *self,
   g_autofree char *avatar_fallback =
     avatar_fallback_label_for_author(effective_display, entry->handle, entry->pubkey_hex);
 
-  guint media_count = strv_length(media_v);
-  guint link_count = strv_length(links_v);
-  gboolean has_reply_context = (entry->root_id && *entry->root_id) || (entry->reply_id && *entry->reply_id);
-  gboolean has_quote_context = quote_state != GNOSTR_TIMELINE_PREVIEW_ABSENT;
-  gboolean has_repost_context = (entry->kind == 6) || repost_state != GNOSTR_TIMELINE_PREVIEW_ABSENT;
   gboolean has_content_warning = entry->content_warning && *entry->content_warning;
-
-  guint content_len = entry->content ? (guint)g_utf8_strlen(entry->content, -1) : 0;
-  double text_reserved = MIN(MAX_TEXT_RESERVED_HEIGHT, 24.0 + ((content_len + 79u) / 80u) * 22.0);
-  double media_reserved = media_count * DEFAULT_MEDIA_RESERVED_HEIGHT;
-  double link_reserved = link_count * DEFAULT_LINK_PREVIEW_RESERVED_HEIGHT;
-  double initial_reserved = DEFAULT_BASE_RESERVED_HEIGHT + text_reserved + media_reserved + link_reserved;
-  if (has_reply_context)
-    initial_reserved += DEFAULT_CONTEXT_RESERVED_HEIGHT;
-  if (has_quote_context)
-    initial_reserved += DEFAULT_QUOTE_RESERVED_HEIGHT;
-  if (has_repost_context)
-    initial_reserved += DEFAULT_REPOST_RESERVED_HEIGHT;
-  if (has_content_warning)
-    initial_reserved += DEFAULT_CONTEXT_RESERVED_HEIGHT;
-
-  g_autofree char *geometry_signature = g_strdup_printf("vm-v1:k%d:r%d:q%d:p%d:m%u:l%u:cw%d",
-                                                        entry->kind,
-                                                        has_reply_context,
-                                                        has_quote_context,
-                                                        has_repost_context,
-                                                        media_count,
-                                                        link_count,
-                                                        has_content_warning);
 
   GnostrTimelineItemViewModelSpec spec = {
     .event_id = event_id,
@@ -497,7 +450,6 @@ gnostr_timeline_hydrator_hydrate_entry(GnostrTimelineHydrator *self,
     .avatar_fallback_label = avatar_fallback,
     .nip05 = entry->nip05,
     .has_profile = entry->has_profile,
-    .avatar_state = (entry->avatar_url && *entry->avatar_url) ? GNOSTR_TIMELINE_AVATAR_URL : GNOSTR_TIMELINE_AVATAR_FALLBACK,
     .root_id = entry->root_id,
     .reply_id = entry->reply_id,
     .parent_pubkey = entry->parent_pubkey,
@@ -539,21 +491,11 @@ gnostr_timeline_hydrator_hydrate_entry(GnostrTimelineHydrator *self,
     .action_zap_target = entry->zap_target ? entry->zap_target : entry->pubkey_hex,
     .moderation_state = entry->is_muted ? GNOSTR_TIMELINE_MODERATION_MUTED :
       (has_content_warning ? GNOSTR_TIMELINE_MODERATION_CONTENT_WARNING : GNOSTR_TIMELINE_MODERATION_VISIBLE),
-    .media_reservation_count = media_count,
-    .media_reserved_height = media_reserved,
-    .link_preview_reservation_count = link_count,
-    .link_preview_reserved_height = link_reserved,
-    .has_reply_context_reservation = has_reply_context,
-    .has_repost_context_reservation = has_repost_context,
-    .has_quote_context_reservation = has_quote_context,
-    .context_reservation_count = (has_reply_context ? 1u : 0u),
-    .quote_preview_reservation_count = (has_quote_context ? 1u : 0u),
-    .repost_preview_reservation_count = (has_repost_context ? 1u : 0u),
-    .footer_action_reservation_count = 1u,
-    .initial_reserved_height = initial_reserved,
-    .geometry_signature = geometry_signature,
   };
 
+  g_autofree char *geometry_signature =
+    gnostr_timeline_item_view_model_spec_recompute_derived_fields(&spec);
+  (void)geometry_signature;
   return gnostr_timeline_item_view_model_new(&spec);
 }
 

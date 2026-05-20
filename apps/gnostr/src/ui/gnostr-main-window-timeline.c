@@ -131,6 +131,8 @@ gnostr_main_window_on_timeline_scroll_value_changed_internal(GtkAdjustment *adj,
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self->timeline_feed_controller))
     return;
+  if (self->timeline_scroll_restore_depth > 0)
+    return;
 
   gdouble value = gtk_adjustment_get_value(adj);
   gdouble upper = gtk_adjustment_get_upper(adj);
@@ -212,7 +214,9 @@ gnostr_main_window_on_timeline_restore_scroll_internal(GnostrTimelineFeedControl
   gdouble max_value = MAX(lower, upper - page_size);
   gdouble target = CLAMP(lower + MAX(0.0, scroll_y), lower, max_value);
 
+  self->timeline_scroll_restore_depth++;
   gtk_adjustment_set_value(vadj, target);
+  self->timeline_scroll_restore_depth--;
 }
 
 void
@@ -356,27 +360,6 @@ on_filter_switcher_activated(GnostrFilterSwitcher *switcher,
     return;
 
   gnostr_main_window_activate_filter_set_by_id_internal(self, filter_set_id);
-}
-
-static gboolean
-scroll_to_top_idle(gpointer user_data)
-{
-  GnostrMainWindow *self = user_data;
-  if (!self || !GNOSTR_IS_MAIN_WINDOW(self))
-    return G_SOURCE_REMOVE;
-
-  GtkWidget *timeline = self->session_view ? gnostr_session_view_get_timeline(self->session_view) : NULL;
-  if (timeline && NOSTR_GTK_IS_TIMELINE_VIEW(timeline)) {
-    GtkWidget *list_view = nostr_gtk_timeline_view_get_list_view(NOSTR_GTK_TIMELINE_VIEW(timeline));
-    if (list_view && GTK_IS_LIST_VIEW(list_view))
-      gtk_list_view_scroll_to(GTK_LIST_VIEW(list_view), 0, GTK_LIST_SCROLL_FOCUS, NULL);
-  }
-
-  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view))
-    gnostr_session_view_set_new_notes_count(self->session_view, 0);
-
-  g_object_unref(self);
-  return G_SOURCE_REMOVE;
 }
 
 /* Called when the filter-set manager's list model changes (add/update/
@@ -685,6 +668,4 @@ gnostr_main_window_on_new_notes_clicked_internal(GtkButton *btn, gpointer user_d
     gnostr_timeline_feed_controller_set_user_at_top(self->timeline_feed_controller, TRUE);
     gnostr_timeline_feed_controller_admit_pending_head(self->timeline_feed_controller, TRUE);
   }
-
-  g_idle_add_full(G_PRIORITY_DEFAULT, scroll_to_top_idle, g_object_ref(self), NULL);
 }
