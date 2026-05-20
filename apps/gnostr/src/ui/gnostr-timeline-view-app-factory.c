@@ -1001,9 +1001,10 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
           nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
         }
       } else {
-        /* Snapshot rows bind rich areas only from immutable VM data.  This path
-         * intentionally avoids bind-time content parsing, DB lookups, and
-         * request-embed emission. */
+        /* Snapshot rows bind text from immutable VM data and reserve rich
+         * content slots only as inert placeholders. This path intentionally
+         * avoids bind/map-time content parsing, DB lookups, request-embed
+         * emission, OG fetches, and media loads. */
         nostr_gtk_note_card_row_set_precomputed_markup(
           NOSTR_GTK_NOTE_CARD_ROW(row),
           content,

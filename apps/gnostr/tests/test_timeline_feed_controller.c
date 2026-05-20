@@ -92,6 +92,33 @@ batch_add_unprofiled(GnostrTimelineBatch *batch,
                                  FALSE);
 }
 
+static void
+batch_add_entry_with_content_and_media(GnostrTimelineBatch *batch,
+                                       guint64 note_key,
+                                       gint64 created_at,
+                                       guint8 id_byte,
+                                       const char *content,
+                                       char **media_urls,
+                                       char **links)
+{
+  GnostrTimelineBatchEntry entry = {
+    .note_key = note_key,
+    .created_at = created_at,
+    .pubkey_hex = "pubkey",
+    .content = (char *)content,
+    .display_name = "Display Name",
+    .handle = "handle",
+    .avatar_url = "https://example.test/avatar.png",
+    .nip05 = "name@example.test",
+    .media_urls = media_urls,
+    .links = links,
+    .kind = 1,
+    .has_profile = TRUE,
+  };
+  fill_id(entry.event_id, id_byte);
+  gnostr_timeline_batch_add_entry(batch, &entry);
+}
+
 static char *
 event_id_hex_for_byte(guint8 byte)
 {
@@ -946,6 +973,156 @@ test_geometry_width_bucket_change_uses_independent_footprint(void)
 }
 
 static void
+test_live_existing_replacement_defers_geometry_unsafe_visible_row(void)
+{
+  GnostrTimelineFeedController *controller =
+    gnostr_timeline_feed_controller_new(NULL);
+
+  GnostrTimelineBatch *refresh = batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 1);
+  batch_add_entry_with_content_and_media(refresh,
+                                         1,
+                                         100,
+                                         0x11,
+                                         "plain body",
+                                         NULL,
+                                         NULL);
+  gnostr_timeline_feed_controller_ingest_batch(controller, refresh);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(refresh);
+
+  g_autoptr(GnostrTimelineSnapshot) initial = dup_controller_snapshot(controller);
+  GnostrTimelineSnapshotRow *initial_row = gnostr_timeline_snapshot_get_row(initial, 0);
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_content(initial_row), ==, "plain body");
+  g_assert_null(strstr(gnostr_timeline_snapshot_row_get_layout_signature(initial_row), "m1"));
+
+  PublishedCapture published = { 0 };
+  g_signal_connect(controller, "snapshot-published",
+                   G_CALLBACK(on_snapshot_published), &published);
+
+  gnostr_timeline_feed_controller_set_viewport(controller, 0.0, 400.0, 480);
+
+  char *media_urls[] = { "https://example.test/media.png", NULL };
+  GnostrTimelineBatch *live = batch_new(GNOSTR_TIMELINE_BATCH_LIVE_HEAD, 1);
+  batch_add_entry_with_content_and_media(live,
+                                         2,
+                                         100,
+                                         0x11,
+                                         "rich body",
+                                         media_urls,
+                                         NULL);
+  gnostr_timeline_feed_controller_ingest_batch(controller, live);
+  g_object_unref(live);
+  drain_main_context_for_ms(80);
+
+  g_assert_cmpuint(published.emissions, ==, 0);
+  g_autoptr(GnostrTimelineSnapshot) blocked = dup_controller_snapshot(controller);
+  GnostrTimelineSnapshotRow *blocked_row = gnostr_timeline_snapshot_get_row(blocked, 0);
+  const char *blocked_event_id = gnostr_timeline_snapshot_row_get_event_id(blocked_row);
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_content(blocked_row), ==, "plain body");
+  g_assert_null(strstr(gnostr_timeline_snapshot_row_get_layout_signature(blocked_row), "m1"));
+
+  GnostrTimelineMetadataPatch metadata = {
+    .event_id = (char *)blocked_event_id,
+    .has_like_count = TRUE,
+    .like_count = 7,
+    .has_is_liked = TRUE,
+    .is_liked = TRUE,
+  };
+  GnostrTimelineBatch *metadata_batch = batch_new(GNOSTR_TIMELINE_BATCH_METADATA_PATCH, 1);
+  gnostr_timeline_batch_add_metadata_patch(metadata_batch, &metadata);
+  gnostr_timeline_feed_controller_ingest_batch(controller, metadata_batch);
+  g_object_unref(metadata_batch);
+
+  GnostrTimelineProfilePatch profile = {
+    .pubkey_hex = "pubkey",
+    .display_name = "Patched Name",
+    .handle = "patched",
+    .avatar_url = "https://example.test/patched.png",
+    .nip05 = "patched@example.test",
+  };
+  GnostrTimelineBatch *profile_batch = batch_new(GNOSTR_TIMELINE_BATCH_PROFILE_PATCH, 1);
+  gnostr_timeline_batch_add_profile_patch(profile_batch, &profile);
+  gnostr_timeline_feed_controller_ingest_batch(controller, profile_batch);
+  g_object_unref(profile_batch);
+  drain_main_context_for_ms(80);
+  g_assert_cmpuint(published.emissions, ==, 0);
+
+  gnostr_timeline_feed_controller_set_viewport(controller, 10000.0, 400.0, 480);
+  gnostr_timeline_feed_controller_compose_now(controller);
+
+  g_assert_cmpuint(published.emissions, ==, 1);
+  g_autoptr(GnostrTimelineSnapshot) admitted = dup_controller_snapshot(controller);
+  GnostrTimelineSnapshotRow *admitted_row = gnostr_timeline_snapshot_get_row(admitted, 0);
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_content(admitted_row), ==, "rich body");
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_note_key(admitted_row), ==, "2");
+  g_assert_nonnull(strstr(gnostr_timeline_snapshot_row_get_layout_signature(admitted_row), "m1"));
+  g_assert_cmpuint(gnostr_timeline_snapshot_row_get_like_count(admitted_row), ==, 7);
+  g_assert_true(gnostr_timeline_snapshot_row_get_is_liked(admitted_row));
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_display_name(admitted_row), ==, "Patched Name");
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_handle(admitted_row), ==, "patched");
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_avatar_url(admitted_row), ==, "https://example.test/patched.png");
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_nip05(admitted_row), ==, "patched@example.test");
+
+  g_object_unref(controller);
+}
+
+static void
+test_page_existing_replacement_defers_geometry_unsafe_visible_row(void)
+{
+  GnostrTimelineFeedController *controller =
+    gnostr_timeline_feed_controller_new(NULL);
+
+  GnostrTimelineBatch *refresh = batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 1);
+  batch_add_entry_with_content_and_media(refresh,
+                                         1,
+                                         100,
+                                         0x22,
+                                         "plain body",
+                                         NULL,
+                                         NULL);
+  gnostr_timeline_feed_controller_ingest_batch(controller, refresh);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(refresh);
+
+  PublishedCapture published = { 0 };
+  g_signal_connect(controller, "snapshot-published",
+                   G_CALLBACK(on_snapshot_published), &published);
+
+  gnostr_timeline_feed_controller_set_viewport(controller, 0.0, 400.0, 480);
+
+  char *media_urls[] = { "https://example.test/media.png", NULL };
+  GnostrTimelineBatch *older = batch_new(GNOSTR_TIMELINE_BATCH_PAGE_OLDER, 1);
+  batch_add_entry_with_content_and_media(older,
+                                         2,
+                                         100,
+                                         0x22,
+                                         "rich body",
+                                         media_urls,
+                                         NULL);
+  gnostr_timeline_feed_controller_ingest_batch(controller, older);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(older);
+
+  g_assert_cmpuint(published.emissions, ==, 1);
+  g_autoptr(GnostrTimelineSnapshot) still_plain = dup_controller_snapshot(controller);
+  GnostrTimelineSnapshotRow *plain_row = gnostr_timeline_snapshot_get_row(still_plain, 0);
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_content(plain_row), ==, "plain body");
+  g_assert_null(strstr(gnostr_timeline_snapshot_row_get_layout_signature(plain_row), "m1"));
+
+  gnostr_timeline_feed_controller_set_viewport(controller, 10000.0, 400.0, 480);
+  gnostr_timeline_feed_controller_compose_now(controller);
+
+  g_assert_cmpuint(published.emissions, ==, 2);
+  g_autoptr(GnostrTimelineSnapshot) admitted = dup_controller_snapshot(controller);
+  GnostrTimelineSnapshotRow *admitted_row = gnostr_timeline_snapshot_get_row(admitted, 0);
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_content(admitted_row), ==, "rich body");
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_note_key(admitted_row), ==, "2");
+  g_assert_nonnull(strstr(gnostr_timeline_snapshot_row_get_layout_signature(admitted_row), "m1"));
+
+  g_object_unref(controller);
+}
+
+static void
 test_vm_reservation_fields_control_snapshot_footprint(void)
 {
   GnostrTimelineFeedController *controller =
@@ -1050,6 +1227,10 @@ main(int argc,
                   test_geometry_measurement_recomposes_with_cached_height);
   g_test_add_func("/gnostr/timeline-feed-controller/geometry-width-bucket-change",
                   test_geometry_width_bucket_change_uses_independent_footprint);
+  g_test_add_func("/gnostr/timeline-feed-controller/live-existing-replacement-deferred",
+                  test_live_existing_replacement_defers_geometry_unsafe_visible_row);
+  g_test_add_func("/gnostr/timeline-feed-controller/page-existing-replacement-deferred",
+                  test_page_existing_replacement_defers_geometry_unsafe_visible_row);
   g_test_add_func("/gnostr/timeline-feed-controller/vm-reservation-fields",
                   test_vm_reservation_fields_control_snapshot_footprint);
 

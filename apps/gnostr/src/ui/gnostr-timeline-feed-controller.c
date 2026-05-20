@@ -29,6 +29,7 @@ struct _GnostrTimelineFeedController {
   GHashTable *by_event_id;  /* char* -> WorkingEntry* (borrowed value) */
   GHashTable *pending_head; /* char* set of event ids hidden from visible snapshots */
   GHashTable *deferred_patch_events; /* char* set of visible rows awaiting safe patch publication */
+  GHashTable *deferred_replacement_vms; /* char* -> GnostrTimelineItemViewModel* awaiting admission */
   GnostrTimelineGeometryResolver *geometry;
 
   guint visible_limit; /* number of sorted, non-pending rows admitted to snapshots */
@@ -168,6 +169,7 @@ clear_working_set(GnostrTimelineFeedController *self)
   g_hash_table_remove_all(self->by_event_id);
   g_hash_table_remove_all(self->pending_head);
   g_hash_table_remove_all(self->deferred_patch_events);
+  g_hash_table_remove_all(self->deferred_replacement_vms);
   self->visible_limit = 0;
 }
 
@@ -190,6 +192,8 @@ remove_working_event(GnostrTimelineFeedController *self,
   if (out_was_pending)
     *out_was_pending = was_pending;
 
+  g_hash_table_remove(self->deferred_patch_events, event_id);
+  g_hash_table_remove(self->deferred_replacement_vms, event_id);
   g_hash_table_remove(self->by_event_id, event_id);
 
   for (guint i = 0; i < self->working->len; i++) {
@@ -627,6 +631,42 @@ admission_for_replacement_vm(GnostrTimelineFeedController *self,
   return PATCH_ADMISSION_BLOCKED;
 }
 
+static WorkingEntry *
+merge_hydrated_vm_with_admission(GnostrTimelineFeedController *self,
+                                 GnostrTimelineItemViewModel *vm,
+                                 gboolean *out_inserted,
+                                 PatchAdmission *out_admission)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_ITEM_VIEW_MODEL(vm), NULL);
+
+  if (out_admission)
+    *out_admission = PATCH_ADMISSION_NO_CHANGE;
+
+  const char *event_id = gnostr_timeline_item_view_model_get_event_id(vm);
+  WorkingEntry *existing = lookup_working(self, event_id);
+  if (!existing)
+    return merge_hydrated_vm(self, vm, out_inserted);
+
+  if (out_inserted)
+    *out_inserted = FALSE;
+
+  PatchAdmission admission = admission_for_replacement_vm(self, event_id, vm);
+  if (out_admission)
+    *out_admission = admission;
+
+  if (admission == PATCH_ADMISSION_BLOCKED) {
+    g_hash_table_replace(self->deferred_replacement_vms,
+                         g_strdup(event_id),
+                         g_object_ref(vm));
+    return existing;
+  }
+
+  g_hash_table_remove(self->deferred_patch_events, event_id);
+  g_hash_table_remove(self->deferred_replacement_vms, event_id);
+  working_entry_replace_vm(existing, vm);
+  return existing;
+}
+
 static gboolean
 reevaluate_deferred_patch_events(GnostrTimelineFeedController *self)
 {
@@ -641,16 +681,26 @@ reevaluate_deferred_patch_events(GnostrTimelineFeedController *self)
     const char *event_id = key;
     WorkingEntry *entry = lookup_working(self, event_id);
     if (!entry || !entry->vm) {
+      g_hash_table_remove(self->deferred_replacement_vms, event_id);
       g_hash_table_iter_remove(&iter);
       continue;
     }
 
-    PatchAdmission admission = admission_for_replacement_vm(self, event_id, entry->vm);
+    GnostrTimelineItemViewModel *pending_replacement =
+      g_hash_table_lookup(self->deferred_replacement_vms, event_id);
+    GnostrTimelineItemViewModel *candidate = pending_replacement ? pending_replacement : entry->vm;
+    PatchAdmission admission = admission_for_replacement_vm(self, event_id, candidate);
     if (admission == PATCH_ADMISSION_PUBLISH) {
+      if (pending_replacement)
+        working_entry_replace_vm(entry, pending_replacement);
+      g_hash_table_remove(self->deferred_replacement_vms, event_id);
       should_publish = TRUE;
       g_hash_table_iter_remove(&iter);
     } else if (admission == PATCH_ADMISSION_HIDDEN_ONLY ||
                admission == PATCH_ADMISSION_NO_CHANGE) {
+      if (pending_replacement)
+        working_entry_replace_vm(entry, pending_replacement);
+      g_hash_table_remove(self->deferred_replacement_vms, event_id);
       g_hash_table_iter_remove(&iter);
     }
   }
@@ -669,23 +719,27 @@ apply_metadata_patch(GnostrTimelineFeedController *self,
   if (!entry || !entry->vm)
     return PATCH_ADMISSION_NO_CHANGE;
 
+  GnostrTimelineItemViewModel *deferred =
+    g_hash_table_lookup(self->deferred_replacement_vms, patch->event_id);
+  GnostrTimelineItemViewModel *base = deferred ? deferred : entry->vm;
+
   gboolean changed = FALSE;
   changed |= patch->has_like_count &&
-    gnostr_timeline_item_view_model_get_like_count(entry->vm) != patch->like_count;
+    gnostr_timeline_item_view_model_get_like_count(base) != patch->like_count;
   changed |= patch->has_is_liked &&
-    gnostr_timeline_item_view_model_get_is_liked(entry->vm) != patch->is_liked;
+    gnostr_timeline_item_view_model_get_is_liked(base) != patch->is_liked;
   changed |= patch->has_repost_count &&
-    gnostr_timeline_item_view_model_get_repost_count(entry->vm) != patch->repost_count;
+    gnostr_timeline_item_view_model_get_repost_count(base) != patch->repost_count;
   changed |= patch->has_reply_count &&
-    gnostr_timeline_item_view_model_get_reply_count(entry->vm) != patch->reply_count;
+    gnostr_timeline_item_view_model_get_reply_count(base) != patch->reply_count;
   changed |= patch->has_zap_count &&
-    gnostr_timeline_item_view_model_get_zap_count(entry->vm) != patch->zap_count;
+    gnostr_timeline_item_view_model_get_zap_count(base) != patch->zap_count;
   changed |= patch->has_zap_total_msat &&
-    gnostr_timeline_item_view_model_get_zap_total_msat(entry->vm) != patch->zap_total_msat;
+    gnostr_timeline_item_view_model_get_zap_total_msat(base) != patch->zap_total_msat;
 
   if (changed) {
     g_autoptr(GnostrTimelineItemViewModel) replacement =
-      gnostr_timeline_item_view_model_copy_with_interactions(entry->vm,
+      gnostr_timeline_item_view_model_copy_with_interactions(base,
                                                              patch->has_like_count,
                                                              patch->like_count,
                                                              patch->has_is_liked,
@@ -699,7 +753,16 @@ apply_metadata_patch(GnostrTimelineFeedController *self,
                                                              patch->has_zap_total_msat,
                                                              patch->zap_total_msat);
     PatchAdmission admission = admission_for_replacement_vm(self, patch->event_id, replacement);
-    working_entry_replace_vm(entry, replacement);
+    if (deferred && admission == PATCH_ADMISSION_BLOCKED) {
+      g_hash_table_replace(self->deferred_replacement_vms,
+                           g_strdup(patch->event_id),
+                           g_object_ref(replacement));
+    } else {
+      g_hash_table_remove(self->deferred_replacement_vms, patch->event_id);
+      if (admission != PATCH_ADMISSION_BLOCKED)
+        g_hash_table_remove(self->deferred_patch_events, patch->event_id);
+      working_entry_replace_vm(entry, replacement);
+    }
     return admission;
   }
 
@@ -716,31 +779,45 @@ apply_profile_patch(GnostrTimelineFeedController *self,
   PatchAdmission admission = PATCH_ADMISSION_NO_CHANGE;
   for (guint i = 0; i < self->working->len; i++) {
     WorkingEntry *entry = g_ptr_array_index(self->working, i);
-    if (!entry || !entry->vm ||
-        g_strcmp0(gnostr_timeline_item_view_model_get_pubkey(entry->vm), patch->pubkey_hex) != 0)
+    if (!entry || !entry->vm)
+      continue;
+
+    const char *entry_event_id = gnostr_timeline_item_view_model_get_event_id(entry->vm);
+    GnostrTimelineItemViewModel *deferred =
+      g_hash_table_lookup(self->deferred_replacement_vms, entry_event_id);
+    GnostrTimelineItemViewModel *base = deferred ? deferred : entry->vm;
+    if (g_strcmp0(gnostr_timeline_item_view_model_get_pubkey(base), patch->pubkey_hex) != 0)
       continue;
 
     gboolean row_changed = FALSE;
-    row_changed |= g_strcmp0(gnostr_timeline_item_view_model_get_display_name(entry->vm), patch->display_name) != 0;
-    row_changed |= g_strcmp0(gnostr_timeline_item_view_model_get_handle(entry->vm), patch->handle) != 0;
-    row_changed |= g_strcmp0(gnostr_timeline_item_view_model_get_avatar_url(entry->vm), patch->avatar_url) != 0;
-    row_changed |= g_strcmp0(gnostr_timeline_item_view_model_get_nip05(entry->vm), patch->nip05) != 0;
-    row_changed |= !gnostr_timeline_item_view_model_get_has_profile(entry->vm);
+    row_changed |= g_strcmp0(gnostr_timeline_item_view_model_get_display_name(base), patch->display_name) != 0;
+    row_changed |= g_strcmp0(gnostr_timeline_item_view_model_get_handle(base), patch->handle) != 0;
+    row_changed |= g_strcmp0(gnostr_timeline_item_view_model_get_avatar_url(base), patch->avatar_url) != 0;
+    row_changed |= g_strcmp0(gnostr_timeline_item_view_model_get_nip05(base), patch->nip05) != 0;
+    row_changed |= !gnostr_timeline_item_view_model_get_has_profile(base);
 
     if (row_changed) {
       g_autoptr(GnostrTimelineItemViewModel) replacement =
-        gnostr_timeline_item_view_model_copy_with_profile(entry->vm,
+        gnostr_timeline_item_view_model_copy_with_profile(base,
                                                           patch->display_name,
                                                           patch->handle,
                                                           patch->avatar_url,
                                                           patch->nip05,
                                                           TRUE);
-      admission = patch_admission_combine(
-        admission,
-        admission_for_replacement_vm(self,
-                                     gnostr_timeline_item_view_model_get_event_id(entry->vm),
-                                     replacement));
-      working_entry_replace_vm(entry, replacement);
+      PatchAdmission row_admission = admission_for_replacement_vm(self,
+                                                                  entry_event_id,
+                                                                  replacement);
+      admission = patch_admission_combine(admission, row_admission);
+      if (deferred && row_admission == PATCH_ADMISSION_BLOCKED) {
+        g_hash_table_replace(self->deferred_replacement_vms,
+                             g_strdup(entry_event_id),
+                             g_object_ref(replacement));
+      } else {
+        g_hash_table_remove(self->deferred_replacement_vms, entry_event_id);
+        if (row_admission != PATCH_ADMISSION_BLOCKED)
+          g_hash_table_remove(self->deferred_patch_events, entry_event_id);
+        working_entry_replace_vm(entry, replacement);
+      }
     }
   }
 
@@ -777,6 +854,7 @@ gnostr_timeline_feed_controller_dispose(GObject *object)
   g_clear_pointer(&self->by_event_id, g_hash_table_unref);
   g_clear_pointer(&self->pending_head, g_hash_table_unref);
   g_clear_pointer(&self->deferred_patch_events, g_hash_table_unref);
+  g_clear_pointer(&self->deferred_replacement_vms, g_hash_table_unref);
   g_clear_pointer(&self->geometry, gnostr_timeline_geometry_resolver_free);
 
   G_OBJECT_CLASS(gnostr_timeline_feed_controller_parent_class)->dispose(object);
@@ -844,6 +922,7 @@ gnostr_timeline_feed_controller_init(GnostrTimelineFeedController *self)
   self->by_event_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->pending_head = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->deferred_patch_events = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->deferred_replacement_vms = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
   self->geometry = gnostr_timeline_geometry_resolver_new();
   self->page_size = DEFAULT_VISIBLE_PAGE_SIZE;
   self->visible_limit = 0;
@@ -1040,10 +1119,13 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
         return;
       gboolean pending_changed = FALSE;
       guint visible_increment = 0;
+      PatchAdmission admission = PATCH_ADMISSION_NO_CHANGE;
       for (guint i = 0; i < items->len; i++) {
         GnostrTimelineItemViewModel *vm = g_ptr_array_index(items, i);
         gboolean inserted = FALSE;
-        WorkingEntry *we = merge_hydrated_vm(self, vm, &inserted);
+        PatchAdmission item_admission = PATCH_ADMISSION_NO_CHANGE;
+        WorkingEntry *we = merge_hydrated_vm_with_admission(self, vm, &inserted, &item_admission);
+        admission = patch_admission_combine(admission, item_admission);
         const char *event_id = (we && we->vm) ? gnostr_timeline_item_view_model_get_event_id(we->vm) : NULL;
         if (!self->user_at_top && event_id && inserted && !g_hash_table_contains(self->pending_head, event_id)) {
           g_hash_table_add(self->pending_head, g_strdup(event_id));
@@ -1055,9 +1137,19 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
 
       if (self->user_at_top && self->scroll_y <= AT_TOP_EPSILON_PX) {
         expand_visible_limit(self, visible_increment);
-        schedule_compose(self, FALSE, TRUE);
-      } else if (pending_changed) {
-        emit_pending_count(self);
+        if (visible_increment > 0)
+          schedule_compose(self, FALSE, TRUE);
+        else if (admission == PATCH_ADMISSION_PUBLISH)
+          schedule_compose(self, TRUE, FALSE);
+        else if (admission == PATCH_ADMISSION_BLOCKED)
+          g_debug("[COMPOSITOR] Deferring live replacement publication for visible geometry-unsafe rows");
+      } else {
+        if (pending_changed)
+          emit_pending_count(self);
+        if (admission == PATCH_ADMISSION_PUBLISH)
+          schedule_compose(self, TRUE, FALSE);
+        else if (admission == PATCH_ADMISSION_BLOCKED)
+          g_debug("[COMPOSITOR] Deferring live replacement publication for visible geometry-unsafe rows");
       }
       break;
     }
@@ -1067,10 +1159,16 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
       if (!items)
         return;
       self->loading_older = FALSE;
-      for (guint i = 0; i < items->len; i++)
-        merge_hydrated_vm(self, g_ptr_array_index(items, i), NULL);
+      PatchAdmission admission = PATCH_ADMISSION_NO_CHANGE;
+      for (guint i = 0; i < items->len; i++) {
+        PatchAdmission item_admission = PATCH_ADMISSION_NO_CHANGE;
+        merge_hydrated_vm_with_admission(self, g_ptr_array_index(items, i), NULL, &item_admission);
+        admission = patch_admission_combine(admission, item_admission);
+      }
       expand_visible_limit(self, items->len);
       schedule_compose(self, TRUE, FALSE);
+      if (admission == PATCH_ADMISSION_BLOCKED)
+        g_debug("[COMPOSITOR] Deferring older-page replacement publication for visible geometry-unsafe rows");
       break;
     }
 
@@ -1079,10 +1177,16 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
       if (!items)
         return;
       self->loading_newer = FALSE;
-      for (guint i = 0; i < items->len; i++)
-        merge_hydrated_vm(self, g_ptr_array_index(items, i), NULL);
+      PatchAdmission admission = PATCH_ADMISSION_NO_CHANGE;
+      for (guint i = 0; i < items->len; i++) {
+        PatchAdmission item_admission = PATCH_ADMISSION_NO_CHANGE;
+        merge_hydrated_vm_with_admission(self, g_ptr_array_index(items, i), NULL, &item_admission);
+        admission = patch_admission_combine(admission, item_admission);
+      }
       expand_visible_limit(self, items->len);
       schedule_compose(self, TRUE, FALSE);
+      if (admission == PATCH_ADMISSION_BLOCKED)
+        g_debug("[COMPOSITOR] Deferring newer-page replacement publication for visible geometry-unsafe rows");
       break;
     }
 

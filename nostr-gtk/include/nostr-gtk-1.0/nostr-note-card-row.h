@@ -190,8 +190,9 @@ void nostr_gtk_note_card_row_set_precomputed_markup(NostrGtkNoteCardRow *self,
  * @media_urls: (nullable): NULL-terminated media URL array from an immutable VM
  * @reserved_height: reserved media area height in pixels
  *
- * Reserves the media area immediately and lets async media loading fill only
- * the reserved boxes.
+ * Reserves an inert media placeholder area immediately. This snapshot-path
+ * helper must not create media widgets or start media/network loading from
+ * bind/map unless a future API supplies already-resolved immutable media data.
  */
 void nostr_gtk_note_card_row_set_media_urls_reserved(NostrGtkNoteCardRow *self,
                                                      const char * const *media_urls,
@@ -203,7 +204,9 @@ void nostr_gtk_note_card_row_set_media_urls_reserved(NostrGtkNoteCardRow *self,
  * @links: (nullable): NULL-terminated URL array from an immutable VM
  * @reserved_height: reserved link preview area height in pixels
  *
- * Reserves and renders a link preview area without emitting request-embed.
+ * Reserves an inert link-preview placeholder area. This snapshot-path helper
+ * must not create OG preview widgets or start URL fetches from bind/map unless
+ * a future API supplies already-resolved immutable preview data.
  */
 void nostr_gtk_note_card_row_set_link_preview_urls_reserved(NostrGtkNoteCardRow *self,
                                                             const char * const *links,
