@@ -48,6 +48,7 @@ G_DECLARE_FINAL_TYPE(NostrGtkNoteCardRow, nostr_gtk_note_card_row, NOSTR_GTK, NO
  * "delete-note-requested" (gchar* id_hex, gchar* pubkey_hex, gpointer user_data) - NIP-09 deletion request
  * "comment-requested" (gchar* id_hex, gint kind, gchar* pubkey_hex, gpointer user_data) - NIP-22 comment request
  * "highlight-requested" (gchar* highlighted_text, gchar* context, gchar* id_hex, gchar* pubkey_hex, gpointer user_data) - NIP-84 highlight request
+ * "measured-geometry" (gchar* geometry_token, guint64 snapshot_generation, gint width, gint height, gpointer user_data)
  */
 
 typedef struct _NostrGtkNoteCardRow NostrGtkNoteCardRow;
@@ -57,6 +58,34 @@ NostrGtkNoteCardRow *nostr_gtk_note_card_row_new(void);
 void nostr_gtk_note_card_row_set_author(NostrGtkNoteCardRow *self, const char *display_name, const char *handle, const char *avatar_url);
 void nostr_gtk_note_card_row_set_timestamp(NostrGtkNoteCardRow *self, gint64 created_at, const char *fallback_ts);
 void nostr_gtk_note_card_row_set_content(NostrGtkNoteCardRow *self, const char *content);
+
+/**
+ * nostr_gtk_note_card_row_set_reserved_height:
+ * @self: note card row
+ * @reserved_height: reserved outer row height in pixels, or 0 to clear
+ *
+ * Reserves at least @reserved_height pixels for the row during measurement so
+ * compositor-bound snapshots can allocate stable geometry before content reveal.
+ */
+void nostr_gtk_note_card_row_set_reserved_height(NostrGtkNoteCardRow *self,
+                                                 gint reserved_height);
+
+/**
+ * nostr_gtk_note_card_row_set_geometry_token:
+ * @self: note card row
+ * @geometry_token: (nullable): compositor geometry/cache token for this bind
+ * @snapshot_generation: snapshot generation associated with @geometry_token
+ *
+ * Sets the token used when emitting the measured-geometry signal. Changing the
+ * token or generation resets the per-bind measurement report guard.
+ */
+void nostr_gtk_note_card_row_set_geometry_token(NostrGtkNoteCardRow *self,
+                                                const gchar *geometry_token,
+                                                guint64 snapshot_generation);
+
+gint nostr_gtk_note_card_row_get_reserved_height(NostrGtkNoteCardRow *self);
+const gchar *nostr_gtk_note_card_row_get_geometry_token(NostrGtkNoteCardRow *self);
+guint64 nostr_gtk_note_card_row_get_snapshot_generation(NostrGtkNoteCardRow *self);
 
 /**
  * NostrGtkContentSubstType:

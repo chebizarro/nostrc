@@ -1,6 +1,8 @@
 #define G_LOG_DOMAIN "gnostr-event-model"
 
 #include "gn-nostr-event-model.h"
+#include "gnostr-timeline-batch.h"
+#include "gnostr-timeline-source.h"
 #include <nostr-gobject-1.0/gn-timeline-query.h>
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
@@ -108,6 +110,10 @@ struct _GnNostrEventModel {
 
   /* Query parameters (new API) */
   GNostrTimelineQuery *timeline_query;
+
+  /* Data-time acquisition source.  GnNostrEventModel remains the legacy
+   * presentation adapter and consumes generation-tagged source batches. */
+  GnostrTimelineSource *timeline_source;
 
   /* Query parameters (legacy - kept for compatibility) */
   gint *kinds;
@@ -275,6 +281,8 @@ static void on_sub_profiles_batch(uint64_t subid, const uint64_t *note_keys, gui
 static void on_sub_deletes_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
 static void on_sub_reactions_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
 static void on_sub_zaps_batch(uint64_t subid, const uint64_t *note_keys, guint n_keys, gpointer user_data);
+static void on_timeline_source_batch(GnostrTimelineSource *source, GnostrTimelineBatch *batch, gpointer user_data);
+static GnostrTimelineSource *ensure_timeline_source(GnNostrEventModel *self);
 
 /* nostrc-reentrant-guard: Safe wrapper for g_list_model_items_changed that
  * prevents reentrant modifications. GTK widget disposal during items_changed
@@ -2045,17 +2053,410 @@ static void on_sub_zaps_batch(uint64_t subid, const uint64_t *note_keys, guint n
   g_hash_table_unref(events_to_update);
 }
 
+/* -------------------- Source batch compatibility adapter -------------------- */
+
+static void
+emit_source_profile_requests(GnNostrEventModel *self,
+                             GnostrTimelineBatch *batch)
+{
+  for (guint i = 0; i < gnostr_timeline_batch_get_n_profile_requests(batch); i++) {
+    const char *pubkey = gnostr_timeline_batch_get_profile_request(batch, i);
+    if (pubkey)
+      g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, pubkey);
+  }
+
+  if (gnostr_timeline_batch_get_n_profile_requests(batch) > 0) {
+    guint n = gnostr_timeline_batch_get_n_profile_requests(batch);
+    const gchar **pk_array = g_new0(const gchar *, n + 1);
+    for (guint i = 0; i < n; i++)
+      pk_array[i] = gnostr_timeline_batch_get_profile_request(batch, i);
+    pk_array[n] = NULL;
+    gnostr_profile_provider_prefetch_batch_async(pk_array);
+    g_free(pk_array);
+  }
+}
+
+static void
+apply_source_live_head_batch(GnNostrEventModel *self,
+                             GnostrTimelineBatch *batch)
+{
+  void *txn = NULL;
+  gboolean have_txn = (storage_ndb_begin_query(&txn, NULL) == 0 && txn != NULL);
+
+  guint inserted_count = 0;
+  guint direct_inserted = 0;
+  guint old_len = self->notes->len;
+  gint64 arrival_time_us = g_get_monotonic_time();
+  guint n_entries = gnostr_timeline_batch_get_n_entries(batch);
+
+  for (guint i = 0; i < n_entries; i++) {
+    const GnostrTimelineBatchEntry *ve = gnostr_timeline_batch_get_entry(batch, i);
+    if (!ve)
+      continue;
+
+    if (has_note_key(self, ve->note_key))
+      continue;
+    if (has_note_key_pending(self, ve->note_key))
+      continue;
+
+    if (have_txn && ve->pubkey_hex && !author_is_ready(self, ve->pubkey_hex)) {
+      uint8_t pk32[32];
+      if (hex_to_bytes32(ve->pubkey_hex, pk32)) {
+        GNostrProfile *p = profile_cache_ensure_from_db(self, txn, pk32, ve->pubkey_hex);
+        if (!p)
+          g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, ve->pubkey_hex);
+      }
+    } else if (!ve->has_profile && ve->pubkey_hex) {
+      g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, ve->pubkey_hex);
+    }
+
+    if (ve->reply_id && strlen(ve->reply_id) == 64) {
+      uint8_t parent_id32[32];
+      if (hex_to_bytes32(ve->reply_id, parent_id32)) {
+        if (ve->kind == 1 || ve->kind == 1111)
+          storage_ndb_increment_note_meta(parent_id32, "direct_replies");
+        else if (ve->kind == 6)
+          storage_ndb_increment_note_meta(parent_id32, "reposts");
+      }
+    }
+
+    if (ve->root_id || ve->reply_id) {
+      if (!g_hash_table_contains(self->thread_info, &ve->note_key)) {
+        ThreadInfo *tinfo = g_new0(ThreadInfo, 1);
+        tinfo->root_id = g_strdup(ve->root_id);
+        tinfo->parent_id = g_strdup(ve->reply_id);
+        tinfo->depth = 0;
+        uint64_t *key_copy = g_new(uint64_t, 1);
+        *key_copy = ve->note_key;
+        g_hash_table_insert(self->thread_info, key_copy, tinfo);
+      }
+    }
+
+    if (have_txn) {
+      storage_ndb_note *note = storage_ndb_get_note_ptr(txn, ve->note_key);
+      if (note)
+        precache_item_from_note(self, ve->note_key, ve->created_at, note);
+    }
+
+    inserted_count++;
+
+    if (self->drain_enabled) {
+      PendingEntry pentry = {
+        .note_key = ve->note_key,
+        .created_at = ve->created_at,
+        .arrival_time_us = arrival_time_us
+      };
+      memcpy(pentry.event_id, ve->event_id, sizeof(pentry.event_id));
+      insertion_buffer_sorted_insert(self->insertion_buffer, &pentry);
+      add_note_key_to_insertion_set(self, ve->note_key);
+    } else if (insert_note_silent(self, ve->note_key, ve->created_at, ve->event_id,
+                                  ve->root_id, ve->reply_id, 0)) {
+      direct_inserted++;
+    }
+  }
+
+  if (have_txn)
+    storage_ndb_end_query(txn);
+
+  if (direct_inserted > 0) {
+    GArray *evicted_keys = NULL;
+    enforce_window_inline(self, &evicted_keys);
+    emit_items_changed_safe(self, 0, old_len, self->notes->len);
+    cleanup_evicted_keys(self, evicted_keys);
+    g_debug("[SOURCE→MODEL] Direct insert: %u items, model now %u",
+            direct_inserted, self->notes->len);
+  }
+
+  if (inserted_count > direct_inserted) {
+    guint buffered = inserted_count - direct_inserted;
+    if (self->insertion_buffer->len > self->peak_insertion_depth)
+      self->peak_insertion_depth = self->insertion_buffer->len;
+
+    g_debug("[SOURCE→MODEL] Buffered %u live-head items for visible-timing drain (pending: %u)",
+            buffered, self->insertion_buffer->len);
+
+    apply_insertion_backpressure(self);
+    if (self->insertion_buffer->len < INSERTION_BUFFER_MAX)
+      self->backpressure_active = FALSE;
+    ensure_drain_timer(self);
+  }
+
+  emit_source_profile_requests(self, batch);
+}
+
+static void
+apply_source_refresh_batch(GnNostrEventModel *self,
+                           GnostrTimelineBatch *batch)
+{
+  guint old_size = self->notes->len;
+  reset_internal_state_silent(self);
+
+  guint added = 0;
+  guint n_entries = gnostr_timeline_batch_get_n_entries(batch);
+  for (guint i = 0; i < n_entries; i++) {
+    const GnostrTimelineBatchEntry *e = gnostr_timeline_batch_get_entry(batch, i);
+    if (!e)
+      continue;
+
+    if (!e->has_profile && e->pubkey_hex)
+      g_signal_emit(self, signals[SIGNAL_NEED_PROFILE], 0, e->pubkey_hex);
+
+    if (insert_note_silent(self, e->note_key, e->created_at, e->event_id,
+                           e->root_id, e->reply_id, 0))
+      added++;
+  }
+
+  GArray *evicted_keys = NULL;
+  enforce_window_inline(self, &evicted_keys);
+
+  guint new_size = self->notes->len;
+  if (old_size > 0 || new_size > 0)
+    emit_items_changed_safe(self, 0, old_size, new_size);
+  cleanup_evicted_keys(self, evicted_keys);
+
+  emit_source_profile_requests(self, batch);
+
+  g_debug("[SOURCE→MODEL] Refresh batch applied: %u total items (%u added, %u replaced)",
+          self->notes->len, added, old_size);
+
+  g_signal_emit(self, signals[SIGNAL_REFRESH_COMPLETE], 0);
+}
+
+static void
+apply_source_profile_patch_batch(GnNostrEventModel *self,
+                                 GnostrTimelineBatch *batch)
+{
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn)
+    return;
+
+  guint n_entries = gnostr_timeline_batch_get_n_entries(batch);
+  for (guint i = 0; i < n_entries; i++) {
+    const GnostrTimelineBatchEntry *entry = gnostr_timeline_batch_get_entry(batch, i);
+    if (!entry)
+      continue;
+
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, entry->note_key);
+    if (!note || storage_ndb_note_kind(note) != 0)
+      continue;
+
+    const unsigned char *pk32 = storage_ndb_note_pubkey(note);
+    if (!pk32)
+      continue;
+
+    char pubkey_hex[65];
+    storage_ndb_hex_encode(pk32, pubkey_hex);
+
+    const char *content = storage_ndb_note_content(note);
+    uint32_t content_len = storage_ndb_note_content_length(note);
+    if (!content || content_len == 0)
+      continue;
+
+    profile_cache_update_from_content(self, pubkey_hex, content, (gsize)content_len);
+    notify_cached_items_for_pubkey(self, pubkey_hex);
+  }
+
+  storage_ndb_end_query(txn);
+}
+
+static void
+apply_source_delete_batch(GnNostrEventModel *self,
+                          GnostrTimelineBatch *batch)
+{
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn)
+    return;
+
+  guint n_entries = gnostr_timeline_batch_get_n_entries(batch);
+  for (guint i = 0; i < n_entries; i++) {
+    const GnostrTimelineBatchEntry *entry = gnostr_timeline_batch_get_entry(batch, i);
+    if (!entry)
+      continue;
+
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, entry->note_key);
+    if (!note || storage_ndb_note_kind(note) != 5)
+      continue;
+
+    const unsigned char *id32 = storage_ndb_note_id(note);
+    if (!id32)
+      continue;
+
+    char id_hex[65];
+    storage_ndb_hex_encode(id32, id_hex);
+
+    char **arr = NULL;
+    int n = 0;
+    char *filter = g_strdup_printf("[{\"ids\":[\"%s\"]}]", id_hex);
+    int qrc = storage_ndb_query(txn, filter, &arr, &n, NULL);
+    g_free(filter);
+
+    if (qrc == 0 && arr && n > 0 && arr[0])
+      handle_delete_event_json(self, txn, arr[0]);
+
+    storage_ndb_free_results(arr, n);
+  }
+
+  storage_ndb_end_query(txn);
+}
+
+static void
+apply_source_metadata_patch_batch(GnNostrEventModel *self,
+                                  GnostrTimelineBatch *batch)
+{
+  if (!self->reaction_cache || !self->zap_stats_cache)
+    return;
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn)
+    return;
+
+  GHashTable *reactions_to_update = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  GHashTable *zaps_to_update = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+  guint n_entries = gnostr_timeline_batch_get_n_entries(batch);
+  for (guint i = 0; i < n_entries; i++) {
+    const GnostrTimelineBatchEntry *entry = gnostr_timeline_batch_get_entry(batch, i);
+    if (!entry)
+      continue;
+
+    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, entry->note_key);
+    if (!note)
+      continue;
+
+    uint32_t kind = storage_ndb_note_kind(note);
+    if (kind == 7) {
+      char *target_event_id = NULL;
+      storage_ndb_note_get_nip10_thread(note, NULL, &target_event_id);
+      if (!target_event_id)
+        target_event_id = storage_ndb_note_get_last_etag(note);
+
+      if (target_event_id) {
+        gpointer existing = g_hash_table_lookup(self->reaction_cache, target_event_id);
+        guint new_count = (existing ? GPOINTER_TO_UINT(existing) : 0) + 1;
+        g_hash_table_insert(self->reaction_cache, g_strdup(target_event_id), GUINT_TO_POINTER(new_count));
+
+        uint8_t target_id32[32];
+        if (hex_to_bytes32(target_event_id, target_id32))
+          storage_ndb_increment_note_meta(target_id32, "reactions");
+
+        g_hash_table_add(reactions_to_update, g_strdup(target_event_id));
+        g_free(target_event_id);
+      }
+    } else if (kind == 9735) {
+      char *target_event_id = storage_ndb_note_get_last_etag(note);
+      if (target_event_id) {
+        guint zap_count = 0;
+        gint64 total_msat = 0;
+        storage_ndb_get_zap_stats(target_event_id, &zap_count, &total_msat);
+
+        ZapStats *stats = g_hash_table_lookup(self->zap_stats_cache, target_event_id);
+        if (!stats) {
+          stats = g_new0(ZapStats, 1);
+          g_hash_table_insert(self->zap_stats_cache, g_strdup(target_event_id), stats);
+        }
+        stats->count = zap_count;
+        stats->total_msat = total_msat;
+
+        g_hash_table_add(zaps_to_update, g_strdup(target_event_id));
+        g_free(target_event_id);
+      }
+    }
+  }
+
+  storage_ndb_end_query(txn);
+
+  if (g_hash_table_size(self->reaction_cache) > REACTION_CACHE_MAX) {
+    g_debug("[REACTION] Cache overflow (%u > %u), clearing",
+            g_hash_table_size(self->reaction_cache), REACTION_CACHE_MAX);
+    g_hash_table_remove_all(self->reaction_cache);
+  }
+  if (g_hash_table_size(self->zap_stats_cache) > ZAP_CACHE_MAX) {
+    g_debug("[ZAP] Cache overflow (%u > %u), clearing",
+            g_hash_table_size(self->zap_stats_cache), ZAP_CACHE_MAX);
+    g_hash_table_remove_all(self->zap_stats_cache);
+  }
+
+  GHashTableIter iter;
+  gpointer key;
+  g_hash_table_iter_init(&iter, reactions_to_update);
+  while (g_hash_table_iter_next(&iter, &key, NULL))
+    update_item_reaction_count(self, (const char *)key);
+
+  g_hash_table_iter_init(&iter, zaps_to_update);
+  while (g_hash_table_iter_next(&iter, &key, NULL))
+    update_item_zap_stats(self, (const char *)key);
+
+  g_hash_table_unref(reactions_to_update);
+  g_hash_table_unref(zaps_to_update);
+}
+
+static GnostrTimelineSource *
+ensure_timeline_source(GnNostrEventModel *self)
+{
+  g_return_val_if_fail(GN_IS_NOSTR_EVENT_MODEL(self), NULL);
+
+  if (!self->timeline_source) {
+    self->timeline_source = gnostr_timeline_source_new();
+    g_signal_connect(self->timeline_source, "batch",
+                     G_CALLBACK(on_timeline_source_batch), self);
+    if (self->timeline_query)
+      gnostr_timeline_source_set_query(self->timeline_source, self->timeline_query);
+  }
+
+  return self->timeline_source;
+}
+
+static void
+on_timeline_source_batch(GnostrTimelineSource *source,
+                         GnostrTimelineBatch *batch,
+                         gpointer user_data)
+{
+  GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(user_data);
+  if (!GN_IS_NOSTR_EVENT_MODEL(self) || !GNOSTR_IS_TIMELINE_BATCH(batch))
+    return;
+
+  if (source && gnostr_timeline_batch_get_generation(batch) != gnostr_timeline_source_get_generation(source)) {
+    g_debug("[SOURCE→MODEL] Dropping stale %s batch gen=%" G_GUINT64_FORMAT,
+            gnostr_timeline_batch_kind_to_string(gnostr_timeline_batch_get_kind(batch)),
+            gnostr_timeline_batch_get_generation(batch));
+    return;
+  }
+
+  switch (gnostr_timeline_batch_get_kind(batch)) {
+    case GNOSTR_TIMELINE_BATCH_REFRESH:
+      apply_source_refresh_batch(self, batch);
+      break;
+    case GNOSTR_TIMELINE_BATCH_LIVE_HEAD:
+      apply_source_live_head_batch(self, batch);
+      break;
+    case GNOSTR_TIMELINE_BATCH_DELETE:
+      apply_source_delete_batch(self, batch);
+      break;
+    case GNOSTR_TIMELINE_BATCH_PROFILE_PATCH:
+      apply_source_profile_patch_batch(self, batch);
+      break;
+    case GNOSTR_TIMELINE_BATCH_METADATA_PATCH:
+      apply_source_metadata_patch_batch(self, batch);
+      break;
+    case GNOSTR_TIMELINE_BATCH_PAGE_OLDER:
+    case GNOSTR_TIMELINE_BATCH_PAGE_NEWER:
+      /* Legacy async pagination still applies its own source results until the
+       * compositor controller owns paging admission.  The source exposes these
+       * batches for the next layer, but this adapter intentionally leaves the
+       * visible pagination code path unchanged. */
+      g_debug("[SOURCE→MODEL] Ignoring %s batch in legacy adapter",
+              gnostr_timeline_batch_kind_to_string(gnostr_timeline_batch_get_kind(batch)));
+      break;
+  }
+}
+
 /* -------------------- GObject boilerplate -------------------- */
 
 static void gn_nostr_event_model_finalize(GObject *object) {
   GnNostrEventModel *self = GN_NOSTR_EVENT_MODEL(object);
 
-  /* Unsubscribe from nostrdb via dispatcher */
-  if (self->sub_timeline > 0)   { gn_ndb_unsubscribe(self->sub_timeline);   self->sub_timeline = 0;   }
-  if (self->sub_profiles > 0)   { gn_ndb_unsubscribe(self->sub_profiles);   self->sub_profiles = 0;   }
-  if (self->sub_deletes > 0)    { gn_ndb_unsubscribe(self->sub_deletes);    self->sub_deletes = 0;    }
-  if (self->sub_reactions > 0)  { gn_ndb_unsubscribe(self->sub_reactions);  self->sub_reactions = 0;  }
-  if (self->sub_zaps > 0)       { gn_ndb_unsubscribe(self->sub_zaps);       self->sub_zaps = 0;       }
+  /* Data-time acquisition source owns nostrdb subscriptions. */
+  g_clear_object(&self->timeline_source);
 
   /* NIP-25/57: Clean up reaction and zap caches */
   if (self->reaction_cache) g_hash_table_unref(self->reaction_cache);
@@ -2209,12 +2610,10 @@ static void gn_nostr_event_model_init(GnNostrEventModel *self) {
   self->reaction_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->zap_stats_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)zap_stats_free);
 
-  /* Install lifetime subscriptions via dispatcher (marshals to main loop) */
-  self->sub_profiles  = gn_ndb_subscribe(FILTER_PROFILES,  on_sub_profiles_batch,  self, NULL);
-  self->sub_timeline  = gn_ndb_subscribe(FILTER_TIMELINE,  on_sub_timeline_batch,  self, NULL);
-  self->sub_deletes   = gn_ndb_subscribe(FILTER_DELETES,   on_sub_deletes_batch,   self, NULL);
-  self->sub_reactions = gn_ndb_subscribe(FILTER_REACTIONS, on_sub_reactions_batch, self, NULL);
-  self->sub_zaps      = gn_ndb_subscribe(FILTER_ZAPS,      on_sub_zaps_batch,      self, NULL);
+  /* The data-time source is created lazily when the GNostrTimelineQuery API
+   * or async source-backed refresh path is used.  Legacy-only unit tests keep
+   * their historical no-source lifecycle while app timeline code opts in by
+   * setting a timeline query. */
 }
 
 /* -------------------- Public API -------------------- */
@@ -2274,6 +2673,8 @@ void gn_nostr_event_model_set_timeline_query(GnNostrEventModel *self, GNostrTime
   self->limit = query->limit > 0 ? query->limit : MODEL_MAX_ITEMS;
   self->window_size = MIN((guint)MODEL_MAX_ITEMS, self->limit);
 
+  gnostr_timeline_source_set_query(ensure_timeline_source(self), self->timeline_query);
+
   g_debug("[MODEL] Timeline query set: kinds=%zu authors=%zu window=%u",
           self->n_kinds, self->n_authors, self->window_size);
 }
@@ -2318,6 +2719,22 @@ void gn_nostr_event_model_set_query(GnNostrEventModel *self, const GnNostrQueryP
   /* Treat limit as desired window size cap, but never exceed MODEL_MAX_ITEMS */
   self->limit = params->limit > 0 ? params->limit : MODEL_MAX_ITEMS;
   self->window_size = MIN((guint)MODEL_MAX_ITEMS, (guint)(self->limit > 0 ? self->limit : MODEL_MAX_ITEMS));
+
+  if (self->timeline_source) {
+    GNostrTimelineQueryBuilder *builder = gnostr_timeline_query_builder_new();
+    for (gsize i = 0; i < self->n_kinds; i++)
+      gnostr_timeline_query_builder_add_kind(builder, self->kinds[i]);
+    for (gsize i = 0; i < self->n_authors; i++)
+      gnostr_timeline_query_builder_add_author(builder, self->authors[i]);
+    if (self->since > 0)
+      gnostr_timeline_query_builder_set_since(builder, self->since);
+    if (self->until > 0)
+      gnostr_timeline_query_builder_set_until(builder, self->until);
+    gnostr_timeline_query_builder_set_limit(builder, self->window_size);
+    GNostrTimelineQuery *source_query = gnostr_timeline_query_builder_build(builder);
+    gnostr_timeline_source_set_query(self->timeline_source, source_query);
+    gnostr_timeline_query_free(source_query);
+  }
 
   g_debug("[MODEL] Query updated: kinds=%zu authors=%zu window=%u",
           self->n_kinds, self->n_authors, self->window_size);
@@ -2831,6 +3248,11 @@ on_refresh_async_done(GObject *source, GAsyncResult *result, gpointer user_data)
 
 void gn_nostr_event_model_refresh_async(GnNostrEventModel *self) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
+
+  if (self->timeline_source) {
+    gnostr_timeline_source_refresh_async(self->timeline_source);
+    return;
+  }
 
   RefreshQuerySnap *snap = refresh_snap_new(self);
   GTask *task = g_task_new(self, NULL, on_refresh_async_done, NULL);

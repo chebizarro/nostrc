@@ -3,8 +3,10 @@
 #include "gnostr-main-window-private.h"
 
 #include "gnostr-session-view.h"
+#include "gnostr-timeline-feed-controller.h"
 
 #include "../model/gn-nostr-event-model.h"
+#include "../model/gnostr-timeline-batch.h"
 
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <nostr-gtk-1.0/gnostr-thread-view.h>
@@ -41,6 +43,26 @@ gnostr_main_window_update_meta_from_profile_json_internal(GnostrMainWindow *self
                                                   const char *content_json);
   if (self->event_model) {
     gn_nostr_event_model_update_profile(G_OBJECT(self->event_model), pubkey_hex, content_json);
+  }
+
+  if (self->timeline_feed_controller) {
+    GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey_hex);
+    if (meta) {
+      GnostrTimelineProfilePatch patch = {
+        .pubkey_hex = (char *)pubkey_hex,
+        .display_name = meta->display_name,
+        .handle = meta->name,
+        .avatar_url = meta->picture,
+        .nip05 = meta->nip05,
+      };
+      GnostrTimelineBatch *batch = gnostr_timeline_batch_new(
+          GNOSTR_TIMELINE_BATCH_PROFILE_PATCH,
+          gnostr_timeline_feed_controller_get_query_generation(self->timeline_feed_controller));
+      gnostr_timeline_batch_add_profile_patch(batch, &patch);
+      gnostr_timeline_feed_controller_ingest_batch(self->timeline_feed_controller, batch);
+      g_object_unref(batch);
+      gnostr_profile_meta_free(meta);
+    }
   }
 
   if (self->user_pubkey_hex && pubkey_hex &&

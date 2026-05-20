@@ -6,51 +6,91 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 -->
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <template class="GnostrChannelListView" parent="GtkWidget">
+  <template class="GnostrCalendarEventsView" parent="GtkWidget">
+    <accessibility>
+      <property name="label" translatable="yes">Calendar Events</property>
+    </accessibility>
     <child>
       <object class="GtkBox" id="root">
         <property name="orientation">1</property>
         <property name="hexpand">true</property>
         <property name="vexpand">true</property>
         <child>
-          <object class="GtkBox" id="header">
-            <property name="orientation">1</property>
+          <object class="GtkBox" id="header_box">
+            <property name="orientation">0</property>
             <property name="spacing">8</property>
             <property name="margin-start">12</property>
             <property name="margin-end">12</property>
-            <property name="margin-top">8</property>
+            <property name="margin-top">12</property>
             <property name="margin-bottom">8</property>
             <child>
-              <object class="GtkBox">
-                <property name="orientation">0</property>
-                <property name="spacing">8</property>
-                <child>
-                  <object class="GtkLabel">
-                    <property name="label">Public Channels</property>
-                    <property name="xalign">0</property>
-                    <property name="hexpand">true</property>
-                    <style>
-                      <class name="title-2"/>
-                    </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkButton" id="btn_create">
-                    <property name="icon-name">list-add-symbolic</property>
-                    <property name="tooltip-text">Create Channel</property>
-                    <style>
-                      <class name="suggested-action"/>
-                    </style>
-                  </object>
-                </child>
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Events</property>
+                <property name="xalign">0</property>
+                <property name="hexpand">true</property>
+                <style>
+                  <class name="title-2"/>
+                </style>
               </object>
             </child>
             <child>
-              <object class="GtkSearchEntry" id="search_entry">
-                <property name="placeholder-text">Search channels...</property>
-                <property name="hexpand">true</property>
+              <object class="GtkLabel" id="lbl_count">
+                <property name="label"></property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
               </object>
             </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="filter_row">
+            <property name="orientation">0</property>
+            <property name="spacing">6</property>
+            <property name="margin-start">12</property>
+            <property name="margin-end">12</property>
+            <property name="margin-bottom">8</property>
+            <child>
+              <object class="GtkToggleButton" id="btn_all">
+                <property name="label" translatable="yes">All</property>
+                <property name="active">true</property>
+                <style>
+                  <class name="pill"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkToggleButton" id="btn_upcoming">
+                <property name="label" translatable="yes">Upcoming</property>
+                <property name="group">btn_all</property>
+                <style>
+                  <class name="pill"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkToggleButton" id="btn_ongoing">
+                <property name="label" translatable="yes">Now</property>
+                <property name="group">btn_all</property>
+                <style>
+                  <class name="pill"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkToggleButton" id="btn_past">
+                <property name="label" translatable="yes">Past</property>
+                <property name="group">btn_all</property>
+                <style>
+                  <class name="pill"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator">
+            <property name="orientation">0</property>
           </object>
         </child>
         <child>
@@ -60,21 +100,18 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="transition-type">1</property>
             <child>
               <object class="GtkStackPage">
-                <property name="name">list</property>
+                <property name="name">results</property>
                 <property name="child">
-                  <object class="GtkScrolledWindow" id="scroller">
+                  <object class="GtkScrolledWindow">
                     <property name="hexpand">true</property>
                     <property name="vexpand">true</property>
                     <property name="hscrollbar-policy">2</property>
-                    <child>
-                      <object class="GtkListView" id="list_view">
+                    <property name="child">
+                      <object class="GtkListView" id="events_list">
                         <property name="hexpand">true</property>
                         <property name="vexpand">true</property>
-                        <style>
-                          <class name="channel-list"/>
-                        </style>
                       </object>
-                    </child>
+                    </property>
                   </object>
                 </property>
               </object>
@@ -83,14 +120,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkStackPage">
                 <property name="name">empty</property>
                 <property name="child">
-                  <object class="GtkBox" id="empty_state">
+                  <object class="GtkBox">
                     <property name="orientation">1</property>
                     <property name="halign">3</property>
                     <property name="valign">3</property>
                     <property name="spacing">12</property>
                     <child>
                       <object class="GtkImage">
-                        <property name="icon-name">system-users-symbolic</property>
+                        <property name="icon-name">x-office-calendar-symbolic</property>
                         <property name="pixel-size">64</property>
                         <style>
                           <class name="dim-label"/>
@@ -99,7 +136,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkLabel">
-                        <property name="label">No Channels</property>
+                        <property name="label" translatable="yes">No Events Found</property>
                         <style>
                           <class name="title-2"/>
                         </style>
@@ -107,7 +144,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkLabel">
-                        <property name="label">Create a channel or discover public chat rooms.</property>
+                        <property name="label" translatable="yes">Calendar events will appear here as you browse the network.</property>
                         <property name="wrap">true</property>
                         <property name="justify">2</property>
                         <property name="max-width-chars">40</property>
@@ -138,7 +175,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkLabel">
-                        <property name="label">Loading channels...</property>
+                        <property name="label" translatable="yes">Loading events…</property>
                         <style>
                           <class name="dim-label"/>
                         </style>

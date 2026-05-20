@@ -329,6 +329,15 @@ struct _NostrGtkNoteCardRow {
   /* Disposal state - prevents async callbacks from accessing widget after dispose starts */
   gboolean disposed;
 
+  /* Compositor geometry reservation/measurement state. */
+  gint reserved_height;
+  gchar *geometry_token;
+  guint64 snapshot_generation;
+  gint last_reported_width;
+  gint last_reported_height;
+  gchar *last_reported_geometry_token;
+  guint64 last_reported_snapshot_generation;
+
   /* nostrc-dqwq.2: Deferred media widget creation.
    * During bind, store media URLs instead of creating heavyweight GtkPicture /
    * GnostrVideoPlayer widgets.  The actual widgets are created only when the
@@ -396,6 +405,7 @@ enum {
   SIGNAL_LABEL_NOTE_REQUESTED,  /* NIP-32: add label to note */
   SIGNAL_HIGHLIGHT_REQUESTED,  /* NIP-84: highlight text selection */
   SIGNAL_DM_REQUESTED,  /* NIP-04/17: open DM conversation with user */
+  SIGNAL_MEASURED_GEOMETRY,
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -704,6 +714,8 @@ static void nostr_gtk_note_card_row_finalize(GObject *obj) {
   g_clear_pointer(&self->video_title, g_free);
   /* nostrc-dqwq.2: deferred media cleanup */
   g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+  g_clear_pointer(&self->geometry_token, g_free);
+  g_clear_pointer(&self->last_reported_geometry_token, g_free);
   /* nostrc-ncr-lifecycle: Release our ref on the binding context.
    * Any in-flight callbacks still holding refs will keep it alive until
    * they complete and call unref. The GWeakRef inside the context will
@@ -1844,6 +1856,35 @@ static void on_show_sensitive_clicked(GtkButton *btn, gpointer user_data) {
   }
 }
 
+static void
+nostr_gtk_note_card_row_maybe_emit_measured_geometry(NostrGtkNoteCardRow *self,
+                                                     gint width,
+                                                     gint height)
+{
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
+  if (self->disposed || !self->geometry_token || !*self->geometry_token) return;
+  if (width <= 0 || height <= 0) return;
+
+  if (self->last_reported_width == width &&
+      self->last_reported_height == height &&
+      self->last_reported_snapshot_generation == self->snapshot_generation &&
+      g_strcmp0(self->last_reported_geometry_token, self->geometry_token) == 0) {
+    return;
+  }
+
+  self->last_reported_width = width;
+  self->last_reported_height = height;
+  self->last_reported_snapshot_generation = self->snapshot_generation;
+  g_free(self->last_reported_geometry_token);
+  self->last_reported_geometry_token = g_strdup(self->geometry_token);
+
+  g_signal_emit(self, signals[SIGNAL_MEASURED_GEOMETRY], 0,
+                self->geometry_token,
+                self->snapshot_generation,
+                width,
+                height);
+}
+
 /* Clamp natural horizontal width so note cards never force the timeline to
  * expand beyond its allocated width.  Child widgets like GtkPicture report
  * their intrinsic pixel dimensions as natural size (often 1200+ px for images).
@@ -1886,7 +1927,22 @@ nostr_gtk_note_card_row_measure(GtkWidget      *widget,
      * window to expand permanently. */
     *minimum = 0;
     *natural = 0;
+  } else if (self->reserved_height > 0) {
+    *minimum = MAX(*minimum, self->reserved_height);
+    *natural = MAX(*natural, self->reserved_height);
   }
+}
+
+static void
+nostr_gtk_note_card_row_size_allocate(GtkWidget *widget,
+                                      int        width,
+                                      int        height,
+                                      int        baseline)
+{
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(widget);
+
+  GTK_WIDGET_CLASS(nostr_gtk_note_card_row_parent_class)->size_allocate(widget, width, height, baseline);
+  nostr_gtk_note_card_row_maybe_emit_measured_geometry(self, width, height);
 }
 
 static void nostr_gtk_note_card_row_class_init(NostrGtkNoteCardRowClass *klass) {
@@ -1895,6 +1951,7 @@ static void nostr_gtk_note_card_row_class_init(NostrGtkNoteCardRowClass *klass) 
   gclass->dispose = nostr_gtk_note_card_row_dispose;
   gclass->finalize = nostr_gtk_note_card_row_finalize;
   wclass->measure = nostr_gtk_note_card_row_measure;
+  wclass->size_allocate = nostr_gtk_note_card_row_size_allocate;
 
   gtk_widget_class_set_layout_manager_type(wclass, GTK_TYPE_BOX_LAYOUT);
   gtk_widget_class_set_template_from_resource(wclass, UI_RESOURCE);
@@ -2024,6 +2081,10 @@ static void nostr_gtk_note_card_row_class_init(NostrGtkNoteCardRowClass *klass) 
   signals[SIGNAL_DM_REQUESTED] = g_signal_new("dm-requested",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 1, G_TYPE_STRING);
+  /* Compositor measurement: geometry_token, snapshot_generation, width, height */
+  signals[SIGNAL_MEASURED_GEOMETRY] = g_signal_new("measured-geometry",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 4, G_TYPE_STRING, G_TYPE_UINT64, G_TYPE_INT, G_TYPE_INT);
 }
 
 static void nostr_gtk_note_card_row_init(NostrGtkNoteCardRow *self) {
@@ -2162,6 +2223,62 @@ static void nostr_gtk_note_card_row_init(NostrGtkNoteCardRow *self) {
 
 NostrGtkNoteCardRow *nostr_gtk_note_card_row_new(void) {
   return g_object_new(NOSTR_GTK_TYPE_NOTE_CARD_ROW, NULL);
+}
+
+void
+nostr_gtk_note_card_row_set_reserved_height(NostrGtkNoteCardRow *self,
+                                            gint reserved_height)
+{
+  g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
+
+  reserved_height = MAX(reserved_height, 0);
+  if (self->reserved_height == reserved_height) return;
+
+  self->reserved_height = reserved_height;
+  gtk_widget_queue_resize(GTK_WIDGET(self));
+}
+
+void
+nostr_gtk_note_card_row_set_geometry_token(NostrGtkNoteCardRow *self,
+                                           const gchar *geometry_token,
+                                           guint64 snapshot_generation)
+{
+  g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
+
+  if (g_strcmp0(self->geometry_token, geometry_token) == 0 &&
+      self->snapshot_generation == snapshot_generation) {
+    return;
+  }
+
+  g_free(self->geometry_token);
+  self->geometry_token = g_strdup(geometry_token);
+  self->snapshot_generation = snapshot_generation;
+
+  self->last_reported_width = 0;
+  self->last_reported_height = 0;
+  self->last_reported_snapshot_generation = 0;
+  g_clear_pointer(&self->last_reported_geometry_token, g_free);
+}
+
+gint
+nostr_gtk_note_card_row_get_reserved_height(NostrGtkNoteCardRow *self)
+{
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), 0);
+  return self->reserved_height;
+}
+
+const gchar *
+nostr_gtk_note_card_row_get_geometry_token(NostrGtkNoteCardRow *self)
+{
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), NULL);
+  return self->geometry_token;
+}
+
+guint64
+nostr_gtk_note_card_row_get_snapshot_generation(NostrGtkNoteCardRow *self)
+{
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), 0);
+  return self->snapshot_generation;
 }
 
 static void set_avatar_initials(NostrGtkNoteCardRow *self, const char *display, const char *handle) {
@@ -6482,6 +6599,17 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
 
   /* Reset disposed flag - widget is being reused */
   self->disposed = FALSE;
+
+  /* Clear compositor geometry state from the previous item. Snapshot bindings
+   * set a fresh token/reservation before revealing content; legacy bindings
+   * keep the default no-token/no-reservation behavior. */
+  self->reserved_height = 0;
+  g_clear_pointer(&self->geometry_token, g_free);
+  self->snapshot_generation = 0;
+  self->last_reported_width = 0;
+  self->last_reported_height = 0;
+  self->last_reported_snapshot_generation = 0;
+  g_clear_pointer(&self->last_reported_geometry_token, g_free);
 
   /* Assign unique binding ID (nostrc-534d). Async callbacks capture this ID
    * and check it before modifying the widget. If IDs don't match, the row

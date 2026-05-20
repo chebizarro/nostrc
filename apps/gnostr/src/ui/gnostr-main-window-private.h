@@ -26,6 +26,7 @@ typedef struct _GnostrRepoBrowser GnostrRepoBrowser;
 typedef struct _GnostrSignerService GnostrSignerService;
 typedef struct _NostrGtkTimelineView NostrGtkTimelineView;
 typedef struct _GnostrThreadPrefetch GnostrThreadPrefetch;
+typedef struct _GnostrTimelineFeedController GnostrTimelineFeedController;
 
 typedef enum {
   COMPOSE_CONTEXT_NONE,
@@ -70,8 +71,9 @@ struct _GnostrMainWindow {
   /* Session state */
   GHashTable *seen_texts; /* owned; keys are g_strdup(text), values unused */
 
-  /* GListModel-based timeline (primary data source) */
-  GnNostrEventModel *event_model; /* owned; reactive model over nostrdb */
+  /* Timeline feed models */
+  GnNostrEventModel *event_model; /* owned legacy reactive model; not used by main feed */
+  GnostrTimelineFeedController *timeline_feed_controller; /* owned; main feed compositor */
   guint model_refresh_pending;    /* debounced refresh source id, 0 if none */
 
   /* REMOVED: avatar_tex_cache was dead code - never populated.
@@ -299,6 +301,9 @@ void gnostr_main_window_on_timeline_scroll_value_changed_internal(GtkAdjustment 
 void gnostr_main_window_on_event_model_new_items_pending_internal(GnNostrEventModel *model,
                                                                   guint count,
                                                                   gpointer user_data);
+void gnostr_main_window_on_timeline_restore_scroll_internal(GnostrTimelineFeedController *controller,
+                                                            double scroll_y,
+                                                            gpointer user_data);
 void gnostr_main_window_on_timeline_tab_filter_changed_internal(NostrGtkTimelineView *view,
                                                                 guint type,
                                                                 const char *filter_value,

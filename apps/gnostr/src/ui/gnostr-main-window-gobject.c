@@ -195,6 +195,7 @@ gnostr_main_window_dispose_internal(GObject *object)
   g_clear_object(&self->pool);
   g_clear_pointer(&self->seen_texts, g_hash_table_unref);
   g_clear_pointer(&self->profile_fetch_requested, g_hash_table_unref);
+  g_clear_object(&self->timeline_feed_controller);
   g_clear_object(&self->event_model);
   g_clear_pointer(&self->liked_events, g_hash_table_unref);
 

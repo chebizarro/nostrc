@@ -187,8 +187,8 @@ target_compile_definitions(${APP_CLIENT_BIN} PRIVATE APP_ID="${APP_CLIENT_FLATPA
 )
 # Enable real SimplePool-backed timeline fetching in the UI
 target_compile_definitions(${APP_CLIENT_BIN} PRIVATE GNOSTR_ENABLE_REAL_SIMPLEPOOL)
-# Plugin search path for development builds - points to build/plugins directory
-target_compile_definitions(${APP_CLIENT_BIN} PRIVATE GNOSTR_DEV_PLUGIN_DIR="${CMAKE_BINARY_DIR}/plugins")
+# Plugin search path for development builds - points to bundled plugin output directory
+target_compile_definitions(${APP_CLIENT_BIN} PRIVATE GNOSTR_DEV_PLUGIN_DIR="${CMAKE_BINARY_DIR}/apps/gnostr/plugins")
 # Find secp256k1 for key derivation in identity.c
 pkg_check_modules(SECP256K1 QUIET libsecp256k1)
 # Project root for finding shared libraries (works whether built standalone or from top-level)
@@ -1031,6 +1031,42 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "timeline;query;unit;gnostr")
 
+  # Timeline snapshot primitive unit tests (nostrc-2e5.2)
+  add_executable(gnostr-test-timeline-snapshot
+    tests/test_timeline_snapshot.c
+    src/model/gnostr-timeline-snapshot.c
+    src/model/gnostr-timeline-snapshot-model.c)
+  target_compile_features(gnostr-test-timeline-snapshot PRIVATE c_std_11)
+  target_include_directories(gnostr-test-timeline-snapshot PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(gnostr-test-timeline-snapshot PRIVATE PkgConfig::GLIB PkgConfig::GIO)
+  _gnostr_apply_sanitizers(gnostr-test-timeline-snapshot)
+  add_test(NAME gnostr-test-timeline-snapshot COMMAND gnostr-test-timeline-snapshot)
+  set_tests_properties(gnostr-test-timeline-snapshot PROPERTIES
+    TIMEOUT 30
+    LABELS "timeline;snapshot;model;unit;gnostr")
+
+  # Timeline feed compositor/controller unit tests (nostrc-2e5.4)
+  add_executable(gnostr-test-timeline-feed-controller
+    tests/test_timeline_feed_controller.c
+    src/ui/gnostr-timeline-feed-controller.c
+    src/model/gnostr-timeline-batch.c
+    src/model/gnostr-timeline-snapshot.c
+    src/model/gnostr-timeline-snapshot-model.c)
+  target_compile_features(gnostr-test-timeline-feed-controller PRIVATE c_std_11)
+  target_compile_definitions(gnostr-test-timeline-feed-controller PRIVATE
+    GNOSTR_TIMELINE_FEED_CONTROLLER_NO_SOURCE=1)
+  target_include_directories(gnostr-test-timeline-feed-controller PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include)
+  target_link_libraries(gnostr-test-timeline-feed-controller PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO nostr_gobject)
+  _gnostr_apply_sanitizers(gnostr-test-timeline-feed-controller)
+  add_test(NAME gnostr-test-timeline-feed-controller COMMAND gnostr-test-timeline-feed-controller)
+  set_tests_properties(gnostr-test-timeline-feed-controller PROPERTIES
+    TIMEOUT 30
+    LABELS "timeline;feed;controller;unit;gnostr")
+
   # NIP-66 Relay Discovery unit tests
   add_executable(gnostr-test-nip66-relay-discovery tests/test_nip66_relay_discovery.c)
   target_compile_features(gnostr-test-nip66-relay-discovery PRIVATE c_std_11)
@@ -1210,6 +1246,8 @@ if (BUILD_TESTING)
     gn_add_gtest(gnostr-test-event-model-windowing
       SOURCES tests/test_event_model_windowing.c
               src/model/gn-nostr-event-model.c
+              src/model/gnostr-timeline-source.c
+              src/model/gnostr-timeline-batch.c
               src/model/gn-nostr-event-item.c
       LIBS gnostr-testkit nostr_gobject nostr_gtk
            PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
@@ -1300,6 +1338,8 @@ if (BUILD_TESTING)
     gn_add_gtest(gnostr-test-delete-authorization
       SOURCES tests/integ/test_model_delete_authorization.c
               src/model/gn-nostr-event-model.c
+              src/model/gnostr-timeline-source.c
+              src/model/gnostr-timeline-batch.c
               src/model/gn-nostr-event-item.c
               src/util/relays.c
               src/util/relay_info.c
@@ -1351,6 +1391,8 @@ if (BUILD_TESTING)
     gn_add_gtest(gnostr-test-ndb-main-thread-violations
       SOURCES tests/test_ndb_main_thread_violations.c
               src/model/gn-nostr-event-model.c
+              src/model/gnostr-timeline-source.c
+              src/model/gnostr-timeline-batch.c
               src/model/gn-nostr-event-item.c
               src/util/relays.c
               src/util/relay_info.c
@@ -1403,6 +1445,8 @@ if (BUILD_TESTING)
     gn_add_gtest_xvfb(gnostr-test-real-bind-latency
       SOURCES tests/test_real_bind_latency.c
               src/model/gn-nostr-event-model.c
+              src/model/gnostr-timeline-source.c
+              src/model/gnostr-timeline-batch.c
               src/model/gn-nostr-event-item.c
               src/util/relays.c
               src/util/relay_info.c

@@ -21,23 +21,37 @@
 #include <string.h>
 
 #include "../model/gn-nostr-event-item.h"
+#include "../model/gnostr-timeline-batch.h"
 #include "gnostr-timeline-embed-private.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 
+typedef struct {
+  GnNostrEventItem *legacy_item;                  /* optional strong ref */
+  GnostrTimelineFeedController *feed_controller;  /* optional strong ref */
+  char *event_id;                                 /* target note id */
+} PendingMetadataTarget;
+
 struct _GnostrTimelineMetadataController {
   GObject parent_instance;
-  GPtrArray *pending;           /* refs to GnNostrEventItem instances */
-  GHashTable *pending_set;      /* pointer set for the current batch window,
-                                 * used to coalesce duplicate schedule()
-                                 * calls for the same item (does not hold
-                                 * refs — entries are cleared whenever the
-                                 * pending array is swapped or drained) */
+  GPtrArray *pending;           /* PendingMetadataTarget* */
+  GHashTable *pending_set;      /* string dedupe keys for current batch window */
   guint idle_id;
 };
 
 G_DEFINE_FINAL_TYPE(GnostrTimelineMetadataController,
                     gnostr_timeline_metadata_controller,
                     G_TYPE_OBJECT)
+
+static void
+pending_metadata_target_free(PendingMetadataTarget *target)
+{
+  if (!target)
+    return;
+  g_clear_object(&target->legacy_item);
+  g_clear_object(&target->feed_controller);
+  g_free(target->event_id);
+  g_free(target);
+}
 
 /* Data passed from the NDB worker thread back to the main thread. */
 typedef struct {
@@ -46,7 +60,7 @@ typedef struct {
   GHashTable *zap_stats;        /* event_id -> StorageNdbZapStats* */
   GHashTable *repost_counts;    /* event_id -> GUINT count */
   GHashTable *reply_counts;     /* hq-vvmzu: event_id -> GUINT count */
-  GPtrArray  *items;            /* refs to the GObjects */
+  GPtrArray  *targets;          /* PendingMetadataTarget* */
 } MetadataBatchResult;
 
 static void
@@ -57,7 +71,7 @@ metadata_batch_result_free(MetadataBatchResult *r) {
   g_clear_pointer(&r->zap_stats, g_hash_table_unref);
   g_clear_pointer(&r->repost_counts, g_hash_table_unref);
   g_clear_pointer(&r->reply_counts, g_hash_table_unref);
-  g_clear_pointer(&r->items, g_ptr_array_unref);
+  g_clear_pointer(&r->targets, g_ptr_array_unref);
   g_free(r);
 }
 
@@ -67,7 +81,7 @@ metadata_batch_query_thread(GTask *task, gpointer source_object,
                             gpointer task_data G_GNUC_UNUSED,
                             GCancellable *cancellable G_GNUC_UNUSED) {
   (void)source_object;
-  GPtrArray *items = g_object_get_data(G_OBJECT(task), "items");
+  GPtrArray *items = g_object_get_data(G_OBJECT(task), "targets");
   if (!items || items->len == 0) {
     g_task_return_pointer(task, NULL, NULL);
     return;
@@ -79,16 +93,12 @@ metadata_batch_query_thread(GTask *task, gpointer source_object,
   guint id_count = 0;
 
   for (guint i = 0; i < n; i++) {
-    GObject *obj = g_ptr_array_index(items, i);
-    if (!GN_IS_NOSTR_EVENT_ITEM(obj)) continue;
-    gchar *id_hex = NULL;
-    g_object_get(obj, "event-id", &id_hex, NULL);
+    PendingMetadataTarget *target = g_ptr_array_index(items, i);
+    const char *id_hex = target ? target->event_id : NULL;
     if (id_hex && strlen(id_hex) == 64) {
-      owned_ids[id_count] = id_hex;
-      event_ids[id_count] = id_hex;
+      owned_ids[id_count] = g_strdup(id_hex);
+      event_ids[id_count] = owned_ids[id_count];
       id_count++;
-    } else {
-      g_free(id_hex);
     }
   }
 
@@ -104,7 +114,7 @@ metadata_batch_query_thread(GTask *task, gpointer source_object,
     result->zap_stats = storage_ndb_get_zap_stats_batch(event_ids, id_count);
     result->repost_counts = storage_ndb_count_reposts_batch(event_ids, id_count);
     result->reply_counts = storage_ndb_count_replies_batch(event_ids, id_count);
-    result->items = g_ptr_array_ref(items);
+    result->targets = g_ptr_array_ref(items);
   }
 
   for (guint i = 0; i < id_count; i++)
@@ -115,73 +125,111 @@ metadata_batch_query_thread(GTask *task, gpointer source_object,
   g_task_return_pointer(task, result, (GDestroyNotify)metadata_batch_result_free);
 }
 
-/* Main thread: apply NDB query results to GObject items. */
+/* Main thread: apply NDB query results to legacy objects and/or compositor patches. */
 static void
 on_metadata_batch_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   (void)user_data;
   if (!GNOSTR_IS_TIMELINE_METADATA_CONTROLLER(source)) return;
 
   MetadataBatchResult *r = g_task_propagate_pointer(G_TASK(res), NULL);
-  if (!r || !r->items) {
+  if (!r || !r->targets) {
     metadata_batch_result_free(r);
     return;
   }
 
-  guint n = r->items->len;
+  GHashTable *patch_batches = g_hash_table_new(g_direct_hash, g_direct_equal);
+
+  guint n = r->targets->len;
   for (guint i = 0; i < n; i++) {
-    GObject *obj = g_ptr_array_index(r->items, i);
-    /* Type-guard on the cast: the schedule() API accepts only
-     * GnNostrEventItem, but an item may have been disposed between
-     * dispatch and callback. */
-    if (!GN_IS_NOSTR_EVENT_ITEM(obj)) continue;
-    GnNostrEventItem *ev = GN_NOSTR_EVENT_ITEM(obj);
+    PendingMetadataTarget *target = g_ptr_array_index(r->targets, i);
+    const char *id_hex = target ? target->event_id : NULL;
+    if (!id_hex || strlen(id_hex) != 64)
+      continue;
 
-    gchar *id_hex = NULL;
-    g_object_get(obj, "event-id", &id_hex, NULL);
-    if (!id_hex || strlen(id_hex) != 64) { g_free(id_hex); continue; }
+    GnostrTimelineMetadataPatch patch = {
+      .event_id = (char *)id_hex,
+      .has_like_count = TRUE,
+      .like_count = 0,
+      .has_is_liked = TRUE,
+      .is_liked = FALSE,
+      .has_zap_count = TRUE,
+      .zap_count = 0,
+      .has_zap_total_msat = TRUE,
+      .zap_total_msat = 0,
+      .has_repost_count = TRUE,
+      .repost_count = 0,
+      .has_reply_count = TRUE,
+      .reply_count = 0,
+    };
 
-    if (r->reaction_counts) {
-      gpointer val = g_hash_table_lookup(r->reaction_counts, id_hex);
-      if (val) {
-        guint count = GPOINTER_TO_UINT(val);
-        if (count > 0)
-          gn_nostr_event_item_set_like_count(ev, count);
-      }
+    gpointer val = r->reaction_counts ? g_hash_table_lookup(r->reaction_counts, id_hex) : NULL;
+    if (val) {
+      patch.has_like_count = TRUE;
+      patch.like_count = GPOINTER_TO_UINT(val);
+      if (target->legacy_item && patch.like_count > 0)
+        gn_nostr_event_item_set_like_count(target->legacy_item, patch.like_count);
     }
 
     if (r->user_reacted && g_hash_table_lookup(r->user_reacted, id_hex)) {
-      gn_nostr_event_item_set_is_liked(ev, TRUE);
+      patch.has_is_liked = TRUE;
+      patch.is_liked = TRUE;
+      if (target->legacy_item)
+        gn_nostr_event_item_set_is_liked(target->legacy_item, TRUE);
     }
 
-    if (r->zap_stats) {
-      StorageNdbZapStats *zs = g_hash_table_lookup(r->zap_stats, id_hex);
-      if (zs && zs->zap_count > 0) {
-        gn_nostr_event_item_set_zap_count(ev, zs->zap_count);
-        gn_nostr_event_item_set_zap_total_msat(ev, zs->total_msat);
+    StorageNdbZapStats *zs = r->zap_stats ? g_hash_table_lookup(r->zap_stats, id_hex) : NULL;
+    if (zs && zs->zap_count > 0) {
+      patch.has_zap_count = TRUE;
+      patch.zap_count = zs->zap_count;
+      patch.has_zap_total_msat = TRUE;
+      patch.zap_total_msat = zs->total_msat;
+      if (target->legacy_item) {
+        gn_nostr_event_item_set_zap_count(target->legacy_item, zs->zap_count);
+        gn_nostr_event_item_set_zap_total_msat(target->legacy_item, zs->total_msat);
       }
     }
 
-    if (r->repost_counts) {
-      gpointer rval = g_hash_table_lookup(r->repost_counts, id_hex);
-      if (rval) {
-        guint rcount = GPOINTER_TO_UINT(rval);
-        if (rcount > 0)
-          gn_nostr_event_item_set_repost_count(ev, rcount);
-      }
+    gpointer rval = r->repost_counts ? g_hash_table_lookup(r->repost_counts, id_hex) : NULL;
+    if (rval) {
+      patch.has_repost_count = TRUE;
+      patch.repost_count = GPOINTER_TO_UINT(rval);
+      if (target->legacy_item && patch.repost_count > 0)
+        gn_nostr_event_item_set_repost_count(target->legacy_item, patch.repost_count);
     }
 
-    /* hq-vvmzu: Reply counts from ndb_note_meta */
-    if (r->reply_counts) {
-      gpointer rpval = g_hash_table_lookup(r->reply_counts, id_hex);
-      if (rpval) {
-        guint rpcount = GPOINTER_TO_UINT(rpval);
-        if (rpcount > 0)
-          gn_nostr_event_item_set_reply_count(ev, rpcount);
-      }
+    gpointer rpval = r->reply_counts ? g_hash_table_lookup(r->reply_counts, id_hex) : NULL;
+    if (rpval) {
+      patch.has_reply_count = TRUE;
+      patch.reply_count = GPOINTER_TO_UINT(rpval);
+      if (target->legacy_item && patch.reply_count > 0)
+        gn_nostr_event_item_set_reply_count(target->legacy_item, patch.reply_count);
     }
 
-    g_free(id_hex);
+    if (target->feed_controller &&
+        (patch.has_like_count || patch.has_is_liked || patch.has_zap_count ||
+         patch.has_zap_total_msat || patch.has_repost_count || patch.has_reply_count)) {
+      GnostrTimelineBatch *batch = g_hash_table_lookup(patch_batches, target->feed_controller);
+      if (!batch) {
+        batch = gnostr_timeline_batch_new(
+            GNOSTR_TIMELINE_BATCH_METADATA_PATCH,
+            gnostr_timeline_feed_controller_get_query_generation(target->feed_controller));
+        g_hash_table_insert(patch_batches, target->feed_controller, batch);
+      }
+      gnostr_timeline_batch_add_metadata_patch(batch, &patch);
+    }
   }
+
+  GHashTableIter iter;
+  gpointer controller_ptr = NULL;
+  gpointer batch_ptr = NULL;
+  g_hash_table_iter_init(&iter, patch_batches);
+  while (g_hash_table_iter_next(&iter, &controller_ptr, &batch_ptr)) {
+    gnostr_timeline_feed_controller_ingest_batch(
+        GNOSTR_TIMELINE_FEED_CONTROLLER(controller_ptr),
+        GNOSTR_TIMELINE_BATCH(batch_ptr));
+    g_object_unref(batch_ptr);
+  }
+  g_hash_table_destroy(patch_batches);
 
   g_debug("[BATCH] Completed async metadata load for %u events", n);
   metadata_batch_result_free(r);
@@ -203,17 +251,17 @@ metadata_batch_idle_cb(gpointer user_data) {
   g_debug("[BATCH] Dispatching %u metadata items to worker thread",
           self->pending->len);
 
-  /* Move items to the task — the worker thread owns them now. Reset
+  /* Move targets to the task — the worker thread owns them now. Reset
    * the dedup set so the next batch window starts fresh. */
   GPtrArray *items = self->pending;
-  self->pending = g_ptr_array_new_with_free_func(g_object_unref);
+  self->pending = g_ptr_array_new_with_free_func((GDestroyNotify)pending_metadata_target_free);
   g_hash_table_remove_all(self->pending_set);
 
   /* Capture main-thread-only inputs before dispatching to worker. */
   gchar *user_pubkey = gnostr_timeline_embed_get_current_user_pubkey_hex();
 
   GTask *task = g_task_new(self, NULL, on_metadata_batch_done, NULL);
-  g_object_set_data_full(G_OBJECT(task), "items", items,
+  g_object_set_data_full(G_OBJECT(task), "targets", items,
                          (GDestroyNotify)g_ptr_array_unref);
   g_object_set_data_full(G_OBJECT(task), "user-pubkey", user_pubkey, g_free);
   g_task_run_in_thread(task, metadata_batch_query_thread);
@@ -229,25 +277,27 @@ gnostr_timeline_metadata_controller_new(void) {
   return g_object_new(GNOSTR_TYPE_TIMELINE_METADATA_CONTROLLER, NULL);
 }
 
-void
-gnostr_timeline_metadata_controller_schedule(
-    GnostrTimelineMetadataController *self,
-    GnNostrEventItem *item) {
+static void
+schedule_target(GnostrTimelineMetadataController *self,
+                PendingMetadataTarget *target,
+                const char *dedupe_key)
+{
   g_return_if_fail(GNOSTR_IS_TIMELINE_METADATA_CONTROLLER(self));
-  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(item));
-  /* pending and pending_set are allocated in _init() and freed in
-   * dispose(); they are always both non-NULL while the controller is
-   * alive (shutdown() empties them but never frees). */
+  g_return_if_fail(target != NULL);
   g_assert(self->pending && self->pending_set);
 
-  /* Dedupe by pointer identity within the current batch window. The
-   * pending_set holds no refs — membership is valid only until the
-   * next swap/drain inside metadata_batch_idle_cb. */
-  if (g_hash_table_contains(self->pending_set, item))
+  if (!target->event_id || strlen(target->event_id) != 64) {
+    pending_metadata_target_free(target);
     return;
+  }
 
-  g_hash_table_add(self->pending_set, item);
-  g_ptr_array_add(self->pending, g_object_ref(item));
+  if (g_hash_table_contains(self->pending_set, dedupe_key)) {
+    pending_metadata_target_free(target);
+    return;
+  }
+
+  g_hash_table_add(self->pending_set, g_strdup(dedupe_key));
+  g_ptr_array_add(self->pending, target);
 
   if (self->idle_id == 0) {
     /* nostrc-x52i: Use _full variant with g_object_ref/unref to prevent
@@ -259,6 +309,41 @@ gnostr_timeline_metadata_controller_schedule(
                                      g_object_ref(self),
                                      g_object_unref);
   }
+}
+
+void
+gnostr_timeline_metadata_controller_schedule(
+    GnostrTimelineMetadataController *self,
+    GnNostrEventItem *item) {
+  g_return_if_fail(GNOSTR_IS_TIMELINE_METADATA_CONTROLLER(self));
+  g_return_if_fail(GN_IS_NOSTR_EVENT_ITEM(item));
+
+  gchar *id_hex = NULL;
+  g_object_get(item, "event-id", &id_hex, NULL);
+  PendingMetadataTarget *target = g_new0(PendingMetadataTarget, 1);
+  target->legacy_item = g_object_ref(item);
+  target->event_id = id_hex;
+
+  g_autofree gchar *dedupe_key = g_strdup_printf("legacy:%p:%s", item, id_hex ? id_hex : "");
+  schedule_target(self, target, dedupe_key);
+}
+
+void
+gnostr_timeline_metadata_controller_schedule_snapshot_row(
+    GnostrTimelineMetadataController *self,
+    GnostrTimelineSnapshotRow *row,
+    GnostrTimelineFeedController *feed_controller) {
+  g_return_if_fail(GNOSTR_IS_TIMELINE_METADATA_CONTROLLER(self));
+  g_return_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(row));
+  g_return_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(feed_controller));
+
+  const char *event_id = gnostr_timeline_snapshot_row_get_event_id(row);
+  PendingMetadataTarget *target = g_new0(PendingMetadataTarget, 1);
+  target->feed_controller = g_object_ref(feed_controller);
+  target->event_id = g_strdup(event_id);
+
+  g_autofree gchar *dedupe_key = g_strdup_printf("patch:%p:%s", feed_controller, event_id ? event_id : "");
+  schedule_target(self, target, dedupe_key);
 }
 
 void
@@ -343,7 +428,7 @@ gnostr_timeline_metadata_controller_init(
   /* Allocate both containers eagerly so the schedule() hot path never
    * has to test-and-allocate and the in-sync invariant between them is
    * trivially upheld for the entire controller lifetime. */
-  self->pending = g_ptr_array_new_with_free_func(g_object_unref);
-  self->pending_set = g_hash_table_new(g_direct_hash, g_direct_equal);
+  self->pending = g_ptr_array_new_with_free_func((GDestroyNotify)pending_metadata_target_free);
+  self->pending_set = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->idle_id = 0;
 }

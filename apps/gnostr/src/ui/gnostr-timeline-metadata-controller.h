@@ -36,6 +36,8 @@
 #include <glib-object.h>
 
 #include "../model/gn-nostr-event-item.h"
+#include "../model/gnostr-timeline-snapshot.h"
+#include "gnostr-timeline-feed-controller.h"
 
 G_BEGIN_DECLS
 
@@ -89,6 +91,22 @@ gnostr_timeline_metadata_controller_ensure(GObject *owner);
 void gnostr_timeline_metadata_controller_schedule(
     GnostrTimelineMetadataController *self,
     GnNostrEventItem *item);
+
+/**
+ * gnostr_timeline_metadata_controller_schedule_snapshot_row:
+ * @self: controller
+ * @row: immutable compositor row whose metadata should be refreshed
+ * @feed_controller: compositor that should receive the metadata patch batch
+ *
+ * Queue metadata refresh for a compositor row. Results are delivered as a
+ * #GNOSTR_TIMELINE_BATCH_METADATA_PATCH batch to @feed_controller instead of
+ * mutating the visible row object. This is the main-feed compositor path; the
+ * legacy schedule() API above remains for non-migrated consumers.
+ */
+void gnostr_timeline_metadata_controller_schedule_snapshot_row(
+    GnostrTimelineMetadataController *self,
+    GnostrTimelineSnapshotRow *row,
+    GnostrTimelineFeedController *feed_controller);
 
 /**
  * gnostr_timeline_metadata_controller_shutdown:

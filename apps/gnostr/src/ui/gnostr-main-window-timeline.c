@@ -13,6 +13,7 @@
 #include "../model/gnostr-filter-set.h"
 #include "../model/gnostr-filter-set-manager.h"
 #include "../model/gnostr-filter-set-query.h"
+#include "gnostr-timeline-feed-controller.h"
 
 #include <nostr-gobject-1.0/gn-timeline-query.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
@@ -21,6 +22,7 @@
 #include <string.h>
 
 #define GNOSTR_CARD_VISIBILITY_POLICY_DATA_KEY "gnostr-card-visibility-policy"
+#define GNOSTR_TIMELINE_FEED_CONTROLLER_DATA_KEY "timeline-feed-controller"
 
 static char **
 load_followed_pubkeys_snapshot(const char *viewer_pubkey_hex, gsize *out_count)
@@ -125,44 +127,43 @@ gnostr_main_window_on_timeline_scroll_value_changed_internal(GtkAdjustment *adj,
                                                              gpointer user_data)
 {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->event_model)
-    return;
-  if (gn_nostr_event_model_is_async_loading(self->event_model))
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self->timeline_feed_controller))
     return;
 
   gdouble value = gtk_adjustment_get_value(adj);
   gdouble upper = gtk_adjustment_get_upper(adj);
   gdouble page_size = gtk_adjustment_get_page_size(adj);
   gdouble lower = gtk_adjustment_get_lower(adj);
+  gdouble scroll_y = MAX(0.0, value - lower);
 
-  guint n_items = g_list_model_get_n_items(G_LIST_MODEL(self->event_model));
-  if (n_items > 0 && upper > lower) {
-    gdouble row_height_estimate = (upper - lower) / (gdouble)n_items;
-    if (row_height_estimate > 0) {
-      guint visible_start = (guint)(value / row_height_estimate);
-      guint visible_count = (guint)(page_size / row_height_estimate) + 2;
-      guint visible_end = visible_start + visible_count;
-      if (visible_end >= n_items)
-        visible_end = n_items - 1;
-      gn_nostr_event_model_set_visible_range(self->event_model, visible_start, visible_end);
-    }
+  guint width_px = 0;
+  GtkWidget *timeline = self->session_view ? gnostr_session_view_get_timeline(self->session_view) : NULL;
+  if (timeline && NOSTR_GTK_IS_TIMELINE_VIEW(timeline)) {
+    GtkWidget *list_view = nostr_gtk_timeline_view_get_list_view(NOSTR_GTK_TIMELINE_VIEW(timeline));
+    if (list_view && GTK_IS_WIDGET(list_view))
+      width_px = (guint)MAX(0, gtk_widget_get_width(list_view));
+    if (width_px == 0)
+      width_px = (guint)MAX(0, gtk_widget_get_width(timeline));
   }
 
-  gboolean user_at_top = (value <= lower + 50.0);
-  gn_nostr_event_model_set_user_at_top(self->event_model, user_at_top);
+  gnostr_timeline_feed_controller_set_viewport(self->timeline_feed_controller,
+                                               scroll_y,
+                                               page_size,
+                                               width_px);
+  gnostr_timeline_feed_controller_set_user_at_top(self->timeline_feed_controller,
+                                                  value <= lower + 50.0);
 
   guint batch = self->load_older_batch_size > 0 ? self->load_older_batch_size : 30;
-  guint max_items = 200;
 
   gdouble top_threshold = lower + (page_size * 0.2);
   if (value <= top_threshold && upper > page_size) {
-    gn_nostr_event_model_load_newer_async(self->event_model, batch, max_items);
+    gnostr_timeline_feed_controller_load_newer(self->timeline_feed_controller, batch);
     return;
   }
 
   gdouble bottom_threshold = upper - page_size - (page_size * 0.2);
   if (value >= bottom_threshold && upper > page_size)
-    gn_nostr_event_model_load_older_async(self->event_model, batch, max_items);
+    gnostr_timeline_feed_controller_load_older(self->timeline_feed_controller, batch);
 }
 
 void
@@ -182,6 +183,37 @@ gnostr_main_window_on_event_model_new_items_pending_internal(GnNostrEventModel *
 }
 
 void
+gnostr_main_window_on_timeline_restore_scroll_internal(GnostrTimelineFeedController *controller,
+                                                        double scroll_y,
+                                                        gpointer user_data)
+{
+  (void)controller;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->session_view)
+    return;
+
+  GtkWidget *timeline = gnostr_session_view_get_timeline(self->session_view);
+  if (!timeline || !NOSTR_GTK_IS_TIMELINE_VIEW(timeline))
+    return;
+
+  GtkWidget *scroller = nostr_gtk_timeline_view_get_scrolled_window(NOSTR_GTK_TIMELINE_VIEW(timeline));
+  if (!scroller || !GTK_IS_SCROLLED_WINDOW(scroller))
+    return;
+
+  GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
+  if (!vadj)
+    return;
+
+  gdouble lower = gtk_adjustment_get_lower(vadj);
+  gdouble upper = gtk_adjustment_get_upper(vadj);
+  gdouble page_size = gtk_adjustment_get_page_size(vadj);
+  gdouble max_value = MAX(lower, upper - page_size);
+  gdouble target = CLAMP(lower + MAX(0.0, scroll_y), lower, max_value);
+
+  gtk_adjustment_set_value(vadj, target);
+}
+
+void
 gnostr_main_window_on_timeline_tab_filter_changed_internal(NostrGtkTimelineView *view,
                                                             guint type,
                                                             const char *filter_value,
@@ -189,7 +221,7 @@ gnostr_main_window_on_timeline_tab_filter_changed_internal(NostrGtkTimelineView 
 {
   (void)view;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
-  if (!GNOSTR_IS_MAIN_WINDOW(self) || !self->event_model)
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self->timeline_feed_controller))
     return;
 
   g_debug("[TAB_FILTER] type=%u filter='%s'", type, filter_value ? filter_value : "(null)");
@@ -273,8 +305,8 @@ gnostr_main_window_on_timeline_tab_filter_changed_internal(NostrGtkTimelineView 
   }
 
   if (query) {
-    gn_nostr_event_model_set_timeline_query(self->event_model, query);
-    gn_nostr_event_model_refresh_async(self->event_model);
+    gnostr_timeline_feed_controller_set_query(self->timeline_feed_controller, query);
+    gnostr_timeline_feed_controller_refresh(self->timeline_feed_controller);
     gnostr_timeline_query_free(query);
   }
 
@@ -647,11 +679,10 @@ gnostr_main_window_on_new_notes_clicked_internal(GtkButton *btn, gpointer user_d
   if (!GNOSTR_IS_MAIN_WINDOW(self))
     return;
 
-  if (self->event_model && GN_IS_NOSTR_EVENT_MODEL(self->event_model))
-    gn_nostr_event_model_set_user_at_top(self->event_model, TRUE);
-
-  if (self->event_model && GN_IS_NOSTR_EVENT_MODEL(self->event_model))
-    gn_nostr_event_model_flush_pending(self->event_model);
+  if (GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self->timeline_feed_controller)) {
+    gnostr_timeline_feed_controller_set_user_at_top(self->timeline_feed_controller, TRUE);
+    gnostr_timeline_feed_controller_admit_pending_head(self->timeline_feed_controller, TRUE);
+  }
 
   g_idle_add_full(G_PRIORITY_DEFAULT, scroll_to_top_idle, g_object_ref(self), NULL);
 }

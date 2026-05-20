@@ -6,6 +6,7 @@
 #include <nostr-gtk-1.0/gnostr-timeline-view.h>
 #include "gnostr-avatar-cache.h"
 #include "gnostr-startup-live-eose.h"
+#include "gnostr-timeline-feed-controller.h"
 #include "../util/gnostr-thread-prefetch.h"
 
 #include "../model/gn-nostr-event-model.h"
@@ -53,7 +54,14 @@ memory_stats_cb_local(gpointer data)
 
   guint seen_texts_size = self->seen_texts ? g_hash_table_size(self->seen_texts) : 0;
   guint profile_queue = self->profile_fetch_queue ? self->profile_fetch_queue->len : 0;
-  guint model_items = self->event_model ? g_list_model_get_n_items(G_LIST_MODEL(self->event_model)) : 0;
+  guint model_items = 0;
+  if (GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self->timeline_feed_controller)) {
+    GnostrTimelineSnapshotModel *timeline_model =
+      gnostr_timeline_feed_controller_get_model(self->timeline_feed_controller);
+    model_items = timeline_model ? g_list_model_get_n_items(G_LIST_MODEL(timeline_model)) : 0;
+  } else if (self->event_model) {
+    model_items = g_list_model_get_n_items(G_LIST_MODEL(self->event_model));
+  }
   guint liked_events_size = self->liked_events ? g_hash_table_size(self->liked_events) : 0;
   guint profile_batches = self->profile_batches ? self->profile_batches->len : 0;
   guint gift_wrap_queue = self->gift_wrap_queue ? self->gift_wrap_queue->len : 0;
@@ -94,7 +102,12 @@ gnostr_main_window_initial_refresh_timeout_cb_internal(gpointer data)
 
   g_debug("[STARTUP] initial_refresh_timeout_cb: starting async refresh");
 
-  if (self->event_model) {
+  if (GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self->timeline_feed_controller)) {
+    GNostrTimelineQuery *query = gnostr_timeline_query_new_global();
+    gnostr_timeline_feed_controller_set_query(self->timeline_feed_controller, query);
+    gnostr_timeline_query_free(query);
+    gnostr_timeline_feed_controller_refresh(self->timeline_feed_controller);
+  } else if (self->event_model) {
     GNostrTimelineQuery *query = gnostr_timeline_query_new_global();
     gn_nostr_event_model_set_timeline_query(self->event_model, query);
     gnostr_timeline_query_free(query);
@@ -164,33 +177,48 @@ gnostr_main_window_run_startup_bootstrap_internal(GnostrMainWindow *self,
 {
   g_return_if_fail(GNOSTR_IS_MAIN_WINDOW(self));
 
-  self->event_model = gn_nostr_event_model_new();
+  if (!self->event_model) {
+    self->event_model = gn_nostr_event_model_new();
 
-  GnNostrQueryParams params = {
-    .kinds = (gint[]){1},
-    .n_kinds = 1,
-    .authors = NULL,
-    .n_authors = 0,
-    .since = 0,
-    .until = 0,
-    .limit = 500
-  };
-  gn_nostr_event_model_set_query(self->event_model, &params);
-  g_debug("[STARTUP] set_query done");
+    GnNostrQueryParams params = {
+      .kinds = (gint[]){1},
+      .n_kinds = 1,
+      .authors = NULL,
+      .n_authors = 0,
+      .since = 0,
+      .until = 0,
+      .limit = 500
+    };
+    gn_nostr_event_model_set_query(self->event_model, &params);
+    g_signal_connect_object(self->event_model, "need-profile", need_profile_cb, self, G_CONNECT_DEFAULT);
+  }
+
+  if (!self->timeline_feed_controller)
+    self->timeline_feed_controller = gnostr_timeline_feed_controller_new(NULL);
+
   gnostr_avatar_cache_set_startup_mode(TRUE);
 
-  g_signal_connect(self->event_model, "need-profile", need_profile_cb, self);
-  g_signal_connect(self->event_model, "new-items-pending", new_items_pending_cb, self);
+  g_signal_connect_object(self->timeline_feed_controller, "need-profile", need_profile_cb, self, G_CONNECT_DEFAULT);
+  g_signal_connect_object(self->timeline_feed_controller, "pending-count-changed", new_items_pending_cb, self, G_CONNECT_DEFAULT);
+  g_signal_connect_object(self->timeline_feed_controller, "restore-scroll",
+                          G_CALLBACK(gnostr_main_window_on_timeline_restore_scroll_internal),
+                          self,
+                          G_CONNECT_DEFAULT);
 
   GtkWidget *timeline = self->session_view ? gnostr_session_view_get_timeline(self->session_view) : NULL;
   if (timeline && G_TYPE_CHECK_INSTANCE_TYPE(timeline, NOSTR_GTK_TYPE_TIMELINE_VIEW)) {
+    GnostrTimelineSnapshotModel *model =
+      gnostr_timeline_feed_controller_get_model(self->timeline_feed_controller);
     GtkSelectionModel *selection = GTK_SELECTION_MODEL(
-      gtk_single_selection_new(G_LIST_MODEL(self->event_model))
+      gtk_single_selection_new(G_LIST_MODEL(model))
     );
     nostr_gtk_timeline_view_set_model(NOSTR_GTK_TIMELINE_VIEW(timeline), selection);
     g_object_unref(selection);
 
-    gn_nostr_event_model_set_drain_enabled(self->event_model, TRUE);
+    g_object_set_data_full(G_OBJECT(timeline),
+                           "timeline-feed-controller",
+                           g_object_ref(self->timeline_feed_controller),
+                           g_object_unref);
 
     GtkWidget *scroller = nostr_gtk_timeline_view_get_scrolled_window(NOSTR_GTK_TIMELINE_VIEW(timeline));
     if (scroller && GTK_IS_SCROLLED_WINDOW(scroller)) {

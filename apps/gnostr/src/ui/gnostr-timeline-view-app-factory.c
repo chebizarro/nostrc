@@ -7,6 +7,8 @@
 /* nostrc-hqtn: gnostr-zap-dialog.h moved to gnostr-timeline-action-relay.c */
 /* nostrc-hqtn: nostr_profile_provider.h moved to gnostr-timeline-action-relay.c */
 #include "../model/gn-nostr-event-item.h"
+#include "../model/gnostr-timeline-snapshot.h"
+#include "../model/gnostr-timeline-snapshot-model.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include "nostr-event.h"
 #include "nostr-json.h"
@@ -34,6 +36,7 @@
 #include "gnostr-timeline-embed-private.h"
 #include "gnostr-timeline-metadata-controller.h"
 #include "gnostr-timeline-action-relay.h"
+#include "gnostr-timeline-feed-controller.h"
 
 /* Widget template now loaded from nostr-gtk library resource */
 
@@ -61,24 +64,95 @@
 
 static NostrGtkNoteCardRow *get_bound_note_card_row_for_item(gpointer user_data, GObject *expected_item);
 
+#define GNOSTR_TIMELINE_FEED_CONTROLLER_DATA_KEY "timeline-feed-controller"
+
+static guint64
+snapshot_generation_for_list_item(NostrGtkTimelineView *view, GtkListItem *item)
+{
+  if (!view || !NOSTR_GTK_IS_TIMELINE_VIEW(view) || !item)
+    return 0;
+
+  GtkWidget *list_view = nostr_gtk_timeline_view_get_list_view(view);
+  if (!GTK_IS_LIST_VIEW(list_view))
+    return 0;
+
+  GtkSelectionModel *selection_model = gtk_list_view_get_model(GTK_LIST_VIEW(list_view));
+  if (!GTK_IS_SINGLE_SELECTION(selection_model))
+    return 0;
+
+  GListModel *model = gtk_single_selection_get_model(GTK_SINGLE_SELECTION(selection_model));
+  if (!GNOSTR_IS_TIMELINE_SNAPSHOT_MODEL(model))
+    return 0;
+
+  GnostrTimelineSnapshot *snapshot = gnostr_timeline_snapshot_model_get_snapshot(GNOSTR_TIMELINE_SNAPSHOT_MODEL(model));
+  return snapshot ? gnostr_timeline_snapshot_get_generation(snapshot) : 0;
+}
+
+static void
+on_snapshot_row_measured_geometry(NostrGtkNoteCardRow *row,
+                                  const gchar *geometry_token,
+                                  guint64 snapshot_generation,
+                                  gint width,
+                                  gint height,
+                                  gpointer user_data)
+{
+  (void)row;
+
+  if (!geometry_token || !*geometry_token)
+    return;
+
+  NostrGtkTimelineView *view = NOSTR_GTK_IS_TIMELINE_VIEW(user_data)
+      ? NOSTR_GTK_TIMELINE_VIEW(user_data)
+      : NULL;
+  if (!view)
+    return;
+
+  GnostrTimelineFeedController *controller =
+      g_object_get_data(G_OBJECT(view), GNOSTR_TIMELINE_FEED_CONTROLLER_DATA_KEY);
+  if (!GNOSTR_IS_TIMELINE_FEED_CONTROLLER(controller))
+    return;
+
+  gnostr_timeline_feed_controller_record_geometry(controller,
+                                                  geometry_token,
+                                                  snapshot_generation,
+                                                  width,
+                                                  height);
+}
+
+static GnostrCardVisibilityPolicy *
+timeline_visibility_policy_for_view(NostrGtkTimelineView *view)
+{
+  if (view && NOSTR_GTK_IS_TIMELINE_VIEW(view))
+    return g_object_get_data(G_OBJECT(view), "gnostr-card-visibility-policy");
+  return NULL;
+}
+
 static gboolean
 timeline_row_should_be_visible(NostrGtkTimelineView *view, GnNostrEventItem *item)
 {
   if (!GN_IS_NOSTR_EVENT_ITEM(item))
     return FALSE;
 
-  GnostrCardVisibilityPolicy *policy = NULL;
-  if (view && NOSTR_GTK_IS_TIMELINE_VIEW(view))
-    policy = g_object_get_data(G_OBJECT(view), "gnostr-card-visibility-policy");
-
   const char *author_pubkey = gn_nostr_event_item_get_pubkey(item);
   gboolean has_profile = (gn_nostr_event_item_get_profile(item) != NULL);
   gboolean explicitly_loaded = gn_nostr_event_item_get_explicitly_loaded(item);
 
-  return gnostr_card_visibility_policy_should_show(policy,
+  return gnostr_card_visibility_policy_should_show(timeline_visibility_policy_for_view(view),
                                                    author_pubkey,
                                                    has_profile,
                                                    explicitly_loaded);
+}
+
+static gboolean
+timeline_snapshot_row_should_be_visible(NostrGtkTimelineView *view, GnostrTimelineSnapshotRow *row)
+{
+  if (!GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(row))
+    return FALSE;
+
+  return gnostr_card_visibility_policy_should_show(timeline_visibility_policy_for_view(view),
+                                                   gnostr_timeline_snapshot_row_get_pubkey(row),
+                                                   gnostr_timeline_snapshot_row_get_has_profile(row),
+                                                   FALSE);
 }
 
 /* Callback when profile is loaded for an event item - update the row and re-evaluate visibility */
@@ -333,6 +407,12 @@ cleanup_bound_row(GtkWidget *row)
   }
   g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER(0));
 
+  gulong measured_geometry_id = (gulong)GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(row), "tv-measured-geometry-id"));
+  if (measured_geometry_id > 0 && g_signal_handler_is_connected(G_OBJECT(row), measured_geometry_id)) {
+    g_signal_handler_disconnect(row, measured_geometry_id);
+  }
+  g_object_set_data(G_OBJECT(row), "tv-measured-geometry-id", GSIZE_TO_POINTER(0));
+
   gnostr_timeline_embed_inflight_detach_row(row);
 
   if (NOSTR_GTK_IS_NOTE_CARD_ROW(row)) {
@@ -504,6 +584,18 @@ static void schedule_metadata_batch(NostrGtkTimelineView *self, GnNostrEventItem
   gnostr_timeline_metadata_controller_schedule(ctrl, item);
 }
 
+static void schedule_snapshot_metadata_batch(NostrGtkTimelineView *self, GnostrTimelineSnapshotRow *row)
+{
+  GnostrTimelineFeedController *feed_controller =
+      g_object_get_data(G_OBJECT(self), "timeline-feed-controller");
+  if (!GNOSTR_IS_TIMELINE_FEED_CONTROLLER(feed_controller))
+    return;
+
+  GnostrTimelineMetadataController *ctrl =
+      gnostr_timeline_metadata_controller_ensure(G_OBJECT(self));
+  gnostr_timeline_metadata_controller_schedule_snapshot_row(ctrl, row, feed_controller);
+}
+
 /*
  * Tier 2 map handler for timeline view: creates embeds/media/OG when the row
  * becomes visible. During Tier 1 (bind), only Pango markup is set via
@@ -583,13 +675,10 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
     return;
   }
 
-  /* nostrc-lkoa: The gnostr app factory exclusively handles GnNostrEventItem.
-   * The library still offers nostr_gtk_timeline_view_prepend()/set_tree_roots()
-   * which insert TimelineItems, but those are library-internal helpers that
-   * this factory is not wired for. Fail loudly in debug rather than silently
-   * rendering an empty row if a caller mixes item types. */
-  if (!GN_IS_NOSTR_EVENT_ITEM(obj)) {
-    g_critical("factory_bind_cb: unexpected item type %s — only GnNostrEventItem is supported",
+  /* The app factory supports the legacy live GnNostrEventItem model and the
+   * compositor snapshot model. Other item types are still programmer errors. */
+  if (!GN_IS_NOSTR_EVENT_ITEM(obj) && !GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(obj)) {
+    g_critical("factory_bind_cb: unexpected item type %s — expected GnNostrEventItem or GnostrTimelineSnapshotRow",
                G_OBJECT_TYPE_NAME(obj));
     return;
   }
@@ -602,9 +691,29 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
   gchar *pubkey = NULL, *id_hex = NULL, *parent_id = NULL, *parent_pubkey = NULL, *nip05 = NULL;
   guint depth = 0; gboolean is_reply = FALSE; gint64 created_at = 0;
   
-  /* Check if this is a GnNostrEventItem (new model) */
+  /* Check if this is a GnNostrEventItem (legacy live model) or immutable snapshot row. */
   extern GType gn_nostr_event_item_get_type(void);
-  if (G_IS_OBJECT(obj) && G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
+  gboolean is_snapshot_row = GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(obj);
+  if (is_snapshot_row) {
+    GnostrTimelineSnapshotRow *snapshot_row = GNOSTR_TIMELINE_SNAPSHOT_ROW(obj);
+
+    id_hex = g_strdup(gnostr_timeline_snapshot_row_get_event_id(snapshot_row));
+    pubkey = g_strdup(gnostr_timeline_snapshot_row_get_pubkey(snapshot_row));
+    created_at = gnostr_timeline_snapshot_row_get_created_at(snapshot_row);
+    content = g_strdup(gnostr_timeline_snapshot_row_get_content(snapshot_row));
+    display = g_strdup(gnostr_timeline_snapshot_row_get_display_name(snapshot_row));
+    handle = g_strdup(gnostr_timeline_snapshot_row_get_handle(snapshot_row));
+    avatar_url = g_strdup(gnostr_timeline_snapshot_row_get_avatar_url(snapshot_row));
+    nip05 = g_strdup(gnostr_timeline_snapshot_row_get_nip05(snapshot_row));
+
+    if (created_at > 0) {
+      time_t t = (time_t)created_at;
+      struct tm *tm_info = localtime(&t);
+      char buf[64];
+      strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", tm_info);
+      ts = g_strdup(buf);
+    }
+  } else if (G_IS_OBJECT(obj) && G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
     /* NEW: GnNostrEventItem binding */
     gboolean item_is_reply = FALSE;
     g_object_get(obj,
@@ -661,6 +770,24 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
      * nostrc-o7pp: Matches NoteCardFactory pattern. */
     nostr_gtk_note_card_row_prepare_for_bind(NOSTR_GTK_NOTE_CARD_ROW(row));
     gtk_widget_set_visible(row, FALSE);
+
+    if (is_snapshot_row) {
+      GnostrTimelineSnapshotRow *snapshot_row = GNOSTR_TIMELINE_SNAPSHOT_ROW(obj);
+      double reserved_height = gnostr_timeline_snapshot_row_get_effective_height(snapshot_row);
+      if (reserved_height <= 0.0)
+        reserved_height = gnostr_timeline_snapshot_row_get_estimated_height(snapshot_row);
+
+      g_autofree gchar *geometry_token = gnostr_timeline_feed_controller_dup_geometry_token_for_row(snapshot_row);
+      nostr_gtk_note_card_row_set_geometry_token(NOSTR_GTK_NOTE_CARD_ROW(row),
+                                                 geometry_token,
+                                                 snapshot_generation_for_list_item(self, item));
+      nostr_gtk_note_card_row_set_reserved_height(NOSTR_GTK_NOTE_CARD_ROW(row),
+                                                  reserved_height > 0.0 ? (gint)(reserved_height + 0.999999) : 0);
+      gulong measured_geometry_id = g_signal_connect(row, "measured-geometry",
+                                                     G_CALLBACK(on_snapshot_row_measured_geometry), self);
+      g_object_set_data(G_OBJECT(row), "tv-measured-geometry-id",
+                        GSIZE_TO_POINTER((gsize)measured_geometry_id));
+    }
 
     /* Use pubkey prefix as fallback if no profile info available */
     g_autofree gchar *display_fallback = NULL;
@@ -1102,18 +1229,46 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
       nostr_gtk_note_card_row_set_repost_count(NOSTR_GTK_NOTE_CARD_ROW(row), repost_count);
       nostr_gtk_note_card_row_set_reply_count(NOSTR_GTK_NOTE_CARD_ROW(row), reply_count);
       nostr_gtk_note_card_row_set_zap_stats(NOSTR_GTK_NOTE_CARD_ROW(row), zap_count, zap_total);
+    } else if (is_snapshot_row) {
+      GnostrTimelineSnapshotRow *snapshot_row = GNOSTR_TIMELINE_SNAPSHOT_ROW(obj);
+      guint like_count = gnostr_timeline_snapshot_row_get_like_count(snapshot_row);
+      gboolean is_liked = gnostr_timeline_snapshot_row_get_is_liked(snapshot_row);
+      guint repost_count = gnostr_timeline_snapshot_row_get_repost_count(snapshot_row);
+      guint reply_count = gnostr_timeline_snapshot_row_get_reply_count(snapshot_row);
+      guint zap_count = gnostr_timeline_snapshot_row_get_zap_count(snapshot_row);
+      gint64 zap_total = gnostr_timeline_snapshot_row_get_zap_total_msat(snapshot_row);
+
+      guint item_position = gtk_list_item_get_position(item);
+      gboolean is_visible = nostr_gtk_timeline_view_is_item_visible(self, item_position);
+      gboolean defer_metadata = self && (nostr_gtk_timeline_view_is_fast_scrolling(self) || !is_visible);
+      if (!defer_metadata && id_hex && strlen(id_hex) == 64 &&
+          (like_count == 0 || zap_count == 0 || repost_count == 0 || reply_count == 0)) {
+        schedule_snapshot_metadata_batch(self, snapshot_row);
+        gtk_widget_remove_css_class(row, "needs-metadata-refresh");
+      } else if (defer_metadata) {
+        gtk_widget_add_css_class(row, "needs-metadata-refresh");
+      }
+
+      nostr_gtk_note_card_row_set_like_count(NOSTR_GTK_NOTE_CARD_ROW(row), like_count);
+      nostr_gtk_note_card_row_set_liked(NOSTR_GTK_NOTE_CARD_ROW(row), is_liked);
+      nostr_gtk_note_card_row_set_repost_count(NOSTR_GTK_NOTE_CARD_ROW(row), repost_count);
+      nostr_gtk_note_card_row_set_reply_count(NOSTR_GTK_NOTE_CARD_ROW(row), reply_count);
+      nostr_gtk_note_card_row_set_zap_stats(NOSTR_GTK_NOTE_CARD_ROW(row), zap_count, zap_total);
     }
 
     g_free(user_pubkey);
 
-    gtk_widget_set_visible(row, timeline_row_should_be_visible(self, GN_NOSTR_EVENT_ITEM(obj)));
+    gtk_widget_set_visible(row,
+                           is_snapshot_row
+                             ? timeline_snapshot_row_should_be_visible(self, GNOSTR_TIMELINE_SNAPSHOT_ROW(obj))
+                             : timeline_row_should_be_visible(self, GN_NOSTR_EVENT_ITEM(obj)));
 
     /* Connect to profile change notification to update author when profile loads.
      * Use plain g_signal_connect (NOT g_signal_connect_object) because unbind
      * explicitly disconnects via disconnect_by_data. Combining explicit disconnect
      * with g_signal_connect_object causes double-removal of invalidation notifiers
      * → "unable to remove uninstalled invalidation notifier" → SIGABRT. */
-    if (gn_nostr_event_item_get_profile(GN_NOSTR_EVENT_ITEM(obj)) == NULL) {
+    if (!is_snapshot_row && gn_nostr_event_item_get_profile(GN_NOSTR_EVENT_ITEM(obj)) == NULL) {
       g_signal_connect(obj, "notify::profile",
                        G_CALLBACK(on_event_item_profile_changed), item);
     }
@@ -1132,7 +1287,7 @@ static void factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpoi
    * Use the GtkListItem as the per-bind cookie and disconnect by that same
    * cookie in unbind/teardown. This avoids mixing g_signal_connect_object()
    * invalidation notifiers with explicit disconnects on recycled rows. */
-  if (obj && G_IS_OBJECT(obj) && GTK_IS_WIDGET(row)) {
+  if (obj && G_IS_OBJECT(obj) && !is_snapshot_row && GTK_IS_WIDGET(row)) {
     g_signal_connect(obj, "notify::display-name", G_CALLBACK(on_item_notify_display_name), item);
     g_signal_connect(obj, "notify::handle",       G_CALLBACK(on_item_notify_handle),       item);
     g_signal_connect(obj, "notify::avatar-url",   G_CALLBACK(on_item_notify_avatar_url),   item);
