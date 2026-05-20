@@ -240,13 +240,12 @@ listview row.no-animation > * {
 
 /* Deferred metadata placeholder state — action buttons are dimmed to signal
 	* that full metadata (author, counts) is still loading. Applied during fast
-	* scroll; removed once metadata batch arrives. nostrc-e27u. */
+	* scroll; removed once metadata batch arrives. nostrc-e27u.
+	*
+	* Do not dim avatars here: the opacity stacks with real avatar images and
+	* looks like a translucent white wash over the photo while metadata resolves. */
 .note-card.needs-metadata-refresh .note-actions {
 	opacity: 0.3;
-}
-
-.note-card.needs-metadata-refresh .note-avatar {
-	opacity: 0.5;
 }
 
 /* Note: @keyframes / animation not supported in GTK4 CSS — removed */
@@ -358,6 +357,18 @@ label a:visited {
 	margin: 0;
 	min-width: 24px;
 	min-height: 24px;
+	background: transparent;
+	box-shadow: none;
+}
+
+.avatar-button:hover,
+.avatar-button:active,
+.avatar-button:checked,
+.avatar-button:focus,
+.avatar-button:focus-visible,
+.avatar-button:focus-within {
+	background: transparent;
+	box-shadow: none;
 }
 
 /* Note card avatar specific (48px) */

@@ -693,6 +693,27 @@ static gboolean has_note_key(GnNostrEventModel *self, uint64_t key) {
 /* Forward declaration for pipeline drain timer */
 static gboolean on_drain_timer(gpointer user_data);
 
+static void
+emit_pending_new_items(GnNostrEventModel *self,
+                       guint              count,
+                       gboolean           force)
+{
+  if (!self)
+    return;
+
+  gint64 now_us = g_get_monotonic_time();
+  guint old_count = self->unseen_count;
+  self->unseen_count = count;
+
+  if (!force && old_count == count &&
+      self->last_pending_signal_us > 0 &&
+      (now_us - self->last_pending_signal_us) < PENDING_SIGNAL_INTERVAL_US)
+    return;
+
+  self->last_pending_signal_us = now_us;
+  g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, count);
+}
+
 /**
  * has_note_key_pending:
  * Check if a note key is already in the insertion buffer. O(1) lookup.
@@ -972,6 +993,17 @@ static gboolean on_drain_timer(gpointer user_data) {
   guint buffer_depth = self->insertion_buffer->len;
   guint total_processed = 0;
 
+  /* Calm timeline rule: passive live arrivals must never prepend above the
+   * reader's viewport.  Keep hydrated entries in insertion_buffer and surface
+   * only the non-intrusive "N new notes" affordance until the user returns to
+   * the top or explicitly clicks the banner. */
+  if (!self->user_at_top && buffer_depth > 0) {
+    emit_pending_new_items(self, buffer_depth, FALSE);
+    g_debug("[CALM] Holding %u hydrated new items in pending queue", buffer_depth);
+    self->tick_source_id = 0;
+    return G_SOURCE_REMOVE;
+  }
+
   if (buffer_depth > 0) {
     /* Adaptive batch sizing based on buffer depth */
     guint batch_limit;
@@ -1013,16 +1045,9 @@ static gboolean on_drain_timer(gpointer user_data) {
               total_processed, self->notes->len);
     }
 
-    /* Track unseen items when user is scrolled down.
-     * Throttle signal emission to avoid per-frame toast label updates. */
-    if (!self->user_at_top && total_processed > 0) {
-      self->unseen_count += total_processed;
-      gboolean is_last_batch = (self->insertion_buffer->len == 0);
-      if (is_last_batch ||
-          (start_us - self->last_pending_signal_us >= PENDING_SIGNAL_INTERVAL_US)) {
-        self->last_pending_signal_us = start_us;
-        g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, self->unseen_count);
-      }
+    if (self->user_at_top && total_processed > 0 && self->unseen_count > 0 &&
+        self->insertion_buffer->len == 0) {
+      emit_pending_new_items(self, 0, TRUE);
     }
   }
 
@@ -3780,10 +3805,12 @@ void gn_nostr_event_model_set_user_at_top(GnNostrEventModel *self, gboolean at_t
   gboolean was_at_top = self->user_at_top;
   self->user_at_top = at_top;
 
-  if (at_top && !was_at_top && self->unseen_count > 0) {
-    g_debug("[CALM] User scrolled to top, clearing %u unseen count", self->unseen_count);
-    self->unseen_count = 0;
-    g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
+  if (at_top && !was_at_top) {
+    if (self->unseen_count > 0) {
+      g_debug("[CALM] User returned to top; draining %u pending notes", self->unseen_count);
+    }
+    if (self->insertion_buffer && self->insertion_buffer->len > 0)
+      ensure_drain_timer(self);
   }
 }
 
@@ -3793,14 +3820,17 @@ guint gn_nostr_event_model_get_pending_count(GnNostrEventModel *self) {
   return self->unseen_count;
 }
 
-/* Reset unseen count (e.g., when user clicks "N new notes" indicator).
- * Items are already in the model — this just clears the notification. */
+/* Flush pending hydrated notes after explicit user intent (banner click / top
+ * navigation).  Passive relay/database arrivals sit in insertion_buffer while
+ * the user is scrolled down; this call is the intentional publish step. */
 void gn_nostr_event_model_flush_pending(GnNostrEventModel *self) {
   g_return_if_fail(GN_IS_NOSTR_EVENT_MODEL(self));
 
   if (self->unseen_count > 0) {
-    g_debug("[CALM] Flushing unseen count: %u", self->unseen_count);
-    self->unseen_count = 0;
-    g_signal_emit(self, signals[SIGNAL_NEW_ITEMS_PENDING], 0, (guint)0);
+    g_debug("[CALM] Flushing pending notes: %u", self->unseen_count);
   }
+
+  self->user_at_top = TRUE;
+  if (self->insertion_buffer && self->insertion_buffer->len > 0)
+    ensure_drain_timer(self);
 }

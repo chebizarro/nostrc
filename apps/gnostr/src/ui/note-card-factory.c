@@ -502,11 +502,9 @@ on_ncf_row_mapped_tier2(GtkWidget *widget, gpointer user_data)
       nostr_gtk_note_card_row_set_thread_info(card, root_id, parent_id, NULL, is_reply);
     }
 
-    /* Deferred content (media, OG, embeds) */
-    const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(event_item);
-    if (cached) {
-      nostr_gtk_note_card_row_apply_deferred_content(card, cached);
-    }
+    /* Media, OG preview, and embeds are intentionally NOT created from the
+     * map handler.  The bind path reserves those areas before the row is made
+     * visible, so mapping/image fetches cannot expand an already-visible card. */
 
     /* hq-ys1vk: Relay provenance (Tier 2 - requires txn) */
     const char * const *relay_urls = gn_nostr_event_item_get_relay_urls(event_item);
@@ -622,10 +620,11 @@ factory_bind_cb(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
       nostr_gtk_note_card_row_set_event_kind(NOSTR_GTK_NOTE_CARD_ROW(row), kind);
 
     } else {
-      /* Normal path — render cache or full render */
+      /* Normal path — render before reveal and reserve any media/embed/preview
+       * areas now.  This keeps card height stable after gtk_widget_set_visible(). */
       const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(event_item);
       if (cached) {
-        nostr_gtk_note_card_row_set_content_markup_only(NOSTR_GTK_NOTE_CARD_ROW(row), content, cached);
+        nostr_gtk_note_card_row_set_content_rendered(NOSTR_GTK_NOTE_CARD_ROW(row), content, cached);
       } else {
         /* No cache: fall back to full render (first bind) */
         nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
