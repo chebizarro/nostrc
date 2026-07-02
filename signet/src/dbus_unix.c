@@ -74,6 +74,27 @@ static const char *signet_dbus_introspection_xml =
     "      <arg type='as' direction='out' name='credential_types'/>"
     "    </method>"
     "  </interface>"
+    "  <interface name='net.signet.Passkeys'>"
+    "    <method name='GetInfo'>"
+    "      <arg type='s' direction='out' name='info_json'/>"
+    "    </method>"
+    "    <method name='MakeCredential'>"
+    "      <arg type='s' direction='in' name='request_json'/>"
+    "      <arg type='s' direction='out' name='response_json'/>"
+    "    </method>"
+    "    <method name='GetAssertion'>"
+    "      <arg type='s' direction='in' name='request_json'/>"
+    "      <arg type='s' direction='out' name='response_json'/>"
+    "    </method>"
+    "    <method name='ExportCredential'>"
+    "      <arg type='s' direction='in' name='request_json'/>"
+    "      <arg type='s' direction='out' name='response_json'/>"
+    "    </method>"
+    "    <method name='ImportCredential'>"
+    "      <arg type='s' direction='in' name='request_json'/>"
+    "      <arg type='s' direction='out' name='response_json'/>"
+    "    </method>"
+    "  </interface>"
     "</node>";
 
 struct SignetDbusServer {
@@ -81,6 +102,7 @@ struct SignetDbusServer {
   SignetPolicyRegistry *policy;
   SignetStore *store;
   SignetAuditLogger *audit;
+  struct SignetFidoService *fido;
   SignetUidResolver uid_resolver;
   void *uid_resolver_data;
   bool use_system_bus;
@@ -89,6 +111,7 @@ struct SignetDbusServer {
   GDBusConnection *conn;
   guint signer_reg_id;
   guint creds_reg_id;
+  guint passkeys_reg_id;
   GDBusNodeInfo *node_info;
 };
 
@@ -146,6 +169,7 @@ static void signet_dbus_handle_method(GDBusConnection *connection,
     .policy = ds->policy,
     .store = ds->store,
     .audit = ds->audit,
+    .fido = ds->fido,
     .transport = "dbus_unix",
   };
   signet_dbus_dispatch_authenticated(&ctx, agent_id, interface_name,
@@ -158,6 +182,10 @@ static const GDBusInterfaceVTable signer_vtable = {
 };
 
 static const GDBusInterfaceVTable credentials_vtable = {
+  .method_call = signet_dbus_handle_method,
+};
+
+static const GDBusInterfaceVTable passkeys_vtable = {
   .method_call = signet_dbus_handle_method,
 };
 
@@ -191,6 +219,17 @@ static void signet_on_bus_acquired(GDBusConnection *conn,
   if (ds->creds_reg_id == 0 && err) {
     g_warning("signet: failed to register Credentials interface: %s", err->message);
     g_error_free(err);
+    err = NULL;
+  }
+
+  /* Register net.signet.Passkeys interface. */
+  GDBusInterfaceInfo *passkeys_iface = ds->node_info->interfaces[2];
+  ds->passkeys_reg_id = g_dbus_connection_register_object(
+      conn, SIGNET_DBUS_OBJECT_PATH, passkeys_iface,
+      &passkeys_vtable, ds, NULL, &err);
+  if (ds->passkeys_reg_id == 0 && err) {
+    g_warning("signet: failed to register Passkeys interface: %s", err->message);
+    g_error_free(err);
   }
 }
 
@@ -222,6 +261,7 @@ SignetDbusServer *signet_dbus_server_new(const SignetDbusServerConfig *cfg) {
   ds->policy = cfg->policy;
   ds->store = cfg->store;
   ds->audit = cfg->audit;
+  ds->fido = cfg->fido;
   ds->uid_resolver = cfg->uid_resolver;
   ds->uid_resolver_data = cfg->uid_resolver_data;
   ds->use_system_bus = cfg->use_system_bus;
@@ -271,6 +311,10 @@ void signet_dbus_server_stop(SignetDbusServer *ds) {
     if (ds->creds_reg_id > 0) {
       g_dbus_connection_unregister_object(ds->conn, ds->creds_reg_id);
       ds->creds_reg_id = 0;
+    }
+    if (ds->passkeys_reg_id > 0) {
+      g_dbus_connection_unregister_object(ds->conn, ds->passkeys_reg_id);
+      ds->passkeys_reg_id = 0;
     }
     ds->conn = NULL; /* owned by GDBus, not us */
   }

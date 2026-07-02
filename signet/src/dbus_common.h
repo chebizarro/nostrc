@@ -12,12 +12,14 @@ struct SignetAuditLogger;
 struct SignetKeyStore;
 struct SignetPolicyRegistry;
 struct SignetStore;
+struct SignetFidoService;
 
 typedef struct {
   struct SignetKeyStore *keys;
   struct SignetPolicyRegistry *policy;
   struct SignetStore *store;
   struct SignetAuditLogger *audit;
+  struct SignetFidoService *fido;
   const char *transport;
 } SignetDbusDispatchContext;
 

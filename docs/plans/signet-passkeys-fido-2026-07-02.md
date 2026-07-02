@@ -4,6 +4,19 @@
 > Feasibility-first; phased roadmap contingent on a "go" decision.
 > Scope locked with user: signet as a **FIDO2/CTAP2 authenticator + passkey vault**; programmatic agent-facing API first, virtual CTAP device later; **software-backed keys with a pluggable-hardware seam**; **syncable multi-device credentials** (`BE`/`BS` set, backed by a fleet export/sync path).
 
+## Execution Status
+
+- [x] **Phase 0** — feasibility spike (GO). `signet/tests/phase0/`. (`nostrc-p25`)
+- [x] **Phase 1** — storage model + passkey vault. Done: `signet/src/store_passkeys.c` + `include/signet/store_passkeys.h` (create/find-by-cred-id/find-by-agent-rp/excludeCredentials, versioned PSK-wrapped payload, mlock'd key blob); `passkey_credentials` migration in `store.c`; tests pass (meson + ctest + standalone). (`nostrc-rh8`)
+- [x] **Phase 2** — programmatic API + policy/consent + wiring. Done: `SignetFidoService` (`src/fido.c`, 828 LOC), MakeCredential/GetAssertion (AT/UP/BE/BS flags, frozen AAGUID `80c64041-9927-4901-957f-e0032db96bee`, signCount=0, none attestation, UV default-deny), `net.signet.Passkeys` D-Bus + NIP-46 `webauthn_*`, `passkey.*` capabilities (not in wildcard default), audit event, `[passkeys]` config+PSK. **Verified: `cmake --build build --target signetd -DSIGNET_ENABLE_PASSKEYS=ON` compiles+links; `test_fido_service` passes.** (`nostrc-e0j`)
+
+> Build tip for implementers: the full daemon DOES build in the monorepo — `cmake -S . -B build -DSIGNET_ENABLE_PASSKEYS=ON && cmake --build build --target signetd`. (`string_array.h` lives in `libgo/include`, which the standalone `signet/meson.build` omits — use the CMake `build/` for full-build verification.)
+- [x] **Phase 2b** — credential portability. Done: versioned export container in `store_passkeys.*`; `signet_fido_export/import_credential_json`; D-Bus `ExportCredential`/`ImportCredential` + NIP-46 `webauthn_export`/`webauthn_import`; `passkey.export`/`passkey.import` capabilities; import PSK-validates + rejects cross-fleet. Verified: signetd links; `test_fido_service` (incl. export/import), `test_capability`, `test_store_passkeys` all pass. (`nostrc-hd7`)
+- [x] **Phase 3** — interop + conformance. Done: ceremony assertions (attestation CBOR structure, BE/BS bits, signCount bytes, no-AT on assertion) + full capability/policy mapping tests (D-Bus + NIP-46, deny-without-cap); `test_fido_interop_json` drives the wired JSON entrypoints (`signet_fido_make_credential_json`→`get_assertion_json`) and **python-fido2 independently verifies** the attestation + assertion. All passkey tests pass in the CMake `build/`. Deferred: live-daemon D-Bus socket run (needs identity/UID/policy provisioning) — harness stops at the transport JSON boundary. (`nostrc-0kj`)
+- [ ] **Phase 4** — virtual CTAP-HID device (deferred). (`nostrc-71a`)
+
+> Environment note for implementers: the full `signetd` build needs the in-tree libnostr/nip46 libs (monorepo CMake `../build`), which may not be present. Follow the Phase 0 precedent — ensure new modules compile (gated behind `SIGNET_ENABLE_PASSKEYS`) and land unit tests that run standalone against OpenSSL/libsodium/sqlite3. Report build status honestly rather than forcing a full daemon build.
+
 ## Goal
 
 Determine whether signet — the headless NIP-46 "bunker" signer/vault for agent fleets — can act as a **FIDO2 authenticator** that creates, stores, and uses WebAuthn passkey credentials on behalf of agents, and if so, define what it would take. This extends signet's "replace the password manager / NIP-07 / NIP-46 for headless agents" mission to the FIDO passkey ecosystem.

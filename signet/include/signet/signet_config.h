@@ -36,6 +36,7 @@ extern "C" {
 #define SIGNET_MAX_LISTEN_LEN     128
 #define SIGNET_MAX_HEX_32         64
 #define SIGNET_MAX_HEX_32_STRLEN  65 /* 64 hex + NUL */
+#define SIGNET_AAGUID_STRLEN      37 /* UUID string + NUL */
 
 typedef enum {
   SIGNET_LOG_ERROR = 0,
@@ -101,6 +102,17 @@ typedef struct {
   /* --- [ssh_agent] --- */
   bool ssh_agent_enabled;          /* SSH agent socket (default false) */
   char ssh_agent_socket_path[SIGNET_MAX_STR];
+
+  /* --- [passkeys] --- */
+  bool passkeys_enabled;           /* default false */
+  char passkeys_backend[SIGNET_MAX_STR];
+  char passkeys_aaguid[SIGNET_AAGUID_STRLEN];
+  char passkeys_attestation[SIGNET_MAX_STR];
+  bool passkeys_allow_headless_uv;
+  char passkeys_sync_key[SIGNET_MAX_HEX_32_STRLEN];
+  char passkeys_sync_key_file[SIGNET_MAX_STR];
+  uint8_t passkeys_sync_psk[32];
+  bool passkeys_sync_psk_set;
 } SignetConfig;
 
 /* Initialize cfg with safe defaults. */

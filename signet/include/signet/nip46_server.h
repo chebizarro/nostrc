@@ -30,11 +30,13 @@ struct SignetPolicyEngine;
 struct SignetKeyStore;
 struct SignetReplayCache;
 struct SignetAuditLogger;
+struct SignetFidoService;
 
 typedef struct SignetNip46Server SignetNip46Server;
 
 typedef struct {
   const char *identity; /* borrowed */
+  struct SignetFidoService *fido; /* borrowed; may be NULL/disabled */
 } SignetNip46ServerConfig;
 
 /* Create NIP-46 server. Returns NULL on OOM. */

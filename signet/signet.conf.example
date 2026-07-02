@@ -51,3 +51,18 @@ skew_seconds = 120
 [audit]
 path =
 stdout = true
+
+[passkeys]
+# Programmatic WebAuthn/FIDO2 authenticator API. Off by default.
+enabled = false
+backend = software-openssl
+# Frozen Signet software-authenticator AAGUID. Override to all-zero for max privacy.
+aaguid = 80c64041-9927-4901-957f-e0032db96bee
+attestation = none
+# Headless UP is always asserted after Signet policy approval. UV-required ceremonies
+# default-deny unless this explicit opt-in is true.
+allow_headless_uv = false
+# Fleet PSK for portable passkey credential wrapping (64 hex chars), or a file
+# containing the same. Prefer sync_key_file or SIGNET_PASSKEYS_SYNC_KEY_FILE.
+sync_key =
+sync_key_file =

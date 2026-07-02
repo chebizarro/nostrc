@@ -11,6 +11,9 @@
 #include "signet/store_leases.h"
 #include "signet/store_secrets.h"
 #include "signet/audit_logger.h"
+#ifdef SIGNET_ENABLE_PASSKEYS
+#include "signet/fido.h"
+#endif
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -424,6 +427,167 @@ static void handle_get_token(const SignetDbusDispatchContext *ctx,
   signet_secret_record_clear(&rec);
 }
 
+#ifdef SIGNET_ENABLE_PASSKEYS
+static void handle_passkey_error(GDBusMethodInvocation *invocation,
+                                 SignetFidoStatus status,
+                                 const SignetFidoError *err) {
+  const char *name = "net.signet.Error.Internal";
+  if (status == SIGNET_FIDO_ERR_NOT_CONFIGURED) name = "net.signet.Error.NotConfigured";
+  else if (status == SIGNET_FIDO_ERR_BAD_REQUEST) name = "net.signet.Error.BadRequest";
+  else if (status == SIGNET_FIDO_ERR_UNSUPPORTED_ALGORITHM) name = "net.signet.Error.UnsupportedAlgorithm";
+  else if (status == SIGNET_FIDO_ERR_EXCLUDED) name = "net.signet.Error.ExcludedCredential";
+  else if (status == SIGNET_FIDO_ERR_NOT_FOUND) name = "net.signet.Error.NotFound";
+  else if (status == SIGNET_FIDO_ERR_UV_REQUIRED) name = "net.signet.Error.UserVerificationRequired";
+  g_dbus_method_invocation_return_dbus_error(invocation, name,
+      (err && err->reason) ? err->reason : signet_fido_status_string(status));
+}
+
+static void handle_passkey_get_info(const SignetDbusDispatchContext *ctx,
+                                    const char *agent_id,
+                                    GDBusMethodInvocation *invocation) {
+  char *json = NULL;
+  SignetFidoError ferr;
+  SignetFidoStatus st = signet_fido_get_info_json(ctx ? ctx->fido : NULL,
+                                                   agent_id, &json, &ferr);
+  if (st != SIGNET_FIDO_OK) {
+    handle_passkey_error(invocation, st, &ferr);
+    return;
+  }
+  g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", json));
+  g_free(json);
+}
+
+static void handle_passkey_make_credential(const SignetDbusDispatchContext *ctx,
+                                           const char *agent_id,
+                                           GVariant *parameters,
+                                           GDBusMethodInvocation *invocation) {
+  const char *request_json = NULL;
+  g_variant_get(parameters, "(&s)", &request_json);
+  char *json = NULL;
+  SignetFidoError ferr;
+  SignetFidoStatus st = signet_fido_make_credential_json(ctx ? ctx->fido : NULL,
+                                                          agent_id, request_json,
+                                                          &json, &ferr);
+  if (st != SIGNET_FIDO_OK) {
+    handle_passkey_error(invocation, st, &ferr);
+    return;
+  }
+  g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", json));
+  g_free(json);
+}
+
+static void handle_passkey_get_assertion(const SignetDbusDispatchContext *ctx,
+                                         const char *agent_id,
+                                         GVariant *parameters,
+                                         GDBusMethodInvocation *invocation) {
+  const char *request_json = NULL;
+  g_variant_get(parameters, "(&s)", &request_json);
+  char *json = NULL;
+  SignetFidoError ferr;
+  SignetFidoStatus st = signet_fido_get_assertion_json(ctx ? ctx->fido : NULL,
+                                                        agent_id, request_json,
+                                                        &json, &ferr);
+  if (st != SIGNET_FIDO_OK) {
+    handle_passkey_error(invocation, st, &ferr);
+    return;
+  }
+  g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", json));
+  g_free(json);
+}
+
+static void handle_passkey_export_credential(const SignetDbusDispatchContext *ctx,
+                                             const char *agent_id,
+                                             GVariant *parameters,
+                                             GDBusMethodInvocation *invocation) {
+  const char *request_json = NULL;
+  g_variant_get(parameters, "(&s)", &request_json);
+  char *json = NULL;
+  SignetFidoError ferr;
+  SignetFidoStatus st = signet_fido_export_credential_json(ctx ? ctx->fido : NULL,
+                                                            agent_id, request_json,
+                                                            &json, &ferr);
+  if (st != SIGNET_FIDO_OK) {
+    handle_passkey_error(invocation, st, &ferr);
+    return;
+  }
+  g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", json));
+  g_free(json);
+}
+
+static void handle_passkey_import_credential(const SignetDbusDispatchContext *ctx,
+                                             const char *agent_id,
+                                             GVariant *parameters,
+                                             GDBusMethodInvocation *invocation) {
+  const char *request_json = NULL;
+  g_variant_get(parameters, "(&s)", &request_json);
+  char *json = NULL;
+  SignetFidoError ferr;
+  SignetFidoStatus st = signet_fido_import_credential_json(ctx ? ctx->fido : NULL,
+                                                            agent_id, request_json,
+                                                            &json, &ferr);
+  if (st != SIGNET_FIDO_OK) {
+    handle_passkey_error(invocation, st, &ferr);
+    return;
+  }
+  g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", json));
+  g_free(json);
+}
+
+#else
+static void handle_passkey_get_info(const SignetDbusDispatchContext *ctx,
+                                    const char *agent_id,
+                                    GDBusMethodInvocation *invocation) {
+  (void)ctx;
+  (void)agent_id;
+  g_dbus_method_invocation_return_dbus_error(invocation,
+      "net.signet.Error.NotConfigured", "Passkeys support not built");
+}
+
+static void handle_passkey_make_credential(const SignetDbusDispatchContext *ctx,
+                                           const char *agent_id,
+                                           GVariant *parameters,
+                                           GDBusMethodInvocation *invocation) {
+  (void)ctx;
+  (void)agent_id;
+  (void)parameters;
+  g_dbus_method_invocation_return_dbus_error(invocation,
+      "net.signet.Error.NotConfigured", "Passkeys support not built");
+}
+
+static void handle_passkey_get_assertion(const SignetDbusDispatchContext *ctx,
+                                         const char *agent_id,
+                                         GVariant *parameters,
+                                         GDBusMethodInvocation *invocation) {
+  (void)ctx;
+  (void)agent_id;
+  (void)parameters;
+  g_dbus_method_invocation_return_dbus_error(invocation,
+      "net.signet.Error.NotConfigured", "Passkeys support not built");
+}
+
+static void handle_passkey_export_credential(const SignetDbusDispatchContext *ctx,
+                                             const char *agent_id,
+                                             GVariant *parameters,
+                                             GDBusMethodInvocation *invocation) {
+  (void)ctx;
+  (void)agent_id;
+  (void)parameters;
+  g_dbus_method_invocation_return_dbus_error(invocation,
+      "net.signet.Error.NotConfigured", "Passkeys support not built");
+}
+
+static void handle_passkey_import_credential(const SignetDbusDispatchContext *ctx,
+                                             const char *agent_id,
+                                             GVariant *parameters,
+                                             GDBusMethodInvocation *invocation) {
+  (void)ctx;
+  (void)agent_id;
+  (void)parameters;
+  g_dbus_method_invocation_return_dbus_error(invocation,
+      "net.signet.Error.NotConfigured", "Passkeys support not built");
+}
+#endif
+
 static void handle_list_credentials(const SignetDbusDispatchContext *ctx,
                                     const char *agent_id,
                                     GDBusMethodInvocation *invocation) {
@@ -489,6 +653,21 @@ void signet_dbus_dispatch_authenticated(const SignetDbusDispatchContext *ctx,
     } else {
       g_dbus_method_invocation_return_dbus_error(
           invocation, "net.signet.Error.UnknownMethod", "Unknown credentials method");
+    }
+  } else if (strcmp(interface_name, "net.signet.Passkeys") == 0) {
+    if (strcmp(method_name, "GetInfo") == 0) {
+      handle_passkey_get_info(ctx, agent_id, invocation);
+    } else if (strcmp(method_name, "MakeCredential") == 0) {
+      handle_passkey_make_credential(ctx, agent_id, parameters, invocation);
+    } else if (strcmp(method_name, "GetAssertion") == 0) {
+      handle_passkey_get_assertion(ctx, agent_id, parameters, invocation);
+    } else if (strcmp(method_name, "ExportCredential") == 0) {
+      handle_passkey_export_credential(ctx, agent_id, parameters, invocation);
+    } else if (strcmp(method_name, "ImportCredential") == 0) {
+      handle_passkey_import_credential(ctx, agent_id, parameters, invocation);
+    } else {
+      g_dbus_method_invocation_return_dbus_error(
+          invocation, "net.signet.Error.UnknownMethod", "Unknown passkeys method");
     }
   } else {
     g_dbus_method_invocation_return_dbus_error(

@@ -87,6 +87,27 @@ static const char *signet_tcp_introspection_xml =
     "      <arg type='as' direction='out' name='credential_types'/>"
     "    </method>"
     "  </interface>"
+    "  <interface name='net.signet.Passkeys'>"
+    "    <method name='GetInfo'>"
+    "      <arg type='s' direction='out' name='info_json'/>"
+    "    </method>"
+    "    <method name='MakeCredential'>"
+    "      <arg type='s' direction='in' name='request_json'/>"
+    "      <arg type='s' direction='out' name='response_json'/>"
+    "    </method>"
+    "    <method name='GetAssertion'>"
+    "      <arg type='s' direction='in' name='request_json'/>"
+    "      <arg type='s' direction='out' name='response_json'/>"
+    "    </method>"
+    "    <method name='ExportCredential'>"
+    "      <arg type='s' direction='in' name='request_json'/>"
+    "      <arg type='s' direction='out' name='response_json'/>"
+    "    </method>"
+    "    <method name='ImportCredential'>"
+    "      <arg type='s' direction='in' name='request_json'/>"
+    "      <arg type='s' direction='out' name='response_json'/>"
+    "    </method>"
+    "  </interface>"
     "</node>";
 
 /* Per-connection state: tracks whether client has authenticated. */
@@ -111,6 +132,7 @@ struct SignetDbusTcpServer {
   SignetStore *store;
   SignetChallengeStore *challenges;
   SignetAuditLogger *audit;
+  struct SignetFidoService *fido;
   const SignetFleetRegistry *fleet;
 
   GDBusServer *server;
@@ -229,6 +251,7 @@ static void signet_tcp_handle_method(GDBusConnection *connection,
     .policy = ds->policy,
     .store = ds->store,
     .audit = ds->audit,
+    .fido = ds->fido,
     .transport = "dbus_tcp",
   };
   signet_dbus_dispatch_authenticated(&ctx, agent_id, interface_name,
@@ -247,6 +270,10 @@ static const GDBusInterfaceVTable signer_vtable = {
 };
 
 static const GDBusInterfaceVTable credentials_vtable = {
+  .method_call = signet_tcp_handle_method,
+};
+
+static const GDBusInterfaceVTable passkeys_vtable = {
   .method_call = signet_tcp_handle_method,
 };
 
@@ -283,6 +310,13 @@ signet_tcp_on_new_connection(GDBusServer *server,
       &credentials_vtable, ds, NULL, &err);
   if (err) { g_error_free(err); err = NULL; }
 
+  /* Register Passkeys interface. */
+  GDBusInterfaceInfo *passkeys_iface = ds->node_info->interfaces[3];
+  g_dbus_connection_register_object(
+      connection, SIGNET_TCP_OBJECT_PATH, passkeys_iface,
+      &passkeys_vtable, ds, NULL, &err);
+  if (err) { g_error_free(err); err = NULL; }
+
   return TRUE; /* claim the connection */
 }
 
@@ -302,6 +336,7 @@ SignetDbusTcpServer *signet_dbus_tcp_server_new(const SignetDbusTcpServerConfig 
   ds->store = cfg->store;
   ds->challenges = cfg->challenges;
   ds->audit = cfg->audit;
+  ds->fido = cfg->fido;
   ds->fleet = cfg->fleet;
 
   g_mutex_init(&ds->mu);

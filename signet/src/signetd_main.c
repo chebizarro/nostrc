@@ -33,6 +33,9 @@
 #include "signet/dbus_tcp.h"
 #include "signet/nip5l_transport.h"
 #include "signet/ssh_agent.h"
+#ifdef SIGNET_ENABLE_PASSKEYS
+#include "signet/fido.h"
+#endif
 #include <nip11.h>
 
 /* Management event kind range */
@@ -483,6 +486,44 @@ int main(int argc, char **argv) {
     .master_key = db_key ? db_key : "",
   };
   SignetKeyStore *keys = signet_key_store_new(audit, &ks_cfg);
+  SignetStore *base_store = signet_key_store_get_store(keys);
+
+#ifdef SIGNET_ENABLE_PASSKEYS
+  SignetFidoService *fido = NULL;
+  {
+    uint8_t aaguid[SIGNET_FIDO_AAGUID_LEN];
+    if (signet_fido_parse_aaguid(cfg.passkeys_aaguid, aaguid) != 0) {
+      (void)signet_fido_parse_aaguid(SIGNET_FIDO_DEFAULT_AAGUID, aaguid);
+      g_warning("[signetd] invalid passkeys AAGUID in config; using default %s",
+                SIGNET_FIDO_DEFAULT_AAGUID);
+    }
+    SignetFidoServiceConfig fido_cfg = {
+      .enabled = cfg.passkeys_enabled,
+      .store = base_store,
+      .audit = audit,
+      .fleet_psk = cfg.passkeys_sync_psk_set ? cfg.passkeys_sync_psk : NULL,
+      .fleet_psk_len = cfg.passkeys_sync_psk_set ? sizeof(cfg.passkeys_sync_psk) : 0,
+      .backend = cfg.passkeys_backend,
+      .attestation = cfg.passkeys_attestation,
+      .allow_headless_uv = cfg.passkeys_allow_headless_uv,
+    };
+    memcpy(fido_cfg.aaguid, aaguid, sizeof(aaguid));
+    fido = signet_fido_service_new(&fido_cfg);
+    if (!fido) {
+      g_warning("[signetd] failed to initialize passkey service; passkeys will return NotConfigured");
+    }
+    if (cfg.passkeys_enabled) {
+      g_message("[signetd] passkeys enabled backend=%s attestation=%s headless_uv=%s",
+                cfg.passkeys_backend, cfg.passkeys_attestation,
+                cfg.passkeys_allow_headless_uv ? "true" : "false");
+    }
+  }
+#else
+  struct SignetFidoService *fido = NULL;
+  if (cfg.passkeys_enabled) {
+    g_warning("[signetd] passkeys enabled in config but this build lacks SIGNET_ENABLE_PASSKEYS");
+  }
+#endif
 
   /* 4) Policy store (file-backed) */
   SignetPolicyStore *store = signet_policy_store_file_new(cfg.policy_file_path);
@@ -547,6 +588,7 @@ int main(int argc, char **argv) {
   /* 7) NIP-46 server */
   SignetNip46ServerConfig n46_cfg = {
     .identity = cfg.identity,
+    .fido = fido,
   };
   SignetNip46Server *nip46 = signet_nip46_server_new(relays, policy, keys, replay, audit, &n46_cfg);
   dctx.nip46 = nip46;
@@ -567,7 +609,6 @@ int main(int argc, char **argv) {
   SignetChallengeStore *challenges = signet_challenge_store_new();
 
   /* 8b) Deny list + fleet registry for auth */
-  SignetStore *base_store = signet_key_store_get_store(keys);
   SignetDenyList *deny = base_store ? signet_deny_list_new(base_store) : NULL;
   dctx.deny = deny;
 
@@ -616,6 +657,7 @@ int main(int argc, char **argv) {
       .policy = cap_registry,
       .store = base_store,
       .audit = audit,
+      .fido = fido,
       .uid_resolver = NULL,
       .uid_resolver_data = NULL,
       .use_system_bus = true,
@@ -643,6 +685,7 @@ int main(int argc, char **argv) {
       .store = base_store,
       .challenges = challenges,
       .audit = audit,
+      .fido = fido,
       .fleet = &fleet_reg,
     };
     dbus_tcp = signet_dbus_tcp_server_new(&dt_cfg);
@@ -842,6 +885,10 @@ cleanup:
 
   signet_mgmt_handler_free(mgmt);
   signet_nip46_server_free(nip46);
+
+#ifdef SIGNET_ENABLE_PASSKEYS
+  signet_fido_service_free(fido);
+#endif
 
   if (relays) signet_relay_pool_free(relays);
 

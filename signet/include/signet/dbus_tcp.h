@@ -26,6 +26,7 @@ struct SignetStore;
 struct SignetChallengeStore;
 struct SignetAuditLogger;
 struct SignetFleetRegistry;
+struct SignetFidoService;
 
 typedef struct {
   const char *listen_address;  /* e.g. "tcp:host=0.0.0.0,port=47472" */
@@ -34,6 +35,7 @@ typedef struct {
   struct SignetStore *store;
   struct SignetChallengeStore *challenges;
   struct SignetAuditLogger *audit;
+  struct SignetFidoService *fido;
   const struct SignetFleetRegistry *fleet;
 } SignetDbusTcpServerConfig;
 

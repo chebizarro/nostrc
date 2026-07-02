@@ -22,6 +22,7 @@
  */
 
 #include "signet/store.h"
+#include "store_passkeys_schema.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -273,6 +274,17 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
   (void)sqlite3_exec(store->db,
                      "CREATE INDEX IF NOT EXISTS idx_bootstrap_handoff ON bootstrap_tokens(handoff_secret);",
                      NULL, NULL, NULL);
+
+  /* v3: dedicated passkey credential vault (N credentials per agent). */
+  errmsg = NULL;
+  rc = sqlite3_exec(store->db,
+                    SIGNET_PASSKEY_CREDENTIALS_SCHEMA_SQL,
+                    NULL, NULL, &errmsg);
+  if (rc != SQLITE_OK) {
+    if (errmsg) sqlite3_free(errmsg);
+    signet_store_close(store);
+    return NULL;
+  }
 
   /* Enable WAL mode for better concurrent read performance. */
   (void)sqlite3_exec(store->db, "PRAGMA journal_mode=WAL;", NULL, NULL, NULL);

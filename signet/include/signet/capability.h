@@ -28,6 +28,12 @@ extern "C" {
 #define SIGNET_CAP_SIGNET_REISSUE      "signet.reissue_token"
 #define SIGNET_CAP_SIGNET_REVOKE       "signet.revoke"
 #define SIGNET_CAP_RELAY_MANAGE        "relay.manage"
+#define SIGNET_CAP_PASSKEY_GET_INFO    "passkey.get_info"
+#define SIGNET_CAP_PASSKEY_MAKE_CREDENTIAL "passkey.make_credential"
+#define SIGNET_CAP_PASSKEY_GET_ASSERTION   "passkey.get_assertion"
+#define SIGNET_CAP_PASSKEY_EXPORT          "passkey.export"
+#define SIGNET_CAP_PASSKEY_IMPORT          "passkey.import"
+#define SIGNET_CAP_PASSKEY_MANAGE      "passkey.manage"
 
 /* Agent policy: defines what an agent is authorized to do. */
 typedef struct {

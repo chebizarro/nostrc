@@ -153,6 +153,8 @@ if get_option('signet_enable_passkeys')
   signet_core_sources += files(
     'src/fido_crypto_openssl.c',
     'src/fido_cbor.c',
+    'src/store_passkeys.c',
+    'src/fido.c',
   )
   add_project_arguments('-DSIGNET_ENABLE_PASSKEYS=1', language: 'c')
 endif
@@ -192,4 +194,5 @@ summary({
   'In-tree libnostr required': require_in_tree ? 'yes' : 'no',
   'In-tree build dir': nostrc_build_dir,
   'libsodium': sodium_dep.found() ? 'found' : 'not found',
+  'Passkeys': get_option('signet_enable_passkeys') ? 'enabled' : 'disabled',
 }, section: 'Signet')

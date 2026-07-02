@@ -160,6 +160,52 @@ static bool signet_is_hex(const char *s, size_t expected_len) {
   return s[expected_len] == '\0';
 }
 
+static int signet_hex_nibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+  if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+  return -1;
+}
+
+static bool signet_hex_to_bytes32(const char *hex, uint8_t out[32]) {
+  if (!signet_is_hex(hex, 64) || !out) return false;
+  for (size_t i = 0; i < 32; i++) {
+    int hi = signet_hex_nibble(hex[i * 2]);
+    int lo = signet_hex_nibble(hex[i * 2 + 1]);
+    if (hi < 0 || lo < 0) return false;
+    out[i] = (uint8_t)((hi << 4) | lo);
+  }
+  return true;
+}
+
+static void signet_config_resolve_passkey_psk(SignetConfig *cfg) {
+  if (!cfg) return;
+  cfg->passkeys_sync_psk_set = false;
+  secure_wipe(cfg->passkeys_sync_psk, sizeof(cfg->passkeys_sync_psk));
+
+  char candidate[SIGNET_MAX_HEX_32_STRLEN];
+  candidate[0] = '\0';
+  if (cfg->passkeys_sync_key[0]) {
+    signet_strlcpy(candidate, cfg->passkeys_sync_key, sizeof(candidate));
+  } else if (cfg->passkeys_sync_key_file[0]) {
+    gchar *contents = NULL;
+    gsize len = 0;
+    if (g_file_get_contents(cfg->passkeys_sync_key_file, &contents, &len, NULL) && contents) {
+      g_strstrip(contents);
+      signet_strlcpy(candidate, contents, sizeof(candidate));
+    }
+    if (contents) {
+      secure_wipe(contents, len);
+      g_free(contents);
+    }
+  }
+
+  if (candidate[0] && signet_hex_to_bytes32(candidate, cfg->passkeys_sync_psk)) {
+    cfg->passkeys_sync_psk_set = true;
+  }
+  secure_wipe(candidate, sizeof(candidate));
+}
+
 /* ------------------------------ init/clear -------------------------------- */
 
 void signet_config_init(SignetConfig *cfg) {
@@ -186,6 +232,12 @@ void signet_config_init(SignetConfig *cfg) {
 
   signet_strlcpy(cfg->audit_path, "", sizeof(cfg->audit_path));
   cfg->audit_stdout = true;
+
+  cfg->passkeys_enabled = false;
+  signet_strlcpy(cfg->passkeys_backend, "software-openssl", sizeof(cfg->passkeys_backend));
+  signet_strlcpy(cfg->passkeys_aaguid, "80c64041-9927-4901-957f-e0032db96bee", sizeof(cfg->passkeys_aaguid));
+  signet_strlcpy(cfg->passkeys_attestation, "none", sizeof(cfg->passkeys_attestation));
+  cfg->passkeys_allow_headless_uv = false;
 }
 
 void signet_config_clear(SignetConfig *cfg) {
@@ -205,6 +257,8 @@ void signet_config_clear(SignetConfig *cfg) {
 
   /* Wipe sensitive fields. */
   secure_wipe(cfg->remote_signer_secret_key_hex, sizeof(cfg->remote_signer_secret_key_hex));
+  secure_wipe(cfg->passkeys_sync_key, sizeof(cfg->passkeys_sync_key));
+  secure_wipe(cfg->passkeys_sync_psk, sizeof(cfg->passkeys_sync_psk));
 
   signet_config_init(cfg);
 }
@@ -306,6 +360,22 @@ static void signet_config_load_keyfile(GKeyFile *kf, SignetConfig *cfg) {
     cfg->ssh_agent_enabled = g_key_file_get_boolean(kf, "ssh_agent", "enabled", NULL);
   val = g_key_file_get_string(kf, "ssh_agent", "socket_path", NULL);
   if (val) { signet_strlcpy(cfg->ssh_agent_socket_path, val, sizeof(cfg->ssh_agent_socket_path)); g_free(val); }
+
+  /* [passkeys] */
+  if (g_key_file_has_key(kf, "passkeys", "enabled", NULL))
+    cfg->passkeys_enabled = g_key_file_get_boolean(kf, "passkeys", "enabled", NULL);
+  val = g_key_file_get_string(kf, "passkeys", "backend", NULL);
+  if (val) { signet_strlcpy(cfg->passkeys_backend, val, sizeof(cfg->passkeys_backend)); g_free(val); }
+  val = g_key_file_get_string(kf, "passkeys", "aaguid", NULL);
+  if (val) { signet_strlcpy(cfg->passkeys_aaguid, val, sizeof(cfg->passkeys_aaguid)); g_free(val); }
+  val = g_key_file_get_string(kf, "passkeys", "attestation", NULL);
+  if (val) { signet_strlcpy(cfg->passkeys_attestation, val, sizeof(cfg->passkeys_attestation)); g_free(val); }
+  if (g_key_file_has_key(kf, "passkeys", "allow_headless_uv", NULL))
+    cfg->passkeys_allow_headless_uv = g_key_file_get_boolean(kf, "passkeys", "allow_headless_uv", NULL);
+  val = g_key_file_get_string(kf, "passkeys", "sync_key", NULL);
+  if (val) { signet_strlcpy(cfg->passkeys_sync_key, val, sizeof(cfg->passkeys_sync_key)); g_free(val); }
+  val = g_key_file_get_string(kf, "passkeys", "sync_key_file", NULL);
+  if (val) { signet_strlcpy(cfg->passkeys_sync_key_file, val, sizeof(cfg->passkeys_sync_key_file)); g_free(val); }
 }
 
 /* -------------------------- env var overrides ----------------------------- */
@@ -395,6 +465,21 @@ static void signet_config_apply_env(SignetConfig *cfg) {
 
   val = g_getenv("SIGNET_SSH_AGENT_SOCKET");
   if (val) signet_strlcpy(cfg->ssh_agent_socket_path, val, sizeof(cfg->ssh_agent_socket_path));
+
+  val = g_getenv("SIGNET_PASSKEYS_ENABLED");
+  if (val) cfg->passkeys_enabled = (atoi(val) != 0 || g_ascii_strcasecmp(val, "true") == 0);
+  val = g_getenv("SIGNET_PASSKEYS_BACKEND");
+  if (val) signet_strlcpy(cfg->passkeys_backend, val, sizeof(cfg->passkeys_backend));
+  val = g_getenv("SIGNET_PASSKEYS_AAGUID");
+  if (val) signet_strlcpy(cfg->passkeys_aaguid, val, sizeof(cfg->passkeys_aaguid));
+  val = g_getenv("SIGNET_PASSKEYS_ATTESTATION");
+  if (val) signet_strlcpy(cfg->passkeys_attestation, val, sizeof(cfg->passkeys_attestation));
+  val = g_getenv("SIGNET_PASSKEYS_ALLOW_HEADLESS_UV");
+  if (val) cfg->passkeys_allow_headless_uv = (atoi(val) != 0 || g_ascii_strcasecmp(val, "true") == 0);
+  val = g_getenv("SIGNET_PASSKEYS_SYNC_KEY");
+  if (val) signet_strlcpy(cfg->passkeys_sync_key, val, sizeof(cfg->passkeys_sync_key));
+  val = g_getenv("SIGNET_PASSKEYS_SYNC_KEY_FILE");
+  if (val) signet_strlcpy(cfg->passkeys_sync_key_file, val, sizeof(cfg->passkeys_sync_key_file));
 }
 
 /* ------------------------------ public API -------------------------------- */
@@ -421,6 +506,7 @@ int signet_config_load(const char *path, SignetConfig *out_cfg) {
 
   /* Environment variables always override. */
   signet_config_apply_env(out_cfg);
+  signet_config_resolve_passkey_psk(out_cfg);
 
   return 0;
 }
@@ -451,6 +537,24 @@ int signet_config_validate(const SignetConfig *cfg, char *err_buf, size_t err_bu
     if (err_buf && err_buf_len > 0)
       snprintf(err_buf, err_buf_len, "db_path is empty");
     return -1;
+  }
+
+  if (cfg->passkeys_enabled) {
+    if (strcmp(cfg->passkeys_backend, "software-openssl") != 0) {
+      if (err_buf && err_buf_len > 0)
+        snprintf(err_buf, err_buf_len, "unsupported passkeys backend: %s", cfg->passkeys_backend);
+      return -1;
+    }
+    if (strcmp(cfg->passkeys_attestation, "none") != 0) {
+      if (err_buf && err_buf_len > 0)
+        snprintf(err_buf, err_buf_len, "unsupported passkeys attestation: %s", cfg->passkeys_attestation);
+      return -1;
+    }
+    if (!cfg->passkeys_sync_psk_set) {
+      if (err_buf && err_buf_len > 0)
+        snprintf(err_buf, err_buf_len, "passkeys enabled but sync_key/sync_key_file is missing or not 64 hex chars");
+      return -1;
+    }
   }
 
   return 0;

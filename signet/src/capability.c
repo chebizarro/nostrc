@@ -222,6 +222,16 @@ const char *signet_method_to_capability(const char *method) {
   if (strcmp(method, "Decrypt") == 0)      return SIGNET_CAP_NOSTR_ENCRYPT;
   if (strcmp(method, "GetToken") == 0)     return SIGNET_CAP_CREDENTIAL_GET_TOKEN;
   if (strcmp(method, "GetSession") == 0)   return SIGNET_CAP_CREDENTIAL_GET_SESSION;
+  if (strcmp(method, "GetInfo") == 0)      return SIGNET_CAP_PASSKEY_GET_INFO;
+  if (strcmp(method, "MakeCredential") == 0) return SIGNET_CAP_PASSKEY_MAKE_CREDENTIAL;
+  if (strcmp(method, "GetAssertion") == 0) return SIGNET_CAP_PASSKEY_GET_ASSERTION;
+  if (strcmp(method, "ExportCredential") == 0) return SIGNET_CAP_PASSKEY_EXPORT;
+  if (strcmp(method, "ImportCredential") == 0) return SIGNET_CAP_PASSKEY_IMPORT;
+  if (strcmp(method, "webauthn_get_info") == 0) return SIGNET_CAP_PASSKEY_GET_INFO;
+  if (strcmp(method, "webauthn_make_credential") == 0) return SIGNET_CAP_PASSKEY_MAKE_CREDENTIAL;
+  if (strcmp(method, "webauthn_get_assertion") == 0) return SIGNET_CAP_PASSKEY_GET_ASSERTION;
+  if (strcmp(method, "webauthn_export") == 0) return SIGNET_CAP_PASSKEY_EXPORT;
+  if (strcmp(method, "webauthn_import") == 0) return SIGNET_CAP_PASSKEY_IMPORT;
   if (strcmp(method, "connect") == 0)      return SIGNET_CAP_ALWAYS_ALLOW;
   if (strcmp(method, "ping") == 0)         return SIGNET_CAP_ALWAYS_ALLOW;
   if (strcmp(method, "get_relays") == 0)   return SIGNET_CAP_ALWAYS_ALLOW;

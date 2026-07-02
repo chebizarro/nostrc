@@ -90,6 +90,88 @@ if (TARGET PkgConfig::GLIB)
   target_link_libraries(test_relay_pool_protocol PRIVATE PkgConfig::GLIB)
 endif()
 
+if (SIGNET_ENABLE_PASSKEYS)
+  add_executable(test_store_passkeys
+    test_store_passkeys.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/store_passkeys.c
+  )
+  target_include_directories(test_store_passkeys PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  )
+  target_link_libraries(test_store_passkeys PRIVATE OpenSSL::Crypto)
+  if (TARGET PkgConfig::SQLITE3)
+    target_link_libraries(test_store_passkeys PRIVATE PkgConfig::SQLITE3)
+  else()
+    target_link_libraries(test_store_passkeys PRIVATE sqlite3)
+  endif()
+  if (TARGET PkgConfig::SODIUM)
+    target_link_libraries(test_store_passkeys PRIVATE PkgConfig::SODIUM)
+  else()
+    target_link_libraries(test_store_passkeys PRIVATE sodium)
+  endif()
+
+  add_executable(test_fido_service
+    test_fido_service.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/fido.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/fido_crypto_openssl.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/fido_cbor.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/store_passkeys.c
+  )
+  target_include_directories(test_fido_service PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  )
+  target_compile_definitions(test_fido_service PRIVATE SIGNET_ENABLE_PASSKEYS=1)
+  target_link_libraries(test_fido_service PRIVATE OpenSSL::Crypto)
+  if (TARGET PkgConfig::GLIB)
+    target_link_libraries(test_fido_service PRIVATE PkgConfig::GLIB)
+  endif()
+  if (TARGET PkgConfig::JSON_GLIB)
+    target_link_libraries(test_fido_service PRIVATE PkgConfig::JSON_GLIB)
+  endif()
+  if (TARGET PkgConfig::SQLITE3)
+    target_link_libraries(test_fido_service PRIVATE PkgConfig::SQLITE3)
+  else()
+    target_link_libraries(test_fido_service PRIVATE sqlite3)
+  endif()
+  if (TARGET PkgConfig::SODIUM)
+    target_link_libraries(test_fido_service PRIVATE PkgConfig::SODIUM)
+  else()
+    target_link_libraries(test_fido_service PRIVATE sodium)
+  endif()
+
+  add_executable(test_fido_interop_json
+    test_fido_interop_json.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/fido.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/fido_crypto_openssl.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/fido_cbor.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/store_passkeys.c
+  )
+  target_include_directories(test_fido_interop_json PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  )
+  target_compile_definitions(test_fido_interop_json PRIVATE SIGNET_ENABLE_PASSKEYS=1)
+  target_link_libraries(test_fido_interop_json PRIVATE OpenSSL::Crypto)
+  if (TARGET PkgConfig::GLIB)
+    target_link_libraries(test_fido_interop_json PRIVATE PkgConfig::GLIB)
+  endif()
+  if (TARGET PkgConfig::JSON_GLIB)
+    target_link_libraries(test_fido_interop_json PRIVATE PkgConfig::JSON_GLIB)
+  endif()
+  if (TARGET PkgConfig::SQLITE3)
+    target_link_libraries(test_fido_interop_json PRIVATE PkgConfig::SQLITE3)
+  else()
+    target_link_libraries(test_fido_interop_json PRIVATE sqlite3)
+  endif()
+  if (TARGET PkgConfig::SODIUM)
+    target_link_libraries(test_fido_interop_json PRIVATE PkgConfig::SODIUM)
+  else()
+    target_link_libraries(test_fido_interop_json PRIVATE sodium)
+  endif()
+endif()
+
 # Register tests with CTest
 add_test(NAME signet_smoke COMMAND test_signet_smoke)
 add_test(NAME replay_cache COMMAND test_replay_cache)
@@ -101,3 +183,9 @@ add_test(NAME key_store COMMAND test_key_store)
 add_test(NAME nostr_auth COMMAND test_nostr_auth)
 add_test(NAME capability COMMAND test_capability)
 add_test(NAME relay_pool_protocol COMMAND test_relay_pool_protocol)
+if (SIGNET_ENABLE_PASSKEYS)
+  add_test(NAME store_passkeys COMMAND test_store_passkeys)
+  add_test(NAME fido_service COMMAND test_fido_service)
+  add_test(NAME fido_interop_external
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/run_fido_interop_external_check.sh $<TARGET_FILE:test_fido_interop_json> ${CMAKE_CURRENT_BINARY_DIR}/phase3_interop)
+endif()

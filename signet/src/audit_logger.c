@@ -64,6 +64,7 @@ const char *signet_audit_event_type_to_string(SignetAuditEventType type) {
     case SIGNET_AUDIT_EVENT_SIGN_RESPONSE: return "sign_response";
     case SIGNET_AUDIT_EVENT_REPLAY_REJECTED: return "replay_rejected";
     case SIGNET_AUDIT_EVENT_MGMT_APPLIED: return "mgmt_applied";
+    case SIGNET_AUDIT_EVENT_PASSKEY_CEREMONY: return "passkey_ceremony";
     case SIGNET_AUDIT_EVENT_ERROR: return "error";
     case SIGNET_AUDIT_EVENT_UNSPECIFIED:
     default: return "unspecified";

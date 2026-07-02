@@ -80,6 +80,8 @@ if (SIGNET_ENABLE_PASSKEYS)
   list(APPEND SIGNET_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/fido_crypto_openssl.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/fido_cbor.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/store_passkeys.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/fido.c
   )
 endif()
 

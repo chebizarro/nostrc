@@ -23,6 +23,9 @@
 #include "signet/replay_cache.h"
 #include "signet/audit_logger.h"
 #include "signet/util.h"
+#ifdef SIGNET_ENABLE_PASSKEYS
+#include "signet/fido.h"
+#endif
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -279,6 +282,7 @@ struct SignetNip46Server {
   SignetKeyStore *keys;
   SignetReplayCache *replay;
   SignetAuditLogger *audit;
+  struct SignetFidoService *fido;
 
   char *identity;
   GHashTable *sessions_by_client_pubkey; /* client ephemeral pubkey -> agent_id */
@@ -304,6 +308,7 @@ SignetNip46Server *signet_nip46_server_new(SignetRelayPool *relays,
   s->keys = keys;
   s->replay = replay;
   s->audit = audit;
+  s->fido = cfg->fido;
 
   s->identity = g_strdup(cfg->identity);
   s->sessions_by_client_pubkey = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
@@ -630,6 +635,55 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         signet_memzero(agent_sk_hex, sizeof(agent_sk_hex));
         signet_loaded_key_clear(&agent_key);
       }
+
+    } else if (strcmp(method, "webauthn_get_info") == 0 ||
+               strcmp(method, "webauthn_make_credential") == 0 ||
+               strcmp(method, "webauthn_get_assertion") == 0 ||
+               strcmp(method, "webauthn_export") == 0 ||
+               strcmp(method, "webauthn_import") == 0) {
+#ifdef SIGNET_ENABLE_PASSKEYS
+      char *fido_json = NULL;
+      SignetFidoError ferr;
+      SignetFidoStatus fst = SIGNET_FIDO_ERR_INTERNAL;
+      if (strcmp(method, "webauthn_get_info") == 0) {
+        fst = signet_fido_get_info_json(s->fido, session_agent_id, &fido_json, &ferr);
+      } else {
+        if (!req.params || req.n_params < 1) {
+          err_str = g_strdup("webauthn method requires JSON payload param");
+          status = "error";
+          code = "invalid_params";
+        } else if (strcmp(method, "webauthn_make_credential") == 0) {
+          fst = signet_fido_make_credential_json(s->fido, session_agent_id,
+                                                 req.params[0], &fido_json, &ferr);
+        } else if (strcmp(method, "webauthn_get_assertion") == 0) {
+          fst = signet_fido_get_assertion_json(s->fido, session_agent_id,
+                                               req.params[0], &fido_json, &ferr);
+        } else if (strcmp(method, "webauthn_export") == 0) {
+          fst = signet_fido_export_credential_json(s->fido, session_agent_id,
+                                                   req.params[0], &fido_json, &ferr);
+        } else {
+          fst = signet_fido_import_credential_json(s->fido, session_agent_id,
+                                                   req.params[0], &fido_json, &ferr);
+        }
+      }
+      if (!err_str) {
+        if (fst == SIGNET_FIDO_OK) {
+          result = fido_json;
+          fido_json = NULL;
+          status = "ok";
+          code = "ok";
+        } else {
+          err_str = g_strdup(ferr.reason ? ferr.reason : signet_fido_status_string(fst));
+          status = "error";
+          code = signet_fido_status_string(fst);
+        }
+      }
+      g_free(fido_json);
+#else
+      err_str = g_strdup("passkeys support not built");
+      status = "error";
+      code = "not_configured";
+#endif
 
     } else if (strcmp(method, "get_relays") == 0) {
       /* Build a JSON object mapping relay URLs to empty read/write hints. */

@@ -42,4 +42,27 @@
       <arg type="as" direction="out" name="credential_types" />
     </method>
   </interface>
+
+  <interface name="net.signet.Passkeys">
+    <!-- JSON request/response payloads mirror NIP-46 webauthn_* methods. -->
+    <method name="GetInfo">
+      <arg type="s" direction="out" name="info_json" />
+    </method>
+    <method name="MakeCredential">
+      <arg type="s" direction="in" name="request_json" />
+      <arg type="s" direction="out" name="response_json" />
+    </method>
+    <method name="GetAssertion">
+      <arg type="s" direction="in" name="request_json" />
+      <arg type="s" direction="out" name="response_json" />
+    </method>
+    <method name="ExportCredential">
+      <arg type="s" direction="in" name="request_json" />
+      <arg type="s" direction="out" name="response_json" />
+    </method>
+    <method name="ImportCredential">
+      <arg type="s" direction="in" name="request_json" />
+      <arg type="s" direction="out" name="response_json" />
+    </method>
+  </interface>
 </node>

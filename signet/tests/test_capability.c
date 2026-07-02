@@ -25,6 +25,27 @@ static void test_method_to_capability(void) {
   assert(enc_cap != NULL);
   assert(strcmp(enc_cap, SIGNET_CAP_NOSTR_ENCRYPT) == 0);
 
+  assert(strcmp(signet_method_to_capability("GetInfo"),
+                SIGNET_CAP_PASSKEY_GET_INFO) == 0);
+  assert(strcmp(signet_method_to_capability("MakeCredential"),
+                SIGNET_CAP_PASSKEY_MAKE_CREDENTIAL) == 0);
+  assert(strcmp(signet_method_to_capability("GetAssertion"),
+                SIGNET_CAP_PASSKEY_GET_ASSERTION) == 0);
+  assert(strcmp(signet_method_to_capability("ExportCredential"),
+                SIGNET_CAP_PASSKEY_EXPORT) == 0);
+  assert(strcmp(signet_method_to_capability("ImportCredential"),
+                SIGNET_CAP_PASSKEY_IMPORT) == 0);
+  assert(strcmp(signet_method_to_capability("webauthn_get_info"),
+                SIGNET_CAP_PASSKEY_GET_INFO) == 0);
+  assert(strcmp(signet_method_to_capability("webauthn_make_credential"),
+                SIGNET_CAP_PASSKEY_MAKE_CREDENTIAL) == 0);
+  assert(strcmp(signet_method_to_capability("webauthn_get_assertion"),
+                SIGNET_CAP_PASSKEY_GET_ASSERTION) == 0);
+  assert(strcmp(signet_method_to_capability("webauthn_export"),
+                SIGNET_CAP_PASSKEY_EXPORT) == 0);
+  assert(strcmp(signet_method_to_capability("webauthn_import"),
+                SIGNET_CAP_PASSKEY_IMPORT) == 0);
+
   /* NIP-5L style method names. */
   const char *sign_5l = signet_method_to_capability("sign_event");
   assert(sign_5l != NULL);
@@ -130,6 +151,73 @@ static void test_kind_restrictions(void) {
 
 /* ----------------------------- Policy evaluate (integration) ------------- */
 
+static void test_passkey_policy_decisions(void) {
+  SignetPolicyRegistry *pr = signet_policy_registry_new();
+
+  char *default_caps[] = { (char *)SIGNET_CAP_NOSTR_SIGN, NULL };
+  SignetAgentPolicy default_policy = {
+    .name = g_strdup("default-no-passkeys"),
+    .capabilities = default_caps,
+    .n_capabilities = 1,
+    .allowed_event_kinds = NULL,
+    .n_allowed_kinds = 0,
+    .disallowed_credential_types = NULL,
+    .n_disallowed_types = 0,
+    .rate_limit_per_hour = 0,
+  };
+  assert(signet_policy_registry_add(pr, &default_policy) == 0);
+  assert(signet_policy_registry_assign(pr, "*", "default-no-passkeys") == 0);
+
+  const char *passkey_methods[] = {
+    "GetInfo",
+    "MakeCredential",
+    "GetAssertion",
+    "ExportCredential",
+    "ImportCredential",
+    "webauthn_get_info",
+    "webauthn_make_credential",
+    "webauthn_get_assertion",
+    "webauthn_export",
+    "webauthn_import",
+  };
+  for (size_t i = 0; i < sizeof(passkey_methods) / sizeof(passkey_methods[0]); i++) {
+    assert(!signet_policy_evaluate(pr, "agent-with-default", passkey_methods[i], -1));
+  }
+
+  char *passkey_caps[] = {
+    (char *)SIGNET_CAP_PASSKEY_GET_INFO,
+    (char *)SIGNET_CAP_PASSKEY_MAKE_CREDENTIAL,
+    (char *)SIGNET_CAP_PASSKEY_GET_ASSERTION,
+    (char *)SIGNET_CAP_PASSKEY_EXPORT,
+    (char *)SIGNET_CAP_PASSKEY_IMPORT,
+    NULL,
+  };
+  SignetAgentPolicy passkey_policy = {
+    .name = g_strdup("passkey-rp"),
+    .capabilities = passkey_caps,
+    .n_capabilities = 5,
+    .allowed_event_kinds = NULL,
+    .n_allowed_kinds = 0,
+    .disallowed_credential_types = NULL,
+    .n_disallowed_types = 0,
+    .rate_limit_per_hour = 0,
+  };
+  assert(signet_policy_registry_add(pr, &passkey_policy) == 0);
+  assert(signet_policy_registry_assign(pr, "agent-passkey", "passkey-rp") == 0);
+
+  for (size_t i = 0; i < sizeof(passkey_methods) / sizeof(passkey_methods[0]); i++) {
+    assert(signet_policy_evaluate(pr, "agent-passkey", passkey_methods[i], -1));
+  }
+
+  assert(!signet_policy_evaluate(pr, "agent-passkey", "SignEvent", 1));
+  assert(!signet_policy_evaluate(pr, "agent-passkey", "Encrypt", -1));
+
+  g_free(default_policy.name);
+  g_free(passkey_policy.name);
+  signet_policy_registry_free(pr);
+  printf("test_passkey_policy_decisions: PASS\n");
+}
+
 static void test_policy_evaluate(void) {
   SignetPolicyRegistry *pr = signet_policy_registry_new();
 
@@ -221,6 +309,7 @@ int main(void) {
   test_method_to_capability();
   test_capability_grant();
   test_kind_restrictions();
+  test_passkey_policy_decisions();
   test_policy_evaluate();
   test_rate_limit();
   test_policy_clear();
