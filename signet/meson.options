@@ -14,6 +14,12 @@ option('signet_enable_health',
   description: 'Enable the minimal HTTP /health endpoint'
 )
 
+option('signet_enable_passkeys',
+  type: 'boolean',
+  value: false,
+  description: 'Build experimental FIDO2/passkeys (WebAuthn authenticator) modules'
+)
+
 option('signet_json_backend',
   type: 'combo',
   choices: ['json-glib', 'jansson'],

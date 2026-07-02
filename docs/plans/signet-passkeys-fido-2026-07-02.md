@@ -1,6 +1,7 @@
 # Signet Passkeys (FIDO2 / WebAuthn) Feasibility Plan
 
-> Status: Feasibility assessment (feasibility-first; phased roadmap contingent on a "go" decision).
+> Status: **Phase 0 executed — verdict GO** (2026-07-02). ES256/P-256, COSE/authData/`none`-attestation encoding, N-per-agent storage + PSK sync round-trip, and an **independent python-fido2 verification** all pass. Spike: `signet/tests/phase0/` (`README.md`). Phases 1+ ready to build.
+> Feasibility-first; phased roadmap contingent on a "go" decision.
 > Scope locked with user: signet as a **FIDO2/CTAP2 authenticator + passkey vault**; programmatic agent-facing API first, virtual CTAP device later; **software-backed keys with a pluggable-hardware seam**; **syncable multi-device credentials** (`BE`/`BS` set, backed by a fleet export/sync path).
 
 ## Goal
@@ -71,6 +72,14 @@ The gate must probe the *novel* risks, not just the well-solved crypto. OpenSSL 
 3. Prototype COSE_Key (EC2: `kty=2,alg=-7,crv=1,x,y`) and a `fmt:"none"` attestation object via libcbor; assert byte-stable output against fixtures (`include/signet/fido_cbor.h`, `src/fido_cbor.c`, `tests/test_fido_cbor.c`).
 4. **Storage-fit + portability probe:** stand up the dedicated `passkey_credentials` table and prove N-credentials-per-agent write / lookup-by-`rp_id`, **plus a PSK-wrap round-trip** (wrap a key under the fleet PSK on "instance A", unwrap and use on "instance B"). Validates both the cardinality fix and the sync decision before "go."
 5. **End-to-end RP ceremony — the real gate:** drive a full *register + authenticate* against `python-fido2` acting as RP **and** client (not just standalone signature verification), and observe how it treats a headless UP=1 / no-UV authenticator. Record go/no-go here; if no-go, stop.
+
+**Phase 0 result (2026-07-02): GO.** All five items pass in `signet/tests/phase0/`:
+- ES256/P-256 keygen, PKCS#8 export/import, sign, verify, tamper-reject (`test_fido_crypto.c`).
+- Byte-correct COSE_Key + authenticatorData + `none` attestation; self-hosted RP register→assert verifies (`test_fido_cbor.c`).
+- N passkeys per agent + PSK-wrapped export A→B, unwrap+sign+verify, wrong-PSK rejected (`test_passkey_store.c`).
+- **Independent cross-check: python-fido2 2.2.1 CBOR-decodes signet's attestation object and cryptographically verifies the ES256 assertion** (`emit_artifacts.c` + `verify_external.py`).
+- Build gate wired: `signet_enable_passkeys` (Meson) / `SIGNET_ENABLE_PASSKEYS` (CMake), off by default; modules compile clean under `-Wall -Wextra -Werror`.
+- Spike scope: standalone build (no full daemon); hand-rolled canonical CBOR to be swapped for libcbor in Phase 1; AAGUID is a placeholder pending the Phase 2 freeze.
 
 ### Phase 1 — Storage model + passkey vault
 1. Add the **self-contained `passkey_credentials` table** (lookup fields + encrypted `payload`/`nonce` columns) via an additive migration, with indexes on `(agent_id, rp_id)` and `credential_id` (`store.c:112-211`, migration at `store.c:258-265`). Do **not** touch the one-row-per-agent `secrets` table or its type enum.

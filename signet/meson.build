@@ -145,6 +145,18 @@ signet_core_sources = files(
   'src/ssh_agent.c',
 )
 
+# Experimental FIDO2/passkeys modules (Phase 0 spike).
+# See docs/plans/signet-passkeys-fido-2026-07-02.md. Off by default; only needs
+# OpenSSL (already a dependency). The hand-rolled CBOR encoder in the spike is
+# slated to be replaced by libcbor in the production build (Phase 0 item 1).
+if get_option('signet_enable_passkeys')
+  signet_core_sources += files(
+    'src/fido_crypto_openssl.c',
+    'src/fido_cbor.c',
+  )
+  add_project_arguments('-DSIGNET_ENABLE_PASSKEYS=1', language: 'c')
+endif
+
 signet_core = static_library('signet_core',
   signet_core_sources,
   include_directories: signet_includes,
