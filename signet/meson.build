@@ -39,6 +39,22 @@ sqlite3_dep = dependency('sqlite3', required: true)
 sodium_dep = dependency('libsodium', required: true)
 mhd_dep = dependency('libmicrohttpd', required: true)
 
+# nsync is pulled in transitively via libgo headers (context.h -> nsync.h) and
+# symbols. It ships no pkg-config file, so mirror the CMake find_path/find_library
+# approach: locate the header across common prefixes and link the lib when present.
+nsync_deps = []
+nsync_lib = cc.find_library('nsync', required: false)
+if nsync_lib.found()
+  nsync_deps += nsync_lib
+endif
+nsync_cargs = []
+foreach d : ['/opt/homebrew/include', '/usr/local/include', '/opt/local/include']
+  if fs.exists(d / 'nsync.h')
+    nsync_cargs += '-I' + d
+  endif
+endforeach
+nsync_dep = declare_dependency(compile_args: nsync_cargs, dependencies: nsync_deps)
+
 # JSON backend
 json_backend = get_option('signet_json_backend')
 if json_backend == 'json-glib'
@@ -76,6 +92,7 @@ signet_deps = [
   sqlite3_dep,
   sodium_dep,
   mhd_dep,
+  nsync_dep,
 ]
 
 if nostr_dep.found()
@@ -98,6 +115,9 @@ endif
 root_inc = include_directories('..')
 signet_inc = include_directories('include')
 libnostr_inc = include_directories('../libnostr/include')
+# libnostr public headers (e.g. nostr-tag.h) include libgo headers such as
+# string_array.h; the standalone build needs libgo/include on the path.
+libgo_inc = include_directories('../libgo/include')
 
 nips_inc = include_directories(
   '../nips/nip01/include',
@@ -106,12 +126,14 @@ nips_inc = include_directories(
   '../nips/nip19/include',
   '../nips/nip44/include',
   '../nips/nip46/include',
+  '../nips/nip11/include',
 )
 
 signet_includes = [
   root_inc,
   signet_inc,
   libnostr_inc,
+  libgo_inc,
   nips_inc,
 ]
 
