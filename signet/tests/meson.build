@@ -74,6 +74,14 @@ test_nostr_auth = executable('test_nostr_auth',
   install: false,
 )
 
+test_store_lifecycle = executable('test_store_lifecycle',
+  'test_store_lifecycle.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: false,
+)
+
 test('signet_smoke', test_exe)
 test('replay_cache', test_replay)
 test('policy_engine', test_policy)
@@ -83,6 +91,7 @@ test('capability', test_capability)
 test('relay_pool_protocol', test_relay_pool)
 test('signing_crypto', test_signing_crypto)
 test('nostr_auth', test_nostr_auth)
+test('store_lifecycle', test_store_lifecycle)
 
 if get_option('signet_enable_passkeys')
   test_store_passkeys = executable('test_store_passkeys',
