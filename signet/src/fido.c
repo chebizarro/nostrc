@@ -230,6 +230,10 @@ bool signet_fido_service_is_enabled(const SignetFidoService *svc) {
   return svc && svc->enabled;
 }
 
+bool signet_fido_service_allows_headless_uv(const SignetFidoService *svc) {
+  return svc && svc->allow_headless_uv;
+}
+
 static bool has_es256(const SignetFidoMakeCredentialRequest *req) {
   if (!req || !req->pub_key_cred_params || req->pub_key_cred_param_count == 0) return false;
   for (size_t i = 0; i < req->pub_key_cred_param_count; i++) {

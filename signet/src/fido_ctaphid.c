@@ -271,7 +271,12 @@ static int ctap2_make_credential(SignetFidoCtapHid *dev, const uint8_t *p, size_
     uint8_t e = CTAP2_ERR_INVALID_CBOR;
     *out = (uint8_t *)malloc(1); if (!*out) return -1; **out = e; *out_len = 1; return 0;
   }
-  if (d.unsupported_pin_uv || d.uv_required) {
+  /* Reject clientPin (genuinely unsupported). A uv=true request is honored only
+   * when the service is configured for headless UV; otherwise reject. When
+   * honored, the requirement is passed to the service, which enforces the
+   * allow_headless_uv policy and sets the UV flag in authData. */
+  if (d.unsupported_pin_uv ||
+      (d.uv_required && !signet_fido_service_allows_headless_uv(dev->fido))) {
     signet_fido_cbor_make_credential_clear(&d);
     *out = (uint8_t *)malloc(1); if (!*out) return -1; **out = CTAP2_ERR_UNSUPPORTED_OPTION; *out_len = 1; return 0;
   }
@@ -290,7 +295,7 @@ static int ctap2_make_credential(SignetFidoCtapHid *dev, const uint8_t *p, size_
     .user_name = d.user_name,
     .user_display_name = d.user_display_name,
     .discoverable = d.discoverable,
-    .user_verification = SIGNET_FIDO_UV_DISCOURAGED,
+    .user_verification = d.uv_required ? SIGNET_FIDO_UV_REQUIRED : SIGNET_FIDO_UV_DISCOURAGED,
     .pub_key_cred_params = d.algs,
     .pub_key_cred_param_count = d.alg_count,
     .exclude_credential_ids = (const uint8_t *const *)d.exclude_ids,
@@ -324,7 +329,8 @@ static int ctap2_get_assertion(SignetFidoCtapHid *dev, const uint8_t *p, size_t 
     signet_fido_cbor_get_assertion_clear(&d);
     *out = (uint8_t *)malloc(1); if (!*out) return -1; **out = CTAP2_ERR_INVALID_CBOR; *out_len = 1; return 0;
   }
-  if (d.unsupported_pin_uv || d.uv_required) {
+  if (d.unsupported_pin_uv ||
+      (d.uv_required && !signet_fido_service_allows_headless_uv(dev->fido))) {
     signet_fido_cbor_get_assertion_clear(&d);
     *out = (uint8_t *)malloc(1); if (!*out) return -1; **out = CTAP2_ERR_UNSUPPORTED_OPTION; *out_len = 1; return 0;
   }
@@ -337,7 +343,7 @@ static int ctap2_get_assertion(SignetFidoCtapHid *dev, const uint8_t *p, size_t 
     .rp_id = d.rp_id,
     .client_data_hash = d.client_data_hash,
     .client_data_hash_len = d.client_data_hash_len,
-    .user_verification = SIGNET_FIDO_UV_DISCOURAGED,
+    .user_verification = d.uv_required ? SIGNET_FIDO_UV_REQUIRED : SIGNET_FIDO_UV_DISCOURAGED,
     .allow_credential_ids = (const uint8_t *const *)d.allow_ids,
     .allow_credential_id_lens = d.allow_lens,
     .allow_credential_count = d.allow_count,
