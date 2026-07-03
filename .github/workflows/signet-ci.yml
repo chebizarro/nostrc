@@ -1,0 +1,67 @@
+name: signet CI
+
+# Dedicated CI for the Signet NIP-46 bunker. The main nostrc CI builds with
+# -DSIGNET_ENABLE=OFF, so without this workflow signet has no coverage. This
+# builds signet as part of the monorepo (CMake) and runs its ctest suite, with a
+# matrix entry that turns on the experimental FIDO2/passkeys modules so those
+# code paths and their tests are exercised in CI too.
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'signet/**'
+      - '.github/workflows/signet-ci.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'signet/**'
+      - '.github/workflows/signet-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: signet • passkeys=${{ matrix.passkeys }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        passkeys: [ 'OFF', 'ON' ]
+
+    env:
+      CMAKE_BUILD_TYPE: Debug
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config clang \
+            libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
+            libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
+            libjson-glib-dev libgit2-dev libnsync-dev \
+            libsqlite3-dev libmicrohttpd-dev libcbor-dev
+          echo "CC=clang" >> $GITHUB_ENV
+          echo "CXX=clang++" >> $GITHUB_ENV
+
+      - name: Configure (signet enabled)
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+            -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
+            -DWITH_NOSTRDB=ON -DLIBNOSTR_WITH_NOSTRDB=ON \
+            -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF \
+            -DSIGNET_ENABLE=ON -DBUILD_TESTING=ON \
+            -DSIGNET_ENABLE_PASSKEYS=${{ matrix.passkeys }}
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test (signet ctest suite)
+        run: ctest --test-dir build/signet/tests --output-on-failure

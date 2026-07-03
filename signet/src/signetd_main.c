@@ -69,6 +69,20 @@
 #define SIGNET_NIP46_KIND_CIPHERTEXT 24133
 
 static volatile sig_atomic_t g_shutdown_requested = 0;
+
+/* Resolve a local-transport peer UID (SO_PEERCRED / getpeereid) to an agent_id
+ * using the [uid_map] config section. Returns a newly-allocated agent_id
+ * (caller frees) or NULL when the UID is not mapped, in which case the
+ * transport rejects the caller. */
+static char *signetd_uid_resolver(uid_t uid, void *user_data) {
+  const SignetConfig *cfg = (const SignetConfig *)user_data;
+  if (!cfg) return NULL;
+  for (size_t i = 0; i < cfg->n_uid_map; i++) {
+    if (cfg->uid_map_uids[i] == (uint32_t)uid && cfg->uid_map_agents[i])
+      return g_strdup(cfg->uid_map_agents[i]);
+  }
+  return NULL;
+}
 static GMainLoop *g_main_loop = NULL;
 
 static void signet_on_term(int signo) {
@@ -724,6 +738,11 @@ int main(int argc, char **argv) {
   SignetDenyList *deny = base_store ? signet_deny_list_new(base_store) : NULL;
   dctx.deny = deny;
 
+  /* Give the management handler the SAME live deny list so that
+   * revoke_agent (kind 28010) deny-lists the pubkey, burns leases, and takes
+   * effect immediately via deny-list precedence. */
+  signet_mgmt_handler_set_deny_list(mgmt, deny);
+
   /* Build a fleet registry adapter.
    * is_in_fleet: all provisioned agents are fleet members.
    * is_denied: check the deny list.
@@ -775,8 +794,8 @@ int main(int argc, char **argv) {
       .uid_resolver_data = test_uid_map.agent_id[0] ? &test_uid_map : NULL,
       .use_system_bus = !test_dbus_session_bus,
 #else
-      .uid_resolver = NULL,
-      .uid_resolver_data = NULL,
+      .uid_resolver = cfg.n_uid_map ? signetd_uid_resolver : NULL,
+      .uid_resolver_data = cfg.n_uid_map ? &cfg : NULL,
       .use_system_bus = true,
 #endif
     };
@@ -855,8 +874,8 @@ int main(int argc, char **argv) {
       .uid_resolver = test_uid_map.agent_id[0] ? signet_test_uid_resolver : NULL,
       .uid_resolver_data = test_uid_map.agent_id[0] ? &test_uid_map : NULL,
 #else
-      .uid_resolver = NULL,
-      .uid_resolver_data = NULL,
+      .uid_resolver = cfg.n_uid_map ? signetd_uid_resolver : NULL,
+      .uid_resolver_data = cfg.n_uid_map ? &cfg : NULL,
 #endif
     };
     ssh_agent = signet_ssh_agent_new(&sa_cfg);

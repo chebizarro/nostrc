@@ -492,6 +492,9 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   } else if (rr == SIGNET_REPLAY_TOO_FAR_IN_FUTURE) {
     code = "replay_in_future";
     err_str = g_strdup("replay rejected (in future)");
+  } else if (rr == SIGNET_REPLAY_INVALID) {
+    code = "replay_invalid";
+    err_str = g_strdup("replay rejected (malformed event id/timestamp)");
   } else if (!dec_ok) {
     code = "decrypt_failed";
     err_str = g_strdup("decrypt failed");
@@ -554,7 +557,9 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
 
     } else if (strcmp(method, "sign_event") == 0 ||
                strcmp(method, "nip04_encrypt") == 0 ||
-               strcmp(method, "nip04_decrypt") == 0) {
+               strcmp(method, "nip04_decrypt") == 0 ||
+               strcmp(method, "nip44_encrypt") == 0 ||
+               strcmp(method, "nip44_decrypt") == 0) {
       SignetLoadedKey agent_key;
       memset(&agent_key, 0, sizeof(agent_key));
       if (!signet_key_store_load_agent_key(s->keys, session_agent_id, &agent_key) ||
@@ -608,7 +613,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
               free(eerr);
             }
           }
-        } else {
+        } else if (strcmp(method, "nip04_decrypt") == 0) {
           if (!req.params || req.n_params < 2) {
             err_str = g_strdup("nip04_decrypt requires [pubkey, ciphertext]");
             status = "error";
@@ -628,6 +633,66 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
               status = "ok";
               code = "ok";
               free(derr);
+            }
+          }
+        } else if (strcmp(method, "nip44_encrypt") == 0) {
+          /* NIP-44 v2 encrypt: params = [peer_pubkey_hex, plaintext]. */
+          if (!req.params || req.n_params < 2) {
+            err_str = g_strdup("nip44_encrypt requires [pubkey, plaintext]");
+            status = "error";
+            code = "invalid_params";
+          } else {
+            uint8_t peer_pk[32];
+            if (!signet_hex_to_bytes32(req.params[0], peer_pk)) {
+              err_str = g_strdup("invalid peer pubkey");
+              status = "error";
+              code = "invalid_params";
+            } else {
+              char *ct = NULL;
+              int rc = nostr_nip44_encrypt_v2(agent_key.secret_key, peer_pk,
+                                              (const uint8_t *)req.params[1],
+                                              strlen(req.params[1]), &ct);
+              signet_memzero(peer_pk, sizeof(peer_pk));
+              if (rc != 0 || !ct) {
+                err_str = g_strdup("encrypt failed");
+                status = "error";
+                code = "encrypt_failed";
+              } else {
+                result = g_strdup(ct);
+                free(ct);
+                status = "ok";
+                code = "ok";
+              }
+            }
+          }
+        } else { /* nip44_decrypt: params = [peer_pubkey_hex, ciphertext] */
+          if (!req.params || req.n_params < 2) {
+            err_str = g_strdup("nip44_decrypt requires [pubkey, ciphertext]");
+            status = "error";
+            code = "invalid_params";
+          } else {
+            uint8_t peer_pk[32];
+            if (!signet_hex_to_bytes32(req.params[0], peer_pk)) {
+              err_str = g_strdup("invalid peer pubkey");
+              status = "error";
+              code = "invalid_params";
+            } else {
+              uint8_t *pt = NULL;
+              size_t pt_len = 0;
+              int rc = nostr_nip44_decrypt_v2(agent_key.secret_key, peer_pk,
+                                              req.params[1], &pt, &pt_len);
+              signet_memzero(peer_pk, sizeof(peer_pk));
+              if (rc != 0 || !pt) {
+                err_str = g_strdup("decrypt failed");
+                status = "error";
+                code = "decrypt_failed";
+              } else {
+                result = g_strndup((const char *)pt, pt_len);
+                signet_memzero(pt, pt_len);
+                free(pt);
+                status = "ok";
+                code = "ok";
+              }
             }
           }
         }

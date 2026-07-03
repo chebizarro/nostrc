@@ -630,18 +630,25 @@ int signet_relay_pool_publish_event_json(SignetRelayPool *rp, const char *event_
     return -1;
   }
 
-  /* Publish to all relays in the pool */
+  /* Publish to all connected relays in the pool, counting how many actually
+   * received the event. Returning 0 unconditionally (even with zero connected
+   * relays) would make callers believe a response was delivered when nothing
+   * was sent. */
   NostrSimplePool *pool = rp->pool;
+  int sent = 0;
   for (size_t i = 0; i < pool->relay_count; i++) {
     NostrRelay *relay = pool->relays[i];
     if (relay && nostr_relay_is_connected(relay)) {
       nostr_relay_publish(relay, evt);
+      sent++;
     }
   }
 
   nostr_event_free(evt);
   g_mutex_unlock(&rp->mu);
-  return 0;
+  /* -2: started but no connected relay received the event (distinct from -1
+   * used for invalid args / not-started). */
+  return sent > 0 ? 0 : -2;
 }
 
 /* NPA-02: Publish OK tracking.
@@ -710,6 +717,7 @@ int signet_relay_pool_publish_event_json_ack(SignetRelayPool *rp,
   char *eid = nostr_event_get_id(evt);
 
   NostrSimplePool *pool = rp->pool;
+  int sent = 0;
   for (size_t i = 0; i < pool->relay_count; i++) {
     NostrRelay *relay = pool->relays[i];
     if (relay && nostr_relay_is_connected(relay)) {
@@ -728,13 +736,15 @@ int signet_relay_pool_publish_event_json_ack(SignetRelayPool *rp,
         nostr_relay_set_ok_callback(relay, signet_publish_ok_handler, ctx);
       }
       nostr_relay_publish(relay, evt);
+      sent++;
     }
   }
 
   free(eid);
   nostr_event_free(evt);
   g_mutex_unlock(&rp->mu);
-  return 0;
+  /* -2: started but no connected relay received the event. */
+  return sent > 0 ? 0 : -2;
 }
 
 int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_json) {
@@ -761,6 +771,24 @@ int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_j
   if (!o) {
     g_object_unref(p);
     return -1;
+  }
+
+  /* Verify the Schnorr signature before dispatching. This helper is a
+   * direct parse+dispatch path that does NOT pass through the subscription
+   * middleware (which verifies at relay_pool.c:85), so without this check a
+   * forged/unsigned event could reach higher layers. Fail closed on any
+   * event that does not deserialize or whose signature is invalid. */
+  {
+    NostrEvent *vevt = nostr_event_new();
+    if (vevt) {
+      bool sig_ok = nostr_event_deserialize_compact(vevt, event_json, NULL) &&
+                    nostr_event_check_signature(vevt);
+      nostr_event_free(vevt);
+      if (!sig_ok) {
+        g_object_unref(p);
+        return -1;
+      }
+    }
   }
 
   /* Extract minimal fields. */

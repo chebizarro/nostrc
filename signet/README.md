@@ -63,8 +63,8 @@ Management events are NIP-44 v2 encrypted between provisioner and bunker. Ack re
 
 ### Audit & Observability
 
-- **Hash-Chained Audit Log** — Every signing, management, and credential operation is logged with `entry_hash = SHA256(ts || agent_id || op || detail || prev_hash)`. Chain integrity is verifiable offline via `signetctl verify-audit`
-- **Structured JSON Logging** — 12-factor compliant; audit output to stdout or file
+- **Hash-Chained Audit Log** — Every signing, management, and credential operation is written to the SQLCipher audit store with `entry_hash = SHA256(ts || agent_id || op || detail || prev_hash)`. Chain integrity is verifiable offline via `signetctl verify-audit`. (Hash-chaining applies to the database audit store; the stdout/file JSON stream below is a separate, non-chained operational log.)
+- **Structured JSON Logging** — 12-factor compliant; operational audit output to stdout or file (not hash-chained; use the SQLCipher store for tamper-evident history)
 - **Health Endpoint** — `GET /health` via libmicrohttpd with Prometheus-style counters (bootstrap_total, auth_ok/denied/error, sign_total, revoke_total, active sessions/leases)
 - **Replay Protection** — In-memory rolling window with configurable TTL and clock skew tolerance
 
@@ -127,6 +127,17 @@ cd signet
 meson setup builddir
 meson compile -C builddir
 ```
+
+For real AES-256 encryption at rest, build against SQLCipher (otherwise the DB
+is plain SQLite and only per-record envelope encryption protects secret keys):
+
+```bash
+meson setup builddir -Dsignet_use_sqlcipher=true
+```
+
+At startup Signet verifies SQLCipher is active (`PRAGMA cipher_version` + a
+keyed read). If it is not and `SIGNET_REQUIRE_ENCRYPTED_DB=true`, the daemon
+refuses to start; otherwise it logs a prominent warning.
 
 ### Run
 
@@ -200,7 +211,8 @@ All configuration can be overridden with `SIGNET_`-prefixed environment variable
 
 | Variable                       | Description                              |
 |--------------------------------|------------------------------------------|
-| `SIGNET_DB_KEY`                | SQLCipher master key (required)          |
+| `SIGNET_DB_KEY`                | SQLCipher master key (required; hex, base64, or passphrase) |
+| `SIGNET_REQUIRE_ENCRYPTED_DB`  | Refuse to start unless the DB is SQLCipher-encrypted |
 | `SIGNET_BUNKER_NSEC`          | Bunker identity nsec (required)          |
 | `SIGNET_PROVISIONER_NSEC`     | Provisioner nsec for signetctl           |
 | `SIGNET_RELAYS`                | Comma-separated relay URLs               |

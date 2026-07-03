@@ -274,18 +274,76 @@ static void test_rate_limit(void) {
   signet_policy_registry_add(pr, &policy);
   signet_policy_registry_assign(pr, "rate-agent", "rate-limited");
 
-  /* First few requests should succeed. */
+  /* With 5/hour the token bucket clamps to burst=1.0 (see capability.c), so
+   * exactly ONE request is admitted and the very next must be denied. This is
+   * the actual enforcement assertion the old test lacked: a stubbed limiter
+   * that always returned true would fail here. */
   bool first = signet_policy_rate_limit_check(pr, "rate-agent", SIGNET_CAP_NOSTR_SIGN);
-  assert(first); /* at least the first should pass */
+  assert(first); /* bucket starts full (burst = 1) */
 
-  /* Just ensure the API works without crashing for multiple calls. */
-  for (int i = 0; i < 10; i++) {
-    (void)signet_policy_rate_limit_check(pr, "rate-agent", SIGNET_CAP_NOSTR_SIGN);
+  bool second = signet_policy_rate_limit_check(pr, "rate-agent", SIGNET_CAP_NOSTR_SIGN);
+  assert(!second); /* ENFORCEMENT: the limit actually blocks the 2nd request */
+
+  /* A rapid burst must not all pass; with burst=1 and negligible refill over
+   * microseconds, none of these 20 succeed. An always-allow stub yields 20. */
+  int allowed = 0;
+  for (int i = 0; i < 20; i++) {
+    if (signet_policy_rate_limit_check(pr, "rate-agent", SIGNET_CAP_NOSTR_SIGN))
+      allowed++;
   }
+  assert(allowed == 0);
+
+  /* Per-capability isolation: a different capability gets its own bucket and
+   * is admitted once even though NOSTR_SIGN is exhausted for this agent. */
+  bool other_cap = signet_policy_rate_limit_check(pr, "rate-agent", SIGNET_CAP_NOSTR_ENCRYPT);
+  assert(other_cap);
 
   g_free(policy.name);
   signet_policy_registry_free(pr);
-  printf("test_rate_limit: PASS\n");
+
+  /* Unlimited (rate_limit_per_hour == 0) must admit every request. */
+  SignetPolicyRegistry *pr2 = signet_policy_registry_new();
+  char *caps2[] = { (char *)SIGNET_CAP_NOSTR_SIGN, NULL };
+  SignetAgentPolicy unlimited = {
+    .name = g_strdup("unlimited"),
+    .capabilities = caps2,
+    .n_capabilities = 1,
+    .rate_limit_per_hour = 0,
+  };
+  signet_policy_registry_add(pr2, &unlimited);
+  signet_policy_registry_assign(pr2, "free-agent", "unlimited");
+  int free_allowed = 0;
+  for (int i = 0; i < 50; i++) {
+    if (signet_policy_rate_limit_check(pr2, "free-agent", SIGNET_CAP_NOSTR_SIGN))
+      free_allowed++;
+  }
+  assert(free_allowed == 50);
+  g_free(unlimited.name);
+  signet_policy_registry_free(pr2);
+
+  /* A high limit scales the burst (36000/hour -> burst 3600), so a 100-call
+   * burst is fully admitted. Proves the limit tracks the configured value
+   * rather than a hardcoded constant. */
+  SignetPolicyRegistry *pr3 = signet_policy_registry_new();
+  char *caps3[] = { (char *)SIGNET_CAP_NOSTR_SIGN, NULL };
+  SignetAgentPolicy high = {
+    .name = g_strdup("high"),
+    .capabilities = caps3,
+    .n_capabilities = 1,
+    .rate_limit_per_hour = 36000,
+  };
+  signet_policy_registry_add(pr3, &high);
+  signet_policy_registry_assign(pr3, "busy-agent", "high");
+  int high_allowed = 0;
+  for (int i = 0; i < 100; i++) {
+    if (signet_policy_rate_limit_check(pr3, "busy-agent", SIGNET_CAP_NOSTR_SIGN))
+      high_allowed++;
+  }
+  assert(high_allowed == 100);
+  g_free(high.name);
+  signet_policy_registry_free(pr3);
+
+  printf("test_rate_limit: PASS (enforcement, isolation, unlimited, burst-scaling)\n");
 }
 
 /* ----------------------------- Policy clear ------------------------------ */

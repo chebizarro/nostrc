@@ -52,6 +52,14 @@ skew_seconds = 120
 path =
 stdout = true
 
+[uid_map]
+# SO_PEERCRED peer UID -> agent_id mapping for the local D-Bus Unix and SSH
+# agent transports. Each entry is "<numeric-uid> = <agent_id>". A caller whose
+# peer UID is not listed here is rejected (Unauthorized). Required to make the
+# D-Bus Unix / SSH agent transports usable.
+# 1000 = agent-alpha
+# 1001 = agent-beta
+
 [passkeys]
 # Programmatic WebAuthn/FIDO2 authenticator API. Off by default.
 enabled = false

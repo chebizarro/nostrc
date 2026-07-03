@@ -168,19 +168,15 @@ static int exchange_credential_http(const char *service_url,
 
 #endif /* SIGNET_HAVE_CURL */
 
-/* Generate a local random session token (fallback when no service URL
- * is provided or when libcurl is not available). */
-static void generate_local_token(char **out_token, int64_t *out_expires_at) {
-  uint8_t raw[32];
-  randombytes_buf(raw, sizeof(raw));
-  char *token_hex = g_malloc(65);
-  for (int i = 0; i < 32; i++)
-    sprintf(token_hex + i * 2, "%02x", raw[i]);
-  token_hex[64] = '\0';
-  sodium_memzero(raw, sizeof(raw));
-
-  *out_token = token_hex;
-  *out_expires_at = signet_now_unix() + 3600; /* 1h default */
+/* A brokered session must be exchanged over a secure transport. Require https
+ * except for loopback (local development), so credentials are never POSTed to a
+ * plaintext service. */
+static bool signet_session_url_is_secure(const char *url) {
+  if (!url) return false;
+  if (g_ascii_strncasecmp(url, "https://", 8) == 0) return true;
+  if (g_ascii_strncasecmp(url, "http://localhost", 16) == 0) return true;
+  if (g_ascii_strncasecmp(url, "http://127.0.0.1", 16) == 0) return true;
+  return false;
 }
 
 int signet_session_broker_get(SignetStore *store,
@@ -216,10 +212,19 @@ int signet_session_broker_get(SignetStore *store,
   int64_t expires_at = 0;
   bool exchanged = false;
 
-  /* 3. Exchange credential for session token via HTTP POST. */
+  /* 3. Exchange the credential for a REAL service session token.
+   *
+   * A service URL is required and must be secure (https, or loopback for local
+   * dev). We never substitute a locally-minted random token for a real service
+   * session: if the exchange cannot happen we fail closed, so a caller can
+   * never mistake a meaningless bearer token for a brokered session. */
+  if (!req->service_url || req->service_url[0] == '\0' ||
+      !signet_session_url_is_secure(req->service_url)) {
+    signet_secret_record_clear(&rec);
+    return -1;
+  }
 #ifdef SIGNET_HAVE_CURL
-  if (req->service_url && req->service_url[0] != '\0' &&
-      rec.payload && rec.payload_len > 0) {
+  if (rec.payload && rec.payload_len > 0) {
     rc = exchange_credential_http(req->service_url,
                                     rec.payload, rec.payload_len,
                                     &session_token, &expires_at);
@@ -228,13 +233,17 @@ int signet_session_broker_get(SignetStore *store,
   }
 #endif
 
-  /* Fallback: generate a local token if HTTP exchange failed or
-   * no service URL was provided. */
-  if (!exchanged)
-    generate_local_token(&session_token, &expires_at);
-
   /* Wipe the credential payload immediately. */
   signet_secret_record_clear(&rec);
+
+  if (!exchanged) {
+    /* Exchange failed or libcurl unavailable: fail closed, no fake token. */
+    if (session_token) {
+      sodium_memzero(session_token, strlen(session_token));
+      g_free(session_token);
+    }
+    return -1;
+  }
 
   /* 4. Issue a lease. */
   uint8_t lid_raw[16];
@@ -250,10 +259,19 @@ int signet_session_broker_get(SignetStore *store,
       req->service_url ? req->service_url : "",
       exchanged ? "true" : "false");
 
-  (void)signet_store_issue_lease(store, lease_id,
-                                   req->credential_id,
-                                   req->agent_id,
-                                   now, expires_at, meta);
+  /* Lease tracking is authoritative: if we cannot persist the lease, fail the
+   * whole request rather than hand back an untracked session token. */
+  if (signet_store_issue_lease(store, lease_id,
+                               req->credential_id,
+                               req->agent_id,
+                               now, expires_at, meta) != 0) {
+    g_free(meta);
+    if (session_token) {
+      sodium_memzero(session_token, strlen(session_token));
+      g_free(session_token);
+    }
+    return -1;
+  }
   g_free(meta);
 
   /* 5. Audit log (no secret values). */

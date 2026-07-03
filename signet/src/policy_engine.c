@@ -28,6 +28,10 @@ SignetPolicyEngine *signet_policy_engine_new(SignetPolicyStore *store,
 
   pe->store = store;
   pe->audit = audit;
+  /* Retained for callers/telemetry, but evaluation is intentionally
+   * fail-closed: a missing identity, missing policy file, or store error
+   * always DENIES regardless of this value. A fleet bunker must never
+   * default-allow, so this field is not used to widen access. */
   pe->default_decision = cfg ? cfg->default_decision : SIGNET_POLICY_DECISION_DENY;
 
   return pe;

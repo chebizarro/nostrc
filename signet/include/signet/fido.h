@@ -114,6 +114,11 @@ SignetFidoService *signet_fido_service_new(const SignetFidoServiceConfig *cfg);
 void signet_fido_service_free(SignetFidoService *svc);
 
 bool signet_fido_service_is_enabled(const SignetFidoService *svc);
+
+/* True if the service is configured to approve UV-required ceremonies headlessly
+ * (allow_headless_uv). The CTAP-HID layer uses this to decide whether a uv=true
+ * request can be honored rather than rejected outright. */
+bool signet_fido_service_allows_headless_uv(const SignetFidoService *svc);
 const char *signet_fido_status_string(SignetFidoStatus status);
 void signet_fido_error_clear(SignetFidoError *err);
 
