@@ -6,7 +6,7 @@ test_exe = executable('test_signet_smoke',
   'test_signet_smoke.c',
   link_with: signet_core,
   include_directories: signet_includes,
-  dependencies: signet_deps,
+  dependencies: signet_deps + [in_tree_dep],
   install: false,
 )
 
@@ -14,7 +14,7 @@ test_replay = executable('test_replay_cache',
   'test_replay_cache.c',
   link_with: signet_core,
   include_directories: signet_includes,
-  dependencies: signet_deps,
+  dependencies: signet_deps + [in_tree_dep],
   install: false,
 )
 
@@ -22,7 +22,7 @@ test_policy = executable('test_policy_engine',
   'test_policy_engine.c',
   link_with: signet_core,
   include_directories: signet_includes,
-  dependencies: signet_deps,
+  dependencies: signet_deps + [in_tree_dep],
   install: false,
 )
 
@@ -30,7 +30,7 @@ test_audit = executable('test_audit_logger',
   'test_audit_logger.c',
   link_with: signet_core,
   include_directories: signet_includes,
-  dependencies: signet_deps,
+  dependencies: signet_deps + [in_tree_dep],
   install: false,
 )
 
@@ -38,7 +38,7 @@ test_bootstrap_contract = executable('test_bootstrap_contract',
   'test_bootstrap_contract.c',
   link_with: signet_core,
   include_directories: signet_includes,
-  dependencies: signet_deps,
+  dependencies: signet_deps + [in_tree_dep],
   install: false,
 )
 

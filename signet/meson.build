@@ -66,24 +66,95 @@ else
   error('Unsupported signet_json_backend: ' + json_backend)
 endif
 
-# In-tree libraries (typically produced by monorepo CMake build)
-# We keep directory list broad to match common CMake output layouts.
-in_tree_dirs = [
-  nostrc_build_dir,
-  nostrc_build_dir / 'libnostr',
-  nostrc_build_dir / 'libjson',
-  nostrc_build_dir / 'nips' / 'nip46',
-  nostrc_build_dir / 'nips' / 'nip04',
-  nostrc_build_dir / 'nips' / 'nip44',
-  nostrc_build_dir / 'nips' / 'nip01',
-  nostrc_build_dir / 'nips' / 'nip19',
+# In-tree libraries produced by the monorepo CMake build (under nostrc_build_dir).
+# The standalone meson build links these prebuilt archives directly so it can
+# produce a working signetd. The set, names, and order mirror the CMake link
+# line (see bd nostrc-1fb); build the monorepo CMake target first.
+in_tree_archives = [
+  'nips/nip19/libnip19.a',
+  'nips/nip46/libnostr_nip46_core.a',
+  'nips/nip04/libnip04.a',
+  'nips/nip44/libnostr_nip44_core.a',
+  'nips/nip11/libnip11.a',
+  'libnostr/libnostr.a',
+  'libgo/liblibgo.a',
+  'libnostr/libnostrdb.a',
 ]
+in_tree_link_args = []
+in_tree_found = true
+foreach rel : in_tree_archives
+  ap = nostrc_build_dir / rel
+  if fs.exists(ap)
+    in_tree_link_args += ap
+  else
+    in_tree_found = false
+  endif
+endforeach
 
-nostr_dep = cc.find_library('nostr', dirs: in_tree_dirs, required: require_in_tree)
-nostr_json_dep = cc.find_library('nostr_json', dirs: in_tree_dirs, required: require_in_tree)
-nip46_dep = cc.find_library('nip46', dirs: in_tree_dirs, required: require_in_tree)
-nip19_dep = cc.find_library('nip19', dirs: in_tree_dirs, required: require_in_tree)
-nip44_dep = cc.find_library('nip44', dirs: in_tree_dirs, required: require_in_tree)
+# nostr_json is built as a shared library in the CMake tree.
+nostr_json_dir = nostrc_build_dir / 'libjson'
+if fs.exists(nostr_json_dir / 'libnostr_json.dylib') or fs.exists(nostr_json_dir / 'libnostr_json.so')
+  in_tree_link_args += ['-L' + nostr_json_dir, '-lnostr_json', '-Wl,-rpath,' + nostr_json_dir]
+else
+  in_tree_found = false
+endif
+
+# flatccrt is a STATIC archive that libnostrdb depends on, so it must come after
+# the archives above in the link line — add it as a positional link arg.
+extra_lib_dirs = ['/opt/homebrew/lib', '/usr/local/lib', '/opt/local/lib']
+foreach d : extra_lib_dirs
+  if fs.exists(d / 'libflatccrt.a')
+    in_tree_link_args += d / 'libflatccrt.a'
+  endif
+endforeach
+
+if require_in_tree and not in_tree_found
+  error('signet_require_in_tree_libs=true but prebuilt monorepo libraries were not found under ' + nostrc_build_dir + '. Build the CMake target first, or set -Dsignet_require_in_tree_libs=false.')
+endif
+
+# External libs the monorepo stack pulls in (dylibs -> order-independent).
+in_tree_ext_deps = []
+secp_dep = dependency('libsecp256k1', required: false)
+if not secp_dep.found()
+  secp_dep = cc.find_library('secp256k1', dirs: extra_lib_dirs, required: false)
+endif
+if secp_dep.found()
+  in_tree_ext_deps += secp_dep
+endif
+ws_dep = dependency('libwebsockets', required: false)
+if not ws_dep.found()
+  ws_dep = cc.find_library('websockets', dirs: extra_lib_dirs, required: false)
+endif
+if ws_dep.found()
+  in_tree_ext_deps += ws_dep
+endif
+threads_dep = dependency('threads', required: false)
+if threads_dep.found()
+  in_tree_ext_deps += threads_dep
+endif
+if host_machine.system() == 'darwin'
+  security_dep = dependency('appleframeworks', modules: ['Security'], required: false)
+  if security_dep.found()
+    in_tree_ext_deps += security_dep
+  endif
+endif
+# nsync ships as a dylib in a non-default prefix; link it explicitly (the earlier
+# nsync_dep only provides the include path).
+nsync_link = cc.find_library('nsync', dirs: extra_lib_dirs, required: false)
+if nsync_link.found()
+  in_tree_ext_deps += nsync_link
+endif
+# libcurl is pulled in transitively by libnostr (NIP-05/NIP-11 fetch).
+curl_dep = dependency('libcurl', required: false)
+if not curl_dep.found()
+  curl_dep = cc.find_library('curl', dirs: extra_lib_dirs, required: false)
+endif
+if curl_dep.found()
+  in_tree_ext_deps += curl_dep
+endif
+
+# Single dependency carrying the in-tree archive link line + external libs.
+in_tree_dep = declare_dependency(link_args: in_tree_link_args, dependencies: in_tree_ext_deps)
 
 signet_deps = [
   glib_dep,
@@ -95,22 +166,6 @@ signet_deps = [
   mhd_dep,
   nsync_dep,
 ]
-
-if nostr_dep.found()
-  signet_deps += nostr_dep
-endif
-if nostr_json_dep.found()
-  signet_deps += nostr_json_dep
-endif
-if nip46_dep.found()
-  signet_deps += nip46_dep
-endif
-if nip19_dep.found()
-  signet_deps += nip19_dep
-endif
-if nip44_dep.found()
-  signet_deps += nip44_dep
-endif
 if get_option('signet_enable_passkeys')
   signet_deps += cbor_dep
 endif
@@ -202,7 +257,7 @@ executable('signetd',
   'src/signetd_main.c',
   link_with: signet_core,
   include_directories: signet_includes,
-  dependencies: signet_deps,
+  dependencies: signet_deps + [in_tree_dep],
   c_args: signetd_cargs,
   install: true,
 )
@@ -211,7 +266,7 @@ executable('signetctl',
   'src/signetctl_main.c',
   link_with: signet_core,
   include_directories: signet_includes,
-  dependencies: signet_deps,
+  dependencies: signet_deps + [in_tree_dep],
   install: true,
 )
 
