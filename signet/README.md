@@ -63,8 +63,8 @@ Management events are NIP-44 v2 encrypted between provisioner and bunker. Ack re
 
 ### Audit & Observability
 
-- **Hash-Chained Audit Log** — Every signing, management, and credential operation is logged with `entry_hash = SHA256(ts || agent_id || op || detail || prev_hash)`. Chain integrity is verifiable offline via `signetctl verify-audit`
-- **Structured JSON Logging** — 12-factor compliant; audit output to stdout or file
+- **Hash-Chained Audit Log** — Every signing, management, and credential operation is written to the SQLCipher audit store with `entry_hash = SHA256(ts || agent_id || op || detail || prev_hash)`. Chain integrity is verifiable offline via `signetctl verify-audit`. (Hash-chaining applies to the database audit store; the stdout/file JSON stream below is a separate, non-chained operational log.)
+- **Structured JSON Logging** — 12-factor compliant; operational audit output to stdout or file (not hash-chained; use the SQLCipher store for tamper-evident history)
 - **Health Endpoint** — `GET /health` via libmicrohttpd with Prometheus-style counters (bootstrap_total, auth_ok/denied/error, sign_total, revoke_total, active sessions/leases)
 - **Replay Protection** — In-memory rolling window with configurable TTL and clock skew tolerance
 

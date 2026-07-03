@@ -384,10 +384,23 @@ int signet_key_store_rotate_agent(SignetKeyStore *ks,
 
   g_mutex_lock(&ks->mu);
 
-  /* Check that the agent exists in the cache. */
+  /* The agent must exist. Check the hot cache first, then fall back to the
+   * backing store so agents that were provisioned but not yet loaded into the
+   * cache can still be rotated (previously they returned not_found). */
   if (!g_hash_table_contains(ks->cache, agent_id)) {
-    g_mutex_unlock(&ks->mu);
-    return 1; /* not found */
+    int exists_in_store = 0;
+    if (ks->store) {
+      SignetAgentRecord rec;
+      memset(&rec, 0, sizeof(rec));
+      if (signet_store_get_agent(ks->store, agent_id, &rec) == 0) {
+        exists_in_store = 1;
+        signet_agent_record_clear(&rec);
+      }
+    }
+    if (!exists_in_store) {
+      g_mutex_unlock(&ks->mu);
+      return 1; /* not found in cache or store */
+    }
   }
 
   /* Generate a new keypair. */

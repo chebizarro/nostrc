@@ -198,7 +198,8 @@ static int handle_sign_request(SignetSshAgent *sa, int client_fd,
   const uint8_t *dp = data;
   uint32_t kb_len = get_u32(dp); dp += 4;
   if (kb_len + 8 > data_len) return send_failure(client_fd);
-  dp += kb_len; /* skip key blob */
+  const uint8_t *req_key_blob = dp; /* identity the client asked to sign with */
+  dp += kb_len;
 
   uint32_t msg_len = get_u32(dp); dp += 4;
   if ((uint32_t)(dp - data) + msg_len > data_len) return send_failure(client_fd);
@@ -223,6 +224,23 @@ static int handle_sign_request(SignetSshAgent *sa, int client_fd,
     return send_failure(client_fd);
   }
   signet_loaded_key_clear(&lk);
+
+  /* Bind the signature to the requested identity: the client must have asked
+   * to sign with THIS agent's ed25519 key blob (the only identity we expose),
+   * not some other key. Previously the requested blob was skipped, so a sign
+   * request for any identity was served with the mapped agent's key. */
+  {
+    size_t agent_blob_len = 0;
+    uint8_t *agent_blob = build_ed25519_key_blob(pk, &agent_blob_len);
+    int blob_match = (agent_blob && agent_blob_len == kb_len &&
+                      memcmp(agent_blob, req_key_blob, kb_len) == 0);
+    g_free(agent_blob);
+    if (!blob_match) {
+      sodium_memzero(ed_sk, sizeof(ed_sk));
+      sodium_memzero(pk, sizeof(pk));
+      return send_failure(client_fd);
+    }
+  }
 
   uint8_t sig[64];
   unsigned long long sig_len_actual;

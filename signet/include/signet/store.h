@@ -4,8 +4,10 @@
  *
  * Provides AES-256-encrypted storage for agent secret keys and metadata.
  * Secret keys are envelope-encrypted at rest using crypto_secretbox_easy
- * with a per-agent nonce and a data-encryption key derived via HKDF from
- * the master key (SIGNET_DB_KEY env var).
+ * with a per-record random nonce and a data-encryption key derived from the
+ * master key (SIGNET_DB_KEY env var) via keyed BLAKE2b (crypto_generichash)
+ * with domain separation. SIGNET_DB_KEY may be supplied as 64/128-char hex, a
+ * base64-encoded 32/64-byte key, or a raw ASCII passphrase (>= 32 bytes).
  *
  * Schema:
  *   agents(agent_id TEXT PRIMARY KEY,

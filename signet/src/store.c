@@ -82,7 +82,22 @@ static bool signet_derive_dek(const char *master_key, uint8_t dek[SIGNET_DEK_LEN
     }
   }
 
-  /* Fall back to raw bytes if hex decode didn't work */
+  /* Then try base64 (the documented SIGNET_DB_KEY format: a base64-encoded
+   * 32-byte key). Accept a decoded length of exactly 32 or 64 bytes. */
+  if (ikm_len == 0) {
+    unsigned char dec[64];
+    size_t dec_len = 0;
+    if (sodium_base642bin(dec, sizeof(dec), master_key, mk_len,
+                          NULL, &dec_len, NULL,
+                          sodium_base64_VARIANT_ORIGINAL) == 0 &&
+        (dec_len == 32 || dec_len == 64)) {
+      memcpy(ikm, dec, dec_len);
+      ikm_len = dec_len;
+    }
+    sodium_memzero(dec, sizeof(dec));
+  }
+
+  /* Fall back to raw bytes (treat the key as an ASCII passphrase). */
   if (ikm_len == 0) {
     ikm_len = mk_len > sizeof(ikm) ? sizeof(ikm) : mk_len;
     memcpy(ikm, master_key, ikm_len);
@@ -344,6 +359,7 @@ int signet_store_put_agent(SignetStore *store,
   sqlite3_stmt *stmt = NULL;
   int rc = sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL);
   if (rc != SQLITE_OK) {
+    sodium_memzero(ciphertext, ct_len);
     free(ciphertext);
     return -1;
   }
@@ -360,6 +376,7 @@ int signet_store_put_agent(SignetStore *store,
 
   rc = sqlite3_step(stmt);
   sqlite3_finalize(stmt);
+  sodium_memzero(ciphertext, ct_len);
   free(ciphertext);
 
   return (rc == SQLITE_DONE) ? 0 : -1;
@@ -516,7 +533,8 @@ void signet_agent_record_clear(SignetAgentRecord *rec) {
   }
   rec->secret_key_len = 0;
   if (rec->connect_secret) {
-    memset(rec->connect_secret, 0, strlen(rec->connect_secret));
+    /* sodium_memzero is not elided by the optimizer, unlike plain memset. */
+    sodium_memzero(rec->connect_secret, strlen(rec->connect_secret));
     g_free(rec->connect_secret);
     rec->connect_secret = NULL;
   }
