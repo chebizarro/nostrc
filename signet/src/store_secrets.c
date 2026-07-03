@@ -256,25 +256,21 @@ int signet_store_rotate_secret(SignetStore *store,
   if (rc != SQLITE_ROW) { sqlite3_finalize(vs); return -1; }
 
   int old_version = sqlite3_column_int(vs, 0);
-  const void *old_payload = sqlite3_column_blob(vs, 1);
+  const void *ob = sqlite3_column_blob(vs, 1);
   int old_payload_len = sqlite3_column_bytes(vs, 1);
-  const void *old_nonce = sqlite3_column_blob(vs, 2);
+  const void *on = sqlite3_column_blob(vs, 2);
   int old_nonce_len = sqlite3_column_bytes(vs, 2);
   int new_version = old_version + 1;
 
-  /* Archive old version. */
-  const char *arch_sql =
-    "INSERT INTO secret_versions (id, version, payload, nonce, created_at) VALUES (?, ?, ?, ?, ?);";
-  sqlite3_stmt *as = NULL;
-  if (sqlite3_prepare_v2(db, arch_sql, -1, &as, NULL) == SQLITE_OK) {
-    sqlite3_bind_text(as, 1, id, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(as, 2, old_version);
-    sqlite3_bind_blob(as, 3, old_payload, old_payload_len, SQLITE_TRANSIENT);
-    sqlite3_bind_blob(as, 4, old_nonce, old_nonce_len, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(as, 5, now);
-    sqlite3_step(as);
-    sqlite3_finalize(as);
+  /* Copy the old payload/nonce out of the statement before finalizing it, so
+   * the archive INSERT can run later inside a transaction. */
+  uint8_t *old_payload = (old_payload_len > 0) ? (uint8_t *)malloc(old_payload_len) : NULL;
+  uint8_t *old_nonce = (old_nonce_len > 0) ? (uint8_t *)malloc(old_nonce_len) : NULL;
+  if ((old_payload_len > 0 && !old_payload) || (old_nonce_len > 0 && !old_nonce)) {
+    free(old_payload); free(old_nonce); sqlite3_finalize(vs); return -1;
   }
+  if (old_payload) memcpy(old_payload, ob, (size_t)old_payload_len);
+  if (old_nonce) memcpy(old_nonce, on, (size_t)old_nonce_len);
   sqlite3_finalize(vs);
 
   /* Encrypt new payload. */
@@ -283,33 +279,72 @@ int signet_store_rotate_secret(SignetStore *store,
 
   size_t ct_len = new_payload_len + SIGNET_MAC_LEN;
   uint8_t *ciphertext = (uint8_t *)malloc(ct_len);
-  if (!ciphertext) return -1;
+  if (!ciphertext) { free(old_payload); free(old_nonce); return -1; }
 
   if (crypto_secretbox_easy(ciphertext, new_payload, new_payload_len, nonce, dek) != 0) {
-    free(ciphertext);
-    return -1;
+    free(ciphertext); free(old_payload); free(old_nonce); return -1;
   }
 
-  /* Update secrets table. */
-  const char *upd_sql =
-    "UPDATE secrets SET payload = ?, nonce = ?, version = ?, active_version = ?, "
-    "rotated_at = ? WHERE id = ?;";
-  sqlite3_stmt *us = NULL;
-  rc = sqlite3_prepare_v2(db, upd_sql, -1, &us, NULL);
-  if (rc != SQLITE_OK) { free(ciphertext); return -1; }
+  /* Archive + update are wrapped in a single transaction so version history
+   * can never diverge from the active payload: either BOTH the secret_versions
+   * insert and the secrets update commit, or neither does. Archive failures
+   * (previously ignored) now roll the whole rotation back. */
+  int result = -1;
+  if (sqlite3_exec(db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) != SQLITE_OK) {
+    goto rotate_cleanup;
+  }
 
-  sqlite3_bind_blob(us, 1, ciphertext, (int)ct_len, SQLITE_TRANSIENT);
-  sqlite3_bind_blob(us, 2, nonce, SIGNET_NONCE_LEN, SQLITE_TRANSIENT);
-  sqlite3_bind_int(us, 3, new_version);
-  sqlite3_bind_int(us, 4, new_version);
-  sqlite3_bind_int64(us, 5, now);
-  sqlite3_bind_text(us, 6, id, -1, SQLITE_TRANSIENT);
+  {
+    const char *arch_sql =
+      "INSERT INTO secret_versions (id, version, payload, nonce, created_at) VALUES (?, ?, ?, ?, ?);";
+    sqlite3_stmt *as = NULL;
+    if (sqlite3_prepare_v2(db, arch_sql, -1, &as, NULL) != SQLITE_OK) {
+      sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL); goto rotate_cleanup;
+    }
+    sqlite3_bind_text(as, 1, id, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(as, 2, old_version);
+    sqlite3_bind_blob(as, 3, old_payload, old_payload_len, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(as, 4, old_nonce, old_nonce_len, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(as, 5, now);
+    int ar = sqlite3_step(as);
+    sqlite3_finalize(as);
+    if (ar != SQLITE_DONE) {
+      sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL); goto rotate_cleanup;
+    }
+  }
 
-  rc = sqlite3_step(us);
-  sqlite3_finalize(us);
-  free(ciphertext);
+  {
+    const char *upd_sql =
+      "UPDATE secrets SET payload = ?, nonce = ?, version = ?, active_version = ?, "
+      "rotated_at = ? WHERE id = ?;";
+    sqlite3_stmt *us = NULL;
+    if (sqlite3_prepare_v2(db, upd_sql, -1, &us, NULL) != SQLITE_OK) {
+      sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL); goto rotate_cleanup;
+    }
+    sqlite3_bind_blob(us, 1, ciphertext, (int)ct_len, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(us, 2, nonce, SIGNET_NONCE_LEN, SQLITE_TRANSIENT);
+    sqlite3_bind_int(us, 3, new_version);
+    sqlite3_bind_int(us, 4, new_version);
+    sqlite3_bind_int64(us, 5, now);
+    sqlite3_bind_text(us, 6, id, -1, SQLITE_TRANSIENT);
+    int ur = sqlite3_step(us);
+    sqlite3_finalize(us);
+    if (ur != SQLITE_DONE) {
+      sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL); goto rotate_cleanup;
+    }
+  }
 
-  return (rc == SQLITE_DONE) ? 0 : -1;
+  if (sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL) != SQLITE_OK) {
+    sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL); goto rotate_cleanup;
+  }
+  result = 0;
+
+rotate_cleanup:
+  if (ciphertext) { sodium_memzero(ciphertext, ct_len); free(ciphertext); }
+  sodium_memzero(nonce, sizeof(nonce));
+  free(old_payload);
+  free(old_nonce);
+  return result;
 }
 
 void signet_secret_record_clear(SignetSecretRecord *rec) {

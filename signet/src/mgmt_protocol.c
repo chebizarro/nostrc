@@ -580,12 +580,15 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
           h->policy_store, req.agent_id, req.policy_json, now, &policy_err);
       if (prc == 0) {
         ok = true;
-        code = "policy_set";
         if (policy_err) {
-          /* In-memory update succeeded but persistence failed. */
-          message = g_strdup_printf("policy updated for agent %s (warning: %s)",
+          /* In-memory update succeeded but durable persistence FAILED. Signal
+           * this distinctly (not "policy_set") so automation does not assume
+           * the change survives a restart. */
+          code = "policy_set_not_persisted";
+          message = g_strdup_printf("policy updated in memory for agent %s but NOT persisted: %s",
                                     req.agent_id, policy_err);
         } else {
+          code = "policy_set";
           message = g_strdup_printf("policy updated for agent %s", req.agent_id);
         }
         result = g_strdup(req.policy_json);

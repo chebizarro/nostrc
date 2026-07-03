@@ -132,9 +132,10 @@ static bool signet_replay_skew_check(const SignetReplayCache *c,
     return true;
   }
 
-  /* If created_at is missing/invalid, do not apply skew validation here. */
+  /* A missing/invalid timestamp on an event we are asked to skew-check is
+   * malformed; fail closed rather than silently skipping validation. */
   if (event_created_at <= 0) {
-    *out = SIGNET_REPLAY_OK;
+    *out = SIGNET_REPLAY_INVALID;
     return true;
   }
 
@@ -158,14 +159,17 @@ SignetReplayResult signet_replay_check_and_mark(SignetReplayCache *c,
                                                 const char *event_id_hex,
                                                 int64_t event_created_at,
                                                 int64_t now) {
-  if (!c || !event_id_hex || event_id_hex[0] == '\0') return SIGNET_REPLAY_OK;
+  if (!c) return SIGNET_REPLAY_OK; /* replay protection disabled */
+  /* Missing/empty event id means we cannot dedup; reject rather than admit. */
+  if (!event_id_hex || event_id_hex[0] == '\0') return SIGNET_REPLAY_INVALID;
 
   SignetReplayResult skew_res = SIGNET_REPLAY_OK;
   (void)signet_replay_skew_check(c, event_created_at, now, &skew_res);
   if (skew_res != SIGNET_REPLAY_OK) return skew_res;
 
-  /* Defensive bound to avoid pathological memory use if caller passes junk. */
-  if (strlen(event_id_hex) > 256) return SIGNET_REPLAY_OK;
+  /* Defensive bound to avoid pathological memory use if caller passes junk.
+   * An overlong id is malformed input, so fail closed rather than admit it. */
+  if (strlen(event_id_hex) > 256) return SIGNET_REPLAY_INVALID;
 
   g_mutex_lock(&c->mu);
 

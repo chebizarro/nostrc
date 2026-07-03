@@ -24,7 +24,10 @@ typedef enum {
   SIGNET_REPLAY_OK = 0,
   SIGNET_REPLAY_DUPLICATE = 1,
   SIGNET_REPLAY_TOO_OLD = 2,
-  SIGNET_REPLAY_TOO_FAR_IN_FUTURE = 3
+  SIGNET_REPLAY_TOO_FAR_IN_FUTURE = 3,
+  /* Malformed input (missing/empty/overlong event id, or invalid timestamp
+   * while skew validation is enabled). Callers must fail closed on this. */
+  SIGNET_REPLAY_INVALID = 4
 } SignetReplayResult;
 
 typedef struct {
