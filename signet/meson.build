@@ -38,6 +38,7 @@ openssl_dep = dependency('openssl', required: true)
 sqlite3_dep = dependency('sqlite3', required: true)
 sodium_dep = dependency('libsodium', required: true)
 mhd_dep = dependency('libmicrohttpd', required: true)
+cbor_dep = dependency('libcbor', required: get_option('signet_enable_passkeys'))
 
 # nsync is pulled in transitively via libgo headers (context.h -> nsync.h) and
 # symbols. It ships no pkg-config file, so mirror the CMake find_path/find_library
@@ -110,6 +111,9 @@ endif
 if nip44_dep.found()
   signet_deps += nip44_dep
 endif
+if get_option('signet_enable_passkeys')
+  signet_deps += cbor_dep
+endif
 
 # Include paths to monorepo headers (match existing monorepo patterns)
 root_inc = include_directories('..')
@@ -167,10 +171,9 @@ signet_core_sources = files(
   'src/ssh_agent.c',
 )
 
-# Experimental FIDO2/passkeys modules (Phase 0 spike).
-# See docs/plans/signet-passkeys-fido-2026-07-02.md. Off by default; only needs
-# OpenSSL (already a dependency). The hand-rolled CBOR encoder in the spike is
-# slated to be replaced by libcbor in the production build (Phase 0 item 1).
+# Experimental FIDO2/passkeys modules.
+# See docs/plans/signet-passkeys-fido-2026-07-02.md. Off by default; requires
+# OpenSSL plus libcbor for CTAP2/WebAuthn CBOR/COSE handling.
 if get_option('signet_enable_passkeys')
   signet_core_sources += files(
     'src/fido_crypto_openssl.c',
@@ -217,5 +220,6 @@ summary({
   'In-tree libnostr required': require_in_tree ? 'yes' : 'no',
   'In-tree build dir': nostrc_build_dir,
   'libsodium': sodium_dep.found() ? 'found' : 'not found',
+  'libcbor': cbor_dep.found() ? 'found' : 'not found',
   'Passkeys': get_option('signet_enable_passkeys') ? 'enabled' : 'disabled',
 }, section: 'Signet')

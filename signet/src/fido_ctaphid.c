@@ -138,327 +138,6 @@ static void cbor_array(ByteBuf *b, size_t n) { cbor_head(b, 4, n); }
 static void cbor_map(ByteBuf *b, size_t n) { cbor_head(b, 5, n); }
 static void cbor_bool(ByteBuf *b, bool v) { bb_u8(b, v ? 0xf5u : 0xf4u); }
 
-/* ---- small CBOR decoder for CTAP2 request maps ------------------------- */
-typedef struct {
-  const uint8_t *p;
-  size_t n;
-  size_t off;
-} CborIn;
-
-static int cbor_read_u8(CborIn *in, uint8_t *v) {
-  if (!in || in->off >= in->n) return -1;
-  *v = in->p[in->off++];
-  return 0;
-}
-
-static int cbor_read_head(CborIn *in, uint8_t *major, uint64_t *arg) {
-  uint8_t ib = 0;
-  if (cbor_read_u8(in, &ib) != 0) return -1;
-  *major = (uint8_t)(ib >> 5);
-  uint8_t ai = (uint8_t)(ib & 0x1f);
-  if (ai < 24) { *arg = ai; return 0; }
-  if (ai == 24) { uint8_t b; if (cbor_read_u8(in, &b) != 0) return -1; *arg = b; return 0; }
-  if (ai == 25) {
-    uint8_t a, b;
-    if (cbor_read_u8(in, &a) || cbor_read_u8(in, &b)) return -1;
-    *arg = ((uint64_t)a << 8) | b;
-    return 0;
-  }
-  if (ai == 26) {
-    uint8_t b[4];
-    for (size_t i = 0; i < 4; i++) if (cbor_read_u8(in, &b[i])) return -1;
-    *arg = ((uint64_t)b[0] << 24) | ((uint64_t)b[1] << 16) | ((uint64_t)b[2] << 8) | b[3];
-    return 0;
-  }
-  if (ai == 27) {
-    uint64_t v = 0;
-    for (size_t i = 0; i < 8; i++) { uint8_t b; if (cbor_read_u8(in, &b)) return -1; v = (v << 8) | b; }
-    *arg = v;
-    return 0;
-  }
-  return -1; /* indefinite lengths are intentionally unsupported */
-}
-
-static int cbor_skip(CborIn *in, int depth) {
-  if (depth > 32) return -1;
-  uint8_t major = 0;
-  uint64_t arg = 0;
-  if (cbor_read_head(in, &major, &arg) != 0) return -1;
-  switch (major) {
-    case 0: case 1: return 0;
-    case 2: case 3:
-      if (arg > in->n - in->off) return -1;
-      in->off += (size_t)arg;
-      return 0;
-    case 4:
-      if (arg > 1024) return -1;
-      for (uint64_t i = 0; i < arg; i++) if (cbor_skip(in, depth + 1) != 0) return -1;
-      return 0;
-    case 5:
-      if (arg > 1024) return -1;
-      for (uint64_t i = 0; i < arg; i++) if (cbor_skip(in, depth + 1) || cbor_skip(in, depth + 1)) return -1;
-      return 0;
-    case 6:
-      return cbor_skip(in, depth + 1);
-    case 7:
-      return 0;
-    default:
-      return -1;
-  }
-}
-
-static int cbor_get_int(CborIn *in, int64_t *out) {
-  uint8_t major = 0;
-  uint64_t arg = 0;
-  if (cbor_read_head(in, &major, &arg) != 0) return -1;
-  if (major == 0) { if (arg > INT64_MAX) return -1; *out = (int64_t)arg; return 0; }
-  if (major == 1) { if (arg > (uint64_t)INT64_MAX) return -1; *out = -1 - (int64_t)arg; return 0; }
-  return -1;
-}
-
-static int cbor_get_bool(CborIn *in, bool *out) {
-  if (!in || in->off >= in->n) return -1;
-  uint8_t b = in->p[in->off++];
-  if (b == 0xf4u) { *out = false; return 0; }
-  if (b == 0xf5u) { *out = true; return 0; }
-  return -1;
-}
-
-static int cbor_get_bstr(CborIn *in, uint8_t **out, size_t *out_len) {
-  uint8_t major = 0;
-  uint64_t arg = 0;
-  if (out) *out = NULL;
-  if (out_len) *out_len = 0;
-  if (cbor_read_head(in, &major, &arg) != 0 || major != 2 || arg > in->n - in->off || arg > SIZE_MAX) return -1;
-  uint8_t *p = NULL;
-  if (arg > 0) {
-    p = (uint8_t *)malloc((size_t)arg);
-    if (!p) return -1;
-    memcpy(p, in->p + in->off, (size_t)arg);
-  }
-  in->off += (size_t)arg;
-  if (out) *out = p; else free(p);
-  if (out_len) *out_len = (size_t)arg;
-  return 0;
-}
-
-static int cbor_get_tstr(CborIn *in, char **out) {
-  uint8_t major = 0;
-  uint64_t arg = 0;
-  if (out) *out = NULL;
-  if (cbor_read_head(in, &major, &arg) != 0 || major != 3 || arg > in->n - in->off || arg > SIZE_MAX - 1) return -1;
-  char *s = (char *)malloc((size_t)arg + 1);
-  if (!s) return -1;
-  memcpy(s, in->p + in->off, (size_t)arg);
-  s[arg] = '\0';
-  in->off += (size_t)arg;
-  if (out) *out = s; else free(s);
-  return 0;
-}
-
-static int cbor_get_text_key(CborIn *in, char *buf, size_t buflen) {
-  char *tmp = NULL;
-  if (cbor_get_tstr(in, &tmp) != 0) return -1;
-  if (!buf || buflen == 0) { free(tmp); return -1; }
-  g_strlcpy(buf, tmp, buflen);
-  free(tmp);
-  return 0;
-}
-
-typedef struct {
-  uint8_t *client_data_hash;
-  size_t client_data_hash_len;
-  char *rp_id;
-  uint8_t *user_handle;
-  size_t user_handle_len;
-  char *user_name;
-  char *user_display_name;
-  bool discoverable;
-  bool uv_required;
-  bool unsupported_pin_uv;
-  int *algs;
-  size_t alg_count;
-  uint8_t **exclude_ids;
-  size_t *exclude_lens;
-  size_t exclude_count;
-} DecodedMakeCredential;
-
-typedef struct {
-  char *rp_id;
-  uint8_t *client_data_hash;
-  size_t client_data_hash_len;
-  bool uv_required;
-  bool unsupported_pin_uv;
-  uint8_t **allow_ids;
-  size_t *allow_lens;
-  size_t allow_count;
-} DecodedGetAssertion;
-
-static void decoded_mc_clear(DecodedMakeCredential *d) {
-  if (!d) return;
-  free(d->client_data_hash); free(d->rp_id); free(d->user_handle);
-  free(d->user_name); free(d->user_display_name); free(d->algs);
-  for (size_t i = 0; i < d->exclude_count; i++) free(d->exclude_ids[i]);
-  free(d->exclude_ids); free(d->exclude_lens);
-  memset(d, 0, sizeof(*d));
-}
-static void decoded_ga_clear(DecodedGetAssertion *d) {
-  if (!d) return;
-  free(d->rp_id); free(d->client_data_hash);
-  for (size_t i = 0; i < d->allow_count; i++) free(d->allow_ids[i]);
-  free(d->allow_ids); free(d->allow_lens);
-  memset(d, 0, sizeof(*d));
-}
-
-static int parse_rp_map(CborIn *in, char **rp_id) {
-  uint8_t major = 0; uint64_t n = 0;
-  if (cbor_read_head(in, &major, &n) || major != 5 || n > 32) return -1;
-  for (uint64_t i = 0; i < n; i++) {
-    char key[32];
-    if (cbor_get_text_key(in, key, sizeof(key))) return -1;
-    if (strcmp(key, "id") == 0) {
-      free(*rp_id);
-      if (cbor_get_tstr(in, rp_id)) return -1;
-    } else if (cbor_skip(in, 0)) return -1;
-  }
-  return 0;
-}
-
-static int parse_user_map(CborIn *in, DecodedMakeCredential *d) {
-  uint8_t major = 0; uint64_t n = 0;
-  if (cbor_read_head(in, &major, &n) || major != 5 || n > 32) return -1;
-  for (uint64_t i = 0; i < n; i++) {
-    char key[32];
-    if (cbor_get_text_key(in, key, sizeof(key))) return -1;
-    if (strcmp(key, "id") == 0) {
-      free(d->user_handle); d->user_handle = NULL; d->user_handle_len = 0;
-      if (cbor_get_bstr(in, &d->user_handle, &d->user_handle_len)) return -1;
-    } else if (strcmp(key, "name") == 0) {
-      free(d->user_name); if (cbor_get_tstr(in, &d->user_name)) return -1;
-    } else if (strcmp(key, "displayName") == 0) {
-      free(d->user_display_name); if (cbor_get_tstr(in, &d->user_display_name)) return -1;
-    } else if (cbor_skip(in, 0)) return -1;
-  }
-  return 0;
-}
-
-static int parse_pubkey_params(CborIn *in, DecodedMakeCredential *d) {
-  uint8_t major = 0; uint64_t n = 0;
-  if (cbor_read_head(in, &major, &n) || major != 4 || n > CTAP2_MAX_CRED_LIST) return -1;
-  int *algs = (int *)calloc(n ? (size_t)n : 1, sizeof(int));
-  if (!algs) return -1;
-  size_t count = 0;
-  for (uint64_t i = 0; i < n; i++) {
-    uint8_t m = 0; uint64_t pairs = 0;
-    if (cbor_read_head(in, &m, &pairs) || m != 5 || pairs > 16) { free(algs); return -1; }
-    bool have_alg = false;
-    int64_t alg = 0;
-    for (uint64_t j = 0; j < pairs; j++) {
-      char key[32];
-      if (cbor_get_text_key(in, key, sizeof(key))) { free(algs); return -1; }
-      if (strcmp(key, "alg") == 0) {
-        if (cbor_get_int(in, &alg)) { free(algs); return -1; }
-        have_alg = true;
-      } else if (cbor_skip(in, 0)) { free(algs); return -1; }
-    }
-    if (have_alg) algs[count++] = (int)alg;
-  }
-  free(d->algs);
-  d->algs = algs;
-  d->alg_count = count;
-  return 0;
-}
-
-static int parse_cred_descriptors(CborIn *in, uint8_t ***ids, size_t **lens, size_t *count) {
-  uint8_t major = 0; uint64_t n = 0;
-  if (cbor_read_head(in, &major, &n) || major != 4 || n > CTAP2_MAX_CRED_LIST) return -1;
-  uint8_t **out_ids = (uint8_t **)calloc(n ? (size_t)n : 1, sizeof(uint8_t *));
-  size_t *out_lens = (size_t *)calloc(n ? (size_t)n : 1, sizeof(size_t));
-  if (!out_ids || !out_lens) { free(out_ids); free(out_lens); return -1; }
-  size_t out_count = 0;
-  for (uint64_t i = 0; i < n; i++) {
-    uint8_t m = 0; uint64_t pairs = 0;
-    if (cbor_read_head(in, &m, &pairs) || m != 5 || pairs > 16) goto fail;
-    uint8_t *id = NULL; size_t id_len = 0;
-    for (uint64_t j = 0; j < pairs; j++) {
-      char key[32];
-      if (cbor_get_text_key(in, key, sizeof(key))) goto fail;
-      if (strcmp(key, "id") == 0) {
-        free(id); id = NULL; id_len = 0;
-        if (cbor_get_bstr(in, &id, &id_len)) goto fail;
-      } else if (cbor_skip(in, 0)) goto fail;
-    }
-    if (id && id_len > 0) { out_ids[out_count] = id; out_lens[out_count] = id_len; out_count++; }
-    else free(id);
-  }
-  *ids = out_ids; *lens = out_lens; *count = out_count;
-  return 0;
-fail:
-  for (size_t i = 0; i < out_count; i++) free(out_ids[i]);
-  free(out_ids); free(out_lens);
-  return -1;
-}
-
-static int parse_options(CborIn *in, bool *rk, bool *uv_required, bool *bad_up) {
-  uint8_t major = 0; uint64_t n = 0;
-  if (cbor_read_head(in, &major, &n) || major != 5 || n > 32) return -1;
-  for (uint64_t i = 0; i < n; i++) {
-    char key[32]; bool val = false;
-    if (cbor_get_text_key(in, key, sizeof(key)) || cbor_get_bool(in, &val)) return -1;
-    if (strcmp(key, "rk") == 0 && rk) *rk = val;
-    else if (strcmp(key, "uv") == 0 && uv_required) *uv_required = val;
-    else if (strcmp(key, "up") == 0 && bad_up && !val) *bad_up = true;
-  }
-  return 0;
-}
-
-static int decode_make_credential(const uint8_t *p, size_t n, DecodedMakeCredential *d) {
-  memset(d, 0, sizeof(*d));
-  d->discoverable = false;
-  CborIn in = { .p = p, .n = n, .off = 0 };
-  uint8_t major = 0; uint64_t pairs = 0;
-  if (cbor_read_head(&in, &major, &pairs) || major != 5 || pairs > 32) return -1;
-  bool bad_up = false;
-  for (uint64_t i = 0; i < pairs; i++) {
-    int64_t key = 0;
-    if (cbor_get_int(&in, &key)) return -1;
-    switch (key) {
-      case 1: if (cbor_get_bstr(&in, &d->client_data_hash, &d->client_data_hash_len)) return -1; break;
-      case 2: if (parse_rp_map(&in, &d->rp_id)) return -1; break;
-      case 3: if (parse_user_map(&in, d)) return -1; break;
-      case 4: if (parse_pubkey_params(&in, d)) return -1; break;
-      case 5: if (parse_cred_descriptors(&in, &d->exclude_ids, &d->exclude_lens, &d->exclude_count)) return -1; break;
-      case 7: if (parse_options(&in, &d->discoverable, &d->uv_required, &bad_up)) return -1; break;
-      case 8: case 9: d->unsupported_pin_uv = true; if (cbor_skip(&in, 0)) return -1; break;
-      default: if (cbor_skip(&in, 0)) return -1; break;
-    }
-  }
-  if (bad_up) d->unsupported_pin_uv = true;
-  return (in.off == in.n) ? 0 : -1;
-}
-
-static int decode_get_assertion(const uint8_t *p, size_t n, DecodedGetAssertion *d) {
-  memset(d, 0, sizeof(*d));
-  CborIn in = { .p = p, .n = n, .off = 0 };
-  uint8_t major = 0; uint64_t pairs = 0;
-  if (cbor_read_head(&in, &major, &pairs) || major != 5 || pairs > 32) return -1;
-  bool bad_up = false;
-  for (uint64_t i = 0; i < pairs; i++) {
-    int64_t key = 0;
-    if (cbor_get_int(&in, &key)) return -1;
-    switch (key) {
-      case 1: free(d->rp_id); if (cbor_get_tstr(&in, &d->rp_id)) return -1; break;
-      case 2: free(d->client_data_hash); d->client_data_hash = NULL; d->client_data_hash_len = 0; if (cbor_get_bstr(&in, &d->client_data_hash, &d->client_data_hash_len)) return -1; break;
-      case 3: if (parse_cred_descriptors(&in, &d->allow_ids, &d->allow_lens, &d->allow_count)) return -1; break;
-      case 5: { bool rk_ignored = false; if (parse_options(&in, &rk_ignored, &d->uv_required, &bad_up)) return -1; break; }
-      case 6: case 7: d->unsupported_pin_uv = true; if (cbor_skip(&in, 0)) return -1; break;
-      default: if (cbor_skip(&in, 0)) return -1; break;
-    }
-  }
-  if (bad_up) d->unsupported_pin_uv = true;
-  return (in.off == in.n) ? 0 : -1;
-}
-
 /* ---- device state ------------------------------------------------------- */
 typedef struct {
   uint32_t cid;
@@ -586,19 +265,19 @@ static int ctap2_get_info(SignetFidoCtapHid *dev, uint8_t **out, size_t *out_len
 
 static int ctap2_make_credential(SignetFidoCtapHid *dev, const uint8_t *p, size_t n,
                                   uint8_t **out, size_t *out_len) {
-  DecodedMakeCredential d;
-  if (decode_make_credential(p, n, &d) != 0) {
-    decoded_mc_clear(&d);
+  SignetFidoCborMakeCredential d;
+  if (signet_fido_cbor_decode_make_credential(p, n, &d) != 0) {
+    signet_fido_cbor_make_credential_clear(&d);
     uint8_t e = CTAP2_ERR_INVALID_CBOR;
     *out = (uint8_t *)malloc(1); if (!*out) return -1; **out = e; *out_len = 1; return 0;
   }
   if (d.unsupported_pin_uv || d.uv_required) {
-    decoded_mc_clear(&d);
+    signet_fido_cbor_make_credential_clear(&d);
     *out = (uint8_t *)malloc(1); if (!*out) return -1; **out = CTAP2_ERR_UNSUPPORTED_OPTION; *out_len = 1; return 0;
   }
   if (!d.client_data_hash || d.client_data_hash_len != SIGNET_FIDO_CLIENT_DATA_HASH_LEN ||
       !d.rp_id || !d.user_handle || d.user_handle_len == 0 || !d.algs || d.alg_count == 0) {
-    decoded_mc_clear(&d);
+    signet_fido_cbor_make_credential_clear(&d);
     *out = (uint8_t *)malloc(1); if (!*out) return -1; **out = CTAP2_ERR_MISSING_PARAMETER; *out_len = 1; return 0;
   }
 
@@ -622,7 +301,7 @@ static int ctap2_make_credential(SignetFidoCtapHid *dev, const uint8_t *p, size_
   SignetFidoError err;
   SignetFidoStatus st = signet_fido_make_credential(dev->fido, dev->agent_id, &req, &res, &err);
   if (st != SIGNET_FIDO_OK) {
-    decoded_mc_clear(&d);
+    signet_fido_cbor_make_credential_clear(&d);
     *out = (uint8_t *)malloc(1); if (!*out) return -1; **out = status_to_ctap2(st); *out_len = 1; return 0;
   }
 
@@ -634,23 +313,23 @@ static int ctap2_make_credential(SignetFidoCtapHid *dev, const uint8_t *p, size_
   cbor_uint(&b, 3); cbor_map(&b, 0);
   int rc = bb_finish(&b, out, out_len);
   signet_fido_make_credential_result_clear(&res);
-  decoded_mc_clear(&d);
+  signet_fido_cbor_make_credential_clear(&d);
   return rc;
 }
 
 static int ctap2_get_assertion(SignetFidoCtapHid *dev, const uint8_t *p, size_t n,
                                uint8_t **out, size_t *out_len) {
-  DecodedGetAssertion d;
-  if (decode_get_assertion(p, n, &d) != 0) {
-    decoded_ga_clear(&d);
+  SignetFidoCborGetAssertion d;
+  if (signet_fido_cbor_decode_get_assertion(p, n, &d) != 0) {
+    signet_fido_cbor_get_assertion_clear(&d);
     *out = (uint8_t *)malloc(1); if (!*out) return -1; **out = CTAP2_ERR_INVALID_CBOR; *out_len = 1; return 0;
   }
   if (d.unsupported_pin_uv || d.uv_required) {
-    decoded_ga_clear(&d);
+    signet_fido_cbor_get_assertion_clear(&d);
     *out = (uint8_t *)malloc(1); if (!*out) return -1; **out = CTAP2_ERR_UNSUPPORTED_OPTION; *out_len = 1; return 0;
   }
   if (!d.rp_id || !d.client_data_hash || d.client_data_hash_len != SIGNET_FIDO_CLIENT_DATA_HASH_LEN) {
-    decoded_ga_clear(&d);
+    signet_fido_cbor_get_assertion_clear(&d);
     *out = (uint8_t *)malloc(1); if (!*out) return -1; **out = CTAP2_ERR_MISSING_PARAMETER; *out_len = 1; return 0;
   }
 
@@ -667,7 +346,7 @@ static int ctap2_get_assertion(SignetFidoCtapHid *dev, const uint8_t *p, size_t 
   SignetFidoError err;
   SignetFidoStatus st = signet_fido_get_assertion(dev->fido, dev->agent_id, &req, &res, &err);
   if (st != SIGNET_FIDO_OK) {
-    decoded_ga_clear(&d);
+    signet_fido_cbor_get_assertion_clear(&d);
     *out = (uint8_t *)malloc(1); if (!*out) return -1; **out = status_to_ctap2(st); *out_len = 1; return 0;
   }
 
@@ -683,7 +362,7 @@ static int ctap2_get_assertion(SignetFidoCtapHid *dev, const uint8_t *p, size_t 
   cbor_uint(&b, 5); cbor_uint(&b, 1);
   int rc = bb_finish(&b, out, out_len);
   signet_fido_get_assertion_result_clear(&res);
-  decoded_ga_clear(&d);
+  signet_fido_cbor_get_assertion_clear(&d);
   return rc;
 }
 

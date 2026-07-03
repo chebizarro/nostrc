@@ -14,11 +14,13 @@ CC="${CC:-cc}"
 pc() { pkg-config "$@" 2>/dev/null; }
 ossl_cflags="$(pc --cflags openssl || echo "-I/opt/homebrew/opt/openssl@3/include")"
 ossl_libs="$(pc --libs openssl || echo "-L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto")"
+cbor_cflags="$(pc --cflags libcbor || true)"
+cbor_libs="$(pc --libs libcbor || echo "-lcbor")"
 
 echo "== building emitter =="
-$CC -std=c11 -Wall -Wextra -O1 -I"$inc" $ossl_cflags \
+$CC -std=c11 -Wall -Wextra -O1 -I"$inc" $ossl_cflags $cbor_cflags \
     "$here/emit_artifacts.c" "$src/fido_crypto_openssl.c" "$src/fido_cbor.c" \
-    $ossl_libs -o "$out/emit_artifacts"
+    $ossl_libs $cbor_libs -o "$out/emit_artifacts"
 
 "$out/emit_artifacts" > "$out/artifacts.json"
 echo "== emitted $out/artifacts.json =="

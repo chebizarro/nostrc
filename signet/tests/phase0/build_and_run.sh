@@ -17,15 +17,17 @@ sodium_cflags="$(pc --cflags libsodium || echo "-I/opt/homebrew/include")"
 sodium_libs="$(pc --libs libsodium || echo "-L/opt/homebrew/lib -lsodium")"
 sqlite_cflags="$(pc --cflags sqlite3 || true)"
 sqlite_libs="$(pc --libs sqlite3 || echo "-lsqlite3")"
+cbor_cflags="$(pc --cflags libcbor || true)"
+cbor_libs="$(pc --libs libcbor || echo "-lcbor")"
 
-CFLAGS="-std=c11 -Wall -Wextra -O1 -I$inc $ossl_cflags $sodium_cflags $sqlite_cflags"
+CFLAGS="-std=c11 -Wall -Wextra -O1 -I$inc $ossl_cflags $sodium_cflags $sqlite_cflags $cbor_cflags"
 out="$here/_build"; mkdir -p "$out"
 
 echo "== compiling =="
 $CC $CFLAGS "$here/test_fido_crypto.c" "$src/fido_crypto_openssl.c" \
     $ossl_libs -o "$out/test_fido_crypto"
 $CC $CFLAGS "$here/test_fido_cbor.c" "$src/fido_crypto_openssl.c" "$src/fido_cbor.c" \
-    $ossl_libs -o "$out/test_fido_cbor"
+    $ossl_libs $cbor_libs -o "$out/test_fido_cbor"
 $CC $CFLAGS "$here/test_passkey_store.c" "$src/fido_crypto_openssl.c" \
     $ossl_libs $sodium_libs $sqlite_libs -o "$out/test_passkey_store"
 

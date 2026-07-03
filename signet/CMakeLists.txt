@@ -69,14 +69,17 @@ set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ssh_agent.c
 )
 
-# Experimental FIDO2/passkeys modules (Phase 0 spike).
-# See docs/plans/signet-passkeys-fido-2026-07-02.md. Off by default; only needs
-# OpenSSL (already linked). The spike's hand-rolled CBOR encoder is slated to be
-# replaced by libcbor in the production build (Phase 0 item 1).
+# Experimental FIDO2/passkeys modules.
+# See docs/plans/signet-passkeys-fido-2026-07-02.md. Off by default; requires
+# OpenSSL plus libcbor for CTAP2/WebAuthn CBOR/COSE handling.
 if (NOT DEFINED SIGNET_ENABLE_PASSKEYS)
   option(SIGNET_ENABLE_PASSKEYS "Build experimental FIDO2/passkeys (WebAuthn authenticator) modules" OFF)
 endif()
 if (SIGNET_ENABLE_PASSKEYS)
+  if (NOT PKG_CONFIG_FOUND)
+    message(FATAL_ERROR "SIGNET_ENABLE_PASSKEYS requires pkg-config to find libcbor")
+  endif()
+  pkg_check_modules(LIBCBOR REQUIRED IMPORTED_TARGET libcbor)
   list(APPEND SIGNET_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/fido_crypto_openssl.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/fido_cbor.c
@@ -119,6 +122,7 @@ target_link_libraries(signet_core PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 
 if (SIGNET_ENABLE_PASSKEYS)
   target_compile_definitions(signet_core PUBLIC SIGNET_ENABLE_PASSKEYS=1)
+  target_link_libraries(signet_core PRIVATE PkgConfig::LIBCBOR)
 endif()
 
 if (TARGET PkgConfig::SQLITE3)

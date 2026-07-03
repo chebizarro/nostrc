@@ -65,7 +65,7 @@ if get_option('signet_enable_passkeys')
     '../src/fido_cbor.c',
     '../src/store_passkeys.c',
     include_directories: signet_includes + [include_directories('../src')],
-    dependencies: [glib_dep, json_dep, openssl_dep, sqlite3_dep, sodium_dep],
+    dependencies: [glib_dep, json_dep, openssl_dep, sqlite3_dep, sodium_dep, cbor_dep],
     install: false,
   )
   test('fido_service', test_fido_service)
@@ -86,7 +86,7 @@ if get_option('signet_enable_passkeys')
     '../src/fido_cbor.c',
     '../src/store_passkeys.c',
     include_directories: signet_includes + [include_directories('../src')],
-    dependencies: [glib_dep, json_dep, openssl_dep, sqlite3_dep, sodium_dep],
+    dependencies: [glib_dep, json_dep, openssl_dep, sqlite3_dep, sodium_dep, cbor_dep],
     install: false,
   )
   test('fido_interop_external', find_program('bash'),

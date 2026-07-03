@@ -123,7 +123,7 @@ if (SIGNET_ENABLE_PASSKEYS)
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
   )
   target_compile_definitions(test_fido_service PRIVATE SIGNET_ENABLE_PASSKEYS=1)
-  target_link_libraries(test_fido_service PRIVATE OpenSSL::Crypto)
+  target_link_libraries(test_fido_service PRIVATE OpenSSL::Crypto PkgConfig::LIBCBOR)
   if (TARGET PkgConfig::GLIB)
     target_link_libraries(test_fido_service PRIVATE PkgConfig::GLIB)
   endif()
@@ -142,7 +142,7 @@ if (SIGNET_ENABLE_PASSKEYS)
   endif()
 
   add_executable(test_fido_ctaphid test_fido_ctaphid.c)
-  target_link_libraries(test_fido_ctaphid PRIVATE signet_core)
+  target_link_libraries(test_fido_ctaphid PRIVATE signet_core PkgConfig::LIBCBOR)
 
   add_executable(test_fido_interop_json
     test_fido_interop_json.c
@@ -156,7 +156,7 @@ if (SIGNET_ENABLE_PASSKEYS)
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
   )
   target_compile_definitions(test_fido_interop_json PRIVATE SIGNET_ENABLE_PASSKEYS=1)
-  target_link_libraries(test_fido_interop_json PRIVATE OpenSSL::Crypto)
+  target_link_libraries(test_fido_interop_json PRIVATE OpenSSL::Crypto PkgConfig::LIBCBOR)
   if (TARGET PkgConfig::GLIB)
     target_link_libraries(test_fido_interop_json PRIVATE PkgConfig::GLIB)
   endif()

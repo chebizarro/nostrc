@@ -79,13 +79,9 @@ static int verify_cose_es256_assertion(const uint8_t *cose, size_t cose_len,
                                        const uint8_t *auth_data, size_t auth_data_len,
                                        const uint8_t client_hash[32],
                                        const uint8_t *sig, size_t sig_len) {
-  if (!cose || cose_len != 77 || !auth_data || !sig) return -1;
-  if (!(cose[0] == 0xa5 && cose[8] == 0x58 && cose[9] == 0x20 &&
-        cose[42] == 0x22 && cose[43] == 0x58 && cose[44] == 0x20)) {
-    return -1;
-  }
-  const uint8_t *x = cose + 10;
-  const uint8_t *y = cose + 45;
+  if (!cose || !auth_data || !sig) return -1;
+  uint8_t x[32], y[32];
+  if (signet_cose_ec2_p256_parse(cose, cose_len, x, y) != 0) return -1;
   uint8_t *msg = (uint8_t *)malloc(auth_data_len + 32);
   if (!msg) return -1;
   memcpy(msg, auth_data, auth_data_len);
