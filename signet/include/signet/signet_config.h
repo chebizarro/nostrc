@@ -103,6 +103,12 @@ typedef struct {
   bool ssh_agent_enabled;          /* SSH agent socket (default false) */
   char ssh_agent_socket_path[SIGNET_MAX_STR];
 
+  /* --- [uid_map] --- : SO_PEERCRED peer UID -> agent_id for local transports
+   * (D-Bus Unix, SSH agent). Each [uid_map] entry is "<uid> = <agent_id>". */
+  uint32_t *uid_map_uids;
+  char **uid_map_agents;
+  size_t n_uid_map;
+
   /* --- [passkeys] --- */
   bool passkeys_enabled;           /* default false */
   char passkeys_backend[SIGNET_MAX_STR];

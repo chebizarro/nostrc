@@ -256,6 +256,12 @@ void signet_config_clear(SignetConfig *cfg) {
   cfg->allowed_kinds = NULL;
   cfg->n_allowed_kinds = 0;
 
+  signet_free_strv(cfg->uid_map_agents, cfg->n_uid_map);
+  cfg->uid_map_agents = NULL;
+  g_free(cfg->uid_map_uids);
+  cfg->uid_map_uids = NULL;
+  cfg->n_uid_map = 0;
+
   /* Wipe sensitive fields. */
   secure_wipe(cfg->remote_signer_secret_key_hex, sizeof(cfg->remote_signer_secret_key_hex));
   secure_wipe(cfg->passkeys_sync_key, sizeof(cfg->passkeys_sync_key));
@@ -361,6 +367,33 @@ static void signet_config_load_keyfile(GKeyFile *kf, SignetConfig *cfg) {
     cfg->ssh_agent_enabled = g_key_file_get_boolean(kf, "ssh_agent", "enabled", NULL);
   val = g_key_file_get_string(kf, "ssh_agent", "socket_path", NULL);
   if (val) { signet_strlcpy(cfg->ssh_agent_socket_path, val, sizeof(cfg->ssh_agent_socket_path)); g_free(val); }
+
+  /* [uid_map] : "<uid> = <agent_id>" entries mapping SO_PEERCRED peer UIDs to
+   * agent identities for the local D-Bus Unix and SSH agent transports. */
+  if (g_key_file_has_group(kf, "uid_map")) {
+    gsize nkeys = 0;
+    gchar **keys = g_key_file_get_keys(kf, "uid_map", &nkeys, NULL);
+    if (keys && nkeys > 0) {
+      cfg->uid_map_uids = (uint32_t *)g_malloc0(sizeof(uint32_t) * nkeys);
+      cfg->uid_map_agents = (char **)g_malloc0(sizeof(char *) * (nkeys + 1));
+      size_t count = 0;
+      for (gsize i = 0; i < nkeys; i++) {
+        gchar *agent = g_key_file_get_string(kf, "uid_map", keys[i], NULL);
+        if (!agent || !agent[0]) { g_free(agent); continue; }
+        char *endp = NULL;
+        unsigned long uid = strtoul(keys[i], &endp, 10);
+        if (endp && *endp == '\0') {
+          cfg->uid_map_uids[count] = (uint32_t)uid;
+          cfg->uid_map_agents[count] = g_strstrip(agent); /* ownership moves */
+          count++;
+        } else {
+          g_free(agent);
+        }
+      }
+      cfg->n_uid_map = count;
+    }
+    if (keys) g_strfreev(keys);
+  }
 
   /* [passkeys] */
   if (g_key_file_has_key(kf, "passkeys", "enabled", NULL))
