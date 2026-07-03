@@ -35,7 +35,13 @@ require_in_tree = get_option('signet_require_in_tree_libs')
 glib_dep = dependency('glib-2.0', version: '>= 2.56', required: true)
 gio_dep = dependency('gio-2.0', required: true)
 openssl_dep = dependency('openssl', required: true)
-sqlite3_dep = dependency('sqlite3', required: true)
+if get_option('signet_use_sqlcipher')
+  # SQLCipher exposes the same sqlite3 C API but encrypts the database at rest.
+  sqlite3_dep = dependency('sqlcipher', required: true)
+  add_project_arguments('-DSIGNET_USE_SQLCIPHER=1', language: 'c')
+else
+  sqlite3_dep = dependency('sqlite3', required: true)
+endif
 sodium_dep = dependency('libsodium', required: true)
 mhd_dep = dependency('libmicrohttpd', required: true)
 cbor_dep = dependency('libcbor', required: get_option('signet_enable_passkeys'))

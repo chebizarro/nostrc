@@ -20,6 +20,12 @@ option('signet_enable_passkeys',
   description: 'Build experimental FIDO2/passkeys (WebAuthn authenticator) modules'
 )
 
+option('signet_use_sqlcipher',
+  type: 'boolean',
+  value: false,
+  description: 'Link SQLCipher instead of plain SQLite for AES-256 at-rest DB encryption'
+)
+
 option('signet_enable_test_hooks',
   type: 'boolean',
   value: false,

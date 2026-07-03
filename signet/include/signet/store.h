@@ -56,6 +56,11 @@ void signet_store_close(SignetStore *store);
 /* Check if the store is open and usable. */
 bool signet_store_is_open(const SignetStore *store);
 
+/* True if the underlying database is SQLCipher-encrypted at rest (i.e. the
+ * build linked SQLCipher and PRAGMA key took effect). False means the DB is
+ * plain SQLite and only per-record envelope encryption is protecting secrets. */
+bool signet_store_is_encrypted(const SignetStore *store);
+
 /* Store a new agent key. secret_key must be 32 bytes.
  * Returns 0 on success, -1 on error. */
 int signet_store_put_agent(SignetStore *store,

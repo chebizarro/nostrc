@@ -49,7 +49,32 @@ struct SignetStore {
   sqlite3 *db;
   uint8_t dek[SIGNET_DEK_LEN];  /* derived data-encryption key (mlock'd) */
   bool open;
+  bool encrypted;              /* true if SQLCipher is active for this db */
 };
+
+/* Detect whether SQLCipher is actually driving this connection. On plain
+ * SQLite, `PRAGMA cipher_version` is an unknown pragma that yields no row; on
+ * SQLCipher it returns a non-empty version string. */
+static bool signet_store_detect_sqlcipher(sqlite3 *db) {
+  sqlite3_stmt *st = NULL;
+  bool has_cipher = false;
+  if (sqlite3_prepare_v2(db, "PRAGMA cipher_version;", -1, &st, NULL) == SQLITE_OK) {
+    if (sqlite3_step(st) == SQLITE_ROW) {
+      const unsigned char *v = sqlite3_column_text(st, 0);
+      if (v && v[0]) has_cipher = true;
+    }
+    sqlite3_finalize(st);
+  }
+  return has_cipher;
+}
+
+static bool signet_env_truthy(const char *name) {
+  const char *v = getenv(name);
+  return v && (strcmp(v, "1") == 0 ||
+               g_ascii_strcasecmp(v, "true") == 0 ||
+               g_ascii_strcasecmp(v, "yes") == 0 ||
+               g_ascii_strcasecmp(v, "on") == 0);
+}
 
 /* ------------------------------ helpers ---------------------------------- */
 
@@ -267,10 +292,41 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
   if (pragma) {
     rc = sqlite3_exec(store->db, pragma, NULL, NULL, NULL);
     sqlite3_free(pragma);
-    if (rc != SQLITE_OK) {
-      /* If this is regular SQLite (not SQLCipher), PRAGMA key is a no-op.
-       * We continue — the envelope encryption layer provides security. */
+    (void)rc; /* PRAGMA key is a no-op on plain SQLite; verified below. */
+  }
+
+  /* Verify at-rest encryption. Previously a failed/ignored PRAGMA key silently
+   * left the database as plaintext SQLite while still reporting success. Now we
+   * detect SQLCipher explicitly and either enforce or loudly warn. */
+  store->encrypted = signet_store_detect_sqlcipher(store->db);
+  if (store->encrypted) {
+    /* Validate the key with a keyed read: a wrong SIGNET_DB_KEY makes the very
+     * first read fail with "file is not a database". Refuse rather than create
+     * a second, divergent database. */
+    if (sqlite3_exec(store->db, "SELECT count(*) FROM sqlite_master;",
+                     NULL, NULL, NULL) != SQLITE_OK) {
+      g_critical("[signet] SQLCipher keyed read failed for '%s' "
+                 "(wrong SIGNET_DB_KEY?). Refusing to open.", cfg->db_path);
+      signet_store_close(store);
+      return NULL;
     }
+  } else {
+    /* Not SQLCipher: the database is plaintext at rest. Only per-record
+     * envelope encryption protects secret keys; connect secrets and metadata
+     * are cleartext. Refuse when the operator demanded encryption. */
+    if (signet_env_truthy("SIGNET_REQUIRE_ENCRYPTED_DB")) {
+      g_critical("[signet] SIGNET_REQUIRE_ENCRYPTED_DB is set but the database "
+                 "at '%s' is NOT SQLCipher-encrypted (plain SQLite). Refusing "
+                 "to open. Build against SQLCipher (meson -Dsignet_use_sqlcipher=true).",
+                 cfg->db_path);
+      signet_store_close(store);
+      return NULL;
+    }
+    g_warning("[signet] database at '%s' is NOT SQLCipher-encrypted at rest "
+              "(plain SQLite). Secret keys remain envelope-encrypted, but "
+              "connect secrets and metadata are stored in cleartext. Build "
+              "against SQLCipher or set SIGNET_REQUIRE_ENCRYPTED_DB=true to enforce.",
+              cfg->db_path);
   }
 
   /* Create schema. */
@@ -321,6 +377,10 @@ void signet_store_close(SignetStore *store) {
 
   store->open = false;
   free(store);
+}
+
+bool signet_store_is_encrypted(const SignetStore *store) {
+  return store && store->encrypted;
 }
 
 bool signet_store_is_open(const SignetStore *store) {

@@ -128,6 +128,17 @@ meson setup builddir
 meson compile -C builddir
 ```
 
+For real AES-256 encryption at rest, build against SQLCipher (otherwise the DB
+is plain SQLite and only per-record envelope encryption protects secret keys):
+
+```bash
+meson setup builddir -Dsignet_use_sqlcipher=true
+```
+
+At startup Signet verifies SQLCipher is active (`PRAGMA cipher_version` + a
+keyed read). If it is not and `SIGNET_REQUIRE_ENCRYPTED_DB=true`, the daemon
+refuses to start; otherwise it logs a prominent warning.
+
 ### Run
 
 ```bash
@@ -200,7 +211,8 @@ All configuration can be overridden with `SIGNET_`-prefixed environment variable
 
 | Variable                       | Description                              |
 |--------------------------------|------------------------------------------|
-| `SIGNET_DB_KEY`                | SQLCipher master key (required)          |
+| `SIGNET_DB_KEY`                | SQLCipher master key (required; hex, base64, or passphrase) |
+| `SIGNET_REQUIRE_ENCRYPTED_DB`  | Refuse to start unless the DB is SQLCipher-encrypted |
 | `SIGNET_BUNKER_NSEC`          | Bunker identity nsec (required)          |
 | `SIGNET_PROVISIONER_NSEC`     | Provisioner nsec for signetctl           |
 | `SIGNET_RELAYS`                | Comma-separated relay URLs               |
