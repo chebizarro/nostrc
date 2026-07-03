@@ -16,6 +16,18 @@
 #define SIGNET_NONCE_LEN  crypto_secretbox_NONCEBYTES
 #define SIGNET_MAC_LEN    crypto_secretbox_MACBYTES
 
+/* Derive a per-agent envelope key from the store DEK and the agent's pubkey
+ * (keyed BLAKE2b). This gives each agent a distinct credential-encryption key,
+ * so one agent's key material cannot decrypt another agent's payloads — the
+ * "per-agent secretbox" property the security model advertises. Deterministic:
+ * both put and get derive the same key from the row's agent_pubkey. */
+static void signet_derive_agent_key(const uint8_t *dek, const char *agent_pubkey,
+                                    uint8_t out[32]) {
+  crypto_generichash(out, 32,
+                     (const uint8_t *)agent_pubkey, strlen(agent_pubkey),
+                     dek, 32);
+}
+
 const char *signet_secret_type_to_string(SignetSecretType t) {
   switch (t) {
     case SIGNET_SECRET_NOSTR_NSEC:   return "nostr_nsec";
@@ -51,18 +63,23 @@ int signet_store_put_secret(SignetStore *store,
   const uint8_t *dek = signet_store_get_dek(store);
   if (!db || !dek || !id || !agent_id || !agent_pubkey || !payload) return -1;
 
-  /* Encrypt payload with DEK. */
+  /* Encrypt payload with the per-agent envelope key. */
+  uint8_t akey[32];
+  signet_derive_agent_key(dek, agent_pubkey, akey);
+
   uint8_t nonce[SIGNET_NONCE_LEN];
   randombytes_buf(nonce, sizeof(nonce));
 
   size_t ct_len = payload_len + SIGNET_MAC_LEN;
   uint8_t *ciphertext = (uint8_t *)malloc(ct_len);
-  if (!ciphertext) return -1;
+  if (!ciphertext) { sodium_memzero(akey, sizeof(akey)); return -1; }
 
-  if (crypto_secretbox_easy(ciphertext, payload, payload_len, nonce, dek) != 0) {
+  if (crypto_secretbox_easy(ciphertext, payload, payload_len, nonce, akey) != 0) {
+    sodium_memzero(akey, sizeof(akey));
     free(ciphertext);
     return -1;
   }
+  sodium_memzero(akey, sizeof(akey));
 
   const char *sql =
     "INSERT OR REPLACE INTO secrets "
@@ -120,25 +137,32 @@ int signet_store_get_secret(SignetStore *store,
     return (rc == SQLITE_DONE) ? 1 : -1;
   }
 
+  const char *agent_pubkey_col = (const char *)sqlite3_column_text(stmt, 1);
   const uint8_t *ct = (const uint8_t *)sqlite3_column_blob(stmt, 4);
   int ct_len = sqlite3_column_bytes(stmt, 4);
   const uint8_t *nonce = (const uint8_t *)sqlite3_column_blob(stmt, 5);
   int nonce_len = sqlite3_column_bytes(stmt, 5);
 
-  if (!ct || ct_len < (int)SIGNET_MAC_LEN || !nonce || nonce_len != SIGNET_NONCE_LEN) {
+  if (!agent_pubkey_col || !ct || ct_len < (int)SIGNET_MAC_LEN ||
+      !nonce || nonce_len != SIGNET_NONCE_LEN) {
     sqlite3_finalize(stmt);
     return -1;
   }
 
+  uint8_t akey[32];
+  signet_derive_agent_key(dek, agent_pubkey_col, akey);
+
   size_t pt_len = (size_t)ct_len - SIGNET_MAC_LEN;
   uint8_t *plaintext = (uint8_t *)sodium_malloc(pt_len);
-  if (!plaintext) { sqlite3_finalize(stmt); return -1; }
+  if (!plaintext) { sodium_memzero(akey, sizeof(akey)); sqlite3_finalize(stmt); return -1; }
 
-  if (crypto_secretbox_open_easy(plaintext, ct, (size_t)ct_len, nonce, dek) != 0) {
+  if (crypto_secretbox_open_easy(plaintext, ct, (size_t)ct_len, nonce, akey) != 0) {
+    sodium_memzero(akey, sizeof(akey));
     sodium_free(plaintext);
     sqlite3_finalize(stmt);
     return -1;
   }
+  sodium_memzero(akey, sizeof(akey));
 
   const char *type_str = (const char *)sqlite3_column_text(stmt, 2);
 
@@ -245,8 +269,8 @@ int signet_store_rotate_secret(SignetStore *store,
   const uint8_t *dek = signet_store_get_dek(store);
   if (!db || !dek || !id || !new_payload) return -1;
 
-  /* Get current version and payload. */
-  const char *ver_sql = "SELECT active_version, payload, nonce FROM secrets WHERE id = ?;";
+  /* Get current version, payload, and owning agent pubkey. */
+  const char *ver_sql = "SELECT active_version, payload, nonce, agent_pubkey FROM secrets WHERE id = ?;";
   sqlite3_stmt *vs = NULL;
   int rc = sqlite3_prepare_v2(db, ver_sql, -1, &vs, NULL);
   if (rc != SQLITE_OK) return -1;
@@ -262,6 +286,10 @@ int signet_store_rotate_secret(SignetStore *store,
   int old_nonce_len = sqlite3_column_bytes(vs, 2);
   int new_version = old_version + 1;
 
+  /* Owning agent pubkey — needed to derive the per-agent envelope key. */
+  const char *apk = (const char *)sqlite3_column_text(vs, 3);
+  char *agent_pubkey_copy = apk ? g_strdup(apk) : NULL;
+
   /* Copy the old payload/nonce out of the statement before finalizing it, so
    * the archive INSERT can run later inside a transaction. */
   uint8_t *old_payload = (old_payload_len > 0) ? (uint8_t *)malloc(old_payload_len) : NULL;
@@ -273,16 +301,22 @@ int signet_store_rotate_secret(SignetStore *store,
   if (old_nonce) memcpy(old_nonce, on, (size_t)old_nonce_len);
   sqlite3_finalize(vs);
 
-  /* Encrypt new payload. */
+  if (!agent_pubkey_copy) { free(old_payload); free(old_nonce); return -1; }
+
+  /* Encrypt new payload with the per-agent envelope key. */
   uint8_t nonce[SIGNET_NONCE_LEN];
   randombytes_buf(nonce, sizeof(nonce));
 
   size_t ct_len = new_payload_len + SIGNET_MAC_LEN;
   uint8_t *ciphertext = (uint8_t *)malloc(ct_len);
-  if (!ciphertext) { free(old_payload); free(old_nonce); return -1; }
+  if (!ciphertext) { free(old_payload); free(old_nonce); g_free(agent_pubkey_copy); return -1; }
 
-  if (crypto_secretbox_easy(ciphertext, new_payload, new_payload_len, nonce, dek) != 0) {
-    free(ciphertext); free(old_payload); free(old_nonce); return -1;
+  uint8_t akey[32];
+  signet_derive_agent_key(dek, agent_pubkey_copy, akey);
+  int enc_rc = crypto_secretbox_easy(ciphertext, new_payload, new_payload_len, nonce, akey);
+  sodium_memzero(akey, sizeof(akey));
+  if (enc_rc != 0) {
+    free(ciphertext); free(old_payload); free(old_nonce); g_free(agent_pubkey_copy); return -1;
   }
 
   /* Archive + update are wrapped in a single transaction so version history
@@ -344,6 +378,7 @@ rotate_cleanup:
   sodium_memzero(nonce, sizeof(nonce));
   free(old_payload);
   free(old_nonce);
+  g_free(agent_pubkey_copy);
   return result;
 }
 
