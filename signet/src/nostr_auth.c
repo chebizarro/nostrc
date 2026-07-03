@@ -124,7 +124,12 @@ SignetAuthResult signet_auth_verify(SignetChallengeStore *cs,
   NostrEvent *evt = nostr_event_new();
   if (!evt) return SIGNET_AUTH_ERR_INTERNAL;
 
-  if (!nostr_event_deserialize(evt, auth_event_json)) {
+  /* Use the backend-independent compact parser (same as the NIP-46 path).
+   * nostr_event_deserialize() routes through the optional json_interface
+   * backend, which signet does not install — so it fails with "no backend" and
+   * would make all challenge auth (D-Bus TCP, NIP-5L, bootstrap /auth) reject
+   * valid events. The compact parser has no such dependency. */
+  if (!nostr_event_deserialize_compact(evt, auth_event_json, NULL)) {
     nostr_event_free(evt);
     return SIGNET_AUTH_ERR_INVALID_EVENT;
   }
