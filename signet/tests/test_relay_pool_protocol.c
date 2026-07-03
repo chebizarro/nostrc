@@ -157,13 +157,12 @@ static void test_sig_verification_invalid(void) {
    * simpler parse+dispatch that doesn't go through middleware.
    * We test that handle_event_json at least parses and dispatches. */
   int rc = signet_relay_pool_handle_event_json(rp, bad_json);
-  /* rc == 0 means parse succeeded. The event callback may or may not fire
-   * depending on whether handle_event_json checks signatures. */
-  (void)rc;
 
-  /* The key assertion: the middleware path (signet_pool_event_middleware)
-   * DOES check signatures. handle_event_json is the lower-level path.
-   * We just verify it doesn't crash on bad input. */
+  /* handle_event_json now verifies the Schnorr signature before dispatching
+   * (NPA-01 defense in depth). An all-zeros signature is invalid, so the
+   * event must be REJECTED: non-zero return and the callback must NOT fire. */
+  ASSERT_TRUE(rc != 0, "handle_event_json must reject an invalid signature");
+  ASSERT_EQ_INT(ectx.event_count, 0, "callback must NOT fire for a forged event");
 
   signet_relay_pool_free(rp);
   PASS();

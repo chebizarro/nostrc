@@ -50,12 +50,21 @@ test_capability = executable('test_capability',
   install: false,
 )
 
+test_relay_pool = executable('test_relay_pool_protocol',
+  'test_relay_pool_protocol.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: false,
+)
+
 test('signet_smoke', test_exe)
 test('replay_cache', test_replay)
 test('policy_engine', test_policy)
 test('audit_logger', test_audit)
 test('bootstrap_contract', test_bootstrap_contract)
 test('capability', test_capability)
+test('relay_pool_protocol', test_relay_pool)
 
 if get_option('signet_enable_passkeys')
   test_store_passkeys = executable('test_store_passkeys',

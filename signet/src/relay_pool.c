@@ -773,6 +773,24 @@ int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_j
     return -1;
   }
 
+  /* Verify the Schnorr signature before dispatching. This helper is a
+   * direct parse+dispatch path that does NOT pass through the subscription
+   * middleware (which verifies at relay_pool.c:85), so without this check a
+   * forged/unsigned event could reach higher layers. Fail closed on any
+   * event that does not deserialize or whose signature is invalid. */
+  {
+    NostrEvent *vevt = nostr_event_new();
+    if (vevt) {
+      bool sig_ok = nostr_event_deserialize_compact(vevt, event_json, NULL) &&
+                    nostr_event_check_signature(vevt);
+      nostr_event_free(vevt);
+      if (!sig_ok) {
+        g_object_unref(p);
+        return -1;
+      }
+    }
+  }
+
   /* Extract minimal fields. */
   int kind = 0;
   int64_t created_at = 0;
