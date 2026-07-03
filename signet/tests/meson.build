@@ -42,11 +42,20 @@ test_bootstrap_contract = executable('test_bootstrap_contract',
   install: false,
 )
 
+test_capability = executable('test_capability',
+  'test_capability.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: false,
+)
+
 test('signet_smoke', test_exe)
 test('replay_cache', test_replay)
 test('policy_engine', test_policy)
 test('audit_logger', test_audit)
 test('bootstrap_contract', test_bootstrap_contract)
+test('capability', test_capability)
 
 if get_option('signet_enable_passkeys')
   test_store_passkeys = executable('test_store_passkeys',

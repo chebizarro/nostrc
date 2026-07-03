@@ -105,6 +105,7 @@ struct SignetKeyStore;
 struct SignetRelayPool;
 struct SignetAuditLogger;
 struct SignetPolicyStore;
+struct SignetDenyList;
 
 typedef struct SignetMgmtHandler SignetMgmtHandler;
 
@@ -126,6 +127,13 @@ SignetMgmtHandler *signet_mgmt_handler_new(struct SignetKeyStore *keys,
 
 /* Free a management handler. Safe on NULL. */
 void signet_mgmt_handler_free(SignetMgmtHandler *h);
+
+/* Attach the daemon's live deny list so that revoke_agent can add revoked
+ * pubkeys to it (and so deny-list precedence takes effect immediately, without
+ * a restart). Pass the SAME instance consulted by the auth/fleet is_denied
+ * callback. Safe to call with NULL h or NULL deny. */
+void signet_mgmt_handler_set_deny_list(SignetMgmtHandler *h,
+                                       struct SignetDenyList *deny);
 
 /* Handle an incoming management event.
  * Verifies authorization, parses, executes, publishes ack.

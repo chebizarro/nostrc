@@ -724,6 +724,11 @@ int main(int argc, char **argv) {
   SignetDenyList *deny = base_store ? signet_deny_list_new(base_store) : NULL;
   dctx.deny = deny;
 
+  /* Give the management handler the SAME live deny list so that
+   * revoke_agent (kind 28010) deny-lists the pubkey, burns leases, and takes
+   * effect immediately via deny-list precedence. */
+  signet_mgmt_handler_set_deny_list(mgmt, deny);
+
   /* Build a fleet registry adapter.
    * is_in_fleet: all provisioned agents are fleet members.
    * is_denied: check the deny list.

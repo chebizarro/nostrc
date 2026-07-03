@@ -276,6 +276,19 @@ handle_bootstrap(SignetBootstrapServer *bs, struct MHD_Connection *conn,
                      json_error("failed to bind bootstrap handoff"));
   }
 
+  /* Enforce single-use: atomically mark the token consumed (used_at NULL->now).
+   * The UPDATE is guarded by `used_at IS NULL`, so under concurrent redemptions
+   * exactly one request wins; any that lose (or a replay of an already-used
+   * token) get a non-zero return and are rejected here. This is the replay
+   * defense the README promises for bootstrap tokens. */
+  if (signet_store_consume_bootstrap_token(bs->store, token_hash, now) != 0) {
+    signet_agent_record_clear(&rec);
+    g_free(bunker_uri);
+    g_object_unref(parser);
+    return send_json(conn, MHD_HTTP_FORBIDDEN,
+                     json_error("token already used"));
+  }
+
   char *resp_json = g_strdup_printf(
       "{\"uri\":\"%s\",\"pubkey\":\"%s\"}",
       bunker_uri ? bunker_uri : "", pubkey_hex);

@@ -12,6 +12,8 @@
 #include "signet/policy_store.h"
 #include "signet/relay_pool.h"
 #include "signet/audit_logger.h"
+#include "signet/revocation.h"
+#include "signet/store.h"
 #include "signet/util.h"
 
 #include <nostr/nip44/nip44.h>
@@ -236,6 +238,7 @@ struct SignetMgmtHandler {
   SignetRelayPool *relays;
   SignetAuditLogger *audit;
   SignetPolicyStore *policy_store;
+  SignetDenyList *deny;   /* shared live deny list (owned by daemon) */
 
   char **provisioner_pubkeys;
   size_t n_provisioner_pubkeys;
@@ -308,6 +311,11 @@ void signet_mgmt_handler_free(SignetMgmtHandler *h) {
   g_free(h);
 }
 
+void signet_mgmt_handler_set_deny_list(SignetMgmtHandler *h, SignetDenyList *deny) {
+  if (!h) return;
+  h->deny = deny;
+}
+
 /* Publish an ack event to relays. */
 static void signet_mgmt_publish_ack(SignetMgmtHandler *h,
                                     const char *recipient_pubkey_hex,
@@ -335,7 +343,17 @@ static void signet_mgmt_publish_ack(SignetMgmtHandler *h,
       if (erc != 0) encrypted_content = NULL;
     }
   }
-  nostr_event_set_content(evt, encrypted_content ? encrypted_content : ack_content);
+
+  /* Fail closed: management ACKs are always NIP-44 encrypted to the
+   * requesting provisioner. If encryption failed (or no recipient was
+   * resolved), never fall back to publishing the ACK in plaintext — that
+   * would leak provisioning results (agent_id, pubkey, bunker_uri). */
+  if (!encrypted_content) {
+    g_warning("[signetd] mgmt ack encryption failed; refusing to publish plaintext ack");
+    nostr_event_free(evt);
+    return;
+  }
+  nostr_event_set_content(evt, encrypted_content);
 
   NostrTags *tags = nostr_tags_new(0);
   if (tags) {
@@ -472,14 +490,39 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
     }
 
     case SIGNET_MGMT_OP_REVOKE_AGENT: {
-      int rc = signet_key_store_revoke_agent(h->keys, req.agent_id);
+      /* Resolve the agent pubkey BEFORE revocation wipes the key, so we can
+       * add it to the deny list. Absence of a pubkey means the agent is not
+       * known -> not_found. */
+      char agent_pubkey_hex[65];
+      bool have_pk = signet_key_store_get_agent_pubkey(
+          h->keys, req.agent_id, agent_pubkey_hex, sizeof(agent_pubkey_hex));
+
+      if (!have_pk) {
+        code = "not_found";
+        message = g_strdup("agent not found");
+        break;
+      }
+
+      SignetStore *base_store = signet_key_store_get_store(h->keys);
+      int rc;
+      if (base_store) {
+        /* Full revocation: deny list + lease burn + key wipe + audit.
+         * Deny-list precedence then rejects any residual session/lease. */
+        rc = signet_revoke_agent(base_store, h->keys, h->deny, h->audit,
+                                 req.agent_id, agent_pubkey_hex,
+                                 "management revoke_agent", now);
+      } else {
+        /* Cache-only mode: no persistent store/deny list is available. */
+        rc = signet_key_store_revoke_agent(h->keys, req.agent_id);
+        if (rc == 1) rc = 0; /* pubkey resolved above, so it existed */
+      }
+
       if (rc == 0) {
         ok = true;
         code = "revoked";
-        message = g_strdup_printf("agent %s revoked", req.agent_id);
-      } else if (rc == 1) {
-        code = "not_found";
-        message = g_strdup("agent not found");
+        message = base_store
+            ? g_strdup_printf("agent %s revoked (deny-listed, leases burned)", req.agent_id)
+            : g_strdup_printf("agent %s revoked (cache-only)", req.agent_id);
       } else {
         code = "revoke_failed";
         message = g_strdup("failed to revoke agent");
