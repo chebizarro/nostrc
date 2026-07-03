@@ -62,6 +62,9 @@ attestation = none
 # Headless UP is always asserted after Signet policy approval. UV-required ceremonies
 # default-deny unless this explicit opt-in is true.
 allow_headless_uv = false
+# Optional Linux-only /dev/uhid virtual CTAP-HID device for browser/libfido2 use.
+# Disabled by default; requires SIGNET_ENABLE_PASSKEYS build, Linux, and /dev/uhid access.
+virtual_ctap = false
 # Fleet PSK for portable passkey credential wrapping (64 hex chars), or a file
 # containing the same. Prefer sync_key_file or SIGNET_PASSKEYS_SYNC_KEY_FILE.
 sync_key =

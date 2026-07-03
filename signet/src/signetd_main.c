@@ -35,6 +35,7 @@
 #include "signet/ssh_agent.h"
 #ifdef SIGNET_ENABLE_PASSKEYS
 #include "signet/fido.h"
+#include "signet/fido_ctaphid.h"
 #endif
 #include <nip11.h>
 
@@ -490,7 +491,9 @@ int main(int argc, char **argv) {
 
 #ifdef SIGNET_ENABLE_PASSKEYS
   SignetFidoService *fido = NULL;
+  SignetFidoCtapHid *ctaphid = NULL;
   {
+    uint8_t ctaphid_aaguid[SIGNET_FIDO_AAGUID_LEN];
     uint8_t aaguid[SIGNET_FIDO_AAGUID_LEN];
     if (signet_fido_parse_aaguid(cfg.passkeys_aaguid, aaguid) != 0) {
       (void)signet_fido_parse_aaguid(SIGNET_FIDO_DEFAULT_AAGUID, aaguid);
@@ -508,20 +511,37 @@ int main(int argc, char **argv) {
       .allow_headless_uv = cfg.passkeys_allow_headless_uv,
     };
     memcpy(fido_cfg.aaguid, aaguid, sizeof(aaguid));
+    memcpy(ctaphid_aaguid, aaguid, sizeof(ctaphid_aaguid));
     fido = signet_fido_service_new(&fido_cfg);
     if (!fido) {
       g_warning("[signetd] failed to initialize passkey service; passkeys will return NotConfigured");
     }
     if (cfg.passkeys_enabled) {
-      g_message("[signetd] passkeys enabled backend=%s attestation=%s headless_uv=%s",
+      g_message("[signetd] passkeys enabled backend=%s attestation=%s headless_uv=%s virtual_ctap=%s",
                 cfg.passkeys_backend, cfg.passkeys_attestation,
-                cfg.passkeys_allow_headless_uv ? "true" : "false");
+                cfg.passkeys_allow_headless_uv ? "true" : "false",
+                cfg.passkeys_virtual_ctap ? "true" : "false");
+    }
+    if (cfg.passkeys_virtual_ctap) {
+      SignetFidoCtapHidConfig hid_cfg = {
+        .enabled = true,
+        .fido = fido,
+        .agent_id = cfg.identity,
+        .aaguid = ctaphid_aaguid,
+      };
+      ctaphid = signet_fido_ctaphid_new(&hid_cfg);
+      if (!ctaphid || signet_fido_ctaphid_start(ctaphid) != 0) {
+        g_warning("[signetd] virtual CTAP-HID requested but not started");
+      }
     }
   }
 #else
   struct SignetFidoService *fido = NULL;
   if (cfg.passkeys_enabled) {
     g_warning("[signetd] passkeys enabled in config but this build lacks SIGNET_ENABLE_PASSKEYS");
+  }
+  if (cfg.passkeys_virtual_ctap) {
+    g_warning("[signetd] virtual CTAP requested but this build lacks SIGNET_ENABLE_PASSKEYS");
   }
 #endif
 
@@ -887,6 +907,7 @@ cleanup:
   signet_nip46_server_free(nip46);
 
 #ifdef SIGNET_ENABLE_PASSKEYS
+  signet_fido_ctaphid_free(ctaphid);
   signet_fido_service_free(fido);
 #endif
 

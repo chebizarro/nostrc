@@ -70,6 +70,15 @@ if get_option('signet_enable_passkeys')
   )
   test('fido_service', test_fido_service)
 
+  test_fido_ctaphid = executable('test_fido_ctaphid',
+    'test_fido_ctaphid.c',
+    link_with: signet_core,
+    include_directories: signet_includes,
+    dependencies: signet_deps,
+    install: false,
+  )
+  test('fido_ctaphid', test_fido_ctaphid)
+
   test_fido_interop_json = executable('test_fido_interop_json',
     'test_fido_interop_json.c',
     '../src/fido.c',

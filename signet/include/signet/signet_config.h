@@ -109,6 +109,7 @@ typedef struct {
   char passkeys_aaguid[SIGNET_AAGUID_STRLEN];
   char passkeys_attestation[SIGNET_MAX_STR];
   bool passkeys_allow_headless_uv;
+  bool passkeys_virtual_ctap;      /* default false; Linux /dev/uhid only */
   char passkeys_sync_key[SIGNET_MAX_HEX_32_STRLEN];
   char passkeys_sync_key_file[SIGNET_MAX_STR];
   uint8_t passkeys_sync_psk[32];

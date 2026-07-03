@@ -82,6 +82,7 @@ if (SIGNET_ENABLE_PASSKEYS)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/fido_cbor.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/store_passkeys.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/fido.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/fido_ctaphid.c
   )
 endif()
 

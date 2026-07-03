@@ -155,6 +155,7 @@ if get_option('signet_enable_passkeys')
     'src/fido_cbor.c',
     'src/store_passkeys.c',
     'src/fido.c',
+    'src/fido_ctaphid.c',
   )
   add_project_arguments('-DSIGNET_ENABLE_PASSKEYS=1', language: 'c')
 endif

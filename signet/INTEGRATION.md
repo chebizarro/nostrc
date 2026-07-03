@@ -62,6 +62,51 @@ ctest --test-dir build/signet/tests -R fido_interop_external --output-on-failure
 
 A live `signetd` + private D-Bus session is not required for this harness; it intentionally tests the service+transport JSON boundary (`signet_fido_*_json`) used by both transports while avoiding daemon identity, UID→agent mapping, and fleet policy provisioning in unit CI. Full daemon smoke remains a separate build/integration concern.
 
+#### Phase 4 Linux virtual CTAP-HID validation
+
+`[passkeys] virtual_ctap = true` creates a Linux-only virtual FIDO2 HID authenticator through `/dev/uhid`. It is disabled by default and is compiled as a clean no-op/stub on non-Linux hosts. The CTAP-HID layer advertises `rk=true`, `up=true`, `uv=false`, and `clientPin=false`; PIN/UV commands and `uv=true` requests return CTAP errors rather than fabricated verification.
+
+Prerequisites on a Linux host:
+
+```bash
+cmake -S . -B build -DSIGNET_ENABLE_PASSKEYS=ON
+cmake --build build --target signetd test_fido_ctaphid
+ctest --test-dir build/signet/tests -R fido_ctaphid --output-on-failure
+sudo modprobe uhid
+# grant the signetd user access to /dev/uhid, or run the daemon with a narrowly-scoped test privilege
+```
+
+Configure passkeys and the virtual device:
+
+```ini
+[passkeys]
+enabled = true
+virtual_ctap = true
+backend = software-openssl
+aaguid = 80c64041-9927-4901-957f-e0032db96bee
+attestation = none
+allow_headless_uv = false
+sync_key_file = /run/secrets/signet-passkey-sync-key
+```
+
+Run `signetd` with normal `SIGNET_DB_KEY`, `SIGNET_BUNKER_NSEC`, and relay/policy configuration. The virtual CTAP adapter currently uses the daemon `[nostr] identity` value as the `SignetFidoService` `agent_id` for credentials created through the HID path, so provision policy/capability state for that identity before testing.
+
+Functional smoke with libfido2 tools:
+
+```bash
+fido2-token -L
+# Expect a "Signet virtual FIDO2 authenticator" HID device.
+
+# Exercise register/authenticate with libfido2 tools or a small libfido2 program:
+# 1. call authenticatorGetInfo and confirm FIDO_2_0, ES256, rk/up true, uv/clientPin false
+# 2. makeCredential with ES256, uv=false, and an rp.id such as example.com
+# 3. getAssertion for the returned credential id and the same rp.id
+# 4. verify authData flags: UP, BE, BS set; UV clear; signCount == 0
+# 5. verify the ES256 signature over authData || clientDataHash using the returned COSE public key
+```
+
+Browsers and `fido2-token` must be tested on Linux because macOS does not provide `/dev/uhid`; a macOS build can only prove the stubbed module compiles/links and the frame parser unit test passes.
+
 ## NIP-46 Methods
 
 | Method              | Description                                    |

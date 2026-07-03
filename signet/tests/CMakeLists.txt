@@ -141,6 +141,9 @@ if (SIGNET_ENABLE_PASSKEYS)
     target_link_libraries(test_fido_service PRIVATE sodium)
   endif()
 
+  add_executable(test_fido_ctaphid test_fido_ctaphid.c)
+  target_link_libraries(test_fido_ctaphid PRIVATE signet_core)
+
   add_executable(test_fido_interop_json
     test_fido_interop_json.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/fido.c
@@ -186,6 +189,7 @@ add_test(NAME relay_pool_protocol COMMAND test_relay_pool_protocol)
 if (SIGNET_ENABLE_PASSKEYS)
   add_test(NAME store_passkeys COMMAND test_store_passkeys)
   add_test(NAME fido_service COMMAND test_fido_service)
+  add_test(NAME fido_ctaphid COMMAND test_fido_ctaphid)
   add_test(NAME fido_interop_external
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/run_fido_interop_external_check.sh $<TARGET_FILE:test_fido_interop_json> ${CMAKE_CURRENT_BINARY_DIR}/phase3_interop)
 endif()

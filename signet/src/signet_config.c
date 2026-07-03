@@ -238,6 +238,7 @@ void signet_config_init(SignetConfig *cfg) {
   signet_strlcpy(cfg->passkeys_aaguid, "80c64041-9927-4901-957f-e0032db96bee", sizeof(cfg->passkeys_aaguid));
   signet_strlcpy(cfg->passkeys_attestation, "none", sizeof(cfg->passkeys_attestation));
   cfg->passkeys_allow_headless_uv = false;
+  cfg->passkeys_virtual_ctap = false;
 }
 
 void signet_config_clear(SignetConfig *cfg) {
@@ -372,6 +373,8 @@ static void signet_config_load_keyfile(GKeyFile *kf, SignetConfig *cfg) {
   if (val) { signet_strlcpy(cfg->passkeys_attestation, val, sizeof(cfg->passkeys_attestation)); g_free(val); }
   if (g_key_file_has_key(kf, "passkeys", "allow_headless_uv", NULL))
     cfg->passkeys_allow_headless_uv = g_key_file_get_boolean(kf, "passkeys", "allow_headless_uv", NULL);
+  if (g_key_file_has_key(kf, "passkeys", "virtual_ctap", NULL))
+    cfg->passkeys_virtual_ctap = g_key_file_get_boolean(kf, "passkeys", "virtual_ctap", NULL);
   val = g_key_file_get_string(kf, "passkeys", "sync_key", NULL);
   if (val) { signet_strlcpy(cfg->passkeys_sync_key, val, sizeof(cfg->passkeys_sync_key)); g_free(val); }
   val = g_key_file_get_string(kf, "passkeys", "sync_key_file", NULL);
@@ -476,6 +479,8 @@ static void signet_config_apply_env(SignetConfig *cfg) {
   if (val) signet_strlcpy(cfg->passkeys_attestation, val, sizeof(cfg->passkeys_attestation));
   val = g_getenv("SIGNET_PASSKEYS_ALLOW_HEADLESS_UV");
   if (val) cfg->passkeys_allow_headless_uv = (atoi(val) != 0 || g_ascii_strcasecmp(val, "true") == 0);
+  val = g_getenv("SIGNET_PASSKEYS_VIRTUAL_CTAP");
+  if (val) cfg->passkeys_virtual_ctap = (atoi(val) != 0 || g_ascii_strcasecmp(val, "true") == 0);
   val = g_getenv("SIGNET_PASSKEYS_SYNC_KEY");
   if (val) signet_strlcpy(cfg->passkeys_sync_key, val, sizeof(cfg->passkeys_sync_key));
   val = g_getenv("SIGNET_PASSKEYS_SYNC_KEY_FILE");
@@ -536,6 +541,12 @@ int signet_config_validate(const SignetConfig *cfg, char *err_buf, size_t err_bu
   if (!cfg->db_path[0]) {
     if (err_buf && err_buf_len > 0)
       snprintf(err_buf, err_buf_len, "db_path is empty");
+    return -1;
+  }
+
+  if (cfg->passkeys_virtual_ctap && !cfg->passkeys_enabled) {
+    if (err_buf && err_buf_len > 0)
+      snprintf(err_buf, err_buf_len, "passkeys virtual_ctap requires passkeys enabled");
     return -1;
   }
 
