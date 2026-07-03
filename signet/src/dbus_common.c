@@ -354,13 +354,13 @@ static void handle_get_session(const SignetDbusDispatchContext *ctx,
   int64_t expires_at = now + 24 * 60 * 60;
 
   if (!ctx->store) {
-    /* Preserve legacy store-less transport behavior: return an opaque token
-     * without server-side validation state. When a store is configured, the
-     * lease metadata below is the source of truth and persists only the token
-     * hash, never the raw token. */
-    g_dbus_method_invocation_return_value(invocation,
-        g_variant_new("(sx)", token_hex, (gint64)expires_at));
+    /* No store means no lease tracking. Refuse rather than hand out an
+     * untracked, unvalidatable bearer token (previously returned as an
+     * "opaque token"). */
     sodium_memzero(token_hex, sizeof(token_hex));
+    g_dbus_method_invocation_return_dbus_error(
+        invocation, "net.signet.Error.NotConfigured",
+        "Session brokering requires a configured store");
     return;
   }
 
@@ -394,6 +394,7 @@ static void handle_get_session(const SignetDbusDispatchContext *ctx,
 }
 
 static void handle_get_token(const SignetDbusDispatchContext *ctx,
+                             const char *agent_id,
                              GVariant *parameters,
                              GDBusMethodInvocation *invocation) {
   const char *cred_type = NULL;
@@ -409,6 +410,18 @@ static void handle_get_token(const SignetDbusDispatchContext *ctx,
   memset(&rec, 0, sizeof(rec));
   int rc = signet_store_get_secret(ctx->store, cred_type, &rec);
   if (rc != 0) {
+    g_dbus_method_invocation_return_dbus_error(
+        invocation, "net.signet.Error.NotFound", "Credential not found");
+    return;
+  }
+
+  /* Enforce per-agent ownership: a caller may only retrieve credentials that
+   * belong to its OWN agent_id. Without this, any authenticated D-Bus/TCP
+   * caller could read any agent's credential by id. Return NotFound (not a
+   * distinct AccessDenied) so callers cannot probe for others' credential ids. */
+  if (!rec.agent_id || strcmp(rec.agent_id, agent_id) != 0) {
+    audit_key_access(ctx, agent_id, "GetToken", "deny", "not_owner");
+    signet_secret_record_clear(&rec);
     g_dbus_method_invocation_return_dbus_error(
         invocation, "net.signet.Error.NotFound", "Credential not found");
     return;
@@ -647,7 +660,7 @@ void signet_dbus_dispatch_authenticated(const SignetDbusDispatchContext *ctx,
     if (strcmp(method_name, "GetSession") == 0) {
       handle_get_session(ctx, agent_id, parameters, invocation);
     } else if (strcmp(method_name, "GetToken") == 0) {
-      handle_get_token(ctx, parameters, invocation);
+      handle_get_token(ctx, agent_id, parameters, invocation);
     } else if (strcmp(method_name, "ListCredentials") == 0) {
       handle_list_credentials(ctx, agent_id, invocation);
     } else {
