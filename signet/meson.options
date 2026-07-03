@@ -20,6 +20,12 @@ option('signet_enable_passkeys',
   description: 'Build experimental FIDO2/passkeys (WebAuthn authenticator) modules'
 )
 
+option('signet_enable_test_hooks',
+  type: 'boolean',
+  value: false,
+  description: 'Build test-only daemon hooks for integration harnesses (never enable for production)'
+)
+
 option('signet_json_backend',
   type: 'combo',
   choices: ['json-glib', 'jansson'],

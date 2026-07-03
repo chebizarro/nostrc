@@ -60,7 +60,23 @@ cmake --build build --target test_fido_interop_json
 ctest --test-dir build/signet/tests -R fido_interop_external --output-on-failure
 ```
 
-A live `signetd` + private D-Bus session is not required for this harness; it intentionally tests the service+transport JSON boundary (`signet_fido_*_json`) used by both transports while avoiding daemon identity, UID→agent mapping, and fleet policy provisioning in unit CI. Full daemon smoke remains a separate build/integration concern.
+A live `signetd` + private D-Bus session is not required for this harness; it intentionally tests the service+transport JSON boundary (`signet_fido_*_json`) used by both transports while avoiding daemon identity, UID→agent mapping, and fleet policy provisioning in unit CI.
+
+#### Manual live-daemon D-Bus interop harness
+
+`signet/tests/interop/run_live_dbus_interop.sh` closes the transport last mile manually: it starts a private D-Bus session bus, runs a real passkey-enabled `signetd` against throwaway stores, calls `net.signet.Passkeys.GetInfo`, `MakeCredential`, `GetAssertion`, `ExportCredential`, and `ImportCredential` with `gdbus`, then verifies the live daemon's attestation object and imported-key ES256 assertion using `signet/tests/phase0/verify_external.py` with python-fido2 2.2.1.
+
+It is registered as disabled/manual CTest `live_dbus_interop_manual` and is not part of the default suite:
+
+```bash
+cmake -S . -B build -DSIGNET_ENABLE_PASSKEYS=ON
+cmake --build build --target signetd
+bash signet/tests/interop/run_live_dbus_interop.sh
+```
+
+The harness builds/runs a separate `build-signet-testhooks/` daemon with `SIGNET_ENABLE_TEST_HOOKS=ON`; the normal `build/` production-style daemon keeps those hooks compiled out.
+
+Prerequisites: `dbus-daemon` and `gdbus` (on macOS, usually from Homebrew `dbus`/GLib), `python3`, and CMake. The harness uses explicitly named `SIGNET_DBUS_TEST_*` environment switches to map the current UID to a disposable test agent and grant passkey capabilities only for the spawned test-hooks daemon process.
 
 #### Phase 4 Linux virtual CTAP-HID validation
 

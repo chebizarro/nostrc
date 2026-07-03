@@ -54,6 +54,10 @@
 /* Process hardening */
 #include <sys/mman.h>
 #include <sys/resource.h>
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+#include <sys/types.h>
+#include <unistd.h>
+#endif
 #if defined(__linux__)
 #include <sys/prctl.h>
 #endif
@@ -78,6 +82,26 @@ static void signet_on_term(int signo) {
 static int64_t signet_now_unix(void) {
   return (int64_t)time(NULL);
 }
+
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+static bool signet_env_truthy(const char *value) {
+  return value && (strcmp(value, "1") == 0 ||
+                   g_ascii_strcasecmp(value, "true") == 0 ||
+                   g_ascii_strcasecmp(value, "yes") == 0 ||
+                   g_ascii_strcasecmp(value, "on") == 0);
+}
+
+typedef struct {
+  uid_t uid;
+  char agent_id[SIGNET_MAX_STR];
+} SignetTestUidMap;
+
+static char *signet_test_uid_resolver(uid_t uid, void *user_data) {
+  SignetTestUidMap *map = (SignetTestUidMap *)user_data;
+  if (!map || !map->agent_id[0] || uid != map->uid) return NULL;
+  return g_strdup(map->agent_id);
+}
+#endif
 
 static void signet_usage(FILE *out) {
   fprintf(out, "Usage: signetd [-c <config_path>]\n");
@@ -452,6 +476,20 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  const char *test_dbus_agent_id = g_getenv("SIGNET_DBUS_TEST_AGENT_ID");
+  bool test_dbus_session_bus = signet_env_truthy(g_getenv("SIGNET_DBUS_SESSION_BUS"));
+  bool test_dbus_provision_agent = signet_env_truthy(g_getenv("SIGNET_DBUS_TEST_PROVISION_AGENT"));
+  bool test_dbus_grant_passkeys = signet_env_truthy(g_getenv("SIGNET_DBUS_TEST_GRANT_PASSKEYS"));
+  bool test_dbus_skip_relay = signet_env_truthy(g_getenv("SIGNET_DBUS_TEST_SKIP_RELAY"));
+  SignetTestUidMap test_uid_map;
+  memset(&test_uid_map, 0, sizeof(test_uid_map));
+  if (test_dbus_agent_id && test_dbus_agent_id[0]) {
+    test_uid_map.uid = geteuid();
+    g_strlcpy(test_uid_map.agent_id, test_dbus_agent_id, sizeof(test_uid_map.agent_id));
+  }
+#endif
+
   /* Validate required configuration before proceeding. */
   {
     char err_buf[256];
@@ -487,6 +525,29 @@ int main(int argc, char **argv) {
     .master_key = db_key ? db_key : "",
   };
   SignetKeyStore *keys = signet_key_store_new(audit, &ks_cfg);
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  if (keys && test_uid_map.agent_id[0] && test_dbus_provision_agent) {
+    char existing_pubkey[65];
+    if (!signet_key_store_get_agent_pubkey(keys, test_uid_map.agent_id,
+                                           existing_pubkey, sizeof(existing_pubkey))) {
+      char agent_pubkey[65];
+      char *bunker_uri = NULL;
+      int prc = signet_key_store_provision_agent(
+          keys, test_uid_map.agent_id,
+          cfg.remote_signer_pubkey_hex,
+          (const char *const *)cfg.relays, cfg.n_relays,
+          agent_pubkey, sizeof(agent_pubkey), &bunker_uri);
+      if (prc == 0) {
+        g_message("[signetd] test D-Bus provisioned agent_id=%s pubkey=%s",
+                  test_uid_map.agent_id, agent_pubkey);
+      } else {
+        g_warning("[signetd] test D-Bus failed to provision agent_id=%s",
+                  test_uid_map.agent_id);
+      }
+      g_free(bunker_uri);
+    }
+  }
+#endif
   SignetStore *base_store = signet_key_store_get_store(keys);
 
 #ifdef SIGNET_ENABLE_PASSKEYS
@@ -583,6 +644,37 @@ int main(int argc, char **argv) {
     signet_policy_registry_add(cap_registry, &default_pol);
     signet_policy_registry_assign(cap_registry, "*", "default");
   }
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  if (test_uid_map.agent_id[0] && test_dbus_grant_passkeys) {
+    char *passkey_caps[] = {
+      (char *)SIGNET_CAP_NOSTR_SIGN,
+      (char *)SIGNET_CAP_NOSTR_ENCRYPT,
+      (char *)SIGNET_CAP_SSH_SIGN,
+      (char *)SIGNET_CAP_SSH_LIST_KEYS,
+      (char *)SIGNET_CAP_PASSKEY_GET_INFO,
+      (char *)SIGNET_CAP_PASSKEY_MAKE_CREDENTIAL,
+      (char *)SIGNET_CAP_PASSKEY_GET_ASSERTION,
+      (char *)SIGNET_CAP_PASSKEY_EXPORT,
+      (char *)SIGNET_CAP_PASSKEY_IMPORT,
+    };
+    SignetAgentPolicy passkey_pol = {
+      .name = (char *)"test-dbus-passkeys",
+      .capabilities = passkey_caps,
+      .n_capabilities = G_N_ELEMENTS(passkey_caps),
+      .allowed_event_kinds = NULL,
+      .n_allowed_kinds = 0,
+      .disallowed_credential_types = NULL,
+      .n_disallowed_types = 0,
+      .rate_limit_per_hour = 1000,
+    };
+    if (signet_policy_registry_add(cap_registry, &passkey_pol) == 0 &&
+        signet_policy_registry_assign(cap_registry, test_uid_map.agent_id,
+                                      "test-dbus-passkeys") == 0) {
+      g_message("[signetd] test D-Bus granted passkey capabilities to agent_id=%s",
+                test_uid_map.agent_id);
+    }
+  }
+#endif
 
   /* 6) Relay pool */
   SignetDaemonCtx dctx;
@@ -678,9 +770,15 @@ int main(int argc, char **argv) {
       .store = base_store,
       .audit = audit,
       .fido = fido,
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+      .uid_resolver = test_uid_map.agent_id[0] ? signet_test_uid_resolver : NULL,
+      .uid_resolver_data = test_uid_map.agent_id[0] ? &test_uid_map : NULL,
+      .use_system_bus = !test_dbus_session_bus,
+#else
       .uid_resolver = NULL,
       .uid_resolver_data = NULL,
       .use_system_bus = true,
+#endif
     };
     dbus_unix = signet_dbus_server_new(&du_cfg);
     if (dbus_unix && signet_dbus_server_start(dbus_unix) != 0) {
@@ -753,8 +851,13 @@ int main(int argc, char **argv) {
       .keys = keys,
       .policy = cap_registry,
       .audit = audit,
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+      .uid_resolver = test_uid_map.agent_id[0] ? signet_test_uid_resolver : NULL,
+      .uid_resolver_data = test_uid_map.agent_id[0] ? &test_uid_map : NULL,
+#else
       .uid_resolver = NULL,
       .uid_resolver_data = NULL,
+#endif
     };
     ssh_agent = signet_ssh_agent_new(&sa_cfg);
     if (ssh_agent && signet_ssh_agent_start(ssh_agent) != 0) {
@@ -782,54 +885,61 @@ int main(int argc, char **argv) {
     }
   }
 
-  /* NPA-08: Discover relay capabilities via NIP-11 before connecting.
-   * Non-fatal — relays that don't serve NIP-11 are simply logged. */
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  if (test_dbus_skip_relay) {
+    g_message("[signetd] test D-Bus skipping relay discovery/start/subscribe");
+  } else
+#endif
   {
-    bool have_auth = (cfg.remote_signer_secret_key_hex[0] != '\0');
-    signet_discover_relays((const char *const *)cfg.relays, cfg.n_relays, have_auth);
-  }
+    /* NPA-08: Discover relay capabilities via NIP-11 before connecting.
+     * Non-fatal — relays that don't serve NIP-11 are simply logged. */
+    {
+      bool have_auth = (cfg.remote_signer_secret_key_hex[0] != '\0');
+      signet_discover_relays((const char *const *)cfg.relays, cfg.n_relays, have_auth);
+    }
 
-  /* Start relay pool after everything is ready. */
-  if (!relays || !nip46 || !policy || !store || !keys || !replay) {
-    fprintf(stderr, "signetd: initialization failed\n");
-    goto cleanup;
-  }
-
-  if (signet_relay_pool_start(relays) != 0) {
-    fprintf(stderr, "signetd: failed to start relay pool\n");
-    goto cleanup;
-  }
-
-  /* Subscribe to management event kinds (28000-28090) and NIP-46 requests (24133).
-   * Without this subscription the daemon connects to the relay but never receives
-   * incoming management commands or signing requests.
-   *
-   * NPA-04: Use scoped subscribe with our bunker pubkey as #p tag filter.
-   * This tells the relay to only send us events tagged with our pubkey,
-   * dramatically reducing bandwidth on shared relays. */
-  {
-    static const int signet_kinds[] = {
-      24133,                       /* NIP-46 signing requests      */
-      SIGNET_KIND_PROVISION_AGENT, /* 28000 */
-      SIGNET_KIND_REVOKE_AGENT,    /* 28010 */
-      SIGNET_KIND_SET_POLICY,      /* 28020 */
-      SIGNET_KIND_GET_STATUS,      /* 28030 */
-      SIGNET_KIND_LIST_AGENTS,     /* 28040 */
-      SIGNET_KIND_ROTATE_KEY,      /* 28050 */
-      /* NOTE: 28090 (MGMT_ACK) intentionally excluded — signetd publishes
-       * acks but does not need to receive them; subscribing wastes relay BW. */
-    };
-    const char *bunker_pk = cfg.remote_signer_pubkey_hex[0]
-                              ? cfg.remote_signer_pubkey_hex : NULL;
-    if (signet_relay_pool_subscribe_scoped(relays, signet_kinds,
-                                           G_N_ELEMENTS(signet_kinds),
-                                           bunker_pk, 0) != 0) {
-      fprintf(stderr, "signetd: failed to subscribe to event kinds\n");
+    /* Start relay pool after everything is ready. */
+    if (!relays || !nip46 || !policy || !store || !keys || !replay) {
+      fprintf(stderr, "signetd: initialization failed\n");
       goto cleanup;
     }
-    g_message("[signetd] subscribed to %zu event kinds on relay pool (p-tag=%s)",
-              G_N_ELEMENTS(signet_kinds),
-              bunker_pk ? bunker_pk : "unscoped");
+
+    if (signet_relay_pool_start(relays) != 0) {
+      fprintf(stderr, "signetd: failed to start relay pool\n");
+      goto cleanup;
+    }
+
+    /* Subscribe to management event kinds (28000-28090) and NIP-46 requests (24133).
+     * Without this subscription the daemon connects to the relay but never receives
+     * incoming management commands or signing requests.
+     *
+     * NPA-04: Use scoped subscribe with our bunker pubkey as #p tag filter.
+     * This tells the relay to only send us events tagged with our pubkey,
+     * dramatically reducing bandwidth on shared relays. */
+    {
+      static const int signet_kinds[] = {
+        24133,                       /* NIP-46 signing requests      */
+        SIGNET_KIND_PROVISION_AGENT, /* 28000 */
+        SIGNET_KIND_REVOKE_AGENT,    /* 28010 */
+        SIGNET_KIND_SET_POLICY,      /* 28020 */
+        SIGNET_KIND_GET_STATUS,      /* 28030 */
+        SIGNET_KIND_LIST_AGENTS,     /* 28040 */
+        SIGNET_KIND_ROTATE_KEY,      /* 28050 */
+        /* NOTE: 28090 (MGMT_ACK) intentionally excluded — signetd publishes
+         * acks but does not need to receive them; subscribing wastes relay BW. */
+      };
+      const char *bunker_pk = cfg.remote_signer_pubkey_hex[0]
+                                ? cfg.remote_signer_pubkey_hex : NULL;
+      if (signet_relay_pool_subscribe_scoped(relays, signet_kinds,
+                                             G_N_ELEMENTS(signet_kinds),
+                                             bunker_pk, 0) != 0) {
+        fprintf(stderr, "signetd: failed to subscribe to event kinds\n");
+        goto cleanup;
+      }
+      g_message("[signetd] subscribed to %zu event kinds on relay pool (p-tag=%s)",
+                G_N_ELEMENTS(signet_kinds),
+                bunker_pk ? bunker_pk : "unscoped");
+    }
   }
 
   /* NPA-07: Event-driven main loop using GMainLoop.

@@ -192,4 +192,10 @@ if (SIGNET_ENABLE_PASSKEYS)
   add_test(NAME fido_ctaphid COMMAND test_fido_ctaphid)
   add_test(NAME fido_interop_external
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/run_fido_interop_external_check.sh $<TARGET_FILE:test_fido_interop_json> ${CMAKE_CURRENT_BINARY_DIR}/phase3_interop)
+
+  add_test(NAME live_dbus_interop_manual
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/interop/run_live_dbus_interop.sh)
+  set_tests_properties(live_dbus_interop_manual PROPERTIES
+    DISABLED TRUE
+    LABELS "manual;interop;dbus;passkeys")
 endif()

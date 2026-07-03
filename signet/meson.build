@@ -185,6 +185,11 @@ if get_option('signet_enable_passkeys')
   add_project_arguments('-DSIGNET_ENABLE_PASSKEYS=1', language: 'c')
 endif
 
+signetd_cargs = []
+if get_option('signet_enable_test_hooks')
+  signetd_cargs += '-DSIGNET_ENABLE_TEST_HOOKS=1'
+endif
+
 signet_core = static_library('signet_core',
   signet_core_sources,
   include_directories: signet_includes,
@@ -198,6 +203,7 @@ executable('signetd',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps,
+  c_args: signetd_cargs,
   install: true,
 )
 
@@ -222,4 +228,5 @@ summary({
   'libsodium': sodium_dep.found() ? 'found' : 'not found',
   'libcbor': cbor_dep.found() ? 'found' : 'not found',
   'Passkeys': get_option('signet_enable_passkeys') ? 'enabled' : 'disabled',
+  'Test hooks': get_option('signet_enable_test_hooks') ? 'enabled' : 'disabled',
 }, section: 'Signet')
