@@ -540,8 +540,16 @@ void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url) {
 
     // Re-lock to add relay to pool
     pthread_mutex_lock(&pool->pool_mutex);
-    pool->relays = (NostrRelay **)realloc(pool->relays, (pool->relay_count + 1) * sizeof(NostrRelay *));
-    pool->relays[pool->relay_count++] = relay;
+    {
+        // Use a temp so a realloc failure does not leak the existing array.
+        NostrRelay **grown = (NostrRelay **)realloc(
+            pool->relays, (pool->relay_count + 1) * sizeof(NostrRelay *));
+        if (grown) {
+            pool->relays = grown;
+            pool->relays[pool->relay_count++] = relay;
+        }
+        /* else: OOM — keep existing pool, drop this relay rather than crash. */
+    }
     pthread_mutex_unlock(&pool->pool_mutex);
 }
 
@@ -560,9 +568,15 @@ void nostr_simple_pool_add_relay(NostrSimplePool *pool, NostrRelay *relay) {
         }
     }
 
-    // Add relay to pool
-    pool->relays = (NostrRelay **)realloc(pool->relays, (pool->relay_count + 1) * sizeof(NostrRelay *));
-    pool->relays[pool->relay_count++] = relay;
+    // Add relay to pool (temp ptr so realloc failure doesn't leak the array).
+    {
+        NostrRelay **grown = (NostrRelay **)realloc(
+            pool->relays, (pool->relay_count + 1) * sizeof(NostrRelay *));
+        if (grown) {
+            pool->relays = grown;
+            pool->relays[pool->relay_count++] = relay;
+        }
+    }
 
     pthread_mutex_unlock(&pool->pool_mutex);
 }

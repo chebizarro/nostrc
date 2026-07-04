@@ -29,9 +29,12 @@ void nostr_multi_store_free(NostrMultiStore *multi) {
 
 // Publish an event to multiple stores
 int nostr_multi_store_publish(NostrMultiStore *multi, void *ctx, NostrEvent *event) {
+    if (!multi || !multi->stores) return -1;
     int result = 0;
     for (size_t i = 0; i < multi->stores_count; i++) {
-        int res = multi->stores[i]->publish(multi->stores[i], ctx, event);
+        NostrRelayStore *st = multi->stores[i];
+        if (!st || !st->publish) { result = -1; continue; }
+        int res = st->publish(st, ctx, event);
         if (res != 0) {
             result = res;
         }
@@ -41,23 +44,40 @@ int nostr_multi_store_publish(NostrMultiStore *multi, void *ctx, NostrEvent *eve
 
 // Query events from multiple stores
 int nostr_multi_store_query_sync(NostrMultiStore *multi, void *ctx, NostrFilter *filter, NostrEvent ***events, size_t *events_count) {
+    if (!multi || !multi->stores || !events || !events_count) return -1;
     int result = 0;
     size_t total_events_count = 0;
+    NostrEvent **acc = NULL; /* build locally; never clobber caller's ptr on failure */
 
     for (size_t i = 0; i < multi->stores_count; i++) {
+        NostrRelayStore *st = multi->stores[i];
+        if (!st || !st->query_sync) { result = -1; continue; }
         NostrEvent **store_events = NULL;
         size_t store_events_count = 0;
-        int res = multi->stores[i]->query_sync(multi->stores[i], ctx, filter, &store_events, &store_events_count);
+        int res = st->query_sync(st, ctx, filter, &store_events, &store_events_count);
         if (res != 0) {
             result = res;
         }
 
-        *events = (NostrEvent **)realloc(*events, (total_events_count + store_events_count) * sizeof(NostrEvent *));
-        memcpy(*events + total_events_count, store_events, store_events_count * sizeof(NostrEvent *));
-        total_events_count += store_events_count;
+        if (store_events_count > 0 && store_events) {
+            /* Use a temp so a realloc failure does not leak the existing buffer. */
+            NostrEvent **grown = (NostrEvent **)realloc(
+                acc, (total_events_count + store_events_count) * sizeof(NostrEvent *));
+            if (!grown) {
+                free(store_events);
+                free(acc);
+                *events = NULL;
+                *events_count = 0;
+                return -1;
+            }
+            acc = grown;
+            memcpy(acc + total_events_count, store_events, store_events_count * sizeof(NostrEvent *));
+            total_events_count += store_events_count;
+        }
         free(store_events);
     }
 
+    *events = acc;
     *events_count = total_events_count;
     return result;
 }

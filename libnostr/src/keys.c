@@ -173,35 +173,31 @@ bool nostr_key_is_valid_public_hex(const char *pk) {
     return true;
 }
 
-// Validate if a public key is valid using libsecp256k1
+// Validate if a public key is valid using libsecp256k1.
+// Nostr public keys are 32-byte x-only (BIP-340) keys encoded as 64 hex chars.
 bool nostr_key_is_valid_public(const char *pk) {
-    secp256k1_context *ctx;
-    secp256k1_pubkey pubkey;
-    unsigned char pub_key_bin[33]; // Compressed public key (33 bytes)
-    int return_val;
-
-    // First check if the provided string is a valid public key hex
+    // First check that the string is a well-formed 32-byte x-only hex key.
     if (!nostr_key_is_valid_public_hex(pk)) {
         return false;
     }
 
-    // Convert the hex-encoded public key to binary form
-    if (!nostr_hex2bin(pub_key_bin, pk, sizeof(pub_key_bin))) {
+    // Decode the 32-byte x-only public key.
+    unsigned char xonly_bin[32];
+    if (!nostr_hex2bin(xonly_bin, pk, sizeof(xonly_bin))) {
         return false;
     }
 
-    // Create secp256k1 context for public key verification
-    ctx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
-
-    // Parse the compressed public key
-    return_val = secp256k1_ec_pubkey_parse(ctx, &pubkey, pub_key_bin, sizeof(pub_key_bin));
-    if (return_val == 0) {
-        // Invalid public key
-        secp256k1_context_destroy(ctx);
+    // A valid x-only pubkey must lie on the curve: attempt to parse it.
+    go_autoptr(secp256k1_ctx_t) ctx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
+    if (!ctx) {
         return false;
     }
 
-    // Public key parsing succeeded, so it's valid
-    secp256k1_context_destroy(ctx);
+    secp256k1_xonly_pubkey xonly_pubkey;
+    if (!secp256k1_xonly_pubkey_parse(ctx, &xonly_pubkey, xonly_bin)) {
+        // Not a valid point on the curve.
+        return false;
+    }
+
     return true;
 }

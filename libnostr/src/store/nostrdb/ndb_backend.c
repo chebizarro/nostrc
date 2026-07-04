@@ -159,8 +159,24 @@ static int ln_ndb_open(ln_store **out, const char *path, const char *opts_json)
     if (parse_kv_int(opts_json, "ingester_threads", &v) && v > 0) cfg.ingester_threads = (int)v;
     if (parse_kv_int(opts_json, "writer_scratch_buffer_size", &v) && v > 0) cfg.writer_scratch_buffer_size = (int)v;
     if (parse_kv_int(opts_json, "ingest_skip_validation", &v) && v > 0) {
-      cfg.ingest_filter = ln_ndb_ingest_filter_skip;
-      cfg.filter_context = NULL;
+      /* SECURITY: skipping ingest validation accepts events with invalid ids
+       * and signatures into the durable store. This must NEVER be enabled by a
+       * stray production config option alone. Require an explicit, out-of-band
+       * environment opt-in (NOSTR_ALLOW_UNSAFE_INGEST=1) so that a leaked/typo'd
+       * opts_json key cannot silently disable signature verification. */
+      const char *allow = getenv("NOSTR_ALLOW_UNSAFE_INGEST");
+      if (allow && allow[0] == '1' && allow[1] == '\0') {
+        fprintf(stderr,
+          "[ndb] WARNING: ingest validation DISABLED (ingest_skip_validation + "
+          "NOSTR_ALLOW_UNSAFE_INGEST=1). Events with invalid ids/signatures will "
+          "be accepted. This is UNSAFE and must only be used in tests.\n");
+        cfg.ingest_filter = ln_ndb_ingest_filter_skip;
+        cfg.filter_context = NULL;
+      } else {
+        fprintf(stderr,
+          "[ndb] REFUSED ingest_skip_validation: set NOSTR_ALLOW_UNSAFE_INGEST=1 "
+          "to enable (test-only). Proceeding WITH full id/signature validation.\n");
+      }
     }
   }
 

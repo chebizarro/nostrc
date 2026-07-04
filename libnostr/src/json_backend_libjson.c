@@ -68,10 +68,14 @@ char *default_serialize_filter(const NostrFilter *filter) {
     return out;
 }
 
+/* Contract (see nostr-json.h / json.c facade): return 0 on success, non-zero
+ * on failure. Earlier this returned 1=success/0=failure, which is INVERTED
+ * relative to the facade — causing valid JSON to be treated as a failure and
+ * malformed JSON to be treated as success on the fallback path. */
 int default_deserialize_event(NostrEvent *event, const char *json_str) {
-    if (!event || !json_str) return 0;
+    if (!event || !json_str) return -1;
     json_error_t err; json_t *root = json_loads(json_str, 0, &err);
-    if (!root) return 0;
+    if (!root) return -1;
     json_t *val = NULL;
 
     /* id */
@@ -125,7 +129,7 @@ int default_deserialize_event(NostrEvent *event, const char *json_str) {
     }
 
     json_decref(root);
-    return 1;
+    return 0;
 }
 
 char *default_serialize_event(const NostrEvent *event) {

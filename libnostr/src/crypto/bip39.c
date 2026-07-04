@@ -2,6 +2,7 @@
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <openssl/sha.h>
+#include <openssl/crypto.h>
 #include <ctype.h>
 #ifdef NOSTR_HAVE_GLIB
 #include <glib.h>
@@ -217,18 +218,37 @@ bool nostr_bip39_seed(const char *mnemonic, const char *passphrase, uint8_t out[
   /* Apply NFKD normalization per BIP-39 */
   char *mn_norm = nfkd_dup(mnemonic);
   char *pf_norm = nfkd_dup(pp);
-  char salt[9 + 256];
-  memcpy(salt, "mnemonic", 8);
-  salt[8] = '\0';
-  strncat(salt, pf_norm, sizeof(salt) - 9);
-  if (PKCS5_PBKDF2_HMAC(mn_norm, (int)strlen(mn_norm),
-                         (const unsigned char*)salt, (int)strlen(salt),
-                         2048, EVP_sha512(), 64, out) != 1) {
+  if (!mn_norm || !pf_norm) {
+    /* Normalization/allocation failed; do not proceed with a NULL buffer. */
     nfkd_free(mn_norm);
     nfkd_free(pf_norm);
     return false;
   }
+
+  /* BIP-39 salt is "mnemonic" || passphrase with an ARBITRARY-length
+   * passphrase. Size the buffer dynamically instead of truncating to a fixed
+   * 256-byte stack buffer (which would make long passphrases, or two
+   * passphrases sharing a 256-byte prefix, derive the same seed). */
+  size_t pf_len = strlen(pf_norm);
+  size_t salt_len = 8 + pf_len; /* "mnemonic" (8 bytes) + passphrase */
+  char *salt = (char *)malloc(salt_len + 1);
+  if (!salt) {
+    nfkd_free(mn_norm);
+    nfkd_free(pf_norm);
+    return false;
+  }
+  memcpy(salt, "mnemonic", 8);
+  memcpy(salt + 8, pf_norm, pf_len);
+  salt[salt_len] = '\0';
+
+  int rc = PKCS5_PBKDF2_HMAC(mn_norm, (int)strlen(mn_norm),
+                             (const unsigned char*)salt, (int)salt_len,
+                             2048, EVP_sha512(), 64, out);
+
+  /* Scrub the salt (contains the passphrase) before freeing. */
+  OPENSSL_cleanse(salt, salt_len + 1);
+  free(salt);
   nfkd_free(mn_norm);
   nfkd_free(pf_norm);
-  return true;
+  return rc == 1;
 }

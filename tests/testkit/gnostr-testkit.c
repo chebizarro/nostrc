@@ -46,6 +46,10 @@ gn_test_ndb_new(const char *opts_json)
     }
     ndb->dir = g_strdup(dir);
 
+    /* Explicit opt-in to unsafe ingest (test events use fabricated sigs). The
+     * backend now refuses ingest_skip_validation unless this env var is set. */
+    g_setenv("NOSTR_ALLOW_UNSAFE_INGEST", "1", TRUE);
+
     /* Default opts: small mapsize for tests (64 MB), skip validation for test events */
     const char *opts = opts_json ? opts_json :
         "{\"mapsize\": 67108864, \"ingester_threads\": 1, \"ingest_skip_validation\": 1}";

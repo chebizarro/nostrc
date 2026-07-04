@@ -1,5 +1,6 @@
 #include "../include/rate_limiter.h"
 #include <time.h>
+#include <math.h>
 
 static double now_seconds(void){
   struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -21,6 +22,10 @@ void tb_set_now(nostr_token_bucket *tb, double now){
 
 bool tb_allow(nostr_token_bucket *tb, double cost){
   if (!tb) return false;
+  /* Reject invalid costs: a negative cost would ADD tokens (bypassing the
+   * limiter and inflating the bucket), and non-finite costs (NaN/Inf) make the
+   * comparisons meaningless. Deny without mutating bucket state. */
+  if (!isfinite(cost) || cost < 0.0) return false;
   double now = now_seconds();
   double elapsed = now - tb->last_ts;
   if (elapsed < 0) elapsed = 0;

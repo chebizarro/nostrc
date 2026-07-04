@@ -288,6 +288,18 @@ if(LIBNOSTR_WITH_NOSTRDB)
   endif()
 endif()
 
+# -----------------------------------------------------------------------------
+# Tests (CTest). Real regression tests for audited core behavior.
+# -----------------------------------------------------------------------------
+option(LIBNOSTR_BUILD_TESTS "Build libnostr unit tests" ON)
+if(LIBNOSTR_BUILD_TESTS)
+  enable_testing()
+  add_executable(test_core_audit tests/test_core_audit.c)
+  target_link_libraries(test_core_audit PRIVATE nostr OpenSSL::Crypto ${SECP256K1_LIB})
+  target_include_directories(test_core_audit PRIVATE include)
+  add_test(NAME libnostr_core_audit COMMAND test_core_audit)
+endif()
+
 # Install rules
 include(GNUInstallDirs)
 install(TARGETS nostr

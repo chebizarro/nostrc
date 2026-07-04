@@ -11,6 +11,9 @@ int main() {
     system("rm -rf /tmp/test_ndb_simple && mkdir -p /tmp/test_ndb_simple");
     
     // Initialize store with same config as gnostr
+    // Test events use fabricated signatures; explicitly opt in to unsafe ingest.
+    // The backend refuses ingest_skip_validation unless this env var is set.
+    setenv("NOSTR_ALLOW_UNSAFE_INGEST", "1", 1);
     ln_store *store = NULL;
     const char *opts = "{\"mapsize\":1073741824,\"ingester_threads\":4,\"ingest_skip_validation\":1}";
     
