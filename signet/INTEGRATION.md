@@ -15,8 +15,9 @@ Agents connect to Signet via the NIP-46 protocol over Nostr relays, or locally v
 3. **Signing**: The agent sends `sign_event` requests via NIP-46. Signet evaluates per-agent
    policy, signs from the hot key cache, and returns the signed event.
 
-4. **Revocation**: A provisioner sends a revoke event (kind 28010). Signet zeros the cache
-   entry, adds the pubkey to the deny list, and refuses all further requests for that agent.
+4. **Revocation**: A provisioner sends a revoke event (kind 28010). Signet resolves the
+   agent pubkey, adds it to the deny list, burns active leases, wipes the key from both
+   cache and store, audits the action, and refuses all further requests for that agent.
 
 ### D-Bus (Local / LAN)
 
@@ -125,28 +126,31 @@ Browsers and `fido2-token` must be tested on Linux because macOS does not provid
 
 ## NIP-46 Methods
 
-| Method              | Description                                    |
-|---------------------|------------------------------------------------|
-| `connect`           | Establish session; validate auth secret        |
-| `get_public_key`    | Return agent's public key (hex)                |
-| `sign_event`        | Policy check then sign from hot cache          |
-| `nip04_encrypt`     | NIP-04 encrypt plaintext for a peer            |
-| `nip04_decrypt`     | NIP-04 decrypt ciphertext from a peer          |
-| `webauthn_get_info` | Return Signet authenticator info JSON          |
-| `webauthn_make_credential` | Create a passkey credential JSON response |
-| `webauthn_get_assertion` | Sign an assertion JSON response            |
-| `webauthn_export`   | Export a credential portability container      |
-| `webauthn_import`   | Import a credential portability container      |
-| `ping`              | Keepalive                                      |
+| Method              | Params                              | Description                                    |
+|---------------------|-------------------------------------|------------------------------------------------|
+| `connect`           | auth secret / session data          | Establish session; validate auth secret        |
+| `get_public_key`    | `[]`                                | Return agent's public key (hex)                |
+| `sign_event`        | `[event_json]`                      | Policy check then sign from hot cache          |
+| `nip04_encrypt`     | `[peer_pubkey_hex, plaintext]`      | NIP-04 encrypt plaintext for a peer            |
+| `nip04_decrypt`     | `[peer_pubkey_hex, ciphertext]`     | NIP-04 decrypt ciphertext from a peer          |
+| `nip44_encrypt`     | `[peer_pubkey_hex, plaintext]`      | NIP-44 v2 encrypt plaintext for a peer         |
+| `nip44_decrypt`     | `[peer_pubkey_hex, ciphertext]`     | NIP-44 v2 decrypt ciphertext from a peer       |
+| `get_relays`        | `[]`                                | Return relay map JSON                          |
+| `webauthn_get_info` | `[]`                                | Return Signet authenticator info JSON          |
+| `webauthn_make_credential` | request JSON                 | Create a passkey credential JSON response |
+| `webauthn_get_assertion` | request JSON                     | Sign an assertion JSON response            |
+| `webauthn_export`   | request JSON                        | Export a credential portability container      |
+| `webauthn_import`   | request JSON                        | Import a credential portability container      |
+| `ping`              | `[]`                                | Keepalive                                      |
 
 ## Management Protocol
 
-All management traffic flows as NIP-44 v2 encrypted, signed Nostr events. Authorization requires the event's pubkey to be in the `provisioner_pubkeys` list.
+All management traffic flows as NIP-44 v2 encrypted, signed Nostr events. Authorization requires the event's pubkey to be in the `provisioner_pubkeys` list. ACKs fail closed on encryption errors; Signet does not fall back to plaintext management ACKs.
 
 | Kind  | Operation         | Description                              |
 |-------|-------------------|------------------------------------------|
 | 28000 | `provision_agent` | Generate keypair, return bunker:// URI   |
-| 28010 | `revoke_agent`    | Wipe key, add to deny list               |
+| 28010 | `revoke_agent`    | Resolve pubkey, deny, burn leases, wipe cache/store, audit |
 | 28020 | `set_policy`      | Parse and apply policy JSON for agent    |
 | 28030 | `get_status`      | Query daemon health                      |
 | 28040 | `list_agents`     | Enumerate managed agents                 |
@@ -160,9 +164,10 @@ For automated fleet provisioning:
 1. Fleet Commander provisions agent via management event (kind 28000)
 2. Fleet Commander sends bootstrap token to agent via NIP-17 gift-wrapped DM
 3. Agent decrypts token, calls `POST /bootstrap` to verify
-4. Signet returns a `nostrconnect://` handoff URI
-5. Agent calls `GET /challenge` and `POST /auth` to establish a session
-6. Agent connects via NIP-46 using the handoff URI
+4. Signet atomically consumes the single-use bootstrap token; replay attempts return 403
+5. Signet returns a `nostrconnect://` handoff URI
+6. Agent calls `GET /challenge` and `POST /auth` to establish a session
+7. Agent connects via NIP-46 using the handoff URI
 
 ## Health Endpoint
 
@@ -171,3 +176,11 @@ curl http://localhost:8080/health
 ```
 
 Returns 200 if healthy (SQLCipher open, relays connected), 503 otherwise.
+
+## Security Guarantees
+
+- **Fail-closed crypto paths**: management ACK encryption failures return errors instead of plaintext; relay publish with zero connected relays reports failure.
+- **Per-agent credential isolation**: credential payloads use per-agent envelope keys derived via BLAKE2b from the store DEK and agent pubkey; D-Bus `GetToken` only returns credentials owned by the requesting agent.
+- **Transactional rotation**: credential rotation archives the old secret and writes the new one in a single SQLite transaction.
+- **SQLCipher startup verification**: Signet verifies SQLCipher with `PRAGMA cipher_version` plus a keyed read at startup and refuses to start when `SIGNET_REQUIRE_ENCRYPTED_DB=true` and encryption is unavailable.
+- **Complete revocation**: `revoke_agent` denies the resolved pubkey, burns active leases, wipes cache and persistent key material, and audits the operation.

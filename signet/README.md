@@ -7,9 +7,9 @@ Signet is a NIP-46 compliant Nostr bunker server built for managing cryptographi
 ### Core Signing
 
 - **NIP-46 Remote Signing** — Signs Nostr events on behalf of registered agents over relay-based NIP-46 sessions
-- **NIP-04 / NIP-44 Encryption** — Encrypt and decrypt messages for agents using standard Nostr encryption protocols
+- **NIP-04 / NIP-44 Encryption** — Encrypt and decrypt messages for agents using standard Nostr encryption protocols, including NIP-44 v2 `nip44_encrypt` / `nip44_decrypt` over NIP-46
 - **Hot Key Cache** — `sodium_malloc`-backed, `mlock`'d GHashTable for zero-latency signing (no disk read on the sign path)
-- **SQLCipher Persistence** — AES-256 encrypted SQLite database for agent records, key material, credentials, leases, and audit logs
+- **SQLCipher Persistence** — AES-256 encrypted SQLite database for agent records, key material, credentials, leases, and audit logs, verified at startup with `PRAGMA cipher_version` plus a keyed read
 - **Per-Agent Key Rotation** — Rotate an agent's keypair without reprovisioning; old keys are wiped from cache and store
 
 ### Policy & Authorization
@@ -38,27 +38,29 @@ All provisioning, revocation, and policy management is done through signed Nostr
 | Kind  | Operation         | Description                           |
 |-------|-------------------|---------------------------------------|
 | 28000 | `provision_agent` | Generate keypair, return bunker:// URI|
-| 28010 | `revoke_agent`    | Wipe key from cache and store         |
+| 28010 | `revoke_agent`    | Resolve pubkey, deny, burn leases, wipe key from cache/store, audit |
 | 28020 | `set_policy`      | Parse and apply policy JSON           |
 | 28030 | `get_status`      | Query daemon health                   |
 | 28040 | `list_agents`     | Enumerate managed agents              |
 | 28050 | `rotate_key`      | Rotate agent keypair                  |
 | 28090 | `ack`             | Response to any management command    |
 
-Management events are NIP-44 v2 encrypted between provisioner and bunker. Ack responses are encrypted to the requesting provisioner. Authorization requires the event's pubkey to be in the `provisioner_pubkeys` list.
+Management events are NIP-44 v2 encrypted between provisioner and bunker. Ack responses are encrypted to the requesting provisioner and fail closed on encryption errors; Signet no longer falls back to plaintext ACKs. Authorization requires the event pubkey to be in the `provisioner_pubkeys` list.
 
 ### Bootstrap & Onboarding
 
 - **NIP-17 Bootstrap Delivery** — Fleet Commander sends bootstrap tokens as gift-wrapped NIP-17 DMs to the agent's throwaway bootstrap pubkey
-- **Single-Use Bootstrap Tokens** — Time-limited, attempt-capped, SHA256-hashed tokens bound to agent_id and bootstrap_pubkey
+- **Single-Use Bootstrap Tokens** — Time-limited, attempt-capped, SHA256-hashed tokens bound to agent_id and bootstrap_pubkey; `POST /bootstrap` consumes the token atomically and replays return 403
 - **Challenge-Response Auth** — Shared Nostr-signed challenge validator (kind 28100) used across all transports; 30-second TTL, single-use challenges
 - **Session Leases** — Time-bound session tokens (24h TTL) issued after successful authentication
 
 ### Credential Management
 
 - **Extended Secret Store** — Stores multiple credential types (Nostr nsec, SSH keys, API tokens, certificates) with envelope encryption at rest
+- **Per-Agent Envelope Keys** — Each agent gets a distinct credential-encryption key derived via BLAKE2b from the store DEK and agent pubkey
 - **Credential Leasing** — Time-bound leases for credential access; agents request sessions via D-Bus or NIP-5L, Signet brokers the credential exchange
 - **Version-Tracked Rotation** — Credential rotation archives the previous version; old versions remain in the `secret_versions` table
+- **Transactional Rotation** — `signet_store_rotate_secret` archives the old value and updates the current value in one SQLite transaction
 - **Session Brokering** — Agents call `GetSession(credential_id)` to exchange a stored credential for a service session token with automatic lease tracking
 
 ### Audit & Observability
@@ -93,7 +95,7 @@ Fleet Cmdr → NIP-17 bootstrap → Relay → Agent → POST /bootstrap → sign
 |----------------------|----------------------------------------------------------------|
 | **signetd**          | Main daemon; wires all subsystems with config-gated activation |
 | **signetctl**        | CLI for remote management and local store introspection        |
-| **NIP-46 Server**    | Handles `sign_event`, `get_public_key`, `connect`, `ping`     |
+| **NIP-46 Server**    | Handles `sign_event`, `get_public_key`, `connect`, NIP-04/NIP-44 encryption, `get_relays`, `ping` |
 | **Key Store**        | `mlock`'d GHashTable + SQLCipher persistence                   |
 | **Policy Store**     | File-backed (GKeyFile) with SIGHUP reload and TTL              |
 | **Policy Engine**    | Evaluates requests against per-agent policy and rate limits    |
@@ -136,8 +138,10 @@ meson setup builddir -Dsignet_use_sqlcipher=true
 ```
 
 At startup Signet verifies SQLCipher is active (`PRAGMA cipher_version` + a
-keyed read). If it is not and `SIGNET_REQUIRE_ENCRYPTED_DB=true`, the daemon
-refuses to start; otherwise it logs a prominent warning.
+keyed read). If verification fails and `SIGNET_REQUIRE_ENCRYPTED_DB=true`, the
+daemon refuses to start; otherwise it logs a prominent warning. Set
+`SIGNET_REQUIRE_ENCRYPTED_DB=true` in production so accidental plain SQLite
+builds fail closed.
 
 ### Run
 
@@ -147,7 +151,7 @@ export SIGNET_BUNKER_NSEC="nsec1..."
 ./builddir/signetd -c signet.conf
 ```
 
-Both `SIGNET_DB_KEY` and `SIGNET_BUNKER_NSEC` are **required**. Signet refuses to start without them.
+Both `SIGNET_DB_KEY` and `SIGNET_BUNKER_NSEC` are **required**. Signet refuses to start without them. In production, also set `SIGNET_REQUIRE_ENCRYPTED_DB=true` so startup fails unless SQLCipher verification succeeds.
 
 ### Docker
 
@@ -278,13 +282,27 @@ See `policies.toml.example` for detailed examples. Policies are defined per-iden
 [identity.my-agent]
 default = deny
 allow_clients = ["*"]
-allow_methods = ["sign_event", "get_public_key", "nip04_encrypt", "nip04_decrypt"]
+allow_methods = ["sign_event", "get_public_key", "nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt"]
 allow_kinds = [1, 4, 7]
 deny_kinds = [30078]
 ttl_seconds = 3600
 ```
 
 Policies can be updated at runtime via the SET_POLICY management command or by editing the policy file and sending SIGHUP.
+
+## NIP-46 Methods
+
+| Method            | Params                                      | Description                         |
+|-------------------|---------------------------------------------|-------------------------------------|
+| `connect`         | auth secret / session data                  | Establish session                   |
+| `get_public_key`  | `[]`                                        | Return agent public key hex         |
+| `sign_event`      | `[event_json]`                              | Policy check then sign from cache   |
+| `nip04_encrypt`   | `[peer_pubkey_hex, plaintext]`              | NIP-04 encrypt for a peer           |
+| `nip04_decrypt`   | `[peer_pubkey_hex, ciphertext]`             | NIP-04 decrypt from a peer          |
+| `nip44_encrypt`   | `[peer_pubkey_hex, plaintext]`              | NIP-44 v2 encrypt for a peer        |
+| `nip44_decrypt`   | `[peer_pubkey_hex, ciphertext]`             | NIP-44 v2 decrypt from a peer       |
+| `get_relays`      | `[]`                                        | Return relay map JSON               |
+| `ping`            | `[]`                                        | Keepalive                           |
 
 ## D-Bus Interface
 
@@ -297,8 +315,8 @@ Signet exposes two D-Bus interfaces (see `dbus/net.signet.Signer.xml`):
 - `Decrypt(ciphertext, peer_pubkey, algorithm) → plaintext`
 
 **net.signet.Credentials** — Credential lease operations:
-- `GetSession(service_url) → (session_token, expires_at)`
-- `GetToken(credential_type) → (token, expires_at)`
+- `GetSession(service_url) → (session_token, expires_at)` — refuses to mint tokens when no credential store is configured
+- `GetToken(credential_type) → (token, expires_at)` — enforces per-agent ownership; agents can only retrieve their own credentials
 - `ListCredentials() → credential_types[]`
 
 ## Health Endpoint
@@ -324,14 +342,22 @@ curl http://localhost:8080/health
 }
 ```
 
+## Testing & CI
+
+Signet has a real hardening test suite: 10 Meson tests / 16 CMake ctests cover real crypto paths, rate-limit enforcement, signed-challenge authentication verification, and audit hash-chain tamper detection. `.github/workflows/signet-ci.yml` runs the Signet CI matrix, including a passkeys-ON entry.
+
 ## Security Model
 
 - Agent nsecs never leave Signet's process — agents only receive `nostrconnect://` URIs
 - Key material in the hot cache is `sodium_malloc`'d + `mlock`'d (never swapped) and `secure_wipe`'d on revocation/shutdown
-- SQLCipher provides AES-256 encryption at rest; credential payloads are additionally envelope-encrypted with per-agent libsodium secretbox
+- SQLCipher provides AES-256 encryption at rest and is verified at startup with `PRAGMA cipher_version` plus a keyed read; with `SIGNET_REQUIRE_ENCRYPTED_DB=true`, verification failure stops the daemon
+- Credential payloads are envelope-encrypted with per-agent libsodium secretbox keys derived via BLAKE2b from the store DEK and agent pubkey
 - Core dumps disabled via `prctl(PR_SET_DUMPABLE, 0)`
-- Management protocol uses NIP-44 v2 encryption between provisioner and bunker
-- Bootstrap tokens are single-use, time-limited, attempt-capped, and stored as SHA256 hashes
+- Management protocol uses NIP-44 v2 encryption between provisioner and bunker, and ACKs fail closed instead of falling back to plaintext on encryption errors
+- Relay publish reports an error when zero relays are connected instead of pretending success
+- Bootstrap tokens are single-use, time-limited, attempt-capped, and stored as SHA256 hashes; `POST /bootstrap` consumes them atomically and replay returns 403
+- Revocation resolves the agent pubkey, adds it to the deny list, burns leases, wipes the key from cache and store, and records an audit entry
+- Credential rotation archives and updates secrets in a single SQLite transaction
 - Hash-chained audit log provides tamper-evident operation history
 - Runs as non-root `signet` user in production
 
