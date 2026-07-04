@@ -150,6 +150,34 @@ static void signet_audit_nip46(SignetAuditLogger *audit,
   }
 }
 
+static void signet_nip46_publish_cas_audit(SignetRelayPool *relays,
+                                           const char *signer_sk_hex,
+                                           const char *agent_id,
+                                           int64_t now) {
+  if (!relays || !signer_sk_hex) return;
+  NostrEvent *evt = nostr_event_new();
+  if (!evt) return;
+  nostr_event_set_kind(evt, 4903); /* TODO(cascadia-nips): use generated CAS_AUDIT constant. */
+  nostr_event_set_created_at(evt, now);
+  char *content = g_strdup_printf("{\"domain\":\"signet\",\"type\":\"sign\",\"agent\":\"%s\",\"status\":\"ok\"}", agent_id ? agent_id : "");
+  nostr_event_set_content(evt, content ? content : "{}");
+  g_free(content);
+  NostrTags *tags = nostr_tags_new(0);
+  if (tags) {
+    NostrTag *domain = nostr_tag_new("domain", "signet", NULL);
+    NostrTag *type = nostr_tag_new("type", "sign", NULL);
+    if (domain) nostr_tags_append(tags, domain);
+    if (type) nostr_tags_append(tags, type);
+    if (agent_id) { NostrTag *agent = nostr_tag_new("agent", agent_id, NULL); if (agent) nostr_tags_append(tags, agent); }
+    nostr_event_set_tags(evt, tags);
+  }
+  if (nostr_event_sign(evt, signer_sk_hex) == 0) {
+    char *json = nostr_event_serialize_compact(evt);
+    if (json) { (void)signet_relay_pool_publish_event_json(relays, json); free(json); }
+  }
+  nostr_event_free(evt);
+}
+
 /* -------------------- extract event kind from JSON ----------------------- */
 
 static bool signet_json_event_extract_kind(const char *event_json, int *out_kind) {
@@ -588,6 +616,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
               result = signed_evt;
               status = "ok";
               code = "ok";
+              signet_nip46_publish_cas_audit(s->relays, remote_signer_secret_key_hex, session_agent_id, now);
               g_free(serr);
             }
           }

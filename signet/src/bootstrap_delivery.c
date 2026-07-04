@@ -26,15 +26,19 @@ int signet_bootstrap_send(const char *fleet_sk_hex,
                             const char *bootstrap_pubkey_hex,
                             const SignetBootstrapMessage *msg,
                             SignetRelayPool *relay_pool) {
-  if (!fleet_sk_hex || !bootstrap_pubkey_hex || !msg || !msg->token ||
-      !msg->agent_id || !relay_pool)
+  if (!fleet_sk_hex || !bootstrap_pubkey_hex || !msg ||
+      (!msg->token && !msg->bunker_uri) || !msg->agent_id || !relay_pool)
     return -1;
 
   /* Build JSON content for the DM. */
   GString *json = g_string_sized_new(256);
   g_string_append_printf(json,
-      "{\"type\":\"bootstrap\",\"token\":\"%s\",\"agent_id\":\"%s\"",
-      msg->token, msg->agent_id);
+      "{\"type\":\"signet/bunker-handoff\",\"agent_id\":\"%s\"",
+      msg->agent_id);
+  if (msg->token)
+    g_string_append_printf(json, ",\"token\":\"%s\"", msg->token);
+  if (msg->bunker_uri)
+    g_string_append_printf(json, ",\"bunker_uri\":\"%s\"", msg->bunker_uri);
   if (msg->bootstrap_url)
     g_string_append_printf(json, ",\"bootstrap_url\":\"%s\"", msg->bootstrap_url);
   if (msg->expires_at > 0)
@@ -107,17 +111,20 @@ int signet_bootstrap_receive(const char *gift_wrap_json,
 
   /* Parse the JSON content. */
   char *token = NULL;
+  char *bunker_uri = NULL;
   char *agent_id = NULL;
   char *bootstrap_url = NULL;
   int64_t expires_at = 0;
 
   nostr_json_get_string(content, "token", &token);
+  nostr_json_get_string(content, "bunker_uri", &bunker_uri);
   nostr_json_get_string(content, "agent_id", &agent_id);
   nostr_json_get_string(content, "bootstrap_url", &bootstrap_url);
   nostr_json_get_int64(content, "expires_at", &expires_at);
 
-  if (!token || !agent_id) {
+  if ((!token && !bunker_uri) || !agent_id) {
     free(token);
+    free(bunker_uri);
     free(agent_id);
     free(bootstrap_url);
     free(content);
@@ -126,6 +133,7 @@ int signet_bootstrap_receive(const char *gift_wrap_json,
   }
 
   out->token = token;
+  out->bunker_uri = bunker_uri;
   out->agent_id = agent_id;
   out->bootstrap_url = bootstrap_url;
   out->expires_at = expires_at;
@@ -223,6 +231,7 @@ bool signet_bootstrap_needs_reissue(SignetStore *store,
 void signet_bootstrap_received_clear(SignetBootstrapReceived *recv) {
   if (!recv) return;
   free(recv->token);
+  free(recv->bunker_uri);
   free(recv->agent_id);
   free(recv->bootstrap_url);
   free(recv->sender_pubkey);

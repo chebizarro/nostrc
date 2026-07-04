@@ -45,8 +45,12 @@ static void signetctl_usage(FILE *out) {
     "Usage: signetctl [-c <config>] <command> [args]\n"
     "\n"
     "Commands:\n"
-    "  provision <agent_id>     Provision a new agent identity\n"
+    "  provision <agent_id> [--deliver <bootstrap_pubkey>] [--ttl <sec>]\n"
+    "                           Provision and optionally gift-wrap bunker URI\n"
     "  revoke <agent_id>        Revoke an agent identity\n"
+    "  rotate <agent_id>        Rotate an agent identity key\n"
+    "  set-policy <agent_id> <policy-json>\n"
+    "                           Set an agent policy\n"
     "  status                   Query daemon health status\n"
     "  list                     List managed agents\n"
     "\n"
@@ -74,7 +78,8 @@ static void signetctl_usage(FILE *out) {
 
 /* -------------------- build management event JSON ------------------------ */
 
-static char *signetctl_build_content(const char *agent_id, const char *request_id) {
+static char *signetctl_build_content_ex(const char *agent_id, const char *request_id, const char *policy_json,
+                                          const char *bootstrap_pubkey, int delivery_ttl) {
   JsonBuilder *b = json_builder_new();
   if (!b) return NULL;
 
@@ -88,6 +93,26 @@ static char *signetctl_build_content(const char *agent_id, const char *request_i
   if (request_id) {
     json_builder_set_member_name(b, "request_id");
     json_builder_add_string_value(b, request_id);
+  }
+
+  if (bootstrap_pubkey) {
+    json_builder_set_member_name(b, "deliver");
+    json_builder_add_boolean_value(b, TRUE);
+    json_builder_set_member_name(b, "bootstrap_pubkey");
+    json_builder_add_string_value(b, bootstrap_pubkey);
+    json_builder_set_member_name(b, "delivery_ttl");
+    json_builder_add_int_value(b, delivery_ttl > 0 ? delivery_ttl : 600);
+  }
+
+  if (policy_json) {
+    g_autoptr(JsonParser) pp = json_parser_new();
+    if (json_parser_load_from_data(pp, policy_json, -1, NULL)) {
+      JsonNode *proot = json_parser_get_root(pp);
+      if (proot && JSON_NODE_HOLDS_OBJECT(proot)) {
+        json_builder_set_member_name(b, "policy");
+        json_builder_add_value(b, json_node_copy(proot));
+      }
+    }
   }
 
   json_builder_end_object(b);
@@ -298,6 +323,8 @@ int main(int argc, char **argv) {
   /* Determine event kind and agent_id. */
   int kind = 0;
   const char *agent_id = NULL;
+  const char *deliver_bootstrap_pubkey = NULL;
+  int delivery_ttl = 600;
 
   if (strcmp(cmd, "provision") == 0) {
     kind = SIGNET_KIND_PROVISION_AGENT;
@@ -306,10 +333,36 @@ int main(int argc, char **argv) {
       return 2;
     }
     agent_id = argv[argi++];
+    while (argi < argc) {
+      if (strcmp(argv[argi], "--deliver") == 0 && (argi + 1) < argc) {
+        deliver_bootstrap_pubkey = argv[argi + 1];
+        argi += 2;
+      } else if (strcmp(argv[argi], "--ttl") == 0 && (argi + 1) < argc) {
+        delivery_ttl = atoi(argv[argi + 1]);
+        argi += 2;
+      } else {
+        fprintf(stderr, "signetctl: unknown provision option '%s'\n", argv[argi]);
+        return 2;
+      }
+    }
   } else if (strcmp(cmd, "revoke") == 0) {
     kind = SIGNET_KIND_REVOKE_AGENT;
     if (argi >= argc) {
       fprintf(stderr, "signetctl: revoke requires <agent_id>\n");
+      return 2;
+    }
+    agent_id = argv[argi++];
+  } else if (strcmp(cmd, "rotate") == 0) {
+    kind = SIGNET_KIND_ROTATE_KEY;
+    if (argi >= argc) {
+      fprintf(stderr, "signetctl: rotate requires <agent_id>\n");
+      return 2;
+    }
+    agent_id = argv[argi++];
+  } else if (strcmp(cmd, "set-policy") == 0) {
+    kind = SIGNET_KIND_SET_POLICY;
+    if ((argi + 1) >= argc) {
+      fprintf(stderr, "signetctl: set-policy requires <agent_id> <policy-json>\n");
       return 2;
     }
     agent_id = argv[argi++];
@@ -533,8 +586,14 @@ int main(int argc, char **argv) {
   uint64_t rid = (uint64_t)g_get_real_time();
   snprintf(request_id, sizeof(request_id), "%016" G_GINT64_MODIFIER "x", rid);
 
+  const char *policy_json = NULL;
+  if (kind == SIGNET_KIND_SET_POLICY) {
+    policy_json = argv[argi++];
+  }
+
   /* Build event content. */
-  char *content = signetctl_build_content(agent_id, request_id);
+  char *content = signetctl_build_content_ex(agent_id, request_id, policy_json,
+                                             deliver_bootstrap_pubkey, delivery_ttl);
   if (!content) {
     fprintf(stderr, "signetctl: failed to build content\n");
     signet_config_clear(&cfg);

@@ -89,6 +89,13 @@ extern "C" {
  */
 #define SIGNET_KIND_MGMT_ACK       28090
 
+/* Cascadia canonical management plane.
+ * TODO(cascadia-nips): replace local constants with generated cascadia-nips
+ * bindings once WS2 is tagged.
+ */
+#define SIGNET_KIND_CONTEXTVM_INTENT 25910
+#define SIGNET_KIND_NIP59_GIFT_WRAP 1059
+
 /**
  * SignetMgmtOp:
  * @SIGNET_MGMT_OP_UNKNOWN: signet mgmt op unknown
@@ -133,6 +140,9 @@ typedef struct {
   char *agent_id;          /* target agent (owned, heap) */
   char *policy_json;       /* optional policy object JSON (owned, heap) */
   char *request_id;        /* optional correlation ID (owned, heap) */
+  char *bootstrap_pubkey;  /* optional delivery bootstrap pubkey */
+  bool deliver;            /* provision: send bunker handoff via NIP-17 */
+  int64_t delivery_ttl;    /* seconds; capped by handler */
 } SignetMgmtRequest;
 
 /* Map event kind to management op. */
@@ -277,6 +287,7 @@ typedef struct {
   const char *bunker_pubkey_hex;       /* for addressing */
   const char *const *relay_urls;       /* relay URLs for bunker:// URIs */
   size_t n_relay_urls;
+  bool legacy_28000_enabled;
 } SignetMgmtHandlerConfig;
 
 /* Create a management handler. */
@@ -351,6 +362,17 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
                                      int kind,
                                      const char *event_id_hex,
                                      int64_t now);
+
+/* Handle a Cascadia ContextVM kind-25910 JSON-RPC management intent.
+ * Plain kind-25910 events are accepted for test/local compatibility; kind-1059
+ * gift-wrap callers should pass the unwrapped 25910 JSON as content_json and
+ * the inner sender pubkey as event_pubkey_hex.
+ */
+int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
+                                      const char *event_pubkey_hex,
+                                      const char *content_json,
+                                      const char *event_id_hex,
+                                      int64_t now);
 
 #ifdef __cplusplus
 }

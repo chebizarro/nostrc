@@ -115,6 +115,7 @@ target_link_libraries(signet_core PUBLIC
   nostr_json
   $<$<TARGET_EXISTS:nip19>:nip19>
   $<$<TARGET_EXISTS:nip04>:nip04>
+  $<$<TARGET_EXISTS:nostr_nip17_core>:nostr_nip17_core>
   $<$<TARGET_EXISTS:nip44>:nip44>
   $<$<TARGET_EXISTS:nostr_nip46_core>:nostr_nip46_core>
   $<$<TARGET_EXISTS:nip11>:nip11>
@@ -155,7 +156,10 @@ endif()
 
 add_executable(signetd ${CMAKE_CURRENT_SOURCE_DIR}/src/signetd_main.c)
 target_link_libraries(signetd PRIVATE signet_core)
-target_include_directories(signetd PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip11/include)
+target_include_directories(signetd PRIVATE
+  ${CMAKE_SOURCE_DIR}/nips/nip11/include
+  ${CMAKE_SOURCE_DIR}/nips/nip17/include
+)
 if (SIGNET_ENABLE_TEST_HOOKS)
   target_compile_definitions(signetd PRIVATE SIGNET_ENABLE_TEST_HOOKS=1)
 endif()

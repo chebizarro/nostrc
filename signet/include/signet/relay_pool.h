@@ -58,6 +58,7 @@ typedef struct {
   const char *pubkey_hex;        /* borrowed; may be NULL */
   int64_t created_at;            /* unix seconds */
   const char *content;           /* borrowed; may be NULL */
+  const char *event_json;        /* borrowed serialized event JSON; may be NULL */
 } SignetRelayEventView;
 
 /**

@@ -97,6 +97,7 @@ static void signet_pool_event_middleware(NostrIncomingEvent *incoming, void *use
   ev.event_id_hex = event_id;
   ev.pubkey_hex = nostr_event_get_pubkey(incoming->event);
   ev.content = nostr_event_get_content(incoming->event);
+  ev.event_json = nostr_event_serialize_compact(incoming->event);
 
   /* NPA-03: Track latest event timestamp for since-based backfill.
    * After reconnect, filter_since is updated to this value so we
@@ -111,6 +112,7 @@ static void signet_pool_event_middleware(NostrIncomingEvent *incoming, void *use
 
   rp->on_event(&ev, rp->user_data);
 
+  free((void *)ev.event_json);
   free(event_id);
 }
 

@@ -14,8 +14,10 @@
 #include "signet/audit_logger.h"
 #include "signet/revocation.h"
 #include "signet/store.h"
+#include "signet/bootstrap_delivery.h"
 #include "signet/util.h"
 
+#include <nostr/nip17/nip17.h>
 #include <nostr/nip44/nip44.h>
 #include <secure_buf.h>
 #include <sodium.h>
@@ -85,6 +87,7 @@ void signet_mgmt_request_clear(SignetMgmtRequest *req) {
   g_free(req->agent_id);
   g_free(req->policy_json);
   g_free(req->request_id);
+  g_free(req->bootstrap_pubkey);
   memset(req, 0, sizeof(*req));
 }
 
@@ -150,6 +153,17 @@ int signet_mgmt_request_parse(int kind,
       out_req->policy_json = json_generator_to_data(gen, NULL);
       g_object_unref(gen);
     }
+  }
+
+  if (json_object_has_member(o, "deliver")) {
+    out_req->deliver = json_object_get_boolean_member(o, "deliver");
+  }
+  if (json_object_has_member(o, "bootstrap_pubkey")) {
+    const char *v = json_object_get_string_member(o, "bootstrap_pubkey");
+    if (v && v[0]) out_req->bootstrap_pubkey = g_strdup(v);
+  }
+  if (json_object_has_member(o, "delivery_ttl")) {
+    out_req->delivery_ttl = json_object_get_int_member(o, "delivery_ttl");
   }
 
   /* Validate required fields per op. */
@@ -239,6 +253,8 @@ struct SignetMgmtHandler {
   SignetAuditLogger *audit;
   SignetPolicyStore *policy_store;
   SignetDenyList *deny;   /* shared live deny list (owned by daemon) */
+  bool legacy_28000_enabled;
+  bool reply_contextvm;
 
   char **provisioner_pubkeys;
   size_t n_provisioner_pubkeys;
@@ -264,6 +280,7 @@ SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
   h->relays = relays;
   h->audit = audit;
   h->policy_store = policy_store;
+  h->legacy_28000_enabled = cfg->legacy_28000_enabled;
 
   if (cfg->provisioner_pubkeys && cfg->n_provisioner_pubkeys > 0) {
     h->provisioner_pubkeys = (char **)g_new0(char *, cfg->n_provisioner_pubkeys);
@@ -316,6 +333,63 @@ void signet_mgmt_handler_set_deny_list(SignetMgmtHandler *h, SignetDenyList *den
   h->deny = deny;
 }
 
+static char *signet_mgmt_ack_to_jsonrpc(const char *ack_content) {
+  if (!ack_content) return NULL;
+  g_autoptr(JsonParser) p = json_parser_new();
+  if (!json_parser_load_from_data(p, ack_content, -1, NULL)) return g_strdup(ack_content);
+  JsonNode *root = json_parser_get_root(p);
+  if (!root || !JSON_NODE_HOLDS_OBJECT(root)) return g_strdup(ack_content);
+  JsonObject *o = json_node_get_object(root);
+  if (json_object_has_member(o, "jsonrpc")) return g_strdup(ack_content);
+
+  const char *rid = json_object_has_member(o, "request_id") ? json_object_get_string_member(o, "request_id") : NULL;
+  bool ok = json_object_has_member(o, "ok") ? json_object_get_boolean_member(o, "ok") : false;
+  g_autoptr(JsonBuilder) b = json_builder_new();
+  json_builder_begin_object(b);
+  json_builder_set_member_name(b, "jsonrpc"); json_builder_add_string_value(b, "2.0");
+  if (ok) {
+    json_builder_set_member_name(b, "result");
+    if (json_object_has_member(o, "result")) json_builder_add_value(b, json_node_copy(json_object_get_member(o, "result")));
+    else json_builder_add_value(b, json_node_copy(root));
+  } else {
+    json_builder_set_member_name(b, "error");
+    json_builder_begin_object(b);
+    json_builder_set_member_name(b, "code"); json_builder_add_int_value(b, -32000);
+    json_builder_set_member_name(b, "message");
+    json_builder_add_string_value(b, json_object_has_member(o, "message") ? json_object_get_string_member(o, "message") : "Signet management command failed");
+    if (json_object_has_member(o, "code")) {
+      json_builder_set_member_name(b, "data"); json_builder_add_string_value(b, json_object_get_string_member(o, "code"));
+    }
+    json_builder_end_object(b);
+  }
+  json_builder_set_member_name(b, "id");
+  if (rid) json_builder_add_string_value(b, rid); else json_builder_add_null_value(b);
+  json_builder_end_object(b);
+  JsonNode *out = json_builder_get_root(b);
+  g_autoptr(JsonGenerator) gen = json_generator_new();
+  json_generator_set_root(gen, out); json_generator_set_pretty(gen, FALSE);
+  char *s = json_generator_to_data(gen, NULL);
+  json_node_free(out);
+  return s;
+}
+
+static void signet_mgmt_publish_contextvm_reply(SignetMgmtHandler *h,
+                                                const char *recipient_pubkey_hex,
+                                                const char *ack_content) {
+  if (!h || !h->relays || !h->bunker_sk_hex || !recipient_pubkey_hex || !ack_content) return;
+  char *jsonrpc = signet_mgmt_ack_to_jsonrpc(ack_content);
+  if (!jsonrpc) return;
+  NostrEvent *gift = nostr_nip17_wrap_dm(h->bunker_sk_hex, recipient_pubkey_hex, jsonrpc);
+  g_free(jsonrpc);
+  if (!gift) return;
+  char *event_json = nostr_event_serialize_compact(gift);
+  nostr_event_free(gift);
+  if (event_json) {
+    (void)signet_relay_pool_publish_event_json(h->relays, event_json);
+    free(event_json);
+  }
+}
+
 /* Publish an ack event to relays. */
 static void signet_mgmt_publish_ack(SignetMgmtHandler *h,
                                     const char *recipient_pubkey_hex,
@@ -323,6 +397,10 @@ static void signet_mgmt_publish_ack(SignetMgmtHandler *h,
                                     const char *ref_event_id_hex,
                                     int64_t now) {
   if (!h || !h->relays || !h->bunker_sk_hex || !ack_content) return;
+  if (h->reply_contextvm) {
+    signet_mgmt_publish_contextvm_reply(h, recipient_pubkey_hex, ack_content);
+    return;
+  }
 
   NostrEvent *evt = nostr_event_new();
   if (!evt) return;
@@ -381,6 +459,168 @@ static void signet_mgmt_publish_ack(SignetMgmtHandler *h,
   }
 
   free(encrypted_content);
+  nostr_event_free(evt);
+}
+
+int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
+                                     const char *event_pubkey_hex,
+                                     const char *content_json,
+                                     int kind,
+                                     const char *event_id_hex,
+                                     int64_t now);
+
+static int signet_mgmt_kind_from_contextvm_method(const char *method) {
+  if (!method) return 0;
+  if (strcmp(method, "agent/provision") == 0) return SIGNET_KIND_PROVISION_AGENT;
+  if (strcmp(method, "agent/revoke") == 0) return SIGNET_KIND_REVOKE_AGENT;
+  if (strcmp(method, "agent/set-policy") == 0) return SIGNET_KIND_SET_POLICY;
+  if (strcmp(method, "agent/get-status") == 0) return SIGNET_KIND_GET_STATUS;
+  if (strcmp(method, "agent/list") == 0) return SIGNET_KIND_LIST_AGENTS;
+  if (strcmp(method, "agent/rotate-key") == 0) return SIGNET_KIND_ROTATE_KEY;
+  return 0;
+}
+
+static char *signet_mgmt_contextvm_to_legacy_json(const char *content_json, int *out_kind) {
+  if (out_kind) *out_kind = 0;
+  if (!content_json || !content_json[0]) return NULL;
+
+  g_autoptr(JsonParser) p = json_parser_new();
+  if (!json_parser_load_from_data(p, content_json, -1, NULL)) return NULL;
+  JsonNode *root = json_parser_get_root(p);
+  if (!root || !JSON_NODE_HOLDS_OBJECT(root)) return NULL;
+  JsonObject *o = json_node_get_object(root);
+  const char *method = json_object_has_member(o, "method") ? json_object_get_string_member(o, "method") : NULL;
+  int kind = signet_mgmt_kind_from_contextvm_method(method);
+  if (kind == 0) return NULL;
+  if (out_kind) *out_kind = kind;
+
+  JsonNode *params = json_object_has_member(o, "params") ? json_object_get_member(o, "params") : NULL;
+  JsonObject *po = (params && JSON_NODE_HOLDS_OBJECT(params)) ? json_node_get_object(params) : NULL;
+
+  g_autoptr(JsonBuilder) b = json_builder_new();
+  json_builder_begin_object(b);
+  if (json_object_has_member(o, "id")) {
+    json_builder_set_member_name(b, "request_id");
+    JsonNode *idn = json_object_get_member(o, "id");
+    if (JSON_NODE_HOLDS_VALUE(idn) && json_node_get_value_type(idn) == G_TYPE_STRING)
+      json_builder_add_string_value(b, json_node_get_string(idn));
+    else if (JSON_NODE_HOLDS_VALUE(idn) && json_node_get_value_type(idn) == G_TYPE_INT64)
+      json_builder_add_int_value(b, json_node_get_int(idn));
+    else
+      json_builder_add_value(b, json_node_copy(idn));
+  }
+  if (po && json_object_has_member(po, "agent_id")) {
+    json_builder_set_member_name(b, "agent_id");
+    json_builder_add_string_value(b, json_object_get_string_member(po, "agent_id"));
+  }
+  if (po && json_object_has_member(po, "agent")) {
+    json_builder_set_member_name(b, "agent_id");
+    json_builder_add_string_value(b, json_object_get_string_member(po, "agent"));
+  }
+  if (po && json_object_has_member(po, "policy")) {
+    json_builder_set_member_name(b, "policy");
+    json_builder_add_value(b, json_node_copy(json_object_get_member(po, "policy")));
+  }
+  if (po && json_object_has_member(po, "deliver")) {
+    json_builder_set_member_name(b, "deliver");
+    json_builder_add_boolean_value(b, json_object_get_boolean_member(po, "deliver"));
+  }
+  if (po && json_object_has_member(po, "bootstrap_pubkey")) {
+    json_builder_set_member_name(b, "bootstrap_pubkey");
+    json_builder_add_string_value(b, json_object_get_string_member(po, "bootstrap_pubkey"));
+  }
+  if (po && json_object_has_member(po, "delivery_ttl")) {
+    json_builder_set_member_name(b, "delivery_ttl");
+    json_builder_add_int_value(b, json_object_get_int_member(po, "delivery_ttl"));
+  }
+  json_builder_end_object(b);
+
+  JsonNode *out = json_builder_get_root(b);
+  g_autoptr(JsonGenerator) gen = json_generator_new();
+  json_generator_set_root(gen, out);
+  json_generator_set_pretty(gen, FALSE);
+  char *s = json_generator_to_data(gen, NULL);
+  json_node_free(out);
+  return s;
+}
+
+int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
+                                      const char *event_pubkey_hex,
+                                      const char *content_json,
+                                      const char *event_id_hex,
+                                      int64_t now) {
+  if (!h) return -1;
+  if (!signet_mgmt_is_authorized(event_pubkey_hex,
+                                 (const char *const *)h->provisioner_pubkeys,
+                                 h->n_provisioner_pubkeys)) {
+    h->reply_contextvm = true;
+    char *err = g_strdup("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32002,\"message\":\"sender is not an authorized Signet provisioner\"},\"id\":null}");
+    signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now);
+    h->reply_contextvm = false;
+    g_free(err);
+    return -1;
+  }
+
+  int legacy_kind = 0;
+  char *legacy_json = signet_mgmt_contextvm_to_legacy_json(content_json, &legacy_kind);
+  if (!legacy_json || legacy_kind == 0) {
+    h->reply_contextvm = true;
+    char *err = g_strdup("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32601,\"message\":\"unknown Signet ContextVM method\"},\"id\":null}");
+    signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now);
+    h->reply_contextvm = false;
+    g_free(err);
+    g_free(legacy_json);
+    return -1;
+  }
+
+  char *encrypted = NULL;
+  uint8_t sk[32], pk[32];
+  if (signet_mgmt_hex_to_bytes32(h->bunker_sk_hex, sk) &&
+      signet_mgmt_hex_to_bytes32(event_pubkey_hex, pk)) {
+    (void)nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)legacy_json,
+                                 strlen(legacy_json), &encrypted);
+  }
+  signet_mgmt_memzero(sk, sizeof(sk));
+  g_free(legacy_json);
+  if (!encrypted) return -1;
+  h->reply_contextvm = true;
+  int rc = signet_mgmt_handler_handle_event(h, event_pubkey_hex, encrypted,
+                                            legacy_kind, event_id_hex, now);
+  h->reply_contextvm = false;
+  free(encrypted);
+  return rc;
+}
+
+static void signet_mgmt_publish_cas_audit(SignetMgmtHandler *h,
+                                           const char *audit_type,
+                                           const char *agent_id,
+                                           const char *status,
+                                           int64_t now) {
+  if (!h || !h->relays || !h->bunker_sk_hex || !audit_type) return;
+  NostrEvent *evt = nostr_event_new();
+  if (!evt) return;
+  nostr_event_set_kind(evt, 4903); /* TODO(cascadia-nips): use generated CAS_AUDIT constant. */
+  nostr_event_set_created_at(evt, now);
+  char *content = g_strdup_printf("{\"domain\":\"signet\",\"type\":\"%s\",\"agent\":\"%s\",\"status\":\"%s\"}",
+                                  audit_type, agent_id ? agent_id : "", status ? status : "ok");
+  nostr_event_set_content(evt, content ? content : "{}");
+  g_free(content);
+  NostrTags *tags = nostr_tags_new(0);
+  if (tags) {
+    NostrTag *domain = nostr_tag_new("domain", "signet", NULL);
+    NostrTag *type = nostr_tag_new("type", audit_type, NULL);
+    if (domain) nostr_tags_append(tags, domain);
+    if (type) nostr_tags_append(tags, type);
+    if (agent_id && agent_id[0]) {
+      NostrTag *agent = nostr_tag_new("agent", agent_id, NULL);
+      if (agent) nostr_tags_append(tags, agent);
+    }
+    nostr_event_set_tags(evt, tags);
+  }
+  if (nostr_event_sign(evt, h->bunker_sk_hex) == 0) {
+    char *json = nostr_event_serialize_compact(evt);
+    if (json) { (void)signet_relay_pool_publish_event_json(h->relays, json); free(json); }
+  }
   nostr_event_free(evt);
 }
 
@@ -481,6 +721,23 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
         } else {
           result = g_strdup_printf("{\"agent_id\":\"%s\",\"pubkey\":\"%s\"}", req.agent_id, pubkey_hex);
         }
+        if (req.deliver && req.bootstrap_pubkey && req.bootstrap_pubkey[0] && bunker_uri) {
+          int64_t ttl = req.delivery_ttl > 0 ? req.delivery_ttl : 600;
+          if (ttl > 900) ttl = 900;
+          SignetBootstrapMessage dm = {0};
+          dm.agent_id = req.agent_id;
+          dm.bunker_uri = bunker_uri;
+          dm.relay_urls = h->relay_urls;
+          dm.n_relay_urls = h->n_relay_urls;
+          dm.expires_at = now + ttl;
+          if (signet_bootstrap_send(h->bunker_sk_hex, req.bootstrap_pubkey, &dm, h->relays) == 0) {
+            char *old = result;
+            result = g_strdup_printf("{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"bunker_uri\":\"%s\",\"delivered\":true,\"delivery_expires_at\":%" G_GINT64_FORMAT "}",
+                                     req.agent_id, pubkey_hex, bunker_uri, (gint64)dm.expires_at);
+            g_free(old);
+          }
+        }
+        signet_mgmt_publish_cas_audit(h, "provision", req.agent_id, "ok", now);
         g_free(bunker_uri);
       } else {
         code = "provision_failed";
@@ -519,6 +776,7 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
 
       if (rc == 0) {
         ok = true;
+        signet_mgmt_publish_cas_audit(h, "revoke", req.agent_id, "ok", now);
         code = "revoked";
         message = base_store
             ? g_strdup_printf("agent %s revoked (deny-listed, leases burned)", req.agent_id)
@@ -607,6 +865,7 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
                                               new_pubkey_hex, sizeof(new_pubkey_hex));
       if (rrc == 0) {
         ok = true;
+        signet_mgmt_publish_cas_audit(h, "rotate", req.agent_id, "ok", now);
         code = "key_rotated";
         message = g_strdup_printf("key rotated for agent %s", req.agent_id);
         result = g_strdup_printf("{\"agent_id\":\"%s\",\"new_pubkey\":\"%s\"}",

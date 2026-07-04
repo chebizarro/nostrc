@@ -38,6 +38,8 @@
 #include "signet/fido_ctaphid.h"
 #endif
 #include <nip11.h>
+#include <nostr-event.h>
+#include <nostr/nip17/nip17.h>
 
 /* Management event kind range */
 #define SIGNET_MGMT_KIND_MIN 28000
@@ -394,8 +396,39 @@ static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_dat
     return;
   }
 
+  /* Cascadia canonical ContextVM management intents (kind 25910).
+   * TODO(cascadia-nips): replace local kind constant when generated bindings are tagged. */
+  if (ev->kind == SIGNET_KIND_CONTEXTVM_INTENT && ctx->mgmt) {
+    (void)signet_mgmt_handler_handle_intent(ctx->mgmt,
+                                            ev->pubkey_hex ? ev->pubkey_hex : "",
+                                            ev->content ? ev->content : "",
+                                            ev->event_id_hex ? ev->event_id_hex : "",
+                                            signet_now_unix());
+    return;
+  }
+
+  /* NIP-59/NIP-17 gift-wrapped ContextVM management intents (kind 1059). */
+  if (ev->kind == SIGNET_KIND_NIP59_GIFT_WRAP && ctx->mgmt && ev->event_json) {
+    NostrEvent *gw = nostr_event_new();
+    if (gw && nostr_event_deserialize_compact(gw, ev->event_json, NULL)) {
+      char *inner = NULL;
+      char *sender = NULL;
+      if (nostr_nip17_decrypt_dm(gw, ctx->cfg->remote_signer_secret_key_hex, &inner, &sender) == 0 && inner) {
+        (void)signet_mgmt_handler_handle_intent(ctx->mgmt,
+                                                sender ? sender : "",
+                                                inner,
+                                                ev->event_id_hex ? ev->event_id_hex : "",
+                                                signet_now_unix());
+      }
+      free(inner);
+      free(sender);
+    }
+    if (gw) nostr_event_free(gw);
+    return;
+  }
+
   /* Management event dispatch (kinds 28000-28090). */
-  if (ev->kind >= SIGNET_MGMT_KIND_MIN && ev->kind <= SIGNET_MGMT_KIND_MAX && ctx->mgmt) {
+  if (ctx->cfg->mgmt_legacy_28000 && ev->kind >= SIGNET_MGMT_KIND_MIN && ev->kind <= SIGNET_MGMT_KIND_MAX && ctx->mgmt) {
     (void)signet_mgmt_handler_handle_event(ctx->mgmt,
                                           ev->pubkey_hex ? ev->pubkey_hex : "",
                                           ev->content ? ev->content : "",
@@ -727,6 +760,7 @@ int main(int argc, char **argv) {
     .bunker_pubkey_hex = cfg.remote_signer_pubkey_hex,
     .relay_urls = (const char *const *)cfg.relays,
     .n_relay_urls = cfg.n_relays,
+    .legacy_28000_enabled = cfg.mgmt_legacy_28000,
   };
   SignetMgmtHandler *mgmt = signet_mgmt_handler_new(keys, relays, audit, store, &mgmt_cfg);
   dctx.mgmt = mgmt;
@@ -938,7 +972,9 @@ int main(int argc, char **argv) {
     {
       static const int signet_kinds[] = {
         24133,                       /* NIP-46 signing requests      */
-        SIGNET_KIND_PROVISION_AGENT, /* 28000 */
+        SIGNET_KIND_CONTEXTVM_INTENT,/* 25910 Cascadia ContextVM */
+        SIGNET_KIND_NIP59_GIFT_WRAP, /* 1059 NIP-59/NIP-17 gift-wrap */
+        SIGNET_KIND_PROVISION_AGENT, /* 28000 gated by signet.mgmt.legacy_28000 */
         SIGNET_KIND_REVOKE_AGENT,    /* 28010 */
         SIGNET_KIND_SET_POLICY,      /* 28020 */
         SIGNET_KIND_GET_STATUS,      /* 28030 */

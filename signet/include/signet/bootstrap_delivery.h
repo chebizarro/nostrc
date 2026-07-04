@@ -43,7 +43,8 @@ struct SignetStore;
  * Since: 1.0
  */
 typedef struct {
-  char *token;             /* raw bootstrap token */
+  char *token;             /* raw bootstrap token (legacy HTTP bootstrap) */
+  char *bunker_uri;        /* NIP-46 bunker:// handoff URI */
   char *agent_id;          /* target agent_id */
   char *bootstrap_url;     /* URL of /bootstrap endpoint */
   char *const *relay_urls; /* relay URLs for bunker connection */
@@ -68,6 +69,7 @@ typedef struct {
  */
 typedef struct {
   char *token;
+  char *bunker_uri;
   char *agent_id;
   char *bootstrap_url;
   char **relay_urls;
