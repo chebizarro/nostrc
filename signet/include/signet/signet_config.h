@@ -32,12 +32,58 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
+/**
+ * SIGNET_MAX_STR:
+ *
+ * Maximum length of fixed-size configuration strings, including the trailing nul byte.
+ *
+ * Since: 1.0
+ */
 #define SIGNET_MAX_STR            256
+/**
+ * SIGNET_MAX_LISTEN_LEN:
+ *
+ * Maximum length of listen-address configuration strings.
+ *
+ * Since: 1.0
+ */
 #define SIGNET_MAX_LISTEN_LEN     128
+/**
+ * SIGNET_MAX_HEX_32:
+ *
+ * Number of hexadecimal characters in a 32-byte value.
+ *
+ * Since: 1.0
+ */
 #define SIGNET_MAX_HEX_32         64
+/**
+ * SIGNET_MAX_HEX_32_STRLEN:
+ *
+ * Buffer length for a 32-byte hex string plus trailing nul byte.
+ *
+ * Since: 1.0
+ */
 #define SIGNET_MAX_HEX_32_STRLEN  65 /* 64 hex + NUL */
+/**
+ * SIGNET_AAGUID_STRLEN:
+ *
+ * Buffer length for a UUID-formatted AAGUID plus trailing nul byte.
+ *
+ * Since: 1.0
+ */
 #define SIGNET_AAGUID_STRLEN      37 /* UUID string + NUL */
 
+/**
+ * SignetLogLevel:
+ * @SIGNET_LOG_ERROR: signet log error
+ * @SIGNET_LOG_WARN: signet log warn
+ * @SIGNET_LOG_INFO: signet log info
+ * @SIGNET_LOG_DEBUG: signet log debug
+ *
+ * Configured daemon log verbosity.
+ *
+ * Since: 1.0
+ */
 typedef enum {
   SIGNET_LOG_ERROR = 0,
   SIGNET_LOG_WARN  = 1,
@@ -45,6 +91,55 @@ typedef enum {
   SIGNET_LOG_DEBUG = 3,
 } SignetLogLevel;
 
+/**
+ * SignetConfig:
+ * @log_level: log level value.
+ * @health_port: 0 = disabled.
+ * @db_path: path to the persistent database file.
+ * @relays: relays value.
+ * @n_relays: n relays value.
+ * @remote_signer_pubkey_hex: remote signer pubkey hex value.
+ * @remote_signer_secret_key_hex: remote signer secret key hex value.
+ * @reconnect_interval_s: reconnect interval s value.
+ * @provisioner_pubkeys: provisioner pubkeys value.
+ * @n_provisioner_pubkeys: n provisioner pubkeys value.
+ * @identity: identity value.
+ * @policy_file_path: policy file path value.
+ * @policy_default_decision: "deny" or "allow".
+ * @allowed_kinds: allowed kinds value.
+ * @n_allowed_kinds: n allowed kinds value.
+ * @rate_limit_rpm: 0 = unlimited.
+ * @replay_max_entries: replay max entries value.
+ * @replay_ttl_seconds: replay ttl seconds value.
+ * @replay_skew_seconds: replay skew seconds value.
+ * @audit_path: audit path value.
+ * @audit_stdout: audit stdout value.
+ * @bootstrap_port: 0 = disabled (default).
+ * @dbus_unix_enabled: system D-Bus (default false).
+ * @dbus_tcp_enabled: TCP D-Bus (default false).
+ * @dbus_tcp_port: default 47472.
+ * @nip5l_enabled: NIP-5L socket (default false).
+ * @nip5l_socket_path: nip5l socket path value.
+ * @ssh_agent_enabled: SSH agent socket (default false).
+ * @ssh_agent_socket_path: ssh agent socket path value.
+ * @uid_map_uids: uid map uids value.
+ * @uid_map_agents: uid map agents value.
+ * @n_uid_map: n uid map value.
+ * @passkeys_enabled: default false.
+ * @passkeys_backend: passkeys backend value.
+ * @passkeys_aaguid: passkeys aaguid value.
+ * @passkeys_attestation: passkeys attestation value.
+ * @passkeys_allow_headless_uv: passkeys allow headless uv value.
+ * @passkeys_virtual_ctap: default false; Linux /dev/uhid only.
+ * @passkeys_sync_key: passkeys sync key value.
+ * @passkeys_sync_key_file: passkeys sync key file value.
+ * @passkeys_sync_psk: passkeys sync psk value.
+ * @passkeys_sync_psk_set: passkeys sync psk set value.
+ *
+ * Runtime configuration loaded from defaults, config file, and environment.
+ *
+ * Since: 1.0
+ */
 typedef struct {
   /* --- [server] --- */
   SignetLogLevel log_level;
@@ -123,18 +218,57 @@ typedef struct {
 } SignetConfig;
 
 /* Initialize cfg with safe defaults. */
+/**
+ * signet_config_init:
+ * @cfg: (not nullable): configuration to use
+ *
+ * Initialize cfg with safe defaults.
+ *
+ * Since: 1.0
+ */
 void signet_config_init(SignetConfig *cfg);
 
 /* Free heap allocations inside cfg and zero sensitive fields. Safe to call multiple times. */
+/**
+ * signet_config_clear:
+ * @cfg: (nullable): configuration to use
+ *
+ * Free heap allocations inside cfg and zero sensitive fields. Safe to call multiple times.
+ *
+ * Since: 1.0
+ */
 void signet_config_clear(SignetConfig *cfg);
 
 /* Load configuration from path. If path is NULL or missing, defaults are applied.
  * Environment variable overrides are always applied last.
  * Returns 0 on success, -1 on hard failure (e.g., out-of-memory). */
+/**
+ * signet_config_load:
+ * @path: (nullable): filesystem path
+ * @out_cfg: (out) (not nullable): return location for cfg
+ *
+ * Load configuration from path. If path is NULL or missing, defaults are applied. Environment variable overrides are always applied last. Returns 0 on success, -1 on hard failure (e.g., out-of-memory).
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.0
+ */
 int signet_config_load(const char *path, SignetConfig *out_cfg);
 
 /* Validate that required fields are present. Returns 0 if valid, -1 if not.
  * On failure, writes a human-readable message to err_buf (if non-NULL). */
+/**
+ * signet_config_validate:
+ * @cfg: (not nullable): configuration to use
+ * @err_buf: (not nullable): err buf
+ * @err_buf_len: length of @err_buf in bytes
+ *
+ * Validate that required fields are present. Returns 0 if valid, -1 if not. On failure, writes a human-readable message to err_buf (if non-NULL).
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.0
+ */
 int signet_config_validate(const SignetConfig *cfg, char *err_buf, size_t err_buf_len);
 
 #ifdef __cplusplus

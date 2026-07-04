@@ -30,14 +30,43 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
+/**
+ * SignetStore:
+ * Opaque handle for the SQLCipher-backed Signet persistent store.
+ *
+ * Since: 1.0
+ */
 typedef struct SignetStore SignetStore;
 
+/**
+ * SignetStoreConfig:
+ * @db_path: path to SQLCipher database file.
+ * @master_key: master key (hex or base64; min 32 bytes entropy).
+ *
+ * Configuration used to open a Signet persistent store.
+ *
+ * Since: 1.0
+ */
 typedef struct {
   const char *db_path;     /* path to SQLCipher database file */
   const char *master_key;  /* master key (hex or base64; min 32 bytes entropy) */
 } SignetStoreConfig;
 
 /* Agent record returned from the store. Caller must free with signet_agent_record_clear(). */
+/**
+ * SignetAgentRecord:
+ * @agent_id: (transfer full): agent identifier.
+ * @secret_key: (array length=secret_key_len) (transfer full): decrypted 32-byte secret key in locked heap memory.
+ * @secret_key_len: length of @secret_key in bytes; 32 on success.
+ * @connect_secret: (transfer full) (nullable): one-time connect secret, or %NULL after consumption.
+ * @created_at: creation time as Unix seconds.
+ * @last_used: last-use time as Unix seconds, or 0 if never used.
+ *
+ * Decrypted agent record returned from persistent storage.
+ * Clear with signet_agent_record_clear() to wipe the secret key.
+ *
+ * Since: 1.0
+ */
 typedef struct {
   char *agent_id;
   uint8_t *secret_key;       /* decrypted 32-byte secret key (heap, mlock'd) */
@@ -48,21 +77,82 @@ typedef struct {
 } SignetAgentRecord;
 
 /* Open (or create) the store. Returns NULL on failure. */
+/**
+ * signet_store_open:
+ * @cfg: (nullable): configuration to use
+ *
+ * Open (or create) the store. Returns NULL on failure.
+ *
+ * Returns: (transfer full) (nullable): a newly allocated object, or %NULL on failure
+ *
+ * Since: 1.0
+ */
 SignetStore *signet_store_open(const SignetStoreConfig *cfg);
 
 /* Close and free the store. Safe on NULL. */
+/**
+ * signet_store_close:
+ * @store: (nullable): a #SignetStore
+ *
+ * Closes and frees a store, wiping process-owned secret material.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Since: 1.0
+ */
 void signet_store_close(SignetStore *store);
 
 /* Check if the store is open and usable. */
+/**
+ * signet_store_is_open:
+ * @store: (nullable): a #SignetStore
+ *
+ * Checks whether a store handle is open and usable.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: %true if the store is open, otherwise %false
+ *
+ * Since: 1.0
+ */
 bool signet_store_is_open(const SignetStore *store);
 
 /* True if the underlying database is SQLCipher-encrypted at rest (i.e. the
  * build linked SQLCipher and PRAGMA key took effect). False means the DB is
  * plain SQLite and only per-record envelope encryption is protecting secrets. */
+/**
+ * signet_store_is_encrypted:
+ * @store: (nullable): a #SignetStore
+ *
+ * Reports whether database-page encryption is active in addition to envelope encryption.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: %true if the condition is met, otherwise %false
+ *
+ * Since: 1.0
+ */
 bool signet_store_is_encrypted(const SignetStore *store);
 
 /* Store a new agent key. secret_key must be 32 bytes.
  * Returns 0 on success, -1 on error. */
+/**
+ * signet_store_put_agent:
+ * @store: (nullable): a #SignetStore
+ * @agent_id: (not nullable): agent identifier
+ * @secret_key: (not nullable): secret key
+ * @secret_key_len: length of @secret_key in bytes
+ * @connect_secret: (not nullable): connect secret
+ * @now: current Unix time in seconds
+ *
+ * Stores a new agent custody key and optional one-time connect secret.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.0
+ */
 int signet_store_put_agent(SignetStore *store,
                            const char *agent_id,
                            const uint8_t *secret_key,
@@ -72,28 +162,108 @@ int signet_store_put_agent(SignetStore *store,
 
 /* Retrieve and decrypt an agent key.
  * Returns 0 on success, 1 if not found, -1 on error. */
+/**
+ * signet_store_get_agent:
+ * @store: (nullable): a #SignetStore
+ * @agent_id: (not nullable): agent identifier
+ * @out_record: (out) (not nullable): return location for record
+ *
+ * Looks up and decrypts an agent custody key.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.0
+ */
 int signet_store_get_agent(SignetStore *store,
                            const char *agent_id,
                            SignetAgentRecord *out_record);
 
 /* Delete an agent from the store.
  * Returns 0 on success, 1 if not found, -1 on error. */
+/**
+ * signet_store_delete_agent:
+ * @store: (nullable): a #SignetStore
+ * @agent_id: (not nullable): agent identifier
+ *
+ * Deletes an agent record from persistent storage.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.0
+ */
 int signet_store_delete_agent(SignetStore *store, const char *agent_id);
 
+/**
+ * signet_store_free_agent_ids:
+ * @store: (nullable): a #SignetStore
+ * @out_ids: (out) (transfer full) (not nullable) (array): return location for ids
+ * @out_count: (out) (not nullable): return location for the number of elements
+ *
+ * Frees an agent identifier vector returned by signet_store_list_agents().
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: Caller frees with result
+ *
+ * Since: 1.0
+ */
 /* List all agent IDs. Caller frees with signet_store_free_agent_ids().
  * Returns 0 on success, -1 on error. */
+/**
+ * signet_store_list_agents:
+ * @store: (not nullable): a #SignetStore
+ * @out_ids: (out) (transfer full) (not nullable): return location for a newly allocated string vector
+ * @out_count: (out) (not nullable): number of elements
+ *
+ * List all agent IDs. Caller frees with signet_store_free_agent_ids(). Returns 0 on success, -1 on error.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.0
+ */
 int signet_store_list_agents(SignetStore *store,
                              char ***out_ids,
                              size_t *out_count);
 
 /* Update the last_used timestamp for an agent.
  * Returns 0 on success, -1 on error. */
+/**
+ * signet_store_touch_agent:
+ * @store: (nullable): a #SignetStore
+ * @agent_id: (not nullable): agent identifier
+ * @now: current Unix time in seconds
+ *
+ * Updates an agent record last-used timestamp.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.0
+ */
 int signet_store_touch_agent(SignetStore *store,
                              const char *agent_id,
                              int64_t now);
 
 /* Consume (clear) the connect_secret for an agent after successful connect.
  * Returns 0 on success, 1 if not found or already consumed, -1 on error. */
+/**
+ * signet_store_consume_connect_secret:
+ * @store: (nullable): a #SignetStore
+ * @agent_id: (not nullable): agent identifier
+ *
+ * Clears an agent connect secret after successful connection.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.0
+ */
 int signet_store_consume_connect_secret(SignetStore *store,
                                         const char *agent_id);
 
@@ -103,24 +273,78 @@ int signet_store_consume_connect_secret(SignetStore *store,
  * used in the same transaction.
  * On success, returns 0 and sets *out_agent_id to a newly allocated string
  * owned by the caller (g_free). Returns 1 if not found/expired, -1 on error. */
+/**
+ * signet_store_consume_connect_secret_value:
+ * @store: (nullable): a #SignetStore
+ * @connect_secret: (not nullable): connect secret
+ * @now: current Unix time in seconds
+ * @out_agent_id: (out) (transfer full) (not nullable): return location for agent id
+ *
+ * Resolves an agent by one-time connect secret and consumes it atomically.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.0
+ */
 int signet_store_consume_connect_secret_value(SignetStore *store,
                                               const char *connect_secret,
                                               int64_t now,
                                               char **out_agent_id);
 
 /* Free an agent record (wipes secret key). Safe on NULL. */
+/**
+ * signet_agent_record_clear:
+ * @rec: (nullable): rec
+ *
+ * Clears an agent record and wipes its decrypted key.
+ *
+ * Since: 1.0
+ */
 void signet_agent_record_clear(SignetAgentRecord *rec);
 
 /* Free an agent ID list. Safe on NULL. */
+/**
+ * signet_store_free_agent_ids:
+ * @ids: (not nullable) (array): ids
+ * @count: count
+ *
+ * Frees an agent identifier vector returned by signet_store_list_agents().
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Since: 1.0
+ */
 void signet_store_free_agent_ids(char **ids, size_t count);
 
 /* Get the underlying sqlite3 handle for use by sub-stores.
  * Returns NULL if store is not open. The handle is owned by the store. */
+/**
+ * signet_store_get_db:
+ * @store: (not nullable): a #SignetStore
+ *
+ * Get the underlying sqlite3 handle for use by sub-stores. Returns NULL if store is not open. The handle is owned by the store.
+ *
+ * Returns: (transfer none) (nullable): a borrowed pointer owned by the callee
+ *
+ * Since: 1.0
+ */
 struct sqlite3 *signet_store_get_db(SignetStore *store);
 
 /* Get the data-encryption key for envelope encryption by sub-stores.
  * Returns NULL if store is not open. The pointer is mlock'd and owned by the store.
  * Caller MUST NOT free or modify. */
+/**
+ * signet_store_get_dek:
+ * @store: (not nullable): a #SignetStore
+ *
+ * Get the data-encryption key for envelope encryption by sub-stores. Returns NULL if store is not open. The pointer is mlock'd and owned by the store. Caller MUST NOT free or modify.
+ *
+ * Returns: (transfer none) (nullable): a borrowed pointer owned by the callee
+ *
+ * Since: 1.0
+ */
 const uint8_t *signet_store_get_dek(const SignetStore *store);
 
 #ifdef __cplusplus

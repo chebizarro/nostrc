@@ -18,6 +18,12 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
+/**
+ * SignetDbusTcpServer:
+ * Opaque D-Bus TCP transport server.
+ *
+ * Since: 1.0
+ */
 typedef struct SignetDbusTcpServer SignetDbusTcpServer;
 
 struct SignetKeyStore;
@@ -28,6 +34,21 @@ struct SignetAuditLogger;
 struct SignetFleetRegistry;
 struct SignetFidoService;
 
+/**
+ * SignetDbusTcpServerConfig:
+ * @listen_address: e.g. "tcp:host=0.0.0.0,port=47472".
+ * @keys: borrowed key-store dependency.
+ * @policy: borrowed policy dependency.
+ * @store: borrowed store dependency.
+ * @challenges: borrowed challenge store dependency.
+ * @audit: borrowed audit logger dependency.
+ * @fido: borrowed FIDO service dependency.
+ * @fleet: borrowed fleet registry dependency.
+ *
+ * Configuration for the D-Bus TCP transport.
+ *
+ * Since: 1.0
+ */
 typedef struct {
   const char *listen_address;  /* e.g. "tcp:host=0.0.0.0,port=47472" */
   struct SignetKeyStore *keys;
@@ -40,15 +61,51 @@ typedef struct {
 } SignetDbusTcpServerConfig;
 
 /* Create D-Bus TCP server. Returns NULL on OOM. */
+/**
+ * signet_dbus_tcp_server_new:
+ * @cfg: (nullable): configuration to use
+ *
+ * Create D-Bus TCP server. Returns NULL on OOM.
+ *
+ * Returns: (transfer full) (nullable): a newly allocated object, or %NULL on failure
+ *
+ * Since: 1.0
+ */
 SignetDbusTcpServer *signet_dbus_tcp_server_new(const SignetDbusTcpServerConfig *cfg);
 
 /* Free D-Bus TCP server. Safe on NULL. */
+/**
+ * signet_dbus_tcp_server_free:
+ * @ds: (nullable): a D-Bus server
+ *
+ * Free D-Bus TCP server. Safe on NULL.
+ *
+ * Since: 1.0
+ */
 void signet_dbus_tcp_server_free(SignetDbusTcpServer *ds);
 
 /* Start listening. Returns 0 on success, -1 on failure. */
+/**
+ * signet_dbus_tcp_server_start:
+ * @ds: (not nullable): a D-Bus server
+ *
+ * Start listening. Returns 0 on success, -1 on failure.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.0
+ */
 int signet_dbus_tcp_server_start(SignetDbusTcpServer *ds);
 
 /* Stop listening. Safe to call multiple times. */
+/**
+ * signet_dbus_tcp_server_stop:
+ * @ds: (nullable): a D-Bus server
+ *
+ * Stop listening. Safe to call multiple times.
+ *
+ * Since: 1.0
+ */
 void signet_dbus_tcp_server_stop(SignetDbusTcpServer *ds);
 
 #ifdef __cplusplus

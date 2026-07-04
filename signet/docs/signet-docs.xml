@@ -1,0 +1,71 @@
+<?xml version="1.0"?>
+<!DOCTYPE book PUBLIC "-//OASIS//DTD DocBook XML V4.3//EN"
+               "http://www.oasis-open.org/docbook/xml/4.3/docbookx.dtd"
+[
+  <!ENTITY % local.common.attrib "xmlns:xi  CDATA  #FIXED 'http://www.w3.org/2003/XInclude'">
+]>
+<book id="index">
+  <bookinfo>
+    <title>Signet Reference Manual</title>
+    <releaseinfo>For Signet 1.0</releaseinfo>
+  </bookinfo>
+
+  <chapter id="signet-api">
+    <title>Public API</title>
+
+    <section id="signet-storage">
+      <title>Persistent storage</title>
+      <xi:include href="xml/store.xml"/>
+      <xi:include href="xml/store_secrets.xml"/>
+      <xi:include href="xml/store_leases.xml"/>
+      <xi:include href="xml/store_tokens.xml"/>
+      <xi:include href="xml/store_audit.xml"/>
+      <xi:include href="xml/store_passkeys.xml"/>
+    </section>
+
+    <section id="signet-keys-policy">
+      <title>Keys, policy, replay, and audit</title>
+      <xi:include href="xml/key_store.xml"/>
+      <xi:include href="xml/policy_store.xml"/>
+      <xi:include href="xml/policy_engine.xml"/>
+      <xi:include href="xml/capability.xml"/>
+      <xi:include href="xml/replay_cache.xml"/>
+      <xi:include href="xml/audit_logger.xml"/>
+      <xi:include href="xml/revocation.xml"/>
+      <xi:include href="xml/session_broker.xml"/>
+    </section>
+
+    <section id="signet-network-services">
+      <title>Network services and protocols</title>
+      <xi:include href="xml/relay_pool.xml"/>
+      <xi:include href="xml/nip46_server.xml"/>
+      <xi:include href="xml/health_server.xml"/>
+      <xi:include href="xml/bootstrap_server.xml"/>
+      <xi:include href="xml/bootstrap_delivery.xml"/>
+      <xi:include href="xml/mgmt_protocol.xml"/>
+      <xi:include href="xml/nostr_auth.xml"/>
+    </section>
+
+    <section id="signet-local-transports">
+      <title>Local transports</title>
+      <xi:include href="xml/dbus_unix.xml"/>
+      <xi:include href="xml/dbus_tcp.xml"/>
+      <xi:include href="xml/nip5l_transport.xml"/>
+      <xi:include href="xml/ssh_agent.xml"/>
+    </section>
+
+    <section id="signet-fido">
+      <title>FIDO2 and passkeys</title>
+      <xi:include href="xml/fido.xml"/>
+      <xi:include href="xml/fido_crypto.xml"/>
+      <xi:include href="xml/fido_cbor.xml"/>
+      <xi:include href="xml/fido_ctaphid.xml"/>
+    </section>
+
+    <section id="signet-config-util">
+      <title>Configuration and utilities</title>
+      <xi:include href="xml/signet_config.xml"/>
+      <xi:include href="xml/util.xml"/>
+    </section>
+  </chapter>
+</book>

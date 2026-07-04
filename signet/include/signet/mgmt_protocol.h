@@ -32,14 +32,77 @@ extern "C" {
 #include <stdint.h>
 
 /* Nostr event kinds for management protocol. */
+/**
+ * SIGNET_KIND_PROVISION_AGENT:
+ *
+ * Management event kind for provisioning an agent.
+ *
+ * Since: 1.0
+ */
 #define SIGNET_KIND_PROVISION_AGENT 28000
+/**
+ * SIGNET_KIND_REVOKE_AGENT:
+ *
+ * Management event kind for revoking an agent.
+ *
+ * Since: 1.0
+ */
 #define SIGNET_KIND_REVOKE_AGENT   28010
+/**
+ * SIGNET_KIND_SET_POLICY:
+ *
+ * Management event kind for setting policy.
+ *
+ * Since: 1.0
+ */
 #define SIGNET_KIND_SET_POLICY     28020
+/**
+ * SIGNET_KIND_GET_STATUS:
+ *
+ * Management event kind for status queries.
+ *
+ * Since: 1.0
+ */
 #define SIGNET_KIND_GET_STATUS     28030
+/**
+ * SIGNET_KIND_LIST_AGENTS:
+ *
+ * Management event kind for listing agents.
+ *
+ * Since: 1.0
+ */
 #define SIGNET_KIND_LIST_AGENTS    28040
+/**
+ * SIGNET_KIND_ROTATE_KEY:
+ *
+ * Management event kind for rotating an agent key.
+ *
+ * Since: 1.0
+ */
 #define SIGNET_KIND_ROTATE_KEY     28050
+/**
+ * SIGNET_KIND_MGMT_ACK:
+ *
+ * Management event kind for acknowledgements.
+ *
+ * Since: 1.0
+ */
 #define SIGNET_KIND_MGMT_ACK       28090
 
+/**
+ * SignetMgmtOp:
+ * @SIGNET_MGMT_OP_UNKNOWN: signet mgmt op unknown
+ * @SIGNET_MGMT_OP_PROVISION_AGENT: signet mgmt op provision agent
+ * @SIGNET_MGMT_OP_REVOKE_AGENT: signet mgmt op revoke agent
+ * @SIGNET_MGMT_OP_SET_POLICY: signet mgmt op set policy
+ * @SIGNET_MGMT_OP_GET_STATUS: signet mgmt op get status
+ * @SIGNET_MGMT_OP_LIST_AGENTS: signet mgmt op list agents
+ * @SIGNET_MGMT_OP_ROTATE_KEY: signet mgmt op rotate key
+ *
+ * Supported Nostr-native management operations.
+ *
+ * Since: 1.0
+ */
 typedef enum {
   SIGNET_MGMT_OP_UNKNOWN = 0,
   SIGNET_MGMT_OP_PROVISION_AGENT,
@@ -51,6 +114,18 @@ typedef enum {
 } SignetMgmtOp;
 
 /* Parsed management request from event content JSON. */
+/**
+ * SignetMgmtRequest:
+ * @op: op value.
+ * @kind: original event kind.
+ * @agent_id: target agent (owned, heap).
+ * @policy_json: optional policy object JSON (owned, heap).
+ * @request_id: optional correlation ID (owned, heap).
+ *
+ * Parsed management request content.
+ *
+ * Since: 1.0
+ */
 typedef struct {
   SignetMgmtOp op;
   int kind;                /* original event kind */
@@ -61,13 +136,45 @@ typedef struct {
 } SignetMgmtRequest;
 
 /* Map event kind to management op. */
+/**
+ * signet_mgmt_op_from_kind:
+ * @kind: kind
+ *
+ * Map event kind to management op.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.0
+ */
 SignetMgmtOp signet_mgmt_op_from_kind(int kind);
 
 /* Map op to canonical string name. Returns static string. */
+/**
+ * signet_mgmt_op_to_string:
+ * @op: management operation
+ *
+ * Map op to canonical string name. Returns static string.
+ *
+ * Returns: (transfer none) (nullable): a borrowed pointer owned by the callee
+ *
+ * Since: 1.0
+ */
 const char *signet_mgmt_op_to_string(SignetMgmtOp op);
 
 /* Check whether event_pubkey_hex is in the provisioner pubkey list.
  * Case-insensitive hex comparison. */
+/**
+ * signet_mgmt_is_authorized:
+ * @event_pubkey_hex: (not nullable): event pubkey hex
+ * @provisioner_pubkeys: (not nullable): provisioner pubkeys
+ * @n_provisioner_pubkeys: number of elements
+ *
+ * Check whether event_pubkey_hex is in the provisioner pubkey list. Case-insensitive hex comparison.
+ *
+ * Returns: %true if the condition is met, otherwise %false
+ *
+ * Since: 1.0
+ */
 bool signet_mgmt_is_authorized(const char *event_pubkey_hex,
                                const char *const *provisioner_pubkeys,
                                size_t n_provisioner_pubkeys);
@@ -83,16 +190,51 @@ bool signet_mgmt_is_authorized(const char *event_pubkey_hex,
  *
  * Returns 0 on success, -1 on parse/validation error.
  * out_error receives a heap string on error (caller frees). */
+/**
+ * signet_mgmt_request_parse:
+ * @kind: kind
+ * @content_json: (not nullable): content json
+ * @out_req: (out) (not nullable): return location for req
+ * @out_error: (out) (transfer full) (nullable): return location for a newly allocated error string
+ *
+ * Parse management request JSON content. Expected shape depends on kind:   28000: {"agent_id": "...", "request_id": "..."}   28010: {"agent_id": "...", "request_id": "..."}   28020: {"agent_id": "...", "policy": {...}, "request_id": "..."}   28030: {"request_id": "..."}   28040: {"request_id": "..."}   28050: {"agent_id": "...", "request_id": "..."}.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.0
+ */
 int signet_mgmt_request_parse(int kind,
                               const char *content_json,
                               SignetMgmtRequest *out_req,
                               char **out_error);
 
 /* Free/clear a parsed request. Safe on NULL. */
+/**
+ * signet_mgmt_request_clear:
+ * @req: (nullable): request data
+ *
+ * Free/clear a parsed request. Safe on NULL.
+ *
+ * Since: 1.0
+ */
 void signet_mgmt_request_clear(SignetMgmtRequest *req);
 
 /* Build ack response JSON.
  * Returns heap string (caller frees with g_free) or NULL on error. */
+/**
+ * signet_mgmt_build_ack:
+ * @request_id: (nullable): request correlation identifier
+ * @ok: whether the command succeeded
+ * @code: (nullable): machine-readable result code
+ * @message: (nullable): human-readable message
+ * @result_json: (nullable): optional result JSON object
+ *
+ * Build ack response JSON. Returns heap string (caller frees with g_free) or NULL on error.
+ *
+ * Returns: (transfer full) (nullable): a newly allocated string, or %NULL on failure
+ *
+ * Since: 1.0
+ */
 char *signet_mgmt_build_ack(const char *request_id,
                             bool ok,
                             const char *code,
@@ -107,8 +249,27 @@ struct SignetAuditLogger;
 struct SignetPolicyStore;
 struct SignetDenyList;
 
+/**
+ * SignetMgmtHandler:
+ * Opaque management-event executor.
+ *
+ * Since: 1.0
+ */
 typedef struct SignetMgmtHandler SignetMgmtHandler;
 
+/**
+ * SignetMgmtHandlerConfig:
+ * @provisioner_pubkeys: provisioner pubkeys value.
+ * @n_provisioner_pubkeys: n provisioner pubkeys value.
+ * @bunker_secret_key_hex: for signing ack events.
+ * @bunker_pubkey_hex: for addressing.
+ * @relay_urls: relay URLs for bunker:// URIs.
+ * @n_relay_urls: n relay urls value.
+ *
+ * Configuration for management command authorization and acknowledgements.
+ *
+ * Since: 1.0
+ */
 typedef struct {
   const char *const *provisioner_pubkeys;
   size_t n_provisioner_pubkeys;
@@ -119,6 +280,20 @@ typedef struct {
 } SignetMgmtHandlerConfig;
 
 /* Create a management handler. */
+/**
+ * signet_mgmt_handler_new:
+ * @keys: (not nullable): keys
+ * @relays: (not nullable): relays
+ * @audit: (not nullable): audit
+ * @policy_store: (not nullable): policy store
+ * @cfg: (nullable): configuration to use
+ *
+ * Create a management handler.
+ *
+ * Returns: (transfer full) (nullable): a newly allocated object, or %NULL on failure
+ *
+ * Since: 1.0
+ */
 SignetMgmtHandler *signet_mgmt_handler_new(struct SignetKeyStore *keys,
                                            struct SignetRelayPool *relays,
                                            struct SignetAuditLogger *audit,
@@ -126,18 +301,50 @@ SignetMgmtHandler *signet_mgmt_handler_new(struct SignetKeyStore *keys,
                                            const SignetMgmtHandlerConfig *cfg);
 
 /* Free a management handler. Safe on NULL. */
+/**
+ * signet_mgmt_handler_free:
+ * @h: (nullable): a #SignetMgmtHandler
+ *
+ * Free a management handler. Safe on NULL.
+ *
+ * Since: 1.0
+ */
 void signet_mgmt_handler_free(SignetMgmtHandler *h);
 
 /* Attach the daemon's live deny list so that revoke_agent can add revoked
  * pubkeys to it (and so deny-list precedence takes effect immediately, without
  * a restart). Pass the SAME instance consulted by the auth/fleet is_denied
  * callback. Safe to call with NULL h or NULL deny. */
+/**
+ * signet_mgmt_handler_set_deny_list:
+ * @h: (not nullable): a #SignetMgmtHandler
+ * @deny: (nullable): deny
+ *
+ * Attach the daemon's live deny list so that revoke_agent can add revoked pubkeys to it (and so deny-list precedence takes effect immediately, without a restart). Pass the SAME instance consulted by the auth/fleet is_denied callback. Safe to call with NULL h or NULL deny.
+ *
+ * Since: 1.0
+ */
 void signet_mgmt_handler_set_deny_list(SignetMgmtHandler *h,
                                        struct SignetDenyList *deny);
 
 /* Handle an incoming management event.
  * Verifies authorization, parses, executes, publishes ack.
  * Returns 0 on success (ack published), -1 on error. */
+/**
+ * signet_mgmt_handler_handle_event:
+ * @h: (not nullable): a #SignetMgmtHandler
+ * @event_pubkey_hex: (not nullable): event pubkey hex
+ * @content_json: (not nullable): content json
+ * @kind: kind
+ * @event_id_hex: (nullable): event id hex
+ * @now: current Unix time in seconds
+ *
+ * Handle an incoming management event. Verifies authorization, parses, executes, publishes ack. Returns 0 on success (ack published), -1 on error.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.0
+ */
 int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
                                      const char *event_pubkey_hex,
                                      const char *content_json,
