@@ -2,22 +2,24 @@
  *
  * mgmt_protocol.h - Nostr-native management protocol for Signet.
  *
- * Management operations are signed Nostr events (no HTTP/REST).
- * The daemon consumes these events and applies mutations after verifying
- * admin signatures and replay protection.
+ * Management operations are Cascadia ContextVM kind-25910 JSON-RPC intents
+ * (no HTTP/REST). The daemon consumes these events and applies mutations
+ * after verifying admin signatures and replay protection.
  *
- * Event kinds (design spec):
- *   28000 - provision_agent (create new agent identity)
- *   28010 - revoke_agent (destroy agent identity)
- *   28020 - set_policy (update agent policy)
- *   28030 - get_status (health/status query)
- *   28040 - list_agents (enumerate managed agents)
- *   28050 - rotate_key (rotate agent keypair)
- *   28090 - ack (response to any management command)
+ * Canonical methods:
+ *   agent/provision   - create new agent identity
+ *   agent/revoke      - destroy agent identity
+ *   agent/set-policy  - update agent policy
+ *   agent/get-status  - health/status query
+ *   agent/list        - enumerate managed agents
+ *   agent/rotate-key  - rotate agent keypair
  *
- * Transport: NIP-44 v2 encrypted to bunker pubkey (decrypt on receive,
- *            encrypt on ack; decryption failures are rejected).
- * Authorization: event.pubkey must be in provisioner_pubkeys list.
+ * Relay transport: NIP-59/NIP-17 gift-wrap kind 1059 carrying the inner
+ *                  kind-25910 intent.
+ * Authorization: inner sender pubkey must be in provisioner_pubkeys list.
+ *
+ * Deprecated compatibility: the 28000-series event kinds and 28090 ACK are
+ * available only when legacy_28000 is explicitly enabled.
  */
 
 #ifndef SIGNET_MGMT_PROTOCOL_H
@@ -31,11 +33,11 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
-/* Nostr event kinds for management protocol. */
+/* Deprecated Nostr event kinds for the legacy 28000-series management protocol. */
 /**
  * SIGNET_KIND_PROVISION_AGENT:
  *
- * Management event kind for provisioning an agent.
+ * Legacy management event kind for provisioning an agent.
  *
  * Since: 1.0
  */
@@ -43,7 +45,7 @@ extern "C" {
 /**
  * SIGNET_KIND_REVOKE_AGENT:
  *
- * Management event kind for revoking an agent.
+ * Legacy management event kind for revoking an agent.
  *
  * Since: 1.0
  */
@@ -51,7 +53,7 @@ extern "C" {
 /**
  * SIGNET_KIND_SET_POLICY:
  *
- * Management event kind for setting policy.
+ * Legacy management event kind for setting policy.
  *
  * Since: 1.0
  */
@@ -59,7 +61,7 @@ extern "C" {
 /**
  * SIGNET_KIND_GET_STATUS:
  *
- * Management event kind for status queries.
+ * Legacy management event kind for status queries.
  *
  * Since: 1.0
  */
@@ -67,7 +69,7 @@ extern "C" {
 /**
  * SIGNET_KIND_LIST_AGENTS:
  *
- * Management event kind for listing agents.
+ * Legacy management event kind for listing agents.
  *
  * Since: 1.0
  */
@@ -75,7 +77,7 @@ extern "C" {
 /**
  * SIGNET_KIND_ROTATE_KEY:
  *
- * Management event kind for rotating an agent key.
+ * Legacy management event kind for rotating an agent key.
  *
  * Since: 1.0
  */
@@ -83,7 +85,7 @@ extern "C" {
 /**
  * SIGNET_KIND_MGMT_ACK:
  *
- * Management event kind for acknowledgements.
+ * Legacy management event kind for acknowledgements.
  *
  * Since: 1.0
  */

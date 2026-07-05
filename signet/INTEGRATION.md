@@ -6,8 +6,9 @@ Agents connect to Signet via the NIP-46 protocol over Nostr relays, or locally v
 
 ### NIP-46 (Relay-Based)
 
-1. **Provisioning**: An authorized provisioner sends a signed management event (kind 28000)
-   to Signet via a Nostr relay. Signet generates a keypair and returns a `nostrconnect://` URI.
+1. **Provisioning**: An authorized provisioner sends a Cascadia ContextVM `25910`
+   `agent/provision` intent to Signet via a Nostr relay, typically gift-wrapped as kind `1059`.
+   Signet generates a keypair and returns a `nostrconnect://` URI.
 
 2. **Agent Boot**: The agent receives the `nostrconnect://` URI as an environment variable.
    It uses NIP-46 to establish a session with Signet over the relay.
@@ -15,7 +16,7 @@ Agents connect to Signet via the NIP-46 protocol over Nostr relays, or locally v
 3. **Signing**: The agent sends `sign_event` requests via NIP-46. Signet evaluates per-agent
    policy, signs from the hot key cache, and returns the signed event.
 
-4. **Revocation**: A provisioner sends a revoke event (kind 28010). Signet resolves the
+4. **Revocation**: A provisioner sends a `25910` `agent/revoke` intent. Signet resolves the
    agent pubkey, adds it to the deny list, burns active leases, wipes the key from both
    cache and store, audits the action, and refuses all further requests for that agent.
 
@@ -145,23 +146,22 @@ Browsers and `fido2-token` must be tested on Linux because macOS does not provid
 
 ## Management Protocol
 
-All management traffic flows as NIP-44 v2 encrypted, signed Nostr events. Authorization requires the event's pubkey to be in the `provisioner_pubkeys` list. ACKs fail closed on encryption errors; Signet does not fall back to plaintext management ACKs.
+All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents. Relay transport should gift-wrap the intent with NIP-59/NIP-17 kind `1059`; authorization requires the inner sender pubkey to be in the `provisioner_pubkeys` list. Responses are correlated ContextVM results. The deprecated `28000`-series event kinds and `28090` ACKs are compatibility-only when `legacy_28000` is explicitly enabled.
 
-| Kind  | Operation         | Description                              |
-|-------|-------------------|------------------------------------------|
-| 28000 | `provision_agent` | Generate keypair, return bunker:// URI   |
-| 28010 | `revoke_agent`    | Resolve pubkey, deny, burn leases, wipe cache/store, audit |
-| 28020 | `set_policy`      | Parse and apply policy JSON for agent    |
-| 28030 | `get_status`      | Query daemon health                      |
-| 28040 | `list_agents`     | Enumerate managed agents                 |
-| 28050 | `rotate_key`      | Rotate agent keypair                     |
-| 28090 | `ack`             | Response to any management command       |
+| Kind  | Method | Description |
+|-------|--------|-------------|
+| 25910 | `agent/provision` | Generate keypair, return bunker:// URI |
+| 25910 | `agent/revoke` | Resolve pubkey, deny, burn leases, wipe cache/store, audit |
+| 25910 | `agent/set-policy` | Parse and apply policy JSON for agent |
+| 25910 | `agent/get-status` | Query daemon health |
+| 25910 | `agent/list` | Enumerate managed agents |
+| 25910 | `agent/rotate-key` | Rotate agent keypair |
 
 ## Bootstrap Flow
 
 For automated fleet provisioning:
 
-1. Fleet Commander provisions agent via management event (kind 28000)
+1. Fleet Commander provisions agent via a `25910` `agent/provision` management intent
 2. Fleet Commander sends bootstrap token to agent via NIP-17 gift-wrapped DM
 3. Agent decrypts token, calls `POST /bootstrap` to verify
 4. Signet atomically consumes the single-use bootstrap token; replay attempts return 403

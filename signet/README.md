@@ -33,19 +33,18 @@ All v2 transports (D-Bus, NIP-5L, SSH agent, bootstrap) are disabled by default 
 
 ### Management Protocol
 
-All provisioning, revocation, and policy management is done through signed Nostr events — there is no REST management API.
+All provisioning, revocation, and policy management is done through Cascadia ContextVM signed Nostr intents — there is no REST management API. The canonical management plane is kind `25910`, usually gift-wrapped with NIP-59/NIP-17 kind `1059` for relay transport.
 
-| Kind  | Operation         | Description                           |
-|-------|-------------------|---------------------------------------|
-| 28000 | `provision_agent` | Generate keypair, return bunker:// URI|
-| 28010 | `revoke_agent`    | Resolve pubkey, deny, burn leases, wipe key from cache/store, audit |
-| 28020 | `set_policy`      | Parse and apply policy JSON           |
-| 28030 | `get_status`      | Query daemon health                   |
-| 28040 | `list_agents`     | Enumerate managed agents              |
-| 28050 | `rotate_key`      | Rotate agent keypair                  |
-| 28090 | `ack`             | Response to any management command    |
+| Kind  | Method | Description |
+|-------|--------|-------------|
+| 25910 | `agent/provision` | Generate keypair, return bunker:// URI |
+| 25910 | `agent/revoke` | Resolve pubkey, deny, burn leases, wipe key from cache/store, audit |
+| 25910 | `agent/set-policy` | Parse and apply policy JSON |
+| 25910 | `agent/get-status` | Query daemon health |
+| 25910 | `agent/list` | Enumerate managed agents |
+| 25910 | `agent/rotate-key` | Rotate agent keypair |
 
-Management events are NIP-44 v2 encrypted between provisioner and bunker. Ack responses are encrypted to the requesting provisioner and fail closed on encryption errors; Signet no longer falls back to plaintext ACKs. Authorization requires the event pubkey to be in the `provisioner_pubkeys` list.
+Management intents are encrypted between provisioner and bunker when transported through gift-wrap. Responses are correlated ContextVM results; legacy `28090` ACKs are only for the disabled-by-default `legacy_28000` compatibility path. Authorization requires the event pubkey to be in the `provisioner_pubkeys` list.
 
 ### Bootstrap & Onboarding
 
@@ -85,7 +84,7 @@ The control plane is Nostr. All of it. There is no REST management API. The only
 ```
 Agent → NIP-46 request → Relay → signetd → hot cache → sign → Relay → Agent
 Agent → D-Bus / NIP-5L / SSH → signetd → hot cache → sign → Agent
-Admin → Signed mgmt event → Relay → signetd → provision/revoke/policy → Relay → Admin
+Admin → ContextVM 25910 intent → Relay → signetd → provision/revoke/policy → Relay → Admin
 Fleet Cmdr → NIP-17 bootstrap → Relay → Agent → POST /bootstrap → signetd → bunker:// URI
 ```
 
@@ -100,7 +99,7 @@ Fleet Cmdr → NIP-17 bootstrap → Relay → Agent → POST /bootstrap → sign
 | **Policy Store**     | File-backed (GKeyFile) with SIGHUP reload and TTL              |
 | **Policy Engine**    | Evaluates requests against per-agent policy and rate limits    |
 | **Capability Engine**| Capability-based authorization with rate limiting              |
-| **Management Handler**| Parses and executes management events (kinds 28000-28090)     |
+| **Management Handler**| Parses and executes ContextVM `25910` management intents; legacy `28000`-series events are compatibility-only when explicitly enabled |
 | **Relay Pool**       | WebSocket connections with exponential backoff reconnect       |
 | **Audit Logger**     | Structured JSON logging to stdout or file                      |
 | **Health Server**    | `GET /health` via libmicrohttpd                                |
