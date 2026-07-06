@@ -31,9 +31,16 @@ typedef struct {
 
 typedef struct {
     pthread_t thread;
+    bool thread_started;   /* true once pthread_create succeeded (joinable) */
     _Atomic bool running;
     uint32_t interval_ms;
     char *export_path;
+
+    /* Interruptible sleep: stop() signals stop_cv so the worker wakes
+     * immediately instead of blocking for a full interval, and stop() then
+     * joins the worker BEFORE freeing export_path (prevents UAF). */
+    pthread_mutex_t stop_mu;
+    pthread_cond_t stop_cv;
 
     /* Rolling counter history */
     RollingCounter counters[MAX_TRACKED_COUNTERS];
@@ -48,6 +55,9 @@ typedef struct {
 
 static Collector g_collector = {
     .running = false,
+    .thread_started = false,
+    .stop_mu = PTHREAD_MUTEX_INITIALIZER,
+    .stop_cv = PTHREAD_COND_INITIALIZER,
     .snap_mu = PTHREAD_MUTEX_INITIALIZER,
 };
 
@@ -297,11 +307,20 @@ static void *collector_thread(void *arg)
             export_to_file(g_collector.export_path);
         }
 
-        /* Sleep for the configured interval */
-        struct timespec ts;
-        ts.tv_sec = g_collector.interval_ms / 1000;
-        ts.tv_nsec = (long)(g_collector.interval_ms % 1000) * 1000000L;
-        nanosleep(&ts, NULL);
+        /* Sleep for the configured interval, but wake immediately if stop()
+         * clears 'running' and signals stop_cv. This keeps shutdown prompt so
+         * stop() can join without waiting a full interval. */
+        pthread_mutex_lock(&g_collector.stop_mu);
+        if (atomic_load(&g_collector.running)) {
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            uint64_t add_ns = (uint64_t)ts.tv_nsec +
+                              (uint64_t)(g_collector.interval_ms % 1000) * 1000000ull;
+            ts.tv_sec += (time_t)(g_collector.interval_ms / 1000) + (time_t)(add_ns / 1000000000ull);
+            ts.tv_nsec = (long)(add_ns % 1000000000ull);
+            pthread_cond_timedwait(&g_collector.stop_cv, &g_collector.stop_mu, &ts);
+        }
+        pthread_mutex_unlock(&g_collector.stop_mu);
     }
     return NULL;
 }
@@ -337,17 +356,37 @@ void nostr_metrics_collector_start(uint32_t interval_ms, const char *export_path
     memset(g_collector.counters, 0, sizeof(g_collector.counters));
 
     atomic_store(&g_collector.running, true);
-    pthread_create(&g_collector.thread, NULL, collector_thread, NULL);
-    pthread_detach(g_collector.thread);
+    g_collector.thread_started = false;
+    int rc = pthread_create(&g_collector.thread, NULL, collector_thread, NULL);
+    if (rc != 0) {
+        /* Thread never started: do not report running, and release resources. */
+        atomic_store(&g_collector.running, false);
+        free(g_collector.export_path);
+        g_collector.export_path = NULL;
+        return;
+    }
+    g_collector.thread_started = true;
 }
 
 void nostr_metrics_collector_stop(void)
 {
     if (!atomic_load(&g_collector.running)) return;
-    atomic_store(&g_collector.running, false);
-    /* Thread will exit on next wakeup */
 
-    /* Clean up */
+    /* Signal shutdown and wake the worker out of its interruptible sleep. */
+    pthread_mutex_lock(&g_collector.stop_mu);
+    atomic_store(&g_collector.running, false);
+    pthread_cond_signal(&g_collector.stop_cv);
+    pthread_mutex_unlock(&g_collector.stop_mu);
+
+    /* Join BEFORE touching export_path: guarantees the worker is no longer
+     * inside collect_snapshot()/export_to_file() reading g_collector.export_path,
+     * eliminating the use-after-free that a bare pthread_detach()+free allowed. */
+    if (g_collector.thread_started) {
+        pthread_join(g_collector.thread, NULL);
+        g_collector.thread_started = false;
+    }
+
+    /* Clean up (worker is now guaranteed stopped). */
     pthread_mutex_lock(&g_collector.snap_mu);
     snapshot_free_internals(&g_collector.latest);
     g_collector.has_snapshot = false;

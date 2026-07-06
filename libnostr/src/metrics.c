@@ -177,40 +177,109 @@ static metrics_entry *registry_get_or_create(const char *name, metric_type_t typ
 static uint64_t g_tls_flush_ns = NOSTR_COUNTER_FLUSH_NS;
 
 typedef struct tls_counter_slot {
-    const char *name;     // key (assumed long-lived string literal in hot paths)
-    uint64_t pending;     // accumulated delta
+    const char *name;         // key (assumed long-lived string literal in hot paths)
+    _Atomic uint64_t pending; // accumulated delta (drained atomically, incl. cross-thread)
 } tls_counter_slot;
 
 typedef struct tls_counter_cache {
     uint64_t last_flush_ns;
-    int used;
+    _Atomic int used;                    // live slot count; append-only until eviction
+    struct tls_counter_cache *reg_next;  // global registry list link (guarded by registry mu)
     tls_counter_slot slots[NOSTR_COUNTER_TLS_SLOTS];
 } tls_counter_cache;
 
-#if defined(__APPLE__) || defined(__GNUC__)
-static __thread tls_counter_cache g_tls_counters;
-#else
-static _Thread_local tls_counter_cache g_tls_counters;
-#endif
+// Per-thread caches are HEAP-allocated and owned by a pthread_key, NOT stored in
+// __thread/_Thread_local storage. On some platforms (notably macOS/dyld) the
+// runtime frees dynamic __thread blocks during its own TSD cleanup, which can
+// run before our pthread_key destructor -> the destructor would touch freed
+// memory. Owning the block ourselves makes its lifetime fully deterministic:
+// it is freed only by tls_counter_cache_dtor, under the registry lock.
+static pthread_mutex_t g_tls_registry_mu = PTHREAD_MUTEX_INITIALIZER;
+static tls_counter_cache *g_tls_registry_head = NULL;
+static pthread_key_t g_tls_key;
+static pthread_once_t g_tls_key_once = PTHREAD_ONCE_INIT;
 
+// Drain one cache's pending deltas into the global registry. Safe from the
+// owning thread or a cross-thread flush: 'used' is read with acquire semantics
+// (pairs with the release store when a slot is published) so names are visible,
+// and each pending value is taken with an atomic exchange so a concurrent add
+// (atomic_fetch_add) and a drain never lose an update.
+static void tls_cache_drain(tls_counter_cache *c)
+{
+    int used = atomic_load_explicit(&c->used, memory_order_acquire);
+    for (int i = 0; i < used; ++i) {
+        tls_counter_slot *s = &c->slots[i];
+        const char *name = s->name;
+        uint64_t pend = atomic_exchange_explicit(&s->pending, 0ull, memory_order_relaxed);
+        if (!name || pend == 0) continue;
+        metrics_entry *e = registry_get_or_create(name, MET_COUNTER);
+        if (e) atomic_fetch_add(&e->u.c.counter, (unsigned long long)pend);
+    }
+}
+
+static void tls_counter_cache_dtor(void *arg)
+{
+    tls_counter_cache *c = (tls_counter_cache *)arg;
+    if (!c) return;
+    pthread_mutex_lock(&g_tls_registry_mu);
+    tls_cache_drain(c); // don't lose this thread's final counts
+    tls_counter_cache **pp = &g_tls_registry_head;
+    while (*pp) {
+        if (*pp == c) { *pp = c->reg_next; break; }
+        pp = &(*pp)->reg_next;
+    }
+    pthread_mutex_unlock(&g_tls_registry_mu);
+    // We own the block: free it here (never touched again after unlink).
+    free(c);
+}
+
+static void tls_key_init(void)
+{
+    pthread_key_create(&g_tls_key, tls_counter_cache_dtor);
+}
+
+// Get (or lazily create + register) this thread's heap cache. Returns NULL only
+// on allocation failure, in which case the caller simply drops the update.
+static tls_counter_cache *tls_get_cache(void)
+{
+    pthread_once(&g_tls_key_once, tls_key_init);
+    tls_counter_cache *c = (tls_counter_cache *)pthread_getspecific(g_tls_key);
+    if (c) return c;
+    c = (tls_counter_cache *)calloc(1, sizeof(*c));
+    if (!c) return NULL;
+    // Bind to the key first: if this fails the destructor would never run, so
+    // don't link the cache into the registry (which would strand it forever).
+    if (pthread_setspecific(g_tls_key, c) != 0) { free(c); return NULL; }
+    pthread_mutex_lock(&g_tls_registry_mu);
+    c->reg_next = g_tls_registry_head;
+    g_tls_registry_head = c;
+    pthread_mutex_unlock(&g_tls_registry_mu);
+    return c;
+}
+
+// Flush the calling thread's own cache (lock-free w.r.t. the hot add path).
 static inline void tls_counters_flush(tls_counter_cache *c)
 {
     if (!c) return;
-    for (int i = 0; i < c->used; ++i) {
-        tls_counter_slot *s = &c->slots[i];
-        if (!s->name || s->pending == 0) continue;
-        metrics_entry *e = registry_get_or_create(s->name, MET_COUNTER);
-        if (e) {
-            atomic_fetch_add(&e->u.c.counter, (unsigned long long)s->pending);
-        }
-        s->pending = 0;
-    }
+    tls_cache_drain(c);
     c->last_flush_ns = nostr_now_ns();
+}
+
+// Flush EVERY registered thread's cache so dump/export reflect all threads.
+static void tls_counters_flush_all(void)
+{
+    pthread_mutex_lock(&g_tls_registry_mu);
+    for (tls_counter_cache *c = g_tls_registry_head; c; c = c->reg_next) {
+        tls_cache_drain(c);
+    }
+    pthread_mutex_unlock(&g_tls_registry_mu);
 }
 
 static inline void tls_counters_add(const char *name, uint64_t delta)
 {
-    tls_counter_cache *c = &g_tls_counters;
+    tls_counter_cache *c = tls_get_cache();
+    if (!c) return;
+
     // Time-based flush
     uint64_t now = nostr_now_ns();
     if (c->last_flush_ns == 0) c->last_flush_ns = now;
@@ -218,26 +287,32 @@ static inline void tls_counters_add(const char *name, uint64_t delta)
         tls_counters_flush(c);
     }
 
+    int used = atomic_load_explicit(&c->used, memory_order_relaxed);
     // Try to find existing slot (pointer match for speed)
-    for (int i = 0; i < c->used; ++i) {
+    for (int i = 0; i < used; ++i) {
         if (c->slots[i].name == name) {
-            c->slots[i].pending += delta;
+            atomic_fetch_add_explicit(&c->slots[i].pending, delta, memory_order_relaxed);
             return;
         }
     }
-    // New slot if space
-    if (c->used < NOSTR_COUNTER_TLS_SLOTS) {
-        c->slots[c->used].name = name;
-        c->slots[c->used].pending = delta;
-        c->used++;
+    // New slot if space: write name+pending, THEN publish via a release store on
+    // 'used' so a cross-thread flusher never observes an uninitialized name.
+    if (used < NOSTR_COUNTER_TLS_SLOTS) {
+        c->slots[used].name = name;
+        atomic_store_explicit(&c->slots[used].pending, delta, memory_order_relaxed);
+        atomic_store_explicit(&c->used, used + 1, memory_order_release);
         return;
     }
-    // Cache full: flush everything then insert into first slot
-    tls_counters_flush(c);
-    c->used = 0;
-    c->slots[c->used].name = name;
-    c->slots[c->used].pending = delta;
-    c->used = 1;
+    // Cache full: evict. This rewrites slot names and resets 'used', so serialize
+    // with the cross-thread flusher via the registry lock (rare slow path only).
+    pthread_mutex_lock(&g_tls_registry_mu);
+    tls_cache_drain(c);
+    atomic_store_explicit(&c->used, 0, memory_order_relaxed);
+    c->slots[0].name = name;
+    atomic_store_explicit(&c->slots[0].pending, delta, memory_order_relaxed);
+    atomic_store_explicit(&c->used, 1, memory_order_release);
+    pthread_mutex_unlock(&g_tls_registry_mu);
+    c->last_flush_ns = nostr_now_ns();
 }
 
 static inline int hist_bin_index(uint64_t ns)
@@ -341,8 +416,9 @@ static uint64_t percentile_estimate(const metrics_histogram *h, double p)
 
 void nostr_metrics_dump(void)
 {
-    // Flush TLS counters for this thread before snapshotting
-    tls_counters_flush(&g_tls_counters);
+    // Flush ALL threads' TLS counters before snapshotting so the dump reflects
+    // every thread's contributions, not just the calling thread's.
+    tls_counters_flush_all();
     // Output a compact JSON object containing counters and histograms
     // {"counters":{...},"histograms":{...}}
     pthread_once(&g_once, metrics_init_once);
@@ -433,7 +509,8 @@ static int prom_append(char *buf, size_t buf_size, size_t *pos, const char *fmt,
 
 size_t nostr_metrics_prometheus(char *buf, size_t buf_size)
 {
-    tls_counters_flush(&g_tls_counters);
+    // Flush ALL threads' TLS counters so the export aggregates every thread.
+    tls_counters_flush_all();
     pthread_once(&g_once, metrics_init_once);
 
     size_t pos = 0;

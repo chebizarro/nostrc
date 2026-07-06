@@ -319,6 +319,22 @@ if(LIBNOSTR_BUILD_TESTS)
   target_link_libraries(test_crypto_audit PRIVATE nostr OpenSSL::Crypto ${SECP256K1_LIB} Threads::Threads)
   target_include_directories(test_crypto_audit PRIVATE include)
   add_test(NAME libnostr_crypto_audit COMMAND test_crypto_audit)
+
+  # Observability + misc robustness (nostrc-lc7, nostrc-dui).
+  # Compiles the sources under test directly with NOSTR_ENABLE_METRICS=1 so the
+  # real metrics/collector paths are exercised (the library defaults metrics OFF).
+  # These four TUs only depend on libc + pthreads, so no libnostr link is needed
+  # (and linking it would duplicate the metrics symbols).
+  add_executable(test_misc_audit
+    tests/test_misc_audit.c
+    src/metrics.c
+    src/metrics_collector.c
+    src/security_limits_runtime.c
+    src/storage_registry.c)
+  target_compile_definitions(test_misc_audit PRIVATE NOSTR_ENABLE_METRICS=1)
+  target_include_directories(test_misc_audit PRIVATE include)
+  target_link_libraries(test_misc_audit PRIVATE Threads::Threads)
+  add_test(NAME libnostr_misc_audit COMMAND test_misc_audit)
 endif()
 
 # Install rules
