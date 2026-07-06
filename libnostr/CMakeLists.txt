@@ -313,6 +313,12 @@ if(LIBNOSTR_BUILD_TESTS)
   target_link_libraries(test_store_txn_audit PRIVATE nostr OpenSSL::Crypto ${SECP256K1_LIB})
   target_include_directories(test_store_txn_audit PRIVATE include)
   add_test(NAME libnostr_store_txn_audit COMMAND test_store_txn_audit)
+
+  find_package(Threads REQUIRED)
+  add_executable(test_crypto_audit tests/test_crypto_audit.c)
+  target_link_libraries(test_crypto_audit PRIVATE nostr OpenSSL::Crypto ${SECP256K1_LIB} Threads::Threads)
+  target_include_directories(test_crypto_audit PRIVATE include)
+  add_test(NAME libnostr_crypto_audit COMMAND test_crypto_audit)
 endif()
 
 # Install rules

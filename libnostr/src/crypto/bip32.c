@@ -72,7 +72,8 @@ static int add_mod_n(const unsigned char a32[32], const unsigned char b32[32], u
   if (BN_bn2binpad(r, out32, 32) != 32) goto done;
   ok = 1;
  done:
-  BN_free(a); BN_free(b); BN_free(n); BN_free(r); BN_CTX_free(ctx);
+  /* a (kpar), b (IL) and r (child key) are secret scalars: clear before free. */
+  BN_clear_free(a); BN_clear_free(b); BN_free(n); BN_clear_free(r); BN_CTX_free(ctx);
   return ok;
 }
 
@@ -87,12 +88,21 @@ static int hmac_sha512(const unsigned char *key, size_t key_len,
 
 bool nostr_bip32_priv_from_master_seed(const uint8_t *seed, size_t seed_len, const uint32_t *path, size_t path_len, uint8_t out32[32]) {
   if (!seed || !out32) return false;
+  bool ok = false;
+  /* All of these hold secret material at some point during derivation and are
+   * zeroized on every exit via the single `cleanup` path below:
+   *   I    - HMAC-SHA512 output (IL || IR)
+   *   k    - current private key scalar (kpar / child)
+   *   c    - current chain code
+   *   data - HMAC input; in the hardened case it embeds ser256(kpar). */
   unsigned char I[64];
-  /* Master key: HMAC_SHA512("Bitcoin seed", seed) */
-  static const unsigned char BITS_SEED[] = "Bitcoin seed";
-  if (!hmac_sha512(BITS_SEED, sizeof("Bitcoin seed")-1, seed, seed_len, I)) return false;
   unsigned char k[32];
   unsigned char c[32];
+  unsigned char data[33 + 4];
+
+  /* Master key: HMAC_SHA512("Bitcoin seed", seed) */
+  static const unsigned char BITS_SEED[] = "Bitcoin seed";
+  if (!hmac_sha512(BITS_SEED, sizeof("Bitcoin seed")-1, seed, seed_len, I)) goto cleanup;
   memcpy(k, I, 32);
   memcpy(c, I+32, 32);
 
@@ -100,14 +110,14 @@ bool nostr_bip32_priv_from_master_seed(const uint8_t *seed, size_t seed_len, con
   {
     BIGNUM *n = BN_bin2bn(SECP256K1_N, 32, NULL);
     BIGNUM *il = BN_bin2bn(k, 32, NULL);
-    int ok = n && il && bn_in_range_1_to_n_1(il, n);
-    if (!ok) { BN_free(n); BN_free(il); return false; }
-    BN_free(n); BN_free(il);
+    int in_range = n && il && bn_in_range_1_to_n_1(il, n);
+    /* il is derived from the secret master key: clear it. */
+    BN_free(n); BN_clear_free(il);
+    if (!in_range) goto cleanup;
   }
 
   for (size_t i = 0; i < path_len; ++i) {
     uint32_t idx = path[i];
-    unsigned char data[33 + 4];
     size_t data_len = 0;
     if (idx & 0x80000000u) {
       /* hardened: 0x00 || ser256(kpar) || ser32(i) */
@@ -118,24 +128,30 @@ bool nostr_bip32_priv_from_master_seed(const uint8_t *seed, size_t seed_len, con
     } else {
       /* non-hardened: serP(point(kpar)) || ser32(i) */
       secp256k1_context *ctx = secp_ctx();
-      if (!ctx) return false;
+      if (!ctx) goto cleanup;
       secp256k1_pubkey pk;
-      if (!secp256k1_ec_pubkey_create(ctx, &pk, k)) { return false; }
+      if (!secp256k1_ec_pubkey_create(ctx, &pk, k)) goto cleanup;
       size_t pub_len = 33;
       unsigned char pub[33];
-      if (!secp256k1_ec_pubkey_serialize(ctx, pub, &pub_len, &pk, SECP256K1_EC_COMPRESSED)) { return false; }
+      if (!secp256k1_ec_pubkey_serialize(ctx, pub, &pub_len, &pk, SECP256K1_EC_COMPRESSED)) goto cleanup;
       memcpy(data, pub, 33);
       ser32(idx, &data[33]);
       data_len = 33 + 4;
     }
-    if (!hmac_sha512(c, 32, data, data_len, I)) return false;
+    if (!hmac_sha512(c, 32, data, data_len, I)) goto cleanup;
     /* k' = (IL + k) mod n; c' = IR */
-    if (!add_mod_n(k, I, k)) return false; /* I[0..31] is IL */
+    if (!add_mod_n(k, I, k)) goto cleanup; /* I[0..31] is IL */
     memcpy(c, I+32, 32);
   }
   memcpy(out32, k, 32);
+  ok = true;
+
+ cleanup:
+  /* Zeroize all sensitive stack material on every return path (success or
+   * error) so private key bytes, chain code and HMAC output do not linger. */
   OPENSSL_cleanse(I, sizeof(I));
-  OPENSSL_cleanse((void*)k, sizeof(k));
-  OPENSSL_cleanse((void*)c, sizeof(c));
-  return true;
+  OPENSSL_cleanse(k, sizeof(k));
+  OPENSSL_cleanse(c, sizeof(c));
+  OPENSSL_cleanse(data, sizeof(data));
+  return ok;
 }

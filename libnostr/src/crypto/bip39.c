@@ -4,6 +4,7 @@
 #include <openssl/sha.h>
 #include <openssl/crypto.h>
 #include <ctype.h>
+#include <pthread.h>
 #ifdef NOSTR_HAVE_GLIB
 #include <glib.h>
 #endif
@@ -14,14 +15,16 @@
 extern const char nostr_bip39_en_blob[];
 extern const size_t nostr_bip39_en_blob_len;
 
-/* Parsed word pointers (2048) initialized on first use */
+/* Parsed word pointers (2048) initialized on first use.
+ * Initialization is guarded by pthread_once so concurrent generate/validate
+ * callers can never observe a partially-populated table (a data race that
+ * previously risked wrong validation or a crash). */
 static const char *g_words[2048];
-static int g_words_init = 0;
+static pthread_once_t g_words_once = PTHREAD_ONCE_INIT;
 /* Forward decls */
 static int allowed_word_count(int n);
 
-static void bip39_init_words(void) {
-  if (g_words_init) return;
+static void bip39_init_words_once(void) {
   size_t i = 0;
   const char *p = nostr_bip39_en_blob;
   const char *end = nostr_bip39_en_blob + nostr_bip39_en_blob_len;
@@ -31,7 +34,10 @@ static void bip39_init_words(void) {
     if (!nl) break;
     p = nl + 1;
   }
-  g_words_init = 1;
+}
+
+static void bip39_init_words(void) {
+  (void)pthread_once(&g_words_once, bip39_init_words_once);
 }
 
 /* Generate a BIP-39 English mnemonic with checksum. Caller must free(). */
