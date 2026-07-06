@@ -46,11 +46,31 @@ static void *accept_loop(void *arg) {
       usleep(10000);
       continue;
     }
-    // Handshake: send banner and read client hello (ignore content for now)
+    // Handshake: send banner and read client hello.
     const char *banner = "{\"name\":\"nostr-signer\",\"supported_methods\":[\"get_public_key\",\"sign_event\",\"nip44_encrypt\",\"nip44_decrypt\",\"list_public_keys\"]}";
     (void)nip5f_write_frame(cfd, banner, strlen(banner));
     char *hello = NULL; size_t hlen = 0;
-    (void)nip5f_read_frame(cfd, &hello, &hlen);
+    if (nip5f_read_frame(cfd, &hello, &hlen) != 0) {
+      if (hello) free(hello);
+      close(cfd);
+      continue;
+    }
+    // Bearer-token enforcement (backward compatible):
+    // If the SERVER has NOSTR_SIGNER_AUTH_TOKEN configured (non-empty), the client
+    // hello MUST carry a matching "auth_token" or the connection is rejected.
+    // If no server token is configured, enforcement is OFF (gnostr-signer relies on this).
+    const char *srv_tok = getenv("NOSTR_SIGNER_AUTH_TOKEN");
+    if (srv_tok && *srv_tok) {
+      char *client_tok = NULL;
+      if (hello) (void)nostr_json_get_string(hello, "auth_token", &client_tok);
+      int authorized = (client_tok && strcmp(client_tok, srv_tok) == 0);
+      if (client_tok) free(client_tok);
+      if (!authorized) {
+        if (hello) free(hello);
+        close(cfd);
+        continue;
+      }
+    }
     if (hello) free(hello);
     // Spawn a detached thread to handle requests for this connection
     pthread_t thr;

@@ -7,6 +7,13 @@
 
 #define NIP5F_MAX_FRAME (1024 * 1024)
 
+/* Avoid SIGPIPE on write to a peer that closed (e.g. after auth rejection).
+ * Linux honors MSG_NOSIGNAL on send(); on platforms that lack it, callers set
+ * SO_NOSIGPIPE on the socket instead. */
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+
 static int read_n(int fd, void *buf, size_t n) {
   uint8_t *p = (uint8_t *)buf;
   size_t got = 0;
@@ -26,7 +33,7 @@ static int write_n(int fd, const void *buf, size_t n) {
   const uint8_t *p = (const uint8_t *)buf;
   size_t put = 0;
   while (put < n) {
-    ssize_t w = send(fd, p + put, n - put, 0);
+    ssize_t w = send(fd, p + put, n - put, MSG_NOSIGNAL);
     if (w <= 0) {
       if (w < 0 && errno == EINTR) continue;
       return -1;

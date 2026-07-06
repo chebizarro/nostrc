@@ -121,6 +121,10 @@ int nostr_nip5f_client_connect(const char *socket_path, void **out_conn) {
   if (!resolved) { free(c); return -1; }
   int fd = socket(AF_UNIX, SOCK_STREAM, 0);
   if (fd < 0) { free(resolved); free(c); return -1; }
+#ifdef SO_NOSIGPIPE
+  /* macOS/BSD: avoid SIGPIPE if the server rejects auth and closes the fd */
+  { int on = 1; (void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on)); }
+#endif
   struct sockaddr_un addr; memset(&addr, 0, sizeof(addr)); addr.sun_family = AF_UNIX;
   size_t maxlen = sizeof(addr.sun_path)-1;
   strncpy(addr.sun_path, resolved, maxlen); addr.sun_path[maxlen] = '\0';
@@ -132,8 +136,28 @@ int nostr_nip5f_client_connect(const char *socket_path, void **out_conn) {
   char *banner = NULL; size_t blen = 0;
   if (nip5f_read_frame(fd, &banner, &blen) != 0) { close(fd); free(c); return -1; }
   if (banner) free(banner);
-  const char *hello = "{\"name\":\"nostr-client\",\"version\":1}";
-  if (nip5f_write_frame(fd, hello, strlen(hello)) != 0) { close(fd); free(c); return -1; }
+  /* Present a bearer token in the hello when one is configured on the CLIENT side.
+   * Prefer NOSTR_SIGNER_CLIENT_AUTH_TOKEN so a client can hold a token distinct from
+   * (or absent when) the server's NOSTR_SIGNER_AUTH_TOKEN; fall back to
+   * NOSTR_SIGNER_AUTH_TOKEN for the common single-env case. */
+  const char *ctok = getenv("NOSTR_SIGNER_CLIENT_AUTH_TOKEN");
+  if (!ctok || !*ctok) ctok = getenv("NOSTR_SIGNER_AUTH_TOKEN");
+  char *hello_buf = NULL;
+  if (ctok && *ctok) {
+    char *tok_json = json_str(ctok); /* returns a quoted+escaped JSON string */
+    if (!tok_json) { close(fd); free(c); return -1; }
+    int need = snprintf(NULL, 0, "{\"name\":\"nostr-client\",\"version\":1,\"auth_token\":%s}", tok_json);
+    if (need < 0) { free(tok_json); close(fd); free(c); return -1; }
+    hello_buf = (char*)malloc((size_t)need + 1);
+    if (!hello_buf) { free(tok_json); close(fd); free(c); return -1; }
+    snprintf(hello_buf, (size_t)need + 1, "{\"name\":\"nostr-client\",\"version\":1,\"auth_token\":%s}", tok_json);
+    free(tok_json);
+  } else {
+    hello_buf = strdup("{\"name\":\"nostr-client\",\"version\":1}");
+    if (!hello_buf) { close(fd); free(c); return -1; }
+  }
+  if (nip5f_write_frame(fd, hello_buf, strlen(hello_buf)) != 0) { free(hello_buf); close(fd); free(c); return -1; }
+  free(hello_buf);
   c->fd = fd;
   c->next_id = 1;
   *out_conn = c;

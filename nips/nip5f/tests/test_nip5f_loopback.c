@@ -217,9 +217,12 @@ static int test_with_authorized_client(void) {
   if (!sk) { fprintf(stderr, "failed to gen sk\n"); return 1; }
   setenv("NOSTR_SIGNER_SECKEY_HEX", sk, 1);
   
-  /* Set a known auth token for this test */
+  /* Server requires this token; client presents a MATCHING token so it is authorized.
+   * The client token is supplied via a CLIENT-side env var so this genuinely exercises
+   * the same token-matching path used to reject an unauthorized client in Test 3. */
   const char *test_token = "test_auth_token_12345";
   setenv("NOSTR_SIGNER_AUTH_TOKEN", test_token, 1);
+  setenv("NOSTR_SIGNER_CLIENT_AUTH_TOKEN", test_token, 1);
   
   char *expected_pub = nostr_key_get_public(sk);
   if (!expected_pub) { fprintf(stderr, "failed to derive pk\n"); free(sk); return 1; }
@@ -239,6 +242,7 @@ static int test_with_authorized_client(void) {
     nostr_nip5f_server_stop(srv);
     free(sk); free(expected_pub); free(sock_path);
     unsetenv("NOSTR_SIGNER_AUTH_TOKEN");
+    unsetenv("NOSTR_SIGNER_CLIENT_AUTH_TOKEN");
     return 1;
   }
 
@@ -263,6 +267,7 @@ static int test_with_authorized_client(void) {
   free(sk);
   unsetenv("NOSTR_SIGNER_SECKEY_HEX");
   unsetenv("NOSTR_SIGNER_AUTH_TOKEN");
+  unsetenv("NOSTR_SIGNER_CLIENT_AUTH_TOKEN");
   return 0;
 
 auth_fail:
@@ -273,6 +278,7 @@ auth_fail:
   free(sk);
   unsetenv("NOSTR_SIGNER_SECKEY_HEX");
   unsetenv("NOSTR_SIGNER_AUTH_TOKEN");
+  unsetenv("NOSTR_SIGNER_CLIENT_AUTH_TOKEN");
   return 1;
 }
 
@@ -284,13 +290,19 @@ static int test_with_unauthorized_client(void) {
   if (!sk) return 1;
   setenv("NOSTR_SIGNER_SECKEY_HEX", sk, 1);
   
-  /* Set required auth token on server */
+  /* Server requires "correct_token". The client presents a DIFFERENT token via the
+   * client-side env var, so enforcement must reject it. (Both endpoints share one
+   * process env, so the client token MUST come from a distinct variable to model an
+   * unauthorized client.) */
   setenv("NOSTR_SIGNER_AUTH_TOKEN", "correct_token", 1);
+  setenv("NOSTR_SIGNER_CLIENT_AUTH_TOKEN", "wrong_token", 1);
 
   void *srv = NULL;
   char *sock_path = unique_sock_path();
   if (nostr_nip5f_server_start(sock_path, &srv) != 0) {
     free(sk); free(sock_path);
+    unsetenv("NOSTR_SIGNER_AUTH_TOKEN");
+    unsetenv("NOSTR_SIGNER_CLIENT_AUTH_TOKEN");
     return 1;
   }
 
@@ -315,6 +327,7 @@ static int test_with_unauthorized_client(void) {
       free(sk);
       unsetenv("NOSTR_SIGNER_SECKEY_HEX");
       unsetenv("NOSTR_SIGNER_AUTH_TOKEN");
+      unsetenv("NOSTR_SIGNER_CLIENT_AUTH_TOKEN");
       return 1;  /* Test failed - auth should have rejected */
     } else {
       /* Operation failed - this is CORRECT behavior */
@@ -333,5 +346,6 @@ static int test_with_unauthorized_client(void) {
   free(sk);
   unsetenv("NOSTR_SIGNER_SECKEY_HEX");
   unsetenv("NOSTR_SIGNER_AUTH_TOKEN");
+  unsetenv("NOSTR_SIGNER_CLIENT_AUTH_TOKEN");
   return 0;  /* Test passed - unauthorized access was blocked */
 }
