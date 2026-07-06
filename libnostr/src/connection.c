@@ -14,6 +14,8 @@
 #include <string.h>
 #include <openssl/ssl.h>
 
+#define NOSTR_CONNECT_RESULT_TIMEOUT_MS 30000U
+
 #ifndef LWS_PROTOCOL_LIST_TERM
 #define LWS_PROTOCOL_LIST_TERM { NULL, NULL, 0, 0, 0, NULL, 0 }
 #endif
@@ -616,9 +618,39 @@ typedef struct {
     int use_ssl;
     NostrConnection *conn;   /* pre-allocated by caller */
     GoChannel *result;        /* capacity-1 channel: carries (intptr_t)1 ok, 0 fail */
+    atomic_int refs;          /* caller + queued/service ownership */
+    atomic_int cancelled;     /* caller timed out or shutdown cancelled request */
+    atomic_int started;       /* service thread has dequeued and may touch conn */
 } ConnectionRequest;
 
 static GoChannel *g_conn_request_queue = NULL; /* capacity 32, created under g_lws_mutex */
+
+static void connection_request_ref(ConnectionRequest *req) {
+    if (req) atomic_fetch_add_explicit(&req->refs, 1, memory_order_relaxed);
+}
+
+static void connection_request_unref(ConnectionRequest *req) {
+    if (!req) return;
+    if (atomic_fetch_sub_explicit(&req->refs, 1, memory_order_acq_rel) == 1) {
+        if (req->result) {
+            go_channel_close(req->result);
+            go_channel_free(req->result);
+        }
+        free(req);
+    }
+}
+
+static void connection_request_cancel(ConnectionRequest *req) {
+    if (req) atomic_store_explicit(&req->cancelled, 1, memory_order_release);
+}
+
+static int connection_request_is_cancelled(ConnectionRequest *req) {
+    return req && atomic_load_explicit(&req->cancelled, memory_order_acquire) != 0;
+}
+
+static int connection_request_started(ConnectionRequest *req) {
+    return req && atomic_load_explicit(&req->started, memory_order_acquire) != 0;
+}
 
 /* Must hold g_lws_mutex when calling.
  * Either or both of conn/priv may be NULL. */
@@ -666,9 +698,10 @@ static void deferred_cleanup_process(void) {
  * lws_client_connect_via_info() without blocking other mutex users. */
 static void service_loop_process_connect_request(ConnectionRequest *req,
                                                   struct lws_context *ctx) {
-    if (!req || !req->conn || !req->conn->priv) {
+    if (req) atomic_store_explicit(&req->started, 1, memory_order_release);
+    if (!req || connection_request_is_cancelled(req) || !req->conn || !req->conn->priv) {
         if (req && req->result) {
-            go_channel_send(req->result, (void *)(intptr_t)0);
+            (void)go_channel_send(req->result, (void *)(intptr_t)0);
         }
         return;
     }
@@ -710,9 +743,10 @@ static void service_loop_process_connect_request(ConnectionRequest *req,
                 (double)nostr_limit_max_frames_per_sec());
     }
 
-    /* Signal the blocked caller */
-    go_channel_send(req->result, (void *)ok);
-    /* Caller owns req and will free it + the result channel */
+    /* Signal the blocked caller.  If the caller timed out, the request still
+     * holds the queued/service reference until this function returns, so the
+     * result channel remains valid and this non-blocking capacity-1 send is safe. */
+    (void)go_channel_send(req->result, (void *)ok);
 }
 
 static void *lws_service_loop(void *arg) {
@@ -756,6 +790,7 @@ static void *lws_service_loop(void *arg) {
             ConnectionRequest *req = NULL;
             if (go_channel_try_receive(queue, (void **)&req) == 0 && req) {
                 service_loop_process_connect_request(req, ctx);
+                connection_request_unref(req); /* drop queued/service ownership */
             }
         }
 
@@ -889,7 +924,21 @@ NostrConnection *nostr_connection_new(const char *url) {
         }
         g_lws_running = 1;
         g_lws_refcount = 0; /* will increment below */
-        pthread_create(&g_lws_service_thread, NULL, lws_service_loop, NULL);
+        int thread_rc = pthread_create(&g_lws_service_thread, NULL, lws_service_loop, NULL);
+        if (thread_rc != 0) {
+            struct lws_context *failed_ctx = g_lws_context;
+            g_lws_context = NULL;
+            g_lws_running = 0;
+            pthread_mutex_unlock(&g_lws_mutex);
+            lws_context_destroy(failed_ctx);
+            go_channel_close(conn->recv_channel);
+            go_channel_free(conn->recv_channel);
+            go_channel_close(conn->send_channel);
+            go_channel_free(conn->send_channel);
+            free(priv);
+            free(conn);
+            return NULL;
+        }
     }
     if (!g_conn_request_queue) {
         g_conn_request_queue = go_channel_create(32);
@@ -907,13 +956,24 @@ NostrConnection *nostr_connection_new(const char *url) {
                  &req->port, req->path, sizeof req->path);
     req->conn = conn;
     req->result = go_channel_create(1);
-    if (!req->result) { free(req); goto fail_decref; }
+    atomic_init(&req->refs, 1);      /* caller ownership */
+    atomic_init(&req->cancelled, 0);
+    atomic_init(&req->started, 0);
+    if (!req->result) { connection_request_unref(req); goto fail_decref; }
 
-    if (go_channel_send(g_conn_request_queue, req) != 0) {
-        /* Queue closed (shutting down) */
-        go_channel_close(req->result);
-        go_channel_free(req->result);
-        free(req);
+    connection_request_ref(req);     /* queued/service ownership */
+    GoSelectCase enqueue_case = {
+        .op = GO_SELECT_SEND,
+        .chan = g_conn_request_queue,
+        .value = req,
+    };
+    GoSelectResult enqueue_sel = go_select_timeout(&enqueue_case, 1,
+                                                   NOSTR_CONNECT_RESULT_TIMEOUT_MS);
+    if (enqueue_sel.selected_case < 0 || !enqueue_sel.ok) {
+        /* Queue full/stalled or closed (shutting down). */
+        connection_request_cancel(req);
+        connection_request_unref(req); /* queued/service ownership was not transferred */
+        connection_request_unref(req); /* caller ownership */
         goto fail_decref;
     }
 
@@ -922,19 +982,33 @@ NostrConnection *nostr_connection_new(const char *url) {
     if (g_lws_context) lws_cancel_service(g_lws_context);
     pthread_mutex_unlock(&g_lws_mutex);
 
-    /* Block until the LWS service thread completes the handshake.
-     * The underlying causes of service-thread stalls (recv_channel overflow,
-     * connection duplication) are now fixed:
-     *   - recv_channel 2048 (nostrc-kw9r, 822c4a8f)
-     *   - shared relay registry eliminates duplicate connections (4569e9f1)
-     * so this should never hang in practice. */
+    /* Wait for the LWS service thread to initiate the connection, but do not
+     * block forever if the service loop dies or stalls.  On timeout we mark the
+     * request cancelled; the queued/service reference keeps req/result alive
+     * until the service loop either drains or skips it. */
     void *result_val = NULL;
-    go_channel_receive(req->result, &result_val);
+    GoSelectCase result_case = {
+        .op = GO_SELECT_RECEIVE,
+        .chan = req->result,
+        .recv_buf = &result_val,
+    };
+    GoSelectResult result_sel = go_select_timeout(&result_case, 1,
+                                                  NOSTR_CONNECT_RESULT_TIMEOUT_MS);
+    if (result_sel.selected_case < 0 || !result_sel.ok) {
+        connection_request_cancel(req);
+        if (connection_request_started(req)) {
+            /* The service thread may already be inside lws_client_connect_via_info()
+             * using req->conn/priv.  Do not free that connection underneath it;
+             * wait for its acknowledgement, which keeps the timeout path safe
+             * even though this rare in-flight case cannot be cancelled by us. */
+            (void)go_channel_receive(req->result, &result_val);
+        } else {
+            connection_request_unref(req); /* caller ownership */
+            goto fail_decref;
+        }
+    }
     intptr_t ok = (intptr_t)result_val;
-
-    go_channel_close(req->result);
-    go_channel_free(req->result);
-    free(req);
+    connection_request_unref(req); /* caller ownership */
 
     if (!ok) goto fail_decref;
 
@@ -965,7 +1039,9 @@ fail_decref:
             if (queue_to_drain) {
                 ConnectionRequest *pend = NULL;
                 while (go_channel_try_receive(queue_to_drain, (void **)&pend) == 0 && pend) {
-                    go_channel_send(pend->result, (void *)(intptr_t)0);
+                    connection_request_cancel(pend);
+                    (void)go_channel_send(pend->result, (void *)(intptr_t)0);
+                    connection_request_unref(pend);
                     pend = NULL;
                 }
                 go_channel_free(queue_to_drain);
@@ -1079,7 +1155,9 @@ void nostr_connection_close(NostrConnection *conn) {
             if (queue_to_drain) {
                 ConnectionRequest *pend = NULL;
                 while (go_channel_try_receive(queue_to_drain, (void **)&pend) == 0 && pend) {
-                    go_channel_send(pend->result, (void *)(intptr_t)0);
+                    connection_request_cancel(pend);
+                    (void)go_channel_send(pend->result, (void *)(intptr_t)0);
+                    connection_request_unref(pend);
                     pend = NULL;
                 }
                 go_channel_free(queue_to_drain);
@@ -1208,7 +1286,9 @@ void nostr_connection_write_message(NostrConnection *conn, GoContext *ctx, char 
     }
     nsync_mu_unlock(&conn->priv->mutex);
     if (!wsi_again) {
-        *err = new_error(1, "connection closed before write could schedule");
+        if (err) {
+            *err = new_error(1, "connection closed before write could schedule");
+        }
         return;
     }
 

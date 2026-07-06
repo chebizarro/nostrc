@@ -64,6 +64,12 @@ typedef struct {
     _Atomic uint64_t event_count;
 } OptimizedRelayChannels;
 
+static void free_websocket_message(WebSocketMessage *msg) {
+    if (!msg) return;
+    free(msg->data);
+    free(msg);
+}
+
 // Initialize performance parameters from environment
 static void init_perf_params(void) {
     if (env_cached) return;
@@ -154,6 +160,10 @@ static MessageBatch *create_batch(int capacity) {
     if (!batch) return NULL;
     
     batch->messages = calloc(capacity, sizeof(WebSocketMessage*));
+    if (!batch->messages) {
+        free(batch);
+        return NULL;
+    }
     batch->capacity = capacity;
     batch->count = 0;
     return batch;
@@ -163,8 +173,7 @@ static void free_batch(MessageBatch *batch) {
     if (!batch) return;
     for (int i = 0; i < batch->count; i++) {
         if (batch->messages[i]) {
-            free(batch->messages[i]->data);
-            free(batch->messages[i]);
+            free_websocket_message(batch->messages[i]);
         }
     }
     free(batch->messages);
@@ -208,8 +217,11 @@ static void process_envelope(NostrRelay *r, NostrEnvelope *envelope,
         NostrEventEnvelope *env = (NostrEventEnvelope *)envelope;
         atomic_fetch_add(&channels->event_count, 1);
         
-        NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions, 
+        nsync_mu_lock(&r->priv->mutex);
+        NostrSubscription *subscription = go_hash_map_get_int(r->subscriptions,
                                                               nostr_sub_id_to_serial(env->subscription_id));
+        if (subscription) nostr_subscription_ref(subscription);
+        nsync_mu_unlock(&r->priv->mutex);
         if (subscription && env->event) {
             // Check banned pubkeys
             int banned = 0;
@@ -239,8 +251,14 @@ static void process_envelope(NostrRelay *r, NostrEnvelope *envelope,
                 job->relay = r;
                 job->verified = false;
 
-                go_channel_send(channels->verify_queue, job);
-                env->event = NULL; // Ownership transferred
+                if (go_channel_send(channels->verify_queue, job) != 0) {
+                    nostr_event_free(job->event);
+                    env->event = NULL;
+                    free(job);
+                } else {
+                    env->event = NULL; // Ownership transferred
+                    subscription = NULL; // VerifyJob owns the subscription ref
+                }
             } else {
                 // Synchronous path (assume_valid or sync mode)
                 bool verified = r->assume_valid || nostr_event_check_signature(env->event);
@@ -257,6 +275,9 @@ static void process_envelope(NostrRelay *r, NostrEnvelope *envelope,
                     env->event = NULL;
                 }
             }
+        }
+        if (subscription) {
+            nostr_subscription_unref(subscription);
         }
         break;
     }
@@ -284,8 +305,9 @@ static void *event_worker(void *arg) {
     
     char buf[4096];
     uint64_t local_msg_count = 0;
+    OptimizedRelayChannels *channels = ctx ? ctx->channels : NULL;
     
-    while (1) {
+    while (ctx) {
         MessageBatch *batch = NULL;
         if (go_channel_receive(ctx->channels->event_chan, (void**)&batch) != 0) {
             break; // Channel closed
@@ -327,7 +349,10 @@ static void *event_worker(void *arg) {
         free_batch(batch);
     }
     
-    go_wait_group_done(ctx->channels->workers);
+    if (channels && channels->workers) {
+        go_wait_group_done(channels->workers);
+    }
+    free(ctx);
     return NULL;
 }
 
@@ -377,6 +402,11 @@ static void *batch_collector(void *arg) {
     } *ctx = arg;
 
     MessageBatch *current = create_batch(BATCH_SIZE);
+    if (!current) {
+        g_warning("Failed to allocate optimized relay message batch");
+        go_wait_group_done(ctx->channels->workers);
+        return NULL;
+    }
 
     while (1) {
         WebSocketMessage *msg = NULL;
@@ -395,8 +425,14 @@ static void *batch_collector(void *arg) {
             GoSelectResult sel = go_select_timeout(cases, 1, 5); /* 5ms window */
             if (sel.selected_case < 0) {
                 /* Timeout or closed — flush what we have */
-                go_channel_send(ctx->output, current);
+                if (go_channel_send(ctx->output, current) != 0) {
+                    free_batch(current);
+                }
                 current = create_batch(BATCH_SIZE);
+                if (!current) {
+                    g_warning("Failed to allocate optimized relay message batch");
+                    break;
+                }
                 continue;
             }
         }
@@ -415,26 +451,28 @@ static void *batch_collector(void *arg) {
 
             /* Send full batch immediately */
             if (current->count >= BATCH_SIZE) {
-                go_channel_send(ctx->output, current);
+                if (go_channel_send(ctx->output, current) != 0) {
+                    free_batch(current);
+                }
                 current = create_batch(BATCH_SIZE);
+                if (!current) {
+                    g_warning("Failed to allocate optimized relay message batch");
+                    break;
+                }
             }
         }
     }
 
     /* Flush remaining — if send fails (channel closed), free the batch to avoid leak */
-    if (current->count > 0) {
-        if (go_channel_send(ctx->output, current) != 0) {
-            /* Output channel closed — free batch and its messages */
-            for (size_t i = 0; i < current->count; i++) {
-                if (current->messages[i]) {
-                    free(current->messages[i]->data);
-                    free(current->messages[i]);
-                }
+    if (current) {
+        if (current->count > 0) {
+            if (go_channel_send(ctx->output, current) != 0) {
+                /* Output channel closed — free batch and its messages */
+                free_batch(current);
             }
+        } else {
             free_batch(current);
         }
-    } else {
-        free_batch(current);
     }
 
     go_wait_group_done(ctx->channels->workers);
@@ -466,6 +504,9 @@ static void *verification_result_processor(void *arg) {
             nostr_event_free(job->event);
         }
         
+        if (job->subscription) {
+            nostr_subscription_unref(job->subscription);
+        }
         free(job);
     }
     
@@ -545,6 +586,10 @@ void *optimized_message_loop(void *arg) {
     char buf[4096];
     Error *err = NULL;
     MessageBatch *event_batch = create_batch(BATCH_SIZE);
+    if (!event_batch) {
+        g_warning("Failed to allocate optimized relay event batch");
+        goto cleanup;
+    }
     
     while (1) {
         nsync_mu_lock(&r->priv->mutex);
@@ -580,19 +625,28 @@ void *optimized_message_loop(void *arg) {
         // Route based on message type
         if (is_control_message(buf)) {
             // Priority channel for control messages
-            go_channel_send(channels.control_chan, msg);
+            if (go_channel_send(channels.control_chan, msg) != 0) {
+                free_websocket_message(msg);
+            }
         } else {
             // Add to event batch
             event_batch->messages[event_batch->count++] = msg;
             
             // Send batch when full
             if (event_batch->count >= BATCH_SIZE) {
-                go_channel_send(channels.event_chan, event_batch);
+                if (go_channel_send(channels.event_chan, event_batch) != 0) {
+                    free_batch(event_batch);
+                }
                 event_batch = create_batch(BATCH_SIZE);
+                if (!event_batch) {
+                    g_warning("Failed to allocate optimized relay event batch");
+                    break;
+                }
             }
         }
     }
     
+cleanup:
     // Cleanup
     free_batch(event_batch);
     
@@ -615,8 +669,10 @@ void *optimized_message_loop(void *arg) {
     free(channels.workers);
     
     // Print final stats
-    fprintf(stderr, "[PERF] Final stats: messages=%lu eose=%lu events=%lu\n",
-            channels.msg_count, channels.eose_count, channels.event_count);
+    fprintf(stderr, "[PERF] Final stats: messages=%llu eose=%llu events=%llu\n",
+            (unsigned long long)channels.msg_count,
+            (unsigned long long)channels.eose_count,
+            (unsigned long long)channels.event_count);
     
     go_wait_group_done(&r->priv->workers);
     return NULL;

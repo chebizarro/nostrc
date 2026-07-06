@@ -632,6 +632,32 @@ void nostr_relay_free(NostrRelay *relay) {
     nostr_relay_unref(relay);
 }
 
+static void relay_discard_failed_connection(NostrRelay *relay) {
+    if (!relay) return;
+
+    NostrConnection *conn = relay->connection;
+    relay->connection = NULL;
+    if (!conn) return;
+
+    if (conn->recv_channel) go_channel_close(conn->recv_channel);
+    if (conn->send_channel) go_channel_close(conn->send_channel);
+
+    GoChannel *recv_ch = NULL;
+    GoChannel *send_ch = NULL;
+    if (conn->priv) {
+        nsync_mu_lock(&conn->priv->mutex);
+        recv_ch = conn->recv_channel;
+        send_ch = conn->send_channel;
+        conn->recv_channel = NULL;
+        conn->send_channel = NULL;
+        nsync_mu_unlock(&conn->priv->mutex);
+    }
+
+    nostr_connection_close(conn);
+    if (recv_ch) go_channel_free(recv_ch);
+    if (send_ch) go_channel_free(send_ch);
+}
+
 bool nostr_relay_connect(NostrRelay *relay, Error **err) {
     if (!relay) {
         if (err) *err = new_error(1, "relay must be initialized with a call to nostr_relay_new()");
@@ -671,6 +697,7 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
      * the context gets freed before the worker can ref it. */
     GoContext *ctx = relay->priv->connection_context;
     if (!ctx) {
+        relay_discard_failed_connection(relay);
         relay_set_state(relay, NOSTR_RELAY_STATE_DISCONNECTED);
         if (err) *err = new_error(1, "no connection context");
         return false;
@@ -684,8 +711,11 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
     NostrRelayWorkerArg *write_arg = malloc(sizeof(NostrRelayWorkerArg));
     NostrRelayWorkerArg *loop_arg = malloc(sizeof(NostrRelayWorkerArg));
     if (!write_arg || !loop_arg) {
-        if (write_arg) { go_context_unref(ctx); free(write_arg); }
-        if (loop_arg) { go_context_unref(ctx); free(loop_arg); }
+        go_context_unref(ctx);
+        go_context_unref(ctx);
+        free(write_arg);
+        free(loop_arg);
+        relay_discard_failed_connection(relay);
         relay_set_state(relay, NOSTR_RELAY_STATE_DISCONNECTED);
         if (err) *err = new_error(1, "failed to allocate worker args");
         return false;
