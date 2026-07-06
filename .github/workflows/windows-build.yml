@@ -153,6 +153,7 @@ jobs:
             -DBUILD_TESTING=OFF \
             -DBUILD_TESTING_FRAMEWORK=OFF \
             -DBUILD_SIGNER_TESTS=OFF \
+            -DLIBNOSTR_BUILD_TESTS=OFF \
             -DBUILD_NATIVE_HOST=ON \
             -DBUILD_WINDOWS_INSTALLER=ON \
             -DBUILD_LIBMARMOT=OFF \
