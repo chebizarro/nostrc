@@ -308,6 +308,11 @@ if(LIBNOSTR_BUILD_TESTS)
   target_link_libraries(test_networking_audit PRIVATE nostr OpenSSL::Crypto ${SECP256K1_LIB})
   target_include_directories(test_networking_audit PRIVATE include src)
   add_test(NAME libnostr_networking_audit COMMAND test_networking_audit)
+
+  add_executable(test_store_txn_audit tests/test_store_txn_audit.c)
+  target_link_libraries(test_store_txn_audit PRIVATE nostr OpenSSL::Crypto ${SECP256K1_LIB})
+  target_include_directories(test_store_txn_audit PRIVATE include)
+  add_test(NAME libnostr_store_txn_audit COMMAND test_store_txn_audit)
 endif()
 
 # Install rules

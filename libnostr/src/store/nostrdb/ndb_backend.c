@@ -38,34 +38,157 @@
  * signal handler calls begin_query while outer code's transaction is active),
  * end_query now only decrements the refcount instead of freeing. The transaction
  * is only freed when refcount reaches 0. */
-typedef struct {
+typedef struct tls_txn_t {
+    struct ndb *db;         /* Owning nostrdb handle for this cached txn */
     struct ndb_txn *txn;
     int refcount;           /* Number of active begin_query calls using this txn */
     time_t last_used;
+    struct tls_txn_t *next; /* Per-thread cache entries keyed by db */
 } tls_txn_t;
+
+typedef struct live_ndb_handle_t {
+    struct ndb *db;
+    struct live_ndb_handle_t *next;
+} live_ndb_handle_t;
 
 static pthread_key_t tls_txn_key;
 static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
-/* nostrc-uaf1: Atomic flag to prevent TLS destructors from accessing ndb
- * after ndb_destroy has freed the LMDB environment. Worker threads from
- * GLib's thread pool may exit after shutdown, triggering their TLS
- * destructors — which would UAF the freed MDB_env. */
-static atomic_bool tls_ndb_alive = false;
+static void tls_init(void);
+
+/* nostrc-uaf1 / nostrc-mrj: TLS destructors can run after a store is closed.
+ * Track live nostrdb handles individually instead of using one process-global
+ * alive bit, so closing store B does not make store A's TLS cleanup leak its
+ * reader txn, while destructors still skip ndb_end_query for the closed handle. */
+static pthread_mutex_t live_ndb_mutex = PTHREAD_MUTEX_INITIALIZER;
+static live_ndb_handle_t *live_ndb_handles = NULL;
+
+static int ndb_handle_is_live_locked(struct ndb *db)
+{
+    for (live_ndb_handle_t *it = live_ndb_handles; it; it = it->next) {
+        if (it->db == db) return 1;
+    }
+    return 0;
+}
+
+static int ndb_handle_register(struct ndb *db)
+{
+    if (!db) return 0;
+
+    live_ndb_handle_t *node = (live_ndb_handle_t *)calloc(1, sizeof(*node));
+    if (!node) return 0;
+    node->db = db;
+
+    pthread_mutex_lock(&live_ndb_mutex);
+    if (ndb_handle_is_live_locked(db)) {
+        pthread_mutex_unlock(&live_ndb_mutex);
+        free(node);
+        return 1;
+    }
+    node->next = live_ndb_handles;
+    live_ndb_handles = node;
+    pthread_mutex_unlock(&live_ndb_mutex);
+    return 1;
+}
+
+static void ndb_handle_unregister(struct ndb *db)
+{
+    if (!db) return;
+
+    live_ndb_handle_t *removed = NULL;
+    pthread_mutex_lock(&live_ndb_mutex);
+    live_ndb_handle_t **link = &live_ndb_handles;
+    while (*link) {
+        if ((*link)->db == db) {
+            removed = *link;
+            *link = removed->next;
+            break;
+        }
+        link = &(*link)->next;
+    }
+    pthread_mutex_unlock(&live_ndb_mutex);
+    free(removed);
+}
+
+static int ndb_end_query_if_handle_live(struct ndb *db, struct ndb_txn *txn)
+{
+    if (!db || !txn) return 0;
+
+    int ok = 0;
+    pthread_mutex_lock(&live_ndb_mutex);
+    if (ndb_handle_is_live_locked(db)) {
+        /* Hold the live-handle mutex while ending the reader txn so close()
+         * cannot unregister/destroy this handle between the liveness check and
+         * ndb_end_query(). */
+        ok = ndb_end_query(txn);
+    }
+    pthread_mutex_unlock(&live_ndb_mutex);
+    return ok;
+}
+
+static tls_txn_t *tls_find_for_db(tls_txn_t *head, struct ndb *db)
+{
+    for (tls_txn_t *it = head; it; it = it->next) {
+        if (it->db == db) return it;
+    }
+    return NULL;
+}
+
+static tls_txn_t *tls_find_for_txn(tls_txn_t *head, struct ndb_txn *txn)
+{
+    for (tls_txn_t *it = head; it; it = it->next) {
+        if (it->txn == txn) return it;
+    }
+    return NULL;
+}
+
+static tls_txn_t *tls_ensure_for_db(struct ndb *db)
+{
+    tls_txn_t *head = (tls_txn_t *)pthread_getspecific(tls_txn_key);
+    tls_txn_t *entry = tls_find_for_db(head, db);
+    if (entry) return entry;
+
+    entry = (tls_txn_t *)calloc(1, sizeof(*entry));
+    if (!entry) return NULL;
+    entry->db = db;
+
+    if (!head) {
+        if (pthread_setspecific(tls_txn_key, entry) != 0) {
+            free(entry);
+            return NULL;
+        }
+    } else {
+        entry->next = head->next;
+        head->next = entry;
+    }
+    return entry;
+}
+
+static void tls_close_inactive_for_db(struct ndb *db)
+{
+    if (!db) return;
+    pthread_once(&tls_init_once, tls_init);
+
+    tls_txn_t *tls = tls_find_for_db((tls_txn_t *)pthread_getspecific(tls_txn_key), db);
+    if (tls && tls->txn && tls->refcount == 0) {
+        ndb_end_query_if_handle_live(tls->db, tls->txn);
+        free(tls->txn);
+        tls->txn = NULL;
+        tls->last_used = 0;
+    }
+}
 
 /* Cleanup function for thread-local transactions */
 static void tls_txn_destructor(void *data)
 {
     tls_txn_t *tls = (tls_txn_t*)data;
-    if (tls) {
+    while (tls) {
+        tls_txn_t *next = tls->next;
         if (tls->txn) {
-            /* Only end the LMDB transaction if the database is still alive.
-             * After ndb_destroy, the MDB_env is freed — calling ndb_end_query
-             * would be a use-after-free. Just free the txn struct. */
-            if (atomic_load(&tls_ndb_alive))
-                ndb_end_query(tls->txn);
+            ndb_end_query_if_handle_live(tls->db, tls->txn);
             free(tls->txn);
         }
         free(tls);
+        tls = next;
     }
 }
 
@@ -73,7 +196,6 @@ static void tls_txn_destructor(void *data)
 static void tls_init(void)
 {
     pthread_key_create(&tls_txn_key, tls_txn_destructor);
-    atomic_store(&tls_ndb_alive, true);
 }
 
 /* very small helpers to parse minimal JSON-like key/values without deps */
@@ -187,6 +309,13 @@ static int ln_ndb_open(ln_store **out, const char *path, const char *opts_json)
     return LN_ERR_DB_OPEN;
   }
 
+  if (!ndb_handle_register(db)) {
+    ndb_destroy(db);
+    free(impl);
+    free(h);
+    return LN_ERR_OOM;
+  }
+
   impl->db = db;
   h->impl = impl;
   *out = h;
@@ -199,11 +328,13 @@ static void ln_ndb_close(ln_store *s)
   if (s->impl) {
     struct ln_ndb_impl *impl = (struct ln_ndb_impl *)s->impl;
     if (impl->db) {
-      /* nostrc-uaf1: Signal TLS destructors BEFORE freeing the LMDB env.
-       * Worker threads exiting after this point will skip ndb_end_query
-       * in their TLS destructor, avoiding use-after-free on MDB_env. */
-      atomic_store(&tls_ndb_alive, false);
-      ndb_destroy((struct ndb *)impl->db);
+      struct ndb *db = (struct ndb *)impl->db;
+      /* End this thread's inactive cached reader for this handle before close,
+       * then unregister only this handle so other open stores remain live for
+       * their TLS destructors. */
+      tls_close_inactive_for_db(db);
+      ndb_handle_unregister(db);
+      ndb_destroy(db);
       impl->db = NULL;
     }
     free(s->impl);
@@ -241,15 +372,15 @@ static int ln_ndb_begin_query(ln_store *s, void **txn_out)
   /* Initialize thread-local storage once */
   pthread_once(&tls_init_once, tls_init);
 
-  /* Get or create thread-local transaction state */
-  tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
+  /* Get or create the thread-local transaction state for this specific db. */
+  tls_txn_t *tls = tls_ensure_for_db(db);
+  if (!tls) return LN_ERR_OOM;
   time_t now = time(NULL);
 
-  /* nostrc-slot: Reuse existing transaction with reference counting.
-   * If we have a recent TLS transaction, just increment refcount and return it.
-   * This prevents reader slot exhaustion during batch processing where signal
-   * handlers trigger nested begin_query calls. */
-  if (tls && tls->txn && tls->refcount > 0) {
+  /* nostrc-slot: Reuse only a transaction owned by this db. This preserves the
+   * reader-slot protection for nested/successive queries while preventing a
+   * thread that just queried store A from receiving A's txn for store B. */
+  if (tls->txn && tls->refcount > 0) {
     /* Existing active transaction - reuse it.
      * Do NOT reset last_used here: the original open time must be preserved
      * so the txn is eventually closed, preventing indefinite LMDB page pinning
@@ -259,29 +390,20 @@ static int ln_ndb_begin_query(ln_store *s, void **txn_out)
     return LN_OK;
   }
 
-  /* Also reuse if transaction is recent (within 2 seconds) even if refcount is 0.
-   * This handles rapid successive queries without holding transactions too long
-   * (which would cause MDB_MAP_FULL from page retention).
-   * Do NOT reset last_used: preserving the original timestamp ensures the txn
-   * closes within 2 seconds of its creation, not 2 seconds of last query. */
-  if (tls && tls->txn && tls->refcount == 0 && (now - tls->last_used) < 2) {
+  /* Also reuse if this db's transaction is recent (within 2 seconds) even if
+   * refcount is 0. Do NOT reset last_used: preserving the original timestamp
+   * ensures the txn closes within 2 seconds of creation, not last query. */
+  if (tls->txn && tls->refcount == 0 && (now - tls->last_used) < 2) {
     tls->refcount = 1;
     *txn_out = tls->txn;
     return LN_OK;
   }
 
-  /* Clean up old transaction if exists and not in use */
-  if (tls && tls->txn && tls->refcount == 0) {
-    ndb_end_query(tls->txn);
+  /* Clean up this db's old transaction if it exists and is not in use. */
+  if (tls->txn && tls->refcount == 0) {
+    ndb_end_query_if_handle_live(tls->db, tls->txn);
     free(tls->txn);
     tls->txn = NULL;
-  }
-
-  /* Create new thread-local storage if needed */
-  if (!tls) {
-    tls = calloc(1, sizeof(tls_txn_t));
-    if (!tls) return LN_ERR_OOM;
-    pthread_setspecific(tls_txn_key, tls);
   }
 
   /* Create new transaction with retries for transient contention */
@@ -311,22 +433,31 @@ static int ln_ndb_begin_query(ln_store *s, void **txn_out)
 
 static int ln_ndb_end_query(ln_store *s, void *txn)
 {
-  (void)s;
-  if (!txn) return LN_ERR_DB_TXN;
+  if (!s || !s->impl || !txn) return LN_ERR_DB_TXN;
+  struct ndb *db = (struct ndb *)((struct ln_ndb_impl *)s->impl)->db;
+  if (!db) return LN_ERR_DB_TXN;
+
+  pthread_once(&tls_init_once, tls_init);
 
   /* nostrc-slot: Decrement reference count instead of immediately freeing.
    * The transaction is only freed when refcount reaches 0 AND it's stale
    * (handled in begin_query when creating a new transaction). */
-  tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
+  tls_txn_t *head = (tls_txn_t*)pthread_getspecific(tls_txn_key);
+  tls_txn_t *tls = tls_find_for_db(head, db);
   if (tls && tls->txn == txn && tls->refcount > 0) {
     tls->refcount--;
     /* Don't actually end the transaction - keep it for reuse */
     return LN_OK;
   }
 
+  /* If the txn belongs to another cached db, do not close/free it through this
+   * store. That would corrupt the owning TLS cache. */
+  tls_txn_t *owner = tls_find_for_txn(head, (struct ndb_txn *)txn);
+  if (owner && owner->db != db) return LN_ERR_DB_TXN;
+
   /* Fallback: if this isn't the TLS transaction, close it directly.
    * This shouldn't normally happen but handles edge cases. */
-  int ok = ndb_end_query((struct ndb_txn *)txn);
+  int ok = ndb_end_query_if_handle_live(db, (struct ndb_txn *)txn);
   free(txn);
   return ok ? LN_OK : LN_ERR_DB_TXN;
 }
@@ -336,13 +467,20 @@ static int ln_ndb_end_query(ln_store *s, void *txn)
  * see newly committed notes. */
 static void ln_ndb_invalidate_txn_cache(ln_store *s)
 {
-  (void)s;
-  tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
-  if (tls && tls->txn && tls->refcount == 0) {
-    ndb_end_query(tls->txn);
-    free(tls->txn);
-    tls->txn = NULL;
-    tls->last_used = 0;
+  struct ndb *db = NULL;
+  if (s && s->impl) db = (struct ndb *)((struct ln_ndb_impl *)s->impl)->db;
+
+  pthread_once(&tls_init_once, tls_init);
+  for (tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
+       tls;
+       tls = tls->next) {
+    if (db && tls->db != db) continue;
+    if (tls->txn && tls->refcount == 0) {
+      ndb_end_query_if_handle_live(tls->db, tls->txn);
+      free(tls->txn);
+      tls->txn = NULL;
+      tls->last_used = 0;
+    }
   }
 }
 
@@ -365,13 +503,17 @@ void ln_ndb_invalidate_txn_cache_ext(void)
  * shutdown, call this from the main thread before storage_ndb_shutdown(). */
 void ln_ndb_force_close_txn_cache(void)
 {
-  tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
-  if (tls && tls->txn) {
-    ndb_end_query(tls->txn);
-    free(tls->txn);
-    tls->txn = NULL;
-    tls->refcount = 0;
-    tls->last_used = 0;
+  pthread_once(&tls_init_once, tls_init);
+  for (tls_txn_t *tls = (tls_txn_t*)pthread_getspecific(tls_txn_key);
+       tls;
+       tls = tls->next) {
+    if (tls->txn) {
+      ndb_end_query_if_handle_live(tls->db, tls->txn);
+      free(tls->txn);
+      tls->txn = NULL;
+      tls->refcount = 0;
+      tls->last_used = 0;
+    }
   }
 }
 
