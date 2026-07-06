@@ -87,14 +87,32 @@ jobs:
       - name: Build nsync from source (if not packaged)
         run: |
           if ! pkg-config --exists nsync 2>/dev/null; then
-            git clone --depth 1 https://github.com/google/nsync.git $HOME/nsync-src
+            # nsync's CMakeLists selects its platform backend from CMAKE_SYSTEM_NAME.
+            # Under MSYS2/MinGW that value is "Windows", so upstream picks the
+            # platform/win32 backend. That backend is written for MSVC and clashes
+            # with MinGW's winpthreads headers (pthread.h/sched.h): it triggers
+            # "sched_yield passed 1 arguments" and redeclares INIT_ONCE /
+            # CRITICAL_SECTION / CONDITION_VARIABLE / nsync_pthread_key_t, so the
+            # build fails. MinGW ships POSIX threads (winpthreads), so we force
+            # nsync onto its POSIX/pthread backend by gating the win32 branch on an
+            # MSVC compiler; GNU/Clang then fall through to nsync's POSIX else-branch
+            # (platform/posix + platform/gcc), which uses only pthreads/sched_yield.
+            git clone --depth 1 --branch 1.29.2 https://github.com/google/nsync.git $HOME/nsync-src
+            # Patch ONLY the platform-source-selection guard (first Windows branch).
+            sed -i '0,/if ("${CMAKE_SYSTEM_NAME}X" STREQUAL "WindowsX")/s//if (("${CMAKE_SYSTEM_NAME}X" STREQUAL "WindowsX") AND ("${CMAKE_C_COMPILER_ID}X" STREQUAL "MSVCX"))/' $HOME/nsync-src/CMakeLists.txt
+            # Fail loudly if upstream layout changed and the patch did not apply,
+            # instead of silently rebuilding the broken win32 backend.
+            grep -qF 'WindowsX") AND ("${CMAKE_C_COMPILER_ID}X" STREQUAL "MSVCX")' $HOME/nsync-src/CMakeLists.txt \
+              || { echo "ERROR: nsync platform-selection patch did not apply"; exit 1; }
             cmake -S $HOME/nsync-src -B $HOME/nsync-build -G Ninja \
               -DCMAKE_BUILD_TYPE=Release -DNSYNC_ENABLE_TESTS=OFF
             cmake --build $HOME/nsync-build --target nsync -j
             # Install C library and headers (skip nsync_cpp which may fail on MinGW)
             cp $HOME/nsync-build/libnsync.a /mingw64/lib/ 2>/dev/null || true
             cp $HOME/nsync-src/public/nsync*.h /mingw64/include/ 2>/dev/null || true
-            # Create minimal pkg-config file (use printf to avoid heredoc indentation issues)
+            # Create minimal pkg-config file (use printf to avoid heredoc indentation issues).
+            # The POSIX backend pulls in pthread symbols, so advertise -lpthread as a
+            # private (static-link) dependency for downstream consumers.
             printf '%s\n' \
               'prefix=/mingw64' \
               'libdir=${prefix}/lib' \
@@ -104,6 +122,7 @@ jobs:
               'Description: nsync C library' \
               'Version: 1.29.2' \
               'Libs: -L${libdir} -lnsync' \
+              'Libs.private: -lpthread' \
               'Cflags: -I${includedir}' \
               > /mingw64/lib/pkgconfig/nsync.pc
           fi
