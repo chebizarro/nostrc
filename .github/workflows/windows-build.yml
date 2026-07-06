@@ -104,7 +104,11 @@ jobs:
             # instead of silently rebuilding the broken win32 backend.
             grep -qF 'WindowsX") AND ("${CMAKE_C_COMPILER_ID}X" STREQUAL "MSVCX")' $HOME/nsync-src/CMakeLists.txt \
               || { echo "ERROR: nsync platform-selection patch did not apply"; exit 1; }
+            # nsync 1.29.2 declares cmake_minimum_required(VERSION 2.8.x), which
+            # modern CMake (>=4.0, as on the runner) refuses. Allow it to configure
+            # under the old-policy compatibility shim.
             cmake -S $HOME/nsync-src -B $HOME/nsync-build -G Ninja \
+              -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
               -DCMAKE_BUILD_TYPE=Release -DNSYNC_ENABLE_TESTS=OFF
             cmake --build $HOME/nsync-build --target nsync -j
             # Install C library and headers (skip nsync_cpp which may fail on MinGW)
