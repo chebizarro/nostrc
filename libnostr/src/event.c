@@ -193,12 +193,16 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
 
     int have_kind = 0;
     int have_created_at = 0;
+    int have_id = 0;
+    int have_pubkey = 0;
+    int have_sig = 0;
+    int have_tags = 0;
+    int have_content = 0;
 
     while (1) {
         p = nostr_json_skip_ws(p);
-        /* Allow and skip commas between members */
-        if (*p == ',') { ++p; continue; }
         if (*p == '}') { ++p; break; }
+        if (*p == ',') JFAIL_EV(NOSTR_JSON_ERR_BAD_SEPARATOR, p);
         // Dispatch by key (in-place match, no allocation for known keys)
         if (match_key_advance(&p, "kind")) {
             long long v = 0;
@@ -214,21 +218,25 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
             if (!s) JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, p);
             if (event->pubkey) free(event->pubkey);
             event->pubkey = s;
+            have_pubkey = 1;
         } else if (match_key_advance(&p, "id")) {
             char *s = nostr_json_parse_string(&p);
             if (!s) JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, p);
             if (event->id) free(event->id);
             event->id = s;
+            have_id = 1;
         } else if (match_key_advance(&p, "sig")) {
             char *s = nostr_json_parse_string(&p);
             if (!s) JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, p);
             if (event->sig) free(event->sig);
             event->sig = s;
+            have_sig = 1;
         } else if (match_key_advance(&p, "content")) {
             char *s = nostr_json_parse_string(&p);
             if (!s) JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, p);
             if (event->content) free(event->content);
             event->content = s;
+            have_content = 1;
         } else if (match_key_advance(&p, "tags")) {
             const char *t = nostr_json_skip_ws(p);
             if (*t != '[') JFAIL_EV(NOSTR_JSON_ERR_EXPECTED_ARRAY, t);
@@ -286,6 +294,7 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
             ++t; // after closing tags
             if (event->tags) nostr_tags_free(event->tags);
             event->tags = parsed;
+            have_tags = 1;
             p = t; // advance parser position
         } else {
             // Unknown key: skip its value generically (string/number/object/array/true/false/null)
@@ -321,13 +330,20 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
         }
         // consume comma or closing brace between pairs
         p = nostr_json_skip_ws(p);
-        if (*p == ',') { ++p; continue; }
+        if (*p == ',') {
+            ++p;
+            p = nostr_json_skip_ws(p);
+            if (*p == '}' || *p == '\0') JFAIL_EV(NOSTR_JSON_ERR_BAD_SEPARATOR, p);
+            continue;
+        }
         if (*p == '}') { ++p; break; }
         // otherwise, invalid separator
         JFAIL_EV(NOSTR_JSON_ERR_BAD_SEPARATOR, p);
     }
-    (void)have_kind;
-    (void)have_created_at;
+    p = nostr_json_skip_ws(p);
+    if (*p != '\0') JFAIL_EV(NOSTR_JSON_ERR_BAD_SEPARATOR, p);
+    if (!have_kind || !have_created_at || !have_id || !have_pubkey || !have_sig || !have_tags || !have_content)
+        JFAIL_EV(NOSTR_JSON_ERR_MISSING_FIELD, p);
     return 1;
 #undef JFAIL_EV
 }
@@ -699,13 +715,19 @@ char *nostr_event_serialize_compact(const NostrEvent *event) {
 
     // id
     if (event->id && *event->id) {
+        char *escaped = nostr_escape_string(event->id);
+        if (!escaped) { free(out); return NULL; }
         ADD_COMMA();
-        if (append_fmt(&out, &cap, &len, "\"id\":\"%s\"", event->id) != 0) { free(out); return NULL; }
+        if (append_fmt(&out, &cap, &len, "\"id\":\"%s\"", escaped) != 0) { free(escaped); free(out); return NULL; }
+        free(escaped);
     }
     // pubkey
     if (event->pubkey && *event->pubkey) {
+        char *escaped = nostr_escape_string(event->pubkey);
+        if (!escaped) { free(out); return NULL; }
         ADD_COMMA();
-        if (append_fmt(&out, &cap, &len, "\"pubkey\":\"%s\"", event->pubkey) != 0) { free(out); return NULL; }
+        if (append_fmt(&out, &cap, &len, "\"pubkey\":\"%s\"", escaped) != 0) { free(escaped); free(out); return NULL; }
+        free(escaped);
     }
     // created_at
     if (event->created_at > 0) {
@@ -743,8 +765,11 @@ char *nostr_event_serialize_compact(const NostrEvent *event) {
 
     // sig
     if (event->sig && *event->sig) {
+        char *escaped = nostr_escape_string(event->sig);
+        if (!escaped) { free(out); return NULL; }
         ADD_COMMA();
-        if (append_fmt(&out, &cap, &len, "\"sig\":\"%s\"", event->sig) != 0) { free(out); return NULL; }
+        if (append_fmt(&out, &cap, &len, "\"sig\":\"%s\"", escaped) != 0) { free(escaped); free(out); return NULL; }
+        free(escaped);
     }
 
     if (append_str(&out, &cap, &len, "}") != 0) { free(out); return NULL; }

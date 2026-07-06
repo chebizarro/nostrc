@@ -298,6 +298,11 @@ if(LIBNOSTR_BUILD_TESTS)
   target_link_libraries(test_core_audit PRIVATE nostr OpenSSL::Crypto ${SECP256K1_LIB})
   target_include_directories(test_core_audit PRIVATE include)
   add_test(NAME libnostr_core_audit COMMAND test_core_audit)
+
+  add_executable(test_parsing_audit tests/test_parsing_audit.c)
+  target_link_libraries(test_parsing_audit PRIVATE nostr OpenSSL::Crypto ${SECP256K1_LIB})
+  target_include_directories(test_parsing_audit PRIVATE include)
+  add_test(NAME libnostr_parsing_audit COMMAND test_parsing_audit)
 endif()
 
 # Install rules

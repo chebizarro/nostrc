@@ -6,6 +6,7 @@
 #include "security_limits_runtime.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <limits.h>
 #include "nostr-json-parse.h"
 
 #define INITIAL_CAPACITY 4  // Initial capacity for Filters array
@@ -650,11 +651,27 @@ static bool sb_puts_raw(sb_t *sb, const char *s, size_t n) {
 }
 static bool sb_puts(sb_t *sb, const char *s) { return sb_puts_raw(sb, s, s ? strlen(s) : 0); }
 static bool sb_put_quoted(sb_t *sb, const char *s) {
+    static const char hex[] = "0123456789abcdef";
     if (!sb_putc(sb, '"')) return false;
-    /* Minimal escaping: escape backslash and quote */
-    for (const char *p = s ? s : ""; *p; ++p) {
-        if (*p == '"' || *p == '\\') { if (!sb_putc(sb, '\\')) return false; }
-        if (!sb_putc(sb, *p)) return false;
+    for (const unsigned char *p = (const unsigned char *)(s ? s : ""); *p; ++p) {
+        unsigned char c = *p;
+        switch (c) {
+        case '"': if (!sb_puts(sb, "\\\"")) return false; break;
+        case '\\': if (!sb_puts(sb, "\\\\")) return false; break;
+        case '\b': if (!sb_puts(sb, "\\b")) return false; break;
+        case '\f': if (!sb_puts(sb, "\\f")) return false; break;
+        case '\n': if (!sb_puts(sb, "\\n")) return false; break;
+        case '\r': if (!sb_puts(sb, "\\r")) return false; break;
+        case '\t': if (!sb_puts(sb, "\\t")) return false; break;
+        default:
+            if (c < 0x20) {
+                char esc[6] = { '\\', 'u', '0', '0', hex[(c >> 4) & 0x0f], hex[c & 0x0f] };
+                if (!sb_puts_raw(sb, esc, sizeof esc)) return false;
+            } else {
+                if (!sb_putc(sb, (char)c)) return false;
+            }
+            break;
+        }
     }
     return sb_putc(sb, '"');
 }
@@ -863,24 +880,7 @@ static const char *skip_value(const char *p) { return skip_value_d(p, 0); }
 
 static char *parse_string_dup(const char **pp) {
     if (!pp || !*pp) return NULL;
-    const char *p = nostr_json_skip_ws(*pp);
-    if (*p != '"') return NULL;
-    ++p;
-    sb_t sb; sb_init(&sb); if (!sb.buf) return NULL;
-    while (*p) {
-        if (*p == '\\') {
-            if (!*(p+1)) { free(sb.buf); return NULL; }
-            // preserve escaped char without interpretation
-            if (!sb_putc(&sb, *(p+1))) { free(sb.buf); return NULL; }
-            p += 2; continue;
-        } else if (*p == '"') {
-            char *out = sb.buf; out[sb.len] = '\0'; *pp = p+1; return out;
-        } else {
-            if (!sb_putc(&sb, *p)) { free(sb.buf); return NULL; }
-            ++p;
-        }
-    }
-    free(sb.buf); return NULL;
+    return nostr_json_parse_string(pp);
 }
 
 static int parse_string_array_values_as_tags(NostrFilter *filter, const char *tag_key, const char **pp) {
@@ -951,11 +951,19 @@ static int parse_int_array_to_array(IntArray *arr, const char **pp) {
     while (*p) {
         int sign = 1;
         if (*p == '-') { sign = -1; ++p; }
-        else if (*p == '+') { ++p; }
+        else if (*p == '+') { return 0; }
         if (*p < '0' || *p > '9') return 0;
-        long val = 0;
-        while (*p >= '0' && *p <= '9') { val = val * 10 + (*p - '0'); ++p; }
-        int_array_add(arr, (int)(sign * val));
+        if (*p == '0' && *(p + 1) >= '0' && *(p + 1) <= '9') return 0;
+        int64_t val = 0;
+        int64_t limit = sign < 0 ? (int64_t)INT_MAX + 1 : (int64_t)INT_MAX;
+        while (*p >= '0' && *p <= '9') {
+            int digit = *p - '0';
+            if (val > (limit - digit) / 10) return 0;
+            val = val * 10 + digit;
+            ++p;
+        }
+        int out = sign < 0 && val == (int64_t)INT_MAX + 1 ? INT_MIN : (int)(sign * val);
+        int_array_add(arr, out);
         p = nostr_json_skip_ws(p);
         if (*p == ',') { ++p; p = nostr_json_skip_ws(p); continue; }
         if (*p == ']') { *pp = p+1; return 1; }

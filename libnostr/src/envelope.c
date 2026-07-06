@@ -319,6 +319,9 @@ static int debug_enabled(void) {
 #define ESET_ENV(code_val) do { \
     if (err_out) { err_out->code = (code_val); err_out->offset = (int)(p - json); } \
 } while (0)
+#define ESET_ENV_AT(code_val, pos) do { \
+    if (err_out) { err_out->code = (code_val); err_out->offset = (int)((pos) - json); } \
+} while (0)
 int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
                                         NostrJsonErrorInfo *err_out) {
     if (!base || !json) {
@@ -377,13 +380,14 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
         if (!filters) { ESET_ENV(NOSTR_JSON_ERR_ALLOC); break; }
         size_t maxf = (size_t)nostr_limit_max_filters_per_req();
         size_t added = 0;
+        int failed = 0;
         while (1) {
             q = parse_comma(p);
             if (!q) break;
             p = nostr_json_skip_ws(q);
-            if (*p != '{') break;
+            if (*p != '{') { ESET_ENV(NOSTR_JSON_ERR_BAD_SEPARATOR); failed = 1; break; }
             char *obj = parse_json_object(&p);
-            if (!obj) break;
+            if (!obj) { ESET_ENV(NOSTR_JSON_ERR_TRUNCATED); failed = 1; break; }
             if (added < maxf) {
                 NostrFilter f = {0};
                 if (nostr_filter_deserialize_compact(&f, obj, NULL)) {
@@ -400,6 +404,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
             }
             free(obj);
         }
+        if (failed) { nostr_filters_free(filters); break; }
         env->filters = filters;
         ok = 1;
         break;
@@ -414,14 +419,15 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
         env->count = 0;
         size_t maxf = (size_t)nostr_limit_max_filters_per_req();
         size_t added = 0;
+        int failed = 0;
         while (1) {
             q = parse_comma(p);
             if (!q) break;
             p = nostr_json_skip_ws(q);
-            if (*p != '{') break;
+            if (*p != '{') { ESET_ENV(NOSTR_JSON_ERR_BAD_SEPARATOR); failed = 1; break; }
             const char *savep = p;
             char *obj = parse_json_object(&p);
-            if (!obj) break;
+            if (!obj) { ESET_ENV(NOSTR_JSON_ERR_TRUNCATED); failed = 1; break; }
             // Detect count object strictly: first key must be "count" and value a number
             const char *op = obj;
             op = nostr_json_skip_ws(op);
@@ -465,6 +471,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
             free(obj);
             (void)savep;
         }
+        if (failed) { nostr_filters_free(filters); break; }
         env->filters = filters;
         ok = 1;
         break;
@@ -474,7 +481,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
         NostrOKEnvelope *env = (NostrOKEnvelope *)base;
         env->event_id = nostr_json_parse_string(&p);
         if (!env->event_id) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; }
-        q = parse_comma(p); if (!q) { ok = 1; break; }
+        q = parse_comma(p); if (!q) { ESET_ENV(NOSTR_JSON_ERR_MISSING_FIELD); break; }
         p = nostr_json_skip_ws(q);
         if (strncmp(p, "true", 4) == 0) { env->ok = true; p += 4; }
         else if (strncmp(p, "false", 5) == 0) { env->ok = false; p += 5; }
@@ -495,6 +502,14 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
     case NOSTR_ENVELOPE_EOSE: {
         if (strcmp(label, "EOSE") != 0) { ESET_ENV(NOSTR_JSON_ERR_LABEL_MISMATCH); break; }
         NostrEOSEEnvelope *env = (NostrEOSEEnvelope *)base;
+        env->message = nostr_json_parse_string(&p);
+        if (!env->message) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; }
+        ok = 1;
+        break;
+    }
+    case NOSTR_ENVELOPE_CLOSE: {
+        if (strcmp(label, "CLOSE") != 0) { ESET_ENV(NOSTR_JSON_ERR_LABEL_MISMATCH); break; }
+        NostrCloseEnvelope *env = (NostrCloseEnvelope *)base;
         env->message = nostr_json_parse_string(&p);
         if (!env->message) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; }
         ok = 1;
@@ -532,15 +547,14 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
             q = parse_comma(p);
             if (q) {
                 p = nostr_json_skip_ws(q);
-                if (*p == '{') {
-                    char *ej = parse_json_object(&p);
-                    if (ej) {
-                        NostrEvent *ev = nostr_event_new();
-                        int succ = nostr_event_deserialize(ev, ej);
-                        free(ej);
-                        if (succ == 0) env->event = ev; else nostr_event_free(ev);
-                    }
-                }
+                if (*p != '{') { ESET_ENV(NOSTR_JSON_ERR_BAD_SEPARATOR); break; }
+                char *ej = parse_json_object(&p);
+                if (!ej) { ESET_ENV(NOSTR_JSON_ERR_TRUNCATED); break; }
+                NostrEvent *ev = nostr_event_new();
+                int succ = nostr_event_deserialize(ev, ej);
+                free(ej);
+                if (succ != 0) { nostr_event_free(ev); ESET_ENV(NOSTR_JSON_ERR_NESTED_EVENT); break; }
+                env->event = ev;
             }
             ok = 1;
         } else {
@@ -553,6 +567,21 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
         break;
     }
 
+    if (ok) {
+        const char *tail = nostr_json_skip_ws(p);
+        if (*tail != ']') {
+            ESET_ENV_AT(*tail == '\0' ? NOSTR_JSON_ERR_UNCLOSED_BRACE : NOSTR_JSON_ERR_BAD_SEPARATOR, tail);
+            ok = 0;
+        } else {
+            ++tail;
+            tail = nostr_json_skip_ws(tail);
+            if (*tail != '\0') {
+                ESET_ENV_AT(NOSTR_JSON_ERR_BAD_SEPARATOR, tail);
+                ok = 0;
+            }
+        }
+    }
+
     if (!ok && debug_enabled()) {
         // Try to show where we are
         const char *tail = nostr_json_skip_ws(p);
@@ -563,6 +592,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
 }
 #undef JFAIL_ENV
 #undef ESET_ENV
+#undef ESET_ENV_AT
 
 static const char *parse_comma(const char *p) {
     if (!p) return NULL;
@@ -636,6 +666,9 @@ NostrEnvelope *nostr_envelope_parse(const char *message) {
     } else if (strcmp(label, "EOSE") == 0) {
         env = (NostrEnvelope *)calloc(1, sizeof(NostrEOSEEnvelope));
         if (env) env->type = NOSTR_ENVELOPE_EOSE;
+    } else if (strcmp(label, "CLOSE") == 0) {
+        env = (NostrEnvelope *)calloc(1, sizeof(NostrCloseEnvelope));
+        if (env) env->type = NOSTR_ENVELOPE_CLOSE;
     } else if (strcmp(label, "CLOSED") == 0) {
         env = (NostrEnvelope *)calloc(1, sizeof(NostrClosedEnvelope));
         if (env) env->type = NOSTR_ENVELOPE_CLOSED;
