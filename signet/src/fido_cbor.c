@@ -123,13 +123,18 @@ static cbor_item_t *load_single_item(const uint8_t *p, size_t n) {
 static int item_get_int64(const cbor_item_t *item, int64_t *out) {
   if (!item || !out) return -1;
   if (cbor_isa_uint(item)) {
-    uint64_t v = cbor_get_uint64(item);
+    /* cbor_get_int() returns the value regardless of the encoded integer
+     * width. cbor_get_uint64() must only be used on 64-bit-width items: on a
+     * narrower item libcbor's release build (asserts compiled out) reads 8
+     * bytes from a smaller data buffer, pulling in uninitialised/out-of-bounds
+     * heap whose non-zero high bytes corrupt the value. */
+    uint64_t v = cbor_get_int(item);
     if (v > (uint64_t)INT64_MAX) return -1;
     *out = (int64_t)v;
     return 0;
   }
   if (cbor_isa_negint(item)) {
-    uint64_t arg = cbor_get_uint64(item);
+    uint64_t arg = cbor_get_int(item);
     if (arg > (uint64_t)INT64_MAX) return -1;
     *out = -1 - (int64_t)arg;
     return 0;
