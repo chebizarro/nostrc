@@ -309,10 +309,15 @@ if(LIBNOSTR_BUILD_TESTS)
   target_include_directories(test_networking_audit PRIVATE include src)
   add_test(NAME libnostr_networking_audit COMMAND test_networking_audit)
 
-  add_executable(test_store_txn_audit tests/test_store_txn_audit.c)
-  target_link_libraries(test_store_txn_audit PRIVATE nostr OpenSSL::Crypto ${SECP256K1_LIB})
-  target_include_directories(test_store_txn_audit PRIVATE include)
-  add_test(NAME libnostr_store_txn_audit COMMAND test_store_txn_audit)
+  # The two-store transaction-scoping test exercises the nostrdb backend, so it
+  # is only meaningful (and only links to something useful) when that backend is
+  # compiled in. Skip it for nostrdb-OFF configurations.
+  if(LIBNOSTR_WITH_NOSTRDB)
+    add_executable(test_store_txn_audit tests/test_store_txn_audit.c)
+    target_link_libraries(test_store_txn_audit PRIVATE nostr OpenSSL::Crypto ${SECP256K1_LIB})
+    target_include_directories(test_store_txn_audit PRIVATE include)
+    add_test(NAME libnostr_store_txn_audit COMMAND test_store_txn_audit)
+  endif()
 
   find_package(Threads REQUIRED)
   add_executable(test_crypto_audit tests/test_crypto_audit.c)

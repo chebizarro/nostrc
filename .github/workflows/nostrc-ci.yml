@@ -96,6 +96,14 @@ jobs:
 
       # TSAN temporarily disabled
 
+      # Explicit gate for the libnostr production-readiness audit regression
+      # suite (epic nostrc-t0s). These targets are registered by
+      # libnostr/CMakeLists.txt (LIBNOSTR_BUILD_TESTS, default ON) and also run
+      # as part of the full "Test" step below; this named step surfaces them as
+      # a first-class signal and fails fast on a libnostr regression.
+      - name: libnostr audit tests
+        run: ctest --test-dir build --output-on-failure -R "libnostr_.*_audit"
+
       - name: Test
         run: |
           # Exclude tests with known ASAN issues (pre-existing bugs, not CI regressions)
