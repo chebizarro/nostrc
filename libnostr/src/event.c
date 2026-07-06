@@ -342,8 +342,18 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
     }
     p = nostr_json_skip_ws(p);
     if (*p != '\0') JFAIL_EV(NOSTR_JSON_ERR_BAD_SEPARATOR, p);
-    if (!have_kind || !have_created_at || !have_id || !have_pubkey || !have_sig || !have_tags || !have_content)
+    /* Require only `kind`: this rejects empty/garbage objects (e.g. "{}") while
+     * still accepting UNSIGNED event templates submitted for signing, which
+     * legitimately omit id/pubkey/sig — and often created_at/tags/content too
+     * (e.g. {"kind":1,"content":"hi"}). All structural validation above
+     * (trailing garbage, unclosed braces, bad separators, truncation) still
+     * applies, so malformed JSON is rejected regardless of which fields exist.
+     * NOTE: requiring the full signed-event field set here broke the NIP-46 /
+     * NIP-55L signer flows, which deserialize templates before signing. */
+    if (!have_kind)
         JFAIL_EV(NOSTR_JSON_ERR_MISSING_FIELD, p);
+    (void)have_created_at; (void)have_id; (void)have_pubkey;
+    (void)have_sig; (void)have_tags; (void)have_content;
     return 1;
 #undef JFAIL_EV
 }

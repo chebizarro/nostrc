@@ -69,14 +69,25 @@ static void test_filter_escape_roundtrip(void) {
 static void test_event_parser_rejects_malformed(void) {
     NostrEvent *ev = nostr_event_new();
     assert(ev != NULL);
+    /* Empty/garbage objects (no kind) are rejected. */
     assert(nostr_event_deserialize_compact(ev, "{}", NULL) == 0);
-    assert(nostr_event_deserialize_compact(ev, "{\"kind\":1,\"created_at\":1}", NULL) == 0);
+    assert(nostr_event_deserialize_compact(ev, "{\"content\":\"hi\"}", NULL) == 0);
+
+    /* UNSIGNED event templates (no id/pubkey/sig — and possibly no
+     * created_at/tags/content) MUST be accepted: the NIP-46 / NIP-55L signer
+     * flows deserialize exactly these before signing. Requiring the full signed
+     * field set here is wrong and previously broke those flows. */
+    assert(nostr_event_deserialize_compact(ev, "{\"kind\":1}", NULL) == 1);
+    assert(nostr_event_deserialize_compact(ev, "{\"kind\":1,\"content\":\"hi\"}", NULL) == 1);
+    assert(nostr_event_deserialize_compact(ev, "{\"kind\":1,\"created_at\":1}", NULL) == 1);
     assert(nostr_event_deserialize_compact(ev,
-        "{\"id\":\"a\",\"pubkey\":\"b\",\"created_at\":1,\"kind\":1,\"content\":\"ok\",\"sig\":\"c\"}", NULL) == 0);
-    assert(nostr_event_deserialize_compact(ev,
-        "{\"id\":\"a\",\"pubkey\":\"b\",\"created_at\":1,\"kind\":1,\"tags\":[],\"sig\":\"c\"}", NULL) == 0);
+        "{\"pubkey\":\"b\",\"created_at\":1,\"kind\":1,\"tags\":[],\"content\":\"ok\"}", NULL) == 1);
+
+    /* Structural corruption is still rejected regardless of which fields exist. */
     assert(nostr_event_deserialize_compact(ev,
         "{\"id\":\"a\",\"pubkey\":\"b\",\"created_at\":1,\"kind\":1,\"tags\":[],\"content\":\"ok\",\"sig\":\"c\",}", NULL) == 0);
+    /* kind out of range is rejected. */
+    assert(nostr_event_deserialize_compact(ev, "{\"kind\":99999}", NULL) == 0);
 
     char valid_with_trailing[1024];
     snprintf(valid_with_trailing, sizeof valid_with_trailing, "%s junk", full_event_json());
@@ -89,7 +100,7 @@ static void test_event_parser_rejects_malformed(void) {
 
     assert(nostr_event_deserialize_compact(ev, full_event_json(), NULL) == 1);
     nostr_event_free(ev);
-    printf("  [ok] event compact parser rejects missing/trailing/truncated input\n");
+    printf("  [ok] event compact parser: accepts unsigned templates, rejects garbage/trailing/truncated\n");
 }
 
 static NostrEnvelope *alloc_envelope(NostrEnvelopeType type) {
