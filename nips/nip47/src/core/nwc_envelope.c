@@ -72,6 +72,11 @@ int nostr_nwc_request_build(const char *wallet_pub_hex, NostrNwcEncryption enc,
   nostr_tags_append(tags, e);
   nostr_event_set_tags(ev, tags);
 
+  /* Compute and cache the event id from the canonical NIP-01 preimage so the
+   * serialized request carries an "id" the wallet can reference in its `e` tag.
+   * (Audit F12: id must be computed from the canonical serialization.) */
+  { char *eid = nostr_event_get_id(ev); if (eid) free(eid); }
+
   char *json = nostr_event_serialize(ev);
   if (!json) goto out;
   *out_event_json = json;
@@ -138,6 +143,10 @@ int nostr_nwc_response_build(const char *client_pub_hex, const char *req_event_i
   if (!enc_t) { nostr_tags_free(tags); goto out; }
   nostr_tags_append(tags, enc_t);
   nostr_event_set_tags(ev, tags);
+
+  /* Compute and cache the event id from the canonical NIP-01 preimage so the
+   * serialized response carries an "id". */
+  { char *eid = nostr_event_get_id(ev); if (eid) free(eid); }
 
   char *json = nostr_event_serialize(ev);
   if (!json) goto out;
