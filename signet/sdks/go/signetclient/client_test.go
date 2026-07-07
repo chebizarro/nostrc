@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	cascadia "git.sharegap.net/cascadia/cascadia-go"
 )
 
 type fakeRelay struct {
@@ -61,7 +63,7 @@ func TestSignEventPublishesNIP46SignEventRequest(t *testing.T) {
 }
 
 func TestCascadiaKindAliasesUseGeneratedConstants(t *testing.T) {
-	if KindContextVM != 25910 || KindGiftWrap != 1059 || KindCascadiaAudit != 4903 {
+	if KindContextVM != cascadia.CAS_INTENT || KindGiftWrap != cascadia.NIP59_GIFT_WRAP || KindCascadiaAudit != cascadia.CAS_AUDIT {
 		t.Fatalf("unexpected kind aliases: contextvm=%d giftwrap=%d audit=%d", KindContextVM, KindGiftWrap, KindCascadiaAudit)
 	}
 }
