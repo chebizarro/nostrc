@@ -10,13 +10,19 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	cascadia "git.sharegap.net/cascadia/cascadia-go"
 )
 
 const (
-	KindNIP46         = 24133
-	KindContextVM     = 25910 // TODO(cascadia-nips): replace with generated binding.
-	KindGiftWrap      = 1059  // TODO(cascadia-nips): replace with generated binding.
-	KindCascadiaAudit = 4903  // TODO(cascadia-nips): replace with generated binding.
+	KindNIP46     = 24133
+	KindContextVM = cascadia.CAS_INTENT
+	KindGiftWrap  = cascadia.NIP59_GIFT_WRAP
+
+	// KindCascadiaAudit is the canonical CAS_AUDIT kind. cascadia-go v0.2.0
+	// does not yet export CAS_AUDIT, so keep this alias local until the
+	// generated binding includes it.
+	KindCascadiaAudit = 4903
 )
 
 type Relay interface {
