@@ -65,7 +65,7 @@ typedef struct {
  * encrypted_sender_data = AEAD.Seal(key, nonce, "", sender_data)
  *
  * @param sender_data_secret  From epoch secrets
- * @param ciphertext_sample   First AEAD_KEY_LEN bytes of the ciphertext
+ * @param ciphertext_sample   First KDF.Nh bytes of ciphertext, or all if shorter
  * @param sender_data         Plaintext sender data to encrypt
  * @param out                 Output buffer (at least 12 + AEAD_TAG_LEN bytes)
  * @param out_len             Output length

@@ -140,6 +140,22 @@ mls_crypto_derive_secret(uint8_t out[MLS_HASH_LEN],
                                          secret, label, NULL, 0);
 }
 
+int
+mls_crypto_derive_tree_secret(uint8_t *out, size_t out_len,
+                               const uint8_t secret[MLS_HASH_LEN],
+                               const char *label,
+                               uint32_t generation)
+{
+    uint8_t generation_be[4];
+    generation_be[0] = (uint8_t)(generation >> 24);
+    generation_be[1] = (uint8_t)(generation >> 16);
+    generation_be[2] = (uint8_t)(generation >> 8);
+    generation_be[3] = (uint8_t)generation;
+
+    return mls_crypto_expand_with_label(out, out_len, secret, label,
+                                         generation_be, sizeof(generation_be));
+}
+
 /**
  * Encode a QUIC variable-length integer (RFC 9000 §16).
  * Returns number of bytes written (1, 2, 4, or 8).

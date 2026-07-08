@@ -281,9 +281,9 @@ init_sender_ratchet(MlsSecretTree *st, uint32_t leaf_index)
 /**
  * Derive message keys from a ratchet secret and advance the ratchet.
  *
- * key = ExpandWithLabel(secret[n], "key", "", key_length)
- * nonce = ExpandWithLabel(secret[n], "nonce", "", nonce_length)
- * secret[n+1] = ExpandWithLabel(secret[n], "secret", "", Nh)
+ * key = DeriveTreeSecret(secret[n], "key", generation, key_length)
+ * nonce = DeriveTreeSecret(secret[n], "nonce", generation, nonce_length)
+ * secret[n+1] = DeriveTreeSecret(secret[n], "secret", generation, Nh)
  */
 static int
 ratchet_derive_keys(uint8_t secret[MLS_HASH_LEN], uint32_t *generation,
@@ -292,18 +292,18 @@ ratchet_derive_keys(uint8_t secret[MLS_HASH_LEN], uint32_t *generation,
     out->generation = *generation;
 
     /* Derive key */
-    if (mls_crypto_expand_with_label(out->key, MLS_AEAD_KEY_LEN,
-                                      secret, "key", NULL, 0) != 0)
+    if (mls_crypto_derive_tree_secret(out->key, MLS_AEAD_KEY_LEN,
+                                       secret, "key", *generation) != 0)
         return -1;
     /* Derive nonce */
-    if (mls_crypto_expand_with_label(out->nonce, MLS_AEAD_NONCE_LEN,
-                                      secret, "nonce", NULL, 0) != 0)
+    if (mls_crypto_derive_tree_secret(out->nonce, MLS_AEAD_NONCE_LEN,
+                                       secret, "nonce", *generation) != 0)
         return -1;
 
-    /* Advance ratchet: secret[n+1] = ExpandWithLabel(secret[n], "secret", "", Nh) */
+    /* Advance ratchet: secret[n+1] = DeriveTreeSecret(secret[n], "secret", generation, Nh) */
     uint8_t next_secret[MLS_HASH_LEN];
-    if (mls_crypto_expand_with_label(next_secret, MLS_HASH_LEN,
-                                      secret, "secret", NULL, 0) != 0)
+    if (mls_crypto_derive_tree_secret(next_secret, MLS_HASH_LEN,
+                                       secret, "secret", *generation) != 0)
         return -1;
 
     memcpy(secret, next_secret, MLS_HASH_LEN);

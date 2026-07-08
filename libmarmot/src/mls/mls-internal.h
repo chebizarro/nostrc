@@ -89,6 +89,15 @@ int mls_crypto_derive_secret(uint8_t out[MLS_HASH_LEN],
                               const uint8_t secret[MLS_HASH_LEN],
                               const char *label);
 
+/**
+ * DeriveTreeSecret (MLS §9.1): ExpandWithLabel with a uint32 generation
+ * encoded as a four-byte big-endian context.
+ */
+int mls_crypto_derive_tree_secret(uint8_t *out, size_t out_len,
+                                   const uint8_t secret[MLS_HASH_LEN],
+                                   const char *label,
+                                   uint32_t generation);
+
 /** ExpandWithLabel with raw binary label (explicit length, no strlen). */
 int mls_crypto_expand_with_label_raw(uint8_t *out, size_t out_len,
                                       const uint8_t secret[MLS_HASH_LEN],

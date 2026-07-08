@@ -76,6 +76,8 @@ fail:
  *                                    ciphertext_sample, AEAD_KEY_LEN)
  * sender_data_nonce = ExpandWithLabel(sender_data_secret, "nonce",
  *                                      ciphertext_sample, AEAD_NONCE_LEN)
+ * where ciphertext_sample is the first KDF.Nh bytes of ciphertext, or the
+ * whole ciphertext if shorter.
  * encrypted_sender_data = AEAD.Seal(key, nonce, "", plaintext_sender_data)
  * ══════════════════════════════════════════════════════════════════════════ */
 
@@ -113,23 +115,17 @@ derive_sender_data_keys(const uint8_t sender_data_secret[MLS_HASH_LEN],
                         uint8_t key[MLS_AEAD_KEY_LEN],
                         uint8_t nonce[MLS_AEAD_NONCE_LEN])
 {
-    /* Clamp sample to AEAD_KEY_LEN bytes */
-    size_t actual_sample_len = sample_len < MLS_AEAD_KEY_LEN ? sample_len : MLS_AEAD_KEY_LEN;
-    uint8_t sample[MLS_AEAD_KEY_LEN];
-    if (actual_sample_len > 0) {
-        memcpy(sample, ciphertext_sample, actual_sample_len);
-    }
-    if (actual_sample_len < MLS_AEAD_KEY_LEN) {
-        memset(sample + actual_sample_len, 0, MLS_AEAD_KEY_LEN - actual_sample_len);
-    }
+    /* RFC 9420 §6.3.2: sample the first KDF.Nh bytes, or all ciphertext if shorter. */
+    size_t actual_sample_len = sample_len < MLS_HASH_LEN ? sample_len : MLS_HASH_LEN;
+    if (actual_sample_len > 0 && !ciphertext_sample) return -1;
 
     if (mls_crypto_expand_with_label(key, MLS_AEAD_KEY_LEN,
                                       sender_data_secret, "key",
-                                      sample, MLS_AEAD_KEY_LEN) != 0)
+                                      ciphertext_sample, actual_sample_len) != 0)
         return -1;
     if (mls_crypto_expand_with_label(nonce, MLS_AEAD_NONCE_LEN,
                                       sender_data_secret, "nonce",
-                                      sample, MLS_AEAD_KEY_LEN) != 0)
+                                      ciphertext_sample, actual_sample_len) != 0)
         return -1;
     return 0;
 }
@@ -257,8 +253,8 @@ mls_private_message_encrypt(const uint8_t *group_id, size_t group_id_len,
     if (rc != 0) { free(ciphertext); return -1; }
 
     /* Step 4: Encrypt sender data */
-    /* Ciphertext sample = first AEAD_KEY_LEN bytes of ciphertext */
-    size_t sample_len = ct_len < MLS_AEAD_KEY_LEN ? ct_len : MLS_AEAD_KEY_LEN;
+    /* Ciphertext sample = first KDF.Nh bytes of ciphertext, or all if shorter. */
+    size_t sample_len = ct_len < MLS_HASH_LEN ? ct_len : MLS_HASH_LEN;
 
     MlsSenderData sd = {
         .leaf_index = sender_leaf_index,
@@ -320,8 +316,8 @@ mls_private_message_decrypt(const MlsPrivateMessage *msg,
         return -1;
 
     /* Step 1: Decrypt sender data */
-    size_t sample_len = msg->ciphertext_len < MLS_AEAD_KEY_LEN
-                         ? msg->ciphertext_len : MLS_AEAD_KEY_LEN;
+    size_t sample_len = msg->ciphertext_len < MLS_HASH_LEN
+                         ? msg->ciphertext_len : MLS_HASH_LEN;
 
     MlsSenderData sd;
     int rc = mls_sender_data_decrypt(sender_data_secret,
