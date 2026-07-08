@@ -22,6 +22,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <errno.h>
 
 #if __has_include("nostrdb.h")
 #include "nostrdb.h"
@@ -601,7 +602,10 @@ ndb_save_message(void *ctx, const MarmotMessage *msg)
 
     /* Ingest the event JSON into nostrdb after commit to avoid holding write lock */
     if (nc->ndb && msg->event_json) {
-        ndb_process_event(nc->ndb, msg->event_json, (int)strlen(msg->event_json));
+        int ingest_rc = ndb_process_event(nc->ndb, msg->event_json, (int)strlen(msg->event_json));
+        if (ingest_rc == 0) {
+            return MARMOT_ERR_STORAGE;
+        }
     }
 
     return MARMOT_OK;
@@ -1000,6 +1004,255 @@ ndb_save_processed_welcome(void *ctx, const uint8_t wrapper_id[32],
     return MARMOT_OK;
 }
 
+/* ── Key package info operations (via LMDB KV) ───────────────────────── */
+
+/*
+ * Key package info format (version 1):
+ * [1:version][32:ref][32:owner_pubkey][8:created_at][1:active]
+ * [4:relay_count][repeated [4:url_len][url_bytes]]
+ */
+static uint8_t *
+serialize_kpi(const MarmotKeyPackageInfo *info, size_t *out_len)
+{
+    if (!info || !out_len) return NULL;
+
+    size_t size = 1 + 32 + 32 + 8 + 1 + 4;
+    for (size_t i = 0; i < info->relay_count; i++) {
+        const char *url = (info->relay_urls && info->relay_urls[i]) ? info->relay_urls[i] : "";
+        size_t len = strlen(url);
+        if (len > UINT32_MAX || size > SIZE_MAX - 4 - len) return NULL;
+        size += 4 + len;
+    }
+
+    uint8_t *buf = malloc(size);
+    if (!buf) return NULL;
+    uint8_t *p = buf;
+    *p++ = 1;
+    memcpy(p, info->ref, 32); p += 32;
+    memcpy(p, info->owner_pubkey, 32); p += 32;
+    write_i64_le(p, info->created_at); p += 8;
+    *p++ = info->active ? 1 : 0;
+    write_u32_le(p, (uint32_t)info->relay_count); p += 4;
+    for (size_t i = 0; i < info->relay_count; i++) {
+        const char *url = (info->relay_urls && info->relay_urls[i]) ? info->relay_urls[i] : "";
+        uint32_t len = (uint32_t)strlen(url);
+        write_u32_le(p, len); p += 4;
+        if (len > 0) { memcpy(p, url, len); p += len; }
+    }
+    *out_len = (size_t)(p - buf);
+    return buf;
+}
+
+static MarmotKeyPackageInfo *
+deserialize_kpi(const uint8_t *data, size_t len)
+{
+    if (!data || len < 1 + 32 + 32 + 8 + 1 + 4 || data[0] != 1) return NULL;
+    const uint8_t *p = data + 1;
+    const uint8_t *end = data + len;
+
+    MarmotKeyPackageInfo *info = marmot_key_package_info_new();
+    if (!info) return NULL;
+
+    memcpy(info->ref, p, 32); p += 32;
+    memcpy(info->owner_pubkey, p, 32); p += 32;
+    info->created_at = read_i64_le(p); p += 8;
+    info->active = *p++ != 0;
+
+    if (p + 4 > end) goto fail;
+    uint32_t relay_count = read_u32_le(p); p += 4;
+    if (relay_count > 0) {
+        info->relay_urls = calloc(relay_count, sizeof(char *));
+        if (!info->relay_urls) goto fail;
+        for (uint32_t i = 0; i < relay_count; i++) {
+            if (p + 4 > end) goto fail;
+            uint32_t url_len = read_u32_le(p); p += 4;
+            if (p + url_len > end) goto fail;
+            info->relay_urls[i] = strndup((const char *)p, url_len);
+            if (!info->relay_urls[i] && url_len > 0) goto fail;
+            p += url_len;
+            info->relay_count++;
+        }
+    }
+    if (p != end) goto fail;
+    return info;
+
+fail:
+    marmot_key_package_info_free(info);
+    return NULL;
+}
+
+static size_t
+make_kpi_key(const uint8_t ref[32], uint8_t *buf, size_t buf_len)
+{
+    return make_kv_key("kpi", ref, 32, buf, buf_len);
+}
+
+static bool
+key_has_kpi_prefix(const MDB_val *key)
+{
+    static const char prefix[] = "kpi";
+    size_t prefix_len = sizeof(prefix); /* includes NUL */
+    return key && key->mv_size >= prefix_len &&
+           memcmp(key->mv_data, prefix, prefix_len) == 0;
+}
+
+static MarmotError
+ndb_save_key_package_info(void *ctx, const MarmotKeyPackageInfo *info)
+{
+    NdbCtx *nc = ctx;
+    uint8_t kbuf[64];
+    size_t kl = make_kpi_key(info->ref, kbuf, sizeof(kbuf));
+    if (kl == 0) return MARMOT_ERR_INVALID_ARG;
+
+    size_t blob_len = 0;
+    uint8_t *blob = serialize_kpi(info, &blob_len);
+    if (!blob) return MARMOT_ERR_MEMORY;
+
+    MDB_txn *txn;
+    if (mdb_txn_begin(nc->mls_env, NULL, 0, &txn) != 0) {
+        free(blob);
+        return MARMOT_ERR_STORAGE;
+    }
+
+    MDB_val k = { .mv_size = kl, .mv_data = kbuf };
+    MDB_val v = { .mv_size = blob_len, .mv_data = blob };
+    int rc = mdb_put(txn, nc->dbi_kv, &k, &v, 0);
+    free(blob);
+    if (rc != 0) { mdb_txn_abort(txn); return MARMOT_ERR_STORAGE; }
+    rc = mdb_txn_commit(txn);
+    return rc == 0 ? MARMOT_OK : MARMOT_ERR_STORAGE;
+}
+
+static MarmotError
+ndb_find_key_package_by_ref(void *ctx, const uint8_t ref[32], MarmotKeyPackageInfo **out)
+{
+    NdbCtx *nc = ctx;
+    *out = NULL;
+
+    uint8_t kbuf[64];
+    size_t kl = make_kpi_key(ref, kbuf, sizeof(kbuf));
+    if (kl == 0) return MARMOT_ERR_INVALID_ARG;
+
+    MDB_txn *txn;
+    if (mdb_txn_begin(nc->mls_env, NULL, MDB_RDONLY, &txn) != 0)
+        return MARMOT_ERR_STORAGE;
+
+    MDB_val k = { .mv_size = kl, .mv_data = kbuf };
+    MDB_val v;
+    int rc = mdb_get(txn, nc->dbi_kv, &k, &v);
+    if (rc == 0) {
+        *out = deserialize_kpi(v.mv_data, v.mv_size);
+        if (!*out) { mdb_txn_abort(txn); return MARMOT_ERR_STORAGE; }
+    }
+    mdb_txn_abort(txn);
+    return MARMOT_OK;
+}
+
+static MarmotError
+ndb_find_key_packages_by_pubkey(void *ctx, const uint8_t pubkey[32],
+                                 MarmotKeyPackageInfo ***out, size_t *out_count)
+{
+    NdbCtx *nc = ctx;
+    *out = NULL;
+    *out_count = 0;
+
+    MDB_txn *txn;
+    if (mdb_txn_begin(nc->mls_env, NULL, MDB_RDONLY, &txn) != 0)
+        return MARMOT_ERR_STORAGE;
+
+    MDB_cursor *cur;
+    if (mdb_cursor_open(txn, nc->dbi_kv, &cur) != 0) {
+        mdb_txn_abort(txn);
+        return MARMOT_ERR_STORAGE;
+    }
+
+    size_t cap = 8;
+    MarmotKeyPackageInfo **arr = calloc(cap, sizeof(MarmotKeyPackageInfo *));
+    if (!arr) { mdb_cursor_close(cur); mdb_txn_abort(txn); return MARMOT_ERR_MEMORY; }
+
+    size_t count = 0;
+    MDB_val k, v;
+    int rc = mdb_cursor_get(cur, &k, &v, MDB_FIRST);
+    while (rc == 0) {
+        if (key_has_kpi_prefix(&k)) {
+            MarmotKeyPackageInfo *info = deserialize_kpi(v.mv_data, v.mv_size);
+            if (!info) { rc = MDB_CORRUPTED; break; }
+            if (memcmp(info->owner_pubkey, pubkey, 32) == 0) {
+                if (count >= cap) {
+                    cap *= 2;
+                    MarmotKeyPackageInfo **tmp = realloc(arr, cap * sizeof(MarmotKeyPackageInfo *));
+                    if (!tmp) { marmot_key_package_info_free(info); rc = ENOMEM; break; }
+                    arr = tmp;
+                }
+                arr[count++] = info;
+            } else {
+                marmot_key_package_info_free(info);
+            }
+        }
+        rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+    }
+
+    mdb_cursor_close(cur);
+    mdb_txn_abort(txn);
+
+    if (rc != MDB_NOTFOUND) {
+        for (size_t i = 0; i < count; i++) marmot_key_package_info_free(arr[i]);
+        free(arr);
+        return rc == ENOMEM ? MARMOT_ERR_MEMORY : MARMOT_ERR_STORAGE;
+    }
+
+    *out = arr;
+    *out_count = count;
+    return MARMOT_OK;
+}
+
+static MarmotError
+ndb_deactivate_key_packages(void *ctx, const uint8_t pubkey[32])
+{
+    NdbCtx *nc = ctx;
+
+    MDB_txn *txn;
+    if (mdb_txn_begin(nc->mls_env, NULL, 0, &txn) != 0)
+        return MARMOT_ERR_STORAGE;
+
+    MDB_cursor *cur;
+    if (mdb_cursor_open(txn, nc->dbi_kv, &cur) != 0) {
+        mdb_txn_abort(txn);
+        return MARMOT_ERR_STORAGE;
+    }
+
+    MDB_val k, v;
+    int rc = mdb_cursor_get(cur, &k, &v, MDB_FIRST);
+    while (rc == 0) {
+        if (key_has_kpi_prefix(&k)) {
+            MarmotKeyPackageInfo *info = deserialize_kpi(v.mv_data, v.mv_size);
+            if (!info) { rc = MDB_CORRUPTED; break; }
+            if (memcmp(info->owner_pubkey, pubkey, 32) == 0 && info->active) {
+                info->active = false;
+                size_t blob_len = 0;
+                uint8_t *blob = serialize_kpi(info, &blob_len);
+                marmot_key_package_info_free(info);
+                if (!blob) { rc = ENOMEM; break; }
+                MDB_val nv = { .mv_size = blob_len, .mv_data = blob };
+                rc = mdb_cursor_put(cur, &k, &nv, MDB_CURRENT);
+                free(blob);
+                if (rc != 0) break;
+            } else {
+                marmot_key_package_info_free(info);
+            }
+        }
+        rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+    }
+
+    mdb_cursor_close(cur);
+    if (rc != MDB_NOTFOUND) {
+        mdb_txn_abort(txn);
+        return rc == ENOMEM ? MARMOT_ERR_MEMORY : MARMOT_ERR_STORAGE;
+    }
+    rc = mdb_txn_commit(txn);
+    return rc == 0 ? MARMOT_OK : MARMOT_ERR_STORAGE;
+}
+
 /* ── Relay operations (via LMDB) ──────────────────────────────────────── */
 
 static MarmotError
@@ -1393,10 +1646,10 @@ marmot_storage_nostrdb_new(void *ndb_handle, const char *mls_state_dir)
     s->pending_welcomes = ndb_pending_welcomes;
     s->find_processed_welcome = ndb_find_processed_welcome;
     s->save_processed_welcome = ndb_save_processed_welcome;
-    s->save_key_package_info = NULL;
-    s->find_key_package_by_ref = NULL;
-    s->find_key_packages_by_pubkey = NULL;
-    s->deactivate_key_packages = NULL;
+    s->save_key_package_info = ndb_save_key_package_info;
+    s->find_key_package_by_ref = ndb_find_key_package_by_ref;
+    s->find_key_packages_by_pubkey = ndb_find_key_packages_by_pubkey;
+    s->deactivate_key_packages = ndb_deactivate_key_packages;
     s->group_relays = ndb_group_relays;
     s->replace_group_relays = ndb_replace_group_relays;
     s->get_exporter_secret = ndb_get_exporter_secret;

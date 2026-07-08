@@ -783,11 +783,13 @@ run_contract_tests(const char *backend_name, MarmotStorage *s,
     /* Relays */
     TEST(test_relay_replace_and_list, backend_name, s);
 
-    /* Key package info (skip if backend doesn't implement it) */
-    if (s->save_key_package_info) {
-        TEST(test_key_package_info_roundtrip, backend_name, s);
-        TEST(test_key_package_info_deactivate, backend_name, s);
-    }
+    /* Key package info: required for every backend by the MarmotStorage contract. */
+    assert(s->save_key_package_info != NULL);
+    assert(s->find_key_package_by_ref != NULL);
+    assert(s->find_key_packages_by_pubkey != NULL);
+    assert(s->deactivate_key_packages != NULL);
+    TEST(test_key_package_info_roundtrip, backend_name, s);
+    TEST(test_key_package_info_deactivate, backend_name, s);
 
     /* Persistence */
     if (is_persistent_expected) {
