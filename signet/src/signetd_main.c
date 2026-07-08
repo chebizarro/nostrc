@@ -23,6 +23,7 @@
 #include "signet/relay_pool.h"
 #include "signet/nip46_server.h"
 #include "signet/mgmt_protocol.h"
+#include "signet/cascadia.h"
 #include "signet/health_server.h"
 #include "signet/bootstrap_server.h"
 #include "signet/nostr_auth.h"
@@ -396,9 +397,8 @@ static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_dat
     return;
   }
 
-  /* Cascadia canonical ContextVM management intents (kind 25910).
-   * TODO(cascadia-nips): replace local kind constant when generated bindings are tagged. */
-  if (ev->kind == SIGNET_KIND_CONTEXTVM_INTENT && ctx->mgmt) {
+  /* Cascadia canonical ContextVM management intents (kind 25910). */
+  if (ev->kind == CAS_INTENT && ctx->mgmt) {
     (void)signet_mgmt_handler_handle_intent(ctx->mgmt,
                                             ev->pubkey_hex ? ev->pubkey_hex : "",
                                             ev->content ? ev->content : "",
@@ -408,7 +408,7 @@ static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_dat
   }
 
   /* NIP-59/NIP-17 gift-wrapped ContextVM management intents (kind 1059). */
-  if (ev->kind == SIGNET_KIND_NIP59_GIFT_WRAP && ctx->mgmt && ev->event_json) {
+  if (ev->kind == NIP59_GIFT_WRAP && ctx->mgmt && ev->event_json) {
     NostrEvent *gw = nostr_event_new();
     if (gw && nostr_event_deserialize_compact(gw, ev->event_json, NULL)) {
       char *inner = NULL;
@@ -972,8 +972,8 @@ int main(int argc, char **argv) {
     {
       static const int signet_kinds[] = {
         24133,                       /* NIP-46 signing requests      */
-        SIGNET_KIND_CONTEXTVM_INTENT,/* 25910 Cascadia ContextVM */
-        SIGNET_KIND_NIP59_GIFT_WRAP, /* 1059 NIP-59/NIP-17 gift-wrap */
+        CAS_INTENT,                  /* 25910 Cascadia ContextVM */
+        NIP59_GIFT_WRAP,             /* 1059 NIP-59/NIP-17 gift-wrap */
         SIGNET_KIND_PROVISION_AGENT, /* 28000 gated by signet.mgmt.legacy_28000 */
         SIGNET_KIND_REVOKE_AGENT,    /* 28010 */
         SIGNET_KIND_SET_POLICY,      /* 28020 */

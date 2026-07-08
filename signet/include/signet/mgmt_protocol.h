@@ -29,6 +29,8 @@
 extern "C" {
 #endif
 
+#include "signet/cascadia.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -91,12 +93,9 @@ extern "C" {
  */
 #define SIGNET_KIND_MGMT_ACK       28090
 
-/* Cascadia canonical management plane.
- * TODO(cascadia-nips): replace local constants with generated cascadia-nips
- * bindings once WS2 is tagged.
- */
-#define SIGNET_KIND_CONTEXTVM_INTENT 25910
-#define SIGNET_KIND_NIP59_GIFT_WRAP 1059
+/* Cascadia canonical management plane compatibility aliases. */
+#define SIGNET_KIND_CONTEXTVM_INTENT CAS_INTENT
+#define SIGNET_KIND_NIP59_GIFT_WRAP NIP59_GIFT_WRAP
 
 /**
  * SignetMgmtOp:
