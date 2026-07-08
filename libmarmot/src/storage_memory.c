@@ -795,16 +795,22 @@ mem_save_exporter_secret(void *ctx, const MarmotGroupId *gid,
     return MARMOT_OK;
 }
 
-/* ── Snapshot operations (no-op for memory) ────────────────────────────── */
+/* ── Snapshot operations ──────────────────────────────────────────────── */
 
+/*
+ * The memory backend does not implement commit-race snapshots. Returning
+ * MARMOT_ERR_UNSUPPORTED is safer than reporting success for no-op snapshot
+ * operations, which would let callers rely on rollback support that does not
+ * exist for this backend.
+ */
 static MarmotError mem_create_snapshot(void *ctx, const MarmotGroupId *gid, const char *name)
-{ (void)ctx; (void)gid; (void)name; return MARMOT_OK; }
+{ (void)ctx; (void)gid; (void)name; return MARMOT_ERR_UNSUPPORTED; }
 static MarmotError mem_rollback_snapshot(void *ctx, const MarmotGroupId *gid, const char *name)
-{ (void)ctx; (void)gid; (void)name; return MARMOT_OK; }
+{ (void)ctx; (void)gid; (void)name; return MARMOT_ERR_UNSUPPORTED; }
 static MarmotError mem_release_snapshot(void *ctx, const MarmotGroupId *gid, const char *name)
-{ (void)ctx; (void)gid; (void)name; return MARMOT_OK; }
+{ (void)ctx; (void)gid; (void)name; return MARMOT_ERR_UNSUPPORTED; }
 static MarmotError mem_prune_expired(void *ctx, uint64_t ts, size_t *out)
-{ (void)ctx; (void)ts; *out = 0; return MARMOT_OK; }
+{ (void)ctx; (void)ts; if (out) *out = 0; return MARMOT_ERR_UNSUPPORTED; }
 
 /* ── MLS key store ─────────────────────────────────────────────────────── */
 

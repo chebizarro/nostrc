@@ -94,6 +94,9 @@ marmot_process_welcome(Marmot *m,
 
     *out_welcome = NULL;
 
+    if (!m->storage || !m->storage->mls_store || !m->storage->save_welcome)
+        return MARMOT_ERR_STORAGE;
+
     /* Check for duplicate: was this wrapper event already processed? */
     if (m->storage && m->storage->find_processed_welcome) {
         bool already_processed = false;
@@ -223,17 +226,24 @@ marmot_process_welcome(Marmot *m,
     /* Extract preview info (limited without decryption) */
     extract_group_preview(welcome, welcome_data, welcome_len);
 
-    /* Store the raw welcome data for later processing */
-    if (m->storage && m->storage->mls_store) {
-        m->storage->mls_store(m->storage->ctx, "welcome_data",
-                               wrapper_event_id, 32,
-                               welcome_data, welcome_len);
-    }
+    /* Store the raw welcome data for later processing. Mandatory: accepting
+     * the welcome requires this MLS Welcome blob. */
+    MarmotError err = m->storage->mls_store(m->storage->ctx, "welcome_data",
+                                             wrapper_event_id, 32,
+                                             welcome_data, welcome_len);
     free(welcome_data);
+    if (err != MARMOT_OK) {
+        marmot_welcome_free(welcome);
+        return err;
+    }
 
-    /* Store the welcome */
-    if (m->storage && m->storage->save_welcome) {
-        m->storage->save_welcome(m->storage->ctx, welcome);
+    /* Store the welcome metadata. Mandatory for pending-welcome APIs. */
+    err = m->storage->save_welcome(m->storage->ctx, welcome);
+    if (err != MARMOT_OK) {
+        if (m->storage->mls_delete)
+            m->storage->mls_delete(m->storage->ctx, "welcome_data", wrapper_event_id, 32);
+        marmot_welcome_free(welcome);
+        return err;
     }
 
     *out_welcome = welcome;
@@ -249,7 +259,9 @@ marmot_accept_welcome(Marmot *m, const MarmotWelcome *welcome)
 {
     if (!m || !welcome)
         return MARMOT_ERR_INVALID_ARG;
-    if (!m->storage || !m->storage->mls_load)
+    if (!m->storage || !m->storage->mls_load || !m->storage->mls_store ||
+        !m->storage->save_exporter_secret || !m->storage->save_group ||
+        !m->storage->save_processed_welcome)
         return MARMOT_ERR_STORAGE;
 
     /* Retrieve the raw MLS Welcome data from storage */
@@ -433,53 +445,62 @@ marmot_accept_welcome(Marmot *m, const MarmotWelcome *welcome)
     }
     marmot_group_data_extension_free(gde);
 
-    /* Store exporter secret */
-    if (m->storage && m->storage->save_exporter_secret) {
-        m->storage->save_exporter_secret(m->storage->ctx,
-                                          &group->mls_group_id,
-                                          mls_group.epoch,
-                                          mls_group.epoch_secrets.exporter_secret);
-    }
+    /* Store exporter secret. Mandatory for message encryption after accept. */
+    MarmotError err = m->storage->save_exporter_secret(m->storage->ctx,
+                                                       &group->mls_group_id,
+                                                       mls_group.epoch,
+                                                       mls_group.epoch_secrets.exporter_secret);
+    if (err != MARMOT_OK)
+        goto fail;
 
     /* Persist the full MLS group state for future operations
-     * (add/remove members, send/receive messages) */
-    if (m->storage && m->storage->mls_store) {
-        uint8_t *state_data = NULL;
-        size_t state_len = 0;
-        if (mls_group_serialize(&mls_group, &state_data, &state_len) == 0) {
-            m->storage->mls_store(m->storage->ctx, "mls_group",
-                                   mls_group.group_id, mls_group.group_id_len,
-                                   state_data, state_len);
-            free(state_data);
+     * (add/remove members, send/receive messages). Mandatory. */
+    uint8_t *state_data = NULL;
+    size_t state_len = 0;
+    if (mls_group_serialize(&mls_group, &state_data, &state_len) != 0) {
+        err = MARMOT_ERR_SERIALIZATION;
+        goto fail;
+    }
+    err = m->storage->mls_store(m->storage->ctx, "mls_group",
+                                mls_group.group_id, mls_group.group_id_len,
+                                state_data, state_len);
+    free(state_data);
+    if (err != MARMOT_OK)
+        goto fail;
+
+    /* Store the group metadata. */
+    err = m->storage->save_group(m->storage->ctx, group);
+    if (err != MARMOT_OK)
+        goto fail;
+
+    /* Store group relays when the welcome carries them. */
+    if (gde_relays && gde_relay_count > 0) {
+        if (!m->storage->replace_group_relays) {
+            err = MARMOT_ERR_STORAGE;
+            goto fail;
         }
+        err = m->storage->replace_group_relays(m->storage->ctx,
+                                               &group->mls_group_id,
+                                               (const char **)gde_relays,
+                                               gde_relay_count);
+        if (err != MARMOT_OK)
+            goto fail;
     }
 
-    /* Store the group metadata */
-    if (m->storage && m->storage->save_group) {
-        m->storage->save_group(m->storage->ctx, group);
-    }
+    /* Record the welcome as processed. */
+    err = m->storage->save_processed_welcome(m->storage->ctx,
+                                             welcome->wrapper_event_id,
+                                             welcome->id,
+                                             marmot_now(),
+                                             MARMOT_WELCOME_STATE_ACCEPTED,
+                                             NULL);
+    if (err != MARMOT_OK)
+        goto fail;
 
-    /* Store group relays */
-    if (gde_relays && gde_relay_count > 0 &&
-        m->storage && m->storage->replace_group_relays) {
-        m->storage->replace_group_relays(m->storage->ctx,
-                                          &group->mls_group_id,
-                                          (const char **)gde_relays,
-                                          gde_relay_count);
-    }
-
-    /* Record the welcome as processed */
-    if (m->storage && m->storage->save_processed_welcome) {
-        m->storage->save_processed_welcome(m->storage->ctx,
-                                            welcome->wrapper_event_id,
-                                            welcome->id,
-                                            marmot_now(),
-                                            MARMOT_WELCOME_STATE_ACCEPTED,
-                                            NULL);
-    }
-
-    /* Clean up stored raw welcome data */
-    if (m->storage && m->storage->mls_delete) {
+    /* Clean up stored raw welcome data. This delete is best-effort: the
+     * accepted group is already durably stored, and stale raw welcome data is
+     * only a cache/cleanup concern. */
+    if (m->storage->mls_delete) {
         m->storage->mls_delete(m->storage->ctx, "welcome_data",
                                 welcome->wrapper_event_id, 32);
     }
@@ -494,6 +515,15 @@ marmot_accept_welcome(Marmot *m, const MarmotWelcome *welcome)
     }
 
     return MARMOT_OK;
+
+fail:
+    mls_group_free(&mls_group);
+    marmot_group_free(group);
+    if (gde_relays) {
+        for (size_t i = 0; i < gde_relay_count; i++) free(gde_relays[i]);
+        free(gde_relays);
+    }
+    return err;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

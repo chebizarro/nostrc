@@ -143,6 +143,10 @@ marmot_create_key_package(Marmot *m,
 
     memset(result, 0, sizeof(*result));
 
+    if (!m->storage || !m->storage->mls_store || !m->storage->mls_delete ||
+        !m->storage->save_key_package_info || !m->storage->deactivate_key_packages)
+        return MARMOT_ERR_STORAGE;
+
     /* Ensure MLS identity is ready */
     if (marmot_ensure_identity(m) != 0)
         return MARMOT_ERR_CRYPTO;
@@ -294,59 +298,88 @@ tag_fail:
     return MARMOT_ERR_MEMORY;
 
 success:
+    ;
 
-    /* Deactivate previous key packages for this pubkey (rotation) */
-    if (m->storage && m->storage->deactivate_key_packages) {
-        m->storage->deactivate_key_packages(m->storage->ctx, nostr_pubkey);
+    /* Store the KeyPackage private material in storage for later Welcome
+     * processing. These writes are mandatory: accepting a Welcome for this
+     * KeyPackage requires both the private-key blob and full KeyPackage. */
+    MarmotError err;
+    uint8_t priv_blob[MLS_KEM_SK_LEN + MLS_KEM_SK_LEN + MLS_SIG_SK_LEN];
+    memcpy(priv_blob, kp_priv.init_key_private, MLS_KEM_SK_LEN);
+    memcpy(priv_blob + MLS_KEM_SK_LEN, kp_priv.encryption_key_private, MLS_KEM_SK_LEN);
+    memcpy(priv_blob + MLS_KEM_SK_LEN + MLS_KEM_SK_LEN,
+           kp_priv.signature_key_private, MLS_SIG_SK_LEN);
+
+    err = m->storage->mls_store(m->storage->ctx, "kp_priv",
+                                kp_ref, MLS_HASH_LEN,
+                                priv_blob, sizeof(priv_blob));
+    sodium_memzero(priv_blob, sizeof(priv_blob));
+    if (err != MARMOT_OK) {
+        marmot_key_package_result_free(result);
+        mls_key_package_clear(&kp);
+        mls_key_package_private_clear(&kp_priv);
+        return err;
     }
 
-    /* Save KeyPackageInfo metadata */
-    if (m->storage && m->storage->save_key_package_info) {
-        MarmotKeyPackageInfo info;
-        memset(&info, 0, sizeof(info));
-        memcpy(info.ref, kp_ref, 32);
-        memcpy(info.owner_pubkey, nostr_pubkey, 32);
-        info.created_at = marmot_now();
-        info.active = true;
-        if (relay_count > 0 && relay_urls) {
-            info.relay_urls = (char **)relay_urls;  /* borrowed for save */
-            info.relay_count = relay_count;
-        }
-        m->storage->save_key_package_info(m->storage->ctx, &info);
-        /* Don't free relay_urls — they're borrowed from caller */
-        info.relay_urls = NULL;
-        info.relay_count = 0;
+    MlsTlsBuf kp_buf;
+    if (mls_tls_buf_init(&kp_buf, 1024) != 0) {
+        m->storage->mls_delete(m->storage->ctx, "kp_priv", kp_ref, MLS_HASH_LEN);
+        marmot_key_package_result_free(result);
+        mls_key_package_clear(&kp);
+        mls_key_package_private_clear(&kp_priv);
+        return MARMOT_ERR_MEMORY;
+    }
+    if (mls_key_package_serialize(&kp, &kp_buf) != 0) {
+        mls_tls_buf_free(&kp_buf);
+        m->storage->mls_delete(m->storage->ctx, "kp_priv", kp_ref, MLS_HASH_LEN);
+        marmot_key_package_result_free(result);
+        mls_key_package_clear(&kp);
+        mls_key_package_private_clear(&kp_priv);
+        return MARMOT_ERR_TLS_CODEC;
+    }
+    err = m->storage->mls_store(m->storage->ctx, "kp_full",
+                                kp_ref, MLS_HASH_LEN,
+                                kp_buf.data, kp_buf.len);
+    mls_tls_buf_free(&kp_buf);
+    if (err != MARMOT_OK) {
+        m->storage->mls_delete(m->storage->ctx, "kp_priv", kp_ref, MLS_HASH_LEN);
+        marmot_key_package_result_free(result);
+        mls_key_package_clear(&kp);
+        mls_key_package_private_clear(&kp_priv);
+        return err;
     }
 
-    /* Store the KeyPackage private material in storage for later Welcome processing */
-    if (m->storage && m->storage->mls_store) {
-        /* Serialize private keys for storage */
-        uint8_t priv_blob[MLS_KEM_SK_LEN + MLS_KEM_SK_LEN + MLS_SIG_SK_LEN];
-        memcpy(priv_blob, kp_priv.init_key_private, MLS_KEM_SK_LEN);
-        memcpy(priv_blob + MLS_KEM_SK_LEN, kp_priv.encryption_key_private, MLS_KEM_SK_LEN);
-        memcpy(priv_blob + MLS_KEM_SK_LEN + MLS_KEM_SK_LEN,
-               kp_priv.signature_key_private, MLS_SIG_SK_LEN);
+    /* Deactivate previous key packages for this pubkey (rotation). Mandatory
+     * so callers do not publish a new active package while older ones remain
+     * active after a failed storage write. */
+    err = m->storage->deactivate_key_packages(m->storage->ctx, nostr_pubkey);
+    if (err != MARMOT_OK) {
+        m->storage->mls_delete(m->storage->ctx, "kp_priv", kp_ref, MLS_HASH_LEN);
+        m->storage->mls_delete(m->storage->ctx, "kp_full", kp_ref, MLS_HASH_LEN);
+        marmot_key_package_result_free(result);
+        mls_key_package_clear(&kp);
+        mls_key_package_private_clear(&kp_priv);
+        return err;
+    }
 
-        /* Store keyed by (label="kp_priv", key=KeyPackageRef) */
-        m->storage->mls_store(m->storage->ctx, "kp_priv",
-                               kp_ref, MLS_HASH_LEN,
-                               priv_blob, sizeof(priv_blob));
-        sodium_memzero(priv_blob, sizeof(priv_blob));
-
-        /* Also store the full serialized KeyPackage for Welcome processing.
-         * mls_welcome_process_parsed needs the complete KP to compute the
-         * KeyPackageRef and populate the ratchet tree leaf node. */
-        {
-            MlsTlsBuf kp_buf;
-            if (mls_tls_buf_init(&kp_buf, 1024) == 0) {
-                if (mls_key_package_serialize(&kp, &kp_buf) == 0) {
-                    m->storage->mls_store(m->storage->ctx, "kp_full",
-                                           kp_ref, MLS_HASH_LEN,
-                                           kp_buf.data, kp_buf.len);
-                }
-                mls_tls_buf_free(&kp_buf);
-            }
-        }
+    MarmotKeyPackageInfo info;
+    memset(&info, 0, sizeof(info));
+    memcpy(info.ref, kp_ref, 32);
+    memcpy(info.owner_pubkey, nostr_pubkey, 32);
+    info.created_at = marmot_now();
+    info.active = true;
+    if (relay_count > 0 && relay_urls) {
+        info.relay_urls = (char **)relay_urls;  /* borrowed for save */
+        info.relay_count = relay_count;
+    }
+    err = m->storage->save_key_package_info(m->storage->ctx, &info);
+    if (err != MARMOT_OK) {
+        m->storage->mls_delete(m->storage->ctx, "kp_priv", kp_ref, MLS_HASH_LEN);
+        m->storage->mls_delete(m->storage->ctx, "kp_full", kp_ref, MLS_HASH_LEN);
+        marmot_key_package_result_free(result);
+        mls_key_package_clear(&kp);
+        mls_key_package_private_clear(&kp_priv);
+        return err;
     }
 
     /* Clean up */

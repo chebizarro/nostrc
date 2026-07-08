@@ -1349,6 +1349,10 @@ marmot_storage_sqlite_new(const char *path, const char *encryption_key)
         }
 #else
         fprintf(stderr, "[marmot-sqlite] Encryption requested but SQLCipher not linked\n");
+        sqlite3_close(sc->db);
+        free(sc->path);
+        free(sc);
+        return NULL;
 #endif
     }
 

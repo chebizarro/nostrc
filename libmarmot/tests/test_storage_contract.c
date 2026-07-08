@@ -20,6 +20,16 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#if defined(__has_include)
+#  if __has_include(<sqlite3.h>)
+#    include <sqlite3.h>
+#    define MARMOT_TEST_HAVE_SQLITE3_HEADER 1
+#  endif
+#endif
+#ifndef MARMOT_TEST_HAVE_SQLITE3_HEADER
+#  define MARMOT_TEST_HAVE_SQLITE3_HEADER 0
+#endif
+
 #define TEST(fn, backend_name, storage) do { \
     printf("  [%-8s] %-45s", backend_name, #fn); \
     fn(storage); \
@@ -31,6 +41,16 @@
  * ──────────────────────────────────────────────────────────────────────── */
 
 static char tmp_dir[256];
+
+static bool
+sqlite_runtime_has_codec(void)
+{
+#if MARMOT_TEST_HAVE_SQLITE3_HEADER
+    return sqlite3_compileoption_used("SQLITE_HAS_CODEC") != 0;
+#else
+    return false;
+#endif
+}
 
 static void
 make_tmp_dir(void)
@@ -673,22 +693,51 @@ static void
 test_snapshot_lifecycle(MarmotStorage *s)
 {
     MarmotGroupId gid = marmot_group_id_new((uint8_t *)"snap_grp", 8);
+    bool persistent = s->is_persistent && s->is_persistent(s->ctx);
 
-    /* Create snapshot — should succeed even if group doesn't exist yet
-     * (snapshots are just named save points) */
     MarmotError err = s->create_snapshot(s->ctx, &gid, "before_commit");
-    assert(err == MARMOT_OK);
+    if (persistent) {
+        assert(err == MARMOT_OK);
 
-    /* Release without rollback */
-    err = s->release_snapshot(s->ctx, &gid, "before_commit");
-    assert(err == MARMOT_OK);
+        /* Release without rollback */
+        err = s->release_snapshot(s->ctx, &gid, "before_commit");
+        assert(err == MARMOT_OK);
 
-    /* Prune expired snapshots — should work even with none */
-    size_t pruned = 0;
-    err = s->prune_expired_snapshots(s->ctx, 0, &pruned);
-    assert(err == MARMOT_OK);
+        /* Prune expired snapshots — should work even with none */
+        size_t pruned = 0;
+        err = s->prune_expired_snapshots(s->ctx, 0, &pruned);
+        assert(err == MARMOT_OK);
+    } else {
+        /* Non-persistent memory storage does not provide real snapshots and
+         * must report that explicitly rather than faking success. */
+        assert(err == MARMOT_ERR_UNSUPPORTED);
+        err = s->rollback_snapshot(s->ctx, &gid, "before_commit");
+        assert(err == MARMOT_ERR_UNSUPPORTED);
+        err = s->release_snapshot(s->ctx, &gid, "before_commit");
+        assert(err == MARMOT_ERR_UNSUPPORTED);
+        size_t pruned = 123;
+        err = s->prune_expired_snapshots(s->ctx, 0, &pruned);
+        assert(err == MARMOT_ERR_UNSUPPORTED);
+        assert(pruned == 0);
+    }
 
     marmot_group_id_free(&gid);
+}
+
+static void
+test_sqlite_encryption_request_requires_codec(MarmotStorage *unused)
+{
+    (void)unused;
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/encrypted_without_codec.db", tmp_dir);
+
+    MarmotStorage *s = marmot_storage_sqlite_new(db_path, "test-secret");
+    if (sqlite_runtime_has_codec()) {
+        assert(s != NULL);
+        marmot_storage_free(s);
+    } else {
+        assert(s == NULL);
+    }
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -783,6 +832,7 @@ int main(void)
         if (s != NULL) {
             run_contract_tests("sqlite", s, true);
             marmot_storage_free(s);
+            TEST(test_sqlite_encryption_request_requires_codec, "sqlite", NULL);
             total_backends++;
         } else {
             printf("\n── sqlite backend ── SKIPPED (not available)\n");

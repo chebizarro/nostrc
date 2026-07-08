@@ -153,6 +153,9 @@ marmot_get_pending_welcomes(Marmot *m,
     if (!m || !out_welcomes || !out_count)
         return MARMOT_ERR_INVALID_ARG;
 
+    if (!m->storage || !m->storage->pending_welcomes)
+        return MARMOT_ERR_STORAGE;
+
     MarmotPagination pg = pagination ? *pagination : marmot_pagination_default();
     return m->storage->pending_welcomes(m->storage->ctx,
                                          &pg, out_welcomes, out_count);
@@ -167,6 +170,8 @@ marmot_get_group(Marmot *m, const MarmotGroupId *mls_group_id, MarmotGroup **out
 {
     if (!m || !mls_group_id || !out)
         return MARMOT_ERR_INVALID_ARG;
+    if (!m->storage || !m->storage->find_group_by_mls_id)
+        return MARMOT_ERR_STORAGE;
     return m->storage->find_group_by_mls_id(m->storage->ctx, mls_group_id, out);
 }
 
@@ -175,6 +180,8 @@ marmot_get_all_groups(Marmot *m, MarmotGroup ***out_groups, size_t *out_count)
 {
     if (!m || !out_groups || !out_count)
         return MARMOT_ERR_INVALID_ARG;
+    if (!m->storage || !m->storage->all_groups)
+        return MARMOT_ERR_STORAGE;
     return m->storage->all_groups(m->storage->ctx, out_groups, out_count);
 }
 
@@ -186,6 +193,9 @@ marmot_get_messages(Marmot *m,
 {
     if (!m || !mls_group_id || !out_msgs || !out_count)
         return MARMOT_ERR_INVALID_ARG;
+
+    if (!m->storage || !m->storage->messages)
+        return MARMOT_ERR_STORAGE;
 
     MarmotPagination pg = pagination ? *pagination : marmot_pagination_default();
     return m->storage->messages(m->storage->ctx,

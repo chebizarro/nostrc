@@ -68,6 +68,9 @@ marmot_encrypt_media(Marmot *m,
 {
     if (!m || !mls_group_id || !file_data || !result)
         return MARMOT_ERR_INVALID_ARG;
+    if (!m->storage || !m->storage->find_group_by_mls_id ||
+        !m->storage->get_exporter_secret)
+        return MARMOT_ERR_STORAGE;
 
     memset(result, 0, sizeof(*result));
 
@@ -172,6 +175,8 @@ marmot_decrypt_media(Marmot *m,
 {
     if (!m || !mls_group_id || !encrypted_data || !imeta || !out_data || !out_len)
         return MARMOT_ERR_INVALID_ARG;
+    if (!m->storage || !m->storage->get_exporter_secret)
+        return MARMOT_ERR_STORAGE;
 
     *out_data = NULL;
     *out_len = 0;

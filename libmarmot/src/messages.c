@@ -321,7 +321,9 @@ marmot_create_message(Marmot *m,
 {
     if (!m || !mls_group_id || !inner_event_json || !result)
         return MARMOT_ERR_INVALID_ARG;
-    if (!m->storage || !m->storage->find_group_by_mls_id || !m->storage->get_exporter_secret)
+    if (!m->storage || !m->storage->find_group_by_mls_id ||
+        !m->storage->get_exporter_secret || !m->storage->save_message ||
+        !m->storage->save_group)
         return MARMOT_ERR_STORAGE;
 
     memset(result, 0, sizeof(*result));
@@ -397,9 +399,14 @@ marmot_create_message(Marmot *m,
     free(mls_ciphertext);
     sodium_memzero(exporter_secret, sizeof(exporter_secret));
 
-    /* Persist updated MLS state (generation counter advances on encrypt) */
+    /* Persist updated MLS state (generation counter advances on encrypt). */
     if (mls_loaded) {
-        msg_save_mls_group(m, &mls_group);
+        if (msg_save_mls_group(m, &mls_group) != 0) {
+            free(nip44_ciphertext);
+            mls_group_free(&mls_group);
+            marmot_group_free(group);
+            return MARMOT_ERR_STORAGE;
+        }
         mls_group_free(&mls_group);
     }
 
@@ -449,30 +456,40 @@ marmot_create_message(Marmot *m,
 
     /* ── 5. Create stored message record ──────────────────────────────── */
     result->message = marmot_message_new();
-    if (result->message) {
-        result->message->kind = MARMOT_KIND_GROUP_MESSAGE;
-        result->message->created_at = marmot_now();
-        result->message->processed_at = marmot_now();
-        result->message->mls_group_id = marmot_group_id_new(
-            mls_group_id->data, mls_group_id->len);
-        result->message->content = strdup(inner_event_json);
-        result->message->event_json = strdup(inner_event_json);
-        result->message->epoch = group->epoch;
-        result->message->state = MARMOT_MSG_STATE_CREATED;
+    if (!result->message) {
+        marmot_group_free(group);
+        marmot_outgoing_message_free(result);
+        return MARMOT_ERR_MEMORY;
+    }
+    result->message->kind = MARMOT_KIND_GROUP_MESSAGE;
+    result->message->created_at = marmot_now();
+    result->message->processed_at = marmot_now();
+    result->message->mls_group_id = marmot_group_id_new(
+        mls_group_id->data, mls_group_id->len);
+    result->message->content = strdup(inner_event_json);
+    result->message->event_json = strdup(inner_event_json);
+    result->message->epoch = group->epoch;
+    result->message->state = MARMOT_MSG_STATE_CREATED;
 
-        /* Generate a random message ID for tracking */
-        randombytes_buf(result->message->id, 32);
+    /* Generate a random message ID for tracking */
+    randombytes_buf(result->message->id, 32);
 
-        /* Persist the message */
-        if (m->storage->save_message) {
-            m->storage->save_message(m->storage->ctx, result->message);
-        }
+    /* Persist the message. Mandatory: callers must not get MARMOT_OK for an
+     * outgoing message that cannot be saved locally. */
+    err = m->storage->save_message(m->storage->ctx, result->message);
+    if (err != MARMOT_OK) {
+        marmot_group_free(group);
+        marmot_outgoing_message_free(result);
+        return err;
     }
 
     /* ── 6. Update group's last message metadata ──────────────────────── */
     group->last_message_at = marmot_now();
-    if (m->storage->save_group) {
-        m->storage->save_group(m->storage->ctx, group);
+    err = m->storage->save_group(m->storage->ctx, group);
+    if (err != MARMOT_OK) {
+        marmot_group_free(group);
+        marmot_outgoing_message_free(result);
+        return err;
     }
 
     marmot_group_free(group);
@@ -490,7 +507,9 @@ marmot_process_message(Marmot *m,
 {
     if (!m || !group_event_json || !result)
         return MARMOT_ERR_INVALID_ARG;
-    if (!m->storage)
+    if (!m->storage || !m->storage->find_group_by_nostr_id ||
+        !m->storage->get_exporter_secret || !m->storage->save_message ||
+        !m->storage->save_group)
         return MARMOT_ERR_STORAGE;
 
     memset(result, 0, sizeof(*result));
@@ -503,11 +522,9 @@ marmot_process_message(Marmot *m,
 
     /* ── 2. Find the group by nostr_group_id ──────────────────────────── */
     MarmotGroup *group = NULL;
-    if (m->storage->find_group_by_nostr_id) {
-        err = m->storage->find_group_by_nostr_id(m->storage->ctx,
-                                                   parsed.nostr_group_id,
-                                                   &group);
-    }
+    err = m->storage->find_group_by_nostr_id(m->storage->ctx,
+                                             parsed.nostr_group_id,
+                                             &group);
     if (err != MARMOT_OK || !group) {
         parsed_group_event_clear(&parsed);
         return MARMOT_ERR_GROUP_NOT_FOUND;
@@ -730,10 +747,14 @@ marmot_process_message(Marmot *m,
         msg->epoch = used_epoch;
         msg->state = MARMOT_MSG_STATE_PROCESSED;
 
-        if (m->storage->save_message) {
-            m->storage->save_message(m->storage->ctx, msg);
-        }
+        err = m->storage->save_message(m->storage->ctx, msg);
         marmot_message_free(msg);
+        if (err != MARMOT_OK) {
+            marmot_message_result_free(result);
+            marmot_group_free(group);
+            parsed_group_event_clear(&parsed);
+            return err;
+        }
     }
 
     /* ── 9. Update group's last message metadata ──────────────────────── */
@@ -743,8 +764,12 @@ marmot_process_message(Marmot *m,
         free(group->last_message_id);
         group->last_message_id = strdup(parsed.event_id);
     }
-    if (m->storage->save_group) {
-        m->storage->save_group(m->storage->ctx, group);
+    err = m->storage->save_group(m->storage->ctx, group);
+    if (err != MARMOT_OK) {
+        marmot_message_result_free(result);
+        marmot_group_free(group);
+        parsed_group_event_clear(&parsed);
+        return err;
     }
 
     marmot_group_free(group);

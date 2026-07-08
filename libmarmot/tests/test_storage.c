@@ -12,6 +12,87 @@
 
 #define TEST(name) do { printf("  %-50s", #name); name(); printf("PASS\n"); } while(0)
 
+/* ── Test-only storage helpers ─────────────────────────────────────────── */
+
+typedef struct {
+    int save_group_calls;
+    int mls_store_calls;
+    int save_exporter_secret_calls;
+} FailingStorageCtx;
+
+static void test_destroy(void *ctx)
+{
+    free(ctx);
+}
+
+static MarmotError test_save_group_fails(void *ctx, const MarmotGroup *group)
+{
+    (void)group;
+    ((FailingStorageCtx *)ctx)->save_group_calls++;
+    return MARMOT_ERR_STORAGE;
+}
+
+static MarmotError test_mls_store_ok(void *ctx, const char *label,
+                                      const uint8_t *key, size_t key_len,
+                                      const uint8_t *value, size_t value_len)
+{
+    (void)label; (void)key; (void)key_len; (void)value; (void)value_len;
+    ((FailingStorageCtx *)ctx)->mls_store_calls++;
+    return MARMOT_OK;
+}
+
+static MarmotError test_mls_store_fails(void *ctx, const char *label,
+                                         const uint8_t *key, size_t key_len,
+                                         const uint8_t *value, size_t value_len)
+{
+    (void)label; (void)key; (void)key_len; (void)value; (void)value_len;
+    ((FailingStorageCtx *)ctx)->mls_store_calls++;
+    return MARMOT_ERR_STORAGE;
+}
+
+static MarmotError test_mls_delete_ok(void *ctx, const char *label,
+                                       const uint8_t *key, size_t key_len)
+{
+    (void)ctx; (void)label; (void)key; (void)key_len;
+    return MARMOT_OK;
+}
+
+static MarmotError test_save_exporter_secret_ok(void *ctx,
+                                                 const MarmotGroupId *gid,
+                                                 uint64_t epoch,
+                                                 const uint8_t secret[32])
+{
+    (void)gid; (void)epoch; (void)secret;
+    ((FailingStorageCtx *)ctx)->save_exporter_secret_calls++;
+    return MARMOT_OK;
+}
+
+static MarmotError test_save_key_package_info_ok(void *ctx,
+                                                  const MarmotKeyPackageInfo *info)
+{
+    (void)ctx; (void)info;
+    return MARMOT_OK;
+}
+
+static MarmotError test_deactivate_key_packages_ok(void *ctx,
+                                                    const uint8_t pubkey[32])
+{
+    (void)ctx; (void)pubkey;
+    return MARMOT_OK;
+}
+
+static MarmotStorage *make_test_storage(FailingStorageCtx **out_ctx)
+{
+    FailingStorageCtx *ctx = calloc(1, sizeof(*ctx));
+    assert(ctx != NULL);
+    MarmotStorage *s = calloc(1, sizeof(*s));
+    assert(s != NULL);
+    s->ctx = ctx;
+    s->destroy = test_destroy;
+    if (out_ctx) *out_ctx = ctx;
+    return s;
+}
+
 /* ── Group CRUD ────────────────────────────────────────────────────────── */
 
 static void test_storage_group_roundtrip(void)
@@ -229,6 +310,122 @@ static void test_storage_exporter_secret(void)
     marmot_storage_free(s);
 }
 
+/* ── Snapshot support ─────────────────────────────────────────────────── */
+
+static void test_storage_memory_snapshots_unsupported(void)
+{
+    MarmotStorage *s = marmot_storage_memory_new();
+    assert(s != NULL);
+
+    MarmotGroupId gid = marmot_group_id_new((uint8_t *)"snap", 4);
+    size_t pruned = 123;
+
+    assert(s->create_snapshot(s->ctx, &gid, "before") == MARMOT_ERR_UNSUPPORTED);
+    assert(s->rollback_snapshot(s->ctx, &gid, "before") == MARMOT_ERR_UNSUPPORTED);
+    assert(s->release_snapshot(s->ctx, &gid, "before") == MARMOT_ERR_UNSUPPORTED);
+    assert(s->prune_expired_snapshots(s->ctx, 0, &pruned) == MARMOT_ERR_UNSUPPORTED);
+    assert(pruned == 0);
+
+    marmot_group_id_free(&gid);
+    marmot_storage_free(s);
+}
+
+/* ── Public API storage-failure behavior ───────────────────────────────── */
+
+static void test_public_apis_reject_missing_storage_methods(void)
+{
+    MarmotStorage *s = make_test_storage(NULL);
+    Marmot *m = marmot_new(s);
+    assert(m != NULL);
+
+    MarmotWelcome **welcomes = NULL;
+    size_t count = 0;
+    assert(marmot_get_pending_welcomes(m, NULL, &welcomes, &count) == MARMOT_ERR_STORAGE);
+
+    MarmotGroupId gid = marmot_group_id_new((uint8_t *)"gid", 3);
+    MarmotGroup *group = NULL;
+    assert(marmot_get_group(m, &gid, &group) == MARMOT_ERR_STORAGE);
+
+    MarmotGroup **groups = NULL;
+    assert(marmot_get_all_groups(m, &groups, &count) == MARMOT_ERR_STORAGE);
+
+    MarmotMessage **messages = NULL;
+    assert(marmot_get_messages(m, &gid, NULL, &messages, &count) == MARMOT_ERR_STORAGE);
+
+    const uint8_t data[] = { 1, 2, 3 };
+    MarmotEncryptedMedia media;
+    assert(marmot_encrypt_media(m, &gid, data, sizeof(data), "application/octet-stream",
+                                 NULL, &media) == MARMOT_ERR_STORAGE);
+
+    uint8_t enc[16] = { 0 };
+    MarmotImetaInfo imeta;
+    memset(&imeta, 0, sizeof(imeta));
+    uint8_t *out = NULL;
+    size_t out_len = 0;
+    assert(marmot_decrypt_media(m, &gid, enc, sizeof(enc), &imeta,
+                                 &out, &out_len) == MARMOT_ERR_STORAGE);
+
+    marmot_group_id_free(&gid);
+    marmot_free(m);
+}
+
+static void test_create_group_reports_save_group_failure(void)
+{
+    FailingStorageCtx *ctx = NULL;
+    MarmotStorage *s = make_test_storage(&ctx);
+    s->mls_store = test_mls_store_ok;
+    s->mls_delete = test_mls_delete_ok;
+    s->save_exporter_secret = test_save_exporter_secret_ok;
+    s->save_group = test_save_group_fails;
+
+    Marmot *m = marmot_new(s);
+    assert(m != NULL);
+
+    uint8_t creator_pk[32];
+    memset(creator_pk, 0x42, sizeof(creator_pk));
+    MarmotGroupConfig config;
+    memset(&config, 0, sizeof(config));
+    config.name = "storage failure group";
+
+    MarmotCreateGroupResult result;
+    memset(&result, 0, sizeof(result));
+    MarmotError err = marmot_create_group(m, creator_pk, NULL, 0, &config, &result);
+    assert(err == MARMOT_ERR_STORAGE);
+    assert(ctx->mls_store_calls == 1);
+    assert(ctx->save_exporter_secret_calls == 1);
+    assert(ctx->save_group_calls == 1);
+    assert(result.group == NULL);
+
+    marmot_create_group_result_free(&result);
+    marmot_free(m);
+}
+
+static void test_key_package_reports_private_store_failure(void)
+{
+    FailingStorageCtx *ctx = NULL;
+    MarmotStorage *s = make_test_storage(&ctx);
+    s->mls_store = test_mls_store_fails;
+    s->mls_delete = test_mls_delete_ok;
+    s->save_key_package_info = test_save_key_package_info_ok;
+    s->deactivate_key_packages = test_deactivate_key_packages_ok;
+
+    Marmot *m = marmot_new(s);
+    assert(m != NULL);
+
+    uint8_t pubkey[32];
+    memset(pubkey, 0x24, sizeof(pubkey));
+    MarmotKeyPackageResult result;
+    memset(&result, 0, sizeof(result));
+
+    MarmotError err = marmot_create_key_package_unsigned(m, pubkey, NULL, 0, &result);
+    assert(err == MARMOT_ERR_STORAGE);
+    assert(ctx->mls_store_calls == 1);
+    assert(result.event_json == NULL);
+
+    marmot_key_package_result_free(&result);
+    marmot_free(m);
+}
+
 /* ── is_persistent ─────────────────────────────────────────────────────── */
 
 static void test_storage_not_persistent(void)
@@ -246,6 +443,10 @@ int main(void)
     TEST(test_storage_messages);
     TEST(test_storage_mls_kv);
     TEST(test_storage_exporter_secret);
+    TEST(test_storage_memory_snapshots_unsupported);
+    TEST(test_public_apis_reject_missing_storage_methods);
+    TEST(test_create_group_reports_save_group_failure);
+    TEST(test_key_package_reports_private_store_failure);
     TEST(test_storage_not_persistent);
     printf("All storage tests passed.\n");
     return 0;

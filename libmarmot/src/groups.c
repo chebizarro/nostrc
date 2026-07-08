@@ -391,6 +391,10 @@ marmot_create_group(Marmot *m,
 
     memset(result, 0, sizeof(*result));
 
+    if (!m->storage || !m->storage->save_group || !m->storage->mls_store ||
+        !m->storage->save_exporter_secret)
+        return MARMOT_ERR_STORAGE;
+
     /* Ensure identity */
     if (marmot_ensure_identity(m) != 0)
         return MARMOT_ERR_CRYPTO;
@@ -506,31 +510,60 @@ marmot_create_group(Marmot *m,
 
     /* Convert to MarmotGroup */
     result->group = mls_group_to_marmot_group(&mls_group, &gde_local);
-
-    /* Store the MLS group state in storage */
-    if (result->group && m->storage && m->storage->save_group) {
-        m->storage->save_group(m->storage->ctx, result->group);
+    if (!result->group) {
+        mls_group_free(&mls_group);
+        marmot_create_group_result_free(result);
+        return MARMOT_ERR_MEMORY;
     }
 
-    /* Store the full MLS group state for future operations */
-    if (m->storage && m->storage->mls_store) {
-        uint8_t *state_data = NULL;
-        size_t state_len = 0;
-        if (mls_group_serialize(&mls_group, &state_data, &state_len) == 0) {
-            m->storage->mls_store(m->storage->ctx, "mls_group",
-                                   mls_group_id, 32,
-                                   state_data, state_len);
-            free(state_data);
-        }
+    /* Store the full MLS group state for future operations. This write is
+     * mandatory: later add/remove/message operations cannot proceed without
+     * the private MLS state. */
+    uint8_t *state_data = NULL;
+    size_t state_len = 0;
+    if (mls_group_serialize(&mls_group, &state_data, &state_len) != 0) {
+        mls_group_free(&mls_group);
+        marmot_create_group_result_free(result);
+        return MARMOT_ERR_SERIALIZATION;
+    }
+    err = m->storage->mls_store(m->storage->ctx, "mls_group",
+                                mls_group_id, 32,
+                                state_data, state_len);
+    free(state_data);
+    if (err != MARMOT_OK) {
+        mls_group_free(&mls_group);
+        marmot_create_group_result_free(result);
+        return err;
     }
 
-    /* Store exporter secret for NIP-44 message encryption */
-    if (m->storage && m->storage->save_exporter_secret) {
-        MarmotGroupId gid = marmot_group_id_new(mls_group_id, 32);
-        m->storage->save_exporter_secret(m->storage->ctx, &gid,
-                                          mls_group.epoch,
-                                          mls_group.epoch_secrets.exporter_secret);
-        marmot_group_id_free(&gid);
+    /* Store exporter secret for NIP-44 message encryption. Mandatory: a group
+     * without its exporter secret cannot send or receive messages. */
+    MarmotGroupId gid = marmot_group_id_new(mls_group_id, 32);
+    err = m->storage->save_exporter_secret(m->storage->ctx, &gid,
+                                           mls_group.epoch,
+                                           mls_group.epoch_secrets.exporter_secret);
+    marmot_group_id_free(&gid);
+    if (err != MARMOT_OK) {
+        /* Best-effort rollback of MLS state; there is no exporter-secret
+         * delete hook in the storage contract. */
+        if (m->storage->mls_delete)
+            m->storage->mls_delete(m->storage->ctx, "mls_group", mls_group_id, 32);
+        mls_group_free(&mls_group);
+        marmot_create_group_result_free(result);
+        return err;
+    }
+
+    /* Store group metadata last so callers never observe a group whose private
+     * MLS state was not persisted. */
+    err = m->storage->save_group(m->storage->ctx, result->group);
+    if (err != MARMOT_OK) {
+        /* Best-effort rollback of MLS state; the storage API has no group or
+         * exporter-secret delete operation. */
+        if (m->storage->mls_delete)
+            m->storage->mls_delete(m->storage->ctx, "mls_group", mls_group_id, 32);
+        mls_group_free(&mls_group);
+        marmot_create_group_result_free(result);
+        return err;
     }
 
     mls_group_free(&mls_group);
@@ -596,7 +629,9 @@ marmot_add_members(Marmot *m,
         return MARMOT_ERR_CRYPTO;
 
     /* Look up the group metadata for admin check */
-    if (!m->storage || !m->storage->find_group_by_mls_id)
+    if (!m->storage || !m->storage->find_group_by_mls_id ||
+        !m->storage->mls_store || !m->storage->save_group ||
+        !m->storage->save_exporter_secret)
         return MARMOT_ERR_STORAGE;
 
     MarmotGroup *group = NULL;
@@ -683,18 +718,39 @@ marmot_add_members(Marmot *m,
     }
     mls_add_result_clear(&last_add_result);
 
-    /* Save updated MLS group state */
-    save_mls_group(m, &mls);
+    /* Save updated MLS group state. Mandatory for future operations. */
+    if (save_mls_group(m, &mls) != 0) {
+        for (size_t j = 0; j < kp_count; j++) free(welcomes[j]);
+        free(welcomes);
+        free(commit_json);
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return MARMOT_ERR_STORAGE;
+    }
 
     /* Update group metadata (epoch) */
     group->epoch = mls.epoch;
-    m->storage->save_group(m->storage->ctx, group);
+    err = m->storage->save_group(m->storage->ctx, group);
+    if (err != MARMOT_OK) {
+        for (size_t j = 0; j < kp_count; j++) free(welcomes[j]);
+        free(welcomes);
+        free(commit_json);
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return err;
+    }
 
-    /* Store new exporter secret */
-    if (m->storage->save_exporter_secret) {
-        m->storage->save_exporter_secret(m->storage->ctx, mls_group_id,
-                                          mls.epoch,
-                                          mls.epoch_secrets.exporter_secret);
+    /* Store new exporter secret. Mandatory for message encryption. */
+    err = m->storage->save_exporter_secret(m->storage->ctx, mls_group_id,
+                                           mls.epoch,
+                                           mls.epoch_secrets.exporter_secret);
+    if (err != MARMOT_OK) {
+        for (size_t j = 0; j < kp_count; j++) free(welcomes[j]);
+        free(welcomes);
+        free(commit_json);
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return err;
     }
 
     mls_group_free(&mls);
@@ -726,7 +782,9 @@ marmot_remove_members(Marmot *m,
         return MARMOT_ERR_CRYPTO;
 
     /* Look up group metadata for admin check */
-    if (!m->storage || !m->storage->find_group_by_mls_id)
+    if (!m->storage || !m->storage->find_group_by_mls_id ||
+        !m->storage->mls_store || !m->storage->save_group ||
+        !m->storage->save_exporter_secret)
         return MARMOT_ERR_STORAGE;
 
     MarmotGroup *group = NULL;
@@ -792,18 +850,36 @@ marmot_remove_members(Marmot *m,
     }
     mls_commit_result_clear(&last_result);
 
-    /* Save updated MLS group state */
-    save_mls_group(m, &mls);
+    /* Save updated MLS group state. Mandatory for future operations. */
+    if (save_mls_group(m, &mls) != 0) {
+        free(*out_commit_json);
+        *out_commit_json = NULL;
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return MARMOT_ERR_STORAGE;
+    }
 
     /* Update group metadata */
     group->epoch = mls.epoch;
-    m->storage->save_group(m->storage->ctx, group);
+    err = m->storage->save_group(m->storage->ctx, group);
+    if (err != MARMOT_OK) {
+        free(*out_commit_json);
+        *out_commit_json = NULL;
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return err;
+    }
 
-    /* Store new exporter secret */
-    if (m->storage->save_exporter_secret) {
-        m->storage->save_exporter_secret(m->storage->ctx, mls_group_id,
-                                          mls.epoch,
-                                          mls.epoch_secrets.exporter_secret);
+    /* Store new exporter secret. Mandatory for message encryption. */
+    err = m->storage->save_exporter_secret(m->storage->ctx, mls_group_id,
+                                           mls.epoch,
+                                           mls.epoch_secrets.exporter_secret);
+    if (err != MARMOT_OK) {
+        free(*out_commit_json);
+        *out_commit_json = NULL;
+        mls_group_free(&mls);
+        marmot_group_free(group);
+        return err;
     }
 
     mls_group_free(&mls);
@@ -870,6 +946,12 @@ marmot_update_group_metadata(Marmot *m,
 
     /* Admin check using our Nostr pubkey from MLS tree */
     if (mls_loaded) {
+        if (!m->storage->mls_store || !m->storage->save_exporter_secret) {
+            mls_group_free(&mls);
+            marmot_group_free(group);
+            return MARMOT_ERR_STORAGE;
+        }
+
         uint8_t our_nostr_pk[32];
         if (get_own_credential_identity(&mls, our_nostr_pk) != 0 ||
             !is_admin(group, our_nostr_pk)) {
@@ -915,14 +997,23 @@ marmot_update_group_metadata(Marmot *m,
         memset(&commit_result, 0, sizeof(commit_result));
         if (mls_group_self_update(&mls, &commit_result) == 0) {
             /* Save updated MLS state */
-            save_mls_group(m, &mls);
+            if (save_mls_group(m, &mls) != 0) {
+                mls_commit_result_clear(&commit_result);
+                mls_group_free(&mls);
+                marmot_group_free(group);
+                return MARMOT_ERR_STORAGE;
+            }
             group->epoch = mls.epoch;
 
-            /* Store new exporter secret */
-            if (m->storage->save_exporter_secret) {
-                m->storage->save_exporter_secret(m->storage->ctx, mls_group_id,
-                                                  mls.epoch,
-                                                  mls.epoch_secrets.exporter_secret);
+            /* Store new exporter secret. Mandatory for message encryption. */
+            err = m->storage->save_exporter_secret(m->storage->ctx, mls_group_id,
+                                                   mls.epoch,
+                                                   mls.epoch_secrets.exporter_secret);
+            if (err != MARMOT_OK) {
+                mls_commit_result_clear(&commit_result);
+                mls_group_free(&mls);
+                marmot_group_free(group);
+                return err;
             }
         }
         mls_commit_result_clear(&commit_result);
