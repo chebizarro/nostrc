@@ -14,6 +14,7 @@
 
 #include <marmot/marmot.h>
 #include "marmot-internal.h"
+#include <nostr/nip44/nip44.h>
 #include <sodium.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -100,6 +101,59 @@ generate_nostr_keypair(uint8_t sk[32], uint8_t pk[32])
     assert(secp256k1_keypair_xonly_pub(ctx, &xonly, NULL, &keypair) == 1);
     assert(secp256k1_xonly_pubkey_serialize(ctx, pk, &xonly) == 1);
     secp256k1_context_destroy(ctx);
+}
+
+static int
+test_derive_exporter_convkey(const uint8_t exporter_secret[32],
+                              uint8_t out_convkey[32])
+{
+    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+    if (!ctx) return -1;
+
+    if (!secp256k1_ec_seckey_verify(ctx, exporter_secret)) {
+        secp256k1_context_destroy(ctx);
+        return -1;
+    }
+
+    secp256k1_keypair keypair;
+    if (!secp256k1_keypair_create(ctx, &keypair, exporter_secret)) {
+        secp256k1_context_destroy(ctx);
+        return -1;
+    }
+
+    secp256k1_xonly_pubkey xonly;
+    if (!secp256k1_keypair_xonly_pub(ctx, &xonly, NULL, &keypair)) {
+        secp256k1_context_destroy(ctx);
+        return -1;
+    }
+
+    uint8_t pk[32];
+    if (!secp256k1_xonly_pubkey_serialize(ctx, pk, &xonly)) {
+        secp256k1_context_destroy(ctx);
+        return -1;
+    }
+    secp256k1_context_destroy(ctx);
+
+    int rc = nostr_nip44_convkey(exporter_secret, pk, out_convkey);
+    sodium_memzero(pk, sizeof(pk));
+    return rc;
+}
+
+static int
+test_encrypt_raw_legacy_payload(const uint8_t exporter_secret[32],
+                                const char *plaintext,
+                                char **out_b64)
+{
+    uint8_t convkey[32];
+    if (test_derive_exporter_convkey(exporter_secret, convkey) != 0)
+        return -1;
+
+    int rc = nostr_nip44_encrypt_v2_with_convkey(convkey,
+                                                  (const uint8_t *)plaintext,
+                                                  strlen(plaintext),
+                                                  out_b64);
+    sodium_memzero(convkey, sizeof(convkey));
+    return rc;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -993,6 +1047,113 @@ test_create_message_with_active_group(void)
         ASSERT_OK(err, "create_message unexpected error");
     }
 
+    marmot_create_group_result_free(&gresult);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_create_message_requires_mls_state_by_default(void)
+{
+    TEST("MIP-03: create_message requires MLS state by default");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+
+    MarmotGroupConfig config = {0};
+    config.name = "Missing MLS State Test";
+    config.admin_pubkeys = (uint8_t (*)[32])&pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult gresult;
+    memset(&gresult, 0, sizeof(gresult));
+
+    MarmotError err = marmot_create_group(m, pk, NULL, 0, &config, &gresult);
+    ASSERT_OK(err, "create_group");
+    ASSERT(gresult.group != NULL, "group is NULL");
+    ASSERT(m->storage && m->storage->mls_delete, "storage missing mls_delete");
+
+    err = m->storage->mls_delete(m->storage->ctx, "mls_group",
+                                  gresult.group->mls_group_id.data,
+                                  gresult.group->mls_group_id.len);
+    ASSERT_OK(err, "mls_delete");
+
+    MarmotOutgoingMessage msg_result;
+    memset(&msg_result, 0, sizeof(msg_result));
+    err = marmot_create_message(m, &gresult.group->mls_group_id,
+                                 "{\"kind\":9,\"content\":\"raw fallback must be explicit\"}",
+                                 &msg_result);
+    ASSERT(err == MARMOT_ERR_MLS,
+           "missing MLS state should return MARMOT_ERR_MLS");
+    marmot_outgoing_message_free(&msg_result);
+
+    marmot_create_group_result_free(&gresult);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_process_message_rejects_raw_json_with_mls_state_by_default(void)
+{
+    TEST("MIP-03: process_message rejects raw JSON fallback by default");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+
+    MarmotGroupConfig config = {0};
+    config.name = "Raw Fallback Reject Test";
+    config.admin_pubkeys = (uint8_t (*)[32])&pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult gresult;
+    memset(&gresult, 0, sizeof(gresult));
+
+    MarmotError err = marmot_create_group(m, pk, NULL, 0, &config, &gresult);
+    ASSERT_OK(err, "create_group");
+    ASSERT(gresult.group != NULL, "group is NULL");
+
+    uint8_t exporter_secret[32];
+    err = m->storage->get_exporter_secret(m->storage->ctx,
+                                           &gresult.group->mls_group_id,
+                                           gresult.group->epoch,
+                                           exporter_secret);
+    ASSERT_OK(err, "get_exporter_secret");
+
+    const char *inner_json = "{\"kind\":9,\"content\":\"legacy raw payload\"}";
+    char *ciphertext = NULL;
+    ASSERT(test_encrypt_raw_legacy_payload(exporter_secret, inner_json,
+                                            &ciphertext) == 0,
+           "legacy raw encrypt failed");
+    sodium_memzero(exporter_secret, sizeof(exporter_secret));
+
+    char *gid_hex = marmot_hex_encode(gresult.group->nostr_group_id, 32);
+    ASSERT(gid_hex != NULL, "gid hex encode failed");
+
+    size_t event_len = strlen(ciphertext) + strlen(gid_hex) + 160;
+    char *event_json = malloc(event_len);
+    ASSERT(event_json != NULL, "event_json alloc failed");
+    snprintf(event_json, event_len,
+             "{\"kind\":445,\"content\":\"%s\","
+             "\"created_at\":1700000000,"
+             "\"tags\":[[\"h\",\"%s\"]]}",
+             ciphertext, gid_hex);
+
+    MarmotMessageResult result;
+    memset(&result, 0, sizeof(result));
+    err = marmot_process_message(m, event_json, &result);
+    ASSERT(err == MARMOT_ERR_MLS,
+           "raw JSON fallback should require explicit legacy opt-in");
+    marmot_message_result_free(&result);
+
+    free(event_json);
+    free(gid_hex);
+    free(ciphertext);
     marmot_create_group_result_free(&gresult);
     marmot_free(m);
     PASS();
@@ -2179,6 +2340,8 @@ test_marmot_config_defaults(void)
     ASSERT(config.max_forward_distance > 0, "max_forward_dist should be > 0");
     ASSERT(config.epoch_snapshot_retention > 0, "snapshot_retention should be > 0");
     ASSERT(config.snapshot_ttl_seconds > 0, "snapshot_ttl should be > 0");
+    ASSERT(config.allow_legacy_raw_messages == false,
+           "legacy raw messages must be disabled by default");
 
     PASS();
 }
@@ -2238,6 +2401,8 @@ main(void)
     test_create_message_no_group();
     test_create_message_inactive_group();
     test_create_message_with_active_group();
+    test_create_message_requires_mls_state_by_default();
+    test_process_message_rejects_raw_json_with_mls_state_by_default();
     test_process_message_null_args();
     test_process_message_wrong_kind();
     test_process_message_missing_h_tag();

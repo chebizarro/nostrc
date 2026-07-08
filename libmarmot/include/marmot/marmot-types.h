@@ -135,6 +135,15 @@ typedef struct {
      * Default: 604800 (1 week)
      */
     uint64_t snapshot_ttl_seconds;
+
+    /**
+     * Permit legacy pre-MLS-framing messages that contain raw inner-event JSON
+     * directly inside the NIP-44 layer. Disabled by default: MIP-03 messages
+     * require MLS PrivateMessage framing, and missing/invalid MLS state is an
+     * MLS error instead of an implicit compatibility downgrade.
+     * Default: false
+     */
+    bool allow_legacy_raw_messages;
 } MarmotConfig;
 
 /**

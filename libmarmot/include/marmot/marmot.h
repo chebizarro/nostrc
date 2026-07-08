@@ -322,8 +322,13 @@ MarmotError marmot_get_pending_welcomes(Marmot *m,
  * @inner_event_json: JSON of the unsigned event to encrypt and send
  * @result: (out): outgoing message with encrypted event JSON
  *
- * Create an encrypted group message. The inner event is encrypted using
- * NIP-44 with the MLS exporter secret as the conversation key.
+ * Create an encrypted group message. The inner event is first framed as an
+ * MLS PrivateMessage, then encrypted using NIP-44 with the MLS exporter secret
+ * as the conversation key.
+ *
+ * MLS group state is required by default. Setting
+ * MarmotConfig.allow_legacy_raw_messages permits the legacy pre-framing path
+ * that NIP-44-encrypts the raw inner JSON only when MLS state is unavailable.
  *
  * The caller must gift-wrap the result and publish to group relays.
  *
@@ -344,6 +349,10 @@ MarmotError marmot_create_message(Marmot *m,
  * - Application messages (decrypts content)
  * - Commits (updates group state)
  * - Proposals (queued for commit)
+ *
+ * MIP-03 messages require MLS PrivateMessage framing by default. The legacy
+ * raw-JSON NIP-44 fallback is accepted only when
+ * MarmotConfig.allow_legacy_raw_messages is enabled.
  *
  * Returns: MARMOT_OK on success
  */

@@ -77,6 +77,7 @@ marmot_config_default(void)
         .max_forward_distance    = 1000,
         .epoch_snapshot_retention = 5,
         .snapshot_ttl_seconds    = 604800,     /* 1 week */
+        .allow_legacy_raw_messages = false,
     };
 }
 

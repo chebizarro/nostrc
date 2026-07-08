@@ -20,8 +20,8 @@
  *   4. Validate sender identity
  *
  * MLS PrivateMessage framing (mls_group_encrypt/decrypt) wraps the
- * plaintext before NIP-44 encryption when MLS group state is available.
- * Falls back to direct NIP-44 encryption when MLS state is not loaded.
+ * plaintext before NIP-44 encryption. Raw inner JSON compatibility is
+ * accepted only when MarmotConfig.allow_legacy_raw_messages is enabled.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -357,9 +357,8 @@ marmot_create_message(Marmot *m,
      *   1. Wrapped as MLS PrivateMessage via mls_group_encrypt()
      *   2. Then NIP-44-encrypted with the exporter_secret-derived convkey
      *
-     * When MLS group state is not available in storage, we fall back to
-     * encrypting the inner event JSON directly with NIP-44 (Phase 3
-     * compatibility mode).
+     * Missing MLS group state is an MLS error by default. Legacy raw JSON
+     * NIP-44 encryption is only available through the explicit config opt-in.
      */
     const uint8_t *plaintext = (const uint8_t *)inner_event_json;
     size_t plaintext_len = strlen(inner_event_json);
@@ -384,6 +383,10 @@ marmot_create_message(Marmot *m,
         }
         nip44_plaintext = mls_ciphertext;
         nip44_plaintext_len = mls_ciphertext_len;
+    } else if (!m->config.allow_legacy_raw_messages) {
+        sodium_memzero(exporter_secret, sizeof(exporter_secret));
+        marmot_group_free(group);
+        return MARMOT_ERR_MLS;
     }
 
     char *nip44_ciphertext = NULL;
@@ -594,14 +597,11 @@ marmot_process_message(Marmot *m,
         return MARMOT_ERR_NIP44;
     }
 
-    /* ── 6. Unwrap MLS PrivateMessage if MLS group state available ────── */
+    /* ── 6. Unwrap MLS PrivateMessage ─────────────────────────────────── */
     /*
-     * The NIP-44 decrypted content is either:
-     *   a) An MLS PrivateMessage (when full framing is active)
-     *   b) Raw inner event JSON (Phase 3 compatibility mode)
-     *
-     * Try MLS decryption first; if MLS state is unavailable or
-     * deserialization fails (indicating raw JSON), use as-is.
+     * MIP-03 requires the NIP-44 decrypted content to be an MLS
+     * PrivateMessage. Raw inner-event JSON is accepted only for explicitly
+     * opted-in legacy deployments.
      */
     MlsGroup mls_group;
     memset(&mls_group, 0, sizeof(mls_group));
@@ -634,8 +634,14 @@ marmot_process_message(Marmot *m,
             result->type = MARMOT_RESULT_OWN_MESSAGE;
             return MARMOT_OK;
         }
-        /* Other MLS errors: fall through to use raw decrypted data.
-         * This handles messages sent before MLS framing was enabled. */
+    }
+
+    if (!used_mls && !m->config.allow_legacy_raw_messages) {
+        free(decrypted);
+        if (mls_loaded) mls_group_free(&mls_group);
+        marmot_group_free(group);
+        parsed_group_event_clear(&parsed);
+        return MARMOT_ERR_MLS;
     }
 
     char *inner_json = NULL;
@@ -654,10 +660,8 @@ marmot_process_message(Marmot *m,
         free(inner_plaintext);
         free(decrypted);
     } else {
-        /* Sanity check: if the NIP-44 decrypted data doesn't look like JSON,
-         * it's likely MLS PrivateMessage ciphertext from an epoch whose MLS
-         * state is no longer available (e.g., epoch lookback across an epoch
-         * advance). We can't recover the plaintext in this case. */
+        /* Explicit legacy mode: accept raw inner-event JSON directly from the
+         * NIP-44 layer. Non-JSON payloads are not silently accepted. */
         if (decrypted_len == 0 ||
             (decrypted[0] != '{' && decrypted[0] != '[')) {
             free(decrypted);
