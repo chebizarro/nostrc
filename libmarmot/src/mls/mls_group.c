@@ -224,21 +224,11 @@ generate_update_path(MlsGroup *group,
     for (uint32_t i = 0; i < fdp_len; i++) {
         uint32_t node_idx = fdp[i];
 
-        /* Derive node keypair from path_secret:
-         * node_secret = DeriveSecret(path_secret, "node")
-         * node_priv = ExpandWithLabel(node_secret, "key", "", KEM_SK_LEN)
-         * (simplified: we use the path secret to seed a KEM keypair) */
-        uint8_t node_secret[MLS_HASH_LEN];
-        if (mls_crypto_derive_secret(node_secret, path_secrets[i], "node") != 0)
-            goto fail;
-
+        /* Derive node keypair per RFC 9420 §7.4 / RFC 9180 §7.1.3. */
         uint8_t node_sk[MLS_KEM_SK_LEN];
         uint8_t node_pk[MLS_KEM_PK_LEN];
-        if (mls_crypto_hkdf_expand(node_sk, MLS_KEM_SK_LEN, node_secret,
-                                    (const uint8_t *)"mls10 key", 9) != 0)
+        if (mls_tree_derive_node_keypair(path_secrets[i], node_sk, node_pk) != 0)
             goto fail;
-        /* Derive public key from private (X25519 clamping) */
-        crypto_scalarmult_base(node_pk, node_sk);
 
         memcpy(path_out->nodes[i].encryption_key, node_pk, MLS_KEM_PK_LEN);
 
@@ -322,7 +312,6 @@ generate_update_path(MlsGroup *group,
         memset(&group->tree.nodes[node_idx].parent, 0, sizeof(MlsParentNode));
         memcpy(group->tree.nodes[node_idx].parent.encryption_key, node_pk, MLS_KEM_PK_LEN);
 
-        sodium_memzero(node_secret, sizeof(node_secret));
         sodium_memzero(node_sk, sizeof(node_sk));
     }
 

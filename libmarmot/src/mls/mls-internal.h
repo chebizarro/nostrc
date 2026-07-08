@@ -46,25 +46,80 @@ extern "C" {
 
 /* ── HPKE (DHKEM X25519, RFC 9180 §4.1) ──────────────────────────────── */
 
+typedef struct {
+    uint8_t key[MLS_AEAD_KEY_LEN];
+    uint8_t base_nonce[MLS_AEAD_NONCE_LEN];
+    uint8_t exporter_secret[MLS_HASH_LEN];
+} MlsHpkeContext;
+
 /** X25519 DH. out must be MLS_KEM_SECRET_LEN bytes. */
 int mls_crypto_dh(uint8_t out[MLS_KEM_SECRET_LEN],
                   const uint8_t sk[MLS_KEM_SK_LEN],
                   const uint8_t pk[MLS_KEM_PK_LEN]);
 
-/** Generate X25519 keypair. */
+/** Generate a random X25519 keypair for DHKEM. */
 int mls_crypto_kem_keygen(uint8_t sk[MLS_KEM_SK_LEN],
                            uint8_t pk[MLS_KEM_PK_LEN]);
+
+/** RFC 9180 §7.1.3 DHKEM DeriveKeyPair(ikm) for X25519/HKDF-SHA256. */
+int mls_crypto_kem_derive_keypair(const uint8_t *ikm, size_t ikm_len,
+                                   uint8_t sk[MLS_KEM_SK_LEN],
+                                   uint8_t pk[MLS_KEM_PK_LEN]);
 
 /** DHKEM Encap: produce (shared_secret, enc) for recipient pk. */
 int mls_crypto_kem_encap(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
                           uint8_t enc[MLS_KEM_ENC_LEN],
                           const uint8_t pk[MLS_KEM_PK_LEN]);
 
+/** Deterministic DHKEM Encap using DeriveKeyPair(ikmE); intended for vectors. */
+int mls_crypto_kem_encap_derand(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
+                                 uint8_t enc[MLS_KEM_ENC_LEN],
+                                 const uint8_t pk[MLS_KEM_PK_LEN],
+                                 const uint8_t *ikm_e, size_t ikm_e_len);
+
 /** DHKEM Decap: recover shared_secret from enc using sk. */
 int mls_crypto_kem_decap(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
                           const uint8_t enc[MLS_KEM_ENC_LEN],
                           const uint8_t sk[MLS_KEM_SK_LEN],
                           const uint8_t pk[MLS_KEM_PK_LEN]);
+
+/**
+ * RFC 9180 §5.1 base-mode HPKE KeySchedule for
+ * DHKEM(X25519,HKDF-SHA256)+HKDF-SHA256+AES-128-GCM.
+ */
+int mls_crypto_hpke_key_schedule_base(MlsHpkeContext *ctx,
+                                       const uint8_t shared_secret[MLS_KEM_SECRET_LEN],
+                                       const uint8_t *info, size_t info_len);
+
+/** Base-mode SetupS: encap to pkR and derive sender context. */
+int mls_crypto_hpke_setup_base_s(uint8_t enc[MLS_KEM_ENC_LEN],
+                                  MlsHpkeContext *ctx,
+                                  const uint8_t pk_r[MLS_KEM_PK_LEN],
+                                  const uint8_t *info, size_t info_len);
+
+/** Base-mode SetupR: decap enc with skR/pkR and derive recipient context. */
+int mls_crypto_hpke_setup_base_r(MlsHpkeContext *ctx,
+                                  const uint8_t enc[MLS_KEM_ENC_LEN],
+                                  const uint8_t sk_r[MLS_KEM_SK_LEN],
+                                  const uint8_t pk_r[MLS_KEM_PK_LEN],
+                                  const uint8_t *info, size_t info_len);
+
+/** Single-shot base-mode HPKE Seal; ct must hold pt_len + MLS_AEAD_TAG_LEN. */
+int mls_crypto_hpke_seal_base(uint8_t enc[MLS_KEM_ENC_LEN],
+                               uint8_t *ct, size_t *ct_len,
+                               const uint8_t pk_r[MLS_KEM_PK_LEN],
+                               const uint8_t *info, size_t info_len,
+                               const uint8_t *aad, size_t aad_len,
+                               const uint8_t *pt, size_t pt_len);
+
+/** Single-shot base-mode HPKE Open; pt must hold ct_len - MLS_AEAD_TAG_LEN. */
+int mls_crypto_hpke_open_base(uint8_t *pt, size_t *pt_len,
+                               const uint8_t enc[MLS_KEM_ENC_LEN],
+                               const uint8_t sk_r[MLS_KEM_SK_LEN],
+                               const uint8_t pk_r[MLS_KEM_PK_LEN],
+                               const uint8_t *info, size_t info_len,
+                               const uint8_t *aad, size_t aad_len,
+                               const uint8_t *ct, size_t ct_len);
 
 /* ── HKDF (SHA-256) ──────────────────────────────────────────────────── */
 

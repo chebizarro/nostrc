@@ -357,6 +357,137 @@ cleanup:
  * HPKE / DHKEM (X25519)
  * ══════════════════════════════════════════════════════════════════════════ */
 
+#define MLS_HPKE_KEM_ID        0x0020 /* DHKEM(X25519, HKDF-SHA256) */
+#define MLS_HPKE_KDF_ID        0x0001 /* HKDF-SHA256 */
+#define MLS_HPKE_AEAD_ID       0x0001 /* AES-128-GCM */
+#define MLS_HPKE_MODE_BASE     0x00
+
+static const uint8_t MLS_HPKE_LABEL_PREFIX[] = {'H','P','K','E','-','v','1'};
+static const uint8_t MLS_HPKE_KEM_SUITE_ID[] = {'K','E','M', 0x00, 0x20};
+static const uint8_t MLS_HPKE_SUITE_ID[] = {
+    'H','P','K','E',
+    0x00, 0x20, /* KEM  DHKEM(X25519, HKDF-SHA256) */
+    0x00, 0x01, /* KDF  HKDF-SHA256 */
+    0x00, 0x01  /* AEAD AES-128-GCM */
+};
+
+static int
+hpke_labeled_extract(uint8_t prk[MLS_KDF_EXTRACT_LEN],
+                     const uint8_t *suite_id, size_t suite_id_len,
+                     const uint8_t *salt, size_t salt_len,
+                     const char *label,
+                     const uint8_t *ikm, size_t ikm_len)
+{
+    size_t label_len = label ? strlen(label) : 0;
+    size_t prefix_len = sizeof(MLS_HPKE_LABEL_PREFIX);
+    if (ikm_len > SIZE_MAX - prefix_len - suite_id_len - label_len)
+        return -1;
+    size_t labeled_ikm_len = prefix_len + suite_id_len + label_len + ikm_len;
+
+    uint8_t *labeled_ikm = malloc(labeled_ikm_len ? labeled_ikm_len : 1);
+    if (!labeled_ikm) return -1;
+
+    size_t pos = 0;
+    memcpy(labeled_ikm + pos, MLS_HPKE_LABEL_PREFIX, prefix_len);
+    pos += prefix_len;
+    memcpy(labeled_ikm + pos, suite_id, suite_id_len);
+    pos += suite_id_len;
+    if (label_len > 0) {
+        memcpy(labeled_ikm + pos, label, label_len);
+        pos += label_len;
+    }
+    if (ikm_len > 0) {
+        memcpy(labeled_ikm + pos, ikm, ikm_len);
+        pos += ikm_len;
+    }
+
+    int rc = mls_crypto_hkdf_extract(prk, salt, salt_len, labeled_ikm, pos);
+    sodium_memzero(labeled_ikm, labeled_ikm_len);
+    free(labeled_ikm);
+    return rc;
+}
+
+static int
+hpke_labeled_expand(uint8_t *out, size_t out_len,
+                    const uint8_t prk[MLS_KDF_EXTRACT_LEN],
+                    const uint8_t *suite_id, size_t suite_id_len,
+                    const char *label,
+                    const uint8_t *info, size_t info_len)
+{
+    if (out_len > 0xffff) return -1;
+
+    size_t label_len = label ? strlen(label) : 0;
+    size_t prefix_len = sizeof(MLS_HPKE_LABEL_PREFIX);
+    if (info_len > SIZE_MAX - 2 - prefix_len - suite_id_len - label_len)
+        return -1;
+    size_t labeled_info_len = 2 + prefix_len + suite_id_len + label_len + info_len;
+
+    uint8_t *labeled_info = malloc(labeled_info_len);
+    if (!labeled_info) return -1;
+
+    size_t pos = 0;
+    labeled_info[pos++] = (uint8_t)(out_len >> 8);
+    labeled_info[pos++] = (uint8_t)(out_len & 0xff);
+    memcpy(labeled_info + pos, MLS_HPKE_LABEL_PREFIX, prefix_len);
+    pos += prefix_len;
+    memcpy(labeled_info + pos, suite_id, suite_id_len);
+    pos += suite_id_len;
+    if (label_len > 0) {
+        memcpy(labeled_info + pos, label, label_len);
+        pos += label_len;
+    }
+    if (info_len > 0) {
+        memcpy(labeled_info + pos, info, info_len);
+        pos += info_len;
+    }
+
+    int rc = mls_crypto_hkdf_expand(out, out_len, prk, labeled_info, pos);
+    sodium_memzero(labeled_info, labeled_info_len);
+    free(labeled_info);
+    return rc;
+}
+
+static int
+dhkem_extract_and_expand(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
+                         const uint8_t dh[MLS_KEM_SECRET_LEN],
+                         const uint8_t *kem_context, size_t kem_context_len)
+{
+    uint8_t eae_prk[MLS_KDF_EXTRACT_LEN];
+    if (hpke_labeled_extract(eae_prk,
+                             MLS_HPKE_KEM_SUITE_ID, sizeof(MLS_HPKE_KEM_SUITE_ID),
+                             NULL, 0, "eae_prk", dh, MLS_KEM_SECRET_LEN) != 0)
+        return -1;
+
+    int rc = hpke_labeled_expand(shared_secret, MLS_KEM_SECRET_LEN, eae_prk,
+                                  MLS_HPKE_KEM_SUITE_ID, sizeof(MLS_HPKE_KEM_SUITE_ID),
+                                  "shared_secret", kem_context, kem_context_len);
+    sodium_memzero(eae_prk, sizeof(eae_prk));
+    return rc;
+}
+
+static int
+kem_encap_from_keypair(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
+                       uint8_t enc[MLS_KEM_ENC_LEN],
+                       const uint8_t sk_e[MLS_KEM_SK_LEN],
+                       const uint8_t pk_e[MLS_KEM_PK_LEN],
+                       const uint8_t pk_r[MLS_KEM_PK_LEN])
+{
+    uint8_t dh[MLS_KEM_SECRET_LEN];
+    if (mls_crypto_dh(dh, sk_e, pk_r) != 0)
+        return -1;
+
+    memcpy(enc, pk_e, MLS_KEM_ENC_LEN);
+
+    uint8_t kem_context[MLS_KEM_ENC_LEN + MLS_KEM_PK_LEN];
+    memcpy(kem_context, enc, MLS_KEM_ENC_LEN);
+    memcpy(kem_context + MLS_KEM_ENC_LEN, pk_r, MLS_KEM_PK_LEN);
+
+    int rc = dhkem_extract_and_expand(shared_secret, dh,
+                                      kem_context, sizeof(kem_context));
+    sodium_memzero(dh, sizeof(dh));
+    return rc;
+}
+
 int
 mls_crypto_dh(uint8_t out[MLS_KEM_SECRET_LEN],
               const uint8_t sk[MLS_KEM_SK_LEN],
@@ -374,69 +505,63 @@ mls_crypto_kem_keygen(uint8_t sk[MLS_KEM_SK_LEN],
 }
 
 int
+mls_crypto_kem_derive_keypair(const uint8_t *ikm, size_t ikm_len,
+                               uint8_t sk[MLS_KEM_SK_LEN],
+                               uint8_t pk[MLS_KEM_PK_LEN])
+{
+    if (!ikm || !sk || !pk) return -1;
+
+    uint8_t dkp_prk[MLS_KDF_EXTRACT_LEN];
+    if (hpke_labeled_extract(dkp_prk,
+                             MLS_HPKE_KEM_SUITE_ID, sizeof(MLS_HPKE_KEM_SUITE_ID),
+                             NULL, 0, "dkp_prk", ikm, ikm_len) != 0)
+        return -1;
+
+    int rc = hpke_labeled_expand(sk, MLS_KEM_SK_LEN, dkp_prk,
+                                  MLS_HPKE_KEM_SUITE_ID, sizeof(MLS_HPKE_KEM_SUITE_ID),
+                                  "sk", NULL, 0);
+    sodium_memzero(dkp_prk, sizeof(dkp_prk));
+    if (rc != 0) return -1;
+
+    if (crypto_scalarmult_curve25519_base(pk, sk) != 0) {
+        sodium_memzero(sk, MLS_KEM_SK_LEN);
+        return -1;
+    }
+    return 0;
+}
+
+int
 mls_crypto_kem_encap(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
                       uint8_t enc[MLS_KEM_ENC_LEN],
                       const uint8_t pk[MLS_KEM_PK_LEN])
 {
-    /*
-     * DHKEM.Encap(pkR):
-     *   (skE, pkE) = GenerateKeyPair()
-     *   dh = DH(skE, pkR)
-     *   enc = pkE
-     *   kem_context = pkE || pkR
-     *   shared_secret = ExtractAndExpand(dh, kem_context)
-     */
-    uint8_t sk_eph[MLS_KEM_SK_LEN];
-    uint8_t pk_eph[MLS_KEM_PK_LEN];
+    if (!shared_secret || !enc || !pk) return -1;
 
-    if (mls_crypto_kem_keygen(sk_eph, pk_eph) != 0)
+    uint8_t sk_e[MLS_KEM_SK_LEN];
+    uint8_t pk_e[MLS_KEM_PK_LEN];
+    if (mls_crypto_kem_keygen(sk_e, pk_e) != 0)
         return -1;
 
-    uint8_t dh[MLS_KEM_SECRET_LEN];
-    if (mls_crypto_dh(dh, sk_eph, pk) != 0) {
-        sodium_memzero(sk_eph, sizeof(sk_eph));
+    int rc = kem_encap_from_keypair(shared_secret, enc, sk_e, pk_e, pk);
+    sodium_memzero(sk_e, sizeof(sk_e));
+    return rc;
+}
+
+int
+mls_crypto_kem_encap_derand(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
+                             uint8_t enc[MLS_KEM_ENC_LEN],
+                             const uint8_t pk[MLS_KEM_PK_LEN],
+                             const uint8_t *ikm_e, size_t ikm_e_len)
+{
+    if (!shared_secret || !enc || !pk || !ikm_e) return -1;
+
+    uint8_t sk_e[MLS_KEM_SK_LEN];
+    uint8_t pk_e[MLS_KEM_PK_LEN];
+    if (mls_crypto_kem_derive_keypair(ikm_e, ikm_e_len, sk_e, pk_e) != 0)
         return -1;
-    }
 
-    /* enc = pkE */
-    memcpy(enc, pk_eph, MLS_KEM_PK_LEN);
-
-    /* kem_context = pkE || pkR */
-    uint8_t kem_ctx[MLS_KEM_PK_LEN * 2];
-    memcpy(kem_ctx, pk_eph, MLS_KEM_PK_LEN);
-    memcpy(kem_ctx + MLS_KEM_PK_LEN, pk, MLS_KEM_PK_LEN);
-
-    /* ExtractAndExpand(dh, kem_context) */
-    /* suite_id = "KEM" || I2OSP(0x0020, 2) for DHKEM(X25519) */
-    const uint8_t suite_id[] = "KEM\x00\x20";
-    size_t suite_id_len = 5;
-
-    /* psk_id_hash = LabeledExtract("", "psk_id_hash", "") — empty for base mode */
-    /* Extract: PRK = HKDF-Extract(dh as salt-ish, kem_context as IKM) */
-    uint8_t prk[MLS_KDF_EXTRACT_LEN];
-    if (mls_crypto_hkdf_extract(prk, dh, MLS_KEM_SECRET_LEN,
-                                 kem_ctx, sizeof(kem_ctx)) != 0) {
-        sodium_memzero(sk_eph, sizeof(sk_eph));
-        sodium_memzero(dh, sizeof(dh));
-        return -1;
-    }
-
-    /* Expand: shared_secret = HKDF-Expand(PRK, "shared_secret" || suite_id, 32) */
-    /* For simplicity, concatenate label */
-    const char *label = "shared_secret";
-    size_t label_len = strlen(label);
-    size_t info_len = label_len + suite_id_len;
-    uint8_t info[64]; /* plenty of room */
-    memcpy(info, label, label_len);
-    memcpy(info + label_len, suite_id, suite_id_len);
-
-    int rc = mls_crypto_hkdf_expand(shared_secret, MLS_KEM_SECRET_LEN,
-                                     prk, info, info_len);
-
-    sodium_memzero(sk_eph, sizeof(sk_eph));
-    sodium_memzero(dh, sizeof(dh));
-    sodium_memzero(prk, sizeof(prk));
-
+    int rc = kem_encap_from_keypair(shared_secret, enc, sk_e, pk_e, pk);
+    sodium_memzero(sk_e, sizeof(sk_e));
     return rc;
 }
 
@@ -446,36 +571,159 @@ mls_crypto_kem_decap(uint8_t shared_secret[MLS_KEM_SECRET_LEN],
                       const uint8_t sk[MLS_KEM_SK_LEN],
                       const uint8_t pk[MLS_KEM_PK_LEN])
 {
-    /* dh = DH(skR, enc) where enc = pkE */
+    if (!shared_secret || !enc || !sk || !pk) return -1;
+
     uint8_t dh[MLS_KEM_SECRET_LEN];
     if (mls_crypto_dh(dh, sk, enc) != 0)
         return -1;
 
-    /* kem_context = enc || pkR */
-    uint8_t kem_ctx[MLS_KEM_PK_LEN * 2];
-    memcpy(kem_ctx, enc, MLS_KEM_ENC_LEN);
-    memcpy(kem_ctx + MLS_KEM_ENC_LEN, pk, MLS_KEM_PK_LEN);
+    uint8_t kem_context[MLS_KEM_ENC_LEN + MLS_KEM_PK_LEN];
+    memcpy(kem_context, enc, MLS_KEM_ENC_LEN);
+    memcpy(kem_context + MLS_KEM_ENC_LEN, pk, MLS_KEM_PK_LEN);
 
-    uint8_t prk[MLS_KDF_EXTRACT_LEN];
-    if (mls_crypto_hkdf_extract(prk, dh, MLS_KEM_SECRET_LEN,
-                                 kem_ctx, sizeof(kem_ctx)) != 0) {
-        sodium_memzero(dh, sizeof(dh));
-        return -1;
-    }
-
-    const char *label = "shared_secret";
-    const uint8_t suite_id[] = "KEM\x00\x20";
-    size_t label_len = strlen(label);
-    size_t suite_id_len = 5;
-    uint8_t info[64];
-    memcpy(info, label, label_len);
-    memcpy(info + label_len, suite_id, suite_id_len);
-
-    int rc = mls_crypto_hkdf_expand(shared_secret, MLS_KEM_SECRET_LEN,
-                                     prk, info, label_len + suite_id_len);
-
+    int rc = dhkem_extract_and_expand(shared_secret, dh,
+                                      kem_context, sizeof(kem_context));
     sodium_memzero(dh, sizeof(dh));
-    sodium_memzero(prk, sizeof(prk));
+    return rc;
+}
+
+int
+mls_crypto_hpke_key_schedule_base(MlsHpkeContext *ctx,
+                                   const uint8_t shared_secret[MLS_KEM_SECRET_LEN],
+                                   const uint8_t *info, size_t info_len)
+{
+    if (!ctx || !shared_secret || (info_len > 0 && !info)) return -1;
+
+    uint8_t psk_id_hash[MLS_HASH_LEN];
+    uint8_t info_hash[MLS_HASH_LEN];
+    uint8_t secret[MLS_KDF_EXTRACT_LEN];
+    uint8_t key_schedule_context[1 + MLS_HASH_LEN + MLS_HASH_LEN];
+    int rc = -1;
+
+    if (hpke_labeled_extract(psk_id_hash,
+                             MLS_HPKE_SUITE_ID, sizeof(MLS_HPKE_SUITE_ID),
+                             NULL, 0, "psk_id_hash", NULL, 0) != 0)
+        goto cleanup;
+    if (hpke_labeled_extract(info_hash,
+                             MLS_HPKE_SUITE_ID, sizeof(MLS_HPKE_SUITE_ID),
+                             NULL, 0, "info_hash", info, info_len) != 0)
+        goto cleanup;
+
+    key_schedule_context[0] = MLS_HPKE_MODE_BASE;
+    memcpy(key_schedule_context + 1, psk_id_hash, MLS_HASH_LEN);
+    memcpy(key_schedule_context + 1 + MLS_HASH_LEN, info_hash, MLS_HASH_LEN);
+
+    if (hpke_labeled_extract(secret,
+                             MLS_HPKE_SUITE_ID, sizeof(MLS_HPKE_SUITE_ID),
+                             shared_secret, MLS_KEM_SECRET_LEN,
+                             "secret", NULL, 0) != 0)
+        goto cleanup;
+
+    if (hpke_labeled_expand(ctx->key, MLS_AEAD_KEY_LEN, secret,
+                            MLS_HPKE_SUITE_ID, sizeof(MLS_HPKE_SUITE_ID),
+                            "key", key_schedule_context,
+                            sizeof(key_schedule_context)) != 0)
+        goto cleanup;
+    if (hpke_labeled_expand(ctx->base_nonce, MLS_AEAD_NONCE_LEN, secret,
+                            MLS_HPKE_SUITE_ID, sizeof(MLS_HPKE_SUITE_ID),
+                            "base_nonce", key_schedule_context,
+                            sizeof(key_schedule_context)) != 0)
+        goto cleanup;
+    if (hpke_labeled_expand(ctx->exporter_secret, MLS_HASH_LEN, secret,
+                            MLS_HPKE_SUITE_ID, sizeof(MLS_HPKE_SUITE_ID),
+                            "exp", key_schedule_context,
+                            sizeof(key_schedule_context)) != 0)
+        goto cleanup;
+
+    rc = 0;
+
+cleanup:
+    sodium_memzero(psk_id_hash, sizeof(psk_id_hash));
+    sodium_memzero(info_hash, sizeof(info_hash));
+    sodium_memzero(secret, sizeof(secret));
+    sodium_memzero(key_schedule_context, sizeof(key_schedule_context));
+    if (rc != 0)
+        sodium_memzero(ctx, sizeof(*ctx));
+    return rc;
+}
+
+int
+mls_crypto_hpke_setup_base_s(uint8_t enc[MLS_KEM_ENC_LEN],
+                              MlsHpkeContext *ctx,
+                              const uint8_t pk_r[MLS_KEM_PK_LEN],
+                              const uint8_t *info, size_t info_len)
+{
+    if (!enc || !ctx || !pk_r) return -1;
+
+    uint8_t shared_secret[MLS_KEM_SECRET_LEN];
+    if (mls_crypto_kem_encap(shared_secret, enc, pk_r) != 0)
+        return -1;
+
+    int rc = mls_crypto_hpke_key_schedule_base(ctx, shared_secret, info, info_len);
+    sodium_memzero(shared_secret, sizeof(shared_secret));
+    return rc;
+}
+
+int
+mls_crypto_hpke_setup_base_r(MlsHpkeContext *ctx,
+                              const uint8_t enc[MLS_KEM_ENC_LEN],
+                              const uint8_t sk_r[MLS_KEM_SK_LEN],
+                              const uint8_t pk_r[MLS_KEM_PK_LEN],
+                              const uint8_t *info, size_t info_len)
+{
+    if (!ctx || !enc || !sk_r || !pk_r) return -1;
+
+    uint8_t shared_secret[MLS_KEM_SECRET_LEN];
+    if (mls_crypto_kem_decap(shared_secret, enc, sk_r, pk_r) != 0)
+        return -1;
+
+    int rc = mls_crypto_hpke_key_schedule_base(ctx, shared_secret, info, info_len);
+    sodium_memzero(shared_secret, sizeof(shared_secret));
+    return rc;
+}
+
+int
+mls_crypto_hpke_seal_base(uint8_t enc[MLS_KEM_ENC_LEN],
+                           uint8_t *ct, size_t *ct_len,
+                           const uint8_t pk_r[MLS_KEM_PK_LEN],
+                           const uint8_t *info, size_t info_len,
+                           const uint8_t *aad, size_t aad_len,
+                           const uint8_t *pt, size_t pt_len)
+{
+    if (!enc || !ct || !ct_len || !pk_r || (pt_len > 0 && !pt) ||
+        (aad_len > 0 && !aad))
+        return -1;
+
+    MlsHpkeContext ctx;
+    if (mls_crypto_hpke_setup_base_s(enc, &ctx, pk_r, info, info_len) != 0)
+        return -1;
+
+    int rc = mls_crypto_aead_encrypt(ct, ct_len, ctx.key, ctx.base_nonce,
+                                      pt, pt_len, aad, aad_len);
+    sodium_memzero(&ctx, sizeof(ctx));
+    return rc;
+}
+
+int
+mls_crypto_hpke_open_base(uint8_t *pt, size_t *pt_len,
+                           const uint8_t enc[MLS_KEM_ENC_LEN],
+                           const uint8_t sk_r[MLS_KEM_SK_LEN],
+                           const uint8_t pk_r[MLS_KEM_PK_LEN],
+                           const uint8_t *info, size_t info_len,
+                           const uint8_t *aad, size_t aad_len,
+                           const uint8_t *ct, size_t ct_len)
+{
+    if (!pt || !pt_len || !enc || !sk_r || !pk_r || !ct ||
+        (aad_len > 0 && !aad))
+        return -1;
+
+    MlsHpkeContext ctx;
+    if (mls_crypto_hpke_setup_base_r(&ctx, enc, sk_r, pk_r, info, info_len) != 0)
+        return -1;
+
+    int rc = mls_crypto_aead_decrypt(pt, pt_len, ctx.key, ctx.base_nonce,
+                                      ct, ct_len, aad, aad_len);
+    sodium_memzero(&ctx, sizeof(ctx));
     return rc;
 }
 

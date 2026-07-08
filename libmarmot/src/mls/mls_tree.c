@@ -782,16 +782,11 @@ mls_tree_derive_node_keypair(const uint8_t path_secret[MLS_HASH_LEN],
     uint8_t node_secret[MLS_HASH_LEN];
     if (mls_crypto_derive_secret(node_secret, path_secret, "node") != 0) return -1;
 
-    /* Derive private key via ExpandWithLabel */
-    if (mls_crypto_expand_with_label(node_sk_out, MLS_KEM_SK_LEN, node_secret,
-                                      "key_pair", NULL, 0) != 0) {
-        memset(node_secret, 0, MLS_HASH_LEN);
-        return -1;
-    }
+    /* RFC 9420 TreeKEM uses HPKE DHKEM DeriveKeyPair(node_secret). */
+    int rc = mls_crypto_kem_derive_keypair(node_secret, MLS_HASH_LEN,
+                                           node_sk_out, node_pk_out);
     memset(node_secret, 0, MLS_HASH_LEN);
-
-    /* Derive public key from private key via X25519 base point */
-    return crypto_scalarmult_base(node_pk_out, node_sk_out);
+    return rc;
 }
 
 int
