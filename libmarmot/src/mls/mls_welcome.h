@@ -34,7 +34,7 @@ extern "C" {
 typedef struct {
     uint8_t  key_package_ref[MLS_HASH_LEN];  /**< Identifies target KeyPackage */
     uint8_t  kem_output[MLS_KEM_ENC_LEN];    /**< HPKE encap output */
-    uint8_t *encrypted_joiner_secret;         /**< AEAD ciphertext */
+    uint8_t *encrypted_joiner_secret;         /**< HPKE ciphertext carrying GroupSecrets */
     size_t   encrypted_joiner_secret_len;
 } MlsEncryptedGroupSecrets;
 
@@ -53,6 +53,7 @@ void mls_encrypted_group_secrets_clear(MlsEncryptedGroupSecrets *egs);
 
 typedef struct {
     uint16_t cipher_suite;
+    bool     has_mls_message_wrapper; /**< true when encoded as MLSMessage/welcome */
 
     MlsEncryptedGroupSecrets *secrets;
     size_t                     secret_count;
