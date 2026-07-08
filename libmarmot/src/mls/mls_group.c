@@ -248,12 +248,6 @@ generate_update_path(MlsGroup *group,
         MlsTlsBuf enc_buf;
         if (mls_tls_buf_init(&enc_buf, 256) != 0) goto fail;
 
-        /* Write count */
-        if (mls_tls_write_u32(&enc_buf, res_len) != 0) {
-            mls_tls_buf_free(&enc_buf);
-            goto fail;
-        }
-
         for (uint32_t j = 0; j < res_len; j++) {
             uint32_t target_node = resolution[j];
             const uint8_t *target_pk = NULL;
@@ -377,10 +371,7 @@ decrypt_path_secret(const MlsGroup *group,
     mls_tls_reader_init(&reader, path_node->encrypted_path_secrets,
                         path_node->encrypted_path_secrets_len);
 
-    uint32_t count = 0;
-    if (mls_tls_read_u32(&reader, &count) != 0)
-        return -1;
-    if ((uint32_t)our_idx >= count)
+    if ((uint32_t)our_idx >= path_node->secret_count)
         return MARMOT_ERR_MLS_PROCESS_MESSAGE;
 
     /* Skip to our entry */
@@ -909,12 +900,10 @@ mls_group_add_member(MlsGroup *group,
          */
         /* cipher_suite */
         mls_tls_write_u16(&welcome_buf, MARMOT_CIPHERSUITE);
-        /* secrets count (1 entry for the new member) */
-        mls_tls_write_u32(&welcome_buf, 1);
-        /* key package ref */
+        /* encrypted_group_secrets: EncryptedGroupSecrets<V> */
         {
-            uint8_t kp_ref[MLS_HASH_LEN];
-            if (mls_key_package_ref(kp, kp_ref) != 0) {
+            MlsTlsBuf secrets_vec;
+            if (mls_tls_buf_init(&secrets_vec, 128) != 0) {
                 free(enc_gi);
                 mls_group_info_clear(&gi);
                 mls_tls_buf_free(&gi_buf);
@@ -923,11 +912,32 @@ mls_group_add_member(MlsGroup *group,
                 mls_commit_clear(&commit);
                 return MARMOT_ERR_INTERNAL;
             }
-            mls_tls_buf_append(&welcome_buf, kp_ref, MLS_HASH_LEN);
+            uint8_t kp_ref[MLS_HASH_LEN];
+            if (mls_key_package_ref(kp, kp_ref) != 0) {
+                free(enc_gi);
+                mls_group_info_clear(&gi);
+                mls_tls_buf_free(&gi_buf);
+                mls_tls_buf_free(&commit_buf);
+                mls_tls_buf_free(&welcome_buf);
+                mls_tls_buf_free(&secrets_vec);
+                mls_commit_clear(&commit);
+                return MARMOT_ERR_INTERNAL;
+            }
+            if (mls_tls_buf_append(&secrets_vec, kp_ref, MLS_HASH_LEN) != 0 ||
+                mls_tls_write_opaque16(&secrets_vec, kem_enc, MLS_KEM_ENC_LEN) != 0 ||
+                mls_tls_write_opaque16(&secrets_vec, enc_js, enc_js_len) != 0 ||
+                mls_tls_write_opaque32(&welcome_buf, secrets_vec.data, secrets_vec.len) != 0) {
+                free(enc_gi);
+                mls_group_info_clear(&gi);
+                mls_tls_buf_free(&gi_buf);
+                mls_tls_buf_free(&commit_buf);
+                mls_tls_buf_free(&welcome_buf);
+                mls_tls_buf_free(&secrets_vec);
+                mls_commit_clear(&commit);
+                return MARMOT_ERR_INTERNAL;
+            }
+            mls_tls_buf_free(&secrets_vec);
         }
-        /* HPKECiphertext: kem_output || ciphertext */
-        mls_tls_write_opaque16(&welcome_buf, kem_enc, MLS_KEM_ENC_LEN);
-        mls_tls_write_opaque16(&welcome_buf, enc_js, enc_js_len);
         /* encrypted_group_info */
         mls_tls_write_opaque32(&welcome_buf, enc_gi, enc_gi_len);
 
@@ -1483,15 +1493,21 @@ mls_group_encrypt(MlsGroup *group,
         mls_private_message_clear(&msg);
         return MARMOT_ERR_MEMORY;
     }
-    if (mls_private_message_serialize(&msg, &buf) != 0) {
-        mls_private_message_clear(&msg);
+    MlsMLSMessage wire_msg;
+    memset(&wire_msg, 0, sizeof(wire_msg));
+    wire_msg.wire_format = MLS_WIRE_FORMAT_PRIVATE_MESSAGE;
+    wire_msg.cipher_suite = MARMOT_CIPHERSUITE;
+    wire_msg.private_message = msg; /* transfer ownership for serialization/clear */
+
+    if (mls_message_serialize(&wire_msg, &buf) != 0) {
+        mls_message_clear(&wire_msg);
         mls_tls_buf_free(&buf);
         return MARMOT_ERR_MLS_FRAMING;
     }
 
     *out_data = buf.data;
     *out_len = buf.len;
-    mls_private_message_clear(&msg);
+    mls_message_clear(&wire_msg);
 
     return 0;
 }
@@ -1505,34 +1521,41 @@ mls_group_decrypt(MlsGroup *group,
     if (!group || !ciphertext || !out_plaintext || !out_pt_len)
         return MARMOT_ERR_INVALID_ARG;
 
-    /* Deserialize PrivateMessage */
-    MlsPrivateMessage msg;
+    /* Deserialize MLSMessage envelope containing a PrivateMessage */
+    MlsMLSMessage wire_msg;
     MlsTlsReader reader;
     mls_tls_reader_init(&reader, ciphertext, ciphertext_len);
-    if (mls_private_message_deserialize(&reader, &msg) != 0)
+    if (mls_message_deserialize(&reader, &wire_msg) != 0)
         return MARMOT_ERR_MLS_FRAMING;
+    if (!mls_tls_reader_done(&reader) ||
+        wire_msg.wire_format != MLS_WIRE_FORMAT_PRIVATE_MESSAGE) {
+        mls_message_clear(&wire_msg);
+        return MARMOT_ERR_MLS_FRAMING;
+    }
+
+    MlsPrivateMessage *msg = &wire_msg.private_message;
 
     /* Verify group_id and epoch match */
-    if (msg.group_id_len != group->group_id_len ||
-        memcmp(msg.group_id, group->group_id, group->group_id_len) != 0) {
-        mls_private_message_clear(&msg);
+    if (msg->group_id_len != group->group_id_len ||
+        memcmp(msg->group_id, group->group_id, group->group_id_len) != 0) {
+        mls_message_clear(&wire_msg);
         return MARMOT_ERR_WRONG_GROUP_ID;
     }
-    if (msg.epoch != group->epoch) {
-        mls_private_message_clear(&msg);
+    if (msg->epoch != group->epoch) {
+        mls_message_clear(&wire_msg);
         return MARMOT_ERR_WRONG_EPOCH;
     }
 
     /* Step 1: Decrypt sender data to identify the sender */
-    size_t sample_len = msg.ciphertext_len < MLS_AEAD_KEY_LEN
-                         ? msg.ciphertext_len : MLS_AEAD_KEY_LEN;
+    size_t sample_len = msg->ciphertext_len < MLS_HASH_LEN
+                         ? msg->ciphertext_len : MLS_HASH_LEN;
     MlsSenderData sender_data;
     if (mls_sender_data_decrypt(group->epoch_secrets.sender_data_secret,
-                                 msg.ciphertext, sample_len,
-                                 msg.encrypted_sender_data,
-                                 msg.encrypted_sender_data_len,
+                                 msg->ciphertext, sample_len,
+                                 msg->encrypted_sender_data,
+                                 msg->encrypted_sender_data_len,
                                  &sender_data) != 0) {
-        mls_private_message_clear(&msg);
+        mls_message_clear(&wire_msg);
         return MARMOT_ERR_CRYPTO;
     }
 
@@ -1541,22 +1564,22 @@ mls_group_decrypt(MlsGroup *group,
 
     /* Check not from ourselves — before consuming ratchet state */
     if (sender_data.leaf_index == group->own_leaf_index) {
-        mls_private_message_clear(&msg);
+        mls_message_clear(&wire_msg);
         return MARMOT_ERR_OWN_MESSAGE;
     }
 
     /* Step 2: Full decrypt (content keys + AEAD) */
-    if (mls_private_message_decrypt(&msg,
+    if (mls_private_message_decrypt(msg,
                                      group->epoch_secrets.sender_data_secret,
                                      &group->secret_tree,
                                      group->max_forward_distance,
                                      out_plaintext, out_pt_len,
                                      &sender_data) != 0) {
-        mls_private_message_clear(&msg);
+        mls_message_clear(&wire_msg);
         return MARMOT_ERR_CRYPTO;
     }
 
-    mls_private_message_clear(&msg);
+    mls_message_clear(&wire_msg);
     return 0;
 }
 
@@ -1749,6 +1772,29 @@ proposal_deserialize(MlsTlsReader *reader, MlsProposal *p)
     }
 }
 
+static int
+count_hpke_ciphertexts(const uint8_t *data, size_t len, uint32_t *out_count)
+{
+    if (!out_count) return -1;
+    *out_count = 0;
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, data, len);
+
+    while (!mls_tls_reader_done(&reader)) {
+        uint8_t *enc = NULL, *ct = NULL;
+        size_t enc_len = 0, ct_len = 0;
+        if (mls_tls_read_opaque16(&reader, &enc, &enc_len) != 0) return -1;
+        if (mls_tls_read_opaque16(&reader, &ct, &ct_len) != 0) {
+            free(enc);
+            return -1;
+        }
+        free(enc);
+        free(ct);
+        (*out_count)++;
+    }
+    return 0;
+}
+
 int
 mls_update_path_serialize(const MlsUpdatePath *up, MlsTlsBuf *buf)
 {
@@ -1757,19 +1803,25 @@ mls_update_path_serialize(const MlsUpdatePath *up, MlsTlsBuf *buf)
     /* Leaf node */
     if (mls_leaf_node_serialize(&up->leaf_node, buf) != 0) return -1;
 
-    /* Node count */
-    if (mls_tls_write_u32(buf, (uint32_t)up->node_count) != 0) return -1;
+    /* nodes: UpdatePathNode<V> */
+    MlsTlsBuf nodes_buf;
+    if (mls_tls_buf_init(&nodes_buf, 256) != 0) return -1;
 
-    /* Each path node */
     for (size_t i = 0; i < up->node_count; i++) {
-        if (mls_tls_buf_append(buf, up->nodes[i].encryption_key, MLS_KEM_PK_LEN) != 0)
-            return -1;
-        if (mls_tls_write_opaque32(buf, up->nodes[i].encrypted_path_secrets,
+        if (mls_tls_buf_append(&nodes_buf, up->nodes[i].encryption_key, MLS_KEM_PK_LEN) != 0)
+            goto fail;
+        if (mls_tls_write_opaque32(&nodes_buf, up->nodes[i].encrypted_path_secrets,
                                     up->nodes[i].encrypted_path_secrets_len) != 0)
-            return -1;
+            goto fail;
     }
 
+    if (mls_tls_write_opaque32(buf, nodes_buf.data, nodes_buf.len) != 0) goto fail;
+    mls_tls_buf_free(&nodes_buf);
     return 0;
+
+fail:
+    mls_tls_buf_free(&nodes_buf);
+    return -1;
 }
 
 int
@@ -1780,22 +1832,38 @@ mls_update_path_deserialize(MlsTlsReader *reader, MlsUpdatePath *up)
 
     if (mls_leaf_node_deserialize(reader, &up->leaf_node) != 0) goto fail;
 
-    uint32_t count;
-    if (mls_tls_read_u32(reader, &count) != 0) goto fail;
+    uint8_t *nodes_data = NULL;
+    size_t nodes_len = 0;
+    if (mls_tls_read_opaque32(reader, &nodes_data, &nodes_len) != 0) goto fail;
 
-    if (count > 0) {
-        up->nodes = calloc(count, sizeof(MlsUpdatePathNode));
-        if (!up->nodes) goto fail;
-        up->node_count = count;
+    if (nodes_len > 0) {
+        MlsTlsReader nodes_reader;
+        mls_tls_reader_init(&nodes_reader, nodes_data, nodes_len);
 
-        for (uint32_t i = 0; i < count; i++) {
-            if (mls_tls_read_fixed(reader, up->nodes[i].encryption_key, MLS_KEM_PK_LEN) != 0)
-                goto fail;
-            if (mls_tls_read_opaque32(reader, &up->nodes[i].encrypted_path_secrets,
-                                       &up->nodes[i].encrypted_path_secrets_len) != 0)
-                goto fail;
+        while (!mls_tls_reader_done(&nodes_reader)) {
+            MlsUpdatePathNode *new_nodes = realloc(
+                up->nodes, (up->node_count + 1) * sizeof(MlsUpdatePathNode));
+            if (!new_nodes) { free(nodes_data); goto fail; }
+            up->nodes = new_nodes;
+
+            MlsUpdatePathNode *node = &up->nodes[up->node_count];
+            memset(node, 0, sizeof(*node));
+            up->node_count++;
+            if (mls_tls_read_fixed(&nodes_reader, node->encryption_key, MLS_KEM_PK_LEN) != 0) {
+                free(nodes_data); goto fail;
+            }
+            if (mls_tls_read_opaque32(&nodes_reader, &node->encrypted_path_secrets,
+                                       &node->encrypted_path_secrets_len) != 0) {
+                free(nodes_data); goto fail;
+            }
+            if (count_hpke_ciphertexts(node->encrypted_path_secrets,
+                                       node->encrypted_path_secrets_len,
+                                       &node->secret_count) != 0) {
+                free(nodes_data); goto fail;
+            }
         }
     }
+    free(nodes_data);
 
     return 0;
 fail:
@@ -1808,14 +1876,21 @@ mls_commit_serialize(const MlsCommit *commit, MlsTlsBuf *buf)
 {
     if (!commit || !buf) return -1;
 
-    /* Proposal count */
-    if (mls_tls_write_u32(buf, (uint32_t)commit->proposal_count) != 0) return -1;
+    /* proposals: Proposal<V> */
+    MlsTlsBuf proposals_buf;
+    if (mls_tls_buf_init(&proposals_buf, 256) != 0) return -1;
 
-    /* Proposals */
     for (size_t i = 0; i < commit->proposal_count; i++) {
-        if (proposal_serialize(&commit->proposals[i], buf) != 0)
+        if (proposal_serialize(&commit->proposals[i], &proposals_buf) != 0) {
+            mls_tls_buf_free(&proposals_buf);
             return -1;
+        }
     }
+    if (mls_tls_write_opaque32(buf, proposals_buf.data, proposals_buf.len) != 0) {
+        mls_tls_buf_free(&proposals_buf);
+        return -1;
+    }
+    mls_tls_buf_free(&proposals_buf);
 
     /* has_path flag */
     if (mls_tls_write_u8(buf, commit->has_path ? 1 : 0) != 0) return -1;
@@ -1835,19 +1910,29 @@ mls_commit_deserialize(MlsTlsReader *reader, MlsCommit *commit)
     if (!reader || !commit) return -1;
     memset(commit, 0, sizeof(*commit));
 
-    uint32_t prop_count;
-    if (mls_tls_read_u32(reader, &prop_count) != 0) goto fail;
+    uint8_t *proposals_data = NULL;
+    size_t proposals_len = 0;
+    if (mls_tls_read_opaque32(reader, &proposals_data, &proposals_len) != 0) goto fail;
 
-    if (prop_count > 0) {
-        commit->proposals = calloc(prop_count, sizeof(MlsProposal));
-        if (!commit->proposals) goto fail;
-        commit->proposal_count = prop_count;
+    if (proposals_len > 0) {
+        MlsTlsReader proposals_reader;
+        mls_tls_reader_init(&proposals_reader, proposals_data, proposals_len);
 
-        for (uint32_t i = 0; i < prop_count; i++) {
-            if (proposal_deserialize(reader, &commit->proposals[i]) != 0)
-                goto fail;
+        while (!mls_tls_reader_done(&proposals_reader)) {
+            MlsProposal *new_proposals = realloc(
+                commit->proposals, (commit->proposal_count + 1) * sizeof(MlsProposal));
+            if (!new_proposals) { free(proposals_data); goto fail; }
+            commit->proposals = new_proposals;
+
+            MlsProposal *proposal = &commit->proposals[commit->proposal_count];
+            memset(proposal, 0, sizeof(*proposal));
+            commit->proposal_count++;
+            if (proposal_deserialize(&proposals_reader, proposal) != 0) {
+                free(proposals_data); goto fail;
+            }
         }
     }
+    free(proposals_data);
 
     uint8_t has_path;
     if (mls_tls_read_u8(reader, &has_path) != 0) goto fail;

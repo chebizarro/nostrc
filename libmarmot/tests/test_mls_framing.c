@@ -1156,7 +1156,7 @@ static void test_full_public_message_flow(void)
     msg.wire_format = MLS_WIRE_FORMAT_PUBLIC_MESSAGE;
     msg.cipher_suite = 0x0001;
 
-    const uint8_t proposal_body[5] = {0x03 /* Remove */, 0x00, 0x00, 0x00, 0x02};
+    const uint8_t proposal_body[6] = {0x00, 0x03 /* Remove */, 0x00, 0x00, 0x00, 0x02};
     const size_t proposal_body_len = sizeof(proposal_body);
     msg.public_message.content.group_id = malloc(sizeof(gid) - 1);
     memcpy(msg.public_message.content.group_id, gid, sizeof(gid) - 1);

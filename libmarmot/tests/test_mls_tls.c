@@ -148,6 +148,42 @@ static void test_opaque_empty(void)
     mls_tls_buf_free(&buf);
 }
 
+static void test_vli_full_range_and_canonical(void)
+{
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, 32) == 0);
+    assert(mls_tls_write_vli(&buf, 63) == 0);
+    assert(mls_tls_write_vli(&buf, 64) == 0);
+    assert(mls_tls_write_vli(&buf, 16383) == 0);
+    assert(mls_tls_write_vli(&buf, 16384) == 0);
+    assert(mls_tls_write_vli(&buf, 0x3fffffffUL) == 0);
+    assert(mls_tls_write_vli(&buf, 0x40000000UL) == 0);
+
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, buf.data, buf.len);
+    size_t v = 0;
+    assert(mls_tls_read_vli(&r, &v) == 0 && v == 63);
+    assert(mls_tls_read_vli(&r, &v) == 0 && v == 64);
+    assert(mls_tls_read_vli(&r, &v) == 0 && v == 16383);
+    assert(mls_tls_read_vli(&r, &v) == 0 && v == 16384);
+    assert(mls_tls_read_vli(&r, &v) == 0 && v == 0x3fffffffUL);
+    assert(mls_tls_read_vli(&r, &v) == 0 && v == 0x40000000UL);
+    assert(mls_tls_reader_done(&r));
+    mls_tls_buf_free(&buf);
+
+    uint8_t noncanonical2[] = {0x40, 0x00};
+    mls_tls_reader_init(&r, noncanonical2, sizeof(noncanonical2));
+    assert(mls_tls_read_vli(&r, &v) != 0);
+
+    uint8_t noncanonical4[] = {0x80, 0x00, 0x00, 0x40};
+    mls_tls_reader_init(&r, noncanonical4, sizeof(noncanonical4));
+    assert(mls_tls_read_vli(&r, &v) != 0);
+
+    uint8_t noncanonical8[] = {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00};
+    mls_tls_reader_init(&r, noncanonical8, sizeof(noncanonical8));
+    assert(mls_tls_read_vli(&r, &v) != 0);
+}
+
 /* ── Mixed types ──────────────────────────────────────────────────────── */
 
 static void test_mixed_types(void)
@@ -245,6 +281,7 @@ int main(void)
     TEST(test_opaque8_roundtrip);
     TEST(test_opaque16_roundtrip);
     TEST(test_opaque_empty);
+    TEST(test_vli_full_range_and_canonical);
     TEST(test_mixed_types);
     TEST(test_read_past_end);
     TEST(test_opaque8_overflow);

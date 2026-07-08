@@ -297,8 +297,12 @@ int mls_framed_content_tbs_serialize(const MlsFramedContent *fc,
 
 typedef struct {
     uint8_t  signature[MLS_SIG_LEN]; /**< Ed25519 signature */
+    size_t   signature_len;          /**< Wire signature length */
+    uint8_t *signature_data;         /**< Non-Ed25519/variable signature bytes */
     bool     has_confirmation_tag;   /**< true for commit content type */
     uint8_t  confirmation_tag[MLS_HASH_LEN]; /**< MAC for commit messages */
+    size_t   confirmation_tag_len;   /**< Wire MAC length */
+    uint8_t *confirmation_tag_data;  /**< Non-SHA256/variable MAC bytes */
 } MlsFramedContentAuthData;
 
 /**
@@ -354,6 +358,8 @@ typedef struct {
     MlsFramedContentAuthData auth;
     bool                     has_membership_tag;
     uint8_t                  membership_tag[MLS_HASH_LEN];
+    size_t                   membership_tag_len;
+    uint8_t                 *membership_tag_data;
 } MlsPublicMessage;
 
 /** Free a PublicMessage's heap data. */
@@ -412,7 +418,6 @@ int mls_compute_confirmation_tag(const uint8_t confirmation_key[MLS_HASH_LEN],
  *
  * struct {
  *   ProtocolVersion version = mls10;
- *   CipherSuite cipher_suite;
  *   WireFormat wire_format;
  *   select (wire_format) {
  *     case mls_public_message:  PublicMessage;
@@ -423,7 +428,7 @@ int mls_compute_confirmation_tag(const uint8_t confirmation_key[MLS_HASH_LEN],
 
 typedef struct {
     uint16_t wire_format;     /**< MLS_WIRE_FORMAT_* */
-    uint16_t cipher_suite;    /**< 0x0001 for our suite */
+    uint16_t cipher_suite;    /**< Local/default suite; not serialized in MLSMessage */
     union {
         MlsPublicMessage  public_message;
         MlsPrivateMessage private_message;

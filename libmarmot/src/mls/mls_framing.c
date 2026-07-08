@@ -7,6 +7,7 @@
  */
 
 #include "mls_framing.h"
+#include "mls_group.h"
 #include <stdlib.h>
 #include <string.h>
 #include <sodium.h>
@@ -449,6 +450,102 @@ mls_framed_content_clear(MlsFramedContent *fc)
     memset(fc, 0, sizeof(*fc));
 }
 
+static void
+auth_data_clear(MlsFramedContentAuthData *auth)
+{
+    if (!auth) return;
+    free(auth->signature_data);
+    free(auth->confirmation_tag_data);
+    memset(auth, 0, sizeof(*auth));
+}
+
+static int
+copy_reader_span(const MlsTlsReader *reader, size_t start, uint8_t **out, size_t *out_len)
+{
+    if (!reader || !out || !out_len || reader->pos < start) return -1;
+    size_t len = reader->pos - start;
+    uint8_t *copy = NULL;
+    if (len > 0) {
+        copy = malloc(len);
+        if (!copy) return -1;
+        memcpy(copy, reader->data + start, len);
+    }
+    *out = copy;
+    *out_len = len;
+    return 0;
+}
+
+static int
+skip_proposal_body(MlsTlsReader *reader)
+{
+    uint16_t type;
+    if (mls_tls_read_u16(reader, &type) != 0) return -1;
+
+    switch (type) {
+    case MLS_PROPOSAL_ADD: {
+        MlsKeyPackage kp;
+        int rc;
+        memset(&kp, 0, sizeof(kp));
+        rc = mls_key_package_deserialize(reader, &kp);
+        mls_key_package_clear(&kp);
+        return rc;
+    }
+    case MLS_PROPOSAL_UPDATE: {
+        MlsLeafNode leaf;
+        int rc;
+        memset(&leaf, 0, sizeof(leaf));
+        rc = mls_leaf_node_deserialize(reader, &leaf);
+        mls_leaf_node_clear(&leaf);
+        return rc;
+    }
+    case MLS_PROPOSAL_REMOVE:
+        return mls_tls_read_u32(reader, &(uint32_t){0});
+    default:
+        return -1;
+    }
+}
+
+static int
+framed_content_body_serialize(const MlsFramedContent *fc, MlsTlsBuf *buf)
+{
+    switch (fc->content_type) {
+    case MLS_CONTENT_TYPE_APPLICATION:
+        return mls_tls_write_opaque32(buf, fc->content, fc->content_len);
+    case MLS_CONTENT_TYPE_PROPOSAL:
+    case MLS_CONTENT_TYPE_COMMIT:
+        if (fc->content_len > 0)
+            return mls_tls_buf_append(buf, fc->content, fc->content_len);
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+static int
+framed_content_body_deserialize(MlsTlsReader *reader, MlsFramedContent *fc)
+{
+    size_t start = reader->pos;
+
+    switch (fc->content_type) {
+    case MLS_CONTENT_TYPE_APPLICATION:
+        return mls_tls_read_opaque32(reader, &fc->content, &fc->content_len);
+    case MLS_CONTENT_TYPE_PROPOSAL:
+        if (skip_proposal_body(reader) != 0) return -1;
+        return copy_reader_span(reader, start, &fc->content, &fc->content_len);
+    case MLS_CONTENT_TYPE_COMMIT: {
+        MlsCommit commit;
+        int rc;
+        memset(&commit, 0, sizeof(commit));
+        rc = mls_commit_deserialize(reader, &commit);
+        mls_commit_clear(&commit);
+        if (rc != 0) return -1;
+        return copy_reader_span(reader, start, &fc->content, &fc->content_len);
+    }
+    default:
+        return -1;
+    }
+}
+
 /** Serialize Sender to TLS. */
 static int
 sender_tls_serialize(const MlsSender *s, MlsTlsBuf *buf)
@@ -485,8 +582,7 @@ mls_framed_content_serialize(const MlsFramedContent *fc, MlsTlsBuf *buf)
     if (mls_tls_write_opaque32(buf, fc->authenticated_data,
                                 fc->authenticated_data_len) != 0) return -1;
     if (mls_tls_write_u8(buf, fc->content_type) != 0) return -1;
-    /* Content body is already serialized; write as opaque<V> */
-    if (mls_tls_write_opaque32(buf, fc->content, fc->content_len) != 0) return -1;
+    if (framed_content_body_serialize(fc, buf) != 0) return -1;
     return 0;
 }
 
@@ -502,7 +598,7 @@ mls_framed_content_deserialize(MlsTlsReader *reader, MlsFramedContent *fc)
     if (mls_tls_read_opaque32(reader, &fc->authenticated_data,
                                &fc->authenticated_data_len) != 0) goto fail;
     if (mls_tls_read_u8(reader, &fc->content_type) != 0) goto fail;
-    if (mls_tls_read_opaque32(reader, &fc->content, &fc->content_len) != 0) goto fail;
+    if (framed_content_body_deserialize(reader, fc) != 0) goto fail;
     return 0;
 
 fail:
@@ -627,6 +723,7 @@ mls_framed_content_sign(const MlsFramedContent *fc,
                               sign_content, sign_content_len);
     free(sign_content);
 
+    auth->signature_len = MLS_SIG_LEN;
     auth->has_confirmation_tag = false;
     return rc;
 }
@@ -656,6 +753,12 @@ mls_framed_content_verify(const MlsFramedContent *fc,
         return -1;
     }
     free(tbs);
+
+    size_t sig_len = auth->signature_len ? auth->signature_len : MLS_SIG_LEN;
+    if (auth->signature_data || sig_len != MLS_SIG_LEN) {
+        free(sign_content);
+        return -1;
+    }
 
     /* Verify */
     int rc = mls_crypto_verify(auth->signature, verification_key,
@@ -693,6 +796,8 @@ mls_public_message_clear(MlsPublicMessage *msg)
 {
     if (!msg) return;
     mls_framed_content_clear(&msg->content);
+    auth_data_clear(&msg->auth);
+    free(msg->membership_tag_data);
     memset(msg, 0, sizeof(*msg));
 }
 
@@ -703,10 +808,16 @@ static int
 auth_data_serialize(const MlsFramedContentAuthData *auth, uint8_t content_type,
                     MlsTlsBuf *buf)
 {
-    if (mls_tls_write_opaque16(buf, auth->signature, MLS_SIG_LEN) != 0) return -1;
+    const uint8_t *sig = auth->signature_data ? auth->signature_data : auth->signature;
+    size_t sig_len = auth->signature_data ? auth->signature_len :
+                     (auth->signature_len ? auth->signature_len : MLS_SIG_LEN);
+    if (mls_tls_write_opaque16(buf, sig, sig_len) != 0) return -1;
     if (content_type == MLS_CONTENT_TYPE_COMMIT) {
-        /* confirmation_tag: MAC = opaque<V> */
-        if (mls_tls_write_opaque8(buf, auth->confirmation_tag, MLS_HASH_LEN) != 0) return -1;
+        const uint8_t *tag = auth->confirmation_tag_data ?
+                             auth->confirmation_tag_data : auth->confirmation_tag;
+        size_t tag_len = auth->confirmation_tag_data ? auth->confirmation_tag_len :
+                         (auth->confirmation_tag_len ? auth->confirmation_tag_len : MLS_HASH_LEN);
+        if (mls_tls_write_opaque32(buf, tag, tag_len) != 0) return -1;
     }
     return 0;
 }
@@ -723,17 +834,28 @@ auth_data_deserialize(MlsTlsReader *reader, uint8_t content_type,
     uint8_t *sig = NULL;
     size_t sig_len = 0;
     if (mls_tls_read_opaque16(reader, &sig, &sig_len) != 0) return -1;
-    if (sig_len != MLS_SIG_LEN) { free(sig); return -1; }
-    memcpy(auth->signature, sig, MLS_SIG_LEN);
-    free(sig);
+    if (sig_len <= MLS_SIG_LEN) {
+        if (sig_len > 0) memcpy(auth->signature, sig, sig_len);
+        free(sig);
+    } else {
+        auth->signature_data = sig;
+    }
+    auth->signature_len = sig_len;
 
     if (content_type == MLS_CONTENT_TYPE_COMMIT) {
         uint8_t *tag = NULL;
         size_t tag_len = 0;
-        if (mls_tls_read_opaque8(reader, &tag, &tag_len) != 0) return -1;
-        if (tag_len != MLS_HASH_LEN) { free(tag); return -1; }
-        memcpy(auth->confirmation_tag, tag, MLS_HASH_LEN);
-        free(tag);
+        if (mls_tls_read_opaque32(reader, &tag, &tag_len) != 0) {
+            auth_data_clear(auth);
+            return -1;
+        }
+        if (tag_len <= MLS_HASH_LEN) {
+            if (tag_len > 0) memcpy(auth->confirmation_tag, tag, tag_len);
+            free(tag);
+        } else {
+            auth->confirmation_tag_data = tag;
+        }
+        auth->confirmation_tag_len = tag_len;
         auth->has_confirmation_tag = true;
     }
     return 0;
@@ -750,7 +872,10 @@ mls_public_message_serialize(const MlsPublicMessage *msg, MlsTlsBuf *buf)
     if (auth_data_serialize(&msg->auth, msg->content.content_type, buf) != 0) return -1;
     /* membership_tag (for member senders) */
     if (msg->content.sender.sender_type == MLS_SENDER_TYPE_MEMBER) {
-        if (mls_tls_write_opaque8(buf, msg->membership_tag, MLS_HASH_LEN) != 0) return -1;
+        const uint8_t *tag = msg->membership_tag_data ? msg->membership_tag_data : msg->membership_tag;
+        size_t tag_len = msg->membership_tag_data ? msg->membership_tag_len :
+                         (msg->membership_tag_len ? msg->membership_tag_len : MLS_HASH_LEN);
+        if (mls_tls_write_opaque32(buf, tag, tag_len) != 0) return -1;
     }
     return 0;
 }
@@ -766,10 +891,14 @@ mls_public_message_deserialize(MlsTlsReader *reader, MlsPublicMessage *msg)
     if (msg->content.sender.sender_type == MLS_SENDER_TYPE_MEMBER) {
         uint8_t *tag = NULL;
         size_t tag_len = 0;
-        if (mls_tls_read_opaque8(reader, &tag, &tag_len) != 0) goto fail;
-        if (tag_len != MLS_HASH_LEN) { free(tag); goto fail; }
-        memcpy(msg->membership_tag, tag, MLS_HASH_LEN);
-        free(tag);
+        if (mls_tls_read_opaque32(reader, &tag, &tag_len) != 0) goto fail;
+        if (tag_len <= MLS_HASH_LEN) {
+            if (tag_len > 0) memcpy(msg->membership_tag, tag, tag_len);
+            free(tag);
+        } else {
+            msg->membership_tag_data = tag;
+        }
+        msg->membership_tag_len = tag_len;
         msg->has_membership_tag = true;
     }
     return 0;
@@ -843,6 +972,7 @@ mls_public_message_compute_membership_tag(MlsPublicMessage *msg,
                                            membership_key, "MAC",
                                            tbm, tbm_len);
     free(tbm);
+    msg->membership_tag_len = MLS_HASH_LEN;
     msg->has_membership_tag = (rc == 0);
     return rc;
 }
@@ -900,8 +1030,6 @@ mls_message_serialize(const MlsMLSMessage *msg, MlsTlsBuf *buf)
 
     /* version: uint16 = 1 (mls10) */
     if (mls_tls_write_u16(buf, 1) != 0) return -1;
-    /* cipher_suite: uint16 */
-    if (mls_tls_write_u16(buf, msg->cipher_suite) != 0) return -1;
     /* wire_format: uint16 */
     if (mls_tls_write_u16(buf, msg->wire_format) != 0) return -1;
 
@@ -925,15 +1053,23 @@ mls_message_deserialize(MlsTlsReader *reader, MlsMLSMessage *msg)
     if (mls_tls_read_u16(reader, &version) != 0) return -1;
     if (version != 1) return -1; /* Only MLS 1.0 */
 
-    if (mls_tls_read_u16(reader, &msg->cipher_suite) != 0) return -1;
+    msg->cipher_suite = MARMOT_CIPHERSUITE;
     if (mls_tls_read_u16(reader, &msg->wire_format) != 0) return -1;
 
+    int rc;
     switch (msg->wire_format) {
     case MLS_WIRE_FORMAT_PUBLIC_MESSAGE:
-        return mls_public_message_deserialize(reader, &msg->public_message);
+        rc = mls_public_message_deserialize(reader, &msg->public_message);
+        break;
     case MLS_WIRE_FORMAT_PRIVATE_MESSAGE:
-        return mls_private_message_deserialize(reader, &msg->private_message);
+        rc = mls_private_message_deserialize(reader, &msg->private_message);
+        break;
     default:
         return -1;
     }
+    if (rc != 0) {
+        mls_message_clear(msg);
+        return -1;
+    }
+    return 0;
 }

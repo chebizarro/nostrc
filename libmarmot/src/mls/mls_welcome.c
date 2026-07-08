@@ -49,22 +49,29 @@ mls_welcome_serialize(const MlsWelcome *w, MlsTlsBuf *buf)
     /* cipher_suite */
     if (mls_tls_write_u16(buf, w->cipher_suite) != 0) return -1;
 
-    /* secrets count */
-    if (mls_tls_write_u32(buf, (uint32_t)w->secret_count) != 0) return -1;
+    /* secrets: EncryptedGroupSecrets<V> */
+    MlsTlsBuf secrets_buf;
+    if (mls_tls_buf_init(&secrets_buf, 256) != 0) return -1;
 
     for (size_t i = 0; i < w->secret_count; i++) {
         const MlsEncryptedGroupSecrets *egs = &w->secrets[i];
 
         /* key_package_ref: fixed 32 bytes */
-        if (mls_tls_buf_append(buf, egs->key_package_ref, MLS_HASH_LEN) != 0)
-            return -1;
+        if (mls_tls_buf_append(&secrets_buf, egs->key_package_ref, MLS_HASH_LEN) != 0)
+            goto fail_secrets;
         /* HPKECiphertext: kem_output || ciphertext */
-        if (mls_tls_write_opaque16(buf, egs->kem_output, MLS_KEM_ENC_LEN) != 0)
-            return -1;
-        if (mls_tls_write_opaque16(buf, egs->encrypted_joiner_secret,
+        if (mls_tls_write_opaque16(&secrets_buf, egs->kem_output, MLS_KEM_ENC_LEN) != 0)
+            goto fail_secrets;
+        if (mls_tls_write_opaque16(&secrets_buf, egs->encrypted_joiner_secret,
                                     egs->encrypted_joiner_secret_len) != 0)
-            return -1;
+            goto fail_secrets;
     }
+
+    if (mls_tls_write_opaque32(buf, secrets_buf.data, secrets_buf.len) != 0) {
+        mls_tls_buf_free(&secrets_buf);
+        return -1;
+    }
+    mls_tls_buf_free(&secrets_buf);
 
     /* encrypted_group_info */
     if (mls_tls_write_opaque32(buf, w->encrypted_group_info,
@@ -72,6 +79,10 @@ mls_welcome_serialize(const MlsWelcome *w, MlsTlsBuf *buf)
         return -1;
 
     return 0;
+
+fail_secrets:
+    mls_tls_buf_free(&secrets_buf);
+    return -1;
 }
 
 int
@@ -82,32 +93,44 @@ mls_welcome_deserialize(MlsTlsReader *reader, MlsWelcome *w)
 
     if (mls_tls_read_u16(reader, &w->cipher_suite) != 0) goto fail;
 
-    uint32_t count;
-    if (mls_tls_read_u32(reader, &count) != 0) goto fail;
+    uint8_t *secrets_data = NULL;
+    size_t secrets_len = 0;
+    if (mls_tls_read_opaque32(reader, &secrets_data, &secrets_len) != 0) goto fail;
 
-    if (count > 0) {
-        w->secrets = calloc(count, sizeof(MlsEncryptedGroupSecrets));
-        if (!w->secrets) goto fail;
-        w->secret_count = count;
+    if (secrets_len > 0) {
+        MlsTlsReader secrets_reader;
+        mls_tls_reader_init(&secrets_reader, secrets_data, secrets_len);
 
-        for (uint32_t i = 0; i < count; i++) {
-            MlsEncryptedGroupSecrets *egs = &w->secrets[i];
+        while (!mls_tls_reader_done(&secrets_reader)) {
+            MlsEncryptedGroupSecrets *new_secrets = realloc(
+                w->secrets, (w->secret_count + 1) * sizeof(MlsEncryptedGroupSecrets));
+            if (!new_secrets) { free(secrets_data); goto fail; }
+            w->secrets = new_secrets;
 
-            if (mls_tls_read_fixed(reader, egs->key_package_ref, MLS_HASH_LEN) != 0)
-                goto fail;
+            MlsEncryptedGroupSecrets *egs = &w->secrets[w->secret_count];
+            memset(egs, 0, sizeof(*egs));
+
+            if (mls_tls_read_fixed(&secrets_reader, egs->key_package_ref, MLS_HASH_LEN) != 0) {
+                free(secrets_data); goto fail;
+            }
             {
                 uint8_t *kem = NULL;
                 size_t kem_len = 0;
-                if (mls_tls_read_opaque16(reader, &kem, &kem_len) != 0) goto fail;
-                if (kem_len != MLS_KEM_ENC_LEN) { free(kem); goto fail; }
+                if (mls_tls_read_opaque16(&secrets_reader, &kem, &kem_len) != 0) {
+                    free(secrets_data); goto fail;
+                }
+                if (kem_len != MLS_KEM_ENC_LEN) { free(kem); free(secrets_data); goto fail; }
                 memcpy(egs->kem_output, kem, MLS_KEM_ENC_LEN);
                 free(kem);
             }
-            if (mls_tls_read_opaque16(reader, &egs->encrypted_joiner_secret,
-                                       &egs->encrypted_joiner_secret_len) != 0)
-                goto fail;
+            if (mls_tls_read_opaque16(&secrets_reader, &egs->encrypted_joiner_secret,
+                                       &egs->encrypted_joiner_secret_len) != 0) {
+                free(secrets_data); goto fail;
+            }
+            w->secret_count++;
         }
     }
+    free(secrets_data);
 
     if (mls_tls_read_opaque32(reader, &w->encrypted_group_info,
                                &w->encrypted_group_info_len) != 0)

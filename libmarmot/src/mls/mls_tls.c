@@ -111,7 +111,8 @@ mls_tls_write_u64(MlsTlsBuf *buf, uint64_t val)
  * Encoding:
  *   0..63:        1 byte  (2 MSBs = 00)
  *   64..16383:    2 bytes (2 MSBs = 01)
- *   16384..2^30:  4 bytes (2 MSBs = 10)
+ *   16384..2^30-1: 4 bytes (2 MSBs = 10)
+ *   2^30..2^62-1: 8 bytes (2 MSBs = 11)
  * ──────────────────────────────────────────────────────────────────────── */
 
 int
@@ -134,6 +135,19 @@ mls_tls_write_vli(MlsTlsBuf *buf, size_t val)
             (uint8_t)(val & 0xff)
         };
         return mls_tls_buf_append(buf, bytes, 4);
+    } else if ((uint64_t)val < (1ULL << 62)) {
+        uint64_t v = (uint64_t)val;
+        uint8_t bytes[8] = {
+            (uint8_t)(0xC0 | ((v >> 56) & 0x3f)),
+            (uint8_t)((v >> 48) & 0xff),
+            (uint8_t)((v >> 40) & 0xff),
+            (uint8_t)((v >> 32) & 0xff),
+            (uint8_t)((v >> 24) & 0xff),
+            (uint8_t)((v >> 16) & 0xff),
+            (uint8_t)((v >> 8) & 0xff),
+            (uint8_t)(v & 0xff)
+        };
+        return mls_tls_buf_append(buf, bytes, 8);
     }
     return -1; /* too large */
 }
@@ -246,32 +260,30 @@ mls_tls_read_fixed(MlsTlsReader *r, uint8_t *out, size_t n)
 int
 mls_tls_read_vli(MlsTlsReader *r, size_t *out)
 {
+    if (!r || !out) return -1;
     if (mls_tls_reader_remaining(r) < 1) return -1;
 
     uint8_t first = r->data[r->pos];
     uint8_t prefix = first >> 6;
+    size_t n = (size_t)1 << prefix;
+    if (mls_tls_reader_remaining(r) < n) return -1;
 
-    switch (prefix) {
-    case 0: /* 1-byte: 6-bit value */
-        *out = first & 0x3f;
-        r->pos += 1;
-        return 0;
-    case 1: /* 2-byte: 14-bit value */
-        if (mls_tls_reader_remaining(r) < 2) return -1;
-        *out = ((size_t)(first & 0x3f) << 8) | r->data[r->pos + 1];
-        r->pos += 2;
-        return 0;
-    case 2: /* 4-byte: 30-bit value */
-        if (mls_tls_reader_remaining(r) < 4) return -1;
-        *out = ((size_t)(first & 0x3f) << 24) |
-               ((size_t)r->data[r->pos + 1] << 16) |
-               ((size_t)r->data[r->pos + 2] << 8) |
-               (size_t)r->data[r->pos + 3];
-        r->pos += 4;
-        return 0;
-    default: /* 8-byte (prefix=3): not supported for MLS opaque fields */
+    uint64_t value = first & 0x3f;
+    for (size_t i = 1; i < n; i++) {
+        value = (value << 8) | r->data[r->pos + i];
+    }
+
+    /* RFC 9000 §16: encoders MUST use the shortest possible encoding. */
+    if ((n == 2 && value < 0x40) ||
+        (n == 4 && value < 0x4000) ||
+        (n == 8 && value < 0x40000000ULL)) {
         return -1;
     }
+    if (value > (uint64_t)SIZE_MAX) return -1;
+
+    *out = (size_t)value;
+    r->pos += n;
+    return 0;
 }
 
 /* ── Opaque read helpers using VLI ────────────────────────────────────── */
@@ -313,5 +325,5 @@ mls_tls_read_opaque16(MlsTlsReader *r, uint8_t **out, size_t *out_len)
 int
 mls_tls_read_opaque32(MlsTlsReader *r, uint8_t **out, size_t *out_len)
 {
-    return read_opaque_vli(r, out, out_len, 0x3FFFFFFFUL);
+    return read_opaque_vli(r, out, out_len, SIZE_MAX);
 }
