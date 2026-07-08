@@ -13,16 +13,20 @@
 #include <glib-object.h>
 #include <gio/gio.h>
 #include <marmot-gobject-1.0/marmot-gobject.h>
+#include <nostr-keys.h>
 #include <string.h>
 
 /* ══════════════════════════════════════════════════════════════════════════
  * Test fixtures and helpers
  * ══════════════════════════════════════════════════════════════════════════ */
 
-/* Fake 32-byte hex strings for testing (64 hex chars) */
+/* Fake 32-byte hex strings for boxed/storage-only tests (64 hex chars). */
 #define TEST_HEX_32 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 #define TEST_HEX_32_B "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 #define TEST_HEX_32_C "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+/* Valid deterministic Nostr secret keys for protocol paths that sign events. */
+#define TEST_MEMBER_SK_HEX "0000000000000000000000000000000000000000000000000000000000000002"
 
 /* Shorter group IDs (variable length in MLS) */
 #define TEST_GROUP_ID_HEX "deadbeefcafebabe0102030405060708"
@@ -570,21 +574,29 @@ new_memory_client(MarmotGobjectMemoryStorage **out_store)
 }
 
 static gchar *
-create_unsigned_key_package_sync(MarmotGobjectClient *client,
-                                  const gchar *pubkey_hex,
-                                  const gchar * const *relay_urls)
+create_signed_key_package_sync(MarmotGobjectClient *client,
+                               const gchar *sk_hex,
+                               const gchar * const *relay_urls,
+                               gchar **out_pubkey_hex)
 {
+    gchar *pubkey_hex = nostr_key_get_public(sk_hex);
+    g_assert_nonnull(pubkey_hex);
+
     AsyncFixture *f = async_fixture_new();
-    marmot_gobject_client_create_key_package_unsigned_async(
-        client, pubkey_hex, relay_urls, NULL, async_callback, f);
+    marmot_gobject_client_create_key_package_async(
+        client, pubkey_hex, sk_hex, relay_urls, NULL, async_callback, f);
     g_main_loop_run(f->loop);
 
     GError *error = NULL;
-    gchar *json = marmot_gobject_client_create_key_package_unsigned_finish(
+    gchar *json = marmot_gobject_client_create_key_package_finish(
         client, f->result, &error);
     g_assert_no_error(error);
     g_assert_nonnull(json);
     async_fixture_free(f);
+
+    if (out_pubkey_hex)
+        *out_pubkey_hex = g_strdup(pubkey_hex);
+    g_free(pubkey_hex);
     return json;
 }
 
@@ -703,9 +715,11 @@ setup_real_welcome_flow(MarmotGobjectClient **out_inviter,
     MarmotGobjectClient *member = new_memory_client(&member_store);
 
     const gchar *member_relays[] = { "wss://member.example", NULL };
-    gchar *kp_json = create_unsigned_key_package_sync(member, TEST_HEX_32_B, member_relays);
+    gchar *member_pubkey = NULL;
+    gchar *kp_json = create_signed_key_package_sync(member, TEST_MEMBER_SK_HEX,
+                                                     member_relays, &member_pubkey);
     const gchar *kps[] = { kp_json, NULL };
-    const gchar *admins[] = { TEST_HEX_32, TEST_HEX_32_B, NULL };
+    const gchar *admins[] = { TEST_HEX_32, member_pubkey, NULL };
     const gchar *group_relays[] = { "wss://relay1.example", "wss://relay2.example", NULL };
 
     gchar **welcomes = NULL;
@@ -732,6 +746,7 @@ setup_real_welcome_flow(MarmotGobjectClient **out_inviter,
     g_assert_cmpstr(welcome_relays[1], ==, "wss://relay2.example");
     g_assert_null(welcome_relays[2]);
 
+    g_free(member_pubkey);
     g_free(kp_json);
     *out_inviter = inviter;
     *out_inviter_store = inviter_store;
@@ -897,7 +912,8 @@ test_client_signal_welcome_received(void)
     SignalData sd = { FALSE, NULL };
     g_signal_connect(member, "welcome-received", G_CALLBACK(on_welcome_received), &sd);
 
-    gchar *kp_json = create_unsigned_key_package_sync(member, TEST_HEX_32_B, NULL);
+    gchar *kp_json = create_signed_key_package_sync(member, TEST_MEMBER_SK_HEX,
+                                                     NULL, NULL);
     const gchar *kps[] = { kp_json, NULL };
     const gchar *relays[] = { "wss://relay1.example", "wss://relay2.example", NULL };
     gchar **welcomes = NULL;

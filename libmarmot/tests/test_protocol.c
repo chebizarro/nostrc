@@ -1999,12 +1999,13 @@ test_message_epoch_lookback(void)
 
     /* Try to decrypt the epoch-0 message at epoch 1.
      * NIP-44 lookback finds the exporter_secret, but MLS epoch 0 state
-     * is no longer available — this correctly returns a crypto error. */
+     * is no longer available. With MLS framing required, this is an MLS
+     * state/framing failure rather than a NIP-44 crypto failure. */
     MarmotMessageResult msg_in;
     memset(&msg_in, 0, sizeof(msg_in));
 
     err = marmot_process_message(m, msg_out.event_json, &msg_in);
-    ASSERT(err == MARMOT_ERR_CRYPTO,
+    ASSERT(err == MARMOT_ERR_MLS,
            "should fail: MLS state for old epoch unavailable");
 
     marmot_message_result_free(&msg_in);
