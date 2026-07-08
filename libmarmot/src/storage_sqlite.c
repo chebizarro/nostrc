@@ -484,6 +484,41 @@ sql_save_group(void *ctx, const MarmotGroup *group)
     return (rc == SQLITE_DONE) ? MARMOT_OK : MARMOT_ERR_STORAGE;
 }
 
+static MarmotError
+sql_delete_group(void *ctx, const MarmotGroupId *gid)
+{
+    SqliteCtx *sc = ctx;
+    if (!gid) return MARMOT_ERR_INVALID_ARG;
+
+    char *errmsg = NULL;
+    int rc = sqlite3_exec(sc->db, "BEGIN IMMEDIATE", NULL, NULL, &errmsg);
+    if (rc != SQLITE_OK) { sqlite3_free(errmsg); return MARMOT_ERR_STORAGE; }
+
+    sqlite3_stmt *stmt = NULL;
+    rc = sqlite3_prepare_v2(sc->db, "DELETE FROM group_relays WHERE mls_group_id = ?", -1, &stmt, NULL);
+    if (rc != SQLITE_OK) goto fail;
+    bind_group_id(stmt, 1, gid);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt); stmt = NULL;
+    if (rc != SQLITE_DONE) goto fail;
+
+    rc = sqlite3_prepare_v2(sc->db, "DELETE FROM groups WHERE mls_group_id = ?", -1, &stmt, NULL);
+    if (rc != SQLITE_OK) goto fail;
+    bind_group_id(stmt, 1, gid);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt); stmt = NULL;
+    if (rc != SQLITE_DONE) goto fail;
+
+    rc = sqlite3_exec(sc->db, "COMMIT", NULL, NULL, &errmsg);
+    if (rc != SQLITE_OK) { sqlite3_free(errmsg); return MARMOT_ERR_STORAGE; }
+    return MARMOT_OK;
+
+fail:
+    if (stmt) sqlite3_finalize(stmt);
+    sqlite3_exec(sc->db, "ROLLBACK", NULL, NULL, NULL);
+    return MARMOT_ERR_STORAGE;
+}
+
 /* ── Message operations ────────────────────────────────────────────────── */
 
 static MarmotError
@@ -1146,6 +1181,24 @@ sql_save_exporter_secret(void *ctx, const MarmotGroupId *gid,
     return (rc == SQLITE_DONE) ? MARMOT_OK : MARMOT_ERR_STORAGE;
 }
 
+static MarmotError
+sql_delete_exporter_secret(void *ctx, const MarmotGroupId *gid, uint64_t epoch)
+{
+    SqliteCtx *sc = ctx;
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(sc->db,
+        "DELETE FROM exporter_secrets WHERE mls_group_id = ? AND epoch = ?",
+        -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
+
+    bind_group_id(stmt, 1, gid);
+    sqlite3_bind_int64(stmt, 2, (int64_t)epoch);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return (rc == SQLITE_DONE) ? MARMOT_OK : MARMOT_ERR_STORAGE;
+}
+
 /* ── Snapshot operations ───────────────────────────────────────────────── */
 
 static MarmotError
@@ -1379,6 +1432,7 @@ marmot_storage_sqlite_new(const char *path, const char *encryption_key)
     s->find_group_by_mls_id = sql_find_group_by_mls_id;
     s->find_group_by_nostr_id = sql_find_group_by_nostr_id;
     s->save_group = sql_save_group;
+    s->delete_group = sql_delete_group;
     s->messages = sql_messages;
     s->last_message = sql_last_message;
 
@@ -1408,6 +1462,7 @@ marmot_storage_sqlite_new(const char *path, const char *encryption_key)
     /* Exporter secret ops */
     s->get_exporter_secret = sql_get_exporter_secret;
     s->save_exporter_secret = sql_save_exporter_secret;
+    s->delete_exporter_secret = sql_delete_exporter_secret;
 
     /* Snapshot ops */
     s->create_snapshot = sql_create_snapshot;

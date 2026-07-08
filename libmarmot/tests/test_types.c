@@ -5,6 +5,8 @@
  */
 
 #include <marmot/marmot.h>
+#include <secp256k1.h>
+#include <secp256k1_extrakeys.h>
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -23,6 +25,7 @@ static void test_config_defaults(void)
     assert(cfg.max_forward_distance == 1000);
     assert(cfg.epoch_snapshot_retention == 5);
     assert(cfg.snapshot_ttl_seconds == 604800);
+    assert(cfg.allow_legacy_raw_messages == false);
 }
 
 /* ── GroupId ────────────────────────────────────────────────────────────── */
@@ -199,6 +202,15 @@ static void test_marmot_with_config(void)
     memset(&kp, 0, sizeof(kp));
     uint8_t pk[32] = {0};
     uint8_t sk[32] = {0};
+    sk[31] = 1; /* valid secp256k1 test secret */
+    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+    assert(ctx != NULL);
+    secp256k1_keypair keypair;
+    assert(secp256k1_keypair_create(ctx, &keypair, sk) == 1);
+    secp256k1_xonly_pubkey xonly;
+    assert(secp256k1_keypair_xonly_pub(ctx, &xonly, NULL, &keypair) == 1);
+    assert(secp256k1_xonly_pubkey_serialize(ctx, pk, &xonly) == 1);
+    secp256k1_context_destroy(ctx);
     assert(marmot_create_key_package(m, pk, sk, NULL, 0, &kp) == MARMOT_OK);
     marmot_key_package_result_free(&kp);
 

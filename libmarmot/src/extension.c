@@ -30,6 +30,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define MARMOT_EXTENSION_MAX_ADMINS        1000u
+#define MARMOT_EXTENSION_MAX_RELAYS        100u
+#define MARMOT_EXTENSION_MAX_RELAY_URL_LEN 4096u
+#define MARMOT_EXTENSION_MAX_ENCODED_SIZE  (1024u * 1024u)
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Constructor / Destructor
  * ──────────────────────────────────────────────────────────────────────── */
@@ -77,6 +82,45 @@ marmot_group_data_extension_serialize(const MarmotGroupDataExtension *ext,
     if (name_len > 65535 || desc_len > 65535)
         return MARMOT_ERR_EXTENSION_FORMAT;
 
+    if (ext->admin_count > MARMOT_EXTENSION_MAX_ADMINS)
+        return MARMOT_ERR_EXTENSION_FORMAT;
+    if (ext->admin_count > 0 && !ext->admins)
+        return MARMOT_ERR_EXTENSION_FORMAT;
+    if (ext->admin_count > SIZE_MAX / 32)
+        return MARMOT_ERR_EXTENSION_FORMAT;
+    size_t admins_bytes = ext->admin_count * 32;
+
+    if (ext->relay_count > MARMOT_EXTENSION_MAX_RELAYS)
+        return MARMOT_ERR_EXTENSION_FORMAT;
+    if (ext->relay_count > 0 && !ext->relays)
+        return MARMOT_ERR_EXTENSION_FORMAT;
+    size_t relays_inner_len = 0;
+    for (size_t i = 0; i < ext->relay_count; i++) {
+        size_t url_len = ext->relays[i] ? strlen(ext->relays[i]) : 0;
+        if (url_len > MARMOT_EXTENSION_MAX_RELAY_URL_LEN || url_len > 65535)
+            return MARMOT_ERR_EXTENSION_FORMAT;
+        if (relays_inner_len > SIZE_MAX - 2 - url_len)
+            return MARMOT_ERR_EXTENSION_FORMAT;
+        relays_inner_len += 2 + url_len;
+    }
+    if (relays_inner_len > UINT32_MAX)
+        return MARMOT_ERR_EXTENSION_FORMAT;
+
+    size_t total_len = 2 + 32 + 2 + name_len + 2 + desc_len + 4 + admins_bytes +
+                       4 + relays_inner_len + 1;
+    if (ext->image_hash) {
+        if (total_len > SIZE_MAX - (32 + 32 + 12 + ((ext->version >= 2) ? 1 : 0)))
+            return MARMOT_ERR_EXTENSION_FORMAT;
+        total_len += 32 + 32 + 12 + ((ext->version >= 2) ? 1 : 0);
+        if (ext->version >= 2 && ext->image_upload_key) {
+            if (total_len > SIZE_MAX - 32)
+                return MARMOT_ERR_EXTENSION_FORMAT;
+            total_len += 32;
+        }
+    }
+    if (total_len > MARMOT_EXTENSION_MAX_ENCODED_SIZE)
+        return MARMOT_ERR_EXTENSION_FORMAT;
+
     /* Validate image fields: all present or all absent */
     bool has_image = (ext->image_hash != NULL);
     if (has_image) {
@@ -106,7 +150,6 @@ marmot_group_data_extension_serialize(const MarmotGroupDataExtension *ext,
 
     /* admins<4>: serialize as a vector of 32-byte pubkeys */
     {
-        size_t admins_bytes = ext->admin_count * 32;
         if (mls_tls_write_u32(&buf, (uint32_t)admins_bytes) != 0) goto fail;
         for (size_t i = 0; i < ext->admin_count; i++) {
             if (mls_tls_buf_append(&buf, ext->admins[i], 32) != 0)
@@ -116,9 +159,9 @@ marmot_group_data_extension_serialize(const MarmotGroupDataExtension *ext,
 
     /* relays<4>: serialize as a vector of opaque<2> strings */
     {
-        /* First compute total inner size */
+        /* Bounds were precomputed above; build the relay vector. */
         MlsTlsBuf inner;
-        if (mls_tls_buf_init(&inner, 256) != 0) goto fail;
+        if (mls_tls_buf_init(&inner, relays_inner_len ? relays_inner_len : 1) != 0) goto fail;
         for (size_t i = 0; i < ext->relay_count; i++) {
             size_t url_len = ext->relays[i] ? strlen(ext->relays[i]) : 0;
             if (mls_tls_write_opaque16(&inner,
@@ -313,6 +356,8 @@ marmot_group_data_extension_deserialize(const uint8_t *data, size_t len)
             }
         }
     }
+
+    if (!mls_tls_reader_done(&r)) goto fail;
 
     return ext;
 

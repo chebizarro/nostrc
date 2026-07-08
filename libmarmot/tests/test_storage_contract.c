@@ -216,6 +216,32 @@ test_group_list_all(MarmotStorage *s)
     marmot_group_free(g2);
 }
 
+static void
+test_group_delete_removes_group_and_relays(MarmotStorage *s)
+{
+    uint8_t gid_data[] = {9, 8, 7, 6};
+    MarmotGroup *g = make_test_group(gid_data, sizeof(gid_data), "DeleteMe", 1);
+    assert(s->save_group(s->ctx, g) == MARMOT_OK);
+
+    const char *urls[] = {"wss://delete.example.com"};
+    assert(s->replace_group_relays(s->ctx, &g->mls_group_id, urls, 1) == MARMOT_OK);
+
+    assert(s->delete_group(s->ctx, &g->mls_group_id) == MARMOT_OK);
+
+    MarmotGroup *found = (MarmotGroup *)0x1;
+    assert(s->find_group_by_mls_id(s->ctx, &g->mls_group_id, &found) == MARMOT_OK);
+    assert(found == NULL);
+
+    MarmotGroupRelay *relays = NULL;
+    size_t relay_count = 99;
+    assert(s->group_relays(s->ctx, &g->mls_group_id, &relays, &relay_count) == MARMOT_OK);
+    assert(relay_count == 0);
+    assert(relays == NULL || relay_count == 0);
+    free(relays);
+
+    marmot_group_free(g);
+}
+
 /* Helper: ensure a group exists (needed for sqlite FK constraints) */
 static void
 ensure_group(MarmotStorage *s, const MarmotGroupId *gid, const char *name)
@@ -530,6 +556,22 @@ test_exporter_secret_overwrite(MarmotStorage *s)
     marmot_group_id_free(&gid);
 }
 
+static void
+test_exporter_secret_delete(MarmotStorage *s)
+{
+    MarmotGroupId gid = marmot_group_id_new((uint8_t *)"delete_exp_grp", 14);
+    uint8_t secret[32];
+    memset(secret, 0x55, 32);
+
+    assert(s->save_exporter_secret(s->ctx, &gid, 12, secret) == MARMOT_OK);
+    assert(s->delete_exporter_secret(s->ctx, &gid, 12) == MARMOT_OK);
+
+    uint8_t out[32];
+    assert(s->get_exporter_secret(s->ctx, &gid, 12, out) == MARMOT_ERR_STORAGE_NOT_FOUND);
+
+    marmot_group_id_free(&gid);
+}
+
 /* ── 6. Key package info operations ────────────────────────────────────── */
 
 static void
@@ -757,6 +799,8 @@ run_contract_tests(const char *backend_name, MarmotStorage *s,
     TEST(test_group_not_found, backend_name, s);
     TEST(test_group_upsert, backend_name, s);
     TEST(test_group_list_all, backend_name, s);
+    assert(s->delete_group != NULL);
+    TEST(test_group_delete_removes_group_and_relays, backend_name, s);
 
     /* Messages */
     TEST(test_message_save_and_find, backend_name, s);
@@ -779,15 +823,19 @@ run_contract_tests(const char *backend_name, MarmotStorage *s,
     /* Exporter secrets */
     TEST(test_exporter_secret_roundtrip, backend_name, s);
     TEST(test_exporter_secret_overwrite, backend_name, s);
+    assert(s->delete_exporter_secret != NULL);
+    TEST(test_exporter_secret_delete, backend_name, s);
 
     /* Relays */
     TEST(test_relay_replace_and_list, backend_name, s);
 
-    /* Key package info (skip if backend doesn't implement it) */
-    if (s->save_key_package_info) {
-        TEST(test_key_package_info_roundtrip, backend_name, s);
-        TEST(test_key_package_info_deactivate, backend_name, s);
-    }
+    /* Key package info: required for every backend by the MarmotStorage contract. */
+    assert(s->save_key_package_info != NULL);
+    assert(s->find_key_package_by_ref != NULL);
+    assert(s->find_key_packages_by_pubkey != NULL);
+    assert(s->deactivate_key_packages != NULL);
+    TEST(test_key_package_info_roundtrip, backend_name, s);
+    TEST(test_key_package_info_deactivate, backend_name, s);
 
     /* Persistence */
     if (is_persistent_expected) {

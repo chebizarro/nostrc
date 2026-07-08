@@ -14,11 +14,14 @@
 
 #include <marmot/marmot.h>
 #include "marmot-internal.h"
+#include <nostr/nip44/nip44.h>
 #include <sodium.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <secp256k1.h>
+#include <secp256k1_extrakeys.h>
 
 /* Internal declarations needed for round-trip test */
 #include "../src/mls/mls_key_package.h"
@@ -85,10 +88,72 @@ create_test_instance(void)
 static void
 generate_nostr_keypair(uint8_t sk[32], uint8_t pk[32])
 {
-    /* For testing: random 32-byte values.
-     * In production, these would be secp256k1 keys. */
-    randombytes_buf(sk, 32);
-    randombytes_buf(pk, 32);
+    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+    assert(ctx != NULL);
+
+    do {
+        randombytes_buf(sk, 32);
+    } while (!secp256k1_ec_seckey_verify(ctx, sk));
+
+    secp256k1_keypair keypair;
+    assert(secp256k1_keypair_create(ctx, &keypair, sk) == 1);
+    secp256k1_xonly_pubkey xonly;
+    assert(secp256k1_keypair_xonly_pub(ctx, &xonly, NULL, &keypair) == 1);
+    assert(secp256k1_xonly_pubkey_serialize(ctx, pk, &xonly) == 1);
+    secp256k1_context_destroy(ctx);
+}
+
+static int
+test_derive_exporter_convkey(const uint8_t exporter_secret[32],
+                              uint8_t out_convkey[32])
+{
+    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+    if (!ctx) return -1;
+
+    if (!secp256k1_ec_seckey_verify(ctx, exporter_secret)) {
+        secp256k1_context_destroy(ctx);
+        return -1;
+    }
+
+    secp256k1_keypair keypair;
+    if (!secp256k1_keypair_create(ctx, &keypair, exporter_secret)) {
+        secp256k1_context_destroy(ctx);
+        return -1;
+    }
+
+    secp256k1_xonly_pubkey xonly;
+    if (!secp256k1_keypair_xonly_pub(ctx, &xonly, NULL, &keypair)) {
+        secp256k1_context_destroy(ctx);
+        return -1;
+    }
+
+    uint8_t pk[32];
+    if (!secp256k1_xonly_pubkey_serialize(ctx, pk, &xonly)) {
+        secp256k1_context_destroy(ctx);
+        return -1;
+    }
+    secp256k1_context_destroy(ctx);
+
+    int rc = nostr_nip44_convkey(exporter_secret, pk, out_convkey);
+    sodium_memzero(pk, sizeof(pk));
+    return rc;
+}
+
+static int
+test_encrypt_raw_legacy_payload(const uint8_t exporter_secret[32],
+                                const char *plaintext,
+                                char **out_b64)
+{
+    uint8_t convkey[32];
+    if (test_derive_exporter_convkey(exporter_secret, convkey) != 0)
+        return -1;
+
+    int rc = nostr_nip44_encrypt_v2_with_convkey(convkey,
+                                                  (const uint8_t *)plaintext,
+                                                  strlen(plaintext),
+                                                  out_b64);
+    sodium_memzero(convkey, sizeof(convkey));
+    return rc;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -254,6 +319,42 @@ test_key_package_roundtrip(void)
            "key package ref should match after round-trip");
 
     mls_key_package_clear(&kp);
+    marmot_key_package_result_free(&result);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_key_package_rejects_bad_signature(void)
+{
+    TEST("MIP-00: parse rejects kind:443 with bad signature");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    uint8_t nostr_sk[32], nostr_pk[32];
+    generate_nostr_keypair(nostr_sk, nostr_pk);
+
+    MarmotKeyPackageResult result;
+    memset(&result, 0, sizeof(result));
+    MarmotError err = marmot_create_key_package(m, nostr_pk, nostr_sk,
+                                                 NULL, 0, &result);
+    ASSERT_OK(err, "create_key_package");
+
+    char *tampered = strdup(result.event_json);
+    ASSERT(tampered != NULL, "strdup tampered event");
+    char *sig = strstr(tampered, "\"sig\":\"");
+    ASSERT(sig != NULL, "signed event has sig");
+    sig += strlen("\"sig\":\"");
+    sig[0] = (sig[0] == '0') ? '1' : '0';
+
+    MlsKeyPackage kp;
+    memset(&kp, 0, sizeof(kp));
+    uint8_t parsed_pk[32];
+    err = marmot_parse_key_package_event(tampered, &kp, parsed_pk);
+    ASSERT(err != MARMOT_OK, "tampered signature should be rejected");
+
+    free(tampered);
     marmot_key_package_result_free(&result);
     marmot_free(m);
     PASS();
@@ -582,6 +683,10 @@ test_process_welcome_basic(void)
         "{\"kind\":444,\"content\":\"dGVzdA==\","  /* "test" in base64 */
         "\"created_at\":2000000000,"
         "\"tags\":[[\"encoding\",\"base64\"],"
+        "[\"h\",\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"],"
+        "[\"name\",\"Preview Group\"],"
+        "[\"description\",\"Preview Description\"],"
+        "[\"member_count\",\"3\"],"
         "[\"relays\",\"wss://relay.example.com\"]]}";
 
     uint8_t wrapper_id[32];
@@ -597,6 +702,14 @@ test_process_welcome_basic(void)
         ASSERT(welcome->state == MARMOT_WELCOME_STATE_PENDING,
                "welcome should be pending");
         ASSERT(welcome->group_relay_count == 1, "should have 1 relay");
+        ASSERT(welcome->group_name != NULL &&
+               strcmp(welcome->group_name, "Preview Group") == 0,
+               "should extract preview group name");
+        ASSERT(welcome->group_description != NULL &&
+               strcmp(welcome->group_description, "Preview Description") == 0,
+               "should extract preview group description");
+        ASSERT(welcome->member_count == 3, "should extract member count");
+        ASSERT(welcome->nostr_group_id[0] == 0xaa, "should extract nostr group id");
         marmot_welcome_free(welcome);
     }
     /* Even if it fails due to invalid MLS data, that's acceptable */
@@ -634,7 +747,7 @@ test_process_welcome_wrong_kind(void)
 static void
 test_decline_welcome(void)
 {
-    TEST("MIP-02: decline_welcome succeeds");
+    TEST("MIP-02: decline_welcome persists declined state");
 
     Marmot *m = create_test_instance();
     ASSERT(m != NULL, "failed to create instance");
@@ -642,11 +755,34 @@ test_decline_welcome(void)
     /* Create a MarmotWelcome manually for testing */
     MarmotWelcome *w = marmot_welcome_new();
     ASSERT(w != NULL, "failed to create welcome");
+    randombytes_buf(w->id, 32);
     randombytes_buf(w->wrapper_event_id, 32);
     w->state = MARMOT_WELCOME_STATE_PENDING;
+    w->event_json = strdup("{\"kind\":444,\"content\":\"dGVzdA==\"}");
+
+    ASSERT_OK(m->storage->save_welcome(m->storage->ctx, w), "save pending welcome");
 
     MarmotError err = marmot_decline_welcome(m, w);
     ASSERT_OK(err, "decline_welcome");
+
+    MarmotWelcome **pending = NULL;
+    size_t pending_count = 0;
+    err = marmot_get_pending_welcomes(m, NULL, &pending, &pending_count);
+    ASSERT_OK(err, "get pending welcomes after decline");
+    ASSERT(pending_count == 0, "declined welcome must not remain pending");
+    free(pending);
+
+    bool found = false;
+    int state = 0;
+    char *reason = NULL;
+    err = m->storage->find_processed_welcome(m->storage->ctx,
+                                              w->wrapper_event_id,
+                                              &found, &state, &reason);
+    ASSERT_OK(err, "find processed welcome");
+    ASSERT(found, "declined welcome should have processed record");
+    ASSERT(state == MARMOT_WELCOME_STATE_DECLINED,
+           "processed welcome state should be DECLINED");
+    free(reason);
 
     marmot_welcome_free(w);
     marmot_free(m);
@@ -796,10 +932,25 @@ test_welcome_duplicate_detection(void)
     /* Second process with same wrapper_id should be rejected */
     MarmotWelcome *welcome2 = NULL;
     err = marmot_process_welcome(m, wrapper_id, rumor_json, &welcome2);
-    ASSERT(err == MARMOT_ERR_WELCOME_PREVIOUSLY_FAILED,
-           "duplicate welcome should be rejected");
+    ASSERT(err == MARMOT_ERR_WELCOME_ALREADY_ACCEPTED,
+           "accepted duplicate welcome should be rejected distinctly");
     ASSERT(welcome2 == NULL, "duplicate welcome should return NULL");
 
+    uint8_t wrapper_id2[32];
+    randombytes_buf(wrapper_id2, 32);
+    MarmotWelcome *welcome3 = NULL;
+    err = marmot_process_welcome(m, wrapper_id2, rumor_json, &welcome3);
+    ASSERT_OK(err, "process second welcome");
+    ASSERT(welcome3 != NULL, "second welcome is NULL");
+    err = marmot_decline_welcome(m, welcome3);
+    ASSERT_OK(err, "decline second welcome");
+    MarmotWelcome *welcome4 = NULL;
+    err = marmot_process_welcome(m, wrapper_id2, rumor_json, &welcome4);
+    ASSERT(err == MARMOT_ERR_WELCOME_ALREADY_DECLINED,
+           "declined duplicate welcome should be rejected distinctly");
+    ASSERT(welcome4 == NULL, "declined duplicate should return NULL");
+
+    marmot_welcome_free(welcome3);
     marmot_welcome_free(welcome1);
     marmot_free(m);
     PASS();
@@ -946,6 +1097,113 @@ test_create_message_with_active_group(void)
         ASSERT_OK(err, "create_message unexpected error");
     }
 
+    marmot_create_group_result_free(&gresult);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_create_message_requires_mls_state_by_default(void)
+{
+    TEST("MIP-03: create_message requires MLS state by default");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+
+    MarmotGroupConfig config = {0};
+    config.name = "Missing MLS State Test";
+    config.admin_pubkeys = (uint8_t (*)[32])&pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult gresult;
+    memset(&gresult, 0, sizeof(gresult));
+
+    MarmotError err = marmot_create_group(m, pk, NULL, 0, &config, &gresult);
+    ASSERT_OK(err, "create_group");
+    ASSERT(gresult.group != NULL, "group is NULL");
+    ASSERT(m->storage && m->storage->mls_delete, "storage missing mls_delete");
+
+    err = m->storage->mls_delete(m->storage->ctx, "mls_group",
+                                  gresult.group->mls_group_id.data,
+                                  gresult.group->mls_group_id.len);
+    ASSERT_OK(err, "mls_delete");
+
+    MarmotOutgoingMessage msg_result;
+    memset(&msg_result, 0, sizeof(msg_result));
+    err = marmot_create_message(m, &gresult.group->mls_group_id,
+                                 "{\"kind\":9,\"content\":\"raw fallback must be explicit\"}",
+                                 &msg_result);
+    ASSERT(err == MARMOT_ERR_MLS,
+           "missing MLS state should return MARMOT_ERR_MLS");
+    marmot_outgoing_message_free(&msg_result);
+
+    marmot_create_group_result_free(&gresult);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_process_message_rejects_raw_json_with_mls_state_by_default(void)
+{
+    TEST("MIP-03: process_message rejects raw JSON fallback by default");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+
+    MarmotGroupConfig config = {0};
+    config.name = "Raw Fallback Reject Test";
+    config.admin_pubkeys = (uint8_t (*)[32])&pk;
+    config.admin_count = 1;
+
+    MarmotCreateGroupResult gresult;
+    memset(&gresult, 0, sizeof(gresult));
+
+    MarmotError err = marmot_create_group(m, pk, NULL, 0, &config, &gresult);
+    ASSERT_OK(err, "create_group");
+    ASSERT(gresult.group != NULL, "group is NULL");
+
+    uint8_t exporter_secret[32];
+    err = m->storage->get_exporter_secret(m->storage->ctx,
+                                           &gresult.group->mls_group_id,
+                                           gresult.group->epoch,
+                                           exporter_secret);
+    ASSERT_OK(err, "get_exporter_secret");
+
+    const char *inner_json = "{\"kind\":9,\"content\":\"legacy raw payload\"}";
+    char *ciphertext = NULL;
+    ASSERT(test_encrypt_raw_legacy_payload(exporter_secret, inner_json,
+                                            &ciphertext) == 0,
+           "legacy raw encrypt failed");
+    sodium_memzero(exporter_secret, sizeof(exporter_secret));
+
+    char *gid_hex = marmot_hex_encode(gresult.group->nostr_group_id, 32);
+    ASSERT(gid_hex != NULL, "gid hex encode failed");
+
+    size_t event_len = strlen(ciphertext) + strlen(gid_hex) + 160;
+    char *event_json = malloc(event_len);
+    ASSERT(event_json != NULL, "event_json alloc failed");
+    snprintf(event_json, event_len,
+             "{\"kind\":445,\"content\":\"%s\","
+             "\"created_at\":1700000000,"
+             "\"tags\":[[\"h\",\"%s\"]]}",
+             ciphertext, gid_hex);
+
+    MarmotMessageResult result;
+    memset(&result, 0, sizeof(result));
+    err = marmot_process_message(m, event_json, &result);
+    ASSERT(err == MARMOT_ERR_MLS,
+           "raw JSON fallback should require explicit legacy opt-in");
+    marmot_message_result_free(&result);
+
+    free(event_json);
+    free(gid_hex);
+    free(ciphertext);
     marmot_create_group_result_free(&gresult);
     marmot_free(m);
     PASS();
@@ -2132,6 +2390,8 @@ test_marmot_config_defaults(void)
     ASSERT(config.max_forward_distance > 0, "max_forward_dist should be > 0");
     ASSERT(config.epoch_snapshot_retention > 0, "snapshot_retention should be > 0");
     ASSERT(config.snapshot_ttl_seconds > 0, "snapshot_ttl should be > 0");
+    ASSERT(config.allow_legacy_raw_messages == false,
+           "legacy raw messages must be disabled by default");
 
     PASS();
 }
@@ -2161,6 +2421,7 @@ main(void)
     test_create_key_package_null_args();
     test_create_multiple_key_packages();
     test_key_package_roundtrip();
+    test_key_package_rejects_bad_signature();
     test_key_package_rotation();
     test_key_package_info_storage();
 
@@ -2190,6 +2451,8 @@ main(void)
     test_create_message_no_group();
     test_create_message_inactive_group();
     test_create_message_with_active_group();
+    test_create_message_requires_mls_state_by_default();
+    test_process_message_rejects_raw_json_with_mls_state_by_default();
     test_process_message_null_args();
     test_process_message_wrong_kind();
     test_process_message_missing_h_tag();

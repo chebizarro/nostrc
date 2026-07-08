@@ -53,30 +53,84 @@ base64_decode(const char *b64, size_t *out_len)
  * Internal: extract group preview from MLS Welcome's GroupInfo extension
  * ──────────────────────────────────────────────────────────────────────── */
 
-static void
-extract_group_preview(MarmotWelcome *welcome,
-                       const uint8_t *welcome_data, size_t welcome_len)
+static bool
+is_hex_len(const char *s, size_t len)
 {
-    /*
-     * To preview group info without fully processing the Welcome,
-     * we would need to parse the encrypted GroupInfo — which requires
-     * knowing the welcome_secret. This isn't possible without the
-     * KeyPackage private key.
-     *
-     * Instead, we store the raw Welcome data and extract preview info
-     * when the user accepts the welcome (at which point we decrypt
-     * the GroupInfo and read the extension).
-     *
-     * For now, the preview fields are left empty and populated on accept.
-     */
-    (void)welcome_data;
-    (void)welcome_len;
+    if (!s || strlen(s) != len) return false;
+    for (size_t i = 0; i < len; i++) {
+        char c = s[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+              (c >= 'A' && c <= 'F')))
+            return false;
+    }
+    return true;
+}
 
-    /* These will be populated on accept */
+static void
+extract_group_preview_from_tags(MarmotWelcome *welcome, NostrTags *tags)
+{
     memset(welcome->nostr_group_id, 0, 32);
     welcome->group_name = NULL;
     welcome->group_description = NULL;
     welcome->member_count = 0;
+
+    if (!tags) return;
+
+    for (size_t i = 0; i < nostr_tags_size(tags); i++) {
+        NostrTag *tag = nostr_tags_get(tags, i);
+        if (!tag || nostr_tag_size(tag) < 2) continue;
+        const char *key = nostr_tag_get_key(tag);
+        const char *val = nostr_tag_get_value(tag);
+        if (!key || !val) continue;
+
+        if (strcmp(key, "h") == 0 && is_hex_len(val, 64)) {
+            marmot_hex_decode(val, welcome->nostr_group_id, 32);
+        } else if (strcmp(key, "name") == 0 && !welcome->group_name) {
+            welcome->group_name = strdup(val);
+        } else if (strcmp(key, "description") == 0 && !welcome->group_description) {
+            welcome->group_description = strdup(val);
+        } else if (strcmp(key, "member_count") == 0) {
+            welcome->member_count = (size_t)strtoull(val, NULL, 10);
+        } else if (strcmp(key, "admin") == 0 && is_hex_len(val, 64)) {
+            uint8_t (*admins)[32] = realloc(welcome->group_admin_pubkeys,
+                                            (welcome->group_admin_count + 1) * 32);
+            if (admins) {
+                welcome->group_admin_pubkeys = admins;
+                marmot_hex_decode(val, welcome->group_admin_pubkeys[welcome->group_admin_count], 32);
+                welcome->group_admin_count++;
+            }
+        }
+    }
+}
+
+static void
+record_welcome_failure(Marmot *m, const uint8_t wrapper_event_id[32],
+                       const char *reason)
+{
+    if (m && m->storage && m->storage->save_processed_welcome) {
+        m->storage->save_processed_welcome(m->storage->ctx,
+                                           wrapper_event_id,
+                                           NULL,
+                                           marmot_now(),
+                                           MARMOT_WELCOME_STATE_FAILED,
+                                           reason);
+    }
+}
+
+static MarmotError
+error_for_processed_welcome_state(int state)
+{
+    switch ((MarmotWelcomeState)state) {
+    case MARMOT_WELCOME_STATE_ACCEPTED:
+        return MARMOT_ERR_WELCOME_ALREADY_ACCEPTED;
+    case MARMOT_WELCOME_STATE_DECLINED:
+        return MARMOT_ERR_WELCOME_ALREADY_DECLINED;
+    case MARMOT_WELCOME_STATE_FAILED:
+        return MARMOT_ERR_WELCOME_PREVIOUSLY_FAILED;
+    case MARMOT_WELCOME_STATE_PENDING:
+    default:
+        return MARMOT_ERR_WELCOME;
+    }
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -94,7 +148,8 @@ marmot_process_welcome(Marmot *m,
 
     *out_welcome = NULL;
 
-    if (!m->storage || !m->storage->mls_store || !m->storage->save_welcome)
+    if (!m->storage || !m->storage->mls_store || !m->storage->save_welcome ||
+        !m->storage->save_processed_welcome)
         return MARMOT_ERR_STORAGE;
 
     /* Check for duplicate: was this wrapper event already processed? */
@@ -107,8 +162,9 @@ marmot_process_welcome(Marmot *m,
                                                  &already_processed,
                                                  &state, &reason) == MARMOT_OK &&
             already_processed) {
+            MarmotError processed_err = error_for_processed_welcome_state(state);
             free(reason);
-            return MARMOT_ERR_WELCOME_PREVIOUSLY_FAILED;
+            return processed_err;
         }
         free(reason);
     }
@@ -116,14 +172,17 @@ marmot_process_welcome(Marmot *m,
     /* Parse the rumor event (kind:444, unsigned) */
     NostrEvent rumor;
     memset(&rumor, 0, sizeof(rumor));
-    if (!nostr_event_deserialize_compact(&rumor, rumor_event_json, NULL))
+    if (!nostr_event_deserialize_compact(&rumor, rumor_event_json, NULL)) {
+        record_welcome_failure(m, wrapper_event_id, "deserialization failed");
         return MARMOT_ERR_DESERIALIZATION;
+    }
 
     /* Verify kind */
     if (rumor.kind != MARMOT_KIND_WELCOME) {
         /* Free stack-allocated event fields */
         free(rumor.id); free(rumor.pubkey); free(rumor.content);
         free(rumor.sig); nostr_tags_free(rumor.tags);
+        record_welcome_failure(m, wrapper_event_id, "unexpected welcome kind");
         return MARMOT_ERR_INVALID_ARG;
     }
 
@@ -134,6 +193,7 @@ marmot_process_welcome(Marmot *m,
         if (age > (int64_t)m->config.max_event_age_secs) {
             free(rumor.id); free(rumor.pubkey); free(rumor.content);
             free(rumor.sig); nostr_tags_free(rumor.tags);
+            record_welcome_failure(m, wrapper_event_id, "welcome expired");
             return MARMOT_ERR_WELCOME_EXPIRED;
         }
     }
@@ -142,6 +202,7 @@ marmot_process_welcome(Marmot *m,
     if (!rumor.content || strlen(rumor.content) == 0) {
         free(rumor.id); free(rumor.pubkey); free(rumor.content);
         free(rumor.sig); nostr_tags_free(rumor.tags);
+        record_welcome_failure(m, wrapper_event_id, "empty welcome content");
         return MARMOT_ERR_DESERIALIZATION;
     }
 
@@ -198,11 +259,12 @@ marmot_process_welcome(Marmot *m,
         }
     }
 
-    /* Free the rumor event */
-    free(rumor.id); free(rumor.pubkey); free(rumor.content);
-    free(rumor.sig); nostr_tags_free(rumor.tags);
-
-    if (!welcome_data) return MARMOT_ERR_DESERIALIZATION;
+    if (!welcome_data) {
+        free(rumor.id); free(rumor.pubkey); free(rumor.content);
+        free(rumor.sig); nostr_tags_free(rumor.tags);
+        record_welcome_failure(m, wrapper_event_id, "welcome content decode failed");
+        return MARMOT_ERR_DESERIALIZATION;
+    }
 
     /* Create the MarmotWelcome record */
     MarmotWelcome *welcome = marmot_welcome_new();
@@ -216,6 +278,12 @@ marmot_process_welcome(Marmot *m,
     }
 
     memcpy(welcome->wrapper_event_id, wrapper_event_id, 32);
+    if (rumor.id && is_hex_len(rumor.id, 64))
+        marmot_hex_decode(rumor.id, welcome->id, 32);
+    else
+        memcpy(welcome->id, wrapper_event_id, 32);
+    if (rumor.pubkey && is_hex_len(rumor.pubkey, 64))
+        marmot_hex_decode(rumor.pubkey, welcome->welcomer, 32);
     welcome->event_json = strdup(rumor_event_json);
     welcome->state = MARMOT_WELCOME_STATE_PENDING;
 
@@ -223,8 +291,12 @@ marmot_process_welcome(Marmot *m,
     welcome->group_relays = relay_urls;
     welcome->group_relay_count = relay_count;
 
-    /* Extract preview info (limited without decryption) */
-    extract_group_preview(welcome, welcome_data, welcome_len);
+    /* Extract cleartext preview info from rumor tags. */
+    extract_group_preview_from_tags(welcome, rumor.tags);
+
+    /* Free the rumor event after preview extraction */
+    free(rumor.id); free(rumor.pubkey); free(rumor.content);
+    free(rumor.sig); nostr_tags_free(rumor.tags);
 
     /* Store the raw welcome data for later processing. Mandatory: accepting
      * the welcome requires this MLS Welcome blob. */
@@ -263,7 +335,7 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
         return MARMOT_ERR_INVALID_ARG;
     if (!m->storage || !m->storage->mls_load || !m->storage->mls_store ||
         !m->storage->save_exporter_secret || !m->storage->save_group ||
-        !m->storage->save_processed_welcome)
+        !m->storage->save_welcome || !m->storage->save_processed_welcome)
         return MARMOT_ERR_STORAGE;
 
     /* Retrieve the raw MLS Welcome data from storage */
@@ -272,6 +344,7 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     if (m->storage->mls_load(m->storage->ctx, "welcome_data",
                               welcome->wrapper_event_id, 32,
                               &welcome_data, &welcome_len) != 0) {
+        record_welcome_failure(m, welcome->wrapper_event_id, "stored welcome data not found");
         return MARMOT_ERR_STORAGE;
     }
 
@@ -287,6 +360,7 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
 
     if (mls_welcome_deserialize(&reader, &mls_welcome) != 0) {
         free(welcome_data);
+        record_welcome_failure(m, welcome->wrapper_event_id, "MLS Welcome deserialize failed");
         return MARMOT_ERR_MLS;
     }
     free(welcome_data);
@@ -354,6 +428,7 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
 
     if (!found) {
         mls_welcome_clear(&mls_welcome);
+        record_welcome_failure(m, welcome->wrapper_event_id, "matching KeyPackage private key not found");
         return MARMOT_ERR_KEY_NOT_FOUND;
     }
 
@@ -368,7 +443,10 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     mls_key_package_clear(&matched_kp);
     sodium_memzero(&matched_priv, sizeof(matched_priv));
 
-    if (rc != 0) return MARMOT_ERR_MLS;
+    if (rc != 0) {
+        record_welcome_failure(m, welcome->wrapper_event_id, "MLS Welcome processing failed");
+        return MARMOT_ERR_MLS;
+    }
 
     /* Extract GroupData extension from the group's extensions */
     MarmotGroupDataExtension *gde = NULL;
@@ -498,7 +576,21 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
             goto fail;
     }
 
-    /* Record the welcome as processed. */
+    /* Update the welcome row and record it as processed. */
+    MarmotWelcome updated_welcome = *welcome;
+    updated_welcome.state = MARMOT_WELCOME_STATE_ACCEPTED;
+    updated_welcome.mls_group_id = group->mls_group_id;
+    memcpy(updated_welcome.nostr_group_id, group->nostr_group_id, 32);
+    updated_welcome.group_name = group->name;
+    updated_welcome.group_description = group->description;
+    updated_welcome.group_image_hash = group->image_hash;
+    updated_welcome.group_admin_pubkeys = group->admin_pubkeys;
+    updated_welcome.group_admin_count = group->admin_count;
+    updated_welcome.member_count = mls_group.tree.n_leaves;
+    err = m->storage->save_welcome(m->storage->ctx, &updated_welcome);
+    if (err != MARMOT_OK)
+        goto fail;
+
     err = m->storage->save_processed_welcome(m->storage->ctx,
                                              welcome->wrapper_event_id,
                                              welcome->id,
@@ -528,6 +620,7 @@ accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **o
     return MARMOT_OK;
 
 fail:
+    record_welcome_failure(m, welcome->wrapper_event_id, marmot_error_string(err));
     if (out_group) {
         marmot_group_free(*out_group);
         *out_group = NULL;
@@ -609,9 +702,27 @@ marmot_decline_welcome(Marmot *m, const MarmotWelcome *welcome)
 {
     if (!m || !welcome)
         return MARMOT_ERR_INVALID_ARG;
+    if (!m->storage || !m->storage->save_welcome ||
+        !m->storage->save_processed_welcome)
+        return MARMOT_ERR_STORAGE;
+
+    MarmotWelcome declined = *welcome;
+    declined.state = MARMOT_WELCOME_STATE_DECLINED;
+    MarmotError err = m->storage->save_welcome(m->storage->ctx, &declined);
+    if (err != MARMOT_OK)
+        return err;
+
+    err = m->storage->save_processed_welcome(m->storage->ctx,
+                                             welcome->wrapper_event_id,
+                                             welcome->id,
+                                             marmot_now(),
+                                             MARMOT_WELCOME_STATE_DECLINED,
+                                             NULL);
+    if (err != MARMOT_OK)
+        return err;
 
     /* Clean up stored welcome data */
-    if (m->storage && m->storage->mls_delete) {
+    if (m->storage->mls_delete) {
         m->storage->mls_delete(m->storage->ctx, "welcome_data",
                                 welcome->wrapper_event_id, 32);
     }

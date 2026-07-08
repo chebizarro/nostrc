@@ -101,8 +101,8 @@ void marmot_free(Marmot *m);
  * @relay_count: number of relay URLs
  * @result: (out): result containing the kind:443 event JSON
  *
- * Create an MLS KeyPackage and wrap it in a kind:443 Nostr event.
- * The event is unsigned — the caller must sign and publish it.
+ * Create an MLS KeyPackage and wrap it in a signed kind:443 Nostr event.
+ * The event id, pubkey, and Schnorr signature are produced from @nostr_sk.
  *
  * Returns: MARMOT_OK on success
  */
@@ -126,9 +126,6 @@ MarmotError marmot_create_key_package(Marmot *m,
  *
  * This is the preferred API for signer-only architectures where the caller
  * delegates Nostr event signing to an external service (e.g., D-Bus signer).
- *
- * NOTE: The MLS credential's self-signature currently uses a zero SK
- * placeholder. Future versions will support delegated MLS signing.
  *
  * Returns: MARMOT_OK on success
  */
@@ -325,8 +322,13 @@ MarmotError marmot_get_pending_welcomes(Marmot *m,
  * @inner_event_json: JSON of the unsigned event to encrypt and send
  * @result: (out): outgoing message with encrypted event JSON
  *
- * Create an encrypted group message. The inner event is encrypted using
- * NIP-44 with the MLS exporter secret as the conversation key.
+ * Create an encrypted group message. The inner event is first framed as an
+ * MLS PrivateMessage, then encrypted using NIP-44 with the MLS exporter secret
+ * as the conversation key.
+ *
+ * MLS group state is required by default. Setting
+ * MarmotConfig.allow_legacy_raw_messages permits the legacy pre-framing path
+ * that NIP-44-encrypts the raw inner JSON only when MLS state is unavailable.
  *
  * The caller must gift-wrap the result and publish to group relays.
  *
@@ -338,6 +340,25 @@ MarmotError marmot_create_message(Marmot *m,
                                    MarmotOutgoingMessage *result);
 
 /**
+ * marmot_save_created_message:
+ * @m: Marmot instance
+ * @mls_group_id: the group the message was sent to
+ * @signed_group_event_json: signed outer kind:445 event JSON with real id
+ * @inner_event_json: plaintext inner event JSON saved as local content
+ *
+ * Persist an outgoing message after the caller has filled the ephemeral pubkey
+ * and signature for the kind:445 event. marmot_create_message() intentionally
+ * does not persist CREATED rows because unsigned events have no stable Nostr
+ * event ID.
+ *
+ * Returns: MARMOT_OK on success
+ */
+MarmotError marmot_save_created_message(Marmot *m,
+                                         const MarmotGroupId *mls_group_id,
+                                         const char *signed_group_event_json,
+                                         const char *inner_event_json);
+
+/**
  * marmot_process_message:
  * @m: Marmot instance
  * @group_event_json: JSON of the kind:445 group event (rumor, after NIP-59 unwrap)
@@ -347,6 +368,10 @@ MarmotError marmot_create_message(Marmot *m,
  * - Application messages (decrypts content)
  * - Commits (updates group state)
  * - Proposals (queued for commit)
+ *
+ * MIP-03 messages require MLS PrivateMessage framing by default. The legacy
+ * raw-JSON NIP-44 fallback is accepted only when
+ * MarmotConfig.allow_legacy_raw_messages is enabled.
  *
  * Returns: MARMOT_OK on success
  */
