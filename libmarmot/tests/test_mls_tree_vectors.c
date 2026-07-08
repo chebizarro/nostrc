@@ -6,7 +6,8 @@
  * Also exercises path secret derivation chains and parent hash chains
  * that the unit tests in test_mls_tree.c don't fully cover.
  *
- * Test vectors from: libmarmot/tests/vectors/mdk/tree-math.json
+ * The tree-math values below are embedded known-answer vectors copied from
+ * the checked-in MDK tree-math corpus; this test does not load JSON at runtime.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -24,7 +25,7 @@
 /* ══════════════════════════════════════════════════════════════════════════
  * RFC 9420 Tree Math Test Vectors
  *
- * Extracted from tests/vectors/mdk/tree-math.json
+ * Static known-answer tree-math tables.
  * -1 means the function is undefined for that node index
  * (leaves have no left/right, root has no parent/sibling).
  * ══════════════════════════════════════════════════════════════════════════ */

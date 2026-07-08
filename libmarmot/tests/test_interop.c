@@ -24,6 +24,9 @@
 #include "mls/mls-internal.h"
 #include "mls/mls_key_schedule.h"
 #include "mls/mls_key_package.h"
+#include "mls/mls_framing.h"
+#include "mls/mls_welcome.h"
+#include "mls/mls_group.h"
 #include "mdk_vector_loader.h"
 #include <assert.h>
 #include <stdio.h>
@@ -1160,36 +1163,78 @@ test_dump_self_vectors(void)
  * MDK Vector Validation
  * ══════════════════════════════════════════════════════════════════════════ */
 
+static size_t g_mdk_asserted = 0;
+static size_t g_mdk_deferred = 0;
+
 static void
-test_mdk_key_schedule_vectors(const char *vector_dir)
+assert_bytes_eq(const char *label, const uint8_t *actual,
+                const uint8_t *expected, size_t len)
 {
-    char path[512];
-    snprintf(path, sizeof(path), "%s/key-schedule.json", vector_dir);
-    
-    MdkKeyScheduleVector vectors[5];
-    size_t count = 0;
-    
-    if (mdk_load_key_schedule_vectors(path, vectors, &count, 5) != 0) {
-        printf("SKIP (failed to load)\n");
-        return;
+    if (memcmp(actual, expected, len) != 0) {
+        fprintf(stderr, "\nFAIL %s\n  got:      ", label);
+        for (size_t i = 0; i < len; i++) fprintf(stderr, "%02x", actual[i]);
+        fprintf(stderr, "\n  expected: ");
+        for (size_t i = 0; i < len; i++) fprintf(stderr, "%02x", expected[i]);
+        fprintf(stderr, "\n");
+        assert(0 && "MDK vector byte mismatch");
     }
-    
-    if (count == 0) {
-        printf("SKIP (no vectors)\n");
-        return;
-    }
-    
-    printf("PASS (loaded %zu test cases with %zu epochs)\n", 
-           count, count > 0 ? vectors[0].epoch_count : 0);
-    
-    /* Validate first epoch of first test case */
-    if (count > 0 && vectors[0].epoch_count > 0) {
-        MdkEpochVector *epoch = &vectors[0].epochs[0];
-        
-        /* Skip MLS-Exporter test for now - MDK vectors use hex-encoded labels
-         * which differs from the MLS spec's string label requirement */
-        (void)epoch; /* Suppress unused variable warning */
-    }
+    g_mdk_asserted++;
+}
+
+static void
+assert_mls_message_roundtrip(const char *label, const uint8_t *data, size_t len)
+{
+    MlsMLSMessage msg;
+    MlsTlsReader reader;
+    memset(&msg, 0, sizeof(msg));
+    mls_tls_reader_init(&reader, data, len);
+    int rc = mls_message_deserialize(&reader, &msg);
+    assert(rc == 0 && "MDK MLSMessage must deserialize");
+    assert(mls_tls_reader_remaining(&reader) == 0 && "MDK MLSMessage must consume all bytes");
+
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, len + 64) == 0);
+    assert(mls_message_serialize(&msg, &buf) == 0 && "MDK MLSMessage must reserialize");
+    assert(buf.len == len && "MDK MLSMessage roundtrip length mismatch");
+    assert_bytes_eq(label, buf.data, data, len);
+    mls_tls_buf_free(&buf);
+    mls_message_clear(&msg);
+}
+
+static void
+assert_welcome_roundtrip(const char *label, const uint8_t *data, size_t len)
+{
+    MlsWelcome w;
+    MlsTlsReader reader;
+    memset(&w, 0, sizeof(w));
+    mls_tls_reader_init(&reader, data, len);
+    assert(mls_welcome_deserialize(&reader, &w) == 0 && "MDK Welcome must deserialize");
+    assert(mls_tls_reader_remaining(&reader) == 0 && "MDK Welcome must consume all bytes");
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, len + 64) == 0);
+    assert(mls_welcome_serialize(&w, &buf) == 0 && "MDK Welcome must reserialize");
+    assert(buf.len == len && "MDK Welcome roundtrip length mismatch");
+    assert_bytes_eq(label, buf.data, data, len);
+    mls_tls_buf_free(&buf);
+    mls_welcome_clear(&w);
+}
+
+static void
+assert_key_package_roundtrip(const char *label, const uint8_t *data, size_t len)
+{
+    MlsKeyPackage kp;
+    MlsTlsReader reader;
+    memset(&kp, 0, sizeof(kp));
+    mls_tls_reader_init(&reader, data, len);
+    assert(mls_key_package_deserialize(&reader, &kp) == 0 && "MDK KeyPackage must deserialize");
+    assert(mls_tls_reader_remaining(&reader) == 0 && "MDK KeyPackage must consume all bytes");
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, len + 64) == 0);
+    assert(mls_key_package_serialize(&kp, &buf) == 0 && "MDK KeyPackage must reserialize");
+    assert(buf.len == len && "MDK KeyPackage roundtrip length mismatch");
+    assert_bytes_eq(label, buf.data, data, len);
+    mls_tls_buf_free(&buf);
+    mls_key_package_clear(&kp);
 }
 
 static void
@@ -1197,70 +1242,317 @@ test_mdk_crypto_basics_vectors(const char *vector_dir)
 {
     char path[512];
     snprintf(path, sizeof(path), "%s/crypto-basics.json", vector_dir);
-    
     MdkCryptoBasicsVector vectors[MAX_CRYPTO_TESTS];
     size_t count = 0;
-    
-    if (mdk_load_crypto_basics_vectors(path, vectors, &count, MAX_CRYPTO_TESTS) != 0) {
-        printf("SKIP (failed to load)\n");
-        return;
-    }
-    
-    if (count == 0) {
-        printf("SKIP (no vectors)\n");
-        return;
-    }
-    
-    printf("PASS (loaded %zu test cases)\n", count);
-    
-    /* Validate ExpandWithLabel for ciphersuite 1 */
+    assert(mdk_load_crypto_basics_vectors(path, vectors, &count, MAX_CRYPTO_TESTS) == 0);
+    assert(count > 0 && "crypto-basics file exists but yielded zero ciphersuite-1 cases");
+
     for (size_t i = 0; i < count; i++) {
-        if (vectors[i].cipher_suite == 1 && vectors[i].expand_length > 0) {
-            uint8_t derived[32];
-            
-            int rc = mls_crypto_expand_with_label(
-                derived, vectors[i].expand_length,
-                vectors[i].expand_secret,
-                vectors[i].expand_label,
-                vectors[i].expand_context, 32
-            );
-            
-            if (rc == 0 && memcmp(derived, vectors[i].expand_out, vectors[i].expand_length) == 0) {
-                printf("  ✓ ExpandWithLabel matches MDK (cs=%u)\n", vectors[i].cipher_suite);
-            } else {
-                printf("  ✗ ExpandWithLabel mismatch (cs=%u)\n", vectors[i].cipher_suite);
+        uint8_t out[32];
+        assert(mls_crypto_expand_with_label(out, vectors[i].expand_length,
+                                            vectors[i].expand_secret,
+                                            vectors[i].expand_label,
+                                            vectors[i].expand_context, 32) == 0);
+        assert_bytes_eq("crypto-basics.expand_with_label", out,
+                        vectors[i].expand_out, vectors[i].expand_length);
+
+        assert(mls_crypto_derive_secret(out, vectors[i].derive_secret,
+                                        vectors[i].derive_label) == 0);
+        assert_bytes_eq("crypto-basics.derive_secret", out,
+                        vectors[i].derive_out, 32);
+    }
+    printf("PASS (%zu ciphersuite-1 cases asserted)\n", count);
+}
+
+static void
+test_mdk_key_schedule_vectors(const char *vector_dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/key-schedule.json", vector_dir);
+    MdkKeyScheduleVector vectors[10];
+    size_t count = 0;
+    assert(mdk_load_key_schedule_vectors(path, vectors, &count, 10) == 0);
+    assert(count > 0 && "key-schedule file exists but yielded zero ciphersuite-1 cases");
+
+    for (size_t i = 0; i < count; i++) {
+        uint8_t init[MLS_HASH_LEN];
+        memcpy(init, vectors[i].initial_init_secret, MLS_HASH_LEN);
+        for (size_t e = 0; e < vectors[i].epoch_count; e++) {
+            MdkEpochVector *epoch = &vectors[i].epochs[e];
+            MlsEpochSecrets sec;
+            assert(mls_key_schedule_derive(init, epoch->commit_secret,
+                                           epoch->group_context, epoch->group_context_len,
+                                           epoch->psk_secret, &sec) == 0);
+            assert_bytes_eq("key-schedule.joiner_secret", sec.joiner_secret, epoch->joiner_secret, MLS_HASH_LEN);
+            assert_bytes_eq("key-schedule.welcome_secret", sec.welcome_secret, epoch->welcome_secret, MLS_HASH_LEN);
+            assert_bytes_eq("key-schedule.sender_data_secret", sec.sender_data_secret, epoch->sender_data_secret, MLS_HASH_LEN);
+            assert_bytes_eq("key-schedule.encryption_secret", sec.encryption_secret, epoch->encryption_secret, MLS_HASH_LEN);
+            assert_bytes_eq("key-schedule.exporter_secret", sec.exporter_secret, epoch->exporter_secret, MLS_HASH_LEN);
+            assert_bytes_eq("key-schedule.external_secret", sec.external_secret, epoch->external_secret, MLS_HASH_LEN);
+            assert_bytes_eq("key-schedule.confirmation_key", sec.confirmation_key, epoch->confirmation_key, MLS_HASH_LEN);
+            assert_bytes_eq("key-schedule.membership_key", sec.membership_key, epoch->membership_key, MLS_HASH_LEN);
+            assert_bytes_eq("key-schedule.resumption_psk", sec.resumption_psk, epoch->resumption_psk, MLS_HASH_LEN);
+            assert_bytes_eq("key-schedule.epoch_authenticator", sec.epoch_authenticator, epoch->epoch_authenticator, MLS_HASH_LEN);
+            assert_bytes_eq("key-schedule.init_secret", sec.init_secret, epoch->init_secret, MLS_HASH_LEN);
+
+            if (epoch->exporter_length > 0) {
+                uint8_t exported[64];
+                assert(epoch->exporter_length <= sizeof(exported));
+                assert(mls_exporter(sec.exporter_secret, epoch->exporter_label,
+                                    epoch->exporter_context, 32,
+                                    exported, epoch->exporter_length) == 0);
+                assert_bytes_eq("key-schedule.exporter", exported,
+                                epoch->exporter_secret_out, epoch->exporter_length);
             }
-            break;
+            memcpy(init, sec.init_secret, MLS_HASH_LEN);
         }
     }
+    printf("PASS (%zu ciphersuite-1 chains asserted)\n", count);
 }
 
-/* ──────────────────────────────────────────────────────────────────────── */
+static void
+test_mdk_tree_math_vectors(const char *vector_dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/tree-math.json", vector_dir);
+    MdkTreeMathVector vectors[50];
+    size_t count = 0;
+    assert(mdk_load_tree_math_vectors(path, vectors, &count, 50) == 0);
+    assert(count > 0 && "tree-math file exists but yielded zero cases");
 
-#define TEST_VECTOR_SIMPLE(name, filename, type, max) \
-static void test_mdk_##name##_vectors(const char *vector_dir) { \
-    char path[512]; \
-    snprintf(path, sizeof(path), "%s/" filename ".json", vector_dir); \
-    type vectors[max]; \
-    size_t count = 0; \
-    if (mdk_load_##name##_vectors(path, vectors, &count, max) != 0) { \
-        printf("SKIP (file not found)\n"); \
-        return; \
-    } \
-    printf("PASS (loaded %zu test cases)\n", count); \
+    for (size_t v = 0; v < count; v++) {
+        assert(mls_tree_node_width(vectors[v].n_leaves) == vectors[v].n_nodes);
+        assert(mls_tree_root(vectors[v].n_leaves) == vectors[v].root);
+        g_mdk_asserted += 2;
+        for (size_t i = 0; i < vectors[v].array_size; i++) {
+            if (vectors[v].left[i] != UINT32_MAX) {
+                assert(mls_tree_left((uint32_t)i) == vectors[v].left[i]);
+                g_mdk_asserted++;
+            }
+            if (vectors[v].right[i] != UINT32_MAX) {
+                assert(mls_tree_right((uint32_t)i) == vectors[v].right[i]);
+                g_mdk_asserted++;
+            }
+            if (vectors[v].parent[i] != UINT32_MAX) {
+                assert(mls_tree_parent((uint32_t)i, vectors[v].n_leaves) == vectors[v].parent[i]);
+                g_mdk_asserted++;
+            }
+            if (vectors[v].sibling[i] != UINT32_MAX) {
+                assert(mls_tree_sibling((uint32_t)i, vectors[v].n_leaves) == vectors[v].sibling[i]);
+                g_mdk_asserted++;
+            }
+        }
+        mdk_free_tree_math_vector(&vectors[v]);
+    }
+    printf("PASS (%zu cases asserted)\n", count);
 }
 
-TEST_VECTOR_SIMPLE(tree_math, "tree-math", MdkTreeMathVector, 50)
-TEST_VECTOR_SIMPLE(messages, "messages", MdkMessagesVector, 10)
-TEST_VECTOR_SIMPLE(deserialization, "deserialization", MdkDeserializationVector, 50)
-TEST_VECTOR_SIMPLE(psk_secret, "psk_secret", MdkPskSecretVector, 20)
-TEST_VECTOR_SIMPLE(secret_tree, "secret-tree", MdkSecretTreeVector, 20)
-TEST_VECTOR_SIMPLE(transcript_hashes, "transcript-hashes", MdkTranscriptHashesVector, 20)
-TEST_VECTOR_SIMPLE(welcome, "welcome", MdkWelcomeVector, 20)
-TEST_VECTOR_SIMPLE(message_protection, "message-protection", MdkMessageProtectionVector, 20)
-TEST_VECTOR_SIMPLE(tree_operations, "tree-operations", MdkTreeOperationsVector, 50)
-TEST_VECTOR_SIMPLE(tree_validation, "tree-validation", MdkTreeValidationVector, 20)
-TEST_VECTOR_SIMPLE(treekem, "treekem", MdkTreeKEMVector, 20)
+static void
+test_mdk_secret_tree_vectors(const char *vector_dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/secret-tree.json", vector_dir);
+    MdkSecretTreeVector vectors[20];
+    size_t count = 0;
+    assert(mdk_load_secret_tree_vectors(path, vectors, &count, 20) == 0);
+    assert(count > 0 && "secret-tree file exists but yielded zero ciphersuite-1 cases");
+
+    for (size_t v = 0; v < count; v++) {
+        uint8_t sample[MLS_HASH_LEN] = {0};
+        size_t sample_len = vectors[v].sender_data_ciphertext_len < MLS_HASH_LEN ?
+                            vectors[v].sender_data_ciphertext_len : MLS_HASH_LEN;
+        memcpy(sample, vectors[v].sender_data_ciphertext, sample_len);
+        uint8_t key[MLS_AEAD_KEY_LEN], nonce[MLS_AEAD_NONCE_LEN];
+        assert(mls_crypto_expand_with_label(key, sizeof(key), vectors[v].sender_data_secret,
+                                            "key", sample, MLS_HASH_LEN) == 0);
+        assert(mls_crypto_expand_with_label(nonce, sizeof(nonce), vectors[v].sender_data_secret,
+                                            "nonce", sample, MLS_HASH_LEN) == 0);
+        assert_bytes_eq("secret-tree.sender_data_key", key, vectors[v].sender_data_key, sizeof(key));
+        assert_bytes_eq("secret-tree.sender_data_nonce", nonce, vectors[v].sender_data_nonce, sizeof(nonce));
+
+        MlsSecretTree st;
+        assert(mls_secret_tree_init(&st, vectors[v].encryption_secret, (uint32_t)vectors[v].n_leaves) == 0);
+        for (uint32_t leaf = 0; leaf < vectors[v].n_leaves; leaf++) {
+            for (size_t gi = 0; gi < vectors[v].generation_count[leaf]; gi++) {
+                MdkSecretTreeGenerationVector *g = &vectors[v].generations[leaf][gi];
+                MlsMessageKeys mk;
+                assert(mls_secret_tree_get_keys_for_generation(&st, leaf, false,
+                                                               g->generation, 1000, &mk) == 0);
+                assert_bytes_eq("secret-tree.application_key", mk.key, g->application_key, sizeof(g->application_key));
+                assert_bytes_eq("secret-tree.application_nonce", mk.nonce, g->application_nonce, sizeof(g->application_nonce));
+                assert(mls_secret_tree_get_keys_for_generation(&st, leaf, true,
+                                                               g->generation, 1000, &mk) == 0);
+                assert_bytes_eq("secret-tree.handshake_key", mk.key, g->handshake_key, sizeof(g->handshake_key));
+                assert_bytes_eq("secret-tree.handshake_nonce", mk.nonce, g->handshake_nonce, sizeof(g->handshake_nonce));
+            }
+        }
+        mls_secret_tree_free(&st);
+    }
+    printf("PASS (%zu ciphersuite-1 cases asserted)\n", count);
+}
+
+static void
+test_mdk_transcript_hashes_vectors(const char *vector_dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/transcript-hashes.json", vector_dir);
+    MdkTranscriptHashesVector vectors[20];
+    size_t count = 0;
+    assert(mdk_load_transcript_hashes_vectors(path, vectors, &count, 20) == 0);
+    assert(count > 0 && "transcript-hashes file exists but yielded zero ciphersuite-1 cases");
+
+    for (size_t i = 0; i < count; i++) {
+        size_t conf_input_len = MLS_HASH_LEN + vectors[i].authenticated_content_len;
+        uint8_t *conf_input = malloc(conf_input_len);
+        assert(conf_input);
+        memcpy(conf_input, vectors[i].interim_transcript_hash_before, MLS_HASH_LEN);
+        memcpy(conf_input + MLS_HASH_LEN, vectors[i].authenticated_content,
+               vectors[i].authenticated_content_len);
+        uint8_t confirmed[MLS_HASH_LEN];
+        assert(mls_crypto_hash(confirmed, conf_input, conf_input_len) == 0);
+        free(conf_input);
+        assert_bytes_eq("transcript.confirmed", confirmed,
+                        vectors[i].confirmed_transcript_hash_after, MLS_HASH_LEN);
+
+        uint8_t tag[MLS_HASH_LEN];
+        assert(mls_compute_confirmation_tag(vectors[i].confirmation_key, confirmed, tag) == 0);
+        uint8_t interim_input[MLS_HASH_LEN * 2];
+        memcpy(interim_input, confirmed, MLS_HASH_LEN);
+        memcpy(interim_input + MLS_HASH_LEN, tag, MLS_HASH_LEN);
+        uint8_t interim[MLS_HASH_LEN];
+        assert(mls_crypto_hash(interim, interim_input, sizeof(interim_input)) == 0);
+        assert_bytes_eq("transcript.interim", interim,
+                        vectors[i].interim_transcript_hash_after, MLS_HASH_LEN);
+    }
+    printf("PASS (%zu ciphersuite-1 cases asserted)\n", count);
+}
+
+static void
+test_mdk_deserialization_vectors(const char *vector_dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/deserialization.json", vector_dir);
+    MdkDeserializationVector vectors[50];
+    size_t count = 0;
+    assert(mdk_load_deserialization_vectors(path, vectors, &count, 50) == 0);
+    assert(count > 0 && "deserialization file exists but yielded zero cases");
+    for (size_t i = 0; i < count; i++) {
+        MlsTlsReader reader;
+        size_t len = 0;
+        mls_tls_reader_init(&reader, vectors[i].vlbytes_header, vectors[i].vlbytes_header_len);
+        assert(mls_tls_read_vli(&reader, &len) == 0);
+        assert(len == vectors[i].length);
+        assert(mls_tls_reader_done(&reader));
+        g_mdk_asserted++;
+    }
+    printf("PASS (%zu VLBytes headers asserted)\n", count);
+}
+
+static void
+test_mdk_messages_vectors(const char *vector_dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/messages.json", vector_dir);
+    MdkMessagesVector vectors[10];
+    size_t count = 0;
+    assert(mdk_load_messages_vectors(path, vectors, &count, 10) == 0);
+    assert(count > 0 && "messages file exists but yielded zero cases");
+    for (size_t i = 0; i < count; i++) {
+        assert_key_package_roundtrip("messages.key_package", vectors[i].mls_key_package, vectors[i].mls_key_package_len);
+        assert_welcome_roundtrip("messages.welcome", vectors[i].mls_welcome, vectors[i].mls_welcome_len);
+        assert_mls_message_roundtrip("messages.public_application", vectors[i].public_message_application, vectors[i].public_message_application_len);
+        assert_mls_message_roundtrip("messages.public_proposal", vectors[i].public_message_proposal, vectors[i].public_message_proposal_len);
+        assert_mls_message_roundtrip("messages.public_commit", vectors[i].public_message_commit, vectors[i].public_message_commit_len);
+        assert_mls_message_roundtrip("messages.private", vectors[i].private_message, vectors[i].private_message_len);
+    }
+    printf("PASS (%zu message cases asserted)\n", count);
+}
+
+static void
+test_mdk_welcome_vectors(const char *vector_dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/welcome.json", vector_dir);
+    MdkWelcomeVector vectors[20];
+    size_t count = 0;
+    assert(mdk_load_welcome_vectors(path, vectors, &count, 20) == 0);
+    assert(count > 0 && "welcome file exists but yielded zero ciphersuite-1 cases");
+    for (size_t i = 0; i < count; i++) {
+        assert_key_package_roundtrip("welcome.key_package", vectors[i].key_package, vectors[i].key_package_len);
+        assert_welcome_roundtrip("welcome.welcome", vectors[i].welcome, vectors[i].welcome_len);
+    }
+    printf("PASS (%zu ciphersuite-1 cases asserted)\n", count);
+}
+
+static void
+test_mdk_message_protection_vectors(const char *vector_dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/message-protection.json", vector_dir);
+    MdkMessageProtectionVector vectors[20];
+    size_t count = 0;
+    assert(mdk_load_message_protection_vectors(path, vectors, &count, 20) == 0);
+    assert(count > 0 && "message-protection file exists but yielded zero ciphersuite-1 cases");
+    for (size_t i = 0; i < count; i++) {
+        assert_mls_message_roundtrip("message-protection.proposal_pub", vectors[i].proposal_pub, vectors[i].proposal_pub_len);
+        assert_mls_message_roundtrip("message-protection.proposal_priv", vectors[i].proposal_priv, vectors[i].proposal_priv_len);
+        assert_mls_message_roundtrip("message-protection.application_priv", vectors[i].application_priv, vectors[i].application_priv_len);
+    }
+    printf("PASS (%zu ciphersuite-1 protection cases asserted)\n", count);
+}
+
+static void
+print_deferred_loaded(const char *label, size_t count, const char *reason)
+{
+    (void)label;
+    assert(count > 0 && "vector file exists but yielded zero parsed cases");
+    g_mdk_deferred += count;
+    printf("XFAIL/DEFERRED (loaded %zu cases; %s)\n", count, reason);
+}
+
+static void
+test_mdk_psk_secret_vectors(const char *vector_dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/psk_secret.json", vector_dir);
+    MdkPskSecretVector vectors[20];
+    size_t count = 0;
+    assert(mdk_load_psk_secret_vectors(path, vectors, &count, 20) == 0);
+    print_deferred_loaded("psk_secret", count, "libmarmot has no exposed PSK-secret combiner yet");
+}
+
+static void
+test_mdk_tree_operations_vectors(const char *vector_dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/tree-operations.json", vector_dir);
+    MdkTreeOperationsVector vectors[50];
+    size_t count = 0;
+    assert(mdk_load_tree_operations_vectors(path, vectors, &count, 50) == 0);
+    print_deferred_loaded("tree-operations", count, "stateful tree mutation/vector replay API is not implemented");
+}
+
+static void
+test_mdk_tree_validation_vectors(const char *vector_dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/tree-validation.json", vector_dir);
+    MdkTreeValidationVector vectors[20];
+    size_t count = 0;
+    assert(mdk_load_tree_validation_vectors(path, vectors, &count, 20) == 0);
+    print_deferred_loaded("tree-validation", count, "ratchet-tree validation/resolution vector API is not implemented");
+}
+
+static void
+test_mdk_treekem_vectors(const char *vector_dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/treekem.json", vector_dir);
+    MdkTreeKEMVector vectors[20];
+    size_t count = 0;
+    assert(mdk_load_treekem_vectors(path, vectors, &count, 20) == 0);
+    print_deferred_loaded("treekem", count, "full UpdatePath/commit-auth TreeKEM replay is not implemented");
+}
 
 static void
 test_mdk_passive_client_all_vectors(const char *vector_dir)
@@ -1270,23 +1562,16 @@ test_mdk_passive_client_all_vectors(const char *vector_dir)
         "passive-client-handling-commit.json", 
         "passive-client-random.json"
     };
-    
     size_t total = 0;
     for (size_t i = 0; i < 3; i++) {
         char path[512];
         snprintf(path, sizeof(path), "%s/%s", vector_dir, files[i]);
         MdkPassiveClientVector vectors[10];
         size_t count = 0;
-        if (mdk_load_passive_client_vectors(path, vectors, &count, 10) == 0) {
-            total += count;
-        }
+        assert(mdk_load_passive_client_vectors(path, vectors, &count, 10) == 0);
+        total += count;
     }
-    
-    if (total > 0) {
-        printf("PASS (loaded %zu test cases across 3 files)\n", total);
-    } else {
-        printf("SKIP (files not found)\n");
-    }
+    print_deferred_loaded("passive-client", total, "passive client Welcome/commit processing is not implemented end-to-end");
 }
 
 /* ──────────────────────────────────────────────────────────────────────── */
@@ -1305,6 +1590,8 @@ int main(void)
     const char *vector_paths[] = {
         "tests/vectors/mdk",
         "libmarmot/tests/vectors/mdk",
+        "../libmarmot/tests/vectors/mdk",
+        "../../libmarmot/tests/vectors/mdk",
         "../tests/vectors/mdk",
         "./vectors/mdk"
     };
@@ -1391,12 +1678,12 @@ int main(void)
     printf("\n─ Self-Vectors ─\n");
     TEST(test_dump_self_vectors);
 
-    printf("\nAll interop tests passed (9 self-tests + %d MDK vector types + %d protocol tests).\n",
-           found_vectors ? 15 : 0, found_vectors ? 8 : 0);
-    
     if (found_vectors) {
-        printf("\n✓ MDK cross-implementation validation completed (15 vector types + 8 protocol tests).\n");
+        printf("\nInterop self-tests passed; MDK asserted checks: %zu; deferred vector cases: %zu.\n",
+               g_mdk_asserted, g_mdk_deferred);
+        printf("Deferred vector classes are printed as XFAIL/DEFERRED above and are not green coverage.\n");
     } else {
+        printf("\nAll interop self-tests passed (9 self-tests; no MDK vectors loaded).\n");
         printf("\nNOTE: For full cross-implementation validation, capture MDK vectors\n");
         printf("      and place them in tests/vectors/mdk/.\n");
     }

@@ -5,7 +5,9 @@
  * RFC 9420 Appendix D test vectors (cipher suite 0x0001:
  * MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519).
  *
- * Test vectors from: libmarmot/tests/vectors/mdk/key-schedule.json
+ * The values below are embedded known-answer vectors copied into this test;
+ * this target does not load MDK JSON at runtime. JSON-backed key-schedule
+ * coverage lives in test_interop.c.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -92,7 +94,7 @@ assert_hex_eq(const char *label, const uint8_t *actual, size_t actual_len, const
     assert(assert_hex_eq(label, actual, len, hex) == 0)
 
 /* ══════════════════════════════════════════════════════════════════════════
- * RFC 9420 Appendix D test vectors (cipher suite 1, 5 epochs)
+ * Static known-answer key schedule vectors (cipher suite 1, 5 epochs)
  * ══════════════════════════════════════════════════════════════════════════ */
 
 static const char *INITIAL_INIT_SECRET =

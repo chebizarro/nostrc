@@ -17,6 +17,8 @@
 /* Maximum vector counts */
 #define MAX_EPOCHS 10
 #define MAX_CRYPTO_TESTS 20
+#define MAX_SECRET_TREE_LEAVES 32
+#define MAX_SECRET_TREE_GENERATIONS 8
 
 /* Key schedule epoch data */
 typedef struct {
@@ -26,6 +28,7 @@ typedef struct {
     uint8_t exporter_secret[32];
     uint8_t init_secret[32];
     uint8_t joiner_secret[32];
+    uint8_t psk_secret[32];
     uint8_t membership_key[32];
     uint8_t sender_data_secret[32];
     uint8_t welcome_secret[32];
@@ -96,6 +99,34 @@ typedef struct {
     size_t mls_group_info_len;
     uint8_t mls_key_package[4096];
     size_t mls_key_package_len;
+    uint8_t ratchet_tree[8192];
+    size_t ratchet_tree_len;
+    uint8_t group_secrets[1024];
+    size_t group_secrets_len;
+    uint8_t add_proposal[2048];
+    size_t add_proposal_len;
+    uint8_t update_proposal[2048];
+    size_t update_proposal_len;
+    uint8_t remove_proposal[256];
+    size_t remove_proposal_len;
+    uint8_t pre_shared_key_proposal[512];
+    size_t pre_shared_key_proposal_len;
+    uint8_t re_init_proposal[2048];
+    size_t re_init_proposal_len;
+    uint8_t external_init_proposal[512];
+    size_t external_init_proposal_len;
+    uint8_t group_context_extensions_proposal[512];
+    size_t group_context_extensions_proposal_len;
+    uint8_t commit[2048];
+    size_t commit_len;
+    uint8_t public_message_application[2048];
+    size_t public_message_application_len;
+    uint8_t public_message_proposal[2048];
+    size_t public_message_proposal_len;
+    uint8_t public_message_commit[2048];
+    size_t public_message_commit_len;
+    uint8_t private_message[2048];
+    size_t private_message_len;
 } MdkMessagesVector;
 
 /* Deserialization test */
@@ -120,14 +151,24 @@ typedef struct {
 
 /* Secret tree test */
 typedef struct {
+    uint32_t generation;
+    uint8_t application_key[16];
+    uint8_t application_nonce[12];
+    uint8_t handshake_key[16];
+    uint8_t handshake_nonce[12];
+} MdkSecretTreeGenerationVector;
+
+typedef struct {
     uint32_t cipher_suite;
     uint8_t encryption_secret[32];
     uint8_t sender_data_secret[32];
     uint8_t sender_data_ciphertext[256];
     size_t sender_data_ciphertext_len;
-    uint8_t sender_data_key[32];
-    uint8_t sender_data_nonce[32];
+    uint8_t sender_data_key[16];
+    uint8_t sender_data_nonce[12];
     size_t n_leaves;
+    size_t generation_count[MAX_SECRET_TREE_LEAVES];
+    MdkSecretTreeGenerationVector generations[MAX_SECRET_TREE_LEAVES][MAX_SECRET_TREE_GENERATIONS];
 } MdkSecretTreeVector;
 
 /* Transcript hashes test */
@@ -150,7 +191,7 @@ typedef struct {
     size_t signer_pub_len;
     uint8_t key_package[2048];
     size_t key_package_len;
-    uint8_t welcome[4096];
+    uint8_t welcome[16384];
     size_t welcome_len;
 } MdkWelcomeVector;
 
@@ -175,6 +216,16 @@ typedef struct {
     size_t proposal_pub_len;
     uint8_t proposal_priv[2048];
     size_t proposal_priv_len;
+    uint8_t commit[2048];
+    size_t commit_len;
+    uint8_t commit_pub[2048];
+    size_t commit_pub_len;
+    uint8_t commit_priv[2048];
+    size_t commit_priv_len;
+    uint8_t application[1024];
+    size_t application_len;
+    uint8_t application_priv[2048];
+    size_t application_priv_len;
 } MdkMessageProtectionVector;
 
 /* Tree operations test */
@@ -194,7 +245,7 @@ typedef struct {
 /* Tree validation test */
 typedef struct {
     uint32_t cipher_suite;
-    uint8_t tree[16384];
+    uint8_t tree[32768];
     size_t tree_len;
     uint8_t group_id[32];
     size_t group_id_len;
@@ -222,7 +273,7 @@ typedef struct {
     size_t encryption_priv_len;
     uint8_t init_priv[128];
     size_t init_priv_len;
-    uint8_t welcome[4096];
+    uint8_t welcome[16384];
     size_t welcome_len;
     uint8_t ratchet_tree[16384];
     size_t ratchet_tree_len;

@@ -7,7 +7,7 @@
  * Test vector sources:
  *   - HKDF-SHA256: RFC 5869 test vectors
  *   - ExpandWithLabel: MLS WG test vector repository
- *   - Key schedule: Self-consistency + cross-validated with MDK
+ *   - Key schedule: Embedded self-consistency known-answer checks (does not load MDK JSON)
  *   - Secret tree: Property-based validation
  *   - Ed25519: RFC 8032 §7.1 test vectors
  *
