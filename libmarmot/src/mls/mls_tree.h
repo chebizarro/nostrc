@@ -50,18 +50,20 @@ uint32_t mls_tree_sibling(uint32_t x, uint32_t n);
 
 /**
  * Direct path from node x to root (exclusive of x, inclusive of root).
- * Returns count of entries written. path must have room for at least
- * log2(n)+1 entries.
+ * Returns 0 on success and writes count to path_len; returns -1 if the
+ * provided capacity is too small.
  */
-uint32_t mls_tree_direct_path(uint32_t x, uint32_t n,
-                               uint32_t *path, uint32_t max_len);
+int mls_tree_direct_path(uint32_t x, uint32_t n,
+                         uint32_t *path, uint32_t max_len,
+                         uint32_t *path_len);
 
 /**
  * Copath of node x: siblings of nodes on the direct path.
- * Returns count. copath must have room for at least log2(n)+1 entries.
+ * Returns 0 on success and writes count to copath_len; returns -1 on overflow.
  */
-uint32_t mls_tree_copath(uint32_t x, uint32_t n,
-                          uint32_t *copath, uint32_t max_len);
+int mls_tree_copath(uint32_t x, uint32_t n,
+                    uint32_t *copath, uint32_t max_len,
+                    uint32_t *copath_len);
 
 /** Convert leaf index to node index. */
 static inline uint32_t mls_tree_leaf_to_node(uint32_t leaf_idx) {
@@ -209,7 +211,8 @@ void mls_parent_node_clear(MlsParentNode *node);
  * @return 0 on success
  */
 int mls_tree_resolution(const MlsRatchetTree *tree, uint32_t node_idx,
-                        uint32_t *out, uint32_t *out_len);
+                        uint32_t *out, uint32_t max_len,
+                        uint32_t *out_len);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Filtered direct path (RFC 9420 §4.1.2)
@@ -228,7 +231,8 @@ int mls_tree_resolution(const MlsRatchetTree *tree, uint32_t node_idx,
  * @return 0 on success
  */
 int mls_tree_filtered_direct_path(const MlsRatchetTree *tree, uint32_t leaf_idx,
-                                   uint32_t *out, uint32_t *out_len);
+                                  uint32_t *out, uint32_t max_len,
+                                  uint32_t *out_len);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Tree hash (RFC 9420 §7.8)
@@ -271,7 +275,10 @@ int mls_tree_root_hash(const MlsRatchetTree *tree, uint8_t out[MLS_HASH_LEN]);
  * @return 0 on success
  */
 int mls_tree_parent_hash(const MlsRatchetTree *tree, uint32_t parent_node_idx,
-                          uint32_t original_child, uint8_t out[MLS_HASH_LEN]);
+                         uint32_t original_child, uint8_t out[MLS_HASH_LEN]);
+
+/** Verify all non-root parent_hash fields in a received tree. */
+int mls_tree_verify_parent_hashes(const MlsRatchetTree *tree);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Path secret derivation helpers (RFC 9420 §7.4)

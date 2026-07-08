@@ -288,7 +288,8 @@ static void test_vector_direct_path_consistency(void)
         for (uint32_t leaf = 0; leaf < vec->n_leaves; leaf++) {
             uint32_t x = mls_tree_leaf_to_node(leaf);
             uint32_t path[32];
-            uint32_t len = mls_tree_direct_path(x, vec->n_leaves, path, 32);
+            uint32_t len = 0;
+            assert(mls_tree_direct_path(x, vec->n_leaves, path, 32, &len) == 0);
 
             /* Direct path should match iterating parent() up to root */
             uint32_t cur = x;
@@ -312,8 +313,9 @@ static void test_vector_copath_consistency(void)
         for (uint32_t leaf = 0; leaf < vec->n_leaves; leaf++) {
             uint32_t x = mls_tree_leaf_to_node(leaf);
             uint32_t path[32], copath[32];
-            uint32_t plen = mls_tree_direct_path(x, vec->n_leaves, path, 32);
-            uint32_t clen = mls_tree_copath(x, vec->n_leaves, copath, 32);
+            uint32_t plen = 0, clen = 0;
+            assert(mls_tree_direct_path(x, vec->n_leaves, path, 32, &plen) == 0);
+            assert(mls_tree_copath(x, vec->n_leaves, copath, 32, &clen) == 0);
 
             assert(plen == clen);
 

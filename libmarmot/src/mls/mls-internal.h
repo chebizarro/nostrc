@@ -202,6 +202,16 @@ int mls_crypto_verify(const uint8_t sig[MLS_SIG_LEN],
                       const uint8_t pk[MLS_SIG_PK_LEN],
                       const uint8_t *msg, size_t msg_len);
 
+/** RFC 9420 SignWithLabel/VerifyWithLabel helpers. */
+int mls_crypto_sign_with_label(uint8_t sig[MLS_SIG_LEN],
+                               const uint8_t sk[MLS_SIG_SK_LEN],
+                               const char *label,
+                               const uint8_t *content, size_t content_len);
+int mls_crypto_verify_with_label(const uint8_t sig[MLS_SIG_LEN],
+                                 const uint8_t pk[MLS_SIG_PK_LEN],
+                                 const char *label,
+                                 const uint8_t *content, size_t content_len);
+
 /* ── Random ──────────────────────────────────────────────────────────── */
 
 /** Fill buffer with cryptographically secure random bytes. */

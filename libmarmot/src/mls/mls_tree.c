@@ -89,50 +89,46 @@ mls_tree_sibling(uint32_t x, uint32_t n)
         return mls_tree_left(p);
 }
 
-uint32_t
+int
 mls_tree_direct_path(uint32_t x, uint32_t n,
-                      uint32_t *path, uint32_t max_len)
+                      uint32_t *path, uint32_t max_len,
+                      uint32_t *path_len)
 {
+    if (!path_len || (max_len > 0 && !path) || n == 0) return -1;
+    *path_len = 0;
     uint32_t r = mls_tree_root(n);
     if (x == r) return 0;
 
     uint32_t count = 0;
     uint32_t cur = x;
-    while (cur != r && count < max_len) {
+    while (cur != r) {
+        if (count >= max_len) return -1;
         cur = mls_tree_parent(cur, n);
         path[count++] = cur;
     }
-    return count;
+    *path_len = count;
+    return 0;
 }
 
-uint32_t
+int
 mls_tree_copath(uint32_t x, uint32_t n,
-                 uint32_t *copath, uint32_t max_len)
+                 uint32_t *copath, uint32_t max_len,
+                 uint32_t *copath_len)
 {
+    if (!copath_len || (max_len > 0 && !copath) || n == 0) return -1;
+    *copath_len = 0;
     uint32_t r = mls_tree_root(n);
     if (x == r) return 0;
 
-    /* Build the path from x to root (inclusive of x, exclusive of root) */
-    uint32_t dp[64]; /* max tree depth */
-    uint32_t dp_len = 0;
-
-    if (dp_len >= 64) return 0; /* Safety check */
-    dp[dp_len++] = x;
+    uint32_t count = 0;
     uint32_t cur = x;
     while (cur != r) {
+        if (count >= max_len) return -1;
+        copath[count++] = mls_tree_sibling(cur, n);
         cur = mls_tree_parent(cur, n);
-        if (cur != r) {
-            if (dp_len >= 64) return 0; /* Prevent overflow */
-            dp[dp_len++] = cur;
-        }
     }
-
-    /* Copath = siblings of each node in dp */
-    uint32_t count = 0;
-    for (uint32_t i = 0; i < dp_len && count < max_len; i++) {
-        copath[count++] = mls_tree_sibling(dp[i], n);
-    }
-    return count;
+    *copath_len = count;
+    return 0;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -366,11 +362,12 @@ resolution_recursive(const MlsRatchetTree *tree, uint32_t node_idx,
 
 int
 mls_tree_resolution(const MlsRatchetTree *tree, uint32_t node_idx,
-                    uint32_t *out, uint32_t *out_len)
+                    uint32_t *out, uint32_t max_len,
+                    uint32_t *out_len)
 {
     if (!tree || !out || !out_len) return -1;
     *out_len = 0;
-    return resolution_recursive(tree, node_idx, out, out_len, tree->n_nodes);
+    return resolution_recursive(tree, node_idx, out, out_len, max_len);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -379,13 +376,17 @@ mls_tree_resolution(const MlsRatchetTree *tree, uint32_t node_idx,
 
 int
 mls_tree_filtered_direct_path(const MlsRatchetTree *tree, uint32_t leaf_idx,
-                               uint32_t *out, uint32_t *out_len)
+                               uint32_t *out, uint32_t max_len,
+                               uint32_t *out_len)
 {
-    if (!tree || !out || !out_len) return -1;
+    if (!tree || !out || !out_len || tree->n_leaves == 0) return -1;
     *out_len = 0;
 
     uint32_t node_idx = mls_tree_leaf_to_node(leaf_idx);
+    if (node_idx >= tree->n_nodes) return -1;
     uint32_t r = mls_tree_root(tree->n_leaves);
+    uint32_t *res = calloc(tree->n_nodes ? tree->n_nodes : 1, sizeof(uint32_t));
+    if (!res) return -1;
 
     /* Walk from leaf to root */
     uint32_t cur = node_idx;
@@ -395,19 +396,20 @@ mls_tree_filtered_direct_path(const MlsRatchetTree *tree, uint32_t leaf_idx,
         uint32_t copath_child = mls_tree_sibling(cur, tree->n_leaves);
 
         /* Check if copath child has non-empty resolution */
-        uint32_t res[256];
         uint32_t res_len = 0;
-        int rc = mls_tree_resolution(tree, copath_child, res, &res_len);
-        if (rc != 0) return rc;
+        int rc = mls_tree_resolution(tree, copath_child, res, tree->n_nodes, &res_len);
+        if (rc != 0) { free(res); return rc; }
 
         if (res_len > 0) {
             /* Copath child has non-empty resolution: include p in filtered path */
+            if (*out_len >= max_len) { free(res); return -1; }
             out[(*out_len)++] = p;
         }
         /* Else: skip p (copath child is empty) */
 
         cur = p;
     }
+    free(res);
     return 0;
 }
 
@@ -564,8 +566,8 @@ mls_leaf_node_deserialize(MlsTlsReader *reader, MlsLeafNode *node)
     /* signature */
     uint8_t *sig = NULL; size_t sig_len = 0;
     if (mls_tls_read_opaque16(reader, &sig, &sig_len) != 0) return -1;
-    if (sig_len > MLS_SIG_LEN) { free(sig); return -1; }
-    if (sig_len > 0) memcpy(node->signature, sig, sig_len);
+    if (sig_len != MLS_SIG_LEN) { free(sig); return -1; }
+    memcpy(node->signature, sig, sig_len);
     node->signature_len = sig_len;
     free(sig);
 
@@ -678,6 +680,16 @@ mls_tree_root_hash(const MlsRatchetTree *tree, uint8_t out[MLS_HASH_LEN])
     return mls_tree_hash(tree, mls_tree_root(tree->n_leaves), out);
 }
 
+static int
+subtree_contains_node(const MlsRatchetTree *tree, uint32_t subtree_root, uint32_t node_idx)
+{
+    if (!tree || subtree_root >= tree->n_nodes || node_idx >= tree->n_nodes) return 0;
+    if (subtree_root == node_idx) return 1;
+    if (mls_tree_is_leaf(subtree_root)) return 0;
+    return subtree_contains_node(tree, mls_tree_left(subtree_root), node_idx) ||
+           subtree_contains_node(tree, mls_tree_right(subtree_root), node_idx);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * Parent hash (RFC 9420 §7.9)
  *
@@ -695,38 +707,40 @@ mls_tree_parent_hash(const MlsRatchetTree *tree, uint32_t parent_node_idx,
 {
     if (!tree || !out) return -1;
     if (parent_node_idx >= tree->n_nodes) return -1;
-    if (!mls_tree_is_leaf(parent_node_idx) == 0) return -1; /* must be a parent */
+    if (mls_tree_is_leaf(parent_node_idx)) return -1; /* must be a parent */
 
     const MlsNode *pnode = &tree->nodes[parent_node_idx];
     if (pnode->type != MLS_NODE_PARENT) return -1;
 
-    /* Determine the sibling of original_child under parent_node_idx */
+    /* Determine the sibling subtree of original_child under parent_node_idx. */
     uint32_t sibling_idx;
     uint32_t left = mls_tree_left(parent_node_idx);
-    if (original_child == left || /* child is on the left subtree */
-        (original_child < parent_node_idx && original_child >= left)) {
-        sibling_idx = mls_tree_right(parent_node_idx);
+    uint32_t right = mls_tree_right(parent_node_idx);
+    if (subtree_contains_node(tree, left, original_child)) {
+        sibling_idx = right;
+    } else if (subtree_contains_node(tree, right, original_child)) {
+        sibling_idx = left;
     } else {
-        sibling_idx = mls_tree_left(parent_node_idx);
+        return -1;
     }
 
     /* Compute original_sibling_tree_hash */
     uint8_t sibling_hash[MLS_HASH_LEN];
     if (mls_tree_hash(tree, sibling_idx, sibling_hash) != 0) return -1;
 
-    /* Get the parent_hash of this node's parent (or empty if at root) */
+    /* Get this node's own parent_hash field (or empty if at root). */
     uint8_t parent_parent_hash[MLS_HASH_LEN];
     size_t  parent_parent_hash_len = 0;
     uint32_t r = mls_tree_root(tree->n_leaves);
     if (parent_node_idx != r) {
-        uint32_t grandparent = mls_tree_parent(parent_node_idx, tree->n_leaves);
-        if (tree->nodes[grandparent].type == MLS_NODE_PARENT &&
-            tree->nodes[grandparent].parent.parent_hash &&
-            tree->nodes[grandparent].parent.parent_hash_len > 0) {
-            memcpy(parent_parent_hash, tree->nodes[grandparent].parent.parent_hash,
-                   MLS_HASH_LEN);
+        if (pnode->parent.parent_hash_len > 0) {
+            if (!pnode->parent.parent_hash || pnode->parent.parent_hash_len != MLS_HASH_LEN)
+                return -1;
+            memcpy(parent_parent_hash, pnode->parent.parent_hash, MLS_HASH_LEN);
             parent_parent_hash_len = MLS_HASH_LEN;
         }
+    } else if (pnode->parent.parent_hash_len != 0) {
+        return -1;
     }
 
     /* Serialize ParentHashInput */
@@ -750,6 +764,42 @@ mls_tree_parent_hash(const MlsRatchetTree *tree, uint32_t parent_node_idx,
 fail:
     mls_tls_buf_free(&buf);
     return -1;
+}
+
+int
+mls_tree_verify_parent_hashes(const MlsRatchetTree *tree)
+{
+    if (!tree || tree->n_leaves == 0 || !tree->nodes) return -1;
+    uint32_t r = mls_tree_root(tree->n_leaves);
+
+    for (uint32_t idx = 0; idx < tree->n_nodes; idx++) {
+        const MlsNode *node = &tree->nodes[idx];
+        const uint8_t *received = NULL;
+        size_t received_len = 0;
+
+        if (idx == r) {
+            if (node->type == MLS_NODE_PARENT && node->parent.parent_hash_len != 0)
+                return -1;
+            continue;
+        }
+
+        if (node->type == MLS_NODE_PARENT) {
+            received = node->parent.parent_hash;
+            received_len = node->parent.parent_hash_len;
+        } else if (node->type == MLS_NODE_LEAF && node->leaf.leaf_node_source == 3) {
+            received = node->leaf.parent_hash;
+            received_len = node->leaf.parent_hash_len;
+        } else {
+            continue;
+        }
+
+        if (!received || received_len != MLS_HASH_LEN) return -1;
+        uint32_t parent = mls_tree_parent(idx, tree->n_leaves);
+        uint8_t expected[MLS_HASH_LEN];
+        if (mls_tree_parent_hash(tree, parent, idx, expected) != 0) return -1;
+        if (memcmp(received, expected, MLS_HASH_LEN) != 0) return -1;
+    }
+    return 0;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

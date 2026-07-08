@@ -143,28 +143,28 @@ static void test_direct_path(void)
     uint32_t len;
 
     /* Leaf 0 (node 0) → 1, 3, 7 */
-    len = mls_tree_direct_path(0, n, path, 16);
+    assert(mls_tree_direct_path(0, n, path, 16, &len) == 0);
     assert(len == 3);
     assert(path[0] == 1);
     assert(path[1] == 3);
     assert(path[2] == 7);
 
     /* Leaf 3 (node 6) → 5, 3, 7 */
-    len = mls_tree_direct_path(6, n, path, 16);
+    assert(mls_tree_direct_path(6, n, path, 16, &len) == 0);
     assert(len == 3);
     assert(path[0] == 5);
     assert(path[1] == 3);
     assert(path[2] == 7);
 
     /* Leaf 7 (node 14) → 13, 11, 7 */
-    len = mls_tree_direct_path(14, n, path, 16);
+    assert(mls_tree_direct_path(14, n, path, 16, &len) == 0);
     assert(len == 3);
     assert(path[0] == 13);
     assert(path[1] == 11);
     assert(path[2] == 7);
 
     /* Root has empty direct path */
-    len = mls_tree_direct_path(7, n, path, 16);
+    assert(mls_tree_direct_path(7, n, path, 16, &len) == 0);
     assert(len == 0);
 }
 
@@ -176,7 +176,7 @@ static void test_copath(void)
 
     /* Leaf 0 (node 0): direct path is 1, 3, 7.
      * Copath is siblings: sibling(0)=2, sibling(1)=5, sibling(3)=11 */
-    len = mls_tree_copath(0, n, copath, 16);
+    assert(mls_tree_copath(0, n, copath, 16, &len) == 0);
     assert(len == 3);
     assert(copath[0] == 2);
     assert(copath[1] == 5);
@@ -382,20 +382,20 @@ static void test_resolution_all_populated(void)
     /* Resolution of a populated leaf = just itself */
     uint32_t res[16];
     uint32_t res_len = 0;
-    assert(mls_tree_resolution(&tree, 0, res, &res_len) == 0);
+    assert(mls_tree_resolution(&tree, 0, res, 16, &res_len) == 0);
     assert(res_len == 1);
     assert(res[0] == 0);
 
     /* Resolution of blank parent node 1 = resolution(left) + resolution(right) = {0, 2} */
     res_len = 0;
-    assert(mls_tree_resolution(&tree, 1, res, &res_len) == 0);
+    assert(mls_tree_resolution(&tree, 1, res, 16, &res_len) == 0);
     assert(res_len == 2);
     assert(res[0] == 0); /* leaf 0 */
     assert(res[1] == 2); /* leaf 1 */
 
     /* Resolution of root (blank) = all leaves */
     res_len = 0;
-    assert(mls_tree_resolution(&tree, 3, res, &res_len) == 0);
+    assert(mls_tree_resolution(&tree, 3, res, 16, &res_len) == 0);
     assert(res_len == 4);
 
     mls_tree_free(&tree);
@@ -432,20 +432,20 @@ static void test_resolution_with_blanks(void)
     uint32_t res_len = 0;
 
     /* Resolution of node 1: only leaf 0 (blank leaf 1 contributes nothing) */
-    assert(mls_tree_resolution(&tree, 1, res, &res_len) == 0);
+    assert(mls_tree_resolution(&tree, 1, res, 16, &res_len) == 0);
     assert(res_len == 1);
     assert(res[0] == 0);
 
     /* Resolution of node 5: both children populated */
     res_len = 0;
-    assert(mls_tree_resolution(&tree, 5, res, &res_len) == 0);
+    assert(mls_tree_resolution(&tree, 5, res, 16, &res_len) == 0);
     assert(res_len == 2);
     assert(res[0] == 4);
     assert(res[1] == 6);
 
     /* Resolution of blank leaf 1 (node 2): empty */
     res_len = 0;
-    assert(mls_tree_resolution(&tree, 2, res, &res_len) == 0);
+    assert(mls_tree_resolution(&tree, 2, res, 16, &res_len) == 0);
     assert(res_len == 0);
 
     mls_tree_free(&tree);
@@ -469,7 +469,7 @@ static void test_resolution_with_unmerged(void)
 
     uint32_t res[16];
     uint32_t res_len = 0;
-    assert(mls_tree_resolution(&tree, 1, res, &res_len) == 0);
+    assert(mls_tree_resolution(&tree, 1, res, 16, &res_len) == 0);
     /* Should be: {1 (the parent itself), 4 (node of unmerged leaf 2)} */
     assert(res_len == 2);
     assert(res[0] == 1);
@@ -502,7 +502,7 @@ static void test_filtered_direct_path_all_populated(void)
 
     uint32_t out[16];
     uint32_t out_len = 0;
-    assert(mls_tree_filtered_direct_path(&tree, 0, out, &out_len) == 0);
+    assert(mls_tree_filtered_direct_path(&tree, 0, out, 16, &out_len) == 0);
     assert(out_len == 2);
     assert(out[0] == 1);
     assert(out[1] == 3);
@@ -532,7 +532,7 @@ static void test_filtered_direct_path_with_blank_copath(void)
 
     uint32_t out[16];
     uint32_t out_len = 0;
-    assert(mls_tree_filtered_direct_path(&tree, 0, out, &out_len) == 0);
+    assert(mls_tree_filtered_direct_path(&tree, 0, out, 16, &out_len) == 0);
     assert(out_len == 1);
     assert(out[0] == 3);
 
@@ -760,7 +760,8 @@ static void test_tree_single_leaf(void)
     assert(mls_tree_node_width(1) == 1);
 
     uint32_t path[4];
-    uint32_t len = mls_tree_direct_path(0, 1, path, 4);
+    uint32_t len = 0;
+    assert(mls_tree_direct_path(0, 1, path, 4, &len) == 0);
     assert(len == 0);
 
     MlsRatchetTree tree;
@@ -809,9 +810,29 @@ static void test_tree_large(void)
 
     /* Direct path of leaf 0 should have 5 entries (log2(32) = 5) */
     uint32_t path[16];
-    uint32_t len = mls_tree_direct_path(0, n, path, 16);
+    uint32_t len = 0;
+    assert(mls_tree_direct_path(0, n, path, 16, &len) == 0);
     assert(len == 5);
 
+    mls_tree_free(&tree);
+}
+
+static void test_tree_capacity_errors(void)
+{
+    uint32_t buf[2];
+    uint32_t len = 0;
+    assert(mls_tree_direct_path(0, 8, buf, 2, &len) != 0);
+    assert(mls_tree_copath(0, 8, buf, 2, &len) != 0);
+
+    MlsRatchetTree tree;
+    assert(mls_tree_new(&tree, 4) == 0);
+    for (uint32_t i = 0; i < 4; i++) {
+        uint32_t ni = mls_tree_leaf_to_node(i);
+        tree.nodes[ni].type = MLS_NODE_LEAF;
+        make_test_leaf(&tree.nodes[ni].leaf, (uint8_t)(i + 1));
+    }
+    assert(mls_tree_resolution(&tree, 3, buf, 2, &len) != 0);
+    assert(mls_tree_filtered_direct_path(&tree, 0, buf, 1, &len) != 0);
     mls_tree_free(&tree);
 }
 
@@ -850,6 +871,36 @@ static void test_parent_hash_basic(void)
         if (hash[i] != 0) { all_zero = 0; break; }
     }
     assert(!all_zero);
+
+    mls_tree_free(&tree);
+}
+
+static void test_parent_hash_verify_mismatch(void)
+{
+    MlsRatchetTree tree;
+    assert(mls_tree_new(&tree, 2) == 0);
+
+    tree.nodes[0].type = MLS_NODE_LEAF;
+    make_test_leaf(&tree.nodes[0].leaf, 0x01);
+    tree.nodes[0].leaf.leaf_node_source = 3; /* commit */
+    tree.nodes[2].type = MLS_NODE_LEAF;
+    make_test_leaf(&tree.nodes[2].leaf, 0x02);
+
+    tree.nodes[1].type = MLS_NODE_PARENT;
+    memset(tree.nodes[1].parent.encryption_key, 0xAA, MLS_KEM_PK_LEN);
+    tree.nodes[1].parent.parent_hash = NULL;
+    tree.nodes[1].parent.parent_hash_len = 0;
+    tree.nodes[1].parent.unmerged_leaves = NULL;
+    tree.nodes[1].parent.unmerged_leaf_count = 0;
+
+    tree.nodes[0].leaf.parent_hash_len = MLS_HASH_LEN;
+    tree.nodes[0].leaf.parent_hash = malloc(MLS_HASH_LEN);
+    assert(tree.nodes[0].leaf.parent_hash);
+    assert(mls_tree_parent_hash(&tree, 1, 0, tree.nodes[0].leaf.parent_hash) == 0);
+    assert(mls_tree_verify_parent_hashes(&tree) == 0);
+
+    tree.nodes[0].leaf.parent_hash[0] ^= 0x01;
+    assert(mls_tree_verify_parent_hashes(&tree) != 0);
 
     mls_tree_free(&tree);
 }
@@ -1029,9 +1080,11 @@ int main(void)
     TEST(test_tree_single_leaf);
     TEST(test_tree_two_leaves);
     TEST(test_tree_large);
+    TEST(test_tree_capacity_errors);
 
     printf("\n  --- Parent hash ---\n");
     TEST(test_parent_hash_basic);
+    TEST(test_parent_hash_verify_mismatch);
     TEST(test_parent_hash_deterministic);
 
     printf("\n  --- Path secret derivation ---\n");

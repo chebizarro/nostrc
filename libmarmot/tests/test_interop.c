@@ -1228,6 +1228,7 @@ assert_key_package_roundtrip(const char *label, const uint8_t *data, size_t len)
     mls_tls_reader_init(&reader, data, len);
     assert(mls_key_package_deserialize(&reader, &kp) == 0 && "MDK KeyPackage must deserialize");
     assert(mls_tls_reader_remaining(&reader) == 0 && "MDK KeyPackage must consume all bytes");
+    assert(mls_key_package_validate(&kp) == 0 && "MDK KeyPackage must validate");
     MlsTlsBuf buf;
     assert(mls_tls_buf_init(&buf, len + 64) == 0);
     assert(mls_key_package_serialize(&kp, &buf) == 0 && "MDK KeyPackage must reserialize");

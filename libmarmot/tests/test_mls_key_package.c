@@ -116,6 +116,57 @@ TEST(test_validate_bad_signature)
     mls_key_package_private_clear(&priv);
 }
 
+TEST(test_validate_bad_leaf_signature)
+{
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    assert(mls_key_package_create(&kp, &priv, TEST_IDENTITY, 32, NULL, 0) == 0);
+
+    /* Corrupt only the independently-signed LeafNode signature, then
+     * re-sign the outer KeyPackage so validation must catch the leaf sig. */
+    kp.leaf_node.signature[0] ^= 0x80;
+    MlsTlsBuf tbs;
+    assert(mls_tls_buf_init(&tbs, 512) == 0);
+    assert(mls_key_package_tbs_serialize(&kp, &tbs) == 0);
+    assert(mls_crypto_sign_with_label(kp.signature, priv.signature_key_private,
+                                      "KeyPackageTBS", tbs.data, tbs.len) == 0);
+    kp.signature_len = MLS_SIG_LEN;
+    mls_tls_buf_free(&tbs);
+
+    int rc = mls_key_package_validate(&kp);
+    assert(rc == MARMOT_ERR_SIGNATURE);
+
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+}
+
+TEST(test_deserialize_rejects_short_signatures)
+{
+    MlsKeyPackage kp, out;
+    MlsKeyPackagePrivate priv;
+    assert(mls_key_package_create(&kp, &priv, TEST_IDENTITY, 32, NULL, 0) == 0);
+
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, 512) == 0);
+    kp.signature_len = MLS_SIG_LEN - 1;
+    assert(mls_key_package_serialize(&kp, &buf) == 0);
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, buf.data, buf.len);
+    assert(mls_key_package_deserialize(&reader, &out) != 0);
+    mls_tls_buf_free(&buf);
+
+    assert(mls_tls_buf_init(&buf, 512) == 0);
+    kp.signature_len = MLS_SIG_LEN;
+    kp.leaf_node.signature_len = MLS_SIG_LEN - 1;
+    assert(mls_key_package_serialize(&kp, &buf) == 0);
+    mls_tls_reader_init(&reader, buf.data, buf.len);
+    assert(mls_key_package_deserialize(&reader, &out) != 0);
+    mls_tls_buf_free(&buf);
+
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+}
+
 TEST(test_serialize_roundtrip)
 {
     MlsKeyPackage kp, kp2;
@@ -257,6 +308,8 @@ int main(void)
     RUN(test_validate_bad_version);
     RUN(test_validate_bad_ciphersuite);
     RUN(test_validate_bad_signature);
+    RUN(test_validate_bad_leaf_signature);
+    RUN(test_deserialize_rejects_short_signatures);
     RUN(test_serialize_roundtrip);
     RUN(test_key_package_ref);
     RUN(test_different_kp_different_ref);

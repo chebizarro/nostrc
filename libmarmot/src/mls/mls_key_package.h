@@ -41,7 +41,9 @@ extern "C" {
  */
 typedef struct {
     uint16_t    version;           /**< ProtocolVersion (= 1 for mls10) */
-    uint16_t    cipher_suite;      /**< CipherSuite (= 0x0001) */
+    uint16_t    cipher_suite;      /**< Logical CipherSuite (= 0x0001) */
+    uint8_t     cipher_suite_raw[6]; /**< Exact wire encoding used in TBS */
+    size_t      cipher_suite_raw_len;
     uint8_t     init_key[MLS_KEM_PK_LEN]; /**< HPKE init public key (X25519) */
     MlsLeafNode leaf_node;         /**< The leaf node for the tree */
     uint8_t    *extensions_data;   /**< Serialized extensions */

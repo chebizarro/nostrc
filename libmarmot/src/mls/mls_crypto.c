@@ -10,6 +10,7 @@
 #include "mls-internal.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 #include <sodium.h>
 #include <openssl/evp.h>
@@ -751,6 +752,57 @@ mls_crypto_verify(const uint8_t sig[MLS_SIG_LEN],
                   const uint8_t *msg, size_t msg_len)
 {
     return crypto_sign_ed25519_verify_detached(sig, msg, msg_len, pk) == 0 ? 0 : -1;
+}
+
+static int
+build_sign_content(MlsTlsBuf *buf, const char *label,
+                   const uint8_t *content, size_t content_len)
+{
+    if (!buf || !label || (content_len > 0 && !content)) return -1;
+    char full_label[128];
+    int n = snprintf(full_label, sizeof(full_label), "MLS 1.0 %s", label);
+    if (n < 0 || (size_t)n >= sizeof(full_label)) return -1;
+    if (mls_tls_write_opaque16(buf, (const uint8_t *)full_label, (size_t)n) != 0)
+        return -1;
+    if (mls_tls_write_opaque32(buf, content, content_len) != 0)
+        return -1;
+    return 0;
+}
+
+int
+mls_crypto_sign_with_label(uint8_t sig[MLS_SIG_LEN],
+                           const uint8_t sk[MLS_SIG_SK_LEN],
+                           const char *label,
+                           const uint8_t *content, size_t content_len)
+{
+    if (!sig || !sk) return -1;
+    MlsTlsBuf buf;
+    if (mls_tls_buf_init(&buf, content_len + 64) != 0) return -1;
+    if (build_sign_content(&buf, label, content, content_len) != 0) {
+        mls_tls_buf_free(&buf);
+        return -1;
+    }
+    int rc = mls_crypto_sign(sig, sk, buf.data, buf.len);
+    mls_tls_buf_free(&buf);
+    return rc;
+}
+
+int
+mls_crypto_verify_with_label(const uint8_t sig[MLS_SIG_LEN],
+                             const uint8_t pk[MLS_SIG_PK_LEN],
+                             const char *label,
+                             const uint8_t *content, size_t content_len)
+{
+    if (!sig || !pk) return -1;
+    MlsTlsBuf buf;
+    if (mls_tls_buf_init(&buf, content_len + 64) != 0) return -1;
+    if (build_sign_content(&buf, label, content, content_len) != 0) {
+        mls_tls_buf_free(&buf);
+        return -1;
+    }
+    int rc = mls_crypto_verify(sig, pk, buf.data, buf.len);
+    mls_tls_buf_free(&buf);
+    return rc;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

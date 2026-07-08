@@ -144,13 +144,8 @@ generate_update_path(MlsGroup *group,
     uint32_t fdp[64];
     uint32_t fdp_len = 0;
     if (mls_tree_filtered_direct_path(&group->tree, group->own_leaf_index,
-                                       fdp, &fdp_len) != 0)
+                                       fdp, 64, &fdp_len) != 0)
         return -1;
-    
-    /* Bounds check: ensure path fits in our fixed array */
-    if (fdp_len > 64) {
-        return MARMOT_ERR_INTERNAL;
-    }
 
     /* Generate new leaf encryption key */
     uint8_t new_enc_sk[MLS_KEM_SK_LEN];
@@ -238,11 +233,8 @@ generate_update_path(MlsGroup *group,
         /* Get resolution of the sibling (nodes we need to encrypt to) */
         uint32_t resolution[256];
         uint32_t res_len = 0;
-        if (mls_tree_resolution(&group->tree, sibling, resolution, &res_len) != 0)
+        if (mls_tree_resolution(&group->tree, sibling, resolution, 256, &res_len) != 0)
             goto fail;
-        
-        /* Bounds check */
-        if (res_len > 256) goto fail;
 
         /* Encrypt path_secret to each resolution member's encryption key */
         MlsTlsBuf enc_buf;
@@ -347,12 +339,8 @@ decrypt_path_secret(const MlsGroup *group,
     /* Get resolution of the copath node to find our position */
     uint32_t resolution[256];
     uint32_t res_len = 0;
-    if (mls_tree_resolution(&group->tree, copath_node_idx, resolution, &res_len) != 0)
+    if (mls_tree_resolution(&group->tree, copath_node_idx, resolution, 256, &res_len) != 0)
         return -1;
-    
-    /* Bounds check */
-    if (res_len > 256)
-        return MARMOT_ERR_INTERNAL;
 
     /* Find our position in the resolution */
     uint32_t own_node = mls_tree_leaf_to_node(group->own_leaf_index);
@@ -981,11 +969,9 @@ mls_group_remove_member(MlsGroup *group,
 
     /* Blank nodes on the direct path */
     uint32_t path[64];
-    uint32_t path_len = mls_tree_direct_path(removed_node, group->tree.n_leaves,
-                                              path, 64);
-    
-    /* Bounds check */
-    if (path_len > 64) {
+    uint32_t path_len = 0;
+    if (mls_tree_direct_path(removed_node, group->tree.n_leaves,
+                             path, 64, &path_len) != 0) {
         return MARMOT_ERR_INTERNAL;
     }
     
@@ -1272,10 +1258,8 @@ mls_group_process_commit(MlsGroup *group,
             mls_tree_blank_node(&group->tree.nodes[rm_node]);
             /* Blank path to root */
             uint32_t dp[64];
-            uint32_t dp_len = mls_tree_direct_path(rm_node, group->tree.n_leaves, dp, 64);
-            
-            /* Bounds check */
-            if (dp_len > 64) {
+            uint32_t dp_len = 0;
+            if (mls_tree_direct_path(rm_node, group->tree.n_leaves, dp, 64, &dp_len) != 0) {
                 mls_commit_clear(&commit);
                 return MARMOT_ERR_INTERNAL;
             }
@@ -1317,13 +1301,7 @@ mls_group_process_commit(MlsGroup *group,
         uint32_t fdp[64];
         uint32_t fdp_len = 0;
         if (mls_tree_filtered_direct_path(&group->tree, sender_leaf,
-                                           fdp, &fdp_len) != 0) {
-            mls_commit_clear(&commit);
-            return MARMOT_ERR_INTERNAL;
-        }
-        
-        /* Bounds check */
-        if (fdp_len > 64) {
+                                           fdp, 64, &fdp_len) != 0) {
             mls_commit_clear(&commit);
             return MARMOT_ERR_INTERNAL;
         }
@@ -1338,13 +1316,7 @@ mls_group_process_commit(MlsGroup *group,
             uint32_t resolution[256];
             uint32_t res_len = 0;
             if (mls_tree_resolution(&group->tree, copath_sibling,
-                                     resolution, &res_len) == 0) {
-                /* Bounds check */
-                if (res_len > 256) {
-                    mls_commit_clear(&commit);
-                    return MARMOT_ERR_INTERNAL;
-                }
-                
+                                     resolution, 256, &res_len) == 0) {
                 for (uint32_t j = 0; j < res_len; j++) {
                     if (resolution[j] == own_node) {
                         our_path_idx = (int)i;
@@ -1399,6 +1371,13 @@ mls_group_process_commit(MlsGroup *group,
             memset(&group->tree.nodes[node_idx].parent, 0, sizeof(MlsParentNode));
             memcpy(group->tree.nodes[node_idx].parent.encryption_key,
                    commit.path.nodes[i].encryption_key, MLS_KEM_PK_LEN);
+        }
+
+        if (mls_tree_verify_parent_hashes(&group->tree) != 0) {
+            mls_commit_clear(&commit);
+            sodium_memzero(our_path_secret, sizeof(our_path_secret));
+            sodium_memzero(current_secret, sizeof(current_secret));
+            return MARMOT_ERR_MLS_PROCESS_MESSAGE;
         }
 
         sodium_memzero(our_path_secret, sizeof(our_path_secret));
