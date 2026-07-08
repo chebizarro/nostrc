@@ -1204,46 +1204,28 @@ sql_delete_exporter_secret(void *ctx, const MarmotGroupId *gid, uint64_t epoch)
 static MarmotError
 sql_create_snapshot(void *ctx, const MarmotGroupId *gid, const char *name)
 {
-    SqliteCtx *sc = ctx;
-
-    /* Serialize group state (MLS key store entries for this group) */
-    /* For now, just mark the snapshot with timestamp */
-    sqlite3_stmt *stmt;
-    int rc = sqlite3_prepare_v2(sc->db,
-        "INSERT OR REPLACE INTO snapshots (mls_group_id, name, data, created_at) "
-        "VALUES (?, ?, X'00', strftime('%s','now'))", -1, &stmt, NULL);
-    if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
-
-    bind_group_id(stmt, 1, gid);
-    sqlite3_bind_text(stmt, 2, name, -1, SQLITE_TRANSIENT);
-
-    rc = sqlite3_step(stmt);
-    sqlite3_finalize(stmt);
-    return (rc == SQLITE_DONE) ? MARMOT_OK : MARMOT_ERR_STORAGE;
+    (void)ctx;
+    (void)gid;
+    (void)name;
+    return MARMOT_ERR_UNSUPPORTED;
 }
 
 static MarmotError
 sql_rollback_snapshot(void *ctx, const MarmotGroupId *gid, const char *name)
 {
-    SqliteCtx *sc = ctx;
-
-    /* Delete the snapshot after use */
-    sqlite3_stmt *stmt;
-    int rc = sqlite3_prepare_v2(sc->db,
-        "DELETE FROM snapshots WHERE mls_group_id = ? AND name = ?", -1, &stmt, NULL);
-    if (rc != SQLITE_OK) return MARMOT_ERR_STORAGE;
-
-    bind_group_id(stmt, 1, gid);
-    sqlite3_bind_text(stmt, 2, name, -1, SQLITE_TRANSIENT);
-    sqlite3_step(stmt);
-    sqlite3_finalize(stmt);
-    return MARMOT_OK;
+    (void)ctx;
+    (void)gid;
+    (void)name;
+    return MARMOT_ERR_UNSUPPORTED;
 }
 
 static MarmotError
 sql_release_snapshot(void *ctx, const MarmotGroupId *gid, const char *name)
 {
-    return sql_rollback_snapshot(ctx, gid, name);
+    (void)ctx;
+    (void)gid;
+    (void)name;
+    return MARMOT_ERR_UNSUPPORTED;
 }
 
 static MarmotError

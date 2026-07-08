@@ -534,6 +534,61 @@ skip_proposal_body(MlsTlsReader *reader)
 }
 
 static int
+skip_proposal_or_ref(MlsTlsReader *reader)
+{
+    uint8_t proposal_or_ref_type;
+    if (mls_tls_read_u8(reader, &proposal_or_ref_type) != 0) return -1;
+
+    switch (proposal_or_ref_type) {
+    case 1: /* proposal: inline Proposal */
+        return skip_proposal_body(reader);
+    case 2: { /* reference: ProposalRef */
+        uint8_t *proposal_ref = NULL;
+        size_t proposal_ref_len = 0;
+        if (mls_tls_read_opaque32(reader, &proposal_ref, &proposal_ref_len) != 0)
+            return -1;
+        free(proposal_ref);
+        return proposal_ref_len > 0 ? 0 : -1;
+    }
+    default:
+        return -1;
+    }
+}
+
+static int
+skip_commit_body(MlsTlsReader *reader)
+{
+    uint8_t *proposals_data = NULL;
+    size_t proposals_len = 0;
+    if (mls_tls_read_opaque32(reader, &proposals_data, &proposals_len) != 0)
+        return -1;
+
+    if (proposals_len > 0) {
+        MlsTlsReader proposals_reader;
+        mls_tls_reader_init(&proposals_reader, proposals_data, proposals_len);
+        while (!mls_tls_reader_done(&proposals_reader)) {
+            if (skip_proposal_or_ref(&proposals_reader) != 0) {
+                free(proposals_data);
+                return -1;
+            }
+        }
+    }
+    free(proposals_data);
+
+    uint8_t has_path;
+    if (mls_tls_read_u8(reader, &has_path) != 0) return -1;
+    if (has_path) {
+        MlsUpdatePath path;
+        int rc;
+        memset(&path, 0, sizeof(path));
+        rc = mls_update_path_deserialize(reader, &path);
+        mls_update_path_clear(&path);
+        return rc;
+    }
+    return 0;
+}
+
+static int
 framed_content_body_serialize(const MlsFramedContent *fc, MlsTlsBuf *buf)
 {
     switch (fc->content_type) {
@@ -560,15 +615,9 @@ framed_content_body_deserialize(MlsTlsReader *reader, MlsFramedContent *fc)
     case MLS_CONTENT_TYPE_PROPOSAL:
         if (skip_proposal_body(reader) != 0) return -1;
         return copy_reader_span(reader, start, &fc->content, &fc->content_len);
-    case MLS_CONTENT_TYPE_COMMIT: {
-        MlsCommit commit;
-        int rc;
-        memset(&commit, 0, sizeof(commit));
-        rc = mls_commit_deserialize(reader, &commit);
-        mls_commit_clear(&commit);
-        if (rc != 0) return -1;
+    case MLS_CONTENT_TYPE_COMMIT:
+        if (skip_commit_body(reader) != 0) return -1;
         return copy_reader_span(reader, start, &fc->content, &fc->content_len);
-    }
     default:
         return -1;
     }
@@ -1092,27 +1141,27 @@ mls_message_deserialize(MlsTlsReader *reader, MlsMLSMessage *msg)
     if (mls_tls_read_u16(reader, &msg->wire_format) != 0) return -1;
 
     size_t body_start = reader->pos;
-    int rc;
     switch (msg->wire_format) {
     case MLS_WIRE_FORMAT_PUBLIC_MESSAGE:
-        rc = mls_public_message_deserialize(reader, &msg->public_message);
-        break;
+        if (mls_public_message_deserialize(reader, &msg->public_message) != 0) {
+            mls_message_clear(msg);
+            return -1;
+        }
+        return 0;
     case MLS_WIRE_FORMAT_PRIVATE_MESSAGE:
-        rc = mls_private_message_deserialize(reader, &msg->private_message);
-        break;
+        if (mls_private_message_deserialize(reader, &msg->private_message) != 0) {
+            mls_message_clear(msg);
+            return -1;
+        }
+        return 0;
     case MLS_WIRE_FORMAT_WELCOME:
     case MLS_WIRE_FORMAT_GROUP_INFO:
     case MLS_WIRE_FORMAT_KEY_PACKAGE:
-        rc = -2; /* Force opaque preservation below. */
-        break;
-    default:
-        return -1;
-    }
-    if (rc != 0) {
-        uint16_t wire_format = msg->wire_format;
-        mls_message_clear(msg);
-        msg->wire_format = wire_format;
-        msg->cipher_suite = MARMOT_CIPHERSUITE;
+        /* MlsMLSMessage models only RFC 9420 PublicMessage and PrivateMessage
+         * bodies.  Preserve other valid top-level MLSMessage bodies opaquely so
+         * generic dispatch can pass them to their owning module parsers without
+         * data loss, but never use this path to hide Public/Private parse
+         * failures. */
         reader->pos = body_start;
         msg->opaque_content_len = mls_tls_reader_remaining(reader);
         if (msg->opaque_content_len > 0) {
@@ -1125,6 +1174,7 @@ mls_message_deserialize(MlsTlsReader *reader, MlsMLSMessage *msg)
             }
         }
         return 0;
+    default:
+        return -1;
     }
-    return 0;
 }

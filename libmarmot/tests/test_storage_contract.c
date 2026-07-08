@@ -737,28 +737,22 @@ test_snapshot_lifecycle(MarmotStorage *s)
     MarmotGroupId gid = marmot_group_id_new((uint8_t *)"snap_grp", 8);
     bool persistent = s->is_persistent && s->is_persistent(s->ctx);
 
+    /* No backend currently implements real snapshot rollback.  All must report
+     * that honestly rather than returning OK for marker-only/no-op snapshots. */
     MarmotError err = s->create_snapshot(s->ctx, &gid, "before_commit");
+    assert(err == MARMOT_ERR_UNSUPPORTED);
+    err = s->rollback_snapshot(s->ctx, &gid, "before_commit");
+    assert(err == MARMOT_ERR_UNSUPPORTED);
+    err = s->release_snapshot(s->ctx, &gid, "before_commit");
+    assert(err == MARMOT_ERR_UNSUPPORTED);
+
+    size_t pruned = 123;
+    err = s->prune_expired_snapshots(s->ctx, 0, &pruned);
     if (persistent) {
-        assert(err == MARMOT_OK);
-
-        /* Release without rollback */
-        err = s->release_snapshot(s->ctx, &gid, "before_commit");
-        assert(err == MARMOT_OK);
-
-        /* Prune expired snapshots — should work even with none */
-        size_t pruned = 0;
-        err = s->prune_expired_snapshots(s->ctx, 0, &pruned);
+        /* Persistent backends still own the legacy snapshots table/DBI and may
+         * prune stale rows; this does not imply rollback snapshot support. */
         assert(err == MARMOT_OK);
     } else {
-        /* Non-persistent memory storage does not provide real snapshots and
-         * must report that explicitly rather than faking success. */
-        assert(err == MARMOT_ERR_UNSUPPORTED);
-        err = s->rollback_snapshot(s->ctx, &gid, "before_commit");
-        assert(err == MARMOT_ERR_UNSUPPORTED);
-        err = s->release_snapshot(s->ctx, &gid, "before_commit");
-        assert(err == MARMOT_ERR_UNSUPPORTED);
-        size_t pruned = 123;
-        err = s->prune_expired_snapshots(s->ctx, 0, &pruned);
         assert(err == MARMOT_ERR_UNSUPPORTED);
         assert(pruned == 0);
     }

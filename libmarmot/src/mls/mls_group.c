@@ -2320,7 +2320,8 @@ mls_update_path_serialize(const MlsUpdatePath *up, MlsTlsBuf *buf)
     if (mls_tls_buf_init(&nodes_buf, 256) != 0) return -1;
 
     for (size_t i = 0; i < up->node_count; i++) {
-        if (mls_tls_buf_append(&nodes_buf, up->nodes[i].encryption_key, MLS_KEM_PK_LEN) != 0)
+        if (mls_tls_write_opaque16(&nodes_buf, up->nodes[i].encryption_key,
+                                    MLS_KEM_PK_LEN) != 0)
             goto fail;
         if (mls_tls_write_opaque32(&nodes_buf, up->nodes[i].encrypted_path_secrets,
                                     up->nodes[i].encrypted_path_secrets_len) != 0)
@@ -2361,9 +2362,16 @@ mls_update_path_deserialize(MlsTlsReader *reader, MlsUpdatePath *up)
             MlsUpdatePathNode *node = &up->nodes[up->node_count];
             memset(node, 0, sizeof(*node));
             up->node_count++;
-            if (mls_tls_read_fixed(&nodes_reader, node->encryption_key, MLS_KEM_PK_LEN) != 0) {
+            uint8_t *enc_key = NULL;
+            size_t enc_key_len = 0;
+            if (mls_tls_read_opaque16(&nodes_reader, &enc_key, &enc_key_len) != 0) {
                 free(nodes_data); goto fail;
             }
+            if (enc_key_len != MLS_KEM_PK_LEN) {
+                free(enc_key); free(nodes_data); goto fail;
+            }
+            memcpy(node->encryption_key, enc_key, MLS_KEM_PK_LEN);
+            free(enc_key);
             if (mls_tls_read_opaque32(&nodes_reader, &node->encrypted_path_secrets,
                                        &node->encrypted_path_secrets_len) != 0) {
                 free(nodes_data); goto fail;

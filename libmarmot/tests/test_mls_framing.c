@@ -1312,6 +1312,25 @@ static void test_mls_message_wrong_version(void)
     mls_tls_buf_free(&buf);
 }
 
+static void test_mls_message_malformed_public_rejected(void)
+{
+    /* This is a top-level MLSMessage with a PublicMessage wire_format but a
+     * truncated body.  It must fail the real PublicMessage parser rather than
+     * being accepted through opaque byte preservation. */
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, 16) == 0);
+    assert(mls_tls_write_u16(&buf, 1) == 0);
+    assert(mls_tls_write_u16(&buf, MLS_WIRE_FORMAT_PUBLIC_MESSAGE) == 0);
+    assert(mls_tls_write_opaque8(&buf, (const uint8_t *)"g", 1) == 0);
+
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, buf.data, buf.len);
+    MlsMLSMessage msg;
+    assert(mls_message_deserialize(&reader, &msg) != 0);
+
+    mls_tls_buf_free(&buf);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * Integration: full sign → public message → serialize → verify
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -1466,6 +1485,7 @@ int main(void)
     TEST(test_mls_message_public_roundtrip);
     TEST(test_mls_message_private_roundtrip);
     TEST(test_mls_message_wrong_version);
+    TEST(test_mls_message_malformed_public_rejected);
 
     printf("\n  --- Integration ---\n");
     TEST(test_full_public_message_flow);

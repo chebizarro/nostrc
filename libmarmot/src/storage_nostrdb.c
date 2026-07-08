@@ -1442,56 +1442,28 @@ ndb_delete_exporter_secret(void *ctx, const MarmotGroupId *gid, uint64_t epoch)
 static MarmotError
 ndb_create_snapshot(void *ctx, const MarmotGroupId *gid, const char *name)
 {
-    NdbCtx *nc = ctx;
-    uint8_t key_buf[256];
-    size_t kl = make_kv_key("snap", (const uint8_t *)name, strlen(name), key_buf, sizeof(key_buf));
-    if (kl == 0) return MARMOT_ERR_INVALID_ARG;
-
-    /* Prepend group_id */
-    uint8_t full_key[512];
-    if (gid->len + kl > sizeof(full_key)) return MARMOT_ERR_INVALID_ARG;
-    memcpy(full_key, gid->data, gid->len);
-    memcpy(full_key + gid->len, key_buf, kl);
-
-    MDB_txn *txn;
-    if (mdb_txn_begin(nc->mls_env, NULL, 0, &txn) != 0)
-        return MARMOT_ERR_STORAGE;
-
-    int64_t now = (int64_t)time(NULL);
-    MDB_val k = { .mv_size = gid->len + kl, .mv_data = full_key };
-    MDB_val v = { .mv_size = sizeof(now), .mv_data = &now };
-    mdb_put(txn, nc->dbi_snapshots, &k, &v, 0);
-    mdb_txn_commit(txn);
-    return MARMOT_OK;
+    (void)ctx;
+    (void)gid;
+    (void)name;
+    return MARMOT_ERR_UNSUPPORTED;
 }
 
 static MarmotError
 ndb_rollback_snapshot(void *ctx, const MarmotGroupId *gid, const char *name)
 {
-    NdbCtx *nc = ctx;
-    uint8_t key_buf[256];
-    size_t kl = make_kv_key("snap", (const uint8_t *)name, strlen(name), key_buf, sizeof(key_buf));
-    if (kl == 0) return MARMOT_ERR_INVALID_ARG;
-
-    uint8_t full_key[512];
-    if (gid->len + kl > sizeof(full_key)) return MARMOT_ERR_INVALID_ARG;
-    memcpy(full_key, gid->data, gid->len);
-    memcpy(full_key + gid->len, key_buf, kl);
-
-    MDB_txn *txn;
-    if (mdb_txn_begin(nc->mls_env, NULL, 0, &txn) != 0)
-        return MARMOT_ERR_STORAGE;
-
-    MDB_val k = { .mv_size = gid->len + kl, .mv_data = full_key };
-    mdb_del(txn, nc->dbi_snapshots, &k, NULL);
-    mdb_txn_commit(txn);
-    return MARMOT_OK;
+    (void)ctx;
+    (void)gid;
+    (void)name;
+    return MARMOT_ERR_UNSUPPORTED;
 }
 
 static MarmotError
 ndb_release_snapshot(void *ctx, const MarmotGroupId *gid, const char *name)
 {
-    return ndb_rollback_snapshot(ctx, gid, name);
+    (void)ctx;
+    (void)gid;
+    (void)name;
+    return MARMOT_ERR_UNSUPPORTED;
 }
 
 static MarmotError
