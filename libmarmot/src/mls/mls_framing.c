@@ -305,40 +305,45 @@ mls_private_message_encrypt(const uint8_t *group_id, size_t group_id_len,
  * PrivateMessage decryption
  * ══════════════════════════════════════════════════════════════════════════ */
 
-int
-mls_private_message_decrypt(const MlsPrivateMessage *msg,
-                             const uint8_t sender_data_secret[MLS_HASH_LEN],
-                             MlsSecretTree *st,
-                             uint32_t max_forward_distance,
-                             uint8_t **out_plaintext, size_t *out_pt_len,
-                             MlsSenderData *out_sender)
+static bool
+private_message_content_type_valid(uint8_t content_type)
 {
-    if (!msg || !sender_data_secret || !st || !out_plaintext || !out_pt_len || !out_sender)
+    return content_type == MLS_CONTENT_TYPE_APPLICATION ||
+           content_type == MLS_CONTENT_TYPE_PROPOSAL ||
+           content_type == MLS_CONTENT_TYPE_COMMIT;
+}
+
+int
+mls_private_message_decrypt_with_sender_data(const MlsPrivateMessage *msg,
+                                              const MlsSenderData *sender_data,
+                                              MlsSecretTree *st,
+                                              uint32_t max_forward_distance,
+                                              uint8_t **out_plaintext,
+                                              size_t *out_pt_len,
+                                              MlsSenderData *out_sender)
+{
+    if (!msg || !sender_data || !st || !out_plaintext || !out_pt_len || !out_sender)
         return -1;
 
-    /* Step 1: Decrypt sender data */
-    size_t sample_len = msg->ciphertext_len < MLS_HASH_LEN
-                         ? msg->ciphertext_len : MLS_HASH_LEN;
+    /* Validate non-secret metadata before consuming ratchet state. */
+    if (!private_message_content_type_valid(msg->content_type))
+        return MARMOT_ERR_MESSAGE;
+    if (sender_data->leaf_index >= st->n_leaves)
+        return MARMOT_ERR_FROM_NON_MEMBER;
+    if (msg->ciphertext_len < MLS_AEAD_TAG_LEN)
+        return MARMOT_ERR_MESSAGE;
 
-    MlsSenderData sd;
-    int rc = mls_sender_data_decrypt(sender_data_secret,
-                                      msg->ciphertext, sample_len,
-                                      msg->encrypted_sender_data,
-                                      msg->encrypted_sender_data_len,
-                                      &sd);
-    if (rc != 0) return -1;
-
-    /* Step 2: Get message keys from the secret tree */
     bool is_handshake = (msg->content_type == MLS_CONTENT_TYPE_PROPOSAL ||
                          msg->content_type == MLS_CONTENT_TYPE_COMMIT);
 
     MlsMessageKeys keys;
-    rc = mls_secret_tree_get_keys_for_generation(st, sd.leaf_index, is_handshake,
-                                                  sd.generation, max_forward_distance,
-                                                  &keys);
+    int rc = mls_secret_tree_get_keys_for_generation(st, sender_data->leaf_index,
+                                                      is_handshake,
+                                                      sender_data->generation,
+                                                      max_forward_distance,
+                                                      &keys);
     if (rc != 0) return rc;
 
-    /* Step 3: Build content AAD */
     uint8_t *content_aad = NULL;
     size_t content_aad_len = 0;
     rc = mls_build_content_aad(msg->group_id, msg->group_id_len,
@@ -347,22 +352,16 @@ mls_private_message_decrypt(const MlsPrivateMessage *msg,
                                 &content_aad, &content_aad_len);
     if (rc != 0) { sodium_memzero(&keys, sizeof(keys)); return -1; }
 
-    /* Step 4: Apply reuse guard to nonce */
     uint8_t nonce[MLS_AEAD_NONCE_LEN];
     memcpy(nonce, keys.nonce, MLS_AEAD_NONCE_LEN);
-    mls_apply_reuse_guard(nonce, sd.reuse_guard);
+    mls_apply_reuse_guard(nonce, sender_data->reuse_guard);
 
-    /* Step 5: Decrypt content */
-    if (msg->ciphertext_len < MLS_AEAD_TAG_LEN) {
-        free(content_aad);
-        sodium_memzero(&keys, sizeof(keys));
-        return -1;
-    }
     size_t pt_max = msg->ciphertext_len - MLS_AEAD_TAG_LEN;
     uint8_t *plaintext = malloc(pt_max > 0 ? pt_max : 1);
     if (!plaintext) {
         free(content_aad);
         sodium_memzero(&keys, sizeof(keys));
+        sodium_memzero(nonce, sizeof(nonce));
         return -1;
     }
 
@@ -382,8 +381,37 @@ mls_private_message_decrypt(const MlsPrivateMessage *msg,
 
     *out_plaintext = plaintext;
     *out_pt_len = pt_len;
-    *out_sender = sd;
+    *out_sender = *sender_data;
     return 0;
+}
+
+int
+mls_private_message_decrypt(const MlsPrivateMessage *msg,
+                             const uint8_t sender_data_secret[MLS_HASH_LEN],
+                             MlsSecretTree *st,
+                             uint32_t max_forward_distance,
+                             uint8_t **out_plaintext, size_t *out_pt_len,
+                             MlsSenderData *out_sender)
+{
+    if (!msg || !sender_data_secret || !st || !out_plaintext || !out_pt_len || !out_sender)
+        return -1;
+
+    size_t sample_len = msg->ciphertext_len < MLS_HASH_LEN
+                         ? msg->ciphertext_len : MLS_HASH_LEN;
+
+    MlsSenderData sd;
+    int rc = mls_sender_data_decrypt(sender_data_secret,
+                                      msg->ciphertext, sample_len,
+                                      msg->encrypted_sender_data,
+                                      msg->encrypted_sender_data_len,
+                                      &sd);
+    if (rc != 0) return MARMOT_ERR_CRYPTO;
+
+    return mls_private_message_decrypt_with_sender_data(msg, &sd, st,
+                                                         max_forward_distance,
+                                                         out_plaintext,
+                                                         out_pt_len,
+                                                         out_sender);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

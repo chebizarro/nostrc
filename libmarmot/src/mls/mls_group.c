@@ -2058,6 +2058,18 @@ mls_group_decrypt(MlsGroup *group,
         return MARMOT_ERR_CRYPTO;
     }
 
+    /* Validate metadata before consuming ratchet state. */
+    if (sender_data.leaf_index >= group->tree.n_leaves) {
+        mls_message_clear(&wire_msg);
+        return MARMOT_ERR_FROM_NON_MEMBER;
+    }
+    if (msg->content_type != MLS_CONTENT_TYPE_APPLICATION &&
+        msg->content_type != MLS_CONTENT_TYPE_PROPOSAL &&
+        msg->content_type != MLS_CONTENT_TYPE_COMMIT) {
+        mls_message_clear(&wire_msg);
+        return MARMOT_ERR_MESSAGE;
+    }
+
     if (out_sender_leaf)
         *out_sender_leaf = sender_data.leaf_index;
 
@@ -2067,15 +2079,17 @@ mls_group_decrypt(MlsGroup *group,
         return MARMOT_ERR_OWN_MESSAGE;
     }
 
-    /* Step 2: Full decrypt (content keys + AEAD) */
-    if (mls_private_message_decrypt(msg,
-                                     group->epoch_secrets.sender_data_secret,
-                                     &group->secret_tree,
-                                     group->max_forward_distance,
-                                     out_plaintext, out_pt_len,
-                                     &sender_data) != 0) {
+    /* Step 2: Full decrypt (content keys + AEAD) using sender data already parsed above. */
+    int rc = mls_private_message_decrypt_with_sender_data(msg,
+                                                           &sender_data,
+                                                           &group->secret_tree,
+                                                           group->max_forward_distance,
+                                                           out_plaintext,
+                                                           out_pt_len,
+                                                           &sender_data);
+    if (rc != 0) {
         mls_message_clear(&wire_msg);
-        return MARMOT_ERR_CRYPTO;
+        return rc;
     }
 
     mls_message_clear(&wire_msg);

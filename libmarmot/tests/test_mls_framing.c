@@ -644,6 +644,195 @@ static void test_private_message_tamper_ciphertext(void)
     teardown_epoch(&ctx);
 }
 
+static void test_private_message_out_of_order_within_window(void)
+{
+    TestEpochCtx ctx;
+    setup_epoch(&ctx, 2, 0, 0x81);
+
+    MlsPrivateMessage msgs[3];
+    memset(msgs, 0, sizeof(msgs));
+
+    for (uint32_t i = 0; i < 3; i++) {
+        MlsMessageKeys keys;
+        assert(mls_secret_tree_derive_keys(&ctx.secret_tree, 0, false, &keys) == 0);
+        uint8_t guard[4] = { (uint8_t)i, 0xAA, 0xBB, 0xCC };
+        char pt[16];
+        snprintf(pt, sizeof(pt), "msg-%u", i);
+        assert(mls_private_message_encrypt(
+            ctx.group_id, ctx.group_id_len, ctx.epoch,
+            MLS_CONTENT_TYPE_APPLICATION,
+            NULL, 0, (const uint8_t *)pt, strlen(pt),
+            ctx.secrets.sender_data_secret,
+            &keys, 0, guard, &msgs[i]) == 0);
+    }
+
+    MlsSecretTree dec_tree;
+    assert(mls_secret_tree_init(&dec_tree, ctx.secrets.encryption_secret, 2) == 0);
+
+    uint8_t *decrypted = NULL;
+    size_t dec_len = 0;
+    MlsSenderData sender;
+    assert(mls_private_message_decrypt(&msgs[2], ctx.secrets.sender_data_secret,
+                                        &dec_tree, 8,
+                                        &decrypted, &dec_len, &sender) == 0);
+    assert(dec_len == 5 && memcmp(decrypted, "msg-2", 5) == 0);
+    assert(sender.generation == 2);
+    free(decrypted);
+
+    decrypted = NULL;
+    assert(mls_private_message_decrypt(&msgs[0], ctx.secrets.sender_data_secret,
+                                        &dec_tree, 8,
+                                        &decrypted, &dec_len, &sender) == 0);
+    assert(dec_len == 5 && memcmp(decrypted, "msg-0", 5) == 0);
+    assert(sender.generation == 0);
+    free(decrypted);
+
+    for (uint32_t i = 0; i < 3; i++)
+        mls_private_message_clear(&msgs[i]);
+    mls_secret_tree_free(&dec_tree);
+    teardown_epoch(&ctx);
+}
+
+static void test_private_message_beyond_window_rejected(void)
+{
+    TestEpochCtx ctx;
+    setup_epoch(&ctx, 2, 0, 0x82);
+
+    MlsPrivateMessage msgs[4];
+    memset(msgs, 0, sizeof(msgs));
+
+    for (uint32_t i = 0; i < 4; i++) {
+        MlsMessageKeys keys;
+        assert(mls_secret_tree_derive_keys(&ctx.secret_tree, 0, false, &keys) == 0);
+        uint8_t guard[4] = { (uint8_t)i, 0x11, 0x22, 0x33 };
+        char pt[16];
+        snprintf(pt, sizeof(pt), "win-%u", i);
+        assert(mls_private_message_encrypt(
+            ctx.group_id, ctx.group_id_len, ctx.epoch,
+            MLS_CONTENT_TYPE_APPLICATION,
+            NULL, 0, (const uint8_t *)pt, strlen(pt),
+            ctx.secrets.sender_data_secret,
+            &keys, 0, guard, &msgs[i]) == 0);
+    }
+
+    MlsSecretTree dec_tree;
+    assert(mls_secret_tree_init(&dec_tree, ctx.secrets.encryption_secret, 2) == 0);
+
+    uint8_t *decrypted = NULL;
+    size_t dec_len = 0;
+    MlsSenderData sender;
+    assert(mls_private_message_decrypt(&msgs[3], ctx.secrets.sender_data_secret,
+                                        &dec_tree, 2,
+                                        &decrypted, &dec_len, &sender) != 0);
+
+    /* Rejection must not advance the ratchet; generation 0 still decrypts. */
+    assert(mls_private_message_decrypt(&msgs[0], ctx.secrets.sender_data_secret,
+                                        &dec_tree, 2,
+                                        &decrypted, &dec_len, &sender) == 0);
+    assert(dec_len == 5 && memcmp(decrypted, "win-0", 5) == 0);
+    free(decrypted);
+
+    for (uint32_t i = 0; i < 4; i++)
+        mls_private_message_clear(&msgs[i]);
+    mls_secret_tree_free(&dec_tree);
+    teardown_epoch(&ctx);
+}
+
+static void test_private_message_replay_rejected(void)
+{
+    TestEpochCtx ctx;
+    setup_epoch(&ctx, 2, 0, 0x83);
+
+    MlsPrivateMessage msgs[3];
+    memset(msgs, 0, sizeof(msgs));
+
+    for (uint32_t i = 0; i < 3; i++) {
+        MlsMessageKeys keys;
+        assert(mls_secret_tree_derive_keys(&ctx.secret_tree, 0, false, &keys) == 0);
+        uint8_t guard[4] = { (uint8_t)i, 0x44, 0x55, 0x66 };
+        char pt[16];
+        snprintf(pt, sizeof(pt), "rep-%u", i);
+        assert(mls_private_message_encrypt(
+            ctx.group_id, ctx.group_id_len, ctx.epoch,
+            MLS_CONTENT_TYPE_APPLICATION,
+            NULL, 0, (const uint8_t *)pt, strlen(pt),
+            ctx.secrets.sender_data_secret,
+            &keys, 0, guard, &msgs[i]) == 0);
+    }
+
+    MlsSecretTree dec_tree;
+    assert(mls_secret_tree_init(&dec_tree, ctx.secrets.encryption_secret, 2) == 0);
+
+    uint8_t *decrypted = NULL;
+    size_t dec_len = 0;
+    MlsSenderData sender;
+    assert(mls_private_message_decrypt(&msgs[2], ctx.secrets.sender_data_secret,
+                                        &dec_tree, 8,
+                                        &decrypted, &dec_len, &sender) == 0);
+    free(decrypted);
+
+    decrypted = NULL;
+    assert(mls_private_message_decrypt(&msgs[0], ctx.secrets.sender_data_secret,
+                                        &dec_tree, 8,
+                                        &decrypted, &dec_len, &sender) == 0);
+    free(decrypted);
+
+    assert(mls_private_message_decrypt(&msgs[0], ctx.secrets.sender_data_secret,
+                                        &dec_tree, 8,
+                                        &decrypted, &dec_len, &sender) != 0);
+    assert(mls_private_message_decrypt(&msgs[2], ctx.secrets.sender_data_secret,
+                                        &dec_tree, 8,
+                                        &decrypted, &dec_len, &sender) != 0);
+
+    for (uint32_t i = 0; i < 3; i++)
+        mls_private_message_clear(&msgs[i]);
+    mls_secret_tree_free(&dec_tree);
+    teardown_epoch(&ctx);
+}
+
+static void test_private_message_validation_before_ratchet(void)
+{
+    TestEpochCtx ctx;
+    setup_epoch(&ctx, 2, 0, 0x84);
+
+    MlsMessageKeys keys;
+    assert(mls_secret_tree_derive_keys(&ctx.secret_tree, 0, false, &keys) == 0);
+
+    uint8_t guard[4] = {0x01, 0x02, 0x03, 0x04};
+    const uint8_t pt[] = "validate";
+    MlsPrivateMessage msg;
+    assert(mls_private_message_encrypt(
+        ctx.group_id, ctx.group_id_len, ctx.epoch,
+        MLS_CONTENT_TYPE_APPLICATION,
+        NULL, 0, pt, sizeof(pt) - 1,
+        ctx.secrets.sender_data_secret,
+        &keys, 0, guard, &msg) == 0);
+
+    MlsSecretTree dec_tree;
+    assert(mls_secret_tree_init(&dec_tree, ctx.secrets.encryption_secret, 2) == 0);
+
+    uint8_t old_type = msg.content_type;
+    msg.content_type = 0xFF;
+    uint8_t *decrypted = NULL;
+    size_t dec_len = 0;
+    MlsSenderData sender;
+    assert(mls_private_message_decrypt(&msg, ctx.secrets.sender_data_secret,
+                                        &dec_tree, 8,
+                                        &decrypted, &dec_len, &sender) != 0);
+
+    /* Invalid content type returned before consuming generation 0. */
+    msg.content_type = old_type;
+    assert(mls_private_message_decrypt(&msg, ctx.secrets.sender_data_secret,
+                                        &dec_tree, 8,
+                                        &decrypted, &dec_len, &sender) == 0);
+    assert(dec_len == sizeof(pt) - 1 && memcmp(decrypted, pt, dec_len) == 0);
+    free(decrypted);
+
+    mls_private_message_clear(&msg);
+    mls_secret_tree_free(&dec_tree);
+    teardown_epoch(&ctx);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * FramedContent tests
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -1251,6 +1440,10 @@ int main(void)
     TEST(test_private_message_serialize_roundtrip);
     TEST(test_private_message_empty_plaintext);
     TEST(test_private_message_tamper_ciphertext);
+    TEST(test_private_message_out_of_order_within_window);
+    TEST(test_private_message_beyond_window_rejected);
+    TEST(test_private_message_replay_rejected);
+    TEST(test_private_message_validation_before_ratchet);
 
     printf("\n  --- FramedContent ---\n");
     TEST(test_framed_content_serialize_roundtrip);

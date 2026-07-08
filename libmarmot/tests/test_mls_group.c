@@ -774,6 +774,100 @@ TEST(test_two_member_multiple_messages)
     mls_group_free(&bob_group);
 }
 
+TEST(test_group_out_of_order_and_replay)
+{
+    MlsGroup alice_group, bob_group;
+    uint8_t alice_sk[MLS_SIG_SK_LEN];
+    assert(create_alice_group(&alice_group, alice_sk) == 0);
+
+    MlsKeyPackage bob_kp;
+    MlsKeyPackagePrivate bob_priv;
+    assert(mls_key_package_create(&bob_kp, &bob_priv, BOB_ID, 32, NULL, 0) == 0);
+
+    MlsAddResult add_result;
+    assert(mls_group_add_member(&alice_group, &bob_kp, &add_result) == 0);
+    assert(mls_welcome_process(add_result.welcome_data, add_result.welcome_len,
+                                &bob_kp, &bob_priv, NULL, 0, &bob_group) == 0);
+
+    uint8_t *ct[3] = {0};
+    size_t ct_len[3] = {0};
+    for (int i = 0; i < 3; i++) {
+        char msg[16];
+        snprintf(msg, sizeof(msg), "ooo-%d", i);
+        assert(mls_group_encrypt(&alice_group, (const uint8_t *)msg, strlen(msg),
+                                  &ct[i], &ct_len[i]) == 0);
+    }
+
+    uint8_t *pt = NULL;
+    size_t pt_len = 0;
+    uint32_t sender = 999;
+    assert(mls_group_decrypt(&bob_group, ct[2], ct_len[2], &pt, &pt_len, &sender) == 0);
+    assert(sender == 0);
+    assert(pt_len == 5 && memcmp(pt, "ooo-2", 5) == 0);
+    free(pt);
+
+    pt = NULL;
+    assert(mls_group_decrypt(&bob_group, ct[0], ct_len[0], &pt, &pt_len, &sender) == 0);
+    assert(sender == 0);
+    assert(pt_len == 5 && memcmp(pt, "ooo-0", 5) == 0);
+    free(pt);
+
+    assert(mls_group_decrypt(&bob_group, ct[0], ct_len[0], &pt, &pt_len, &sender) != 0);
+
+    for (int i = 0; i < 3; i++)
+        free(ct[i]);
+    mls_add_result_clear(&add_result);
+    mls_key_package_clear(&bob_kp);
+    mls_key_package_private_clear(&bob_priv);
+    mls_group_free(&alice_group);
+    mls_group_free(&bob_group);
+}
+
+TEST(test_group_out_of_order_beyond_window)
+{
+    MlsGroup alice_group, bob_group;
+    uint8_t alice_sk[MLS_SIG_SK_LEN];
+    assert(create_alice_group(&alice_group, alice_sk) == 0);
+
+    MlsKeyPackage bob_kp;
+    MlsKeyPackagePrivate bob_priv;
+    assert(mls_key_package_create(&bob_kp, &bob_priv, BOB_ID, 32, NULL, 0) == 0);
+
+    MlsAddResult add_result;
+    assert(mls_group_add_member(&alice_group, &bob_kp, &add_result) == 0);
+    assert(mls_welcome_process(add_result.welcome_data, add_result.welcome_len,
+                                &bob_kp, &bob_priv, NULL, 0, &bob_group) == 0);
+    bob_group.max_forward_distance = 1;
+
+    uint8_t *ct[3] = {0};
+    size_t ct_len[3] = {0};
+    for (int i = 0; i < 3; i++) {
+        char msg[16];
+        snprintf(msg, sizeof(msg), "win-%d", i);
+        assert(mls_group_encrypt(&alice_group, (const uint8_t *)msg, strlen(msg),
+                                  &ct[i], &ct_len[i]) == 0);
+    }
+
+    uint8_t *pt = NULL;
+    size_t pt_len = 0;
+    uint32_t sender = 999;
+    assert(mls_group_decrypt(&bob_group, ct[2], ct_len[2], &pt, &pt_len, &sender) != 0);
+
+    /* The rejected generation 2 message must not consume generation 0. */
+    assert(mls_group_decrypt(&bob_group, ct[0], ct_len[0], &pt, &pt_len, &sender) == 0);
+    assert(sender == 0);
+    assert(pt_len == 5 && memcmp(pt, "win-0", 5) == 0);
+    free(pt);
+
+    for (int i = 0; i < 3; i++)
+        free(ct[i]);
+    mls_add_result_clear(&add_result);
+    mls_key_package_clear(&bob_kp);
+    mls_key_package_private_clear(&bob_priv);
+    mls_group_free(&alice_group);
+    mls_group_free(&bob_group);
+}
+
 /**
  * Verify epoch secrets match between creator and joiner after Welcome.
  */
@@ -1392,6 +1486,8 @@ int main(void)
     printf(" Two-member integration:\n");
     RUN(test_two_member_message_exchange);
     RUN(test_two_member_multiple_messages);
+    RUN(test_group_out_of_order_and_replay);
+    RUN(test_group_out_of_order_beyond_window);
     RUN(test_welcome_epoch_secrets_match);
     RUN(test_process_valid_self_update_commit_roundtrip);
     RUN(test_bad_committer_signature_rejected);
