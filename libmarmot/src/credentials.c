@@ -27,9 +27,76 @@
 #include <nostr-event.h>
 #include <nostr-tag.h>
 #include <sodium.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Internal helpers
+ * ──────────────────────────────────────────────────────────────────────── */
+
+static void
+clear_stack_event(NostrEvent *event)
+{
+    if (!event) return;
+    free(event->id);
+    free(event->pubkey);
+    free(event->content);
+    free(event->sig);
+    nostr_tags_free(event->tags);
+    memset(event, 0, sizeof(*event));
+}
+
+static bool
+is_hex_len(const char *s, size_t len)
+{
+    if (!s || strlen(s) != len) return false;
+    for (size_t i = 0; i < len; i++) {
+        char c = s[i];
+        if (!((c >= '0' && c <= '9') ||
+              (c >= 'a' && c <= 'f') ||
+              (c >= 'A' && c <= 'F')))
+            return false;
+    }
+    return true;
+}
+
+static bool
+find_tag_value(NostrTags *tags, const char *key, const char **out_value)
+{
+    if (out_value) *out_value = NULL;
+    if (!tags || !key) return false;
+    for (size_t i = 0; i < nostr_tags_size(tags); i++) {
+        NostrTag *tag = nostr_tags_get(tags, i);
+        if (nostr_tag_size(tag) >= 2 && strcmp(nostr_tag_get_key(tag), key) == 0) {
+            if (out_value) *out_value = nostr_tag_get_value(tag);
+            return true;
+        }
+    }
+    return false;
+}
+
+static MarmotError
+verify_event_id_and_signature(NostrEvent *event)
+{
+    if (!event || !is_hex_len(event->id, 64) ||
+        !is_hex_len(event->pubkey, 64) || !is_hex_len(event->sig, 128))
+        return MARMOT_ERR_VALIDATION;
+
+    char *claimed_id = event->id;
+    event->id = NULL;
+    char *computed_id = nostr_event_get_id(event);
+    free(event->id); /* cached copy created by nostr_event_get_id() */
+    event->id = claimed_id;
+    if (!computed_id) return MARMOT_ERR_VALIDATION;
+
+    bool id_ok = strcmp(computed_id, claimed_id) == 0;
+    free(computed_id);
+    if (!id_ok) return MARMOT_ERR_VALIDATION;
+
+    return nostr_event_check_signature(event) ? MARMOT_OK : MARMOT_ERR_VALIDATION;
+}
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Internal: ensure MLS identity is initialized
@@ -129,14 +196,15 @@ fail:
  * Public API: marmot_create_key_package
  * ──────────────────────────────────────────────────────────────────────── */
 
-MarmotError
-marmot_create_key_package(Marmot *m,
-                           const uint8_t nostr_pubkey[32],
-                           const uint8_t nostr_sk[32],
-                           const char **relay_urls, size_t relay_count,
-                           MarmotKeyPackageResult *result)
+static MarmotError
+create_key_package_common(Marmot *m,
+                          const uint8_t nostr_pubkey[32],
+                          const uint8_t nostr_sk[32],
+                          bool sign_event,
+                          const char **relay_urls, size_t relay_count,
+                          MarmotKeyPackageResult *result)
 {
-    if (!m || !nostr_pubkey || !nostr_sk || !result)
+    if (!m || !nostr_pubkey || !result || (sign_event && !nostr_sk))
         return MARMOT_ERR_INVALID_ARG;
     if (relay_count > 0 && !relay_urls)
         return MARMOT_ERR_INVALID_ARG;
@@ -278,7 +346,40 @@ marmot_create_key_package(Marmot *m,
 
     nostr_event_set_tags(event, tags);
 
-    /* Serialize the unsigned event to JSON */
+    if (sign_event) {
+        char *sk_hex = marmot_hex_encode(nostr_sk, 32);
+        if (!sk_hex) {
+            nostr_event_free(event);
+            mls_key_package_clear(&kp);
+            mls_key_package_private_clear(&kp_priv);
+            return MARMOT_ERR_MEMORY;
+        }
+        if (nostr_event_sign(event, sk_hex) != 0) {
+            free(sk_hex);
+            nostr_event_free(event);
+            mls_key_package_clear(&kp);
+            mls_key_package_private_clear(&kp_priv);
+            return MARMOT_ERR_CRYPTO;
+        }
+        free(sk_hex);
+
+        char *expected_pubkey = marmot_hex_encode(nostr_pubkey, 32);
+        if (!expected_pubkey) {
+            nostr_event_free(event);
+            mls_key_package_clear(&kp);
+            mls_key_package_private_clear(&kp_priv);
+            return MARMOT_ERR_MEMORY;
+        }
+        bool pubkey_matches = event->pubkey && strcmp(event->pubkey, expected_pubkey) == 0;
+        free(expected_pubkey);
+        if (!pubkey_matches) {
+            nostr_event_free(event);
+            mls_key_package_clear(&kp);
+            mls_key_package_private_clear(&kp_priv);
+            return MARMOT_ERR_VALIDATION;
+        }
+    }
+
     result->event_json = nostr_event_serialize_compact(event);
     nostr_event_free(event);
 
@@ -389,6 +490,17 @@ success:
     return MARMOT_OK;
 }
 
+MarmotError
+marmot_create_key_package(Marmot *m,
+                           const uint8_t nostr_pubkey[32],
+                           const uint8_t nostr_sk[32],
+                           const char **relay_urls, size_t relay_count,
+                           MarmotKeyPackageResult *result)
+{
+    return create_key_package_common(m, nostr_pubkey, nostr_sk, true,
+                                     relay_urls, relay_count, result);
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Public API: marmot_create_key_package_unsigned
  *
@@ -407,15 +519,8 @@ marmot_create_key_package_unsigned(Marmot *m,
     if (!m || !nostr_pubkey || !result)
         return MARMOT_ERR_INVALID_ARG;
 
-    /*
-     * The signed variant validates nostr_sk but never uses it for the
-     * actual key package creation (mls_key_package_create only receives
-     * the pubkey).  We pass a zeroed SK to satisfy the parameter contract
-     * while keeping a single code path.
-     */
-    static const uint8_t zero_sk[32] = { 0 };
-    return marmot_create_key_package(m, nostr_pubkey, zero_sk,
-                                      relay_urls, relay_count, result);
+    return create_key_package_common(m, nostr_pubkey, NULL, false,
+                                     relay_urls, relay_count, result);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -427,95 +532,101 @@ marmot_parse_key_package_event(const char *event_json,
                                 MlsKeyPackage *kp_out,
                                 uint8_t nostr_pubkey_out[32])
 {
-    if (!event_json || !kp_out) return -1;
+    if (!event_json || !kp_out) return MARMOT_ERR_INVALID_ARG;
 
     NostrEvent event;
     memset(&event, 0, sizeof(event));
     if (!nostr_event_deserialize_compact(&event, event_json, NULL))
         return MARMOT_ERR_DESERIALIZATION;
 
-    /* Verify kind */
+    MarmotError err = MARMOT_OK;
+    uint8_t event_pubkey[32];
+    const char *encoding = NULL;
+    const char *ref_hex = NULL;
+    uint8_t expected_ref[MLS_HASH_LEN];
+
     if (event.kind != MARMOT_KIND_KEY_PACKAGE) {
-        free(event.id); free(event.pubkey); free(event.content);
-        free(event.sig); nostr_tags_free(event.tags);
-        return MARMOT_ERR_INVALID_ARG;
+        err = MARMOT_ERR_UNEXPECTED_EVENT;
+        goto fail_event;
     }
 
-    /* Extract pubkey */
-    if (nostr_pubkey_out && event.pubkey) {
-        marmot_hex_decode(event.pubkey, nostr_pubkey_out, 32);
+    err = verify_event_id_and_signature(&event);
+    if (err != MARMOT_OK) goto fail_event;
+
+    if (marmot_hex_decode(event.pubkey, event_pubkey, sizeof(event_pubkey)) != 0) {
+        err = MARMOT_ERR_VALIDATION;
+        goto fail_event;
     }
 
-    /* Get content */
-    const char *content = event.content;
-    if (!content || strlen(content) == 0) {
-        free(event.id); free(event.pubkey); free(event.content);
-        free(event.sig); nostr_tags_free(event.tags);
-        return MARMOT_ERR_DESERIALIZATION;
+    if (!find_tag_value(event.tags, "encoding", &encoding) ||
+        !encoding || strcmp(encoding, "base64") != 0) {
+        err = MARMOT_ERR_VALIDATION;
+        goto fail_event;
     }
 
-    /* Check encoding tag (default is hex for backwards compat) */
-    bool is_base64 = false;
-    if (event.tags) {
-        for (size_t i = 0; i < nostr_tags_size(event.tags); i++) {
-            NostrTag *tag = nostr_tags_get(event.tags, i);
-            if (nostr_tag_size(tag) >= 2 &&
-                strcmp(nostr_tag_get_key(tag), "encoding") == 0 &&
-                strcmp(nostr_tag_get_value(tag), "base64") == 0) {
-                is_base64 = true;
-                break;
-            }
-        }
+    if (!find_tag_value(event.tags, "i", &ref_hex) || !is_hex_len(ref_hex, 64)) {
+        err = MARMOT_ERR_VALIDATION;
+        goto fail_event;
     }
 
-    /* Decode content */
-    uint8_t *kp_data = NULL;
+    if (!event.content || event.content[0] == '\0') {
+        err = MARMOT_ERR_DESERIALIZATION;
+        goto fail_event;
+    }
+
     size_t kp_len = 0;
-
-    if (is_base64) {
-        kp_data = marmot_base64_decode(content, &kp_len);
-    } else {
-        /* Hex decode (deprecated) */
-        size_t hex_len = strlen(content);
-        if (hex_len % 2 != 0) {
-            free(event.id); free(event.pubkey); free(event.content);
-            free(event.sig); nostr_tags_free(event.tags);
-            return MARMOT_ERR_DESERIALIZATION;
-        }
-        kp_len = hex_len / 2;
-        kp_data = malloc(kp_len);
-        if (kp_data && marmot_hex_decode(content, kp_data, kp_len) != 0) {
-            free(kp_data);
-            kp_data = NULL;
-        }
+    uint8_t *kp_data = marmot_base64_decode(event.content, &kp_len);
+    if (!kp_data) {
+        err = MARMOT_ERR_DESERIALIZATION;
+        goto fail_event;
     }
 
-    /* We need to properly free the event - but nostr_event_free takes a pointer */
-    /* The event was stack-allocated and populated by deserialize_compact */
-    free(event.id);
-    free(event.pubkey);
-    free(event.content);
-    free(event.sig);
-    nostr_tags_free(event.tags);
-
-    if (!kp_data) return MARMOT_ERR_DESERIALIZATION;
-
-    /* Deserialize the MLS KeyPackage */
     MlsTlsReader reader;
     mls_tls_reader_init(&reader, kp_data, kp_len);
     memset(kp_out, 0, sizeof(*kp_out));
-
     int rc = mls_key_package_deserialize(&reader, kp_out);
     free(kp_data);
-
-    if (rc != 0) return MARMOT_ERR_MLS;
-
-    /* Validate the KeyPackage */
-    rc = mls_key_package_validate(kp_out);
     if (rc != 0) {
-        mls_key_package_clear(kp_out);
-        return MARMOT_ERR_VALIDATION;
+        err = MARMOT_ERR_MLS;
+        goto fail_event;
     }
 
+    rc = mls_key_package_validate(kp_out);
+    if (rc != 0) {
+        err = MARMOT_ERR_VALIDATION;
+        goto fail_kp;
+    }
+
+    if (kp_out->leaf_node.credential_identity_len != 32 ||
+        !kp_out->leaf_node.credential_identity ||
+        memcmp(kp_out->leaf_node.credential_identity, event_pubkey, 32) != 0) {
+        err = MARMOT_ERR_AUTHOR_MISMATCH;
+        goto fail_kp;
+    }
+
+    if (mls_key_package_ref(kp_out, expected_ref) != 0) {
+        err = MARMOT_ERR_MLS;
+        goto fail_kp;
+    }
+    char *expected_ref_hex = marmot_hex_encode(expected_ref, MLS_HASH_LEN);
+    if (!expected_ref_hex) {
+        err = MARMOT_ERR_MEMORY;
+        goto fail_kp;
+    }
+    bool ref_ok = strcmp(expected_ref_hex, ref_hex) == 0;
+    free(expected_ref_hex);
+    if (!ref_ok) {
+        err = MARMOT_ERR_VALIDATION;
+        goto fail_kp;
+    }
+
+    if (nostr_pubkey_out) memcpy(nostr_pubkey_out, event_pubkey, 32);
+    clear_stack_event(&event);
     return MARMOT_OK;
+
+fail_kp:
+    mls_key_package_clear(kp_out);
+fail_event:
+    clear_stack_event(&event);
+    return err;
 }

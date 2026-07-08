@@ -101,8 +101,8 @@ void marmot_free(Marmot *m);
  * @relay_count: number of relay URLs
  * @result: (out): result containing the kind:443 event JSON
  *
- * Create an MLS KeyPackage and wrap it in a kind:443 Nostr event.
- * The event is unsigned — the caller must sign and publish it.
+ * Create an MLS KeyPackage and wrap it in a signed kind:443 Nostr event.
+ * The event id, pubkey, and Schnorr signature are produced from @nostr_sk.
  *
  * Returns: MARMOT_OK on success
  */
@@ -126,9 +126,6 @@ MarmotError marmot_create_key_package(Marmot *m,
  *
  * This is the preferred API for signer-only architectures where the caller
  * delegates Nostr event signing to an external service (e.g., D-Bus signer).
- *
- * NOTE: The MLS credential's self-signature currently uses a zero SK
- * placeholder. Future versions will support delegated MLS signing.
  *
  * Returns: MARMOT_OK on success
  */

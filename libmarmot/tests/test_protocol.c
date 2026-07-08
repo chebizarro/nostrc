@@ -19,6 +19,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <secp256k1.h>
+#include <secp256k1_extrakeys.h>
 
 /* Internal declarations needed for round-trip test */
 #include "../src/mls/mls_key_package.h"
@@ -85,10 +87,19 @@ create_test_instance(void)
 static void
 generate_nostr_keypair(uint8_t sk[32], uint8_t pk[32])
 {
-    /* For testing: random 32-byte values.
-     * In production, these would be secp256k1 keys. */
-    randombytes_buf(sk, 32);
-    randombytes_buf(pk, 32);
+    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN);
+    assert(ctx != NULL);
+
+    do {
+        randombytes_buf(sk, 32);
+    } while (!secp256k1_ec_seckey_verify(ctx, sk));
+
+    secp256k1_keypair keypair;
+    assert(secp256k1_keypair_create(ctx, &keypair, sk) == 1);
+    secp256k1_xonly_pubkey xonly;
+    assert(secp256k1_keypair_xonly_pub(ctx, &xonly, NULL, &keypair) == 1);
+    assert(secp256k1_xonly_pubkey_serialize(ctx, pk, &xonly) == 1);
+    secp256k1_context_destroy(ctx);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -254,6 +265,42 @@ test_key_package_roundtrip(void)
            "key package ref should match after round-trip");
 
     mls_key_package_clear(&kp);
+    marmot_key_package_result_free(&result);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_key_package_rejects_bad_signature(void)
+{
+    TEST("MIP-00: parse rejects kind:443 with bad signature");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+
+    uint8_t nostr_sk[32], nostr_pk[32];
+    generate_nostr_keypair(nostr_sk, nostr_pk);
+
+    MarmotKeyPackageResult result;
+    memset(&result, 0, sizeof(result));
+    MarmotError err = marmot_create_key_package(m, nostr_pk, nostr_sk,
+                                                 NULL, 0, &result);
+    ASSERT_OK(err, "create_key_package");
+
+    char *tampered = strdup(result.event_json);
+    ASSERT(tampered != NULL, "strdup tampered event");
+    char *sig = strstr(tampered, "\"sig\":\"");
+    ASSERT(sig != NULL, "signed event has sig");
+    sig += strlen("\"sig\":\"");
+    sig[0] = (sig[0] == '0') ? '1' : '0';
+
+    MlsKeyPackage kp;
+    memset(&kp, 0, sizeof(kp));
+    uint8_t parsed_pk[32];
+    err = marmot_parse_key_package_event(tampered, &kp, parsed_pk);
+    ASSERT(err != MARMOT_OK, "tampered signature should be rejected");
+
+    free(tampered);
     marmot_key_package_result_free(&result);
     marmot_free(m);
     PASS();
@@ -2161,6 +2208,7 @@ main(void)
     test_create_key_package_null_args();
     test_create_multiple_key_packages();
     test_key_package_roundtrip();
+    test_key_package_rejects_bad_signature();
     test_key_package_rotation();
     test_key_package_info_storage();
 
