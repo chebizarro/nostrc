@@ -110,12 +110,16 @@ marmot_gobject_message_init(MarmotGobjectMessage *self)
 }
 
 MarmotGobjectMessage *
-marmot_gobject_message_new_from_data(const gchar *event_id_hex,
-                                      const gchar *pubkey_hex,
-                                      const gchar *content,
-                                      guint kind,
-                                      gint64 created_at,
-                                      const gchar *mls_group_id_hex)
+marmot_gobject_message_new_from_data_full(const gchar *event_id_hex,
+                                           const gchar *pubkey_hex,
+                                           const gchar *content,
+                                           guint kind,
+                                           gint64 created_at,
+                                           gint64 processed_at,
+                                           const gchar *mls_group_id_hex,
+                                           guint64 epoch,
+                                           MarmotGobjectMessageState state,
+                                           const gchar *event_json)
 {
     MarmotGobjectMessage *self = g_object_new(MARMOT_GOBJECT_TYPE_MESSAGE, NULL);
     self->event_id_hex     = g_strdup(event_id_hex);
@@ -123,8 +127,25 @@ marmot_gobject_message_new_from_data(const gchar *event_id_hex,
     self->content          = g_strdup(content);
     self->kind             = kind;
     self->created_at       = created_at;
+    self->processed_at     = processed_at;
     self->mls_group_id_hex = g_strdup(mls_group_id_hex);
+    self->epoch            = epoch;
+    self->state            = state;
+    self->event_json       = g_strdup(event_json);
     return self;
+}
+
+MarmotGobjectMessage *
+marmot_gobject_message_new_from_data(const gchar *event_id_hex,
+                                      const gchar *pubkey_hex,
+                                      const gchar *content,
+                                      guint kind,
+                                      gint64 created_at,
+                                      const gchar *mls_group_id_hex)
+{
+    return marmot_gobject_message_new_from_data_full(
+        event_id_hex, pubkey_hex, content, kind, created_at, 0,
+        mls_group_id_hex, 0, MARMOT_GOBJECT_MESSAGE_STATE_CREATED, NULL);
 }
 
 /* ── Accessors ─────────────────────────────────────────────────── */

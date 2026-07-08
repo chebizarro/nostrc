@@ -254,9 +254,11 @@ marmot_process_welcome(Marmot *m,
  * Public API: marmot_accept_welcome
  * ──────────────────────────────────────────────────────────────────────── */
 
-MarmotError
-marmot_accept_welcome(Marmot *m, const MarmotWelcome *welcome)
+static MarmotError
+accept_welcome_internal(Marmot *m, const MarmotWelcome *welcome, MarmotGroup **out_group)
 {
+    if (out_group)
+        *out_group = NULL;
     if (!m || !welcome)
         return MARMOT_ERR_INVALID_ARG;
     if (!m->storage || !m->storage->mls_load || !m->storage->mls_store ||
@@ -487,6 +489,15 @@ marmot_accept_welcome(Marmot *m, const MarmotWelcome *welcome)
             goto fail;
     }
 
+    /* Return accepted group metadata to callers that need to emit/bind it. */
+    if (out_group && m->storage->find_group_by_mls_id) {
+        err = m->storage->find_group_by_mls_id(m->storage->ctx,
+                                               &group->mls_group_id,
+                                               out_group);
+        if (err != MARMOT_OK)
+            goto fail;
+    }
+
     /* Record the welcome as processed. */
     err = m->storage->save_processed_welcome(m->storage->ctx,
                                              welcome->wrapper_event_id,
@@ -517,6 +528,10 @@ marmot_accept_welcome(Marmot *m, const MarmotWelcome *welcome)
     return MARMOT_OK;
 
 fail:
+    if (out_group) {
+        marmot_group_free(*out_group);
+        *out_group = NULL;
+    }
     mls_group_free(&mls_group);
     marmot_group_free(group);
     if (gde_relays) {
@@ -524,6 +539,65 @@ fail:
         free(gde_relays);
     }
     return err;
+}
+
+MarmotError
+marmot_accept_welcome(Marmot *m, const MarmotWelcome *welcome)
+{
+    return accept_welcome_internal(m, welcome, NULL);
+}
+
+MarmotError
+marmot_accept_welcome_by_wrapper_id(Marmot *m,
+                                     const uint8_t wrapper_event_id[32],
+                                     MarmotGroup **out_group)
+{
+    if (out_group)
+        *out_group = NULL;
+    if (!m || !wrapper_event_id)
+        return MARMOT_ERR_INVALID_ARG;
+    if (!m->storage || !m->storage->pending_welcomes)
+        return MARMOT_ERR_STORAGE;
+
+    MarmotWelcome **welcomes = NULL;
+    size_t count = 0;
+    MarmotError err = m->storage->pending_welcomes(m->storage->ctx, NULL,
+                                                    &welcomes, &count);
+    if (err != MARMOT_OK)
+        return err;
+
+    MarmotWelcome *matched = NULL;
+    for (size_t i = 0; i < count; i++) {
+        if (!matched && memcmp(welcomes[i]->wrapper_event_id, wrapper_event_id, 32) == 0) {
+            matched = welcomes[i];
+        } else {
+            marmot_welcome_free(welcomes[i]);
+        }
+    }
+    free(welcomes);
+
+    if (!matched)
+        return MARMOT_ERR_STORAGE_NOT_FOUND;
+
+    err = accept_welcome_internal(m, matched, out_group);
+    marmot_welcome_free(matched);
+    return err;
+}
+
+MarmotError
+marmot_get_group_relay_urls(Marmot *m,
+                             const MarmotGroupId *mls_group_id,
+                             MarmotGroupRelay **out_relays,
+                             size_t *out_count)
+{
+    if (!m || !mls_group_id || !out_relays || !out_count)
+        return MARMOT_ERR_INVALID_ARG;
+    *out_relays = NULL;
+    *out_count = 0;
+    if (!m->storage || !m->storage->group_relays)
+        return MARMOT_ERR_STORAGE;
+    return m->storage->group_relays(m->storage->ctx, mls_group_id,
+                                    out_relays, out_count);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

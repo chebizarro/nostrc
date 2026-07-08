@@ -130,6 +130,43 @@ MarmotGobjectPagination *marmot_gobject_pagination_copy(const MarmotGobjectPagin
  */
 void marmot_gobject_pagination_free(MarmotGobjectPagination *pagination);
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * MarmotGobjectEncryptedMedia — GBoxed result for MIP-04 encryption
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    GBytes *encrypted_data;
+    gchar  *mime_type;
+    gchar  *filename;
+    gchar  *url;
+    gsize   original_size;
+    guint8  file_hash[32];
+    guint8  nonce[12];
+    guint64 epoch;
+} MarmotGobjectEncryptedMedia;
+
+GType marmot_gobject_encrypted_media_get_type(void) G_GNUC_CONST;
+#define MARMOT_GOBJECT_TYPE_ENCRYPTED_MEDIA (marmot_gobject_encrypted_media_get_type())
+
+MarmotGobjectEncryptedMedia *marmot_gobject_encrypted_media_new(GBytes *encrypted_data,
+                                                                 const gchar *mime_type,
+                                                                 const gchar *filename,
+                                                                 const gchar *url,
+                                                                 gsize original_size,
+                                                                 const guint8 file_hash[32],
+                                                                 const guint8 nonce[12],
+                                                                 guint64 epoch);
+MarmotGobjectEncryptedMedia *marmot_gobject_encrypted_media_copy(const MarmotGobjectEncryptedMedia *media);
+void marmot_gobject_encrypted_media_free(MarmotGobjectEncryptedMedia *media);
+
+GBytes *marmot_gobject_encrypted_media_get_data(MarmotGobjectEncryptedMedia *media);
+const gchar *marmot_gobject_encrypted_media_get_mime_type(MarmotGobjectEncryptedMedia *media);
+const gchar *marmot_gobject_encrypted_media_get_filename(MarmotGobjectEncryptedMedia *media);
+gsize marmot_gobject_encrypted_media_get_original_size(MarmotGobjectEncryptedMedia *media);
+const guint8 *marmot_gobject_encrypted_media_get_file_hash(MarmotGobjectEncryptedMedia *media);
+const guint8 *marmot_gobject_encrypted_media_get_nonce(MarmotGobjectEncryptedMedia *media);
+guint64 marmot_gobject_encrypted_media_get_epoch(MarmotGobjectEncryptedMedia *media);
+
 G_END_DECLS
 
 #endif /* MARMOT_GOBJECT_BOXED_H */

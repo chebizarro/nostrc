@@ -17,6 +17,7 @@
 #include "marmot-gobject-welcome.h"
 #include "marmot-gobject-storage.h"
 #include "marmot-gobject-enums.h"
+#include "marmot-gobject-boxed.h"
 
 G_BEGIN_DECLS
 
@@ -356,11 +357,12 @@ void marmot_gobject_client_encrypt_media_async(MarmotGobjectClient *self,
  * @result: a #GAsyncResult
  * @error: (nullable): return location for a #GError
  *
- * Returns: (transfer full) (nullable): encrypted data as #GBytes, or NULL on error
+ * Returns: (transfer full) (nullable): encrypted media metadata and data,
+ *   or NULL on error
  */
-GBytes *marmot_gobject_client_encrypt_media_finish(MarmotGobjectClient *self,
-                                                    GAsyncResult *result,
-                                                    GError **error);
+MarmotGobjectEncryptedMedia *marmot_gobject_client_encrypt_media_finish(MarmotGobjectClient *self,
+                                                                         GAsyncResult *result,
+                                                                         GError **error);
 
 /**
  * marmot_gobject_client_decrypt_media_async:

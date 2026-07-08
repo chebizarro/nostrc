@@ -14,6 +14,7 @@
 #include "marmot-gobject-1.0/marmot-gobject-key-package.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /* ── Error domain ────────────────────────────────────────────────── */
 
@@ -130,25 +131,15 @@ marmot_gobject_client_new(MarmotGobjectStorage *storage)
 {
     g_return_val_if_fail(MARMOT_GOBJECT_IS_STORAGE(storage), NULL);
 
-    MarmotStorage *raw = marmot_gobject_storage_get_raw_storage(storage);
+    MarmotStorage *raw = marmot_gobject_storage_steal_raw_storage(storage);
     g_return_val_if_fail(raw != NULL, NULL);
 
-    /*
-     * IMPORTANT: marmot_new() takes ownership of the storage pointer.
-     * The GObject storage wrapper must NOT free it in its finalizer.
-     * We keep a reference to the GObject wrapper to maintain the lifetime
-     * contract, but the underlying MarmotStorage* is now owned by Marmot.
-     *
-     * After marmot_new() succeeds, we clear the internal pointer in the
-     * storage wrapper to prevent double-free.
-     */
+    /* marmot_new() takes ownership of the storage pointer. */
     Marmot *m = marmot_new(raw);
-    if (!m)
+    if (!m) {
+        marmot_storage_free(raw);
         return NULL;
-
-    /* Prevent double-free: clear the wrapper's internal pointer
-     * now that marmot_new() owns the storage. */
-    marmot_gobject_storage_clear_raw_storage(storage);
+    }
 
     MarmotGobjectClient *self = g_object_new(MARMOT_GOBJECT_TYPE_CLIENT, NULL);
     self->marmot = m;
@@ -185,6 +176,172 @@ bytes_to_hex(const uint8_t *data, size_t len)
         snprintf(hex + i * 2, 3, "%02x", data[i]);
     hex[len * 2] = '\0';
     return hex;
+}
+
+static gchar **
+admin_pubkeys_to_hex_strv(const uint8_t (*admin_pubkeys)[32], size_t admin_count)
+{
+    if (!admin_pubkeys || admin_count == 0)
+        return NULL;
+
+    gchar **hexes = g_new0(gchar *, admin_count + 1);
+    for (size_t i = 0; i < admin_count; i++)
+        hexes[i] = bytes_to_hex(admin_pubkeys[i], 32);
+    return hexes;
+}
+
+static gchar **
+welcome_relays_to_strv(char **relays, size_t relay_count)
+{
+    if (!relays || relay_count == 0)
+        return NULL;
+
+    gchar **urls = g_new0(gchar *, relay_count + 1);
+    for (size_t i = 0; i < relay_count; i++)
+        urls[i] = g_strdup(relays[i]);
+    return urls;
+}
+
+static MarmotGobjectGroup *
+gobject_group_from_marmot(const MarmotGroup *group)
+{
+    if (!group)
+        return NULL;
+
+    gchar *mls_hex = marmot_group_id_to_hex(&group->mls_group_id);
+    gchar *nostr_hex = bytes_to_hex(group->nostr_group_id, 32);
+    gchar **admins = admin_pubkeys_to_hex_strv(
+        (const uint8_t (*)[32])group->admin_pubkeys, group->admin_count);
+
+    MarmotGobjectGroup *gobj = marmot_gobject_group_new_from_data_full(
+        mls_hex, nostr_hex,
+        group->name, group->description,
+        marmot_gobject_group_state_from_marmot(group->state),
+        group->epoch,
+        (const gchar * const *)admins,
+        (guint)group->admin_count,
+        group->last_message_at);
+
+    g_free(mls_hex);
+    g_free(nostr_hex);
+    g_strfreev(admins);
+    return gobj;
+}
+
+static MarmotGobjectMessage *
+gobject_message_from_marmot(const MarmotMessage *msg)
+{
+    if (!msg)
+        return NULL;
+
+    gchar *evt_hex = bytes_to_hex(msg->id, 32);
+    gchar *pk_hex = bytes_to_hex(msg->pubkey, 32);
+    gchar *grp_hex = marmot_group_id_to_hex(&msg->mls_group_id);
+
+    MarmotGobjectMessage *gobj = marmot_gobject_message_new_from_data_full(
+        evt_hex, pk_hex, msg->content, msg->kind,
+        msg->created_at, msg->processed_at, grp_hex,
+        msg->epoch,
+        marmot_gobject_message_state_from_marmot(msg->state),
+        msg->event_json);
+
+    g_free(evt_hex);
+    g_free(pk_hex);
+    g_free(grp_hex);
+    return gobj;
+}
+
+static MarmotGobjectWelcome *
+gobject_welcome_from_marmot(const MarmotWelcome *welcome)
+{
+    if (!welcome)
+        return NULL;
+
+    gchar *mls_hex = marmot_group_id_to_hex(&welcome->mls_group_id);
+    gchar *nostr_hex = bytes_to_hex(welcome->nostr_group_id, 32);
+    gchar *welc_hex = bytes_to_hex(welcome->welcomer, 32);
+    gchar *evt_hex = bytes_to_hex(welcome->id, 32);
+    gchar *wrapper_hex = bytes_to_hex(welcome->wrapper_event_id, 32);
+    gchar **relays = welcome_relays_to_strv(welcome->group_relays,
+                                            welcome->group_relay_count);
+
+    MarmotGobjectWelcome *gobj = marmot_gobject_welcome_new_from_data_full(
+        evt_hex, welcome->group_name, welcome->group_description,
+        welc_hex, welcome->member_count,
+        marmot_gobject_welcome_state_from_marmot(welcome->state),
+        mls_hex, nostr_hex, wrapper_hex,
+        (const gchar * const *)relays);
+
+    g_free(mls_hex);
+    g_free(nostr_hex);
+    g_free(welc_hex);
+    g_free(evt_hex);
+    g_free(wrapper_hex);
+    g_strfreev(relays);
+    return gobj;
+}
+
+typedef struct {
+    MarmotGobjectClient *client;
+    guint signal_id;
+    GObject *object;
+} QueuedSignal;
+
+static gboolean
+emit_queued_signal(gpointer user_data)
+{
+    QueuedSignal *queued = user_data;
+    g_signal_emit(queued->client, queued->signal_id, 0, queued->object);
+    g_object_unref(queued->object);
+    g_object_unref(queued->client);
+    g_free(queued);
+    return G_SOURCE_REMOVE;
+}
+
+static void
+queue_client_signal(MarmotGobjectClient *self, guint signal_id, GObject *object)
+{
+    if (!object)
+        return;
+
+    QueuedSignal *queued = g_new0(QueuedSignal, 1);
+    queued->client = g_object_ref(self);
+    queued->signal_id = signal_id;
+    queued->object = g_object_ref(object);
+    g_main_context_invoke(NULL, emit_queued_signal, queued);
+}
+
+static MarmotGobjectMessage *
+find_processed_message_for_inner_json(Marmot *marmot, const gchar *inner_json)
+{
+    if (!marmot || !inner_json)
+        return NULL;
+
+    MarmotGroup **groups = NULL;
+    size_t group_count = 0;
+    if (marmot_get_all_groups(marmot, &groups, &group_count) != MARMOT_OK)
+        return NULL;
+
+    MarmotGobjectMessage *found = NULL;
+    for (size_t i = 0; i < group_count && !found; i++) {
+        MarmotPagination page = marmot_pagination_default();
+        MarmotMessage **messages = NULL;
+        size_t message_count = 0;
+        if (marmot_get_messages(marmot, &groups[i]->mls_group_id, &page,
+                                &messages, &message_count) == MARMOT_OK) {
+            for (size_t j = 0; j < message_count; j++) {
+                if (!found && messages[j]->state == MARMOT_MSG_STATE_PROCESSED &&
+                    messages[j]->event_json && strcmp(messages[j]->event_json, inner_json) == 0) {
+                    found = gobject_message_from_marmot(messages[j]);
+                }
+                marmot_message_free(messages[j]);
+            }
+            free(messages);
+        }
+        marmot_group_free(groups[i]);
+    }
+    free(groups);
+    return found;
 }
 
 static void
@@ -476,18 +633,7 @@ create_group_thread(GTask *task, gpointer source_object,
     d->evolution_json = g_strdup(result.evolution_event_json);
 
     /* Build the GObject group */
-    MarmotGobjectGroup *group = NULL;
-    if (result.group) {
-        gchar *mls_hex = marmot_group_id_to_hex(&result.group->mls_group_id);
-        gchar *nostr_hex = bytes_to_hex(result.group->nostr_group_id, 32);
-        group = marmot_gobject_group_new_from_data(
-            mls_hex, nostr_hex,
-            result.group->name, result.group->description,
-            (MarmotGobjectGroupState)result.group->state,
-            result.group->epoch);
-        g_free(mls_hex);
-        g_free(nostr_hex);
-    }
+    MarmotGobjectGroup *group = gobject_group_from_marmot(result.group);
 
     marmot_create_group_result_free(&result);
     g_task_return_pointer(task, group, g_object_unref);
@@ -596,27 +742,10 @@ process_welcome_thread(GTask *task, gpointer source_object,
         return;
     }
 
-    /* Convert to GObject */
-    gchar *mls_hex   = marmot_group_id_to_hex(&welcome->mls_group_id);
-    gchar *nostr_hex = bytes_to_hex(welcome->nostr_group_id, 32);
-    gchar *welc_hex  = bytes_to_hex(welcome->welcomer, 32);
-    gchar *evt_hex   = bytes_to_hex(welcome->id, 32);
-
-    MarmotGobjectWelcome *gobj = marmot_gobject_welcome_new_from_data(
-        evt_hex, welcome->group_name, welcome->group_description,
-        welc_hex, welcome->member_count,
-        (MarmotGobjectWelcomeState)welcome->state,
-        mls_hex, nostr_hex);
-
-    g_free(mls_hex);
-    g_free(nostr_hex);
-    g_free(welc_hex);
-    g_free(evt_hex);
+    MarmotGobjectWelcome *gobj = gobject_welcome_from_marmot(welcome);
     marmot_welcome_free(welcome);
 
-    /* Store the wrapper event ID for accept/decline */
-    marmot_gobject_welcome_set_wrapper_event_id(gobj, d->wrapper_event_id_hex);
-
+    queue_client_signal(self, client_signals[SIGNAL_WELCOME_RECEIVED], G_OBJECT(gobj));
     g_task_return_pointer(task, gobj, g_object_unref);
 }
 
@@ -659,8 +788,6 @@ accept_welcome_thread(GTask *task, gpointer source_object,
     MarmotGobjectWelcome *gobj = MARMOT_GOBJECT_WELCOME(task_data);
     (void)cancellable;
 
-    /* Reconstruct a minimal MarmotWelcome with the wrapper_event_id
-     * that marmot_accept_welcome needs to look up raw data from storage. */
     const gchar *wrapper_hex = marmot_gobject_welcome_get_wrapper_event_id(gobj);
     if (!wrapper_hex) {
         g_task_return_new_error(task, MARMOT_GOBJECT_ERROR,
@@ -669,35 +796,29 @@ accept_welcome_thread(GTask *task, gpointer source_object,
         return;
     }
 
-    MarmotWelcome *welcome = marmot_welcome_new();
-    if (!welcome) {
-        g_task_return_new_error(task, MARMOT_GOBJECT_ERROR,
-                                MARMOT_GOBJECT_ERROR_MARMOT,
-                                "Failed to allocate welcome");
-        return;
-    }
-
-    /* Set wrapper_event_id from the GObject */
-    if (!hex_to_bytes(wrapper_hex, welcome->wrapper_event_id, 32)) {
-        marmot_welcome_free(welcome);
+    uint8_t wrapper_id[32];
+    if (!hex_to_bytes(wrapper_hex, wrapper_id, 32)) {
         g_task_return_new_error(task, MARMOT_GOBJECT_ERROR,
                                 MARMOT_GOBJECT_ERROR_INVALID_HEX,
                                 "Invalid wrapper event ID hex");
         return;
     }
 
-    /* Set event ID */
-    const gchar *evt_hex = marmot_gobject_welcome_get_event_id(gobj);
-    if (evt_hex)
-        hex_to_bytes(evt_hex, welcome->id, 32);
-
-    MarmotError err = marmot_accept_welcome(self->marmot, welcome);
-    marmot_welcome_free(welcome);
-
+    MarmotGroup *accepted_group = NULL;
+    MarmotError err = marmot_accept_welcome_by_wrapper_id(self->marmot,
+                                                           wrapper_id,
+                                                           &accepted_group);
     if (err != MARMOT_OK) {
         g_task_return_new_error(task, MARMOT_GOBJECT_ERROR, (gint)err,
                                 "%s", marmot_error_string(err));
         return;
+    }
+
+    if (accepted_group) {
+        MarmotGobjectGroup *group = gobject_group_from_marmot(accepted_group);
+        marmot_group_free(accepted_group);
+        queue_client_signal(self, client_signals[SIGNAL_GROUP_JOINED], G_OBJECT(group));
+        g_object_unref(group);
     }
 
     g_task_return_boolean(task, TRUE);
@@ -845,11 +966,18 @@ process_message_thread(GTask *task, gpointer source_object,
         return;
     }
 
-    d->result_type = (MarmotGobjectMessageResultType)result.type;
+    d->result_type = marmot_gobject_message_result_type_from_marmot(result.type);
 
     gchar *inner_json = NULL;
-    if (result.type == MARMOT_RESULT_APPLICATION_MESSAGE && result.app_msg.inner_event_json)
+    if (result.type == MARMOT_RESULT_APPLICATION_MESSAGE && result.app_msg.inner_event_json) {
         inner_json = g_strdup(result.app_msg.inner_event_json);
+        MarmotGobjectMessage *message = find_processed_message_for_inner_json(
+            self->marmot, inner_json);
+        if (message) {
+            queue_client_signal(self, client_signals[SIGNAL_MESSAGE_RECEIVED], G_OBJECT(message));
+            g_object_unref(message);
+        }
+    }
 
     marmot_message_result_free(&result);
     g_task_return_pointer(task, inner_json, g_free);
@@ -949,11 +1077,20 @@ encrypt_media_thread(GTask *task, gpointer source_object,
         return;
     }
 
-    /* Return the encrypted data as GBytes */
     GBytes *encrypted = g_bytes_new_take(result.encrypted_data, result.encrypted_len);
     result.encrypted_data = NULL;  /* ownership transferred */
+    MarmotGobjectEncryptedMedia *media = marmot_gobject_encrypted_media_new(
+        encrypted,
+        result.imeta.mime_type,
+        result.imeta.filename,
+        result.imeta.url,
+        result.imeta.original_size,
+        result.imeta.file_hash,
+        result.imeta.nonce,
+        result.imeta.epoch);
+    g_bytes_unref(encrypted);
     marmot_encrypted_media_clear(&result);
-    g_task_return_pointer(task, encrypted, (GDestroyNotify)g_bytes_unref);
+    g_task_return_pointer(task, media, (GDestroyNotify)marmot_gobject_encrypted_media_free);
 }
 
 void
@@ -987,7 +1124,7 @@ marmot_gobject_client_encrypt_media_async(MarmotGobjectClient *self,
     g_object_unref(task);
 }
 
-GBytes *
+MarmotGobjectEncryptedMedia *
 marmot_gobject_client_encrypt_media_finish(MarmotGobjectClient *self,
                                             GAsyncResult *result,
                                             GError **error)
@@ -1143,13 +1280,7 @@ marmot_gobject_client_get_group(MarmotGobjectClient *self,
     if (!group)
         return NULL;
 
-    gchar *mls_hex   = marmot_group_id_to_hex(&group->mls_group_id);
-    gchar *nostr_hex = bytes_to_hex(group->nostr_group_id, 32);
-    MarmotGobjectGroup *gobj = marmot_gobject_group_new_from_data(
-        mls_hex, nostr_hex, group->name, group->description,
-        (MarmotGobjectGroupState)group->state, group->epoch);
-    g_free(mls_hex);
-    g_free(nostr_hex);
+    MarmotGobjectGroup *gobj = gobject_group_from_marmot(group);
     marmot_group_free(group);
     return gobj;
 }
@@ -1169,13 +1300,7 @@ marmot_gobject_client_get_all_groups(MarmotGobjectClient *self, GError **error)
 
     GPtrArray *arr = g_ptr_array_new_with_free_func(g_object_unref);
     for (size_t i = 0; i < count; i++) {
-        gchar *mls_hex   = marmot_group_id_to_hex(&groups[i]->mls_group_id);
-        gchar *nostr_hex = bytes_to_hex(groups[i]->nostr_group_id, 32);
-        MarmotGobjectGroup *g = marmot_gobject_group_new_from_data(
-            mls_hex, nostr_hex, groups[i]->name, groups[i]->description,
-            (MarmotGobjectGroupState)groups[i]->state, groups[i]->epoch);
-        g_free(mls_hex);
-        g_free(nostr_hex);
+        MarmotGobjectGroup *g = gobject_group_from_marmot(groups[i]);
         g_ptr_array_add(arr, g);
         marmot_group_free(groups[i]);
     }
@@ -1220,15 +1345,7 @@ marmot_gobject_client_get_messages(MarmotGobjectClient *self,
 
     GPtrArray *arr = g_ptr_array_new_with_free_func(g_object_unref);
     for (size_t i = 0; i < count; i++) {
-        gchar *evt_hex   = bytes_to_hex(msgs[i]->id, 32);
-        gchar *pk_hex    = bytes_to_hex(msgs[i]->pubkey, 32);
-        gchar *grp_hex   = marmot_group_id_to_hex(&msgs[i]->mls_group_id);
-        MarmotGobjectMessage *m = marmot_gobject_message_new_from_data(
-            evt_hex, pk_hex, msgs[i]->content, msgs[i]->kind,
-            msgs[i]->created_at, grp_hex);
-        g_free(evt_hex);
-        g_free(pk_hex);
-        g_free(grp_hex);
+        MarmotGobjectMessage *m = gobject_message_from_marmot(msgs[i]);
         g_ptr_array_add(arr, m);
         marmot_message_free(msgs[i]);
     }
@@ -1251,19 +1368,7 @@ marmot_gobject_client_get_pending_welcomes(MarmotGobjectClient *self, GError **e
 
     GPtrArray *arr = g_ptr_array_new_with_free_func(g_object_unref);
     for (size_t i = 0; i < count; i++) {
-        gchar *mls_hex   = marmot_group_id_to_hex(&welcomes[i]->mls_group_id);
-        gchar *nostr_hex = bytes_to_hex(welcomes[i]->nostr_group_id, 32);
-        gchar *welc_hex  = bytes_to_hex(welcomes[i]->welcomer, 32);
-        gchar *evt_hex   = bytes_to_hex(welcomes[i]->id, 32);
-        MarmotGobjectWelcome *w = marmot_gobject_welcome_new_from_data(
-            evt_hex, welcomes[i]->group_name, welcomes[i]->group_description,
-            welc_hex, welcomes[i]->member_count,
-            (MarmotGobjectWelcomeState)welcomes[i]->state,
-            mls_hex, nostr_hex);
-        g_free(mls_hex);
-        g_free(nostr_hex);
-        g_free(welc_hex);
-        g_free(evt_hex);
+        MarmotGobjectWelcome *w = gobject_welcome_from_marmot(welcomes[i]);
         g_ptr_array_add(arr, w);
         marmot_welcome_free(welcomes[i]);
     }
@@ -1292,35 +1397,29 @@ marmot_gobject_client_get_group_relay_urls(MarmotGobjectClient *self,
 
     if (out_count) *out_count = 0;
 
-    /* Get the raw MarmotStorage from the GObject storage backend */
-    MarmotStorage *storage = marmot_gobject_storage_get_raw_storage(self->storage);
-    if (storage == NULL || storage->group_relays == NULL)
-        return NULL;
-
-    /* Convert hex → MarmotGroupId */
     gsize hex_len = strlen(mls_group_id_hex);
     gsize gid_len = hex_len / 2;
     uint8_t *gid_bytes = g_malloc(gid_len);
-
-    for (gsize i = 0; i < gid_len; i++) {
-        unsigned int byte_val = 0;
-        sscanf(mls_group_id_hex + (i * 2), "%02x", &byte_val);
-        gid_bytes[i] = (uint8_t)byte_val;
+    if (!hex_to_bytes(mls_group_id_hex, gid_bytes, gid_len)) {
+        g_free(gid_bytes);
+        return NULL;
     }
+
     MarmotGroupId mls_gid = marmot_group_id_new(gid_bytes, gid_len);
     g_free(gid_bytes);
 
-    /* Query storage for group relays */
     MarmotGroupRelay *relays = NULL;
     size_t relay_count = 0;
-    MarmotError err = storage->group_relays(storage->ctx, &mls_gid,
-                                             &relays, &relay_count);
+    MarmotError err = marmot_get_group_relay_urls(self->marmot, &mls_gid,
+                                                   &relays, &relay_count);
     marmot_group_id_free(&mls_gid);
 
     if (err != MARMOT_OK || relay_count == 0) {
         if (relays) {
-            for (size_t i = 0; i < relay_count; i++)
+            for (size_t i = 0; i < relay_count; i++) {
                 free(relays[i].relay_url);
+                marmot_group_id_free(&relays[i].mls_group_id);
+            }
             free(relays);
         }
         return NULL;

@@ -29,6 +29,20 @@ marmot_gobject_storage_get_raw_storage(MarmotGobjectStorage *self)
     return iface->get_raw_storage(self);
 }
 
+gpointer
+marmot_gobject_storage_steal_raw_storage(MarmotGobjectStorage *self)
+{
+    g_return_val_if_fail(MARMOT_GOBJECT_IS_STORAGE(self), NULL);
+    MarmotGobjectStorageInterface *iface = MARMOT_GOBJECT_STORAGE_GET_IFACE(self);
+    if (iface->steal_raw_storage)
+        return iface->steal_raw_storage(self);
+
+    gpointer raw = marmot_gobject_storage_get_raw_storage(self);
+    if (raw && iface->clear_raw_storage)
+        iface->clear_raw_storage(self);
+    return raw;
+}
+
 void
 marmot_gobject_storage_clear_raw_storage(MarmotGobjectStorage *self)
 {
@@ -62,6 +76,15 @@ memory_storage_get_raw(MarmotGobjectStorage *self)
     return mem_storage->storage;
 }
 
+static gpointer
+memory_storage_steal_raw(MarmotGobjectStorage *self)
+{
+    MarmotGobjectMemoryStorage *mem_storage = MARMOT_GOBJECT_MEMORY_STORAGE(self);
+    MarmotStorage *storage = mem_storage->storage;
+    mem_storage->storage = NULL;
+    return storage;
+}
+
 static void
 memory_storage_clear_raw(MarmotGobjectStorage *self)
 {
@@ -73,6 +96,7 @@ static void
 marmot_gobject_memory_storage_iface_init(MarmotGobjectStorageInterface *iface)
 {
     iface->get_raw_storage = memory_storage_get_raw;
+    iface->steal_raw_storage = memory_storage_steal_raw;
     iface->clear_raw_storage = memory_storage_clear_raw;
 }
 
@@ -130,6 +154,15 @@ sqlite_storage_get_raw(MarmotGobjectStorage *self)
     return sql_storage->storage;
 }
 
+static gpointer
+sqlite_storage_steal_raw(MarmotGobjectStorage *self)
+{
+    MarmotGobjectSqliteStorage *sql_storage = MARMOT_GOBJECT_SQLITE_STORAGE(self);
+    MarmotStorage *storage = sql_storage->storage;
+    sql_storage->storage = NULL;
+    return storage;
+}
+
 static void
 sqlite_storage_clear_raw(MarmotGobjectStorage *self)
 {
@@ -141,6 +174,7 @@ static void
 marmot_gobject_sqlite_storage_iface_init(MarmotGobjectStorageInterface *iface)
 {
     iface->get_raw_storage = sqlite_storage_get_raw;
+    iface->steal_raw_storage = sqlite_storage_steal_raw;
     iface->clear_raw_storage = sqlite_storage_clear_raw;
 }
 

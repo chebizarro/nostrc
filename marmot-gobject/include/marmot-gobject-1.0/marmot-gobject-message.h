@@ -58,6 +58,17 @@ MarmotGobjectMessage *marmot_gobject_message_new_from_data(const gchar *event_id
                                                             gint64 created_at,
                                                             const gchar *mls_group_id_hex);
 
+MarmotGobjectMessage *marmot_gobject_message_new_from_data_full(const gchar *event_id_hex,
+                                                                 const gchar *pubkey_hex,
+                                                                 const gchar *content,
+                                                                 guint kind,
+                                                                 gint64 created_at,
+                                                                 gint64 processed_at,
+                                                                 const gchar *mls_group_id_hex,
+                                                                 guint64 epoch,
+                                                                 MarmotGobjectMessageState state,
+                                                                 const gchar *event_json);
+
 /* ── Property accessors ──────────────────────────────────────────── */
 
 const gchar *marmot_gobject_message_get_event_id(MarmotGobjectMessage *self);

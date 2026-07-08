@@ -136,12 +136,15 @@ marmot_gobject_group_init(MarmotGobjectGroup *self)
 }
 
 MarmotGobjectGroup *
-marmot_gobject_group_new_from_data(const gchar *mls_group_id_hex,
-                                    const gchar *nostr_group_id_hex,
-                                    const gchar *name,
-                                    const gchar *description,
-                                    MarmotGobjectGroupState state,
-                                    guint64 epoch)
+marmot_gobject_group_new_from_data_full(const gchar *mls_group_id_hex,
+                                         const gchar *nostr_group_id_hex,
+                                         const gchar *name,
+                                         const gchar *description,
+                                         MarmotGobjectGroupState state,
+                                         guint64 epoch,
+                                         const gchar * const *admin_pubkey_hexes,
+                                         guint admin_count,
+                                         gint64 last_message_at)
 {
     MarmotGobjectGroup *self = g_object_new(MARMOT_GOBJECT_TYPE_GROUP, NULL);
     self->mls_group_id_hex   = g_strdup(mls_group_id_hex);
@@ -150,7 +153,29 @@ marmot_gobject_group_new_from_data(const gchar *mls_group_id_hex,
     self->description        = g_strdup(description);
     self->state              = state;
     self->epoch              = epoch;
+    self->last_message_at    = last_message_at;
+
+    if (admin_count > 0 && admin_pubkey_hexes) {
+        self->admin_pubkey_hexes = g_new0(gchar *, admin_count + 1);
+        for (guint i = 0; i < admin_count; i++)
+            self->admin_pubkey_hexes[i] = g_strdup(admin_pubkey_hexes[i]);
+        self->admin_count = admin_count;
+    }
+
     return self;
+}
+
+MarmotGobjectGroup *
+marmot_gobject_group_new_from_data(const gchar *mls_group_id_hex,
+                                    const gchar *nostr_group_id_hex,
+                                    const gchar *name,
+                                    const gchar *description,
+                                    MarmotGobjectGroupState state,
+                                    guint64 epoch)
+{
+    return marmot_gobject_group_new_from_data_full(
+        mls_group_id_hex, nostr_group_id_hex, name, description,
+        state, epoch, NULL, 0, 0);
 }
 
 /* ── Accessors ─────────────────────────────────────────────────── */

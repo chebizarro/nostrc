@@ -51,6 +51,17 @@ struct _MarmotGobjectStorageInterface {
     gpointer (*get_raw_storage)(MarmotGobjectStorage *self);
 
     /**
+     * steal_raw_storage:
+     * @self: a #MarmotGobjectStorage
+     *
+     * Transfers the underlying C MarmotStorage pointer to the caller and
+     * clears the wrapper so its finalizer will not free the storage.
+     *
+     * Returns: (transfer full): the underlying MarmotStorage
+     */
+    gpointer (*steal_raw_storage)(MarmotGobjectStorage *self);
+
+    /**
      * clear_raw_storage:
      * @self: a #MarmotGobjectStorage
      *
@@ -68,6 +79,17 @@ struct _MarmotGobjectStorageInterface {
  * Returns: (transfer none): the underlying C MarmotStorage pointer
  */
 gpointer marmot_gobject_storage_get_raw_storage(MarmotGobjectStorage *self);
+
+/**
+ * marmot_gobject_storage_steal_raw_storage:
+ * @self: a #MarmotGobjectStorage
+ *
+ * Transfers ownership of the underlying C MarmotStorage pointer to the caller.
+ * After this call, marmot_gobject_storage_get_raw_storage() returns NULL.
+ *
+ * Returns: (transfer full): the underlying C MarmotStorage pointer
+ */
+gpointer marmot_gobject_storage_steal_raw_storage(MarmotGobjectStorage *self);
 
 /**
  * marmot_gobject_storage_clear_raw_storage:

@@ -275,6 +275,22 @@ MarmotError marmot_process_welcome(Marmot *m,
 MarmotError marmot_accept_welcome(Marmot *m, const MarmotWelcome *welcome);
 
 /**
+ * marmot_accept_welcome_by_wrapper_id:
+ * @m: Marmot instance
+ * @wrapper_event_id: (array fixed-size=32): the gift-wrap event ID
+ * @out_group: (out) (transfer full) (nullable): accepted group metadata
+ *
+ * Accept a pending welcome by wrapper event ID and optionally return the
+ * accepted group. This avoids callers reconstructing partial MarmotWelcome
+ * records just to carry the wrapper ID.
+ *
+ * Returns: MARMOT_OK on success
+ */
+MarmotError marmot_accept_welcome_by_wrapper_id(Marmot *m,
+                                                 const uint8_t wrapper_event_id[32],
+                                                 MarmotGroup **out_group);
+
+/**
  * marmot_decline_welcome:
  * @m: Marmot instance
  * @welcome: the welcome to decline
@@ -364,6 +380,20 @@ MarmotError marmot_get_group(Marmot *m,
  */
 MarmotError marmot_get_all_groups(Marmot *m,
                                    MarmotGroup ***out_groups, size_t *out_count);
+
+/**
+ * marmot_get_group_relay_urls:
+ * @m: Marmot instance
+ * @mls_group_id: group to query
+ * @out_relays: (out) (array length=out_count) (transfer full): relay records
+ * @out_count: (out): number of relays
+ *
+ * Returns group relay URLs through the Marmot handle without exposing storage.
+ */
+MarmotError marmot_get_group_relay_urls(Marmot *m,
+                                         const MarmotGroupId *mls_group_id,
+                                         MarmotGroupRelay **out_relays,
+                                         size_t *out_count);
 
 /**
  * marmot_get_messages:

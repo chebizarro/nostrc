@@ -57,6 +57,16 @@ MarmotGobjectGroup *marmot_gobject_group_new_from_data(const gchar *mls_group_id
                                                         MarmotGobjectGroupState state,
                                                         guint64 epoch);
 
+MarmotGobjectGroup *marmot_gobject_group_new_from_data_full(const gchar *mls_group_id_hex,
+                                                             const gchar *nostr_group_id_hex,
+                                                             const gchar *name,
+                                                             const gchar *description,
+                                                             MarmotGobjectGroupState state,
+                                                             guint64 epoch,
+                                                             const gchar * const *admin_pubkey_hexes,
+                                                             guint admin_count,
+                                                             gint64 last_message_at);
+
 /* ── Property accessors ──────────────────────────────────────────── */
 
 /**

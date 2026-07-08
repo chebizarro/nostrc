@@ -566,6 +566,23 @@ marmot_create_group(Marmot *m,
         return err;
     }
 
+    if (config->relay_count > 0 && config->relay_urls) {
+        if (!m->storage->replace_group_relays) {
+            mls_group_free(&mls_group);
+            marmot_create_group_result_free(result);
+            return MARMOT_ERR_STORAGE;
+        }
+        err = m->storage->replace_group_relays(m->storage->ctx,
+                                               &result->group->mls_group_id,
+                                               (const char **)config->relay_urls,
+                                               config->relay_count);
+        if (err != MARMOT_OK) {
+            mls_group_free(&mls_group);
+            marmot_create_group_result_free(result);
+            return err;
+        }
+    }
+
     mls_group_free(&mls_group);
     return MARMOT_OK;
 }

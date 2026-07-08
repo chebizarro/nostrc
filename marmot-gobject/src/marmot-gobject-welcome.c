@@ -102,14 +102,16 @@ static void
 marmot_gobject_welcome_init(MarmotGobjectWelcome *self) { (void)self; }
 
 MarmotGobjectWelcome *
-marmot_gobject_welcome_new_from_data(const gchar *event_id_hex,
-                                      const gchar *group_name,
-                                      const gchar *group_description,
-                                      const gchar *welcomer_hex,
-                                      guint member_count,
-                                      MarmotGobjectWelcomeState state,
-                                      const gchar *mls_group_id_hex,
-                                      const gchar *nostr_group_id_hex)
+marmot_gobject_welcome_new_from_data_full(const gchar *event_id_hex,
+                                           const gchar *group_name,
+                                           const gchar *group_description,
+                                           const gchar *welcomer_hex,
+                                           guint member_count,
+                                           MarmotGobjectWelcomeState state,
+                                           const gchar *mls_group_id_hex,
+                                           const gchar *nostr_group_id_hex,
+                                           const gchar *wrapper_event_id_hex,
+                                           const gchar * const *relay_urls)
 {
     MarmotGobjectWelcome *self = g_object_new(MARMOT_GOBJECT_TYPE_WELCOME, NULL);
     self->event_id_hex      = g_strdup(event_id_hex);
@@ -120,7 +122,25 @@ marmot_gobject_welcome_new_from_data(const gchar *event_id_hex,
     self->state             = state;
     self->mls_group_id_hex  = g_strdup(mls_group_id_hex);
     self->nostr_group_id_hex = g_strdup(nostr_group_id_hex);
+    self->wrapper_event_id_hex = g_strdup(wrapper_event_id_hex);
+    self->relay_urls = g_strdupv((gchar **)relay_urls);
     return self;
+}
+
+MarmotGobjectWelcome *
+marmot_gobject_welcome_new_from_data(const gchar *event_id_hex,
+                                      const gchar *group_name,
+                                      const gchar *group_description,
+                                      const gchar *welcomer_hex,
+                                      guint member_count,
+                                      MarmotGobjectWelcomeState state,
+                                      const gchar *mls_group_id_hex,
+                                      const gchar *nostr_group_id_hex)
+{
+    return marmot_gobject_welcome_new_from_data_full(
+        event_id_hex, group_name, group_description, welcomer_hex,
+        member_count, state, mls_group_id_hex, nostr_group_id_hex,
+        NULL, NULL);
 }
 
 /* ── Accessors ─────────────────────────────────────────────────── */
@@ -152,4 +172,12 @@ marmot_gobject_welcome_set_wrapper_event_id(MarmotGobjectWelcome *self,
 {
     g_free(self->wrapper_event_id_hex);
     self->wrapper_event_id_hex = g_strdup(wrapper_event_id_hex);
+}
+
+void
+marmot_gobject_welcome_set_relay_urls(MarmotGobjectWelcome *self,
+                                       const gchar * const *relay_urls)
+{
+    g_strfreev(self->relay_urls);
+    self->relay_urls = g_strdupv((gchar **)relay_urls);
 }

@@ -45,6 +45,17 @@ MarmotGobjectWelcome *marmot_gobject_welcome_new_from_data(const gchar *event_id
                                                             const gchar *mls_group_id_hex,
                                                             const gchar *nostr_group_id_hex);
 
+MarmotGobjectWelcome *marmot_gobject_welcome_new_from_data_full(const gchar *event_id_hex,
+                                                                 const gchar *group_name,
+                                                                 const gchar *group_description,
+                                                                 const gchar *welcomer_hex,
+                                                                 guint member_count,
+                                                                 MarmotGobjectWelcomeState state,
+                                                                 const gchar *mls_group_id_hex,
+                                                                 const gchar *nostr_group_id_hex,
+                                                                 const gchar *wrapper_event_id_hex,
+                                                                 const gchar * const *relay_urls);
+
 /* ── Property accessors ──────────────────────────────────────────── */
 
 const gchar *marmot_gobject_welcome_get_event_id(MarmotGobjectWelcome *self);
@@ -82,6 +93,9 @@ const gchar *marmot_gobject_welcome_get_wrapper_event_id(MarmotGobjectWelcome *s
  */
 void marmot_gobject_welcome_set_wrapper_event_id(MarmotGobjectWelcome *self,
                                                    const gchar *wrapper_event_id_hex);
+
+void marmot_gobject_welcome_set_relay_urls(MarmotGobjectWelcome *self,
+                                             const gchar * const *relay_urls);
 
 G_END_DECLS
 

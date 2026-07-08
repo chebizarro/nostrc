@@ -10,6 +10,7 @@
 #define MARMOT_GOBJECT_ENUMS_H
 
 #include <glib-object.h>
+#include <marmot/marmot-types.h>
 
 G_BEGIN_DECLS
 
@@ -30,6 +31,8 @@ typedef enum {
 GType marmot_gobject_group_state_get_type(void) G_GNUC_CONST;
 #define MARMOT_GOBJECT_TYPE_GROUP_STATE (marmot_gobject_group_state_get_type())
 
+MarmotGobjectGroupState marmot_gobject_group_state_from_marmot(MarmotGroupState state);
+
 /**
  * MarmotGobjectMessageState:
  * @MARMOT_GOBJECT_MESSAGE_STATE_CREATED: Message created/pending
@@ -49,6 +52,8 @@ typedef enum {
 GType marmot_gobject_message_state_get_type(void) G_GNUC_CONST;
 #define MARMOT_GOBJECT_TYPE_MESSAGE_STATE (marmot_gobject_message_state_get_type())
 
+MarmotGobjectMessageState marmot_gobject_message_state_from_marmot(MarmotMessageState state);
+
 /**
  * MarmotGobjectWelcomeState:
  * @MARMOT_GOBJECT_WELCOME_STATE_PENDING: Welcome pending user action
@@ -65,6 +70,8 @@ typedef enum {
 
 GType marmot_gobject_welcome_state_get_type(void) G_GNUC_CONST;
 #define MARMOT_GOBJECT_TYPE_WELCOME_STATE (marmot_gobject_welcome_state_get_type())
+
+MarmotGobjectWelcomeState marmot_gobject_welcome_state_from_marmot(MarmotWelcomeState state);
 
 /**
  * MarmotGobjectMessageResultType:
@@ -84,6 +91,8 @@ typedef enum {
 
 GType marmot_gobject_message_result_type_get_type(void) G_GNUC_CONST;
 #define MARMOT_GOBJECT_TYPE_MESSAGE_RESULT_TYPE (marmot_gobject_message_result_type_get_type())
+
+MarmotGobjectMessageResultType marmot_gobject_message_result_type_from_marmot(MarmotMessageResultType type);
 
 G_END_DECLS
 

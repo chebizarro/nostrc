@@ -6,6 +6,55 @@
 
 #include "marmot-gobject-1.0/marmot-gobject-enums.h"
 
+/* ── Explicit libmarmot → GObject enum conversions ──────────────── */
+
+MarmotGobjectGroupState
+marmot_gobject_group_state_from_marmot(MarmotGroupState state)
+{
+    switch (state) {
+    case MARMOT_GROUP_STATE_ACTIVE:   return MARMOT_GOBJECT_GROUP_STATE_ACTIVE;
+    case MARMOT_GROUP_STATE_INACTIVE: return MARMOT_GOBJECT_GROUP_STATE_INACTIVE;
+    case MARMOT_GROUP_STATE_PENDING:  return MARMOT_GOBJECT_GROUP_STATE_PENDING;
+    default:                          return MARMOT_GOBJECT_GROUP_STATE_INACTIVE;
+    }
+}
+
+MarmotGobjectMessageState
+marmot_gobject_message_state_from_marmot(MarmotMessageState state)
+{
+    switch (state) {
+    case MARMOT_MSG_STATE_CREATED:           return MARMOT_GOBJECT_MESSAGE_STATE_CREATED;
+    case MARMOT_MSG_STATE_PROCESSED:         return MARMOT_GOBJECT_MESSAGE_STATE_PROCESSED;
+    case MARMOT_MSG_STATE_DELETED:           return MARMOT_GOBJECT_MESSAGE_STATE_DELETED;
+    case MARMOT_MSG_STATE_EPOCH_INVALIDATED: return MARMOT_GOBJECT_MESSAGE_STATE_EPOCH_INVALIDATED;
+    default:                                 return MARMOT_GOBJECT_MESSAGE_STATE_DELETED;
+    }
+}
+
+MarmotGobjectWelcomeState
+marmot_gobject_welcome_state_from_marmot(MarmotWelcomeState state)
+{
+    switch (state) {
+    case MARMOT_WELCOME_STATE_PENDING:  return MARMOT_GOBJECT_WELCOME_STATE_PENDING;
+    case MARMOT_WELCOME_STATE_ACCEPTED: return MARMOT_GOBJECT_WELCOME_STATE_ACCEPTED;
+    case MARMOT_WELCOME_STATE_DECLINED: return MARMOT_GOBJECT_WELCOME_STATE_DECLINED;
+    default:                            return MARMOT_GOBJECT_WELCOME_STATE_DECLINED;
+    }
+}
+
+MarmotGobjectMessageResultType
+marmot_gobject_message_result_type_from_marmot(MarmotMessageResultType type)
+{
+    switch (type) {
+    case MARMOT_RESULT_APPLICATION_MESSAGE: return MARMOT_GOBJECT_MESSAGE_RESULT_APPLICATION;
+    case MARMOT_RESULT_COMMIT:              return MARMOT_GOBJECT_MESSAGE_RESULT_COMMIT;
+    case MARMOT_RESULT_PROPOSAL:            return MARMOT_GOBJECT_MESSAGE_RESULT_PROPOSAL;
+    case MARMOT_RESULT_UNPROCESSABLE:       return MARMOT_GOBJECT_MESSAGE_RESULT_UNPROCESSABLE;
+    case MARMOT_RESULT_OWN_MESSAGE:         return MARMOT_GOBJECT_MESSAGE_RESULT_OWN_MESSAGE;
+    default:                                return MARMOT_GOBJECT_MESSAGE_RESULT_UNPROCESSABLE;
+    }
+}
+
 /* ── MarmotGobjectGroupState ─────────────────────────────────────── */
 
 static const GEnumValue group_state_values[] = {
