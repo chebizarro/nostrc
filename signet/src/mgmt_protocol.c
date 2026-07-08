@@ -8,6 +8,7 @@
  */
 
 #include "signet/mgmt_protocol.h"
+#include "signet/cascadia.h"
 #include "signet/key_store.h"
 #include "signet/policy_store.h"
 #include "signet/relay_pool.h"
@@ -599,7 +600,7 @@ static void signet_mgmt_publish_cas_audit(SignetMgmtHandler *h,
   if (!h || !h->relays || !h->bunker_sk_hex || !audit_type) return;
   NostrEvent *evt = nostr_event_new();
   if (!evt) return;
-  nostr_event_set_kind(evt, 4903); /* TODO(cascadia-nips): use generated CAS_AUDIT constant. */
+  nostr_event_set_kind(evt, CAS_AUDIT);
   nostr_event_set_created_at(evt, now);
   char *content = g_strdup_printf("{\"domain\":\"signet\",\"type\":\"%s\",\"agent\":\"%s\",\"status\":\"%s\"}",
                                   audit_type, agent_id ? agent_id : "", status ? status : "ok");

@@ -15,6 +15,7 @@
  */
 
 #include "signet/nip46_server.h"
+#include "signet/cascadia.h"
 #include "signet/health_server.h"  /* g_signet_metrics */
 
 #include "signet/relay_pool.h"
@@ -157,7 +158,7 @@ static void signet_nip46_publish_cas_audit(SignetRelayPool *relays,
   if (!relays || !signer_sk_hex) return;
   NostrEvent *evt = nostr_event_new();
   if (!evt) return;
-  nostr_event_set_kind(evt, 4903); /* TODO(cascadia-nips): use generated CAS_AUDIT constant. */
+  nostr_event_set_kind(evt, CAS_AUDIT);
   nostr_event_set_created_at(evt, now);
   char *content = g_strdup_printf("{\"domain\":\"signet\",\"type\":\"sign\",\"agent\":\"%s\",\"status\":\"ok\"}", agent_id ? agent_id : "");
   nostr_event_set_content(evt, content ? content : "{}");
