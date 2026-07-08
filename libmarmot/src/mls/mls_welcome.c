@@ -498,7 +498,7 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
             return MARMOT_ERR_MEMORY;
         }
         mls_tls_buf_append(&tbuf, gi.confirmed_transcript_hash, MLS_HASH_LEN);
-        mls_tls_buf_append(&tbuf, gi.confirmation_tag, MLS_HASH_LEN);
+        mls_tls_write_opaque32(&tbuf, gi.confirmation_tag, MLS_HASH_LEN);
         mls_crypto_hash(group_out->interim_transcript_hash, tbuf.data, tbuf.len);
         mls_tls_buf_free(&tbuf);
     }

@@ -1219,6 +1219,80 @@ assert_welcome_roundtrip(const char *label, const uint8_t *data, size_t len)
     mls_welcome_clear(&w);
 }
 
+static int
+authenticated_content_confirmed_len(const uint8_t *data, size_t len,
+                                    size_t *out_len)
+{
+    if (!data || !out_len) return -1;
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, data, len);
+
+    uint16_t wire_format = 0;
+    if (mls_tls_read_u16(&reader, &wire_format) != 0) return -1;
+    if (wire_format != MLS_WIRE_FORMAT_PUBLIC_MESSAGE &&
+        wire_format != MLS_WIRE_FORMAT_PRIVATE_MESSAGE)
+        return -1;
+
+    uint8_t *tmp = NULL;
+    size_t tmp_len = 0;
+    if (mls_tls_read_opaque8(&reader, &tmp, &tmp_len) != 0) return -1;
+    free(tmp);
+    uint64_t epoch = 0;
+    (void)epoch;
+    if (mls_tls_read_u64(&reader, &epoch) != 0) return -1;
+    uint8_t sender_type = 0;
+    if (mls_tls_read_u8(&reader, &sender_type) != 0) return -1;
+    if (sender_type == MLS_SENDER_TYPE_MEMBER) {
+        uint32_t leaf = 0;
+        if (mls_tls_read_u32(&reader, &leaf) != 0) return -1;
+    }
+    if (mls_tls_read_opaque32(&reader, &tmp, &tmp_len) != 0) return -1;
+    free(tmp);
+    tmp = NULL;
+
+    uint8_t content_type = 0;
+    if (mls_tls_read_u8(&reader, &content_type) != 0) return -1;
+    switch (content_type) {
+    case MLS_CONTENT_TYPE_APPLICATION:
+        if (mls_tls_read_opaque32(&reader, &tmp, &tmp_len) != 0) return -1;
+        free(tmp);
+        break;
+    case MLS_CONTENT_TYPE_COMMIT: {
+        /* Commit = proposals<V> || optional<UpdatePath>.  The MDK
+         * transcript vector carries a no-path commit; for the transcript
+         * boundary we only need to scan to the auth signature. */
+        if (mls_tls_read_opaque32(&reader, &tmp, &tmp_len) != 0) return -1;
+        free(tmp);
+        uint8_t has_path = 0;
+        if (mls_tls_read_u8(&reader, &has_path) != 0) return -1;
+        if (has_path) return -1;
+        break;
+    }
+    default:
+        return -1;
+    }
+
+    uint8_t *sig = NULL;
+    size_t sig_len = 0;
+    if (mls_tls_read_opaque16(&reader, &sig, &sig_len) != 0) return -1;
+    free(sig);
+
+    /* RFC 9420 confirmed transcript hashes AuthenticatedContentTBM,
+     * which ends after FramedContentAuthData.signature.  For commits the
+     * confirmation_tag is authenticated later into the interim hash and is
+     * intentionally not part of the confirmed transcript input. */
+    *out_len = reader.pos;
+
+    if (content_type == MLS_CONTENT_TYPE_COMMIT) {
+        uint8_t *tag = NULL;
+        size_t tag_len = 0;
+        if (mls_tls_read_opaque32(&reader, &tag, &tag_len) != 0) return -1;
+        free(tag);
+    }
+
+    return mls_tls_reader_done(&reader) ? 0 : -1;
+}
+
 static void
 assert_key_package_roundtrip(const char *label, const uint8_t *data, size_t len)
 {
@@ -1403,12 +1477,17 @@ test_mdk_transcript_hashes_vectors(const char *vector_dir)
     assert(count > 0 && "transcript-hashes file exists but yielded zero ciphersuite-1 cases");
 
     for (size_t i = 0; i < count; i++) {
-        size_t conf_input_len = MLS_HASH_LEN + vectors[i].authenticated_content_len;
+        size_t confirmed_content_len = 0;
+        assert(authenticated_content_confirmed_len(
+                   vectors[i].authenticated_content,
+                   vectors[i].authenticated_content_len,
+                   &confirmed_content_len) == 0);
+        size_t conf_input_len = MLS_HASH_LEN + confirmed_content_len;
         uint8_t *conf_input = malloc(conf_input_len);
         assert(conf_input);
         memcpy(conf_input, vectors[i].interim_transcript_hash_before, MLS_HASH_LEN);
         memcpy(conf_input + MLS_HASH_LEN, vectors[i].authenticated_content,
-               vectors[i].authenticated_content_len);
+               confirmed_content_len);
         uint8_t confirmed[MLS_HASH_LEN];
         assert(mls_crypto_hash(confirmed, conf_input, conf_input_len) == 0);
         free(conf_input);
@@ -1417,11 +1496,13 @@ test_mdk_transcript_hashes_vectors(const char *vector_dir)
 
         uint8_t tag[MLS_HASH_LEN];
         assert(mls_compute_confirmation_tag(vectors[i].confirmation_key, confirmed, tag) == 0);
-        uint8_t interim_input[MLS_HASH_LEN * 2];
-        memcpy(interim_input, confirmed, MLS_HASH_LEN);
-        memcpy(interim_input + MLS_HASH_LEN, tag, MLS_HASH_LEN);
+        MlsTlsBuf interim_buf;
+        assert(mls_tls_buf_init(&interim_buf, MLS_HASH_LEN * 2 + 1) == 0);
+        assert(mls_tls_buf_append(&interim_buf, confirmed, MLS_HASH_LEN) == 0);
+        assert(mls_tls_write_opaque32(&interim_buf, tag, MLS_HASH_LEN) == 0);
         uint8_t interim[MLS_HASH_LEN];
-        assert(mls_crypto_hash(interim, interim_input, sizeof(interim_input)) == 0);
+        assert(mls_crypto_hash(interim, interim_buf.data, interim_buf.len) == 0);
+        mls_tls_buf_free(&interim_buf);
         assert_bytes_eq("transcript.interim", interim,
                         vectors[i].interim_transcript_hash_after, MLS_HASH_LEN);
     }

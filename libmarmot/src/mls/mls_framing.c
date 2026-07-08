@@ -772,8 +772,8 @@ mls_framed_content_verify(const MlsFramedContent *fc,
  *
  * confirmation_tag = HMAC(confirmation_key, confirmed_transcript_hash)
  *
- * We use HKDF-Expand-Label as a MAC since our crypto layer provides that.
- * Specifically: MAC(key, msg) = ExpandWithLabel(key, "MAC", msg, HASH_LEN)
+ * HMAC-SHA256 is equivalent to HKDF-Extract with confirmation_key as
+ * the salt and confirmed_transcript_hash as the input key material.
  * ══════════════════════════════════════════════════════════════════════════ */
 
 int
@@ -782,9 +782,9 @@ mls_compute_confirmation_tag(const uint8_t confirmation_key[MLS_HASH_LEN],
                               uint8_t out[MLS_HASH_LEN])
 {
     if (!confirmation_key || !confirmed_transcript_hash || !out) return -1;
-    return mls_crypto_expand_with_label(out, MLS_HASH_LEN,
-                                         confirmation_key, "MAC",
-                                         confirmed_transcript_hash, MLS_HASH_LEN);
+    return mls_crypto_hkdf_extract(out,
+                                    confirmation_key, MLS_HASH_LEN,
+                                    confirmed_transcript_hash, MLS_HASH_LEN);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -967,10 +967,10 @@ mls_public_message_compute_membership_tag(MlsPublicMessage *msg,
                                          &tbm, &tbm_len) != 0)
         return -1;
 
-    /* MAC(membership_key, tbm) = ExpandWithLabel(key, "MAC", tbm, HASH_LEN) */
-    int rc = mls_crypto_expand_with_label(msg->membership_tag, MLS_HASH_LEN,
-                                           membership_key, "MAC",
-                                           tbm, tbm_len);
+    /* MAC(membership_key, tbm) = HMAC-SHA256(membership_key, tbm). */
+    int rc = mls_crypto_hkdf_extract(msg->membership_tag,
+                                      membership_key, MLS_HASH_LEN,
+                                      tbm, tbm_len);
     free(tbm);
     msg->membership_tag_len = MLS_HASH_LEN;
     msg->has_membership_tag = (rc == 0);
@@ -992,9 +992,9 @@ mls_public_message_verify_membership_tag(const MlsPublicMessage *msg,
         return -1;
 
     uint8_t expected[MLS_HASH_LEN];
-    int rc = mls_crypto_expand_with_label(expected, MLS_HASH_LEN,
-                                           membership_key, "MAC",
-                                           tbm, tbm_len);
+    int rc = mls_crypto_hkdf_extract(expected,
+                                      membership_key, MLS_HASH_LEN,
+                                      tbm, tbm_len);
     free(tbm);
     if (rc != 0) return -1;
 
@@ -1014,12 +1014,15 @@ mls_message_clear(MlsMLSMessage *msg)
     if (!msg) return;
     switch (msg->wire_format) {
     case MLS_WIRE_FORMAT_PUBLIC_MESSAGE:
-        mls_public_message_clear(&msg->public_message);
+        if (!msg->opaque_content)
+            mls_public_message_clear(&msg->public_message);
         break;
     case MLS_WIRE_FORMAT_PRIVATE_MESSAGE:
-        mls_private_message_clear(&msg->private_message);
+        if (!msg->opaque_content)
+            mls_private_message_clear(&msg->private_message);
         break;
     }
+    free(msg->opaque_content);
     memset(msg, 0, sizeof(*msg));
 }
 
@@ -1032,6 +1035,10 @@ mls_message_serialize(const MlsMLSMessage *msg, MlsTlsBuf *buf)
     if (mls_tls_write_u16(buf, 1) != 0) return -1;
     /* wire_format: uint16 */
     if (mls_tls_write_u16(buf, msg->wire_format) != 0) return -1;
+
+    if (msg->opaque_content || msg->opaque_content_len > 0)
+        return mls_tls_buf_append(buf, msg->opaque_content,
+                                  msg->opaque_content_len);
 
     switch (msg->wire_format) {
     case MLS_WIRE_FORMAT_PUBLIC_MESSAGE:
@@ -1056,6 +1063,7 @@ mls_message_deserialize(MlsTlsReader *reader, MlsMLSMessage *msg)
     msg->cipher_suite = MARMOT_CIPHERSUITE;
     if (mls_tls_read_u16(reader, &msg->wire_format) != 0) return -1;
 
+    size_t body_start = reader->pos;
     int rc;
     switch (msg->wire_format) {
     case MLS_WIRE_FORMAT_PUBLIC_MESSAGE:
@@ -1064,12 +1072,31 @@ mls_message_deserialize(MlsTlsReader *reader, MlsMLSMessage *msg)
     case MLS_WIRE_FORMAT_PRIVATE_MESSAGE:
         rc = mls_private_message_deserialize(reader, &msg->private_message);
         break;
+    case MLS_WIRE_FORMAT_WELCOME:
+    case MLS_WIRE_FORMAT_GROUP_INFO:
+    case MLS_WIRE_FORMAT_KEY_PACKAGE:
+        rc = -2; /* Force opaque preservation below. */
+        break;
     default:
         return -1;
     }
     if (rc != 0) {
+        uint16_t wire_format = msg->wire_format;
         mls_message_clear(msg);
-        return -1;
+        msg->wire_format = wire_format;
+        msg->cipher_suite = MARMOT_CIPHERSUITE;
+        reader->pos = body_start;
+        msg->opaque_content_len = mls_tls_reader_remaining(reader);
+        if (msg->opaque_content_len > 0) {
+            msg->opaque_content = malloc(msg->opaque_content_len);
+            if (!msg->opaque_content) return -1;
+            if (mls_tls_read_fixed(reader, msg->opaque_content,
+                                   msg->opaque_content_len) != 0) {
+                mls_message_clear(msg);
+                return -1;
+            }
+        }
+        return 0;
     }
     return 0;
 }

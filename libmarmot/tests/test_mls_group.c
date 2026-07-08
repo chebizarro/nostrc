@@ -529,6 +529,105 @@ static const uint8_t CHARLIE_ID[32] = {
     0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC,
 };
 
+static int
+setup_two_member_groups(MlsGroup *alice_group, MlsGroup *bob_group,
+                        MlsKeyPackage *bob_kp,
+                        MlsKeyPackagePrivate *bob_priv,
+                        MlsAddResult *add_result)
+{
+    uint8_t alice_sk[MLS_SIG_SK_LEN];
+    if (create_alice_group(alice_group, alice_sk) != 0) return -1;
+    if (mls_key_package_create(bob_kp, bob_priv, BOB_ID, 32, NULL, 0) != 0)
+        return -1;
+    if (mls_group_add_member(alice_group, bob_kp, add_result) != 0)
+        return -1;
+    if (mls_welcome_process(add_result->welcome_data, add_result->welcome_len,
+                            bob_kp, bob_priv, NULL, 0, bob_group) != 0)
+        return -1;
+    return 0;
+}
+
+static int
+build_commit_public_message_for_test(MlsGroup *sender,
+                                     const uint8_t *commit_body,
+                                     size_t commit_body_len,
+                                     const uint8_t confirmation_tag[MLS_HASH_LEN],
+                                     uint8_t **out, size_t *out_len)
+{
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    if (mls_group_context_build(sender, &gc, &gc_len) != 0) return -1;
+
+    MlsMLSMessage msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.wire_format = MLS_WIRE_FORMAT_PUBLIC_MESSAGE;
+    msg.cipher_suite = MARMOT_CIPHERSUITE;
+    MlsPublicMessage *pm = &msg.public_message;
+    pm->content.group_id = malloc(sender->group_id_len);
+    pm->content.content = malloc(commit_body_len);
+    if (!pm->content.group_id || !pm->content.content) goto fail;
+    memcpy(pm->content.group_id, sender->group_id, sender->group_id_len);
+    pm->content.group_id_len = sender->group_id_len;
+    pm->content.epoch = sender->epoch;
+    pm->content.sender.sender_type = MLS_SENDER_TYPE_MEMBER;
+    pm->content.sender.leaf_index = sender->own_leaf_index;
+    pm->content.content_type = MLS_CONTENT_TYPE_COMMIT;
+    memcpy(pm->content.content, commit_body, commit_body_len);
+    pm->content.content_len = commit_body_len;
+    if (mls_framed_content_sign(&pm->content, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                gc, gc_len, sender->own_signature_key,
+                                &pm->auth) != 0) goto fail;
+    memcpy(pm->auth.confirmation_tag, confirmation_tag, MLS_HASH_LEN);
+    pm->auth.confirmation_tag_len = MLS_HASH_LEN;
+    pm->auth.has_confirmation_tag = true;
+    if (mls_public_message_compute_membership_tag(pm,
+            sender->epoch_secrets.membership_key, gc, gc_len) != 0) goto fail;
+
+    MlsTlsBuf buf;
+    if (mls_tls_buf_init(&buf, commit_body_len + 256) != 0) goto fail;
+    if (mls_message_serialize(&msg, &buf) != 0) {
+        mls_tls_buf_free(&buf);
+        goto fail;
+    }
+    *out = buf.data;
+    *out_len = buf.len;
+    free(gc);
+    mls_message_clear(&msg);
+    return 0;
+fail:
+    free(gc);
+    mls_message_clear(&msg);
+    return -1;
+}
+
+static int
+build_encrypt_context_for_test(const char *label,
+                               const uint8_t *context, size_t context_len,
+                               uint8_t **out, size_t *out_len)
+{
+    const char prefix[] = "MLS 1.0 ";
+    size_t label_len = strlen(prefix) + strlen(label);
+    uint8_t *full_label = malloc(label_len);
+    if (!full_label) return -1;
+    memcpy(full_label, prefix, strlen(prefix));
+    memcpy(full_label + strlen(prefix), label, strlen(label));
+    MlsTlsBuf buf;
+    if (mls_tls_buf_init(&buf, label_len + context_len + 16) != 0) {
+        free(full_label);
+        return -1;
+    }
+    if (mls_tls_write_opaque16(&buf, full_label, label_len) != 0 ||
+        mls_tls_write_opaque32(&buf, context, context_len) != 0) {
+        free(full_label);
+        mls_tls_buf_free(&buf);
+        return -1;
+    }
+    free(full_label);
+    *out = buf.data;
+    *out_len = buf.len;
+    return 0;
+}
+
 /**
  * Full integration: Alice creates group, adds Bob via Welcome,
  * Bob processes Welcome and joins, then they exchange messages.
@@ -707,6 +806,228 @@ TEST(test_welcome_epoch_secrets_match)
                   bob_group.epoch_secrets.membership_key,
                   MLS_HASH_LEN) == 0);
 
+    mls_add_result_clear(&add_result);
+    mls_key_package_clear(&bob_kp);
+    mls_key_package_private_clear(&bob_priv);
+    mls_group_free(&alice_group);
+    mls_group_free(&bob_group);
+}
+
+TEST(test_process_valid_self_update_commit_roundtrip)
+{
+    MlsGroup alice_group, bob_group;
+    MlsKeyPackage bob_kp;
+    MlsKeyPackagePrivate bob_priv;
+    MlsAddResult add_result;
+    memset(&add_result, 0, sizeof(add_result));
+    assert(setup_two_member_groups(&alice_group, &bob_group,
+                                   &bob_kp, &bob_priv, &add_result) == 0);
+
+    MlsCommitResult update;
+    assert(mls_group_self_update(&alice_group, &update) == 0);
+    assert(mls_group_process_commit(&bob_group, update.commit_data,
+                                    update.commit_len, 0) == 0);
+    assert(alice_group.epoch == bob_group.epoch);
+
+    const char *msg = "post-update";
+    uint8_t *ct = NULL, *pt = NULL;
+    size_t ct_len = 0, pt_len = 0;
+    uint32_t sender = 99;
+    assert(mls_group_encrypt(&alice_group, (const uint8_t *)msg, strlen(msg),
+                              &ct, &ct_len) == 0);
+    assert(mls_group_decrypt(&bob_group, ct, ct_len, &pt, &pt_len, &sender) == 0);
+    assert(sender == 0);
+    assert(pt_len == strlen(msg) && memcmp(pt, msg, pt_len) == 0);
+    free(ct);
+    free(pt);
+
+    mls_commit_result_clear(&update);
+    mls_add_result_clear(&add_result);
+    mls_key_package_clear(&bob_kp);
+    mls_key_package_private_clear(&bob_priv);
+    mls_group_free(&alice_group);
+    mls_group_free(&bob_group);
+}
+
+TEST(test_bad_committer_signature_rejected)
+{
+    MlsGroup alice_group, bob_group;
+    MlsKeyPackage bob_kp;
+    MlsKeyPackagePrivate bob_priv;
+    MlsAddResult add_result;
+    memset(&add_result, 0, sizeof(add_result));
+    assert(setup_two_member_groups(&alice_group, &bob_group,
+                                   &bob_kp, &bob_priv, &add_result) == 0);
+
+    MlsCommitResult update;
+    assert(mls_group_self_update(&alice_group, &update) == 0);
+    MlsMLSMessage msg;
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, update.commit_data, update.commit_len);
+    assert(mls_message_deserialize(&r, &msg) == 0);
+    msg.public_message.auth.signature[0] ^= 0x01;
+    MlsTlsBuf tampered;
+    assert(mls_tls_buf_init(&tampered, update.commit_len) == 0);
+    assert(mls_message_serialize(&msg, &tampered) == 0);
+    assert(mls_group_process_commit(&bob_group, tampered.data, tampered.len, 0) != 0);
+
+    mls_tls_buf_free(&tampered);
+    mls_message_clear(&msg);
+    mls_commit_result_clear(&update);
+    mls_add_result_clear(&add_result);
+    mls_key_package_clear(&bob_kp);
+    mls_key_package_private_clear(&bob_priv);
+    mls_group_free(&alice_group);
+    mls_group_free(&bob_group);
+}
+
+TEST(test_wrong_confirmation_tag_rejected)
+{
+    MlsGroup alice_group, bob_group;
+    MlsKeyPackage bob_kp;
+    MlsKeyPackagePrivate bob_priv;
+    MlsAddResult add_result;
+    memset(&add_result, 0, sizeof(add_result));
+    assert(setup_two_member_groups(&alice_group, &bob_group,
+                                   &bob_kp, &bob_priv, &add_result) == 0);
+
+    MlsCommitResult update;
+    assert(mls_group_self_update(&alice_group, &update) == 0);
+    MlsMLSMessage msg;
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, update.commit_data, update.commit_len);
+    assert(mls_message_deserialize(&r, &msg) == 0);
+    msg.public_message.auth.confirmation_tag[0] ^= 0x01;
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    assert(mls_group_context_build(&bob_group, &gc, &gc_len) == 0);
+    assert(mls_public_message_compute_membership_tag(&msg.public_message,
+            bob_group.epoch_secrets.membership_key, gc, gc_len) == 0);
+    free(gc);
+    MlsTlsBuf tampered;
+    assert(mls_tls_buf_init(&tampered, update.commit_len) == 0);
+    assert(mls_message_serialize(&msg, &tampered) == 0);
+    assert(mls_group_process_commit(&bob_group, tampered.data, tampered.len, 0) != 0);
+
+    mls_tls_buf_free(&tampered);
+    mls_message_clear(&msg);
+    mls_commit_result_clear(&update);
+    mls_add_result_clear(&add_result);
+    mls_key_package_clear(&bob_kp);
+    mls_key_package_private_clear(&bob_priv);
+    mls_group_free(&alice_group);
+    mls_group_free(&bob_group);
+}
+
+TEST(test_unknown_proposal_type_rejected)
+{
+    MlsGroup alice_group, bob_group;
+    MlsKeyPackage bob_kp;
+    MlsKeyPackagePrivate bob_priv;
+    MlsAddResult add_result;
+    memset(&add_result, 0, sizeof(add_result));
+    assert(setup_two_member_groups(&alice_group, &bob_group,
+                                   &bob_kp, &bob_priv, &add_result) == 0);
+
+    MlsTlsBuf body;
+    assert(mls_tls_buf_init(&body, 8) == 0);
+    uint8_t unknown_prop[2] = { 0x12, 0x34 };
+    assert(mls_tls_write_opaque32(&body, unknown_prop, sizeof(unknown_prop)) == 0);
+    assert(mls_tls_write_u8(&body, 0) == 0); /* no path */
+    uint8_t zero_tag[MLS_HASH_LEN] = {0};
+    uint8_t *wire = NULL;
+    size_t wire_len = 0;
+    assert(build_commit_public_message_for_test(&alice_group, body.data, body.len,
+                                                zero_tag, &wire, &wire_len) == 0);
+    assert(mls_group_process_commit(&bob_group, wire, wire_len, 0) != 0);
+
+    free(wire);
+    mls_tls_buf_free(&body);
+    mls_add_result_clear(&add_result);
+    mls_key_package_clear(&bob_kp);
+    mls_key_package_private_clear(&bob_priv);
+    mls_group_free(&alice_group);
+    mls_group_free(&bob_group);
+}
+
+TEST(test_tampered_group_info_signature_rejected)
+{
+    MlsGroup alice_group, bob_group;
+    MlsKeyPackage bob_kp;
+    MlsKeyPackagePrivate bob_priv;
+    MlsAddResult add_result;
+    memset(&add_result, 0, sizeof(add_result));
+    assert(setup_two_member_groups(&alice_group, &bob_group,
+                                   &bob_kp, &bob_priv, &add_result) == 0);
+
+    MlsWelcome w;
+    MlsTlsReader wr;
+    mls_tls_reader_init(&wr, add_result.welcome_data, add_result.welcome_len);
+    assert(mls_welcome_deserialize(&wr, &w) == 0);
+
+    uint8_t welcome_key[MLS_AEAD_KEY_LEN], welcome_nonce[MLS_AEAD_NONCE_LEN];
+    assert(mls_crypto_expand_with_label(welcome_key, MLS_AEAD_KEY_LEN,
+            alice_group.epoch_secrets.welcome_secret, "key", NULL, 0) == 0);
+    assert(mls_crypto_expand_with_label(welcome_nonce, MLS_AEAD_NONCE_LEN,
+            alice_group.epoch_secrets.welcome_secret, "nonce", NULL, 0) == 0);
+    uint8_t *gi_data = malloc(w.encrypted_group_info_len);
+    size_t gi_len = 0;
+    assert(gi_data != NULL);
+    assert(mls_crypto_aead_decrypt(gi_data, &gi_len, welcome_key, welcome_nonce,
+            w.encrypted_group_info, w.encrypted_group_info_len, NULL, 0) == 0);
+    MlsGroupInfo gi;
+    MlsTlsReader gir;
+    mls_tls_reader_init(&gir, gi_data, gi_len);
+    assert(mls_group_info_deserialize(&gir, &gi) == 0);
+    gi.signature[0] ^= 0x01;
+    MlsTlsBuf gi_buf;
+    assert(mls_tls_buf_init(&gi_buf, gi_len) == 0);
+    assert(mls_group_info_serialize(&gi, &gi_buf) == 0);
+    uint8_t *new_enc_gi = malloc(gi_buf.len + MLS_AEAD_TAG_LEN);
+    size_t new_enc_gi_len = 0;
+    assert(new_enc_gi != NULL);
+    assert(mls_crypto_aead_encrypt(new_enc_gi, &new_enc_gi_len,
+            welcome_key, welcome_nonce, gi_buf.data, gi_buf.len, NULL, 0) == 0);
+
+    MlsTlsBuf group_secrets;
+    assert(mls_tls_buf_init(&group_secrets, MLS_HASH_LEN + 8) == 0);
+    assert(mls_tls_write_opaque16(&group_secrets,
+            alice_group.epoch_secrets.joiner_secret, MLS_HASH_LEN) == 0);
+    assert(mls_tls_write_u8(&group_secrets, 0) == 0);
+    assert(mls_tls_write_opaque32(&group_secrets, NULL, 0) == 0);
+    uint8_t *info = NULL;
+    size_t info_len = 0;
+    assert(build_encrypt_context_for_test("Welcome", new_enc_gi, new_enc_gi_len,
+                                          &info, &info_len) == 0);
+    uint8_t new_enc[MLS_KEM_ENC_LEN];
+    uint8_t *new_ct = malloc(group_secrets.len + MLS_AEAD_TAG_LEN);
+    size_t new_ct_len = 0;
+    assert(new_ct != NULL);
+    assert(mls_crypto_hpke_seal_base(new_enc, new_ct, &new_ct_len,
+            bob_kp.init_key, info, info_len, NULL, 0,
+            group_secrets.data, group_secrets.len) == 0);
+    memcpy(w.secrets[0].kem_output, new_enc, MLS_KEM_ENC_LEN);
+    free(w.secrets[0].encrypted_joiner_secret);
+    w.secrets[0].encrypted_joiner_secret = new_ct;
+    w.secrets[0].encrypted_joiner_secret_len = new_ct_len;
+    free(w.encrypted_group_info);
+    w.encrypted_group_info = new_enc_gi;
+    w.encrypted_group_info_len = new_enc_gi_len;
+
+    MlsTlsBuf tampered_welcome;
+    assert(mls_tls_buf_init(&tampered_welcome, add_result.welcome_len) == 0);
+    assert(mls_welcome_serialize(&w, &tampered_welcome) == 0);
+    MlsGroup rejected;
+    assert(mls_welcome_process(tampered_welcome.data, tampered_welcome.len,
+                               &bob_kp, &bob_priv, NULL, 0, &rejected) != 0);
+
+    free(info);
+    free(gi_data);
+    mls_tls_buf_free(&group_secrets);
+    mls_tls_buf_free(&gi_buf);
+    mls_tls_buf_free(&tampered_welcome);
+    mls_group_info_clear(&gi);
+    mls_welcome_clear(&w);
     mls_add_result_clear(&add_result);
     mls_key_package_clear(&bob_kp);
     mls_key_package_private_clear(&bob_priv);
@@ -1072,6 +1393,11 @@ int main(void)
     RUN(test_two_member_message_exchange);
     RUN(test_two_member_multiple_messages);
     RUN(test_welcome_epoch_secrets_match);
+    RUN(test_process_valid_self_update_commit_roundtrip);
+    RUN(test_bad_committer_signature_rejected);
+    RUN(test_wrong_confirmation_tag_rejected);
+    RUN(test_unknown_proposal_type_rejected);
+    RUN(test_tampered_group_info_signature_rejected);
     RUN(test_own_message_detection);
     RUN(test_ciphertext_uniqueness);
     RUN(test_epoch_mismatch_rejected);

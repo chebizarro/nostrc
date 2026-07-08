@@ -48,53 +48,78 @@ derive_commit_secret(const uint8_t *path_secret, bool has_path,
     return mls_crypto_derive_secret(out, path_secret, "path");
 }
 
-/**
- * Update the transcript hashes after a Commit.
- *
- * confirmed_transcript_hash =
- *   H(interim_transcript_hash_old || FramedContentTBS_of_commit)
- *
- * interim_transcript_hash =
- *   H(confirmed_transcript_hash_new || confirmation_tag)
- *
- * For simplicity, we hash the serialized commit as the FramedContent
- * stand-in (the full FramedContent wrapping is done at the Marmot layer).
- */
 static int
-update_transcript_hashes(MlsGroup *group,
-                         const uint8_t *commit_data, size_t commit_len,
-                         const uint8_t confirmation_tag[MLS_HASH_LEN])
+replace_parent_hash(uint8_t **field, size_t *field_len,
+                    const uint8_t hash[MLS_HASH_LEN])
 {
-    MlsTlsBuf buf;
-
-    /* confirmed = H(old_interim || commit_content) */
-    if (mls_tls_buf_init(&buf, MLS_HASH_LEN + commit_len) != 0)
-        return -1;
-    if (mls_tls_buf_append(&buf, group->interim_transcript_hash, MLS_HASH_LEN) != 0)
-        goto fail;
-    if (mls_tls_buf_append(&buf, commit_data, commit_len) != 0)
-        goto fail;
-
-    if (mls_crypto_hash(group->confirmed_transcript_hash, buf.data, buf.len) != 0)
-        goto fail;
-    mls_tls_buf_free(&buf);
-
-    /* interim = H(new_confirmed || confirmation_tag) */
-    if (mls_tls_buf_init(&buf, MLS_HASH_LEN * 2) != 0)
-        return -1;
-    if (mls_tls_buf_append(&buf, group->confirmed_transcript_hash, MLS_HASH_LEN) != 0)
-        goto fail;
-    if (mls_tls_buf_append(&buf, confirmation_tag, MLS_HASH_LEN) != 0)
-        goto fail;
-
-    if (mls_crypto_hash(group->interim_transcript_hash, buf.data, buf.len) != 0)
-        goto fail;
-    mls_tls_buf_free(&buf);
-
+    if (!field || !field_len || !hash) return -1;
+    uint8_t *copy = malloc(MLS_HASH_LEN);
+    if (!copy) return -1;
+    memcpy(copy, hash, MLS_HASH_LEN);
+    free(*field);
+    *field = copy;
+    *field_len = MLS_HASH_LEN;
     return 0;
-fail:
-    mls_tls_buf_free(&buf);
-    return -1;
+}
+
+static int
+leaf_node_tbs_serialize_local(const MlsLeafNode *node, MlsTlsBuf *buf)
+{
+    if (!node || !buf) return -1;
+    if (mls_tls_write_opaque16(buf, node->encryption_key, MLS_KEM_PK_LEN) != 0)
+        return -1;
+    if (mls_tls_write_opaque16(buf, node->signature_key, MLS_SIG_PK_LEN) != 0)
+        return -1;
+    if (mls_tls_write_u16(buf, node->credential_type) != 0)
+        return -1;
+    if (mls_tls_write_opaque16(buf, node->credential_identity,
+                                node->credential_identity_len) != 0)
+        return -1;
+#define WRITE_U16_VEC_LOCAL(arr, count) do { \
+        size_t total = (count) * 2; \
+        if (mls_tls_write_vli(buf, total) != 0) return -1; \
+        for (size_t _i = 0; _i < (count); _i++) { \
+            if (mls_tls_write_u16(buf, (arr)[_i]) != 0) return -1; \
+        } \
+    } while (0)
+    WRITE_U16_VEC_LOCAL(node->versions, node->version_count);
+    WRITE_U16_VEC_LOCAL(node->ciphersuites, node->ciphersuite_count);
+    WRITE_U16_VEC_LOCAL(node->cap_extensions, node->cap_extension_count);
+    WRITE_U16_VEC_LOCAL(node->proposals, node->proposal_count);
+    WRITE_U16_VEC_LOCAL(node->cap_credentials, node->cap_credential_count);
+#undef WRITE_U16_VEC_LOCAL
+    if (mls_tls_write_u8(buf, node->leaf_node_source) != 0)
+        return -1;
+    if (node->leaf_node_source == 1) {
+        if (mls_tls_write_u64(buf, node->lifetime_not_before) != 0) return -1;
+        if (mls_tls_write_u64(buf, node->lifetime_not_after) != 0) return -1;
+    } else if (node->leaf_node_source == 3) {
+        if (mls_tls_write_opaque8(buf, node->parent_hash,
+                                  node->parent_hash_len) != 0)
+            return -1;
+    }
+    if (mls_tls_write_opaque32(buf, node->extensions_data,
+                                node->extensions_len) != 0)
+        return -1;
+    return 0;
+}
+
+static int
+sign_leaf_node_local(MlsLeafNode *node,
+                     const uint8_t signature_key[MLS_SIG_SK_LEN])
+{
+    MlsTlsBuf tbs;
+    if (!node || !signature_key) return -1;
+    if (mls_tls_buf_init(&tbs, 256) != 0) return -1;
+    if (leaf_node_tbs_serialize_local(node, &tbs) != 0) {
+        mls_tls_buf_free(&tbs);
+        return -1;
+    }
+    int rc = mls_crypto_sign_with_label(node->signature, signature_key,
+                                        "LeafNodeTBS", tbs.data, tbs.len);
+    mls_tls_buf_free(&tbs);
+    if (rc == 0) node->signature_len = MLS_SIG_LEN;
+    return rc;
 }
 
 /**
@@ -163,6 +188,19 @@ generate_update_path(MlsGroup *group,
                                        fdp, 64, &fdp_len) != 0)
         return -1;
 
+    /* A remove can blank every copath resolution member on the committer's
+     * filtered direct path (notably the two-member remove case).  There are
+     * then no recipients for encrypted path secrets, but the committer still
+     * has a non-leaf parent chain that must be regenerated so parent_hash and
+     * the new commit leaf signature validate. */
+    uint32_t own_node_for_path = mls_tree_leaf_to_node(group->own_leaf_index);
+    uint32_t root_for_path = mls_tree_root(n_leaves);
+    if (fdp_len == 0 && own_node_for_path != root_for_path) {
+        if (mls_tree_direct_path(own_node_for_path, n_leaves,
+                                 fdp, 64, &fdp_len) != 0)
+            return -1;
+    }
+
     /* Generate new leaf encryption key */
     uint8_t new_enc_sk[MLS_KEM_SK_LEN];
     uint8_t new_enc_pk[MLS_KEM_PK_LEN];
@@ -204,31 +242,31 @@ generate_update_path(MlsGroup *group,
     path_out->leaf_node.cap_credentials[0] = MLS_CREDENTIAL_BASIC;
 
     /* Generate path secrets for each filtered direct path node */
+    uint8_t path_secrets[64][MLS_HASH_LEN];
+    memset(path_secrets, 0, sizeof(path_secrets));
     if (fdp_len == 0) {
-        /* Degenerate: single member, no path needed */
+        /* Degenerate: single member, no path nodes, but still rotate and
+         * sign/install the sender leaf below. */
         mls_crypto_random(root_path_secret, MLS_HASH_LEN);
         path_out->nodes = NULL;
         path_out->node_count = 0;
-        sodium_memzero(new_enc_sk, sizeof(new_enc_sk));
-        return 0;
+    } else {
+        path_out->nodes = calloc(fdp_len, sizeof(MlsUpdatePathNode));
+        if (!path_out->nodes) goto fail;
+        path_out->node_count = fdp_len;
+
+        /* Generate a random leaf path secret and derive up the tree */
+        mls_crypto_random(path_secrets[0], MLS_HASH_LEN);
+
+        for (uint32_t i = 1; i < fdp_len; i++) {
+            /* path_secret[i] = DeriveSecret(path_secret[i-1], "path") */
+            if (mls_crypto_derive_secret(path_secrets[i], path_secrets[i - 1], "path") != 0)
+                goto fail;
+        }
+
+        /* The root path secret is the last one */
+        memcpy(root_path_secret, path_secrets[fdp_len - 1], MLS_HASH_LEN);
     }
-
-    path_out->nodes = calloc(fdp_len, sizeof(MlsUpdatePathNode));
-    if (!path_out->nodes) goto fail;
-    path_out->node_count = fdp_len;
-
-    /* Generate a random leaf path secret and derive up the tree */
-    uint8_t path_secrets[64][MLS_HASH_LEN];
-    mls_crypto_random(path_secrets[0], MLS_HASH_LEN);
-
-    for (uint32_t i = 1; i < fdp_len; i++) {
-        /* path_secret[i] = DeriveSecret(path_secret[i-1], "path") */
-        if (mls_crypto_derive_secret(path_secrets[i], path_secrets[i - 1], "path") != 0)
-            goto fail;
-    }
-
-    /* The root path secret is the last one */
-    memcpy(root_path_secret, path_secrets[fdp_len - 1], MLS_HASH_LEN);
 
     /* For each node on the filtered direct path, derive the node key
      * and encrypt the path secret for each copath resolution member */
@@ -243,8 +281,12 @@ generate_update_path(MlsGroup *group,
 
         memcpy(path_out->nodes[i].encryption_key, node_pk, MLS_KEM_PK_LEN);
 
-        /* Get copath sibling for this direct-path node */
-        uint32_t sibling = mls_tree_sibling(node_idx, n_leaves);
+        /* Get the copath node for this direct-path node.  For path[i], this
+         * is the sibling of the child immediately below it: the committer leaf
+         * for i=0, otherwise the previous direct-path node. */
+        uint32_t child_below = (i == 0) ? mls_tree_leaf_to_node(group->own_leaf_index)
+                                        : fdp[i - 1];
+        uint32_t sibling = mls_tree_sibling(child_below, n_leaves);
 
         /* Get resolution of the sibling (nodes we need to encrypt to) */
         uint32_t resolution[256];
@@ -302,8 +344,39 @@ generate_update_path(MlsGroup *group,
         sodium_memzero(node_sk, sizeof(node_sk));
     }
 
-    /* Update our own leaf in the tree */
+    /* Populate parent_hash fields for the generated direct path.  The
+     * parent_hash chain is computed from the root downward because each
+     * child's expected value includes its parent's parent_hash. */
+    uint32_t root = mls_tree_root(n_leaves);
+    for (uint32_t rev = fdp_len; rev > 0; rev--) {
+        uint32_t node_idx = fdp[rev - 1];
+        if (node_idx == root) continue;
+        if (group->tree.nodes[node_idx].type != MLS_NODE_PARENT) goto fail;
+        uint32_t parent = mls_tree_parent(node_idx, n_leaves);
+        uint8_t ph[MLS_HASH_LEN];
+        if (mls_tree_parent_hash(&group->tree, parent, node_idx, ph) != 0)
+            goto fail;
+        if (replace_parent_hash(&group->tree.nodes[node_idx].parent.parent_hash,
+                                &group->tree.nodes[node_idx].parent.parent_hash_len,
+                                ph) != 0)
+            goto fail;
+    }
+
+    /* Update our own leaf in the tree. */
     uint32_t own_node = mls_tree_leaf_to_node(group->own_leaf_index);
+    if (own_node != root) {
+        uint32_t parent = mls_tree_parent(own_node, n_leaves);
+        uint8_t ph[MLS_HASH_LEN];
+        if (mls_tree_parent_hash(&group->tree, parent, own_node, ph) != 0)
+            goto fail;
+        if (replace_parent_hash(&path_out->leaf_node.parent_hash,
+                                &path_out->leaf_node.parent_hash_len,
+                                ph) != 0)
+            goto fail;
+    }
+    if (sign_leaf_node_local(&path_out->leaf_node, group->own_signature_key) != 0)
+        goto fail;
+
     mls_leaf_node_clear(&group->tree.nodes[own_node].leaf);
     if (mls_leaf_node_clone(&group->tree.nodes[own_node].leaf, &path_out->leaf_node) != 0)
         goto fail;
@@ -823,6 +896,10 @@ mls_group_create(MlsGroup *group,
     }
     leaf->leaf.cap_credentials[0] = MLS_CREDENTIAL_BASIC;
     leaf->leaf.leaf_node_source = 3; /* commit (initial group creation) */
+    if (sign_leaf_node_local(&leaf->leaf, signature_key_private) != 0) {
+        sodium_memzero(enc_sk, sizeof(enc_sk));
+        goto fail;
+    }
 
     sodium_memzero(enc_sk, sizeof(enc_sk));
 
@@ -992,7 +1069,7 @@ mls_group_add_member(MlsGroup *group,
         return MARMOT_ERR_MEMORY;
     }
     mls_tls_buf_append(&int_buf, group->confirmed_transcript_hash, MLS_HASH_LEN);
-    mls_tls_buf_append(&int_buf, confirmation_tag, MLS_HASH_LEN);
+    mls_tls_write_opaque32(&int_buf, confirmation_tag, MLS_HASH_LEN);
     mls_crypto_hash(group->interim_transcript_hash, int_buf.data, int_buf.len);
     mls_tls_buf_free(&int_buf);
 
@@ -1332,7 +1409,7 @@ mls_group_remove_member(MlsGroup *group,
         return MARMOT_ERR_MEMORY;
     }
     mls_tls_buf_append(&int_buf, group->confirmed_transcript_hash, MLS_HASH_LEN);
-    mls_tls_buf_append(&int_buf, confirmation_tag, MLS_HASH_LEN);
+    mls_tls_write_opaque32(&int_buf, confirmation_tag, MLS_HASH_LEN);
     mls_crypto_hash(group->interim_transcript_hash, int_buf.data, int_buf.len);
     mls_tls_buf_free(&int_buf);
 
@@ -1457,7 +1534,7 @@ mls_group_self_update(MlsGroup *group, MlsCommitResult *result)
         return MARMOT_ERR_MEMORY;
     }
     mls_tls_buf_append(&int_buf, group->confirmed_transcript_hash, MLS_HASH_LEN);
-    mls_tls_buf_append(&int_buf, confirmation_tag, MLS_HASH_LEN);
+    mls_tls_write_opaque32(&int_buf, confirmation_tag, MLS_HASH_LEN);
     mls_crypto_hash(group->interim_transcript_hash, int_buf.data, int_buf.len);
     mls_tls_buf_free(&int_buf);
 
@@ -1704,7 +1781,9 @@ mls_group_process_commit(MlsGroup *group,
         int our_path_idx = -1;
 
         for (uint32_t i = 0; i < fdp_len && i < commit.path.node_count; i++) {
-            uint32_t copath_sibling = mls_tree_sibling(fdp[i], group->tree.n_leaves);
+            uint32_t child_below = (i == 0) ? mls_tree_leaf_to_node(sender_leaf)
+                                             : fdp[i - 1];
+            uint32_t copath_sibling = mls_tree_sibling(child_below, group->tree.n_leaves);
             /* Check if we're in the resolution of this copath sibling */
             uint32_t resolution[256];
             uint32_t res_len = 0;
@@ -1726,7 +1805,9 @@ mls_group_process_commit(MlsGroup *group,
         }
 
         /* Decrypt our path secret */
-        uint32_t copath_sibling = mls_tree_sibling(fdp[our_path_idx],
+        uint32_t child_below = (our_path_idx == 0) ? mls_tree_leaf_to_node(sender_leaf)
+                                                    : fdp[our_path_idx - 1];
+        uint32_t copath_sibling = mls_tree_sibling(child_below,
                                                     group->tree.n_leaves);
         /* Get our encryption keys */
         const uint8_t *our_enc_pk = group->tree.nodes[own_node].leaf.encryption_key;
@@ -1755,8 +1836,15 @@ mls_group_process_commit(MlsGroup *group,
         }
         memcpy(root_path_secret, current_secret, MLS_HASH_LEN);
 
+        if (commit.path.node_count != fdp_len) {
+            mls_commit_clear(&commit);
+            sodium_memzero(our_path_secret, sizeof(our_path_secret));
+            sodium_memzero(current_secret, sizeof(current_secret));
+            return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+        }
+
         /* Update parent nodes from the update path */
-        for (uint32_t i = 0; i < fdp_len && i < commit.path.node_count; i++) {
+        for (uint32_t i = 0; i < fdp_len; i++) {
             uint32_t node_idx = fdp[i];
             if (group->tree.nodes[node_idx].type == MLS_NODE_PARENT)
                 mls_parent_node_clear(&group->tree.nodes[node_idx].parent);
@@ -1764,6 +1852,32 @@ mls_group_process_commit(MlsGroup *group,
             memset(&group->tree.nodes[node_idx].parent, 0, sizeof(MlsParentNode));
             memcpy(group->tree.nodes[node_idx].parent.encryption_key,
                    commit.path.nodes[i].encryption_key, MLS_KEM_PK_LEN);
+        }
+
+        /* Reconstruct parent_hash fields for generated parent nodes.  These
+         * values are part of the ratchet-tree state but are not serialized in
+         * UpdatePathNode; the signed commit leaf carries the leaf-side value. */
+        uint32_t root = mls_tree_root(group->tree.n_leaves);
+        for (uint32_t rev = fdp_len; rev > 0; rev--) {
+            uint32_t node_idx = fdp[rev - 1];
+            if (node_idx == root) continue;
+            if (group->tree.nodes[node_idx].type != MLS_NODE_PARENT) {
+                mls_commit_clear(&commit);
+                sodium_memzero(our_path_secret, sizeof(our_path_secret));
+                sodium_memzero(current_secret, sizeof(current_secret));
+                return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            }
+            uint32_t parent = mls_tree_parent(node_idx, group->tree.n_leaves);
+            uint8_t ph[MLS_HASH_LEN];
+            if (mls_tree_parent_hash(&group->tree, parent, node_idx, ph) != 0 ||
+                replace_parent_hash(&group->tree.nodes[node_idx].parent.parent_hash,
+                                    &group->tree.nodes[node_idx].parent.parent_hash_len,
+                                    ph) != 0) {
+                mls_commit_clear(&commit);
+                sodium_memzero(our_path_secret, sizeof(our_path_secret));
+                sodium_memzero(current_secret, sizeof(current_secret));
+                return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+            }
         }
 
         if (mls_tree_verify_parent_hashes(&group->tree) != 0) {
@@ -1819,7 +1933,7 @@ mls_group_process_commit(MlsGroup *group,
         return MARMOT_ERR_MEMORY;
     }
     mls_tls_buf_append(&int_buf, group->confirmed_transcript_hash, MLS_HASH_LEN);
-    mls_tls_buf_append(&int_buf, confirmation_tag, MLS_HASH_LEN);
+    mls_tls_write_opaque32(&int_buf, confirmation_tag, MLS_HASH_LEN);
     mls_crypto_hash(group->interim_transcript_hash, int_buf.data, int_buf.len);
     mls_tls_buf_free(&int_buf);
 

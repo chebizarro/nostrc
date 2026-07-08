@@ -433,6 +433,12 @@ typedef struct {
         MlsPublicMessage  public_message;
         MlsPrivateMessage private_message;
     };
+    /* For top-level MLSMessage wire formats owned by other modules
+     * (Welcome, GroupInfo, KeyPackage), preserve the body opaquely so
+     * generic MLSMessage deserialization can round-trip all RFC 9420
+     * wire formats without duplicating those parsers here. */
+    uint8_t *opaque_content;
+    size_t   opaque_content_len;
 } MlsMLSMessage;
 
 /** Free an MLSMessage's heap data. */
