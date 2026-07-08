@@ -299,6 +299,7 @@ typedef enum {
     MARMOT_WELCOME_STATE_PENDING  = 0,
     MARMOT_WELCOME_STATE_ACCEPTED = 1,
     MARMOT_WELCOME_STATE_DECLINED = 2,
+    MARMOT_WELCOME_STATE_FAILED   = 3,
 } MarmotWelcomeState;
 
 /* ──────────────────────────────────────────────────────────────────────────

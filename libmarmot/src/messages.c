@@ -457,7 +457,7 @@ marmot_create_message(Marmot *m,
         return MARMOT_ERR_EVENT_BUILD;
     }
 
-    /* ── 5. Create stored message record ──────────────────────────────── */
+    /* ── 5. Return an unsaved local message view ──────────────────────── */
     result->message = marmot_message_new();
     if (!result->message) {
         marmot_group_free(group);
@@ -466,37 +466,82 @@ marmot_create_message(Marmot *m,
     }
     result->message->kind = MARMOT_KIND_GROUP_MESSAGE;
     result->message->created_at = marmot_now();
-    result->message->processed_at = marmot_now();
+    result->message->processed_at = 0;
     result->message->mls_group_id = marmot_group_id_new(
         mls_group_id->data, mls_group_id->len);
     result->message->content = strdup(inner_event_json);
-    result->message->event_json = strdup(inner_event_json);
+    result->message->event_json = strdup(result->event_json);
     result->message->epoch = group->epoch;
     result->message->state = MARMOT_MSG_STATE_CREATED;
 
-    /* Generate a random message ID for tracking */
-    randombytes_buf(result->message->id, 32);
-
-    /* Persist the message. Mandatory: callers must not get MARMOT_OK for an
-     * outgoing message that cannot be saved locally. */
-    err = m->storage->save_message(m->storage->ctx, result->message);
-    if (err != MARMOT_OK) {
-        marmot_group_free(group);
-        marmot_outgoing_message_free(result);
-        return err;
-    }
-
-    /* ── 6. Update group's last message metadata ──────────────────────── */
-    group->last_message_at = marmot_now();
-    err = m->storage->save_group(m->storage->ctx, group);
-    if (err != MARMOT_OK) {
-        marmot_group_free(group);
-        marmot_outgoing_message_free(result);
-        return err;
-    }
-
+    /* Do not persist here: the returned kind:445 event is intentionally
+     * unsigned and has no stable Nostr event id until the caller fills the
+     * ephemeral pubkey/signature. Use marmot_save_created_message() after
+     * signing to persist the real outer event id/json. */
     marmot_group_free(group);
     return MARMOT_OK;
+}
+
+MarmotError
+marmot_save_created_message(Marmot *m,
+                             const MarmotGroupId *mls_group_id,
+                             const char *signed_group_event_json,
+                             const char *inner_event_json)
+{
+    if (!m || !mls_group_id || !signed_group_event_json || !inner_event_json)
+        return MARMOT_ERR_INVALID_ARG;
+    if (!m->storage || !m->storage->find_group_by_mls_id ||
+        !m->storage->save_message || !m->storage->save_group)
+        return MARMOT_ERR_STORAGE;
+
+    ParsedGroupEvent parsed;
+    MarmotError err = parse_group_event(signed_group_event_json, &parsed);
+    if (err != MARMOT_OK)
+        return err;
+    if (!parsed.event_id || !parsed.pubkey ||
+        strlen(parsed.event_id) != 64 || strlen(parsed.pubkey) != 64) {
+        parsed_group_event_clear(&parsed);
+        return MARMOT_ERR_VALIDATION;
+    }
+
+    MarmotGroup *group = NULL;
+    err = m->storage->find_group_by_mls_id(m->storage->ctx, mls_group_id, &group);
+    if (err != MARMOT_OK || !group) {
+        parsed_group_event_clear(&parsed);
+        return MARMOT_ERR_GROUP_NOT_FOUND;
+    }
+
+    MarmotMessage *msg = marmot_message_new();
+    if (!msg) {
+        marmot_group_free(group);
+        parsed_group_event_clear(&parsed);
+        return MARMOT_ERR_MEMORY;
+    }
+    marmot_hex_decode(parsed.event_id, msg->id, 32);
+    marmot_hex_decode(parsed.pubkey, msg->pubkey, 32);
+    msg->kind = MARMOT_KIND_GROUP_MESSAGE;
+    msg->mls_group_id = marmot_group_id_new(mls_group_id->data, mls_group_id->len);
+    msg->created_at = parsed.created_at;
+    msg->processed_at = marmot_now();
+    msg->content = strdup(inner_event_json);
+    msg->event_json = strdup(signed_group_event_json);
+    memcpy(msg->wrapper_event_id, msg->id, 32); /* no kind:1059 wrapper at this API layer */
+    msg->epoch = group->epoch;
+    msg->state = MARMOT_MSG_STATE_CREATED;
+
+    err = m->storage->save_message(m->storage->ctx, msg);
+    if (err == MARMOT_OK) {
+        group->last_message_at = parsed.created_at;
+        group->last_message_processed_at = msg->processed_at;
+        free(group->last_message_id);
+        group->last_message_id = strdup(parsed.event_id);
+        err = m->storage->save_group(m->storage->ctx, group);
+    }
+
+    marmot_message_free(msg);
+    marmot_group_free(group);
+    parsed_group_event_clear(&parsed);
+    return err;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -540,6 +585,21 @@ marmot_process_message(Marmot *m,
     }
 
     /* ── 3. Idempotency: check if already processed ───────────────────── */
+    if (parsed.event_id && m->storage->is_message_processed) {
+        uint8_t event_id_bytes[32];
+        if (marmot_hex_decode(parsed.event_id, event_id_bytes, 32) == 0) {
+            bool processed = false;
+            if (m->storage->is_message_processed(m->storage->ctx,
+                                                  event_id_bytes,
+                                                  &processed) == MARMOT_OK &&
+                processed) {
+                marmot_group_free(group);
+                parsed_group_event_clear(&parsed);
+                result->type = MARMOT_RESULT_OWN_MESSAGE;
+                return MARMOT_OK;
+            }
+        }
+    }
     if (parsed.event_id && m->storage->find_message_by_id) {
         uint8_t event_id_bytes[32];
         if (marmot_hex_decode(parsed.event_id, event_id_bytes, 32) == 0) {
@@ -747,11 +807,23 @@ marmot_process_message(Marmot *m,
         msg->created_at = parsed.created_at;
         msg->processed_at = marmot_now();
         msg->content = strdup(inner_json);
-        msg->event_json = strdup(inner_json);
+        msg->event_json = strdup(group_event_json);
+        if (parsed.event_id)
+            memcpy(msg->wrapper_event_id, msg->id, 32); /* outer kind:445 id at this layer */
         msg->epoch = used_epoch;
         msg->state = MARMOT_MSG_STATE_PROCESSED;
 
         err = m->storage->save_message(m->storage->ctx, msg);
+        if (err == MARMOT_OK && parsed.event_id && m->storage->save_processed_message) {
+            err = m->storage->save_processed_message(m->storage->ctx,
+                                                     msg->wrapper_event_id,
+                                                     msg->id,
+                                                     msg->processed_at,
+                                                     used_epoch,
+                                                     &msg->mls_group_id,
+                                                     MARMOT_MSG_STATE_PROCESSED,
+                                                     NULL);
+        }
         marmot_message_free(msg);
         if (err != MARMOT_OK) {
             marmot_message_result_free(result);

@@ -1018,6 +1018,14 @@ ndb_save_processed_welcome(void *ctx, const uint8_t wrapper_id[32],
     MDB_val k = { .mv_size = kl, .mv_data = kbuf };
     MDB_val v = { .mv_size = off, .mv_data = vbuf };
     int rc = mdb_put(txn, nc->dbi_kv, &k, &v, 0);
+    if (rc == 0 && welcome_id) {
+        uint8_t wbuf[64];
+        size_t wl = make_kv_key("wproc", welcome_id, 32, wbuf, sizeof(wbuf));
+        if (wl > 0) {
+            MDB_val wk = { .mv_size = wl, .mv_data = wbuf };
+            rc = mdb_put(txn, nc->dbi_kv, &wk, &v, 0);
+        }
+    }
     free(vbuf);
 
     if (rc != 0) { mdb_txn_abort(txn); return MARMOT_ERR_STORAGE; }

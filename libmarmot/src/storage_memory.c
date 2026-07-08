@@ -470,6 +470,20 @@ static MarmotError
 mem_save_welcome(void *ctx, const MarmotWelcome *welcome)
 {
     MemCtx *mc = ctx;
+
+    /* Upsert by stable welcome id, falling back to wrapper id for callers that
+     * only know the gift-wrap identifier. */
+    for (size_t i = 0; i < mc->welcome_count; i++) {
+        if (memcmp(mc->welcomes[i]->id, welcome->id, 32) == 0 ||
+            memcmp(mc->welcomes[i]->wrapper_event_id, welcome->wrapper_event_id, 32) == 0) {
+            MarmotWelcome *copy = welcome_deep_copy(welcome);
+            if (!copy) return MARMOT_ERR_MEMORY;
+            marmot_welcome_free(mc->welcomes[i]);
+            mc->welcomes[i] = copy;
+            return MARMOT_OK;
+        }
+    }
+
     if (mc->welcome_count >= mc->welcome_cap) {
         size_t new_cap = mc->welcome_cap ? mc->welcome_cap * 2 : 16;
         MarmotWelcome **arr = realloc(mc->welcomes, new_cap * sizeof(MarmotWelcome *));

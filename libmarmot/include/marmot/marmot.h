@@ -340,6 +340,25 @@ MarmotError marmot_create_message(Marmot *m,
                                    MarmotOutgoingMessage *result);
 
 /**
+ * marmot_save_created_message:
+ * @m: Marmot instance
+ * @mls_group_id: the group the message was sent to
+ * @signed_group_event_json: signed outer kind:445 event JSON with real id
+ * @inner_event_json: plaintext inner event JSON saved as local content
+ *
+ * Persist an outgoing message after the caller has filled the ephemeral pubkey
+ * and signature for the kind:445 event. marmot_create_message() intentionally
+ * does not persist CREATED rows because unsigned events have no stable Nostr
+ * event ID.
+ *
+ * Returns: MARMOT_OK on success
+ */
+MarmotError marmot_save_created_message(Marmot *m,
+                                         const MarmotGroupId *mls_group_id,
+                                         const char *signed_group_event_json,
+                                         const char *inner_event_json);
+
+/**
  * marmot_process_message:
  * @m: Marmot instance
  * @group_event_json: JSON of the kind:445 group event (rumor, after NIP-59 unwrap)

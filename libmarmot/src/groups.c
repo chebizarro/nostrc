@@ -271,9 +271,37 @@ build_evolution_event(const uint8_t *commit_data, size_t commit_len,
  * Internal: Build kind:444 welcome rumor (unsigned)
  * ──────────────────────────────────────────────────────────────────────── */
 
+static void
+free_stack_event_fields(NostrEvent *ev)
+{
+    free(ev->id);
+    free(ev->pubkey);
+    free(ev->content);
+    free(ev->sig);
+    nostr_tags_free(ev->tags);
+    memset(ev, 0, sizeof(*ev));
+}
+
+static char *
+extract_event_id_hex(const char *event_json)
+{
+    NostrEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    if (!event_json || !nostr_event_deserialize_compact(&ev, event_json, NULL))
+        return NULL;
+    char *id = ev.id ? strdup(ev.id) : NULL;
+    free_stack_event_fields(&ev);
+    return id;
+}
+
 static char *
 build_welcome_rumor(const uint8_t *welcome_data, size_t welcome_len,
                      const char *kp_event_id,
+                     const uint8_t nostr_group_id[32],
+                     const char *group_name,
+                     const char *group_description,
+                     const uint8_t (*admin_pubkeys)[32], size_t admin_count,
+                     size_t member_count,
                      const char **relay_urls, size_t relay_count)
 {
     /* Welcome rumor is a kind:444 unsigned event with:
@@ -304,6 +332,42 @@ build_welcome_rumor(const uint8_t *welcome_data, size_t welcome_len,
         if (!tag) { nostr_tags_free(tags); nostr_event_free(event); return NULL; }
         nostr_tags_append(tags, tag);
     }
+
+    /* preview h tag: Nostr group id */
+    if (nostr_group_id) {
+        char *ngid_hex = marmot_hex_encode(nostr_group_id, 32);
+        if (ngid_hex) {
+            NostrTag *h_tag = nostr_tag_new("h", ngid_hex, NULL);
+            free(ngid_hex);
+            if (!h_tag) { nostr_tags_free(tags); nostr_event_free(event); return NULL; }
+            nostr_tags_append(tags, h_tag);
+        }
+    }
+
+    if (group_name) {
+        NostrTag *name_tag = nostr_tag_new("name", group_name, NULL);
+        if (!name_tag) { nostr_tags_free(tags); nostr_event_free(event); return NULL; }
+        nostr_tags_append(tags, name_tag);
+    }
+    if (group_description) {
+        NostrTag *desc_tag = nostr_tag_new("description", group_description, NULL);
+        if (!desc_tag) { nostr_tags_free(tags); nostr_event_free(event); return NULL; }
+        nostr_tags_append(tags, desc_tag);
+    }
+    for (size_t i = 0; i < admin_count && admin_pubkeys; i++) {
+        char *admin_hex = marmot_hex_encode(admin_pubkeys[i], 32);
+        if (admin_hex) {
+            NostrTag *admin_tag = nostr_tag_new("admin", admin_hex, NULL);
+            free(admin_hex);
+            if (!admin_tag) { nostr_tags_free(tags); nostr_event_free(event); return NULL; }
+            nostr_tags_append(tags, admin_tag);
+        }
+    }
+    char member_count_buf[32];
+    snprintf(member_count_buf, sizeof(member_count_buf), "%zu", member_count);
+    NostrTag *members_tag = nostr_tag_new("member_count", member_count_buf, NULL);
+    if (!members_tag) { nostr_tags_free(tags); nostr_event_free(event); return NULL; }
+    nostr_tags_append(tags, members_tag);
 
     /* encoding tag */
     NostrTag *tag = nostr_tag_new("encoding", "base64", NULL);
@@ -472,13 +536,19 @@ marmot_create_group(Marmot *m,
             return MARMOT_ERR_MLS;
         }
 
-        /* Build welcome rumor for this member */
-        /* Extract the KeyPackage event ID for the e-tag */
-        /* For now, use NULL since we don't parse the event ID from JSON */
+        /* Build welcome rumor for this member, including the KeyPackage event
+         * id and cleartext preview tags used by pending-welcome UIs. */
+        char *kp_event_id = extract_event_id_hex(key_package_event_jsons[i]);
         result->welcome_rumor_jsons[i] = build_welcome_rumor(
             add_result.welcome_data, add_result.welcome_len,
-            NULL, /* kp_event_id — would need to extract from event JSON */
+            kp_event_id,
+            nostr_group_id,
+            config->name,
+            config->description,
+            config->admin_pubkeys, config->admin_count,
+            mls_group.tree.n_leaves,
             (const char **)config->relay_urls, config->relay_count);
+        free(kp_event_id);
 
         /* Keep the last commit (for groups with >1 new member, we only
          * publish the final commit) */
@@ -720,9 +790,17 @@ marmot_add_members(Marmot *m,
         }
 
         /* Build welcome rumor */
+        char *kp_event_id = extract_event_id_hex(key_package_event_jsons[i]);
         welcomes[i] = build_welcome_rumor(
             add_result.welcome_data, add_result.welcome_len,
-            NULL, NULL, 0);
+            kp_event_id,
+            group->nostr_group_id,
+            group->name,
+            group->description,
+            (const uint8_t (*)[32])group->admin_pubkeys, group->admin_count,
+            mls.tree.n_leaves,
+            NULL, 0);
+        free(kp_event_id);
 
         mls_add_result_clear(&last_add_result);
         last_add_result = add_result;
