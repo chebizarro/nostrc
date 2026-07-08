@@ -20,8 +20,8 @@
  *   4. Validate sender identity
  *
  * MLS PrivateMessage framing (mls_group_encrypt/decrypt) wraps the
- * plaintext before NIP-44 encryption when MLS group state is available.
- * Falls back to direct NIP-44 encryption when MLS state is not loaded.
+ * plaintext before NIP-44 encryption. Raw inner JSON compatibility is
+ * accepted only when MarmotConfig.allow_legacy_raw_messages is enabled.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -357,9 +357,8 @@ marmot_create_message(Marmot *m,
      *   1. Wrapped as MLS PrivateMessage via mls_group_encrypt()
      *   2. Then NIP-44-encrypted with the exporter_secret-derived convkey
      *
-     * When MLS group state is not available in storage, we fall back to
-     * encrypting the inner event JSON directly with NIP-44 (Phase 3
-     * compatibility mode).
+     * Missing MLS group state is an MLS error by default. Legacy raw JSON
+     * NIP-44 encryption is only available through the explicit config opt-in.
      */
     const uint8_t *plaintext = (const uint8_t *)inner_event_json;
     size_t plaintext_len = strlen(inner_event_json);
@@ -384,6 +383,10 @@ marmot_create_message(Marmot *m,
         }
         nip44_plaintext = mls_ciphertext;
         nip44_plaintext_len = mls_ciphertext_len;
+    } else if (!m->config.allow_legacy_raw_messages) {
+        sodium_memzero(exporter_secret, sizeof(exporter_secret));
+        marmot_group_free(group);
+        return MARMOT_ERR_MLS;
     }
 
     char *nip44_ciphertext = NULL;
@@ -454,7 +457,7 @@ marmot_create_message(Marmot *m,
         return MARMOT_ERR_EVENT_BUILD;
     }
 
-    /* ── 5. Create stored message record ──────────────────────────────── */
+    /* ── 5. Return an unsaved local message view ──────────────────────── */
     result->message = marmot_message_new();
     if (!result->message) {
         marmot_group_free(group);
@@ -463,37 +466,82 @@ marmot_create_message(Marmot *m,
     }
     result->message->kind = MARMOT_KIND_GROUP_MESSAGE;
     result->message->created_at = marmot_now();
-    result->message->processed_at = marmot_now();
+    result->message->processed_at = 0;
     result->message->mls_group_id = marmot_group_id_new(
         mls_group_id->data, mls_group_id->len);
     result->message->content = strdup(inner_event_json);
-    result->message->event_json = strdup(inner_event_json);
+    result->message->event_json = strdup(result->event_json);
     result->message->epoch = group->epoch;
     result->message->state = MARMOT_MSG_STATE_CREATED;
 
-    /* Generate a random message ID for tracking */
-    randombytes_buf(result->message->id, 32);
-
-    /* Persist the message. Mandatory: callers must not get MARMOT_OK for an
-     * outgoing message that cannot be saved locally. */
-    err = m->storage->save_message(m->storage->ctx, result->message);
-    if (err != MARMOT_OK) {
-        marmot_group_free(group);
-        marmot_outgoing_message_free(result);
-        return err;
-    }
-
-    /* ── 6. Update group's last message metadata ──────────────────────── */
-    group->last_message_at = marmot_now();
-    err = m->storage->save_group(m->storage->ctx, group);
-    if (err != MARMOT_OK) {
-        marmot_group_free(group);
-        marmot_outgoing_message_free(result);
-        return err;
-    }
-
+    /* Do not persist here: the returned kind:445 event is intentionally
+     * unsigned and has no stable Nostr event id until the caller fills the
+     * ephemeral pubkey/signature. Use marmot_save_created_message() after
+     * signing to persist the real outer event id/json. */
     marmot_group_free(group);
     return MARMOT_OK;
+}
+
+MarmotError
+marmot_save_created_message(Marmot *m,
+                             const MarmotGroupId *mls_group_id,
+                             const char *signed_group_event_json,
+                             const char *inner_event_json)
+{
+    if (!m || !mls_group_id || !signed_group_event_json || !inner_event_json)
+        return MARMOT_ERR_INVALID_ARG;
+    if (!m->storage || !m->storage->find_group_by_mls_id ||
+        !m->storage->save_message || !m->storage->save_group)
+        return MARMOT_ERR_STORAGE;
+
+    ParsedGroupEvent parsed;
+    MarmotError err = parse_group_event(signed_group_event_json, &parsed);
+    if (err != MARMOT_OK)
+        return err;
+    if (!parsed.event_id || !parsed.pubkey ||
+        strlen(parsed.event_id) != 64 || strlen(parsed.pubkey) != 64) {
+        parsed_group_event_clear(&parsed);
+        return MARMOT_ERR_VALIDATION;
+    }
+
+    MarmotGroup *group = NULL;
+    err = m->storage->find_group_by_mls_id(m->storage->ctx, mls_group_id, &group);
+    if (err != MARMOT_OK || !group) {
+        parsed_group_event_clear(&parsed);
+        return MARMOT_ERR_GROUP_NOT_FOUND;
+    }
+
+    MarmotMessage *msg = marmot_message_new();
+    if (!msg) {
+        marmot_group_free(group);
+        parsed_group_event_clear(&parsed);
+        return MARMOT_ERR_MEMORY;
+    }
+    marmot_hex_decode(parsed.event_id, msg->id, 32);
+    marmot_hex_decode(parsed.pubkey, msg->pubkey, 32);
+    msg->kind = MARMOT_KIND_GROUP_MESSAGE;
+    msg->mls_group_id = marmot_group_id_new(mls_group_id->data, mls_group_id->len);
+    msg->created_at = parsed.created_at;
+    msg->processed_at = marmot_now();
+    msg->content = strdup(inner_event_json);
+    msg->event_json = strdup(signed_group_event_json);
+    memcpy(msg->wrapper_event_id, msg->id, 32); /* no kind:1059 wrapper at this API layer */
+    msg->epoch = group->epoch;
+    msg->state = MARMOT_MSG_STATE_CREATED;
+
+    err = m->storage->save_message(m->storage->ctx, msg);
+    if (err == MARMOT_OK) {
+        group->last_message_at = parsed.created_at;
+        group->last_message_processed_at = msg->processed_at;
+        free(group->last_message_id);
+        group->last_message_id = strdup(parsed.event_id);
+        err = m->storage->save_group(m->storage->ctx, group);
+    }
+
+    marmot_message_free(msg);
+    marmot_group_free(group);
+    parsed_group_event_clear(&parsed);
+    return err;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -537,6 +585,21 @@ marmot_process_message(Marmot *m,
     }
 
     /* ── 3. Idempotency: check if already processed ───────────────────── */
+    if (parsed.event_id && m->storage->is_message_processed) {
+        uint8_t event_id_bytes[32];
+        if (marmot_hex_decode(parsed.event_id, event_id_bytes, 32) == 0) {
+            bool processed = false;
+            if (m->storage->is_message_processed(m->storage->ctx,
+                                                  event_id_bytes,
+                                                  &processed) == MARMOT_OK &&
+                processed) {
+                marmot_group_free(group);
+                parsed_group_event_clear(&parsed);
+                result->type = MARMOT_RESULT_OWN_MESSAGE;
+                return MARMOT_OK;
+            }
+        }
+    }
     if (parsed.event_id && m->storage->find_message_by_id) {
         uint8_t event_id_bytes[32];
         if (marmot_hex_decode(parsed.event_id, event_id_bytes, 32) == 0) {
@@ -594,14 +657,11 @@ marmot_process_message(Marmot *m,
         return MARMOT_ERR_NIP44;
     }
 
-    /* ── 6. Unwrap MLS PrivateMessage if MLS group state available ────── */
+    /* ── 6. Unwrap MLS PrivateMessage ─────────────────────────────────── */
     /*
-     * The NIP-44 decrypted content is either:
-     *   a) An MLS PrivateMessage (when full framing is active)
-     *   b) Raw inner event JSON (Phase 3 compatibility mode)
-     *
-     * Try MLS decryption first; if MLS state is unavailable or
-     * deserialization fails (indicating raw JSON), use as-is.
+     * MIP-03 requires the NIP-44 decrypted content to be an MLS
+     * PrivateMessage. Raw inner-event JSON is accepted only for explicitly
+     * opted-in legacy deployments.
      */
     MlsGroup mls_group;
     memset(&mls_group, 0, sizeof(mls_group));
@@ -634,8 +694,14 @@ marmot_process_message(Marmot *m,
             result->type = MARMOT_RESULT_OWN_MESSAGE;
             return MARMOT_OK;
         }
-        /* Other MLS errors: fall through to use raw decrypted data.
-         * This handles messages sent before MLS framing was enabled. */
+    }
+
+    if (!used_mls && !m->config.allow_legacy_raw_messages) {
+        free(decrypted);
+        if (mls_loaded) mls_group_free(&mls_group);
+        marmot_group_free(group);
+        parsed_group_event_clear(&parsed);
+        return MARMOT_ERR_MLS;
     }
 
     char *inner_json = NULL;
@@ -654,10 +720,8 @@ marmot_process_message(Marmot *m,
         free(inner_plaintext);
         free(decrypted);
     } else {
-        /* Sanity check: if the NIP-44 decrypted data doesn't look like JSON,
-         * it's likely MLS PrivateMessage ciphertext from an epoch whose MLS
-         * state is no longer available (e.g., epoch lookback across an epoch
-         * advance). We can't recover the plaintext in this case. */
+        /* Explicit legacy mode: accept raw inner-event JSON directly from the
+         * NIP-44 layer. Non-JSON payloads are not silently accepted. */
         if (decrypted_len == 0 ||
             (decrypted[0] != '{' && decrypted[0] != '[')) {
             free(decrypted);
@@ -743,11 +807,23 @@ marmot_process_message(Marmot *m,
         msg->created_at = parsed.created_at;
         msg->processed_at = marmot_now();
         msg->content = strdup(inner_json);
-        msg->event_json = strdup(inner_json);
+        msg->event_json = strdup(group_event_json);
+        if (parsed.event_id)
+            memcpy(msg->wrapper_event_id, msg->id, 32); /* outer kind:445 id at this layer */
         msg->epoch = used_epoch;
         msg->state = MARMOT_MSG_STATE_PROCESSED;
 
         err = m->storage->save_message(m->storage->ctx, msg);
+        if (err == MARMOT_OK && parsed.event_id && m->storage->save_processed_message) {
+            err = m->storage->save_processed_message(m->storage->ctx,
+                                                     msg->wrapper_event_id,
+                                                     msg->id,
+                                                     msg->processed_at,
+                                                     used_epoch,
+                                                     &msg->mls_group_id,
+                                                     MARMOT_MSG_STATE_PROCESSED,
+                                                     NULL);
+        }
         marmot_message_free(msg);
         if (err != MARMOT_OK) {
             marmot_message_result_free(result);

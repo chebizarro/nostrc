@@ -305,40 +305,45 @@ mls_private_message_encrypt(const uint8_t *group_id, size_t group_id_len,
  * PrivateMessage decryption
  * ══════════════════════════════════════════════════════════════════════════ */
 
-int
-mls_private_message_decrypt(const MlsPrivateMessage *msg,
-                             const uint8_t sender_data_secret[MLS_HASH_LEN],
-                             MlsSecretTree *st,
-                             uint32_t max_forward_distance,
-                             uint8_t **out_plaintext, size_t *out_pt_len,
-                             MlsSenderData *out_sender)
+static bool
+private_message_content_type_valid(uint8_t content_type)
 {
-    if (!msg || !sender_data_secret || !st || !out_plaintext || !out_pt_len || !out_sender)
+    return content_type == MLS_CONTENT_TYPE_APPLICATION ||
+           content_type == MLS_CONTENT_TYPE_PROPOSAL ||
+           content_type == MLS_CONTENT_TYPE_COMMIT;
+}
+
+int
+mls_private_message_decrypt_with_sender_data(const MlsPrivateMessage *msg,
+                                              const MlsSenderData *sender_data,
+                                              MlsSecretTree *st,
+                                              uint32_t max_forward_distance,
+                                              uint8_t **out_plaintext,
+                                              size_t *out_pt_len,
+                                              MlsSenderData *out_sender)
+{
+    if (!msg || !sender_data || !st || !out_plaintext || !out_pt_len || !out_sender)
         return -1;
 
-    /* Step 1: Decrypt sender data */
-    size_t sample_len = msg->ciphertext_len < MLS_HASH_LEN
-                         ? msg->ciphertext_len : MLS_HASH_LEN;
+    /* Validate non-secret metadata before consuming ratchet state. */
+    if (!private_message_content_type_valid(msg->content_type))
+        return MARMOT_ERR_MESSAGE;
+    if (sender_data->leaf_index >= st->n_leaves)
+        return MARMOT_ERR_FROM_NON_MEMBER;
+    if (msg->ciphertext_len < MLS_AEAD_TAG_LEN)
+        return MARMOT_ERR_MESSAGE;
 
-    MlsSenderData sd;
-    int rc = mls_sender_data_decrypt(sender_data_secret,
-                                      msg->ciphertext, sample_len,
-                                      msg->encrypted_sender_data,
-                                      msg->encrypted_sender_data_len,
-                                      &sd);
-    if (rc != 0) return -1;
-
-    /* Step 2: Get message keys from the secret tree */
     bool is_handshake = (msg->content_type == MLS_CONTENT_TYPE_PROPOSAL ||
                          msg->content_type == MLS_CONTENT_TYPE_COMMIT);
 
     MlsMessageKeys keys;
-    rc = mls_secret_tree_get_keys_for_generation(st, sd.leaf_index, is_handshake,
-                                                  sd.generation, max_forward_distance,
-                                                  &keys);
+    int rc = mls_secret_tree_get_keys_for_generation(st, sender_data->leaf_index,
+                                                      is_handshake,
+                                                      sender_data->generation,
+                                                      max_forward_distance,
+                                                      &keys);
     if (rc != 0) return rc;
 
-    /* Step 3: Build content AAD */
     uint8_t *content_aad = NULL;
     size_t content_aad_len = 0;
     rc = mls_build_content_aad(msg->group_id, msg->group_id_len,
@@ -347,22 +352,16 @@ mls_private_message_decrypt(const MlsPrivateMessage *msg,
                                 &content_aad, &content_aad_len);
     if (rc != 0) { sodium_memzero(&keys, sizeof(keys)); return -1; }
 
-    /* Step 4: Apply reuse guard to nonce */
     uint8_t nonce[MLS_AEAD_NONCE_LEN];
     memcpy(nonce, keys.nonce, MLS_AEAD_NONCE_LEN);
-    mls_apply_reuse_guard(nonce, sd.reuse_guard);
+    mls_apply_reuse_guard(nonce, sender_data->reuse_guard);
 
-    /* Step 5: Decrypt content */
-    if (msg->ciphertext_len < MLS_AEAD_TAG_LEN) {
-        free(content_aad);
-        sodium_memzero(&keys, sizeof(keys));
-        return -1;
-    }
     size_t pt_max = msg->ciphertext_len - MLS_AEAD_TAG_LEN;
     uint8_t *plaintext = malloc(pt_max > 0 ? pt_max : 1);
     if (!plaintext) {
         free(content_aad);
         sodium_memzero(&keys, sizeof(keys));
+        sodium_memzero(nonce, sizeof(nonce));
         return -1;
     }
 
@@ -382,8 +381,37 @@ mls_private_message_decrypt(const MlsPrivateMessage *msg,
 
     *out_plaintext = plaintext;
     *out_pt_len = pt_len;
-    *out_sender = sd;
+    *out_sender = *sender_data;
     return 0;
+}
+
+int
+mls_private_message_decrypt(const MlsPrivateMessage *msg,
+                             const uint8_t sender_data_secret[MLS_HASH_LEN],
+                             MlsSecretTree *st,
+                             uint32_t max_forward_distance,
+                             uint8_t **out_plaintext, size_t *out_pt_len,
+                             MlsSenderData *out_sender)
+{
+    if (!msg || !sender_data_secret || !st || !out_plaintext || !out_pt_len || !out_sender)
+        return -1;
+
+    size_t sample_len = msg->ciphertext_len < MLS_HASH_LEN
+                         ? msg->ciphertext_len : MLS_HASH_LEN;
+
+    MlsSenderData sd;
+    int rc = mls_sender_data_decrypt(sender_data_secret,
+                                      msg->ciphertext, sample_len,
+                                      msg->encrypted_sender_data,
+                                      msg->encrypted_sender_data_len,
+                                      &sd);
+    if (rc != 0) return MARMOT_ERR_CRYPTO;
+
+    return mls_private_message_decrypt_with_sender_data(msg, &sd, st,
+                                                         max_forward_distance,
+                                                         out_plaintext,
+                                                         out_pt_len,
+                                                         out_sender);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -772,8 +800,8 @@ mls_framed_content_verify(const MlsFramedContent *fc,
  *
  * confirmation_tag = HMAC(confirmation_key, confirmed_transcript_hash)
  *
- * We use HKDF-Expand-Label as a MAC since our crypto layer provides that.
- * Specifically: MAC(key, msg) = ExpandWithLabel(key, "MAC", msg, HASH_LEN)
+ * HMAC-SHA256 is equivalent to HKDF-Extract with confirmation_key as
+ * the salt and confirmed_transcript_hash as the input key material.
  * ══════════════════════════════════════════════════════════════════════════ */
 
 int
@@ -782,9 +810,9 @@ mls_compute_confirmation_tag(const uint8_t confirmation_key[MLS_HASH_LEN],
                               uint8_t out[MLS_HASH_LEN])
 {
     if (!confirmation_key || !confirmed_transcript_hash || !out) return -1;
-    return mls_crypto_expand_with_label(out, MLS_HASH_LEN,
-                                         confirmation_key, "MAC",
-                                         confirmed_transcript_hash, MLS_HASH_LEN);
+    return mls_crypto_hkdf_extract(out,
+                                    confirmation_key, MLS_HASH_LEN,
+                                    confirmed_transcript_hash, MLS_HASH_LEN);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -967,10 +995,10 @@ mls_public_message_compute_membership_tag(MlsPublicMessage *msg,
                                          &tbm, &tbm_len) != 0)
         return -1;
 
-    /* MAC(membership_key, tbm) = ExpandWithLabel(key, "MAC", tbm, HASH_LEN) */
-    int rc = mls_crypto_expand_with_label(msg->membership_tag, MLS_HASH_LEN,
-                                           membership_key, "MAC",
-                                           tbm, tbm_len);
+    /* MAC(membership_key, tbm) = HMAC-SHA256(membership_key, tbm). */
+    int rc = mls_crypto_hkdf_extract(msg->membership_tag,
+                                      membership_key, MLS_HASH_LEN,
+                                      tbm, tbm_len);
     free(tbm);
     msg->membership_tag_len = MLS_HASH_LEN;
     msg->has_membership_tag = (rc == 0);
@@ -992,9 +1020,9 @@ mls_public_message_verify_membership_tag(const MlsPublicMessage *msg,
         return -1;
 
     uint8_t expected[MLS_HASH_LEN];
-    int rc = mls_crypto_expand_with_label(expected, MLS_HASH_LEN,
-                                           membership_key, "MAC",
-                                           tbm, tbm_len);
+    int rc = mls_crypto_hkdf_extract(expected,
+                                      membership_key, MLS_HASH_LEN,
+                                      tbm, tbm_len);
     free(tbm);
     if (rc != 0) return -1;
 
@@ -1014,12 +1042,15 @@ mls_message_clear(MlsMLSMessage *msg)
     if (!msg) return;
     switch (msg->wire_format) {
     case MLS_WIRE_FORMAT_PUBLIC_MESSAGE:
-        mls_public_message_clear(&msg->public_message);
+        if (!msg->opaque_content)
+            mls_public_message_clear(&msg->public_message);
         break;
     case MLS_WIRE_FORMAT_PRIVATE_MESSAGE:
-        mls_private_message_clear(&msg->private_message);
+        if (!msg->opaque_content)
+            mls_private_message_clear(&msg->private_message);
         break;
     }
+    free(msg->opaque_content);
     memset(msg, 0, sizeof(*msg));
 }
 
@@ -1032,6 +1063,10 @@ mls_message_serialize(const MlsMLSMessage *msg, MlsTlsBuf *buf)
     if (mls_tls_write_u16(buf, 1) != 0) return -1;
     /* wire_format: uint16 */
     if (mls_tls_write_u16(buf, msg->wire_format) != 0) return -1;
+
+    if (msg->opaque_content || msg->opaque_content_len > 0)
+        return mls_tls_buf_append(buf, msg->opaque_content,
+                                  msg->opaque_content_len);
 
     switch (msg->wire_format) {
     case MLS_WIRE_FORMAT_PUBLIC_MESSAGE:
@@ -1056,6 +1091,7 @@ mls_message_deserialize(MlsTlsReader *reader, MlsMLSMessage *msg)
     msg->cipher_suite = MARMOT_CIPHERSUITE;
     if (mls_tls_read_u16(reader, &msg->wire_format) != 0) return -1;
 
+    size_t body_start = reader->pos;
     int rc;
     switch (msg->wire_format) {
     case MLS_WIRE_FORMAT_PUBLIC_MESSAGE:
@@ -1064,12 +1100,31 @@ mls_message_deserialize(MlsTlsReader *reader, MlsMLSMessage *msg)
     case MLS_WIRE_FORMAT_PRIVATE_MESSAGE:
         rc = mls_private_message_deserialize(reader, &msg->private_message);
         break;
+    case MLS_WIRE_FORMAT_WELCOME:
+    case MLS_WIRE_FORMAT_GROUP_INFO:
+    case MLS_WIRE_FORMAT_KEY_PACKAGE:
+        rc = -2; /* Force opaque preservation below. */
+        break;
     default:
         return -1;
     }
     if (rc != 0) {
+        uint16_t wire_format = msg->wire_format;
         mls_message_clear(msg);
-        return -1;
+        msg->wire_format = wire_format;
+        msg->cipher_suite = MARMOT_CIPHERSUITE;
+        reader->pos = body_start;
+        msg->opaque_content_len = mls_tls_reader_remaining(reader);
+        if (msg->opaque_content_len > 0) {
+            msg->opaque_content = malloc(msg->opaque_content_len);
+            if (!msg->opaque_content) return -1;
+            if (mls_tls_read_fixed(reader, msg->opaque_content,
+                                   msg->opaque_content_len) != 0) {
+                mls_message_clear(msg);
+                return -1;
+            }
+        }
+        return 0;
     }
     return 0;
 }

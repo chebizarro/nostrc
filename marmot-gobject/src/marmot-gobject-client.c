@@ -331,7 +331,7 @@ find_processed_message_for_inner_json(Marmot *marmot, const gchar *inner_json)
                                 &messages, &message_count) == MARMOT_OK) {
             for (size_t j = 0; j < message_count; j++) {
                 if (!found && messages[j]->state == MARMOT_MSG_STATE_PROCESSED &&
-                    messages[j]->event_json && strcmp(messages[j]->event_json, inner_json) == 0) {
+                    messages[j]->content && strcmp(messages[j]->content, inner_json) == 0) {
                     found = gobject_message_from_marmot(messages[j]);
                 }
                 marmot_message_free(messages[j]);

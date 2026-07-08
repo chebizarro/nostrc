@@ -388,6 +388,8 @@ typedef struct {
     size_t   extensions_len;
 
     /* GroupInfo-specific fields */
+    uint8_t *group_info_extensions_data;     /**< Serialized GroupInfo extensions */
+    size_t   group_info_extensions_len;
     uint8_t  confirmation_tag[MLS_HASH_LEN]; /**< MAC over confirmed_transcript_hash */
     uint32_t signer_leaf;                    /**< Which leaf signed this GroupInfo */
     uint8_t  signature[MLS_SIG_LEN];

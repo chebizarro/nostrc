@@ -8,6 +8,7 @@
  */
 
 #include "mls/mls_key_schedule.h"
+#include "mls/mls_tree.h"
 #include "mls/mls-internal.h"
 #include <assert.h>
 #include <stdio.h>
@@ -353,7 +354,7 @@ static void test_secret_tree_get_keys_for_generation(void)
 
 static void test_secret_tree_max_forward_distance(void)
 {
-    /* Forward ratchet beyond max distance should fail */
+    /* Forward ratchet beyond max distance should fail without advancing state. */
     uint8_t enc_secret[MLS_HASH_LEN];
     memset(enc_secret, 0x33, sizeof(enc_secret));
 
@@ -361,12 +362,98 @@ static void test_secret_tree_max_forward_distance(void)
     assert(mls_secret_tree_init(&st, enc_secret, 2) == 0);
 
     MlsMessageKeys k;
-    /* Try to jump to generation 100 with max forward distance of 5 */
     int rc = mls_secret_tree_get_keys_for_generation(&st, 0, false, 100, 5, &k);
     assert(rc != 0);
 
-    /* But jumping to generation 5 with max 5 should succeed */
-    assert(mls_secret_tree_get_keys_for_generation(&st, 0, false, 5, 5, &k) == 0);
+    /* The failed jump must not consume generation 0. */
+    assert(mls_secret_tree_get_keys_for_generation(&st, 0, false, 0, 5, &k) == 0);
+    assert(k.generation == 0);
+
+    mls_secret_tree_free(&st);
+}
+
+static void test_secret_tree_out_of_order_window(void)
+{
+    uint8_t enc_secret[MLS_HASH_LEN];
+    memset(enc_secret, 0xA5, sizeof(enc_secret));
+
+    MlsSecretTree seq, dec;
+    assert(mls_secret_tree_init(&seq, enc_secret, 2) == 0);
+    assert(mls_secret_tree_init(&dec, enc_secret, 2) == 0);
+
+    MlsMessageKeys expected[3];
+    for (uint32_t i = 0; i < 3; i++) {
+        assert(mls_secret_tree_derive_keys(&seq, 0, false, &expected[i]) == 0);
+        assert(expected[i].generation == i);
+    }
+
+    MlsMessageKeys got;
+    assert(mls_secret_tree_get_keys_for_generation(&dec, 0, false, 2, 8, &got) == 0);
+    assert(got.generation == 2);
+    assert(memcmp(got.key, expected[2].key, MLS_AEAD_KEY_LEN) == 0);
+    assert(memcmp(got.nonce, expected[2].nonce, MLS_AEAD_NONCE_LEN) == 0);
+
+    /* Generations skipped while reaching 2 are retained for reordering. */
+    assert(mls_secret_tree_get_keys_for_generation(&dec, 0, false, 0, 8, &got) == 0);
+    assert(got.generation == 0);
+    assert(memcmp(got.key, expected[0].key, MLS_AEAD_KEY_LEN) == 0);
+
+    assert(mls_secret_tree_get_keys_for_generation(&dec, 0, false, 1, 8, &got) == 0);
+    assert(got.generation == 1);
+    assert(memcmp(got.key, expected[1].key, MLS_AEAD_KEY_LEN) == 0);
+
+    mls_secret_tree_free(&seq);
+    mls_secret_tree_free(&dec);
+}
+
+static void test_secret_tree_replay_rejected(void)
+{
+    uint8_t enc_secret[MLS_HASH_LEN];
+    memset(enc_secret, 0xB6, sizeof(enc_secret));
+
+    MlsSecretTree st;
+    assert(mls_secret_tree_init(&st, enc_secret, 2) == 0);
+
+    MlsMessageKeys k;
+    assert(mls_secret_tree_get_keys_for_generation(&st, 0, false, 2, 8, &k) == 0);
+    assert(mls_secret_tree_get_keys_for_generation(&st, 0, false, 0, 8, &k) == 0);
+
+    /* Cached skipped keys are consumed once, and target generations are not cached. */
+    assert(mls_secret_tree_get_keys_for_generation(&st, 0, false, 0, 8, &k) != 0);
+    assert(mls_secret_tree_get_keys_for_generation(&st, 0, false, 2, 8, &k) != 0);
+
+    mls_secret_tree_free(&st);
+}
+
+static int all_zero(const uint8_t *buf, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        if (buf[i] != 0)
+            return 0;
+    }
+    return 1;
+}
+
+static void test_secret_tree_node_secret_erasure(void)
+{
+    uint8_t enc_secret[MLS_HASH_LEN];
+    memset(enc_secret, 0xC7, sizeof(enc_secret));
+
+    MlsSecretTree st;
+    assert(mls_secret_tree_init(&st, enc_secret, 4) == 0);
+
+    uint32_t n_nodes = mls_tree_node_width(4);
+    for (uint32_t node = 0; node < n_nodes; node++) {
+        if (!mls_tree_is_leaf(node))
+            assert(all_zero(st.tree_secrets[node], MLS_HASH_LEN));
+    }
+
+    uint32_t leaf0 = mls_tree_leaf_to_node(0);
+    assert(!all_zero(st.tree_secrets[leaf0], MLS_HASH_LEN));
+
+    MlsMessageKeys k;
+    assert(mls_secret_tree_derive_keys(&st, 0, false, &k) == 0);
+    assert(all_zero(st.tree_secrets[leaf0], MLS_HASH_LEN));
 
     mls_secret_tree_free(&st);
 }
@@ -669,6 +756,9 @@ int main(void)
     TEST(test_secret_tree_handshake_vs_application);
     TEST(test_secret_tree_get_keys_for_generation);
     TEST(test_secret_tree_max_forward_distance);
+    TEST(test_secret_tree_out_of_order_window);
+    TEST(test_secret_tree_replay_rejected);
+    TEST(test_secret_tree_node_secret_erasure);
 
     printf("\n  --- MLS Exporter ---\n");
     TEST(test_exporter_deterministic);

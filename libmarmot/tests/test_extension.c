@@ -219,6 +219,67 @@ static void test_extension_deserialize_null(void)
     assert(marmot_group_data_extension_deserialize(NULL, 100) == NULL);
 }
 
+static void test_extension_rejects_trailing_bytes(void)
+{
+    MarmotGroupDataExtension *ext = marmot_group_data_extension_new();
+    assert(ext != NULL);
+    memset(ext->nostr_group_id, 0x42, 32);
+    ext->name = strdup("Trailing Bytes");
+
+    uint8_t *data = NULL;
+    size_t len = 0;
+    assert(marmot_group_data_extension_serialize(ext, &data, &len) == MARMOT_OK);
+    uint8_t *with_trailing = malloc(len + 1);
+    assert(with_trailing != NULL);
+    memcpy(with_trailing, data, len);
+    with_trailing[len] = 0x99;
+
+    MarmotGroupDataExtension *parsed =
+        marmot_group_data_extension_deserialize(with_trailing, len + 1);
+    assert(parsed == NULL);
+
+    free(with_trailing);
+    free(data);
+    marmot_group_data_extension_free(ext);
+}
+
+static void test_extension_serialize_bounds(void)
+{
+    MarmotGroupDataExtension *ext = marmot_group_data_extension_new();
+    assert(ext != NULL);
+    memset(ext->nostr_group_id, 0x24, 32);
+
+    ext->admin_count = 1001;
+    ext->admins = calloc(ext->admin_count, 32);
+    uint8_t *data = NULL;
+    size_t len = 0;
+    assert(marmot_group_data_extension_serialize(ext, &data, &len) ==
+           MARMOT_ERR_EXTENSION_FORMAT);
+    free(ext->admins);
+    ext->admins = NULL;
+    ext->admin_count = 0;
+
+    ext->relay_count = 101;
+    ext->relays = calloc(ext->relay_count, sizeof(char *));
+    assert(marmot_group_data_extension_serialize(ext, &data, &len) ==
+           MARMOT_ERR_EXTENSION_FORMAT);
+    free(ext->relays);
+    ext->relays = NULL;
+    ext->relay_count = 0;
+
+    ext->relay_count = 1;
+    ext->relays = calloc(1, sizeof(char *));
+    assert(ext->relays != NULL);
+    ext->relays[0] = malloc(4098);
+    assert(ext->relays[0] != NULL);
+    memset(ext->relays[0], 'a', 4097);
+    ext->relays[0][4097] = '\0';
+    assert(marmot_group_data_extension_serialize(ext, &data, &len) ==
+           MARMOT_ERR_EXTENSION_FORMAT);
+
+    marmot_group_data_extension_free(ext);
+}
+
 int main(void)
 {
     printf("libmarmot: Extension serialization tests\n");
@@ -229,6 +290,8 @@ int main(void)
     TEST(test_extension_deserialize_garbage);
     TEST(test_extension_deserialize_truncated);
     TEST(test_extension_deserialize_null);
+    TEST(test_extension_rejects_trailing_bytes);
+    TEST(test_extension_serialize_bounds);
     printf("All extension tests passed.\n");
     return 0;
 }

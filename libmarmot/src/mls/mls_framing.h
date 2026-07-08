@@ -160,6 +160,21 @@ int mls_private_message_decrypt(const MlsPrivateMessage *msg,
                                  uint8_t **out_plaintext, size_t *out_pt_len,
                                  MlsSenderData *out_sender);
 
+/**
+ * Decrypt a PrivateMessage content using already decrypted sender data.
+ *
+ * Validates sender membership and content type before consuming secret-tree
+ * ratchet state.  This is used by group decryption after a single sender-data
+ * decrypt/parse pass.
+ */
+int mls_private_message_decrypt_with_sender_data(const MlsPrivateMessage *msg,
+                                                  const MlsSenderData *sender_data,
+                                                  MlsSecretTree *st,
+                                                  uint32_t max_forward_distance,
+                                                  uint8_t **out_plaintext,
+                                                  size_t *out_pt_len,
+                                                  MlsSenderData *out_sender);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * PrivateMessage TLS serialization
  * ──────────────────────────────────────────────────────────────────────── */
@@ -433,6 +448,12 @@ typedef struct {
         MlsPublicMessage  public_message;
         MlsPrivateMessage private_message;
     };
+    /* For top-level MLSMessage wire formats owned by other modules
+     * (Welcome, GroupInfo, KeyPackage), preserve the body opaquely so
+     * generic MLSMessage deserialization can round-trip all RFC 9420
+     * wire formats without duplicating those parsers here. */
+    uint8_t *opaque_content;
+    size_t   opaque_content_len;
 } MlsMLSMessage;
 
 /** Free an MLSMessage's heap data. */

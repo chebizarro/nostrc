@@ -91,6 +91,8 @@ xmemdup(const uint8_t *data, size_t len)
     return out;
 }
 
+static void relay_entry_clear(struct relay_entry *e);
+
 static MarmotGroup *
 group_deep_copy(const MarmotGroup *src)
 {
@@ -227,6 +229,36 @@ mem_save_group(void *ctx, const MarmotGroup *group)
     mc->groups[mc->group_count] = group_deep_copy(group);
     if (!mc->groups[mc->group_count]) return MARMOT_ERR_MEMORY;
     mc->group_count++;
+    return MARMOT_OK;
+}
+
+static MarmotError
+mem_delete_group(void *ctx, const MarmotGroupId *gid)
+{
+    MemCtx *mc = ctx;
+    if (!gid) return MARMOT_ERR_INVALID_ARG;
+
+    for (size_t i = 0; i < mc->group_count; i++) {
+        if (marmot_group_id_equal(&mc->groups[i]->mls_group_id, gid)) {
+            marmot_group_free(mc->groups[i]);
+            if (i < mc->group_count - 1)
+                mc->groups[i] = mc->groups[mc->group_count - 1];
+            mc->group_count--;
+            break;
+        }
+    }
+
+    for (size_t i = 0; i < mc->relay_count; ) {
+        if (marmot_group_id_equal(&mc->relays[i].gid, gid)) {
+            relay_entry_clear(&mc->relays[i]);
+            if (i < mc->relay_count - 1)
+                mc->relays[i] = mc->relays[mc->relay_count - 1];
+            mc->relay_count--;
+        } else {
+            i++;
+        }
+    }
+
     return MARMOT_OK;
 }
 
@@ -438,6 +470,20 @@ static MarmotError
 mem_save_welcome(void *ctx, const MarmotWelcome *welcome)
 {
     MemCtx *mc = ctx;
+
+    /* Upsert by stable welcome id, falling back to wrapper id for callers that
+     * only know the gift-wrap identifier. */
+    for (size_t i = 0; i < mc->welcome_count; i++) {
+        if (memcmp(mc->welcomes[i]->id, welcome->id, 32) == 0 ||
+            memcmp(mc->welcomes[i]->wrapper_event_id, welcome->wrapper_event_id, 32) == 0) {
+            MarmotWelcome *copy = welcome_deep_copy(welcome);
+            if (!copy) return MARMOT_ERR_MEMORY;
+            marmot_welcome_free(mc->welcomes[i]);
+            mc->welcomes[i] = copy;
+            return MARMOT_OK;
+        }
+    }
+
     if (mc->welcome_count >= mc->welcome_cap) {
         size_t new_cap = mc->welcome_cap ? mc->welcome_cap * 2 : 16;
         MarmotWelcome **arr = realloc(mc->welcomes, new_cap * sizeof(MarmotWelcome *));
@@ -795,6 +841,25 @@ mem_save_exporter_secret(void *ctx, const MarmotGroupId *gid,
     return MARMOT_OK;
 }
 
+static MarmotError
+mem_delete_exporter_secret(void *ctx, const MarmotGroupId *gid, uint64_t epoch)
+{
+    MemCtx *mc = ctx;
+    if (!gid) return MARMOT_ERR_INVALID_ARG;
+
+    for (size_t i = 0; i < mc->secret_count; i++) {
+        if (mc->secrets[i].epoch == epoch &&
+            marmot_group_id_equal(&mc->secrets[i].mls_group_id, gid)) {
+            marmot_group_id_free(&mc->secrets[i].mls_group_id);
+            if (i < mc->secret_count - 1)
+                mc->secrets[i] = mc->secrets[mc->secret_count - 1];
+            mc->secret_count--;
+            return MARMOT_OK;
+        }
+    }
+    return MARMOT_ERR_STORAGE_NOT_FOUND;
+}
+
 /* ── Snapshot operations ──────────────────────────────────────────────── */
 
 /*
@@ -957,6 +1022,7 @@ marmot_storage_memory_new(void)
     s->find_group_by_mls_id = mem_find_group_by_mls_id;
     s->find_group_by_nostr_id = mem_find_group_by_nostr_id;
     s->save_group = mem_save_group;
+    s->delete_group = mem_delete_group;
     s->messages = mem_messages;
     s->last_message = mem_last_message;
 
@@ -986,6 +1052,7 @@ marmot_storage_memory_new(void)
     /* Exporter secret ops */
     s->get_exporter_secret = mem_get_exporter_secret;
     s->save_exporter_secret = mem_save_exporter_secret;
+    s->delete_exporter_secret = mem_delete_exporter_secret;
 
     /* Snapshot ops */
     s->create_snapshot = mem_create_snapshot;

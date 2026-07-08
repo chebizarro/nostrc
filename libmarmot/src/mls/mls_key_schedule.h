@@ -74,17 +74,40 @@ int mls_key_schedule_derive(const uint8_t *init_secret_prev,
  * structure as the ratchet tree.
  * ──────────────────────────────────────────────────────────────────────── */
 
+/** Maximum skipped message keys retained per sender ratchet chain. */
+#define MLS_SECRET_TREE_MAX_SKIPPED_MESSAGE_KEYS 32
+
+/**
+ * MlsMessageKeys:
+ *
+ * The key and nonce for encrypting/decrypting a single message.
+ */
+typedef struct {
+    uint8_t  key[MLS_AEAD_KEY_LEN];
+    uint8_t  nonce[MLS_AEAD_NONCE_LEN];
+    uint32_t generation;
+} MlsMessageKeys;
+
+/** A cached skipped message key, consumed at most once. */
+typedef struct {
+    bool valid;
+    MlsMessageKeys keys;
+} MlsSkippedMessageKey;
+
 /**
  * MlsSenderRatchet:
  *
  * Per-sender ratchet state for deriving message keys.
- * Each sender gets a handshake and application key chain.
+ * Each sender gets a handshake and application key chain plus bounded
+ * skipped-key caches for out-of-order decryption.
  */
 typedef struct {
     uint8_t  handshake_secret[MLS_HASH_LEN];
     uint8_t  application_secret[MLS_HASH_LEN];
     uint32_t handshake_generation;
     uint32_t application_generation;
+    MlsSkippedMessageKey handshake_skipped[MLS_SECRET_TREE_MAX_SKIPPED_MESSAGE_KEYS];
+    MlsSkippedMessageKey application_skipped[MLS_SECRET_TREE_MAX_SKIPPED_MESSAGE_KEYS];
 } MlsSenderRatchet;
 
 /**
@@ -118,17 +141,6 @@ int mls_secret_tree_init(MlsSecretTree *st,
 void mls_secret_tree_free(MlsSecretTree *st);
 
 /**
- * MlsMessageKeys:
- *
- * The key and nonce for encrypting/decrypting a single message.
- */
-typedef struct {
-    uint8_t  key[MLS_AEAD_KEY_LEN];
-    uint8_t  nonce[MLS_AEAD_NONCE_LEN];
-    uint32_t generation;
-} MlsMessageKeys;
-
-/**
  * Derive message keys for a sender at the given generation.
  *
  * For encryption: call with is_handshake=false for application messages.
@@ -146,7 +158,9 @@ int mls_secret_tree_derive_keys(MlsSecretTree *st, uint32_t leaf_index,
 /**
  * Derive message keys for decrypting a message at a specific generation.
  *
- * Advances the ratchet forward if needed (up to max_forward_distance).
+ * Advances the ratchet forward if needed (up to max_forward_distance),
+ * retaining skipped intervening keys in a bounded cache for out-of-order
+ * delivery. Past cached keys are consumed once; replays fail.
  *
  * @param st                  The secret tree
  * @param leaf_index          Sender's leaf index

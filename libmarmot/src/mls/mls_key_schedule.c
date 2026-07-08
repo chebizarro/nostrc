@@ -182,23 +182,40 @@ populate_tree(uint8_t (*secrets)[MLS_HASH_LEN], uint32_t node_idx,
     uint32_t n_nodes = mls_tree_node_width(n_leaves);
     if (node_idx >= n_nodes) return 0;
 
-    memcpy(secrets[node_idx], parent_secret, MLS_HASH_LEN);
+    if (mls_tree_is_leaf(node_idx)) {
+        /* Retain only leaf secrets, and only until that sender ratchet is
+         * first initialized.  Internal/node secrets are never persisted after
+         * their children have been derived. */
+        memcpy(secrets[node_idx], parent_secret, MLS_HASH_LEN);
+        return 0;
+    }
 
-    if (!mls_tree_is_leaf(node_idx)) {
-        uint32_t l = mls_tree_left(node_idx);
-        uint32_t r = mls_tree_right(node_idx);
+    uint32_t l = mls_tree_left(node_idx);
+    uint32_t r = mls_tree_right(node_idx);
 
-        uint8_t left_secret[MLS_HASH_LEN], right_secret[MLS_HASH_LEN];
-        if (derive_tree_left(left_secret, parent_secret) != 0) return -1;
-        if (derive_tree_right(right_secret, parent_secret) != 0) return -1;
-
-        if (populate_tree(secrets, l, n_leaves, left_secret) != 0) return -1;
-        if (populate_tree(secrets, r, n_leaves, right_secret) != 0) return -1;
-
+    uint8_t left_secret[MLS_HASH_LEN] = {0};
+    uint8_t right_secret[MLS_HASH_LEN] = {0};
+    if (derive_tree_left(left_secret, parent_secret) != 0) {
         sodium_memzero(left_secret, sizeof(left_secret));
         sodium_memzero(right_secret, sizeof(right_secret));
+        return -1;
     }
-    return 0;
+    if (derive_tree_right(right_secret, parent_secret) != 0) {
+        sodium_memzero(left_secret, sizeof(left_secret));
+        sodium_memzero(right_secret, sizeof(right_secret));
+        return -1;
+    }
+
+    int rc = 0;
+    if (populate_tree(secrets, l, n_leaves, left_secret) != 0)
+        rc = -1;
+    if (rc == 0 && populate_tree(secrets, r, n_leaves, right_secret) != 0)
+        rc = -1;
+
+    sodium_memzero(left_secret, sizeof(left_secret));
+    sodium_memzero(right_secret, sizeof(right_secret));
+    sodium_memzero(secrets[node_idx], MLS_HASH_LEN);
+    return rc;
 }
 
 int
@@ -270,8 +287,11 @@ init_sender_ratchet(MlsSecretTree *st, uint32_t leaf_index)
                                       leaf_secret, "handshake", NULL, 0) != 0)
         return -1;
     if (mls_crypto_expand_with_label(ratchet->application_secret, MLS_HASH_LEN,
-                                      leaf_secret, "application", NULL, 0) != 0)
+                                      leaf_secret, "application", NULL, 0) != 0) {
+        sodium_memzero(ratchet->handshake_secret, MLS_HASH_LEN);
         return -1;
+    }
+    sodium_memzero(st->tree_secrets[node_idx], MLS_HASH_LEN);
     ratchet->handshake_generation = 0;
     ratchet->application_generation = 0;
     st->sender_initialized[leaf_index] = true;
@@ -306,6 +326,7 @@ ratchet_derive_keys(uint8_t secret[MLS_HASH_LEN], uint32_t *generation,
                                        secret, "secret", *generation) != 0)
         return -1;
 
+    sodium_memzero(secret, MLS_HASH_LEN);
     memcpy(secret, next_secret, MLS_HASH_LEN);
     sodium_memzero(next_secret, sizeof(next_secret));
     (*generation)++;
@@ -332,6 +353,51 @@ mls_secret_tree_derive_keys(MlsSecretTree *st, uint32_t leaf_index,
     }
 }
 
+static MlsSkippedMessageKey *
+ratchet_skipped_cache(MlsSenderRatchet *ratchet, bool is_handshake)
+{
+    return is_handshake ? ratchet->handshake_skipped
+                        : ratchet->application_skipped;
+}
+
+static uint32_t
+skipped_cache_valid_count(MlsSkippedMessageKey *cache)
+{
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < MLS_SECRET_TREE_MAX_SKIPPED_MESSAGE_KEYS; i++) {
+        if (cache[i].valid)
+            count++;
+    }
+    return count;
+}
+
+static int
+skipped_cache_take(MlsSkippedMessageKey *cache, uint32_t generation,
+                   MlsMessageKeys *out)
+{
+    for (uint32_t i = 0; i < MLS_SECRET_TREE_MAX_SKIPPED_MESSAGE_KEYS; i++) {
+        if (cache[i].valid && cache[i].keys.generation == generation) {
+            memcpy(out, &cache[i].keys, sizeof(*out));
+            sodium_memzero(&cache[i], sizeof(cache[i]));
+            return 0;
+        }
+    }
+    return MARMOT_ERR_MESSAGE;
+}
+
+static int
+skipped_cache_add(MlsSkippedMessageKey *cache, const MlsMessageKeys *keys)
+{
+    for (uint32_t i = 0; i < MLS_SECRET_TREE_MAX_SKIPPED_MESSAGE_KEYS; i++) {
+        if (!cache[i].valid) {
+            memcpy(&cache[i].keys, keys, sizeof(cache[i].keys));
+            cache[i].valid = true;
+            return 0;
+        }
+    }
+    return MARMOT_ERR_MESSAGE;
+}
+
 int
 mls_secret_tree_get_keys_for_generation(MlsSecretTree *st, uint32_t leaf_index,
                                          bool is_handshake, uint32_t generation,
@@ -350,27 +416,34 @@ mls_secret_tree_get_keys_for_generation(MlsSecretTree *st, uint32_t leaf_index,
     uint32_t *gen = is_handshake
                      ? &ratchet->handshake_generation
                      : &ratchet->application_generation;
+    MlsSkippedMessageKey *cache = ratchet_skipped_cache(ratchet, is_handshake);
 
-    /* Check that the requested generation isn't too far in the past */
-    if (generation < *gen) {
-        /* Would need out-of-order handling — not implemented yet.
-         * For now, return error for past generations. */
-        return MARMOT_ERR_WRONG_EPOCH;
-    }
+    /* Past generations are only accepted if they were retained as skipped
+     * keys.  Taking a cached key wipes it, so replaying that generation fails. */
+    if (generation < *gen)
+        return skipped_cache_take(cache, generation, out);
 
-    /* Check forward distance */
-    if (generation - *gen > max_forward_distance)
+    uint32_t distance = generation - *gen;
+    if (distance > max_forward_distance ||
+        distance > MLS_SECRET_TREE_MAX_SKIPPED_MESSAGE_KEYS)
         return MARMOT_ERR_MESSAGE;
 
-    /* Advance ratchet to the requested generation */
+    /* Ensure the bounded cache can retain every intervening skipped key before
+     * mutating ratchet state. */
+    uint32_t valid = skipped_cache_valid_count(cache);
+    if (distance > MLS_SECRET_TREE_MAX_SKIPPED_MESSAGE_KEYS - valid)
+        return MARMOT_ERR_MESSAGE;
+
     while (*gen < generation) {
-        MlsMessageKeys dummy;
-        if (ratchet_derive_keys(secret, gen, &dummy) != 0)
+        MlsMessageKeys skipped;
+        if (ratchet_derive_keys(secret, gen, &skipped) != 0)
             return -1;
-        sodium_memzero(&dummy, sizeof(dummy));
+        int rc = skipped_cache_add(cache, &skipped);
+        sodium_memzero(&skipped, sizeof(skipped));
+        if (rc != 0)
+            return rc;
     }
 
-    /* Now derive keys at the target generation */
     return ratchet_derive_keys(secret, gen, out);
 }
 
