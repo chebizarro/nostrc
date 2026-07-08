@@ -467,8 +467,29 @@ ndb_save_group(void *ctx, const MarmotGroup *group)
     free(blob);
 
     if (rc != 0) { mdb_txn_abort(txn); return MARMOT_ERR_STORAGE; }
-    mdb_txn_commit(txn);
-    return MARMOT_OK;
+    rc = mdb_txn_commit(txn);
+    return rc == 0 ? MARMOT_OK : MARMOT_ERR_STORAGE;
+}
+
+static MarmotError
+ndb_delete_group(void *ctx, const MarmotGroupId *gid)
+{
+    NdbCtx *nc = ctx;
+    if (!gid || !gid->data) return MARMOT_ERR_INVALID_ARG;
+
+    MDB_txn *txn;
+    if (mdb_txn_begin(nc->mls_env, NULL, 0, &txn) != 0)
+        return MARMOT_ERR_STORAGE;
+
+    MDB_val k = { .mv_size = gid->len, .mv_data = (void *)gid->data };
+    int rc = mdb_del(txn, nc->dbi_relays, &k, NULL);
+    if (rc != 0 && rc != MDB_NOTFOUND) { mdb_txn_abort(txn); return MARMOT_ERR_STORAGE; }
+
+    rc = mdb_del(txn, nc->dbi_groups, &k, NULL);
+    if (rc != 0 && rc != MDB_NOTFOUND) { mdb_txn_abort(txn); return MARMOT_ERR_STORAGE; }
+
+    rc = mdb_txn_commit(txn);
+    return rc == 0 ? MARMOT_OK : MARMOT_ERR_STORAGE;
 }
 
 /* ── Message operations (via nostrdb for events + LMDB for metadata) ──── */
@@ -1384,8 +1405,28 @@ ndb_save_exporter_secret(void *ctx, const MarmotGroupId *gid,
     int rc = mdb_put(txn, nc->dbi_secrets, &k, &v, 0);
 
     if (rc != 0) { mdb_txn_abort(txn); return MARMOT_ERR_STORAGE; }
-    mdb_txn_commit(txn);
-    return MARMOT_OK;
+    rc = mdb_txn_commit(txn);
+    return rc == 0 ? MARMOT_OK : MARMOT_ERR_STORAGE;
+}
+
+static MarmotError
+ndb_delete_exporter_secret(void *ctx, const MarmotGroupId *gid, uint64_t epoch)
+{
+    NdbCtx *nc = ctx;
+
+    uint8_t key_buf[256];
+    size_t key_len = make_secret_key(gid, epoch, key_buf, sizeof(key_buf));
+    if (key_len == 0) return MARMOT_ERR_INVALID_ARG;
+
+    MDB_txn *txn;
+    if (mdb_txn_begin(nc->mls_env, NULL, 0, &txn) != 0)
+        return MARMOT_ERR_STORAGE;
+
+    MDB_val k = { .mv_size = key_len, .mv_data = key_buf };
+    int rc = mdb_del(txn, nc->dbi_secrets, &k, NULL);
+    if (rc != 0 && rc != MDB_NOTFOUND) { mdb_txn_abort(txn); return MARMOT_ERR_STORAGE; }
+    rc = mdb_txn_commit(txn);
+    return rc == 0 ? MARMOT_OK : MARMOT_ERR_STORAGE;
 }
 
 /* ── Snapshot operations (via LMDB) ────────────────────────────────────── */
@@ -1635,6 +1676,7 @@ marmot_storage_nostrdb_new(void *ndb_handle, const char *mls_state_dir)
     s->find_group_by_mls_id = ndb_find_group_by_mls_id;
     s->find_group_by_nostr_id = ndb_find_group_by_nostr_id;
     s->save_group = ndb_save_group;
+    s->delete_group = ndb_delete_group;
     s->messages = ndb_messages;
     s->last_message = ndb_last_message;
     s->save_message = ndb_save_message;
@@ -1654,6 +1696,7 @@ marmot_storage_nostrdb_new(void *ndb_handle, const char *mls_state_dir)
     s->replace_group_relays = ndb_replace_group_relays;
     s->get_exporter_secret = ndb_get_exporter_secret;
     s->save_exporter_secret = ndb_save_exporter_secret;
+    s->delete_exporter_secret = ndb_delete_exporter_secret;
     s->create_snapshot = ndb_create_snapshot;
     s->rollback_snapshot = ndb_rollback_snapshot;
     s->release_snapshot = ndb_release_snapshot;

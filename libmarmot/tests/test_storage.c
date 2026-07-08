@@ -16,8 +16,12 @@
 
 typedef struct {
     int save_group_calls;
+    int delete_group_calls;
     int mls_store_calls;
+    int mls_delete_calls;
     int save_exporter_secret_calls;
+    int delete_exporter_secret_calls;
+    int replace_group_relays_calls;
 } FailingStorageCtx;
 
 static void test_destroy(void *ctx)
@@ -25,11 +29,25 @@ static void test_destroy(void *ctx)
     free(ctx);
 }
 
+static MarmotError test_save_group_ok(void *ctx, const MarmotGroup *group)
+{
+    (void)group;
+    ((FailingStorageCtx *)ctx)->save_group_calls++;
+    return MARMOT_OK;
+}
+
 static MarmotError test_save_group_fails(void *ctx, const MarmotGroup *group)
 {
     (void)group;
     ((FailingStorageCtx *)ctx)->save_group_calls++;
     return MARMOT_ERR_STORAGE;
+}
+
+static MarmotError test_delete_group_ok(void *ctx, const MarmotGroupId *gid)
+{
+    (void)gid;
+    ((FailingStorageCtx *)ctx)->delete_group_calls++;
+    return MARMOT_OK;
 }
 
 static MarmotError test_mls_store_ok(void *ctx, const char *label,
@@ -53,7 +71,8 @@ static MarmotError test_mls_store_fails(void *ctx, const char *label,
 static MarmotError test_mls_delete_ok(void *ctx, const char *label,
                                        const uint8_t *key, size_t key_len)
 {
-    (void)ctx; (void)label; (void)key; (void)key_len;
+    (void)label; (void)key; (void)key_len;
+    ((FailingStorageCtx *)ctx)->mls_delete_calls++;
     return MARMOT_OK;
 }
 
@@ -65,6 +84,25 @@ static MarmotError test_save_exporter_secret_ok(void *ctx,
     (void)gid; (void)epoch; (void)secret;
     ((FailingStorageCtx *)ctx)->save_exporter_secret_calls++;
     return MARMOT_OK;
+}
+
+static MarmotError test_delete_exporter_secret_ok(void *ctx,
+                                                   const MarmotGroupId *gid,
+                                                   uint64_t epoch)
+{
+    (void)gid; (void)epoch;
+    ((FailingStorageCtx *)ctx)->delete_exporter_secret_calls++;
+    return MARMOT_OK;
+}
+
+static MarmotError test_replace_group_relays_fails(void *ctx,
+                                                    const MarmotGroupId *gid,
+                                                    const char **urls,
+                                                    size_t count)
+{
+    (void)gid; (void)urls; (void)count;
+    ((FailingStorageCtx *)ctx)->replace_group_relays_calls++;
+    return MARMOT_ERR_STORAGE;
 }
 
 static MarmotError test_save_key_package_info_ok(void *ctx,
@@ -376,6 +414,8 @@ static void test_create_group_reports_save_group_failure(void)
     s->mls_store = test_mls_store_ok;
     s->mls_delete = test_mls_delete_ok;
     s->save_exporter_secret = test_save_exporter_secret_ok;
+    s->delete_exporter_secret = test_delete_exporter_secret_ok;
+    s->delete_group = test_delete_group_ok;
     s->save_group = test_save_group_fails;
 
     Marmot *m = marmot_new(s);
@@ -394,6 +434,50 @@ static void test_create_group_reports_save_group_failure(void)
     assert(ctx->mls_store_calls == 1);
     assert(ctx->save_exporter_secret_calls == 1);
     assert(ctx->save_group_calls == 1);
+    assert(ctx->delete_exporter_secret_calls == 1);
+    assert(ctx->mls_delete_calls == 1);
+    assert(ctx->delete_group_calls == 0);
+    assert(result.group == NULL);
+
+    marmot_create_group_result_free(&result);
+    marmot_free(m);
+}
+
+static void test_create_group_rolls_back_after_relay_failure(void)
+{
+    FailingStorageCtx *ctx = NULL;
+    MarmotStorage *s = make_test_storage(&ctx);
+    s->mls_store = test_mls_store_ok;
+    s->mls_delete = test_mls_delete_ok;
+    s->save_exporter_secret = test_save_exporter_secret_ok;
+    s->delete_exporter_secret = test_delete_exporter_secret_ok;
+    s->save_group = test_save_group_ok;
+    s->delete_group = test_delete_group_ok;
+    s->replace_group_relays = test_replace_group_relays_fails;
+
+    Marmot *m = marmot_new(s);
+    assert(m != NULL);
+
+    uint8_t creator_pk[32];
+    memset(creator_pk, 0x43, sizeof(creator_pk));
+    const char *relays[] = { "wss://relay.example.com" };
+    MarmotGroupConfig config;
+    memset(&config, 0, sizeof(config));
+    config.name = "relay failure group";
+    config.relay_urls = (char **)relays;
+    config.relay_count = 1;
+
+    MarmotCreateGroupResult result;
+    memset(&result, 0, sizeof(result));
+    MarmotError err = marmot_create_group(m, creator_pk, NULL, 0, &config, &result);
+    assert(err == MARMOT_ERR_STORAGE);
+    assert(ctx->mls_store_calls == 1);
+    assert(ctx->save_exporter_secret_calls == 1);
+    assert(ctx->save_group_calls == 1);
+    assert(ctx->replace_group_relays_calls == 1);
+    assert(ctx->delete_group_calls == 1);
+    assert(ctx->delete_exporter_secret_calls == 1);
+    assert(ctx->mls_delete_calls == 1);
     assert(result.group == NULL);
 
     marmot_create_group_result_free(&result);
@@ -446,6 +530,7 @@ int main(void)
     TEST(test_storage_memory_snapshots_unsupported);
     TEST(test_public_apis_reject_missing_storage_methods);
     TEST(test_create_group_reports_save_group_failure);
+    TEST(test_create_group_rolls_back_after_relay_failure);
     TEST(test_key_package_reports_private_store_failure);
     TEST(test_storage_not_persistent);
     printf("All storage tests passed.\n");

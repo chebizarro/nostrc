@@ -54,6 +54,10 @@ typedef struct MarmotStorage {
     /** Save (insert or upsert) a group. Storage copies what it needs. */
     MarmotError (*save_group)(void *ctx, const MarmotGroup *group);
 
+    /** Delete a group by MLS group ID. Must also remove group-scoped relay metadata. */
+    MarmotError (*delete_group)(void *ctx,
+                                 const MarmotGroupId *mls_group_id);
+
     /** Get messages for a group with pagination. Caller frees array + messages. */
     MarmotError (*messages)(void *ctx,
                              const MarmotGroupId *group_id,
@@ -167,6 +171,11 @@ typedef struct MarmotStorage {
                                          const MarmotGroupId *group_id,
                                          uint64_t epoch,
                                          const uint8_t secret[32]);
+
+    /** Delete exporter secret for a group+epoch. */
+    MarmotError (*delete_exporter_secret)(void *ctx,
+                                           const MarmotGroupId *group_id,
+                                           uint64_t epoch);
 
     /* ── Snapshot operations (for commit race resolution) ─────────────── */
 

@@ -391,8 +391,9 @@ marmot_create_group(Marmot *m,
 
     memset(result, 0, sizeof(*result));
 
-    if (!m->storage || !m->storage->save_group || !m->storage->mls_store ||
-        !m->storage->save_exporter_secret)
+    if (!m->storage || !m->storage->save_group || !m->storage->delete_group ||
+        !m->storage->mls_store || !m->storage->mls_delete ||
+        !m->storage->save_exporter_secret || !m->storage->delete_exporter_secret)
         return MARMOT_ERR_STORAGE;
 
     /* Ensure identity */
@@ -542,12 +543,9 @@ marmot_create_group(Marmot *m,
     err = m->storage->save_exporter_secret(m->storage->ctx, &gid,
                                            mls_group.epoch,
                                            mls_group.epoch_secrets.exporter_secret);
-    marmot_group_id_free(&gid);
     if (err != MARMOT_OK) {
-        /* Best-effort rollback of MLS state; there is no exporter-secret
-         * delete hook in the storage contract. */
-        if (m->storage->mls_delete)
-            m->storage->mls_delete(m->storage->ctx, "mls_group", mls_group_id, 32);
+        m->storage->mls_delete(m->storage->ctx, "mls_group", mls_group_id, 32);
+        marmot_group_id_free(&gid);
         mls_group_free(&mls_group);
         marmot_create_group_result_free(result);
         return err;
@@ -557,10 +555,9 @@ marmot_create_group(Marmot *m,
      * MLS state was not persisted. */
     err = m->storage->save_group(m->storage->ctx, result->group);
     if (err != MARMOT_OK) {
-        /* Best-effort rollback of MLS state; the storage API has no group or
-         * exporter-secret delete operation. */
-        if (m->storage->mls_delete)
-            m->storage->mls_delete(m->storage->ctx, "mls_group", mls_group_id, 32);
+        m->storage->delete_exporter_secret(m->storage->ctx, &gid, mls_group.epoch);
+        m->storage->mls_delete(m->storage->ctx, "mls_group", mls_group_id, 32);
+        marmot_group_id_free(&gid);
         mls_group_free(&mls_group);
         marmot_create_group_result_free(result);
         return err;
@@ -577,12 +574,17 @@ marmot_create_group(Marmot *m,
                                                (const char **)config->relay_urls,
                                                config->relay_count);
         if (err != MARMOT_OK) {
+            m->storage->delete_group(m->storage->ctx, &result->group->mls_group_id);
+            m->storage->delete_exporter_secret(m->storage->ctx, &gid, mls_group.epoch);
+            m->storage->mls_delete(m->storage->ctx, "mls_group", mls_group_id, 32);
+            marmot_group_id_free(&gid);
             mls_group_free(&mls_group);
             marmot_create_group_result_free(result);
             return err;
         }
     }
 
+    marmot_group_id_free(&gid);
     mls_group_free(&mls_group);
     return MARMOT_OK;
 }
