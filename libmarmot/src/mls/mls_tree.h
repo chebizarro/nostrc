@@ -255,8 +255,16 @@ int mls_tree_hash(const MlsRatchetTree *tree, uint32_t node_idx,
 int mls_tree_root_hash(const MlsRatchetTree *tree, uint8_t out[MLS_HASH_LEN]);
 
 /* ──────────────────────────────────────────────────────────────────────────
- * TLS serialization for tree nodes
+ * TLS serialization for whole ratchet trees
  * ──────────────────────────────────────────────────────────────────────── */
+
+/** Serialize a RatchetTree to MLS TLS format (RatchetTree nodes<V>).  Caller frees *out_data. */
+int mls_ratchet_tree_serialize(const MlsRatchetTree *tree,
+                               uint8_t **out_data, size_t *out_len);
+
+/** Deserialize a RatchetTree from MLS TLS format (RatchetTree nodes<V>). */
+int mls_ratchet_tree_deserialize(const uint8_t *data, size_t len,
+                                 MlsRatchetTree *tree);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Parent hash (RFC 9420 §7.9)

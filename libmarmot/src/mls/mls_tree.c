@@ -199,6 +199,8 @@ mls_leaf_node_clone(MlsLeafNode *dst, const MlsLeafNode *src)
     dst->signature_len = src->signature_len;
     dst->parent_hash_len = src->parent_hash_len;
     dst->leaf_node_source = src->leaf_node_source;
+    dst->lifetime_not_before = src->lifetime_not_before;
+    dst->lifetime_not_after = src->lifetime_not_after;
 
     /* Deep-copy heap allocations */
     dst->credential_identity = NULL;
@@ -680,6 +682,143 @@ mls_tree_root_hash(const MlsRatchetTree *tree, uint8_t out[MLS_HASH_LEN])
     return mls_tree_hash(tree, mls_tree_root(tree->n_leaves), out);
 }
 
+int
+mls_ratchet_tree_serialize(const MlsRatchetTree *tree,
+                           uint8_t **out_data, size_t *out_len)
+{
+    if (!tree || !out_data || !out_len) return -1;
+    if (tree->n_leaves == 0 || tree->n_nodes == 0 || !tree->nodes) return -1;
+
+    uint32_t node_count = tree->n_nodes;
+    while (node_count > 0 && tree->nodes[node_count - 1].type == MLS_NODE_BLANK)
+        node_count--;
+    if (node_count == 0) return -1;
+
+    MlsTlsBuf nodes;
+    if (mls_tls_buf_init(&nodes, node_count * 64 + 8) != 0) return -1;
+
+    for (uint32_t i = 0; i < node_count; i++) {
+        const MlsNode *node = &tree->nodes[i];
+        if (node->type == MLS_NODE_BLANK) {
+            if (mls_tls_write_u8(&nodes, 0) != 0) goto fail_nodes; /* optional<Node>: absent */
+        } else if (node->type == MLS_NODE_LEAF && mls_tree_is_leaf(i)) {
+            if (mls_tls_write_u8(&nodes, 1) != 0 || /* present */
+                mls_tls_write_u8(&nodes, 1) != 0 || /* NodeType::leaf */
+                mls_leaf_node_serialize(&node->leaf, &nodes) != 0) goto fail_nodes;
+        } else if (node->type == MLS_NODE_PARENT && !mls_tree_is_leaf(i)) {
+            if (mls_tls_write_u8(&nodes, 1) != 0 || /* present */
+                mls_tls_write_u8(&nodes, 2) != 0 || /* NodeType::parent */
+                mls_parent_node_serialize(&node->parent, &nodes) != 0) goto fail_nodes;
+        } else {
+            goto fail_nodes;
+        }
+    }
+
+    MlsTlsBuf out;
+    if (mls_tls_buf_init(&out, nodes.len + 4) != 0) goto fail_nodes;
+    if (mls_tls_write_opaque32(&out, nodes.data, nodes.len) != 0) {
+        mls_tls_buf_free(&out);
+        goto fail_nodes;
+    }
+    mls_tls_buf_free(&nodes);
+    *out_data = out.data;
+    *out_len = out.len;
+    return 0;
+
+fail_nodes:
+    mls_tls_buf_free(&nodes);
+    return -1;
+}
+
+int
+mls_ratchet_tree_deserialize(const uint8_t *data, size_t len,
+                             MlsRatchetTree *tree)
+{
+    if (!data || !tree) return -1;
+    memset(tree, 0, sizeof(*tree));
+
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, data, len);
+
+    uint8_t *nodes_data = NULL;
+    size_t nodes_len = 0;
+    if (mls_tls_read_opaque32(&reader, &nodes_data, &nodes_len) != 0) return -1;
+    if (!mls_tls_reader_done(&reader) || nodes_len == 0) {
+        free(nodes_data);
+        return -1;
+    }
+
+    MlsTlsReader nodes_reader;
+    mls_tls_reader_init(&nodes_reader, nodes_data, nodes_len);
+
+    MlsRatchetTree tmp;
+    memset(&tmp, 0, sizeof(tmp));
+    uint32_t capacity = 0;
+
+    while (!mls_tls_reader_done(&nodes_reader)) {
+        if (tmp.n_nodes == capacity) {
+            uint32_t new_capacity = capacity ? capacity * 2 : 16;
+            if (new_capacity <= capacity) goto fail;
+            MlsNode *new_nodes = realloc(tmp.nodes, (size_t)new_capacity * sizeof(MlsNode));
+            if (!new_nodes) goto fail;
+            tmp.nodes = new_nodes;
+            capacity = new_capacity;
+        }
+
+        MlsNode *node = &tmp.nodes[tmp.n_nodes];
+        memset(node, 0, sizeof(*node));
+        node->type = MLS_NODE_BLANK;
+
+        uint8_t present = 0;
+        if (mls_tls_read_u8(&nodes_reader, &present) != 0) goto fail;
+        if (present == 1) {
+            uint8_t node_type = 0;
+            if (mls_tls_read_u8(&nodes_reader, &node_type) != 0) goto fail;
+            if (node_type == 1 && mls_tree_is_leaf(tmp.n_nodes)) {
+                node->type = MLS_NODE_LEAF;
+                if (mls_leaf_node_deserialize(&nodes_reader, &node->leaf) != 0) goto fail;
+            } else if (node_type == 2 && !mls_tree_is_leaf(tmp.n_nodes)) {
+                node->type = MLS_NODE_PARENT;
+                if (mls_parent_node_deserialize(&nodes_reader, &node->parent) != 0) goto fail;
+            } else {
+                goto fail;
+            }
+        } else if (present != 0) {
+            goto fail;
+        }
+        tmp.n_nodes++;
+    }
+
+    if (tmp.n_nodes == 0 || tmp.nodes[tmp.n_nodes - 1].type == MLS_NODE_BLANK) goto fail;
+
+    uint32_t full_nodes = 1;
+    while (full_nodes < tmp.n_nodes) {
+        if (full_nodes > (UINT32_MAX - 1) / 2) goto fail;
+        full_nodes = full_nodes * 2 + 1;
+    }
+    if (full_nodes > tmp.n_nodes) {
+        MlsNode *new_nodes = realloc(tmp.nodes, (size_t)full_nodes * sizeof(MlsNode));
+        if (!new_nodes) goto fail;
+        tmp.nodes = new_nodes;
+        for (uint32_t i = tmp.n_nodes; i < full_nodes; i++) {
+            memset(&tmp.nodes[i], 0, sizeof(MlsNode));
+            tmp.nodes[i].type = MLS_NODE_BLANK;
+        }
+        tmp.n_nodes = full_nodes;
+    }
+    tmp.n_leaves = (tmp.n_nodes + 1) / 2;
+    if (mls_tree_node_width(tmp.n_leaves) != tmp.n_nodes) goto fail;
+
+    free(nodes_data);
+    *tree = tmp;
+    return 0;
+
+fail:
+    free(nodes_data);
+    mls_tree_free(&tmp);
+    return -1;
+}
+
 static int
 subtree_contains_node(const MlsRatchetTree *tree, uint32_t subtree_root, uint32_t node_idx)
 {
@@ -688,6 +827,91 @@ subtree_contains_node(const MlsRatchetTree *tree, uint32_t subtree_root, uint32_
     if (mls_tree_is_leaf(subtree_root)) return 0;
     return subtree_contains_node(tree, mls_tree_left(subtree_root), node_idx) ||
            subtree_contains_node(tree, mls_tree_right(subtree_root), node_idx);
+}
+
+static int
+parent_node_has_unmerged_leaf(const MlsParentNode *parent, uint32_t leaf_idx)
+{
+    if (!parent) return 0;
+    for (size_t i = 0; i < parent->unmerged_leaf_count; i++) {
+        if (parent->unmerged_leaves[i] == leaf_idx) return 1;
+    }
+    return 0;
+}
+
+static int
+mls_parent_node_serialize_without_unmerged(const MlsParentNode *node,
+                                           const MlsParentNode *blanked,
+                                           MlsTlsBuf *buf)
+{
+    if (!node || !buf) return -1;
+    if (node->parent_hash_len > 0 && !node->parent_hash) return -1;
+    if (mls_tls_write_opaque16(buf, node->encryption_key, MLS_KEM_PK_LEN) != 0)
+        return -1;
+    if (mls_tls_write_opaque8(buf, node->parent_hash, node->parent_hash_len) != 0)
+        return -1;
+
+    size_t kept = 0;
+    for (size_t i = 0; i < node->unmerged_leaf_count; i++) {
+        if (!parent_node_has_unmerged_leaf(blanked, node->unmerged_leaves[i]))
+            kept++;
+    }
+    if (mls_tls_write_vli(buf, kept * 4) != 0) return -1;
+    for (size_t i = 0; i < node->unmerged_leaf_count; i++) {
+        if (parent_node_has_unmerged_leaf(blanked, node->unmerged_leaves[i]))
+            continue;
+        if (mls_tls_write_u32(buf, node->unmerged_leaves[i]) != 0) return -1;
+    }
+    return 0;
+}
+
+static int
+mls_tree_hash_with_unmerged_blanked(const MlsRatchetTree *tree, uint32_t node_idx,
+                                    const MlsParentNode *blanked,
+                                    uint8_t out[MLS_HASH_LEN])
+{
+    if (!tree || !out || node_idx >= tree->n_nodes) return -1;
+
+    MlsTlsBuf buf;
+    if (mls_tls_buf_init(&buf, 256) != 0) return -1;
+    const MlsNode *node = &tree->nodes[node_idx];
+
+    if (mls_tree_is_leaf(node_idx)) {
+        if (mls_tls_write_u8(&buf, 1) != 0) goto fail;
+        if (mls_tls_write_u32(&buf, mls_tree_node_to_leaf(node_idx)) != 0) goto fail;
+        if (node->type == MLS_NODE_LEAF &&
+            !parent_node_has_unmerged_leaf(blanked, mls_tree_node_to_leaf(node_idx))) {
+            if (mls_tls_write_u8(&buf, 1) != 0) goto fail;
+            if (mls_leaf_node_serialize(&node->leaf, &buf) != 0) goto fail;
+        } else {
+            if (mls_tls_write_u8(&buf, 0) != 0) goto fail;
+        }
+    } else {
+        if (mls_tls_write_u8(&buf, 2) != 0) goto fail;
+        if (node->type == MLS_NODE_PARENT) {
+            if (mls_tls_write_u8(&buf, 1) != 0) goto fail;
+            if (mls_parent_node_serialize_without_unmerged(&node->parent, blanked, &buf) != 0)
+                goto fail;
+        } else {
+            if (mls_tls_write_u8(&buf, 0) != 0) goto fail;
+        }
+        uint8_t left_hash[MLS_HASH_LEN];
+        if (mls_tree_hash_with_unmerged_blanked(tree, mls_tree_left(node_idx),
+                                                blanked, left_hash) != 0) goto fail;
+        if (mls_tls_write_opaque8(&buf, left_hash, MLS_HASH_LEN) != 0) goto fail;
+        uint8_t right_hash[MLS_HASH_LEN];
+        if (mls_tree_hash_with_unmerged_blanked(tree, mls_tree_right(node_idx),
+                                                blanked, right_hash) != 0) goto fail;
+        if (mls_tls_write_opaque8(&buf, right_hash, MLS_HASH_LEN) != 0) goto fail;
+    }
+
+    int rc = mls_crypto_hash(out, buf.data, buf.len);
+    mls_tls_buf_free(&buf);
+    return rc;
+
+fail:
+    mls_tls_buf_free(&buf);
+    return -1;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -724,9 +948,11 @@ mls_tree_parent_hash(const MlsRatchetTree *tree, uint32_t parent_node_idx,
         return -1;
     }
 
-    /* Compute original_sibling_tree_hash */
+    /* Compute original_sibling_tree_hash after blanking P.unmerged_leaves. */
     uint8_t sibling_hash[MLS_HASH_LEN];
-    if (mls_tree_hash(tree, sibling_idx, sibling_hash) != 0) return -1;
+    if (mls_tree_hash_with_unmerged_blanked(tree, sibling_idx,
+                                            &pnode->parent, sibling_hash) != 0)
+        return -1;
 
     /* Get this node's own parent_hash field (or empty if at root). */
     uint8_t parent_parent_hash[MLS_HASH_LEN];
@@ -766,39 +992,154 @@ fail:
     return -1;
 }
 
+static int
+node_parent_hash_field(const MlsRatchetTree *tree, uint32_t node_idx,
+                       const uint8_t **out, size_t *out_len)
+{
+    if (!tree || node_idx >= tree->n_nodes || !out || !out_len) return -1;
+    const MlsNode *node = &tree->nodes[node_idx];
+    *out = NULL;
+    *out_len = 0;
+    if (node->type == MLS_NODE_PARENT) {
+        *out = node->parent.parent_hash;
+        *out_len = node->parent.parent_hash_len;
+        return 1;
+    }
+    if (node->type == MLS_NODE_LEAF && node->leaf.leaf_node_source == 3) {
+        *out = node->leaf.parent_hash;
+        *out_len = node->leaf.parent_hash_len;
+        return 1;
+    }
+    return 0;
+}
+
+static int
+parent_unmerged_contains(const MlsParentNode *parent, uint32_t leaf_idx)
+{
+    if (!parent) return 0;
+    for (size_t i = 0; i < parent->unmerged_leaf_count; i++) {
+        if (parent->unmerged_leaves[i] == leaf_idx) return 1;
+    }
+    return 0;
+}
+
+static int
+parent_hash_step_valid(const MlsRatchetTree *tree, uint32_t child_node,
+                       uint32_t parent_node)
+{
+    if (!tree || parent_node >= tree->n_nodes || child_node >= tree->n_nodes) return 0;
+    const MlsNode *pnode = &tree->nodes[parent_node];
+    if (pnode->type != MLS_NODE_PARENT) return 0;
+    if (!subtree_contains_node(tree, parent_node, child_node)) return 0;
+
+    const uint8_t *received = NULL;
+    size_t received_len = 0;
+    int has_hash = node_parent_hash_field(tree, child_node, &received, &received_len);
+    if (has_hash != 1 || !received || received_len != MLS_HASH_LEN) return 0;
+
+    uint8_t expected[MLS_HASH_LEN];
+    if (mls_tree_parent_hash(tree, parent_node, child_node, expected) != 0) return 0;
+    if (memcmp(received, expected, MLS_HASH_LEN) != 0) return 0;
+
+    uint32_t left = mls_tree_left(parent_node);
+    uint32_t right = mls_tree_right(parent_node);
+    uint32_t path_child;
+    if (subtree_contains_node(tree, left, child_node))
+        path_child = left;
+    else if (subtree_contains_node(tree, right, child_node))
+        path_child = right;
+    else
+        return 0;
+
+    uint32_t *resolution = calloc(tree->n_nodes ? tree->n_nodes : 1, sizeof(uint32_t));
+    if (!resolution) return 0;
+    uint32_t resolution_len = 0;
+    if (mls_tree_resolution(tree, path_child, resolution, tree->n_nodes, &resolution_len) != 0) {
+        free(resolution);
+        return 0;
+    }
+
+    int child_in_resolution = 0;
+    size_t resolution_without_child = 0;
+    for (uint32_t i = 0; i < resolution_len; i++) {
+        if (resolution[i] == child_node) {
+            child_in_resolution = 1;
+        } else {
+            resolution_without_child++;
+            if (!mls_tree_is_leaf(resolution[i])) {
+                free(resolution);
+                return 0;
+            }
+            uint32_t leaf_idx = mls_tree_node_to_leaf(resolution[i]);
+            if (!parent_unmerged_contains(&pnode->parent, leaf_idx)) {
+                free(resolution);
+                return 0;
+            }
+        }
+    }
+    if (!child_in_resolution) {
+        free(resolution);
+        return 0;
+    }
+
+    size_t unmerged_in_subtree = 0;
+    for (size_t i = 0; i < pnode->parent.unmerged_leaf_count; i++) {
+        uint32_t leaf_node = mls_tree_leaf_to_node(pnode->parent.unmerged_leaves[i]);
+        if (subtree_contains_node(tree, path_child, leaf_node))
+            unmerged_in_subtree++;
+    }
+    free(resolution);
+    return unmerged_in_subtree == resolution_without_child;
+}
+
 int
 mls_tree_verify_parent_hashes(const MlsRatchetTree *tree)
 {
     if (!tree || tree->n_leaves == 0 || !tree->nodes) return -1;
-    uint32_t r = mls_tree_root(tree->n_leaves);
+    uint32_t root = mls_tree_root(tree->n_leaves);
 
-    for (uint32_t idx = 0; idx < tree->n_nodes; idx++) {
-        const MlsNode *node = &tree->nodes[idx];
-        const uint8_t *received = NULL;
-        size_t received_len = 0;
+    int *valid_parent = calloc(tree->n_nodes ? tree->n_nodes : 1, sizeof(int));
+    if (!valid_parent) return -1;
 
-        if (idx == r) {
-            if (node->type == MLS_NODE_PARENT && node->parent.parent_hash_len != 0)
-                return -1;
-            continue;
+    int changed = 1;
+    while (changed) {
+        changed = 0;
+        for (uint32_t p = 0; p < tree->n_nodes; p++) {
+            if (valid_parent[p] || tree->nodes[p].type != MLS_NODE_PARENT)
+                continue;
+
+            for (uint32_t d = 0; d < tree->n_nodes; d++) {
+                if (d == p) continue;
+                int candidate = 0;
+                if (tree->nodes[d].type == MLS_NODE_LEAF &&
+                    tree->nodes[d].leaf.leaf_node_source == 3) {
+                    candidate = 1;
+                } else if (tree->nodes[d].type == MLS_NODE_PARENT && valid_parent[d]) {
+                    candidate = 1;
+                }
+                if (!candidate) continue;
+                if (parent_hash_step_valid(tree, d, p)) {
+                    valid_parent[p] = 1;
+                    changed = 1;
+                    break;
+                }
+            }
         }
-
-        if (node->type == MLS_NODE_PARENT) {
-            received = node->parent.parent_hash;
-            received_len = node->parent.parent_hash_len;
-        } else if (node->type == MLS_NODE_LEAF && node->leaf.leaf_node_source == 3) {
-            received = node->leaf.parent_hash;
-            received_len = node->leaf.parent_hash_len;
-        } else {
-            continue;
-        }
-
-        if (!received || received_len != MLS_HASH_LEN) return -1;
-        uint32_t parent = mls_tree_parent(idx, tree->n_leaves);
-        uint8_t expected[MLS_HASH_LEN];
-        if (mls_tree_parent_hash(tree, parent, idx, expected) != 0) return -1;
-        if (memcmp(received, expected, MLS_HASH_LEN) != 0) return -1;
     }
+
+    for (uint32_t i = 0; i < tree->n_nodes; i++) {
+        if (tree->nodes[i].type == MLS_NODE_PARENT && !valid_parent[i]) {
+            free(valid_parent);
+            return -1;
+        }
+        if (i == root && tree->nodes[i].type == MLS_NODE_PARENT &&
+            tree->nodes[i].parent.parent_hash_len != 0) {
+            free(valid_parent);
+            return -1;
+        }
+    }
+
+    free(valid_parent);
     return 0;
 }
 

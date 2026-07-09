@@ -1600,7 +1600,154 @@ test_mdk_psk_secret_vectors(const char *vector_dir)
     MdkPskSecretVector vectors[20];
     size_t count = 0;
     assert(mdk_load_psk_secret_vectors(path, vectors, &count, 20) == 0);
-    print_deferred_loaded("psk_secret", count, "libmarmot has no exposed PSK-secret combiner yet");
+    assert(count > 0 && "psk_secret file exists but yielded zero ciphersuite-1 cases");
+
+    for (size_t v = 0; v < count; v++) {
+        MlsPskInput psks[16];
+        assert(vectors[v].psk_count <= 16);
+        for (size_t i = 0; i < vectors[v].psk_count; i++) {
+            psks[i].psk_id = vectors[v].psks[i].psk_id;
+            psks[i].psk_id_len = vectors[v].psks[i].psk_id_len;
+            psks[i].psk = vectors[v].psks[i].psk;
+            psks[i].psk_len = 32;
+            psks[i].psk_nonce = vectors[v].psks[i].psk_nonce;
+            psks[i].psk_nonce_len = 32;
+        }
+        uint8_t actual[MLS_HASH_LEN];
+        assert(mls_psk_secret_compute(psks, vectors[v].psk_count, actual) == 0);
+        assert_bytes_eq("psk_secret.combined", actual, vectors[v].psk_secret, MLS_HASH_LEN);
+    }
+    printf("PASS (%zu ciphersuite-1 PSK chains asserted)\n", count);
+}
+
+static int
+mdk_deserialize_proposal(const uint8_t *data, size_t len, MlsProposal *proposal)
+{
+    if (!data || !proposal) return -1;
+    MlsTlsReader reader;
+    memset(proposal, 0, sizeof(*proposal));
+    mls_tls_reader_init(&reader, data, len);
+    if (mls_tls_read_u16(&reader, &proposal->type) != 0) return -1;
+    switch (proposal->type) {
+    case MLS_PROPOSAL_ADD:
+        if (mls_key_package_deserialize(&reader, &proposal->add.key_package) != 0) goto fail;
+        break;
+    case MLS_PROPOSAL_UPDATE:
+        if (mls_leaf_node_deserialize(&reader, &proposal->update.leaf_node) != 0) goto fail;
+        break;
+    case MLS_PROPOSAL_REMOVE:
+        if (mls_tls_read_u32(&reader, &proposal->remove.removed_leaf) != 0) goto fail;
+        break;
+    default:
+        goto fail;
+    }
+    if (!mls_tls_reader_done(&reader)) goto fail;
+    return 0;
+fail:
+    mls_proposal_clear(proposal);
+    return -1;
+}
+
+static int
+mdk_subtree_is_blank(const MlsRatchetTree *tree, uint32_t node_idx)
+{
+    if (!tree || node_idx >= tree->n_nodes) return 1;
+    if (tree->nodes[node_idx].type != MLS_NODE_BLANK) return 0;
+    if (mls_tree_is_leaf(node_idx)) return 1;
+    return mdk_subtree_is_blank(tree, mls_tree_left(node_idx)) &&
+           mdk_subtree_is_blank(tree, mls_tree_right(node_idx));
+}
+
+static int
+mdk_truncate_blank_right_edge(MlsRatchetTree *tree)
+{
+    if (!tree) return -1;
+    while (tree->n_leaves > 1) {
+        uint32_t root = mls_tree_root(tree->n_leaves);
+        uint32_t right = mls_tree_right(root);
+        if (!mdk_subtree_is_blank(tree, right)) break;
+
+        uint32_t new_leaves = tree->n_leaves / 2;
+        uint32_t new_nodes_count = mls_tree_node_width(new_leaves);
+        for (uint32_t i = new_nodes_count; i < tree->n_nodes; i++)
+            mls_tree_blank_node(&tree->nodes[i]);
+        MlsNode *new_nodes = realloc(tree->nodes, (size_t)new_nodes_count * sizeof(MlsNode));
+        if (!new_nodes && new_nodes_count > 0) return -1;
+        tree->nodes = new_nodes;
+        tree->n_leaves = new_leaves;
+        tree->n_nodes = new_nodes_count;
+    }
+    return 0;
+}
+
+static int
+mdk_apply_tree_proposal(MlsRatchetTree *tree, const MlsProposal *proposal,
+                        uint32_t proposal_sender)
+{
+    if (!tree || !proposal) return -1;
+    switch (proposal->type) {
+    case MLS_PROPOSAL_ADD: {
+        if (mls_key_package_validate(&proposal->add.key_package) != 0) return -1;
+        uint32_t new_leaf = UINT32_MAX;
+        for (uint32_t leaf = 0; leaf < tree->n_leaves; leaf++) {
+            uint32_t node_idx = mls_tree_leaf_to_node(leaf);
+            if (node_idx < tree->n_nodes && tree->nodes[node_idx].type == MLS_NODE_BLANK) {
+                new_leaf = node_idx;
+                break;
+            }
+        }
+        if (new_leaf == UINT32_MAX) {
+            uint32_t old_leaves = tree->n_leaves;
+            uint32_t new_leaves = old_leaves ? old_leaves * 2 : 1;
+            uint32_t new_nodes_count = mls_tree_node_width(new_leaves);
+            if (new_nodes_count <= tree->n_nodes) return -1;
+            MlsNode *new_nodes = realloc(tree->nodes, (size_t)new_nodes_count * sizeof(MlsNode));
+            if (!new_nodes) return -1;
+            tree->nodes = new_nodes;
+            for (uint32_t i = tree->n_nodes; i < new_nodes_count; i++) {
+                memset(&tree->nodes[i], 0, sizeof(MlsNode));
+                tree->nodes[i].type = MLS_NODE_BLANK;
+            }
+            tree->n_leaves = new_leaves;
+            tree->n_nodes = new_nodes_count;
+            new_leaf = mls_tree_leaf_to_node(old_leaves);
+        }
+        MlsNode *n = &tree->nodes[new_leaf];
+        mls_tree_blank_node(n);
+        n->type = MLS_NODE_LEAF;
+        return mls_leaf_node_clone(&n->leaf, &proposal->add.key_package.leaf_node);
+    }
+    case MLS_PROPOSAL_UPDATE: {
+        if (proposal_sender >= tree->n_leaves) return -1;
+        uint32_t sender_node = mls_tree_leaf_to_node(proposal_sender);
+        mls_tree_blank_node(&tree->nodes[sender_node]);
+        tree->nodes[sender_node].type = MLS_NODE_LEAF;
+        if (mls_leaf_node_clone(&tree->nodes[sender_node].leaf,
+                                &proposal->update.leaf_node) != 0)
+            return -1;
+        uint32_t dp[128];
+        uint32_t dp_len = 0;
+        if (mls_tree_direct_path(sender_node, tree->n_leaves, dp, 128, &dp_len) != 0)
+            return -1;
+        for (uint32_t i = 0; i < dp_len; i++)
+            mls_tree_blank_node(&tree->nodes[dp[i]]);
+        return 0;
+    }
+    case MLS_PROPOSAL_REMOVE: {
+        if (proposal->remove.removed_leaf >= tree->n_leaves) return -1;
+        uint32_t rm_node = mls_tree_leaf_to_node(proposal->remove.removed_leaf);
+        mls_tree_blank_node(&tree->nodes[rm_node]);
+        uint32_t dp[128];
+        uint32_t dp_len = 0;
+        if (mls_tree_direct_path(rm_node, tree->n_leaves, dp, 128, &dp_len) != 0)
+            return -1;
+        for (uint32_t i = 0; i < dp_len; i++)
+            mls_tree_blank_node(&tree->nodes[dp[i]]);
+        return mdk_truncate_blank_right_edge(tree);
+    }
+    default:
+        return -1;
+    }
 }
 
 static void
@@ -1611,7 +1758,48 @@ test_mdk_tree_operations_vectors(const char *vector_dir)
     MdkTreeOperationsVector vectors[50];
     size_t count = 0;
     assert(mdk_load_tree_operations_vectors(path, vectors, &count, 50) == 0);
-    print_deferred_loaded("tree-operations", count, "stateful tree mutation/vector replay API is not implemented");
+    assert(count > 0 && "tree-operations file exists but yielded zero ciphersuite-1 cases");
+
+    for (size_t v = 0; v < count; v++) {
+        MlsRatchetTree tree;
+        assert(mls_ratchet_tree_deserialize(vectors[v].tree_before,
+                                            vectors[v].tree_before_len,
+                                            &tree) == 0);
+        uint8_t before_hash[MLS_HASH_LEN];
+        assert(mls_tree_root_hash(&tree, before_hash) == 0);
+        assert_bytes_eq("tree-operations.tree_hash_before", before_hash,
+                        vectors[v].tree_hash_before, MLS_HASH_LEN);
+
+        MlsRatchetTree expected_tree;
+        assert(mls_ratchet_tree_deserialize(vectors[v].tree_after,
+                                            vectors[v].tree_after_len,
+                                            &expected_tree) == 0);
+        uint8_t expected_tree_hash[MLS_HASH_LEN];
+        assert(mls_tree_root_hash(&expected_tree, expected_tree_hash) == 0);
+        assert_bytes_eq("tree-operations.expected_tree_after_hash",
+                        expected_tree_hash, vectors[v].tree_hash_after, MLS_HASH_LEN);
+        mls_tree_free(&expected_tree);
+
+        MlsProposal proposal;
+        assert(mdk_deserialize_proposal(vectors[v].proposal, vectors[v].proposal_len,
+                                        &proposal) == 0);
+        assert(mdk_apply_tree_proposal(&tree, &proposal, vectors[v].proposal_sender) == 0);
+
+        uint8_t *serialized = NULL;
+        size_t serialized_len = 0;
+        assert(mls_ratchet_tree_serialize(&tree, &serialized, &serialized_len) == 0);
+        uint8_t after_hash[MLS_HASH_LEN];
+        assert(mls_tree_root_hash(&tree, after_hash) == 0);
+        assert_bytes_eq("tree-operations.tree_hash_after", after_hash,
+                        vectors[v].tree_hash_after, MLS_HASH_LEN);
+        assert(serialized_len == vectors[v].tree_after_len && "tree-operations serialized tree length mismatch");
+        assert_bytes_eq("tree-operations.tree_after", serialized,
+                        vectors[v].tree_after, vectors[v].tree_after_len);
+        free(serialized);
+        mls_proposal_clear(&proposal);
+        mls_tree_free(&tree);
+    }
+    printf("PASS (%zu tree operation replays asserted)\n", count);
 }
 
 static void
@@ -1622,7 +1810,46 @@ test_mdk_tree_validation_vectors(const char *vector_dir)
     MdkTreeValidationVector vectors[20];
     size_t count = 0;
     assert(mdk_load_tree_validation_vectors(path, vectors, &count, 20) == 0);
-    print_deferred_loaded("tree-validation", count, "ratchet-tree validation/resolution vector API is not implemented");
+    assert(count > 0 && "tree-validation file exists but yielded zero ciphersuite-1 cases");
+
+    for (size_t v = 0; v < count; v++) {
+        MlsRatchetTree tree;
+        assert(mls_ratchet_tree_deserialize(vectors[v].tree, vectors[v].tree_len, &tree) == 0);
+        assert(vectors[v].tree_hash_count == tree.n_nodes);
+        assert(vectors[v].resolution_count == tree.n_nodes);
+        assert(mls_tree_verify_parent_hashes(&tree) == 0 && "tree-validation parent hashes must verify");
+        g_mdk_asserted++;
+
+        uint8_t *serialized = NULL;
+        size_t serialized_len = 0;
+        assert(mls_ratchet_tree_serialize(&tree, &serialized, &serialized_len) == 0);
+        assert(serialized_len == vectors[v].tree_len && "tree-validation serialized tree length mismatch");
+        assert_bytes_eq("tree-validation.tree_roundtrip", serialized,
+                        vectors[v].tree, vectors[v].tree_len);
+        free(serialized);
+
+        for (uint32_t node = 0; node < tree.n_nodes; node++) {
+            uint8_t hash[MLS_HASH_LEN];
+            assert(mls_tree_hash(&tree, node, hash) == 0);
+            assert_bytes_eq("tree-validation.tree_hash", hash,
+                            vectors[v].tree_hashes[node], MLS_HASH_LEN);
+
+            uint32_t resolution[512];
+            uint32_t resolution_len = 0;
+            assert(tree.n_nodes <= 512);
+            assert(mls_tree_resolution(&tree, node, resolution, 512, &resolution_len) == 0);
+            assert(resolution_len == vectors[v].resolutions[node].count &&
+                   "tree-validation resolution length mismatch");
+            for (uint32_t i = 0; i < resolution_len; i++) {
+                assert(resolution[i] == vectors[v].resolutions[node].nodes[i] &&
+                       "tree-validation resolution node mismatch");
+                g_mdk_asserted++;
+            }
+        }
+        mls_tree_free(&tree);
+        mdk_free_tree_validation_vector(&vectors[v]);
+    }
+    printf("PASS (%zu ratchet trees validated)\n", count);
 }
 
 static void
@@ -1763,7 +1990,7 @@ int main(void)
     if (found_vectors) {
         printf("\nInterop self-tests passed; MDK asserted checks: %zu; deferred vector cases: %zu.\n",
                g_mdk_asserted, g_mdk_deferred);
-        printf("Deferred vector classes are printed as XFAIL/DEFERRED above and are not green coverage.\n");
+        printf("Remaining deferred vector classes are printed as XFAIL/DEFERRED above and are not green coverage.\n");
     } else {
         printf("\nAll interop self-tests passed (9 self-tests; no MDK vectors loaded).\n");
         printf("\nNOTE: For full cross-implementation validation, capture MDK vectors\n");

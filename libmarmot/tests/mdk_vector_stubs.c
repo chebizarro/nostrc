@@ -308,11 +308,12 @@ static int parse_psk_secret_object(const char *obj, const char *end, void *dst,
     const char *p = json_array_for_key(obj, end, "psks", &arr_end);
     if (!p) return -1;
     p++;
-    while (v->psk_count < 16) {
+    while (1) {
         p = skip_ws(p, arr_end);
         if (p >= arr_end || *p == ']') break;
         if (*p == ',') { p++; continue; }
         if (*p != '{') return -1;
+        if (v->psk_count >= 16) return -1;
         const char *oe = json_find_matching(p, arr_end + 1, '{', '}');
         if (!oe) return -1;
         if (json_get_hex_var(p, oe, "psk_id", v->psks[v->psk_count].psk_id,
@@ -479,6 +480,90 @@ static int parse_tree_operations_object(const char *obj, const char *end, void *
     return 0;
 }
 
+static int parse_hex_hash_array(const char *obj, const char *end, const char *key,
+                                uint8_t (**out_hashes)[32], size_t *out_count)
+{
+    const char *arr_end = NULL;
+    const char *p = json_array_for_key(obj, end, key, &arr_end);
+    if (!p || !out_hashes || !out_count) return -1;
+    *out_hashes = NULL;
+    *out_count = 0;
+    p++;
+    while (1) {
+        p = skip_ws(p, arr_end);
+        if (p >= arr_end || *p == ']') break;
+        if (*p == ',') { p++; continue; }
+        if (*p != '"') return -1;
+        p++;
+        const char *q = p;
+        while (q < arr_end && *q && *q != '"') q++;
+        if (q >= arr_end || *q != '"') return -1;
+        if ((size_t)(q - p) != 64) return -1;
+        uint8_t (*new_hashes)[32] = realloc(*out_hashes, (*out_count + 1) * 32);
+        if (!new_hashes) return -1;
+        *out_hashes = new_hashes;
+        char hex[65];
+        memcpy(hex, p, 64);
+        hex[64] = '\0';
+        if (!mdk_hex_decode((*out_hashes)[*out_count], hex, 32)) return -1;
+        (*out_count)++;
+        p = q + 1;
+    }
+    return *out_count > 0 ? 0 : -1;
+}
+
+static int parse_u32_array(const char *arr, const char *arr_end,
+                           uint32_t **out_nodes, size_t *out_count)
+{
+    if (!arr || !arr_end || !out_nodes || !out_count) return -1;
+    *out_nodes = NULL;
+    *out_count = 0;
+    const char *p = arr + 1;
+    while (1) {
+        p = skip_ws(p, arr_end);
+        if (p >= arr_end || *p == ']') break;
+        if (*p == ',') { p++; continue; }
+        char *num_end = NULL;
+        unsigned long n = strtoul(p, &num_end, 10);
+        if (num_end == p || num_end > arr_end || n > UINT32_MAX) return -1;
+        uint32_t *new_nodes = realloc(*out_nodes, (*out_count + 1) * sizeof(uint32_t));
+        if (!new_nodes) return -1;
+        *out_nodes = new_nodes;
+        (*out_nodes)[(*out_count)++] = (uint32_t)n;
+        p = num_end;
+    }
+    return 0;
+}
+
+static int parse_resolution_array(const char *obj, const char *end,
+                                  MdkTreeValidationResolution **out_res,
+                                  size_t *out_count)
+{
+    const char *arr_end = NULL;
+    const char *p = json_array_for_key(obj, end, "resolutions", &arr_end);
+    if (!p || !out_res || !out_count) return -1;
+    *out_res = NULL;
+    *out_count = 0;
+    p++;
+    while (1) {
+        p = skip_ws(p, arr_end);
+        if (p >= arr_end || *p == ']') break;
+        if (*p == ',') { p++; continue; }
+        if (*p != '[') return -1;
+        const char *inner_end = json_find_matching(p, arr_end + 1, '[', ']');
+        if (!inner_end) return -1;
+        MdkTreeValidationResolution *new_res = realloc(*out_res, (*out_count + 1) * sizeof(**out_res));
+        if (!new_res) return -1;
+        *out_res = new_res;
+        MdkTreeValidationResolution *r = &(*out_res)[*out_count];
+        memset(r, 0, sizeof(*r));
+        if (parse_u32_array(p, inner_end, &r->nodes, &r->count) != 0) return -1;
+        (*out_count)++;
+        p = inner_end + 1;
+    }
+    return *out_count > 0 ? 0 : -1;
+}
+
 static int parse_tree_validation_object(const char *obj, const char *end, void *dst,
                                         size_t *count, size_t max_count)
 {
@@ -491,7 +576,12 @@ static int parse_tree_validation_object(const char *obj, const char *end, void *
     memset(v, 0, sizeof(*v));
     v->cipher_suite = cs;
     if (json_get_hex_var(obj, end, "tree", v->tree, sizeof(v->tree), &v->tree_len) != 0 ||
-        json_get_hex_var(obj, end, "group_id", v->group_id, sizeof(v->group_id), &v->group_id_len) != 0) return -1;
+        json_get_hex_var(obj, end, "group_id", v->group_id, sizeof(v->group_id), &v->group_id_len) != 0 ||
+        parse_hex_hash_array(obj, end, "tree_hashes", &v->tree_hashes, &v->tree_hash_count) != 0 ||
+        parse_resolution_array(obj, end, &v->resolutions, &v->resolution_count) != 0) {
+        mdk_free_tree_validation_vector(v);
+        return -1;
+    }
     (*count)++;
     return 0;
 }
@@ -632,4 +722,16 @@ void mdk_free_tree_math_vector(MdkTreeMathVector *vec)
         free(vec->sibling);
         memset(vec, 0, sizeof(*vec));
     }
+}
+
+void mdk_free_tree_validation_vector(MdkTreeValidationVector *vec)
+{
+    if (!vec) return;
+    free(vec->tree_hashes);
+    if (vec->resolutions) {
+        for (size_t i = 0; i < vec->resolution_count; i++)
+            free(vec->resolutions[i].nodes);
+        free(vec->resolutions);
+    }
+    memset(vec, 0, sizeof(*vec));
 }

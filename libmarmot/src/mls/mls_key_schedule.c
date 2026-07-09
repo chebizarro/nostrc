@@ -137,6 +137,88 @@ cleanup:
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+ * PSK Secret (RFC 9420 §8.4)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static int
+serialize_psk_label(MlsTlsBuf *buf, const MlsPskInput *psk,
+                    uint16_t index, uint16_t count)
+{
+    if (!buf || !psk || !psk->psk_id || !psk->psk_nonce) return -1;
+
+    /* PreSharedKeyID for an external PSK:
+     *   PSKType external(1) || opaque psk_id<V> || opaque psk_nonce<V>
+     * PSKLabel:
+     *   PreSharedKeyID id || uint16 index || uint16 count
+     */
+    if (mls_tls_write_u8(buf, 1) != 0) return -1;
+    if (mls_tls_write_opaque16(buf, psk->psk_id, psk->psk_id_len) != 0) return -1;
+    if (mls_tls_write_opaque16(buf, psk->psk_nonce, psk->psk_nonce_len) != 0) return -1;
+    if (mls_tls_write_u16(buf, index) != 0) return -1;
+    if (mls_tls_write_u16(buf, count) != 0) return -1;
+    return 0;
+}
+
+int
+mls_psk_secret_compute(const MlsPskInput *psks, size_t psk_count,
+                       uint8_t out[MLS_HASH_LEN])
+{
+    if (!out) return -1;
+    if (psk_count > 0 && !psks) return -1;
+    if (psk_count > UINT16_MAX) return -1;
+
+    uint8_t zero[MLS_HASH_LEN] = {0};
+    uint8_t current[MLS_HASH_LEN] = {0};
+    uint8_t psk_extracted[MLS_HASH_LEN] = {0};
+    uint8_t psk_input[MLS_HASH_LEN] = {0};
+    uint8_t next[MLS_HASH_LEN] = {0};
+    int rc = -1;
+
+    for (size_t i = 0; i < psk_count; i++) {
+        if (!psks[i].psk || psks[i].psk_len == 0 ||
+            !psks[i].psk_id || !psks[i].psk_nonce)
+            goto cleanup;
+
+        /* psk_extracted_[i] = KDF.Extract(0, psk_[i]) */
+        if (mls_crypto_hkdf_extract(psk_extracted, zero, MLS_HASH_LEN,
+                                    psks[i].psk, psks[i].psk_len) != 0)
+            goto cleanup;
+
+        MlsTlsBuf label;
+        if (mls_tls_buf_init(&label, psks[i].psk_id_len + psks[i].psk_nonce_len + 16) != 0)
+            goto cleanup;
+        if (serialize_psk_label(&label, &psks[i], (uint16_t)i, (uint16_t)psk_count) != 0) {
+            mls_tls_buf_free(&label);
+            goto cleanup;
+        }
+
+        /* psk_input_[i] = ExpandWithLabel(psk_extracted_[i], "derived psk", PSKLabel, KDF.Nh) */
+        int expand_rc = mls_crypto_expand_with_label(psk_input, MLS_HASH_LEN,
+                                                     psk_extracted, "derived psk",
+                                                     label.data, label.len);
+        mls_tls_buf_free(&label);
+        if (expand_rc != 0) goto cleanup;
+
+        /* psk_secret_[i+1] = KDF.Extract(psk_input_[i], psk_secret_[i]) */
+        if (mls_crypto_hkdf_extract(next, psk_input, MLS_HASH_LEN,
+                                    current, MLS_HASH_LEN) != 0)
+            goto cleanup;
+        memcpy(current, next, MLS_HASH_LEN);
+        sodium_memzero(next, sizeof(next));
+    }
+
+    memcpy(out, current, MLS_HASH_LEN);
+    rc = 0;
+
+cleanup:
+    sodium_memzero(current, sizeof(current));
+    sodium_memzero(psk_extracted, sizeof(psk_extracted));
+    sodium_memzero(psk_input, sizeof(psk_input));
+    sodium_memzero(next, sizeof(next));
+    return rc;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
  * Secret Tree (RFC 9420 §9)
  *
  * The tree has the same shape as the ratchet tree. The root holds the

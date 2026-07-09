@@ -244,11 +244,20 @@ typedef struct {
 
 /* Tree validation test */
 typedef struct {
+    uint32_t *nodes;
+    size_t count;
+} MdkTreeValidationResolution;
+
+typedef struct {
     uint32_t cipher_suite;
     uint8_t tree[32768];
     size_t tree_len;
     uint8_t group_id[32];
     size_t group_id_len;
+    uint8_t (*tree_hashes)[32];
+    size_t tree_hash_count;
+    MdkTreeValidationResolution *resolutions;
+    size_t resolution_count;
 } MdkTreeValidationVector;
 
 /* TreeKEM test */
@@ -376,5 +385,6 @@ int mdk_json_find_number(const char *json, const char *key, uint32_t *out);
 
 /* Cleanup functions */
 void mdk_free_tree_math_vector(MdkTreeMathVector *vec);
+void mdk_free_tree_validation_vector(MdkTreeValidationVector *vec);
 
 #endif /* MDK_VECTOR_LOADER_H */

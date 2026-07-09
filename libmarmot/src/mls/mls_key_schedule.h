@@ -66,6 +66,25 @@ int mls_key_schedule_derive(const uint8_t *init_secret_prev,
                              const uint8_t *psk_secret,
                              MlsEpochSecrets *out);
 
+/** A single external PSK input for RFC 9420 §8.4 psk_secret computation. */
+typedef struct {
+    const uint8_t *psk_id;
+    size_t psk_id_len;
+    const uint8_t *psk;
+    size_t psk_len;
+    const uint8_t *psk_nonce;
+    size_t psk_nonce_len;
+} MlsPskInput;
+
+/**
+ * Compute psk_secret from an ordered list of external PSKs (RFC 9420 §8.4).
+ *
+ * This implements the PSK extraction chain used as input to the epoch key
+ * schedule.  With psk_count == 0, out is the all-zero KDF.Nh vector.
+ */
+int mls_psk_secret_compute(const MlsPskInput *psks, size_t psk_count,
+                           uint8_t out[MLS_HASH_LEN]);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Secret tree & message keys (RFC 9420 §9)
  *
