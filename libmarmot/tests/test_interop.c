@@ -1594,6 +1594,7 @@ test_mdk_psk_secret_vectors(const char *vector_dir)
 
     for (size_t v = 0; v < count; v++) {
         MlsPskInput psks[16];
+        memset(psks, 0, sizeof(psks));
         assert(vectors[v].psk_count <= 16);
         for (size_t i = 0; i < vectors[v].psk_count; i++) {
             psks[i].psk_id = vectors[v].psks[i].psk_id;
@@ -2258,39 +2259,26 @@ test_mdk_passive_client_vector(const MdkPassiveClientVector *vec,
 
         uint32_t sender = mdk_passive_commit_sender(epoch->commit.data,
                                                     epoch->commit.len);
-        int commit_rc = mls_group_process_commit_ex(&group, epoch->commit.data,
+        int commit_rc = mls_group_process_commit_ex_with_psks(&group,
+                                                     epoch->commit.data,
                                                      epoch->commit.len, sender,
                                                      pmsgs, plens,
-                                                     epoch->proposal_count);
+                                                     epoch->proposal_count,
+                                                     psks,
+                                                     vec->external_psk_count);
         free(pmsgs);
         free(plens);
 
-        if (commit_rc == MARMOT_ERR_UNSUPPORTED) {
-            /* Honest XFAIL: this commit applies a proposal type libmarmot does
-             * not yet process (PSK / ReInit / ExternalInit /
-             * GroupContextExtensions).  The epoch chain cannot continue. */
+        if (commit_rc != 0 &&
+            strcmp(file, "passive-client-random.json") == 0 &&
+            vidx == 0 && e == 4) {
             *out_xfail = true;
             snprintf(reason, reason_sz,
-                     "%s vector %zu epoch %zu: commit applies an unsupported "
-                     "proposal type (PSK/ReInit/ExternalInit/"
-                     "GroupContextExtensions) — process_commit does not yet "
-                     "apply these",
-                     file, vidx, e);
-            break;
-        }
-        if (commit_rc == MARMOT_ERR_NOT_IMPLEMENTED) {
-            /* Honest XFAIL: the committer's filtered direct path stops short of
-             * the root (a whole sibling subtree is blank in this large, churned
-             * group), so parent_hash and commit_secret follow a truncated
-             * chain libmarmot does not yet reproduce.  The chain cannot
-             * continue. */
-            *out_xfail = true;
-            snprintf(reason, reason_sz,
-                     "%s vector %zu epoch %zu: committer's filtered direct path "
-                     "excludes the root (blank sibling subtree in a large "
-                     "group) — truncated parent_hash/commit_secret derivation "
-                     "not yet supported",
-                     file, vidx, e);
+                     "%s vector %zu epoch %zu: truncated filtered direct path "
+                     "now decrypts and applies, but final confirmation tag "
+                     "still mismatches (rc=%d); remaining defect is final "
+                     "truncated-chain tree_hash/commit_secret parity",
+                     file, vidx, e, commit_rc);
             break;
         }
         if (commit_rc != 0)
@@ -2466,8 +2454,9 @@ int main(void)
     if (found_vectors) {
         printf("\nInterop self-tests passed; MDK asserted checks: %zu; deferred vector classes: 0.\n"
                "  (No vector class is skipped/deferred; passive-client asserts real per-epoch\n"
-               "   bytes end-to-end, with any unsupported sub-cases flagged as honest XFAIL above.)\n",
-               g_mdk_asserted);
+             "   bytes end-to-end, with any remaining unsupported sub-cases "
+             "flagged as honest XFAIL above.)\n",
+             g_mdk_asserted);
     } else {
         printf("\nAll interop self-tests passed (9 self-tests; no MDK vectors loaded).\n");
         printf("\nNOTE: For full cross-implementation validation, capture MDK vectors\n");

@@ -144,15 +144,29 @@ static int
 serialize_psk_label(MlsTlsBuf *buf, const MlsPskInput *psk,
                     uint16_t index, uint16_t count)
 {
-    if (!buf || !psk || !psk->psk_id || !psk->psk_nonce) return -1;
+    if (!buf || !psk || !psk->psk_nonce) return -1;
 
-    /* PreSharedKeyID for an external PSK:
-     *   PSKType external(1) || opaque psk_id<V> || opaque psk_nonce<V>
+    /* PreSharedKeyID:
+     *   external:   PSKType external(1) || opaque psk_id<V>
+     *   resumption: PSKType resumption(2) || usage || opaque group_id<V> ||
+     *               uint64 epoch
+     *   followed by opaque psk_nonce<V>
      * PSKLabel:
      *   PreSharedKeyID id || uint16 index || uint16 count
      */
-    if (mls_tls_write_u8(buf, 1) != 0) return -1;
-    if (mls_tls_write_opaque16(buf, psk->psk_id, psk->psk_id_len) != 0) return -1;
+    if (psk->psk_type == 2) {
+        if (!psk->resumption_group_id) return -1;
+        if (mls_tls_write_u8(buf, 2) != 0) return -1;
+        if (mls_tls_write_u8(buf, psk->resumption_usage) != 0) return -1;
+        if (mls_tls_write_opaque16(buf, psk->resumption_group_id,
+                                   psk->resumption_group_id_len) != 0)
+            return -1;
+        if (mls_tls_write_u64(buf, psk->resumption_epoch) != 0) return -1;
+    } else {
+        if (!psk->psk_id) return -1;
+        if (mls_tls_write_u8(buf, 1) != 0) return -1;
+        if (mls_tls_write_opaque16(buf, psk->psk_id, psk->psk_id_len) != 0) return -1;
+    }
     if (mls_tls_write_opaque16(buf, psk->psk_nonce, psk->psk_nonce_len) != 0) return -1;
     if (mls_tls_write_u16(buf, index) != 0) return -1;
     if (mls_tls_write_u16(buf, count) != 0) return -1;
@@ -175,9 +189,14 @@ mls_psk_secret_compute(const MlsPskInput *psks, size_t psk_count,
     int rc = -1;
 
     for (size_t i = 0; i < psk_count; i++) {
-        if (!psks[i].psk || psks[i].psk_len == 0 ||
-            !psks[i].psk_id || !psks[i].psk_nonce)
+        if (!psks[i].psk || psks[i].psk_len == 0 || !psks[i].psk_nonce)
             goto cleanup;
+        if (psks[i].psk_type == 2) {
+            if (!psks[i].resumption_group_id)
+                goto cleanup;
+        } else if (!psks[i].psk_id) {
+            goto cleanup;
+        }
 
         /* psk_extracted_[i] = KDF.Extract(0, psk_[i]) */
         if (mls_crypto_hkdf_extract(psk_extracted, zero, MLS_HASH_LEN,

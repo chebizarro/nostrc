@@ -68,8 +68,17 @@ int mls_key_schedule_derive(const uint8_t *init_secret_prev,
 
 /** A single external PSK input for RFC 9420 §8.4 psk_secret computation. */
 typedef struct {
+    /** 0 or 1 = external PSK, 2 = resumption PSK. */
+    uint8_t psk_type;
+
     const uint8_t *psk_id;
     size_t psk_id_len;
+
+    uint8_t resumption_usage;
+    const uint8_t *resumption_group_id;
+    size_t resumption_group_id_len;
+    uint64_t resumption_epoch;
+
     const uint8_t *psk;
     size_t psk_len;
     const uint8_t *psk_nonce;

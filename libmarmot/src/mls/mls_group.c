@@ -62,6 +62,10 @@ replace_parent_hash(uint8_t **field, size_t *field_len,
     return 0;
 }
 
+static void
+remember_resumption_psk(MlsGroup *group, uint64_t epoch,
+                        const uint8_t psk[MLS_HASH_LEN]);
+
 static int
 child_below_path_node(uint32_t sender_leaf, uint32_t n_leaves,
                       uint32_t path_node, uint32_t *out_child)
@@ -147,7 +151,8 @@ sign_leaf_node_local(MlsLeafNode *node,
 static int
 group_derive_epoch(MlsGroup *group,
                    const uint8_t *init_secret_prev,
-                   const uint8_t commit_secret[MLS_HASH_LEN])
+                   const uint8_t commit_secret[MLS_HASH_LEN],
+                   const uint8_t psk_secret[MLS_HASH_LEN])
 {
     /* Build GroupContext */
     uint8_t tree_hash[MLS_HASH_LEN];
@@ -167,7 +172,7 @@ group_derive_epoch(MlsGroup *group,
     /* Derive epoch secrets */
     MlsEpochSecrets new_secrets;
     int rc = mls_key_schedule_derive(init_secret_prev, commit_secret,
-                                     gc_data, gc_len, NULL, &new_secrets);
+                                     gc_data, gc_len, psk_secret, &new_secrets);
     free(gc_data);
     if (rc != 0)
         return rc;
@@ -437,6 +442,8 @@ static int
 decrypt_path_secret(const MlsGroup *group,
                     const MlsUpdatePathNode *path_node,
                     uint32_t copath_node_idx,
+                    const uint32_t *excluded_leaves,
+                    size_t excluded_leaf_count,
                     const uint8_t *group_context, size_t group_context_len,
                     const uint8_t own_enc_sk[MLS_KEM_SK_LEN],
                     const uint8_t own_enc_pk[MLS_KEM_PK_LEN],
@@ -447,6 +454,24 @@ decrypt_path_secret(const MlsGroup *group,
     uint32_t res_len = 0;
     if (mls_tree_resolution(&group->tree, copath_node_idx, resolution, 256, &res_len) != 0)
         return -1;
+    if (excluded_leaf_count > 0 && excluded_leaves) {
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i < res_len; i++) {
+            bool excluded = false;
+            if (mls_tree_is_leaf(resolution[i])) {
+                uint32_t leaf = mls_tree_node_to_leaf(resolution[i]);
+                for (size_t j = 0; j < excluded_leaf_count; j++) {
+                    if (excluded_leaves[j] == leaf) {
+                        excluded = true;
+                        break;
+                    }
+                }
+            }
+            if (!excluded)
+                resolution[kept++] = resolution[i];
+        }
+        res_len = kept;
+    }
 
     /* Find our position in the resolution */
     uint32_t own_node = mls_tree_leaf_to_node(group->own_leaf_index);
@@ -657,7 +682,7 @@ mls_treekem_apply_update_path(MlsRatchetTree *tree,
     uint32_t root = mls_tree_root(tree->n_leaves);
     for (uint32_t rev = fdp_len; rev > 0; rev--) {
         uint32_t node_idx = fdp[rev - 1];
-        if (node_idx == root) continue;
+        if (node_idx == root || rev == fdp_len) continue;
         if (tree->nodes[node_idx].type != MLS_NODE_PARENT)
             return -1;
         uint32_t path_pos = rev - 1;
@@ -967,6 +992,14 @@ mls_proposal_clear(MlsProposal *p)
     case MLS_PROPOSAL_UPDATE:
         mls_leaf_node_clear(&p->update.leaf_node);
         break;
+    case MLS_PROPOSAL_PSK:
+        free(p->psk.psk_id);
+        free(p->psk.resumption_group_id);
+        free(p->psk.psk_nonce);
+        break;
+    case MLS_PROPOSAL_GROUP_CONTEXT_EXT:
+        free(p->group_context_extensions.extensions);
+        break;
     default:
         break;
     }
@@ -1133,7 +1166,7 @@ mls_group_create(MlsGroup *group,
     uint8_t zero_secret[MLS_HASH_LEN];
     memset(zero_secret, 0, MLS_HASH_LEN);
 
-    if (group_derive_epoch(group, NULL, zero_secret) != 0) goto fail;
+    if (group_derive_epoch(group, NULL, zero_secret, NULL) != 0) goto fail;
 
     return 0;
 
@@ -1261,11 +1294,14 @@ mls_group_add_member(MlsGroup *group,
     mls_crypto_hash(group->confirmed_transcript_hash, conf_buf.data, conf_buf.len);
     mls_tls_buf_free(&conf_buf);
 
+    uint64_t previous_epoch = group->epoch;
+    remember_resumption_psk(group, previous_epoch,
+                            group->epoch_secrets.resumption_psk);
     group->epoch++;
 
     /* Derive new epoch secrets */
     const uint8_t *prev_init = group->epoch_secrets.init_secret;
-    if (group_derive_epoch(group, prev_init, commit_secret) != 0) {
+    if (group_derive_epoch(group, prev_init, commit_secret, NULL) != 0) {
         mls_tls_buf_free(&commit_buf);
         mls_commit_clear(&commit);
         return MARMOT_ERR_INTERNAL;
@@ -1606,9 +1642,12 @@ mls_group_remove_member(MlsGroup *group,
     mls_crypto_hash(group->confirmed_transcript_hash, conf_buf.data, conf_buf.len);
     mls_tls_buf_free(&conf_buf);
 
+    uint64_t previous_epoch = group->epoch;
+    remember_resumption_psk(group, previous_epoch,
+                            group->epoch_secrets.resumption_psk);
     group->epoch++;
     const uint8_t *prev_init = group->epoch_secrets.init_secret;
-    if (group_derive_epoch(group, prev_init, commit_secret) != 0) {
+    if (group_derive_epoch(group, prev_init, commit_secret, NULL) != 0) {
         free(pre_gc);
         mls_tls_buf_free(&buf);
         mls_commit_clear(&commit);
@@ -1732,9 +1771,12 @@ mls_group_self_update(MlsGroup *group, MlsCommitResult *result)
     mls_crypto_hash(group->confirmed_transcript_hash, conf_buf.data, conf_buf.len);
     mls_tls_buf_free(&conf_buf);
 
+    uint64_t previous_epoch = group->epoch;
+    remember_resumption_psk(group, previous_epoch,
+                            group->epoch_secrets.resumption_psk);
     group->epoch++;
     const uint8_t *prev_init = group->epoch_secrets.init_secret;
-    if (group_derive_epoch(group, prev_init, commit_secret) != 0) {
+    if (group_derive_epoch(group, prev_init, commit_secret, NULL) != 0) {
         free(pre_gc);
         mls_tls_buf_free(&buf);
         mls_commit_clear(&commit);
@@ -1790,45 +1832,53 @@ mls_group_self_update(MlsGroup *group, MlsCommitResult *result)
  * Process incoming Commit
  * ══════════════════════════════════════════════════════════════════════════ */
 
-/**
- * Validate proposal ordering per RFC 9420.
- * Proposals must be ordered: Updates, Removes, then Adds.
- */
+/** Validate that all proposals have types this processor understands. */
 static int
 validate_proposal_ordering(const MlsProposal *proposals, size_t count)
 {
-    if (count == 0) return 0;
-    
-    /* Track the last seen proposal type to enforce ordering */
-    int last_type = -1;
-    
     for (size_t i = 0; i < count; i++) {
-        int current_type = proposals[i].type;
-        
-        /* Map to ordering groups: Update=0, Remove=1, Add=2 */
-        int order_group;
-        switch (current_type) {
-        case MLS_PROPOSAL_UPDATE:
-            order_group = 0;
-            break;
-        case MLS_PROPOSAL_REMOVE:
-            order_group = 1;
-            break;
+        switch (proposals[i].type) {
         case MLS_PROPOSAL_ADD:
-            order_group = 2;
+        case MLS_PROPOSAL_UPDATE:
+        case MLS_PROPOSAL_REMOVE:
+        case MLS_PROPOSAL_PSK:
+        case MLS_PROPOSAL_GROUP_CONTEXT_EXT:
             break;
         default:
             return MARMOT_ERR_MLS_PROCESS_MESSAGE;
         }
-        
-        /* Ensure non-decreasing order */
-        if (order_group < last_type) {
-            return MARMOT_ERR_MLS_PROCESS_MESSAGE;
-        }
-        last_type = order_group;
     }
-    
+
     return 0;
+}
+
+static int
+proposal_application_order(uint16_t type)
+{
+    switch (type) {
+    case MLS_PROPOSAL_UPDATE: return 0;
+    case MLS_PROPOSAL_REMOVE: return 1;
+    case MLS_PROPOSAL_ADD: return 2;
+    case MLS_PROPOSAL_PSK: return 3;
+    case MLS_PROPOSAL_GROUP_CONTEXT_EXT: return 3;
+    default: return 4;
+    }
+}
+
+static void
+sort_proposals_for_application(MlsProposal *proposals, size_t count)
+{
+    for (size_t i = 1; i < count; i++) {
+        MlsProposal cur = proposals[i];
+        int cur_order = proposal_application_order(cur.type);
+        size_t j = i;
+        while (j > 0 &&
+               proposal_application_order(proposals[j - 1].type) > cur_order) {
+            proposals[j] = proposals[j - 1];
+            j--;
+        }
+        proposals[j] = cur;
+    }
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -1953,10 +2003,187 @@ proposal_store_resolve(MlsProposalStore *store, MlsProposal *p)
 }
 
 static int
+proposal_type_apply_supported(const MlsProposal *p)
+{
+    if (!p || p->unsupported) return 0;
+    switch (p->type) {
+    case MLS_PROPOSAL_ADD:
+    case MLS_PROPOSAL_UPDATE:
+    case MLS_PROPOSAL_REMOVE:
+    case MLS_PROPOSAL_PSK:
+    case MLS_PROPOSAL_GROUP_CONTEXT_EXT:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static const MlsPskInput *
+find_external_psk(const MlsPskInput *external_psks, size_t external_psk_count,
+                  const uint8_t *psk_id, size_t psk_id_len)
+{
+    if (!psk_id) return NULL;
+    for (size_t i = 0; i < external_psk_count; i++) {
+        if (external_psks[i].psk_id &&
+            external_psks[i].psk_id_len == psk_id_len &&
+            memcmp(external_psks[i].psk_id, psk_id, psk_id_len) == 0)
+            return &external_psks[i];
+    }
+    return NULL;
+}
+
+static const uint8_t *
+lookup_resumption_psk(const MlsGroup *group, uint64_t epoch);
+
+static int
+commit_psk_secret_compute(const MlsGroup *group,
+                          const MlsProposal *proposals, size_t proposal_count,
+                          const MlsPskInput *external_psks,
+                          size_t external_psk_count,
+                          uint8_t out[MLS_HASH_LEN])
+{
+    if (!group || !out) return MARMOT_ERR_INVALID_ARG;
+
+    size_t psk_count = 0;
+    for (size_t i = 0; i < proposal_count; i++) {
+        if (proposals[i].type == MLS_PROPOSAL_PSK)
+            psk_count++;
+    }
+
+    if (psk_count == 0) {
+        if (mls_psk_secret_compute(NULL, 0, out) != 0)
+            return MARMOT_ERR_INTERNAL;
+        return 0;
+    }
+
+    MlsPskInput *inputs = calloc(psk_count, sizeof(*inputs));
+    if (!inputs) return MARMOT_ERR_MEMORY;
+
+    size_t idx = 0;
+    for (size_t i = 0; i < proposal_count; i++) {
+        const MlsProposal *p = &proposals[i];
+        if (p->type != MLS_PROPOSAL_PSK)
+            continue;
+
+        inputs[idx].psk_nonce = p->psk.psk_nonce;
+        inputs[idx].psk_nonce_len = p->psk.psk_nonce_len;
+        if (!inputs[idx].psk_nonce || inputs[idx].psk_nonce_len == 0) {
+            free(inputs);
+            return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+        }
+
+        if (p->psk.psk_type == 1) {
+            const MlsPskInput *ext =
+                find_external_psk(external_psks, external_psk_count,
+                                  p->psk.psk_id, p->psk.psk_id_len);
+            if (!ext || !ext->psk || ext->psk_len == 0) {
+                free(inputs);
+                return MARMOT_ERR_UNSUPPORTED;
+            }
+            inputs[idx].psk_id = p->psk.psk_id;
+            inputs[idx].psk_id_len = p->psk.psk_id_len;
+            inputs[idx].psk_type = 1;
+            inputs[idx].psk = ext->psk;
+            inputs[idx].psk_len = ext->psk_len;
+        } else if (p->psk.psk_type == 2) {
+            if (p->psk.resumption_group_id_len != group->group_id_len ||
+                memcmp(p->psk.resumption_group_id, group->group_id,
+                       group->group_id_len) != 0) {
+                free(inputs);
+                return MARMOT_ERR_UNSUPPORTED;
+            }
+            const uint8_t *resumption_psk =
+                lookup_resumption_psk(group, p->psk.resumption_epoch);
+            if (!resumption_psk) {
+                free(inputs);
+                return MARMOT_ERR_UNSUPPORTED;
+            }
+            inputs[idx].psk_type = 2;
+            inputs[idx].resumption_usage = p->psk.resumption_usage;
+            inputs[idx].resumption_group_id = p->psk.resumption_group_id;
+            inputs[idx].resumption_group_id_len = p->psk.resumption_group_id_len;
+            inputs[idx].resumption_epoch = p->psk.resumption_epoch;
+            inputs[idx].psk = resumption_psk;
+            inputs[idx].psk_len = MLS_HASH_LEN;
+        } else {
+            free(inputs);
+            return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+        }
+        idx++;
+    }
+
+    int rc = mls_psk_secret_compute(inputs, psk_count, out);
+    free(inputs);
+    return rc == 0 ? 0 : MARMOT_ERR_INTERNAL;
+}
+
+static int
+apply_group_context_extensions(MlsGroup *group,
+                               const uint8_t *extensions,
+                               size_t extensions_len)
+{
+    if (!group) return -1;
+    uint8_t *copy = NULL;
+    if (extensions_len > 0) {
+        if (!extensions) return -1;
+        copy = malloc(extensions_len);
+        if (!copy) return -1;
+        memcpy(copy, extensions, extensions_len);
+    }
+    free(group->extensions_data);
+    group->extensions_data = copy;
+    group->extensions_len = extensions_len;
+    return 0;
+}
+
+static void
+remember_resumption_psk(MlsGroup *group, uint64_t epoch,
+                        const uint8_t psk[MLS_HASH_LEN])
+{
+    if (!group || !psk) return;
+    size_t slot = 0;
+    for (size_t i = 0; i < MLS_RESUMPTION_PSK_CACHE_SIZE; i++) {
+        if (group->resumption_psk_cache[i].valid &&
+            group->resumption_psk_cache[i].epoch == epoch) {
+            slot = i;
+            goto store;
+        }
+        if (!group->resumption_psk_cache[i].valid) {
+            slot = i;
+            goto store;
+        }
+        if (group->resumption_psk_cache[i].epoch <
+            group->resumption_psk_cache[slot].epoch)
+            slot = i;
+    }
+
+store:
+    group->resumption_psk_cache[slot].valid = true;
+    group->resumption_psk_cache[slot].epoch = epoch;
+    memcpy(group->resumption_psk_cache[slot].psk, psk, MLS_HASH_LEN);
+}
+
+static const uint8_t *
+lookup_resumption_psk(const MlsGroup *group, uint64_t epoch)
+{
+    if (!group) return NULL;
+    if (group->epoch == epoch)
+        return group->epoch_secrets.resumption_psk;
+    for (size_t i = 0; i < MLS_RESUMPTION_PSK_CACHE_SIZE; i++) {
+        if (group->resumption_psk_cache[i].valid &&
+            group->resumption_psk_cache[i].epoch == epoch)
+            return group->resumption_psk_cache[i].psk;
+    }
+    return NULL;
+}
+
+static int
 process_commit_impl(MlsGroup *group,
                     const uint8_t *commit_data, size_t commit_len,
                     uint32_t sender_leaf,
-                    MlsProposalStore *store)
+                    MlsProposalStore *store,
+                    const MlsPskInput *external_psks,
+                    size_t external_psk_count)
 {
     if (!group || !commit_data) return MARMOT_ERR_INVALID_ARG;
     if (sender_leaf >= group->tree.n_leaves) return MARMOT_ERR_INVALID_ARG;
@@ -2033,7 +2260,7 @@ process_commit_impl(MlsGroup *group,
     group = &staged;
 
     /* Resolve referenced proposals (ProposalOrRef type 2) against the store,
-     * and reject commits carrying proposal types we do not yet apply. */
+     * and reject commits carrying proposal types we still do not apply. */
     for (size_t i = 0; i < commit.proposal_count; i++) {
         MlsProposal *p = &commit.proposals[i];
         if (p->is_ref) {
@@ -2045,10 +2272,7 @@ process_commit_impl(MlsGroup *group,
                              : MARMOT_ERR_UNSUPPORTED;
             }
         }
-        if (p->unsupported ||
-            (p->type != MLS_PROPOSAL_ADD &&
-             p->type != MLS_PROPOSAL_UPDATE &&
-             p->type != MLS_PROPOSAL_REMOVE)) {
+        if (!proposal_type_apply_supported(p)) {
             mls_commit_clear(&commit);
             return MARMOT_ERR_UNSUPPORTED;
         }
@@ -2060,6 +2284,21 @@ process_commit_impl(MlsGroup *group,
         return MARMOT_ERR_MLS_PROCESS_MESSAGE;
     }
 
+    uint8_t psk_secret[MLS_HASH_LEN];
+    int psk_rc = commit_psk_secret_compute(group, commit.proposals,
+                                           commit.proposal_count,
+                                           external_psks, external_psk_count,
+                                           psk_secret);
+    if (psk_rc != 0) {
+        mls_commit_clear(&commit);
+        return psk_rc;
+    }
+
+    sort_proposals_for_application(commit.proposals, commit.proposal_count);
+
+    uint32_t added_leaves[64];
+    size_t added_leaf_count = 0;
+
     /* Apply proposals */
     for (size_t i = 0; i < commit.proposal_count; i++) {
         MlsProposal *p = &commit.proposals[i];
@@ -2067,17 +2306,27 @@ process_commit_impl(MlsGroup *group,
         case MLS_PROPOSAL_ADD: {
             if (mls_key_package_validate(&p->add.key_package) != 0) {
                 mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
                 return MARMOT_ERR_MLS_PROCESS_MESSAGE;
             }
             uint32_t new_leaf_idx;
             if (mls_tree_add_leaf(&group->tree, &new_leaf_idx) != 0) {
                 mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
                 return MARMOT_ERR_INTERNAL;
             }
             MlsNode *n = &group->tree.nodes[new_leaf_idx];
             n->type = MLS_NODE_LEAF;
             if (mls_leaf_node_clone(&n->leaf, &p->add.key_package.leaf_node) != 0) {
                 mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
+                return MARMOT_ERR_INTERNAL;
+            }
+            if (added_leaf_count < sizeof(added_leaves) / sizeof(added_leaves[0]))
+                added_leaves[added_leaf_count++] = mls_tree_node_to_leaf(new_leaf_idx);
+            else {
+                mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
                 return MARMOT_ERR_INTERNAL;
             }
             uint32_t new_leaf = mls_tree_node_to_leaf(new_leaf_idx);
@@ -2086,6 +2335,7 @@ process_commit_impl(MlsGroup *group,
             if (mls_tree_direct_path(new_leaf_idx, group->tree.n_leaves,
                                      add_dp, 64, &add_dp_len) != 0) {
                 mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
                 return MARMOT_ERR_INTERNAL;
             }
             for (uint32_t j = 0; j < add_dp_len; j++) {
@@ -2095,6 +2345,7 @@ process_commit_impl(MlsGroup *group,
                                            (parent->parent.unmerged_leaf_count + 1) * sizeof(uint32_t));
                 if (!leaves) {
                     mls_commit_clear(&commit);
+                    sodium_memzero(psk_secret, sizeof(psk_secret));
                     return MARMOT_ERR_INTERNAL;
                 }
                 parent->parent.unmerged_leaves = leaves;
@@ -2106,6 +2357,7 @@ process_commit_impl(MlsGroup *group,
             /* Validate leaf index */
             if (p->remove.removed_leaf >= group->tree.n_leaves) {
                 mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
                 return MARMOT_ERR_INVALID_ARG;
             }
             uint32_t rm_node = mls_tree_leaf_to_node(p->remove.removed_leaf);
@@ -2115,6 +2367,7 @@ process_commit_impl(MlsGroup *group,
             uint32_t dp_len = 0;
             if (mls_tree_direct_path(rm_node, group->tree.n_leaves, dp, 64, &dp_len) != 0) {
                 mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
                 return MARMOT_ERR_INTERNAL;
             }
             
@@ -2129,6 +2382,7 @@ process_commit_impl(MlsGroup *group,
                                     ? p->update_leaf_index : sender_leaf;
             if (upd_leaf >= group->tree.n_leaves) {
                 mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
                 return MARMOT_ERR_INVALID_ARG;
             }
             uint32_t upd_node = mls_tree_leaf_to_node(upd_leaf);
@@ -2136,6 +2390,7 @@ process_commit_impl(MlsGroup *group,
             if (mls_leaf_node_clone(&group->tree.nodes[upd_node].leaf,
                                      &p->update.leaf_node) != 0) {
                 mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
                 return MARMOT_ERR_INTERNAL;
             }
             /* Applying an Update blanks the updated leaf's direct path to the
@@ -2145,14 +2400,29 @@ process_commit_impl(MlsGroup *group,
             if (mls_tree_direct_path(upd_node, group->tree.n_leaves,
                                      upd_dp, 64, &upd_dp_len) != 0) {
                 mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
                 return MARMOT_ERR_INTERNAL;
             }
             for (uint32_t j = 0; j < upd_dp_len; j++)
                 mls_tree_blank_node(&group->tree.nodes[upd_dp[j]]);
             break;
         }
+        case MLS_PROPOSAL_PSK:
+            /* PSKs are applied by injecting the combined psk_secret into the
+             * epoch key schedule below.  They do not directly mutate the tree. */
+            break;
+        case MLS_PROPOSAL_GROUP_CONTEXT_EXT:
+            if (apply_group_context_extensions(group,
+                    p->group_context_extensions.extensions,
+                    p->group_context_extensions.extensions_len) != 0) {
+                mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
+                return MARMOT_ERR_INTERNAL;
+            }
+            break;
         default:
             mls_commit_clear(&commit);
+            sodium_memzero(psk_secret, sizeof(psk_secret));
             return MARMOT_ERR_MLS_PROCESS_MESSAGE;
         }
     }
@@ -2168,6 +2438,7 @@ process_commit_impl(MlsGroup *group,
         if (mls_leaf_node_clone(&group->tree.nodes[sender_node].leaf,
                                  &commit.path.leaf_node) != 0) {
             mls_commit_clear(&commit);
+            sodium_memzero(psk_secret, sizeof(psk_secret));
             return MARMOT_ERR_INTERNAL;
         }
 
@@ -2177,19 +2448,8 @@ process_commit_impl(MlsGroup *group,
         if (mls_tree_filtered_direct_path(&group->tree, sender_leaf,
                                            fdp, 64, &fdp_len) != 0) {
             mls_commit_clear(&commit);
+            sodium_memzero(psk_secret, sizeof(psk_secret));
             return MARMOT_ERR_INTERNAL;
-        }
-
-        /* When the committer's filtered direct path stops short of the root —
-         * i.e. an entire sibling subtree toward the root is blank/empty (common
-         * once a large group has churned members away) — the topmost node's
-         * parent_hash and the commit_secret derivation follow the truncated
-         * chain.  libmarmot does not yet reproduce that truncated derivation;
-         * flag it as a known gap rather than deriving a wrong epoch. */
-        if (fdp_len > 0 &&
-            fdp[fdp_len - 1] != mls_tree_root(group->tree.n_leaves)) {
-            mls_commit_clear(&commit);
-            return MARMOT_ERR_NOT_IMPLEMENTED;
         }
 
         /* Find which copath node we're under */
@@ -2201,6 +2461,7 @@ process_commit_impl(MlsGroup *group,
             if (child_below_path_node(sender_leaf, group->tree.n_leaves,
                                       fdp[i], &child_below) != 0) {
                 mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
                 return MARMOT_ERR_INTERNAL;
             }
             uint32_t copath_sibling = mls_tree_sibling(child_below, group->tree.n_leaves);
@@ -2221,6 +2482,7 @@ process_commit_impl(MlsGroup *group,
 
         if (our_path_idx < 0) {
             mls_commit_clear(&commit);
+            sodium_memzero(psk_secret, sizeof(psk_secret));
             return MARMOT_ERR_MLS_PROCESS_MESSAGE;
         }
 
@@ -2229,6 +2491,7 @@ process_commit_impl(MlsGroup *group,
         if (child_below_path_node(sender_leaf, group->tree.n_leaves,
                                   fdp[our_path_idx], &child_below) != 0) {
             mls_commit_clear(&commit);
+            sodium_memzero(psk_secret, sizeof(psk_secret));
             return MARMOT_ERR_INTERNAL;
         }
         uint32_t copath_sibling = mls_tree_sibling(child_below,
@@ -2272,12 +2535,14 @@ process_commit_impl(MlsGroup *group,
 
         if (decrypt_path_secret(group, &commit.path.nodes[our_path_idx],
                                 copath_sibling,
+                                added_leaves, added_leaf_count,
                                 path_context, path_context_len,
                                 our_enc_sk,
                                 our_enc_pk,
                                 our_path_secret) != 0) {
             free(path_context);
             mls_commit_clear(&commit);
+            sodium_memzero(psk_secret, sizeof(psk_secret));
             return MARMOT_ERR_CRYPTO;
         }
         free(path_context);
@@ -2295,10 +2560,25 @@ process_commit_impl(MlsGroup *group,
 
         if (commit.path.node_count != fdp_len) {
             mls_commit_clear(&commit);
+            sodium_memzero(psk_secret, sizeof(psk_secret));
             sodium_memzero(our_path_secret, sizeof(our_path_secret));
             sodium_memzero(current_secret, sizeof(current_secret));
             return MARMOT_ERR_MLS_PROCESS_MESSAGE;
         }
+
+        uint32_t full_dp[64];
+        uint32_t full_dp_len = 0;
+        uint32_t sender_node_for_blank = mls_tree_leaf_to_node(sender_leaf);
+        if (mls_tree_direct_path(sender_node_for_blank, group->tree.n_leaves,
+                                 full_dp, 64, &full_dp_len) != 0) {
+            mls_commit_clear(&commit);
+            sodium_memzero(psk_secret, sizeof(psk_secret));
+            sodium_memzero(our_path_secret, sizeof(our_path_secret));
+            sodium_memzero(current_secret, sizeof(current_secret));
+            return MARMOT_ERR_INTERNAL;
+        }
+        for (uint32_t i = 0; i < full_dp_len; i++)
+            mls_tree_blank_node(&group->tree.nodes[full_dp[i]]);
 
         /* Update parent nodes from the update path */
         for (uint32_t i = 0; i < fdp_len; i++) {
@@ -2317,9 +2597,10 @@ process_commit_impl(MlsGroup *group,
         uint32_t root = mls_tree_root(group->tree.n_leaves);
         for (uint32_t rev = fdp_len; rev > 0; rev--) {
             uint32_t node_idx = fdp[rev - 1];
-            if (node_idx == root) continue;
+            if (node_idx == root || rev == fdp_len) continue;
             if (group->tree.nodes[node_idx].type != MLS_NODE_PARENT) {
                 mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
                 sodium_memzero(our_path_secret, sizeof(our_path_secret));
                 sodium_memzero(current_secret, sizeof(current_secret));
                 return MARMOT_ERR_MLS_PROCESS_MESSAGE;
@@ -2327,6 +2608,7 @@ process_commit_impl(MlsGroup *group,
             uint32_t path_pos = rev - 1;
             if (path_pos + 1 >= fdp_len) {
                 mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
                 sodium_memzero(our_path_secret, sizeof(our_path_secret));
                 sodium_memzero(current_secret, sizeof(current_secret));
                 return MARMOT_ERR_MLS_PROCESS_MESSAGE;
@@ -2338,6 +2620,7 @@ process_commit_impl(MlsGroup *group,
                                     &group->tree.nodes[node_idx].parent.parent_hash_len,
                                     ph) != 0) {
                 mls_commit_clear(&commit);
+                sodium_memzero(psk_secret, sizeof(psk_secret));
                 sodium_memzero(our_path_secret, sizeof(our_path_secret));
                 sodium_memzero(current_secret, sizeof(current_secret));
                 return MARMOT_ERR_MLS_PROCESS_MESSAGE;
@@ -2346,6 +2629,7 @@ process_commit_impl(MlsGroup *group,
 
         if (mls_tree_verify_parent_hashes(&group->tree) != 0) {
             mls_commit_clear(&commit);
+            sodium_memzero(psk_secret, sizeof(psk_secret));
             sodium_memzero(our_path_secret, sizeof(our_path_secret));
             sodium_memzero(current_secret, sizeof(current_secret));
             return MARMOT_ERR_MLS_PROCESS_MESSAGE;
@@ -2369,12 +2653,14 @@ process_commit_impl(MlsGroup *group,
                                                   &confirmed_input_len);
     if (transcript_rc != 0) {
         mls_commit_clear(&commit);
+        sodium_memzero(psk_secret, sizeof(psk_secret));
         return MARMOT_ERR_MEMORY;
     }
     MlsTlsBuf conf_buf;
     if (mls_tls_buf_init(&conf_buf, MLS_HASH_LEN + confirmed_input_len) != 0) {
         free(confirmed_input);
         mls_commit_clear(&commit);
+        sodium_memzero(psk_secret, sizeof(psk_secret));
         return MARMOT_ERR_MEMORY;
     }
     mls_tls_buf_append(&conf_buf, group->interim_transcript_hash, MLS_HASH_LEN);
@@ -2384,10 +2670,14 @@ process_commit_impl(MlsGroup *group,
     mls_tls_buf_free(&conf_buf);
 
     /* Advance epoch */
+    uint64_t previous_epoch = group->epoch;
+    remember_resumption_psk(group, previous_epoch,
+                            group->epoch_secrets.resumption_psk);
     group->epoch++;
     const uint8_t *prev_init = group->epoch_secrets.init_secret;
-    if (group_derive_epoch(group, prev_init, commit_secret) != 0) {
+    if (group_derive_epoch(group, prev_init, commit_secret, psk_secret) != 0) {
         mls_commit_clear(&commit);
+        sodium_memzero(psk_secret, sizeof(psk_secret));
         return MARMOT_ERR_INTERNAL;
     }
 
@@ -2398,6 +2688,7 @@ process_commit_impl(MlsGroup *group,
                              confirmation_tag);
     if (sodium_memcmp(confirmation_tag, pm->auth.confirmation_tag, MLS_HASH_LEN) != 0) {
         mls_commit_clear(&commit);
+        sodium_memzero(psk_secret, sizeof(psk_secret));
         sodium_memzero(root_path_secret, sizeof(root_path_secret));
         sodium_memzero(commit_secret, sizeof(commit_secret));
         return MARMOT_ERR_MLS_PROCESS_MESSAGE;
@@ -2407,6 +2698,7 @@ process_commit_impl(MlsGroup *group,
     MlsTlsBuf int_buf;
     if (mls_tls_buf_init(&int_buf, MLS_HASH_LEN * 2) != 0) {
         mls_commit_clear(&commit);
+        sodium_memzero(psk_secret, sizeof(psk_secret));
         return MARMOT_ERR_MEMORY;
     }
     mls_tls_buf_append(&int_buf, group->confirmed_transcript_hash, MLS_HASH_LEN);
@@ -2415,6 +2707,7 @@ process_commit_impl(MlsGroup *group,
     mls_tls_buf_free(&int_buf);
 
     mls_commit_clear(&commit);
+    sodium_memzero(psk_secret, sizeof(psk_secret));
     sodium_memzero(root_path_secret, sizeof(root_path_secret));
     sodium_memzero(commit_secret, sizeof(commit_secret));
 
@@ -2433,7 +2726,8 @@ mls_group_process_commit(MlsGroup *group,
                          const uint8_t *commit_data, size_t commit_len,
                          uint32_t sender_leaf)
 {
-    return process_commit_impl(group, commit_data, commit_len, sender_leaf, NULL);
+    return process_commit_impl(group, commit_data, commit_len, sender_leaf,
+                               NULL, NULL, 0);
 }
 
 int
@@ -2449,7 +2743,28 @@ mls_group_process_commit_ex(MlsGroup *group,
                              proposal_count) != 0)
         return MARMOT_ERR_MLS_PROCESS_MESSAGE;
     int rc = process_commit_impl(group, commit_data, commit_len, sender_leaf,
-                                 &store);
+                                 &store, NULL, 0);
+    proposal_store_free(&store);
+    return rc;
+}
+
+int
+mls_group_process_commit_ex_with_psks(MlsGroup *group,
+                                      const uint8_t *commit_data,
+                                      size_t commit_len,
+                                      uint32_t sender_leaf,
+                                      const uint8_t *const *proposal_msgs,
+                                      const size_t *proposal_lens,
+                                      size_t proposal_count,
+                                      const MlsPskInput *external_psks,
+                                      size_t external_psk_count)
+{
+    MlsProposalStore store;
+    if (proposal_store_build(&store, proposal_msgs, proposal_lens,
+                             proposal_count) != 0)
+        return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+    int rc = process_commit_impl(group, commit_data, commit_len, sender_leaf,
+                                 &store, external_psks, external_psk_count);
     proposal_store_free(&store);
     return rc;
 }
@@ -2810,27 +3125,27 @@ proposal_deserialize(MlsTlsReader *reader, MlsProposal *p)
     case MLS_PROPOSAL_REMOVE:
         return mls_tls_read_u32(reader, &p->remove.removed_leaf);
     case MLS_PROPOSAL_PSK: {
-        /* Recognized but not applied: parse (skip) the PreSharedKeyID so the
-         * commit deserializes, then reject at processing time. */
         uint8_t psktype;
-        p->unsupported = true;
         if (mls_tls_read_u8(reader, &psktype) != 0) return -1;
+        p->psk.psk_type = psktype;
         if (psktype == 1) {
-            uint8_t *id = NULL; size_t idl = 0;
-            if (mls_tls_read_opaque32(reader, &id, &idl) != 0) return -1;
-            free(id);
+            if (mls_tls_read_opaque32(reader, &p->psk.psk_id,
+                                      &p->psk.psk_id_len) != 0)
+                return -1;
         } else if (psktype == 2) {
-            uint8_t usage; uint8_t *gid = NULL; size_t gidl = 0; uint64_t epoch;
-            if (mls_tls_read_u8(reader, &usage) != 0) return -1;
-            if (mls_tls_read_opaque32(reader, &gid, &gidl) != 0) return -1;
-            free(gid);
-            if (mls_tls_read_u64(reader, &epoch) != 0) return -1;
+            if (mls_tls_read_u8(reader, &p->psk.resumption_usage) != 0)
+                return -1;
+            if (mls_tls_read_opaque32(reader, &p->psk.resumption_group_id,
+                                      &p->psk.resumption_group_id_len) != 0)
+                return -1;
+            if (mls_tls_read_u64(reader, &p->psk.resumption_epoch) != 0)
+                return -1;
         } else {
             return -1;
         }
-        uint8_t *nonce = NULL; size_t noncel = 0;
-        if (mls_tls_read_opaque32(reader, &nonce, &noncel) != 0) return -1;
-        free(nonce);
+        if (mls_tls_read_opaque32(reader, &p->psk.psk_nonce,
+                                  &p->psk.psk_nonce_len) != 0)
+            return -1;
         return 0;
     }
     case MLS_PROPOSAL_REINIT: {
@@ -2853,10 +3168,10 @@ proposal_deserialize(MlsTlsReader *reader, MlsProposal *p)
         return 0;
     }
     case MLS_PROPOSAL_GROUP_CONTEXT_EXT: {
-        uint8_t *ext = NULL; size_t extl = 0;
-        p->unsupported = true;
-        if (mls_tls_read_opaque32(reader, &ext, &extl) != 0) return -1;
-        free(ext);
+        if (mls_tls_read_opaque32(reader,
+                                  &p->group_context_extensions.extensions,
+                                  &p->group_context_extensions.extensions_len) != 0)
+            return -1;
         return 0;
     }
     default:
@@ -3098,6 +3413,8 @@ fail:
  *   interim_transcript_hash (32 bytes)
  *   extensions opaque32
  *   max_forward_distance u32
+ *   resumption_psk_cache_count u32
+ *   repeated: epoch u64 || resumption_psk[32]
  * ══════════════════════════════════════════════════════════════════════════ */
 
 #define MLS_GROUP_SERIAL_MAGIC  0x4D4C5347  /* "MLSG" */
@@ -3171,6 +3488,22 @@ mls_group_serialize(const MlsGroup *group, uint8_t **out_data, size_t *out_len)
 
     /* Config */
     if (mls_tls_write_u32(&buf, group->max_forward_distance) != 0) goto fail;
+
+    uint32_t cache_count = 0;
+    for (size_t i = 0; i < MLS_RESUMPTION_PSK_CACHE_SIZE; i++) {
+        if (group->resumption_psk_cache[i].valid)
+            cache_count++;
+    }
+    if (mls_tls_write_u32(&buf, cache_count) != 0) goto fail;
+    for (size_t i = 0; i < MLS_RESUMPTION_PSK_CACHE_SIZE; i++) {
+        if (!group->resumption_psk_cache[i].valid)
+            continue;
+        if (mls_tls_write_u64(&buf, group->resumption_psk_cache[i].epoch) != 0)
+            goto fail;
+        if (mls_tls_buf_append(&buf, group->resumption_psk_cache[i].psk,
+                               MLS_HASH_LEN) != 0)
+            goto fail;
+    }
 
     *out_data = buf.data;
     *out_len = buf.len;
@@ -3266,6 +3599,23 @@ mls_group_deserialize(const uint8_t *data, size_t len, MlsGroup *group)
 
     /* Config */
     if (mls_tls_read_u32(&reader, &group->max_forward_distance) != 0) goto fail;
+
+    if (mls_tls_reader_remaining(&reader) > 0) {
+        uint32_t cache_count = 0;
+        if (mls_tls_read_u32(&reader, &cache_count) != 0) goto fail;
+        if (cache_count > MLS_RESUMPTION_PSK_CACHE_SIZE) goto fail;
+        for (uint32_t i = 0; i < cache_count; i++) {
+            uint64_t epoch = 0;
+            uint8_t psk[MLS_HASH_LEN];
+            if (mls_tls_read_u64(&reader, &epoch) != 0) goto fail;
+            if (mls_tls_read_fixed(&reader, psk, MLS_HASH_LEN) != 0) goto fail;
+            group->resumption_psk_cache[i].valid = true;
+            group->resumption_psk_cache[i].epoch = epoch;
+            memcpy(group->resumption_psk_cache[i].psk, psk, MLS_HASH_LEN);
+            sodium_memzero(psk, sizeof(psk));
+        }
+        if (!mls_tls_reader_done(&reader)) goto fail;
+    }
 
     /* Re-derive the secret tree from the encryption_secret */
     if (mls_secret_tree_init(&group->secret_tree,

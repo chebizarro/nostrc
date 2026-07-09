@@ -36,6 +36,14 @@ extern "C" {
 #define MLS_PROPOSAL_EXTERNAL_INIT  6
 #define MLS_PROPOSAL_GROUP_CONTEXT_EXT 7
 
+#define MLS_RESUMPTION_PSK_CACHE_SIZE 8
+
+typedef struct {
+    bool     valid;
+    uint64_t epoch;
+    uint8_t  psk[MLS_HASH_LEN];
+} MlsResumptionPskCacheEntry;
+
 /* ──────────────────────────────────────────────────────────────────────────
  * MlsProposal - A single proposal within a Commit
  * ──────────────────────────────────────────────────────────────────────── */
@@ -57,6 +65,28 @@ typedef struct {
         struct {
             uint32_t removed_leaf;
         } remove;
+
+        /** PreSharedKey proposal: external or resumption PSK id plus nonce. */
+        struct {
+            uint8_t  psk_type;  /* 1 = external, 2 = resumption */
+
+            uint8_t *psk_id;
+            size_t   psk_id_len;
+
+            uint8_t  resumption_usage;
+            uint8_t *resumption_group_id;
+            size_t   resumption_group_id_len;
+            uint64_t resumption_epoch;
+
+            uint8_t *psk_nonce;
+            size_t   psk_nonce_len;
+        } psk;
+
+        /** GroupContextExtensions proposal: serialized Extension vector. */
+        struct {
+            uint8_t *extensions;
+            size_t   extensions_len;
+        } group_context_extensions;
     };
 
     /** Target leaf for an Update proposal.  An Update replaces the LeafNode of
@@ -71,7 +101,7 @@ typedef struct {
     size_t   ref_len;
 
     /** True when the proposal type is recognized but not supported for
-     *  processing (PSK / ReInit / ExternalInit / GroupContextExtensions).
+     *  processing (currently ReInit / ExternalInit).
      *  Such a commit is rejected with MARMOT_ERR_UNSUPPORTED. */
     bool     unsupported;
 } MlsProposal;
@@ -159,6 +189,7 @@ typedef struct {
     /* ── Key schedule ─────────────────────────────────────────────────── */
     MlsEpochSecrets epoch_secrets;      /**< Derived epoch secrets */
     MlsSecretTree   secret_tree;        /**< Per-sender message key ratchets */
+    MlsResumptionPskCacheEntry resumption_psk_cache[MLS_RESUMPTION_PSK_CACHE_SIZE];
 
     /* ── Transcript hashes (RFC 9420 §8.2) ────────────────────────────── */
     uint8_t confirmed_transcript_hash[MLS_HASH_LEN];
@@ -328,8 +359,10 @@ int mls_group_process_commit(MlsGroup *group,
  * mls_group_process_commit() for inline proposals.
  *
  * Commits carrying proposal types that libmarmot does not yet apply
- * (PreSharedKey / ReInit / ExternalInit / GroupContextExtensions) are
- * rejected with MARMOT_ERR_UNSUPPORTED rather than a generic framing error.
+ * (currently ReInit / ExternalInit) are rejected with
+ * MARMOT_ERR_UNSUPPORTED rather than a generic framing error.  Commits with
+ * external PreSharedKey proposals require mls_group_process_commit_ex_with_psks()
+ * so the application can supply the external PSK material.
  *
  * @param group           The group state (modified on success)
  * @param commit_data     Serialized Commit MLSMessage
@@ -346,6 +379,23 @@ int mls_group_process_commit_ex(MlsGroup *group,
                                 const uint8_t *const *proposal_msgs,
                                 const size_t *proposal_lens,
                                 size_t proposal_count);
+
+/**
+ * Process a Commit with referenced proposals and externally supplied PSK
+ * material.  PSK proposals are applied in commit order; external PSKs are
+ * matched by psk_id and their proposal nonce is used for RFC 9420 §8.4
+ * psk_secret computation.  Resumption PSKs for the current group/epoch are
+ * resolved from group->epoch_secrets.resumption_psk.
+ */
+int mls_group_process_commit_ex_with_psks(MlsGroup *group,
+                                          const uint8_t *commit_data,
+                                          size_t commit_len,
+                                          uint32_t sender_leaf,
+                                          const uint8_t *const *proposal_msgs,
+                                          const size_t *proposal_lens,
+                                          size_t proposal_count,
+                                          const MlsPskInput *external_psks,
+                                          size_t external_psk_count);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Application messages
