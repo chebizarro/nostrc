@@ -107,6 +107,19 @@ int mls_welcome_process(const uint8_t *welcome_data, size_t welcome_len,
                         MlsGroup *group_out);
 
 /**
+ * Process a Welcome with external PSK inputs supplied by the caller.
+ *
+ * The PSKs are combined per RFC 9420 §8.4 and used for both GroupInfo
+ * decryption and joiner epoch-secret derivation.
+ */
+int mls_welcome_process_with_psks(const uint8_t *welcome_data, size_t welcome_len,
+                                  const MlsKeyPackage *kp,
+                                  const MlsKeyPackagePrivate *kp_priv,
+                                  const uint8_t *ratchet_tree, size_t tree_len,
+                                  const MlsPskInput *psks, size_t psk_count,
+                                  MlsGroup *group_out);
+
+/**
  * Process a Welcome that has already been deserialized.
  *
  * Same as mls_welcome_process but takes a parsed MlsWelcome struct.
@@ -116,6 +129,14 @@ int mls_welcome_process_parsed(const MlsWelcome *welcome,
                                const MlsKeyPackagePrivate *kp_priv,
                                const uint8_t *ratchet_tree, size_t tree_len,
                                MlsGroup *group_out);
+
+/** Process a parsed Welcome with external PSK inputs. */
+int mls_welcome_process_parsed_with_psks(const MlsWelcome *welcome,
+                                         const MlsKeyPackage *kp,
+                                         const MlsKeyPackagePrivate *kp_priv,
+                                         const uint8_t *ratchet_tree, size_t tree_len,
+                                         const MlsPskInput *psks, size_t psk_count,
+                                         MlsGroup *group_out);
 
 #ifdef __cplusplus
 }

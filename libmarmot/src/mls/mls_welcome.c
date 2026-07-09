@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sodium.h>
+#include <stdio.h>
 
 #define MLS_EXTENSION_RATCHET_TREE 0x0002
 
@@ -64,9 +65,29 @@ hpke_decrypt_with_label(uint8_t *pt, size_t *pt_len,
     return rc;
 }
 
+typedef struct {
+    uint8_t *psk_id;
+    size_t psk_id_len;
+    uint8_t *psk_nonce;
+    size_t psk_nonce_len;
+} MlsWelcomePskId;
+
+static void
+welcome_psk_ids_free(MlsWelcomePskId *ids, size_t count)
+{
+    if (!ids) return;
+    for (size_t i = 0; i < count; i++) {
+        free(ids[i].psk_id);
+        free(ids[i].psk_nonce);
+    }
+    free(ids);
+}
+
 static int
 parse_group_secrets(const uint8_t *data, size_t len,
-                    uint8_t joiner_secret[MLS_HASH_LEN])
+                    uint8_t joiner_secret[MLS_HASH_LEN],
+                    MlsWelcomePskId **psk_ids_out,
+                    size_t *psk_id_count_out)
 {
     MlsTlsReader r;
     mls_tls_reader_init(&r, data, len);
@@ -76,6 +97,9 @@ parse_group_secrets(const uint8_t *data, size_t len,
     if (js_len != MLS_HASH_LEN) { free(js); return -1; }
     memcpy(joiner_secret, js, MLS_HASH_LEN);
     free(js);
+
+    if (psk_ids_out) *psk_ids_out = NULL;
+    if (psk_id_count_out) *psk_id_count_out = 0;
 
     uint8_t has_path = 0;
     if (mls_tls_read_u8(&r, &has_path) != 0) return -1;
@@ -88,6 +112,39 @@ parse_group_secrets(const uint8_t *data, size_t len,
     uint8_t *psks = NULL;
     size_t psks_len = 0;
     if (mls_tls_read_opaque32(&r, &psks, &psks_len) != 0) return -1;
+    if (psks_len > 0) {
+        MlsTlsReader pr;
+        mls_tls_reader_init(&pr, psks, psks_len);
+        while (!mls_tls_reader_done(&pr)) {
+            uint8_t psk_type = 0;
+            if (mls_tls_read_u8(&pr, &psk_type) != 0 || psk_type != 1) {
+                free(psks);
+                welcome_psk_ids_free(psk_ids_out ? *psk_ids_out : NULL,
+                                     psk_id_count_out ? *psk_id_count_out : 0);
+                return -1;
+            }
+            MlsWelcomePskId *items = realloc(psk_ids_out ? *psk_ids_out : NULL,
+                                             ((psk_id_count_out ? *psk_id_count_out : 0) + 1) * sizeof(MlsWelcomePskId));
+            if (!items) {
+                free(psks);
+                welcome_psk_ids_free(psk_ids_out ? *psk_ids_out : NULL,
+                                     psk_id_count_out ? *psk_id_count_out : 0);
+                return -1;
+            }
+            *psk_ids_out = items;
+            MlsWelcomePskId *slot = &items[*psk_id_count_out];
+            memset(slot, 0, sizeof(*slot));
+            if (mls_tls_read_opaque16(&pr, &slot->psk_id, &slot->psk_id_len) != 0 ||
+                mls_tls_read_opaque16(&pr, &slot->psk_nonce, &slot->psk_nonce_len) != 0) {
+                free(psks);
+                welcome_psk_ids_free(*psk_ids_out, *psk_id_count_out + 1);
+                *psk_ids_out = NULL;
+                *psk_id_count_out = 0;
+                return -1;
+            }
+            (*psk_id_count_out)++;
+        }
+    }
     free(psks);
     return mls_tls_reader_done(&r) ? 0 : -1;
 }
@@ -96,15 +153,16 @@ static int
 mls_group_info_tbs_serialize_local(const MlsGroupInfo *gi, MlsTlsBuf *buf)
 {
     if (!gi || !buf) return -1;
+    if (mls_tls_write_u16(buf, 1) != 0) return -1;
     if (mls_tls_write_u16(buf, MARMOT_CIPHERSUITE) != 0) return -1;
-    if (mls_tls_write_opaque16(buf, gi->group_id, gi->group_id_len) != 0) return -1;
+    if (mls_tls_write_opaque8(buf, gi->group_id, gi->group_id_len) != 0) return -1;
     if (mls_tls_write_u64(buf, gi->epoch) != 0) return -1;
-    if (mls_tls_buf_append(buf, gi->tree_hash, MLS_HASH_LEN) != 0) return -1;
-    if (mls_tls_buf_append(buf, gi->confirmed_transcript_hash, MLS_HASH_LEN) != 0) return -1;
+    if (mls_tls_write_opaque8(buf, gi->tree_hash, MLS_HASH_LEN) != 0) return -1;
+    if (mls_tls_write_opaque8(buf, gi->confirmed_transcript_hash, MLS_HASH_LEN) != 0) return -1;
     if (mls_tls_write_opaque32(buf, gi->extensions_data, gi->extensions_len) != 0) return -1;
     if (mls_tls_write_opaque32(buf, gi->group_info_extensions_data,
                                 gi->group_info_extensions_len) != 0) return -1;
-    if (mls_tls_buf_append(buf, gi->confirmation_tag, MLS_HASH_LEN) != 0) return -1;
+    if (mls_tls_write_opaque8(buf, gi->confirmation_tag, MLS_HASH_LEN) != 0) return -1;
     if (mls_tls_write_u32(buf, gi->signer_leaf) != 0) return -1;
     return 0;
 }
@@ -344,8 +402,35 @@ mls_welcome_process(const uint8_t *welcome_data, size_t welcome_len,
     if (mls_welcome_deserialize(&reader, &welcome) != 0)
         return MARMOT_ERR_WELCOME_INVALID;
 
-    int rc = mls_welcome_process_parsed(&welcome, kp, kp_priv,
-                                         ratchet_tree, tree_len, group_out);
+    int rc = mls_welcome_process_parsed_with_psks(&welcome, kp, kp_priv,
+                                                   ratchet_tree, tree_len,
+                                                   NULL, 0, group_out);
+    mls_welcome_clear(&welcome);
+    return rc;
+}
+
+int
+mls_welcome_process_with_psks(const uint8_t *welcome_data, size_t welcome_len,
+                              const MlsKeyPackage *kp,
+                              const MlsKeyPackagePrivate *kp_priv,
+                              const uint8_t *ratchet_tree, size_t tree_len,
+                              const MlsPskInput *psks, size_t psk_count,
+                              MlsGroup *group_out)
+{
+    if (!welcome_data || !kp || !kp_priv || !group_out ||
+        (psk_count > 0 && !psks))
+        return MARMOT_ERR_INVALID_ARG;
+
+    MlsWelcome welcome;
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, welcome_data, welcome_len);
+    if (mls_welcome_deserialize(&reader, &welcome) != 0)
+        return MARMOT_ERR_WELCOME_INVALID;
+
+    int rc = mls_welcome_process_parsed_with_psks(&welcome, kp, kp_priv,
+                                                   ratchet_tree, tree_len,
+                                                   psks, psk_count,
+                                                   group_out);
     mls_welcome_clear(&welcome);
     return rc;
 }
@@ -357,7 +442,21 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
                            const uint8_t *ratchet_tree, size_t tree_len,
                            MlsGroup *group_out)
 {
-    if (!welcome || !kp || !kp_priv || !group_out)
+    return mls_welcome_process_parsed_with_psks(welcome, kp, kp_priv,
+                                                ratchet_tree, tree_len,
+                                                NULL, 0, group_out);
+}
+
+int
+mls_welcome_process_parsed_with_psks(const MlsWelcome *welcome,
+                                     const MlsKeyPackage *kp,
+                                     const MlsKeyPackagePrivate *kp_priv,
+                                     const uint8_t *ratchet_tree, size_t tree_len,
+                                     const MlsPskInput *psks, size_t psk_count,
+                                     MlsGroup *group_out)
+{
+    if (!welcome || !kp || !kp_priv || !group_out ||
+        (psk_count > 0 && !psks))
         return MARMOT_ERR_INVALID_ARG;
 
     memset(group_out, 0, sizeof(*group_out));
@@ -397,23 +496,77 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
     }
 
     uint8_t joiner_secret[MLS_HASH_LEN];
-    if (parse_group_secrets(group_secrets, group_secrets_len, joiner_secret) != 0) {
+    MlsWelcomePskId *welcome_psk_ids = NULL;
+    size_t welcome_psk_id_count = 0;
+    if (parse_group_secrets(group_secrets, group_secrets_len, joiner_secret,
+                            &welcome_psk_ids, &welcome_psk_id_count) != 0) {
         free(group_secrets);
         return MARMOT_ERR_WELCOME_INVALID;
     }
     free(group_secrets);
+
+    uint8_t psk_secret[MLS_HASH_LEN];
+    MlsPskInput *effective_psks = NULL;
+    size_t effective_psk_count = 0;
+    if (welcome_psk_id_count > 0) {
+        if (psk_count != welcome_psk_id_count) {
+            welcome_psk_ids_free(welcome_psk_ids, welcome_psk_id_count);
+            sodium_memzero(joiner_secret, sizeof(joiner_secret));
+            return MARMOT_ERR_WELCOME_INVALID;
+        }
+        effective_psks = calloc(welcome_psk_id_count, sizeof(*effective_psks));
+        if (!effective_psks) {
+            welcome_psk_ids_free(welcome_psk_ids, welcome_psk_id_count);
+            sodium_memzero(joiner_secret, sizeof(joiner_secret));
+            return MARMOT_ERR_MEMORY;
+        }
+        effective_psk_count = welcome_psk_id_count;
+        for (size_t i = 0; i < welcome_psk_id_count; i++) {
+            const MlsPskInput *match = NULL;
+            for (size_t j = 0; j < psk_count; j++) {
+                if (psks[j].psk_id_len == welcome_psk_ids[i].psk_id_len &&
+                    memcmp(psks[j].psk_id, welcome_psk_ids[i].psk_id,
+                           welcome_psk_ids[i].psk_id_len) == 0) {
+                    match = &psks[j];
+                    break;
+                }
+            }
+            if (!match || !match->psk || match->psk_len == 0) {
+                free(effective_psks);
+                welcome_psk_ids_free(welcome_psk_ids, welcome_psk_id_count);
+                sodium_memzero(joiner_secret, sizeof(joiner_secret));
+                return MARMOT_ERR_WELCOME_INVALID;
+            }
+            effective_psks[i].psk_id = welcome_psk_ids[i].psk_id;
+            effective_psks[i].psk_id_len = welcome_psk_ids[i].psk_id_len;
+            effective_psks[i].psk = match->psk;
+            effective_psks[i].psk_len = match->psk_len;
+            effective_psks[i].psk_nonce = welcome_psk_ids[i].psk_nonce;
+            effective_psks[i].psk_nonce_len = welcome_psk_ids[i].psk_nonce_len;
+        }
+    } else {
+        effective_psks = (MlsPskInput *)psks;
+        effective_psk_count = psk_count;
+    }
+    if (mls_psk_secret_compute(effective_psks, effective_psk_count, psk_secret) != 0) {
+        if (welcome_psk_id_count > 0) free(effective_psks);
+        welcome_psk_ids_free(welcome_psk_ids, welcome_psk_id_count);
+        sodium_memzero(joiner_secret, sizeof(joiner_secret));
+        return MARMOT_ERR_INTERNAL;
+    }
+    if (welcome_psk_id_count > 0) free(effective_psks);
+    welcome_psk_ids_free(welcome_psk_ids, welcome_psk_id_count);
 
     /* Derive welcome_secret per RFC 9420 §8.3:
      * member_secret = Extract(joiner_secret, psk_secret_or_zero)
      * welcome_secret = DeriveSecret(member_secret, "welcome")
      * welcome_key = ExpandWithLabel(welcome_secret, "key", "", key_len)
      * welcome_nonce = ExpandWithLabel(welcome_secret, "nonce", "", nonce_len) */
-    uint8_t zero_psk[MLS_HASH_LEN];
-    memset(zero_psk, 0, MLS_HASH_LEN);
     uint8_t member_secret_early[MLS_HASH_LEN];
     if (mls_crypto_hkdf_extract(member_secret_early, joiner_secret, MLS_HASH_LEN,
-                                 zero_psk, MLS_HASH_LEN) != 0) {
+                                 psk_secret, MLS_HASH_LEN) != 0) {
         sodium_memzero(joiner_secret, sizeof(joiner_secret));
+        sodium_memzero(psk_secret, sizeof(psk_secret));
         return MARMOT_ERR_INTERNAL;
     }
     uint8_t welcome_secret[MLS_HASH_LEN];
@@ -459,12 +612,37 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
     sodium_memzero(welcome_nonce, sizeof(welcome_nonce));
     sodium_memzero(welcome_secret, sizeof(welcome_secret));
 
-    /* Parse GroupInfo */
+    /* Parse GroupInfo. MDK vectors may carry it as an MLSMessage/group_info
+     * wrapper; GroupInfo itself starts after the 4-byte MLSMessage header. */
+    { FILE *dbg = fopen("/tmp/gi.bin", "wb"); if (dbg) { fwrite(gi_data, 1, gi_len, dbg); fclose(dbg); } }
+    const uint8_t *gi_parse = gi_data;
+    size_t gi_parse_len = gi_len;
+    if (gi_parse_len >= 4 && gi_parse[0] == 0x00 && gi_parse[1] == 0x01 &&
+        gi_parse[2] == 0x00 && gi_parse[3] == MLS_WIRE_FORMAT_GROUP_INFO) {
+        gi_parse += 4;
+        gi_parse_len -= 4;
+    }
     MlsGroupInfo gi;
     MlsTlsReader gi_reader;
-    mls_tls_reader_init(&gi_reader, gi_data, gi_len);
-    if (mls_group_info_deserialize(&gi_reader, &gi) != 0 ||
-        !mls_tls_reader_done(&gi_reader)) {
+    mls_tls_reader_init(&gi_reader, gi_parse, gi_parse_len);
+    int gi_parse_rc = mls_group_info_deserialize(&gi_reader, &gi);
+    if (gi_parse_rc != 0 || !mls_tls_reader_done(&gi_reader)) {
+        size_t pos = gi_reader.pos;
+        fprintf(stderr, "welcome invalid: groupinfo parse rc=%d gi_len=%zu parse_len=%zu prefix=%02x%02x%02x%02x%02x%02x%02x%02x pos=%zu remprefix=%02x%02x%02x%02x%02x%02x%02x%02x\n",
+                gi_parse_rc, gi_len, gi_parse_len,
+                gi_len > 0 ? gi_data[0] : 0, gi_len > 1 ? gi_data[1] : 0,
+                gi_len > 2 ? gi_data[2] : 0, gi_len > 3 ? gi_data[3] : 0,
+                gi_len > 4 ? gi_data[4] : 0, gi_len > 5 ? gi_data[5] : 0,
+                gi_len > 6 ? gi_data[6] : 0, gi_len > 7 ? gi_data[7] : 0,
+                pos,
+                pos + 0 < gi_parse_len ? gi_parse[pos + 0] : 0,
+                pos + 1 < gi_parse_len ? gi_parse[pos + 1] : 0,
+                pos + 2 < gi_parse_len ? gi_parse[pos + 2] : 0,
+                pos + 3 < gi_parse_len ? gi_parse[pos + 3] : 0,
+                pos + 4 < gi_parse_len ? gi_parse[pos + 4] : 0,
+                pos + 5 < gi_parse_len ? gi_parse[pos + 5] : 0,
+                pos + 6 < gi_parse_len ? gi_parse[pos + 6] : 0,
+                pos + 7 < gi_parse_len ? gi_parse[pos + 7] : 0);
         free(gi_data);
         sodium_memzero(joiner_secret, sizeof(joiner_secret));
         return MARMOT_ERR_WELCOME_INVALID;
@@ -530,6 +708,7 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
         if (find_ratchet_tree_extension(gi.group_info_extensions_data,
                                         gi.group_info_extensions_len,
                                         &ext_tree, &ext_tree_len) != 0) {
+            fprintf(stderr, "welcome invalid: ratchet tree extension missing\n");
             mls_group_info_clear(&gi);
             sodium_memzero(joiner_secret, sizeof(joiner_secret));
             mls_group_free(group_out);
@@ -540,7 +719,8 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
         tree_src_len = ext_tree_len;
     }
 
-    if (deserialize_ratchet_tree(tree_src, tree_src_len, &group_out->tree) != 0) {
+    if (mls_ratchet_tree_deserialize(tree_src, tree_src_len, &group_out->tree) != 0) {
+        fprintf(stderr, "welcome invalid: ratchet tree deserialize\n");
         free(tree_ext_alloc);
         mls_group_info_clear(&gi);
         sodium_memzero(joiner_secret, sizeof(joiner_secret));
@@ -553,6 +733,7 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
     if (mls_tree_root_hash(&group_out->tree, actual_tree_hash) != 0 ||
         sodium_memcmp(actual_tree_hash, gi.tree_hash, MLS_HASH_LEN) != 0 ||
         mls_tree_verify_parent_hashes(&group_out->tree) != 0) {
+        fprintf(stderr, "welcome invalid: tree hash/parent hash\n");
         mls_group_info_clear(&gi);
         sodium_memzero(joiner_secret, sizeof(joiner_secret));
         mls_group_free(group_out);
@@ -579,6 +760,7 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
         mls_crypto_verify_with_label(gi.signature,
             group_out->tree.nodes[signer_node].leaf.signature_key,
             "GroupInfoTBS", gi_tbs.data, gi_tbs.len) != 0) {
+        fprintf(stderr, "welcome invalid: groupinfo signature\n");
         mls_tls_buf_free(&gi_tbs);
         mls_group_info_clear(&gi);
         sodium_memzero(joiner_secret, sizeof(joiner_secret));
@@ -653,14 +835,11 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
      * 4. All epoch secrets derived from epoch_secret
      *
      * This matches mls_key_schedule_derive steps 3-6. */
-    uint8_t zero[MLS_HASH_LEN];
-    memset(zero, 0, MLS_HASH_LEN);
-
     /* Step 1: member_secret = Extract(joiner_secret, psk_secret)
      * salt = joiner_secret, ikm = psk_secret (zero if no PSK) */
     uint8_t member_secret[MLS_HASH_LEN];
     if (mls_crypto_hkdf_extract(member_secret, joiner_secret, MLS_HASH_LEN,
-                                 zero, MLS_HASH_LEN) != 0) {
+                                 psk_secret, MLS_HASH_LEN) != 0) {
         free(gc_data);
         mls_group_info_clear(&gi);
         sodium_memzero(joiner_secret, sizeof(joiner_secret));
@@ -758,6 +937,7 @@ mls_welcome_process_parsed(const MlsWelcome *welcome,
     free(gc_data);
     mls_group_info_clear(&gi);
     sodium_memzero(joiner_secret, sizeof(joiner_secret));
+    sodium_memzero(psk_secret, sizeof(psk_secret));
     sodium_memzero(epoch_secret, sizeof(epoch_secret));
 
     return 0;

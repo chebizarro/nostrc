@@ -688,6 +688,30 @@ compute_confirmation_tag(const uint8_t confirmation_key[MLS_HASH_LEN],
 }
 
 static int
+public_message_confirmed_transcript_input(const MlsPublicMessage *pm,
+                                          uint8_t **out, size_t *out_len)
+{
+    if (!pm || !out || !out_len) return -1;
+    MlsTlsBuf buf;
+    if (mls_tls_buf_init(&buf, 512) != 0) return -1;
+    if (mls_tls_write_u16(&buf, MLS_WIRE_FORMAT_PUBLIC_MESSAGE) != 0 ||
+        mls_framed_content_serialize(&pm->content, &buf) != 0) {
+        mls_tls_buf_free(&buf);
+        return -1;
+    }
+    const uint8_t *sig = pm->auth.signature_data ? pm->auth.signature_data : pm->auth.signature;
+    size_t sig_len = pm->auth.signature_data ? pm->auth.signature_len :
+                     (pm->auth.signature_len ? pm->auth.signature_len : MLS_SIG_LEN);
+    if (mls_tls_write_opaque16(&buf, sig, sig_len) != 0) {
+        mls_tls_buf_free(&buf);
+        return -1;
+    }
+    *out = buf.data;
+    *out_len = buf.len;
+    return 0;
+}
+
+static int
 build_encrypt_context(const char *label,
                       const uint8_t *context, size_t context_len,
                       uint8_t **out, size_t *out_len)
@@ -829,15 +853,16 @@ static int
 mls_group_info_tbs_serialize_local(const MlsGroupInfo *gi, MlsTlsBuf *buf)
 {
     if (!gi || !buf) return -1;
+    if (mls_tls_write_u16(buf, 1) != 0) return -1;
     if (mls_tls_write_u16(buf, MARMOT_CIPHERSUITE) != 0) return -1;
-    if (mls_tls_write_opaque16(buf, gi->group_id, gi->group_id_len) != 0) return -1;
+    if (mls_tls_write_opaque8(buf, gi->group_id, gi->group_id_len) != 0) return -1;
     if (mls_tls_write_u64(buf, gi->epoch) != 0) return -1;
-    if (mls_tls_buf_append(buf, gi->tree_hash, MLS_HASH_LEN) != 0) return -1;
-    if (mls_tls_buf_append(buf, gi->confirmed_transcript_hash, MLS_HASH_LEN) != 0) return -1;
+    if (mls_tls_write_opaque8(buf, gi->tree_hash, MLS_HASH_LEN) != 0) return -1;
+    if (mls_tls_write_opaque8(buf, gi->confirmed_transcript_hash, MLS_HASH_LEN) != 0) return -1;
     if (mls_tls_write_opaque32(buf, gi->extensions_data, gi->extensions_len) != 0) return -1;
     if (mls_tls_write_opaque32(buf, gi->group_info_extensions_data,
                                 gi->group_info_extensions_len) != 0) return -1;
-    if (mls_tls_buf_append(buf, gi->confirmation_tag, MLS_HASH_LEN) != 0) return -1;
+    if (mls_tls_write_opaque8(buf, gi->confirmation_tag, MLS_HASH_LEN) != 0) return -1;
     if (mls_tls_write_u32(buf, gi->signer_leaf) != 0) return -1;
     return 0;
 }
@@ -1806,10 +1831,132 @@ validate_proposal_ordering(const MlsProposal *proposals, size_t count)
     return 0;
 }
 
-int
-mls_group_process_commit(MlsGroup *group,
-                         const uint8_t *commit_data, size_t commit_len,
-                         uint32_t sender_leaf)
+/* ──────────────────────────────────────────────────────────────────────────
+ * Referenced-proposal store (RFC 9420 §12.4)
+ *
+ * A commit may reference proposals by ProposalRef instead of inlining them.
+ * The referenced proposals are the standalone Proposal MLSMessages previously
+ * received in the same epoch.  We parse each, compute its
+ * ProposalRef = RefHash("MLS 1.0 Proposal Reference", AuthenticatedContent),
+ * and resolve the commit's references against that set.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+static int proposal_deserialize(MlsTlsReader *reader, MlsProposal *p);
+
+typedef struct {
+    uint8_t     ref[MLS_HASH_LEN];
+    size_t      ref_len;
+    MlsProposal prop;
+    bool        consumed;
+} MlsStoredProposal;
+
+typedef struct {
+    MlsStoredProposal *items;
+    size_t             count;
+} MlsProposalStore;
+
+static int
+proposal_msg_ref(const MlsPublicMessage *pm, uint8_t out[MLS_HASH_LEN])
+{
+    /* AuthenticatedContent = wire_format || FramedContent || signature,
+     * exactly the bytes produced for the confirmed-transcript input. */
+    uint8_t *ac = NULL;
+    size_t ac_len = 0;
+    if (public_message_confirmed_transcript_input(pm, &ac, &ac_len) != 0)
+        return -1;
+    int rc = mls_crypto_ref_hash(out, "MLS 1.0 Proposal Reference", ac, ac_len);
+    free(ac);
+    return rc;
+}
+
+static void
+proposal_store_free(MlsProposalStore *store)
+{
+    if (!store || !store->items) return;
+    for (size_t i = 0; i < store->count; i++) {
+        if (!store->items[i].consumed)
+            mls_proposal_clear(&store->items[i].prop);
+    }
+    free(store->items);
+    store->items = NULL;
+    store->count = 0;
+}
+
+static int
+proposal_store_build(MlsProposalStore *store,
+                     const uint8_t *const *msgs, const size_t *lens, size_t n)
+{
+    memset(store, 0, sizeof(*store));
+    if (n == 0) return 0;
+    if (!msgs || !lens) return -1;
+    store->items = calloc(n, sizeof(*store->items));
+    if (!store->items) return -1;
+
+    for (size_t i = 0; i < n; i++) {
+        MlsMLSMessage msg;
+        memset(&msg, 0, sizeof(msg));
+        MlsTlsReader r;
+        mls_tls_reader_init(&r, msgs[i], lens[i]);
+        if (mls_message_deserialize(&r, &msg) != 0 ||
+            !mls_tls_reader_done(&r) ||
+            msg.wire_format != MLS_WIRE_FORMAT_PUBLIC_MESSAGE ||
+            msg.public_message.content.content_type != MLS_CONTENT_TYPE_PROPOSAL) {
+            mls_message_clear(&msg);
+            proposal_store_free(store);
+            return -1;
+        }
+        MlsPublicMessage *pm = &msg.public_message;
+        MlsStoredProposal *slot = &store->items[store->count];
+        memset(slot, 0, sizeof(*slot));
+
+        MlsTlsReader pr;
+        mls_tls_reader_init(&pr, pm->content.content, pm->content.content_len);
+        if (proposal_deserialize(&pr, &slot->prop) != 0 ||
+            !mls_tls_reader_done(&pr) ||
+            proposal_msg_ref(pm, slot->ref) != 0) {
+            mls_proposal_clear(&slot->prop);
+            mls_message_clear(&msg);
+            proposal_store_free(store);
+            return -1;
+        }
+        /* An Update replaces the LeafNode of the member that sent the
+         * proposal (RFC 9420 §12.1.2); capture that leaf from the framing. */
+        if (slot->prop.type == MLS_PROPOSAL_UPDATE &&
+            pm->content.sender.sender_type == MLS_SENDER_TYPE_MEMBER)
+            slot->prop.update_leaf_index = pm->content.sender.leaf_index;
+        slot->ref_len = MLS_HASH_LEN;
+        store->count++;
+        mls_message_clear(&msg);
+    }
+    return 0;
+}
+
+/* Resolve `p` (a referenced proposal) by moving the matching stored proposal
+ * into it.  Returns 0 on success, -1 when no stored proposal matches. */
+static int
+proposal_store_resolve(MlsProposalStore *store, MlsProposal *p)
+{
+    if (!store) return -1;
+    for (size_t i = 0; i < store->count; i++) {
+        MlsStoredProposal *s = &store->items[i];
+        if (s->consumed) continue;
+        if (s->ref_len == p->ref_len &&
+            memcmp(s->ref, p->ref, p->ref_len) == 0) {
+            MlsProposal moved = s->prop;
+            s->consumed = true;
+            memset(&s->prop, 0, sizeof(s->prop));
+            *p = moved;   /* clears is_ref/ref; installs resolved proposal */
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static int
+process_commit_impl(MlsGroup *group,
+                    const uint8_t *commit_data, size_t commit_len,
+                    uint32_t sender_leaf,
+                    MlsProposalStore *store)
 {
     if (!group || !commit_data) return MARMOT_ERR_INVALID_ARG;
     if (sender_leaf >= group->tree.n_leaves) return MARMOT_ERR_INVALID_ARG;
@@ -1869,6 +2016,7 @@ mls_group_process_commit(MlsGroup *group,
         return MARMOT_ERR_MLS_PROCESS_MESSAGE;
     }
 
+
     MlsGroup staged;
     uint8_t *group_snapshot = NULL;
     size_t group_snapshot_len = 0;
@@ -1883,6 +2031,28 @@ mls_group_process_commit(MlsGroup *group,
     free(group_snapshot);
     MlsGroup *live_group = group;
     group = &staged;
+
+    /* Resolve referenced proposals (ProposalOrRef type 2) against the store,
+     * and reject commits carrying proposal types we do not yet apply. */
+    for (size_t i = 0; i < commit.proposal_count; i++) {
+        MlsProposal *p = &commit.proposals[i];
+        if (p->is_ref) {
+            if (proposal_store_resolve(store, p) != 0) {
+                mls_commit_clear(&commit);
+                /* Without a proposal store we cannot resolve references;
+                 * with one, a missing referent is a genuine framing error. */
+                return store ? MARMOT_ERR_MLS_PROCESS_MESSAGE
+                             : MARMOT_ERR_UNSUPPORTED;
+            }
+        }
+        if (p->unsupported ||
+            (p->type != MLS_PROPOSAL_ADD &&
+             p->type != MLS_PROPOSAL_UPDATE &&
+             p->type != MLS_PROPOSAL_REMOVE)) {
+            mls_commit_clear(&commit);
+            return MARMOT_ERR_UNSUPPORTED;
+        }
+    }
 
     /* Validate proposal ordering per RFC 9420 */
     if (validate_proposal_ordering(commit.proposals, commit.proposal_count) != 0) {
@@ -1910,6 +2080,26 @@ mls_group_process_commit(MlsGroup *group,
                 mls_commit_clear(&commit);
                 return MARMOT_ERR_INTERNAL;
             }
+            uint32_t new_leaf = mls_tree_node_to_leaf(new_leaf_idx);
+            uint32_t add_dp[64];
+            uint32_t add_dp_len = 0;
+            if (mls_tree_direct_path(new_leaf_idx, group->tree.n_leaves,
+                                     add_dp, 64, &add_dp_len) != 0) {
+                mls_commit_clear(&commit);
+                return MARMOT_ERR_INTERNAL;
+            }
+            for (uint32_t j = 0; j < add_dp_len; j++) {
+                MlsNode *parent = &group->tree.nodes[add_dp[j]];
+                if (parent->type != MLS_NODE_PARENT) continue;
+                uint32_t *leaves = realloc(parent->parent.unmerged_leaves,
+                                           (parent->parent.unmerged_leaf_count + 1) * sizeof(uint32_t));
+                if (!leaves) {
+                    mls_commit_clear(&commit);
+                    return MARMOT_ERR_INTERNAL;
+                }
+                parent->parent.unmerged_leaves = leaves;
+                parent->parent.unmerged_leaves[parent->parent.unmerged_leaf_count++] = new_leaf;
+            }
             break;
         }
         case MLS_PROPOSAL_REMOVE: {
@@ -1933,13 +2123,32 @@ mls_group_process_commit(MlsGroup *group,
             break;
         }
         case MLS_PROPOSAL_UPDATE: {
-            uint32_t sender_node = mls_tree_leaf_to_node(sender_leaf);
-            mls_leaf_node_clear(&group->tree.nodes[sender_node].leaf);
-            if (mls_leaf_node_clone(&group->tree.nodes[sender_node].leaf,
+            /* Update targets the proposer's leaf (from the standalone proposal
+             * framing); fall back to the committer for legacy inline use. */
+            uint32_t upd_leaf = (p->update_leaf_index != UINT32_MAX)
+                                    ? p->update_leaf_index : sender_leaf;
+            if (upd_leaf >= group->tree.n_leaves) {
+                mls_commit_clear(&commit);
+                return MARMOT_ERR_INVALID_ARG;
+            }
+            uint32_t upd_node = mls_tree_leaf_to_node(upd_leaf);
+            mls_leaf_node_clear(&group->tree.nodes[upd_node].leaf);
+            if (mls_leaf_node_clone(&group->tree.nodes[upd_node].leaf,
                                      &p->update.leaf_node) != 0) {
                 mls_commit_clear(&commit);
                 return MARMOT_ERR_INTERNAL;
             }
+            /* Applying an Update blanks the updated leaf's direct path to the
+             * root (RFC 9420 §12.1.2); the stale path secrets are invalidated. */
+            uint32_t upd_dp[64];
+            uint32_t upd_dp_len = 0;
+            if (mls_tree_direct_path(upd_node, group->tree.n_leaves,
+                                     upd_dp, 64, &upd_dp_len) != 0) {
+                mls_commit_clear(&commit);
+                return MARMOT_ERR_INTERNAL;
+            }
+            for (uint32_t j = 0; j < upd_dp_len; j++)
+                mls_tree_blank_node(&group->tree.nodes[upd_dp[j]]);
             break;
         }
         default:
@@ -1969,6 +2178,18 @@ mls_group_process_commit(MlsGroup *group,
                                            fdp, 64, &fdp_len) != 0) {
             mls_commit_clear(&commit);
             return MARMOT_ERR_INTERNAL;
+        }
+
+        /* When the committer's filtered direct path stops short of the root —
+         * i.e. an entire sibling subtree toward the root is blank/empty (common
+         * once a large group has churned members away) — the topmost node's
+         * parent_hash and the commit_secret derivation follow the truncated
+         * chain.  libmarmot does not yet reproduce that truncated derivation;
+         * flag it as a known gap rather than deriving a wrong epoch. */
+        if (fdp_len > 0 &&
+            fdp[fdp_len - 1] != mls_tree_root(group->tree.n_leaves)) {
+            mls_commit_clear(&commit);
+            return MARMOT_ERR_NOT_IMPLEMENTED;
         }
 
         /* Find which copath node we're under */
@@ -2018,13 +2239,36 @@ mls_group_process_commit(MlsGroup *group,
 
         uint8_t our_path_secret[MLS_HASH_LEN];
 
-        /* Decrypt from the path node using our stored private key */
+        /* Decrypt from the path node using our stored private key.  Per
+         * RFC 9420 §7.6, UpdatePathNode HPKE info is bound to the provisional
+         * GroupContext with the post-UpdatePath tree hash, while the epoch and
+         * transcript hash are still the pre-commit values. */
         uint8_t *path_context = NULL;
         size_t path_context_len = 0;
-        if (mls_group_context_build(group, &path_context, &path_context_len) != 0) {
+        uint8_t *tree_snapshot = NULL;
+        size_t tree_snapshot_len = 0;
+        MlsRatchetTree context_tree;
+        memset(&context_tree, 0, sizeof(context_tree));
+        uint8_t provisional_tree_hash[MLS_HASH_LEN];
+        if (mls_ratchet_tree_serialize(&group->tree, &tree_snapshot,
+                                       &tree_snapshot_len) != 0 ||
+            mls_ratchet_tree_deserialize(tree_snapshot, tree_snapshot_len,
+                                         &context_tree) != 0 ||
+            mls_treekem_apply_update_path(&context_tree, sender_leaf,
+                                          &commit.path) != 0 ||
+            mls_tree_root_hash(&context_tree, provisional_tree_hash) != 0 ||
+            mls_group_context_serialize(group->group_id, group->group_id_len,
+                                        group->epoch + 1, provisional_tree_hash,
+                                        group->confirmed_transcript_hash,
+                                        group->extensions_data, group->extensions_len,
+                                        &path_context, &path_context_len) != 0) {
+            free(tree_snapshot);
+            mls_tree_free(&context_tree);
             mls_commit_clear(&commit);
             return MARMOT_ERR_INTERNAL;
         }
+        free(tree_snapshot);
+        mls_tree_free(&context_tree);
 
         if (decrypt_path_secret(group, &commit.path.nodes[our_path_idx],
                                 copath_sibling,
@@ -2115,15 +2359,28 @@ mls_group_process_commit(MlsGroup *group,
     uint8_t commit_secret[MLS_HASH_LEN];
     derive_commit_secret(has_path ? root_path_secret : NULL, has_path, commit_secret);
 
-    /* Update confirmed transcript hash */
+    /* Update confirmed transcript hash over AuthenticatedContentTBM (through
+     * FramedContentAuthData.signature, excluding the commit confirmation tag). */
+    uint8_t *confirmed_input = NULL;
+    size_t confirmed_input_len = 0;
+    int transcript_rc =
+        public_message_confirmed_transcript_input(pm,
+                                                  &confirmed_input,
+                                                  &confirmed_input_len);
+    if (transcript_rc != 0) {
+        mls_commit_clear(&commit);
+        return MARMOT_ERR_MEMORY;
+    }
     MlsTlsBuf conf_buf;
-    if (mls_tls_buf_init(&conf_buf, MLS_HASH_LEN + commit_body_len) != 0) {
+    if (mls_tls_buf_init(&conf_buf, MLS_HASH_LEN + confirmed_input_len) != 0) {
+        free(confirmed_input);
         mls_commit_clear(&commit);
         return MARMOT_ERR_MEMORY;
     }
     mls_tls_buf_append(&conf_buf, group->interim_transcript_hash, MLS_HASH_LEN);
-    mls_tls_buf_append(&conf_buf, commit_body, commit_body_len);
+    mls_tls_buf_append(&conf_buf, confirmed_input, confirmed_input_len);
     mls_crypto_hash(group->confirmed_transcript_hash, conf_buf.data, conf_buf.len);
+    free(confirmed_input);
     mls_tls_buf_free(&conf_buf);
 
     /* Advance epoch */
@@ -2169,6 +2426,32 @@ mls_group_process_commit(MlsGroup *group,
     mls_message_clear(&wire_msg);
 
     return 0;
+}
+
+int
+mls_group_process_commit(MlsGroup *group,
+                         const uint8_t *commit_data, size_t commit_len,
+                         uint32_t sender_leaf)
+{
+    return process_commit_impl(group, commit_data, commit_len, sender_leaf, NULL);
+}
+
+int
+mls_group_process_commit_ex(MlsGroup *group,
+                            const uint8_t *commit_data, size_t commit_len,
+                            uint32_t sender_leaf,
+                            const uint8_t *const *proposal_msgs,
+                            const size_t *proposal_lens,
+                            size_t proposal_count)
+{
+    MlsProposalStore store;
+    if (proposal_store_build(&store, proposal_msgs, proposal_lens,
+                             proposal_count) != 0)
+        return MARMOT_ERR_MLS_PROCESS_MESSAGE;
+    int rc = process_commit_impl(group, commit_data, commit_len, sender_leaf,
+                                 &store);
+    proposal_store_free(&store);
+    return rc;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -2407,11 +2690,12 @@ mls_group_info_serialize(const MlsGroupInfo *gi, MlsTlsBuf *buf)
     if (!gi || !buf) return -1;
 
     /* GroupContext portion */
+    if (mls_tls_write_u16(buf, 1) != 0) return -1;
     if (mls_tls_write_u16(buf, MARMOT_CIPHERSUITE) != 0) return -1;
-    if (mls_tls_write_opaque16(buf, gi->group_id, gi->group_id_len) != 0) return -1;
+    if (mls_tls_write_opaque8(buf, gi->group_id, gi->group_id_len) != 0) return -1;
     if (mls_tls_write_u64(buf, gi->epoch) != 0) return -1;
-    if (mls_tls_buf_append(buf, gi->tree_hash, MLS_HASH_LEN) != 0) return -1;
-    if (mls_tls_buf_append(buf, gi->confirmed_transcript_hash, MLS_HASH_LEN) != 0)
+    if (mls_tls_write_opaque8(buf, gi->tree_hash, MLS_HASH_LEN) != 0) return -1;
+    if (mls_tls_write_opaque8(buf, gi->confirmed_transcript_hash, MLS_HASH_LEN) != 0)
         return -1;
     if (mls_tls_write_opaque32(buf, gi->extensions_data, gi->extensions_len) != 0)
         return -1;
@@ -2419,7 +2703,7 @@ mls_group_info_serialize(const MlsGroupInfo *gi, MlsTlsBuf *buf)
     /* GroupInfo-specific fields */
     if (mls_tls_write_opaque32(buf, gi->group_info_extensions_data,
                                 gi->group_info_extensions_len) != 0) return -1;
-    if (mls_tls_buf_append(buf, gi->confirmation_tag, MLS_HASH_LEN) != 0) return -1;
+    if (mls_tls_write_opaque8(buf, gi->confirmation_tag, MLS_HASH_LEN) != 0) return -1;
     if (mls_tls_write_u32(buf, gi->signer_leaf) != 0) return -1;
     if (mls_tls_write_opaque16(buf, gi->signature, gi->signature_len) != 0) return -1;
 
@@ -2432,18 +2716,36 @@ mls_group_info_deserialize(MlsTlsReader *reader, MlsGroupInfo *gi)
     if (!reader || !gi) return -1;
     memset(gi, 0, sizeof(*gi));
 
+    uint16_t version;
     uint16_t cs;
+    if (mls_tls_read_u16(reader, &version) != 0) goto fail;
+    if (version != 1) goto fail;
     if (mls_tls_read_u16(reader, &cs) != 0) goto fail;
     if (cs != MARMOT_CIPHERSUITE) goto fail;
 
-    if (mls_tls_read_opaque16(reader, &gi->group_id, &gi->group_id_len) != 0) goto fail;
+    if (mls_tls_read_opaque8(reader, &gi->group_id, &gi->group_id_len) != 0) goto fail;
     if (mls_tls_read_u64(reader, &gi->epoch) != 0) goto fail;
-    if (mls_tls_read_fixed(reader, gi->tree_hash, MLS_HASH_LEN) != 0) goto fail;
-    if (mls_tls_read_fixed(reader, gi->confirmed_transcript_hash, MLS_HASH_LEN) != 0) goto fail;
+    uint8_t *tree_hash = NULL;
+    size_t tree_hash_len = 0;
+    if (mls_tls_read_opaque8(reader, &tree_hash, &tree_hash_len) != 0) goto fail;
+    if (tree_hash_len != MLS_HASH_LEN) { free(tree_hash); goto fail; }
+    memcpy(gi->tree_hash, tree_hash, MLS_HASH_LEN);
+    free(tree_hash);
+    uint8_t *cth = NULL;
+    size_t cth_len = 0;
+    if (mls_tls_read_opaque8(reader, &cth, &cth_len) != 0) goto fail;
+    if (cth_len != MLS_HASH_LEN) { free(cth); goto fail; }
+    memcpy(gi->confirmed_transcript_hash, cth, MLS_HASH_LEN);
+    free(cth);
     if (mls_tls_read_opaque32(reader, &gi->extensions_data, &gi->extensions_len) != 0) goto fail;
     if (mls_tls_read_opaque32(reader, &gi->group_info_extensions_data,
                                &gi->group_info_extensions_len) != 0) goto fail;
-    if (mls_tls_read_fixed(reader, gi->confirmation_tag, MLS_HASH_LEN) != 0) goto fail;
+    uint8_t *confirmation_tag = NULL;
+    size_t confirmation_tag_len = 0;
+    if (mls_tls_read_opaque8(reader, &confirmation_tag, &confirmation_tag_len) != 0) goto fail;
+    if (confirmation_tag_len != MLS_HASH_LEN) { free(confirmation_tag); goto fail; }
+    memcpy(gi->confirmation_tag, confirmation_tag, MLS_HASH_LEN);
+    free(confirmation_tag);
     if (mls_tls_read_u32(reader, &gi->signer_leaf) != 0) goto fail;
 
     {
@@ -2489,16 +2791,74 @@ proposal_deserialize(MlsTlsReader *reader, MlsProposal *p)
 {
     if (!reader || !p) return -1;
     memset(p, 0, sizeof(*p));
+    p->update_leaf_index = UINT32_MAX; /* default: committer's own leaf */
 
     if (mls_tls_read_u16(reader, &p->type) != 0) return -1;
 
     switch (p->type) {
     case MLS_PROPOSAL_ADD:
+        if (mls_tls_reader_remaining(reader) >= 4 &&
+            reader->data[reader->pos] == 0x00 &&
+            reader->data[reader->pos + 1] == 0x01 &&
+            reader->data[reader->pos + 2] == 0x00 &&
+            reader->data[reader->pos + 3] == MLS_WIRE_FORMAT_KEY_PACKAGE) {
+            reader->pos += 4;
+        }
         return mls_key_package_deserialize(reader, &p->add.key_package);
     case MLS_PROPOSAL_UPDATE:
         return mls_leaf_node_deserialize(reader, &p->update.leaf_node);
     case MLS_PROPOSAL_REMOVE:
         return mls_tls_read_u32(reader, &p->remove.removed_leaf);
+    case MLS_PROPOSAL_PSK: {
+        /* Recognized but not applied: parse (skip) the PreSharedKeyID so the
+         * commit deserializes, then reject at processing time. */
+        uint8_t psktype;
+        p->unsupported = true;
+        if (mls_tls_read_u8(reader, &psktype) != 0) return -1;
+        if (psktype == 1) {
+            uint8_t *id = NULL; size_t idl = 0;
+            if (mls_tls_read_opaque32(reader, &id, &idl) != 0) return -1;
+            free(id);
+        } else if (psktype == 2) {
+            uint8_t usage; uint8_t *gid = NULL; size_t gidl = 0; uint64_t epoch;
+            if (mls_tls_read_u8(reader, &usage) != 0) return -1;
+            if (mls_tls_read_opaque32(reader, &gid, &gidl) != 0) return -1;
+            free(gid);
+            if (mls_tls_read_u64(reader, &epoch) != 0) return -1;
+        } else {
+            return -1;
+        }
+        uint8_t *nonce = NULL; size_t noncel = 0;
+        if (mls_tls_read_opaque32(reader, &nonce, &noncel) != 0) return -1;
+        free(nonce);
+        return 0;
+    }
+    case MLS_PROPOSAL_REINIT: {
+        uint8_t *gid = NULL; size_t gidl = 0; uint16_t version, cs;
+        uint8_t *ext = NULL; size_t extl = 0;
+        p->unsupported = true;
+        if (mls_tls_read_opaque32(reader, &gid, &gidl) != 0) return -1;
+        free(gid);
+        if (mls_tls_read_u16(reader, &version) != 0) return -1;
+        if (mls_tls_read_u16(reader, &cs) != 0) return -1;
+        if (mls_tls_read_opaque32(reader, &ext, &extl) != 0) return -1;
+        free(ext);
+        return 0;
+    }
+    case MLS_PROPOSAL_EXTERNAL_INIT: {
+        uint8_t *kem = NULL; size_t keml = 0;
+        p->unsupported = true;
+        if (mls_tls_read_opaque32(reader, &kem, &keml) != 0) return -1;
+        free(kem);
+        return 0;
+    }
+    case MLS_PROPOSAL_GROUP_CONTEXT_EXT: {
+        uint8_t *ext = NULL; size_t extl = 0;
+        p->unsupported = true;
+        if (mls_tls_read_opaque32(reader, &ext, &extl) != 0) return -1;
+        free(ext);
+        return 0;
+    }
     default:
         return -1; /* Unknown proposal type */
     }
@@ -2667,6 +3027,31 @@ mls_commit_deserialize(MlsTlsReader *reader, MlsCommit *commit)
             MlsProposal *proposal = &commit->proposals[commit->proposal_count];
             memset(proposal, 0, sizeof(*proposal));
             commit->proposal_count++;
+            uint8_t proposal_or_ref = 1;
+            if (mls_tls_read_u8(&proposals_reader, &proposal_or_ref) != 0) {
+                free(proposals_data); goto fail;
+            }
+            if (proposal_or_ref == 2) {
+                /* Referenced proposal (ProposalOrRef type 2): record the
+                 * ProposalRef so the caller can resolve it against a store of
+                 * previously-received proposals (mls_group_process_commit_ex). */
+                uint8_t *ref = NULL;
+                size_t ref_len = 0;
+                if (mls_tls_read_opaque32(&proposals_reader, &ref, &ref_len) != 0) {
+                    free(proposals_data); goto fail;
+                }
+                if (ref_len == 0 || ref_len > MLS_HASH_LEN) {
+                    free(ref); free(proposals_data); goto fail;
+                }
+                proposal->is_ref = true;
+                proposal->ref_len = ref_len;
+                memcpy(proposal->ref, ref, ref_len);
+                free(ref);
+                continue;
+            }
+            if (proposal_or_ref != 1) {
+                free(proposals_data); goto fail;
+            }
             if (proposal_deserialize(&proposals_reader, proposal) != 0) {
                 free(proposals_data); goto fail;
             }

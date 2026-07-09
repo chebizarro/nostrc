@@ -528,6 +528,57 @@ skip_proposal_body(MlsTlsReader *reader)
     }
     case MLS_PROPOSAL_REMOVE:
         return mls_tls_read_u32(reader, &(uint32_t){0});
+    case MLS_PROPOSAL_PSK: {
+        /* PreSharedKeyID psk; = PSKType psktype; select{...}; opaque psk_nonce<V>; */
+        uint8_t psktype;
+        if (mls_tls_read_u8(reader, &psktype) != 0) return -1;
+        if (psktype == 1) { /* external: opaque psk_id<V> */
+            uint8_t *id = NULL; size_t idl = 0;
+            if (mls_tls_read_opaque32(reader, &id, &idl) != 0) return -1;
+            free(id);
+        } else if (psktype == 2) { /* resumption: usage(1) + group_id<V> + epoch(8) */
+            uint8_t usage;
+            uint8_t *gid = NULL; size_t gidl = 0;
+            uint64_t epoch;
+            if (mls_tls_read_u8(reader, &usage) != 0) return -1;
+            if (mls_tls_read_opaque32(reader, &gid, &gidl) != 0) return -1;
+            free(gid);
+            if (mls_tls_read_u64(reader, &epoch) != 0) return -1;
+        } else {
+            return -1;
+        }
+        uint8_t *nonce = NULL; size_t noncel = 0;
+        if (mls_tls_read_opaque32(reader, &nonce, &noncel) != 0) return -1;
+        free(nonce);
+        return 0;
+    }
+    case MLS_PROPOSAL_REINIT: {
+        /* opaque group_id<V>; ProtocolVersion version; CipherSuite cs; Extension extensions<V>; */
+        uint8_t *gid = NULL; size_t gidl = 0;
+        uint16_t version, cs;
+        uint8_t *ext = NULL; size_t extl = 0;
+        if (mls_tls_read_opaque32(reader, &gid, &gidl) != 0) return -1;
+        free(gid);
+        if (mls_tls_read_u16(reader, &version) != 0) return -1;
+        if (mls_tls_read_u16(reader, &cs) != 0) return -1;
+        if (mls_tls_read_opaque32(reader, &ext, &extl) != 0) return -1;
+        free(ext);
+        return 0;
+    }
+    case MLS_PROPOSAL_EXTERNAL_INIT: {
+        /* opaque kem_output<V>; */
+        uint8_t *kem = NULL; size_t keml = 0;
+        if (mls_tls_read_opaque32(reader, &kem, &keml) != 0) return -1;
+        free(kem);
+        return 0;
+    }
+    case MLS_PROPOSAL_GROUP_CONTEXT_EXT: {
+        /* Extension extensions<V>; */
+        uint8_t *ext = NULL; size_t extl = 0;
+        if (mls_tls_read_opaque32(reader, &ext, &extl) != 0) return -1;
+        free(ext);
+        return 0;
+    }
     default:
         return -1;
     }

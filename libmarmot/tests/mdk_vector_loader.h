@@ -311,6 +311,25 @@ typedef struct {
 
 /* Passive client test */
 typedef struct {
+    uint8_t *data;
+    size_t len;
+} MdkByteVector;
+
+typedef struct {
+    uint8_t psk_id[256];
+    size_t psk_id_len;
+    uint8_t psk[256];
+    size_t psk_len;
+} MdkPassiveExternalPsk;
+
+typedef struct {
+    MdkByteVector *proposals;
+    size_t proposal_count;
+    MdkByteVector commit;
+    uint8_t epoch_authenticator[32];
+} MdkPassiveClientEpoch;
+
+typedef struct {
     uint32_t cipher_suite;
     uint8_t key_package[2048];
     size_t key_package_len;
@@ -324,7 +343,10 @@ typedef struct {
     size_t welcome_len;
     uint8_t ratchet_tree[16384];
     size_t ratchet_tree_len;
+    MdkPassiveExternalPsk *external_psks;
+    size_t external_psk_count;
     uint8_t initial_epoch_authenticator[32];
+    MdkPassiveClientEpoch *epochs;
     size_t epoch_count;
 } MdkPassiveClientVector;
 
@@ -425,5 +447,6 @@ int mdk_json_find_number(const char *json, const char *key, uint32_t *out);
 void mdk_free_tree_math_vector(MdkTreeMathVector *vec);
 void mdk_free_tree_validation_vector(MdkTreeValidationVector *vec);
 void mdk_free_treekem_vector(MdkTreeKEMVector *vec);
+void mdk_free_passive_client_vector(MdkPassiveClientVector *vec);
 
 #endif /* MDK_VECTOR_LOADER_H */

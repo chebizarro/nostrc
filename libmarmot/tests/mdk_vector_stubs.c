@@ -141,6 +141,44 @@ static int json_get_hex_optional(const char *start, const char *end, const char 
     return json_get_hex_var(start, end, key, out, out_cap, out_len);
 }
 
+static int parse_hex_string_alloc(const char *p, const char *end,
+                                  uint8_t **out, size_t *out_len,
+                                  const char **next)
+{
+    if (!p || p >= end || *p != '"' || !out || !out_len) return -1;
+    p++;
+    const char *q = p;
+    while (q < end && *q && *q != '"') q++;
+    if (q >= end || *q != '"') return -1;
+    size_t hex_len = (size_t)(q - p);
+    if ((hex_len & 1) != 0) return -1;
+    size_t byte_len = hex_len / 2;
+    uint8_t *buf = NULL;
+    if (byte_len > 0) {
+        buf = malloc(byte_len);
+        if (!buf) return -1;
+        char *hex = malloc(hex_len + 1);
+        if (!hex) { free(buf); return -1; }
+        memcpy(hex, p, hex_len);
+        hex[hex_len] = '\0';
+        int ok = mdk_hex_decode(buf, hex, byte_len) ? 0 : -1;
+        free(hex);
+        if (ok != 0) { free(buf); return -1; }
+    }
+    *out = buf;
+    *out_len = byte_len;
+    if (next) *next = q + 1;
+    return 0;
+}
+
+static int json_get_hex_alloc(const char *start, const char *end, const char *key,
+                              uint8_t **out, size_t *out_len)
+{
+    const char *p = json_find_key_value(start, end, key);
+    if (!p) return -1;
+    return parse_hex_string_alloc(p, end, out, out_len, NULL);
+}
+
 static const char *json_array_for_key(const char *start, const char *end,
                                       const char *key, const char **array_end)
 {
@@ -764,6 +802,96 @@ static int parse_treekem_object(const char *obj, const char *end, void *dst,
     return 0;
 }
 
+static int parse_passive_external_psks(const char *obj, const char *end,
+                                       MdkPassiveExternalPsk **out,
+                                       size_t *out_count)
+{
+    const char *arr_end = NULL;
+    const char *p = json_array_for_key(obj, end, "external_psks", &arr_end);
+    if (!p || !out || !out_count) return -1;
+    *out = NULL;
+    *out_count = 0;
+    p++;
+    while (1) {
+        p = skip_ws(p, arr_end);
+        if (p >= arr_end || *p == ']') break;
+        if (*p == ',') { p++; continue; }
+        if (*p != '{') return -1;
+        const char *oe = json_find_matching(p, arr_end + 1, '{', '}');
+        if (!oe) return -1;
+        MdkPassiveExternalPsk *items = realloc(*out, (*out_count + 1) * sizeof(**out));
+        if (!items) return -1;
+        *out = items;
+        MdkPassiveExternalPsk *psk = &(*out)[*out_count];
+        memset(psk, 0, sizeof(*psk));
+        if (json_get_hex_var(p, oe, "psk_id", psk->psk_id, sizeof(psk->psk_id), &psk->psk_id_len) != 0 ||
+            json_get_hex_var(p, oe, "psk", psk->psk, sizeof(psk->psk), &psk->psk_len) != 0)
+            return -1;
+        (*out_count)++;
+        p = oe + 1;
+    }
+    return 0;
+}
+
+static int parse_passive_proposals(const char *obj, const char *end,
+                                   MdkByteVector **out,
+                                   size_t *out_count)
+{
+    const char *arr_end = NULL;
+    const char *p = json_array_for_key(obj, end, "proposals", &arr_end);
+    if (!p || !out || !out_count) return -1;
+    *out = NULL;
+    *out_count = 0;
+    p++;
+    while (1) {
+        p = skip_ws(p, arr_end);
+        if (p >= arr_end || *p == ']') break;
+        if (*p == ',') { p++; continue; }
+        MdkByteVector *items = realloc(*out, (*out_count + 1) * sizeof(**out));
+        if (!items) return -1;
+        *out = items;
+        MdkByteVector *proposal = &(*out)[*out_count];
+        memset(proposal, 0, sizeof(*proposal));
+        if (parse_hex_string_alloc(p, arr_end, &proposal->data,
+                                   &proposal->len, &p) != 0)
+            return -1;
+        (*out_count)++;
+    }
+    return 0;
+}
+
+static int parse_passive_epochs(const char *obj, const char *end,
+                                MdkPassiveClientEpoch **out,
+                                size_t *out_count)
+{
+    const char *arr_end = NULL;
+    const char *p = json_array_for_key(obj, end, "epochs", &arr_end);
+    if (!p || !out || !out_count) return -1;
+    *out = NULL;
+    *out_count = 0;
+    p++;
+    while (1) {
+        p = skip_ws(p, arr_end);
+        if (p >= arr_end || *p == ']') break;
+        if (*p == ',') { p++; continue; }
+        if (*p != '{') return -1;
+        const char *oe = json_find_matching(p, arr_end + 1, '{', '}');
+        if (!oe) return -1;
+        MdkPassiveClientEpoch *epochs = realloc(*out, (*out_count + 1) * sizeof(**out));
+        if (!epochs) return -1;
+        *out = epochs;
+        MdkPassiveClientEpoch *epoch = &(*out)[*out_count];
+        memset(epoch, 0, sizeof(*epoch));
+        if (parse_passive_proposals(p, oe, &epoch->proposals, &epoch->proposal_count) != 0 ||
+            json_get_hex_alloc(p, oe, "commit", &epoch->commit.data, &epoch->commit.len) != 0 ||
+            json_get_hex_fixed(p, oe, "epoch_authenticator", epoch->epoch_authenticator, 32) != 0)
+            return -1;
+        (*out_count)++;
+        p = oe + 1;
+    }
+    return 0;
+}
+
 static int parse_passive_client_object(const char *obj, const char *end, void *dst,
                                        size_t *count, size_t max_count)
 {
@@ -781,20 +909,11 @@ static int parse_passive_client_object(const char *obj, const char *end, void *d
         json_get_hex_var(obj, end, "init_priv", v->init_priv, sizeof(v->init_priv), &v->init_priv_len) != 0 ||
         json_get_hex_var(obj, end, "welcome", v->welcome, sizeof(v->welcome), &v->welcome_len) != 0 ||
         json_get_hex_optional(obj, end, "ratchet_tree", v->ratchet_tree, sizeof(v->ratchet_tree), &v->ratchet_tree_len) != 0 ||
-        json_get_hex_fixed(obj, end, "initial_epoch_authenticator", v->initial_epoch_authenticator, 32) != 0) return -1;
-    const char *epochs_end = NULL;
-    const char *epochs = json_array_for_key(obj, end, "epochs", &epochs_end);
-    if (!epochs) return -1;
-    const char *p = epochs + 1;
-    while (p < epochs_end) {
-        p = skip_ws(p, epochs_end);
-        if (p >= epochs_end || *p == ']') break;
-        if (*p == ',') { p++; continue; }
-        if (*p != '{') return -1;
-        const char *oe = json_find_matching(p, epochs_end + 1, '{', '}');
-        if (!oe) return -1;
-        v->epoch_count++;
-        p = oe + 1;
+        parse_passive_external_psks(obj, end, &v->external_psks, &v->external_psk_count) != 0 ||
+        json_get_hex_fixed(obj, end, "initial_epoch_authenticator", v->initial_epoch_authenticator, 32) != 0 ||
+        parse_passive_epochs(obj, end, &v->epochs, &v->epoch_count) != 0) {
+        mdk_free_passive_client_vector(v);
+        return -1;
     }
     (*count)++;
     return 0;
@@ -900,5 +1019,24 @@ void mdk_free_treekem_vector(MdkTreeKEMVector *vec)
     if (!vec) return;
     for (size_t i = 0; i < vec->update_path_count; i++)
         free(vec->update_paths[i].path_secrets);
+    memset(vec, 0, sizeof(*vec));
+}
+
+void mdk_free_passive_client_vector(MdkPassiveClientVector *vec)
+{
+    if (!vec) return;
+    free(vec->external_psks);
+    if (vec->epochs) {
+        for (size_t i = 0; i < vec->epoch_count; i++) {
+            MdkPassiveClientEpoch *epoch = &vec->epochs[i];
+            if (epoch->proposals) {
+                for (size_t j = 0; j < epoch->proposal_count; j++)
+                    free(epoch->proposals[j].data);
+                free(epoch->proposals);
+            }
+            free(epoch->commit.data);
+        }
+        free(vec->epochs);
+    }
     memset(vec, 0, sizeof(*vec));
 }

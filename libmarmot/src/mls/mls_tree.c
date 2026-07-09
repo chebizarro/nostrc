@@ -300,7 +300,16 @@ mls_tree_add_leaf(MlsRatchetTree *tree, uint32_t *out_leaf_node_idx)
         return 0;
     }
 
-    uint32_t new_n_leaves = tree->n_leaves + 1;
+    for (uint32_t leaf = 0; leaf < tree->n_leaves; leaf++) {
+        uint32_t node_idx = mls_tree_leaf_to_node(leaf);
+        if (node_idx < tree->n_nodes && tree->nodes[node_idx].type == MLS_NODE_BLANK) {
+            if (out_leaf_node_idx) *out_leaf_node_idx = node_idx;
+            return 0;
+        }
+    }
+
+    uint32_t old_n_leaves = tree->n_leaves;
+    uint32_t new_n_leaves = old_n_leaves * 2;
     uint32_t new_n_nodes = mls_tree_node_width(new_n_leaves);
 
     /* Grow the array: append (new_n_nodes - old_n_nodes) blank nodes */
@@ -317,7 +326,7 @@ mls_tree_add_leaf(MlsRatchetTree *tree, uint32_t *out_leaf_node_idx)
     tree->n_nodes = new_n_nodes;
     tree->n_leaves = new_n_leaves;
 
-    uint32_t new_leaf_node_idx = mls_tree_leaf_to_node(new_n_leaves - 1);
+    uint32_t new_leaf_node_idx = mls_tree_leaf_to_node(old_n_leaves);
     if (out_leaf_node_idx) *out_leaf_node_idx = new_leaf_node_idx;
     return 0;
 }
@@ -621,6 +630,15 @@ mls_parent_node_deserialize(MlsTlsReader *reader, MlsParentNode *node)
  *   }
  * ══════════════════════════════════════════════════════════════════════════ */
 
+static uint32_t
+mls_tree_right_bounded(uint32_t x, uint32_t n_nodes)
+{
+    uint32_t r = mls_tree_right(x);
+    while (r >= n_nodes && mls_tree_level(r) > 0)
+        r = mls_tree_left(r);
+    return r;
+}
+
 int
 mls_tree_hash(const MlsRatchetTree *tree, uint32_t node_idx,
               uint8_t out[MLS_HASH_LEN])
@@ -662,7 +680,7 @@ mls_tree_hash(const MlsRatchetTree *tree, uint32_t node_idx,
         if (mls_tls_write_opaque8(&buf, left_hash, MLS_HASH_LEN) != 0) goto fail;
         /* right_hash */
         uint8_t right_hash[MLS_HASH_LEN];
-        if (mls_tree_hash(tree, mls_tree_right(node_idx), right_hash) != 0) goto fail;
+        if (mls_tree_hash(tree, mls_tree_right_bounded(node_idx, tree->n_nodes), right_hash) != 0) goto fail;
         if (mls_tls_write_opaque8(&buf, right_hash, MLS_HASH_LEN) != 0) goto fail;
     }
 

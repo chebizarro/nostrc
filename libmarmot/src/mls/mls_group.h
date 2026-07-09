@@ -58,6 +58,22 @@ typedef struct {
             uint32_t removed_leaf;
         } remove;
     };
+
+    /** Target leaf for an Update proposal.  An Update replaces the LeafNode of
+     *  the member that *sent* the proposal, not the committer.  UINT32_MAX
+     *  means "the committer's own leaf" (legacy inline behavior). */
+    uint32_t update_leaf_index;
+
+    /** True when this slot is a referenced proposal (ProposalOrRef type 2)
+     *  that has not yet been resolved against an external proposal store. */
+    bool     is_ref;
+    uint8_t  ref[MLS_HASH_LEN];  /**< ProposalRef hash when is_ref is true */
+    size_t   ref_len;
+
+    /** True when the proposal type is recognized but not supported for
+     *  processing (PSK / ReInit / ExternalInit / GroupContextExtensions).
+     *  Such a commit is rejected with MARMOT_ERR_UNSUPPORTED. */
+    bool     unsupported;
 } MlsProposal;
 
 /** Free proposal internals. */
@@ -300,6 +316,36 @@ int mls_group_self_update(MlsGroup *group,
 int mls_group_process_commit(MlsGroup *group,
                              const uint8_t *commit_data, size_t commit_len,
                              uint32_t sender_leaf);
+
+/**
+ * Process a Commit that may contain referenced proposals (ProposalOrRef
+ * type 2, RFC 9420 §12.4).
+ *
+ * The referenced proposals are supplied as previously-received standalone
+ * Proposal MLSMessages (PublicMessage wire format).  Each is parsed and its
+ * ProposalRef = RefHash("MLS 1.0 Proposal Reference", AuthenticatedContent)
+ * computed so the commit's references can be resolved.  Behaves exactly like
+ * mls_group_process_commit() for inline proposals.
+ *
+ * Commits carrying proposal types that libmarmot does not yet apply
+ * (PreSharedKey / ReInit / ExternalInit / GroupContextExtensions) are
+ * rejected with MARMOT_ERR_UNSUPPORTED rather than a generic framing error.
+ *
+ * @param group           The group state (modified on success)
+ * @param commit_data     Serialized Commit MLSMessage
+ * @param commit_len      Length of commit data
+ * @param sender_leaf     Leaf index of the committer
+ * @param proposal_msgs   Array of serialized standalone Proposal MLSMessages
+ * @param proposal_lens   Length of each proposal message
+ * @param proposal_count  Number of referenced-proposal messages
+ * @return 0 on success, MARMOT_ERR_UNSUPPORTED for unsupported proposal types
+ */
+int mls_group_process_commit_ex(MlsGroup *group,
+                                const uint8_t *commit_data, size_t commit_len,
+                                uint32_t sender_leaf,
+                                const uint8_t *const *proposal_msgs,
+                                const size_t *proposal_lens,
+                                size_t proposal_count);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Application messages
