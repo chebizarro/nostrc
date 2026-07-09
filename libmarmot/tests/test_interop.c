@@ -2269,18 +2269,6 @@ test_mdk_passive_client_vector(const MdkPassiveClientVector *vec,
         free(pmsgs);
         free(plens);
 
-        if (commit_rc != 0 &&
-            strcmp(file, "passive-client-random.json") == 0 &&
-            vidx == 0 && e == 4) {
-            *out_xfail = true;
-            snprintf(reason, reason_sz,
-                     "%s vector %zu epoch %zu: truncated filtered direct path "
-                     "now decrypts and applies, but final confirmation tag "
-                     "still mismatches (rc=%d); remaining defect is final "
-                     "truncated-chain tree_hash/commit_secret parity",
-                     file, vidx, e, commit_rc);
-            break;
-        }
         if (commit_rc != 0)
             fprintf(stderr, "\npassive-client commit rc=%d file=%s vector=%zu sender=%u epoch_index=%zu proposals=%zu commit_len=%zu group_epoch=%llu\n",
                     commit_rc, file, vidx, sender, e, epoch->proposal_count, epoch->commit.len,
@@ -2454,8 +2442,7 @@ int main(void)
     if (found_vectors) {
         printf("\nInterop self-tests passed; MDK asserted checks: %zu; deferred vector classes: 0.\n"
                "  (No vector class is skipped/deferred; passive-client asserts real per-epoch\n"
-             "   bytes end-to-end, with any remaining unsupported sub-cases "
-             "flagged as honest XFAIL above.)\n",
+             "   bytes end-to-end with 0 honest XFAIL sub-cases.)\n",
              g_mdk_asserted);
     } else {
         printf("\nAll interop self-tests passed (9 self-tests; no MDK vectors loaded).\n");

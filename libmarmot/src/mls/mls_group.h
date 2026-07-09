@@ -37,12 +37,20 @@ extern "C" {
 #define MLS_PROPOSAL_GROUP_CONTEXT_EXT 7
 
 #define MLS_RESUMPTION_PSK_CACHE_SIZE 8
+#define MLS_OWN_PATH_KEY_CACHE_SIZE 128
 
 typedef struct {
     bool     valid;
     uint64_t epoch;
     uint8_t  psk[MLS_HASH_LEN];
 } MlsResumptionPskCacheEntry;
+
+typedef struct {
+    bool     valid;
+    uint32_t node;
+    uint8_t  sk[MLS_KEM_SK_LEN];
+    uint8_t  pk[MLS_KEM_PK_LEN];
+} MlsOwnPathKeyCacheEntry;
 
 /* ──────────────────────────────────────────────────────────────────────────
  * MlsProposal - A single proposal within a Commit
@@ -185,6 +193,7 @@ typedef struct {
     uint32_t       own_leaf_index;      /**< Our leaf index in the tree */
     uint8_t        own_signature_key[MLS_SIG_SK_LEN]; /**< Our Ed25519 private key */
     uint8_t        own_encryption_key[MLS_KEM_SK_LEN]; /**< Our X25519 encryption private key */
+    MlsOwnPathKeyCacheEntry own_path_keys[MLS_OWN_PATH_KEY_CACHE_SIZE];
 
     /* ── Key schedule ─────────────────────────────────────────────────── */
     MlsEpochSecrets epoch_secrets;      /**< Derived epoch secrets */
