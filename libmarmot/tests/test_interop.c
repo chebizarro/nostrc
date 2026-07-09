@@ -1852,15 +1852,288 @@ test_mdk_tree_validation_vectors(const char *vector_dir)
     printf("PASS (%zu ratchet trees validated)\n", count);
 }
 
+static bool
+mdk_treekem_node_contains_leaf(uint32_t node_idx, uint32_t leaf_idx,
+                               uint32_t n_leaves)
+{
+    if (node_idx >= mls_tree_node_width(n_leaves)) return false;
+    if (mls_tree_is_leaf(node_idx))
+        return mls_tree_node_to_leaf(node_idx) == leaf_idx;
+    return mdk_treekem_node_contains_leaf(mls_tree_left(node_idx), leaf_idx, n_leaves) ||
+           mdk_treekem_node_contains_leaf(mls_tree_right(node_idx), leaf_idx, n_leaves);
+}
+
+static int
+mdk_treekem_update_path_nodes(const MlsRatchetTree *tree, uint32_t sender_leaf,
+                              uint32_t *out, uint32_t max_len, uint32_t *out_len)
+{
+    if (!tree || !out || !out_len || sender_leaf >= tree->n_leaves) return -1;
+    if (mls_tree_filtered_direct_path(tree, sender_leaf, out, max_len, out_len) != 0)
+        return -1;
+    uint32_t sender_node = mls_tree_leaf_to_node(sender_leaf);
+    uint32_t root = mls_tree_root(tree->n_leaves);
+    if (*out_len == 0 && sender_node != root) {
+        if (mls_tree_direct_path(sender_node, tree->n_leaves, out, max_len, out_len) != 0)
+            return -1;
+    }
+    return 0;
+}
+
+static int
+mdk_treekem_child_below_path_node(const MlsRatchetTree *tree,
+                                  uint32_t sender_leaf,
+                                  uint32_t path_node,
+                                  uint32_t *out_child)
+{
+    if (!tree || !out_child || sender_leaf >= tree->n_leaves) return -1;
+    uint32_t child = mls_tree_leaf_to_node(sender_leaf);
+    uint32_t root = mls_tree_root(tree->n_leaves);
+    while (child != root) {
+        uint32_t parent = mls_tree_parent(child, tree->n_leaves);
+        if (parent == path_node) {
+            *out_child = child;
+            return 0;
+        }
+        child = parent;
+    }
+    return -1;
+}
+
+static int
+mdk_treekem_path_index_for_leaf(const MlsRatchetTree *tree, uint32_t sender_leaf,
+                                uint32_t leaf_idx,
+                                const uint32_t *fdp, uint32_t fdp_len,
+                                uint32_t *out_idx)
+{
+    if (!tree || !fdp || !out_idx || leaf_idx >= tree->n_leaves) return -1;
+    for (uint32_t i = 0; i < fdp_len; i++) {
+        uint32_t child_below = UINT32_MAX;
+        if (mdk_treekem_child_below_path_node(tree, sender_leaf,
+                                             fdp[i], &child_below) != 0)
+            return -1;
+        uint32_t sibling = mls_tree_sibling(child_below, tree->n_leaves);
+        if (mdk_treekem_node_contains_leaf(sibling, leaf_idx, tree->n_leaves)) {
+            *out_idx = i;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static const MdkTreeKEMLeafPrivate *
+mdk_treekem_find_leaf_private(const MdkTreeKEMVector *vec, uint32_t leaf_idx)
+{
+    for (size_t i = 0; i < vec->leaf_private_count; i++) {
+        if (vec->leaves_private[i].index == leaf_idx)
+            return &vec->leaves_private[i];
+    }
+    return NULL;
+}
+
+static int
+mdk_treekem_private_key_for_node(const MdkTreeKEMVector *vec,
+                                 const MlsRatchetTree *tree,
+                                 uint32_t node_idx,
+                                 uint8_t out_sk[MLS_KEM_SK_LEN])
+{
+    if (!vec || !tree || !out_sk || node_idx >= tree->n_nodes) return -1;
+    if (mls_tree_is_leaf(node_idx)) {
+        const MdkTreeKEMLeafPrivate *leaf =
+            mdk_treekem_find_leaf_private(vec, mls_tree_node_to_leaf(node_idx));
+        if (!leaf || leaf->encryption_priv_len != MLS_KEM_SK_LEN) return -1;
+        uint8_t derived_pk[MLS_KEM_PK_LEN];
+        if (crypto_scalarmult_base(derived_pk, leaf->encryption_priv) != 0)
+            return -1;
+        if (tree->nodes[node_idx].type != MLS_NODE_LEAF ||
+            memcmp(derived_pk, tree->nodes[node_idx].leaf.encryption_key, MLS_KEM_PK_LEN) != 0) {
+            fprintf(stderr, "\ntreekem leaf private key/public key mismatch: leaf=%u node=%u\n",
+                    leaf->index, node_idx);
+            return -1;
+        }
+        memcpy(out_sk, leaf->encryption_priv, MLS_KEM_SK_LEN);
+        return 0;
+    }
+
+    for (size_t i = 0; i < vec->leaf_private_count; i++) {
+        const MdkTreeKEMLeafPrivate *leaf = &vec->leaves_private[i];
+        for (size_t j = 0; j < leaf->path_secret_count; j++) {
+            if (leaf->path_secrets[j].node != node_idx) continue;
+            uint8_t pk[MLS_KEM_PK_LEN];
+            if (mls_tree_derive_node_keypair(leaf->path_secrets[j].path_secret,
+                                             out_sk, pk) != 0)
+                return -1;
+            if (tree->nodes[node_idx].type != MLS_NODE_PARENT ||
+                memcmp(pk, tree->nodes[node_idx].parent.encryption_key, MLS_KEM_PK_LEN) != 0)
+                return -1;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static int
+mdk_treekem_decrypt_expected_secret(const MdkTreeKEMVector *vec,
+                                    const MlsRatchetTree *tree,
+                                    const MlsUpdatePath *path,
+                                    uint32_t sender_leaf,
+                                    const uint32_t *fdp,
+                                    uint32_t path_idx,
+                                    uint32_t recipient_leaf,
+                                    const uint8_t *group_context,
+                                    size_t group_context_len,
+                                    uint8_t out_secret[MLS_HASH_LEN])
+{
+    uint32_t child_below = UINT32_MAX;
+    if (mdk_treekem_child_below_path_node(tree, sender_leaf,
+                                          fdp[path_idx], &child_below) != 0)
+        return -1;
+    uint32_t copath = mls_tree_sibling(child_below, tree->n_leaves);
+    uint32_t resolution[256];
+    uint32_t res_len = 0;
+    if (mls_tree_resolution(tree, copath, resolution, 256, &res_len) != 0)
+        return -1;
+
+    for (uint32_t i = 0; i < res_len; i++) {
+        uint32_t node_idx = resolution[i];
+        if (!mdk_treekem_node_contains_leaf(node_idx, recipient_leaf, tree->n_leaves))
+            continue;
+        uint8_t node_sk[MLS_KEM_SK_LEN];
+        if (mdk_treekem_private_key_for_node(vec, tree, node_idx, node_sk) != 0)
+            continue;
+        int rc = mls_treekem_update_path_decrypt_secret(tree, &path->nodes[path_idx],
+                                                        copath, node_idx,
+                                                        group_context, group_context_len,
+                                                        node_sk, out_secret);
+        sodium_memzero(node_sk, sizeof(node_sk));
+        return rc;
+    }
+    return -1;
+}
+
 static void
 test_mdk_treekem_vectors(const char *vector_dir)
 {
     char path[512];
     snprintf(path, sizeof(path), "%s/treekem.json", vector_dir);
-    MdkTreeKEMVector vectors[20];
+    const size_t max_vectors = 20;
+    MdkTreeKEMVector *vectors = calloc(max_vectors, sizeof(*vectors));
+    assert(vectors && "treekem vector allocation failed");
     size_t count = 0;
-    assert(mdk_load_treekem_vectors(path, vectors, &count, 20) == 0);
-    print_deferred_loaded("treekem", count, "full UpdatePath/commit-auth TreeKEM replay is not implemented");
+    assert(mdk_load_treekem_vectors(path, vectors, &count, max_vectors) == 0);
+    assert(count > 0 && "treekem file exists but yielded zero ciphersuite-1 cases");
+
+    size_t update_count = 0;
+    for (size_t v = 0; v < count; v++) {
+        MdkTreeKEMVector *vec = &vectors[v];
+        assert(vec->leaf_private_count > 0);
+        assert(vec->update_path_count > 0);
+        for (size_t u = 0; u < vec->update_path_count; u++) {
+            const MdkTreeKEMUpdatePathVector *uv = &vec->update_paths[u];
+            MlsRatchetTree tree;
+            assert(mls_ratchet_tree_deserialize(vec->ratchet_tree,
+                                                vec->ratchet_tree_len,
+                                                &tree) == 0);
+            assert(uv->sender < tree.n_leaves);
+            assert(uv->path_secret_count == tree.n_leaves);
+
+            MlsUpdatePath up;
+            MlsTlsReader reader;
+            memset(&up, 0, sizeof(up));
+            mls_tls_reader_init(&reader, uv->update_path, uv->update_path_len);
+            assert(mls_update_path_deserialize(&reader, &up) == 0);
+            assert(mls_tls_reader_done(&reader));
+            MlsTlsBuf up_buf;
+            assert(mls_tls_buf_init(&up_buf, uv->update_path_len + 64) == 0);
+            assert(mls_update_path_serialize(&up, &up_buf) == 0);
+            assert(up_buf.len == uv->update_path_len && "treekem UpdatePath roundtrip length mismatch");
+            assert_bytes_eq("treekem.update_path_roundtrip", up_buf.data,
+                            uv->update_path, uv->update_path_len);
+            mls_tls_buf_free(&up_buf);
+
+            uint32_t fdp[128];
+            uint32_t fdp_len = 0;
+            assert(mdk_treekem_update_path_nodes(&tree, uv->sender,
+                                                 fdp, 128, &fdp_len) == 0);
+            assert(up.node_count == fdp_len && "treekem UpdatePath node count mismatch");
+            uint8_t *group_context = NULL;
+            size_t group_context_len = 0;
+            assert(mls_group_context_serialize(vec->group_id, vec->group_id_len,
+                                               vec->epoch, uv->tree_hash_after,
+                                               vec->confirmed_transcript_hash,
+                                               NULL, 0,
+                                               &group_context, &group_context_len) == 0);
+
+            bool path_node_seen[128] = {0};
+            for (uint32_t leaf = 0; leaf < tree.n_leaves; leaf++) {
+                if (!uv->path_secrets[leaf].present) continue;
+                assert(leaf != uv->sender && "treekem sender must not receive encrypted path secret");
+                uint32_t path_idx = UINT32_MAX;
+                int path_rc = mdk_treekem_path_index_for_leaf(&tree, uv->sender, leaf,
+                                                              fdp, fdp_len, &path_idx);
+                if (path_rc != 0) {
+                    fprintf(stderr, "\ntreekem path lookup failed: vector=%zu update=%zu sender=%u leaf=%u fdp_len=%u\n",
+                            v, u, uv->sender, leaf, fdp_len);
+                }
+                assert(path_rc == 0);
+                assert(path_idx < up.node_count);
+                uint8_t decrypted[MLS_HASH_LEN];
+                int dec_rc = mdk_treekem_decrypt_expected_secret(vec, &tree, &up,
+                                                           uv->sender, fdp,
+                                                           path_idx, leaf,
+                                                           group_context, group_context_len,
+                                                           decrypted);
+                if (dec_rc != 0) {
+                    fprintf(stderr, "\ntreekem decrypt failed: vector=%zu update=%zu sender=%u leaf=%u path_idx=%u fdp_len=%u\n",
+                            v, u, uv->sender, leaf, path_idx, fdp_len);
+                }
+                assert(dec_rc == 0);
+                assert_bytes_eq("treekem.decrypted_path_secret", decrypted,
+                                uv->path_secrets[leaf].path_secret, MLS_HASH_LEN);
+
+                uint8_t node_sk[MLS_KEM_SK_LEN];
+                uint8_t node_pk[MLS_KEM_PK_LEN];
+                assert(mls_tree_derive_node_keypair(decrypted, node_sk, node_pk) == 0);
+                assert_bytes_eq("treekem.path_node_public_key", node_pk,
+                                up.nodes[path_idx].encryption_key, MLS_KEM_PK_LEN);
+                sodium_memzero(node_sk, sizeof(node_sk));
+
+                uint8_t root_path_secret[MLS_HASH_LEN];
+                memcpy(root_path_secret, decrypted, MLS_HASH_LEN);
+                for (uint32_t i = path_idx + 1; i < fdp_len; i++)
+                    assert(mls_tree_derive_next_path_secret(root_path_secret,
+                                                            root_path_secret) == 0);
+                uint8_t commit_secret[MLS_HASH_LEN];
+                assert(mls_treekem_commit_secret_from_path_secret(root_path_secret,
+                                                                  commit_secret) == 0);
+                assert_bytes_eq("treekem.commit_secret", commit_secret,
+                                uv->commit_secret, MLS_HASH_LEN);
+                path_node_seen[path_idx] = true;
+            }
+            for (uint32_t i = 0; i < up.node_count; i++)
+                assert((path_node_seen[i] || up.nodes[i].secret_count == 0) &&
+                       "treekem path node was not covered by vector path_secrets");
+
+            free(group_context);
+            int apply_rc = mls_treekem_apply_update_path(&tree, uv->sender, &up);
+            if (apply_rc != 0) {
+                fprintf(stderr, "\ntreekem apply failed: vector=%zu update=%zu sender=%u fdp_len=%u node_count=%zu\n",
+                        v, u, uv->sender, fdp_len, up.node_count);
+            }
+            assert(apply_rc == 0);
+            uint8_t tree_hash_after[MLS_HASH_LEN];
+            assert(mls_tree_root_hash(&tree, tree_hash_after) == 0);
+            assert_bytes_eq("treekem.tree_hash_after", tree_hash_after,
+                            uv->tree_hash_after, MLS_HASH_LEN);
+
+            mls_update_path_clear(&up);
+            mls_tree_free(&tree);
+            update_count++;
+        }
+        mdk_free_treekem_vector(vec);
+    }
+    free(vectors);
+    printf("PASS (%zu UpdatePaths across %zu TreeKEM cases asserted)\n",
+           update_count, count);
 }
 
 static void

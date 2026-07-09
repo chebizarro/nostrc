@@ -368,6 +368,37 @@ int mls_update_path_serialize(const MlsUpdatePath *up, MlsTlsBuf *buf);
 int mls_update_path_deserialize(MlsTlsReader *reader, MlsUpdatePath *up);
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * TreeKEM UpdatePath helpers
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/** Derive commit_secret = DeriveSecret(root_path_secret, "path"). */
+int mls_treekem_commit_secret_from_path_secret(const uint8_t root_path_secret[MLS_HASH_LEN],
+                                               uint8_t out[MLS_HASH_LEN]);
+
+/**
+ * Decrypt one encrypted path secret from an UpdatePathNode for a node in the
+ * copath resolution.  The caller provides the target node's HPKE private key;
+ * the public key is read from the ratchet tree.
+ */
+int mls_treekem_update_path_decrypt_secret(const MlsRatchetTree *tree,
+                                           const MlsUpdatePathNode *path_node,
+                                           uint32_t copath_node_idx,
+                                           uint32_t resolution_node_idx,
+                                           const uint8_t *group_context,
+                                           size_t group_context_len,
+                                           const uint8_t node_enc_sk[MLS_KEM_SK_LEN],
+                                           uint8_t out_path_secret[MLS_HASH_LEN]);
+
+/**
+ * Apply an UpdatePath to a ratchet tree and reconstruct parent hashes.
+ * The tree is mutated in place and may be partially updated if validation
+ * fails; callers that need rollback should apply to a staged copy.
+ */
+int mls_treekem_apply_update_path(MlsRatchetTree *tree,
+                                  uint32_t sender_leaf,
+                                  const MlsUpdatePath *path);
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Group info (for Welcome construction)
  * ──────────────────────────────────────────────────────────────────────── */
 

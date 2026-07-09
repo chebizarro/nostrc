@@ -564,6 +564,156 @@ static int parse_resolution_array(const char *obj, const char *end,
     return *out_count > 0 ? 0 : -1;
 }
 
+static int parse_treekem_node_secrets(const char *obj, const char *end,
+                                      MdkTreeKEMNodeSecret *out,
+                                      size_t *out_count, size_t max_count)
+{
+    const char *arr_end = NULL;
+    const char *p = json_array_for_key(obj, end, "path_secrets", &arr_end);
+    if (!p || !out || !out_count) return -1;
+    *out_count = 0;
+    p++;
+    while (1) {
+        p = skip_ws(p, arr_end);
+        if (p >= arr_end || *p == ']') break;
+        if (*p == ',') { p++; continue; }
+        if (*p != '{' || *out_count >= max_count) return -1;
+        const char *oe = json_find_matching(p, arr_end + 1, '{', '}');
+        if (!oe) return -1;
+        MdkTreeKEMNodeSecret *secret = &out[*out_count];
+        if (json_get_u32(p, oe, "node", &secret->node) != 0 ||
+            json_get_hex_fixed(p, oe, "path_secret", secret->path_secret, 32) != 0)
+            return -1;
+        (*out_count)++;
+        p = oe + 1;
+    }
+    return 0;
+}
+
+static int parse_treekem_leaf_private_array(const char *obj, const char *end,
+                                            MdkTreeKEMLeafPrivate *out,
+                                            size_t *out_count, size_t max_count)
+{
+    const char *arr_end = NULL;
+    const char *p = json_array_for_key(obj, end, "leaves_private", &arr_end);
+    if (!p || !out || !out_count) return -1;
+    *out_count = 0;
+    p++;
+    while (1) {
+        p = skip_ws(p, arr_end);
+        if (p >= arr_end || *p == ']') break;
+        if (*p == ',') { p++; continue; }
+        if (*p != '{' || *out_count >= max_count) return -1;
+        const char *oe = json_find_matching(p, arr_end + 1, '{', '}');
+        if (!oe) return -1;
+        MdkTreeKEMLeafPrivate *leaf = &out[*out_count];
+        memset(leaf, 0, sizeof(*leaf));
+        if (json_get_u32(p, oe, "index", &leaf->index) != 0 ||
+            json_get_hex_var(p, oe, "signature_priv", leaf->signature_priv,
+                             sizeof(leaf->signature_priv), &leaf->signature_priv_len) != 0 ||
+            json_get_hex_var(p, oe, "encryption_priv", leaf->encryption_priv,
+                             sizeof(leaf->encryption_priv), &leaf->encryption_priv_len) != 0 ||
+            leaf->encryption_priv_len != 32 ||
+            parse_treekem_node_secrets(p, oe, leaf->path_secrets,
+                                       &leaf->path_secret_count,
+                                       MAX_TREEKEM_NODE_SECRETS) != 0)
+            return -1;
+        (*out_count)++;
+        p = oe + 1;
+    }
+    return *out_count > 0 ? 0 : -1;
+}
+
+static int parse_hex_string_token(const char *p, const char *end,
+                                  uint8_t *out, size_t out_len,
+                                  const char **next)
+{
+    if (!p || p >= end || *p != '"' || !out || !next) return -1;
+    p++;
+    const char *q = p;
+    while (q < end && *q && *q != '"') q++;
+    if (q >= end || *q != '"') return -1;
+    size_t hex_len = (size_t)(q - p);
+    if (hex_len != out_len * 2) return -1;
+    char *hex = malloc(hex_len + 1);
+    if (!hex) return -1;
+    memcpy(hex, p, hex_len);
+    hex[hex_len] = '\0';
+    int rc = mdk_hex_decode(out, hex, out_len) ? 0 : -1;
+    free(hex);
+    if (rc == 0) *next = q + 1;
+    return rc;
+}
+
+static int parse_treekem_leaf_path_secret_array(const char *obj, const char *end,
+                                                MdkTreeKEMLeafPathSecret **out,
+                                                size_t *out_count)
+{
+    const char *arr_end = NULL;
+    const char *p = json_array_for_key(obj, end, "path_secrets", &arr_end);
+    if (!p || !out || !out_count) return -1;
+    *out = NULL;
+    *out_count = 0;
+    p++;
+    while (1) {
+        p = skip_ws(p, arr_end);
+        if (p >= arr_end || *p == ']') break;
+        if (*p == ',') { p++; continue; }
+        MdkTreeKEMLeafPathSecret *new_items = realloc(*out, (*out_count + 1) * sizeof(**out));
+        if (!new_items) return -1;
+        *out = new_items;
+        MdkTreeKEMLeafPathSecret *slot = &(*out)[*out_count];
+        memset(slot, 0, sizeof(*slot));
+        if (!strncmp(p, "null", 4)) {
+            slot->present = false;
+            p += 4;
+        } else if (*p == '"') {
+            slot->present = true;
+            if (parse_hex_string_token(p, arr_end, slot->path_secret, 32, &p) != 0)
+                return -1;
+        } else {
+            return -1;
+        }
+        (*out_count)++;
+    }
+    return *out_count > 0 ? 0 : -1;
+}
+
+static int parse_treekem_update_path_array(const char *obj, const char *end,
+                                           MdkTreeKEMUpdatePathVector *out,
+                                           size_t *out_count, size_t max_count)
+{
+    const char *arr_end = NULL;
+    const char *p = json_array_for_key(obj, end, "update_paths", &arr_end);
+    if (!p || !out || !out_count) return -1;
+    *out_count = 0;
+    p++;
+    while (1) {
+        p = skip_ws(p, arr_end);
+        if (p >= arr_end || *p == ']') break;
+        if (*p == ',') { p++; continue; }
+        if (*p != '{' || *out_count >= max_count) return -1;
+        const char *oe = json_find_matching(p, arr_end + 1, '{', '}');
+        if (!oe) return -1;
+        MdkTreeKEMUpdatePathVector *up = &out[*out_count];
+        memset(up, 0, sizeof(*up));
+        if (json_get_u32(p, oe, "sender", &up->sender) != 0 ||
+            json_get_hex_var(p, oe, "update_path", up->update_path,
+                             sizeof(up->update_path), &up->update_path_len) != 0 ||
+            json_get_hex_fixed(p, oe, "tree_hash_after", up->tree_hash_after, 32) != 0 ||
+            json_get_hex_fixed(p, oe, "commit_secret", up->commit_secret, 32) != 0 ||
+            parse_treekem_leaf_path_secret_array(p, oe, &up->path_secrets,
+                                                 &up->path_secret_count) != 0) {
+            free(up->path_secrets);
+            memset(up, 0, sizeof(*up));
+            return -1;
+        }
+        (*out_count)++;
+        p = oe + 1;
+    }
+    return *out_count > 0 ? 0 : -1;
+}
+
 static int parse_tree_validation_object(const char *obj, const char *end, void *dst,
                                         size_t *count, size_t max_count)
 {
@@ -600,7 +750,16 @@ static int parse_treekem_object(const char *obj, const char *end, void *dst,
     if (json_get_hex_var(obj, end, "group_id", v->group_id, sizeof(v->group_id), &v->group_id_len) != 0 ||
         json_get_u64(obj, end, "epoch", &v->epoch) != 0 ||
         json_get_hex_fixed(obj, end, "confirmed_transcript_hash", v->confirmed_transcript_hash, 32) != 0 ||
-        json_get_hex_var(obj, end, "ratchet_tree", v->ratchet_tree, sizeof(v->ratchet_tree), &v->ratchet_tree_len) != 0) return -1;
+        json_get_hex_var(obj, end, "ratchet_tree", v->ratchet_tree, sizeof(v->ratchet_tree), &v->ratchet_tree_len) != 0 ||
+        parse_treekem_leaf_private_array(obj, end, v->leaves_private,
+                                         &v->leaf_private_count,
+                                         MAX_TREEKEM_LEAVES) != 0 ||
+        parse_treekem_update_path_array(obj, end, v->update_paths,
+                                        &v->update_path_count,
+                                        MAX_TREEKEM_UPDATES) != 0) {
+        mdk_free_treekem_vector(v);
+        return -1;
+    }
     (*count)++;
     return 0;
 }
@@ -733,5 +892,13 @@ void mdk_free_tree_validation_vector(MdkTreeValidationVector *vec)
             free(vec->resolutions[i].nodes);
         free(vec->resolutions);
     }
+    memset(vec, 0, sizeof(*vec));
+}
+
+void mdk_free_treekem_vector(MdkTreeKEMVector *vec)
+{
+    if (!vec) return;
+    for (size_t i = 0; i < vec->update_path_count; i++)
+        free(vec->update_paths[i].path_secrets);
     memset(vec, 0, sizeof(*vec));
 }

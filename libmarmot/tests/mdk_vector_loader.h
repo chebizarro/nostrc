@@ -261,14 +261,52 @@ typedef struct {
 } MdkTreeValidationVector;
 
 /* TreeKEM test */
+#define MAX_TREEKEM_LEAVES 32
+#define MAX_TREEKEM_UPDATES 32
+#define MAX_TREEKEM_NODE_SECRETS 64
+
+typedef struct {
+    uint32_t node;
+    uint8_t path_secret[32];
+} MdkTreeKEMNodeSecret;
+
+typedef struct {
+    uint32_t index;
+    uint8_t signature_priv[128];
+    size_t signature_priv_len;
+    uint8_t encryption_priv[128];
+    size_t encryption_priv_len;
+    MdkTreeKEMNodeSecret path_secrets[MAX_TREEKEM_NODE_SECRETS];
+    size_t path_secret_count;
+} MdkTreeKEMLeafPrivate;
+
+typedef struct {
+    bool present;
+    uint8_t path_secret[32];
+} MdkTreeKEMLeafPathSecret;
+
+typedef struct {
+    uint32_t sender;
+    uint8_t update_path[32768];
+    size_t update_path_len;
+    uint8_t tree_hash_after[32];
+    uint8_t commit_secret[32];
+    MdkTreeKEMLeafPathSecret *path_secrets; /* indexed by leaf index */
+    size_t path_secret_count;
+} MdkTreeKEMUpdatePathVector;
+
 typedef struct {
     uint32_t cipher_suite;
     uint8_t group_id[32];
     size_t group_id_len;
     uint64_t epoch;
     uint8_t confirmed_transcript_hash[32];
-    uint8_t ratchet_tree[16384];
+    uint8_t ratchet_tree[32768];
     size_t ratchet_tree_len;
+    MdkTreeKEMLeafPrivate leaves_private[MAX_TREEKEM_LEAVES];
+    size_t leaf_private_count;
+    MdkTreeKEMUpdatePathVector update_paths[MAX_TREEKEM_UPDATES];
+    size_t update_path_count;
 } MdkTreeKEMVector;
 
 /* Passive client test */
@@ -386,5 +424,6 @@ int mdk_json_find_number(const char *json, const char *key, uint32_t *out);
 /* Cleanup functions */
 void mdk_free_tree_math_vector(MdkTreeMathVector *vec);
 void mdk_free_tree_validation_vector(MdkTreeValidationVector *vec);
+void mdk_free_treekem_vector(MdkTreeKEMVector *vec);
 
 #endif /* MDK_VECTOR_LOADER_H */
