@@ -120,19 +120,28 @@ bool signet_store_is_open(const SignetStore *store);
 /* True if the underlying database is SQLCipher-encrypted at rest (i.e. the
  * build linked SQLCipher and PRAGMA key took effect). False means the DB is
  * plain SQLite and only per-record envelope encryption is protecting secrets. */
-/**
- * signet_store_is_encrypted:
- * @store: (nullable): a #SignetStore
- *
- * Reports whether database-page encryption is active in addition to envelope encryption.
- *
- * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
- *
- * Returns: %true if the condition is met, otherwise %false
- *
- * Since: 1.0
- */
 bool signet_store_is_encrypted(const SignetStore *store);
+
+/* True if the file at db_path is a legacy plaintext SQLite database (detected by
+ * the on-disk "SQLite format 3\0" magic header). SQLCipher databases and
+ * empty/absent files return false. */
+bool signet_store_file_is_plaintext_sqlite(const char *db_path);
+
+/* True if this build's sqlite3 is actually SQLCipher (so encryption/migration
+ * are possible). */
+bool signet_store_sqlcipher_available(void);
+
+/* Migrate a legacy plaintext SQLite database at db_path to a SQLCipher-encrypted
+ * database keyed by master_key. Uses SQLCipher's ATTACH + sqlcipher_export; on
+ * success the original plaintext file is renamed to "<db_path>.plaintext-backup"
+ * and db_path becomes the new encrypted database.
+ *
+ * Returns 0 on success, 1 if db_path is not a plaintext SQLite file (nothing to
+ * migrate), or -1 on error (SQLCipher unavailable, or migration failure with the
+ * original left intact). signet_store_open() performs this automatically for
+ * legacy databases unless SIGNET_MIGRATE_PLAINTEXT_DB=false. */
+int signet_store_migrate_plaintext_to_sqlcipher(const char *db_path,
+                                                const char *master_key);
 
 /* Store a new agent key. secret_key must be 32 bytes.
  * Returns 0 on success, -1 on error. */

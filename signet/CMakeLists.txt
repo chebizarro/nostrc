@@ -36,8 +36,18 @@ if (NOT TARGET OpenSSL::SSL OR NOT TARGET OpenSSL::Crypto)
   find_package(OpenSSL REQUIRED)
 endif()
 
+if (NOT DEFINED SIGNET_USE_SQLCIPHER)
+  option(SIGNET_USE_SQLCIPHER "Link SQLCipher instead of plain SQLite for AES-256 at-rest DB encryption" OFF)
+endif()
+
 if (PKG_CONFIG_FOUND)
-  pkg_check_modules(SQLITE3 QUIET IMPORTED_TARGET sqlite3)
+  if (SIGNET_USE_SQLCIPHER)
+    # SQLCipher exposes the same sqlite3 C API but encrypts the database at rest.
+    # Reuse the SQLITE3 imported-target name so downstream linkage is unchanged.
+    pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlcipher)
+  else()
+    pkg_check_modules(SQLITE3 QUIET IMPORTED_TARGET sqlite3)
+  endif()
   pkg_check_modules(SODIUM QUIET IMPORTED_TARGET libsodium)
   pkg_check_modules(MHD QUIET IMPORTED_TARGET libmicrohttpd)
   pkg_check_modules(CURL QUIET IMPORTED_TARGET libcurl)
