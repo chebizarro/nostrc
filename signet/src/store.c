@@ -27,6 +27,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>   /* link()/fsync() for crash-safe migration swap */
+#include <fcntl.h>    /* open() for fsync of file + parent directory */
 
 #include <glib.h>
 #include <sqlite3.h>
@@ -74,6 +76,197 @@ static bool signet_env_truthy(const char *name) {
                g_ascii_strcasecmp(v, "true") == 0 ||
                g_ascii_strcasecmp(v, "yes") == 0 ||
                g_ascii_strcasecmp(v, "on") == 0);
+}
+
+static bool signet_env_falsey(const char *name) {
+  const char *v = getenv(name);
+  return v && (strcmp(v, "0") == 0 ||
+               g_ascii_strcasecmp(v, "false") == 0 ||
+               g_ascii_strcasecmp(v, "no") == 0 ||
+               g_ascii_strcasecmp(v, "off") == 0);
+}
+
+/* True if the file at `path` is a LEGACY plaintext SQLite database, detected by
+ * the 16-byte "SQLite format 3\0" magic header. SQLCipher databases encrypt the
+ * header too, so they do not match; empty/absent files do not match either. */
+static bool signet_file_is_plain_sqlite(const char *path) {
+  static const char kMagic[16] = "SQLite format 3";  /* 15 chars + implicit NUL = 16 */
+  FILE *f = fopen(path, "rb");
+  if (!f) return false;
+  char hdr[16];
+  size_t n = fread(hdr, 1, sizeof(hdr), f);
+  fclose(f);
+  return n == sizeof(hdr) && memcmp(hdr, kMagic, sizeof(hdr)) == 0;
+}
+
+/* True if this build's sqlite3 is actually SQLCipher (checked against a throwaway
+ * in-memory database so the real file is never touched). */
+static bool signet_sqlcipher_available(void) {
+  sqlite3 *mem = NULL;
+  if (sqlite3_open(":memory:", &mem) != SQLITE_OK) {
+    if (mem) sqlite3_close(mem);
+    return false;
+  }
+  bool ok = signet_store_detect_sqlcipher(mem);
+  sqlite3_close(mem);
+  return ok;
+}
+
+/* fsync a file path (best-effort durability). */
+static void signet_fsync_file(const char *path) {
+  int fd = open(path, O_RDONLY);
+  if (fd >= 0) { (void)fsync(fd); (void)close(fd); }
+}
+
+/* fsync the directory containing `path` so a rename/create is durable. */
+static void signet_fsync_parent_dir(const char *path) {
+  char *dup = g_strdup(path);
+  if (!dup) return;
+  char *slash = strrchr(dup, '/');
+  const char *dir;
+  if (!slash) dir = ".";
+  else if (slash == dup) dir = "/";
+  else { *slash = '\0'; dir = dup; }
+  int fd = open(dir, O_RDONLY);
+  if (fd >= 0) { (void)fsync(fd); (void)close(fd); }
+  g_free(dup);
+}
+
+/* Byte-copy src to dst (crash-safe backup fallback when hard links are
+ * unavailable). Returns 0 on success, -1 on error. */
+static int signet_copy_file(const char *src, const char *dst) {
+  FILE *in = fopen(src, "rb");
+  if (!in) return -1;
+  FILE *out = fopen(dst, "wb");
+  if (!out) { fclose(in); return -1; }
+  char buf[65536];
+  size_t n;
+  int rc = 0;
+  while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+    if (fwrite(buf, 1, n, out) != n) { rc = -1; break; }
+  }
+  if (ferror(in)) rc = -1;
+  if (fflush(out) != 0) rc = -1;
+  fclose(in);
+  if (fclose(out) != 0) rc = -1;
+  return rc;
+}
+
+/* Migrate a plaintext SQLite database in place to a SQLCipher-encrypted one.
+ *
+ * Uses the canonical SQLCipher recipe: acquire an EXCLUSIVE lock on the
+ * plaintext DB (no key), fold WAL into the main file, ATTACH a fresh keyed
+ * database, sqlcipher_export() the schema+data into it, verify+fsync it, then
+ * atomically swap it into place while keeping a plaintext backup. Stale plaintext
+ * WAL/-shm sidecars are removed BEFORE the swap. On any failure the original
+ * file is left intact and the function returns non-zero.
+ *
+ * NOTE: migration is expected to run offline / at daemon startup (single
+ * writer). The exclusive lock aborts the migration rather than risk losing a
+ * concurrent writer's data.
+ *
+ * Returns 0 on success, -1 on error. */
+static int signet_store_do_migrate(const char *db_path, const char *master_key) {
+  int result = -1;
+  sqlite3 *src = NULL;
+  bool attached = false;
+  char *tmp_path = sqlite3_mprintf("%s.sqlcipher-migrating", db_path);
+  char *bak_path = sqlite3_mprintf("%s.plaintext-backup", db_path);
+  if (!tmp_path || !bak_path) goto done;
+
+  remove(tmp_path); /* clear any leftover from a previous aborted run */
+
+  /* Open the plaintext source with no key. */
+  if (sqlite3_open(db_path, &src) != SQLITE_OK || !src) goto done;
+
+  /* Take an EXCLUSIVE lock for the whole migration so no other process can
+   * write to the legacy DB between export and swap (which would silently lose
+   * those writes). Abort if the lock cannot be acquired. */
+  (void)sqlite3_busy_timeout(src, 5000);
+  if (sqlite3_exec(src, "PRAGMA locking_mode=EXCLUSIVE;", NULL, NULL, NULL) != SQLITE_OK)
+    goto done;
+  if (sqlite3_exec(src, "BEGIN IMMEDIATE; COMMIT;", NULL, NULL, NULL) != SQLITE_OK) {
+    g_warning("[signet] could not acquire exclusive lock on '%s' for migration "
+              "(another process using it?). Aborting.", db_path);
+    goto done;
+  }
+
+  /* Fold any WAL contents into the main file so the export sees all data, and
+   * drop to a rollback journal so no plaintext -wal survives. */
+  if (sqlite3_exec(src, "PRAGMA wal_checkpoint(TRUNCATE);", NULL, NULL, NULL) != SQLITE_OK)
+    goto done;
+  (void)sqlite3_exec(src, "PRAGMA journal_mode=DELETE;", NULL, NULL, NULL);
+
+  /* Sanity check: it must read as a plaintext SQLite database. */
+  if (sqlite3_exec(src, "SELECT count(*) FROM sqlite_master;", NULL, NULL, NULL) != SQLITE_OK)
+    goto done;
+
+  /* ATTACH a new encrypted database and copy everything into it. */
+  {
+    char *attach = sqlite3_mprintf("ATTACH DATABASE %Q AS encrypted KEY '%q';",
+                                   tmp_path, master_key);
+    int arc = attach ? sqlite3_exec(src, attach, NULL, NULL, NULL) : SQLITE_ERROR;
+    if (attach) { sodium_memzero(attach, strlen(attach)); sqlite3_free(attach); }
+    if (arc != SQLITE_OK) goto done;
+    attached = true;
+  }
+
+  if (sqlite3_exec(src, "SELECT sqlcipher_export('encrypted');", NULL, NULL, NULL) != SQLITE_OK)
+    goto done;
+  (void)sqlite3_exec(src, "DETACH DATABASE encrypted;", NULL, NULL, NULL);
+  attached = false;
+  sqlite3_close(src);
+  src = NULL;
+
+  /* Verify the new encrypted database opens with the key and is readable. */
+  {
+    sqlite3 *chk = NULL;
+    bool okenc = false;
+    if (sqlite3_open(tmp_path, &chk) == SQLITE_OK && chk) {
+      char *kp = sqlite3_mprintf("PRAGMA key = '%q';", master_key);
+      if (kp) {
+        (void)sqlite3_exec(chk, kp, NULL, NULL, NULL);
+        sodium_memzero(kp, strlen(kp));
+        sqlite3_free(kp);
+      }
+      okenc = signet_store_detect_sqlcipher(chk) &&
+              sqlite3_exec(chk, "SELECT count(*) FROM sqlite_master;", NULL, NULL, NULL) == SQLITE_OK;
+    }
+    if (chk) sqlite3_close(chk);
+    if (!okenc) goto done;
+  }
+
+  /* Flush the encrypted database to disk before swapping. */
+  signet_fsync_file(tmp_path);
+
+  /* Crash-safe backup of the plaintext original: prefer a cheap hard link, else
+   * a byte copy. db_path itself is never removed, so it always exists. */
+  remove(bak_path);
+  {
+    bool have_backup = (link(db_path, bak_path) == 0) ||
+                       (signet_copy_file(db_path, bak_path) == 0);
+    if (!have_backup) goto done;
+  }
+  signet_fsync_file(bak_path);
+
+  /* Remove stale plaintext WAL/-shm sidecars BEFORE the swap so the encrypted
+   * DB can never be paired with plaintext sidecars. */
+  { char *w = sqlite3_mprintf("%s-wal", db_path); if (w) { remove(w); sqlite3_free(w); }
+    char *s = sqlite3_mprintf("%s-shm", db_path); if (s) { remove(s); sqlite3_free(s); } }
+
+  /* Atomically replace the plaintext DB with the encrypted one. rename() keeps
+   * db_path present at all times; the backup name retains the plaintext copy. */
+  if (rename(tmp_path, db_path) != 0) { remove(bak_path); goto done; }
+  signet_fsync_parent_dir(db_path);
+
+  result = 0;
+done:
+  if (attached && src) (void)sqlite3_exec(src, "DETACH DATABASE encrypted;", NULL, NULL, NULL);
+  if (src) sqlite3_close(src);
+  if (result != 0 && tmp_path) remove(tmp_path); /* never leave a partial temp */
+  sqlite3_free(tmp_path);
+  sqlite3_free(bak_path);
+  return result;
 }
 
 /* ------------------------------ helpers ---------------------------------- */
@@ -275,6 +468,40 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
     return NULL;
   }
 
+  /* Backwards compatibility: if db_path is a LEGACY plaintext SQLite database
+   * and this build uses SQLCipher, refuse to open it as plaintext and migrate
+   * it to an encrypted database first (keeping a plaintext backup). Without
+   * this, a SQLCipher build would treat the plaintext file as a wrong-key
+   * encrypted DB and refuse. Gated on runtime SQLCipher availability, so plain
+   * builds keep their prior behavior. */
+  if (signet_file_is_plain_sqlite(cfg->db_path) && signet_sqlcipher_available()) {
+    if (signet_env_falsey("SIGNET_MIGRATE_PLAINTEXT_DB")) {
+      g_critical("[signet] '%s' is a legacy plaintext SQLite database but this "
+                 "build uses SQLCipher and SIGNET_MIGRATE_PLAINTEXT_DB=false. "
+                 "Refusing to open. Unset the flag (or run 'signetctl migrate-db') "
+                 "to migrate it to an encrypted database.", cfg->db_path);
+      sodium_memzero(store->dek, SIGNET_DEK_LEN);
+      sodium_munlock(store->dek, SIGNET_DEK_LEN);
+      free(store);
+      return NULL;
+    }
+    g_message("[signet] migrating legacy plaintext database '%s' to SQLCipher...",
+              cfg->db_path);
+    if (signet_store_do_migrate(cfg->db_path, cfg->master_key) != 0) {
+      g_critical("[signet] migration of '%s' to SQLCipher FAILED. The original "
+                 "plaintext database is left untouched. Refusing to open.",
+                 cfg->db_path);
+      sodium_memzero(store->dek, SIGNET_DEK_LEN);
+      sodium_munlock(store->dek, SIGNET_DEK_LEN);
+      free(store);
+      return NULL;
+    }
+    g_message("[signet] migration complete; the database is now SQLCipher-encrypted.");
+    g_warning("[signet] a plaintext backup of the old database remains at "
+              "'%s.plaintext-backup' and still contains cleartext secrets/metadata. "
+              "Securely delete it once you have verified the migration.", cfg->db_path);
+  }
+
   /* Open SQLCipher database. */
   int rc = sqlite3_open(cfg->db_path, &store->db);
   if (rc != SQLITE_OK || !store->db) {
@@ -362,6 +589,23 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
 
   store->open = true;
   return store;
+}
+
+bool signet_store_file_is_plaintext_sqlite(const char *db_path) {
+  return db_path && signet_file_is_plain_sqlite(db_path);
+}
+
+bool signet_store_sqlcipher_available(void) {
+  return signet_sqlcipher_available();
+}
+
+int signet_store_migrate_plaintext_to_sqlcipher(const char *db_path,
+                                                const char *master_key) {
+  if (!db_path || !master_key) return -1;
+  if (sodium_init() < 0) return -1;
+  if (!signet_file_is_plain_sqlite(db_path)) return 1; /* not a plaintext DB */
+  if (!signet_sqlcipher_available()) return -1;        /* cannot encrypt */
+  return signet_store_do_migrate(db_path, master_key);
 }
 
 void signet_store_close(SignetStore *store) {

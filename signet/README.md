@@ -142,6 +142,29 @@ daemon refuses to start; otherwise it logs a prominent warning. Set
 `SIGNET_REQUIRE_ENCRYPTED_DB=true` in production so accidental plain SQLite
 builds fail closed.
 
+#### Migrating a legacy plaintext database
+
+When a SQLCipher build opens a `db_path` that points at a **legacy plaintext
+SQLite database** (created by an older build linked against plain SQLite), it
+refuses to use it as-is and transparently migrates it to a new SQLCipher-
+encrypted database keyed by `SIGNET_DB_KEY`. The original is preserved as
+`<db_path>.plaintext-backup`, all rows are copied via SQLCipher's
+`sqlcipher_export`, and stale WAL/`-shm` sidecars are removed. Detection is by
+the on-disk `SQLite format 3\0` magic header, so already-encrypted databases
+are never touched.
+
+Auto-migration on startup is the default. To disable it (and instead refuse to
+open a legacy database), set `SIGNET_MIGRATE_PLAINTEXT_DB=false`. You can also
+migrate explicitly without starting the daemon:
+
+```bash
+SIGNET_DB_KEY=... signetctl -c signet.conf migrate-db
+```
+
+Migration requires a SQLCipher-linked build (`-Dsignet_use_sqlcipher=true` for
+meson, `-DSIGNET_USE_SQLCIPHER=ON` for CMake); plain-SQLite builds keep their
+prior behavior.
+
 ### Run
 
 ```bash
@@ -216,6 +239,7 @@ All configuration can be overridden with `SIGNET_`-prefixed environment variable
 |--------------------------------|------------------------------------------|
 | `SIGNET_DB_KEY`                | SQLCipher master key (required; hex, base64, or passphrase) |
 | `SIGNET_REQUIRE_ENCRYPTED_DB`  | Refuse to start unless the DB is SQLCipher-encrypted |
+| `SIGNET_MIGRATE_PLAINTEXT_DB`  | Auto-migrate a legacy plaintext DB to SQLCipher on open (default true; set `false` to refuse instead) |
 | `SIGNET_BUNKER_NSEC`          | Bunker identity nsec (required)          |
 | `SIGNET_PROVISIONER_NSEC`     | Provisioner nsec for signetctl           |
 | `SIGNET_RELAYS`                | Comma-separated relay URLs               |
@@ -269,6 +293,9 @@ signetctl verify-audit
 
 # Rotate a credential (archives old version)
 signetctl rotate-credential <credential-id>
+
+# Migrate a legacy plaintext SQLite DB to SQLCipher (requires a SQLCipher build)
+SIGNET_DB_KEY=... signetctl migrate-db
 ```
 
 Remote commands require `SIGNET_PROVISIONER_NSEC` to be set. Management events are NIP-44 encrypted and ack responses are validated by sender pubkey and correlated by request_id.

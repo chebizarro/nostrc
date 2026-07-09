@@ -59,6 +59,7 @@ static void signetctl_usage(FILE *out) {
     "  list-leases              List active credential leases (local store)\n"
     "  verify-audit             Verify hash-chained audit log integrity\n"
     "  rotate-credential <id>   Rotate a credential (--file or --stdin)\n"
+    "  migrate-db               Migrate a legacy plaintext SQLite DB to SQLCipher\n"
     "\n"
     "Options:\n"
     "  -c <path>    Configuration file path\n"
@@ -370,6 +371,36 @@ int main(int argc, char **argv) {
     kind = SIGNET_KIND_GET_STATUS;
   } else if (strcmp(cmd, "list") == 0) {
     kind = SIGNET_KIND_LIST_AGENTS;
+  } else if (strcmp(cmd, "migrate-db") == 0) {
+    /* Migrate a legacy plaintext SQLite database to SQLCipher in place. */
+    SignetConfig lcfg;
+    if (signet_config_load(config_path, &lcfg) != 0) {
+      fprintf(stderr, "signetctl: failed to load config\n");
+      return 1;
+    }
+    const char *db_key = g_getenv("SIGNET_DB_KEY");
+    int ret = 1;
+    if (!signet_store_sqlcipher_available()) {
+      fprintf(stderr, "signetctl: this build is not linked against SQLCipher; "
+              "cannot migrate. Rebuild with -Dsignet_use_sqlcipher=true.\n");
+    } else if (!db_key || !db_key[0]) {
+      fprintf(stderr, "signetctl: SIGNET_DB_KEY is required to migrate.\n");
+    } else if (!signet_store_file_is_plaintext_sqlite(lcfg.db_path)) {
+      fprintf(stdout, "signetctl: '%s' is not a legacy plaintext SQLite database; "
+              "nothing to migrate.\n", lcfg.db_path);
+      ret = 0;
+    } else if (signet_store_migrate_plaintext_to_sqlcipher(lcfg.db_path, db_key) == 0) {
+      fprintf(stdout, "signetctl: migrated '%s' to SQLCipher.\n"
+              "  A plaintext backup remains at '%s.plaintext-backup' and still "
+              "contains cleartext secrets;\n  securely delete it once you have "
+              "verified the migration.\n", lcfg.db_path, lcfg.db_path);
+      ret = 0;
+    } else {
+      fprintf(stderr, "signetctl: migration of '%s' failed (original left intact).\n",
+              lcfg.db_path);
+    }
+    signet_config_clear(&lcfg);
+    return ret;
   } else if (strcmp(cmd, "list-agents") == 0 ||
              strcmp(cmd, "list-sessions") == 0 ||
              strcmp(cmd, "list-leases") == 0 ||

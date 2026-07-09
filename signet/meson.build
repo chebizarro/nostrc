@@ -230,6 +230,10 @@ signet_core_sources = files(
   'src/nip5l_transport.c',
   'src/session_broker.c',
   'src/ssh_agent.c',
+  # NIP-17 gift-wrap DM helpers are a CMake OBJECT library upstream (no static
+  # archive), so compile the single source directly into signet_core here;
+  # signetd/mgmt/bootstrap reference nostr_nip17_wrap_dm/decrypt_dm. (nostrc-lra)
+  '../nips/nip17/src/nip17.c',
 )
 
 # Experimental FIDO2/passkeys modules.

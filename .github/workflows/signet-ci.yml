@@ -21,12 +21,13 @@ on:
 
 jobs:
   build-and-test:
-    name: signet • passkeys=${{ matrix.passkeys }}
+    name: signet • passkeys=${{ matrix.passkeys }} • sqlcipher=${{ matrix.sqlcipher }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         passkeys: [ 'OFF', 'ON' ]
+        sqlcipher: [ 'OFF', 'ON' ]
 
     env:
       CMAKE_BUILD_TYPE: Debug
@@ -46,7 +47,7 @@ jobs:
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
             libjson-glib-dev libgit2-dev libnsync-dev \
-            libsqlite3-dev libmicrohttpd-dev libcbor-dev
+            libsqlite3-dev libmicrohttpd-dev libcbor-dev libsqlcipher-dev
           echo "CC=clang" >> $GITHUB_ENV
           echo "CXX=clang++" >> $GITHUB_ENV
 
@@ -58,7 +59,8 @@ jobs:
             -DWITH_NOSTRDB=ON -DLIBNOSTR_WITH_NOSTRDB=ON \
             -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF \
             -DSIGNET_ENABLE=ON -DBUILD_TESTING=ON \
-            -DSIGNET_ENABLE_PASSKEYS=${{ matrix.passkeys }}
+            -DSIGNET_ENABLE_PASSKEYS=${{ matrix.passkeys }} \
+            -DSIGNET_USE_SQLCIPHER=${{ matrix.sqlcipher }}
 
       - name: Build
         run: cmake --build build -j

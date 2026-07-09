@@ -82,6 +82,14 @@ test_store_lifecycle = executable('test_store_lifecycle',
   install: false,
 )
 
+test_db_migration = executable('test_db_migration',
+  'test_db_migration.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: false,
+)
+
 test('signet_smoke', test_exe)
 test('replay_cache', test_replay)
 test('policy_engine', test_policy)
@@ -92,6 +100,7 @@ test('relay_pool_protocol', test_relay_pool)
 test('signing_crypto', test_signing_crypto)
 test('nostr_auth', test_nostr_auth)
 test('store_lifecycle', test_store_lifecycle)
+test('db_migration', test_db_migration)
 
 if get_option('signet_enable_passkeys')
   test_store_passkeys = executable('test_store_passkeys',
