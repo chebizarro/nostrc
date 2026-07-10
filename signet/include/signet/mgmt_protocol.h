@@ -85,6 +85,16 @@ extern "C" {
  */
 #define SIGNET_KIND_ROTATE_KEY     28050
 /**
+ * SIGNET_KIND_ADOPT_EXISTING:
+ *
+ * Internal management kind for adopt-existing (BYO-key registration of a
+ * canonical identity). ContextVM-only (method agent/adopt-existing); never
+ * subscribed on the legacy wire.
+ *
+ * Since: 1.1
+ */
+#define SIGNET_KIND_ADOPT_EXISTING 28060
+/**
  * SIGNET_KIND_MGMT_ACK:
  *
  * Legacy management event kind for acknowledgements.
@@ -119,6 +129,7 @@ typedef enum {
   SIGNET_MGMT_OP_GET_STATUS,
   SIGNET_MGMT_OP_LIST_AGENTS,
   SIGNET_MGMT_OP_ROTATE_KEY,
+  SIGNET_MGMT_OP_ADOPT_EXISTING,
 } SignetMgmtOp;
 
 /* Parsed management request from event content JSON. */
@@ -144,6 +155,9 @@ typedef struct {
   char *bootstrap_pubkey;  /* optional delivery bootstrap pubkey */
   bool deliver;            /* provision: send bunker handoff via NIP-17 */
   int64_t delivery_ttl;    /* seconds; capped by handler */
+  char *agent_nsec;        /* adopt: supplied secret (nsec or 64-hex) — sensitive, owned */
+  char *expected_pubkey;   /* adopt: require derived pubkey to match (owned) */
+  char *connect_secret;    /* adopt: optional fixed connect secret (owned) */
 } SignetMgmtRequest;
 
 /* Map event kind to management op. */

@@ -120,6 +120,19 @@ bool signet_key_store_load_agent_key(SignetKeyStore *ks,
  * returned via *out_bunker_uri (caller frees with g_free). out_bunker_uri may be
  * NULL if not needed. Returns 0 on success, -1 on error. */
 /**
+ * SignetAdoptResult:
+ * Result codes for signet_key_store_adopt_agent().
+ */
+typedef enum {
+  SIGNET_ADOPT_OK = 0,
+  SIGNET_ADOPT_ERR_INVALID_SECRET = -1,
+  SIGNET_ADOPT_ERR_PUBKEY_MISMATCH = -2,
+  SIGNET_ADOPT_ERR_AGENT_EXISTS = -3,
+  SIGNET_ADOPT_ERR_PUBKEY_EXISTS = -4,
+  SIGNET_ADOPT_ERR_INTERNAL = -5,
+} SignetAdoptResult;
+
+/**
  * signet_key_store_provision_agent:
  * @ks: (not nullable): a #SignetKeyStore
  * @agent_id: (not nullable): agent identifier
@@ -146,6 +159,31 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
                                      char *out_pubkey_hex,
                                      size_t out_pubkey_hex_sz,
                                      char **out_bunker_uri);
+
+/**
+ * signet_key_store_adopt_agent:
+ * Register an EXISTING canonical identity (BYO-key) instead of minting a new
+ * keypair. Derives the pubkey from @secret_key; if @expected_pubkey_hex is
+ * non-NULL it must match exactly. Fails if @agent_id already exists or the
+ * pubkey is already bound to another agent. On success stores the key in the
+ * same encrypted path as provisioned agents (provenance=adopted), returns the
+ * pubkey via @out_pubkey_hex (>=65 bytes) and, when @bunker_pubkey_hex/relays
+ * are given, a bunker:// URI via *@out_bunker_uri (caller frees with g_free).
+ * @connect_secret_in may be NULL to generate a random one. The caller must
+ * zeroize @secret_key after the call.
+ *
+ * Returns: SIGNET_ADOPT_OK on success, or a SignetAdoptResult error code.
+ */
+SignetAdoptResult signet_key_store_adopt_agent(SignetKeyStore *ks,
+                                               const char *agent_id,
+                                               const uint8_t secret_key[32],
+                                               const char *expected_pubkey_hex,
+                                               const char *connect_secret_in,
+                                               const char *bunker_pubkey_hex,
+                                               const char *const *relay_urls,
+                                               size_t n_relay_urls,
+                                               char out_pubkey_hex[65],
+                                               char **out_bunker_uri);
 
 /* Revoke an agent. Removes from hot cache and SQLCipher.
  * Returns 0 on success, 1 if not found, -1 on error. */

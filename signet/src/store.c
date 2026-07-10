@@ -351,9 +351,12 @@ static const char *SIGNET_SCHEMA_SQL =
   "  algo TEXT NOT NULL DEFAULT 'xsalsa20poly1305',"
   "  connect_secret TEXT,"
   "  created_at INTEGER NOT NULL,"
-  "  last_used INTEGER NOT NULL DEFAULT 0"
+  "  last_used INTEGER NOT NULL DEFAULT 0,"
+  "  pubkey TEXT,"                                       /* x-only pubkey hex (adopt/collision checks) */
+  "  provenance TEXT NOT NULL DEFAULT 'provisioned'"     /* provisioned | adopted | rotated */
   ");"
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_connect_secret ON agents(connect_secret) WHERE connect_secret IS NOT NULL;"
+  "CREATE INDEX IF NOT EXISTS idx_agents_pubkey ON agents(pubkey);"
 
   /* v2: extended secrets (multi-type credentials) */
   "CREATE TABLE IF NOT EXISTS secrets ("
@@ -591,6 +594,16 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
   (void)sqlite3_exec(store->db,
                      "CREATE INDEX IF NOT EXISTS idx_bootstrap_handoff ON bootstrap_tokens(handoff_secret);",
                      NULL, NULL, NULL);
+  /* v3.1: agent pubkey (for adopt collision checks) + provenance. */
+  (void)sqlite3_exec(store->db,
+                     "ALTER TABLE agents ADD COLUMN pubkey TEXT;",
+                     NULL, NULL, NULL);
+  (void)sqlite3_exec(store->db,
+                     "ALTER TABLE agents ADD COLUMN provenance TEXT NOT NULL DEFAULT 'provisioned';",
+                     NULL, NULL, NULL);
+  (void)sqlite3_exec(store->db,
+                     "CREATE INDEX IF NOT EXISTS idx_agents_pubkey ON agents(pubkey);",
+                     NULL, NULL, NULL);
 
   /* v3: dedicated passkey credential vault (N credentials per agent). */
   errmsg = NULL;
@@ -650,12 +663,14 @@ bool signet_store_is_open(const SignetStore *store) {
   return store && store->open && store->db;
 }
 
-int signet_store_put_agent(SignetStore *store,
-                           const char *agent_id,
-                           const uint8_t *secret_key,
-                           size_t secret_key_len,
-                           const char *connect_secret,
-                           int64_t now) {
+int signet_store_put_agent_ex(SignetStore *store,
+                              const char *agent_id,
+                              const uint8_t *secret_key,
+                              size_t secret_key_len,
+                              const char *connect_secret,
+                              const char *pubkey_hex,
+                              const char *provenance,
+                              int64_t now) {
   if (!store || !store->open || !agent_id || !secret_key) return -1;
   if (secret_key_len != SIGNET_NSEC_LEN) return -1;
 
@@ -676,8 +691,9 @@ int signet_store_put_agent(SignetStore *store,
 
   /* INSERT OR REPLACE into the database. */
   const char *sql =
-    "INSERT OR REPLACE INTO agents (agent_id, encrypted_nsec, nonce, algo, connect_secret, created_at, last_used) "
-    "VALUES (?, ?, ?, 'xsalsa20poly1305', ?, ?, 0);";
+    "INSERT OR REPLACE INTO agents "
+    "(agent_id, encrypted_nsec, nonce, algo, connect_secret, created_at, last_used, pubkey, provenance) "
+    "VALUES (?, ?, ?, 'xsalsa20poly1305', ?, ?, 0, ?, ?);";
 
   sqlite3_stmt *stmt = NULL;
   int rc = sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL);
@@ -696,6 +712,13 @@ int signet_store_put_agent(SignetStore *store,
     sqlite3_bind_null(stmt, 4);
   }
   sqlite3_bind_int64(stmt, 5, now);
+  if (pubkey_hex && pubkey_hex[0]) {
+    sqlite3_bind_text(stmt, 6, pubkey_hex, -1, SQLITE_TRANSIENT);
+  } else {
+    sqlite3_bind_null(stmt, 6);
+  }
+  sqlite3_bind_text(stmt, 7, (provenance && provenance[0]) ? provenance : "provisioned",
+                    -1, SQLITE_TRANSIENT);
 
   rc = sqlite3_step(stmt);
   sqlite3_finalize(stmt);
@@ -703,6 +726,36 @@ int signet_store_put_agent(SignetStore *store,
   free(ciphertext);
 
   return (rc == SQLITE_DONE) ? 0 : -1;
+}
+
+int signet_store_put_agent(SignetStore *store,
+                           const char *agent_id,
+                           const uint8_t *secret_key,
+                           size_t secret_key_len,
+                           const char *connect_secret,
+                           int64_t now) {
+  return signet_store_put_agent_ex(store, agent_id, secret_key, secret_key_len,
+                                   connect_secret, NULL, "provisioned", now);
+}
+
+int signet_store_pubkey_in_use(SignetStore *store,
+                               const char *pubkey_hex,
+                               const char *exclude_agent_id,
+                               bool *out_in_use) {
+  if (out_in_use) *out_in_use = false;
+  if (!store || !store->open || !pubkey_hex || !pubkey_hex[0] || !out_in_use) return -1;
+
+  const char *sql = exclude_agent_id
+      ? "SELECT 1 FROM agents WHERE pubkey = ? AND agent_id != ? LIMIT 1;"
+      : "SELECT 1 FROM agents WHERE pubkey = ? LIMIT 1;";
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_text(stmt, 1, pubkey_hex, -1, SQLITE_TRANSIENT);
+  if (exclude_agent_id) sqlite3_bind_text(stmt, 2, exclude_agent_id, -1, SQLITE_TRANSIENT);
+  int rc = sqlite3_step(stmt);
+  if (rc == SQLITE_ROW) *out_in_use = true;
+  sqlite3_finalize(stmt);
+  return (rc == SQLITE_ROW || rc == SQLITE_DONE) ? 0 : -1;
 }
 
 int signet_store_get_agent(SignetStore *store,

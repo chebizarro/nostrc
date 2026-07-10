@@ -238,9 +238,10 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
   int rc = -1;
   int64_t now = (int64_t)time(NULL);
 
-  /* Store in SQLCipher (with connect_secret). */
+  /* Store in SQLCipher (with connect_secret + pubkey + provenance). */
   if (ks->store) {
-    rc = signet_store_put_agent(ks->store, agent_id, sk_raw, 32, connect_secret, now);
+    rc = signet_store_put_agent_ex(ks->store, agent_id, sk_raw, 32, connect_secret,
+                                   pk_hex, "provisioned", now);
   }
 
   if (rc == 0 || !ks->store) {
@@ -293,6 +294,135 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
   free(pk_hex);
 
   return rc;
+}
+
+SignetAdoptResult signet_key_store_adopt_agent(SignetKeyStore *ks,
+                                               const char *agent_id,
+                                               const uint8_t secret_key[32],
+                                               const char *expected_pubkey_hex,
+                                               const char *connect_secret_in,
+                                               const char *bunker_pubkey_hex,
+                                               const char *const *relay_urls,
+                                               size_t n_relay_urls,
+                                               char out_pubkey_hex[65],
+                                               char **out_bunker_uri) {
+  if (!ks || !agent_id || !secret_key || !out_pubkey_hex)
+    return SIGNET_ADOPT_ERR_INTERNAL;
+  if (out_bunker_uri) *out_bunker_uri = NULL;
+
+  /* Derive the pubkey from the supplied secret. */
+  char sk_hex[65];
+  for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", secret_key[i]);
+  sk_hex[64] = '\0';
+  char *pk_hex = nostr_key_get_public(sk_hex);
+  sodium_memzero(sk_hex, sizeof(sk_hex));
+  if (!pk_hex || strlen(pk_hex) != 64) {
+    free(pk_hex);
+    return SIGNET_ADOPT_ERR_INVALID_SECRET;
+  }
+
+  /* Require the caller-declared pubkey to match exactly. */
+  if (expected_pubkey_hex && expected_pubkey_hex[0] &&
+      g_ascii_strcasecmp(pk_hex, expected_pubkey_hex) != 0) {
+    free(pk_hex);
+    return SIGNET_ADOPT_ERR_PUBKEY_MISMATCH;
+  }
+
+  /* connect_secret: use the supplied one (any length), else a random 32-byte
+   * hex string. Heap-allocated so a caller-supplied value is never silently
+   * truncated. */
+  char *connect_secret = NULL;
+  if (connect_secret_in && connect_secret_in[0]) {
+    connect_secret = g_strdup(connect_secret_in);
+  } else {
+    uint8_t secret_raw[32];
+    randombytes_buf(secret_raw, sizeof(secret_raw));
+    connect_secret = g_malloc(65);
+    for (int i = 0; i < 32; i++) sprintf(connect_secret + i * 2, "%02x", secret_raw[i]);
+    connect_secret[64] = '\0';
+    sodium_memzero(secret_raw, sizeof(secret_raw));
+  }
+
+  SignetAdoptResult result = SIGNET_ADOPT_ERR_INTERNAL;
+  int64_t now = (int64_t)time(NULL);
+  int rc = -1;
+  bool exists = false;
+
+  g_mutex_lock(&ks->mu);
+
+  /* Reject if agent_id already exists (cache or store). Fail closed on a
+   * store/decrypt error rather than risk overwriting an existing row. */
+  exists = g_hash_table_contains(ks->cache, agent_id);
+  if (!exists && ks->store) {
+    SignetAgentRecord rec;
+    memset(&rec, 0, sizeof(rec));
+    int grc = signet_store_get_agent(ks->store, agent_id, &rec);
+    if (grc == 0) {
+      exists = true;
+      signet_agent_record_clear(&rec);
+    } else if (grc < 0) {
+      result = SIGNET_ADOPT_ERR_INTERNAL;
+      goto done;
+    }
+  }
+  if (exists) { result = SIGNET_ADOPT_ERR_AGENT_EXISTS; goto done; }
+
+  /* Reject if the pubkey is already bound to another agent. Fail closed on a
+   * store error rather than storing a possibly-colliding key. */
+  if (ks->store) {
+    bool in_use = false;
+    if (signet_store_pubkey_in_use(ks->store, pk_hex, agent_id, &in_use) != 0) {
+      result = SIGNET_ADOPT_ERR_INTERNAL;
+      goto done;
+    }
+    if (in_use) { result = SIGNET_ADOPT_ERR_PUBKEY_EXISTS; goto done; }
+  }
+
+  /* Store the externally supplied key in the same encrypted path as provisioned
+   * agents, tagged provenance=adopted. */
+  if (ks->store) {
+    rc = signet_store_put_agent_ex(ks->store, agent_id, secret_key, 32,
+                                   connect_secret, pk_hex, "adopted", now);
+  }
+  if (rc == 0 || !ks->store) {
+    SignetCacheEntry *entry = signet_cache_entry_new(secret_key, now);
+    if (entry) {
+      g_hash_table_replace(ks->cache, g_strdup(agent_id), entry);
+      rc = 0;
+    } else {
+      rc = -1;
+    }
+  }
+  if (rc != 0) { result = SIGNET_ADOPT_ERR_INTERNAL; goto done; }
+
+  g_strlcpy(out_pubkey_hex, pk_hex, 65);
+  result = SIGNET_ADOPT_OK;
+
+  if (out_bunker_uri && bunker_pubkey_hex && bunker_pubkey_hex[0]) {
+    GString *uri = g_string_new("bunker://");
+    g_string_append(uri, bunker_pubkey_hex);
+    g_string_append_c(uri, '?');
+    for (size_t i = 0; i < n_relay_urls; i++) {
+      if (i > 0) g_string_append_c(uri, '&');
+      char *escaped = g_uri_escape_string(relay_urls[i], NULL, FALSE);
+      g_string_append(uri, "relay=");
+      g_string_append(uri, escaped ? escaped : relay_urls[i]);
+      g_free(escaped);
+    }
+    if (n_relay_urls > 0) g_string_append_c(uri, '&');
+    g_string_append(uri, "secret=");
+    g_string_append(uri, connect_secret);
+    *out_bunker_uri = g_string_free(uri, FALSE);
+  }
+
+done:
+  g_mutex_unlock(&ks->mu);
+  if (connect_secret) {
+    sodium_memzero(connect_secret, strlen(connect_secret));
+    g_free(connect_secret);
+  }
+  free(pk_hex);
+  return result;
 }
 
 int signet_key_store_validate_connect_secret(SignetKeyStore *ks,
@@ -429,9 +559,12 @@ int signet_key_store_rotate_agent(SignetKeyStore *ks,
   int rc = -1;
   int64_t now = (int64_t)time(NULL);
 
-  /* Replace in SQLCipher (connect_secret = NULL for rotated keys). */
+  /* Replace in SQLCipher (connect_secret = NULL for rotated keys). Record the
+   * new pubkey + provenance so rotated agents stay visible to pubkey-collision
+   * checks (adopt-existing) and their new identity is tracked. */
   if (ks->store) {
-    rc = signet_store_put_agent(ks->store, agent_id, sk_raw, 32, NULL, now);
+    rc = signet_store_put_agent_ex(ks->store, agent_id, sk_raw, 32, NULL,
+                                   pk_hex, "rotated", now);
   }
 
   if (rc == 0 || !ks->store) {

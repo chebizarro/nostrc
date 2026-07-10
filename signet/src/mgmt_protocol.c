@@ -20,6 +20,7 @@
 
 #include <nostr/nip17/nip17.h>
 #include <nostr/nip44/nip44.h>
+#include <nostr/nip19/nip19.h>
 #include <secure_buf.h>
 #include <sodium.h>
 
@@ -49,6 +50,7 @@ SignetMgmtOp signet_mgmt_op_from_kind(int kind) {
     case SIGNET_KIND_GET_STATUS:     return SIGNET_MGMT_OP_GET_STATUS;
     case SIGNET_KIND_LIST_AGENTS:    return SIGNET_MGMT_OP_LIST_AGENTS;
     case SIGNET_KIND_ROTATE_KEY:     return SIGNET_MGMT_OP_ROTATE_KEY;
+    case SIGNET_KIND_ADOPT_EXISTING: return SIGNET_MGMT_OP_ADOPT_EXISTING;
     default:                         return SIGNET_MGMT_OP_UNKNOWN;
   }
 }
@@ -61,6 +63,7 @@ const char *signet_mgmt_op_to_string(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_GET_STATUS:      return "get_status";
     case SIGNET_MGMT_OP_LIST_AGENTS:     return "list_agents";
     case SIGNET_MGMT_OP_ROTATE_KEY:      return "rotate_key";
+    case SIGNET_MGMT_OP_ADOPT_EXISTING:  return "adopt_existing";
     default:                             return "unknown";
   }
 }
@@ -89,6 +92,10 @@ void signet_mgmt_request_clear(SignetMgmtRequest *req) {
   g_free(req->policy_json);
   g_free(req->request_id);
   g_free(req->bootstrap_pubkey);
+  /* agent_nsec/connect_secret carry secret material — wipe before free. */
+  if (req->agent_nsec) { secure_wipe(req->agent_nsec, strlen(req->agent_nsec)); g_free(req->agent_nsec); }
+  if (req->connect_secret) { secure_wipe(req->connect_secret, strlen(req->connect_secret)); g_free(req->connect_secret); }
+  g_free(req->expected_pubkey);
   memset(req, 0, sizeof(*req));
 }
 
@@ -166,12 +173,25 @@ int signet_mgmt_request_parse(int kind,
   if (json_object_has_member(o, "delivery_ttl")) {
     out_req->delivery_ttl = json_object_get_int_member(o, "delivery_ttl");
   }
+  if (json_object_has_member(o, "agent_nsec")) {
+    const char *v = json_object_get_string_member(o, "agent_nsec");
+    if (v && v[0]) out_req->agent_nsec = g_strdup(v);
+  }
+  if (json_object_has_member(o, "expected_pubkey")) {
+    const char *v = json_object_get_string_member(o, "expected_pubkey");
+    if (v && v[0]) out_req->expected_pubkey = g_strdup(v);
+  }
+  if (json_object_has_member(o, "connect_secret")) {
+    const char *v = json_object_get_string_member(o, "connect_secret");
+    if (v && v[0]) out_req->connect_secret = g_strdup(v);
+  }
 
   /* Validate required fields per op. */
   bool needs_agent_id = (out_req->op == SIGNET_MGMT_OP_PROVISION_AGENT ||
                          out_req->op == SIGNET_MGMT_OP_REVOKE_AGENT ||
                          out_req->op == SIGNET_MGMT_OP_SET_POLICY ||
-                         out_req->op == SIGNET_MGMT_OP_ROTATE_KEY);
+                         out_req->op == SIGNET_MGMT_OP_ROTATE_KEY ||
+                         out_req->op == SIGNET_MGMT_OP_ADOPT_EXISTING);
 
   if (needs_agent_id && (!out_req->agent_id || !out_req->agent_id[0])) {
     if (out_error) *out_error = g_strdup("agent_id is required");
@@ -182,6 +202,13 @@ int signet_mgmt_request_parse(int kind,
   if (out_req->op == SIGNET_MGMT_OP_SET_POLICY &&
       (!out_req->policy_json || !out_req->policy_json[0])) {
     if (out_error) *out_error = g_strdup("set_policy requires policy object");
+    signet_mgmt_request_clear(out_req);
+    return -1;
+  }
+
+  if (out_req->op == SIGNET_MGMT_OP_ADOPT_EXISTING &&
+      (!out_req->agent_nsec || !out_req->agent_nsec[0])) {
+    if (out_error) *out_error = g_strdup("adopt_existing requires agent_nsec");
     signet_mgmt_request_clear(out_req);
     return -1;
   }
@@ -478,6 +505,7 @@ static int signet_mgmt_kind_from_contextvm_method(const char *method) {
   if (strcmp(method, "agent/get-status") == 0) return SIGNET_KIND_GET_STATUS;
   if (strcmp(method, "agent/list") == 0) return SIGNET_KIND_LIST_AGENTS;
   if (strcmp(method, "agent/rotate-key") == 0) return SIGNET_KIND_ROTATE_KEY;
+  if (strcmp(method, "agent/adopt-existing") == 0) return SIGNET_KIND_ADOPT_EXISTING;
   return 0;
 }
 
@@ -534,6 +562,18 @@ static char *signet_mgmt_contextvm_to_legacy_json(const char *content_json, int 
     json_builder_set_member_name(b, "delivery_ttl");
     json_builder_add_int_value(b, json_object_get_int_member(po, "delivery_ttl"));
   }
+  if (po && json_object_has_member(po, "agent_nsec")) {
+    json_builder_set_member_name(b, "agent_nsec");
+    json_builder_add_string_value(b, json_object_get_string_member(po, "agent_nsec"));
+  }
+  if (po && json_object_has_member(po, "expected_pubkey")) {
+    json_builder_set_member_name(b, "expected_pubkey");
+    json_builder_add_string_value(b, json_object_get_string_member(po, "expected_pubkey"));
+  }
+  if (po && json_object_has_member(po, "connect_secret")) {
+    json_builder_set_member_name(b, "connect_secret");
+    json_builder_add_string_value(b, json_object_get_string_member(po, "connect_secret"));
+  }
   json_builder_end_object(b);
 
   JsonNode *out = json_builder_get_root(b);
@@ -570,7 +610,7 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
     signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now);
     h->reply_contextvm = false;
     g_free(err);
-    g_free(legacy_json);
+    if (legacy_json) { secure_wipe(legacy_json, strlen(legacy_json)); g_free(legacy_json); }
     return -1;
   }
 
@@ -582,6 +622,8 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
                                  strlen(legacy_json), &encrypted);
   }
   signet_mgmt_memzero(sk, sizeof(sk));
+  /* legacy_json may embed agent_nsec/connect_secret (adopt-existing). */
+  secure_wipe(legacy_json, strlen(legacy_json));
   g_free(legacy_json);
   if (!encrypted) return -1;
   h->reply_contextvm = true;
@@ -663,18 +705,22 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
     int drc = nostr_nip44_decrypt_v2(sk, pk, content_json, &pt, &pt_len);
     signet_mgmt_memzero(sk, sizeof(sk));
     if (drc != 0 || !pt || pt_len == 0) {
+      if (pt) secure_wipe(pt, pt_len);
       free(pt);
       return -1;
     }
 
     decrypted_content = (char *)malloc(pt_len + 1);
     if (!decrypted_content) {
+      secure_wipe(pt, pt_len);
       free(pt);
       return -1;
     }
     memcpy(decrypted_content, pt, pt_len);
     decrypted_content[pt_len] = '\0';
     effective_content = decrypted_content;
+    /* pt is the decrypted plaintext (may hold agent_nsec) — wipe before free. */
+    secure_wipe(pt, pt_len);
     free(pt);
   }
 
@@ -689,7 +735,7 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
       g_free(ack);
     }
     g_free(parse_err);
-    free(decrypted_content);
+    if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
     return -1;
   }
 
@@ -744,6 +790,119 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
         code = "provision_failed";
         message = g_strdup("failed to provision agent");
       }
+      break;
+    }
+
+    case SIGNET_MGMT_OP_ADOPT_EXISTING: {
+      /* Decode the supplied secret: nsec bech32 or 64-char hex. */
+      uint8_t sk_raw[32];
+      bool decoded = false;
+      const char *sec = req.agent_nsec;
+      if (sec && strncmp(sec, "nsec1", 5) == 0) {
+        decoded = (nostr_nip19_decode_nsec(sec, sk_raw) == 0);
+      } else if (sec && strlen(sec) == 64) {
+        size_t bin_len = 0;
+        decoded = (sodium_hex2bin(sk_raw, sizeof(sk_raw), sec, 64, NULL, &bin_len, NULL) == 0 &&
+                   bin_len == 32);
+      }
+      if (!decoded) {
+        code = "invalid_secret";
+        message = g_strdup("invalid agent_nsec");
+        sodium_memzero(sk_raw, sizeof(sk_raw));
+        break;
+      }
+
+      /* Derive the pubkey so we can run the deny-list gate before storing. */
+      char derived_pk[65] = {0};
+      {
+        char sk_hex[65];
+        for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", sk_raw[i]);
+        sk_hex[64] = '\0';
+        char *pk = nostr_key_get_public(sk_hex);
+        sodium_memzero(sk_hex, sizeof(sk_hex));
+        if (pk && strlen(pk) == 64) g_strlcpy(derived_pk, pk, sizeof(derived_pk));
+        free(pk);
+      }
+      if (!derived_pk[0]) {
+        code = "invalid_secret";
+        message = g_strdup("could not derive pubkey");
+        sodium_memzero(sk_raw, sizeof(sk_raw));
+        break;
+      }
+
+      /* expected_pubkey must match exactly when provided. */
+      if (req.expected_pubkey && req.expected_pubkey[0] &&
+          g_ascii_strcasecmp(derived_pk, req.expected_pubkey) != 0) {
+        code = "pubkey_mismatch";
+        message = g_strdup("derived pubkey does not match expected_pubkey");
+        sodium_memzero(sk_raw, sizeof(sk_raw));
+        break;
+      }
+
+      /* Reject deny-listed pubkeys. */
+      if (h->deny && signet_deny_list_contains(h->deny, derived_pk)) {
+        code = "deny_listed";
+        message = g_strdup("pubkey is deny-listed");
+        signet_mgmt_publish_cas_audit(h, "adopt_existing", req.agent_id, "deny_listed", now);
+        sodium_memzero(sk_raw, sizeof(sk_raw));
+        break;
+      }
+
+      char pubkey_hex[65];
+      char *bunker_uri = NULL;
+      SignetAdoptResult ar = signet_key_store_adopt_agent(
+          h->keys, req.agent_id, sk_raw,
+          req.expected_pubkey, req.connect_secret,
+          h->bunker_pk_hex,
+          (const char *const *)h->relay_urls, h->n_relay_urls,
+          pubkey_hex, &bunker_uri);
+      sodium_memzero(sk_raw, sizeof(sk_raw));
+
+      if (ar == SIGNET_ADOPT_OK) {
+        ok = true;
+        code = "adopted";
+        message = g_strdup_printf("agent %s adopted", req.agent_id);
+        if (bunker_uri) {
+          char *escaped_uri = g_strescape(bunker_uri, NULL);
+          result = g_strdup_printf(
+              "{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"adopted\":true,\"bunker_uri\":\"%s\"}",
+              req.agent_id, pubkey_hex, escaped_uri ? escaped_uri : bunker_uri);
+          g_free(escaped_uri);
+        } else {
+          result = g_strdup_printf(
+              "{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"adopted\":true}",
+              req.agent_id, pubkey_hex);
+        }
+        if (req.deliver && req.bootstrap_pubkey && req.bootstrap_pubkey[0] && bunker_uri) {
+          int64_t ttl = req.delivery_ttl > 0 ? req.delivery_ttl : 600;
+          if (ttl > 900) ttl = 900;
+          SignetBootstrapMessage dm = {0};
+          dm.agent_id = req.agent_id;
+          dm.bunker_uri = bunker_uri;
+          dm.relay_urls = h->relay_urls;
+          dm.n_relay_urls = h->n_relay_urls;
+          dm.expires_at = now + ttl;
+          if (signet_bootstrap_send(h->bunker_sk_hex, req.bootstrap_pubkey, &dm, h->relays) == 0) {
+            char *old = result;
+            result = g_strdup_printf(
+                "{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"adopted\":true,\"bunker_uri\":\"%s\",\"delivered\":true,\"delivery_expires_at\":%" G_GINT64_FORMAT "}",
+                req.agent_id, pubkey_hex, bunker_uri, (gint64)dm.expires_at);
+            g_free(old);
+          }
+        }
+        signet_mgmt_publish_cas_audit(h, "adopt_existing", req.agent_id, "ok", now);
+      } else {
+        switch (ar) {
+          case SIGNET_ADOPT_ERR_INVALID_SECRET:  code = "invalid_secret"; break;
+          case SIGNET_ADOPT_ERR_PUBKEY_MISMATCH: code = "pubkey_mismatch"; break;
+          case SIGNET_ADOPT_ERR_AGENT_EXISTS:    code = "agent_exists"; break;
+          case SIGNET_ADOPT_ERR_PUBKEY_EXISTS:   code = "pubkey_exists"; break;
+          default:                               code = "adopt_failed"; break;
+        }
+        message = g_strdup_printf("failed to adopt agent (%s)", code);
+        signet_mgmt_publish_cas_audit(h, "adopt_existing", req.agent_id, code, now);
+      }
+      g_free(bunker_uri);
       break;
     }
 
@@ -896,7 +1055,8 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
 
   g_free(message);
   g_free(result);
-  free(decrypted_content);
+  /* decrypted_content may hold agent_nsec/connect_secret (adopt-existing). */
+  if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
   signet_mgmt_request_clear(&req);
 
   return ok ? 0 : -1;

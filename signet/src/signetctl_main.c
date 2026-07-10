@@ -47,6 +47,10 @@ static void signetctl_usage(FILE *out) {
     "                           Provision and optionally gift-wrap bunker URI\n"
     "  revoke <agent_id>        Revoke an agent identity\n"
     "  rotate <agent_id>        Rotate an agent identity key\n"
+    "  adopt-existing <agent_id> --sec <nsec-or-hex|->\n"
+    "                 [--expected-pubkey <hex>] [--deliver <bootstrap_pubkey>] [--ttl <sec>]\n"
+    "                           Adopt an existing (BYO) keypair as an agent\n"
+    "                           (--sec - reads the secret from stdin)\n"
     "  set-policy <agent_id> <policy-json>\n"
     "                           Set an agent policy\n"
     "  status                   Query daemon health status\n"
@@ -69,6 +73,7 @@ static void signetctl_usage(FILE *out) {
     "\n"
     "Examples:\n"
     "  signetctl provision my-agent\n"
+    "  signetctl adopt-existing my-agent --sec nsec1... --expected-pubkey <hex>\n"
     "  signetctl revoke my-agent\n"
     "  signetctl status\n"
     "  signetctl list\n",
@@ -88,6 +93,7 @@ static const char *signetctl_contextvm_method(int kind) {
     case SIGNET_KIND_GET_STATUS:      return "agent/get-status";
     case SIGNET_KIND_LIST_AGENTS:     return "agent/list";
     case SIGNET_KIND_ROTATE_KEY:      return "agent/rotate-key";
+    case SIGNET_KIND_ADOPT_EXISTING:  return "agent/adopt-existing";
     default:                          return NULL;
   }
 }
@@ -97,7 +103,8 @@ static const char *signetctl_contextvm_method(int kind) {
  * This is the kind-25910 CAS_INTENT payload the daemon parses. */
 static char *signetctl_build_intent(int kind, const char *agent_id, const char *request_id,
                                     const char *policy_json, const char *bootstrap_pubkey,
-                                    int delivery_ttl) {
+                                    int delivery_ttl, const char *agent_nsec,
+                                    const char *expected_pubkey) {
   const char *method = signetctl_contextvm_method(kind);
   if (!method) return NULL;
 
@@ -113,6 +120,14 @@ static char *signetctl_build_intent(int kind, const char *agent_id, const char *
   if (agent_id) {
     json_builder_set_member_name(b, "agent_id");
     json_builder_add_string_value(b, agent_id);
+  }
+  if (agent_nsec) {
+    json_builder_set_member_name(b, "agent_nsec");
+    json_builder_add_string_value(b, agent_nsec);
+  }
+  if (expected_pubkey) {
+    json_builder_set_member_name(b, "expected_pubkey");
+    json_builder_add_string_value(b, expected_pubkey);
   }
   if (bootstrap_pubkey) {
     json_builder_set_member_name(b, "deliver");
@@ -158,6 +173,30 @@ static char *signetctl_build_gift_wrapped_intent(const char *intent_json,
   char *json = nostr_event_serialize_compact(gw);
   nostr_event_free(gw);
   return json;
+}
+
+/* Print only agent_id, pubkey, bunker_uri from an adopt-existing JSON-RPC
+ * reply ({"jsonrpc":"2.0","result":{...}}). Never echoes secret material. */
+static void signetctl_print_adopt_result(const char *reply_json) {
+  g_autoptr(JsonParser) p = json_parser_new();
+  if (!reply_json || !json_parser_load_from_data(p, reply_json, -1, NULL)) {
+    if (reply_json) printf("%s\n", reply_json);
+    return;
+  }
+  JsonNode *root = json_parser_get_root(p);
+  if (!root || !JSON_NODE_HOLDS_OBJECT(root)) { printf("%s\n", reply_json); return; }
+  JsonObject *o = json_node_get_object(root);
+  JsonObject *res = o;
+  if (json_object_has_member(o, "result")) {
+    JsonNode *rn = json_object_get_member(o, "result");
+    if (rn && JSON_NODE_HOLDS_OBJECT(rn)) res = json_node_get_object(rn);
+  }
+  const char *aid = json_object_has_member(res, "agent_id") ? json_object_get_string_member(res, "agent_id") : NULL;
+  const char *pk  = json_object_has_member(res, "pubkey") ? json_object_get_string_member(res, "pubkey") : NULL;
+  const char *uri = json_object_has_member(res, "bunker_uri") ? json_object_get_string_member(res, "bunker_uri") : NULL;
+  if (aid) printf("agent_id: %s\n", aid);
+  if (pk)  printf("pubkey: %s\n", pk);
+  if (uri) printf("bunker_uri: %s\n", uri);
 }
 
 /* ---------------------- ack response handling ----------------------------- */
@@ -299,6 +338,8 @@ int main(int argc, char **argv) {
   const char *agent_id = NULL;
   const char *deliver_bootstrap_pubkey = NULL;
   int delivery_ttl = 600;
+  const char *adopt_sec = NULL;
+  const char *adopt_expected_pubkey = NULL;
 
   if (strcmp(cmd, "provision") == 0) {
     kind = SIGNET_KIND_PROVISION_AGENT;
@@ -333,6 +374,49 @@ int main(int argc, char **argv) {
       return 2;
     }
     agent_id = argv[argi++];
+  } else if (strcmp(cmd, "adopt-existing") == 0) {
+    kind = SIGNET_KIND_ADOPT_EXISTING;
+    if (argi >= argc) {
+      fprintf(stderr, "signetctl: adopt-existing requires <agent_id>\n");
+      return 2;
+    }
+    agent_id = argv[argi++];
+    while (argi < argc) {
+      if (strcmp(argv[argi], "--sec") == 0 && (argi + 1) < argc) {
+        adopt_sec = argv[argi + 1];
+        argi += 2;
+      } else if (strcmp(argv[argi], "--expected-pubkey") == 0 && (argi + 1) < argc) {
+        adopt_expected_pubkey = argv[argi + 1];
+        argi += 2;
+      } else if (strcmp(argv[argi], "--deliver") == 0 && (argi + 1) < argc) {
+        deliver_bootstrap_pubkey = argv[argi + 1];
+        argi += 2;
+      } else if (strcmp(argv[argi], "--ttl") == 0 && (argi + 1) < argc) {
+        delivery_ttl = atoi(argv[argi + 1]);
+        argi += 2;
+      } else {
+        fprintf(stderr, "signetctl: unknown adopt-existing option '%s'\n", argv[argi]);
+        return 2;
+      }
+    }
+    if (!adopt_sec || !adopt_sec[0]) {
+      fprintf(stderr, "signetctl: adopt-existing requires --sec <nsec-or-hex>\n");
+      return 2;
+    }
+    if (strcmp(adopt_sec, "-") == 0) {
+      /* Read the secret from stdin so it never appears in argv / shell history. */
+      static char sec_stdin[256];
+      if (!fgets(sec_stdin, sizeof(sec_stdin), stdin)) {
+        fprintf(stderr, "signetctl: failed to read --sec from stdin\n");
+        return 2;
+      }
+      sec_stdin[strcspn(sec_stdin, "\r\n")] = '\0';
+      if (!sec_stdin[0]) {
+        fprintf(stderr, "signetctl: empty --sec read from stdin\n");
+        return 2;
+      }
+      adopt_sec = sec_stdin;
+    }
   } else if (strcmp(cmd, "set-policy") == 0) {
     kind = SIGNET_KIND_SET_POLICY;
     if ((argi + 1) >= argc) {
@@ -607,7 +691,8 @@ int main(int argc, char **argv) {
 
   /* Build the Cascadia ContextVM intent (JSON-RPC 2.0, kind-25910 payload). */
   char *intent = signetctl_build_intent(kind, agent_id, request_id, policy_json,
-                                        deliver_bootstrap_pubkey, delivery_ttl);
+                                        deliver_bootstrap_pubkey, delivery_ttl,
+                                        adopt_sec, adopt_expected_pubkey);
   if (!intent) {
     fprintf(stderr, "signetctl: failed to build intent\n");
     signet_config_clear(&cfg);
@@ -770,7 +855,11 @@ int main(int argc, char **argv) {
       fprintf(stderr, "Error reply:\n%s\n", ack_ctx.response_json);
       exit_code = 1;
     } else {
-      printf("Reply received:\n%s\n", ack_ctx.response_json);
+      if (kind == SIGNET_KIND_ADOPT_EXISTING) {
+        signetctl_print_adopt_result(ack_ctx.response_json);
+      } else {
+        printf("Reply received:\n%s\n", ack_ctx.response_json);
+      }
       exit_code = 0;
     }
   } else {

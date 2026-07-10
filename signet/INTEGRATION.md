@@ -156,6 +156,52 @@ All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents
 | 25910 | `agent/get-status` | Query daemon health |
 | 25910 | `agent/list` | Enumerate managed agents |
 | 25910 | `agent/rotate-key` | Rotate agent keypair |
+| 25910 | `agent/adopt-existing` | Register an externally supplied (BYO) keypair as an agent |
+
+### `agent/adopt-existing` (BYO-key)
+
+Binds an `agent_id` to an already-canonical identity instead of minting a fresh
+keypair. Same authorization as other management ops (inner sender must be a
+configured provisioner). The secret arrives only inside the encrypted
+ContextVM/gift-wrap management path; it is never echoed in results, logs, or
+audit detail, and secret buffers are zeroized after use.
+
+**Params:**
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `agent_id` | string | yes | Identifier to bind |
+| `agent_nsec` | string | yes | `nsec1...` bech32 **or** 64-char hex secret |
+| `expected_pubkey` | 64-hex | no | If present, derived pubkey must match exactly |
+| `connect_secret` | string | no | Fixed bunker connect secret (else random) |
+| `deliver` | bool | no | Gift-wrap the bunker URI to `bootstrap_pubkey` |
+| `bootstrap_pubkey` | 64-hex | no | Recipient for delivery |
+| `delivery_ttl` | int | no | Delivery expiry seconds (capped at 900) |
+
+**Result:** `{ "agent_id", "pubkey", "adopted": true, "bunker_uri" }`.
+
+**Semantics:** decode `agent_nsec` → derive pubkey → (optional) require
+`expected_pubkey` match → fail if `agent_id` exists → fail if the pubkey is
+already bound to another agent → fail if the pubkey is deny-listed → store the
+secret in the same encrypted key store as provisioned agents (provenance
+`adopted`) → return the normal `bunker_uri`. An adopted agent is
+indistinguishable from a provisioned one at runtime except that its provenance
+is `adopted`.
+
+**Failure codes:** `invalid_secret`, `pubkey_mismatch`, `agent_exists`,
+`pubkey_exists`, `deny_listed`, `adopt_failed`.
+
+**Audit:** op `adopt_existing`, fields `agent_id`, `pubkey`, `status`,
+`provisioner_pubkey` — never secret material.
+
+**CLI:**
+
+```
+signetctl adopt-existing <agent_id> --sec <nsec-or-hex> \
+    [--expected-pubkey <hex>] [--deliver <bootstrap_pubkey>] [--ttl <sec>]
+```
+
+The CLI prints only `agent_id`, `pubkey`, and `bunker_uri`.
 
 ## Bootstrap Flow
 

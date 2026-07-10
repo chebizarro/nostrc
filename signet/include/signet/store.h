@@ -173,6 +173,26 @@ int signet_store_put_agent(SignetStore *store,
                            const char *connect_secret,
                            int64_t now);
 
+/* Like signet_store_put_agent but also records the agent's x-only pubkey hex
+ * (for adopt/collision checks) and provenance ("provisioned"|"adopted"|"rotated";
+ * NULL defaults to "provisioned"). Returns 0 on success, -1 on error. */
+int signet_store_put_agent_ex(SignetStore *store,
+                              const char *agent_id,
+                              const uint8_t *secret_key,
+                              size_t secret_key_len,
+                              const char *connect_secret,
+                              const char *pubkey_hex,
+                              const char *provenance,
+                              int64_t now);
+
+/* Report whether pubkey_hex is already bound to some agent (optionally excluding
+ * exclude_agent_id). Only detects agents whose pubkey column is populated.
+ * Returns 0 on success (sets *out_in_use), -1 on error. */
+int signet_store_pubkey_in_use(SignetStore *store,
+                               const char *pubkey_hex,
+                               const char *exclude_agent_id,
+                               bool *out_in_use);
+
 /* Retrieve and decrypt an agent key.
  * Returns 0 on success, 1 if not found, -1 on error. */
 /**
