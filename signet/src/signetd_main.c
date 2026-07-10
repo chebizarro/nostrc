@@ -46,6 +46,33 @@
 #define SIGNET_MGMT_KIND_MIN 28000
 #define SIGNET_MGMT_KIND_MAX 28090
 
+/* Subscribe the relay pool to the event kinds signetd must receive: NIP-46
+ * signing requests (24133), Cascadia ContextVM management intents (25910), and
+ * NIP-59 gift-wraps (1059) that carry them. The deprecated 28000-series
+ * management kinds are added ONLY when the legacy_28000 compatibility path is
+ * enabled, so a default deployment never subscribes to deprecated kinds.
+ * Scoped to the bunker pubkey (#p) when available to reduce relay bandwidth.
+ * Used for the initial subscription and every resubscribe so they can never
+ * drift (previously the resubscribe paths dropped 25910/1059, which broke
+ * ContextVM management after a relay CLOSED/reconnect). */
+static int signetd_subscribe_mgmt_kinds(SignetRelayPool *relays, bool legacy,
+                                        const char *bunker_pk) {
+  int kinds[16];
+  size_t n = 0;
+  kinds[n++] = 24133;            /* NIP-46 signing requests */
+  kinds[n++] = CAS_INTENT;       /* 25910 Cascadia ContextVM management */
+  kinds[n++] = NIP59_GIFT_WRAP;  /* 1059 NIP-59/NIP-17 gift-wrap */
+  if (legacy) {
+    kinds[n++] = SIGNET_KIND_PROVISION_AGENT; /* 28000 */
+    kinds[n++] = SIGNET_KIND_REVOKE_AGENT;    /* 28010 */
+    kinds[n++] = SIGNET_KIND_SET_POLICY;      /* 28020 */
+    kinds[n++] = SIGNET_KIND_GET_STATUS;      /* 28030 */
+    kinds[n++] = SIGNET_KIND_LIST_AGENTS;     /* 28040 */
+    kinds[n++] = SIGNET_KIND_ROTATE_KEY;      /* 28050 */
+  }
+  return signet_relay_pool_subscribe_scoped(relays, kinds, n, bunker_pk, 0);
+}
+
 #include <errno.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -325,14 +352,9 @@ static gboolean signetd_health_tick(gpointer data) {
   /* NPA-06: CLOSED subscription detection. */
   if (snap.relay_connected && signet_relay_pool_check_sub_closed(ctx->relays)) {
     g_warning("[signetd] subscription CLOSED by relay \u2014 re-subscribing");
-    static const int resub_kinds[] = {
-      24133,
-      SIGNET_KIND_PROVISION_AGENT, SIGNET_KIND_REVOKE_AGENT,
-      SIGNET_KIND_SET_POLICY, SIGNET_KIND_GET_STATUS,
-      SIGNET_KIND_LIST_AGENTS, SIGNET_KIND_ROTATE_KEY,
-    };
-    signet_relay_pool_subscribe_kinds(ctx->relays, resub_kinds,
-                                      G_N_ELEMENTS(resub_kinds));
+    signetd_subscribe_mgmt_kinds(ctx->relays, ctx->cfg->mgmt_legacy_28000,
+                                 ctx->cfg->remote_signer_pubkey_hex[0]
+                                   ? ctx->cfg->remote_signer_pubkey_hex : NULL);
   }
 
   /* Explicit reconnect with 30s throttle. */
@@ -344,14 +366,9 @@ static gboolean signetd_health_tick(gpointer data) {
       signet_relay_pool_update_since_from_latest(ctx->relays);
       signet_relay_pool_stop(ctx->relays);
       if (signet_relay_pool_start(ctx->relays) == 0) {
-        static const int signet_kinds[] = {
-          24133,
-          SIGNET_KIND_PROVISION_AGENT, SIGNET_KIND_REVOKE_AGENT,
-          SIGNET_KIND_SET_POLICY, SIGNET_KIND_GET_STATUS,
-          SIGNET_KIND_LIST_AGENTS, SIGNET_KIND_ROTATE_KEY,
-        };
-        signet_relay_pool_subscribe_kinds(ctx->relays, signet_kinds,
-                                          G_N_ELEMENTS(signet_kinds));
+        signetd_subscribe_mgmt_kinds(ctx->relays, ctx->cfg->mgmt_legacy_28000,
+                                     ctx->cfg->remote_signer_pubkey_hex[0]
+                                       ? ctx->cfg->remote_signer_pubkey_hex : NULL);
         g_message("[signetd] relay pool restarted and resubscribed");
       }
       snap.relay_connected = signet_relay_pool_is_connected(ctx->relays);
@@ -970,29 +987,17 @@ int main(int argc, char **argv) {
      * This tells the relay to only send us events tagged with our pubkey,
      * dramatically reducing bandwidth on shared relays. */
     {
-      static const int signet_kinds[] = {
-        24133,                       /* NIP-46 signing requests      */
-        CAS_INTENT,                  /* 25910 Cascadia ContextVM */
-        NIP59_GIFT_WRAP,             /* 1059 NIP-59/NIP-17 gift-wrap */
-        SIGNET_KIND_PROVISION_AGENT, /* 28000 gated by signet.mgmt.legacy_28000 */
-        SIGNET_KIND_REVOKE_AGENT,    /* 28010 */
-        SIGNET_KIND_SET_POLICY,      /* 28020 */
-        SIGNET_KIND_GET_STATUS,      /* 28030 */
-        SIGNET_KIND_LIST_AGENTS,     /* 28040 */
-        SIGNET_KIND_ROTATE_KEY,      /* 28050 */
-        /* NOTE: 28090 (MGMT_ACK) intentionally excluded — signetd publishes
-         * acks but does not need to receive them; subscribing wastes relay BW. */
-      };
+      /* NOTE: 28090 (MGMT_ACK) is intentionally never subscribed — signetd
+       * publishes acks but does not receive them. */
       const char *bunker_pk = cfg.remote_signer_pubkey_hex[0]
                                 ? cfg.remote_signer_pubkey_hex : NULL;
-      if (signet_relay_pool_subscribe_scoped(relays, signet_kinds,
-                                             G_N_ELEMENTS(signet_kinds),
-                                             bunker_pk, 0) != 0) {
+      if (signetd_subscribe_mgmt_kinds(relays, cfg.mgmt_legacy_28000, bunker_pk) != 0) {
         fprintf(stderr, "signetd: failed to subscribe to event kinds\n");
         goto cleanup;
       }
-      g_message("[signetd] subscribed to %zu event kinds on relay pool (p-tag=%s)",
-                G_N_ELEMENTS(signet_kinds),
+      g_message("[signetd] subscribed to management kinds on relay pool "
+                "(legacy_28000=%s, p-tag=%s)",
+                cfg.mgmt_legacy_28000 ? "on" : "off",
                 bunker_pk ? bunker_pk : "unscoped");
     }
   }
