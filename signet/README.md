@@ -242,6 +242,7 @@ All configuration can be overridden with `SIGNET_`-prefixed environment variable
 | `SIGNET_MIGRATE_PLAINTEXT_DB`  | Auto-migrate a legacy plaintext DB to SQLCipher on open (default true; set `false` to refuse instead) |
 | `SIGNET_BUNKER_NSEC`          | Bunker identity nsec (required)          |
 | `SIGNET_PROVISIONER_NSEC`     | Provisioner nsec for signetctl           |
+| `SIGNET_BUNKER_PUBKEY`        | Bunker pubkey (npub/hex) for signetctl to address the bunker |
 | `SIGNET_RELAYS`                | Comma-separated relay URLs               |
 | `SIGNET_LOG_LEVEL`            | `debug`, `info`, `warn`, `error`         |
 | `SIGNET_DB_PATH`              | SQLCipher database path                  |
@@ -298,7 +299,16 @@ signetctl rotate-credential <credential-id>
 SIGNET_DB_KEY=... signetctl migrate-db
 ```
 
-Remote commands require `SIGNET_PROVISIONER_NSEC` to be set. Management events are NIP-44 encrypted and ack responses are validated by sender pubkey and correlated by request_id.
+Remote commands emit **Cascadia ContextVM** JSON-RPC 2.0 intents (kind 25910)
+wrapped in **NIP-59 gift-wraps** (kind 1059) addressed to the bunker, and consume
+the daemon's gift-wrapped ContextVM reply (validated by the bunker's pubkey and
+correlated by the JSON-RPC `id`). This matches the daemon's default protocol; the
+deprecated 28000-series is no longer used by signetctl.
+
+Requirements:
+- `SIGNET_PROVISIONER_NSEC` — the provisioner key that signs/authorizes intents.
+- The bunker's pubkey, so signetctl can address it: set `[nostr] bunker_pubkey`
+  (npub or hex) in the config, or `SIGNET_BUNKER_PUBKEY` in the environment.
 
 ## Policy Configuration
 
