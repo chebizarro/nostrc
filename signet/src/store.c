@@ -918,6 +918,50 @@ void signet_agent_record_clear(SignetAgentRecord *rec) {
   rec->last_used = 0;
 }
 
+int signet_store_get_agent_meta(SignetStore *store,
+                                const char *agent_id,
+                                SignetAgentMeta *out_meta) {
+  if (!store || !store->open || !agent_id || !out_meta) return -1;
+  memset(out_meta, 0, sizeof(*out_meta));
+
+  /* Non-secret metadata only — never decrypts the custody key, so a row with an
+   * undecryptable secret still renders. */
+  const char *sql =
+    "SELECT created_at, last_used, pubkey, provenance FROM agents WHERE agent_id = ?;";
+
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_text(stmt, 1, agent_id, -1, SQLITE_TRANSIENT);
+
+  int rc = sqlite3_step(stmt);
+  if (rc != SQLITE_ROW) {
+    sqlite3_finalize(stmt);
+    return (rc == SQLITE_DONE) ? 1 : -1; /* 1 = not found */
+  }
+
+  int64_t created_at = sqlite3_column_int64(stmt, 0);
+  int64_t last_used = sqlite3_column_int64(stmt, 1);
+  const char *pubkey = (const char *)sqlite3_column_text(stmt, 2);
+  const char *provenance = (const char *)sqlite3_column_text(stmt, 3);
+
+  out_meta->agent_id = g_strdup(agent_id);
+  out_meta->pubkey = (pubkey && pubkey[0]) ? g_strdup(pubkey) : NULL;
+  out_meta->provenance = (provenance && provenance[0]) ? g_strdup(provenance) : NULL;
+  out_meta->created_at = created_at;
+  out_meta->last_used = last_used;
+
+  sqlite3_finalize(stmt);
+  return 0;
+}
+
+void signet_agent_meta_clear(SignetAgentMeta *meta) {
+  if (!meta) return;
+  g_free(meta->agent_id);
+  g_free(meta->pubkey);
+  g_free(meta->provenance);
+  memset(meta, 0, sizeof(*meta));
+}
+
 int signet_store_consume_connect_secret(SignetStore *store,
                                         const char *agent_id) {
   if (!store || !store->open || !agent_id) return -1;

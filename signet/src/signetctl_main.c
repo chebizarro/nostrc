@@ -500,15 +500,21 @@ int main(int argc, char **argv) {
       char **ids = NULL;
       size_t count = 0;
       if (signet_store_list_agents(store, &ids, &count) == 0) {
-        printf("%-20s %-10s\n", "AGENT_ID", "CREATED_AT");
+        printf("%-24s %-11s %-64s %s\n", "AGENT_ID", "PROVENANCE", "PUBKEY", "CREATED_AT");
         for (size_t i = 0; i < count; i++) {
-          SignetAgentRecord rec;
-          memset(&rec, 0, sizeof(rec));
-          if (signet_store_get_agent(store, ids[i], &rec) == 0) {
-            printf("%-20s %-10" G_GINT64_FORMAT "\n", ids[i], rec.created_at);
-            signet_agent_record_clear(&rec);
+          /* Render from non-secret metadata so a row still shows even when its
+           * custody key cannot be decrypted (wrong/rotated DEK, corrupt blob). */
+          SignetAgentMeta meta;
+          memset(&meta, 0, sizeof(meta));
+          if (signet_store_get_agent_meta(store, ids[i], &meta) == 0) {
+            printf("%-24s %-11s %-64s %" G_GINT64_FORMAT "\n",
+                   ids[i],
+                   meta.provenance ? meta.provenance : "provisioned",
+                   meta.pubkey ? meta.pubkey : "(unknown)",
+                   meta.created_at);
+            signet_agent_meta_clear(&meta);
           } else {
-            printf("%-20s (error)\n", ids[i]);
+            printf("%-24s (error)\n", ids[i]);
           }
         }
         printf("\nTotal: %zu agents\n", count);

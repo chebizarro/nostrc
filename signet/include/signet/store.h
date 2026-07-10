@@ -80,6 +80,31 @@ typedef struct {
   int64_t last_used;
 } SignetAgentRecord;
 
+/**
+ * SignetAgentMeta:
+ * @agent_id: (transfer full): agent identifier.
+ * @pubkey: (transfer full) (nullable): 64-hex public key, or %NULL for legacy
+ *   rows created before the pubkey column existed.
+ * @provenance: (transfer full) (nullable): "provisioned", "adopted", or
+ *   "rotated".
+ * @created_at: creation time as Unix seconds.
+ * @last_used: last-use time as Unix seconds, or 0 if never used.
+ *
+ * Non-secret agent metadata. Unlike #SignetAgentRecord this is read WITHOUT
+ * decrypting the custody key, so it renders even when the secret cannot be
+ * decrypted (e.g. wrong/rotated DEK or a corrupt blob). Clear with
+ * signet_agent_meta_clear().
+ *
+ * Since: 1.1
+ */
+typedef struct {
+  char *agent_id;
+  char *pubkey;
+  char *provenance;
+  int64_t created_at;
+  int64_t last_used;
+} SignetAgentMeta;
+
 /* Open (or create) the store. Returns NULL on failure. */
 /**
  * signet_store_open:
@@ -212,6 +237,34 @@ int signet_store_pubkey_in_use(SignetStore *store,
 int signet_store_get_agent(SignetStore *store,
                            const char *agent_id,
                            SignetAgentRecord *out_record);
+
+/**
+ * signet_store_get_agent_meta:
+ * @store: (nullable): a #SignetStore
+ * @agent_id: (not nullable): agent identifier
+ * @out_meta: (out) (not nullable): return location for the metadata
+ *
+ * Reads non-secret agent metadata (agent_id, pubkey, provenance, timestamps)
+ * WITHOUT decrypting the custody key. Use this for listing/introspection so a
+ * row still renders when its secret cannot be decrypted.
+ *
+ * Returns: 0 on success, 1 if not found, -1 on error.
+ *
+ * Since: 1.1
+ */
+int signet_store_get_agent_meta(SignetStore *store,
+                                const char *agent_id,
+                                SignetAgentMeta *out_meta);
+
+/**
+ * signet_agent_meta_clear:
+ * @meta: (nullable): metadata to clear
+ *
+ * Frees the strings owned by a #SignetAgentMeta and zeroes the struct.
+ *
+ * Since: 1.1
+ */
+void signet_agent_meta_clear(SignetAgentMeta *meta);
 
 /* Delete an agent from the store.
  * Returns 0 on success, 1 if not found, -1 on error. */

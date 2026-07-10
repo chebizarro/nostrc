@@ -323,6 +323,50 @@ static void test_adopt_secret_not_on_disk(void) {
   printf("test_adopt_secret_not_on_disk: PASS\n");
 }
 
+/* Metadata (pubkey/provenance) is readable WITHOUT decrypting the secret, so
+ * listing renders a row even when its custody key is undecryptable. */
+static void test_agent_meta_no_decrypt(void) {
+  char *db_path = NULL;
+  SignetKeyStore *ks = open_ks(&db_path);
+
+  /* One provisioned, one adopted. */
+  char prov_pk[65] = {0};
+  assert(signet_key_store_provision_agent(ks, "prov-1", NULL, NULL, 0,
+                                          prov_pk, sizeof(prov_pk), NULL) == 0);
+  uint8_t sk[32]; char adopt_pk[65];
+  gen_keypair(sk, adopt_pk);
+  char out_pk[65] = {0}; char *uri = NULL;
+  assert(signet_key_store_adopt_agent(ks, "adopt-1", sk, adopt_pk, NULL, BUNKER_PK,
+                                      RELAYS, 1, out_pk, &uri) == SIGNET_ADOPT_OK);
+  g_free(uri);
+
+  SignetStore *store = signet_key_store_get_store(ks);
+  assert(store);
+
+  SignetAgentMeta m;
+  memset(&m, 0, sizeof(m));
+  assert(signet_store_get_agent_meta(store, "prov-1", &m) == 0);
+  assert(m.pubkey && strcmp(m.pubkey, prov_pk) == 0);
+  assert(m.provenance && strcmp(m.provenance, "provisioned") == 0);
+  signet_agent_meta_clear(&m);
+
+  memset(&m, 0, sizeof(m));
+  assert(signet_store_get_agent_meta(store, "adopt-1", &m) == 0);
+  assert(m.pubkey && strcmp(m.pubkey, adopt_pk) == 0);
+  assert(m.provenance && strcmp(m.provenance, "adopted") == 0);
+  signet_agent_meta_clear(&m);
+
+  /* Unknown agent -> not found (1), not an error. */
+  memset(&m, 0, sizeof(m));
+  assert(signet_store_get_agent_meta(store, "nope", &m) == 1);
+
+  sodium_memzero(sk, sizeof(sk));
+  signet_key_store_free(ks);
+  unlink(db_path);
+  g_free(db_path);
+  printf("test_agent_meta_no_decrypt: PASS\n");
+}
+
 int main(void) {
   assert(sodium_init() >= 0);
   test_adopt_success();
@@ -332,6 +376,7 @@ int main(void) {
   test_adopt_pubkey_exists();
   test_adopted_agent_signs();
   test_adopt_secret_not_on_disk();
+  test_agent_meta_no_decrypt();
   printf("All adopt-existing tests passed!\n");
   return 0;
 }
