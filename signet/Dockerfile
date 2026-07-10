@@ -23,12 +23,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjansson-dev \
     libssl-dev \
     libsqlite3-dev \
+    libsqlcipher-dev \
     libsodium-dev \
     libmicrohttpd-dev \
     libsecp256k1-dev \
     libcurl4-openssl-dev \
     libwebsockets-dev \
     libnsync-dev \
+    libgit2-dev \
     ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
   && pip3 install --no-cache-dir --break-system-packages "cmake>=3.30,<3.31"
@@ -42,10 +44,12 @@ RUN cmake -B build-docker -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTING=OFF \
     -DSIGNET_ENABLE=ON \
+    -DSIGNET_USE_SQLCIPHER=ON \
     -DBUILD_NOSTR_GTK=OFF \
     -DBUILD_APPS=OFF \
     -DBUILD_LIBMARMOT=OFF \
     -DBUILD_MARMOT_GOBJECT=OFF \
+    -DLIBNOSTR_WITH_NOSTRDB=OFF \
   && cmake --build build-docker --target signetd signetctl
 
 # ============================================================================
@@ -59,6 +63,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjansson4 \
     libssl3 \
     libsqlite3-0 \
+    libsqlcipher0 \
     libsodium23 \
     libmicrohttpd12 \
     libsecp256k1-1 \

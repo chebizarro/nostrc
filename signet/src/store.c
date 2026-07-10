@@ -423,7 +423,6 @@ static const char *SIGNET_SCHEMA_SQL =
   "  attempt_count INTEGER DEFAULT 0"
   ");"
   "CREATE INDEX IF NOT EXISTS idx_bootstrap_agent ON bootstrap_tokens(agent_id);"
-  "CREATE INDEX IF NOT EXISTS idx_bootstrap_handoff ON bootstrap_tokens(handoff_secret);"
 
   /* v2: deny list for revocation */
   "CREATE TABLE IF NOT EXISTS deny_list ("
@@ -582,6 +581,8 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
   char *errmsg = NULL;
   rc = sqlite3_exec(store->db, SIGNET_SCHEMA_SQL, NULL, NULL, &errmsg);
   if (rc != SQLITE_OK) {
+    g_critical("[signet] failed to apply base schema for '%s': %s",
+               cfg->db_path, errmsg ? errmsg : sqlite3_errmsg(store->db));
     if (errmsg) sqlite3_free(errmsg);
     signet_store_close(store);
     return NULL;
@@ -611,13 +612,23 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
                     SIGNET_PASSKEY_CREDENTIALS_SCHEMA_SQL,
                     NULL, NULL, &errmsg);
   if (rc != SQLITE_OK) {
+    g_critical("[signet] failed to apply passkey schema for '%s': %s",
+               cfg->db_path, errmsg ? errmsg : sqlite3_errmsg(store->db));
     if (errmsg) sqlite3_free(errmsg);
     signet_store_close(store);
     return NULL;
   }
 
   /* Enable WAL mode for better concurrent read performance. */
-  (void)sqlite3_exec(store->db, "PRAGMA journal_mode=WAL;", NULL, NULL, NULL);
+  errmsg = NULL;
+  rc = sqlite3_exec(store->db, "PRAGMA journal_mode=WAL;", NULL, NULL, &errmsg);
+  if (rc != SQLITE_OK) {
+    g_critical("[signet] failed to enable WAL for '%s': %s",
+               cfg->db_path, errmsg ? errmsg : sqlite3_errmsg(store->db));
+    if (errmsg) sqlite3_free(errmsg);
+    signet_store_close(store);
+    return NULL;
+  }
 
   store->open = true;
   return store;

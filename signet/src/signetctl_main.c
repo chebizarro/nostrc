@@ -245,7 +245,9 @@ static void signetctl_on_event(const SignetRelayEventView *ev, void *user_data) 
 
   /* Correlate by JSON-RPC id == our request id, and note error replies. An
    * error reply from our bunker with a null/absent id (e.g. unauthorized or
-   * unknown-method) is still ours, since only we could decrypt it. */
+   * unknown-method) is still ours only when we did not have a request id to
+   * correlate. A non-matching or missing id must not be allowed to poison a
+   * later command from relay history. */
   bool is_error = false;
   bool id_ok = (ctx->expected_request_id[0] == '\0');
   {
@@ -266,6 +268,10 @@ static void signetctl_on_event(const SignetRelayEventView *ev, void *user_data) 
         }
       }
     }
+  }
+  if (is_error && ctx->expected_request_id[0] && !id_ok) {
+    free(inner); free(sender);
+    return;
   }
   if (!id_ok && !is_error) { free(inner); free(sender); return; }
 

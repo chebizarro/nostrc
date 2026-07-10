@@ -45,6 +45,13 @@
 /* Management event kind range */
 #define SIGNET_MGMT_KIND_MIN 28000
 #define SIGNET_MGMT_KIND_MAX 28090
+/* NIP-59/NIP-17 gift-wraps may backdate the outer event by up to ~2 days.
+ * Subscribe back far enough to catch legitimate fresh commands without forcing
+ * signetctl to override normal wrap timestamps. */
+#define SIGNET_MGMT_GIFT_WRAP_WINDOW_SEC ((int64_t)((2 * 24 * 3600) + 3600))
+/* Ignore management traffic for a short window after subscribe/reconnect so
+ * relays can drain stored history before we accept fresh commands. */
+#define SIGNET_MGMT_ACCEPT_DELAY_SEC ((int64_t)10)
 
 /* Subscribe the relay pool to the event kinds signetd must receive: NIP-46
  * signing requests (24133), Cascadia ContextVM management intents (25910), and
@@ -55,8 +62,15 @@
  * Used for the initial subscription and every resubscribe so they can never
  * drift (previously the resubscribe paths dropped 25910/1059, which broke
  * ContextVM management after a relay CLOSED/reconnect). */
+static int64_t signetd_mgmt_since_floor(void) {
+  int64_t now = (int64_t)time(NULL);
+  int64_t since = now - SIGNET_MGMT_GIFT_WRAP_WINDOW_SEC;
+  return since > 0 ? since : 0;
+}
+
 static int signetd_subscribe_mgmt_kinds(SignetRelayPool *relays, bool legacy,
-                                        const char *bunker_pk) {
+                                        const char *bunker_pk,
+                                        int64_t since) {
   int kinds[16];
   size_t n = 0;
   kinds[n++] = 24133;            /* NIP-46 signing requests */
@@ -70,7 +84,7 @@ static int signetd_subscribe_mgmt_kinds(SignetRelayPool *relays, bool legacy,
     kinds[n++] = SIGNET_KIND_LIST_AGENTS;     /* 28040 */
     kinds[n++] = SIGNET_KIND_ROTATE_KEY;      /* 28050 */
   }
-  return signet_relay_pool_subscribe_scoped(relays, kinds, n, bunker_pk, 0);
+  return signet_relay_pool_subscribe_scoped(relays, kinds, n, bunker_pk, since);
 }
 
 #include <errno.h>
@@ -156,10 +170,12 @@ static void signet_usage(FILE *out) {
 /* Forward declaration — struct defined below. */
 typedef struct {
   const SignetConfig *cfg;
+  SignetRelayPool *relays;
   SignetNip46Server *nip46;
   SignetMgmtHandler *mgmt;
   SignetDenyList *deny;
   SignetKeyStore *keys;
+  int64_t mgmt_accept_after;
 } SignetDaemonCtx;
 
 /* Fleet membership: a pubkey is in-fleet if it belongs to a provisioned agent.
@@ -335,6 +351,7 @@ typedef struct {
   SignetKeyStore *keys;
   SignetPolicyStore *store;
   const SignetConfig *cfg;
+  SignetDaemonCtx *daemon_ctx;
   int64_t started_at;
   int64_t last_reconnect_attempt;
 } HealthTimerCtx;
@@ -352,9 +369,12 @@ static gboolean signetd_health_tick(gpointer data) {
   /* NPA-06: CLOSED subscription detection. */
   if (snap.relay_connected && signet_relay_pool_check_sub_closed(ctx->relays)) {
     g_warning("[signetd] subscription CLOSED by relay \u2014 re-subscribing");
+    if (ctx->daemon_ctx)
+      ctx->daemon_ctx->mgmt_accept_after = signet_now_unix() + SIGNET_MGMT_ACCEPT_DELAY_SEC;
     signetd_subscribe_mgmt_kinds(ctx->relays, ctx->cfg->mgmt_legacy_28000,
                                  ctx->cfg->remote_signer_pubkey_hex[0]
-                                   ? ctx->cfg->remote_signer_pubkey_hex : NULL);
+                                   ? ctx->cfg->remote_signer_pubkey_hex : NULL,
+                                 signetd_mgmt_since_floor());
   }
 
   /* Explicit reconnect with 30s throttle. */
@@ -366,9 +386,12 @@ static gboolean signetd_health_tick(gpointer data) {
       signet_relay_pool_update_since_from_latest(ctx->relays);
       signet_relay_pool_stop(ctx->relays);
       if (signet_relay_pool_start(ctx->relays) == 0) {
+        if (ctx->daemon_ctx)
+          ctx->daemon_ctx->mgmt_accept_after = signet_now_unix() + SIGNET_MGMT_ACCEPT_DELAY_SEC;
         signetd_subscribe_mgmt_kinds(ctx->relays, ctx->cfg->mgmt_legacy_28000,
                                      ctx->cfg->remote_signer_pubkey_hex[0]
-                                       ? ctx->cfg->remote_signer_pubkey_hex : NULL);
+                                       ? ctx->cfg->remote_signer_pubkey_hex : NULL,
+                                     signetd_mgmt_since_floor());
         g_message("[signetd] relay pool restarted and resubscribed");
       }
       snap.relay_connected = signet_relay_pool_is_connected(ctx->relays);
@@ -416,6 +439,8 @@ static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_dat
 
   /* Cascadia canonical ContextVM management intents (kind 25910). */
   if (ev->kind == CAS_INTENT && ctx->mgmt) {
+    if (signet_now_unix() < ctx->mgmt_accept_after) return;
+    if (!signet_relay_pool_is_subscribed(ctx->relays)) return;
     (void)signet_mgmt_handler_handle_intent(ctx->mgmt,
                                             ev->pubkey_hex ? ev->pubkey_hex : "",
                                             ev->content ? ev->content : "",
@@ -426,6 +451,8 @@ static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_dat
 
   /* NIP-59/NIP-17 gift-wrapped ContextVM management intents (kind 1059). */
   if (ev->kind == NIP59_GIFT_WRAP && ctx->mgmt && ev->event_json) {
+    if (signet_now_unix() < ctx->mgmt_accept_after) return;
+    if (!signet_relay_pool_is_subscribed(ctx->relays)) return;
     NostrEvent *gw = nostr_event_new();
     if (gw && nostr_event_deserialize_compact(gw, ev->event_json, NULL)) {
       char *inner = NULL;
@@ -446,6 +473,8 @@ static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_dat
 
   /* Management event dispatch (kinds 28000-28090). */
   if (ctx->cfg->mgmt_legacy_28000 && ev->kind >= SIGNET_MGMT_KIND_MIN && ev->kind <= SIGNET_MGMT_KIND_MAX && ctx->mgmt) {
+    if (signet_now_unix() < ctx->mgmt_accept_after) return;
+    if (!signet_relay_pool_is_subscribed(ctx->relays)) return;
     (void)signet_mgmt_handler_handle_event(ctx->mgmt,
                                           ev->pubkey_hex ? ev->pubkey_hex : "",
                                           ev->content ? ev->content : "",
@@ -745,6 +774,7 @@ int main(int argc, char **argv) {
   memset(&dctx, 0, sizeof(dctx));
   dctx.cfg = &cfg;
   dctx.keys = keys;
+  dctx.mgmt_accept_after = signet_now_unix() + SIGNET_MGMT_ACCEPT_DELAY_SEC;
 
   SignetRelayPoolConfig rp_cfg = {
     .relays = (const char *const *)cfg.relays,
@@ -760,6 +790,7 @@ int main(int argc, char **argv) {
     .auth_relay_tag_url = g_getenv("SIGNET_AUTH_RELAY_URL"),
   };
   SignetRelayPool *relays = signet_relay_pool_new(&rp_cfg);
+  dctx.relays = relays;
 
   /* 7) NIP-46 server */
   SignetNip46ServerConfig n46_cfg = {
@@ -991,7 +1022,8 @@ int main(int argc, char **argv) {
        * publishes acks but does not receive them. */
       const char *bunker_pk = cfg.remote_signer_pubkey_hex[0]
                                 ? cfg.remote_signer_pubkey_hex : NULL;
-      if (signetd_subscribe_mgmt_kinds(relays, cfg.mgmt_legacy_28000, bunker_pk) != 0) {
+      if (signetd_subscribe_mgmt_kinds(relays, cfg.mgmt_legacy_28000, bunker_pk,
+                                       signetd_mgmt_since_floor()) != 0) {
         fprintf(stderr, "signetd: failed to subscribe to event kinds\n");
         goto cleanup;
       }
@@ -1019,6 +1051,7 @@ int main(int argc, char **argv) {
     .keys = keys,
     .store = store,
     .cfg = &cfg,
+    .daemon_ctx = &dctx,
     .started_at = started_at,
     .last_reconnect_attempt = 0,
   };
