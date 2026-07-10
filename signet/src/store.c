@@ -474,7 +474,7 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
    * this, a SQLCipher build would treat the plaintext file as a wrong-key
    * encrypted DB and refuse. Gated on runtime SQLCipher availability, so plain
    * builds keep their prior behavior. */
-  if (signet_file_is_plain_sqlite(cfg->db_path) && signet_sqlcipher_available()) {
+  if (!cfg->read_only && signet_file_is_plain_sqlite(cfg->db_path) && signet_sqlcipher_available()) {
     if (signet_env_falsey("SIGNET_MIGRATE_PLAINTEXT_DB")) {
       g_critical("[signet] '%s' is a legacy plaintext SQLite database but this "
                  "build uses SQLCipher and SIGNET_MIGRATE_PLAINTEXT_DB=false. "
@@ -502,15 +502,24 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
               "Securely delete it once you have verified the migration.", cfg->db_path);
   }
 
-  /* Open SQLCipher database. */
-  int rc = sqlite3_open(cfg->db_path, &store->db);
+  /* Open the database. Read-only mode (local introspection) opens READONLY so
+   * it never takes write locks or runs schema migration against a live,
+   * daemon-owned DB. */
+  int rc = cfg->read_only
+             ? sqlite3_open_v2(cfg->db_path, &store->db, SQLITE_OPEN_READONLY, NULL)
+             : sqlite3_open(cfg->db_path, &store->db);
   if (rc != SQLITE_OK || !store->db) {
+    g_warning("[signet] failed to open database '%s': %s", cfg->db_path,
+              store->db ? sqlite3_errmsg(store->db) : sqlite3_errstr(rc));
     sodium_memzero(store->dek, SIGNET_DEK_LEN);
     sodium_munlock(store->dek, SIGNET_DEK_LEN);
     if (store->db) sqlite3_close(store->db);
     free(store);
     return NULL;
   }
+
+  /* Retry transient locks (e.g. a concurrent writer) instead of failing at once. */
+  sqlite3_busy_timeout(store->db, 5000);
 
   /* Set SQLCipher encryption key.
    * SQLCipher uses PRAGMA key to set the database encryption key.
@@ -532,8 +541,9 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
      * a second, divergent database. */
     if (sqlite3_exec(store->db, "SELECT count(*) FROM sqlite_master;",
                      NULL, NULL, NULL) != SQLITE_OK) {
-      g_critical("[signet] SQLCipher keyed read failed for '%s' "
-                 "(wrong SIGNET_DB_KEY?). Refusing to open.", cfg->db_path);
+      g_critical("[signet] keyed read failed for '%s': %s "
+                 "(wrong SIGNET_DB_KEY or database locked?). Refusing to open.",
+                 cfg->db_path, sqlite3_errmsg(store->db));
       signet_store_close(store);
       return NULL;
     }
@@ -554,6 +564,15 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
               "connect secrets and metadata are stored in cleartext. Build "
               "against SQLCipher or set SIGNET_REQUIRE_ENCRYPTED_DB=true to enforce.",
               cfg->db_path);
+  }
+
+  /* Read-only introspection: never create/migrate schema (that needs write locks
+   * and can fail against a live daemon-owned DB). Enforce query-only and return
+   * the opened, keyed, read-only handle. */
+  if (cfg->read_only) {
+    (void)sqlite3_exec(store->db, "PRAGMA query_only=ON;", NULL, NULL, NULL);
+    store->open = true;
+    return store;
   }
 
   /* Create schema. */

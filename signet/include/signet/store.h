@@ -42,6 +42,9 @@ typedef struct SignetStore SignetStore;
  * SignetStoreConfig:
  * @db_path: path to SQLCipher database file.
  * @master_key: master key (hex or base64; min 32 bytes entropy).
+ * @read_only: open read-only for introspection; skips schema creation/migration
+ *   and auto-migration, sets PRAGMA query_only, and never takes write locks, so
+ *   it can coexist with a live daemon that already holds the DB open.
  *
  * Configuration used to open a Signet persistent store.
  *
@@ -50,6 +53,7 @@ typedef struct SignetStore SignetStore;
 typedef struct {
   const char *db_path;     /* path to SQLCipher database file */
   const char *master_key;  /* master key (hex or base64; min 32 bytes entropy) */
+  bool read_only;          /* open read-only (introspection); no schema writes */
 } SignetStoreConfig;
 
 /* Agent record returned from the store. Caller must free with signet_agent_record_clear(). */
