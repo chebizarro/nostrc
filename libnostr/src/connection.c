@@ -797,6 +797,18 @@ static void *lws_service_loop(void *arg) {
         // Service events without holding our mutex to avoid deadlocks with
         // threads calling lws_cancel_service() or other lws APIs.
         lws_service(ctx, 50);
+
+        /* Robustly flush queued outgoing frames. The per-connection
+         * writable_pending drain runs in LWS_CALLBACK_EVENT_WAIT_CANCELLED and
+         * only fires when that callback's wsi matches the connection's wsi;
+         * after a client reconnect (or when the cancel delivers a context-level
+         * wsi) a queued write can be stranded with writable_pending set but the
+         * CLIENT_WRITEABLE callback never requested — e.g. a short-lived client
+         * whose larger publish frame never reaches the relay (nostrc-7k6).
+         * Requesting a writable callback for every client connection each
+         * service iteration guarantees send_channel is drained; the callback is
+         * a no-op when the queue is empty. */
+        lws_callback_on_writable_all_protocol(ctx, &protocols[0]);
     }
     return NULL;
 }

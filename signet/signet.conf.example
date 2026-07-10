@@ -23,6 +23,11 @@ db_path = /data/signet.db
 # Signet's own bunker identity
 # Injected via env: SIGNET_BUNKER_NSEC (required, no default)
 
+# Bunker public key (npub or 64-char hex). Lets clients (e.g. signetctl) address
+# the bunker WITHOUT its secret. Ignored by the daemon (it derives the pubkey
+# from SIGNET_BUNKER_NSEC). Env override: SIGNET_BUNKER_PUBKEY.
+# bunker_pubkey = npub1...
+
 # Relay URLs (semicolon-separated)
 relays = wss://relay.example.com
 

@@ -311,6 +311,23 @@ static void signet_config_load_keyfile(GKeyFile *kf, SignetConfig *cfg) {
   val = g_key_file_get_string(kf, "nostr", "identity", NULL);
   if (val) { signet_strlcpy(cfg->identity, val, sizeof(cfg->identity)); g_free(val); }
 
+  /* Bunker pubkey (npub or 64-hex): lets clients such as signetctl address the
+   * bunker without needing SIGNET_BUNKER_NSEC. When SIGNET_BUNKER_NSEC is set
+   * (the daemon), the derived pubkey below overrides this. */
+  val = g_key_file_get_string(kf, "nostr", "bunker_pubkey", NULL);
+  if (val) {
+    if (g_ascii_strncasecmp(val, "npub1", 5) == 0) {
+      uint8_t pk[32];
+      if (nostr_nip19_decode_npub(val, pk) == 0)
+        signet_bytes_to_hex(pk, 32, cfg->remote_signer_pubkey_hex,
+                            sizeof(cfg->remote_signer_pubkey_hex));
+    } else if (signet_is_hex(val, 64)) {
+      signet_strlcpy(cfg->remote_signer_pubkey_hex, val,
+                      sizeof(cfg->remote_signer_pubkey_hex));
+    }
+    g_free(val);
+  }
+
   /* [policy_defaults] */
   val = g_key_file_get_string(kf, "policy_defaults", "default_decision", NULL);
   if (val) { signet_strlcpy(cfg->policy_default_decision, val, sizeof(cfg->policy_default_decision)); g_free(val); }
@@ -478,6 +495,21 @@ static void signet_config_apply_env(SignetConfig *cfg) {
                         sizeof(cfg->remote_signer_pubkey_hex));
         free(pub);
       }
+    }
+  }
+
+  /* SIGNET_BUNKER_PUBKEY (npub or 64-hex): address the bunker without its nsec.
+   * Only fills when a pubkey was not already derived from SIGNET_BUNKER_NSEC. */
+  val = g_getenv("SIGNET_BUNKER_PUBKEY");
+  if (val && val[0] && !cfg->remote_signer_pubkey_hex[0]) {
+    if (g_ascii_strncasecmp(val, "npub1", 5) == 0) {
+      uint8_t pk[32];
+      if (nostr_nip19_decode_npub(val, pk) == 0)
+        signet_bytes_to_hex(pk, 32, cfg->remote_signer_pubkey_hex,
+                            sizeof(cfg->remote_signer_pubkey_hex));
+    } else if (signet_is_hex(val, 64)) {
+      signet_strlcpy(cfg->remote_signer_pubkey_hex, val,
+                      sizeof(cfg->remote_signer_pubkey_hex));
     }
   }
 

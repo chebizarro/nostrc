@@ -27,10 +27,8 @@
 #include <nostr-event.h>
 #include <nostr-keys.h>
 #include <nostr/nip19/nip19.h>
-#include <nostr/nip44/nip44.h>
+#include <nostr/nip17/nip17.h>   /* NIP-59/NIP-17 gift-wrap for ContextVM intents */
 
-/* Forward declarations */
-static bool signetctl_hex_to_bytes32(const char *hex, uint8_t out[32]);
 #include <secure_buf.h>
 
 #define SIGNETCTL_VERSION "0.1.0"
@@ -77,25 +75,45 @@ static void signetctl_usage(FILE *out) {
     SIGNETCTL_VERSION);
 }
 
-/* -------------------- build management event JSON ------------------------ */
+/* -------------------- build Cascadia ContextVM intent -------------------- */
 
-static char *signetctl_build_content_ex(const char *agent_id, const char *request_id, const char *policy_json,
-                                          const char *bootstrap_pubkey, int delivery_ttl) {
+/* Map a legacy management kind to its Cascadia ContextVM JSON-RPC method name.
+ * (Kept internally keyed by SIGNET_KIND_* so the command dispatch is unchanged;
+ * the wire form is now a kind-25910 ContextVM intent, gift-wrapped.) */
+static const char *signetctl_contextvm_method(int kind) {
+  switch (kind) {
+    case SIGNET_KIND_PROVISION_AGENT: return "agent/provision";
+    case SIGNET_KIND_REVOKE_AGENT:    return "agent/revoke";
+    case SIGNET_KIND_SET_POLICY:      return "agent/set-policy";
+    case SIGNET_KIND_GET_STATUS:      return "agent/get-status";
+    case SIGNET_KIND_LIST_AGENTS:     return "agent/list";
+    case SIGNET_KIND_ROTATE_KEY:      return "agent/rotate-key";
+    default:                          return NULL;
+  }
+}
+
+/* Build a Cascadia ContextVM JSON-RPC 2.0 intent:
+ *   {"jsonrpc":"2.0","id":"<request_id>","method":"agent/...","params":{...}}
+ * This is the kind-25910 CAS_INTENT payload the daemon parses. */
+static char *signetctl_build_intent(int kind, const char *agent_id, const char *request_id,
+                                    const char *policy_json, const char *bootstrap_pubkey,
+                                    int delivery_ttl) {
+  const char *method = signetctl_contextvm_method(kind);
+  if (!method) return NULL;
+
   JsonBuilder *b = json_builder_new();
   if (!b) return NULL;
-
   json_builder_begin_object(b);
+  json_builder_set_member_name(b, "jsonrpc"); json_builder_add_string_value(b, "2.0");
+  json_builder_set_member_name(b, "id"); json_builder_add_string_value(b, request_id);
+  json_builder_set_member_name(b, "method"); json_builder_add_string_value(b, method);
 
+  json_builder_set_member_name(b, "params");
+  json_builder_begin_object(b);
   if (agent_id) {
     json_builder_set_member_name(b, "agent_id");
     json_builder_add_string_value(b, agent_id);
   }
-
-  if (request_id) {
-    json_builder_set_member_name(b, "request_id");
-    json_builder_add_string_value(b, request_id);
-  }
-
   if (bootstrap_pubkey) {
     json_builder_set_member_name(b, "deliver");
     json_builder_add_boolean_value(b, TRUE);
@@ -104,7 +122,6 @@ static char *signetctl_build_content_ex(const char *agent_id, const char *reques
     json_builder_set_member_name(b, "delivery_ttl");
     json_builder_add_int_value(b, delivery_ttl > 0 ? delivery_ttl : 600);
   }
-
   if (policy_json) {
     g_autoptr(JsonParser) pp = json_parser_new();
     if (json_parser_load_from_data(pp, policy_json, -1, NULL)) {
@@ -115,67 +132,31 @@ static char *signetctl_build_content_ex(const char *agent_id, const char *reques
       }
     }
   }
-
-  json_builder_end_object(b);
+  json_builder_end_object(b); /* params */
+  json_builder_end_object(b); /* root */
 
   JsonGenerator *gen = json_generator_new();
   if (!gen) { g_object_unref(b); return NULL; }
-
   JsonNode *root = json_builder_get_root(b);
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, FALSE);
   char *out = json_generator_to_data(gen, NULL);
-
   json_node_free(root);
   g_object_unref(gen);
   g_object_unref(b);
   return out;
 }
 
-static char *signetctl_build_signed_event(int kind,
-                                          const char *content,
-                                          const char *bunker_pubkey_hex,
-                                          const char *provisioner_sk_hex) {
-  NostrEvent *evt = nostr_event_new();
-  if (!evt) return NULL;
-
-  nostr_event_set_kind(evt, kind);
-  nostr_event_set_created_at(evt, (int64_t)time(NULL));
-  /* NIP-44 encrypt the content to the bunker pubkey. */
-  char *encrypted_content = NULL;
-  if (content && bunker_pubkey_hex && provisioner_sk_hex) {
-    uint8_t sk[32], pk[32];
-    if (signetctl_hex_to_bytes32(provisioner_sk_hex, sk) &&
-        signetctl_hex_to_bytes32(bunker_pubkey_hex, pk)) {
-      int erc = nostr_nip44_encrypt_v2(sk, pk,
-                                       (const uint8_t *)content, strlen(content),
-                                       &encrypted_content);
-      secure_wipe(sk, 32);
-      if (erc != 0) encrypted_content = NULL;
-    }
-  }
-  nostr_event_set_content(evt, encrypted_content ? encrypted_content : (content ? content : ""));
-
-  /* Tag the bunker pubkey so it knows this is for it. */
-  if (bunker_pubkey_hex) {
-    NostrTags *tags = nostr_tags_new(0);
-    if (tags) {
-      NostrTag *p_tag = nostr_tag_new("p", bunker_pubkey_hex, NULL);
-      if (p_tag) {
-        nostr_tags_append(tags, p_tag);
-      }
-      nostr_event_set_tags(evt, tags);
-    }
-  }
-
-  if (nostr_event_sign(evt, provisioner_sk_hex) != 0) {
-    nostr_event_free(evt);
-    return NULL;
-  }
-
-  char *json = nostr_event_serialize_compact(evt);
-  free(encrypted_content);
-  nostr_event_free(evt);
+/* Gift-wrap (NIP-59/NIP-17, kind 1059) the intent to the bunker pubkey, signed
+ * with the provisioner key. Returns the serialized gift-wrap event JSON. */
+static char *signetctl_build_gift_wrapped_intent(const char *intent_json,
+                                                 const char *bunker_pubkey_hex,
+                                                 const char *provisioner_sk_hex) {
+  if (!intent_json || !bunker_pubkey_hex || !provisioner_sk_hex) return NULL;
+  NostrEvent *gw = nostr_nip17_wrap_dm(provisioner_sk_hex, bunker_pubkey_hex, intent_json);
+  if (!gw) return NULL;
+  char *json = nostr_event_serialize_compact(gw);
+  nostr_event_free(gw);
   return json;
 }
 
@@ -183,88 +164,80 @@ static char *signetctl_build_signed_event(int kind,
 
 typedef struct {
   bool received;
+  bool is_error;                     /* true if the JSON-RPC reply carried an error */
   char *response_json;
   GMutex mu;
   GCond cond;
   /* Correlation / security fields. */
-  char expected_request_id[17];      /* hex request_id we sent */
-  char expected_sender_hex[65];      /* bunker pubkey (ack sender) */
-  char provisioner_sk_hex[65];       /* our SK for NIP-44 decrypt */
+  char expected_request_id[17];      /* JSON-RPC id we sent */
+  char expected_sender_hex[65];      /* bunker pubkey (reply's real sender) */
+  char provisioner_sk_hex[65];       /* our SK for gift-wrap decrypt */
 } SignetctlAckCtx;
-
-static bool signetctl_hex_to_bytes32(const char *hex, uint8_t out[32]) {
-  if (!hex || strlen(hex) != 64) return false;
-  for (int i = 0; i < 32; i++) {
-    unsigned int byte;
-    if (sscanf(hex + i * 2, "%2x", &byte) != 1) return false;
-    out[i] = (uint8_t)byte;
-  }
-  return true;
-}
 
 static void signetctl_on_event(const SignetRelayEventView *ev, void *user_data) {
   SignetctlAckCtx *ctx = (SignetctlAckCtx *)user_data;
   if (!ctx || !ev) return;
 
-  /* Only accept ack events (kind 28090). */
-  if (ev->kind != SIGNET_KIND_MGMT_ACK || !ev->content) return;
+  /* Replies are Cascadia ContextVM JSON-RPC responses delivered as NIP-59
+   * gift-wraps (kind 1059). Ignore anything else. */
+  if (ev->kind != NIP59_GIFT_WRAP || !ev->event_json) return;
 
-  /* 1) Verify sender is the bunker. */
-  if (ctx->expected_sender_hex[0] && ev->pubkey_hex) {
-    if (g_ascii_strcasecmp(ev->pubkey_hex, ctx->expected_sender_hex) != 0) {
-      return; /* not from our bunker — ignore */
+  /* Unwrap the gift-wrap with our provisioner key. Only replies addressed to us
+   * decrypt successfully; `sender` is the real (seal) author = the bunker. */
+  char *inner = NULL;
+  char *sender = NULL;
+  {
+    NostrEvent *gw = nostr_event_new();
+    if (gw && nostr_event_deserialize_compact(gw, ev->event_json, NULL)) {
+      (void)nostr_nip17_decrypt_dm(gw, ctx->provisioner_sk_hex, &inner, &sender);
     }
+    if (gw) nostr_event_free(gw);
+  }
+  if (!inner) { free(inner); free(sender); return; }
+
+  /* The reply must come from our bunker. */
+  if (ctx->expected_sender_hex[0] &&
+      (!sender || g_ascii_strcasecmp(sender, ctx->expected_sender_hex) != 0)) {
+    free(inner); free(sender);
+    return;
   }
 
-  /* 2) NIP-44 decrypt the content. */
-  char *plaintext = NULL;
-  if (ctx->provisioner_sk_hex[0] && ev->pubkey_hex) {
-    uint8_t sk[32], pk[32];
-    if (signetctl_hex_to_bytes32(ctx->provisioner_sk_hex, sk) &&
-        signetctl_hex_to_bytes32(ev->pubkey_hex, pk)) {
-      uint8_t *pt = NULL;
-      size_t pt_len = 0;
-      int drc = nostr_nip44_decrypt_v2(sk, pk, ev->content, &pt, &pt_len);
-      secure_wipe(sk, 32);
-      if (drc == 0 && pt && pt_len > 0) {
-        plaintext = (char *)malloc(pt_len + 1);
-        if (plaintext) {
-          memcpy(plaintext, pt, pt_len);
-          plaintext[pt_len] = '\0';
-        }
-        free(pt);
-      }
-    }
-  }
-  /* Fall back to plaintext if decryption failed (backward compat). */
-  const char *content = plaintext ? plaintext : ev->content;
-
-  /* 3) Correlate request_id from the ack JSON. */
-  if (ctx->expected_request_id[0]) {
+  /* Correlate by JSON-RPC id == our request id, and note error replies. An
+   * error reply from our bunker with a null/absent id (e.g. unauthorized or
+   * unknown-method) is still ours, since only we could decrypt it. */
+  bool is_error = false;
+  bool id_ok = (ctx->expected_request_id[0] == '\0');
+  {
     g_autoptr(JsonParser) p = json_parser_new();
-    if (json_parser_load_from_data(p, content, -1, NULL)) {
+    if (json_parser_load_from_data(p, inner, -1, NULL)) {
       JsonNode *root = json_parser_get_root(p);
       if (root && JSON_NODE_HOLDS_OBJECT(root)) {
         JsonObject *o = json_node_get_object(root);
-        if (json_object_has_member(o, "request_id")) {
-          const char *rid = json_object_get_string_member(o, "request_id");
-          if (!rid || strcmp(rid, ctx->expected_request_id) != 0) {
-            free(plaintext);
-            return; /* request_id mismatch — not our ack */
-          }
+        if (json_object_has_member(o, "error")) is_error = true;
+        if (json_object_has_member(o, "id")) {
+          JsonNode *idn = json_object_get_member(o, "id");
+          const char *rid = (JSON_NODE_HOLDS_VALUE(idn) &&
+                             json_node_get_value_type(idn) == G_TYPE_STRING)
+                              ? json_node_get_string(idn) : NULL;
+          if (ctx->expected_request_id[0] && rid &&
+              strcmp(rid, ctx->expected_request_id) == 0)
+            id_ok = true;
         }
       }
     }
   }
+  if (!id_ok && !is_error) { free(inner); free(sender); return; }
 
   g_mutex_lock(&ctx->mu);
   if (!ctx->received) {
     ctx->received = true;
-    ctx->response_json = g_strdup(content);
+    ctx->is_error = is_error;
+    ctx->response_json = g_strdup(inner);
     g_cond_signal(&ctx->cond);
   }
   g_mutex_unlock(&ctx->mu);
-  free(plaintext);
+  free(inner);
+  free(sender);
 }
 
 /* ---------------------- resolve provisioner key --------------------------- */
@@ -622,25 +595,34 @@ int main(int argc, char **argv) {
     policy_json = argv[argi++];
   }
 
-  /* Build event content. */
-  char *content = signetctl_build_content_ex(agent_id, request_id, policy_json,
-                                             deliver_bootstrap_pubkey, delivery_ttl);
-  if (!content) {
-    fprintf(stderr, "signetctl: failed to build content\n");
+  /* Build the Cascadia ContextVM intent (JSON-RPC 2.0, kind-25910 payload). */
+  char *intent = signetctl_build_intent(kind, agent_id, request_id, policy_json,
+                                        deliver_bootstrap_pubkey, delivery_ttl);
+  if (!intent) {
+    fprintf(stderr, "signetctl: failed to build intent\n");
     signet_config_clear(&cfg);
     secure_wipe(provisioner_sk_hex, 64);
     return 1;
   }
 
-  /* Build and sign the event. */
+  /* Gift-wrap (NIP-59/NIP-17, kind 1059) the intent to the bunker pubkey. */
   const char *bunker_pk = cfg.remote_signer_pubkey_hex[0]
                             ? cfg.remote_signer_pubkey_hex
                             : NULL;
-  char *event_json = signetctl_build_signed_event(kind, content, bunker_pk, provisioner_sk_hex);
-  g_free(content);
+  if (!bunker_pk) {
+    fprintf(stderr, "signetctl: bunker pubkey not configured (set SIGNET_BUNKER_NSEC / [nostr] identity)\n");
+    sodium_memzero(intent, strlen(intent));
+    g_free(intent);
+    signet_config_clear(&cfg);
+    secure_wipe(provisioner_sk_hex, 64);
+    return 1;
+  }
+  char *event_json = signetctl_build_gift_wrapped_intent(intent, bunker_pk, provisioner_sk_hex);
+  sodium_memzero(intent, strlen(intent));
+  g_free(intent);
 
   if (!event_json) {
-    fprintf(stderr, "signetctl: failed to sign event\n");
+    fprintf(stderr, "signetctl: failed to build gift-wrapped intent\n");
     signet_config_clear(&cfg);
     secure_wipe(provisioner_sk_hex, 64);
     return 1;
@@ -679,10 +661,6 @@ int main(int argc, char **argv) {
     goto cleanup;
   }
 
-  /* Subscribe for ack events. */
-  int ack_kinds[] = { SIGNET_KIND_MGMT_ACK };
-  signet_relay_pool_subscribe_kinds(rp, ack_kinds, 1);
-
   /* Wait for relay connections, pumping the GLib main context.
    *
    * WHY: signet_relay_auth_callback schedules NIP-42 AUTH via g_idle_add().
@@ -716,6 +694,22 @@ int main(int argc, char **argv) {
       goto cleanup;
     }
 
+    /* Subscribe for gift-wrapped ContextVM replies (kind 1059) addressed to us,
+     * only AFTER the relay is connected. nostr_simple_pool_ensure_relay
+     * disconnects+reconnects a relay that is not yet connected, so subscribing
+     * before the initial async handshake completes churns the connection and the
+     * subsequent publish can race a torn-down socket (nostrc-7k6). NIP-59
+     * randomizes the gift-wrap created_at up to ~2 days into the past, so the
+     * `since` window reaches back beyond that or the reply would be filtered. */
+    {
+      int reply_kinds[] = { NIP59_GIFT_WRAP };
+      int64_t reply_since = (int64_t)time(NULL) - (2 * 24 * 3600) - 3600;
+      if (reply_since < 0) reply_since = 0;
+      char *prov_pub = nostr_key_get_public(ack_ctx.provisioner_sk_hex);
+      signet_relay_pool_subscribe_scoped(rp, reply_kinds, 1, prov_pub, reply_since);
+      free(prov_pub);
+    }
+
     /* NPA-10: Wait for subscription EOSE instead of fixed 2s drain.
      * On non-AUTH relays, EOSE arrives within ~1 RTT of connect.
      * On AUTH relays, EOSE arrives after: AUTH challenge → response →
@@ -729,13 +723,14 @@ int main(int argc, char **argv) {
     }
   }
 
-  /* Publish the management event. */
+  /* Publish the gift-wrapped ContextVM intent. */
   if (signet_relay_pool_publish_event_json(rp, event_json) != 0) {
     fprintf(stderr, "signetctl: failed to publish event\n");
     goto cleanup;
   }
 
-  printf("Published %s event. Waiting for ack...\n", signet_mgmt_op_to_string(signet_mgmt_op_from_kind(kind)));
+  printf("Published %s ContextVM intent (gift-wrapped). Waiting for reply...\n",
+         signet_mgmt_op_to_string(signet_mgmt_op_from_kind(kind)));
 
   /* Wait for ack with timeout, pumping the GLib main context.
    *
@@ -761,10 +756,15 @@ int main(int argc, char **argv) {
   }
 
   if (ack_ctx.received && ack_ctx.response_json) {
-    printf("Ack received:\n%s\n", ack_ctx.response_json);
-    exit_code = 0;
+    if (ack_ctx.is_error) {
+      fprintf(stderr, "Error reply:\n%s\n", ack_ctx.response_json);
+      exit_code = 1;
+    } else {
+      printf("Reply received:\n%s\n", ack_ctx.response_json);
+      exit_code = 0;
+    }
   } else {
-    fprintf(stderr, "signetctl: timeout waiting for ack (%ds)\n", SIGNETCTL_TIMEOUT_SEC);
+    fprintf(stderr, "signetctl: timeout waiting for reply (%ds)\n", SIGNETCTL_TIMEOUT_SEC);
   }
 
 cleanup:
