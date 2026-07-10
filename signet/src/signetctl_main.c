@@ -661,18 +661,6 @@ int main(int argc, char **argv) {
     goto cleanup;
   }
 
-  /* Subscribe for gift-wrapped ContextVM replies (kind 1059) addressed to us.
-   * NIP-59 randomizes the gift-wrap created_at up to ~2 days into the past, so
-   * reach the `since` window back beyond that or the reply would be filtered. */
-  {
-    int reply_kinds[] = { NIP59_GIFT_WRAP };
-    int64_t reply_since = (int64_t)time(NULL) - (2 * 24 * 3600) - 3600;
-    if (reply_since < 0) reply_since = 0;
-    char *prov_pub = nostr_key_get_public(ack_ctx.provisioner_sk_hex);
-    signet_relay_pool_subscribe_scoped(rp, reply_kinds, 1, prov_pub, reply_since);
-    free(prov_pub);
-  }
-
   /* Wait for relay connections, pumping the GLib main context.
    *
    * WHY: signet_relay_auth_callback schedules NIP-42 AUTH via g_idle_add().
@@ -704,6 +692,22 @@ int main(int argc, char **argv) {
     if (!connected) {
       fprintf(stderr, "signetctl: no relay connected after 5s\n");
       goto cleanup;
+    }
+
+    /* Subscribe for gift-wrapped ContextVM replies (kind 1059) addressed to us,
+     * only AFTER the relay is connected. nostr_simple_pool_ensure_relay
+     * disconnects+reconnects a relay that is not yet connected, so subscribing
+     * before the initial async handshake completes churns the connection and the
+     * subsequent publish can race a torn-down socket (nostrc-7k6). NIP-59
+     * randomizes the gift-wrap created_at up to ~2 days into the past, so the
+     * `since` window reaches back beyond that or the reply would be filtered. */
+    {
+      int reply_kinds[] = { NIP59_GIFT_WRAP };
+      int64_t reply_since = (int64_t)time(NULL) - (2 * 24 * 3600) - 3600;
+      if (reply_since < 0) reply_since = 0;
+      char *prov_pub = nostr_key_get_public(ack_ctx.provisioner_sk_hex);
+      signet_relay_pool_subscribe_scoped(rp, reply_kinds, 1, prov_pub, reply_since);
+      free(prov_pub);
     }
 
     /* NPA-10: Wait for subscription EOSE instead of fixed 2s drain.
