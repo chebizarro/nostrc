@@ -394,10 +394,20 @@ int main(int argc, char **argv) {
       return 1;
     }
     const char *db_key = g_getenv("SIGNET_DB_KEY");
-    SignetStoreConfig scfg = { .db_path = lcfg.db_path, .master_key = db_key ? db_key : "" };
+    /* Pure-read introspection commands open the store READ-ONLY so they never
+     * run schema/migration writes and can coexist with a live daemon holding
+     * the same DB open. rotate-credential mutates, so it opens read-write. */
+    bool ro = (strcmp(cmd, "rotate-credential") != 0);
+    SignetStoreConfig scfg = {
+      .db_path = lcfg.db_path,
+      .master_key = db_key ? db_key : "",
+      .read_only = ro,
+    };
     SignetStore *store = signet_store_open(&scfg);
     if (!store) {
-      fprintf(stderr, "signetctl: failed to open store at %s\n", lcfg.db_path);
+      fprintf(stderr, "signetctl: failed to open store at %s "
+              "(see the [signet] log line above for the underlying error)\n",
+              lcfg.db_path);
       signet_config_clear(&lcfg);
       return 1;
     }
