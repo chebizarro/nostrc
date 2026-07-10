@@ -56,7 +56,9 @@ static void signetctl_usage(FILE *out) {
     "  status                   Query daemon health status\n"
     "  list                     List managed agents\n"
     "\n"
-    "  list-agents              List agents with details (local store)\n"
+    "  list-agents [--verify]   List agents with details (local store);\n"
+    "                           --verify decrypts each key and checks it derives\n"
+    "                           the stored pubkey (STATUS: ok/DECRYPT_FAIL/MISMATCH)\n"
     "  list-sessions            List active sessions (local store)\n"
     "  list-leases              List active credential leases (local store)\n"
     "  verify-audit             Verify hash-chained audit log integrity\n"
@@ -472,6 +474,11 @@ int main(int argc, char **argv) {
 
   /* --- Local store introspection commands --- */
   if (kind == -1) {
+    /* Optional flags for introspection commands. */
+    bool verify_agents = false;
+    for (int ai = argi; ai < argc; ai++) {
+      if (strcmp(argv[ai], "--verify") == 0) verify_agents = true;
+    }
     SignetConfig lcfg;
     if (signet_config_load(config_path, &lcfg) != 0) {
       fprintf(stderr, "signetctl: failed to load config\n");
@@ -500,24 +507,68 @@ int main(int argc, char **argv) {
       char **ids = NULL;
       size_t count = 0;
       if (signet_store_list_agents(store, &ids, &count) == 0) {
-        printf("%-24s %-11s %-64s %s\n", "AGENT_ID", "PROVENANCE", "PUBKEY", "CREATED_AT");
+        if (verify_agents)
+          printf("%-24s %-11s %-64s %-13s %s\n",
+                 "AGENT_ID", "PROVENANCE", "PUBKEY", "STATUS", "CREATED_AT");
+        else
+          printf("%-24s %-11s %-64s %s\n",
+                 "AGENT_ID", "PROVENANCE", "PUBKEY", "CREATED_AT");
+        size_t failed = 0;
         for (size_t i = 0; i < count; i++) {
           /* Render from non-secret metadata so a row still shows even when its
            * custody key cannot be decrypted (wrong/rotated DEK, corrupt blob). */
           SignetAgentMeta meta;
           memset(&meta, 0, sizeof(meta));
-          if (signet_store_get_agent_meta(store, ids[i], &meta) == 0) {
+          if (signet_store_get_agent_meta(store, ids[i], &meta) != 0) {
+            printf("%-24s (error)\n", ids[i]);
+            failed++;
+            continue;
+          }
+          if (verify_agents) {
+            /* --verify: attempt to decrypt the custody key and confirm it
+             * derives the stored pubkey. */
+            const char *status = "ok";
+            SignetAgentRecord rec;
+            memset(&rec, 0, sizeof(rec));
+            int grc = signet_store_get_agent(store, ids[i], &rec);
+            if (grc != 0) {
+              status = "DECRYPT_FAIL";
+              failed++;
+            } else {
+              char skx[65];
+              for (size_t b = 0; b < rec.secret_key_len && b < 32; b++)
+                snprintf(skx + b * 2, 3, "%02x", rec.secret_key[b]);
+              skx[64] = '\0';
+              char *dpk = nostr_key_get_public(skx);
+              sodium_memzero(skx, sizeof(skx));
+              if (!dpk) {
+                status = "BAD_KEY";
+                failed++;
+              } else if (meta.pubkey && g_ascii_strcasecmp(dpk, meta.pubkey) != 0) {
+                status = "MISMATCH";
+                failed++;
+              }
+              free(dpk);
+              signet_agent_record_clear(&rec);
+            }
+            printf("%-24s %-11s %-64s %-13s %" G_GINT64_FORMAT "\n",
+                   ids[i],
+                   meta.provenance ? meta.provenance : "provisioned",
+                   meta.pubkey ? meta.pubkey : "(unknown)",
+                   status, meta.created_at);
+          } else {
             printf("%-24s %-11s %-64s %" G_GINT64_FORMAT "\n",
                    ids[i],
                    meta.provenance ? meta.provenance : "provisioned",
                    meta.pubkey ? meta.pubkey : "(unknown)",
                    meta.created_at);
-            signet_agent_meta_clear(&meta);
-          } else {
-            printf("%-24s (error)\n", ids[i]);
           }
+          signet_agent_meta_clear(&meta);
         }
-        printf("\nTotal: %zu agents\n", count);
+        if (verify_agents)
+          printf("\nTotal: %zu agents, %zu failed verification\n", count, failed);
+        else
+          printf("\nTotal: %zu agents\n", count);
         signet_store_free_agent_ids(ids, count);
       } else {
         fprintf(stderr, "signetctl: failed to list agents\n");
