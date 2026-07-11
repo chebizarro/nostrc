@@ -657,7 +657,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
               code = "sign_failed";
             } else {
               result = signed_evt;
-              result_is_json = true;
+              result_is_json = false;
               status = "ok";
               code = "ok";
               signet_nip46_publish_cas_audit(s->relays, remote_signer_secret_key_hex, session_agent_id, now);
