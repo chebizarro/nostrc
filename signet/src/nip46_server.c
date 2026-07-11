@@ -56,6 +56,44 @@ static void signet_memzero(void *p, size_t n) {
   if (p && n) secure_wipe(p, n);
 }
 
+static char *signet_json_quote_string(const char *s) {
+  if (!s) return NULL;
+
+  JsonBuilder *b = json_builder_new();
+  if (!b) return NULL;
+
+  json_builder_begin_array(b);
+  json_builder_add_string_value(b, s);
+  json_builder_end_array(b);
+
+  JsonGenerator *g = json_generator_new();
+  if (!g) {
+    g_object_unref(b);
+    return NULL;
+  }
+
+  JsonNode *root = json_builder_get_root(b);
+  json_generator_set_root(g, root);
+  json_generator_set_pretty(g, FALSE);
+  char *array_json = json_generator_to_data(g, NULL);
+
+  json_node_free(root);
+  g_object_unref(g);
+  g_object_unref(b);
+
+  if (!array_json) return NULL;
+
+  size_t len = strlen(array_json);
+  if (len < 4) {
+    g_free(array_json);
+    return NULL;
+  }
+
+  char *quoted = g_strndup(array_json + 1, len - 2);
+  g_free(array_json);
+  return quoted;
+}
+
 static void signet_bytes32_to_hex(const uint8_t in[32], char out_hex[65]) {
   for (int i = 0; i < 32; i++) {
     sprintf(out_hex + (i * 2), "%02x", in[i]);
@@ -509,6 +547,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   const char *code = "internal_error";
 
   char *result = NULL;
+  bool result_is_json = false;
   char *err_str = NULL;
   bool allow = false;
 
@@ -562,12 +601,14 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         g_hash_table_replace(s->sessions_by_client_pubkey, session_key, session_value);
         g_mutex_unlock(&s->mu);
         result = g_strdup("ack");
+        result_is_json = false;
         status = "ok";
         code = "ok";
       }
 
     } else if (strcmp(method, "ping") == 0) {
       result = g_strdup("pong");
+      result_is_json = false;
       status = "ok";
       code = "ok";
 
@@ -580,6 +621,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         code = "invalid_key";
       } else {
         result = g_strdup(agent_pubkey_hex);
+        result_is_json = false;
         status = "ok";
         code = "ok";
       }
@@ -615,6 +657,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
               code = "sign_failed";
             } else {
               result = signed_evt;
+              result_is_json = true;
               status = "ok";
               code = "ok";
               signet_nip46_publish_cas_audit(s->relays, remote_signer_secret_key_hex, session_agent_id, now);
@@ -638,6 +681,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
               code = "encrypt_failed";
             } else {
               result = ct;
+              result_is_json = false;
               status = "ok";
               code = "ok";
               free(eerr);
@@ -660,6 +704,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
               code = "decrypt_failed";
             } else {
               result = pt;
+              result_is_json = false;
               status = "ok";
               code = "ok";
               free(derr);
@@ -689,6 +734,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
                 code = "encrypt_failed";
               } else {
                 result = g_strdup(ct);
+                result_is_json = false;
                 free(ct);
                 status = "ok";
                 code = "ok";
@@ -718,6 +764,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
                 code = "decrypt_failed";
               } else {
                 result = g_strndup((const char *)pt, pt_len);
+                result_is_json = false;
                 signet_memzero(pt, pt_len);
                 free(pt);
                 status = "ok";
@@ -765,6 +812,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         if (fst == SIGNET_FIDO_OK) {
           result = fido_json;
           fido_json = NULL;
+          result_is_json = true;
           status = "ok";
           code = "ok";
         } else {
@@ -792,6 +840,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       }
       g_string_append_c(rb, '}');
       result = g_string_free(rb, FALSE);
+      result_is_json = true;
       status = "ok";
       code = "ok";
 
@@ -825,8 +874,14 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   if (err_str) {
     resp_json = nostr_nip46_response_build_err(req_id ? req_id : "", err_str);
   } else {
+    g_autofree char *result_json = NULL;
+    if (result_is_json) {
+      result_json = g_strdup(result ? result : "\"\"");
+    } else {
+      result_json = signet_json_quote_string(result ? result : "");
+    }
     resp_json = nostr_nip46_response_build_ok(req_id ? req_id : "",
-                                               result ? result : "");
+                                               result_json ? result_json : "\"\"");
   }
 
   /* 9) Encrypt response (NIP-44 v2) */
