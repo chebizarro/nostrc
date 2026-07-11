@@ -160,9 +160,8 @@ static char *signet_strip_quotes_dup(const char *s) {
 
   if (n >= 2 && ((tmp[0] == '\"' && tmp[n - 1] == '\"') || (tmp[0] == '\'' && tmp[n - 1] == '\''))) {
     tmp[n - 1] = '\0';
-    tmp++;
-    /* tmp now points inside allocated memory; copy into new string */
-    return g_strdup(tmp);
+    /* Copy the interior without shifting the owning pointer. */
+    return g_strdup(tmp + 1);
   }
 
   return g_strdup(tmp);
@@ -441,6 +440,7 @@ static gboolean signet_policy_store_load_file_locked(SignetPolicyStore *ps, int6
     if (ps->identities) g_hash_table_remove_all(ps->identities);
     ps->file_loaded_at = now;
     ps->reload_requested = FALSE;
+    g_message("[signetd] policy store: no policy file configured");
     return TRUE;
   }
 
@@ -463,6 +463,10 @@ static gboolean signet_policy_store_load_file_locked(SignetPolicyStore *ps, int6
       ps->last_error = g_strdup("failed to load policy file");
     }
 
+    g_warning("[signetd] policy store: failed to load '%s': %s",
+              ps->file_path,
+              ps->last_error ? ps->last_error : "unknown error");
+
     g_key_file_free(kf);
     return TRUE;
   }
@@ -477,6 +481,7 @@ static gboolean signet_policy_store_load_file_locked(SignetPolicyStore *ps, int6
 
   gsize ngroups = 0;
   gchar **groups = g_key_file_get_groups(kf, &ngroups);
+  guint loaded_identities = 0;
 
   for (gsize gi = 0; gi < ngroups; gi++) {
     const char *grp = groups[gi];
@@ -573,6 +578,7 @@ static gboolean signet_policy_store_load_file_locked(SignetPolicyStore *ps, int6
     (void)signet_parse_int_list(deny_kinds_raw, &p->deny_kinds, &p->deny_kinds_any);
 
     g_hash_table_replace(new_ids, g_strdup(identity), p);
+    loaded_identities++;
   }
 
   if (groups) g_strfreev(groups);
@@ -587,6 +593,9 @@ static gboolean signet_policy_store_load_file_locked(SignetPolicyStore *ps, int6
 
   ps->file_loaded_at = now;
   ps->reload_requested = FALSE;
+  g_message("[signetd] policy store: loaded %u identities from %s",
+            loaded_identities,
+            ps->file_path);
   return TRUE;
 }
 
