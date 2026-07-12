@@ -894,6 +894,97 @@ int signet_store_list_agents(SignetStore *store, char ***out_ids, size_t *out_co
   return 0;
 }
 
+int signet_store_list_agents_missing_pubkey(SignetStore *store,
+                                            char ***out_ids,
+                                            size_t *out_count) {
+  if (!store || !store->open || !out_ids || !out_count) return -1;
+
+  *out_ids = NULL;
+  *out_count = 0;
+
+  /* Legacy rows created before the v3.1 pubkey column have pubkey NULL (or
+   * empty). These are invisible to signet_store_pubkey_in_use collision
+   * checks until backfilled. */
+  const char *sql =
+      "SELECT agent_id FROM agents WHERE pubkey IS NULL OR pubkey = '' "
+      "ORDER BY created_at;";
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL);
+  if (rc != SQLITE_OK) return -1;
+
+  GPtrArray *arr = g_ptr_array_new_with_free_func(NULL); /* elements freed manually */
+
+  while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+    const char *id = (const char *)sqlite3_column_text(stmt, 0);
+    if (id) g_ptr_array_add(arr, g_strdup(id));
+  }
+
+  sqlite3_finalize(stmt);
+
+  if (rc != SQLITE_DONE) {
+    for (guint i = 0; i < arr->len; i++) g_free(g_ptr_array_index(arr, i));
+    g_ptr_array_free(arr, TRUE);
+    return -1;
+  }
+
+  size_t count = arr->len;
+  char **ids = (char **)calloc(count + 1, sizeof(char *));
+  if (!ids && count > 0) {
+    for (guint i = 0; i < arr->len; i++) g_free(g_ptr_array_index(arr, i));
+    g_ptr_array_free(arr, TRUE);
+    return -1;
+  }
+
+  for (size_t i = 0; i < count; i++) {
+    ids[i] = (char *)g_ptr_array_index(arr, (guint)i);
+  }
+
+  g_ptr_array_free(arr, TRUE); /* elements transferred to ids */
+
+  *out_ids = ids;
+  *out_count = count;
+  return 0;
+}
+
+int signet_store_set_agent_pubkey(SignetStore *store,
+                                  const char *agent_id,
+                                  const char *pubkey_hex) {
+  if (!store || !store->open || !agent_id || !agent_id[0] ||
+      !pubkey_hex || strlen(pubkey_hex) != 64) {
+    return -1;
+  }
+
+  /* Validate and canonicalize: all 64 chars must be hex, stored lowercase.
+   * signet_store_pubkey_in_use() compares with plain SQL equality, so a
+   * mixed-case or non-hex value would silently miss collisions. */
+  char canonical[65];
+  for (int i = 0; i < 64; i++) {
+    char c = pubkey_hex[i];
+    if (!g_ascii_isxdigit(c)) return -1;
+    canonical[i] = (char)g_ascii_tolower(c);
+  }
+  canonical[64] = '\0';
+
+  /* Backfill-only: never overwrite an already-populated pubkey. Provision,
+   * adopt, and rotate all record the pubkey at write time; this exists solely
+   * to repair legacy rows. */
+  const char *sql =
+      "UPDATE agents SET pubkey = ? "
+      "WHERE agent_id = ? AND (pubkey IS NULL OR pubkey = '');";
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL);
+  if (rc != SQLITE_OK) return -1;
+
+  sqlite3_bind_text(stmt, 1, canonical, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, agent_id, -1, SQLITE_TRANSIENT);
+  rc = sqlite3_step(stmt);
+  int changes = sqlite3_changes(store->db);
+  sqlite3_finalize(stmt);
+
+  if (rc != SQLITE_DONE) return -1;
+  return (changes > 0) ? 0 : 1; /* 1 = not found or pubkey already set */
+}
+
 int signet_store_touch_agent(SignetStore *store, const char *agent_id, int64_t now) {
   if (!store || !store->open || !agent_id) return -1;
 

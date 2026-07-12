@@ -114,6 +114,14 @@ test_mgmt_replay = executable('test_mgmt_replay',
   install: false,
 )
 
+test_pubkey_backfill = executable('test_pubkey_backfill',
+  'test_pubkey_backfill.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: false,
+)
+
 test('signet_smoke', test_exe)
 test('replay_cache', test_replay)
 test('policy_engine', test_policy)
@@ -128,6 +136,7 @@ test('db_migration', test_db_migration)
 test('adopt_existing', test_adopt_existing)
 test('reissue_connect', test_reissue_connect)
 test('mgmt_replay', test_mgmt_replay)
+test('pubkey_backfill', test_pubkey_backfill)
 
 if get_option('signet_enable_passkeys')
   test_store_passkeys = executable('test_store_passkeys',

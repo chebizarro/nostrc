@@ -308,6 +308,32 @@ int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
                                             char **out_connect_secret,
                                             char **out_bunker_uri);
 
+/* Backfill agents.pubkey for legacy rows created before the pubkey column
+ * existed (pre-v3.1). For each row with a NULL/empty pubkey, decrypts the
+ * custody key, derives the x-only pubkey, and persists it so
+ * signet_store_pubkey_in_use() collision checks (agent/adopt-existing) cover
+ * the whole fleet. Rows whose secret cannot be decrypted are counted in
+ * *out_failed and left untouched. Idempotent — populated rows are never
+ * rewritten. No-op (returns 0 with zero counts) in cache-only mode.
+ * Returns 0 on success (even with per-row failures), -1 on store error. */
+/**
+ * signet_key_store_backfill_pubkeys:
+ * @ks: (not nullable): a #SignetKeyStore
+ * @out_updated: (out) (nullable): return location for the number of rows backfilled
+ * @out_failed: (out) (nullable): return location for the number of rows that could not be backfilled
+ *
+ * Backfills the persisted pubkey for legacy agent rows. Idempotent.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.1
+ */
+int signet_key_store_backfill_pubkeys(SignetKeyStore *ks,
+                                      size_t *out_updated,
+                                      size_t *out_failed);
+
 /* Copy the derived pubkey for an agent into out_pubkey_hex.
  * out_pubkey_hex must be at least 65 bytes. Returns true on success. */
 /**

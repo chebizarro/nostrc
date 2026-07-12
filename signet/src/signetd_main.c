@@ -643,6 +643,23 @@ int main(int argc, char **argv) {
 #endif
   SignetStore *base_store = signet_key_store_get_store(keys);
 
+  /* Backfill agents.pubkey for rows created before the v3.1 pubkey column.
+   * Until backfilled, those rows are invisible to pubkey-collision checks
+   * (agent/adopt-existing could silently bind an already-custodied key to a
+   * second agent_id). Idempotent; rows whose secret cannot be decrypted are
+   * skipped and surfaced by `signetctl list-agents --verify`. */
+  if (keys && base_store) {
+    size_t bf_updated = 0, bf_failed = 0;
+    if (signet_key_store_backfill_pubkeys(keys, &bf_updated, &bf_failed) == 0) {
+      if (bf_updated > 0 || bf_failed > 0) {
+        g_message("[signetd] pubkey backfill: %zu row(s) updated, %zu failed",
+                  bf_updated, bf_failed);
+      }
+    } else {
+      g_warning("[signetd] pubkey backfill pass failed");
+    }
+  }
+
 #ifdef SIGNET_ENABLE_PASSKEYS
   SignetFidoService *fido = NULL;
   SignetFidoCtapHid *ctaphid = NULL;

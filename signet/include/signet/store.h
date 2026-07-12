@@ -335,6 +335,50 @@ int signet_store_touch_agent(SignetStore *store,
                              const char *agent_id,
                              int64_t now);
 
+/* List agents whose pubkey column is NULL/empty (rows created before the
+ * v3.1 pubkey column). These rows are invisible to
+ * signet_store_pubkey_in_use() collision checks until backfilled.
+ * Caller frees with signet_store_free_agent_ids().
+ * Returns 0 on success, -1 on error. */
+/**
+ * signet_store_list_agents_missing_pubkey:
+ * @store: (nullable): a #SignetStore
+ * @out_ids: (out) (transfer full) (not nullable): return location for agent ids
+ * @out_count: (out) (not nullable): return location for the id count
+ *
+ * Lists agents whose pubkey column has not been populated.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.1
+ */
+int signet_store_list_agents_missing_pubkey(SignetStore *store,
+                                            char ***out_ids,
+                                            size_t *out_count);
+
+/* Backfill the pubkey for a legacy agent row. Only writes when the current
+ * pubkey is NULL/empty — never overwrites a populated value.
+ * Returns 0 on success, 1 if not found or already set, -1 on error. */
+/**
+ * signet_store_set_agent_pubkey:
+ * @store: (nullable): a #SignetStore
+ * @agent_id: (not nullable): agent identifier
+ * @pubkey_hex: (not nullable): 64-hex x-only pubkey
+ *
+ * Backfills the pubkey column for a legacy agent row (never overwrites).
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.1
+ */
+int signet_store_set_agent_pubkey(SignetStore *store,
+                                  const char *agent_id,
+                                  const char *pubkey_hex);
+
 /* Consume (clear) the connect_secret for an agent after successful connect.
  * Returns 0 on success, 1 if not found or already consumed, -1 on error. */
 /**

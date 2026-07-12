@@ -727,6 +727,83 @@ int signet_key_store_list_agents(SignetKeyStore *ks,
   return 0;
 }
 
+int signet_key_store_backfill_pubkeys(SignetKeyStore *ks,
+                                      size_t *out_updated,
+                                      size_t *out_failed) {
+  if (out_updated) *out_updated = 0;
+  if (out_failed) *out_failed = 0;
+  if (!ks) return -1;
+
+  g_mutex_lock(&ks->mu);
+
+  if (!ks->store) {
+    /* Cache-only mode: nothing persisted, nothing to backfill. */
+    g_mutex_unlock(&ks->mu);
+    return 0;
+  }
+
+  char **ids = NULL;
+  size_t count = 0;
+  if (signet_store_list_agents_missing_pubkey(ks->store, &ids, &count) != 0) {
+    g_mutex_unlock(&ks->mu);
+    return -1;
+  }
+
+  size_t updated = 0, failed = 0;
+  for (size_t i = 0; i < count; i++) {
+    /* Decrypt the custody key and derive the identity pubkey. A row whose
+     * secret cannot be decrypted (wrong/rotated DEK, corrupt blob) is counted
+     * as failed and left untouched — `signetctl list-agents --verify` surfaces
+     * those. */
+    SignetAgentRecord rec;
+    memset(&rec, 0, sizeof(rec));
+    if (signet_store_get_agent(ks->store, ids[i], &rec) != 0) {
+      failed++;
+      continue;
+    }
+
+    char *pk_hex = NULL;
+    if (rec.secret_key && rec.secret_key_len == 32) {
+      char sk_hex[65];
+      for (int b = 0; b < 32; b++) sprintf(sk_hex + b * 2, "%02x", rec.secret_key[b]);
+      sk_hex[64] = '\0';
+      pk_hex = nostr_key_get_public(sk_hex);
+      sodium_memzero(sk_hex, sizeof(sk_hex));
+    }
+    signet_agent_record_clear(&rec);
+
+    if (!pk_hex || strlen(pk_hex) != 64) {
+      /* Could not derive a pubkey from the decrypted secret. */
+      failed++;
+      free(pk_hex);
+      continue;
+    }
+
+    int src = signet_store_set_agent_pubkey(ks->store, ids[i], pk_hex);
+    free(pk_hex);
+    if (src == 0) {
+      updated++;
+    } else if (src == 1) {
+      /* Row vanished or was populated concurrently — benign, not a failure. */
+    } else {
+      /* Store write error: abort the pass rather than mislabeling a database
+       * problem as a per-row derivation failure. */
+      g_mutex_unlock(&ks->mu);
+      signet_store_free_agent_ids(ids, count);
+      if (out_updated) *out_updated = updated;
+      if (out_failed) *out_failed = failed;
+      return -1;
+    }
+  }
+
+  g_mutex_unlock(&ks->mu);
+
+  signet_store_free_agent_ids(ids, count);
+  if (out_updated) *out_updated = updated;
+  if (out_failed) *out_failed = failed;
+  return 0;
+}
+
 bool signet_key_store_get_agent_pubkey(SignetKeyStore *ks,
                                        const char *agent_id,
                                        char *out_pubkey_hex,
