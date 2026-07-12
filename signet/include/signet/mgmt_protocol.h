@@ -286,6 +286,7 @@ struct SignetRelayPool;
 struct SignetAuditLogger;
 struct SignetPolicyStore;
 struct SignetDenyList;
+struct SignetReplayCache;
 
 /**
  * SignetMgmtHandler:
@@ -365,6 +366,35 @@ void signet_mgmt_handler_free(SignetMgmtHandler *h);
  */
 void signet_mgmt_handler_set_deny_list(SignetMgmtHandler *h,
                                        struct SignetDenyList *deny);
+
+/* Attach a replay cache so each DELIVERED EVENT ID executes at most once per
+ * cache TTL. This suppresses relay redelivery, republishing of the same
+ * serialized event, and history replay of non-idempotent commands
+ * (rotate-key, reissue-connect, provision). It does NOT deduplicate a client
+ * retry that re-signs/re-wraps the same JSON-RPC request — that produces a
+ * new event id and executes again. Duplicates are dropped SILENTLY (no error
+ * ack): the first delivery already published the authoritative ack, and an
+ * error ack sharing its request_id could race ahead of a secret-bearing
+ * result; clients recover from a lost ack by sending a new intent.
+ * The check is by event id only: gift-wrapped (kind 1059) intents have a
+ * NIP-59-randomized outer created_at, so timestamp skew cannot be enforced
+ * here — history-replay bounds come from the subscription since-floor and
+ * mgmt_accept_after. When a cache is attached, events with a missing/empty
+ * event id fail closed (with a replay_invalid error ack). Use a DEDICATED
+ * cache instance rather than sharing the NIP-46 one, so signing traffic
+ * cannot evict management entries before their TTL. Safe to call with NULL
+ * h or NULL replay (NULL disables the check). */
+/**
+ * signet_mgmt_handler_set_replay_cache:
+ * @h: (not nullable): a #SignetMgmtHandler
+ * @replay: (nullable): replay cache
+ *
+ * Attach a replay cache so each management event executes at most once per cache TTL. Safe to call with NULL h or NULL replay.
+ *
+ * Since: 1.1
+ */
+void signet_mgmt_handler_set_replay_cache(SignetMgmtHandler *h,
+                                          struct SignetReplayCache *replay);
 
 /* Handle an incoming management event.
  * Verifies authorization, parses, executes, publishes ack.

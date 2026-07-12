@@ -14,6 +14,7 @@
 #include "signet/relay_pool.h"
 #include "signet/audit_logger.h"
 #include "signet/revocation.h"
+#include "signet/replay_cache.h"
 #include "signet/store.h"
 #include "signet/bootstrap_delivery.h"
 #include "signet/util.h"
@@ -284,6 +285,7 @@ struct SignetMgmtHandler {
   SignetAuditLogger *audit;
   SignetPolicyStore *policy_store;
   SignetDenyList *deny;   /* shared live deny list (owned by daemon) */
+  SignetReplayCache *replay; /* shared replay cache (owned by daemon) */
   bool legacy_28000_enabled;
   bool reply_contextvm;
 
@@ -357,6 +359,12 @@ void signet_mgmt_handler_free(SignetMgmtHandler *h) {
   for (size_t i = 0; i < h->n_relay_urls; i++) g_free(h->relay_urls[i]);
   g_free(h->relay_urls);
   g_free(h);
+}
+
+void signet_mgmt_handler_set_replay_cache(SignetMgmtHandler *h,
+                                          SignetReplayCache *replay) {
+  if (!h) return;
+  h->replay = replay;
 }
 
 void signet_mgmt_handler_set_deny_list(SignetMgmtHandler *h, SignetDenyList *deny) {
@@ -743,6 +751,45 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
     g_free(parse_err);
     if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
     return -1;
+  }
+
+  /* 2b) Replay protection: each delivered event id executes at most once per
+   * cache TTL. This runs AFTER parse (so the error ack can carry request_id)
+   * and BEFORE execute (so non-idempotent commands — rotate-key,
+   * reissue-connect, provision — never run twice on relay redelivery,
+   * republish of the same serialized event, or history replay).
+   * Duplicate suppression is by delivered event id only:
+   * gift-wrapped intents carry a NIP-59-randomized outer created_at, so `now`
+   * is passed for the timestamp and skew is effectively not enforced here
+   * (history bounds come from the subscription since-floor and
+   * mgmt_accept_after). Fail closed on a missing event id. */
+  if (h->replay) {
+    SignetReplayResult rr = signet_replay_check_and_mark(
+        h->replay, event_id_hex, now, now);
+    if (rr == SIGNET_REPLAY_DUPLICATE) {
+      /* Silently drop duplicates (like unauthorized events). The FIRST
+       * delivery already published the authoritative ack — publishing an
+       * error ack here with the same request_id could race ahead of the
+       * success ack and starve the client of a secret-bearing result
+       * (reissue-connect/provision). Clients recover from a lost ack by
+       * sending a NEW intent (new event id). */
+      if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
+      signet_mgmt_request_clear(&req);
+      return -1;
+    }
+    if (rr != SIGNET_REPLAY_OK) {
+      /* Malformed (missing event id): fail closed, but tell the sender. */
+      char *rack = signet_mgmt_build_ack(req.request_id, false, "replay_invalid",
+                                         "management event rejected by replay protection",
+                                         NULL);
+      if (rack) {
+        signet_mgmt_publish_ack(h, event_pubkey_hex, rack, event_id_hex, now);
+        g_free(rack);
+      }
+      if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
+      signet_mgmt_request_clear(&req);
+      return -1;
+    }
   }
 
   /* 3) Execute command. */

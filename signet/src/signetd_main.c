@@ -825,6 +825,21 @@ int main(int argc, char **argv) {
    * effect immediately via deny-list precedence. */
   signet_mgmt_handler_set_deny_list(mgmt, deny);
 
+  /* Dedicated management replay cache so each 25910 management event id
+   * executes at most once per TTL — without this, redelivered/replayed
+   * gift-wrapped intents re-run non-idempotent commands (rotate-key,
+   * reissue-connect, provision). Deliberately NOT the NIP-46 cache: sharing
+   * would couple management replay retention to signing traffic volume, and
+   * high NIP-46 load could evict a management event id before its TTL. Sized
+   * small — management traffic is a trickle. */
+  SignetReplayCacheConfig mgmt_replay_cfg = {
+    .max_entries = 4096,
+    .ttl_seconds = cfg.replay_ttl_seconds,
+    .skew_seconds = cfg.replay_skew_seconds,
+  };
+  SignetReplayCache *mgmt_replay = signet_replay_cache_new(&mgmt_replay_cfg);
+  signet_mgmt_handler_set_replay_cache(mgmt, mgmt_replay);
+
   /* Build a fleet registry adapter.
    * is_in_fleet: all provisioned agents are fleet members.
    * is_denied: check the deny list.
@@ -1122,6 +1137,7 @@ cleanup:
 
   signet_key_store_free(keys);
 
+  signet_replay_cache_free(mgmt_replay);
   signet_replay_cache_free(replay);
 
   signet_deny_list_free(deny);
