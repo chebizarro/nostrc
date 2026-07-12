@@ -312,9 +312,11 @@ int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
  * existed (pre-v3.1). For each row with a NULL/empty pubkey, decrypts the
  * custody key, derives the x-only pubkey, and persists it so
  * signet_store_pubkey_in_use() collision checks (agent/adopt-existing) cover
- * the whole fleet. Rows whose secret cannot be decrypted are counted in
- * *out_failed and left untouched. Idempotent — populated rows are never
- * rewritten. No-op (returns 0 with zero counts) in cache-only mode.
+ * the whole fleet. Rows whose secret cannot be decrypted — and rows whose
+ * derived pubkey is already bound to another agent (duplicate legacy custody
+ * keys) — are counted in *out_failed and left untouched. Idempotent —
+ * populated rows are never rewritten. No-op (returns 0 with zero counts) in
+ * cache-only mode.
  * Returns 0 on success (even with per-row failures), -1 on store error. */
 /**
  * signet_key_store_backfill_pubkeys:

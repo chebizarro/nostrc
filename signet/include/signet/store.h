@@ -173,7 +173,8 @@ int signet_store_migrate_plaintext_to_sqlcipher(const char *db_path,
                                                 const char *master_key);
 
 /* Store a new agent key. secret_key must be 32 bytes.
- * Returns 0 on success, -1 on error. */
+ * Returns 0 on success, 1 if the write violates DB-level uniqueness (the
+ * connect_secret is already bound to another agent), -1 on error. */
 /**
  * signet_store_put_agent:
  * @store: (nullable): a #SignetStore
@@ -200,7 +201,12 @@ int signet_store_put_agent(SignetStore *store,
 
 /* Like signet_store_put_agent but also records the agent's x-only pubkey hex
  * (for adopt/collision checks) and provenance ("provisioned"|"adopted"|"rotated";
- * NULL defaults to "provisioned"). Returns 0 on success, -1 on error. */
+ * NULL defaults to "provisioned").
+ * Writing the same agent_id again replaces that row (upsert). Returns 0 on
+ * success, 1 if the write violates DB-level uniqueness — the pubkey or
+ * connect_secret is already bound to a DIFFERENT agent — and -1 on other
+ * errors. (Not INSERT OR REPLACE: that would resolve a unique-index conflict
+ * by deleting the other agent's row.) */
 int signet_store_put_agent_ex(SignetStore *store,
                               const char *agent_id,
                               const uint8_t *secret_key,
@@ -360,7 +366,9 @@ int signet_store_list_agents_missing_pubkey(SignetStore *store,
 
 /* Backfill the pubkey for a legacy agent row. Only writes when the current
  * pubkey is NULL/empty — never overwrites a populated value.
- * Returns 0 on success, 1 if not found or already set, -1 on error. */
+ * Returns 0 on success, 1 if not found or already set, 2 if the pubkey is
+ * already bound to another agent (duplicate legacy custody keys tripping the
+ * unique index), -1 on error. */
 /**
  * signet_store_set_agent_pubkey:
  * @store: (nullable): a #SignetStore

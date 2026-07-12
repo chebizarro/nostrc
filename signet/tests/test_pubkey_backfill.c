@@ -188,6 +188,144 @@ static void test_backfill_and_collision_detection(void) {
   printf("test_backfill_and_collision_detection: PASS\n");
 }
 
+/* nostrc-ttm: DB-level uniqueness. put_agent_ex is an upsert keyed on
+ * agent_id — replacing the same agent works, while binding another agent to
+ * an existing pubkey or connect_secret fails with 1 and leaves the original
+ * row untouched (OR REPLACE would have silently deleted it). */
+static void test_db_level_uniqueness(void) {
+  char *db_path = make_temp_db_path();
+  SignetStoreConfig scfg = { .db_path = db_path, .master_key = MASTER_KEY };
+  SignetStore *st = signet_store_open(&scfg);
+  assert(st != NULL);
+
+  uint8_t sk1[32]; char pk1[65];
+  uint8_t sk2[32]; char pk2[65];
+  uint8_t sk3[32]; char pk3[65];
+  gen_keypair(sk1, pk1);
+  gen_keypair(sk2, pk2);
+  gen_keypair(sk3, pk3);
+
+  /* Insert agent-a, then replace it (same agent_id, new key): both succeed. */
+  assert(signet_store_put_agent_ex(st, "agent-a", sk1, 32, "secret-a", pk1,
+                                   "provisioned", 1000) == 0);
+  assert(signet_store_put_agent_ex(st, "agent-a", sk2, 32, "secret-a2", pk2,
+                                   "rotated", 2000) == 0);
+  SignetAgentMeta meta;
+  memset(&meta, 0, sizeof(meta));
+  assert(signet_store_get_agent_meta(st, "agent-a", &meta) == 0);
+  assert(meta.pubkey && g_ascii_strcasecmp(meta.pubkey, pk2) == 0);
+  signet_agent_meta_clear(&meta);
+
+  /* Binding a DIFFERENT agent to agent-a's pubkey fails with 1 and must NOT
+   * delete agent-a (the old INSERT OR REPLACE behavior). */
+  assert(signet_store_put_agent_ex(st, "impostor", sk3, 32, NULL, pk2,
+                                   "adopted", 3000) == 1);
+  memset(&meta, 0, sizeof(meta));
+  assert(signet_store_get_agent_meta(st, "agent-a", &meta) == 0); /* intact */
+  assert(meta.pubkey && g_ascii_strcasecmp(meta.pubkey, pk2) == 0);
+  signet_agent_meta_clear(&meta);
+  memset(&meta, 0, sizeof(meta));
+  assert(signet_store_get_agent_meta(st, "impostor", &meta) != 0); /* absent */
+
+  /* Reusing another agent's connect_secret also fails with 1, intact rows. */
+  assert(signet_store_put_agent_ex(st, "agent-c", sk3, 32, "dup-secret", pk3,
+                                   "provisioned", 4000) == 0);
+  uint8_t sk4[32]; char pk4[65];
+  gen_keypair(sk4, pk4);
+  assert(signet_store_put_agent_ex(st, "agent-d", sk4, 32, "dup-secret", pk4,
+                                   "provisioned", 5000) == 1);
+  memset(&meta, 0, sizeof(meta));
+  assert(signet_store_get_agent_meta(st, "agent-c", &meta) == 0); /* intact */
+  signet_agent_meta_clear(&meta);
+  memset(&meta, 0, sizeof(meta));
+  assert(signet_store_get_agent_meta(st, "agent-d", &meta) != 0); /* absent */
+
+  /* Case-insensitivity: put_agent_ex canonicalizes to lowercase, so binding
+   * another agent to the UPPERCASE form of an existing pubkey still fails. */
+  {
+    char upper_pk2[65];
+    for (int i = 0; i < 65; i++) upper_pk2[i] = (char)g_ascii_toupper(pk2[i]);
+    assert(signet_store_put_agent_ex(st, "impostor-uc", sk4, 32, NULL, upper_pk2,
+                                     "adopted", 5500) == 1);
+    memset(&meta, 0, sizeof(meta));
+    assert(signet_store_get_agent_meta(st, "impostor-uc", &meta) != 0); /* absent */
+  }
+
+  /* Malformed pubkeys are rejected outright. */
+  assert(signet_store_put_agent_ex(st, "bad-pk", sk4, 32, NULL, "deadbeef",
+                                   "adopted", 5600) == -1);
+  assert(signet_store_put_agent_ex(st, "bad-pk", sk4, 32, NULL,
+      "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+      "adopted", 5700) == -1);
+
+  /* Legacy rows with NULL pubkey do not trip the partial unique index. */
+  uint8_t sk5[32]; char pk5[65];
+  uint8_t sk6[32]; char pk6[65];
+  gen_keypair(sk5, pk5);
+  gen_keypair(sk6, pk6);
+  assert(signet_store_put_agent(st, "legacy-1", sk5, 32, NULL, 6000) == 0);
+  assert(signet_store_put_agent(st, "legacy-2", sk6, 32, NULL, 7000) == 0);
+
+  sodium_memzero(sk1, sizeof(sk1));
+  sodium_memzero(sk2, sizeof(sk2));
+  sodium_memzero(sk3, sizeof(sk3));
+  sodium_memzero(sk4, sizeof(sk4));
+  sodium_memzero(sk5, sizeof(sk5));
+  sodium_memzero(sk6, sizeof(sk6));
+  signet_store_close(st);
+  unlink(db_path);
+  g_free(db_path);
+  printf("test_db_level_uniqueness: PASS\n");
+}
+
+/* Duplicate legacy custody keys: the same secret stored under two agent_ids
+ * (possible pre-index). Backfill must populate the first, count the second as
+ * a per-row failure (pubkey already bound), and NOT abort the pass. */
+static void test_backfill_duplicate_legacy_keys(void) {
+  char *db_path = make_temp_db_path();
+
+  uint8_t sk[32]; char pk[65];
+  gen_keypair(sk, pk);
+  seed_legacy_row(db_path, "twin-a", sk);
+  {
+    SignetStoreConfig scfg = { .db_path = db_path, .master_key = MASTER_KEY };
+    SignetStore *st = signet_store_open(&scfg);
+    assert(st != NULL);
+    assert(signet_store_put_agent(st, "twin-b", sk, 32, NULL, 1100) == 0);
+    signet_store_close(st);
+  }
+
+  SignetAuditLoggerConfig alc = { .path = NULL, .to_stdout = false, .flush_each_write = false };
+  SignetAuditLogger *audit = signet_audit_logger_new(&alc);
+  SignetKeyStoreConfig kcfg = { .db_path = db_path, .master_key = MASTER_KEY };
+  SignetKeyStore *ks = signet_key_store_new(audit, &kcfg);
+  assert(ks != NULL);
+
+  size_t updated = 0, failed = 0;
+  assert(signet_key_store_backfill_pubkeys(ks, &updated, &failed) == 0);
+  assert(updated == 1);
+  assert(failed == 1);
+
+  /* Exactly one of the twins carries the pubkey. */
+  SignetStore *st = signet_key_store_get_store(ks);
+  SignetAgentMeta ma, mb;
+  memset(&ma, 0, sizeof(ma));
+  memset(&mb, 0, sizeof(mb));
+  assert(signet_store_get_agent_meta(st, "twin-a", &ma) == 0);
+  assert(signet_store_get_agent_meta(st, "twin-b", &mb) == 0);
+  bool a_set = (ma.pubkey && ma.pubkey[0]);
+  bool b_set = (mb.pubkey && mb.pubkey[0]);
+  assert(a_set != b_set);
+  signet_agent_meta_clear(&ma);
+  signet_agent_meta_clear(&mb);
+
+  sodium_memzero(sk, sizeof(sk));
+  signet_key_store_free(ks);
+  unlink(db_path);
+  g_free(db_path);
+  printf("test_backfill_duplicate_legacy_keys: PASS\n");
+}
+
 static void test_backfill_empty_store(void) {
   char *db_path = make_temp_db_path();
   SignetAuditLoggerConfig alc = { .path = NULL, .to_stdout = false, .flush_each_write = false };
@@ -214,6 +352,8 @@ int main(void) {
   }
 
   test_backfill_and_collision_detection();
+  test_db_level_uniqueness();
+  test_backfill_duplicate_legacy_keys();
   test_backfill_empty_store();
 
   printf("All pubkey backfill tests passed.\n");

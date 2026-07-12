@@ -242,6 +242,9 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
   if (ks->store) {
     rc = signet_store_put_agent_ex(ks->store, agent_id, sk_raw, 32, connect_secret,
                                    pk_hex, "provisioned", now);
+    /* A uniqueness conflict on a freshly generated random key/secret is a
+     * store-integrity problem, not a caller error — normalize to failure. */
+    if (rc == 1) rc = -1;
   }
 
   if (rc == 0 || !ks->store) {
@@ -383,6 +386,20 @@ SignetAdoptResult signet_key_store_adopt_agent(SignetKeyStore *ks,
   if (ks->store) {
     rc = signet_store_put_agent_ex(ks->store, agent_id, secret_key, 32,
                                    connect_secret, pk_hex, "adopted", now);
+    if (rc == 1) {
+      /* DB-level uniqueness fired under the same mutex as the pre-checks, so
+       * this is either a pubkey bound to another agent that the (pre-backfill)
+       * column check missed, or a caller-supplied connect_secret already in
+       * use. Distinguish so the provisioner gets an accurate failure code. */
+      bool pk_in_use = false;
+      if (signet_store_pubkey_in_use(ks->store, pk_hex, agent_id, &pk_in_use) == 0 &&
+          pk_in_use) {
+        result = SIGNET_ADOPT_ERR_PUBKEY_EXISTS;
+      } else {
+        result = SIGNET_ADOPT_ERR_INTERNAL; /* connect_secret collision or other */
+      }
+      goto done;
+    }
   }
   if (rc == 0 || !ks->store) {
     SignetCacheEntry *entry = signet_cache_entry_new(secret_key, now);
@@ -664,6 +681,9 @@ int signet_key_store_rotate_agent(SignetKeyStore *ks,
   if (ks->store) {
     rc = signet_store_put_agent_ex(ks->store, agent_id, sk_raw, 32, NULL,
                                    pk_hex, "rotated", now);
+    /* A uniqueness conflict on a freshly generated random key is a
+     * store-integrity problem — report rotate_failed, not not_found. */
+    if (rc == 1) rc = -1;
   }
 
   if (rc == 0 || !ks->store) {
@@ -785,6 +805,11 @@ int signet_key_store_backfill_pubkeys(SignetKeyStore *ks,
       updated++;
     } else if (src == 1) {
       /* Row vanished or was populated concurrently — benign, not a failure. */
+    } else if (src == 2) {
+      /* This custody key is already bound to another agent (duplicate legacy
+       * rows). Count per-row and keep going — one duplicated key must not
+       * abort the backfill for the rest of the fleet. */
+      failed++;
     } else {
       /* Store write error: abort the pass rather than mislabeling a database
        * problem as a per-row derivation failure. */

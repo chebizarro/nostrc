@@ -605,6 +605,24 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
   (void)sqlite3_exec(store->db,
                      "CREATE INDEX IF NOT EXISTS idx_agents_pubkey ON agents(pubkey);",
                      NULL, NULL, NULL);
+  /* v3.2: DB-level pubkey uniqueness (one agent per custody key). Safe now
+   * that put_agent_ex upserts with ON CONFLICT(agent_id) instead of OR
+   * REPLACE. Creation fails on legacy DBs that already contain duplicate
+   * pubkeys — warn (uniqueness stays application-enforced) and retry at the
+   * next open once the duplicates are repaired. */
+  {
+    char *uniq_err = NULL;
+    if (sqlite3_exec(store->db,
+                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_pubkey_unique "
+                     "ON agents(pubkey) WHERE pubkey IS NOT NULL AND pubkey != '';",
+                     NULL, NULL, &uniq_err) != SQLITE_OK) {
+      g_warning("[signet] could not create unique pubkey index (duplicate "
+                "pubkeys in agents table?): %s — DB-level uniqueness is NOT "
+                "enforced until the duplicates are repaired",
+                uniq_err ? uniq_err : "unknown error");
+      sqlite3_free(uniq_err);
+    }
+  }
 
   /* v3: dedicated passkey credential vault (N credentials per agent). */
   errmsg = NULL;
@@ -685,6 +703,22 @@ int signet_store_put_agent_ex(SignetStore *store,
   if (!store || !store->open || !agent_id || !secret_key) return -1;
   if (secret_key_len != SIGNET_NSEC_LEN) return -1;
 
+  /* Validate/canonicalize the pubkey: the unique index and
+   * signet_store_pubkey_in_use() compare bytewise, so a mixed-case value
+   * would bypass both. Non-empty pubkeys must be exactly 64 hex chars and
+   * are stored lowercase. */
+  char canonical_pubkey[65] = {0};
+  bool have_pubkey = (pubkey_hex && pubkey_hex[0]);
+  if (have_pubkey) {
+    if (strlen(pubkey_hex) != 64) return -1;
+    for (int i = 0; i < 64; i++) {
+      char c = pubkey_hex[i];
+      if (!g_ascii_isxdigit(c)) return -1;
+      canonical_pubkey[i] = (char)g_ascii_tolower(c);
+    }
+    canonical_pubkey[64] = '\0';
+  }
+
   /* Generate random nonce. */
   uint8_t nonce[SIGNET_NONCE_LEN];
   randombytes_buf(nonce, sizeof(nonce));
@@ -700,11 +734,26 @@ int signet_store_put_agent_ex(SignetStore *store,
     return -1;
   }
 
-  /* INSERT OR REPLACE into the database. */
+  /* Upsert keyed on agent_id. Deliberately NOT "INSERT OR REPLACE": OR
+   * REPLACE resolves a violation of ANY unique constraint by DELETING the
+   * conflicting row, so with the unique pubkey/connect_secret indexes a
+   * same-pubkey (or same-secret) insert would silently destroy the OTHER
+   * agent's row. With ON CONFLICT(agent_id) DO UPDATE, replacing the same
+   * agent still works, while a pubkey/connect_secret collision with a
+   * different agent fails with SQLITE_CONSTRAINT (reported as 1). */
   const char *sql =
-    "INSERT OR REPLACE INTO agents "
+    "INSERT INTO agents "
     "(agent_id, encrypted_nsec, nonce, algo, connect_secret, created_at, last_used, pubkey, provenance) "
-    "VALUES (?, ?, ?, 'xsalsa20poly1305', ?, ?, 0, ?, ?);";
+    "VALUES (?, ?, ?, 'xsalsa20poly1305', ?, ?, 0, ?, ?) "
+    "ON CONFLICT(agent_id) DO UPDATE SET "
+    "  encrypted_nsec = excluded.encrypted_nsec, "
+    "  nonce = excluded.nonce, "
+    "  algo = excluded.algo, "
+    "  connect_secret = excluded.connect_secret, "
+    "  created_at = excluded.created_at, "
+    "  last_used = 0, "
+    "  pubkey = excluded.pubkey, "
+    "  provenance = excluded.provenance;";
 
   sqlite3_stmt *stmt = NULL;
   int rc = sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL);
@@ -723,8 +772,8 @@ int signet_store_put_agent_ex(SignetStore *store,
     sqlite3_bind_null(stmt, 4);
   }
   sqlite3_bind_int64(stmt, 5, now);
-  if (pubkey_hex && pubkey_hex[0]) {
-    sqlite3_bind_text(stmt, 6, pubkey_hex, -1, SQLITE_TRANSIENT);
+  if (have_pubkey) {
+    sqlite3_bind_text(stmt, 6, canonical_pubkey, -1, SQLITE_TRANSIENT);
   } else {
     sqlite3_bind_null(stmt, 6);
   }
@@ -736,7 +785,15 @@ int signet_store_put_agent_ex(SignetStore *store,
   sodium_memzero(ciphertext, ct_len);
   free(ciphertext);
 
-  return (rc == SQLITE_DONE) ? 0 : -1;
+  if (rc == SQLITE_DONE) return 0;
+  /* Unique-constraint violation: the pubkey or connect_secret is already
+   * bound to a DIFFERENT agent (same-agent replaces are resolved by the
+   * ON CONFLICT clause above and never reach here). Use the extended errcode
+   * so future non-uniqueness constraints are not misreported as conflicts. */
+  int xerr = sqlite3_extended_errcode(store->db);
+  if (xerr == SQLITE_CONSTRAINT_UNIQUE || xerr == SQLITE_CONSTRAINT_PRIMARYKEY)
+    return 1;
+  return -1;
 }
 
 int signet_store_put_agent(SignetStore *store,
@@ -981,7 +1038,14 @@ int signet_store_set_agent_pubkey(SignetStore *store,
   int changes = sqlite3_changes(store->db);
   sqlite3_finalize(stmt);
 
-  if (rc != SQLITE_DONE) return -1;
+  if (rc != SQLITE_DONE) {
+    /* Unique-index violation: this pubkey is already bound to ANOTHER agent
+     * (duplicate legacy custody keys). Distinct from a generic store error so
+     * the backfill pass can count it per-row instead of aborting. */
+    int xerr = sqlite3_extended_errcode(store->db);
+    if (xerr == SQLITE_CONSTRAINT_UNIQUE) return 2;
+    return -1;
+  }
   return (changes > 0) ? 0 : 1; /* 1 = not found or pubkey already set */
 }
 
