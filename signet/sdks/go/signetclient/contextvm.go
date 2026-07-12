@@ -30,6 +30,9 @@ func (m *MgmtClient) Rotate(ctx context.Context, agent string) error {
 func (m *MgmtClient) SetPolicy(ctx context.Context, agent string, policy map[string]any) error {
 	return m.call(ctx, "agent/set-policy", map[string]any{"agent_id": agent, "policy": policy})
 }
+func (m *MgmtClient) ReissueConnect(ctx context.Context, agent string) error {
+	return m.call(ctx, "agent/reissue-connect", map[string]any{"agent_id": agent})
+}
 func (m *MgmtClient) Status(ctx context.Context) error { return m.call(ctx, "agent/get-status", nil) }
 func (m *MgmtClient) List(ctx context.Context) error   { return m.call(ctx, "agent/list", nil) }
 

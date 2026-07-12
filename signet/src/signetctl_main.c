@@ -14,10 +14,13 @@
 #include "signet/store_audit.h"
 #include "signet/store_secrets.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <glib.h>
 #include <json-glib/json-glib.h>
@@ -51,6 +54,11 @@ static void signetctl_usage(FILE *out) {
     "                 [--expected-pubkey <hex>] [--deliver <bootstrap_pubkey>] [--ttl <sec>]\n"
     "                           Adopt an existing (BYO) keypair as an agent\n"
     "                           (--sec - reads the secret from stdin)\n"
+    "  reissue-connect <agent_id> [--out <path>] [--show-secret]\n"
+    "                           Mint a fresh one-time connect_secret for an\n"
+    "                           existing agent (restart recovery). --out writes\n"
+    "                           the secret atomically to <path> (0600);\n"
+    "                           --show-secret prints it to stdout instead\n"
     "  set-policy <agent_id> <policy-json>\n"
     "                           Set an agent policy\n"
     "  status                   Query daemon health status\n"
@@ -76,6 +84,7 @@ static void signetctl_usage(FILE *out) {
     "Examples:\n"
     "  signetctl provision my-agent\n"
     "  signetctl adopt-existing my-agent --sec nsec1... --expected-pubkey <hex>\n"
+    "  signetctl reissue-connect my-agent --out /run/agent/connect-secret\n"
     "  signetctl revoke my-agent\n"
     "  signetctl status\n"
     "  signetctl list\n",
@@ -96,6 +105,7 @@ static const char *signetctl_contextvm_method(int kind) {
     case SIGNET_KIND_LIST_AGENTS:     return "agent/list";
     case SIGNET_KIND_ROTATE_KEY:      return "agent/rotate-key";
     case SIGNET_KIND_ADOPT_EXISTING:  return "agent/adopt-existing";
+    case SIGNET_KIND_REISSUE_CONNECT: return "agent/reissue-connect";
     default:                          return NULL;
   }
 }
@@ -199,6 +209,99 @@ static void signetctl_print_adopt_result(const char *reply_json) {
   if (aid) printf("agent_id: %s\n", aid);
   if (pk)  printf("pubkey: %s\n", pk);
   if (uri) printf("bunker_uri: %s\n", uri);
+}
+
+/* Atomically write a secret to path with mode 0600: write to a same-directory
+ * temp file (O_EXCL), fsync, then rename over the destination. Returns 0 on
+ * success, -1 on error. Never logs the secret. */
+static int signetctl_write_secret_file(const char *path, const char *secret) {
+  if (!path || !path[0] || !secret) return -1;
+  char *tmp = g_strdup_printf("%s.tmp.%ld", path, (long)getpid());
+  int fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (fd < 0) {
+    fprintf(stderr, "signetctl: failed to create '%s': %s\n", tmp, g_strerror(errno));
+    g_free(tmp);
+    return -1;
+  }
+  size_t len = strlen(secret);
+  size_t off = 0;
+  bool ok = true;
+  while (off < len) {
+    ssize_t wr = write(fd, secret + off, len - off);
+    if (wr < 0) {
+      if (errno == EINTR) continue;
+      ok = false;
+      break;
+    }
+    off += (size_t)wr;
+  }
+  if (ok) ok = (fsync(fd) == 0);
+  close(fd);
+  if (ok && rename(tmp, path) != 0) {
+    fprintf(stderr, "signetctl: failed to rename '%s' -> '%s': %s\n", tmp, path, g_strerror(errno));
+    ok = false;
+  }
+  if (ok) {
+    /* Make the rename durable: fsync the parent directory. */
+    char *dir = g_path_get_dirname(path);
+    int dfd = open(dir, O_RDONLY);
+    if (dfd >= 0) { (void)fsync(dfd); close(dfd); }
+    g_free(dir);
+  }
+  if (!ok) unlink(tmp);
+  g_free(tmp);
+  return ok ? 0 : -1;
+}
+
+/* Handle an agent/reissue-connect JSON-RPC reply. Prints non-secret fields;
+ * the fresh connect_secret is written to out_path (atomic, 0600) when given,
+ * or printed only with --show-secret. Returns process exit code. */
+static int signetctl_handle_reissue_result(const char *reply_json,
+                                           const char *out_path,
+                                           bool show_secret) {
+  g_autoptr(JsonParser) p = json_parser_new();
+  if (!reply_json || !json_parser_load_from_data(p, reply_json, -1, NULL)) {
+    fprintf(stderr, "signetctl: unparseable reissue-connect reply\n");
+    return 1;
+  }
+  JsonNode *root = json_parser_get_root(p);
+  if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
+    fprintf(stderr, "signetctl: malformed reissue-connect reply\n");
+    return 1;
+  }
+  JsonObject *o = json_node_get_object(root);
+  JsonObject *res = o;
+  if (json_object_has_member(o, "result")) {
+    JsonNode *rn = json_object_get_member(o, "result");
+    if (rn && JSON_NODE_HOLDS_OBJECT(rn)) res = json_node_get_object(rn);
+  }
+  const char *aid = json_object_has_member(res, "agent_id") ? json_object_get_string_member(res, "agent_id") : NULL;
+  const char *upk = json_object_has_member(res, "user_pubkey") ? json_object_get_string_member(res, "user_pubkey") : NULL;
+  const char *bpk = json_object_has_member(res, "bunker_pubkey") ? json_object_get_string_member(res, "bunker_pubkey") : NULL;
+  const char *sec = json_object_has_member(res, "connect_secret") ? json_object_get_string_member(res, "connect_secret") : NULL;
+  const char *url = json_object_has_member(res, "bunker_uri") ? json_object_get_string_member(res, "bunker_uri") : NULL;
+
+  if (!sec || !sec[0]) {
+    fprintf(stderr, "signetctl: reply carried no connect_secret\n");
+    return 1;
+  }
+
+  if (aid) printf("agent_id: %s\n", aid);
+  if (upk) printf("user_pubkey: %s\n", upk);
+  if (bpk) printf("bunker_pubkey: %s\n", bpk);
+
+  if (out_path && out_path[0]) {
+    if (signetctl_write_secret_file(out_path, sec) != 0) return 1;
+    printf("connect_secret: written to %s\n", out_path);
+  }
+  if (show_secret) {
+    printf("connect_secret: %s\n", sec);
+    if (url) printf("bunker_uri: %s\n", url);
+  } else if (!out_path) {
+    printf("connect_secret: (withheld; pass --out <path> or --show-secret)\n");
+    return 1;
+  }
+  return 0;
 }
 
 /* ---------------------- ack response handling ----------------------------- */
@@ -348,6 +451,8 @@ int main(int argc, char **argv) {
   int delivery_ttl = 600;
   const char *adopt_sec = NULL;
   const char *adopt_expected_pubkey = NULL;
+  const char *reissue_out_path = NULL;
+  bool reissue_show_secret = false;
 
   if (strcmp(cmd, "provision") == 0) {
     kind = SIGNET_KIND_PROVISION_AGENT;
@@ -382,6 +487,25 @@ int main(int argc, char **argv) {
       return 2;
     }
     agent_id = argv[argi++];
+  } else if (strcmp(cmd, "reissue-connect") == 0) {
+    kind = SIGNET_KIND_REISSUE_CONNECT;
+    if (argi >= argc) {
+      fprintf(stderr, "signetctl: reissue-connect requires <agent_id>\n");
+      return 2;
+    }
+    agent_id = argv[argi++];
+    while (argi < argc) {
+      if (strcmp(argv[argi], "--out") == 0 && (argi + 1) < argc) {
+        reissue_out_path = argv[argi + 1];
+        argi += 2;
+      } else if (strcmp(argv[argi], "--show-secret") == 0) {
+        reissue_show_secret = true;
+        argi += 1;
+      } else {
+        fprintf(stderr, "signetctl: unknown reissue-connect option '%s'\n", argv[argi]);
+        return 2;
+      }
+    }
   } else if (strcmp(cmd, "adopt-existing") == 0) {
     kind = SIGNET_KIND_ADOPT_EXISTING;
     if (argi >= argc) {
@@ -920,10 +1044,15 @@ int main(int argc, char **argv) {
     } else {
       if (kind == SIGNET_KIND_ADOPT_EXISTING) {
         signetctl_print_adopt_result(ack_ctx.response_json);
+        exit_code = 0;
+      } else if (kind == SIGNET_KIND_REISSUE_CONNECT) {
+        exit_code = signetctl_handle_reissue_result(ack_ctx.response_json,
+                                                    reissue_out_path,
+                                                    reissue_show_secret);
       } else {
         printf("Reply received:\n%s\n", ack_ctx.response_json);
+        exit_code = 0;
       }
-      exit_code = 0;
     }
   } else {
     fprintf(stderr, "signetctl: timeout waiting for reply (%ds)\n", SIGNETCTL_TIMEOUT_SEC);
@@ -935,6 +1064,9 @@ cleanup:
     signet_relay_pool_stop(rp);
     signet_relay_pool_free(rp);
   }
+  /* The reply may embed a fresh connect_secret (reissue-connect) or bunker
+   * URI (provision/adopt) — wipe before free. */
+  if (ack_ctx.response_json) secure_wipe(ack_ctx.response_json, strlen(ack_ctx.response_json));
   g_free(ack_ctx.response_json);
   secure_wipe(ack_ctx.provisioner_sk_hex, sizeof(ack_ctx.provisioner_sk_hex));
   g_mutex_clear(&ack_ctx.mu);

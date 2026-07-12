@@ -13,6 +13,8 @@
  *   agent/get-status  - health/status query
  *   agent/list        - enumerate managed agents
  *   agent/rotate-key  - rotate agent keypair
+ *   agent/reissue-connect - mint a fresh one-time connect_secret for an
+ *                       existing agent (restart recovery; ContextVM-only)
  *
  * Relay transport: NIP-59/NIP-17 gift-wrap kind 1059 carrying the inner
  *                  kind-25910 intent.
@@ -95,6 +97,16 @@ extern "C" {
  */
 #define SIGNET_KIND_ADOPT_EXISTING 28060
 /**
+ * SIGNET_KIND_REISSUE_CONNECT:
+ *
+ * Internal management kind for reissue-connect (mint a fresh one-time
+ * connect_secret for an existing agent). ContextVM-only (method
+ * agent/reissue-connect); never subscribed on the legacy wire.
+ *
+ * Since: 1.1
+ */
+#define SIGNET_KIND_REISSUE_CONNECT 28070
+/**
  * SIGNET_KIND_MGMT_ACK:
  *
  * Legacy management event kind for acknowledgements.
@@ -130,6 +142,7 @@ typedef enum {
   SIGNET_MGMT_OP_LIST_AGENTS,
   SIGNET_MGMT_OP_ROTATE_KEY,
   SIGNET_MGMT_OP_ADOPT_EXISTING,
+  SIGNET_MGMT_OP_REISSUE_CONNECT,
 } SignetMgmtOp;
 
 /* Parsed management request from event content JSON. */

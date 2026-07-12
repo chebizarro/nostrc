@@ -485,6 +485,105 @@ int signet_key_store_consume_connect_secret(SignetKeyStore *ks,
   return rc;
 }
 
+int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
+                                            const char *agent_id,
+                                            const char *bunker_pubkey_hex,
+                                            const char *const *relay_urls,
+                                            size_t n_relay_urls,
+                                            char out_pubkey_hex[65],
+                                            char **out_connect_secret,
+                                            char **out_bunker_uri) {
+  if (out_connect_secret) *out_connect_secret = NULL;
+  if (out_bunker_uri) *out_bunker_uri = NULL;
+  if (!ks || !agent_id || !agent_id[0] || !out_pubkey_hex || !out_connect_secret)
+    return -1;
+
+  /* Generate a fresh random connect_secret (32 bytes hex = 64 chars). */
+  uint8_t secret_raw[32];
+  randombytes_buf(secret_raw, sizeof(secret_raw));
+  char connect_secret[65];
+  for (int i = 0; i < 32; i++) sprintf(connect_secret + i * 2, "%02x", secret_raw[i]);
+  connect_secret[64] = '\0';
+  sodium_memzero(secret_raw, sizeof(secret_raw));
+
+  int rc = -1;
+  char *pk_hex = NULL;
+
+  g_mutex_lock(&ks->mu);
+
+  /* Reissue only makes sense with a persistent store — a cache-only key store
+   * has no connect_secret column to update. */
+  if (!ks->store) {
+    g_mutex_unlock(&ks->mu);
+    sodium_memzero(connect_secret, sizeof(connect_secret));
+    return -1;
+  }
+
+  /* The agent must exist. Load the record so we can derive the identity
+   * pubkey even for legacy rows without a populated pubkey column. */
+  SignetAgentRecord rec;
+  memset(&rec, 0, sizeof(rec));
+  int grc = signet_store_get_agent(ks->store, agent_id, &rec);
+  if (grc != 0) {
+    g_mutex_unlock(&ks->mu);
+    sodium_memzero(connect_secret, sizeof(connect_secret));
+    return (grc > 0) ? 1 : -1;
+  }
+
+  if (rec.secret_key && rec.secret_key_len == 32) {
+    char sk_hex[65];
+    for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", rec.secret_key[i]);
+    sk_hex[64] = '\0';
+    pk_hex = nostr_key_get_public(sk_hex);
+    sodium_memzero(sk_hex, sizeof(sk_hex));
+  }
+  signet_agent_record_clear(&rec);
+
+  if (!pk_hex || strlen(pk_hex) != 64) {
+    g_mutex_unlock(&ks->mu);
+    sodium_memzero(connect_secret, sizeof(connect_secret));
+    free(pk_hex);
+    return -1;
+  }
+
+  int64_t now = (int64_t)time(NULL);
+  rc = signet_store_reissue_connect_secret(ks->store, agent_id, connect_secret, now);
+
+  g_mutex_unlock(&ks->mu);
+
+  if (rc != 0) {
+    sodium_memzero(connect_secret, sizeof(connect_secret));
+    free(pk_hex);
+    return (rc > 0) ? 1 : -1;
+  }
+
+  memcpy(out_pubkey_hex, pk_hex, 65);
+  *out_connect_secret = g_strdup(connect_secret);
+
+  /* Build bunker:// URI embedding the fresh secret, if requested.
+   * Format: bunker://<bunker_pubkey>?relay=<url1>&relay=<url2>&secret=<connect_secret> */
+  if (out_bunker_uri && bunker_pubkey_hex && bunker_pubkey_hex[0]) {
+    GString *uri = g_string_new("bunker://");
+    g_string_append(uri, bunker_pubkey_hex);
+    g_string_append_c(uri, '?');
+    for (size_t i = 0; i < n_relay_urls; i++) {
+      if (i > 0) g_string_append_c(uri, '&');
+      char *escaped = g_uri_escape_string(relay_urls[i], NULL, FALSE);
+      g_string_append(uri, "relay=");
+      g_string_append(uri, escaped ? escaped : relay_urls[i]);
+      g_free(escaped);
+    }
+    if (n_relay_urls > 0) g_string_append_c(uri, '&');
+    g_string_append(uri, "secret=");
+    g_string_append(uri, connect_secret);
+    *out_bunker_uri = g_string_free(uri, FALSE);
+  }
+
+  sodium_memzero(connect_secret, sizeof(connect_secret));
+  free(pk_hex);
+  return 0;
+}
+
 int signet_key_store_revoke_agent(SignetKeyStore *ks, const char *agent_id) {
   if (!ks || !agent_id) return -1;
 

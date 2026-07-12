@@ -991,6 +991,32 @@ int signet_store_consume_connect_secret(SignetStore *store,
   return (changes > 0) ? 0 : 1; /* 1 = not found or already consumed */
 }
 
+int signet_store_reissue_connect_secret(SignetStore *store,
+                                        const char *agent_id,
+                                        const char *connect_secret,
+                                        int64_t now) {
+  if (!store || !store->open || !agent_id || !agent_id[0] ||
+      !connect_secret || !connect_secret[0]) {
+    return -1;
+  }
+
+  const char *sql =
+      "UPDATE agents SET connect_secret = ?, last_used = ? WHERE agent_id = ?;";
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL);
+  if (rc != SQLITE_OK) return -1;
+
+  sqlite3_bind_text(stmt, 1, connect_secret, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 2, now);
+  sqlite3_bind_text(stmt, 3, agent_id, -1, SQLITE_TRANSIENT);
+  rc = sqlite3_step(stmt);
+  int changes = sqlite3_changes(store->db);
+  sqlite3_finalize(stmt);
+
+  if (rc != SQLITE_DONE) return -1;
+  return (changes > 0) ? 0 : 1; /* 1 = agent not found */
+}
+
 int signet_store_consume_connect_secret_value(SignetStore *store,
                                               const char *connect_secret,
                                               int64_t now,

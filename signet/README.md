@@ -44,6 +44,7 @@ All provisioning, revocation, and policy management is done through Cascadia Con
 | 25910 | `agent/list` | Enumerate managed agents |
 | 25910 | `agent/rotate-key` | Rotate agent keypair |
 | 25910 | `agent/adopt-existing` | Register an externally supplied (BYO) keypair as an agent |
+| 25910 | `agent/reissue-connect` | Mint a fresh one-time `connect_secret` for an existing agent (restart recovery) |
 
 Management intents are encrypted between provisioner and bunker when transported through gift-wrap. Responses are correlated ContextVM results; legacy `28090` ACKs are only for the disabled-by-default `legacy_28000` compatibility path. Authorization requires the event pubkey to be in the `provisioner_pubkeys` list.
 

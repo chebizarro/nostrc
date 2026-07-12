@@ -157,6 +157,7 @@ All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents
 | 25910 | `agent/list` | Enumerate managed agents |
 | 25910 | `agent/rotate-key` | Rotate agent keypair |
 | 25910 | `agent/adopt-existing` | Register an externally supplied (BYO) keypair as an agent |
+| 25910 | `agent/reissue-connect` | Mint a fresh one-time `connect_secret` for an existing agent |
 
 ### `agent/adopt-existing` (BYO-key)
 
@@ -202,6 +203,63 @@ signetctl adopt-existing <agent_id> --sec <nsec-or-hex> \
 ```
 
 The CLI prints only `agent_id`, `pubkey`, and `bunker_uri`.
+
+### `agent/reissue-connect` (restart recovery)
+
+Mints and persists a fresh one-time `connect_secret` for an **existing** agent,
+replacing whatever secret was there before (consumed or not). This is the
+Nostr-native recovery path for headless clients that consumed their
+`connect_secret` on first NIP-46 connect and then restarted: an authorized
+provisioner asks Signet to reissue instead of re-provisioning, editing the DB,
+or adding a REST refresh API. The `connect_secret` stays single-use — the next
+NIP-46 `connect` consumes the fresh one exactly as it would the original.
+
+Same authorization as other management ops (inner sender must be a configured
+provisioner). The fresh secret is returned only in the NIP-44-encrypted
+ContextVM reply to the requesting provisioner.
+
+**Params:**
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `agent_id` | string | yes | Existing agent to reissue for |
+| `client_pubkey` | 64-hex | no | Current NIP-46 client pubkey (accepted for audit/context; not enforced in v1) |
+| `reason` | string | no | Free-form context, e.g. `restart_recovery` (accepted; not enforced) |
+
+**Result:**
+
+```json
+{
+  "agent_id": "stew",
+  "bunker_pubkey": "<signet bunker pubkey>",
+  "user_pubkey": "<agent identity pubkey>",
+  "connect_secret": "<fresh one-time secret>",
+  "bunker_uri": "bunker://<bunker_pubkey>?relay=<...>&secret=<fresh secret>",
+  "issued_at": 1752380000
+}
+```
+
+**Semantics:** agent must exist → generate a fresh random 32-byte hex secret →
+replace the agent's `connect_secret` in a single UPDATE (old or already-consumed
+secrets become/stay invalid) → return the fresh secret and bunker URL in the
+encrypted reply only. The agent's keypair is untouched (unlike
+`agent/rotate-key`).
+
+**Failure codes:** `not_found`, `reissue_failed`.
+
+**Audit:** op `reissue_connect`, fields `agent_id`, `status` — never secret
+material.
+
+**CLI:**
+
+```
+signetctl reissue-connect <agent_id> [--out <path>] [--show-secret]
+```
+
+The CLI prints `agent_id`, `user_pubkey`, and `bunker_pubkey`. The fresh secret
+is written atomically (0600) to `--out <path>` for consumption by e.g. an
+OpenClaw `nip46ConnectSecret` file backend, or printed only with
+`--show-secret`.
 
 ## Bootstrap Flow
 

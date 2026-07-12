@@ -353,6 +353,31 @@ int signet_store_touch_agent(SignetStore *store,
 int signet_store_consume_connect_secret(SignetStore *store,
                                         const char *agent_id);
 
+/* Replace the connect_secret for an existing agent with a caller-supplied
+ * fresh value (management agent/reissue-connect). Any previously issued or
+ * already-consumed secret for the agent becomes invalid. Also updates
+ * last_used for audit purposes.
+ * Returns 0 on success, 1 if the agent does not exist, -1 on error. */
+/**
+ * signet_store_reissue_connect_secret:
+ * @store: (nullable): a #SignetStore
+ * @agent_id: (not nullable): agent identifier
+ * @connect_secret: (not nullable): fresh one-time connect secret to persist
+ * @now: current Unix time in seconds
+ *
+ * Replaces the agent's one-time connect secret with a fresh value.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.1
+ */
+int signet_store_reissue_connect_secret(SignetStore *store,
+                                        const char *agent_id,
+                                        const char *connect_secret,
+                                        int64_t now);
+
 /* Resolve an agent by connect_secret and consume that secret atomically.
  * If the connect_secret was previously bound to a bootstrap token handoff,
  * the matching bootstrap token must also still be active and will be marked

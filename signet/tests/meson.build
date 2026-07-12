@@ -98,6 +98,14 @@ test_adopt_existing = executable('test_adopt_existing',
   install: false,
 )
 
+test_reissue_connect = executable('test_reissue_connect',
+  'test_reissue_connect.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: false,
+)
+
 test('signet_smoke', test_exe)
 test('replay_cache', test_replay)
 test('policy_engine', test_policy)
@@ -110,6 +118,7 @@ test('nostr_auth', test_nostr_auth)
 test('store_lifecycle', test_store_lifecycle)
 test('db_migration', test_db_migration)
 test('adopt_existing', test_adopt_existing)
+test('reissue_connect', test_reissue_connect)
 
 if get_option('signet_enable_passkeys')
   test_store_passkeys = executable('test_store_passkeys',

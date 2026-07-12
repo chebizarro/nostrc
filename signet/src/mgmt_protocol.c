@@ -51,6 +51,7 @@ SignetMgmtOp signet_mgmt_op_from_kind(int kind) {
     case SIGNET_KIND_LIST_AGENTS:    return SIGNET_MGMT_OP_LIST_AGENTS;
     case SIGNET_KIND_ROTATE_KEY:     return SIGNET_MGMT_OP_ROTATE_KEY;
     case SIGNET_KIND_ADOPT_EXISTING: return SIGNET_MGMT_OP_ADOPT_EXISTING;
+    case SIGNET_KIND_REISSUE_CONNECT: return SIGNET_MGMT_OP_REISSUE_CONNECT;
     default:                         return SIGNET_MGMT_OP_UNKNOWN;
   }
 }
@@ -64,6 +65,7 @@ const char *signet_mgmt_op_to_string(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_LIST_AGENTS:     return "list_agents";
     case SIGNET_MGMT_OP_ROTATE_KEY:      return "rotate_key";
     case SIGNET_MGMT_OP_ADOPT_EXISTING:  return "adopt_existing";
+    case SIGNET_MGMT_OP_REISSUE_CONNECT: return "reissue_connect";
     default:                             return "unknown";
   }
 }
@@ -191,7 +193,8 @@ int signet_mgmt_request_parse(int kind,
                          out_req->op == SIGNET_MGMT_OP_REVOKE_AGENT ||
                          out_req->op == SIGNET_MGMT_OP_SET_POLICY ||
                          out_req->op == SIGNET_MGMT_OP_ROTATE_KEY ||
-                         out_req->op == SIGNET_MGMT_OP_ADOPT_EXISTING);
+                         out_req->op == SIGNET_MGMT_OP_ADOPT_EXISTING ||
+                         out_req->op == SIGNET_MGMT_OP_REISSUE_CONNECT);
 
   if (needs_agent_id && (!out_req->agent_id || !out_req->agent_id[0])) {
     if (out_error) *out_error = g_strdup("agent_id is required");
@@ -408,6 +411,8 @@ static void signet_mgmt_publish_contextvm_reply(SignetMgmtHandler *h,
   char *jsonrpc = signet_mgmt_ack_to_jsonrpc(ack_content);
   if (!jsonrpc) return;
   NostrEvent *gift = nostr_nip17_wrap_dm(h->bunker_sk_hex, recipient_pubkey_hex, jsonrpc);
+  /* jsonrpc may embed a fresh connect_secret / bunker URI — wipe before free. */
+  secure_wipe(jsonrpc, strlen(jsonrpc));
   g_free(jsonrpc);
   if (!gift) return;
   char *event_json = nostr_event_serialize_compact(gift);
@@ -506,6 +511,7 @@ static int signet_mgmt_kind_from_contextvm_method(const char *method) {
   if (strcmp(method, "agent/list") == 0) return SIGNET_KIND_LIST_AGENTS;
   if (strcmp(method, "agent/rotate-key") == 0) return SIGNET_KIND_ROTATE_KEY;
   if (strcmp(method, "agent/adopt-existing") == 0) return SIGNET_KIND_ADOPT_EXISTING;
+  if (strcmp(method, "agent/reissue-connect") == 0) return SIGNET_KIND_REISSUE_CONNECT;
   return 0;
 }
 
@@ -1040,6 +1046,66 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
       break;
     }
 
+    case SIGNET_MGMT_OP_REISSUE_CONNECT: {
+      char user_pubkey_hex[65] = {0};
+      char *fresh_secret = NULL;
+      char *bunker_uri = NULL;
+      int rrc = signet_key_store_reissue_connect_secret(
+          h->keys, req.agent_id,
+          h->bunker_pk_hex,
+          (const char *const *)h->relay_urls, h->n_relay_urls,
+          user_pubkey_hex, &fresh_secret, &bunker_uri);
+      if (rrc == 0 && fresh_secret) {
+        ok = true;
+        code = "connect_reissued";
+        message = g_strdup_printf("fresh connect_secret issued for agent %s", req.agent_id);
+        /* Build the result with JsonBuilder (not printf) so agent_id and the
+         * bunker URI are always correctly JSON-escaped — a malformed result
+         * would be silently dropped by signet_mgmt_build_ack and the fresh
+         * secret never disclosed. */
+        JsonBuilder *rb = json_builder_new();
+        if (rb) {
+          json_builder_begin_object(rb);
+          json_builder_set_member_name(rb, "agent_id");
+          json_builder_add_string_value(rb, req.agent_id);
+          json_builder_set_member_name(rb, "bunker_pubkey");
+          json_builder_add_string_value(rb, h->bunker_pk_hex ? h->bunker_pk_hex : "");
+          json_builder_set_member_name(rb, "user_pubkey");
+          json_builder_add_string_value(rb, user_pubkey_hex);
+          json_builder_set_member_name(rb, "connect_secret");
+          json_builder_add_string_value(rb, fresh_secret);
+          json_builder_set_member_name(rb, "bunker_uri");
+          if (bunker_uri) json_builder_add_string_value(rb, bunker_uri);
+          else json_builder_add_null_value(rb);
+          json_builder_set_member_name(rb, "issued_at");
+          json_builder_add_int_value(rb, now);
+          json_builder_end_object(rb);
+          JsonNode *rroot = json_builder_get_root(rb);
+          JsonGenerator *rgen = json_generator_new();
+          if (rgen && rroot) {
+            json_generator_set_root(rgen, rroot);
+            json_generator_set_pretty(rgen, FALSE);
+            result = json_generator_to_data(rgen, NULL);
+          }
+          if (rgen) g_object_unref(rgen);
+          if (rroot) json_node_free(rroot);
+          g_object_unref(rb);
+        }
+        signet_mgmt_publish_cas_audit(h, "reissue_connect", req.agent_id, "ok", now);
+      } else if (rrc == 1) {
+        code = "not_found";
+        message = g_strdup("agent not found");
+        signet_mgmt_publish_cas_audit(h, "reissue_connect", req.agent_id, "not_found", now);
+      } else {
+        code = "reissue_failed";
+        message = g_strdup("failed to reissue connect secret");
+        signet_mgmt_publish_cas_audit(h, "reissue_connect", req.agent_id, "error", now);
+      }
+      if (fresh_secret) { secure_wipe(fresh_secret, strlen(fresh_secret)); g_free(fresh_secret); }
+      if (bunker_uri) { secure_wipe(bunker_uri, strlen(bunker_uri)); g_free(bunker_uri); }
+      break;
+    }
+
     default:
       code = "unknown_command";
       message = g_strdup("unknown management command");
@@ -1050,10 +1116,15 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
   char *ack = signet_mgmt_build_ack(req.request_id, ok, code, message, result);
   if (ack) {
     signet_mgmt_publish_ack(h, event_pubkey_hex, ack, event_id_hex, now);
+    /* ack may embed secrets carried in result — wipe before free. */
+    secure_wipe(ack, strlen(ack));
     g_free(ack);
   }
 
   g_free(message);
+  /* result may embed a fresh connect_secret/bunker URI (reissue-connect,
+   * provision, adopt-existing) — wipe before free. */
+  if (result) { secure_wipe(result, strlen(result)); }
   g_free(result);
   /* decrypted_content may hold agent_nsec/connect_secret (adopt-existing). */
   if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
