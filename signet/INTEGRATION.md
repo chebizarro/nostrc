@@ -225,6 +225,16 @@ op, which is provisioner-only):
   sender/agent mismatch both return `unauthorized`, so agent existence cannot
   be probed. The audit event records the path (`ok_provisioner` / `ok_self`).
 
+**Applicability of the self path:** signing the request requires possession of
+the agent's identity private key, so self-service applies to **adopted
+(BYO-key) agents** whose host retains its own nsec. Agents **provisioned
+inside Signet** never receive their identity key — they only hold a NIP-46
+client keypair, which has no verified binding to the identity outside an
+established session and is therefore deliberately NOT accepted as an auth
+basis — so they must recover via a provisioner (or the bootstrap-token flow).
+This is intentional: "self" is proven by an unforgeable signature under the
+identity key, never by a claimed `client_pubkey` or request params.
+
 The fresh secret is returned only in the NIP-44-encrypted ContextVM reply to
 the requesting sender.
 
