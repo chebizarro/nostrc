@@ -857,6 +857,12 @@ int main(int argc, char **argv) {
   SignetReplayCache *mgmt_replay = signet_replay_cache_new(&mgmt_replay_cfg);
   signet_mgmt_handler_set_replay_cache(mgmt, mgmt_replay);
 
+  /* Separate replay domain for self-service agent/reissue-connect events so
+   * an agent flooding unique self-reissue intents cannot evict provisioner
+   * event ids from the privileged cache and replay a captured mutation. */
+  SignetReplayCache *mgmt_replay_self = signet_replay_cache_new(&mgmt_replay_cfg);
+  signet_mgmt_handler_set_self_replay_cache(mgmt, mgmt_replay_self);
+
   /* Build a fleet registry adapter.
    * is_in_fleet: all provisioned agents are fleet members.
    * is_denied: check the deny list.
@@ -1154,6 +1160,7 @@ cleanup:
 
   signet_key_store_free(keys);
 
+  signet_replay_cache_free(mgmt_replay_self);
   signet_replay_cache_free(mgmt_replay);
   signet_replay_cache_free(replay);
 

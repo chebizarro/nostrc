@@ -400,6 +400,25 @@ void signet_mgmt_handler_set_deny_list(SignetMgmtHandler *h,
 void signet_mgmt_handler_set_replay_cache(SignetMgmtHandler *h,
                                           struct SignetReplayCache *replay);
 
+/* Attach a SEPARATE replay cache for self-service (non-provisioner)
+ * agent/reissue-connect events. Isolating the domains means an agent
+ * flooding unique self-reissue intents can only churn its own cache — it can
+ * never evict provisioner event ids from the privileged cache within their
+ * TTL and then replay a captured provisioner mutation. Wire BOTH caches; if
+ * this one is absent, self-service events fall back to the provisioner
+ * cache (functional, but without the isolation guarantee). Safe on NULL. */
+/**
+ * signet_mgmt_handler_set_self_replay_cache:
+ * @h: (not nullable): a #SignetMgmtHandler
+ * @replay: (nullable): replay cache for self-service reissue events
+ *
+ * Attach a dedicated replay cache for self-service reissue events so they cannot evict provisioner entries. Safe to call with NULL h or NULL replay.
+ *
+ * Since: 1.1
+ */
+void signet_mgmt_handler_set_self_replay_cache(SignetMgmtHandler *h,
+                                               struct SignetReplayCache *replay);
+
 /* Handle an incoming management event.
  * Verifies authorization, parses, executes, publishes ack.
  * Returns 0 on success (ack published), -1 on error. */

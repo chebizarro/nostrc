@@ -504,6 +504,7 @@ int signet_key_store_consume_connect_secret(SignetKeyStore *ks,
 
 int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
                                             const char *agent_id,
+                                            const char *expected_user_pubkey,
                                             const char *bunker_pubkey_hex,
                                             const char *const *relay_urls,
                                             size_t n_relay_urls,
@@ -561,6 +562,18 @@ int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
     sodium_memzero(connect_secret, sizeof(connect_secret));
     free(pk_hex);
     return -1;
+  }
+
+  /* Identity binding, checked ATOMICALLY with the mutation (same mutex hold):
+   * when the caller pins an expected identity (self-service authorization),
+   * a concurrent rotate between the caller's auth check and this call must
+   * not let the OLD key mint a secret for the NEW identity. */
+  if (expected_user_pubkey && expected_user_pubkey[0] &&
+      g_ascii_strcasecmp(pk_hex, expected_user_pubkey) != 0) {
+    g_mutex_unlock(&ks->mu);
+    sodium_memzero(connect_secret, sizeof(connect_secret));
+    free(pk_hex);
+    return 2; /* identity mismatch */
   }
 
   int64_t now = (int64_t)time(NULL);

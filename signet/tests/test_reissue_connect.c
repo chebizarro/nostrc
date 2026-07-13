@@ -105,7 +105,7 @@ static void test_reissue_success(void) {
   char re_pk[65] = {0};
   char *fresh = NULL;
   char *uri = NULL;
-  int rc = signet_key_store_reissue_connect_secret(ks, "stew", BUNKER_PK, RELAYS, 1,
+  int rc = signet_key_store_reissue_connect_secret(ks, "stew", NULL, BUNKER_PK, RELAYS, 1,
                                                    re_pk, &fresh, &uri);
   assert(rc == 0);
   assert(fresh != NULL && is_hex64(fresh));
@@ -162,17 +162,33 @@ static void test_reissue_after_consumption(void) {
   /* Reissue mints a fresh secret that validates again. */
   char re_pk[65] = {0};
   char *fresh = NULL;
-  assert(signet_key_store_reissue_connect_secret(ks, "stew", NULL, NULL, 0,
+  assert(signet_key_store_reissue_connect_secret(ks, "stew", NULL, NULL, NULL, 0,
                                                  re_pk, &fresh, NULL) == 0);
   assert(fresh && is_hex64(fresh));
   assert(signet_key_store_validate_connect_secret(ks, "stew", fresh) == 0);
 
+  /* Identity pinning: reissue with a mismatched expected pubkey is refused
+   * (2) and does not mutate — the concurrent-rotate guard. */
+  {
+    char *pinned = NULL;
+    assert(signet_key_store_reissue_connect_secret(ks, "stew",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        NULL, NULL, 0, re_pk, &pinned, NULL) == 2);
+    assert(pinned == NULL);
+    /* Pinning the CORRECT identity succeeds. */
+    assert(signet_key_store_reissue_connect_secret(ks, "stew", pk_hex,
+        NULL, NULL, 0, re_pk, &pinned, NULL) == 0);
+    assert(pinned != NULL);
+    sodium_memzero(pinned, strlen(pinned));
+    g_free(pinned);
+  }
+
   /* Reissue twice: only the latest secret is valid. */
   char *fresh2 = NULL;
-  assert(signet_key_store_reissue_connect_secret(ks, "stew", NULL, NULL, 0,
+  assert(signet_key_store_reissue_connect_secret(ks, "stew", NULL, NULL, NULL, 0,
                                                  re_pk, &fresh2, NULL) == 0);
   char *fresh3 = NULL;
-  assert(signet_key_store_reissue_connect_secret(ks, "stew", NULL, NULL, 0,
+  assert(signet_key_store_reissue_connect_secret(ks, "stew", NULL, NULL, NULL, 0,
                                                  re_pk, &fresh3, NULL) == 0);
   assert(strcmp(fresh2, fresh3) != 0);
   {
@@ -200,7 +216,7 @@ static void test_reissue_unknown_agent(void) {
 
   char re_pk[65] = {0};
   char *fresh = NULL;
-  int rc = signet_key_store_reissue_connect_secret(ks, "nope", BUNKER_PK, RELAYS, 1,
+  int rc = signet_key_store_reissue_connect_secret(ks, "nope", NULL, BUNKER_PK, RELAYS, 1,
                                                    re_pk, &fresh, NULL);
   assert(rc == 1);
   assert(fresh == NULL);

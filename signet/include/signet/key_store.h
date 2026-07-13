@@ -273,17 +273,25 @@ int signet_key_store_consume_connect_secret(SignetKeyStore *ks,
 /* Mint and persist a fresh one-time connect_secret for an EXISTING agent
  * (management agent/reissue-connect). The previous secret — consumed or not —
  * becomes invalid. Requires a backing store (fails in cache-only mode).
+ * When @expected_user_pubkey is non-NULL, the reissue proceeds only if the
+ * agent's CURRENT identity pubkey equals it (case-insensitive), checked
+ * atomically with the mutation under the key-store mutex — self-service
+ * callers pass the authenticated sender so a concurrent rotate cannot let a
+ * superseded key mint a secret for the new identity (returns 2 on mismatch).
+ * Provisioner callers pass NULL.
  * On success:
  *   - *out_connect_secret receives the fresh secret (caller wipes + g_free);
  *   - out_pubkey_hex (>= 65 bytes) receives the agent identity pubkey;
  *   - when @bunker_pubkey_hex/relays are given and out_bunker_uri is non-NULL,
  *     *out_bunker_uri receives a bunker:// URI embedding the fresh secret
  *     (caller wipes + g_free).
- * Returns 0 on success, 1 if the agent does not exist, -1 on error. */
+ * Returns 0 on success, 1 if the agent does not exist, 2 on identity
+ * mismatch, -1 on error. */
 /**
  * signet_key_store_reissue_connect_secret:
  * @ks: (not nullable): a #SignetKeyStore
  * @agent_id: (not nullable): agent identifier
+ * @expected_user_pubkey: (nullable): require the agent's current identity pubkey to equal this 64-hex value
  * @bunker_pubkey_hex: (nullable): bunker pubkey for bunker:// URI
  * @relay_urls: (nullable) (array length=n_relay_urls): relay URLs for the URI
  * @n_relay_urls: number of elements
@@ -301,6 +309,7 @@ int signet_key_store_consume_connect_secret(SignetKeyStore *ks,
  */
 int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
                                             const char *agent_id,
+                                            const char *expected_user_pubkey,
                                             const char *bunker_pubkey_hex,
                                             const char *const *relay_urls,
                                             size_t n_relay_urls,

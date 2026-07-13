@@ -285,7 +285,8 @@ struct SignetMgmtHandler {
   SignetAuditLogger *audit;
   SignetPolicyStore *policy_store;
   SignetDenyList *deny;   /* shared live deny list (owned by daemon) */
-  SignetReplayCache *replay; /* shared replay cache (owned by daemon) */
+  SignetReplayCache *replay;      /* provisioner replay cache (owned by daemon) */
+  SignetReplayCache *replay_self; /* self-service replay cache (owned by daemon) */
   bool legacy_28000_enabled;
   bool reply_contextvm;
 
@@ -365,6 +366,12 @@ void signet_mgmt_handler_set_replay_cache(SignetMgmtHandler *h,
                                           SignetReplayCache *replay) {
   if (!h) return;
   h->replay = replay;
+}
+
+void signet_mgmt_handler_set_self_replay_cache(SignetMgmtHandler *h,
+                                               SignetReplayCache *replay) {
+  if (!h) return;
+  h->replay_self = replay;
 }
 
 void signet_mgmt_handler_set_deny_list(SignetMgmtHandler *h, SignetDenyList *deny) {
@@ -668,8 +675,35 @@ static void signet_mgmt_publish_cas_audit(SignetMgmtHandler *h,
   if (!evt) return;
   nostr_event_set_kind(evt, CAS_AUDIT);
   nostr_event_set_created_at(evt, now);
-  char *content = g_strdup_printf("{\"domain\":\"signet\",\"type\":\"%s\",\"agent\":\"%s\",\"status\":\"%s\"}",
-                                  audit_type, agent_id ? agent_id : "", status ? status : "ok");
+  /* JsonBuilder, not printf: agent_id comes from request params, and quotes/
+   * control characters must not yield malformed (or misleading) bunker-signed
+   * audit content. */
+  char *content = NULL;
+  {
+    JsonBuilder *ab = json_builder_new();
+    if (ab) {
+      json_builder_begin_object(ab);
+      json_builder_set_member_name(ab, "domain");
+      json_builder_add_string_value(ab, "signet");
+      json_builder_set_member_name(ab, "type");
+      json_builder_add_string_value(ab, audit_type);
+      json_builder_set_member_name(ab, "agent");
+      json_builder_add_string_value(ab, agent_id ? agent_id : "");
+      json_builder_set_member_name(ab, "status");
+      json_builder_add_string_value(ab, status ? status : "ok");
+      json_builder_end_object(ab);
+      JsonNode *aroot = json_builder_get_root(ab);
+      JsonGenerator *agen = json_generator_new();
+      if (agen && aroot) {
+        json_generator_set_root(agen, aroot);
+        json_generator_set_pretty(agen, FALSE);
+        content = json_generator_to_data(agen, NULL);
+      }
+      if (agen) g_object_unref(agen);
+      if (aroot) json_node_free(aroot);
+      g_object_unref(ab);
+    }
+  }
   nostr_event_set_content(evt, content ? content : "{}");
   g_free(content);
   NostrTags *tags = nostr_tags_new(0);
@@ -784,6 +818,10 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
                                                    self_pk, sizeof(self_pk));
     if (!known || !event_pubkey_hex || !event_pubkey_hex[0] ||
         g_ascii_strcasecmp(self_pk, event_pubkey_hex) != 0) {
+      /* Encrypted ack only — deliberately NO public CAS audit here: this is
+       * an unauthenticated claim about an agent_id, and publishing
+       * bunker-signed audits for arbitrary claims would hand strangers an
+       * audit-spam/poisoning primitive. */
       char *uack = signet_mgmt_build_ack(req.request_id, false, "unauthorized",
                                          "sender is neither a provisioner nor the target agent",
                                          NULL);
@@ -791,8 +829,34 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
         signet_mgmt_publish_ack(h, event_pubkey_hex, uack, event_id_hex, now);
         g_free(uack);
       }
+      if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
+      signet_mgmt_request_clear(&req);
+      return -1;
+    }
+  }
+
+  /* 2a-bis) Suspension gate for reissue-connect, BOTH auth paths, also before
+   * the replay mark: a deny-listed agent must not obtain a fresh
+   * connect_secret (self-service cannot bypass suspension; a provisioner
+   * must lift the deny entry first). Keyed by PUBKEY only, like the
+   * adopt-existing gate — deny_list_remove clears only the pubkey cache key,
+   * so matching agent_id would keep blocking an un-suspended agent until
+   * restart. */
+  if (req.op == SIGNET_MGMT_OP_REISSUE_CONNECT && h->deny) {
+    char target_pk[65] = {0};
+    bool have_pk = signet_key_store_get_agent_pubkey(
+        h->keys, req.agent_id, target_pk, sizeof(target_pk));
+    if ((have_pk && signet_deny_list_contains(h->deny, target_pk)) ||
+        (event_pubkey_hex && event_pubkey_hex[0] &&
+         signet_deny_list_contains(h->deny, event_pubkey_hex))) {
+      char *dack = signet_mgmt_build_ack(req.request_id, false, "deny_listed",
+                                         "agent or sender is deny-listed", NULL);
+      if (dack) {
+        signet_mgmt_publish_ack(h, event_pubkey_hex, dack, event_id_hex, now);
+        g_free(dack);
+      }
       signet_mgmt_publish_cas_audit(h, "reissue_connect", req.agent_id,
-                                    "unauthorized", now);
+                                    "deny_listed", now);
       if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
       signet_mgmt_request_clear(&req);
       return -1;
@@ -809,9 +873,16 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
    * is passed for the timestamp and skew is effectively not enforced here
    * (history bounds come from the subscription since-floor and
    * mgmt_accept_after). Fail closed on a missing event id. */
-  if (h->replay) {
+  /* Self-service events are marked in their OWN replay domain so an agent
+   * flooding unique self-reissue intents can never evict provisioner event
+   * ids from the privileged cache within their TTL (replay-then-re-execute).
+   * Falls back to the provisioner cache only if no self cache was wired. */
+  SignetReplayCache *replay_domain =
+      sender_is_provisioner ? h->replay
+                            : (h->replay_self ? h->replay_self : h->replay);
+  if (replay_domain) {
     SignetReplayResult rr = signet_replay_check_and_mark(
-        h->replay, event_id_hex, now, now);
+        replay_domain, event_id_hex, now, now);
     if (rr == SIGNET_REPLAY_DUPLICATE) {
       /* Silently drop duplicates (like unauthorized events). The FIRST
        * delivery already published the authoritative ack — publishing an
@@ -1147,8 +1218,13 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
       char user_pubkey_hex[65] = {0};
       char *fresh_secret = NULL;
       char *bunker_uri = NULL;
+      /* Self-service pins the authenticated sender as the required identity;
+       * the key store re-verifies it ATOMICALLY with the mutation so a
+       * concurrent rotate between step 2a and here cannot let the superseded
+       * key mint a secret for the new identity. */
       int rrc = signet_key_store_reissue_connect_secret(
           h->keys, req.agent_id,
+          sender_is_provisioner ? NULL : event_pubkey_hex,
           h->bunker_pk_hex,
           (const char *const *)h->relay_urls, h->n_relay_urls,
           user_pubkey_hex, &fresh_secret, &bunker_uri);
@@ -1196,6 +1272,11 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
         code = "not_found";
         message = g_strdup("agent not found");
         signet_mgmt_publish_cas_audit(h, "reissue_connect", req.agent_id, "not_found", now);
+      } else if (rrc == 2) {
+        /* Identity changed between authorization and execution (concurrent
+         * rotate). The superseded key is no longer this agent. */
+        code = "unauthorized";
+        message = g_strdup("sender is neither a provisioner nor the target agent");
       } else {
         code = "reissue_failed";
         message = g_strdup("failed to reissue connect secret");

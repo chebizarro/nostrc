@@ -17,6 +17,7 @@
 #include "signet/key_store.h"
 #include "signet/mgmt_protocol.h"
 #include "signet/replay_cache.h"
+#include "signet/revocation.h"
 #include "signet/store.h"
 #include "signet/audit_logger.h"
 
@@ -71,6 +72,8 @@ typedef struct {
   SignetKeyStore *ks;
   SignetMgmtHandler *mgmt;
   SignetReplayCache *replay;
+  SignetReplayCache *replay_self;
+  SignetDenyList *deny;
   char *db_path;
   char bunker_sk_hex[65];
   char bunker_pk_hex[65];
@@ -129,14 +132,28 @@ static void fixture_setup(Fixture *f) {
   assert(f->replay != NULL);
   signet_mgmt_handler_set_replay_cache(f->mgmt, f->replay);
 
+  /* Deliberately TINY self-service replay domain so the isolation test can
+   * cheaply overflow it. */
+  SignetReplayCacheConfig scfg = { .max_entries = 8, .ttl_seconds = 300, .skew_seconds = 300 };
+  f->replay_self = signet_replay_cache_new(&scfg);
+  assert(f->replay_self != NULL);
+  signet_mgmt_handler_set_self_replay_cache(f->mgmt, f->replay_self);
+
+  /* Live deny list, shared with the handler exactly as signetd wires it. */
+  f->deny = signet_deny_list_new(signet_key_store_get_store(f->ks));
+  assert(f->deny != NULL);
+  signet_mgmt_handler_set_deny_list(f->mgmt, f->deny);
+
   adopt_agent(f, "stew", f->stew_sk_hex, f->stew_pk_hex, "stew-initial");
   adopt_agent(f, "other", f->other_sk_hex, f->other_pk_hex, "other-initial");
 }
 
 static void fixture_teardown(Fixture *f) {
   signet_mgmt_handler_free(f->mgmt);
+  signet_deny_list_free(f->deny);
   signet_key_store_free(f->ks);
   signet_replay_cache_free(f->replay);
+  signet_replay_cache_free(f->replay_self);
   unlink(f->db_path);
   g_free(f->db_path);
   sodium_memzero(f->bunker_sk_hex, sizeof(f->bunker_sk_hex));
@@ -310,6 +327,90 @@ static void test_self_service_does_not_leak_to_other_methods(void) {
   printf("test_self_service_does_not_leak_to_other_methods: PASS\n");
 }
 
+/* Replay-domain isolation: an agent flooding unique self-reissue intents
+ * must not evict provisioner event ids from the privileged replay cache
+ * (which would allow re-executing a captured provisioner mutation). */
+static void test_self_flood_cannot_evict_provisioner_entries(void) {
+  Fixture f;
+  fixture_setup(&f);
+  int64_t now = 1752380000;
+
+  /* A provisioner mutation is executed and its event id marked. */
+  assert(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-priv", now) == 0);
+
+  /* Flood: 24 unique self-service events — 3x the self cache capacity (8),
+   * enough to have fully cycled a shared cache of that size. */
+  for (int i = 0; i < 24; i++) {
+    char evt[32];
+    snprintf(evt, sizeof(evt), "evt-flood-%d", i);
+    assert(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", evt, now) == 0);
+  }
+
+  /* The captured provisioner event still cannot be replayed. */
+  assert(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-priv", now) == -1);
+
+  fixture_teardown(&f);
+  printf("test_self_flood_cannot_evict_provisioner_entries: PASS\n");
+}
+
+/* Suspension: a deny-listed (but not revoked) agent must not obtain a fresh
+ * connect_secret via self-service OR via a provisioner, until the deny entry
+ * is lifted. Suspension of one agent must not affect others. */
+static void test_suspended_agent_cannot_bypass(void) {
+  Fixture f;
+  fixture_setup(&f);
+  int64_t now = 1752380000;
+
+  /* Suspend stew: deny-list its pubkey WITHOUT revoking/wiping the key. */
+  assert(signet_deny_list_add(f.deny, f.stew_pk_hex, "stew", "suspended", now) == 0);
+
+  /* Self-service reissue is refused; the stored secret is untouched. */
+  assert(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-d1", now) == -1);
+  char *s = read_connect_secret(&f, "stew");
+  assert(s && strcmp(s, "stew-initial") == 0);
+  sodium_memzero(s, strlen(s)); g_free(s);
+
+  /* Even a provisioner cannot mint for a suspended agent. */
+  assert(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-d2", now) == -1);
+  s = read_connect_secret(&f, "stew");
+  assert(s && strcmp(s, "stew-initial") == 0);
+  sodium_memzero(s, strlen(s)); g_free(s);
+
+  /* Suspension is scoped: the other agent still self-services fine. */
+  assert(send_reissue(&f, f.other_sk_hex, f.other_pk_hex, "other", "evt-d3", now) == 0);
+
+  /* Lifting the suspension restores self-service. */
+  assert(signet_deny_list_remove(f.deny, f.stew_pk_hex) == 0);
+  assert(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-d4", now) == 0);
+  s = read_connect_secret(&f, "stew");
+  assert(s && strcmp(s, "stew-initial") != 0);
+  sodium_memzero(s, strlen(s)); g_free(s);
+
+  fixture_teardown(&f);
+  printf("test_suspended_agent_cannot_bypass: PASS\n");
+}
+
+/* Full revocation: the key is wiped, so the revoked agent can no longer
+ * self-authorize at all, and a provisioner gets not_found. */
+static void test_revoked_agent_cannot_reissue(void) {
+  Fixture f;
+  fixture_setup(&f);
+  int64_t now = 1752380000;
+
+  SignetStore *st = signet_key_store_get_store(f.ks);
+  assert(st != NULL);
+  assert(signet_revoke_agent(st, f.ks, f.deny, NULL, "stew", f.stew_pk_hex,
+                             "test revoke", now) == 0);
+
+  /* Self-service with the (formerly valid) agent key is refused. */
+  assert(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-v1", now) == -1);
+  /* Provisioner reissue for the revoked agent fails too (row is gone). */
+  assert(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-v2", now) == -1);
+
+  fixture_teardown(&f);
+  printf("test_revoked_agent_cannot_reissue: PASS\n");
+}
+
 int main(void) {
   if (sodium_init() < 0) {
     fprintf(stderr, "sodium_init failed\n");
@@ -322,6 +423,9 @@ int main(void) {
   test_unknown_sender_cannot_reissue();
   test_self_service_replay_executes_once();
   test_self_service_does_not_leak_to_other_methods();
+  test_self_flood_cannot_evict_provisioner_entries();
+  test_suspended_agent_cannot_bypass();
+  test_revoked_agent_cannot_reissue();
 
   printf("All reissue self-service tests passed.\n");
   return 0;

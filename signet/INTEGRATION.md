@@ -249,13 +249,20 @@ the requesting sender.
 }
 ```
 
-**Semantics:** agent must exist → generate a fresh random 32-byte hex secret →
+**Semantics:** agent must exist → deny-list gate (below) → generate a fresh random 32-byte hex secret →
 replace the agent's `connect_secret` in a single UPDATE (old or already-consumed
 secrets become/stay invalid) → return the fresh secret and bunker URL in the
 encrypted reply only. The agent's keypair is untouched (unlike
 `agent/rotate-key`).
 
-**Failure codes:** `not_found`, `reissue_failed`.
+**Suspension/revocation:** a deny-listed agent cannot obtain a fresh secret on
+EITHER auth path — a suspended agent cannot self-service around its
+suspension, and a provisioner must lift the deny entry before reissuing
+(`deny_listed`, mirroring the adopt-existing gate; keyed by pubkey). A fully
+revoked agent's key is wiped, so self-service fails `unauthorized` and
+provisioner reissue fails `not_found`.
+
+**Failure codes:** `unauthorized`, `deny_listed`, `not_found`, `reissue_failed`.
 
 **Audit:** op `reissue_connect`, fields `agent_id`, `status` — never secret
 material.
