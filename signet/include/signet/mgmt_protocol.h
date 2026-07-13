@@ -19,6 +19,10 @@
  * Relay transport: NIP-59/NIP-17 gift-wrap kind 1059 carrying the inner
  *                  kind-25910 intent.
  * Authorization: inner sender pubkey must be in provisioner_pubkeys list.
+ *                Exception: agent/reissue-connect is also authorized when the
+ *                sender IS the target agent (sender pubkey equals the agent's
+ *                identity pubkey) — self-service connect_secret recovery. The
+ *                self path grants no power over any other agent or method.
  *
  * Deprecated compatibility: the 28000-series event kinds and 28090 ACK are
  * available only when legacy_28000 is explicitly enabled.

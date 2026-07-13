@@ -605,7 +605,18 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
                                       const char *event_id_hex,
                                       int64_t now) {
   if (!h) return -1;
-  if (!signet_mgmt_is_authorized(event_pubkey_hex,
+
+  int legacy_kind = 0;
+  char *legacy_json = signet_mgmt_contextvm_to_legacy_json(content_json, &legacy_kind);
+
+  /* agent/reissue-connect additionally supports SELF-SERVICE authorization:
+   * a non-provisioner sender may reissue its own connect_secret. That check
+   * needs the parsed agent_id, so for this one method the sender check is
+   * deferred to the execution path in handle_event. Every other method (and
+   * every unknown method) remains provisioner-only and is rejected here. */
+  bool defer_auth = (legacy_kind == SIGNET_KIND_REISSUE_CONNECT);
+  if (!defer_auth &&
+      !signet_mgmt_is_authorized(event_pubkey_hex,
                                  (const char *const *)h->provisioner_pubkeys,
                                  h->n_provisioner_pubkeys)) {
     h->reply_contextvm = true;
@@ -613,11 +624,10 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
     signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now);
     h->reply_contextvm = false;
     g_free(err);
+    if (legacy_json) { secure_wipe(legacy_json, strlen(legacy_json)); g_free(legacy_json); }
     return -1;
   }
 
-  int legacy_kind = 0;
-  char *legacy_json = signet_mgmt_contextvm_to_legacy_json(content_json, &legacy_kind);
   if (!legacy_json || legacy_kind == 0) {
     h->reply_contextvm = true;
     char *err = g_strdup("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32601,\"message\":\"unknown Signet ContextVM method\"},\"id\":null}");
@@ -689,10 +699,17 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
                                      int64_t now) {
   if (!h) return -1;
 
-  /* 1) Authorization check. */
-  if (!signet_mgmt_is_authorized(event_pubkey_hex,
-                                 (const char *const *)h->provisioner_pubkeys,
-                                 h->n_provisioner_pubkeys)) {
+  /* 1) Authorization check. agent/reissue-connect alone also admits the
+   * target agent itself; its sender-vs-agent check runs after parse (the
+   * agent_id is needed) in the execution case below. The sender pubkey is
+   * trustworthy on every ingress path: plain events are Schnorr-verified
+   * before dispatch (relay_pool NPA-01) and gift-wrapped intents take the
+   * authenticated seal author from nostr_nip17_decrypt_dm. */
+  bool sender_is_provisioner =
+      signet_mgmt_is_authorized(event_pubkey_hex,
+                                (const char *const *)h->provisioner_pubkeys,
+                                h->n_provisioner_pubkeys);
+  if (!sender_is_provisioner && kind != SIGNET_KIND_REISSUE_CONNECT) {
     return -1; /* silently drop unauthorized events */
   }
 
@@ -751,6 +768,35 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
     g_free(parse_err);
     if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
     return -1;
+  }
+
+  /* 2a) Deferred self-service authorization for agent/reissue-connect: a
+   * non-provisioner sender must BE the target agent — the signed sender
+   * pubkey must equal the agent's identity pubkey, resolved from custody
+   * (never from request params). This runs BEFORE the replay mark so
+   * unauthorized floods cannot churn the replay cache and evict legitimate
+   * management event ids within their TTL. An unknown agent_id gets the same
+   * "unauthorized" as a mismatch so a stranger cannot probe which agent_ids
+   * exist. (Senders of every other kind were already gated above.) */
+  if (req.op == SIGNET_MGMT_OP_REISSUE_CONNECT && !sender_is_provisioner) {
+    char self_pk[65] = {0};
+    bool known = signet_key_store_get_agent_pubkey(h->keys, req.agent_id,
+                                                   self_pk, sizeof(self_pk));
+    if (!known || !event_pubkey_hex || !event_pubkey_hex[0] ||
+        g_ascii_strcasecmp(self_pk, event_pubkey_hex) != 0) {
+      char *uack = signet_mgmt_build_ack(req.request_id, false, "unauthorized",
+                                         "sender is neither a provisioner nor the target agent",
+                                         NULL);
+      if (uack) {
+        signet_mgmt_publish_ack(h, event_pubkey_hex, uack, event_id_hex, now);
+        g_free(uack);
+      }
+      signet_mgmt_publish_cas_audit(h, "reissue_connect", req.agent_id,
+                                    "unauthorized", now);
+      if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
+      signet_mgmt_request_clear(&req);
+      return -1;
+    }
   }
 
   /* 2b) Replay protection: each delivered event id executes at most once per
@@ -1094,6 +1140,10 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
     }
 
     case SIGNET_MGMT_OP_REISSUE_CONNECT: {
+      /* Authorization already enforced in step 2a: a non-provisioner sender
+       * reaching this point IS the target agent. */
+      const char *auth_path = sender_is_provisioner ? "provisioner" : "self";
+
       char user_pubkey_hex[65] = {0};
       char *fresh_secret = NULL;
       char *bunker_uri = NULL;
@@ -1138,7 +1188,10 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
           if (rroot) json_node_free(rroot);
           g_object_unref(rb);
         }
-        signet_mgmt_publish_cas_audit(h, "reissue_connect", req.agent_id, "ok", now);
+        signet_mgmt_publish_cas_audit(h, "reissue_connect", req.agent_id,
+                                      (strcmp(auth_path, "self") == 0)
+                                          ? "ok_self" : "ok_provisioner",
+                                      now);
       } else if (rrc == 1) {
         code = "not_found";
         message = g_strdup("agent not found");

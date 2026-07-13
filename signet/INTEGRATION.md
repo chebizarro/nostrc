@@ -214,9 +214,19 @@ provisioner asks Signet to reissue instead of re-provisioning, editing the DB,
 or adding a REST refresh API. The `connect_secret` stays single-use — the next
 NIP-46 `connect` consumes the fresh one exactly as it would the original.
 
-Same authorization as other management ops (inner sender must be a configured
-provisioner). The fresh secret is returned only in the NIP-44-encrypted
-ContextVM reply to the requesting provisioner.
+Authorization accepts **two** sender identities (unlike every other management
+op, which is provisioner-only):
+
+- a configured provisioner (fleet control — can reissue for any agent), or
+- **the target agent itself**: the signed sender pubkey (gift-wrap seal
+  author) equals the agent's identity pubkey. Self-service lets a restarted
+  headless agent recover its own connect path using its own key — it grants no
+  power over other agents or other methods. An unknown `agent_id` and a
+  sender/agent mismatch both return `unauthorized`, so agent existence cannot
+  be probed. The audit event records the path (`ok_provisioner` / `ok_self`).
+
+The fresh secret is returned only in the NIP-44-encrypted ContextVM reply to
+the requesting sender.
 
 **Params:**
 
