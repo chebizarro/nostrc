@@ -7,6 +7,7 @@ Signet is a NIP-46 compliant Nostr bunker server built for managing cryptographi
 ### Core Signing
 
 - **NIP-46 Remote Signing** — Signs Nostr events on behalf of registered agents over relay-based NIP-46 sessions
+- **Persistent Client Pairing** — The one-time `connect_secret` is a pairing bootstrap: it is consumed atomically with a durable `client_pubkey → agent` binding, so bound clients reconnect across agent AND daemon restarts with no secret and no operator (identity-pinned; suspension/revocation take effect immediately)
 - **NIP-04 / NIP-44 Encryption** — Encrypt and decrypt messages for agents using standard Nostr encryption protocols, including NIP-44 v2 `nip44_encrypt` / `nip44_decrypt` over NIP-46
 - **Hot Key Cache** — `sodium_malloc`-backed, `mlock`'d GHashTable for zero-latency signing (no disk read on the sign path)
 - **SQLCipher Persistence** — AES-256 encrypted SQLite database for agent records, key material, credentials, leases, and audit logs, verified at startup with `PRAGMA cipher_version` plus a keyed read
@@ -48,7 +49,7 @@ All provisioning, revocation, and policy management is done through Cascadia Con
 | 25910 | `agent/list-clients` | List an agent's persistent NIP-46 client bindings |
 | 25910 | `agent/revoke-client` | Soft-revoke a NIP-46 client binding (client must re-pair) |
 
-Management intents are encrypted between provisioner and bunker when transported through gift-wrap. Responses are correlated ContextVM results; legacy `28090` ACKs are only for the disabled-by-default `legacy_28000` compatibility path. Authorization requires the event pubkey to be in the `provisioner_pubkeys` list.
+Management intents are encrypted between provisioner and bunker when transported through gift-wrap. Responses are correlated ContextVM results; legacy `28090` ACKs are only for the disabled-by-default `legacy_28000` compatibility path. Authorization requires the event pubkey to be in the `provisioner_pubkeys` list, with one exception: `agent/reissue-connect` is also authorized when the signed sender IS the target agent (self-service re-pairing; grants no power over other agents or methods). Each delivered management event id executes at most once per replay-cache TTL, so relay redelivery and history replay cannot re-run non-idempotent commands; self-service events are isolated in their own replay domain.
 
 ### Bootstrap & Onboarding
 
@@ -98,7 +99,7 @@ Fleet Cmdr → NIP-17 bootstrap → Relay → Agent → POST /bootstrap → sign
 |----------------------|----------------------------------------------------------------|
 | **signetd**          | Main daemon; wires all subsystems with config-gated activation |
 | **signetctl**        | CLI for remote management and local store introspection        |
-| **NIP-46 Server**    | Handles `sign_event`, `get_public_key`, `connect`, NIP-04/NIP-44 encryption, `get_relays`, `ping` |
+| **NIP-46 Server**    | Handles `sign_event`, `get_public_key`, `connect` (pairing + binding reconnect), NIP-04/NIP-44 encryption, `get_relays`, `ping`; resolves clients via persistent, identity-pinned bindings |
 | **Key Store**        | `mlock`'d GHashTable + SQLCipher persistence                   |
 | **Policy Store**     | File-backed (GKeyFile) with SIGHUP reload and TTL              |
 | **Policy Engine**    | Evaluates requests against per-agent policy and rate limits    |
@@ -271,6 +272,20 @@ All configuration can be overridden with `SIGNET_`-prefixed environment variable
 # Provision a new agent identity
 signetctl provision my-agent
 
+# Adopt an existing (BYO) keypair as an agent
+signetctl adopt-existing my-agent --sec nsec1... --expected-pubkey <hex>
+
+# Mint a fresh one-time connect_secret (forced re-pairing);
+# --out writes it atomically (0600) for a file-backed client config
+signetctl reissue-connect my-agent --out /run/agent/connect-secret
+
+# List / revoke an agent's persistent NIP-46 client bindings
+signetctl list-clients my-agent
+signetctl revoke-client <client_pubkey>
+
+# Rotate an agent identity key
+signetctl rotate my-agent
+
 # Revoke an agent identity
 signetctl revoke my-agent
 
@@ -334,7 +349,7 @@ Policies can be updated at runtime via the SET_POLICY management command or by e
 
 | Method            | Params                                      | Description                         |
 |-------------------|---------------------------------------------|-------------------------------------|
-| `connect`         | auth secret / session data                  | Establish session                   |
+| `connect`         | `[signer_pubkey, connect_secret?]`          | Pair (one-time secret) or reconnect (bound clients need no secret) |
 | `get_public_key`  | `[]`                                        | Return agent public key hex         |
 | `sign_event`      | `[event_json]`                              | Policy check then sign from cache   |
 | `nip04_encrypt`   | `[peer_pubkey_hex, plaintext]`              | NIP-04 encrypt for a peer           |
@@ -384,7 +399,7 @@ curl http://localhost:8080/health
 
 ## Testing & CI
 
-Signet has a real hardening test suite: 10 Meson tests / 16 CMake ctests cover real crypto paths, rate-limit enforcement, signed-challenge authentication verification, and audit hash-chain tamper detection. `.github/workflows/signet-ci.yml` runs the Signet CI matrix, including a passkeys-ON entry.
+Signet has a real hardening test suite: 17 Meson tests / 18 CMake ctests (plus passkeys-ON entries) cover real crypto paths, rate-limit enforcement, signed-challenge authentication verification, audit hash-chain tamper detection, management replay protection, connect-secret reissue and self-service authorization, persistent client-binding pairing/reconnect/revocation, and pubkey backfill/uniqueness. `.github/workflows/signet-ci.yml` runs the Signet CI matrix, including a passkeys-ON entry.
 
 ## Security Model
 
@@ -396,7 +411,10 @@ Signet has a real hardening test suite: 10 Meson tests / 16 CMake ctests cover r
 - Management protocol uses NIP-44 v2 encryption between provisioner and bunker, and ACKs fail closed instead of falling back to plaintext on encryption errors
 - Relay publish reports an error when zero relays are connected instead of pretending success
 - Bootstrap tokens are single-use, time-limited, attempt-capped, and stored as SHA256 hashes; `POST /bootstrap` consumes them atomically and replay returns 403
-- Revocation resolves the agent pubkey, adds it to the deny list, burns leases, wipes the key from cache and store, and records an audit entry
+- Revocation resolves the agent pubkey, adds it to the deny list, burns leases, revokes the agent's persistent client bindings, wipes the key from cache and store, and records an audit entry
+- NIP-46 pairing is atomic (secret consumption + durable client binding in one transaction); bindings are pinned to the agent identity pubkey at pairing time, so rotation or reprovisioning never resurrects old client authority
+- The daemon's live deny list is enforced on every NIP-46 path (pairing, reconnect, per-request) before policy evaluation — suspension takes effect immediately
+- Management intents are replay-protected per delivered event id (dedicated caches; self-service traffic cannot evict provisioner entries), and one custody pubkey can never be bound to two agents (partial unique index + non-destructive upsert)
 - Credential rotation archives and updates secrets in a single SQLite transaction
 - Hash-chained audit log provides tamper-evident operation history
 - Runs as non-root `signet` user in production

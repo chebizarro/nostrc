@@ -10,15 +10,23 @@ Agents connect to Signet via the NIP-46 protocol over Nostr relays, or locally v
    `agent/provision` intent to Signet via a Nostr relay, typically gift-wrapped as kind `1059`.
    Signet generates a keypair and returns a `nostrconnect://` URI.
 
-2. **Agent Boot**: The agent receives the `nostrconnect://` URI as an environment variable.
-   It uses NIP-46 to establish a session with Signet over the relay.
+2. **Agent Boot / Pairing**: The agent receives the `nostrconnect://`/`bunker://` URI as an
+   environment variable. Its first NIP-46 `connect` presents the one-time `connect_secret`,
+   which Signet consumes while durably recording the client pairing (one transaction).
 
-3. **Signing**: The agent sends `sign_event` requests via NIP-46. Signet evaluates per-agent
-   policy, signs from the hot key cache, and returns the signed event.
+3. **Signing**: The agent sends `sign_event` requests via NIP-46. Signet resolves the
+   client to its agent via the persistent binding, evaluates per-agent policy, signs from
+   the hot key cache, and returns the signed event.
 
-4. **Revocation**: A provisioner sends a `25910` `agent/revoke` intent. Signet resolves the
-   agent pubkey, adds it to the deny list, burns active leases, wipes the key from both
-   cache and store, audits the action, and refuses all further requests for that agent.
+4. **Restarts**: Bound clients reconnect autonomously — no fresh secret, no operator.
+   Agent restarts, daemon restarts, or both: the persistent pairing survives (see
+   "NIP-46 pairing model" below). A fresh secret (`agent/reissue-connect`) is only needed
+   to pair a NEW client key (host rebuild, key compromise, revoked binding).
+
+5. **Revocation**: A provisioner sends a `25910` `agent/revoke` intent. Signet resolves the
+   agent pubkey, adds it to the deny list, burns active leases, revokes the agent's client
+   bindings, wipes the key from both cache and store, audits the action, and refuses all
+   further requests for that agent.
 
 ### D-Bus (Local / LAN)
 
@@ -129,7 +137,7 @@ Browsers and `fido2-token` must be tested on Linux because macOS does not provid
 
 | Method              | Params                              | Description                                    |
 |---------------------|-------------------------------------|------------------------------------------------|
-| `connect`           | auth secret / session data          | Establish session; validate auth secret        |
+| `connect`           | `[remote_signer_pubkey, connect_secret?]` | Pair (one-time secret, consumed atomically with the durable client binding) or reconnect (bound clients need no secret; the client's own stale secret is also accepted) |
 | `get_public_key`    | `[]`                                | Return agent's public key (hex)                |
 | `sign_event`        | `[event_json]`                      | Policy check then sign from hot cache          |
 | `nip04_encrypt`     | `[peer_pubkey_hex, plaintext]`      | NIP-04 encrypt plaintext for a peer            |
@@ -146,7 +154,7 @@ Browsers and `fido2-token` must be tested on Linux because macOS does not provid
 
 ## Management Protocol
 
-All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents. Relay transport should gift-wrap the intent with NIP-59/NIP-17 kind `1059`; authorization requires the inner sender pubkey to be in the `provisioner_pubkeys` list. Responses are correlated ContextVM results. Each management **event id** executes at most once per replay-cache TTL: relay redelivery, republishing of the same serialized event, and history replay are silently dropped instead of re-running non-idempotent commands such as `agent/rotate-key` or `agent/reissue-connect`. Note this keys on the delivered Nostr event id — a client retry that re-signs the same request produces a new event id and executes again; recover from a lost reply by sending a new intent. The deprecated `28000`-series event kinds and `28090` ACKs are compatibility-only when `legacy_28000` is explicitly enabled.
+All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents. Relay transport should gift-wrap the intent with NIP-59/NIP-17 kind `1059`; authorization requires the inner sender pubkey to be in the `provisioner_pubkeys` list (sole exception: `agent/reissue-connect` also accepts the target agent itself — see below). Responses are correlated ContextVM results. Each management **event id** executes at most once per replay-cache TTL: relay redelivery, republishing of the same serialized event, and history replay are silently dropped instead of re-running non-idempotent commands such as `agent/rotate-key` or `agent/reissue-connect`. Note this keys on the delivered Nostr event id — a client retry that re-signs the same request produces a new event id and executes again; recover from a lost reply by sending a new intent. The deprecated `28000`-series event kinds and `28090` ACKs are compatibility-only when `legacy_28000` is explicitly enabled.
 
 | Kind  | Method | Description |
 |-------|--------|-------------|
@@ -206,15 +214,15 @@ signetctl adopt-existing <agent_id> --sec <nsec-or-hex> \
 
 The CLI prints only `agent_id`, `pubkey`, and `bunker_uri`.
 
-### `agent/reissue-connect` (restart recovery)
+### `agent/reissue-connect` (forced re-pairing)
 
 Mints and persists a fresh one-time `connect_secret` for an **existing** agent,
-replacing whatever secret was there before (consumed or not). This is the
-Nostr-native recovery path for headless clients that consumed their
-`connect_secret` on first NIP-46 connect and then restarted: an authorized
-provisioner asks Signet to reissue instead of re-provisioning, editing the DB,
-or adding a REST refresh API. The `connect_secret` stays single-use — the next
-NIP-46 `connect` consumes the fresh one exactly as it would the original.
+replacing whatever secret was there before (consumed or not). Routine restarts
+do NOT need this — bound clients reconnect via their persistent pairing (see
+"NIP-46 pairing model" below). Reissue is the **forced re-pairing** tool: a
+new or rebuilt host, a lost or compromised client key, or a binding revoked
+via `agent/revoke-client`. The `connect_secret` stays single-use — the next
+NIP-46 `connect` consumes the fresh one atomically with the new pairing.
 
 Authorization accepts **two** sender identities (unlike every other management
 op, which is provisioner-only):
@@ -245,7 +253,7 @@ the requesting sender.
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
 | `agent_id` | string | yes | Existing agent to reissue for |
-| `client_pubkey` | 64-hex | no | Current NIP-46 client pubkey (accepted for audit/context; not enforced in v1) |
+| `client_pubkey` | 64-hex | no | Accepted for audit/context only — never an auth basis; binding to a new client key happens at the next `connect` |
 | `reason` | string | no | Free-form context, e.g. `restart_recovery` (accepted; not enforced) |
 
 **Result:**
@@ -263,7 +271,7 @@ the requesting sender.
 
 **Semantics:** agent must exist → deny-list gate (below) → generate a fresh random 32-byte hex secret →
 replace the agent's `connect_secret` in a single UPDATE (old or already-consumed
-secrets become/stay invalid) → return the fresh secret and bunker URL in the
+secrets become/stay invalid) → return the fresh secret and bunker URI in the
 encrypted reply only. The agent's keypair is untouched (unlike
 `agent/rotate-key`).
 
@@ -356,4 +364,8 @@ Returns 200 if healthy (SQLCipher open, relays connected), 503 otherwise.
 - **Per-agent credential isolation**: credential payloads use per-agent envelope keys derived via BLAKE2b from the store DEK and agent pubkey; D-Bus `GetToken` only returns credentials owned by the requesting agent.
 - **Transactional rotation**: credential rotation archives the old secret and writes the new one in a single SQLite transaction.
 - **SQLCipher startup verification**: Signet verifies SQLCipher with `PRAGMA cipher_version` plus a keyed read at startup and refuses to start when `SIGNET_REQUIRE_ENCRYPTED_DB=true` and encryption is unavailable.
-- **Complete revocation**: `revoke_agent` denies the resolved pubkey, burns active leases, wipes cache and persistent key material, and audits the operation.
+- **Complete revocation**: `revoke_agent` denies the resolved pubkey, burns active leases, revokes the agent's persistent client bindings, wipes cache and persistent key material, and audits the operation.
+- **Atomic pairing**: NIP-46 `connect` consumes the one-time secret and records the durable client binding in one SQLite transaction — the credential cannot be burned without the pairing (or vice versa).
+- **Identity-pinned bindings**: client bindings resolve only while the agent's current identity pubkey matches the one pinned at pairing time — rotation or reprovisioning cannot resurrect prior authority.
+- **Management replay protection**: each delivered management event id executes at most once per replay-cache TTL, with self-service reissue events isolated in their own replay domain so they cannot evict provisioner entries.
+- **DB-level identity uniqueness**: a partial unique index on `agents.pubkey` (with upsert semantics that error instead of destructively replacing) prevents one custody key from ever being bound to two agents.
