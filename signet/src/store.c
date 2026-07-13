@@ -424,6 +424,21 @@ static const char *SIGNET_SCHEMA_SQL =
   ");"
   "CREATE INDEX IF NOT EXISTS idx_bootstrap_agent ON bootstrap_tokens(agent_id);"
 
+  /* v3.3: persistent NIP-46 client bindings (pair once, reconnect without a
+   * fresh connect_secret). A binding is created under the authority of a
+   * one-time connect_secret at first connect and survives daemon/agent
+   * restarts; revoked_at soft-revokes without losing audit history. */
+  "CREATE TABLE IF NOT EXISTS agent_clients ("
+  "  client_pubkey TEXT PRIMARY KEY NOT NULL,"
+  "  agent_id TEXT NOT NULL,"
+  "  agent_pubkey TEXT,"            /* identity pinned at pairing: rotate/reprovision invalidates */
+  "  bound_secret_hash TEXT,"       /* sha256 of the pairing secret (stale-reconnect check) */
+  "  bound_at INTEGER NOT NULL,"
+  "  last_used INTEGER NOT NULL DEFAULT 0,"
+  "  revoked_at INTEGER"
+  ");"
+  "CREATE INDEX IF NOT EXISTS idx_agent_clients_agent ON agent_clients(agent_id);"
+
   /* v2: deny list for revocation */
   "CREATE TABLE IF NOT EXISTS deny_list ("
   "  pubkey_hex TEXT PRIMARY KEY NOT NULL,"
@@ -605,6 +620,27 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
   (void)sqlite3_exec(store->db,
                      "CREATE INDEX IF NOT EXISTS idx_agents_pubkey ON agents(pubkey);",
                      NULL, NULL, NULL);
+  /* v3.3: persistent NIP-46 client bindings (additive for older DBs). */
+  (void)sqlite3_exec(store->db,
+                     "CREATE TABLE IF NOT EXISTS agent_clients ("
+                     "  client_pubkey TEXT PRIMARY KEY NOT NULL,"
+                     "  agent_id TEXT NOT NULL,"
+                     "  agent_pubkey TEXT,"
+                     "  bound_secret_hash TEXT,"
+                     "  bound_at INTEGER NOT NULL,"
+                     "  last_used INTEGER NOT NULL DEFAULT 0,"
+                     "  revoked_at INTEGER);",
+                     NULL, NULL, NULL);
+  (void)sqlite3_exec(store->db,
+                     "ALTER TABLE agent_clients ADD COLUMN agent_pubkey TEXT;",
+                     NULL, NULL, NULL);
+  (void)sqlite3_exec(store->db,
+                     "ALTER TABLE agent_clients ADD COLUMN bound_secret_hash TEXT;",
+                     NULL, NULL, NULL);
+  (void)sqlite3_exec(store->db,
+                     "CREATE INDEX IF NOT EXISTS idx_agent_clients_agent ON agent_clients(agent_id);",
+                     NULL, NULL, NULL);
+
   /* v3.2: DB-level pubkey uniqueness (one agent per custody key). Safe now
    * that put_agent_ex upserts with ON CONFLICT(agent_id) instead of OR
    * REPLACE. Creation fails on legacy DBs that already contain duplicate
@@ -1049,6 +1085,247 @@ int signet_store_set_agent_pubkey(SignetStore *store,
   return (changes > 0) ? 0 : 1; /* 1 = not found or pubkey already set */
 }
 
+/* Canonicalize a 64-hex pubkey to lowercase. Returns false if malformed. */
+static bool signet_store_canonical_pubkey(const char *pubkey_hex, char out[65]) {
+  if (!pubkey_hex || strlen(pubkey_hex) != 64) return false;
+  for (int i = 0; i < 64; i++) {
+    char c = pubkey_hex[i];
+    if (!g_ascii_isxdigit(c)) return false;
+    out[i] = (char)g_ascii_tolower(c);
+  }
+  out[64] = '\0';
+  return true;
+}
+
+/* sha256 hex of a pairing secret (or NULL). Caller g_free. */
+static char *signet_store_secret_hash(const char *secret) {
+  if (!secret || !secret[0]) return NULL;
+  return g_compute_checksum_for_string(G_CHECKSUM_SHA256, secret, -1);
+}
+
+/* Internal bind (no argument re-validation), used inside the consume
+ * transaction and by the public wrapper. agent_pubkey/pairing secret hash
+ * may be NULL. */
+static int signet_store_bind_client_stmt(SignetStore *store,
+                                         const char *agent_id,
+                                         const char *agent_pubkey,
+                                         const char *client_pubkey_canonical,
+                                         const char *secret_hash,
+                                         int64_t now) {
+  /* Upsert: re-pairing (authorized by a fresh one-time secret) rebinds the
+   * client key and clears any prior revocation — a new secret IS the
+   * recovery path from a revoked binding. */
+  const char *sql =
+      "INSERT INTO agent_clients "
+      "(client_pubkey, agent_id, agent_pubkey, bound_secret_hash, bound_at, last_used, revoked_at) "
+      "VALUES (?, ?, ?, ?, ?, ?, NULL) "
+      "ON CONFLICT(client_pubkey) DO UPDATE SET "
+      "  agent_id = excluded.agent_id, "
+      "  agent_pubkey = excluded.agent_pubkey, "
+      "  bound_secret_hash = excluded.bound_secret_hash, "
+      "  bound_at = excluded.bound_at, "
+      "  last_used = excluded.last_used, "
+      "  revoked_at = NULL;";
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_text(stmt, 1, client_pubkey_canonical, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, agent_id, -1, SQLITE_TRANSIENT);
+  if (agent_pubkey && agent_pubkey[0]) {
+    sqlite3_bind_text(stmt, 3, agent_pubkey, -1, SQLITE_TRANSIENT);
+  } else {
+    sqlite3_bind_null(stmt, 3);
+  }
+  if (secret_hash && secret_hash[0]) {
+    sqlite3_bind_text(stmt, 4, secret_hash, -1, SQLITE_TRANSIENT);
+  } else {
+    sqlite3_bind_null(stmt, 4);
+  }
+  sqlite3_bind_int64(stmt, 5, now);
+  sqlite3_bind_int64(stmt, 6, now);
+  int rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  return (rc == SQLITE_DONE) ? 0 : -1;
+}
+
+int signet_store_bind_client(SignetStore *store,
+                             const char *agent_id,
+                             const char *agent_pubkey,
+                             const char *client_pubkey,
+                             const char *pairing_secret,
+                             int64_t now) {
+  if (!store || !store->open || !agent_id || !agent_id[0]) return -1;
+  char canonical[65];
+  if (!signet_store_canonical_pubkey(client_pubkey, canonical)) return -1;
+  char agent_pk_canonical[65];
+  const char *apk = NULL;
+  if (agent_pubkey && agent_pubkey[0]) {
+    if (!signet_store_canonical_pubkey(agent_pubkey, agent_pk_canonical)) return -1;
+    apk = agent_pk_canonical;
+  }
+  char *hash = signet_store_secret_hash(pairing_secret);
+  int rc = signet_store_bind_client_stmt(store, agent_id, apk, canonical, hash, now);
+  g_free(hash);
+  return rc;
+}
+
+int signet_store_lookup_client_binding(SignetStore *store,
+                                       const char *client_pubkey,
+                                       int64_t now,
+                                       char **out_agent_id,
+                                       char **out_bound_secret_hash) {
+  if (out_agent_id) *out_agent_id = NULL;
+  if (out_bound_secret_hash) *out_bound_secret_hash = NULL;
+  if (!store || !store->open || !out_agent_id) return -1;
+  char canonical[65];
+  if (!signet_store_canonical_pubkey(client_pubkey, canonical)) return 1;
+
+  /* The binding is pinned to the identity pubkey recorded at pairing time:
+   * if the agent was rotated, revoked+reprovisioned, or re-adopted under a
+   * different key, the pin no longer matches and the old binding conveys
+   * NOTHING toward the new identity. */
+  const char *sql =
+      "SELECT c.agent_id, c.last_used, c.bound_secret_hash "
+      "FROM agent_clients c JOIN agents a ON a.agent_id = c.agent_id "
+      "WHERE c.client_pubkey = ? AND c.revoked_at IS NULL "
+      "  AND c.agent_pubkey IS NOT NULL AND a.pubkey IS NOT NULL "
+      "  AND a.pubkey = c.agent_pubkey "
+      "LIMIT 1;";
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_text(stmt, 1, canonical, -1, SQLITE_TRANSIENT);
+  int rc = sqlite3_step(stmt);
+  if (rc == SQLITE_DONE) {
+    sqlite3_finalize(stmt);
+    return 1; /* not bound, revoked, or identity changed */
+  }
+  if (rc != SQLITE_ROW) {
+    sqlite3_finalize(stmt);
+    return -1;
+  }
+  const char *aid = (const char *)sqlite3_column_text(stmt, 0);
+  int64_t last_used = sqlite3_column_int64(stmt, 1);
+  const char *bsh = (const char *)sqlite3_column_text(stmt, 2);
+  char *copy = aid ? g_strdup(aid) : NULL;
+  char *hash_copy = (out_bound_secret_hash && bsh) ? g_strdup(bsh) : NULL;
+  sqlite3_finalize(stmt);
+  if (!copy) {
+    g_free(hash_copy);
+    return -1;
+  }
+
+  /* Coalesced last_used touch: the signing hot path must not become a
+   * per-request writer (WAL growth/contention), so persist at most once per
+   * minute per client. */
+  if (now - last_used >= 60) {
+    const char *touch_sql =
+        "UPDATE agent_clients SET last_used = ? WHERE client_pubkey = ?;";
+    sqlite3_stmt *touch = NULL;
+    if (sqlite3_prepare_v2(store->db, touch_sql, -1, &touch, NULL) == SQLITE_OK) {
+      sqlite3_bind_int64(touch, 1, now);
+      sqlite3_bind_text(touch, 2, canonical, -1, SQLITE_TRANSIENT);
+      (void)sqlite3_step(touch);
+      sqlite3_finalize(touch);
+    }
+  }
+
+  *out_agent_id = copy;
+  if (out_bound_secret_hash) *out_bound_secret_hash = hash_copy;
+  else g_free(hash_copy);
+  return 0;
+}
+
+int signet_store_revoke_client(SignetStore *store,
+                               const char *client_pubkey,
+                               int64_t now) {
+  if (!store || !store->open) return -1;
+  char canonical[65];
+  if (!signet_store_canonical_pubkey(client_pubkey, canonical)) return -1;
+
+  const char *sql =
+      "UPDATE agent_clients SET revoked_at = ? "
+      "WHERE client_pubkey = ? AND revoked_at IS NULL;";
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_int64(stmt, 1, now);
+  sqlite3_bind_text(stmt, 2, canonical, -1, SQLITE_TRANSIENT);
+  int rc = sqlite3_step(stmt);
+  int changes = sqlite3_changes(store->db);
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_DONE) return -1;
+  return (changes > 0) ? 0 : 1; /* 1 = not found or already revoked */
+}
+
+int signet_store_revoke_agent_clients(SignetStore *store,
+                                      const char *agent_id,
+                                      int64_t now) {
+  if (!store || !store->open || !agent_id || !agent_id[0]) return -1;
+
+  const char *sql =
+      "UPDATE agent_clients SET revoked_at = ? "
+      "WHERE agent_id = ? AND revoked_at IS NULL;";
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_int64(stmt, 1, now);
+  sqlite3_bind_text(stmt, 2, agent_id, -1, SQLITE_TRANSIENT);
+  int rc = sqlite3_step(stmt);
+  int changes = sqlite3_changes(store->db);
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_DONE) return -1;
+  return changes; /* number of bindings revoked (>= 0) */
+}
+
+int signet_store_list_clients(SignetStore *store,
+                              const char *agent_id,
+                              SignetClientBinding **out_list,
+                              size_t *out_count) {
+  if (out_list) *out_list = NULL;
+  if (out_count) *out_count = 0;
+  if (!store || !store->open || !agent_id || !agent_id[0] ||
+      !out_list || !out_count) {
+    return -1;
+  }
+
+  const char *sql =
+      "SELECT client_pubkey, bound_at, last_used, revoked_at "
+      "FROM agent_clients WHERE agent_id = ? ORDER BY bound_at;";
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_text(stmt, 1, agent_id, -1, SQLITE_TRANSIENT);
+
+  GArray *arr = g_array_new(FALSE, TRUE, sizeof(SignetClientBinding));
+  int rc;
+  while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+    SignetClientBinding b;
+    memset(&b, 0, sizeof(b));
+    const char *pk = (const char *)sqlite3_column_text(stmt, 0);
+    b.client_pubkey = pk ? g_strdup(pk) : NULL;
+    b.bound_at = sqlite3_column_int64(stmt, 1);
+    b.last_used = sqlite3_column_int64(stmt, 2);
+    b.revoked_at = (sqlite3_column_type(stmt, 3) == SQLITE_NULL)
+                       ? 0 : sqlite3_column_int64(stmt, 3);
+    g_array_append_val(arr, b);
+  }
+  sqlite3_finalize(stmt);
+
+  if (rc != SQLITE_DONE) {
+    for (guint i = 0; i < arr->len; i++)
+      g_free(g_array_index(arr, SignetClientBinding, i).client_pubkey);
+    g_array_free(arr, TRUE);
+    return -1;
+  }
+
+  *out_count = arr->len;
+  *out_list = (SignetClientBinding *)g_array_free(arr, FALSE);
+  if (*out_count == 0 && *out_list) { g_free(*out_list); *out_list = NULL; }
+  return 0;
+}
+
+void signet_client_binding_list_free(SignetClientBinding *list, size_t count) {
+  if (!list) return;
+  for (size_t i = 0; i < count; i++) g_free(list[i].client_pubkey);
+  g_free(list);
+}
+
 int signet_store_touch_agent(SignetStore *store, const char *agent_id, int64_t now) {
   if (!store || !store->open || !agent_id) return -1;
 
@@ -1172,20 +1449,34 @@ int signet_store_reissue_connect_secret(SignetStore *store,
   return (changes > 0) ? 0 : 1; /* 1 = agent not found */
 }
 
-int signet_store_consume_connect_secret_value(SignetStore *store,
-                                              const char *connect_secret,
-                                              int64_t now,
-                                              char **out_agent_id) {
+/* Shared transactional body for consume-by-value. When bind_client_pubkey is
+ * non-NULL the persistent client binding is created INSIDE the same
+ * transaction as the secret consumption: either both commit or neither does,
+ * so a crash / binding failure can never burn the one-time credential
+ * without establishing the durable pairing (and vice versa). */
+static int signet_store_consume_connect_secret_value_internal(
+    SignetStore *store,
+    const char *connect_secret,
+    int64_t now,
+    const char *bind_client_pubkey,
+    char **out_agent_id) {
   if (out_agent_id) *out_agent_id = NULL;
   if (!store || !store->open || !connect_secret || !connect_secret[0] || !out_agent_id) {
     return -1;
+  }
+
+  /* Validate the client pubkey BEFORE opening the transaction. */
+  char client_canonical[65];
+  if (bind_client_pubkey) {
+    if (!signet_store_canonical_pubkey(bind_client_pubkey, client_canonical))
+      return -1;
   }
 
   int rc = sqlite3_exec(store->db, "BEGIN IMMEDIATE TRANSACTION;", NULL, NULL, NULL);
   if (rc != SQLITE_OK) return -1;
 
   const char *select_sql =
-      "SELECT agent_id FROM agents WHERE connect_secret = ? LIMIT 1;";
+      "SELECT agent_id, pubkey FROM agents WHERE connect_secret = ? LIMIT 1;";
   sqlite3_stmt *select_stmt = NULL;
   rc = sqlite3_prepare_v2(store->db, select_sql, -1, &select_stmt, NULL);
   if (rc != SQLITE_OK) {
@@ -1207,9 +1498,12 @@ int signet_store_consume_connect_secret_value(SignetStore *store,
   }
 
   const char *agent_id = (const char *)sqlite3_column_text(select_stmt, 0);
+  const char *agent_pk = (const char *)sqlite3_column_text(select_stmt, 1);
   char *agent_copy = agent_id ? g_strdup(agent_id) : NULL;
+  char *agent_pk_copy = agent_pk ? g_strdup(agent_pk) : NULL;
   sqlite3_finalize(select_stmt);
   if (!agent_copy) {
+    g_free(agent_pk_copy);
     sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
     return -1;
   }
@@ -1222,6 +1516,7 @@ int signet_store_consume_connect_secret_value(SignetStore *store,
   rc = sqlite3_prepare_v2(store->db, token_sql, -1, &token_stmt, NULL);
   if (rc != SQLITE_OK) {
     g_free(agent_copy);
+    g_free(agent_pk_copy);
     sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
     return -1;
   }
@@ -1237,6 +1532,7 @@ int signet_store_consume_connect_secret_value(SignetStore *store,
   } else if (rc != SQLITE_DONE) {
     sqlite3_finalize(token_stmt);
     g_free(agent_copy);
+    g_free(agent_pk_copy);
     sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
     return -1;
   }
@@ -1250,6 +1546,7 @@ int signet_store_consume_connect_secret_value(SignetStore *store,
     if (rc != SQLITE_OK) {
       g_free(token_hash);
       g_free(agent_copy);
+      g_free(agent_pk_copy);
       sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
       return -1;
     }
@@ -1261,6 +1558,7 @@ int signet_store_consume_connect_secret_value(SignetStore *store,
     g_free(token_hash);
     if (rc != SQLITE_DONE || token_changes <= 0) {
       g_free(agent_copy);
+      g_free(agent_pk_copy);
       sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
       return 1;
     }
@@ -1272,6 +1570,7 @@ int signet_store_consume_connect_secret_value(SignetStore *store,
   rc = sqlite3_prepare_v2(store->db, update_sql, -1, &update_stmt, NULL);
   if (rc != SQLITE_OK) {
     g_free(agent_copy);
+    g_free(agent_pk_copy);
     sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
     return -1;
   }
@@ -1283,19 +1582,55 @@ int signet_store_consume_connect_secret_value(SignetStore *store,
 
   if (rc != SQLITE_DONE || changes <= 0) {
     g_free(agent_copy);
+    g_free(agent_pk_copy);
     sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
     return (rc == SQLITE_DONE) ? 1 : -1;
+  }
+
+  /* Persistent pairing, same transaction as the consumption. */
+  if (bind_client_pubkey) {
+    char *hash = signet_store_secret_hash(connect_secret);
+    int brc = signet_store_bind_client_stmt(store, agent_copy,
+                                            (agent_pk_copy && agent_pk_copy[0]) ? agent_pk_copy : NULL,
+                                            client_canonical, hash, now);
+    g_free(hash);
+    if (brc != 0) {
+      g_free(agent_copy);
+      g_free(agent_pk_copy);
+      sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+      return -1;
+    }
   }
 
   rc = sqlite3_exec(store->db, "COMMIT;", NULL, NULL, NULL);
   if (rc != SQLITE_OK) {
     g_free(agent_copy);
+    g_free(agent_pk_copy);
     sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
     return -1;
   }
 
+  g_free(agent_pk_copy);
   *out_agent_id = agent_copy;
   return 0;
+}
+
+int signet_store_consume_connect_secret_value(SignetStore *store,
+                                              const char *connect_secret,
+                                              int64_t now,
+                                              char **out_agent_id) {
+  return signet_store_consume_connect_secret_value_internal(
+      store, connect_secret, now, NULL, out_agent_id);
+}
+
+int signet_store_consume_connect_secret_and_bind(SignetStore *store,
+                                                 const char *connect_secret,
+                                                 const char *client_pubkey,
+                                                 int64_t now,
+                                                 char **out_agent_id) {
+  if (!client_pubkey || !client_pubkey[0]) return -1;
+  return signet_store_consume_connect_secret_value_internal(
+      store, connect_secret, now, client_pubkey, out_agent_id);
 }
 
 sqlite3 *signet_store_get_db(SignetStore *store) {

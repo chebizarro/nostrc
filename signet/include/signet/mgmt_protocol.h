@@ -15,6 +15,8 @@
  *   agent/rotate-key  - rotate agent keypair
  *   agent/reissue-connect - mint a fresh one-time connect_secret for an
  *                       existing agent (restart recovery; ContextVM-only)
+ *   agent/list-clients  - list an agent's persistent NIP-46 client bindings
+ *   agent/revoke-client - soft-revoke a persistent NIP-46 client binding
  *
  * Relay transport: NIP-59/NIP-17 gift-wrap kind 1059 carrying the inner
  *                  kind-25910 intent.
@@ -111,6 +113,24 @@ extern "C" {
  */
 #define SIGNET_KIND_REISSUE_CONNECT 28070
 /**
+ * SIGNET_KIND_LIST_CLIENTS:
+ *
+ * Internal management kind for listing an agent's persistent NIP-46 client
+ * bindings. ContextVM-only (method agent/list-clients).
+ *
+ * Since: 1.2
+ */
+#define SIGNET_KIND_LIST_CLIENTS 28071
+/**
+ * SIGNET_KIND_REVOKE_CLIENT:
+ *
+ * Internal management kind for soft-revoking a persistent NIP-46 client
+ * binding. ContextVM-only (method agent/revoke-client).
+ *
+ * Since: 1.2
+ */
+#define SIGNET_KIND_REVOKE_CLIENT 28072
+/**
  * SIGNET_KIND_MGMT_ACK:
  *
  * Legacy management event kind for acknowledgements.
@@ -147,6 +167,8 @@ typedef enum {
   SIGNET_MGMT_OP_ROTATE_KEY,
   SIGNET_MGMT_OP_ADOPT_EXISTING,
   SIGNET_MGMT_OP_REISSUE_CONNECT,
+  SIGNET_MGMT_OP_LIST_CLIENTS,
+  SIGNET_MGMT_OP_REVOKE_CLIENT,
 } SignetMgmtOp;
 
 /* Parsed management request from event content JSON. */
@@ -175,6 +197,7 @@ typedef struct {
   char *agent_nsec;        /* adopt: supplied secret (nsec or 64-hex) — sensitive, owned */
   char *expected_pubkey;   /* adopt: require derived pubkey to match (owned) */
   char *connect_secret;    /* adopt: optional fixed connect secret (owned) */
+  char *client_pubkey;     /* revoke-client: target NIP-46 client pubkey (owned) */
 } SignetMgmtRequest;
 
 /* Map event kind to management op. */

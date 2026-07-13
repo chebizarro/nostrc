@@ -842,6 +842,10 @@ int main(int argc, char **argv) {
    * effect immediately via deny-list precedence. */
   signet_mgmt_handler_set_deny_list(mgmt, deny);
 
+  /* And the NIP-46 server, so suspended (deny-listed) agents are refused on
+   * pairing, binding reconnect, and per-request resolution. */
+  signet_nip46_server_set_deny_list(nip46, deny);
+
   /* Dedicated management replay cache so each 25910 management event id
    * executes at most once per TTL — without this, redelivered/replayed
    * gift-wrapped intents re-run non-idempotent commands (rotate-key,

@@ -59,6 +59,11 @@ static void signetctl_usage(FILE *out) {
     "                           existing agent (restart recovery). --out writes\n"
     "                           the secret atomically to <path> (0600);\n"
     "                           --show-secret prints it to stdout instead\n"
+    "  list-clients <agent_id>  List the agent's persistent NIP-46 client\n"
+    "                           bindings (via management plane)\n"
+    "  revoke-client <client_pubkey>\n"
+    "                           Soft-revoke a NIP-46 client binding; the\n"
+    "                           client must re-pair with a fresh secret\n"
     "  set-policy <agent_id> <policy-json>\n"
     "                           Set an agent policy\n"
     "  status                   Query daemon health status\n"
@@ -106,6 +111,8 @@ static const char *signetctl_contextvm_method(int kind) {
     case SIGNET_KIND_ROTATE_KEY:      return "agent/rotate-key";
     case SIGNET_KIND_ADOPT_EXISTING:  return "agent/adopt-existing";
     case SIGNET_KIND_REISSUE_CONNECT: return "agent/reissue-connect";
+    case SIGNET_KIND_LIST_CLIENTS:    return "agent/list-clients";
+    case SIGNET_KIND_REVOKE_CLIENT:   return "agent/revoke-client";
     default:                          return NULL;
   }
 }
@@ -116,7 +123,7 @@ static const char *signetctl_contextvm_method(int kind) {
 static char *signetctl_build_intent(int kind, const char *agent_id, const char *request_id,
                                     const char *policy_json, const char *bootstrap_pubkey,
                                     int delivery_ttl, const char *agent_nsec,
-                                    const char *expected_pubkey) {
+                                    const char *expected_pubkey, const char *client_pubkey) {
   const char *method = signetctl_contextvm_method(kind);
   if (!method) return NULL;
 
@@ -140,6 +147,10 @@ static char *signetctl_build_intent(int kind, const char *agent_id, const char *
   if (expected_pubkey) {
     json_builder_set_member_name(b, "expected_pubkey");
     json_builder_add_string_value(b, expected_pubkey);
+  }
+  if (client_pubkey) {
+    json_builder_set_member_name(b, "client_pubkey");
+    json_builder_add_string_value(b, client_pubkey);
   }
   if (bootstrap_pubkey) {
     json_builder_set_member_name(b, "deliver");
@@ -453,6 +464,7 @@ int main(int argc, char **argv) {
   const char *adopt_expected_pubkey = NULL;
   const char *reissue_out_path = NULL;
   bool reissue_show_secret = false;
+  const char *revoke_client_pubkey = NULL;
 
   if (strcmp(cmd, "provision") == 0) {
     kind = SIGNET_KIND_PROVISION_AGENT;
@@ -506,6 +518,20 @@ int main(int argc, char **argv) {
         return 2;
       }
     }
+  } else if (strcmp(cmd, "list-clients") == 0) {
+    kind = SIGNET_KIND_LIST_CLIENTS;
+    if (argi >= argc) {
+      fprintf(stderr, "signetctl: list-clients requires <agent_id>\n");
+      return 2;
+    }
+    agent_id = argv[argi++];
+  } else if (strcmp(cmd, "revoke-client") == 0) {
+    kind = SIGNET_KIND_REVOKE_CLIENT;
+    if (argi >= argc) {
+      fprintf(stderr, "signetctl: revoke-client requires <client_pubkey>\n");
+      return 2;
+    }
+    revoke_client_pubkey = argv[argi++];
   } else if (strcmp(cmd, "adopt-existing") == 0) {
     kind = SIGNET_KIND_ADOPT_EXISTING;
     if (argi >= argc) {
@@ -879,7 +905,8 @@ int main(int argc, char **argv) {
   /* Build the Cascadia ContextVM intent (JSON-RPC 2.0, kind-25910 payload). */
   char *intent = signetctl_build_intent(kind, agent_id, request_id, policy_json,
                                         deliver_bootstrap_pubkey, delivery_ttl,
-                                        adopt_sec, adopt_expected_pubkey);
+                                        adopt_sec, adopt_expected_pubkey,
+                                        revoke_client_pubkey);
   if (!intent) {
     fprintf(stderr, "signetctl: failed to build intent\n");
     signet_config_clear(&cfg);

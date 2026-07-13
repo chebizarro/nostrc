@@ -53,6 +53,8 @@ SignetMgmtOp signet_mgmt_op_from_kind(int kind) {
     case SIGNET_KIND_ROTATE_KEY:     return SIGNET_MGMT_OP_ROTATE_KEY;
     case SIGNET_KIND_ADOPT_EXISTING: return SIGNET_MGMT_OP_ADOPT_EXISTING;
     case SIGNET_KIND_REISSUE_CONNECT: return SIGNET_MGMT_OP_REISSUE_CONNECT;
+    case SIGNET_KIND_LIST_CLIENTS:   return SIGNET_MGMT_OP_LIST_CLIENTS;
+    case SIGNET_KIND_REVOKE_CLIENT:  return SIGNET_MGMT_OP_REVOKE_CLIENT;
     default:                         return SIGNET_MGMT_OP_UNKNOWN;
   }
 }
@@ -67,6 +69,8 @@ const char *signet_mgmt_op_to_string(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_ROTATE_KEY:      return "rotate_key";
     case SIGNET_MGMT_OP_ADOPT_EXISTING:  return "adopt_existing";
     case SIGNET_MGMT_OP_REISSUE_CONNECT: return "reissue_connect";
+    case SIGNET_MGMT_OP_LIST_CLIENTS:    return "list_clients";
+    case SIGNET_MGMT_OP_REVOKE_CLIENT:   return "revoke_client";
     default:                             return "unknown";
   }
 }
@@ -99,6 +103,7 @@ void signet_mgmt_request_clear(SignetMgmtRequest *req) {
   if (req->agent_nsec) { secure_wipe(req->agent_nsec, strlen(req->agent_nsec)); g_free(req->agent_nsec); }
   if (req->connect_secret) { secure_wipe(req->connect_secret, strlen(req->connect_secret)); g_free(req->connect_secret); }
   g_free(req->expected_pubkey);
+  g_free(req->client_pubkey);
   memset(req, 0, sizeof(*req));
 }
 
@@ -188,6 +193,10 @@ int signet_mgmt_request_parse(int kind,
     const char *v = json_object_get_string_member(o, "connect_secret");
     if (v && v[0]) out_req->connect_secret = g_strdup(v);
   }
+  if (json_object_has_member(o, "client_pubkey")) {
+    const char *v = json_object_get_string_member(o, "client_pubkey");
+    if (v && v[0]) out_req->client_pubkey = g_strdup(v);
+  }
 
   /* Validate required fields per op. */
   bool needs_agent_id = (out_req->op == SIGNET_MGMT_OP_PROVISION_AGENT ||
@@ -195,7 +204,8 @@ int signet_mgmt_request_parse(int kind,
                          out_req->op == SIGNET_MGMT_OP_SET_POLICY ||
                          out_req->op == SIGNET_MGMT_OP_ROTATE_KEY ||
                          out_req->op == SIGNET_MGMT_OP_ADOPT_EXISTING ||
-                         out_req->op == SIGNET_MGMT_OP_REISSUE_CONNECT);
+                         out_req->op == SIGNET_MGMT_OP_REISSUE_CONNECT ||
+                         out_req->op == SIGNET_MGMT_OP_LIST_CLIENTS);
 
   if (needs_agent_id && (!out_req->agent_id || !out_req->agent_id[0])) {
     if (out_error) *out_error = g_strdup("agent_id is required");
@@ -213,6 +223,13 @@ int signet_mgmt_request_parse(int kind,
   if (out_req->op == SIGNET_MGMT_OP_ADOPT_EXISTING &&
       (!out_req->agent_nsec || !out_req->agent_nsec[0])) {
     if (out_error) *out_error = g_strdup("adopt_existing requires agent_nsec");
+    signet_mgmt_request_clear(out_req);
+    return -1;
+  }
+
+  if (out_req->op == SIGNET_MGMT_OP_REVOKE_CLIENT &&
+      (!out_req->client_pubkey || !out_req->client_pubkey[0])) {
+    if (out_error) *out_error = g_strdup("revoke_client requires client_pubkey");
     signet_mgmt_request_clear(out_req);
     return -1;
   }
@@ -527,6 +544,8 @@ static int signet_mgmt_kind_from_contextvm_method(const char *method) {
   if (strcmp(method, "agent/rotate-key") == 0) return SIGNET_KIND_ROTATE_KEY;
   if (strcmp(method, "agent/adopt-existing") == 0) return SIGNET_KIND_ADOPT_EXISTING;
   if (strcmp(method, "agent/reissue-connect") == 0) return SIGNET_KIND_REISSUE_CONNECT;
+  if (strcmp(method, "agent/list-clients") == 0) return SIGNET_KIND_LIST_CLIENTS;
+  if (strcmp(method, "agent/revoke-client") == 0) return SIGNET_KIND_REVOKE_CLIENT;
   return 0;
 }
 
@@ -594,6 +613,10 @@ static char *signet_mgmt_contextvm_to_legacy_json(const char *content_json, int 
   if (po && json_object_has_member(po, "connect_secret")) {
     json_builder_set_member_name(b, "connect_secret");
     json_builder_add_string_value(b, json_object_get_string_member(po, "connect_secret"));
+  }
+  if (po && json_object_has_member(po, "client_pubkey")) {
+    json_builder_set_member_name(b, "client_pubkey");
+    json_builder_add_string_value(b, json_object_get_string_member(po, "client_pubkey"));
   }
   json_builder_end_object(b);
 
@@ -1284,6 +1307,93 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
       }
       if (fresh_secret) { secure_wipe(fresh_secret, strlen(fresh_secret)); g_free(fresh_secret); }
       if (bunker_uri) { secure_wipe(bunker_uri, strlen(bunker_uri)); g_free(bunker_uri); }
+      break;
+    }
+
+    case SIGNET_MGMT_OP_LIST_CLIENTS: {
+      SignetStore *base_store = signet_key_store_get_store(h->keys);
+      if (!base_store) {
+        code = "no_store";
+        message = g_strdup("persistent store not available");
+        break;
+      }
+      SignetClientBinding *list = NULL;
+      size_t count = 0;
+      if (signet_store_list_clients(base_store, req.agent_id, &list, &count) != 0) {
+        code = "list_failed";
+        message = g_strdup("failed to list client bindings");
+        break;
+      }
+      JsonBuilder *lb = json_builder_new();
+      if (lb) {
+        json_builder_begin_object(lb);
+        json_builder_set_member_name(lb, "agent_id");
+        json_builder_add_string_value(lb, req.agent_id);
+        json_builder_set_member_name(lb, "count");
+        json_builder_add_int_value(lb, (gint64)count);
+        json_builder_set_member_name(lb, "clients");
+        json_builder_begin_array(lb);
+        for (size_t i = 0; i < count; i++) {
+          json_builder_begin_object(lb);
+          json_builder_set_member_name(lb, "client_pubkey");
+          json_builder_add_string_value(lb, list[i].client_pubkey ? list[i].client_pubkey : "");
+          json_builder_set_member_name(lb, "bound_at");
+          json_builder_add_int_value(lb, list[i].bound_at);
+          json_builder_set_member_name(lb, "last_used");
+          json_builder_add_int_value(lb, list[i].last_used);
+          json_builder_set_member_name(lb, "active");
+          json_builder_add_boolean_value(lb, list[i].revoked_at == 0);
+          if (list[i].revoked_at != 0) {
+            json_builder_set_member_name(lb, "revoked_at");
+            json_builder_add_int_value(lb, list[i].revoked_at);
+          }
+          json_builder_end_object(lb);
+        }
+        json_builder_end_array(lb);
+        json_builder_end_object(lb);
+        JsonNode *lroot = json_builder_get_root(lb);
+        JsonGenerator *lgen = json_generator_new();
+        if (lgen && lroot) {
+          json_generator_set_root(lgen, lroot);
+          json_generator_set_pretty(lgen, FALSE);
+          result = json_generator_to_data(lgen, NULL);
+        }
+        if (lgen) g_object_unref(lgen);
+        if (lroot) json_node_free(lroot);
+        g_object_unref(lb);
+      }
+      signet_client_binding_list_free(list, count);
+      if (result) {
+        ok = true;
+        code = "ok";
+      } else {
+        code = "internal_error";
+        message = g_strdup("failed to build client list");
+      }
+      break;
+    }
+
+    case SIGNET_MGMT_OP_REVOKE_CLIENT: {
+      SignetStore *base_store = signet_key_store_get_store(h->keys);
+      if (!base_store) {
+        code = "no_store";
+        message = g_strdup("persistent store not available");
+        break;
+      }
+      int crc = signet_store_revoke_client(base_store, req.client_pubkey, now);
+      if (crc == 0) {
+        ok = true;
+        code = "client_revoked";
+        message = g_strdup("client binding revoked");
+        signet_mgmt_publish_cas_audit(h, "revoke_client",
+                                      req.agent_id ? req.agent_id : "", "ok", now);
+      } else if (crc == 1) {
+        code = "not_found";
+        message = g_strdup("client binding not found or already revoked");
+      } else {
+        code = "revoke_client_failed";
+        message = g_strdup("failed to revoke client binding");
+      }
       break;
     }
 

@@ -21,6 +21,8 @@
 #include "signet/relay_pool.h"
 #include "signet/policy_engine.h"
 #include "signet/key_store.h"
+#include "signet/store.h"      /* persistent NIP-46 client bindings */
+#include "signet/revocation.h" /* live deny list (suspension precedence) */
 #include "signet/replay_cache.h"
 #include "signet/audit_logger.h"
 #include "signet/util.h"
@@ -353,9 +355,16 @@ struct SignetNip46Server {
 
   char *identity;
   GHashTable *sessions_by_client_pubkey; /* client ephemeral pubkey -> agent_id */
+  SignetDenyList *deny;                  /* live deny list (owned by daemon) */
 
   GMutex mu;
 };
+
+void signet_nip46_server_set_deny_list(SignetNip46Server *s,
+                                       struct SignetDenyList *deny) {
+  if (!s) return;
+  s->deny = deny;
+}
 
 SignetNip46Server *signet_nip46_server_new(SignetRelayPool *relays,
                                            SignetPolicyEngine *policy,
@@ -476,42 +485,122 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       const char *requested_signer = (req.params && req.n_params >= 1) ? req.params[0] : NULL;
       const char *provided_secret = (req.params && req.n_params >= 2) ? req.params[1] : NULL;
 
-      if (!requested_signer || !requested_signer[0] || !provided_secret || !provided_secret[0]) {
+      if (!requested_signer || !requested_signer[0]) {
         pre_code = "invalid_params";
-        pre_err = g_strdup("connect requires [remote_signer_pubkey, connect_secret]");
+        pre_err = g_strdup("connect requires [remote_signer_pubkey, connect_secret?]");
       } else if (g_ascii_strcasecmp(requested_signer, remote_signer_pubkey_hex) != 0) {
         pre_code = "wrong_signer";
         pre_err = g_strdup("connect target does not match bunker pubkey");
       } else {
-        int rc = signet_key_store_consume_connect_secret(s->keys, provided_secret, now, &session_agent_id);
-        if (rc != 0 || !session_agent_id) {
-          pre_code = "auth_failed";
-          pre_err = g_strdup("connect_secret mismatch");
-        } else {
-          policy_identity = session_agent_id;
+        /* PAIRING path: a provided one-time secret authorizes binding (or
+         * re-binding) this client key to its agent. Consumption and the
+         * durable binding commit in ONE store transaction — a crash or
+         * binding failure can never burn the credential without recording
+         * the pairing. */
+        bool secret_provided = (provided_secret && provided_secret[0]);
+        SignetStore *st = signet_key_store_get_store(s->keys);
+        if (secret_provided && st) {
+          int rc = signet_store_consume_connect_secret_and_bind(
+              st, provided_secret, client_pubkey_hex, now, &session_agent_id);
+          if (rc != 0) { g_free(session_agent_id); session_agent_id = NULL; }
+        } else if (secret_provided) {
+          /* Cache-only mode: no persistent secrets/bindings exist. */
+          int rc = signet_key_store_consume_connect_secret(s->keys, provided_secret, now, &session_agent_id);
+          if (rc != 0) { g_free(session_agent_id); session_agent_id = NULL; }
         }
+
+        /* RECONNECT path: falls back to the PERSISTENT binding created at
+         * pairing time. The sender proved possession of the bound client key
+         * by NIP-44-encrypting this request, so no new trust is granted.
+         * A non-empty secret that failed above is accepted ONLY when it is
+         * the client's OWN former pairing secret (hash-pinned at pairing) —
+         * the stale value a restarted client re-sends. An arbitrary wrong
+         * secret stays auth_failed so misconfiguration/probing is surfaced
+         * rather than silently ignored. */
+        if (!session_agent_id) {
+          char *bound = NULL;
+          char *bound_hash = NULL;
+          if (st && signet_store_lookup_client_binding(st, client_pubkey_hex, now,
+                                                       &bound, &bound_hash) == 0 && bound) {
+            bool stale_ok = true;
+            if (secret_provided) {
+              char *provided_hash =
+                  g_compute_checksum_for_string(G_CHECKSUM_SHA256, provided_secret, -1);
+              stale_ok = (bound_hash && provided_hash &&
+                          g_strcmp0(bound_hash, provided_hash) == 0);
+              g_free(provided_hash);
+            }
+            if (stale_ok) {
+              session_agent_id = bound;
+              bound = NULL;
+            }
+          }
+          g_free(bound);
+          g_free(bound_hash);
+
+          if (!session_agent_id) {
+            pre_code = "auth_failed";
+            pre_err = secret_provided
+                          ? g_strdup("connect_secret mismatch")
+                          : g_strdup("connect requires a connect_secret or an existing client binding");
+          }
+        }
+
+        if (session_agent_id) policy_identity = session_agent_id;
       }
     } else {
-      bool bound_found = false;
-      if (s->sessions_by_client_pubkey) {
-        g_mutex_lock(&s->mu);
-        const char *bound_agent = (const char *)g_hash_table_lookup(
-            s->sessions_by_client_pubkey, client_pubkey_hex);
-        if (bound_agent && bound_agent[0]) {
-          bound_found = true;
-          session_agent_id = g_strdup(bound_agent);
+      /* Resolve the requesting client to its agent. The persistent binding
+       * table is authoritative when a store is present (it survives daemon
+       * restarts and honors revocation immediately); the in-memory session
+       * table only serves cache-only deployments. */
+      SignetStore *st = signet_key_store_get_store(s->keys);
+      if (st) {
+        char *bound = NULL;
+        int brc = signet_store_lookup_client_binding(st, client_pubkey_hex, now, &bound, NULL);
+        if (brc == 0 && bound) {
+          session_agent_id = bound;
+        } else {
+          g_free(bound);
+          pre_code = "not_connected";
+          pre_err = g_strdup("client has no active NIP-46 session");
         }
-        g_mutex_unlock(&s->mu);
+      } else {
+        bool bound_found = false;
+        if (s->sessions_by_client_pubkey) {
+          g_mutex_lock(&s->mu);
+          const char *bound_agent = (const char *)g_hash_table_lookup(
+              s->sessions_by_client_pubkey, client_pubkey_hex);
+          if (bound_agent && bound_agent[0]) {
+            bound_found = true;
+            session_agent_id = g_strdup(bound_agent);
+          }
+          g_mutex_unlock(&s->mu);
+        }
+
+        if (!bound_found) {
+          pre_code = "not_connected";
+          pre_err = g_strdup("client has no active NIP-46 session");
+        } else if (!session_agent_id) {
+          pre_code = "oom";
+          pre_err = g_strdup("out of memory");
+        }
       }
 
-      if (!bound_found) {
-        pre_code = "not_connected";
-        pre_err = g_strdup("client has no active NIP-46 session");
-      } else if (!session_agent_id) {
-        pre_code = "oom";
-        pre_err = g_strdup("out of memory");
-      } else {
-        policy_identity = session_agent_id;
+      if (session_agent_id) policy_identity = session_agent_id;
+    }
+
+    /* Suspension precedence: a deny-listed agent identity is refused BEFORE
+     * policy evaluation, on every path (pairing, reconnect, requests). The
+     * policy engine does not consult the deny list, so without this check a
+     * suspended-but-not-revoked agent with a persistent binding could keep
+     * using its custody key. */
+    if (!pre_err && session_agent_id && s->deny) {
+      char agent_pk[65] = {0};
+      if (signet_key_store_get_agent_pubkey(s->keys, session_agent_id,
+                                            agent_pk, sizeof(agent_pk)) &&
+          signet_deny_list_contains(s->deny, agent_pk)) {
+        pre_code = "deny_listed";
+        pre_err = g_strdup("agent identity is deny-listed");
       }
     }
   }
@@ -600,6 +689,11 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         g_mutex_lock(&s->mu);
         g_hash_table_replace(s->sessions_by_client_pubkey, session_key, session_value);
         g_mutex_unlock(&s->mu);
+
+        /* The persistent pairing was already committed ATOMICALLY with the
+         * secret consumption (or resolved from an existing binding); only
+         * the cache-only RAM session needed recording here. */
+
         result = g_strdup("ack");
         result_is_json = false;
         status = "ok";

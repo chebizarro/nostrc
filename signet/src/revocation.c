@@ -177,6 +177,10 @@ static int signet_revoke_internal(SignetStore *store,
   int lease_rc = signet_store_revoke_agent_leases(store, agent_id, now);
   if (lease_rc < 0) rc = -1;
 
+  /* 2b. Revoke all persistent NIP-46 client bindings so bound clients cannot
+   * reconnect to the revoked identity. */
+  if (signet_store_revoke_agent_clients(store, agent_id, now) < 0) rc = -1;
+
   /* 3. Revoke key from key store (removes from hot cache + SQLCipher). */
   if (keys) {
     int key_rc = signet_key_store_revoke_agent(keys, agent_id);

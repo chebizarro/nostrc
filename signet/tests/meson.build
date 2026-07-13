@@ -130,6 +130,14 @@ test_reissue_self_service = executable('test_reissue_self_service',
   install: false,
 )
 
+test_client_bindings = executable('test_client_bindings',
+  'test_client_bindings.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: false,
+)
+
 test('signet_smoke', test_exe)
 test('replay_cache', test_replay)
 test('policy_engine', test_policy)
@@ -146,6 +154,7 @@ test('reissue_connect', test_reissue_connect)
 test('mgmt_replay', test_mgmt_replay)
 test('pubkey_backfill', test_pubkey_backfill)
 test('reissue_self_service', test_reissue_self_service)
+test('client_bindings', test_client_bindings)
 
 if get_option('signet_enable_passkeys')
   test_store_passkeys = executable('test_store_passkeys',

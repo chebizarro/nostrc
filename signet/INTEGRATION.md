@@ -158,6 +158,8 @@ All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents
 | 25910 | `agent/rotate-key` | Rotate agent keypair |
 | 25910 | `agent/adopt-existing` | Register an externally supplied (BYO) keypair as an agent |
 | 25910 | `agent/reissue-connect` | Mint a fresh one-time `connect_secret` for an existing agent |
+| 25910 | `agent/list-clients` | List an agent's persistent NIP-46 client bindings |
+| 25910 | `agent/revoke-client` | Soft-revoke a persistent NIP-46 client binding (forces re-pairing) |
 
 ### `agent/adopt-existing` (BYO-key)
 
@@ -287,6 +289,46 @@ The CLI prints `agent_id`, `user_pubkey`, and `bunker_pubkey`. The fresh secret
 is written atomically (0600) to `--out <path>` for consumption by e.g. an
 OpenClaw `nip46ConnectSecret` file backend, or printed only with
 `--show-secret`.
+
+### NIP-46 pairing model (persistent client bindings)
+
+The one-time `connect_secret` is a **pairing bootstrap**, not a session
+credential. On the first successful `connect`, Signet consumes the secret and
+durably records the binding `client_pubkey → agent_id` (table
+`agent_clients`). From then on:
+
+- **Pairing is atomic.** The secret consumption and the durable binding
+  commit in one store transaction — a crash or write failure can never burn
+  the one-time credential without recording the pairing (or vice versa).
+- **Reconnects need no secret.** A `connect` from a bound client succeeds
+  with no secret, or with the client's OWN stale/consumed pairing secret
+  (what a restarted client typically re-sends — verified against a SHA-256
+  recorded at pairing). An arbitrary wrong secret is rejected with
+  `auth_failed` so misconfiguration and probing surface. Requests
+  (`sign_event`, …) from a bound client resolve directly — no `connect`
+  required at all. The binding survives agent AND daemon restarts, so
+  headless agents recover autonomously.
+- **Authenticity:** every request is NIP-44-encrypted under the bound client
+  key, so a reconnect proves possession of the key that was authorized during
+  the secret-verified pairing. No new trust is granted.
+- **Identity pinning:** bindings record the agent identity pubkey at pairing
+  time and resolve only while it matches the agent's CURRENT identity —
+  `agent/rotate-key`, revocation + reprovisioning, or re-adoption under a new
+  key all invalidate old bindings (no resurrection of prior authority).
+- **Suspension precedence:** the daemon's live deny list is checked on every
+  path (pairing, reconnect, per-request) before policy evaluation — a
+  suspended agent's bound clients are refused immediately.
+- **Revocation:** `agent/revoke-client` soft-revokes one binding
+  (`revoked_at`); the persistent table is authoritative per-request, so
+  revocation takes effect immediately. Full `agent/revoke` revokes all of the
+  agent's bindings. A revoked client must re-pair with a fresh one-time secret
+  (`agent/reissue-connect`), which re-binds and clears the revocation.
+- **Inspection:** `agent/list-clients` returns all bindings (active and
+  revoked) with `bound_at` / `last_used` timestamps.
+- Policy evaluation and deny-list precedence are unchanged and apply on top
+  of binding resolution.
+
+CLI: `signetctl list-clients <agent_id>`, `signetctl revoke-client <client_pubkey>`.
 
 ## Bootstrap Flow
 

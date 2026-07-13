@@ -387,6 +387,168 @@ int signet_store_set_agent_pubkey(SignetStore *store,
                                   const char *agent_id,
                                   const char *pubkey_hex);
 
+/* ---- Persistent NIP-46 client bindings (pair once, reconnect freely) ----
+ *
+ * A binding (client_pubkey -> agent_id) is created under the authority of a
+ * one-time connect_secret at first connect and persists across daemon and
+ * agent restarts, so a bound client reconnects WITHOUT a fresh secret.
+ * Bindings are soft-revoked (revoked_at) for auditability; re-pairing with a
+ * fresh secret rebinds and clears the revocation. */
+
+/**
+ * SignetClientBinding:
+ * @client_pubkey: (transfer full): bound NIP-46 client pubkey (64-hex).
+ * @bound_at: binding creation time as Unix seconds.
+ * @last_used: last resolution time as Unix seconds, or 0.
+ * @revoked_at: revocation time as Unix seconds, or 0 if active.
+ *
+ * One persistent NIP-46 client binding row.
+ *
+ * Since: 1.2
+ */
+typedef struct {
+  char *client_pubkey;
+  int64_t bound_at;
+  int64_t last_used;
+  int64_t revoked_at;
+} SignetClientBinding;
+
+/* Bind (or re-bind) a client pubkey to an agent. Upsert keyed on
+ * client_pubkey; clears any prior revocation (a fresh one-time secret is the
+ * authorized recovery path from a revoked binding). The binding is pinned to
+ * @agent_pubkey (the agent identity at pairing time): rotation or
+ * reprovisioning under a new key invalidates it. @pairing_secret, when given,
+ * is stored as a SHA-256 hash so a stale reconnect can prove it presented
+ * ITS OWN former secret. Pubkeys must be 64-hex; stored lowercase.
+ * Returns 0 on success, -1 on error. */
+/**
+ * signet_store_bind_client:
+ * @store: (nullable): a #SignetStore
+ * @agent_id: (not nullable): agent identifier
+ * @agent_pubkey: (nullable): 64-hex agent identity pubkey to pin
+ * @client_pubkey: (not nullable): 64-hex NIP-46 client pubkey
+ * @pairing_secret: (nullable): one-time secret used to pair (stored hashed)
+ * @now: current Unix time in seconds
+ *
+ * Binds a client pubkey to an agent (upsert; clears prior revocation).
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.2
+ */
+int signet_store_bind_client(SignetStore *store,
+                             const char *agent_id,
+                             const char *agent_pubkey,
+                             const char *client_pubkey,
+                             const char *pairing_secret,
+                             int64_t now);
+
+/* Resolve the agent bound to client_pubkey. Only active bindings whose
+ * pinned agent_pubkey still matches the agent's CURRENT identity pubkey
+ * resolve (rotate/reprovision invalidates). last_used is persisted at most
+ * once per minute (coalesced) to keep the signing hot path read-mostly.
+ * On success sets *out_agent_id (caller g_free) and, when
+ * @out_bound_secret_hash is non-NULL, the SHA-256 hex of the pairing secret
+ * (or NULL if none recorded; caller g_free).
+ * Returns 0 on success, 1 if not bound/revoked/identity-changed, -1 on error. */
+/**
+ * signet_store_lookup_client_binding:
+ * @store: (nullable): a #SignetStore
+ * @client_pubkey: (not nullable): 64-hex NIP-46 client pubkey
+ * @now: current Unix time in seconds
+ * @out_agent_id: (out) (transfer full) (not nullable): return location for the bound agent id
+ * @out_bound_secret_hash: (out) (transfer full) (nullable): return location for the pairing-secret hash
+ *
+ * Resolves the agent bound to a client pubkey; revoked or identity-changed bindings do not match.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.2
+ */
+int signet_store_lookup_client_binding(SignetStore *store,
+                                       const char *client_pubkey,
+                                       int64_t now,
+                                       char **out_agent_id,
+                                       char **out_bound_secret_hash);
+
+/* Soft-revoke a client binding. Returns 0 on success, 1 if not found or
+ * already revoked, -1 on error. */
+/**
+ * signet_store_revoke_client:
+ * @store: (nullable): a #SignetStore
+ * @client_pubkey: (not nullable): 64-hex NIP-46 client pubkey
+ * @now: current Unix time in seconds
+ *
+ * Soft-revokes a client binding (sets revoked_at).
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.2
+ */
+int signet_store_revoke_client(SignetStore *store,
+                               const char *client_pubkey,
+                               int64_t now);
+
+/* Soft-revoke ALL active client bindings for an agent (agent revocation).
+ * Returns the number of bindings revoked (>= 0), or -1 on error. */
+/**
+ * signet_store_revoke_agent_clients:
+ * @store: (nullable): a #SignetStore
+ * @agent_id: (not nullable): agent identifier
+ * @now: current Unix time in seconds
+ *
+ * Soft-revokes all active client bindings for an agent.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.2
+ */
+int signet_store_revoke_agent_clients(SignetStore *store,
+                                      const char *agent_id,
+                                      int64_t now);
+
+/* List all bindings (active and revoked) for an agent. Caller frees with
+ * signet_client_binding_list_free(). Returns 0 on success, -1 on error. */
+/**
+ * signet_store_list_clients:
+ * @store: (nullable): a #SignetStore
+ * @agent_id: (not nullable): agent identifier
+ * @out_list: (out) (transfer full) (not nullable): return location for the binding array
+ * @out_count: (out) (not nullable): return location for the element count
+ *
+ * Lists all client bindings recorded for an agent, including revoked ones.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.2
+ */
+int signet_store_list_clients(SignetStore *store,
+                              const char *agent_id,
+                              SignetClientBinding **out_list,
+                              size_t *out_count);
+
+/* Free a binding list from signet_store_list_clients(). Safe on NULL. */
+/**
+ * signet_client_binding_list_free:
+ * @list: (nullable): binding array
+ * @count: number of elements
+ *
+ * Frees a client binding list.
+ *
+ * Since: 1.2
+ */
+void signet_client_binding_list_free(SignetClientBinding *list, size_t count);
+
 /* Consume (clear) the connect_secret for an agent after successful connect.
  * Returns 0 on success, 1 if not found or already consumed, -1 on error. */
 /**
@@ -455,6 +617,33 @@ int signet_store_consume_connect_secret_value(SignetStore *store,
                                               const char *connect_secret,
                                               int64_t now,
                                               char **out_agent_id);
+
+/* Like signet_store_consume_connect_secret_value but ALSO creates the
+ * persistent NIP-46 client binding for @client_pubkey in the SAME
+ * transaction: either the secret is consumed AND the pairing is durably
+ * recorded, or neither happens. This is the pairing path used by the NIP-46
+ * connect handler. Returns 0 on success, 1 if not found/expired, -1 on error. */
+/**
+ * signet_store_consume_connect_secret_and_bind:
+ * @store: (nullable): a #SignetStore
+ * @connect_secret: (not nullable): connect secret
+ * @client_pubkey: (not nullable): 64-hex NIP-46 client pubkey to bind
+ * @now: current Unix time in seconds
+ * @out_agent_id: (out) (transfer full) (not nullable): return location for agent id
+ *
+ * Atomically consumes a one-time connect secret and records the client pairing.
+ *
+ * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.2
+ */
+int signet_store_consume_connect_secret_and_bind(SignetStore *store,
+                                                 const char *connect_secret,
+                                                 const char *client_pubkey,
+                                                 int64_t now,
+                                                 char **out_agent_id);
 
 /* Free an agent record (wipes secret key). Safe on NULL. */
 /**

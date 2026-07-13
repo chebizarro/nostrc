@@ -77,6 +77,23 @@ SignetNip46Server *signet_nip46_server_new(struct SignetRelayPool *relays,
                                            struct SignetAuditLogger *audit,
                                            const SignetNip46ServerConfig *cfg);
 
+/* Attach the daemon's LIVE deny list so suspended (deny-listed) agent
+ * identities are refused on every path — pairing, binding reconnect, and
+ * per-request resolution — before policy evaluation. Pass the SAME instance
+ * consulted by the auth/fleet is_denied callback. Safe on NULL h or deny. */
+/**
+ * signet_nip46_server_set_deny_list:
+ * @s: (not nullable): a #SignetNip46Server
+ * @deny: (nullable): live deny list
+ *
+ * Attach the daemon deny list; deny-listed agent identities are refused before policy evaluation.
+ *
+ * Since: 1.2
+ */
+struct SignetDenyList;
+void signet_nip46_server_set_deny_list(SignetNip46Server *s,
+                                       struct SignetDenyList *deny);
+
 /* Free server. Safe on NULL. */
 /**
  * signet_nip46_server_free:
