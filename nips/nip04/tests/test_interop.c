@@ -16,8 +16,8 @@ int main(void) {
         free(err);
         return 1;
     }
-    if (strncmp(content, "v=2:", 4) != 0) {
-        fprintf(stderr, "expected AEAD v2 envelope, got: %s\n", content);
+    if (strncmp(content, "v=2:", 4) == 0 || strstr(content, "?iv=") == NULL) {
+        fprintf(stderr, "expected standard NIP-04 envelope, got: %s\n", content);
         free(content);
         return 1;
     }
@@ -38,5 +38,20 @@ int main(void) {
 
     free(pt);
     free(content);
+
+    const char *fixture_msg = "nostr-tools nip04 fixture";
+    const char *fixture_content = "EPr2K0Ys12tMRVsLxh6Yw14bN62Ci3kbYGagq7lT3QU=?iv=xF+EsvVJ3AK1K5i9nQKRfg==";
+    pt = NULL; err = NULL;
+    if (nostr_nip04_decrypt(fixture_content, sender_pk_hex, receiver_sk_hex, &pt, &err) != 0) {
+        fprintf(stderr, "nostr-tools fixture decrypt failed: %s\n", err ? err : "unknown");
+        free(err);
+        return 1;
+    }
+    if (strcmp(pt, fixture_msg) != 0) {
+        fprintf(stderr, "fixture plaintext mismatch: got '%s' exp '%s'\n", pt, fixture_msg);
+        free(pt);
+        return 1;
+    }
+    free(pt);
     return 0;
 }

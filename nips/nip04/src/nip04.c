@@ -311,7 +311,7 @@ static int ecdh_derive_key(const char *peer_pub_hex, const char *self_sec_hex, u
     secp256k1_pubkey pub;
     if (!secp256k1_ec_pubkey_parse(ctx, &pub, pk_bin, pk_bin_len)) { secp256k1_context_destroy(ctx); secure_bzero(sk_bin, sizeof(sk_bin)); return -1; }
 
-    if (!secp256k1_ecdh(ctx, key_out32, &pub, sk_bin, ecdh_hash_sha256, NULL)) { secp256k1_context_destroy(ctx); secure_bzero(sk_bin, sizeof(sk_bin)); return -1; }
+    if (!secp256k1_ecdh(ctx, key_out32, &pub, sk_bin, ecdh_hash_xcopy, NULL)) { secp256k1_context_destroy(ctx); secure_bzero(sk_bin, sizeof(sk_bin)); return -1; }
     secp256k1_context_destroy(ctx);
     secure_bzero(sk_bin, sizeof(sk_bin));
     return 0;
@@ -372,49 +372,22 @@ int nostr_nip04_encrypt(const char *plaintext_utf8,
         return -1;
     *out_content_b64_qiv = NULL;
 
-    unsigned char key[32], nonce[12];
-    if (nip04_kdf_aead(receiver_pubkey_hex, sender_seckey_hex, key, nonce) != 0) {
-        if (out_error) *out_error = strdup("ecdh failed");
+    nostr_secure_buf sender_seckey = secure_alloc(32);
+    if (!sender_seckey.ptr) {
+        if (out_error) *out_error = strdup("oom");
+        return -1;
+    }
+    if (!nostr_hex2bin((unsigned char *)sender_seckey.ptr, sender_seckey_hex, 32)) {
+        secure_free(&sender_seckey);
+        if (out_error) *out_error = strdup("invalid secret key");
         return -1;
     }
 
-    size_t in_len = strlen(plaintext_utf8);
-    unsigned char *cipher = (unsigned char *)malloc(in_len + 16); /* GCM: ciphertext same len, tag 16 appended later */
-    if (!cipher) { secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("oom"); return -1; }
-
-    int len = 0, total = 0;
-    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-    if (!ctx) { free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("evp ctx"); return -1; }
-    if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
-    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, (int)sizeof(nonce), NULL) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
-    if (EVP_EncryptInit_ex(ctx, NULL, NULL, key, nonce) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
-    if (EVP_EncryptUpdate(ctx, cipher, &len, (const unsigned char *)plaintext_utf8, (int)in_len) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
-    total = len;
-    if (EVP_EncryptFinal_ex(ctx, cipher + total, &len) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
-    total += len;
-    unsigned char tag[16];
-    if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, tag) != 1) { EVP_CIPHER_CTX_free(ctx); free(cipher); secure_bzero(key, sizeof key); if (out_error) *out_error = strdup("encrypt failed"); return -1; }
-    EVP_CIPHER_CTX_free(ctx);
-
-    /* Assemble: v=2:base64(nonce(12) || ciphertext || tag(16)) */
-    size_t payload_len = sizeof(nonce) + (size_t)total + sizeof(tag);
-    unsigned char *payload = (unsigned char*)malloc(payload_len);
-    if (!payload) { secure_bzero(key, sizeof key); OPENSSL_cleanse(tag, sizeof tag); free(cipher); if (out_error) *out_error = strdup("oom"); return -1; }
-    size_t off = 0; memcpy(payload + off, nonce, sizeof(nonce)); off += sizeof(nonce);
-    memcpy(payload + off, cipher, (size_t)total); off += (size_t)total;
-    memcpy(payload + off, tag, sizeof(tag));
-    char *b64 = NULL;
-    int rc_b64 = base64_encode(payload, payload_len, &b64) ? 0 : -1;
-    OPENSSL_cleanse(tag, sizeof tag);
-    free(cipher); secure_bzero(key, sizeof key); OPENSSL_cleanse(payload, payload_len); free(payload);
-    if (rc_b64 != 0) { if (out_error) *out_error = strdup("encrypt failed"); return -1; }
-    size_t out_sz = 4 + strlen(b64) + 1; /* v=2: + b64 */
-    char *out = (char*)malloc(out_sz);
-    if (!out) { free(b64); if (out_error) *out_error = strdup("oom"); return -1; }
-    snprintf(out, out_sz, "v=2:%s", b64);
-    free(b64);
-    *out_content_b64_qiv = out;
-    return 0;
+    int rc = nostr_nip04_encrypt_legacy_secure(plaintext_utf8, receiver_pubkey_hex,
+                                               &sender_seckey, out_content_b64_qiv,
+                                               out_error);
+    secure_free(&sender_seckey);
+    return rc;
 }
 
 int nostr_nip04_decrypt(const char *content_b64_qiv,
@@ -613,9 +586,9 @@ int nostr_nip04_encrypt_legacy_secure(
         return -1;
     }
 
-    /* ECDH with SHA-256 hash of X coordinate as the key (standard NIP-04) */
+    /* ECDH raw X coordinate is the AES key for standard NIP-04. */
     unsigned char key[32];
-    if (!secp256k1_ecdh(ctx, key, &pub, (const unsigned char*)sender_seckey->ptr, ecdh_hash_sha256, NULL)) {
+    if (!secp256k1_ecdh(ctx, key, &pub, (const unsigned char*)sender_seckey->ptr, ecdh_hash_xcopy, NULL)) {
         secp256k1_context_destroy(ctx);
         if (out_error) *out_error = strdup("ecdh failed");
         return -1;
