@@ -1112,22 +1112,47 @@ static int signet_store_bind_client_stmt(SignetStore *store,
                                          const char *client_pubkey_canonical,
                                          const char *secret_hash,
                                          int64_t now) {
-  /* Upsert: re-pairing (authorized by a fresh one-time secret) rebinds the
-   * client key and clears any prior revocation — a new secret IS the
-   * recovery path from a revoked binding. */
-  const char *sql =
+  /* Upsert without SQLite 3.24+ ON CONFLICT ... DO UPDATE syntax: SQLCipher
+   * deployments can link older SQLite parsers. Re-pairing (authorized by a
+   * fresh one-time secret) rebinds the client key and clears prior revocation
+   * -- a new secret IS the recovery path from a revoked binding. */
+  const char *update_sql =
+      "UPDATE agent_clients SET "
+      "  agent_id = ?, "
+      "  agent_pubkey = ?, "
+      "  bound_secret_hash = ?, "
+      "  bound_at = ?, "
+      "  last_used = ?, "
+      "  revoked_at = NULL "
+      "WHERE client_pubkey = ?;";
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(store->db, update_sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_text(stmt, 1, agent_id, -1, SQLITE_TRANSIENT);
+  if (agent_pubkey && agent_pubkey[0]) {
+    sqlite3_bind_text(stmt, 2, agent_pubkey, -1, SQLITE_TRANSIENT);
+  } else {
+    sqlite3_bind_null(stmt, 2);
+  }
+  if (secret_hash && secret_hash[0]) {
+    sqlite3_bind_text(stmt, 3, secret_hash, -1, SQLITE_TRANSIENT);
+  } else {
+    sqlite3_bind_null(stmt, 3);
+  }
+  sqlite3_bind_int64(stmt, 4, now);
+  sqlite3_bind_int64(stmt, 5, now);
+  sqlite3_bind_text(stmt, 6, client_pubkey_canonical, -1, SQLITE_TRANSIENT);
+  int rc = sqlite3_step(stmt);
+  int changes = sqlite3_changes(store->db);
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_DONE) return -1;
+  if (changes > 0) return 0;
+
+  const char *insert_sql =
       "INSERT INTO agent_clients "
       "(client_pubkey, agent_id, agent_pubkey, bound_secret_hash, bound_at, last_used, revoked_at) "
-      "VALUES (?, ?, ?, ?, ?, ?, NULL) "
-      "ON CONFLICT(client_pubkey) DO UPDATE SET "
-      "  agent_id = excluded.agent_id, "
-      "  agent_pubkey = excluded.agent_pubkey, "
-      "  bound_secret_hash = excluded.bound_secret_hash, "
-      "  bound_at = excluded.bound_at, "
-      "  last_used = excluded.last_used, "
-      "  revoked_at = NULL;";
-  sqlite3_stmt *stmt = NULL;
-  if (sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
+      "VALUES (?, ?, ?, ?, ?, ?, NULL);";
+  stmt = NULL;
+  if (sqlite3_prepare_v2(store->db, insert_sql, -1, &stmt, NULL) != SQLITE_OK) return -1;
   sqlite3_bind_text(stmt, 1, client_pubkey_canonical, -1, SQLITE_TRANSIENT);
   sqlite3_bind_text(stmt, 2, agent_id, -1, SQLITE_TRANSIENT);
   if (agent_pubkey && agent_pubkey[0]) {
@@ -1142,7 +1167,7 @@ static int signet_store_bind_client_stmt(SignetStore *store,
   }
   sqlite3_bind_int64(stmt, 5, now);
   sqlite3_bind_int64(stmt, 6, now);
-  int rc = sqlite3_step(stmt);
+  rc = sqlite3_step(stmt);
   sqlite3_finalize(stmt);
   return (rc == SQLITE_DONE) ? 0 : -1;
 }
