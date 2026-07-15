@@ -134,30 +134,33 @@ typedef struct {
  * authenticated the connection (no more race condition). */
 static gboolean signet_post_auth_resubscribe(gpointer data) {
   PostAuthResubData *rd = (PostAuthResubData *)data;
-  NostrRelay      *r   = rd->relay;
   SignetRelayPool *rp  = rd->pool;
   const char      *rurl = rd->relay_url[0] ? rd->relay_url
-                                            : nostr_relay_get_url_const(r);
+                                            : nostr_relay_get_url_const(rd->relay);
 
   g_message("[signetd] auth-ok: Khatru confirmed auth, re-subscribing on %s", rurl);
 
-  /* NPA-04: Use shared scoped filter builder for consistent filtering */
+  int *kinds = NULL;
+  size_t n_kinds = 0;
   g_mutex_lock(&rp->mu);
-  NostrFilters *filters = signet_relay_pool_build_filters_locked(rp);
+  if (rp->active_kinds && rp->n_active_kinds > 0) {
+    n_kinds = rp->n_active_kinds;
+    kinds = (int *)malloc(n_kinds * sizeof(int));
+    if (kinds) memcpy(kinds, rp->active_kinds, n_kinds * sizeof(int));
+  }
   g_mutex_unlock(&rp->mu);
 
   g_free(rd);   /* ownership transferred — free before subscribe to avoid leak */
 
-  if (filters) {
-    GoContext *ctx = nostr_relay_get_context(r);
-    Error *err = NULL;
-    if (nostr_relay_subscribe(r, ctx, filters, &err)) {
+  if (kinds && n_kinds > 0) {
+    if (signet_relay_pool_subscribe_kinds(rp, kinds, n_kinds) == 0) {
       g_message("[signetd] post-AUTH re-subscribed on %s", rurl);
     } else {
-      g_warning("[signetd] post-AUTH re-subscribe failed on %s: %s",
-                rurl, err ? err->message : "unknown");
+      g_warning("[signetd] post-AUTH re-subscribe failed on %s", rurl);
     }
-    nostr_filters_free(filters);
+    free(kinds);
+  } else {
+    g_warning("[signetd] post-AUTH re-subscribe skipped on %s: no active kinds", rurl);
   }
 
   return G_SOURCE_REMOVE;  /* one-shot */
