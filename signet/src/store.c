@@ -774,58 +774,95 @@ int signet_store_put_agent_ex(SignetStore *store,
    * REPLACE resolves a violation of ANY unique constraint by DELETING the
    * conflicting row, so with the unique pubkey/connect_secret indexes a
    * same-pubkey (or same-secret) insert would silently destroy the OTHER
-   * agent's row. With ON CONFLICT(agent_id) DO UPDATE, replacing the same
-   * agent still works, while a pubkey/connect_secret collision with a
-   * different agent fails with SQLITE_CONSTRAINT (reported as 1). */
-  const char *sql =
-    "INSERT INTO agents "
-    "(agent_id, encrypted_nsec, nonce, algo, connect_secret, created_at, last_used, pubkey, provenance) "
-    "VALUES (?, ?, ?, 'xsalsa20poly1305', ?, ?, 0, ?, ?) "
-    "ON CONFLICT(agent_id) DO UPDATE SET "
-    "  encrypted_nsec = excluded.encrypted_nsec, "
-    "  nonce = excluded.nonce, "
-    "  algo = excluded.algo, "
-    "  connect_secret = excluded.connect_secret, "
-    "  created_at = excluded.created_at, "
+   * agent's row.
+   *
+   * Avoid modern "ON CONFLICT ... DO UPDATE" syntax here too: deployed
+   * SQLCipher builds may expose an older SQLite parser even when plain
+   * libsqlite3 on the host accepts it. A two-step UPDATE then INSERT keeps
+   * same-agent replacement working while preserving unique-constraint
+   * failures for pubkey/connect_secret collisions with other agents. */
+  const char *update_sql =
+    "UPDATE agents SET "
+    "  encrypted_nsec = ?, "
+    "  nonce = ?, "
+    "  algo = 'xsalsa20poly1305', "
+    "  connect_secret = ?, "
+    "  created_at = ?, "
     "  last_used = 0, "
-    "  pubkey = excluded.pubkey, "
-    "  provenance = excluded.provenance;";
+    "  pubkey = ?, "
+    "  provenance = ? "
+    "WHERE agent_id = ?;";
 
   sqlite3_stmt *stmt = NULL;
-  int rc = sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL);
+  int rc = sqlite3_prepare_v2(store->db, update_sql, -1, &stmt, NULL);
   if (rc != SQLITE_OK) {
     sodium_memzero(ciphertext, ct_len);
     free(ciphertext);
     return -1;
   }
 
-  sqlite3_bind_text(stmt, 1, agent_id, -1, SQLITE_TRANSIENT);
-  sqlite3_bind_blob(stmt, 2, ciphertext, (int)ct_len, SQLITE_TRANSIENT);
-  sqlite3_bind_blob(stmt, 3, nonce, SIGNET_NONCE_LEN, SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 1, ciphertext, (int)ct_len, SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 2, nonce, SIGNET_NONCE_LEN, SQLITE_TRANSIENT);
   if (connect_secret && connect_secret[0]) {
-    sqlite3_bind_text(stmt, 4, connect_secret, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, connect_secret, -1, SQLITE_TRANSIENT);
   } else {
-    sqlite3_bind_null(stmt, 4);
+    sqlite3_bind_null(stmt, 3);
   }
-  sqlite3_bind_int64(stmt, 5, now);
+  sqlite3_bind_int64(stmt, 4, now);
   if (have_pubkey) {
-    sqlite3_bind_text(stmt, 6, canonical_pubkey, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 5, canonical_pubkey, -1, SQLITE_TRANSIENT);
   } else {
-    sqlite3_bind_null(stmt, 6);
+    sqlite3_bind_null(stmt, 5);
   }
-  sqlite3_bind_text(stmt, 7, (provenance && provenance[0]) ? provenance : "provisioned",
+  sqlite3_bind_text(stmt, 6, (provenance && provenance[0]) ? provenance : "provisioned",
                     -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 7, agent_id, -1, SQLITE_TRANSIENT);
 
   rc = sqlite3_step(stmt);
+  int updated = sqlite3_changes(store->db);
   sqlite3_finalize(stmt);
+
+  if (rc == SQLITE_DONE && updated == 0) {
+    const char *insert_sql =
+      "INSERT INTO agents "
+      "(agent_id, encrypted_nsec, nonce, algo, connect_secret, created_at, last_used, pubkey, provenance) "
+      "VALUES (?, ?, ?, 'xsalsa20poly1305', ?, ?, 0, ?, ?);";
+    rc = sqlite3_prepare_v2(store->db, insert_sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+      sodium_memzero(ciphertext, ct_len);
+      free(ciphertext);
+      return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, agent_id, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(stmt, 2, ciphertext, (int)ct_len, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(stmt, 3, nonce, SIGNET_NONCE_LEN, SQLITE_TRANSIENT);
+    if (connect_secret && connect_secret[0]) {
+      sqlite3_bind_text(stmt, 4, connect_secret, -1, SQLITE_TRANSIENT);
+    } else {
+      sqlite3_bind_null(stmt, 4);
+    }
+    sqlite3_bind_int64(stmt, 5, now);
+    if (have_pubkey) {
+      sqlite3_bind_text(stmt, 6, canonical_pubkey, -1, SQLITE_TRANSIENT);
+    } else {
+      sqlite3_bind_null(stmt, 6);
+    }
+    sqlite3_bind_text(stmt, 7, (provenance && provenance[0]) ? provenance : "provisioned",
+                      -1, SQLITE_TRANSIENT);
+
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+  }
+
   sodium_memzero(ciphertext, ct_len);
   free(ciphertext);
 
   if (rc == SQLITE_DONE) return 0;
   /* Unique-constraint violation: the pubkey or connect_secret is already
-   * bound to a DIFFERENT agent (same-agent replaces are resolved by the
-   * ON CONFLICT clause above and never reach here). Use the extended errcode
-   * so future non-uniqueness constraints are not misreported as conflicts. */
+   * bound to a DIFFERENT agent (same-agent replacements are handled by the
+   * UPDATE path above and never reach the INSERT). Use the extended errcode so
+   * future non-uniqueness constraints are not misreported as conflicts. */
   int xerr = sqlite3_extended_errcode(store->db);
   if (xerr == SQLITE_CONSTRAINT_UNIQUE || xerr == SQLITE_CONSTRAINT_PRIMARYKEY)
     return 1;
