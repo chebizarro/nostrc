@@ -75,10 +75,7 @@ static int signetd_subscribe_mgmt_kinds(SignetRelayPool *relays, bool legacy,
   size_t n = 0;
   kinds[n++] = 24133;            /* NIP-46 signing requests */
   kinds[n++] = CAS_INTENT;       /* 25910 Cascadia ContextVM management */
-  /* Do not mix gift-wrap history into the live signer relay stream. A private
-   * bunker relay can contain stale/bad NIP-17 backfill tagged to Signet; pulling
-   * that on restart can starve live NIP-46 RPCs. Gift-wrapped management should
-   * be handled by a separate paced subscription if re-enabled. */
+  kinds[n++] = NIP59_GIFT_WRAP;  /* 1059 carrying canonical management intents */
   if (legacy) {
     kinds[n++] = SIGNET_KIND_PROVISION_AGENT; /* 28000 */
     kinds[n++] = SIGNET_KIND_REVOKE_AGENT;    /* 28010 */
