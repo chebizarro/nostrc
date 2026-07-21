@@ -26,8 +26,8 @@
  *                identity pubkey) — self-service connect_secret recovery. The
  *                self path grants no power over any other agent or method.
  *
- * Deprecated compatibility: the 28000-series event kinds and 28090 ACK are
- * available only when legacy_28000 is explicitly enabled.
+ * No legacy management event transport is supported. Operations are keyed by
+ * their ContextVM method and replies are NIP-59 gift-wrapped JSON-RPC results.
  */
 
 #ifndef SIGNET_MGMT_PROTOCOL_H
@@ -42,102 +42,6 @@ extern "C" {
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-
-/* Deprecated Nostr event kinds for the legacy 28000-series management protocol. */
-/**
- * SIGNET_KIND_PROVISION_AGENT:
- *
- * Legacy management event kind for provisioning an agent.
- *
- * Since: 1.0
- */
-#define SIGNET_KIND_PROVISION_AGENT 28000
-/**
- * SIGNET_KIND_REVOKE_AGENT:
- *
- * Legacy management event kind for revoking an agent.
- *
- * Since: 1.0
- */
-#define SIGNET_KIND_REVOKE_AGENT   28010
-/**
- * SIGNET_KIND_SET_POLICY:
- *
- * Legacy management event kind for setting policy.
- *
- * Since: 1.0
- */
-#define SIGNET_KIND_SET_POLICY     28020
-/**
- * SIGNET_KIND_GET_STATUS:
- *
- * Legacy management event kind for status queries.
- *
- * Since: 1.0
- */
-#define SIGNET_KIND_GET_STATUS     28030
-/**
- * SIGNET_KIND_LIST_AGENTS:
- *
- * Legacy management event kind for listing agents.
- *
- * Since: 1.0
- */
-#define SIGNET_KIND_LIST_AGENTS    28040
-/**
- * SIGNET_KIND_ROTATE_KEY:
- *
- * Legacy management event kind for rotating an agent key.
- *
- * Since: 1.0
- */
-#define SIGNET_KIND_ROTATE_KEY     28050
-/**
- * SIGNET_KIND_ADOPT_EXISTING:
- *
- * Internal management kind for adopt-existing (BYO-key registration of a
- * canonical identity). ContextVM-only (method agent/adopt-existing); never
- * subscribed on the legacy wire.
- *
- * Since: 1.1
- */
-#define SIGNET_KIND_ADOPT_EXISTING 28060
-/**
- * SIGNET_KIND_REISSUE_CONNECT:
- *
- * Internal management kind for reissue-connect (mint a fresh one-time
- * connect_secret for an existing agent). ContextVM-only (method
- * agent/reissue-connect); never subscribed on the legacy wire.
- *
- * Since: 1.1
- */
-#define SIGNET_KIND_REISSUE_CONNECT 28070
-/**
- * SIGNET_KIND_LIST_CLIENTS:
- *
- * Internal management kind for listing an agent's persistent NIP-46 client
- * bindings. ContextVM-only (method agent/list-clients).
- *
- * Since: 1.2
- */
-#define SIGNET_KIND_LIST_CLIENTS 28071
-/**
- * SIGNET_KIND_REVOKE_CLIENT:
- *
- * Internal management kind for soft-revoking a persistent NIP-46 client
- * binding. ContextVM-only (method agent/revoke-client).
- *
- * Since: 1.2
- */
-#define SIGNET_KIND_REVOKE_CLIENT 28072
-/**
- * SIGNET_KIND_MGMT_ACK:
- *
- * Legacy management event kind for acknowledgements.
- *
- * Since: 1.0
- */
-#define SIGNET_KIND_MGMT_ACK       28090
 
 /* Cascadia canonical management plane compatibility aliases. */
 #define SIGNET_KIND_CONTEXTVM_INTENT CAS_INTENT
@@ -186,8 +90,6 @@ typedef enum {
  */
 typedef struct {
   SignetMgmtOp op;
-  int kind;                /* original event kind */
-
   char *agent_id;          /* target agent (owned, heap) */
   char *policy_json;       /* optional policy object JSON (owned, heap) */
   char *request_id;        /* optional correlation ID (owned, heap) */
@@ -199,19 +101,6 @@ typedef struct {
   char *connect_secret;    /* adopt: optional fixed connect secret (owned) */
   char *client_pubkey;     /* revoke-client: target NIP-46 client pubkey (owned) */
 } SignetMgmtRequest;
-
-/* Map event kind to management op. */
-/**
- * signet_mgmt_op_from_kind:
- * @kind: kind
- *
- * Map event kind to management op.
- *
- * Returns: operation-specific status or value as documented by the function
- *
- * Since: 1.0
- */
-SignetMgmtOp signet_mgmt_op_from_kind(int kind);
 
 /* Map op to canonical string name. Returns static string. */
 /**
@@ -244,31 +133,26 @@ bool signet_mgmt_is_authorized(const char *event_pubkey_hex,
                                const char *const *provisioner_pubkeys,
                                size_t n_provisioner_pubkeys);
 
-/* Parse management request JSON content.
- * Expected shape depends on kind:
- *   28000: {"agent_id": "...", "request_id": "..."}
- *   28010: {"agent_id": "...", "request_id": "..."}
- *   28020: {"agent_id": "...", "policy": {...}, "request_id": "..."}
- *   28030: {"request_id": "..."}
- *   28040: {"request_id": "..."}
- *   28050: {"agent_id": "...", "request_id": "..."}
+/* Parse normalized ContextVM method parameters.
+ * The operation comes from the validated JSON-RPC method name; content_json
+ * is the normalized params object plus request_id correlation.
  *
  * Returns 0 on success, -1 on parse/validation error.
  * out_error receives a heap string on error (caller frees). */
 /**
  * signet_mgmt_request_parse:
- * @kind: kind
+ * @op: validated ContextVM management operation
  * @content_json: (not nullable): content json
  * @out_req: (out) (not nullable): return location for req
  * @out_error: (out) (transfer full) (nullable): return location for a newly allocated error string
  *
- * Parse management request JSON content. Expected shape depends on kind:   28000: {"agent_id": "...", "request_id": "..."}   28010: {"agent_id": "...", "request_id": "..."}   28020: {"agent_id": "...", "policy": {...}, "request_id": "..."}   28030: {"request_id": "..."}   28040: {"request_id": "..."}   28050: {"agent_id": "...", "request_id": "..."}.
+ * Parse normalized ContextVM management parameters.
  *
  * Returns: operation-specific status or value as documented by the function
  *
  * Since: 1.0
  */
-int signet_mgmt_request_parse(int kind,
+int signet_mgmt_request_parse(SignetMgmtOp op,
                               const char *content_json,
                               SignetMgmtRequest *out_req,
                               char **out_error);
@@ -343,7 +227,6 @@ typedef struct {
   const char *bunker_pubkey_hex;       /* for addressing */
   const char *const *relay_urls;       /* relay URLs for bunker:// URIs */
   size_t n_relay_urls;
-  bool legacy_28000_enabled;
 } SignetMgmtHandlerConfig;
 
 /* Create a management handler. */
@@ -442,30 +325,15 @@ void signet_mgmt_handler_set_replay_cache(SignetMgmtHandler *h,
 void signet_mgmt_handler_set_self_replay_cache(SignetMgmtHandler *h,
                                                struct SignetReplayCache *replay);
 
-/* Handle an incoming management event.
- * Verifies authorization, parses, executes, publishes ack.
- * Returns 0 on success (ack published), -1 on error. */
-/**
- * signet_mgmt_handler_handle_event:
- * @h: (not nullable): a #SignetMgmtHandler
- * @event_pubkey_hex: (not nullable): event pubkey hex
- * @content_json: (not nullable): content json
- * @kind: kind
- * @event_id_hex: (nullable): event id hex
- * @now: current Unix time in seconds
- *
- * Handle an incoming management event. Verifies authorization, parses, executes, publishes ack. Returns 0 on success (ack published), -1 on error.
- *
- * Returns: operation-specific status or value as documented by the function
- *
- * Since: 1.0
- */
-int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
-                                     const char *event_pubkey_hex,
-                                     const char *content_json,
-                                     int kind,
-                                     const char *event_id_hex,
-                                     int64_t now);
+/* Execute an already-normalized ContextVM request. This lower-level entry
+ * point exists for transport-independent tests; relay callers use
+ * signet_mgmt_handler_handle_intent(). */
+int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
+                                       const char *event_pubkey_hex,
+                                       const char *params_json,
+                                       SignetMgmtOp op,
+                                       const char *event_id_hex,
+                                       int64_t now);
 
 /* Handle a Cascadia ContextVM kind-25910 JSON-RPC management intent.
  * Plain kind-25910 events are accepted for test/local compatibility; kind-1059

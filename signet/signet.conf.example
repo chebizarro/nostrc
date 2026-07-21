@@ -62,11 +62,6 @@ stdout = true
 # payloads over NIP-17/NIP-59 gift-wrap instead.
 port = 0
 
-[mgmt]
-# Deprecated 28000-series management protocol. Default false: canonical control is
-# ContextVM kind 25910, gift-wrapped with NIP-59/NIP-17 kind 1059.
-legacy_28000 = false
-
 [uid_map]
 # SO_PEERCRED peer UID -> agent_id mapping for the local D-Bus Unix and SSH
 # agent transports. Each entry is "<numeric-uid> = <agent_id>". A caller whose

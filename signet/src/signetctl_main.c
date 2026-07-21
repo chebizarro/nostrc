@@ -98,21 +98,19 @@ static void signetctl_usage(FILE *out) {
 
 /* -------------------- build Cascadia ContextVM intent -------------------- */
 
-/* Map a legacy management kind to its Cascadia ContextVM JSON-RPC method name.
- * (Kept internally keyed by SIGNET_KIND_* so the command dispatch is unchanged;
- * the wire form is now a kind-25910 ContextVM intent, gift-wrapped.) */
-static const char *signetctl_contextvm_method(int kind) {
-  switch (kind) {
-    case SIGNET_KIND_PROVISION_AGENT: return "agent/provision";
-    case SIGNET_KIND_REVOKE_AGENT:    return "agent/revoke";
-    case SIGNET_KIND_SET_POLICY:      return "agent/set-policy";
-    case SIGNET_KIND_GET_STATUS:      return "agent/get-status";
-    case SIGNET_KIND_LIST_AGENTS:     return "agent/list";
-    case SIGNET_KIND_ROTATE_KEY:      return "agent/rotate-key";
-    case SIGNET_KIND_ADOPT_EXISTING:  return "agent/adopt-existing";
-    case SIGNET_KIND_REISSUE_CONNECT: return "agent/reissue-connect";
-    case SIGNET_KIND_LIST_CLIENTS:    return "agent/list-clients";
-    case SIGNET_KIND_REVOKE_CLIENT:   return "agent/revoke-client";
+/* Map an operation to its Cascadia ContextVM JSON-RPC method name. */
+static const char *signetctl_contextvm_method(SignetMgmtOp op) {
+  switch (op) {
+    case SIGNET_MGMT_OP_PROVISION_AGENT: return "agent/provision";
+    case SIGNET_MGMT_OP_REVOKE_AGENT:    return "agent/revoke";
+    case SIGNET_MGMT_OP_SET_POLICY:      return "agent/set-policy";
+    case SIGNET_MGMT_OP_GET_STATUS:      return "agent/get-status";
+    case SIGNET_MGMT_OP_LIST_AGENTS:     return "agent/list";
+    case SIGNET_MGMT_OP_ROTATE_KEY:      return "agent/rotate-key";
+    case SIGNET_MGMT_OP_ADOPT_EXISTING:  return "agent/adopt-existing";
+    case SIGNET_MGMT_OP_REISSUE_CONNECT: return "agent/reissue-connect";
+    case SIGNET_MGMT_OP_LIST_CLIENTS:    return "agent/list-clients";
+    case SIGNET_MGMT_OP_REVOKE_CLIENT:   return "agent/revoke-client";
     default:                          return NULL;
   }
 }
@@ -120,11 +118,11 @@ static const char *signetctl_contextvm_method(int kind) {
 /* Build a Cascadia ContextVM JSON-RPC 2.0 intent:
  *   {"jsonrpc":"2.0","id":"<request_id>","method":"agent/...","params":{...}}
  * This is the kind-25910 CAS_INTENT payload the daemon parses. */
-static char *signetctl_build_intent(int kind, const char *agent_id, const char *request_id,
+static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const char *request_id,
                                     const char *policy_json, const char *bootstrap_pubkey,
                                     int delivery_ttl, const char *agent_nsec,
                                     const char *expected_pubkey, const char *client_pubkey) {
-  const char *method = signetctl_contextvm_method(kind);
+  const char *method = signetctl_contextvm_method(op);
   if (!method) return NULL;
 
   JsonBuilder *b = json_builder_new();
@@ -455,8 +453,8 @@ int main(int argc, char **argv) {
 
   const char *cmd = argv[argi++];
 
-  /* Determine event kind and agent_id. */
-  int kind = 0;
+  /* Determine ContextVM operation and agent_id. */
+  SignetMgmtOp op = SIGNET_MGMT_OP_UNKNOWN;
   const char *agent_id = NULL;
   const char *deliver_bootstrap_pubkey = NULL;
   int delivery_ttl = 600;
@@ -467,7 +465,7 @@ int main(int argc, char **argv) {
   const char *revoke_client_pubkey = NULL;
 
   if (strcmp(cmd, "provision") == 0) {
-    kind = SIGNET_KIND_PROVISION_AGENT;
+    op = SIGNET_MGMT_OP_PROVISION_AGENT;
     if (argi >= argc) {
       fprintf(stderr, "signetctl: provision requires <agent_id>\n");
       return 2;
@@ -486,21 +484,21 @@ int main(int argc, char **argv) {
       }
     }
   } else if (strcmp(cmd, "revoke") == 0) {
-    kind = SIGNET_KIND_REVOKE_AGENT;
+    op = SIGNET_MGMT_OP_REVOKE_AGENT;
     if (argi >= argc) {
       fprintf(stderr, "signetctl: revoke requires <agent_id>\n");
       return 2;
     }
     agent_id = argv[argi++];
   } else if (strcmp(cmd, "rotate") == 0) {
-    kind = SIGNET_KIND_ROTATE_KEY;
+    op = SIGNET_MGMT_OP_ROTATE_KEY;
     if (argi >= argc) {
       fprintf(stderr, "signetctl: rotate requires <agent_id>\n");
       return 2;
     }
     agent_id = argv[argi++];
   } else if (strcmp(cmd, "reissue-connect") == 0) {
-    kind = SIGNET_KIND_REISSUE_CONNECT;
+    op = SIGNET_MGMT_OP_REISSUE_CONNECT;
     if (argi >= argc) {
       fprintf(stderr, "signetctl: reissue-connect requires <agent_id>\n");
       return 2;
@@ -519,21 +517,21 @@ int main(int argc, char **argv) {
       }
     }
   } else if (strcmp(cmd, "list-clients") == 0) {
-    kind = SIGNET_KIND_LIST_CLIENTS;
+    op = SIGNET_MGMT_OP_LIST_CLIENTS;
     if (argi >= argc) {
       fprintf(stderr, "signetctl: list-clients requires <agent_id>\n");
       return 2;
     }
     agent_id = argv[argi++];
   } else if (strcmp(cmd, "revoke-client") == 0) {
-    kind = SIGNET_KIND_REVOKE_CLIENT;
+    op = SIGNET_MGMT_OP_REVOKE_CLIENT;
     if (argi >= argc) {
       fprintf(stderr, "signetctl: revoke-client requires <client_pubkey>\n");
       return 2;
     }
     revoke_client_pubkey = argv[argi++];
   } else if (strcmp(cmd, "adopt-existing") == 0) {
-    kind = SIGNET_KIND_ADOPT_EXISTING;
+    op = SIGNET_MGMT_OP_ADOPT_EXISTING;
     if (argi >= argc) {
       fprintf(stderr, "signetctl: adopt-existing requires <agent_id>\n");
       return 2;
@@ -576,16 +574,16 @@ int main(int argc, char **argv) {
       adopt_sec = sec_stdin;
     }
   } else if (strcmp(cmd, "set-policy") == 0) {
-    kind = SIGNET_KIND_SET_POLICY;
+    op = SIGNET_MGMT_OP_SET_POLICY;
     if ((argi + 1) >= argc) {
       fprintf(stderr, "signetctl: set-policy requires <agent_id> <policy-json>\n");
       return 2;
     }
     agent_id = argv[argi++];
   } else if (strcmp(cmd, "status") == 0) {
-    kind = SIGNET_KIND_GET_STATUS;
+    op = SIGNET_MGMT_OP_GET_STATUS;
   } else if (strcmp(cmd, "list") == 0) {
-    kind = SIGNET_KIND_LIST_AGENTS;
+    op = SIGNET_MGMT_OP_LIST_AGENTS;
   } else if (strcmp(cmd, "migrate-db") == 0) {
     /* Migrate a legacy plaintext SQLite database to SQLCipher in place. */
     SignetConfig lcfg;
@@ -622,14 +620,14 @@ int main(int argc, char **argv) {
              strcmp(cmd, "verify-audit") == 0 ||
              strcmp(cmd, "rotate-credential") == 0) {
     /* Local store introspection — handled separately below. */
-    kind = -1;
+    op = (SignetMgmtOp)-1;
   } else {
     fprintf(stderr, "signetctl: unknown command '%s'\n", cmd);
     return 2;
   }
 
   /* --- Local store introspection commands --- */
-  if (kind == -1) {
+  if (op == (SignetMgmtOp)-1) {
     /* Optional flags for introspection commands. */
     bool verify_agents = false;
     for (int ai = argi; ai < argc; ai++) {
@@ -898,12 +896,12 @@ int main(int argc, char **argv) {
   snprintf(request_id, sizeof(request_id), "%016" G_GINT64_MODIFIER "x", rid);
 
   const char *policy_json = NULL;
-  if (kind == SIGNET_KIND_SET_POLICY) {
+  if (op == SIGNET_MGMT_OP_SET_POLICY) {
     policy_json = argv[argi++];
   }
 
   /* Build the Cascadia ContextVM intent (JSON-RPC 2.0, kind-25910 payload). */
-  char *intent = signetctl_build_intent(kind, agent_id, request_id, policy_json,
+  char *intent = signetctl_build_intent(op, agent_id, request_id, policy_json,
                                         deliver_bootstrap_pubkey, delivery_ttl,
                                         adopt_sec, adopt_expected_pubkey,
                                         revoke_client_pubkey);
@@ -978,7 +976,7 @@ int main(int argc, char **argv) {
    * so auth-required relays (armada) always time out.
    *
    * Pumping the context also drains the post-auth re-subscribe chain
-   * (signet_post_auth_resubscribe), ensuring kind:28090 subscriptions are
+   * (signet_post_auth_resubscribe), ensuring reply subscriptions are
    * live before we publish the management event.
    *
    * We give up to 5s: connection RTT + NIP-42 challenge/response (2 relay
@@ -1039,7 +1037,7 @@ int main(int argc, char **argv) {
   }
 
   printf("Published %s ContextVM intent (gift-wrapped). Waiting for reply...\n",
-         signet_mgmt_op_to_string(signet_mgmt_op_from_kind(kind)));
+         signet_mgmt_op_to_string(op));
 
   /* Wait for ack with timeout, pumping the GLib main context.
    *
@@ -1069,10 +1067,10 @@ int main(int argc, char **argv) {
       fprintf(stderr, "Error reply:\n%s\n", ack_ctx.response_json);
       exit_code = 1;
     } else {
-      if (kind == SIGNET_KIND_ADOPT_EXISTING) {
+      if (op == SIGNET_MGMT_OP_ADOPT_EXISTING) {
         signetctl_print_adopt_result(ack_ctx.response_json);
         exit_code = 0;
-      } else if (kind == SIGNET_KIND_REISSUE_CONNECT) {
+      } else if (op == SIGNET_MGMT_OP_REISSUE_CONNECT) {
         exit_code = signetctl_handle_reissue_result(ack_ctx.response_json,
                                                     reissue_out_path,
                                                     reissue_show_secret);

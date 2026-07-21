@@ -37,7 +37,7 @@ Agents on the same machine or LAN can use the `net.signet.Signer` D-Bus interfac
 
 ### NIP-5L (Unix Socket)
 
-Line-delimited NIP-46 JSON framing over `/run/signet/nip5l.sock`. Auth via Nostr challenge-response (kind 28100). Supports systemd socket activation. Enable with `nip5l = true`.
+Line-delimited NIP-46 JSON framing over `/run/signet/nip5l.sock`. Auth uses a signed ContextVM challenge event. Supports systemd socket activation. Enable with `nip5l = true`.
 
 ### SSH Agent
 
@@ -154,7 +154,7 @@ Browsers and `fido2-token` must be tested on Linux because macOS does not provid
 
 ## Management Protocol
 
-All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents. Relay transport should gift-wrap the intent with NIP-59/NIP-17 kind `1059`; authorization requires the inner sender pubkey to be in the `provisioner_pubkeys` list (sole exception: `agent/reissue-connect` also accepts the target agent itself — see below). Responses are correlated ContextVM results. Each management **event id** executes at most once per replay-cache TTL: relay redelivery, republishing of the same serialized event, and history replay are silently dropped instead of re-running non-idempotent commands such as `agent/rotate-key` or `agent/reissue-connect`. Note this keys on the delivered Nostr event id — a client retry that re-signs the same request produces a new event id and executes again; recover from a lost reply by sending a new intent. The deprecated `28000`-series event kinds and `28090` ACKs are compatibility-only when `legacy_28000` is explicitly enabled.
+All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents. Relay transport should gift-wrap the intent with NIP-59/NIP-17 kind `1059`; authorization requires the inner sender pubkey to be in the `provisioner_pubkeys` list (sole exception: `agent/reissue-connect` also accepts the target agent itself — see below). Responses are correlated, gift-wrapped ContextVM results. Each management **event id** executes at most once per replay-cache TTL: relay redelivery, republishing of the same serialized event, and history replay are silently dropped instead of re-running non-idempotent commands such as `agent/rotate-key` or `agent/reissue-connect`. Note this keys on the delivered Nostr event id — a client retry that re-signs the same request produces a new event id and executes again; recover from a lost reply by sending a new intent. Retired custom management event kinds are not subscribed, parsed, or emitted.
 
 | Kind  | Method | Description |
 |-------|--------|-------------|

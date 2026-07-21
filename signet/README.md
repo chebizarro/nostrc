@@ -49,13 +49,13 @@ All provisioning, revocation, and policy management is done through Cascadia Con
 | 25910 | `agent/list-clients` | List an agent's persistent NIP-46 client bindings |
 | 25910 | `agent/revoke-client` | Soft-revoke a NIP-46 client binding (client must re-pair) |
 
-Management intents are encrypted between provisioner and bunker when transported through gift-wrap. Responses are correlated ContextVM results; legacy `28090` ACKs are only for the disabled-by-default `legacy_28000` compatibility path. Authorization requires the event pubkey to be in the `provisioner_pubkeys` list, with one exception: `agent/reissue-connect` is also authorized when the signed sender IS the target agent (self-service re-pairing; grants no power over other agents or methods). Each delivered management event id executes at most once per replay-cache TTL, so relay redelivery and history replay cannot re-run non-idempotent commands; self-service events are isolated in their own replay domain.
+Management intents are encrypted between provisioner and bunker when transported through gift-wrap. Responses are correlated, gift-wrapped ContextVM results. Authorization requires the event pubkey to be in the `provisioner_pubkeys` list, with one exception: `agent/reissue-connect` is also authorized when the signed sender IS the target agent (self-service re-pairing; grants no power over other agents or methods). Each delivered management event id executes at most once per replay-cache TTL, so relay redelivery and history replay cannot re-run non-idempotent commands; self-service events are isolated in their own replay domain.
 
 ### Bootstrap & Onboarding
 
 - **NIP-17 Bootstrap Delivery** — Fleet Commander sends bootstrap tokens as gift-wrapped NIP-17 DMs to the agent's throwaway bootstrap pubkey
 - **Single-Use Bootstrap Tokens** — Time-limited, attempt-capped, SHA256-hashed tokens bound to agent_id and bootstrap_pubkey; `POST /bootstrap` consumes the token atomically and replays return 403
-- **Challenge-Response Auth** — Shared Nostr-signed challenge validator (kind 28100) used across all transports; 30-second TTL, single-use challenges
+- **Challenge-Response Auth** — Shared signed ContextVM challenge validator used across all transports; 30-second TTL, single-use challenges
 - **Session Leases** — Time-bound session tokens (24h TTL) issued after successful authentication
 
 ### Credential Management
@@ -104,7 +104,7 @@ Fleet Cmdr → NIP-17 bootstrap → Relay → Agent → POST /bootstrap → sign
 | **Policy Store**     | File-backed (GKeyFile) with SIGHUP reload and TTL              |
 | **Policy Engine**    | Evaluates requests against per-agent policy and rate limits    |
 | **Capability Engine**| Capability-based authorization with rate limiting              |
-| **Management Handler**| Parses and executes ContextVM `25910` management intents; legacy `28000`-series events are compatibility-only when explicitly enabled |
+| **Management Handler**| Parses and executes ContextVM `25910` management intents and returns gift-wrapped JSON-RPC results |
 | **Relay Pool**       | WebSocket connections with exponential backoff reconnect       |
 | **Audit Logger**     | Structured JSON logging to stdout or file                      |
 | **Health Server**    | `GET /health` via libmicrohttpd                                |
@@ -321,8 +321,8 @@ SIGNET_DB_KEY=... signetctl migrate-db
 Remote commands emit **Cascadia ContextVM** JSON-RPC 2.0 intents (kind 25910)
 wrapped in **NIP-59 gift-wraps** (kind 1059) addressed to the bunker, and consume
 the daemon's gift-wrapped ContextVM reply (validated by the bunker's pubkey and
-correlated by the JSON-RPC `id`). This matches the daemon's default protocol; the
-deprecated 28000-series is no longer used by signetctl.
+correlated by the JSON-RPC `id`). The retired custom management-event transport
+is neither emitted nor accepted.
 
 Requirements:
 - `SIGNET_PROVISIONER_NSEC` — the provisioner key that signs/authorizes intents.

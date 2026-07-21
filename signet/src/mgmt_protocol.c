@@ -2,7 +2,7 @@
  *
  * mgmt_protocol.c - Nostr-native management protocol for Signet.
  *
- * Handles management events (kinds 28000-28090) for agent provisioning,
+ * Handles canonical ContextVM management methods for agent provisioning,
  * revocation, policy updates, and status queries. All operations execute
  * against the SignetKeyStore (SQLCipher + hot cache).
  */
@@ -42,22 +42,6 @@ static void signet_mgmt_memzero(void *p, size_t n) {
 }
 
 #define signet_mgmt_hex_to_bytes32 signet_hex_to_bytes32
-
-SignetMgmtOp signet_mgmt_op_from_kind(int kind) {
-  switch (kind) {
-    case SIGNET_KIND_PROVISION_AGENT: return SIGNET_MGMT_OP_PROVISION_AGENT;
-    case SIGNET_KIND_REVOKE_AGENT:   return SIGNET_MGMT_OP_REVOKE_AGENT;
-    case SIGNET_KIND_SET_POLICY:     return SIGNET_MGMT_OP_SET_POLICY;
-    case SIGNET_KIND_GET_STATUS:     return SIGNET_MGMT_OP_GET_STATUS;
-    case SIGNET_KIND_LIST_AGENTS:    return SIGNET_MGMT_OP_LIST_AGENTS;
-    case SIGNET_KIND_ROTATE_KEY:     return SIGNET_MGMT_OP_ROTATE_KEY;
-    case SIGNET_KIND_ADOPT_EXISTING: return SIGNET_MGMT_OP_ADOPT_EXISTING;
-    case SIGNET_KIND_REISSUE_CONNECT: return SIGNET_MGMT_OP_REISSUE_CONNECT;
-    case SIGNET_KIND_LIST_CLIENTS:   return SIGNET_MGMT_OP_LIST_CLIENTS;
-    case SIGNET_KIND_REVOKE_CLIENT:  return SIGNET_MGMT_OP_REVOKE_CLIENT;
-    default:                         return SIGNET_MGMT_OP_UNKNOWN;
-  }
-}
 
 const char *signet_mgmt_op_to_string(SignetMgmtOp op) {
   switch (op) {
@@ -107,7 +91,7 @@ void signet_mgmt_request_clear(SignetMgmtRequest *req) {
   memset(req, 0, sizeof(*req));
 }
 
-int signet_mgmt_request_parse(int kind,
+int signet_mgmt_request_parse(SignetMgmtOp op,
                               const char *content_json,
                               SignetMgmtRequest *out_req,
                               char **out_error) {
@@ -117,11 +101,10 @@ int signet_mgmt_request_parse(int kind,
   }
   memset(out_req, 0, sizeof(*out_req));
 
-  out_req->op = signet_mgmt_op_from_kind(kind);
-  out_req->kind = kind;
+  out_req->op = op;
 
   if (out_req->op == SIGNET_MGMT_OP_UNKNOWN) {
-    if (out_error) *out_error = g_strdup("unknown management event kind");
+    if (out_error) *out_error = g_strdup("unknown ContextVM management method");
     return -1;
   }
 
@@ -304,8 +287,6 @@ struct SignetMgmtHandler {
   SignetDenyList *deny;   /* shared live deny list (owned by daemon) */
   SignetReplayCache *replay;      /* provisioner replay cache (owned by daemon) */
   SignetReplayCache *replay_self; /* self-service replay cache (owned by daemon) */
-  bool legacy_28000_enabled;
-  bool reply_contextvm;
 
   char **provisioner_pubkeys;
   size_t n_provisioner_pubkeys;
@@ -331,7 +312,6 @@ SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
   h->relays = relays;
   h->audit = audit;
   h->policy_store = policy_store;
-  h->legacy_28000_enabled = cfg->legacy_28000_enabled;
 
   if (cfg->provisioner_pubkeys && cfg->n_provisioner_pubkeys > 0) {
     h->provisioner_pubkeys = (char **)g_new0(char *, cfg->n_provisioner_pubkeys);
@@ -455,102 +435,41 @@ static void signet_mgmt_publish_contextvm_reply(SignetMgmtHandler *h,
   }
 }
 
-/* Publish an ack event to relays. */
+/* Publish a canonical NIP-59 gift-wrapped ContextVM result. */
 static void signet_mgmt_publish_ack(SignetMgmtHandler *h,
                                     const char *recipient_pubkey_hex,
                                     const char *ack_content,
                                     const char *ref_event_id_hex,
                                     int64_t now) {
-  if (!h || !h->relays || !h->bunker_sk_hex || !ack_content) return;
-  if (h->reply_contextvm) {
-    signet_mgmt_publish_contextvm_reply(h, recipient_pubkey_hex, ack_content);
-    return;
-  }
-
-  NostrEvent *evt = nostr_event_new();
-  if (!evt) return;
-
-  nostr_event_set_kind(evt, SIGNET_KIND_MGMT_ACK);
-  nostr_event_set_created_at(evt, now);
-
-  /* NIP-44 v2 encrypt the ack content to the recipient. */
-  char *encrypted_content = NULL;
-  if (recipient_pubkey_hex && recipient_pubkey_hex[0]) {
-    uint8_t sk[32], pk[32];
-    if (signet_mgmt_hex_to_bytes32(h->bunker_sk_hex, sk) &&
-        signet_mgmt_hex_to_bytes32(recipient_pubkey_hex, pk)) {
-      int erc = nostr_nip44_encrypt_v2(sk, pk,
-                                       (const uint8_t *)ack_content, strlen(ack_content),
-                                       &encrypted_content);
-      signet_mgmt_memzero(sk, 32);
-      if (erc != 0) encrypted_content = NULL;
-    }
-  }
-
-  /* Fail closed: management ACKs are always NIP-44 encrypted to the
-   * requesting provisioner. If encryption failed (or no recipient was
-   * resolved), never fall back to publishing the ACK in plaintext — that
-   * would leak provisioning results (agent_id, pubkey, bunker_uri). */
-  if (!encrypted_content) {
-    g_warning("[signetd] mgmt ack encryption failed; refusing to publish plaintext ack");
-    nostr_event_free(evt);
-    return;
-  }
-  nostr_event_set_content(evt, encrypted_content);
-
-  NostrTags *tags = nostr_tags_new(0);
-  if (tags) {
-    if (recipient_pubkey_hex) {
-      NostrTag *p_tag = nostr_tag_new("p", recipient_pubkey_hex, NULL);
-      if (p_tag) {
-        nostr_tags_append(tags, p_tag);
-      }
-    }
-    if (ref_event_id_hex) {
-      NostrTag *e_tag = nostr_tag_new("e", ref_event_id_hex, NULL);
-      if (e_tag) {
-        nostr_tags_append(tags, e_tag);
-      }
-    }
-    nostr_event_set_tags(evt, tags);
-  }
-
-  if (nostr_event_sign(evt, h->bunker_sk_hex) == 0) {
-    char *json = nostr_event_serialize_compact(evt);
-    if (json) {
-      signet_relay_pool_publish_event_json(h->relays, json);
-      free(json);
-    }
-  }
-
-  free(encrypted_content);
-  nostr_event_free(evt);
+  (void)ref_event_id_hex;
+  (void)now;
+  signet_mgmt_publish_contextvm_reply(h, recipient_pubkey_hex, ack_content);
 }
 
-int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
-                                     const char *event_pubkey_hex,
-                                     const char *content_json,
-                                     int kind,
-                                     const char *event_id_hex,
-                                     int64_t now);
+int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
+                                       const char *event_pubkey_hex,
+                                       const char *content_json,
+                                       SignetMgmtOp op,
+                                       const char *event_id_hex,
+                                       int64_t now);
 
-static int signet_mgmt_kind_from_contextvm_method(const char *method) {
-  if (!method) return 0;
-  if (strcmp(method, "agent/provision") == 0) return SIGNET_KIND_PROVISION_AGENT;
-  if (strcmp(method, "agent/revoke") == 0) return SIGNET_KIND_REVOKE_AGENT;
-  if (strcmp(method, "agent/set-policy") == 0) return SIGNET_KIND_SET_POLICY;
-  if (strcmp(method, "agent/get-status") == 0) return SIGNET_KIND_GET_STATUS;
-  if (strcmp(method, "agent/list") == 0) return SIGNET_KIND_LIST_AGENTS;
-  if (strcmp(method, "agent/rotate-key") == 0) return SIGNET_KIND_ROTATE_KEY;
-  if (strcmp(method, "agent/adopt-existing") == 0) return SIGNET_KIND_ADOPT_EXISTING;
-  if (strcmp(method, "agent/reissue-connect") == 0) return SIGNET_KIND_REISSUE_CONNECT;
-  if (strcmp(method, "agent/list-clients") == 0) return SIGNET_KIND_LIST_CLIENTS;
-  if (strcmp(method, "agent/revoke-client") == 0) return SIGNET_KIND_REVOKE_CLIENT;
-  return 0;
+static SignetMgmtOp signet_mgmt_op_from_contextvm_method(const char *method) {
+  if (!method) return SIGNET_MGMT_OP_UNKNOWN;
+  if (strcmp(method, "agent/provision") == 0) return SIGNET_MGMT_OP_PROVISION_AGENT;
+  if (strcmp(method, "agent/revoke") == 0) return SIGNET_MGMT_OP_REVOKE_AGENT;
+  if (strcmp(method, "agent/set-policy") == 0) return SIGNET_MGMT_OP_SET_POLICY;
+  if (strcmp(method, "agent/get-status") == 0) return SIGNET_MGMT_OP_GET_STATUS;
+  if (strcmp(method, "agent/list") == 0) return SIGNET_MGMT_OP_LIST_AGENTS;
+  if (strcmp(method, "agent/rotate-key") == 0) return SIGNET_MGMT_OP_ROTATE_KEY;
+  if (strcmp(method, "agent/adopt-existing") == 0) return SIGNET_MGMT_OP_ADOPT_EXISTING;
+  if (strcmp(method, "agent/reissue-connect") == 0) return SIGNET_MGMT_OP_REISSUE_CONNECT;
+  if (strcmp(method, "agent/list-clients") == 0) return SIGNET_MGMT_OP_LIST_CLIENTS;
+  if (strcmp(method, "agent/revoke-client") == 0) return SIGNET_MGMT_OP_REVOKE_CLIENT;
+  return SIGNET_MGMT_OP_UNKNOWN;
 }
 
-static char *signet_mgmt_contextvm_to_legacy_json(const char *content_json, int *out_kind) {
-  if (out_kind) *out_kind = 0;
+static char *signet_mgmt_contextvm_params_json(const char *content_json, SignetMgmtOp *out_op) {
+  if (out_op) *out_op = SIGNET_MGMT_OP_UNKNOWN;
   if (!content_json || !content_json[0]) return NULL;
 
   g_autoptr(JsonParser) p = json_parser_new();
@@ -559,9 +478,9 @@ static char *signet_mgmt_contextvm_to_legacy_json(const char *content_json, int 
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) return NULL;
   JsonObject *o = json_node_get_object(root);
   const char *method = json_object_has_member(o, "method") ? json_object_get_string_member(o, "method") : NULL;
-  int kind = signet_mgmt_kind_from_contextvm_method(method);
-  if (kind == 0) return NULL;
-  if (out_kind) *out_kind = kind;
+  SignetMgmtOp op = signet_mgmt_op_from_contextvm_method(method);
+  if (op == SIGNET_MGMT_OP_UNKNOWN) return NULL;
+  if (out_op) *out_op = op;
 
   JsonNode *params = json_object_has_member(o, "params") ? json_object_get_member(o, "params") : NULL;
   JsonObject *po = (params && JSON_NODE_HOLDS_OBJECT(params)) ? json_node_get_object(params) : NULL;
@@ -636,35 +555,31 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
                                       int64_t now) {
   if (!h) return -1;
 
-  int legacy_kind = 0;
-  char *legacy_json = signet_mgmt_contextvm_to_legacy_json(content_json, &legacy_kind);
+  SignetMgmtOp op = SIGNET_MGMT_OP_UNKNOWN;
+  char *params_json = signet_mgmt_contextvm_params_json(content_json, &op);
 
   /* agent/reissue-connect additionally supports SELF-SERVICE authorization:
    * a non-provisioner sender may reissue its own connect_secret. That check
    * needs the parsed agent_id, so for this one method the sender check is
-   * deferred to the execution path in handle_event. Every other method (and
+   * deferred to the normalized request execution path. Every other method (and
    * every unknown method) remains provisioner-only and is rejected here. */
-  bool defer_auth = (legacy_kind == SIGNET_KIND_REISSUE_CONNECT);
+  bool defer_auth = (op == SIGNET_MGMT_OP_REISSUE_CONNECT);
   if (!defer_auth &&
       !signet_mgmt_is_authorized(event_pubkey_hex,
                                  (const char *const *)h->provisioner_pubkeys,
                                  h->n_provisioner_pubkeys)) {
-    h->reply_contextvm = true;
     char *err = g_strdup("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32002,\"message\":\"sender is not an authorized Signet provisioner\"},\"id\":null}");
     signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now);
-    h->reply_contextvm = false;
     g_free(err);
-    if (legacy_json) { secure_wipe(legacy_json, strlen(legacy_json)); g_free(legacy_json); }
+    if (params_json) { secure_wipe(params_json, strlen(params_json)); g_free(params_json); }
     return -1;
   }
 
-  if (!legacy_json || legacy_kind == 0) {
-    h->reply_contextvm = true;
+  if (!params_json || op == SIGNET_MGMT_OP_UNKNOWN) {
     char *err = g_strdup("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32601,\"message\":\"unknown Signet ContextVM method\"},\"id\":null}");
     signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now);
-    h->reply_contextvm = false;
     g_free(err);
-    if (legacy_json) { secure_wipe(legacy_json, strlen(legacy_json)); g_free(legacy_json); }
+    if (params_json) { secure_wipe(params_json, strlen(params_json)); g_free(params_json); }
     return -1;
   }
 
@@ -672,18 +587,16 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
   uint8_t sk[32], pk[32];
   if (signet_mgmt_hex_to_bytes32(h->bunker_sk_hex, sk) &&
       signet_mgmt_hex_to_bytes32(event_pubkey_hex, pk)) {
-    (void)nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)legacy_json,
-                                 strlen(legacy_json), &encrypted);
+    (void)nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)params_json,
+                                 strlen(params_json), &encrypted);
   }
   signet_mgmt_memzero(sk, sizeof(sk));
-  /* legacy_json may embed agent_nsec/connect_secret (adopt-existing). */
-  secure_wipe(legacy_json, strlen(legacy_json));
-  g_free(legacy_json);
+  /* params_json may embed agent_nsec/connect_secret (adopt-existing). */
+  secure_wipe(params_json, strlen(params_json));
+  g_free(params_json);
   if (!encrypted) return -1;
-  h->reply_contextvm = true;
-  int rc = signet_mgmt_handler_handle_event(h, event_pubkey_hex, encrypted,
-                                            legacy_kind, event_id_hex, now);
-  h->reply_contextvm = false;
+  int rc = signet_mgmt_handler_handle_request(h, event_pubkey_hex, encrypted,
+                                              op, event_id_hex, now);
   free(encrypted);
   return rc;
 }
@@ -748,12 +661,12 @@ static void signet_mgmt_publish_cas_audit(SignetMgmtHandler *h,
   nostr_event_free(evt);
 }
 
-int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
-                                     const char *event_pubkey_hex,
-                                     const char *content_json,
-                                     int kind,
-                                     const char *event_id_hex,
-                                     int64_t now) {
+int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
+                                       const char *event_pubkey_hex,
+                                       const char *content_json,
+                                       SignetMgmtOp op,
+                                       const char *event_id_hex,
+                                       int64_t now) {
   if (!h) return -1;
 
   /* 1) Authorization check. agent/reissue-connect alone also admits the
@@ -766,7 +679,7 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
       signet_mgmt_is_authorized(event_pubkey_hex,
                                 (const char *const *)h->provisioner_pubkeys,
                                 h->n_provisioner_pubkeys);
-  if (!sender_is_provisioner && kind != SIGNET_KIND_REISSUE_CONNECT) {
+  if (!sender_is_provisioner && op != SIGNET_MGMT_OP_REISSUE_CONNECT) {
     return -1; /* silently drop unauthorized events */
   }
 
@@ -815,7 +728,7 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
   /* 2) Parse request. */
   SignetMgmtRequest req;
   char *parse_err = NULL;
-  if (signet_mgmt_request_parse(kind, effective_content, &req, &parse_err) != 0) {
+  if (signet_mgmt_request_parse(op, effective_content, &req, &parse_err) != 0) {
     char *ack = signet_mgmt_build_ack(NULL, false, "parse_error",
                                        parse_err ? parse_err : "invalid request", NULL);
     if (ack) {
@@ -834,7 +747,7 @@ int signet_mgmt_handler_handle_event(SignetMgmtHandler *h,
    * unauthorized floods cannot churn the replay cache and evict legitimate
    * management event ids within their TTL. An unknown agent_id gets the same
    * "unauthorized" as a mismatch so a stranger cannot probe which agent_ids
-   * exist. (Senders of every other kind were already gated above.) */
+   * exist. (Senders of every other operation were already gated above.) */
   if (req.op == SIGNET_MGMT_OP_REISSUE_CONNECT && !sender_is_provisioner) {
     char self_pk[65] = {0};
     bool known = signet_key_store_get_agent_pubkey(h->keys, req.agent_id,

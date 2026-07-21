@@ -7,7 +7,7 @@
  *   - D-Bus TCP (post-SASL handshake)
  *   - NIP-5L Unix socket
  *
- * Auth event structure (custom kind, NOT NIP-98):
+ * Auth event structure (canonical ContextVM kind):
  *   kind: SIGNET_AUTH_KIND
  *   content: ""
  *   tags: [["challenge", "<hex>"], ["agent", "<agent_id>"], ["purpose", "signet-auth"]]
@@ -28,19 +28,19 @@
 extern "C" {
 #endif
 
+#include "signet/cascadia.h"
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Custom event kind for Signet authentication.
- * Not 27235 (NIP-98 HTTP Auth) to avoid cross-protocol confusion. */
+/* Canonical ContextVM kind for signed Signet authentication challenges. */
 /**
  * SIGNET_AUTH_KIND:
  *
- * Custom Nostr event kind used for Signet authentication challenges.
+ * ContextVM event kind used for Signet authentication challenges.
  *
  * Since: 1.0
  */
-#define SIGNET_AUTH_KIND 28100
+#define SIGNET_AUTH_KIND CAS_INTENT
 
 /* Challenge TTL in seconds. */
 /**

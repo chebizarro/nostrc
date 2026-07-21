@@ -42,9 +42,6 @@
 #include <nostr-event.h>
 #include <nostr/nip17/nip17.h>
 
-/* Management event kind range */
-#define SIGNET_MGMT_KIND_MIN 28000
-#define SIGNET_MGMT_KIND_MAX 28090
 /* NIP-59/NIP-17 gift-wraps may backdate the outer event by up to ~2 days.
  * Subscribe back far enough to catch legitimate fresh commands without forcing
  * signetctl to override normal wrap timestamps. */
@@ -55,9 +52,7 @@
 
 /* Subscribe the relay pool to the event kinds signetd must receive: NIP-46
  * signing requests (24133), Cascadia ContextVM management intents (25910), and
- * NIP-59 gift-wraps (1059) that carry them. The deprecated 28000-series
- * management kinds are added ONLY when the legacy_28000 compatibility path is
- * enabled, so a default deployment never subscribes to deprecated kinds.
+ * NIP-59 gift-wraps (1059) that carry them.
  * Scoped to the bunker pubkey (#p) when available to reduce relay bandwidth.
  * Used for the initial subscription and every resubscribe so they can never
  * drift (previously the resubscribe paths dropped 25910/1059, which broke
@@ -68,22 +63,14 @@ static int64_t signetd_mgmt_since_floor(void) {
   return since > 0 ? since : 0;
 }
 
-static int signetd_subscribe_mgmt_kinds(SignetRelayPool *relays, bool legacy,
+static int signetd_subscribe_mgmt_kinds(SignetRelayPool *relays,
                                         const char *bunker_pk,
                                         int64_t since) {
-  int kinds[16];
+  int kinds[3];
   size_t n = 0;
   kinds[n++] = 24133;            /* NIP-46 signing requests */
   kinds[n++] = CAS_INTENT;       /* 25910 Cascadia ContextVM management */
   kinds[n++] = NIP59_GIFT_WRAP;  /* 1059 carrying canonical management intents */
-  if (legacy) {
-    kinds[n++] = SIGNET_KIND_PROVISION_AGENT; /* 28000 */
-    kinds[n++] = SIGNET_KIND_REVOKE_AGENT;    /* 28010 */
-    kinds[n++] = SIGNET_KIND_SET_POLICY;      /* 28020 */
-    kinds[n++] = SIGNET_KIND_GET_STATUS;      /* 28030 */
-    kinds[n++] = SIGNET_KIND_LIST_AGENTS;     /* 28040 */
-    kinds[n++] = SIGNET_KIND_ROTATE_KEY;      /* 28050 */
-  }
   return signet_relay_pool_subscribe_scoped(relays, kinds, n, bunker_pk, since);
 }
 
@@ -371,7 +358,7 @@ static gboolean signetd_health_tick(gpointer data) {
     g_warning("[signetd] subscription CLOSED by relay \u2014 re-subscribing");
     if (ctx->daemon_ctx)
       ctx->daemon_ctx->mgmt_accept_after = signet_now_unix() + SIGNET_MGMT_ACCEPT_DELAY_SEC;
-    signetd_subscribe_mgmt_kinds(ctx->relays, ctx->cfg->mgmt_legacy_28000,
+    signetd_subscribe_mgmt_kinds(ctx->relays,
                                  ctx->cfg->remote_signer_pubkey_hex[0]
                                    ? ctx->cfg->remote_signer_pubkey_hex : NULL,
                                  signetd_mgmt_since_floor());
@@ -388,7 +375,7 @@ static gboolean signetd_health_tick(gpointer data) {
       if (signet_relay_pool_start(ctx->relays) == 0) {
         if (ctx->daemon_ctx)
           ctx->daemon_ctx->mgmt_accept_after = signet_now_unix() + SIGNET_MGMT_ACCEPT_DELAY_SEC;
-        signetd_subscribe_mgmt_kinds(ctx->relays, ctx->cfg->mgmt_legacy_28000,
+        signetd_subscribe_mgmt_kinds(ctx->relays,
                                      ctx->cfg->remote_signer_pubkey_hex[0]
                                        ? ctx->cfg->remote_signer_pubkey_hex : NULL,
                                      signetd_mgmt_since_floor());
@@ -471,18 +458,6 @@ static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_dat
     return;
   }
 
-  /* Management event dispatch (kinds 28000-28090). */
-  if (ctx->cfg->mgmt_legacy_28000 && ev->kind >= SIGNET_MGMT_KIND_MIN && ev->kind <= SIGNET_MGMT_KIND_MAX && ctx->mgmt) {
-    if (signet_now_unix() < ctx->mgmt_accept_after) return;
-    if (!signet_relay_pool_is_subscribed(ctx->relays)) return;
-    (void)signet_mgmt_handler_handle_event(ctx->mgmt,
-                                          ev->pubkey_hex ? ev->pubkey_hex : "",
-                                          ev->content ? ev->content : "",
-                                          ev->kind,
-                                          ev->event_id_hex ? ev->event_id_hex : "",
-                                          signet_now_unix());
-    return;
-  }
 }
 
 int main(int argc, char **argv) {
@@ -825,7 +800,6 @@ int main(int argc, char **argv) {
     .bunker_pubkey_hex = cfg.remote_signer_pubkey_hex,
     .relay_urls = (const char *const *)cfg.relays,
     .n_relay_urls = cfg.n_relays,
-    .legacy_28000_enabled = cfg.mgmt_legacy_28000,
   };
   SignetMgmtHandler *mgmt = signet_mgmt_handler_new(keys, relays, audit, store, &mgmt_cfg);
   dctx.mgmt = mgmt;
@@ -838,7 +812,7 @@ int main(int argc, char **argv) {
   dctx.deny = deny;
 
   /* Give the management handler the SAME live deny list so that
-   * revoke_agent (kind 28010) deny-lists the pubkey, burns leases, and takes
+   * agent/revoke deny-lists the pubkey, burns leases, and takes
    * effect immediately via deny-list precedence. */
   signet_mgmt_handler_set_deny_list(mgmt, deny);
 
@@ -1052,7 +1026,7 @@ int main(int argc, char **argv) {
       goto cleanup;
     }
 
-    /* Subscribe to management event kinds (28000-28090) and NIP-46 requests (24133).
+    /* Subscribe to canonical ContextVM management and NIP-46 requests.
      * Without this subscription the daemon connects to the relay but never receives
      * incoming management commands or signing requests.
      *
@@ -1060,18 +1034,15 @@ int main(int argc, char **argv) {
      * This tells the relay to only send us events tagged with our pubkey,
      * dramatically reducing bandwidth on shared relays. */
     {
-      /* NOTE: 28090 (MGMT_ACK) is intentionally never subscribed — signetd
-       * publishes acks but does not receive them. */
       const char *bunker_pk = cfg.remote_signer_pubkey_hex[0]
                                 ? cfg.remote_signer_pubkey_hex : NULL;
-      if (signetd_subscribe_mgmt_kinds(relays, cfg.mgmt_legacy_28000, bunker_pk,
+      if (signetd_subscribe_mgmt_kinds(relays, bunker_pk,
                                        signetd_mgmt_since_floor()) != 0) {
         fprintf(stderr, "signetd: failed to subscribe to event kinds\n");
         goto cleanup;
       }
-      g_message("[signetd] subscribed to management kinds on relay pool "
-                "(legacy_28000=%s, p-tag=%s)",
-                cfg.mgmt_legacy_28000 ? "on" : "off",
+      g_message("[signetd] subscribed to canonical management kinds on relay pool "
+                "(p-tag=%s)",
                 bunker_pk ? bunker_pk : "unscoped");
     }
   }

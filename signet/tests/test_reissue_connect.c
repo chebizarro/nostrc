@@ -229,19 +229,18 @@ static void test_reissue_unknown_agent(void) {
 
 /* 5: protocol wiring — kind/op mapping, required params, authorization. */
 static void test_protocol_wiring(void) {
-  assert(signet_mgmt_op_from_kind(SIGNET_KIND_REISSUE_CONNECT) == SIGNET_MGMT_OP_REISSUE_CONNECT);
   assert(strcmp(signet_mgmt_op_to_string(SIGNET_MGMT_OP_REISSUE_CONNECT), "reissue_connect") == 0);
 
   /* agent_id is required. */
   SignetMgmtRequest req;
   char *err = NULL;
-  assert(signet_mgmt_request_parse(SIGNET_KIND_REISSUE_CONNECT,
+  assert(signet_mgmt_request_parse(SIGNET_MGMT_OP_REISSUE_CONNECT,
                                    "{\"request_id\":\"r1\"}", &req, &err) != 0);
   assert(err != NULL);
   g_free(err);
   err = NULL;
 
-  assert(signet_mgmt_request_parse(SIGNET_KIND_REISSUE_CONNECT,
+  assert(signet_mgmt_request_parse(SIGNET_MGMT_OP_REISSUE_CONNECT,
                                    "{\"agent_id\":\"stew\",\"request_id\":\"r2\"}",
                                    &req, &err) == 0);
   assert(req.op == SIGNET_MGMT_OP_REISSUE_CONNECT);

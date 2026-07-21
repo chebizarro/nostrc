@@ -233,8 +233,6 @@ void signet_config_init(SignetConfig *cfg) {
   signet_strlcpy(cfg->audit_path, "", sizeof(cfg->audit_path));
   cfg->audit_stdout = true;
 
-  cfg->mgmt_legacy_28000 = false;
-
   cfg->passkeys_enabled = false;
   signet_strlcpy(cfg->passkeys_backend, "software-openssl", sizeof(cfg->passkeys_backend));
   signet_strlcpy(cfg->passkeys_aaguid, "80c64041-9927-4901-957f-e0032db96bee", sizeof(cfg->passkeys_aaguid));
@@ -364,10 +362,6 @@ static void signet_config_load_keyfile(GKeyFile *kf, SignetConfig *cfg) {
   /* [bootstrap] */
   if (g_key_file_has_key(kf, "bootstrap", "port", NULL))
     cfg->bootstrap_port = g_key_file_get_integer(kf, "bootstrap", "port", NULL);
-
-  /* [mgmt] */
-  if (g_key_file_has_key(kf, "mgmt", "legacy_28000", NULL))
-    cfg->mgmt_legacy_28000 = g_key_file_get_boolean(kf, "mgmt", "legacy_28000", NULL);
 
   /* [dbus] */
   if (g_key_file_has_key(kf, "dbus", "unix_enabled", NULL))
@@ -518,9 +512,6 @@ static void signet_config_apply_env(SignetConfig *cfg) {
   /* v2 transport overrides */
   val = g_getenv("SIGNET_BOOTSTRAP_PORT");
   if (val) cfg->bootstrap_port = atoi(val);
-
-  val = g_getenv("SIGNET_MGMT_LEGACY_28000");
-  if (val) cfg->mgmt_legacy_28000 = (atoi(val) != 0 || g_ascii_strcasecmp(val, "true") == 0);
 
   val = g_getenv("SIGNET_DBUS_UNIX");
   if (val) cfg->dbus_unix_enabled = (atoi(val) != 0 || g_ascii_strcasecmp(val, "true") == 0);

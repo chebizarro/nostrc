@@ -98,7 +98,6 @@ static void fixture_setup(Fixture *f, bool with_replay_cache) {
     .bunker_pubkey_hex = f->bunker_pk_hex,
     .relay_urls = RELAYS,
     .n_relay_urls = 1,
-    .legacy_28000_enabled = false,
   };
   /* No relay pool: ack publishing becomes a no-op, which is fine — these
    * tests assert on handler return codes and persisted store state. */
@@ -169,10 +168,10 @@ static void test_no_cache_duplicates_execute(void) {
   fixture_setup(&f, false);
 
   int64_t now = 1752380000;
-  assert(signet_mgmt_handler_handle_event(f.mgmt, f.prov_pk_hex, "",
-                                          SIGNET_KIND_GET_STATUS, "evt-dup", now) == 0);
-  assert(signet_mgmt_handler_handle_event(f.mgmt, f.prov_pk_hex, "",
-                                          SIGNET_KIND_GET_STATUS, "evt-dup", now) == 0);
+  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
+                                          SIGNET_MGMT_OP_GET_STATUS, "evt-dup", now) == 0);
+  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
+                                          SIGNET_MGMT_OP_GET_STATUS, "evt-dup", now) == 0);
 
   fixture_teardown(&f);
   printf("test_no_cache_duplicates_execute: PASS\n");
@@ -184,12 +183,12 @@ static void test_cache_rejects_duplicate(void) {
   fixture_setup(&f, true);
 
   int64_t now = 1752380000;
-  assert(signet_mgmt_handler_handle_event(f.mgmt, f.prov_pk_hex, "",
-                                          SIGNET_KIND_GET_STATUS, "evt-1", now) == 0);
-  assert(signet_mgmt_handler_handle_event(f.mgmt, f.prov_pk_hex, "",
-                                          SIGNET_KIND_GET_STATUS, "evt-1", now) == -1);
-  assert(signet_mgmt_handler_handle_event(f.mgmt, f.prov_pk_hex, "",
-                                          SIGNET_KIND_GET_STATUS, "evt-2", now) == 0);
+  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
+                                          SIGNET_MGMT_OP_GET_STATUS, "evt-1", now) == 0);
+  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
+                                          SIGNET_MGMT_OP_GET_STATUS, "evt-1", now) == -1);
+  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
+                                          SIGNET_MGMT_OP_GET_STATUS, "evt-2", now) == 0);
 
   fixture_teardown(&f);
   printf("test_cache_rejects_duplicate: PASS\n");
@@ -205,22 +204,22 @@ static void test_replayed_reissue_mints_once(void) {
   int64_t now = 1752380000;
 
   /* First delivery executes and replaces the connect_secret. */
-  assert(signet_mgmt_handler_handle_event(f.mgmt, f.prov_pk_hex, cipher,
-                                          SIGNET_KIND_REISSUE_CONNECT, "evt-r", now) == 0);
+  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
+                                          SIGNET_MGMT_OP_REISSUE_CONNECT, "evt-r", now) == 0);
   char *after_first = read_connect_secret(&f, "stew");
   assert(after_first != NULL);
   assert(strcmp(after_first, "initial-secret") != 0);
 
   /* Replay of the SAME event id is rejected and must not mint again. */
-  assert(signet_mgmt_handler_handle_event(f.mgmt, f.prov_pk_hex, cipher,
-                                          SIGNET_KIND_REISSUE_CONNECT, "evt-r", now) == -1);
+  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
+                                          SIGNET_MGMT_OP_REISSUE_CONNECT, "evt-r", now) == -1);
   char *after_replay = read_connect_secret(&f, "stew");
   assert(after_replay != NULL);
   assert(strcmp(after_first, after_replay) == 0);
 
   /* A genuinely new request (new event id) mints a different secret. */
-  assert(signet_mgmt_handler_handle_event(f.mgmt, f.prov_pk_hex, cipher,
-                                          SIGNET_KIND_REISSUE_CONNECT, "evt-r2", now) == 0);
+  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
+                                          SIGNET_MGMT_OP_REISSUE_CONNECT, "evt-r2", now) == 0);
   char *after_second = read_connect_secret(&f, "stew");
   assert(after_second != NULL);
   assert(strcmp(after_second, after_replay) != 0);
@@ -242,10 +241,10 @@ static void test_missing_event_id_fails_closed(void) {
   char *cipher = encrypt_to_bunker(&f, "{\"agent_id\":\"stew\",\"request_id\":\"r1\"}");
   int64_t now = 1752380000;
 
-  assert(signet_mgmt_handler_handle_event(f.mgmt, f.prov_pk_hex, cipher,
-                                          SIGNET_KIND_REISSUE_CONNECT, "", now) == -1);
-  assert(signet_mgmt_handler_handle_event(f.mgmt, f.prov_pk_hex, cipher,
-                                          SIGNET_KIND_REISSUE_CONNECT, NULL, now) == -1);
+  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
+                                          SIGNET_MGMT_OP_REISSUE_CONNECT, "", now) == -1);
+  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
+                                          SIGNET_MGMT_OP_REISSUE_CONNECT, NULL, now) == -1);
 
   /* The original secret is untouched. */
   char *secret = read_connect_secret(&f, "stew");

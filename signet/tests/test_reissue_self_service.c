@@ -122,7 +122,6 @@ static void fixture_setup(Fixture *f) {
     .bunker_pubkey_hex = f->bunker_pk_hex,
     .relay_urls = RELAYS,
     .n_relay_urls = 1,
-    .legacy_28000_enabled = false,
   };
   f->mgmt = signet_mgmt_handler_new(f->ks, NULL, NULL, NULL, &mcfg);
   assert(f->mgmt != NULL);
@@ -196,8 +195,8 @@ static int send_reissue(Fixture *f, const char *sender_sk, const char *sender_pk
                                   agent_id, event_id);
   char *cipher = encrypt_to_bunker(f, sender_sk, payload);
   g_free(payload);
-  int rc = signet_mgmt_handler_handle_event(f->mgmt, sender_pk, cipher,
-                                            SIGNET_KIND_REISSUE_CONNECT,
+  int rc = signet_mgmt_handler_handle_request(f->mgmt, sender_pk, cipher,
+                                            SIGNET_MGMT_OP_REISSUE_CONNECT,
                                             event_id, now);
   free(cipher);
   return rc;
@@ -312,14 +311,14 @@ static void test_self_service_does_not_leak_to_other_methods(void) {
   /* An agent sending get-status (empty content, would succeed for a
    * provisioner) must be silently dropped: the self-service exception is
    * scoped to agent/reissue-connect only. */
-  assert(signet_mgmt_handler_handle_event(f.mgmt, f.stew_pk_hex, "",
-                                          SIGNET_KIND_GET_STATUS,
+  assert(signet_mgmt_handler_handle_request(f.mgmt, f.stew_pk_hex, "",
+                                          SIGNET_MGMT_OP_GET_STATUS,
                                           "evt-m1", now) == -1);
   /* Same for a mutating method. */
   char *cipher = encrypt_to_bunker(&f, f.stew_sk_hex,
                                    "{\"agent_id\":\"stew\",\"request_id\":\"rk\"}");
-  assert(signet_mgmt_handler_handle_event(f.mgmt, f.stew_pk_hex, cipher,
-                                          SIGNET_KIND_ROTATE_KEY,
+  assert(signet_mgmt_handler_handle_request(f.mgmt, f.stew_pk_hex, cipher,
+                                          SIGNET_MGMT_OP_ROTATE_KEY,
                                           "evt-m2", now) == -1);
   free(cipher);
 

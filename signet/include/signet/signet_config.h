@@ -115,7 +115,6 @@ typedef enum {
  * @audit_path: audit path value.
  * @audit_stdout: audit stdout value.
  * @bootstrap_port: 0 = disabled (default).
- * @mgmt_legacy_28000: enable deprecated 28000-series management protocol.
  * @dbus_unix_enabled: system D-Bus (default false).
  * @dbus_tcp_enabled: TCP D-Bus (default false).
  * @dbus_tcp_port: default 47472.
@@ -185,9 +184,6 @@ typedef struct {
 
   /* --- [bootstrap] --- */
   int bootstrap_port;              /* 0 = disabled (default) */
-
-  /* --- [mgmt] --- */
-  bool mgmt_legacy_28000;          /* false by default; enables deprecated 28000-series */
 
   /* --- [dbus] --- */
   bool dbus_unix_enabled;          /* system D-Bus (default false) */
