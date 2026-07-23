@@ -204,6 +204,38 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
   if (!ks || !agent_id || !out_pubkey_hex || out_pubkey_hex_sz < 65) return -1;
   if (out_bunker_uri) *out_bunker_uri = NULL;
 
+  /* Provisioning is create-or-get, never an implicit key rotation. When the
+   * durable agent_id already exists, preserve its key and mint only a fresh
+   * one-time connection secret for the returned bunker URI. Explicit
+   * agent/rotate-key remains the sole key-rotation operation. */
+  if (ks->store) {
+    char existing_pubkey[65] = {0};
+    char *connect_secret = NULL;
+    char *existing_bunker_uri = NULL;
+    int existing_rc = signet_key_store_reissue_connect_secret(
+        ks, agent_id, NULL, bunker_pubkey_hex, relay_urls, n_relay_urls,
+        existing_pubkey, &connect_secret, &existing_bunker_uri);
+    if (existing_rc == 0) {
+      memcpy(out_pubkey_hex, existing_pubkey, 65);
+      if (out_bunker_uri) {
+        *out_bunker_uri = existing_bunker_uri;
+        existing_bunker_uri = NULL;
+      }
+      if (connect_secret) {
+        sodium_memzero(connect_secret, strlen(connect_secret));
+        g_free(connect_secret);
+      }
+      g_free(existing_bunker_uri);
+      return 0;
+    }
+    if (connect_secret) {
+      sodium_memzero(connect_secret, strlen(connect_secret));
+      g_free(connect_secret);
+    }
+    g_free(existing_bunker_uri);
+    if (existing_rc < 0) return -1;
+  }
+
   /* Generate a new keypair using libnostr. */
   char *sk_hex = nostr_key_generate_private();
   if (!sk_hex) return -1;

@@ -76,6 +76,36 @@ static void test_provision_and_load(void) {
   printf("test_provision_and_load: PASS\n");
 }
 
+static void test_provision_is_idempotent(void) {
+  char *db_path = NULL;
+  SignetKeyStore *ks = open_test_ks(&db_path);
+  char bunker_pub[65];
+  memset(bunker_pub, 'a', 64);
+  bunker_pub[64] = '\0';
+  const char *relays[] = { "wss://relay.example.com" };
+  char first_pub[65] = {0};
+  char second_pub[65] = {0};
+  char *first_uri = NULL;
+  char *second_uri = NULL;
+
+  assert(signet_key_store_provision_agent(
+             ks, "stable-agent", bunker_pub, relays, 1,
+             first_pub, sizeof(first_pub), &first_uri) == 0);
+  assert(signet_key_store_provision_agent(
+             ks, "stable-agent", bunker_pub, relays, 1,
+             second_pub, sizeof(second_pub), &second_uri) == 0);
+  assert(strcmp(first_pub, second_pub) == 0);
+  assert(first_uri != NULL && second_uri != NULL);
+  assert(strcmp(first_uri, second_uri) != 0);
+
+  g_free(first_uri);
+  g_free(second_uri);
+  signet_key_store_free(ks);
+  unlink(db_path);
+  g_free(db_path);
+  printf("test_provision_is_idempotent: PASS\n");
+}
+
 static void test_load_nonexistent(void) {
   char *db_path = NULL;
   SignetKeyStore *ks = open_test_ks(&db_path);
@@ -253,6 +283,7 @@ int main(void) {
 
   test_null_safety();
   test_provision_and_load();
+  test_provision_is_idempotent();
   test_load_nonexistent();
   test_revoke_agent();
   test_rotate_agent();
