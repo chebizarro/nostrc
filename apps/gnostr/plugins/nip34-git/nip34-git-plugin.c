@@ -1428,10 +1428,15 @@ settings_page_data_free(SettingsPageData *data)
 static void
 update_repo_list(SettingsPageData *data)
 {
-  /* Clear existing items */
-  GtkWidget *child;
-  while ((child = gtk_widget_get_first_child(GTK_WIDGET(data->repo_list))) != NULL)
-    gtk_list_box_remove(data->repo_list, child);
+  /* Clear existing items — skip non-row internal children (the placeholder
+   * set via gtk_list_box_set_placeholder is parented in the list box too). */
+  GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(data->repo_list));
+  while (child != NULL) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    if (GTK_IS_LIST_BOX_ROW(child))
+      gtk_list_box_remove(data->repo_list, child);
+    child = next;
+  }
 
   guint n_repos   = g_hash_table_size(data->plugin->repositories);
   guint n_patches = g_hash_table_size(data->plugin->patches);

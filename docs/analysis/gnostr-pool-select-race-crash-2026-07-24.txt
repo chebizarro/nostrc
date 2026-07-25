@@ -1,0 +1,97 @@
+[RELAY_POOL] Subscription 511 received 71 events before EOSE
+WebSocket connection established
+WebSocket connection established
+[RELAY_POOL] Subscription 494 received 31 events before EOSE
+error: gnostr debug map object file "/Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr/CMakeFiles/gnostr.dir/src/model/gnostr-timeline-snapshot-model.c.o" changed (actual: 0x6a63edf8, debug map: 0x6a63ed4e) since this executable was linked, debug info will not be loaded
+Process 71883 launched: '/Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr/gnostr' (arm64)
+Process 71883 stopped
+* thread #265, name = 'pool-70', stop reason = EXC_BAD_ACCESS (code=2, address=0x17523bff0)
+    frame #0: 0x00000001002a7758 gnostr`go_channel_ref(chan=<unavailable>) at channel.c:940
+   937 	 * Without this check, a channel being destroyed (magic cleared in unref)
+   938 	 * could have its refs incremented, causing the graveyard to skip freeing
+   939 	 * it while the caller uses an invalid channel. */
+-> 940 	GoChannel *go_channel_ref(GoChannel *chan) {
+   941 	    if (chan == NULL) return NULL;
+   942 	    /* Check magic to reject destroyed/invalid channels */
+   943 	    if (chan->magic != GO_CHANNEL_MAGIC) {
+Target 0: (gnostr) stopped.
+(lldb) bt all
+error: libnip04.a(nip04.c.o) failed to load objfile for /Users/bizarro/Documents/Projects/nostrc/build/nips/nip04/libnip04.a
+Debugging will be degraded for this module.
+warning: could not execute support code to read Objective-C class data in the process. This may reduce the quality of type information available.
+    frame #3: 0x0000000100829640 libnsync.1.dylib`nsync_cv_wait_with_deadline_generic + 360
+    frame #4: 0x00000001002a8824 gnostr`go_channel_receive(chan=0x000000015344af00, data=0x0000000000000000) at channel.c:1294:13
+    frame #5: 0x00000001003001bc gnostr`nostr_subscription_start(arg=0x00000001534e85e0) at subscription.c:311:11
+    frame #6: 0x00000001002a55e0 gnostr`go_wrapper_func(arg=0x000000015347c730) at go.c:29:20
+    frame #7: 0x000000019f71fc0c libsystem_pthread.dylib`_pthread_start + 136
+  thread #264
+    frame #0: 0x000000019f6df8b0 libsystem_kernel.dylib`__workq_kernreturn + 8
+* thread #265, name = 'pool-70', stop reason = EXC_BAD_ACCESS (code=2, address=0x17523bff0)
+  * frame #0: 0x00000001002a7758 gnostr`go_channel_ref(chan=<unavailable>) at channel.c:940
+    frame #1: 0x00000001002ab94c gnostr`ref_channels(cases=0x000000013a1ad200, num_cases=60) at select.c:283:13
+    frame #2: 0x00000001002abdd8 gnostr`go_select_timeout(cases=0x000000013a1ad200, num_cases=60, timeout_ms=500) at select.c:419:5
+    frame #3: 0x0000000100214974 gnostr`query_thread_func(task=0x0000000152bc8c60, source_object=0x000000011f729c40, task_data=0x0000000152bc8d20, cancellable=0x0000000000000000) at nostr_pool.c:765:19
+    frame #4: 0x0000000101bd9510 libgio-2.0.0.dylib`g_task_thread_pool_thread + 200
+    frame #5: 0x0000000100a4b520 libglib-2.0.0.dylib`g_thread_pool_thread_proxy + 208
+    frame #6: 0x0000000100a49d98 libglib-2.0.0.dylib`g_thread_proxy + 84
+    frame #7: 0x000000019f71fc0c libsystem_pthread.dylib`_pthread_start + 136
+  thread #266
+    frame #0: 0x000000019f6e13cc libsystem_kernel.dylib`__psynch_cvwait + 8
+    frame #1: 0x000000019f7200e0 libsystem_pthread.dylib`_pthread_cond_wait + 984
+    frame #2: 0x000000010082c844 libnsync.1.dylib`nsync_mu_semaphore_p_with_deadline + 204
+    frame #3: 0x0000000100829640 libnsync.1.dylib`nsync_cv_wait_with_deadline_generic + 360
+    frame #4: 0x00000001002a8824 gnostr`go_channel_receive(chan=0x00000001286a5710, data=0x0000000000000000) at channel.c:1294:13
+    frame #5: 0x00000001003001bc gnostr`nostr_subscription_start(arg=0x0000000129398900) at subscription.c:311:11
+    frame #6: 0x00000001002a55e0 gnostr`go_wrapper_func(arg=0x0000000129373d70) at go.c:29:20
+    frame #7: 0x000000019f71fc0c libsystem_pthread.dylib`_pthread_start + 136
+  thread #267
+    frame #0: 0x000000019f6e13cc libsystem_kernel.dylib`__psynch_cvwait + 8
+    frame #1: 0x000000019f7200e0 libsystem_pthread.dylib`_pthread_cond_wait + 984
+    frame #2: 0x000000010082c844 libnsync.1.dylib`nsync_mu_semaphore_p_with_deadline + 204
+    frame #3: 0x0000000100829640 libnsync.1.dylib`nsync_cv_wait_with_deadline_generic + 360
+    frame #4: 0x00000001002a8824 gnostr`go_channel_receive(chan=0x00000001286ca860, data=0x0000000000000000) at channel.c:1294:13
+    frame #5: 0x00000001003001bc gnostr`nostr_subscription_start(arg=0x00000001293f7bc0) at subscription.c:311:11
+    frame #6: 0x00000001002a55e0 gnostr`go_wrapper_func(arg=0x000000014f18a250) at go.c:29:20
+    frame #7: 0x000000019f71fc0c libsystem_pthread.dylib`_pthread_start + 136
+  thread #268
+    frame #0: 0x000000019f6e13cc libsystem_kernel.dylib`__psynch_cvwait + 8
+    frame #1: 0x000000019f7200e0 libsystem_pthread.dylib`_pthread_cond_wait + 984
+    frame #2: 0x000000010082c844 libnsync.1.dylib`nsync_mu_semaphore_p_with_deadline + 204
+    frame #3: 0x0000000100829640 libnsync.1.dylib`nsync_cv_wait_with_deadline_generic + 360
+    frame #4: 0x00000001002a8824 gnostr`go_channel_receive(chan=0x000000011c004080, data=0x0000000000000000) at channel.c:1294:13
+    frame #5: 0x00000001003001bc gnostr`nostr_subscription_start(arg=0x0000000129350080) at subscription.c:311:11
+    frame #6: 0x00000001002a55e0 gnostr`go_wrapper_func(arg=0x000000012745d1a0) at go.c:29:20
+    frame #7: 0x000000019f71fc0c libsystem_pthread.dylib`_pthread_start + 136
+  thread #269
+    frame #0: 0x000000019f6e13cc libsystem_kernel.dylib`__psynch_cvwait + 8
+    frame #1: 0x000000019f7200e0 libsystem_pthread.dylib`_pthread_cond_wait + 984
+    frame #2: 0x000000010082c844 libnsync.1.dylib`nsync_mu_semaphore_p_with_deadline + 204
+    frame #3: 0x0000000100829640 libnsync.1.dylib`nsync_cv_wait_with_deadline_generic + 360
+    frame #4: 0x00000001002a8824 gnostr`go_channel_receive(chan=0x000000011c004940, data=0x0000000000000000) at channel.c:1294:13
+    frame #5: 0x00000001003001bc gnostr`nostr_subscription_start(arg=0x00000001293ca620) at subscription.c:311:11
+    frame #6: 0x00000001002a55e0 gnostr`go_wrapper_func(arg=0x0000000129373d70) at go.c:29:20
+    frame #7: 0x000000019f71fc0c libsystem_pthread.dylib`_pthread_start + 136
+  thread #270
+    frame #0: 0x000000019f6e13cc libsystem_kernel.dylib`__psynch_cvwait + 8
+    frame #1: 0x000000019f7200e0 libsystem_pthread.dylib`_pthread_cond_wait + 984
+    frame #2: 0x000000010082c844 libnsync.1.dylib`nsync_mu_semaphore_p_with_deadline + 204
+    frame #3: 0x0000000100829640 libnsync.1.dylib`nsync_cv_wait_with_deadline_generic + 360
+    frame #4: 0x00000001002a8824 gnostr`go_channel_receive(chan=0x000000011c0056c0, data=0x0000000000000000) at channel.c:1294:13
+    frame #5: 0x00000001003001bc gnostr`nostr_subscription_start(arg=0x000000011c0f4840) at subscription.c:311:11
+    frame #6: 0x00000001002a55e0 gnostr`go_wrapper_func(arg=0x00000001293cd8e0) at go.c:29:20
+    frame #7: 0x000000019f71fc0c libsystem_pthread.dylib`_pthread_start + 136
+  thread #271
+    frame #0: 0x000000019f6e13cc libsystem_kernel.dylib`__psynch_cvwait + 8
+    frame #1: 0x000000019f7200e0 libsystem_pthread.dylib`_pthread_cond_wait + 984
+    frame #2: 0x000000010082c844 libnsync.1.dylib`nsync_mu_semaphore_p_with_deadline + 204
+    frame #3: 0x0000000100829640 libnsync.1.dylib`nsync_cv_wait_with_deadline_generic + 360
+    frame #4: 0x00000001002a8824 gnostr`go_channel_receive(chan=0x000000011c009dc0, data=0x0000000000000000) at channel.c:1294:13
+    frame #5: 0x00000001003001bc gnostr`nostr_subscription_start(arg=0x000000011c0c8590) at subscription.c:311:11
+    frame #6: 0x00000001002a55e0 gnostr`go_wrapper_func(arg=0x00000001274a2f20) at go.c:29:20
+    frame #7: 0x000000019f71fc0c libsystem_pthread.dylib`_pthread_start + 136
+  thread #272
+    frame #0: 0x000000019f6e13cc libsystem_kernel.dylib`__psynch_cvwait + 8
+    frame #1: 0x000000019f7200e0 libsystem_pthread.dylib`_pthread_cond_wait + 984
+    frame #2: 0x000000010082c844 libnsync.1.dylib`nsync_mu_semaphore_p_with_deadline + 204
+    frame #3: 0x0000000100829640 libnsync.1.dylib`nsync_cv_wait_with_deadline_generic + 360
+    frame #4: 0x00000001002a8824 gnostr`go_channel_receive(chan=0x000000012ddef290, data=0x0000000000000000) at channel.c:1294:13

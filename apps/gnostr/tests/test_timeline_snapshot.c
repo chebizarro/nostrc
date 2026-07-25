@@ -159,6 +159,104 @@ test_snapshot_model_replacement(void)
   g_object_unref(c);
 }
 
+/* Regression: multi-span diff publication must keep the model consistent
+ * with consumers at EVERY items-changed emission (GListModel contract).
+ * The shadow array mimics GTK's list item manager bookkeeping; under the
+ * old implementation (swap to final array, then emit spans) the n_items
+ * check below failed mid-sequence and GTK crashed. */
+static void
+shadow_items_changed(GListModel *model,
+                     guint position,
+                     guint removed,
+                     guint added,
+                     gpointer user_data)
+{
+  GPtrArray *shadow = user_data;
+
+  g_assert_cmpuint(position, <=, shadow->len);
+  g_assert_cmpuint(removed, <=, shadow->len - position);
+
+  if (removed > 0)
+    g_ptr_array_remove_range(shadow, position, removed);
+  for (guint k = 0; k < added; k++) {
+    gpointer item = g_list_model_get_item(model, position + k);
+    g_assert_nonnull(item);
+    g_ptr_array_insert(shadow, (gint)(position + k), item); /* takes ref */
+  }
+
+  /* Model must agree with the consumer view after applying this span. */
+  g_assert_cmpuint(g_list_model_get_n_items(model), ==, shadow->len);
+}
+
+static void
+test_snapshot_model_multi_span_diff_consistency(void)
+{
+  GnostrTimelineSnapshotModel *model = gnostr_timeline_snapshot_model_new();
+  GPtrArray *shadow = g_ptr_array_new_with_free_func(g_object_unref);
+  g_signal_connect(model, "items-changed", G_CALLBACK(shadow_items_changed), shadow);
+
+  GnostrTimelineSnapshotRow *a = row_new("event-a", 400, "a", 10.0);
+  GnostrTimelineSnapshotRow *b = row_new("event-b", 300, "b", 10.0);
+  GnostrTimelineSnapshotRow *c = row_new("event-c", 200, "c", 10.0);
+  GnostrTimelineSnapshotRow *d = row_new("event-d", 100, "d", 10.0);
+  GnostrTimelineSnapshotRow *first_rows[] = { a, b, c, d };
+  GnostrTimelineSnapshot *first = gnostr_timeline_snapshot_new(1, 1, first_rows, 4, 0);
+  gnostr_timeline_snapshot_model_replace_snapshot(model, first);
+  g_assert_cmpuint(shadow->len, ==, 4);
+
+  /* Second snapshot: keep a and c (same pointers), replace b with x,
+   * replace d with e — forces two disjoint diff spans. */
+  GnostrTimelineSnapshotRow *x = row_new("event-x", 250, "x", 10.0);
+  GnostrTimelineSnapshotRow *e = row_new("event-e", 50, "e", 10.0);
+  GnostrTimelineSnapshotRow *second_rows[] = { a, x, c, e };
+  GnostrTimelineSnapshot *second = gnostr_timeline_snapshot_new(2, 1, second_rows, 4, 0);
+  gnostr_timeline_snapshot_model_replace_snapshot(model, second);
+
+  /* Consumer view must equal the final model contents. */
+  g_assert_cmpuint(shadow->len, ==, 4);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(model)), ==, 4);
+  for (guint i = 0; i < shadow->len; i++) {
+    GObject *item = g_list_model_get_item(G_LIST_MODEL(model), i);
+    g_assert_true(item == g_ptr_array_index(shadow, i));
+    g_object_unref(item);
+  }
+  GObject *row1 = g_list_model_get_item(G_LIST_MODEL(model), 1);
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_event_id(GNOSTR_TIMELINE_SNAPSHOT_ROW(row1)), ==, "event-x");
+  g_object_unref(row1);
+
+  /* Two spans where the FIRST changes the item count (remove x, then
+   * replace e with f+g). Under the old implementation the model already
+   * reported the final length during the first emission while the
+   * consumer was still mid-sequence — exactly the divergence that
+   * crashed GTK's list item manager. */
+  GnostrTimelineSnapshotRow *f = row_new("event-f", 150, "f", 10.0);
+  GnostrTimelineSnapshotRow *g = row_new("event-g", 120, "g", 10.0);
+  GnostrTimelineSnapshotRow *third_rows[] = { a, c, f, g };
+  GnostrTimelineSnapshot *third = gnostr_timeline_snapshot_new(3, 1, third_rows, 4, 0);
+  gnostr_timeline_snapshot_model_replace_snapshot(model, third);
+  g_assert_cmpuint(shadow->len, ==, 4);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(model)), ==, 4);
+  for (guint i = 0; i < shadow->len; i++) {
+    GObject *item = g_list_model_get_item(G_LIST_MODEL(model), i);
+    g_assert_true(item == g_ptr_array_index(shadow, i));
+    g_object_unref(item);
+  }
+
+  g_object_unref(model);
+  g_ptr_array_unref(shadow);
+  g_object_unref(first);
+  g_object_unref(second);
+  g_object_unref(third);
+  g_object_unref(a);
+  g_object_unref(b);
+  g_object_unref(c);
+  g_object_unref(d);
+  g_object_unref(x);
+  g_object_unref(e);
+  g_object_unref(f);
+  g_object_unref(g);
+}
+
 int
 main(int argc,
      char **argv)
@@ -168,6 +266,7 @@ main(int argc,
   g_test_add_func("/gnostr/timeline-snapshot/ordering-lookup-prefix", test_snapshot_ordering_lookup_and_prefix);
   g_test_add_func("/gnostr/timeline-snapshot/row-replacement", test_row_replacement_is_object_replacement);
   g_test_add_func("/gnostr/timeline-snapshot/model-replacement", test_snapshot_model_replacement);
+  g_test_add_func("/gnostr/timeline-snapshot/multi-span-diff-consistency", test_snapshot_model_multi_span_diff_consistency);
 
   return g_test_run();
 }

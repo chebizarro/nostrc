@@ -280,28 +280,57 @@ gnostr_timeline_snapshot_model_replace_snapshot(GnostrTimelineSnapshotModel *sel
   }
 
   g_autoptr(GArray) spans = snapshot_model_build_diff_spans(self->published_rows, new_rows);
-  gboolean fallback = spans == NULL;
 
   if (snapshot)
     g_object_ref(snapshot);
   g_clear_object(&self->snapshot);
   self->snapshot = snapshot;
 
-  g_ptr_array_unref(self->published_rows);
-  self->published_rows = new_rows;
-
-  if (fallback) {
+  if (spans == NULL) {
+    /* Fallback: full replacement in one consistent emission. */
+    g_ptr_array_unref(self->published_rows);
+    self->published_rows = new_rows;
     guint new_len = self->published_rows->len;
     if (old_len || new_len)
       g_list_model_items_changed(G_LIST_MODEL(self), 0, old_len, new_len);
     return;
   }
 
+  /* Apply each diff span to published_rows BEFORE emitting it. The
+   * GListModel contract requires the model to reflect exactly the
+   * announced change at every items_changed emission; swapping to the
+   * final array up-front and then emitting all spans leaves the model
+   * ahead of consumers mid-sequence, which corrupts GTK's list item
+   * manager bookkeeping (crash in gtk_list_item_manager_ensure_items).
+   * Span positions are in new-array coordinates and ascend, so the
+   * prefix of published_rows is already in sync when each is applied. */
   for (guint i = 0; i < spans->len; i++) {
     ItemsChangedSpan *span = &g_array_index(spans, ItemsChangedSpan, i);
+    if (span->position > self->published_rows->len ||
+        span->removed > self->published_rows->len - span->position ||
+        (span->added > 0 && span->position + span->added > new_rows->len))
+      break; /* malformed span — defensive resync below repairs the model */
+    if (span->removed > 0)
+      g_ptr_array_remove_range(self->published_rows, span->position, span->removed);
+    for (guint k = 0; k < span->added; k++) {
+      GnostrTimelineSnapshotRow *row = g_ptr_array_index(new_rows, span->position + k);
+      g_ptr_array_insert(self->published_rows, (gint)(span->position + k), g_object_ref(row));
+    }
     g_list_model_items_changed(G_LIST_MODEL(self),
                                span->position,
                                span->removed,
                                span->added);
   }
+
+  /* Defensive resync: if the diff ever diverges from the target rows,
+   * publish a full replacement rather than leaving the model wrong. */
+  if (!snapshot_model_rows_identical(self->published_rows, new_rows)) {
+    guint cur_len = self->published_rows->len;
+    g_ptr_array_unref(self->published_rows);
+    self->published_rows = new_rows;
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, cur_len, new_rows->len);
+    return;
+  }
+
+  g_ptr_array_unref(new_rows);
 }

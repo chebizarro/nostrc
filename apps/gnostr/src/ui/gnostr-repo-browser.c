@@ -349,16 +349,24 @@ rebuild_list(GnostrRepoBrowser *self)
    * before removal to prevent Pango layout corruption during disposal.
    * nostrc-pgo2: Repo browser manages NoteCardRow lifecycle manually (not
    * via GtkListItemFactory), so we must handle unbind ourselves. */
-  GtkWidget *child;
-  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->repo_list))) != NULL) {
-    /* NoteCardRow is inside: ListBoxRow → Box → NoteCardRow */
-    GtkWidget *container = gtk_list_box_row_get_child(GTK_LIST_BOX_ROW(child));
-    if (container && GTK_IS_BOX(container)) {
-      GtkWidget *first = gtk_widget_get_first_child(container);
-      if (first && NOSTR_GTK_IS_NOTE_CARD_ROW(first))
-        nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(first));
+  /* NOTE: the list box also parents non-row internal children (the
+   * placeholder set via gtk_list_box_set_placeholder), so only rows may
+   * be cast/removed — casting the placeholder to GtkListBoxRow reads
+   * garbage and crashes (EXC_BAD_ACCESS). */
+  GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->repo_list));
+  while (child != NULL) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    if (GTK_IS_LIST_BOX_ROW(child)) {
+      /* NoteCardRow is inside: ListBoxRow → Box → NoteCardRow */
+      GtkWidget *container = gtk_list_box_row_get_child(GTK_LIST_BOX_ROW(child));
+      if (container && GTK_IS_BOX(container)) {
+        GtkWidget *first = gtk_widget_get_first_child(container);
+        if (first && NOSTR_GTK_IS_NOTE_CARD_ROW(first))
+          nostr_gtk_note_card_row_prepare_for_unbind(NOSTR_GTK_NOTE_CARD_ROW(first));
+      }
+      gtk_list_box_remove(self->repo_list, child);
     }
-    gtk_list_box_remove(self->repo_list, child);
+    child = next;
   }
 
   /* Add matching repositories */
@@ -394,9 +402,13 @@ static void
 rebuild_patch_list(GnostrRepoBrowser *self)
 {
   /* Clear existing rows */
-  GtkWidget *child;
-  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->patch_list))) != NULL)
-    gtk_list_box_remove(self->patch_list, child);
+  GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->patch_list));
+  while (child != NULL) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    if (GTK_IS_LIST_BOX_ROW(child))
+      gtk_list_box_remove(self->patch_list, child);
+    child = next;
+  }
 
   GHashTableIter iter;
   gpointer key, value;
@@ -490,9 +502,13 @@ rebuild_patch_list(GnostrRepoBrowser *self)
 static void
 rebuild_issue_list(GnostrRepoBrowser *self)
 {
-  GtkWidget *child;
-  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->issue_list))) != NULL)
-    gtk_list_box_remove(self->issue_list, child);
+  GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->issue_list));
+  while (child != NULL) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    if (GTK_IS_LIST_BOX_ROW(child))
+      gtk_list_box_remove(self->issue_list, child);
+    child = next;
+  }
 
   GHashTableIter iter;
   gpointer key, value;
