@@ -539,11 +539,14 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
         gboolean page_has_new = FALSE;
         gint64 min_created_at = -1;
         GPtrArray *batch = g_ptr_array_new_with_free_func((GDestroyNotify)nostr_event_free);
+        /* nostrc-hmp: heap-allocate select cases OUTSIDE the loop. g_newa
+         * (alloca) inside a loop accumulates until function return and
+         * overflows the thread stack under heavy event traffic. */
+        size_t max_cases = subs->len * 2;
+        GoSelectCase *cases = g_new0(GoSelectCase, MAX(max_cases, 1));
         for (;;) {
             /* Build select cases for event+eose channels */
             {
-                size_t max_cases = subs->len * 2;
-                GoSelectCase *cases = g_newa(GoSelectCase, max_cases);
                 size_t nc = 0;
                 for (guint i = 0; i < subs->len; i++) {
                     SubItem *it = (SubItem *)subs->pdata[i];
@@ -599,6 +602,7 @@ static gpointer paginate_with_interval_thread(gpointer user_data) {
             }
             if (all_eosed || (ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable))) break;
         }
+        g_free(cases);
 
         /* Emit sorted batch if any (nostrc-bhm) */
         if (batch->len > 0) {
@@ -777,13 +781,17 @@ static gpointer subscribe_many_thread(gpointer user_data) {
     gboolean bootstrap_emitted = FALSE;
     guint max_batch_size = get_batch_size();
 
+    /* nostrc-hmp: heap-allocate select cases OUTSIDE the loop. g_newa
+     * (alloca) inside this long-lived streaming loop accumulated stack
+     * every iteration until the pump thread overflowed its guard page. */
+    size_t stream_max_cases = subs->len * 2;
+    GoSelectCase *stream_cases = g_new0(GoSelectCase, MAX(stream_max_cases, 1));
     /* nostrc-3gd6: Replaced 5ms adaptive sleep with go_select_timeout.
      * Blocks until any subscription channel is ready, then drains. */
     while (!(ctx->cancellable && g_cancellable_is_cancelled(ctx->cancellable))) {
         /* Block until any event channel is ready (50ms timeout for cancellation checks) */
         {
-            size_t max_cases = subs->len * 2;
-            GoSelectCase *cases = g_newa(GoSelectCase, max_cases);
+            GoSelectCase *cases = stream_cases;
             size_t nc = 0;
             for (guint i = 0; i < subs->len; i++) {
                 SubItem *it = (SubItem *)subs->pdata[i];
@@ -858,6 +866,7 @@ static gpointer subscribe_many_thread(gpointer user_data) {
             }
         }
     }
+    g_free(stream_cases);
 
     /* Print per-subscription stats - use url_copy since relay may be freed by main thread */
     for (guint i = 0; i < subs->len; i++) {
@@ -1852,7 +1861,11 @@ static void *fetch_profiles_goroutine(void *arg) {
     
     /* nostrc-3gd6: Replaced try_receive + 10ms sleep loop with go_select_timeout.
      * Build a select case array from all subscription channels, block until any
-     * channel is ready (or 100ms timeout for cancellation checks), then drain all. */
+     * channel is ready (or 100ms timeout for cancellation checks), then drain all.
+     * nostrc-hmp: cases heap-allocated OUTSIDE the loop — per-iteration g_newa
+     * (alloca) accumulated stack until the worker thread overflowed. */
+    size_t sel_max_cases = ctx->subs->len * 3;
+    GoSelectCase *sel_cases = g_new0(GoSelectCase, MAX(sel_max_cases, 1));
     while (TRUE) {
         guint64 now = g_get_monotonic_time();
 
@@ -1864,8 +1877,7 @@ static void *fetch_profiles_goroutine(void *arg) {
 
         /* Build select cases from all active subscription channels */
         {
-            size_t max_cases = ctx->subs->len * 3;
-            GoSelectCase *cases = g_newa(GoSelectCase, max_cases);
+            GoSelectCase *cases = sel_cases;
             size_t nc = 0;
 
             for (guint i = 0; i < ctx->subs->len; i++) {
@@ -1976,6 +1988,7 @@ static void *fetch_profiles_goroutine(void *arg) {
          * or zero fired subscriptions.  Broken relays that never send EOSE
          * are the relay's problem — the caller can cancel. */
     }
+    g_free(sel_cases);
     
 cleanup_and_exit:
     /* Cleanup filters */

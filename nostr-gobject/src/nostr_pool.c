@@ -691,6 +691,13 @@ query_thread_func(GTask         *task,
     const guint max_cases = items->len * 2;
     GoSelectCase *cases = g_new0(GoSelectCase, max_cases);
     void **recv_bufs = g_new0(void *, max_cases);
+    /* nostrc-hmp: case->item mapping arrays. MUST be heap-allocated and
+     * hoisted out of the loop — the previous per-iteration g_newa (alloca)
+     * accumulated until function return; one iteration runs per received
+     * event, so large queries overflowed the worker thread stack (guard-
+     * page EXC_BAD_ACCESS crashes on pool-N threads). */
+    guint *case_item_idx = g_new0(guint, max_cases);
+    gboolean *case_is_eose = g_new0(gboolean, max_cases);
 
     for (;;) {
         if (cancellable && g_cancellable_is_cancelled(cancellable)) {
@@ -708,9 +715,6 @@ query_thread_func(GTask         *task,
         gboolean all_done = TRUE;
         size_t n_cases = 0;
 
-        /* Track which item index each case maps to, for post-select dispatch */
-        guint *case_item_idx = g_newa(guint, max_cases);
-        gboolean *case_is_eose = g_newa(gboolean, max_cases);
 
         for (guint i = 0; i < items->len; i++) {
             RelaySubItem *item = g_ptr_array_index(items, i);
@@ -831,6 +835,8 @@ query_thread_func(GTask         *task,
 
     g_free(cases);
     g_free(recv_bufs);
+    g_free(case_item_idx);
+    g_free(case_is_eose);
 
     /* nostrc-blk1: Deliver results BEFORE subscription cleanup.
      * nostr_subscription_close/free can block waiting on lifecycle worker

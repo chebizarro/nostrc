@@ -351,6 +351,11 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
     QueueMetrics *m = &sub->priv->metrics;
 
     if (is_live) {
+        /* nostrc-hmp: Capture fields BEFORE the send. On successful
+         * try_send, ownership transfers to the consumer, which may pop
+         * and free the event on another thread immediately — touching
+         * `event` after a successful send is a use-after-free. */
+        int64_t ev_created_at = event->created_at;
         // Non-blocking send; if full or closed or canceled, drop to avoid hang
         if (go_channel_try_send(sub->events, event) != 0) {
             if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
@@ -366,7 +371,6 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
             atomic_fetch_add(&m->events_enqueued, 1);
             atomic_store(&m->last_enqueue_time_us, now_us);
 
-            int64_t ev_created_at = event->created_at;
             int64_t old_seen = atomic_load(&sub->priv->last_seen_created_at);
             while (ev_created_at > old_seen) {
                 if (atomic_compare_exchange_weak(&sub->priv->last_seen_created_at,
@@ -787,8 +791,15 @@ bool nostr_subscription_refire_since(NostrSubscription *sub, int64_t since, Erro
         return nostr_subscription_fire(sub, err);
     }
 
+    /* nostrc-hmp: Serialize the whole read-copy/swap/fire/restore sequence.
+     * Concurrent refires (stale + new message_loop threads for a flapping
+     * relay) otherwise free each other's temporary filters mid-iteration
+     * (heap-use-after-free) and corrupt sub->filters. */
+    nsync_mu_lock(&sub->priv->sub_mutex);
+
     NostrFilters *copy = nostr_filters_new();
     if (!copy) {
+        nsync_mu_unlock(&sub->priv->sub_mutex);
         if (err) *err = new_error(1, "failed to allocate refire filters");
         return false;
     }
@@ -797,6 +808,7 @@ bool nostr_subscription_refire_since(NostrSubscription *sub, int64_t since, Erro
         NostrFilter *dup = nostr_filter_copy(&sub->filters->filters[i]);
         if (!dup) {
             nostr_filters_free(copy);
+            nsync_mu_unlock(&sub->priv->sub_mutex);
             if (err) *err = new_error(1, "failed to copy refire filter");
             return false;
         }
@@ -808,6 +820,7 @@ bool nostr_subscription_refire_since(NostrSubscription *sub, int64_t since, Erro
         if (!nostr_filters_add(copy, &tmp)) {
             nostr_filter_clear(&tmp);
             nostr_filters_free(copy);
+            nsync_mu_unlock(&sub->priv->sub_mutex);
             if (err) *err = new_error(1, "failed to append refire filter");
             return false;
         }
@@ -818,6 +831,7 @@ bool nostr_subscription_refire_since(NostrSubscription *sub, int64_t since, Erro
     bool ok = nostr_subscription_fire(sub, err);
     sub->filters = orig;
     nostr_filters_free(copy);
+    nsync_mu_unlock(&sub->priv->sub_mutex);
     return ok;
 }
 
