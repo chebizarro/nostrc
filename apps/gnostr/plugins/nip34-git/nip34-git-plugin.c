@@ -961,6 +961,12 @@ on_open_git_client_action(GnostrPluginContext *context,
     GtkWindow *parent = gnostr_plugin_context_get_main_window(context);
 
     self->git_client_window = GTK_WINDOW(gtk_window_new());
+    /* nostrc-gzd9: Track the window's lifetime with a weak pointer so the
+     * field auto-NULLs when GTK destroys the toplevel (user closes it, or the
+     * application tears down toplevels at shutdown). Without this, deactivate
+     * later calls gtk_window_destroy() on a freed pointer -> EXC_BAD_ACCESS. */
+    g_object_add_weak_pointer(G_OBJECT(self->git_client_window),
+                              (gpointer *)&self->git_client_window);
     gtk_window_set_title(self->git_client_window, "Git Client");
     gtk_window_set_default_size(self->git_client_window, 800, 600);
     if (parent) {
@@ -1219,8 +1225,13 @@ nip34_git_plugin_deactivate(GnostrPlugin        *plugin,
     gnostr_plugin_context_unregister_action(context, "open-git-client");
   }
 
-  /* Close git client window if open */
+  /* Close git client window if it's still alive. The weak pointer registered
+   * at creation keeps self->git_client_window NULL once the window has already
+   * been destroyed, so this only runs when it genuinely still exists. Remove
+   * the weak pointer before destroying so the field isn't touched twice. */
   if (self->git_client_window) {
+    g_object_remove_weak_pointer(G_OBJECT(self->git_client_window),
+                                 (gpointer *)&self->git_client_window);
     gtk_window_destroy(self->git_client_window);
     self->git_client_window = NULL;
   }
