@@ -42,7 +42,22 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build all targets
-        run: cmake --build build -j
+        run: |
+          set +e
+          cmake --build build -j 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            summary="$(grep -E 'fatal error:|error:|undefined reference|ninja: build stopped' build.log | tail -n 30)"
+            if [ -z "$summary" ]; then
+              summary="$(tail -n 30 build.log)"
+            fi
+            summary="${summary//'%'/'%25'}"
+            summary="${summary//$'\r'/'%0D'}"
+            summary="${summary//$'\n'/'%0A'}"
+            echo "::error file=.github/workflows/gnostr-appimage.yml,line=45::${summary}"
+            exit "$status"
+          fi
 
       - name: Stage install tree
         run: cmake --install build --prefix "$PWD/AppDir/usr"
