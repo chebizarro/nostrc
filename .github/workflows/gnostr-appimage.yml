@@ -49,6 +49,11 @@ jobs:
           # Adw.Spinner is newer than Noble's libadwaita; Gtk.Spinner is compatible.
           sed -i 's/Adw\.Spinner/Gtk.Spinner/' apps/gnostr/data/ui/gnostr-main-window.blp
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_APPS=ON \
+            -DSIGNET_ENABLE=OFF \
+            -DBUILD_RELAYD=OFF \
+            -DBUILD_TESTING=OFF \
+            -DBUILD_TESTING_FRAMEWORK=OFF \
             -DCMAKE_C_FLAGS="-include $PWD/ci-gcc-compat.h"
 
       - name: Build all targets
