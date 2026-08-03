@@ -75,7 +75,9 @@ jobs:
           fi
 
       - name: Stage install tree
-        run: cmake --install build --prefix "$PWD/AppDir/usr"
+        run: |
+          cmake --install build --prefix "$PWD/AppDir/usr"
+          find AppDir/usr/bin -maxdepth 1 -type f ! -name gnostr -delete
 
       - name: Verify installed application data
         run: |
