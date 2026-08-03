@@ -5,7 +5,7 @@ on:
   workflow_call:
   push:
     branches:
-      - ci/gnostr-appimage
+      - master
     paths:
       - 'apps/gnostr/**'
       - '.github/workflows/gnostr-appimage.yml'
