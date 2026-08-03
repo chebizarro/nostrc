@@ -101,6 +101,8 @@ jobs:
             cp apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg "$APPDIR/usr/share/icons/hicolor/scalable/apps/"
           fi
       - name: Build AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
           set -e
           export NO_APPSTREAM=1
@@ -155,6 +157,8 @@ jobs:
           Categories=Utility;
           EOF
       - name: Build AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
           set -e
           export NO_APPSTREAM=1
@@ -172,58 +176,7 @@ jobs:
 
   build-appimage-gnostr:
     name: Build AppImage (gnostr)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
-            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
-            libnsync-dev \
-            wget file patchelf desktop-file-utils
-      - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - name: Build
-        run: cmake --build build -j --target gnostr
-      - name: Download AppImage tools
-        run: |
-          mkdir -p appimage-tools
-          cd appimage-tools
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk.sh
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-gtk.sh appimagetool-x86_64.AppImage
-      - name: Prepare AppDir
-        run: |
-          set -e
-          APPDIR=$PWD/AppDir
-          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/scalable/apps"
-          cp build/apps/gnostr/gnostr "$APPDIR/usr/bin/gnostr"
-          # Desktop file and metadata
-          cp apps/gnostr/packaging/appimage/gnostr.desktop "$APPDIR/usr/share/applications/"
-          # Icon
-          if [ -f apps/gnostr/data/icons/hicolor/scalable/apps/org.gnostr.Client.svg ]; then
-            cp apps/gnostr/data/icons/hicolor/scalable/apps/org.gnostr.Client.svg "$APPDIR/usr/share/icons/hicolor/scalable/apps/"
-          fi
-      - name: Build AppImage
-        run: |
-          set -e
-          export NO_APPSTREAM=1
-          ./appimage-tools/linuxdeploy-x86_64.AppImage --appdir AppDir \
-            -d AppDir/usr/share/applications/gnostr.desktop \
-            --executable AppDir/usr/bin/gnostr \
-            --plugin gtk
-          ./appimage-tools/appimagetool-x86_64.AppImage AppDir gnostr-${GITHUB_REF_NAME#v}-x86_64.AppImage
-          mkdir -p dist
-          mv gnostr-*.AppImage dist/
-      - name: Upload AppImage
-        uses: actions/upload-artifact@v4
-        with:
-          name: appimage-gnostr
-          path: dist/*.AppImage
+    uses: ./.github/workflows/gnostr-appimage.yml
 
   build-snap-gnostr:
     name: Build Snap (gnostr)

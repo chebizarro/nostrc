@@ -1,0 +1,140 @@
+name: gnostr AppImage
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches:
+      - ci/gnostr-appimage
+    paths:
+      - 'apps/gnostr/**'
+      - '.github/workflows/gnostr-appimage.yml'
+      - '.github/workflows/release.yml'
+  pull_request:
+    paths:
+      - 'apps/gnostr/**'
+      - '.github/workflows/gnostr-appimage.yml'
+      - '.github/workflows/release.yml'
+
+jobs:
+  build-appimage:
+    name: Build and smoke test gnostr AppImage
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build and smoke-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev \
+            libsecret-1-dev libssl-dev libnsync-dev libpeas-2-dev libjson-glib-dev \
+            libsoup-3.0-dev libsqlite3-dev libqrencode-dev libsecp256k1-dev \
+            libsodium-dev libcurl4-openssl-dev libgit2-dev blueprint-compiler \
+            librsvg2-dev libgdk-pixbuf-2.0-dev adwaita-icon-theme \
+            wget file patchelf desktop-file-utils xvfb xauth
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build all targets
+        run: cmake --build build -j
+
+      - name: Stage install tree
+        run: cmake --install build --prefix "$PWD/AppDir/usr"
+
+      - name: Verify installed application data
+        run: |
+          set -e
+          test -f AppDir/usr/share/glib-2.0/schemas/gschemas.compiled
+          test -d AppDir/usr/share/gnostr/plugins
+          find AppDir/usr/share/gnostr/plugins -mindepth 1 -maxdepth 1 -type d -print -quit | grep -q .
+
+      - name: Download AppImage tools
+        run: |
+          mkdir -p appimage-tools
+          cd appimage-tools
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk.sh
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-gtk.sh appimagetool-x86_64.AppImage
+
+      - name: Build AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: |
+          set -e
+          export NO_APPSTREAM=1
+
+          plugin_args=()
+          while IFS= read -r -d '' plugin; do
+            plugin_args+=(--library "$plugin")
+          done < <(find AppDir/usr/share/gnostr/plugins -type f -name '*.so' -print0)
+
+          ./appimage-tools/linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --desktop-file AppDir/usr/share/applications/org.gnostr.gnostr.desktop \
+            --executable AppDir/usr/bin/gnostr \
+            "${plugin_args[@]}" \
+            --plugin gtk
+
+          mv AppDir/AppRun AppDir/AppRun.linuxdeploy
+          cat > AppDir/AppRun <<'EOF'
+          #!/bin/sh
+          APPDIR="$(dirname "$(readlink -f "$0")")"
+          export GNOSTR_PLUGIN_PATH="$APPDIR/usr/share/gnostr/plugins"
+          exec "$APPDIR/AppRun.linuxdeploy" "$@"
+          EOF
+          chmod +x AppDir/AppRun
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${VERSION//\//-}"
+          ./appimage-tools/appimagetool-x86_64.AppImage \
+            AppDir "gnostr-${VERSION}-x86_64.AppImage"
+          mkdir -p dist
+          mv gnostr-*.AppImage dist/
+
+      - name: Verify bundled binary dependencies
+        run: |
+          set -e
+          ldd AppDir/usr/bin/gnostr | tee ldd.log
+          if grep -Fq 'not found' ldd.log; then
+            echo "Unresolved shared-library dependency in AppDir" >&2
+            exit 1
+          fi
+
+      - name: Smoke test AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: |
+          set -e
+          APPIMAGE="$(find dist -maxdepth 1 -name '*.AppImage' -print -quit)"
+          test -n "$APPIMAGE"
+
+          start="$(date +%s)"
+          set +e
+          timeout 20s xvfb-run -a "$APPIMAGE" >smoke-test.log 2>&1
+          status=$?
+          set -e
+          elapsed=$(( $(date +%s) - start ))
+          cat smoke-test.log
+
+          if [ "$status" -eq 124 ]; then
+            echo "gnostr remained running until the 20-second timeout"
+          elif [ "$status" -ne 0 ] && [ "$elapsed" -lt 10 ]; then
+            echo "gnostr crashed after ${elapsed}s with exit status ${status}" >&2
+            exit "$status"
+          else
+            echo "gnostr exited with status ${status} after ${elapsed}s"
+          fi
+
+      - name: Upload gnostr AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-gnostr
+          path: dist/*.AppImage
+          if-no-files-found: error
