@@ -98,6 +98,20 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
           set -e
+          report_failure() {
+            status=$?
+            trap - EXIT
+            if [ "$status" -ne 0 ]; then
+              summary="$(tail -n 80 appimage-build.log)"
+              summary="${summary//'%'/'%25'}"
+              summary="${summary//$'\r'/'%0D'}"
+              summary="${summary//$'\n'/'%0A'}"
+              echo "::error file=.github/workflows/gnostr-appimage.yml::${summary}"
+            fi
+            exit "$status"
+          }
+          trap report_failure EXIT
+          exec > >(tee appimage-build.log) 2>&1
           export NO_APPSTREAM=1
 
           plugin_args=()
