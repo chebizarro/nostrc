@@ -36,7 +36,8 @@ jobs:
             libsoup-3.0-dev libsqlite3-dev libqrencode-dev libsecp256k1-dev \
             libsodium-dev libcurl4-openssl-dev libgit2-dev blueprint-compiler \
             librsvg2-dev libgdk-pixbuf-2.0-dev adwaita-icon-theme \
-            wget file patchelf desktop-file-utils xvfb xauth
+            wget file patchelf desktop-file-utils xvfb xauth python3-pip
+          sudo python3 -m pip install --break-system-packages blueprint-compiler==0.22.2
 
       - name: Configure
         run: |
@@ -57,7 +58,7 @@ jobs:
           status=${PIPESTATUS[0]}
           set -e
           if [ "$status" -ne 0 ]; then
-            summary="$(grep -E 'fatal error:|error:|undefined reference|ninja: build stopped' build.log | tail -n 30)"
+            summary="$(grep -B 4 -A 2 -E 'fatal error:|error:|undefined reference|ninja: build stopped' build.log | tail -n 60)"
             if [ -z "$summary" ]; then
               summary="$(tail -n 30 build.log)"
             fi
