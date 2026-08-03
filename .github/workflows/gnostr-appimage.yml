@@ -39,9 +39,14 @@ jobs:
             wget file patchelf desktop-file-utils xvfb xauth
 
       - name: Configure
-        env:
-          CFLAGS: '-D__has_feature(x)=0'
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: |
+          cat > "$PWD/ci-gcc-compat.h" <<'EOF'
+          #ifndef __has_feature
+          #define __has_feature(x) 0
+          #endif
+          EOF
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-include $PWD/ci-gcc-compat.h"
 
       - name: Build all targets
         run: |
