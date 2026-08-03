@@ -116,6 +116,7 @@ jobs:
           trap report_failure EXIT
           exec > >(tee appimage-build.log) 2>&1
           export NO_APPSTREAM=1
+          export LD_LIBRARY_PATH="$PWD/AppDir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
           plugin_args=()
           while IFS= read -r -d '' plugin; do
