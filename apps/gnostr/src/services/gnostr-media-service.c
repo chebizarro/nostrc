@@ -1,7 +1,15 @@
 #include "gnostr-media-service.h"
 
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include <glib/gstdio.h>
+#include <errno.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <utime.h>
+
+#ifndef GNOSTR_MEDIA_SERVICE_TESTING
+#include <nostr-gobject-1.0/gnostr-identity.h>
+#endif
 
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
@@ -26,6 +34,10 @@ gboolean gnostr_is_remote_media_allowed(void);
 #define INLINE_BUDGET_KEY "image-cache-max-mb"
 #define OG_IMAGE_BUDGET_KEY "og-image-cache-max-mb"
 #define VIDEO_POSTER_BUDGET_KEY "video-poster-cache-max-mb"
+#define OG_METADATA_DIR "og-metadata"
+#define OG_METADATA_VERSION 1
+
+G_LOCK_DEFINE_STATIC(media_disk);
 
 typedef enum {
   PENDING_TEXTURE,
@@ -114,6 +126,11 @@ struct _PendingRequest {
   guint outstanding_workers;
   gboolean any_worker_success;
   gboolean any_worker_failure;
+  gboolean disk_lookup_active;
+  gboolean body_from_disk;
+  guint disk_write_classes;
+  char *cache_namespace;
+  GnostrMediaResourceClass disk_resource_class;
   GBytes *body;
   GHashTable *decode_variants; /* borrowed DecodeJob.variant_key -> DecodeJob */
 #ifdef HAVE_SOUP3
@@ -144,6 +161,13 @@ struct _GnostrMediaService {
   guint64 og_misses;
   guint64 og_evictions;
 
+  char *disk_root;
+  GHashTable *known_namespaces; /* namespace strings already scheduled */
+  guint outstanding_disk_jobs;
+#ifdef GNOSTR_MEDIA_SERVICE_TESTING
+  char *namespace_override;
+#endif
+
   GSettings *settings;
 };
 
@@ -159,6 +183,13 @@ static void subscriber_complete_texture(Subscriber *subscriber,
 static void subscriber_complete_og(Subscriber *subscriber,
                                    GnostrOgMetadata *metadata,
                                    const GError *error);
+static void schedule_disk_write(PendingRequest *request,
+                                GnostrMediaResourceClass resource_class);
+static void schedule_og_write(PendingRequest *request,
+                              GnostrOgMetadata *metadata);
+static void start_disk_lookup(PendingRequest *request);
+static void ensure_namespace_sweep(GnostrMediaService *self,
+                                   const char *cache_namespace);
 
 GQuark
 gnostr_media_error_quark(void)
@@ -184,6 +215,9 @@ gnostr_media_service_config_init(GnostrMediaServiceConfig *config)
   config->negative_cache_ttl_usec = 60 * G_USEC_PER_SEC;
   config->og_metadata_max_entries = 256;
   config->og_metadata_ttl_usec = 30 * 60 * G_USEC_PER_SEC;
+  config->disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_INLINE] = DEFAULT_INLINE_BUDGET;
+  config->disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_OG_IMAGE] = DEFAULT_OG_IMAGE_BUDGET;
+  config->disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER] = DEFAULT_VIDEO_POSTER_BUDGET;
 }
 
 GnostrOgMetadata *
@@ -230,6 +264,150 @@ const char *
 gnostr_og_metadata_get_source_url(const GnostrOgMetadata *metadata)
 {
   return metadata ? metadata->source_url : NULL;
+}
+
+static const char *
+disk_class_name(GnostrMediaResourceClass resource_class)
+{
+  static const char *names[GNOSTR_MEDIA_RESOURCE_N_CLASSES] = {
+    "inline", "og-image", "video-poster"
+  };
+  return resource_class >= 0 && resource_class < GNOSTR_MEDIA_RESOURCE_N_CLASSES
+      ? names[resource_class] : NULL;
+}
+
+static char *
+url_digest(const char *url)
+{
+  return g_compute_checksum_for_string(G_CHECKSUM_SHA256, url, -1);
+}
+
+static char *
+current_cache_namespace(GnostrMediaService *self)
+{
+#ifdef GNOSTR_MEDIA_SERVICE_TESTING
+  if (self->namespace_override)
+    return g_strdup(self->namespace_override);
+#else
+  GNostrIdentity *identity = gnostr_identity_get_current();
+  if (identity && identity->npub && g_str_has_prefix(identity->npub, "npub1")) {
+    gboolean safe = TRUE;
+    for (const char *p = identity->npub; *p; p++) {
+      if (!g_ascii_isalnum(*p)) {
+        safe = FALSE;
+        break;
+      }
+    }
+    if (safe) {
+      char *result = g_strdup(identity->npub);
+      gnostr_identity_free(identity);
+      return result;
+    }
+  }
+  gnostr_identity_free(identity);
+#endif
+  return g_strdup("anon");
+}
+
+static char *
+disk_class_dir(GnostrMediaService *self,
+               const char *cache_namespace,
+               GnostrMediaResourceClass resource_class)
+{
+  return g_build_filename(self->disk_root, cache_namespace,
+                          disk_class_name(resource_class), NULL);
+}
+
+static char *
+disk_texture_path(GnostrMediaService *self,
+                  const char *cache_namespace,
+                  GnostrMediaResourceClass resource_class,
+                  const char *url)
+{
+  g_autofree char *dir = disk_class_dir(self, cache_namespace, resource_class);
+  g_autofree char *digest = url_digest(url);
+  return g_build_filename(dir, digest, NULL);
+}
+
+static char *
+disk_og_metadata_path(GnostrMediaService *self,
+                      const char *cache_namespace,
+                      const char *url)
+{
+  g_autofree char *digest = url_digest(url);
+  return g_build_filename(self->disk_root, cache_namespace,
+                          OG_METADATA_DIR, digest, NULL);
+}
+
+typedef struct {
+  char *path;
+  guint64 size;
+  gint64 mtime;
+} DiskFileEntry;
+
+static void
+disk_file_entry_free(DiskFileEntry *entry)
+{
+  if (!entry)
+    return;
+  g_free(entry->path);
+  g_free(entry);
+}
+
+static gint
+disk_file_entry_compare(gconstpointer a, gconstpointer b)
+{
+  const DiskFileEntry *ea = *(DiskFileEntry * const *)a;
+  const DiskFileEntry *eb = *(DiskFileEntry * const *)b;
+  if (ea->mtime < eb->mtime)
+    return -1;
+  if (ea->mtime > eb->mtime)
+    return 1;
+  return g_strcmp0(ea->path, eb->path);
+}
+
+static GPtrArray *
+scan_regular_files(const char *dir, guint64 *out_total)
+{
+  g_autoptr(GDir) handle = g_dir_open(dir, 0, NULL);
+  GPtrArray *files = g_ptr_array_new_with_free_func(
+      (GDestroyNotify)disk_file_entry_free);
+  guint64 total = 0;
+  if (handle) {
+    const char *name;
+    while ((name = g_dir_read_name(handle)) != NULL) {
+      g_autofree char *path = g_build_filename(dir, name, NULL);
+      GStatBuf st;
+      if (g_lstat(path, &st) != 0 || !S_ISREG(st.st_mode))
+        continue;
+      DiskFileEntry *entry = g_new0(DiskFileEntry, 1);
+      entry->path = g_steal_pointer(&path);
+      entry->size = st.st_size > 0 ? (guint64)st.st_size : 0;
+      entry->mtime = (gint64)st.st_mtime;
+      total += entry->size;
+      g_ptr_array_add(files, entry);
+    }
+  }
+  if (out_total)
+    *out_total = total;
+  return files;
+}
+
+static guint
+prune_directory_to_budget(const char *dir, guint64 budget)
+{
+  guint64 total = 0;
+  g_autoptr(GPtrArray) files = scan_regular_files(dir, &total);
+  g_ptr_array_sort(files, disk_file_entry_compare);
+  guint removed = 0;
+  for (guint i = 0; i < files->len && total > budget; i++) {
+    DiskFileEntry *entry = g_ptr_array_index(files, i);
+    if (g_unlink(entry->path) == 0) {
+      total -= MIN(total, entry->size);
+      removed++;
+    }
+  }
+  return removed;
 }
 
 static char *
@@ -355,6 +533,16 @@ operation_key(const char *url, PendingKind kind)
   return g_strdup_printf("%c\n%s", kind == PENDING_TEXTURE ? 'T' : 'M', url);
 }
 
+static char *
+pending_operation_key(const char *url,
+                      PendingKind kind,
+                      const char *cache_namespace)
+{
+  return g_strdup_printf("%c\n%s\n%s",
+                         kind == PENDING_TEXTURE ? 'T' : 'M',
+                         cache_namespace, url);
+}
+
 static void
 negative_entry_free(NegativeEntry *entry)
 {
@@ -467,12 +655,13 @@ og_cache_lookup(GnostrMediaService *self, const char *url)
 }
 
 static void
-og_cache_store(GnostrMediaService *self,
-               const char *url,
-               GnostrOgMetadata *metadata)
+og_cache_store_until(GnostrMediaService *self,
+                     const char *url,
+                     GnostrOgMetadata *metadata,
+                     gint64 expires_at)
 {
   if (self->config.og_metadata_max_entries == 0 ||
-      self->config.og_metadata_ttl_usec <= 0)
+      expires_at <= g_get_monotonic_time())
     return;
 
   OgCacheEntry *old = g_hash_table_lookup(self->og_cache, url);
@@ -482,8 +671,7 @@ og_cache_store(GnostrMediaService *self,
   OgCacheEntry *entry = g_new0(OgCacheEntry, 1);
   entry->url = g_strdup(url);
   entry->metadata = gnostr_og_metadata_ref(metadata);
-  entry->expires_at = g_get_monotonic_time() +
-                      self->config.og_metadata_ttl_usec;
+  entry->expires_at = expires_at;
   g_queue_push_tail(&self->og_lru, entry);
   entry->lru_link = g_queue_peek_tail_link(&self->og_lru);
   g_hash_table_insert(self->og_cache, entry->url, entry);
@@ -565,7 +753,8 @@ cancel_subscriber_on_context(gpointer data)
           request->network_done = TRUE;
           pending_maybe_finish(request);
           start_queued_downloads(dispatch->service);
-        } else if (request->network_active) {
+        } else if (request->network_active ||
+                   request->disk_lookup_active) {
           g_cancellable_cancel(request->network_cancellable);
         }
       }
@@ -776,6 +965,7 @@ pending_free(PendingRequest *request)
     g_byte_array_unref(request->download);
 #endif
   g_free(request->table_key);
+  g_free(request->cache_namespace);
   g_free(request->url);
   g_object_unref(request->service);
   g_free(request);
@@ -913,6 +1103,7 @@ decode_texture_done(GObject *source, GAsyncResult *result, gpointer user_data)
     request->any_worker_success = TRUE;
     texture_cache_store(self, job->resource_class, request->url,
                         job->target_width, job->target_height, texture);
+    schedule_disk_write(request, job->resource_class);
   } else {
     request->any_worker_failure = TRUE;
   }
@@ -1165,10 +1356,14 @@ parse_og_done(GObject *source, GAsyncResult *result, gpointer user_data)
   GnostrOgMetadata *metadata =
       g_task_propagate_pointer(G_TASK(result), &error);
 
-  if (metadata)
-    og_cache_store(self, request->url, metadata);
-  else
+  if (metadata) {
+    og_cache_store_until(self, request->url, metadata,
+                         g_get_monotonic_time() +
+                         self->config.og_metadata_ttl_usec);
+    schedule_og_write(request, metadata);
+  } else {
     negative_store(self, request->url, request->kind);
+  }
 
   for (guint i = 0; i < request->subscribers->len; i++) {
     Subscriber *subscriber = g_ptr_array_index(request->subscribers, i);
@@ -1216,6 +1411,574 @@ process_downloaded_body(PendingRequest *request)
     process_texture_body(request);
   else
     process_og_body(request);
+}
+
+typedef struct {
+  PendingKind kind;
+  char *path;
+  char *url;
+  gsize size_cap;
+  guint64 disk_budget;
+  gint64 og_ttl_usec;
+} DiskLookupJob;
+
+typedef struct {
+  GBytes *bytes;
+  GnostrOgMetadata *metadata;
+  gint64 expires_real_usec;
+} DiskLookupResult;
+
+static void
+disk_lookup_job_free(DiskLookupJob *job)
+{
+  if (!job)
+    return;
+  g_free(job->path);
+  g_free(job->url);
+  g_free(job);
+}
+
+static void
+disk_lookup_result_free(DiskLookupResult *result)
+{
+  if (!result)
+    return;
+  g_clear_pointer(&result->bytes, g_bytes_unref);
+  gnostr_og_metadata_unref(result->metadata);
+  g_free(result);
+}
+
+static char *
+keyfile_optional_string(GKeyFile *keyfile, const char *key)
+{
+  return g_key_file_has_key(keyfile, "entry", key, NULL)
+      ? g_key_file_get_string(keyfile, "entry", key, NULL) : NULL;
+}
+
+static void
+disk_lookup_worker(GTask *task,
+                   gpointer source_object,
+                   gpointer task_data,
+                   GCancellable *cancellable)
+{
+  (void)source_object;
+  DiskLookupJob *job = task_data;
+  DiskLookupResult *result = g_new0(DiskLookupResult, 1);
+  if (job->disk_budget == 0 || g_cancellable_is_cancelled(cancellable)) {
+    if (g_cancellable_is_cancelled(cancellable)) {
+      disk_lookup_result_free(result);
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                              "Disk cache lookup cancelled");
+    } else {
+      g_task_return_pointer(task, result,
+                            (GDestroyNotify)disk_lookup_result_free);
+    }
+    return;
+  }
+
+  G_LOCK(media_disk);
+  GStatBuf st;
+  gboolean usable = g_stat(job->path, &st) == 0 && S_ISREG(st.st_mode) &&
+      st.st_size >= 0 && (guint64)st.st_size <= (guint64)job->size_cap;
+  if (usable && job->kind == PENDING_TEXTURE) {
+    char *contents = NULL;
+    gsize length = 0;
+    if (g_file_get_contents(job->path, &contents, &length, NULL)) {
+      result->bytes = g_bytes_new_take(contents, length);
+      g_utime(job->path, NULL);
+    }
+  } else if (usable && job->kind == PENDING_OG_METADATA) {
+    g_autoptr(GKeyFile) keyfile = g_key_file_new();
+    g_autoptr(GError) error = NULL;
+    if (g_key_file_load_from_file(keyfile, job->path, G_KEY_FILE_NONE, &error)) {
+      gint version = g_key_file_get_integer(keyfile, "entry", "version", &error);
+      g_autofree char *stored_url = error ? NULL :
+          g_key_file_get_string(keyfile, "entry", "url", &error);
+      gint64 stored_at = error ? 0 :
+          g_key_file_get_int64(keyfile, "entry", "stored-at-usec", &error);
+      gint64 expires_at = error ? 0 :
+          g_key_file_get_int64(keyfile, "entry", "expires-at-usec", &error);
+      gint64 configured_expiry = (stored_at > 0 && job->og_ttl_usec > 0 &&
+                                   stored_at <= G_MAXINT64 - job->og_ttl_usec)
+          ? stored_at + job->og_ttl_usec : 0;
+      gint64 effective_expiry = configured_expiry > 0
+          ? MIN(expires_at, configured_expiry) : 0;
+      if (!error && version == OG_METADATA_VERSION &&
+          g_strcmp0(stored_url, job->url) == 0 &&
+          effective_expiry > g_get_real_time()) {
+        GnostrOgMetadata *metadata = g_new0(GnostrOgMetadata, 1);
+        g_atomic_ref_count_init(&metadata->ref_count);
+        metadata->title = keyfile_optional_string(keyfile, "title");
+        metadata->description = keyfile_optional_string(keyfile, "description");
+        metadata->image_url = keyfile_optional_string(keyfile, "image-url");
+        metadata->source_url = keyfile_optional_string(keyfile, "source-url");
+        if (!metadata->source_url)
+          metadata->source_url = g_strdup(job->url);
+        if (metadata->title || metadata->description || metadata->image_url) {
+          result->metadata = metadata;
+          result->expires_real_usec = effective_expiry;
+          g_utime(job->path, NULL);
+        } else {
+          gnostr_og_metadata_unref(metadata);
+        }
+      } else if (!error && effective_expiry <= g_get_real_time()) {
+        g_unlink(job->path);
+      }
+    }
+  }
+  G_UNLOCK(media_disk);
+
+  if (g_cancellable_is_cancelled(cancellable)) {
+    disk_lookup_result_free(result);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                            "Disk cache lookup cancelled");
+    return;
+  }
+  g_task_return_pointer(task, result, (GDestroyNotify)disk_lookup_result_free);
+}
+
+static void
+queue_network_after_disk_miss(PendingRequest *request)
+{
+  if (pending_all_completed(request)) {
+    request->network_done = TRUE;
+    pending_maybe_finish(request);
+    return;
+  }
+  if (negative_lookup(request->service, request->url, request->kind)) {
+    pending_fail(request,
+                 g_error_new_literal(GNOSTR_MEDIA_ERROR,
+                                     GNOSTR_MEDIA_ERROR_NEGATIVE_CACHED,
+                                     "URL is temporarily negative-cached"),
+                 FALSE);
+    return;
+  }
+  request->queued = TRUE;
+  g_queue_push_tail(&request->service->download_queue, request);
+  start_queued_downloads(request->service);
+}
+
+static void
+disk_lookup_done(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  PendingRequest *request = user_data;
+  g_autoptr(GError) error = NULL;
+  DiskLookupResult *lookup = g_task_propagate_pointer(G_TASK(result), &error);
+  request->disk_lookup_active = FALSE;
+  g_assert(request->outstanding_workers > 0);
+  request->outstanding_workers--;
+
+  if (error) {
+    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) &&
+        pending_all_completed(request)) {
+      request->network_done = TRUE;
+      pending_maybe_finish(request);
+      return;
+    }
+    queue_network_after_disk_miss(request);
+    return;
+  }
+
+  if (request->kind == PENDING_TEXTURE && lookup && lookup->bytes) {
+    request->body = g_bytes_ref(lookup->bytes);
+    request->body_from_disk = TRUE;
+    request->network_done = TRUE;
+    process_texture_body(request);
+  } else if (request->kind == PENDING_OG_METADATA && lookup &&
+             lookup->metadata &&
+             lookup->expires_real_usec > g_get_real_time()) {
+    gint64 remaining = lookup->expires_real_usec - g_get_real_time();
+    og_cache_store_until(request->service, request->url, lookup->metadata,
+                         g_get_monotonic_time() + remaining);
+    for (guint i = 0; i < request->subscribers->len; i++) {
+      Subscriber *subscriber = g_ptr_array_index(request->subscribers, i);
+      if (!subscriber->completed)
+        subscriber_complete_og(subscriber, lookup->metadata, NULL);
+    }
+    request->network_done = TRUE;
+    pending_maybe_finish(request);
+  } else {
+    queue_network_after_disk_miss(request);
+  }
+  disk_lookup_result_free(lookup);
+}
+
+static void
+start_disk_lookup(PendingRequest *request)
+{
+  GnostrMediaService *self = request->service;
+  DiskLookupJob *job = g_new0(DiskLookupJob, 1);
+  job->kind = request->kind;
+  job->url = g_strdup(request->url);
+  if (request->kind == PENDING_TEXTURE) {
+    job->path = disk_texture_path(self, request->cache_namespace,
+                                  request->disk_resource_class, request->url);
+    job->disk_budget =
+        self->config.disk_budget_bytes[request->disk_resource_class];
+    job->size_cap = request->download_cap;
+  } else {
+    job->path = disk_og_metadata_path(self, request->cache_namespace,
+                                      request->url);
+    job->disk_budget =
+        self->config.disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_OG_IMAGE];
+    job->size_cap = self->config.og_metadata_body_size_cap;
+    job->og_ttl_usec = self->config.og_metadata_ttl_usec;
+  }
+  request->disk_lookup_active = TRUE;
+  request->outstanding_workers++;
+  GTask *task = g_task_new(self, request->network_cancellable,
+                           disk_lookup_done, request);
+  g_task_set_priority(task, G_PRIORITY_DEFAULT_IDLE);
+  g_task_set_task_data(task, job, (GDestroyNotify)disk_lookup_job_free);
+  g_task_run_in_thread(task, disk_lookup_worker);
+  g_object_unref(task);
+}
+
+typedef struct {
+  char *cache_namespace;
+  char *url;
+  GnostrMediaResourceClass resource_class;
+  GBytes *bytes;
+  guint64 budget;
+} DiskWriteJob;
+
+static void
+disk_write_job_free(DiskWriteJob *job)
+{
+  if (!job)
+    return;
+  g_free(job->cache_namespace);
+  g_free(job->url);
+  g_bytes_unref(job->bytes);
+  g_free(job);
+}
+
+static void
+disk_write_worker(GTask *task,
+                  gpointer source_object,
+                  gpointer task_data,
+                  GCancellable *cancellable)
+{
+  GnostrMediaService *self = GNOSTR_MEDIA_SERVICE(source_object);
+  DiskWriteJob *job = task_data;
+  gsize length = 0;
+  const char *data = g_bytes_get_data(job->bytes, &length);
+  if (job->budget == 0 || (guint64)length > job->budget ||
+      g_cancellable_is_cancelled(cancellable)) {
+    g_task_return_boolean(task, TRUE);
+    return;
+  }
+
+  g_autofree char *dir = disk_class_dir(self, job->cache_namespace,
+                                        job->resource_class);
+  g_autofree char *path = disk_texture_path(self, job->cache_namespace,
+                                            job->resource_class, job->url);
+  g_autoptr(GError) error = NULL;
+  gboolean written = FALSE;
+  G_LOCK(media_disk);
+  if (g_mkdir_with_parents(dir, 0700) == 0) {
+    GStatBuf old_st;
+    guint64 old_size = g_stat(path, &old_st) == 0 && S_ISREG(old_st.st_mode)
+        ? (guint64)MAX(old_st.st_size, 0) : 0;
+    guint64 total = 0;
+    g_autoptr(GPtrArray) files = scan_regular_files(dir, &total);
+    g_ptr_array_sort(files, disk_file_entry_compare);
+    for (guint i = 0;
+         i < files->len && total - MIN(total, old_size) + length > job->budget;
+         i++) {
+      DiskFileEntry *entry = g_ptr_array_index(files, i);
+      if (g_strcmp0(entry->path, path) == 0)
+        continue;
+      if (g_unlink(entry->path) == 0)
+        total -= MIN(total, entry->size);
+    }
+    if (total - MIN(total, old_size) + length <= job->budget)
+      written = g_file_set_contents(path, data, length, &error);
+    if (written) {
+      g_chmod(path, 0600);
+      prune_directory_to_budget(dir, job->budget);
+    }
+  } else {
+    g_set_error(&error, G_FILE_ERROR, g_file_error_from_errno(errno),
+                "Failed to create media cache directory: %s",
+                g_strerror(errno));
+  }
+  G_UNLOCK(media_disk);
+  if (error)
+    g_task_return_error(task, g_steal_pointer(&error));
+  else
+    g_task_return_boolean(task, TRUE);
+}
+
+static void
+detached_disk_job_done(GObject *source,
+                       GAsyncResult *result,
+                       gpointer user_data)
+{
+  (void)user_data;
+  GnostrMediaService *self = GNOSTR_MEDIA_SERVICE(source);
+  g_autoptr(GError) error = NULL;
+  g_task_propagate_boolean(G_TASK(result), &error);
+  if (error)
+    g_debug("media disk maintenance failed: %s", error->message);
+  g_assert(self->outstanding_disk_jobs > 0);
+  self->outstanding_disk_jobs--;
+}
+
+static void
+schedule_disk_write(PendingRequest *request,
+                    GnostrMediaResourceClass resource_class)
+{
+  GnostrMediaService *self = request->service;
+  guint bit = 1u << resource_class;
+  if (request->body_from_disk || (request->disk_write_classes & bit) != 0 ||
+      self->config.disk_budget_bytes[resource_class] == 0)
+    return;
+  request->disk_write_classes |= bit;
+  DiskWriteJob *job = g_new0(DiskWriteJob, 1);
+  job->cache_namespace = g_strdup(request->cache_namespace);
+  job->url = g_strdup(request->url);
+  job->resource_class = resource_class;
+  job->bytes = g_bytes_ref(request->body);
+  job->budget = self->config.disk_budget_bytes[resource_class];
+  self->outstanding_disk_jobs++;
+  GTask *task = g_task_new(self, NULL, detached_disk_job_done, NULL);
+  g_task_set_priority(task, G_PRIORITY_LOW);
+  g_task_set_task_data(task, job, (GDestroyNotify)disk_write_job_free);
+  g_task_run_in_thread(task, disk_write_worker);
+  g_object_unref(task);
+}
+
+typedef struct {
+  char *cache_namespace;
+  char *url;
+  char *title;
+  char *description;
+  char *image_url;
+  char *source_url;
+  gint64 ttl_usec;
+  guint max_entries;
+  guint64 disk_budget;
+} OgWriteJob;
+
+static void
+og_write_job_free(OgWriteJob *job)
+{
+  if (!job)
+    return;
+  g_free(job->cache_namespace);
+  g_free(job->url);
+  g_free(job->title);
+  g_free(job->description);
+  g_free(job->image_url);
+  g_free(job->source_url);
+  g_free(job);
+}
+
+static void
+prune_og_metadata_dir(const char *dir, guint max_entries)
+{
+  guint64 ignored = 0;
+  g_autoptr(GPtrArray) files = scan_regular_files(dir, &ignored);
+  gint64 now = g_get_real_time();
+  for (gint i = (gint)files->len - 1; i >= 0; i--) {
+    DiskFileEntry *entry = g_ptr_array_index(files, (guint)i);
+    g_autoptr(GKeyFile) keyfile = g_key_file_new();
+    g_autoptr(GError) error = NULL;
+    gboolean valid = g_key_file_load_from_file(keyfile, entry->path,
+                                               G_KEY_FILE_NONE, &error);
+    gint64 expires = valid ? g_key_file_get_int64(
+        keyfile, "entry", "expires-at-usec", &error) : 0;
+    if (!valid || error || expires <= now) {
+      g_unlink(entry->path);
+      g_ptr_array_remove_index(files, (guint)i);
+    }
+  }
+  g_ptr_array_sort(files, disk_file_entry_compare);
+  while (files->len > max_entries) {
+    DiskFileEntry *entry = g_ptr_array_index(files, 0);
+    g_unlink(entry->path);
+    g_ptr_array_remove_index(files, 0);
+  }
+}
+
+static void
+og_write_worker(GTask *task,
+                gpointer source_object,
+                gpointer task_data,
+                GCancellable *cancellable)
+{
+  GnostrMediaService *self = GNOSTR_MEDIA_SERVICE(source_object);
+  OgWriteJob *job = task_data;
+  if (job->disk_budget == 0 || job->ttl_usec <= 0 ||
+      job->max_entries == 0 || g_cancellable_is_cancelled(cancellable)) {
+    g_task_return_boolean(task, TRUE);
+    return;
+  }
+  gint64 stored_at = g_get_real_time();
+  if (stored_at > G_MAXINT64 - job->ttl_usec) {
+    g_task_return_boolean(task, TRUE);
+    return;
+  }
+  g_autoptr(GKeyFile) keyfile = g_key_file_new();
+  g_key_file_set_integer(keyfile, "entry", "version", OG_METADATA_VERSION);
+  g_key_file_set_string(keyfile, "entry", "url", job->url);
+  g_key_file_set_int64(keyfile, "entry", "stored-at-usec", stored_at);
+  g_key_file_set_int64(keyfile, "entry", "expires-at-usec",
+                       stored_at + job->ttl_usec);
+  if (job->title)
+    g_key_file_set_string(keyfile, "entry", "title", job->title);
+  if (job->description)
+    g_key_file_set_string(keyfile, "entry", "description", job->description);
+  if (job->image_url)
+    g_key_file_set_string(keyfile, "entry", "image-url", job->image_url);
+  if (job->source_url)
+    g_key_file_set_string(keyfile, "entry", "source-url", job->source_url);
+  gsize length = 0;
+  g_autofree char *data = g_key_file_to_data(keyfile, &length, NULL);
+  if (!data || length > self->config.og_metadata_body_size_cap) {
+    g_task_return_boolean(task, TRUE);
+    return;
+  }
+
+  g_autofree char *path = disk_og_metadata_path(
+      self, job->cache_namespace, job->url);
+  g_autofree char *dir = g_path_get_dirname(path);
+  g_autoptr(GError) error = NULL;
+  G_LOCK(media_disk);
+  if (g_mkdir_with_parents(dir, 0700) == 0 &&
+      g_file_set_contents(path, data, length, &error)) {
+    g_chmod(path, 0600);
+    prune_og_metadata_dir(dir, job->max_entries);
+  } else if (!error) {
+    g_set_error(&error, G_FILE_ERROR, g_file_error_from_errno(errno),
+                "Failed to create OG metadata cache directory: %s",
+                g_strerror(errno));
+  }
+  G_UNLOCK(media_disk);
+  if (error)
+    g_task_return_error(task, g_steal_pointer(&error));
+  else
+    g_task_return_boolean(task, TRUE);
+}
+
+static void
+schedule_og_write(PendingRequest *request, GnostrOgMetadata *metadata)
+{
+  GnostrMediaService *self = request->service;
+  if (self->config.disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_OG_IMAGE] == 0 ||
+      self->config.og_metadata_max_entries == 0 ||
+      self->config.og_metadata_ttl_usec <= 0)
+    return;
+  OgWriteJob *job = g_new0(OgWriteJob, 1);
+  job->cache_namespace = g_strdup(request->cache_namespace);
+  job->url = g_strdup(request->url);
+  job->title = g_strdup(metadata->title);
+  job->description = g_strdup(metadata->description);
+  job->image_url = g_strdup(metadata->image_url);
+  job->source_url = g_strdup(metadata->source_url);
+  job->ttl_usec = self->config.og_metadata_ttl_usec;
+  job->max_entries = self->config.og_metadata_max_entries;
+  job->disk_budget =
+      self->config.disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_OG_IMAGE];
+  self->outstanding_disk_jobs++;
+  GTask *task = g_task_new(self, NULL, detached_disk_job_done, NULL);
+  g_task_set_priority(task, G_PRIORITY_LOW);
+  g_task_set_task_data(task, job, (GDestroyNotify)og_write_job_free);
+  g_task_run_in_thread(task, og_write_worker);
+  g_object_unref(task);
+}
+
+typedef struct {
+  char *cache_namespace;
+  guint64 budgets[GNOSTR_MEDIA_RESOURCE_N_CLASSES];
+  guint og_metadata_max_entries;
+} SweepJob;
+
+static void
+sweep_job_free(SweepJob *job)
+{
+  if (!job)
+    return;
+  g_free(job->cache_namespace);
+  g_free(job);
+}
+
+static void
+sweep_worker(GTask *task,
+             gpointer source_object,
+             gpointer task_data,
+             GCancellable *cancellable)
+{
+  GnostrMediaService *self = GNOSTR_MEDIA_SERVICE(source_object);
+  SweepJob *job = task_data;
+  if (g_cancellable_is_cancelled(cancellable)) {
+    g_task_return_boolean(task, TRUE);
+    return;
+  }
+  G_LOCK(media_disk);
+  for (guint i = 0; i < GNOSTR_MEDIA_RESOURCE_N_CLASSES; i++) {
+    g_autofree char *dir = disk_class_dir(self, job->cache_namespace, i);
+    prune_directory_to_budget(dir, job->budgets[i]);
+  }
+  g_autofree char *metadata_dir = g_build_filename(
+      self->disk_root, job->cache_namespace, OG_METADATA_DIR, NULL);
+  prune_og_metadata_dir(metadata_dir, job->og_metadata_max_entries);
+  G_UNLOCK(media_disk);
+  g_task_return_boolean(task, TRUE);
+}
+
+typedef struct {
+  GnostrMediaService *service;
+  SweepJob *job;
+} SweepDispatch;
+
+static void
+sweep_dispatch_free(SweepDispatch *dispatch)
+{
+  if (!dispatch)
+    return;
+  g_clear_object(&dispatch->service);
+  sweep_job_free(dispatch->job);
+  g_free(dispatch);
+}
+
+static gboolean
+start_sweep_idle(gpointer data)
+{
+  SweepDispatch *dispatch = data;
+  GTask *task = g_task_new(dispatch->service, NULL,
+                           detached_disk_job_done, NULL);
+  g_task_set_priority(task, G_PRIORITY_LOW);
+  g_task_set_task_data(task, g_steal_pointer(&dispatch->job),
+                       (GDestroyNotify)sweep_job_free);
+  g_task_run_in_thread(task, sweep_worker);
+  g_object_unref(task);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+ensure_namespace_sweep(GnostrMediaService *self, const char *cache_namespace)
+{
+  if (g_hash_table_contains(self->known_namespaces, cache_namespace))
+    return;
+  g_hash_table_add(self->known_namespaces, g_strdup(cache_namespace));
+  SweepJob *job = g_new0(SweepJob, 1);
+  job->cache_namespace = g_strdup(cache_namespace);
+  memcpy(job->budgets, self->config.disk_budget_bytes,
+         sizeof(job->budgets));
+  job->og_metadata_max_entries = self->config.og_metadata_max_entries;
+  SweepDispatch *dispatch = g_new0(SweepDispatch, 1);
+  dispatch->service = g_object_ref(self);
+  dispatch->job = job;
+  self->outstanding_disk_jobs++;
+  GSource *source = g_idle_source_new();
+  g_source_set_priority(source, G_PRIORITY_LOW);
+  g_source_set_callback(source, start_sweep_idle, dispatch,
+                        (GDestroyNotify)sweep_dispatch_free);
+  g_source_attach(source, self->context);
+  g_source_unref(source);
 }
 
 #ifdef HAVE_SOUP3
@@ -1393,18 +2156,21 @@ start_queued_downloads(GnostrMediaService *self)
 static PendingRequest *
 pending_request_new(GnostrMediaService *self,
                     const char *url,
-                    PendingKind kind)
+                    PendingKind kind,
+                    const char *cache_namespace,
+                    GnostrMediaResourceClass disk_resource_class)
 {
   PendingRequest *request = g_new0(PendingRequest, 1);
   request->service = g_object_ref(self);
   request->url = g_strdup(url);
   request->kind = kind;
-  request->table_key = operation_key(url, kind);
+  request->cache_namespace = g_strdup(cache_namespace);
+  request->disk_resource_class = disk_resource_class;
+  request->table_key = pending_operation_key(url, kind, cache_namespace);
   request->subscribers =
       g_ptr_array_new_with_free_func((GDestroyNotify)subscriber_unref);
   request->network_cancellable = g_cancellable_new();
   request->decode_variants = g_hash_table_new(g_str_hash, g_str_equal);
-  request->queued = TRUE;
   return request;
 }
 
@@ -1461,13 +2227,6 @@ reject_common(GnostrMediaService *self,
     schedule_delivery(self, subscriber, url, NULL, NULL,
                       g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED,
                                           "Media request cancelled"));
-    return TRUE;
-  }
-  if (negative_lookup(self, url, kind)) {
-    schedule_delivery(self, subscriber, url, NULL, NULL,
-                      g_error_new_literal(GNOSTR_MEDIA_ERROR,
-                                          GNOSTR_MEDIA_ERROR_NEGATIVE_CACHED,
-                                          "URL is temporarily negative-cached"));
     return TRUE;
   }
   return FALSE;
@@ -1537,7 +2296,10 @@ gnostr_media_service_request_texture(GnostrMediaService *self,
     return;
   }
 
-  g_autofree char *key = operation_key(url, PENDING_TEXTURE);
+  g_autofree char *cache_namespace = current_cache_namespace(self);
+  ensure_namespace_sweep(self, cache_namespace);
+  g_autofree char *key = pending_operation_key(
+      url, PENDING_TEXTURE, cache_namespace);
   PendingRequest *request = g_hash_table_lookup(self->pending, key);
   if (request) {
     attach_subscriber(request, subscriber);
@@ -1555,11 +2317,11 @@ gnostr_media_service_request_texture(GnostrMediaService *self,
     return;
   }
 
-  request = pending_request_new(self, url, PENDING_TEXTURE);
+  request = pending_request_new(self, url, PENDING_TEXTURE,
+                                cache_namespace, resource_class);
   attach_subscriber(request, subscriber);
   g_hash_table_insert(self->pending, request->table_key, request);
-  g_queue_push_tail(&self->download_queue, request);
-  start_queued_downloads(self);
+  start_disk_lookup(request);
   subscriber_unref(subscriber);
 }
 
@@ -1598,7 +2360,10 @@ gnostr_media_service_request_og_metadata(GnostrMediaService *self,
     return;
   }
 
-  g_autofree char *key = operation_key(url, PENDING_OG_METADATA);
+  g_autofree char *cache_namespace = current_cache_namespace(self);
+  ensure_namespace_sweep(self, cache_namespace);
+  g_autofree char *key = pending_operation_key(
+      url, PENDING_OG_METADATA, cache_namespace);
   PendingRequest *request = g_hash_table_lookup(self->pending, key);
   if (request) {
     attach_subscriber(request, subscriber);
@@ -1616,11 +2381,12 @@ gnostr_media_service_request_og_metadata(GnostrMediaService *self,
     return;
   }
 
-  request = pending_request_new(self, url, PENDING_OG_METADATA);
+  request = pending_request_new(self, url, PENDING_OG_METADATA,
+                                cache_namespace,
+                                GNOSTR_MEDIA_RESOURCE_OG_IMAGE);
   attach_subscriber(request, subscriber);
   g_hash_table_insert(self->pending, request->table_key, request);
-  g_queue_push_tail(&self->download_queue, request);
-  start_queued_downloads(self);
+  start_disk_lookup(request);
   subscriber_unref(subscriber);
 }
 
@@ -1653,8 +2419,15 @@ reload_settings_budgets(GnostrMediaService *self)
   for (guint i = 0; i < GNOSTR_MEDIA_RESOURCE_N_CLASSES; i++) {
     self->config.memory_budget_bytes[i] =
         self->texture_caches[i].stats.budget_bytes;
+    self->config.disk_budget_bytes[i] =
+        self->texture_caches[i].stats.budget_bytes;
     texture_cache_trim(&self->texture_caches[i]);
   }
+
+  /* Re-sweep the active namespace after any budget change. */
+  g_hash_table_remove_all(self->known_namespaces);
+  g_autofree char *cache_namespace = current_cache_namespace(self);
+  ensure_namespace_sweep(self, cache_namespace);
 }
 
 static void
@@ -1831,6 +2604,35 @@ gnostr_media_service_clear_all(GnostrMediaService *self)
 
 #ifdef GNOSTR_MEDIA_SERVICE_TESTING
 void
+gnostr_media_service_test_set_disk_root(GnostrMediaService *self,
+                                         const char *disk_root)
+{
+  g_return_if_fail(GNOSTR_IS_MEDIA_SERVICE(self));
+  g_return_if_fail(disk_root != NULL);
+  g_return_if_fail(g_hash_table_size(self->known_namespaces) == 0);
+  g_free(self->disk_root);
+  self->disk_root = g_strdup(disk_root);
+}
+
+void
+gnostr_media_service_test_set_namespace(GnostrMediaService *self,
+                                         const char *cache_namespace)
+{
+  g_return_if_fail(GNOSTR_IS_MEDIA_SERVICE(self));
+  g_return_if_fail(cache_namespace != NULL && *cache_namespace != '\0');
+  g_return_if_fail(strchr(cache_namespace, G_DIR_SEPARATOR) == NULL);
+  g_free(self->namespace_override);
+  self->namespace_override = g_strdup(cache_namespace);
+}
+
+guint
+gnostr_media_service_test_get_outstanding_disk_jobs(GnostrMediaService *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_MEDIA_SERVICE(self), 0);
+  return self->outstanding_disk_jobs;
+}
+
+void
 gnostr_media_service_test_store_texture(GnostrMediaService *self,
                                         const char *url,
                                         GnostrMediaResourceClass resource_class,
@@ -1892,6 +2694,11 @@ gnostr_media_service_finalize(GObject *object)
   g_hash_table_unref(self->pending);
   g_hash_table_unref(self->negative);
   g_hash_table_unref(self->og_cache);
+  g_hash_table_unref(self->known_namespaces);
+  g_free(self->disk_root);
+#ifdef GNOSTR_MEDIA_SERVICE_TESTING
+  g_free(self->namespace_override);
+#endif
   g_main_context_unref(self->context);
   G_OBJECT_CLASS(gnostr_media_service_parent_class)->finalize(object);
 }
@@ -1911,6 +2718,10 @@ gnostr_media_service_init(GnostrMediaService *self)
   self->pending = g_hash_table_new(g_str_hash, g_str_equal);
   self->negative = g_hash_table_new(g_str_hash, g_str_equal);
   self->og_cache = g_hash_table_new(g_str_hash, g_str_equal);
+  self->disk_root = g_build_filename(g_get_user_cache_dir(),
+                                     "gnostr", "media", NULL);
+  self->known_namespaces = g_hash_table_new_full(
+      g_str_hash, g_str_equal, g_free, NULL);
   for (guint i = 0; i < GNOSTR_MEDIA_RESOURCE_N_CLASSES; i++)
     self->texture_caches[i].entries =
         g_hash_table_new(g_str_hash, g_str_equal);

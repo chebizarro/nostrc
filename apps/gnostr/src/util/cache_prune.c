@@ -1,8 +1,8 @@
 /**
  * Cache pruning implementation for gnostr.
  *
- * Handles automatic cleanup of image cache and nostrdb storage
- * to prevent unbounded disk usage.
+ * Handles automatic cleanup of the legacy avatar cache and nostrdb storage.
+ * Account-namespaced rich-media persistence is owned by GnostrMediaService.
  */
 
 #include "cache_prune.h"
@@ -128,7 +128,7 @@ gint64 gnostr_cache_get_ndb_size(void)
 int gnostr_cache_prune_images(int max_size_mb)
 {
   if (max_size_mb <= 0) {
-    g_debug("cache_prune: image pruning disabled (max_size_mb=%d)", max_size_mb);
+    g_debug("cache_prune: avatar pruning disabled (max_size_mb=%d)", max_size_mb);
     return 0;
   }
 
@@ -144,7 +144,7 @@ int gnostr_cache_prune_images(int max_size_mb)
   gint64 max_size_bytes = (gint64)max_size_mb * 1024 * 1024;
 
   if (total_size <= max_size_bytes) {
-    g_message("cache_prune: image cache (%.2f MB) is under limit (%d MB), no pruning needed",
+    g_message("cache_prune: avatar cache (%.2f MB) is under limit (%d MB), no pruning needed",
               total_size / (1024.0 * 1024.0), max_size_mb);
     g_ptr_array_unref(entries);
     return 0;
@@ -169,7 +169,7 @@ int gnostr_cache_prune_images(int max_size_mb)
     }
   }
 
-  g_message("cache_prune: deleted %d image files, freed %.2f MB",
+  g_message("cache_prune: deleted %d avatar files, freed %.2f MB",
             deleted_count, freed_bytes / (1024.0 * 1024.0));
 
   g_ptr_array_unref(entries);
@@ -196,7 +196,7 @@ int gnostr_cache_clear_images(void)
     }
   }
 
-  g_message("cache_prune: cleared all %d image cache files", deleted_count);
+  g_message("cache_prune: cleared all %d avatar cache files", deleted_count);
   g_ptr_array_unref(entries);
   return deleted_count;
 }
@@ -210,7 +210,7 @@ char *gnostr_cache_stats_string(void)
   double image_mb = image_size / (1024.0 * 1024.0);
   double ndb_mb = ndb_size / (1024.0 * 1024.0);
 
-  return g_strdup_printf("Images: %.1f MB (%d files), NDB: %.1f MB",
+  return g_strdup_printf("Avatars: %.1f MB (%d files), NDB: %.1f MB",
                          image_mb, image_count, ndb_mb);
 }
 
@@ -253,11 +253,12 @@ void gnostr_cache_prune_init(void)
     return;
   }
 
-  /* Prune image cache */
+  /* Prune legacy avatars.  Media service directories self-enforce their
+   * per-class budgets on write and in low-priority sweeps. */
   if (image_max_mb > 0) {
     int deleted = gnostr_cache_prune_images(image_max_mb);
     if (deleted > 0) {
-      g_message("cache_prune: pruned %d image files", deleted);
+      g_message("cache_prune: pruned %d avatar files", deleted);
     }
   }
 

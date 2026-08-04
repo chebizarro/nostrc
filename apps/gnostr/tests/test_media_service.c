@@ -1,9 +1,13 @@
 #include <glib.h>
+#include <glib/gstdio.h>
 #include <libsoup/soup.h>
+#include <sys/stat.h>
 
 #include "../src/services/gnostr-media-service.h"
 
 static SoupSession *test_session;
+static char *test_disk_root;
+static const char *test_namespace = "npub1testnamespace";
 
 SoupSession *
 gnostr_get_shared_soup_session(void)
@@ -31,6 +35,21 @@ make_texture(int width, int height)
                                             bytes, stride));
 }
 
+static void
+configure_test_service(GnostrMediaService *service)
+{
+  gnostr_media_service_test_set_disk_root(service, test_disk_root);
+  gnostr_media_service_test_set_namespace(service, test_namespace);
+}
+
+static GnostrMediaService *
+new_test_service(const GnostrMediaServiceConfig *config)
+{
+  GnostrMediaService *service = gnostr_media_service_new(config);
+  configure_test_service(service);
+  return service;
+}
+
 static GnostrMediaService *
 make_service(guint64 inline_budget, gint64 negative_ttl_usec)
 {
@@ -43,7 +62,58 @@ make_service(guint64 inline_budget, gint64 negative_ttl_usec)
   config.negative_cache_ttl_usec = negative_ttl_usec;
   config.max_in_flight = 8;
   config.max_concurrent_downloads = 2;
-  return gnostr_media_service_new(&config);
+  return new_test_service(&config);
+}
+
+static void
+wait_for_disk_jobs(GnostrMediaService *service)
+{
+  gint64 deadline = g_get_monotonic_time() + 5 * G_USEC_PER_SEC;
+  while (gnostr_media_service_test_get_outstanding_disk_jobs(service) > 0 &&
+         g_get_monotonic_time() < deadline)
+    g_main_context_iteration(NULL, TRUE);
+  g_assert_cmpuint(
+      gnostr_media_service_test_get_outstanding_disk_jobs(service), ==, 0);
+}
+
+static void
+remove_tree(const char *path)
+{
+  g_autoptr(GDir) dir = g_dir_open(path, 0, NULL);
+  if (dir) {
+    const char *name;
+    while ((name = g_dir_read_name(dir)) != NULL) {
+      g_autofree char *child = g_build_filename(path, name, NULL);
+      if (g_file_test(child, G_FILE_TEST_IS_DIR) &&
+          !g_file_test(child, G_FILE_TEST_IS_SYMLINK))
+        remove_tree(child);
+      else
+        g_unlink(child);
+    }
+  }
+  g_rmdir(path);
+}
+
+static guint64
+directory_regular_file_size(const char *dir, guint *out_count)
+{
+  guint64 total = 0;
+  guint count = 0;
+  g_autoptr(GDir) handle = g_dir_open(dir, 0, NULL);
+  if (handle) {
+    const char *name;
+    while ((name = g_dir_read_name(handle)) != NULL) {
+      g_autofree char *path = g_build_filename(dir, name, NULL);
+      GStatBuf st;
+      if (g_stat(path, &st) == 0 && S_ISREG(st.st_mode)) {
+        total += st.st_size;
+        count++;
+      }
+    }
+  }
+  if (out_count)
+    *out_count = count;
+  return total;
 }
 
 static void
@@ -232,6 +302,151 @@ test_in_flight_requests_are_coalesced(void)
 typedef struct {
   GMainLoop *loop;
   guint callbacks;
+  GError *error;
+} SingleTextureFixture;
+
+static void
+single_texture_ready(GnostrMediaService *service,
+                     const char *url,
+                     GdkTexture *texture,
+                     const GError *error,
+                     gpointer user_data)
+{
+  (void)service;
+  (void)url;
+  SingleTextureFixture *fixture = user_data;
+  fixture->callbacks++;
+  if (error)
+    fixture->error = g_error_copy(error);
+  else if (!texture)
+    fixture->error = g_error_new_literal(GNOSTR_MEDIA_ERROR,
+                                         GNOSTR_MEDIA_ERROR_DECODE,
+                                         "Callback returned no texture");
+  g_main_loop_quit(fixture->loop);
+}
+
+static gboolean
+single_texture_timeout(gpointer user_data)
+{
+  SingleTextureFixture *fixture = user_data;
+  if (!fixture->error)
+    fixture->error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_TIMED_OUT,
+                                         "Timed out waiting for texture");
+  g_main_loop_quit(fixture->loop);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+request_texture_and_wait(GnostrMediaService *service,
+                         const char *url,
+                         SingleTextureFixture *fixture)
+{
+  fixture->loop = g_main_loop_new(NULL, FALSE);
+  gnostr_media_service_request_texture(
+      service, url, GNOSTR_MEDIA_RESOURCE_INLINE, 32, 32, NULL,
+      single_texture_ready, fixture, NULL);
+  guint timeout_id = g_timeout_add_seconds(5, single_texture_timeout, fixture);
+  g_main_loop_run(fixture->loop);
+  if (timeout_id)
+    g_source_remove(timeout_id);
+  g_main_loop_unref(fixture->loop);
+  fixture->loop = NULL;
+  g_assert_no_error(fixture->error);
+}
+
+static void
+test_disk_hit_falls_back_before_network(void)
+{
+  g_autoptr(SoupServer) server = soup_server_new(NULL, NULL);
+  DedupFixture server_fixture = { 0 };
+  soup_server_add_handler(server, "/image.png", server_image_handler,
+                          &server_fixture, NULL);
+  g_autoptr(GError) listen_error = NULL;
+  g_assert_true(soup_server_listen_local(server, 0,
+                                        SOUP_SERVER_LISTEN_IPV4_ONLY,
+                                        &listen_error));
+  g_assert_no_error(listen_error);
+  GSList *uris = soup_server_get_uris(server);
+  g_assert_nonnull(uris);
+  g_autofree char *base = g_uri_to_string(uris->data);
+  g_slist_free_full(uris, (GDestroyNotify)g_uri_unref);
+  g_autofree char *url = g_strconcat(base, "image.png", NULL);
+
+  GnostrMediaServiceConfig config;
+  gnostr_media_service_config_init(&config);
+  config.memory_budget_bytes[GNOSTR_MEDIA_RESOURCE_INLINE] = 0;
+  config.disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_INLINE] = 1024 * 1024;
+
+  SingleTextureFixture fixture = { 0 };
+  {
+    g_autoptr(GnostrMediaService) first = new_test_service(&config);
+    request_texture_and_wait(first, url, &fixture);
+    wait_for_disk_jobs(first);
+  }
+  g_assert_cmpuint(server_fixture.server_requests, ==, 1);
+
+  g_autoptr(GnostrMediaService) second = new_test_service(&config);
+  request_texture_and_wait(second, url, &fixture);
+  wait_for_disk_jobs(second);
+  g_assert_cmpuint(fixture.callbacks, ==, 2);
+  g_assert_cmpuint(server_fixture.server_requests, ==, 1);
+
+  g_autofree char *digest = g_compute_checksum_for_string(
+      G_CHECKSUM_SHA256, url, -1);
+  g_autofree char *path = g_build_filename(
+      test_disk_root, test_namespace, "inline", digest, NULL);
+  g_assert_true(g_file_test(path, G_FILE_TEST_IS_REGULAR));
+  g_clear_error(&fixture.error);
+  soup_server_disconnect(server);
+}
+
+static void
+test_disk_write_enforces_encoded_byte_budget(void)
+{
+  g_autoptr(SoupServer) server = soup_server_new(NULL, NULL);
+  DedupFixture server_fixture = { 0 };
+  soup_server_add_handler(server, NULL, server_image_handler,
+                          &server_fixture, NULL);
+  g_autoptr(GError) listen_error = NULL;
+  g_assert_true(soup_server_listen_local(server, 0,
+                                        SOUP_SERVER_LISTEN_IPV4_ONLY,
+                                        &listen_error));
+  g_assert_no_error(listen_error);
+  GSList *uris = soup_server_get_uris(server);
+  g_assert_nonnull(uris);
+  g_autofree char *base = g_uri_to_string(uris->data);
+  g_slist_free_full(uris, (GDestroyNotify)g_uri_unref);
+  g_autofree char *first_url = g_strconcat(base, "one.png", NULL);
+  g_autofree char *second_url = g_strconcat(base, "two.png", NULL);
+
+  GnostrMediaServiceConfig config;
+  gnostr_media_service_config_init(&config);
+  config.memory_budget_bytes[GNOSTR_MEDIA_RESOURCE_INLINE] = 0;
+  config.disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_INLINE] = 100;
+  g_autoptr(GnostrMediaService) service = new_test_service(&config);
+  SingleTextureFixture fixture = { 0 };
+
+  request_texture_and_wait(service, first_url, &fixture);
+  wait_for_disk_jobs(service);
+  request_texture_and_wait(service, second_url, &fixture);
+  wait_for_disk_jobs(service);
+
+  g_autofree char *dir = g_build_filename(
+      test_disk_root, test_namespace, "inline", NULL);
+  guint count = 0;
+  guint64 total = directory_regular_file_size(dir, &count);
+  g_assert_cmpuint(total, <=, config.disk_budget_bytes[
+      GNOSTR_MEDIA_RESOURCE_INLINE]);
+  g_assert_cmpuint(count, ==, 1);
+  g_assert_cmpuint(server_fixture.server_requests, ==, 2);
+  g_clear_error(&fixture.error);
+  soup_server_disconnect(server);
+}
+
+
+typedef struct {
+  GMainLoop *loop;
+  guint callbacks;
   guint server_requests;
   GError *error;
 } OgFixture;
@@ -341,7 +556,7 @@ test_og_metadata_is_shared_and_ttl_cached(void)
   gnostr_media_service_config_init(&config);
   config.og_metadata_ttl_usec = 20 * 1000;
   g_autoptr(GnostrMediaService) service =
-      gnostr_media_service_new(&config);
+      new_test_service(&config);
 
   request_og_and_wait(service, url, &fixture);
   request_og_and_wait(service, url, &fixture);
@@ -349,6 +564,58 @@ test_og_metadata_is_shared_and_ttl_cached(void)
 
   g_usleep(30 * 1000);
   request_og_and_wait(service, url, &fixture);
+  g_assert_cmpuint(fixture.callbacks, ==, 3);
+  g_assert_cmpuint(fixture.server_requests, ==, 2);
+
+  wait_for_disk_jobs(service);
+  g_clear_error(&fixture.error);
+  soup_server_disconnect(server);
+}
+
+static void
+test_og_metadata_persists_with_ttl(void)
+{
+  g_autoptr(SoupServer) server = soup_server_new(NULL, NULL);
+  OgFixture fixture = { 0 };
+  soup_server_add_handler(server, "/persist", server_og_handler,
+                          &fixture, NULL);
+  g_autoptr(GError) listen_error = NULL;
+  g_assert_true(soup_server_listen_local(server, 0,
+                                        SOUP_SERVER_LISTEN_IPV4_ONLY,
+                                        &listen_error));
+  g_assert_no_error(listen_error);
+  GSList *uris = soup_server_get_uris(server);
+  g_assert_nonnull(uris);
+  g_autofree char *base = g_uri_to_string(uris->data);
+  g_slist_free_full(uris, (GDestroyNotify)g_uri_unref);
+  g_autofree char *url = g_strconcat(base, "persist", NULL);
+
+  GnostrMediaServiceConfig config;
+  gnostr_media_service_config_init(&config);
+  config.og_metadata_ttl_usec = 250 * 1000;
+  config.memory_budget_bytes[GNOSTR_MEDIA_RESOURCE_OG_IMAGE] = 0;
+  config.disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_OG_IMAGE] = 1024 * 1024;
+
+  {
+    g_autoptr(GnostrMediaService) first = new_test_service(&config);
+    request_og_and_wait(first, url, &fixture);
+    wait_for_disk_jobs(first);
+  }
+  g_assert_cmpuint(fixture.server_requests, ==, 1);
+
+  {
+    g_autoptr(GnostrMediaService) second = new_test_service(&config);
+    request_og_and_wait(second, url, &fixture);
+    wait_for_disk_jobs(second);
+  }
+  g_assert_cmpuint(fixture.server_requests, ==, 1);
+
+  g_usleep(350 * 1000);
+  {
+    g_autoptr(GnostrMediaService) third = new_test_service(&config);
+    request_og_and_wait(third, url, &fixture);
+    wait_for_disk_jobs(third);
+  }
   g_assert_cmpuint(fixture.callbacks, ==, 3);
   g_assert_cmpuint(fixture.server_requests, ==, 2);
 
@@ -360,15 +627,28 @@ int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
+  g_autoptr(GError) tmp_error = NULL;
+  test_disk_root = g_dir_make_tmp("gnostr-media-service-XXXXXX", &tmp_error);
+  g_assert_no_error(tmp_error);
+  g_assert_nonnull(test_disk_root);
+
   g_test_add_func("/media-service/cache/decoded-byte-budget",
                   test_cache_respects_decoded_byte_budget);
   g_test_add_func("/media-service/negative/bounded-ttl",
                   test_negative_cache_is_bounded_and_expires);
   g_test_add_func("/media-service/in-flight/dedup-independent-cancel",
                   test_in_flight_requests_are_coalesced);
+  g_test_add_func("/media-service/disk/hit-before-network",
+                  test_disk_hit_falls_back_before_network);
+  g_test_add_func("/media-service/disk/encoded-byte-budget",
+                  test_disk_write_enforces_encoded_byte_budget);
   g_test_add_func("/media-service/og/shared-ttl-cache",
                   test_og_metadata_is_shared_and_ttl_cached);
+  g_test_add_func("/media-service/og/persisted-ttl",
+                  test_og_metadata_persists_with_ttl);
   int result = g_test_run();
   g_clear_object(&test_session);
+  remove_tree(test_disk_root);
+  g_clear_pointer(&test_disk_root, g_free);
   return result;
 }

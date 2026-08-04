@@ -9,8 +9,12 @@ G_BEGIN_DECLS
  * Cache pruning module for gnostr.
  *
  * Provides automatic cleanup of:
- * - Image/avatar cache (downloaded images in ~/.cache/gnostr/avatars)
+ * - Legacy avatar cache (downloaded images in ~/.cache/gnostr/avatars)
  * - Nostrdb event storage (LMDB files in ~/.cache/gnostr/ndb)
+ *
+ * Account-namespaced media directories under ~/.cache/gnostr/media are owned
+ * and bounded by GnostrMediaService; this module intentionally never scans
+ * or removes them.
  *
  * Cache limits are configurable via GSettings (org.gnostr.Client):
  * - image-cache-max-mb: Max size for image cache (default 500 MB)
@@ -26,8 +30,8 @@ G_BEGIN_DECLS
 void gnostr_cache_prune_init(void);
 
 /**
- * Prune image cache to stay under size limit.
- * Deletes oldest files first until cache is within limit.
+ * Prune the legacy avatar cache to stay under size limit.
+ * Deletes oldest avatar files first until cache is within limit.
  *
  * @param max_size_mb Maximum cache size in megabytes. 0 = no limit.
  * @return Number of files deleted, or -1 on error.
@@ -35,8 +39,8 @@ void gnostr_cache_prune_init(void);
 int gnostr_cache_prune_images(int max_size_mb);
 
 /**
- * Get current image cache size in bytes.
- * Scans ~/.cache/gnostr/avatars directory.
+ * Get current legacy avatar cache size in bytes.
+ * Scans ~/.cache/gnostr/avatars only.
  *
  * @param file_count Output for number of cached files (may be NULL).
  * @return Total size in bytes, or -1 on error.

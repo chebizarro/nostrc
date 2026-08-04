@@ -16,7 +16,8 @@ G_DECLARE_FINAL_TYPE(GnostrMediaService, gnostr_media_service,
  * @GNOSTR_MEDIA_RESOURCE_OG_IMAGE: Open Graph preview images
  * @GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER: video poster images
  *
- * Independently-budgeted decoded texture cache classes.
+ * Independently-budgeted media cache classes.  Memory budgets account
+ * decoded texture bytes; disk budgets account encoded response bytes.
  */
 typedef enum {
   GNOSTR_MEDIA_RESOURCE_INLINE = 0,
@@ -55,6 +56,9 @@ typedef struct {
   gint64 negative_cache_ttl_usec;
   guint og_metadata_max_entries;
   gint64 og_metadata_ttl_usec;
+  /* Encoded-byte disk ceilings, independently enforced per namespace and
+   * resource class.  Zero disables the disk tier for that class. */
+  guint64 disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_N_CLASSES];
 } GnostrMediaServiceConfig;
 
 typedef struct {
@@ -109,8 +113,9 @@ typedef void (*GnostrMediaOgCallback)(GnostrMediaService *service,
  * @config: configuration to initialize
  *
  * Initializes production-safe defaults.  The default singleton additionally
- * replaces the three memory budgets from org.gnostr.Client GSettings and
- * tracks later setting changes.
+ * replaces the three memory and disk budgets from org.gnostr.Client GSettings
+ * and tracks later setting changes.  Each setting is a separate ceiling for
+ * each tier, not a combined memory-plus-disk quota.
  */
 void gnostr_media_service_config_init(GnostrMediaServiceConfig *config);
 
@@ -169,8 +174,8 @@ void gnostr_media_service_request_og_metadata(GnostrMediaService *service,
 void gnostr_media_service_get_stats(GnostrMediaService *service,
                                     GnostrMediaCacheStats *out_stats);
 
-/* Eviction affects memory and negative caches.  A future disk tier can remain
- * behind these same calls without changing consumers. */
+/* Explicit eviction remains synchronous and memory-only.  Persisted entries
+ * expire or are removed by the disk tier's budget sweeps. */
 guint gnostr_media_service_evict_url(GnostrMediaService *service,
                                      const char *url);
 void gnostr_media_service_clear_class(GnostrMediaService *service,
@@ -178,6 +183,14 @@ void gnostr_media_service_clear_class(GnostrMediaService *service,
 void gnostr_media_service_clear_all(GnostrMediaService *service);
 
 #ifdef GNOSTR_MEDIA_SERVICE_TESTING
+/* These must be set before the service's first request. */
+void gnostr_media_service_test_set_disk_root(GnostrMediaService *service,
+                                             const char *disk_root);
+void gnostr_media_service_test_set_namespace(GnostrMediaService *service,
+                                             const char *cache_namespace);
+guint gnostr_media_service_test_get_outstanding_disk_jobs(
+    GnostrMediaService *service);
+
 void gnostr_media_service_test_store_texture(GnostrMediaService *service,
                                              const char *url,
                                              GnostrMediaResourceClass resource_class,
