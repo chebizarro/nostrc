@@ -111,7 +111,7 @@ test_nprofile_encode_decode(void)
   const gchar *const *enc_relays = gnostr_nip19_get_relays(encoded);
   g_assert_nonnull(enc_relays);
   g_assert_cmpstr(enc_relays[0], ==, "wss://nos.lol");
-  g_assert_cmpstr(enc_relays[1], ==, "wss://nos.lol");
+  g_assert_cmpstr(enc_relays[1], ==, "wss://relay.primal.net");
   g_assert_null(enc_relays[2]);
 
   /* Decode */
@@ -124,7 +124,7 @@ test_nprofile_encode_decode(void)
   const gchar *const *dec_relays = gnostr_nip19_get_relays(decoded);
   g_assert_nonnull(dec_relays);
   g_assert_cmpstr(dec_relays[0], ==, "wss://nos.lol");
-  g_assert_cmpstr(dec_relays[1], ==, "wss://nos.lol");
+  g_assert_cmpstr(dec_relays[1], ==, "wss://relay.primal.net");
 }
 
 /* ── nprofile without relays ─────────────────────────────────────── */
@@ -255,7 +255,7 @@ test_nrelay_encode_decode(void)
   const gchar *const *enc_relays = gnostr_nip19_get_relays(encoded);
   g_assert_nonnull(enc_relays);
   g_assert_cmpstr(enc_relays[0], ==, "wss://nos.lol");
-  g_assert_cmpstr(enc_relays[1], ==, "wss://nos.lol");
+  g_assert_cmpstr(enc_relays[1], ==, "wss://relay.primal.net");
 
   /* Decode */
   g_autoptr(GNostrNip19) decoded = gnostr_nip19_decode(bech32, &error);
@@ -266,7 +266,7 @@ test_nrelay_encode_decode(void)
   const gchar *const *dec_relays = gnostr_nip19_get_relays(decoded);
   g_assert_nonnull(dec_relays);
   g_assert_cmpstr(dec_relays[0], ==, "wss://nos.lol");
-  g_assert_cmpstr(dec_relays[1], ==, "wss://nos.lol");
+  g_assert_cmpstr(dec_relays[1], ==, "wss://relay.primal.net");
 }
 
 /* ── inspect ─────────────────────────────────────────────────────── */
