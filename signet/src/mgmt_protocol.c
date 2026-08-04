@@ -16,6 +16,7 @@
 #include "signet/revocation.h"
 #include "signet/replay_cache.h"
 #include "signet/store.h"
+#include "signet/store_audit.h"
 #include "signet/store_secrets.h"
 #include "signet/bootstrap_delivery.h"
 #include "signet/util.h"
@@ -37,6 +38,14 @@
 #include <nostr-keys.h>
 
 /* ---- small helpers (also in nip46_server.c; duplicated to stay static) ---- */
+
+static void signet_mgmt_chain_audit(SignetMgmtHandler *h,
+                                    const char *operation,
+                                    const char *identity,
+                                    const char *secret_id,
+                                    const char *decision,
+                                    const char *reason,
+                                    int64_t now);
 
 static void signet_mgmt_memzero(void *p, size_t n) {
   if (p && n) secure_wipe(p, n);
@@ -678,6 +687,8 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
       !signet_mgmt_is_authorized(event_pubkey_hex,
                                  (const char *const *)h->provisioner_pubkeys,
                                  h->n_provisioner_pubkeys)) {
+    signet_mgmt_chain_audit(h, "mgmt_unauthorized", event_pubkey_hex, NULL,
+                            "deny", "not_provisioner", now);
     char *err = g_strdup("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32002,\"message\":\"sender is not an authorized Signet provisioner\"},\"id\":null}");
     signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now);
     g_free(err);
@@ -709,6 +720,70 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
                                               op, event_id_hex, now);
   free(encrypted);
   return rc;
+}
+
+/* Append a redacted entry to the store's hash-chained audit log for a
+ * management outcome. identity is the acting/subject identity (sender pubkey
+ * for unauthorized events, agent_id for executed mutations); secret_id is the
+ * affected credential id when applicable. detail carries only enumerated,
+ * non-secret fields (decision + stable reason code) — never request payloads.
+ * Silently a no-op in cache-only mode (no persistent store). */
+static void signet_mgmt_chain_audit(SignetMgmtHandler *h,
+                                    const char *operation,
+                                    const char *identity,
+                                    const char *secret_id,
+                                    const char *decision,
+                                    const char *reason,
+                                    int64_t now) {
+  if (!h || !h->keys || !operation) return;
+  SignetStore *base_store = signet_key_store_get_store(h->keys);
+  if (!base_store) return;
+  char *detail = NULL;
+  {
+    JsonBuilder *b = json_builder_new();
+    if (b) {
+      json_builder_begin_object(b);
+      json_builder_set_member_name(b, "decision");
+      json_builder_add_string_value(b, decision ? decision : "deny");
+      json_builder_set_member_name(b, "reason");
+      json_builder_add_string_value(b, reason ? reason : "unknown");
+      json_builder_end_object(b);
+      JsonNode *root = json_builder_get_root(b);
+      JsonGenerator *gen = json_generator_new();
+      if (root && gen) {
+        json_generator_set_root(gen, root);
+        json_generator_set_pretty(gen, FALSE);
+        detail = json_generator_to_data(gen, NULL);
+      }
+      if (gen) g_object_unref(gen);
+      if (root) json_node_free(root);
+      g_object_unref(b);
+    }
+  }
+  (void)signet_audit_log_append(base_store, now,
+                                (identity && identity[0]) ? identity : "unknown",
+                                operation, secret_id, "contextvm", detail);
+  g_free(detail);
+}
+
+/* Map a management op to its chain-audit operation name, or NULL for
+ * read-only operations that do not need a mutation audit. */
+static const char *signet_mgmt_op_audit_name(SignetMgmtOp op) {
+  switch (op) {
+    case SIGNET_MGMT_OP_PROVISION_AGENT:    return "mgmt_provision_agent";
+    case SIGNET_MGMT_OP_ADOPT_EXISTING:     return "mgmt_adopt_existing";
+    case SIGNET_MGMT_OP_REVOKE_AGENT:       return "mgmt_revoke_agent";
+    case SIGNET_MGMT_OP_ROTATE_KEY:         return "mgmt_rotate_key";
+    case SIGNET_MGMT_OP_REISSUE_CONNECT:    return "mgmt_reissue_connect";
+    case SIGNET_MGMT_OP_SET_POLICY:         return "mgmt_set_policy";
+    case SIGNET_MGMT_OP_REVOKE_CLIENT:      return "mgmt_revoke_client";
+    case SIGNET_MGMT_OP_CREATE_CREDENTIAL:  return "credential_create";
+    case SIGNET_MGMT_OP_IMPORT_CREDENTIAL:  return "credential_import";
+    case SIGNET_MGMT_OP_ROTATE_CREDENTIAL:  return "credential_rotate";
+    case SIGNET_MGMT_OP_REVOKE_CREDENTIAL:  return "credential_revoke";
+    case SIGNET_MGMT_OP_DELETE_CREDENTIAL:  return "credential_delete";
+    default:                                return NULL;
+  }
 }
 
 static void signet_mgmt_publish_cas_audit(SignetMgmtHandler *h,
@@ -900,7 +975,11 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
                                 (const char *const *)h->provisioner_pubkeys,
                                 h->n_provisioner_pubkeys);
   if (!sender_is_provisioner && op != SIGNET_MGMT_OP_REISSUE_CONNECT) {
-    return -1; /* silently drop unauthorized events */
+    /* Silently drop unauthorized events (no ack — do not confirm the bunker
+     * exists) but record the attempt in the tamper-evident audit chain. */
+    signet_mgmt_chain_audit(h, "mgmt_unauthorized", event_pubkey_hex, NULL,
+                            "deny", "not_provisioner", now);
+    return -1;
   }
 
   /* 1b) NIP-44 v2 decrypt the event content.
@@ -978,6 +1057,8 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
        * an unauthenticated claim about an agent_id, and publishing
        * bunker-signed audits for arbitrary claims would hand strangers an
        * audit-spam/poisoning primitive. */
+      signet_mgmt_chain_audit(h, "mgmt_unauthorized", event_pubkey_hex, NULL,
+                              "deny", "not_target_agent", now);
       char *uack = signet_mgmt_build_ack(req.request_id, false, "unauthorized",
                                          "sender is neither a provisioner nor the target agent",
                                          NULL);
@@ -1013,6 +1094,8 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
       }
       signet_mgmt_publish_cas_audit(h, "reissue_connect", req.agent_id,
                                     "deny_listed", now);
+      signet_mgmt_chain_audit(h, "mgmt_reissue_connect", event_pubkey_hex, NULL,
+                              "deny", "deny_listed", now);
       if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
       signet_mgmt_request_clear(&req);
       return -1;
@@ -1070,6 +1153,7 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
   const char *code = "internal_error";
   char *message = NULL;
   char *result = NULL;
+  char *audit_secret_id = NULL; /* affected credential id for chain audit */
 
   switch (req.op) {
     case SIGNET_MGMT_OP_PROVISION_AGENT: {
@@ -1559,6 +1643,7 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
           provenance, event_pubkey_hex, now, &metadata);
       sodium_free(payload);
       if (src == SIGNET_SECRET_OK) {
+        audit_secret_id = g_strdup(metadata.id);
         result = signet_mgmt_secret_metadata_json(&metadata);
         if (result) {
           ok = true;
@@ -1796,6 +1881,22 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
       message = g_strdup("unknown management command");
       break;
   }
+
+  /* 3b) Hash-chained mutation audit: every executed management mutation
+   * (and every failed attempt at one) leaves a redacted, tamper-evident
+   * entry keyed to the affected identity/credential. Read-only ops
+   * (status/list/inspect) are not mutations and are skipped. */
+  {
+    const char *audit_op = signet_mgmt_op_audit_name(req.op);
+    if (audit_op) {
+      signet_mgmt_chain_audit(
+          h, audit_op,
+          (req.agent_id && req.agent_id[0]) ? req.agent_id : event_pubkey_hex,
+          audit_secret_id ? audit_secret_id : req.credential_id,
+          ok ? "allow" : "deny", code, now);
+    }
+  }
+  g_free(audit_secret_id);
 
   /* 4) Publish ack. */
   char *ack = signet_mgmt_build_ack(req.request_id, ok, code, message, result);

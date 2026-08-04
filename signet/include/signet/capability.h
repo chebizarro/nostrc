@@ -280,6 +280,27 @@ bool signet_policy_allowed_kind(SignetPolicyRegistry *pr,
                                  const char *agent_id,
                                  int event_kind);
 
+/* Check whether an agent may access a credential of the given type.
+ * Enforces the policy's disallowed_credential_types deny rules.
+ * Fail-closed: an agent with no assigned policy is denied. */
+/**
+ * signet_policy_type_allowed:
+ * @pr: (not nullable): a #SignetPolicyRegistry
+ * @agent_id: (not nullable): agent identifier
+ * @credential_type: (not nullable): credential type string (e.g. "api_token")
+ *
+ * Check whether the agent's policy permits access to credentials of
+ * @credential_type. Types listed in disallowed_credential_types are denied;
+ * an agent without a policy is denied (fail closed).
+ *
+ * Returns: %true if the type is permitted, otherwise %false
+ *
+ * Since: 1.3
+ */
+bool signet_policy_type_allowed(SignetPolicyRegistry *pr,
+                                const char *agent_id,
+                                const char *credential_type);
+
 /* Check rate limit for (agent_id, capability).
  * Returns true if the request is allowed, false if rate-limited.
  * Uses libnostr's token bucket internally. */

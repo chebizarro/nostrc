@@ -88,6 +88,35 @@ int signet_store_revoke_lease(struct SignetStore *store,
                               const char *lease_id,
                               int64_t now);
 
+/* Atomically consume (burn) a lease on use: the lease must be active,
+ * unexpired, and bound to exactly this (agent_id, secret_id). One-use
+ * semantics: a second consume of the same lease fails.
+ * Returns 0 when consumed, 1 when not consumable (unknown, burned, expired,
+ * revoked, or bound to a different agent/secret), -1 on error. */
+/**
+ * signet_store_consume_lease:
+ * @store: (nullable): a #SignetStore
+ * @lease_id: (not nullable): lease id
+ * @secret_id: (not nullable): secret the lease must be bound to
+ * @agent_id: (not nullable): agent the lease must belong to
+ * @now: current Unix time in seconds
+ *
+ * Atomically burn a one-use lease. Returns 0 when consumed, 1 when not
+ * consumable, -1 on error.
+ *
+ * Thread safety: this function is safe to call concurrently; the burn is a
+ * single conditional UPDATE.
+ *
+ * Returns: operation-specific status or value as documented by the function
+ *
+ * Since: 1.3
+ */
+int signet_store_consume_lease(struct SignetStore *store,
+                               const char *lease_id,
+                               const char *secret_id,
+                               const char *agent_id,
+                               int64_t now);
+
 /* Revoke all leases for an agent. Returns count revoked, -1 on error. */
 /**
  * signet_store_revoke_agent_leases:

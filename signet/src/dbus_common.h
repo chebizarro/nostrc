@@ -13,6 +13,7 @@ struct SignetKeyStore;
 struct SignetPolicyRegistry;
 struct SignetStore;
 struct SignetFidoService;
+struct SignetDenyList;
 
 typedef struct {
   struct SignetKeyStore *keys;
@@ -20,6 +21,7 @@ typedef struct {
   struct SignetStore *store;
   struct SignetAuditLogger *audit;
   struct SignetFidoService *fido;
+  struct SignetDenyList *deny;   /* live deny list; deny > any capability */
   const char *transport;
 } SignetDbusDispatchContext;
 

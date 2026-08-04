@@ -103,6 +103,7 @@ struct SignetDbusServer {
   SignetStore *store;
   SignetAuditLogger *audit;
   struct SignetFidoService *fido;
+  struct SignetDenyList *deny;
   SignetUidResolver uid_resolver;
   void *uid_resolver_data;
   bool use_system_bus;
@@ -170,6 +171,7 @@ static void signet_dbus_handle_method(GDBusConnection *connection,
     .store = ds->store,
     .audit = ds->audit,
     .fido = ds->fido,
+    .deny = ds->deny,
     .transport = "dbus_unix",
   };
   signet_dbus_dispatch_authenticated(&ctx, agent_id, interface_name,
@@ -262,6 +264,7 @@ SignetDbusServer *signet_dbus_server_new(const SignetDbusServerConfig *cfg) {
   ds->store = cfg->store;
   ds->audit = cfg->audit;
   ds->fido = cfg->fido;
+  ds->deny = cfg->deny;
   ds->uid_resolver = cfg->uid_resolver;
   ds->uid_resolver_data = cfg->uid_resolver_data;
   ds->use_system_bus = cfg->use_system_bus;

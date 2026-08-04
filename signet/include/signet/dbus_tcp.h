@@ -33,6 +33,7 @@ struct SignetChallengeStore;
 struct SignetAuditLogger;
 struct SignetFleetRegistry;
 struct SignetFidoService;
+struct SignetDenyList;
 
 /**
  * SignetDbusTcpServerConfig:
@@ -57,6 +58,7 @@ typedef struct {
   struct SignetChallengeStore *challenges;
   struct SignetAuditLogger *audit;
   struct SignetFidoService *fido;
+  struct SignetDenyList *deny;  /* live deny list (deny > capability) */
   const struct SignetFleetRegistry *fleet;
 } SignetDbusTcpServerConfig;
 

@@ -79,6 +79,8 @@ set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/dbus_tcp.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/nip5l_transport.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/session_broker.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/credential_access.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/git_credential.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ssh_agent.c
 )
 
@@ -178,7 +180,10 @@ add_executable(signetctl ${CMAKE_CURRENT_SOURCE_DIR}/src/signetctl_main.c)
 target_link_libraries(signetctl PRIVATE signet_core)
 target_include_directories(signetctl PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip19/include)
 
-install(TARGETS signetd signetctl RUNTIME DESTINATION bin)
+add_executable(signet-git-credential ${CMAKE_CURRENT_SOURCE_DIR}/src/git_credential_main.c)
+target_link_libraries(signet-git-credential PRIVATE signet_core)
+
+install(TARGETS signetd signetctl signet-git-credential RUNTIME DESTINATION bin)
 
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/signet.conf.example)
   install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/signet.conf.example DESTINATION share/nostrc)

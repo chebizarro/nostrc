@@ -891,6 +891,7 @@ int main(int argc, char **argv) {
       .store = base_store,
       .audit = audit,
       .fido = fido,
+      .deny = deny,
 #ifdef SIGNET_ENABLE_TEST_HOOKS
       .uid_resolver = test_uid_map.agent_id[0] ? signet_test_uid_resolver : NULL,
       .uid_resolver_data = test_uid_map.agent_id[0] ? &test_uid_map : NULL,
@@ -925,6 +926,7 @@ int main(int argc, char **argv) {
       .challenges = challenges,
       .audit = audit,
       .fido = fido,
+      .deny = deny,
       .fleet = &fleet_reg,
     };
     dbus_tcp = signet_dbus_tcp_server_new(&dt_cfg);

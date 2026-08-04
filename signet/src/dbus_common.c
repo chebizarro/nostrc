@@ -7,7 +7,9 @@
 
 #include "signet/key_store.h"
 #include "signet/capability.h"
+#include "signet/credential_access.h"
 #include "signet/store.h"
+#include "signet/store_audit.h"
 #include "signet/store_leases.h"
 #include "signet/store_secrets.h"
 #include "signet/audit_logger.h"
@@ -382,11 +384,24 @@ static void handle_get_session(const SignetDbusDispatchContext *ctx,
   if (signet_store_issue_lease(ctx->store, lease_id, "session",
                                agent_id, now, expires_at, meta) != 0) {
     g_free(meta);
+    audit_key_access(ctx, agent_id, "GetSession", "error", "lease_persist_failed");
     g_dbus_method_invocation_return_dbus_error(
         invocation, "net.signet.Error.Internal", "Failed to persist session lease");
     return;
   }
   g_free(meta);
+
+  /* Hash-chained audit for the brokered session (token itself is never
+   * logged; the lease metadata records only its SHA-256). */
+  {
+    char detail[160];
+    snprintf(detail, sizeof(detail),
+             "{\"decision\":\"allow\",\"reason\":\"ok\",\"lease_id\":\"%s\"}",
+             lease_id);
+    (void)signet_audit_log_append(ctx->store, now, agent_id, "session_issue",
+                                  "session", transport_name(ctx), detail);
+  }
+  audit_key_access(ctx, agent_id, "GetSession", "allow", "ok");
 
   g_dbus_method_invocation_return_value(invocation,
       g_variant_new("(sx)", token_hex, (gint64)expires_at));
@@ -397,8 +412,8 @@ static void handle_get_token(const SignetDbusDispatchContext *ctx,
                              const char *agent_id,
                              GVariant *parameters,
                              GDBusMethodInvocation *invocation) {
-  const char *cred_type = NULL;
-  g_variant_get(parameters, "(&s)", &cred_type);
+  const char *cred_id = NULL;
+  g_variant_get(parameters, "(&s)", &cred_id);
 
   if (!ctx->store) {
     g_dbus_method_invocation_return_dbus_error(
@@ -406,38 +421,56 @@ static void handle_get_token(const SignetDbusDispatchContext *ctx,
     return;
   }
 
-  SignetSecretRecord rec;
-  memset(&rec, 0, sizeof(rec));
-  int rc = signet_store_get_secret(ctx->store, cred_type, &rec);
-  if (rc != 0) {
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.NotFound", "Credential not found");
+  /* All token retrieval flows through the unified credential-access path:
+   * deny-list precedence, explicit capability, owner-before-decrypt, type
+   * deny rules, expiry/revocation, tracking lease, and a hash-chained audit
+   * entry on every outcome. */
+  SignetCredentialAccessContext acc = {
+    .store = ctx->store,
+    .policy = ctx->policy,
+    .deny = ctx->deny,
+    .logger = ctx->audit,
+  };
+  SignetCredentialAccessRequest areq = {
+    .agent_id = agent_id,
+    .credential_id = cred_id,
+    .capability = SIGNET_CAP_CREDENTIAL_GET_TOKEN,
+    .transport = transport_name(ctx),
+    .issue_lease = true,
+    .lease_ttl_seconds = 3600,
+  };
+  SignetCredentialAccessGrant grant;
+  SignetCredAccessStatus st = signet_credential_access_acquire(
+      &acc, &areq, signet_now_unix(), &grant);
+
+  if (st != SIGNET_CRED_ACCESS_OK) {
+    /* Uniform NotFound for every denial so callers cannot probe for other
+     * agents' credential ids or lifecycle states. Internal errors are
+     * distinguishable (nothing about the credential is revealed). */
+    if (st == SIGNET_CRED_ACCESS_ERROR) {
+      g_dbus_method_invocation_return_dbus_error(
+          invocation, "net.signet.Error.Internal", "Credential access failed");
+    } else {
+      g_dbus_method_invocation_return_dbus_error(
+          invocation, "net.signet.Error.NotFound", "Credential not found");
+    }
     return;
   }
 
-  /* Enforce per-agent ownership: a caller may only retrieve credentials that
-   * belong to its OWN agent_id. Without this, any authenticated D-Bus/TCP
-   * caller could read any agent's credential by id. Return NotFound (not a
-   * distinct AccessDenied) so callers cannot probe for others' credential ids. */
-  if (!rec.agent_id || strcmp(rec.agent_id, agent_id) != 0) {
-    audit_key_access(ctx, agent_id, "GetToken", "deny", "not_owner");
-    signet_secret_record_clear(&rec);
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.NotFound", "Credential not found");
-    return;
-  }
-
-  int64_t expires_at = signet_now_unix() + 3600;
+  int64_t expires_at = grant.lease_expires_at;
   char *token_hex = NULL;
-  if (rec.payload && rec.payload_len > 0) {
-    token_hex = g_malloc(rec.payload_len * 2 + 1);
-    bytes_to_hex(rec.payload, rec.payload_len, token_hex);
+  if (grant.record.payload && grant.record.payload_len > 0) {
+    token_hex = g_malloc(grant.record.payload_len * 2 + 1);
+    bytes_to_hex(grant.record.payload, grant.record.payload_len, token_hex);
   }
 
   g_dbus_method_invocation_return_value(invocation,
       g_variant_new("(sx)", token_hex ? token_hex : "", (gint64)expires_at));
-  g_free(token_hex);
-  signet_secret_record_clear(&rec);
+  if (token_hex) {
+    sodium_memzero(token_hex, strlen(token_hex));
+    g_free(token_hex);
+  }
+  signet_credential_access_grant_clear(&grant);
 }
 
 #ifdef SIGNET_ENABLE_PASSKEYS

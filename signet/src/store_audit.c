@@ -53,6 +53,24 @@ int signet_audit_log_append(SignetStore *store,
   sqlite3 *db = signet_store_get_db(store);
   if (!db || !agent_id || !operation) return -1;
 
+  /* Chain appends must be ATOMIC: the prev-hash read and the insert form a
+   * read-modify-write on the chain head. Serialize in-process on the
+   * connection mutex (the store opens with FULLMUTEX) and, when we are not
+   * already inside a caller's transaction, wrap the pair in an immediate
+   * transaction so a concurrent writer on another connection cannot
+   * interleave and fork the chain (two entries with the same prev_hash). */
+  sqlite3_mutex *db_mutex = sqlite3_db_mutex(db);
+  sqlite3_mutex_enter(db_mutex);
+
+  bool own_txn = sqlite3_get_autocommit(db) != 0;
+  if (own_txn &&
+      sqlite3_exec(db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) != SQLITE_OK) {
+    sqlite3_mutex_leave(db_mutex);
+    return -1;
+  }
+
+  int result = -1;
+
   /* Get the hash of the previous entry (chain link). */
   const char *prev_sql = "SELECT entry_hash FROM audit_log ORDER BY id DESC LIMIT 1;";
   sqlite3_stmt *ps = NULL;
@@ -66,7 +84,7 @@ int signet_audit_log_append(SignetStore *store,
     }
     sqlite3_finalize(ps);
   } else {
-    prev_hash = g_strdup("genesis");
+    goto out;
   }
 
   /* Compute entry hash. */
@@ -83,7 +101,7 @@ int signet_audit_log_append(SignetStore *store,
   if (rc != SQLITE_OK) {
     g_free(prev_hash);
     g_free(entry_hash);
-    return -1;
+    goto out;
   }
 
   sqlite3_bind_int64(stmt, 1, ts);
@@ -112,7 +130,21 @@ int signet_audit_log_append(SignetStore *store,
   g_free(prev_hash);
   g_free(entry_hash);
 
-  return (rc == SQLITE_DONE) ? 0 : -1;
+  result = (rc == SQLITE_DONE) ? 0 : -1;
+
+out:
+  if (own_txn) {
+    if (result == 0) {
+      if (sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL) != SQLITE_OK) {
+        (void)sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+        result = -1;
+      }
+    } else {
+      (void)sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+    }
+  }
+  sqlite3_mutex_leave(db_mutex);
+  return result;
 }
 
 int signet_audit_verify_chain(SignetStore *store,

@@ -72,6 +72,49 @@ int signet_store_revoke_lease(SignetStore *store,
   return (changes > 0) ? 0 : 1;
 }
 
+int signet_store_consume_lease(SignetStore *store,
+                               const char *lease_id,
+                               const char *secret_id,
+                               const char *agent_id,
+                               int64_t now) {
+  sqlite3 *db = signet_store_get_db(store);
+  if (!db || !lease_id || !secret_id || !agent_id) return -1;
+
+  /* Single conditional UPDATE = atomic burn: only an active, unexpired lease
+   * bound to exactly this agent+secret is consumed, and only once. */
+  const char *sql =
+    "UPDATE leases SET revoked_at = ? "
+    "WHERE lease_id = ? AND secret_id = ? AND agent_id = ? "
+    "AND revoked_at IS NULL AND expires_at > ?;";
+
+  /* Hold the connection mutex across step + changes so a concurrent
+   * statement on this shared FULLMUTEX handle cannot slip between them and
+   * corrupt the consumed-row count the burn decision depends on. */
+  sqlite3_mutex *db_mutex = sqlite3_db_mutex(db);
+  sqlite3_mutex_enter(db_mutex);
+
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+  if (rc != SQLITE_OK) {
+    sqlite3_mutex_leave(db_mutex);
+    return -1;
+  }
+
+  sqlite3_bind_int64(stmt, 1, now);
+  sqlite3_bind_text(stmt, 2, lease_id, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, secret_id, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, agent_id, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 5, now);
+
+  rc = sqlite3_step(stmt);
+  int changes = sqlite3_changes(db);
+  sqlite3_finalize(stmt);
+  sqlite3_mutex_leave(db_mutex);
+
+  if (rc != SQLITE_DONE) return -1;
+  return (changes == 1) ? 0 : 1;
+}
+
 int signet_store_revoke_agent_leases(SignetStore *store,
                                      const char *agent_id,
                                      int64_t now) {

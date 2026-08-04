@@ -10,6 +10,7 @@
  */
 
 #include "signet/session_broker.h"
+#include "signet/credential_access.h"
 #include "signet/store.h"
 #include "signet/store_secrets.h"
 #include "signet/store_leases.h"
@@ -181,6 +182,7 @@ static bool signet_session_url_is_secure(const char *url) {
 
 int signet_session_broker_get(SignetStore *store,
                                 SignetPolicyRegistry *policy,
+                                struct SignetDenyList *deny,
                                 SignetAuditLogger *audit,
                                 const SignetSessionRequest *req,
                                 SignetSessionResult *result) {
@@ -188,26 +190,32 @@ int signet_session_broker_get(SignetStore *store,
     return -1;
   memset(result, 0, sizeof(*result));
 
-  /* 1. Check capability: agent must have credential.get_session. */
-  if (policy) {
-    if (!signet_policy_has_capability(policy, req->agent_id,
-                                       SIGNET_CAP_CREDENTIAL_GET_SESSION))
-      return -1;
-
-    /* Rate limit. */
-    if (!signet_policy_rate_limit_check(policy, req->agent_id,
-                                         SIGNET_CAP_CREDENTIAL_GET_SESSION))
-      return -1;
-  }
-
-  /* 2. Look up the credential from secrets store. */
-  SignetSecretRecord rec;
-  memset(&rec, 0, sizeof(rec));
-  int rc = signet_store_get_secret(store, req->credential_id, &rec);
-  if (rc != 0)
-    return -1; /* credential not found or decryption error */
-
   int64_t now = signet_now_unix();
+
+  /* 1+2. Retrieve the credential via the unified credential-access path:
+   * deny-list precedence, explicit credential.get_session capability, rate
+   * limit, owner-before-decrypt, type deny rules, expiry/revocation, and a
+   * hash-chained audit entry on every outcome (allow or deny). */
+  SignetCredentialAccessContext acc = {
+    .store = store,
+    .policy = policy,
+    .deny = deny,
+    .logger = audit,
+  };
+  SignetCredentialAccessRequest areq = {
+    .agent_id = req->agent_id,
+    .credential_id = req->credential_id,
+    .capability = SIGNET_CAP_CREDENTIAL_GET_SESSION,
+    .transport = "session_broker",
+    .issue_lease = false, /* the broker issues its own session lease below */
+  };
+  SignetCredentialAccessGrant grant;
+  if (signet_credential_access_acquire(&acc, &areq, now, &grant) !=
+      SIGNET_CRED_ACCESS_OK)
+    return -1;
+
+  SignetSecretRecord rec = grant.record; /* ownership moves to rec */
+  g_free(grant.lease_id);
   char *session_token = NULL;
   int64_t expires_at = 0;
   bool exchanged = false;
@@ -225,10 +233,9 @@ int signet_session_broker_get(SignetStore *store,
   }
 #ifdef SIGNET_HAVE_CURL
   if (rec.payload && rec.payload_len > 0) {
-    rc = exchange_credential_http(req->service_url,
-                                    rec.payload, rec.payload_len,
-                                    &session_token, &expires_at);
-    if (rc == 0)
+    if (exchange_credential_http(req->service_url,
+                                 rec.payload, rec.payload_len,
+                                 &session_token, &expires_at) == 0)
       exchanged = true;
   }
 #endif

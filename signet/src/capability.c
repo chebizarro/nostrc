@@ -174,6 +174,28 @@ bool signet_policy_allowed_kind(SignetPolicyRegistry *pr,
   return found;
 }
 
+bool signet_policy_type_allowed(SignetPolicyRegistry *pr,
+                                const char *agent_id,
+                                const char *credential_type) {
+  if (!pr || !agent_id || !credential_type) return false;
+  g_mutex_lock(&pr->mu);
+  const SignetAgentPolicy *pol = signet_policy_lookup_locked(pr, agent_id);
+  if (!pol) {
+    g_mutex_unlock(&pr->mu);
+    return false; /* fail closed: no policy, no credential access */
+  }
+  bool denied = false;
+  for (size_t i = 0; i < pol->n_disallowed_types; i++) {
+    if (pol->disallowed_credential_types[i] &&
+        strcmp(pol->disallowed_credential_types[i], credential_type) == 0) {
+      denied = true;
+      break;
+    }
+  }
+  g_mutex_unlock(&pr->mu);
+  return !denied;
+}
+
 bool signet_policy_rate_limit_check(SignetPolicyRegistry *pr,
                                      const char *agent_id,
                                      const char *capability) {

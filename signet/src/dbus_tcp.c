@@ -133,6 +133,7 @@ struct SignetDbusTcpServer {
   SignetChallengeStore *challenges;
   SignetAuditLogger *audit;
   struct SignetFidoService *fido;
+  struct SignetDenyList *deny;
   const SignetFleetRegistry *fleet;
 
   GDBusServer *server;
@@ -252,6 +253,7 @@ static void signet_tcp_handle_method(GDBusConnection *connection,
     .store = ds->store,
     .audit = ds->audit,
     .fido = ds->fido,
+    .deny = ds->deny,
     .transport = "dbus_tcp",
   };
   signet_dbus_dispatch_authenticated(&ctx, agent_id, interface_name,
@@ -337,6 +339,7 @@ SignetDbusTcpServer *signet_dbus_tcp_server_new(const SignetDbusTcpServerConfig 
   ds->challenges = cfg->challenges;
   ds->audit = cfg->audit;
   ds->fido = cfg->fido;
+  ds->deny = cfg->deny;
   ds->fleet = cfg->fleet;
 
   g_mutex_init(&ds->mu);

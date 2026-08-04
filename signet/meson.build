@@ -229,6 +229,8 @@ signet_core_sources = files(
   'src/dbus_tcp.c',
   'src/nip5l_transport.c',
   'src/session_broker.c',
+  'src/credential_access.c',
+  'src/git_credential.c',
   'src/ssh_agent.c',
   # NIP-17 gift-wrap DM helpers are a CMake OBJECT library upstream (no static
   # archive), so compile the single source directly into signet_core here;
@@ -274,6 +276,18 @@ executable('signetd',
 
 signetctl_exe = executable('signetctl',
   'src/signetctl_main.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: true,
+)
+
+# Git credential helper: retrieves an agent-bound PAT via signetd's
+# authenticated D-Bus Credentials interface (capability + ownership + audit
+# enforced daemon-side). Installed so git can use
+#   credential.helper '!signet-git-credential'
+executable('signet-git-credential',
+  'src/git_credential_main.c',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],

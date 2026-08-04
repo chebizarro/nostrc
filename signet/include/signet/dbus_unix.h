@@ -35,6 +35,7 @@ struct SignetPolicyRegistry;
 struct SignetStore;
 struct SignetAuditLogger;
 struct SignetFidoService;
+struct SignetDenyList;
 
 /* UID → agent_id mapping callback.
  * Returns agent_id string (caller frees with g_free), or NULL if unknown. */
@@ -72,6 +73,7 @@ typedef struct {
   struct SignetStore *store;
   struct SignetAuditLogger *audit;
   struct SignetFidoService *fido;
+  struct SignetDenyList *deny;  /* live deny list (deny > capability) */
   SignetUidResolver uid_resolver;
   void *uid_resolver_data;
   bool use_system_bus;  /* true = system bus, false = session bus */

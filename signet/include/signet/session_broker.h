@@ -25,6 +25,7 @@ struct SignetStore;
 struct SignetKeyStore;
 struct SignetPolicyRegistry;
 struct SignetAuditLogger;
+struct SignetDenyList;
 
 /**
  * SignetSessionResult:
@@ -61,13 +62,18 @@ typedef struct {
 /**
  * signet_session_broker_get:
  * @store: (not nullable): a #SignetStore
- * @policy: (not nullable): policy registry used for authorization.
- * @audit: (not nullable): audit logger for non-secret events.
+ * @policy: (nullable): policy registry used for authorization. NULL fails
+ *   closed (no capability was ever granted).
+ * @deny: (nullable): live deny list; deny-listed agents are refused before
+ *   any capability grant is considered.
+ * @audit: (nullable): audit logger for non-secret events.
  * @req: (not nullable): session request.
  * @result: (out) (not nullable): session result to populate.
  *
- * Looks up the requested credential, exchanges it for a service session token,
- * and records the associated lease. Clear @result with
+ * Retrieves the credential through the unified credential-access path
+ * (explicit capability, owner-before-decrypt, deny/revoke precedence,
+ * hash-chained audit on every outcome), exchanges it for a service session
+ * token, and records the associated lease. Clear @result with
  * signet_session_result_clear() on success.
  *
  * Returns: 0 on success, or -1 on error
@@ -76,6 +82,7 @@ typedef struct {
  */
 int signet_session_broker_get(struct SignetStore *store,
                                 struct SignetPolicyRegistry *policy,
+                                struct SignetDenyList *deny,
                                 struct SignetAuditLogger *audit,
                                 const SignetSessionRequest *req,
                                 SignetSessionResult *result);
