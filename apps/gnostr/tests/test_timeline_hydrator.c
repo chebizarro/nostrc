@@ -295,6 +295,27 @@ test_missing_metadata_fallbacks_and_reservations(void)
   g_object_unref(hydrator);
 }
 
+static void
+test_initial_text_reservation_uses_elided_parse_output(void)
+{
+  GnostrTimelineItemViewModelSpec empty = { .content = "" };
+  char *empty_signature =
+    gnostr_timeline_item_view_model_spec_recompute_derived_fields(&empty);
+
+  g_autofree char *long_path = g_strnfill(200, 'a');
+  g_autofree char *media_url =
+    g_strdup_printf("https://cdn.example/%s.jpg", long_path);
+  GnostrTimelineItemViewModelSpec media_only = { .content = media_url };
+  char *media_signature =
+    gnostr_timeline_item_view_model_spec_recompute_derived_fields(&media_only);
+
+  g_assert_cmpfloat(media_only.initial_reserved_height, ==,
+                    empty.initial_reserved_height);
+
+  g_free(empty_signature);
+  g_free(media_signature);
+}
+
 typedef struct {
   gboolean done;
   gboolean got_items;
@@ -352,6 +373,8 @@ main(int argc,
                   test_missing_preview_states_are_deterministic);
   g_test_add_func("/gnostr/timeline-hydrator/missing-metadata-fallbacks-reservations",
                   test_missing_metadata_fallbacks_and_reservations);
+  g_test_add_func("/gnostr/timeline-hydrator/elided-initial-text-reservation",
+                  test_initial_text_reservation_uses_elided_parse_output);
   g_test_add_func("/gnostr/timeline-hydrator/stale-generation-drops",
                   test_stale_generation_drops_sync_and_async);
 

@@ -1,5 +1,6 @@
 #include "gnostr-timeline-geometry.h"
 
+#include <nostr-gtk-1.0/content_renderer.h>
 #include <string.h>
 
 #define MIN_ROW_HEIGHT_PX       160.0
@@ -67,20 +68,28 @@ estimate_text_lines(const char *content,
   if (!content || !*content)
     return 1;
 
+  /* Use the parser's elided display text so URLs/event refs that occupy rich
+   * slots do not also inflate the text reservation. */
+  GnContentRenderResult *parsed = gn_content_parse(content, -1, NULL, NULL);
+  const char *display_text = (parsed && parsed->plain_text) ?
+    parsed->plain_text : content;
+
   guint content_width = content_width_for_bucket(width_bucket);
   guint chars_per_line = MAX(20u, content_width / 7u);
-  glong chars = g_utf8_strlen(content, -1);
+  glong chars = g_utf8_strlen(display_text, -1);
   if (chars <= 0)
-    chars = (glong)strlen(content);
+    chars = (glong)strlen(display_text);
 
   guint hard_breaks = 0;
-  for (const char *p = content; *p; p++) {
+  for (const char *p = display_text; *p; p++) {
     if (*p == '\n')
       hard_breaks++;
   }
 
   guint wrapped = (guint)(((MAX(chars, 1) + chars_per_line - 1) / chars_per_line));
-  return CLAMP(wrapped + hard_breaks, 1u, MAX_COLLAPSED_LINES);
+  guint lines = CLAMP(wrapped + hard_breaks, 1u, MAX_COLLAPSED_LINES);
+  gnostr_content_render_result_free(parsed);
+  return lines;
 }
 
 static double
@@ -154,6 +163,7 @@ gnostr_timeline_geometry_dup_layout_signature(const GnostrTimelineGeometryInput 
   gboolean has_footer = !input || input->has_footer_action_reservation;
   guint media_count = input ? input->media_reservation_count : 0;
   guint link_count = input ? input->link_preview_reservation_count : 0;
+  guint embed_count = input ? input->embed_reservation_count : 0;
   guint text_bucket = input ? content_text_bucket(input->content) : 0;
   const char *semantic_signature = (input && input->geometry_signature && *input->geometry_signature) ?
     input->geometry_signature : NULL;
@@ -168,7 +178,7 @@ gnostr_timeline_geometry_dup_layout_signature(const GnostrTimelineGeometryInput 
     semantic_signature = fallback_signature;
   }
 
-  return g_strdup_printf("%s:%s:profile%d:mod%d:cw%d:m%u:l%u:footer%d",
+  return g_strdup_printf("%s:%s:profile%d:mod%d:cw%d:m%u:l%u:e%u:footer%d",
                          GNOSTR_TIMELINE_GEOMETRY_LAYOUT_VERSION,
                          semantic_signature,
                          (input && input->has_profile) ? 1 : 0,
@@ -176,6 +186,7 @@ gnostr_timeline_geometry_dup_layout_signature(const GnostrTimelineGeometryInput 
                          (input && input->has_content_warning) ? 1 : 0,
                          media_count,
                          link_count,
+                         embed_count,
                          has_footer ? 1 : 0);
 }
 

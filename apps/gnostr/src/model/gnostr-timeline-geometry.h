@@ -6,7 +6,7 @@
 G_BEGIN_DECLS
 
 #define GNOSTR_TIMELINE_GEOMETRY_DEFAULT_WIDTH_BUCKET 480u
-#define GNOSTR_TIMELINE_GEOMETRY_LAYOUT_VERSION "timeline-geometry-v2"
+#define GNOSTR_TIMELINE_GEOMETRY_LAYOUT_VERSION "timeline-geometry-v3"
 
 typedef struct _GnostrTimelineGeometryResolver GnostrTimelineGeometryResolver;
 
@@ -26,6 +26,7 @@ typedef struct {
   double      media_reserved_height;
   guint       link_preview_reservation_count;
   double      link_preview_reserved_height;
+  guint       embed_reservation_count;
   gboolean    has_reply_context_reservation;
   gboolean    has_repost_context_reservation;
   gboolean    has_quote_context_reservation;

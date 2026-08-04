@@ -1308,7 +1308,7 @@ test_no_op_compose_reuses_snapshot_row_object(void)
 }
 
 static void
-test_layout_signature_v2_wraps_vm_semantic_signature(void)
+test_layout_signature_v3_wraps_vm_semantic_signature(void)
 {
   GnostrTimelineGeometryInput input = {
     .content = "signature body",
@@ -1319,19 +1319,21 @@ test_layout_signature_v2_wraps_vm_semantic_signature(void)
     .has_content_warning = TRUE,
     .media_reservation_count = 1,
     .link_preview_reservation_count = 1,
+    .embed_reservation_count = 2,
     .has_footer_action_reservation = TRUE,
   };
 
   g_autofree char *signature =
     gnostr_timeline_geometry_dup_layout_signature(&input, 480);
   g_assert_nonnull(signature);
-  g_assert_true(g_str_has_prefix(signature, "timeline-geometry-v2:"));
+  g_assert_true(g_str_has_prefix(signature, "timeline-geometry-v3:"));
   g_assert_nonnull(strstr(signature, "vm-semantic-only"));
   g_assert_nonnull(strstr(signature, "profile1"));
   g_assert_nonnull(strstr(signature, "mod"));
   g_assert_nonnull(strstr(signature, "cw1"));
   g_assert_nonnull(strstr(signature, "m1"));
   g_assert_nonnull(strstr(signature, "l1"));
+  g_assert_nonnull(strstr(signature, "e2"));
   g_assert_nonnull(strstr(signature, "footer1"));
   g_assert_cmpstr(signature, !=, "timeline-geometry-v2:vm-semantic-only");
 }
@@ -1589,8 +1591,8 @@ main(int argc,
                   test_width_bucket_change_updates_published_media_reserved_height);
   g_test_add_func("/gnostr/timeline-feed-controller/no-op-compose-reuses-row",
                   test_no_op_compose_reuses_snapshot_row_object);
-  g_test_add_func("/gnostr/timeline-feed-controller/layout-signature-v2-wraps-vm-signature",
-                  test_layout_signature_v2_wraps_vm_semantic_signature);
+  g_test_add_func("/gnostr/timeline-feed-controller/layout-signature-v3-wraps-vm-signature",
+                  test_layout_signature_v3_wraps_vm_semantic_signature);
   g_test_add_func("/gnostr/timeline-feed-controller/snapshot-model-metadata-targeted-replace",
                   test_snapshot_model_metadata_patch_emits_targeted_replace_span);
   g_test_add_func("/gnostr/timeline-feed-controller/snapshot-model-pending-head-insert",

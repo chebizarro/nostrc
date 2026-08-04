@@ -207,7 +207,7 @@ if(NOT EXISTS "${_NOSTR_CONFIG_H}")
 endif()
 
 # Include GI wrapper and core headers for SimplePool and nostr models
-target_include_directories(${APP_CLIENT_BIN} PRIVATE
+target_include_directories(${APP_CLIENT_BIN} BEFORE PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/src/util
   ${CMAKE_CURRENT_SOURCE_DIR}/src/services
@@ -1039,9 +1039,11 @@ if (BUILD_TESTING)
     src/model/gnostr-timeline-snapshot.c
     src/model/gnostr-timeline-snapshot-model.c)
   target_compile_features(gnostr-test-timeline-snapshot PRIVATE c_std_11)
-  target_include_directories(gnostr-test-timeline-snapshot PRIVATE
+  target_include_directories(gnostr-test-timeline-snapshot BEFORE PRIVATE
+    ${PROJECT_ROOT}/nostr-gtk/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_link_libraries(gnostr-test-timeline-snapshot PRIVATE PkgConfig::GLIB PkgConfig::GIO)
+  target_link_libraries(gnostr-test-timeline-snapshot PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO gn_content_parser)
   _gnostr_apply_sanitizers(gnostr-test-timeline-snapshot)
   add_test(NAME gnostr-test-timeline-snapshot COMMAND gnostr-test-timeline-snapshot)
   set_tests_properties(gnostr-test-timeline-snapshot PROPERTIES
@@ -1053,9 +1055,10 @@ if (BUILD_TESTING)
     tests/test_timeline_geometry.c
     src/model/gnostr-timeline-geometry.c)
   target_compile_features(gnostr-test-timeline-geometry PRIVATE c_std_11)
-  target_include_directories(gnostr-test-timeline-geometry PRIVATE
+  target_include_directories(gnostr-test-timeline-geometry BEFORE PRIVATE
+    ${PROJECT_ROOT}/nostr-gtk/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_link_libraries(gnostr-test-timeline-geometry PRIVATE PkgConfig::GLIB)
+  target_link_libraries(gnostr-test-timeline-geometry PRIVATE PkgConfig::GLIB gn_content_parser)
   _gnostr_apply_sanitizers(gnostr-test-timeline-geometry)
   add_test(NAME gnostr-test-timeline-geometry COMMAND gnostr-test-timeline-geometry)
   set_tests_properties(gnostr-test-timeline-geometry PROPERTIES
@@ -1092,9 +1095,11 @@ if (BUILD_TESTING)
     src/model/gnostr-timeline-hydrator.c
     src/model/gnostr-timeline-item-view-model.c)
   target_compile_features(gnostr-test-timeline-hydrator PRIVATE c_std_11)
-  target_include_directories(gnostr-test-timeline-hydrator PRIVATE
+  target_include_directories(gnostr-test-timeline-hydrator BEFORE PRIVATE
+    ${PROJECT_ROOT}/nostr-gtk/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_link_libraries(gnostr-test-timeline-hydrator PRIVATE PkgConfig::GLIB PkgConfig::GIO)
+  target_link_libraries(gnostr-test-timeline-hydrator PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO gn_content_parser)
   _gnostr_apply_sanitizers(gnostr-test-timeline-hydrator)
   add_test(NAME gnostr-test-timeline-hydrator COMMAND gnostr-test-timeline-hydrator)
   set_tests_properties(gnostr-test-timeline-hydrator PROPERTIES
@@ -1114,11 +1119,12 @@ if (BUILD_TESTING)
   target_compile_features(gnostr-test-timeline-feed-controller PRIVATE c_std_11)
   target_compile_definitions(gnostr-test-timeline-feed-controller PRIVATE
     GNOSTR_TIMELINE_FEED_CONTROLLER_NO_SOURCE=1)
-  target_include_directories(gnostr-test-timeline-feed-controller PRIVATE
+  target_include_directories(gnostr-test-timeline-feed-controller BEFORE PRIVATE
+    ${PROJECT_ROOT}/nostr-gtk/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${PROJECT_ROOT}/nostr-gobject/include)
   target_link_libraries(gnostr-test-timeline-feed-controller PRIVATE
-    PkgConfig::GLIB PkgConfig::GIO nostr_gobject)
+    PkgConfig::GLIB PkgConfig::GIO nostr_gobject gn_content_parser)
   _gnostr_apply_sanitizers(gnostr-test-timeline-feed-controller)
   add_test(NAME gnostr-test-timeline-feed-controller COMMAND gnostr-test-timeline-feed-controller)
   set_tests_properties(gnostr-test-timeline-feed-controller PROPERTIES

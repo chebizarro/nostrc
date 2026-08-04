@@ -178,6 +178,7 @@ test_rich_areas_reserve_additional_height(void)
   rich.media_reserved_height = 440.0;
   rich.link_preview_reservation_count = 1;
   rich.link_preview_reserved_height = 128.0;
+  rich.embed_reservation_count = 2;
   rich.has_content_warning = TRUE;
   rich.moderation_state = 1;
 
@@ -190,6 +191,7 @@ test_rich_areas_reserve_additional_height(void)
   g_assert_nonnull(strstr(rich_footprint.layout_signature, "quotectx1"));
   g_assert_nonnull(strstr(rich_footprint.layout_signature, "m2"));
   g_assert_nonnull(strstr(rich_footprint.layout_signature, "l1"));
+  g_assert_nonnull(strstr(rich_footprint.layout_signature, "e2"));
   g_assert_cmpfloat(rich_footprint.media_reserved_height, !=, rich.media_reserved_height);
   g_assert_cmpfloat(rich_footprint.link_preview_reserved_height, !=, rich.link_preview_reserved_height);
   g_assert_nonnull(strstr(rich_footprint.layout_signature, "cw1"));
@@ -198,6 +200,36 @@ test_rich_areas_reserve_additional_height(void)
 
   gnostr_timeline_row_footprint_clear(&plain);
   gnostr_timeline_row_footprint_clear(&rich_footprint);
+}
+
+static void
+test_media_elision_controls_text_height(void)
+{
+  g_autoptr(GnostrTimelineGeometryResolver) resolver =
+    gnostr_timeline_geometry_resolver_new();
+
+  GnostrTimelineGeometryInput plain = base_input;
+  plain.content = "caption";
+
+  GnostrTimelineGeometryInput media = base_input;
+  media.content =
+    "caption https://cdn.test/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg "
+    "https://cdn.test/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.jpg "
+    "https://cdn.test/cccccccccccccccccccccccccccccccccccccccc.jpg";
+
+  GnostrTimelineRowFootprint plain_footprint = { 0 };
+  GnostrTimelineRowFootprint media_footprint = { 0 };
+  gnostr_timeline_geometry_resolver_resolve(resolver, &plain, 480,
+                                            &plain_footprint);
+  gnostr_timeline_geometry_resolver_resolve(resolver, &media, 480,
+                                            &media_footprint);
+
+  g_assert_cmpfloat_with_epsilon(media_footprint.estimated_height,
+                                 plain_footprint.estimated_height,
+                                 0.001);
+
+  gnostr_timeline_row_footprint_clear(&plain_footprint);
+  gnostr_timeline_row_footprint_clear(&media_footprint);
 }
 
 static void
@@ -247,6 +279,8 @@ main(int argc,
                   test_passive_measurement_cannot_change_effective_height);
   g_test_add_func("/gnostr/timeline-geometry/rich-area-reservations",
                   test_rich_areas_reserve_additional_height);
+  g_test_add_func("/gnostr/timeline-geometry/media-elision-text-height",
+                  test_media_elision_controls_text_height);
   g_test_add_func("/gnostr/timeline-geometry/explicit-reservation-fields",
                   test_explicit_reservation_fields_control_height_not_url_sniffing);
 

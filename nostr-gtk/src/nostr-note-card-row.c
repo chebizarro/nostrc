@@ -3492,10 +3492,11 @@ void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
 
   if (!render) return;
 
-  /* Avoid Pango markup for render results that already fell back due to
-   * invalid nostrdb block spans; bind those as plain text instead. */
+  /* The shared parser always returns safely escaped Pango markup, including
+   * its tokenizer fallback. Empty markup is meaningful when all content was
+   * elided into rich-content slots. */
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
-    if (!render->used_block_fallback && render->markup && *render->markup) {
+    if (render->markup) {
       gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
       gnostr_safe_set_markup(GTK_LABEL(self->content_label), render->markup);
     } else {
@@ -3617,7 +3618,7 @@ void nostr_gtk_note_card_row_set_content_markup_only(NostrGtkNoteCardRow *self,
   g_clear_pointer(&self->content_text, g_free);
   self->content_text = g_strdup(safe_text);
 
-  if (render && !render->used_block_fallback && render->markup && *render->markup) {
+  if (render && render->markup) {
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
     gnostr_safe_set_markup(GTK_LABEL(self->content_label), render->markup);
   } else {
@@ -4006,7 +4007,7 @@ void nostr_gtk_note_card_row_set_content_tagged_markup_only(NostrGtkNoteCardRow 
     gtk_widget_set_visible(self->subject_label, FALSE);
   }
 
-  if (render && !render->used_block_fallback && render->markup && *render->markup) {
+  if (render && render->markup) {
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
     gnostr_safe_set_markup(GTK_LABEL(self->content_label), render->markup);
   } else {

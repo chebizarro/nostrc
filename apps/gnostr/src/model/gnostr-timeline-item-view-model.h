@@ -105,6 +105,7 @@ typedef struct {
   double media_reserved_height;
   guint link_preview_reservation_count;
   double link_preview_reserved_height;
+  guint embed_reservation_count;
   gboolean has_reply_context_reservation;
   gboolean has_repost_context_reservation;
   gboolean has_quote_context_reservation;
@@ -214,6 +215,7 @@ guint       gnostr_timeline_item_view_model_get_media_reservation_count(GnostrTi
 double      gnostr_timeline_item_view_model_get_media_reserved_height(GnostrTimelineItemViewModel *self);
 guint       gnostr_timeline_item_view_model_get_link_preview_reservation_count(GnostrTimelineItemViewModel *self);
 double      gnostr_timeline_item_view_model_get_link_preview_reserved_height(GnostrTimelineItemViewModel *self);
+guint       gnostr_timeline_item_view_model_get_embed_reservation_count(GnostrTimelineItemViewModel *self);
 gboolean    gnostr_timeline_item_view_model_get_has_reply_context_reservation(GnostrTimelineItemViewModel *self);
 gboolean    gnostr_timeline_item_view_model_get_has_repost_context_reservation(GnostrTimelineItemViewModel *self);
 gboolean    gnostr_timeline_item_view_model_get_has_quote_context_reservation(GnostrTimelineItemViewModel *self);

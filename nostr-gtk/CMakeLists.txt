@@ -97,7 +97,6 @@ set(NOSTR_GTK_SOURCES
   src/gn-timeline-tabs.c
   src/gnostr-timeline-view.c
   src/gnostr-note-embed.c
-  src/content_renderer.c
   src/gnostr-nip05.c
   ${GRESOURCE_C}
 )
@@ -113,11 +112,35 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/gnostr-timeline-view.h
   include/nostr-gtk-1.0/gnostr-note-embed.h
   include/nostr-gtk-1.0/content_renderer.h
+  include/nostr-gtk-1.0/nostr-gtk-error.h
   include/nostr-gtk-1.0/gnostr-nip05.h
 )
 
+# ── Shared content parser component ─────────────────────────────────
+# Kept as an object library so lightweight model/tests can consume the parser
+# without linking the app-coupled widget archive. Its objects remain embedded
+# in nostr_gtk, preserving the installed legacy renderer ABI.
+add_library(gn_content_parser OBJECT
+  src/content_renderer.c
+  src/nostr-gtk-error.c)
+target_include_directories(gn_content_parser
+  BEFORE PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gtk-1.0
+    ${CMAKE_SOURCE_DIR}/third_party/nostrdb/src
+    ${CMAKE_SOURCE_DIR}/third_party/nostrdb/ccan)
+target_link_libraries(gn_content_parser
+  PUBLIC
+    PkgConfig::GLIB2
+    nostr_gobject
+    PkgConfig::JSON_GLIB)
+apply_sanitizers(gn_content_parser)
+
 # ── Library target ───────────────────────────────────────────────────
 add_library(nostr_gtk ${NOSTR_GTK_SOURCES})
+target_link_libraries(nostr_gtk PRIVATE gn_content_parser)
 
 set_target_properties(nostr_gtk PROPERTIES
   OUTPUT_NAME nostr-gtk-1.0
@@ -316,6 +339,11 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-version.h"
 # ── Tests ────────────────────────────────────────────────────────────
 if(BUILD_TESTING)
   include(${CMAKE_SOURCE_DIR}/cmake/GnTest.cmake)
+
+  gn_add_gtest(test_nostr_gtk_content_parser
+    SOURCES tests/test_content_parser.c
+    LIBS    gn_content_parser nip19 PkgConfig::GLIB2
+  )
 
   # Widget tests — require headless GTK rendering (Xvfb on Linux, native on macOS)
   gn_add_gtest_xvfb(test_nostr_gtk_listview_recycle_stress

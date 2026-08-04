@@ -2,6 +2,8 @@
 
 #include "gnostr-timeline-item-view-model.h"
 
+#include <nostr-gtk-1.0/content_renderer.h>
+
 #include <string.h>
 
 struct _GnostrTimelineItemViewModel {
@@ -82,6 +84,7 @@ struct _GnostrTimelineItemViewModel {
   double media_reserved_height;
   guint link_preview_reservation_count;
   double link_preview_reserved_height;
+  guint embed_reservation_count;
   gboolean has_reply_context_reservation;
   gboolean has_repost_context_reservation;
   gboolean has_quote_context_reservation;
@@ -202,9 +205,14 @@ gnostr_timeline_item_view_model_spec_recompute_derived_fields(GnostrTimelineItem
     spec->repost_state != GNOSTR_TIMELINE_PREVIEW_ABSENT;
   gboolean has_content_warning = spec->content_warning && *spec->content_warning;
 
-  guint content_len = spec->content ? (guint)g_utf8_strlen(spec->content, -1) : 0;
+  GnContentRenderResult *parsed_content =
+    gn_content_parse(spec->content ? spec->content : "", -1, NULL, NULL);
+  const char *geometry_text = (parsed_content && parsed_content->plain_text) ?
+    parsed_content->plain_text : spec->content;
+  guint content_len = geometry_text ? (guint)g_utf8_strlen(geometry_text, -1) : 0;
   double text_reserved = MIN(MAX_TEXT_RESERVED_HEIGHT,
                              24.0 + ((content_len + 79u) / 80u) * 22.0);
+  gnostr_content_render_result_free(parsed_content);
   double media_reserved = media_count * DEFAULT_MEDIA_RESERVED_HEIGHT;
   double link_reserved = link_count * DEFAULT_LINK_PREVIEW_RESERVED_HEIGHT;
   double initial_reserved = DEFAULT_BASE_RESERVED_HEIGHT + text_reserved +
@@ -233,13 +241,14 @@ gnostr_timeline_item_view_model_spec_recompute_derived_fields(GnostrTimelineItem
   spec->footer_action_reservation_count = 1u;
   spec->initial_reserved_height = initial_reserved;
 
-  char *geometry_signature = g_strdup_printf("vm-v1:k%d:r%d:q%d:p%d:m%u:l%u:cw%d",
+  char *geometry_signature = g_strdup_printf("vm-v1:k%d:r%d:q%d:p%d:m%u:l%u:e%u:cw%d",
                                              spec->kind,
                                              has_reply_context,
                                              has_quote_context,
                                              has_repost_context,
                                              media_count,
                                              link_count,
+                                             spec->embed_reservation_count,
                                              has_content_warning);
   spec->geometry_signature = geometry_signature;
   return geometry_signature;
@@ -329,6 +338,7 @@ gnostr_timeline_item_view_model_new(const GnostrTimelineItemViewModelSpec *spec)
   self->media_reserved_height = spec->media_reserved_height;
   self->link_preview_reservation_count = spec->link_preview_reservation_count;
   self->link_preview_reserved_height = spec->link_preview_reserved_height;
+  self->embed_reservation_count = spec->embed_reservation_count;
   self->has_reply_context_reservation = spec->has_reply_context_reservation;
   self->has_repost_context_reservation = spec->has_repost_context_reservation;
   self->has_quote_context_reservation = spec->has_quote_context_reservation;
@@ -416,6 +426,7 @@ fill_spec_from_vm(GnostrTimelineItemViewModel *self,
   spec->media_reserved_height = self->media_reserved_height;
   spec->link_preview_reservation_count = self->link_preview_reservation_count;
   spec->link_preview_reserved_height = self->link_preview_reserved_height;
+  spec->embed_reservation_count = self->embed_reservation_count;
   spec->has_reply_context_reservation = self->has_reply_context_reservation;
   spec->has_repost_context_reservation = self->has_repost_context_reservation;
   spec->has_quote_context_reservation = self->has_quote_context_reservation;
@@ -729,6 +740,12 @@ guint gnostr_timeline_item_view_model_get_link_preview_reservation_count(GnostrT
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_ITEM_VIEW_MODEL(self), 0);
   return self->link_preview_reservation_count;
+}
+
+guint gnostr_timeline_item_view_model_get_embed_reservation_count(GnostrTimelineItemViewModel *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_ITEM_VIEW_MODEL(self), 0);
+  return self->embed_reservation_count;
 }
 
 double gnostr_timeline_item_view_model_get_link_preview_reserved_height(GnostrTimelineItemViewModel *self)

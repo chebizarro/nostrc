@@ -2,7 +2,7 @@
 #define APPS_GNOSTR_UTIL_CONTENT_RENDERER_H
 
 #include <glib.h>
-#include "nostr-gtk-error.h"
+#include <nostr-gtk-1.0/nostr-gtk-error.h>
 
 /**
  * Content Renderer - NDB content block-based rendering
@@ -12,19 +12,80 @@
  */
 
 /**
+ * GnContentDescriptorType:
+ *
+ * Structured rich-content classes emitted in source order by
+ * gn_content_parse().
+ */
+typedef enum {
+  GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE,
+  GN_CONTENT_DESCRIPTOR_MEDIA_VIDEO,
+  GN_CONTENT_DESCRIPTOR_LINK_PREVIEW,
+  GN_CONTENT_DESCRIPTOR_NOSTR_EVENT_REF,
+  GN_CONTENT_DESCRIPTOR_NOSTR_PROFILE_REF,
+} GnContentDescriptorType;
+
+/**
+ * GnContentDescriptor:
+ * @type: descriptor class
+ * @url: media/link URL, when applicable
+ * @original: original nostr: URI for reference descriptors
+ * @id: event id hex, or naddr identifier
+ * @pubkey: profile/author pubkey hex, when available
+ * @relay_hints: (array zero-terminated=1) (element-type utf8): relay hints
+ * @width: NIP-92 width, or 0
+ * @height: NIP-92 height, or 0
+ * @thumbnail_url: NIP-92 thumb/image URL, when available
+ */
+typedef struct GnContentDescriptor {
+  GnContentDescriptorType type;
+  gchar *url;
+  gchar *original;
+  gchar *id;
+  gchar *pubkey;
+  gchar **relay_hints;
+  gint width;
+  gint height;
+  gchar *thumbnail_url;
+} GnContentDescriptor;
+
+/**
  * GnContentRenderResult:
  *
- * Unified result from a single-pass content render.  Collects Pango markup,
- * media URLs, nostr references, and OG-preview URLs in one block iteration.
+ * Unified result from a single-pass content parse. Collects elided Pango
+ * markup, the corresponding plain display text, and ordered descriptors.
+ * Legacy extraction fields remain populated for existing render consumers.
  */
 typedef struct GnContentRenderResult {
-  gchar     *markup;          /* Pango markup (transfer full, non-NULL) */
-  GPtrArray *media_urls;      /* image/video URLs by extension (nullable, element: gchar*) */
-  GPtrArray *all_urls;        /* ALL http(s) URLs in document order (nullable, element: gchar*) */
-  gchar     *first_nostr_ref; /* First nostr: URI for NIP-21 embed (nullable) */
-  gchar     *first_og_url;    /* First non-media http(s) URL for OG preview (nullable) */
-  gboolean   used_block_fallback; /* Renderer bailed out of block iteration and returned text fallback */
+  gchar     *markup;          /* elided Pango markup (transfer full, non-NULL) */
+  gchar     *plain_text;      /* same elided display text without escaping */
+  GPtrArray *descriptors;     /* ordered GnContentDescriptor* array (non-NULL) */
+  GPtrArray *media_urls;      /* legacy image/video URLs (nullable, element: gchar*) */
+  GPtrArray *all_urls;        /* legacy http(s) URLs (nullable, element: gchar*) */
+  gchar     *first_nostr_ref; /* legacy first event nostr: URI (nullable) */
+  gchar     *first_og_url;    /* legacy first non-media URL (nullable) */
+  gboolean   used_block_fallback;
 } GnContentRenderResult;
+
+/**
+ * gn_content_parse:
+ * @content: raw note content string
+ * @content_len: length of content (-1 for strlen)
+ * @tags_json: (nullable): event tags JSON used for NIP-92 enrichment
+ * @error: (nullable): return location for a #GError, or %NULL
+ *
+ * Parses content once into elided markup/plain text plus typed descriptors.
+ * Media URLs and event references are elided; normal links and profile
+ * mentions remain inline.
+ *
+ * Returns: (transfer full) (nullable): parsed result, or %NULL on error.
+ */
+GnContentRenderResult *gn_content_parse(const char *content,
+                                        int content_len,
+                                        const char *tags_json,
+                                        GError **error);
+
+void gn_content_descriptor_free(GnContentDescriptor *descriptor);
 
 /**
  * gnostr_render_content:
@@ -32,7 +93,7 @@ typedef struct GnContentRenderResult {
  * @content_len: length of content (-1 for strlen)
  * @error: (nullable): return location for a #GError, or %NULL
  *
- * Single-pass NDB block iteration producing markup + extracted URLs.
+ * Compatibility wrapper over gn_content_parse() without event tags.
  *
  * Returns: (transfer full) (nullable): newly allocated result, or %NULL on
  *          error. Caller must free with gnostr_content_render_result_free().
