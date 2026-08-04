@@ -16,6 +16,7 @@
 #include "signet/revocation.h"
 #include "signet/replay_cache.h"
 #include "signet/store.h"
+#include "signet/store_secrets.h"
 #include "signet/bootstrap_delivery.h"
 #include "signet/util.h"
 
@@ -55,6 +56,13 @@ const char *signet_mgmt_op_to_string(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_REISSUE_CONNECT: return "reissue_connect";
     case SIGNET_MGMT_OP_LIST_CLIENTS:    return "list_clients";
     case SIGNET_MGMT_OP_REVOKE_CLIENT:   return "revoke_client";
+    case SIGNET_MGMT_OP_CREATE_CREDENTIAL: return "create_credential";
+    case SIGNET_MGMT_OP_IMPORT_CREDENTIAL: return "import_credential";
+    case SIGNET_MGMT_OP_LIST_CREDENTIALS: return "list_credentials";
+    case SIGNET_MGMT_OP_INSPECT_CREDENTIAL: return "inspect_credential";
+    case SIGNET_MGMT_OP_ROTATE_CREDENTIAL: return "rotate_credential";
+    case SIGNET_MGMT_OP_REVOKE_CREDENTIAL: return "revoke_credential";
+    case SIGNET_MGMT_OP_DELETE_CREDENTIAL: return "delete_credential";
     default:                             return "unknown";
   }
 }
@@ -88,6 +96,14 @@ void signet_mgmt_request_clear(SignetMgmtRequest *req) {
   if (req->connect_secret) { secure_wipe(req->connect_secret, strlen(req->connect_secret)); g_free(req->connect_secret); }
   g_free(req->expected_pubkey);
   g_free(req->client_pubkey);
+  g_free(req->credential_id);
+  g_free(req->secret_type);
+  g_free(req->label);
+  if (req->payload_b64) {
+    secure_wipe(req->payload_b64, strlen(req->payload_b64));
+    g_free(req->payload_b64);
+  }
+  g_free(req->credential_policy_id);
   memset(req, 0, sizeof(*req));
 }
 
@@ -180,6 +196,31 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
     const char *v = json_object_get_string_member(o, "client_pubkey");
     if (v && v[0]) out_req->client_pubkey = g_strdup(v);
   }
+  if (json_object_has_member(o, "credential_id")) {
+    const char *v = json_object_get_string_member(o, "credential_id");
+    if (v && v[0]) out_req->credential_id = g_strdup(v);
+  }
+  if (json_object_has_member(o, "secret_type")) {
+    const char *v = json_object_get_string_member(o, "secret_type");
+    if (v && v[0]) out_req->secret_type = g_strdup(v);
+  }
+  if (json_object_has_member(o, "label")) {
+    const char *v = json_object_get_string_member(o, "label");
+    if (v && v[0]) out_req->label = g_strdup(v);
+  }
+  if (json_object_has_member(o, "payload_b64")) {
+    const char *v = json_object_get_string_member(o, "payload_b64");
+    if (v && v[0]) out_req->payload_b64 = g_strdup(v);
+  }
+  if (json_object_has_member(o, "policy_id")) {
+    const char *v = json_object_get_string_member(o, "policy_id");
+    if (v && v[0]) out_req->credential_policy_id = g_strdup(v);
+  }
+  if (json_object_has_member(o, "expires_at")) {
+    out_req->credential_expires_at =
+        (int64_t)json_object_get_int_member(o, "expires_at");
+    out_req->has_credential_expires_at = true;
+  }
 
   /* Validate required fields per op. */
   bool needs_agent_id = (out_req->op == SIGNET_MGMT_OP_PROVISION_AGENT ||
@@ -188,7 +229,9 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
                          out_req->op == SIGNET_MGMT_OP_ROTATE_KEY ||
                          out_req->op == SIGNET_MGMT_OP_ADOPT_EXISTING ||
                          out_req->op == SIGNET_MGMT_OP_REISSUE_CONNECT ||
-                         out_req->op == SIGNET_MGMT_OP_LIST_CLIENTS);
+                         out_req->op == SIGNET_MGMT_OP_LIST_CLIENTS ||
+                         out_req->op == SIGNET_MGMT_OP_CREATE_CREDENTIAL ||
+                         out_req->op == SIGNET_MGMT_OP_IMPORT_CREDENTIAL);
 
   if (needs_agent_id && (!out_req->agent_id || !out_req->agent_id[0])) {
     if (out_error) *out_error = g_strdup("agent_id is required");
@@ -213,6 +256,42 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
   if (out_req->op == SIGNET_MGMT_OP_REVOKE_CLIENT &&
       (!out_req->client_pubkey || !out_req->client_pubkey[0])) {
     if (out_error) *out_error = g_strdup("revoke_client requires client_pubkey");
+    signet_mgmt_request_clear(out_req);
+    return -1;
+  }
+
+  bool create_or_import =
+      out_req->op == SIGNET_MGMT_OP_CREATE_CREDENTIAL ||
+      out_req->op == SIGNET_MGMT_OP_IMPORT_CREDENTIAL;
+  if (create_or_import) {
+    SignetSecretType parsed_type;
+    if (!out_req->secret_type ||
+        !signet_secret_type_parse(out_req->secret_type, &parsed_type) ||
+        (parsed_type != SIGNET_SECRET_API_TOKEN &&
+         parsed_type != SIGNET_SECRET_CREDENTIAL) ||
+        !out_req->label || !out_req->payload_b64) {
+      if (out_error)
+        *out_error = g_strdup("credential create/import requires agent_id, "
+                              "api_token|credential type, label, and payload");
+      signet_mgmt_request_clear(out_req);
+      return -1;
+    }
+  }
+
+  bool needs_credential_id =
+      out_req->op == SIGNET_MGMT_OP_INSPECT_CREDENTIAL ||
+      out_req->op == SIGNET_MGMT_OP_ROTATE_CREDENTIAL ||
+      out_req->op == SIGNET_MGMT_OP_REVOKE_CREDENTIAL ||
+      out_req->op == SIGNET_MGMT_OP_DELETE_CREDENTIAL;
+  if (needs_credential_id &&
+      (!out_req->credential_id || !out_req->credential_id[0])) {
+    if (out_error) *out_error = g_strdup("credential_id is required");
+    signet_mgmt_request_clear(out_req);
+    return -1;
+  }
+  if (out_req->op == SIGNET_MGMT_OP_ROTATE_CREDENTIAL &&
+      (!out_req->payload_b64 || !out_req->payload_b64[0])) {
+    if (out_error) *out_error = g_strdup("credential rotate requires payload");
     signet_mgmt_request_clear(out_req);
     return -1;
   }
@@ -465,6 +544,13 @@ static SignetMgmtOp signet_mgmt_op_from_contextvm_method(const char *method) {
   if (strcmp(method, "agent/reissue-connect") == 0) return SIGNET_MGMT_OP_REISSUE_CONNECT;
   if (strcmp(method, "agent/list-clients") == 0) return SIGNET_MGMT_OP_LIST_CLIENTS;
   if (strcmp(method, "agent/revoke-client") == 0) return SIGNET_MGMT_OP_REVOKE_CLIENT;
+  if (strcmp(method, "credential/create") == 0) return SIGNET_MGMT_OP_CREATE_CREDENTIAL;
+  if (strcmp(method, "credential/import") == 0) return SIGNET_MGMT_OP_IMPORT_CREDENTIAL;
+  if (strcmp(method, "credential/list") == 0) return SIGNET_MGMT_OP_LIST_CREDENTIALS;
+  if (strcmp(method, "credential/inspect") == 0) return SIGNET_MGMT_OP_INSPECT_CREDENTIAL;
+  if (strcmp(method, "credential/rotate") == 0) return SIGNET_MGMT_OP_ROTATE_CREDENTIAL;
+  if (strcmp(method, "credential/revoke") == 0) return SIGNET_MGMT_OP_REVOKE_CREDENTIAL;
+  if (strcmp(method, "credential/delete") == 0) return SIGNET_MGMT_OP_DELETE_CREDENTIAL;
   return SIGNET_MGMT_OP_UNKNOWN;
 }
 
@@ -536,6 +622,30 @@ static char *signet_mgmt_contextvm_params_json(const char *content_json, SignetM
   if (po && json_object_has_member(po, "client_pubkey")) {
     json_builder_set_member_name(b, "client_pubkey");
     json_builder_add_string_value(b, json_object_get_string_member(po, "client_pubkey"));
+  }
+  if (po && json_object_has_member(po, "credential_id")) {
+    json_builder_set_member_name(b, "credential_id");
+    json_builder_add_string_value(b, json_object_get_string_member(po, "credential_id"));
+  }
+  if (po && json_object_has_member(po, "secret_type")) {
+    json_builder_set_member_name(b, "secret_type");
+    json_builder_add_string_value(b, json_object_get_string_member(po, "secret_type"));
+  }
+  if (po && json_object_has_member(po, "label")) {
+    json_builder_set_member_name(b, "label");
+    json_builder_add_string_value(b, json_object_get_string_member(po, "label"));
+  }
+  if (po && json_object_has_member(po, "payload_b64")) {
+    json_builder_set_member_name(b, "payload_b64");
+    json_builder_add_string_value(b, json_object_get_string_member(po, "payload_b64"));
+  }
+  if (po && json_object_has_member(po, "policy_id")) {
+    json_builder_set_member_name(b, "policy_id");
+    json_builder_add_string_value(b, json_object_get_string_member(po, "policy_id"));
+  }
+  if (po && json_object_has_member(po, "expires_at")) {
+    json_builder_set_member_name(b, "expires_at");
+    json_builder_add_int_value(b, json_object_get_int_member(po, "expires_at"));
   }
   json_builder_end_object(b);
 
@@ -659,6 +769,116 @@ static void signet_mgmt_publish_cas_audit(SignetMgmtHandler *h,
     if (json) { (void)signet_relay_pool_publish_event_json(h->relays, json); free(json); }
   }
   nostr_event_free(evt);
+}
+
+static void signet_mgmt_add_secret_metadata(JsonBuilder *b,
+                                              const SignetSecretMetadata *m) {
+  json_builder_begin_object(b);
+  json_builder_set_member_name(b, "credential_id");
+  json_builder_add_string_value(b, m->id ? m->id : "");
+  json_builder_set_member_name(b, "agent_id");
+  json_builder_add_string_value(b, m->agent_id ? m->agent_id : "");
+  json_builder_set_member_name(b, "secret_type");
+  json_builder_add_string_value(b, signet_secret_type_to_string(m->secret_type));
+  json_builder_set_member_name(b, "label");
+  json_builder_add_string_value(b, m->label ? m->label : "");
+  json_builder_set_member_name(b, "policy_id");
+  if (m->policy_id) json_builder_add_string_value(b, m->policy_id);
+  else json_builder_add_null_value(b);
+  json_builder_set_member_name(b, "provenance");
+  json_builder_add_string_value(b, m->provenance ? m->provenance : "legacy");
+  json_builder_set_member_name(b, "created_by");
+  if (m->created_by) json_builder_add_string_value(b, m->created_by);
+  else json_builder_add_null_value(b);
+  json_builder_set_member_name(b, "created_at");
+  json_builder_add_int_value(b, m->created_at);
+  json_builder_set_member_name(b, "rotated_at");
+  if (m->rotated_at) json_builder_add_int_value(b, m->rotated_at);
+  else json_builder_add_null_value(b);
+  json_builder_set_member_name(b, "expires_at");
+  if (m->expires_at) json_builder_add_int_value(b, m->expires_at);
+  else json_builder_add_null_value(b);
+  json_builder_set_member_name(b, "revoked_at");
+  if (m->revoked_at) json_builder_add_int_value(b, m->revoked_at);
+  else json_builder_add_null_value(b);
+  json_builder_set_member_name(b, "version");
+  json_builder_add_int_value(b, m->version);
+  json_builder_set_member_name(b, "active_version");
+  json_builder_add_int_value(b, m->active_version);
+  json_builder_set_member_name(b, "status");
+  json_builder_add_string_value(b, signet_secret_status_to_string(m->status));
+  json_builder_end_object(b);
+}
+
+static char *signet_mgmt_secret_metadata_json(
+    const SignetSecretMetadata *metadata) {
+  JsonBuilder *b = json_builder_new();
+  if (!b) return NULL;
+  signet_mgmt_add_secret_metadata(b, metadata);
+  JsonNode *root = json_builder_get_root(b);
+  JsonGenerator *gen = json_generator_new();
+  char *json = NULL;
+  if (root && gen) {
+    json_generator_set_root(gen, root);
+    json_generator_set_pretty(gen, FALSE);
+    json = json_generator_to_data(gen, NULL);
+  }
+  if (gen) g_object_unref(gen);
+  if (root) json_node_free(root);
+  g_object_unref(b);
+  return json;
+}
+
+static char *signet_mgmt_secret_metadata_list_json(
+    const SignetSecretMetadata *metadata, size_t count) {
+  JsonBuilder *b = json_builder_new();
+  if (!b) return NULL;
+  json_builder_begin_object(b);
+  json_builder_set_member_name(b, "count");
+  json_builder_add_int_value(b, (gint64)count);
+  json_builder_set_member_name(b, "credentials");
+  json_builder_begin_array(b);
+  for (size_t i = 0; i < count; i++)
+    signet_mgmt_add_secret_metadata(b, &metadata[i]);
+  json_builder_end_array(b);
+  json_builder_end_object(b);
+  JsonNode *root = json_builder_get_root(b);
+  JsonGenerator *gen = json_generator_new();
+  char *json = NULL;
+  if (root && gen) {
+    json_generator_set_root(gen, root);
+    json_generator_set_pretty(gen, FALSE);
+    json = json_generator_to_data(gen, NULL);
+  }
+  if (gen) g_object_unref(gen);
+  if (root) json_node_free(root);
+  g_object_unref(b);
+  return json;
+}
+
+static int signet_mgmt_decode_secret_payload(const char *payload_b64,
+                                              uint8_t **out_payload,
+                                              size_t *out_len) {
+  if (!payload_b64 || !out_payload || !out_len) return -1;
+  *out_payload = NULL;
+  *out_len = 0;
+  size_t encoded_len = strlen(payload_b64);
+  if (encoded_len == 0 || encoded_len > 1398108u) return -1;
+  size_t capacity = (encoded_len / 4u) * 3u + 3u;
+  if (capacity > 1024u * 1024u + 2u) return -1;
+  uint8_t *payload = sodium_malloc(capacity);
+  if (!payload) return -1;
+  size_t decoded_len = 0;
+  if (sodium_base642bin(payload, capacity, payload_b64, encoded_len,
+                        NULL, &decoded_len, NULL,
+                        sodium_base64_VARIANT_ORIGINAL) != 0 ||
+      decoded_len == 0 || decoded_len > 1024u * 1024u) {
+    sodium_free(payload);
+    return -1;
+  }
+  *out_payload = payload;
+  *out_len = decoded_len;
+  return 0;
 }
 
 int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
@@ -1307,6 +1527,267 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
         code = "revoke_client_failed";
         message = g_strdup("failed to revoke client binding");
       }
+      break;
+    }
+
+    case SIGNET_MGMT_OP_CREATE_CREDENTIAL:
+    case SIGNET_MGMT_OP_IMPORT_CREDENTIAL: {
+      SignetStore *base_store = signet_key_store_get_store(h->keys);
+      uint8_t *payload = NULL;
+      size_t payload_len = 0;
+      SignetSecretType secret_type;
+      if (!base_store) {
+        code = "no_store";
+        message = g_strdup("persistent store not available");
+        break;
+      }
+      if (!signet_secret_type_parse(req.secret_type, &secret_type) ||
+          signet_mgmt_decode_secret_payload(req.payload_b64,
+                                            &payload, &payload_len) != 0) {
+        code = "invalid_credential";
+        message = g_strdup("invalid credential type or payload");
+        break;
+      }
+      SignetSecretMetadata metadata;
+      memset(&metadata, 0, sizeof(metadata));
+      const char *provenance =
+          req.op == SIGNET_MGMT_OP_IMPORT_CREDENTIAL ? "imported" : "created";
+      SignetSecretResult src = signet_store_create_secret(
+          base_store, req.agent_id, secret_type, req.label,
+          payload, payload_len, req.credential_policy_id,
+          req.has_credential_expires_at ? req.credential_expires_at : 0,
+          provenance, event_pubkey_hex, now, &metadata);
+      sodium_free(payload);
+      if (src == SIGNET_SECRET_OK) {
+        result = signet_mgmt_secret_metadata_json(&metadata);
+        if (result) {
+          ok = true;
+          code = req.op == SIGNET_MGMT_OP_IMPORT_CREDENTIAL
+                   ? "credential_imported" : "credential_created";
+          message = g_strdup(req.op == SIGNET_MGMT_OP_IMPORT_CREDENTIAL
+                               ? "credential imported" : "credential created");
+          signet_mgmt_publish_cas_audit(
+              h, req.op == SIGNET_MGMT_OP_IMPORT_CREDENTIAL
+                   ? "credential_import" : "credential_create",
+              metadata.agent_id, "ok", now);
+        } else {
+          code = "internal_error";
+          message = g_strdup("failed to build credential metadata");
+        }
+      } else if (src == SIGNET_SECRET_EXISTS) {
+        code = "credential_exists";
+        message = g_strdup("credential already exists; overwrite refused");
+      } else if (src == SIGNET_SECRET_NOT_FOUND) {
+        code = "agent_not_found";
+        message = g_strdup("credential owner agent not found");
+      } else {
+        code = "invalid_credential";
+        message = g_strdup("credential creation/import failed");
+      }
+      signet_secret_metadata_clear(&metadata);
+      break;
+    }
+
+    case SIGNET_MGMT_OP_LIST_CREDENTIALS: {
+      SignetStore *base_store = signet_key_store_get_store(h->keys);
+      if (!base_store) {
+        code = "no_store";
+        message = g_strdup("persistent store not available");
+        break;
+      }
+      SignetSecretMetadata *metadata = NULL;
+      size_t count = 0;
+      SignetSecretResult src = signet_store_list_secret_metadata(
+          base_store, req.agent_id, now, &metadata, &count);
+      if (src == SIGNET_SECRET_OK) {
+        result = signet_mgmt_secret_metadata_list_json(metadata, count);
+        if (result) {
+          ok = true;
+          code = "ok";
+        } else {
+          code = "internal_error";
+          message = g_strdup("failed to build credential list");
+        }
+      } else {
+        code = "credential_store_failed";
+        message = g_strdup("failed to list credentials");
+      }
+      signet_secret_metadata_list_free(metadata, count);
+      break;
+    }
+
+    case SIGNET_MGMT_OP_INSPECT_CREDENTIAL: {
+      SignetStore *base_store = signet_key_store_get_store(h->keys);
+      SignetSecretMetadata metadata;
+      memset(&metadata, 0, sizeof(metadata));
+      if (!base_store) {
+        code = "no_store";
+        message = g_strdup("persistent store not available");
+        break;
+      }
+      SignetSecretResult src = signet_store_get_secret_metadata(
+          base_store, req.credential_id, now, &metadata);
+      if (src == SIGNET_SECRET_OK) {
+        result = signet_mgmt_secret_metadata_json(&metadata);
+        if (result) {
+          ok = true;
+          code = "ok";
+        } else {
+          code = "internal_error";
+          message = g_strdup("failed to build credential metadata");
+        }
+      } else if (src == SIGNET_SECRET_NOT_FOUND) {
+        code = "credential_not_found";
+        message = g_strdup("credential not found");
+      } else {
+        code = "credential_store_failed";
+        message = g_strdup("failed to inspect credential");
+      }
+      signet_secret_metadata_clear(&metadata);
+      break;
+    }
+
+    case SIGNET_MGMT_OP_ROTATE_CREDENTIAL: {
+      SignetStore *base_store = signet_key_store_get_store(h->keys);
+      uint8_t *payload = NULL;
+      size_t payload_len = 0;
+      SignetSecretMetadata metadata;
+      memset(&metadata, 0, sizeof(metadata));
+      if (!base_store) {
+        code = "no_store";
+        message = g_strdup("persistent store not available");
+        break;
+      }
+      if (signet_mgmt_decode_secret_payload(req.payload_b64,
+                                            &payload, &payload_len) != 0) {
+        code = "invalid_credential";
+        message = g_strdup("invalid credential payload");
+        break;
+      }
+      SignetSecretResult src = signet_store_rotate_secret_ex(
+          base_store, req.credential_id, payload, payload_len,
+          req.has_credential_expires_at, req.credential_expires_at,
+          now, &metadata);
+      sodium_free(payload);
+      if (src == SIGNET_SECRET_OK) {
+        result = signet_mgmt_secret_metadata_json(&metadata);
+        if (result) {
+          ok = true;
+          code = "credential_rotated";
+          message = g_strdup("credential rotated; prior version archived");
+          signet_mgmt_publish_cas_audit(
+              h, "credential_rotate", metadata.agent_id, "ok", now);
+        } else {
+          code = "internal_error";
+          message = g_strdup("failed to build credential metadata");
+        }
+      } else if (src == SIGNET_SECRET_NOT_FOUND) {
+        code = "credential_not_found";
+        message = g_strdup("credential not found");
+      } else if (src == SIGNET_SECRET_REVOKED) {
+        code = "credential_revoked";
+        message = g_strdup("revoked credential cannot be rotated");
+      } else if (src == SIGNET_SECRET_EXPIRED) {
+        code = "credential_expired";
+        message = g_strdup("expired credential requires a replacement expiry");
+      } else {
+        code = "credential_store_failed";
+        message = g_strdup("credential rotation failed");
+      }
+      signet_secret_metadata_clear(&metadata);
+      break;
+    }
+
+    case SIGNET_MGMT_OP_REVOKE_CREDENTIAL: {
+      SignetStore *base_store = signet_key_store_get_store(h->keys);
+      SignetSecretMetadata metadata;
+      memset(&metadata, 0, sizeof(metadata));
+      if (!base_store) {
+        code = "no_store";
+        message = g_strdup("persistent store not available");
+        break;
+      }
+      SignetSecretResult src = signet_store_revoke_secret(
+          base_store, req.credential_id, now, &metadata);
+      if (src == SIGNET_SECRET_OK) {
+        result = signet_mgmt_secret_metadata_json(&metadata);
+        if (result) {
+          ok = true;
+          code = "credential_revoked";
+          message = g_strdup("credential revoked");
+          signet_mgmt_publish_cas_audit(
+              h, "credential_revoke", metadata.agent_id, "ok", now);
+        } else {
+          code = "internal_error";
+          message = g_strdup("failed to build credential metadata");
+        }
+      } else if (src == SIGNET_SECRET_NOT_FOUND) {
+        code = "credential_not_found";
+        message = g_strdup("credential not found");
+      } else {
+        code = "credential_store_failed";
+        message = g_strdup("credential revocation failed");
+      }
+      signet_secret_metadata_clear(&metadata);
+      break;
+    }
+
+    case SIGNET_MGMT_OP_DELETE_CREDENTIAL: {
+      SignetStore *base_store = signet_key_store_get_store(h->keys);
+      if (!base_store) {
+        code = "no_store";
+        message = g_strdup("persistent store not available");
+        break;
+      }
+      SignetSecretMetadata metadata;
+      memset(&metadata, 0, sizeof(metadata));
+      SignetSecretResult inspect_rc = signet_store_get_secret_metadata(
+          base_store, req.credential_id, now, &metadata);
+      SignetSecretResult src = inspect_rc == SIGNET_SECRET_OK
+          ? signet_store_delete_revoked_secret(base_store, req.credential_id)
+          : inspect_rc;
+      if (src == SIGNET_SECRET_OK) {
+        JsonBuilder *db = json_builder_new();
+        if (db) {
+          json_builder_begin_object(db);
+          json_builder_set_member_name(db, "credential_id");
+          json_builder_add_string_value(db, req.credential_id);
+          json_builder_set_member_name(db, "agent_id");
+          json_builder_add_string_value(db, metadata.agent_id ? metadata.agent_id : "");
+          json_builder_set_member_name(db, "deleted");
+          json_builder_add_boolean_value(db, TRUE);
+          json_builder_end_object(db);
+          JsonNode *root = json_builder_get_root(db);
+          JsonGenerator *gen = json_generator_new();
+          if (root && gen) {
+            json_generator_set_root(gen, root);
+            result = json_generator_to_data(gen, NULL);
+          }
+          if (gen) g_object_unref(gen);
+          if (root) json_node_free(root);
+          g_object_unref(db);
+        }
+        if (result) {
+          ok = true;
+          code = "credential_deleted";
+          message = g_strdup("revoked credential deleted");
+          signet_mgmt_publish_cas_audit(
+              h, "credential_delete", metadata.agent_id, "ok", now);
+        } else {
+          code = "internal_error";
+          message = g_strdup("failed to build credential deletion result");
+        }
+      } else if (src == SIGNET_SECRET_NOT_FOUND) {
+        code = "credential_not_found";
+        message = g_strdup("credential not found");
+      } else if (src == SIGNET_SECRET_NOT_REVOKED) {
+        code = "credential_not_revoked";
+        message = g_strdup("credential must be revoked before deletion");
+      } else {
+        code = "credential_store_failed";
+        message = g_strdup("credential deletion failed");
+      }
+      signet_secret_metadata_clear(&metadata);
       break;
     }
 

@@ -14,6 +14,7 @@
 #include "signet/store.h"
 #include "signet/relay_pool.h"
 #include "signet/audit_logger.h"
+#include "signet/health_server.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +38,7 @@
 
 /* NIP-46 JSON-RPC framing: line-delimited JSON. */
 #define NIP5L_MAX_LINE 65536
-#define NIP5L_MAX_CONNECTIONS 64
+#define NIP5L_MAX_CONNECTIONS 8
 
 /* Per-connection state. */
 typedef struct {
@@ -71,7 +72,9 @@ struct SignetNip5lServer {
   GSocketService *service;
   GList *connections;  /* list of Nip5lConnState* */
   guint active_connections;
+  bool stopping;
   GMutex mu;
+  GCond connections_drained;
 };
 
 static int64_t signet_now_unix(void) {
@@ -440,7 +443,7 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
 typedef struct {
   SignetNip5lServer *ns;
   Nip5lConnState *cs;
-  GSocketConnection *conn_ref; /* ref'd to keep the socket alive */
+  GSocketConnection *conn_ref;
 } Nip5lClientThreadData;
 
 static gpointer nip5l_client_thread(gpointer data) {
@@ -480,10 +483,11 @@ static gpointer nip5l_client_thread(gpointer data) {
   g_mutex_lock(&ns->mu);
   ns->connections = g_list_remove(ns->connections, cs);
   if (ns->active_connections > 0) ns->active_connections--;
+  if (ns->active_connections == 0) g_cond_broadcast(&ns->connections_drained);
   g_mutex_unlock(&ns->mu);
 
   nip5l_conn_state_free(cs);
-  g_object_unref(td->conn_ref); /* release the connection ref */
+  g_object_unref(td->conn_ref);
   g_free(td);
   return NULL;
 }
@@ -500,7 +504,8 @@ nip5l_on_incoming(GSocketService *service,
   SignetNip5lServer *ns = (SignetNip5lServer *)user_data;
 
   g_mutex_lock(&ns->mu);
-  if (ns->active_connections >= NIP5L_MAX_CONNECTIONS) {
+  if (ns->stopping || ns->active_connections >= NIP5L_MAX_CONNECTIONS) {
+    g_atomic_int_inc(&g_signet_metrics.nip5l_connections_denied);
     g_mutex_unlock(&ns->mu);
     g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
     return TRUE;
@@ -512,17 +517,38 @@ nip5l_on_incoming(GSocketService *service,
 
   GSocket *sock = g_socket_connection_get_socket(connection);
   int fd = g_socket_get_fd(sock);
-  cs->channel = g_io_channel_unix_new(fd);
+  int channel_fd = dup(fd);
+  if (channel_fd < 0) {
+    g_free(cs);
+    g_mutex_lock(&ns->mu);
+    if (ns->active_connections > 0) ns->active_connections--;
+    if (ns->active_connections == 0) g_cond_broadcast(&ns->connections_drained);
+    g_mutex_unlock(&ns->mu);
+    g_atomic_int_inc(&g_signet_metrics.nip5l_connections_denied);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    return TRUE;
+  }
+  cs->channel = g_io_channel_unix_new(channel_fd);
+  GIOFlags channel_flags = g_io_channel_get_flags(cs->channel);
+  g_io_channel_set_flags(cs->channel, channel_flags & ~G_IO_FLAG_NONBLOCK, NULL);
   g_io_channel_set_encoding(cs->channel, NULL, NULL);
   g_io_channel_set_line_term(cs->channel, "\n", 1);
 
   g_mutex_lock(&ns->mu);
+  if (ns->stopping) {
+    if (ns->active_connections > 0) ns->active_connections--;
+    if (ns->active_connections == 0) g_cond_broadcast(&ns->connections_drained);
+    g_mutex_unlock(&ns->mu);
+    nip5l_conn_state_free(cs);
+    g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+    return TRUE;
+  }
   ns->connections = g_list_prepend(ns->connections, cs);
   g_mutex_unlock(&ns->mu);
 
   /* Spawn a dedicated thread per client so the listener stays available
-   * for new connections.  Ref the GSocketConnection to keep the underlying
-   * fd alive until the thread finishes. */
+   * for new connections. The channel owns a duplicated descriptor, keeping
+   * client I/O independent of the callback's GSocketConnection lifetime. */
   Nip5lClientThreadData *td = g_new0(Nip5lClientThreadData, 1);
   td->ns = ns;
   td->cs = cs;
@@ -536,6 +562,7 @@ nip5l_on_incoming(GSocketService *service,
     g_mutex_lock(&ns->mu);
     ns->connections = g_list_remove(ns->connections, cs);
     if (ns->active_connections > 0) ns->active_connections--;
+    if (ns->active_connections == 0) g_cond_broadcast(&ns->connections_drained);
     g_mutex_unlock(&ns->mu);
     nip5l_conn_state_free(cs);
     g_object_unref(td->conn_ref);
@@ -564,6 +591,7 @@ SignetNip5lServer *signet_nip5l_server_new(const SignetNip5lServerConfig *cfg) {
   ns->fleet = cfg->fleet;
   ns->relays = cfg->relays;
   g_mutex_init(&ns->mu);
+  g_cond_init(&ns->connections_drained);
 
   return ns;
 }
@@ -572,9 +600,9 @@ void signet_nip5l_server_free(SignetNip5lServer *ns) {
   if (!ns) return;
   signet_nip5l_server_stop(ns);
   g_mutex_lock(&ns->mu);
-  g_list_free_full(ns->connections, (GDestroyNotify)nip5l_conn_state_free);
-  ns->connections = NULL;
+  g_assert(ns->connections == NULL);
   g_mutex_unlock(&ns->mu);
+  g_cond_clear(&ns->connections_drained);
   g_mutex_clear(&ns->mu);
   g_free(ns->socket_path);
   g_free(ns);
@@ -583,6 +611,10 @@ void signet_nip5l_server_free(SignetNip5lServer *ns) {
 int signet_nip5l_server_start(SignetNip5lServer *ns) {
   if (!ns) return -1;
   if (ns->service) return 0;
+
+  g_mutex_lock(&ns->mu);
+  ns->stopping = false;
+  g_mutex_unlock(&ns->mu);
 
   /* Remove stale socket file. */
   (void)unlink(ns->socket_path);
@@ -616,9 +648,27 @@ int signet_nip5l_server_start(SignetNip5lServer *ns) {
 }
 
 void signet_nip5l_server_stop(SignetNip5lServer *ns) {
-  if (!ns || !ns->service) return;
-  g_socket_service_stop(ns->service);
-  g_object_unref(ns->service);
-  ns->service = NULL;
+  if (!ns) return;
+
+  g_mutex_lock(&ns->mu);
+  ns->stopping = true;
+  g_mutex_unlock(&ns->mu);
+
+  if (ns->service) {
+    g_socket_service_stop(ns->service);
+    g_object_unref(ns->service);
+    ns->service = NULL;
+  }
+
+  g_mutex_lock(&ns->mu);
+  for (GList *it = ns->connections; it; it = it->next) {
+    Nip5lConnState *cs = (Nip5lConnState *)it->data;
+    if (cs && cs->channel)
+      g_io_channel_shutdown(cs->channel, FALSE, NULL);
+  }
+  while (ns->active_connections > 0)
+    g_cond_wait(&ns->connections_drained, &ns->mu);
+  g_mutex_unlock(&ns->mu);
+
   (void)unlink(ns->socket_path);
 }

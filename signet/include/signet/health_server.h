@@ -51,6 +51,8 @@ typedef struct {
   volatile gint revoke_total;
   volatile gint active_sessions;
   volatile gint active_leases;
+  volatile gint nip5l_connections_denied;
+  volatile gint ssh_agent_connections_denied;
 } SignetMetricsCounters;
 
 /* Process-global counters.  Defined in health_server.c. */
@@ -128,6 +130,8 @@ typedef struct {
   int64_t fleet_sync_last_ts;  /* unix timestamp of last fleet sync */
   uint32_t active_sessions;
   uint32_t active_leases;
+  uint64_t nip5l_connections_denied;
+  uint64_t ssh_agent_connections_denied;
 } SignetHealthSnapshot;
 
 /* Create health server. Returns NULL on OOM. */

@@ -21,6 +21,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #include <glib.h>
 #include <json-glib/json-glib.h>
@@ -75,7 +76,18 @@ static void signetctl_usage(FILE *out) {
     "  list-sessions            List active sessions (local store)\n"
     "  list-leases              List active credential leases (local store)\n"
     "  verify-audit             Verify hash-chained audit log integrity\n"
-    "  rotate-credential <id>   Rotate a credential (--file or --stdin)\n"
+    "\n"
+    "  create-credential <agent_id> --type <api_token|credential> --label <label>\n"
+    "                    [--policy-id <id>] [--expires-at <unix>] (--file <path>|--stdin)\n"
+    "  import-credential <agent_id> --type <api_token|credential> --label <label>\n"
+    "                    [--policy-id <id>] [--expires-at <unix>] (--file <path>|--stdin)\n"
+    "  list-credentials [agent_id]       List payload-free credential metadata\n"
+    "  inspect-credential <id>           Inspect payload-free metadata\n"
+    "  rotate-credential <id> [--expires-at <unix>] (--file <path>|--stdin)\n"
+    "  revoke-credential <id>            Soft-revoke a credential\n"
+    "  delete-credential <id> --confirm Delete a previously revoked credential\n"
+    "                           All credential operations use encrypted ContextVM;\n"
+    "                           payload files must be regular owner-only files.\n"
     "  migrate-db               Migrate a legacy plaintext SQLite DB to SQLCipher\n"
     "\n"
     "Options:\n"
@@ -111,6 +123,13 @@ static const char *signetctl_contextvm_method(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_REISSUE_CONNECT: return "agent/reissue-connect";
     case SIGNET_MGMT_OP_LIST_CLIENTS:    return "agent/list-clients";
     case SIGNET_MGMT_OP_REVOKE_CLIENT:   return "agent/revoke-client";
+    case SIGNET_MGMT_OP_CREATE_CREDENTIAL: return "credential/create";
+    case SIGNET_MGMT_OP_IMPORT_CREDENTIAL: return "credential/import";
+    case SIGNET_MGMT_OP_LIST_CREDENTIALS: return "credential/list";
+    case SIGNET_MGMT_OP_INSPECT_CREDENTIAL: return "credential/inspect";
+    case SIGNET_MGMT_OP_ROTATE_CREDENTIAL: return "credential/rotate";
+    case SIGNET_MGMT_OP_REVOKE_CREDENTIAL: return "credential/revoke";
+    case SIGNET_MGMT_OP_DELETE_CREDENTIAL: return "credential/delete";
     default:                          return NULL;
   }
 }
@@ -121,7 +140,11 @@ static const char *signetctl_contextvm_method(SignetMgmtOp op) {
 static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const char *request_id,
                                     const char *policy_json, const char *bootstrap_pubkey,
                                     int delivery_ttl, const char *agent_nsec,
-                                    const char *expected_pubkey, const char *client_pubkey) {
+                                    const char *expected_pubkey, const char *client_pubkey,
+                                    const char *credential_id, const char *secret_type,
+                                    const char *label, const char *payload_b64,
+                                    const char *credential_policy_id,
+                                    bool has_expires_at, int64_t expires_at) {
   const char *method = signetctl_contextvm_method(op);
   if (!method) return NULL;
 
@@ -149,6 +172,30 @@ static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const
   if (client_pubkey) {
     json_builder_set_member_name(b, "client_pubkey");
     json_builder_add_string_value(b, client_pubkey);
+  }
+  if (credential_id) {
+    json_builder_set_member_name(b, "credential_id");
+    json_builder_add_string_value(b, credential_id);
+  }
+  if (secret_type) {
+    json_builder_set_member_name(b, "secret_type");
+    json_builder_add_string_value(b, secret_type);
+  }
+  if (label) {
+    json_builder_set_member_name(b, "label");
+    json_builder_add_string_value(b, label);
+  }
+  if (payload_b64) {
+    json_builder_set_member_name(b, "payload_b64");
+    json_builder_add_string_value(b, payload_b64);
+  }
+  if (credential_policy_id) {
+    json_builder_set_member_name(b, "policy_id");
+    json_builder_add_string_value(b, credential_policy_id);
+  }
+  if (has_expires_at) {
+    json_builder_set_member_name(b, "expires_at");
+    json_builder_add_int_value(b, expires_at);
   }
   if (bootstrap_pubkey) {
     json_builder_set_member_name(b, "deliver");
@@ -402,6 +449,7 @@ static void signetctl_on_event(const SignetRelayEventView *ev, void *user_data) 
 /* ---------------------- resolve provisioner key --------------------------- */
 
 static bool signetctl_resolve_provisioner_key(char *out_sk_hex, size_t sz) {
+  if (!out_sk_hex || sz < 65) return false;
   const char *nsec = g_getenv("SIGNET_PROVISIONER_NSEC");
   if (!nsec || !nsec[0]) return false;
 
@@ -428,9 +476,110 @@ static bool signetctl_resolve_provisioner_key(char *out_sk_hex, size_t sz) {
   return false;
 }
 
+#define SIGNETCTL_MAX_CREDENTIAL_PAYLOAD (1024u * 1024u)
+
+static bool signetctl_parse_i64(const char *s, int64_t *out) {
+  if (!s || !s[0] || !out) return false;
+  char *end = NULL;
+  errno = 0;
+  gint64 value = g_ascii_strtoll(s, &end, 10);
+  if (errno == ERANGE || !end || *end != '\0') return false;
+  *out = (int64_t)value;
+  return true;
+}
+
+static int signetctl_read_credential_payload(const char *input_file,
+                                             bool from_stdin,
+                                             uint8_t **out_payload,
+                                             size_t *out_len) {
+  if (!out_payload || !out_len || (!!input_file == from_stdin)) return -1;
+  *out_payload = NULL;
+  *out_len = 0;
+
+  int fd = STDIN_FILENO;
+  if (input_file) {
+    int flags = O_RDONLY;
+#ifdef O_CLOEXEC
+    flags |= O_CLOEXEC;
+#endif
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+    fd = open(input_file, flags);
+    if (fd < 0) {
+      fprintf(stderr, "signetctl: cannot open protected input file '%s': %s\n",
+              input_file, g_strerror(errno));
+      return -1;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
+        st.st_uid != geteuid() || (st.st_mode & 0077) != 0) {
+      fprintf(stderr, "signetctl: input file must be a regular, owner-only "
+                      "(0600 or stricter), non-symlink file owned by this user\n");
+      close(fd);
+      return -1;
+    }
+    if (st.st_size <= 0 ||
+        (uint64_t)st.st_size > SIGNETCTL_MAX_CREDENTIAL_PAYLOAD) {
+      fprintf(stderr, "signetctl: credential input must be 1..%u bytes\n",
+              SIGNETCTL_MAX_CREDENTIAL_PAYLOAD);
+      close(fd);
+      return -1;
+    }
+  }
+
+  uint8_t *payload = sodium_malloc(SIGNETCTL_MAX_CREDENTIAL_PAYLOAD + 1u);
+  if (!payload) {
+    if (input_file) close(fd);
+    return -1;
+  }
+  size_t total = 0;
+  for (;;) {
+    ssize_t n = read(fd, payload + total,
+                     SIGNETCTL_MAX_CREDENTIAL_PAYLOAD + 1u - total);
+    if (n < 0 && errno == EINTR) continue;
+    if (n < 0) {
+      fprintf(stderr, "signetctl: failed to read credential input: %s\n",
+              g_strerror(errno));
+      sodium_free(payload);
+      if (input_file) close(fd);
+      return -1;
+    }
+    if (n == 0) break;
+    total += (size_t)n;
+    if (total > SIGNETCTL_MAX_CREDENTIAL_PAYLOAD) {
+      fprintf(stderr, "signetctl: credential input exceeds %u bytes\n",
+              SIGNETCTL_MAX_CREDENTIAL_PAYLOAD);
+      sodium_free(payload);
+      if (input_file) close(fd);
+      return -1;
+    }
+  }
+  if (input_file) close(fd);
+  if (total == 0) {
+    fprintf(stderr, "signetctl: credential input is empty\n");
+    sodium_free(payload);
+    return -1;
+  }
+
+  *out_payload = payload;
+  *out_len = total;
+  return 0;
+}
+
+static void signetctl_wipe_free_string(char *value) {
+  if (!value) return;
+  secure_wipe(value, strlen(value));
+  g_free(value);
+}
+
 /* ------------------------------ main ------------------------------------- */
 
 int main(int argc, char **argv) {
+  if (sodium_init() < 0) {
+    fprintf(stderr, "signetctl: libsodium initialization failed\n");
+    return 1;
+  }
   const char *config_path = NULL;
   int argi = 1;
 
@@ -463,6 +612,16 @@ int main(int argc, char **argv) {
   const char *reissue_out_path = NULL;
   bool reissue_show_secret = false;
   const char *revoke_client_pubkey = NULL;
+  const char *credential_id = NULL;
+  const char *credential_type = NULL;
+  const char *credential_label = NULL;
+  const char *credential_policy_id = NULL;
+  const char *credential_input_file = NULL;
+  bool credential_from_stdin = false;
+  bool has_credential_expires_at = false;
+  int64_t credential_expires_at = 0;
+  bool credential_delete_confirmed = false;
+  char *credential_payload_b64 = NULL;
 
   if (strcmp(cmd, "provision") == 0) {
     op = SIGNET_MGMT_OP_PROVISION_AGENT;
@@ -584,6 +743,149 @@ int main(int argc, char **argv) {
     op = SIGNET_MGMT_OP_GET_STATUS;
   } else if (strcmp(cmd, "list") == 0) {
     op = SIGNET_MGMT_OP_LIST_AGENTS;
+  } else if (strcmp(cmd, "create-credential") == 0 ||
+             strcmp(cmd, "import-credential") == 0) {
+    op = strcmp(cmd, "create-credential") == 0
+           ? SIGNET_MGMT_OP_CREATE_CREDENTIAL
+           : SIGNET_MGMT_OP_IMPORT_CREDENTIAL;
+    if (argi >= argc) {
+      fprintf(stderr, "signetctl: %s requires <agent_id>\n", cmd);
+      return 2;
+    }
+    agent_id = argv[argi++];
+    while (argi < argc) {
+      if (strcmp(argv[argi], "--type") == 0 && argi + 1 < argc) {
+        credential_type = argv[argi + 1];
+        argi += 2;
+      } else if (strcmp(argv[argi], "--label") == 0 && argi + 1 < argc) {
+        credential_label = argv[argi + 1];
+        argi += 2;
+      } else if (strcmp(argv[argi], "--policy-id") == 0 && argi + 1 < argc) {
+        credential_policy_id = argv[argi + 1];
+        argi += 2;
+      } else if (strcmp(argv[argi], "--expires-at") == 0 && argi + 1 < argc) {
+        if (!signetctl_parse_i64(argv[argi + 1], &credential_expires_at) ||
+            credential_expires_at < 0) {
+          fprintf(stderr, "signetctl: invalid --expires-at value\n");
+          return 2;
+        }
+        has_credential_expires_at = true;
+        argi += 2;
+      } else if (strcmp(argv[argi], "--file") == 0 && argi + 1 < argc) {
+        if (credential_input_file) {
+          fprintf(stderr, "signetctl: --file may be specified only once\n");
+          return 2;
+        }
+        credential_input_file = argv[argi + 1];
+        argi += 2;
+      } else if (strcmp(argv[argi], "--stdin") == 0) {
+        if (credential_from_stdin) {
+          fprintf(stderr, "signetctl: --stdin may be specified only once\n");
+          return 2;
+        }
+        credential_from_stdin = true;
+        argi++;
+      } else {
+        fprintf(stderr, "signetctl: unknown %s option '%s'\n", cmd, argv[argi]);
+        return 2;
+      }
+    }
+    SignetSecretType parsed_type;
+    if (!credential_type ||
+        !signet_secret_type_parse(credential_type, &parsed_type) ||
+        (parsed_type != SIGNET_SECRET_API_TOKEN &&
+         parsed_type != SIGNET_SECRET_CREDENTIAL) ||
+        !credential_label || !credential_label[0] ||
+        (!!credential_input_file == credential_from_stdin)) {
+      fprintf(stderr, "signetctl: %s requires --type <api_token|credential>, "
+                      "--label <label>, and exactly one of --file/--stdin\n", cmd);
+      return 2;
+    }
+  } else if (strcmp(cmd, "list-credentials") == 0) {
+    op = SIGNET_MGMT_OP_LIST_CREDENTIALS;
+    if (argi < argc) agent_id = argv[argi++];
+    if (argi != argc) {
+      fprintf(stderr, "signetctl: list-credentials accepts at most [agent_id]\n");
+      return 2;
+    }
+  } else if (strcmp(cmd, "inspect-credential") == 0) {
+    op = SIGNET_MGMT_OP_INSPECT_CREDENTIAL;
+    if (argi >= argc) {
+      fprintf(stderr, "signetctl: inspect-credential requires <id>\n");
+      return 2;
+    }
+    credential_id = argv[argi++];
+    if (argi != argc) {
+      fprintf(stderr, "signetctl: unexpected inspect-credential argument\n");
+      return 2;
+    }
+  } else if (strcmp(cmd, "rotate-credential") == 0) {
+    op = SIGNET_MGMT_OP_ROTATE_CREDENTIAL;
+    if (argi >= argc) {
+      fprintf(stderr, "signetctl: rotate-credential requires <id>\n");
+      return 2;
+    }
+    credential_id = argv[argi++];
+    while (argi < argc) {
+      if (strcmp(argv[argi], "--file") == 0 && argi + 1 < argc) {
+        if (credential_input_file) {
+          fprintf(stderr, "signetctl: --file may be specified only once\n");
+          return 2;
+        }
+        credential_input_file = argv[argi + 1];
+        argi += 2;
+      } else if (strcmp(argv[argi], "--stdin") == 0) {
+        if (credential_from_stdin) {
+          fprintf(stderr, "signetctl: --stdin may be specified only once\n");
+          return 2;
+        }
+        credential_from_stdin = true;
+        argi++;
+      } else if (strcmp(argv[argi], "--expires-at") == 0 && argi + 1 < argc) {
+        if (!signetctl_parse_i64(argv[argi + 1], &credential_expires_at) ||
+            credential_expires_at < 0) {
+          fprintf(stderr, "signetctl: invalid --expires-at value\n");
+          return 2;
+        }
+        has_credential_expires_at = true;
+        argi += 2;
+      } else {
+        fprintf(stderr, "signetctl: unknown rotate-credential option '%s'\n",
+                argv[argi]);
+        return 2;
+      }
+    }
+    if (!!credential_input_file == credential_from_stdin) {
+      fprintf(stderr, "signetctl: rotate-credential requires exactly one of "
+                      "--file <path> or --stdin\n");
+      return 2;
+    }
+  } else if (strcmp(cmd, "revoke-credential") == 0) {
+    op = SIGNET_MGMT_OP_REVOKE_CREDENTIAL;
+    if (argi >= argc) {
+      fprintf(stderr, "signetctl: revoke-credential requires <id>\n");
+      return 2;
+    }
+    credential_id = argv[argi++];
+    if (argi != argc) {
+      fprintf(stderr, "signetctl: unexpected revoke-credential argument\n");
+      return 2;
+    }
+  } else if (strcmp(cmd, "delete-credential") == 0) {
+    op = SIGNET_MGMT_OP_DELETE_CREDENTIAL;
+    if (argi >= argc) {
+      fprintf(stderr, "signetctl: delete-credential requires <id> --confirm\n");
+      return 2;
+    }
+    credential_id = argv[argi++];
+    if (argi < argc && strcmp(argv[argi], "--confirm") == 0) {
+      credential_delete_confirmed = true;
+      argi++;
+    }
+    if (!credential_delete_confirmed || argi != argc) {
+      fprintf(stderr, "signetctl: delete-credential requires explicit --confirm\n");
+      return 2;
+    }
   } else if (strcmp(cmd, "migrate-db") == 0) {
     /* Migrate a legacy plaintext SQLite database to SQLCipher in place. */
     SignetConfig lcfg;
@@ -617,8 +919,7 @@ int main(int argc, char **argv) {
   } else if (strcmp(cmd, "list-agents") == 0 ||
              strcmp(cmd, "list-sessions") == 0 ||
              strcmp(cmd, "list-leases") == 0 ||
-             strcmp(cmd, "verify-audit") == 0 ||
-             strcmp(cmd, "rotate-credential") == 0) {
+             strcmp(cmd, "verify-audit") == 0) {
     /* Local store introspection — handled separately below. */
     op = (SignetMgmtOp)-1;
   } else {
@@ -639,10 +940,8 @@ int main(int argc, char **argv) {
       return 1;
     }
     const char *db_key = g_getenv("SIGNET_DB_KEY");
-    /* Pure-read introspection commands open the store READ-ONLY so they never
-     * run schema/migration writes and can coexist with a live daemon holding
-     * the same DB open. rotate-credential mutates, so it opens read-write. */
-    bool ro = (strcmp(cmd, "rotate-credential") != 0);
+    /* Local introspection never mutates the daemon-owned store. */
+    bool ro = true;
     SignetStoreConfig scfg = {
       .db_path = lcfg.db_path,
       .master_key = db_key ? db_key : "",
@@ -784,83 +1083,6 @@ int main(int argc, char **argv) {
       } else {
         fprintf(stderr, "signetctl: failed to verify audit chain\n");
       }
-    } else if (strcmp(cmd, "rotate-credential") == 0) {
-      if (argi >= argc) {
-        fprintf(stderr, "signetctl: rotate-credential requires <id> [--file <path> | --stdin]\n");
-        signet_store_close(store);
-        signet_config_clear(&lcfg);
-        return 2;
-      }
-      const char *cred_id = argv[argi++];
-
-      /* Read new credential payload from --file or --stdin. */
-      uint8_t *new_payload = NULL;
-      size_t new_payload_len = 0;
-      const char *input_file = NULL;
-      bool from_stdin = false;
-
-      for (int ai = argi; ai < argc; ai++) {
-        if (strcmp(argv[ai], "--file") == 0 && (ai + 1) < argc) {
-          input_file = argv[++ai];
-        } else if (strcmp(argv[ai], "--stdin") == 0) {
-          from_stdin = true;
-        }
-      }
-
-      if (!input_file && !from_stdin) {
-        fprintf(stderr, "signetctl: rotate-credential requires --file <path> or --stdin\n"
-                "  Example: signetctl rotate-credential my-cred --file /path/to/secret\n"
-                "  Example: echo -n 'newsecret' | signetctl rotate-credential my-cred --stdin\n");
-        signet_store_close(store);
-        signet_config_clear(&lcfg);
-        return 2;
-      }
-
-      if (input_file) {
-        /* Read credential from file. */
-        gchar *contents = NULL;
-        gsize length = 0;
-        GError *ferr = NULL;
-        if (!g_file_get_contents(input_file, &contents, &length, &ferr)) {
-          fprintf(stderr, "signetctl: failed to read '%s': %s\n",
-                  input_file, ferr ? ferr->message : "unknown error");
-          if (ferr) g_error_free(ferr);
-          signet_store_close(store);
-          signet_config_clear(&lcfg);
-          return 1;
-        }
-        new_payload = (uint8_t *)contents;
-        new_payload_len = length;
-      } else {
-        /* Read credential from stdin. */
-        GString *buf = g_string_sized_new(4096);
-        char chunk[4096];
-        size_t nread;
-        while ((nread = fread(chunk, 1, sizeof(chunk), stdin)) > 0) {
-          g_string_append_len(buf, chunk, (gssize)nread);
-        }
-        if (buf->len == 0) {
-          fprintf(stderr, "signetctl: no data received on stdin\n");
-          g_string_free(buf, TRUE);
-          signet_store_close(store);
-          signet_config_clear(&lcfg);
-          return 1;
-        }
-        new_payload_len = buf->len;
-        new_payload = (uint8_t *)g_string_free(buf, FALSE);
-      }
-
-      int64_t now = (int64_t)time(NULL);
-      int rrc = signet_store_rotate_secret(store, cred_id, new_payload,
-                                             new_payload_len, now);
-      sodium_memzero(new_payload, new_payload_len);
-      g_free(new_payload);
-
-      if (rrc == 0) {
-        printf("Credential '%s' rotated successfully (old version archived).\n", cred_id);
-      } else {
-        fprintf(stderr, "signetctl: failed to rotate credential '%s'\n", cred_id);
-      }
     }
 
     signet_store_close(store);
@@ -868,10 +1090,29 @@ int main(int argc, char **argv) {
     return 0;
   }
 
+  if (op == SIGNET_MGMT_OP_CREATE_CREDENTIAL ||
+      op == SIGNET_MGMT_OP_IMPORT_CREDENTIAL ||
+      op == SIGNET_MGMT_OP_ROTATE_CREDENTIAL) {
+    uint8_t *payload = NULL;
+    size_t payload_len = 0;
+    if (signetctl_read_credential_payload(credential_input_file,
+                                          credential_from_stdin,
+                                          &payload, &payload_len) != 0) {
+      return 1;
+    }
+    credential_payload_b64 = g_base64_encode(payload, payload_len);
+    sodium_free(payload);
+    if (!credential_payload_b64) {
+      fprintf(stderr, "signetctl: failed to encode credential payload\n");
+      return 1;
+    }
+  }
+
   /* Resolve provisioner secret key. */
   char provisioner_sk_hex[65];
   if (!signetctl_resolve_provisioner_key(provisioner_sk_hex, sizeof(provisioner_sk_hex))) {
     fprintf(stderr, "signetctl: SIGNET_PROVISIONER_NSEC not set or invalid\n");
+    signetctl_wipe_free_string(credential_payload_b64);
     return 1;
   }
 
@@ -880,6 +1121,7 @@ int main(int argc, char **argv) {
   if (signet_config_load(config_path, &cfg) != 0) {
     fprintf(stderr, "signetctl: failed to load config\n");
     secure_wipe(provisioner_sk_hex, 64);
+    signetctl_wipe_free_string(credential_payload_b64);
     return 1;
   }
 
@@ -887,6 +1129,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "signetctl: no relays configured\n");
     signet_config_clear(&cfg);
     secure_wipe(provisioner_sk_hex, 64);
+    signetctl_wipe_free_string(credential_payload_b64);
     return 1;
   }
 
@@ -904,7 +1147,14 @@ int main(int argc, char **argv) {
   char *intent = signetctl_build_intent(op, agent_id, request_id, policy_json,
                                         deliver_bootstrap_pubkey, delivery_ttl,
                                         adopt_sec, adopt_expected_pubkey,
-                                        revoke_client_pubkey);
+                                        revoke_client_pubkey, credential_id,
+                                        credential_type, credential_label,
+                                        credential_payload_b64,
+                                        credential_policy_id,
+                                        has_credential_expires_at,
+                                        credential_expires_at);
+  signetctl_wipe_free_string(credential_payload_b64);
+  credential_payload_b64 = NULL;
   if (!intent) {
     fprintf(stderr, "signetctl: failed to build intent\n");
     signet_config_clear(&cfg);

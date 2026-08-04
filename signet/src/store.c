@@ -342,6 +342,71 @@ static bool signet_derive_dek(const char *master_key, uint8_t dek[SIGNET_DEK_LEN
 
 /* ------------------------------ schema ----------------------------------- */
 
+static bool signet_store_has_column(sqlite3 *db,
+                                    const char *table,
+                                    const char *column) {
+  if (!db || !table || !column) return false;
+  char *sql = sqlite3_mprintf("PRAGMA table_info(%Q);", table);
+  if (!sql) return false;
+  sqlite3_stmt *stmt = NULL;
+  bool found = false;
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+      const char *name = (const char *)sqlite3_column_text(stmt, 1);
+      if (name && strcmp(name, column) == 0) {
+        found = true;
+        break;
+      }
+    }
+  }
+  sqlite3_finalize(stmt);
+  sqlite3_free(sql);
+  return found;
+}
+
+static bool signet_store_add_column(sqlite3 *db,
+                                    const char *table,
+                                    const char *column,
+                                    const char *definition) {
+  if (signet_store_has_column(db, table, column)) return true;
+  char *sql = sqlite3_mprintf("ALTER TABLE %w ADD COLUMN %w %s;",
+                              table, column, definition);
+  if (!sql) return false;
+  int rc = sqlite3_exec(db, sql, NULL, NULL, NULL);
+  sqlite3_free(sql);
+  return rc == SQLITE_OK;
+}
+
+/* Lifecycle metadata is security state, so unlike older best-effort additive
+ * migrations this one fails the store open if any step cannot be applied. */
+static bool signet_store_migrate_secret_lifecycle(sqlite3 *db) {
+  if (!db || sqlite3_exec(db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) != SQLITE_OK)
+    return false;
+
+  bool ok =
+      signet_store_add_column(db, "secrets", "provenance",
+                              "TEXT NOT NULL DEFAULT 'legacy'") &&
+      signet_store_add_column(db, "secrets", "created_by", "TEXT") &&
+      signet_store_add_column(db, "secrets", "revoked_at", "INTEGER") &&
+      signet_store_add_column(db, "secrets", "version_created_at", "INTEGER") &&
+      signet_store_add_column(db, "secret_versions", "expires_at", "INTEGER") &&
+      signet_store_add_column(db, "secret_versions", "provenance",
+                              "TEXT NOT NULL DEFAULT 'legacy'") &&
+      signet_store_add_column(db, "secret_versions", "retired_at", "INTEGER") &&
+      sqlite3_exec(db, "DROP INDEX IF EXISTS idx_secrets_pubkey;",
+                   NULL, NULL, NULL) == SQLITE_OK &&
+      sqlite3_exec(db,
+                   "CREATE INDEX IF NOT EXISTS idx_secrets_pubkey_lookup "
+                   "ON secrets(agent_pubkey);",
+                   NULL, NULL, NULL) == SQLITE_OK;
+
+  if (!ok || sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL) != SQLITE_OK) {
+    (void)sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+    return false;
+  }
+  return true;
+}
+
 static const char *SIGNET_SCHEMA_SQL =
   /* v1: agent keypair storage */
   "CREATE TABLE IF NOT EXISTS agents ("
@@ -372,10 +437,14 @@ static const char *SIGNET_SCHEMA_SQL =
   "  rotated_at INTEGER,"
   "  expires_at INTEGER,"
   "  version INTEGER DEFAULT 1,"
-  "  active_version INTEGER DEFAULT 1"
+  "  active_version INTEGER DEFAULT 1,"
+  "  provenance TEXT NOT NULL DEFAULT 'legacy',"
+  "  created_by TEXT,"
+  "  revoked_at INTEGER,"
+  "  version_created_at INTEGER"
   ");"
   "CREATE INDEX IF NOT EXISTS idx_secrets_agent ON secrets(agent_id);"
-  "CREATE UNIQUE INDEX IF NOT EXISTS idx_secrets_pubkey ON secrets(agent_pubkey);"
+  "CREATE INDEX IF NOT EXISTS idx_secrets_pubkey_lookup ON secrets(agent_pubkey);"
 
   /* v2: credential version history for rotation */
   "CREATE TABLE IF NOT EXISTS secret_versions ("
@@ -385,6 +454,9 @@ static const char *SIGNET_SCHEMA_SQL =
   "  nonce BLOB NOT NULL,"
   "  created_at INTEGER NOT NULL,"
   "  revoked_at INTEGER,"
+  "  expires_at INTEGER,"
+  "  provenance TEXT NOT NULL DEFAULT 'legacy',"
+  "  retired_at INTEGER,"
   "  PRIMARY KEY (id, version)"
   ");"
 
@@ -522,9 +594,15 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
   /* Open the database. Read-only mode (local introspection) opens READONLY so
    * it never takes write locks or runs schema migration against a live,
    * daemon-owned DB. */
-  int rc = cfg->read_only
-             ? sqlite3_open_v2(cfg->db_path, &store->db, SQLITE_OPEN_READONLY, NULL)
-             : sqlite3_open(cfg->db_path, &store->db);
+  /* The daemon shares one SQLCipher connection across signing, session,
+   * credential, lease, and audit paths. Force serialized connection mode even
+   * when the linked SQLite/SQLCipher library defaults to multi-thread mode.
+   * This makes every sqlite3 call on this handle participate in the same
+   * recursive connection mutex. */
+  int open_flags = cfg->read_only
+      ? (SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX)
+      : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX);
+  int rc = sqlite3_open_v2(cfg->db_path, &store->db, open_flags, NULL);
   if (rc != SQLITE_OK || !store->db) {
     g_warning("[signet] failed to open database '%s': %s", cfg->db_path,
               store->db ? sqlite3_errmsg(store->db) : sqlite3_errstr(rc));
@@ -599,6 +677,13 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
     g_critical("[signet] failed to apply base schema for '%s': %s",
                cfg->db_path, errmsg ? errmsg : sqlite3_errmsg(store->db));
     if (errmsg) sqlite3_free(errmsg);
+    signet_store_close(store);
+    return NULL;
+  }
+
+  if (!signet_store_migrate_secret_lifecycle(store->db)) {
+    g_critical("[signet] failed to apply credential lifecycle schema migration "
+               "for '%s': %s", cfg->db_path, sqlite3_errmsg(store->db));
     signet_store_close(store);
     return NULL;
   }

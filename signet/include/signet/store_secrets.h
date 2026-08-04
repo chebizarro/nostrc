@@ -77,6 +77,41 @@ typedef struct {
   int active_version;
 } SignetSecretRecord;
 
+typedef enum {
+  SIGNET_SECRET_OK = 0,
+  SIGNET_SECRET_NOT_FOUND = 1,
+  SIGNET_SECRET_EXISTS = 2,
+  SIGNET_SECRET_EXPIRED = 3,
+  SIGNET_SECRET_REVOKED = 4,
+  SIGNET_SECRET_NOT_REVOKED = 5,
+  SIGNET_SECRET_ERROR = -1,
+} SignetSecretResult;
+
+typedef enum {
+  SIGNET_SECRET_STATUS_ACTIVE = 0,
+  SIGNET_SECRET_STATUS_EXPIRED,
+  SIGNET_SECRET_STATUS_REVOKED,
+} SignetSecretStatus;
+
+/* Payload-free lifecycle metadata. None of these fields contain ciphertext,
+ * nonces, payload hashes, payload lengths, or decrypted secret material. */
+typedef struct {
+  char *id;
+  char *agent_id;
+  SignetSecretType secret_type;
+  char *label;
+  char *policy_id;
+  char *provenance;
+  char *created_by;
+  int64_t created_at;
+  int64_t rotated_at;
+  int64_t expires_at;
+  int64_t revoked_at;
+  int version;
+  int active_version;
+  SignetSecretStatus status;
+} SignetSecretMetadata;
+
 /* Map secret type to/from string. */
 /**
  * signet_secret_type_to_string:
@@ -101,8 +136,81 @@ const char *signet_secret_type_to_string(SignetSecretType t);
  */
 SignetSecretType signet_secret_type_from_string(const char *s);
 
-/* Store a new secret. Payload is envelope-encrypted before writing.
- * Returns 0 on success, -1 on error. */
+/* Strict parser for untrusted lifecycle requests. */
+bool signet_secret_type_parse(const char *s, SignetSecretType *out_type);
+
+/* Stable identifier derived only from owner, type, and label. */
+int signet_secret_id_generate(const char *agent_id,
+                              SignetSecretType secret_type,
+                              const char *label,
+                              char out_id[70]);
+
+/* Insert-only lifecycle creation/import. The owner pubkey is resolved from the
+ * agents table; caller-supplied pubkeys are never trusted. */
+SignetSecretResult signet_store_create_secret(
+    struct SignetStore *store,
+    const char *agent_id,
+    SignetSecretType secret_type,
+    const char *label,
+    const uint8_t *payload,
+    size_t payload_len,
+    const char *policy_id,
+    int64_t expires_at,
+    const char *provenance,
+    const char *created_by,
+    int64_t now,
+    SignetSecretMetadata *out_metadata);
+
+/* Metadata-only administrative inspection/listing. agent_id may be NULL for
+ * a provisioner listing all credentials. */
+SignetSecretResult signet_store_get_secret_metadata(
+    struct SignetStore *store,
+    const char *id,
+    int64_t now,
+    SignetSecretMetadata *out_metadata);
+SignetSecretResult signet_store_list_secret_metadata(
+    struct SignetStore *store,
+    const char *agent_id,
+    int64_t now,
+    SignetSecretMetadata **out_metadata,
+    size_t *out_count);
+
+/* Expiry/revocation-aware retrieval. No payload is decrypted when unavailable. */
+SignetSecretResult signet_store_get_secret_at(
+    struct SignetStore *store,
+    const char *id,
+    int64_t now,
+    SignetSecretRecord *out_record);
+
+/* Lifecycle mutations. Rotation preserves the previous encrypted version in
+ * secret_versions within the same transaction. */
+SignetSecretResult signet_store_rotate_secret_ex(
+    struct SignetStore *store,
+    const char *id,
+    const uint8_t *new_payload,
+    size_t new_payload_len,
+    bool replace_expires_at,
+    int64_t expires_at,
+    int64_t now,
+    SignetSecretMetadata *out_metadata);
+SignetSecretResult signet_store_revoke_secret(
+    struct SignetStore *store,
+    const char *id,
+    int64_t now,
+    SignetSecretMetadata *out_metadata);
+SignetSecretResult signet_store_delete_revoked_secret(
+    struct SignetStore *store,
+    const char *id);
+int signet_store_secret_history_count(struct SignetStore *store,
+                                      const char *id);
+
+const char *signet_secret_status_to_string(SignetSecretStatus status);
+void signet_secret_metadata_clear(SignetSecretMetadata *metadata);
+void signet_secret_metadata_list_free(SignetSecretMetadata *metadata,
+                                      size_t count);
+
+/* Legacy explicit-ID insert. Payload is envelope-encrypted before writing.
+ * Returns 0 on success, 1 when id exists, -1 on error. Never overwrites. */
 /**
  * signet_store_put_secret:
  * @store: (nullable): a #SignetStore
@@ -135,8 +243,8 @@ int signet_store_put_secret(struct SignetStore *store,
                             const char *policy_id,
                             int64_t now);
 
-/* Retrieve and decrypt a secret.
- * Returns 0 on success, 1 if not found, -1 on error. */
+/* Retrieve and decrypt an active, unexpired secret.
+ * Returns 0 on success, 1 if not found/unavailable, -1 on error. */
 /**
  * signet_store_get_secret:
  * @store: (nullable): a #SignetStore

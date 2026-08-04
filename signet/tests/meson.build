@@ -138,6 +138,22 @@ test_client_bindings = executable('test_client_bindings',
   install: false,
 )
 
+test_credential_lifecycle = executable('test_credential_lifecycle',
+  'test_credential_lifecycle.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: false,
+)
+
+test_item3_concurrency = executable('test_item3_concurrency',
+  'test_item3_concurrency.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: false,
+)
+
 test('signet_smoke', test_exe)
 test('replay_cache', test_replay)
 test('policy_engine', test_policy)
@@ -155,6 +171,11 @@ test('mgmt_replay', test_mgmt_replay)
 test('pubkey_backfill', test_pubkey_backfill)
 test('reissue_self_service', test_reissue_self_service)
 test('client_bindings', test_client_bindings)
+test('credential_lifecycle', test_credential_lifecycle)
+test('signetctl_credentials', find_program('sh'),
+  args: [meson.current_source_dir() / 'test_signetctl_credentials.sh',
+         signetctl_exe.full_path()])
+test('item3_concurrency', test_item3_concurrency, timeout: 60)
 
 if get_option('signet_enable_passkeys')
   test_store_passkeys = executable('test_store_passkeys',

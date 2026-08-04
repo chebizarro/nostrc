@@ -154,6 +154,13 @@ static char *signet_build_metrics(const SignetHealthSnapshot *s, uint64_t uptime
   g_string_append_printf(m, "# TYPE signet_revoke_total counter\n");
   g_string_append_printf(m, "signet_revoke_total %" G_GUINT64_FORMAT "\n", s->revoke_total);
 
+  g_string_append_printf(m, "# HELP signet_connection_denied_total Connections denied at transport limits.\n");
+  g_string_append_printf(m, "# TYPE signet_connection_denied_total counter\n");
+  g_string_append_printf(m, "signet_connection_denied_total{transport=\"nip5l\"} %" G_GUINT64_FORMAT "\n",
+                         s->nip5l_connections_denied);
+  g_string_append_printf(m, "signet_connection_denied_total{transport=\"ssh_agent\"} %" G_GUINT64_FORMAT "\n",
+                         s->ssh_agent_connections_denied);
+
   g_string_append_printf(m, "# HELP signet_fleet_sync_last_timestamp Fleet sync time.\n");
   g_string_append_printf(m, "# TYPE signet_fleet_sync_last_timestamp gauge\n");
   g_string_append_printf(m, "signet_fleet_sync_last_timestamp %" G_GINT64_FORMAT "\n",

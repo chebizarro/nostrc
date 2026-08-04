@@ -272,7 +272,7 @@ executable('signetd',
   install: true,
 )
 
-executable('signetctl',
+signetctl_exe = executable('signetctl',
   'src/signetctl_main.c',
   link_with: signet_core,
   include_directories: signet_includes,

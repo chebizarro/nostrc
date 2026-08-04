@@ -400,6 +400,10 @@ static gboolean signetd_health_tick(gpointer data) {
   snap.revoke_total = (uint64_t)g_atomic_int_get(&g_signet_metrics.revoke_total);
   snap.active_sessions = (uint32_t)g_atomic_int_get(&g_signet_metrics.active_sessions);
   snap.active_leases = (uint32_t)g_atomic_int_get(&g_signet_metrics.active_leases);
+  snap.nip5l_connections_denied =
+      (uint64_t)g_atomic_int_get(&g_signet_metrics.nip5l_connections_denied);
+  snap.ssh_agent_connections_denied =
+      (uint64_t)g_atomic_int_get(&g_signet_metrics.ssh_agent_connections_denied);
 
   int64_t now = signet_now_unix();
   snap.uptime_sec = (now >= ctx->started_at) ? (uint64_t)(now - ctx->started_at) : 0;

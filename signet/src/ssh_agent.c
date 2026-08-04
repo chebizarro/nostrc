@@ -20,6 +20,7 @@
 #include "signet/key_store.h"
 #include "signet/capability.h"
 #include "signet/audit_logger.h"
+#include "signet/health_server.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -44,7 +45,7 @@
 #define SSH_ED25519_KEYTYPE_LEN 11
 
 /* Limit concurrent per-client threads to avoid unbounded spawning. */
-#define SSH_AGENT_MAX_CONNECTIONS 64
+#define SSH_AGENT_MAX_CONNECTIONS 8
 
 struct SignetSshAgent {
   char *socket_path;
@@ -57,7 +58,10 @@ struct SignetSshAgent {
   int listen_fd;
   GThread *accept_thread;
   volatile gint running;
-  volatile gint active_clients;
+  guint active_clients;
+  GHashTable *client_fds;
+  GMutex clients_mu;
+  GCond clients_drained;
 };
 
 /* ----------------------------- wire helpers ------------------------------- */
@@ -293,7 +297,6 @@ static void handle_client(SignetSshAgent *sa, int client_fd) {
     peer_uid = euid;
 #endif
   if (peer_uid == (uid_t)-1) {
-    close(client_fd);
     return;
   }
 
@@ -302,7 +305,6 @@ static void handle_client(SignetSshAgent *sa, int client_fd) {
     agent_id = sa->uid_resolver(peer_uid, sa->uid_resolver_data);
   }
   if (!agent_id) {
-    close(client_fd);
     return;
   }
 
@@ -339,7 +341,6 @@ static void handle_client(SignetSshAgent *sa, int client_fd) {
   }
 
   g_free(agent_id);
-  close(client_fd);
 }
 
 /* ---- per-client thread data ---- */
@@ -352,7 +353,12 @@ typedef struct {
 static gpointer ssh_agent_client_thread(gpointer data) {
   SshClientThreadData *td = (SshClientThreadData *)data;
   handle_client(td->sa, td->client_fd);
-  g_atomic_int_add(&td->sa->active_clients, -1);
+  g_mutex_lock(&td->sa->clients_mu);
+  g_hash_table_remove(td->sa->client_fds, GINT_TO_POINTER(td->client_fd));
+  if (td->sa->active_clients > 0) td->sa->active_clients--;
+  if (td->sa->active_clients == 0) g_cond_broadcast(&td->sa->clients_drained);
+  g_mutex_unlock(&td->sa->clients_mu);
+  close(td->client_fd);
   g_free(td);
   return NULL;
 }
@@ -368,12 +374,16 @@ static gpointer ssh_agent_accept_loop(gpointer data) {
       if (errno == EINTR) continue;
       break;
     }
-    gint prev = g_atomic_int_add(&sa->active_clients, 1);
-    if (prev >= SSH_AGENT_MAX_CONNECTIONS) {
-      g_atomic_int_add(&sa->active_clients, -1);
+    g_mutex_lock(&sa->clients_mu);
+    if (sa->active_clients >= SSH_AGENT_MAX_CONNECTIONS) {
+      g_atomic_int_inc(&g_signet_metrics.ssh_agent_connections_denied);
+      g_mutex_unlock(&sa->clients_mu);
       close(client_fd);
       continue;
     }
+    sa->active_clients++;
+    g_hash_table_add(sa->client_fds, GINT_TO_POINTER(client_fd));
+    g_mutex_unlock(&sa->clients_mu);
 
     /* Handle each client in its own thread for concurrency. */
     SshClientThreadData *td = g_new(SshClientThreadData, 1);
@@ -383,7 +393,11 @@ static gpointer ssh_agent_accept_loop(gpointer data) {
     if (t) {
       g_thread_unref(t); /* detach — client thread manages its own lifetime */
     } else {
-      g_atomic_int_add(&sa->active_clients, -1);
+      g_mutex_lock(&sa->clients_mu);
+      g_hash_table_remove(sa->client_fds, GINT_TO_POINTER(client_fd));
+      if (sa->active_clients > 0) sa->active_clients--;
+      if (sa->active_clients == 0) g_cond_broadcast(&sa->clients_drained);
+      g_mutex_unlock(&sa->clients_mu);
       close(client_fd);
       g_free(td);
     }
@@ -408,6 +422,9 @@ SignetSshAgent *signet_ssh_agent_new(const SignetSshAgentConfig *cfg) {
   sa->uid_resolver = cfg->uid_resolver;
   sa->uid_resolver_data = cfg->uid_resolver_data;
   sa->listen_fd = -1;
+  sa->client_fds = g_hash_table_new(g_direct_hash, g_direct_equal);
+  g_mutex_init(&sa->clients_mu);
+  g_cond_init(&sa->clients_drained);
 
   return sa;
 }
@@ -415,6 +432,9 @@ SignetSshAgent *signet_ssh_agent_new(const SignetSshAgentConfig *cfg) {
 void signet_ssh_agent_free(SignetSshAgent *sa) {
   if (!sa) return;
   signet_ssh_agent_stop(sa);
+  g_hash_table_destroy(sa->client_fds);
+  g_cond_clear(&sa->clients_drained);
+  g_mutex_clear(&sa->clients_mu);
   g_free(sa->socket_path);
   g_free(sa);
 }
@@ -466,6 +486,16 @@ void signet_ssh_agent_stop(SignetSshAgent *sa) {
     g_thread_join(sa->accept_thread);
     sa->accept_thread = NULL;
   }
+
+  g_mutex_lock(&sa->clients_mu);
+  GHashTableIter iter;
+  gpointer fd_key;
+  g_hash_table_iter_init(&iter, sa->client_fds);
+  while (g_hash_table_iter_next(&iter, &fd_key, NULL))
+    shutdown(GPOINTER_TO_INT(fd_key), SHUT_RDWR);
+  while (sa->active_clients > 0)
+    g_cond_wait(&sa->clients_drained, &sa->clients_mu);
+  g_mutex_unlock(&sa->clients_mu);
 
   (void)unlink(sa->socket_path);
 }

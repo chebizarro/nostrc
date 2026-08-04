@@ -19,6 +19,7 @@
 #include "signet/audit_logger.h"
 
 #include <inttypes.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -542,8 +543,12 @@ int signet_bootstrap_server_start(SignetBootstrapServer *bs) {
   const char *colon = strrchr(bs->listen, ':');
   if (!colon || colon[1] == '\0') return -1;
 
-  unsigned int port = (unsigned int)atoi(colon + 1);
-  if (port == 0 && strcmp(colon + 1, "0") != 0) return -1;
+  errno = 0;
+  char *end = NULL;
+  unsigned long parsed = strtoul(colon + 1, &end, 10);
+  if (errno != 0 || end == colon + 1 || *end != '\0' || parsed > 65535UL)
+    return -1;
+  unsigned int port = (unsigned int)parsed;
 
   bs->mhd = MHD_start_daemon(
       MHD_USE_INTERNAL_POLLING_THREAD | MHD_USE_ERROR_LOG,

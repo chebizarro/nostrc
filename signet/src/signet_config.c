@@ -128,6 +128,16 @@ static SignetLogLevel signet_parse_log_level(const char *s) {
   return SIGNET_LOG_INFO;
 }
 
+static int signet_parse_port(const char *raw) {
+  if (!raw || !raw[0]) return -1;
+  errno = 0;
+  char *end = NULL;
+  long value = strtol(raw, &end, 10);
+  if (errno != 0 || end == raw || *end != '\0' || value < 0 || value > 65535)
+    return -1;
+  return (int)value;
+}
+
 /* Safe strncpy that always NUL-terminates. */
 static void signet_strlcpy(char *dst, const char *src, size_t dst_sz) {
   if (!dst || dst_sz == 0) return;
@@ -441,7 +451,7 @@ static void signet_config_apply_env(SignetConfig *cfg) {
   if (val) cfg->log_level = signet_parse_log_level(val);
 
   val = g_getenv("SIGNET_HEALTH_PORT");
-  if (val) cfg->health_port = atoi(val);
+  if (val) cfg->health_port = signet_parse_port(val);
 
   val = g_getenv("SIGNET_DB_PATH");
   if (val) signet_strlcpy(cfg->db_path, val, sizeof(cfg->db_path));
@@ -511,7 +521,7 @@ static void signet_config_apply_env(SignetConfig *cfg) {
 
   /* v2 transport overrides */
   val = g_getenv("SIGNET_BOOTSTRAP_PORT");
-  if (val) cfg->bootstrap_port = atoi(val);
+  if (val) cfg->bootstrap_port = signet_parse_port(val);
 
   val = g_getenv("SIGNET_DBUS_UNIX");
   if (val) cfg->dbus_unix_enabled = (atoi(val) != 0 || g_ascii_strcasecmp(val, "true") == 0);
@@ -520,7 +530,7 @@ static void signet_config_apply_env(SignetConfig *cfg) {
   if (val) cfg->dbus_tcp_enabled = (atoi(val) != 0 || g_ascii_strcasecmp(val, "true") == 0);
 
   val = g_getenv("SIGNET_DBUS_TCP_PORT");
-  if (val) cfg->dbus_tcp_port = atoi(val);
+  if (val) cfg->dbus_tcp_port = signet_parse_port(val);
 
   val = g_getenv("SIGNET_NIP5L");
   if (val) cfg->nip5l_enabled = (atoi(val) != 0 || g_ascii_strcasecmp(val, "true") == 0);
@@ -585,6 +595,22 @@ int signet_config_validate(const SignetConfig *cfg, char *err_buf, size_t err_bu
   if (!cfg) {
     if (err_buf && err_buf_len > 0)
       snprintf(err_buf, err_buf_len, "config is NULL");
+    return -1;
+  }
+
+  if (cfg->health_port < 0 || cfg->health_port > 65535) {
+    if (err_buf && err_buf_len > 0)
+      snprintf(err_buf, err_buf_len, "health_port must be in range 0..65535");
+    return -1;
+  }
+  if (cfg->bootstrap_port < 0 || cfg->bootstrap_port > 65535) {
+    if (err_buf && err_buf_len > 0)
+      snprintf(err_buf, err_buf_len, "bootstrap port must be in range 0..65535");
+    return -1;
+  }
+  if (cfg->dbus_tcp_port < 0 || cfg->dbus_tcp_port > 65535) {
+    if (err_buf && err_buf_len > 0)
+      snprintf(err_buf, err_buf_len, "D-Bus TCP port must be in range 0..65535");
     return -1;
   }
 

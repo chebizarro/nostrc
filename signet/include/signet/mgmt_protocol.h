@@ -73,6 +73,13 @@ typedef enum {
   SIGNET_MGMT_OP_REISSUE_CONNECT,
   SIGNET_MGMT_OP_LIST_CLIENTS,
   SIGNET_MGMT_OP_REVOKE_CLIENT,
+  SIGNET_MGMT_OP_CREATE_CREDENTIAL,
+  SIGNET_MGMT_OP_IMPORT_CREDENTIAL,
+  SIGNET_MGMT_OP_LIST_CREDENTIALS,
+  SIGNET_MGMT_OP_INSPECT_CREDENTIAL,
+  SIGNET_MGMT_OP_ROTATE_CREDENTIAL,
+  SIGNET_MGMT_OP_REVOKE_CREDENTIAL,
+  SIGNET_MGMT_OP_DELETE_CREDENTIAL,
 } SignetMgmtOp;
 
 /* Parsed management request from event content JSON. */
@@ -100,6 +107,16 @@ typedef struct {
   char *expected_pubkey;   /* adopt: require derived pubkey to match (owned) */
   char *connect_secret;    /* adopt: optional fixed connect secret (owned) */
   char *client_pubkey;     /* revoke-client: target NIP-46 client pubkey (owned) */
+
+  /* Generic credential lifecycle fields. payload_b64 is sensitive and is
+   * accepted only inside the encrypted ContextVM request. */
+  char *credential_id;
+  char *secret_type;
+  char *label;
+  char *payload_b64;
+  char *credential_policy_id;
+  int64_t credential_expires_at;
+  bool has_credential_expires_at;
 } SignetMgmtRequest;
 
 /* Map op to canonical string name. Returns static string. */
