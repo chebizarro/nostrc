@@ -17,6 +17,7 @@
 #include <adwaita.h>
 #include <glib.h>
 #include <nostr-gtk-1.0/nostr-note-card-row.h>
+#include <nostr-gtk-1.0/content_renderer.h>
 
 /* ── Size thresholds (in pixels) ──────────────────────────────────── */
 /* These should be adjusted based on the actual design requirements.
@@ -300,6 +301,96 @@ test_note_card_reserved_height_blocks_passive_expansion(void)
     g_object_unref(row);
 }
 
+static guint rich_media_request_count;
+
+static void
+fake_media_texture_request(gpointer loader,
+                           const char *url,
+                           NostrGtkMediaResourceClass resource_class,
+                           int target_width,
+                           int target_height,
+                           GCancellable *cancellable,
+                           NostrGtkMediaTextureReadyFunc callback,
+                           gpointer user_data,
+                           GDestroyNotify user_data_destroy)
+{
+    g_assert_nonnull(loader);
+    g_assert_nonnull(url);
+    g_assert_cmpint(resource_class, ==, NOSTR_GTK_MEDIA_RESOURCE_INLINE);
+    g_assert_cmpint(target_width, >, 0);
+    g_assert_cmpint(target_height, >, 0);
+    g_assert_false(g_cancellable_is_cancelled(cancellable));
+    rich_media_request_count++;
+
+    const guint8 pixel[] = { 0x33, 0x66, 0x99, 0xff };
+    g_autoptr(GBytes) bytes = g_bytes_new_static(pixel, sizeof(pixel));
+    g_autoptr(GdkTexture) texture = GDK_TEXTURE(gdk_memory_texture_new(
+        1, 1, GDK_MEMORY_R8G8B8A8, bytes, 4));
+    callback(texture, NULL, user_data);
+    if (user_data_destroy)
+        user_data_destroy(user_data);
+}
+
+static void
+test_rich_content_hydration_preserves_reserved_height(void)
+{
+    rich_media_request_count = 0;
+    NostrGtkNoteCardRow *row = nostr_gtk_note_card_row_new();
+    nostr_gtk_note_card_row_prepare_for_bind(row);
+    nostr_gtk_note_card_row_set_content(row, "Rich content geometry");
+    nostr_gtk_note_card_row_set_reserved_height(row, 720);
+    nostr_gtk_note_card_row_set_media_texture_loader(
+        row, &rich_media_request_count, fake_media_texture_request);
+
+    GnContentDescriptor image = {
+        .type = GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE,
+        .url = "https://example.test/image.png",
+    };
+    GnContentDescriptor link = {
+        .type = GN_CONTENT_DESCRIPTOR_LINK_PREVIEW,
+        .url = "https://example.test/article",
+    };
+    GnContentDescriptor embed = {
+        .type = GN_CONTENT_DESCRIPTOR_NOSTR_EVENT_REF,
+        .original = "nostr:note1placeholder",
+    };
+    g_autoptr(GPtrArray) descriptors = g_ptr_array_new();
+    g_ptr_array_add(descriptors, &image);
+    g_ptr_array_add(descriptors, &link);
+    g_ptr_array_add(descriptors, &embed);
+
+    nostr_gtk_note_card_row_set_rich_content(row, descriptors, 240, 120, 160);
+
+    int before_min = 0, before_nat = 0;
+    gtk_widget_measure(GTK_WIDGET(row), GTK_ORIENTATION_VERTICAL,
+                       REFERENCE_WIDTH_PX, &before_min, &before_nat, NULL, NULL);
+    g_assert_cmpint(before_min, ==, 720);
+    g_assert_cmpint(before_nat, ==, 720);
+    g_assert_cmpuint(rich_media_request_count, ==, 0);
+
+    GtkWindow *window = GTK_WINDOW(gtk_window_new());
+    gtk_window_set_default_size(window, REFERENCE_WIDTH_PX, 720);
+    gtk_window_set_child(window, GTK_WIDGET(row));
+    gtk_window_present(window);
+
+    gint64 deadline = g_get_monotonic_time() + 500 * G_TIME_SPAN_MILLISECOND;
+    while (rich_media_request_count == 0 && g_get_monotonic_time() < deadline) {
+        while (g_main_context_iteration(NULL, FALSE)) {}
+        g_usleep(1000);
+    }
+    while (g_main_context_iteration(NULL, FALSE)) {}
+    g_assert_cmpuint(rich_media_request_count, ==, 1);
+
+    int after_min = 0, after_nat = 0;
+    gtk_widget_measure(GTK_WIDGET(row), GTK_ORIENTATION_VERTICAL,
+                       REFERENCE_WIDTH_PX, &after_min, &after_nat, NULL, NULL);
+    g_assert_cmpint(after_min, ==, before_min);
+    g_assert_cmpint(after_nat, ==, before_nat);
+
+    gtk_window_destroy(window);
+    while (g_main_context_iteration(NULL, FALSE)) {}
+}
+
 static void
 test_note_card_explicit_expansion_allows_natural_height(void)
 {
@@ -344,6 +435,8 @@ main(int argc, char *argv[])
                     test_note_card_reserved_height_blocks_passive_expansion);
     g_test_add_func("/nostr-gtk/sizing/note-card-explicit-expansion",
                     test_note_card_explicit_expansion_allows_natural_height);
+    g_test_add_func("/nostr-gtk/sizing/rich-content-hydration-fixed",
+                    test_rich_content_hydration_preserves_reserved_height);
 
     return g_test_run();
 }

@@ -9,6 +9,7 @@
 #include "../model/gn-nostr-event-item.h"
 #include "../model/gnostr-timeline-snapshot.h"
 #include "../model/gnostr-timeline-snapshot-model.h"
+#include "../services/gnostr-media-service.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include "nostr-event.h"
 #include "nostr-json.h"
@@ -213,6 +214,69 @@ static void on_event_item_profile_changed(GObject *event_item, GParamSpec *pspec
                                                         GN_NOSTR_EVENT_ITEM(event_item)));
 }
 
+typedef struct {
+  NostrGtkMediaTextureReadyFunc callback;
+  gpointer user_data;
+  GDestroyNotify user_data_destroy;
+} RowMediaRequestBridge;
+
+static void
+row_media_request_bridge_free(gpointer data)
+{
+  RowMediaRequestBridge *bridge = data;
+  if (!bridge) return;
+  if (bridge->user_data_destroy)
+    bridge->user_data_destroy(bridge->user_data);
+  g_free(bridge);
+}
+
+static void
+on_app_media_texture_ready(GnostrMediaService *service,
+                           const char *url,
+                           GdkTexture *texture,
+                           const GError *error,
+                           gpointer user_data)
+{
+  (void)service;
+  (void)url;
+  RowMediaRequestBridge *bridge = user_data;
+  bridge->callback(texture, error, bridge->user_data);
+}
+
+static void
+request_row_media_texture(gpointer loader,
+                          const char *url,
+                          NostrGtkMediaResourceClass resource_class,
+                          int target_width,
+                          int target_height,
+                          GCancellable *cancellable,
+                          NostrGtkMediaTextureReadyFunc callback,
+                          gpointer user_data,
+                          GDestroyNotify user_data_destroy)
+{
+  GnostrMediaResourceClass app_class = GNOSTR_MEDIA_RESOURCE_INLINE;
+  switch (resource_class) {
+    case NOSTR_GTK_MEDIA_RESOURCE_OG_IMAGE:
+      app_class = GNOSTR_MEDIA_RESOURCE_OG_IMAGE;
+      break;
+    case NOSTR_GTK_MEDIA_RESOURCE_VIDEO_POSTER:
+      app_class = GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER;
+      break;
+    case NOSTR_GTK_MEDIA_RESOURCE_INLINE:
+    default:
+      break;
+  }
+
+  RowMediaRequestBridge *bridge = g_new0(RowMediaRequestBridge, 1);
+  bridge->callback = callback;
+  bridge->user_data = user_data;
+  bridge->user_data_destroy = user_data_destroy;
+  gnostr_media_service_request_texture(
+      GNOSTR_MEDIA_SERVICE(loader), url, app_class,
+      target_width, target_height, cancellable,
+      on_app_media_texture_ready, bridge, row_media_request_bridge_free);
+}
+
 /* Handler for search-hashtag signal from note card rows */
 static void on_note_card_search_hashtag(NostrGtkNoteCardRow *row, const char *hashtag, gpointer user_data) {
   (void)row;
@@ -227,6 +291,10 @@ static void on_note_card_search_hashtag(NostrGtkNoteCardRow *row, const char *ha
 
 static GtkWidget *create_timeline_note_card_row(NostrGtkTimelineView *self) {
   GtkWidget *row = GTK_WIDGET(nostr_gtk_note_card_row_new());
+  nostr_gtk_note_card_row_set_media_texture_loader(
+      NOSTR_GTK_NOTE_CARD_ROW(row),
+      gnostr_media_service_get_default(),
+      request_row_media_texture);
 
   /* nostrc-hqtn: Connect all main-window-bound action signals once for the
    * row lifetime. Bind/unbind only manages per-item signals. */
@@ -970,24 +1038,22 @@ bind_row_common(NostrGtkTimelineView *self,
           nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
         }
       } else {
-        /* Snapshot rows bind text from immutable VM data and reserve rich
-         * content slots only as inert placeholders. This path intentionally
-         * avoids bind/map-time content parsing, DB lookups, request-embed
-         * emission, OG fetches, and media loads. */
+        /* Snapshot rows bind text and ordered rich descriptors from immutable
+         * VM data. Fixed frames are built at bind; inline image hydration is
+         * map-gated inside those frames. Link and embed frames stay placeholders
+         * until WI-5, without parsing content or issuing DB/embed work here. */
         nostr_gtk_note_card_row_set_precomputed_markup(
           NOSTR_GTK_NOTE_CARD_ROW(row),
           content,
           snapshot_vm ? gnostr_timeline_item_view_model_get_rendered_content(snapshot_vm) : NULL);
         if (snapshot_vm) {
           GnostrTimelineSnapshotRow *snapshot_row = GNOSTR_TIMELINE_SNAPSHOT_ROW(obj);
-          nostr_gtk_note_card_row_set_media_urls_reserved(
+          nostr_gtk_note_card_row_set_rich_content(
             NOSTR_GTK_NOTE_CARD_ROW(row),
-            gnostr_timeline_item_view_model_get_media_urls(snapshot_vm),
-            gnostr_timeline_snapshot_row_get_media_reserved_height(snapshot_row));
-          nostr_gtk_note_card_row_set_link_preview_urls_reserved(
-            NOSTR_GTK_NOTE_CARD_ROW(row),
-            gnostr_timeline_item_view_model_get_links(snapshot_vm),
-            gnostr_timeline_snapshot_row_get_link_preview_reserved_height(snapshot_row));
+            gnostr_timeline_item_view_model_get_content_descriptors(snapshot_vm),
+            gnostr_timeline_snapshot_row_get_media_reserved_height(snapshot_row),
+            gnostr_timeline_snapshot_row_get_link_preview_reserved_height(snapshot_row),
+            gnostr_timeline_snapshot_row_get_embed_reserved_height(snapshot_row));
         }
       }
     }

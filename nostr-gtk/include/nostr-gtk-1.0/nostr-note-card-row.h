@@ -20,6 +20,34 @@ G_BEGIN_DECLS
  * The actual struct is an anonymous typedef; we declare a compatible tag here
  * so consumers can use pointers without the full definition. */
 typedef struct GnContentRenderResult GnContentRenderResult;
+typedef struct GnContentDescriptor GnContentDescriptor;
+
+/**
+ * NostrGtkMediaResourceClass:
+ *
+ * Library-neutral media classes used by the injected texture loader.  The
+ * application maps these values to its media service without nostr-gtk linking
+ * against app sources.
+ */
+typedef enum {
+  NOSTR_GTK_MEDIA_RESOURCE_INLINE,
+  NOSTR_GTK_MEDIA_RESOURCE_OG_IMAGE,
+  NOSTR_GTK_MEDIA_RESOURCE_VIDEO_POSTER,
+} NostrGtkMediaResourceClass;
+
+typedef void (*NostrGtkMediaTextureReadyFunc)(GdkTexture *texture,
+                                               const GError *error,
+                                               gpointer user_data);
+
+typedef void (*NostrGtkMediaTextureRequestFunc)(gpointer loader,
+                                                 const char *url,
+                                                 NostrGtkMediaResourceClass resource_class,
+                                                 int target_width,
+                                                 int target_height,
+                                                 GCancellable *cancellable,
+                                                 NostrGtkMediaTextureReadyFunc callback,
+                                                 gpointer user_data,
+                                                 GDestroyNotify user_data_destroy);
 
 #define NOSTR_GTK_TYPE_NOTE_CARD_ROW (nostr_gtk_note_card_row_get_type())
 
@@ -185,32 +213,39 @@ void nostr_gtk_note_card_row_set_precomputed_markup(NostrGtkNoteCardRow *self,
                                                     const char *markup);
 
 /**
- * nostr_gtk_note_card_row_set_media_urls_reserved:
+ * nostr_gtk_note_card_row_set_media_texture_loader:
  * @self: note card row
- * @media_urls: (nullable): NULL-terminated media URL array from an immutable VM
- * @reserved_height: reserved media area height in pixels
+ * @loader: (nullable): opaque loader instance, which must outlive @self
+ * @request_func: (nullable): async texture request function
  *
- * Reserves an inert media placeholder area immediately. This snapshot-path
- * helper must not create media widgets or start media/network loading from
- * bind/map unless a future API supplies already-resolved immutable media data.
+ * Injects an application-owned bounded media loader.  Passing %NULL restores
+ * the nostr-gtk Soup/LRU fallback used by non-app consumers.
  */
-void nostr_gtk_note_card_row_set_media_urls_reserved(NostrGtkNoteCardRow *self,
-                                                     const char * const *media_urls,
-                                                     double reserved_height);
+void nostr_gtk_note_card_row_set_media_texture_loader(
+    NostrGtkNoteCardRow *self,
+    gpointer loader,
+    NostrGtkMediaTextureRequestFunc request_func);
 
 /**
- * nostr_gtk_note_card_row_set_link_preview_urls_reserved:
+ * nostr_gtk_note_card_row_set_rich_content:
  * @self: note card row
- * @links: (nullable): NULL-terminated URL array from an immutable VM
- * @reserved_height: reserved link preview area height in pixels
+ * @descriptors: (nullable) (element-type GnContentDescriptor): ordered,
+ *   immutable rich-content descriptors borrowed for this call
+ * @media_reserved_height: fixed media reservation in pixels
+ * @link_preview_reserved_height: fixed link-preview reservation in pixels
+ * @embed_reserved_height: fixed event-embed reservation in pixels
  *
- * Reserves an inert link-preview placeholder area. This snapshot-path helper
- * must not create OG preview widgets or start URL fetches from bind/map unless
- * a future API supplies already-resolved immutable preview data.
+ * Builds fixed-size frames during bind.  Inline image requests remain map-gated
+ * and scroll-debounced; video, link-preview and event-embed frames are
+ * placeholders until their later hydration work items.  Hydration never changes
+ * the reserved frame or outer row geometry.
  */
-void nostr_gtk_note_card_row_set_link_preview_urls_reserved(NostrGtkNoteCardRow *self,
-                                                            const char * const *links,
-                                                            double reserved_height);
+void nostr_gtk_note_card_row_set_rich_content(
+    NostrGtkNoteCardRow *self,
+    const GPtrArray *descriptors,
+    double media_reserved_height,
+    double link_preview_reserved_height,
+    double embed_reserved_height);
 
 /**
  * nostr_gtk_note_card_row_apply_deferred_content:

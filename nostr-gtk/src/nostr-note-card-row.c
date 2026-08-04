@@ -186,6 +186,8 @@ struct _NostrGtkNoteCardRow {
   GtkWidget *content_label;
   GtkWidget *emoji_box;  /* NIP-30: Custom emoji display box */
   GtkWidget *media_box;
+  gpointer media_texture_loader; /* borrowed application service */
+  NostrGtkMediaTextureRequestFunc media_texture_request_func;
   GtkWidget *embed_box;
   GtkWidget *og_preview_container;
   GtkWidget *actions_box;
@@ -203,7 +205,7 @@ struct _NostrGtkNoteCardRow {
 #ifdef HAVE_SOUP3
   GCancellable *avatar_cancellable;
   SoupSession *media_session;
-  GHashTable *media_cancellables; /* URL -> GCancellable */
+  GHashTable *media_cancellables; /* request key -> GCancellable */
 #endif
   guint depth;
   char *id_hex;
@@ -412,6 +414,25 @@ enum {
 };
 static guint signals[N_SIGNALS];
 
+static void
+quiesce_media_widget_tree(GtkWidget *widget)
+{
+  if (!widget) return;
+  if (GNOSTR_IS_VIDEO_PLAYER(widget))
+    gnostr_video_player_stop(GNOSTR_VIDEO_PLAYER(widget));
+  if (GTK_IS_PICTURE(widget))
+    gtk_picture_set_paintable(GTK_PICTURE(widget), NULL);
+  else if (GTK_IS_IMAGE(widget))
+    gtk_image_clear(GTK_IMAGE(widget));
+  else if (GTK_IS_SPINNER(widget))
+    gtk_spinner_stop(GTK_SPINNER(widget));
+
+  for (GtkWidget *child = gtk_widget_get_first_child(widget);
+       child;
+       child = gtk_widget_get_next_sibling(child))
+    quiesce_media_widget_tree(child);
+}
+
 /* Centralized teardown quiesce path used by both unbind and dispose.
  * This function performs LIMITED visual mutations that are safe during unbind:
  * - Clearing high-risk label markup (content_label) to prevent Pango crashes
@@ -493,6 +514,10 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
         g_cancellable_cancel(cancellable);
       }
     }
+    /* The media service and Soup requests retain their own cancellable refs.
+     * Drop row-owned entries immediately so an unbound pooled row cannot retain
+     * canceled per-frame state until its next bind. */
+    g_hash_table_remove_all(self->media_cancellables);
     if (clear_cancellable_refs) {
       g_clear_pointer(&self->media_cancellables, g_hash_table_unref);
       g_clear_object(&self->media_session);
@@ -514,40 +539,10 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
   }
   self->video_player = NULL;
 
-  if (self->media_box && GTK_IS_BOX(self->media_box)) {
-    GtkWidget *child = gtk_widget_get_first_child(self->media_box);
-    while (child) {
-      if (GNOSTR_IS_VIDEO_PLAYER(child)) {
-        gnostr_video_player_stop(GNOSTR_VIDEO_PLAYER(child));
-      }
-      /* nostrc-imgdef: Walk overlay children to clear BOTH GtkPicture paintables
-       * AND GtkImage icon-names. The media containers (GtkOverlay) hold:
-       *   - GtkPicture (the image) — clear paintable
-       *   - GtkSpinner (loading indicator) — stop and hide
-       *   - GtkImage (error fallback) — clear icon to reset GtkImageDefinition
-       * Clearing icon-name sets the internal GtkImageDefinition to EMPTY type,
-       * which is a safe state for finalization even if heap corruption has
-       * damaged adjacent memory. */
-      if (GTK_IS_OVERLAY(child)) {
-        GtkWidget *ov_child = gtk_widget_get_first_child(child);
-        while (ov_child) {
-          if (GTK_IS_PICTURE(ov_child)) {
-            gtk_picture_set_paintable(GTK_PICTURE(ov_child), NULL);
-          } else if (GTK_IS_IMAGE(ov_child)) {
-            gtk_image_clear(GTK_IMAGE(ov_child));
-          } else if (GTK_IS_SPINNER(ov_child)) {
-            gtk_spinner_stop(GTK_SPINNER(ov_child));
-          }
-          ov_child = gtk_widget_get_next_sibling(ov_child);
-        }
-      }
-      /* Backwards compat: direct GtkPicture children of media_box */
-      if (GTK_IS_PICTURE(child)) {
-        gtk_picture_set_paintable(GTK_PICTURE(child), NULL);
-      }
-      child = gtk_widget_get_next_sibling(child);
-    }
-  }
+  /* Clear every dynamically nested media paintable before children are
+   * removed. Snapshot rich media uses a GtkGrid below media_box, while the
+   * legacy path keeps direct overlay children. */
+  quiesce_media_widget_tree(self->media_box);
 
   /* On unbind, remove dynamically attached children so dispose_template() sees
    * only the template-owned widget tree. This covers the hot trim/recycle path
@@ -2331,6 +2326,17 @@ NostrGtkNoteCardRow *nostr_gtk_note_card_row_new(void) {
 }
 
 void
+nostr_gtk_note_card_row_set_media_texture_loader(
+    NostrGtkNoteCardRow *self,
+    gpointer loader,
+    NostrGtkMediaTextureRequestFunc request_func)
+{
+  g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
+  self->media_texture_loader = loader;
+  self->media_texture_request_func = request_func;
+}
+
+void
 nostr_gtk_note_card_row_set_reserved_height(NostrGtkNoteCardRow *self,
                                             gint reserved_height)
 {
@@ -2471,6 +2477,109 @@ static void show_loaded_image(GtkWidget *container) {
   if (GTK_IS_PICTURE(picture)) {
     gtk_widget_set_visible(picture, TRUE);
   }
+}
+
+typedef struct {
+  NoteCardBindingContext *binding_ctx;
+  GWeakRef picture_ref;
+  gchar *url;
+  gchar *request_key;
+  guint64 binding_id;
+  gint row_height_before_hydration;
+} InjectedMediaLoadCtx;
+
+static void
+injected_media_load_ctx_free(gpointer data)
+{
+  InjectedMediaLoadCtx *ctx = data;
+  if (!ctx) return;
+  if (ctx->binding_ctx)
+    note_card_binding_context_unref(ctx->binding_ctx);
+  g_weak_ref_clear(&ctx->picture_ref);
+  g_free(ctx->url);
+  g_free(ctx->request_key);
+  g_free(ctx);
+}
+
+#ifndef G_DISABLE_ASSERT
+typedef struct {
+  NoteCardBindingContext *binding_ctx;
+  guint64 binding_id;
+  gint expected_height;
+} GeometryInvariantCtx;
+
+static gboolean
+assert_hydrated_geometry_unchanged(gpointer data)
+{
+  GeometryInvariantCtx *ctx = data;
+  GObject *row_obj = note_card_binding_context_get_row(ctx->binding_ctx);
+  if (row_obj) {
+    NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(row_obj);
+    if (self->binding_id == ctx->binding_id && ctx->expected_height > 0)
+      g_assert_cmpint(gtk_widget_get_height(GTK_WIDGET(self)), ==, ctx->expected_height);
+    g_object_unref(row_obj);
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static void
+geometry_invariant_ctx_free(gpointer data)
+{
+  GeometryInvariantCtx *ctx = data;
+  if (ctx->binding_ctx)
+    note_card_binding_context_unref(ctx->binding_ctx);
+  g_free(ctx);
+}
+#endif
+
+static void
+on_injected_media_texture_ready(GdkTexture *texture,
+                                const GError *error,
+                                gpointer user_data)
+{
+  InjectedMediaLoadCtx *ctx = user_data;
+  GObject *row_obj = note_card_binding_context_get_row(ctx->binding_ctx);
+  GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
+
+  if (!row_obj || !picture) {
+    if (row_obj) g_object_unref(row_obj);
+    if (picture) g_object_unref(picture);
+    return;
+  }
+
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(row_obj);
+  if (self->binding_id == ctx->binding_id &&
+      !self->disposed &&
+      GTK_IS_PICTURE(picture) &&
+      gtk_widget_get_native(picture) != NULL &&
+      gtk_widget_get_mapped(picture)) {
+    GtkWidget *container = gtk_widget_get_parent(picture);
+    if (texture) {
+      gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
+      if (container) show_loaded_image(container);
+#ifndef G_DISABLE_ASSERT
+      if (ctx->row_height_before_hydration > 0) {
+        GeometryInvariantCtx *assert_ctx = g_new0(GeometryInvariantCtx, 1);
+        assert_ctx->binding_ctx = note_card_binding_context_ref(ctx->binding_ctx);
+        assert_ctx->binding_id = ctx->binding_id;
+        assert_ctx->expected_height = ctx->row_height_before_hydration;
+        g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+                        assert_hydrated_geometry_unchanged,
+                        assert_ctx,
+                        geometry_invariant_ctx_free);
+      }
+#endif
+    } else if (!error || !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      if (container) show_broken_image_fallback(container);
+      if (error)
+        g_debug("Media service: failed to load %s: %s", ctx->url, error->message);
+    }
+  }
+
+  if (self->media_cancellables)
+    g_hash_table_remove(self->media_cancellables, ctx->request_key);
+  g_object_unref(picture);
+  g_object_unref(row_obj);
 }
 
 /* Worker thread: decode image bytes into an immutable GdkTexture off the
@@ -2617,7 +2726,36 @@ static void load_media_image_internal(NostrGtkNoteCardRow *self, const char *url
     return;
   }
 
-  /* Check cache first */
+  /* App consumers inject the bounded media service.  Keep the process-global
+   * 50-texture LRU and direct Soup path strictly as the library fallback. */
+  if (self->media_texture_loader && self->media_texture_request_func) {
+    GCancellable *cancellable = g_cancellable_new();
+    g_autofree gchar *request_key = g_strdup_printf(
+        "%s#%" G_GUINT64_FORMAT "#%p", url, self->binding_id, picture);
+    g_hash_table_insert(self->media_cancellables, g_strdup(request_key), cancellable);
+
+    InjectedMediaLoadCtx *ctx = g_new0(InjectedMediaLoadCtx, 1);
+    ctx->binding_ctx = note_card_binding_context_ref(self->binding_ctx);
+    g_weak_ref_init(&ctx->picture_ref, picture);
+    ctx->url = g_strdup(url);
+    ctx->request_key = g_strdup(request_key);
+    ctx->binding_id = self->binding_id;
+    ctx->row_height_before_hydration = gtk_widget_get_height(GTK_WIDGET(self));
+
+    self->media_texture_request_func(
+        self->media_texture_loader,
+        url,
+        NOSTR_GTK_MEDIA_RESOURCE_INLINE,
+        MAX(gtk_widget_get_width(GTK_WIDGET(picture)), 1),
+        MAX(gtk_widget_get_height(GTK_WIDGET(picture)), 1),
+        cancellable,
+        on_injected_media_texture_ready,
+        ctx,
+        injected_media_load_ctx_free);
+    return;
+  }
+
+  /* Check fallback cache first */
   GdkTexture *cached = media_image_cache_get(url);
   if (cached) {
     gtk_picture_set_paintable(picture, GDK_PAINTABLE(cached));
@@ -3641,7 +3779,9 @@ void nostr_gtk_note_card_row_set_precomputed_markup(NostrGtkNoteCardRow *self,
   g_clear_pointer(&self->content_text, g_free);
   self->content_text = g_strdup(safe_text);
 
-  if (markup && *markup) {
+  /* A non-NULL empty string is authoritative parser output: media-only and
+   * event-ref-only notes intentionally elide every text token. */
+  if (markup) {
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
     gnostr_safe_set_markup(GTK_LABEL(self->content_label), markup);
   } else {
@@ -3650,82 +3790,200 @@ void nostr_gtk_note_card_row_set_precomputed_markup(NostrGtkNoteCardRow *self,
   }
 }
 
-void nostr_gtk_note_card_row_set_media_urls_reserved(NostrGtkNoteCardRow *self,
-                                                     const char * const *media_urls,
-                                                     double reserved_height) {
-  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
-  if (self->disposed) return;
-  if (self->binding_id == 0) return;
-  if (!self->media_box || !GTK_IS_BOX(self->media_box)) return;
+#define RICH_CONTENT_FRAME_SPACING 6
 
-  (void)media_urls;
+static void
+clear_box_children(GtkWidget *box)
+{
+  if (!GTK_IS_BOX(box)) return;
+  GtkWidget *child = gtk_widget_get_first_child(box);
+  while (child) {
+    GtkWidget *next = gtk_widget_get_next_sibling(child);
+    gtk_box_remove(GTK_BOX(box), child);
+    child = next;
+  }
+}
 
-  if (self->media_map_handler_id > 0) {
+static GtkWidget *
+create_rich_content_placeholder(const char *icon_name,
+                                const char *label,
+                                gint height)
+{
+  GtkWidget *frame = gtk_frame_new(NULL);
+  gtk_widget_add_css_class(frame, "rich-content-placeholder");
+  gtk_widget_set_size_request(frame, -1, MAX(height, 1));
+  gtk_widget_set_hexpand(frame, TRUE);
+  gtk_widget_set_overflow(frame, GTK_OVERFLOW_HIDDEN);
+
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  gtk_widget_set_halign(box, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
+  GtkWidget *icon = gtk_image_new_from_icon_name(icon_name);
+  GtkWidget *text_label = gtk_label_new(label);
+  gtk_widget_add_css_class(text_label, "dim-label");
+  gtk_box_append(GTK_BOX(box), icon);
+  gtk_box_append(GTK_BOX(box), text_label);
+  gtk_frame_set_child(GTK_FRAME(frame), box);
+  return frame;
+}
+
+static guint
+count_rich_descriptors(const GPtrArray *descriptors,
+                       GnContentDescriptorType first,
+                       GnContentDescriptorType second)
+{
+  guint count = 0;
+  if (!descriptors) return 0;
+  for (guint i = 0; i < descriptors->len; i++) {
+    const GnContentDescriptor *descriptor = g_ptr_array_index((GPtrArray *)descriptors, i);
+    if (descriptor && (descriptor->type == first || descriptor->type == second))
+      count++;
+  }
+  return count;
+}
+
+static gint
+reserved_slot_height(double reserved_height, guint slots)
+{
+  if (reserved_height <= 0.0 || slots == 0) return 0;
+  gint total = (gint)(reserved_height + 0.999999);
+  gint spacing = (gint)(slots - 1) * RICH_CONTENT_FRAME_SPACING;
+  return MAX((total - spacing) / (gint)slots, 1);
+}
+
+void
+nostr_gtk_note_card_row_set_rich_content(
+    NostrGtkNoteCardRow *self,
+    const GPtrArray *descriptors,
+    double media_reserved_height,
+    double link_preview_reserved_height,
+    double embed_reserved_height)
+{
+  g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
+  if (self->disposed || self->binding_id == 0) return;
+
+  if (self->media_map_handler_id > 0 && self->media_box) {
     g_signal_handler_disconnect(self->media_box, self->media_map_handler_id);
     self->media_map_handler_id = 0;
   }
-
-  GtkWidget *child = gtk_widget_get_first_child(self->media_box);
-  while (child) {
-    GtkWidget *next = gtk_widget_get_next_sibling(child);
-    gtk_box_remove(GTK_BOX(self->media_box), child);
-    child = next;
-  }
-
   g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
-  self->media_widgets_created = FALSE;
+  self->media_widgets_created = TRUE;
 
-  if (reserved_height <= 0.0) {
-    gtk_widget_set_size_request(self->media_box, -1, -1);
-    gtk_widget_set_visible(self->media_box, FALSE);
-    return;
+  clear_box_children(self->media_box);
+  clear_box_children(self->og_preview_container);
+  if (self->embed_box && GTK_IS_FRAME(self->embed_box))
+    gtk_frame_set_child(GTK_FRAME(self->embed_box), NULL);
+  self->og_preview = NULL;
+  self->note_embed = NULL;
+
+  guint media_count = count_rich_descriptors(
+      descriptors,
+      GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE,
+      GN_CONTENT_DESCRIPTOR_MEDIA_VIDEO);
+  guint link_count = count_rich_descriptors(
+      descriptors,
+      GN_CONTENT_DESCRIPTOR_LINK_PREVIEW,
+      GN_CONTENT_DESCRIPTOR_LINK_PREVIEW);
+  guint embed_count = count_rich_descriptors(
+      descriptors,
+      GN_CONTENT_DESCRIPTOR_NOSTR_EVENT_REF,
+      GN_CONTENT_DESCRIPTOR_NOSTR_EVENT_REF);
+
+  gint media_px = media_reserved_height > 0.0
+      ? (gint)(media_reserved_height + 0.999999) : 0;
+  gint link_px = link_preview_reserved_height > 0.0
+      ? (gint)(link_preview_reserved_height + 0.999999) : 0;
+  gint embed_px = embed_reserved_height > 0.0
+      ? (gint)(embed_reserved_height + 0.999999) : 0;
+
+  gtk_widget_set_size_request(self->media_box, -1, media_px > 0 ? media_px : -1);
+  gtk_widget_set_visible(self->media_box, media_px > 0);
+  gtk_widget_set_size_request(self->og_preview_container, -1, link_px > 0 ? link_px : -1);
+  gtk_widget_set_visible(self->og_preview_container, link_px > 0);
+  gtk_widget_set_size_request(self->embed_box, -1, embed_px > 0 ? embed_px : -1);
+  gtk_widget_set_visible(self->embed_box, embed_px > 0);
+
+  GtkWidget *media_grid = NULL;
+  guint media_columns = media_count > 1 ? 2u : 1u;
+  guint media_rows = media_count > 0
+      ? (media_count + media_columns - 1u) / media_columns : 0;
+  gint media_slot_height = reserved_slot_height(media_reserved_height, media_rows);
+  if (media_count > 0 && media_px > 0) {
+    media_grid = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(media_grid), RICH_CONTENT_FRAME_SPACING);
+    gtk_grid_set_row_spacing(GTK_GRID(media_grid), RICH_CONTENT_FRAME_SPACING);
+    gtk_grid_set_column_homogeneous(GTK_GRID(media_grid), TRUE);
+    gtk_widget_set_hexpand(media_grid, TRUE);
+    gtk_box_append(GTK_BOX(self->media_box), media_grid);
   }
 
-  /* Snapshot rows may carry URL lists for footprint calculation, but URLs are
-   * not immutable fetched media. Keep the reserved rich-content slot inert:
-   * no pending map handler, no GtkPicture/GnostrVideoPlayer construction, and
-   * no network fetch from bind/map. A future snapshot with pre-resolved media
-   * VM data can fill this area through a separate immutable-data setter. */
-  gint reserved_px = (gint)(reserved_height + 0.999999);
-  gtk_widget_set_size_request(self->media_box, -1, reserved_px);
-  gtk_widget_set_visible(self->media_box, TRUE);
-}
-
-void nostr_gtk_note_card_row_set_link_preview_urls_reserved(NostrGtkNoteCardRow *self,
-                                                            const char * const *links,
-                                                            double reserved_height) {
-  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
-  if (self->disposed) return;
-  if (self->binding_id == 0) return;
-  if (!self->og_preview_container || !GTK_IS_BOX(self->og_preview_container)) return;
-
-  (void)links;
-
-  if (self->og_preview) {
-    gtk_box_remove(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
-    self->og_preview = NULL;
+  GtkWidget *embed_list = NULL;
+  if (embed_count > 0 && embed_px > 0) {
+    embed_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, RICH_CONTENT_FRAME_SPACING);
+    gtk_frame_set_child(GTK_FRAME(self->embed_box), embed_list);
   }
 
-  GtkWidget *child = gtk_widget_get_first_child(self->og_preview_container);
-  while (child) {
-    GtkWidget *next = gtk_widget_get_next_sibling(child);
-    gtk_box_remove(GTK_BOX(self->og_preview_container), child);
-    child = next;
-  }
+  if (GTK_IS_BOX(self->og_preview_container))
+    gtk_box_set_spacing(GTK_BOX(self->og_preview_container), RICH_CONTENT_FRAME_SPACING);
 
-  if (reserved_height <= 0.0) {
-    gtk_widget_set_size_request(self->og_preview_container, -1, -1);
-    gtk_widget_set_visible(self->og_preview_container, FALSE);
-    return;
-  }
+  guint media_index = 0;
+  gint link_slot_height = reserved_slot_height(link_preview_reserved_height, link_count);
+  /* embed_box has a 1px CSS border on each edge; keep child frames inside
+   * the published reservation rather than adding their minimum on top. */
+  gint embed_slot_height = reserved_slot_height(
+      MAX(embed_reserved_height - 2.0, 0.0), embed_count);
+  for (guint i = 0; descriptors && i < descriptors->len; i++) {
+    const GnContentDescriptor *descriptor = g_ptr_array_index((GPtrArray *)descriptors, i);
+    if (!descriptor) continue;
 
-  /* Snapshot link URLs are only reservation inputs here. Do not create an
-   * OgPreviewWidget or call og_preview_widget_set_url_with_cancellable() from
-   * row bind; that would start live OG/network work outside the immutable VM
-   * snapshot contract. */
-  gint reserved_px = (gint)(reserved_height + 0.999999);
-  gtk_widget_set_size_request(self->og_preview_container, -1, reserved_px);
-  gtk_widget_set_visible(self->og_preview_container, TRUE);
+    switch (descriptor->type) {
+      case GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE: {
+        if (!media_grid || !descriptor->url || !*descriptor->url) break;
+        GtkWidget *container = create_image_container(
+            descriptor->url, media_slot_height, NULL);
+        gtk_widget_set_hexpand(container, TRUE);
+        GtkWidget *picture = g_object_get_data(G_OBJECT(container), "media-picture");
+        GtkGesture *click_gesture = gtk_gesture_click_new();
+        gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
+        g_signal_connect(click_gesture, "released", G_CALLBACK(on_media_image_clicked), NULL);
+        gtk_widget_add_controller(picture, GTK_EVENT_CONTROLLER(click_gesture));
+        gtk_grid_attach(GTK_GRID(media_grid), container,
+                        media_index % media_columns,
+                        media_index / media_columns, 1, 1);
+#ifdef HAVE_SOUP3
+        /* Installs picture map/unmap handlers only. The actual request starts
+         * from the existing 40 ms mapped debounce in on_picture_mapped(). */
+        load_media_image(self, descriptor->url, GTK_PICTURE(picture));
+#endif
+        media_index++;
+        break;
+      }
+      case GN_CONTENT_DESCRIPTOR_MEDIA_VIDEO: {
+        if (!media_grid) break;
+        GtkWidget *placeholder = create_rich_content_placeholder(
+            "video-x-generic-symbolic", _("Video"), media_slot_height);
+        gtk_grid_attach(GTK_GRID(media_grid), placeholder,
+                        media_index % media_columns,
+                        media_index / media_columns, 1, 1);
+        media_index++;
+        break;
+      }
+      case GN_CONTENT_DESCRIPTOR_LINK_PREVIEW:
+        if (link_px > 0)
+          gtk_box_append(GTK_BOX(self->og_preview_container),
+                         create_rich_content_placeholder(
+                             "web-browser-symbolic", _("Link preview"), link_slot_height));
+        break;
+      case GN_CONTENT_DESCRIPTOR_NOSTR_EVENT_REF:
+        if (embed_list)
+          gtk_box_append(GTK_BOX(embed_list),
+                         create_rich_content_placeholder(
+                             "mail-message-new-symbolic", _("Referenced note"), embed_slot_height));
+        break;
+      case GN_CONTENT_DESCRIPTOR_NOSTR_PROFILE_REF:
+        break;
+    }
+  }
 }
 
 /**
@@ -6871,6 +7129,12 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
    * but reset the flag for safety in case unbind was skipped. */
   self->media_widgets_created = FALSE;
   g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+  if (self->media_box)
+    gtk_widget_set_size_request(self->media_box, -1, -1);
+  if (self->og_preview_container)
+    gtk_widget_set_size_request(self->og_preview_container, -1, -1);
+  if (self->embed_box)
+    gtk_widget_set_size_request(self->embed_box, -1, -1);
   if (self->media_map_handler_id > 0 && self->media_box && GTK_IS_BOX(self->media_box)) {
     g_signal_handler_disconnect(self->media_box, self->media_map_handler_id);
   }
