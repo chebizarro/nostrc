@@ -101,9 +101,12 @@ test_request_dedup(void)
 
   g_autofree char *pk = make_pubkey(0x10);
 
-  /* Request the same pubkey twice with different callbacks */
+  /* Request the same pubkey twice with different callbacks. A hinted
+   * request must still share the hint-less request's pending entry. */
+  const char *hints[] = { "wss://hint.example.com" };
   gnostr_profile_service_request(svc, pk, test_profile_callback, &cb1);
-  gnostr_profile_service_request(svc, pk, test_profile_callback, &cb2);
+  gnostr_profile_service_request_with_hints(
+      svc, pk, hints, G_N_ELEMENTS(hints), test_profile_callback, &cb2);
 
   /* Check stats — should have 2 requests but deduplicated internally */
   GnostrProfileServiceStats stats;

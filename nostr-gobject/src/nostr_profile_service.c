@@ -23,10 +23,15 @@ typedef struct {
 } PendingCallback;
 
 /* Entry in the pending requests hash table */
+#define MAX_HINT_RELAYS_PER_REQUEST 8
+#define MAX_HINT_RELAYS_PER_BATCH 64
+
 typedef struct {
   char *pubkey_hex;        /* owned */
   GPtrArray *callbacks;    /* array of PendingCallback* */
+  GPtrArray *hint_relays;  /* owned unique relay URL strings */
   gboolean in_flight;      /* TRUE if currently being fetched */
+  gboolean retry_with_new_hints; /* hints arrived after relay snapshot */
 } PendingRequest;
 
 /* The service singleton structure */
@@ -86,6 +91,7 @@ static void pending_request_free(PendingRequest *req) {
   if (req->callbacks) {
     g_ptr_array_free(req->callbacks, TRUE);
   }
+  g_clear_pointer(&req->hint_relays, g_ptr_array_unref);
   g_free(req);
 }
 
@@ -93,8 +99,36 @@ static PendingRequest *pending_request_new(const char *pubkey_hex) {
   PendingRequest *req = g_new0(PendingRequest, 1);
   req->pubkey_hex = g_strdup(pubkey_hex);
   req->callbacks = g_ptr_array_new_with_free_func((GDestroyNotify)pending_callback_free);
+  req->hint_relays = g_ptr_array_new_with_free_func(g_free);
   req->in_flight = FALSE;
   return req;
+}
+
+static gboolean relay_array_contains(GPtrArray *relays, const char *url) {
+  if (!relays || !url || !*url) return FALSE;
+  for (guint i = 0; i < relays->len; i++) {
+    if (g_strcmp0(g_ptr_array_index(relays, i), url) == 0)
+      return TRUE;
+  }
+  return FALSE;
+}
+
+static gboolean pending_request_merge_hints(
+                                        PendingRequest *req,
+                                        const char *const *hint_relays,
+                                        size_t hint_relay_count) {
+  if (!req || !hint_relays) return FALSE;
+
+  gboolean added = FALSE;
+  size_t count = MIN(hint_relay_count, (size_t)MAX_HINT_RELAYS_PER_REQUEST);
+  for (size_t i = 0; i < count; i++) {
+    const char *url = hint_relays[i];
+    if (url && *url && !relay_array_contains(req->hint_relays, url)) {
+      g_ptr_array_add(req->hint_relays, g_strdup(url));
+      added = TRUE;
+    }
+  }
+  return added;
 }
 
 /* Convert hex string to 32-byte binary */
@@ -270,15 +304,25 @@ static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer use
   for (guint i = 0; i < batch->len; i++) {
     const char *pubkey = g_ptr_array_index(batch, i);
     if (pubkey) {
-      /* Check if there are still pending callbacks for this pubkey */
+      /* If hints arrived after this batch took its relay snapshot,
+       * preserve the deduplicated request and retry once with the augmented
+       * relay set instead of completing all subscribers with NULL. */
+      gboolean pending = FALSE;
+      gboolean retry = FALSE;
       g_mutex_lock(&svc->mutex);
       PendingRequest *req = g_hash_table_lookup(svc->pending_requests, pubkey);
+      if (req) {
+        pending = TRUE;
+        retry = req->retry_with_new_hints;
+        if (retry) {
+          req->retry_with_new_hints = FALSE;
+          req->in_flight = FALSE;
+        }
+      }
       g_mutex_unlock(&svc->mutex);
 
-      if (req) {
-        /* Profile not found - fire callbacks with NULL */
+      if (pending && !retry)
         fire_callbacks(svc, pubkey, NULL);
-      }
     }
   }
 
@@ -345,21 +389,6 @@ static void dispatch_next_batch(GnostrProfileService *svc) {
     }
     g_ptr_array_unref(configured);
   }
-  if (!svc->relay_urls || svc->relay_url_count == 0) {
-    g_message("[PROFILE_SERVICE] No relays configured, skipping fetch");
-    g_mutex_unlock(&svc->mutex);
-    return;
-  }
-
-  if (!svc->pool) {
-    svc->pool = gnostr_pool_new();
-    svc->owns_pool = TRUE;
-  }
-
-  if (!svc->cancellable) {
-    svc->cancellable = g_cancellable_new();
-  }
-
   /* Get the next batch */
   GPtrArray *batch = g_ptr_array_index(svc->fetch_batches, svc->fetch_batch_pos);
   g_ptr_array_index(svc->fetch_batches, svc->fetch_batch_pos) = NULL; /* transfer ownership */
@@ -370,6 +399,53 @@ static void dispatch_next_batch(GnostrProfileService *svc) {
     g_mutex_unlock(&svc->mutex);
     dispatch_next_batch(svc);
     return;
+  }
+
+  /* Build the per-batch relay union. Configured relays remain the baseline;
+   * hint relays are temporary and bounded by their pending request lifetime. */
+  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
+  for (size_t i = 0; i < svc->relay_url_count; i++) {
+    const char *url = svc->relay_urls[i];
+    if (url && *url && !relay_array_contains(urls, url))
+      g_ptr_array_add(urls, g_strdup(url));
+  }
+
+  guint hints_added = 0;
+  for (guint i = 0;
+       i < batch->len && hints_added < MAX_HINT_RELAYS_PER_BATCH;
+       i++) {
+    const char *pubkey = g_ptr_array_index(batch, i);
+    PendingRequest *req = g_hash_table_lookup(svc->pending_requests, pubkey);
+    if (!req || !req->hint_relays) continue;
+    for (guint j = 0;
+         j < req->hint_relays->len && hints_added < MAX_HINT_RELAYS_PER_BATCH;
+         j++) {
+      const char *url = g_ptr_array_index(req->hint_relays, j);
+      if (!relay_array_contains(urls, url)) {
+        g_ptr_array_add(urls, g_strdup(url));
+        hints_added++;
+      }
+    }
+  }
+
+  if (urls->len == 0) {
+    g_message("[PROFILE_SERVICE] No configured or hint relays, skipping fetch");
+    g_mutex_unlock(&svc->mutex);
+    for (guint i = 0; i < batch->len; i++)
+      fire_callbacks(svc, g_ptr_array_index(batch, i), NULL);
+    g_ptr_array_free(batch, TRUE);
+    g_ptr_array_unref(urls);
+    dispatch_next_batch(svc);
+    return;
+  }
+
+  if (!svc->pool) {
+    svc->pool = gnostr_pool_new();
+    svc->owns_pool = TRUE;
+  }
+
+  if (!svc->cancellable) {
+    svc->cancellable = g_cancellable_new();
   }
 
   /* Mark in-flight */
@@ -383,20 +459,10 @@ static void dispatch_next_batch(GnostrProfileService *svc) {
     authors[i] = g_ptr_array_index(batch, i);
   }
 
-  /* Copy relay URLs for async use */
-  const char **urls = g_new0(const char*, svc->relay_url_count);
-  for (size_t i = 0; i < svc->relay_url_count; i++) {
-    urls[i] = svc->relay_urls[i];
-  }
-  size_t url_count = svc->relay_url_count;
-
-  g_debug("[PROFILE_SERVICE] Dispatching batch of %zu profiles to %zu relays",
-          n, url_count);
+  g_debug("[PROFILE_SERVICE] Dispatching batch of %zu profiles to %u relays (%u hints)",
+          n, urls->len, hints_added);
 
   g_mutex_unlock(&svc->mutex);
-
-  /* Sync relays on the pool */
-  gnostr_pool_sync_relays(svc->pool, (const gchar **)urls, url_count);
 
   /* Build kind-0 filter for the batch of authors */
   NostrFilter *f = nostr_filter_new();
@@ -413,12 +479,15 @@ static void dispatch_next_batch(GnostrProfileService *svc) {
   ctx->batch = batch; /* transfer ownership */
   ctx->filters = filters; /* transfer ownership */
 
-  /* Start async fetch */
-  gnostr_pool_query_async(svc->pool, filters, svc->cancellable,
-                          on_profiles_fetched, ctx);
+  /* Query the explicit union so per-request hints do not accumulate in the
+   * service pool. gnostr_pool_query_urls_async snapshots the URL strings. */
+  gnostr_pool_query_urls_async(svc->pool,
+                               (const gchar **)urls->pdata, urls->len,
+                               filters, svc->cancellable,
+                               on_profiles_fetched, ctx);
 
   g_free((gpointer)authors);
-  g_free((gpointer)urls);
+  g_ptr_array_unref(urls);
 }
 
 /* ============== Debounce Timer Callback ============== */
@@ -573,8 +642,11 @@ gpointer gnostr_profile_service_get_default(void) {
   return svc;
 }
 
-void gnostr_profile_service_request(gpointer service,
+void gnostr_profile_service_request_with_hints(
+                                     gpointer service,
                                      const char *pubkey_hex,
+                                     const char *const *hint_relays,
+                                     size_t hint_relay_count,
                                      GnostrProfileServiceCallback callback,
                                      gpointer user_data) {
   GnostrProfileService *svc = (GnostrProfileService*)service;
@@ -603,6 +675,10 @@ void gnostr_profile_service_request(gpointer service,
     req = pending_request_new(pubkey_hex);
     g_hash_table_insert(svc->pending_requests, g_strdup(pubkey_hex), req);
   }
+  gboolean added_hints =
+      pending_request_merge_hints(req, hint_relays, hint_relay_count);
+  if (req->in_flight && added_hints)
+    req->retry_with_new_hints = TRUE;
 
   /* Add callback if provided */
   if (callback) {
@@ -621,6 +697,14 @@ void gnostr_profile_service_request(gpointer service,
   }
 
   g_mutex_unlock(&svc->mutex);
+}
+
+void gnostr_profile_service_request(gpointer service,
+                                     const char *pubkey_hex,
+                                     GnostrProfileServiceCallback callback,
+                                     gpointer user_data) {
+  gnostr_profile_service_request_with_hints(service, pubkey_hex, NULL, 0,
+                                            callback, user_data);
 }
 
 guint gnostr_profile_service_cancel_for_user_data(gpointer service, gpointer user_data) {

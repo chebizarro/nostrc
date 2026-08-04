@@ -64,6 +64,26 @@ void gnostr_profile_service_request(gpointer service,
                                      GnostrProfileServiceCallback callback,
                                      gpointer user_data);
 
+/* Request profile data while augmenting the configured relay set with
+ * per-request NIP-19 relay hints. Hints are copied, deduplicated with other
+ * requests for the same pubkey, bounded internally, and discarded when the
+ * pending request completes. Configured relays are never replaced.
+ *
+ * @param service          The profile service instance
+ * @param pubkey_hex       64-character hex pubkey to fetch
+ * @param hint_relays      Optional array of relay URL strings
+ * @param hint_relay_count Number of entries in hint_relays
+ * @param callback         Callback to invoke when profile is ready
+ * @param user_data        User data for callback
+ */
+void gnostr_profile_service_request_with_hints(
+                                     gpointer service,
+                                     const char *pubkey_hex,
+                                     const char *const *hint_relays,
+                                     size_t hint_relay_count,
+                                     GnostrProfileServiceCallback callback,
+                                     gpointer user_data);
+
 /* Cancel all pending callbacks for a specific user_data.
  * Useful when a widget is being destroyed and needs to cancel its pending requests.
  * Does not cancel the fetch itself, just removes the callbacks.

@@ -215,6 +215,26 @@ test_naddr_encode_decode(void)
   g_assert_cmpstr(dec_relays[0], ==, "wss://relay.nostr.band");
 }
 
+/* Decode a fixed vector rather than one produced in-process. This guards
+ * consumers such as note embeds against accidentally retaining only the
+ * naddr author while dropping its kind and d-tag identifier. */
+static void
+test_naddr_fixed_vector(void)
+{
+  static const gchar *naddr =
+    "naddr1qqyx67fdvskhgct8qgsrhuxx8l9ex335q7he0f09aej04zpazpl0ne2cgukyawd24mayt8grqsqqqa28c8lyyw";
+
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GNostrNip19) decoded = gnostr_nip19_decode(naddr, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(decoded);
+  g_assert_cmpint(gnostr_nip19_get_entity_type(decoded), ==,
+                  GNOSTR_BECH32_NADDR);
+  g_assert_cmpstr(gnostr_nip19_get_pubkey(decoded), ==, TEST_PUBKEY_HEX);
+  g_assert_cmpstr(gnostr_nip19_get_identifier(decoded), ==, "my-d-tag");
+  g_assert_cmpint(gnostr_nip19_get_kind(decoded), ==, 30023);
+}
+
 /* ── nrelay round-trip ───────────────────────────────────────────── */
 
 static void
@@ -416,6 +436,7 @@ main(int argc, char *argv[])
   g_test_add_func("/nip19/nprofile-no-relays", test_nprofile_no_relays);
   g_test_add_func("/nip19/nevent-roundtrip", test_nevent_encode_decode);
   g_test_add_func("/nip19/naddr-roundtrip", test_naddr_encode_decode);
+  g_test_add_func("/nip19/naddr-fixed-vector", test_naddr_fixed_vector);
   g_test_add_func("/nip19/nrelay-roundtrip", test_nrelay_encode_decode);
   g_test_add_func("/nip19/inspect", test_inspect);
   g_test_add_func("/nip19/decode-invalid", test_decode_invalid);

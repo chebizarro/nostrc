@@ -27,6 +27,7 @@
 #endif
 
 #define UI_RESOURCE "/org/nostr/gtk/ui/widgets/gnostr-note-embed.ui"
+#define MAX_EMBED_HINT_RELAYS 8
 
 typedef enum {
   EMBED_TYPE_UNKNOWN,
@@ -65,6 +66,8 @@ struct _GnostrNoteEmbed {
   EmbedState state;
   char *target_id;        /* event ID hex or pubkey hex */
   char *original_uri;     /* original nostr: URI */
+  gint address_kind;      /* naddr kind, or -1 */
+  char *address_identifier; /* naddr d-tag identifier */
   char **relay_hints;     /* NULL-terminated array of relay URLs */
   size_t relay_hints_count;
 
@@ -97,8 +100,10 @@ static guint signals[N_SIGNALS];
 
 /* Forward declarations */
 static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id32[32]);
+static void fetch_address_from_local(GnostrNoteEmbed *self);
 static void fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex);
 static void request_profile_via_service(GnostrNoteEmbed *self, const char *pubkey_hex);
+static void apply_relay_event_json(GnostrNoteEmbed *self, const char *json);
 static void on_profile_service_result(const char *pubkey_hex,
                                        const GnostrProfileMeta *meta,
                                        gpointer user_data);
@@ -163,6 +168,7 @@ static void gnostr_note_embed_finalize(GObject *obj) {
 
   g_clear_pointer(&self->target_id, g_free);
   g_clear_pointer(&self->original_uri, g_free);
+  g_clear_pointer(&self->address_identifier, g_free);
 
   if (self->relay_hints) {
     for (size_t i = 0; i < self->relay_hints_count; i++) {
@@ -262,6 +268,7 @@ static void gnostr_note_embed_init(GnostrNoteEmbed *self) {
 
   self->embed_type = EMBED_TYPE_UNKNOWN;
   self->state = EMBED_STATE_EMPTY;
+  self->address_kind = -1;
   self->cancellable = g_cancellable_new();
 
 #ifdef HAVE_SOUP3
@@ -439,6 +446,7 @@ static char *truncate_content(const char *content, size_t max_len) {
 
 /* Parse nostr: URI and extract type + data */
 static gboolean parse_nostr_uri(const char *uri, EmbedType *type, char **target_hex,
+                                 gint *address_kind, char **address_identifier,
                                  char ***relay_hints, size_t *relay_count) {
   if (!uri) return FALSE;
 
@@ -449,6 +457,8 @@ static gboolean parse_nostr_uri(const char *uri, EmbedType *type, char **target_
 
   *type = EMBED_TYPE_UNKNOWN;
   *target_hex = NULL;
+  *address_kind = -1;
+  *address_identifier = NULL;
   *relay_hints = NULL;
   *relay_count = 0;
 
@@ -519,10 +529,13 @@ static gboolean parse_nostr_uri(const char *uri, EmbedType *type, char **target_
 
     case GNOSTR_BECH32_NADDR: {
       const gchar *pubkey = gnostr_nip19_get_pubkey(n19);
-      if (pubkey) {
+      const gchar *identifier = gnostr_nip19_get_identifier(n19);
+      gint kind = gnostr_nip19_get_kind(n19);
+      if (pubkey && identifier && kind >= 0) {
         *type = EMBED_TYPE_ADDR;
-        /* For naddr, we use author pubkey as target (will need special handling) */
         *target_hex = g_strdup(pubkey);
+        *address_kind = kind;
+        *address_identifier = g_strdup(identifier);
 
         /* Copy relay hints */
         const gchar *const *relays = gnostr_nip19_get_relays(n19);
@@ -561,6 +574,8 @@ void gnostr_note_embed_set_nostr_uri(GnostrNoteEmbed *self, const char *uri) {
   /* Clear previous state */
   g_clear_pointer(&self->target_id, g_free);
   g_clear_pointer(&self->original_uri, g_free);
+  g_clear_pointer(&self->address_identifier, g_free);
+  self->address_kind = -1;
   self->hints_attempted = FALSE;
   self->main_pool_attempted = FALSE;
   if (self->relay_hints) {
@@ -583,10 +598,14 @@ void gnostr_note_embed_set_nostr_uri(GnostrNoteEmbed *self, const char *uri) {
   /* Parse the URI */
   EmbedType type;
   char *target_hex = NULL;
+  gint address_kind = -1;
+  char *address_identifier = NULL;
   char **hints = NULL;
   size_t hint_count = 0;
 
-  if (!parse_nostr_uri(uri, &type, &target_hex, &hints, &hint_count)) {
+  if (!parse_nostr_uri(uri, &type, &target_hex,
+                       &address_kind, &address_identifier,
+                       &hints, &hint_count)) {
     self->state = EMBED_STATE_ERROR;
     if (GTK_IS_LABEL(self->error_label)) {
       gtk_label_set_text(GTK_LABEL(self->error_label), "Invalid nostr URI");
@@ -597,6 +616,8 @@ void gnostr_note_embed_set_nostr_uri(GnostrNoteEmbed *self, const char *uri) {
 
   self->embed_type = type;
   self->target_id = target_hex;
+  self->address_kind = address_kind;
+  self->address_identifier = address_identifier;
   self->relay_hints = hints;
   self->relay_hints_count = hint_count;
 
@@ -610,6 +631,8 @@ void gnostr_note_embed_set_nostr_uri(GnostrNoteEmbed *self, const char *uri) {
     if (type == EMBED_TYPE_PROFILE) {
       /* nostrc-pb01: delegate profile loading to centralized service */
       request_profile_via_service(self, target_hex);
+    } else if (type == EMBED_TYPE_ADDR) {
+      fetch_address_from_local(self);
     } else {
       fetch_event_from_local(self, bytes32);
     }
@@ -631,6 +654,8 @@ void gnostr_note_embed_set_event_id(GnostrNoteEmbed *self,
   self->disposed = FALSE;
 
   g_clear_pointer(&self->target_id, g_free);
+  g_clear_pointer(&self->address_identifier, g_free);
+  self->address_kind = -1;
   self->target_id = g_strdup(event_id_hex);
   self->embed_type = EMBED_TYPE_NOTE;
 
@@ -676,6 +701,8 @@ void gnostr_note_embed_set_pubkey(GnostrNoteEmbed *self,
   /* nostrc-akyz: defensively normalize npub/nprofile to hex */
   g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
   g_clear_pointer(&self->target_id, g_free);
+  g_clear_pointer(&self->address_identifier, g_free);
+  self->address_kind = -1;
   self->target_id = hex ? g_strdup(hex) : g_strdup(pubkey_hex);
   self->embed_type = EMBED_TYPE_PROFILE;
 
@@ -836,6 +863,31 @@ gboolean gnostr_note_embed_is_profile(GnostrNoteEmbed *self) {
   return self->embed_type == EMBED_TYPE_PROFILE;
 }
 
+/* Return an owned copy of the newest valid event in a result array. */
+static char *
+copy_latest_event_json(const char *const *jsons, size_t count)
+{
+  const char *latest_json = NULL;
+  gint64 latest_created_at = G_MININT64;
+
+  for (size_t i = 0; i < count; i++) {
+    const char *json = jsons[i];
+    if (!json) continue;
+
+    NostrEvent *event = nostr_event_new();
+    if (event && nostr_event_deserialize(event, json) == 0) {
+      gint64 created_at = (gint64)nostr_event_get_created_at(event);
+      if (!latest_json || created_at > latest_created_at) {
+        latest_json = json;
+        latest_created_at = created_at;
+      }
+    }
+    if (event) nostr_event_free(event);
+  }
+
+  return latest_json ? g_strdup(latest_json) : NULL;
+}
+
 /* Local database fetch for events */
 static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id32[32]) {
   void *txn = NULL;
@@ -928,16 +980,71 @@ static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id
   storage_ndb_end_query(txn);
 }
 
+/* Resolve an naddr from nostrdb using its complete NIP-33 address. */
+static void
+fetch_address_from_local(GnostrNoteEmbed *self)
+{
+  if (!self->target_id || self->address_kind < 0 ||
+      !self->address_identifier) {
+    gnostr_note_embed_set_error(self, "Invalid naddr");
+    return;
+  }
+
+  NostrFilter *filter = nostr_filter_new();
+  const int kinds[] = { self->address_kind };
+  const char *authors[] = { self->target_id };
+  nostr_filter_set_kinds(filter, kinds, 1);
+  nostr_filter_set_authors(filter, authors, 1);
+  nostr_filter_tags_append(filter, "d", self->address_identifier, NULL);
+  /* Bound corrupted/legacy duplicate rows while still selecting the newest. */
+  nostr_filter_set_limit(filter, 64);
+
+  char *filter_object = nostr_filter_serialize(filter);
+  nostr_filter_free(filter);
+  if (!filter_object) {
+    fetch_event_from_relays(self, NULL);
+    return;
+  }
+  g_autofree char *filters_json = g_strdup_printf("[%s]", filter_object);
+  free(filter_object);
+
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
+    fetch_event_from_relays(self, NULL);
+    return;
+  }
+
+  char **results = NULL;
+  int count = 0;
+  int rc = storage_ndb_query(txn, filters_json, &results, &count, NULL);
+  storage_ndb_end_query(txn);
+
+  g_autofree char *latest = NULL;
+  if (rc == 0 && results && count > 0)
+    latest = copy_latest_event_json((const char *const *)results, (size_t)count);
+  if (results)
+    storage_ndb_free_results(results, count);
+
+  if (latest)
+    apply_relay_event_json(self, latest);
+  else
+    fetch_event_from_relays(self, NULL);
+}
+
 typedef struct {
   GWeakRef embed_ref;
-  gchar *event_id;
+  gchar *request_key;
   GCancellable *cancellable;
   gulong cancelled_id;
   gint cancelled;
 } EventRequestSubscriber;
 
 typedef struct {
+  gchar *request_key;
   gchar *event_id;
+  gint address_kind;
+  gchar *address_author;
+  gchar *address_identifier;
   gchar **relay_hints;
   gsize relay_hints_count;
   GPtrArray *subscribers;
@@ -946,8 +1053,8 @@ typedef struct {
   gboolean main_pool_attempted;
 } PendingEventRequest;
 
-/* event id -> PendingEventRequest. Entries exist only while a relay query is
- * active, so identical embeds share one hint/read-relay resolution. */
+/* Canonical event/address key -> PendingEventRequest. Entries exist only
+ * while a relay query is active, so identical embeds share one resolution. */
 static GHashTable *pending_event_requests;
 
 static void start_pending_event_query(PendingEventRequest *request,
@@ -971,7 +1078,7 @@ event_request_subscriber_free(gpointer data)
                              subscriber->cancelled_id);
   g_clear_object(&subscriber->cancellable);
   g_weak_ref_clear(&subscriber->embed_ref);
-  g_free(subscriber->event_id);
+  g_free(subscriber->request_key);
   g_free(subscriber);
 }
 
@@ -983,7 +1090,10 @@ pending_event_request_free(gpointer data)
   g_clear_object(&request->cancellable);
   g_strfreev(request->relay_hints);
   g_clear_pointer(&request->subscribers, g_ptr_array_unref);
+  g_free(request->request_key);
   g_free(request->event_id);
+  g_free(request->address_author);
+  g_free(request->address_identifier);
   g_free(request);
 }
 
@@ -1030,9 +1140,17 @@ complete_pending_event_request(PendingEventRequest *request,
     GnostrNoteEmbed *embed = g_weak_ref_get(&subscriber->embed_ref);
     if (!embed)
       continue;
-    if (!embed->disposed &&
-        embed->target_id &&
-        g_ascii_strcasecmp(embed->target_id, subscriber->event_id) == 0) {
+    g_autofree char *current_key = NULL;
+    if (embed->embed_type == EMBED_TYPE_ADDR &&
+        embed->target_id && embed->address_identifier) {
+      current_key = g_strdup_printf("a:%d:%s:%s", embed->address_kind,
+                                    embed->target_id,
+                                    embed->address_identifier);
+    } else if (embed->target_id) {
+      current_key = g_strdup_printf("e:%s", embed->target_id);
+    }
+    if (!embed->disposed && current_key &&
+        g_strcmp0(current_key, subscriber->request_key) == 0) {
       if (json)
         apply_relay_event_json(embed, json);
       else
@@ -1042,7 +1160,7 @@ complete_pending_event_request(PendingEventRequest *request,
     g_object_unref(embed);
   }
 
-  g_hash_table_remove(pending_event_requests, request->event_id);
+  g_hash_table_remove(pending_event_requests, request->request_key);
 }
 
 static void
@@ -1065,8 +1183,16 @@ on_pending_event_query_done(GObject *source,
   }
 
   const char *json = NULL;
-  if (!error && results && results->len > 0)
-    json = g_ptr_array_index(results, 0);
+  g_autofree char *latest = NULL;
+  if (!error && results && results->len > 0) {
+    if (request->address_identifier) {
+      latest = copy_latest_event_json(
+          (const char *const *)results->pdata, results->len);
+      json = latest;
+    } else {
+      json = g_ptr_array_index(results, 0);
+    }
+  }
 
   if (json)
     complete_pending_event_request(request, json, NULL);
@@ -1143,37 +1269,42 @@ start_pending_event_query(PendingEventRequest *request,
     for (gsize i = 0; i < request->relay_hints_count; i++)
       g_ptr_array_add(urls, g_strdup(request->relay_hints[i]));
     g_debug("note_embed: shared request trying %zu relay hints for %s",
-            request->relay_hints_count, request->event_id);
+            request->relay_hints_count, request->request_key);
   } else {
     request->main_pool_attempted = TRUE;
     urls = gnostr_get_read_relay_urls();
     g_debug("note_embed: shared request trying %u read relays for %s",
-            urls->len, request->event_id);
+            urls->len, request->request_key);
   }
 
-  const char **url_array = g_new0(const char *, urls->len);
-  for (guint i = 0; i < urls->len; i++)
-    url_array[i] = g_ptr_array_index(urls, i);
-  gnostr_pool_sync_relays(embed_pool, (const gchar **)url_array, urls->len);
-  g_free(url_array);
-
   NostrFilter *filter = nostr_filter_new();
-  const char *ids[] = { request->event_id };
-  nostr_filter_set_ids(filter, ids, 1);
+  if (request->address_identifier) {
+    const int kinds[] = { request->address_kind };
+    const char *authors[] = { request->address_author };
+    nostr_filter_set_kinds(filter, kinds, 1);
+    nostr_filter_set_authors(filter, authors, 1);
+    nostr_filter_tags_append(filter, "d", request->address_identifier, NULL);
+    nostr_filter_set_limit(filter, 64);
+  } else {
+    const char *ids[] = { request->event_id };
+    nostr_filter_set_ids(filter, ids, 1);
+  }
+
   NostrFilters *filters = nostr_filters_new();
   nostr_filters_add(filters, filter);
-  gnostr_pool_query_async(embed_pool, filters, request->cancellable,
-                          on_pending_event_query_done, request);
   nostr_filter_free(filter);
+  gnostr_pool_query_urls_async(
+      embed_pool, (const gchar **)urls->pdata, urls->len,
+      filters, request->cancellable, on_pending_event_query_done, request);
 }
 
 static EventRequestSubscriber *
-event_request_subscriber_new(GnostrNoteEmbed *self, const char *event_id)
+event_request_subscriber_new(GnostrNoteEmbed *self, const char *request_key)
 {
   EventRequestSubscriber *subscriber =
       g_new0(EventRequestSubscriber, 1);
   g_weak_ref_init(&subscriber->embed_ref, self);
-  subscriber->event_id = g_strdup(event_id);
+  subscriber->request_key = g_strdup(request_key);
 
   GCancellable *effective = get_effective_cancellable(self);
   if (effective) {
@@ -1193,10 +1324,21 @@ event_request_subscriber_new(GnostrNoteEmbed *self, const char *event_id)
 static void
 fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex)
 {
-  if (!id_hex || !*id_hex) {
+  gboolean is_address =
+      self->embed_type == EMBED_TYPE_ADDR &&
+      self->target_id && self->address_identifier &&
+      self->address_kind >= 0;
+
+  if (!is_address && (!id_hex || !*id_hex)) {
     gnostr_note_embed_set_error(self, "No event ID");
     return;
   }
+
+  g_autofree char *request_key =
+      is_address
+          ? g_strdup_printf("a:%d:%s:%s", self->address_kind,
+                            self->target_id, self->address_identifier)
+          : g_strdup_printf("e:%s", id_hex);
 
   if (!pending_event_requests) {
     pending_event_requests = g_hash_table_new_full(
@@ -1204,25 +1346,35 @@ fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex)
   }
 
   PendingEventRequest *request =
-      g_hash_table_lookup(pending_event_requests, id_hex);
+      g_hash_table_lookup(pending_event_requests, request_key);
   if (request) {
     g_ptr_array_add(request->subscribers,
-                    event_request_subscriber_new(self, id_hex));
+                    event_request_subscriber_new(self, request_key));
     return;
   }
 
   request = g_new0(PendingEventRequest, 1);
-  request->event_id = g_strdup(id_hex);
-  request->relay_hints = g_strdupv(self->relay_hints);
-  request->relay_hints_count =
-      request->relay_hints ? g_strv_length(request->relay_hints) : 0;
+  request->request_key = g_strdup(request_key);
+  if (is_address) {
+    request->address_kind = self->address_kind;
+    request->address_author = g_strdup(self->target_id);
+    request->address_identifier = g_strdup(self->address_identifier);
+  } else {
+    request->event_id = g_strdup(id_hex);
+  }
+  request->relay_hints_count = MIN(self->relay_hints_count, (size_t)MAX_EMBED_HINT_RELAYS);
+  if (request->relay_hints_count > 0) {
+    request->relay_hints = g_new0(char *, request->relay_hints_count + 1);
+    for (gsize i = 0; i < request->relay_hints_count; i++)
+      request->relay_hints[i] = g_strdup(self->relay_hints[i]);
+  }
   request->subscribers = g_ptr_array_new_with_free_func(
       event_request_subscriber_free);
   request->cancellable = g_cancellable_new();
   g_ptr_array_add(request->subscribers,
-                  event_request_subscriber_new(self, id_hex));
+                  event_request_subscriber_new(self, request_key));
   g_hash_table_insert(pending_event_requests,
-                      g_strdup(request->event_id), request);
+                      g_strdup(request->request_key), request);
 
   start_pending_event_query(request, request->relay_hints_count > 0);
 }
@@ -1278,12 +1430,7 @@ static void on_profile_service_result(const char *pubkey_hex,
 
 /* Request a profile for the given pubkey via the centralized profile service.
  * Cancels any prior in-flight request for this widget to avoid stale results.
- *
- * NOTE (nostrc-pb01): nprofile-encoded relay hints stored in self->relay_hints
- * are intentionally NOT forwarded to the service - the service currently fetches
- * from its shared configured pool. Profiles reachable only via a hint relay
- * (e.g., private community relays) may fall back to a pubkey-only display.
- * A future enhancement could extend the service to accept per-request hints. */
+ * NIP-19 hint relays augment the service's configured relay batch. */
 static void request_profile_via_service(GnostrNoteEmbed *self, const char *pubkey_hex) {
   if (!pubkey_hex || !*pubkey_hex) {
     gnostr_note_embed_set_profile(self, NULL, NULL, NULL, NULL, self->target_id);
@@ -1308,7 +1455,10 @@ static void request_profile_via_service(GnostrNoteEmbed *self, const char *pubke
    * in case set_pubkey/set_nostr_uri is called repeatedly on the same widget. */
   gnostr_profile_service_cancel_for_user_data(svc, self);
 
-  gnostr_profile_service_request(svc, pubkey_hex, on_profile_service_result, self);
+  gnostr_profile_service_request_with_hints(
+      svc, pubkey_hex,
+      (const char *const *)self->relay_hints, self->relay_hints_count,
+      on_profile_service_result, self);
 }
 
 /**
