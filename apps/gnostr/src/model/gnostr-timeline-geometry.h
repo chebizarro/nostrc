@@ -27,6 +27,7 @@ typedef struct {
   guint       link_preview_reservation_count;
   double      link_preview_reserved_height;
   guint       embed_reservation_count;
+  double      embed_reserved_height;
   gboolean    has_reply_context_reservation;
   gboolean    has_repost_context_reservation;
   gboolean    has_quote_context_reservation;
@@ -45,6 +46,7 @@ typedef struct {
   double   effective_height;
   double   media_reserved_height;
   double   link_preview_reserved_height;
+  double   embed_reserved_height;
   guint    width_bucket;
   char    *layout_signature;
   gboolean geometry_measured;

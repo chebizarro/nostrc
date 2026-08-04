@@ -316,6 +316,67 @@ test_initial_text_reservation_uses_elided_parse_output(void)
   g_free(media_signature);
 }
 
+static void
+test_descriptor_caps_order_elision_and_reservations(void)
+{
+  static const char *note =
+    "note1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsglnzgl";
+  GString *content = g_string_new("caption ");
+  for (guint i = 0; i < 5; i++)
+    g_string_append_printf(content, "https://cdn.test/image-%u.jpg ", i);
+  for (guint i = 0; i < 3; i++)
+    g_string_append_printf(content, "https://example.test/page-%u ", i);
+  for (guint i = 0; i < 4; i++)
+    g_string_append_printf(content, "nostr:%s ", note);
+
+  GnostrTimelineHydrator *hydrator = gnostr_timeline_hydrator_new(5);
+  GnostrTimelineBatch *batch = batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 5);
+  batch_add(batch, 1, 100, 0x42, content->str, "Author", "author", NULL, TRUE);
+
+  g_autoptr(GPtrArray) items =
+    gnostr_timeline_hydrator_hydrate_batch(hydrator, batch);
+  g_assert_nonnull(items);
+  g_assert_cmpuint(items->len, ==, 1);
+  GnostrTimelineItemViewModel *vm = g_ptr_array_index(items, 0);
+  const GPtrArray *descriptors =
+    gnostr_timeline_item_view_model_get_content_descriptors(vm);
+  g_assert_nonnull(descriptors);
+  g_assert_cmpuint(descriptors->len, ==, 9);
+
+  for (guint i = 0; i < 4; i++) {
+    const GnContentDescriptor *descriptor =
+      g_ptr_array_index((GPtrArray *)descriptors, i);
+    g_assert_cmpint(descriptor->type, ==, GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE);
+  }
+  for (guint i = 4; i < 6; i++) {
+    const GnContentDescriptor *descriptor =
+      g_ptr_array_index((GPtrArray *)descriptors, i);
+    g_assert_cmpint(descriptor->type, ==, GN_CONTENT_DESCRIPTOR_LINK_PREVIEW);
+  }
+  for (guint i = 6; i < 9; i++) {
+    const GnContentDescriptor *descriptor =
+      g_ptr_array_index((GPtrArray *)descriptors, i);
+    g_assert_cmpint(descriptor->type, ==, GN_CONTENT_DESCRIPTOR_NOSTR_EVENT_REF);
+  }
+
+  g_assert_cmpuint(gnostr_timeline_item_view_model_get_descriptor_overflow_count(vm), ==, 3);
+  g_assert_cmpuint(gnostr_timeline_item_view_model_get_media_reservation_count(vm), ==, 4);
+  g_assert_cmpuint(gnostr_timeline_item_view_model_get_link_preview_reservation_count(vm), ==, 2);
+  g_assert_cmpuint(gnostr_timeline_item_view_model_get_embed_reservation_count(vm), ==, 3);
+  g_assert_cmpfloat(gnostr_timeline_item_view_model_get_embed_reserved_height(vm), ==, 492.0);
+  g_assert_nonnull(strstr(gnostr_timeline_item_view_model_get_geometry_signature(vm), "e3"));
+
+  const char *markup = gnostr_timeline_item_view_model_get_rendered_content(vm);
+  g_assert_nonnull(markup);
+  g_assert_null(strstr(markup, "image-0.jpg"));
+  g_assert_null(strstr(markup, note));
+  g_assert_nonnull(strstr(markup, "page-0"));
+
+  g_string_free(content, TRUE);
+  g_object_unref(batch);
+  g_object_unref(hydrator);
+}
+
 typedef struct {
   gboolean done;
   gboolean got_items;
@@ -375,6 +436,8 @@ main(int argc,
                   test_missing_metadata_fallbacks_and_reservations);
   g_test_add_func("/gnostr/timeline-hydrator/elided-initial-text-reservation",
                   test_initial_text_reservation_uses_elided_parse_output);
+  g_test_add_func("/gnostr/timeline-hydrator/descriptor-caps-order-elision-reservations",
+                  test_descriptor_caps_order_elision_and_reservations);
   g_test_add_func("/gnostr/timeline-hydrator/stale-generation-drops",
                   test_stale_generation_drops_sync_and_async);
 

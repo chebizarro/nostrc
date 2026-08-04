@@ -387,6 +387,7 @@ resolve_footprint_for_vm(GnostrTimelineFeedController *self,
     .link_preview_reservation_count = vm ? gnostr_timeline_item_view_model_get_link_preview_reservation_count(vm) : 0,
     .link_preview_reserved_height = vm ? gnostr_timeline_item_view_model_get_link_preview_reserved_height(vm) : 0.0,
     .embed_reservation_count = vm ? gnostr_timeline_item_view_model_get_embed_reservation_count(vm) : 0,
+    .embed_reserved_height = vm ? gnostr_timeline_item_view_model_get_embed_reserved_height(vm) : 0.0,
     .has_reply_context_reservation = vm ? gnostr_timeline_item_view_model_get_has_reply_context_reservation(vm) : FALSE,
     .has_repost_context_reservation = vm ? gnostr_timeline_item_view_model_get_has_repost_context_reservation(vm) : FALSE,
     .has_quote_context_reservation = vm ? gnostr_timeline_item_view_model_get_has_quote_context_reservation(vm) : FALSE,
@@ -453,7 +454,9 @@ row_matches_entry_footprint(GnostrTimelineSnapshotRow *row,
          ABS(gnostr_timeline_snapshot_row_get_media_reserved_height(row) -
              footprint->media_reserved_height) < 0.001 &&
          ABS(gnostr_timeline_snapshot_row_get_link_preview_reserved_height(row) -
-             footprint->link_preview_reserved_height) < 0.001;
+             footprint->link_preview_reserved_height) < 0.001 &&
+         ABS(gnostr_timeline_snapshot_row_get_embed_reserved_height(row) -
+             footprint->embed_reserved_height) < 0.001;
 }
 
 static GnostrTimelineSnapshotRow *
@@ -488,8 +491,9 @@ snapshot_row_from_entry(GnostrTimelineFeedController *self,
                                                      footprint.measured_height,
                                                      footprint.effective_height,
                                                      footprint.media_reserved_height,
-                                                     footprint.link_preview_reserved_height,
-                                                     footprint.width_bucket,
+                                                       footprint.link_preview_reserved_height,
+                                                       footprint.embed_reserved_height,
+                                                       footprint.width_bucket,
                                                      footprint.layout_signature,
                                                      footprint.geometry_measured);
   gnostr_timeline_row_footprint_clear(&footprint);

@@ -60,6 +60,8 @@ struct _GnostrTimelineItemViewModel {
   char **mentions;
   char **links;
   char **media_urls;
+  GPtrArray *content_descriptors;
+  guint descriptor_overflow_count;
 
   char *action_event_id;
   char *action_pubkey;
@@ -85,6 +87,7 @@ struct _GnostrTimelineItemViewModel {
   guint link_preview_reservation_count;
   double link_preview_reserved_height;
   guint embed_reservation_count;
+  double embed_reserved_height;
   gboolean has_reply_context_reservation;
   gboolean has_repost_context_reservation;
   gboolean has_quote_context_reservation;
@@ -141,6 +144,7 @@ gnostr_timeline_item_view_model_finalize(GObject *object)
   g_strfreev(self->mentions);
   g_strfreev(self->links);
   g_strfreev(self->media_urls);
+  g_clear_pointer(&self->content_descriptors, g_ptr_array_unref);
   g_free(self->action_event_id);
   g_free(self->action_pubkey);
   g_free(self->action_zap_target);
@@ -171,6 +175,8 @@ gnostr_timeline_item_view_model_init(GnostrTimelineItemViewModel *self)
 #define DEFAULT_REPOST_RESERVED_HEIGHT 44.0
 #define DEFAULT_MEDIA_RESERVED_HEIGHT 240.0
 #define DEFAULT_LINK_PREVIEW_RESERVED_HEIGHT 120.0
+#define DEFAULT_EVENT_EMBED_RESERVED_HEIGHT 160.0
+#define DEFAULT_RICH_CONTENT_SPACING 6.0
 #define MAX_TEXT_RESERVED_HEIGHT 240.0
 
 static char **
@@ -191,6 +197,41 @@ strv_length_const(const char * const *values)
   return n;
 }
 
+static GnContentDescriptor *
+dup_content_descriptor(const GnContentDescriptor *descriptor)
+{
+  if (!descriptor)
+    return NULL;
+
+  GnContentDescriptor *copy = g_new0(GnContentDescriptor, 1);
+  copy->type = descriptor->type;
+  copy->url = g_strdup(descriptor->url);
+  copy->original = g_strdup(descriptor->original);
+  copy->id = g_strdup(descriptor->id);
+  copy->pubkey = g_strdup(descriptor->pubkey);
+  copy->relay_hints = g_strdupv(descriptor->relay_hints);
+  copy->width = descriptor->width;
+  copy->height = descriptor->height;
+  copy->thumbnail_url = g_strdup(descriptor->thumbnail_url);
+  return copy;
+}
+
+static GPtrArray *
+dup_content_descriptors(const GPtrArray *descriptors)
+{
+  if (!descriptors)
+    return NULL;
+
+  GPtrArray *copy =
+    g_ptr_array_new_with_free_func((GDestroyNotify)gn_content_descriptor_free);
+  for (guint i = 0; i < descriptors->len; i++) {
+    GnContentDescriptor *descriptor = g_ptr_array_index((GPtrArray *)descriptors, i);
+    if (descriptor)
+      g_ptr_array_add(copy, dup_content_descriptor(descriptor));
+  }
+  return copy;
+}
+
 char *
 gnostr_timeline_item_view_model_spec_recompute_derived_fields(GnostrTimelineItemViewModelSpec *spec)
 {
@@ -198,6 +239,25 @@ gnostr_timeline_item_view_model_spec_recompute_derived_fields(GnostrTimelineItem
 
   guint media_count = strv_length_const(spec->media_urls);
   guint link_count = strv_length_const(spec->links);
+  guint embed_count = spec->embed_reservation_count;
+  if (spec->content_descriptors) {
+    media_count = 0;
+    link_count = 0;
+    embed_count = 0;
+    for (guint i = 0; i < spec->content_descriptors->len; i++) {
+      const GnContentDescriptor *descriptor =
+        g_ptr_array_index((GPtrArray *)spec->content_descriptors, i);
+      if (!descriptor)
+        continue;
+      if (descriptor->type == GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE ||
+          descriptor->type == GN_CONTENT_DESCRIPTOR_MEDIA_VIDEO)
+        media_count++;
+      else if (descriptor->type == GN_CONTENT_DESCRIPTOR_LINK_PREVIEW)
+        link_count++;
+      else if (descriptor->type == GN_CONTENT_DESCRIPTOR_NOSTR_EVENT_REF)
+        embed_count++;
+    }
+  }
   gboolean has_reply_context = (spec->root_id && *spec->root_id) ||
     (spec->reply_id && *spec->reply_id);
   gboolean has_quote_context = spec->quote_state != GNOSTR_TIMELINE_PREVIEW_ABSENT;
@@ -215,8 +275,11 @@ gnostr_timeline_item_view_model_spec_recompute_derived_fields(GnostrTimelineItem
   gnostr_content_render_result_free(parsed_content);
   double media_reserved = media_count * DEFAULT_MEDIA_RESERVED_HEIGHT;
   double link_reserved = link_count * DEFAULT_LINK_PREVIEW_RESERVED_HEIGHT;
+  double embed_reserved = embed_count > 0 ?
+    (embed_count * DEFAULT_EVENT_EMBED_RESERVED_HEIGHT) +
+      ((embed_count - 1u) * DEFAULT_RICH_CONTENT_SPACING) : 0.0;
   double initial_reserved = DEFAULT_BASE_RESERVED_HEIGHT + text_reserved +
-    media_reserved + link_reserved;
+    media_reserved + link_reserved + embed_reserved;
   if (has_reply_context)
     initial_reserved += DEFAULT_CONTEXT_RESERVED_HEIGHT;
   if (has_quote_context)
@@ -232,6 +295,8 @@ gnostr_timeline_item_view_model_spec_recompute_derived_fields(GnostrTimelineItem
   spec->media_reserved_height = media_reserved;
   spec->link_preview_reservation_count = link_count;
   spec->link_preview_reserved_height = link_reserved;
+  spec->embed_reservation_count = embed_count;
+  spec->embed_reserved_height = embed_reserved;
   spec->has_reply_context_reservation = has_reply_context;
   spec->has_repost_context_reservation = has_repost_context;
   spec->has_quote_context_reservation = has_quote_context;
@@ -248,7 +313,7 @@ gnostr_timeline_item_view_model_spec_recompute_derived_fields(GnostrTimelineItem
                                              has_repost_context,
                                              media_count,
                                              link_count,
-                                             spec->embed_reservation_count,
+                                             embed_count,
                                              has_content_warning);
   spec->geometry_signature = geometry_signature;
   return geometry_signature;
@@ -314,6 +379,8 @@ gnostr_timeline_item_view_model_new(const GnostrTimelineItemViewModelSpec *spec)
   self->mentions = dup_strv_or_null(spec->mentions);
   self->links = dup_strv_or_null(spec->links);
   self->media_urls = dup_strv_or_null(spec->media_urls);
+  self->content_descriptors = dup_content_descriptors(spec->content_descriptors);
+  self->descriptor_overflow_count = spec->descriptor_overflow_count;
 
   self->action_event_id = g_strdup(spec->action_event_id);
   self->action_pubkey = g_strdup(spec->action_pubkey);
@@ -339,6 +406,7 @@ gnostr_timeline_item_view_model_new(const GnostrTimelineItemViewModelSpec *spec)
   self->link_preview_reservation_count = spec->link_preview_reservation_count;
   self->link_preview_reserved_height = spec->link_preview_reserved_height;
   self->embed_reservation_count = spec->embed_reservation_count;
+  self->embed_reserved_height = spec->embed_reserved_height;
   self->has_reply_context_reservation = spec->has_reply_context_reservation;
   self->has_repost_context_reservation = spec->has_repost_context_reservation;
   self->has_quote_context_reservation = spec->has_quote_context_reservation;
@@ -405,6 +473,8 @@ fill_spec_from_vm(GnostrTimelineItemViewModel *self,
   spec->mentions = (const char * const *)self->mentions;
   spec->links = (const char * const *)self->links;
   spec->media_urls = (const char * const *)self->media_urls;
+  spec->content_descriptors = self->content_descriptors;
+  spec->descriptor_overflow_count = self->descriptor_overflow_count;
   spec->action_event_id = self->action_event_id;
   spec->action_pubkey = self->action_pubkey;
   spec->action_is_own_note = self->action_is_own_note;
@@ -427,6 +497,7 @@ fill_spec_from_vm(GnostrTimelineItemViewModel *self,
   spec->link_preview_reservation_count = self->link_preview_reservation_count;
   spec->link_preview_reserved_height = self->link_preview_reserved_height;
   spec->embed_reservation_count = self->embed_reservation_count;
+  spec->embed_reserved_height = self->embed_reserved_height;
   spec->has_reply_context_reservation = self->has_reply_context_reservation;
   spec->has_repost_context_reservation = self->has_repost_context_reservation;
   spec->has_quote_context_reservation = self->has_quote_context_reservation;
@@ -640,6 +711,18 @@ const char * const *gnostr_timeline_item_view_model_get_media_urls(GnostrTimelin
   return (const char * const *)self->media_urls;
 }
 
+const GPtrArray *gnostr_timeline_item_view_model_get_content_descriptors(GnostrTimelineItemViewModel *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_ITEM_VIEW_MODEL(self), NULL);
+  return self->content_descriptors;
+}
+
+guint gnostr_timeline_item_view_model_get_descriptor_overflow_count(GnostrTimelineItemViewModel *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_ITEM_VIEW_MODEL(self), 0);
+  return self->descriptor_overflow_count;
+}
+
 gboolean gnostr_timeline_item_view_model_get_action_is_own_note(GnostrTimelineItemViewModel *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_ITEM_VIEW_MODEL(self), FALSE);
@@ -746,6 +829,12 @@ guint gnostr_timeline_item_view_model_get_embed_reservation_count(GnostrTimeline
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_ITEM_VIEW_MODEL(self), 0);
   return self->embed_reservation_count;
+}
+
+double gnostr_timeline_item_view_model_get_embed_reserved_height(GnostrTimelineItemViewModel *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_ITEM_VIEW_MODEL(self), 0.0);
+  return self->embed_reserved_height;
 }
 
 double gnostr_timeline_item_view_model_get_link_preview_reserved_height(GnostrTimelineItemViewModel *self)

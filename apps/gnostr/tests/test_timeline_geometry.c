@@ -194,12 +194,38 @@ test_rich_areas_reserve_additional_height(void)
   g_assert_nonnull(strstr(rich_footprint.layout_signature, "e2"));
   g_assert_cmpfloat(rich_footprint.media_reserved_height, !=, rich.media_reserved_height);
   g_assert_cmpfloat(rich_footprint.link_preview_reserved_height, !=, rich.link_preview_reserved_height);
+  g_assert_cmpfloat(rich_footprint.embed_reserved_height, ==, 328.0);
   g_assert_nonnull(strstr(rich_footprint.layout_signature, "cw1"));
   g_assert_nonnull(strstr(rich_footprint.layout_signature, "mod1"));
   g_assert_nonnull(strstr(rich_footprint.layout_signature, "footer1"));
 
   gnostr_timeline_row_footprint_clear(&plain);
   gnostr_timeline_row_footprint_clear(&rich_footprint);
+}
+
+static void
+test_event_embed_reservation_is_fixed_and_count_deterministic(void)
+{
+  g_autoptr(GnostrTimelineGeometryResolver) resolver =
+    gnostr_timeline_geometry_resolver_new();
+
+  GnostrTimelineGeometryInput input = base_input;
+  input.embed_reservation_count = 3;
+  input.embed_reserved_height = 492.0;
+  input.initial_reserved_height = 700.0;
+
+  GnostrTimelineRowFootprint narrow = { 0 };
+  GnostrTimelineRowFootprint wide = { 0 };
+  gnostr_timeline_geometry_resolver_resolve(resolver, &input, 480, &narrow);
+  gnostr_timeline_geometry_resolver_resolve(resolver, &input, 720, &wide);
+
+  g_assert_cmpfloat(narrow.embed_reserved_height, ==, 496.0);
+  g_assert_cmpfloat(wide.embed_reserved_height, ==, narrow.embed_reserved_height);
+  g_assert_cmpfloat(narrow.effective_height, ==, wide.effective_height);
+  g_assert_nonnull(strstr(narrow.layout_signature, "e3"));
+
+  gnostr_timeline_row_footprint_clear(&narrow);
+  gnostr_timeline_row_footprint_clear(&wide);
 }
 
 static void
@@ -279,6 +305,8 @@ main(int argc,
                   test_passive_measurement_cannot_change_effective_height);
   g_test_add_func("/gnostr/timeline-geometry/rich-area-reservations",
                   test_rich_areas_reserve_additional_height);
+  g_test_add_func("/gnostr/timeline-geometry/event-embed-fixed-reservation",
+                  test_event_embed_reservation_is_fixed_and_count_deterministic);
   g_test_add_func("/gnostr/timeline-geometry/media-elision-text-height",
                   test_media_elision_controls_text_height);
   g_test_add_func("/gnostr/timeline-geometry/explicit-reservation-fields",

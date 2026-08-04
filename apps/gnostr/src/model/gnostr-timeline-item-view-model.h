@@ -2,6 +2,7 @@
 #define GNOSTR_TIMELINE_ITEM_VIEW_MODEL_H
 
 #include <glib-object.h>
+#include <nostr-gtk-1.0/content_renderer.h>
 
 G_BEGIN_DECLS
 
@@ -81,6 +82,8 @@ typedef struct {
   const char * const *mentions;
   const char * const *links;
   const char * const *media_urls;
+  const GPtrArray *content_descriptors;
+  guint descriptor_overflow_count;
 
   const char *action_event_id;
   const char *action_pubkey;
@@ -106,6 +109,7 @@ typedef struct {
   guint link_preview_reservation_count;
   double link_preview_reserved_height;
   guint embed_reservation_count;
+  double embed_reserved_height;
   gboolean has_reply_context_reservation;
   gboolean has_repost_context_reservation;
   gboolean has_quote_context_reservation;
@@ -194,6 +198,8 @@ const char * const *gnostr_timeline_item_view_model_get_hashtags(GnostrTimelineI
 const char * const *gnostr_timeline_item_view_model_get_mentions(GnostrTimelineItemViewModel *self);
 const char * const *gnostr_timeline_item_view_model_get_links(GnostrTimelineItemViewModel *self);
 const char * const *gnostr_timeline_item_view_model_get_media_urls(GnostrTimelineItemViewModel *self);
+const GPtrArray *gnostr_timeline_item_view_model_get_content_descriptors(GnostrTimelineItemViewModel *self);
+guint       gnostr_timeline_item_view_model_get_descriptor_overflow_count(GnostrTimelineItemViewModel *self);
 const char *gnostr_timeline_item_view_model_get_action_event_id(GnostrTimelineItemViewModel *self);
 const char *gnostr_timeline_item_view_model_get_action_pubkey(GnostrTimelineItemViewModel *self);
 gboolean    gnostr_timeline_item_view_model_get_action_is_own_note(GnostrTimelineItemViewModel *self);
@@ -216,6 +222,7 @@ double      gnostr_timeline_item_view_model_get_media_reserved_height(GnostrTime
 guint       gnostr_timeline_item_view_model_get_link_preview_reservation_count(GnostrTimelineItemViewModel *self);
 double      gnostr_timeline_item_view_model_get_link_preview_reserved_height(GnostrTimelineItemViewModel *self);
 guint       gnostr_timeline_item_view_model_get_embed_reservation_count(GnostrTimelineItemViewModel *self);
+double      gnostr_timeline_item_view_model_get_embed_reserved_height(GnostrTimelineItemViewModel *self);
 gboolean    gnostr_timeline_item_view_model_get_has_reply_context_reservation(GnostrTimelineItemViewModel *self);
 gboolean    gnostr_timeline_item_view_model_get_has_repost_context_reservation(GnostrTimelineItemViewModel *self);
 gboolean    gnostr_timeline_item_view_model_get_has_quote_context_reservation(GnostrTimelineItemViewModel *self);

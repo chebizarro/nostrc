@@ -29,12 +29,15 @@ struct _GnostrTimelineSnapshotRow {
   guint zap_count;
   gint64 zap_total_msat;
   GnostrTimelineItemViewModel *view_model;
+  GPtrArray *content_descriptors;
+  guint descriptor_overflow_count;
 
   double estimated_height;
   double measured_height;
   double effective_height;
   double media_reserved_height;
   double link_preview_reserved_height;
+  double embed_reserved_height;
   guint width_bucket;
   char *layout_signature;
   gboolean geometry_measured;
@@ -62,6 +65,7 @@ gnostr_timeline_snapshot_row_finalize(GObject *object)
   g_free(self->reposted_event_id);
   g_strfreev(self->hashtags);
   g_clear_object(&self->view_model);
+  g_clear_pointer(&self->content_descriptors, g_ptr_array_unref);
   g_free(self->layout_signature);
 
   G_OBJECT_CLASS(gnostr_timeline_snapshot_row_parent_class)->finalize(object);
@@ -124,6 +128,7 @@ gnostr_timeline_snapshot_row_new(const char *event_id,
                                                effective_height,
                                                media_reserved_height,
                                                link_preview_reserved_height,
+                                               0.0,
                                                width_bucket,
                                                layout_signature,
                                                geometry_measured);
@@ -158,6 +163,7 @@ gnostr_timeline_snapshot_row_new_full(const char *event_id,
                                        double effective_height,
                                        double media_reserved_height,
                                        double link_preview_reserved_height,
+                                       double embed_reserved_height,
                                        guint width_bucket,
                                        const char *layout_signature,
                                        gboolean geometry_measured)
@@ -192,6 +198,7 @@ gnostr_timeline_snapshot_row_new_full(const char *event_id,
   self->effective_height = effective_height > 0.0 ? effective_height : estimated_height;
   self->media_reserved_height = media_reserved_height;
   self->link_preview_reserved_height = link_preview_reserved_height;
+  self->embed_reserved_height = embed_reserved_height;
   self->width_bucket = width_bucket;
   self->layout_signature = g_strdup(layout_signature);
   self->geometry_measured = geometry_measured;
@@ -206,6 +213,7 @@ gnostr_timeline_snapshot_row_new_from_view_model(GnostrTimelineItemViewModel *vi
                                                   double effective_height,
                                                   double media_reserved_height,
                                                   double link_preview_reserved_height,
+                                                  double embed_reserved_height,
                                                   guint width_bucket,
                                                   const char *layout_signature,
                                                   gboolean geometry_measured)
@@ -241,10 +249,17 @@ gnostr_timeline_snapshot_row_new_from_view_model(GnostrTimelineItemViewModel *vi
                                           effective_height,
                                           media_reserved_height,
                                           link_preview_reserved_height,
+                                          embed_reserved_height,
                                           width_bucket,
                                           layout_signature,
                                           geometry_measured);
   row->view_model = g_object_ref(view_model);
+  const GPtrArray *descriptors =
+    gnostr_timeline_item_view_model_get_content_descriptors(view_model);
+  row->content_descriptors = descriptors ?
+    g_ptr_array_ref((GPtrArray *)descriptors) : NULL;
+  row->descriptor_overflow_count =
+    gnostr_timeline_item_view_model_get_descriptor_overflow_count(view_model);
   return row;
 }
 
@@ -414,6 +429,24 @@ double gnostr_timeline_snapshot_row_get_link_preview_reserved_height(GnostrTimel
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 0.0);
   return self->link_preview_reserved_height;
+}
+
+double gnostr_timeline_snapshot_row_get_embed_reserved_height(GnostrTimelineSnapshotRow *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 0.0);
+  return self->embed_reserved_height;
+}
+
+const GPtrArray *gnostr_timeline_snapshot_row_get_content_descriptors(GnostrTimelineSnapshotRow *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
+  return self->content_descriptors;
+}
+
+guint gnostr_timeline_snapshot_row_get_descriptor_overflow_count(GnostrTimelineSnapshotRow *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 0);
+  return self->descriptor_overflow_count;
 }
 
 guint gnostr_timeline_snapshot_row_get_width_bucket(GnostrTimelineSnapshotRow *self)

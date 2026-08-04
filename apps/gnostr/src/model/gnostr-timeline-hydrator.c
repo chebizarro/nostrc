@@ -81,137 +81,14 @@ event_id_for_entry(const GnostrTimelineBatchEntry *entry)
   return g_strdup_printf("note-key-%" G_GUINT64_FORMAT, entry->note_key);
 }
 
-static gboolean
-str_has_suffix_with_len(const char *str,
-                        gsize len,
-                        const char *suffix)
-{
-  gsize suffix_len = strlen(suffix);
-  if (!str || suffix_len > len)
-    return FALSE;
-  return memcmp(str + len - suffix_len, suffix, suffix_len) == 0;
-}
-
-static gboolean
-str_has_media_suffix(const char *url)
-{
-  if (!url)
-    return FALSE;
-
-  g_autofree char *lower = g_ascii_strdown(url, -1);
-  const char *q = strchr(lower, '?');
-  gsize len = q ? (gsize)(q - lower) : strlen(lower);
-
-  return (str_has_suffix_with_len(lower, len, ".jpg") ||
-          str_has_suffix_with_len(lower, len, ".jpeg") ||
-          str_has_suffix_with_len(lower, len, ".png") ||
-          str_has_suffix_with_len(lower, len, ".gif") ||
-          str_has_suffix_with_len(lower, len, ".webp") ||
-          str_has_suffix_with_len(lower, len, ".mp4") ||
-          str_has_suffix_with_len(lower, len, ".webm") ||
-          str_has_suffix_with_len(lower, len, ".mov"));
-}
-
-static gboolean
-is_nostr_bech32_token(const char *token)
-{
-  return token &&
-    (g_str_has_prefix(token, "nostr:") ||
-     g_str_has_prefix(token, "note1") ||
-     g_str_has_prefix(token, "npub1") ||
-     g_str_has_prefix(token, "nevent1") ||
-     g_str_has_prefix(token, "nprofile1") ||
-     g_str_has_prefix(token, "naddr1"));
-}
-
-static gboolean
-is_http_token(const char *token)
-{
-  return token &&
-    (g_str_has_prefix(token, "http://") ||
-     g_str_has_prefix(token, "https://") ||
-     g_str_has_prefix(token, "www."));
-}
-
-static gsize
-trim_trailing_token_punctuation(const char *token,
-                                gsize len)
-{
-  while (len > 0) {
-    char c = token[len - 1];
-    if (c == '.' || c == ',' || c == ';' || c == ':' ||
-        c == '!' || c == '?' || c == ')' || c == ']' || c == '}')
-      len--;
-    else
-      break;
-  }
-  return len;
-}
-
-static void
-append_markup_for_token(GString *out,
-                        const char *token,
-                        gsize len)
-{
-  if (len == 0)
-    return;
-
-  gsize core_len = trim_trailing_token_punctuation(token, len);
-  const char *suffix = token + core_len;
-  gsize suffix_len = len - core_len;
-  g_autofree char *core = g_strndup(token, core_len);
-
-  if (core_len > 1 && core[0] == '#') {
-    g_autofree char *tag = g_strdup(core + 1);
-    g_autofree char *esc_tag = g_markup_escape_text(tag, -1);
-    g_autofree char *esc_href = g_markup_escape_text(tag, -1);
-    g_string_append_printf(out, "<a href=\"hashtag:%s\">#%s</a>", esc_href, esc_tag);
-  } else if (is_http_token(core)) {
-    g_autofree char *href = g_str_has_prefix(core, "www.")
-      ? g_strdup_printf("https://%s", core)
-      : g_strdup(core);
-    g_autofree char *esc_href = g_markup_escape_text(href, -1);
-    g_autofree char *esc_display = g_markup_escape_text(core, -1);
-    g_string_append_printf(out, "<a href=\"%s\">%s</a>", esc_href, esc_display);
-  } else if (is_nostr_bech32_token(core)) {
-    g_autofree char *href = g_str_has_prefix(core, "nostr:")
-      ? g_strdup(core)
-      : g_strdup_printf("nostr:%s", core);
-    g_autofree char *esc_href = g_markup_escape_text(href, -1);
-    g_autofree char *esc_display = g_markup_escape_text(core, -1);
-    g_string_append_printf(out, "<a href=\"%s\">%s</a>", esc_href, esc_display);
-  } else {
-    g_autofree char *escaped = g_markup_escape_text(core, -1);
-    g_string_append(out, escaped);
-  }
-
-  if (suffix_len > 0) {
-    g_autofree char *escaped_suffix = g_markup_escape_text(suffix, suffix_len);
-    g_string_append(out, escaped_suffix);
-  }
-}
-
 static char *
 render_markup_from_content(const char *content)
 {
-  if (!content || !*content)
-    return g_strdup("");
-
-  GString *out = g_string_new(NULL);
-  const char *p = content;
-  while (*p) {
-    if (g_ascii_isspace(*p)) {
-      g_string_append_c(out, *p++);
-      continue;
-    }
-
-    const char *start = p;
-    while (*p && !g_ascii_isspace(*p))
-      p++;
-    append_markup_for_token(out, start, (gsize)(p - start));
-  }
-
-  return g_string_free(out, FALSE);
+  GnContentRenderResult *parsed =
+    gn_content_parse(content ? content : "", -1, NULL, NULL);
+  char *markup = g_strdup(parsed && parsed->markup ? parsed->markup : "");
+  gnostr_content_render_result_free(parsed);
+  return markup;
 }
 
 static gboolean
@@ -237,47 +114,20 @@ ptr_array_add_unique(GPtrArray *array,
   g_ptr_array_add(array, g_strdup(value));
 }
 
-static char *
-trim_url_token(const char *start,
-               gsize len)
-{
-  while (len > 0) {
-    char c = start[len - 1];
-    if (c == '.' || c == ',' || c == ';' || c == ':' || c == ')' || c == ']' || c == '}' || c == '!' || c == '?')
-      len--;
-    else
-      break;
-  }
-
-  return len > 0 ? g_strndup(start, len) : NULL;
-}
+#define MAX_MEDIA_DESCRIPTORS 4u
+#define MAX_LINK_PREVIEW_DESCRIPTORS 2u
+#define MAX_EVENT_EMBED_DESCRIPTORS 3u
 
 static void
-extract_content_tokens(const char *content,
-                       GPtrArray *hashtags,
-                       GPtrArray *mentions,
-                       GPtrArray *links,
-                       GPtrArray *media)
+extract_inline_metadata(const char *content,
+                        GPtrArray *hashtags,
+                        GPtrArray *mentions)
 {
   if (!content || !*content)
     return;
 
   const char *p = content;
   while (*p) {
-    if (g_str_has_prefix(p, "https://") || g_str_has_prefix(p, "http://")) {
-      const char *start = p;
-      while (*p && !g_ascii_isspace(*p) && *p != '<' && *p != '>' && *p != '"' && *p != '\'')
-        p++;
-      g_autofree char *url = trim_url_token(start, (gsize)(p - start));
-      if (url && *url) {
-        if (str_has_media_suffix(url))
-          ptr_array_add_unique(media, url);
-        else
-          ptr_array_add_unique(links, url);
-      }
-      continue;
-    }
-
     if (*p == '#' && (p == content || !g_ascii_isalnum(*(p - 1)))) {
       const char *start = ++p;
       while (*p && (g_ascii_isalnum(*p) || *p == '_' || *p == '-'))
@@ -301,6 +151,142 @@ extract_content_tokens(const char *content,
     }
 
     p = g_utf8_next_char(p);
+  }
+}
+
+static GnContentDescriptor *
+dup_content_descriptor(const GnContentDescriptor *descriptor)
+{
+  GnContentDescriptor *copy = g_new0(GnContentDescriptor, 1);
+  copy->type = descriptor->type;
+  copy->url = g_strdup(descriptor->url);
+  copy->original = g_strdup(descriptor->original);
+  copy->id = g_strdup(descriptor->id);
+  copy->pubkey = g_strdup(descriptor->pubkey);
+  copy->relay_hints = g_strdupv(descriptor->relay_hints);
+  copy->width = descriptor->width;
+  copy->height = descriptor->height;
+  copy->thumbnail_url = g_strdup(descriptor->thumbnail_url);
+  return copy;
+}
+
+static gboolean
+descriptors_contain_url(const GPtrArray *descriptors,
+                        const char *url)
+{
+  if (!descriptors || !url)
+    return FALSE;
+  for (guint i = 0; i < descriptors->len; i++) {
+    const GnContentDescriptor *descriptor =
+      g_ptr_array_index((GPtrArray *)descriptors, i);
+    if (descriptor && g_strcmp0(descriptor->url, url) == 0)
+      return TRUE;
+  }
+  return FALSE;
+}
+
+static void
+append_explicit_url_descriptors(GPtrArray *descriptors,
+                                char **urls,
+                                GnContentDescriptorType type)
+{
+  if (!urls)
+    return;
+  for (guint i = 0; urls[i]; i++) {
+    if (!*urls[i] || descriptors_contain_url(descriptors, urls[i]))
+      continue;
+    GnContentDescriptor *descriptor = g_new0(GnContentDescriptor, 1);
+    descriptor->type = type;
+    descriptor->url = g_strdup(urls[i]);
+    g_ptr_array_add(descriptors, descriptor);
+  }
+}
+
+static GPtrArray *
+merge_content_descriptors(const GPtrArray *parsed_descriptors,
+                          char **explicit_links,
+                          char **explicit_media)
+{
+  GPtrArray *merged =
+    g_ptr_array_new_with_free_func((GDestroyNotify)gn_content_descriptor_free);
+  if (parsed_descriptors) {
+    for (guint i = 0; i < parsed_descriptors->len; i++) {
+      const GnContentDescriptor *descriptor =
+        g_ptr_array_index((GPtrArray *)parsed_descriptors, i);
+      if (descriptor)
+        g_ptr_array_add(merged, dup_content_descriptor(descriptor));
+    }
+  }
+  append_explicit_url_descriptors(merged, explicit_media,
+                                  GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE);
+  append_explicit_url_descriptors(merged, explicit_links,
+                                  GN_CONTENT_DESCRIPTOR_LINK_PREVIEW);
+  return merged;
+}
+
+static GPtrArray *
+cap_content_descriptors(const GPtrArray *descriptors,
+                        guint *out_overflow_count)
+{
+  GPtrArray *capped = g_ptr_array_new();
+  guint media_count = 0;
+  guint link_count = 0;
+  guint event_count = 0;
+  guint overflow_count = 0;
+
+  if (descriptors) {
+    for (guint i = 0; i < descriptors->len; i++) {
+      GnContentDescriptor *descriptor =
+        g_ptr_array_index((GPtrArray *)descriptors, i);
+      if (!descriptor)
+        continue;
+
+      gboolean include = TRUE;
+      switch (descriptor->type) {
+        case GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE:
+        case GN_CONTENT_DESCRIPTOR_MEDIA_VIDEO:
+          include = media_count++ < MAX_MEDIA_DESCRIPTORS;
+          break;
+        case GN_CONTENT_DESCRIPTOR_LINK_PREVIEW:
+          include = link_count++ < MAX_LINK_PREVIEW_DESCRIPTORS;
+          break;
+        case GN_CONTENT_DESCRIPTOR_NOSTR_EVENT_REF:
+          include = event_count++ < MAX_EVENT_EMBED_DESCRIPTORS;
+          break;
+        case GN_CONTENT_DESCRIPTOR_NOSTR_PROFILE_REF:
+          break;
+      }
+
+      if (include)
+        g_ptr_array_add(capped, descriptor);
+      else
+        overflow_count++;
+    }
+  }
+
+  if (out_overflow_count)
+    *out_overflow_count = overflow_count;
+  return capped;
+}
+
+static void
+collect_descriptor_urls(const GPtrArray *descriptors,
+                        GPtrArray *links,
+                        GPtrArray *media)
+{
+  if (!descriptors)
+    return;
+
+  for (guint i = 0; i < descriptors->len; i++) {
+    const GnContentDescriptor *descriptor =
+      g_ptr_array_index((GPtrArray *)descriptors, i);
+    if (!descriptor || !descriptor->url)
+      continue;
+    if (descriptor->type == GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE ||
+        descriptor->type == GN_CONTENT_DESCRIPTOR_MEDIA_VIDEO)
+      ptr_array_add_unique(media, descriptor->url);
+    else if (descriptor->type == GN_CONTENT_DESCRIPTOR_LINK_PREVIEW)
+      ptr_array_add_unique(links, descriptor->url);
   }
 }
 
@@ -391,7 +377,17 @@ gnostr_timeline_hydrator_hydrate_entry(GnostrTimelineHydrator *self,
 
   g_autofree char *event_id = event_id_for_entry(entry);
   g_autofree char *note_key = g_strdup_printf("%" G_GUINT64_FORMAT, entry->note_key);
-  g_autofree char *rendered_content = render_markup_from_content(entry->content);
+  GnContentRenderResult *parsed_content =
+    gn_content_parse(entry->content ? entry->content : "", -1, NULL, NULL);
+  g_autofree char *rendered_content =
+    g_strdup(parsed_content && parsed_content->markup ? parsed_content->markup : "");
+  GPtrArray *descriptor_candidates =
+    merge_content_descriptors(parsed_content ? parsed_content->descriptors : NULL,
+                              entry->links,
+                              entry->media_urls);
+  guint descriptor_overflow_count = 0;
+  GPtrArray *content_descriptors =
+    cap_content_descriptors(descriptor_candidates, &descriptor_overflow_count);
   g_autofree char *parent_fallback = author_fallback_label(entry->parent_pubkey);
   g_autofree char *quoted_snippet = content_snippet(entry->quoted_content);
   g_autofree char *quoted_rendered = render_markup_from_content(quoted_snippet);
@@ -414,9 +410,8 @@ gnostr_timeline_hydrator_hydrate_entry(GnostrTimelineHydrator *self,
   GPtrArray *media = g_ptr_array_new_with_free_func(g_free);
   seed_ptr_array_from_strv(hashtags, entry->hashtags);
   seed_ptr_array_from_strv(mentions, entry->mentions);
-  seed_ptr_array_from_strv(links, entry->links);
-  seed_ptr_array_from_strv(media, entry->media_urls);
-  extract_content_tokens(entry->content, hashtags, mentions, links, media);
+  extract_inline_metadata(entry->content, hashtags, mentions);
+  collect_descriptor_urls(content_descriptors, links, media);
 
   g_auto(GStrv) hashtags_v = finish_strv(hashtags);
   g_auto(GStrv) mentions_v = finish_strv(mentions);
@@ -482,6 +477,8 @@ gnostr_timeline_hydrator_hydrate_entry(GnostrTimelineHydrator *self,
     .mentions = (const char * const *)mentions_v,
     .links = (const char * const *)links_v,
     .media_urls = (const char * const *)media_v,
+    .content_descriptors = content_descriptors,
+    .descriptor_overflow_count = descriptor_overflow_count,
     .action_event_id = event_id,
     .action_pubkey = entry->pubkey_hex,
     .action_is_own_note = entry->is_own_note,
@@ -496,7 +493,12 @@ gnostr_timeline_hydrator_hydrate_entry(GnostrTimelineHydrator *self,
   g_autofree char *geometry_signature =
     gnostr_timeline_item_view_model_spec_recompute_derived_fields(&spec);
   (void)geometry_signature;
-  return gnostr_timeline_item_view_model_new(&spec);
+  GnostrTimelineItemViewModel *view_model =
+    gnostr_timeline_item_view_model_new(&spec);
+  g_ptr_array_unref(content_descriptors);
+  g_ptr_array_unref(descriptor_candidates);
+  gnostr_content_render_result_free(parsed_content);
+  return view_model;
 }
 
 static gint

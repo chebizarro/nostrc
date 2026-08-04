@@ -1090,6 +1090,18 @@ test_live_existing_replacement_defers_geometry_unsafe_visible_row(void)
   g_assert_cmpstr(gnostr_timeline_snapshot_row_get_content(admitted_row), ==, "rich body");
   g_assert_cmpstr(gnostr_timeline_snapshot_row_get_note_key(admitted_row), ==, "2");
   g_assert_nonnull(strstr(gnostr_timeline_snapshot_row_get_layout_signature(admitted_row), "m1"));
+  const GPtrArray *descriptors =
+    gnostr_timeline_snapshot_row_get_content_descriptors(admitted_row);
+  g_assert_nonnull(descriptors);
+  g_assert_cmpuint(descriptors->len, ==, 1);
+  const GnContentDescriptor *descriptor =
+    g_ptr_array_index((GPtrArray *)descriptors, 0);
+  g_assert_cmpint(descriptor->type, ==, GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE);
+  g_assert_cmpstr(descriptor->url, ==, "https://example.test/media.png");
+  g_assert_cmpuint(gnostr_timeline_snapshot_row_get_descriptor_overflow_count(admitted_row), ==, 0);
+  g_autoptr(GnostrTimelineItemViewModel) descriptor_vm =
+    gnostr_timeline_snapshot_row_dup_view_model(admitted_row);
+  g_assert_cmpuint(gnostr_timeline_item_view_model_get_media_reservation_count(descriptor_vm), ==, 1);
   g_assert_cmpuint(gnostr_timeline_snapshot_row_get_like_count(admitted_row), ==, 7);
   g_assert_true(gnostr_timeline_snapshot_row_get_is_liked(admitted_row));
   g_assert_cmpstr(gnostr_timeline_snapshot_row_get_display_name(admitted_row), ==, "Patched Name");

@@ -24,6 +24,7 @@
 #define NOTE_CARD_MAIN_CONTENT_MARGIN_START_PX 16u
 #define NOTE_CARD_MAIN_CONTENT_MARGIN_END_PX   16u
 #define NOTE_CARD_MEDIA_SPACING_PX             6.0
+#define EVENT_EMBED_COMPACT_HEIGHT_PX           160.0
 
 typedef struct {
   double measured_height;
@@ -135,6 +136,7 @@ gnostr_timeline_row_footprint_clear(GnostrTimelineRowFootprint *footprint)
   footprint->effective_height = 0.0;
   footprint->media_reserved_height = 0.0;
   footprint->link_preview_reserved_height = 0.0;
+  footprint->embed_reserved_height = 0.0;
   footprint->width_bucket = 0;
   footprint->geometry_measured = FALSE;
 }
@@ -320,6 +322,17 @@ resolve_link_preview_reserved_height(guint link_count,
   return quantize_height(height);
 }
 
+static double
+resolve_embed_reserved_height(guint embed_count)
+{
+  if (embed_count == 0)
+    return 0.0;
+
+  double height = ((double)embed_count * EVENT_EMBED_COMPACT_HEIGHT_PX) +
+    ((double)(embed_count - 1u) * NOTE_CARD_MEDIA_SPACING_PX);
+  return quantize_height(height);
+}
+
 void
 gnostr_timeline_geometry_resolver_resolve(GnostrTimelineGeometryResolver *self,
                                           const GnostrTimelineGeometryInput *input,
@@ -338,6 +351,8 @@ gnostr_timeline_geometry_resolver_resolve(GnostrTimelineGeometryResolver *self,
     resolve_media_reserved_height(input->media_reservation_count, width_bucket) : 0.0;
   out_footprint->link_preview_reserved_height = input ?
     resolve_link_preview_reserved_height(input->link_preview_reservation_count, width_bucket) : 0.0;
+  out_footprint->embed_reserved_height = input ?
+    resolve_embed_reserved_height(input->embed_reservation_count) : 0.0;
   out_footprint->layout_signature =
     gnostr_timeline_geometry_dup_layout_signature(input, width_bucket);
 
@@ -352,6 +367,8 @@ gnostr_timeline_geometry_resolver_resolve(GnostrTimelineGeometryResolver *self,
       estimate += out_footprint->media_reserved_height - input->media_reserved_height;
     if (input->link_preview_reservation_count > 0)
       estimate += out_footprint->link_preview_reserved_height - input->link_preview_reserved_height;
+    if (input->embed_reservation_count > 0)
+      estimate += out_footprint->embed_reserved_height - input->embed_reserved_height;
   }
 
   if (estimate <= 0.0) {
@@ -370,6 +387,8 @@ gnostr_timeline_geometry_resolver_resolve(GnostrTimelineGeometryResolver *self,
       estimate += out_footprint->media_reserved_height;
     if (input && input->link_preview_reservation_count > 0)
       estimate += out_footprint->link_preview_reserved_height;
+    if (input && input->embed_reservation_count > 0)
+      estimate += out_footprint->embed_reserved_height;
     if (input && input->has_content_warning)
       estimate += CONTENT_WARNING_PX;
     if (input && input->moderation_state != 0)
