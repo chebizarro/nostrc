@@ -157,7 +157,7 @@ add_custom_command(
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
   VERBATIM)
 
-file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c src/notifications/*.c src/sync/*.c src/search-provider/*.c)
+file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/engine/*.c src/ipc/*.c src/util/*.c src/model/*.c src/services/*.c src/notifications/*.c src/sync/*.c src/search-provider/*.c)
 # Explicitly append app-local timeline factory source so it is always built,
 # even when incremental builds miss new globbed files before reconfigure.
 list(APPEND APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gnostr-timeline-view-app-factory.c)
@@ -210,6 +210,7 @@ endif()
 target_include_directories(${APP_CLIENT_BIN} PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/src/util
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/services
   ${PROJECT_ROOT}/nostr-gtk/include
   ${PROJECT_ROOT}/nostr-gobject/include
   ${PROJECT_ROOT}/libnostr/include
@@ -1060,6 +1061,29 @@ if (BUILD_TESTING)
   set_tests_properties(gnostr-test-timeline-geometry PROPERTIES
     TIMEOUT 30
     LABELS "timeline;geometry;unit;gnostr")
+
+  # Central bounded media service unit tests (nostrc-ovnu)
+  if (SOUP3_FOUND)
+    add_executable(gnostr-test-media-service
+      tests/test_media_service.c
+      src/services/gnostr-media-service.c)
+    target_compile_features(gnostr-test-media-service PRIVATE c_std_11)
+    target_compile_definitions(gnostr-test-media-service PRIVATE
+      HAVE_SOUP3=1
+      GNOSTR_MEDIA_SERVICE_TESTING=1)
+    target_include_directories(gnostr-test-media-service PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/services
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/util
+      ${PROJECT_ROOT}/libnostr/include)
+    target_link_libraries(gnostr-test-media-service PRIVATE
+      PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::GIO PkgConfig::SOUP3)
+    _gnostr_apply_sanitizers(gnostr-test-media-service)
+    add_test(NAME gnostr-test-media-service COMMAND gnostr-test-media-service)
+    set_tests_properties(gnostr-test-media-service PROPERTIES
+      TIMEOUT 30
+      LABELS "media;cache;network;unit;gnostr")
+  endif()
 
   # Timeline hydrator/view-model unit tests (nostrc-75h.2)
   add_executable(gnostr-test-timeline-hydrator

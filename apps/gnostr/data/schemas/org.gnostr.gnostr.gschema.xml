@@ -252,9 +252,26 @@
       <default>500</default>
       <summary>Image cache maximum size (MB)</summary>
       <description>
-        Maximum size in megabytes for the image/avatar cache.
-        When exceeded, oldest files are pruned on startup.
-        Set to 0 to disable automatic pruning.
+        Maximum size in megabytes for the image/avatar disk cache and the
+        decoded inline-media texture cache. When exceeded, oldest files or
+        textures are evicted. Set to 0 to disable inline texture caching and
+        startup disk pruning.
+      </description>
+    </key>
+    <key name="og-image-cache-max-mb" type="i">
+      <default>64</default>
+      <summary>Open Graph image memory cache maximum size (MB)</summary>
+      <description>
+        Maximum decoded-texture memory used by Open Graph preview images.
+        Set to 0 to disable this memory cache class.
+      </description>
+    </key>
+    <key name="video-poster-cache-max-mb" type="i">
+      <default>64</default>
+      <summary>Video poster memory cache maximum size (MB)</summary>
+      <description>
+        Maximum decoded-texture memory used by video poster images.
+        Set to 0 to disable this memory cache class.
       </description>
     </key>
     <key name="ndb-cache-max-mb" type="i">
