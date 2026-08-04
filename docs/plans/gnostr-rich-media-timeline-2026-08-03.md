@@ -113,8 +113,8 @@ New central service (`apps/gnostr/src/services/gnostr-media-service.[ch]`) that 
 - [x] WI-2 VM + snapshot plumbing — `nostrc-1qpw` (commit 5774d4c1: hydrator uses gn_content_parse, descriptors + caps + embed reservation class through VM/snapshot, 4/4 tests)
 - [x] WI-3 media service core — `nostrc-ovnu` (commit 72a103fb: gnostr-media-service.[ch], 4/4 unit tests, schema keys)
 - [x] WI-4 row hydration API + factory switch — `nostrc-2zuz` (commit 7211edbe: set_rich_content() + loader injection, factory switched, inert setters removed, geometry safeguards)
-- [ ] WI-5 OG + embeds all refs — `nostrc-l25c`
-- [ ] WI-6 video posters — `nostrc-qqz5`
+- [x] WI-5 OG + embeds all refs — `nostrc-l25c` (commit 77ca1372: OG widget fed by service, embed cards with event-ID dedup)
+- [x] WI-6 video posters — `nostrc-qqz5` (commit 77ca1372: imeta/extracted posters, tap-to-play in fixed frame)
 - [x] WI-7 disk tier + persisted OG — `nostrc-dvsd` (commit 03cee1d4: namespaced disk tier, disk-before-network, write-time + idle pruning, persisted OG TTL, 7/7 tests)
 - [x] WI-8 account eviction — `nostrc-e6yd` (commit 7adcec3b: evict_account with namespace generations, in-flight safety, tests)
 - [x] WI-9 thumbnailer — `nostrc-gykl` (commit 7adcec3b: bounded GStreamer one-shot extraction, concurrency 2, graceful fallback, persisted posters)
