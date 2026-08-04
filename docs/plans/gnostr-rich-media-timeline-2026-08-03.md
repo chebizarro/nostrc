@@ -119,7 +119,7 @@ New central service (`apps/gnostr/src/services/gnostr-media-service.[ch]`) that 
 - [x] WI-8 account eviction — `nostrc-e6yd` (commit 7adcec3b: evict_account with namespace generations, in-flight safety, tests)
 - [x] WI-9 thumbnailer — `nostrc-gykl` (commit 7adcec3b: bounded GStreamer one-shot extraction, concurrency 2, graceful fallback, persisted posters)
 
-Follow-ups filed: `nostrc-pkah` (naddr/nprofile), `nostrc-ub72` (removal UI), `nostrc-8rxk` (ndb retention), `nostrc-uexn` (settings UI), `nostrc-kklz` (avatar migration).
+Follow-ups filed: `nostrc-pkah` (naddr/nprofile — **done**, commit 351777fa), `nostrc-ub72` (removal UI), `nostrc-8rxk` (ndb retention), `nostrc-uexn` (settings UI), `nostrc-kklz` (avatar migration), `nostrc-9flq` (pre-existing nprofile-encode relay bug, blocks nip19 suite).
 
 ## References
 
