@@ -52,6 +52,9 @@ typedef struct {
   gsize og_metadata_body_size_cap;
   guint max_in_flight;
   guint max_concurrent_downloads;
+  /* One-shot video poster extraction is independently capped at two workers. */
+  guint max_concurrent_thumbnails;
+  guint thumbnail_timeout_msec;
   guint negative_cache_max_entries;
   gint64 negative_cache_ttl_usec;
   guint og_metadata_max_entries;
@@ -76,6 +79,8 @@ typedef struct {
   guint pending_requests;
   guint queued_downloads;
   guint active_downloads;
+  guint queued_thumbnails;
+  guint active_thumbnails;
   guint negative_entries;
   guint og_metadata_entries;
   guint64 negative_hits;
@@ -174,13 +179,22 @@ void gnostr_media_service_request_og_metadata(GnostrMediaService *service,
 void gnostr_media_service_get_stats(GnostrMediaService *service,
                                     GnostrMediaCacheStats *out_stats);
 
-/* Explicit eviction remains synchronous and memory-only.  Persisted entries
- * expire or are removed by the disk tier's budget sweeps. */
+/* URL eviction remains synchronous and memory-only. */
 guint gnostr_media_service_evict_url(GnostrMediaService *service,
                                      const char *url);
 void gnostr_media_service_clear_class(GnostrMediaService *service,
                                       GnostrMediaResourceClass resource_class);
 void gnostr_media_service_clear_all(GnostrMediaService *service);
+
+/**
+ * gnostr_media_service_evict_account:
+ * @npub: account npub whose private media namespace should be removed
+ *
+ * Cancels account-scoped in-flight work, purges its memory entries, and removes
+ * its disk namespace.  This is an account-removal hook; logout must not call it.
+ */
+void gnostr_media_service_evict_account(GnostrMediaService *service,
+                                        const char *npub);
 
 #ifdef GNOSTR_MEDIA_SERVICE_TESTING
 /* These must be set before the service's first request. */
@@ -190,6 +204,18 @@ void gnostr_media_service_test_set_namespace(GnostrMediaService *service,
                                              const char *cache_namespace);
 guint gnostr_media_service_test_get_outstanding_disk_jobs(
     GnostrMediaService *service);
+
+typedef GBytes *(*GnostrMediaTestThumbnailExtractor)(
+    const char *url,
+    guint timeout_msec,
+    GCancellable *cancellable,
+    GError **error,
+    gpointer user_data);
+void gnostr_media_service_test_set_thumbnail_extractor(
+    GnostrMediaService *service,
+    GnostrMediaTestThumbnailExtractor extractor,
+    gpointer user_data,
+    GDestroyNotify user_data_destroy);
 
 void gnostr_media_service_test_store_texture(GnostrMediaService *service,
                                              const char *url,

@@ -623,6 +623,223 @@ test_og_metadata_persists_with_ttl(void)
   soup_server_disconnect(server);
 }
 
+static void
+test_account_eviction_removes_namespace_and_memory(void)
+{
+  GnostrMediaServiceConfig config;
+  gnostr_media_service_config_init(&config);
+  config.memory_budget_bytes[GNOSTR_MEDIA_RESOURCE_INLINE] = 1024;
+  g_autoptr(GnostrMediaService) service = new_test_service(&config);
+  g_autoptr(GdkTexture) texture = make_texture(2, 2);
+
+  gnostr_media_service_test_set_namespace(service, "npub1evicted");
+  gnostr_media_service_test_store_texture(
+      service, "https://example.test/evicted.png",
+      GNOSTR_MEDIA_RESOURCE_INLINE, 2, 2, texture);
+  g_autofree char *account_dir = g_build_filename(
+      test_disk_root, "npub1evicted", "inline", NULL);
+  g_assert_cmpint(g_mkdir_with_parents(account_dir, 0700), ==, 0);
+  g_autofree char *disk_file = g_build_filename(account_dir, "entry", NULL);
+  g_assert_true(g_file_set_contents(disk_file, "cached", -1, NULL));
+
+  gnostr_media_service_test_set_namespace(service, "npub1retained");
+  gnostr_media_service_test_store_texture(
+      service, "https://example.test/retained.png",
+      GNOSTR_MEDIA_RESOURCE_INLINE, 2, 2, texture);
+
+  gnostr_media_service_evict_account(service, "npub1evicted");
+
+  g_autofree char *namespace_dir = g_build_filename(
+      test_disk_root, "npub1evicted", NULL);
+  g_assert_false(g_file_test(namespace_dir, G_FILE_TEST_EXISTS));
+  GnostrMediaCacheStats stats;
+  gnostr_media_service_get_stats(service, &stats);
+  g_assert_cmpuint(stats.classes[GNOSTR_MEDIA_RESOURCE_INLINE].entries, ==, 1);
+  g_assert_cmpuint(stats.classes[GNOSTR_MEDIA_RESOURCE_INLINE].resident_bytes,
+                   ==, 16);
+}
+
+typedef struct {
+  GMutex lock;
+  guint active;
+  guint max_active;
+  guint callbacks;
+  guint successes;
+  GMainLoop *loop;
+  GError *error;
+} ThumbnailFixture;
+
+static GBytes *
+stub_thumbnail_extract(const char *url,
+                       guint timeout_msec,
+                       GCancellable *cancellable,
+                       GError **error,
+                       gpointer user_data)
+{
+  (void)url;
+  (void)timeout_msec;
+  ThumbnailFixture *fixture = user_data;
+  g_mutex_lock(&fixture->lock);
+  fixture->active++;
+  fixture->max_active = MAX(fixture->max_active, fixture->active);
+  g_mutex_unlock(&fixture->lock);
+
+  g_usleep(50 * 1000);
+  GBytes *bytes = NULL;
+  if (g_cancellable_is_cancelled(cancellable)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                        "Stub extraction cancelled");
+  } else {
+    gsize png_size = 0;
+    guchar *png = g_base64_decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+        "+A8AAQUBAScY42YAAAAASUVORK5CYII=", &png_size);
+    bytes = g_bytes_new_take(png, png_size);
+  }
+
+  g_mutex_lock(&fixture->lock);
+  fixture->active--;
+  g_mutex_unlock(&fixture->lock);
+  return bytes;
+}
+
+static void
+evicted_thumbnail_ready(GnostrMediaService *service,
+                        const char *url,
+                        GdkTexture *texture,
+                        const GError *error,
+                        gpointer user_data)
+{
+  (void)service;
+  (void)url;
+  ThumbnailFixture *fixture = user_data;
+  fixture->callbacks++;
+  g_assert_null(texture);
+  g_assert_true(g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED));
+}
+
+static void
+test_account_eviction_cancels_in_flight_thumbnail(void)
+{
+  GnostrMediaServiceConfig config;
+  gnostr_media_service_config_init(&config);
+  config.thumbnail_timeout_msec = 1000;
+  config.disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER] = 1024 * 1024;
+  g_autoptr(GnostrMediaService) service = new_test_service(&config);
+  gnostr_media_service_test_set_namespace(service, "npub1inflight");
+  ThumbnailFixture fixture = { 0 };
+  g_mutex_init(&fixture.lock);
+  gnostr_media_service_test_set_thumbnail_extractor(
+      service, stub_thumbnail_extract, &fixture, NULL);
+
+  gnostr_media_service_request_texture(
+      service, "https://example.test/inflight.mp4",
+      GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER, 32, 32, NULL,
+      evicted_thumbnail_ready, &fixture, NULL);
+  gint64 deadline = g_get_monotonic_time() + 5 * G_USEC_PER_SEC;
+  GnostrMediaCacheStats stats;
+  do {
+    g_main_context_iteration(NULL, TRUE);
+    gnostr_media_service_get_stats(service, &stats);
+  } while (stats.active_thumbnails == 0 && g_get_monotonic_time() < deadline);
+  g_assert_cmpuint(stats.active_thumbnails, ==, 1);
+
+  gnostr_media_service_evict_account(service, "npub1inflight");
+  do {
+    g_main_context_iteration(NULL, TRUE);
+    gnostr_media_service_get_stats(service, &stats);
+  } while ((stats.active_thumbnails > 0 || stats.pending_requests > 0) &&
+           g_get_monotonic_time() < deadline);
+
+  g_assert_cmpuint(fixture.callbacks, ==, 1);
+  g_assert_cmpuint(stats.active_thumbnails, ==, 0);
+  g_assert_cmpuint(stats.pending_requests, ==, 0);
+  g_assert_cmpuint(stats.classes[GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER].entries,
+                   ==, 0);
+  wait_for_disk_jobs(service);
+  g_autofree char *namespace_dir = g_build_filename(
+      test_disk_root, "npub1inflight", NULL);
+  g_assert_false(g_file_test(namespace_dir, G_FILE_TEST_EXISTS));
+  g_mutex_clear(&fixture.lock);
+}
+
+static void
+thumbnail_ready(GnostrMediaService *service,
+                const char *url,
+                GdkTexture *texture,
+                const GError *error,
+                gpointer user_data)
+{
+  (void)service;
+  (void)url;
+  ThumbnailFixture *fixture = user_data;
+  fixture->callbacks++;
+  if (texture)
+    fixture->successes++;
+  else if (!fixture->error)
+    fixture->error = error ? g_error_copy(error) :
+        g_error_new_literal(GNOSTR_MEDIA_ERROR, GNOSTR_MEDIA_ERROR_DECODE,
+                            "Thumbnail callback returned no texture");
+  if (fixture->callbacks == 5)
+    g_main_loop_quit(fixture->loop);
+}
+
+static gboolean
+thumbnail_timeout(gpointer user_data)
+{
+  ThumbnailFixture *fixture = user_data;
+  if (!fixture->error)
+    fixture->error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_TIMED_OUT,
+                                         "Timed out waiting for thumbnails");
+  g_main_loop_quit(fixture->loop);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+test_thumbnail_queue_is_bounded_and_persisted(void)
+{
+  GnostrMediaServiceConfig config;
+  gnostr_media_service_config_init(&config);
+  config.max_concurrent_thumbnails = 2;
+  config.thumbnail_timeout_msec = 1000;
+  config.disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER] = 1024 * 1024;
+  g_autoptr(GnostrMediaService) service = new_test_service(&config);
+  ThumbnailFixture fixture = { 0 };
+  g_mutex_init(&fixture.lock);
+  fixture.loop = g_main_loop_new(NULL, FALSE);
+  gnostr_media_service_test_set_thumbnail_extractor(
+      service, stub_thumbnail_extract, &fixture, NULL);
+
+  for (guint i = 0; i < 5; i++) {
+    g_autofree char *url = g_strdup_printf("https://example.test/%u.mp4", i);
+    gnostr_media_service_request_texture(
+        service, url, GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER, 32, 32, NULL,
+        thumbnail_ready, &fixture, NULL);
+  }
+  guint timeout_id = g_timeout_add_seconds(5, thumbnail_timeout, &fixture);
+  g_main_loop_run(fixture.loop);
+  if (timeout_id)
+    g_source_remove(timeout_id);
+
+  g_assert_no_error(fixture.error);
+  g_assert_cmpuint(fixture.callbacks, ==, 5);
+  g_assert_cmpuint(fixture.successes, ==, 5);
+  g_assert_cmpuint(fixture.max_active, <=, 2);
+  g_assert_cmpuint(fixture.max_active, ==, 2);
+  wait_for_disk_jobs(service);
+
+  const char *first_url = "https://example.test/0.mp4";
+  g_autofree char *digest = g_compute_checksum_for_string(
+      G_CHECKSUM_SHA256, first_url, -1);
+  g_autofree char *poster_path = g_build_filename(
+      test_disk_root, test_namespace, "video-poster", digest, NULL);
+  g_assert_true(g_file_test(poster_path, G_FILE_TEST_IS_REGULAR));
+
+  g_clear_error(&fixture.error);
+  g_main_loop_unref(fixture.loop);
+  g_mutex_clear(&fixture.lock);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -646,6 +863,12 @@ main(int argc, char **argv)
                   test_og_metadata_is_shared_and_ttl_cached);
   g_test_add_func("/media-service/og/persisted-ttl",
                   test_og_metadata_persists_with_ttl);
+  g_test_add_func("/media-service/account/eviction",
+                  test_account_eviction_removes_namespace_and_memory);
+  g_test_add_func("/media-service/account/eviction-in-flight",
+                  test_account_eviction_cancels_in_flight_thumbnail);
+  g_test_add_func("/media-service/video/thumbnail-bounds",
+                  test_thumbnail_queue_is_bounded_and_persisted);
   int result = g_test_run();
   g_clear_object(&test_session);
   remove_tree(test_disk_root);

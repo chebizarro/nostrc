@@ -7,6 +7,12 @@
 #include <sys/stat.h>
 #include <utime.h>
 
+#ifdef HAVE_GSTREAMER
+#include <gst/app/gstappsink.h>
+#include <gst/gst.h>
+#include <gst/video/video.h>
+#endif
+
 #ifndef GNOSTR_MEDIA_SERVICE_TESTING
 #include <nostr-gobject-1.0/gnostr-identity.h>
 #endif
@@ -36,6 +42,8 @@ gboolean gnostr_is_remote_media_allowed(void);
 #define VIDEO_POSTER_BUDGET_KEY "video-poster-cache-max-mb"
 #define OG_METADATA_DIR "og-metadata"
 #define OG_METADATA_VERSION 1
+#define MAX_THUMBNAIL_CONCURRENCY 2
+#define DEFAULT_THUMBNAIL_TIMEOUT_MSEC 10000
 
 G_LOCK_DEFINE_STATIC(media_disk);
 
@@ -50,6 +58,7 @@ typedef struct _Subscriber Subscriber;
 typedef struct {
   char *key;
   char *url;
+  char *cache_namespace;
   GdkTexture *texture;
   guint64 decoded_bytes;
   GList *lru_link;
@@ -63,6 +72,8 @@ typedef struct {
 
 typedef struct {
   char *key;
+  char *cache_namespace;
+  char *url;
   gint64 expires_at;
   GList *lru_link;
 } NegativeEntry;
@@ -76,7 +87,9 @@ struct _GnostrOgMetadata {
 };
 
 typedef struct {
+  char *key;
   char *url;
+  char *cache_namespace;
   GnostrOgMetadata *metadata;
   gint64 expires_at;
   GList *lru_link;
@@ -121,6 +134,8 @@ struct _PendingRequest {
   GCancellable *network_cancellable;
   gsize download_cap;
   gboolean queued;
+  gboolean thumbnail_queued;
+  gboolean thumbnail_active;
   gboolean network_active;
   gboolean network_done;
   guint outstanding_workers;
@@ -130,6 +145,7 @@ struct _PendingRequest {
   gboolean body_from_disk;
   guint disk_write_classes;
   char *cache_namespace;
+  guint64 namespace_epoch;
   GnostrMediaResourceClass disk_resource_class;
   GBytes *body;
   GHashTable *decode_variants; /* borrowed DecodeJob.variant_key -> DecodeJob */
@@ -149,6 +165,8 @@ struct _GnostrMediaService {
   GHashTable *pending; /* PendingRequest.table_key -> PendingRequest */
   GQueue download_queue;
   guint active_downloads;
+  GQueue thumbnail_queue; /* PendingRequest* */
+  guint active_thumbnails;
 
   GHashTable *negative; /* NegativeEntry.key -> NegativeEntry */
   GQueue negative_lru;
@@ -163,9 +181,13 @@ struct _GnostrMediaService {
 
   char *disk_root;
   GHashTable *known_namespaces; /* namespace strings already scheduled */
+  GHashTable *namespace_epochs; /* namespace -> guint64*, guarded by media_disk */
   guint outstanding_disk_jobs;
 #ifdef GNOSTR_MEDIA_SERVICE_TESTING
   char *namespace_override;
+  GnostrMediaTestThumbnailExtractor test_thumbnail_extractor;
+  gpointer test_thumbnail_data;
+  GDestroyNotify test_thumbnail_data_destroy;
 #endif
 
   GSettings *settings;
@@ -190,6 +212,7 @@ static void schedule_og_write(PendingRequest *request,
 static void start_disk_lookup(PendingRequest *request);
 static void ensure_namespace_sweep(GnostrMediaService *self,
                                    const char *cache_namespace);
+static void start_queued_thumbnails(GnostrMediaService *self);
 
 GQuark
 gnostr_media_error_quark(void)
@@ -211,6 +234,8 @@ gnostr_media_service_config_init(GnostrMediaServiceConfig *config)
   config->og_metadata_body_size_cap = DEFAULT_OG_METADATA_BODY_CAP;
   config->max_in_flight = 128;
   config->max_concurrent_downloads = 6;
+  config->max_concurrent_thumbnails = MAX_THUMBNAIL_CONCURRENCY;
+  config->thumbnail_timeout_msec = DEFAULT_THUMBNAIL_TIMEOUT_MSEC;
   config->negative_cache_max_entries = 256;
   config->negative_cache_ttl_usec = 60 * G_USEC_PER_SEC;
   config->og_metadata_max_entries = 256;
@@ -307,6 +332,68 @@ current_cache_namespace(GnostrMediaService *self)
   gnostr_identity_free(identity);
 #endif
   return g_strdup("anon");
+}
+
+static gboolean
+valid_account_namespace(const char *cache_namespace)
+{
+  if (!cache_namespace || !g_str_has_prefix(cache_namespace, "npub1"))
+    return FALSE;
+  for (const char *p = cache_namespace; *p; p++) {
+    if (!g_ascii_isalnum(*p))
+      return FALSE;
+  }
+  return TRUE;
+}
+
+static guint64
+namespace_epoch_get_locked(GnostrMediaService *self,
+                           const char *cache_namespace)
+{
+  guint64 *epoch = g_hash_table_lookup(self->namespace_epochs,
+                                       cache_namespace);
+  if (!epoch) {
+    epoch = g_new0(guint64, 1);
+    *epoch = 1;
+    g_hash_table_insert(self->namespace_epochs, g_strdup(cache_namespace),
+                        epoch);
+  }
+  return *epoch;
+}
+
+static guint64
+namespace_epoch_get(GnostrMediaService *self, const char *cache_namespace)
+{
+  G_LOCK(media_disk);
+  guint64 epoch = namespace_epoch_get_locked(self, cache_namespace);
+  G_UNLOCK(media_disk);
+  return epoch;
+}
+
+static gboolean
+namespace_epoch_matches_locked(GnostrMediaService *self,
+                               const char *cache_namespace,
+                               guint64 epoch)
+{
+  return namespace_epoch_get_locked(self, cache_namespace) == epoch;
+}
+
+static void
+remove_tree_locked(const char *path)
+{
+  g_autoptr(GDir) dir = g_dir_open(path, 0, NULL);
+  if (dir) {
+    const char *name;
+    while ((name = g_dir_read_name(dir)) != NULL) {
+      g_autofree char *child = g_build_filename(path, name, NULL);
+      if (g_file_test(child, G_FILE_TEST_IS_DIR) &&
+          !g_file_test(child, G_FILE_TEST_IS_SYMLINK))
+        remove_tree_locked(child);
+      else
+        g_unlink(child);
+    }
+  }
+  g_rmdir(path);
 }
 
 static char *
@@ -411,9 +498,13 @@ prune_directory_to_budget(const char *dir, guint64 budget)
 }
 
 static char *
-texture_key(const char *url, int width, int height)
+texture_key(const char *cache_namespace,
+            const char *url,
+            int width,
+            int height)
 {
-  return g_strdup_printf("%dx%d\n%s", width, height, url);
+  return g_strdup_printf("%s\n%dx%d\n%s", cache_namespace, width, height,
+                         url);
 }
 
 static guint64
@@ -433,6 +524,7 @@ texture_entry_free(TextureCacheEntry *entry)
     return;
   g_free(entry->key);
   g_free(entry->url);
+  g_free(entry->cache_namespace);
   g_clear_object(&entry->texture);
   g_free(entry);
 }
@@ -465,12 +557,13 @@ texture_cache_trim(TextureClassCache *cache)
 static GdkTexture *
 texture_cache_lookup(GnostrMediaService *self,
                      GnostrMediaResourceClass resource_class,
+                     const char *cache_namespace,
                      const char *url,
                      int width,
                      int height)
 {
   TextureClassCache *cache = &self->texture_caches[resource_class];
-  g_autofree char *key = texture_key(url, width, height);
+  g_autofree char *key = texture_key(cache_namespace, url, width, height);
   TextureCacheEntry *entry = g_hash_table_lookup(cache->entries, key);
   if (!entry) {
     cache->stats.misses++;
@@ -486,6 +579,7 @@ texture_cache_lookup(GnostrMediaService *self,
 static void
 texture_cache_store(GnostrMediaService *self,
                     GnostrMediaResourceClass resource_class,
+                    const char *cache_namespace,
                     const char *url,
                     int width,
                     int height,
@@ -493,7 +587,8 @@ texture_cache_store(GnostrMediaService *self,
 {
   TextureClassCache *cache = &self->texture_caches[resource_class];
   guint64 bytes = texture_decoded_bytes(texture);
-  g_autofree char *lookup_key = texture_key(url, width, height);
+  g_autofree char *lookup_key = texture_key(cache_namespace, url, width,
+                                              height);
   TextureCacheEntry *old = g_hash_table_lookup(cache->entries, lookup_key);
 
   if (old)
@@ -515,6 +610,7 @@ texture_cache_store(GnostrMediaService *self,
   TextureCacheEntry *entry = g_new0(TextureCacheEntry, 1);
   entry->key = g_steal_pointer(&lookup_key);
   entry->url = g_strdup(url);
+  entry->cache_namespace = g_strdup(cache_namespace);
   entry->texture = g_object_ref(texture);
   entry->decoded_bytes = bytes;
   g_queue_push_tail(&cache->lru, entry);
@@ -528,9 +624,13 @@ texture_cache_store(GnostrMediaService *self,
 }
 
 static char *
-operation_key(const char *url, PendingKind kind)
+operation_key(const char *cache_namespace,
+              const char *url,
+              PendingKind kind)
 {
-  return g_strdup_printf("%c\n%s", kind == PENDING_TEXTURE ? 'T' : 'M', url);
+  return g_strdup_printf("%c\n%s\n%s",
+                         kind == PENDING_TEXTURE ? 'T' : 'M',
+                         cache_namespace, url);
 }
 
 static char *
@@ -549,6 +649,8 @@ negative_entry_free(NegativeEntry *entry)
   if (!entry)
     return;
   g_free(entry->key);
+  g_free(entry->cache_namespace);
+  g_free(entry->url);
   g_free(entry);
 }
 
@@ -562,9 +664,12 @@ negative_remove_entry(GnostrMediaService *self, NegativeEntry *entry)
 }
 
 static gboolean
-negative_lookup(GnostrMediaService *self, const char *url, PendingKind kind)
+negative_lookup(GnostrMediaService *self,
+                const char *cache_namespace,
+                const char *url,
+                PendingKind kind)
 {
-  g_autofree char *key = operation_key(url, kind);
+  g_autofree char *key = operation_key(cache_namespace, url, kind);
   NegativeEntry *entry = g_hash_table_lookup(self->negative, key);
   if (!entry)
     return FALSE;
@@ -580,13 +685,16 @@ negative_lookup(GnostrMediaService *self, const char *url, PendingKind kind)
 }
 
 static void
-negative_store(GnostrMediaService *self, const char *url, PendingKind kind)
+negative_store(GnostrMediaService *self,
+               const char *cache_namespace,
+               const char *url,
+               PendingKind kind)
 {
   if (self->config.negative_cache_max_entries == 0 ||
       self->config.negative_cache_ttl_usec <= 0)
     return;
 
-  g_autofree char *key = operation_key(url, kind);
+  g_autofree char *key = operation_key(cache_namespace, url, kind);
   NegativeEntry *entry = g_hash_table_lookup(self->negative, key);
   if (entry) {
     entry->expires_at = g_get_monotonic_time() +
@@ -598,6 +706,8 @@ negative_store(GnostrMediaService *self, const char *url, PendingKind kind)
 
   entry = g_new0(NegativeEntry, 1);
   entry->key = g_steal_pointer(&key);
+  entry->cache_namespace = g_strdup(cache_namespace);
+  entry->url = g_strdup(url);
   entry->expires_at = g_get_monotonic_time() +
                       self->config.negative_cache_ttl_usec;
   g_queue_push_tail(&self->negative_lru, entry);
@@ -616,7 +726,9 @@ og_cache_entry_free(OgCacheEntry *entry)
 {
   if (!entry)
     return;
+  g_free(entry->key);
   g_free(entry->url);
+  g_free(entry->cache_namespace);
   gnostr_og_metadata_unref(entry->metadata);
   g_free(entry);
 }
@@ -626,7 +738,7 @@ og_cache_remove_entry(GnostrMediaService *self,
                       OgCacheEntry *entry,
                       gboolean count_eviction)
 {
-  g_hash_table_remove(self->og_cache, entry->url);
+  g_hash_table_remove(self->og_cache, entry->key);
   if (entry->lru_link)
     g_queue_delete_link(&self->og_lru, entry->lru_link);
   if (count_eviction)
@@ -635,9 +747,13 @@ og_cache_remove_entry(GnostrMediaService *self,
 }
 
 static GnostrOgMetadata *
-og_cache_lookup(GnostrMediaService *self, const char *url)
+og_cache_lookup(GnostrMediaService *self,
+                const char *cache_namespace,
+                const char *url)
 {
-  OgCacheEntry *entry = g_hash_table_lookup(self->og_cache, url);
+  g_autofree char *key = operation_key(cache_namespace, url,
+                                        PENDING_OG_METADATA);
+  OgCacheEntry *entry = g_hash_table_lookup(self->og_cache, key);
   if (!entry) {
     self->og_misses++;
     return NULL;
@@ -656,6 +772,7 @@ og_cache_lookup(GnostrMediaService *self, const char *url)
 
 static void
 og_cache_store_until(GnostrMediaService *self,
+                     const char *cache_namespace,
                      const char *url,
                      GnostrOgMetadata *metadata,
                      gint64 expires_at)
@@ -664,17 +781,21 @@ og_cache_store_until(GnostrMediaService *self,
       expires_at <= g_get_monotonic_time())
     return;
 
-  OgCacheEntry *old = g_hash_table_lookup(self->og_cache, url);
+  g_autofree char *key = operation_key(cache_namespace, url,
+                                        PENDING_OG_METADATA);
+  OgCacheEntry *old = g_hash_table_lookup(self->og_cache, key);
   if (old)
     og_cache_remove_entry(self, old, FALSE);
 
   OgCacheEntry *entry = g_new0(OgCacheEntry, 1);
+  entry->key = g_steal_pointer(&key);
   entry->url = g_strdup(url);
+  entry->cache_namespace = g_strdup(cache_namespace);
   entry->metadata = gnostr_og_metadata_ref(metadata);
   entry->expires_at = expires_at;
   g_queue_push_tail(&self->og_lru, entry);
   entry->lru_link = g_queue_peek_tail_link(&self->og_lru);
-  g_hash_table_insert(self->og_cache, entry->url, entry);
+  g_hash_table_insert(self->og_cache, entry->key, entry);
 
   while (g_hash_table_size(self->og_cache) >
          self->config.og_metadata_max_entries) {
@@ -753,7 +874,13 @@ cancel_subscriber_on_context(gpointer data)
           request->network_done = TRUE;
           pending_maybe_finish(request);
           start_queued_downloads(dispatch->service);
-        } else if (request->network_active ||
+        } else if (request->thumbnail_queued) {
+          g_queue_remove(&request->service->thumbnail_queue, request);
+          request->thumbnail_queued = FALSE;
+          request->network_done = TRUE;
+          pending_maybe_finish(request);
+          start_queued_thumbnails(dispatch->service);
+        } else if (request->network_active || request->thumbnail_active ||
                    request->disk_lookup_active) {
           g_cancellable_cancel(request->network_cancellable);
         }
@@ -1004,7 +1131,8 @@ pending_fail(PendingRequest *request,
 {
   pending_network_done(request);
   if (negative)
-    negative_store(request->service, request->url, request->kind);
+    negative_store(request->service, request->cache_namespace, request->url,
+                   request->kind);
 
   for (guint i = 0; i < request->subscribers->len; i++) {
     Subscriber *subscriber = g_ptr_array_index(request->subscribers, i);
@@ -1097,12 +1225,21 @@ decode_texture_done(GObject *source, GAsyncResult *result, gpointer user_data)
   GnostrMediaService *self = request->service;
   g_autoptr(GError) error = NULL;
   GdkTexture *texture = g_task_propagate_pointer(G_TASK(result), &error);
+  if (texture && namespace_epoch_get(self, request->cache_namespace) !=
+                     request->namespace_epoch) {
+    g_object_unref(texture);
+    texture = NULL;
+    g_clear_error(&error);
+    error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                                "Account media cache evicted");
+  }
 
   g_hash_table_remove(request->decode_variants, job->variant_key);
   if (texture) {
     request->any_worker_success = TRUE;
-    texture_cache_store(self, job->resource_class, request->url,
-                        job->target_width, job->target_height, texture);
+    texture_cache_store(self, job->resource_class, request->cache_namespace,
+                        request->url, job->target_width, job->target_height,
+                        texture);
     schedule_disk_write(request, job->resource_class);
   } else {
     request->any_worker_failure = TRUE;
@@ -1121,8 +1258,11 @@ decode_texture_done(GObject *source, GAsyncResult *result, gpointer user_data)
   decode_job_free(job);
 
   if (request->outstanding_workers == 0 &&
-      request->any_worker_failure && !request->any_worker_success)
-    negative_store(self, request->url, request->kind);
+      request->any_worker_failure && !request->any_worker_success &&
+      namespace_epoch_get(self, request->cache_namespace) ==
+          request->namespace_epoch)
+    negative_store(self, request->cache_namespace, request->url,
+                   request->kind);
   pending_maybe_finish(request);
 }
 
@@ -1180,7 +1320,8 @@ process_texture_body(PendingRequest *request)
 
   if (request->outstanding_workers == 0) {
     if (request->any_worker_failure)
-      negative_store(request->service, request->url, request->kind);
+      negative_store(request->service, request->cache_namespace, request->url,
+                     request->kind);
     pending_maybe_finish(request);
   }
 }
@@ -1355,14 +1496,25 @@ parse_og_done(GObject *source, GAsyncResult *result, gpointer user_data)
   g_autoptr(GError) error = NULL;
   GnostrOgMetadata *metadata =
       g_task_propagate_pointer(G_TASK(result), &error);
+  if (metadata && namespace_epoch_get(self, request->cache_namespace) !=
+                      request->namespace_epoch) {
+    gnostr_og_metadata_unref(metadata);
+    metadata = NULL;
+    g_clear_error(&error);
+    error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                                "Account media cache evicted");
+  }
 
   if (metadata) {
-    og_cache_store_until(self, request->url, metadata,
+    og_cache_store_until(self, request->cache_namespace, request->url,
+                         metadata,
                          g_get_monotonic_time() +
                          self->config.og_metadata_ttl_usec);
     schedule_og_write(request, metadata);
-  } else {
-    negative_store(self, request->url, request->kind);
+  } else if (namespace_epoch_get(self, request->cache_namespace) ==
+                 request->namespace_epoch) {
+    negative_store(self, request->cache_namespace, request->url,
+                   request->kind);
   }
 
   for (guint i = 0; i < request->subscribers->len; i++) {
@@ -1417,6 +1569,8 @@ typedef struct {
   PendingKind kind;
   char *path;
   char *url;
+  char *cache_namespace;
+  guint64 namespace_epoch;
   gsize size_cap;
   guint64 disk_budget;
   gint64 og_ttl_usec;
@@ -1435,6 +1589,7 @@ disk_lookup_job_free(DiskLookupJob *job)
     return;
   g_free(job->path);
   g_free(job->url);
+  g_free(job->cache_namespace);
   g_free(job);
 }
 
@@ -1461,7 +1616,7 @@ disk_lookup_worker(GTask *task,
                    gpointer task_data,
                    GCancellable *cancellable)
 {
-  (void)source_object;
+  GnostrMediaService *self = GNOSTR_MEDIA_SERVICE(source_object);
   DiskLookupJob *job = task_data;
   DiskLookupResult *result = g_new0(DiskLookupResult, 1);
   if (job->disk_budget == 0 || g_cancellable_is_cancelled(cancellable)) {
@@ -1477,6 +1632,13 @@ disk_lookup_worker(GTask *task,
   }
 
   G_LOCK(media_disk);
+  if (!namespace_epoch_matches_locked(self, job->cache_namespace,
+                                      job->namespace_epoch)) {
+    G_UNLOCK(media_disk);
+    g_task_return_pointer(task, result,
+                          (GDestroyNotify)disk_lookup_result_free);
+    return;
+  }
   GStatBuf st;
   gboolean usable = g_stat(job->path, &st) == 0 && S_ISREG(st.st_mode) &&
       st.st_size >= 0 && (guint64)st.st_size <= (guint64)job->size_cap;
@@ -1537,6 +1699,269 @@ disk_lookup_worker(GTask *task,
   g_task_return_pointer(task, result, (GDestroyNotify)disk_lookup_result_free);
 }
 
+typedef GBytes *(*ThumbnailExtractor)(const char *url,
+                                      guint timeout_msec,
+                                      GCancellable *cancellable,
+                                      GError **error,
+                                      gpointer user_data);
+
+typedef struct {
+  PendingRequest *request;
+  ThumbnailExtractor extractor;
+  gpointer extractor_data;
+} ThumbnailJob;
+
+static gboolean
+looks_like_video_url(const char *url)
+{
+  g_autoptr(GUri) uri = g_uri_parse(url, G_URI_FLAGS_PARSE_RELAXED, NULL);
+  const char *path = uri ? g_uri_get_path(uri) : url;
+  if (!path)
+    return FALSE;
+  static const char *extensions[] = {
+    ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".ogv", NULL
+  };
+  g_autofree char *lower = g_ascii_strdown(path, -1);
+  for (guint i = 0; extensions[i]; i++) {
+    if (g_str_has_suffix(lower, extensions[i]))
+      return TRUE;
+  }
+  return FALSE;
+}
+
+#ifdef HAVE_GSTREAMER
+static void
+pixbuf_pixels_free(guchar *pixels, gpointer user_data)
+{
+  (void)user_data;
+  g_free(pixels);
+}
+
+static GBytes *
+gstreamer_extract_thumbnail(const char *url,
+                            guint timeout_msec,
+                            GCancellable *cancellable,
+                            GError **error,
+                            gpointer user_data)
+{
+  (void)user_data;
+  static gsize initialized;
+  static gboolean available;
+  if (g_once_init_enter(&initialized)) {
+    g_autoptr(GError) init_error = NULL;
+    available = gst_init_check(NULL, NULL, &init_error);
+    g_once_init_leave(&initialized, 1);
+  }
+  if (!available) {
+    g_set_error_literal(error, GNOSTR_MEDIA_ERROR,
+                        GNOSTR_MEDIA_ERROR_UNAVAILABLE,
+                        "GStreamer could not be initialized");
+    return NULL;
+  }
+  if (g_cancellable_is_cancelled(cancellable)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                        "Video thumbnail extraction cancelled");
+    return NULL;
+  }
+
+  g_autofree char *quoted_url = g_shell_quote(url);
+  g_autofree char *description = g_strdup_printf(
+      "uridecodebin uri=%s ! videoconvert ! videoscale ! "
+      "video/x-raw,format=RGBA,width=640,height=360,pixel-aspect-ratio=1/1 ! "
+      "appsink name=poster-sink max-buffers=1 drop=true sync=false",
+      quoted_url);
+  GstElement *pipeline = gst_parse_launch(description, error);
+  if (!pipeline)
+    return NULL;
+  GstElement *sink = gst_bin_get_by_name(GST_BIN(pipeline), "poster-sink");
+  if (!sink) {
+    gst_object_unref(pipeline);
+    g_set_error_literal(error, GNOSTR_MEDIA_ERROR,
+                        GNOSTR_MEDIA_ERROR_UNAVAILABLE,
+                        "Required GStreamer video elements are unavailable");
+    return NULL;
+  }
+
+  GstStateChangeReturn state = gst_element_set_state(pipeline,
+                                                      GST_STATE_PLAYING);
+  GstSample *sample = NULL;
+  if (state != GST_STATE_CHANGE_FAILURE)
+    sample = gst_app_sink_try_pull_sample(GST_APP_SINK(sink),
+        (GstClockTime)timeout_msec * GST_MSECOND);
+  if (!sample && state != GST_STATE_CHANGE_FAILURE)
+    sample = gst_app_sink_try_pull_preroll(GST_APP_SINK(sink), 0);
+
+  GBytes *result = NULL;
+  if (sample && !g_cancellable_is_cancelled(cancellable)) {
+    GstCaps *caps = gst_sample_get_caps(sample);
+    GstBuffer *buffer = gst_sample_get_buffer(sample);
+    GstVideoInfo info;
+    GstMapInfo map;
+    if (caps && buffer && gst_video_info_from_caps(&info, caps) &&
+        gst_buffer_map(buffer, &map, GST_MAP_READ)) {
+      guint width = GST_VIDEO_INFO_WIDTH(&info);
+      guint height = GST_VIDEO_INFO_HEIGHT(&info);
+      gsize row_bytes = (gsize)width * 4;
+      gint stride = GST_VIDEO_INFO_PLANE_STRIDE(&info, 0);
+      if (width > 0 && height > 0 && stride > 0 &&
+          map.size >= (gsize)stride * height) {
+        guchar *pixels = g_malloc(row_bytes * height);
+        for (guint y = 0; y < height; y++)
+          memcpy(pixels + y * row_bytes, map.data + y * stride, row_bytes);
+        g_autoptr(GdkPixbuf) pixbuf = gdk_pixbuf_new_from_data(
+            pixels, GDK_COLORSPACE_RGB, TRUE, 8, width, height, row_bytes,
+            pixbuf_pixels_free, NULL);
+        gchar *png = NULL;
+        gsize png_size = 0;
+        if (gdk_pixbuf_save_to_buffer(pixbuf, &png, &png_size, "png", error,
+                                      NULL))
+          result = g_bytes_new_take(png, png_size);
+        else
+          g_free(png);
+      }
+      gst_buffer_unmap(buffer, &map);
+    }
+  }
+
+  if (!result && !*error) {
+    if (g_cancellable_is_cancelled(cancellable))
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                          "Video thumbnail extraction cancelled");
+    else
+      g_set_error_literal(error, GNOSTR_MEDIA_ERROR,
+                          GNOSTR_MEDIA_ERROR_DECODE,
+                          "Video thumbnail extraction timed out or produced no frame");
+  }
+  if (sample)
+    gst_sample_unref(sample);
+  gst_element_set_state(pipeline, GST_STATE_NULL);
+  gst_object_unref(sink);
+  gst_object_unref(pipeline);
+  return result;
+}
+#else
+static GBytes *
+gstreamer_extract_thumbnail(const char *url,
+                            guint timeout_msec,
+                            GCancellable *cancellable,
+                            GError **error,
+                            gpointer user_data)
+{
+  (void)url;
+  (void)timeout_msec;
+  (void)cancellable;
+  (void)user_data;
+  g_set_error_literal(error, GNOSTR_MEDIA_ERROR, GNOSTR_MEDIA_ERROR_UNAVAILABLE,
+                      "This build has no GStreamer thumbnail support");
+  return NULL;
+}
+#endif
+
+static void
+thumbnail_worker(GTask *task,
+                 gpointer source_object,
+                 gpointer task_data,
+                 GCancellable *cancellable)
+{
+  GnostrMediaService *self = GNOSTR_MEDIA_SERVICE(source_object);
+  ThumbnailJob *job = task_data;
+  g_autoptr(GError) error = NULL;
+  GBytes *bytes = job->extractor(job->request->url,
+                                 self->config.thumbnail_timeout_msec,
+                                 cancellable, &error, job->extractor_data);
+  if (bytes)
+    g_task_return_pointer(task, bytes, (GDestroyNotify)g_bytes_unref);
+  else {
+    if (!error)
+      error = g_error_new_literal(GNOSTR_MEDIA_ERROR,
+                                  GNOSTR_MEDIA_ERROR_DECODE,
+                                  "Video thumbnail extractor returned no frame");
+    g_task_return_error(task, g_steal_pointer(&error));
+  }
+}
+
+static void
+thumbnail_done(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  GnostrMediaService *self = GNOSTR_MEDIA_SERVICE(source);
+  ThumbnailJob *job = user_data;
+  PendingRequest *request = job->request;
+  g_autoptr(GError) error = NULL;
+  GBytes *bytes = g_task_propagate_pointer(G_TASK(result), &error);
+
+  g_assert(self->active_thumbnails > 0);
+  self->active_thumbnails--;
+  request->thumbnail_active = FALSE;
+  request->network_done = TRUE;
+  g_assert(request->outstanding_workers > 0);
+  request->outstanding_workers--;
+
+  if (bytes && namespace_epoch_get(self, request->cache_namespace) ==
+                   request->namespace_epoch &&
+      !g_cancellable_is_cancelled(request->network_cancellable)) {
+    request->body = g_bytes_ref(bytes);
+    process_texture_body(request);
+  } else {
+    if (!error)
+      error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                                  "Video thumbnail extraction cancelled");
+    for (guint i = 0; i < request->subscribers->len; i++) {
+      Subscriber *subscriber = g_ptr_array_index(request->subscribers, i);
+      if (!subscriber->completed)
+        subscriber_complete_texture(subscriber, NULL, error);
+    }
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+      negative_store(self, request->cache_namespace, request->url,
+                     request->kind);
+    pending_maybe_finish(request);
+  }
+  if (bytes)
+    g_bytes_unref(bytes);
+  g_free(job);
+  start_queued_thumbnails(self);
+}
+
+static void
+start_queued_thumbnails(GnostrMediaService *self)
+{
+  while (self->active_thumbnails < self->config.max_concurrent_thumbnails &&
+         !g_queue_is_empty(&self->thumbnail_queue)) {
+    PendingRequest *request = g_queue_pop_head(&self->thumbnail_queue);
+    request->thumbnail_queued = FALSE;
+    if (pending_all_completed(request)) {
+      request->network_done = TRUE;
+      pending_maybe_finish(request);
+      continue;
+    }
+    request->thumbnail_active = TRUE;
+    request->outstanding_workers++;
+    self->active_thumbnails++;
+    ThumbnailJob *job = g_new0(ThumbnailJob, 1);
+    job->request = request;
+#ifdef GNOSTR_MEDIA_SERVICE_TESTING
+    job->extractor = self->test_thumbnail_extractor
+        ? (ThumbnailExtractor)self->test_thumbnail_extractor
+        : gstreamer_extract_thumbnail;
+    job->extractor_data = self->test_thumbnail_data;
+#else
+    job->extractor = gstreamer_extract_thumbnail;
+#endif
+    GTask *task = g_task_new(self, request->network_cancellable,
+                             thumbnail_done, job);
+    g_task_set_task_data(task, job, NULL);
+    g_task_run_in_thread(task, thumbnail_worker);
+    g_object_unref(task);
+  }
+}
+
+static void
+queue_thumbnail(PendingRequest *request)
+{
+  request->thumbnail_queued = TRUE;
+  g_queue_push_tail(&request->service->thumbnail_queue, request);
+  start_queued_thumbnails(request->service);
+}
+
 static void
 queue_network_after_disk_miss(PendingRequest *request)
 {
@@ -1545,12 +1970,19 @@ queue_network_after_disk_miss(PendingRequest *request)
     pending_maybe_finish(request);
     return;
   }
-  if (negative_lookup(request->service, request->url, request->kind)) {
+  if (negative_lookup(request->service, request->cache_namespace,
+                      request->url, request->kind)) {
     pending_fail(request,
                  g_error_new_literal(GNOSTR_MEDIA_ERROR,
                                      GNOSTR_MEDIA_ERROR_NEGATIVE_CACHED,
                                      "URL is temporarily negative-cached"),
                  FALSE);
+    return;
+  }
+  if (request->kind == PENDING_TEXTURE &&
+      request->disk_resource_class == GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER &&
+      looks_like_video_url(request->url)) {
+    queue_thumbnail(request);
     return;
   }
   request->queued = TRUE;
@@ -1589,7 +2021,8 @@ disk_lookup_done(GObject *source, GAsyncResult *result, gpointer user_data)
              lookup->metadata &&
              lookup->expires_real_usec > g_get_real_time()) {
     gint64 remaining = lookup->expires_real_usec - g_get_real_time();
-    og_cache_store_until(request->service, request->url, lookup->metadata,
+    og_cache_store_until(request->service, request->cache_namespace,
+                         request->url, lookup->metadata,
                          g_get_monotonic_time() + remaining);
     for (guint i = 0; i < request->subscribers->len; i++) {
       Subscriber *subscriber = g_ptr_array_index(request->subscribers, i);
@@ -1611,6 +2044,8 @@ start_disk_lookup(PendingRequest *request)
   DiskLookupJob *job = g_new0(DiskLookupJob, 1);
   job->kind = request->kind;
   job->url = g_strdup(request->url);
+  job->cache_namespace = g_strdup(request->cache_namespace);
+  job->namespace_epoch = request->namespace_epoch;
   if (request->kind == PENDING_TEXTURE) {
     job->path = disk_texture_path(self, request->cache_namespace,
                                   request->disk_resource_class, request->url);
@@ -1637,6 +2072,7 @@ start_disk_lookup(PendingRequest *request)
 
 typedef struct {
   char *cache_namespace;
+  guint64 namespace_epoch;
   char *url;
   GnostrMediaResourceClass resource_class;
   GBytes *bytes;
@@ -1677,6 +2113,12 @@ disk_write_worker(GTask *task,
   g_autoptr(GError) error = NULL;
   gboolean written = FALSE;
   G_LOCK(media_disk);
+  if (!namespace_epoch_matches_locked(self, job->cache_namespace,
+                                      job->namespace_epoch)) {
+    G_UNLOCK(media_disk);
+    g_task_return_boolean(task, TRUE);
+    return;
+  }
   if (g_mkdir_with_parents(dir, 0700) == 0) {
     GStatBuf old_st;
     guint64 old_size = g_stat(path, &old_st) == 0 && S_ISREG(old_st.st_mode)
@@ -1738,6 +2180,7 @@ schedule_disk_write(PendingRequest *request,
   request->disk_write_classes |= bit;
   DiskWriteJob *job = g_new0(DiskWriteJob, 1);
   job->cache_namespace = g_strdup(request->cache_namespace);
+  job->namespace_epoch = request->namespace_epoch;
   job->url = g_strdup(request->url);
   job->resource_class = resource_class;
   job->bytes = g_bytes_ref(request->body);
@@ -1752,6 +2195,7 @@ schedule_disk_write(PendingRequest *request,
 
 typedef struct {
   char *cache_namespace;
+  guint64 namespace_epoch;
   char *url;
   char *title;
   char *description;
@@ -1847,6 +2291,12 @@ og_write_worker(GTask *task,
   g_autofree char *dir = g_path_get_dirname(path);
   g_autoptr(GError) error = NULL;
   G_LOCK(media_disk);
+  if (!namespace_epoch_matches_locked(self, job->cache_namespace,
+                                      job->namespace_epoch)) {
+    G_UNLOCK(media_disk);
+    g_task_return_boolean(task, TRUE);
+    return;
+  }
   if (g_mkdir_with_parents(dir, 0700) == 0 &&
       g_file_set_contents(path, data, length, &error)) {
     g_chmod(path, 0600);
@@ -1873,6 +2323,7 @@ schedule_og_write(PendingRequest *request, GnostrOgMetadata *metadata)
     return;
   OgWriteJob *job = g_new0(OgWriteJob, 1);
   job->cache_namespace = g_strdup(request->cache_namespace);
+  job->namespace_epoch = request->namespace_epoch;
   job->url = g_strdup(request->url);
   job->title = g_strdup(metadata->title);
   job->description = g_strdup(metadata->description);
@@ -2165,6 +2616,7 @@ pending_request_new(GnostrMediaService *self,
   request->url = g_strdup(url);
   request->kind = kind;
   request->cache_namespace = g_strdup(cache_namespace);
+  request->namespace_epoch = namespace_epoch_get(self, cache_namespace);
   request->disk_resource_class = disk_resource_class;
   request->table_key = pending_operation_key(url, kind, cache_namespace);
   request->subscribers =
@@ -2281,8 +2733,9 @@ gnostr_media_service_request_texture(GnostrMediaService *self,
     return;
   }
 
+  g_autofree char *cache_namespace = current_cache_namespace(self);
   GdkTexture *cached =
-      texture_cache_lookup(self, resource_class, url,
+      texture_cache_lookup(self, resource_class, cache_namespace, url,
                            target_width, target_height);
   if (cached) {
     schedule_delivery(self, subscriber, url, cached, NULL, NULL);
@@ -2296,7 +2749,6 @@ gnostr_media_service_request_texture(GnostrMediaService *self,
     return;
   }
 
-  g_autofree char *cache_namespace = current_cache_namespace(self);
   ensure_namespace_sweep(self, cache_namespace);
   g_autofree char *key = pending_operation_key(
       url, PENDING_TEXTURE, cache_namespace);
@@ -2346,8 +2798,9 @@ gnostr_media_service_request_og_metadata(GnostrMediaService *self,
   subscriber->callback.og = callback;
   subscriber->body_cap = self->config.og_metadata_body_size_cap;
 
+  g_autofree char *cache_namespace = current_cache_namespace(self);
   GnostrOgMetadata *cached = valid_http_url(url)
-      ? og_cache_lookup(self, url) : NULL;
+      ? og_cache_lookup(self, cache_namespace, url) : NULL;
   if (cached) {
     schedule_delivery(self, subscriber, url, NULL, cached, NULL);
     gnostr_og_metadata_unref(cached);
@@ -2360,7 +2813,6 @@ gnostr_media_service_request_og_metadata(GnostrMediaService *self,
     return;
   }
 
-  g_autofree char *cache_namespace = current_cache_namespace(self);
   ensure_namespace_sweep(self, cache_namespace);
   g_autofree char *key = pending_operation_key(
       url, PENDING_OG_METADATA, cache_namespace);
@@ -2452,6 +2904,11 @@ gnostr_media_service_new(const GnostrMediaServiceConfig *config)
   self->config.max_concurrent_downloads =
       CLAMP(self->config.max_concurrent_downloads, 1,
             self->config.max_in_flight);
+  self->config.max_concurrent_thumbnails =
+      CLAMP(self->config.max_concurrent_thumbnails, 1,
+            MAX_THUMBNAIL_CONCURRENCY);
+  self->config.thumbnail_timeout_msec =
+      MAX(self->config.thumbnail_timeout_msec, 1);
   for (guint i = 0; i < GNOSTR_MEDIA_RESOURCE_N_CLASSES; i++)
     self->texture_caches[i].stats.budget_bytes =
         self->config.memory_budget_bytes[i];
@@ -2529,6 +2986,8 @@ gnostr_media_service_get_stats(GnostrMediaService *self,
   out_stats->pending_requests = g_hash_table_size(self->pending);
   out_stats->queued_downloads = g_queue_get_length(&self->download_queue);
   out_stats->active_downloads = self->active_downloads;
+  out_stats->queued_thumbnails = g_queue_get_length(&self->thumbnail_queue);
+  out_stats->active_thumbnails = self->active_thumbnails;
   out_stats->negative_entries = g_hash_table_size(self->negative);
   out_stats->og_metadata_entries = g_hash_table_size(self->og_cache);
   out_stats->negative_hits = self->negative_hits;
@@ -2559,19 +3018,26 @@ gnostr_media_service_evict_url(GnostrMediaService *self, const char *url)
     }
   }
 
-  OgCacheEntry *og = g_hash_table_lookup(self->og_cache, url);
-  if (og) {
-    og_cache_remove_entry(self, og, TRUE);
-    removed++;
+  GList *link = self->og_lru.head;
+  while (link) {
+    GList *next = link->next;
+    OgCacheEntry *og = link->data;
+    if (g_str_equal(og->url, url)) {
+      og_cache_remove_entry(self, og, TRUE);
+      removed++;
+    }
+    link = next;
   }
 
-  for (guint kind = PENDING_TEXTURE; kind <= PENDING_OG_METADATA; kind++) {
-    g_autofree char *key = operation_key(url, (PendingKind)kind);
-    NegativeEntry *entry = g_hash_table_lookup(self->negative, key);
-    if (entry) {
+  link = self->negative_lru.head;
+  while (link) {
+    GList *next = link->next;
+    NegativeEntry *entry = link->data;
+    if (g_str_equal(entry->url, url)) {
       negative_remove_entry(self, entry);
       removed++;
     }
+    link = next;
   }
   return removed;
 }
@@ -2600,6 +3066,97 @@ gnostr_media_service_clear_all(GnostrMediaService *self)
     negative_remove_entry(self, g_queue_peek_head(&self->negative_lru));
   while (!g_queue_is_empty(&self->og_lru))
     og_cache_remove_entry(self, g_queue_peek_head(&self->og_lru), TRUE);
+}
+
+void
+gnostr_media_service_evict_account(GnostrMediaService *self,
+                                    const char *npub)
+{
+  g_return_if_fail(GNOSTR_IS_MEDIA_SERVICE(self));
+  g_return_if_fail(valid_account_namespace(npub));
+
+  /* Advance the generation before cancellation or deletion.  Detached disk
+   * jobs capture the old generation and therefore cannot recreate the account
+   * namespace after this function returns. */
+  g_autofree char *namespace_dir = g_build_filename(self->disk_root, npub, NULL);
+  G_LOCK(media_disk);
+  guint64 *epoch = g_hash_table_lookup(self->namespace_epochs, npub);
+  if (!epoch) {
+    epoch = g_new0(guint64, 1);
+    *epoch = 1;
+    g_hash_table_insert(self->namespace_epochs, g_strdup(npub), epoch);
+  }
+  (*epoch)++;
+  remove_tree_locked(namespace_dir);
+  G_UNLOCK(media_disk);
+  g_hash_table_remove(self->known_namespaces, npub);
+
+  for (guint i = 0; i < GNOSTR_MEDIA_RESOURCE_N_CLASSES; i++) {
+    TextureClassCache *cache = &self->texture_caches[i];
+    GList *link = cache->lru.head;
+    while (link) {
+      GList *next = link->next;
+      TextureCacheEntry *entry = link->data;
+      if (g_str_equal(entry->cache_namespace, npub))
+        texture_cache_remove_entry(cache, entry, TRUE);
+      link = next;
+    }
+  }
+
+  GList *link = self->og_lru.head;
+  while (link) {
+    GList *next = link->next;
+    OgCacheEntry *entry = link->data;
+    if (g_str_equal(entry->cache_namespace, npub))
+      og_cache_remove_entry(self, entry, TRUE);
+    link = next;
+  }
+  link = self->negative_lru.head;
+  while (link) {
+    GList *next = link->next;
+    NegativeEntry *entry = link->data;
+    if (g_str_equal(entry->cache_namespace, npub))
+      negative_remove_entry(self, entry);
+    link = next;
+  }
+
+  g_autoptr(GPtrArray) requests = g_ptr_array_new();
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, self->pending);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    PendingRequest *request = value;
+    if (g_str_equal(request->cache_namespace, npub))
+      g_ptr_array_add(requests, request);
+  }
+  for (guint i = 0; i < requests->len; i++) {
+    PendingRequest *request = g_ptr_array_index(requests, i);
+    g_autoptr(GError) error = g_error_new_literal(
+        G_IO_ERROR, G_IO_ERROR_CANCELLED, "Account media cache evicted");
+    for (guint j = 0; j < request->subscribers->len; j++) {
+      Subscriber *subscriber = g_ptr_array_index(request->subscribers, j);
+      if (!subscriber->completed) {
+        if (subscriber->kind == PENDING_TEXTURE)
+          subscriber_complete_texture(subscriber, NULL, error);
+        else
+          subscriber_complete_og(subscriber, NULL, error);
+      }
+    }
+    if (request->queued) {
+      g_queue_remove(&self->download_queue, request);
+      request->queued = FALSE;
+      request->network_done = TRUE;
+    }
+    if (request->thumbnail_queued) {
+      g_queue_remove(&self->thumbnail_queue, request);
+      request->thumbnail_queued = FALSE;
+      request->network_done = TRUE;
+    }
+    g_cancellable_cancel(request->network_cancellable);
+    pending_maybe_finish(request);
+  }
+  start_queued_downloads(self);
+  start_queued_thumbnails(self);
 }
 
 #ifdef GNOSTR_MEDIA_SERVICE_TESTING
@@ -2633,6 +3190,23 @@ gnostr_media_service_test_get_outstanding_disk_jobs(GnostrMediaService *self)
 }
 
 void
+gnostr_media_service_test_set_thumbnail_extractor(
+    GnostrMediaService *self,
+    GnostrMediaTestThumbnailExtractor extractor,
+    gpointer user_data,
+    GDestroyNotify user_data_destroy)
+{
+  g_return_if_fail(GNOSTR_IS_MEDIA_SERVICE(self));
+  g_return_if_fail(self->active_thumbnails == 0 &&
+                   g_queue_is_empty(&self->thumbnail_queue));
+  if (self->test_thumbnail_data_destroy)
+    self->test_thumbnail_data_destroy(self->test_thumbnail_data);
+  self->test_thumbnail_extractor = extractor;
+  self->test_thumbnail_data = user_data;
+  self->test_thumbnail_data_destroy = user_data_destroy;
+}
+
+void
 gnostr_media_service_test_store_texture(GnostrMediaService *self,
                                         const char *url,
                                         GnostrMediaResourceClass resource_class,
@@ -2641,8 +3215,9 @@ gnostr_media_service_test_store_texture(GnostrMediaService *self,
                                         GdkTexture *texture)
 {
   g_return_if_fail(GNOSTR_IS_MEDIA_SERVICE(self));
-  texture_cache_store(self, resource_class, url, target_width, target_height,
-                      texture);
+  g_autofree char *cache_namespace = current_cache_namespace(self);
+  texture_cache_store(self, resource_class, cache_namespace, url, target_width,
+                      target_height, texture);
 }
 
 void
@@ -2651,7 +3226,8 @@ gnostr_media_service_test_store_negative(GnostrMediaService *self,
                                          gboolean metadata_request)
 {
   g_return_if_fail(GNOSTR_IS_MEDIA_SERVICE(self));
-  negative_store(self, url,
+  g_autofree char *cache_namespace = current_cache_namespace(self);
+  negative_store(self, cache_namespace, url,
                  metadata_request ? PENDING_OG_METADATA : PENDING_TEXTURE);
 }
 
@@ -2661,7 +3237,8 @@ gnostr_media_service_test_is_negative(GnostrMediaService *self,
                                       gboolean metadata_request)
 {
   g_return_val_if_fail(GNOSTR_IS_MEDIA_SERVICE(self), FALSE);
-  return negative_lookup(self, url,
+  g_autofree char *cache_namespace = current_cache_namespace(self);
+  return negative_lookup(self, cache_namespace, url,
                          metadata_request ? PENDING_OG_METADATA
                                           : PENDING_TEXTURE);
 }
@@ -2695,8 +3272,11 @@ gnostr_media_service_finalize(GObject *object)
   g_hash_table_unref(self->negative);
   g_hash_table_unref(self->og_cache);
   g_hash_table_unref(self->known_namespaces);
+  g_hash_table_unref(self->namespace_epochs);
   g_free(self->disk_root);
 #ifdef GNOSTR_MEDIA_SERVICE_TESTING
+  if (self->test_thumbnail_data_destroy)
+    self->test_thumbnail_data_destroy(self->test_thumbnail_data);
   g_free(self->namespace_override);
 #endif
   g_main_context_unref(self->context);
@@ -2722,6 +3302,8 @@ gnostr_media_service_init(GnostrMediaService *self)
                                      "gnostr", "media", NULL);
   self->known_namespaces = g_hash_table_new_full(
       g_str_hash, g_str_equal, g_free, NULL);
+  self->namespace_epochs = g_hash_table_new_full(
+      g_str_hash, g_str_equal, g_free, g_free);
   for (guint i = 0; i < GNOSTR_MEDIA_RESOURCE_N_CLASSES; i++)
     self->texture_caches[i].entries =
         g_hash_table_new(g_str_hash, g_str_equal);
