@@ -5,6 +5,7 @@
 #include "signet/audit_logger.h"
 #include "signet/key_store.h"
 #include "signet/mgmt_protocol.h"
+#include "signet/replay_cache.h"
 #include "signet/store.h"
 #include "signet/store_secrets.h"
 
@@ -284,10 +285,101 @@ static void test_expiry_and_unauthorized(void) {
   puts("test_expiry_and_unauthorized: PASS");
 }
 
+/* Item 4: a PLAINTEXT (non-NIP-44) mutation request must be rejected before
+ * parsing — even from an authorized provisioner — and must not mutate state. */
+static void test_plaintext_mutation_rejected(void) {
+  Fixture f;
+  setup(&f);
+  SignetStore *store = signet_key_store_get_store(f.keys);
+  assert(store);
+
+  /* Valid request JSON, but sent as raw plaintext instead of NIP-44. */
+  char *create = request_json("plainette", "sneaky-token");
+  assert(signet_mgmt_handler_handle_request(
+      f.mgmt, f.provisioner_pk, create, SIGNET_MGMT_OP_CREATE_CREDENTIAL,
+      "plaintext-1", 2000000000) == -1);
+
+  char plain_id[70];
+  assert(signet_secret_id_generate("owner", SIGNET_SECRET_API_TOKEN,
+                                   "plainette", plain_id) == 0);
+  SignetSecretMetadata metadata;
+  memset(&metadata, 0, sizeof(metadata));
+  assert(signet_store_get_secret_metadata(
+      store, plain_id, 2000000000, &metadata) == SIGNET_SECRET_NOT_FOUND);
+
+  g_free(create);
+  teardown(&f);
+  puts("test_plaintext_mutation_rejected: PASS");
+}
+
+/* Item 4: with a replay cache attached, a replayed credential mutation event
+ * id executes at most once — the duplicate is rejected and state unchanged. */
+static void test_credential_mutation_replay_rejected(void) {
+  Fixture f;
+  setup(&f);
+  SignetStore *store = signet_key_store_get_store(f.keys);
+  assert(store);
+
+  SignetReplayCacheConfig rcfg = {
+    .max_entries = 128, .ttl_seconds = 300, .skew_seconds = 300
+  };
+  SignetReplayCache *replay = signet_replay_cache_new(&rcfg);
+  assert(replay);
+  signet_mgmt_handler_set_replay_cache(f.mgmt, replay);
+
+  char *create = request_json("replayed", "original-value");
+  assert(handle(&f, SIGNET_MGMT_OP_CREATE_CREDENTIAL,
+                create, "replay-evt-1") == 0);
+  char cred_id[70];
+  assert(signet_secret_id_generate("owner", SIGNET_SECRET_API_TOKEN,
+                                   "replayed", cred_id) == 0);
+
+  /* Replay of the SAME event id carrying a rotate must be dropped. */
+  char *b64 = g_base64_encode((const guchar *)"replayed-value",
+                              strlen("replayed-value"));
+  char *rotate = g_strdup_printf(
+      "{\"request_id\":\"r\",\"credential_id\":\"%s\","
+      "\"payload_b64\":\"%s\"}", cred_id, b64);
+  g_free(b64);
+  assert(handle(&f, SIGNET_MGMT_OP_ROTATE_CREDENTIAL,
+                rotate, "replay-evt-1") == -1);
+
+  SignetSecretRecord record;
+  memset(&record, 0, sizeof(record));
+  assert(signet_store_get_secret_at(
+      store, cred_id, 2000000001, &record) == SIGNET_SECRET_OK);
+  assert(record.payload_len == strlen("original-value"));
+  assert(memcmp(record.payload, "original-value", record.payload_len) == 0);
+  assert(record.version == 1 && record.active_version == 1);
+  signet_secret_record_clear(&record);
+  assert(signet_store_secret_history_count(store, cred_id) == 0);
+
+  /* A fresh event id still executes. */
+  char *b64b = g_base64_encode((const guchar *)"rotated-value",
+                               strlen("rotated-value"));
+  char *rotate2 = g_strdup_printf(
+      "{\"request_id\":\"r\",\"credential_id\":\"%s\","
+      "\"payload_b64\":\"%s\"}", cred_id, b64b);
+  g_free(b64b);
+  assert(handle(&f, SIGNET_MGMT_OP_ROTATE_CREDENTIAL,
+                rotate2, "replay-evt-2") == 0);
+  assert(signet_store_secret_history_count(store, cred_id) == 1);
+
+  g_free(create);
+  g_free(rotate);
+  g_free(rotate2);
+  signet_mgmt_handler_set_replay_cache(f.mgmt, NULL);
+  teardown(&f);
+  signet_replay_cache_free(replay);
+  puts("test_credential_mutation_replay_rejected: PASS");
+}
+
 int main(void) {
   assert(sodium_init() >= 0);
   test_encrypted_contextvm_lifecycle();
   test_expiry_and_unauthorized();
+  test_plaintext_mutation_rejected();
+  test_credential_mutation_replay_rejected();
   puts("credential lifecycle tests: ALL PASS");
   return 0;
 }

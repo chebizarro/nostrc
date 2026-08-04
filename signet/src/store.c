@@ -31,6 +31,7 @@
 #include <fcntl.h>    /* open() for fsync of file + parent directory */
 
 #include <glib.h>
+#include <glib/gstdio.h>  /* g_lstat for backup/restore alias guards */
 #include <sqlite3.h>
 
 /* libnostr secure memory */
@@ -622,6 +623,8 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
   char *pragma = sqlite3_mprintf("PRAGMA key = '%q';", cfg->master_key);
   if (pragma) {
     rc = sqlite3_exec(store->db, pragma, NULL, NULL, NULL);
+    /* The pragma string embeds the master key — wipe before releasing. */
+    sodium_memzero(pragma, strlen(pragma));
     sqlite3_free(pragma);
     (void)rc; /* PRAGMA key is a no-op on plain SQLite; verified below. */
   }
@@ -788,6 +791,464 @@ int signet_store_migrate_plaintext_to_sqlcipher(const char *db_path,
   if (!signet_file_is_plain_sqlite(db_path)) return 1; /* not a plaintext DB */
   if (!signet_sqlcipher_available()) return -1;        /* cannot encrypt */
   return signet_store_do_migrate(db_path, master_key);
+}
+
+/* ---------------------------- backup / restore ---------------------------- */
+
+/* Enforce the same >=32-bytes-of-key-material rule as the master key by
+ * running the key through the DEK derivation into a throwaway output. */
+static bool signet_key_has_min_entropy(const char *key) {
+  uint8_t probe[SIGNET_DEK_LEN];
+  bool ok = signet_derive_dek(key, probe);
+  sodium_memzero(probe, sizeof(probe));
+  return ok;
+}
+
+/* Verify that the database at `path` opens with `key`, is SQLCipher-encrypted,
+ * that the core store tables are readable with that key, and that a full
+ * `PRAGMA integrity_check` walks every page (indices, freelist) and reports
+ * "ok" — on SQLCipher a failed page HMAC surfaces here. Used to prove a
+ * backup (or restored database) is usable BEFORE reporting success. */
+static bool signet_verify_encrypted_db(const char *path, const char *key) {
+  sqlite3 *chk = NULL;
+  bool ok = false;
+  if (sqlite3_open_v2(path, &chk, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK && chk) {
+    char *kp = sqlite3_mprintf("PRAGMA key = '%q';", key);
+    if (kp) {
+      (void)sqlite3_exec(chk, kp, NULL, NULL, NULL);
+      sodium_memzero(kp, strlen(kp));
+      sqlite3_free(kp);
+    }
+    ok = signet_store_detect_sqlcipher(chk) &&
+         sqlite3_exec(chk,
+                      "SELECT (SELECT count(*) FROM agents),"
+                      " (SELECT count(*) FROM secrets),"
+                      " (SELECT count(*) FROM secret_versions),"
+                      " (SELECT count(*) FROM audit_log);",
+                      NULL, NULL, NULL) == SQLITE_OK;
+    if (ok) {
+      sqlite3_stmt *ic = NULL;
+      ok = false;
+      if (sqlite3_prepare_v2(chk, "PRAGMA integrity_check;", -1, &ic, NULL) ==
+          SQLITE_OK) {
+        if (sqlite3_step(ic) == SQLITE_ROW) {
+          const unsigned char *row = sqlite3_column_text(ic, 0);
+          ok = row && strcmp((const char *)row, "ok") == 0;
+        }
+        sqlite3_finalize(ic);
+      }
+    }
+  }
+  if (chk) sqlite3_close(chk);
+  return ok;
+}
+
+/* True when both paths exist and name the same underlying file (dev+inode). */
+static bool signet_same_file(const char *a, const char *b) {
+  GStatBuf sa, sb;
+  if (!a || !b) return false;
+  if (g_lstat(a, &sa) != 0 || g_lstat(b, &sb) != 0) return false;
+  return sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
+}
+
+/* Atomically create `path` as a fresh empty regular file with mode 0600.
+ * Fails if the path already exists or is a symlink (O_EXCL|O_NOFOLLOW), which
+ * makes the no-overwrite guarantee race-free and pins restrictive perms on the
+ * file SQLite will subsequently write into. Returns 0 on success. */
+static int signet_create_exclusive_0600(const char *path) {
+  int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+  if (fd < 0) return -1;
+  (void)close(fd);
+  return 0;
+}
+
+/* fsync a file and report failure (the void helpers above are best-effort). */
+static int signet_fsync_file_rc(const char *path) {
+  int fd = open(path, O_RDONLY);
+  if (fd < 0) return -1;
+  int rc = fsync(fd);
+  (void)close(fd);
+  return rc == 0 ? 0 : -1;
+}
+
+/* Prove that `master_key` is the envelope master of the (already keyed) source
+ * connection by authenticating one envelope blob with the DEK it derives:
+ * agent custody blobs are secretbox'd directly under the DEK, credential
+ * payloads under BLAKE2b(agent_pubkey) keyed by the DEK. Poly1305 makes this
+ * an authenticated check — a wrong master key cannot pass. Returns 0 when the
+ * key matches or the database contains no envelope blobs to check, -1 on
+ * mismatch/error. */
+static int signet_check_envelope_master(sqlite3 *db, const char *master_key) {
+  uint8_t dek[SIGNET_DEK_LEN];
+  if (!signet_derive_dek(master_key, dek)) return -1;
+
+  int verdict = 0;    /* nothing to check yet */
+  bool checked = false; /* true once one blob was actually authenticated */
+  sqlite3_stmt *st = NULL;
+
+  if (sqlite3_prepare_v2(db,
+        "SELECT encrypted_nsec, nonce FROM agents LIMIT 1;",
+        -1, &st, NULL) == SQLITE_OK) {
+    if (sqlite3_step(st) == SQLITE_ROW) {
+      checked = true;
+      const uint8_t *ct = sqlite3_column_blob(st, 0);
+      int ct_len = sqlite3_column_bytes(st, 0);
+      const uint8_t *nonce = sqlite3_column_blob(st, 1);
+      int nonce_len = sqlite3_column_bytes(st, 1);
+      verdict = -1;
+      if (ct && nonce && nonce_len == (int)SIGNET_NONCE_LEN &&
+          ct_len == (int)(SIGNET_NSEC_LEN + SIGNET_CIPHERTEXT_EXTRA)) {
+        uint8_t pt[SIGNET_NSEC_LEN];
+        if (crypto_secretbox_open_easy(pt, ct, (size_t)ct_len, nonce, dek) == 0)
+          verdict = 0;
+        sodium_memzero(pt, sizeof(pt));
+      }
+    }
+    sqlite3_finalize(st);
+    st = NULL;
+  }
+
+  if (verdict == 0 && !checked) {
+    /* agents was empty — fall through to a credential blob (per-agent key
+     * derived from the DEK). */
+    if (sqlite3_prepare_v2(db,
+          "SELECT payload, nonce, agent_pubkey FROM secrets LIMIT 1;",
+          -1, &st, NULL) == SQLITE_OK) {
+      if (sqlite3_step(st) == SQLITE_ROW) {
+        const uint8_t *ct = sqlite3_column_blob(st, 0);
+        int ct_len = sqlite3_column_bytes(st, 0);
+        const uint8_t *nonce = sqlite3_column_blob(st, 1);
+        int nonce_len = sqlite3_column_bytes(st, 1);
+        const char *pubkey = (const char *)sqlite3_column_text(st, 2);
+        verdict = -1;
+        if (ct && nonce && pubkey && nonce_len == (int)SIGNET_NONCE_LEN &&
+            ct_len > (int)SIGNET_CIPHERTEXT_EXTRA) {
+          uint8_t akey[SIGNET_DEK_LEN];
+          crypto_generichash(akey, sizeof(akey),
+                             (const uint8_t *)pubkey, strlen(pubkey),
+                             dek, sizeof(dek));
+          size_t pt_len = (size_t)ct_len - SIGNET_CIPHERTEXT_EXTRA;
+          uint8_t *pt = malloc(pt_len);
+          if (pt) {
+            if (crypto_secretbox_open_easy(pt, ct, (size_t)ct_len,
+                                           nonce, akey) == 0)
+              verdict = 0;
+            sodium_memzero(pt, pt_len);
+            free(pt);
+          }
+          sodium_memzero(akey, sizeof(akey));
+        }
+      }
+      sqlite3_finalize(st);
+    }
+  }
+
+  sodium_memzero(dek, sizeof(dek));
+  return verdict;
+}
+
+int signet_store_backup(SignetStore *store,
+                        const char *backup_path,
+                        const char *backup_key) {
+  if (!store || !store->open || !store->db || !backup_path || !backup_path[0] ||
+      !backup_key)
+    return -1;
+
+  /* An encrypted backup needs the SQLCipher layer on the source connection:
+   * sqlcipher_export() on plain SQLite would write a PLAINTEXT copy. Fail
+   * closed rather than silently produce an unencrypted backup. */
+  if (!store->encrypted) {
+    g_critical("[signet] backup refused: store at hand is not "
+               "SQLCipher-encrypted, an encrypted backup cannot be produced. "
+               "Build with -Dsignet_use_sqlcipher=true.");
+    return -1;
+  }
+
+  /* ATTACH inherits the main connection's open flags; a read-only handle
+   * cannot create the backup database. */
+  if (sqlite3_db_readonly(store->db, "main") == 1) {
+    g_critical("[signet] backup refused: store handle is read-only.");
+    return -1;
+  }
+
+  if (!signet_key_has_min_entropy(backup_key)) {
+    g_critical("[signet] backup refused: backup key must carry at least 32 "
+               "bytes of key material (hex, base64, or raw).");
+    return -1;
+  }
+
+  /* Race-free no-overwrite + restrictive perms: atomically create the target
+   * as a fresh empty 0600 regular file (fails on existing files and symlinks).
+   * SQLite treats the empty file as a fresh database on ATTACH. Because the
+   * target provably did not exist before this call, it can never alias the
+   * live database or its sidecars. From here on WE own the file and must
+   * remove it on every failure path. */
+  if (signet_create_exclusive_0600(backup_path) != 0) {
+    g_critical("[signet] backup refused: cannot create '%s' exclusively "
+               "(already exists, is a symlink, or directory not writable).",
+               backup_path);
+    return -1;
+  }
+
+  int result = -1;
+  bool attached = false;
+  sqlite3_mutex *db_mutex = sqlite3_db_mutex(store->db);
+  sqlite3_mutex_enter(db_mutex);
+
+  /* Fold any WAL into the main file so the export sees every committed row. */
+  (void)sqlite3_exec(store->db, "PRAGMA wal_checkpoint(TRUNCATE);",
+                     NULL, NULL, NULL);
+
+  {
+    char *attach = sqlite3_mprintf("ATTACH DATABASE %Q AS backup KEY '%q';",
+                                   backup_path, backup_key);
+    int arc = attach ? sqlite3_exec(store->db, attach, NULL, NULL, NULL)
+                     : SQLITE_ERROR;
+    if (attach) { sodium_memzero(attach, strlen(attach)); sqlite3_free(attach); }
+    if (arc != SQLITE_OK) goto done;
+    attached = true;
+  }
+
+  if (sqlite3_exec(store->db, "SELECT sqlcipher_export('backup');",
+                   NULL, NULL, NULL) != SQLITE_OK)
+    goto done;
+
+  result = 0;
+done:
+  if (attached) {
+    /* A failed DETACH would leave the backup attachment (and its key) live on
+     * the shared daemon connection — treat it as a hard failure. */
+    if (sqlite3_exec(store->db, "DETACH DATABASE backup;",
+                     NULL, NULL, NULL) != SQLITE_OK) {
+      g_critical("[signet] backup: DETACH failed: %s",
+                 sqlite3_errmsg(store->db));
+      result = -1;
+    }
+  }
+  sqlite3_mutex_leave(db_mutex);
+
+  if (result != 0) {
+    remove(backup_path); /* never leave a partial backup behind */
+    return -1;
+  }
+
+  /* Verify on an independent connection before reporting success: encrypted
+   * on disk (no plaintext header), readable with the backup key, and a full
+   * integrity_check passes. Then make it durable — a backup whose durability
+   * is unknown is not a backup, so fsync failures are failures. */
+  if (signet_file_is_plain_sqlite(backup_path) ||
+      !signet_verify_encrypted_db(backup_path, backup_key)) {
+    g_critical("[signet] backup verification FAILED for '%s'; deleting it.",
+               backup_path);
+    remove(backup_path);
+    return -1;
+  }
+
+  if (signet_fsync_file_rc(backup_path) != 0) {
+    g_critical("[signet] backup: fsync of '%s' failed; deleting it.",
+               backup_path);
+    remove(backup_path);
+    return -1;
+  }
+  signet_fsync_parent_dir(backup_path);
+  return 0;
+}
+
+int signet_store_restore_backup(const char *backup_path,
+                                const char *backup_key,
+                                const char *db_path,
+                                const char *master_key) {
+  if (!backup_path || !backup_key || !db_path || !db_path[0] || !master_key)
+    return -1;
+  if (sodium_init() < 0) return -1;
+
+  int result = -1;
+  sqlite3 *src = NULL;
+  bool attached = false;
+  char *tmp_path = sqlite3_mprintf("%s.restoring", db_path);
+  char *pre_path = sqlite3_mprintf("%s.pre-restore", db_path);
+  if (!tmp_path || !pre_path) goto done;
+
+  /* The restored DB is keyed by master_key; enforce the same entropy rule the
+   * store applies at open time so restore cannot downgrade key strength. */
+  if (!signet_key_has_min_entropy(master_key)) {
+    g_critical("[signet] restore refused: master key must carry at least 32 "
+               "bytes of key material.");
+    goto done;
+  }
+
+  /* Alias guard: the backup must not BE the live database, the working file,
+   * or the pre-restore slot — lexically or by inode — otherwise the cleanup
+   * steps below would destroy the very file being restored. */
+  if (strcmp(backup_path, db_path) == 0 ||
+      strcmp(backup_path, tmp_path) == 0 ||
+      strcmp(backup_path, pre_path) == 0 ||
+      signet_same_file(backup_path, db_path) ||
+      signet_same_file(backup_path, tmp_path) ||
+      signet_same_file(backup_path, pre_path)) {
+    g_critical("[signet] restore refused: backup path '%s' aliases the target "
+               "database or its working files.", backup_path);
+    goto done;
+  }
+
+  /* The backup must be an encrypted database that opens with backup_key. */
+  if (signet_file_is_plain_sqlite(backup_path)) {
+    g_critical("[signet] restore refused: '%s' is a PLAINTEXT SQLite file, "
+               "not an encrypted backup.", backup_path);
+    goto done;
+  }
+  if (!signet_verify_encrypted_db(backup_path, backup_key)) {
+    g_critical("[signet] restore refused: '%s' does not open with the given "
+               "backup key (wrong key, corrupt, or not a Signet backup).",
+               backup_path);
+    goto done;
+  }
+
+  remove(tmp_path); /* clear any leftover from a previous aborted run */
+
+  /* Create the working file exclusively with 0600 perms; SQLite treats the
+   * fresh empty file as a new database on ATTACH, so no SQLITE_OPEN_CREATE is
+   * needed on the source connection (which also guarantees a vanished/replaced
+   * backup path cannot be silently recreated as an empty database). */
+  if (signet_create_exclusive_0600(tmp_path) != 0) {
+    g_critical("[signet] restore: cannot create working file '%s'.", tmp_path);
+    goto done;
+  }
+
+  if (sqlite3_open_v2(backup_path, &src,
+                      SQLITE_OPEN_READWRITE, NULL) != SQLITE_OK || !src)
+    goto done;
+  {
+    char *kp = sqlite3_mprintf("PRAGMA key = '%q';", backup_key);
+    if (!kp) goto done;
+    (void)sqlite3_exec(src, kp, NULL, NULL, NULL);
+    sodium_memzero(kp, strlen(kp));
+    sqlite3_free(kp);
+  }
+  if (sqlite3_exec(src, "SELECT count(*) FROM sqlite_master;",
+                   NULL, NULL, NULL) != SQLITE_OK)
+    goto done;
+
+  /* The envelope blobs inside the backup are bound to the DEK of the master
+   * key that was active when it was taken. Authenticate one of them against
+   * the SUPPLIED master key now — otherwise a wrong (but strong) master key
+   * would re-key the SQLCipher layer successfully and produce a "restored"
+   * store whose payloads can never be decrypted. */
+  if (signet_check_envelope_master(src, master_key) != 0) {
+    g_critical("[signet] restore refused: the supplied master key does not "
+               "match the envelope key material inside '%s' (backups must be "
+               "restored with the master key that was active when they were "
+               "taken).", backup_path);
+    goto done;
+  }
+  {
+    char *attach = sqlite3_mprintf("ATTACH DATABASE %Q AS restored KEY '%q';",
+                                   tmp_path, master_key);
+    int arc = attach ? sqlite3_exec(src, attach, NULL, NULL, NULL)
+                     : SQLITE_ERROR;
+    if (attach) { sodium_memzero(attach, strlen(attach)); sqlite3_free(attach); }
+    if (arc != SQLITE_OK) goto done;
+    attached = true;
+  }
+  if (sqlite3_exec(src, "SELECT sqlcipher_export('restored');",
+                   NULL, NULL, NULL) != SQLITE_OK)
+    goto done;
+  (void)sqlite3_exec(src, "DETACH DATABASE restored;", NULL, NULL, NULL);
+  attached = false;
+  sqlite3_close(src);
+  src = NULL;
+
+  /* Verify the restored database opens with the master key, then flush it. */
+  if (!signet_verify_encrypted_db(tmp_path, master_key)) {
+    g_critical("[signet] restore verification FAILED for '%s'.", tmp_path);
+    goto done;
+  }
+  if (signet_fsync_file_rc(tmp_path) != 0) {
+    g_critical("[signet] restore: fsync of '%s' failed.", tmp_path);
+    goto done;
+  }
+
+  /* Handle an existing database at db_path before the swap:
+   * 1) If it opens with master_key, take an exclusive lock (refusing while a
+   *    running daemon holds the store) and fold its WAL into the main file so
+   *    the .pre-restore copy is complete and stale sidecars become empty.
+   * 2) If it does NOT open with master_key (lost/rotated key — the very
+   *    scenario restore exists for), preserve any -wal sidecar verbatim next
+   *    to the .pre-restore copy instead. */
+  if (g_file_test(db_path, G_FILE_TEST_EXISTS)) {
+    bool folded = false;
+    sqlite3 *old = NULL;
+    if (sqlite3_open_v2(db_path, &old, SQLITE_OPEN_READWRITE, NULL) ==
+            SQLITE_OK && old) {
+      char *kp = sqlite3_mprintf("PRAGMA key = '%q';", master_key);
+      if (kp) {
+        (void)sqlite3_exec(old, kp, NULL, NULL, NULL);
+        sodium_memzero(kp, strlen(kp));
+        sqlite3_free(kp);
+        if (sqlite3_exec(old, "SELECT count(*) FROM sqlite_master;",
+                         NULL, NULL, NULL) == SQLITE_OK) {
+          /* Keyed read works: insist on exclusivity — a live daemon must
+           * block the restore rather than race it. */
+          (void)sqlite3_busy_timeout(old, 2000);
+          if (sqlite3_exec(old, "PRAGMA locking_mode=EXCLUSIVE;",
+                           NULL, NULL, NULL) != SQLITE_OK ||
+              sqlite3_exec(old, "BEGIN IMMEDIATE; COMMIT;",
+                           NULL, NULL, NULL) != SQLITE_OK) {
+            g_critical("[signet] restore refused: could not get an exclusive "
+                       "lock on '%s' (is signetd still running?).", db_path);
+            sqlite3_close(old);
+            goto done;
+          }
+          (void)sqlite3_exec(old, "PRAGMA wal_checkpoint(TRUNCATE);",
+                             NULL, NULL, NULL);
+          (void)sqlite3_exec(old, "PRAGMA journal_mode=DELETE;",
+                             NULL, NULL, NULL);
+          folded = true;
+        }
+      }
+      sqlite3_close(old);
+    }
+
+    remove(pre_path);
+    if (link(db_path, pre_path) != 0 &&
+        signet_copy_file(db_path, pre_path) != 0)
+      goto done;
+    signet_fsync_file(pre_path);
+
+    if (!folded) {
+      /* Could not fold the WAL (foreign key): preserve it alongside the
+       * pre-restore copy so no committed state is discarded. */
+      char *w = sqlite3_mprintf("%s-wal", db_path);
+      char *pw = sqlite3_mprintf("%s-wal", pre_path);
+      if (w && pw && g_file_test(w, G_FILE_TEST_EXISTS)) {
+        if (signet_copy_file(w, pw) != 0) {
+          sqlite3_free(w); sqlite3_free(pw);
+          goto done;
+        }
+        signet_fsync_file(pw);
+      }
+      sqlite3_free(w);
+      sqlite3_free(pw);
+    }
+  }
+
+  /* Remove stale sidecars so the restored DB is never paired with a previous
+   * database's WAL/-shm (already folded or preserved above). */
+  { char *w = sqlite3_mprintf("%s-wal", db_path); if (w) { remove(w); sqlite3_free(w); }
+    char *s = sqlite3_mprintf("%s-shm", db_path); if (s) { remove(s); sqlite3_free(s); } }
+
+  if (rename(tmp_path, db_path) != 0) goto done;
+  signet_fsync_parent_dir(db_path);
+
+  result = 0;
+done:
+  if (attached && src)
+    (void)sqlite3_exec(src, "DETACH DATABASE restored;", NULL, NULL, NULL);
+  if (src) sqlite3_close(src);
+  if (result != 0 && tmp_path) remove(tmp_path); /* never leave a partial temp */
+  sqlite3_free(tmp_path);
+  sqlite3_free(pre_path);
+  return result;
 }
 
 void signet_store_close(SignetStore *store) {

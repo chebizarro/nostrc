@@ -162,6 +162,14 @@ test_git_credential = executable('test_git_credential',
   install: false,
 )
 
+test_backup_restore = executable('test_backup_restore',
+  'test_backup_restore.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: false,
+)
+
 test_item3_concurrency = executable('test_item3_concurrency',
   'test_item3_concurrency.c',
   link_with: signet_core,
@@ -194,6 +202,7 @@ test('signetctl_credentials', find_program('sh'),
   args: [meson.current_source_dir() / 'test_signetctl_credentials.sh',
          signetctl_exe.full_path()])
 test('item3_concurrency', test_item3_concurrency, timeout: 60)
+test('backup_restore', test_backup_restore, timeout: 60)
 
 if get_option('signet_enable_passkeys')
   test_store_passkeys = executable('test_store_passkeys',

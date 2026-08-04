@@ -89,6 +89,13 @@ static void signetctl_usage(FILE *out) {
     "                           All credential operations use encrypted ContextVM;\n"
     "                           payload files must be regular owner-only files.\n"
     "  migrate-db               Migrate a legacy plaintext SQLite DB to SQLCipher\n"
+    "  backup-db <path>         Write an encrypted point-in-time backup of the\n"
+    "                           entire store (current + archived secrets, audit)\n"
+    "                           keyed by SIGNET_BACKUP_KEY (never via argv)\n"
+    "  restore-db <path> --confirm\n"
+    "                           Restore an encrypted backup over the configured\n"
+    "                           DB (offline; stop signetd first). Previous DB is\n"
+    "                           kept at <db>.pre-restore\n"
     "\n"
     "Options:\n"
     "  -c <path>    Configuration file path\n"
@@ -97,6 +104,8 @@ static void signetctl_usage(FILE *out) {
     "Environment:\n"
     "  SIGNET_PROVISIONER_NSEC  Provisioner's nsec (required, bech32 or hex)\n"
     "  SIGNET_RELAYS            Comma-separated relay URLs (or set in config)\n"
+    "  SIGNET_DB_KEY            Store master key (local store commands)\n"
+    "  SIGNET_BACKUP_KEY        Independent backup key for backup-db/restore-db\n"
     "\n"
     "Examples:\n"
     "  signetctl provision my-agent\n"
@@ -913,6 +922,71 @@ int main(int argc, char **argv) {
     } else {
       fprintf(stderr, "signetctl: migration of '%s' failed (original left intact).\n",
               lcfg.db_path);
+    }
+    signet_config_clear(&lcfg);
+    return ret;
+  } else if (strcmp(cmd, "backup-db") == 0 || strcmp(cmd, "restore-db") == 0) {
+    /* Encrypted backup/restore of the local store. Keys come from the
+     * environment ONLY (SIGNET_DB_KEY, SIGNET_BACKUP_KEY) — never argv. */
+    bool is_backup = strcmp(cmd, "backup-db") == 0;
+    const char *file_path = NULL;
+    bool confirmed = false;
+    for (int ai = argi; ai < argc; ai++) {
+      if (strcmp(argv[ai], "--confirm") == 0) confirmed = true;
+      else if (!file_path) file_path = argv[ai];
+      else { fprintf(stderr, "signetctl: unexpected argument '%s'\n", argv[ai]); return 2; }
+    }
+    if (!file_path || !file_path[0]) {
+      fprintf(stderr, "signetctl: %s requires a backup file path\n", cmd);
+      return 2;
+    }
+    if (!is_backup && !confirmed) {
+      fprintf(stderr, "signetctl: restore-db REPLACES the configured database "
+              "and requires explicit --confirm (stop signetd first).\n");
+      return 2;
+    }
+    SignetConfig lcfg;
+    if (signet_config_load(config_path, &lcfg) != 0) {
+      fprintf(stderr, "signetctl: failed to load config\n");
+      return 1;
+    }
+    const char *db_key = g_getenv("SIGNET_DB_KEY");
+    const char *backup_key = g_getenv("SIGNET_BACKUP_KEY");
+    int ret = 1;
+    if (!db_key || !db_key[0]) {
+      fprintf(stderr, "signetctl: SIGNET_DB_KEY is required.\n");
+    } else if (!backup_key || !backup_key[0]) {
+      fprintf(stderr, "signetctl: SIGNET_BACKUP_KEY is required (an independent "
+              "key protecting the backup file; >= 32 bytes of key material).\n");
+    } else if (is_backup) {
+      SignetStoreConfig scfg = { .db_path = lcfg.db_path, .master_key = db_key };
+      SignetStore *store = signet_store_open(&scfg);
+      if (!store) {
+        fprintf(stderr, "signetctl: failed to open store at %s\n", lcfg.db_path);
+      } else {
+        if (signet_store_backup(store, file_path, backup_key) == 0) {
+          fprintf(stdout, "signetctl: encrypted backup written to '%s'.\n"
+                  "  It contains current AND archived secrets (envelope-encrypted;\n"
+                  "  payloads additionally require the master key on restore).\n",
+                  file_path);
+          ret = 0;
+        } else {
+          fprintf(stderr, "signetctl: backup to '%s' failed "
+                  "(see the [signet] log line above).\n", file_path);
+        }
+        signet_store_close(store);
+      }
+    } else {
+      if (signet_store_restore_backup(file_path, backup_key,
+                                      lcfg.db_path, db_key) == 0) {
+        fprintf(stdout, "signetctl: restored '%s' from backup '%s'.\n"
+                "  The previous database (if any) was kept at '%s.pre-restore'.\n",
+                lcfg.db_path, file_path, lcfg.db_path);
+        ret = 0;
+      } else {
+        fprintf(stderr, "signetctl: restore of '%s' from '%s' failed; the "
+                "original database is untouched.\n", lcfg.db_path, file_path);
+      }
     }
     signet_config_clear(&lcfg);
     return ret;

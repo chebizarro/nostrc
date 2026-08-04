@@ -172,6 +172,61 @@ bool signet_store_sqlcipher_available(void);
 int signet_store_migrate_plaintext_to_sqlcipher(const char *db_path,
                                                 const char *master_key);
 
+/* Write an encrypted point-in-time backup of the ENTIRE store (agents, secrets
+ * including archived secret_versions, leases, policies, deny list, audit_log)
+ * to backup_path as a fresh SQLCipher database keyed by backup_key.
+ *
+ * Security properties:
+ * - backup_key is independent of the master key, so the backup can be shipped
+ *   off-host without exporting SIGNET_DB_KEY. It must carry >= 32 bytes of key
+ *   material (hex/base64/raw, same rule as the master key); weak keys are
+ *   refused.
+ * - Envelope-encrypted payload blobs are copied AS-IS: even with backup_key,
+ *   the backup alone never yields secret payloads. Decryption additionally
+ *   requires the master key active when the backup was taken.
+ * - The backup is verified (opens with backup_key, SQLCipher active, core
+ *   tables readable, full integrity_check passes, no plaintext SQLite header)
+ *   and fsync'd before success is reported; a failed backup never leaves a
+ *   partial file behind.
+ * - The target file is created atomically (O_EXCL|O_NOFOLLOW, mode 0600):
+ *   existing files and symlinks are refused race-free.
+ *
+ * Requires a read-write store handle on a SQLCipher-encrypted database (a
+ * plaintext store cannot produce an encrypted backup and is refused).
+ * Returns 0 on success, -1 on error. */
+int signet_store_backup(SignetStore *store,
+                        const char *backup_path,
+                        const char *backup_key);
+
+/* Restore the encrypted backup at backup_path (created by signet_store_backup,
+ * keyed by backup_key) to db_path, re-keyed to master_key. OFFLINE operation:
+ * db_path must not be open by a running daemon.
+ *
+ * The restored database is written to "<db_path>.restoring", verified to open
+ * with master_key, fsync'd, and atomically rename()d into place; any previous
+ * database at db_path is preserved as "<db_path>.pre-restore" (still
+ * SQLCipher-encrypted) and stale -wal/-shm sidecars are removed before the
+ * swap. On any failure the original db_path is left untouched.
+ *
+ * master_key must be the SAME master key that was active when the backup was
+ * taken: envelope-encrypted payloads inside the backup are bound to that key's
+ * derived DEK and cannot be re-wrapped by restore. This is ENFORCED — restore
+ * authenticates one envelope blob from the backup against the supplied key
+ * and refuses on mismatch (a backup containing no envelope blobs is exempt).
+ *
+ * Additional safety: backup_path may not alias db_path or its working files
+ * (checked lexically and by inode); if the existing database opens with
+ * master_key, restore takes an exclusive lock (refusing while signetd runs)
+ * and folds its WAL into the .pre-restore copy — otherwise any -wal sidecar
+ * is preserved verbatim next to it; the working file is created 0600.
+ * Returns 0 on success, -1 on error (wrong backup_key, wrong master_key,
+ * weak master_key, unreadable/plaintext backup, locked target, or swap
+ * failure). */
+int signet_store_restore_backup(const char *backup_path,
+                                const char *backup_key,
+                                const char *db_path,
+                                const char *master_key);
+
 /* Store a new agent key. secret_key must be 32 bytes.
  * Returns 0 on success, 1 if the write violates DB-level uniqueness (the
  * connect_secret is already bound to another agent), -1 on error. */
