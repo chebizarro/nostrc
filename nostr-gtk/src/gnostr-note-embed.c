@@ -928,98 +928,156 @@ static void fetch_event_from_local(GnostrNoteEmbed *self, const unsigned char id
   storage_ndb_end_query(txn);
 }
 
-/* Forward declaration for fallback */
-static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex);
+typedef struct {
+  GWeakRef embed_ref;
+  gchar *event_id;
+  GCancellable *cancellable;
+  gulong cancelled_id;
+  gint cancelled;
+} EventRequestSubscriber;
 
-/* Callback for relay query */
-static void on_relay_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GError *err = NULL;
-  GPtrArray *results = gnostr_pool_query_finish(GNOSTR_POOL(source), res, &err);
+typedef struct {
+  gchar *event_id;
+  gchar **relay_hints;
+  gsize relay_hints_count;
+  GPtrArray *subscribers;
+  GCancellable *cancellable;
+  gboolean hints_attempted;
+  gboolean main_pool_attempted;
+} PendingEventRequest;
 
-  /* ASAN fix: We hold a ref on self during async, so it's always valid.
-   * Cast immediately - the ref ensures the object stays alive until we unref. */
-  GnostrNoteEmbed *self = (GnostrNoteEmbed *)user_data;
+/* event id -> PendingEventRequest. Entries exist only while a relay query is
+ * active, so identical embeds share one hint/read-relay resolution. */
+static GHashTable *pending_event_requests;
 
-  /* Check for cancellation - widget may be disposing but we still hold a ref */
-  if (err && g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-    g_error_free(err);
-    if (results) g_ptr_array_unref(results);
-    goto cleanup;
-  }
+static void start_pending_event_query(PendingEventRequest *request,
+                                      gboolean use_hints);
 
-  /* Check disposed flag - widget is disposing, don't do work but still unref */
-  if (self->disposed) {
-    g_clear_error(&err);
-    if (results) g_ptr_array_unref(results);
-    goto cleanup;
-  }
+static void
+on_event_subscriber_cancelled(GCancellable *cancellable, gpointer user_data)
+{
+  (void)cancellable;
+  EventRequestSubscriber *subscriber = user_data;
+  g_atomic_int_set(&subscriber->cancelled, TRUE);
+}
 
-  if (err) {
-    /* If hints were tried and failed (but main pool not yet), fall back to main pool */
-    if (self->hints_attempted && !self->main_pool_attempted && self->relay_hints_count > 0) {
-      g_debug("note_embed: hint relays failed, falling back to main pool");
-      g_error_free(err);
-      fetch_event_from_main_pool(self, self->target_id);
-      goto cleanup;
-    }
-    gnostr_note_embed_set_error(self, "Network error");
-    g_error_free(err);
-    goto cleanup;
-  }
+static void
+event_request_subscriber_free(gpointer data)
+{
+  EventRequestSubscriber *subscriber = data;
+  if (!subscriber) return;
+  if (subscriber->cancellable && subscriber->cancelled_id)
+    g_cancellable_disconnect(subscriber->cancellable,
+                             subscriber->cancelled_id);
+  g_clear_object(&subscriber->cancellable);
+  g_weak_ref_clear(&subscriber->embed_ref);
+  g_free(subscriber->event_id);
+  g_free(subscriber);
+}
 
-  if (!results || results->len == 0) {
-    /* If hints were tried and found nothing (but main pool not yet), fall back to main pool */
-    if (self->hints_attempted && !self->main_pool_attempted && self->relay_hints_count > 0) {
-      g_debug("note_embed: not found on hint relays, falling back to main pool");
-      if (results) g_ptr_array_unref(results);
-      fetch_event_from_main_pool(self, self->target_id);
-      goto cleanup;
-    }
-    gnostr_note_embed_set_error(self, "Not found");
-    if (results) g_ptr_array_unref(results);
-    goto cleanup;
-  }
+static void
+pending_event_request_free(gpointer data)
+{
+  PendingEventRequest *request = data;
+  if (!request) return;
+  g_clear_object(&request->cancellable);
+  g_strfreev(request->relay_hints);
+  g_clear_pointer(&request->subscribers, g_ptr_array_unref);
+  g_free(request->event_id);
+  g_free(request);
+}
 
-  const char *json = (const char*)g_ptr_array_index(results, 0);
-  if (!json) {
-    gnostr_note_embed_set_error(self, "Empty result");
-    g_ptr_array_unref(results);
-    goto cleanup;
-  }
-
-  /* Ingest into local store (background) */
-  {
-    GPtrArray *b = g_ptr_array_new_with_free_func(g_free);
-    g_ptr_array_add(b, g_strdup(json));
-    storage_ndb_ingest_events_async(b);
-  }
-
-  /* Parse and display */
-  NostrEvent *evt = nostr_event_new();
-  if (evt && nostr_event_deserialize(evt, json) == 0) {
-    const char *content = nostr_event_get_content(evt);
-    const char *author_hex = nostr_event_get_pubkey(evt);
-    gint64 created_at = (gint64)nostr_event_get_created_at(evt);
-
-    char *ts = format_timestamp(created_at);
-    g_autofree char *author_display = NULL;
-    if (author_hex && strlen(author_hex) >= 8) {
-      author_display = g_strdup_printf("%.8s...", author_hex);
-    }
-
-    gnostr_note_embed_set_content(self, author_display, NULL, content, ts, NULL);
-
-    g_free(ts);
-  } else {
+static void
+apply_relay_event_json(GnostrNoteEmbed *self, const char *json)
+{
+  NostrEvent *event = nostr_event_new();
+  if (!event || nostr_event_deserialize(event, json) != 0) {
+    if (event) nostr_event_free(event);
     gnostr_note_embed_set_error(self, "Failed to parse");
+    return;
   }
 
-  if (evt) nostr_event_free(evt);
-  g_ptr_array_unref(results);
+  const char *content = nostr_event_get_content(event);
+  const char *author_hex = nostr_event_get_pubkey(event);
+  gint64 created_at = (gint64)nostr_event_get_created_at(event);
+  g_autofree char *timestamp = format_timestamp(created_at);
+  g_autofree char *author_display = NULL;
+  if (author_hex && strlen(author_hex) >= 8)
+    author_display = g_strdup_printf("%.8s...", author_hex);
 
-cleanup:
-  /* Release the ref we took when starting this async operation */
-  g_object_unref(self);
+  gnostr_note_embed_set_content(self, author_display, NULL, content,
+                                timestamp, NULL);
+  nostr_event_free(event);
+}
+
+static void
+complete_pending_event_request(PendingEventRequest *request,
+                               const char *json,
+                               const char *error_message)
+{
+  if (json) {
+    GPtrArray *batch = g_ptr_array_new_with_free_func(g_free);
+    g_ptr_array_add(batch, g_strdup(json));
+    storage_ndb_ingest_events_async(batch);
+  }
+
+  for (guint i = 0; i < request->subscribers->len; i++) {
+    EventRequestSubscriber *subscriber =
+        g_ptr_array_index(request->subscribers, i);
+    if (g_atomic_int_get(&subscriber->cancelled))
+      continue;
+
+    GnostrNoteEmbed *embed = g_weak_ref_get(&subscriber->embed_ref);
+    if (!embed)
+      continue;
+    if (!embed->disposed &&
+        embed->target_id &&
+        g_ascii_strcasecmp(embed->target_id, subscriber->event_id) == 0) {
+      if (json)
+        apply_relay_event_json(embed, json);
+      else
+        gnostr_note_embed_set_error(
+            embed, error_message ? error_message : "Not found");
+    }
+    g_object_unref(embed);
+  }
+
+  g_hash_table_remove(pending_event_requests, request->event_id);
+}
+
+static void
+on_pending_event_query_done(GObject *source,
+                            GAsyncResult *result,
+                            gpointer user_data)
+{
+  PendingEventRequest *request = user_data;
+  g_autoptr(GError) error = NULL;
+  GPtrArray *results =
+      gnostr_pool_query_finish(GNOSTR_POOL(source), result, &error);
+
+  if ((error || !results || results->len == 0) &&
+      request->hints_attempted &&
+      !request->main_pool_attempted) {
+    if (results)
+      g_ptr_array_unref(results);
+    start_pending_event_query(request, FALSE);
+    return;
+  }
+
+  const char *json = NULL;
+  if (!error && results && results->len > 0)
+    json = g_ptr_array_index(results, 0);
+
+  if (json)
+    complete_pending_event_request(request, json, NULL);
+  else
+    complete_pending_event_request(
+        request, NULL,
+        error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)
+            ? "Network error" : "Not found");
+
+  if (results)
+    g_ptr_array_unref(results);
 }
 
 /* Shared pool for embed queries - initialized lazily with pre-connected relays */
@@ -1072,90 +1130,101 @@ static void ensure_embed_pool_initialized(void) {
   }
 }
 
-/* Fetch event from relays - try hints first, then main pool */
-static void fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex) {
-  if (!id_hex) {
+static void
+start_pending_event_query(PendingEventRequest *request,
+                          gboolean use_hints)
+{
+  ensure_embed_pool_initialized();
+
+  g_autoptr(GPtrArray) urls = NULL;
+  if (use_hints && request->relay_hints_count > 0) {
+    request->hints_attempted = TRUE;
+    urls = g_ptr_array_new_with_free_func(g_free);
+    for (gsize i = 0; i < request->relay_hints_count; i++)
+      g_ptr_array_add(urls, g_strdup(request->relay_hints[i]));
+    g_debug("note_embed: shared request trying %zu relay hints for %s",
+            request->relay_hints_count, request->event_id);
+  } else {
+    request->main_pool_attempted = TRUE;
+    urls = gnostr_get_read_relay_urls();
+    g_debug("note_embed: shared request trying %u read relays for %s",
+            urls->len, request->event_id);
+  }
+
+  const char **url_array = g_new0(const char *, urls->len);
+  for (guint i = 0; i < urls->len; i++)
+    url_array[i] = g_ptr_array_index(urls, i);
+  gnostr_pool_sync_relays(embed_pool, (const gchar **)url_array, urls->len);
+  g_free(url_array);
+
+  NostrFilter *filter = nostr_filter_new();
+  const char *ids[] = { request->event_id };
+  nostr_filter_set_ids(filter, ids, 1);
+  NostrFilters *filters = nostr_filters_new();
+  nostr_filters_add(filters, filter);
+  gnostr_pool_query_async(embed_pool, filters, request->cancellable,
+                          on_pending_event_query_done, request);
+  nostr_filter_free(filter);
+}
+
+static EventRequestSubscriber *
+event_request_subscriber_new(GnostrNoteEmbed *self, const char *event_id)
+{
+  EventRequestSubscriber *subscriber =
+      g_new0(EventRequestSubscriber, 1);
+  g_weak_ref_init(&subscriber->embed_ref, self);
+  subscriber->event_id = g_strdup(event_id);
+
+  GCancellable *effective = get_effective_cancellable(self);
+  if (effective) {
+    subscriber->cancellable = g_object_ref(effective);
+    subscriber->cancelled_id = g_cancellable_connect(
+        effective, G_CALLBACK(on_event_subscriber_cancelled),
+        subscriber, NULL);
+    if (g_cancellable_is_cancelled(effective))
+      g_atomic_int_set(&subscriber->cancelled, TRUE);
+  }
+  return subscriber;
+}
+
+/* Nostrdb is checked synchronously before this function. The shared table
+ * coalesces only relay work and keeps each widget as an independently
+ * cancellable weak subscriber. */
+static void
+fetch_event_from_relays(GnostrNoteEmbed *self, const char *id_hex)
+{
+  if (!id_hex || !*id_hex) {
     gnostr_note_embed_set_error(self, "No event ID");
     return;
   }
 
-  /* Ensure pool is initialized */
-  ensure_embed_pool_initialized();
+  if (!pending_event_requests) {
+    pending_event_requests = g_hash_table_new_full(
+        g_str_hash, g_str_equal, g_free, pending_event_request_free);
+  }
 
-  /* If we have relay hints and haven't tried them yet, use hints only first */
-  if (self->relay_hints && self->relay_hints_count > 0 && !self->hints_attempted) {
-    self->hints_attempted = TRUE;
-
-    GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
-    for (size_t i = 0; i < self->relay_hints_count; i++) {
-      g_ptr_array_add(urls, g_strdup(self->relay_hints[i]));
-    }
-
-    g_debug("note_embed: trying %zu relay hints first for %s", self->relay_hints_count, id_hex);
-
-    /* Build filter */
-    NostrFilter *filter = nostr_filter_new();
-    const char *ids[1] = { id_hex };
-    nostr_filter_set_ids(filter, ids, 1);
-
-    /* Convert GPtrArray to const char** */
-    const char **url_arr = g_new0(const char*, urls->len);
-    for (guint i = 0; i < urls->len; i++) {
-      url_arr[i] = (const char*)g_ptr_array_index(urls, i);
-    }
-
-    /* Hold ref during async - callback will unref */
-    g_object_ref(self);
-    gnostr_pool_sync_relays(embed_pool, (const gchar **)url_arr, urls->len);
-    {
-      NostrFilters *_qf = nostr_filters_new();
-      nostr_filters_add(_qf, filter);
-      gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_relay_query_done, self);
-    }
-
-    g_free(url_arr);
-    g_ptr_array_free(urls, TRUE);
-    nostr_filter_free(filter);
+  PendingEventRequest *request =
+      g_hash_table_lookup(pending_event_requests, id_hex);
+  if (request) {
+    g_ptr_array_add(request->subscribers,
+                    event_request_subscriber_new(self, id_hex));
     return;
   }
 
-  /* No hints or hints already tried - use main pool */
-  fetch_event_from_main_pool(self, id_hex);
-}
+  request = g_new0(PendingEventRequest, 1);
+  request->event_id = g_strdup(id_hex);
+  request->relay_hints = g_strdupv(self->relay_hints);
+  request->relay_hints_count =
+      request->relay_hints ? g_strv_length(request->relay_hints) : 0;
+  request->subscribers = g_ptr_array_new_with_free_func(
+      event_request_subscriber_free);
+  request->cancellable = g_cancellable_new();
+  g_ptr_array_add(request->subscribers,
+                  event_request_subscriber_new(self, id_hex));
+  g_hash_table_insert(pending_event_requests,
+                      g_strdup(request->event_id), request);
 
-/* Fetch event from main relay pool (fallback) */
-static void fetch_event_from_main_pool(GnostrNoteEmbed *self, const char *id_hex) {
-  self->main_pool_attempted = TRUE;
-
-  /* Get read-capable relays for fetching (NIP-65) */
-  GPtrArray *urls = gnostr_get_read_relay_urls();
-
-  /* Relays come from GSettings with defaults configured in schema */
-  g_debug("note_embed: trying %u read relays for %s", urls->len, id_hex);
-
-  /* Build filter */
-  NostrFilter *filter = nostr_filter_new();
-  const char *ids[1] = { id_hex };
-  nostr_filter_set_ids(filter, ids, 1);
-
-  /* Convert GPtrArray to const char** */
-  const char **url_arr = g_new0(const char*, urls->len);
-  for (guint i = 0; i < urls->len; i++) {
-    url_arr[i] = (const char*)g_ptr_array_index(urls, i);
-  }
-
-  /* Hold ref during async - callback will unref */
-  g_object_ref(self);
-  gnostr_pool_sync_relays(embed_pool, (const gchar **)url_arr, urls->len);
-  {
-    NostrFilters *_qf = nostr_filters_new();
-    nostr_filters_add(_qf, filter);
-    gnostr_pool_query_async(embed_pool, _qf, get_effective_cancellable(self), on_relay_query_done, self);
-  }
-
-  g_free(url_arr);
-  g_ptr_array_free(urls, TRUE);
-  nostr_filter_free(filter);
+  start_pending_event_query(request, request->relay_hints_count > 0);
 }
 
 /* nostrc-pb01: Profile loading now goes through the centralized profile

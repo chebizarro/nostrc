@@ -235,10 +235,10 @@ void nostr_gtk_note_card_row_set_media_texture_loader(
  * @link_preview_reserved_height: fixed link-preview reservation in pixels
  * @embed_reserved_height: fixed event-embed reservation in pixels
  *
- * Builds fixed-size frames during bind.  Inline image requests remain map-gated
- * and scroll-debounced; video, link-preview and event-embed frames are
- * placeholders until their later hydration work items.  Hydration never changes
- * the reserved frame or outer row geometry.
+ * Builds fixed-size frames during bind. Inline images, video posters, Open
+ * Graph previews, and compact event embeds hydrate inside those reservations.
+ * Poster taps replace only the frame child with a video player. Hydration never
+ * changes the reserved frame or outer row geometry.
  */
 void nostr_gtk_note_card_row_set_rich_content(
     NostrGtkNoteCardRow *self,

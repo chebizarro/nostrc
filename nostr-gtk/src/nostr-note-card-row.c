@@ -2542,7 +2542,12 @@ on_injected_media_texture_ready(GdkTexture *texture,
   GtkWidget *picture = g_weak_ref_get(&ctx->picture_ref);
 
   if (!row_obj || !picture) {
-    if (row_obj) g_object_unref(row_obj);
+    if (row_obj) {
+      NostrGtkNoteCardRow *row = NOSTR_GTK_NOTE_CARD_ROW(row_obj);
+      if (row->media_cancellables)
+        g_hash_table_remove(row->media_cancellables, ctx->request_key);
+      g_object_unref(row_obj);
+    }
     if (picture) g_object_unref(picture);
     return;
   }
@@ -2711,7 +2716,10 @@ remote_media_loading_enabled(void) {
   return g_settings_get_boolean(s, "load-remote-media");
 }
 
-static void load_media_image_internal(NostrGtkNoteCardRow *self, const char *url, GtkPicture *picture) {
+static void load_media_image_internal(NostrGtkNoteCardRow *self,
+                                      const char *url,
+                                      NostrGtkMediaResourceClass resource_class,
+                                      GtkPicture *picture) {
   if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
 
   /* Privacy: skip remote fetch if disabled (still serve from cache) */
@@ -2745,13 +2753,21 @@ static void load_media_image_internal(NostrGtkNoteCardRow *self, const char *url
     self->media_texture_request_func(
         self->media_texture_loader,
         url,
-        NOSTR_GTK_MEDIA_RESOURCE_INLINE,
+        resource_class,
         MAX(gtk_widget_get_width(GTK_WIDGET(picture)), 1),
         MAX(gtk_widget_get_height(GTK_WIDGET(picture)), 1),
         cancellable,
         on_injected_media_texture_ready,
         ctx,
         injected_media_load_ctx_free);
+    return;
+  }
+
+  /* The library fallback can fetch still images, but it must never download an
+   * entire video into memory. App rows inject the media service for posters. */
+  if (resource_class == NOSTR_GTK_MEDIA_RESOURCE_VIDEO_POSTER) {
+    GtkWidget *container = gtk_widget_get_parent(GTK_WIDGET(picture));
+    if (container) show_broken_image_fallback(container);
     return;
   }
 
@@ -2818,6 +2834,7 @@ typedef struct {
   NoteCardBindingContext *ctx;  /* ref-counted binding context (replaces raw self) */
   GWeakRef picture_ref;         /* weak ref to GtkPicture (replaces raw pointer) */
   char *url;
+  NostrGtkMediaResourceClass resource_class;
   guint timeout_id;
   gulong map_handler_id;
   gulong unmap_handler_id;
@@ -2916,7 +2933,8 @@ static gboolean on_lazy_load_timeout(gpointer user_data) {
 
   g_debug("Media: Lazy loading image: %s", ctx->url);
   ctx->loaded = TRUE;
-  load_media_image_internal(self, ctx->url, GTK_PICTURE(picture));
+  load_media_image_internal(self, ctx->url, ctx->resource_class,
+                            GTK_PICTURE(picture));
 
   g_object_unref(picture);
   g_object_unref(row_obj);
@@ -2994,7 +3012,10 @@ static void on_lazy_load_picture_destroyed(gpointer user_data, GObject *where_th
 
 /* Load media image with lazy loading - defers actual loading until widget is visible.
  * nostrc-ncr-lifecycle: Uses NoteCardBindingContext + GWeakRef for safe async access. */
-static void load_media_image(NostrGtkNoteCardRow *self, const char *url, GtkPicture *picture) {
+static void load_media_texture(NostrGtkNoteCardRow *self,
+                               const char *url,
+                               NostrGtkMediaResourceClass resource_class,
+                               GtkPicture *picture) {
   if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
   if (!self->binding_ctx) return; /* Not bound — skip */
 
@@ -3005,6 +3026,7 @@ static void load_media_image(NostrGtkNoteCardRow *self, const char *url, GtkPict
   ctx->ctx = note_card_binding_context_ref(self->binding_ctx);
   g_weak_ref_init(&ctx->picture_ref, picture);
   ctx->url = g_strdup(url);
+  ctx->resource_class = resource_class;
   ctx->loaded = FALSE;
   ctx->destroyed = FALSE;
   ctx->timeout_id = 0;
@@ -3020,6 +3042,14 @@ static void load_media_image(NostrGtkNoteCardRow *self, const char *url, GtkPict
   if (gtk_widget_get_mapped(GTK_WIDGET(picture))) {
     on_picture_mapped(GTK_WIDGET(picture), ctx);
   }
+}
+
+static void
+load_media_image(NostrGtkNoteCardRow *self,
+                 const char *url,
+                 GtkPicture *picture)
+{
+  load_media_texture(self, url, NOSTR_GTK_MEDIA_RESOURCE_INLINE, picture);
 }
 #endif
 
@@ -3792,6 +3822,89 @@ void nostr_gtk_note_card_row_set_precomputed_markup(NostrGtkNoteCardRow *self,
 
 #define RICH_CONTENT_FRAME_SPACING 6
 
+typedef struct {
+  GtkWidget parent_instance;
+  GtkWidget *child;
+  gint reserved_height;
+} NostrGtkFixedRichFrame;
+
+typedef struct {
+  GtkWidgetClass parent_class;
+} NostrGtkFixedRichFrameClass;
+
+#define NOSTR_GTK_TYPE_FIXED_RICH_FRAME \
+  (nostr_gtk_fixed_rich_frame_get_type())
+
+G_DEFINE_TYPE(NostrGtkFixedRichFrame, nostr_gtk_fixed_rich_frame,
+              GTK_TYPE_WIDGET)
+
+static void
+nostr_gtk_fixed_rich_frame_measure(GtkWidget *widget,
+                                   GtkOrientation orientation,
+                                   int for_size,
+                                   int *minimum,
+                                   int *natural,
+                                   int *minimum_baseline,
+                                   int *natural_baseline)
+{
+  (void)for_size;
+  NostrGtkFixedRichFrame *self =
+      (NostrGtkFixedRichFrame *)widget;
+  if (orientation == GTK_ORIENTATION_VERTICAL) {
+    *minimum = self->reserved_height;
+    *natural = self->reserved_height;
+  } else {
+    /* The timeline column owns width. Rich children must shrink into it. */
+    *minimum = 0;
+    *natural = 0;
+  }
+  *minimum_baseline = -1;
+  *natural_baseline = -1;
+}
+
+static void
+nostr_gtk_fixed_rich_frame_dispose(GObject *object)
+{
+  NostrGtkFixedRichFrame *self =
+      (NostrGtkFixedRichFrame *)object;
+  g_clear_pointer(&self->child, gtk_widget_unparent);
+  G_OBJECT_CLASS(nostr_gtk_fixed_rich_frame_parent_class)->dispose(object);
+}
+
+static void
+nostr_gtk_fixed_rich_frame_class_init(
+    NostrGtkFixedRichFrameClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS(klass);
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
+  object_class->dispose = nostr_gtk_fixed_rich_frame_dispose;
+  widget_class->measure = nostr_gtk_fixed_rich_frame_measure;
+  gtk_widget_class_set_layout_manager_type(widget_class,
+                                           GTK_TYPE_BIN_LAYOUT);
+  gtk_widget_class_set_css_name(widget_class, "rich-content-frame");
+}
+
+static void
+nostr_gtk_fixed_rich_frame_init(NostrGtkFixedRichFrame *self)
+{
+  gtk_widget_set_hexpand(GTK_WIDGET(self), TRUE);
+  gtk_widget_set_vexpand(GTK_WIDGET(self), FALSE);
+  gtk_widget_set_overflow(GTK_WIDGET(self), GTK_OVERFLOW_HIDDEN);
+}
+
+static void
+fixed_rich_frame_set_child(GtkWidget *frame, GtkWidget *child)
+{
+  NostrGtkFixedRichFrame *self =
+      (NostrGtkFixedRichFrame *)frame;
+  if (self->child == child)
+    return;
+  g_clear_pointer(&self->child, gtk_widget_unparent);
+  self->child = child;
+  if (child)
+    gtk_widget_set_parent(child, frame);
+}
+
 static void
 clear_box_children(GtkWidget *box)
 {
@@ -3805,26 +3918,14 @@ clear_box_children(GtkWidget *box)
 }
 
 static GtkWidget *
-create_rich_content_placeholder(const char *icon_name,
-                                const char *label,
-                                gint height)
+create_fixed_rich_content_frame(gint height)
 {
-  GtkWidget *frame = gtk_frame_new(NULL);
-  gtk_widget_add_css_class(frame, "rich-content-placeholder");
-  gtk_widget_set_size_request(frame, -1, MAX(height, 1));
-  gtk_widget_set_hexpand(frame, TRUE);
-  gtk_widget_set_overflow(frame, GTK_OVERFLOW_HIDDEN);
-
-  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-  gtk_widget_set_halign(box, GTK_ALIGN_CENTER);
-  gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
-  GtkWidget *icon = gtk_image_new_from_icon_name(icon_name);
-  GtkWidget *text_label = gtk_label_new(label);
-  gtk_widget_add_css_class(text_label, "dim-label");
-  gtk_box_append(GTK_BOX(box), icon);
-  gtk_box_append(GTK_BOX(box), text_label);
-  gtk_frame_set_child(GTK_FRAME(frame), box);
-  return frame;
+  NostrGtkFixedRichFrame *frame = g_object_new(
+      NOSTR_GTK_TYPE_FIXED_RICH_FRAME, NULL);
+  frame->reserved_height = MAX(height, 1);
+  gtk_widget_set_size_request(GTK_WIDGET(frame), -1,
+                              frame->reserved_height);
+  return GTK_WIDGET(frame);
 }
 
 static guint
@@ -3849,6 +3950,286 @@ reserved_slot_height(double reserved_height, guint slots)
   gint total = (gint)(reserved_height + 0.999999);
   gint spacing = (gint)(slots - 1) * RICH_CONTENT_FRAME_SPACING;
   return MAX((total - spacing) / (gint)slots, 1);
+}
+
+typedef struct {
+  NoteCardBindingContext *binding_ctx;
+  GWeakRef frame_ref;
+  gchar *video_url;
+  guint64 binding_id;
+} VideoActivationContext;
+
+static void
+video_activation_context_free(gpointer data, GClosure *closure)
+{
+  (void)closure;
+  VideoActivationContext *ctx = data;
+  if (!ctx) return;
+  if (ctx->binding_ctx)
+    note_card_binding_context_unref(ctx->binding_ctx);
+  g_weak_ref_clear(&ctx->frame_ref);
+  g_free(ctx->video_url);
+  g_free(ctx);
+}
+
+static void
+on_rich_video_play_clicked(GtkButton *button, gpointer user_data)
+{
+  (void)button;
+  VideoActivationContext *ctx = user_data;
+  GObject *row_obj = note_card_binding_context_get_row(ctx->binding_ctx);
+  GtkWidget *frame = g_weak_ref_get(&ctx->frame_ref);
+  if (!row_obj || !frame) {
+    if (row_obj) g_object_unref(row_obj);
+    if (frame) g_object_unref(frame);
+    return;
+  }
+
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(row_obj);
+  NoteCardBindingContext *activation_binding_ctx = NULL;
+  guint64 activation_binding_id = 0;
+  if (!self->disposed &&
+      self->binding_id == ctx->binding_id &&
+      G_TYPE_CHECK_INSTANCE_TYPE(
+          frame, NOSTR_GTK_TYPE_FIXED_RICH_FRAME) &&
+      ctx->video_url && *ctx->video_url) {
+    /* Replacing the poster destroys the button and its signal context
+     * synchronously. Retain everything needed after set_child() first. */
+    activation_binding_ctx =
+        note_card_binding_context_ref(ctx->binding_ctx);
+    activation_binding_id = ctx->binding_id;
+    GnostrVideoPlayer *player = gnostr_video_player_new();
+    gnostr_video_player_set_autoplay(player, FALSE);
+    gnostr_video_player_set_uri(player, ctx->video_url);
+    gtk_widget_set_hexpand(GTK_WIDGET(player), TRUE);
+    gtk_widget_set_vexpand(GTK_WIDGET(player), TRUE);
+    gint row_height_before_activation =
+        gtk_widget_get_height(GTK_WIDGET(self));
+    fixed_rich_frame_set_child(frame, GTK_WIDGET(player));
+    gnostr_video_player_play(player);
+#ifndef G_DISABLE_ASSERT
+    if (row_height_before_activation > 0) {
+      GeometryInvariantCtx *assert_ctx =
+          g_new0(GeometryInvariantCtx, 1);
+      assert_ctx->binding_ctx =
+          note_card_binding_context_ref(activation_binding_ctx);
+      assert_ctx->binding_id = activation_binding_id;
+      assert_ctx->expected_height = row_height_before_activation;
+      g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+                      assert_hydrated_geometry_unchanged,
+                      assert_ctx,
+                      geometry_invariant_ctx_free);
+    }
+#endif
+  }
+  if (activation_binding_ctx)
+    note_card_binding_context_unref(activation_binding_ctx);
+
+  g_object_unref(frame);
+  g_object_unref(row_obj);
+}
+
+static GtkWidget *
+create_rich_video_frame(NostrGtkNoteCardRow *self,
+                        const GnContentDescriptor *descriptor,
+                        gint height)
+{
+  GtkWidget *frame = create_fixed_rich_content_frame(height);
+  gtk_widget_add_css_class(frame, "rich-video-frame");
+
+  const char *request_url =
+      descriptor->thumbnail_url && *descriptor->thumbnail_url
+          ? descriptor->thumbnail_url : descriptor->url;
+  GtkWidget *poster = create_image_container(
+      request_url ? request_url : "", height, _("Play video"));
+  gtk_widget_set_hexpand(poster, TRUE);
+  gtk_widget_set_overflow(poster, GTK_OVERFLOW_HIDDEN);
+
+  GtkWidget *error_image =
+      g_object_get_data(G_OBJECT(poster), "error-image");
+  if (GTK_IS_IMAGE(error_image)) {
+    gtk_image_set_from_icon_name(GTK_IMAGE(error_image),
+                                 "video-x-generic-symbolic");
+    gtk_widget_set_visible(error_image, request_url == NULL ||
+                                         *request_url == '\0');
+  }
+
+  GtkWidget *play =
+      gtk_button_new_from_icon_name("media-playback-start-symbolic");
+  gtk_widget_add_css_class(play, "osd");
+  gtk_widget_add_css_class(play, "circular");
+  gtk_widget_add_css_class(play, "video-play-overlay");
+  gtk_widget_set_halign(play, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(play, GTK_ALIGN_CENTER);
+  gtk_widget_set_tooltip_text(play, _("Play video"));
+  gtk_overlay_add_overlay(GTK_OVERLAY(poster), play);
+  fixed_rich_frame_set_child(frame, poster);
+
+  VideoActivationContext *ctx = g_new0(VideoActivationContext, 1);
+  ctx->binding_ctx = note_card_binding_context_ref(self->binding_ctx);
+  g_weak_ref_init(&ctx->frame_ref, frame);
+  ctx->video_url = g_strdup(descriptor->url);
+  ctx->binding_id = self->binding_id;
+  g_signal_connect_data(play, "clicked",
+                        G_CALLBACK(on_rich_video_play_clicked),
+                        ctx, video_activation_context_free, 0);
+
+  gboolean poster_request_started = FALSE;
+#ifdef HAVE_SOUP3
+  if (request_url && *request_url && remote_media_loading_enabled()) {
+    GtkWidget *picture =
+        g_object_get_data(G_OBJECT(poster), "media-picture");
+    load_media_texture(self, request_url,
+                       NOSTR_GTK_MEDIA_RESOURCE_VIDEO_POSTER,
+                       GTK_PICTURE(picture));
+    poster_request_started = TRUE;
+  }
+#endif
+  if (!poster_request_started) {
+    GtkWidget *spinner =
+        g_object_get_data(G_OBJECT(poster), "loading-spinner");
+    if (GTK_IS_SPINNER(spinner)) {
+      gtk_spinner_stop(GTK_SPINNER(spinner));
+      gtk_widget_set_visible(spinner, FALSE);
+    }
+    if (GTK_IS_IMAGE(error_image))
+      gtk_widget_set_visible(error_image, TRUE);
+  }
+  return frame;
+}
+
+typedef enum {
+  RICH_HYDRATION_LINK_PREVIEW,
+  RICH_HYDRATION_EVENT_EMBED,
+} RichHydrationType;
+
+typedef struct {
+  NoteCardBindingContext *binding_ctx;
+  GWeakRef widget_ref;
+  RichHydrationType type;
+  gchar *url_or_uri;
+  gchar *event_id;
+  gchar **relay_hints;
+  guint64 binding_id;
+  guint timeout_id;
+  gboolean started;
+} RichHydrationContext;
+
+static void
+rich_hydration_context_free(gpointer data)
+{
+  RichHydrationContext *ctx = data;
+  if (!ctx) return;
+  if (ctx->timeout_id)
+    g_source_remove(ctx->timeout_id);
+  if (ctx->binding_ctx)
+    note_card_binding_context_unref(ctx->binding_ctx);
+  g_weak_ref_clear(&ctx->widget_ref);
+  g_free(ctx->url_or_uri);
+  g_free(ctx->event_id);
+  g_strfreev(ctx->relay_hints);
+  g_free(ctx);
+}
+
+static gboolean
+start_rich_frame_hydration(gpointer user_data)
+{
+  RichHydrationContext *ctx = user_data;
+  ctx->timeout_id = 0;
+
+  GObject *row_obj = note_card_binding_context_get_row(ctx->binding_ctx);
+  GtkWidget *widget = g_weak_ref_get(&ctx->widget_ref);
+  if (!row_obj || !widget) {
+    if (row_obj) g_object_unref(row_obj);
+    if (widget) g_object_unref(widget);
+    return G_SOURCE_REMOVE;
+  }
+
+  NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(row_obj);
+  if (self->disposed ||
+      self->binding_id != ctx->binding_id ||
+      !gtk_widget_get_mapped(widget)) {
+    g_object_unref(widget);
+    g_object_unref(row_obj);
+    return G_SOURCE_REMOVE;
+  }
+
+  ctx->started = TRUE;
+  if (ctx->type == RICH_HYDRATION_LINK_PREVIEW) {
+    og_preview_widget_set_url_with_cancellable(
+        OG_PREVIEW_WIDGET(widget), ctx->url_or_uri,
+        self->async_cancellable);
+  } else {
+    GnostrNoteEmbed *embed = GNOSTR_NOTE_EMBED(widget);
+    gnostr_note_embed_set_cancellable(embed, self->async_cancellable);
+    if (ctx->url_or_uri && *ctx->url_or_uri)
+      gnostr_note_embed_set_nostr_uri(embed, ctx->url_or_uri);
+    else if (ctx->event_id && *ctx->event_id)
+      gnostr_note_embed_set_event_id(
+          embed, ctx->event_id,
+          (const char * const *)ctx->relay_hints);
+    else
+      gnostr_note_embed_set_error(embed, _("Invalid event reference"));
+
+    if (ctx->url_or_uri)
+      g_signal_emit(self, signals[SIGNAL_REQUEST_EMBED], 0,
+                    ctx->url_or_uri);
+  }
+
+  g_object_unref(widget);
+  g_object_unref(row_obj);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+on_rich_frame_mapped(GtkWidget *frame, gpointer user_data)
+{
+  (void)frame;
+  RichHydrationContext *ctx = user_data;
+  if (ctx->started || ctx->timeout_id)
+    return;
+  ctx->timeout_id = g_timeout_add_full(
+      G_PRIORITY_DEFAULT_IDLE, 40, start_rich_frame_hydration,
+      ctx, NULL);
+}
+
+static void
+on_rich_frame_unmapped(GtkWidget *frame, gpointer user_data)
+{
+  (void)frame;
+  RichHydrationContext *ctx = user_data;
+  if (!ctx->started && ctx->timeout_id) {
+    g_source_remove(ctx->timeout_id);
+    ctx->timeout_id = 0;
+  }
+}
+
+static void
+attach_rich_frame_hydration(NostrGtkNoteCardRow *self,
+                            GtkWidget *frame,
+                            GtkWidget *widget,
+                            RichHydrationType type,
+                            const GnContentDescriptor *descriptor)
+{
+  RichHydrationContext *ctx = g_new0(RichHydrationContext, 1);
+  ctx->binding_ctx = note_card_binding_context_ref(self->binding_ctx);
+  g_weak_ref_init(&ctx->widget_ref, widget);
+  ctx->type = type;
+  ctx->binding_id = self->binding_id;
+  if (type == RICH_HYDRATION_LINK_PREVIEW) {
+    ctx->url_or_uri = g_strdup(descriptor->url);
+  } else {
+    ctx->url_or_uri = g_strdup(descriptor->original);
+    ctx->event_id = g_strdup(descriptor->id);
+    ctx->relay_hints = g_strdupv(descriptor->relay_hints);
+  }
+
+  g_object_set_data_full(G_OBJECT(frame), "rich-hydration-context",
+                         ctx, rich_hydration_context_free);
+  g_signal_connect(frame, "map", G_CALLBACK(on_rich_frame_mapped), ctx);
+  g_signal_connect(frame, "unmap", G_CALLBACK(on_rich_frame_unmapped), ctx);
+  if (gtk_widget_get_mapped(frame))
+    on_rich_frame_mapped(frame, ctx);
 }
 
 void
@@ -3959,26 +4340,48 @@ nostr_gtk_note_card_row_set_rich_content(
         break;
       }
       case GN_CONTENT_DESCRIPTOR_MEDIA_VIDEO: {
-        if (!media_grid) break;
-        GtkWidget *placeholder = create_rich_content_placeholder(
-            "video-x-generic-symbolic", _("Video"), media_slot_height);
-        gtk_grid_attach(GTK_GRID(media_grid), placeholder,
+        if (!media_grid || !descriptor->url || !*descriptor->url) break;
+        GtkWidget *video_frame =
+            create_rich_video_frame(self, descriptor, media_slot_height);
+        gtk_grid_attach(GTK_GRID(media_grid), video_frame,
                         media_index % media_columns,
                         media_index / media_columns, 1, 1);
         media_index++;
         break;
       }
       case GN_CONTENT_DESCRIPTOR_LINK_PREVIEW:
-        if (link_px > 0)
-          gtk_box_append(GTK_BOX(self->og_preview_container),
-                         create_rich_content_placeholder(
-                             "web-browser-symbolic", _("Link preview"), link_slot_height));
+        if (link_px > 0 && descriptor->url && *descriptor->url) {
+          GtkWidget *frame =
+              create_fixed_rich_content_frame(link_slot_height);
+          OgPreviewWidget *preview = og_preview_widget_new();
+          gtk_widget_set_hexpand(GTK_WIDGET(preview), TRUE);
+          gtk_widget_set_vexpand(GTK_WIDGET(preview), TRUE);
+          fixed_rich_frame_set_child(frame, GTK_WIDGET(preview));
+          gtk_box_append(GTK_BOX(self->og_preview_container), frame);
+          attach_rich_frame_hydration(
+              self, frame, GTK_WIDGET(preview),
+              RICH_HYDRATION_LINK_PREVIEW, descriptor);
+          self->og_preview = preview;
+        }
         break;
       case GN_CONTENT_DESCRIPTOR_NOSTR_EVENT_REF:
-        if (embed_list)
-          gtk_box_append(GTK_BOX(embed_list),
-                         create_rich_content_placeholder(
-                             "mail-message-new-symbolic", _("Referenced note"), embed_slot_height));
+        if (embed_list) {
+          GtkWidget *frame =
+              create_fixed_rich_content_frame(embed_slot_height);
+          GnostrNoteEmbed *embed = gnostr_note_embed_new();
+          gtk_widget_set_hexpand(GTK_WIDGET(embed), TRUE);
+          gtk_widget_set_vexpand(GTK_WIDGET(embed), TRUE);
+          gtk_widget_set_overflow(GTK_WIDGET(embed), GTK_OVERFLOW_HIDDEN);
+          gnostr_note_embed_set_cancellable(embed, self->async_cancellable);
+          g_signal_connect(embed, "profile-clicked",
+                           G_CALLBACK(on_embed_profile_clicked), self);
+          fixed_rich_frame_set_child(frame, GTK_WIDGET(embed));
+          gtk_box_append(GTK_BOX(embed_list), frame);
+          attach_rich_frame_hydration(
+              self, frame, GTK_WIDGET(embed),
+              RICH_HYDRATION_EVENT_EMBED, descriptor);
+          self->note_embed = embed;
+        }
         break;
       case GN_CONTENT_DESCRIPTOR_NOSTR_PROFILE_REF:
         break;
