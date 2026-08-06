@@ -23,8 +23,8 @@ static void secure_bzero(void *p, size_t n) {
 
 /* (moved AEAD KDF helpers below) */
 
-/* forward declaration for ECDH hash callback defined below */
-static int ecdh_hash_sha256(unsigned char *out, const unsigned char *x32, const unsigned char *y32, void *data);
+/* Forward declaration for the standard NIP-04 raw-X ECDH callback. */
+static int ecdh_hash_xcopy(unsigned char *out, const unsigned char *x32, const unsigned char *y32, void *data);
 
 /* === Minimal HKDF-SHA256 helpers (per NIP-04 key separation) === */
 static int hmac_sha256_once(const unsigned char *key, size_t klen,
@@ -105,7 +105,8 @@ static int ecdh_derive_key_bin(const char *peer_pub_hex, const unsigned char sk_
     if (!secp256k1_ec_seckey_verify(ctx, sk_bin)) { secp256k1_context_destroy(ctx); return -1; }
     secp256k1_pubkey pub;
     if (!secp256k1_ec_pubkey_parse(ctx, &pub, pk_bin, pk_bin_len)) { secp256k1_context_destroy(ctx); return -1; }
-    if (!secp256k1_ecdh(ctx, key_out32, &pub, sk_bin, ecdh_hash_sha256, NULL)) { secp256k1_context_destroy(ctx); return -1; }
+    /* Standard NIP-04 uses the raw ECDH X coordinate as its AES key. */
+    if (!secp256k1_ecdh(ctx, key_out32, &pub, sk_bin, ecdh_hash_xcopy, NULL)) { secp256k1_context_destroy(ctx); return -1; }
     secp256k1_context_destroy(ctx);
     return 0;
 }
@@ -155,19 +156,7 @@ static bool base64_decode(const char *in, unsigned char **out_buf, size_t *out_l
     return ok;
 }
 
-static int evp_sha256(const unsigned char *in, size_t in_len, unsigned char out32[32]) {
-    unsigned int mdlen = 0;
-    if (EVP_Digest(in, in_len, out32, &mdlen, EVP_sha256(), NULL) != 1) return 0;
-    return mdlen == 32 ? 1 : 0;
-}
-
-/* Hash callback that computes SHA-256 over the 32-byte X coordinate (for secp256k1_ecdh) */
-static int ecdh_hash_sha256(unsigned char *out, const unsigned char *x32, const unsigned char *y32, void *data) {
-    (void)y32; (void)data;
-    return evp_sha256(x32, 32, out);
-}
-
-/* Hash callback that copies X coordinate as-is (for diagnostics helper) */
+/* Hash callback that copies the ECDH X coordinate for standard NIP-04. */
 static int ecdh_hash_xcopy(unsigned char *out, const unsigned char *x32, const unsigned char *y32, void *data) {
     (void)y32; (void)data;
     memcpy(out, x32, 32);
