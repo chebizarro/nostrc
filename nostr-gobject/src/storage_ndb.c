@@ -49,6 +49,9 @@ static void *g_sub_cb_ctx = NULL;
 /* Diagnostic counters */
 static guint64 g_ingest_count = 0;
 static guint64 g_ingest_bytes = 0;
+static volatile gint g_json_query_count = 0;
+static volatile gint g_note_key_query_count = 0;
+static volatile gint g_profile_meta_direct_count = 0;
 
 /* ═══════════════════════════════════════════════════════════════════
  * Main-thread NDB transaction violation detection (GNOSTR_TESTING)
@@ -138,6 +141,28 @@ const char *storage_ndb_testing_get_violation_func(unsigned index)
 
 guint64 storage_ndb_get_ingest_count(void) { return g_ingest_count; }
 guint64 storage_ndb_get_ingest_bytes(void) { return g_ingest_bytes; }
+
+void storage_ndb_reset_query_diagnostics(void)
+{
+  g_atomic_int_set(&g_json_query_count, 0);
+  g_atomic_int_set(&g_note_key_query_count, 0);
+  g_atomic_int_set(&g_profile_meta_direct_count, 0);
+}
+
+uint64_t storage_ndb_get_json_query_count(void)
+{
+  return (uint64_t)g_atomic_int_get(&g_json_query_count);
+}
+
+uint64_t storage_ndb_get_note_key_query_count(void)
+{
+  return (uint64_t)g_atomic_int_get(&g_note_key_query_count);
+}
+
+uint64_t storage_ndb_get_profile_meta_direct_count(void)
+{
+  return (uint64_t)g_atomic_int_get(&g_profile_meta_direct_count);
+}
 
 /* Forward declarations */
 static gboolean hex_to_id32(const char *hex, unsigned char out[32]);
@@ -437,6 +462,7 @@ int storage_ndb_query(void *txn, const char *filters_json, char ***out_arr, int 
                 (void*)g_store, txn);
     return LN_ERR_QUERY;
   }
+  g_atomic_int_inc(&g_json_query_count);
   void *results = NULL; int count = 0;
   int rc = ln_store_query(g_store, txn, filters_json, &results, &count);
   if (rc != LN_OK) {
@@ -445,6 +471,46 @@ int storage_ndb_query(void *txn, const char *filters_json, char ***out_arr, int 
     return rc;
   }
   *out_arr = (char**)results; *out_count = count;
+  return LN_OK;
+}
+
+int storage_ndb_query_note_keys(void *txn,
+                                const char *filters_json,
+                                StorageNdbNoteKeyResult **out_arr,
+                                int *out_count,
+                                GError **error)
+{
+  if (!g_store || !txn || !filters_json || !out_arr || !out_count) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_STATE,
+                "Invalid arguments to storage_ndb_query_note_keys (store=%p txn=%p)",
+                (void *)g_store, txn);
+    return LN_ERR_QUERY;
+  }
+
+  *out_arr = NULL;
+  *out_count = 0;
+  g_atomic_int_inc(&g_note_key_query_count);
+
+  ln_store_note_key_result *results = NULL;
+  int count = 0;
+  int rc = ln_store_query_note_keys(g_store, txn, filters_json, &results, &count);
+  if (rc != LN_OK) {
+    g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_NOT_FOUND,
+                "NDB note-key query failed with rc=%d", rc);
+    return rc;
+  }
+
+  StorageNdbNoteKeyResult *copy = NULL;
+  if (count > 0) {
+    copy = g_new(StorageNdbNoteKeyResult, (gsize)count);
+    for (int i = 0; i < count; i++) {
+      copy[i].note_key = results[i].note_key;
+      copy[i].created_at = results[i].created_at;
+    }
+  }
+  free(results);
+  *out_arr = copy;
+  *out_count = count;
   return LN_OK;
 }
 
@@ -541,8 +607,10 @@ int storage_ndb_get_profile_meta_direct(void *txn,
     return LN_ERR_QUERY;
   }
   memset(out, 0, sizeof(*out));
+  g_atomic_int_inc(&g_profile_meta_direct_count);
 
   struct ndb_txn *ntxn = (struct ndb_txn *)txn;
+  out->last_fetch = ndb_read_last_profile_fetch(ntxn, pk32);
   size_t record_len = 0;
   uint64_t prim = 0;
   void *root = ndb_get_profile_by_pubkey(ntxn, pk32, &record_len, &prim);
@@ -552,6 +620,7 @@ int storage_ndb_get_profile_meta_direct(void *txn,
     return LN_ERR_NOT_FOUND;
   }
 
+  out->event_exists = TRUE;
   NdbProfileRecord_table_t record = NdbProfileRecord_as_root(root);
   NdbProfile_table_t profile = NdbProfileRecord_profile(record);
   if (!profile) {

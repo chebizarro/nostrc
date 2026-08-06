@@ -517,7 +517,12 @@ void ln_ndb_force_close_txn_cache(void)
   }
 }
 
-static int ln_ndb_query(ln_store *s, void *txn, const char *filters_json, void **results, int *count)
+static int ln_ndb_query_projected(ln_store *s,
+                                  void *txn,
+                                  const char *filters_json,
+                                  void **results,
+                                  int *count,
+                                  int return_note_keys)
 {
   if (!s || !s->impl || !txn || !filters_json || !results || !count) return LN_ERR_QUERY;
   struct ndb_txn *ntxn = (struct ndb_txn *)txn;
@@ -628,10 +633,50 @@ static int ln_ndb_query(ln_store *s, void *txn, const char *filters_json, void *
   fprintf(stderr, "[ndb] ndb_query returned %d results\n", got);
   #endif
 
-  /* Allocate array of JSON strings */
+  if (got == 0) {
+    for (int i = 0; i < num_filters; i++) {
+      ndb_filter_destroy(&filters[i]);
+      free(tmpbufs[i]);
+    }
+    *results = NULL;
+    *count = 0;
+    return LN_OK;
+  }
+
+  if (return_note_keys) {
+    ln_store_note_key_result *key_results = NULL;
+    if (got > 0) {
+      key_results = (ln_store_note_key_result *)calloc((size_t)got, sizeof(*key_results));
+      if (!key_results) {
+        for (int i = 0; i < num_filters; i++) {
+          ndb_filter_destroy(&filters[i]);
+          free(tmpbufs[i]);
+        }
+        return LN_ERR_OOM;
+      }
+
+      for (int i = 0; i < got; i++) {
+        key_results[i].note_key = qres[i].note_id;
+        key_results[i].created_at = qres[i].note ? ndb_note_created_at(qres[i].note) : 0;
+      }
+    }
+
+    for (int i = 0; i < num_filters; i++) {
+      ndb_filter_destroy(&filters[i]);
+      free(tmpbufs[i]);
+    }
+    *results = key_results;
+    *count = got;
+    return LN_OK;
+  }
+
+  /* Allocate array of JSON strings for generic consumers. */
   char **arr = (char **)calloc((size_t)got, sizeof(char *));
   if (!arr) {
-    for (int i = 0; i < num_filters; i++) ndb_filter_destroy(&filters[i]);
+    for (int i = 0; i < num_filters; i++) {
+      ndb_filter_destroy(&filters[i]);
+      free(tmpbufs[i]);
+    }
     return LN_ERR_OOM;
   }
 
@@ -664,6 +709,24 @@ static int ln_ndb_query(ln_store *s, void *txn, const char *filters_json, void *
   *results = arr;
   *count = got;
   return LN_OK;
+}
+
+static int ln_ndb_query(ln_store *s,
+                        void *txn,
+                        const char *filters_json,
+                        void **results,
+                        int *count)
+{
+  return ln_ndb_query_projected(s, txn, filters_json, results, count, 0);
+}
+
+static int ln_ndb_query_note_keys(ln_store *s,
+                                  void *txn,
+                                  const char *filters_json,
+                                  ln_store_note_key_result **results,
+                                  int *count)
+{
+  return ln_ndb_query_projected(s, txn, filters_json, (void **)results, count, 1);
 }
 
 static int ln_ndb_text_search(ln_store *s, void *txn, const char *query, const char *config_json, void **results, int *count)
@@ -901,6 +964,7 @@ static const struct ln_store_ops ndb_ops = {
   .begin_query = ln_ndb_begin_query,
   .end_query = ln_ndb_end_query,
   .query = ln_ndb_query,
+  .query_note_keys = ln_ndb_query_note_keys,
   .text_search = ln_ndb_text_search,
   .search_profile = ln_ndb_search_profile,
   .get_note_by_id = ln_ndb_get_note_by_id,

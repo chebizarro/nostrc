@@ -80,7 +80,16 @@ int storage_ndb_end_query(void *txn);
 int storage_ndb_begin_query_retry(void **txn_out, int attempts, int sleep_ms, GError **error);
 
 /* Queries */
+typedef struct {
+    uint64_t note_key;
+    uint64_t created_at;
+} StorageNdbNoteKeyResult;
+
 int storage_ndb_query(void *txn, const char *filters_json, char ***out_arr, int *out_count, GError **error);
+int storage_ndb_query_note_keys(void *txn, const char *filters_json,
+                                StorageNdbNoteKeyResult **out_arr,
+                                int *out_count,
+                                GError **error);
 int storage_ndb_text_search(void *txn, const char *q, const char *config_json, char ***out_arr, int *out_count, GError **error);
 int storage_ndb_search_profile(void *txn, const char *query, int limit, char ***out_arr, int *out_count, GError **error);
 
@@ -104,6 +113,8 @@ typedef struct {
     char *website;	 /* nullable */
     char *lud06;	 /* nullable */
     uint32_t created_at; /* from the associated kind:0 note, 0 if unavailable */
+    uint64_t last_fetch; /* NDB_DB_PROFILE_LAST_FETCH, 0 if never fetched */
+    gboolean event_exists; /* profile record exists even when every field is empty */
 } StorageNdbProfileMeta;
 
 /* Read profile fields directly from the NdbProfile FlatBuffer record.
@@ -155,6 +166,14 @@ void storage_ndb_update_metrics(void);
 /* Diagnostic counters */
 uint64_t storage_ndb_get_ingest_count(void);
 uint64_t storage_ndb_get_ingest_bytes(void);
+
+/* Performance-invariant diagnostics. These count storage API calls, allowing
+ * tests to prove that timeline queries avoid the JSON projection and that
+ * profile hydration is bounded by unique authors rather than note count. */
+void storage_ndb_reset_query_diagnostics(void);
+uint64_t storage_ndb_get_json_query_count(void);
+uint64_t storage_ndb_get_note_key_query_count(void);
+uint64_t storage_ndb_get_profile_meta_direct_count(void);
 
 /* Free results helpers */
 void storage_ndb_free_results(char **arr, int n);

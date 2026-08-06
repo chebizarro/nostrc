@@ -33,6 +33,15 @@ int ln_store_query(ln_store *s, void *txn, const char *filters_json, void **resu
   return s->ops->query(s, txn, filters_json, results, count);
 }
 
+int ln_store_query_note_keys(ln_store *s, void *txn, const char *filters_json, ln_store_note_key_result **results, int *count)
+{
+  if (!results || !count) return LN_ERR_QUERY;
+  *results = NULL;
+  *count = 0;
+  if (!s || !s->ops || !s->ops->query_note_keys) return LN_ERR_QUERY;
+  return s->ops->query_note_keys(s, txn, filters_json, results, count);
+}
+
 int ln_store_text_search(ln_store *s, void *txn, const char *query, const char *config_json, void **results, int *count)
 {
   if (!s || !s->ops || !s->ops->text_search) return LN_ERR_TEXTSEARCH;

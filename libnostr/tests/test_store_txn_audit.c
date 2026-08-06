@@ -72,6 +72,45 @@ static int query_contains(ln_store *store, const char *needle, const char *forbi
     return found;
 }
 
+static void assert_empty_query_projections(ln_store *store)
+{
+    void *txn = NULL;
+    void *json_results = (void *)1;
+    ln_store_note_key_result *key_results = (ln_store_note_key_result *)1;
+    int count = -1;
+
+    assert(ln_store_begin_query(store, &txn) == LN_OK);
+    assert(ln_store_query(store, txn, "{\"kinds\":[9999]}",
+                          &json_results, &count) == LN_OK);
+    assert(json_results == NULL);
+    assert(count == 0);
+
+    count = -1;
+    assert(ln_store_query_note_keys(store, txn, "{\"kinds\":[9999]}",
+                                    &key_results, &count) == LN_OK);
+    assert(key_results == NULL);
+    assert(count == 0);
+    assert(ln_store_end_query(store, txn) == LN_OK);
+}
+
+static void assert_note_key_query(ln_store *store, uint64_t expected_created_at)
+{
+    void *txn = NULL;
+    ln_store_note_key_result *results = NULL;
+    int count = 0;
+
+    assert(ln_store_begin_query(store, &txn) == LN_OK);
+    assert(txn != NULL);
+    assert(ln_store_query_note_keys(store, txn, "{\"kinds\":[1]}",
+                                    &results, &count) == LN_OK);
+    assert(count == 1);
+    assert(results != NULL);
+    assert(results[0].note_key != 0);
+    assert(results[0].created_at == expected_created_at);
+    free(results);
+    assert(ln_store_end_query(store, txn) == LN_OK);
+}
+
 static void wait_until_visible(ln_store *store, const char *needle)
 {
     const struct timespec delay = { .tv_sec = 0, .tv_nsec = 100 * 1000 * 1000 };
@@ -121,6 +160,15 @@ static void test_two_store_tls_txn_scoping(void)
 
     wait_until_visible(store_a, "store-a-only");
     wait_until_visible(store_b, "store-b-only");
+
+    /* The compact projection returns the native nostrdb primary key and
+     * timestamp without materializing an event JSON string. */
+    ln_ndb_force_close_txn_cache();
+    assert_note_key_query(store_a, 101);
+    ln_ndb_force_close_txn_cache();
+    assert_note_key_query(store_b, 202);
+    ln_ndb_force_close_txn_cache();
+    assert_empty_query_projections(store_a);
 
     /* Clear polling txns, then intentionally query A followed by B within the
      * two-second reuse window. Pre-fix, B reused A's cached txn and returned

@@ -18,6 +18,7 @@
 
 #include "gnostr-testkit.h"
 #include "../src/model/gn-nostr-event-model.h"
+#include "../src/model/gnostr-timeline-source.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 
 /* MODEL_MAX_ITEMS from the model source — keep in sync */
@@ -690,6 +691,87 @@ test_mixed_timestamp_live_insert_preserves_global_sort_order(void)
   teardown_ndb();
 }
 
+typedef struct {
+  GnostrTimelineBatch *batch;
+} TimelineSourceCapture;
+
+static void
+capture_refresh_batch(GnostrTimelineSource *source G_GNUC_UNUSED,
+                      GnostrTimelineBatch *batch,
+                      gpointer user_data)
+{
+  TimelineSourceCapture *capture = user_data;
+  if (!capture->batch &&
+      gnostr_timeline_batch_get_kind(batch) == GNOSTR_TIMELINE_BATCH_REFRESH)
+    capture->batch = g_object_ref(batch);
+}
+
+static void
+test_timeline_source_uses_key_query_and_author_profile_cache(void)
+{
+  static const char *pubkey =
+    "abababababababababababababababababababababababababababababababab";
+  static const char *profile_content =
+    "{\"display_name\":\"Alice Display\",\"name\":\"alice\","
+    "\"picture\":\"https://example.test/alice.png\","
+    "\"nip05\":\"alice@example.test\"}";
+  enum { NOTE_COUNT = 6 };
+
+  setup_ndb();
+  g_autofree char *profile_json = gn_test_make_event_json_with_pubkey(
+    0, profile_content, 1700000990, pubkey);
+  g_assert_true(gn_test_ndb_ingest_json(s_ndb, profile_json));
+  for (guint i = 0; i < NOTE_COUNT; i++) {
+    g_autofree char *content = g_strdup_printf("author-cache-note-%u", i);
+    g_autofree char *event_json = gn_test_make_event_json_with_pubkey(
+      1, content, 1700001000 + (gint64)i, pubkey);
+    g_assert_true(gn_test_ndb_ingest_json(s_ndb, event_json));
+  }
+  gn_test_ndb_wait_for_ingest();
+
+  GNostrTimelineQuery *query = gnostr_timeline_query_new_for_author(pubkey);
+  query->limit = NOTE_COUNT;
+  GnostrTimelineSource *source = gnostr_timeline_source_new_with_query(query);
+  gnostr_timeline_query_free(query);
+
+  TimelineSourceCapture capture = {0};
+  g_signal_connect(source, "batch", G_CALLBACK(capture_refresh_batch), &capture);
+  storage_ndb_reset_query_diagnostics();
+  gnostr_timeline_source_refresh_async(source);
+
+  gint64 deadline = g_get_monotonic_time() + (5 * G_TIME_SPAN_SECOND);
+  while (!capture.batch && g_get_monotonic_time() < deadline) {
+    while (g_main_context_iteration(NULL, FALSE)) {}
+    g_usleep(1000);
+  }
+
+  g_assert_nonnull(capture.batch);
+  g_assert_cmpuint(gnostr_timeline_batch_get_n_entries(capture.batch), ==,
+                   NOTE_COUNT);
+  g_assert_cmpuint(storage_ndb_get_json_query_count(), ==, 0);
+  g_assert_cmpuint(storage_ndb_get_note_key_query_count(), ==, 1);
+  g_assert_cmpuint(storage_ndb_get_profile_meta_direct_count(), ==, 1);
+
+  for (guint i = 0; i < NOTE_COUNT; i++) {
+    const GnostrTimelineBatchEntry *entry =
+      gnostr_timeline_batch_get_entry(capture.batch, i);
+    g_assert_nonnull(entry);
+    g_assert_cmpuint(entry->note_key, !=, 0);
+    g_assert_cmpstr(entry->pubkey_hex, ==, pubkey);
+    g_assert_cmpstr(entry->display_name, ==, "Alice Display");
+    g_assert_cmpstr(entry->handle, ==, "alice");
+    g_assert_cmpstr(entry->avatar_url, ==, "https://example.test/alice.png");
+    g_assert_cmpstr(entry->nip05, ==, "alice@example.test");
+    g_assert_true(entry->has_profile);
+  }
+  g_assert_cmpuint(gnostr_timeline_batch_get_n_profile_requests(capture.batch),
+                   ==, 0);
+
+  g_clear_object(&capture.batch);
+  g_object_unref(source);
+  teardown_ndb();
+}
+
 /* ── Main ────────────────────────────────────────────────────────── */
 
 int
@@ -727,6 +809,8 @@ main(int argc, char *argv[])
                    test_same_timestamp_live_insert_uses_deterministic_tie_break);
   g_test_add_func("/gnostr/event-model/mixed-timestamp-live-insert-sort-order",
                    test_mixed_timestamp_live_insert_preserves_global_sort_order);
+  g_test_add_func("/gnostr/timeline-source/key-query-per-author-profile-cache",
+                   test_timeline_source_uses_key_query_and_author_profile_cache);
 
   return g_test_run();
 }

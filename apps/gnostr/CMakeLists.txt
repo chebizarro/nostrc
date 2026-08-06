@@ -1371,6 +1371,7 @@ if (BUILD_TESTING)
               src/model/gnostr-timeline-source.c
               src/model/gnostr-timeline-batch.c
               src/model/gn-nostr-event-item.c
+              src/util/mute_filter.c
       LIBS gnostr-testkit nostr_gobject nostr_gtk
            PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB
       TIMEOUT 120
@@ -1411,6 +1412,15 @@ if (BUILD_TESTING)
     _gnostr_apply_sanitizers(gnostr-test-event-model-windowing)
     set_tests_properties(gnostr-test-event-model-windowing PROPERTIES
       LABELS "model;windowing;unit;gnostr")
+
+    # Expose the focused source performance invariant under a timeline-matching
+    # CTest name so the standard timeline regression filter always runs it.
+    add_test(NAME gnostr-test-timeline-source
+      COMMAND $<TARGET_FILE:gnostr-test-event-model-windowing>
+              -p /gnostr/timeline-source/key-query-per-author-profile-cache)
+    set_tests_properties(gnostr-test-timeline-source PROPERTIES
+      TIMEOUT 30
+      LABELS "timeline;source;profile;unit;gnostr")
 
     gn_add_gtest(gnostr-test-event-item-txn-budget
       SOURCES tests/test_event_item_txn_budget.c

@@ -3,7 +3,6 @@
 #include "gnostr-timeline-source.h"
 
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
-#include <nostr-gobject-1.0/gn-nostr-profile.h>
 #include <nostr-gobject-1.0/gnostr-mute-list.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include <nostr.h>
@@ -49,6 +48,38 @@ typedef struct {
   guint n_keys;
   guint requested_count;
 } SourceBatchRequest;
+
+typedef struct {
+  StorageNdbProfileMeta meta;
+} SourceProfileCacheEntry;
+
+static void
+source_profile_cache_entry_free(gpointer data)
+{
+  SourceProfileCacheEntry *entry = data;
+  if (!entry)
+    return;
+  storage_ndb_profile_meta_clear(&entry->meta);
+  g_free(entry);
+}
+
+static SourceProfileCacheEntry *
+source_profile_cache_lookup(GHashTable *cache,
+                            void *txn,
+                            const unsigned char pk32[32],
+                            const char *pubkey_hex)
+{
+  SourceProfileCacheEntry *entry = g_hash_table_lookup(cache, pubkey_hex);
+  if (entry)
+    return entry;
+
+  entry = g_new0(SourceProfileCacheEntry, 1);
+  /* Cache misses too: event_exists remains FALSE, while last_fetch still
+   * records nostrdb's staleness marker without a second profile read. */
+  storage_ndb_get_profile_meta_direct(txn, pk32, &entry->meta, NULL);
+  g_hash_table_insert(cache, g_strdup(pubkey_hex), entry);
+  return entry;
+}
 
 static gboolean hex_to_bytes32(const char *hex, uint8_t out[32]);
 static void source_emit_delete_batch(GnostrTimelineSource *self, const uint64_t *note_keys, guint n_keys);
@@ -164,81 +195,11 @@ note_is_muted_by_fields(storage_ndb_note *note,
                                                hashtags);
 }
 
-static void
-hydrate_profile_fields_from_db(void *txn,
-                               const unsigned char pk32[32],
-                               const char *pubkey_hex,
-                               char **out_display_name,
-                               char **out_handle,
-                               char **out_avatar_url,
-                               char **out_nip05)
-{
-  if (out_display_name) *out_display_name = NULL;
-  if (out_handle) *out_handle = NULL;
-  if (out_avatar_url) *out_avatar_url = NULL;
-  if (out_nip05) *out_nip05 = NULL;
-  if (!txn || !pk32 || !pubkey_hex)
-    return;
-
-  char *evt_json = NULL;
-  int evt_len = 0;
-  int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &evt_json, &evt_len, NULL);
-  if (rc != 0 || !evt_json || evt_len <= 0) {
-    if (evt_json)
-      free(evt_json);
-    return;
-  }
-
-  NostrEvent *evt = nostr_event_new();
-  if (!evt) {
-    free(evt_json);
-    return;
-  }
-
-  if (nostr_event_deserialize(evt, evt_json) == 0 && nostr_event_get_kind(evt) == 0) {
-    const char *profile_json = nostr_event_get_content(evt);
-    if (profile_json && *profile_json) {
-      GNostrProfile *profile = gnostr_profile_new(pubkey_hex);
-      gnostr_profile_update_from_json(profile, profile_json);
-      if (out_display_name)
-        *out_display_name = g_strdup(gnostr_profile_get_display_name(profile));
-      if (out_handle)
-        *out_handle = g_strdup(gnostr_profile_get_name(profile));
-      if (out_avatar_url)
-        *out_avatar_url = g_strdup(gnostr_profile_get_picture_url(profile));
-      if (out_nip05)
-        *out_nip05 = g_strdup(gnostr_profile_get_nip05(profile));
-      g_object_unref(profile);
-    }
-  }
-
-  nostr_event_free(evt);
-  free(evt_json);
-}
-
-static gboolean
-db_has_profile_event_for_pubkey(void *txn, const unsigned char pk32[32])
-{
-  if (!txn || !pk32)
-    return FALSE;
-
-  char *evt_json = NULL;
-  int evt_len = 0;
-  int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &evt_json, &evt_len, NULL);
-  if (rc != 0 || !evt_json || evt_len <= 0) {
-    if (evt_json)
-      free(evt_json);
-    return FALSE;
-  }
-
-  free(evt_json);
-  return TRUE;
-}
-
 static gboolean
 add_note_key_to_batch_from_txn(GnostrTimelineBatch *batch,
                                GNostrTimelineQuery *query,
                                void *txn,
+                               GHashTable *profile_cache,
                                uint64_t note_key,
                                gboolean apply_query_filter)
 {
@@ -278,20 +239,9 @@ add_note_key_to_batch_from_txn(GnostrTimelineBatch *batch,
   uint32_t content_len = content_ptr ? storage_ndb_note_content_length(note) : 0;
   g_autofree char *content = content_ptr ? g_strndup(content_ptr, content_len) : NULL;
 
-  g_autofree char *display_name = NULL;
-  g_autofree char *handle = NULL;
-  g_autofree char *avatar_url = NULL;
-  g_autofree char *nip05 = NULL;
-  hydrate_profile_fields_from_db(txn,
-                                 pk32,
-                                 pubkey_hex,
-                                 &display_name,
-                                 &handle,
-                                 &avatar_url,
-                                 &nip05);
-
-  gboolean has_profile = (display_name || handle || avatar_url || nip05 ||
-                          db_has_profile_event_for_pubkey(txn, pk32));
+  SourceProfileCacheEntry *profile =
+    source_profile_cache_lookup(profile_cache, txn, pk32, pubkey_hex);
+  gboolean has_profile = profile->meta.event_exists;
   if (!has_profile)
     gnostr_timeline_batch_add_profile_request(batch, pubkey_hex);
 
@@ -301,10 +251,10 @@ add_note_key_to_batch_from_txn(GnostrTimelineBatch *batch,
     .created_at = created_at,
     .pubkey_hex = pubkey_hex,
     .content = content,
-    .display_name = display_name,
-    .handle = handle,
-    .avatar_url = avatar_url,
-    .nip05 = nip05,
+    .display_name = profile->meta.display_name,
+    .handle = profile->meta.name,
+    .avatar_url = profile->meta.picture,
+    .nip05 = profile->meta.nip05,
     .root_id = root_id,
     .reply_id = reply_id,
     .quoted_event_id = quoted_event_id,
@@ -337,45 +287,29 @@ query_results_into_batch(GnostrTimelineBatch *batch,
     return;
   }
 
-  char **json_results = NULL;
+  StorageNdbNoteKeyResult *key_results = NULL;
   int result_count = 0;
-  int rc = storage_ndb_query(txn, query_json, &json_results, &result_count, NULL);
+  int rc = storage_ndb_query_note_keys(txn, query_json,
+                                       &key_results, &result_count, NULL);
+  GHashTable *profile_cache = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                    g_free,
+                                                    source_profile_cache_entry_free);
 
   guint added = 0;
-  if (rc == 0 && json_results && result_count > 0) {
+  if (rc == 0 && key_results && result_count > 0) {
     for (int i = 0; i < result_count; i++) {
-      const char *event_json = json_results[i];
-      if (!event_json)
-        continue;
-
-      NostrEvent *evt = nostr_event_new();
-      if (!evt)
-        continue;
-
-      if (nostr_event_deserialize(evt, event_json) == 0) {
-        char *event_id_tmp = nostr_event_get_id(evt);
-        g_autofree gchar *event_id = event_id_tmp ? g_strdup(event_id_tmp) : NULL;
-        free(event_id_tmp);
-
-        uint8_t id32[32];
-        if (event_id && hex_to_bytes32(event_id, id32)) {
-          uint64_t note_key = storage_ndb_get_note_key_by_id(txn, id32, NULL);
-          if (note_key != 0 && add_note_key_to_batch_from_txn(batch, query, txn, note_key, TRUE)) {
-            added++;
-            if (requested_count > 0 && added >= requested_count) {
-              nostr_event_free(evt);
-              break;
-            }
-          }
-        }
+      if (key_results[i].note_key != 0 &&
+          add_note_key_to_batch_from_txn(batch, query, txn, profile_cache,
+                                         key_results[i].note_key, TRUE)) {
+        added++;
+        if (requested_count > 0 && added >= requested_count)
+          break;
       }
-
-      nostr_event_free(evt);
     }
-
-    storage_ndb_free_results(json_results, result_count);
   }
 
+  g_free(key_results);
+  g_hash_table_unref(profile_cache);
   storage_ndb_end_query(txn);
 }
 
@@ -391,8 +325,13 @@ source_batch_thread_func(GTask *task,
   if (req->note_keys && req->n_keys > 0) {
     void *txn = NULL;
     if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
+      GHashTable *profile_cache =
+        g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                              source_profile_cache_entry_free);
       for (guint i = 0; i < req->n_keys; i++)
-        add_note_key_to_batch_from_txn(batch, req->query, txn, req->note_keys[i], TRUE);
+        add_note_key_to_batch_from_txn(batch, req->query, txn, profile_cache,
+                                       req->note_keys[i], TRUE);
+      g_hash_table_unref(profile_cache);
       storage_ndb_end_query(txn);
     }
   } else {
@@ -632,25 +571,17 @@ source_emit_note_key_patch_batch(GnostrTimelineSource *self,
         storage_ndb_hex_encode(pk32, pubkey_hex);
 
       if (kind == GNOSTR_TIMELINE_BATCH_PROFILE_PATCH && pk32) {
-        g_autofree char *display_name = NULL;
-        g_autofree char *handle = NULL;
-        g_autofree char *avatar_url = NULL;
-        g_autofree char *nip05 = NULL;
-        hydrate_profile_fields_from_db(txn,
-                                       pk32,
-                                       pubkey_hex,
-                                       &display_name,
-                                       &handle,
-                                       &avatar_url,
-                                       &nip05);
+        StorageNdbProfileMeta profile = {0};
+        storage_ndb_get_profile_meta_direct(txn, pk32, &profile, NULL);
         GnostrTimelineProfilePatch patch = {
           .pubkey_hex = pubkey_hex,
-          .display_name = display_name,
-          .handle = handle,
-          .avatar_url = avatar_url,
-          .nip05 = nip05,
+          .display_name = profile.display_name,
+          .handle = profile.name,
+          .avatar_url = profile.picture,
+          .nip05 = profile.nip05,
         };
         gnostr_timeline_batch_add_profile_patch(batch, &patch);
+        storage_ndb_profile_meta_clear(&profile);
       } else if (kind == GNOSTR_TIMELINE_BATCH_METADATA_PATCH && metadata_target_ids) {
         g_autofree char *target_id = storage_ndb_note_get_last_etag(note);
         if (target_id && *target_id && !strv_contains_string(metadata_target_ids, target_id))
@@ -954,17 +885,15 @@ gnostr_timeline_source_load_newer_async(GnostrTimelineSource *self,
   if (count == 0)
     return;
 
-  guint query_limit = count * 4;
-  if (query_limit < 100)
-    query_limit = 100;
-
   SourceBatchRequest *req = g_new0(SourceBatchRequest, 1);
   req->kind = GNOSTR_TIMELINE_BATCH_PAGE_NEWER;
   req->generation = self->generation;
   req->query = source_query_copy_or_default(self);
   req->query->since = after_timestamp > 0 ? after_timestamp + 1 : 0;
   req->query->until = 0;
-  req->query->limit = query_limit;
+  /* The controller already includes its retained-window buffers in count;
+   * do not inflate a 30-row publication into a 100-note DB query. */
+  req->query->limit = count;
   req->requested_count = count;
 
   GTask *task = g_task_new(self, NULL, source_batch_done_cb, NULL);
