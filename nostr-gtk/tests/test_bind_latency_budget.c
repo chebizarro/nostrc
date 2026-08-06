@@ -21,10 +21,20 @@
 #  define SANITIZER_SLOWDOWN 1
 #endif
 
+/* The native macOS GTK backend schedules AppKit layout/rendering on the same
+ * main context as the heartbeat. Its normal frame-processing gaps are roughly
+ * 2x the X11/Xvfb baseline; keep the total-work budget and missed-gap allowance
+ * unchanged so sustained regressions still fail. */
+#ifdef __APPLE__
+#  define BACKEND_SLOWDOWN 2
+#else
+#  define BACKEND_SLOWDOWN 1
+#endif
+
 /* Budget: bind loop for N items should not cause any stall > MAX_STALL_MS */
 #define N_ITEMS         300
 #define HEARTBEAT_MS    5
-#define MAX_STALL_MS    (100 * SANITIZER_SLOWDOWN)
+#define MAX_STALL_MS    (100 * SANITIZER_SLOWDOWN * BACKEND_SLOWDOWN)
 #define MAX_TOTAL_MS    (5000 * SANITIZER_SLOWDOWN)
 /* Minimum heartbeat iterations we expect in any test — ensures heartbeat actually fired */
 #define MIN_HEARTBEATS  3
