@@ -1,4 +1,5 @@
 #include <nostr/nip04.h>
+#include <glib.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,8 +13,8 @@ int main(void) {
     const char *msg = "Hello, NIP-04!";
     /* This test specifically validates the standard legacy CBC wire format;
      * AEAD v2 is exercised separately by test_nip04_aead. */
-    if (setenv("NIP04_LEGACY_CBC", "1", 1) != 0) {
-        perror("setenv NIP04_LEGACY_CBC");
+    if (!g_setenv("NIP04_LEGACY_CBC", "1", TRUE)) {
+        fprintf(stderr, "failed to set NIP04_LEGACY_CBC\n");
         return 1;
     }
     char *content = NULL; char *err = NULL;

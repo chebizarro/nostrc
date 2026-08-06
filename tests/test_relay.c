@@ -1,11 +1,12 @@
 #include "nostr-relay.h"
 #include "nostr-subscription.h"
+#include <glib.h>
 #include <assert.h>
 
 void test_relay_initialization_and_cleanup() {
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    setenv("NOSTR_TEST_MODE", "1", 1);
+    g_setenv("NOSTR_TEST_MODE", "1", TRUE);
     
     // Create relay
     NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
@@ -20,7 +21,7 @@ void test_relay_initialization_and_cleanup() {
 void test_relay_connection_and_close() {
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    setenv("NOSTR_TEST_MODE", "1", 1);
+    g_setenv("NOSTR_TEST_MODE", "1", TRUE);
 
     // Create relay
     NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
@@ -49,7 +50,7 @@ void test_relay_connection_and_close() {
 void test_relay_subscription() {
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    setenv("NOSTR_TEST_MODE", "1", 1);
+    g_setenv("NOSTR_TEST_MODE", "1", TRUE);
 
     // Create relay
     NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
@@ -89,7 +90,7 @@ void test_relay_subscription() {
 void test_relay_write() {
     Error *err = NULL;
     GoContext *ctx = go_context_background();
-    setenv("NOSTR_TEST_MODE", "1", 1);
+    g_setenv("NOSTR_TEST_MODE", "1", TRUE);
 
     // Create relay
     NostrRelay *relay = nostr_relay_new(ctx, "wss://example.invalid", &err);
