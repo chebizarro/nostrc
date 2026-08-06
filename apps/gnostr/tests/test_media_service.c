@@ -840,6 +840,73 @@ test_thumbnail_queue_is_bounded_and_persisted(void)
   g_mutex_clear(&fixture.lock);
 }
 
+static void
+test_disk_executor_bounds_and_coalesces(void)
+{
+  GnostrMediaServiceConfig config;
+  gnostr_media_service_config_init(&config);
+  config.disk_worker_count = 1;
+  config.disk_max_queued_jobs = 2;
+  config.disk_max_queued_bytes = 8;
+  config.disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_INLINE] = 1024 * 1024;
+  g_autoptr(GnostrMediaService) service = new_test_service(&config);
+  g_autoptr(GBytes) bytes = g_bytes_new_static("data", 4);
+
+  /* Completion callbacks cannot run until the main context iterates, so the
+   * first job occupies the sole worker while the following submissions test
+   * the waiting queue deterministically. */
+  gnostr_media_service_test_enqueue_disk_write(
+      service, test_namespace, GNOSTR_MEDIA_RESOURCE_INLINE,
+      "https://example.test/active.png", bytes);
+  gnostr_media_service_test_enqueue_disk_write(
+      service, test_namespace, GNOSTR_MEDIA_RESOURCE_INLINE,
+      "https://example.test/active.png", bytes);
+  GnostrMediaCacheStats stats;
+  gnostr_media_service_get_stats(service, &stats);
+  g_assert_cmpuint(stats.active_disk_jobs, ==, 1);
+  g_assert_cmpuint(stats.queued_disk_jobs, ==, 1);
+  g_assert_cmpuint(stats.dropped_disk_jobs, ==, 0);
+
+  gnostr_media_service_test_enqueue_disk_write(
+      service, test_namespace, GNOSTR_MEDIA_RESOURCE_INLINE,
+      "https://example.test/coalesced.png", bytes);
+  gnostr_media_service_test_enqueue_disk_write(
+      service, test_namespace, GNOSTR_MEDIA_RESOURCE_INLINE,
+      "https://example.test/coalesced.png", bytes);
+  gnostr_media_service_test_enqueue_disk_write(
+      service, test_namespace, GNOSTR_MEDIA_RESOURCE_INLINE,
+      "https://example.test/third.png", bytes);
+  gnostr_media_service_test_enqueue_disk_write(
+      service, test_namespace, GNOSTR_MEDIA_RESOURCE_INLINE,
+      "https://example.test/fourth.png", bytes);
+
+  gnostr_media_service_get_stats(service, &stats);
+  g_assert_cmpuint(stats.active_disk_jobs, ==, 1);
+  g_assert_cmpuint(stats.queued_disk_jobs, ==, 2);
+  g_assert_cmpuint(stats.queued_disk_bytes, ==, 8);
+  g_assert_cmpuint(stats.dropped_disk_jobs, ==, 3);
+  g_assert_cmpuint(
+      gnostr_media_service_test_get_outstanding_disk_jobs(service), ==, 3);
+
+  wait_for_disk_jobs(service);
+  gnostr_media_service_get_stats(service, &stats);
+  g_assert_cmpuint(stats.active_disk_jobs, ==, 0);
+  g_assert_cmpuint(stats.queued_disk_jobs, ==, 0);
+  g_assert_cmpuint(stats.queued_disk_bytes, ==, 0);
+
+  /* An active sweep retains exactly one latest follow-up instead of running
+   * duplicate scans or losing a settings-triggered resweep. */
+  gnostr_media_service_test_enqueue_sweep(service, test_namespace);
+  gnostr_media_service_test_enqueue_sweep(service, test_namespace);
+  gnostr_media_service_test_enqueue_sweep(service, test_namespace);
+  gnostr_media_service_get_stats(service, &stats);
+  g_assert_cmpuint(stats.active_disk_jobs, ==, 1);
+  g_assert_cmpuint(stats.queued_disk_jobs, ==, 1);
+  g_assert_cmpuint(stats.queued_disk_bytes, ==, 0);
+  g_assert_cmpuint(stats.dropped_disk_jobs, ==, 4);
+  wait_for_disk_jobs(service);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -859,6 +926,8 @@ main(int argc, char **argv)
                   test_disk_hit_falls_back_before_network);
   g_test_add_func("/media-service/disk/encoded-byte-budget",
                   test_disk_write_enforces_encoded_byte_budget);
+  g_test_add_func("/media-service/disk/executor-bounds-coalescing",
+                  test_disk_executor_bounds_and_coalesces);
   g_test_add_func("/media-service/og/shared-ttl-cache",
                   test_og_metadata_is_shared_and_ttl_cached);
   g_test_add_func("/media-service/og/persisted-ttl",

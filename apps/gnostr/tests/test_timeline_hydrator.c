@@ -380,6 +380,7 @@ test_descriptor_caps_order_elision_and_reservations(void)
 typedef struct {
   gboolean done;
   gboolean got_items;
+  GError *error;
 } AsyncHydrateCapture;
 
 static void
@@ -389,7 +390,8 @@ on_hydrate_done(GObject *source,
 {
   AsyncHydrateCapture *capture = user_data;
   g_autoptr(GPtrArray) items =
-    gnostr_timeline_hydrator_hydrate_batch_finish(GNOSTR_TIMELINE_HYDRATOR(source), result, NULL);
+    gnostr_timeline_hydrator_hydrate_batch_finish(
+        GNOSTR_TIMELINE_HYDRATOR(source), result, &capture->error);
   capture->got_items = items != NULL;
   capture->done = TRUE;
 }
@@ -415,9 +417,51 @@ test_stale_generation_drops_sync_and_async(void)
     g_main_context_iteration(NULL, TRUE);
   g_assert_true(capture.done);
   g_assert_false(capture.got_items);
+  g_assert_no_error(capture.error);
 
+  GnostrTimelineBatch *current =
+      batch_new(GNOSTR_TIMELINE_BATCH_LIVE_HEAD, 9);
+  batch_add(current, 2, 101, 0x12, "current", "Current", "current", NULL,
+            TRUE);
+  AsyncHydrateCapture changed = { 0 };
+  gnostr_timeline_hydrator_hydrate_batch_async(
+      hydrator, current, NULL, on_hydrate_done, &changed);
+  gnostr_timeline_hydrator_set_generation(hydrator, 10);
+  deadline = g_get_monotonic_time() + G_TIME_SPAN_SECOND;
+  while (!changed.done && g_get_monotonic_time() < deadline)
+    g_main_context_iteration(NULL, TRUE);
+  g_assert_true(changed.done);
+  g_assert_false(changed.got_items);
+  g_assert_no_error(changed.error);
+
+  g_object_unref(current);
   g_object_unref(stale);
   g_object_unref(hydrator);
+}
+
+static void
+test_async_cancellation_is_reported(void)
+{
+  g_autoptr(GnostrTimelineHydrator) hydrator =
+      gnostr_timeline_hydrator_new(12);
+  g_autoptr(GnostrTimelineBatch) batch =
+      batch_new(GNOSTR_TIMELINE_BATCH_LIVE_HEAD, 12);
+  batch_add(batch, 1, 100, 0x12, "cancelled", "Cancelled", "cancelled",
+            NULL, TRUE);
+  g_autoptr(GCancellable) cancellable = g_cancellable_new();
+  g_cancellable_cancel(cancellable);
+
+  AsyncHydrateCapture capture = { 0 };
+  gnostr_timeline_hydrator_hydrate_batch_async(
+      hydrator, batch, cancellable, on_hydrate_done, &capture);
+  gint64 deadline = g_get_monotonic_time() + G_TIME_SPAN_SECOND;
+  while (!capture.done && g_get_monotonic_time() < deadline)
+    g_main_context_iteration(NULL, TRUE);
+
+  g_assert_true(capture.done);
+  g_assert_false(capture.got_items);
+  g_assert_error(capture.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error(&capture.error);
 }
 
 int
@@ -440,6 +484,8 @@ main(int argc,
                   test_descriptor_caps_order_elision_and_reservations);
   g_test_add_func("/gnostr/timeline-hydrator/stale-generation-drops",
                   test_stale_generation_drops_sync_and_async);
+  g_test_add_func("/gnostr/timeline-hydrator/async-cancellation",
+                  test_async_cancellation_is_reported);
 
   return g_test_run();
 }

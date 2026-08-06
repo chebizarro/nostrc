@@ -62,6 +62,11 @@ typedef struct {
   /* Encoded-byte disk ceilings, independently enforced per namespace and
    * resource class.  Zero disables the disk tier for that class. */
   guint64 disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_N_CLASSES];
+  /* Detached cache maintenance uses a private bounded executor.  Limits apply
+   * to waiting jobs; jobs already running are accounted separately. */
+  guint disk_worker_count;
+  guint disk_max_queued_jobs;
+  guint64 disk_max_queued_bytes;
 } GnostrMediaServiceConfig;
 
 typedef struct {
@@ -88,6 +93,10 @@ typedef struct {
   guint64 og_metadata_hits;
   guint64 og_metadata_misses;
   guint64 og_metadata_evictions;
+  guint queued_disk_jobs;
+  guint64 queued_disk_bytes;
+  guint active_disk_jobs;
+  guint64 dropped_disk_jobs;
 } GnostrMediaCacheStats;
 
 typedef struct _GnostrOgMetadata GnostrOgMetadata;
@@ -204,6 +213,15 @@ void gnostr_media_service_test_set_namespace(GnostrMediaService *service,
                                              const char *cache_namespace);
 guint gnostr_media_service_test_get_outstanding_disk_jobs(
     GnostrMediaService *service);
+void gnostr_media_service_test_enqueue_disk_write(
+    GnostrMediaService *service,
+    const char *cache_namespace,
+    GnostrMediaResourceClass resource_class,
+    const char *url,
+    GBytes *bytes);
+void gnostr_media_service_test_enqueue_sweep(
+    GnostrMediaService *service,
+    const char *cache_namespace);
 
 typedef GBytes *(*GnostrMediaTestThumbnailExtractor)(
     const char *url,

@@ -580,17 +580,41 @@ hydrate_batch_thread(GTask *task,
                      gpointer task_data,
                      GCancellable *cancellable)
 {
-  (void)cancellable;
   GnostrTimelineHydrator *self = GNOSTR_TIMELINE_HYDRATOR(source_object);
   HydrateTaskData *data = task_data;
 
-  if (data->generation != gnostr_timeline_hydrator_get_generation(self) ||
-      data->generation != gnostr_timeline_batch_get_generation(data->batch)) {
+  if (g_task_return_error_if_cancelled(task))
+    return;
+  if (data->generation != gnostr_timeline_batch_get_generation(data->batch)) {
     g_task_return_pointer(task, NULL, NULL);
     return;
   }
 
-  GPtrArray *items = gnostr_timeline_hydrator_hydrate_batch(self, data->batch);
+  GPtrArray *items = g_ptr_array_new_with_free_func(g_object_unref);
+  guint n_entries = gnostr_timeline_batch_get_n_entries(data->batch);
+  for (guint i = 0; i < n_entries; i++) {
+    if (g_cancellable_is_cancelled(cancellable)) {
+      g_ptr_array_unref(items);
+      g_task_return_error_if_cancelled(task);
+      return;
+    }
+    const GnostrTimelineBatchEntry *entry =
+        gnostr_timeline_batch_get_entry(data->batch, i);
+    if (!entry)
+      continue;
+    GnostrTimelineItemViewModel *vm =
+        gnostr_timeline_hydrator_hydrate_entry(self, entry);
+    if (vm)
+      g_ptr_array_add(items, vm);
+  }
+  if (g_cancellable_is_cancelled(cancellable)) {
+    g_ptr_array_unref(items);
+    g_task_return_error_if_cancelled(task);
+    return;
+  }
+
+  g_ptr_array_sort(items, sort_vm_ptrs_cb);
+  dedup_sorted_items(items);
   g_task_return_pointer(task, items, (GDestroyNotify)g_ptr_array_unref);
 }
 
@@ -606,7 +630,9 @@ gnostr_timeline_hydrator_hydrate_batch_async(GnostrTimelineHydrator *self,
 
   HydrateTaskData *data = g_new0(HydrateTaskData, 1);
   data->batch = g_object_ref(batch);
-  data->generation = gnostr_timeline_batch_get_generation(batch);
+  /* Generation is main-context state: capture it before worker dispatch and do
+   * not read the mutable field from the worker thread. */
+  data->generation = self->generation;
 
   GTask *task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_task_data(task, data, (GDestroyNotify)hydrate_task_data_free);
@@ -622,5 +648,17 @@ gnostr_timeline_hydrator_hydrate_batch_finish(GnostrTimelineHydrator *self,
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_HYDRATOR(self), NULL);
   g_return_val_if_fail(g_task_is_valid(result, self), NULL);
 
-  return g_task_propagate_pointer(G_TASK(result), error);
+  GTask *task = G_TASK(result);
+  GPtrArray *items = g_task_propagate_pointer(task, error);
+  if (!items)
+    return NULL;
+
+  /* finish() runs on the dispatching main context.  Do not publish worker
+   * results after a query generation change. */
+  HydrateTaskData *data = g_task_get_task_data(task);
+  if (!data || data->generation != self->generation) {
+    g_ptr_array_unref(items);
+    return NULL;
+  }
+  return items;
 }

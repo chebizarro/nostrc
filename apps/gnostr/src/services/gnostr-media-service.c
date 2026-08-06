@@ -44,6 +44,10 @@ gboolean gnostr_is_remote_media_allowed(void);
 #define OG_METADATA_VERSION 1
 #define MAX_THUMBNAIL_CONCURRENCY 2
 #define DEFAULT_THUMBNAIL_TIMEOUT_MSEC 10000
+#define DEFAULT_DISK_WORKER_COUNT 2
+#define DEFAULT_DISK_MAX_QUEUED_JOBS 32
+#define DEFAULT_DISK_MAX_QUEUED_BYTES ((guint64)32 * MIB)
+#define MAX_DISK_WORKER_COUNT 2
 
 G_LOCK_DEFINE_STATIC(media_disk);
 
@@ -54,6 +58,7 @@ typedef enum {
 
 typedef struct _PendingRequest PendingRequest;
 typedef struct _Subscriber Subscriber;
+typedef struct _DiskExecutorEntry DiskExecutorEntry;
 
 typedef struct {
   char *key;
@@ -183,6 +188,12 @@ struct _GnostrMediaService {
   GHashTable *known_namespaces; /* namespace strings already scheduled */
   GHashTable *namespace_epochs; /* namespace -> guint64*, guarded by media_disk */
   guint outstanding_disk_jobs;
+  GThreadPool *disk_pool;
+  GQueue disk_queue; /* DiskExecutorEntry*; main-context-only */
+  GHashTable *disk_coalesced; /* DiskExecutorEntry.key -> entry */
+  guint active_disk_jobs;
+  guint64 queued_disk_bytes;
+  guint64 dropped_disk_jobs;
 #ifdef GNOSTR_MEDIA_SERVICE_TESTING
   char *namespace_override;
   GnostrMediaTestThumbnailExtractor test_thumbnail_extractor;
@@ -213,6 +224,7 @@ static void start_disk_lookup(PendingRequest *request);
 static void ensure_namespace_sweep(GnostrMediaService *self,
                                    const char *cache_namespace);
 static void start_queued_thumbnails(GnostrMediaService *self);
+static void disk_executor_pool_worker(gpointer data, gpointer user_data);
 
 GQuark
 gnostr_media_error_quark(void)
@@ -243,6 +255,9 @@ gnostr_media_service_config_init(GnostrMediaServiceConfig *config)
   config->disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_INLINE] = DEFAULT_INLINE_BUDGET;
   config->disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_OG_IMAGE] = DEFAULT_OG_IMAGE_BUDGET;
   config->disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER] = DEFAULT_VIDEO_POSTER_BUDGET;
+  config->disk_worker_count = DEFAULT_DISK_WORKER_COUNT;
+  config->disk_max_queued_jobs = DEFAULT_DISK_MAX_QUEUED_JOBS;
+  config->disk_max_queued_bytes = DEFAULT_DISK_MAX_QUEUED_BYTES;
 }
 
 GnostrOgMetadata *
@@ -2153,19 +2168,219 @@ disk_write_worker(GTask *task,
     g_task_return_boolean(task, TRUE);
 }
 
+struct _DiskExecutorEntry {
+  char *key;
+  GTask *task;
+  GTaskThreadFunc worker;
+  guint64 retained_bytes;
+  gboolean low_priority;
+  gboolean active;
+  gboolean discarded;
+  DiskExecutorEntry *replacement; /* latest queued duplicate */
+  DiskExecutorEntry *predecessor; /* active job this entry follows */
+};
+
+static void disk_executor_start_queued(GnostrMediaService *self);
+
+static void
+disk_executor_entry_free(DiskExecutorEntry *entry)
+{
+  if (!entry)
+    return;
+  g_clear_object(&entry->task);
+  g_free(entry->key);
+  g_free(entry);
+}
+
+static DiskExecutorEntry *
+disk_executor_oldest_write(GnostrMediaService *self)
+{
+  for (GList *link = self->disk_queue.head; link; link = link->next) {
+    DiskExecutorEntry *entry = link->data;
+    if (entry->low_priority)
+      return entry;
+  }
+  return NULL;
+}
+
+static void
+disk_executor_discard(DiskExecutorEntry *entry)
+{
+  entry->discarded = TRUE;
+  GTask *task = g_steal_pointer(&entry->task);
+  /* Release retained bytes immediately; the completed GTask callback only
+   * keeps the tiny executor entry alive until the main context dispatches. */
+  g_task_set_task_data(task, NULL, NULL);
+  g_task_return_boolean(task, TRUE);
+  g_object_unref(task);
+}
+
+static void
+disk_executor_drop_queued(GnostrMediaService *self,
+                          DiskExecutorEntry *entry)
+{
+  g_assert(!entry->active);
+  g_assert(g_queue_remove(&self->disk_queue, entry));
+  if (entry->predecessor && entry->predecessor->replacement == entry)
+    entry->predecessor->replacement = NULL;
+  g_assert(self->queued_disk_bytes >= entry->retained_bytes);
+  self->queued_disk_bytes -= entry->retained_bytes;
+  if (g_hash_table_lookup(self->disk_coalesced, entry->key) == entry)
+    g_hash_table_remove(self->disk_coalesced, entry->key);
+  g_assert(self->outstanding_disk_jobs > 0);
+  self->outstanding_disk_jobs--;
+  self->dropped_disk_jobs++;
+  disk_executor_discard(entry);
+}
+
+static void
+disk_executor_launch(GnostrMediaService *self, DiskExecutorEntry *entry)
+{
+  g_autoptr(GError) error = NULL;
+  if (!self->disk_pool) {
+    self->disk_pool = g_thread_pool_new(
+        disk_executor_pool_worker, NULL, (gint)self->config.disk_worker_count,
+        TRUE, &error);
+  }
+
+  entry->active = TRUE;
+  self->active_disk_jobs++;
+  if (!self->disk_pool || !g_thread_pool_push(self->disk_pool, entry, &error)) {
+    if (!error)
+      error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                  "Failed to dispatch media disk job");
+    GTask *task = g_steal_pointer(&entry->task);
+    g_task_return_error(task, g_steal_pointer(&error));
+    g_object_unref(task);
+  }
+}
+
+static void
+disk_executor_start_queued(GnostrMediaService *self)
+{
+  while (self->active_disk_jobs < self->config.disk_worker_count &&
+         !g_queue_is_empty(&self->disk_queue)) {
+    DiskExecutorEntry *entry = g_queue_pop_head(&self->disk_queue);
+    g_assert(self->queued_disk_bytes >= entry->retained_bytes);
+    self->queued_disk_bytes -= entry->retained_bytes;
+    disk_executor_launch(self, entry);
+  }
+}
+
+static void
+disk_executor_complete(GnostrMediaService *self,
+                       DiskExecutorEntry *entry)
+{
+  g_assert(entry->active);
+  g_assert(self->active_disk_jobs > 0);
+  self->active_disk_jobs--;
+  DiskExecutorEntry *replacement = entry->replacement;
+  g_hash_table_remove(self->disk_coalesced, entry->key);
+  if (replacement) {
+    replacement->predecessor = NULL;
+    g_hash_table_insert(self->disk_coalesced, replacement->key, replacement);
+  }
+  g_assert(self->outstanding_disk_jobs > 0);
+  self->outstanding_disk_jobs--;
+  disk_executor_entry_free(entry);
+  disk_executor_start_queued(self);
+}
+
 static void
 detached_disk_job_done(GObject *source,
                        GAsyncResult *result,
                        gpointer user_data)
 {
-  (void)user_data;
   GnostrMediaService *self = GNOSTR_MEDIA_SERVICE(source);
+  DiskExecutorEntry *entry = user_data;
   g_autoptr(GError) error = NULL;
   g_task_propagate_boolean(G_TASK(result), &error);
   if (error)
     g_debug("media disk maintenance failed: %s", error->message);
-  g_assert(self->outstanding_disk_jobs > 0);
-  self->outstanding_disk_jobs--;
+  if (entry->discarded)
+    disk_executor_entry_free(entry);
+  else
+    disk_executor_complete(self, entry);
+}
+
+static DiskExecutorEntry *
+disk_executor_entry_new(GnostrMediaService *self,
+                        char *key,
+                        guint64 retained_bytes,
+                        gboolean low_priority,
+                        GTaskThreadFunc worker,
+                        gpointer task_data,
+                        GDestroyNotify task_data_destroy)
+{
+  DiskExecutorEntry *entry = g_new0(DiskExecutorEntry, 1);
+  entry->key = key;
+  entry->worker = worker;
+  entry->retained_bytes = retained_bytes;
+  entry->low_priority = low_priority;
+  entry->task = g_task_new(self, NULL, detached_disk_job_done, entry);
+  g_task_set_priority(entry->task,
+                      low_priority ? G_PRIORITY_LOW : G_PRIORITY_DEFAULT_IDLE);
+  g_task_set_task_data(entry->task, task_data, task_data_destroy);
+  return entry;
+}
+
+static gboolean
+disk_executor_submit(GnostrMediaService *self, DiskExecutorEntry *entry)
+{
+  DiskExecutorEntry *active_predecessor = NULL;
+  DiskExecutorEntry *existing =
+      g_hash_table_lookup(self->disk_coalesced, entry->key);
+  if (existing) {
+    if (existing->active) {
+      /* The running job cannot be replaced safely.  Retain at most one latest
+       * follow-up so the newest payload wins without duplicate concurrency. */
+      active_predecessor = existing;
+      if (existing->replacement) {
+        DiskExecutorEntry *old_replacement = existing->replacement;
+        existing->replacement = NULL;
+        disk_executor_drop_queued(self, old_replacement);
+      }
+    } else {
+      disk_executor_drop_queued(self, existing);
+    }
+  }
+
+  if (!active_predecessor &&
+      self->active_disk_jobs < self->config.disk_worker_count &&
+      g_queue_is_empty(&self->disk_queue)) {
+    g_hash_table_insert(self->disk_coalesced, entry->key, entry);
+    self->outstanding_disk_jobs++;
+    disk_executor_launch(self, entry);
+    return TRUE;
+  }
+
+  while (g_queue_get_length(&self->disk_queue) >=
+             self->config.disk_max_queued_jobs ||
+         entry->retained_bytes > self->config.disk_max_queued_bytes -
+                                     MIN(self->queued_disk_bytes,
+                                         self->config.disk_max_queued_bytes)) {
+    DiskExecutorEntry *oldest = disk_executor_oldest_write(self);
+    if (!oldest) {
+      self->dropped_disk_jobs++;
+      disk_executor_discard(entry);
+      return FALSE;
+    }
+    disk_executor_drop_queued(self, oldest);
+  }
+
+  if (active_predecessor) {
+    active_predecessor->replacement = entry;
+    entry->predecessor = active_predecessor;
+  } else
+    g_hash_table_insert(self->disk_coalesced, entry->key, entry);
+  if (entry->low_priority)
+    g_queue_push_tail(&self->disk_queue, entry);
+  else
+    g_queue_push_head(&self->disk_queue, entry);
+  self->queued_disk_bytes += entry->retained_bytes;
+  self->outstanding_disk_jobs++;
+  disk_executor_start_queued(self);
+  return TRUE;
 }
 
 static void
@@ -2185,12 +2400,13 @@ schedule_disk_write(PendingRequest *request,
   job->resource_class = resource_class;
   job->bytes = g_bytes_ref(request->body);
   job->budget = self->config.disk_budget_bytes[resource_class];
-  self->outstanding_disk_jobs++;
-  GTask *task = g_task_new(self, NULL, detached_disk_job_done, NULL);
-  g_task_set_priority(task, G_PRIORITY_LOW);
-  g_task_set_task_data(task, job, (GDestroyNotify)disk_write_job_free);
-  g_task_run_in_thread(task, disk_write_worker);
-  g_object_unref(task);
+  gsize retained_bytes = g_bytes_get_size(job->bytes);
+  char *key = g_strdup_printf("texture:%s:%u:%s", job->cache_namespace,
+                              (guint)job->resource_class, job->url);
+  DiskExecutorEntry *entry = disk_executor_entry_new(
+      self, key, retained_bytes, TRUE, disk_write_worker, job,
+      (GDestroyNotify)disk_write_job_free);
+  disk_executor_submit(self, entry);
 }
 
 typedef struct {
@@ -2333,12 +2549,16 @@ schedule_og_write(PendingRequest *request, GnostrOgMetadata *metadata)
   job->max_entries = self->config.og_metadata_max_entries;
   job->disk_budget =
       self->config.disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_OG_IMAGE];
-  self->outstanding_disk_jobs++;
-  GTask *task = g_task_new(self, NULL, detached_disk_job_done, NULL);
-  g_task_set_priority(task, G_PRIORITY_LOW);
-  g_task_set_task_data(task, job, (GDestroyNotify)og_write_job_free);
-  g_task_run_in_thread(task, og_write_worker);
-  g_object_unref(task);
+  guint64 retained_bytes = strlen(job->url) + strlen(job->cache_namespace);
+  retained_bytes += job->title ? strlen(job->title) : 0;
+  retained_bytes += job->description ? strlen(job->description) : 0;
+  retained_bytes += job->image_url ? strlen(job->image_url) : 0;
+  retained_bytes += job->source_url ? strlen(job->source_url) : 0;
+  char *key = g_strdup_printf("og:%s:%s", job->cache_namespace, job->url);
+  DiskExecutorEntry *entry = disk_executor_entry_new(
+      self, key, retained_bytes, TRUE, og_write_worker, job,
+      (GDestroyNotify)og_write_job_free);
+  disk_executor_submit(self, entry);
 }
 
 typedef struct {
@@ -2380,33 +2600,15 @@ sweep_worker(GTask *task,
   g_task_return_boolean(task, TRUE);
 }
 
-typedef struct {
-  GnostrMediaService *service;
-  SweepJob *job;
-} SweepDispatch;
-
 static void
-sweep_dispatch_free(SweepDispatch *dispatch)
+disk_executor_pool_worker(gpointer data, gpointer user_data)
 {
-  if (!dispatch)
-    return;
-  g_clear_object(&dispatch->service);
-  sweep_job_free(dispatch->job);
-  g_free(dispatch);
-}
-
-static gboolean
-start_sweep_idle(gpointer data)
-{
-  SweepDispatch *dispatch = data;
-  GTask *task = g_task_new(dispatch->service, NULL,
-                           detached_disk_job_done, NULL);
-  g_task_set_priority(task, G_PRIORITY_LOW);
-  g_task_set_task_data(task, g_steal_pointer(&dispatch->job),
-                       (GDestroyNotify)sweep_job_free);
-  g_task_run_in_thread(task, sweep_worker);
+  (void)user_data;
+  DiskExecutorEntry *entry = data;
+  GTask *task = g_steal_pointer(&entry->task);
+  entry->worker(task, g_task_get_source_object(task),
+                g_task_get_task_data(task), g_task_get_cancellable(task));
   g_object_unref(task);
-  return G_SOURCE_REMOVE;
 }
 
 static void
@@ -2420,16 +2622,11 @@ ensure_namespace_sweep(GnostrMediaService *self, const char *cache_namespace)
   memcpy(job->budgets, self->config.disk_budget_bytes,
          sizeof(job->budgets));
   job->og_metadata_max_entries = self->config.og_metadata_max_entries;
-  SweepDispatch *dispatch = g_new0(SweepDispatch, 1);
-  dispatch->service = g_object_ref(self);
-  dispatch->job = job;
-  self->outstanding_disk_jobs++;
-  GSource *source = g_idle_source_new();
-  g_source_set_priority(source, G_PRIORITY_LOW);
-  g_source_set_callback(source, start_sweep_idle, dispatch,
-                        (GDestroyNotify)sweep_dispatch_free);
-  g_source_attach(source, self->context);
-  g_source_unref(source);
+  char *key = g_strdup_printf("sweep:%s", cache_namespace);
+  DiskExecutorEntry *entry = disk_executor_entry_new(
+      self, key, 0, FALSE, sweep_worker, job, (GDestroyNotify)sweep_job_free);
+  if (!disk_executor_submit(self, entry))
+    g_hash_table_remove(self->known_namespaces, cache_namespace);
 }
 
 #ifdef HAVE_SOUP3
@@ -2909,6 +3106,8 @@ gnostr_media_service_new(const GnostrMediaServiceConfig *config)
             MAX_THUMBNAIL_CONCURRENCY);
   self->config.thumbnail_timeout_msec =
       MAX(self->config.thumbnail_timeout_msec, 1);
+  self->config.disk_worker_count =
+      CLAMP(self->config.disk_worker_count, 1, MAX_DISK_WORKER_COUNT);
   for (guint i = 0; i < GNOSTR_MEDIA_RESOURCE_N_CLASSES; i++)
     self->texture_caches[i].stats.budget_bytes =
         self->config.memory_budget_bytes[i];
@@ -2995,6 +3194,10 @@ gnostr_media_service_get_stats(GnostrMediaService *self,
   out_stats->og_metadata_hits = self->og_hits;
   out_stats->og_metadata_misses = self->og_misses;
   out_stats->og_metadata_evictions = self->og_evictions;
+  out_stats->queued_disk_jobs = g_queue_get_length(&self->disk_queue);
+  out_stats->queued_disk_bytes = self->queued_disk_bytes;
+  out_stats->active_disk_jobs = self->active_disk_jobs;
+  out_stats->dropped_disk_jobs = self->dropped_disk_jobs;
 }
 
 guint
@@ -3190,6 +3393,55 @@ gnostr_media_service_test_get_outstanding_disk_jobs(GnostrMediaService *self)
 }
 
 void
+gnostr_media_service_test_enqueue_disk_write(
+    GnostrMediaService *self,
+    const char *cache_namespace,
+    GnostrMediaResourceClass resource_class,
+    const char *url,
+    GBytes *bytes)
+{
+  g_return_if_fail(GNOSTR_IS_MEDIA_SERVICE(self));
+  g_return_if_fail(cache_namespace != NULL);
+  g_return_if_fail(resource_class >= 0 &&
+                   resource_class < GNOSTR_MEDIA_RESOURCE_N_CLASSES);
+  g_return_if_fail(url != NULL);
+  g_return_if_fail(bytes != NULL);
+
+  DiskWriteJob *job = g_new0(DiskWriteJob, 1);
+  job->cache_namespace = g_strdup(cache_namespace);
+  job->namespace_epoch = namespace_epoch_get(self, cache_namespace);
+  job->url = g_strdup(url);
+  job->resource_class = resource_class;
+  job->bytes = g_bytes_ref(bytes);
+  job->budget = self->config.disk_budget_bytes[resource_class];
+  char *key = g_strdup_printf("texture:%s:%u:%s", cache_namespace,
+                              (guint)resource_class, url);
+  DiskExecutorEntry *entry = disk_executor_entry_new(
+      self, key, g_bytes_get_size(bytes), TRUE, disk_write_worker, job,
+      (GDestroyNotify)disk_write_job_free);
+  disk_executor_submit(self, entry);
+}
+
+void
+gnostr_media_service_test_enqueue_sweep(
+    GnostrMediaService *self,
+    const char *cache_namespace)
+{
+  g_return_if_fail(GNOSTR_IS_MEDIA_SERVICE(self));
+  g_return_if_fail(cache_namespace != NULL);
+
+  SweepJob *job = g_new0(SweepJob, 1);
+  job->cache_namespace = g_strdup(cache_namespace);
+  memcpy(job->budgets, self->config.disk_budget_bytes,
+         sizeof(job->budgets));
+  job->og_metadata_max_entries = self->config.og_metadata_max_entries;
+  char *key = g_strdup_printf("sweep:%s", cache_namespace);
+  DiskExecutorEntry *entry = disk_executor_entry_new(
+      self, key, 0, FALSE, sweep_worker, job, (GDestroyNotify)sweep_job_free);
+  (void)disk_executor_submit(self, entry);
+}
+
+void
 gnostr_media_service_test_set_thumbnail_extractor(
     GnostrMediaService *self,
     GnostrMediaTestThumbnailExtractor extractor,
@@ -3271,6 +3523,13 @@ gnostr_media_service_finalize(GObject *object)
   g_hash_table_unref(self->pending);
   g_hash_table_unref(self->negative);
   g_hash_table_unref(self->og_cache);
+  g_assert(self->outstanding_disk_jobs == 0);
+  g_assert(self->active_disk_jobs == 0);
+  g_assert(g_queue_is_empty(&self->disk_queue));
+  g_assert(g_hash_table_size(self->disk_coalesced) == 0);
+  if (self->disk_pool)
+    g_thread_pool_free(self->disk_pool, FALSE, TRUE);
+  g_hash_table_unref(self->disk_coalesced);
   g_hash_table_unref(self->known_namespaces);
   g_hash_table_unref(self->namespace_epochs);
   g_free(self->disk_root);
@@ -3302,6 +3561,7 @@ gnostr_media_service_init(GnostrMediaService *self)
                                      "gnostr", "media", NULL);
   self->known_namespaces = g_hash_table_new_full(
       g_str_hash, g_str_equal, g_free, NULL);
+  self->disk_coalesced = g_hash_table_new(g_str_hash, g_str_equal);
   self->namespace_epochs = g_hash_table_new_full(
       g_str_hash, g_str_equal, g_free, g_free);
   for (guint i = 0; i < GNOSTR_MEDIA_RESOURCE_N_CLASSES; i++)
