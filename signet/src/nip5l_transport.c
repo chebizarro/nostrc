@@ -46,6 +46,7 @@ typedef struct {
   char *pubkey_hex;
   bool authenticated;
   GIOChannel *channel;
+  int channel_fd;
 } Nip5lConnState;
 
 static void nip5l_conn_state_free(Nip5lConnState *s) {
@@ -529,6 +530,7 @@ nip5l_on_incoming(GSocketService *service,
     return TRUE;
   }
   cs->channel = g_io_channel_unix_new(channel_fd);
+  cs->channel_fd = channel_fd;
   GIOFlags channel_flags = g_io_channel_get_flags(cs->channel);
   g_io_channel_set_flags(cs->channel, channel_flags & ~G_IO_FLAG_NONBLOCK, NULL);
   g_io_channel_set_encoding(cs->channel, NULL, NULL);
@@ -663,8 +665,13 @@ void signet_nip5l_server_stop(SignetNip5lServer *ns) {
   g_mutex_lock(&ns->mu);
   for (GList *it = ns->connections; it; it = it->next) {
     Nip5lConnState *cs = (Nip5lConnState *)it->data;
-    if (cs && cs->channel)
-      g_io_channel_shutdown(cs->channel, FALSE, NULL);
+    /* Do not call g_io_channel_shutdown() from the stop thread while the
+     * client thread is blocked inside g_io_channel_read_line(): GIOChannel
+     * shutdown is not safe concurrently and deadlocks on Linux.  A socket
+     * shutdown is thread-safe and wakes the reader; that owning thread then
+     * performs the GIOChannel shutdown/unref during normal cleanup. */
+    if (cs && cs->channel_fd >= 0)
+      shutdown(cs->channel_fd, SHUT_RDWR);
   }
   while (ns->active_connections > 0)
     g_cond_wait(&ns->connections_drained, &ns->mu);

@@ -25,6 +25,15 @@ project('signet', 'c',
 cc = meson.get_compiler('c')
 fs = import('fs')
 
+# Signet uses POSIX.1-2008 and Linux extensions such as O_CLOEXEC,
+# O_NOFOLLOW, SA_RESTART, and mkstemps.  Strict c11 hides those declarations
+# on glibc unless a feature-test macro is defined before system headers.
+# Keep the requirement explicit so Meson and CMake do not silently compile
+# different source APIs.
+if host_machine.system() == 'linux'
+  add_project_arguments('-D_GNU_SOURCE', language: 'c')
+endif
+
 # Resolve monorepo CMake build directory for in-tree libraries
 nostrc_build_dir_opt = get_option('nostrc_build_dir')
 nostrc_build_dir = fs.is_absolute(nostrc_build_dir_opt) ? nostrc_build_dir_opt : (meson.current_source_dir() / nostrc_build_dir_opt)

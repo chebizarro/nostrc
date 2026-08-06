@@ -186,6 +186,18 @@ target_link_libraries(test_client_bindings PRIVATE signet_core)
 if (TARGET nostr)
   target_link_libraries(test_client_bindings PRIVATE nostr)
 endif()
+
+# Generic credential lifecycle, authorization, Git helper, backup/restore,
+# and concurrency acceptance tests. Keep this list aligned with meson.build.
+foreach(_signet_security_test IN ITEMS
+    credential_lifecycle
+    credential_access
+    git_credential
+    backup_restore
+    item3_concurrency)
+  add_executable(test_${_signet_security_test} test_${_signet_security_test}.c)
+  target_link_libraries(test_${_signet_security_test} PRIVATE signet_core)
+endforeach()
 if (TARGET PkgConfig::GLIB)
   target_link_libraries(test_client_bindings PRIVATE PkgConfig::GLIB)
 endif()
@@ -316,6 +328,11 @@ add_test(NAME mgmt_replay COMMAND test_mgmt_replay)
 add_test(NAME pubkey_backfill COMMAND test_pubkey_backfill)
 add_test(NAME reissue_self_service COMMAND test_reissue_self_service)
 add_test(NAME client_bindings COMMAND test_client_bindings)
+add_test(NAME credential_lifecycle COMMAND test_credential_lifecycle)
+add_test(NAME credential_access COMMAND test_credential_access)
+add_test(NAME git_credential COMMAND test_git_credential)
+add_test(NAME backup_restore COMMAND test_backup_restore)
+add_test(NAME item3_concurrency COMMAND test_item3_concurrency)
 if (SIGNET_ENABLE_PASSKEYS)
   add_test(NAME store_passkeys COMMAND test_store_passkeys)
   add_test(NAME fido_service COMMAND test_fido_service)

@@ -9,6 +9,10 @@ cmake_minimum_required(VERSION 3.22)
 
 project(signet C)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_compile_definitions(_GNU_SOURCE)
+endif()
+
 if (NOT DEFINED SIGNET_ENABLE)
   option(SIGNET_ENABLE "Build Signet NIP-46 bunker service (signetd + signetctl)" ON)
 endif()

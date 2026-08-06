@@ -20,6 +20,60 @@ on:
   workflow_dispatch:
 
 jobs:
+  meson-linux:
+    name: signet Meson • sqlcipher=${{ matrix.sqlcipher }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sqlcipher: 'OFF'
+            meson_sqlcipher: 'false'
+          - sqlcipher: 'ON'
+            meson_sqlcipher: 'true'
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config meson \
+            libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
+            libssl-dev libcurl4-openssl-dev libglib2.0-dev libjson-glib-dev \
+            libgit2-dev libnsync-dev libsqlite3-dev libmicrohttpd-dev \
+            libcbor-dev libsqlcipher-dev
+
+      - name: Build in-tree libraries
+        run: |
+          cmake -S . -B build-meson-deps -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
+            -DWITH_NOSTRDB=ON -DLIBNOSTR_WITH_NOSTRDB=ON \
+            -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF \
+            -DSIGNET_ENABLE=ON -DBUILD_TESTING=OFF \
+            -DSIGNET_ENABLE_PASSKEYS=OFF \
+            -DSIGNET_USE_SQLCIPHER=${{ matrix.sqlcipher }}
+          cmake --build build-meson-deps --target signetd signetctl
+
+      - name: Configure Meson
+        run: |
+          meson setup build-signet-meson signet \
+            -Dnostrc_build_dir="$PWD/build-meson-deps" \
+            -Dsignet_require_in_tree_libs=true \
+            -Dsignet_use_sqlcipher=${{ matrix.meson_sqlcipher }} \
+            -Dwerror=true
+
+      - name: Build and test Meson suite
+        run: |
+          meson compile -C build-signet-meson
+          meson test -C build-signet-meson --print-errorlogs
+
   build-and-test:
     name: signet • passkeys=${{ matrix.passkeys }} • sqlcipher=${{ matrix.sqlcipher }}
     runs-on: ubuntu-latest

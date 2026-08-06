@@ -144,11 +144,6 @@ static char *signet_strdup0(const char *s) {
   return strdup(s);
 }
 
-static gboolean signet_streq0(const char *a, const char *b) {
-  if (!a || !b) return FALSE;
-  return strcmp(a, b) == 0;
-}
-
 static char *signet_strip_quotes_dup(const char *s) {
   if (!s) return NULL;
 
