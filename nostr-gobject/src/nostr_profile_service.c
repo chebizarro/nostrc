@@ -104,6 +104,78 @@ static PendingRequest *pending_request_new(const char *pubkey_hex) {
   return req;
 }
 
+/* Private batch-queue primitives.  They are intentionally not declared in the
+ * installed API; the batching unit test declares them locally so it can cover
+ * append-while-active deterministically without a relay or mock pool. */
+#define PROFILE_FETCH_BATCH_SIZE 100
+
+static void fetch_batch_free(GPtrArray *batch) {
+  if (batch)
+    g_ptr_array_unref(batch);
+}
+
+void gnostr_profile_service_private_fetch_batches_append(
+    GPtrArray **fetch_batches,
+    guint *fetch_batch_pos,
+    GPtrArray *pubkeys) {
+  g_return_if_fail(fetch_batches != NULL);
+  g_return_if_fail(fetch_batch_pos != NULL);
+  g_return_if_fail(pubkeys != NULL);
+
+  /* Consumed slots no longer own their batches.  If there is no queued tail,
+   * compact back to an empty queue before appending the next generation. */
+  if (*fetch_batches && *fetch_batch_pos >= (*fetch_batches)->len) {
+    g_clear_pointer(fetch_batches, g_ptr_array_unref);
+    *fetch_batch_pos = 0;
+  }
+
+  if (!*fetch_batches) {
+    *fetch_batches = g_ptr_array_new_with_free_func(
+        (GDestroyNotify)fetch_batch_free);
+  }
+
+  for (guint off = 0; off < pubkeys->len; off += PROFILE_FETCH_BATCH_SIZE) {
+    guint n = MIN(PROFILE_FETCH_BATCH_SIZE, pubkeys->len - off);
+    GPtrArray *batch = g_ptr_array_new_with_free_func(g_free);
+
+    for (guint i = 0; i < n; i++) {
+      char *pubkey = g_ptr_array_index(pubkeys, off + i);
+      g_ptr_array_index(pubkeys, off + i) = NULL;
+      g_ptr_array_add(batch, pubkey);
+    }
+
+    g_ptr_array_add(*fetch_batches, batch);
+  }
+
+  g_ptr_array_unref(pubkeys);
+}
+
+GPtrArray *gnostr_profile_service_private_fetch_batches_pop(
+    GPtrArray *fetch_batches,
+    guint *fetch_batch_pos) {
+  g_return_val_if_fail(fetch_batch_pos != NULL, NULL);
+
+  while (fetch_batches && *fetch_batch_pos < fetch_batches->len) {
+    guint pos = (*fetch_batch_pos)++;
+    GPtrArray *batch = g_ptr_array_index(fetch_batches, pos);
+    g_ptr_array_index(fetch_batches, pos) = NULL;
+    if (batch)
+      return batch;
+  }
+
+  return NULL;
+}
+
+void gnostr_profile_service_private_fetch_batches_clear(
+    GPtrArray **fetch_batches,
+    guint *fetch_batch_pos) {
+  g_return_if_fail(fetch_batches != NULL);
+  g_return_if_fail(fetch_batch_pos != NULL);
+
+  g_clear_pointer(fetch_batches, g_ptr_array_unref);
+  *fetch_batch_pos = 0;
+}
+
 static gboolean relay_array_contains(GPtrArray *relays, const char *url) {
   if (!relays || !url || !*url) return FALSE;
   for (guint i = 0; i < relays->len; i++) {
@@ -169,7 +241,7 @@ static GnostrProfileMeta *check_ndb_cache(const char *pubkey_hex) {
   void *txn = NULL;
   if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) return NULL;
 
-  char *json = NULL;
+  g_autofree char *json = NULL;
   int json_len = 0;
   int rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &json_len, NULL);
   storage_ndb_end_query(txn);
@@ -184,8 +256,16 @@ static GnostrProfileMeta *check_ndb_cache(const char *pubkey_hex) {
   return meta;
 }
 
-/* Fire callbacks for a pubkey with the given profile (may be NULL) */
-static void fire_callbacks(GnostrProfileService *svc, const char *pubkey_hex, const GnostrProfileMeta *meta) {
+/* Forward declarations */
+static void dispatch_next_batch(GnostrProfileService *svc);
+static gboolean debounce_timeout_cb(gpointer user_data);
+
+/* Complete a request, or retain it for one retry when hints arrived after the
+ * active batch took its relay snapshot. */
+static void complete_request(GnostrProfileService *svc,
+                             const char *pubkey_hex,
+                             const GnostrProfileMeta *meta,
+                             gboolean retry_for_new_hints) {
   g_mutex_lock(&svc->mutex);
 
   PendingRequest *req = g_hash_table_lookup(svc->pending_requests, pubkey_hex);
@@ -194,24 +274,37 @@ static void fire_callbacks(GnostrProfileService *svc, const char *pubkey_hex, co
     return;
   }
 
-  /* Copy callbacks to fire outside the lock */
-  GPtrArray *to_fire = g_ptr_array_new();
-  for (guint i = 0; i < req->callbacks->len; i++) {
-    PendingCallback *cb = g_ptr_array_index(req->callbacks, i);
-    if (cb && cb->callback) {
-      PendingCallback *copy = g_new0(PendingCallback, 1);
-      copy->callback = cb->callback;
-      copy->user_data = cb->user_data;
-      g_ptr_array_add(to_fire, copy);
+  if (retry_for_new_hints && req->retry_with_new_hints) {
+    req->retry_with_new_hints = FALSE;
+    req->in_flight = FALSE;
+    if (!svc->debounce_source_id) {
+      svc->debounce_source_id =
+          g_timeout_add(svc->debounce_ms, debounce_timeout_cb, svc);
     }
+    g_mutex_unlock(&svc->mutex);
+    return;
   }
 
-  /* Remove the request now that we're handling it */
+  /* Steal the owned callback array so delivery can happen outside the lock.
+   * Its existing element free function releases every PendingCallback after
+   * delivery; copying the elements here used to leak one allocation each. */
+  GPtrArray *to_fire = g_steal_pointer(&req->callbacks);
+  guint callback_count = to_fire->len;
+
+  g_warn_if_fail(svc->stats.pending_callbacks >= callback_count);
+  if (svc->stats.pending_callbacks >= callback_count)
+    svc->stats.pending_callbacks -= callback_count;
+  else
+    svc->stats.pending_callbacks = 0;
+
+  /* Terminal completion removes the request, so its in-flight state cannot
+   * strand it.  pending_request_free() sees the stolen callbacks as NULL. */
   g_hash_table_remove(svc->pending_requests, pubkey_hex);
+  svc->stats.pending_requests = g_hash_table_size(svc->pending_requests);
 
   g_mutex_unlock(&svc->mutex);
 
-  /* Fire callbacks outside the lock */
+  /* Fire callbacks outside the lock. */
   for (guint i = 0; i < to_fire->len; i++) {
     PendingCallback *cb = g_ptr_array_index(to_fire, i);
     if (cb->callback) {
@@ -223,12 +316,20 @@ static void fire_callbacks(GnostrProfileService *svc, const char *pubkey_hex, co
     }
   }
 
-  g_ptr_array_free(to_fire, TRUE);
+  g_ptr_array_unref(to_fire);
 }
 
-/* Forward declarations */
-static void dispatch_next_batch(GnostrProfileService *svc);
-static gboolean debounce_timeout_cb(gpointer user_data);
+/* Fire callbacks for a terminal cache or network result (which may be NULL). */
+static void fire_callbacks(GnostrProfileService *svc,
+                           const char *pubkey_hex,
+                           const GnostrProfileMeta *meta) {
+  complete_request(svc, pubkey_hex, meta, FALSE);
+}
+
+static void complete_missing_request(GnostrProfileService *svc,
+                                     const char *pubkey_hex) {
+  complete_request(svc, pubkey_hex, NULL, TRUE);
+}
 
 /* ============== Batch Fetch Implementation ============== */
 
@@ -253,78 +354,70 @@ static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer use
     g_warning("[PROFILE_SERVICE] Fetch error: %s", error->message);
   }
 
+  /* Record the requested authors separately from returned events so each batch
+   * member completes exactly once, after all provider updates are applied. */
+  GHashTable *batch_pubkeys = g_hash_table_new(g_str_hash, g_str_equal);
+  GHashTable *resolved_pubkeys =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  for (guint i = 0; i < batch->len; i++) {
+    const char *pubkey = g_ptr_array_index(batch, i);
+    if (pubkey)
+      g_hash_table_add(batch_pubkeys, (gpointer)pubkey);
+  }
+
   if (jsons) {
     g_mutex_lock(&svc->mutex);
     svc->stats.profiles_fetched += jsons->len;
     g_mutex_unlock(&svc->mutex);
 
     /* Collect JSONs for background NDB ingestion.
-     * Provider cache updates + callbacks stay on main thread (fast). */
+     * Provider cache updates stay on the main thread (fast). */
     GPtrArray *to_ingest = g_ptr_array_new_with_free_func(g_free);
 
-    /* Process each returned profile */
     for (guint i = 0; i < jsons->len; i++) {
       const char *evt_json = g_ptr_array_index(jsons, i);
       if (!evt_json) continue;
 
-      /* Queue for background NDB ingestion (not on main thread) */
       g_ptr_array_add(to_ingest, g_strdup(evt_json));
 
-      /* Extract pubkey from event JSON using GNostrEvent and update provider cache */
       GNostrEvent *evt = gnostr_event_new_from_json(evt_json, NULL);
       if (evt) {
         const char *pubkey_hex = gnostr_event_get_pubkey(evt);
         if (pubkey_hex && strlen(pubkey_hex) == 64) {
-          /* Update the profile provider cache */
           gnostr_profile_provider_update(pubkey_hex, evt_json);
 
-          /* Record fetch timestamp so we can skip re-fetching
-           * this profile until it becomes stale. */
           unsigned char pk32[32];
           if (hex_to_bytes32(pubkey_hex, pk32)) {
             uint64_t now = (uint64_t)(g_get_real_time() / G_USEC_PER_SEC);
             storage_ndb_write_last_profile_fetch(pk32, now);
           }
 
-          /* Get the updated profile and fire callbacks */
-          GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey_hex);
-          fire_callbacks(svc, pubkey_hex, meta);
-          if (meta) gnostr_profile_meta_free(meta);
+          if (g_hash_table_contains(batch_pubkeys, pubkey_hex))
+            g_hash_table_add(resolved_pubkeys, g_strdup(pubkey_hex));
         }
         g_object_unref(evt);
       }
     }
     g_ptr_array_unref(jsons);
 
-    /* Spawn background thread for NDB ingestion */
     storage_ndb_ingest_events_async(to_ingest); /* takes ownership */
   }
 
-  /* For any pubkeys in the batch that didn't get a profile, fire callbacks with NULL */
   for (guint i = 0; i < batch->len; i++) {
     const char *pubkey = g_ptr_array_index(batch, i);
-    if (pubkey) {
-      /* If hints arrived after this batch took its relay snapshot,
-       * preserve the deduplicated request and retry once with the augmented
-       * relay set instead of completing all subscribers with NULL. */
-      gboolean pending = FALSE;
-      gboolean retry = FALSE;
-      g_mutex_lock(&svc->mutex);
-      PendingRequest *req = g_hash_table_lookup(svc->pending_requests, pubkey);
-      if (req) {
-        pending = TRUE;
-        retry = req->retry_with_new_hints;
-        if (retry) {
-          req->retry_with_new_hints = FALSE;
-          req->in_flight = FALSE;
-        }
-      }
-      g_mutex_unlock(&svc->mutex);
+    if (!pubkey) continue;
 
-      if (pending && !retry)
-        fire_callbacks(svc, pubkey, NULL);
+    if (g_hash_table_contains(resolved_pubkeys, pubkey)) {
+      GnostrProfileMeta *meta = gnostr_profile_provider_get(pubkey);
+      fire_callbacks(svc, pubkey, meta);
+      if (meta) gnostr_profile_meta_free(meta);
+    } else {
+      complete_missing_request(svc, pubkey);
     }
   }
+
+  g_hash_table_unref(resolved_pubkeys);
+  g_hash_table_unref(batch_pubkeys);
 
   /* Cleanup -- filters are owned by the GTask (via g_object_set_data_full
    * with nostr_filters_free destroy notify in gnostr_pool_query_async),
@@ -357,20 +450,17 @@ static void dispatch_next_batch(GnostrProfileService *svc) {
   /* Check if we have batches to process */
   if (!svc->fetch_batches || svc->fetch_batch_pos >= svc->fetch_batches->len) {
     /* No more batches - cleanup */
-    if (svc->fetch_batches) {
-      g_ptr_array_free(svc->fetch_batches, TRUE);
-      svc->fetch_batches = NULL;
-    }
-    svc->fetch_batch_pos = 0;
+    gnostr_profile_service_private_fetch_batches_clear(
+        &svc->fetch_batches, &svc->fetch_batch_pos);
 
-    /* Check if there are new pending requests that came in during fetch */
+    /* Check if there are new pending requests that came in during fetch.
+     * Keep source ID inspection and assignment under the service mutex. */
     guint pending = g_hash_table_size(svc->pending_requests);
-    g_mutex_unlock(&svc->mutex);
-
     if (pending > 0 && !svc->debounce_source_id) {
-      /* Schedule a new debounce to pick up new requests */
-      svc->debounce_source_id = g_timeout_add(svc->debounce_ms, debounce_timeout_cb, svc);
+      svc->debounce_source_id =
+          g_timeout_add(svc->debounce_ms, debounce_timeout_cb, svc);
     }
+    g_mutex_unlock(&svc->mutex);
     return;
   }
 
@@ -389,10 +479,9 @@ static void dispatch_next_batch(GnostrProfileService *svc) {
     }
     g_ptr_array_unref(configured);
   }
-  /* Get the next batch */
-  GPtrArray *batch = g_ptr_array_index(svc->fetch_batches, svc->fetch_batch_pos);
-  g_ptr_array_index(svc->fetch_batches, svc->fetch_batch_pos) = NULL; /* transfer ownership */
-  svc->fetch_batch_pos++;
+  /* Get the next batch (transfer full). */
+  GPtrArray *batch = gnostr_profile_service_private_fetch_batches_pop(
+      svc->fetch_batches, &svc->fetch_batch_pos);
 
   if (!batch || batch->len == 0) {
     if (batch) g_ptr_array_free(batch, TRUE);
@@ -428,11 +517,20 @@ static void dispatch_next_batch(GnostrProfileService *svc) {
     }
   }
 
+  /* Hints merged before this point are represented by the URL snapshot above.
+   * Only hints merged after the mutex is released should trigger a retry. */
+  for (guint i = 0; i < batch->len; i++) {
+    const char *pubkey = g_ptr_array_index(batch, i);
+    PendingRequest *req = g_hash_table_lookup(svc->pending_requests, pubkey);
+    if (req)
+      req->retry_with_new_hints = FALSE;
+  }
+
   if (urls->len == 0) {
     g_message("[PROFILE_SERVICE] No configured or hint relays, skipping fetch");
     g_mutex_unlock(&svc->mutex);
     for (guint i = 0; i < batch->len; i++)
-      fire_callbacks(svc, g_ptr_array_index(batch, i), NULL);
+      complete_missing_request(svc, g_ptr_array_index(batch, i));
     g_ptr_array_free(batch, TRUE);
     g_ptr_array_unref(urls);
     dispatch_next_batch(svc);
@@ -561,31 +659,12 @@ static gboolean debounce_timeout_cb(gpointer user_data) {
     return G_SOURCE_REMOVE;
   }
 
-  /* Partition into batches of 100 */
+  /* Append this debounce generation behind any batches already queued by an
+   * active fetch sequence.  Replacing the queue here strands the old tail's
+   * PendingRequest objects with in_flight=TRUE forever. */
   g_mutex_lock(&svc->mutex);
-
-  const guint batch_size = 100;
-  guint total = need_fetch->len;
-
-  if (svc->fetch_batches) {
-    /* Shouldn't happen, but clean up stale state */
-    g_ptr_array_free(svc->fetch_batches, TRUE);
-  }
-  svc->fetch_batches = g_ptr_array_new();
-  svc->fetch_batch_pos = 0;
-
-  for (guint off = 0; off < total; off += batch_size) {
-    guint n = (off + batch_size <= total) ? batch_size : (total - off);
-    GPtrArray *batch = g_ptr_array_new_with_free_func(g_free);
-    for (guint j = 0; j < n; j++) {
-      char *pk = g_ptr_array_index(need_fetch, off + j);
-      g_ptr_array_index(need_fetch, off + j) = NULL; /* transfer */
-      g_ptr_array_add(batch, pk);
-    }
-    g_ptr_array_add(svc->fetch_batches, batch);
-  }
-
-  g_ptr_array_free(need_fetch, TRUE);
+  gnostr_profile_service_private_fetch_batches_append(
+      &svc->fetch_batches, &svc->fetch_batch_pos, need_fetch);
   g_mutex_unlock(&svc->mutex);
 
   /* Start fetching */
@@ -689,7 +768,8 @@ void gnostr_profile_service_request_with_hints(
   }
 
   svc->stats.pending_requests = g_hash_table_size(svc->pending_requests);
-  svc->stats.pending_callbacks++;
+  if (callback)
+    svc->stats.pending_callbacks++;
 
   /* LEGITIMATE TIMEOUT - Debounce profile fetching to batch requests. */
   if (!svc->debounce_source_id && !req->in_flight) {
@@ -723,17 +803,28 @@ guint gnostr_profile_service_cancel_for_user_data(gpointer service, gpointer use
     PendingRequest *req = (PendingRequest*)value;
     if (!req || !req->callbacks) continue;
 
+    gboolean removed_from_request = FALSE;
     for (guint i = 0; i < req->callbacks->len; ) {
       PendingCallback *cb = g_ptr_array_index(req->callbacks, i);
       if (cb && cb->user_data == user_data) {
         g_ptr_array_remove_index(req->callbacks, i);
+        removed_from_request = TRUE;
         cancelled++;
+        if (svc->stats.pending_callbacks > 0)
+          svc->stats.pending_callbacks--;
       } else {
         i++;
       }
     }
+
+    /* An unclaimed request with no subscribers has no work left to perform.
+     * Once claimed by debounce, retain it until its batch completes so queued
+     * ownership and in-flight state remain consistent. */
+    if (removed_from_request && req->callbacks->len == 0 && !req->in_flight)
+      g_hash_table_iter_remove(&iter);
   }
 
+  svc->stats.pending_requests = g_hash_table_size(svc->pending_requests);
   g_mutex_unlock(&svc->mutex);
 
   if (cancelled > 0) {
@@ -864,15 +955,9 @@ void gnostr_profile_service_shutdown(void) {
     svc->pending_requests = NULL;
   }
 
-  /* Free fetch batches */
-  if (svc->fetch_batches) {
-    for (guint i = 0; i < svc->fetch_batches->len; i++) {
-      GPtrArray *b = g_ptr_array_index(svc->fetch_batches, i);
-      if (b) g_ptr_array_free(b, TRUE);
-    }
-    g_ptr_array_free(svc->fetch_batches, TRUE);
-    svc->fetch_batches = NULL;
-  }
+  /* Free queued (but not currently active) fetch batches. */
+  gnostr_profile_service_private_fetch_batches_clear(
+      &svc->fetch_batches, &svc->fetch_batch_pos);
 
   /* Free relay URLs */
   if (svc->relay_urls) {

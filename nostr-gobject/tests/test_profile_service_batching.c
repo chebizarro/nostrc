@@ -19,6 +19,20 @@
 #include "gnostr-testkit.h"
 #include <nostr-gobject-1.0/nostr_profile_service.h>
 
+/* Private queue primitives implemented in nostr_profile_service.c.  They are
+ * deliberately absent from the installed header: this test exercises the
+ * production queue logic without expanding the public service API. */
+void gnostr_profile_service_private_fetch_batches_append(
+    GPtrArray **fetch_batches,
+    guint *fetch_batch_pos,
+    GPtrArray *pubkeys);
+GPtrArray *gnostr_profile_service_private_fetch_batches_pop(
+    GPtrArray *fetch_batches,
+    guint *fetch_batch_pos);
+void gnostr_profile_service_private_fetch_batches_clear(
+    GPtrArray **fetch_batches,
+    guint *fetch_batch_pos);
+
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
 /* Deterministic pubkey generator */
@@ -159,6 +173,16 @@ test_debounce_accumulation(void)
                  (unsigned long)stats.requests,
                  (unsigned long)stats.cache_hits,
                  (unsigned long)stats.network_fetches);
+  g_assert_cmpuint(stats.pending_requests, ==, 0);
+  g_assert_cmpuint(stats.pending_callbacks, ==, 0);
+  g_assert_cmpuint(stats.callbacks_fired, ==, 10);
+
+  /* Delivery steals and destroys the owned callback array.  Under the leak
+   * harness this also exercises the PendingCallback cleanup path. */
+  for (int i = 0; i < 10; i++) {
+    g_assert_cmpuint(cbs[i].callback_count, ==, 1);
+    g_assert_true(cbs[i].got_null_meta);
+  }
 
   for (int i = 0; i < 10; i++) {
     callback_data_clear(&cbs[i]);
@@ -182,18 +206,30 @@ test_cancel_for_user_data(void)
 
   g_autofree char *pk1 = make_pubkey(0x30);
   g_autofree char *pk2 = make_pubkey(0x31);
+  g_autofree char *pk3 = make_pubkey(0x32);
 
-  /* Register two requests — one we'll cancel */
+  /* Register two callbacks plus an intentional callback-less warm-up request. */
   gnostr_profile_service_request(svc, pk1, test_profile_callback, &cb_keep);
   gnostr_profile_service_request(svc, pk2, test_profile_callback, &cb_cancel);
+  gnostr_profile_service_request(svc, pk3, NULL, NULL);
 
   /* Cancel callbacks for cb_cancel's user_data */
   guint cancelled = gnostr_profile_service_cancel_for_user_data(svc, &cb_cancel);
   g_assert_cmpuint(cancelled, ==, 1);
 
+  GnostrProfileServiceStats stats;
+  gnostr_profile_service_get_stats(svc, &stats);
+  /* The request emptied by cancellation is removed; the unrelated warm-up
+   * request remains pending despite having no callback. */
+  g_assert_cmpuint(stats.pending_requests, ==, 2);
+  g_assert_cmpuint(stats.pending_callbacks, ==, 1);
+
   /* Cancel again — should be idempotent */
   guint cancelled2 = gnostr_profile_service_cancel_for_user_data(svc, &cb_cancel);
   g_assert_cmpuint(cancelled2, ==, 0);
+  gnostr_profile_service_get_stats(svc, &stats);
+  g_assert_cmpuint(stats.pending_requests, ==, 2);
+  g_assert_cmpuint(stats.pending_callbacks, ==, 1);
 
   callback_data_clear(&cb_keep);
   callback_data_clear(&cb_cancel);
@@ -227,8 +263,59 @@ test_stats_accuracy(void)
 
   gnostr_profile_service_get_stats(svc, &stats);
   g_assert_cmpuint(stats.requests, ==, 5);
+  g_assert_cmpuint(stats.pending_requests, ==, 5);
+  g_assert_cmpuint(stats.pending_callbacks, ==, 0);
 
   gnostr_profile_service_shutdown();
+}
+
+/* ── Test: append batches while a fetch is active ───────────────── */
+
+static void
+test_batch_queue_append_while_active(void)
+{
+  GPtrArray *fetch_batches = NULL;
+  guint fetch_batch_pos = 0;
+
+  GPtrArray *old_generation = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; i < 101; i++)
+    g_ptr_array_add(old_generation, make_pubkey(0x60 + i));
+
+  gnostr_profile_service_private_fetch_batches_append(
+      &fetch_batches, &fetch_batch_pos, old_generation);
+
+  /* Hold the first batch as though its async fetch is active. */
+  GPtrArray *active = gnostr_profile_service_private_fetch_batches_pop(
+      fetch_batches, &fetch_batch_pos);
+  g_assert_nonnull(active);
+  g_assert_cmpuint(active->len, ==, 100);
+
+  GPtrArray *new_generation = g_ptr_array_new_with_free_func(g_free);
+  g_ptr_array_add(new_generation, make_pubkey(0xd0));
+  g_ptr_array_add(new_generation, make_pubkey(0xd1));
+  gnostr_profile_service_private_fetch_batches_append(
+      &fetch_batches, &fetch_batch_pos, new_generation);
+
+  /* The old tail must remain ahead of batches appended by the later debounce. */
+  GPtrArray *old_tail = gnostr_profile_service_private_fetch_batches_pop(
+      fetch_batches, &fetch_batch_pos);
+  g_assert_nonnull(old_tail);
+  g_assert_cmpuint(old_tail->len, ==, 1);
+
+  GPtrArray *new_tail = gnostr_profile_service_private_fetch_batches_pop(
+      fetch_batches, &fetch_batch_pos);
+  g_assert_nonnull(new_tail);
+  g_assert_cmpuint(new_tail->len, ==, 2);
+  g_assert_null(gnostr_profile_service_private_fetch_batches_pop(
+      fetch_batches, &fetch_batch_pos));
+
+  g_ptr_array_unref(active);
+  g_ptr_array_unref(old_tail);
+  g_ptr_array_unref(new_tail);
+  gnostr_profile_service_private_fetch_batches_clear(
+      &fetch_batches, &fetch_batch_pos);
+  g_assert_null(fetch_batches);
+  g_assert_cmpuint(fetch_batch_pos, ==, 0);
 }
 
 /* ── Test: shutdown-cleanup ──────────────────────────────────────── */
@@ -340,6 +427,8 @@ main(int argc, char *argv[])
                    test_cancel_for_user_data);
   g_test_add_func("/nostr-gobject/profile-service/stats-accuracy",
                    test_stats_accuracy);
+  g_test_add_func("/nostr-gobject/profile-service/batch-queue-append-while-active",
+                   test_batch_queue_append_while_active);
   g_test_add_func("/nostr-gobject/profile-service/shutdown-cleanup",
                    test_shutdown_cleanup);
   g_test_add_func("/nostr-gobject/profile-service/set-debounce",
