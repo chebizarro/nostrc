@@ -10,6 +10,17 @@ The compositor architecture is sound (immutable snapshots, row reuse, map-gated 
 3. **The nostrdb boundary throws away its own advantage.** Every query result is serialized from the mmap to JSON, deserialized to `NostrEvent` just to read the ID, then looked up again (`ndb_backend.c:578-646`; `timeline-source.c:285-341`); profile hydration repeats lookup+serialize+parse per NOTE not per author (`timeline-source.c:133-209,250-268`); one event's content is parsed up to 4× (main, empty quote, empty repost, VM `recompute_derived_fields`) and its strings copied ~5× along source→batch→VM→snapshot→row (`hydrator.c`, `item-view-model.c:165-376`, `snapshot.c:117-221`).
 4. **Patches scale with history; live path is unscoped.** Profile/interaction updates scan all retained entries and clone entire VMs + reparse content (`feed-controller.c:622-738`); subscriptions stay global regardless of active query, hydration runs synchronously on the dispatch context (`timeline-source.c:711-720,373-396`; `feed-controller.c:122-130`) — the async hydrator API exists unused (`hydrator.c:541-630`).
 
+## nostrdb leverage audit (2026-08-06) — capabilities we ignore
+
+Vendored nostrdb natively provides, with our current usage status:
+- **Persisted content blocks**: parses content at ingest into typed blocks (text/url/hashtag/bech32-mention/invoice) stored in LMDB (`NDB_DB_NOTE_BLOCKS`, `ndb_get_blocks_by_key` with lazy backfill, `third_party/nostrdb/src/nostrdb.c:6118-6160,10228-10299`). Our wrapper `storage_ndb_get_blocks()` (`storage_ndb.c:2252-2258`) has **zero callers** — every render re-parses via `ndb_parse_content` with a fresh 512 KiB buffer (`content_renderer.c:602-647`), up to 4×/event.
+- **Zero-copy profile flatbuffers**: `NdbProfile` accessors + native profile search + `NDB_DB_PROFILE_LAST_FETCH`. Used correctly in ONE path (`storage_ndb_get_profile_meta_direct` → provider `nostr_profile_provider.c:206-250`); the timeline source + profile service instead do record→note→JSON→NostrEvent→content-JSON→GNostrProfile per NOTE (`ndb_backend.c:766-795`, `gnostr-timeline-source.c:168-216`).
+- **Persisted interaction counts**: `ndb_note_meta` (`NDB_DB_META`) stores reactions (by emoji + total), direct/thread replies, reposts, quote reposts, updated at ingest (`src/metadata.h`, `nostrdb.h:685-723`). We instead recompute aggregates with 4 DB passes per reaction/zap event (`gnostr-timeline-source.c:555-612`). **Unused.**
+- **Query planner + indexes**: kind/pubkey/pubkey+kind/relay+kind indexes; kinds+limit are passed down (good), but we then post-filter twice in C (`query_matches_note` + hard kind allowlist, `timeline-source.c:109-145,245-252`). Caveat: multi-author queries have a planner TODO (fall back to scans) — relevant to follow feeds.
+- **Native filter-scoped subscriptions**: we DO use `ndb_subscribe`/`ndb_poll_for_notes` via `GnNdbDispatcher` (good), but keep 5 fixed global filters regardless of the active query (`timeline-source.c:14-18,843-851`) — narrowing is natively supported.
+- **JSON boundary confirmed**: every query result is eagerly `ndb_note_json`-serialized (`ndb_backend.c:631-660`) although `ndb_query_result.note` is already a zero-copy pointer in the open txn; timeline reparses it just for the ID (`timeline-source.c:335-368`).
+- **No native naddr index** exists (no compound kind+pubkey+d lookup) — our filter-based naddr resolution stands; `#d` should be added to the timeline query model when needed.
+
 ## Work Items (ranked by expected impact)
 
 ### Phase 1 — stop the quadratic/unbounded behavior
