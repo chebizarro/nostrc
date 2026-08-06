@@ -18,6 +18,9 @@
 #include <glib.h>
 #include <nostr-gtk-1.0/nostr-note-card-row.h>
 #include <nostr-gtk-1.0/content_renderer.h>
+#include <nostr-gobject-1.0/gnostr-identity.h>
+
+extern GResource *nostr_gtk_get_resource(void);
 
 /* ── Size thresholds (in pixels) ──────────────────────────────────── */
 /* These should be adjusted based on the actual design requirements.
@@ -422,6 +425,8 @@ int
 main(int argc, char *argv[])
 {
     gtk_test_init(&argc, &argv, NULL);
+    g_resources_register(nostr_gtk_get_resource());
+    gnostr_identity_init("org.gnostr.Client");
 
     g_test_add_func("/nostr-gtk/sizing/label-baseline",
                     test_label_stays_bounded);

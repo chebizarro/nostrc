@@ -2009,15 +2009,28 @@ nostr_gtk_note_card_row_maybe_emit_measured_geometry(NostrGtkNoteCardRow *self,
  * Without clamping, the GtkListView grows to accommodate the largest natural
  * width, making the timeline fill the entire screen.  Same pattern as
  * og_preview_widget_measure (nostrc-14wu). */
+typedef struct {
+  GtkLayoutManager parent_instance;
+} NostrGtkNoteCardLayout;
+
+typedef struct {
+  GtkLayoutManagerClass parent_class;
+} NostrGtkNoteCardLayoutClass;
+
+G_DEFINE_TYPE(NostrGtkNoteCardLayout, nostr_gtk_note_card_layout,
+              GTK_TYPE_LAYOUT_MANAGER)
+
 static void
-nostr_gtk_note_card_row_measure(GtkWidget      *widget,
-                             GtkOrientation  orientation,
-                             int             for_size,
-                             int            *minimum,
-                             int            *natural,
-                             int            *minimum_baseline,
-                             int            *natural_baseline)
+nostr_gtk_note_card_layout_measure(GtkLayoutManager *manager,
+                                   GtkWidget        *widget,
+                                   GtkOrientation   orientation,
+                                   int              for_size,
+                                   int             *minimum,
+                                   int             *natural,
+                                   int             *minimum_baseline,
+                                   int             *natural_baseline)
 {
+  (void)manager;
   NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(widget);
 
   /* Guard: skip parent measure when disposed — child widgets (NoteEmbed,
@@ -2026,14 +2039,29 @@ nostr_gtk_note_card_row_measure(GtkWidget      *widget,
   if (self->disposed) {
     *minimum = 0;
     *natural = 0;
-    *minimum_baseline = -1;
-    *natural_baseline = -1;
+    if (minimum_baseline) *minimum_baseline = -1;
+    if (natural_baseline) *natural_baseline = -1;
     return;
   }
 
-  GTK_WIDGET_CLASS(nostr_gtk_note_card_row_parent_class)->measure(
-      widget, orientation, for_size,
-      minimum, natural, minimum_baseline, natural_baseline);
+  GtkWidget *child = gtk_widget_get_first_child(widget);
+  if (child && gtk_widget_should_layout(child)) {
+    int child_for_size = for_size;
+    if (orientation == GTK_ORIENTATION_VERTICAL && for_size >= 0) {
+      int child_minimum_width = 0;
+      gtk_widget_measure(child, GTK_ORIENTATION_HORIZONTAL, -1,
+                         &child_minimum_width, NULL, NULL, NULL);
+      child_for_size = MAX(for_size, child_minimum_width);
+    }
+    gtk_widget_measure(child, orientation, child_for_size,
+                       minimum, natural,
+                       minimum_baseline, natural_baseline);
+  } else {
+    *minimum = 0;
+    *natural = 0;
+    if (minimum_baseline) *minimum_baseline = -1;
+    if (natural_baseline) *natural_baseline = -1;
+  }
 
   if (orientation == GTK_ORIENTATION_HORIZONTAL) {
     /* Clamp BOTH minimum and natural to zero.  The card will expand to
@@ -2059,6 +2087,33 @@ nostr_gtk_note_card_row_measure(GtkWidget      *widget,
 }
 
 static void
+nostr_gtk_note_card_layout_allocate(GtkLayoutManager *manager,
+                                    GtkWidget        *widget,
+                                    int               width,
+                                    int               height,
+                                    int               baseline)
+{
+  (void)manager;
+  GtkWidget *child = gtk_widget_get_first_child(widget);
+  if (child && gtk_widget_should_layout(child))
+    gtk_widget_allocate(child, width, height, baseline, NULL);
+}
+
+static void
+nostr_gtk_note_card_layout_class_init(NostrGtkNoteCardLayoutClass *klass)
+{
+  GtkLayoutManagerClass *layout_class = GTK_LAYOUT_MANAGER_CLASS(klass);
+  layout_class->measure = nostr_gtk_note_card_layout_measure;
+  layout_class->allocate = nostr_gtk_note_card_layout_allocate;
+}
+
+static void
+nostr_gtk_note_card_layout_init(NostrGtkNoteCardLayout *self)
+{
+  (void)self;
+}
+
+static void
 nostr_gtk_note_card_row_size_allocate(GtkWidget *widget,
                                       int        width,
                                       int        height,
@@ -2075,10 +2130,10 @@ static void nostr_gtk_note_card_row_class_init(NostrGtkNoteCardRowClass *klass) 
   GObjectClass *gclass = G_OBJECT_CLASS(klass);
   gclass->dispose = nostr_gtk_note_card_row_dispose;
   gclass->finalize = nostr_gtk_note_card_row_finalize;
-  wclass->measure = nostr_gtk_note_card_row_measure;
   wclass->size_allocate = nostr_gtk_note_card_row_size_allocate;
 
-  gtk_widget_class_set_layout_manager_type(wclass, GTK_TYPE_BOX_LAYOUT);
+  gtk_widget_class_set_layout_manager_type(
+      wclass, nostr_gtk_note_card_layout_get_type());
   gtk_widget_class_set_template_from_resource(wclass, UI_RESOURCE);
   gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, root);
   gtk_widget_class_bind_template_child(wclass, NostrGtkNoteCardRow, btn_avatar);

@@ -348,30 +348,39 @@ if(BUILD_TESTING)
   # Widget tests — require headless GTK rendering (Xvfb on Linux, native on macOS)
   gn_add_gtest_xvfb(test_nostr_gtk_listview_recycle_stress
     SOURCES tests/test_listview_recycle_stress.c
-    LIBS    nostr_gtk PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
+    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
     TIMEOUT 120
   )
 
   gn_add_gtest_xvfb(test_nostr_gtk_note_card_measure
     SOURCES tests/test_note_card_measure.c
-    LIBS    nostr_gtk PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
+    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
   )
 
   gn_add_gtest_xvfb(test_nostr_gtk_widget_churn_leaks
     SOURCES tests/test_widget_churn_leaks.c
-    LIBS    nostr_gtk PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
+    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
     TIMEOUT 120
   )
 
   gn_add_gtest_xvfb(test_nostr_gtk_bind_latency_budget
     SOURCES tests/test_bind_latency_budget.c
-    LIBS    nostr_gtk PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
+    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
     TIMEOUT 120
   )
 
   gn_add_gtest_xvfb(test_nostr_gtk_thread_view_bounded
     SOURCES tests/test_thread_view_bounded_load.c
-    LIBS    nostr_gtk PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
+    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
     TIMEOUT 120
   )
+
+  set_tests_properties(
+    test_nostr_gtk_listview_recycle_stress
+    test_nostr_gtk_note_card_measure
+    test_nostr_gtk_widget_churn_leaks
+    test_nostr_gtk_bind_latency_budget
+    test_nostr_gtk_thread_view_bounded
+    PROPERTIES
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr")
 endif()

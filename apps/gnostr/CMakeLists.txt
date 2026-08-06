@@ -567,6 +567,51 @@ include(CTest)
 if (BUILD_TESTING)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
+
+  # Real app-layer implementations required by nostr-gtk widget tests.
+  # Keep these in a static archive so only the objects referenced by the
+  # widget under test (and their real dependency closure) are linked.
+  add_library(gnostr-widget-test-support STATIC EXCLUDE_FROM_ALL
+    tests/gnostr_widget_test_stubs.c
+    src/ipc/gnostr-signer-service.c
+    src/ipc/signer_ipc.c
+    src/services/gnostr-media-service.c
+    src/ui/gnostr-avatar-cache.c
+    src/ui/gnostr-image-viewer.c
+    src/ui/gnostr-video-player.c
+    src/ui/og-preview-widget.c
+    src/util/custom_emoji.c
+    src/util/imeta.c
+    src/util/markdown_pango.c
+    src/util/nip03_opentimestamps.c
+    src/util/nip21_uri.c
+    src/util/nip32_labels.c
+    src/util/nip48_proxy.c
+    src/util/nip71.c
+    src/util/nip73_external_ids.c
+    src/util/nip84_highlights.c
+    src/util/relay_info.c
+    src/util/utils.c
+    src/util/youtube_url.c
+    src/util/zap.c)
+  if(APPLE)
+    target_sources(gnostr-widget-test-support PRIVATE src/util/keystore_macos.c)
+  elseif(LIBSECRET_FOUND)
+    target_sources(gnostr-widget-test-support PRIVATE src/util/keystore_libsecret.c)
+  else()
+    target_sources(gnostr-widget-test-support PRIVATE src/util/keystore_stub.c)
+  endif()
+  target_compile_features(gnostr-widget-test-support PRIVATE c_std_11)
+  target_compile_definitions(gnostr-widget-test-support PRIVATE
+    $<TARGET_PROPERTY:${APP_CLIENT_BIN},COMPILE_DEFINITIONS>)
+  target_include_directories(gnostr-widget-test-support PRIVATE
+    $<TARGET_PROPERTY:${APP_CLIENT_BIN},INCLUDE_DIRECTORIES>)
+  get_target_property(_gnostr_widget_test_libs ${APP_CLIENT_BIN} LINK_LIBRARIES)
+  list(REMOVE_ITEM _gnostr_widget_test_libs nostr_gtk)
+  target_link_libraries(gnostr-widget-test-support PUBLIC
+    ${_gnostr_widget_test_libs})
+  _gnostr_apply_sanitizers(gnostr-widget-test-support)
+
   add_executable(gnostr-test-relays tests/test_relays.c)
   target_compile_features(gnostr-test-relays PRIVATE c_std_11)
   target_include_directories(gnostr-test-relays PRIVATE
@@ -1592,6 +1637,16 @@ if(GLIB_COMPILE_SCHEMAS)
   )
   add_custom_target(gnostr-schemas ALL DEPENDS ${GNOSTR_SCHEMA_OUTPUT})
   add_dependencies(${APP_CLIENT_BIN} gnostr-schemas)
+  foreach(_widget_test
+      test_nostr_gtk_listview_recycle_stress
+      test_nostr_gtk_note_card_measure
+      test_nostr_gtk_widget_churn_leaks
+      test_nostr_gtk_bind_latency_budget
+      test_nostr_gtk_thread_view_bounded)
+    if(TARGET ${_widget_test})
+      add_dependencies(${_widget_test} gnostr-schemas)
+    endif()
+  endforeach()
 else()
   message(WARNING "glib-compile-schemas not found - GSettings schemas will not be compiled")
 endif()
