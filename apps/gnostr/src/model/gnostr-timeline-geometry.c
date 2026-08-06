@@ -28,10 +28,13 @@
 
 typedef struct {
   double measured_height;
+  guint64 last_access;
 } CachedMeasurement;
 
 struct _GnostrTimelineGeometryResolver {
   GHashTable *measurements; /* char* cache-key -> CachedMeasurement* */
+  guint max_entries;
+  guint64 access_clock;
 };
 
 static void
@@ -113,6 +116,7 @@ gnostr_timeline_geometry_resolver_new(void)
                                              g_str_equal,
                                              g_free,
                                              (GDestroyNotify)cached_measurement_free);
+  self->max_entries = GNOSTR_TIMELINE_GEOMETRY_DEFAULT_MAX_ENTRIES;
   return self;
 }
 
@@ -123,6 +127,79 @@ gnostr_timeline_geometry_resolver_free(GnostrTimelineGeometryResolver *self)
     return;
   g_clear_pointer(&self->measurements, g_hash_table_unref);
   g_free(self);
+}
+
+static void
+evict_lru_until_within_limit(GnostrTimelineGeometryResolver *self)
+{
+  while (g_hash_table_size(self->measurements) > self->max_entries) {
+    GHashTableIter iter;
+    gpointer key = NULL;
+    gpointer value = NULL;
+    gpointer lru_key = NULL;
+    guint64 lru_access = G_MAXUINT64;
+
+    g_hash_table_iter_init(&iter, self->measurements);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+      CachedMeasurement *measurement = value;
+      if (measurement && measurement->last_access < lru_access) {
+        lru_access = measurement->last_access;
+        lru_key = key;
+      }
+    }
+
+    if (!lru_key)
+      break;
+    g_hash_table_remove(self->measurements, lru_key);
+  }
+}
+
+void
+gnostr_timeline_geometry_resolver_set_max_entries(GnostrTimelineGeometryResolver *self,
+                                                   guint max_entries)
+{
+  g_return_if_fail(self != NULL);
+  self->max_entries = MAX(max_entries, 1u);
+  evict_lru_until_within_limit(self);
+}
+
+guint
+gnostr_timeline_geometry_resolver_get_max_entries(GnostrTimelineGeometryResolver *self)
+{
+  g_return_val_if_fail(self != NULL, 0);
+  return self->max_entries;
+}
+
+guint
+gnostr_timeline_geometry_resolver_get_n_entries(GnostrTimelineGeometryResolver *self)
+{
+  g_return_val_if_fail(self != NULL, 0);
+  return g_hash_table_size(self->measurements);
+}
+
+void
+gnostr_timeline_geometry_resolver_remove_event(GnostrTimelineGeometryResolver *self,
+                                               const char *event_id)
+{
+  g_return_if_fail(self != NULL);
+  if (!event_id || !*event_id)
+    return;
+
+  g_autofree char *prefix = g_strconcat(event_id, "|", NULL);
+  GHashTableIter iter;
+  gpointer key = NULL;
+  g_hash_table_iter_init(&iter, self->measurements);
+  while (g_hash_table_iter_next(&iter, &key, NULL)) {
+    if (g_str_has_prefix((const char *)key, prefix))
+      g_hash_table_iter_remove(&iter);
+  }
+}
+
+void
+gnostr_timeline_geometry_resolver_clear(GnostrTimelineGeometryResolver *self)
+{
+  g_return_if_fail(self != NULL);
+  g_hash_table_remove_all(self->measurements);
 }
 
 void
@@ -259,9 +336,14 @@ gnostr_timeline_geometry_resolver_record_measurement_for_key(GnostrTimelineGeome
   if (!cache_key || !*cache_key || measured_height <= 0.0)
     return;
 
-  CachedMeasurement *measurement = g_new0(CachedMeasurement, 1);
+  CachedMeasurement *measurement = g_hash_table_lookup(self->measurements, cache_key);
+  if (!measurement) {
+    measurement = g_new0(CachedMeasurement, 1);
+    g_hash_table_insert(self->measurements, g_strdup(cache_key), measurement);
+  }
   measurement->measured_height = quantize_height(measured_height);
-  g_hash_table_replace(self->measurements, g_strdup(cache_key), measurement);
+  measurement->last_access = ++self->access_clock;
+  evict_lru_until_within_limit(self);
 }
 
 gboolean
@@ -279,6 +361,7 @@ gnostr_timeline_geometry_resolver_lookup_measurement(GnostrTimelineGeometryResol
   if (!measurement)
     return FALSE;
 
+  measurement->last_access = ++self->access_clock;
   if (out_measured_height)
     *out_measured_height = measurement->measured_height;
   return TRUE;

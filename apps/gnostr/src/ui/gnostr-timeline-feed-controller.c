@@ -9,10 +9,24 @@
 #define COMPOSE_DEBOUNCE_MS     50u
 #define AT_TOP_EPSILON_PX       1.0
 #define DEFAULT_VISIBLE_PAGE_SIZE 30u
+#define DEFAULT_HEAD_BUFFER_PAGES 2u
+#define DEFAULT_TAIL_BUFFER_PAGES 2u
+#define DEFAULT_PENDING_HEAD_PAGES 3u
+#define GEOMETRY_CACHE_VARIANTS_PER_ROW 4u
 
 typedef struct {
   GnostrTimelineItemViewModel *vm;
 } WorkingEntry;
+
+typedef struct {
+  gint64 created_at;
+  guint64 note_key;
+} PendingHeadEntry;
+
+typedef enum {
+  WINDOW_TRIM_TAIL = 0,
+  WINDOW_TRIM_HEAD,
+} WindowTrimEdge;
 
 typedef enum {
   GNOSTR_COMPOSE_SCROLL_KEEP_VIEWPORT = 0,
@@ -33,13 +47,21 @@ struct _GnostrTimelineFeedController {
 
   GPtrArray *working;       /* element-type: WorkingEntry* */
   GHashTable *by_event_id;  /* char* -> WorkingEntry* (borrowed value) */
-  GHashTable *pending_head; /* char* set of event ids hidden from visible snapshots */
+  GHashTable *pending_head; /* char* event id -> PendingHeadEntry* (no VM retention) */
   GHashTable *deferred_patch_events; /* char* set of visible rows awaiting safe patch publication */
   GHashTable *deferred_replacement_vms; /* char* -> GnostrTimelineItemViewModel* awaiting admission */
   GnostrTimelineGeometryResolver *geometry;
 
-  guint visible_limit; /* number of sorted, non-pending rows admitted to snapshots */
+  guint visible_limit; /* number of sorted rows admitted to snapshots */
   guint page_size;
+  guint retained_limit;
+  guint pending_head_limit;
+  guint pending_head_dropped;
+  WindowTrimEdge trim_edge;
+  gint64 older_cursor;
+  gint64 newer_cursor;
+  gboolean admit_pending_scroll_to_top;
+  gboolean pending_admission_requested;
 
   gboolean user_at_top;
   double scroll_y;
@@ -173,7 +195,13 @@ clear_working_set(GnostrTimelineFeedController *self)
   g_hash_table_remove_all(self->pending_head);
   g_hash_table_remove_all(self->deferred_patch_events);
   g_hash_table_remove_all(self->deferred_replacement_vms);
+  gnostr_timeline_geometry_resolver_clear(self->geometry);
   self->visible_limit = 0;
+  self->older_cursor = 0;
+  self->newer_cursor = 0;
+  self->pending_head_dropped = 0;
+  self->admit_pending_scroll_to_top = FALSE;
+  self->pending_admission_requested = FALSE;
 }
 
 static gboolean
@@ -186,14 +214,15 @@ remove_working_event(GnostrTimelineFeedController *self,
     return FALSE;
 
   WorkingEntry *entry = lookup_working(self, event_id);
-  if (!entry)
-    return FALSE;
-
   gboolean was_pending = g_hash_table_remove(self->pending_head, event_id);
   if (was_pending && out_pending_changed)
     *out_pending_changed = TRUE;
   if (out_was_pending)
     *out_was_pending = was_pending;
+
+  gnostr_timeline_geometry_resolver_remove_event(self->geometry, event_id);
+  if (!entry)
+    return was_pending;
 
   g_hash_table_remove(self->deferred_patch_events, event_id);
   g_hash_table_remove(self->deferred_replacement_vms, event_id);
@@ -213,6 +242,47 @@ static guint
 pending_count(GnostrTimelineFeedController *self)
 {
   return self->pending_head ? g_hash_table_size(self->pending_head) : 0;
+}
+
+static void
+add_pending_head_vm(GnostrTimelineFeedController *self,
+                    GnostrTimelineItemViewModel *vm)
+{
+  const char *event_id = vm ? gnostr_timeline_item_view_model_get_event_id(vm) : NULL;
+  if (!event_id || !*event_id || g_hash_table_contains(self->pending_head, event_id))
+    return;
+
+  PendingHeadEntry *pending = g_new0(PendingHeadEntry, 1);
+  pending->created_at = gnostr_timeline_item_view_model_get_created_at(vm);
+  pending->note_key = gnostr_timeline_item_view_model_get_note_key_u64(vm);
+  g_hash_table_insert(self->pending_head, g_strdup(event_id), pending);
+
+  while (g_hash_table_size(self->pending_head) > self->pending_head_limit) {
+    GHashTableIter iter;
+    gpointer key = NULL;
+    gpointer value = NULL;
+    gpointer oldest_key = NULL;
+    gint64 oldest_created_at = G_MAXINT64;
+    guint64 oldest_note_key = G_MAXUINT64;
+
+    g_hash_table_iter_init(&iter, self->pending_head);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+      PendingHeadEntry *candidate = value;
+      if (candidate &&
+          (candidate->created_at < oldest_created_at ||
+           (candidate->created_at == oldest_created_at &&
+            candidate->note_key < oldest_note_key))) {
+        oldest_created_at = candidate->created_at;
+        oldest_note_key = candidate->note_key;
+        oldest_key = key;
+      }
+    }
+
+    if (!oldest_key)
+      break;
+    g_hash_table_remove(self->pending_head, oldest_key);
+    self->pending_head_dropped++;
+  }
 }
 
 static guint
@@ -429,6 +499,54 @@ sort_working_entries_cb(gconstpointer a,
   return gnostr_timeline_item_view_model_compare(entry_a->vm, entry_b->vm);
 }
 
+static void
+update_window_cursors(GnostrTimelineFeedController *self)
+{
+  self->older_cursor = 0;
+  self->newer_cursor = 0;
+
+  for (guint i = 0; i < self->working->len; i++) {
+    WorkingEntry *entry = g_ptr_array_index(self->working, i);
+    if (!entry || !entry->vm)
+      continue;
+    gint64 created_at = gnostr_timeline_item_view_model_get_created_at(entry->vm);
+    if (self->newer_cursor == 0 || created_at > self->newer_cursor)
+      self->newer_cursor = created_at;
+    if (self->older_cursor == 0 || created_at < self->older_cursor)
+      self->older_cursor = created_at;
+  }
+}
+
+static void
+evict_outside_window(GnostrTimelineFeedController *self)
+{
+  if (self->working->len <= self->retained_limit) {
+    update_window_cursors(self);
+    return;
+  }
+
+  g_autoptr(GPtrArray) sorted = g_ptr_array_new();
+  for (guint i = 0; i < self->working->len; i++)
+    g_ptr_array_add(sorted, g_ptr_array_index(self->working, i));
+  g_ptr_array_sort(sorted, sort_working_entries_cb);
+
+  guint remove_count = sorted->len - self->retained_limit;
+  for (guint i = 0; i < remove_count; i++) {
+    guint index = self->trim_edge == WINDOW_TRIM_HEAD ? i : sorted->len - 1u - i;
+    WorkingEntry *entry = g_ptr_array_index(sorted, index);
+    const char *event_id = (entry && entry->vm) ?
+      gnostr_timeline_item_view_model_get_event_id(entry->vm) : NULL;
+    if (event_id)
+      remove_working_event(self, event_id, NULL, NULL);
+  }
+
+  if (self->trim_edge == WINDOW_TRIM_HEAD)
+    self->visible_limit = self->visible_limit > remove_count ?
+      self->visible_limit - remove_count : 0;
+  clamp_visible_limit(self);
+  update_window_cursors(self);
+}
+
 static gboolean
 row_matches_entry_footprint(GnostrTimelineSnapshotRow *row,
                             WorkingEntry *entry,
@@ -504,6 +622,8 @@ static GnostrTimelineSnapshot *
 compose_snapshot(GnostrTimelineFeedController *self,
                  GnostrTimelineSnapshot *old_snapshot)
 {
+  evict_outside_window(self);
+
   GPtrArray *rows = g_ptr_array_new_with_free_func(g_object_unref);
   GPtrArray *eligible = g_ptr_array_new();
 
@@ -804,7 +924,7 @@ apply_metadata_patch(GnostrTimelineFeedController *self,
                                                              patch->has_zap_total_msat,
                                                              patch->zap_total_msat);
     PatchAdmission admission = admission_for_replacement_vm(self, patch->event_id, replacement);
-    if (deferred && admission == PATCH_ADMISSION_BLOCKED) {
+    if (admission == PATCH_ADMISSION_BLOCKED) {
       g_hash_table_replace(self->deferred_replacement_vms,
                            g_strdup(patch->event_id),
                            g_object_ref(replacement));
@@ -859,7 +979,7 @@ apply_profile_patch(GnostrTimelineFeedController *self,
                                                                   entry_event_id,
                                                                   replacement);
       admission = patch_admission_combine(admission, row_admission);
-      if (deferred && row_admission == PATCH_ADMISSION_BLOCKED) {
+      if (row_admission == PATCH_ADMISSION_BLOCKED) {
         g_hash_table_replace(self->deferred_replacement_vms,
                              g_strdup(entry_event_id),
                              g_object_ref(replacement));
@@ -971,11 +1091,18 @@ gnostr_timeline_feed_controller_init(GnostrTimelineFeedController *self)
   self->model = gnostr_timeline_snapshot_model_new();
   self->working = g_ptr_array_new_with_free_func((GDestroyNotify)working_entry_free);
   self->by_event_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  self->pending_head = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->pending_head = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   self->deferred_patch_events = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->deferred_replacement_vms = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
   self->geometry = gnostr_timeline_geometry_resolver_new();
   self->page_size = DEFAULT_VISIBLE_PAGE_SIZE;
+  self->retained_limit = self->page_size *
+    (1u + DEFAULT_HEAD_BUFFER_PAGES + DEFAULT_TAIL_BUFFER_PAGES);
+  self->pending_head_limit = self->page_size * DEFAULT_PENDING_HEAD_PAGES;
+  self->trim_edge = WINDOW_TRIM_TAIL;
+  gnostr_timeline_geometry_resolver_set_max_entries(
+    self->geometry,
+    self->retained_limit * GEOMETRY_CACHE_VARIANTS_PER_ROW);
   self->visible_limit = 0;
   self->scheduled_scroll_policy = GNOSTR_COMPOSE_SCROLL_KEEP_VIEWPORT;
   self->user_at_top = TRUE;
@@ -1100,16 +1227,14 @@ gnostr_timeline_feed_controller_load_older(GnostrTimelineFeedController *self,
 
   self->loading_older = TRUE;
 
-  gint64 before = 0;
-  g_autoptr(GnostrTimelineSnapshot) snapshot = dup_current_snapshot(self);
-  if (snapshot && gnostr_timeline_snapshot_get_n_rows(snapshot) > 0) {
-    GnostrTimelineSnapshotRow *last =
-      gnostr_timeline_snapshot_get_row(snapshot,
-                                       gnostr_timeline_snapshot_get_n_rows(snapshot) - 1);
-    before = last ? gnostr_timeline_snapshot_row_get_created_at(last) : 0;
-  }
-
-  gnostr_timeline_source_load_older_async(self->source, count, before);
+  /* The cursor follows the retained tail, not an all-time watermark.  If an
+   * older tail was evicted while moving newer, this boundary deliberately
+   * re-fetches that adjacent history. */
+  guint request_count = count > G_MAXUINT - self->retained_limit ?
+    G_MAXUINT : count + self->retained_limit;
+  gint64 inclusive_before = self->older_cursor > 0 && self->older_cursor < G_MAXINT64 ?
+    self->older_cursor + 1 : self->older_cursor;
+  gnostr_timeline_source_load_older_async(self->source, request_count, inclusive_before);
 #endif
 }
 
@@ -1127,14 +1252,12 @@ gnostr_timeline_feed_controller_load_newer(GnostrTimelineFeedController *self,
 
   self->loading_newer = TRUE;
 
-  gint64 after = 0;
-  g_autoptr(GnostrTimelineSnapshot) snapshot = dup_current_snapshot(self);
-  if (snapshot && gnostr_timeline_snapshot_get_n_rows(snapshot) > 0) {
-    GnostrTimelineSnapshotRow *first = gnostr_timeline_snapshot_get_row(snapshot, 0);
-    after = first ? gnostr_timeline_snapshot_row_get_created_at(first) : 0;
-  }
-
-  gnostr_timeline_source_load_newer_async(self->source, count, after);
+  /* Symmetric with load_older: after head eviction, this boundary lets the
+   * source re-fetch the evicted newer slice without retaining its VMs. */
+  guint request_count = count > G_MAXUINT - self->retained_limit ?
+    G_MAXUINT : count + self->retained_limit;
+  gint64 inclusive_after = self->newer_cursor > 1 ? self->newer_cursor - 1 : 0;
+  gnostr_timeline_source_load_newer_async(self->source, request_count, inclusive_after);
 #endif
 }
 
@@ -1157,9 +1280,11 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
       if (!items)
         return;
       clear_working_set(self);
+      self->trim_edge = WINDOW_TRIM_TAIL;
       for (guint i = 0; i < items->len; i++)
         merge_hydrated_vm(self, g_ptr_array_index(items, i), NULL);
       set_initial_visible_limit(self);
+      evict_outside_window(self);
       emit_pending_count(self);
       schedule_compose(self, GNOSTR_COMPOSE_SCROLL_TO_TOP);
       break;
@@ -1169,26 +1294,34 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
       g_autoptr(GPtrArray) items = hydrate_batch_items(self, batch);
       if (!items)
         return;
+      self->trim_edge = WINDOW_TRIM_TAIL;
       gboolean pending_changed = FALSE;
       guint visible_increment = 0;
       PatchAdmission admission = PATCH_ADMISSION_NO_CHANGE;
       for (guint i = 0; i < items->len; i++) {
         GnostrTimelineItemViewModel *vm = g_ptr_array_index(items, i);
+        const char *event_id = gnostr_timeline_item_view_model_get_event_id(vm);
+        WorkingEntry *existing = lookup_working(self, event_id);
+        if (!self->user_at_top && !existing) {
+          guint old_pending_count = pending_count(self);
+          add_pending_head_vm(self, vm);
+          pending_changed |= pending_count(self) != old_pending_count ||
+            g_hash_table_contains(self->pending_head, event_id);
+          continue;
+        }
+
         gboolean inserted = FALSE;
         PatchAdmission item_admission = PATCH_ADMISSION_NO_CHANGE;
-        WorkingEntry *we = merge_hydrated_vm_with_admission(self, vm, &inserted, &item_admission);
+        merge_hydrated_vm_with_admission(self, vm, &inserted, &item_admission);
         admission = patch_admission_combine(admission, item_admission);
-        const char *event_id = (we && we->vm) ? gnostr_timeline_item_view_model_get_event_id(we->vm) : NULL;
-        if (!self->user_at_top && event_id && inserted && !g_hash_table_contains(self->pending_head, event_id)) {
-          g_hash_table_add(self->pending_head, g_strdup(event_id));
-          pending_changed = TRUE;
-        } else if (self->user_at_top && inserted) {
+        if (self->user_at_top && inserted)
           visible_increment++;
-        }
       }
 
       if (self->user_at_top && self->scroll_y <= AT_TOP_EPSILON_PX) {
+        self->trim_edge = WINDOW_TRIM_TAIL;
         expand_visible_limit(self, visible_increment);
+        evict_outside_window(self);
         if (visible_increment > 0)
           schedule_compose(self, GNOSTR_COMPOSE_SCROLL_TO_TOP);
         else if (admission == PATCH_ADMISSION_PUBLISH)
@@ -1203,6 +1336,7 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
         else if (admission == PATCH_ADMISSION_BLOCKED)
           g_debug("[COMPOSITOR] Deferring live replacement publication for visible geometry-unsafe rows");
       }
+      evict_outside_window(self);
       break;
     }
 
@@ -1211,6 +1345,7 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
       if (!items)
         return;
       self->loading_older = FALSE;
+      self->trim_edge = WINDOW_TRIM_HEAD;
       PatchAdmission admission = PATCH_ADMISSION_NO_CHANGE;
       for (guint i = 0; i < items->len; i++) {
         PatchAdmission item_admission = PATCH_ADMISSION_NO_CHANGE;
@@ -1218,6 +1353,7 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
         admission = patch_admission_combine(admission, item_admission);
       }
       expand_visible_limit(self, items->len);
+      evict_outside_window(self);
       schedule_compose(self, GNOSTR_COMPOSE_SCROLL_RESTORE_ANCHOR);
       if (admission == PATCH_ADMISSION_BLOCKED)
         g_debug("[COMPOSITOR] Deferring older-page replacement publication for visible geometry-unsafe rows");
@@ -1229,14 +1365,38 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
       if (!items)
         return;
       self->loading_newer = FALSE;
+      self->trim_edge = WINDOW_TRIM_TAIL;
       PatchAdmission admission = PATCH_ADMISSION_NO_CHANGE;
+      gboolean pending_changed = FALSE;
       for (guint i = 0; i < items->len; i++) {
+        GnostrTimelineItemViewModel *vm = g_ptr_array_index(items, i);
+        const char *event_id = gnostr_timeline_item_view_model_get_event_id(vm);
+        pending_changed |= event_id && g_hash_table_remove(self->pending_head, event_id);
         PatchAdmission item_admission = PATCH_ADMISSION_NO_CHANGE;
-        merge_hydrated_vm_with_admission(self, g_ptr_array_index(items, i), NULL, &item_admission);
+        merge_hydrated_vm_with_admission(self, vm, NULL, &item_admission);
         admission = patch_admission_combine(admission, item_admission);
       }
       expand_visible_limit(self, items->len);
-      schedule_compose(self, GNOSTR_COMPOSE_SCROLL_RESTORE_ANCHOR);
+      evict_outside_window(self);
+      if (pending_changed)
+        emit_pending_count(self);
+
+      gboolean admission_completed = self->pending_admission_requested && pending_count(self) == 0;
+      GnostrComposeScrollPolicy page_policy =
+        admission_completed && self->admit_pending_scroll_to_top ?
+          GNOSTR_COMPOSE_SCROLL_TO_TOP : GNOSTR_COMPOSE_SCROLL_RESTORE_ANCHOR;
+      if (admission_completed) {
+        self->pending_admission_requested = FALSE;
+        self->admit_pending_scroll_to_top = FALSE;
+      }
+      schedule_compose(self, page_policy);
+
+#ifndef GNOSTR_TIMELINE_FEED_CONTROLLER_NO_SOURCE
+      if (self->pending_admission_requested && pending_count(self) > 0 && self->source) {
+        gnostr_timeline_feed_controller_load_newer(self,
+                                                   MAX(pending_count(self), self->page_size));
+      }
+#endif
       if (admission == PATCH_ADMISSION_BLOCKED)
         g_debug("[COMPOSITOR] Deferring newer-page replacement publication for visible geometry-unsafe rows");
       break;
@@ -1263,9 +1423,15 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
         }
       }
 
-      if (pending_changed)
+      if (pending_changed) {
         emit_pending_count(self);
+        if (pending_count(self) == 0) {
+          self->pending_admission_requested = FALSE;
+          self->admit_pending_scroll_to_top = FALSE;
+        }
+      }
       clamp_visible_limit(self);
+      update_window_cursors(self);
       if (visible_changed)
         schedule_compose(self, GNOSTR_COMPOSE_SCROLL_RESTORE_ANCHOR);
       else if (n_targets == 0 && n_entries > 0)
@@ -1356,6 +1522,56 @@ gnostr_timeline_feed_controller_get_pending_count(GnostrTimelineFeedController *
   return pending_count(self);
 }
 
+guint
+gnostr_timeline_feed_controller_get_pending_dropped_count(GnostrTimelineFeedController *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self), 0);
+  return self->pending_head_dropped;
+}
+
+gboolean
+gnostr_timeline_feed_controller_has_pending_event(GnostrTimelineFeedController *self,
+                                                  const char *event_id)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self), FALSE);
+  return event_id && g_hash_table_contains(self->pending_head, event_id);
+}
+
+guint
+gnostr_timeline_feed_controller_get_working_count(GnostrTimelineFeedController *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self), 0);
+  return self->working->len;
+}
+
+guint
+gnostr_timeline_feed_controller_get_retained_limit(GnostrTimelineFeedController *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self), 0);
+  return self->retained_limit;
+}
+
+guint
+gnostr_timeline_feed_controller_get_geometry_cache_count(GnostrTimelineFeedController *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self), 0);
+  return gnostr_timeline_geometry_resolver_get_n_entries(self->geometry);
+}
+
+gint64
+gnostr_timeline_feed_controller_get_older_cursor(GnostrTimelineFeedController *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self), 0);
+  return self->older_cursor;
+}
+
+gint64
+gnostr_timeline_feed_controller_get_newer_cursor(GnostrTimelineFeedController *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self), 0);
+  return self->newer_cursor;
+}
+
 void
 gnostr_timeline_feed_controller_admit_pending_head(GnostrTimelineFeedController *self,
                                                    gboolean scroll_to_top)
@@ -1366,12 +1582,19 @@ gnostr_timeline_feed_controller_admit_pending_head(GnostrTimelineFeedController 
   if (admitted == 0)
     return;
 
-  g_hash_table_remove_all(self->pending_head);
-  expand_visible_limit(self, admitted);
-  emit_pending_count(self);
-  schedule_compose(self,
-                   scroll_to_top ? GNOSTR_COMPOSE_SCROLL_TO_TOP :
-                                   GNOSTR_COMPOSE_SCROLL_RESTORE_ANCHOR);
+  self->pending_admission_requested = TRUE;
+  self->admit_pending_scroll_to_top |= scroll_to_top;
+
+  /* Pending entries intentionally own no VMs and remain counted until a
+   * qualifying PAGE_NEWER batch actually re-fetches each ID. */
+#ifndef GNOSTR_TIMELINE_FEED_CONTROLLER_NO_SOURCE
+  if (self->source) {
+    if (!self->loading_newer)
+      gnostr_timeline_feed_controller_load_newer(self, MAX(admitted, self->page_size));
+    /* Otherwise pending_admission_requested guarantees a follow-up when the
+     * in-flight PAGE_NEWER batch completes. */
+  }
+#endif
 }
 
 void
@@ -1433,6 +1656,11 @@ gnostr_timeline_feed_controller_record_geometry(GnostrTimelineFeedController *se
   guint64 current_generation = current_snapshot ?
     gnostr_timeline_snapshot_get_generation(current_snapshot) : 0;
   if (snapshot_generation > 0 && current_generation > 0 && snapshot_generation < current_generation)
+    return;
+
+  /* A late measurement from an evicted row must not recreate orphaned cache
+   * state after coordinated eviction. */
+  if (!lookup_working(self, event_id))
     return;
 
   gnostr_timeline_geometry_resolver_record_measurement(self->geometry,

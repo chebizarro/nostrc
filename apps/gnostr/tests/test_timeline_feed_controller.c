@@ -145,6 +145,36 @@ batch_add_delete_target(GnostrTimelineBatch *batch,
   gnostr_timeline_batch_add_delete_target(batch, &target);
 }
 
+static void
+batch_add_range(GnostrTimelineBatch *batch,
+                guint first,
+                guint count,
+                gint64 timestamp_base)
+{
+  for (guint i = 0; i < count; i++) {
+    guint value = first + i;
+    g_assert_cmpuint(value, <=, 255);
+    batch_add(batch, value, timestamp_base - (gint64)value, (guint8)value);
+  }
+}
+
+static void
+record_snapshot_geometry(GnostrTimelineFeedController *controller,
+                         GnostrTimelineSnapshot *snapshot)
+{
+  guint64 generation = gnostr_timeline_snapshot_get_generation(snapshot);
+  for (guint i = 0; i < gnostr_timeline_snapshot_get_n_rows(snapshot); i++) {
+    GnostrTimelineSnapshotRow *row = gnostr_timeline_snapshot_get_row(snapshot, i);
+    g_autofree char *token =
+      gnostr_timeline_feed_controller_dup_geometry_token_for_row(row);
+    gnostr_timeline_feed_controller_record_geometry(controller,
+                                                    token,
+                                                    generation,
+                                                    480,
+                                                    200 + (gint)(i % 5));
+  }
+}
+
 static GnostrTimelineSnapshot *
 dup_controller_snapshot(GnostrTimelineFeedController *controller)
 {
@@ -355,6 +385,19 @@ test_admit_pending_head_publishes_snapshot(void)
   gnostr_timeline_feed_controller_compose_now(controller);
   drain_main_context_for_ms(80);
 
+  g_assert_cmpuint(gnostr_timeline_feed_controller_get_pending_count(controller), ==, 1);
+  g_assert_cmpuint(pending.count, ==, 1);
+  g_assert_cmpuint(restore.emissions, ==, 0);
+
+  /* Pending-head state retains only ordering metadata.  Admission asks the
+   * source to re-fetch; model that PAGE_NEWER completion explicitly here. */
+  g_autoptr(GnostrTimelineSnapshot) before_refetch = dup_controller_snapshot(controller);
+  g_assert_cmpuint(gnostr_timeline_snapshot_get_n_rows(before_refetch), ==, 2);
+  GnostrTimelineBatch *newer = batch_new(GNOSTR_TIMELINE_BATCH_PAGE_NEWER, 1);
+  batch_add(newer, 3, 110, 0x33);
+  gnostr_timeline_feed_controller_ingest_batch(controller, newer);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(newer);
   g_assert_cmpuint(gnostr_timeline_feed_controller_get_pending_count(controller), ==, 0);
   g_assert_cmpuint(pending.count, ==, 0);
   g_assert_cmpuint(restore.emissions, ==, 1);
@@ -726,6 +769,21 @@ test_pending_head_patch_updates_hidden_vm_without_publish(void)
 
   gnostr_timeline_feed_controller_admit_pending_head(controller, FALSE);
   gnostr_timeline_feed_controller_compose_now(controller);
+
+  /* Lightweight pending records do not receive VM patches.  Re-fetch the VM,
+   * then the normal metadata stream supplies the current aggregate. */
+  GnostrTimelineBatch *newer = batch_new(GNOSTR_TIMELINE_BATCH_PAGE_NEWER, 1);
+  batch_add(newer, 2, 200, 0x22);
+  gnostr_timeline_feed_controller_ingest_batch(controller, newer);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(newer);
+
+  GnostrTimelineBatch *refetched_metadata = batch_new(GNOSTR_TIMELINE_BATCH_METADATA_PATCH, 1);
+  gnostr_timeline_batch_add_metadata_patch(refetched_metadata, &metadata);
+  gnostr_timeline_feed_controller_ingest_batch(controller, refetched_metadata);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(refetched_metadata);
+
   g_autoptr(GnostrTimelineSnapshot) admitted = dup_controller_snapshot(controller);
   g_assert_true(gnostr_timeline_snapshot_lookup_event(admitted, pending_id, &index));
   GnostrTimelineSnapshotRow *pending_row = gnostr_timeline_snapshot_get_row(admitted, index);
@@ -891,6 +949,10 @@ test_unprofiled_rows_publish_with_deterministic_fallbacks(void)
   gnostr_timeline_feed_controller_ingest_batch(controller, profile_batch);
   gnostr_timeline_feed_controller_compose_now(controller);
   g_object_unref(profile_batch);
+
+  /* The fallback-to-profile layout change is deferred while visible. */
+  gnostr_timeline_feed_controller_set_viewport(controller, 10000.0, 400.0, 480);
+  gnostr_timeline_feed_controller_compose_now(controller);
 
   g_autoptr(GnostrTimelineSnapshot) patched = dup_controller_snapshot(controller);
   g_assert_cmpuint(gnostr_timeline_snapshot_get_n_rows(patched), ==, 1);
@@ -1420,6 +1482,13 @@ test_snapshot_model_pending_head_admit_emits_head_insert_span(void)
 
   gnostr_timeline_feed_controller_admit_pending_head(controller, TRUE);
   gnostr_timeline_feed_controller_compose_now(controller);
+  g_assert_cmpuint(changes.emissions, ==, 0);
+
+  GnostrTimelineBatch *newer = batch_new(GNOSTR_TIMELINE_BATCH_PAGE_NEWER, 1);
+  batch_add(newer, 3, 200, 0x33);
+  gnostr_timeline_feed_controller_ingest_batch(controller, newer);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(newer);
 
   g_assert_cmpuint(changes.emissions, ==, 1);
   g_assert_cmpuint(changes.position[0], ==, 0);
@@ -1551,6 +1620,117 @@ test_vm_reservation_fields_control_snapshot_footprint(void)
   g_object_unref(controller);
 }
 
+static void
+test_far_paging_bounds_window_cache_and_refetches_evicted_tail(void)
+{
+  GnostrTimelineFeedController *controller =
+    gnostr_timeline_feed_controller_new(NULL);
+  RestoreCapture restore = { 0.0, 0 };
+  g_signal_connect(controller, "restore-scroll",
+                   G_CALLBACK(on_restore_scroll), &restore);
+
+  GnostrTimelineBatch *refresh = batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 1);
+  batch_add_range(refresh, 1, 30, 3000);
+  gnostr_timeline_feed_controller_ingest_batch(controller, refresh);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(refresh);
+
+  for (guint page = 1; page < 7; page++) {
+    g_autoptr(GnostrTimelineSnapshot) before = dup_controller_snapshot(controller);
+    double near_tail = MAX(0.0, gnostr_timeline_snapshot_get_total_height(before) - 200.0);
+    gnostr_timeline_feed_controller_set_viewport(controller, near_tail, 400.0, 480);
+
+    GnostrTimelineBatch *older = batch_new(GNOSTR_TIMELINE_BATCH_PAGE_OLDER, 1);
+    batch_add_range(older, (page * 30) + 1, 30, 3000);
+    gnostr_timeline_feed_controller_ingest_batch(controller, older);
+    g_assert_cmpuint(gnostr_timeline_feed_controller_get_working_count(controller), <=,
+                     gnostr_timeline_feed_controller_get_retained_limit(controller));
+    gnostr_timeline_feed_controller_compose_now(controller);
+    g_object_unref(older);
+
+    g_autoptr(GnostrTimelineSnapshot) current = dup_controller_snapshot(controller);
+    record_snapshot_geometry(controller, current);
+    g_assert_cmpuint(gnostr_timeline_feed_controller_get_working_count(controller), <=,
+                     gnostr_timeline_feed_controller_get_retained_limit(controller));
+    g_assert_cmpuint(gnostr_timeline_snapshot_get_n_rows(current), <=,
+                     gnostr_timeline_feed_controller_get_retained_limit(controller));
+    g_assert_cmpuint(gnostr_timeline_feed_controller_get_geometry_cache_count(controller), <=,
+                     GNOSTR_TIMELINE_GEOMETRY_DEFAULT_MAX_ENTRIES);
+  }
+
+  g_assert_cmpuint(gnostr_timeline_feed_controller_get_retained_limit(controller), ==, 150);
+  g_assert_cmpuint(gnostr_timeline_feed_controller_get_working_count(controller), ==, 150);
+  g_assert_cmpint(gnostr_timeline_feed_controller_get_newer_cursor(controller), ==, 2939);
+  g_assert_cmpint(gnostr_timeline_feed_controller_get_older_cursor(controller), ==, 2790);
+
+  /* Move newer, which evicts the oldest tail (181..210). */
+  GnostrTimelineBatch *newer = batch_new(GNOSTR_TIMELINE_BATCH_PAGE_NEWER, 1);
+  batch_add_range(newer, 31, 30, 3000);
+  gnostr_timeline_feed_controller_ingest_batch(controller, newer);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(newer);
+  g_assert_cmpint(gnostr_timeline_feed_controller_get_older_cursor(controller), ==, 2820);
+
+  g_autoptr(GnostrTimelineSnapshot) before_refetch = dup_controller_snapshot(controller);
+  g_autofree char *anchor_id = event_id_hex_for_byte(180);
+  guint anchor_index = 0;
+  g_assert_true(gnostr_timeline_snapshot_lookup_event(before_refetch, anchor_id, &anchor_index));
+  double anchor_offset = 10.0;
+  double anchor_scroll = gnostr_timeline_snapshot_get_row_top(before_refetch, anchor_index) + anchor_offset;
+  gnostr_timeline_feed_controller_set_viewport(controller, anchor_scroll, 400.0, 480);
+  restore.emissions = 0;
+
+  /* The retained-tail cursor permits PAGE_OLDER to re-fetch the evicted slice. */
+  GnostrTimelineBatch *refetched = batch_new(GNOSTR_TIMELINE_BATCH_PAGE_OLDER, 1);
+  batch_add_range(refetched, 181, 30, 3000);
+  gnostr_timeline_feed_controller_ingest_batch(controller, refetched);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(refetched);
+
+  g_autoptr(GnostrTimelineSnapshot) after_refetch = dup_controller_snapshot(controller);
+  guint restored_index = 0;
+  g_assert_true(gnostr_timeline_snapshot_lookup_event(after_refetch, anchor_id, &restored_index));
+  double expected_scroll = gnostr_timeline_snapshot_get_row_top(after_refetch, restored_index) + anchor_offset;
+  g_assert_cmpuint(restore.emissions, ==, 1);
+  g_assert_cmpfloat_with_epsilon(restore.value, expected_scroll, 0.001);
+  g_assert_cmpuint(gnostr_timeline_feed_controller_get_working_count(controller), ==, 150);
+  g_assert_cmpint(gnostr_timeline_feed_controller_get_older_cursor(controller), ==, 2790);
+  g_autofree char *refetched_id = event_id_hex_for_byte(210);
+  guint ignored = 0;
+  g_assert_true(gnostr_timeline_snapshot_lookup_event(after_refetch, refetched_id, &ignored));
+
+  g_object_unref(controller);
+}
+
+static void
+test_pending_head_is_lightweight_and_capped(void)
+{
+  GnostrTimelineFeedController *controller =
+    gnostr_timeline_feed_controller_new(NULL);
+
+  GnostrTimelineBatch *refresh = batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 1);
+  batch_add(refresh, 250, 1000, 250);
+  gnostr_timeline_feed_controller_ingest_batch(controller, refresh);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(refresh);
+  gnostr_timeline_feed_controller_set_viewport(controller, 64.0, 400.0, 480);
+
+  GnostrTimelineBatch *live = batch_new(GNOSTR_TIMELINE_BATCH_LIVE_HEAD, 1);
+  batch_add_range(live, 1, 120, 4000);
+  gnostr_timeline_feed_controller_ingest_batch(controller, live);
+  g_object_unref(live);
+
+  g_assert_cmpuint(gnostr_timeline_feed_controller_get_pending_count(controller), ==, 90);
+  g_assert_cmpuint(gnostr_timeline_feed_controller_get_pending_dropped_count(controller), ==, 30);
+  g_assert_cmpuint(gnostr_timeline_feed_controller_get_working_count(controller), ==, 1);
+  g_autofree char *newest = event_id_hex_for_byte(1);
+  g_autofree char *oldest = event_id_hex_for_byte(120);
+  g_assert_false(gnostr_timeline_feed_controller_has_pending_event(controller, oldest));
+  g_assert_true(gnostr_timeline_feed_controller_has_pending_event(controller, newest));
+
+  g_object_unref(controller);
+}
+
 int
 main(int argc,
      char **argv)
@@ -1615,6 +1795,10 @@ main(int argc,
                   test_snapshot_model_identical_recompose_emits_no_items_changed);
   g_test_add_func("/gnostr/timeline-feed-controller/vm-reservation-fields",
                   test_vm_reservation_fields_control_snapshot_footprint);
+  g_test_add_func("/gnostr/timeline-feed-controller/bounded-window-evict-refetch-anchor",
+                  test_far_paging_bounds_window_cache_and_refetches_evicted_tail);
+  g_test_add_func("/gnostr/timeline-feed-controller/pending-head-lightweight-cap",
+                  test_pending_head_is_lightweight_and_capped);
 
   return g_test_run();
 }

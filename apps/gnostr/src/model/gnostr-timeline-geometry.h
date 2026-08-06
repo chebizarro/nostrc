@@ -7,6 +7,7 @@ G_BEGIN_DECLS
 
 #define GNOSTR_TIMELINE_GEOMETRY_DEFAULT_WIDTH_BUCKET 480u
 #define GNOSTR_TIMELINE_GEOMETRY_LAYOUT_VERSION "timeline-geometry-v3"
+#define GNOSTR_TIMELINE_GEOMETRY_DEFAULT_MAX_ENTRIES 600u
 
 typedef struct _GnostrTimelineGeometryResolver GnostrTimelineGeometryResolver;
 
@@ -54,6 +55,13 @@ typedef struct {
 
 GnostrTimelineGeometryResolver *gnostr_timeline_geometry_resolver_new(void);
 void gnostr_timeline_geometry_resolver_free(GnostrTimelineGeometryResolver *self);
+void gnostr_timeline_geometry_resolver_set_max_entries(GnostrTimelineGeometryResolver *self,
+                                                       guint max_entries);
+guint gnostr_timeline_geometry_resolver_get_max_entries(GnostrTimelineGeometryResolver *self);
+guint gnostr_timeline_geometry_resolver_get_n_entries(GnostrTimelineGeometryResolver *self);
+void gnostr_timeline_geometry_resolver_remove_event(GnostrTimelineGeometryResolver *self,
+                                                    const char *event_id);
+void gnostr_timeline_geometry_resolver_clear(GnostrTimelineGeometryResolver *self);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GnostrTimelineGeometryResolver,
                               gnostr_timeline_geometry_resolver_free)

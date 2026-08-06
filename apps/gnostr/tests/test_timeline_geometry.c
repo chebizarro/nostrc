@@ -289,6 +289,37 @@ test_explicit_reservation_fields_control_height_not_url_sniffing(void)
   gnostr_timeline_row_footprint_clear(&explicit_footprint);
 }
 
+static void
+test_cache_lru_bound_and_event_purge(void)
+{
+  g_autoptr(GnostrTimelineGeometryResolver) resolver =
+    gnostr_timeline_geometry_resolver_new();
+  gnostr_timeline_geometry_resolver_set_max_entries(resolver, 3);
+
+  gnostr_timeline_geometry_resolver_record_measurement(resolver, "event-a", 480, "sig-a", 100.0);
+  gnostr_timeline_geometry_resolver_record_measurement(resolver, "event-b", 480, "sig-b", 110.0);
+  gnostr_timeline_geometry_resolver_record_measurement(resolver, "event-c", 480, "sig-c", 120.0);
+
+  double measured = 0.0;
+  g_assert_true(gnostr_timeline_geometry_resolver_lookup_measurement(
+    resolver, "event-a", 480, "sig-a", &measured));
+  gnostr_timeline_geometry_resolver_record_measurement(resolver, "event-d", 480, "sig-d", 130.0);
+
+  g_assert_cmpuint(gnostr_timeline_geometry_resolver_get_n_entries(resolver), ==, 3);
+  g_assert_true(gnostr_timeline_geometry_resolver_lookup_measurement(
+    resolver, "event-a", 480, "sig-a", NULL));
+  g_assert_false(gnostr_timeline_geometry_resolver_lookup_measurement(
+    resolver, "event-b", 480, "sig-b", NULL));
+
+  gnostr_timeline_geometry_resolver_record_measurement(resolver, "event-a", 560, "sig-a", 140.0);
+  gnostr_timeline_geometry_resolver_remove_event(resolver, "event-a");
+  g_assert_false(gnostr_timeline_geometry_resolver_lookup_measurement(
+    resolver, "event-a", 480, "sig-a", NULL));
+  g_assert_false(gnostr_timeline_geometry_resolver_lookup_measurement(
+    resolver, "event-a", 560, "sig-a", NULL));
+  g_assert_cmpuint(gnostr_timeline_geometry_resolver_get_n_entries(resolver), <=, 2);
+}
+
 int
 main(int argc,
      char **argv)
@@ -311,6 +342,8 @@ main(int argc,
                   test_media_elision_controls_text_height);
   g_test_add_func("/gnostr/timeline-geometry/explicit-reservation-fields",
                   test_explicit_reservation_fields_control_height_not_url_sniffing);
+  g_test_add_func("/gnostr/timeline-geometry/lru-bound-event-purge",
+                  test_cache_lru_bound_and_event_purge);
 
   return g_test_run();
 }

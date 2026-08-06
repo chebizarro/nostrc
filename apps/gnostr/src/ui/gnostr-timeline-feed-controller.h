@@ -78,6 +78,14 @@ void gnostr_timeline_feed_controller_set_user_at_top(GnostrTimelineFeedControlle
 gboolean gnostr_timeline_feed_controller_get_user_at_top(GnostrTimelineFeedController *self);
 
 guint gnostr_timeline_feed_controller_get_pending_count(GnostrTimelineFeedController *self);
+guint gnostr_timeline_feed_controller_get_pending_dropped_count(GnostrTimelineFeedController *self);
+gboolean gnostr_timeline_feed_controller_has_pending_event(GnostrTimelineFeedController *self,
+                                                           const char *event_id);
+guint gnostr_timeline_feed_controller_get_working_count(GnostrTimelineFeedController *self);
+guint gnostr_timeline_feed_controller_get_retained_limit(GnostrTimelineFeedController *self);
+guint gnostr_timeline_feed_controller_get_geometry_cache_count(GnostrTimelineFeedController *self);
+gint64 gnostr_timeline_feed_controller_get_older_cursor(GnostrTimelineFeedController *self);
+gint64 gnostr_timeline_feed_controller_get_newer_cursor(GnostrTimelineFeedController *self);
 void  gnostr_timeline_feed_controller_admit_pending_head(GnostrTimelineFeedController *self,
                                                          gboolean scroll_to_top);
 
