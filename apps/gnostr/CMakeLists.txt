@@ -1090,6 +1090,8 @@ if (BUILD_TESTING)
     src/model/gnostr-timeline-snapshot.c
     src/model/gnostr-timeline-snapshot-model.c)
   target_compile_features(gnostr-test-timeline-snapshot PRIVATE c_std_11)
+  target_compile_definitions(gnostr-test-timeline-snapshot PRIVATE
+    GNOSTR_TIMELINE_SNAPSHOT_MODEL_TESTING=1)
   target_include_directories(gnostr-test-timeline-snapshot BEFORE PRIVATE
     ${PROJECT_ROOT}/nostr-gtk/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src)

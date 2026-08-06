@@ -534,11 +534,12 @@ compose_snapshot(GnostrTimelineFeedController *self,
   if (self->snapshot_generation == 0)
     self->snapshot_generation = 1;
 
-  GnostrTimelineSnapshot *snapshot = gnostr_timeline_snapshot_new(self->snapshot_generation,
-                                                                  self->query_generation,
-                                                                  (GnostrTimelineSnapshotRow * const *)rows->pdata,
-                                                                  rows->len,
-                                                                  pending_count(self));
+  GnostrTimelineSnapshot *snapshot = gnostr_timeline_snapshot_new_sorted(
+    self->snapshot_generation,
+    self->query_generation,
+    (GnostrTimelineSnapshotRow * const *)rows->pdata,
+    rows->len,
+    pending_count(self));
   g_ptr_array_unref(rows);
   return snapshot;
 }

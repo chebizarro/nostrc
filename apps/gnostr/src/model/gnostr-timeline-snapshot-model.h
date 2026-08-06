@@ -16,6 +16,10 @@ GnostrTimelineSnapshot *gnostr_timeline_snapshot_model_dup_snapshot(GnostrTimeli
 void gnostr_timeline_snapshot_model_replace_snapshot(GnostrTimelineSnapshotModel *self,
                                                      GnostrTimelineSnapshot *snapshot);
 
+#ifdef GNOSTR_TIMELINE_SNAPSHOT_MODEL_TESTING
+guint64 gnostr_timeline_snapshot_model_get_last_diff_work(GnostrTimelineSnapshotModel *self);
+#endif
+
 G_END_DECLS
 
 #endif /* GNOSTR_TIMELINE_SNAPSHOT_MODEL_H */

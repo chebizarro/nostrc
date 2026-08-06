@@ -5,6 +5,7 @@ struct _GnostrTimelineSnapshotModel {
 
   GnostrTimelineSnapshot *snapshot;
   GPtrArray *published_rows; /* element-type: GnostrTimelineSnapshotRow* */
+  guint64 last_diff_work;
 };
 
 typedef struct {
@@ -114,12 +115,14 @@ snapshot_model_dup_rows(GnostrTimelineSnapshot *snapshot)
 
 static gboolean
 snapshot_model_rows_identical(GPtrArray *old_rows,
-                              GPtrArray *new_rows)
+                              GPtrArray *new_rows,
+                              guint64 *work)
 {
   if (old_rows->len != new_rows->len)
     return FALSE;
 
   for (guint i = 0; i < old_rows->len; i++) {
+    (*work)++;
     if (g_ptr_array_index(old_rows, i) != g_ptr_array_index(new_rows, i))
       return FALSE;
   }
@@ -127,54 +130,50 @@ snapshot_model_rows_identical(GPtrArray *old_rows,
   return TRUE;
 }
 
-static gboolean
-snapshot_model_validate_event_ids(GPtrArray *rows)
+typedef enum {
+  SNAPSHOT_ROWS_VALID,
+  SNAPSHOT_ROWS_INVALID_KEY,
+  SNAPSHOT_ROWS_UNSORTED,
+} SnapshotRowsValidation;
+
+static SnapshotRowsValidation
+snapshot_model_validate_rows(GPtrArray *rows,
+                             guint64 *work)
 {
   GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal);
 
   for (guint i = 0; i < rows->len; i++) {
     GnostrTimelineSnapshotRow *row = g_ptr_array_index(rows, i);
     const char *event_id = row ? gnostr_timeline_snapshot_row_get_event_id(row) : NULL;
+    (*work)++;
 
     if (!event_id || !*event_id || g_hash_table_contains(seen, event_id)) {
       g_hash_table_destroy(seen);
-      return FALSE;
+      return SNAPSHOT_ROWS_INVALID_KEY;
+    }
+
+    if (i > 0) {
+      GnostrTimelineSnapshotRow *previous = g_ptr_array_index(rows, i - 1);
+      (*work)++;
+      if (gnostr_timeline_snapshot_compare_rows(previous, row) > 0) {
+        g_hash_table_destroy(seen);
+        return SNAPSHOT_ROWS_UNSORTED;
+      }
     }
 
     g_hash_table_add(seen, (gpointer)event_id);
   }
 
   g_hash_table_destroy(seen);
-  return TRUE;
-}
-
-static guint
-lcs_at(guint *lcs,
-       guint n_cols,
-       guint row,
-       guint col)
-{
-  return lcs[(row * n_cols) + col];
-}
-
-static void
-lcs_set(guint *lcs,
-        guint n_cols,
-        guint row,
-        guint col,
-        guint value)
-{
-  lcs[(row * n_cols) + col] = value;
+  return SNAPSHOT_ROWS_VALID;
 }
 
 static gboolean
-snapshot_model_same_event_id(GPtrArray *old_rows,
-                             guint old_index,
-                             GPtrArray *new_rows,
-                             guint new_index)
+snapshot_model_same_event_id(GnostrTimelineSnapshotRow *old_row,
+                             GnostrTimelineSnapshotRow *new_row,
+                             guint64 *work)
 {
-  GnostrTimelineSnapshotRow *old_row = g_ptr_array_index(old_rows, old_index);
-  GnostrTimelineSnapshotRow *new_row = g_ptr_array_index(new_rows, new_index);
+  (*work)++;
   return g_strcmp0(gnostr_timeline_snapshot_row_get_event_id(old_row),
                    gnostr_timeline_snapshot_row_get_event_id(new_row)) == 0;
 }
@@ -198,65 +197,102 @@ snapshot_model_add_span(GArray *spans,
 
 static GArray *
 snapshot_model_build_diff_spans(GPtrArray *old_rows,
-                                GPtrArray *new_rows)
+                                GPtrArray *new_rows,
+                                guint64 *work)
 {
-  if (!snapshot_model_validate_event_ids(old_rows) ||
-      !snapshot_model_validate_event_ids(new_rows))
+  SnapshotRowsValidation old_validation = snapshot_model_validate_rows(old_rows, work);
+  SnapshotRowsValidation new_validation = snapshot_model_validate_rows(new_rows, work);
+  if (old_validation != SNAPSHOT_ROWS_VALID ||
+      new_validation != SNAPSHOT_ROWS_VALID)
     return NULL;
 
-  guint old_len = old_rows->len;
-  guint new_len = new_rows->len;
-  guint n_cols = new_len + 1;
-  guint *lcs = g_new0(guint, (old_len + 1) * (new_len + 1));
+  const guint old_len = old_rows->len;
+  const guint new_len = new_rows->len;
+  const guint common_len = MIN(old_len, new_len);
+  guint prefix = 0;
 
-  for (gint i = (gint)old_len - 1; i >= 0; i--) {
-    for (gint j = (gint)new_len - 1; j >= 0; j--) {
-      if (snapshot_model_same_event_id(old_rows, (guint)i, new_rows, (guint)j)) {
-        lcs_set(lcs, n_cols, (guint)i, (guint)j,
-                lcs_at(lcs, n_cols, (guint)i + 1, (guint)j + 1) + 1);
-      } else {
-        guint skip_old = lcs_at(lcs, n_cols, (guint)i + 1, (guint)j);
-        guint skip_new = lcs_at(lcs, n_cols, (guint)i, (guint)j + 1);
-        lcs_set(lcs, n_cols, (guint)i, (guint)j, MAX(skip_old, skip_new));
-      }
-    }
+  while (prefix < common_len) {
+    (*work)++;
+    if (g_ptr_array_index(old_rows, prefix) != g_ptr_array_index(new_rows, prefix))
+      break;
+    prefix++;
+  }
+
+  guint old_end = old_len;
+  guint new_end = new_len;
+  while (old_end > prefix && new_end > prefix) {
+    (*work)++;
+    if (g_ptr_array_index(old_rows, old_end - 1) !=
+        g_ptr_array_index(new_rows, new_end - 1))
+      break;
+    old_end--;
+    new_end--;
   }
 
   GArray *spans = g_array_new(FALSE, FALSE, sizeof(ItemsChangedSpan));
-  guint i = 0;
-  guint j = 0;
-  guint old_start = 0;
-  guint new_start = 0;
-  guint position = 0;
+  guint old_index = prefix;
+  guint new_index = prefix;
+  guint position = prefix;
+  guint span_position = prefix;
+  guint removed = 0;
+  guint added = 0;
 
-  while (i < old_len && j < new_len) {
-    if (snapshot_model_same_event_id(old_rows, i, new_rows, j)) {
-      snapshot_model_add_span(spans, position, i - old_start, j - new_start);
-      position += j - new_start;
+  while (old_index < old_end && new_index < new_end) {
+    GnostrTimelineSnapshotRow *old_row = g_ptr_array_index(old_rows, old_index);
+    GnostrTimelineSnapshotRow *new_row = g_ptr_array_index(new_rows, new_index);
 
-      GnostrTimelineSnapshotRow *old_row = g_ptr_array_index(old_rows, i);
-      GnostrTimelineSnapshotRow *new_row = g_ptr_array_index(new_rows, j);
-      if (old_row != new_row)
-        snapshot_model_add_span(spans, position, 1, 1);
+    if (snapshot_model_same_event_id(old_row, new_row, work)) {
+      if (old_row == new_row) {
+        snapshot_model_add_span(spans, span_position, removed, added);
+        removed = 0;
+        added = 0;
+        old_index++;
+        new_index++;
+        position++;
+        continue;
+      }
 
-      i++;
-      j++;
-      old_start = i;
-      new_start = j;
+      if (removed == 0 && added == 0)
+        span_position = position;
+      removed++;
+      added++;
+      old_index++;
+      new_index++;
       position++;
-    } else if (lcs_at(lcs, n_cols, i + 1, j) >= lcs_at(lcs, n_cols, i, j + 1)) {
-      i++;
+      continue;
+    }
+
+    (*work)++;
+    gint order = gnostr_timeline_snapshot_compare_rows(old_row, new_row);
+    if (order < 0) {
+      if (removed == 0 && added == 0)
+        span_position = position;
+      removed++;
+      old_index++;
+    } else if (order > 0) {
+      if (removed == 0 && added == 0)
+        span_position = position;
+      added++;
+      new_index++;
+      position++;
     } else {
-      j++;
+      g_array_unref(spans);
+      return NULL;
     }
   }
 
-  snapshot_model_add_span(spans,
-                          position,
-                          old_len - old_start,
-                          new_len - new_start);
+  if (old_index < old_end) {
+    if (removed == 0 && added == 0)
+      span_position = position;
+    removed += old_end - old_index;
+  }
+  if (new_index < new_end) {
+    if (removed == 0 && added == 0)
+      span_position = position;
+    added += new_end - new_index;
+  }
+  snapshot_model_add_span(spans, span_position, removed, added);
 
-  g_free(lcs);
   return spans;
 }
 
@@ -270,7 +306,10 @@ gnostr_timeline_snapshot_model_replace_snapshot(GnostrTimelineSnapshotModel *sel
   guint old_len = self->published_rows ? self->published_rows->len : 0;
   GPtrArray *new_rows = snapshot_model_dup_rows(snapshot);
 
-  if (snapshot_model_rows_identical(self->published_rows, new_rows)) {
+  self->last_diff_work = 0;
+  if (snapshot_model_rows_identical(self->published_rows,
+                                    new_rows,
+                                    &self->last_diff_work)) {
     if (snapshot)
       g_object_ref(snapshot);
     g_clear_object(&self->snapshot);
@@ -279,7 +318,10 @@ gnostr_timeline_snapshot_model_replace_snapshot(GnostrTimelineSnapshotModel *sel
     return;
   }
 
-  g_autoptr(GArray) spans = snapshot_model_build_diff_spans(self->published_rows, new_rows);
+  g_autoptr(GArray) spans =
+    snapshot_model_build_diff_spans(self->published_rows,
+                                    new_rows,
+                                    &self->last_diff_work);
 
   if (snapshot)
     g_object_ref(snapshot);
@@ -324,7 +366,9 @@ gnostr_timeline_snapshot_model_replace_snapshot(GnostrTimelineSnapshotModel *sel
 
   /* Defensive resync: if the diff ever diverges from the target rows,
    * publish a full replacement rather than leaving the model wrong. */
-  if (!snapshot_model_rows_identical(self->published_rows, new_rows)) {
+  if (!snapshot_model_rows_identical(self->published_rows,
+                                      new_rows,
+                                      &self->last_diff_work)) {
     guint cur_len = self->published_rows->len;
     g_ptr_array_unref(self->published_rows);
     self->published_rows = new_rows;
@@ -334,3 +378,12 @@ gnostr_timeline_snapshot_model_replace_snapshot(GnostrTimelineSnapshotModel *sel
 
   g_ptr_array_unref(new_rows);
 }
+
+#ifdef GNOSTR_TIMELINE_SNAPSHOT_MODEL_TESTING
+guint64
+gnostr_timeline_snapshot_model_get_last_diff_work(GnostrTimelineSnapshotModel *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_MODEL(self), 0);
+  return self->last_diff_work;
+}
+#endif

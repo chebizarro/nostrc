@@ -114,6 +114,12 @@ GnostrTimelineSnapshot *gnostr_timeline_snapshot_new(guint64 generation,
                                                       guint n_rows,
                                                       guint pending_head_count);
 
+GnostrTimelineSnapshot *gnostr_timeline_snapshot_new_sorted(guint64 generation,
+                                                             guint64 query_generation,
+                                                             GnostrTimelineSnapshotRow * const *rows,
+                                                             guint n_rows,
+                                                             guint pending_head_count);
+
 GnostrTimelineSnapshot *gnostr_timeline_snapshot_new_empty(guint64 generation,
                                                             guint64 query_generation);
 

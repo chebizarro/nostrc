@@ -114,6 +114,29 @@ on_items_changed(GListModel *model,
   capture->count++;
 }
 
+typedef struct {
+  guint position;
+  guint removed;
+  guint added;
+} ChangedSpan;
+
+static void
+collect_changed_spans(GListModel *model,
+                      guint position,
+                      guint removed,
+                      guint added,
+                      gpointer user_data)
+{
+  (void)model;
+  GArray *spans = user_data;
+  ChangedSpan span = {
+    .position = position,
+    .removed = removed,
+    .added = added,
+  };
+  g_array_append_val(spans, span);
+}
+
 static void
 test_snapshot_model_replacement(void)
 {
@@ -257,6 +280,227 @@ test_snapshot_model_multi_span_diff_consistency(void)
   g_object_unref(g);
 }
 
+static void
+test_snapshot_model_insert_at_head(void)
+{
+  GnostrTimelineSnapshotModel *model = gnostr_timeline_snapshot_model_new();
+  ItemsChangedCapture capture = { 0 };
+  g_signal_connect(model, "items-changed", G_CALLBACK(on_items_changed), &capture);
+
+  GnostrTimelineSnapshotRow *a = row_new("event-a", 200, "a", 10.0);
+  GnostrTimelineSnapshotRow *b = row_new("event-b", 100, "b", 10.0);
+  GnostrTimelineSnapshotRow *head = row_new("event-head", 300, "head", 10.0);
+  GnostrTimelineSnapshotRow *old_rows[] = { a, b };
+  GnostrTimelineSnapshotRow *new_rows[] = { head, a, b };
+  GnostrTimelineSnapshot *old_snapshot =
+    gnostr_timeline_snapshot_new_sorted(1, 1, old_rows, G_N_ELEMENTS(old_rows), 0);
+  GnostrTimelineSnapshot *new_snapshot =
+    gnostr_timeline_snapshot_new_sorted(2, 1, new_rows, G_N_ELEMENTS(new_rows), 0);
+
+  gnostr_timeline_snapshot_model_replace_snapshot(model, old_snapshot);
+  capture = (ItemsChangedCapture){ 0 };
+  gnostr_timeline_snapshot_model_replace_snapshot(model, new_snapshot);
+
+  g_assert_cmpuint(capture.count, ==, 1);
+  g_assert_cmpuint(capture.position, ==, 0);
+  g_assert_cmpuint(capture.removed, ==, 0);
+  g_assert_cmpuint(capture.added, ==, 1);
+
+  g_object_unref(model);
+  g_object_unref(old_snapshot);
+  g_object_unref(new_snapshot);
+  g_object_unref(a);
+  g_object_unref(b);
+  g_object_unref(head);
+}
+
+static void
+test_snapshot_model_remove_mid(void)
+{
+  GnostrTimelineSnapshotModel *model = gnostr_timeline_snapshot_model_new();
+  ItemsChangedCapture capture = { 0 };
+  g_signal_connect(model, "items-changed", G_CALLBACK(on_items_changed), &capture);
+
+  GnostrTimelineSnapshotRow *a = row_new("event-a", 300, "a", 10.0);
+  GnostrTimelineSnapshotRow *b = row_new("event-b", 200, "b", 10.0);
+  GnostrTimelineSnapshotRow *c = row_new("event-c", 100, "c", 10.0);
+  GnostrTimelineSnapshotRow *old_rows[] = { a, b, c };
+  GnostrTimelineSnapshotRow *new_rows[] = { a, c };
+  GnostrTimelineSnapshot *old_snapshot =
+    gnostr_timeline_snapshot_new_sorted(1, 1, old_rows, G_N_ELEMENTS(old_rows), 0);
+  GnostrTimelineSnapshot *new_snapshot =
+    gnostr_timeline_snapshot_new_sorted(2, 1, new_rows, G_N_ELEMENTS(new_rows), 0);
+
+  gnostr_timeline_snapshot_model_replace_snapshot(model, old_snapshot);
+  capture = (ItemsChangedCapture){ 0 };
+  gnostr_timeline_snapshot_model_replace_snapshot(model, new_snapshot);
+
+  g_assert_cmpuint(capture.count, ==, 1);
+  g_assert_cmpuint(capture.position, ==, 1);
+  g_assert_cmpuint(capture.removed, ==, 1);
+  g_assert_cmpuint(capture.added, ==, 0);
+
+  g_object_unref(model);
+  g_object_unref(old_snapshot);
+  g_object_unref(new_snapshot);
+  g_object_unref(a);
+  g_object_unref(b);
+  g_object_unref(c);
+}
+
+static void
+test_snapshot_model_mixed_coalesced_spans(void)
+{
+  GnostrTimelineSnapshotModel *model = gnostr_timeline_snapshot_model_new();
+  GArray *spans = g_array_new(FALSE, FALSE, sizeof(ChangedSpan));
+  g_signal_connect(model, "items-changed", G_CALLBACK(collect_changed_spans), spans);
+
+  GnostrTimelineSnapshotRow *a = row_new("event-a", 600, "a", 10.0);
+  GnostrTimelineSnapshotRow *b = row_new("event-b", 500, "b", 10.0);
+  GnostrTimelineSnapshotRow *c = row_new("event-c", 400, "c", 10.0);
+  GnostrTimelineSnapshotRow *d = row_new("event-d", 300, "d", 10.0);
+  GnostrTimelineSnapshotRow *e = row_new("event-e", 200, "e", 10.0);
+  GnostrTimelineSnapshotRow *f = row_new("event-f", 100, "f", 10.0);
+  GnostrTimelineSnapshotRow *head = row_new("event-head", 700, "head", 10.0);
+  GnostrTimelineSnapshotRow *b_replacement = row_new("event-b", 500, "b", 20.0);
+  GnostrTimelineSnapshotRow *x = row_new("event-x", 450, "x", 10.0);
+  GnostrTimelineSnapshotRow *tail = row_new("event-tail", 50, "tail", 10.0);
+  GnostrTimelineSnapshotRow *old_rows[] = { a, b, c, d, e, f };
+  GnostrTimelineSnapshotRow *new_rows[] = {
+    head, a, b_replacement, x, d, f, tail
+  };
+  GnostrTimelineSnapshot *old_snapshot =
+    gnostr_timeline_snapshot_new_sorted(1, 1, old_rows, G_N_ELEMENTS(old_rows), 0);
+  GnostrTimelineSnapshot *new_snapshot =
+    gnostr_timeline_snapshot_new_sorted(2, 1, new_rows, G_N_ELEMENTS(new_rows), 0);
+
+  gnostr_timeline_snapshot_model_replace_snapshot(model, old_snapshot);
+  g_array_set_size(spans, 0);
+  gnostr_timeline_snapshot_model_replace_snapshot(model, new_snapshot);
+
+  const ChangedSpan expected[] = {
+    { 0, 0, 1 },
+    { 2, 2, 2 },
+    { 5, 1, 0 },
+    { 6, 0, 1 },
+  };
+  g_assert_cmpuint(spans->len, ==, G_N_ELEMENTS(expected));
+  for (guint i = 0; i < spans->len; i++) {
+    ChangedSpan actual = g_array_index(spans, ChangedSpan, i);
+    g_assert_cmpuint(actual.position, ==, expected[i].position);
+    g_assert_cmpuint(actual.removed, ==, expected[i].removed);
+    g_assert_cmpuint(actual.added, ==, expected[i].added);
+  }
+
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(model)), ==, G_N_ELEMENTS(new_rows));
+
+  g_object_unref(model);
+  g_array_unref(spans);
+  g_object_unref(old_snapshot);
+  g_object_unref(new_snapshot);
+  g_object_unref(a);
+  g_object_unref(b);
+  g_object_unref(c);
+  g_object_unref(d);
+  g_object_unref(e);
+  g_object_unref(f);
+  g_object_unref(head);
+  g_object_unref(b_replacement);
+  g_object_unref(x);
+  g_object_unref(tail);
+}
+
+static void
+test_snapshot_model_large_single_replacement_is_linear(void)
+{
+  const guint n_rows = 10000;
+  const guint replacement_index = n_rows / 2;
+  GnostrTimelineSnapshotModel *model = gnostr_timeline_snapshot_model_new();
+  ItemsChangedCapture capture = { 0 };
+  GPtrArray *rows = g_ptr_array_new_with_free_func(g_object_unref);
+  g_signal_connect(model, "items-changed", G_CALLBACK(on_items_changed), &capture);
+
+  for (guint i = 0; i < n_rows; i++) {
+    g_autofree char *event_id = g_strdup_printf("event-%05u", i);
+    g_ptr_array_add(rows, row_new(event_id, (gint64)(n_rows - i), event_id, 10.0));
+  }
+
+  GnostrTimelineSnapshot *old_snapshot =
+    gnostr_timeline_snapshot_new_sorted(1,
+                                        1,
+                                        (GnostrTimelineSnapshotRow * const *)rows->pdata,
+                                        rows->len,
+                                        0);
+  GnostrTimelineSnapshotRow **new_rows = g_new(GnostrTimelineSnapshotRow *, n_rows);
+  for (guint i = 0; i < n_rows; i++)
+    new_rows[i] = g_ptr_array_index(rows, i);
+
+  g_autofree char *replacement_id = g_strdup_printf("event-%05u", replacement_index);
+  GnostrTimelineSnapshotRow *replacement =
+    row_new(replacement_id,
+            (gint64)(n_rows - replacement_index),
+            replacement_id,
+            20.0);
+  new_rows[replacement_index] = replacement;
+  GnostrTimelineSnapshot *new_snapshot =
+    gnostr_timeline_snapshot_new_sorted(2, 1, new_rows, n_rows, 0);
+  g_free(new_rows);
+
+  gnostr_timeline_snapshot_model_replace_snapshot(model, old_snapshot);
+  capture = (ItemsChangedCapture){ 0 };
+  gnostr_timeline_snapshot_model_replace_snapshot(model, new_snapshot);
+
+  g_assert_cmpuint(capture.count, ==, 1);
+  g_assert_cmpuint(capture.position, ==, replacement_index);
+  g_assert_cmpuint(capture.removed, ==, 1);
+  g_assert_cmpuint(capture.added, ==, 1);
+  g_assert_cmpuint(gnostr_timeline_snapshot_model_get_last_diff_work(model),
+                   <=,
+                   (guint64)n_rows * 8 + 32);
+
+  g_object_unref(model);
+  g_object_unref(old_snapshot);
+  g_object_unref(new_snapshot);
+  g_object_unref(replacement);
+  g_ptr_array_unref(rows);
+}
+
+static void
+test_snapshot_model_invalid_rows_fall_back_to_full_splice(void)
+{
+  GnostrTimelineSnapshotModel *model = gnostr_timeline_snapshot_model_new();
+  ItemsChangedCapture capture = { 0 };
+  g_signal_connect(model, "items-changed", G_CALLBACK(on_items_changed), &capture);
+
+  GnostrTimelineSnapshotRow *a = row_new("event-a", 300, "a", 10.0);
+  GnostrTimelineSnapshotRow *b = row_new("event-b", 200, "b", 10.0);
+  GnostrTimelineSnapshotRow *c = row_new("event-c", 100, "c", 10.0);
+  GnostrTimelineSnapshotRow *invalid = row_new("", 200, "invalid", 10.0);
+  GnostrTimelineSnapshotRow *old_rows[] = { a, b, c };
+  GnostrTimelineSnapshotRow *new_rows[] = { a, invalid, c };
+  GnostrTimelineSnapshot *old_snapshot =
+    gnostr_timeline_snapshot_new_sorted(1, 1, old_rows, G_N_ELEMENTS(old_rows), 0);
+  GnostrTimelineSnapshot *new_snapshot =
+    gnostr_timeline_snapshot_new_sorted(2, 1, new_rows, G_N_ELEMENTS(new_rows), 0);
+
+  gnostr_timeline_snapshot_model_replace_snapshot(model, old_snapshot);
+  capture = (ItemsChangedCapture){ 0 };
+  gnostr_timeline_snapshot_model_replace_snapshot(model, new_snapshot);
+
+  g_assert_cmpuint(capture.count, ==, 1);
+  g_assert_cmpuint(capture.position, ==, 0);
+  g_assert_cmpuint(capture.removed, ==, G_N_ELEMENTS(old_rows));
+  g_assert_cmpuint(capture.added, ==, G_N_ELEMENTS(new_rows));
+
+  g_object_unref(model);
+  g_object_unref(old_snapshot);
+  g_object_unref(new_snapshot);
+  g_object_unref(a);
+  g_object_unref(b);
+  g_object_unref(c);
+  g_object_unref(invalid);
+}
+
 int
 main(int argc,
      char **argv)
@@ -267,6 +511,13 @@ main(int argc,
   g_test_add_func("/gnostr/timeline-snapshot/row-replacement", test_row_replacement_is_object_replacement);
   g_test_add_func("/gnostr/timeline-snapshot/model-replacement", test_snapshot_model_replacement);
   g_test_add_func("/gnostr/timeline-snapshot/multi-span-diff-consistency", test_snapshot_model_multi_span_diff_consistency);
+  g_test_add_func("/gnostr/timeline-snapshot/insert-at-head", test_snapshot_model_insert_at_head);
+  g_test_add_func("/gnostr/timeline-snapshot/remove-mid", test_snapshot_model_remove_mid);
+  g_test_add_func("/gnostr/timeline-snapshot/mixed-coalesced-spans", test_snapshot_model_mixed_coalesced_spans);
+  g_test_add_func("/gnostr/timeline-snapshot/large-single-replacement-linear",
+                  test_snapshot_model_large_single_replacement_is_linear);
+  g_test_add_func("/gnostr/timeline-snapshot/invalid-rows-full-splice",
+                  test_snapshot_model_invalid_rows_fall_back_to_full_splice);
 
   return g_test_run();
 }

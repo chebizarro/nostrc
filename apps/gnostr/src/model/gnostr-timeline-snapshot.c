@@ -561,12 +561,26 @@ gnostr_timeline_snapshot_init(GnostrTimelineSnapshot *self)
   self->event_index = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 }
 
-GnostrTimelineSnapshot *
-gnostr_timeline_snapshot_new(guint64 generation,
-                             guint64 query_generation,
-                             GnostrTimelineSnapshotRow * const *rows,
-                             guint n_rows,
-                             guint pending_head_count)
+static gboolean
+snapshot_rows_are_sorted(GPtrArray *rows)
+{
+  for (guint i = 1; i < rows->len; i++) {
+    GnostrTimelineSnapshotRow *previous = g_ptr_array_index(rows, i - 1);
+    GnostrTimelineSnapshotRow *current = g_ptr_array_index(rows, i);
+    if (gnostr_timeline_snapshot_compare_rows(previous, current) > 0)
+      return FALSE;
+  }
+
+  return TRUE;
+}
+
+static GnostrTimelineSnapshot *
+gnostr_timeline_snapshot_new_internal(guint64 generation,
+                                      guint64 query_generation,
+                                      GnostrTimelineSnapshotRow * const *rows,
+                                      guint n_rows,
+                                      guint pending_head_count,
+                                      gboolean rows_are_sorted)
 {
   GnostrTimelineSnapshot *self = g_object_new(GNOSTR_TYPE_TIMELINE_SNAPSHOT, NULL);
 
@@ -579,7 +593,10 @@ gnostr_timeline_snapshot_new(guint64 generation,
     g_ptr_array_add(self->rows, g_object_ref(rows[i]));
   }
 
-  g_ptr_array_sort(self->rows, sort_rows_cb);
+  if (rows_are_sorted)
+    g_assert(snapshot_rows_are_sorted(self->rows));
+  else
+    g_ptr_array_sort(self->rows, sort_rows_cb);
 
   GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal);
   for (guint i = 0; i < self->rows->len;) {
@@ -599,6 +616,36 @@ gnostr_timeline_snapshot_new(guint64 generation,
 
   gnostr_timeline_snapshot_rebuild_indexes(self);
   return self;
+}
+
+GnostrTimelineSnapshot *
+gnostr_timeline_snapshot_new(guint64 generation,
+                             guint64 query_generation,
+                             GnostrTimelineSnapshotRow * const *rows,
+                             guint n_rows,
+                             guint pending_head_count)
+{
+  return gnostr_timeline_snapshot_new_internal(generation,
+                                               query_generation,
+                                               rows,
+                                               n_rows,
+                                               pending_head_count,
+                                               FALSE);
+}
+
+GnostrTimelineSnapshot *
+gnostr_timeline_snapshot_new_sorted(guint64 generation,
+                                    guint64 query_generation,
+                                    GnostrTimelineSnapshotRow * const *rows,
+                                    guint n_rows,
+                                    guint pending_head_count)
+{
+  return gnostr_timeline_snapshot_new_internal(generation,
+                                               query_generation,
+                                               rows,
+                                               n_rows,
+                                               pending_head_count,
+                                               TRUE);
 }
 
 GnostrTimelineSnapshot *
