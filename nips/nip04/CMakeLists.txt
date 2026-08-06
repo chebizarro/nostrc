@@ -42,5 +42,10 @@ foreach(TEST_SRC ${TEST_SOURCES})
     get_filename_component(TEST_NAME ${TEST_SRC} NAME_WE)
     add_executable(${TEST_NAME} ${TEST_SRC})
     target_link_libraries(${TEST_NAME} PRIVATE nip04 nostr OpenSSL::Crypto ${SECP256K1_LIB})
-    add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+    # test_interop intentionally validates standard NIP-04 CBC fixtures. An
+    # AEAD-only build rejects those fixtures by design, so keep that coverage
+    # in normal builds rather than registering a contradictory strict-mode test.
+    if (NOT (NIP04_STRICT_AEAD_ONLY AND TEST_NAME STREQUAL "test_interop"))
+        add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+    endif()
 endforeach()

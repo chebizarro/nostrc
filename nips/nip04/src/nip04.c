@@ -383,9 +383,17 @@ int nostr_nip04_encrypt(const char *plaintext_utf8,
         return -1;
     }
 
+#ifdef NIP04_STRICT_AEAD_ONLY
+    /* An AEAD-only build must not emit an envelope that its own decrypt API
+     * rejects. Default builds retain standard NIP-04 CBC wire compatibility. */
+    int rc = nostr_nip04_encrypt_secure(plaintext_utf8, receiver_pubkey_hex,
+                                        &sender_seckey, out_content_b64_qiv,
+                                        out_error);
+#else
     int rc = nostr_nip04_encrypt_legacy_secure(plaintext_utf8, receiver_pubkey_hex,
                                                &sender_seckey, out_content_b64_qiv,
                                                out_error);
+#endif
     secure_free(&sender_seckey);
     return rc;
 }

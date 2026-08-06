@@ -1,4 +1,5 @@
 #include "nostr-relay.h"
+#include "nostr-subscription.h"
 #include <assert.h>
 
 void test_relay_initialization_and_cleanup() {
@@ -66,10 +67,17 @@ void test_relay_subscription() {
     NostrFilters *filters = nostr_filters_new();
     nostr_filters_add(filters, filter);
 
-    // Subscribe
-    bool subscribed = nostr_relay_subscribe(relay, ctx, filters, &err);
+    // Prepare and fire explicitly so the test retains ownership of the
+    // subscription and can stop its lifecycle worker before relay teardown.
+    NostrSubscription *subscription =
+        nostr_relay_prepare_subscription(relay, ctx, filters);
+    assert(subscription != NULL);
+    bool subscribed = nostr_subscription_fire(subscription, &err);
     assert(subscribed == true);
     assert(err == NULL);
+
+    nostr_subscription_unsubscribe(subscription);
+    nostr_subscription_free(subscription);
 
     // Close the relay
     nostr_relay_close(relay, &err);
@@ -93,9 +101,14 @@ void test_relay_write() {
     assert(connected == true);
     assert(err == NULL);
 
-    // Write a message
+    // Write a message and wait for the offline writer to finish. Closing
+    // the relay with an in-flight request made this test scheduler-dependent.
     GoChannel *write_channel = nostr_relay_write(relay, "test message");
     assert(write_channel != NULL);
+    Error *write_err = NULL;
+    assert(go_channel_receive(write_channel, (void **)&write_err) == 0);
+    assert(write_err == NULL);
+    go_channel_unref(write_channel);
 
     // Close the relay
     nostr_relay_close(relay, &err);
