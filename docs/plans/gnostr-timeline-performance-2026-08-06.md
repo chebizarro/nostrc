@@ -29,8 +29,8 @@ Vendored nostrdb natively provides, with our current usage status:
 3. ✅ DONE (commit 22d4466f, nostrc-qjde: blocks-cache-first via storage_ndb_get_blocks with per-block-slice sanitization preserving cached offsets, grow-on-demand fallback buffer, refcounted GnParsedContent shared hydrator→VM→snapshot→row→patches, quote/repost/geometry reparses removed, transfer-capped descriptors) — **Parse once, share everywhere** — carry one immutable parsed-content artifact (markup + plain text + descriptors + derived geometry) from hydration through VM and snapshot; skip parsing absent quote/repost; transfer-cap descriptors instead of double deep-copy; split mutable state (profile fields, counts) from immutable content so `copy_with_*()` shares content + geometry instead of cloning + reparsing.
 
 ### Phase 2 — fix the nostrdb boundary
-4. **Note-key query path** — add an ndb query API returning note keys/pointers (no JSON round-trip for IDs); populate batches directly under the open transaction; stop over-querying 100 to publish 30 (`timeline-source.c:864-891`).
-5. **Per-author profile hydration** — per-batch (ideally longer-lived) pubkey-keyed cache with an `event_exists` flag; one lookup per author per batch instead of per note; kill the second existence query.
+4. ✅ DONE (commit b6271b91, nostrc-7wzy) — **Note-key query path** — add an ndb query API returning note keys/pointers (no JSON round-trip for IDs); populate batches directly under the open transaction; stop over-querying 100 to publish 30 (`timeline-source.c:864-891`).
+5. ✅ DONE (commit b6271b91, nostrc-7wzy: per-batch pubkey-keyed flatbuffer cache w/ existence + last-fetch, JSON fallback removed) — **Per-author profile hydration** — per-batch (ideally longer-lived) pubkey-keyed cache with an `event_exists` flag; one lookup per author per batch instead of per note; kill the second existence query.
 
 ### Phase 3 — live path + patches
 6. **Scoped, coalesced, async ingestion** — narrow subscriptions to the active query where possible; coalesce keys into one bounded queue per source generation; use the existing async hydrator with generation cancellation; publish merged completions.
