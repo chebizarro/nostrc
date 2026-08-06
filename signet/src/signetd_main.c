@@ -719,6 +719,13 @@ int main(int argc, char **argv) {
       (char *)SIGNET_CAP_NOSTR_ENCRYPT,
       (char *)SIGNET_CAP_SSH_SIGN,
       (char *)SIGNET_CAP_SSH_LIST_KEYS,
+      /* Credential access remains owner-bound and is further constrained by
+       * credential type, expiry, revocation, lease, deny-list, and audit
+       * enforcement.  Listing these capabilities explicitly is required for
+       * the production registry; otherwise GetToken/GetSession are
+       * unreachable even when every downstream check would allow them. */
+      (char *)SIGNET_CAP_CREDENTIAL_GET_TOKEN,
+      (char *)SIGNET_CAP_CREDENTIAL_GET_SESSION,
     };
     SignetAgentPolicy default_pol = {
       .name = (char *)"default",
