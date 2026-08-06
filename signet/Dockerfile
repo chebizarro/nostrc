@@ -50,7 +50,7 @@ RUN cmake -B build-docker -G Ninja \
     -DBUILD_LIBMARMOT=OFF \
     -DBUILD_MARMOT_GOBJECT=OFF \
     -DLIBNOSTR_WITH_NOSTRDB=OFF \
-  && cmake --build build-docker --target signetd signetctl
+  && cmake --build build-docker --target signetd signetctl signet-git-credential
 
 # ============================================================================
 # Stage 2: Runtime
@@ -80,6 +80,7 @@ RUN groupadd -r signet && useradd -r -g signet -d /data -s /usr/sbin/nologin sig
 # Copy binaries from build stage
 COPY --from=builder /src/build-docker/signet/signetd /usr/local/bin/signetd
 COPY --from=builder /src/build-docker/signet/signetctl /usr/local/bin/signetctl
+COPY --from=builder /src/build-docker/signet/signet-git-credential /usr/local/bin/signet-git-credential
 
 # Grant CAP_IPC_LOCK so mlockall() works for non-root deployments without
 # Docker cap_add (e.g., bare metal with systemd).  Requires libcap2-bin.
