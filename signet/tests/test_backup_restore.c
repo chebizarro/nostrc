@@ -199,6 +199,14 @@ static void test_backup_restore_roundtrip(void) {
   char alpha_id[70], beta_id[70];
   populate(store, alpha_id, beta_id);
 
+  /* A legacy/corrupt custody envelope must not mask later valid credential
+   * envelopes when restore authenticates the supplied master key. */
+  sqlite3 *raw = signet_store_get_db(store);
+  assert(raw != NULL);
+  assert(sqlite3_exec(raw,
+      "UPDATE agents SET encrypted_nsec = randomblob(length(encrypted_nsec));",
+      NULL, NULL, NULL) == SQLITE_OK);
+
   assert(signet_store_backup(store, bak, BACKUP_KEY) == 0);
   assert(g_file_test(bak, G_FILE_TEST_EXISTS));
   /* The backup must be encrypted at rest and must carry 0600 permissions. */

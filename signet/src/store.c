@@ -882,25 +882,25 @@ static int signet_check_envelope_master(sqlite3 *db, const char *master_key) {
   uint8_t dek[SIGNET_DEK_LEN];
   if (!signet_derive_dek(master_key, dek)) return -1;
 
-  int verdict = 0;    /* nothing to check yet */
-  bool checked = false; /* true once one blob was actually authenticated */
+  int verdict = 0;      /* nothing to check yet */
+  bool saw_blob = false;
+  bool authenticated = false;
   sqlite3_stmt *st = NULL;
 
   if (sqlite3_prepare_v2(db,
-        "SELECT encrypted_nsec, nonce FROM agents LIMIT 1;",
+        "SELECT encrypted_nsec, nonce FROM agents;",
         -1, &st, NULL) == SQLITE_OK) {
-    if (sqlite3_step(st) == SQLITE_ROW) {
-      checked = true;
+    while (!authenticated && sqlite3_step(st) == SQLITE_ROW) {
+      saw_blob = true;
       const uint8_t *ct = sqlite3_column_blob(st, 0);
       int ct_len = sqlite3_column_bytes(st, 0);
       const uint8_t *nonce = sqlite3_column_blob(st, 1);
       int nonce_len = sqlite3_column_bytes(st, 1);
-      verdict = -1;
       if (ct && nonce && nonce_len == (int)SIGNET_NONCE_LEN &&
           ct_len == (int)(SIGNET_NSEC_LEN + SIGNET_CIPHERTEXT_EXTRA)) {
         uint8_t pt[SIGNET_NSEC_LEN];
-        if (crypto_secretbox_open_easy(pt, ct, (size_t)ct_len, nonce, dek) == 0)
-          verdict = 0;
+        authenticated = crypto_secretbox_open_easy(
+                            pt, ct, (size_t)ct_len, nonce, dek) == 0;
         sodium_memzero(pt, sizeof(pt));
       }
     }
@@ -908,19 +908,20 @@ static int signet_check_envelope_master(sqlite3 *db, const char *master_key) {
     st = NULL;
   }
 
-  if (verdict == 0 && !checked) {
-    /* agents was empty — fall through to a credential blob (per-agent key
-     * derived from the DEK). */
+  if (!authenticated) {
+    /* Fall through to credential blobs (per-agent keys derived from the DEK).
+     * Legacy/corrupt rows must not make a valid backup unrestorable when a
+     * later envelope can authenticate the supplied master key. */
     if (sqlite3_prepare_v2(db,
-          "SELECT payload, nonce, agent_pubkey FROM secrets LIMIT 1;",
+          "SELECT payload, nonce, agent_pubkey FROM secrets;",
           -1, &st, NULL) == SQLITE_OK) {
-      if (sqlite3_step(st) == SQLITE_ROW) {
+      while (!authenticated && sqlite3_step(st) == SQLITE_ROW) {
+        saw_blob = true;
         const uint8_t *ct = sqlite3_column_blob(st, 0);
         int ct_len = sqlite3_column_bytes(st, 0);
         const uint8_t *nonce = sqlite3_column_blob(st, 1);
         int nonce_len = sqlite3_column_bytes(st, 1);
         const char *pubkey = (const char *)sqlite3_column_text(st, 2);
-        verdict = -1;
         if (ct && nonce && pubkey && nonce_len == (int)SIGNET_NONCE_LEN &&
             ct_len > (int)SIGNET_CIPHERTEXT_EXTRA) {
           uint8_t akey[SIGNET_DEK_LEN];
@@ -930,9 +931,8 @@ static int signet_check_envelope_master(sqlite3 *db, const char *master_key) {
           size_t pt_len = (size_t)ct_len - SIGNET_CIPHERTEXT_EXTRA;
           uint8_t *pt = malloc(pt_len);
           if (pt) {
-            if (crypto_secretbox_open_easy(pt, ct, (size_t)ct_len,
-                                           nonce, akey) == 0)
-              verdict = 0;
+            authenticated = crypto_secretbox_open_easy(
+                                pt, ct, (size_t)ct_len, nonce, akey) == 0;
             sodium_memzero(pt, pt_len);
             free(pt);
           }
@@ -943,6 +943,7 @@ static int signet_check_envelope_master(sqlite3 *db, const char *master_key) {
     }
   }
 
+  verdict = (!saw_blob || authenticated) ? 0 : -1;
   sodium_memzero(dek, sizeof(dek));
   return verdict;
 }
