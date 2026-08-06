@@ -23,6 +23,16 @@ int main(void) {
   expect(rc == 0 && enc && strncmp(enc, "v=2:", 4) == 0, "encrypt v2 ok");
   if (err) free(err);
 
+  // Reusing a GCM nonce with the same key is catastrophic. The serialized
+  // envelope must change when encrypting identical plaintext for the same peer.
+  char *enc2 = NULL;
+  err = NULL;
+  rc = nostr_nip04_encrypt("hello", receiver_pk, sender_sk, &enc2, &err);
+  expect(rc == 0 && enc2 && strncmp(enc2, "v=2:", 4) == 0, "second v2 encrypt ok");
+  if (err) free(err);
+  expect(strcmp(enc, enc2) != 0, "v2 encryption uses a fresh nonce");
+  free(enc2);
+
   // Decrypt v2
   char *pt = NULL; err = NULL;
   rc = nostr_nip04_decrypt(enc, sender_pk, receiver_sk, &pt, &err);

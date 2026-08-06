@@ -10,6 +10,12 @@ int main(void) {
     const char *receiver_pk_hex = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
 
     const char *msg = "Hello, NIP-04!";
+    /* This test specifically validates the standard legacy CBC wire format;
+     * AEAD v2 is exercised separately by test_nip04_aead. */
+    if (setenv("NIP04_LEGACY_CBC", "1", 1) != 0) {
+        perror("setenv NIP04_LEGACY_CBC");
+        return 1;
+    }
     char *content = NULL; char *err = NULL;
     if (nostr_nip04_encrypt(msg, receiver_pk_hex, sender_sk_hex, &content, &err) != 0) {
         fprintf(stderr, "encrypt failed: %s\n", err ? err : "unknown");

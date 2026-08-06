@@ -163,21 +163,18 @@ static int ecdh_hash_xcopy(unsigned char *out, const unsigned char *x32, const u
     return 1;
 }
 
-/* === AEAD key/nonce derivation (HKDF with info="NIP04") === */
-static int nip04_kdf_aead_from_x(const unsigned char x[32], unsigned char key32[32], unsigned char nonce12[12]) {
+/* === AEAD key derivation (HKDF with info="NIP04") === */
+static int nip04_kdf_aead_from_x(const unsigned char x[32], unsigned char key32[32]) {
     static const unsigned char info[] = { 'N','I','P','0','4' };
-    unsigned char prk[32]; unsigned char okm[44];
+    unsigned char prk[32];
     hkdf_extract(NULL, 0, x, 32, prk);
-    hkdf_expand(prk, info, sizeof(info), okm, sizeof(okm));
-    memcpy(key32, okm, 32);
-    memcpy(nonce12, okm + 32, 12);
+    hkdf_expand(prk, info, sizeof(info), key32, 32);
     OPENSSL_cleanse(prk, sizeof prk);
-    OPENSSL_cleanse(okm, sizeof okm);
     return 0;
 }
 
 static int nip04_kdf_aead(const char *peer_pub_hex, const char *self_seckey_hex,
-                          unsigned char key32[32], unsigned char nonce12[12]) {
+                          unsigned char key32[32]) {
     unsigned char sk_bin[32]; unsigned char pk_bin[65];
     size_t pk_bin_len;
     if (!peer_pub_hex || !self_seckey_hex) return -1;
@@ -206,13 +203,13 @@ static int nip04_kdf_aead(const char *peer_pub_hex, const char *self_seckey_hex,
     if (!secp256k1_ecdh(ctx, x, &pub, sk_bin, ecdh_hash_xcopy, NULL)) { secp256k1_context_destroy(ctx); secure_bzero(sk_bin, sizeof sk_bin); return -1; }
     secp256k1_context_destroy(ctx);
     secure_bzero(sk_bin, sizeof sk_bin);
-    int rc = nip04_kdf_aead_from_x(x, key32, nonce12);
+    int rc = nip04_kdf_aead_from_x(x, key32);
     secure_bzero((void*)x, sizeof x);
     return rc;
 }
 
 static int nip04_kdf_aead_bin(const char *peer_pub_hex, const unsigned char sk_bin[32],
-                              unsigned char key32[32], unsigned char nonce12[12]) {
+                              unsigned char key32[32]) {
     if (!peer_pub_hex || !sk_bin) {
         fprintf(stderr, "[nip04] kdf_aead_bin: NULL input (peer=%p, sk=%p)\n",
                 (void*)peer_pub_hex, (void*)sk_bin);
@@ -267,7 +264,7 @@ static int nip04_kdf_aead_bin(const char *peer_pub_hex, const unsigned char sk_b
     }
     fprintf(stderr, "[nip04] kdf_aead_bin: ECDH succeeded\n");
     secp256k1_context_destroy(ctx);
-    int rc = nip04_kdf_aead_from_x(x, key32, nonce12);
+    int rc = nip04_kdf_aead_from_x(x, key32);
     secure_bzero((void*)x, sizeof x);
     return rc;
 }
@@ -373,15 +370,24 @@ int nostr_nip04_encrypt(const char *plaintext_utf8,
     }
 
 #ifdef NIP04_STRICT_AEAD_ONLY
-    /* An AEAD-only build must not emit an envelope that its own decrypt API
-     * rejects. Default builds retain standard NIP-04 CBC wire compatibility. */
+    /* Strict builds always emit the only envelope their decrypt API accepts. */
     int rc = nostr_nip04_encrypt_secure(plaintext_utf8, receiver_pubkey_hex,
                                         &sender_seckey, out_content_b64_qiv,
                                         out_error);
 #else
-    int rc = nostr_nip04_encrypt_legacy_secure(plaintext_utf8, receiver_pubkey_hex,
+    /* AEAD v2 is the default. Legacy CBC remains an explicit compatibility
+     * mode for standard NIP-04 peers and uses its dedicated raw-X path. */
+    const char *legacy_cbc = getenv("NIP04_LEGACY_CBC");
+    int rc;
+    if (legacy_cbc && strcmp(legacy_cbc, "1") == 0) {
+        rc = nostr_nip04_encrypt_legacy_secure(plaintext_utf8, receiver_pubkey_hex,
                                                &sender_seckey, out_content_b64_qiv,
                                                out_error);
+    } else {
+        rc = nostr_nip04_encrypt_secure(plaintext_utf8, receiver_pubkey_hex,
+                                        &sender_seckey, out_content_b64_qiv,
+                                        out_error);
+    }
 #endif
     secure_free(&sender_seckey);
     return rc;
@@ -406,8 +412,8 @@ int nostr_nip04_decrypt(const char *content_b64_qiv,
         const unsigned char *tag = payload + payload_len - 16;
         const unsigned char *ct = payload + 12;
         size_t ct_len = payload_len - 12 - 16;
-        unsigned char key[32]; unsigned char dummy_nonce[12];
-        if (nip04_kdf_aead(sender_pubkey_hex, receiver_seckey_hex, key, dummy_nonce) != 0) { OPENSSL_cleanse(payload, payload_len); free(payload); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+        unsigned char key[32];
+        if (nip04_kdf_aead(sender_pubkey_hex, receiver_seckey_hex, key) != 0) { OPENSSL_cleanse(payload, payload_len); free(payload); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
         /* Note: nonce from payload, not derived */
         unsigned char *pt = (unsigned char*)malloc(ct_len + 1);
         if (!pt) { secure_bzero(key, sizeof key); OPENSSL_cleanse(payload, payload_len); free(payload); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
@@ -488,8 +494,15 @@ int nostr_nip04_encrypt_secure(
     *out_content_b64_qiv = NULL;
 
     unsigned char key[32], nonce[12];
-    if (nip04_kdf_aead_bin(receiver_pubkey_hex, (const unsigned char*)sender_seckey->ptr, key, nonce) != 0) {
+    if (nip04_kdf_aead_bin(receiver_pubkey_hex, (const unsigned char*)sender_seckey->ptr, key) != 0) {
         if (out_error) *out_error = strdup("ecdh failed");
+        return -1;
+    }
+    /* The nonce is carried in the v2 envelope and must be unique for every
+     * AES-GCM encryption under the long-lived ECDH-derived key. */
+    if (RAND_bytes(nonce, sizeof(nonce)) != 1) {
+        secure_bzero(key, sizeof key);
+        if (out_error) *out_error = strdup("random nonce failed");
         return -1;
     }
 
@@ -689,8 +702,8 @@ int nostr_nip04_decrypt_secure(
         const unsigned char *nonce = payload;
         const unsigned char *tag = payload + payload_len - 16;
         const unsigned char *ct = payload + 12; size_t ct_len = payload_len - 12 - 16;
-        unsigned char key[32], dummy_nonce[12];
-        if (nip04_kdf_aead_bin(sender_pubkey_hex, (const unsigned char*)receiver_seckey->ptr, key, dummy_nonce) != 0) { OPENSSL_cleanse(payload, payload_len); free(payload); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+        unsigned char key[32];
+        if (nip04_kdf_aead_bin(sender_pubkey_hex, (const unsigned char*)receiver_seckey->ptr, key) != 0) { OPENSSL_cleanse(payload, payload_len); free(payload); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
         unsigned char *pt = (unsigned char*)malloc(ct_len + 1);
         if (!pt) { secure_bzero(key, sizeof key); OPENSSL_cleanse(payload, payload_len); free(payload); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
         EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
