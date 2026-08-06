@@ -136,28 +136,9 @@ static void gnostr_note_embed_dispose(GObject *obj) {
   /* Clear layout manager to prevent measurement during disposal cascade. */
   gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
 
-  /* Safe label cleanup: clear text when native is available (resets
-   * PangoLayout), ref-leak when native is gone to prevent finalization
-   * crash in pango_layout_clear_lines.  Same pattern as note_card_row. */
-#define EMBED_DISPOSE_LABEL(lbl) \
-  do { \
-    if (GNOSTR_LABEL_SAFE(lbl)) { \
-      gtk_label_set_text(GTK_LABEL(lbl), ""); \
-    } else if (GTK_IS_LABEL(lbl)) { \
-      const char *_t = gtk_label_get_text(GTK_LABEL(lbl)); \
-      if (_t && *_t) g_object_ref(lbl); \
-    } \
-  } while (0)
-
-  EMBED_DISPOSE_LABEL(self->content_label);
-  EMBED_DISPOSE_LABEL(self->author_label);
-  EMBED_DISPOSE_LABEL(self->handle_label);
-  EMBED_DISPOSE_LABEL(self->timestamp_label);
-  EMBED_DISPOSE_LABEL(self->error_label);
-  EMBED_DISPOSE_LABEL(self->profile_about_label);
-
-#undef EMBED_DISPOSE_LABEL
-
+  /* Labels are cleared while rooted by prepare_for_unbind() from the parent
+   * quiesce path. Do not retain them here: template disposal must release
+   * the widget tree. */
   gtk_widget_dispose_template(GTK_WIDGET(self), GNOSTR_TYPE_NOTE_EMBED);
 
   G_OBJECT_CLASS(gnostr_note_embed_parent_class)->dispose(obj);
@@ -414,30 +395,33 @@ static char *format_timestamp(gint64 created_at) {
   return g_strdup(buf);
 }
 
-/* Truncate content for embed display */
+/* Sanitize and truncate content for embed display at UTF-8 boundaries. */
 static char *truncate_content(const char *content, size_t max_len) {
-  if (!content || !*content) return g_strdup("");
+  g_autofree char *safe_content = gnostr_sanitize_utf8(content);
+  if (!safe_content || !*safe_content) return g_strdup("");
 
   GString *out = g_string_new("");
   gboolean prev_space = FALSE;
   size_t n = 0;
+  const char *p = safe_content;
 
-  for (const char *p = content; *p && n < max_len; p++) {
-    char c = *p;
-    /* Normalize whitespace */
-    if (c == '\n' || c == '\r' || c == '\t') c = ' ';
-    if (g_ascii_isspace(c)) {
+  while (*p && n < max_len) {
+    gunichar c = g_utf8_get_char(p);
+    p = g_utf8_next_char(p);
+
+    /* Normalize all Unicode whitespace and collapse consecutive runs. */
+    if (g_unichar_isspace(c)) {
       if (prev_space) continue;
       c = ' ';
       prev_space = TRUE;
     } else {
       prev_space = FALSE;
     }
-    g_string_append_c(out, c);
+    g_string_append_unichar(out, c);
     n++;
   }
 
-  if (strlen(content) > max_len) {
+  if (*p) {
     g_string_append(out, "...");
   }
 
@@ -767,18 +751,22 @@ void gnostr_note_embed_set_content(GnostrNoteEmbed *self,
   self->embed_type = EMBED_TYPE_NOTE;
   self->state = EMBED_STATE_LOADED;
 
+  g_autofree char *safe_author_display = gnostr_sanitize_utf8(author_display);
+  g_autofree char *safe_author_handle = gnostr_sanitize_utf8(author_handle);
+
   if (GTK_IS_LABEL(self->author_label)) {
     gtk_label_set_text(GTK_LABEL(self->author_label),
-                       author_display && *author_display ? author_display : "Anonymous");
+                       safe_author_display && *safe_author_display
+                           ? safe_author_display : "Anonymous");
   }
 
   if (GTK_IS_LABEL(self->handle_label)) {
     g_autofree char *handle_text = NULL;
-    if (author_handle && *author_handle) {
-      if (author_handle[0] != '@') {
-        handle_text = g_strdup_printf("@%s", author_handle);
+    if (safe_author_handle && *safe_author_handle) {
+      if (safe_author_handle[0] != '@') {
+        handle_text = g_strdup_printf("@%s", safe_author_handle);
       } else {
-        handle_text = g_strdup(author_handle);
+        handle_text = g_strdup(safe_author_handle);
       }
     }
     gtk_label_set_text(GTK_LABEL(self->handle_label), handle_text ? handle_text : "");
@@ -802,7 +790,7 @@ void gnostr_note_embed_set_content(GnostrNoteEmbed *self,
     }
   }
 
-  load_avatar(self, avatar_url, author_display, author_handle);
+  load_avatar(self, avatar_url, safe_author_display, safe_author_handle);
 
   update_ui_state(self);
 }
@@ -824,18 +812,22 @@ void gnostr_note_embed_set_profile(GnostrNoteEmbed *self,
   g_clear_pointer(&self->target_id, g_free);
   self->target_id = new_target_id;
 
+  g_autofree char *safe_display_name = gnostr_sanitize_utf8(display_name);
+  g_autofree char *safe_handle = gnostr_sanitize_utf8(handle);
+
   if (GTK_IS_LABEL(self->author_label)) {
     gtk_label_set_text(GTK_LABEL(self->author_label),
-                       display_name && *display_name ? display_name : "Anonymous");
+                       safe_display_name && *safe_display_name
+                           ? safe_display_name : "Anonymous");
   }
 
   if (GTK_IS_LABEL(self->handle_label)) {
     g_autofree char *handle_text = NULL;
-    if (handle && *handle) {
-      if (handle[0] != '@') {
-        handle_text = g_strdup_printf("@%s", handle);
+    if (safe_handle && *safe_handle) {
+      if (safe_handle[0] != '@') {
+        handle_text = g_strdup_printf("@%s", safe_handle);
       } else {
-        handle_text = g_strdup(handle);
+        handle_text = g_strdup(safe_handle);
       }
     } else if (self->target_id && strlen(self->target_id) >= 8) {
       handle_text = g_strdup_printf("%.8s...", self->target_id);
@@ -848,7 +840,7 @@ void gnostr_note_embed_set_profile(GnostrNoteEmbed *self,
     gtk_label_set_text(GTK_LABEL(self->profile_about_label), truncated ? truncated : "");
   }
 
-  load_avatar(self, avatar_url, display_name, handle);
+  load_avatar(self, avatar_url, safe_display_name, safe_handle);
 
   update_ui_state(self);
 }
@@ -1490,6 +1482,8 @@ void gnostr_note_embed_prepare_for_unbind(GnostrNoteEmbed *self) {
    * while the widget still has a native surface.  Without this, a layout pass
    * between unbind and dispose can reach a child GtkLabel whose PangoLayout is
    * NULL, causing SEGV in pango_layout_set_width. */
+  if (GNOSTR_LABEL_SAFE(self->avatar_initials))
+    gtk_label_set_text(GTK_LABEL(self->avatar_initials), "");
   if (GNOSTR_LABEL_SAFE(self->content_label))
     gtk_label_set_text(GTK_LABEL(self->content_label), "");
   if (GNOSTR_LABEL_SAFE(self->author_label))

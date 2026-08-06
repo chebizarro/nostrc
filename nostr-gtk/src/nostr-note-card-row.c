@@ -415,6 +415,26 @@ enum {
 static guint signals[N_SIGNALS];
 
 static void
+quiesce_rich_label_widget_tree(GtkWidget *widget)
+{
+  if (!widget) return;
+
+  if (OG_IS_PREVIEW_WIDGET(widget)) {
+    og_preview_widget_prepare_for_unbind(OG_PREVIEW_WIDGET(widget));
+    return;
+  }
+  if (GNOSTR_IS_NOTE_EMBED(widget)) {
+    gnostr_note_embed_prepare_for_unbind(GNOSTR_NOTE_EMBED(widget));
+    return;
+  }
+
+  for (GtkWidget *child = gtk_widget_get_first_child(widget);
+       child;
+       child = gtk_widget_get_next_sibling(child))
+    quiesce_rich_label_widget_tree(child);
+}
+
+static void
 quiesce_media_widget_tree(GtkWidget *widget)
 {
   if (!widget) return;
@@ -446,6 +466,11 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
   /* Mark as inactive first so async callbacks bail out immediately. */
   self->disposed = TRUE;
   self->binding_id = 0;
+
+  /* Clear rich-child labels while the row is still rooted, before removing
+   * those children below. Their prepare hooks also cancel/guard late writers. */
+  quiesce_rich_label_widget_tree(self->embed_box);
+  quiesce_rich_label_widget_tree(self->og_preview_container);
 
   /* Timeline stability mode: note rows now bind plain sanitized text, not
    * rich markup. Avoid mutating GtkLabel/Pango state during unbind/dispose;

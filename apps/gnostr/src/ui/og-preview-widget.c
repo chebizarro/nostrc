@@ -4,6 +4,7 @@
 #include "../services/gnostr-media-service.h"
 #include "../util/utils.h"
 #include "../util/youtube_url.h"
+#include <nostr-gtk-1.0/content_renderer.h>
 #include <string.h>
 
 struct _OgPreviewWidget {
@@ -144,17 +145,22 @@ update_ui_with_metadata(OgPreviewWidget *self,
   gtk_widget_set_visible(self->error_label, FALSE);
   gtk_widget_set_visible(self->card_box, TRUE);
 
-  gtk_label_set_text(GTK_LABEL(self->title_label),
-                     title && *title ? title :
-                     (domain && *domain ? domain : self->current_url));
-  if (description && *description) {
-    gtk_label_set_text(GTK_LABEL(self->description_label), description);
+  const char *display_title =
+      title && *title ? title :
+      (domain && *domain ? domain : self->current_url);
+  g_autofree char *safe_title = gnostr_sanitize_utf8(display_title);
+  g_autofree char *safe_description = gnostr_sanitize_utf8(description);
+  g_autofree char *safe_domain = gnostr_sanitize_utf8(domain);
+
+  gtk_label_set_text(GTK_LABEL(self->title_label), safe_title);
+  if (safe_description && *safe_description) {
+    gtk_label_set_text(GTK_LABEL(self->description_label), safe_description);
     gtk_widget_set_visible(self->description_label, TRUE);
   } else {
     gtk_label_set_text(GTK_LABEL(self->description_label), "");
     gtk_widget_set_visible(self->description_label, FALSE);
   }
-  gtk_label_set_text(GTK_LABEL(self->site_label), domain ? domain : "");
+  gtk_label_set_text(GTK_LABEL(self->site_label), safe_domain);
 
   gtk_picture_set_paintable(GTK_PICTURE(self->image_widget), NULL);
   gtk_widget_set_visible(self->image_widget, FALSE);
@@ -321,23 +327,9 @@ og_preview_widget_dispose(GObject *object)
   if (self->image_overlay_widget && GTK_IS_WIDGET(self->image_overlay_widget))
     gtk_widget_set_layout_manager(self->image_overlay_widget, NULL);
 
-#define OG_DISPOSE_LABEL(label)                                             \
-  do {                                                                      \
-    if (GNOSTR_LABEL_SAFE(label))                                            \
-      gtk_label_set_text(GTK_LABEL(label), "");                             \
-    else if (GTK_IS_LABEL(label)) {                                          \
-      const char *text = gtk_label_get_text(GTK_LABEL(label));              \
-      if (text && *text)                                                     \
-        g_object_ref(label);                                                 \
-    }                                                                        \
-  } while (0)
-
-  OG_DISPOSE_LABEL(self->title_label);
-  OG_DISPOSE_LABEL(self->description_label);
-  OG_DISPOSE_LABEL(self->site_label);
-  OG_DISPOSE_LABEL(self->error_label);
-#undef OG_DISPOSE_LABEL
-
+  /* Labels are cleared while rooted by prepare_for_unbind() from the parent
+   * quiesce path. Do not retain them here: normal unparenting must release
+   * the widget tree. */
   self->play_overlay = NULL;
 #ifdef HAVE_WEBKITGTK
   g_clear_pointer(&self->youtube_embed, gtk_widget_unparent);
