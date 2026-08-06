@@ -85,6 +85,27 @@ GnContentRenderResult *gn_content_parse(const char *content,
                                         const char *tags_json,
                                         GError **error);
 
+struct ndb_blocks;
+
+/**
+ * gn_content_parse_with_blocks:
+ * @blocks: (transfer none): persisted nostrdb blocks whose offsets address
+ *   @content
+ *
+ * Renders from an existing block stream without invoking ndb_parse_content().
+ * Cached block slices are sanitized independently before entering markup so
+ * offsets remain relative to the stored bytes.
+ */
+GnContentRenderResult *gn_content_parse_with_blocks(const char *content,
+                                                    int content_len,
+                                                    const char *tags_json,
+                                                    struct ndb_blocks *blocks,
+                                                    GError **error);
+
+/* Lightweight instrumentation used by parse-once pipeline tests. */
+void  gn_content_parser_reset_invocation_count(void);
+guint gn_content_parser_get_invocation_count(void);
+
 void gn_content_descriptor_free(GnContentDescriptor *descriptor);
 
 /**

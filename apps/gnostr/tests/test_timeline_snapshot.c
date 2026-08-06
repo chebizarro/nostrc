@@ -466,6 +466,52 @@ test_snapshot_model_large_single_replacement_is_linear(void)
 }
 
 static void
+test_snapshot_row_proxies_view_model_parsed_artifact(void)
+{
+  GPtrArray *descriptors =
+    g_ptr_array_new_with_free_func((GDestroyNotify)gn_content_descriptor_free);
+  GnContentDescriptor *descriptor = g_new0(GnContentDescriptor, 1);
+  descriptor->type = GN_CONTENT_DESCRIPTOR_LINK_PREVIEW;
+  descriptor->url = g_strdup("https://example.test/page");
+  g_ptr_array_add(descriptors, descriptor);
+  GnostrTimelineParsedContent *artifact =
+    gnostr_timeline_parsed_content_new_take(
+      g_strdup("shared content"), g_strdup("shared content"),
+      g_strdup("shared content"), descriptors, NULL, NULL, NULL, NULL, 0);
+  GnostrTimelineItemViewModelSpec spec = {
+    .event_id = "shared-event",
+    .note_key = "44",
+    .note_key_u64 = 44,
+    .pubkey = "shared-pubkey",
+    .created_at = 123,
+    .tie_breaker = "shared-event",
+    .kind = 1,
+    .parsed_content = artifact,
+  };
+  g_autofree char *signature =
+    gnostr_timeline_item_view_model_spec_recompute_derived_fields(&spec);
+  g_autoptr(GnostrTimelineItemViewModel) vm =
+    gnostr_timeline_item_view_model_new(&spec);
+  gnostr_timeline_parsed_content_unref(artifact);
+
+  g_autoptr(GnostrTimelineSnapshotRow) row =
+    gnostr_timeline_snapshot_row_new_from_view_model(
+      vm, 320.0, 0.0, 320.0, 0.0, 120.0, 0.0, 480,
+      "layout-shared", FALSE);
+  g_assert_true(gnostr_timeline_snapshot_row_get_content(row) ==
+                gnostr_timeline_item_view_model_get_content(vm));
+  g_assert_true(gnostr_timeline_snapshot_row_get_content_descriptors(row) ==
+                gnostr_timeline_item_view_model_get_content_descriptors(vm));
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_event_id(row), ==,
+                  "shared-event");
+  g_autoptr(GnostrTimelineItemViewModel) row_vm =
+    gnostr_timeline_snapshot_row_dup_view_model(row);
+  g_assert_true(row_vm == vm);
+  g_assert_true(gnostr_timeline_item_view_model_get_parsed_content(row_vm) ==
+                gnostr_timeline_item_view_model_get_parsed_content(vm));
+}
+
+static void
 test_snapshot_model_invalid_rows_fall_back_to_full_splice(void)
 {
   GnostrTimelineSnapshotModel *model = gnostr_timeline_snapshot_model_new();
@@ -518,6 +564,8 @@ main(int argc,
                   test_snapshot_model_large_single_replacement_is_linear);
   g_test_add_func("/gnostr/timeline-snapshot/invalid-rows-full-splice",
                   test_snapshot_model_invalid_rows_fall_back_to_full_splice);
+  g_test_add_func("/gnostr/timeline-snapshot/row-proxies-parsed-artifact",
+                  test_snapshot_row_proxies_view_model_parsed_artifact);
 
   return g_test_run();
 }

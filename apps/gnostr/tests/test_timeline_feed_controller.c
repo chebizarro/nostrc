@@ -1231,7 +1231,7 @@ test_page_existing_replacement_defers_geometry_unsafe_visible_row(void)
 }
 
 static void
-test_copy_with_profile_recomputes_media_geometry_signature(void)
+test_copy_with_profile_shares_media_geometry_signature(void)
 {
   char *media_urls[] = { "https://example.test/media.png", NULL };
   GnostrTimelineItemViewModelSpec spec = {
@@ -1262,6 +1262,8 @@ test_copy_with_profile_recomputes_media_geometry_signature(void)
                                                       "new@example.test",
                                                       TRUE);
 
+  g_assert_true(gnostr_timeline_item_view_model_get_parsed_content(copy) ==
+                gnostr_timeline_item_view_model_get_parsed_content(vm));
   const char *signature = gnostr_timeline_item_view_model_get_geometry_signature(copy);
   g_assert_nonnull(signature);
   g_assert_nonnull(strstr(signature, "vm-v1:"));
@@ -1271,7 +1273,7 @@ test_copy_with_profile_recomputes_media_geometry_signature(void)
 }
 
 static void
-test_copy_with_interactions_recomputes_initial_reserved_height(void)
+test_copy_with_interactions_shares_initial_reserved_height(void)
 {
   char *links[] = { "https://example.test/preview", NULL };
   GnostrTimelineItemViewModelSpec spec = {
@@ -1304,7 +1306,9 @@ test_copy_with_interactions_recomputes_initial_reserved_height(void)
                                                           TRUE, 1,
                                                           TRUE, 1000);
 
-  g_assert_cmpfloat(gnostr_timeline_item_view_model_get_initial_reserved_height(copy), >,
+  g_assert_true(gnostr_timeline_item_view_model_get_parsed_content(copy) ==
+                gnostr_timeline_item_view_model_get_parsed_content(vm));
+  g_assert_cmpfloat(gnostr_timeline_item_view_model_get_initial_reserved_height(copy), ==,
                     gnostr_timeline_item_view_model_get_initial_reserved_height(vm));
   g_assert_cmpuint(gnostr_timeline_item_view_model_get_link_preview_reservation_count(copy), ==, 1);
   g_assert_nonnull(strstr(gnostr_timeline_item_view_model_get_geometry_signature(copy), "l1"));
@@ -1776,9 +1780,9 @@ main(int argc,
   g_test_add_func("/gnostr/timeline-feed-controller/page-existing-replacement-deferred",
                   test_page_existing_replacement_defers_geometry_unsafe_visible_row);
   g_test_add_func("/gnostr/timeline-feed-controller/vm-copy-profile-media-signature",
-                  test_copy_with_profile_recomputes_media_geometry_signature);
+                  test_copy_with_profile_shares_media_geometry_signature);
   g_test_add_func("/gnostr/timeline-feed-controller/vm-copy-interactions-reserved-height",
-                  test_copy_with_interactions_recomputes_initial_reserved_height);
+                  test_copy_with_interactions_shares_initial_reserved_height);
   g_test_add_func("/gnostr/timeline-feed-controller/width-bucket-media-reserved-height",
                   test_width_bucket_change_updates_published_media_reserved_height);
   g_test_add_func("/gnostr/timeline-feed-controller/no-op-compose-reuses-row",

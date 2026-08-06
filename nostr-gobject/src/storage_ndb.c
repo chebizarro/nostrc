@@ -2257,34 +2257,54 @@ storage_ndb_blocks *storage_ndb_get_blocks(void *txn, uint64_t note_key)
   return ndb_get_blocks_by_key(ndb, ntxn, note_key);
 }
 
+storage_ndb_blocks *storage_ndb_blocks_dup(const storage_ndb_blocks *blocks)
+{
+  if (!blocks) return NULL;
+
+  size_t size = ndb_blocks_total_size((struct ndb_blocks *)blocks);
+  if (size < sizeof(struct ndb_blocks)) return NULL;
+
+  struct ndb_blocks *copy = malloc(size);
+  if (!copy) return NULL;
+  memcpy(copy, blocks, size);
+  copy->flags |= NDB_BLOCK_FLAG_OWNED;
+  return copy;
+}
+
 storage_ndb_blocks *storage_ndb_parse_content_blocks(const char *content, int content_len)
 {
   if (!content || content_len <= 0) return NULL;
 
-  /* nostrc-heap-guard: Reject extremely long content before parsing.
-   * ndb_parse_content writes blocks into a fixed buffer. While the parser
-   * uses cursor bounds checks, content with many small blocks (URLs,
-   * hashtags, mentions) generates proportionally more block overhead.
-   * Cap at 256KB to stay well within our 512KB parse buffer. */
+  /* Bound hostile relay input, but size the scratch buffer to the actual note
+   * instead of allocating 512 KiB for every ordinary parse. A block stream can
+   * be larger than the source when it contains many tiny tokens, so retry with
+   * geometric growth up to a content-proportional ceiling. */
   if (content_len > (256 * 1024)) {
     g_debug("storage_ndb: content too long (%d bytes), skipping block parse", content_len);
     return NULL;
   }
 
-  /* Match ndb_note_to_blocks: use malloc (ndb_blocks_free calls free()) */
-  const int buf_size = 2 << 18;  /* 512KB, same as nostrdb internal */
-  unsigned char *buf = malloc(buf_size);
-  if (!buf) return NULL;
-  struct ndb_blocks *blocks = NULL;
+  size_t buf_size = MAX((size_t)4096, (size_t)content_len * 2u + 256u);
+  size_t max_size = MAX((size_t)16384, (size_t)content_len * 8u + 4096u);
+  max_size = MIN(max_size, (size_t)(2 * 1024 * 1024));
 
-  if (ndb_parse_content(buf, buf_size, content, content_len, &blocks) != 1) {
+  while (buf_size <= max_size) {
+    unsigned char *buf = malloc(buf_size);
+    if (!buf) return NULL;
+
+    struct ndb_blocks *blocks = NULL;
+    if (ndb_parse_content(buf, (int)buf_size, content, content_len, &blocks) == 1) {
+      blocks->flags |= NDB_BLOCK_FLAG_OWNED;
+      return blocks;
+    }
+
     free(buf);
-    return NULL;
+    if (buf_size == max_size)
+      break;
+    buf_size = MIN(buf_size * 2u, max_size);
   }
 
-  /* blocks points into buf; set OWNED flag so ndb_blocks_free() calls free() */
-  blocks->flags |= NDB_BLOCK_FLAG_OWNED;
-  return blocks;
+  return NULL;
 }
 
 void storage_ndb_blocks_free(storage_ndb_blocks *blocks)

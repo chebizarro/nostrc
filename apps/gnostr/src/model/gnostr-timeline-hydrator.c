@@ -84,6 +84,8 @@ event_id_for_entry(const GnostrTimelineBatchEntry *entry)
 static char *
 render_markup_from_content(const char *content)
 {
+  if (!content || !*content)
+    return NULL;
   GnContentRenderResult *parsed =
     gn_content_parse(content ? content : "", -1, NULL, NULL);
   char *markup = g_strdup(parsed && parsed->markup ? parsed->markup : "");
@@ -154,118 +156,96 @@ extract_inline_metadata(const char *content,
   }
 }
 
-static GnContentDescriptor *
-dup_content_descriptor(const GnContentDescriptor *descriptor)
-{
-  GnContentDescriptor *copy = g_new0(GnContentDescriptor, 1);
-  copy->type = descriptor->type;
-  copy->url = g_strdup(descriptor->url);
-  copy->original = g_strdup(descriptor->original);
-  copy->id = g_strdup(descriptor->id);
-  copy->pubkey = g_strdup(descriptor->pubkey);
-  copy->relay_hints = g_strdupv(descriptor->relay_hints);
-  copy->width = descriptor->width;
-  copy->height = descriptor->height;
-  copy->thumbnail_url = g_strdup(descriptor->thumbnail_url);
-  return copy;
-}
+typedef struct {
+  guint media_count;
+  guint link_count;
+  guint event_count;
+  guint overflow_count;
+} DescriptorTransferState;
 
-static gboolean
-descriptors_contain_url(const GPtrArray *descriptors,
-                        const char *url)
+static void
+transfer_capped_descriptor(GPtrArray *capped,
+                           GnContentDescriptor *descriptor,
+                           DescriptorTransferState *state)
 {
-  if (!descriptors || !url)
-    return FALSE;
-  for (guint i = 0; i < descriptors->len; i++) {
-    const GnContentDescriptor *descriptor =
-      g_ptr_array_index((GPtrArray *)descriptors, i);
-    if (descriptor && g_strcmp0(descriptor->url, url) == 0)
-      return TRUE;
+  if (!descriptor)
+    return;
+
+  gboolean include = TRUE;
+  switch (descriptor->type) {
+    case GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE:
+    case GN_CONTENT_DESCRIPTOR_MEDIA_VIDEO:
+      include = state->media_count++ < MAX_MEDIA_DESCRIPTORS;
+      break;
+    case GN_CONTENT_DESCRIPTOR_LINK_PREVIEW:
+      include = state->link_count++ < MAX_LINK_PREVIEW_DESCRIPTORS;
+      break;
+    case GN_CONTENT_DESCRIPTOR_NOSTR_EVENT_REF:
+      include = state->event_count++ < MAX_EVENT_EMBED_DESCRIPTORS;
+      break;
+    case GN_CONTENT_DESCRIPTOR_NOSTR_PROFILE_REF:
+      break;
   }
-  return FALSE;
+
+  if (include)
+    g_ptr_array_add(capped, descriptor);
+  else {
+    state->overflow_count++;
+    gn_content_descriptor_free(descriptor);
+  }
 }
 
 static void
-append_explicit_url_descriptors(GPtrArray *descriptors,
-                                char **urls,
-                                GnContentDescriptorType type)
+transfer_explicit_urls(GPtrArray *capped,
+                       GHashTable *seen_urls,
+                       char **urls,
+                       GnContentDescriptorType type,
+                       DescriptorTransferState *state)
 {
   if (!urls)
     return;
+
   for (guint i = 0; urls[i]; i++) {
-    if (!*urls[i] || descriptors_contain_url(descriptors, urls[i]))
+    if (!*urls[i] || g_hash_table_contains(seen_urls, urls[i]))
       continue;
+    g_hash_table_add(seen_urls, g_strdup(urls[i]));
     GnContentDescriptor *descriptor = g_new0(GnContentDescriptor, 1);
     descriptor->type = type;
     descriptor->url = g_strdup(urls[i]);
-    g_ptr_array_add(descriptors, descriptor);
+    transfer_capped_descriptor(capped, descriptor, state);
   }
 }
 
 static GPtrArray *
-merge_content_descriptors(const GPtrArray *parsed_descriptors,
-                          char **explicit_links,
-                          char **explicit_media)
+take_capped_content_descriptors(GnContentRenderResult *parsed,
+                                char **explicit_links,
+                                char **explicit_media,
+                                guint *out_overflow_count)
 {
-  GPtrArray *merged =
+  GPtrArray *capped =
     g_ptr_array_new_with_free_func((GDestroyNotify)gn_content_descriptor_free);
-  if (parsed_descriptors) {
-    for (guint i = 0; i < parsed_descriptors->len; i++) {
-      const GnContentDescriptor *descriptor =
-        g_ptr_array_index((GPtrArray *)parsed_descriptors, i);
-      if (descriptor)
-        g_ptr_array_add(merged, dup_content_descriptor(descriptor));
+  g_autoptr(GHashTable) seen_urls =
+    g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  DescriptorTransferState state = { 0 };
+
+  if (parsed && parsed->descriptors) {
+    for (guint i = 0; i < parsed->descriptors->len; i++) {
+      GnContentDescriptor *descriptor = g_ptr_array_index(parsed->descriptors, i);
+      parsed->descriptors->pdata[i] = NULL;
+      if (descriptor && descriptor->url)
+        g_hash_table_add(seen_urls, g_strdup(descriptor->url));
+      transfer_capped_descriptor(capped, descriptor, &state);
     }
+    g_ptr_array_set_size(parsed->descriptors, 0);
   }
-  append_explicit_url_descriptors(merged, explicit_media,
-                                  GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE);
-  append_explicit_url_descriptors(merged, explicit_links,
-                                  GN_CONTENT_DESCRIPTOR_LINK_PREVIEW);
-  return merged;
-}
 
-static GPtrArray *
-cap_content_descriptors(const GPtrArray *descriptors,
-                        guint *out_overflow_count)
-{
-  GPtrArray *capped = g_ptr_array_new();
-  guint media_count = 0;
-  guint link_count = 0;
-  guint event_count = 0;
-  guint overflow_count = 0;
-
-  if (descriptors) {
-    for (guint i = 0; i < descriptors->len; i++) {
-      GnContentDescriptor *descriptor =
-        g_ptr_array_index((GPtrArray *)descriptors, i);
-      if (!descriptor)
-        continue;
-
-      gboolean include = TRUE;
-      switch (descriptor->type) {
-        case GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE:
-        case GN_CONTENT_DESCRIPTOR_MEDIA_VIDEO:
-          include = media_count++ < MAX_MEDIA_DESCRIPTORS;
-          break;
-        case GN_CONTENT_DESCRIPTOR_LINK_PREVIEW:
-          include = link_count++ < MAX_LINK_PREVIEW_DESCRIPTORS;
-          break;
-        case GN_CONTENT_DESCRIPTOR_NOSTR_EVENT_REF:
-          include = event_count++ < MAX_EVENT_EMBED_DESCRIPTORS;
-          break;
-        case GN_CONTENT_DESCRIPTOR_NOSTR_PROFILE_REF:
-          break;
-      }
-
-      if (include)
-        g_ptr_array_add(capped, descriptor);
-      else
-        overflow_count++;
-    }
-  }
+  transfer_explicit_urls(capped, seen_urls, explicit_media,
+                         GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE, &state);
+  transfer_explicit_urls(capped, seen_urls, explicit_links,
+                         GN_CONTENT_DESCRIPTOR_LINK_PREVIEW, &state);
 
   if (out_overflow_count)
-    *out_overflow_count = overflow_count;
+    *out_overflow_count = state.overflow_count;
   return capped;
 }
 
@@ -377,22 +357,16 @@ gnostr_timeline_hydrator_hydrate_entry(GnostrTimelineHydrator *self,
 
   g_autofree char *event_id = event_id_for_entry(entry);
   g_autofree char *note_key = g_strdup_printf("%" G_GUINT64_FORMAT, entry->note_key);
-  GnContentRenderResult *parsed_content =
+  GnContentRenderResult *render_result = entry->content_blocks ?
+    gn_content_parse_with_blocks(entry->content ? entry->content : "", -1,
+                                 NULL, entry->content_blocks, NULL) :
     gn_content_parse(entry->content ? entry->content : "", -1, NULL, NULL);
-  g_autofree char *rendered_content =
-    g_strdup(parsed_content && parsed_content->markup ? parsed_content->markup : "");
-  GPtrArray *descriptor_candidates =
-    merge_content_descriptors(parsed_content ? parsed_content->descriptors : NULL,
-                              entry->links,
-                              entry->media_urls);
   guint descriptor_overflow_count = 0;
   GPtrArray *content_descriptors =
-    cap_content_descriptors(descriptor_candidates, &descriptor_overflow_count);
+    take_capped_content_descriptors(render_result, entry->links,
+                                    entry->media_urls,
+                                    &descriptor_overflow_count);
   g_autofree char *parent_fallback = author_fallback_label(entry->parent_pubkey);
-  g_autofree char *quoted_snippet = content_snippet(entry->quoted_content);
-  g_autofree char *quoted_rendered = render_markup_from_content(quoted_snippet);
-  g_autofree char *reposted_snippet = content_snippet(entry->reposted_content);
-  g_autofree char *reposted_rendered = render_markup_from_content(reposted_snippet);
   GnostrTimelinePreviewState quote_state = preview_state_for(entry->quoted_event_id,
                                                              entry->quoted_resolved,
                                                              entry->quoted_content,
@@ -403,6 +377,12 @@ gnostr_timeline_hydrator_hydrate_entry(GnostrTimelineHydrator *self,
                                                               entry->reposted_content,
                                                               entry->reposted_pubkey,
                                                               entry->reposted_created_at);
+  g_autofree char *quoted_snippet = quote_state == GNOSTR_TIMELINE_PREVIEW_RESOLVED ?
+    content_snippet(entry->quoted_content) : NULL;
+  g_autofree char *quoted_rendered = render_markup_from_content(quoted_snippet);
+  g_autofree char *reposted_snippet = repost_state == GNOSTR_TIMELINE_PREVIEW_RESOLVED ?
+    content_snippet(entry->reposted_content) : NULL;
+  g_autofree char *reposted_rendered = render_markup_from_content(reposted_snippet);
 
   GPtrArray *hashtags = g_ptr_array_new_with_free_func(g_free);
   GPtrArray *mentions = g_ptr_array_new_with_free_func(g_free);
@@ -417,6 +397,22 @@ gnostr_timeline_hydrator_hydrate_entry(GnostrTimelineHydrator *self,
   g_auto(GStrv) mentions_v = finish_strv(mentions);
   g_auto(GStrv) links_v = finish_strv(links);
   g_auto(GStrv) media_v = finish_strv(media);
+
+  char *artifact_markup = render_result ?
+    g_steal_pointer(&render_result->markup) : NULL;
+  char *artifact_plain_text = render_result ?
+    g_steal_pointer(&render_result->plain_text) : NULL;
+  GnostrTimelineParsedContent *parsed_content =
+    gnostr_timeline_parsed_content_new_take(
+      g_strdup(entry->content ? entry->content : ""),
+      artifact_markup,
+      artifact_plain_text,
+      content_descriptors,
+      g_steal_pointer(&hashtags_v),
+      g_steal_pointer(&mentions_v),
+      g_steal_pointer(&links_v),
+      g_steal_pointer(&media_v),
+      descriptor_overflow_count);
 
   g_autofree char *display_fallback = NULL;
   const char *display = entry->display_name;
@@ -438,7 +434,8 @@ gnostr_timeline_hydrator_hydrate_entry(GnostrTimelineHydrator *self,
     .tie_breaker = event_id,
     .kind = entry->kind,
     .content = entry->content,
-    .rendered_content = rendered_content,
+    .rendered_content = gnostr_timeline_parsed_content_get_markup(parsed_content),
+    .parsed_content = parsed_content,
     .display_name = effective_display,
     .handle = entry->handle,
     .avatar_url = entry->avatar_url,
@@ -473,12 +470,6 @@ gnostr_timeline_hydrator_hydrate_entry(GnostrTimelineHydrator *self,
     .reposted_kind = entry->reposted_kind,
     .content_warning = entry->content_warning,
     .relay_hint = entry->relay_hint,
-    .hashtags = (const char * const *)hashtags_v,
-    .mentions = (const char * const *)mentions_v,
-    .links = (const char * const *)links_v,
-    .media_urls = (const char * const *)media_v,
-    .content_descriptors = content_descriptors,
-    .descriptor_overflow_count = descriptor_overflow_count,
     .action_event_id = event_id,
     .action_pubkey = entry->pubkey_hex,
     .action_is_own_note = entry->is_own_note,
@@ -495,9 +486,8 @@ gnostr_timeline_hydrator_hydrate_entry(GnostrTimelineHydrator *self,
   (void)geometry_signature;
   GnostrTimelineItemViewModel *view_model =
     gnostr_timeline_item_view_model_new(&spec);
-  g_ptr_array_unref(content_descriptors);
-  g_ptr_array_unref(descriptor_candidates);
-  gnostr_content_render_result_free(parsed_content);
+  gnostr_timeline_parsed_content_unref(parsed_content);
+  gnostr_content_render_result_free(render_result);
   return view_model;
 }
 

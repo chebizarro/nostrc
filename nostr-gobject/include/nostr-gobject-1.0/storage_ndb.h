@@ -433,6 +433,10 @@ typedef struct ndb_blocks storage_ndb_blocks;
  * The blocks reference internal DB memory valid while txn is open. */
 storage_ndb_blocks *storage_ndb_get_blocks(void *txn, uint64_t note_key);
 
+/* Copy a cached blocks value out of its transaction. The returned handle owns
+	* its packed storage and remains valid after the transaction closes. */
+storage_ndb_blocks *storage_ndb_blocks_dup(const storage_ndb_blocks *blocks);
+
 /* Parse content on-the-fly into blocks (fallback when no note_key available).
  * Returns NULL on failure. Caller must call storage_ndb_blocks_free(). */
 storage_ndb_blocks *storage_ndb_parse_content_blocks(const char *content, int content_len);

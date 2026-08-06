@@ -1,6 +1,7 @@
 #include <glib.h>
 #include <nostr/nip19/nip19.h>
 #include <nostr-gtk-1.0/content_renderer.h>
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -189,6 +190,55 @@ test_imeta_enrichment_and_mime_classification(void)
 }
 
 static void
+assert_descriptors_equal(const GPtrArray *a,
+                         const GPtrArray *b)
+{
+  g_assert_nonnull(a);
+  g_assert_nonnull(b);
+  g_assert_cmpuint(a->len, ==, b->len);
+  for (guint i = 0; i < a->len; i++) {
+    const GnContentDescriptor *left = g_ptr_array_index((GPtrArray *)a, i);
+    const GnContentDescriptor *right = g_ptr_array_index((GPtrArray *)b, i);
+    g_assert_cmpint(left->type, ==, right->type);
+    g_assert_cmpstr(left->url, ==, right->url);
+    g_assert_cmpstr(left->original, ==, right->original);
+    g_assert_cmpstr(left->id, ==, right->id);
+    g_assert_cmpstr(left->pubkey, ==, right->pubkey);
+  }
+}
+
+static void
+test_cached_blocks_match_fallback_with_utf8(void)
+{
+  static const char *note =
+    "note1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsglnzgl";
+  g_autofree char *content = g_strdup_printf(
+    "caf\xc3\xa9 \xce\xb1\xe2\x80\x8b\xce\xb2 https://example.test/page #nostr "
+    "nostr:%s \xf0\x9f\x99\x82\xe7\xb5\x82",
+    note);
+
+  storage_ndb_blocks *blocks =
+    storage_ndb_parse_content_blocks(content, (int)strlen(content));
+  g_assert_nonnull(blocks);
+
+  GnContentRenderResult *cached =
+    gn_content_parse_with_blocks(content, -1, NULL, blocks, NULL);
+  GnContentRenderResult *fallback =
+    gn_content_parse(content, -1, NULL, NULL);
+  g_assert_nonnull(cached);
+  g_assert_nonnull(fallback);
+  g_assert_cmpstr(cached->markup, ==, fallback->markup);
+  g_assert_cmpstr(cached->plain_text, ==, fallback->plain_text);
+  assert_descriptors_equal(cached->descriptors, fallback->descriptors);
+  g_assert_true(g_utf8_validate(cached->markup, -1, NULL));
+  g_assert_true(g_utf8_validate(cached->plain_text, -1, NULL));
+
+  gnostr_content_render_result_free(cached);
+  gnostr_content_render_result_free(fallback);
+  storage_ndb_blocks_free(blocks);
+}
+
+static void
 test_legacy_wrapper_uses_elided_parse(void)
 {
   GnContentRenderResult *result =
@@ -214,5 +264,7 @@ main(int argc, char **argv)
                   test_imeta_enrichment_and_mime_classification);
   g_test_add_func("/nostr-gtk/content-parser/legacy-wrapper",
                   test_legacy_wrapper_uses_elided_parse);
+  g_test_add_func("/nostr-gtk/content-parser/cached-blocks-utf8-equivalence",
+                  test_cached_blocks_match_fallback_with_utf8);
   return g_test_run();
 }

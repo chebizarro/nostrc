@@ -272,6 +272,7 @@ add_note_key_to_batch_from_txn(GnostrTimelineBatch *batch,
   g_autofree char *quoted_event_id = storage_ndb_note_get_qtag(note);
   g_autofree char *reposted_event_id = kind == 6 ? storage_ndb_note_get_last_etag(note) : NULL;
   g_auto(GStrv) hashtags = storage_ndb_note_get_hashtags(note);
+  storage_ndb_blocks *content_blocks = storage_ndb_get_blocks(txn, note_key);
 
   const char *content_ptr = storage_ndb_note_content(note);
   uint32_t content_len = content_ptr ? storage_ndb_note_content_length(note) : 0;
@@ -294,23 +295,27 @@ add_note_key_to_batch_from_txn(GnostrTimelineBatch *batch,
   if (!has_profile)
     gnostr_timeline_batch_add_profile_request(batch, pubkey_hex);
 
-  gnostr_timeline_batch_add_note_full(batch,
-                                      note_key,
-                                      created_at,
-                                      storage_ndb_note_id(note),
-                                      pubkey_hex,
-                                      content,
-                                      display_name,
-                                      handle,
-                                      avatar_url,
-                                      nip05,
-                                      root_id,
-                                      reply_id,
-                                      quoted_event_id,
-                                      reposted_event_id,
-                                      (const char * const *)hashtags,
-                                      kind,
-                                      has_profile);
+  GnostrTimelineBatchEntry entry = {
+    .note_key = note_key,
+    .content_blocks = content_blocks,
+    .created_at = created_at,
+    .pubkey_hex = pubkey_hex,
+    .content = content,
+    .display_name = display_name,
+    .handle = handle,
+    .avatar_url = avatar_url,
+    .nip05 = nip05,
+    .root_id = root_id,
+    .reply_id = reply_id,
+    .quoted_event_id = quoted_event_id,
+    .reposted_event_id = reposted_event_id,
+    .hashtags = hashtags,
+    .kind = kind,
+    .has_profile = has_profile,
+  };
+  memcpy(entry.event_id, storage_ndb_note_id(note), sizeof(entry.event_id));
+  gnostr_timeline_batch_add_entry(batch, &entry);
+  storage_ndb_blocks_free(content_blocks);
 
   g_free(root_id);
   g_free(reply_id);

@@ -14,6 +14,20 @@
 #include <stdio.h>
 #include <string.h>
 
+static gint parser_invocation_count;
+
+void
+gn_content_parser_reset_invocation_count(void)
+{
+  g_atomic_int_set(&parser_invocation_count, 0);
+}
+
+guint
+gn_content_parser_get_invocation_count(void)
+{
+  return (guint)g_atomic_int_get(&parser_invocation_count);
+}
+
 /* nostrdb headers (with diagnostic suppression for zero-length arrays) */
 #if defined(__clang__)
 #  pragma clang diagnostic push
@@ -456,6 +470,23 @@ static void append_display_text(GString *markup,
     g_string_append_len(plain_text, text, len);
 }
 
+/* Persisted block offsets address the exact stored content bytes, not a
+ * sanitized copy. Sanitize only after slicing so removed/replaced UTF-8 bytes
+ * cannot shift later offsets or split a multi-byte sequence by remapping. */
+static gchar *sanitize_block_slice(const char *text, gsize len) {
+  g_autofree gchar *slice = g_strndup(text, len);
+  return gnostr_sanitize_utf8(slice);
+}
+
+static void append_sanitized_block_slice(GString *markup,
+                                         GString *plain_text,
+                                         const char *text,
+                                         gsize len) {
+  if (!text || len == 0) return;
+  g_autofree gchar *safe = sanitize_block_slice(text, len);
+  append_display_text(markup, plain_text, safe, -1);
+}
+
 static void populate_legacy_fields(GnContentRenderResult *result) {
   if (!result || !result->descriptors) return;
 
@@ -599,10 +630,11 @@ static void parse_fallback_text(const char *content,
   }
 }
 
-GnContentRenderResult *gn_content_parse(const char *content,
-                                        int content_len,
-                                        const char *tags_json,
-                                        GError **error) {
+static GnContentRenderResult *gn_content_parse_internal(const char *content,
+                                                 int content_len,
+                                                 const char *tags_json,
+                                                 storage_ndb_blocks *provided_blocks,
+                                                 GError **error) {
   if (!content) {
     g_set_error_literal(error, NOSTR_GTK_ERROR, NOSTR_GTK_ERROR_INVALID_INPUT,
                         "Content string is NULL");
@@ -615,23 +647,26 @@ GnContentRenderResult *gn_content_parse(const char *content,
     content_len = (int)strnlen(content, (gsize)content_len);
 
   g_autofree gchar *bounded_content = g_strndup(content, content_len);
-  g_autofree gchar *safe_content = gnostr_sanitize_utf8(bounded_content);
-  if (!safe_content)
+  g_autofree gchar *safe_content = provided_blocks ? NULL :
+    gnostr_sanitize_utf8(bounded_content);
+  if (!provided_blocks && !safe_content)
     safe_content = g_strdup("");
 
   GnContentRenderResult *result = g_new0(GnContentRenderResult, 1);
   result->descriptors =
     g_ptr_array_new_with_free_func((GDestroyNotify)gn_content_descriptor_free);
 
-  if (!*safe_content) {
+  if (!*(provided_blocks ? bounded_content : safe_content)) {
     result->markup = g_strdup("");
     result->plain_text = g_strdup("");
     return result;
   }
 
   g_autoptr(GHashTable) imeta_by_url = parse_imeta_enrichments(tags_json);
-  storage_ndb_blocks *blocks =
+  const char *block_content = provided_blocks ? bounded_content : safe_content;
+  storage_ndb_blocks *blocks = provided_blocks ? provided_blocks :
     storage_ndb_parse_content_blocks(safe_content, (int)strlen(safe_content));
+  gboolean owns_blocks = provided_blocks == NULL;
   GString *markup = g_string_new("");
   GString *plain_text = g_string_new("");
 
@@ -641,14 +676,14 @@ GnContentRenderResult *gn_content_parse(const char *content,
     goto finish;
   }
 
-  const char *content_end = safe_content + strlen(safe_content);
+  const char *content_end = block_content + strlen(block_content);
   struct ndb_block_iterator iter;
   struct ndb_block *block;
-  ndb_blocks_iterate_start(safe_content, blocks, &iter);
+  ndb_blocks_iterate_start(block_content, blocks, &iter);
 
 #define VALIDATE_BLOCK_RANGE(ptr_, len_) \
   do { \
-    if ((ptr_) == NULL || (ptr_) < safe_content || (ptr_) > content_end || \
+    if ((ptr_) == NULL || (ptr_) < block_content || (ptr_) > content_end || \
         (gsize)(content_end - (ptr_)) < (gsize)(len_)) { \
       g_warning("content_renderer: invalid block range; falling back type=%d len=%u", \
                 btype, (guint)(len_)); \
@@ -665,7 +700,7 @@ GnContentRenderResult *gn_content_parse(const char *content,
         const char *ptr = ndb_str_block_ptr(sb);
         uint32_t len = ndb_str_block_len(sb);
         VALIDATE_BLOCK_RANGE(ptr, len);
-        append_display_text(markup, plain_text, ptr, len);
+        append_sanitized_block_slice(markup, plain_text, ptr, len);
         break;
       }
 
@@ -675,7 +710,7 @@ GnContentRenderResult *gn_content_parse(const char *content,
         uint32_t len = ndb_str_block_len(sb);
         VALIDATE_BLOCK_RANGE(ptr, len);
         append_display_text(markup, plain_text, "#", 1);
-        append_display_text(markup, plain_text, ptr, len);
+        append_sanitized_block_slice(markup, plain_text, ptr, len);
         break;
       }
 
@@ -684,7 +719,7 @@ GnContentRenderResult *gn_content_parse(const char *content,
         const char *ptr = ndb_str_block_ptr(sb);
         uint32_t len = ndb_str_block_len(sb);
         VALIDATE_BLOCK_RANGE(ptr, len);
-        g_autofree gchar *url = g_strndup(ptr, len);
+        g_autofree gchar *url = sanitize_block_slice(ptr, len);
 
         if (!is_http_url_n(ptr, len)) {
           append_display_text(markup, plain_text, url, -1);
@@ -751,7 +786,7 @@ GnContentRenderResult *gn_content_parse(const char *content,
           const char *ptr = ndb_str_block_ptr(sb);
           uint32_t len = ndb_str_block_len(sb);
           VALIDATE_BLOCK_RANGE(ptr, len);
-          append_display_text(markup, plain_text, ptr, len);
+          append_sanitized_block_slice(markup, plain_text, ptr, len);
         }
         break;
       }
@@ -762,17 +797,22 @@ GnContentRenderResult *gn_content_parse(const char *content,
   }
 
 #undef VALIDATE_BLOCK_RANGE
-  storage_ndb_blocks_free(blocks);
+  if (owns_blocks)
+    storage_ndb_blocks_free(blocks);
   goto finish;
 
 fallback_from_blocks:
 #undef VALIDATE_BLOCK_RANGE
-  storage_ndb_blocks_free(blocks);
+  if (owns_blocks)
+    storage_ndb_blocks_free(blocks);
   g_string_truncate(markup, 0);
   g_string_truncate(plain_text, 0);
   g_ptr_array_set_size(result->descriptors, 0);
   result->used_block_fallback = TRUE;
-  parse_fallback_text(safe_content, imeta_by_url, result, markup, plain_text);
+  if (!safe_content)
+    safe_content = gnostr_sanitize_utf8(bounded_content);
+  parse_fallback_text(safe_content ? safe_content : "", imeta_by_url,
+                      result, markup, plain_text);
 
 finish:
   result->markup = g_string_free(markup, FALSE);
@@ -781,6 +821,25 @@ finish:
   gnostr_strip_zwsp(result->plain_text);
   populate_legacy_fields(result);
   return result;
+}
+
+GnContentRenderResult *gn_content_parse(const char *content,
+                                        int content_len,
+                                        const char *tags_json,
+                                        GError **error) {
+  g_atomic_int_inc(&parser_invocation_count);
+  return gn_content_parse_internal(content, content_len, tags_json, NULL, error);
+}
+
+GnContentRenderResult *gn_content_parse_with_blocks(const char *content,
+                                                    int content_len,
+                                                    const char *tags_json,
+                                                    struct ndb_blocks *blocks,
+                                                    GError **error) {
+  g_atomic_int_inc(&parser_invocation_count);
+  if (!blocks)
+    return gn_content_parse_internal(content, content_len, tags_json, NULL, error);
+  return gn_content_parse_internal(content, content_len, tags_json, blocks, error);
 }
 
 GnContentRenderResult *gnostr_render_content(const char *content,

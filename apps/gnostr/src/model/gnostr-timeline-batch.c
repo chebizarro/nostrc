@@ -1,6 +1,7 @@
 #define G_LOG_DOMAIN "gnostr-timeline-batch"
 
 #include "gnostr-timeline-batch.h"
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include <string.h>
 
 struct _GnostrTimelineBatch {
@@ -21,6 +22,7 @@ static void
 gnostr_timeline_batch_entry_clear(gpointer data)
 {
   GnostrTimelineBatchEntry *entry = data;
+  storage_ndb_blocks_free(entry->content_blocks);
   g_free(entry->pubkey_hex);
   g_free(entry->content);
   g_free(entry->display_name);
@@ -162,6 +164,7 @@ gnostr_timeline_batch_add_entry(GnostrTimelineBatch *self,
 
   GnostrTimelineBatchEntry copy = { 0 };
   copy.note_key = entry->note_key;
+  copy.content_blocks = storage_ndb_blocks_dup(entry->content_blocks);
   copy.created_at = entry->created_at;
   memcpy(copy.event_id, entry->event_id, sizeof(copy.event_id));
   copy.pubkey_hex = g_strdup(entry->pubkey_hex);

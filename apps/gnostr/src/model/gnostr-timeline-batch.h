@@ -6,6 +6,8 @@
 
 G_BEGIN_DECLS
 
+typedef struct ndb_blocks storage_ndb_blocks;
+
 #define GNOSTR_TYPE_TIMELINE_BATCH (gnostr_timeline_batch_get_type())
 G_DECLARE_FINAL_TYPE(GnostrTimelineBatch, gnostr_timeline_batch, GNOSTR, TIMELINE_BATCH, GObject)
 
@@ -21,6 +23,7 @@ typedef enum {
 
 typedef struct {
   uint64_t note_key;
+  storage_ndb_blocks *content_blocks;
   gint64   created_at;
   uint8_t  event_id[32];
   char    *pubkey_hex;

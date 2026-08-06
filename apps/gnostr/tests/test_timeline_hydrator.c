@@ -1,5 +1,6 @@
 #include <glib.h>
 #include <gio/gio.h>
+#include <nostr-gobject-1.0/storage_ndb.h>
 #include <string.h>
 
 #include "../src/model/gnostr-timeline-batch.h"
@@ -298,22 +299,26 @@ test_missing_metadata_fallbacks_and_reservations(void)
 static void
 test_initial_text_reservation_uses_elided_parse_output(void)
 {
-  GnostrTimelineItemViewModelSpec empty = { .content = "" };
-  char *empty_signature =
-    gnostr_timeline_item_view_model_spec_recompute_derived_fields(&empty);
-
+  g_autoptr(GnostrTimelineHydrator) hydrator =
+    gnostr_timeline_hydrator_new(1);
+  g_autoptr(GnostrTimelineBatch) batch =
+    batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 1);
   g_autofree char *long_path = g_strnfill(200, 'a');
   g_autofree char *media_url =
     g_strdup_printf("https://cdn.example/%s.jpg", long_path);
-  GnostrTimelineItemViewModelSpec media_only = { .content = media_url };
-  char *media_signature =
-    gnostr_timeline_item_view_model_spec_recompute_derived_fields(&media_only);
+  batch_add(batch, 0, 100, 0x31, "", "Empty", "empty", NULL, TRUE);
+  batch_add(batch, 0, 99, 0x32, media_url, "Media", "media", NULL, TRUE);
 
-  g_assert_cmpfloat(media_only.initial_reserved_height, ==,
-                    empty.initial_reserved_height);
-
-  g_free(empty_signature);
-  g_free(media_signature);
+  g_autoptr(GPtrArray) items =
+    gnostr_timeline_hydrator_hydrate_batch(hydrator, batch);
+  g_assert_cmpuint(items->len, ==, 2);
+  GnostrTimelineItemViewModel *empty = g_ptr_array_index(items, 0);
+  GnostrTimelineItemViewModel *media = g_ptr_array_index(items, 1);
+  g_assert_cmpfloat(
+    gnostr_timeline_item_view_model_get_initial_reserved_height(media) -
+      gnostr_timeline_item_view_model_get_media_reserved_height(media),
+    ==,
+    gnostr_timeline_item_view_model_get_initial_reserved_height(empty));
 }
 
 static void
@@ -440,6 +445,64 @@ test_stale_generation_drops_sync_and_async(void)
 }
 
 static void
+test_parse_once_and_share_artifact_across_profile_patch(void)
+{
+  static const char *content =
+    "hello #nostr https://example.test/page https://cdn.test/photo.jpg";
+  storage_ndb_blocks *blocks =
+    storage_ndb_parse_content_blocks(content, (int)strlen(content));
+  g_assert_nonnull(blocks);
+
+  g_autoptr(GnostrTimelineHydrator) hydrator =
+    gnostr_timeline_hydrator_new(13);
+  g_autoptr(GnostrTimelineBatch) batch =
+    batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 13);
+  GnostrTimelineBatchEntry entry = {
+    .note_key = 42,
+    .content_blocks = blocks,
+    .created_at = 100,
+    .pubkey_hex = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    .content = (char *)content,
+    .kind = 1,
+  };
+  fill_id(entry.event_id, 0x51);
+  gnostr_timeline_batch_add_entry(batch, &entry);
+  storage_ndb_blocks_free(blocks);
+
+  gn_content_parser_reset_invocation_count();
+  g_autoptr(GPtrArray) items =
+    gnostr_timeline_hydrator_hydrate_batch(hydrator, batch);
+  g_assert_cmpuint(items->len, ==, 1);
+  g_assert_cmpuint(gn_content_parser_get_invocation_count(), ==, 1);
+
+  GnostrTimelineItemViewModel *original = g_ptr_array_index(items, 0);
+  GnostrTimelineParsedContent *artifact =
+    gnostr_timeline_item_view_model_get_parsed_content(original);
+  g_assert_nonnull(artifact);
+  g_autoptr(GnostrTimelineItemViewModel) patched =
+    gnostr_timeline_item_view_model_copy_with_profile(
+      original, "Patched", "patched", "https://example.test/avatar.png",
+      "patched@example.test", TRUE);
+  g_assert_nonnull(patched);
+  g_assert_true(gnostr_timeline_item_view_model_get_parsed_content(patched) == artifact);
+  g_assert_cmpuint(gn_content_parser_get_invocation_count(), ==, 1);
+  g_assert_cmpstr(gnostr_timeline_item_view_model_get_content(patched), ==, content);
+  g_assert_cmpstr(gnostr_timeline_item_view_model_get_geometry_signature(patched), ==,
+                  gnostr_timeline_item_view_model_get_geometry_signature(original));
+
+  g_autoptr(GnostrTimelineItemViewModel) cleared =
+    gnostr_timeline_item_view_model_copy_with_profile(
+        patched, NULL, NULL, NULL, NULL, TRUE);
+  g_assert_nonnull(cleared);
+  g_assert_true(gnostr_timeline_item_view_model_get_parsed_content(cleared) == artifact);
+  g_assert_null(gnostr_timeline_item_view_model_get_display_name(cleared));
+  g_assert_null(gnostr_timeline_item_view_model_get_handle(cleared));
+  g_assert_null(gnostr_timeline_item_view_model_get_avatar_url(cleared));
+  g_assert_null(gnostr_timeline_item_view_model_get_nip05(cleared));
+  g_assert_cmpuint(gn_content_parser_get_invocation_count(), ==, 1);
+}
+
+static void
 test_async_cancellation_is_reported(void)
 {
   g_autoptr(GnostrTimelineHydrator) hydrator =
@@ -486,6 +549,8 @@ main(int argc,
                   test_stale_generation_drops_sync_and_async);
   g_test_add_func("/gnostr/timeline-hydrator/async-cancellation",
                   test_async_cancellation_is_reported);
+  g_test_add_func("/gnostr/timeline-hydrator/parse-once-profile-patch",
+                  test_parse_once_and_share_artifact_across_profile_patch);
 
   return g_test_run();
 }

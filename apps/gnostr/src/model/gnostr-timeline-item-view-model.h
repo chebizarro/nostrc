@@ -30,6 +30,31 @@ typedef enum {
   GNOSTR_TIMELINE_PREVIEW_RESOLVED,
 } GnostrTimelinePreviewState;
 
+typedef struct _GnostrTimelineParsedContent GnostrTimelineParsedContent;
+
+#define GNOSTR_TYPE_TIMELINE_PARSED_CONTENT \
+  (gnostr_timeline_parsed_content_get_type())
+GType gnostr_timeline_parsed_content_get_type(void) G_GNUC_CONST;
+
+/* Takes ownership of every argument. The returned artifact is immutable once
+ * attached to a view model and is shared by profile/interaction replacements. */
+GnostrTimelineParsedContent *gnostr_timeline_parsed_content_new_take(
+    char *content,
+    char *markup,
+    char *plain_text,
+    GPtrArray *descriptors,
+    char **hashtags,
+    char **mentions,
+    char **links,
+    char **media_urls,
+    guint descriptor_overflow_count);
+GnostrTimelineParsedContent *gnostr_timeline_parsed_content_ref(GnostrTimelineParsedContent *self);
+void gnostr_timeline_parsed_content_unref(GnostrTimelineParsedContent *self);
+const char *gnostr_timeline_parsed_content_get_content(const GnostrTimelineParsedContent *self);
+const char *gnostr_timeline_parsed_content_get_markup(const GnostrTimelineParsedContent *self);
+const char *gnostr_timeline_parsed_content_get_plain_text(const GnostrTimelineParsedContent *self);
+const GPtrArray *gnostr_timeline_parsed_content_get_descriptors(const GnostrTimelineParsedContent *self);
+
 typedef struct {
   const char *event_id;
   const char *note_key;
@@ -41,6 +66,7 @@ typedef struct {
 
   const char *content;
   const char *rendered_content;
+  GnostrTimelineParsedContent *parsed_content;
   const char *display_name;
   const char *handle;
   const char *avatar_url;
@@ -199,6 +225,7 @@ const char * const *gnostr_timeline_item_view_model_get_mentions(GnostrTimelineI
 const char * const *gnostr_timeline_item_view_model_get_links(GnostrTimelineItemViewModel *self);
 const char * const *gnostr_timeline_item_view_model_get_media_urls(GnostrTimelineItemViewModel *self);
 const GPtrArray *gnostr_timeline_item_view_model_get_content_descriptors(GnostrTimelineItemViewModel *self);
+GnostrTimelineParsedContent *gnostr_timeline_item_view_model_get_parsed_content(GnostrTimelineItemViewModel *self);
 guint       gnostr_timeline_item_view_model_get_descriptor_overflow_count(GnostrTimelineItemViewModel *self);
 const char *gnostr_timeline_item_view_model_get_action_event_id(GnostrTimelineItemViewModel *self);
 const char *gnostr_timeline_item_view_model_get_action_pubkey(GnostrTimelineItemViewModel *self);

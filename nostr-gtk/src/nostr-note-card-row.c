@@ -3885,16 +3885,18 @@ void nostr_gtk_note_card_row_set_precomputed_markup(NostrGtkNoteCardRow *self,
   gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "alt-text");
   gtk_widget_remove_css_class(GTK_WIDGET(self->content_label), "placeholder-text");
 
-  g_autofree gchar *safe_text = gnostr_sanitize_utf8(content ? content : "");
   g_clear_pointer(&self->content_text, g_free);
-  self->content_text = g_strdup(safe_text);
+  self->content_text = g_strdup(content ? content : "");
 
-  /* A non-NULL empty string is authoritative parser output: media-only and
-   * event-ref-only notes intentionally elide every text token. */
+  /* This entry point only accepts immutable parser-produced markup. It was
+   * sanitized and escaped while the artifact was built, so binding can avoid
+   * another sanitize/copy/validation pass. A non-NULL empty string remains
+   * authoritative for media-only and event-ref-only notes. */
   if (markup) {
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), TRUE);
-    gnostr_safe_set_markup(GTK_LABEL(self->content_label), markup);
+    gtk_label_set_markup(GTK_LABEL(self->content_label), markup);
   } else {
+    g_autofree gchar *safe_text = gnostr_sanitize_utf8(content ? content : "");
     gtk_label_set_use_markup(GTK_LABEL(self->content_label), FALSE);
     gtk_label_set_text(GTK_LABEL(self->content_label), safe_text);
   }
