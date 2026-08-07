@@ -10,11 +10,11 @@
 extern char *nostr_key_get_public(const char *sk_hex);
 
 /* Internal helpers for deterministic mode (nonce provided) */
-extern void nip44_hkdf_expand(const uint8_t prk[32], const uint8_t *info, size_t info_len,
+extern int nip44_hkdf_expand(const uint8_t prk[32], const uint8_t *info, size_t info_len,
                               uint8_t okm_out[], size_t okm_len);
 extern int  nip44_chacha20_xor(const uint8_t key[32], const uint8_t nonce12[12],
                                const uint8_t *in, uint8_t *out, size_t len);
-extern void nip44_hmac_sha256(const uint8_t *key, size_t key_len,
+extern int nip44_hmac_sha256(const uint8_t *key, size_t key_len,
                               const uint8_t *data1, size_t len1,
                               const uint8_t *data2, size_t len2,
                               uint8_t mac_out[32]);
@@ -60,7 +60,7 @@ int main(int argc, char **argv){
     /* Deterministic build to match vectors/test */
     uint8_t nonce[32]; hex_to_bytes(nonce_hex, nonce, 32);
     uint8_t okm[76];
-    nip44_hkdf_expand(conv, nonce, 32, okm, sizeof(okm));
+    if (nip44_hkdf_expand(conv, nonce, 32, okm, sizeof(okm)) != 0) { free(derived_pub); return 1; }
     const uint8_t *chacha_key = okm + 0;
     const uint8_t *chacha_nonce = okm + 32;
     const uint8_t *hmac_key = okm + 44;
@@ -71,7 +71,7 @@ int main(int argc, char **argv){
     if (!cipher){ free(padded); free(derived_pub); return 1; }
     if (nip44_chacha20_xor(chacha_key, chacha_nonce, padded, cipher, padded_len)!=0){ free(cipher); free(padded); free(derived_pub); return 1; }
     uint8_t mac[32];
-    nip44_hmac_sha256(hmac_key, 32, nonce, 32, cipher, padded_len, mac);
+    if (nip44_hmac_sha256(hmac_key, 32, nonce, 32, cipher, padded_len, mac) != 0) { free(cipher); free(padded); free(derived_pub); return 1; }
     size_t payload_len = 1 + 32 + padded_len + 32;
     uint8_t *payload = (uint8_t*)malloc(payload_len);
     if (!payload){ free(cipher); free(padded); free(derived_pub); return 1; }

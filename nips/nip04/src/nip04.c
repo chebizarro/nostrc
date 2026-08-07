@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <limits.h>
 
 #include <nostr-utils.h> /* for nostr_hex2bin */
 #include <secure_buf.h>
@@ -27,45 +28,78 @@ static void secure_bzero(void *p, size_t n) {
 static int ecdh_hash_xcopy(unsigned char *out, const unsigned char *x32, const unsigned char *y32, void *data);
 
 /* === Minimal HKDF-SHA256 helpers (per NIP-04 key separation) === */
-static int hmac_sha256_once(const unsigned char *key, size_t klen,
-                            const unsigned char *data, size_t dlen,
+static int hmac_sha256_once(const unsigned char *key, size_t key_len,
+                            const unsigned char *data, size_t data_len,
                             unsigned char out[32]) {
-    unsigned int mdlen = 0;
-    HMAC(EVP_sha256(), key, (int)klen, data, dlen, out, &mdlen);
-    return mdlen == 32 ? 1 : 0;
-}
-
-static void hkdf_extract(const unsigned char *salt, size_t salt_len,
-                         const unsigned char *ikm, size_t ikm_len,
-                         unsigned char prk_out[32]) {
-    /* PRK = HMAC(salt, IKM); if salt is NULL, use zeros */
-    unsigned char null_salt[32] = {0};
-    const unsigned char *s = salt ? salt : null_salt;
-    size_t sl = salt ? salt_len : sizeof null_salt;
-    (void)hmac_sha256_once(s, sl, ikm, ikm_len, prk_out);
-}
-
-static void hkdf_expand(const unsigned char prk[32], const unsigned char *info, size_t info_len,
-                        unsigned char okm_out[], size_t okm_len) {
-    /* T(0) = empty; T(1) = HMAC(PRK, T(0) | info | 0x01); ... */
-    unsigned char t[32]; size_t pos = 0; unsigned char ctr = 1; size_t n = (okm_len + 31) / 32;
-    size_t tlen = 0;
-    for (size_t i = 0; i < n; i++) {
-        /* build msg = T(prev) | info | counter */
-        size_t mlen = tlen + info_len + 1;
-        unsigned char *msg = (unsigned char*)OPENSSL_malloc(mlen);
-        if (!msg) return;
-        size_t off = 0;
-        if (tlen) { memcpy(msg + off, t, tlen); off += tlen; }
-        if (info && info_len) { memcpy(msg + off, info, info_len); off += info_len; }
-        msg[off] = ctr;
-        (void)hmac_sha256_once(prk, 32, msg, mlen, t);
-        OPENSSL_free(msg);
-        size_t c = (pos + 32 <= okm_len) ? 32 : (okm_len - pos);
-        memcpy(okm_out + pos, t, c);
-        pos += c; tlen = 32; ctr++;
+    unsigned int digest_len = 0;
+    if (!key || !out || (data_len && !data) || key_len > INT_MAX) return -1;
+    if (!HMAC(EVP_sha256(), key, (int)key_len, data, data_len,
+              out, &digest_len) || digest_len != 32) {
+        OPENSSL_cleanse(out, 32);
+        return -1;
     }
-    OPENSSL_cleanse(t, sizeof t);
+    return 0;
+}
+
+static int hkdf_extract(const unsigned char *salt, size_t salt_len,
+                        const unsigned char *ikm, size_t ikm_len,
+                        unsigned char prk_out[32]) {
+    unsigned char null_salt[32] = {0};
+    const unsigned char *actual_salt = salt ? salt : null_salt;
+    const size_t actual_salt_len = salt ? salt_len : sizeof(null_salt);
+    if (!ikm || !prk_out) return -1;
+    memset(prk_out, 0, 32);
+    return hmac_sha256_once(actual_salt, actual_salt_len,
+                            ikm, ikm_len, prk_out);
+}
+
+static int hkdf_expand(const unsigned char prk[32],
+                       const unsigned char *info, size_t info_len,
+                       unsigned char *okm_out, size_t okm_len) {
+    unsigned char t[32] = {0};
+    size_t pos = 0;
+    size_t t_len = 0;
+    int rc = -1;
+
+    if (!prk || !okm_out || (info_len && !info) || okm_len == 0 ||
+        okm_len > 255u * 32u) {
+        return -1;
+    }
+    memset(okm_out, 0, okm_len);
+
+    const size_t blocks = (okm_len + 31u) / 32u;
+    for (size_t i = 1; i <= blocks; ++i) {
+        const size_t msg_len = t_len + info_len + 1;
+        unsigned char *msg = (unsigned char *)OPENSSL_malloc(msg_len);
+        if (!msg) goto done;
+        size_t off = 0;
+        if (t_len) {
+            memcpy(msg + off, t, t_len);
+            off += t_len;
+        }
+        if (info_len) {
+            memcpy(msg + off, info, info_len);
+            off += info_len;
+        }
+        msg[off] = (unsigned char)i;
+        if (hmac_sha256_once(prk, 32, msg, msg_len, t) != 0) {
+            OPENSSL_clear_free(msg, msg_len);
+            goto done;
+        }
+        OPENSSL_clear_free(msg, msg_len);
+
+        const size_t take = okm_len - pos < sizeof(t)
+                                ? okm_len - pos : sizeof(t);
+        memcpy(okm_out + pos, t, take);
+        pos += take;
+        t_len = sizeof(t);
+    }
+    rc = 0;
+
+done:
+    OPENSSL_cleanse(t, sizeof(t));
+    if (rc != 0) OPENSSL_cleanse(okm_out, okm_len);
+    return rc;
 }
 
 /* Convert x-only pubkey (32 bytes) to compressed format (33 bytes with 02 prefix).
@@ -164,13 +198,22 @@ static int ecdh_hash_xcopy(unsigned char *out, const unsigned char *x32, const u
 }
 
 /* === AEAD key derivation (HKDF with info="NIP04") === */
-static int nip04_kdf_aead_from_x(const unsigned char x[32], unsigned char key32[32]) {
+static int nip04_kdf_aead_from_x(const unsigned char x[32],
+                                    unsigned char key32[32]) {
     static const unsigned char info[] = { 'N','I','P','0','4' };
-    unsigned char prk[32];
-    hkdf_extract(NULL, 0, x, 32, prk);
-    hkdf_expand(prk, info, sizeof(info), key32, 32);
-    OPENSSL_cleanse(prk, sizeof prk);
-    return 0;
+    unsigned char prk[32] = {0};
+    int rc = -1;
+
+    if (!x || !key32) return -1;
+    memset(key32, 0, 32);
+    if (hkdf_extract(NULL, 0, x, 32, prk) != 0) goto done;
+    if (hkdf_expand(prk, info, sizeof(info), key32, 32) != 0) goto done;
+    rc = 0;
+
+done:
+    OPENSSL_cleanse(prk, sizeof(prk));
+    if (rc != 0) OPENSSL_cleanse(key32, 32);
+    return rc;
 }
 
 static int nip04_kdf_aead(const char *peer_pub_hex, const char *self_seckey_hex,
@@ -208,64 +251,47 @@ static int nip04_kdf_aead(const char *peer_pub_hex, const char *self_seckey_hex,
     return rc;
 }
 
-static int nip04_kdf_aead_bin(const char *peer_pub_hex, const unsigned char sk_bin[32],
+static int nip04_kdf_aead_bin(const char *peer_pub_hex,
+                              const unsigned char sk_bin[32],
                               unsigned char key32[32]) {
-    if (!peer_pub_hex || !sk_bin) {
-        fprintf(stderr, "[nip04] kdf_aead_bin: NULL input (peer=%p, sk=%p)\n",
-                (void*)peer_pub_hex, (void*)sk_bin);
-        return -1;
-    }
-    unsigned char pk_bin[65];
-    size_t pk_bin_len;
-    size_t hexlen = strlen(peer_pub_hex);
-    fprintf(stderr, "[nip04] kdf_aead_bin: peer pubkey len=%zu\n", hexlen);
-    if (hexlen == 64) {
-        /* x-only pubkey (Nostr format): convert to compressed */
+    unsigned char pk_bin[65] = {0};
+    unsigned char shared_x[32] = {0};
+    size_t pk_bin_len = 0;
+    secp256k1_context *ctx = NULL;
+    int rc = -1;
+
+    if (!peer_pub_hex || !sk_bin || !key32) return -1;
+    memset(key32, 0, 32);
+
+    const size_t hex_len = strlen(peer_pub_hex);
+    if (hex_len == 64) {
         unsigned char x32[32];
-        if (!nostr_hex2bin(x32, peer_pub_hex, 32)) {
-            fprintf(stderr, "[nip04] kdf_aead_bin: failed to decode peer pubkey hex\n");
-            return -1;
-        }
+        if (!nostr_hex2bin(x32, peer_pub_hex, sizeof(x32))) goto done;
         xonly_to_compressed(x32, pk_bin);
+        OPENSSL_cleanse(x32, sizeof(x32));
         pk_bin_len = 33;
-    } else if (hexlen == 66 || hexlen == 130) {
-        pk_bin_len = hexlen / 2;
-        if (!nostr_hex2bin(pk_bin, peer_pub_hex, pk_bin_len)) {
-            fprintf(stderr, "[nip04] kdf_aead_bin: failed to decode compressed/uncompressed pubkey\n");
-            return -1;
-        }
+    } else if (hex_len == 66 || hex_len == 130) {
+        pk_bin_len = hex_len / 2;
+        if (!nostr_hex2bin(pk_bin, peer_pub_hex, pk_bin_len)) goto done;
     } else {
-        fprintf(stderr, "[nip04] kdf_aead_bin: invalid pubkey length %zu\n", hexlen);
-        return -1;
+        goto done;
     }
-    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
-    if (!ctx) {
-        fprintf(stderr, "[nip04] kdf_aead_bin: failed to create secp256k1 context\n");
-        return -1;
-    }
-    if (!secp256k1_ec_seckey_verify(ctx, sk_bin)) {
-        fprintf(stderr, "[nip04] kdf_aead_bin: secret key verification FAILED\n");
-        secp256k1_context_destroy(ctx);
-        return -1;
-    }
-    fprintf(stderr, "[nip04] kdf_aead_bin: secret key verified OK\n");
+
+    ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+    if (!ctx || !secp256k1_ec_seckey_verify(ctx, sk_bin)) goto done;
     secp256k1_pubkey pub;
-    if (!secp256k1_ec_pubkey_parse(ctx, &pub, pk_bin, pk_bin_len)) {
-        fprintf(stderr, "[nip04] kdf_aead_bin: pubkey parse FAILED\n");
-        secp256k1_context_destroy(ctx);
-        return -1;
+    if (!secp256k1_ec_pubkey_parse(ctx, &pub, pk_bin, pk_bin_len)) goto done;
+    if (!secp256k1_ecdh(ctx, shared_x, &pub, sk_bin,
+                        ecdh_hash_xcopy, NULL)) {
+        goto done;
     }
-    fprintf(stderr, "[nip04] kdf_aead_bin: pubkey parsed OK\n");
-    unsigned char x[32];
-    if (!secp256k1_ecdh(ctx, x, &pub, sk_bin, ecdh_hash_xcopy, NULL)) {
-        fprintf(stderr, "[nip04] kdf_aead_bin: ECDH operation FAILED\n");
-        secp256k1_context_destroy(ctx);
-        return -1;
-    }
-    fprintf(stderr, "[nip04] kdf_aead_bin: ECDH succeeded\n");
+    rc = nip04_kdf_aead_from_x(shared_x, key32);
+
+done:
     secp256k1_context_destroy(ctx);
-    int rc = nip04_kdf_aead_from_x(x, key32);
-    secure_bzero((void*)x, sizeof x);
+    OPENSSL_cleanse(shared_x, sizeof(shared_x));
+    OPENSSL_cleanse(pk_bin, sizeof(pk_bin));
+    if (rc != 0) OPENSSL_cleanse(key32, 32);
     return rc;
 }
 
@@ -369,26 +395,11 @@ int nostr_nip04_encrypt(const char *plaintext_utf8,
         return -1;
     }
 
-#ifdef NIP04_STRICT_AEAD_ONLY
-    /* Strict builds always emit the only envelope their decrypt API accepts. */
+    /* Generic encryption always emits the authenticated AEAD extension.
+     * Legacy CBC emission requires the explicit legacy API. */
     int rc = nostr_nip04_encrypt_secure(plaintext_utf8, receiver_pubkey_hex,
                                         &sender_seckey, out_content_b64_qiv,
                                         out_error);
-#else
-    /* AEAD v2 is the default. Legacy CBC remains an explicit compatibility
-     * mode for standard NIP-04 peers and uses its dedicated raw-X path. */
-    const char *legacy_cbc = getenv("NIP04_LEGACY_CBC");
-    int rc;
-    if (legacy_cbc && strcmp(legacy_cbc, "1") == 0) {
-        rc = nostr_nip04_encrypt_legacy_secure(plaintext_utf8, receiver_pubkey_hex,
-                                               &sender_seckey, out_content_b64_qiv,
-                                               out_error);
-    } else {
-        rc = nostr_nip04_encrypt_secure(plaintext_utf8, receiver_pubkey_hex,
-                                        &sender_seckey, out_content_b64_qiv,
-                                        out_error);
-    }
-#endif
     secure_free(&sender_seckey);
     return rc;
 }
@@ -399,8 +410,12 @@ int nostr_nip04_decrypt(const char *content_b64_qiv,
                         char **out_plaintext_utf8,
                         char **out_error) {
     if (out_error) *out_error = NULL;
-    if (!content_b64_qiv || !sender_pubkey_hex || !receiver_seckey_hex || !out_plaintext_utf8) return -1;
-    *out_plaintext_utf8 = NULL;
+    if (out_plaintext_utf8) *out_plaintext_utf8 = NULL;
+    if (!content_b64_qiv || !sender_pubkey_hex || !receiver_seckey_hex ||
+        !out_plaintext_utf8) {
+        if (out_error) *out_error = strdup("decrypt failed");
+        return -1;
+    }
 
     /* New format: v=2:base64(nonce||cipher||tag). If not present, fall back to legacy unless STRICT is enabled. */
     if (strncmp(content_b64_qiv, "v=2:", 4) == 0) {
@@ -557,7 +572,7 @@ int nostr_nip04_encrypt_legacy_secure(
         return -1;
     *out_content_b64_qiv = NULL;
 
-    /* ECDH to derive shared secret, then SHA-256 for AES key */
+    /* Original NIP-04 uses the raw ECDH X coordinate as the AES key. */
     unsigned char pk_bin[65];
     size_t pk_bin_len;
     size_t hexlen = strlen(receiver_pubkey_hex);
@@ -690,8 +705,13 @@ int nostr_nip04_decrypt_secure(
     char **out_error)
 {
     if (out_error) *out_error = NULL;
-    if (!content_b64_qiv || !sender_pubkey_hex || !receiver_seckey || !receiver_seckey->ptr || receiver_seckey->len < 32 || !out_plaintext_utf8) return -1;
-    *out_plaintext_utf8 = NULL;
+    if (out_plaintext_utf8) *out_plaintext_utf8 = NULL;
+    if (!content_b64_qiv || !sender_pubkey_hex || !receiver_seckey ||
+        !receiver_seckey->ptr || receiver_seckey->len < 32 ||
+        !out_plaintext_utf8) {
+        if (out_error) *out_error = strdup("decrypt failed");
+        return -1;
+    }
 
     /* AEAD v2 path */
     if (strncmp(content_b64_qiv, "v=2:", 4) == 0) {
@@ -727,43 +747,65 @@ int nostr_nip04_decrypt_secure(
     if (out_error) *out_error = strdup("decrypt failed"); return -1;
 #else
     const char *q = strstr(content_b64_qiv, "?iv=");
-    if (!q) { if (out_error) *out_error = strdup("decrypt failed"); return -1; }
-    size_t ct_len = (size_t)(q - content_b64_qiv);
-    char *ct_b64 = (char *)malloc(ct_len + 1);
-    if (!ct_b64) { if (out_error) *out_error = strdup("oom"); return -1; }
-    memcpy(ct_b64, content_b64_qiv, ct_len); ct_b64[ct_len] = '\0';
-    const char *iv_b64 = q + 4;
+    if (!q) {
+        if (out_error) *out_error = strdup("decrypt failed");
+        return -1;
+    }
 
-    unsigned char *ct = NULL; size_t ct_bin_len = 0;
-    unsigned char *iv = NULL; size_t iv_len = 0;
-    if (!base64_decode(ct_b64, &ct, &ct_bin_len)) { free(ct_b64); if (out_error) *out_error = strdup("b64 ct"); return -1; }
-    free(ct_b64);
-    if (!base64_decode(iv_b64, &iv, &iv_len)) { free(ct); if (out_error) *out_error = strdup("b64 iv"); return -1; }
-    if (iv_len != 16) { free(ct); free(iv); if (out_error) *out_error = strdup("iv len"); return -1; }
+    const size_t ct_b64_len = (size_t)(q - content_b64_qiv);
+    char *ct_b64 = (char *)malloc(ct_b64_len + 1);
+    unsigned char *ct = NULL;
+    unsigned char *iv = NULL;
+    unsigned char *pt = NULL;
+    size_t ct_len = 0;
+    size_t iv_len = 0;
+    unsigned char key[32] = {0};
+    EVP_CIPHER_CTX *ctx = NULL;
+    int ok = 0;
+    int len = 0;
+    int total = 0;
 
-    unsigned char key[32];
-    if (ecdh_derive_key_bin(sender_pubkey_hex, (const unsigned char*)receiver_seckey->ptr, key) != 0) {
-        free(ct); free(iv); if (out_error) *out_error = strdup("decrypt failed"); return -1; }
+    if (!ct_b64) goto legacy_done;
+    memcpy(ct_b64, content_b64_qiv, ct_b64_len);
+    ct_b64[ct_b64_len] = '\0';
+    if (!base64_decode(ct_b64, &ct, &ct_len) ||
+        !base64_decode(q + 4, &iv, &iv_len) ||
+        iv_len != 16 ||
+        ecdh_derive_key_bin(sender_pubkey_hex,
+                            (const unsigned char *)receiver_seckey->ptr,
+                            key) != 0) {
+        goto legacy_done;
+    }
 
-    unsigned char *pt = (unsigned char *)malloc(ct_bin_len + 1);
-    if (!pt) { free(ct); free(iv); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("oom"); return -1; }
-    int len = 0, total = 0;
-    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-    if (!ctx) { free(ct); free(iv); free(pt); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("evp ctx"); return -1; }
-    if (EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv) != 1) {
-        EVP_CIPHER_CTX_free(ctx); free(ct); free(iv); free(pt); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("dec init"); return -1; }
-    if (EVP_DecryptUpdate(ctx, pt, &len, ct, (int)ct_bin_len) != 1) {
-        EVP_CIPHER_CTX_free(ctx); free(ct); free(iv); free(pt); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("dec update"); return -1; }
-    total = len;
-    if (EVP_DecryptFinal_ex(ctx, pt + total, &len) != 1) {
-        EVP_CIPHER_CTX_free(ctx); free(ct); free(iv); free(pt); secure_bzero(key, sizeof(key)); if (out_error) *out_error = strdup("dec final"); return -1; }
-    total += len;
+    pt = (unsigned char *)malloc(ct_len + 1);
+    ctx = EVP_CIPHER_CTX_new();
+    if (!pt || !ctx) goto legacy_done;
+    if (EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv) == 1 &&
+        EVP_DecryptUpdate(ctx, pt, &len, ct, (int)ct_len) == 1) {
+        total = len;
+        if (EVP_DecryptFinal_ex(ctx, pt + total, &len) == 1) {
+            total += len;
+            ok = 1;
+        }
+    }
+
+legacy_done:
     EVP_CIPHER_CTX_free(ctx);
+    free(ct_b64);
+    free(ct);
+    free(iv);
+    secure_bzero(key, sizeof(key));
+    if (!ok) {
+        if (pt) {
+            OPENSSL_cleanse(pt, ct_len + 1);
+            free(pt);
+        }
+        if (out_error) *out_error = strdup("decrypt failed");
+        return -1;
+    }
 
     pt[total] = '\0';
     *out_plaintext_utf8 = (char *)pt;
-    free(ct); free(iv);
-    secure_bzero(key, sizeof(key));
     return 0;
 #endif
 }

@@ -140,6 +140,10 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_encryption_detection.c)
   add_test(NAME test_nip46_encryption_detection COMMAND test_nip46_encryption_detection)
 endif()
 
+add_executable(test_nip46_transport_modes tests/test_transport_modes.c)
+target_link_libraries(test_nip46_transport_modes PRIVATE nostr_nip46_core)
+add_test(NAME test_nip46_transport_modes COMMAND test_nip46_transport_modes)
+
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_async_api.c)
   add_executable(test_nip46_async_api tests/test_async_api.c)
   target_link_libraries(test_nip46_async_api PRIVATE nostr_nip46_core)

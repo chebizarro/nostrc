@@ -1,5 +1,6 @@
 #include <nostr/nip04.h>
-#include <glib.h>
+#include <secure_buf.h>
+#include <nostr-utils.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,18 +12,23 @@ int main(void) {
     const char *receiver_pk_hex = "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
 
     const char *msg = "Hello, NIP-04!";
-    /* This test specifically validates the standard legacy CBC wire format;
-     * AEAD v2 is exercised separately by test_nip04_aead. */
-    if (!g_setenv("NIP04_LEGACY_CBC", "1", TRUE)) {
-        fprintf(stderr, "failed to set NIP04_LEGACY_CBC\n");
+    /* Standard CBC emission is explicit; generic encryption cannot be
+     * downgraded by process environment. */
+    nostr_secure_buf sender_sk = secure_alloc(32);
+    if (!sender_sk.ptr ||
+        !nostr_hex2bin((unsigned char *)sender_sk.ptr, sender_sk_hex, 32)) {
+        if (sender_sk.ptr) secure_free(&sender_sk);
         return 1;
     }
     char *content = NULL; char *err = NULL;
-    if (nostr_nip04_encrypt(msg, receiver_pk_hex, sender_sk_hex, &content, &err) != 0) {
+    if (nostr_nip04_encrypt_legacy_secure(msg, receiver_pk_hex, &sender_sk,
+                                          &content, &err) != 0) {
         fprintf(stderr, "encrypt failed: %s\n", err ? err : "unknown");
         free(err);
+        secure_free(&sender_sk);
         return 1;
     }
+    secure_free(&sender_sk);
     if (strncmp(content, "v=2:", 4) == 0 || strstr(content, "?iv=") == NULL) {
         fprintf(stderr, "expected standard NIP-04 envelope, got: %s\n", content);
         free(content);

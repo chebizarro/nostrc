@@ -26,6 +26,8 @@ int main(void)
 
     NostrNip46Session *bunker = nostr_nip46_bunker_new(NULL);
     if (!bunker) { fprintf(stderr, "bunker new failed\n"); return 1; }
+    if (nostr_nip46_session_set_transport_mode(
+            bunker, NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION) != 0) return 1;
 
     /* Pretend we issued a bunker:// for the client with our secret */
     char bunker_uri[256]; snprintf(bunker_uri, sizeof(bunker_uri), "bunker://%s?secret=%s", client_pk_sec1, bunker_sk);
@@ -38,6 +40,8 @@ int main(void)
     /* In a real server this arrives encrypted with NIP-04; emulate full round-trip using client helpers */
     NostrNip46Session *client = nostr_nip46_client_new();
     if (!client) { fprintf(stderr, "client new fail\n"); free(connect_req); nostr_nip46_session_free(bunker); return 1; }
+    if (nostr_nip46_session_set_transport_mode(
+            client, NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION) != 0) return 1;
     if (nostr_nip46_client_connect(client, bunker_uri, NULL) != 0) { fprintf(stderr, "client cfg fail\n"); nostr_nip46_session_free(client); free(connect_req); nostr_nip46_session_free(bunker); return 1; }
 
     char *cipher=NULL; if (nostr_nip46_client_nip04_encrypt(client, client_pk_sec1, connect_req, &cipher)!=0||!cipher){ fprintf(stderr, "connect encrypt fail\n"); free(connect_req); nostr_nip46_session_free(client); nostr_nip46_session_free(bunker); return 1; }

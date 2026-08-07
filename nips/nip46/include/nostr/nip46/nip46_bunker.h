@@ -20,7 +20,7 @@ NostrNip46Session *nostr_nip46_bunker_new(const NostrNip46BunkerCallbacks *cbs);
 int nostr_nip46_bunker_listen(NostrNip46Session *s, const char *const *relays, size_t n_relays);
 int nostr_nip46_bunker_issue_bunker_uri(NostrNip46Session *s, const char *remote_signer_pubkey_hex, const char *const *relays, size_t n_relays, const char *secret, char **out_uri);
 int nostr_nip46_bunker_reply(NostrNip46Session *s, const NostrNip46Request *req, const char *result_or_json, const char *error_or_null);
-/* Decrypt a NIP-04-wrapped request, dispatch, and return an encrypted response */
+/* Decrypt with the session-owned transport mode, dispatch, and encrypt the response with that same mode. */
 int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
                                      const char *client_pubkey_hex,
                                      const char *ciphertext,

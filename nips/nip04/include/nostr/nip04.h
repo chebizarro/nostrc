@@ -13,30 +13,36 @@ extern "C" {
  *
  * The NIP-04 module implements encrypted direct messaging for Nostr.
  *
- * Cryptography:
- * - ECDH over secp256k1 to derive the shared secret (X coordinate).
- * - AES key = SHA-256(shared_x) via OpenSSL EVP_Digest.
- * - AES-256-CBC with PKCS#7 padding; 16-byte IV.
- *
- * Content format:
- * - "base64(ciphertext)?iv=base64(iv)"
+ * Cryptography and formats:
+ * - Generic encryption emits the nostrc AEAD v2 extension:
+ *   "v=2:base64(nonce(12) || ciphertext || tag(16))".
+ * - AEAD v2 derives AES-256-GCM key material from the raw secp256k1 ECDH X
+ *   coordinate with HKDF-SHA256 and info="NIP04".
+ * - Decryption also accepts original NIP-04 interoperability payloads:
+ *   "base64(ciphertext)?iv=base64(iv)", using raw shared X directly as the
+ *   AES-256-CBC key with PKCS#7 padding.
+ * - Original CBC has no integrity protection. Emit it only via the explicit
+ *   legacy API and only inside a validated authenticated outer envelope.
  *
  * Memory and errors:
  * - Functions return 0 on success and non-zero on error.
- * - On success, output strings are allocated; caller must free with free().
- * - On failure, if @out_error is not NULL, an allocated error message is returned; caller must free.
+ * - On success, output strings are allocated; caller frees them with free().
+ * - All public decrypt failures use the allocated string "decrypt failed"
+ *   when @out_error is supplied. This intentionally hides format, padding,
+ *   KDF, and provider failure details.
  */
 
 /**
  * nostr_nip04_encrypt:
  * @plaintext_utf8: (not nullable): NUL-terminated UTF-8 plaintext to encrypt.
- * @receiver_pubkey_hex: (not nullable): Hex-encoded secp256k1 public key (compressed 33-byte or uncompressed 65-byte).
+ * @receiver_pubkey_hex: (not nullable): Hex-encoded x-only (32-byte), compressed (33-byte), or uncompressed (65-byte) secp256k1 public key.
  * @sender_seckey_hex: (not nullable): Hex-encoded 32-byte secp256k1 secret key.
- * @out_content_b64_qiv: (out) (transfer full): On success, set to newly allocated content string "base64(ct)?iv=base64(iv)".
+ * @out_content_b64_qiv: (out) (transfer full): On success, newly allocated AEAD v2 content string.
  * @out_error: (out) (optional) (transfer full): On error, set to an allocated error message.
  *
- * Encrypts @plaintext_utf8 for @receiver_pubkey_hex using NIP-04. The IV is randomly generated.
- * For tests, the environment variable NIP04_TEST_IV_B64 may be set to a base64-encoded 16-byte IV.
+ * Encrypts @plaintext_utf8 using the authenticated nostrc AEAD v2
+ * extension. This generic API never emits legacy CBC and has no environment
+ * variable that can downgrade its output.
  *
  * Returns: 0 on success; non-zero on failure.
  */
@@ -49,13 +55,14 @@ int nostr_nip04_encrypt(
 
 /**
  * nostr_nip04_decrypt:
- * @content_b64_qiv: (not nullable): The NIP-04 content string "base64(ct)?iv=base64(iv)".
+ * @content_b64_qiv: (not nullable): AEAD v2 or original NIP-04 CBC content.
  * @sender_pubkey_hex: (not nullable): Hex-encoded secp256k1 public key of the sender.
  * @receiver_seckey_hex: (not nullable): Hex-encoded 32-byte secp256k1 secret key of the receiver.
  * @out_plaintext_utf8: (out) (transfer full): On success, newly allocated decrypted UTF-8 string.
- * @out_error: (out) (optional) (transfer full): On error, allocated error message.
+ * @out_error: (out) (optional) (transfer full): On failure, allocated uniform string "decrypt failed".
  *
- * Decrypts a NIP-04 content string using receiver's secret key and sender's public key.
+ * Decrypts AEAD v2 and, unless disabled at build time, original CBC
+ * interoperability payloads. Callers must not distinguish failure causes.
  *
  * Returns: 0 on success; non-zero on failure.
  */
@@ -80,8 +87,9 @@ int nostr_nip04_encrypt_secure(
 /**
  * nostr_nip04_encrypt_legacy_secure:
  * Encrypts using the ORIGINAL NIP-04 format (AES-256-CBC with ?iv= output).
- * Required for compatibility with NIP-46 signers that expect legacy format.
- * Output format: "base64(ciphertext)?iv=base64(iv)"
+ * Required only for explicitly configured legacy peers.
+ * Output format: "base64(ciphertext)?iv=base64(iv)".
+ * WARNING: this format is unauthenticated and malleable.
  */
 int nostr_nip04_encrypt_legacy_secure(
     const char *plaintext_utf8,
@@ -92,7 +100,8 @@ int nostr_nip04_encrypt_legacy_secure(
 
 /**
  * nostr_nip04_decrypt_secure:
- * Like nostr_nip04_decrypt but takes the receiver secret key as a secure buffer.
+ * Like nostr_nip04_decrypt but takes the receiver secret key as a secure
+ * buffer. It has the same uniform "decrypt failed" error contract.
  */
 int nostr_nip04_decrypt_secure(
     const char *content_b64_qiv,
@@ -106,7 +115,7 @@ int nostr_nip04_decrypt_secure(
  * @peer_pubkey_hex: (not nullable): Hex-encoded secp256k1 public key of the peer.
  * @self_seckey_hex: (not nullable): Hex-encoded 32-byte secp256k1 secret key of self.
  * @out_shared_hex: (out) (transfer full): On success, newly allocated 64-char hex of shared X coordinate.
- * @out_error: (out) (optional) (transfer full): On error, allocated error message.
+ * @out_error: (out) (optional) (transfer full): On failure, allocated diagnostic error string.
  *
  * Computes the raw ECDH shared secret X coordinate (for diagnostics). Not required for normal usage and insecure to expose.
  * Deprecated because exposing raw shared secrets increases attack surface. Use the AEAD encrypt/decrypt APIs instead.

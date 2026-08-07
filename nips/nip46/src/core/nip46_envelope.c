@@ -22,6 +22,7 @@ static int common_init(NostrEvent **out_event,
                        const char *payload_json) {
     if (!out_event || !sender_pubkey_hex || !receiver_pubkey_hex || !payload_json)
         return -1;
+    *out_event = NULL;
     NostrEvent *ev = nostr_event_new();
     if (!ev) return -1;
     nostr_event_set_kind(ev, NOSTR_EVENT_KIND_NIP46);
@@ -49,4 +50,44 @@ int nostr_nip46_build_response_event(const char *sender_pubkey_hex,
                                      const char *response_json,
                                      NostrEvent **out_event) {
     return common_init(out_event, sender_pubkey_hex, receiver_pubkey_hex, response_json);
+}
+
+static int build_encrypted_event(NostrNip46Session *session,
+                                 const char *sender_pubkey_hex,
+                                 const char *receiver_pubkey_hex,
+                                 const char *plaintext_json,
+                                 NostrEvent **out_event) {
+    if (!session || !out_event) return -1;
+    *out_event = NULL;
+
+    char *ciphertext = NULL;
+    if (nostr_nip46_transport_encrypt(session, receiver_pubkey_hex,
+                                      plaintext_json, &ciphertext) != 0 ||
+        !ciphertext) {
+        return -1;
+    }
+    const int rc = common_init(out_event, sender_pubkey_hex,
+                               receiver_pubkey_hex, ciphertext);
+    free(ciphertext);
+    return rc;
+}
+
+int nostr_nip46_build_encrypted_request_event(
+    NostrNip46Session *session,
+    const char *sender_pubkey_hex,
+    const char *receiver_pubkey_hex,
+    const char *request_json,
+    NostrEvent **out_event) {
+    return build_encrypted_event(session, sender_pubkey_hex,
+                                 receiver_pubkey_hex, request_json, out_event);
+}
+
+int nostr_nip46_build_encrypted_response_event(
+    NostrNip46Session *session,
+    const char *sender_pubkey_hex,
+    const char *receiver_pubkey_hex,
+    const char *response_json,
+    NostrEvent **out_event) {
+    return build_encrypted_event(session, sender_pubkey_hex,
+                                 receiver_pubkey_hex, response_json, out_event);
 }

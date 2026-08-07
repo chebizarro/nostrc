@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 /* NIP-44 calc_padded_len per spec pseudocode */
-static size_t calc_padded_len(size_t unpadded_len) {
+size_t nip44_calc_padded_len(size_t unpadded_len) {
   if (unpadded_len <= 32) return 32;
   /* next power-of-two strictly greater than unpadded_len-1 */
   size_t x = (unpadded_len - 1);
@@ -20,8 +20,10 @@ static size_t calc_padded_len(size_t unpadded_len) {
    is calc_padded_len(len). Thus overall buffer size is 2 + calc_padded_len(len). */
 int nip44_pad(const uint8_t *in, size_t in_len, uint8_t **out_padded, size_t *out_padded_len) {
   if (!out_padded || !out_padded_len) return -1;
-  if (in_len == 0 || in_len > 65535) return -1;
-  size_t padded_section = calc_padded_len(in_len);
+  *out_padded = NULL;
+  *out_padded_len = 0;
+  if (!in || in_len == 0 || in_len > 65535) return -1;
+  size_t padded_section = nip44_calc_padded_len(in_len);
   size_t total = 2 + padded_section;
   uint8_t *buf = (uint8_t*)malloc(total);
   if (!buf) return -1;
@@ -37,11 +39,14 @@ int nip44_pad(const uint8_t *in, size_t in_len, uint8_t **out_padded, size_t *ou
 
 /* Unpad and validate zeros after content */
 int nip44_unpad(const uint8_t *padded, size_t padded_len, uint8_t **out, size_t *out_len) {
-  if (!padded || padded_len < (2 + 32) || !out || !out_len) return -1;
+  if (!out || !out_len) return -1;
+  *out = NULL;
+  *out_len = 0;
+  if (!padded || padded_len < (2 + 32)) return -1;
   /* read big-endian length */
   size_t len = ((size_t)padded[0] << 8) | (size_t)padded[1];
   if (len == 0 || len > 65535) return -1;
-  size_t expected_total = 2 + calc_padded_len(len);
+  size_t expected_total = 2 + nip44_calc_padded_len(len);
   if (padded_len != expected_total) return -1;
   /* ensure zeros after content */
   for (size_t i = 2 + len; i < padded_len; i++) {

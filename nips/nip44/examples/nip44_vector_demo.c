@@ -6,11 +6,11 @@
 
 #include "nostr/nip44/nip44.h"
 
-extern void nip44_hkdf_expand(const uint8_t prk[32], const uint8_t *info, size_t info_len,
+extern int nip44_hkdf_expand(const uint8_t prk[32], const uint8_t *info, size_t info_len,
                               uint8_t okm_out[], size_t okm_len);
 extern int  nip44_chacha20_xor(const uint8_t key[32], const uint8_t nonce12[12],
                                const uint8_t *in, uint8_t *out, size_t len);
-extern void nip44_hmac_sha256(const uint8_t *key, size_t key_len,
+extern int nip44_hmac_sha256(const uint8_t *key, size_t key_len,
                               const uint8_t *data1, size_t len1,
                               const uint8_t *data2, size_t len2,
                               uint8_t mac_out[32]);
@@ -44,7 +44,7 @@ int main(void){
 
   uint8_t nonce[32]; hex_to_bytes(nonce_hex, nonce, 32);
   uint8_t okm[76];
-  nip44_hkdf_expand(conv, nonce, 32, okm, sizeof(okm));
+  assert(nip44_hkdf_expand(conv, nonce, 32, okm, sizeof(okm)) == 0);
   const uint8_t *ck = okm + 0;
   const uint8_t *cn = okm + 32;
   const uint8_t *hk = okm + 44;
@@ -58,7 +58,7 @@ int main(void){
   assert(rc==0);
 
   uint8_t mac[32];
-  nip44_hmac_sha256(hk, 32, nonce, 32, cipher, padded_len, mac);
+  assert(nip44_hmac_sha256(hk, 32, nonce, 32, cipher, padded_len, mac) == 0);
 
   size_t payload_len = 1 + 32 + padded_len + 32;
   uint8_t *payload = (uint8_t*)malloc(payload_len);

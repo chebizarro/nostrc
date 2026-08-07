@@ -18,19 +18,27 @@ typedef struct {
   NostrNip44Version version; /* 0x02 */
 } NostrNip44Params;
 
-/* Derive 32-byte conversation key from sender sk (32) and receiver pk (x-only 32) */
+/* Derive a 32-byte conversation key from sender sk (32) and receiver
+ * x-only pubkey (32). Returns 0 on success. On failure the output is zeroed. */
 int nostr_nip44_convkey(const uint8_t sender_sk[32],
                         const uint8_t receiver_pk_xonly[32],
                         uint8_t out_convkey[32]);
 
-/* Encrypt UTF-8 content with NIP-44 v2.
-   Returns base64 string of concat(version,nonce,ciphertext,mac). Caller frees *out_base64 via free(). */
+/* Encrypt content with standard NIP-44 v2.
+ * Returns canonical base64 of version || nonce || ciphertext || MAC.
+ * Caller frees *out_base64 with free(). On failure *out_base64 is NULL. */
 int nostr_nip44_encrypt_v2(const uint8_t sender_sk[32],
                            const uint8_t receiver_pk_xonly[32],
                            const uint8_t *plaintext_utf8, size_t plaintext_len,
                            char **out_base64);
 
-/* Decrypt base64 payload; validates MAC & padding; outputs UTF-8 content. Caller frees *out_plaintext via free(). */
+/* Strictly decode and decrypt a standard NIP-44 v2 payload.
+ * The complete base64 input must be canonical; MAC is verified before decrypting.
+ * Caller frees *out_plaintext with free(). On failure output is NULL/zero length.
+ *
+ * NIP-44 does not bind an application kind, sender/recipient tag, role, or
+ * session identifier. Protocol users such as NIP-46 must validate those
+ * outer-envelope invariants before accepting decrypted content. */
 int nostr_nip44_decrypt_v2(const uint8_t receiver_sk[32],
                            const uint8_t sender_pk_xonly[32],
                            const char *base64_payload,

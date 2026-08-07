@@ -1,99 +1,118 @@
-# NIP-04 Migration Guide (AEAD v2)
+# NIP-04 and NIP-46 Transport Migration
 
-This guide explains migrating from legacy NIP-04 AES-CBC (`base64(cipher)?iv=base64(iv)`) to the new AEAD v2 envelope (`v=2:base64(nonce||cipher||tag)`), which is now the ONLY encryption format emitted by the library.
+## Implemented formats
 
-- AEAD v2 envelope: `v=2:base64(nonce(12) || ciphertext || tag(16))`
-- Cipher: AES-256-GCM via OpenSSL EVP
-- Key separation: HKDF-SHA256 with `info="NIP04"` over the ECDH shared X
-- Decrypt fallback: legacy `?iv=` is still accepted for interop
+The library supports two NIP-04 wire formats:
 
-## Encrypt/Decrypt APIs
+| Format | Wire prefix/shape | Key derivation | Integrity | Policy |
+|---|---|---|---|---|
+| nostrc AEAD v2 extension | `v=2:base64(nonce(12) || ciphertext || tag(16))` | HKDF-SHA256 over ECDH shared X, `info="NIP04"` | AES-256-GCM tag | Generic encrypt default |
+| Original NIP-04 | `base64(ciphertext)?iv=base64(iv)` | Raw ECDH shared X | None (AES-256-CBC/PKCS#7) | Explicit legacy emission only |
 
-Prefer these canonical APIs. The `_secure` variants take the private key in secure memory.
+The `v=2:` format is a project extension. Generic NIP-04 capability does not
+imply support for it. Original CBC remains accepted by decrypt for
+interoperability, but it is unauthenticated and malleable. Use it only inside a
+strictly validated, signed outer event.
+
+## NIP-04 APIs
+
+`nostr_nip04_encrypt()` and `nostr_nip04_encrypt_secure()` always emit AEAD
+v2. No environment variable can downgrade them.
+
+Legacy CBC emission is deliberately explicit:
 
 ```c
-int nostr_nip04_encrypt(
+int nostr_nip04_encrypt_legacy_secure(
     const char *plaintext_utf8,
     const char *receiver_pubkey_hex,
-    const char *sender_seckey_hex,
-    char **out_content_b64_qiv,
+    const nostr_secure_buf *sender_seckey,
+    char **out_content,
     char **out_error);
+```
 
+Both decrypt APIs recognize AEAD v2 and original CBC unless the library was
+built with `NIP04_STRICT_AEAD_ONLY=ON`:
+
+```c
 int nostr_nip04_decrypt(
-    const char *content_b64_qiv,
+    const char *content,
     const char *sender_pubkey_hex,
     const char *receiver_seckey_hex,
     char **out_plaintext_utf8,
     char **out_error);
 
-int nostr_nip04_encrypt_secure(
-    const char *plaintext_utf8,
-    const char *receiver_pubkey_hex,
-    const nostr_secure_buf *sender_seckey,
-    char **out_content_b64_qiv,
-    char **out_error);
-
 int nostr_nip04_decrypt_secure(
-    const char *content_b64_qiv,
+    const char *content,
     const char *sender_pubkey_hex,
     const nostr_secure_buf *receiver_seckey,
     char **out_plaintext_utf8,
     char **out_error);
 ```
 
-## Example
+Every public decrypt failure returns the same allocated error string,
+`"decrypt failed"`, when `out_error` is supplied. Callers must not branch on
+format, padding, KDF, or provider failure details.
+
+Accepted peer public keys are x-only (32-byte), compressed SEC1 (33-byte), or
+uncompressed SEC1 (65-byte) hex. Secret keys are exactly 32-byte hex or a
+secure 32-byte buffer.
+
+## NIP-46 session transport policy
+
+Every `NostrNip46Session` owns one explicit transport mode:
 
 ```c
-#include <nostr/nip04.h>
-#include <secure_buf.h>
+typedef enum {
+    NOSTR_NIP46_TRANSPORT_NIP44_V2 = 1,
+    NOSTR_NIP46_TRANSPORT_NIP04_LEGACY = 2,
+    NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION = 3
+} NostrNip46TransportMode;
 
-const char *msg = "Hello, NIP-04!";
-char *cipher = NULL, *err = NULL, *plain = NULL;
+int nostr_nip46_session_set_transport_mode(
+    NostrNip46Session *session,
+    NostrNip46TransportMode mode);
 
-nostr_secure_buf sb_sender = secure_alloc(32); // load hex 32B into sb_sender
-nostr_secure_buf sb_receiver = secure_alloc(32); // load hex 32B into sb_receiver
+int nostr_nip46_transport_encrypt(
+    NostrNip46Session *session,
+    const char *peer_pubkey_hex,
+    const char *plaintext,
+    char **out_ciphertext);
 
-if (nostr_nip04_encrypt_secure(msg, receiver_pubkey_hex, &sb_sender, &cipher, &err) != 0) {
-    // handle error
-}
-
-if (nostr_nip04_decrypt_secure(cipher, sender_pubkey_hex, &sb_receiver, &plain, &err) != 0) {
-    // handle error
-}
-
-// cipher starts with "v=2:"; decrypt also accepts legacy ?iv= from older peers
+int nostr_nip46_transport_decrypt(
+    NostrNip46Session *session,
+    const char *peer_pubkey_hex,
+    const char *ciphertext,
+    char **out_plaintext);
 ```
 
-## Deprecated APIs
+The default is `NOSTR_NIP46_TRANSPORT_NIP44_V2`. Configure another mode only
+after peer capability negotiation and before starting client or bunker
+transport. Ciphertext shape never changes the session mode, and a response uses
+the same mode as its request.
 
-- `nostr_nip04_shared_secret_hex(...)` is deprecated.
-  - Rationale: exposing raw ECDH shared secrets increases attack surface.
-  - Replace diagnostics with end-to-end AEAD encrypt/decrypt or use internal HKDF outputs only.
+### Interoperability matrix
 
-## Relay Security Posture
+| Peer capability | Session mode | Emitted payload |
+|---|---|---|
+| Standard/current NIP-46 with NIP-44 v2 | `NIP44_V2` | Standard NIP-44 v2 |
+| Legacy signer requiring original NIP-04 | `NIP04_LEGACY` | CBC `?iv=` |
+| Peer explicitly advertising the nostrc extension | `NIP04_AEAD_V2_EXTENSION` | `v=2:` AEAD |
+| Unknown or conflicting capability | Do not start transport | Failure |
 
-On startup the relay logs a one-line banner summarizing posture, e.g.:
+The algorithm-specific
+`nostr_nip46_client_nip04_*`/`nostr_nip46_client_nip44_*` functions remain
+compatibility helpers. New kind-24133 network paths should use the unified
+transport APIs.
 
-```
-nostrc-relayd: security AEAD=v2 replayTTL=900s skew=+600/-86400
-```
+## Security and operations
 
-- `replayTTL`: duplicate cache TTL
-- `skew`: timestamp skew window (+future / -past)
-
-## Testing and Compatibility
-
-- Tests and consumers should accept `v=2:` envelopes by default.
-- Decrypt continues to accept legacy `?iv=` to interoperate with older peers.
-- CI no longer sets `NIP04_LEGACY_CBC`.
-
-## FAQs
-
-- Q: Can I still produce `?iv=`?
-  - A: No. Encrypt emits AEAD v2 only. Decrypt fallback remains enabled for compatibility.
-
-- Q: How do I handle errors?
-  - A: All decrypt failures return "decrypt failed" to minimize information leakage.
-
-- Q: Which pubkey format is accepted?
-  - A: SEC1 compressed (33B) and uncompressed (65B) hex encodings are accepted by the APIs.
+- Never log decrypted requests, replies, full RPC parameters, ciphertext, or
+  private keys, including in debug builds.
+- Treat a legacy CBC decrypt success as transport compatibility, not proof of
+  ciphertext integrity. Outer event signature, canonical ID, author, recipient,
+  kind, and request/response correlation remain mandatory.
+- `nostr_nip04_shared_secret_hex()` is deprecated because exporting raw ECDH
+  material into ordinary heap strings increases exposure.
+- Builds that can drop legacy interoperability may enable
+  `NIP04_STRICT_AEAD_ONLY`; this is a build-time upper bound, not per-peer
+  negotiation.

@@ -27,6 +27,14 @@ int main(void)
     if (!bunker) { fprintf(stderr, "bunker new failed\n"); return 1; }
     NostrNip46Session *client = nostr_nip46_client_new();
     if (!client) { fprintf(stderr, "client new failed\n"); nostr_nip46_session_free(bunker); return 1; }
+    if (nostr_nip46_session_set_transport_mode(
+            bunker, NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION) != 0 ||
+        nostr_nip46_session_set_transport_mode(
+            client, NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION) != 0) {
+        nostr_nip46_session_free(client);
+        nostr_nip46_session_free(bunker);
+        return 1;
+    }
 
     /* Configure secrets via bunker:// URI (no network used in this example) */
     char bunker_uri[256]; snprintf(bunker_uri, sizeof(bunker_uri), "bunker://%s?secret=%s", pk_sec1, sk);

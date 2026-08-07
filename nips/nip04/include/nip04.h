@@ -1,11 +1,7 @@
-#ifndef NOSTR_NIP04_H
-#define NOSTR_NIP04_H
+#ifndef NOSTR_NIP04_COMPAT_H
+#define NOSTR_NIP04_COMPAT_H
 
-#include <stddef.h>
+/* Compatibility include. New code should include <nostr/nip04.h>. */
+#include <nostr/nip04.h>
 
-// Function prototypes
-char* compute_shared_secret(const char *pub, const char *sk);
-char* encrypt_message(const char *message, const char *key);
-char* decrypt_message(const char *content, const char *key);
-
-#endif // NOSTR_NIP04_H
+#endif /* NOSTR_NIP04_COMPAT_H */

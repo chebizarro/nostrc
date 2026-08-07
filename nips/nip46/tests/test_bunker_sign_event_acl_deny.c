@@ -20,6 +20,7 @@ static int run_sign_without_connect_should_deny(void){
     const char *bunker_pk_sec1 = client_pk_sec1;
 
     NostrNip46Session *bun = nostr_nip46_bunker_new(NULL); if(!bun){ printf("bun new fail\n"); return 1; }
+    if (nostr_nip46_session_set_transport_mode(bun, NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION) != 0) return 1;
     char uri_bunker[256]; snprintf(uri_bunker, sizeof(uri_bunker), "bunker://%s?secret=%s", client_pk_sec1, bunker_sk);
     if (nostr_nip46_client_connect(bun, uri_bunker, NULL) != 0){ printf("bun set secret fail\n"); nostr_nip46_session_free(bun); return 2; }
 
@@ -77,6 +78,7 @@ static int run_sign_after_connect_without_permission_should_deny(void){
     const char *bunker_pk_sec1 = client_pk_sec1;
 
     NostrNip46Session *bun = nostr_nip46_bunker_new(NULL); if(!bun){ printf("bun new fail\n"); return 1; }
+    if (nostr_nip46_session_set_transport_mode(bun, NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION) != 0) return 1;
     char uri_bunker[256]; snprintf(uri_bunker, sizeof(uri_bunker), "bunker://%s?secret=%s", client_pk_sec1, bunker_sk);
     if (nostr_nip46_client_connect(bun, uri_bunker, NULL) != 0){ printf("bun set secret fail\n"); nostr_nip46_session_free(bun); return 2; }
 

@@ -74,9 +74,11 @@ void nostr_nip46_client_set_rate_limit(NostrNip46Session *s,
                                        int max_inflight,
                                        uint32_t min_interval_ms);
 
-/* NIP-46 TRANSPORT-LEVEL local-crypto using s->secret (client communication key).
- * Use ONLY for encrypting/decrypting NIP-46 protocol messages (kind 24133).
- * Do NOT use for user content — use the _rpc variants below instead. */
+/* Algorithm-specific transport compatibility helpers using s->secret.
+ * New network paths should use nostr_nip46_transport_encrypt/decrypt so the
+ * session-owned negotiated mode is applied consistently. These explicit
+ * helpers remain for compatibility/tests and never mutate session policy.
+ * Do NOT use them for user content — use the _rpc variants below instead. */
 int nostr_nip46_client_nip04_encrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext);
 int nostr_nip46_client_nip04_decrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext);
 int nostr_nip46_client_nip44_encrypt(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext);

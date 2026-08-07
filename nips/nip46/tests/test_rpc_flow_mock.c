@@ -67,6 +67,9 @@ static int mock_context_init(MockContext *ctx) {
     /* Create bunker session */
     ctx->bunker = nostr_nip46_bunker_new(NULL);
     if (!ctx->bunker) return -1;
+    if (nostr_nip46_session_set_transport_mode(
+            ctx->bunker,
+            NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION) != 0) return -1;
     char bunker_uri[256];
     snprintf(bunker_uri, sizeof(bunker_uri), "bunker://%s?secret=%s", ctx->client_pk, BUNKER_SK);
     if (nostr_nip46_client_connect(ctx->bunker, bunker_uri, NULL) != 0) return -1;
@@ -342,6 +345,10 @@ static int test_rpc_connect_with_authorize_callback(void) {
 
     /* Create bunker with callback */
     NostrNip46Session *bunker = nostr_nip46_bunker_new(&cbs);
+    TEST_ASSERT(nostr_nip46_session_set_transport_mode(
+                    bunker,
+                    NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION) == 0,
+                "set bunker transport");
     char bunker_uri[256];
     snprintf(bunker_uri, sizeof(bunker_uri), "bunker://%s?secret=%s", client_pk, BUNKER_SK);
     TEST_ASSERT(nostr_nip46_client_connect(bunker, bunker_uri, NULL) == 0, "bunker connect");
@@ -387,6 +394,10 @@ static int test_rpc_connect_denied_by_callback(void) {
     nostr_nip46_client_connect(client, client_uri, NULL);
 
     NostrNip46Session *bunker = nostr_nip46_bunker_new(&cbs);
+    TEST_ASSERT(nostr_nip46_session_set_transport_mode(
+                    bunker,
+                    NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION) == 0,
+                "set bunker transport");
     char bunker_uri[256];
     snprintf(bunker_uri, sizeof(bunker_uri), "bunker://%s?secret=%s", client_pk, BUNKER_SK);
     nostr_nip46_client_connect(bunker, bunker_uri, NULL);
@@ -462,6 +473,10 @@ static int test_rpc_sign_event_custom_callback(void) {
     nostr_nip46_client_connect(client, client_uri, NULL);
 
     NostrNip46Session *bunker = nostr_nip46_bunker_new(&cbs);
+    TEST_ASSERT(nostr_nip46_session_set_transport_mode(
+                    bunker,
+                    NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION) == 0,
+                "set bunker transport");
     char bunker_uri[256];
     snprintf(bunker_uri, sizeof(bunker_uri), "bunker://%s?secret=%s", client_pk, BUNKER_SK);
     nostr_nip46_client_connect(bunker, bunker_uri, NULL);

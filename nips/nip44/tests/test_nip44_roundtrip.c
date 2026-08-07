@@ -47,6 +47,65 @@ static void test_case(const unsigned char *msg, size_t msg_len) {
   free(b64);
 }
 
+static void test_convkey_output_overlap(void) {
+  unsigned char key[32] = {0};
+  key[31] = 1;
+  unsigned char pk[32];
+  unsigned char expected[32];
+  hex_to_bytes("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+               pk, sizeof(pk));
+
+  assert(nostr_nip44_convkey(key, pk, expected) == 0);
+  assert(nostr_nip44_convkey(key, pk, key) == 0);
+  assert(memcmp(key, expected, sizeof(key)) == 0);
+}
+
+static void test_strict_base64(void) {
+  unsigned char sk[32] = {0};
+  sk[31] = 1;
+  unsigned char pk[32];
+  hex_to_bytes("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+               pk, sizeof(pk));
+
+  unsigned char msg[33];
+  memset(msg, 'x', sizeof(msg));
+  char *valid = NULL;
+  assert(nostr_nip44_encrypt_v2(sk, pk, msg, sizeof(msg), &valid) == 0);
+  const size_t n = strlen(valid);
+  assert(n > 2 && valid[n - 1] == '=');
+
+  const char alphabet[] =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const char *p = strchr(alphabet, valid[n - 2]);
+  assert(p && ((p - alphabet) % 4) == 0);
+
+  char *bad = malloc(n + 6);
+  assert(bad);
+  memcpy(bad, valid, n + 1);
+  bad[n - 2] = alphabet[(p - alphabet) + 1]; /* non-canonical unused bits */
+
+  unsigned char *plain = (unsigned char *)0x1;
+  size_t plain_len = 99;
+  assert(nostr_nip44_decrypt_v2(sk, pk, bad, &plain, &plain_len) != 0);
+  assert(plain == NULL && plain_len == 0);
+
+  memcpy(bad, valid, n + 1);
+  bad[n] = '!';
+  bad[n + 1] = '\0';
+  assert(nostr_nip44_decrypt_v2(sk, pk, bad, &plain, &plain_len) != 0);
+
+  memcpy(bad, valid, n + 1);
+  bad[n - 1] = '\0';
+  assert(nostr_nip44_decrypt_v2(sk, pk, bad, &plain, &plain_len) != 0);
+
+  memcpy(bad, valid, n + 1);
+  bad[4] = '\n';
+  assert(nostr_nip44_decrypt_v2(sk, pk, bad, &plain, &plain_len) != 0);
+
+  free(bad);
+  free(valid);
+}
+
 int main(void) {
   srand((unsigned)time(NULL));
 
@@ -62,6 +121,9 @@ int main(void) {
   /* Random message */
   unsigned char rnd[123]; for (int i=0;i<123;i++) rnd[i]=(unsigned char)(rand() & 0xFF);
   test_case(rnd, sizeof(rnd));
+
+  test_strict_base64();
+  test_convkey_output_overlap();
 
   /* Maximum allowed length 65535 */
   unsigned char *maxmsg = (unsigned char*)malloc(65535);
