@@ -76,12 +76,17 @@ gnostr_signer_service_dispose(GObject *object)
     g_clear_object(&self->pending_cancellable);
   }
 
+  /* nostrc-13gf: Detach under the lock, free OUTSIDE it.
+   * nostr_nip46_session_free() blocks (drains in-flight RPCs) and may fire
+   * flushed-job callbacks; holding session_mutex across that can deadlock
+   * with callbacks that re-enter the signer service. */
   g_mutex_lock(&self->session_mutex);
-  if (self->nip46_session) {
-    nostr_nip46_session_free(self->nip46_session);
-    self->nip46_session = NULL;
-  }
+  NostrNip46Session *old_session = self->nip46_session;
+  self->nip46_session = NULL;
   g_mutex_unlock(&self->session_mutex);
+  if (old_session) {
+    nostr_nip46_session_free(old_session);
+  }
 
   /* Don't free the proxy - it's shared via signer_ipc */
   self->nip55l_proxy = NULL;
@@ -190,26 +195,27 @@ gnostr_signer_service_set_nip46_session(GnostrSignerService *self,
 {
   g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
 
+  /* nostrc-13gf: Detach the old session under the lock and free it OUTSIDE.
+   * nostr_nip46_session_free() blocks (drains in-flight RPCs) and may fire
+   * flushed-job callbacks that re-enter the signer service. */
   g_mutex_lock(&self->session_mutex);
+  NostrNip46Session *old_session = self->nip46_session;
+  self->nip46_session = session;
+  if (session) {
+    self->method = GNOSTR_SIGNER_METHOD_NIP46;
+  }
+  g_mutex_unlock(&self->session_mutex);
 
-  /* Free old session if any */
-  if (self->nip46_session) {
-    /* nostrc-svsj: diagnostic for suspected session use-after-free */
+  if (old_session) {
     g_message("[SIGNER_SERVICE] Replacing NIP-46 session %p with %p",
-              (void *)self->nip46_session, (void *)session);
-    nostr_nip46_session_free(self->nip46_session);
-    self->nip46_session = NULL;
+              (void *)old_session, (void *)session);
+    nostr_nip46_session_free(old_session);
   }
 
   if (session) {
-    self->nip46_session = session;
-    self->method = GNOSTR_SIGNER_METHOD_NIP46;
-    g_mutex_unlock(&self->session_mutex);
-
     set_state(self, GNOSTR_SIGNER_STATE_CONNECTED);
     g_debug("[SIGNER_SERVICE] Switched to NIP-46 remote signer");
   } else {
-    g_mutex_unlock(&self->session_mutex);
 
     /* nostrc-dbus1: Reset cached D-Bus failure before retrying.
      * The signer service may have started since our last attempt. */
@@ -274,17 +280,21 @@ gnostr_signer_service_clear(GnostrSignerService *self)
     g_clear_object(&self->pending_cancellable);
   }
 
+  /* nostrc-13gf: Detach the session under the lock, free it OUTSIDE.
+   * nostr_nip46_session_free() blocks (drains in-flight RPCs) and may fire
+   * flushed-job callbacks that re-enter the signer service. */
   g_mutex_lock(&self->session_mutex);
-  if (self->nip46_session) {
-    /* nostrc-svsj: diagnostic for suspected session use-after-free */
-    g_message("[SIGNER_SERVICE] Clearing NIP-46 session %p", (void *)self->nip46_session);
-    nostr_nip46_session_free(self->nip46_session);
-    self->nip46_session = NULL;
-  }
+  NostrNip46Session *old_session = self->nip46_session;
+  self->nip46_session = NULL;
   /* nostrc-svsj: free the pubkey under the same lock used by readers */
   g_free(self->pubkey_hex);
   self->pubkey_hex = NULL;
   g_mutex_unlock(&self->session_mutex);
+
+  if (old_session) {
+    g_message("[SIGNER_SERVICE] Clearing NIP-46 session %p", (void *)old_session);
+    nostr_nip46_session_free(old_session);
+  }
 
   self->nip55l_proxy = NULL;
   self->method = GNOSTR_SIGNER_METHOD_NONE;
@@ -561,20 +571,22 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
     return;
   }
 
-  /* Get session reference while holding lock */
-  NostrNip46Session *session = ctx->service->nip46_session;
+  /* nostrc-13gf: Take a real reference while holding the lock so a
+   * concurrent logout/replace can never free the session under us. */
+  NostrNip46Session *session = nostr_nip46_session_ref(ctx->service->nip46_session);
 
   g_mutex_unlock(&ctx->service->session_mutex);
 
-  /* nostrc-svsj: diagnostic for suspected session use-after-free */
-  g_message("[SIGNER_SERVICE] NIP-46 sign RPC begin: session=%p", (void *)session);
-  g_debug("[SIGNER_SERVICE] Signing event via NIP-46 RPC...");
+  g_debug("[SIGNER_SERVICE] NIP-46 sign RPC begin: session=%p", (void *)session);
 
   /* Use the nip46 library's sign_event function - same code path as get_public_key */
   char *signed_event_json = NULL;
   int rc = nostr_nip46_client_sign_event(session,
                                           ctx->event_json,
                                           &signed_event_json);
+
+  /* Session no longer needed - validation below only touches local data */
+  nostr_nip46_session_unref(session);
 
   if (rc != 0 || !signed_event_json) {
     g_warning("[SIGNER_SERVICE] NIP-46 sign_event RPC failed: rc=%d", rc);
@@ -1042,8 +1054,9 @@ nip46_nip44_thread(GTask *task, gpointer source, gpointer task_data, GCancellabl
     return;
   }
 
-  /* Get session reference while holding lock */
-  NostrNip46Session *session = ctx->service->nip46_session;
+  /* nostrc-13gf: Take a real reference while holding the lock so a
+   * concurrent logout/replace can never free the session under us. */
+  NostrNip46Session *session = nostr_nip46_session_ref(ctx->service->nip46_session);
 
   g_mutex_unlock(&ctx->service->session_mutex);
 
@@ -1065,6 +1078,8 @@ nip46_nip44_thread(GTask *task, gpointer source, gpointer task_data, GCancellabl
                                                ctx->data,
                                                &result);
   }
+
+  nostr_nip46_session_unref(session);
 
   if (rc != 0 || !result) {
     g_warning("[SIGNER_SERVICE] NIP-46 NIP-44 %s failed with rc=%d",

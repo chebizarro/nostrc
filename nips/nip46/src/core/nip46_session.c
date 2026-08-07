@@ -48,6 +48,31 @@ typedef struct PendingRequest {
     struct PendingRequest *next;
 } PendingRequest;
 
+/* nostrc-13gf: Bounded prioritized RPC work queue.
+ * Replaces the old one-detached-pthread-per-async-RPC model, which could
+ * spawn unbounded threads during bulk DM hydration. */
+typedef struct RpcJob {
+    char *method;
+    char **params;
+    size_t n_params;
+    size_t bytes;                /* retained payload size, for the byte cap */
+    NostrNip46AsyncCallback callback;
+    void *user_data;
+    struct RpcJob *next;
+} RpcJob;
+
+typedef struct Nip46RpcWorker {
+    struct NostrNip46Session *session;
+    int dedicated_interactive;   /* worker 0 only serves interactive jobs */
+    pthread_t tid;
+} Nip46RpcWorker;
+
+#define NIP46_RPC_WORKERS         3
+#define NIP46_RPC_QUEUE_MAX_HI    64        /* interactive: sign/connect/get_public_key */
+#define NIP46_RPC_QUEUE_MAX_LO    256       /* bulk: nip04/nip44 encrypt/decrypt */
+#define NIP46_RPC_QUEUE_MAX_BYTES (8u << 20) /* total retained payload cap (8 MiB) */
+#define NIP46_RPC_MAX_INTERVAL_MS 10000u    /* clamp for set_rate_limit pacing */
+
 /* nostrc-kk9f: Session registry for callback context.
  * Maps pool pointers to their owning sessions for event dispatch. */
 typedef struct SessionRegistryEntry {
@@ -106,6 +131,26 @@ struct NostrNip46Session {
     int      rpc_max_inflight;     /* 0 = NIP46_DEFAULT_MAX_INFLIGHT */
     uint32_t rpc_min_interval_ms;  /* 0 = NIP46_DEFAULT_MIN_INTERVAL_MS */
     int64_t  rpc_next_send_ms;     /* earliest monotonic time (ms) for next publish */
+
+    /* nostrc-13gf: Reference counting + coordinated shutdown.
+     * refcount is managed with __atomic builtins; nostr_nip46_session_free()
+     * performs the transport/thread shutdown and drops the owner reference,
+     * while short-lived borrowers (e.g. signer-service worker tasks) hold
+     * refs so the memory outlives their use. */
+    int refcount;
+    int shutting_down;             /* set once by nostr_nip46_session_free */
+
+    /* nostrc-13gf: bounded prioritized async RPC work queue */
+    pthread_mutex_t q_mutex;
+    pthread_cond_t  q_cond;
+    RpcJob  *q_head_hi, *q_tail_hi;
+    RpcJob  *q_head_lo, *q_tail_lo;
+    size_t   q_len_hi, q_len_lo;
+    size_t   q_bytes;              /* total retained payload bytes across queues */
+    int      q_shutdown;
+    int      q_started;            /* workers spawned lazily on first async RPC */
+    int      q_n_workers;          /* how many workers actually started */
+    Nip46RpcWorker q_workers[NIP46_RPC_WORKERS];
 };
 
 /* nostrc-prkl: rate limiting defaults */
@@ -252,6 +297,11 @@ static NostrNip46Session *session_new(const char *note) {
     s->rpc_max_inflight = 0;      /* use default */
     s->rpc_min_interval_ms = 0;   /* use default */
     s->rpc_next_send_ms = 0;
+    /* nostrc-13gf: refcount + async work queue */
+    s->refcount = 1;
+    s->shutting_down = 0;
+    pthread_mutex_init(&s->q_mutex, NULL);
+    pthread_cond_init(&s->q_cond, NULL);
     if (note) s->note = strdup(note);
     return s;
 }
@@ -319,7 +369,10 @@ static int parse_sk32(const char *hex, unsigned char out32[32]){
     return hex_to_bytes_exact(hex, out32, 32);
 }
 
-void nostr_nip46_session_free(NostrNip46Session *s) {
+/* nostrc-13gf: Final destructor - runs when the last reference drops.
+ * All transport and worker threads are already stopped by the shutdown in
+ * nostr_nip46_session_free(); only memory and sync primitives remain. */
+static void session_destroy(NostrNip46Session *s) {
     if (!s) return;
     if (s->note) { memset(s->note, 0, strlen(s->note)); free(s->note); }
     if (s->remote_pubkey_hex) { free(s->remote_pubkey_hex); }
@@ -329,35 +382,10 @@ void nostr_nip46_session_free(NostrNip46Session *s) {
     if (s->last_reply_json) free(s->last_reply_json);
     /* free ACL */
     struct PermEntry *it = s->acl_head; while (it) { struct PermEntry *nx = it->next; if (it->client_pk) free(it->client_pk); if (it->methods){ for(size_t i=0;i<it->n_methods;++i) free(it->methods[i]); free(it->methods);} free(it); it = nx; }
-    /* free transport infrastructure */
-    if (s->pool) {
-        nostr_simple_pool_stop(s->pool);
-        nostr_simple_pool_free(s->pool);
-    }
     if (s->bunker_pubkey_hex) { free(s->bunker_pubkey_hex); }
     if (s->bunker_secret_hex) { memset(s->bunker_secret_hex, 0, strlen(s->bunker_secret_hex)); free(s->bunker_secret_hex); }
     if (s->current_request_client_pubkey) { free(s->current_request_client_pubkey); }
-    /* free client mode transport - use client_stop for consistent cleanup */
-    nostr_nip46_client_stop(s);
-
-    /* nostrc-prkl: Coordinated gate shutdown BEFORE tearing down the pending
-     * infrastructure.  Order matters:
-     *  1. cancel_all closes all pending response channels, waking in-flight
-     *     RPC waiters quickly (they exit through nip46_rpc_gate_release);
-     *  2. mark the gate closing and wake queued callers (they observe
-     *     rpc_gate_closing and bail out without touching the session);
-     *  3. drain: wait until every entrant (in-flight and queued) has left;
-     *  4. only then free pending leftovers and destroy the mutexes. */
-    nostr_nip46_client_cancel_all(s);
-    pthread_mutex_lock(&s->rpc_gate_mutex);
-    s->rpc_gate_closing = 1;
-    pthread_cond_broadcast(&s->rpc_gate_cond);
-    while (s->rpc_inflight > 0 || s->rpc_gate_waiters > 0) {
-        pthread_cond_wait(&s->rpc_gate_cond, &s->rpc_gate_mutex);
-    }
-    pthread_mutex_unlock(&s->rpc_gate_mutex);
-
-    /* cancel and free pending requests (leftovers only after the drain) */
+    /* cancel and free leftover pending requests */
     pthread_mutex_lock(&s->pending_mutex);
     PendingRequest *pr = s->pending_requests;
     while (pr) {
@@ -375,8 +403,93 @@ void nostr_nip46_session_free(NostrNip46Session *s) {
     pthread_mutex_destroy(&s->pending_mutex);
     pthread_mutex_destroy(&s->rpc_gate_mutex);
     pthread_cond_destroy(&s->rpc_gate_cond);
+    pthread_mutex_destroy(&s->q_mutex);
+    pthread_cond_destroy(&s->q_cond);
     if (s->derived_client_pubkey) { free(s->derived_client_pubkey); }
     free(s);
+}
+
+NostrNip46Session *nostr_nip46_session_ref(NostrNip46Session *s) {
+    if (!s) return NULL;
+    __atomic_add_fetch(&s->refcount, 1, __ATOMIC_RELAXED);
+    return s;
+}
+
+void nostr_nip46_session_unref(NostrNip46Session *s) {
+    if (!s) return;
+    if (__atomic_sub_fetch(&s->refcount, 1, __ATOMIC_ACQ_REL) == 0) {
+        session_destroy(s);
+    }
+}
+
+/* Forward declaration: flush + join the async work queue (defined with the
+ * queue implementation below). */
+static void nip46_rpc_queue_shutdown(NostrNip46Session *s);
+
+/* nostrc-13gf: Owner shutdown + unref.
+ *
+ * Shutdown order matters for crash-free teardown while RPCs are active:
+ *  1. mark state STOPPING (new RPC entrants reject fast);
+ *  2. close the rate-limit gate (queued sync callers bail out);
+ *  3. cancel pending requests (in-flight waiters wake via closed channels);
+ *  4. flush + join the async work queue (workers exit);
+ *  5. drain the gate (wait until every sync entrant has left);
+ *  6. only now stop/free the relay pools nobody can be using;
+ *  7. drop the owner reference - memory is freed when borrowers finish. */
+void nostr_nip46_session_free(NostrNip46Session *s) {
+    if (!s) return;
+
+    int already = __atomic_exchange_n(&s->shutting_down, 1, __ATOMIC_ACQ_REL);
+    if (already) {
+        /* Repeated free(): pure no-op. Only the caller that wins the 0->1
+         * transition owns (and below consumes) the owner reference; dropping
+         * another ref here could destroy a session that borrowers (workers,
+         * signer-service tasks) still hold. */
+        fprintf(stderr, "[nip46] session_free: already shutting down (ignored)\n");
+        return;
+    }
+
+    s->state = NIP46_STATE_STOPPING;
+
+    /* 2. close the gate */
+    pthread_mutex_lock(&s->rpc_gate_mutex);
+    s->rpc_gate_closing = 1;
+    pthread_cond_broadcast(&s->rpc_gate_cond);
+    pthread_mutex_unlock(&s->rpc_gate_mutex);
+
+    /* 3. wake in-flight response waiters */
+    nostr_nip46_client_cancel_all(s);
+
+    /* 4. stop async workers */
+    nip46_rpc_queue_shutdown(s);
+
+    /* 5. drain the gate; periodically re-cancel to catch stragglers that
+     * registered a pending request after the first cancel_all pass. */
+    pthread_mutex_lock(&s->rpc_gate_mutex);
+    while (s->rpc_inflight > 0 || s->rpc_gate_waiters > 0) {
+        struct timespec deadline;
+        clock_gettime(CLOCK_REALTIME, &deadline);
+        deadline.tv_nsec += 250 * 1000000L;
+        if (deadline.tv_nsec >= 1000000000L) { deadline.tv_sec++; deadline.tv_nsec -= 1000000000L; }
+        pthread_cond_timedwait(&s->rpc_gate_cond, &s->rpc_gate_mutex, &deadline);
+        if (s->rpc_inflight > 0) {
+            pthread_mutex_unlock(&s->rpc_gate_mutex);
+            nostr_nip46_client_cancel_all(s);
+            pthread_mutex_lock(&s->rpc_gate_mutex);
+        }
+    }
+    pthread_mutex_unlock(&s->rpc_gate_mutex);
+
+    /* 6. transport teardown - nobody is inside the RPC path anymore */
+    nostr_nip46_client_stop(s);
+    if (s->pool) {
+        nostr_simple_pool_stop(s->pool);
+        nostr_simple_pool_free(s->pool);
+        s->pool = NULL;
+    }
+
+    /* 7. drop the owner reference */
+    nostr_nip46_session_unref(s);
 }
 
 /* Client API */
@@ -919,12 +1032,25 @@ static void nip46_sleep_until_ms(int64_t deadline_ms) {
     }
 }
 
-/* Returns 0 when a slot was acquired, -1 when the session is closing. */
+/* nostrc-13gf: Interactive methods get priority over bulk crypto traffic. */
+static int nip46_method_is_interactive(const char *method) {
+    return method && (strcmp(method, "sign_event") == 0 ||
+                      strcmp(method, "connect") == 0 ||
+                      strcmp(method, "get_public_key") == 0 ||
+                      strcmp(method, "ping") == 0);
+}
+
+/* Returns 0 when a slot was acquired, -1 when the session is closing.
+ * nostrc-13gf: bulk (non-interactive) callers may only occupy max-1 slots,
+ * so an interactive sign_event/connect never queues behind a decrypt storm. */
 static int nip46_rpc_gate_acquire(NostrNip46Session *s, const char *method) {
+    int interactive = nip46_method_is_interactive(method);
     pthread_mutex_lock(&s->rpc_gate_mutex);
     int max_inflight = s->rpc_max_inflight > 0 ? s->rpc_max_inflight
                                                : NIP46_DEFAULT_MAX_INFLIGHT;
-    while (!s->rpc_gate_closing && s->rpc_inflight >= max_inflight) {
+    int my_limit = interactive ? max_inflight
+                               : (max_inflight > 1 ? max_inflight - 1 : max_inflight);
+    while (!s->rpc_gate_closing && s->rpc_inflight >= my_limit) {
         s->rpc_gate_waiters++;
         pthread_cond_wait(&s->rpc_gate_cond, &s->rpc_gate_mutex);
         s->rpc_gate_waiters--;
@@ -967,6 +1093,11 @@ void nostr_nip46_client_set_rate_limit(NostrNip46Session *s,
                                        int max_inflight,
                                        uint32_t min_interval_ms) {
     if (!s) return;
+    /* nostrc-13gf: clamp the interval - pacing sleeps hold a gate slot and
+     * are not interruptible, so an absurd interval must not be able to
+     * stall teardown for minutes. */
+    if (min_interval_ms > NIP46_RPC_MAX_INTERVAL_MS)
+        min_interval_ms = NIP46_RPC_MAX_INTERVAL_MS;
     pthread_mutex_lock(&s->rpc_gate_mutex);
     s->rpc_max_inflight = max_inflight > 0 ? max_inflight : 0;
     s->rpc_min_interval_ms = min_interval_ms;
@@ -1262,47 +1393,158 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     return result;
 }
 
-/* nostrc-5wj9: Async RPC call infrastructure.
- * Wraps the synchronous nip46_rpc_call in a detached thread and
- * invokes the user callback on completion. */
+/* nostrc-13gf: Async RPC via a bounded, prioritized, per-session work queue.
+ *
+ * Replaces the old one-detached-pthread-per-request model:
+ *  - a fixed pool of NIP46_RPC_WORKERS threads (spawned lazily on first use;
+ *    worker 0 serves ONLY interactive jobs so sign/connect never starve);
+ *  - two FIFO queues (interactive / bulk) with hard caps - overflow fails
+ *    the request immediately instead of growing without bound;
+ *  - coordinated shutdown: nip46_rpc_queue_shutdown() flushes queued jobs
+ *    (callbacks fire with an error) and joins the workers. */
 
-typedef struct {
-    NostrNip46Session *session;
-    char *method;
-    char **params;
-    size_t n_params;
-    NostrNip46AsyncCallback callback;
-    void *user_data;
-} AsyncRpcContext;
-
-static void async_rpc_context_free(AsyncRpcContext *ctx) {
-    if (!ctx) return;
-    free(ctx->method);
-    if (ctx->params) {
-        for (size_t i = 0; i < ctx->n_params; i++)
-            free(ctx->params[i]);
-        free(ctx->params);
+static void rpc_job_free(RpcJob *job) {
+    if (!job) return;
+    free(job->method);
+    if (job->params) {
+        for (size_t i = 0; i < job->n_params; i++)
+            free(job->params[i]);
+        free(job->params);
     }
-    free(ctx);
+    free(job);
 }
 
-static void *async_rpc_thread(void *arg) {
-    AsyncRpcContext *ctx = (AsyncRpcContext *)arg;
+/* Pop the next eligible job. Interactive first; bulk only for non-dedicated
+ * workers. Caller holds q_mutex. */
+static RpcJob *rpc_queue_pop_locked(NostrNip46Session *s, int dedicated_interactive) {
+    RpcJob *job = NULL;
+    if (s->q_head_hi) {
+        job = s->q_head_hi;
+        s->q_head_hi = job->next;
+        if (!s->q_head_hi) s->q_tail_hi = NULL;
+        s->q_len_hi--;
+    } else if (!dedicated_interactive && s->q_head_lo) {
+        job = s->q_head_lo;
+        s->q_head_lo = job->next;
+        if (!s->q_head_lo) s->q_tail_lo = NULL;
+        s->q_len_lo--;
+    }
+    if (job) {
+        job->next = NULL;
+        s->q_bytes = s->q_bytes >= job->bytes ? s->q_bytes - job->bytes : 0;
+    }
+    return job;
+}
 
-    char *result = nip46_rpc_call(ctx->session, ctx->method,
-                                   (const char **)ctx->params, ctx->n_params,
-                                   NULL);
+/* Worker threads are DETACHED and each holds a session reference taken at
+ * spawn time.  There is deliberately no pthread_join anywhere:
+ *  - teardown cannot deadlock on self-join when a job/flush callback
+ *    triggers nostr_nip46_session_free() from a worker thread;
+ *  - the session memory stays alive until the last worker exits and drops
+ *    its reference (session_destroy only frees memory, never joins).
+ * Workers never touch relay pools outside nip46_rpc_call, and every RPC
+ * runs inside the rate-limit gate, so the shutdown drain in
+ * nostr_nip46_session_free() still guarantees pools are only freed once
+ * no worker is inside the transport. */
+static void *nip46_rpc_worker_main(void *arg) {
+    Nip46RpcWorker *w = (Nip46RpcWorker *)arg;
+    NostrNip46Session *s = w->session; /* ref held by spawner on our behalf */
 
-    if (ctx->callback) {
-        if (result) {
-            ctx->callback(ctx->session, result, NULL, ctx->user_data);
-        } else {
-            ctx->callback(ctx->session, NULL, "RPC call failed", ctx->user_data);
+    for (;;) {
+        pthread_mutex_lock(&s->q_mutex);
+        RpcJob *job = NULL;
+        while (!s->q_shutdown &&
+               (job = rpc_queue_pop_locked(s, w->dedicated_interactive)) == NULL) {
+            pthread_cond_wait(&s->q_cond, &s->q_mutex);
+        }
+        if (!job && s->q_shutdown) {
+            pthread_mutex_unlock(&s->q_mutex);
+            break;
+        }
+        pthread_mutex_unlock(&s->q_mutex);
+
+        char *result = nip46_rpc_call(s, job->method,
+                                      (const char **)job->params, job->n_params,
+                                      NULL);
+        if (job->callback) {
+            if (result) {
+                job->callback(s, result, NULL, job->user_data);
+            } else {
+                job->callback(s, NULL, "RPC call failed", job->user_data);
+            }
+        }
+        free(result);
+        rpc_job_free(job);
+    }
+
+    /* Drop the worker's reference LAST - may run session_destroy. */
+    nostr_nip46_session_unref(s);
+    return NULL;
+}
+
+/* Spawn workers on first use. Caller holds q_mutex. Returns 0 when at least
+ * one worker is available. Partial creation failure is tolerated: we keep
+ * whatever workers started instead of attempting a racy rollback. */
+static int rpc_queue_start_locked(NostrNip46Session *s) {
+    if (s->q_started) return s->q_n_workers > 0 ? 0 : -1;
+    if (s->q_shutdown) return -1;
+
+    int n = 0;
+    for (int i = 0; i < NIP46_RPC_WORKERS; i++) {
+        s->q_workers[i].session = s;
+        s->q_workers[i].dedicated_interactive = (i == 0);
+        nostr_nip46_session_ref(s); /* worker's reference */
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        int rc = pthread_create(&s->q_workers[i].tid, &attr,
+                                nip46_rpc_worker_main, &s->q_workers[i]);
+        pthread_attr_destroy(&attr);
+        if (rc != 0) {
+            nostr_nip46_session_unref(s); /* undo the worker's reference */
+            break;
+        }
+        n++;
+    }
+    if (n == 1) {
+        /* A lone worker must serve both queues or bulk jobs would starve. */
+        s->q_workers[0].dedicated_interactive = 0;
+    }
+    s->q_n_workers = n;
+    s->q_started = 1;
+    fprintf(stderr, "[nip46] rpc queue: started %d worker(s)\n", n);
+    return n > 0 ? 0 : -1;
+}
+
+/* Flush all queued jobs (fail their callbacks) and release the workers.
+ * Does NOT join: detached workers observe q_shutdown, exit, and drop their
+ * session references on their own schedule. */
+static void nip46_rpc_queue_shutdown(NostrNip46Session *s) {
+    if (!s) return;
+
+    pthread_mutex_lock(&s->q_mutex);
+    s->q_shutdown = 1;
+    RpcJob *flush_hi = s->q_head_hi;
+    RpcJob *flush_lo = s->q_head_lo;
+    s->q_head_hi = s->q_tail_hi = NULL;
+    s->q_head_lo = s->q_tail_lo = NULL;
+    s->q_len_hi = s->q_len_lo = 0;
+    s->q_bytes = 0;
+    pthread_cond_broadcast(&s->q_cond);
+    pthread_mutex_unlock(&s->q_mutex);
+
+    RpcJob *lists[2] = { flush_hi, flush_lo };
+    for (int l = 0; l < 2; l++) {
+        RpcJob *job = lists[l];
+        while (job) {
+            RpcJob *next = job->next;
+            if (job->callback) {
+                job->callback(s, NULL, "session closing", job->user_data);
+            }
+            rpc_job_free(job);
+            job = next;
         }
     }
-    free(result);
-    async_rpc_context_free(ctx);
-    return NULL;
 }
 
 static void nip46_rpc_call_async(NostrNip46Session *s, const char *method,
@@ -1314,42 +1556,73 @@ static void nip46_rpc_call_async(NostrNip46Session *s, const char *method,
         return;
     }
 
-    AsyncRpcContext *ctx = (AsyncRpcContext *)calloc(1, sizeof(AsyncRpcContext));
-    if (!ctx) {
+    RpcJob *job = (RpcJob *)calloc(1, sizeof(RpcJob));
+    if (!job) {
         if (callback) callback(s, NULL, "out of memory", user_data);
         return;
     }
-
-    ctx->session = s;
-    ctx->method = strdup(method);
-    ctx->callback = callback;
-    ctx->user_data = user_data;
-
+    job->method = strdup(method);
+    job->callback = callback;
+    job->user_data = user_data;
+    if (!job->method) {
+        rpc_job_free(job);
+        if (callback) callback(s, NULL, "out of memory", user_data);
+        return;
+    }
     if (params && n_params > 0) {
-        ctx->params = (char **)calloc(n_params, sizeof(char *));
-        if (!ctx->params) {
-            async_rpc_context_free(ctx);
+        job->params = (char **)calloc(n_params, sizeof(char *));
+        if (!job->params) {
+            rpc_job_free(job);
             if (callback) callback(s, NULL, "out of memory", user_data);
             return;
         }
-        ctx->n_params = n_params;
+        job->n_params = n_params;
         for (size_t i = 0; i < n_params; i++) {
-            ctx->params[i] = params[i] ? strdup(params[i]) : NULL;
+            job->params[i] = params[i] ? strdup(params[i]) : NULL;
+            if (job->params[i]) job->bytes += strlen(job->params[i]);
         }
     }
+    job->bytes += strlen(job->method) + sizeof(*job);
 
-    pthread_t tid;
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    int interactive = nip46_method_is_interactive(method);
 
-    if (pthread_create(&tid, &attr, async_rpc_thread, ctx) != 0) {
-        pthread_attr_destroy(&attr);
-        async_rpc_context_free(ctx);
-        if (callback) callback(s, NULL, "failed to create thread", user_data);
+    pthread_mutex_lock(&s->q_mutex);
+    if (s->q_shutdown) {
+        pthread_mutex_unlock(&s->q_mutex);
+        rpc_job_free(job);
+        if (callback) callback(s, NULL, "session closing", user_data);
         return;
     }
-    pthread_attr_destroy(&attr);
+    if (rpc_queue_start_locked(s) != 0) {
+        pthread_mutex_unlock(&s->q_mutex);
+        rpc_job_free(job);
+        if (callback) callback(s, NULL, "failed to start rpc workers", user_data);
+        return;
+    }
+    size_t cap = interactive ? NIP46_RPC_QUEUE_MAX_HI : NIP46_RPC_QUEUE_MAX_LO;
+    size_t len = interactive ? s->q_len_hi : s->q_len_lo;
+    if (len >= cap || s->q_bytes + job->bytes > NIP46_RPC_QUEUE_MAX_BYTES) {
+        pthread_mutex_unlock(&s->q_mutex);
+        fprintf(stderr, "[nip46] %s: rpc queue full (%zu jobs / %zu bytes) - rejecting request\n",
+                method, len, s->q_bytes);
+        rpc_job_free(job);
+        if (callback) callback(s, NULL, "rpc queue full", user_data);
+        return;
+    }
+    s->q_bytes += job->bytes;
+    if (interactive) {
+        if (s->q_tail_hi) s->q_tail_hi->next = job; else s->q_head_hi = job;
+        s->q_tail_hi = job;
+        s->q_len_hi++;
+    } else {
+        if (s->q_tail_lo) s->q_tail_lo->next = job; else s->q_head_lo = job;
+        s->q_tail_lo = job;
+        s->q_len_lo++;
+    }
+    /* Broadcast, not signal: a signal could wake only the dedicated
+     * interactive worker for a bulk job it will not take, stranding it. */
+    pthread_cond_broadcast(&s->q_cond);
+    pthread_mutex_unlock(&s->q_mutex);
 }
 
 /* nostrc-5wj9: Public async API implementations */
@@ -1402,19 +1675,20 @@ void nostr_nip46_client_get_public_key_rpc_async(NostrNip46Session *s,
 void nostr_nip46_client_cancel_all(NostrNip46Session *s) {
     if (!s) return;
 
+    /* nostrc-13gf: Close channels IN PLACE instead of detaching the list.
+     * The woken waiter then finds its entry via pending_request_cancel()
+     * and frees it (single owner) - the old detach approach leaked every
+     * cancelled request because the waiter could no longer find it.
+     * go_channel_close() is idempotent, so the waiter's second close of an
+     * already-closed channel is harmless. Entries whose waiters never wake
+     * are freed by the session destructor's leftover sweep. */
     pthread_mutex_lock(&s->pending_mutex);
-    PendingRequest *pr = s->pending_requests;
-    s->pending_requests = NULL;
-    pthread_mutex_unlock(&s->pending_mutex);
-
-    while (pr) {
-        PendingRequest *next = pr->next;
+    for (PendingRequest *pr = s->pending_requests; pr; pr = pr->next) {
         if (pr->response_chan) {
             go_channel_close(pr->response_chan);
-            /* Don't free the channel here - the waiting thread owns it */
         }
-        pr = next;
     }
+    pthread_mutex_unlock(&s->pending_mutex);
 }
 
 /* nostrc-nip46-rpc: Send connect RPC to remote signer.
