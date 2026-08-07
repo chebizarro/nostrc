@@ -84,6 +84,16 @@ template $GnostrProfileEdit: Window {
         margin-top: 16;
         margin-bottom: 16;
 
+        Label {
+          label: "Profile fields are public and linked to your stable public key. Avoid private contact information; edits or local cache deletion cannot remove relay or peer copies.";
+          wrap: true;
+          xalign: 0;
+
+          styles [
+            "dim-label",
+          ]
+        }
+
         Box {
           orientation: vertical;
           spacing: 4;

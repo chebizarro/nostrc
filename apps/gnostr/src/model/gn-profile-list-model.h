@@ -28,9 +28,28 @@ typedef enum {
  *
  * Creates a new profile list model backed by nostrdb.
  *
+ * Kind:0 profile fields are public and linked to a stable pubkey. Loaded
+ * metadata and copied relationship/search state remain in this model until
+ * gn_profile_list_model_clear_cache() or finalization. The backing nostrdb has
+ * separate retention and is not erased when this model is cleared.
+ *
  * Returns: (transfer full): A new #GnProfileListModel implementing #GListModel
  */
 GnProfileListModel *gn_profile_list_model_new(void);
+
+/**
+ * gn_profile_list_model_clear_cache:
+ * @self: the profile list model
+ *
+ * Clears every model-owned in-memory profile, copied following/mute/block
+ * pubkey, and search-filter value. Results from in-flight nostrdb loads and
+ * profile-service requests are ignored if they complete after the clear.
+ *
+ * This does not delete kind:0 events from nostrdb, relay copies, peer caches,
+ * or media caches. Call the relevant account/storage eviction APIs separately
+ * when removing an account.
+ */
+void gn_profile_list_model_clear_cache(GnProfileListModel *self);
 
 /**
  * gn_profile_list_model_load_profiles:

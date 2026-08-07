@@ -826,6 +826,23 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "profile;validation;unit;gnostr")
 
+  add_executable(gnostr-test-profile-cache-privacy
+    tests/test_profile_cache_privacy.c
+    src/model/gn-profile-list-model.c)
+  target_compile_features(gnostr-test-profile-cache-privacy PRIVATE c_std_11)
+  target_include_directories(gnostr-test-profile-cache-privacy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include
+    ${PROJECT_ROOT}/libnostr/include)
+  target_link_libraries(gnostr-test-profile-cache-privacy PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO nostr_gobject nostr_json)
+  _gnostr_apply_sanitizers(gnostr-test-profile-cache-privacy)
+  add_test(NAME gnostr-test-profile-cache-privacy
+    COMMAND gnostr-test-profile-cache-privacy)
+  set_tests_properties(gnostr-test-profile-cache-privacy PROPERTIES
+    TIMEOUT 30
+    LABELS "profile;privacy;cache;unit;gnostr")
+
   add_executable(gnostr-test-plugin-raw-relay-api
     tests/test_plugin_raw_relay_api.c
     src/gnostr-plugin-api.c)

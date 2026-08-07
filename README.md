@@ -12,33 +12,113 @@ The Nostr C library provides an implementation of the Nostr protocol, including 
 - Optional memory management handled by the library
  - NIP-47 (Wallet Connect): canonical helpers for encrypt/decrypt supporting NIP-44 v2 (preferred) and NIP-04 fallback, with automatic key format handling (x-only and SEC1) and full tests/examples.
 
-## Security Hardening and Migration Notes
+## Security Posture and Migration Notes
 
-- Canonical NIP-01 hashing/signing/verification
-  - Event IDs and signatures now use the canonical preimage array `[0, pubkey, created_at, kind, tags, content]` and ignore any caller-provided `id` when verifying. This prevents trusting untrusted `id` fields and aligns with the NIP-01 spec. Existing APIs continue to work; `nostr_event_check_signature()` always recomputes the hash.
+Security boundaries are component-specific. The event library, relay client,
+relay servers, storage backends, encryption modules, and GNostr media UI do not
+substitute for one another.
 
-- NIP-04 AEAD migration (v2)
-  - New default envelope format: `v=2:base64(nonce(12) || ciphertext || tag(16))` using AES-256-GCM.
-  - Keys are derived via HKDF-SHA256 with `info="NIP04"` for domain separation from the ECDH shared secret.
-  - Encryption now emits AEAD v2 only. Legacy AES-CBC `?iv=` is no longer produced by library APIs.
-  - Decrypt fallback remains: legacy AES-CBC `?iv=` content is still accepted to preserve interop with older peers.
-  - All decryption failures return a unified error string ("decrypt failed") to reduce side-channel leakage.
+### NIP-01 event admission
 
-  Optional hardening:
-  - Build-time switch to disable legacy decrypt entirely: set `-DNIP04_STRICT_AEAD_ONLY=ON` when configuring CMake to reject any non-`v=2:` envelopes at decrypt.
+- `nostr_event_validate()` requires all signed-event fields, recomputes the
+  canonical `[0, pubkey, created_at, kind, tags, content]` SHA-256 ID, requires
+  the declared `id` to match, and verifies the Schnorr signature against that
+  same hash. `nostr_event_get_id()` also recomputes instead of trusting or
+  caching a caller-supplied ID.
+- The libnostr WebSocket receive path validates network `EVENT` frames before
+  subscription dispatch; its legacy `assume_valid` field does not bypass
+  validation for network events. Envelope parsing remains structurally
+  separate from cryptographic validation, so non-network callers must invoke
+  the validator at their own trust boundary.
+- `relayd` and `grelay` validate before storage, acknowledgement, or fanout.
+  Both bound event bytes before JSON allocation/signature work and apply
+  monotonic weighted frame and signature-verification budgets at connection,
+  source-IP, and global levels.
 
-  Migration guidance:
-  - Prefer `nostr_nip04_encrypt`/`nostr_nip04_encrypt_secure` and `nostr_nip04_decrypt`/`nostr_nip04_decrypt_secure`.
-  - The helper `nostr_nip04_shared_secret_hex` is deprecated and should not be used by new code; exposing raw ECDH shared secrets increases attack surface.
-  - Tests and examples have been updated to expect `v=2:` envelopes and avoid `?iv=` parsing.
+### Relay replay and timestamp defaults
 
-- Relay ingress hardening
-  - Adds a process-local, capacity-bounded replay set (TTL 15 minutes) keyed by validated canonical event IDs. Reservations commit only after storage succeeds; a full set fails closed rather than shortening the TTL.
-  - Rejects `created_at` values more than 10 minutes in the future. Past-skew rejection is disabled by default to preserve historical sync and NIP-17/NIP-59 timestamp randomization.
-  - On startup, the relay prints a concise security posture banner, for example:
-    - `nostrc-relayd: security validator=canonical replayTTL=900s replayCapacity=65536 skew=+600/-0 ...`
+The shipped `relayd` defaults and `apps/relayd/relay.toml.example` agree:
 
-See `tests/test_event_canonical.c` and `tests/test_nip04_aead.c` for minimal validation of these behaviors.
+| Setting | Default | Meaning |
+|---|---:|---|
+| `replay_cache_capacity` | 65536 | Process-local canonical-ID entries |
+| `replay_ttl_seconds` | 900 | 15-minute replay window |
+| `future_skew_seconds` | 600 | Reject events over 10 minutes in the future |
+| `past_skew_seconds` | 0 | Disabled for historical sync and randomized gift-wrap timestamps |
+
+Replay IDs are reserved before storage, committed only after successful
+storage, and rolled back on failure. A full replay set fails closed rather than
+silently shortening the TTL. This state is bounded and process-local; it is not
+a cross-process or permanent replay database. `grelay` ships the same replay
+TTL and skew defaults through its environment configuration. `relayd` prints
+its effective posture at startup, for example:
+
+`nostrc-relayd: security validator=canonical replayTTL=900s replayCapacity=65536 skew=+600/-0 ...`
+
+### NIP-04, NIP-44, and NIP-46
+
+- Generic `nostr_nip04_encrypt()` and `nostr_nip04_encrypt_secure()` emit the
+  nostrc `v=2:` AES-256-GCM extension. Its key is derived from ECDH shared X
+  with HKDF-SHA256 and `info="NIP04"`. This is a project extension, not a wire
+  format implied by generic NIP-04 support.
+- Original NIP-04 AES-256-CBC/PKCS#7 emission remains available only through
+  the explicit `nostr_nip04_encrypt_legacy_secure()` compatibility API. CBC is
+  unauthenticated and malleable. The former `NIP04_LEGACY_CBC` environment
+  downgrade no longer changes generic encryption output.
+- Decryption accepts AEAD v2 and, by default, original `?iv=` CBC payloads for
+  interoperability. Every public decrypt failure returns the same
+  `"decrypt failed"` error, including legacy padding failures, to avoid a
+  format/padding oracle. This uniform error contract does not add integrity to
+  CBC; authenticate and validate the outer event. Build with
+  `-DNIP04_STRICT_AEAD_ONLY=ON` to reject CBC decrypt entirely.
+- NIP-46 sessions default to standard NIP-44 v2 and own an explicit transport
+  mode. Legacy NIP-04 CBC or the nostrc AEAD extension must be selected after
+  peer capability negotiation; ciphertext shape cannot change the mode.
+  NIP-44 decoding is strict and propagates KDF/HMAC/provider failures.
+
+See `docs/NIP04_MIGRATION.md` for the API and interoperability matrix.
+
+### GNostr remote media and metadata privacy
+
+- Automatic remote media, previews, and avatars are disabled by default.
+  Cached content can still render. Automatic network fetches occur only after
+  the user enables the setting; explicit media/preview actions can request
+  uncached content while automatic fetching remains disabled.
+- HTTP(S) media URLs reject embedded credentials, non-public literal/resolved
+  addresses, reserved/private destinations, and ports other than 80/443.
+  Redirects are manual, same-origin, revalidated, and limited to five hops.
+  Avatar requests use the same intent and URL policy.
+- Fetches are still direct: an allowed origin can observe the receiver's IP and
+  request timing. No privacy proxy is configured, and DNS is validated before
+  the later HTTP connection rather than pinned, so DNS rebinding remains a
+  residual risk.
+- Kind:0 profile metadata is public and tied to a stable pubkey. Names, NIP-05
+  identifiers, biographies, contact/payment identifiers, and avatar URLs can
+  become long-lived correlated PII. GNostr warns before profile publication
+  and does not log complete profile events or full pubkeys from the profile
+  list model. The model retains loaded metadata and copied pubkey/search state
+  until explicitly cleared or finalized; clearing it does not delete nostrdb,
+  media-cache, relay, or peer copies.
+
+### nostrdb validation scope
+
+The nostrdb wrapper normally leaves nostrdb ID/signature validation enabled.
+Its unsafe test path activates only when configuration requests
+`ingest_skip_validation` **and** `NOSTR_ALLOW_UNSAFE_INGEST=1` is present; it
+then emits a prominent warning. This is storage-layer defense in depth only.
+Do not claim or assume nostrdb protects client dispatch, relay
+acknowledgements, replay state, pre-store work, or alternate storage drivers;
+each ingress path must validate before those actions.
+
+Relevant regression coverage includes `libnostr/tests/test_event_validation.c`,
+`apps/relayd/tests/test_ingress_security.c`,
+`apps/relayd/tests/test_rate_limit_security.c`,
+`apps/grelay/tests/test_ingress_security.c`,
+`nips/nip04/tests/test_nip04_error_uniformity.c`,
+`nips/nip44/tests/test_nip44_vectors.c`,
+`nips/nip46/tests/test_transport_modes.c`,
+`apps/gnostr/tests/test_media_url_policy.c`, and
+`apps/gnostr/tests/test_profile_cache_privacy.c`.
 
 ## Quick Start
 

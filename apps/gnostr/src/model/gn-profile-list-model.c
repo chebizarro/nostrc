@@ -3,6 +3,12 @@
  *
  * Queries nostrdb for kind:0 (profile metadata) events and provides
  * them as a GListModel for use with GtkListView.
+ *
+ * Privacy: kind:0 fields can contain long-lived PII that is public and linked
+ * to a stable pubkey. The model retains loaded profiles, copied relationship
+ * pubkeys, and filter text until gn_profile_list_model_clear_cache() or object
+ * finalization. Clearing this model does not delete nostrdb records or copies
+ * already held by relays and peers.
  */
 
 #include "gn-profile-list-model.h"
@@ -25,6 +31,20 @@ typedef struct {
     gboolean is_following;   /* Whether current user follows this profile */
     gboolean is_muted;       /* Whether this profile is muted (NIP-51) */
 } ProfileEntry;
+
+typedef struct {
+    GWeakRef model;
+    guint64 cache_generation;
+} MissingProfileFetchData;
+
+static void
+missing_profile_fetch_data_free(MissingProfileFetchData *data)
+{
+    if (!data)
+        return;
+    g_weak_ref_clear(&data->model);
+    g_free(data);
+}
 
 static void profile_entry_free(ProfileEntry *entry) {
     if (entry) {
@@ -50,6 +70,7 @@ struct _GnProfileListModel {
     GHashTable *blocked_set;     /* pubkey hex -> GINT_TO_POINTER(1) */
     gboolean is_loading;
     guint total_count;
+    guint64 cache_generation; /* Invalidates in-flight loads after a clear. */
 
     /* Pagination state (nostrc-bawd) */
     gint64 oldest_loaded_at;   /* cursor: created_at of oldest loaded profile */
@@ -290,15 +311,6 @@ gn_profile_list_model_finalize(GObject *object)
 {
     GnProfileListModel *self = GN_PROFILE_LIST_MODEL(object);
 
-    /* nostrc-bzoj: Cancel any pending profile fetch callbacks that use this model */
-    gpointer svc = gnostr_profile_service_get_default();
-    if (svc) {
-        guint cancelled = gnostr_profile_service_cancel_for_user_data(svc, self);
-        if (cancelled > 0) {
-            g_debug("profile-list-model: Cancelled %u pending fetch callbacks on finalize", cancelled);
-        }
-    }
-
     g_clear_pointer(&self->all_profiles, g_ptr_array_unref);
     g_clear_pointer(&self->filtered_profiles, g_ptr_array_unref);
     g_clear_pointer(&self->following_set, g_hash_table_destroy);
@@ -340,6 +352,7 @@ gn_profile_list_model_init(GnProfileListModel *self)
     self->filter_text = NULL;
     self->is_loading = FALSE;
     self->total_count = 0;
+    self->cache_generation = 1;
     self->oldest_loaded_at = G_MAXINT64;
     self->all_loaded = FALSE;
 }
@@ -348,6 +361,46 @@ GnProfileListModel *
 gn_profile_list_model_new(void)
 {
     return g_object_new(GN_TYPE_PROFILE_LIST_MODEL, NULL);
+}
+
+void
+gn_profile_list_model_clear_cache(GnProfileListModel *self)
+{
+    g_return_if_fail(GN_IS_PROFILE_LIST_MODEL(self));
+
+    guint old_visible = self->filtered_profiles ? self->filtered_profiles->len : 0;
+    guint old_total = self->total_count;
+
+    /* Prevent an already-running nostrdb query from restoring data after the
+     * caller has requested a privacy clear. The worker may finish, but its
+     * generation will be discarded by load_profiles_complete(). */
+    self->cache_generation++;
+    if (self->cache_generation == 0)
+        self->cache_generation = 1;
+
+    /* Missing-profile callbacks carry this generation and a weak model
+     * reference. They may finish, but cannot resurrect cleared data or retain
+     * the model after its owner releases it. */
+
+    /* Clear borrowed pointers before freeing their owned ProfileEntry values. */
+    g_ptr_array_set_size(self->filtered_profiles, 0);
+    g_ptr_array_set_size(self->all_profiles, 0);
+
+    /* These sets and search text are copied into and owned by this model and
+     * can also correlate stable pubkeys or contain user-entered PII. */
+    g_hash_table_remove_all(self->following_set);
+    g_hash_table_remove_all(self->muted_set);
+    g_hash_table_remove_all(self->blocked_set);
+    g_clear_pointer(&self->filter_text, g_free);
+
+    self->total_count = 0;
+    self->oldest_loaded_at = G_MAXINT64;
+    self->all_loaded = FALSE;
+
+    if (old_visible > 0)
+        g_list_model_items_changed(G_LIST_MODEL(self), 0, old_visible, 0);
+    if (old_total > 0)
+        g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_TOTAL_COUNT]);
 }
 
 /* nostrc-3nj: Parse profile from kind:0 event JSON using NostrJsonInterface */
@@ -399,6 +452,7 @@ typedef struct {
     GPtrArray *loaded_profiles;
     guint requested_limit;   /* how many we asked for */
     gint64 until_cursor;     /* 0 = no cursor (initial load) */
+    guint64 cache_generation;
 } LoadProfilesData;
 
 static void
@@ -492,7 +546,9 @@ load_profiles_complete(GObject *source, GAsyncResult *result, gpointer user_data
         g_error_free(error);
     }
 
-    if (data && data->loaded_profiles) {
+    if (data && data->cache_generation != self->cache_generation) {
+        g_debug("profile-list-model: discarded stale load after cache clear");
+    } else if (data && data->loaded_profiles) {
         gboolean is_initial = (data->until_cursor == 0 || data->until_cursor == G_MAXINT64);
         g_message("profile-list-model: load complete - %u profiles loaded (initial=%d)",
                   data->loaded_profiles->len, is_initial);
@@ -577,6 +633,7 @@ start_load_task(GnProfileListModel *self, guint limit, gint64 until_cursor)
     LoadProfilesData *params = g_new0(LoadProfilesData, 1);
     params->requested_limit = limit;
     params->until_cursor = until_cursor;
+    params->cache_generation = self->cache_generation;
 
     GTask *task = g_task_new(self, NULL, load_profiles_complete, NULL);
     g_task_set_task_data(task, params, NULL); /* freed in load_profiles_data_free via return */
@@ -699,19 +756,24 @@ on_missing_profile_fetched(const char *pubkey_hex,
                            const GnostrProfileMeta *meta,
                            gpointer user_data)
 {
-    GnProfileListModel *self = GN_PROFILE_LIST_MODEL(user_data);
-    if (!GN_IS_PROFILE_LIST_MODEL(self)) return;
+    MissingProfileFetchData *data = user_data;
+    GnProfileListModel *self = data ? g_weak_ref_get(&data->model) : NULL;
+
+    /* Cancellation is only an optimization in the profile service. A callback
+     * can already have been detached for delivery, so the captured generation
+     * is the correctness boundary for a privacy clear. */
+    if (!self || data->cache_generation != self->cache_generation)
+        goto out;
 
     /* Profile not found on network - nothing to add */
     if (!meta) {
-        g_debug("profile-list-model: No profile found for followed user %s", pubkey_hex);
-        return;
+        g_debug("profile-list-model: No profile found for followed user");
+        goto out;
     }
 
     /* Check we don't already have this profile (race condition check) */
-    if (has_profile_for_pubkey(self, pubkey_hex)) {
-        return;
-    }
+    if (has_profile_for_pubkey(self, pubkey_hex))
+        goto out;
 
     /* Build JSON from meta fields for update_from_json */
     GString *json = g_string_new("{");
@@ -770,12 +832,15 @@ on_missing_profile_fetched(const char *pubkey_hex,
     g_ptr_array_add(self->all_profiles, entry);
     self->total_count = self->all_profiles->len;
 
-    g_debug("profile-list-model: Added network-fetched profile for %s (is_following=%d)",
-            pubkey_hex, entry->is_following);
+    g_debug("profile-list-model: Added network-fetched followed profile");
 
     /* Rebuild filtered list to show the new profile */
     rebuild_filtered_list(self);
     g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_TOTAL_COUNT]);
+
+out:
+    g_clear_object(&self);
+    missing_profile_fetch_data_free(data);
 }
 
 void
@@ -811,10 +876,15 @@ gn_profile_list_model_set_following_set(GnProfileListModel *self, const char **p
             if (strlen(pk) != 64) continue;  /* Skip invalid pubkeys */
 
             if (!has_profile_for_pubkey(self, pk)) {
-                /* Request this profile from network */
+                MissingProfileFetchData *data = g_new0(MissingProfileFetchData, 1);
+                g_weak_ref_init(&data->model, self);
+                data->cache_generation = self->cache_generation;
+
+                /* The callback context owns only a weak reference so a pending
+                 * network request cannot extend the model's retention lifetime. */
                 gnostr_profile_service_request(svc, pk,
                                                on_missing_profile_fetched,
-                                               self);
+                                               data);
                 missing_count++;
             }
         }

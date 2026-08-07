@@ -390,8 +390,6 @@ static void on_profile_sign_complete(GObject *source, GAsyncResult *res, gpointe
     return;
   }
 
-  g_message("[PROFILE_EDIT] Signed event: %.100s...", signed_event_json);
-
   /* Emit signal with profile content for immediate local UI update */
   g_signal_emit(self, signals[SIGNAL_PROFILE_SAVED], 0, ctx->profile_content);
 
@@ -509,8 +507,6 @@ static void on_save_clicked(GtkButton *btn, gpointer user_data) {
     self->saving = FALSE;
     return;
   }
-
-  g_message("[PROFILE_EDIT] Unsigned event: %s", event_json);
 
   /* Create async context */
   ProfilePublishContext *ctx = g_new0(ProfilePublishContext, 1);
