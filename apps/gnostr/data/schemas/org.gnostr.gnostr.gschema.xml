@@ -157,6 +157,17 @@
         Empty array means use default relay.
       </description>
     </key>
+    <!-- nostrc-koso: user-configurable pairing relays -->
+    <key name="nip46-connect-relays" type="as">
+      <default>[]</default>
+      <summary>NIP-46 pairing relay URLs</summary>
+      <description>
+        Relay URLs advertised in the nostrconnect:// QR code and used to
+        listen for the remote signer's pairing response. Empty array means
+        use the built-in default relay list. The GNOSTR_NIP46_RELAY
+        environment variable overrides this setting.
+      </description>
+    </key>
     <key name="nwc-connection-uri" type="s">
       <default>''</default>
       <summary>NWC Connection URI</summary>

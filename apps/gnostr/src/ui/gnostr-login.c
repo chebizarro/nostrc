@@ -130,7 +130,7 @@ static void save_nip46_credentials_to_settings(const char *client_secret_hex,
                                                 char **relays,
                                                 size_t n_relays);
 static void show_success(GnostrLogin *self, const char *npub);
-static void start_nip46_listener(GnostrLogin *self, const char *relay_url);
+static void start_nip46_listener(GnostrLogin *self);
 static void stop_nip46_listener(GnostrLogin *self);
 static void on_nip46_pool_connected(GObject *source, GAsyncResult *result, gpointer user_data);
 static void on_nip46_sub_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data);
@@ -1022,19 +1022,29 @@ static void generate_nostrconnect_uri(GnostrLogin *self) {
   /* Clear secret bytes from stack (we've stored them in self) */
   memset(secret_bytes, 0, sizeof(secret_bytes));
 
-  /* Build nostrconnect:// URI with relay and metadata
-   * Format: nostrconnect://<client-pubkey>?relay=...&secret=...&name=...
-   */
-  const char *relay = nip46_get_default_relay();
+  /* Build nostrconnect:// URI with relays and metadata
+   * Format: nostrconnect://<client-pubkey>?relay=...&relay=...&secret=...&name=...
+   * nostrc-koso: advertise ALL configured pairing relays (percent-encoded)
+   * so the signer can respond even if one relay is down. */
+  gsize n_uri_relays = 0;
+  gchar **uri_relays = nip46_get_connect_relays(&n_uri_relays);
+  if (!uri_relays || n_uri_relays == 0) {
+    g_warning("No NIP-46 pairing relays configured");
+    g_strfreev(uri_relays);
+    return;
+  }
 
-  /* Create the nostrconnect URI with the computed client pubkey */
+  GString *uri = g_string_new(NULL);
+  g_string_append_printf(uri, "nostrconnect://%s", client_pubkey_hex);
+  for (gsize ri = 0; ri < n_uri_relays; ri++) {
+    g_autofree char *enc = g_uri_escape_string(uri_relays[ri], NULL, FALSE);
+    g_string_append_printf(uri, "%srelay=%s", ri == 0 ? "?" : "&", enc);
+  }
+  g_string_append_printf(uri, "&secret=%s&name=GNostr", secret_hex);
+  g_strfreev(uri_relays);
+
   g_free(self->nostrconnect_uri);
-  self->nostrconnect_uri = g_strdup_printf(
-    "nostrconnect://%s?relay=%s&secret=%s&name=GNostr",
-    client_pubkey_hex,
-    relay,
-    secret_hex
-  );
+  self->nostrconnect_uri = g_string_free(uri, FALSE);
 
 #ifdef HAVE_QRENCODE
   GdkTexture *tex = generate_qr_texture(self->nostrconnect_uri);
@@ -1058,7 +1068,7 @@ static void on_remote_signer_clicked(GtkButton *btn, gpointer user_data) {
 
   /* Start listening for NIP-46 responses in background (for QR flow)
    * but don't show intrusive "Waiting" status - let the QR speak for itself */
-  start_nip46_listener(self, nip46_get_default_relay());
+  start_nip46_listener(self);
 
   /* Keep status hidden - user sees the QR and the URI entry field
    * Status only appears when they click Connect or an error occurs */
@@ -1111,7 +1121,7 @@ static void on_retry_bunker_clicked(GtkButton *btn, gpointer user_data) {
   /* Re-generate nostrconnect URI and restart listener */
   generate_nostrconnect_uri(self);
 
-  start_nip46_listener(self, nip46_get_default_relay());
+  start_nip46_listener(self);
 
   /* Set waiting status */
   set_bunker_status(self, BUNKER_STATUS_WAITING,
@@ -1719,8 +1729,8 @@ on_nip46_pool_connected(GObject *source, GAsyncResult *result, gpointer user_dat
   self->listening_for_response = TRUE;
 }
 
-static void start_nip46_listener(GnostrLogin *self, const char *relay_url) {
-  if (!self || !relay_url) return;
+static void start_nip46_listener(GnostrLogin *self) {
+  if (!self) return;
 
   if (self->listening_for_response) {
     g_warning("[NIP46_LOGIN] Already listening for response");
@@ -1732,19 +1742,35 @@ static void start_nip46_listener(GnostrLogin *self, const char *relay_url) {
     return;
   }
 
-  g_message("[NIP46_LOGIN] Starting listener on %s for pubkey %s",
-            relay_url, self->client_pubkey_hex);
+  /* nostrc-koso: listen on ALL configured pairing relays, matching the
+   * relay= params advertised in the nostrconnect URI. connect_all_async
+   * succeeds as soon as one relay connects, so a single relay outage
+   * (e.g. relay.nsec.app) no longer breaks QR pairing. */
+  gsize n_relays = 0;
+  gchar **relays = nip46_get_connect_relays(&n_relays);
+  if (!relays || n_relays == 0) {
+    g_warning("[NIP46_LOGIN] No pairing relays configured");
+    g_strfreev(relays);
+    return;
+  }
+
+  g_message("[NIP46_LOGIN] Starting listener on %zu relay(s) for pubkey %s",
+            n_relays, self->client_pubkey_hex);
+  for (gsize i = 0; i < n_relays; i++) {
+    g_message("[NIP46_LOGIN]   relay[%zu]: %s", i, relays[i]);
+  }
 
   /* Create pool */
   self->nip46_pool = gnostr_pool_new();
   if (!self->nip46_pool) {
     g_warning("[NIP46_LOGIN] Failed to create pool");
+    g_strfreev(relays);
     return;
   }
 
-  /* Add relay and connect asynchronously — subscribe in callback */
-  const char *relays[] = { relay_url };
-  gnostr_pool_sync_relays(self->nip46_pool, (const gchar **)relays, 1);
+  /* Add relays and connect asynchronously — subscribe in callback */
+  gnostr_pool_sync_relays(self->nip46_pool, (const gchar **)relays, n_relays);
+  g_strfreev(relays);
   gnostr_pool_connect_all_async(self->nip46_pool, NULL,
                                 on_nip46_pool_connected, self);
 }

@@ -6,7 +6,8 @@
  *
  * Configuration priority:
  *   1. GNOSTR_NIP46_RELAY environment variable (single URL)
- *   2. Built-in fallback list (multiple relays for redundancy)
+ *   2. GSettings org.gnostr.Client nip46-connect-relays (user-configurable)
+ *   3. Built-in fallback list (multiple relays for redundancy)
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -15,6 +16,7 @@
 #define NIP46_RELAY_DEFAULTS_H
 
 #include <glib.h>
+#include <gio/gio.h>
 #include <stdlib.h>
 
 /* Well-known NIP-46 relays. Multiple entries provide redundancy if one
@@ -73,6 +75,59 @@ nip46_get_fallback_relays(gsize *out_count)
   }
   if (out_count) *out_count = NIP46_FALLBACK_RELAY_COUNT;
   return NIP46_FALLBACK_RELAYS;
+}
+
+/**
+ * nip46_get_connect_relays:
+ * @out_count: (out) (nullable): Number of relay URLs returned
+ *
+ * nostrc-koso: Returns the relay list to use for NIP-46 pairing
+ * (nostrconnect:// URI + response listener). Priority:
+ *   1. GNOSTR_NIP46_RELAY environment variable (single relay)
+ *   2. GSettings org.gnostr.Client "nip46-connect-relays" (if non-empty)
+ *   3. Built-in fallback list
+ *
+ * Returns: (transfer full): A NULL-terminated strv; free with g_strfreev()
+ */
+static inline gchar **
+nip46_get_connect_relays(gsize *out_count)
+{
+  const char *env = g_getenv("GNOSTR_NIP46_RELAY");
+  if (env && *env) {
+    gchar **v = g_new0(gchar *, 2);
+    v[0] = g_strdup(env);
+    if (out_count) *out_count = 1;
+    return v;
+  }
+
+  /* User-configured relays. Guard with a schema lookup so processes without
+   * the compiled schema (or with an older schema missing the key) fall back
+   * gracefully instead of aborting in g_settings_new(). */
+  GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+  GSettingsSchema *schema = src
+      ? g_settings_schema_source_lookup(src, "org.gnostr.Client", TRUE)
+      : NULL;
+  if (schema) {
+    gboolean has_key = g_settings_schema_has_key(schema, "nip46-connect-relays");
+    g_settings_schema_unref(schema);
+    if (has_key) {
+      GSettings *settings = g_settings_new("org.gnostr.Client");
+      gchar **v = g_settings_get_strv(settings, "nip46-connect-relays");
+      g_object_unref(settings);
+      if (v && v[0]) {
+        if (out_count) *out_count = g_strv_length(v);
+        return v;
+      }
+      g_strfreev(v);
+    }
+  }
+
+  /* Built-in fallback list */
+  gchar **v = g_new0(gchar *, NIP46_FALLBACK_RELAY_COUNT + 1);
+  for (gsize i = 0; i < NIP46_FALLBACK_RELAY_COUNT; i++)
+    v[i] = g_strdup(NIP46_FALLBACK_RELAYS[i]);
+  if (out_count) *out_count = NIP46_FALLBACK_RELAY_COUNT;
+  return v;
 }
 
 #endif /* NIP46_RELAY_DEFAULTS_H */
