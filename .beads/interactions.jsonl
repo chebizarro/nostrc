@@ -253,3 +253,4 @@
 {"id":"int-0a5390a5","kind":"field_change","created_at":"2026-08-07T09:05:30.609312Z","actor":"Biz","issue_id":"nostrc-br78","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-7ae0dd8b","kind":"field_change","created_at":"2026-08-07T15:28:23.422349Z","actor":"Biz","issue_id":"nostrc-0y02","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-a44b1416","kind":"field_change","created_at":"2026-08-07T15:52:58.796962Z","actor":"Biz","issue_id":"nostrc-el92","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-3e9c85cf","kind":"field_change","created_at":"2026-08-07T17:49:04.830527Z","actor":"Biz","issue_id":"nostrc-ziwc","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
