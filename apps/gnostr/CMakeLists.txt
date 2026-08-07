@@ -1176,6 +1176,24 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "timeline;geometry;unit;gnostr")
 
+  add_executable(gnostr-test-media-url-policy
+    tests/test_media_url_policy.c
+    src/util/utils.c)
+  target_compile_features(gnostr-test-media-url-policy PRIVATE c_std_11)
+  target_compile_definitions(gnostr-test-media-url-policy PRIVATE
+    GNOSTR_MEDIA_POLICY_TESTING=1)
+  target_include_directories(gnostr-test-media-url-policy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/util)
+  target_link_libraries(gnostr-test-media-url-policy PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO)
+  _gnostr_apply_sanitizers(gnostr-test-media-url-policy)
+  add_test(NAME gnostr-test-media-url-policy
+    COMMAND gnostr-test-media-url-policy)
+  set_tests_properties(gnostr-test-media-url-policy PROPERTIES
+    TIMEOUT 30
+    LABELS "media;privacy;ssrf;unit;gnostr")
+
   # Central bounded media service unit tests (nostrc-ovnu)
   if (SOUP3_FOUND)
     add_executable(gnostr-test-media-service

@@ -20,10 +20,14 @@
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 
-/* Implemented by apps/gnostr/src/util/utils.c.  Keep this service header-light
- * so its unit tests do not need the app's relay/storage dependency graph. */
+/* Implemented by apps/gnostr/src/util/utils.c. */
 SoupSession *gnostr_get_shared_soup_session(void);
-gboolean gnostr_is_remote_media_allowed(void);
+gboolean gnostr_media_fetch_intent_is_allowed(GnostrMediaFetchIntent intent);
+gboolean gnostr_media_url_is_safe(const char *url, GError **error);
+gboolean gnostr_media_redirect_is_safe(const char *from_url,
+                                       const char *location,
+                                       char **out_url,
+                                       GError **error);
 #endif
 
 #define MIB ((guint64)1024 * 1024)
@@ -152,6 +156,8 @@ struct _PendingRequest {
   char *cache_namespace;
   guint64 namespace_epoch;
   GnostrMediaResourceClass disk_resource_class;
+  GnostrMediaFetchIntent intent;
+  guint redirect_count;
   GBytes *body;
   GHashTable *decode_variants; /* borrowed DecodeJob.variant_key -> DecodeJob */
 #ifdef HAVE_SOUP3
@@ -2632,6 +2638,8 @@ ensure_namespace_sweep(GnostrMediaService *self, const char *cache_namespace)
 #ifdef HAVE_SOUP3
 static void read_response_chunk(GObject *source, GAsyncResult *result,
                                 gpointer user_data);
+static gboolean send_network_request(PendingRequest *request,
+                                     const char *url);
 
 static void
 queue_response_read(PendingRequest *request)
@@ -2703,6 +2711,42 @@ response_headers_ready(GObject *source,
   }
 
   guint status = soup_message_get_status(request->message);
+  if (status == SOUP_STATUS_MOVED_PERMANENTLY ||
+      status == SOUP_STATUS_FOUND ||
+      status == SOUP_STATUS_SEE_OTHER ||
+      status == SOUP_STATUS_TEMPORARY_REDIRECT ||
+      status == SOUP_STATUS_PERMANENT_REDIRECT) {
+    const char *location = soup_message_headers_get_one(
+        soup_message_get_response_headers(request->message), "Location");
+    g_autofree char *redirect_url = NULL;
+    g_autoptr(GError) redirect_error = NULL;
+    g_autofree char *current_url = soup_message_get_uri(request->message)
+      ? g_uri_to_string(soup_message_get_uri(request->message))
+      : g_strdup(request->url);
+    if (request->redirect_count >= 5 ||
+        !gnostr_media_redirect_is_safe(
+            current_url, location, &redirect_url, &redirect_error)) {
+      pending_fail(request,
+                   g_error_new(GNOSTR_MEDIA_ERROR, GNOSTR_MEDIA_ERROR_HTTP,
+                               "Unsafe media redirect: %s",
+                               redirect_error ? redirect_error->message
+                                              : "redirect limit exceeded"),
+                   FALSE);
+      return;
+    }
+    request->redirect_count++;
+    g_input_stream_close(request->stream, NULL, NULL);
+    g_clear_object(&request->stream);
+    g_clear_object(&request->message);
+    if (!send_network_request(request, redirect_url)) {
+      pending_fail(request,
+                   g_error_new_literal(GNOSTR_MEDIA_ERROR,
+                                       GNOSTR_MEDIA_ERROR_INVALID_ARGUMENT,
+                                       "Invalid redirect URL"),
+                   FALSE);
+    }
+    return;
+  }
   if (status < 200 || status >= 300) {
     pending_fail(request,
                  g_error_new(GNOSTR_MEDIA_ERROR, GNOSTR_MEDIA_ERROR_HTTP,
@@ -2732,6 +2776,33 @@ response_headers_ready(GObject *source,
 }
 #endif
 
+#ifdef HAVE_SOUP3
+static gboolean
+send_network_request(PendingRequest *request, const char *url)
+{
+  g_autoptr(GError) policy_error = NULL;
+  if (!gnostr_media_url_is_safe(url, &policy_error))
+    return FALSE;
+
+  SoupSession *session = gnostr_get_shared_soup_session();
+  if (!session)
+    return FALSE;
+
+  request->message = soup_message_new("GET", url);
+  if (!request->message)
+    return FALSE;
+  soup_message_set_flags(request->message, SOUP_MESSAGE_NO_REDIRECT);
+  soup_message_set_priority(request->message,
+                            request->kind == PENDING_OG_METADATA
+                                ? SOUP_MESSAGE_PRIORITY_LOW
+                                : SOUP_MESSAGE_PRIORITY_NORMAL);
+  soup_session_send_async(session, request->message, G_PRIORITY_DEFAULT,
+                          request->network_cancellable,
+                          response_headers_ready, request);
+  return TRUE;
+}
+#endif
+
 static void
 start_request_download(PendingRequest *request)
 {
@@ -2741,41 +2812,15 @@ start_request_download(PendingRequest *request)
   self->active_downloads++;
 
 #ifdef HAVE_SOUP3
-  if (!gnostr_is_remote_media_allowed()) {
+  if (!gnostr_media_fetch_intent_is_allowed(request->intent) ||
+      !send_network_request(request, request->url)) {
     pending_fail(request,
                  g_error_new_literal(GNOSTR_MEDIA_ERROR,
                                      GNOSTR_MEDIA_ERROR_UNAVAILABLE,
-                                     "Remote media loading is disabled"),
+                                     "Media request blocked by network policy"),
                  FALSE);
     return;
   }
-
-  SoupSession *session = gnostr_get_shared_soup_session();
-  if (!session) {
-    pending_fail(request,
-                 g_error_new_literal(GNOSTR_MEDIA_ERROR,
-                                     GNOSTR_MEDIA_ERROR_UNAVAILABLE,
-                                     "Shared HTTP session is unavailable"),
-                 FALSE);
-    return;
-  }
-
-  request->message = soup_message_new("GET", request->url);
-  if (!request->message) {
-    pending_fail(request,
-                 g_error_new_literal(GNOSTR_MEDIA_ERROR,
-                                     GNOSTR_MEDIA_ERROR_INVALID_ARGUMENT,
-                                     "Invalid media URL"),
-                 FALSE);
-    return;
-  }
-  soup_message_set_priority(request->message,
-                            request->kind == PENDING_OG_METADATA
-                                ? SOUP_MESSAGE_PRIORITY_LOW
-                                : SOUP_MESSAGE_PRIORITY_NORMAL);
-  soup_session_send_async(session, request->message, G_PRIORITY_DEFAULT,
-                          request->network_cancellable,
-                          response_headers_ready, request);
 #else
   pending_fail(request,
                g_error_new_literal(GNOSTR_MEDIA_ERROR,
@@ -2828,8 +2873,10 @@ valid_http_url(const char *url)
 {
   if (!url || !*url)
     return FALSE;
-  const char *scheme = g_uri_peek_scheme(url);
-  return scheme &&
+  g_autoptr(GUri) uri = g_uri_parse(url, G_URI_FLAGS_NONE, NULL);
+  const char *scheme = uri ? g_uri_get_scheme(uri) : NULL;
+  const char *host = uri ? g_uri_get_host(uri) : NULL;
+  return scheme && host && *host && g_uri_get_userinfo(uri) == NULL &&
          (g_ascii_strcasecmp(scheme, "http") == 0 ||
           g_ascii_strcasecmp(scheme, "https") == 0);
 }
@@ -2862,13 +2909,24 @@ static gboolean
 reject_common(GnostrMediaService *self,
               Subscriber *subscriber,
               const char *url,
-              PendingKind kind)
+              PendingKind kind,
+              GnostrMediaFetchIntent intent)
 {
-  if (!valid_http_url(url)) {
+  if (!gnostr_media_fetch_intent_is_allowed(intent)) {
     schedule_delivery(self, subscriber, url, NULL, NULL,
                       g_error_new_literal(GNOSTR_MEDIA_ERROR,
-                                          GNOSTR_MEDIA_ERROR_INVALID_ARGUMENT,
-                                          "Only http and https URLs are supported"));
+                                          GNOSTR_MEDIA_ERROR_UNAVAILABLE,
+                                          "Remote media requires user activation"));
+    return TRUE;
+  }
+  g_autoptr(GError) policy_error = NULL;
+  if (!gnostr_media_url_is_safe(url, &policy_error)) {
+    schedule_delivery(self, subscriber, url, NULL, NULL,
+                      g_error_new(GNOSTR_MEDIA_ERROR,
+                                  GNOSTR_MEDIA_ERROR_INVALID_ARGUMENT,
+                                  "Unsafe media URL: %s",
+                                  policy_error ? policy_error->message
+                                               : "invalid URL"));
     return TRUE;
   }
   if (subscriber->cancellable &&
@@ -2887,6 +2945,25 @@ gnostr_media_service_request_texture(GnostrMediaService *self,
                                      GnostrMediaResourceClass resource_class,
                                      int target_width,
                                      int target_height,
+                                     GCancellable *cancellable,
+                                     GnostrMediaTextureCallback callback,
+                                     gpointer user_data,
+                                     GDestroyNotify user_data_destroy)
+{
+  gnostr_media_service_request_texture_with_intent(
+      self, url, resource_class, target_width, target_height,
+      GNOSTR_MEDIA_FETCH_AUTOMATIC, cancellable, callback, user_data,
+      user_data_destroy);
+}
+
+void
+gnostr_media_service_request_texture_with_intent(
+                                     GnostrMediaService *self,
+                                     const char *url,
+                                     GnostrMediaResourceClass resource_class,
+                                     int target_width,
+                                     int target_height,
+                                     GnostrMediaFetchIntent intent,
                                      GCancellable *cancellable,
                                      GnostrMediaTextureCallback callback,
                                      gpointer user_data,
@@ -2941,7 +3018,7 @@ gnostr_media_service_request_texture(GnostrMediaService *self,
     return;
   }
 
-  if (reject_common(self, subscriber, url, PENDING_TEXTURE)) {
+  if (reject_common(self, subscriber, url, PENDING_TEXTURE, intent)) {
     subscriber_unref(subscriber);
     return;
   }
@@ -2968,6 +3045,7 @@ gnostr_media_service_request_texture(GnostrMediaService *self,
 
   request = pending_request_new(self, url, PENDING_TEXTURE,
                                 cache_namespace, resource_class);
+  request->intent = intent;
   attach_subscriber(request, subscriber);
   g_hash_table_insert(self->pending, request->table_key, request);
   start_disk_lookup(request);
@@ -2977,6 +3055,21 @@ gnostr_media_service_request_texture(GnostrMediaService *self,
 void
 gnostr_media_service_request_og_metadata(GnostrMediaService *self,
                                          const char *url,
+                                         GCancellable *cancellable,
+                                         GnostrMediaOgCallback callback,
+                                         gpointer user_data,
+                                         GDestroyNotify user_data_destroy)
+{
+  gnostr_media_service_request_og_metadata_with_intent(
+      self, url, GNOSTR_MEDIA_FETCH_AUTOMATIC, cancellable, callback,
+      user_data, user_data_destroy);
+}
+
+void
+gnostr_media_service_request_og_metadata_with_intent(
+                                         GnostrMediaService *self,
+                                         const char *url,
+                                         GnostrMediaFetchIntent intent,
                                          GCancellable *cancellable,
                                          GnostrMediaOgCallback callback,
                                          gpointer user_data,
@@ -3005,7 +3098,8 @@ gnostr_media_service_request_og_metadata(GnostrMediaService *self,
     return;
   }
 
-  if (reject_common(self, subscriber, url, PENDING_OG_METADATA)) {
+  if (reject_common(self, subscriber, url, PENDING_OG_METADATA,
+                    intent)) {
     subscriber_unref(subscriber);
     return;
   }
@@ -3033,6 +3127,7 @@ gnostr_media_service_request_og_metadata(GnostrMediaService *self,
   request = pending_request_new(self, url, PENDING_OG_METADATA,
                                 cache_namespace,
                                 GNOSTR_MEDIA_RESOURCE_OG_IMAGE);
+  request->intent = intent;
   attach_subscriber(request, subscriber);
   g_hash_table_insert(self->pending, request->table_key, request);
   start_disk_lookup(request);

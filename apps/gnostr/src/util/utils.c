@@ -1,11 +1,209 @@
 #include "utils.h"
+#ifndef GNOSTR_MEDIA_POLICY_TESTING
 #include <nostr-gobject-1.0/nostr_relay.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include "nostr-filter.h"
 #include "json.h"
+#endif
 #include <gio/gio.h>
 #include <string.h>
 
+GQuark
+gnostr_media_policy_error_quark(void)
+{
+  return g_quark_from_static_string("gnostr-media-policy-error-quark");
+}
+
+static gboolean
+inet_address_is_public(GInetAddress *address)
+{
+  if (!address ||
+      g_inet_address_get_is_any(address) ||
+      g_inet_address_get_is_loopback(address) ||
+      g_inet_address_get_is_link_local(address) ||
+      g_inet_address_get_is_site_local(address) ||
+      g_inet_address_get_is_multicast(address))
+    return FALSE;
+
+  const guint8 *bytes = g_inet_address_to_bytes(address);
+  if (g_inet_address_get_family(address) == G_SOCKET_FAMILY_IPV4) {
+    return !(
+      bytes[0] == 0 ||
+      bytes[0] == 10 ||
+      bytes[0] == 127 ||
+      (bytes[0] == 100 && (bytes[1] & 0xc0) == 0x40) ||
+      (bytes[0] == 169 && bytes[1] == 254) ||
+      (bytes[0] == 172 && (bytes[1] & 0xf0) == 16) ||
+      (bytes[0] == 192 && bytes[1] == 0 && bytes[2] == 0) ||
+      (bytes[0] == 192 && bytes[1] == 0 && bytes[2] == 2) ||
+      (bytes[0] == 192 && bytes[1] == 88 && bytes[2] == 99) ||
+      (bytes[0] == 192 && bytes[1] == 168) ||
+      (bytes[0] == 198 && (bytes[1] == 18 || bytes[1] == 19)) ||
+      (bytes[0] == 198 && bytes[1] == 51 && bytes[2] == 100) ||
+      (bytes[0] == 203 && bytes[1] == 0 && bytes[2] == 113) ||
+      bytes[0] >= 224);
+  }
+
+  if (g_inet_address_get_family(address) == G_SOCKET_FAMILY_IPV6) {
+    if ((bytes[0] & 0xfe) == 0xfc ||
+        (bytes[0] == 0x20 && bytes[1] == 0x01 &&
+         (bytes[2] & 0xfe) == 0x00) ||
+        (bytes[0] == 0x20 && bytes[1] == 0x01 &&
+         bytes[2] == 0x0d && bytes[3] == 0xb8) ||
+        (bytes[0] == 0x20 && bytes[1] == 0x02) ||
+        (bytes[0] == 0x3f && bytes[1] == 0xff &&
+         (bytes[2] & 0xf0) == 0x00))
+      return FALSE;
+    static const guint8 v4_mapped_prefix[12] =
+      { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff };
+    if (memcmp(bytes, v4_mapped_prefix, sizeof(v4_mapped_prefix)) == 0) {
+      g_autoptr(GInetAddress) mapped =
+        g_inet_address_new_from_bytes(bytes + 12, G_SOCKET_FAMILY_IPV4);
+      return inet_address_is_public(mapped);
+    }
+    /* Only IPv6 global unicast (2000::/3) is eligible. */
+    return (bytes[0] & 0xe0) == 0x20;
+  }
+  return FALSE;
+}
+
+gboolean
+gnostr_media_url_is_safe(const char *url, GError **error)
+{
+  if (!url || !*url) {
+    g_set_error_literal(error, GNOSTR_MEDIA_POLICY_ERROR,
+                        GNOSTR_MEDIA_POLICY_ERROR_INVALID_URL,
+                        "Media URL is empty");
+    return FALSE;
+  }
+
+  g_autoptr(GError) parse_error = NULL;
+  g_autoptr(GUri) uri = g_uri_parse(url, G_URI_FLAGS_NONE, &parse_error);
+  const char *scheme = uri ? g_uri_get_scheme(uri) : NULL;
+  const char *host = uri ? g_uri_get_host(uri) : NULL;
+  if (!uri || !scheme || !host || !*host ||
+      (g_ascii_strcasecmp(scheme, "http") != 0 &&
+       g_ascii_strcasecmp(scheme, "https") != 0)) {
+    g_set_error(error, GNOSTR_MEDIA_POLICY_ERROR,
+                GNOSTR_MEDIA_POLICY_ERROR_INVALID_URL,
+                "Media URL must be an absolute HTTP(S) URL: %s",
+                parse_error ? parse_error->message : "invalid URL");
+    return FALSE;
+  }
+
+  if (g_uri_get_userinfo(uri) != NULL) {
+    g_set_error_literal(error, GNOSTR_MEDIA_POLICY_ERROR,
+                        GNOSTR_MEDIA_POLICY_ERROR_CREDENTIALS,
+                        "Credentials in media URLs are not allowed");
+    return FALSE;
+  }
+
+  gint port = g_uri_get_port(uri);
+  if (port != -1 && port != 80 && port != 443) {
+    g_set_error_literal(error, GNOSTR_MEDIA_POLICY_ERROR,
+                        GNOSTR_MEDIA_POLICY_ERROR_UNSAFE_PORT,
+                        "Media URLs may only use ports 80 or 443");
+    return FALSE;
+  }
+
+  if (g_ascii_strcasecmp(host, "localhost") == 0 ||
+      g_str_has_suffix(host, ".localhost")) {
+    g_set_error_literal(error, GNOSTR_MEDIA_POLICY_ERROR,
+                        GNOSTR_MEDIA_POLICY_ERROR_UNSAFE_ADDRESS,
+                        "Local media destinations are not allowed");
+    return FALSE;
+  }
+
+  g_autoptr(GInetAddress) literal = g_inet_address_new_from_string(host);
+  if (literal) {
+    if (inet_address_is_public(literal))
+      return TRUE;
+    g_set_error_literal(error, GNOSTR_MEDIA_POLICY_ERROR,
+                        GNOSTR_MEDIA_POLICY_ERROR_UNSAFE_ADDRESS,
+                        "Private, local, or reserved media destination");
+    return FALSE;
+  }
+
+  g_autoptr(GResolver) resolver = g_resolver_get_default();
+  g_autoptr(GError) resolve_error = NULL;
+  GList *addresses = g_resolver_lookup_by_name(resolver, host, NULL,
+                                               &resolve_error);
+  if (!addresses) {
+    g_set_error(error, GNOSTR_MEDIA_POLICY_ERROR,
+                GNOSTR_MEDIA_POLICY_ERROR_RESOLUTION,
+                "Could not resolve media host: %s",
+                resolve_error ? resolve_error->message : "unknown error");
+    return FALSE;
+  }
+
+  gboolean safe = TRUE;
+  for (GList *it = addresses; it; it = it->next) {
+    if (!inet_address_is_public(G_INET_ADDRESS(it->data))) {
+      safe = FALSE;
+      break;
+    }
+  }
+  g_resolver_free_addresses(addresses);
+  if (!safe) {
+    g_set_error_literal(error, GNOSTR_MEDIA_POLICY_ERROR,
+                        GNOSTR_MEDIA_POLICY_ERROR_UNSAFE_ADDRESS,
+                        "Media host resolves to a private, local, or reserved address");
+  }
+  return safe;
+}
+
+static gint
+uri_effective_port(GUri *uri)
+{
+  gint port = g_uri_get_port(uri);
+  if (port >= 0)
+    return port;
+  return g_ascii_strcasecmp(g_uri_get_scheme(uri), "https") == 0 ? 443 : 80;
+}
+
+gboolean
+gnostr_media_redirect_is_safe(const char *from_url,
+                              const char *location,
+                              char **out_url,
+                              GError **error)
+{
+  if (out_url)
+    *out_url = NULL;
+  if (!from_url || !location || !*location) {
+    g_set_error_literal(error, GNOSTR_MEDIA_POLICY_ERROR,
+                        GNOSTR_MEDIA_POLICY_ERROR_UNSAFE_REDIRECT,
+                        "Redirect is missing a source or destination");
+    return FALSE;
+  }
+
+  g_autoptr(GError) resolve_error = NULL;
+  g_autofree char *resolved =
+    g_uri_resolve_relative(from_url, location, G_URI_FLAGS_NONE, &resolve_error);
+  g_autoptr(GUri) from = g_uri_parse(from_url, G_URI_FLAGS_NONE, NULL);
+  g_autoptr(GUri) to = resolved
+    ? g_uri_parse(resolved, G_URI_FLAGS_NONE, NULL) : NULL;
+  if (!from || !to ||
+      !g_uri_get_scheme(from) || !g_uri_get_scheme(to) ||
+      !g_uri_get_host(from) || !g_uri_get_host(to) ||
+      g_ascii_strcasecmp(g_uri_get_scheme(from), g_uri_get_scheme(to)) != 0 ||
+      g_ascii_strcasecmp(g_uri_get_host(from), g_uri_get_host(to)) != 0 ||
+      uri_effective_port(from) != uri_effective_port(to)) {
+    g_set_error(error, GNOSTR_MEDIA_POLICY_ERROR,
+                GNOSTR_MEDIA_POLICY_ERROR_UNSAFE_REDIRECT,
+                "Cross-origin media redirect is not allowed%s%s",
+                resolve_error ? ": " : "",
+                resolve_error ? resolve_error->message : "");
+    return FALSE;
+  }
+
+  if (!gnostr_media_url_is_safe(resolved, error))
+    return FALSE;
+  if (out_url)
+    *out_url = g_steal_pointer(&resolved);
+  return TRUE;
+}
+
+#ifndef GNOSTR_MEDIA_POLICY_TESTING
 #ifdef HAVE_SOUP3
 
 /* Shared SoupSession singleton - avoids TLS cleanup issues on macOS */
@@ -124,6 +322,19 @@ gnostr_is_remote_media_allowed(void)
 }
 
 #endif /* HAVE_SOUP3 */
+
+gboolean
+gnostr_media_fetch_intent_is_allowed(GnostrMediaFetchIntent intent)
+{
+  if (intent == GNOSTR_MEDIA_FETCH_USER_INITIATED)
+    return TRUE;
+#ifdef HAVE_SOUP3
+  return intent == GNOSTR_MEDIA_FETCH_AUTOMATIC &&
+         gnostr_is_remote_media_allowed();
+#else
+  return FALSE;
+#endif
+}
 
 /* Event sink adapter: persists relay query results to nostrdb automatically */
 static void
@@ -333,3 +544,5 @@ gnostr_publish_to_relays_async(NostrEvent *event,
   g_task_run_in_thread(task, relay_publish_worker);
   g_object_unref(task);
 }
+
+#endif /* !GNOSTR_MEDIA_POLICY_TESTING */

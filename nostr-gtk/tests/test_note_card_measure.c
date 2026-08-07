@@ -320,6 +320,7 @@ deferred_media_texture_request(gpointer loader,
                                NostrGtkMediaResourceClass resource_class,
                                int target_width,
                                int target_height,
+                               gboolean user_initiated,
                                GCancellable *cancellable,
                                NostrGtkMediaTextureReadyFunc callback,
                                gpointer user_data,
@@ -331,6 +332,7 @@ deferred_media_texture_request(gpointer loader,
     g_assert_cmpint(resource_class, ==, NOSTR_GTK_MEDIA_RESOURCE_INLINE);
     g_assert_cmpint(target_width, >, 0);
     g_assert_cmpint(target_height, >, 0);
+    g_assert_true(user_initiated);
     g_assert_false(g_cancellable_is_cancelled(cancellable));
     g_assert_null(request->callback);
 
@@ -453,6 +455,7 @@ fake_media_texture_request(gpointer loader,
                            NostrGtkMediaResourceClass resource_class,
                            int target_width,
                            int target_height,
+                           gboolean user_initiated,
                            GCancellable *cancellable,
                            NostrGtkMediaTextureReadyFunc callback,
                            gpointer user_data,
@@ -463,6 +466,7 @@ fake_media_texture_request(gpointer loader,
     g_assert_cmpint(resource_class, ==, NOSTR_GTK_MEDIA_RESOURCE_INLINE);
     g_assert_cmpint(target_width, >, 0);
     g_assert_cmpint(target_height, >, 0);
+    g_assert_true(user_initiated);
     g_assert_false(g_cancellable_is_cancelled(cancellable));
     rich_media_request_count++;
 

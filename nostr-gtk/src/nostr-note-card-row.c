@@ -2839,7 +2839,7 @@ remote_media_loading_enabled(void) {
     if (src && g_settings_schema_source_lookup(src, "org.gnostr.Client", TRUE))
       s = g_settings_new("org.gnostr.Client");
     else
-      return TRUE; /* default: load media if schema unavailable (library mode) */
+      return FALSE; /* fail closed if the app privacy schema is unavailable */
   }
   return g_settings_get_boolean(s, "load-remote-media");
 }
@@ -2847,11 +2847,12 @@ remote_media_loading_enabled(void) {
 static void load_media_image_internal(NostrGtkNoteCardRow *self,
                                       const char *url,
                                       NostrGtkMediaResourceClass resource_class,
-                                      GtkPicture *picture) {
+                                      GtkPicture *picture,
+                                      gboolean user_initiated) {
   if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
 
   /* Privacy: skip remote fetch if disabled (still serve from cache) */
-  if (!remote_media_loading_enabled()) {
+  if (!user_initiated && !remote_media_loading_enabled()) {
     GdkTexture *cached = media_image_cache_get(url);
     if (cached) {
       gtk_picture_set_paintable(picture, GDK_PAINTABLE(cached));
@@ -2884,6 +2885,7 @@ static void load_media_image_internal(NostrGtkNoteCardRow *self,
         resource_class,
         MAX(gtk_widget_get_width(GTK_WIDGET(picture)), 1),
         MAX(gtk_widget_get_height(GTK_WIDGET(picture)), 1),
+        user_initiated,
         cancellable,
         on_injected_media_texture_ready,
         ctx,
@@ -2909,44 +2911,9 @@ static void load_media_image_internal(NostrGtkNoteCardRow *self,
     return;
   }
 
-  /* Create cancellable for this request */
-  GCancellable *cancellable = g_cancellable_new();
-  g_hash_table_insert(self->media_cancellables, g_strdup(url), cancellable);
-
-  /* Create HTTP request */
-  SoupMessage *msg = soup_message_new("GET", url);
-  if (!msg) {
-    g_debug("Media: Invalid image URL: %s", url);
-    /* nostrc-img1: Clean up orphaned cancellable so URL can be retried */
-    g_hash_table_remove(self->media_cancellables, url);
-    return;
-  }
-
-  /* nostrc-img1: Check SoupSession is available (NULL during shutdown) */
-  SoupSession *session = gnostr_get_shared_soup_session();
-  if (!session) {
-    g_debug("Media: SoupSession unavailable, skipping: %s", url);
-    g_hash_table_remove(self->media_cancellables, url);
-    g_object_unref(msg);
-    return;
-  }
-
-  /* CRITICAL: Use weak ref instead of strong ref to prevent crash
-   * when widget is recycled before HTTP completes. */
-  MediaLoadCtx *ctx = g_new0(MediaLoadCtx, 1);
-  g_weak_ref_init(&ctx->picture_ref, picture);
-
-  /* Start async fetch */
-  soup_session_send_and_read_async(
-    session,
-    msg,
-    G_PRIORITY_DEFAULT,
-    cancellable,
-    on_media_image_loaded,
-    ctx
-  );
-
-  g_object_unref(msg);
+  /* Library consumers must inject a policy-aware loader before networking. */
+  GtkWidget *container = gtk_widget_get_parent(GTK_WIDGET(picture));
+  if (container) show_broken_image_fallback(container);
 }
 
 /* Lazy loading context for deferred media loading.
@@ -2967,6 +2934,7 @@ typedef struct {
   gulong map_handler_id;
   gulong unmap_handler_id;
   gboolean loaded;
+  gboolean user_initiated;
   gboolean destroyed;           /* TRUE after picture weak-notify fires */
 } LazyLoadContext;
 
@@ -3062,7 +3030,7 @@ static gboolean on_lazy_load_timeout(gpointer user_data) {
   g_debug("Media: Lazy loading image: %s", ctx->url);
   ctx->loaded = TRUE;
   load_media_image_internal(self, ctx->url, ctx->resource_class,
-                            GTK_PICTURE(picture));
+                            GTK_PICTURE(picture), ctx->user_initiated);
 
   g_object_unref(picture);
   g_object_unref(row_obj);
@@ -3143,7 +3111,8 @@ static void on_lazy_load_picture_destroyed(gpointer user_data, GObject *where_th
 static void load_media_texture(NostrGtkNoteCardRow *self,
                                const char *url,
                                NostrGtkMediaResourceClass resource_class,
-                               GtkPicture *picture) {
+                               GtkPicture *picture,
+                               gboolean user_initiated) {
   if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
   if (!self->binding_ctx) return; /* Not bound — skip */
 
@@ -3155,6 +3124,7 @@ static void load_media_texture(NostrGtkNoteCardRow *self,
   g_weak_ref_init(&ctx->picture_ref, picture);
   ctx->url = g_strdup(url);
   ctx->resource_class = resource_class;
+  ctx->user_initiated = user_initiated;
   ctx->loaded = FALSE;
   ctx->destroyed = FALSE;
   ctx->timeout_id = 0;
@@ -3177,7 +3147,8 @@ load_media_image(NostrGtkNoteCardRow *self,
                  const char *url,
                  GtkPicture *picture)
 {
-  load_media_texture(self, url, NOSTR_GTK_MEDIA_RESOURCE_INLINE, picture);
+  load_media_texture(self, url, NOSTR_GTK_MEDIA_RESOURCE_INLINE, picture,
+                     TRUE);
 }
 #endif
 
@@ -3478,24 +3449,28 @@ static GtkWidget *create_image_container(const char *url, int height, const char
   }
   gtk_overlay_set_child(GTK_OVERLAY(container), pic);
 
-  /* Create loading spinner (visible and active initially) */
+  /* Create a dormant placeholder; loading starts only after activation. */
   GtkWidget *spinner = gtk_spinner_new();
   gtk_widget_add_css_class(spinner, "media-loading-spinner");
   gtk_widget_set_halign(spinner, GTK_ALIGN_CENTER);
   gtk_widget_set_valign(spinner, GTK_ALIGN_CENTER);
   gtk_widget_set_size_request(spinner, 32, 32);
-  gtk_spinner_start(GTK_SPINNER(spinner));
-  gtk_widget_set_visible(spinner, TRUE);
+  gtk_widget_set_visible(spinner, FALSE);
   gtk_overlay_add_overlay(GTK_OVERLAY(container), spinner);
 
-  /* Create error image (hidden initially, shown on load failure) */
+  /* Placeholder icon; the same widget is reused for load failure. */
   GtkWidget *error_image = gtk_image_new_from_icon_name("image-missing-symbolic");
   gtk_widget_add_css_class(error_image, "media-error-image");
   gtk_image_set_pixel_size(GTK_IMAGE(error_image), 48);
   gtk_widget_set_halign(error_image, GTK_ALIGN_CENTER);
   gtk_widget_set_valign(error_image, GTK_ALIGN_CENTER);
-  gtk_widget_set_visible(error_image, FALSE);
-  gtk_widget_set_tooltip_text(error_image, "Failed to load image");
+  gtk_widget_set_visible(error_image, TRUE);
+  g_autoptr(GUri) media_uri = g_uri_parse(url, G_URI_FLAGS_NONE, NULL);
+  const char *media_host = media_uri ? g_uri_get_host(media_uri) : NULL;
+  g_autofree char *load_tip = g_strdup_printf(
+      "Load remote image from %s (reveals your network address)",
+      media_host ? media_host : "this site");
+  gtk_widget_set_tooltip_text(error_image, load_tip);
   gtk_overlay_add_overlay(GTK_OVERLAY(container), error_image);
 
   /* Store references for access in callbacks */
@@ -3526,6 +3501,37 @@ static void on_media_image_clicked(GtkGestureClick *gesture,
   /* Get the URL of this image */
   const char *clicked_url = g_object_get_data(G_OBJECT(pic), "image-url");
   if (!clicked_url || !*clicked_url) return;
+
+  GdkPaintable *current = gtk_picture_get_paintable(GTK_PICTURE(pic));
+  if (!current) {
+    if (g_object_get_data(G_OBJECT(pic), "media-load-requested"))
+      return;
+    NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(user_data);
+    if (!self || self->disposed)
+      return;
+    g_object_set_data(G_OBJECT(pic), "media-load-requested",
+                      GINT_TO_POINTER(TRUE));
+    GtkWidget *overlay = gtk_widget_get_parent(pic);
+    GtkWidget *spinner = GTK_IS_OVERLAY(overlay)
+      ? g_object_get_data(G_OBJECT(overlay), "loading-spinner") : NULL;
+    GtkWidget *placeholder = GTK_IS_OVERLAY(overlay)
+      ? g_object_get_data(G_OBJECT(overlay), "error-image") : NULL;
+    if (GTK_IS_SPINNER(spinner)) {
+      gtk_spinner_start(GTK_SPINNER(spinner));
+      gtk_widget_set_visible(spinner, TRUE);
+    }
+    if (GTK_IS_WIDGET(placeholder))
+      gtk_widget_set_visible(placeholder, FALSE);
+#ifdef HAVE_SOUP3
+    load_media_image(self, clicked_url, GTK_PICTURE(pic));
+#else
+    if (GTK_IS_SPINNER(spinner))
+      gtk_spinner_stop(GTK_SPINNER(spinner));
+    if (GTK_IS_WIDGET(placeholder))
+      gtk_widget_set_visible(placeholder, TRUE);
+#endif
+    return;
+  }
 
   /* Navigate up to find the media_box:
    * New structure: picture -> overlay (container) -> media_box
@@ -3706,13 +3712,10 @@ static void realize_pending_media_widgets(NostrGtkNoteCardRow *self) {
       GtkWidget *pic = g_object_get_data(G_OBJECT(container), "media-picture");
       GtkGesture *click_gesture = gtk_gesture_click_new();
       gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
-      g_signal_connect(click_gesture, "released", G_CALLBACK(on_media_image_clicked), NULL);
+      g_signal_connect(click_gesture, "released", G_CALLBACK(on_media_image_clicked), self);
       gtk_widget_add_controller(pic, GTK_EVENT_CONTROLLER(click_gesture));
       gtk_box_append(GTK_BOX(self->media_box), container);
       gtk_widget_set_visible(self->media_box, TRUE);
-#ifdef HAVE_SOUP3
-      load_media_image(self, item->url, GTK_PICTURE(pic));
-#endif
     } else {
       GnostrVideoPlayer *player = gnostr_video_player_new();
       gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
@@ -3882,7 +3885,7 @@ void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
     }
     gtk_widget_set_visible(self->og_preview_container, FALSE);
 
-    if (render->first_og_url && remote_media_loading_enabled()) {
+    if (render->first_og_url) {
       self->og_preview = og_preview_widget_new();
       gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
       gtk_widget_set_visible(self->og_preview_container, TRUE);
@@ -4233,29 +4236,14 @@ realize_rich_video_frame(NostrGtkNoteCardRow *self,
                         G_CALLBACK(on_rich_video_play_clicked),
                         activation, video_activation_context_free, 0);
 
-  gboolean poster_request_started = FALSE;
-#ifdef HAVE_SOUP3
-  if (request_url && *request_url && remote_media_loading_enabled()) {
-    GtkWidget *picture =
-        g_object_get_data(G_OBJECT(poster), "media-picture");
-    if (GTK_IS_PICTURE(picture)) {
-      load_media_texture(self, request_url,
-                         NOSTR_GTK_MEDIA_RESOURCE_VIDEO_POSTER,
-                         GTK_PICTURE(picture));
-      poster_request_started = TRUE;
-    }
+  GtkWidget *spinner =
+      g_object_get_data(G_OBJECT(poster), "loading-spinner");
+  if (GTK_IS_SPINNER(spinner)) {
+    gtk_spinner_stop(GTK_SPINNER(spinner));
+    gtk_widget_set_visible(spinner, FALSE);
   }
-#endif
-  if (!poster_request_started) {
-    GtkWidget *spinner =
-        g_object_get_data(G_OBJECT(poster), "loading-spinner");
-    if (GTK_IS_SPINNER(spinner)) {
-      gtk_spinner_stop(GTK_SPINNER(spinner));
-      gtk_widget_set_visible(spinner, FALSE);
-    }
-    if (GTK_IS_IMAGE(error_image))
-      gtk_widget_set_visible(error_image, TRUE);
-  }
+  if (GTK_IS_IMAGE(error_image))
+    gtk_widget_set_visible(error_image, TRUE);
 }
 
 typedef struct {
@@ -4401,18 +4389,6 @@ start_rich_slot_realization(gpointer user_data)
     return G_SOURCE_REMOVE;
   }
 
-  /* Privacy-gated descriptors keep their fixed reservation but do not create
-   * a loader/widget subtree. A later unmap/remap will retry after the setting
-   * changes. Nostr event embeds are local/relay objects rather than media. */
-  if ((descriptor->type == GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE ||
-       descriptor->type == GN_CONTENT_DESCRIPTOR_MEDIA_VIDEO ||
-       descriptor->type == GN_CONTENT_DESCRIPTOR_LINK_PREVIEW) &&
-      !remote_media_loading_enabled()) {
-    g_object_unref(frame);
-    g_object_unref(row_obj);
-    return G_SOURCE_REMOVE;
-  }
-
   NostrGtkFixedRichFrame *fixed = (NostrGtkFixedRichFrame *)frame;
   switch (descriptor->type) {
     case GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE: {
@@ -4426,15 +4402,11 @@ start_rich_slot_realization(gpointer user_data)
         gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture),
                                       GDK_BUTTON_PRIMARY);
         g_signal_connect(click_gesture, "released",
-                         G_CALLBACK(on_media_image_clicked), NULL);
+                         G_CALLBACK(on_media_image_clicked), self);
         gtk_widget_add_controller(picture,
                                   GTK_EVENT_CONTROLLER(click_gesture));
       }
       fixed_rich_frame_set_child(frame, container);
-#ifdef HAVE_SOUP3
-      if (GTK_IS_PICTURE(picture))
-        load_media_image(self, descriptor->url, GTK_PICTURE(picture));
-#endif
       break;
     }
     case GN_CONTENT_DESCRIPTOR_MEDIA_VIDEO:
@@ -5201,7 +5173,7 @@ void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, c
           if (!is_media_url(t)) { url_start = t; break; }
         }
       }
-      if (url_start && remote_media_loading_enabled()) {
+      if (url_start) {
         self->og_preview = og_preview_widget_new();
         gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
         gtk_widget_set_visible(self->og_preview_container, TRUE);
@@ -6606,18 +6578,23 @@ void nostr_gtk_note_card_row_set_article_mode(NostrGtkNoteCardRow *self,
     gtk_widget_set_visible(self->article_title_label, TRUE);
   }
 
-  /* Create header image container if not exists */
+  /* Create a dormant header-image placeholder if not exists. */
   if (!self->article_image_box && image_url && *image_url) {
-    self->article_image_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    self->article_image_box = create_image_container(
+        image_url, 180, _("Load article header image"));
     gtk_widget_add_css_class(self->article_image_box, "article-header-image");
-    gtk_widget_set_visible(self->article_image_box, FALSE);
+    gtk_widget_set_visible(self->article_image_box, TRUE);
 
-    self->article_image = gtk_picture_new();
-    gtk_picture_set_can_shrink(GTK_PICTURE(self->article_image), TRUE);
-    gtk_picture_set_content_fit(GTK_PICTURE(self->article_image), GTK_CONTENT_FIT_COVER);
-    gtk_widget_set_size_request(self->article_image, -1, 180);
+    self->article_image = g_object_get_data(
+        G_OBJECT(self->article_image_box), "media-picture");
     gtk_widget_add_css_class(self->article_image, "article-header-image");
-    gtk_box_append(GTK_BOX(self->article_image_box), self->article_image);
+    GtkGesture *click_gesture = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture),
+                                  GDK_BUTTON_PRIMARY);
+    g_signal_connect(click_gesture, "released",
+                     G_CALLBACK(on_media_image_clicked), self);
+    gtk_widget_add_controller(self->article_image,
+                              GTK_EVENT_CONTROLLER(click_gesture));
 
     /* Insert image at the top of the content area */
     if (GTK_IS_WIDGET(self->content_label)) {
@@ -6627,9 +6604,6 @@ void nostr_gtk_note_card_row_set_article_mode(NostrGtkNoteCardRow *self,
       }
     }
 
-#ifdef HAVE_SOUP3
-    load_article_header_image(self, image_url);
-#endif
   }
 
   /* Set summary as content (with markdown conversion) */
@@ -7046,15 +7020,8 @@ void nostr_gtk_note_card_row_set_video_mode(NostrGtkNoteCardRow *self,
     }
   }
 
-  /* Load thumbnail if available */
-  if (thumb_url && *thumb_url) {
-#ifdef HAVE_SOUP3
-    load_video_thumbnail(self, thumb_url);
-#endif
-  } else {
-    /* Use a placeholder or show video icon */
-    gtk_widget_add_css_class(self->video_thumb_picture, "video-no-thumbnail");
-  }
+  /* Thumbnail networking is deferred until an explicit play action. */
+  gtk_widget_add_css_class(self->video_thumb_picture, "video-no-thumbnail");
 
   /* Set summary as content if provided */
   /* nostrc-wt3n: Don't use GNOSTR_LABEL_SAFE for content - it checks gtk_widget_get_mapped()

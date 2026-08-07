@@ -19,6 +19,9 @@ typedef struct _AvatarCtx {
   GWeakRef image_ref;     /* weak ref to image widget */
   GWeakRef initials_ref;  /* weak ref to initials widget */
   char *url;              /* owned */
+#ifdef HAVE_SOUP3
+  SoupMessage *message;    /* response status and redirect policy */
+#endif
 } AvatarCtx;
 
 /* Simple shared cache for downloaded avatar textures by URL */
@@ -68,6 +71,7 @@ avatar_widget_still_expects_url(GtkWidget *image,
 
 typedef struct _PendingFetch {
   char *url;
+  GnostrMediaFetchIntent intent;
   GWeakRef image_ref;
   GWeakRef initials_ref;
 } PendingFetch;
@@ -149,7 +153,9 @@ static GdkTexture *try_load_avatar_from_disk(const char *url);
 static gboolean avatar_cache_log_cb(gpointer data);
 #ifdef HAVE_SOUP3
 static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer user_data);
-static void start_avatar_fetch_internal(const char *url, GtkWidget *image, GtkWidget *initials);
+static void start_avatar_fetch_internal(const char *url, GtkWidget *image,
+                                        GtkWidget *initials,
+                                        GnostrMediaFetchIntent intent);
 #endif
 
 /* Periodic logger for avatar cache */
@@ -421,6 +427,9 @@ static void avatar_ctx_free(AvatarCtx *c) {
   g_weak_ref_clear(&c->image_ref);
   g_weak_ref_clear(&c->initials_ref);
   g_free(c->url);
+#ifdef HAVE_SOUP3
+  g_clear_object(&c->message);
+#endif
   g_free(c);
 }
 
@@ -428,8 +437,12 @@ static void avatar_ctx_free(AvatarCtx *c) {
 /* Internal: Actually start an HTTP fetch (assumes slot is available).
  * IMPORTANT: Caller must have already incremented s_active_fetches.
  * On early return (error), we decrement it and process queue. */
-static void start_avatar_fetch_internal(const char *url, GtkWidget *image, GtkWidget *initials) {
-  if (!url || !*url) {
+static void start_avatar_fetch_internal(const char *url, GtkWidget *image,
+                                        GtkWidget *initials,
+                                        GnostrMediaFetchIntent intent) {
+  g_autoptr(GError) policy_error = NULL;
+  if (!gnostr_media_fetch_intent_is_allowed(intent) ||
+      !url || !*url || !gnostr_media_url_is_safe(url, &policy_error)) {
     g_warning("avatar fetch: NULL or empty URL");
     goto error_decrement;
   }
@@ -450,6 +463,8 @@ static void start_avatar_fetch_internal(const char *url, GtkWidget *image, GtkWi
   g_weak_ref_init(&ctx->image_ref, image);
   g_weak_ref_init(&ctx->initials_ref, initials);
   ctx->url = g_strdup(url);
+  ctx->message = g_object_ref(msg);
+  soup_message_set_flags(msg, SOUP_MESSAGE_NO_REDIRECT);
 
   g_debug("avatar fetch: starting HTTP for url=%s (active=%u)", url, s_active_fetches);
   s_avatar_metrics.http_start++;
@@ -511,7 +526,7 @@ static void process_pending_fetch_queue(void) {
       s_active_fetches++;
       g_mutex_unlock(&s_fetch_mutex);
 
-      start_avatar_fetch_internal(pf->url, image, initials);
+      start_avatar_fetch_internal(pf->url, image, initials, pf->intent);
 
       /* Release refs obtained from g_weak_ref_get */
       if (image) g_object_unref(image);
@@ -556,7 +571,10 @@ void gnostr_avatar_prefetch(const char *url) {
       return;
     }
   #ifdef HAVE_SOUP3
-    /* Fetch asynchronously and store in cache, using the limiter */
+    /* Fetch asynchronously and store in cache, using the limiter. */
+    if (!gnostr_media_fetch_intent_is_allowed(GNOSTR_MEDIA_FETCH_AUTOMATIC) ||
+        !gnostr_media_url_is_safe(url, NULL))
+      return;
     ensure_fetch_limiter();
 
     g_mutex_lock(&s_fetch_mutex);
@@ -564,11 +582,13 @@ void gnostr_avatar_prefetch(const char *url) {
       s_active_fetches++;
       g_mutex_unlock(&s_fetch_mutex);
       g_debug("avatar prefetch: fetching via HTTP url=%s", url);
-      start_avatar_fetch_internal(url, NULL, NULL);
+      start_avatar_fetch_internal(
+          url, NULL, NULL, GNOSTR_MEDIA_FETCH_AUTOMATIC);
     } else {
       /* Queue the prefetch request */
       PendingFetch *pf = g_new0(PendingFetch, 1);
       pf->url = g_strdup(url);
+      pf->intent = GNOSTR_MEDIA_FETCH_AUTOMATIC;
       g_weak_ref_init(&pf->image_ref, NULL);
       g_weak_ref_init(&pf->initials_ref, NULL);
       /* LIFO order: most recently requested (visible) avatars fetched first */
@@ -622,6 +642,14 @@ void gnostr_avatar_cache_set_startup_mode(gboolean enabled) {
 }
 
 void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials) {
+  gnostr_avatar_download_async_with_intent(
+      url, image, initials, GNOSTR_MEDIA_FETCH_AUTOMATIC);
+}
+
+void gnostr_avatar_download_async_with_intent(const char *url,
+                                               GtkWidget *image,
+                                               GtkWidget *initials,
+                                               GnostrMediaFetchIntent intent) {
     #ifdef HAVE_SOUP3
       if (!url || !*url || !str_has_prefix_http(url)) return;
       avatar_widget_set_expected_url(image, url);
@@ -669,6 +697,10 @@ void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *
         return;
       }
 
+      if (!gnostr_media_fetch_intent_is_allowed(intent) ||
+          !gnostr_media_url_is_safe(url, NULL))
+        return;
+
       ensure_fetch_limiter();
 
       g_mutex_lock(&s_fetch_mutex);
@@ -676,11 +708,12 @@ void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *
         /* Slot available - start immediately */
         s_active_fetches++;
         g_mutex_unlock(&s_fetch_mutex);
-        start_avatar_fetch_internal(url, image, initials);
+        start_avatar_fetch_internal(url, image, initials, intent);
       } else {
         /* Queue the request */
         PendingFetch *pf = g_new0(PendingFetch, 1);
         pf->url = g_strdup(url);
+        pf->intent = intent;
         g_weak_ref_init(&pf->image_ref, image);
         g_weak_ref_init(&pf->initials_ref, initials);
         /* LIFO order: most recently requested (visible) avatars fetched first */
@@ -846,7 +879,11 @@ static void on_avatar_http_done(GObject *source, GAsyncResult *res, gpointer use
   AvatarCtx *ctx = (AvatarCtx*)user_data;
   GError *error = NULL;
   GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
-  if (!bytes) {
+  guint status = ctx && ctx->message
+    ? soup_message_get_status(ctx->message) : 0;
+  if (!bytes || status < 200 || status >= 300) {
+    if (bytes)
+      g_bytes_unref(bytes);
     s_avatar_metrics.http_error++;
     g_debug("avatar http: fetch failed url=%s: %s", ctx && ctx->url ? ctx->url : "(null)", error ? error->message : "unknown");
     g_clear_error(&error);

@@ -249,6 +249,7 @@ request_row_media_texture(gpointer loader,
                           NostrGtkMediaResourceClass resource_class,
                           int target_width,
                           int target_height,
+                          gboolean user_initiated,
                           GCancellable *cancellable,
                           NostrGtkMediaTextureReadyFunc callback,
                           gpointer user_data,
@@ -271,9 +272,12 @@ request_row_media_texture(gpointer loader,
   bridge->callback = callback;
   bridge->user_data = user_data;
   bridge->user_data_destroy = user_data_destroy;
-  gnostr_media_service_request_texture(
+  gnostr_media_service_request_texture_with_intent(
       GNOSTR_MEDIA_SERVICE(loader), url, app_class,
-      target_width, target_height, cancellable,
+      target_width, target_height,
+      user_initiated ? GNOSTR_MEDIA_FETCH_USER_INITIATED
+                     : GNOSTR_MEDIA_FETCH_AUTOMATIC,
+      cancellable,
       on_app_media_texture_ready, bridge, row_media_request_bridge_free);
 }
 

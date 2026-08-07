@@ -18,9 +18,32 @@ gnostr_get_shared_soup_session(void)
 }
 
 gboolean
-gnostr_is_remote_media_allowed(void)
+gnostr_media_fetch_intent_is_allowed(GnostrMediaFetchIntent intent)
 {
+  (void)intent;
   return TRUE;
+}
+
+gboolean
+gnostr_media_url_is_safe(const char *url, GError **error)
+{
+  (void)error;
+  return url && *url;
+}
+
+gboolean
+gnostr_media_redirect_is_safe(const char *from_url,
+                              const char *location,
+                              char **out_url,
+                              GError **error)
+{
+  (void)error;
+  if (!from_url || !location)
+    return FALSE;
+  if (out_url)
+    *out_url = g_uri_resolve_relative(from_url, location, G_URI_FLAGS_NONE,
+                                      NULL);
+  return out_url ? *out_url != NULL : TRUE;
 }
 
 static GdkTexture *

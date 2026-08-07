@@ -2,8 +2,46 @@
 #define GNOSTR_UTIL_H
 
 #include <glib.h>
-#include <nostr-event.h>
+#include <gio/gio.h>
 
+typedef struct _NostrEvent NostrEvent;
+
+#ifndef GNOSTR_MEDIA_FETCH_INTENT_DEFINED
+#define GNOSTR_MEDIA_FETCH_INTENT_DEFINED
+typedef enum {
+  GNOSTR_MEDIA_FETCH_AUTOMATIC = 0,
+  GNOSTR_MEDIA_FETCH_USER_INITIATED
+} GnostrMediaFetchIntent;
+#endif
+
+typedef enum {
+  GNOSTR_MEDIA_POLICY_ERROR_INVALID_URL,
+  GNOSTR_MEDIA_POLICY_ERROR_CREDENTIALS,
+  GNOSTR_MEDIA_POLICY_ERROR_UNSAFE_PORT,
+  GNOSTR_MEDIA_POLICY_ERROR_UNSAFE_ADDRESS,
+  GNOSTR_MEDIA_POLICY_ERROR_RESOLUTION,
+  GNOSTR_MEDIA_POLICY_ERROR_UNSAFE_REDIRECT
+} GnostrMediaPolicyError;
+
+#define GNOSTR_MEDIA_POLICY_ERROR (gnostr_media_policy_error_quark())
+GQuark gnostr_media_policy_error_quark(void);
+
+/* Validates HTTP(S) syntax, rejects URL credentials, and requires every
+ * currently resolved destination address to be globally routable. */
+gboolean gnostr_media_url_is_safe(const char *url, GError **error);
+
+/* Redirects are limited to the same origin and must independently pass the
+ * destination policy. Relative locations are resolved against @from_url. */
+gboolean gnostr_media_redirect_is_safe(const char *from_url,
+                                       const char *location,
+                                       char **out_url,
+                                       GError **error);
+
+/* Automatic fetches require the opt-in setting. Explicit activation is allowed
+ * independently, but never bypasses URL/address policy. */
+gboolean gnostr_media_fetch_intent_is_allowed(GnostrMediaFetchIntent intent);
+
+#ifndef GNOSTR_MEDIA_POLICY_TESTING
 #ifdef HAVE_SOUP3
 #include <libsoup/soup.h>
 
@@ -36,8 +74,7 @@ void gnostr_cleanup_shared_soup_session(void);
  * remote media fetching is permitted. Returns FALSE if the setting is
  * disabled or the schema is unavailable.
  *
- * Intentionally exempt paths (avatars) should not call this.
- * nostrc-jvdv.2: Centralised privacy gate for all media fetch paths.
+ * All automatic media paths, including avatars, must use this policy.
  *
  * Returns: TRUE if remote media loading is allowed
  */
@@ -114,4 +151,5 @@ void gnostr_publish_to_relays_async(NostrEvent *event,
 /* gnostr_ensure_hex_pubkey moved to nostr-gobject */
 #include <nostr-gobject-1.0/nostr_utils.h>
 
+#endif /* !GNOSTR_MEDIA_POLICY_TESTING */
 #endif /* GNOSTR_UTIL_H */

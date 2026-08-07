@@ -3,6 +3,14 @@
 
 #include <gtk/gtk.h>
 
+#ifndef GNOSTR_MEDIA_FETCH_INTENT_DEFINED
+#define GNOSTR_MEDIA_FETCH_INTENT_DEFINED
+typedef enum {
+  GNOSTR_MEDIA_FETCH_AUTOMATIC = 0,
+  GNOSTR_MEDIA_FETCH_USER_INITIATED
+} GnostrMediaFetchIntent;
+#endif
+
 G_BEGIN_DECLS
 
 /* Avatar metrics for pipeline health. */
@@ -21,6 +29,10 @@ typedef struct {
 void gnostr_avatar_prefetch(const char *url);
 GdkTexture *gnostr_avatar_try_load_cached(const char *url);
 void gnostr_avatar_download_async(const char *url, GtkWidget *image, GtkWidget *initials);
+void gnostr_avatar_download_async_with_intent(const char *url,
+                                              GtkWidget *image,
+                                              GtkWidget *initials,
+                                              GnostrMediaFetchIntent intent);
 void gnostr_avatar_cache_set_startup_mode(gboolean enabled);
 
 #ifdef HAVE_SOUP3

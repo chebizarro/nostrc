@@ -213,8 +213,11 @@ gnostr_dm_row_set_peer(GnostrDmRow *self,
 
     /* Load avatar image if URL provided */
     if (avatar_url && *avatar_url) {
-        /* Use avatar cache to load async */
-        gnostr_avatar_download_async(avatar_url, GTK_WIDGET(self->avatar_image), GTK_WIDGET(self->avatar_initials));
+        /* Automatic avatar networking uses the shared privacy/SSRF policy. */
+        gnostr_avatar_download_async_with_intent(
+            avatar_url, GTK_WIDGET(self->avatar_image),
+            GTK_WIDGET(self->avatar_initials),
+            GNOSTR_MEDIA_FETCH_AUTOMATIC);
     } else {
         gtk_widget_set_visible(GTK_WIDGET(self->avatar_image), FALSE);
         gtk_widget_set_visible(GTK_WIDGET(self->avatar_initials), TRUE);

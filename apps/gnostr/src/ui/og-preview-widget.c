@@ -18,6 +18,7 @@ struct _OgPreviewWidget {
   GtkWidget *site_label;
   GtkWidget *spinner;
   GtkWidget *error_label;
+  GtkWidget *load_button;
 
   char *current_url;
   GCancellable *cancellable;
@@ -167,12 +168,13 @@ update_ui_with_metadata(OgPreviewWidget *self,
   gtk_widget_set_visible(self->image_overlay_widget, FALSE);
 
   if (image_url && *image_url) {
-    gnostr_media_service_request_texture(
+    gnostr_media_service_request_texture_with_intent(
         gnostr_media_service_get_default(),
         image_url,
         GNOSTR_MEDIA_RESOURCE_OG_IMAGE,
         240,
         160,
+        GNOSTR_MEDIA_FETCH_USER_INITIATED,
         self->cancellable,
         on_preview_texture_ready,
         og_request_context_new(self),
@@ -336,6 +338,7 @@ og_preview_widget_dispose(GObject *object)
 #endif
   g_clear_pointer(&self->spinner, gtk_widget_unparent);
   g_clear_pointer(&self->error_label, gtk_widget_unparent);
+  g_clear_pointer(&self->load_button, gtk_widget_unparent);
   g_clear_pointer(&self->card_box, gtk_widget_unparent);
 
   self->title_label = NULL;
@@ -410,6 +413,17 @@ og_preview_widget_init(OgPreviewWidget *self)
   gtk_widget_set_valign(self->spinner, GTK_ALIGN_CENTER);
   gtk_widget_set_visible(self->spinner, FALSE);
   gtk_widget_set_parent(self->spinner, GTK_WIDGET(self));
+
+  self->load_button = gtk_button_new_with_label("Load Preview");
+  gtk_widget_set_halign(self->load_button, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign(self->load_button, GTK_ALIGN_CENTER);
+  gtk_widget_set_tooltip_text(
+      self->load_button,
+      "Load this preview from the remote site");
+  gtk_widget_set_visible(self->load_button, FALSE);
+  gtk_widget_set_parent(self->load_button, GTK_WIDGET(self));
+  g_signal_connect_swapped(self->load_button, "clicked",
+                           G_CALLBACK(og_preview_widget_load), self);
 
   self->error_label = gtk_label_new("Preview Not Available");
   gtk_label_set_ellipsize(GTK_LABEL(self->error_label), PANGO_ELLIPSIZE_END);
@@ -490,7 +504,7 @@ og_preview_widget_set_url(OgPreviewWidget *self, const char *url)
 {
   g_return_if_fail(OG_IS_PREVIEW_WIDGET(self));
 
-  if (!url || !*url || !gnostr_is_remote_media_allowed()) {
+  if (!url || !*url) {
     og_preview_widget_clear(self);
     return;
   }
@@ -502,12 +516,35 @@ og_preview_widget_set_url(OgPreviewWidget *self, const char *url)
   self->request_generation++;
   g_free(self->current_url);
   self->current_url = g_strdup(url);
+  g_autoptr(GUri) uri = g_uri_parse(url, G_URI_FLAGS_NONE, NULL);
+  const char *host = uri ? g_uri_get_host(uri) : NULL;
+  g_autofree char *tooltip = g_strdup_printf(
+      "Load preview from %s (reveals your network address)",
+      host ? host : "this site");
+  gtk_widget_set_tooltip_text(self->load_button, tooltip);
   restart_cancellable(self);
-  set_loading_state(self);
+  gtk_spinner_stop(GTK_SPINNER(self->spinner));
+  gtk_widget_set_visible(self->spinner, FALSE);
+  gtk_widget_set_visible(self->error_label, FALSE);
+  gtk_widget_set_visible(self->card_box, FALSE);
+  gtk_widget_set_visible(self->load_button, TRUE);
+}
 
-  gnostr_media_service_request_og_metadata(
+void
+og_preview_widget_load(OgPreviewWidget *self)
+{
+  g_return_if_fail(OG_IS_PREVIEW_WIDGET(self));
+  if (self->disposed || !self->current_url || !*self->current_url)
+    return;
+
+  self->request_generation++;
+  restart_cancellable(self);
+  gtk_widget_set_visible(self->load_button, FALSE);
+  set_loading_state(self);
+  gnostr_media_service_request_og_metadata_with_intent(
       gnostr_media_service_get_default(),
-      url,
+      self->current_url,
+      GNOSTR_MEDIA_FETCH_USER_INITIATED,
       self->cancellable,
       on_metadata_ready,
       og_request_context_new(self),
@@ -548,6 +585,8 @@ og_preview_widget_clear(OgPreviewWidget *self)
     gtk_widget_set_visible(self->spinner, FALSE);
   if (self->error_label)
     gtk_widget_set_visible(self->error_label, FALSE);
+  if (self->load_button)
+    gtk_widget_set_visible(self->load_button, FALSE);
   if (self->card_box)
     gtk_widget_set_visible(self->card_box, FALSE);
 #ifdef HAVE_WEBKITGTK

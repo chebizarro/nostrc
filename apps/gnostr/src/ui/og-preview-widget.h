@@ -20,13 +20,15 @@ OgPreviewWidget *og_preview_widget_new(void);
 /**
  * og_preview_widget_set_url:
  * @self: An #OgPreviewWidget
- * @url: The URL to fetch and preview
+ * @url: The URL to preview
  *
- * Sets the URL whose Open Graph metadata should be displayed. Metadata and
- * preview textures are requested from #GnostrMediaService; changing the URL
- * cancels this widget's prior subscriptions.
+ * Stores the URL and displays a privacy-preserving placeholder. This function
+ * never starts a network request.
  */
 void og_preview_widget_set_url(OgPreviewWidget *self, const char *url);
+
+/* Starts loading after an explicit user activation. */
+void og_preview_widget_load(OgPreviewWidget *self);
 
 /**
  * og_preview_widget_clear:
@@ -56,8 +58,9 @@ void og_preview_widget_prepare_for_unbind(OgPreviewWidget *self);
  * @url: The URL to fetch and preview
  * @cancellable: (nullable): External cancellable from parent widget
  *
- * Sets the URL using a parent cancellable. The widget keeps an independent
- * cancellable subscription, linked to (but never cancelling) the parent.
+ * Stores the URL using a parent cancellable without fetching. The widget
+ * keeps an independent cancellable subscription, linked to (but never
+ * cancelling) the parent.
  */
 void og_preview_widget_set_url_with_cancellable(OgPreviewWidget *self, 
                                                  const char *url,

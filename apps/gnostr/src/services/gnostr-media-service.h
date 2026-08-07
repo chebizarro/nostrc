@@ -4,6 +4,14 @@
 #include <gdk/gdk.h>
 #include <gio/gio.h>
 
+#ifndef GNOSTR_MEDIA_FETCH_INTENT_DEFINED
+#define GNOSTR_MEDIA_FETCH_INTENT_DEFINED
+typedef enum {
+  GNOSTR_MEDIA_FETCH_AUTOMATIC = 0,
+  GNOSTR_MEDIA_FETCH_USER_INITIATED
+} GnostrMediaFetchIntent;
+#endif
+
 G_BEGIN_DECLS
 
 #define GNOSTR_TYPE_MEDIA_SERVICE (gnostr_media_service_get_type())
@@ -171,6 +179,17 @@ void gnostr_media_service_request_texture(GnostrMediaService *service,
                                           GnostrMediaTextureCallback callback,
                                           gpointer user_data,
                                           GDestroyNotify user_data_destroy);
+void gnostr_media_service_request_texture_with_intent(
+    GnostrMediaService *service,
+    const char *url,
+    GnostrMediaResourceClass resource_class,
+    int target_width,
+    int target_height,
+    GnostrMediaFetchIntent intent,
+    GCancellable *cancellable,
+    GnostrMediaTextureCallback callback,
+    gpointer user_data,
+    GDestroyNotify user_data_destroy);
 
 /**
  * gnostr_media_service_request_og_metadata:
@@ -184,6 +203,14 @@ void gnostr_media_service_request_og_metadata(GnostrMediaService *service,
                                               GnostrMediaOgCallback callback,
                                               gpointer user_data,
                                               GDestroyNotify user_data_destroy);
+void gnostr_media_service_request_og_metadata_with_intent(
+    GnostrMediaService *service,
+    const char *url,
+    GnostrMediaFetchIntent intent,
+    GCancellable *cancellable,
+    GnostrMediaOgCallback callback,
+    gpointer user_data,
+    GDestroyNotify user_data_destroy);
 
 void gnostr_media_service_get_stats(GnostrMediaService *service,
                                     GnostrMediaCacheStats *out_stats);
