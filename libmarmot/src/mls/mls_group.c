@@ -239,10 +239,6 @@ generate_update_path(MlsGroup *group,
     if (mls_crypto_kem_keygen(new_enc_sk, new_enc_pk) != 0)
         return -1;
 
-    /* UpdatePathNode HPKE binds the provisional GroupContext (RFC 9420 §7.6). */
-    if (mls_group_context_build(group, &path_context, &path_context_len) != 0)
-        goto fail;
-
     /* Build new leaf node */
     MlsLeafNode *old_leaf = &group->tree.nodes[mls_tree_leaf_to_node(group->own_leaf_index)].leaf;
     memset(&path_out->leaf_node, 0, sizeof(MlsLeafNode));
@@ -304,8 +300,10 @@ generate_update_path(MlsGroup *group,
         memcpy(root_path_secret, path_secrets[fdp_len - 1], MLS_HASH_LEN);
     }
 
-    /* For each node on the filtered direct path, derive the node key
-     * and encrypt the path secret for each copath resolution member */
+    /* For each node on the filtered direct path, derive the node key and
+     * install it in the tree.  Encryption of the path secrets happens below,
+     * once the provisional tree (and thus the provisional GroupContext the
+     * HPKE payloads are bound to) is complete. */
     for (uint32_t i = 0; i < fdp_len; i++) {
         uint32_t node_idx = fdp[i];
 
@@ -316,59 +314,6 @@ generate_update_path(MlsGroup *group,
             goto fail;
 
         memcpy(path_out->nodes[i].encryption_key, node_pk, MLS_KEM_PK_LEN);
-
-        /* Get the copath node for this direct-path node.  For path[i], this
-         * is the sibling of the child immediately below it: the committer leaf
-         * for i=0, otherwise the previous direct-path node. */
-        uint32_t child_below = UINT32_MAX;
-        if (child_below_path_node(group->own_leaf_index, n_leaves,
-                                  node_idx, &child_below) != 0)
-            goto fail;
-        uint32_t sibling = mls_tree_sibling(child_below, n_leaves);
-
-        /* Get resolution of the sibling (nodes we need to encrypt to) */
-        uint32_t resolution[256];
-        uint32_t res_len = 0;
-        if (mls_tree_resolution(&group->tree, sibling, resolution, 256, &res_len) != 0)
-            goto fail;
-
-        /* Encrypt path_secret to each resolution member's encryption key */
-        MlsTlsBuf enc_buf;
-        if (mls_tls_buf_init(&enc_buf, 256) != 0) goto fail;
-
-        for (uint32_t j = 0; j < res_len; j++) {
-            uint32_t target_node = resolution[j];
-            const uint8_t *target_pk = NULL;
-
-            if (mls_tree_is_leaf(target_node)) {
-                target_pk = group->tree.nodes[target_node].leaf.encryption_key;
-            } else {
-                target_pk = group->tree.nodes[target_node].parent.encryption_key;
-            }
-
-            uint8_t enc[MLS_KEM_ENC_LEN];
-            uint8_t ct[MLS_HASH_LEN + MLS_AEAD_TAG_LEN];
-            size_t ct_len = 0;
-            if (hpke_encrypt_with_label(enc, ct, &ct_len, target_pk,
-                                        "UpdatePathNode", path_context, path_context_len,
-                                        path_secrets[i], MLS_HASH_LEN) != 0) {
-                mls_tls_buf_free(&enc_buf);
-                goto fail;
-            }
-
-            /* Write HPKECiphertext: enc || ciphertext */
-            if (mls_tls_write_opaque16(&enc_buf, enc, MLS_KEM_ENC_LEN) != 0 ||
-                mls_tls_write_opaque16(&enc_buf, ct, ct_len) != 0) {
-                mls_tls_buf_free(&enc_buf);
-                goto fail;
-            }
-
-        }
-
-        path_out->nodes[i].encrypted_path_secrets = enc_buf.data;
-        path_out->nodes[i].encrypted_path_secrets_len = enc_buf.len;
-        path_out->nodes[i].secret_count = res_len;
-        /* Don't free enc_buf — ownership transferred */
 
         /* Update the tree node */
         if (group->tree.nodes[node_idx].type != MLS_NODE_BLANK) {
@@ -425,6 +370,80 @@ generate_update_path(MlsGroup *group,
 
     /* Update our stored encryption private key */
     memcpy(group->own_encryption_key, new_enc_sk, MLS_KEM_SK_LEN);
+
+    /* UpdatePathNode HPKE binds the provisional GroupContext (RFC 9420 §7.6):
+     * next epoch, the tree hash after applying this UpdatePath, and the
+     * current confirmed transcript hash.  This mirrors the context receivers
+     * rebuild in process_commit_impl before decrypt_path_secret(). */
+    if (fdp_len > 0) {
+        uint8_t provisional_tree_hash[MLS_HASH_LEN];
+        if (mls_tree_root_hash(&group->tree, provisional_tree_hash) != 0)
+            goto fail;
+        if (mls_group_context_serialize(group->group_id, group->group_id_len,
+                                        group->epoch + 1, provisional_tree_hash,
+                                        group->confirmed_transcript_hash,
+                                        group->extensions_data, group->extensions_len,
+                                        &path_context, &path_context_len) != 0)
+            goto fail;
+    }
+
+    /* Encrypt each path secret to the resolution of its copath node. */
+    for (uint32_t i = 0; i < fdp_len; i++) {
+        uint32_t node_idx = fdp[i];
+
+        /* Get the copath node for this direct-path node.  For path[i], this
+         * is the sibling of the child immediately below it: the committer leaf
+         * for i=0, otherwise the previous direct-path node. */
+        uint32_t child_below = UINT32_MAX;
+        if (child_below_path_node(group->own_leaf_index, n_leaves,
+                                  node_idx, &child_below) != 0)
+            goto fail;
+        uint32_t sibling = mls_tree_sibling(child_below, n_leaves);
+
+        /* Get resolution of the sibling (nodes we need to encrypt to) */
+        uint32_t resolution[256];
+        uint32_t res_len = 0;
+        if (mls_tree_resolution(&group->tree, sibling, resolution, 256, &res_len) != 0)
+            goto fail;
+
+        /* Encrypt path_secret to each resolution member's encryption key */
+        MlsTlsBuf enc_buf;
+        if (mls_tls_buf_init(&enc_buf, 256) != 0) goto fail;
+
+        for (uint32_t j = 0; j < res_len; j++) {
+            uint32_t target_node = resolution[j];
+            const uint8_t *target_pk = NULL;
+
+            if (mls_tree_is_leaf(target_node)) {
+                target_pk = group->tree.nodes[target_node].leaf.encryption_key;
+            } else {
+                target_pk = group->tree.nodes[target_node].parent.encryption_key;
+            }
+
+            uint8_t enc[MLS_KEM_ENC_LEN];
+            uint8_t ct[MLS_HASH_LEN + MLS_AEAD_TAG_LEN];
+            size_t ct_len = 0;
+            if (hpke_encrypt_with_label(enc, ct, &ct_len, target_pk,
+                                        "UpdatePathNode", path_context, path_context_len,
+                                        path_secrets[i], MLS_HASH_LEN) != 0) {
+                mls_tls_buf_free(&enc_buf);
+                goto fail;
+            }
+
+            /* Write HPKECiphertext: enc || ciphertext */
+            if (mls_tls_write_opaque16(&enc_buf, enc, MLS_KEM_ENC_LEN) != 0 ||
+                mls_tls_write_opaque16(&enc_buf, ct, ct_len) != 0) {
+                mls_tls_buf_free(&enc_buf);
+                goto fail;
+            }
+
+        }
+
+        path_out->nodes[i].encrypted_path_secrets = enc_buf.data;
+        path_out->nodes[i].encrypted_path_secrets_len = enc_buf.len;
+        path_out->nodes[i].secret_count = res_len;
+        /* Don't free enc_buf — ownership transferred */
+    }
 
     free(path_context);
     sodium_memzero(path_secrets, sizeof(path_secrets));
@@ -837,42 +856,18 @@ serialize_group_secrets(const uint8_t joiner_secret[MLS_HASH_LEN],
     return 0;
 }
 
-static int
-serialize_ratchet_tree(const MlsRatchetTree *tree, uint8_t **out, size_t *out_len)
-{
-    if (!tree || !out || !out_len) return -1;
-    MlsTlsBuf buf;
-    if (mls_tls_buf_init(&buf, 4096) != 0) return -1;
-    if (mls_tls_write_u32(&buf, tree->n_leaves) != 0) goto fail;
-    for (uint32_t i = 0; i < tree->n_nodes; i++) {
-        const MlsNode *node = &tree->nodes[i];
-        if (node->type == MLS_NODE_BLANK) {
-            if (mls_tls_write_u8(&buf, 0) != 0) goto fail;
-        } else if (node->type == MLS_NODE_LEAF) {
-            if (mls_tls_write_u8(&buf, 1) != 0 ||
-                mls_leaf_node_serialize(&node->leaf, &buf) != 0) goto fail;
-        } else {
-            if (mls_tls_write_u8(&buf, 2) != 0 ||
-                mls_parent_node_serialize(&node->parent, &buf) != 0) goto fail;
-        }
-    }
-    *out = buf.data;
-    *out_len = buf.len;
-    return 0;
-fail:
-    mls_tls_buf_free(&buf);
-    return -1;
-}
-
 #define MLS_EXTENSION_RATCHET_TREE 0x0002
 
 static int
 build_group_info_extensions_with_tree(const MlsRatchetTree *tree,
                                       uint8_t **out, size_t *out_len)
 {
+    /* RFC 9420 ratchet_tree extension: optional<Node> vector encoding
+     * (mls_ratchet_tree_serialize), matching the parser used by
+     * mls_group_join_from_welcome / mls_ratchet_tree_deserialize. */
     uint8_t *tree_data = NULL;
     size_t tree_len = 0;
-    if (serialize_ratchet_tree(tree, &tree_data, &tree_len) != 0) return -1;
+    if (mls_ratchet_tree_serialize(tree, &tree_data, &tree_len) != 0) return -1;
     MlsTlsBuf ext;
     if (mls_tls_buf_init(&ext, tree_len + 16) != 0) {
         free(tree_data);
@@ -925,21 +920,27 @@ mls_group_info_sign_local(MlsGroupInfo *gi,
     return rc;
 }
 
+/**
+ * Phase 1 of commit message assembly: build and sign the FramedContent for a
+ * commit, and return the RFC 9420 §8.1 ConfirmedTranscriptHashInput bytes
+ * (wire_format || FramedContent || signature).  The caller mixes those into
+ * the confirmed transcript hash, derives the new epoch, and computes the
+ * confirmation tag before calling finish_commit_public_message().
+ */
 static int
-wrap_commit_public_message(const MlsGroup *group,
-                           uint64_t message_epoch,
-                           const uint8_t *group_context, size_t group_context_len,
-                           const uint8_t membership_key[MLS_HASH_LEN],
-                           const uint8_t *commit_body, size_t commit_body_len,
-                           const uint8_t confirmation_tag[MLS_HASH_LEN],
-                           uint8_t **out, size_t *out_len)
+begin_commit_public_message(const MlsGroup *group,
+                            uint64_t message_epoch,
+                            const uint8_t *group_context, size_t group_context_len,
+                            const uint8_t *commit_body, size_t commit_body_len,
+                            MlsMLSMessage *msg,
+                            uint8_t **transcript_input, size_t *transcript_input_len)
 {
-    if (!group || !commit_body || !out || !out_len) return -1;
-    MlsMLSMessage msg;
-    memset(&msg, 0, sizeof(msg));
-    msg.wire_format = MLS_WIRE_FORMAT_PUBLIC_MESSAGE;
-    msg.cipher_suite = MARMOT_CIPHERSUITE;
-    MlsPublicMessage *pm = &msg.public_message;
+    if (!group || !commit_body || !msg || !transcript_input || !transcript_input_len)
+        return -1;
+    memset(msg, 0, sizeof(*msg));
+    msg->wire_format = MLS_WIRE_FORMAT_PUBLIC_MESSAGE;
+    msg->cipher_suite = MARMOT_CIPHERSUITE;
+    MlsPublicMessage *pm = &msg->public_message;
     pm->content.group_id = malloc(group->group_id_len);
     pm->content.content = malloc(commit_body_len);
     if (!pm->content.group_id || !pm->content.content) goto fail;
@@ -956,6 +957,28 @@ wrap_commit_public_message(const MlsGroup *group,
                                 group_context, group_context_len,
                                 group->own_signature_key, &pm->auth) != 0)
         goto fail;
+    if (public_message_confirmed_transcript_input(pm, transcript_input,
+                                                  transcript_input_len) != 0)
+        goto fail;
+    return 0;
+fail:
+    mls_message_clear(msg);
+    return -1;
+}
+
+/**
+ * Phase 2: attach the confirmation tag, compute the membership tag, and
+ * serialize the wire message.  Clears msg regardless of outcome.
+ */
+static int
+finish_commit_public_message(MlsMLSMessage *msg,
+                             const uint8_t membership_key[MLS_HASH_LEN],
+                             const uint8_t *group_context, size_t group_context_len,
+                             const uint8_t confirmation_tag[MLS_HASH_LEN],
+                             uint8_t **out, size_t *out_len)
+{
+    if (!msg || !out || !out_len) return -1;
+    MlsPublicMessage *pm = &msg->public_message;
     memcpy(pm->auth.confirmation_tag, confirmation_tag, MLS_HASH_LEN);
     pm->auth.confirmation_tag_len = MLS_HASH_LEN;
     pm->auth.has_confirmation_tag = true;
@@ -965,17 +988,17 @@ wrap_commit_public_message(const MlsGroup *group,
         goto fail;
 
     MlsTlsBuf buf;
-    if (mls_tls_buf_init(&buf, commit_body_len + 256) != 0) goto fail;
-    if (mls_message_serialize(&msg, &buf) != 0) {
+    if (mls_tls_buf_init(&buf, pm->content.content_len + 256) != 0) goto fail;
+    if (mls_message_serialize(msg, &buf) != 0) {
         mls_tls_buf_free(&buf);
         goto fail;
     }
     *out = buf.data;
     *out_len = buf.len;
-    mls_message_clear(&msg);
+    mls_message_clear(msg);
     return 0;
 fail:
-    mls_message_clear(&msg);
+    mls_message_clear(msg);
     return -1;
 }
 
@@ -1291,25 +1314,43 @@ mls_group_add_member(MlsGroup *group,
         return MARMOT_ERR_INTERNAL;
     }
 
-    /* Advance epoch */
-    uint8_t commit_secret[MLS_HASH_LEN];
-    if (derive_commit_secret(root_path_secret, true, commit_secret) != 0) {
+    /* Build and sign the PublicMessage framing now: the confirmed transcript
+     * hash input is wire_format || FramedContent || signature (RFC 9420 §8.1). */
+    MlsMLSMessage wire_msg;
+    uint8_t *ct_input = NULL;
+    size_t ct_input_len = 0;
+    if (begin_commit_public_message(group, pre_epoch, pre_gc, pre_gc_len,
+                                    commit_buf.data, commit_buf.len,
+                                    &wire_msg, &ct_input, &ct_input_len) != 0) {
         mls_tls_buf_free(&commit_buf);
         mls_commit_clear(&commit);
         return MARMOT_ERR_INTERNAL;
     }
 
-    /* Update confirmed transcript hash: H(interim_old || commit) */
+    /* Advance epoch */
+    uint8_t commit_secret[MLS_HASH_LEN];
+    if (derive_commit_secret(root_path_secret, true, commit_secret) != 0) {
+        free(ct_input);
+        mls_message_clear(&wire_msg);
+        mls_tls_buf_free(&commit_buf);
+        mls_commit_clear(&commit);
+        return MARMOT_ERR_INTERNAL;
+    }
+
+    /* Update confirmed transcript hash: H(interim_old || transcript_input) */
     MlsTlsBuf conf_buf;
-    if (mls_tls_buf_init(&conf_buf, MLS_HASH_LEN + commit_buf.len) != 0) {
+    if (mls_tls_buf_init(&conf_buf, MLS_HASH_LEN + ct_input_len) != 0) {
+        free(ct_input);
+        mls_message_clear(&wire_msg);
         mls_tls_buf_free(&commit_buf);
         mls_commit_clear(&commit);
         return MARMOT_ERR_MEMORY;
     }
     mls_tls_buf_append(&conf_buf, group->interim_transcript_hash, MLS_HASH_LEN);
-    mls_tls_buf_append(&conf_buf, commit_buf.data, commit_buf.len);
+    mls_tls_buf_append(&conf_buf, ct_input, ct_input_len);
     mls_crypto_hash(group->confirmed_transcript_hash, conf_buf.data, conf_buf.len);
     mls_tls_buf_free(&conf_buf);
+    free(ct_input);
 
     uint64_t previous_epoch = group->epoch;
     remember_resumption_psk(group, previous_epoch,
@@ -1530,10 +1571,9 @@ mls_group_add_member(MlsGroup *group,
 
     uint8_t *wire_commit = NULL;
     size_t wire_commit_len = 0;
-    if (wrap_commit_public_message(group, pre_epoch, pre_gc, pre_gc_len, pre_membership_key,
-                                   commit_buf.data, commit_buf.len,
-                                   confirmation_tag,
-                                   &wire_commit, &wire_commit_len) != 0) {
+    if (finish_commit_public_message(&wire_msg, pre_membership_key,
+                                     pre_gc, pre_gc_len, confirmation_tag,
+                                     &wire_commit, &wire_commit_len) != 0) {
         free(pre_gc);
         mls_tls_buf_free(&commit_buf);
         mls_tls_buf_free(&welcome_buf);
@@ -1642,22 +1682,39 @@ mls_group_remove_member(MlsGroup *group,
         return MARMOT_ERR_INTERNAL;
     }
 
+    /* Build and sign the PublicMessage framing now: the confirmed transcript
+     * hash input is wire_format || FramedContent || signature (RFC 9420 §8.1). */
+    MlsMLSMessage wire_msg;
+    uint8_t *ct_input = NULL;
+    size_t ct_input_len = 0;
+    if (begin_commit_public_message(group, pre_epoch, pre_gc, pre_gc_len,
+                                    buf.data, buf.len,
+                                    &wire_msg, &ct_input, &ct_input_len) != 0) {
+        free(pre_gc);
+        mls_tls_buf_free(&buf);
+        mls_commit_clear(&commit);
+        return MARMOT_ERR_INTERNAL;
+    }
+
     /* Advance epoch */
     uint8_t commit_secret[MLS_HASH_LEN];
     derive_commit_secret(root_path_secret, true, commit_secret);
 
     /* Update confirmed transcript hash */
     MlsTlsBuf conf_buf;
-    if (mls_tls_buf_init(&conf_buf, MLS_HASH_LEN + buf.len) != 0) {
+    if (mls_tls_buf_init(&conf_buf, MLS_HASH_LEN + ct_input_len) != 0) {
+        free(ct_input);
+        mls_message_clear(&wire_msg);
         free(pre_gc);
         mls_tls_buf_free(&buf);
         mls_commit_clear(&commit);
         return MARMOT_ERR_MEMORY;
     }
     mls_tls_buf_append(&conf_buf, group->interim_transcript_hash, MLS_HASH_LEN);
-    mls_tls_buf_append(&conf_buf, buf.data, buf.len);
+    mls_tls_buf_append(&conf_buf, ct_input, ct_input_len);
     mls_crypto_hash(group->confirmed_transcript_hash, conf_buf.data, conf_buf.len);
     mls_tls_buf_free(&conf_buf);
+    free(ct_input);
 
     uint64_t previous_epoch = group->epoch;
     remember_resumption_psk(group, previous_epoch,
@@ -1665,6 +1722,7 @@ mls_group_remove_member(MlsGroup *group,
     group->epoch++;
     const uint8_t *prev_init = group->epoch_secrets.init_secret;
     if (group_derive_epoch(group, prev_init, commit_secret, NULL) != 0) {
+        mls_message_clear(&wire_msg);
         free(pre_gc);
         mls_tls_buf_free(&buf);
         mls_commit_clear(&commit);
@@ -1679,6 +1737,7 @@ mls_group_remove_member(MlsGroup *group,
     /* Update interim transcript hash */
     MlsTlsBuf int_buf;
     if (mls_tls_buf_init(&int_buf, MLS_HASH_LEN * 2) != 0) {
+        mls_message_clear(&wire_msg);
         free(pre_gc);
         mls_tls_buf_free(&buf);
         mls_commit_clear(&commit);
@@ -1689,14 +1748,13 @@ mls_group_remove_member(MlsGroup *group,
     mls_crypto_hash(group->interim_transcript_hash, int_buf.data, int_buf.len);
     mls_tls_buf_free(&int_buf);
 
-    /* Wrap the commit body in an authenticated PublicMessage using the
+    /* Finish the PublicMessage: confirmation tag + membership tag using the
      * pre-commit group context and membership key (RFC 9420 §6.2). */
     uint8_t *wire_commit = NULL;
     size_t wire_commit_len = 0;
-    if (wrap_commit_public_message(group, pre_epoch, pre_gc, pre_gc_len,
-                                   pre_membership_key,
-                                   buf.data, buf.len, confirmation_tag,
-                                   &wire_commit, &wire_commit_len) != 0) {
+    if (finish_commit_public_message(&wire_msg, pre_membership_key,
+                                     pre_gc, pre_gc_len, confirmation_tag,
+                                     &wire_commit, &wire_commit_len) != 0) {
         free(pre_gc);
         mls_tls_buf_free(&buf);
         mls_commit_clear(&commit);
@@ -1771,22 +1829,40 @@ mls_group_self_update(MlsGroup *group, MlsCommitResult *result)
         return MARMOT_ERR_INTERNAL;
     }
 
+    /* Build and sign the PublicMessage framing now: the confirmed transcript
+     * hash input is wire_format || FramedContent || signature (RFC 9420 §8.1),
+     * so the signed framing must exist before the transcript is advanced. */
+    MlsMLSMessage wire_msg;
+    uint8_t *ct_input = NULL;
+    size_t ct_input_len = 0;
+    if (begin_commit_public_message(group, pre_epoch, pre_gc, pre_gc_len,
+                                    buf.data, buf.len,
+                                    &wire_msg, &ct_input, &ct_input_len) != 0) {
+        free(pre_gc);
+        mls_tls_buf_free(&buf);
+        mls_commit_clear(&commit);
+        return MARMOT_ERR_INTERNAL;
+    }
+
     /* Advance epoch */
     uint8_t commit_secret[MLS_HASH_LEN];
     derive_commit_secret(root_path_secret, true, commit_secret);
 
     /* Update confirmed transcript hash */
     MlsTlsBuf conf_buf;
-    if (mls_tls_buf_init(&conf_buf, MLS_HASH_LEN + buf.len) != 0) {
+    if (mls_tls_buf_init(&conf_buf, MLS_HASH_LEN + ct_input_len) != 0) {
+        free(ct_input);
+        mls_message_clear(&wire_msg);
         free(pre_gc);
         mls_tls_buf_free(&buf);
         mls_commit_clear(&commit);
         return MARMOT_ERR_MEMORY;
     }
     mls_tls_buf_append(&conf_buf, group->interim_transcript_hash, MLS_HASH_LEN);
-    mls_tls_buf_append(&conf_buf, buf.data, buf.len);
+    mls_tls_buf_append(&conf_buf, ct_input, ct_input_len);
     mls_crypto_hash(group->confirmed_transcript_hash, conf_buf.data, conf_buf.len);
     mls_tls_buf_free(&conf_buf);
+    free(ct_input);
 
     uint64_t previous_epoch = group->epoch;
     remember_resumption_psk(group, previous_epoch,
@@ -1794,6 +1870,7 @@ mls_group_self_update(MlsGroup *group, MlsCommitResult *result)
     group->epoch++;
     const uint8_t *prev_init = group->epoch_secrets.init_secret;
     if (group_derive_epoch(group, prev_init, commit_secret, NULL) != 0) {
+        mls_message_clear(&wire_msg);
         free(pre_gc);
         mls_tls_buf_free(&buf);
         mls_commit_clear(&commit);
@@ -1807,6 +1884,7 @@ mls_group_self_update(MlsGroup *group, MlsCommitResult *result)
 
     MlsTlsBuf int_buf;
     if (mls_tls_buf_init(&int_buf, MLS_HASH_LEN * 2) != 0) {
+        mls_message_clear(&wire_msg);
         free(pre_gc);
         mls_tls_buf_free(&buf);
         mls_commit_clear(&commit);
@@ -1817,14 +1895,13 @@ mls_group_self_update(MlsGroup *group, MlsCommitResult *result)
     mls_crypto_hash(group->interim_transcript_hash, int_buf.data, int_buf.len);
     mls_tls_buf_free(&int_buf);
 
-    /* Wrap the commit body in an authenticated PublicMessage using the
+    /* Finish the PublicMessage: confirmation tag + membership tag using the
      * pre-commit group context and membership key (RFC 9420 §6.2). */
     uint8_t *wire_commit = NULL;
     size_t wire_commit_len = 0;
-    if (wrap_commit_public_message(group, pre_epoch, pre_gc, pre_gc_len,
-                                   pre_membership_key,
-                                   buf.data, buf.len, confirmation_tag,
-                                   &wire_commit, &wire_commit_len) != 0) {
+    if (finish_commit_public_message(&wire_msg, pre_membership_key,
+                                     pre_gc, pre_gc_len, confirmation_tag,
+                                     &wire_commit, &wire_commit_len) != 0) {
         free(pre_gc);
         mls_tls_buf_free(&buf);
         mls_commit_clear(&commit);
@@ -3363,6 +3440,12 @@ mls_commit_serialize(const MlsCommit *commit, MlsTlsBuf *buf)
     if (mls_tls_buf_init(&proposals_buf, 256) != 0) return -1;
 
     for (size_t i = 0; i < commit->proposal_count; i++) {
+        /* ProposalOrRef (RFC 9420 §12.4): type 1 = inline proposal. The
+         * deserializer reads this discriminator, so it must be written here. */
+        if (mls_tls_write_u8(&proposals_buf, 1) != 0) {
+            mls_tls_buf_free(&proposals_buf);
+            return -1;
+        }
         if (proposal_serialize(&commit->proposals[i], &proposals_buf) != 0) {
             mls_tls_buf_free(&proposals_buf);
             return -1;

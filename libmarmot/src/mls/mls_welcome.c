@@ -168,38 +168,6 @@ mls_group_info_tbs_serialize_local(const MlsGroupInfo *gi, MlsTlsBuf *buf)
 }
 
 static int
-deserialize_ratchet_tree(const uint8_t *ratchet_tree, size_t tree_len,
-                         MlsRatchetTree *tree)
-{
-    MlsTlsReader tree_reader;
-    mls_tls_reader_init(&tree_reader, ratchet_tree, tree_len);
-
-    uint32_t n_leaves;
-    if (mls_tls_read_u32(&tree_reader, &n_leaves) != 0 ||
-        n_leaves == 0 || n_leaves > 100000) return -1;
-    if (mls_tree_new(tree, n_leaves) != 0) return -1;
-    uint32_t n_nodes = mls_tree_node_width(n_leaves);
-    for (uint32_t i = 0; i < n_nodes; i++) {
-        uint8_t node_type;
-        if (mls_tls_read_u8(&tree_reader, &node_type) != 0) return -1;
-        if (node_type == 0) {
-            tree->nodes[i].type = MLS_NODE_BLANK;
-        } else if (node_type == 1) {
-            tree->nodes[i].type = MLS_NODE_LEAF;
-            memset(&tree->nodes[i].leaf, 0, sizeof(MlsLeafNode));
-            if (mls_leaf_node_deserialize(&tree_reader, &tree->nodes[i].leaf) != 0) return -1;
-        } else if (node_type == 2) {
-            tree->nodes[i].type = MLS_NODE_PARENT;
-            memset(&tree->nodes[i].parent, 0, sizeof(MlsParentNode));
-            if (mls_parent_node_deserialize(&tree_reader, &tree->nodes[i].parent) != 0) return -1;
-        } else {
-            return -1;
-        }
-    }
-    return mls_tls_reader_done(&tree_reader) ? 0 : -1;
-}
-
-static int
 find_ratchet_tree_extension(const uint8_t *exts, size_t exts_len,
                             const uint8_t **tree_data, size_t *tree_len)
 {

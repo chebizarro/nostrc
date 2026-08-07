@@ -294,19 +294,31 @@ static void test_tree_add_leaf(void)
     assert(tree.n_leaves == 1);
     assert(tree.n_nodes == 1);
 
-    /* Add second leaf */
+    /* The slot stays blank until the caller populates it; a second add
+     * reuses the leftmost blank leaf (RFC 9420 §12.1.1). */
+    assert(mls_tree_add_leaf(&tree, &idx) == 0);
+    assert(idx == 0);
+    assert(tree.n_leaves == 1);
+    assert(tree.n_nodes == 1);
+
+    /* Populate leaf 0, then add: no blank leaf left, so the tree grows. */
+    tree.nodes[0].type = MLS_NODE_LEAF;
     assert(mls_tree_add_leaf(&tree, &idx) == 0);
     assert(idx == 2);
     assert(tree.n_leaves == 2);
     assert(tree.n_nodes == 3);
 
-    /* Add third leaf */
+    /* Populate leaf 1, add again: the tree doubles to 4 leaves and the
+     * leftmost new blank leaf (node 4) is returned. */
+    tree.nodes[2].type = MLS_NODE_LEAF;
     assert(mls_tree_add_leaf(&tree, &idx) == 0);
     assert(idx == 4);
-    assert(tree.n_leaves == 3);
-    assert(tree.n_nodes == 5);
+    assert(tree.n_leaves == 4);
+    assert(tree.n_nodes == 7);
 
-    /* Add fourth leaf */
+    /* Populate leaf 2; the next add reuses the remaining blank leaf 3
+     * (node 6) without growing the tree. */
+    tree.nodes[4].type = MLS_NODE_LEAF;
     assert(mls_tree_add_leaf(&tree, &idx) == 0);
     assert(idx == 6);
     assert(tree.n_leaves == 4);
