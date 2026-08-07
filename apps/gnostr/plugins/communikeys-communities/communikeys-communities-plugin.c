@@ -63,7 +63,7 @@ static const char * const *get_authors(GnostrPlugin *plugin) {
   return authors;
 }
 static const char *get_version(GnostrPlugin *plugin) {
-  (void)plugin; return "0.1";
+  (void)plugin; return "0.2";
 }
 static const int *get_supported_kinds(GnostrPlugin *plugin, gsize *n_kinds) {
   (void)plugin;

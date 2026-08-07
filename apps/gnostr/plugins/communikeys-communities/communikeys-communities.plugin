@@ -1,9 +1,9 @@
 [Plugin]
 Module=communikeys-communities
 Name=Communikeys Communities
-Description=Pubkey-owned NIP-CAS-0007 communities for ordinary Nostr relays.
+Description=Section browsing, verified ACLs, chat, and targeted publications for NIP-CAS-0007 communities.
 Authors=Gnostr Contributors
-Version=0.1
+Version=0.2
 Copyright=Copyright © 2026 Gnostr Contributors
 Website=https://github.com/chebizarro/nostrc
 Loader=c
