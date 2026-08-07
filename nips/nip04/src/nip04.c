@@ -809,3 +809,11 @@ legacy_done:
     return 0;
 #endif
 }
+
+int nostr_nip04_legacy_decrypt_enabled(void) {
+#ifdef NIP04_STRICT_AEAD_ONLY
+    return 0;
+#else
+    return 1;
+#endif
+}

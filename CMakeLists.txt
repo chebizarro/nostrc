@@ -357,8 +357,13 @@ if(BUILD_LIBHANAMI AND EXISTS ${CMAKE_SOURCE_DIR}/libhanami/CMakeLists.txt)
   add_subdirectory(libhanami)
 endif()
 
-# Shared test infrastructure (testkit) — must come before libraries that use it
-if(BUILD_TESTING)
+# GObject wrapper option is declared early so the testkit guard below can see it.
+option(BUILD_NOSTR_GOBJECT "Build nostr-gobject GObject wrapper" ON)
+
+# Shared test infrastructure (testkit) — must come before libraries that use it.
+# The testkit hard-depends on nostr-gobject headers (storage_ndb.h), so skip it
+# in builds that disable the GObject wrapper (e.g. libhanami-focused CI).
+if(BUILD_TESTING AND BUILD_NOSTR_GOBJECT)
   add_subdirectory(tests/testkit)
 endif()
 
@@ -375,7 +380,7 @@ if (BUILD_MARMOT_GOBJECT AND BUILD_LIBMARMOT)
 endif()
 
 # GObject wrapper layer (nostr-gobject-1.0) — must come after NIP targets
-option(BUILD_NOSTR_GOBJECT "Build nostr-gobject GObject wrapper" ON)
+# (option declared above, before the testkit guard)
 if (BUILD_NOSTR_GOBJECT)
   add_subdirectory(nostr-gobject)
 endif()

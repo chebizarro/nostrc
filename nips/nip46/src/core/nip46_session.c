@@ -2513,6 +2513,13 @@ int nostr_nip46_session_set_transport_mode(
         mode != NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION) {
         return -1;
     }
+    /* Strict AEAD-only builds compile the legacy CBC decrypt path out of
+     * nip04 entirely; a session negotiated to the legacy transport could
+     * encrypt but never decrypt inbound traffic. Refuse the mode up front. */
+    if (mode == NOSTR_NIP46_TRANSPORT_NIP04_LEGACY &&
+        !nostr_nip04_legacy_decrypt_enabled()) {
+        return -1;
+    }
     if (s->client_pool_started || s->listening) return -1;
     s->transport_mode = mode;
     return 0;

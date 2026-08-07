@@ -7,6 +7,7 @@
 #include "nostr/nip46/nip46_client.h"
 #include "nostr/nip46/nip46_envelope.h"
 #include "nostr/nip46/nip46_msg.h"
+#include "nostr/nip04.h"
 #include "nostr-keys.h"
 
 static const char *CLIENT_SK =
@@ -89,7 +90,19 @@ int main(void) {
     nostr_nip46_session_free(defaults);
 
     exercise_mode(NOSTR_NIP46_TRANSPORT_NIP44_V2, client_pk, bunker_pk);
-    exercise_mode(NOSTR_NIP46_TRANSPORT_NIP04_LEGACY, client_pk, bunker_pk);
+    if (nostr_nip04_legacy_decrypt_enabled()) {
+        exercise_mode(NOSTR_NIP46_TRANSPORT_NIP04_LEGACY, client_pk, bunker_pk);
+    } else {
+        /* Strict AEAD-only builds must refuse the legacy transport outright
+         * instead of accepting a mode that can never decrypt. */
+        NostrNip46Session *strict = nostr_nip46_client_new();
+        assert(strict);
+        assert(nostr_nip46_session_set_transport_mode(
+                   strict, NOSTR_NIP46_TRANSPORT_NIP04_LEGACY) != 0);
+        assert(nostr_nip46_session_get_transport_mode(strict) ==
+               NOSTR_NIP46_TRANSPORT_NIP44_V2);
+        nostr_nip46_session_free(strict);
+    }
     exercise_mode(NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION,
                   client_pk, bunker_pk);
 
@@ -111,17 +124,19 @@ int main(void) {
     assert(plain == NULL);
     /* A hybrid value must not cross the configured NIP-04 shape check:
      * older code saw ?iv= and then dispatched the v=2 prefix as AEAD. */
-    assert(nostr_nip46_session_set_transport_mode(
-               receiver, NOSTR_NIP46_TRANSPORT_NIP04_LEGACY) == 0);
-    size_t hybrid_len = strlen(cipher) + strlen("?iv=AAAAAAAAAAAAAAAAAAAAAA==") + 1;
-    char *hybrid = malloc(hybrid_len);
-    assert(hybrid);
-    snprintf(hybrid, hybrid_len, "%s?iv=AAAAAAAAAAAAAAAAAAAAAA==", cipher);
-    plain = (char *)0x1;
-    assert(nostr_nip46_transport_decrypt(
-               receiver, client_pk, hybrid, &plain) != 0);
-    assert(plain == NULL);
-    free(hybrid);
+    if (nostr_nip04_legacy_decrypt_enabled()) {
+        assert(nostr_nip46_session_set_transport_mode(
+                   receiver, NOSTR_NIP46_TRANSPORT_NIP04_LEGACY) == 0);
+        size_t hybrid_len = strlen(cipher) + strlen("?iv=AAAAAAAAAAAAAAAAAAAAAA==") + 1;
+        char *hybrid = malloc(hybrid_len);
+        assert(hybrid);
+        snprintf(hybrid, hybrid_len, "%s?iv=AAAAAAAAAAAAAAAAAAAAAA==", cipher);
+        plain = (char *)0x1;
+        assert(nostr_nip46_transport_decrypt(
+                   receiver, client_pk, hybrid, &plain) != 0);
+        assert(plain == NULL);
+        free(hybrid);
+    }
     free(cipher);
     nostr_nip46_session_free(receiver);
     nostr_nip46_session_free(sender);

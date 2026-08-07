@@ -111,6 +111,19 @@ int nostr_nip04_decrypt_secure(
     char **out_error);
 
 /**
+ * nostr_nip04_legacy_decrypt_enabled:
+ *
+ * Reports whether this build of the NIP-04 module accepts original NIP-04
+ * CBC interoperability payloads ("base64(ct)?iv=base64(iv)") on decrypt.
+ * Builds configured with NIP04_STRICT_AEAD_ONLY compile the legacy decrypt
+ * path out entirely; callers that would negotiate a legacy transport must
+ * consult this capability first instead of failing mid-conversation.
+ *
+ * Returns: 1 when legacy CBC decrypt is available; 0 in strict AEAD-only builds.
+ */
+int nostr_nip04_legacy_decrypt_enabled(void);
+
+/**
  * nostr_nip04_shared_secret_hex: DEPRECATED — do not use in new code.
  * @peer_pubkey_hex: (not nullable): Hex-encoded secp256k1 public key of the peer.
  * @self_seckey_hex: (not nullable): Hex-encoded 32-byte secp256k1 secret key of self.

@@ -31,7 +31,10 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
         FILES_MATCHING PATTERN "*.h")
 
 # Tests
-if(BUILD_TESTING)
+# nostr_nip57_core references bolt11 symbols (bolt11_decode_minimal, tal_free)
+# that are only compiled when the vendored nostrdb backend is enabled, so the
+# test executables cannot link in nostrdb-less configurations (e.g. libhanami CI).
+if(BUILD_TESTING AND LIBNOSTR_WITH_NOSTRDB)
     if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip57.c)
         add_executable(test_nip57 tests/test_nip57.c)
         target_include_directories(test_nip57

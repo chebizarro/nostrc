@@ -8,6 +8,27 @@
 #include <nostr-utils.h>
 #include <secure_buf.h>
 
+/* MinGW/MSVC lack POSIX setenv/unsetenv; route through _putenv. */
+#ifdef _WIN32
+static int test_setenv(const char *name, const char *value) {
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s=%s", name, value);
+    return _putenv(buf);
+}
+static int test_unsetenv(const char *name) {
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s=", name);
+    return _putenv(buf);
+}
+#else
+static int test_setenv(const char *name, const char *value) {
+    return setenv(name, value, 1);
+}
+static int test_unsetenv(const char *name) {
+    return unsetenv(name);
+}
+#endif
+
 static const char *SENDER_SK =
     "0000000000000000000000000000000000000000000000000000000000000001";
 static const char *RECEIVER_SK =
@@ -99,14 +120,17 @@ int main(void) {
     free(legacy);
 
     /* The old process-global downgrade is ignored by generic encryption. */
-    assert(setenv("NIP04_LEGACY_CBC", "1", 1) == 0);
+    /* Call outside assert() so the env manipulation survives NDEBUG builds. */
+    int legacy_env_rc = test_setenv("NIP04_LEGACY_CBC", "1");
+    assert(legacy_env_rc == 0);
+    (void)legacy_env_rc;
     char *generic = NULL;
     assert(nostr_nip04_encrypt_secure(
                "still aead", RECEIVER_PK, &sender, &generic, &error) == 0);
     assert(generic && strncmp(generic, "v=2:", 4) == 0);
     free(error);
     free(generic);
-    unsetenv("NIP04_LEGACY_CBC");
+    test_unsetenv("NIP04_LEGACY_CBC");
 
     secure_free(&sender);
     secure_free(&receiver);
