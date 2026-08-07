@@ -42,7 +42,6 @@ template $NostrGtkComposer: Widget {
         icon-name: "window-close-symbolic";
         tooltip-text: "Cancel reply";
         has-frame: false;
-        clicked => $on_cancel_reply_clicked();
 
         styles [
           "flat",
@@ -139,7 +138,6 @@ template $NostrGtkComposer: Widget {
         icon-name: "insert-image-symbolic";
         tooltip-text: "Attach image or file";
         has-frame: false;
-        clicked => $on_attach_clicked();
 
         styles [
           "flat",
@@ -150,7 +148,6 @@ template $NostrGtkComposer: Widget {
         icon-name: "dialog-warning-symbolic";
         tooltip-text: "Mark as sensitive content";
         has-frame: false;
-        toggled => $on_sensitive_toggled();
 
         styles [
           "flat",
@@ -161,7 +158,6 @@ template $NostrGtkComposer: Widget {
         icon-name: "document-save-symbolic";
         tooltip-text: "Save as draft";
         has-frame: false;
-        clicked => $on_save_draft_clicked();
 
         styles [
           "flat",
@@ -229,7 +225,6 @@ template $NostrGtkComposer: Widget {
       Button btn_post {
         label: "Post";
         tooltip-text: "Publish note";
-        clicked => $on_post_clicked();
       }
     }
   }

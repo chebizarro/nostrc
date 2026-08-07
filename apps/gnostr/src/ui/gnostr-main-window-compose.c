@@ -63,7 +63,9 @@ static void on_composer_toast_requested(NostrGtkComposer *composer,
 static void on_composer_upload_blossom_done(GnostrBlossomBlob *blob,
                                             GError *error,
                                             gpointer user_data) {
-  NostrGtkComposer *composer = NOSTR_GTK_COMPOSER(user_data);
+  /* nostrc-13gf: user_data carries a strong ref (transfer full) */
+  g_autoptr(GObject) composer_holder = user_data ? G_OBJECT(user_data) : NULL;
+  NostrGtkComposer *composer = (NostrGtkComposer *)composer_holder;
   if (!NOSTR_GTK_IS_COMPOSER(composer)) {
     if (blob) gnostr_blossom_blob_free(blob);
     return;
@@ -91,8 +93,10 @@ static void on_composer_upload_requested(NostrGtkComposer *composer,
   if (!NOSTR_GTK_IS_COMPOSER(composer) || !file_path) return;
 
   g_message("main-window: handling upload request for %s", file_path);
+  /* nostrc-13gf: strong ref - the compose dialog can be closed while the
+   * upload is in flight; the callback unrefs. */
   gnostr_media_upload_async(file_path, NULL,
-                            on_composer_upload_blossom_done, composer,
+                            on_composer_upload_blossom_done, g_object_ref(composer),
                             NULL);
 }
 
@@ -101,7 +105,9 @@ static void on_draft_save_done(GnostrDrafts *drafts,
                                const char *error_message,
                                gpointer user_data) {
   (void)drafts;
-  NostrGtkComposer *composer = NOSTR_GTK_COMPOSER(user_data);
+  /* nostrc-13gf: user_data carries a strong ref (transfer full) */
+  g_autoptr(GObject) composer_holder = user_data ? G_OBJECT(user_data) : NULL;
+  NostrGtkComposer *composer = (NostrGtkComposer *)composer_holder;
   if (!NOSTR_GTK_IS_COMPOSER(composer)) return;
   const char *d_tag = nostr_gtk_composer_get_current_draft_d_tag(composer);
   nostr_gtk_composer_draft_save_complete(composer, success, error_message, d_tag);
@@ -146,7 +152,7 @@ static void on_composer_save_draft_requested(NostrGtkComposer *composer,
   draft->is_sensitive = nostr_gtk_composer_is_sensitive(composer);
 
   GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
-  gnostr_drafts_save_async(drafts_mgr, draft, on_draft_save_done, composer);
+  gnostr_drafts_save_async(drafts_mgr, draft, on_draft_save_done, g_object_ref(composer));
 
   gnostr_draft_free(draft);
 }
@@ -225,7 +231,9 @@ static void on_draft_delete_done(GnostrDrafts *drafts,
                                  gpointer user_data) {
   (void)drafts;
   (void)error_message;
-  NostrGtkComposer *composer = NOSTR_GTK_COMPOSER(user_data);
+  /* nostrc-13gf: user_data carries a strong ref (transfer full) */
+  g_autoptr(GObject) composer_holder = user_data ? G_OBJECT(user_data) : NULL;
+  NostrGtkComposer *composer = (NostrGtkComposer *)composer_holder;
   if (!NOSTR_GTK_IS_COMPOSER(composer)) return;
   nostr_gtk_composer_draft_delete_complete(composer, NULL, success);
 }
@@ -237,7 +245,7 @@ static void on_composer_draft_delete_requested(NostrGtkComposer *composer,
   if (!NOSTR_GTK_IS_COMPOSER(composer) || !d_tag) return;
 
   GnostrDrafts *drafts_mgr = gnostr_drafts_get_default();
-  gnostr_drafts_delete_async(drafts_mgr, d_tag, on_draft_delete_done, composer);
+  gnostr_drafts_delete_async(drafts_mgr, d_tag, on_draft_delete_done, g_object_ref(composer));
 }
 
 static void connect_composer_signals(NostrGtkComposer *composer,

@@ -142,6 +142,15 @@ static void relay_publish_thread(GTask *task, gpointer source_object,
                                  gpointer task_data, GCancellable *cancellable);
 static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer user_data);
 
+/* nostrc-13gf: Close the compose dialog from an idle callback so widget
+ * teardown never happens inside event/signal dispatch. */
+static gboolean gnostr_compose_dialog_deferred_close(gpointer data) {
+  AdwDialog *dialog = ADW_DIALOG(data);
+  if (dialog && ADW_IS_DIALOG(dialog))
+    adw_dialog_force_close(dialog);
+  return G_SOURCE_REMOVE;
+}
+
 void
 gnostr_main_window_publish_event_json_async_internal(
     GnostrMainWindow *self,
@@ -465,8 +474,15 @@ publish_finish_if_settled(PublishContext *ctx)
       GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(composer));
       AdwDialog *dialog = ADW_DIALOG(g_object_get_data(G_OBJECT(composer), "compose-dialog"));
       if (root != NULL && dialog && ADW_IS_DIALOG(dialog)) {
-        adw_dialog_force_close(dialog);
+        /* nostrc-13gf: clear BEFORE closing, and defer the close to an idle
+         * so the dialog (and composer) are never torn down from inside
+         * event/signal dispatch.  Force-closing mid-gesture left GTK's
+         * active widget accounting broken ("Broken accounting of active
+         * state" warning) and could invoke stale button closures. */
         nostr_gtk_composer_clear(composer);
+        g_idle_add_full(G_PRIORITY_DEFAULT,
+                        gnostr_compose_dialog_deferred_close,
+                        g_object_ref(dialog), g_object_unref);
       }
     }
 

@@ -169,16 +169,23 @@ static void on_file_chooser_response(GObject *source, GAsyncResult *res, gpointe
       g_warning("File chooser error: %s", error->message);
     }
     g_error_free(error);
+    if (file) g_object_unref(file);
+    if (user_data) g_object_unref(user_data);
     return;
   }
 
-  if (!file) return;
+  if (!file) {
+    if (user_data) g_object_unref(user_data);
+    return;
+  }
 
   if (user_data == NULL) {
     g_object_unref(file);
     return;
   }
-  NostrGtkComposer *self = (NostrGtkComposer*)user_data;
+  /* nostrc-13gf: user_data carries a strong ref (transfer full) */
+  g_autoptr(GObject) self_holder = G_OBJECT(user_data);
+  NostrGtkComposer *self = (NostrGtkComposer*)self_holder;
   if (!NOSTR_GTK_IS_COMPOSER(self)) {
     g_object_unref(file);
     return;
@@ -275,8 +282,10 @@ static void on_attach_clicked(NostrGtkComposer *self, GtkButton *button) {
     }
   }
 
+  /* nostrc-13gf: hold a strong ref across the async dialog - the composer
+   * (and its compose dialog) can be destroyed while the chooser is open. */
   gtk_file_dialog_open(dialog, parent_window, NULL,
-                       on_file_chooser_response, self);
+                       on_file_chooser_response, g_object_ref(self));
 
   g_object_unref(filters);
   g_object_unref(filter_images);
@@ -396,11 +405,13 @@ static void nostr_gtk_composer_class_init(NostrGtkComposerClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, drafts_empty_label);
     gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, btn_save_draft);
     gtk_widget_class_bind_template_child(widget_class, NostrGtkComposer, placeholder_label);
-  gtk_widget_class_bind_template_callback(widget_class, on_post_clicked);
-  gtk_widget_class_bind_template_callback(widget_class, on_cancel_reply_clicked);
-  gtk_widget_class_bind_template_callback(widget_class, on_attach_clicked);
-  gtk_widget_class_bind_template_callback(widget_class, on_sensitive_toggled);
-  gtk_widget_class_bind_template_callback(widget_class, on_save_draft_clicked);
+  /* nostrc-13gf: Button handlers are connected in init with
+   * g_signal_connect_object (lifetime-tracked) instead of template
+   * <signal> auto-connect.  Template closures carry a raw swapped pointer
+   * to the composer: when the dialog was force-closed mid-gesture (e.g.
+   * relay OK arriving between press and release of "Post"), GTK kept the
+   * button alive through the active input sequence and later invoked the
+   * closure with a finalized composer - a use-after-free crash. */
 
   signals[SIGNAL_POST_REQUESTED] =
       g_signal_new("post-requested",
@@ -494,6 +505,27 @@ on_buffer_changed_update_placeholder(GtkTextBuffer *buffer, gpointer user_data)
 
 static void nostr_gtk_composer_init(NostrGtkComposer *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+
+  /* nostrc-13gf: lifetime-tracked handler connections (see class_init note).
+   * g_signal_connect_object invalidates the closure once the composer is
+   * disposed, so a click delivered after teardown becomes a no-op instead
+   * of a use-after-free. */
+  if (self->btn_post)
+    g_signal_connect_object(self->btn_post, "clicked",
+                            G_CALLBACK(on_post_clicked), self, G_CONNECT_SWAPPED);
+  if (self->btn_cancel_reply)
+    g_signal_connect_object(self->btn_cancel_reply, "clicked",
+                            G_CALLBACK(on_cancel_reply_clicked), self, G_CONNECT_SWAPPED);
+  if (self->btn_attach)
+    g_signal_connect_object(self->btn_attach, "clicked",
+                            G_CALLBACK(on_attach_clicked), self, G_CONNECT_SWAPPED);
+  if (self->btn_sensitive)
+    g_signal_connect_object(self->btn_sensitive, "toggled",
+                            G_CALLBACK(on_sensitive_toggled), self, G_CONNECT_SWAPPED);
+  if (self->btn_save_draft)
+    g_signal_connect_object(self->btn_save_draft, "clicked",
+                            G_CALLBACK(on_save_draft_clicked), self, G_CONNECT_SWAPPED);
+
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->text_view),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Composer", -1);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_post),
@@ -508,11 +540,11 @@ static void nostr_gtk_composer_init(NostrGtkComposer *self) {
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_sensitive),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, "Mark as Sensitive", -1);
   }
-  /* Connect buffer-changed to show/hide placeholder */
+  /* Connect buffer-changed to show/hide placeholder (lifetime-tracked) */
   if (self->text_view && GTK_IS_TEXT_VIEW(self->text_view)) {
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
-    g_signal_connect(buffer, "changed",
-                     G_CALLBACK(on_buffer_changed_update_placeholder), self);
+    g_signal_connect_object(buffer, "changed",
+                            G_CALLBACK(on_buffer_changed_update_placeholder), self, 0);
   }
 
   self->is_sensitive = FALSE;
@@ -527,10 +559,10 @@ static void nostr_gtk_composer_init(NostrGtkComposer *self) {
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_save_draft),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, "Save Draft", -1);
   }
-  /* Connect popover show signal to emit load-drafts-requested */
+  /* Connect popover show signal to emit load-drafts-requested (lifetime-tracked) */
   if (self->drafts_popover && GTK_IS_POPOVER(self->drafts_popover)) {
-    g_signal_connect(self->drafts_popover, "show",
-                     G_CALLBACK(on_drafts_popover_show), self);
+    g_signal_connect_object(self->drafts_popover, "show",
+                            G_CALLBACK(on_drafts_popover_show), self, 0);
   }
 }
 
