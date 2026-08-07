@@ -858,6 +858,29 @@ int nostr_nip46_client_start(NostrNip46Session *s) {
 
     int connected = (conn_sel.selected_case == 0 && conn_sel.ok);
 
+    /* nostrc-koso: With multiple relays, waiting only for the FIRST connection
+     * races the rest: the response subscription below fails silently on relays
+     * whose websocket isn't up yet (nostr_subscription_fire requires a live
+     * connection and is never retried), and the RPC publish skips them too.
+     * Kind 24133 is ephemeral, so a request published before a signer's relay
+     * connects is lost forever — signers that listen on a single relay (e.g.
+     * nsec.app on relay.nsec.app) then never see the request. Give the
+     * remaining relays a short grace window to finish connecting. */
+    if (connected && s->client_pool->relay_count > 1) {
+        for (int waited_ms = 0; waited_ms < 3000; waited_ms += 100) {
+            size_t up = 0;
+            for (size_t i = 0; i < s->client_pool->relay_count; i++) {
+                NostrRelay *r = s->client_pool->relays[i];
+                if (r && nostr_relay_is_connected(r)) up++;
+            }
+            if (up >= s->client_pool->relay_count) break;
+            /* Use the connect channel as the wait primitive; a received
+             * signal or a 100ms timeout both just re-check the counts. */
+            connect_recv = NULL;
+            (void)go_select_timeout(connect_cases, 1, 100);
+        }
+    }
+
     for (size_t i = 0; i < s->client_pool->relay_count; i++) {
         if (s->client_pool->relays[i]) {
             nostr_relay_set_state_callback(s->client_pool->relays[i], NULL, NULL);
@@ -1279,28 +1302,30 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     secure_free(&sb);
     free(cipher);
 
-    /* nostrc-3l6f: Publish request via persistent pool to all connected relays */
+    /* nostrc-3l6f: Publish request via persistent pool to all connected relays.
+     * nostrc-koso: track per-relay publish state and keep the event alive —
+     * relays still connecting get a late publish during the response wait
+     * below, so the request reaches signers that listen on a single relay. */
     fprintf(stderr, "[nip46] %s: publishing via persistent pool (%zu relay(s))\n",
             method, s->client_pool->relay_count);
 
+    size_t pool_relay_count = s->client_pool->relay_count;
+    unsigned char *published_to =
+        (unsigned char *)calloc(pool_relay_count ? pool_relay_count : 1, 1);
     int published = 0;
-    for (size_t i = 0; i < s->client_pool->relay_count; i++) {
+    for (size_t i = 0; i < pool_relay_count; i++) {
         NostrRelay *relay = s->client_pool->relays[i];
         if (relay && nostr_relay_is_connected(relay)) {
             nostr_relay_publish(relay, req_ev);
+            if (published_to) published_to[i] = 1;
             published++;
             fprintf(stderr, "[nip46] %s: published to %s\n", method, nostr_relay_get_url_const(relay));
         }
     }
-    nostr_event_free(req_ev);
 
-    if (published == 0) {
-        fprintf(stderr, "[nip46] %s: ERROR: no connected relays to publish to\n", method);
-        pending_request_cancel(s, req_id);
-        return NULL;
-    }
-
-    /* Wait for response on channel with the configured per-session timeout. */
+    /* Wait for response on channel with the configured per-session timeout.
+     * nostrc-koso: wait in slices; between slices, publish to relays that
+     * finished connecting after the initial publish attempt. */
     fprintf(stderr, "[nip46] %s: waiting for response on relay subscription (timeout=%u ms)\n",
             method, pr->timeout_ms);
 
@@ -1310,10 +1335,36 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     response_cases[0].chan = pr->response_chan;
     response_cases[0].recv_buf = &recv_buf;
 
-    GoSelectResult response_sel = go_select_timeout(response_cases, 1, pr->timeout_ms);
+    GoSelectResult response_sel = { .selected_case = -1, .ok = false };
+    uint32_t waited_ms = 0;
+    while (waited_ms < pr->timeout_ms) {
+        uint32_t slice = pr->timeout_ms - waited_ms;
+        if (slice > 500) slice = 500;
+        response_sel = go_select_timeout(response_cases, 1, slice);
+        if (response_sel.selected_case == 0) break;
+        waited_ms += slice;
+        /* Late publish to relays that connected after the first attempt */
+        for (size_t i = 0; i < pool_relay_count && published_to; i++) {
+            NostrRelay *relay = s->client_pool->relays[i];
+            if (!published_to[i] && relay && nostr_relay_is_connected(relay)) {
+                nostr_relay_publish(relay, req_ev);
+                published_to[i] = 1;
+                published++;
+                fprintf(stderr, "[nip46] %s: late publish to %s\n",
+                        method, nostr_relay_get_url_const(relay));
+            }
+        }
+    }
+    free(published_to);
+    nostr_event_free(req_ev);
+
     if (response_sel.selected_case < 0) {
-        fprintf(stderr, "[nip46] %s: timed out waiting for response after %u ms\n",
-                method, pr->timeout_ms);
+        if (published == 0) {
+            fprintf(stderr, "[nip46] %s: ERROR: no relay ever connected to publish to\n", method);
+        } else {
+            fprintf(stderr, "[nip46] %s: timed out waiting for response after %u ms\n",
+                    method, pr->timeout_ms);
+        }
         pending_request_cancel(s, req_id);
         return NULL;
     }
