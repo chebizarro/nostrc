@@ -306,6 +306,146 @@ test_note_card_reserved_height_blocks_passive_expansion(void)
 
 static guint rich_media_request_count;
 
+typedef struct {
+    guint request_count;
+    NostrGtkMediaTextureReadyFunc callback;
+    gpointer user_data;
+    GDestroyNotify user_data_destroy;
+} DeferredMediaRequest;
+
+static void
+deferred_media_texture_request(gpointer loader,
+                               const char *url,
+                               NostrGtkMediaResourceClass resource_class,
+                               int target_width,
+                               int target_height,
+                               GCancellable *cancellable,
+                               NostrGtkMediaTextureReadyFunc callback,
+                               gpointer user_data,
+                               GDestroyNotify user_data_destroy)
+{
+    DeferredMediaRequest *request = loader;
+    g_assert_nonnull(request);
+    g_assert_nonnull(url);
+    g_assert_cmpint(resource_class, ==, NOSTR_GTK_MEDIA_RESOURCE_INLINE);
+    g_assert_cmpint(target_width, >, 0);
+    g_assert_cmpint(target_height, >, 0);
+    g_assert_false(g_cancellable_is_cancelled(cancellable));
+    g_assert_null(request->callback);
+
+    request->request_count++;
+    request->callback = callback;
+    request->user_data = user_data;
+    request->user_data_destroy = user_data_destroy;
+}
+
+static void
+deferred_media_request_complete(DeferredMediaRequest *request)
+{
+    g_assert_nonnull(request->callback);
+    NostrGtkMediaTextureReadyFunc callback = request->callback;
+    gpointer user_data = request->user_data;
+    GDestroyNotify user_data_destroy = request->user_data_destroy;
+    request->callback = NULL;
+    request->user_data = NULL;
+    request->user_data_destroy = NULL;
+
+    const guint8 pixel[] = { 0x33, 0x66, 0x99, 0xff };
+    g_autoptr(GBytes) bytes = g_bytes_new_static(pixel, sizeof(pixel));
+    g_autoptr(GdkTexture) texture = GDK_TEXTURE(gdk_memory_texture_new(
+        1, 1, GDK_MEMORY_R8G8B8A8, bytes, 4));
+    callback(texture, NULL, user_data);
+    if (user_data_destroy)
+        user_data_destroy(user_data);
+}
+
+static GtkPicture *
+find_rich_media_picture(GtkWidget *widget)
+{
+    if (!widget)
+        return NULL;
+
+    GtkWidget *picture = g_object_get_data(G_OBJECT(widget), "media-picture");
+    if (GTK_IS_PICTURE(picture))
+        return GTK_PICTURE(picture);
+
+    for (GtkWidget *child = gtk_widget_get_first_child(widget);
+         child;
+         child = gtk_widget_get_next_sibling(child)) {
+        GtkPicture *found = find_rich_media_picture(child);
+        if (found)
+            return found;
+    }
+    return NULL;
+}
+
+static void
+drain_main_context_for(gint64 duration_us)
+{
+    gint64 deadline = g_get_monotonic_time() + duration_us;
+    do {
+        gboolean dispatched = FALSE;
+        while (g_main_context_iteration(NULL, FALSE))
+            dispatched = TRUE;
+        if (!dispatched)
+            g_usleep(1000);
+    } while (g_get_monotonic_time() < deadline);
+    while (g_main_context_iteration(NULL, FALSE)) {}
+}
+
+static void
+wait_for_widget_mapped_state(GtkWidget *widget, gboolean expected_mapped)
+{
+    gint64 deadline = g_get_monotonic_time() + 2 * G_TIME_SPAN_SECOND;
+    while (gtk_widget_get_mapped(widget) != expected_mapped &&
+           g_get_monotonic_time() < deadline) {
+        while (g_main_context_iteration(NULL, FALSE)) {}
+        g_usleep(1000);
+    }
+    g_assert_cmpint(gtk_widget_get_mapped(widget), ==, expected_mapped);
+
+    /* Mapping state flips before all frame-clock surface updates have thawed.
+     * Let delayed update sources settle before the next hide/present/destroy. */
+    drain_main_context_for(100 * G_TIME_SPAN_MILLISECOND);
+}
+
+static GtkWindow *
+present_test_window(GtkWidget *child, int width, int height)
+{
+    GtkWindow *window = GTK_WINDOW(gtk_window_new());
+    gtk_window_set_default_size(window, width, height);
+    gtk_window_set_child(window, child);
+    gtk_window_present(window);
+    wait_for_widget_mapped_state(GTK_WIDGET(window), TRUE);
+    return window;
+}
+
+static void
+destroy_settled_test_window(GtkWindow *window)
+{
+    if (gtk_widget_get_mapped(GTK_WIDGET(window))) {
+        gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+        wait_for_widget_mapped_state(GTK_WIDGET(window), FALSE);
+    }
+    gtk_window_set_child(window, NULL);
+    drain_main_context_for(50 * G_TIME_SPAN_MILLISECOND);
+    gtk_window_destroy(window);
+    drain_main_context_for(100 * G_TIME_SPAN_MILLISECOND);
+}
+
+static void
+wait_for_deferred_request(DeferredMediaRequest *request, guint expected_count)
+{
+    gint64 deadline = g_get_monotonic_time() + 500 * G_TIME_SPAN_MILLISECOND;
+    while ((request->request_count < expected_count || !request->callback) &&
+           g_get_monotonic_time() < deadline) {
+        while (g_main_context_iteration(NULL, FALSE)) {}
+        g_usleep(1000);
+    }
+    g_assert_cmpuint(request->request_count, ==, expected_count);
+    g_assert_nonnull(request->callback);
+}
+
 static void
 fake_media_texture_request(gpointer loader,
                            const char *url,
@@ -397,6 +537,102 @@ test_rich_content_hydration_preserves_reserved_height(void)
 
     gtk_window_destroy(window);
     while (g_main_context_iteration(NULL, FALSE)) {}
+}
+
+static void
+test_rich_content_cache_delivery_survives_unmap(void)
+{
+    DeferredMediaRequest request = {0};
+    nostr_gtk_note_card_row_reset_rich_child_creation_count();
+
+    NostrGtkNoteCardRow *row = nostr_gtk_note_card_row_new();
+    g_object_ref_sink(row);
+    nostr_gtk_note_card_row_prepare_for_bind(row);
+    nostr_gtk_note_card_row_set_reserved_height(row, 360);
+    nostr_gtk_note_card_row_set_media_texture_loader(
+        row, &request, deferred_media_texture_request);
+
+    GnContentDescriptor image = {
+        .type = GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE,
+        .url = "https://example.test/image.png",
+    };
+    g_autoptr(GPtrArray) descriptors = g_ptr_array_new();
+    g_ptr_array_add(descriptors, &image);
+    nostr_gtk_note_card_row_set_rich_content(row, descriptors, 240, 0, 0);
+
+    /* The row's 360px compositor reservation can be smaller than the template
+     * root's minimum once its 240px media reservation and card chrome are
+     * combined. Width-for-height negotiation must clamp the internal GtkBox
+     * constraint without letting that minimum escape the row. */
+    int constrained_min_width = -1, constrained_natural_width = -1;
+    gtk_widget_measure(GTK_WIDGET(row), GTK_ORIENTATION_HORIZONTAL, 360,
+                       &constrained_min_width, &constrained_natural_width,
+                       NULL, NULL);
+    g_assert_cmpint(constrained_min_width, ==, 0);
+    g_assert_cmpint(constrained_natural_width, ==, 0);
+
+    GtkWindow *window = present_test_window(
+        GTK_WIDGET(row), REFERENCE_WIDTH_PX, 360);
+
+    wait_for_deferred_request(&request, 1);
+    deferred_media_request_complete(&request);
+    while (g_main_context_iteration(NULL, FALSE)) {}
+
+    GtkPicture *picture = find_rich_media_picture(GTK_WIDGET(row));
+    g_assert_nonnull(picture);
+    g_assert_nonnull(gtk_picture_get_paintable(picture));
+
+    /* Model GtkListView recycling while the parent is obscured by a modal.
+     * Use a fresh surface for each mapped phase so test-owned window teardown
+     * cannot overlap a subsequent present/update-freeze cycle. */
+    destroy_settled_test_window(window);
+    g_assert_false(gtk_widget_get_mapped(GTK_WIDGET(picture)));
+
+    nostr_gtk_note_card_row_prepare_for_unbind(row);
+    nostr_gtk_note_card_row_prepare_for_bind(row);
+    nostr_gtk_note_card_row_set_reserved_height(row, 360);
+    nostr_gtk_note_card_row_set_media_texture_loader(
+        row, &request, deferred_media_texture_request);
+    nostr_gtk_note_card_row_set_rich_content(row, descriptors, 240, 0, 0);
+
+    window = present_test_window(GTK_WIDGET(row), REFERENCE_WIDTH_PX, 360);
+    wait_for_deferred_request(&request, 2);
+    picture = find_rich_media_picture(GTK_WIDGET(row));
+    g_assert_nonnull(picture);
+    g_assert_null(gtk_picture_get_paintable(picture));
+
+    /* A memory-cache hit is still delivered asynchronously. If the modal
+     * temporarily unmaps the row before delivery, the current binding must
+     * retain the texture so remap is instant and requires no third request. */
+    destroy_settled_test_window(window);
+    g_assert_false(gtk_widget_get_mapped(GTK_WIDGET(picture)));
+    deferred_media_request_complete(&request);
+    g_assert_nonnull(gtk_picture_get_paintable(picture));
+
+    constrained_min_width = constrained_natural_width = -1;
+    gtk_widget_measure(GTK_WIDGET(row), GTK_ORIENTATION_HORIZONTAL, 360,
+                       &constrained_min_width, &constrained_natural_width,
+                       NULL, NULL);
+    g_assert_cmpint(constrained_min_width, ==, 0);
+    g_assert_cmpint(constrained_natural_width, ==, 0);
+
+    window = present_test_window(GTK_WIDGET(row), REFERENCE_WIDTH_PX, 360);
+    g_assert_true(gtk_widget_get_mapped(GTK_WIDGET(picture)));
+    g_assert_nonnull(gtk_picture_get_paintable(picture));
+    g_assert_cmpuint(request.request_count, ==, 2);
+    g_assert_cmpuint(
+        nostr_gtk_note_card_row_get_rich_child_creation_count(), ==, 2);
+
+    int min_height = 0, natural_height = 0;
+    gtk_widget_measure(GTK_WIDGET(row), GTK_ORIENTATION_VERTICAL,
+                       REFERENCE_WIDTH_PX, &min_height, &natural_height,
+                       NULL, NULL);
+    g_assert_cmpint(min_height, ==, 360);
+    g_assert_cmpint(natural_height, ==, 360);
+
+    destroy_settled_test_window(window);
+    nostr_gtk_note_card_row_prepare_for_unbind(row);
+    g_object_unref(row);
 }
 
 static void
@@ -510,6 +746,8 @@ main(int argc, char *argv[])
                     test_rich_content_hydration_preserves_reserved_height);
     g_test_add_func("/nostr-gtk/sizing/rich-content-buffer-bind-lightweight",
                     test_rich_content_buffer_bind_creates_no_expensive_children);
+    g_test_add_func("/nostr-gtk/sizing/rich-content-cache-delivery-survives-unmap",
+                    test_rich_content_cache_delivery_survives_unmap);
 
     return g_test_run();
 }

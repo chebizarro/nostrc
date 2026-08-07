@@ -2056,14 +2056,19 @@ nostr_gtk_note_card_layout_measure(GtkLayoutManager *manager,
   GtkWidget *child = gtk_widget_get_first_child(widget);
   if (child && gtk_widget_should_layout(child)) {
     int child_for_size = for_size;
-    if (orientation == GTK_ORIENTATION_VERTICAL && for_size >= 0) {
+    if (for_size >= 0) {
       /* GTK requires the opposite-orientation constraint passed to
-       * gtk_widget_measure() to be at least the child's minimum. Passing a
-       * narrower allocation emits a fatal critical under g_test. */
-      int child_minimum_width = 0;
-      gtk_widget_measure(child, GTK_ORIENTATION_HORIZONTAL, -1,
-                         &child_minimum_width, NULL, NULL, NULL);
-      child_for_size = MAX(for_size, child_minimum_width);
+       * gtk_widget_measure() to be at least the child's minimum. Clamp both
+       * directions: fixed-height rows can be queried for width at a height
+       * below the template root's minimum just as narrow timeline columns can
+       * be queried for height below the root's minimum width. The row still
+       * reports its compositor reservation and clips late content inside it. */
+      GtkOrientation opposite = orientation == GTK_ORIENTATION_VERTICAL
+          ? GTK_ORIENTATION_HORIZONTAL : GTK_ORIENTATION_VERTICAL;
+      int child_opposite_minimum = 0;
+      gtk_widget_measure(child, opposite, -1,
+                         &child_opposite_minimum, NULL, NULL, NULL);
+      child_for_size = MAX(for_size, child_opposite_minimum);
     }
     gtk_widget_measure(child, orientation, child_for_size,
                        minimum, natural,
@@ -2667,15 +2672,22 @@ on_injected_media_texture_ready(GdkTexture *texture,
   NostrGtkNoteCardRow *self = NOSTR_GTK_NOTE_CARD_ROW(row_obj);
   if (self->binding_id == ctx->binding_id &&
       !self->disposed &&
-      GTK_IS_PICTURE(picture) &&
-      gtk_widget_get_native(picture) != NULL &&
-      gtk_widget_get_mapped(picture)) {
+      GTK_IS_PICTURE(picture)) {
     GtkWidget *container = gtk_widget_get_parent(picture);
     if (texture) {
+      /* A memory-cache hit is delivered asynchronously. The row may be
+       * temporarily unmapped while a modal viewer is active, but this picture
+       * still belongs to the current binding. Install the texture now so the
+       * already-realized rich slot is populated immediately on remap. Binding
+       * identity plus the weak picture ref remain the recycle-safety guards. */
       gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
       if (container) show_loaded_image(container);
 #ifndef G_DISABLE_ASSERT
-      if (ctx->row_height_before_hydration > 0) {
+      /* Allocation is transitional off-map; keep mapped/native checks only
+       * around the geometry diagnostic, not around texture delivery. */
+      if (ctx->row_height_before_hydration > 0 &&
+          gtk_widget_get_native(picture) != NULL &&
+          gtk_widget_get_mapped(picture)) {
         GeometryInvariantCtx *assert_ctx = g_new0(GeometryInvariantCtx, 1);
         assert_ctx->binding_ctx = note_card_binding_context_ref(ctx->binding_ctx);
         assert_ctx->binding_id = ctx->binding_id;
