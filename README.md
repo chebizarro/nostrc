@@ -80,10 +80,12 @@ See `docs/NIP04_MIGRATION.md` for the API and interoperability matrix.
 
 ### GNostr remote media and metadata privacy
 
-- Automatic remote media, previews, and avatars are disabled by default.
-  Cached content can still render. Automatic network fetches occur only after
-  the user enables the setting; explicit media/preview actions can request
-  uncached content while automatic fetching remains disabled.
+- A single global setting (`load-remote-media`) controls automatic fetching of
+  remote media, previews, and avatars. It is **enabled by default**, so media,
+  previews, and avatars load automatically. Users who disable it switch to a
+  privacy/consent mode: cached content still renders, automatic network fetches
+  stop, and explicit per-item media/preview actions (click-to-load) can still
+  request uncached content on demand.
 - HTTP(S) media URLs reject embedded credentials, non-public literal/resolved
   addresses, reserved/private destinations, and ports other than 80/443.
   Redirects are manual, same-origin, revalidated, and limited to five hops.

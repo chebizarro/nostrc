@@ -528,6 +528,12 @@ og_preview_widget_set_url(OgPreviewWidget *self, const char *url)
   gtk_widget_set_visible(self->error_label, FALSE);
   gtk_widget_set_visible(self->card_box, FALSE);
   gtk_widget_set_visible(self->load_button, TRUE);
+
+  /* When the global "load-remote-media" setting is enabled (the default),
+   * previews load automatically. When disabled, the load button remains so the
+   * user can explicitly opt in per-preview (click-to-load privacy mode). */
+  if (gnostr_is_remote_media_allowed())
+    og_preview_widget_load(self);
 }
 
 void

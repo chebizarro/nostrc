@@ -194,12 +194,18 @@
       </description>
     </key>
     <key name="load-remote-media" type="b">
-      <default>false</default>
+      <default>true</default>
       <summary>Load remote media</summary>
       <description>
-        Whether to load remote images, videos, and other media from URLs in notes.
-        When disabled, media is not fetched and a placeholder is shown instead.
-        This improves privacy by preventing IP address leakage through media requests.
+        Global setting controlling whether remote images, videos, avatars, link
+        previews, and other media referenced by notes are fetched automatically.
+        Enabled by default. When disabled, media is not fetched automatically and
+        a placeholder (with an explicit click-to-load action) is shown instead;
+        this improves privacy by preventing IP address leakage through automatic
+        media requests. Regardless of this setting, any fetch that does occur is
+        subject to the SSRF/URL policy (credentials, private/loopback/link-local
+        and reserved addresses, and non-80/443 ports are rejected; redirects are
+        manual, same-origin, revalidated, and capped).
       </description>
     </key>
     <key name="video-autoplay" type="b">
