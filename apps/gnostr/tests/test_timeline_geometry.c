@@ -107,7 +107,7 @@ test_measured_height_is_reused_when_it_fits_reserved_footprint(void)
 }
 
 static void
-test_passive_measurement_cannot_change_effective_height(void)
+test_passive_measurement_refines_future_footprint(void)
 {
   g_autoptr(GnostrTimelineGeometryResolver) resolver =
     gnostr_timeline_geometry_resolver_new();
@@ -131,7 +131,8 @@ test_passive_measurement_cannot_change_effective_height(void)
   gnostr_timeline_geometry_resolver_resolve(resolver, &input, 480, &passive);
   g_assert_true(passive.geometry_measured);
   g_assert_cmpfloat(passive.measured_height, >, reserved);
-  g_assert_cmpfloat_with_epsilon(passive.effective_height, reserved, 0.001);
+  g_assert_cmpfloat_with_epsilon(passive.effective_height,
+                                 passive.measured_height, 0.001);
 
   gnostr_timeline_geometry_resolver_record_measurement(resolver,
                                                        input.event_id,
@@ -145,20 +146,9 @@ test_passive_measurement_cannot_change_effective_height(void)
   g_assert_cmpfloat(smaller.measured_height, <, reserved);
   g_assert_cmpfloat_with_epsilon(smaller.effective_height, reserved, 0.001);
 
-  input.explicit_expanded = TRUE;
-  GnostrTimelineRowFootprint explicit = { 0 };
-  gnostr_timeline_geometry_resolver_record_measurement(resolver,
-                                                       input.event_id,
-                                                       initial.width_bucket,
-                                                       initial.layout_signature,
-                                                       reserved + 240.0);
-  gnostr_timeline_geometry_resolver_resolve(resolver, &input, 480, &explicit);
-  g_assert_cmpfloat(explicit.effective_height, >, reserved);
-
   gnostr_timeline_row_footprint_clear(&initial);
   gnostr_timeline_row_footprint_clear(&passive);
   gnostr_timeline_row_footprint_clear(&smaller);
-  gnostr_timeline_row_footprint_clear(&explicit);
 }
 
 static void
@@ -332,8 +322,8 @@ main(int argc,
                   test_width_bucket_changes_do_not_reuse_measurement);
   g_test_add_func("/gnostr/timeline-geometry/measured-height-reuse",
                   test_measured_height_is_reused_when_it_fits_reserved_footprint);
-  g_test_add_func("/gnostr/timeline-geometry/no-passive-expansion",
-                  test_passive_measurement_cannot_change_effective_height);
+  g_test_add_func("/gnostr/timeline-geometry/passive-natural-refinement",
+                  test_passive_measurement_refines_future_footprint);
   g_test_add_func("/gnostr/timeline-geometry/rich-area-reservations",
                   test_rich_areas_reserve_additional_height);
   g_test_add_func("/gnostr/timeline-geometry/event-embed-fixed-reservation",

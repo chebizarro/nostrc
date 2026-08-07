@@ -338,6 +338,7 @@ static void
 test_rich_content_hydration_preserves_reserved_height(void)
 {
     rich_media_request_count = 0;
+    nostr_gtk_note_card_row_reset_rich_child_creation_count();
     NostrGtkNoteCardRow *row = nostr_gtk_note_card_row_new();
     nostr_gtk_note_card_row_prepare_for_bind(row);
     nostr_gtk_note_card_row_set_content(row, "Rich content geometry");
@@ -370,6 +371,8 @@ test_rich_content_hydration_preserves_reserved_height(void)
     g_assert_cmpint(before_min, ==, 720);
     g_assert_cmpint(before_nat, ==, 720);
     g_assert_cmpuint(rich_media_request_count, ==, 0);
+    g_assert_cmpuint(
+        nostr_gtk_note_card_row_get_rich_child_creation_count(), ==, 0);
 
     GtkWindow *window = GTK_WINDOW(gtk_window_new());
     gtk_window_set_default_size(window, REFERENCE_WIDTH_PX, 720);
@@ -383,6 +386,8 @@ test_rich_content_hydration_preserves_reserved_height(void)
     }
     while (g_main_context_iteration(NULL, FALSE)) {}
     g_assert_cmpuint(rich_media_request_count, ==, 1);
+    g_assert_cmpuint(
+        nostr_gtk_note_card_row_get_rich_child_creation_count(), ==, 3);
 
     int after_min = 0, after_nat = 0;
     gtk_widget_measure(GTK_WIDGET(row), GTK_ORIENTATION_VERTICAL,
@@ -392,6 +397,67 @@ test_rich_content_hydration_preserves_reserved_height(void)
 
     gtk_window_destroy(window);
     while (g_main_context_iteration(NULL, FALSE)) {}
+}
+
+static void
+test_rich_content_buffer_bind_creates_no_expensive_children(void)
+{
+    nostr_gtk_note_card_row_reset_rich_child_creation_count();
+    NostrGtkNoteCardRow *row = nostr_gtk_note_card_row_new();
+    g_object_ref_sink(row);
+    nostr_gtk_note_card_row_prepare_for_bind(row);
+    nostr_gtk_note_card_row_set_reserved_height(row, 900);
+
+    GnContentDescriptor image = {
+        .type = GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE,
+        .url = "https://example.test/image.png",
+    };
+    GnContentDescriptor video = {
+        .type = GN_CONTENT_DESCRIPTOR_MEDIA_VIDEO,
+        .url = "https://example.test/video.mp4",
+        .thumbnail_url = "https://example.test/poster.png",
+    };
+    GnContentDescriptor link = {
+        .type = GN_CONTENT_DESCRIPTOR_LINK_PREVIEW,
+        .url = "https://example.test/article",
+    };
+    GnContentDescriptor embed = {
+        .type = GN_CONTENT_DESCRIPTOR_NOSTR_EVENT_REF,
+        .original = "nostr:note1placeholder",
+    };
+    g_autoptr(GPtrArray) descriptors = g_ptr_array_new();
+    g_ptr_array_add(descriptors, &image);
+    g_ptr_array_add(descriptors, &video);
+    g_ptr_array_add(descriptors, &link);
+    g_ptr_array_add(descriptors, &embed);
+
+    nostr_gtk_note_card_row_set_rich_content(
+        row, descriptors, 480, 120, 160);
+
+    /* Window size negotiation may probe below the template child's intrinsic
+     * minimum width. The row layout manager must clamp the GTK measure
+     * constraint rather than emitting a fatal gtk_widget_measure() critical. */
+    int narrow_min = 0, narrow_nat = 0;
+    gtk_widget_measure(GTK_WIDGET(row), GTK_ORIENTATION_VERTICAL, 100,
+                       &narrow_min, &narrow_nat, NULL, NULL);
+    g_assert_cmpint(narrow_min, ==, 900);
+    g_assert_cmpint(narrow_nat, ==, 900);
+
+    g_assert_cmpuint(
+        nostr_gtk_note_card_row_get_rich_child_creation_count(), ==, 0);
+
+    /* A compatible recycle resets and rebinds the pooled fixed frames without
+     * realizing any image/video/OG/embed subtree while still unmapped. */
+    nostr_gtk_note_card_row_prepare_for_unbind(row);
+    nostr_gtk_note_card_row_prepare_for_bind(row);
+    nostr_gtk_note_card_row_set_reserved_height(row, 900);
+    nostr_gtk_note_card_row_set_rich_content(
+        row, descriptors, 480, 120, 160);
+    g_assert_cmpuint(
+        nostr_gtk_note_card_row_get_rich_child_creation_count(), ==, 0);
+
+    nostr_gtk_note_card_row_prepare_for_unbind(row);
+    g_object_unref(row);
 }
 
 static void
@@ -442,6 +508,8 @@ main(int argc, char *argv[])
                     test_note_card_explicit_expansion_allows_natural_height);
     g_test_add_func("/nostr-gtk/sizing/rich-content-hydration-fixed",
                     test_rich_content_hydration_preserves_reserved_height);
+    g_test_add_func("/nostr-gtk/sizing/rich-content-buffer-bind-lightweight",
+                    test_rich_content_buffer_bind_creates_no_expensive_children);
 
     return g_test_run();
 }

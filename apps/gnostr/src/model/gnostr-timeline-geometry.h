@@ -38,7 +38,6 @@ typedef struct {
   guint       repost_count;
   guint       reply_count;
   guint       zap_count;
-  gboolean    explicit_expanded;
 } GnostrTimelineGeometryInput;
 
 typedef struct {

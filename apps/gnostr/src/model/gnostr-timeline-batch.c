@@ -9,6 +9,12 @@ struct _GnostrTimelineBatch {
 
   GnostrTimelineBatchKind kind;
   guint64 generation;
+  gboolean has_page_result;
+  gboolean page_query_succeeded;
+  guint page_raw_result_count;
+  guint page_requested_count;
+  gint64 page_oldest_created_at;
+  gint64 page_newest_created_at;
   GArray *entries;          /* element-type: GnostrTimelineBatchEntry */
   GPtrArray *profile_requests; /* element-type: char* */
   GArray *metadata_patches; /* element-type: GnostrTimelineMetadataPatch */
@@ -137,6 +143,65 @@ gnostr_timeline_batch_get_generation(GnostrTimelineBatch *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_BATCH(self), 0);
   return self->generation;
+}
+
+void
+gnostr_timeline_batch_set_page_result(GnostrTimelineBatch *self,
+                                      gboolean query_succeeded,
+                                      guint raw_result_count,
+                                      guint requested_count,
+                                      gint64 oldest_created_at,
+                                      gint64 newest_created_at)
+{
+  g_return_if_fail(GNOSTR_IS_TIMELINE_BATCH(self));
+  self->has_page_result = TRUE;
+  self->page_query_succeeded = query_succeeded;
+  self->page_raw_result_count = raw_result_count;
+  self->page_requested_count = requested_count;
+  self->page_oldest_created_at = oldest_created_at;
+  self->page_newest_created_at = newest_created_at;
+}
+
+gboolean
+gnostr_timeline_batch_has_page_result(GnostrTimelineBatch *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_BATCH(self), FALSE);
+  return self->has_page_result;
+}
+
+gboolean
+gnostr_timeline_batch_get_page_query_succeeded(GnostrTimelineBatch *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_BATCH(self), FALSE);
+  return self->page_query_succeeded;
+}
+
+guint
+gnostr_timeline_batch_get_page_raw_result_count(GnostrTimelineBatch *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_BATCH(self), 0);
+  return self->page_raw_result_count;
+}
+
+guint
+gnostr_timeline_batch_get_page_requested_count(GnostrTimelineBatch *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_BATCH(self), 0);
+  return self->page_requested_count;
+}
+
+gint64
+gnostr_timeline_batch_get_page_oldest_created_at(GnostrTimelineBatch *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_BATCH(self), 0);
+  return self->page_oldest_created_at;
+}
+
+gint64
+gnostr_timeline_batch_get_page_newest_created_at(GnostrTimelineBatch *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_BATCH(self), 0);
+  return self->page_newest_created_at;
 }
 
 guint

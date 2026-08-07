@@ -493,7 +493,9 @@ gnostr_timeline_geometry_resolver_resolve(GnostrTimelineGeometryResolver *self,
     out_footprint->measured_height = measured;
     out_footprint->geometry_measured = TRUE;
 
-    if (input->explicit_expanded)
-      out_footprint->effective_height = MAX(out_footprint->estimated_height, measured);
+    /* Measurements are natural child heights captured before the row's fixed
+     * reservation clamp. Refine the next published footprint upward while
+     * never shrinking below the deterministic estimate. */
+    out_footprint->effective_height = MAX(out_footprint->estimated_height, measured);
   }
 }

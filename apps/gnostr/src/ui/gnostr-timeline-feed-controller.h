@@ -96,6 +96,8 @@ guint gnostr_timeline_feed_controller_get_retained_limit(GnostrTimelineFeedContr
 guint gnostr_timeline_feed_controller_get_geometry_cache_count(GnostrTimelineFeedController *self);
 gint64 gnostr_timeline_feed_controller_get_older_cursor(GnostrTimelineFeedController *self);
 gint64 gnostr_timeline_feed_controller_get_newer_cursor(GnostrTimelineFeedController *self);
+gboolean gnostr_timeline_feed_controller_get_older_exhausted(GnostrTimelineFeedController *self);
+gboolean gnostr_timeline_feed_controller_get_newer_exhausted(GnostrTimelineFeedController *self);
 void  gnostr_timeline_feed_controller_admit_pending_head(GnostrTimelineFeedController *self,
                                                          gboolean scroll_to_top);
 

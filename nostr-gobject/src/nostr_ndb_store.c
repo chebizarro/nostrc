@@ -245,10 +245,12 @@ ndb_store_get_profile_by_pubkey(GNostrStore *store, const gchar *pubkey_hex, GEr
     int json_len = 0;
     rc = storage_ndb_get_profile_by_pubkey(txn, pk32, &json, &json_len, NULL);
 
-    /* Copy before ending txn — json may reference txn-scoped memory */
+    /* The storage getter returns caller-owned JSON; copy into GLib-owned
+     * memory for the GNostrStore API, then release the storage allocation. */
     gchar *result = NULL;
     if (rc == 0 && json && json_len > 0)
         result = g_strndup(json, json_len);
+    free(json);
 
     storage_ndb_end_query(txn);
 

@@ -104,6 +104,23 @@ GnostrTimelineBatch *gnostr_timeline_batch_new(GnostrTimelineBatchKind kind,
 
 GnostrTimelineBatchKind gnostr_timeline_batch_get_kind(GnostrTimelineBatch *self);
 guint64 gnostr_timeline_batch_get_generation(GnostrTimelineBatch *self);
+
+/* Page-result metadata describes the raw database query before projection
+ * filters (mute/expiry/query matching) remove entries.  Controllers must use
+ * this rather than the hydrated entry count when deciding an edge is empty. */
+void gnostr_timeline_batch_set_page_result(GnostrTimelineBatch *self,
+                                           gboolean query_succeeded,
+                                           guint raw_result_count,
+                                           guint requested_count,
+                                           gint64 oldest_created_at,
+                                           gint64 newest_created_at);
+gboolean gnostr_timeline_batch_has_page_result(GnostrTimelineBatch *self);
+gboolean gnostr_timeline_batch_get_page_query_succeeded(GnostrTimelineBatch *self);
+guint gnostr_timeline_batch_get_page_raw_result_count(GnostrTimelineBatch *self);
+guint gnostr_timeline_batch_get_page_requested_count(GnostrTimelineBatch *self);
+gint64 gnostr_timeline_batch_get_page_oldest_created_at(GnostrTimelineBatch *self);
+gint64 gnostr_timeline_batch_get_page_newest_created_at(GnostrTimelineBatch *self);
+
 guint gnostr_timeline_batch_get_n_entries(GnostrTimelineBatch *self);
 const GnostrTimelineBatchEntry *gnostr_timeline_batch_get_entry(GnostrTimelineBatch *self,
                                                                 guint index);

@@ -447,25 +447,52 @@ query_results_into_batch(GnostrTimelineBatch *batch,
     return;
 
   const char *query_json = gnostr_timeline_query_to_json(query);
-  if (!query_json)
+  if (!query_json) {
+    gnostr_timeline_batch_set_page_result(batch, FALSE, 0, requested_count, 0, 0);
     return;
+  }
 
   void *txn = NULL;
   if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn) {
     g_warning("[SOURCE] query begin failed");
+    gnostr_timeline_batch_set_page_result(batch, FALSE, 0, requested_count, 0, 0);
     return;
   }
 
   StorageNdbNoteKeyResult *key_results = NULL;
   int result_count = 0;
+  g_autoptr(GError) query_error = NULL;
   int rc = storage_ndb_query_note_keys(txn, query_json,
-                                       &key_results, &result_count, NULL);
+                                       &key_results, &result_count,
+                                       &query_error);
+  guint raw_result_count =
+    rc == 0 && result_count > 0 ? (guint)result_count : 0;
+  gint64 oldest_created_at = 0;
+  gint64 newest_created_at = 0;
+  for (guint i = 0; i < raw_result_count; i++) {
+    gint64 created_at = (gint64)key_results[i].created_at;
+    if (oldest_created_at == 0 || created_at < oldest_created_at)
+      oldest_created_at = created_at;
+    if (created_at > newest_created_at)
+      newest_created_at = created_at;
+  }
+  gnostr_timeline_batch_set_page_result(batch, rc == 0,
+                                        raw_result_count, requested_count,
+                                        oldest_created_at, newest_created_at);
+  if (rc != 0) {
+    g_warning("[SOURCE] note-key query failed: %s",
+              query_error ? query_error->message : "unknown error");
+    g_free(key_results);
+    storage_ndb_end_query(txn);
+    return;
+  }
+
   GHashTable *profile_cache = g_hash_table_new_full(g_str_hash, g_str_equal,
                                                     g_free,
                                                     source_profile_cache_entry_free);
 
   guint added = 0;
-  if (rc == 0 && key_results && result_count > 0) {
+  if (key_results && result_count > 0) {
     for (int i = 0; i < result_count; i++) {
       if (cancellable && g_cancellable_is_cancelled(cancellable))
         break;

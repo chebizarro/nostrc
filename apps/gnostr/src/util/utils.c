@@ -65,25 +65,62 @@ void gnostr_cleanup_shared_soup_session(void) {
 #define GNOSTR_CLIENT_SCHEMA_ID "org.gnostr.Client"
 #define GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY "load-remote-media"
 
+static GSettings *s_remote_media_settings;
+static gint s_remote_media_allowed;
+static gsize s_remote_media_settings_initialized;
+
+static void
+on_remote_media_setting_changed(GSettings *settings,
+                                gchar *key,
+                                gpointer user_data)
+{
+  (void)key;
+  (void)user_data;
+  g_atomic_int_set(&s_remote_media_allowed,
+                   g_settings_get_boolean(settings,
+                                          GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY));
+}
+
+static void
+ensure_remote_media_settings(void)
+{
+  if (!g_once_init_enter(&s_remote_media_settings_initialized))
+    return;
+
+  GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+  if (source) {
+    g_autoptr(GSettingsSchema) schema =
+      g_settings_schema_source_lookup(source, GNOSTR_CLIENT_SCHEMA_ID, TRUE);
+    if (schema &&
+        g_settings_schema_has_key(schema, GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY)) {
+      s_remote_media_settings = g_settings_new_full(schema, NULL, NULL);
+      g_atomic_int_set(&s_remote_media_allowed,
+                       g_settings_get_boolean(
+                         s_remote_media_settings,
+                         GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY));
+      g_signal_connect(s_remote_media_settings,
+                       "changed::" GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY,
+                       G_CALLBACK(on_remote_media_setting_changed), NULL);
+    } else {
+      g_debug("Remote media: GSettings schema/key unavailable; blocking");
+    }
+  }
+
+  g_once_init_leave(&s_remote_media_settings_initialized, 1);
+}
+
 gboolean
 gnostr_is_remote_media_allowed(void)
 {
-  GSettingsSchemaSource *source = g_settings_schema_source_get_default();
-  if (!source) return FALSE;
-
-  g_autoptr(GSettingsSchema) schema =
-      g_settings_schema_source_lookup(source, GNOSTR_CLIENT_SCHEMA_ID, TRUE);
-  if (!schema ||
-      !g_settings_schema_has_key(schema, GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY)) {
-    g_debug("Remote media: GSettings schema/key unavailable; blocking");
-    return FALSE;
-  }
-
-  g_autoptr(GSettings) settings =
-      g_settings_new_full(schema, NULL, NULL);
-  if (!settings) return FALSE;
-
-  return g_settings_get_boolean(settings, GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY);
+  ensure_remote_media_settings();
+  /* GSettings reads are thread-safe and authoritative even if the singleton
+   * was first touched from a worker whose thread-default context is not
+   * iterated. The changed signal keeps the cached fast value synchronized for
+   * observers, while this policy check cannot become stale. */
+  if (s_remote_media_settings)
+    return g_settings_get_boolean(s_remote_media_settings,
+                                  GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY);
+  return g_atomic_int_get(&s_remote_media_allowed) != 0;
 }
 
 #endif /* HAVE_SOUP3 */

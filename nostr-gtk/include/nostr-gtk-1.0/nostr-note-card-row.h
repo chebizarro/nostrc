@@ -235,10 +235,10 @@ void nostr_gtk_note_card_row_set_media_texture_loader(
  * @link_preview_reserved_height: fixed link-preview reservation in pixels
  * @embed_reserved_height: fixed event-embed reservation in pixels
  *
- * Builds fixed-size frames during bind. Inline images, video posters, Open
- * Graph previews, and compact event embeds hydrate inside those reservations.
- * Poster taps replace only the frame child with a video player. Hydration never
- * changes the reserved frame or outer row geometry.
+ * Installs reusable fixed-size reservation frames during bind. Expensive image,
+ * video, Open Graph, and event-embed children are created only after their frame
+ * remains mapped through a short debounce. Compatible descriptor frame slots
+ * are pooled across row recycle binds. Child swaps never change outer geometry.
  */
 void nostr_gtk_note_card_row_set_rich_content(
     NostrGtkNoteCardRow *self,
@@ -246,6 +246,10 @@ void nostr_gtk_note_card_row_set_rich_content(
     double media_reserved_height,
     double link_preview_reserved_height,
     double embed_reserved_height);
+
+/* Lightweight instrumentation for map-gated rich-child creation tests. */
+void  nostr_gtk_note_card_row_reset_rich_child_creation_count(void);
+guint nostr_gtk_note_card_row_get_rich_child_creation_count(void);
 
 /**
  * nostr_gtk_note_card_row_apply_deferred_content:

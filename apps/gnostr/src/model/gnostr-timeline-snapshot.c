@@ -5,32 +5,9 @@
 struct _GnostrTimelineSnapshotRow {
   GObject parent_instance;
 
-  char *event_id;
-  char *note_key;
-  char *pubkey;
-  gint64 created_at;
-  char *tie_breaker;
-  char *content;
-  char *display_name;
-  char *handle;
-  char *avatar_url;
-  char *nip05;
-  char *root_id;
-  char *reply_id;
-  char *quoted_event_id;
-  char *reposted_event_id;
-  char **hashtags;
-  gint kind;
-  gboolean has_profile;
-  guint like_count;
-  gboolean is_liked;
-  guint repost_count;
-  guint reply_count;
-  guint zap_count;
-  gint64 zap_total_msat;
+  /* Snapshot rows retain the immutable VM that already owns all event,
+   * profile, interaction, hashtag, and parsed-content data. */
   GnostrTimelineItemViewModel *view_model;
-  GPtrArray *content_descriptors;
-  guint descriptor_overflow_count;
 
   double estimated_height;
   double measured_height;
@@ -50,22 +27,7 @@ gnostr_timeline_snapshot_row_finalize(GObject *object)
 {
   GnostrTimelineSnapshotRow *self = GNOSTR_TIMELINE_SNAPSHOT_ROW(object);
 
-  g_free(self->event_id);
-  g_free(self->note_key);
-  g_free(self->pubkey);
-  g_free(self->tie_breaker);
-  g_free(self->content);
-  g_free(self->display_name);
-  g_free(self->handle);
-  g_free(self->avatar_url);
-  g_free(self->nip05);
-  g_free(self->root_id);
-  g_free(self->reply_id);
-  g_free(self->quoted_event_id);
-  g_free(self->reposted_event_id);
-  g_strfreev(self->hashtags);
   g_clear_object(&self->view_model);
-  g_clear_pointer(&self->content_descriptors, g_ptr_array_unref);
   g_free(self->layout_signature);
 
   G_OBJECT_CLASS(gnostr_timeline_snapshot_row_parent_class)->finalize(object);
@@ -168,42 +130,57 @@ gnostr_timeline_snapshot_row_new_full(const char *event_id,
                                        const char *layout_signature,
                                        gboolean geometry_measured)
 {
-  GnostrTimelineSnapshotRow *self = g_object_new(GNOSTR_TYPE_TIMELINE_SNAPSHOT_ROW, NULL);
+  GnostrTimelineItemViewModelSpec spec = {
+    .event_id = event_id,
+    .note_key = note_key,
+    .note_key_u64 = note_key ? g_ascii_strtoull(note_key, NULL, 10) : 0,
+    .pubkey = pubkey,
+    .created_at = created_at,
+    .tie_breaker = tie_breaker,
+    .kind = kind,
+    .content = content,
+    .rendered_content = content,
+    .display_name = display_name,
+    .handle = handle,
+    .avatar_url = avatar_url,
+    .nip05 = nip05,
+    .has_profile = has_profile,
+    .avatar_state = (avatar_url && *avatar_url) ?
+      GNOSTR_TIMELINE_AVATAR_URL : GNOSTR_TIMELINE_AVATAR_FALLBACK,
+    .root_id = root_id,
+    .reply_id = reply_id,
+    .quoted_event_id = quoted_event_id,
+    .quote_state = quoted_event_id ? GNOSTR_TIMELINE_PREVIEW_RESOLVED :
+                                     GNOSTR_TIMELINE_PREVIEW_ABSENT,
+    .reposted_event_id = reposted_event_id,
+    .repost_state = reposted_event_id ? GNOSTR_TIMELINE_PREVIEW_RESOLVED :
+                                       GNOSTR_TIMELINE_PREVIEW_ABSENT,
+    .hashtags = hashtags,
+    .action_event_id = event_id,
+    .action_pubkey = pubkey,
+    .like_count = like_count,
+    .is_liked = is_liked,
+    .repost_count = repost_count,
+    .reply_count = reply_count,
+    .zap_count = zap_count,
+    .zap_total_msat = zap_total_msat,
+  };
+  g_autoptr(GnostrTimelineItemViewModel) view_model =
+    gnostr_timeline_item_view_model_new(&spec);
+  if (!view_model)
+    return NULL;
 
-  self->event_id = g_strdup(event_id);
-  self->note_key = g_strdup(note_key);
-  self->pubkey = g_strdup(pubkey);
-  self->created_at = created_at;
-  self->tie_breaker = g_strdup(tie_breaker ? tie_breaker : event_id);
-  self->content = g_strdup(content);
-  self->display_name = g_strdup(display_name);
-  self->handle = g_strdup(handle);
-  self->avatar_url = g_strdup(avatar_url);
-  self->nip05 = g_strdup(nip05);
-  self->root_id = g_strdup(root_id);
-  self->reply_id = g_strdup(reply_id);
-  self->quoted_event_id = g_strdup(quoted_event_id);
-  self->reposted_event_id = g_strdup(reposted_event_id);
-  self->hashtags = g_strdupv((char **)hashtags);
-  self->kind = kind;
-  self->has_profile = has_profile;
-  self->like_count = like_count;
-  self->is_liked = is_liked;
-  self->repost_count = repost_count;
-  self->reply_count = reply_count;
-  self->zap_count = zap_count;
-  self->zap_total_msat = zap_total_msat;
-  self->estimated_height = estimated_height;
-  self->measured_height = measured_height;
-  self->effective_height = effective_height > 0.0 ? effective_height : estimated_height;
-  self->media_reserved_height = media_reserved_height;
-  self->link_preview_reserved_height = link_preview_reserved_height;
-  self->embed_reserved_height = embed_reserved_height;
-  self->width_bucket = width_bucket;
-  self->layout_signature = g_strdup(layout_signature);
-  self->geometry_measured = geometry_measured;
-
-  return self;
+  return gnostr_timeline_snapshot_row_new_from_view_model(
+    view_model,
+    estimated_height,
+    measured_height,
+    effective_height,
+    media_reserved_height,
+    link_preview_reserved_height,
+    embed_reserved_height,
+    width_bucket,
+    layout_signature,
+    geometry_measured);
 }
 
 GnostrTimelineSnapshotRow *
@@ -238,139 +215,139 @@ gnostr_timeline_snapshot_row_new_from_view_model(GnostrTimelineItemViewModel *vi
 const char *gnostr_timeline_snapshot_row_get_event_id(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_event_id(self->view_model) : self->event_id;
+  return gnostr_timeline_item_view_model_get_event_id(self->view_model);
 }
 
 const char *gnostr_timeline_snapshot_row_get_note_key(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_note_key(self->view_model) : self->note_key;
+  return gnostr_timeline_item_view_model_get_note_key(self->view_model);
 }
 
 const char *gnostr_timeline_snapshot_row_get_pubkey(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_pubkey(self->view_model) : self->pubkey;
+  return gnostr_timeline_item_view_model_get_pubkey(self->view_model);
 }
 
 gint64 gnostr_timeline_snapshot_row_get_created_at(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 0);
-  return self->view_model ? gnostr_timeline_item_view_model_get_created_at(self->view_model) : self->created_at;
+  return gnostr_timeline_item_view_model_get_created_at(self->view_model);
 }
 
 const char *gnostr_timeline_snapshot_row_get_tie_breaker(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_tie_breaker(self->view_model) : self->tie_breaker;
+  return gnostr_timeline_item_view_model_get_tie_breaker(self->view_model);
 }
 
 const char *gnostr_timeline_snapshot_row_get_content(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_content(self->view_model) : self->content;
+  return gnostr_timeline_item_view_model_get_content(self->view_model);
 }
 
 const char *gnostr_timeline_snapshot_row_get_display_name(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_display_name(self->view_model) : self->display_name;
+  return gnostr_timeline_item_view_model_get_display_name(self->view_model);
 }
 
 const char *gnostr_timeline_snapshot_row_get_handle(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_handle(self->view_model) : self->handle;
+  return gnostr_timeline_item_view_model_get_handle(self->view_model);
 }
 
 const char *gnostr_timeline_snapshot_row_get_avatar_url(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_avatar_url(self->view_model) : self->avatar_url;
+  return gnostr_timeline_item_view_model_get_avatar_url(self->view_model);
 }
 
 const char *gnostr_timeline_snapshot_row_get_nip05(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_nip05(self->view_model) : self->nip05;
+  return gnostr_timeline_item_view_model_get_nip05(self->view_model);
 }
 
 const char *gnostr_timeline_snapshot_row_get_root_id(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_root_id(self->view_model) : self->root_id;
+  return gnostr_timeline_item_view_model_get_root_id(self->view_model);
 }
 
 const char *gnostr_timeline_snapshot_row_get_reply_id(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_reply_id(self->view_model) : self->reply_id;
+  return gnostr_timeline_item_view_model_get_reply_id(self->view_model);
 }
 
 const char *gnostr_timeline_snapshot_row_get_quoted_event_id(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_quoted_event_id(self->view_model) : self->quoted_event_id;
+  return gnostr_timeline_item_view_model_get_quoted_event_id(self->view_model);
 }
 
 const char *gnostr_timeline_snapshot_row_get_reposted_event_id(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_reposted_event_id(self->view_model) : self->reposted_event_id;
+  return gnostr_timeline_item_view_model_get_reposted_event_id(self->view_model);
 }
 
 const char * const *gnostr_timeline_snapshot_row_get_hashtags(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_hashtags(self->view_model) : (const char * const *)self->hashtags;
+  return gnostr_timeline_item_view_model_get_hashtags(self->view_model);
 }
 
 gint gnostr_timeline_snapshot_row_get_kind(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 1);
-  return self->view_model ? gnostr_timeline_item_view_model_get_kind(self->view_model) : self->kind;
+  return gnostr_timeline_item_view_model_get_kind(self->view_model);
 }
 
 gboolean gnostr_timeline_snapshot_row_get_has_profile(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), FALSE);
-  return self->view_model ? gnostr_timeline_item_view_model_get_has_profile(self->view_model) : self->has_profile;
+  return gnostr_timeline_item_view_model_get_has_profile(self->view_model);
 }
 
 guint gnostr_timeline_snapshot_row_get_like_count(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 0);
-  return self->view_model ? gnostr_timeline_item_view_model_get_like_count(self->view_model) : self->like_count;
+  return gnostr_timeline_item_view_model_get_like_count(self->view_model);
 }
 
 gboolean gnostr_timeline_snapshot_row_get_is_liked(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), FALSE);
-  return self->view_model ? gnostr_timeline_item_view_model_get_is_liked(self->view_model) : self->is_liked;
+  return gnostr_timeline_item_view_model_get_is_liked(self->view_model);
 }
 
 guint gnostr_timeline_snapshot_row_get_repost_count(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 0);
-  return self->view_model ? gnostr_timeline_item_view_model_get_repost_count(self->view_model) : self->repost_count;
+  return gnostr_timeline_item_view_model_get_repost_count(self->view_model);
 }
 
 guint gnostr_timeline_snapshot_row_get_reply_count(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 0);
-  return self->view_model ? gnostr_timeline_item_view_model_get_reply_count(self->view_model) : self->reply_count;
+  return gnostr_timeline_item_view_model_get_reply_count(self->view_model);
 }
 
 guint gnostr_timeline_snapshot_row_get_zap_count(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 0);
-  return self->view_model ? gnostr_timeline_item_view_model_get_zap_count(self->view_model) : self->zap_count;
+  return gnostr_timeline_item_view_model_get_zap_count(self->view_model);
 }
 
 gint64 gnostr_timeline_snapshot_row_get_zap_total_msat(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 0);
-  return self->view_model ? gnostr_timeline_item_view_model_get_zap_total_msat(self->view_model) : self->zap_total_msat;
+  return gnostr_timeline_item_view_model_get_zap_total_msat(self->view_model);
 }
 
 double gnostr_timeline_snapshot_row_get_estimated_height(GnostrTimelineSnapshotRow *self)
@@ -412,13 +389,13 @@ double gnostr_timeline_snapshot_row_get_embed_reserved_height(GnostrTimelineSnap
 const GPtrArray *gnostr_timeline_snapshot_row_get_content_descriptors(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? gnostr_timeline_item_view_model_get_content_descriptors(self->view_model) : self->content_descriptors;
+  return gnostr_timeline_item_view_model_get_content_descriptors(self->view_model);
 }
 
 guint gnostr_timeline_snapshot_row_get_descriptor_overflow_count(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), 0);
-  return self->view_model ? gnostr_timeline_item_view_model_get_descriptor_overflow_count(self->view_model) : self->descriptor_overflow_count;
+  return gnostr_timeline_item_view_model_get_descriptor_overflow_count(self->view_model);
 }
 
 guint gnostr_timeline_snapshot_row_get_width_bucket(GnostrTimelineSnapshotRow *self)
@@ -443,7 +420,7 @@ GnostrTimelineItemViewModel *
 gnostr_timeline_snapshot_row_dup_view_model(GnostrTimelineSnapshotRow *self)
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(self), NULL);
-  return self->view_model ? g_object_ref(self->view_model) : NULL;
+  return g_object_ref(self->view_model);
 }
 
 gint

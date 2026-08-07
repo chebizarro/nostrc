@@ -1034,12 +1034,14 @@ test_geometry_measurement_recomposes_with_cached_height(void)
                                                   gnostr_timeline_snapshot_get_generation(measured),
                                                   480,
                                                   initial_height + 240.0);
-  gnostr_timeline_feed_controller_compose_now(controller);
+  /* Passive natural-height growth schedules exactly one anchored publication;
+   * no unrelated source event or explicit compose is required. */
+  drain_main_context_for_ms(80);
   g_autoptr(GnostrTimelineSnapshot) larger = dup_controller_snapshot(controller);
   GnostrTimelineSnapshotRow *larger_row = gnostr_timeline_snapshot_get_row(larger, 0);
   g_assert_cmpfloat(gnostr_timeline_snapshot_row_get_measured_height(larger_row), >, initial_height);
   g_assert_cmpfloat_with_epsilon(gnostr_timeline_snapshot_row_get_effective_height(larger_row),
-                                 initial_height,
+                                 gnostr_timeline_snapshot_row_get_measured_height(larger_row),
                                  0.001);
   g_assert_cmpuint(published.emissions, ==, 2);
 
@@ -1380,7 +1382,7 @@ test_width_bucket_change_updates_published_media_reserved_height(void)
   g_assert_cmpuint(gnostr_timeline_snapshot_row_get_width_bucket(resized_row), ==, 640);
   g_assert_cmpfloat(resized_media_height, >, 0.0);
   g_assert_cmpfloat(resized_media_height, !=, initial_media_height);
-  g_assert_cmpuint(restore.emissions, ==, 0);
+  g_assert_cmpuint(restore.emissions, ==, 1);
 
   g_object_unref(controller);
 }
@@ -1853,6 +1855,107 @@ test_profile_patch_uses_pubkey_index_and_coalesces(void)
   g_object_unref(controller);
 }
 
+static void
+test_page_metadata_uses_raw_results_and_retryable_failures(void)
+{
+  GnostrTimelineFeedController *controller =
+    gnostr_timeline_feed_controller_new(NULL);
+  GnostrTimelineBatch *refresh =
+    batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 1);
+  batch_add(refresh, 1, 100, 0x11);
+  gnostr_timeline_feed_controller_ingest_batch(controller, refresh);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(refresh);
+
+  PublishedCapture published = { 0 };
+  g_signal_connect(controller, "snapshot-published",
+                   G_CALLBACK(on_snapshot_published), &published);
+
+  /* A transient source failure clears loading through the completion batch,
+   * but must leave the edge retryable. */
+  GnostrTimelineBatch *failed =
+    batch_new(GNOSTR_TIMELINE_BATCH_PAGE_OLDER, 1);
+  gnostr_timeline_batch_set_page_result(failed, FALSE, 0, 100, 0, 0);
+  gnostr_timeline_feed_controller_ingest_batch(controller, failed);
+  g_object_unref(failed);
+  g_assert_false(
+    gnostr_timeline_feed_controller_get_older_exhausted(controller));
+
+  /* Projection filters may remove every hydrated entry even though the raw
+   * database page hit its limit. Advance the raw watermark rather than
+   * treating the short projected page as exhaustion. */
+  GnostrTimelineBatch *filtered =
+    batch_new(GNOSTR_TIMELINE_BATCH_PAGE_OLDER, 1);
+  gnostr_timeline_batch_set_page_result(filtered, TRUE, 100, 100, 90, 99);
+  gnostr_timeline_feed_controller_ingest_batch(controller, filtered);
+  g_object_unref(filtered);
+  g_assert_false(
+    gnostr_timeline_feed_controller_get_older_exhausted(controller));
+  g_assert_cmpuint(published.emissions, ==, 0);
+
+  /* If the raw boundary itself cannot advance, suppress further identical
+   * edge work rather than repeatedly querying a no-op range. */
+  GnostrTimelineBatch *stalled =
+    batch_new(GNOSTR_TIMELINE_BATCH_PAGE_OLDER, 1);
+  gnostr_timeline_batch_set_page_result(stalled, TRUE, 100, 100, 90, 99);
+  gnostr_timeline_feed_controller_ingest_batch(controller, stalled);
+  g_object_unref(stalled);
+  g_assert_true(
+    gnostr_timeline_feed_controller_get_older_exhausted(controller));
+  g_assert_cmpuint(published.emissions, ==, 0);
+
+  g_object_unref(controller);
+}
+
+static void
+test_pagination_exhaustion_suppresses_noop_composes(void)
+{
+  GnostrTimelineFeedController *controller =
+    gnostr_timeline_feed_controller_new(NULL);
+  GnostrTimelineBatch *refresh =
+    batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 1);
+  batch_add(refresh, 1, 100, 0x11);
+  gnostr_timeline_feed_controller_ingest_batch(controller, refresh);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(refresh);
+
+  PublishedCapture published = { 0 };
+  g_signal_connect(controller, "snapshot-published",
+                   G_CALLBACK(on_snapshot_published), &published);
+
+  GnostrTimelineBatch *empty_older =
+    batch_new(GNOSTR_TIMELINE_BATCH_PAGE_OLDER, 1);
+  gnostr_timeline_feed_controller_ingest_batch(controller, empty_older);
+  g_object_unref(empty_older);
+  drain_main_context_for_ms(80);
+  g_assert_true(
+    gnostr_timeline_feed_controller_get_older_exhausted(controller));
+  g_assert_cmpuint(published.emissions, ==, 0);
+
+  /* Moving the retained window in the opposite direction reopens the older
+   * edge so evicted history can be fetched from the new cursor. */
+  GnostrTimelineBatch *newer =
+    batch_new(GNOSTR_TIMELINE_BATCH_PAGE_NEWER, 1);
+  batch_add(newer, 2, 110, 0x22);
+  gnostr_timeline_feed_controller_ingest_batch(controller, newer);
+  g_object_unref(newer);
+  g_assert_false(
+    gnostr_timeline_feed_controller_get_older_exhausted(controller));
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_assert_cmpuint(published.emissions, ==, 1);
+
+  GnostrTimelineBatch *empty_newer =
+    batch_new(GNOSTR_TIMELINE_BATCH_PAGE_NEWER, 1);
+  gnostr_timeline_feed_controller_ingest_batch(controller, empty_newer);
+  g_object_unref(empty_newer);
+  drain_main_context_for_ms(80);
+  g_assert_true(
+    gnostr_timeline_feed_controller_get_newer_exhausted(controller));
+  g_assert_cmpuint(published.emissions, ==, 1);
+
+  g_object_unref(controller);
+}
+
 int
 main(int argc,
      char **argv)
@@ -1925,6 +2028,10 @@ main(int argc,
                   test_async_source_hydration_cancelled_on_generation_bump);
   g_test_add_func("/gnostr/timeline-feed-controller/profile-patch-index-coalesced",
                   test_profile_patch_uses_pubkey_index_and_coalesces);
+  g_test_add_func("/gnostr/timeline-feed-controller/page-raw-metadata",
+                  test_page_metadata_uses_raw_results_and_retryable_failures);
+  g_test_add_func("/gnostr/timeline-feed-controller/pagination-exhaustion-noop",
+                  test_pagination_exhaustion_suppresses_noop_composes);
 
   return g_test_run();
 }

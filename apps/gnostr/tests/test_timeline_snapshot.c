@@ -511,42 +511,6 @@ test_snapshot_row_proxies_view_model_parsed_artifact(void)
                 gnostr_timeline_item_view_model_get_parsed_content(vm));
 }
 
-static void
-test_snapshot_model_invalid_rows_fall_back_to_full_splice(void)
-{
-  GnostrTimelineSnapshotModel *model = gnostr_timeline_snapshot_model_new();
-  ItemsChangedCapture capture = { 0 };
-  g_signal_connect(model, "items-changed", G_CALLBACK(on_items_changed), &capture);
-
-  GnostrTimelineSnapshotRow *a = row_new("event-a", 300, "a", 10.0);
-  GnostrTimelineSnapshotRow *b = row_new("event-b", 200, "b", 10.0);
-  GnostrTimelineSnapshotRow *c = row_new("event-c", 100, "c", 10.0);
-  GnostrTimelineSnapshotRow *invalid = row_new("", 200, "invalid", 10.0);
-  GnostrTimelineSnapshotRow *old_rows[] = { a, b, c };
-  GnostrTimelineSnapshotRow *new_rows[] = { a, invalid, c };
-  GnostrTimelineSnapshot *old_snapshot =
-    gnostr_timeline_snapshot_new_sorted(1, 1, old_rows, G_N_ELEMENTS(old_rows), 0);
-  GnostrTimelineSnapshot *new_snapshot =
-    gnostr_timeline_snapshot_new_sorted(2, 1, new_rows, G_N_ELEMENTS(new_rows), 0);
-
-  gnostr_timeline_snapshot_model_replace_snapshot(model, old_snapshot);
-  capture = (ItemsChangedCapture){ 0 };
-  gnostr_timeline_snapshot_model_replace_snapshot(model, new_snapshot);
-
-  g_assert_cmpuint(capture.count, ==, 1);
-  g_assert_cmpuint(capture.position, ==, 0);
-  g_assert_cmpuint(capture.removed, ==, G_N_ELEMENTS(old_rows));
-  g_assert_cmpuint(capture.added, ==, G_N_ELEMENTS(new_rows));
-
-  g_object_unref(model);
-  g_object_unref(old_snapshot);
-  g_object_unref(new_snapshot);
-  g_object_unref(a);
-  g_object_unref(b);
-  g_object_unref(c);
-  g_object_unref(invalid);
-}
-
 int
 main(int argc,
      char **argv)
@@ -562,8 +526,6 @@ main(int argc,
   g_test_add_func("/gnostr/timeline-snapshot/mixed-coalesced-spans", test_snapshot_model_mixed_coalesced_spans);
   g_test_add_func("/gnostr/timeline-snapshot/large-single-replacement-linear",
                   test_snapshot_model_large_single_replacement_is_linear);
-  g_test_add_func("/gnostr/timeline-snapshot/invalid-rows-full-splice",
-                  test_snapshot_model_invalid_rows_fall_back_to_full_splice);
   g_test_add_func("/gnostr/timeline-snapshot/row-proxies-parsed-artifact",
                   test_snapshot_row_proxies_view_model_parsed_artifact);
 

@@ -1038,10 +1038,10 @@ bind_row_common(NostrGtkTimelineView *self,
           nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), content);
         }
       } else {
-        /* Snapshot rows bind text and ordered rich descriptors from immutable
-         * VM data. Fixed frames are built at bind; inline image hydration is
-         * map-gated inside those frames. Link and embed frames stay placeholders
-         * until WI-5, without parsing content or issuing DB/embed work here. */
+        /* Snapshot rows bind text plus cheap fixed reservation frames from
+         * immutable VM data. The row pools compatible slots and creates every
+         * image/video/OG/embed child only after mapped debounce, so GTK's
+         * buffer-zone binds perform no heavyweight rich-widget construction. */
         nostr_gtk_note_card_row_set_precomputed_markup(
           NOSTR_GTK_NOTE_CARD_ROW(row),
           content,
