@@ -194,6 +194,9 @@ gnostr_signer_service_set_nip46_session(GnostrSignerService *self,
 
   /* Free old session if any */
   if (self->nip46_session) {
+    /* nostrc-svsj: diagnostic for suspected session use-after-free */
+    g_message("[SIGNER_SERVICE] Replacing NIP-46 session %p with %p",
+              (void *)self->nip46_session, (void *)session);
     nostr_nip46_session_free(self->nip46_session);
     self->nip46_session = NULL;
   }
@@ -273,6 +276,8 @@ gnostr_signer_service_clear(GnostrSignerService *self)
 
   g_mutex_lock(&self->session_mutex);
   if (self->nip46_session) {
+    /* nostrc-svsj: diagnostic for suspected session use-after-free */
+    g_message("[SIGNER_SERVICE] Clearing NIP-46 session %p", (void *)self->nip46_session);
     nostr_nip46_session_free(self->nip46_session);
     self->nip46_session = NULL;
   }
@@ -526,6 +531,25 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
   (void)source;
   (void)cancellable;
 
+  /* nostrc-svsj: Normalize in the worker so failures flow through the normal
+   * async GTask error path. Completing synchronously from sign_event_async
+   * re-entered GTK signal emission (composer "post-requested") and is unsafe. */
+  {
+    GError *norm_error = NULL;
+    char *normalized = nip46_normalize_sign_request(ctx->service, ctx->event_json,
+                                                    &ctx->expected_pubkey,
+                                                    &ctx->expected_kind,
+                                                    &norm_error);
+    if (!normalized) {
+      g_warning("[SIGNER_SERVICE] NIP-46 sign request normalization failed: %s",
+                norm_error ? norm_error->message : "unknown");
+      g_task_return_error(task, norm_error); /* transfers ownership */
+      return;
+    }
+    g_free(ctx->event_json);
+    ctx->event_json = normalized;
+  }
+
   /* Lock mutex for session access */
   g_mutex_lock(&ctx->service->session_mutex);
 
@@ -542,6 +566,8 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
 
   g_mutex_unlock(&ctx->service->session_mutex);
 
+  /* nostrc-svsj: diagnostic for suspected session use-after-free */
+  g_message("[SIGNER_SERVICE] NIP-46 sign RPC begin: session=%p", (void *)session);
   g_debug("[SIGNER_SERVICE] Signing event via NIP-46 RPC...");
 
   /* Use the nip46 library's sign_event function - same code path as get_public_key */
@@ -667,23 +693,10 @@ gnostr_signer_service_sign_event_async(GnostrSignerService *self,
     case GNOSTR_SIGNER_METHOD_NIP46:
       g_debug("[SIGNER_SERVICE] Signing via NIP-46 remote signer");
       {
-        /* nostrc-svsj: Ensure the template carries the author pubkey before
-         * it reaches the remote signer (see nip46_normalize_sign_request). */
-        GError *norm_error = NULL;
+        /* nostrc-svsj: template normalization (author pubkey injection) and
+         * all of its error reporting happen inside nip46_sign_thread so this
+         * function never completes synchronously on the connected path. */
         ctx->expected_kind = -1;
-        char *normalized = nip46_normalize_sign_request(self, ctx->event_json,
-                                                        &ctx->expected_pubkey,
-                                                        &ctx->expected_kind,
-                                                        &norm_error);
-        if (!normalized) {
-          callback(self, NULL, norm_error, user_data);
-          g_clear_error(&norm_error);
-          sign_context_free(ctx);
-          return;
-        }
-        g_free(ctx->event_json);
-        ctx->event_json = normalized;
-
         GTask *task = g_task_new(NULL, cancellable, on_nip46_sign_complete, ctx);
         g_task_set_task_data(task, ctx, NULL); /* ctx freed in callback */
         g_task_run_in_thread(task, nip46_sign_thread);
