@@ -19,6 +19,7 @@
 #include <nostr-gtk-1.0/nostr-note-card-row.h>
 #include <nostr-gtk-1.0/content_renderer.h>
 #include <nostr-gobject-1.0/gnostr-identity.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
 
 extern GResource *nostr_gtk_get_resource(void);
 
@@ -696,6 +697,90 @@ test_rich_content_buffer_bind_creates_no_expensive_children(void)
     g_object_unref(row);
 }
 
+typedef struct {
+    guint count;
+    gchar *pubkey_hex;
+} OpenProfileCapture;
+
+static void
+on_open_profile_captured(NostrGtkNoteCardRow *row,
+                         const char *pubkey_hex,
+                         gpointer user_data)
+{
+    (void)row;
+    OpenProfileCapture *capture = user_data;
+    capture->count++;
+    g_free(capture->pubkey_hex);
+    capture->pubkey_hex = g_strdup(pubkey_hex);
+}
+
+static GtkLabel *
+find_label_with_text(GtkWidget *widget, const char *text)
+{
+    if (GTK_IS_LABEL(widget) &&
+        g_strcmp0(gtk_label_get_text(GTK_LABEL(widget)), text) == 0)
+        return GTK_LABEL(widget);
+
+    for (GtkWidget *child = gtk_widget_get_first_child(widget);
+         child;
+         child = gtk_widget_get_next_sibling(child)) {
+        GtkLabel *match = find_label_with_text(child, text);
+        if (match)
+            return match;
+    }
+    return NULL;
+}
+
+static void
+test_profile_mention_activation_emits_open_profile(void)
+{
+    static const char *pubkey_hex =
+        "2222222222222222222222222222222222222222222222222222222222222222";
+    const char *relays[] = { "wss://relay.example", NULL };
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GNostrNip19) npub =
+        gnostr_nip19_encode_npub(pubkey_hex, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(npub);
+    g_autoptr(GNostrNip19) nprofile =
+        gnostr_nip19_encode_nprofile(pubkey_hex, relays, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(nprofile);
+
+    const char *targets[] = {
+        gnostr_nip19_get_bech32(npub),
+        gnostr_nip19_get_bech32(nprofile),
+    };
+
+    for (guint i = 0; i < G_N_ELEMENTS(targets); i++) {
+        NostrGtkNoteCardRow *row = nostr_gtk_note_card_row_new();
+        g_object_ref_sink(row);
+        OpenProfileCapture capture = { 0 };
+        g_signal_connect(row, "open-profile",
+                         G_CALLBACK(on_open_profile_captured), &capture);
+
+        g_autofree gchar *href =
+            g_strdup_printf("nostr:%s", targets[i]);
+        g_autofree gchar *markup =
+            g_strdup_printf("<a href=\"%s\">@mention</a>", href);
+        nostr_gtk_note_card_row_set_precomputed_markup(
+            row, "@mention", markup);
+
+        GtkLabel *content_label =
+            find_label_with_text(GTK_WIDGET(row), "@mention");
+        g_assert_nonnull(content_label);
+
+        gboolean handled = FALSE;
+        g_signal_emit_by_name(content_label, "activate-link", href, &handled);
+        g_assert_true(handled);
+        g_assert_cmpuint(capture.count, ==, 1);
+        g_assert_cmpstr(capture.pubkey_hex, ==, pubkey_hex);
+
+        g_free(capture.pubkey_hex);
+        g_object_unref(row);
+    }
+}
+
 static void
 test_note_card_explicit_expansion_allows_natural_height(void)
 {
@@ -740,6 +825,8 @@ main(int argc, char *argv[])
                     test_listview_row_heights_bounded);
     g_test_add_func("/nostr-gtk/sizing/note-card-reserved-height-fixed",
                     test_note_card_reserved_height_blocks_passive_expansion);
+    g_test_add_func("/nostr-gtk/note-card/profile-mention-activation",
+                    test_profile_mention_activation_emits_open_profile);
     g_test_add_func("/nostr-gtk/sizing/note-card-explicit-expansion",
                     test_note_card_explicit_expansion_allows_natural_height);
     g_test_add_func("/nostr-gtk/sizing/rich-content-hydration-fixed",

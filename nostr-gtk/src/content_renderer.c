@@ -470,6 +470,19 @@ static void append_display_text(GString *markup,
     g_string_append_len(plain_text, text, len);
 }
 
+static void append_profile_mention(GString *markup,
+                                   GString *plain_text,
+                                   const char *href,
+                                   const char *display) {
+  if (!href || !*href || !display) return;
+
+  g_autofree gchar *escaped_href = g_markup_escape_text(href, -1);
+  g_autofree gchar *escaped_display = g_markup_escape_text(display, -1);
+  g_string_append_printf(markup, "<a href=\"%s\">%s</a>",
+                         escaped_href, escaped_display);
+  g_string_append(plain_text, display);
+}
+
 /* Persisted block offsets address the exact stored content bytes, not a
  * sanitized copy. Sanitize only after slicing so removed/replaced UTF-8 bytes
  * cannot shift later offsets or split a multi-byte sequence by remapping. */
@@ -615,7 +628,8 @@ static void parse_fallback_text(const char *content,
             descriptor->type == GN_CONTENT_DESCRIPTOR_NOSTR_PROFILE_REF;
           g_ptr_array_add(result->descriptors, descriptor);
           if (profile)
-            append_display_text(markup, plain_text, token, -1);
+            append_profile_mention(markup, plain_text,
+                                   descriptor->original, token);
         } else {
           append_display_text(markup, plain_text, token, -1);
         }
@@ -763,7 +777,12 @@ static GnContentRenderResult *gn_content_parse_internal(const char *content,
 
         g_autofree gchar *display =
           format_mention_display(bech32, str_ptr, str_len);
-        append_display_text(markup, plain_text, display, -1);
+        if (descriptor &&
+            descriptor->type == GN_CONTENT_DESCRIPTOR_NOSTR_PROFILE_REF)
+          append_profile_mention(markup, plain_text,
+                                 descriptor->original, display);
+        else
+          append_display_text(markup, plain_text, display, -1);
         break;
       }
 

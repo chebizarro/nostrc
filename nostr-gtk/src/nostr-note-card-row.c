@@ -893,20 +893,24 @@ static gboolean on_content_activate_link(GtkLabel *label, const char *uri, gpoin
   /* nostr: URIs and bech32 entities */
   if (g_str_has_prefix(uri, "nostr:") || g_str_has_prefix(uri, "note1") || g_str_has_prefix(uri, "npub1") ||
       g_str_has_prefix(uri, "nevent1") || g_str_has_prefix(uri, "nprofile1") || g_str_has_prefix(uri, "naddr1")) {
-    /* Check if this is an npub or nprofile - emit dm-requested signal */
-    g_autofree gchar *nostr_uri = g_str_has_prefix(uri, "nostr:") ? g_strdup(uri) : g_strdup_printf("nostr:%s", uri);
-    GnostrUri *parsed = gnostr_uri_parse(nostr_uri);
-    if (parsed) {
-      if ((parsed->type == GNOSTR_URI_TYPE_NPUB || parsed->type == GNOSTR_URI_TYPE_NPROFILE) &&
-          parsed->pubkey_hex && *parsed->pubkey_hex) {
-        /* Emit dm-requested signal to open DM conversation */
-        g_signal_emit(self, signals[SIGNAL_DM_REQUESTED], 0, parsed->pubkey_hex);
-        gnostr_uri_free(parsed);
-        return TRUE;
+    const char *bech32 = g_str_has_prefix(uri, "nostr:") ? uri + 6 : uri;
+
+    if (g_str_has_prefix(bech32, "npub1") ||
+        g_str_has_prefix(bech32, "nprofile1")) {
+      g_autoptr(GNostrNip19) decoded = gnostr_nip19_decode(bech32, NULL);
+      if (decoded) {
+        GNostrBech32Type type = gnostr_nip19_get_entity_type(decoded);
+        const char *pubkey_hex = gnostr_nip19_get_pubkey(decoded);
+        if ((type == GNOSTR_BECH32_NPUB ||
+             type == GNOSTR_BECH32_NPROFILE) &&
+            pubkey_hex && *pubkey_hex) {
+          g_signal_emit(self, signals[SIGNAL_OPEN_PROFILE], 0, pubkey_hex);
+          return TRUE;
+        }
       }
-      gnostr_uri_free(parsed);
     }
-    /* Fall back to open-nostr-target for other entity types (note, nevent, naddr) */
+
+    /* Fall back to open-nostr-target for event refs or malformed entities. */
     g_signal_emit(self, signals[SIGNAL_OPEN_NOSTR_TARGET], 0, uri);
     return TRUE;
   }

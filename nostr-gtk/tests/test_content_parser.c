@@ -67,6 +67,9 @@ test_classification_and_elision(void)
   g_assert_null(strstr(result->markup, note));
   g_assert_nonnull(strstr(result->markup, link->url));
   g_assert_nonnull(strstr(result->markup, "@npub1"));
+  g_autofree gchar *npub_href =
+    g_strdup_printf("<a href=\"nostr:%s\">", npub);
+  g_assert_nonnull(strstr(result->markup, npub_href));
   g_assert_null(strstr(result->plain_text, image->url));
   g_assert_null(strstr(result->plain_text, note));
 
@@ -155,6 +158,9 @@ test_tlv_reference_classification_and_hints(void)
   g_assert_null(strstr(result->markup, nevent));
   g_assert_null(strstr(result->markup, naddr));
   g_assert_nonnull(strstr(result->markup, "@nprofile"));
+  g_autofree gchar *nprofile_href =
+    g_strdup_printf("<a href=\"nostr:%s\">", nprofile);
+  g_assert_nonnull(strstr(result->markup, nprofile_href));
 
   gnostr_content_render_result_free(result);
   nostr_pointer_free(event_pointer);
@@ -212,10 +218,12 @@ test_cached_blocks_match_fallback_with_utf8(void)
 {
   static const char *note =
     "note1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsglnzgl";
+  static const char *npub =
+    "npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg";
   g_autofree char *content = g_strdup_printf(
     "caf\xc3\xa9 \xce\xb1\xe2\x80\x8b\xce\xb2 https://example.test/page #nostr "
-    "nostr:%s \xf0\x9f\x99\x82\xe7\xb5\x82",
-    note);
+    "nostr:%s nostr:%s \xf0\x9f\x99\x82\xe7\xb5\x82",
+    note, npub);
 
   storage_ndb_blocks *blocks =
     storage_ndb_parse_content_blocks(content, (int)strlen(content));
@@ -232,6 +240,9 @@ test_cached_blocks_match_fallback_with_utf8(void)
   assert_descriptors_equal(cached->descriptors, fallback->descriptors);
   g_assert_true(g_utf8_validate(cached->markup, -1, NULL));
   g_assert_true(g_utf8_validate(cached->plain_text, -1, NULL));
+  g_autofree gchar *npub_href =
+    g_strdup_printf("<a href=\"nostr:%s\">", npub);
+  g_assert_nonnull(strstr(cached->markup, npub_href));
 
   gnostr_content_render_result_free(cached);
   gnostr_content_render_result_free(fallback);
@@ -241,14 +252,21 @@ test_cached_blocks_match_fallback_with_utf8(void)
 static void
 test_legacy_wrapper_uses_elided_parse(void)
 {
+  static const char *npub =
+    "npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg";
+  g_autofree gchar *content = g_strdup_printf(
+    "caption https://cdn.test/photo.webp nostr:%s", npub);
   GnContentRenderResult *result =
-    gnostr_render_content("caption https://cdn.test/photo.webp", -1, NULL);
+    gnostr_render_content(content, -1, NULL);
   g_assert_nonnull(result);
   g_assert_cmpuint(result->media_urls->len, ==, 1);
   g_assert_cmpstr(g_ptr_array_index(result->media_urls, 0), ==,
                   "https://cdn.test/photo.webp");
   g_assert_null(strstr(result->markup, "photo.webp"));
   g_assert_nonnull(strstr(result->markup, "caption"));
+  g_autofree gchar *npub_href =
+    g_strdup_printf("<a href=\"nostr:%s\">", npub);
+  g_assert_nonnull(strstr(result->markup, npub_href));
   gnostr_content_render_result_free(result);
 }
 
