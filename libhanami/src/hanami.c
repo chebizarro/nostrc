@@ -285,7 +285,6 @@ hanami_error_t hanami_clone(git_repository **out,
     /* Query relays for kind 30617 to discover clone URLs and Blossom endpoints.
      * We use a set of default relays if no config is provided. */
     const char *default_relays[] = {
-        "wss://relay.damus.io",
         "wss://nos.lol",
         "wss://relay.nostr.band",
         NULL

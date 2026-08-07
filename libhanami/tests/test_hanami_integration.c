@@ -339,7 +339,7 @@ static void test_transport_url_to_repo(void)
     hanami_blossom_client_t *client = NULL;
     assert(hanami_blossom_client_new(&opts, &test_signer, &client) == HANAMI_OK);
 
-    const char *relays[] = { "wss://relay.damus.io", NULL };
+    const char *relays[] = { "wss://nos.lol", NULL };
     hanami_nostr_ctx_t *ctx = NULL;
     assert(hanami_nostr_ctx_new(relays, &test_signer, &ctx) == HANAMI_OK);
 

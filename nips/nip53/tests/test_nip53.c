@@ -123,7 +123,7 @@ static void test_free_populated_event(void) {
 
     /* relays */
     ev->relays = calloc(2, sizeof(char *));
-    ev->relays[0] = strdup("wss://relay.damus.io");
+    ev->relays[0] = strdup("wss://nos.lol");
 
     /* Should not crash or leak */
     free_live_event(ev);

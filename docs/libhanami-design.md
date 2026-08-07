@@ -219,7 +219,7 @@ Configurable via:
 ```ini
 [hanami]
     endpoint = https://blossom.example.com
-    relays = wss://relay.damus.io,wss://relay.nostr.band
+    relays = wss://nos.lol,wss://relay.nostr.band
     cache-dir = ~/.cache/hanami
     index-backend = sqlite
     upload-threshold = 32768

@@ -23,7 +23,6 @@
  * goes offline. The first entry is preferred for nostrconnect:// URIs. */
 static const char *const NIP46_FALLBACK_RELAYS[] = {
   "wss://relay.nsec.app",
-  "wss://relay.damus.io",
   "wss://nos.lol",
   NULL  /* sentinel */
 };
