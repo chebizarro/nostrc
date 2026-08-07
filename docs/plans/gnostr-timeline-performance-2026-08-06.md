@@ -33,8 +33,8 @@ Vendored nostrdb natively provides, with our current usage status:
 5. ✅ DONE (commit b6271b91, nostrc-7wzy: per-batch pubkey-keyed flatbuffer cache w/ existence + last-fetch, JSON fallback removed) — **Per-author profile hydration** — per-batch (ideally longer-lived) pubkey-keyed cache with an `event_exists` flag; one lookup per author per batch instead of per note; kill the second existence query.
 
 ### Phase 3 — live path + patches
-6. **Scoped, coalesced, async ingestion** — narrow subscriptions to the active query where possible; coalesce keys into one bounded queue per source generation; use the existing async hydrator with generation cancellation; publish merged completions.
-7. **Indexed patches** — `pubkey → WorkingEntry set` index; coalesce patch batches; recalculate only the metric the subscription kind affects (reaction-only update ≠ 4 aggregation passes, `timeline-source.c:555-612`).
+6. ✅ DONE (commit 900e7bae, nostrc-enbe: query-scoped subscriptions incl. search, 512-key deduped per-generation queues, ordered async hydration w/ generation cancellation) — **Scoped, coalesced, async ingestion** — narrow subscriptions to the active query where possible; coalesce keys into one bounded queue per source generation; use the existing async hydrator with generation cancellation; publish merged completions.
+7. ✅ DONE (commit 900e7bae, nostrc-enbe: persisted ndb_note_meta counts verified equal to recomputation — reactions/replies/reposts read from LMDB, single-pass zap fallback, legacy double-increment removed; pubkey→WorkingEntry index + coalesced patches) — **Indexed patches** — `pubkey → WorkingEntry set` index; coalesce patch batches; recalculate only the metric the subscription kind affects (reaction-only update ≠ 4 aggregation passes, `timeline-source.c:555-612`).
 
 ### Phase 4 — bind cost + trims
 8. **Create rich widgets on map, pool frames** — bind lightweight placeholders; construct grids/OG/embed/video subtrees on map; reuse compatible descriptor slots across recycles (`nostr-note-card-row.c:4310-4565`).
