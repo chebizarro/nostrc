@@ -97,9 +97,11 @@ struct _GnostrLogin {
 
   /* NIP-46 relay subscription for receiving signer responses */
   GNostrPool       *nip46_pool;
-  GNostrSubscription *nip46_sub;
-  gulong nip46_events_handler;
+  GNostrPoolMultiSub *nip46_multi_sub; /* nostrc-koso: listen on ALL pairing relays */
   gboolean listening_for_response;
+  gboolean nip46_connect_handled;  /* nostrc-koso: first valid connect response wins;
+                                    * later events (dup acks from other relays, our own
+                                    * RPC responses) must NOT re-enter connect handling */
 };
 
 G_DEFINE_TYPE(GnostrLogin, gnostr_login, ADW_TYPE_BIN)
@@ -133,7 +135,8 @@ static void show_success(GnostrLogin *self, const char *npub);
 static void start_nip46_listener(GnostrLogin *self);
 static void stop_nip46_listener(GnostrLogin *self);
 static void on_nip46_pool_connected(GObject *source, GAsyncResult *result, gpointer user_data);
-static void on_nip46_sub_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data);
+static void on_nip46_sub_event(GNostrPoolMultiSub *multi_sub, const gchar *relay_url,
+                               const gchar *event_json, gpointer user_data);
 
 /* Status state enum for bunker connection */
 typedef enum {
@@ -1508,11 +1511,22 @@ static void on_done_clicked(GtkButton *btn, gpointer user_data) {
 #define NIP46_RESPONSE_KIND 24133
 
 /* Handle incoming NIP-46 events from subscription */
-static void on_nip46_sub_event(GNostrSubscription *sub, const gchar *event_json, gpointer user_data) {
-  (void)sub;
+static void on_nip46_sub_event(GNostrPoolMultiSub *multi_sub, const gchar *relay_url,
+                               const gchar *event_json, gpointer user_data) {
+  (void)multi_sub;
+  (void)relay_url;
   GnostrLogin *self = GNOSTR_LOGIN(user_data);
 
   if (!GNOSTR_IS_LOGIN(self) || !event_json) return;
+
+  /* nostrc-koso: Once a connect response has been accepted, ignore every
+   * further event on this listener. The listener stays alive during the
+   * get_public_key RPC (hq-9ohcb), and with the client key fix (nostrc-80qa)
+   * the RPC response is p-tagged to the SAME client pubkey — without this
+   * guard it would be misread as another connect ack and re-enter
+   * on_nip46_connect_success, freeing the session under the RPC thread.
+   * Also swallows duplicate acks delivered via multiple relays. */
+  if (self->nip46_connect_handled) return;
 
   NostrEvent *event = nostr_event_new();
   if (!event || nostr_event_deserialize(event, event_json) != 0) {
@@ -1664,6 +1678,10 @@ static void on_nip46_sub_event(GNostrSubscription *sub, const gchar *event_json,
   }
 
   nostr_event_free(event);
+  /* nostrc-koso: latch BEFORE scheduling — any event arriving between now and
+   * listener teardown must not re-trigger the connect chain. */
+  self->nip46_connect_handled = TRUE;
+
   /* nostrc-x52i: Use nip46_connect_ctx_free as destroy notify so ctx (including
    * its g_object_ref on self) is properly freed even if the idle source is
    * removed before the callback fires. The callback creates a separate copy
@@ -1704,12 +1722,18 @@ on_nip46_pool_connected(GObject *source, GAsyncResult *result, gpointer user_dat
   NostrFilters *filters = nostr_filters_new();
   nostr_filters_add(filters, filter);
 
+  /* nostrc-koso: subscribe on ALL pool relays (and any that connect later),
+   * not just the first connected one — gnostr_pool_subscribe() picks a single
+   * relay, which raced nondeterministically with multi-relay pairing. */
   GError *sub_error = NULL;
-  GNostrSubscription *sub = gnostr_pool_subscribe(self->nip46_pool, filters, &sub_error);
+  GNostrPoolMultiSub *sub = gnostr_pool_subscribe_multi(
+      self->nip46_pool, filters,
+      on_nip46_sub_event, NULL,
+      self, NULL, &sub_error);
   nostr_filter_free(filter); /* safe: nostr_filters_add used move semantics */
+  nostr_filters_free(filters); /* subscribe_multi deep-copies; caller retains ownership */
 
   if (!sub) {
-    nostr_filters_free(filters); /* caller retains ownership on failure */
     g_warning("[NIP46_LOGIN] Subscription failed: %s",
               sub_error ? sub_error->message : "(unknown)");
     set_bunker_status(self, BUNKER_STATUS_ERROR,
@@ -1718,14 +1742,11 @@ on_nip46_pool_connected(GObject *source, GAsyncResult *result, gpointer user_dat
     g_clear_error(&sub_error);
     return;
   }
-  /* filters now owned by subscription — do NOT free */
 
-  self->nip46_sub = sub;
-  self->nip46_events_handler = g_signal_connect(
-    sub, "event",
-    G_CALLBACK(on_nip46_sub_event), self);
+  self->nip46_multi_sub = sub;
 
-  g_message("[NIP46_LOGIN] Listening for signer response...");
+  g_message("[NIP46_LOGIN] Listening for signer response on %u relay(s)...",
+            gnostr_pool_multi_sub_get_relay_count(sub));
   self->listening_for_response = TRUE;
 }
 
@@ -1753,6 +1774,8 @@ static void start_nip46_listener(GnostrLogin *self) {
     g_strfreev(relays);
     return;
   }
+
+  self->nip46_connect_handled = FALSE;
 
   g_message("[NIP46_LOGIN] Starting listener on %zu relay(s) for pubkey %s",
             n_relays, self->client_pubkey_hex);
@@ -1782,13 +1805,9 @@ static void stop_nip46_listener(GnostrLogin *self) {
 
   g_message("[NIP46_LOGIN] Stopping listener");
 
-  if (self->nip46_sub) {
-    if (self->nip46_events_handler > 0) {
-      g_signal_handler_disconnect(self->nip46_sub, self->nip46_events_handler);
-      self->nip46_events_handler = 0;
-    }
-    gnostr_subscription_close(self->nip46_sub);
-    g_clear_object(&self->nip46_sub);
+  if (self->nip46_multi_sub) {
+    gnostr_pool_multi_sub_close(self->nip46_multi_sub);
+    self->nip46_multi_sub = NULL;
   }
   g_clear_object(&self->nip46_pool);
 
