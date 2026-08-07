@@ -214,7 +214,11 @@ static void relay_publish_thread(GTask *task, gpointer source_object,
 
   GString *warnings = g_string_new(NULL);
 
-  for (guint i = 0; i < r->relay_urls->len; i++) {
+  guint relay_count = r->relay_urls ? r->relay_urls->len : 0;
+  g_debug("[PUBLISH] Worker publishing kind %d to %u relay(s)",
+          nostr_event_get_kind(r->event), relay_count);
+
+  for (guint i = 0; i < relay_count; i++) {
     const char *url = (const char*)g_ptr_array_index(r->relay_urls, i);
 
     /* NIP-11: Check relay limitations before publishing */
@@ -626,7 +630,12 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
   }
 
   g_autoptr(GPtrArray) relay_urls = gnostr_get_write_relay_urls();
+  g_debug("[PUBLISH] Signed kind %d event %.8s; %u write relay(s) available",
+          nostr_event_get_kind(event), ctx->event_id,
+          relay_urls ? relay_urls->len : 0);
   if (!relay_urls || relay_urls->len == 0) {
+    g_warning("[PUBLISH] No write relays configured; cannot publish kind %d event",
+              nostr_event_get_kind(event));
     gnostr_main_window_show_toast_internal(self, "No write relays configured");
     g_free(signed_event_json);
     publish_context_complete(ctx, FALSE);
@@ -1095,11 +1104,25 @@ static void on_sign_like_event_complete(GObject *source, GAsyncResult *res, gpoi
     return;
   }
 
+  /* nostrc-svsj: Fail loudly when no write relays are configured instead of
+   * silently iterating an empty list (perceived as a silent publish failure,
+   * notably under nostrconnect logins where relay config may be missing). */
+  GPtrArray *like_relay_urls = gnostr_get_write_relay_urls();
+  if (!like_relay_urls || like_relay_urls->len == 0) {
+    g_warning("[LIKE] No write relays configured; cannot publish reaction");
+    gnostr_main_window_show_toast_internal(self, "No write relays configured");
+    if (like_relay_urls) g_ptr_array_free(like_relay_urls, TRUE);
+    nostr_event_free(event);
+    g_free(signed_event_json);
+    like_context_free(ctx);
+    return;
+  }
+
   /* Dispatch connect+publish to worker thread to avoid blocking the
    * main loop with synchronous relay connections. */
   RelayPublishResult *r = g_new0(RelayPublishResult, 1);
   r->event = event;                          /* transfer ownership */
-  r->relay_urls = gnostr_get_write_relay_urls();
+  r->relay_urls = like_relay_urls;           /* transfer ownership */
   r->signed_event_json = signed_event_json;  /* transfer ownership */
 
   GTask *task = g_task_new(NULL, NULL, on_like_publish_done, ctx);

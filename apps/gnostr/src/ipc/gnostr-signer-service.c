@@ -253,8 +253,11 @@ gnostr_signer_service_set_pubkey(GnostrSignerService *self,
 {
   g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
 
+  /* nostrc-svsj: guarded so worker-context readers can snapshot safely */
+  g_mutex_lock(&self->session_mutex);
   g_free(self->pubkey_hex);
   self->pubkey_hex = g_strdup(pubkey_hex);
+  g_mutex_unlock(&self->session_mutex);
 }
 
 void
@@ -273,10 +276,10 @@ gnostr_signer_service_clear(GnostrSignerService *self)
     nostr_nip46_session_free(self->nip46_session);
     self->nip46_session = NULL;
   }
-  g_mutex_unlock(&self->session_mutex);
-
+  /* nostrc-svsj: free the pubkey under the same lock used by readers */
   g_free(self->pubkey_hex);
   self->pubkey_hex = NULL;
+  g_mutex_unlock(&self->session_mutex);
 
   self->nip55l_proxy = NULL;
   self->method = GNOSTR_SIGNER_METHOD_NONE;
@@ -302,6 +305,10 @@ typedef struct {
   GnostrSignerCallback callback;
   gpointer user_data;
   char *event_json;
+  /* nostrc-svsj: identity/kind the signed result is expected to carry
+   * (expected_pubkey may be NULL when the template had no pubkey). */
+  char *expected_pubkey;
+  int expected_kind;
 } SignContext;
 
 static void
@@ -309,6 +316,7 @@ sign_context_free(SignContext *ctx)
 {
   if (!ctx) return;
   g_clear_pointer(&ctx->event_json, g_free);
+  g_clear_pointer(&ctx->expected_pubkey, g_free);
   g_free(ctx);
 }
 
@@ -404,6 +412,112 @@ hex_to_bytes(const char *hex, uint8_t *out, size_t out_len)
   return 0;
 }
 
+/* nostrc-svsj: Normalize an unsigned event template before sending it to a
+ * NIP-46 remote signer.
+ *
+ * Several publish paths (kind 1 composer, kind 7 reactions, reposts,
+ * deletions, labels, NIP-34 bug reports, ...) build unsigned JSON with
+ * GNostrJsonBuilder containing only kind/created_at/content/tags.  The
+ * working NIP-59 seal/gift-wrap path, by contrast, serializes a NostrEvent
+ * with the author pubkey set.  Many remote signers reject or mishandle
+ * sign_event templates that omit "pubkey", so inject the logged-in user's
+ * pubkey centrally here instead of patching every builder.
+ *
+ * Returns a newly-allocated normalized JSON string, or NULL with @error set.
+ * On success, *out_expected_pubkey receives the pubkey (if any) the signed
+ * result is expected to carry (caller frees). */
+static gboolean
+is_valid_pubkey_hex64(const char *s)
+{
+  if (!s || strlen(s) != 64) return FALSE;
+  for (size_t i = 0; i < 64; i++) {
+    if (!g_ascii_isxdigit(s[i])) return FALSE;
+  }
+  return TRUE;
+}
+
+static char *
+nip46_normalize_sign_request(GnostrSignerService *self,
+                             const char *event_json,
+                             char **out_expected_pubkey,
+                             int *out_expected_kind,
+                             GError **error)
+{
+  if (out_expected_pubkey) *out_expected_pubkey = NULL;
+  if (out_expected_kind) *out_expected_kind = -1;
+
+  NostrEvent *ev = nostr_event_new();
+  if (!ev) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                "Out of memory normalizing sign request");
+    return NULL;
+  }
+
+  if (nostr_event_deserialize_compact(ev, event_json, NULL) != 1) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                "Invalid unsigned event JSON for signing");
+    nostr_event_free(ev);
+    return NULL;
+  }
+
+  if (out_expected_kind) *out_expected_kind = nostr_event_get_kind(ev);
+
+  /* Snapshot the user pubkey under the mutex: set_pubkey/clear may run on a
+   * different context than the one invoking sign_event_async. */
+  g_mutex_lock(&self->session_mutex);
+  g_autofree char *user_pubkey = g_strdup(self->pubkey_hex);
+  g_mutex_unlock(&self->session_mutex);
+
+  const char *tpl_pubkey = nostr_event_get_pubkey(ev);
+  gboolean have_user_pubkey = is_valid_pubkey_hex64(user_pubkey);
+
+  if (tpl_pubkey && *tpl_pubkey) {
+    /* Template already carries an author pubkey (e.g. NIP-59 seal path). */
+    if (!is_valid_pubkey_hex64(tpl_pubkey)) {
+      g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                  "Unsigned event carries a malformed pubkey");
+      nostr_event_free(ev);
+      return NULL;
+    }
+    if (have_user_pubkey && g_ascii_strcasecmp(tpl_pubkey, user_pubkey) != 0) {
+      g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                  "Unsigned event pubkey %.8s... does not match logged-in user %.8s...",
+                  tpl_pubkey, user_pubkey);
+      nostr_event_free(ev);
+      return NULL;
+    }
+    if (out_expected_pubkey) *out_expected_pubkey = g_strdup(tpl_pubkey);
+    nostr_event_free(ev);
+    return g_strdup(event_json);
+  }
+
+  if (!have_user_pubkey) {
+    /* nostrc-svsj: Refuse to send a pubkey-less template to a remote signer -
+     * several implementations reject or mishandle it, which was the original
+     * silent-failure mode. The identity is known once login/get_public_key
+     * completes, so ask the caller to retry instead. */
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                "Signer identity not yet known - please retry in a moment");
+    nostr_event_free(ev);
+    return NULL;
+  }
+
+  nostr_event_set_pubkey(ev, user_pubkey);
+
+  char *normalized = nostr_event_serialize_compact(ev);
+  nostr_event_free(ev);
+  if (!normalized) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                "Failed to serialize normalized sign request");
+    return NULL;
+  }
+
+  g_debug("[SIGNER_SERVICE] Normalized NIP-46 sign request: injected pubkey %.8s...",
+          user_pubkey);
+  if (out_expected_pubkey) *out_expected_pubkey = g_strdup(user_pubkey);
+  return normalized;
+}
+
 /* NIP-46 signing (runs in thread) - use library's RPC function for consistency with login */
 static void
 nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable *cancellable)
@@ -441,6 +555,60 @@ nip46_sign_thread(GTask *task, gpointer source, gpointer task_data, GCancellable
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
                             "Signer did not respond to sign request");
     return;
+  }
+
+  /* nostrc-svsj: Validate the signed result before handing it to publishers.
+   * A remote signer returning an unsigned or wrong-identity event would
+   * otherwise surface much later as a silent relay rejection. */
+  {
+    NostrEvent *signed_ev = nostr_event_new();
+    gboolean parsed = signed_ev &&
+        nostr_event_deserialize_compact(signed_ev, signed_event_json, NULL) == 1;
+    const char *res_pubkey = parsed ? nostr_event_get_pubkey(signed_ev) : NULL;
+    const char *res_sig = parsed ? nostr_event_get_sig(signed_ev) : NULL;
+
+    if (!parsed || !res_pubkey || !*res_pubkey || !res_sig || !*res_sig) {
+      g_warning("[SIGNER_SERVICE] NIP-46 signer returned invalid signed event (parsed=%d)",
+                parsed);
+      if (signed_ev) nostr_event_free(signed_ev);
+      free(signed_event_json);
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                              "Signer returned an invalid signed event");
+      return;
+    }
+
+    if (ctx->expected_pubkey &&
+        g_ascii_strcasecmp(res_pubkey, ctx->expected_pubkey) != 0) {
+      g_warning("[SIGNER_SERVICE] NIP-46 signed event pubkey %.8s... does not match expected %.8s...",
+                res_pubkey, ctx->expected_pubkey);
+      nostr_event_free(signed_ev);
+      free(signed_event_json);
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                              "Signer returned an event for a different identity");
+      return;
+    }
+
+    if (ctx->expected_kind >= 0 &&
+        nostr_event_get_kind(signed_ev) != ctx->expected_kind) {
+      g_warning("[SIGNER_SERVICE] NIP-46 signed event kind %d does not match requested kind %d",
+                nostr_event_get_kind(signed_ev), ctx->expected_kind);
+      nostr_event_free(signed_ev);
+      free(signed_event_json);
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                              "Signer returned an event of the wrong kind");
+      return;
+    }
+
+    if (!nostr_event_check_signature(signed_ev)) {
+      g_warning("[SIGNER_SERVICE] NIP-46 signed event failed signature verification");
+      nostr_event_free(signed_ev);
+      free(signed_event_json);
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                              "Signer returned an event with an invalid signature");
+      return;
+    }
+
+    nostr_event_free(signed_ev);
   }
 
   g_debug("[SIGNER_SERVICE] NIP-46 sign succeeded");
@@ -499,6 +667,23 @@ gnostr_signer_service_sign_event_async(GnostrSignerService *self,
     case GNOSTR_SIGNER_METHOD_NIP46:
       g_debug("[SIGNER_SERVICE] Signing via NIP-46 remote signer");
       {
+        /* nostrc-svsj: Ensure the template carries the author pubkey before
+         * it reaches the remote signer (see nip46_normalize_sign_request). */
+        GError *norm_error = NULL;
+        ctx->expected_kind = -1;
+        char *normalized = nip46_normalize_sign_request(self, ctx->event_json,
+                                                        &ctx->expected_pubkey,
+                                                        &ctx->expected_kind,
+                                                        &norm_error);
+        if (!normalized) {
+          callback(self, NULL, norm_error, user_data);
+          g_clear_error(&norm_error);
+          sign_context_free(ctx);
+          return;
+        }
+        g_free(ctx->event_json);
+        ctx->event_json = normalized;
+
         GTask *task = g_task_new(NULL, cancellable, on_nip46_sign_complete, ctx);
         g_task_set_task_data(task, ctx, NULL); /* ctx freed in callback */
         g_task_run_in_thread(task, nip46_sign_thread);
