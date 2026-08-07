@@ -299,7 +299,7 @@ NostrEvent *nostr_nip17_unwrap_gift_wrap(NostrEvent *gift_wrap,
         return NULL;
     }
 
-    if (nostr_event_get_kind(gift_wrap) != NOSTR_KIND_GIFT_WRAP) {
+    if (!nostr_nip17_validate_gift_wrap(gift_wrap)) {
         return NULL;
     }
 
@@ -354,13 +354,16 @@ NostrEvent *nostr_nip17_unwrap_gift_wrap(NostrEvent *gift_wrap,
     json[decrypted_len] = '\0';
     free(decrypted);
 
-    if (!nostr_event_deserialize_compact(seal, json, NULL)) {
-        free(json);
+    NostrEventValidationStatus status =
+        nostr_event_deserialize_signed(seal, json, NULL);
+    free(json);
+    if (status != NOSTR_EVENT_VALIDATION_OK ||
+        nostr_event_get_kind(seal) != NOSTR_KIND_SEAL ||
+        nostr_event_validate(seal, NULL) != NOSTR_EVENT_VALIDATION_OK) {
         nostr_event_free(seal);
         return NULL;
     }
 
-    free(json);
     return seal;
 }
 
@@ -370,7 +373,8 @@ NostrEvent *nostr_nip17_unwrap_seal(NostrEvent *seal,
         return NULL;
     }
 
-    if (nostr_event_get_kind(seal) != NOSTR_KIND_SEAL) {
+    if (nostr_event_get_kind(seal) != NOSTR_KIND_SEAL ||
+        nostr_event_validate(seal, NULL) != NOSTR_EVENT_VALIDATION_OK) {
         return NULL;
     }
 
@@ -425,13 +429,25 @@ NostrEvent *nostr_nip17_unwrap_seal(NostrEvent *seal,
     json[decrypted_len] = '\0';
     free(decrypted);
 
-    if (!nostr_event_deserialize_compact(rumor, json, NULL)) {
+    if (nostr_event_deserialize_unsigned(rumor, json, NULL) !=
+        NOSTR_EVENT_VALIDATION_OK) {
         free(json);
         nostr_event_free(rumor);
         return NULL;
     }
-
     free(json);
+
+    /* Rumors are intentionally unsigned. Bind a declared id when present;
+     * otherwise prove that a canonical identity can be computed for callers. */
+    char canonical_id[65];
+    NostrEventValidationStatus status = rumor->id
+        ? nostr_event_validate_id(rumor, canonical_id)
+        : nostr_event_compute_id(rumor, canonical_id);
+    if (status != NOSTR_EVENT_VALIDATION_OK) {
+        nostr_event_free(rumor);
+        return NULL;
+    }
+
     return rumor;
 }
 
@@ -508,8 +524,8 @@ bool nostr_nip17_validate_gift_wrap(NostrEvent *gift_wrap) {
         return false;
     }
 
-    /* Check signature */
-    if (!nostr_event_check_signature(gift_wrap)) {
+    /* Bind the declared id and verify the signature in one pass. */
+    if (nostr_event_validate(gift_wrap, NULL) != NOSTR_EVENT_VALIDATION_OK) {
         return false;
     }
 
@@ -538,8 +554,8 @@ bool nostr_nip17_validate_seal(NostrEvent *seal, NostrEvent *rumor) {
         return false;
     }
 
-    /* Check signature */
-    if (!nostr_event_check_signature(seal)) {
+    /* Bind the declared id and verify the signature in one pass. */
+    if (nostr_event_validate(seal, NULL) != NOSTR_EVENT_VALIDATION_OK) {
         return false;
     }
 

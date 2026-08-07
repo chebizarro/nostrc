@@ -1148,19 +1148,27 @@ static void *message_loop(void *arg) {
         switch (envelope->type) {
         case NOSTR_ENVELOPE_NOTICE:
         case NOSTR_ENVELOPE_EOSE:
-        case NOSTR_ENVELOPE_AUTH:
             nostr_relay_dispatch_control_envelope(r, envelope);
             break;
+        case NOSTR_ENVELOPE_AUTH: {
+            NostrAuthEnvelope *auth = (NostrAuthEnvelope *)envelope;
+            /* Relay-to-client AUTH challenges are strings. If an AUTH frame
+             * carries an event, never dispatch it without full validation. */
+            if (auth->event) {
+                NostrEventValidationStatus status =
+                    nostr_event_validate(auth->event, NULL);
+                if (status != NOSTR_EVENT_VALIDATION_OK) {
+                    nostr_metric_counter_add("auth_event_invalid", 1);
+                    nostr_rl_log(NLOG_WARN, "relay", "drop invalid AUTH event: %s",
+                                 nostr_event_validation_status_string(status));
+                    break;
+                }
+            }
+            nostr_relay_dispatch_control_envelope(r, envelope);
+            break;
+        }
         case NOSTR_ENVELOPE_EVENT: {
             NostrEventEnvelope *env = (NostrEventEnvelope *)envelope;
-            // Emit summary BEFORE handing event to subscription
-            if (env->event) {
-                char tmp[256];
-                const char *id = env->event->id ? env->event->id : "";
-                const char *pk = env->event->pubkey ? env->event->pubkey : "";
-                snprintf(tmp, sizeof(tmp), "EVENT kind=%d pubkey=%.8s id=%.8s", env->event->kind, pk, id);
-                relay_debug_emit(r, tmp);
-            }
             NostrSubscription *subscription = relay_get_subscription_ref(r, nostr_sub_id_to_serial(env->subscription_id));
             if (subscription && env->event) {
                 /* Security: drop events from banned pubkeys early */
@@ -1178,22 +1186,25 @@ static void *message_loop(void *arg) {
                     nostr_subscription_unref(subscription);
                     break;
                 }
-                // Optionally verify signature if available
-                bool verified = true;
-                if (!r->assume_valid) {
-                    if (record_metrics) {
-                        nostr_metric_timer t_verify = {0};
-                        nostr_metric_timer_start(&t_verify);
-                        verified = nostr_event_check_signature(env->event);
-                        static nostr_metric_histogram *h_event_verify_ns;
-                        if (!h_event_verify_ns) h_event_verify_ns = nostr_metric_histogram_get("event_verify_ns");
-                        nostr_metric_timer_stop(&t_verify, h_event_verify_ns);
-                        nostr_metric_counter_add("event_verify_sampled", metrics_sample_rate);
-                    } else {
-                        verified = nostr_event_check_signature(env->event);
-                    }
+                /* Network EVENT frames are never covered by assume_valid. The
+                 * validator computes the hash once, binds it to the declared id,
+                 * and verifies the Schnorr signature against that same hash. */
+                char canonical_id[65];
+                NostrEventValidationStatus validation_status;
+                if (record_metrics) {
+                    nostr_metric_timer t_verify = {0};
+                    nostr_metric_timer_start(&t_verify);
+                    validation_status =
+                        nostr_event_validate(env->event, canonical_id);
+                    static nostr_metric_histogram *h_event_verify_ns;
+                    if (!h_event_verify_ns) h_event_verify_ns = nostr_metric_histogram_get("event_verify_ns");
+                    nostr_metric_timer_stop(&t_verify, h_event_verify_ns);
+                    nostr_metric_counter_add("event_verify_sampled", metrics_sample_rate);
+                } else {
+                    validation_status =
+                        nostr_event_validate(env->event, canonical_id);
                 }
-                if (!verified) {
+                if (validation_status != NOSTR_EVENT_VALIDATION_OK) {
                     if (env->event->pubkey && *env->event->pubkey) {
                         nsync_mu_lock(&r->priv->mutex);
                         nostr_invalidsig_record_fail(r, env->event->pubkey);
@@ -1203,12 +1214,19 @@ static void *message_loop(void *arg) {
                     // drop invalid event
                     if (debug_incoming_cached) {
                         char tmp[256];
-                        const char *id = env->event->id ? env->event->id : "";
-                        snprintf(tmp, sizeof(tmp), "DROP invalid signature id=%.8s", id);
+                        snprintf(tmp, sizeof(tmp), "DROP invalid event: %s",
+                                 nostr_event_validation_status_string(validation_status));
                         relay_debug_emit(r, tmp);
                     }
                     nostr_subscription_unref(subscription);
                 } else {
+                    if (debug_incoming_cached) {
+                        char tmp[256];
+                        const char *pk = env->event->pubkey ? env->event->pubkey : "";
+                        snprintf(tmp, sizeof(tmp), "EVENT kind=%d pubkey=%.8s id=%.8s",
+                                 env->event->kind, pk, canonical_id);
+                        relay_debug_emit(r, tmp);
+                    }
                     /* Producer-side rate limiting (nostrc-7u2):
                      * Check queue pressure before dispatching.
                      * - Critical events (DMs, zaps, mentions) always dispatched

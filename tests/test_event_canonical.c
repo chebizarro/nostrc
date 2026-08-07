@@ -36,10 +36,16 @@ int main(void) {
   char *id = nostr_event_get_id(ev);
   expect(id && strlen(id) == 64, "id hex len");
 
-  // Tamper with event->id and ensure verification still succeeds (since we recompute)
+  // A forged declared id must be rejected, while the getter remains canonical.
   if (ev->id) { free(ev->id); ev->id = NULL; }
   ev->id = strdup("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-  expect(nostr_event_check_signature(ev), "verify ignores provided id and recomputes");
+  expect(!nostr_event_check_signature(ev), "verify binds canonical hash to declared id");
+  expect(nostr_event_validate(ev, NULL) == NOSTR_EVENT_VALIDATION_CANONICAL_ID_MISMATCH,
+         "validate reports declared id mismatch");
+  char *canonical_id = nostr_event_get_id(ev);
+  expect(canonical_id && strcmp(canonical_id, id) == 0,
+         "getter recomputes canonical id instead of trusting declared id");
+  free(canonical_id);
 
   // Tamper with content changes and ensure verification fails
   nostr_event_set_content(ev, "tampered");

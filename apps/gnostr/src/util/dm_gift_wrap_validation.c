@@ -30,7 +30,9 @@ gnostr_dm_gift_wrap_parse_for_processing(const gchar *gift_wrap_json,
   if (!gift_wrap)
     return set_reason(out_reason, "failed to allocate event");
 
-  if (nostr_event_deserialize(gift_wrap, gift_wrap_json) != 0) {
+  NostrEventValidationStatus parse_status =
+      nostr_event_deserialize_signed(gift_wrap, gift_wrap_json, NULL);
+  if (parse_status != NOSTR_EVENT_VALIDATION_OK) {
     nostr_event_free(gift_wrap);
     return set_reason(out_reason, "deserialize failed");
   }
@@ -43,8 +45,12 @@ gnostr_dm_gift_wrap_parse_for_processing(const gchar *gift_wrap_json,
     return FALSE;
   }
 
-  if (!nostr_event_check_signature(gift_wrap)) {
+  NostrEventValidationStatus validation_status =
+      nostr_event_validate(gift_wrap, NULL);
+  if (validation_status != NOSTR_EVENT_VALIDATION_OK) {
     nostr_event_free(gift_wrap);
+    if (validation_status == NOSTR_EVENT_VALIDATION_CANONICAL_ID_MISMATCH)
+      return set_reason(out_reason, "canonical id mismatch");
     return set_reason(out_reason, "invalid signature");
   }
 

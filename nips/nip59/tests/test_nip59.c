@@ -5,10 +5,12 @@
  */
 
 #include "nostr/nip59/nip59.h"
+#include "nostr/nip44/nip44.h"
 #include "nostr-event.h"
 #include "nostr-keys.h"
 #include "nostr-kinds.h"
 #include "nostr-tag.h"
+#include "nostr-utils.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -55,6 +57,44 @@ static NostrEvent *create_test_event(const char *pubkey, const char *content) {
     nostr_event_set_created_at(event, (int64_t)time(NULL));
 
     return event;
+}
+
+static NostrEvent *wrap_raw_json_for_test(const char *json) {
+    char *eph_sk = NULL;
+    char *eph_pk = NULL;
+    assert(nostr_nip59_create_ephemeral_key(&eph_sk, &eph_pk) == NIP59_OK);
+
+    uint8_t eph_sk_bin[32];
+    uint8_t recipient_pk_bin[32];
+    assert(nostr_hex2bin(eph_sk_bin, eph_sk, sizeof(eph_sk_bin)));
+    assert(nostr_hex2bin(recipient_pk_bin, BOB_PK, sizeof(recipient_pk_bin)));
+
+    char *encrypted = NULL;
+    assert(nostr_nip44_encrypt_v2(eph_sk_bin, recipient_pk_bin,
+                                  (const uint8_t *)json, strlen(json),
+                                  &encrypted) == 0);
+    assert(encrypted != NULL);
+
+    NostrEvent *gift_wrap = nostr_event_new();
+    assert(gift_wrap != NULL);
+    nostr_event_set_kind(gift_wrap, NOSTR_KIND_GIFT_WRAP);
+    nostr_event_set_pubkey(gift_wrap, eph_pk);
+    nostr_event_set_content(gift_wrap, encrypted);
+    nostr_event_set_created_at(gift_wrap, (int64_t)time(NULL));
+
+    NostrTag *ptag = nostr_tag_new("p", BOB_PK, NULL);
+    assert(ptag != NULL);
+    NostrTags *tags = nostr_tags_new(1, ptag);
+    assert(tags != NULL);
+    nostr_event_set_tags(gift_wrap, tags);
+    assert(nostr_event_sign(gift_wrap, eph_sk) == 0);
+
+    memset(eph_sk_bin, 0, sizeof(eph_sk_bin));
+    memset(eph_sk, 0, strlen(eph_sk));
+    free(encrypted);
+    free(eph_sk);
+    free(eph_pk);
+    return gift_wrap;
 }
 
 static void test_create_ephemeral_key(void) {
@@ -249,6 +289,19 @@ static void test_unwrap_signed_event(void) {
     nostr_event_free(gift_wrap);
     nostr_event_free(unwrapped);
     printf("  OK: signature preserved through wrap/unwrap\n");
+}
+
+static void test_unwrap_rejects_incomplete_inner_event(void) {
+    printf("Testing incomplete decrypted inner event is rejected...\n");
+
+    NostrEvent *gift_wrap = wrap_raw_json_for_test("{\"kind\":14}");
+    assert(nostr_nip59_validate_gift_wrap(gift_wrap));
+
+    NostrEvent *unwrapped = nostr_nip59_unwrap(gift_wrap, BOB_SK);
+    assert(unwrapped == NULL);
+
+    nostr_event_free(gift_wrap);
+    printf("  OK: incomplete decrypted inner event rejected\n");
 }
 
 static void test_wrong_recipient_fails(void) {
@@ -493,6 +546,7 @@ int main(void) {
     /* Unwrap tests */
     test_unwrap_gift_wrap();
     test_unwrap_signed_event();
+    test_unwrap_rejects_incomplete_inner_event();
     test_wrong_recipient_fails();
 
     /* Validation tests */

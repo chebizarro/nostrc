@@ -211,8 +211,8 @@ NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
         return NULL;
     }
 
-    /* Verify kind */
-    if (nostr_event_get_kind(gift_wrap) != NOSTR_KIND_GIFT_WRAP) {
+    /* Never decrypt an unauthenticated or id-mismatched outer event. */
+    if (!nostr_nip59_validate_gift_wrap(gift_wrap)) {
         return NULL;
     }
 
@@ -248,7 +248,27 @@ NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
     memcpy(json, decrypted, decrypted_len);
     json[decrypted_len] = '\0';
 
-    if (!nostr_event_deserialize_compact(inner_event, json, NULL))
+    /* NIP-59 can wrap either a signed event or an unsigned rumor. Try the two
+     * strict structural contracts separately so attacker-controlled decrypted
+     * JSON never falls back to the permissive signing-template parser. */
+    char canonical_id[65];
+    NostrEventValidationStatus status =
+        nostr_event_deserialize_signed(inner_event, json, NULL);
+    bool signed_inner = status == NOSTR_EVENT_VALIDATION_OK;
+    if (!signed_inner) {
+        status = nostr_event_deserialize_unsigned(inner_event, json, NULL);
+        if (status != NOSTR_EVENT_VALIDATION_OK)
+            return NULL;
+    }
+
+    if (signed_inner) {
+        status = nostr_event_validate(inner_event, canonical_id);
+    } else if (inner_event->id) {
+        status = nostr_event_validate_id(inner_event, canonical_id);
+    } else {
+        status = nostr_event_compute_id(inner_event, canonical_id);
+    }
+    if (status != NOSTR_EVENT_VALIDATION_OK)
         return NULL;
 
     return go_steal_pointer(&inner_event);
@@ -283,8 +303,8 @@ bool nostr_nip59_validate_gift_wrap(NostrEvent *gift_wrap) {
         return false;
     }
 
-    /* Check signature */
-    if (!nostr_event_check_signature(gift_wrap)) {
+    /* Bind the declared id and verify the signature in one pass. */
+    if (nostr_event_validate(gift_wrap, NULL) != NOSTR_EVENT_VALIDATION_OK) {
         return false;
     }
 

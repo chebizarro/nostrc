@@ -998,10 +998,34 @@ void gnostr_main_window_free_urls_owned_internal(const char **urls, size_t count
 
 static gboolean periodic_backfill_cb(gpointer data) { (void)data; return G_SOURCE_REMOVE; }
 
+static int
+ingest_validated_event_json(const gchar *json)
+{
+  NostrEvent *event = nostr_event_new();
+  if (!event)
+    return -1;
+
+  NostrEventValidationStatus status =
+      nostr_event_deserialize_signed(event, json, NULL);
+  if (status == NOSTR_EVENT_VALIDATION_OK)
+    status = nostr_event_validate(event, NULL);
+  nostr_event_free(event);
+
+  if (status != NOSTR_EVENT_VALIDATION_OK) {
+    g_debug("[INGEST-BG] Rejected unvalidated event: %s",
+            nostr_event_validation_status_string(status));
+    return -1;
+  }
+
+  /* nostrdb validation remains enabled as defense in depth. */
+  return storage_ndb_ingest_event_json(json, NULL);
+}
+
 /* nostrc-mzab: Background NDB ingestion thread.
- * Drains the ingest_queue and calls storage_ndb_ingest_event_json()
- * off the main thread, so ndb_process_event (which can block when the
- * ndb ingestion pipeline is full) never stalls the GTK main loop. */
+ * Drains the ingest_queue and validates each signed event before calling
+ * storage_ndb_ingest_event_json() off the main thread, so ndb_process_event
+ * (which can block when the ndb ingestion pipeline is full) never stalls the
+ * GTK main loop. */
 gpointer
 gnostr_main_window_ingest_thread_func_internal(gpointer data)
 {
@@ -1018,7 +1042,7 @@ gnostr_main_window_ingest_thread_func_internal(gpointer data)
       continue;
     }
 
-    int rc = storage_ndb_ingest_event_json(json, NULL);
+    int rc = ingest_validated_event_json(json);
     if (rc == 0) {
       __atomic_fetch_add(&self->ingest_events_processed, 1, __ATOMIC_RELAXED);
     } else {
@@ -1039,7 +1063,7 @@ gnostr_main_window_ingest_thread_func_internal(gpointer data)
            g_get_monotonic_time() < drain_deadline &&
            (json = g_async_queue_try_pop(self->ingest_queue)) != NULL) {
       if (json[0] != '\0')  /* skip sentinel */
-        storage_ndb_ingest_event_json(json, NULL);
+        (void)ingest_validated_event_json(json);
       g_free(json);
       drained++;
     }
@@ -1058,7 +1082,12 @@ static void on_bg_prefetch_event(GNostrSubscription *sub, const gchar *event_jso
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !event_json) return;
 
   NostrEvent *evt = nostr_event_new();
-  if (!evt || nostr_event_deserialize(evt, event_json) != 0) {
+  NostrEventValidationStatus status = evt
+      ? nostr_event_deserialize_signed(evt, event_json, NULL)
+      : NOSTR_EVENT_VALIDATION_NULL;
+  if (status == NOSTR_EVENT_VALIDATION_OK)
+    status = nostr_event_validate(evt, NULL);
+  if (status != NOSTR_EVENT_VALIDATION_OK) {
     if (evt) nostr_event_free(evt);
     return;
   }

@@ -176,8 +176,16 @@ static const char *find_key(const char *json, const char *key) {
     return NULL;
 }
 
-int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
-                                     NostrJsonErrorInfo *err_out) {
+typedef enum {
+    EVENT_PARSE_TEMPLATE = 0,
+    EVENT_PARSE_UNSIGNED,
+    EVENT_PARSE_SIGNED
+} EventParseMode;
+
+static int nostr_event_deserialize_compact_impl(NostrEvent *event,
+                                                const char *json,
+                                                NostrJsonErrorInfo *err_out,
+                                                EventParseMode mode) {
     /* nostrc-737: JFAIL sets error info and returns 0 */
 #define JFAIL_EV(code_val, pos) do { \
     if (err_out) { err_out->code = (code_val); err_out->offset = (int)((pos) - json); } \
@@ -205,97 +213,149 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
         if (*p == ',') JFAIL_EV(NOSTR_JSON_ERR_BAD_SEPARATOR, p);
         // Dispatch by key (in-place match, no allocation for known keys)
         if (match_key_advance(&p, "kind")) {
+            if (mode != EVENT_PARSE_TEMPLATE && have_kind)
+                JFAIL_EV(NOSTR_JSON_ERR_BAD_KEY, p);
             long long v = 0;
             if (!nostr_json_parse_int64(&p, &v)) JFAIL_EV(NOSTR_JSON_ERR_BAD_NUMBER, p);
             if (v < 0 || v > 65535) JFAIL_EV(NOSTR_JSON_ERR_KIND_RANGE, p);
             event->kind = (int)v; have_kind = 1;
         } else if (match_key_advance(&p, "created_at")) {
+            if (mode != EVENT_PARSE_TEMPLATE && have_created_at)
+                JFAIL_EV(NOSTR_JSON_ERR_BAD_KEY, p);
             long long ts = 0;
             if (!nostr_json_parse_int64(&p, &ts)) JFAIL_EV(NOSTR_JSON_ERR_BAD_NUMBER, p);
             event->created_at = (int64_t)ts; have_created_at = 1;
         } else if (match_key_advance(&p, "pubkey")) {
+            if (mode != EVENT_PARSE_TEMPLATE && have_pubkey)
+                JFAIL_EV(NOSTR_JSON_ERR_BAD_KEY, p);
             char *s = nostr_json_parse_string(&p);
             if (!s) JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, p);
             if (event->pubkey) free(event->pubkey);
             event->pubkey = s;
             have_pubkey = 1;
         } else if (match_key_advance(&p, "id")) {
+            if (mode != EVENT_PARSE_TEMPLATE && have_id)
+                JFAIL_EV(NOSTR_JSON_ERR_BAD_KEY, p);
             char *s = nostr_json_parse_string(&p);
             if (!s) JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, p);
             if (event->id) free(event->id);
             event->id = s;
             have_id = 1;
         } else if (match_key_advance(&p, "sig")) {
+            if (mode != EVENT_PARSE_TEMPLATE && have_sig)
+                JFAIL_EV(NOSTR_JSON_ERR_BAD_KEY, p);
             char *s = nostr_json_parse_string(&p);
             if (!s) JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, p);
             if (event->sig) free(event->sig);
             event->sig = s;
             have_sig = 1;
         } else if (match_key_advance(&p, "content")) {
+            if (mode != EVENT_PARSE_TEMPLATE && have_content)
+                JFAIL_EV(NOSTR_JSON_ERR_BAD_KEY, p);
             char *s = nostr_json_parse_string(&p);
             if (!s) JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, p);
             if (event->content) free(event->content);
             event->content = s;
             have_content = 1;
         } else if (match_key_advance(&p, "tags")) {
+            if (mode != EVENT_PARSE_TEMPLATE && have_tags)
+                JFAIL_EV(NOSTR_JSON_ERR_BAD_KEY, p);
             const char *t = nostr_json_skip_ws(p);
             if (*t != '[') JFAIL_EV(NOSTR_JSON_ERR_EXPECTED_ARRAY, t);
-            ++t; // into tags array
-            /* Pre-count number of tags at top-level to reserve capacity */
-            const char *scan = t; int depth = 1; int max_depth = 1; size_t tag_count = 0;
-            while (*scan && depth) {
-                scan = nostr_json_skip_ws(scan);
-                if (*scan == '[' && depth == 1) { ++tag_count; ++scan; }
-                else if (*scan == '"') { char *d = nostr_json_parse_string(&scan); if (!d) JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, scan); free(d); }
-                else if (*scan == '[') { ++depth; if (depth > max_depth) max_depth = depth; ++scan; }
-                else if (*scan == ']') { --depth; ++scan; }
-                else { ++scan; }
-            }
-            if (depth) JFAIL_EV(NOSTR_JSON_ERR_UNCLOSED_BRACE, scan);
-            /* Enforce security limits */
-            if (tag_count > (size_t)nostr_limit_max_tags_per_event()) JFAIL_EV(NOSTR_JSON_ERR_TAG_LIMIT, t);
-            if (max_depth > (int)nostr_limit_max_tag_depth()) JFAIL_EV(NOSTR_JSON_ERR_DEPTH_LIMIT, t);
-            /* nostrc-sub-uaf: Use nostr_tags_new(0) to avoid undefined behaviour.
-             * The old nostr_tags_new(tag_count) read tag_count phantom va_args
-             * from the stack (UB).  Create empty, then reserve to desired capacity. */
+            ++t; /* into outer tags array */
+
             NostrTags *parsed = nostr_tags_new(0);
             if (!parsed) JFAIL_EV(NOSTR_JSON_ERR_ALLOC, t);
-            nostr_tags_reserve(parsed, tag_count > 0 ? tag_count : 4);
+            nostr_tags_reserve(parsed, 4);
+
+            size_t tag_count = 0;
             t = nostr_json_skip_ws(t);
             while (*t && *t != ']') {
-                if (*t != '[') { nostr_tags_free(parsed); JFAIL_EV(NOSTR_JSON_ERR_EXPECTED_ARRAY, t); }
-                ++t; // into a tag array
-                NostrTag *tag = nostr_tag_new(NULL, NULL);
-                if (!tag) { nostr_tags_free(parsed); JFAIL_EV(NOSTR_JSON_ERR_ALLOC, t); }
-                /* Reserve elements for this tag by scanning until closing ']' */
-                const char *t2 = t; size_t elem_count = 0;
-                while (*t2 && *t2 != ']') {
-                    t2 = nostr_json_skip_ws(t2);
-                    if (*t2 == '"') { char *tmp = nostr_json_parse_string(&t2); if (!tmp) { nostr_tag_free(tag); nostr_tags_free(parsed); JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, t2); } free(tmp); ++elem_count; t2 = nostr_json_skip_ws(t2); if (*t2 == ',') { ++t2; } }
-                    else { break; }
+                if (*t != '[') {
+                    nostr_tags_free(parsed);
+                    JFAIL_EV(NOSTR_JSON_ERR_EXPECTED_ARRAY, t);
                 }
-                if (elem_count > 0) nostr_tag_reserve(tag, elem_count);
+                if (++tag_count > (size_t)nostr_limit_max_tags_per_event()) {
+                    nostr_tags_free(parsed);
+                    JFAIL_EV(NOSTR_JSON_ERR_TAG_LIMIT, t);
+                }
+                if (nostr_limit_max_tag_depth() < 2) {
+                    nostr_tags_free(parsed);
+                    JFAIL_EV(NOSTR_JSON_ERR_DEPTH_LIMIT, t);
+                }
+                ++t; /* into one tag array */
+
+                NostrTag *tag = nostr_tag_new(NULL, NULL);
+                if (!tag) {
+                    nostr_tags_free(parsed);
+                    JFAIL_EV(NOSTR_JSON_ERR_ALLOC, t);
+                }
+
                 t = nostr_json_skip_ws(t);
                 while (*t && *t != ']') {
+                    if (*t != '"') {
+                        nostr_tag_free(tag);
+                        nostr_tags_free(parsed);
+                        JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, t);
+                    }
                     char *sv = nostr_json_parse_string(&t);
-                    if (!sv) { nostr_tag_free(tag); nostr_tags_free(parsed); JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, t); }
+                    if (!sv) {
+                        nostr_tag_free(tag);
+                        nostr_tags_free(parsed);
+                        JFAIL_EV(NOSTR_JSON_ERR_BAD_STRING, t);
+                    }
                     nostr_tag_append(tag, sv);
                     free(sv);
+
                     t = nostr_json_skip_ws(t);
-                    if (*t == ',') { ++t; t = nostr_json_skip_ws(t); }
+                    if (*t == ',') {
+                        ++t;
+                        t = nostr_json_skip_ws(t);
+                        if (*t == ']') {
+                            nostr_tag_free(tag);
+                            nostr_tags_free(parsed);
+                            JFAIL_EV(NOSTR_JSON_ERR_BAD_SEPARATOR, t);
+                        }
+                        continue;
+                    }
+                    if (*t != ']') {
+                        nostr_tag_free(tag);
+                        nostr_tags_free(parsed);
+                        JFAIL_EV(NOSTR_JSON_ERR_BAD_SEPARATOR, t);
+                    }
                 }
-                if (*t != ']') { nostr_tag_free(tag); nostr_tags_free(parsed); JFAIL_EV(NOSTR_JSON_ERR_UNCLOSED_BRACE, t); }
-                ++t; // after closing tag array
+                if (*t != ']') {
+                    nostr_tag_free(tag);
+                    nostr_tags_free(parsed);
+                    JFAIL_EV(NOSTR_JSON_ERR_UNCLOSED_BRACE, t);
+                }
+                ++t; /* after one tag array */
                 nostr_tags_append(parsed, tag);
+
                 t = nostr_json_skip_ws(t);
-                if (*t == ',') { ++t; t = nostr_json_skip_ws(t); }
+                if (*t == ',') {
+                    ++t;
+                    t = nostr_json_skip_ws(t);
+                    if (*t == ']') {
+                        nostr_tags_free(parsed);
+                        JFAIL_EV(NOSTR_JSON_ERR_BAD_SEPARATOR, t);
+                    }
+                    continue;
+                }
+                if (*t != ']') {
+                    nostr_tags_free(parsed);
+                    JFAIL_EV(NOSTR_JSON_ERR_BAD_SEPARATOR, t);
+                }
             }
-            if (*t != ']') { nostr_tags_free(parsed); JFAIL_EV(NOSTR_JSON_ERR_UNCLOSED_BRACE, t); }
-            ++t; // after closing tags
+            if (*t != ']') {
+                nostr_tags_free(parsed);
+                JFAIL_EV(NOSTR_JSON_ERR_UNCLOSED_BRACE, t);
+            }
+            ++t; /* after outer tags array */
             if (event->tags) nostr_tags_free(event->tags);
             event->tags = parsed;
             have_tags = 1;
-            p = t; // advance parser position
+            p = t;
         } else {
             // Unknown key: skip its value generically (string/number/object/array/true/false/null)
             const char *t = p;
@@ -352,10 +412,90 @@ int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
      * NIP-55L signer flows, which deserialize templates before signing. */
     if (!have_kind)
         JFAIL_EV(NOSTR_JSON_ERR_MISSING_FIELD, p);
-    (void)have_created_at; (void)have_id; (void)have_pubkey;
-    (void)have_sig; (void)have_tags; (void)have_content;
+    if (mode == EVENT_PARSE_SIGNED &&
+        !(have_id && have_pubkey && have_created_at && have_kind &&
+          have_tags && have_content && have_sig))
+        JFAIL_EV(NOSTR_JSON_ERR_MISSING_FIELD, p);
+    if (mode == EVENT_PARSE_UNSIGNED &&
+        (!(have_pubkey && have_created_at && have_kind && have_tags && have_content) ||
+         have_sig))
+        JFAIL_EV(have_sig ? NOSTR_JSON_ERR_BAD_KEY : NOSTR_JSON_ERR_MISSING_FIELD, p);
     return 1;
 #undef JFAIL_EV
+}
+
+int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
+                                     NostrJsonErrorInfo *err_out) {
+    return nostr_event_deserialize_compact_impl(
+        event, json, err_out, EVENT_PARSE_TEMPLATE);
+}
+
+static void event_clear_owned_fields(NostrEvent *event) {
+    if (!event) return;
+    free(event->id); event->id = NULL;
+    free(event->pubkey); event->pubkey = NULL;
+    if (event->tags) nostr_tags_free(event->tags);
+    event->tags = NULL;
+    free(event->content); event->content = NULL;
+    free(event->sig); event->sig = NULL;
+}
+
+static NostrEventValidationStatus event_deserialize_required(
+    NostrEvent *event, const char *json, NostrJsonErrorInfo *err_out,
+    EventParseMode mode) {
+    if (!event || !json) {
+        if (err_out) {
+            err_out->code = NOSTR_JSON_ERR_NULL_INPUT;
+            err_out->offset = -1;
+        }
+        return NOSTR_EVENT_VALIDATION_NULL;
+    }
+
+    if (strlen(json) > (size_t)nostr_limit_max_event_size()) {
+        if (err_out) {
+            err_out->code = NOSTR_JSON_ERR_OVERFLOW;
+            err_out->offset = -1;
+        }
+        return NOSTR_EVENT_VALIDATION_LIMIT;
+    }
+
+    NostrEvent shadow = {0};
+    NostrJsonErrorInfo local_err = {NOSTR_JSON_OK, -1};
+    NostrJsonErrorInfo *parse_err = err_out ? err_out : &local_err;
+    parse_err->code = NOSTR_JSON_OK;
+    parse_err->offset = -1;
+    if (!nostr_event_deserialize_compact_impl(&shadow, json, parse_err, mode)) {
+        event_clear_owned_fields(&shadow);
+        if (parse_err->code == NOSTR_JSON_ERR_MISSING_FIELD)
+            return NOSTR_EVENT_VALIDATION_MISSING_FIELD;
+        if (parse_err->code == NOSTR_JSON_ERR_TAG_LIMIT ||
+            parse_err->code == NOSTR_JSON_ERR_DEPTH_LIMIT ||
+            parse_err->code == NOSTR_JSON_ERR_OVERFLOW)
+            return NOSTR_EVENT_VALIDATION_LIMIT;
+        return NOSTR_EVENT_VALIDATION_SERIALIZATION_ERROR;
+    }
+
+    event_clear_owned_fields(event);
+    event->id = shadow.id; shadow.id = NULL;
+    event->pubkey = shadow.pubkey; shadow.pubkey = NULL;
+    event->created_at = shadow.created_at;
+    event->kind = shadow.kind;
+    event->tags = shadow.tags; shadow.tags = NULL;
+    event->content = shadow.content; shadow.content = NULL;
+    event->sig = shadow.sig; shadow.sig = NULL;
+    return NOSTR_EVENT_VALIDATION_OK;
+}
+
+NostrEventValidationStatus nostr_event_deserialize_signed(
+    NostrEvent *event, const char *json, NostrJsonErrorInfo *err_out) {
+    return event_deserialize_required(
+        event, json, err_out, EVENT_PARSE_SIGNED);
+}
+
+NostrEventValidationStatus nostr_event_deserialize_unsigned(
+    NostrEvent *event, const char *json, NostrJsonErrorInfo *err_out) {
+    return event_deserialize_required(
+        event, json, err_out, EVENT_PARSE_UNSIGNED);
 }
 
 void nostr_event_free(NostrEvent *event) {
@@ -414,100 +554,149 @@ NostrEvent *nostr_event_copy(const NostrEvent *src) {
 
 /* Legacy array serializer removed: rely on compact/public JSON serializers */
 
-char *nostr_event_get_id(NostrEvent *event) {
-    if (!event)
-        return NULL;
+static NostrEventValidationStatus event_canonical_hash(
+    const NostrEvent *event, unsigned char hash[SHA256_DIGEST_LENGTH]) {
+    if (!event || !hash)
+        return NOSTR_EVENT_VALIDATION_NULL;
 
-    // OPTIMIZATION (nostrc-o56): Return cached ID if available.
-    // Events received from relays already have their ID set during deserialization.
-    // Returning the cached value avoids expensive serialization+hashing on every call,
-    // and more importantly, prevents use-after-free races where another thread frees
-    // the event while we're serializing it.
-    if (event->id && *event->id) {
-        return strdup(event->id);  // Return copy for transfer-full semantics
-    }
-
-    // ID not cached - compute it from the canonical NIP-01 array preimage
     go_autofree char *serialized = nostr_event_serialize_nip01_array(event);
     if (!serialized)
-        return NULL;
+        return NOSTR_EVENT_VALIDATION_SERIALIZATION_ERROR;
 
-    // Hash the serialized event using SHA-256
+    SHA256((const unsigned char *)serialized, strlen(serialized), hash);
+    return NOSTR_EVENT_VALIDATION_OK;
+}
+
+static void hash_to_hex(const unsigned char hash[SHA256_DIGEST_LENGTH],
+                        char out[65]) {
+    static const char hex[] = "0123456789abcdef";
+    for (size_t i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+        out[i * 2] = hex[hash[i] >> 4];
+        out[i * 2 + 1] = hex[hash[i] & 0x0f];
+    }
+    out[64] = '\0';
+}
+
+NostrEventValidationStatus nostr_event_compute_id(const NostrEvent *event,
+                                                   char canonical_id_out[65]) {
+    if (!canonical_id_out)
+        return NOSTR_EVENT_VALIDATION_NULL;
+    canonical_id_out[0] = '\0';
+
     unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256((unsigned char *)serialized, strlen(serialized), hash);
+    NostrEventValidationStatus status = event_canonical_hash(event, hash);
+    if (status != NOSTR_EVENT_VALIDATION_OK)
+        return status;
 
-    // Convert the binary hash to a hex string
-    char *id = nostr_bin2hex(hash, SHA256_DIGEST_LENGTH);
+    hash_to_hex(hash, canonical_id_out);
+    return NOSTR_EVENT_VALIDATION_OK;
+}
 
-    // Cache the computed ID for future calls
-    if (id && !event->id) {
-        event->id = strdup(id);
+static bool is_lower_hex(const char *value, size_t expected_len) {
+    if (!value || strlen(value) != expected_len)
+        return false;
+    for (size_t i = 0; i < expected_len; i++) {
+        if (!((value[i] >= '0' && value[i] <= '9') ||
+              (value[i] >= 'a' && value[i] <= 'f')))
+            return false;
+    }
+    return true;
+}
+
+static NostrEventValidationStatus event_validate_internal(
+    const NostrEvent *event, bool verify_signature, char canonical_id_out[65]) {
+    if (canonical_id_out)
+        canonical_id_out[0] = '\0';
+    if (!event)
+        return NOSTR_EVENT_VALIDATION_NULL;
+    if (!event->id || !event->pubkey || !event->tags || !event->content ||
+        (verify_signature && !event->sig))
+        return NOSTR_EVENT_VALIDATION_MISSING_FIELD;
+
+    unsigned char declared_id[32];
+    if (!is_lower_hex(event->id, 64) ||
+        !nostr_hex2bin(declared_id, event->id, sizeof(declared_id)))
+        return NOSTR_EVENT_VALIDATION_BAD_ID;
+
+    if (!is_lower_hex(event->pubkey, 64))
+        return NOSTR_EVENT_VALIDATION_BAD_PUBKEY;
+
+    unsigned char pubkey_bin[32];
+    unsigned char sig_bin[64];
+    if (verify_signature) {
+        if (!nostr_hex2bin(pubkey_bin, event->pubkey, sizeof(pubkey_bin)))
+            return NOSTR_EVENT_VALIDATION_BAD_PUBKEY;
+        if (!is_lower_hex(event->sig, 128) ||
+            !nostr_hex2bin(sig_bin, event->sig, sizeof(sig_bin)))
+            return NOSTR_EVENT_VALIDATION_BAD_SIGNATURE_FORMAT;
     }
 
-    return id;
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    NostrEventValidationStatus status = event_canonical_hash(event, hash);
+    if (status != NOSTR_EVENT_VALIDATION_OK)
+        return status;
+    if (canonical_id_out)
+        hash_to_hex(hash, canonical_id_out);
+
+    if (memcmp(declared_id, hash, sizeof(hash)) != 0)
+        return NOSTR_EVENT_VALIDATION_CANONICAL_ID_MISMATCH;
+    if (!verify_signature)
+        return NOSTR_EVENT_VALIDATION_OK;
+
+    secp256k1_context *ctx =
+        secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
+    if (!ctx)
+        return NOSTR_EVENT_VALIDATION_CRYPTO_ERROR;
+
+    secp256k1_xonly_pubkey pubkey;
+    if (!secp256k1_xonly_pubkey_parse(ctx, &pubkey, pubkey_bin)) {
+        secp256k1_context_destroy(ctx);
+        return NOSTR_EVENT_VALIDATION_BAD_PUBKEY;
+    }
+
+    int verified =
+        secp256k1_schnorrsig_verify(ctx, sig_bin, hash, sizeof(hash), &pubkey);
+    secp256k1_context_destroy(ctx);
+    return verified ? NOSTR_EVENT_VALIDATION_OK
+                    : NOSTR_EVENT_VALIDATION_SIGNATURE_INVALID;
+}
+
+NostrEventValidationStatus nostr_event_validate_id(const NostrEvent *event,
+                                                    char canonical_id_out[65]) {
+    return event_validate_internal(event, false, canonical_id_out);
+}
+
+NostrEventValidationStatus nostr_event_validate(const NostrEvent *event,
+                                                 char canonical_id_out[65]) {
+    return event_validate_internal(event, true, canonical_id_out);
+}
+
+const char *nostr_event_validation_status_string(NostrEventValidationStatus status) {
+    switch (status) {
+    case NOSTR_EVENT_VALIDATION_OK: return "ok";
+    case NOSTR_EVENT_VALIDATION_NULL: return "null input";
+    case NOSTR_EVENT_VALIDATION_MISSING_FIELD: return "missing signed field";
+    case NOSTR_EVENT_VALIDATION_BAD_ID: return "invalid id format";
+    case NOSTR_EVENT_VALIDATION_BAD_PUBKEY: return "invalid pubkey";
+    case NOSTR_EVENT_VALIDATION_BAD_SIGNATURE_FORMAT: return "invalid signature format";
+    case NOSTR_EVENT_VALIDATION_CANONICAL_ID_MISMATCH: return "canonical id mismatch";
+    case NOSTR_EVENT_VALIDATION_SIGNATURE_INVALID: return "signature invalid";
+    case NOSTR_EVENT_VALIDATION_LIMIT: return "security limit exceeded";
+    case NOSTR_EVENT_VALIDATION_SERIALIZATION_ERROR: return "serialization error";
+    case NOSTR_EVENT_VALIDATION_CRYPTO_ERROR: return "crypto error";
+    default: return "unknown validation status";
+    }
+}
+
+char *nostr_event_get_id(NostrEvent *event) {
+    char canonical_id[65];
+    if (nostr_event_compute_id(event, canonical_id) != NOSTR_EVENT_VALIDATION_OK)
+        return NULL;
+    return strdup(canonical_id);
 }
 
 bool nostr_event_check_signature(NostrEvent *event) {
-    if (!event) {
-        fprintf(stderr, "Event is null\n");
-        return false;
-    }
-
-    // Decode public key from hex
-    unsigned char pubkey_bin[32]; // 32 bytes for schnorr pubkey
-    if (!nostr_hex2bin(pubkey_bin, event->pubkey, sizeof(pubkey_bin))) {
-        fprintf(stderr, "Invalid public key hex\n");
-        return false;
-    }
-
-    // Decode signature from hex
-    unsigned char sig_bin[64]; // 64 bytes for schnorr signature
-    if (!nostr_hex2bin(sig_bin, event->sig, sizeof(sig_bin))) {
-        fprintf(stderr, "Invalid signature hex\n");
-        return false;
-    }
-
-    // Create secp256k1 context
-    secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
-    if (!ctx) {
-        fprintf(stderr, "Failed to create secp256k1 context\n");
-        return false;
-    }
-
-    // Parse the public key using secp256k1_xonly_pubkey_parse (for Schnorr signatures)
-    secp256k1_xonly_pubkey pubkey;
-    if (!secp256k1_xonly_pubkey_parse(ctx, &pubkey, pubkey_bin)) {
-        fprintf(stderr, "Failed to parse public key\n");
-        secp256k1_context_destroy(ctx);
-        return false;
-    }
-
-    // Always recompute the 32-byte message hash from NIP-01 canonical array.
-    unsigned char hash[32];
-    go_autofree char *serialized = nostr_event_serialize_nip01_array(event);
-    if (!serialized) {
-        fprintf(stderr, "Failed to serialize canonical preimage\n");
-        secp256k1_context_destroy(ctx);
-        return false;
-    }
-    SHA256((unsigned char *)serialized, strlen(serialized), hash);
-
-    /*** Verification ***/
-
-    // Verify the signature using secp256k1_schnorrsig_verify
-    int verified = secp256k1_schnorrsig_verify(ctx, sig_bin, hash, 32, &pubkey);
-
-    // Clean up
-    secp256k1_context_destroy(ctx);
-
-    if (verified) {
-        return true;
-    } else {
-        fprintf(stderr, "Signature verification failed for event id=%s pubkey=%s\n", 
-                event->id ? event->id : "(null)", 
-                event->pubkey ? event->pubkey : "(null)");
-        return false;
-    }
+    return nostr_event_validate(event, NULL) == NOSTR_EVENT_VALIDATION_OK;
 }
 
 // Sign the event

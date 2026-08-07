@@ -14,20 +14,6 @@ set_reason(gchar **out_reason, const gchar *reason)
   return FALSE;
 }
 
-static gboolean
-hex_string_is_valid(const gchar *hex, gsize expected_len)
-{
-  if (!hex || strlen(hex) != expected_len)
-    return FALSE;
-
-  for (gsize i = 0; i < expected_len; i++) {
-    if (!g_ascii_isxdigit(hex[i]))
-      return FALSE;
-  }
-
-  return TRUE;
-}
-
 gboolean
 gnostr_profile_event_extract_for_apply(const gchar *event_json,
                                        gchar      **out_pubkey_hex,
@@ -51,15 +37,13 @@ gnostr_profile_event_extract_for_apply(const gchar *event_json,
   if (!gnostr_json_has_key(event_json, "tags"))
     return set_reason(out_reason, "missing tags field");
 
-  g_autofree gchar *raw_id = gnostr_json_get_string(event_json, "id", NULL);
-  if (!hex_string_is_valid(raw_id, 64))
-    return set_reason(out_reason, "missing or invalid id");
-
   NostrEvent *evt = nostr_event_new();
   if (!evt)
     return set_reason(out_reason, "deserialize failed");
 
-  if (nostr_event_deserialize(evt, event_json) != 0) {
+  NostrEventValidationStatus parse_status =
+      nostr_event_deserialize_signed(evt, event_json, NULL);
+  if (parse_status != NOSTR_EVENT_VALIDATION_OK) {
     nostr_event_free(evt);
     return set_reason(out_reason, "deserialize failed");
   }
@@ -69,30 +53,20 @@ gnostr_profile_event_extract_for_apply(const gchar *event_json,
     return set_reason(out_reason, "unexpected kind (expected 0)");
   }
 
-  char *saved_id = evt->id;
-  evt->id = NULL;
-  char *canonical_id = nostr_event_get_id(evt);
-  evt->id = saved_id;
-
-  if (!hex_string_is_valid(canonical_id, 64) ||
-      g_ascii_strcasecmp(raw_id, canonical_id) != 0) {
-    free(canonical_id);
+  NostrEventValidationStatus validation_status =
+      nostr_event_validate(evt, NULL);
+  if (validation_status != NOSTR_EVENT_VALIDATION_OK) {
     nostr_event_free(evt);
-    return set_reason(out_reason, "canonical id mismatch");
-  }
-
-  free(canonical_id);
-
-  const gchar *pubkey_hex = nostr_event_get_pubkey(evt);
-  if (!hex_string_is_valid(pubkey_hex, 64)) {
-    nostr_event_free(evt);
-    return set_reason(out_reason, "missing or invalid pubkey");
-  }
-
-  if (!nostr_event_check_signature(evt)) {
-    nostr_event_free(evt);
+    if (validation_status == NOSTR_EVENT_VALIDATION_CANONICAL_ID_MISMATCH)
+      return set_reason(out_reason, "canonical id mismatch");
+    if (validation_status == NOSTR_EVENT_VALIDATION_BAD_ID)
+      return set_reason(out_reason, "missing or invalid id");
+    if (validation_status == NOSTR_EVENT_VALIDATION_BAD_PUBKEY)
+      return set_reason(out_reason, "missing or invalid pubkey");
     return set_reason(out_reason, "invalid signature");
   }
+
+  const gchar *pubkey_hex = nostr_event_get_pubkey(evt);
 
   const gchar *content_json = nostr_event_get_content(evt);
   if (!content_json) {

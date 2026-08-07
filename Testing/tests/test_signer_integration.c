@@ -42,6 +42,14 @@ static int tests_failed = 0;
 /* Forward declaration */
 static char *make_event_json_with_pubkey(int kind, const char *content, int64_t created_at, const char *pubkey);
 
+static int attach_canonical_id(NostrEvent *event) {
+    char *canonical_id = nostr_event_get_id(event);
+    if (!canonical_id) return -1;
+    free(event->id);
+    event->id = canonical_id;
+    return 0;
+}
+
 /* Build event JSON with optional pubkey (for proper signing).
  * Note: The pubkey MUST be included for signature verification to work,
  * because nostr_event_sign_secure computes the hash before setting pubkey. */
@@ -164,8 +172,15 @@ static int test_sign_event(const char *expected_pk_hex) {
         TEST_FAIL("failed to deserialize signed event");
     }
 
-    /* Compute event ID and verify signature */
-    /* ID is computed during deserialize/serialize */
+    /* The signer API returns only the signature, so complete the signed event
+     * with its canonical id before strict signature validation. */
+    if (attach_canonical_id(ev) != 0) {
+        nostr_event_free(ev);
+        free(event_json);
+        free(signature);
+        TEST_FAIL("failed to compute event id");
+    }
+
     if (!nostr_event_check_signature(ev)) {
         nostr_event_free(ev);
         free(event_json);
@@ -358,7 +373,13 @@ static int test_sign_with_identity(const char *sk_hex, const char *expected_pk_h
         TEST_FAIL("deserialize failed");
     }
 
-    /* ID is computed during deserialize/serialize */
+    if (attach_canonical_id(ev) != 0) {
+        nostr_event_free(ev);
+        free(event_json);
+        free(signature);
+        TEST_FAIL("failed to compute event id");
+    }
+
     int valid = nostr_event_check_signature(ev);
     nostr_event_free(ev);
     free(event_json);

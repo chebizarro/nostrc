@@ -16,6 +16,8 @@
  * Opaque event record; registered as a GBoxed type via `nostr_event_get_type()`.
  */
 // Define the NostrEvent structure
+/* Event objects are mutable and are not thread-safe. Callers must synchronize
+ * both mutation and lifetime; the declared id field is untrusted until validated. */
 typedef struct _NostrEvent {
     char *id;
     char *pubkey;
@@ -26,6 +28,20 @@ typedef struct _NostrEvent {
     char *sig;
     void *extra; // Extra fields
 } NostrEvent;
+
+typedef enum {
+    NOSTR_EVENT_VALIDATION_OK = 0,
+    NOSTR_EVENT_VALIDATION_NULL,
+    NOSTR_EVENT_VALIDATION_MISSING_FIELD,
+    NOSTR_EVENT_VALIDATION_BAD_ID,
+    NOSTR_EVENT_VALIDATION_BAD_PUBKEY,
+    NOSTR_EVENT_VALIDATION_BAD_SIGNATURE_FORMAT,
+    NOSTR_EVENT_VALIDATION_CANONICAL_ID_MISMATCH,
+    NOSTR_EVENT_VALIDATION_SIGNATURE_INVALID,
+    NOSTR_EVENT_VALIDATION_LIMIT,
+    NOSTR_EVENT_VALIDATION_SERIALIZATION_ERROR,
+    NOSTR_EVENT_VALIDATION_CRYPTO_ERROR
+} NostrEventValidationStatus;
 
 #ifdef __cplusplus
 extern "C" {
@@ -62,10 +78,44 @@ GType nostr_event_get_type(void);
 #endif
 
 /**
+ * nostr_event_compute_id:
+ * @event: (nullable): event
+ * @canonical_id_out: (out) (array fixed-size=65): lowercase canonical event id
+ *
+ * Computes the NIP-01 SHA-256 id without consulting @event->id.
+ */
+NostrEventValidationStatus nostr_event_compute_id(const NostrEvent *event,
+                                                   char canonical_id_out[65]);
+
+/**
+ * nostr_event_validate_id:
+ * @event: (nullable): event
+ * @canonical_id_out: (out) (array fixed-size=65): lowercase canonical event id
+ *
+ * Computes the canonical id and requires the declared id to encode the same hash.
+ */
+NostrEventValidationStatus nostr_event_validate_id(const NostrEvent *event,
+                                                    char canonical_id_out[65]);
+
+/**
+ * nostr_event_validate:
+ * @event: (nullable): event
+ * @canonical_id_out: (out) (array fixed-size=65) (nullable): canonical event id
+ *
+ * Strictly validates required signed fields, binds the declared id to the
+ * canonical NIP-01 hash, and verifies the Schnorr signature against that hash.
+ */
+NostrEventValidationStatus nostr_event_validate(const NostrEvent *event,
+                                                 char canonical_id_out[65]);
+
+const char *nostr_event_validation_status_string(NostrEventValidationStatus status);
+
+/**
  * nostr_event_get_id:
  * @event: (nullable): event
  *
- * Returns: (transfer full) (nullable): newly allocated hex id
+ * Recomputes the canonical NIP-01 id. It never trusts or caches @event->id.
+ * Returns: (transfer full) (nullable): newly allocated lowercase hex id
  */
 char *nostr_event_get_id(NostrEvent *event);
 
@@ -73,7 +123,7 @@ char *nostr_event_get_id(NostrEvent *event);
  * nostr_event_check_signature:
  * @event: (nullable): event
  *
- * Returns: whether signature verifies
+ * Returns: whether the declared id is canonical and the signature verifies
  */
 bool nostr_event_check_signature(NostrEvent *event);
 
@@ -206,6 +256,20 @@ char *nostr_event_serialize_compact(const NostrEvent *event);
 typedef struct NostrJsonErrorInfo NostrJsonErrorInfo;
 int nostr_event_deserialize_compact(NostrEvent *event, const char *json,
                                      NostrJsonErrorInfo *err_out);
+
+/* Strict structural parser for signed event JSON. Unlike the permissive
+ * compact parser above, this requires id, pubkey, created_at, kind, tags,
+ * content, and sig to be present. Cryptographic validation remains a separate
+ * nostr_event_validate() step so envelope parsing and admission stay distinct. */
+NostrEventValidationStatus nostr_event_deserialize_signed(
+    NostrEvent *event, const char *json, NostrJsonErrorInfo *err_out);
+
+/* Strict structural parser for unsigned NIP-01-shaped events such as NIP-17
+ * rumors. Requires pubkey, created_at, kind, tags, and content; permits an id
+ * but rejects sig. If id is present, validate it separately with
+ * nostr_event_validate_id(). */
+NostrEventValidationStatus nostr_event_deserialize_unsigned(
+    NostrEvent *event, const char *json, NostrJsonErrorInfo *err_out);
 
 /* ========================================================================
  * Event Priority Classification (nostrc-7u2)

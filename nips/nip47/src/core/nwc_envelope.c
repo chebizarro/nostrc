@@ -22,6 +22,14 @@ static const char *enc_label(NostrNwcEncryption enc) {
   }
 }
 
+static int set_canonical_event_id(NostrEvent *event) {
+  char *canonical_id = nostr_event_get_id(event);
+  if (!canonical_id) return -1;
+  free(event->id);
+  event->id = canonical_id;
+  return 0;
+}
+
 /* naive string escaper for identifiers (method/result_type), assumed to be simple tokens */
 static char *json_quote_token(const char *s) {
   size_t n = strlen(s);
@@ -72,10 +80,9 @@ int nostr_nwc_request_build(const char *wallet_pub_hex, NostrNwcEncryption enc,
   nostr_tags_append(tags, e);
   nostr_event_set_tags(ev, tags);
 
-  /* Compute and cache the event id from the canonical NIP-01 preimage so the
-   * serialized request carries an "id" the wallet can reference in its `e` tag.
-   * (Audit F12: id must be computed from the canonical serialization.) */
-  { char *eid = nostr_event_get_id(ev); if (eid) free(eid); }
+  /* The canonical getter intentionally has no cache side effect; explicitly set
+   * the id that this unsigned envelope format carries for later correlation. */
+  if (set_canonical_event_id(ev) != 0) goto out;
 
   char *json = nostr_event_serialize(ev);
   if (!json) goto out;
@@ -144,9 +151,8 @@ int nostr_nwc_response_build(const char *client_pub_hex, const char *req_event_i
   nostr_tags_append(tags, enc_t);
   nostr_event_set_tags(ev, tags);
 
-  /* Compute and cache the event id from the canonical NIP-01 preimage so the
-   * serialized response carries an "id". */
-  { char *eid = nostr_event_get_id(ev); if (eid) free(eid); }
+  /* See the request path above: serialization needs an explicit canonical id. */
+  if (set_canonical_event_id(ev) != 0) goto out;
 
   char *json = nostr_event_serialize(ev);
   if (!json) goto out;

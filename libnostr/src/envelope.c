@@ -363,9 +363,14 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
         char *event_json = parse_json_object(&p);
         if (!event_json) { ESET_ENV(NOSTR_JSON_ERR_TRUNCATED); break; }
         NostrEvent *ev = nostr_event_new();
-        int succ = nostr_event_deserialize(ev, event_json);
+        NostrEventValidationStatus status =
+            nostr_event_deserialize_signed(ev, event_json, NULL);
         free(event_json);
-        if (succ != 0) { nostr_event_free(ev); ESET_ENV(NOSTR_JSON_ERR_NESTED_EVENT); break; }
+        if (status != NOSTR_EVENT_VALIDATION_OK) {
+            nostr_event_free(ev);
+            ESET_ENV(NOSTR_JSON_ERR_NESTED_EVENT);
+            break;
+        }
         env->event = ev;
         ok = 1;
         break;
@@ -535,9 +540,14 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
             char *ej = parse_json_object(&p);
             if (!ej) { ESET_ENV(NOSTR_JSON_ERR_TRUNCATED); break; }
             NostrEvent *ev = nostr_event_new();
-            int succ = nostr_event_deserialize(ev, ej);
+            NostrEventValidationStatus status =
+                nostr_event_deserialize_signed(ev, ej, NULL);
             free(ej);
-            if (succ != 0) { nostr_event_free(ev); ESET_ENV(NOSTR_JSON_ERR_NESTED_EVENT); break; }
+            if (status != NOSTR_EVENT_VALIDATION_OK) {
+                nostr_event_free(ev);
+                ESET_ENV(NOSTR_JSON_ERR_NESTED_EVENT);
+                break;
+            }
             env->event = ev;
             ok = 1;
         } else if (*p == '"') {
@@ -551,9 +561,14 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
                 char *ej = parse_json_object(&p);
                 if (!ej) { ESET_ENV(NOSTR_JSON_ERR_TRUNCATED); break; }
                 NostrEvent *ev = nostr_event_new();
-                int succ = nostr_event_deserialize(ev, ej);
+                NostrEventValidationStatus status =
+                    nostr_event_deserialize_signed(ev, ej, NULL);
                 free(ej);
-                if (succ != 0) { nostr_event_free(ev); ESET_ENV(NOSTR_JSON_ERR_NESTED_EVENT); break; }
+                if (status != NOSTR_EVENT_VALIDATION_OK) {
+                    nostr_event_free(ev);
+                    ESET_ENV(NOSTR_JSON_ERR_NESTED_EVENT);
+                    break;
+                }
                 env->event = ev;
             }
             ok = 1;
@@ -684,8 +699,10 @@ NostrEnvelope *nostr_envelope_parse(const char *message) {
     }
     free(label);
     if (!env) return NULL;
-    // Delegate parsing to unified deserializer (compact fast-path + backend fallback)
-    if (nostr_envelope_deserialize(env, message) != 0) {
+    /* Network envelopes use the strict compact parser directly. Falling back to
+     * a permissive backend here would allow a malformed signed EVENT/AUTH to
+     * bypass the required-field contract above. */
+    if (!nostr_envelope_deserialize_compact(env, message, NULL)) {
         nostr_envelope_free(env);
         return NULL;
     }
@@ -744,9 +761,12 @@ int event_envelope_unmarshal_json(NostrEventEnvelope *envelope, const char *json
 
     // Parse the JSON to check the number of elements in the array
     NostrEvent *event = nostr_event_new();
-    int err = nostr_event_deserialize(event, json_data);
-    if (err != 0)
+    NostrEventValidationStatus status =
+        nostr_event_deserialize_signed(event, json_data, NULL);
+    if (status != NOSTR_EVENT_VALIDATION_OK) {
+        nostr_event_free(event);
         return -1;
+    }
 
     envelope->event = event;
     return 0;

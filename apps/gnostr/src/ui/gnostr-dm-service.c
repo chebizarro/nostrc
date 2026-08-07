@@ -562,8 +562,23 @@ on_rumor_decrypted(GnostrSignerService *service, const char *rumor_json,
 
     /* Parse rumor event */
     NostrEvent *rumor = nostr_event_new();
-    if (!nostr_event_deserialize_compact(rumor, rumor_json, NULL)) {
+    if (nostr_event_deserialize_unsigned(rumor, rumor_json, NULL) !=
+        NOSTR_EVENT_VALIDATION_OK) {
         g_warning("[DM_SERVICE] Failed to parse rumor JSON");
+        nostr_event_free(rumor);
+        decrypt_ctx_free(ctx);
+        return;
+    }
+
+    /* Rumors are unsigned, but their identity is still canonical. A supplied
+     * id must bind to the decrypted fields before it is used for dedup/storage. */
+    char rumor_canonical_id[65];
+    NostrEventValidationStatus rumor_status = rumor->id
+        ? nostr_event_validate_id(rumor, rumor_canonical_id)
+        : nostr_event_compute_id(rumor, rumor_canonical_id);
+    if (rumor_status != NOSTR_EVENT_VALIDATION_OK) {
+        g_warning("[DM_SERVICE] Invalid rumor identity: %s",
+                  nostr_event_validation_status_string(rumor_status));
         nostr_event_free(rumor);
         decrypt_ctx_free(ctx);
         return;
@@ -644,8 +659,7 @@ on_rumor_decrypted(GnostrSignerService *service, const char *rumor_json,
                                 is_outgoing, TRUE);
         }
 
-        /* Store message in conversation history */
-        char *rumor_id = nostr_event_get_id(rumor);
+        /* Store message in conversation history under the validated canonical id. */
         DmConversation *conv = g_hash_table_lookup(self->conversations, peer_pubkey);
         if (conv && display_content) {
             /* Parse kind 15 file metadata if applicable */
@@ -658,7 +672,7 @@ on_rumor_decrypted(GnostrSignerService *service, const char *rumor_json,
                 }
             }
 
-            gboolean stored = store_message(conv, rumor_id, display_content,
+            gboolean stored = store_message(conv, rumor_canonical_id, display_content,
                                             created_at, is_outgoing, file_msg);
             if (stored) {
                 /* Find the just-stored message to pass via signal */
@@ -682,7 +696,6 @@ on_rumor_decrypted(GnostrSignerService *service, const char *rumor_json,
             if (file_msg) gnostr_dm_file_message_free(file_msg);
         }
 
-        free(rumor_id);
         g_free(file_preview);
     }
 
@@ -722,10 +735,13 @@ on_seal_decrypted(GnostrSignerService *service, const char *seal_json,
 
     g_debug("[DM_SERVICE] Decrypted seal: %.100s...", seal_json);
 
-    /* Parse seal event */
+    /* Strictly parse the signed seal before validating its kind/signature. */
     NostrEvent *seal = nostr_event_new();
-    if (!nostr_event_deserialize_compact(seal, seal_json, NULL)) {
-        g_warning("[DM_SERVICE] Failed to parse seal JSON");
+    NostrEventValidationStatus seal_parse_status =
+        nostr_event_deserialize_signed(seal, seal_json, NULL);
+    if (seal_parse_status != NOSTR_EVENT_VALIDATION_OK) {
+        g_warning("[DM_SERVICE] Failed to parse signed seal JSON: %s",
+                  nostr_event_validation_status_string(seal_parse_status));
         nostr_event_free(seal);
         g_hash_table_remove(self->pending_decrypts, ctx->gift_wrap_id);
         return;
@@ -739,9 +755,11 @@ on_seal_decrypted(GnostrSignerService *service, const char *seal_json,
         return;
     }
 
-    /* Verify seal signature */
-    if (!nostr_event_check_signature(seal)) {
-        g_warning("[DM_SERVICE] Invalid seal signature");
+    /* Bind the seal id and verify its signature in one pass. */
+    NostrEventValidationStatus seal_status = nostr_event_validate(seal, NULL);
+    if (seal_status != NOSTR_EVENT_VALIDATION_OK) {
+        g_warning("[DM_SERVICE] Invalid seal: %s",
+                  nostr_event_validation_status_string(seal_status));
         nostr_event_free(seal);
         g_hash_table_remove(self->pending_decrypts, ctx->gift_wrap_id);
         return;
@@ -771,10 +789,39 @@ on_seal_decrypted(GnostrSignerService *service, const char *seal_json,
         ctx);
 }
 
+static gboolean
+gift_wrap_targets_user(const NostrEvent *gift_wrap, const char *user_pubkey)
+{
+    if (!gift_wrap || !user_pubkey || strlen(user_pubkey) != 64)
+        return FALSE;
+
+    NostrTags *tags = nostr_event_get_tags(gift_wrap);
+    if (!tags)
+        return FALSE;
+    for (size_t i = 0; i < nostr_tags_size(tags); i++) {
+        NostrTag *tag = nostr_tags_get(tags, i);
+        if (!tag || nostr_tag_size(tag) < 2)
+            continue;
+        const char *key = nostr_tag_get(tag, 0);
+        const char *value = nostr_tag_get(tag, 1);
+        if (key && value && strcmp(key, "p") == 0 &&
+            strcmp(value, user_pubkey) == 0)
+            return TRUE;
+    }
+    return FALSE;
+}
+
 /* Step 1: Start async decryption of gift wrap */
 static void
 decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap)
 {
+    /* Relay filters are not an authenticity boundary. Reject wraps for another
+     * recipient before pending-dedup insertion or signer/decrypt RPC work. */
+    if (!gift_wrap_targets_user(gift_wrap, self->user_pubkey)) {
+        g_warning("[DM_SERVICE] Gift wrap recipient does not match active user");
+        return;
+    }
+
     char *id = nostr_event_get_id(gift_wrap);
     const char *outer_pk = nostr_event_get_pubkey(gift_wrap);
     const char *encrypted_content = nostr_event_get_content(gift_wrap);
@@ -889,22 +936,11 @@ on_pool_gift_wrap_event(GNostrSubscription *sub, const gchar *event_json, gpoint
 
     if (!GNOSTR_IS_DM_SERVICE(self) || !event_json) return;
 
-    NostrEvent *evt = nostr_event_new();
-    if (!evt || nostr_event_deserialize(evt, event_json) != 0) {
-        if (evt) nostr_event_free(evt);
-        return;
-    }
-
-    int kind = nostr_event_get_kind(evt);
-    if (kind != NOSTR_KIND_GIFT_WRAP) {
-        nostr_event_free(evt);
-        return;
-    }
-
-    /* Validate gift wrap signature */
-    if (!nostr_event_check_signature(evt)) {
-        g_warning("[DM_SERVICE] Invalid gift wrap signature");
-        nostr_event_free(evt);
+    NostrEvent *evt = NULL;
+    g_autofree gchar *reason = NULL;
+    if (!gnostr_dm_gift_wrap_parse_for_processing(event_json, &evt, &reason)) {
+        g_warning("[DM_SERVICE] Invalid gift wrap: %s",
+                  reason ? reason : "unknown error");
         return;
     }
 
