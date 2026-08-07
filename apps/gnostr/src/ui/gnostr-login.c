@@ -88,8 +88,9 @@ struct _GnostrLogin {
   gboolean local_signer_available;
   gulong name_owner_handler;         /* Monitor daemon appearing/disappearing */
   char *nostrconnect_uri;          /* URI for QR code display */
-  char *nostrconnect_secret;       /* Secret for bunker auth (hex) */
-  uint8_t nostrconnect_secret_bytes[32]; /* Secret bytes for decryption */
+  char *nostrconnect_secret;       /* URI ?secret= handshake token (hex) */
+  uint8_t nostrconnect_secret_bytes[32]; /* Client private key bytes (NIP-44 decrypt) */
+  char *client_seckey_hex;         /* nostrc-80qa: hex of client private key (for session ECDH + persistence) */
   char *client_pubkey_hex;         /* Client pubkey from nostrconnect URI */
   NostrNip46Session *nip46_session; /* NIP-46 session */
   GCancellable *cancellable;       /* For async operations */
@@ -240,7 +241,8 @@ typedef struct {
   GnostrLogin *self;
   char *signer_pubkey_hex;   /* nostrc-rrfr: signer communication pubkey (sender of connect) */
   char *nostrconnect_uri;    /* nostrc-rrfr: URI for session secret/relays */
-  char *nostrconnect_secret; /* nostrc-1wfi: client private key for ECDH */
+  char *nostrconnect_secret; /* URI ?secret= handshake token (ack validation) */
+  char *client_seckey_hex;   /* nostrc-80qa: client private key hex for ECDH */
   char *relay_url;           /* Relay URL for get_public_key RPC */
 } Nip46ConnectCtx;
 
@@ -250,7 +252,8 @@ typedef struct {
   char *user_pubkey_hex;     /* Actual user pubkey from get_public_key RPC */
   char *signer_pubkey_hex;   /* Signer's communication pubkey */
   char *nostrconnect_uri;    /* URI for session persistence */
-  char *nostrconnect_secret; /* Client private key for persistence */
+  char *nostrconnect_secret; /* URI ?secret= handshake token */
+  char *client_seckey_hex;   /* nostrc-80qa: client private key hex for persistence */
 } Nip46PubkeyCtx;
 
 static void nip46_connect_ctx_free(gpointer data) {
@@ -260,10 +263,14 @@ static void nip46_connect_ctx_free(gpointer data) {
     g_free(ctx->signer_pubkey_hex);
     g_free(ctx->nostrconnect_uri);
     g_free(ctx->relay_url);
-    /* Securely clear the secret before freeing */
+    /* Securely clear the secrets before freeing */
     if (ctx->nostrconnect_secret) {
       memset(ctx->nostrconnect_secret, 0, strlen(ctx->nostrconnect_secret));
       g_free(ctx->nostrconnect_secret);
+    }
+    if (ctx->client_seckey_hex) {
+      memset(ctx->client_seckey_hex, 0, strlen(ctx->client_seckey_hex));
+      g_free(ctx->client_seckey_hex);
     }
     g_free(ctx);
   }
@@ -279,6 +286,10 @@ static void nip46_pubkey_ctx_free(gpointer data) {
     if (ctx->nostrconnect_secret) {
       memset(ctx->nostrconnect_secret, 0, strlen(ctx->nostrconnect_secret));
       g_free(ctx->nostrconnect_secret);
+    }
+    if (ctx->client_seckey_hex) {
+      memset(ctx->client_seckey_hex, 0, strlen(ctx->client_seckey_hex));
+      g_free(ctx->client_seckey_hex);
     }
     g_free(ctx);
   }
@@ -309,8 +320,10 @@ static gboolean on_nip46_pubkey_result(gpointer data) {
   }
   const char *npub = gnostr_nip19_get_bech32(n19);
 
-  /* Persist NIP-46 credentials to GSettings */
-  if (ctx->nostrconnect_secret && ctx->signer_pubkey_hex) {
+  /* Persist NIP-46 credentials to GSettings.
+   * nostrc-80qa: persist the CLIENT PRIVATE KEY, not the URI handshake token —
+   * the restore path feeds this value to nostr_nip46_client_set_secret(). */
+  if (ctx->client_seckey_hex && ctx->signer_pubkey_hex) {
     char **relays = NULL;
     size_t n_relays = 0;
 
@@ -318,7 +331,7 @@ static gboolean on_nip46_pubkey_result(gpointer data) {
       nostr_nip46_session_get_relays(self->nip46_session, &relays, &n_relays);
     }
 
-    save_nip46_credentials_to_settings(ctx->nostrconnect_secret,
+    save_nip46_credentials_to_settings(ctx->client_seckey_hex,
                                         ctx->signer_pubkey_hex,
                                         relays, n_relays);
 
@@ -415,6 +428,7 @@ static void on_get_pubkey_done(GObject *source, GAsyncResult *result, gpointer u
   pubkey_ctx->signer_pubkey_hex = g_strdup(ctx->signer_pubkey_hex);
   pubkey_ctx->nostrconnect_uri = g_strdup(ctx->nostrconnect_uri);
   pubkey_ctx->nostrconnect_secret = g_strdup(ctx->nostrconnect_secret);
+  pubkey_ctx->client_seckey_hex = g_strdup(ctx->client_seckey_hex);
 
   free(user_pubkey_hex);
   nip46_connect_ctx_free(ctx);
@@ -459,8 +473,14 @@ static gboolean on_nip46_connect_success(gpointer data) {
   if (ctx->nostrconnect_uri) {
     nostr_nip46_client_connect(self->nip46_session, ctx->nostrconnect_uri, NULL);
   }
-  if (ctx->nostrconnect_secret) {
-    nostr_nip46_client_set_secret(self->nip46_session, ctx->nostrconnect_secret);
+  /* nostrc-80qa: Set the REAL client private key (the one whose pubkey is in
+   * the nostrconnect:// URI). ctx->nostrconnect_secret is only the ?secret=
+   * handshake token — using it here made the get_public_key RPC sign/encrypt
+   * with a key the signer never authorized, stalling the QR login. */
+  if (ctx->client_seckey_hex) {
+    nostr_nip46_client_set_secret(self->nip46_session, ctx->client_seckey_hex);
+  } else {
+    g_warning("[NIP46_LOGIN] Missing client secret key for NIP-46 session");
   }
   if (ctx->signer_pubkey_hex) {
     nostr_nip46_client_set_signer_pubkey(self->nip46_session, ctx->signer_pubkey_hex);
@@ -474,6 +494,7 @@ static gboolean on_nip46_connect_success(gpointer data) {
   task_ctx->signer_pubkey_hex = g_strdup(ctx->signer_pubkey_hex);
   task_ctx->nostrconnect_uri = g_strdup(ctx->nostrconnect_uri);
   task_ctx->nostrconnect_secret = g_strdup(ctx->nostrconnect_secret);
+  task_ctx->client_seckey_hex = g_strdup(ctx->client_seckey_hex);
   task_ctx->relay_url = g_strdup(ctx->relay_url);
 
   /* Spawn async task for get_public_key RPC */
@@ -514,6 +535,11 @@ static void gnostr_login_dispose(GObject *obj) {
   self->nostrconnect_uri = NULL;
   g_free(self->nostrconnect_secret);
   self->nostrconnect_secret = NULL;
+  if (self->client_seckey_hex) {
+    memset(self->client_seckey_hex, 0, strlen(self->client_seckey_hex));
+    g_free(self->client_seckey_hex);
+    self->client_seckey_hex = NULL;
+  }
   g_free(self->client_pubkey_hex);
   self->client_pubkey_hex = NULL;
 
@@ -962,12 +988,36 @@ static void generate_nostrconnect_uri(GnostrLogin *self) {
     /* Clear secret bytes on failure */
     memset(secret_bytes, 0, sizeof(secret_bytes));
     memset(self->nostrconnect_secret_bytes, 0, sizeof(self->nostrconnect_secret_bytes));
+    /* nostrc-80qa: drop any stale key from a previous attempt */
+    if (self->client_seckey_hex) {
+      memset(self->client_seckey_hex, 0, strlen(self->client_seckey_hex));
+      g_free(self->client_seckey_hex);
+      self->client_seckey_hex = NULL;
+    }
     return;
   }
 
   /* Store client pubkey for subscription filter */
   g_free(self->client_pubkey_hex);
   self->client_pubkey_hex = g_strdup(client_pubkey_hex);
+
+  /* nostrc-80qa: Store hex of the REAL client private key. This is what
+   * nostr_nip46_client_set_secret() needs for the RPC session and what gets
+   * persisted for session restore — NOT nostrconnect_secret, which is only
+   * the URI ?secret= handshake token. */
+  {
+    char seckey_hex[65];
+    for (int i = 0; i < 32; i++) {
+      snprintf(seckey_hex + i * 2, 3, "%02x", secret_bytes[i]);
+    }
+    seckey_hex[64] = '\0';
+    if (self->client_seckey_hex) {
+      memset(self->client_seckey_hex, 0, strlen(self->client_seckey_hex));
+      g_free(self->client_seckey_hex);
+    }
+    self->client_seckey_hex = g_strdup(seckey_hex);
+    memset(seckey_hex, 0, sizeof(seckey_hex));
+  }
 
   /* Clear secret bytes from stack (we've stored them in self) */
   memset(secret_bytes, 0, sizeof(secret_bytes));
@@ -1586,6 +1636,7 @@ static void on_nip46_sub_event(GNostrSubscription *sub, const gchar *event_json,
   ctx->signer_pubkey_hex = g_strdup(sender_pubkey);
   ctx->nostrconnect_uri = g_strdup(self->nostrconnect_uri);
   ctx->nostrconnect_secret = g_strdup(self->nostrconnect_secret);
+  ctx->client_seckey_hex = g_strdup(self->client_seckey_hex);
 
   /* Extract relay URL from the nostrconnect URI, fall back to default */
   ctx->relay_url = NULL;
