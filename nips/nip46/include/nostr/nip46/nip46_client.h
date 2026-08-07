@@ -61,6 +61,19 @@ int nostr_nip46_client_set_secret(NostrNip46Session *s, const char *secret_hex);
 int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, char **out_signed_event_json);
 int nostr_nip46_client_ping(NostrNip46Session *s);
 
+/* nostrc-prkl: Tune the client-side RPC rate limit (signer-relay flood
+ * protection). All RPC round-trips (sign_event, nip04/nip44 encrypt/decrypt
+ * RPC variants, connect, get_public_key) share one gate per session:
+ *  - max_inflight: maximum concurrent RPC round-trips (<= 0 keeps the
+ *    built-in default of 4);
+ *  - min_interval_ms: minimum milliseconds between request publishes
+ *    (0 keeps the built-in default of 150 ms).
+ * Callers beyond the cap block until a slot frees; bursts are serialized
+ * into an evenly paced trickle instead of flooding the signer relays. */
+void nostr_nip46_client_set_rate_limit(NostrNip46Session *s,
+                                       int max_inflight,
+                                       uint32_t min_interval_ms);
+
 /* NIP-46 TRANSPORT-LEVEL local-crypto using s->secret (client communication key).
  * Use ONLY for encrypting/decrypting NIP-46 protocol messages (kind 24133).
  * Do NOT use for user content — use the _rpc variants below instead. */

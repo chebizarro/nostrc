@@ -94,7 +94,23 @@ struct NostrNip46Session {
 
     /* nostrc-32yf: Session state machine */
     Nip46SessionState state;
+
+    /* nostrc-prkl: Client RPC rate limiting (signer-relay flood protection).
+     * Bulk operations (e.g. nip44_decrypt for every gift-wrapped DM) used to
+     * publish kind-24133 requests unbounded, tripping relay rate limits. */
+    pthread_mutex_t rpc_gate_mutex;
+    pthread_cond_t  rpc_gate_cond;
+    int      rpc_inflight;         /* currently active RPC round-trips */
+    int      rpc_gate_waiters;     /* callers blocked waiting for a slot */
+    int      rpc_gate_closing;     /* session teardown: reject new entrants */
+    int      rpc_max_inflight;     /* 0 = NIP46_DEFAULT_MAX_INFLIGHT */
+    uint32_t rpc_min_interval_ms;  /* 0 = NIP46_DEFAULT_MIN_INTERVAL_MS */
+    int64_t  rpc_next_send_ms;     /* earliest monotonic time (ms) for next publish */
 };
+
+/* nostrc-prkl: rate limiting defaults */
+#define NIP46_DEFAULT_MAX_INFLIGHT    4
+#define NIP46_DEFAULT_MIN_INTERVAL_MS 150
 
 /* nostrc-kk9f: Session registry helper functions.
  * Register a session's pool for callback lookup. */
@@ -227,6 +243,15 @@ static NostrNip46Session *session_new(const char *note) {
     NostrNip46Session *s = (NostrNip46Session *)calloc(1, sizeof(*s));
     if (!s) return NULL;
     pthread_mutex_init(&s->pending_mutex, NULL);
+    /* nostrc-prkl: RPC rate limiting gate */
+    pthread_mutex_init(&s->rpc_gate_mutex, NULL);
+    pthread_cond_init(&s->rpc_gate_cond, NULL);
+    s->rpc_inflight = 0;
+    s->rpc_gate_waiters = 0;
+    s->rpc_gate_closing = 0;
+    s->rpc_max_inflight = 0;      /* use default */
+    s->rpc_min_interval_ms = 0;   /* use default */
+    s->rpc_next_send_ms = 0;
     if (note) s->note = strdup(note);
     return s;
 }
@@ -314,7 +339,25 @@ void nostr_nip46_session_free(NostrNip46Session *s) {
     if (s->current_request_client_pubkey) { free(s->current_request_client_pubkey); }
     /* free client mode transport - use client_stop for consistent cleanup */
     nostr_nip46_client_stop(s);
-    /* cancel and free pending requests */
+
+    /* nostrc-prkl: Coordinated gate shutdown BEFORE tearing down the pending
+     * infrastructure.  Order matters:
+     *  1. cancel_all closes all pending response channels, waking in-flight
+     *     RPC waiters quickly (they exit through nip46_rpc_gate_release);
+     *  2. mark the gate closing and wake queued callers (they observe
+     *     rpc_gate_closing and bail out without touching the session);
+     *  3. drain: wait until every entrant (in-flight and queued) has left;
+     *  4. only then free pending leftovers and destroy the mutexes. */
+    nostr_nip46_client_cancel_all(s);
+    pthread_mutex_lock(&s->rpc_gate_mutex);
+    s->rpc_gate_closing = 1;
+    pthread_cond_broadcast(&s->rpc_gate_cond);
+    while (s->rpc_inflight > 0 || s->rpc_gate_waiters > 0) {
+        pthread_cond_wait(&s->rpc_gate_cond, &s->rpc_gate_mutex);
+    }
+    pthread_mutex_unlock(&s->rpc_gate_mutex);
+
+    /* cancel and free pending requests (leftovers only after the drain) */
     pthread_mutex_lock(&s->pending_mutex);
     PendingRequest *pr = s->pending_requests;
     while (pr) {
@@ -330,6 +373,8 @@ void nostr_nip46_session_free(NostrNip46Session *s) {
     s->pending_requests = NULL;
     pthread_mutex_unlock(&s->pending_mutex);
     pthread_mutex_destroy(&s->pending_mutex);
+    pthread_mutex_destroy(&s->rpc_gate_mutex);
+    pthread_cond_destroy(&s->rpc_gate_cond);
     if (s->derived_client_pubkey) { free(s->derived_client_pubkey); }
     free(s);
 }
@@ -847,9 +892,110 @@ int nostr_nip46_client_ping(NostrNip46Session *s) {
  * Returns the "result" field from the response on success, or NULL on error.
  * If out_response_pubkey is non-NULL, it receives the pubkey of the responding event.
  * Caller must free the returned strings. */
+/* nostrc-prkl: Rate-limit gate helpers.
+ *
+ * Two mechanisms combined:
+ *  - in-flight cap: at most N RPC round-trips concurrently (excess callers
+ *    block on the condvar until a slot frees up);
+ *  - pacing: successive request publishes are spaced by a minimum interval.
+ *    Each acquirer reserves the next send slot under the mutex, so a burst
+ *    of callers is serialized into an evenly-paced trickle. */
+static int64_t nip46_now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/* Sleep until an absolute monotonic deadline, retrying on EINTR / early wake. */
+static void nip46_sleep_until_ms(int64_t deadline_ms) {
+    for (;;) {
+        int64_t now = nip46_now_ms();
+        if (now >= deadline_ms) return;
+        int64_t remain = deadline_ms - now;
+        struct timespec ts;
+        ts.tv_sec = (time_t)(remain / 1000);
+        ts.tv_nsec = (long)(remain % 1000) * 1000000L;
+        nanosleep(&ts, NULL); /* EINTR or early return: loop re-checks clock */
+    }
+}
+
+/* Returns 0 when a slot was acquired, -1 when the session is closing. */
+static int nip46_rpc_gate_acquire(NostrNip46Session *s, const char *method) {
+    pthread_mutex_lock(&s->rpc_gate_mutex);
+    int max_inflight = s->rpc_max_inflight > 0 ? s->rpc_max_inflight
+                                               : NIP46_DEFAULT_MAX_INFLIGHT;
+    while (!s->rpc_gate_closing && s->rpc_inflight >= max_inflight) {
+        s->rpc_gate_waiters++;
+        pthread_cond_wait(&s->rpc_gate_cond, &s->rpc_gate_mutex);
+        s->rpc_gate_waiters--;
+    }
+    if (s->rpc_gate_closing) {
+        /* Wake the teardown drain (it waits on the same condvar). */
+        pthread_cond_broadcast(&s->rpc_gate_cond);
+        pthread_mutex_unlock(&s->rpc_gate_mutex);
+        fprintf(stderr, "[nip46] %s: session closing - RPC rejected\n", method);
+        return -1;
+    }
+    s->rpc_inflight++;
+
+    uint32_t interval = s->rpc_min_interval_ms > 0 ? s->rpc_min_interval_ms
+                                                   : NIP46_DEFAULT_MIN_INTERVAL_MS;
+    int64_t now = nip46_now_ms();
+    int64_t slot = s->rpc_next_send_ms > now ? s->rpc_next_send_ms : now;
+    s->rpc_next_send_ms = slot + (int64_t)interval;
+    pthread_mutex_unlock(&s->rpc_gate_mutex);
+
+    if (slot > now) {
+        fprintf(stderr, "[nip46] %s: rate limit - pacing %lld ms before publish\n",
+                method, (long long)(slot - now));
+        nip46_sleep_until_ms(slot);
+    }
+    return 0;
+}
+
+static void nip46_rpc_gate_release(NostrNip46Session *s) {
+    pthread_mutex_lock(&s->rpc_gate_mutex);
+    if (s->rpc_inflight > 0) s->rpc_inflight--;
+    /* Broadcast: wakes both queued callers and a draining teardown. */
+    pthread_cond_broadcast(&s->rpc_gate_cond);
+    pthread_mutex_unlock(&s->rpc_gate_mutex);
+}
+
+/* nostrc-prkl: Public tuning knob for the client RPC rate limit.
+ * max_inflight <= 0 or min_interval_ms == 0 keep the built-in defaults. */
+void nostr_nip46_client_set_rate_limit(NostrNip46Session *s,
+                                       int max_inflight,
+                                       uint32_t min_interval_ms) {
+    if (!s) return;
+    pthread_mutex_lock(&s->rpc_gate_mutex);
+    s->rpc_max_inflight = max_inflight > 0 ? max_inflight : 0;
+    s->rpc_min_interval_ms = min_interval_ms;
+    pthread_cond_broadcast(&s->rpc_gate_cond);
+    pthread_mutex_unlock(&s->rpc_gate_mutex);
+}
+
+static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
+                                 const char **params, size_t n_params,
+                                 char **out_response_pubkey);
+
+/* nostrc-prkl: Throttled entry point - every client RPC (sign_event,
+ * nip44_encrypt/decrypt, connect, get_public_key, sync and async variants)
+ * funnels through here, so the gate bounds total signer-relay traffic. */
 static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
                             const char **params, size_t n_params,
                             char **out_response_pubkey) {
+    if (out_response_pubkey) *out_response_pubkey = NULL;
+    if (!s || !method) return NULL;
+    if (nip46_rpc_gate_acquire(s, method) != 0) return NULL;
+    char *result = nip46_rpc_call_impl(s, method, params, n_params,
+                                       out_response_pubkey);
+    nip46_rpc_gate_release(s);
+    return result;
+}
+
+static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
+                                 const char **params, size_t n_params,
+                                 char **out_response_pubkey) {
     if (out_response_pubkey) *out_response_pubkey = NULL;
     if (!s || !method) return NULL;
 
