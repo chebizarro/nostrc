@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: GPL-3.0-or-later
+  Original gnostr artwork: a simple one-color bug silhouette.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="16" height="16" viewBox="0 0 16 16">
+  <path fill="currentColor"
+        d="M5 5h6v6a3 3 0 0 1-6 0V5zm1.5-2L5 1.5V1h1v.1L8 3h-1.5zm3 0L11 1.5V1h-1v.1L8 3h1.5zM2 6h3v1H2V6zm9 0h3v1h-3V6zM1 9h4v1H1V9zm10 0h4v1h-4V9zM2 12h3v1H2v-1zm9 0h3v1h-3v-1z"/>
+</svg>

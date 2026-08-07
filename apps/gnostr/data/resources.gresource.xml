@@ -53,5 +53,6 @@
   </gresource>
   <gresource prefix="/org/gnostr/icons">
     <file>icons/hicolor/scalable/apps/org.gnostr.gnostr.svg</file>
+    <file alias="scalable/actions/gnostr-bug-symbolic.svg">icons/hicolor/scalable/actions/gnostr-bug-symbolic.svg</file>
   </gresource>
 </gresources>

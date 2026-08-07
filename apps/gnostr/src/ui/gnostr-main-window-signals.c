@@ -42,6 +42,8 @@ gnostr_main_window_connect_session_view_signals_internal(GnostrMainWindow *self,
   g_signal_connect(self->session_view, "account-switch-requested", account_switch_cb, self);
   g_signal_connect(self->session_view, "new-notes-clicked", new_notes_cb, self);
   g_signal_connect(self->session_view, "compose-requested", compose_cb, self);
+  g_signal_connect(self->session_view, "bug-report-requested",
+                   G_CALLBACK(gnostr_main_window_on_bug_report_requested_internal), self);
   if (search_committed_cb)
     g_signal_connect(self->session_view, "search-committed", search_committed_cb, self);
 }

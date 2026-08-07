@@ -96,8 +96,27 @@ deferred_plugin_init_cb(gpointer data)
   return G_SOURCE_REMOVE;
 }
 
+static void
+gnostr_register_resource_icons(void)
+{
+  static gboolean registered = FALSE;
+  if (registered)
+    return;
+
+  GdkDisplay *display = gdk_display_get_default();
+  if (!display)
+    return;
+
+  GtkIconTheme *theme = gtk_icon_theme_get_for_display(display);
+  gtk_icon_theme_add_resource_path(theme, "/org/gnostr/icons");
+  registered = TRUE;
+}
+
 static void on_activate(GApplication *app, gpointer user_data) {
   (void)user_data;
+
+  /* Custom action icons are bundled below /org/gnostr/icons/<size>/<context>. */
+  gnostr_register_resource_icons();
 
   GList *windows = gtk_application_get_windows(GTK_APPLICATION(app));
   if (windows) {

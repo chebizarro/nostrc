@@ -474,6 +474,17 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           </object>
                         </child>
                         <child type="end">
+                          <object class="GtkButton" id="btn_bug_report">
+                            <property name="icon-name">gnostr-bug-symbolic</property>
+                            <property name="tooltip-text" translatable="yes">Report a bug</property>
+                            <property name="visible">false</property>
+                            <style>
+                              <class name="flat"/>
+                              <class name="circular"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child type="end">
                           <object class="GtkButton" id="btn_search">
                             <property name="icon-name">system-search-symbolic</property>
                             <property name="tooltip-text" translatable="yes">Search</property>

@@ -41,6 +41,10 @@ struct _PublishContext {
   char *limit_warnings;
   gboolean local_ingested;
   gboolean finalized;
+  GnostrPublishEventCompletion completion_cb;
+  gpointer completion_data;
+  GDestroyNotify completion_destroy;
+  gboolean completion_called;
 };
 
 struct _PublishRelayAttempt {
@@ -64,6 +68,21 @@ static void on_publish_relay_ok(GNostrRelay *relay, const char *event_id, gboole
 static void on_publish_relay_state_changed(GNostrRelay *relay, GNostrRelayState old_state, GNostrRelayState new_state, gpointer user_data);
 static void on_publish_relay_error(GNostrRelay *relay, GError *error, gpointer user_data);
 
+static void
+publish_context_complete(PublishContext *ctx, gboolean success)
+{
+  if (!ctx || ctx->completion_called)
+    return;
+
+  ctx->completion_called = TRUE;
+  if (ctx->completion_cb)
+    ctx->completion_cb(success, ctx->completion_data);
+  if (ctx->completion_destroy)
+    ctx->completion_destroy(ctx->completion_data);
+  ctx->completion_data = NULL;
+  ctx->completion_destroy = NULL;
+}
+
 static void publish_context_free(PublishContext *ctx) {
   if (!ctx) return;
   g_clear_object(&ctx->self);
@@ -76,6 +95,8 @@ static void publish_context_free(PublishContext *ctx) {
   if (ctx->failure_reasons) g_string_free(ctx->failure_reasons, TRUE);
   if (ctx->relay_outcomes) g_string_free(ctx->relay_outcomes, TRUE);
   g_free(ctx->limit_warnings);
+  if (ctx->completion_destroy)
+    ctx->completion_destroy(ctx->completion_data);
   g_free(ctx);
 }
 
@@ -120,6 +141,45 @@ static void relay_publish_result_free(RelayPublishResult *r) {
 static void relay_publish_thread(GTask *task, gpointer source_object,
                                  gpointer task_data, GCancellable *cancellable);
 static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer user_data);
+
+void
+gnostr_main_window_publish_event_json_async_internal(
+    GnostrMainWindow *self,
+    const char *event_json,
+    GCancellable *cancellable,
+    GnostrPublishEventCompletion completion_cb,
+    gpointer completion_data,
+    GDestroyNotify completion_destroy)
+{
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !event_json || !*event_json) {
+    if (completion_cb)
+      completion_cb(FALSE, completion_data);
+    if (completion_destroy)
+      completion_destroy(completion_data);
+    return;
+  }
+
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  if (!gnostr_signer_service_is_available(signer)) {
+    gnostr_main_window_show_toast_internal(self, "Signer not available");
+    if (completion_cb)
+      completion_cb(FALSE, completion_data);
+    if (completion_destroy)
+      completion_destroy(completion_data);
+    return;
+  }
+
+  PublishContext *ctx = g_new0(PublishContext, 1);
+  ctx->self = g_object_ref(self);
+  ctx->text = g_strdup("");
+  g_weak_ref_init(&ctx->composer_ref, NULL);
+  ctx->completion_cb = completion_cb;
+  ctx->completion_data = completion_data;
+  ctx->completion_destroy = completion_destroy;
+
+  gnostr_sign_event_async(event_json, "", "gnostr", cancellable,
+                          on_sign_event_complete, ctx);
+}
 
 struct _LikeContext {
   GnostrMainWindow *self;
@@ -422,6 +482,7 @@ publish_finish_if_settled(PublishContext *ctx)
   if (ctx->relay_outcomes && ctx->relay_outcomes->len > 0)
     g_message("[PUBLISH] Relay publish outcomes:\n%s", ctx->relay_outcomes->str);
 
+  publish_context_complete(ctx, ctx->success_count > 0);
   publish_context_free(ctx);
 }
 
@@ -519,6 +580,7 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
   (void)source; /* Not used with unified signer service */
 
   if (!ctx || !GNOSTR_IS_MAIN_WINDOW(ctx->self)) {
+    publish_context_complete(ctx, FALSE);
     publish_context_free(ctx);
     return;
   }
@@ -532,6 +594,7 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
     g_autofree char *msg = g_strdup_printf("Signing failed: %s", error ? error->message : "unknown error");
     gnostr_main_window_show_toast_internal(self, msg);
     g_clear_error(&error);
+    publish_context_complete(ctx, FALSE);
     publish_context_free(ctx);
     return;
   }
@@ -545,6 +608,7 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
     gnostr_main_window_show_toast_internal(self, "Failed to parse signed event");
     nostr_event_free(event);
     g_free(signed_event_json);
+    publish_context_complete(ctx, FALSE);
     publish_context_free(ctx);
     return;
   }
@@ -556,6 +620,7 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
   if (!ctx->event_id || !*ctx->event_id) {
     gnostr_main_window_show_toast_internal(self, "Failed to determine signed event ID");
     g_free(signed_event_json);
+    publish_context_complete(ctx, FALSE);
     publish_context_free(ctx);
     return;
   }
@@ -564,6 +629,7 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
   if (!relay_urls || relay_urls->len == 0) {
     gnostr_main_window_show_toast_internal(self, "No write relays configured");
     g_free(signed_event_json);
+    publish_context_complete(ctx, FALSE);
     publish_context_free(ctx);
     return;
   }

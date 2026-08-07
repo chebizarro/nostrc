@@ -355,6 +355,74 @@ void nip34_repo_state_free(nip34_repo_state_t *state)
 }
 
 /* =========================================================================
+ * Issue (kind 1621) — creation
+ * ========================================================================= */
+
+NostrEvent *nip34_create_issue(const char *repo_owner_pubkey_hex,
+                               const char *repo_id,
+                               const char *subject,
+                               const char *content,
+                               const char *const *labels)
+{
+    if (!repo_owner_pubkey_hex || !*repo_owner_pubkey_hex ||
+        !repo_id || !*repo_id || !subject || !*subject || !content)
+        return NULL;
+
+    size_t addr_len = strlen("30617::") + strlen(repo_owner_pubkey_hex) +
+                      strlen(repo_id) + 1;
+    char *repo_addr = malloc(addr_len);
+    if (!repo_addr)
+        return NULL;
+    snprintf(repo_addr, addr_len, "30617:%s:%s", repo_owner_pubkey_hex, repo_id);
+
+    size_t label_count = 0;
+    if (labels) {
+        while (labels[label_count])
+            label_count++;
+    }
+
+    NostrEvent *ev = nostr_event_new();
+    if (!ev) {
+        free(repo_addr);
+        return NULL;
+    }
+
+    NostrTags *tags = new_tags(label_count + 4);
+    if (!tags) {
+        free(repo_addr);
+        nostr_event_free(ev);
+        return NULL;
+    }
+
+    if (tags_add2(tags, "a", repo_addr) != 0 ||
+        tags_add2(tags, "p", repo_owner_pubkey_hex) != 0 ||
+        tags_add2(tags, "subject", subject) != 0 ||
+        tags_add2(tags, "alt", "git repository issue") != 0) {
+        free(repo_addr);
+        nostr_tags_free(tags);
+        nostr_event_free(ev);
+        return NULL;
+    }
+
+    for (size_t i = 0; i < label_count; i++) {
+        if (labels[i][0] != '\0' && tags_add2(tags, "t", labels[i]) != 0) {
+            free(repo_addr);
+            nostr_tags_free(tags);
+            nostr_event_free(ev);
+            return NULL;
+        }
+    }
+
+    nostr_event_set_kind(ev, NIP34_KIND_ISSUE);
+    nostr_event_set_created_at(ev, (int64_t)time(NULL));
+    nostr_event_set_content(ev, content);
+    nostr_event_set_tags(ev, tags);
+
+    free(repo_addr);
+    return ev;
+}
+
+/* =========================================================================
  * Patch (kind 1617) — creation
  * ========================================================================= */
 

@@ -48,6 +48,7 @@ typedef enum {
   SIGNAL_ACCOUNT_SWITCH_REQUESTED,
   SIGNAL_NEW_NOTES_CLICKED,
   SIGNAL_COMPOSE_REQUESTED,
+  SIGNAL_BUG_REPORT_REQUESTED,
   SIGNAL_SEARCH_CHANGED,
   SIGNAL_SEARCH_COMMITTED,
   SIGNAL_VIEW_PROFILE_REQUESTED,
@@ -92,6 +93,7 @@ struct _GnostrSessionView {
   GtkButton *btn_reconnect;
   GtkMenuButton *btn_avatar;
   GtkButton *btn_compose;
+  GtkButton *btn_bug_report;
   GtkButton *btn_search;
   GnostrFilterSwitcher *filter_switcher;
 
@@ -549,6 +551,8 @@ static void update_auth_gating(GnostrSessionView *self) {
     gtk_widget_set_sensitive(GTK_WIDGET(self->row_notifications), self->authenticated);
   if (self->row_messages)
     gtk_widget_set_sensitive(GTK_WIDGET(self->row_messages), self->authenticated);
+  if (self->btn_bug_report)
+    gtk_widget_set_visible(GTK_WIDGET(self->btn_bug_report), self->authenticated);
 
   /* Update plugin sidebar rows that require authentication */
   if (self->plugin_auth_required && self->plugin_rows) {
@@ -780,6 +784,13 @@ static void on_btn_compose_clicked(GtkButton *btn, gpointer user_data) {
   g_signal_emit(self, signals[SIGNAL_COMPOSE_REQUESTED], 0);
 }
 
+static void on_btn_bug_report_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
+  if (!GNOSTR_IS_SESSION_VIEW(self) || !self->authenticated) return;
+  g_signal_emit(self, signals[SIGNAL_BUG_REPORT_REQUESTED], 0);
+}
+
 static void on_btn_search_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
@@ -998,6 +1009,17 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
       G_TYPE_NONE,
       0);
 
+  signals[SIGNAL_BUG_REPORT_REQUESTED] = g_signal_new(
+      "bug-report-requested",
+      G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST,
+      0,
+      NULL,
+      NULL,
+      g_cclosure_marshal_VOID__VOID,
+      G_TYPE_NONE,
+      0);
+
   signals[SIGNAL_SEARCH_CHANGED] = g_signal_new(
       "search-changed",
       G_TYPE_FROM_CLASS(klass),
@@ -1077,6 +1099,7 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_reconnect);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_avatar);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_compose);
+  gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_bug_report);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, btn_search);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, filter_switcher);
   gtk_widget_class_bind_template_child(widget_class, GnostrSessionView, search_bar);
@@ -1210,6 +1233,11 @@ static void gnostr_session_view_init(GnostrSessionView *self) {
 
   if (self->btn_compose) {
     g_signal_connect(self->btn_compose, "clicked", G_CALLBACK(on_btn_compose_clicked), self);
+  }
+
+  if (self->btn_bug_report) {
+    g_signal_connect(self->btn_bug_report, "clicked",
+                     G_CALLBACK(on_btn_bug_report_clicked), self);
   }
 
   if (self->btn_search) {

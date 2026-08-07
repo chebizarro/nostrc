@@ -7,7 +7,7 @@
  *   30618 — Repository state (addressable, d-tag = repo ID, ref→OID tags)
  *   1617  — Patch (regular)
  *   1618  — Pull request (regular) [placeholder]
- *   1621  — Issue (regular) [placeholder]
+ *   1621  — Issue (regular)
  *   1630–1633 — Status events (open, applied/merged, closed, draft)
  *
  * @see https://github.com/nostr-protocol/nips/blob/master/34.md
@@ -209,6 +209,32 @@ nip34_result_t nip34_parse_patch(const NostrEvent *event,
                                  nip34_patch_t **out);
 
 void nip34_patch_free(nip34_patch_t *patch);
+
+/* =========================================================================
+ * Issue (kind 1621)
+ * ========================================================================= */
+
+/**
+ * nip34_create_issue:
+ * Create a kind 1621 issue targeting a repository announcement.
+ *
+ * @param repo_owner_pubkey_hex repository owner public key (64-char hex, required)
+ * @param repo_id               repository d-tag identifier (required)
+ * @param subject               issue subject/title (required)
+ * @param content               markdown issue description (required)
+ * @param labels                NULL-terminated array of labels (nullable)
+ *
+ * The event includes an "a" tag for
+ * "30617:<repo_owner_pubkey_hex>:<repo_id>", a "p" tag for the owner,
+ * a "subject" tag, an NIP-31 "alt" tag, and one "t" tag per label.
+ *
+ * Returns: newly allocated unsigned NostrEvent, or NULL on error.
+ */
+NostrEvent *nip34_create_issue(const char *repo_owner_pubkey_hex,
+                               const char *repo_id,
+                               const char *subject,
+                               const char *content,
+                               const char *const *labels);
 
 /* =========================================================================
  * Status events (kinds 1630–1633)

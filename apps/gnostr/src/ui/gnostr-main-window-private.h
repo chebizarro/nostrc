@@ -28,6 +28,9 @@ typedef struct _NostrGtkTimelineView NostrGtkTimelineView;
 typedef struct _GnostrThreadPrefetch GnostrThreadPrefetch;
 typedef struct _GnostrTimelineFeedController GnostrTimelineFeedController;
 
+typedef void (*GnostrPublishEventCompletion)(gboolean success,
+                                              gpointer user_data);
+
 typedef enum {
   COMPOSE_CONTEXT_NONE,
   COMPOSE_CONTEXT_REPLY,
@@ -203,9 +206,17 @@ struct _GnostrMainWindow {
 
 void gnostr_main_window_show_toast_internal(GnostrMainWindow *self, const char *message);
 void gnostr_main_window_handle_composer_post_requested(NostrGtkComposer *composer, const char *text, gpointer user_data);
+void gnostr_main_window_publish_event_json_async_internal(
+    GnostrMainWindow *self,
+    const char *event_json,
+    GCancellable *cancellable,
+    GnostrPublishEventCompletion completion_cb,
+    gpointer completion_data,
+    GDestroyNotify completion_destroy);
 void gnostr_main_window_on_relays_clicked_internal(GtkButton *btn, gpointer user_data);
 void gnostr_main_window_on_settings_clicked_internal(GtkButton *btn, gpointer user_data);
 void gnostr_main_window_on_compose_requested_internal(GnostrSessionView *session_view, gpointer user_data);
+void gnostr_main_window_on_bug_report_requested_internal(GnostrSessionView *session_view, gpointer user_data);
 void gnostr_main_window_on_show_about_activated_internal(GSimpleAction *action, GVariant *param, gpointer user_data);
 void gnostr_main_window_on_show_preferences_activated_internal(GSimpleAction *action, GVariant *param, gpointer user_data);
 void gnostr_main_window_install_actions_internal(GnostrMainWindow *self);

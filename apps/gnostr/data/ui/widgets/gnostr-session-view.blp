@@ -443,6 +443,18 @@ template $GnostrSessionView: Adw.Bin {
                         }
 
                         [end]
+                        Button btn_bug_report {
+                            icon-name: "gnostr-bug-symbolic";
+                            tooltip-text: _("Report a bug");
+                            visible: false;
+
+                            styles [
+                                "flat",
+                                "circular",
+                            ]
+                        }
+
+                        [end]
                         Button btn_search {
                             icon-name: "system-search-symbolic";
                             tooltip-text: _("Search");
