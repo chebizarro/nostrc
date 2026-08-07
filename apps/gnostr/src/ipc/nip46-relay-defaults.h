@@ -20,14 +20,21 @@
 #include <stdlib.h>
 
 /* Well-known NIP-46 relays. Multiple entries provide redundancy if one
- * goes offline. The first entry is preferred for nostrconnect:// URIs. */
+ * goes offline. The first entry is preferred for nostrconnect:// URIs.
+ * nostrc-qpow: entries must accept kind-24133 (ephemeral) events without
+ * policy demands - nos.lol was dropped because it rejects them with
+ * "pow: 28 bits needed", which is unmineable for interactive signing. */
 static const char *const NIP46_FALLBACK_RELAYS[] = {
   "wss://relay.nsec.app",
-  "wss://nos.lol",
+  "wss://relay.primal.net",
+  "wss://relay.damus.io",
   NULL  /* sentinel */
 };
 
-#define NIP46_FALLBACK_RELAY_COUNT 3
+/* Derived from the array so the count can never drift out of sync with the
+ * list (a hand-edited mismatch previously copied the NULL sentinel as a
+ * relay entry). Excludes the sentinel. */
+#define NIP46_FALLBACK_RELAY_COUNT (G_N_ELEMENTS(NIP46_FALLBACK_RELAYS) - 1)
 
 /**
  * nip46_get_default_relay:

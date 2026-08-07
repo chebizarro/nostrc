@@ -1151,6 +1151,44 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
                                  const char **params, size_t n_params,
                                  char **out_response_pubkey);
 
+/* nostrc-qpow: Publish an RPC event and wait briefly for the relay's OK so
+ * delivery failures are visible instead of silent. Some general-purpose
+ * relays reject kind-24133 with policy demands (e.g. "pow: 28 bits needed")
+ * — without OK feedback the request just vanished and the caller burned the
+ * full response timeout.
+ *
+ * Returns: 1 = relay accepted; 0 = no OK within the window (assume
+ * best-effort delivery and keep waiting); -1 = relay explicitly rejected
+ * (retrying the same relay is futile). On rejection, *out_reason (if
+ * non-NULL) is replaced with the relay's reason string. */
+static int nip46_publish_rpc_event(NostrRelay *relay, NostrEvent *ev,
+                                   const char *method, char **out_reason) {
+    Error *perr = NULL;
+    bool accepted = nostr_relay_publish_and_wait(relay, ev, 2000, &perr);
+    const char *url = nostr_relay_get_url_const(relay);
+    if (accepted) {
+        fprintf(stderr, "[nip46] %s: accepted by %s\n", method, url);
+        if (perr) free_error(perr);
+        return 1;
+    }
+    const char *msg = (perr && perr->message) ? perr->message : "";
+    int rc;
+    if (strstr(msg, "rejected")) {
+        fprintf(stderr, "[nip46] %s: REJECTED by %s: %s\n", method, url, msg);
+        if (out_reason) {
+            free(*out_reason);
+            *out_reason = strdup(msg);
+        }
+        rc = -1;
+    } else {
+        fprintf(stderr, "[nip46] %s: no OK from %s within 2s (continuing): %s\n",
+                method, url, *msg ? msg : "(timeout)");
+        rc = 0;
+    }
+    if (perr) free_error(perr);
+    return rc;
+}
+
 /* nostrc-prkl: Throttled entry point - every client RPC (sign_event,
  * nip44_encrypt/decrypt, connect, get_public_key, sync and async variants)
  * funnels through here, so the gate bounds total signer-relay traffic. */
@@ -1309,21 +1347,26 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     /* nostrc-3l6f: Publish request via persistent pool to all connected relays.
      * nostrc-koso: track per-relay publish state and keep the event alive —
      * relays still connecting get a late publish during the response wait
-     * below, so the request reaches signers that listen on a single relay. */
+     * below, so the request reaches signers that listen on a single relay.
+     * nostrc-qpow: wait briefly for each relay's OK so explicit rejections
+     * (e.g. \"pow: 28 bits needed\" on general-purpose relays) are detected
+     * instead of silently losing the request and burning the full timeout. */
     fprintf(stderr, "[nip46] %s: publishing via persistent pool (%zu relay(s))\n",
             method, s->client_pool->relay_count);
 
     size_t pool_relay_count = s->client_pool->relay_count;
     unsigned char *published_to =
         (unsigned char *)calloc(pool_relay_count ? pool_relay_count : 1, 1);
-    int published = 0;
+    int published = 0;   /* accepted or OK-silent (assumed best-effort) */
+    int nacked = 0;      /* explicitly rejected by the relay */
+    char *reject_reason = NULL;
     for (size_t i = 0; i < pool_relay_count; i++) {
         NostrRelay *relay = s->client_pool->relays[i];
         if (relay && nostr_relay_is_connected(relay)) {
-            nostr_relay_publish(relay, req_ev);
-            if (published_to) published_to[i] = 1;
-            published++;
-            fprintf(stderr, "[nip46] %s: published to %s\n", method, nostr_relay_get_url_const(relay));
+            if (published_to) published_to[i] = 1; /* attempted — never re-publish */
+            int prc = nip46_publish_rpc_event(relay, req_ev, method, &reject_reason);
+            if (prc >= 0) published++;
+            else nacked++;
         }
     }
 
@@ -1348,30 +1391,45 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
         if (response_sel.selected_case == 0) break;
         waited_ms += slice;
         /* Late publish to relays that connected after the first attempt */
+        size_t unattempted = 0;
         for (size_t i = 0; i < pool_relay_count && published_to; i++) {
             NostrRelay *relay = s->client_pool->relays[i];
             if (!published_to[i] && relay && nostr_relay_is_connected(relay)) {
-                nostr_relay_publish(relay, req_ev);
                 published_to[i] = 1;
-                published++;
                 fprintf(stderr, "[nip46] %s: late publish to %s\n",
                         method, nostr_relay_get_url_const(relay));
+                int prc = nip46_publish_rpc_event(relay, req_ev, method, &reject_reason);
+                if (prc >= 0) published++;
+                else nacked++;
             }
+            if (published_to && !published_to[i]) unattempted++;
+        }
+        /* nostrc-qpow: every relay we will ever reach has explicitly rejected
+         * the request — waiting out the full timeout is pointless. */
+        if (published == 0 && nacked > 0 && unattempted == 0) {
+            fprintf(stderr, "[nip46] %s: aborting wait - every relay rejected the request\n",
+                    method);
+            break;
         }
     }
     free(published_to);
     nostr_event_free(req_ev);
 
     if (response_sel.selected_case < 0) {
-        if (published == 0) {
+        if (published == 0 && nacked > 0) {
+            fprintf(stderr, "[nip46] %s: ERROR: all relays rejected the request: %s\n",
+                    method, reject_reason ? reject_reason : "(unknown reason)");
+        } else if (published == 0) {
             fprintf(stderr, "[nip46] %s: ERROR: no relay ever connected to publish to\n", method);
         } else {
             fprintf(stderr, "[nip46] %s: timed out waiting for response after %u ms\n",
                     method, pr->timeout_ms);
         }
+        free(reject_reason);
         pending_request_cancel(s, req_id);
         return NULL;
     }
+    free(reject_reason);
 
     char *result = NULL;
     int recv_ok = (response_sel.selected_case == 0 && response_sel.ok) ? 0 : -1;
