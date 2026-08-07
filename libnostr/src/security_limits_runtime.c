@@ -61,6 +61,17 @@ typedef struct {
   int64_t max_frames_per_sec;
   int64_t max_bytes_per_sec;
   int64_t max_event_size;
+  int64_t verification_conn_per_sec;
+  int64_t verification_conn_burst;
+  int64_t verification_ip_per_sec;
+  int64_t verification_ip_burst;
+  int64_t verification_global_per_sec;
+  int64_t verification_global_burst;
+  int64_t max_verification_ips;
+  int64_t max_verification_jobs;
+  int64_t max_verification_bytes;
+  int64_t verification_negative_cache_entries;
+  int64_t verification_negative_ttl_seconds;
   int64_t max_tags_per_event;
   int64_t max_tag_depth;
   int64_t max_ids_per_filter;
@@ -81,6 +92,17 @@ static void limits_init_once(void) {
   g_limits.max_frames_per_sec         = read_ll_env("NOSTR_MAX_FRAMES_PER_SEC", NOSTR_MAX_FRAMES_PER_SEC);
   g_limits.max_bytes_per_sec          = read_ll_env("NOSTR_MAX_BYTES_PER_SEC", NOSTR_MAX_BYTES_PER_SEC);
   g_limits.max_event_size             = read_ll_env("NOSTR_MAX_EVENT_SIZE_BYTES", NOSTR_MAX_EVENT_SIZE_BYTES);
+  g_limits.verification_conn_per_sec   = read_ll_env("NOSTR_VERIFY_CONN_TOKENS_PER_SEC", 40);
+  g_limits.verification_conn_burst     = read_ll_env("NOSTR_VERIFY_CONN_BURST", 80);
+  g_limits.verification_ip_per_sec     = read_ll_env("NOSTR_VERIFY_IP_TOKENS_PER_SEC", 200);
+  g_limits.verification_ip_burst       = read_ll_env("NOSTR_VERIFY_IP_BURST", 400);
+  g_limits.verification_global_per_sec = read_ll_env("NOSTR_VERIFY_GLOBAL_TOKENS_PER_SEC", 2000);
+  g_limits.verification_global_burst   = read_ll_env("NOSTR_VERIFY_GLOBAL_BURST", 4000);
+  g_limits.max_verification_ips        = read_ll_env("NOSTR_VERIFY_MAX_IPS", 4096);
+  g_limits.max_verification_jobs       = read_ll_env("NOSTR_VERIFY_MAX_JOBS", 64);
+  g_limits.max_verification_bytes      = read_ll_env("NOSTR_VERIFY_MAX_BYTES", 16 * 1024 * 1024);
+  g_limits.verification_negative_cache_entries = read_ll_env("NOSTR_VERIFY_NEGATIVE_CACHE_ENTRIES", 4096);
+  g_limits.verification_negative_ttl_seconds = read_ll_env("NOSTR_VERIFY_NEGATIVE_TTL_SECONDS", 30);
   g_limits.max_tags_per_event         = read_ll_env("NOSTR_MAX_TAGS_PER_EVENT", NOSTR_MAX_TAGS_PER_EVENT);
   g_limits.max_tag_depth              = read_ll_env("NOSTR_MAX_TAG_DEPTH", NOSTR_MAX_TAG_DEPTH);
   g_limits.max_ids_per_filter         = read_ll_env("NOSTR_MAX_IDS_PER_FILTER", NOSTR_MAX_IDS_PER_FILTER);
@@ -115,6 +137,40 @@ int64_t nostr_limit_max_bytes_per_sec(void) {
 int64_t nostr_limit_max_event_size(void) {
   limits_ensure_init();
   return g_limits.max_event_size;
+}
+
+int64_t nostr_limit_verification_conn_per_sec(void) {
+  limits_ensure_init(); return g_limits.verification_conn_per_sec;
+}
+int64_t nostr_limit_verification_conn_burst(void) {
+  limits_ensure_init(); return g_limits.verification_conn_burst;
+}
+int64_t nostr_limit_verification_ip_per_sec(void) {
+  limits_ensure_init(); return g_limits.verification_ip_per_sec;
+}
+int64_t nostr_limit_verification_ip_burst(void) {
+  limits_ensure_init(); return g_limits.verification_ip_burst;
+}
+int64_t nostr_limit_verification_global_per_sec(void) {
+  limits_ensure_init(); return g_limits.verification_global_per_sec;
+}
+int64_t nostr_limit_verification_global_burst(void) {
+  limits_ensure_init(); return g_limits.verification_global_burst;
+}
+int64_t nostr_limit_max_verification_ips(void) {
+  limits_ensure_init(); return g_limits.max_verification_ips;
+}
+int64_t nostr_limit_max_verification_jobs(void) {
+  limits_ensure_init(); return g_limits.max_verification_jobs;
+}
+int64_t nostr_limit_max_verification_bytes(void) {
+  limits_ensure_init(); return g_limits.max_verification_bytes;
+}
+int64_t nostr_limit_verification_negative_cache_entries(void) {
+  limits_ensure_init(); return g_limits.verification_negative_cache_entries;
+}
+int64_t nostr_limit_verification_negative_ttl_seconds(void) {
+  limits_ensure_init(); return g_limits.verification_negative_ttl_seconds;
 }
 
 int64_t nostr_limit_max_tags_per_event(void) {

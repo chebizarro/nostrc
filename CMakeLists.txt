@@ -190,6 +190,11 @@ if (GO_ENABLE_TSAN)
   add_compile_definitions(NOSTR_CHANNEL_ATOMIC_TRY=0)
 endif()
 
+# Define testing before application subdirectories so their local security tests
+# can register with CTest.
+option(BUILD_TESTING "Build the testing tree" ON)
+enable_testing()
+
 option(BUILD_RELAYD "Build the relayd application (requires nsync)" ON)
 if (BUILD_RELAYD AND EXISTS ${CMAKE_SOURCE_DIR}/apps/relayd/CMakeLists.txt)
   add_subdirectory(apps/relayd)
@@ -211,9 +216,6 @@ if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   endif()
 endif()
  
-
-# Enable CTest early so all subdirectories can register tests (including NIPs)
-enable_testing()
 
 # Top-level build for the nostrc monorepo.
 # This project builds multiple libraries:
@@ -384,12 +386,7 @@ if (BUILD_NOSTR_GTK)
   add_subdirectory(nostr-gtk)
 endif()
 
-# Add test targets from `tests/`.
-# NOTE: enable_testing() (above) registers CTest but does NOT define the
-# BUILD_TESTING cache variable — only include(CTest) does.  We declare the
-# option explicitly so that workflows that don't pass -DBUILD_TESTING=OFF
-# still get the test targets.
-option(BUILD_TESTING "Build the testing tree" ON)
+# Add the shared test tree after its library dependencies.
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()

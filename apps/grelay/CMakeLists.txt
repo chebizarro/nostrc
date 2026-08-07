@@ -4,6 +4,21 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0>=2.56 gobject-2.0>=2.56 gio-2.0>=2.56)
 pkg_check_modules(SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
 
+# grelay shares the same ingress security implementation as relayd. Keep it
+# available even in builds that disable the relayd executable.
+if(NOT TARGET relay_security)
+  add_library(relay_security STATIC
+    ${CMAKE_SOURCE_DIR}/apps/relayd/src/relay_policy.c
+    ${CMAKE_SOURCE_DIR}/apps/relayd/src/rate_limit.c
+    ${CMAKE_SOURCE_DIR}/apps/relayd/src/relay_ingress.c
+  )
+  target_include_directories(relay_security PUBLIC
+    ${CMAKE_SOURCE_DIR}/apps/relayd/include
+    ${CMAKE_SOURCE_DIR}/libnostr/include
+  )
+  target_link_libraries(relay_security PUBLIC nostr PRIVATE OpenSSL::Crypto)
+endif()
+
 add_executable(grelay
   src/grelay_main.c
 )
@@ -14,10 +29,12 @@ target_link_libraries(grelay
     PkgConfig::SOUP
     nostr
     nostr_json
+    relay_security
 )
 
 target_include_directories(grelay PRIVATE 
   ${CMAKE_SOURCE_DIR}/libnostr/include
+  ${CMAKE_SOURCE_DIR}/apps/relayd/include
 )
 
 # Ensure nostrdb storage is linked so its constructor can register the driver
@@ -61,6 +78,10 @@ endif()
 # Apply sanitizer link flags so TSAN/ASAN DSOs are present when needed
 if (COMMAND apply_sanitizers)
   apply_sanitizers(grelay)
+endif()
+
+if(BUILD_TESTING)
+  add_subdirectory(tests)
 endif()
 
 install(TARGETS grelay RUNTIME DESTINATION bin)

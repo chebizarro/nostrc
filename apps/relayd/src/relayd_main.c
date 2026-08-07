@@ -24,6 +24,9 @@
 #include "nostr-json.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
+#include "security_limits.h"
+#include "security_limits_runtime.h"
+#include "relay_policy.h"
 #ifdef HAVE_NIP86
 #include "nip86.h"
 #endif
@@ -149,12 +152,21 @@ static int http_cb(struct lws *wsi, enum lws_callback_reasons reason,
         } else if (hs->body && strstr(hs->body, "\"method\":\"getlimits\"")) {
           const RelaydCtx *rctx = (const RelaydCtx*)lws_context_user(lws_get_context(wsi));
           if (rctx) {
-            char buf[512];
+            char buf[1024];
             int n2 = snprintf(buf, sizeof(buf),
-              "{\"result\":{\"max_filters\":%d,\"max_limit\":%d,\"max_subs\":%d,\"rate_ops_per_sec\":%d,\"rate_burst\":%d,\"negentropy_enabled\":%d,\"auth\":\"%s\",\"storage_driver\":\"%s\",\"listen\":\"%s\"}}",
+              "{\"result\":{\"max_filters\":%d,\"max_limit\":%d,\"max_subs\":%d,\"max_event_bytes\":%d,\"rate_ops_per_sec\":%d,\"rate_burst\":%d,\"rate_event_cost\":%d,\"replay_ttl_seconds\":%d,\"future_skew_seconds\":%d,\"past_skew_seconds\":%d,\"verification_conn_per_sec\":%d,\"verification_ip_per_sec\":%d,\"verification_global_per_sec\":%d,\"verification_max_jobs\":%d,\"verification_max_bytes\":%d,\"negentropy_enabled\":%d,\"auth\":\"%s\",\"storage_driver\":\"%s\",\"listen\":\"%s\"}}",
               rctx->cfg.max_filters, rctx->cfg.max_limit, rctx->cfg.max_subs,
-              rctx->cfg.rate_ops_per_sec, rctx->cfg.rate_burst, rctx->cfg.negentropy_enabled,
-              rctx->cfg.auth, rctx->cfg.storage_driver, rctx->cfg.listen);
+              rctx->cfg.max_event_bytes, rctx->cfg.rate_ops_per_sec,
+              rctx->cfg.rate_burst, rctx->cfg.rate_event_cost,
+              rctx->cfg.replay_ttl_seconds, rctx->cfg.future_skew_seconds,
+              rctx->cfg.past_skew_seconds,
+              rctx->cfg.verification_conn_per_sec,
+              rctx->cfg.verification_ip_per_sec,
+              rctx->cfg.verification_global_per_sec,
+              rctx->cfg.verification_max_jobs,
+              rctx->cfg.verification_max_bytes,
+              rctx->cfg.negentropy_enabled, rctx->cfg.auth,
+              rctx->cfg.storage_driver, rctx->cfg.listen);
             resp = (n2>0) ? strndup(buf, (size_t)n2) : NULL; http_status = resp?200:500;
           } else {
             resp = strdup("{\"error\":\"noctx\"}"); http_status = 500;
@@ -208,8 +220,21 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
         ConnState *cs = (ConnState*)user;
         /* If auth is required, start unauthenticated */
         cs->authed = (ctx && strcmp(ctx->cfg.auth, "required") == 0) ? 0 : 1;
-        /* Init rate limiter */
-        rate_limit_init_conn(cs, ctx);
+        /* Monotonic weighted frame and verification buckets. */
+        uint64_t now_ms = rate_limit_now_ms();
+        rate_limit_bucket_init(&cs->frame_rate,
+                               (uint32_t)ctx->cfg.rate_ops_per_sec,
+                               (uint32_t)ctx->cfg.rate_burst, now_ms);
+        rate_limit_bucket_init(
+            &cs->byte_rate,
+            (uint32_t)nostr_limit_max_bytes_per_sec(),
+            (uint32_t)nostr_limit_max_bytes_per_sec(), now_ms);
+        rate_limit_bucket_init(&cs->verification_rate,
+                               (uint32_t)ctx->cfg.verification_conn_per_sec,
+                               (uint32_t)ctx->cfg.verification_conn_burst,
+                               now_ms);
+        if (!lws_get_peer_simple(wsi, cs->peer_ip, sizeof(cs->peer_ip)))
+          snprintf(cs->peer_ip, sizeof(cs->peer_ip), "%s", "unknown");
         if (ctx && strcmp(ctx->cfg.auth, "off") != 0) {
           gen_nonce(cs->auth_chal, sizeof(cs->auth_chal));
           cs->need_auth_chal = (cs->auth_chal[0] != '\0');
@@ -226,22 +251,67 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
         }
 #endif
       }
+      metrics_on_connect();
       fprintf(stderr, "relayd: client connected\n");
       break;
     case LWS_CALLBACK_CLOSED:
+      {
+        ConnState *cs = (ConnState *)user;
+        const RelaydCtx *ctx =
+            (const RelaydCtx *)lws_context_user(lws_get_context(wsi));
+        if (cs && ctx && cs->it && ctx->storage && ctx->storage->vt &&
+            ctx->storage->vt->query_free)
+          ctx->storage->vt->query_free(ctx->storage, cs->it);
+        if (cs && ctx && cs->neg_state && ctx->storage && ctx->storage->vt &&
+            ctx->storage->vt->set_free)
+          ctx->storage->vt->set_free(ctx->storage, cs->neg_state);
+        if (cs) {
+          free(cs->rx_buffer);
+          cs->rx_buffer = NULL;
+          cs->rx_length = cs->rx_capacity = 0;
+        }
+      }
       metrics_on_disconnect();
       break;
     case LWS_CALLBACK_SERVER_WRITEABLE:
       relayd_nip01_on_writable(wsi, (ConnState*)user, (const RelaydCtx*)lws_context_user(lws_get_context(wsi)));
       break;
     case LWS_CALLBACK_RECEIVE: {
-      const char *msg = (const char*)in;
       const RelaydCtx *ctx = (const RelaydCtx*)lws_context_user(lws_get_context(wsi));
-      if (len >= 8 && memcmp(msg, "[\"COUNT\"", 8) == 0) {
-        (void)relayd_handle_count(wsi, ctx, msg, len);
-        break;
+      ConnState *cs = (ConnState *)user;
+      if (!ctx || !cs ||
+          !rate_limit_bucket_allow(&cs->byte_rate, rate_limit_now_ms(),
+                                   len > UINT32_MAX ? UINT32_MAX
+                                                    : (uint32_t)len))
+        return -1;
+      if (len > NOSTR_MAX_FRAME_LEN_BYTES - cs->rx_length) {
+        metrics_on_oversize_reject();
+        free(cs->rx_buffer);
+        cs->rx_buffer = NULL;
+        cs->rx_length = cs->rx_capacity = 0;
+        return -1;
       }
-      relayd_nip01_on_receive(wsi, (ConnState*)user, ctx, in, len);
+      size_t needed = cs->rx_length + len + 1;
+      if (needed > cs->rx_capacity) {
+        size_t capacity = cs->rx_capacity ? cs->rx_capacity : 4096;
+        while (capacity < needed && capacity < NOSTR_MAX_FRAME_LEN_BYTES + 1)
+          capacity *= 2;
+        if (capacity > NOSTR_MAX_FRAME_LEN_BYTES + 1)
+          capacity = NOSTR_MAX_FRAME_LEN_BYTES + 1;
+        char *grown = realloc(cs->rx_buffer, capacity);
+        if (!grown) return -1;
+        cs->rx_buffer = grown;
+        cs->rx_capacity = capacity;
+      }
+      memcpy(cs->rx_buffer + cs->rx_length, in, len);
+      cs->rx_length += len;
+      if (!lws_is_final_fragment(wsi) ||
+          lws_remaining_packet_payload(wsi) != 0)
+        break;
+      cs->rx_buffer[cs->rx_length] = '\0';
+      size_t message_len = cs->rx_length;
+      cs->rx_length = 0;
+      relayd_nip01_on_receive(wsi, cs, ctx, cs->rx_buffer, message_len);
       break;
     }
     default: break;
@@ -251,7 +321,7 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
 
 static const struct lws_protocols protocols[] = {
   { "http", http_cb, 0, 0 },
-  { "nostr", nostr_cb, sizeof(ConnState), 8*1024 },
+  { "nostr", nostr_cb, sizeof(ConnState), NOSTR_MAX_FRAME_LEN_BYTES },
   { NULL, NULL, 0, 0 }
 };
 
@@ -259,30 +329,47 @@ int main(int argc, char **argv) {
   (void)argc; (void)argv;
   /* Initialize JSON backend */
   nostr_json_init();
-  /* Load config (simple TOML) */
-  RelaydConfig cfg; relayd_config_load("relay.toml", &cfg);
+  RelaydConfig cfg;
+  if (relayd_config_load("relay.toml", &cfg) != 0) {
+    fprintf(stderr, "nostrc-relayd: invalid relay.toml security limits\n");
+    return 1;
+  }
 
-  /* Initialize optional mitigations from environment */
-  const char *env_ttl = getenv("NOSTR_RELAY_REPLAY_TTL");
-  const char *env_skew_f = getenv("NOSTR_RELAY_SKEW_FUTURE");
-  const char *env_skew_p = getenv("NOSTR_RELAY_SKEW_PAST");
-  int ttl = env_ttl ? atoi(env_ttl) : nostr_relay_get_replay_ttl();
-  int skew_f = env_skew_f ? atoi(env_skew_f) : 0;
-  int skew_p = env_skew_p ? atoi(env_skew_p) : 0;
-  if (env_ttl) {
-    nostr_relay_set_replay_ttl(ttl);
-    ttl = nostr_relay_get_replay_ttl();
+  RelayPolicy *policy = relay_policy_create(
+      (size_t)cfg.replay_cache_capacity, cfg.replay_ttl_seconds,
+      cfg.future_skew_seconds, cfg.past_skew_seconds);
+  VerificationBudgetConfig verify_cfg = {
+      .per_ip_rate = (uint32_t)cfg.verification_ip_per_sec,
+      .per_ip_burst = (uint32_t)cfg.verification_ip_burst,
+      .global_rate = (uint32_t)cfg.verification_global_per_sec,
+      .global_burst = (uint32_t)cfg.verification_global_burst,
+      .max_ip_entries = (size_t)cfg.verification_max_ips,
+      .max_inflight_jobs = (size_t)cfg.verification_max_jobs,
+      .max_inflight_bytes = (size_t)cfg.verification_max_bytes,
+      .negative_cache_entries =
+          (size_t)cfg.verification_negative_cache_entries,
+      .negative_cache_ttl_ms =
+          (uint64_t)cfg.verification_negative_ttl_seconds * 1000ull,
+  };
+  VerificationBudget *verification_budget =
+      verification_budget_create(&verify_cfg, rate_limit_now_ms());
+  if (!policy || !verification_budget) {
+    fprintf(stderr, "nostrc-relayd: failed to allocate ingress security state\n");
+    relay_policy_destroy(policy);
+    verification_budget_destroy(verification_budget);
+    return 1;
   }
-  if (ttl > 0) {
-    fprintf(stderr, "nostrc-relayd: replay TTL enabled: %d seconds\n", ttl);
-  }
-  if (skew_f > 0 || skew_p > 0) {
-    nostr_relay_set_skew(skew_f, skew_p);
-    fprintf(stderr, "nostrc-relayd: timestamp skew enforcement: +%ds future, -%ds past\n", skew_f, skew_p);
-  }
-  /* One-line posture banner */
-  int eff_ttl=0, eff_skew_f=0, eff_skew_p=0; eff_ttl = nostr_relay_get_replay_ttl(); eff_skew_f = skew_f; eff_skew_p = skew_p;
-  fprintf(stderr, "nostrc-relayd: security AEAD=v2 replayTTL=%ds skew=+%d/-%d\n", eff_ttl, eff_skew_f, eff_skew_p);
+
+  fprintf(stderr,
+          "nostrc-relayd: security validator=canonical replayTTL=%ds "
+          "replayCapacity=%d skew=+%d/-%d maxEvent=%dB "
+          "verify(conn/ip/global)=%d/%d/%d tokens/s "
+          "verifyInflight=%d jobs/%dB\n",
+          cfg.replay_ttl_seconds, cfg.replay_cache_capacity,
+          cfg.future_skew_seconds, cfg.past_skew_seconds,
+          cfg.max_event_bytes, cfg.verification_conn_per_sec,
+          cfg.verification_ip_per_sec, cfg.verification_global_per_sec,
+          cfg.verification_max_jobs, cfg.verification_max_bytes);
 
   /* Instantiate storage (driver from config) */
   const char *driver = cfg.storage_driver[0] ? cfg.storage_driver : "nostrdb";
@@ -299,12 +386,21 @@ int main(int argc, char **argv) {
   info.protocols = protocols;
   info.options = LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE;
   /* Attach shared context */
-  RelaydCtx ctx = { .storage = st, .cfg = cfg };
+  RelaydCtx ctx = {
+      .storage = st,
+      .cfg = cfg,
+      .policy = policy,
+      .verification_budget = verification_budget,
+  };
   info.user = &ctx; /* Make config + storage accessible in protocol callbacks */
 
   struct lws_context *context = lws_create_context(&info);
   if (!context) {
     fprintf(stderr, "nostrc-relayd: failed to create lws context\n");
+    relay_policy_destroy(policy);
+    verification_budget_destroy(verification_budget);
+    if (st && st->vt && st->vt->close) st->vt->close(st);
+    free(st);
     return 1;
   }
 
@@ -326,5 +422,7 @@ int main(int argc, char **argv) {
   lws_context_destroy(context);
   if (st && st->vt && st->vt->close) st->vt->close(st);
   free(st);
+  relay_policy_destroy(policy);
+  verification_budget_destroy(verification_budget);
   return 0;
 }

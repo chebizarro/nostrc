@@ -13,14 +13,13 @@
 #include "relayd_conn.h"
 #include "protocol_nip01.h"
 #include "protocol_nip42.h"
+#include "protocol_nip45.h"
 #include "protocol_nip50.h"
 #include "rate_limit.h"
 #include "protocol_nip77.h"
 #include "metrics.h"
+#include "relay_ingress.h"
 #include "relay_policy.h"
-
-/* Keep relay_policy.c in apps/relayd/src without touching build files outside bucket scope. */
-#include "relay_policy.c"
 
 static void ws_send_text(struct lws *wsi, const char *s) {
   if (!wsi || !s) return;
@@ -34,6 +33,22 @@ static void ws_send_text(struct lws *wsi, const char *s) {
 
 static inline int is_replaceable_kind(int kind) { return kind == 0 || kind == 3 || kind == 41; }
 static inline int is_param_replaceable_kind(int kind) { return kind >= 30000 && kind < 40000; }
+
+static uint32_t frame_operation_cost(const RelaydCtx *ctx, const char *msg,
+                                     size_t len) {
+  if (!ctx || !msg) return 1;
+  if (len >= 8 && memcmp(msg, "[\"CLOSE\"", 8) == 0) return 0;
+  if (len >= 7 && memcmp(msg, "[\"EVENT\"", 7) == 0)
+    return (uint32_t)ctx->cfg.rate_event_cost;
+  if ((len >= 6 && memcmp(msg, "[\"REQ\"", 6) == 0) ||
+      (len >= 8 && memcmp(msg, "[\"COUNT\"", 8) == 0)) {
+    uint32_t filters = 0;
+    for (size_t i = 0; i < len; ++i)
+      if (msg[i] == '{' && filters < (uint32_t)ctx->cfg.max_filters) filters++;
+    return 1u + filters;
+  }
+  return 1;
+}
 
 /* Local helper: parse array or single filter into array */
 static int parse_filters_json_local(const char *json, NostrFilter ***out_arr, size_t *out_n, int max_filters) {
@@ -115,30 +130,41 @@ void relayd_nip01_on_writable(struct lws *wsi, ConnState *cs, const RelaydCtx *c
 /* test-only ingress decision is provided in apps/relayd/src/policy_decider.c */
 
 void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx, const void *in, size_t len) {
-  if (!wsi || !ctx || !in || len < 2) return;
+  if (!wsi || !cs || !ctx || !in || len < 2) return;
   const char *msg = (const char*)in;
-  /* Delegate AUTH frame to NIP-42 */
-  if (relayd_nip42_handle_auth_frame(wsi, cs, ctx, msg, len)) return;
-  /* Rate limit for non-CLOSE */
-  if (len >= 8 && memcmp(msg, "[\"CLOSE\"", 8) != 0) {
-    uint64_t now_ms = rate_limit_now_ms();
-    if (!rate_limit_allow(cs, now_ms)) {
-      metrics_on_rate_limit_drop();
-      /* Optional: send CLOSED with reason 'rate-limited' for REQ */
-      if (len >= 7 && memcmp(msg, "[\"REQ\"", 6) == 0) {
-        const char *p = strchr(msg, ','); const char *q1 = p?strchr(p+1,'"'):NULL; const char *q2 = q1?strchr(q1+1,'"'):NULL;
-        char subtmp[128]; subtmp[0]='\0'; if (q1&&q2 && (size_t)(q2-(q1+1))<sizeof(subtmp)) { memcpy(subtmp, q1+1, (size_t)(q2-(q1+1))); subtmp[(size_t)(q2-(q1+1))]='\0'; }
-        char *closed = nostr_closed_build_json(subtmp[0]?subtmp:"sub1", "rate-limited");
-        if (closed) { ws_send_text(wsi, closed); free(closed);}                
+  uint32_t operation_cost = frame_operation_cost(ctx, msg, len);
+  if (operation_cost > 0 &&
+      !rate_limit_bucket_allow(&cs->frame_rate, rate_limit_now_ms(),
+                               operation_cost)) {
+    metrics_on_rate_limit_drop();
+    if ((len >= 6 && memcmp(msg, "[\"REQ\"", 6) == 0) ||
+        (len >= 8 && memcmp(msg, "[\"COUNT\"", 8) == 0)) {
+      const char *p = strchr(msg, ',');
+      const char *q1 = p ? strchr(p + 1, '"') : NULL;
+      const char *q2 = q1 ? strchr(q1 + 1, '"') : NULL;
+      char subtmp[128] = "sub1";
+      if (q1 && q2 && (size_t)(q2 - (q1 + 1)) < sizeof(subtmp)) {
+        memcpy(subtmp, q1 + 1, (size_t)(q2 - (q1 + 1)));
+        subtmp[(size_t)(q2 - (q1 + 1))] = '\0';
       }
-      return;
+      char *closed = nostr_closed_build_json(subtmp, "rate-limited");
+      if (closed) { ws_send_text(wsi, closed); free(closed); }
+    } else if (len >= 7 && memcmp(msg, "[\"EVENT\"", 7) == 0) {
+      char *ok = nostr_ok_build_json("0000", 0, "rate-limited");
+      if (ok) { ws_send_text(wsi, ok); free(ok); }
     }
+    return;
   }
+  if (relayd_nip42_handle_auth_frame(wsi, cs, ctx, msg, len)) return;
   NostrStorage *st = ctx->storage;
+  if (len >= 8 && memcmp(msg, "[\"COUNT\"", 8) == 0) {
+    (void)relayd_handle_count(wsi, ctx, msg, len);
+    return;
+  }
   if (len >= 7 && memcmp(msg, "[\"EVENT\"", 7) == 0) {
-    if (strcmp(ctx->cfg.auth, "required") == 0 && cs && !cs->authed) {
+    if (strcmp(ctx->cfg.auth, "required") == 0 && !cs->authed) {
       char *ok = nostr_ok_build_json("0000", 0, "auth-required");
-      if (ok) { ws_send_text(wsi, ok); free(ok);}          
+      if (ok) { ws_send_text(wsi, ok); free(ok); }
       return;
     }
     const char *ev_json = strchr(msg, ',');
@@ -147,49 +173,53 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
     size_t elen = (size_t)len - (ev_json - msg);
     while (elen > 0 && (ev_json[elen-1] == '\n' || ev_json[elen-1] == '\r' || ev_json[elen-1] == ' ')) elen--;
     if (elen > 0 && ev_json[elen-1] == ']') elen--;
+    if (elen == 0 || elen > (size_t)ctx->cfg.max_event_bytes) {
+      metrics_on_oversize_reject();
+      char *ok = nostr_ok_build_json("0000", 0, "invalid: event too large");
+      if (ok) { ws_send_text(wsi, ok); free(ok); }
+      return;
+    }
     char *ebuf = (char*)malloc(elen + 1);
     if (!ebuf) return;
     memcpy(ebuf, ev_json, elen); ebuf[elen] = '\0';
-    NostrEvent *ev = nostr_event_new(); int ok_parse = 0;
-    if (ev) {
-      if (nostr_event_deserialize_compact(ev, ebuf, NULL)) ok_parse = 1;
-      else ok_parse = (nostr_event_deserialize(ev, ebuf) == 0);
-    }
-    int rc_store = -1; const char *reason = NULL; char *id = NULL;
-    if (ok_parse && ev && st && st->vt && st->vt->put_event) {
-      /* created_at skew check (optional) */
-      time_t now = time(NULL);
-      int64_t created_at = nostr_event_get_created_at(ev);
-      if (relay_policy_created_at_out_of_range(created_at, now)) {
-        reason = "invalid: created_at out of range";
-        rc_store = -1;
-        metrics_on_skew_reject();
-        goto respond_ok;
-      }
-      if (strcmp(ctx->cfg.auth, "required") == 0 && cs && cs->authed_pubkey[0]) {
-        const char *epk = nostr_event_get_pubkey(ev);
-        if (!epk || strcmp(epk, cs->authed_pubkey) != 0) {
-          char *ok = nostr_ok_build_json("0000", 0, "auth-pubkey-mismatch");
-          if (ok) { ws_send_text(wsi, ok); free(ok);}          
-          nostr_event_free(ev); free(ebuf); return;
-        }
-      }
+    RelayIngressConfig ingress_cfg = {
+      .max_event_bytes = (size_t)ctx->cfg.max_event_bytes,
+      .verification_cost = (uint32_t)ctx->cfg.verification_cost
+    };
+    RelayIngressResult ingress;
+    RelayIngressDecision decision = relay_ingress_validate_and_reserve(
+        &ingress_cfg, ctx->policy, ctx->verification_budget,
+        &cs->verification_rate, cs->peer_ip, ebuf, elen, time(NULL),
+        rate_limit_now_ms(), &ingress);
+
+    int rc_store = -1;
+    const char *reason = ingress.reason;
+    if (decision == RELAY_INGRESS_DUPLICATE) {
+      rc_store = 0;
+      metrics_on_duplicate_drop();
+    } else if (decision != RELAY_INGRESS_ACCEPT) {
+      if (decision == RELAY_INGRESS_REJECT_SKEW) metrics_on_skew_reject();
+      else if (decision == RELAY_INGRESS_REJECT_VERIFY_BUDGET)
+        metrics_on_verification_budget_drop();
+      else if (decision == RELAY_INGRESS_REJECT_OVERSIZE)
+        metrics_on_oversize_reject();
+      else
+        metrics_on_validation_reject();
+    } else if (!st || !st->vt || !st->vt->put_event) {
+      reason = "error: store unavailable";
+      (void)relay_ingress_finish(ctx->policy, &ingress, 0);
+    } else {
+      NostrEvent *ev = ingress.event;
       const char *epk = nostr_event_get_pubkey(ev);
       int kind = nostr_event_get_kind(ev);
-      if (!nostr_event_check_signature(ev)) {
-        reason = "invalid: bad signature";
+      if (strcmp(ctx->cfg.auth, "required") == 0 &&
+          cs->authed_pubkey[0] &&
+          (!epk || strcmp(epk, cs->authed_pubkey) != 0)) {
+        reason = "auth-pubkey-mismatch";
+        (void)relay_ingress_finish(ctx->policy, &ingress, 0);
       } else {
-        /* Recompute canonical id and check replay cache (optional) */
-        id = nostr_event_get_id(ev);
-        if (id && strlen(id) == 64 && relay_policy_get_replay_ttl() > 0) {
-          if (relay_policy_seen_id_check_and_add(id, now)) {
-            /* Duplicate within TTL: accept but do not store */
-            rc_store = 0;
-            reason = "duplicate";
-            metrics_on_duplicate_drop();
-            goto respond_ok;
-          }
-        }
+        char *old_replaceable_id = NULL;
+        int replacement_is_stale = 0;
         if (epk && (is_replaceable_kind(kind) || is_param_replaceable_kind(kind))) {
           NostrFilter *ff = nostr_filter_new();
           if (ff) {
@@ -207,29 +237,38 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
             if (it) {
               NostrEvent prev = {0}; size_t n1 = 1;
               if (st->vt->query_next && st->vt->query_next(st, it, &prev, &n1) == 0 && n1 > 0) {
-                char *old_id = nostr_event_get_id(&prev);
-                if (old_id && st->vt->delete_event) (void)st->vt->delete_event(st, old_id);
-                if (old_id) free(old_id);
+                if (nostr_event_get_created_at(&prev) >=
+                    nostr_event_get_created_at(ev))
+                  replacement_is_stale = 1;
+                else
+                  old_replaceable_id = nostr_event_get_id(&prev);
               }
               if (st->vt->query_free) st->vt->query_free(st, it);
             }
             nostr_filter_free(ff);
           }
         }
-        rc_store = st->vt->put_event(st, ev);
-        reason = rc_store == 0 ? "" : "error: store failed";
+        if (replacement_is_stale) {
+          reason = "invalid: newer replaceable event exists";
+          (void)relay_ingress_finish(ctx->policy, &ingress, 0);
+        } else {
+          rc_store = st->vt->put_event(st, ev);
+          reason = rc_store == 0 ? "" : "error: store failed";
+          (void)relay_ingress_finish(ctx->policy, &ingress, rc_store == 0);
+          if (rc_store == 0 && old_replaceable_id &&
+              st->vt->delete_event)
+            (void)st->vt->delete_event(st, old_replaceable_id);
+        }
+        free(old_replaceable_id);
       }
-    } else {
-      reason = "invalid: bad event";
     }
-respond_ok:
+
     {
-      const char *id_hex = id ? id : "0000";
-      char *ok = nostr_ok_build_json(id_hex, rc_store == 0, reason);
+      const char *id_hex = ingress.canonical_id[0] ? ingress.canonical_id : "0000";
+      char *ok = nostr_ok_build_json(id_hex, rc_store == 0, reason ? reason : "");
     if (ok) { ws_send_text(wsi, ok); free(ok); }
     }
-    if (id) free(id);
-    if (ev) nostr_event_free(ev);
+    relay_ingress_result_clear(&ingress);
     free(ebuf);
     return;
   }

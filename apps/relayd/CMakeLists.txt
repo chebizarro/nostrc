@@ -16,6 +16,20 @@ find_library(NSYNC_LIB nsync REQUIRED)
 find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 include_directories(${NSYNC_INCLUDE_DIR})
 
+add_library(relay_security STATIC
+  src/relay_policy.c
+  src/rate_limit.c
+  src/relay_ingress.c
+)
+target_include_directories(relay_security PUBLIC
+  ${CMAKE_SOURCE_DIR}/apps/relayd/include
+  ${CMAKE_SOURCE_DIR}/libnostr/include
+)
+target_link_libraries(relay_security
+  PUBLIC nostr
+  PRIVATE OpenSSL::Crypto
+)
+
 add_executable(nostrc-relayd
   src/relayd_main.c
   src/relayd_config.c
@@ -25,7 +39,6 @@ add_executable(nostrc-relayd
   src/protocol_nip42.c
   src/protocol_nip50.c
   src/protocol_nip77.c
-  src/rate_limit.c
   src/retention.c
   src/metrics.c
 )
@@ -36,6 +49,8 @@ add_library(relayd_core STATIC
   src/metrics.c
 )
 target_link_libraries(relayd_core
+  PUBLIC
+    relay_security
   PRIVATE
     nostr
     nostr_json
@@ -50,6 +65,7 @@ target_link_directories(nostrc-relayd PRIVATE ${LWS_LIBRARY_DIRS})
 
 target_link_libraries(nostrc-relayd
   PRIVATE
+    relay_security
     nostr
     nostr_json
     ${NSYNC_LIB}
@@ -93,6 +109,10 @@ endif()
 
 # NIP-86 integration intentionally disabled for relayd link; relayd has
 # compile-time fallbacks and guards to avoid referencing nip86 symbols.
+
+if(BUILD_TESTING)
+  add_subdirectory(tests)
+endif()
 
 install(TARGETS nostrc-relayd RUNTIME DESTINATION bin)
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/relay.toml.example)

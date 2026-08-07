@@ -15,6 +15,19 @@ int64_t nostr_limit_max_frames_per_sec(void);
 int64_t nostr_limit_max_bytes_per_sec(void);
 int64_t nostr_limit_max_event_size(void);
 
+/* Signature-verification work budgets. Costs are weighted tokens, not events. */
+int64_t nostr_limit_verification_conn_per_sec(void);
+int64_t nostr_limit_verification_conn_burst(void);
+int64_t nostr_limit_verification_ip_per_sec(void);
+int64_t nostr_limit_verification_ip_burst(void);
+int64_t nostr_limit_verification_global_per_sec(void);
+int64_t nostr_limit_verification_global_burst(void);
+int64_t nostr_limit_max_verification_ips(void);
+int64_t nostr_limit_max_verification_jobs(void);
+int64_t nostr_limit_max_verification_bytes(void);
+int64_t nostr_limit_verification_negative_cache_entries(void);
+int64_t nostr_limit_verification_negative_ttl_seconds(void);
+
 int64_t nostr_limit_max_tags_per_event(void);
 int64_t nostr_limit_max_tag_depth(void);
 int64_t nostr_limit_max_ids_per_filter(void);

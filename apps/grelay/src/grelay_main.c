@@ -1,6 +1,10 @@
 #include <gio/gio.h>
 #include <libwebsockets.h>
 #include <string.h>
+#include <stdlib.h>
+#include <time.h>
+#include <errno.h>
+#include <limits.h>
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include "nostr-tag.h"
@@ -8,6 +12,11 @@
 #include "nostr_jansson.h"
 #include "nostr-storage.h"
 #include "nostr-relay-core.h"
+#include "security_limits.h"
+#include "security_limits_runtime.h"
+#include "relay_ingress.h"
+#include "relay_policy.h"
+#include "rate_limit.h"
 
 typedef struct {
   GApplication parent_instance;
@@ -33,6 +42,24 @@ typedef struct {
   /* rate limiting */
   int rate_ops_per_sec;
   int rate_burst;
+  int rate_event_cost;
+  int max_event_bytes;
+  int replay_cache_capacity;
+  int replay_ttl_seconds;
+  int future_skew_seconds;
+  int past_skew_seconds;
+  int verification_cost;
+  int verification_conn_per_sec;
+  int verification_conn_burst;
+  int verification_ip_per_sec;
+  int verification_ip_burst;
+  int verification_global_per_sec;
+  int verification_global_burst;
+  int verification_max_ips;
+  int verification_max_jobs;
+  int verification_max_bytes;
+  int verification_negative_cache_entries;
+  int verification_negative_ttl_seconds;
   /* backpressure */
   int backpressure_max_ticks;
   /* streaming tunables */
@@ -43,8 +70,10 @@ typedef struct {
   int log_verbose;              /* enable verbose debug logs */
   /* active WS clients, owned by the LWS service thread */
   GList *connections;
-  /* storage */
+  /* storage and context-owned ingress security state */
   NostrStorage *storage;
+  RelayPolicy *policy;
+  VerificationBudget *verification_budget;
 } GRelayApp;
 
 typedef GApplicationClass GRelayAppClass;
@@ -59,9 +88,13 @@ typedef struct {
   int authed;
   char auth_chal[64];
   char authed_pubkey[128];
-  /* token bucket */
-  double rl_tokens;
-  guint64 rl_last_ms;
+  char peer_ip[64];
+  char *rx_buffer;
+  size_t rx_length;
+  size_t rx_capacity;
+  RateLimitBucket frame_rate;
+  RateLimitBucket byte_rate;
+  RateLimitBucket verification_rate;
   /* backpressure */
   unsigned int no_progress_ticks;
   /* live subscription filter and outbound frames */
@@ -93,6 +126,11 @@ static struct {
   guint64 queries_eose;
   guint64 queries_failed;
   guint64 auth_failures;
+  guint64 duplicate_drops;
+  guint64 skew_rejects;
+  guint64 validation_rejects;
+  guint64 verification_budget_drops;
+  guint64 oversize_rejects;
   guint64 last_ingest_ms;
   guint64 last_query_ms;
 } Gm;
@@ -108,6 +146,7 @@ static void grelay_state_free(gpointer data) {
   if (st->it && st->app && st->app->storage && st->app->storage->vt && st->app->storage->vt->query_free)
     st->app->storage->vt->query_free(st->app->storage, st->it);
   if (st->filter) nostr_filter_free(st->filter);
+  g_free(st->rx_buffer);
   if (st->outq) {
     char *frame = NULL;
     while ((frame = g_queue_pop_head(st->outq)) != NULL) g_free(frame);
@@ -197,18 +236,25 @@ static void grelay_fanout_event(GRelayApp *app, NostrEvent *ev) {
   if (ejson) g_free(ejson);
 }
 
-static gboolean grelay_rate_allow(GRelayApp *app, GRelayConnState *st) {
-  if (!app || !st) return TRUE;
-  if (app->rate_ops_per_sec <= 0) return TRUE;
-  guint64 now = grelay_now_ms();
-  if (st->rl_last_ms == 0) st->rl_last_ms = now;
-  double capacity = (double)(app->rate_burst > 0 ? app->rate_burst : app->rate_ops_per_sec * 2);
-  double tokens = st->rl_tokens;
-  double refill = ((double)(now - st->rl_last_ms)) * ((double)app->rate_ops_per_sec) / 1000.0;
-  tokens += refill;
-  if (tokens > capacity) tokens = capacity;
-  if (tokens >= 1.0) { tokens -= 1.0; st->rl_tokens = tokens; st->rl_last_ms = now; return TRUE; }
-  st->rl_tokens = tokens; st->rl_last_ms = now; return FALSE;
+static guint32 grelay_operation_cost(GRelayApp *app, const char *data,
+                                      size_t len) {
+  if (!app || !data) return 1;
+  if (len >= 8 && g_str_has_prefix(data, "[\"CLOSE\"")) return 0;
+  if (len >= 7 && g_str_has_prefix(data, "[\"EVENT\""))
+    return (guint32)app->rate_event_cost;
+  if ((len >= 6 && g_str_has_prefix(data, "[\"REQ\"")) ||
+      (len >= 8 && g_str_has_prefix(data, "[\"COUNT\""))) {
+    guint32 filters = 0;
+    for (size_t i = 0; i < len; ++i)
+      if (data[i] == '{' && filters < (guint32)app->max_filters) filters++;
+    return 1u + filters;
+  }
+  return 1;
+}
+
+static gboolean grelay_rate_allow(GRelayConnState *st, guint64 now_ms,
+                                  guint32 cost) {
+  return st && rate_limit_bucket_allow(&st->frame_rate, now_ms, cost);
 }
 
 /* LWS service thread */
@@ -321,8 +367,8 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
         const char *version = app && app->version[0] ? app->version : "0.1";
         const char *nips = app && app->supported_nips[0] ? app->supported_nips : "[1,11,42,45,50,86]";
         g_snprintf(body, sizeof(body),
-          "{\"name\":\"%s\",\"software\":\"%s\",\"version\":\"%s\",\"supported_nips\":%s,\"auth\":\"%s\",\"contact\":null,\"description\":null,\"icon\":null,\"posting_policy\":null,\"limitation\":{\"max_filters\":%d,\"max_limit\":%d,\"max_subscriptions\":%d,\"rate_ops_per_sec\":%d,\"rate_burst\":%d}}",
-          name, software, version, nips, app?app->auth:"off", app?app->max_filters:10, app?app->max_limit:500, app?app->max_subs:20, app?app->rate_ops_per_sec:20, app?app->rate_burst:40);
+          "{\"name\":\"%s\",\"software\":\"%s\",\"version\":\"%s\",\"supported_nips\":%s,\"auth\":\"%s\",\"contact\":null,\"description\":null,\"icon\":null,\"posting_policy\":null,\"limitation\":{\"max_filters\":%d,\"max_limit\":%d,\"max_subscriptions\":%d,\"rate_ops_per_sec\":%d,\"rate_burst\":%d,\"max_event_bytes\":%d,\"replay_ttl_seconds\":%d,\"future_skew_seconds\":%d,\"past_skew_seconds\":%d}}",
+          name, software, version, nips, app?app->auth:"off", app?app->max_filters:10, app?app->max_limit:500, app?app->max_subs:20, app?app->rate_ops_per_sec:20, app?app->rate_burst:40, app?app->max_event_bytes:262144, app?app->replay_ttl_seconds:900, app?app->future_skew_seconds:600, app?app->past_skew_seconds:0);
         (void)lws_return_http_status(wsi, HTTP_STATUS_OK, body);
         return 0;
       } else if (strcmp(uri, "/readyz") == 0) {
@@ -366,6 +412,11 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
         n += g_snprintf(body + n, sizeof(body) - n, "grelay_rate_limit_drops %llu\n", (unsigned long long)Gm.rate_limit_drops);
         n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_backpressure_drops counter\n");
         n += g_snprintf(body + n, sizeof(body) - n, "grelay_backpressure_drops %llu\n", (unsigned long long)Gm.backpressure_drops);
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_duplicate_drops %llu\n", (unsigned long long)Gm.duplicate_drops);
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_skew_rejects %llu\n", (unsigned long long)Gm.skew_rejects);
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_validation_rejects %llu\n", (unsigned long long)Gm.validation_rejects);
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_verification_budget_drops %llu\n", (unsigned long long)Gm.verification_budget_drops);
+        n += g_snprintf(body + n, sizeof(body) - n, "grelay_oversize_rejects %llu\n", (unsigned long long)Gm.oversize_rejects);
         n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_last_ingest_ms gauge\n");
         n += g_snprintf(body + n, sizeof(body) - n, "grelay_last_ingest_ms %llu\n", (unsigned long long)Gm.last_ingest_ms);
         n += g_snprintf(body + n, sizeof(body) - n, "# TYPE grelay_last_query_ms gauge\n");
@@ -388,19 +439,26 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
       } else if (strcmp(uri, "/admin/stats") == 0) {
         char body[512];
         g_snprintf(body, sizeof(body),
-          "{\"connections\":{\"current\":%llu,\"total\":%llu,\"closed\":%llu},\"subs\":{\"current\":%llu,\"started\":%llu,\"ended\":%llu},\"stream\":{\"events\":%llu,\"eose\":%llu},\"drops\":{\"rate_limit\":%llu,\"backpressure\":%llu}}",
+          "{\"connections\":{\"current\":%llu,\"total\":%llu,\"closed\":%llu},\"subs\":{\"current\":%llu,\"started\":%llu,\"ended\":%llu},\"stream\":{\"events\":%llu,\"eose\":%llu},\"drops\":{\"rate_limit\":%llu,\"backpressure\":%llu,\"duplicate\":%llu,\"skew\":%llu,\"validation\":%llu,\"verification_budget\":%llu,\"oversize\":%llu}}",
           (unsigned long long)Gm.connections_current, (unsigned long long)Gm.connections_total, (unsigned long long)Gm.connections_closed,
           (unsigned long long)Gm.subs_current, (unsigned long long)Gm.subs_started, (unsigned long long)Gm.subs_ended,
           (unsigned long long)Gm.events_streamed, (unsigned long long)Gm.eose_sent,
-          (unsigned long long)Gm.rate_limit_drops, (unsigned long long)Gm.backpressure_drops);
+          (unsigned long long)Gm.rate_limit_drops, (unsigned long long)Gm.backpressure_drops,
+          (unsigned long long)Gm.duplicate_drops, (unsigned long long)Gm.skew_rejects,
+          (unsigned long long)Gm.validation_rejects,
+          (unsigned long long)Gm.verification_budget_drops,
+          (unsigned long long)Gm.oversize_rejects);
         (void)lws_return_http_status(wsi, HTTP_STATUS_OK, body);
         return 0;
       } else if (strcmp(uri, "/admin/limits") == 0) {
         char body[512];
         g_snprintf(body, sizeof(body),
-          "{\"port\":%d,\"storage_driver\":\"%s\",\"max_filters\":%d,\"max_limit\":%d,\"max_subscriptions\":%d,\"rate_ops_per_sec\":%d,\"rate_burst\":%d,\"req_pending_ticks\":%d,\"req_tick_interval_ms\":%d,\"req_linger_ms\":%d}",
+          "{\"port\":%d,\"storage_driver\":\"%s\",\"max_filters\":%d,\"max_limit\":%d,\"max_subscriptions\":%d,\"rate_ops_per_sec\":%d,\"rate_burst\":%d,\"max_event_bytes\":%d,\"replay_ttl_seconds\":%d,\"future_skew_seconds\":%d,\"past_skew_seconds\":%d,\"verification_conn_per_sec\":%d,\"verification_ip_per_sec\":%d,\"verification_global_per_sec\":%d}",
           app?app->port:4849, app?app->storage_driver:"nostrdb", app?app->max_filters:10, app?app->max_limit:500, app?app->max_subs:20, app?app->rate_ops_per_sec:20, app?app->rate_burst:40,
-          app?app->req_pending_ticks:0, app?app->req_tick_interval_ms:50, app?app->req_linger_ms:0);
+          app?app->max_event_bytes:262144, app?app->replay_ttl_seconds:900,
+          app?app->future_skew_seconds:600, app?app->past_skew_seconds:0,
+          app?app->verification_conn_per_sec:40, app?app->verification_ip_per_sec:200,
+          app?app->verification_global_per_sec:2000);
         (void)lws_return_http_status(wsi, HTTP_STATUS_OK, body);
         return 0;
       }
@@ -411,6 +469,18 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
     case LWS_CALLBACK_ESTABLISHED: {
       if (!st) break; st->wsi = wsi; st->app = app;
       st->pending_ticks = 0;
+      guint64 now_ms = grelay_now_ms();
+      rate_limit_bucket_init(&st->frame_rate,
+                             (guint32)app->rate_ops_per_sec,
+                             (guint32)app->rate_burst, now_ms);
+      rate_limit_bucket_init(&st->byte_rate,
+                             (guint32)nostr_limit_max_bytes_per_sec(),
+                             (guint32)nostr_limit_max_bytes_per_sec(), now_ms);
+      rate_limit_bucket_init(&st->verification_rate,
+                             (guint32)app->verification_conn_per_sec,
+                             (guint32)app->verification_conn_burst, now_ms);
+      if (!lws_get_peer_simple(wsi, st->peer_ip, sizeof(st->peer_ip)))
+        g_strlcpy(st->peer_ip, "unknown", sizeof(st->peer_ip));
       if (app && !g_list_find(app->connections, st)) app->connections = g_list_prepend(app->connections, st);
       Gm.connections_current++; Gm.connections_total++;
       const struct lws_protocols *proto = lws_get_protocol(wsi);
@@ -426,14 +496,70 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
         grelay_clear_subscription(st, TRUE);
         grelay_outq_clear(st);
         st->wsi = NULL;
+        g_free(st->rx_buffer);
+        st->rx_buffer = NULL;
+        st->rx_length = st->rx_capacity = 0;
       }
       grelay_on_ws_closed_lws();
       g_message("grelay: WS closed");
       return 0;
     }
     case LWS_CALLBACK_RECEIVE: {
-      if (!st) break; const char *data = (const char*)in; size_t n = len; if (!data || n<2) return 0;
+      if (!st || !app || !in) return -1;
+      guint64 fragment_now_ms = grelay_now_ms();
+      if (!rate_limit_bucket_allow(
+              &st->byte_rate, fragment_now_ms,
+              len > UINT32_MAX ? UINT32_MAX : (guint32)len))
+        return -1;
+      if (len > NOSTR_MAX_FRAME_LEN_BYTES - st->rx_length) {
+        Gm.oversize_rejects++;
+        g_clear_pointer(&st->rx_buffer, g_free);
+        st->rx_length = st->rx_capacity = 0;
+        return -1;
+      }
+      size_t needed = st->rx_length + len + 1;
+      if (needed > st->rx_capacity) {
+        size_t capacity = st->rx_capacity ? st->rx_capacity : 4096;
+        while (capacity < needed && capacity < NOSTR_MAX_FRAME_LEN_BYTES + 1)
+          capacity *= 2;
+        if (capacity > NOSTR_MAX_FRAME_LEN_BYTES + 1)
+          capacity = NOSTR_MAX_FRAME_LEN_BYTES + 1;
+        char *grown = g_realloc(st->rx_buffer, capacity);
+        if (!grown) return -1;
+        st->rx_buffer = grown;
+        st->rx_capacity = capacity;
+      }
+      memcpy(st->rx_buffer + st->rx_length, in, len);
+      st->rx_length += len;
+      if (!lws_is_final_fragment(wsi) ||
+          lws_remaining_packet_payload(wsi) != 0)
+        return 0;
+      st->rx_buffer[st->rx_length] = '\0';
+      const char *data = st->rx_buffer;
+      size_t n = st->rx_length;
+      st->rx_length = 0;
+      if (n < 2) return 0;
       if (app && app->log_verbose) { char dbg[257]; size_t cp = n < 256 ? n : 256; memcpy(dbg, data, cp); dbg[cp] = '\0'; g_debug("grelay: ws frame: %.256s", dbg); }
+      guint64 receive_now_ms = grelay_now_ms();
+      guint32 operation_cost = grelay_operation_cost(app, data, n);
+      if (operation_cost > 0 &&
+          !grelay_rate_allow(st, receive_now_ms, operation_cost)) {
+        Gm.rate_limit_drops++;
+        if (n >= 7 && g_str_has_prefix(data, "[\"EVENT\"")) {
+          char *okj = nostr_ok_build_json("0000", 0, "rate-limited");
+          if (okj) {
+            size_t m = strlen(okj);
+            unsigned char *buf = g_malloc(LWS_PRE + m);
+            if (buf) {
+              memcpy(buf + LWS_PRE, okj, m);
+              lws_write(wsi, buf + LWS_PRE, m, LWS_WRITE_TEXT);
+              g_free(buf);
+            }
+            g_free(okj);
+          }
+        }
+        return 0;
+      }
       /* Reuse existing parsing logic by adapting minimal pieces inline */
       /* Only handle EVENT/REQ/COUNT/CLOSE here; AUTH challenge can be added similarly */
       if (n >= 7 && g_str_has_prefix(data, "[\"EVENT\"")) {
@@ -453,45 +579,81 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
         }
         if (p < data + n && *p == '{' && data[end_idx] == '}') {
           size_t elen = (size_t)((data + end_idx + 1) - p);
+          if (elen == 0 || elen > (size_t)app->max_event_bytes) {
+            Gm.oversize_rejects++;
+            char *okj = nostr_ok_build_json("0000", 0,
+                                            "invalid: event too large");
+            if (okj) {
+              size_t m = strlen(okj);
+              unsigned char *buf = g_malloc(LWS_PRE + m);
+              if (buf) {
+                memcpy(buf + LWS_PRE, okj, m);
+                lws_write(wsi, buf + LWS_PRE, m, LWS_WRITE_TEXT);
+                g_free(buf);
+              }
+              g_free(okj);
+            }
+            return 0;
+          }
           char *json = g_strndup(p, (gssize)elen);
           if (json) {
-            NostrEvent *ev = nostr_event_new();
-            /* Disable compact parser; use canonical public API only */
-            int rc = nostr_event_deserialize(ev, json);
-            int ok = (rc == 0 || rc == 1); /* accept 0 or 1 as success across backends */
-            const char *reason = NULL; int rc_store = -1; char *id = NULL;
-            if (ok && app && app->storage && app->storage->vt && app->storage->vt->put_event) {
-              if (app && st && st->authed_pubkey[0]) {
-                const char *epk = nostr_event_get_pubkey(ev);
-                if (!epk || g_strcmp0(epk, st->authed_pubkey) != 0) {
-                  char *okj = nostr_ok_build_json("0000", 0, "auth-pubkey-mismatch"); Gm.auth_failures++;
-                  if (okj) { size_t m=strlen(okj); unsigned char *buf=g_malloc(LWS_PRE+m); if(buf){ memcpy(buf+LWS_PRE, okj, m); lws_write(wsi, buf+LWS_PRE, m, LWS_WRITE_TEXT); g_free(buf);} g_free(okj);} 
-                  nostr_event_free(ev); g_free(json); return 0;
+            RelayIngressConfig ingress_cfg = {
+              .max_event_bytes = (size_t)app->max_event_bytes,
+              .verification_cost = (guint32)app->verification_cost
+            };
+            RelayIngressResult ingress;
+            RelayIngressDecision decision = relay_ingress_validate_and_reserve(
+                &ingress_cfg, app->policy, app->verification_budget,
+                &st->verification_rate, st->peer_ip, json, elen, time(NULL),
+                receive_now_ms, &ingress);
+            const char *reason = ingress.reason;
+            int rc_store = -1;
+
+            if (decision == RELAY_INGRESS_DUPLICATE) {
+              rc_store = 0;
+              Gm.duplicate_drops++;
+            } else if (decision != RELAY_INGRESS_ACCEPT) {
+              if (decision == RELAY_INGRESS_REJECT_SKEW)
+                Gm.skew_rejects++;
+              else if (decision == RELAY_INGRESS_REJECT_VERIFY_BUDGET)
+                Gm.verification_budget_drops++;
+              else if (decision == RELAY_INGRESS_REJECT_OVERSIZE)
+                Gm.oversize_rejects++;
+              else
+                Gm.validation_rejects++;
+            } else if (!app || !app->storage || !app->storage->vt ||
+                       !app->storage->vt->put_event) {
+              reason = "error: store-unavailable";
+              (void)relay_ingress_finish(app->policy, &ingress, 0);
+            } else {
+              NostrEvent *ev = ingress.event;
+              const char *epk = nostr_event_get_pubkey(ev);
+              if (st->authed_pubkey[0] &&
+                  (!epk || g_strcmp0(epk, st->authed_pubkey) != 0)) {
+                reason = "auth-pubkey-mismatch";
+                Gm.auth_failures++;
+                (void)relay_ingress_finish(app->policy, &ingress, 0);
+              } else {
+                rc_store = app->storage->vt->put_event(app->storage, ev);
+                reason = rc_store == 0 ? "" : "error: store failed";
+                (void)relay_ingress_finish(app->policy, &ingress,
+                                           rc_store == 0);
+                if (rc_store == 0) {
+                  Gm.events_ingested_ok++;
+                  Gm.last_ingest_ms = grelay_now_ms();
+                  grelay_fanout_event(app, ev);
+                } else {
+                  Gm.events_ingested_failed++;
                 }
               }
-              id = nostr_event_get_id(ev);
-              rc_store = app->storage->vt->put_event(app->storage, ev);
-              reason = rc_store == 0 ? "" : "error: store failed";
-              if (rc_store == 0) { g_message("grelay: store ok id=%.16s kind=%d", id?id:"0000", ev->kind); Gm.events_ingested_ok++; Gm.last_ingest_ms = grelay_now_ms(); grelay_fanout_event(app, ev); }
-              else { g_message("grelay: store failed id=%.16s kind=%d", id?id:"0000", ev->kind); Gm.events_ingested_failed++; }
-            } else {
-              if (ok) {
-                /* Parsing succeeded but storage path is unavailable */
-                reason = "error: store-unavailable";
-                g_message("grelay: EVENT ok (rc=%d) but storage unavailable: storage=%p vt=%p put_event=%p",
-                          rc,
-                          (void*) (app ? app->storage : NULL),
-                          (app && app->storage) ? (void*)app->storage->vt : NULL,
-                          (app && app->storage && app->storage->vt) ? (void*)app->storage->vt->put_event : NULL);
-              } else {
-                reason = "invalid: bad event";
-                g_message("grelay: EVENT parse failed rc=%d (len=%zu): %.256s ...", rc, elen, json);
-              }
             }
-            const char *id_hex = id ? id : "0000";
-            char *okjson = nostr_ok_build_json(id_hex, rc_store == 0, reason);
+            const char *id_hex =
+                ingress.canonical_id[0] ? ingress.canonical_id : "0000";
+            char *okjson = nostr_ok_build_json(
+                id_hex, rc_store == 0, reason ? reason : "");
             if (okjson) { size_t m=strlen(okjson); unsigned char *buf=g_malloc(LWS_PRE+m); if(buf){ memcpy(buf+LWS_PRE, okjson, m); lws_write(wsi, buf+LWS_PRE, m, LWS_WRITE_TEXT); g_free(buf);} g_free(okjson);} 
-            if (id) g_free(id); if (ev) nostr_event_free(ev); g_free(json);
+            relay_ingress_result_clear(&ingress);
+            g_free(json);
           }
         }
         return 0;
@@ -599,7 +761,7 @@ static int grelay_lws_cb(struct lws *wsi, enum lws_callback_reasons reason,
 
 /* LWS protocol list: only 'nostr' so both HTTP and WS are handled in grelay_lws_cb */
 static const struct lws_protocols grelay_protocols[] = {
-  { "nostr", grelay_lws_cb, sizeof(GRelayConnState), 4096 },
+  { "nostr", grelay_lws_cb, sizeof(GRelayConnState), NOSTR_MAX_FRAME_LEN_BYTES },
   { NULL, NULL, 0, 0 }
 };
 
@@ -611,6 +773,38 @@ static int g_relay_app_command_line(GApplication *app, GApplicationCommandLine *
   nostr_set_json_interface(jansson_impl);
   nostr_json_force_fallback(true);
   nostr_json_init();
+
+  self->policy = relay_policy_create(
+      (size_t)self->replay_cache_capacity, self->replay_ttl_seconds,
+      self->future_skew_seconds, self->past_skew_seconds);
+  VerificationBudgetConfig verify_cfg = {
+      .per_ip_rate = (guint32)self->verification_ip_per_sec,
+      .per_ip_burst = (guint32)self->verification_ip_burst,
+      .global_rate = (guint32)self->verification_global_per_sec,
+      .global_burst = (guint32)self->verification_global_burst,
+      .max_ip_entries = (size_t)self->verification_max_ips,
+      .max_inflight_jobs = (size_t)self->verification_max_jobs,
+      .max_inflight_bytes = (size_t)self->verification_max_bytes,
+      .negative_cache_entries =
+          (size_t)self->verification_negative_cache_entries,
+      .negative_cache_ttl_ms =
+          (guint64)self->verification_negative_ttl_seconds * 1000ull,
+  };
+  self->verification_budget =
+      verification_budget_create(&verify_cfg, grelay_now_ms());
+  if (!self->policy || !self->verification_budget) {
+    g_printerr("grelay: failed to allocate ingress security state\n");
+    return 1;
+  }
+  g_message("grelay: security validator=canonical replayTTL=%ds capacity=%d "
+            "skew=+%d/-%d maxEvent=%dB verify(conn/ip/global)=%d/%d/%d "
+            "inflight=%d jobs/%dB",
+            self->replay_ttl_seconds, self->replay_cache_capacity,
+            self->future_skew_seconds, self->past_skew_seconds,
+            self->max_event_bytes, self->verification_conn_per_sec,
+            self->verification_ip_per_sec,
+            self->verification_global_per_sec, self->verification_max_jobs,
+            self->verification_max_bytes);
   /* Create storage */
   if (self->storage_driver[0]) {
     self->storage = nostr_storage_create(self->storage_driver);
@@ -662,6 +856,19 @@ static int g_relay_app_command_line(GApplication *app, GApplicationCommandLine *
   return 0;
 }
 
+static int grelay_env_int(const char *name, int fallback, int minimum,
+                           int maximum) {
+  const char *text = g_getenv(name);
+  if (!text || !*text) return fallback;
+  char *end = NULL;
+  errno = 0;
+  long value = strtol(text, &end, 10);
+  if (text == end || errno == ERANGE || *end != '\0' || value < minimum ||
+      value > maximum)
+    return fallback;
+  return (int)value;
+}
+
 static void g_relay_app_init(GRelayApp *self) {
   self->port = 4849; /* default grelay port */
   g_strlcpy(self->storage_driver, g_getenv("GRELAY_STORAGE_DRIVER") ? g_getenv("GRELAY_STORAGE_DRIVER") : "nostrdb", sizeof(self->storage_driver));
@@ -673,8 +880,28 @@ static void g_relay_app_init(GRelayApp *self) {
   self->max_filters = g_getenv("GRELAY_MAX_FILTERS") ? atoi(g_getenv("GRELAY_MAX_FILTERS")) : 10;
   self->max_limit = g_getenv("GRELAY_MAX_LIMIT") ? atoi(g_getenv("GRELAY_MAX_LIMIT")) : 500;
   self->max_subs = g_getenv("GRELAY_MAX_SUBS") ? atoi(g_getenv("GRELAY_MAX_SUBS")) : 20;
-  self->rate_ops_per_sec = g_getenv("GRELAY_RATE_OPS_PER_SEC") ? atoi(g_getenv("GRELAY_RATE_OPS_PER_SEC")) : 20;
-  self->rate_burst = g_getenv("GRELAY_RATE_BURST") ? atoi(g_getenv("GRELAY_RATE_BURST")) : 40;
+  self->rate_ops_per_sec = grelay_env_int("GRELAY_RATE_OPS_PER_SEC", 20, 1, RATE_LIMIT_MAX_RATE);
+  self->rate_burst = grelay_env_int("GRELAY_RATE_BURST", 40, 1, RATE_LIMIT_MAX_BURST);
+  self->rate_event_cost = grelay_env_int("GRELAY_RATE_EVENT_COST", 5, 1, self->rate_burst);
+  self->max_event_bytes = grelay_env_int("GRELAY_MAX_EVENT_BYTES", (int)nostr_limit_max_event_size(), 1024, NOSTR_MAX_FRAME_LEN_BYTES);
+  self->replay_cache_capacity = grelay_env_int("GRELAY_REPLAY_CACHE_CAPACITY", 65536, 1, 1000000);
+  self->replay_ttl_seconds = grelay_env_int("GRELAY_REPLAY_TTL_SECONDS", 900, 0, 604800);
+  self->future_skew_seconds = grelay_env_int("GRELAY_FUTURE_SKEW_SECONDS", 600, 0, 604800);
+  self->past_skew_seconds = grelay_env_int("GRELAY_PAST_SKEW_SECONDS", 0, 0, 604800);
+  self->verification_cost = grelay_env_int("GRELAY_VERIFICATION_COST", 5, 1, RATE_LIMIT_MAX_BURST);
+  self->verification_conn_per_sec = grelay_env_int("GRELAY_VERIFY_CONN_PER_SEC", (int)nostr_limit_verification_conn_per_sec(), 1, RATE_LIMIT_MAX_RATE);
+  int maximum_verification_cost = self->verification_cost +
+      (self->max_event_bytes + 16383) / 16384;
+  self->verification_conn_burst = grelay_env_int("GRELAY_VERIFY_CONN_BURST", MAX((int)nostr_limit_verification_conn_burst(), maximum_verification_cost), maximum_verification_cost, RATE_LIMIT_MAX_BURST);
+  self->verification_ip_per_sec = grelay_env_int("GRELAY_VERIFY_IP_PER_SEC", (int)nostr_limit_verification_ip_per_sec(), self->verification_conn_per_sec, RATE_LIMIT_MAX_RATE);
+  self->verification_ip_burst = grelay_env_int("GRELAY_VERIFY_IP_BURST", (int)nostr_limit_verification_ip_burst(), self->verification_conn_burst, RATE_LIMIT_MAX_BURST);
+  self->verification_global_per_sec = grelay_env_int("GRELAY_VERIFY_GLOBAL_PER_SEC", (int)nostr_limit_verification_global_per_sec(), self->verification_ip_per_sec, RATE_LIMIT_MAX_RATE);
+  self->verification_global_burst = grelay_env_int("GRELAY_VERIFY_GLOBAL_BURST", (int)nostr_limit_verification_global_burst(), self->verification_ip_burst, RATE_LIMIT_MAX_BURST);
+  self->verification_max_ips = grelay_env_int("GRELAY_VERIFY_MAX_IPS", (int)nostr_limit_max_verification_ips(), 1, 1000000);
+  self->verification_max_jobs = grelay_env_int("GRELAY_VERIFY_MAX_JOBS", (int)nostr_limit_max_verification_jobs(), 1, 1000000);
+  self->verification_max_bytes = grelay_env_int("GRELAY_VERIFY_MAX_BYTES", (int)nostr_limit_max_verification_bytes(), self->max_event_bytes, INT_MAX);
+  self->verification_negative_cache_entries = grelay_env_int("GRELAY_VERIFY_NEGATIVE_CACHE_ENTRIES", (int)nostr_limit_verification_negative_cache_entries(), 1, 1000000);
+  self->verification_negative_ttl_seconds = grelay_env_int("GRELAY_VERIFY_NEGATIVE_TTL_SECONDS", (int)nostr_limit_verification_negative_ttl_seconds(), 1, 3600);
   self->backpressure_max_ticks = g_getenv("GRELAY_BACKPRESSURE_MAX_TICKS") ? atoi(g_getenv("GRELAY_BACKPRESSURE_MAX_TICKS")) : 0;
   self->req_pending_ticks = g_getenv("GRELAY_REQ_PENDING_TICKS") ? atoi(g_getenv("GRELAY_REQ_PENDING_TICKS")) : 0;
   self->req_tick_interval_ms = g_getenv("GRELAY_REQ_TICK_INTERVAL_MS") ? atoi(g_getenv("GRELAY_REQ_TICK_INTERVAL_MS")) : 50;
@@ -741,7 +968,12 @@ static void g_relay_app_shutdown(GApplication *app) {
   if (self->storage) {
     if (self->storage->vt && self->storage->vt->close) self->storage->vt->close(self->storage);
     g_free(self->storage);
+    self->storage = NULL;
   }
+  relay_policy_destroy(self->policy);
+  self->policy = NULL;
+  verification_budget_destroy(self->verification_budget);
+  self->verification_budget = NULL;
   G_APPLICATION_CLASS(g_relay_app_parent_class)->shutdown(app);
 }
 

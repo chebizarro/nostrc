@@ -33,10 +33,10 @@ The Nostr C library provides an implementation of the Nostr protocol, including 
   - Tests and examples have been updated to expect `v=2:` envelopes and avoid `?iv=` parsing.
 
 - Relay ingress hardening
-  - Adds an in-memory replay cache (TTL 15 minutes) keyed by canonical event `id` to avoid redundant storage/flood.
-  - Enforces timestamp skew limits (+10 minutes future, -24 hours past) on `created_at`.
+  - Adds a process-local, capacity-bounded replay set (TTL 15 minutes) keyed by validated canonical event IDs. Reservations commit only after storage succeeds; a full set fails closed rather than shortening the TTL.
+  - Rejects `created_at` values more than 10 minutes in the future. Past-skew rejection is disabled by default to preserve historical sync and NIP-17/NIP-59 timestamp randomization.
   - On startup, the relay prints a concise security posture banner, for example:
-    - `nostrc-relayd: security AEAD=v2 replayTTL=900s skew=+600/-86400`
+    - `nostrc-relayd: security validator=canonical replayTTL=900s replayCapacity=65536 skew=+600/-0 ...`
 
 See `tests/test_event_canonical.c` and `tests/test_nip04_aead.c` for minimal validation of these behaviors.
 

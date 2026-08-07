@@ -1,36 +1,61 @@
 # nostrc-relayd example configuration
-# Minimal inline TOML-like format parsed by relayd_config.c
+# Minimal inline TOML-like format parsed by relayd_config.c.
 
-# Listen address (host:port)
 listen = "127.0.0.1:4848"
-
-# Storage driver name (requires component linked at build time)
 storage_driver = "nostrdb"
 
-# Identity (NIP-11)
+# NIP-11 identity
 name = "nostrc-relayd"
 software = "nostrc"
 version = "0.1"
-# Optional fields
 # description = "Your relay description"
 # contact = "mailto:admin@example.com"
 
 # Auth mode: off|optional|required (NIP-42)
 auth = "off"
-
-# Supported NIPs exposed via NIP-11 (adjust per build flags)
 supported_nips = [1, 11, 42, 45]
 
-# Limits advertised (NIP-11) and enforced at runtime
+# Query and event limits
 max_filters = 10
 max_limit = 500
 max_subs = 1
+# EVENT JSON bytes, checked before JSON allocation or signature verification.
+max_event_bytes = 262144
 
-# Rate limiting
-# tokens per second (approximate) and burst size
+# Monotonic weighted frame token bucket. CLOSE costs zero, controls cost one,
+# REQ/COUNT cost 1 + filter count, and EVENT uses rate_event_cost.
 rate_ops_per_sec = 20
 rate_burst = 40
+rate_event_cost = 5
+
+# Context-owned replay set. Validated canonical binary IDs are reserved before
+# storage, committed only after storage succeeds, and rolled back on failure.
+replay_cache_capacity = 65536
+replay_ttl_seconds = 900
+
+# created_at policy. Future events over ten minutes are rejected. Past skew is
+# disabled by default so historical sync and NIP-17/NIP-59 randomized
+# timestamps remain interoperable.
+future_skew_seconds = 600
+past_skew_seconds = 0
+
+# Signature-verification budgets. Values are weighted tokens, not event counts;
+# each signed EVENT consumes verification_cost from its connection, source IP,
+# and the global bucket. Raising one level cannot bypass the other levels.
+verification_cost = 5
+verification_conn_per_sec = 40
+verification_conn_burst = 80
+verification_ip_per_sec = 200
+verification_ip_burst = 400
+verification_global_per_sec = 2000
+verification_global_burst = 4000
+
+# Bounded verification state and synchronous in-flight resources.
+verification_max_ips = 4096
+verification_max_jobs = 64
+verification_max_bytes = 16777216
+verification_negative_cache_entries = 4096
+verification_negative_ttl_seconds = 30
 
 # Feature flags
-# Enable NIP-77 Negentropy (experimental)
 negentropy_enabled = 0
