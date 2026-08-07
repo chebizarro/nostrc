@@ -23,11 +23,12 @@
  * goes offline. The first entry is preferred for nostrconnect:// URIs.
  * nostrc-qpow: entries must accept kind-24133 (ephemeral) events without
  * policy demands - nos.lol was dropped because it rejects them with
- * "pow: 28 bits needed", which is unmineable for interactive signing. */
+ * "pow: 28 bits needed", which is unmineable for interactive signing.
+ * Before adding entries here, check the "Banned Relays" list in AGENTS.md. */
 static const char *const NIP46_FALLBACK_RELAYS[] = {
   "wss://relay.nsec.app",
   "wss://relay.primal.net",
-  "wss://relay.damus.io",
+  "wss://relay.sharegap.net",
   NULL  /* sentinel */
 };
 
