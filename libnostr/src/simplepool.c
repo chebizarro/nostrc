@@ -848,6 +848,60 @@ static void pool_drain_all(NostrSimplePool *pool,
     }
 }
 
+/* nostrc-el92: (Re)fire the shared subscription on connected relays that lack
+ * a live sub. nostr_subscription_fire fails when a relay's websocket is not
+ * yet up, and previously the error was swallowed with no retry — the pool
+ * stayed permanently deaf on any relay that finished connecting after
+ * subscribe() was called, or that dropped and reconnected (the CLOSED handler
+ * prunes the sub and nothing re-created it). Skipped for auto_unsub_on_eose
+ * pools, which drop subs after EOSE on purpose — reconciling those would
+ * resubscribe in a loop. Called from the worker loop (≤200ms cadence). */
+static void pool_reconcile_subs(NostrSimplePool *pool) {
+    if (!pool || pool->auto_unsub_on_eose) return;
+    GoContext *bg = go_context_background();
+    pthread_mutex_lock(&pool->pool_mutex);
+    if (!pool->filters_shared) {
+        pthread_mutex_unlock(&pool->pool_mutex);
+        return;
+    }
+    for (size_t i = 0; i < pool->relay_count; i++) {
+        NostrRelay *relay = pool->relays[i];
+        if (!relay || !nostr_relay_is_connected(relay)) continue;
+        bool has_sub = false;
+        for (size_t j = 0; j < pool->subs_count; j++) {
+            if (pool->subs[j] && nostr_subscription_get_relay(pool->subs[j]) == relay) {
+                has_sub = true;
+                break;
+            }
+        }
+        if (has_sub) continue;
+        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, pool->filters_shared);
+        if (!sub) continue;
+        Error *err = NULL;
+        if (!nostr_subscription_fire(sub, &err)) {
+            fprintf(stderr, "[simplepool] resubscribe fire failed on %s: %s\n",
+                    nostr_relay_get_url_const(relay),
+                    (err && err->message) ? err->message : "(unknown)");
+            if (err) free_error(err);
+            nostr_subscription_close(sub, NULL);
+            nostr_subscription_free(sub);
+            continue;
+        }
+        NostrSubscription **grown = (NostrSubscription **)realloc(
+            pool->subs, (pool->subs_count + 1) * sizeof(NostrSubscription *));
+        if (!grown) {
+            nostr_subscription_close(sub, NULL);
+            nostr_subscription_free(sub);
+            continue;
+        }
+        pool->subs = grown;
+        pool->subs[pool->subs_count++] = sub;
+        fprintf(stderr, "[simplepool] (re)subscribed on %s\n",
+                nostr_relay_get_url_const(relay));
+    }
+    pthread_mutex_unlock(&pool->pool_mutex);
+}
+
 void *simple_pool_thread_func(void *arg) {
     NostrSimplePool *pool = (NostrSimplePool *)arg;
 
@@ -933,6 +987,10 @@ void *simple_pool_thread_func(void *arg) {
             void *dummy = NULL;
             while (go_channel_try_receive(pool->wake_ch, &dummy) == 0) { /* drain */ }
         }
+
+        /* 5.5 nostrc-el92: re-fire the shared subscription on relays that
+         * (re)connected since the last pass */
+        pool_reconcile_subs(pool);
 
         /* 6. Greedy drain ALL subscription channels (events + closed + eose) */
         NostrIncomingEvent *batch = NULL;
@@ -1069,6 +1127,11 @@ void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_
         if (!sub) continue;
         Error *err = NULL;
         if (!nostr_subscription_fire(sub, &err)) {
+            /* nostrc-el92: log instead of swallowing; the worker loop's
+             * reconcile pass will retry once the relay is connected. */
+            fprintf(stderr, "[simplepool] subscribe fire failed on %s (will retry on connect): %s\n",
+                    nostr_relay_get_url_const(relay),
+                    (err && err->message) ? err->message : "(unknown)");
             if (err) free_error(err);
             nostr_subscription_close(sub, NULL);
             nostr_subscription_free(sub);
