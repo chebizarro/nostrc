@@ -1176,7 +1176,8 @@ if (BUILD_TESTING)
     src/model/gnostr-timeline-snapshot-model.c)
   target_compile_features(gnostr-test-timeline-feed-controller PRIVATE c_std_11)
   target_compile_definitions(gnostr-test-timeline-feed-controller PRIVATE
-    GNOSTR_TIMELINE_FEED_CONTROLLER_NO_SOURCE=1)
+    GNOSTR_TIMELINE_FEED_CONTROLLER_NO_SOURCE=1
+    GNOSTR_TIMELINE_FEED_CONTROLLER_TESTING=1)
   target_include_directories(gnostr-test-timeline-feed-controller BEFORE PRIVATE
     ${PROJECT_ROOT}/nostr-gtk/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -1188,6 +1189,37 @@ if (BUILD_TESTING)
   set_tests_properties(gnostr-test-timeline-feed-controller PROPERTIES
     TIMEOUT 30
     LABELS "timeline;feed;controller;unit;gnostr")
+
+  # Timeline source subscription/metadata integration tests (nostrc-enbe)
+  add_executable(gnostr-test-timeline-source
+    tests/test_timeline_source.c
+    src/model/gnostr-timeline-source.c
+    src/model/gnostr-timeline-batch.c
+    src/util/mute_filter.c)
+  target_compile_features(gnostr-test-timeline-source PRIVATE c_std_11)
+  target_compile_definitions(gnostr-test-timeline-source PRIVATE
+    GNOSTR_TIMELINE_SOURCE_TESTING=1)
+  target_include_directories(gnostr-test-timeline-source PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include
+    ${PROJECT_ROOT}/libnostr/include
+    ${PROJECT_ROOT}/libjson/include
+    ${PROJECT_ROOT}/libgo/include
+    ${_NOSTR_CONFIG_DIR})
+  target_link_libraries(gnostr-test-timeline-source PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO nostr_gobject nostr_json)
+  if(APPLE)
+    target_link_options(gnostr-test-timeline-source PRIVATE -Wl,-undefined,dynamic_lookup)
+  else()
+    target_link_options(gnostr-test-timeline-source PRIVATE
+      -Wl,--unresolved-symbols=ignore-in-object-files)
+  endif()
+  _gnostr_apply_sanitizers(gnostr-test-timeline-source)
+  add_test(NAME gnostr-test-timeline-source-live COMMAND gnostr-test-timeline-source)
+  set_tests_properties(gnostr-test-timeline-source-live PROPERTIES
+    TIMEOUT 30
+    LABELS "timeline;source;subscription;metadata;integration;gnostr"
+    ENVIRONMENT "NOSTR_ALLOW_UNSAFE_INGEST=1")
 
   # NIP-66 Relay Discovery unit tests
   add_executable(gnostr-test-nip66-relay-discovery tests/test_nip66_relay_discovery.c)

@@ -293,6 +293,12 @@ typedef struct {
 gboolean storage_ndb_read_note_counts(void *txn, const unsigned char id32[32],
 				      StorageNdbNoteCounts *out);
 
+/* Convenience wrapper accepting the canonical 64-character event id.
+ * Uses the caller's open transaction and performs no query/aggregation pass. */
+gboolean storage_ndb_read_note_counts_hex(void *txn,
+					  const char *event_id_hex,
+					  StorageNdbNoteCounts *out);
+
 /* Write/update note metadata counts via ndb_set_note_meta.
  * id32: 32-byte binary note ID.
  * counts: the count values to store.
@@ -426,6 +432,11 @@ void storage_ndb_note_get_nip10_thread_full(storage_ndb_note *note,
 					    char **reply_id_out,
 					    char **root_relay_hint_out,
 					    char **reply_relay_hint_out);
+
+/* Get the first "e" tag from a note via direct tag iteration (no NDB query).
+	* Matches nostrdb's persisted repost-count target selection.
+	* Returns g_strdup'd hex string, or NULL. Caller must g_free(). */
+char *storage_ndb_note_get_first_etag(storage_ndb_note *note);
 
 /* Get the last "e" tag from a note via direct tag iteration (no NDB query).
  * Useful for reactions (kind 7) and zaps (kind 9735).

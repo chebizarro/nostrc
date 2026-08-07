@@ -1109,6 +1109,23 @@ gboolean storage_ndb_read_note_counts(void *txn, const unsigned char id32[32],
   return TRUE;
 }
 
+gboolean
+storage_ndb_read_note_counts_hex(void *txn,
+                                 const char *event_id_hex,
+                                 StorageNdbNoteCounts *out)
+{
+  unsigned char id32[32];
+
+  if (!out)
+    return FALSE;
+  memset(out, 0, sizeof(*out));
+  if (!txn || !event_id_hex || strlen(event_id_hex) != 64 ||
+      !hex_to_id32(event_id_hex, id32))
+    return FALSE;
+
+  return storage_ndb_read_note_counts(txn, id32, out);
+}
+
 /* Write note metadata counts via ndb_set_note_meta.
  * Builds a meta builder, adds a COUNTS entry, and commits. */
 int storage_ndb_write_note_counts(const unsigned char id32[32],
@@ -2023,6 +2040,37 @@ void storage_ndb_note_get_nip10_thread(storage_ndb_note *note, char **root_id_ou
 {
   /* Delegate to the full version, ignoring relay hints */
   storage_ndb_note_get_nip10_thread_full(note, root_id_out, reply_id_out, NULL, NULL);
+}
+
+/* Get the first "e" tag value from a note as hex string. This matches
+ * nostrdb's ndb_process_repost_stats() target selection. */
+char *storage_ndb_note_get_first_etag(storage_ndb_note *note)
+{
+  if (!note) return NULL;
+
+  struct ndb_tags *tags = ndb_note_tags(note);
+  if (!tags || ndb_tags_count(tags) == 0) return NULL;
+
+  struct ndb_iterator iter;
+  ndb_tags_iterate_start(note, &iter);
+  while (ndb_tags_iterate_next(&iter)) {
+    struct ndb_tag *tag = iter.tag;
+    if (ndb_tag_count(tag) < 2) continue;
+
+    struct ndb_str key = ndb_tag_str(note, tag, 0);
+    if (!key.str || strcmp(key.str, "e") != 0) continue;
+
+    struct ndb_str val = ndb_tag_str(note, tag, 1);
+    if (val.flag == NDB_PACKED_ID && val.id) {
+      char hex[65];
+      storage_ndb_hex_encode(val.id, hex);
+      return g_strdup(hex);
+    }
+    if (val.flag != NDB_PACKED_ID && val.str && strlen(val.str) == 64)
+      return g_strndup(val.str, 64);
+  }
+
+  return NULL;
 }
 
 /* Get the last "e" tag value from a note as hex string.

@@ -69,6 +69,16 @@ void gnostr_timeline_feed_controller_load_newer(GnostrTimelineFeedController *se
 void gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
                                                   GnostrTimelineBatch *batch);
 
+#ifdef GNOSTR_TIMELINE_FEED_CONTROLLER_TESTING
+void gnostr_timeline_feed_controller_testing_ingest_source_batch(
+  GnostrTimelineFeedController *self,
+  GnostrTimelineBatch *batch);
+guint64 gnostr_timeline_feed_controller_testing_get_profile_index_lookups(
+  GnostrTimelineFeedController *self);
+guint64 gnostr_timeline_feed_controller_testing_get_profile_index_candidates(
+  GnostrTimelineFeedController *self);
+#endif
+
 void gnostr_timeline_feed_controller_set_viewport(GnostrTimelineFeedController *self,
                                                   double scroll_y,
                                                   double viewport_height,

@@ -40,6 +40,30 @@ static void invalidate_cache(GNostrTimelineQuery *q) {
   q->_hash = 0;
 }
 
+static void append_json_string(GString *json, const char *value) {
+  const unsigned char *p = (const unsigned char *)(value ? value : "");
+
+  g_string_append_c(json, '"');
+  for (; *p; p++) {
+    switch (*p) {
+      case '"': g_string_append(json, "\\\""); break;
+      case '\\': g_string_append(json, "\\\\"); break;
+      case '\b': g_string_append(json, "\\b"); break;
+      case '\f': g_string_append(json, "\\f"); break;
+      case '\n': g_string_append(json, "\\n"); break;
+      case '\r': g_string_append(json, "\\r"); break;
+      case '\t': g_string_append(json, "\\t"); break;
+      default:
+        if (*p < 0x20)
+          g_string_append_printf(json, "\\u%04x", *p);
+        else
+          g_string_append_c(json, (char)*p);
+        break;
+    }
+  }
+  g_string_append_c(json, '"');
+}
+
 /* ============== Constructors ============== */
 
 GNostrTimelineQuery *gnostr_timeline_query_new_global(void) {
@@ -417,6 +441,11 @@ const char *gnostr_timeline_query_to_json(GNostrTimelineQuery *query) {
     g_string_append_printf(json, ",\"#t\":[\"%s\"]", query->hashtag);
   }
 
+  if (query->search) {
+    g_string_append(json, ",\"search\":");
+    append_json_string(json, query->search);
+  }
+
   g_string_append_c(json, '}');
 
   query->_cached_json = g_string_free(json, FALSE);
@@ -510,6 +539,11 @@ char *gnostr_timeline_query_to_json_with_until(GNostrTimelineQuery *query, gint6
     g_string_append_c(json, ']');
   } else if (query->hashtag) {
     g_string_append_printf(json, ",\"#t\":[\"%s\"]", query->hashtag);
+  }
+
+  if (query->search) {
+    g_string_append(json, ",\"search\":");
+    append_json_string(json, query->search);
   }
 
   g_string_append_c(json, '}');

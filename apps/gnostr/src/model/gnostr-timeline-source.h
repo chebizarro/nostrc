@@ -26,6 +26,16 @@ void gnostr_timeline_source_load_newer_async(GnostrTimelineSource *self,
                                              guint count,
                                              gint64 after_timestamp);
 
+#ifdef GNOSTR_TIMELINE_SOURCE_TESTING
+char *gnostr_timeline_source_testing_dup_filter(GnostrTimelineSource *self);
+void gnostr_timeline_source_testing_enqueue_live_keys(GnostrTimelineSource *self,
+                                                       const uint64_t *note_keys,
+                                                       guint n_keys);
+guint gnostr_timeline_source_testing_get_live_pending_count(GnostrTimelineSource *self);
+guint gnostr_timeline_source_testing_get_live_dropped_count(GnostrTimelineSource *self);
+guint gnostr_timeline_source_testing_get_queue_capacity(void);
+#endif
+
 G_END_DECLS
 
 #endif /* GNOSTR_TIMELINE_SOURCE_H */

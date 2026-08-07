@@ -2306,64 +2306,40 @@ apply_source_metadata_patch_batch(GnNostrEventModel *self,
   if (!self->reaction_cache || !self->zap_stats_cache)
     return;
 
-  void *txn = NULL;
-  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn)
-    return;
+  g_autoptr(GHashTable) reactions_to_update =
+    g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  g_autoptr(GHashTable) zaps_to_update =
+    g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
-  GHashTable *reactions_to_update = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  GHashTable *zaps_to_update = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-
-  guint n_entries = gnostr_timeline_batch_get_n_entries(batch);
-  for (guint i = 0; i < n_entries; i++) {
-    const GnostrTimelineBatchEntry *entry = gnostr_timeline_batch_get_entry(batch, i);
-    if (!entry)
+  guint n_patches = gnostr_timeline_batch_get_n_metadata_patches(batch);
+  for (guint i = 0; i < n_patches; i++) {
+    const GnostrTimelineMetadataPatch *patch =
+      gnostr_timeline_batch_get_metadata_patch(batch, i);
+    if (!patch || !patch->event_id)
       continue;
 
-    storage_ndb_note *note = storage_ndb_get_note_ptr(txn, entry->note_key);
-    if (!note)
-      continue;
+    if (patch->has_like_count) {
+      g_hash_table_replace(self->reaction_cache,
+                           g_strdup(patch->event_id),
+                           GUINT_TO_POINTER(patch->like_count));
+      g_hash_table_add(reactions_to_update, g_strdup(patch->event_id));
+    }
 
-    uint32_t kind = storage_ndb_note_kind(note);
-    if (kind == 7) {
-      char *target_event_id = NULL;
-      storage_ndb_note_get_nip10_thread(note, NULL, &target_event_id);
-      if (!target_event_id)
-        target_event_id = storage_ndb_note_get_last_etag(note);
-
-      if (target_event_id) {
-        gpointer existing = g_hash_table_lookup(self->reaction_cache, target_event_id);
-        guint new_count = (existing ? GPOINTER_TO_UINT(existing) : 0) + 1;
-        g_hash_table_insert(self->reaction_cache, g_strdup(target_event_id), GUINT_TO_POINTER(new_count));
-
-        uint8_t target_id32[32];
-        if (hex_to_bytes32(target_event_id, target_id32))
-          storage_ndb_increment_note_meta(target_id32, "reactions");
-
-        g_hash_table_add(reactions_to_update, g_strdup(target_event_id));
-        g_free(target_event_id);
+    if (patch->has_zap_count || patch->has_zap_total_msat) {
+      ZapStats *stats = g_hash_table_lookup(self->zap_stats_cache,
+                                            patch->event_id);
+      if (!stats) {
+        stats = g_new0(ZapStats, 1);
+        g_hash_table_insert(self->zap_stats_cache,
+                            g_strdup(patch->event_id), stats);
       }
-    } else if (kind == 9735) {
-      char *target_event_id = storage_ndb_note_get_last_etag(note);
-      if (target_event_id) {
-        guint zap_count = 0;
-        gint64 total_msat = 0;
-        storage_ndb_get_zap_stats(target_event_id, &zap_count, &total_msat);
-
-        ZapStats *stats = g_hash_table_lookup(self->zap_stats_cache, target_event_id);
-        if (!stats) {
-          stats = g_new0(ZapStats, 1);
-          g_hash_table_insert(self->zap_stats_cache, g_strdup(target_event_id), stats);
-        }
-        stats->count = zap_count;
-        stats->total_msat = total_msat;
-
-        g_hash_table_add(zaps_to_update, g_strdup(target_event_id));
-        g_free(target_event_id);
-      }
+      if (patch->has_zap_count)
+        stats->count = patch->zap_count;
+      if (patch->has_zap_total_msat)
+        stats->total_msat = patch->zap_total_msat;
+      g_hash_table_add(zaps_to_update, g_strdup(patch->event_id));
     }
   }
-
-  storage_ndb_end_query(txn);
 
   if (g_hash_table_size(self->reaction_cache) > REACTION_CACHE_MAX) {
     g_debug("[REACTION] Cache overflow (%u > %u), clearing",
@@ -2385,9 +2361,6 @@ apply_source_metadata_patch_batch(GnNostrEventModel *self,
   g_hash_table_iter_init(&iter, zaps_to_update);
   while (g_hash_table_iter_next(&iter, &key, NULL))
     update_item_zap_stats(self, (const char *)key);
-
-  g_hash_table_unref(reactions_to_update);
-  g_hash_table_unref(zaps_to_update);
 }
 
 static GnostrTimelineSource *

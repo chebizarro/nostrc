@@ -47,6 +47,7 @@ struct _GnostrTimelineFeedController {
 
   GPtrArray *working;       /* element-type: WorkingEntry* */
   GHashTable *by_event_id;  /* char* -> WorkingEntry* (borrowed value) */
+  GHashTable *by_pubkey;    /* char* -> direct-pointer set of borrowed WorkingEntry* */
   GHashTable *pending_head; /* char* event id -> PendingHeadEntry* (no VM retention) */
   GHashTable *deferred_patch_events; /* char* set of visible rows awaiting safe patch publication */
   GHashTable *deferred_replacement_vms; /* char* -> GnostrTimelineItemViewModel* awaiting admission */
@@ -72,6 +73,15 @@ struct _GnostrTimelineFeedController {
   GnostrComposeScrollPolicy scheduled_scroll_policy;
   gboolean loading_older;
   gboolean loading_newer;
+
+  GQueue *source_batch_queue; /* GnostrTimelineBatch refs, source-signal order */
+  GCancellable *hydration_cancellable;
+  guint64 hydration_epoch;
+  gboolean source_batch_processing;
+  gboolean disposed;
+
+  guint64 profile_index_lookups;
+  guint64 profile_index_candidates;
 };
 
 G_DEFINE_TYPE(GnostrTimelineFeedController,
@@ -92,6 +102,10 @@ static void schedule_compose(GnostrTimelineFeedController *self,
                              GnostrComposeScrollPolicy policy);
 static void compose_and_publish(GnostrTimelineFeedController *self,
                                 GnostrComposeScrollPolicy policy);
+static void feed_controller_apply_batch(GnostrTimelineFeedController *self,
+                                        GnostrTimelineBatch *batch,
+                                        GPtrArray *hydrated_items);
+static void process_source_batch_queue(GnostrTimelineFeedController *self);
 
 static WorkingEntry *
 working_entry_new_from_vm(GnostrTimelineItemViewModel *vm)
@@ -113,12 +127,49 @@ working_entry_free(WorkingEntry *we)
 }
 
 static void
-working_entry_replace_vm(WorkingEntry *we,
+index_working_entry_by_pubkey(GnostrTimelineFeedController *self,
+                              WorkingEntry *entry)
+{
+  const char *pubkey = (entry && entry->vm) ?
+    gnostr_timeline_item_view_model_get_pubkey(entry->vm) : NULL;
+  if (!pubkey || !*pubkey)
+    return;
+
+  GHashTable *entries = g_hash_table_lookup(self->by_pubkey, pubkey);
+  if (!entries) {
+    entries = g_hash_table_new(g_direct_hash, g_direct_equal);
+    g_hash_table_insert(self->by_pubkey, g_strdup(pubkey), entries);
+  }
+  g_hash_table_add(entries, entry);
+}
+
+static void
+unindex_working_entry_by_pubkey(GnostrTimelineFeedController *self,
+                                WorkingEntry *entry)
+{
+  const char *pubkey = (entry && entry->vm) ?
+    gnostr_timeline_item_view_model_get_pubkey(entry->vm) : NULL;
+  if (!pubkey || !*pubkey)
+    return;
+
+  GHashTable *entries = g_hash_table_lookup(self->by_pubkey, pubkey);
+  if (!entries)
+    return;
+  g_hash_table_remove(entries, entry);
+  if (g_hash_table_size(entries) == 0)
+    g_hash_table_remove(self->by_pubkey, pubkey);
+}
+
+static void
+working_entry_replace_vm(GnostrTimelineFeedController *self,
+                         WorkingEntry *we,
                          GnostrTimelineItemViewModel *vm)
 {
   if (!we || !GNOSTR_IS_TIMELINE_ITEM_VIEW_MODEL(vm))
     return;
+  unindex_working_entry_by_pubkey(self, we);
   g_set_object(&we->vm, vm);
+  index_working_entry_by_pubkey(self, we);
 }
 
 static gboolean
@@ -163,7 +214,7 @@ merge_hydrated_vm(GnostrTimelineFeedController *self,
   const char *event_id = gnostr_timeline_item_view_model_get_event_id(vm);
   WorkingEntry *existing = lookup_working(self, event_id);
   if (existing) {
-    working_entry_replace_vm(existing, vm);
+    working_entry_replace_vm(self, existing, vm);
     if (out_inserted)
       *out_inserted = FALSE;
     return existing;
@@ -172,6 +223,7 @@ merge_hydrated_vm(GnostrTimelineFeedController *self,
   WorkingEntry *created = working_entry_new_from_vm(vm);
   g_ptr_array_add(self->working, created);
   g_hash_table_insert(self->by_event_id, g_strdup(event_id), created);
+  index_working_entry_by_pubkey(self, created);
 
   if (out_inserted)
     *out_inserted = TRUE;
@@ -190,8 +242,9 @@ hydrate_batch_items(GnostrTimelineFeedController *self,
 static void
 clear_working_set(GnostrTimelineFeedController *self)
 {
-  g_ptr_array_set_size(self->working, 0);
   g_hash_table_remove_all(self->by_event_id);
+  g_hash_table_remove_all(self->by_pubkey);
+  g_ptr_array_set_size(self->working, 0);
   g_hash_table_remove_all(self->pending_head);
   g_hash_table_remove_all(self->deferred_patch_events);
   g_hash_table_remove_all(self->deferred_replacement_vms);
@@ -227,6 +280,7 @@ remove_working_event(GnostrTimelineFeedController *self,
   g_hash_table_remove(self->deferred_patch_events, event_id);
   g_hash_table_remove(self->deferred_replacement_vms, event_id);
   g_hash_table_remove(self->by_event_id, event_id);
+  unindex_working_entry_by_pubkey(self, entry);
 
   for (guint i = 0; i < self->working->len; i++) {
     if (g_ptr_array_index(self->working, i) == entry) {
@@ -834,7 +888,7 @@ merge_hydrated_vm_with_admission(GnostrTimelineFeedController *self,
 
   g_hash_table_remove(self->deferred_patch_events, event_id);
   g_hash_table_remove(self->deferred_replacement_vms, event_id);
-  working_entry_replace_vm(existing, vm);
+  working_entry_replace_vm(self, existing, vm);
   return existing;
 }
 
@@ -863,14 +917,14 @@ reevaluate_deferred_patch_events(GnostrTimelineFeedController *self)
     PatchAdmission admission = admission_for_replacement_vm(self, event_id, candidate);
     if (admission == PATCH_ADMISSION_PUBLISH) {
       if (pending_replacement)
-        working_entry_replace_vm(entry, pending_replacement);
+        working_entry_replace_vm(self, entry, pending_replacement);
       g_hash_table_remove(self->deferred_replacement_vms, event_id);
       should_publish = TRUE;
       g_hash_table_iter_remove(&iter);
     } else if (admission == PATCH_ADMISSION_HIDDEN_ONLY ||
                admission == PATCH_ADMISSION_NO_CHANGE) {
       if (pending_replacement)
-        working_entry_replace_vm(entry, pending_replacement);
+        working_entry_replace_vm(self, entry, pending_replacement);
       g_hash_table_remove(self->deferred_replacement_vms, event_id);
       g_hash_table_iter_remove(&iter);
     }
@@ -932,7 +986,7 @@ apply_metadata_patch(GnostrTimelineFeedController *self,
       g_hash_table_remove(self->deferred_replacement_vms, patch->event_id);
       if (admission != PATCH_ADMISSION_BLOCKED)
         g_hash_table_remove(self->deferred_patch_events, patch->event_id);
-      working_entry_replace_vm(entry, replacement);
+      working_entry_replace_vm(self, entry, replacement);
     }
     return admission;
   }
@@ -947,9 +1001,22 @@ apply_profile_patch(GnostrTimelineFeedController *self,
   if (!patch || !patch->pubkey_hex)
     return PATCH_ADMISSION_NO_CHANGE;
 
+  self->profile_index_lookups++;
+  GHashTable *indexed = g_hash_table_lookup(self->by_pubkey, patch->pubkey_hex);
+  if (!indexed)
+    return PATCH_ADMISSION_NO_CHANGE;
+
+  g_autoptr(GPtrArray) candidates = g_ptr_array_new();
+  GHashTableIter indexed_iter;
+  gpointer indexed_entry = NULL;
+  g_hash_table_iter_init(&indexed_iter, indexed);
+  while (g_hash_table_iter_next(&indexed_iter, &indexed_entry, NULL))
+    g_ptr_array_add(candidates, indexed_entry);
+  self->profile_index_candidates += candidates->len;
+
   PatchAdmission admission = PATCH_ADMISSION_NO_CHANGE;
-  for (guint i = 0; i < self->working->len; i++) {
-    WorkingEntry *entry = g_ptr_array_index(self->working, i);
+  for (guint i = 0; i < candidates->len; i++) {
+    WorkingEntry *entry = g_ptr_array_index(candidates, i);
     if (!entry || !entry->vm)
       continue;
 
@@ -957,8 +1024,6 @@ apply_profile_patch(GnostrTimelineFeedController *self,
     GnostrTimelineItemViewModel *deferred =
       g_hash_table_lookup(self->deferred_replacement_vms, entry_event_id);
     GnostrTimelineItemViewModel *base = deferred ? deferred : entry->vm;
-    if (g_strcmp0(gnostr_timeline_item_view_model_get_pubkey(base), patch->pubkey_hex) != 0)
-      continue;
 
     gboolean row_changed = FALSE;
     row_changed |= g_strcmp0(gnostr_timeline_item_view_model_get_display_name(base), patch->display_name) != 0;
@@ -985,9 +1050,8 @@ apply_profile_patch(GnostrTimelineFeedController *self,
                              g_object_ref(replacement));
       } else {
         g_hash_table_remove(self->deferred_replacement_vms, entry_event_id);
-        if (row_admission != PATCH_ADMISSION_BLOCKED)
-          g_hash_table_remove(self->deferred_patch_events, entry_event_id);
-        working_entry_replace_vm(entry, replacement);
+        g_hash_table_remove(self->deferred_patch_events, entry_event_id);
+        working_entry_replace_vm(self, entry, replacement);
       }
     }
   }
@@ -995,18 +1059,154 @@ apply_profile_patch(GnostrTimelineFeedController *self,
   return admission;
 }
 
+typedef struct {
+  GnostrTimelineFeedController *controller;
+  GnostrTimelineBatch *batch;
+  guint64 epoch;
+} SourceHydrationData;
+
+static void
+source_hydration_data_free(SourceHydrationData *data)
+{
+  if (!data)
+    return;
+  g_clear_object(&data->controller);
+  g_clear_object(&data->batch);
+  g_free(data);
+}
+
+static gboolean
+batch_needs_hydration(GnostrTimelineBatch *batch)
+{
+  switch (gnostr_timeline_batch_get_kind(batch)) {
+    case GNOSTR_TIMELINE_BATCH_REFRESH:
+    case GNOSTR_TIMELINE_BATCH_LIVE_HEAD:
+    case GNOSTR_TIMELINE_BATCH_PAGE_OLDER:
+    case GNOSTR_TIMELINE_BATCH_PAGE_NEWER:
+      return gnostr_timeline_batch_get_n_entries(batch) > 0;
+    case GNOSTR_TIMELINE_BATCH_DELETE:
+    case GNOSTR_TIMELINE_BATCH_PROFILE_PATCH:
+    case GNOSTR_TIMELINE_BATCH_METADATA_PATCH:
+      return FALSE;
+  }
+  return FALSE;
+}
+
+static void
+on_source_hydration_done(GObject *source_object,
+                         GAsyncResult *result,
+                         gpointer user_data)
+{
+  SourceHydrationData *data = user_data;
+  GnostrTimelineFeedController *self = data->controller;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) items =
+    gnostr_timeline_hydrator_hydrate_batch_finish(
+      GNOSTR_TIMELINE_HYDRATOR(source_object), result, &error);
+
+  if (!self->disposed && data->epoch == self->hydration_epoch) {
+    self->source_batch_processing = FALSE;
+    if (items && batch_generation_is_current(self, data->batch)) {
+      feed_controller_apply_batch(self, data->batch, items);
+    } else if (error &&
+               !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      GnostrTimelineBatchKind kind =
+        gnostr_timeline_batch_get_kind(data->batch);
+      if (kind == GNOSTR_TIMELINE_BATCH_PAGE_OLDER)
+        self->loading_older = FALSE;
+      else if (kind == GNOSTR_TIMELINE_BATCH_PAGE_NEWER)
+        self->loading_newer = FALSE;
+      g_warning("[COMPOSITOR] Async hydration failed: %s", error->message);
+    }
+    process_source_batch_queue(self);
+  }
+
+  source_hydration_data_free(data);
+}
+
+static void
+process_source_batch_queue(GnostrTimelineFeedController *self)
+{
+  if (self->disposed || self->source_batch_processing)
+    return;
+
+  while (!g_queue_is_empty(self->source_batch_queue)) {
+    GnostrTimelineBatch *batch = g_queue_pop_head(self->source_batch_queue);
+    if (!batch_generation_is_current(self, batch)) {
+      g_object_unref(batch);
+      continue;
+    }
+
+    if (!batch_needs_hydration(batch)) {
+      feed_controller_apply_batch(self, batch, NULL);
+      g_object_unref(batch);
+      continue;
+    }
+
+    self->source_batch_processing = TRUE;
+    SourceHydrationData *data = g_new0(SourceHydrationData, 1);
+    data->controller = g_object_ref(self);
+    data->batch = batch; /* transfer queue reference */
+    data->epoch = self->hydration_epoch;
+    gnostr_timeline_hydrator_hydrate_batch_async(
+      self->hydrator, batch, self->hydration_cancellable,
+      on_source_hydration_done, data);
+    return;
+  }
+}
+
+static void
+queue_source_batch(GnostrTimelineFeedController *self,
+                   GnostrTimelineBatch *batch)
+{
+  if (self->disposed || !batch_generation_is_current(self, batch))
+    return;
+  g_queue_push_tail(self->source_batch_queue, g_object_ref(batch));
+  process_source_batch_queue(self);
+}
+
 static void
 on_source_batch(GnostrTimelineSource *source G_GNUC_UNUSED,
                 GnostrTimelineBatch *batch,
                 gpointer user_data)
 {
-  gnostr_timeline_feed_controller_ingest_batch(GNOSTR_TIMELINE_FEED_CONTROLLER(user_data), batch);
+  queue_source_batch(GNOSTR_TIMELINE_FEED_CONTROLLER(user_data), batch);
+}
+
+static void
+clear_source_batch_queue(GnostrTimelineFeedController *self)
+{
+  if (!self->source_batch_queue)
+    return;
+  while (!g_queue_is_empty(self->source_batch_queue))
+    g_object_unref(g_queue_pop_head(self->source_batch_queue));
+}
+
+static void
+reset_hydration_generation(GnostrTimelineFeedController *self)
+{
+  if (self->hydration_cancellable)
+    g_cancellable_cancel(self->hydration_cancellable);
+  self->hydration_epoch++;
+  if (self->hydration_epoch == 0)
+    self->hydration_epoch = 1;
+  self->source_batch_processing = FALSE;
+  clear_source_batch_queue(self);
+  g_clear_object(&self->hydration_cancellable);
+  self->hydration_cancellable = g_cancellable_new();
+  if (self->hydrator)
+    gnostr_timeline_hydrator_set_generation(self->hydrator,
+                                             self->query_generation);
 }
 
 static void
 gnostr_timeline_feed_controller_dispose(GObject *object)
 {
   GnostrTimelineFeedController *self = GNOSTR_TIMELINE_FEED_CONTROLLER(object);
+  self->disposed = TRUE;
+  if (self->hydration_cancellable)
+    g_cancellable_cancel(self->hydration_cancellable);
+  clear_source_batch_queue(self);
 
   if (self->compose_source_id != 0) {
     g_source_remove(self->compose_source_id);
@@ -1019,10 +1219,13 @@ gnostr_timeline_feed_controller_dispose(GObject *object)
   }
 
   g_clear_object(&self->source);
+  g_clear_object(&self->hydration_cancellable);
   g_clear_object(&self->hydrator);
   g_clear_object(&self->model);
-  g_clear_pointer(&self->working, g_ptr_array_unref);
   g_clear_pointer(&self->by_event_id, g_hash_table_unref);
+  g_clear_pointer(&self->by_pubkey, g_hash_table_unref);
+  g_clear_pointer(&self->working, g_ptr_array_unref);
+  g_clear_pointer(&self->source_batch_queue, g_queue_free);
   g_clear_pointer(&self->pending_head, g_hash_table_unref);
   g_clear_pointer(&self->deferred_patch_events, g_hash_table_unref);
   g_clear_pointer(&self->deferred_replacement_vms, g_hash_table_unref);
@@ -1088,9 +1291,14 @@ gnostr_timeline_feed_controller_init(GnostrTimelineFeedController *self)
   self->query_generation = 1;
   self->snapshot_generation = 0;
   self->hydrator = gnostr_timeline_hydrator_new(self->query_generation);
+  self->hydration_cancellable = g_cancellable_new();
+  self->hydration_epoch = 1;
+  self->source_batch_queue = g_queue_new();
   self->model = gnostr_timeline_snapshot_model_new();
   self->working = g_ptr_array_new_with_free_func((GDestroyNotify)working_entry_free);
   self->by_event_id = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->by_pubkey = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                          (GDestroyNotify)g_hash_table_unref);
   self->pending_head = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   self->deferred_patch_events = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->deferred_replacement_vms = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
@@ -1163,14 +1371,17 @@ gnostr_timeline_feed_controller_set_source(GnostrTimelineFeedController *self,
 #ifndef GNOSTR_TIMELINE_FEED_CONTROLLER_NO_SOURCE
   if (self->source) {
     self->query_generation = gnostr_timeline_source_get_generation(self->source);
-    if (self->hydrator)
-      gnostr_timeline_hydrator_set_generation(self->hydrator, self->query_generation);
     self->source_batch_handler = g_signal_connect(self->source,
                                                    "batch",
                                                    G_CALLBACK(on_source_batch),
                                                    self);
+  } else {
+    self->query_generation++;
+    if (self->query_generation == 0)
+      self->query_generation = 1;
   }
 #endif
+  reset_hydration_generation(self);
 }
 
 void
@@ -1194,8 +1405,7 @@ gnostr_timeline_feed_controller_set_query(GnostrTimelineFeedController *self,
   if (self->query_generation == 0)
     self->query_generation = 1;
 #endif
-  if (self->hydrator)
-    gnostr_timeline_hydrator_set_generation(self->hydrator, self->query_generation);
+  reset_hydration_generation(self);
   self->loading_older = FALSE;
   self->loading_newer = FALSE;
   clear_working_set(self);
@@ -1261,9 +1471,10 @@ gnostr_timeline_feed_controller_load_newer(GnostrTimelineFeedController *self,
 #endif
 }
 
-void
-gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
-                                             GnostrTimelineBatch *batch)
+static void
+feed_controller_apply_batch(GnostrTimelineFeedController *self,
+                            GnostrTimelineBatch *batch,
+                            GPtrArray *hydrated_items)
 {
   g_return_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self));
   g_return_if_fail(GNOSTR_IS_TIMELINE_BATCH(batch));
@@ -1276,7 +1487,8 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
 
   switch (kind) {
     case GNOSTR_TIMELINE_BATCH_REFRESH: {
-      g_autoptr(GPtrArray) items = hydrate_batch_items(self, batch);
+      g_autoptr(GPtrArray) items = hydrated_items ?
+        g_ptr_array_ref(hydrated_items) : hydrate_batch_items(self, batch);
       if (!items)
         return;
       clear_working_set(self);
@@ -1291,7 +1503,8 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
     }
 
     case GNOSTR_TIMELINE_BATCH_LIVE_HEAD: {
-      g_autoptr(GPtrArray) items = hydrate_batch_items(self, batch);
+      g_autoptr(GPtrArray) items = hydrated_items ?
+        g_ptr_array_ref(hydrated_items) : hydrate_batch_items(self, batch);
       if (!items)
         return;
       self->trim_edge = WINDOW_TRIM_TAIL;
@@ -1341,7 +1554,8 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
     }
 
     case GNOSTR_TIMELINE_BATCH_PAGE_OLDER: {
-      g_autoptr(GPtrArray) items = hydrate_batch_items(self, batch);
+      g_autoptr(GPtrArray) items = hydrated_items ?
+        g_ptr_array_ref(hydrated_items) : hydrate_batch_items(self, batch);
       if (!items)
         return;
       self->loading_older = FALSE;
@@ -1361,7 +1575,8 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
     }
 
     case GNOSTR_TIMELINE_BATCH_PAGE_NEWER: {
-      g_autoptr(GPtrArray) items = hydrate_batch_items(self, batch);
+      g_autoptr(GPtrArray) items = hydrated_items ?
+        g_ptr_array_ref(hydrated_items) : hydrate_batch_items(self, batch);
       if (!items)
         return;
       self->loading_newer = FALSE;
@@ -1443,11 +1658,20 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
     case GNOSTR_TIMELINE_BATCH_PROFILE_PATCH: {
       PatchAdmission admission = PATCH_ADMISSION_NO_CHANGE;
       guint n_patches = gnostr_timeline_batch_get_n_profile_patches(batch);
+      g_autoptr(GHashTable) by_pubkey =
+        g_hash_table_new(g_str_hash, g_str_equal);
       for (guint i = 0; i < n_patches; i++) {
         const GnostrTimelineProfilePatch *patch =
           gnostr_timeline_batch_get_profile_patch(batch, i);
-        admission = patch_admission_combine(admission, apply_profile_patch(self, patch));
+        if (patch && patch->pubkey_hex)
+          g_hash_table_replace(by_pubkey, patch->pubkey_hex, (gpointer)patch);
       }
+      GHashTableIter patch_iter;
+      gpointer patch_value = NULL;
+      g_hash_table_iter_init(&patch_iter, by_pubkey);
+      while (g_hash_table_iter_next(&patch_iter, NULL, &patch_value))
+        admission = patch_admission_combine(
+          admission, apply_profile_patch(self, patch_value));
       if (admission == PATCH_ADMISSION_PUBLISH)
         schedule_compose(self, GNOSTR_COMPOSE_SCROLL_KEEP_VIEWPORT);
       else if (admission == PATCH_ADMISSION_BLOCKED)
@@ -1479,6 +1703,43 @@ gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
 
   emit_profile_requests(self, batch);
 }
+
+void
+gnostr_timeline_feed_controller_ingest_batch(GnostrTimelineFeedController *self,
+                                             GnostrTimelineBatch *batch)
+{
+  g_return_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self));
+  g_return_if_fail(GNOSTR_IS_TIMELINE_BATCH(batch));
+  feed_controller_apply_batch(self, batch, NULL);
+}
+
+#ifdef GNOSTR_TIMELINE_FEED_CONTROLLER_TESTING
+void
+gnostr_timeline_feed_controller_testing_ingest_source_batch(
+  GnostrTimelineFeedController *self,
+  GnostrTimelineBatch *batch)
+{
+  g_return_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self));
+  g_return_if_fail(GNOSTR_IS_TIMELINE_BATCH(batch));
+  queue_source_batch(self, batch);
+}
+
+guint64
+gnostr_timeline_feed_controller_testing_get_profile_index_lookups(
+  GnostrTimelineFeedController *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self), 0);
+  return self->profile_index_lookups;
+}
+
+guint64
+gnostr_timeline_feed_controller_testing_get_profile_index_candidates(
+  GnostrTimelineFeedController *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_TIMELINE_FEED_CONTROLLER(self), 0);
+  return self->profile_index_candidates;
+}
+#endif
 
 void
 gnostr_timeline_feed_controller_set_viewport(GnostrTimelineFeedController *self,

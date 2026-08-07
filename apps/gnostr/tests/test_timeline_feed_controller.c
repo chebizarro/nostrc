@@ -45,6 +45,32 @@ batch_add(GnostrTimelineBatch *batch,
 }
 
 static void
+batch_add_for_author(GnostrTimelineBatch *batch,
+                     guint64 note_key,
+                     gint64 created_at,
+                     guint8 id_byte,
+                     const char *pubkey,
+                     const char *display_name)
+{
+  guint8 id[32];
+  fill_id(id, id_byte);
+  gnostr_timeline_batch_add_note(batch,
+                                 note_key,
+                                 created_at,
+                                 id,
+                                 pubkey,
+                                 "indexed note body",
+                                 display_name,
+                                 "handle",
+                                 NULL,
+                                 NULL,
+                                 NULL,
+                                 NULL,
+                                 1,
+                                 TRUE);
+}
+
+static void
 batch_add_reply(GnostrTimelineBatch *batch,
                 guint64 note_key,
                 gint64 created_at,
@@ -1735,6 +1761,98 @@ test_pending_head_is_lightweight_and_capped(void)
   g_object_unref(controller);
 }
 
+static void
+test_async_source_hydration_cancelled_on_generation_bump(void)
+{
+  GnostrTimelineFeedController *controller =
+    gnostr_timeline_feed_controller_new(NULL);
+  GnostrTimelineBatch *live =
+    batch_new(GNOSTR_TIMELINE_BATCH_LIVE_HEAD, 1);
+
+  g_autofree char *large_content = g_strnfill(8192, 'x');
+  for (guint i = 1; i <= 200; i++) {
+    GnostrTimelineBatchEntry entry = {
+      .note_key = i,
+      .created_at = 1000 - (gint64)i,
+      .pubkey_hex = "async-author",
+      .content = large_content,
+      .display_name = "Async",
+      .kind = 1,
+      .has_profile = TRUE,
+    };
+    fill_id(entry.event_id, (guint8)i);
+    gnostr_timeline_batch_add_entry(live, &entry);
+  }
+
+  gnostr_timeline_feed_controller_testing_ingest_source_batch(controller, live);
+  gnostr_timeline_feed_controller_set_query(controller, NULL);
+  drain_main_context_for_ms(300);
+
+  g_assert_cmpuint(gnostr_timeline_feed_controller_get_query_generation(controller), ==, 2);
+  g_assert_cmpuint(gnostr_timeline_feed_controller_get_working_count(controller), ==, 0);
+
+  g_object_unref(live);
+  g_object_unref(controller);
+}
+
+static void
+test_profile_patch_uses_pubkey_index_and_coalesces(void)
+{
+  GnostrTimelineFeedController *controller =
+    gnostr_timeline_feed_controller_new(NULL);
+  GnostrTimelineBatch *refresh =
+    batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 1);
+
+  for (guint i = 1; i <= 100; i++) {
+    gboolean target_author = i <= 20;
+    batch_add_for_author(refresh, i, 2000 - (gint64)i, (guint8)i,
+                         target_author ? "author-a" : "author-b",
+                         target_author ? "Author A" : "Author B");
+  }
+  gnostr_timeline_feed_controller_ingest_batch(controller, refresh);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(refresh);
+
+  guint64 lookups_before =
+    gnostr_timeline_feed_controller_testing_get_profile_index_lookups(controller);
+  guint64 candidates_before =
+    gnostr_timeline_feed_controller_testing_get_profile_index_candidates(controller);
+
+  GnostrTimelineBatch *patch_batch =
+    batch_new(GNOSTR_TIMELINE_BATCH_PROFILE_PATCH, 1);
+  GnostrTimelineProfilePatch first = {
+    .pubkey_hex = "author-a",
+    .display_name = "Intermediate",
+    .handle = "intermediate",
+  };
+  GnostrTimelineProfilePatch final = {
+    .pubkey_hex = "author-a",
+    .display_name = "Final Author",
+    .handle = "final",
+  };
+  gnostr_timeline_batch_add_profile_patch(patch_batch, &first);
+  gnostr_timeline_batch_add_profile_patch(patch_batch, &final);
+  gnostr_timeline_feed_controller_ingest_batch(controller, patch_batch);
+  gnostr_timeline_feed_controller_compose_now(controller);
+  g_object_unref(patch_batch);
+
+  g_assert_cmpuint(
+    gnostr_timeline_feed_controller_testing_get_profile_index_lookups(controller) -
+      lookups_before, ==, 1);
+  g_assert_cmpuint(
+    gnostr_timeline_feed_controller_testing_get_profile_index_candidates(controller) -
+      candidates_before, ==, 20);
+
+  g_autoptr(GnostrTimelineSnapshot) snapshot = dup_controller_snapshot(controller);
+  g_assert_cmpuint(gnostr_timeline_snapshot_get_n_rows(snapshot), ==, 30);
+  GnostrTimelineSnapshotRow *author_a = gnostr_timeline_snapshot_get_row(snapshot, 0);
+  GnostrTimelineSnapshotRow *author_b = gnostr_timeline_snapshot_get_row(snapshot, 20);
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_display_name(author_a), ==, "Final Author");
+  g_assert_cmpstr(gnostr_timeline_snapshot_row_get_display_name(author_b), ==, "Author B");
+
+  g_object_unref(controller);
+}
+
 int
 main(int argc,
      char **argv)
@@ -1803,6 +1921,10 @@ main(int argc,
                   test_far_paging_bounds_window_cache_and_refetches_evicted_tail);
   g_test_add_func("/gnostr/timeline-feed-controller/pending-head-lightweight-cap",
                   test_pending_head_is_lightweight_and_capped);
+  g_test_add_func("/gnostr/timeline-feed-controller/async-generation-cancellation",
+                  test_async_source_hydration_cancelled_on_generation_bump);
+  g_test_add_func("/gnostr/timeline-feed-controller/profile-patch-index-coalesced",
+                  test_profile_patch_uses_pubkey_index_and_coalesces);
 
   return g_test_run();
 }
