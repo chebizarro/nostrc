@@ -1,0 +1,10 @@
+[Plugin]
+Module=communikeys-communities
+Name=Communikeys Communities
+Description=Pubkey-owned NIP-CAS-0007 communities for ordinary Nostr relays.
+Authors=Gnostr Contributors
+Version=0.1
+Copyright=Copyright © 2026 Gnostr Contributors
+Website=https://github.com/chebizarro/nostrc
+Loader=c
+Builtin=true

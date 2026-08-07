@@ -387,6 +387,11 @@ if (TARGET nip29)
 else()
   message(STATUS "nip29 target not found — skipping nip29-groups plugin (enable ENABLE_NIP29=ON to build it)")
 endif()
+if (TARGET nip_communikeys)
+  add_subdirectory(plugins/communikeys-communities)
+else()
+  message(STATUS "nip_communikeys target not found — skipping Communikeys plugin (enable ENABLE_NIP_COMMUNIKEYS=ON)")
+endif()
 
 # Make gnostr depend on plugins so they're built together
 add_dependencies(${APP_CLIENT_BIN}
@@ -404,6 +409,9 @@ add_dependencies(${APP_CLIENT_BIN}
 )
 if (TARGET nip29-groups)
   add_dependencies(${APP_CLIENT_BIN} nip29-groups)
+endif()
+if (TARGET communikeys-communities)
+  add_dependencies(${APP_CLIENT_BIN} communikeys-communities)
 endif()
 
 # ---- OpenSSL for DM file encryption (AES-GCM) ----

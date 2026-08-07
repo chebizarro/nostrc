@@ -125,6 +125,11 @@ if(ENABLE_NIP29)
     add_subdirectory(nips/nip29)
 endif()
 
+option(ENABLE_NIP_COMMUNIKEYS "Enable NIP-CAS-0007 Communikeys" OFF)
+if(ENABLE_NIP_COMMUNIKEYS)
+    add_subdirectory(nips/nip-communikeys)
+endif()
+
 option(ENABLE_NIP31 "Enable nip31" OFF)
 if(ENABLE_NIP31)
     add_subdirectory(nips/nip31)
