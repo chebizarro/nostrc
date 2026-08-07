@@ -30,6 +30,9 @@ typedef struct _GnostrTimelineFeedController GnostrTimelineFeedController;
 
 typedef void (*GnostrPublishEventCompletion)(gboolean success,
                                               gpointer user_data);
+typedef void (*GnostrPublishEventDetailedCompletion)(gboolean success,
+                                                      const char *event_id,
+                                                      gpointer user_data);
 
 typedef enum {
   COMPOSE_CONTEXT_NONE,
@@ -211,6 +214,14 @@ void gnostr_main_window_publish_event_json_async_internal(
     const char *event_json,
     GCancellable *cancellable,
     GnostrPublishEventCompletion completion_cb,
+    gpointer completion_data,
+    GDestroyNotify completion_destroy);
+void gnostr_main_window_publish_event_json_to_relays_async_internal(
+    GnostrMainWindow *self,
+    const char *event_json,
+    const GPtrArray *additional_relay_urls,
+    GCancellable *cancellable,
+    GnostrPublishEventDetailedCompletion completion_cb,
     gpointer completion_data,
     GDestroyNotify completion_destroy);
 void gnostr_main_window_on_relays_clicked_internal(GtkButton *btn, gpointer user_data);

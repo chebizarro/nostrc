@@ -46,6 +46,9 @@ typedef struct _NostrEvent NostrEvent;
 #define NIP34_KIND_STATUS_CLOSED    1632
 #define NIP34_KIND_STATUS_DRAFT     1633
 
+/* Reverse-domain NIP-32 namespace used for issue self-labels. */
+#define NIP34_ISSUE_LABEL_NAMESPACE "org.gnostr.issue"
+
 /* =========================================================================
  * Result codes
  * ========================================================================= */
@@ -223,10 +226,14 @@ void nip34_patch_free(nip34_patch_t *patch);
  * @param subject               issue subject/title (required)
  * @param content               markdown issue description (required)
  * @param labels                NULL-terminated array of labels (nullable)
+ * @param maintainers           NULL-terminated array of additional maintainer
+ *                              pubkey hex strings (nullable)
  *
  * The event includes an "a" tag for
- * "30617:<repo_owner_pubkey_hex>:<repo_id>", a "p" tag for the owner,
- * a "subject" tag, an NIP-31 "alt" tag, and one "t" tag per label.
+ * "30617:<repo_owner_pubkey_hex>:<repo_id>", "p" tags for the owner and
+ * maintainers, a "subject" tag, an NIP-31 "alt" tag, and one "t" tag per
+ * label. Labels are also emitted as NIP-32 self-labels using
+ * NIP34_ISSUE_LABEL_NAMESPACE.
  *
  * Returns: newly allocated unsigned NostrEvent, or NULL on error.
  */
@@ -234,7 +241,8 @@ NostrEvent *nip34_create_issue(const char *repo_owner_pubkey_hex,
                                const char *repo_id,
                                const char *subject,
                                const char *content,
-                               const char *const *labels);
+                               const char *const *labels,
+                               const char *const *maintainers);
 
 /* =========================================================================
  * Status events (kinds 1630–1633)
@@ -249,17 +257,21 @@ typedef enum {
 
 /**
  * nip34_create_status:
- * Create a status event (kind 1630–1633) targeting a patch or PR.
+ * Create a status event (kind 1630–1633) targeting a root patch, PR, or issue.
  *
- * @param target_event_id  event ID of the patch/PR being annotated (required)
+ * @param target_event_id  event ID being annotated (required)
  * @param status           status kind (1630–1633)
  * @param content          optional status message (nullable)
+ * @param repo_addr        repository address (nullable)
+ * @param pubkeys          NULL-terminated owner/author/maintainer pubkeys (nullable)
  *
  * Returns: newly allocated unsigned NostrEvent, or NULL on error.
  */
 NostrEvent *nip34_create_status(const char *target_event_id,
                                 nip34_status_kind_t status,
-                                const char *content);
+                                const char *content,
+                                const char *repo_addr,
+                                const char *const *pubkeys);
 
 /* =========================================================================
  * Helpers

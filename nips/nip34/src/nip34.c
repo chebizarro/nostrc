@@ -36,8 +36,9 @@ static const char *find_tag_value(const NostrEvent *event, const char *key)
     return NULL;
 }
 
-/* Collect all tag values for a given key into a NULL-terminated array.
- * Returns count in *out_count. Caller frees the array and each string. */
+/* Collect every value after the key from all matching tags. NIP-34's
+ * clone/web/relays/maintainers tags are variadic, although separate tags are
+ * also accepted. Returns count in *out_count. */
 static char **collect_tag_values(const NostrEvent *event, const char *key,
                                  size_t *out_count)
 {
@@ -45,14 +46,12 @@ static char **collect_tag_values(const NostrEvent *event, const char *key,
     if (!event || !event->tags || !key)
         return NULL;
 
-    /* Count matches */
     size_t n = 0;
     for (size_t i = 0; i < event->tags->count; i++) {
         NostrTag *tag = event->tags->data[i];
-        if (tag && tag->size >= 2) {
-            const char *k = string_array_get(tag, 0);
-            if (k && strcmp(k, key) == 0) n++;
-        }
+        const char *k = tag && tag->size >= 2 ? string_array_get(tag, 0) : NULL;
+        if (k && strcmp(k, key) == 0)
+            n += tag->size - 1;
     }
     if (n == 0) return NULL;
 
@@ -60,14 +59,14 @@ static char **collect_tag_values(const NostrEvent *event, const char *key,
     if (!arr) return NULL;
 
     size_t idx = 0;
-    for (size_t i = 0; i < event->tags->count && idx < n; i++) {
+    for (size_t i = 0; i < event->tags->count; i++) {
         NostrTag *tag = event->tags->data[i];
-        if (tag && tag->size >= 2) {
-            const char *k = string_array_get(tag, 0);
-            if (k && strcmp(k, key) == 0) {
-                const char *v = string_array_get(tag, 1);
-                arr[idx++] = v ? strdup(v) : strdup("");
-            }
+        const char *k = tag && tag->size >= 2 ? string_array_get(tag, 0) : NULL;
+        if (!k || strcmp(k, key) != 0)
+            continue;
+        for (size_t j = 1; j < tag->size; j++) {
+            const char *v = string_array_get(tag, j);
+            arr[idx++] = v ? strdup(v) : strdup("");
         }
     }
     *out_count = idx;
@@ -102,6 +101,19 @@ static int tags_add3(NostrTags *tags, const char *k, const char *v1,
     string_array_add(tag, k);
     string_array_add(tag, v1);
     string_array_add(tag, v2);
+    nostr_tags_append(tags, tag);
+    return 0;
+}
+
+static int tags_add4(NostrTags *tags, const char *k, const char *v1,
+                     const char *v2, const char *v3)
+{
+    NostrTag *tag = new_string_array(4);
+    if (!tag) return -1;
+    string_array_add(tag, k);
+    string_array_add(tag, v1);
+    string_array_add(tag, v2);
+    string_array_add(tag, v3);
     nostr_tags_append(tags, tag);
     return 0;
 }
@@ -167,7 +179,7 @@ NostrEvent *nip34_create_repo_announcement(const char *repo_id,
 
     if (maintainers) {
         for (size_t i = 0; maintainers[i]; i++)
-            tags_add2(tags, "p", maintainers[i]);
+            tags_add2(tags, "maintainers", maintainers[i]);
     }
 
     nostr_event_set_tags(ev, tags);
@@ -211,7 +223,7 @@ nip34_result_t nip34_parse_repository(const NostrEvent *event,
     repo->clone = collect_tag_values(event, "clone", &repo->clone_count);
     repo->web = collect_tag_values(event, "web", &repo->web_count);
     repo->relays = collect_tag_values(event, "relays", &repo->relay_count);
-    repo->maintainers = collect_tag_values(event, "p", &repo->maintainer_count);
+    repo->maintainers = collect_tag_values(event, "maintainers", &repo->maintainer_count);
 
     *out = repo;
     return NIP34_OK;
@@ -362,7 +374,8 @@ NostrEvent *nip34_create_issue(const char *repo_owner_pubkey_hex,
                                const char *repo_id,
                                const char *subject,
                                const char *content,
-                               const char *const *labels)
+                               const char *const *labels,
+                               const char *const *maintainers)
 {
     if (!repo_owner_pubkey_hex || !*repo_owner_pubkey_hex ||
         !repo_id || !*repo_id || !subject || !*subject || !content)
@@ -387,7 +400,13 @@ NostrEvent *nip34_create_issue(const char *repo_owner_pubkey_hex,
         return NULL;
     }
 
-    NostrTags *tags = new_tags(label_count + 4);
+    size_t maintainer_count = 0;
+    if (maintainers) {
+        while (maintainers[maintainer_count])
+            maintainer_count++;
+    }
+
+    NostrTags *tags = new_tags(label_count * 2 + maintainer_count + 5);
     if (!tags) {
         free(repo_addr);
         nostr_event_free(ev);
@@ -404,8 +423,29 @@ NostrEvent *nip34_create_issue(const char *repo_owner_pubkey_hex,
         return NULL;
     }
 
+    for (size_t i = 0; i < maintainer_count; i++) {
+        if (maintainers[i][0] != '\0' &&
+            strcmp(maintainers[i], repo_owner_pubkey_hex) != 0 &&
+            tags_add2(tags, "p", maintainers[i]) != 0) {
+            free(repo_addr);
+            nostr_tags_free(tags);
+            nostr_event_free(ev);
+            return NULL;
+        }
+    }
+
+    if (label_count > 0 && tags_add2(tags, "L", NIP34_ISSUE_LABEL_NAMESPACE) != 0) {
+        free(repo_addr);
+        nostr_tags_free(tags);
+        nostr_event_free(ev);
+        return NULL;
+    }
+
     for (size_t i = 0; i < label_count; i++) {
-        if (labels[i][0] != '\0' && tags_add2(tags, "t", labels[i]) != 0) {
+        if (labels[i][0] == '\0')
+            continue;
+        if (tags_add2(tags, "t", labels[i]) != 0 ||
+            tags_add3(tags, "l", labels[i], NIP34_ISSUE_LABEL_NAMESPACE) != 0) {
             free(repo_addr);
             nostr_tags_free(tags);
             nostr_event_free(ev);
@@ -520,7 +560,9 @@ void nip34_patch_free(nip34_patch_t *patch)
 
 NostrEvent *nip34_create_status(const char *target_event_id,
                                 nip34_status_kind_t status,
-                                const char *content)
+                                const char *content,
+                                const char *repo_addr,
+                                const char *const *pubkeys)
 {
     if (!target_event_id)
         return NULL;
@@ -535,10 +577,29 @@ NostrEvent *nip34_create_status(const char *target_event_id,
     nostr_event_set_created_at(ev, (int64_t)time(NULL));
     nostr_event_set_content(ev, content ? content : "");
 
-    NostrTags *tags = new_tags(2);
+    size_t pubkey_count = 0;
+    if (pubkeys) {
+        while (pubkeys[pubkey_count])
+            pubkey_count++;
+    }
+
+    NostrTags *tags = new_tags(pubkey_count + 2);
     if (!tags) { nostr_event_free(ev); return NULL; }
 
-    tags_add2(tags, "e", target_event_id);
+    if (tags_add4(tags, "e", target_event_id, "", "root") != 0 ||
+        (repo_addr && *repo_addr && tags_add2(tags, "a", repo_addr) != 0)) {
+        nostr_tags_free(tags);
+        nostr_event_free(ev);
+        return NULL;
+    }
+
+    for (size_t i = 0; i < pubkey_count; i++) {
+        if (pubkeys[i][0] != '\0' && tags_add2(tags, "p", pubkeys[i]) != 0) {
+            nostr_tags_free(tags);
+            nostr_event_free(ev);
+            return NULL;
+        }
+    }
 
     nostr_event_set_tags(ev, tags);
     return ev;

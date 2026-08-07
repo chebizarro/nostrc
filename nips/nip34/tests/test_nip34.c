@@ -24,6 +24,21 @@ static int tests_passed = 0;
         tests_passed++; \
     } while (0)
 
+static NostrTag *find_tag(const NostrEvent *event, const char *key, size_t occurrence)
+{
+    size_t seen = 0;
+    assert(event != NULL);
+    assert(event->tags != NULL);
+
+    for (size_t i = 0; i < event->tags->count; i++) {
+        NostrTag *tag = event->tags->data[i];
+        const char *tag_key = tag && tag->size > 0 ? string_array_get(tag, 0) : NULL;
+        if (tag_key && strcmp(tag_key, key) == 0 && seen++ == occurrence)
+            return tag;
+    }
+    return NULL;
+}
+
 static const char *find_tag_value(const NostrEvent *event, const char *key, size_t occurrence)
 {
     size_t seen = 0;
@@ -58,7 +73,8 @@ static void test_create_repo_announcement(void)
     assert(ev != NULL);
     assert(nostr_event_get_kind(ev) == NIP34_KIND_REPOSITORY);
     assert(ev->tags != NULL);
-    assert(ev->tags->count >= 6); /* d, name, description, 2x clone, web, relays, p */
+    assert(ev->tags->count >= 6); /* d, name, description, clone/web/relays/maintainers */
+    assert(strcmp(find_tag_value(ev, "maintainers", 0), "aabbccdd") == 0);
 
     nostr_event_free(ev);
 }
@@ -255,27 +271,40 @@ static void test_create_issue(void)
     const char *owner =
         "cdee943cbb19c51ab847a66d5d774373aa9f63d287246bb59b0827fa5e637400";
     const char *labels[] = {"bug", "gnostr", NULL};
+    const char *maintainers[] = {owner, "11223344", NULL};
 
     NostrEvent *ev = nip34_create_issue(owner, "nostrc", "Crash on startup",
-                                         "## Description\n\nIt crashes.", labels);
+                                         "## Description\n\nIt crashes.", labels,
+                                         maintainers);
     assert(ev != NULL);
     assert(nostr_event_get_kind(ev) == NIP34_KIND_ISSUE);
     assert(strcmp(nostr_event_get_content(ev), "## Description\n\nIt crashes.") == 0);
     assert(strcmp(find_tag_value(ev, "a", 0),
                   "30617:cdee943cbb19c51ab847a66d5d774373aa9f63d287246bb59b0827fa5e637400:nostrc") == 0);
     assert(strcmp(find_tag_value(ev, "p", 0), owner) == 0);
+    assert(strcmp(find_tag_value(ev, "p", 1), "11223344") == 0);
+    assert(find_tag_value(ev, "p", 2) == NULL); /* duplicate owner omitted */
     assert(strcmp(find_tag_value(ev, "subject", 0), "Crash on startup") == 0);
     assert(strcmp(find_tag_value(ev, "alt", 0), "git repository issue") == 0);
     assert(strcmp(find_tag_value(ev, "t", 0), "bug") == 0);
     assert(strcmp(find_tag_value(ev, "t", 1), "gnostr") == 0);
     assert(find_tag_value(ev, "t", 2) == NULL);
+    assert(strcmp(find_tag_value(ev, "L", 0), NIP34_ISSUE_LABEL_NAMESPACE) == 0);
+    NostrTag *label0 = find_tag(ev, "l", 0);
+    NostrTag *label1 = find_tag(ev, "l", 1);
+    assert(label0 && label0->size == 3);
+    assert(label1 && label1->size == 3);
+    assert(strcmp(string_array_get(label0, 1), "bug") == 0);
+    assert(strcmp(string_array_get(label0, 2), NIP34_ISSUE_LABEL_NAMESPACE) == 0);
+    assert(strcmp(string_array_get(label1, 1), "gnostr") == 0);
+    assert(strcmp(string_array_get(label1, 2), NIP34_ISSUE_LABEL_NAMESPACE) == 0);
 
     nostr_event_free(ev);
 }
 
 static void test_create_issue_minimal(void)
 {
-    NostrEvent *ev = nip34_create_issue("aabbccdd", "repo", "Subject", "", NULL);
+    NostrEvent *ev = nip34_create_issue("aabbccdd", "repo", "Subject", "", NULL, NULL);
     assert(ev != NULL);
     assert(nostr_event_get_kind(ev) == NIP34_KIND_ISSUE);
     assert(find_tag_value(ev, "t", 0) == NULL);
@@ -284,26 +313,37 @@ static void test_create_issue_minimal(void)
 
 static void test_create_issue_null(void)
 {
-    assert(nip34_create_issue(NULL, "repo", "subject", "content", NULL) == NULL);
-    assert(nip34_create_issue("owner", NULL, "subject", "content", NULL) == NULL);
-    assert(nip34_create_issue("owner", "repo", NULL, "content", NULL) == NULL);
-    assert(nip34_create_issue("owner", "repo", "", "content", NULL) == NULL);
-    assert(nip34_create_issue("owner", "repo", "subject", NULL, NULL) == NULL);
+    assert(nip34_create_issue(NULL, "repo", "subject", "content", NULL, NULL) == NULL);
+    assert(nip34_create_issue("owner", NULL, "subject", "content", NULL, NULL) == NULL);
+    assert(nip34_create_issue("owner", "repo", NULL, "content", NULL, NULL) == NULL);
+    assert(nip34_create_issue("owner", "repo", "", "content", NULL, NULL) == NULL);
+    assert(nip34_create_issue("owner", "repo", "subject", NULL, NULL, NULL) == NULL);
 }
 
 /* ---- Status events (1630–1633) ---- */
 
 static void test_create_status_open(void)
 {
-    NostrEvent *ev = nip34_create_status("event123", NIP34_STATUS_OPEN, "Looks good");
+    const char *pubkeys[] = {"owner", "maintainer", NULL};
+    NostrEvent *ev = nip34_create_status("event123", NIP34_STATUS_OPEN,
+                                          "Looks good", "30617:owner:repo",
+                                          pubkeys);
     assert(ev != NULL);
     assert(nostr_event_get_kind(ev) == 1630);
+    NostrTag *root = find_tag(ev, "e", 0);
+    assert(root && root->size == 4);
+    assert(strcmp(string_array_get(root, 1), "event123") == 0);
+    assert(strcmp(string_array_get(root, 2), "") == 0);
+    assert(strcmp(string_array_get(root, 3), "root") == 0);
+    assert(strcmp(find_tag_value(ev, "a", 0), "30617:owner:repo") == 0);
+    assert(strcmp(find_tag_value(ev, "p", 0), "owner") == 0);
+    assert(strcmp(find_tag_value(ev, "p", 1), "maintainer") == 0);
     nostr_event_free(ev);
 }
 
 static void test_create_status_applied(void)
 {
-    NostrEvent *ev = nip34_create_status("event456", NIP34_STATUS_APPLIED, "Merged!");
+    NostrEvent *ev = nip34_create_status("event456", NIP34_STATUS_APPLIED, "Merged!", NULL, NULL);
     assert(ev != NULL);
     assert(nostr_event_get_kind(ev) == 1631);
     nostr_event_free(ev);
@@ -311,7 +351,7 @@ static void test_create_status_applied(void)
 
 static void test_create_status_closed(void)
 {
-    NostrEvent *ev = nip34_create_status("event789", NIP34_STATUS_CLOSED, NULL);
+    NostrEvent *ev = nip34_create_status("event789", NIP34_STATUS_CLOSED, NULL, NULL, NULL);
     assert(ev != NULL);
     assert(nostr_event_get_kind(ev) == 1632);
     nostr_event_free(ev);
@@ -319,7 +359,7 @@ static void test_create_status_closed(void)
 
 static void test_create_status_draft(void)
 {
-    NostrEvent *ev = nip34_create_status("eventabc", NIP34_STATUS_DRAFT, "WIP");
+    NostrEvent *ev = nip34_create_status("eventabc", NIP34_STATUS_DRAFT, "WIP", NULL, NULL);
     assert(ev != NULL);
     assert(nostr_event_get_kind(ev) == 1633);
     nostr_event_free(ev);
@@ -327,12 +367,12 @@ static void test_create_status_draft(void)
 
 static void test_create_status_null(void)
 {
-    assert(nip34_create_status(NULL, NIP34_STATUS_OPEN, NULL) == NULL);
+    assert(nip34_create_status(NULL, NIP34_STATUS_OPEN, NULL, NULL, NULL) == NULL);
 }
 
 static void test_create_status_invalid_kind(void)
 {
-    assert(nip34_create_status("ev", (nip34_status_kind_t)9999, NULL) == NULL);
+    assert(nip34_create_status("ev", (nip34_status_kind_t)9999, NULL, NULL, NULL) == NULL);
 }
 
 /* ---- Error strings ---- */

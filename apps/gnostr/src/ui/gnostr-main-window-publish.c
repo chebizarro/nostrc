@@ -42,6 +42,8 @@ struct _PublishContext {
   gboolean local_ingested;
   gboolean finalized;
   GnostrPublishEventCompletion completion_cb;
+  GnostrPublishEventDetailedCompletion detailed_completion_cb;
+  GPtrArray *additional_relay_urls; /* char* */
   gpointer completion_data;
   GDestroyNotify completion_destroy;
   gboolean completion_called;
@@ -75,7 +77,10 @@ publish_context_complete(PublishContext *ctx, gboolean success)
     return;
 
   ctx->completion_called = TRUE;
-  if (ctx->completion_cb)
+  if (ctx->detailed_completion_cb)
+    ctx->detailed_completion_cb(success, success ? ctx->event_id : NULL,
+                                ctx->completion_data);
+  else if (ctx->completion_cb)
     ctx->completion_cb(success, ctx->completion_data);
   if (ctx->completion_destroy)
     ctx->completion_destroy(ctx->completion_data);
@@ -92,6 +97,7 @@ static void publish_context_free(PublishContext *ctx) {
   g_free(ctx->signed_event_json);
   g_clear_pointer(&ctx->event_id, free);
   if (ctx->attempts) g_ptr_array_free(ctx->attempts, TRUE);
+  if (ctx->additional_relay_urls) g_ptr_array_unref(ctx->additional_relay_urls);
   if (ctx->failure_reasons) g_string_free(ctx->failure_reasons, TRUE);
   if (ctx->relay_outcomes) g_string_free(ctx->relay_outcomes, TRUE);
   g_free(ctx->limit_warnings);
@@ -151,17 +157,21 @@ static gboolean gnostr_compose_dialog_deferred_close(gpointer data) {
   return G_SOURCE_REMOVE;
 }
 
-void
-gnostr_main_window_publish_event_json_async_internal(
+static void
+publish_event_json_async_full(
     GnostrMainWindow *self,
     const char *event_json,
+    const GPtrArray *additional_relay_urls,
     GCancellable *cancellable,
     GnostrPublishEventCompletion completion_cb,
+    GnostrPublishEventDetailedCompletion detailed_completion_cb,
     gpointer completion_data,
     GDestroyNotify completion_destroy)
 {
   if (!GNOSTR_IS_MAIN_WINDOW(self) || !event_json || !*event_json) {
-    if (completion_cb)
+    if (detailed_completion_cb)
+      detailed_completion_cb(FALSE, NULL, completion_data);
+    else if (completion_cb)
       completion_cb(FALSE, completion_data);
     if (completion_destroy)
       completion_destroy(completion_data);
@@ -171,7 +181,9 @@ gnostr_main_window_publish_event_json_async_internal(
   GnostrSignerService *signer = gnostr_signer_service_get_default();
   if (!gnostr_signer_service_is_available(signer)) {
     gnostr_main_window_show_toast_internal(self, "Signer not available");
-    if (completion_cb)
+    if (detailed_completion_cb)
+      detailed_completion_cb(FALSE, NULL, completion_data);
+    else if (completion_cb)
       completion_cb(FALSE, completion_data);
     if (completion_destroy)
       completion_destroy(completion_data);
@@ -183,11 +195,49 @@ gnostr_main_window_publish_event_json_async_internal(
   ctx->text = g_strdup("");
   g_weak_ref_init(&ctx->composer_ref, NULL);
   ctx->completion_cb = completion_cb;
+  ctx->detailed_completion_cb = detailed_completion_cb;
   ctx->completion_data = completion_data;
   ctx->completion_destroy = completion_destroy;
+  if (additional_relay_urls) {
+    ctx->additional_relay_urls = g_ptr_array_new_with_free_func(g_free);
+    for (guint i = 0; i < additional_relay_urls->len; i++) {
+      const char *url = g_ptr_array_index((GPtrArray *)additional_relay_urls, i);
+      if (url && *url)
+        g_ptr_array_add(ctx->additional_relay_urls, g_strdup(url));
+    }
+  }
 
   gnostr_sign_event_async(event_json, "", "gnostr", cancellable,
                           on_sign_event_complete, ctx);
+}
+
+void
+gnostr_main_window_publish_event_json_async_internal(
+    GnostrMainWindow *self,
+    const char *event_json,
+    GCancellable *cancellable,
+    GnostrPublishEventCompletion completion_cb,
+    gpointer completion_data,
+    GDestroyNotify completion_destroy)
+{
+  publish_event_json_async_full(self, event_json, NULL, cancellable,
+                                completion_cb, NULL, completion_data,
+                                completion_destroy);
+}
+
+void
+gnostr_main_window_publish_event_json_to_relays_async_internal(
+    GnostrMainWindow *self,
+    const char *event_json,
+    const GPtrArray *additional_relay_urls,
+    GCancellable *cancellable,
+    GnostrPublishEventDetailedCompletion completion_cb,
+    gpointer completion_data,
+    GDestroyNotify completion_destroy)
+{
+  publish_event_json_async_full(self, event_json, additional_relay_urls,
+                                cancellable, NULL, completion_cb,
+                                completion_data, completion_destroy);
 }
 
 struct _LikeContext {
@@ -646,9 +696,24 @@ static void on_sign_event_complete(GObject *source, GAsyncResult *res, gpointer 
   }
 
   g_autoptr(GPtrArray) relay_urls = gnostr_get_write_relay_urls();
-  g_debug("[PUBLISH] Signed kind %d event %.8s; %u write relay(s) available",
-          nostr_event_get_kind(event), ctx->event_id,
-          relay_urls ? relay_urls->len : 0);
+  if (!relay_urls)
+    relay_urls = g_ptr_array_new_with_free_func(g_free);
+  if (ctx->additional_relay_urls) {
+    for (guint i = 0; i < ctx->additional_relay_urls->len; i++) {
+      const char *candidate = g_ptr_array_index(ctx->additional_relay_urls, i);
+      gboolean duplicate = FALSE;
+      for (guint j = 0; j < relay_urls->len; j++) {
+        if (g_strcmp0(candidate, g_ptr_array_index(relay_urls, j)) == 0) {
+          duplicate = TRUE;
+          break;
+        }
+      }
+      if (!duplicate)
+        g_ptr_array_add(relay_urls, g_strdup(candidate));
+    }
+  }
+  g_debug("[PUBLISH] Signed kind %d event %.8s; %u destination relay(s) available",
+          nostr_event_get_kind(event), ctx->event_id, relay_urls->len);
   if (!relay_urls || relay_urls->len == 0) {
     g_warning("[PUBLISH] No write relays configured; cannot publish kind %d event",
               nostr_event_get_kind(event));
