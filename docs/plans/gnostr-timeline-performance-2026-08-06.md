@@ -37,11 +37,13 @@ Vendored nostrdb natively provides, with our current usage status:
 7. ✅ DONE (commit 900e7bae, nostrc-enbe: persisted ndb_note_meta counts verified equal to recomputation — reactions/replies/reposts read from LMDB, single-pass zap fallback, legacy double-increment removed; pubkey→WorkingEntry index + coalesced patches) — **Indexed patches** — `pubkey → WorkingEntry set` index; coalesce patch batches; recalculate only the metric the subscription kind affects (reaction-only update ≠ 4 aggregation passes, `timeline-source.c:555-612`).
 
 ### Phase 4 — bind cost + trims
-8. **Create rich widgets on map, pool frames** — bind lightweight placeholders; construct grids/OG/embed/video subtrees on map; reuse compatible descriptor slots across recycles (`nostr-note-card-row.c:4310-4565`).
-9. **Slim snapshot rows** — `{VM ref + geometry}`; getters proxy the VM; drop duplicated strings/hashtags and the redundant descriptor-array ref (`snapshot.c:117-273`).
-10. **Small fixes** — fix `nostr_ndb_store.c:185-224` profile-JSON leak (real leak, do first); cache `GSettings` in `gnostr_is_remote_media_allowed()` (`utils.c:66-91`); pagination watermarks/exhaustion so edge-idling stops re-querying + recomposing (`feed-controller.c:847-902`); remove/repair passive geometry measurement that caches without refining (`geometry.c:321-336`, `feed-controller.c:346-380`).
+8. ✅ DONE (commit 3a8b2e87, nostrc-xost: map/debounce-gated expensive children, frame pooling, remote-media gate, buffer-zone binds create zero expensive children) — **Create rich widgets on map, pool frames** — bind lightweight placeholders; construct grids/OG/embed/video subtrees on map; reuse compatible descriptor slots across recycles (`nostr-note-card-row.c:4310-4565`).
+9. ✅ DONE (3a8b2e87: rows are {VM ref + geometry}, getters proxy VM/artifact) — **Slim snapshot rows** — `{VM ref + geometry}`; getters proxy the VM; drop duplicated strings/hashtags and the redundant descriptor-array ref (`snapshot.c:117-273`).
+10. ✅ DONE (3a8b2e87: ndb-store JSON leak fixed, cached GSettings, pagination watermarks/exhaustion + no-op compose suppression, natural-height refinement composes; regression caught+fixed: layout measure must clamp to child min width) — **Small fixes** — fix `nostr_ndb_store.c:185-224` profile-JSON leak (real leak, do first); cache `GSettings` in `gnostr_is_remote_media_allowed()` (`utils.c:66-91`); pagination watermarks/exhaustion so edge-idling stops re-querying + recomposing (`feed-controller.c:847-902`); remove/repair passive geometry measurement that caches without refining (`geometry.c:321-336`, `feed-controller.c:346-380`).
 
-### Validation (throughout)
+### Validation (throughout) — ✅ landed across phases: bounded-count, linear-diff, parser-count, buffer-zone rich-child-count invariant tests all present
+
+**EPIC nostrc-1urb CLOSED 2026-08-06 — all 10 items complete (commits f16f2d56..3a8b2e87).**
 Perf invariants as tests: page far past the window → assert bounded VM/row/cache counts; replace one row in a large snapshot → assert linear diff work; count parser invocations per hydration/patch; count rich-child creations during scroll recycling.
 
 ## References
