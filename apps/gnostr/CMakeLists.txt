@@ -157,6 +157,12 @@ add_custom_command(
   DEPENDS ${GRESOURCE_XML} ${UI_FILES}
           ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/styles/gnostr.css
           ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions/gnostr-bug-symbolic.svg
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions/gnostr-compose-symbolic.svg
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions/gnostr-notifications-symbolic.svg
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions/gnostr-messages-symbolic.svg
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions/gnostr-calendar-symbolic.svg
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions/gnostr-network-offline-symbolic.svg
+          ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions/gnostr-network-wired-symbolic.svg
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
   VERBATIM)
 
@@ -576,6 +582,17 @@ include(CTest)
 if (BUILD_TESTING)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
+
+  add_executable(gnostr-test-resource-icons
+    tests/test_resource_icons.c
+    ${GRESOURCE_C})
+  target_compile_features(gnostr-test-resource-icons PRIVATE c_std_11)
+  target_link_libraries(gnostr-test-resource-icons PRIVATE PkgConfig::GTK4)
+  _gnostr_apply_sanitizers(gnostr-test-resource-icons)
+  add_test(NAME gnostr-test-resource-icons COMMAND gnostr-test-resource-icons)
+  set_tests_properties(gnostr-test-resource-icons PROPERTIES
+    TIMEOUT 30
+    LABELS "icon;resource;unit;gnostr")
 
   # Real app-layer implementations required by nostr-gtk widget tests.
   # Keep these in a static archive so only the objects referenced by the

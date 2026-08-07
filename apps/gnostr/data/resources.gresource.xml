@@ -54,5 +54,11 @@
   <gresource prefix="/org/gnostr/icons">
     <file>icons/hicolor/scalable/apps/org.gnostr.gnostr.svg</file>
     <file alias="scalable/actions/gnostr-bug-symbolic.svg">icons/hicolor/scalable/actions/gnostr-bug-symbolic.svg</file>
+    <file alias="scalable/actions/gnostr-compose-symbolic.svg">icons/hicolor/scalable/actions/gnostr-compose-symbolic.svg</file>
+    <file alias="scalable/actions/gnostr-notifications-symbolic.svg">icons/hicolor/scalable/actions/gnostr-notifications-symbolic.svg</file>
+    <file alias="scalable/actions/gnostr-messages-symbolic.svg">icons/hicolor/scalable/actions/gnostr-messages-symbolic.svg</file>
+    <file alias="scalable/actions/gnostr-calendar-symbolic.svg">icons/hicolor/scalable/actions/gnostr-calendar-symbolic.svg</file>
+    <file alias="scalable/actions/gnostr-network-offline-symbolic.svg">icons/hicolor/scalable/actions/gnostr-network-offline-symbolic.svg</file>
+    <file alias="scalable/actions/gnostr-network-wired-symbolic.svg">icons/hicolor/scalable/actions/gnostr-network-wired-symbolic.svg</file>
   </gresource>
 </gresources>

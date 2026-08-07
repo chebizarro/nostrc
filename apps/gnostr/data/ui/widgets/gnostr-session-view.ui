@@ -116,7 +116,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="margin-bottom">10</property>
                                     <child>
                                       <object class="GtkImage">
-                                        <property name="icon-name">preferences-system-notifications-symbolic</property>
+                                        <property name="icon-name">gnostr-notifications-symbolic</property>
                                         <property name="pixel-size">16</property>
                                         <style>
                                           <class name="dim-label"/>
@@ -148,7 +148,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="margin-bottom">10</property>
                                     <child>
                                       <object class="GtkImage">
-                                        <property name="icon-name">mail-unread-symbolic</property>
+                                        <property name="icon-name">gnostr-messages-symbolic</property>
                                         <property name="pixel-size">16</property>
                                         <style>
                                           <class name="dim-label"/>
@@ -276,7 +276,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="margin-bottom">10</property>
                                     <child>
                                       <object class="GtkImage">
-                                        <property name="icon-name">x-office-calendar-symbolic</property>
+                                        <property name="icon-name">gnostr-calendar-symbolic</property>
                                         <property name="pixel-size">16</property>
                                         <style>
                                           <class name="dim-label"/>
@@ -323,7 +323,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <property name="spacing">4</property>
                                 <child>
                                   <object class="GtkImage" id="relay_status_icon">
-                                    <property name="icon-name">network-offline-symbolic</property>
+                                    <property name="icon-name">gnostr-network-offline-symbolic</property>
                                     <style>
                                       <class name="dim-label"/>
                                     </style>
@@ -465,7 +465,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child type="end">
                           <object class="GtkButton" id="btn_compose">
-                            <property name="icon-name">document-edit-symbolic</property>
+                            <property name="icon-name">gnostr-compose-symbolic</property>
                             <property name="tooltip-text" translatable="yes">Compose</property>
                             <style>
                               <class name="suggested-action"/>
@@ -545,7 +545,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                       <object class="AdwViewStackPage">
                                         <property name="name">notifications</property>
                                         <property name="title" translatable="yes">Notifications</property>
-                                        <property name="icon-name">preferences-system-notifications-symbolic</property>
+                                        <property name="icon-name">gnostr-notifications-symbolic</property>
                                         <property name="child">
                                           <object class="GnostrNotificationsView" id="notifications_view">
                                             <property name="hexpand">true</property>
@@ -558,7 +558,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                       <object class="AdwViewStackPage">
                                         <property name="name">messages</property>
                                         <property name="title" translatable="yes">Messages</property>
-                                        <property name="icon-name">mail-unread-symbolic</property>
+                                        <property name="icon-name">gnostr-messages-symbolic</property>
                                         <property name="child">
                                           <object class="GtkStack" id="dm_stack">
                                             <property name="transition-type">6</property>
@@ -633,7 +633,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                       <object class="AdwViewStackPage">
                                         <property name="name">calendar</property>
                                         <property name="title" translatable="yes">Events</property>
-                                        <property name="icon-name">x-office-calendar-symbolic</property>
+                                        <property name="icon-name">gnostr-calendar-symbolic</property>
                                         <property name="child">
                                           <object class="GnostrCalendarEventsView" id="calendar_events_view">
                                             <property name="hexpand">true</property>

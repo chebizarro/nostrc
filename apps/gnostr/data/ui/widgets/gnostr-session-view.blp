@@ -110,7 +110,7 @@ template $GnostrSessionView: Adw.Bin {
                                     margin-bottom: 10;
 
                                     Image {
-                                        icon-name: "preferences-system-notifications-symbolic";
+                                        icon-name: "gnostr-notifications-symbolic";
                                         pixel-size: 16;
 
                                         styles [
@@ -139,7 +139,7 @@ template $GnostrSessionView: Adw.Bin {
                                     margin-bottom: 10;
 
                                     Image {
-                                        icon-name: "mail-unread-symbolic";
+                                        icon-name: "gnostr-messages-symbolic";
                                         pixel-size: 16;
 
                                         styles [
@@ -255,7 +255,7 @@ template $GnostrSessionView: Adw.Bin {
                                     margin-bottom: 10;
 
                                     Image {
-                                        icon-name: "x-office-calendar-symbolic";
+                                        icon-name: "gnostr-calendar-symbolic";
                                         pixel-size: 16;
 
                                         styles [
@@ -300,7 +300,7 @@ template $GnostrSessionView: Adw.Bin {
                                 spacing: 4;
 
                                 Image relay_status_icon {
-                                    icon-name: "network-offline-symbolic";
+                                    icon-name: "gnostr-network-offline-symbolic";
 
                                     styles [
                                         "dim-label",
@@ -433,7 +433,7 @@ template $GnostrSessionView: Adw.Bin {
 
                         [end]
                         Button btn_compose {
-                            icon-name: "document-edit-symbolic";
+                            icon-name: "gnostr-compose-symbolic";
                             tooltip-text: _("Compose");
 
                             styles [
@@ -511,7 +511,7 @@ template $GnostrSessionView: Adw.Bin {
                                     Adw.ViewStackPage {
                                         name: "notifications";
                                         title: _("Notifications");
-                                        icon-name: "preferences-system-notifications-symbolic";
+                                        icon-name: "gnostr-notifications-symbolic";
 
                                         child: $GnostrNotificationsView notifications_view {
                                             hexpand: true;
@@ -522,7 +522,7 @@ template $GnostrSessionView: Adw.Bin {
                                     Adw.ViewStackPage {
                                         name: "messages";
                                         title: _("Messages");
-                                        icon-name: "mail-unread-symbolic";
+                                        icon-name: "gnostr-messages-symbolic";
 
                                         child: Stack dm_stack {
                                             transition-type: slide_left_right;
@@ -585,7 +585,7 @@ template $GnostrSessionView: Adw.Bin {
                                     Adw.ViewStackPage {
                                         name: "calendar";
                                         title: _("Events");
-                                        icon-name: "x-office-calendar-symbolic";
+                                        icon-name: "gnostr-calendar-symbolic";
 
                                         child: $GnostrCalendarEventsView calendar_events_view {
                                             hexpand: true;

@@ -1626,19 +1626,19 @@ void gnostr_session_view_set_relay_status(GnostrSessionView *self,
 
     if (total_count == 0) {
       /* No relays configured */
-      gtk_image_set_from_icon_name(self->relay_status_icon, "network-offline-symbolic");
+      gtk_image_set_from_icon_name(self->relay_status_icon, "gnostr-network-offline-symbolic");
       gtk_widget_add_css_class(GTK_WIDGET(self->relay_status_icon), "dim-label");
     } else if (connected_count == 0) {
       /* All relays disconnected */
-      gtk_image_set_from_icon_name(self->relay_status_icon, "network-offline-symbolic");
+      gtk_image_set_from_icon_name(self->relay_status_icon, "gnostr-network-offline-symbolic");
       gtk_widget_add_css_class(GTK_WIDGET(self->relay_status_icon), "error");
     } else if (connected_count < total_count) {
       /* Some relays connected */
-      gtk_image_set_from_icon_name(self->relay_status_icon, "network-wired-symbolic");
+      gtk_image_set_from_icon_name(self->relay_status_icon, "gnostr-network-wired-symbolic");
       gtk_widget_add_css_class(GTK_WIDGET(self->relay_status_icon), "warning");
     } else {
       /* All relays connected */
-      gtk_image_set_from_icon_name(self->relay_status_icon, "network-wired-symbolic");
+      gtk_image_set_from_icon_name(self->relay_status_icon, "gnostr-network-wired-symbolic");
       gtk_widget_add_css_class(GTK_WIDGET(self->relay_status_icon), "success");
     }
   }

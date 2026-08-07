@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later
+     Original gnostr artwork: document with a diagonal pencil. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <path fill="currentColor" d="M2 1h8v1H3v11h10V7h1v7H2V1zm10.9 1L14 3.1 7.1 10H6v-1.1L12.9 2zM5 11h3v1H5v-1z"/>
+</svg>

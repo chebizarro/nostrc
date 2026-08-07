@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later
+     Original gnostr artwork: a simple notification bell. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <path fill="currentColor" d="M7 1h2v1.1A5 5 0 0 1 13 7v3l2 2v1H1v-1l2-2V7a5 5 0 0 1 4-4.9V1zm1 2a4 4 0 0 0-4 4v4h8V7a4 4 0 0 0-4-4zm-2 11h4a2 2 0 0 1-4 0z"/>
+</svg>
