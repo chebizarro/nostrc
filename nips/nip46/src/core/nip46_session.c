@@ -1159,8 +1159,10 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
  *
  * Returns: 1 = relay accepted; 0 = no OK within the window (assume
  * best-effort delivery and keep waiting); -1 = relay explicitly rejected
- * (retrying the same relay is futile). On rejection, *out_reason (if
- * non-NULL) is replaced with the relay's reason string. */
+ * with a permanent policy reason (retrying is futile); -2 = relay answered
+ * 'rate-limited:' — transient per NIP-01, the caller should back off and
+ * retry the SAME relay. On rejection, *out_reason (if non-NULL) is replaced
+ * with the relay's reason string. */
 static int nip46_publish_rpc_event(NostrRelay *relay, NostrEvent *ev,
                                    const char *method, char **out_reason) {
     Error *perr = NULL;
@@ -1173,7 +1175,17 @@ static int nip46_publish_rpc_event(NostrRelay *relay, NostrEvent *ev,
     }
     const char *msg = (perr && perr->message) ? perr->message : "";
     int rc;
-    if (strstr(msg, "rejected")) {
+    if (strstr(msg, "rate-limited")) {
+        /* nostrc-rl46: transient — NIP-01 machine-readable prefix asking us
+         * to slow down and retry, NOT a permanent rejection. */
+        fprintf(stderr, "[nip46] %s: rate-limited by %s (will back off and retry): %s\n",
+                method, url, msg);
+        if (out_reason) {
+            free(*out_reason);
+            *out_reason = strdup(msg);
+        }
+        rc = -2;
+    } else if (strstr(msg, "rejected")) {
         fprintf(stderr, "[nip46] %s: REJECTED by %s: %s\n", method, url, msg);
         if (out_reason) {
             free(*out_reason);
@@ -1187,6 +1199,18 @@ static int nip46_publish_rpc_event(NostrRelay *relay, NostrEvent *ev,
     }
     if (perr) free_error(perr);
     return rc;
+}
+
+/* nostrc-rl46: A relay answered 'rate-limited:' — honor it globally by
+ * pushing the session's next-send slot out, so the rest of a bulk RPC storm
+ * (e.g. a DM nip44_decrypt backlog) actually slows down instead of feeding
+ * the limiter one rejected event per pacing slot. */
+static void nip46_rpc_note_rate_limited(NostrNip46Session *s) {
+    if (!s) return;
+    pthread_mutex_lock(&s->rpc_gate_mutex);
+    int64_t floor_ms = nip46_now_ms() + 2000;
+    if (s->rpc_next_send_ms < floor_ms) s->rpc_next_send_ms = floor_ms;
+    pthread_mutex_unlock(&s->rpc_gate_mutex);
 }
 
 /* nostrc-prkl: Throttled entry point - every client RPC (sign_event,
@@ -1357,16 +1381,28 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     size_t pool_relay_count = s->client_pool->relay_count;
     unsigned char *published_to =
         (unsigned char *)calloc(pool_relay_count ? pool_relay_count : 1, 1);
+    /* nostrc-rl46: per-relay backoff state for transient 'rate-limited:' NACKs */
+    int64_t *retry_at_ms =
+        (int64_t *)calloc(pool_relay_count ? pool_relay_count : 1, sizeof(int64_t));
+    unsigned char *rl_attempts =
+        (unsigned char *)calloc(pool_relay_count ? pool_relay_count : 1, 1);
     int published = 0;   /* accepted or OK-silent (assumed best-effort) */
-    int nacked = 0;      /* explicitly rejected by the relay */
+    int nacked = 0;      /* permanently rejected by the relay */
     char *reject_reason = NULL;
     for (size_t i = 0; i < pool_relay_count; i++) {
         NostrRelay *relay = s->client_pool->relays[i];
         if (relay && nostr_relay_is_connected(relay)) {
-            if (published_to) published_to[i] = 1; /* attempted — never re-publish */
             int prc = nip46_publish_rpc_event(relay, req_ev, method, &reject_reason);
-            if (prc >= 0) published++;
-            else nacked++;
+            if (prc == -2 && retry_at_ms && rl_attempts) {
+                /* transient: leave unattempted, schedule a backoff retry */
+                rl_attempts[i] = 1;
+                retry_at_ms[i] = nip46_now_ms() + 2000;
+                nip46_rpc_note_rate_limited(s);
+            } else {
+                if (published_to) published_to[i] = 1; /* final — never re-publish */
+                if (prc >= 0) published++;
+                else nacked++;
+            }
         }
     }
 
@@ -1390,19 +1426,32 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
         response_sel = go_select_timeout(response_cases, 1, slice);
         if (response_sel.selected_case == 0) break;
         waited_ms += slice;
-        /* Late publish to relays that connected after the first attempt */
+        /* Late publish: relays that connected after the first attempt, plus
+         * nostrc-rl46 backoff retries for relays that answered rate-limited. */
         size_t unattempted = 0;
+        int64_t now_ms = nip46_now_ms();
         for (size_t i = 0; i < pool_relay_count && published_to; i++) {
             NostrRelay *relay = s->client_pool->relays[i];
-            if (!published_to[i] && relay && nostr_relay_is_connected(relay)) {
-                published_to[i] = 1;
-                fprintf(stderr, "[nip46] %s: late publish to %s\n",
-                        method, nostr_relay_get_url_const(relay));
+            int due = (!retry_at_ms || retry_at_ms[i] == 0 || now_ms >= retry_at_ms[i]);
+            if (!published_to[i] && relay && nostr_relay_is_connected(relay) && due) {
+                fprintf(stderr, "[nip46] %s: %s to %s\n", method,
+                        (rl_attempts && rl_attempts[i]) ? "rate-limit retry" : "late publish",
+                        nostr_relay_get_url_const(relay));
                 int prc = nip46_publish_rpc_event(relay, req_ev, method, &reject_reason);
-                if (prc >= 0) published++;
-                else nacked++;
+                if (prc == -2 && retry_at_ms && rl_attempts && rl_attempts[i] < 3) {
+                    rl_attempts[i]++;
+                    retry_at_ms[i] = nip46_now_ms() + 2000 * (int64_t)rl_attempts[i];
+                    nip46_rpc_note_rate_limited(s);
+                } else {
+                    published_to[i] = 1;
+                    if (prc >= 0) published++;
+                    else {
+                        nacked++;
+                        if (prc == -2) nip46_rpc_note_rate_limited(s);
+                    }
+                }
             }
-            if (published_to && !published_to[i]) unattempted++;
+            if (!published_to[i]) unattempted++;
         }
         /* nostrc-qpow: every relay we will ever reach has explicitly rejected
          * the request — waiting out the full timeout is pointless. */
@@ -1413,6 +1462,8 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
         }
     }
     free(published_to);
+    free(retry_at_ms);
+    free(rl_attempts);
     nostr_event_free(req_ev);
 
     if (response_sel.selected_case < 0) {
