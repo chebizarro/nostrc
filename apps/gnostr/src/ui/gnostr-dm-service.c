@@ -24,9 +24,12 @@
 #include "nostr-json.h"
 #include "nostr-tag.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
+#include <nostr-gobject-1.0/nostr_json.h>
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 /* DmConversation and struct _GnostrDmService are in gnostr-dm-service-private.h */
 
@@ -62,6 +65,8 @@ static void dm_service_clear_loading(GnostrDmService *self);
 static void decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap);
 typedef struct _DecryptContext DecryptContext;
 static void decrypt_ctx_free(DecryptContext *ctx);
+typedef struct _DmRumorCacheEntry DmRumorCacheEntry;
+static void dm_rumor_cache_entry_free(DmRumorCacheEntry *e);
 
 static void
 gnostr_dm_service_dispose(GObject *object)
@@ -83,6 +88,7 @@ gnostr_dm_service_finalize(GObject *object)
     g_clear_pointer(&self->user_pubkey, g_free);
     g_clear_pointer(&self->conversations, g_hash_table_destroy);
     g_clear_pointer(&self->pending_decrypts, g_hash_table_destroy);
+    g_clear_pointer(&self->rumor_cache, g_hash_table_destroy);
 
     G_OBJECT_CLASS(gnostr_dm_service_parent_class)->finalize(object);
 }
@@ -124,6 +130,9 @@ gnostr_dm_service_init(GnostrDmService *self)
         g_str_hash, g_str_equal, g_free, (GDestroyNotify)dm_conversation_free);
     self->pending_decrypts = g_hash_table_new_full(
         g_str_hash, g_str_equal, g_free, (GDestroyNotify)decrypt_ctx_free);
+    self->rumor_cache = g_hash_table_new_full(
+        g_str_hash, g_str_equal, g_free, (GDestroyNotify)dm_rumor_cache_entry_free);
+    self->rumor_cache_loaded = FALSE;
     self->pool = NULL;
     self->cancellable = NULL;
     self->events_handler = 0;
@@ -528,38 +537,111 @@ static void decrypt_ctx_free(DecryptContext *ctx) {
     g_free(ctx);
 }
 
+/* nostrc-tzxm: Persistent decrypted-rumor cache.
+ *
+ * Every gift wrap costs TWO sequential NIP-46 nip44_decrypt RPCs (seal, then
+ * rumor). The startup history load replays up to 200 wraps from nostrdb, and
+ * relay reconnects/EOSE replays re-deliver the same wraps — up to ~400 remote
+ * RPCs per launch, which remote signer relays rate-limit. Caching the final
+ * validated rumor keyed by gift-wrap id makes every replayed wrap cost zero
+ * RPCs (and works even when no signer is connected).
+ *
+ * Format: one JSON object per line in
+ * $XDG_DATA_HOME/gnostr/dm-rumor-cache.jsonl (file mode 0600):
+ *   {"wrap_id":"<hex>","seal_pubkey":"<hex>","rumor":{...}}
+ * Storing plaintext rumors on disk matches the threat model of the in-app
+ * message store; the file lives in the user's private data dir. Entries are
+ * written only after full validation and re-validated on every cache hit. */
+struct _DmRumorCacheEntry {
+    char *seal_pubkey;   /* Real sender (validated seal pubkey) */
+    char *rumor_json;    /* Decrypted, validated rumor event JSON */
+};
+
+static void dm_rumor_cache_entry_free(DmRumorCacheEntry *e) {
+    if (!e) return;
+    g_free(e->seal_pubkey);
+    g_free(e->rumor_json);
+    g_free(e);
+}
+
+static char *dm_rumor_cache_path(void) {
+    return g_build_filename(g_get_user_data_dir(), "gnostr",
+                            "dm-rumor-cache.jsonl", NULL);
+}
+
+static void dm_rumor_cache_load(GnostrDmService *self) {
+    if (self->rumor_cache_loaded) return;
+    self->rumor_cache_loaded = TRUE;
+
+    g_autofree char *path = dm_rumor_cache_path();
+    g_autofree char *contents = NULL;
+    if (!g_file_get_contents(path, &contents, NULL, NULL)) return;
+
+    guint loaded = 0;
+    char **lines = g_strsplit(contents, "\n", -1);
+    for (char **lp = lines; lp && *lp; lp++) {
+        if (!**lp) continue;
+        g_autofree char *wrap_id = gnostr_json_get_string(*lp, "wrap_id", NULL);
+        g_autofree char *seal_pk = gnostr_json_get_string(*lp, "seal_pubkey", NULL);
+        g_autofree char *rumor = gnostr_json_get_raw(*lp, "rumor", NULL);
+        if (!wrap_id || strlen(wrap_id) != 64 || !seal_pk || strlen(seal_pk) != 64 || !rumor)
+            continue;
+        if (g_hash_table_contains(self->rumor_cache, wrap_id)) continue;
+        DmRumorCacheEntry *e = g_new0(DmRumorCacheEntry, 1);
+        e->seal_pubkey = g_steal_pointer(&seal_pk);
+        e->rumor_json = g_steal_pointer(&rumor);
+        g_hash_table_insert(self->rumor_cache, g_steal_pointer(&wrap_id), e);
+        loaded++;
+    }
+    g_strfreev(lines);
+    if (loaded)
+        g_message("[DM_SERVICE] Loaded %u cached rumors (replayed wraps skip signer RPCs)",
+                  loaded);
+}
+
+static void dm_rumor_cache_store(GnostrDmService *self, const char *wrap_id,
+                                 const char *seal_pubkey, const char *rumor_json) {
+    /* wrap_id and seal_pubkey are validated 64-char hex (event id / pubkey),
+     * rumor_json is parser-validated JSON — safe to embed without escaping. */
+    if (!wrap_id || strlen(wrap_id) != 64 || !seal_pubkey ||
+        strlen(seal_pubkey) != 64 || !rumor_json)
+        return;
+    if (g_hash_table_contains(self->rumor_cache, wrap_id)) return;
+
+    DmRumorCacheEntry *e = g_new0(DmRumorCacheEntry, 1);
+    e->seal_pubkey = g_strdup(seal_pubkey);
+    e->rumor_json = g_strdup(rumor_json);
+    g_hash_table_insert(self->rumor_cache, g_strdup(wrap_id), e);
+
+    g_autofree char *path = dm_rumor_cache_path();
+    g_autofree char *dir = g_path_get_dirname(path);
+    if (g_mkdir_with_parents(dir, 0700) != 0) {
+        g_warning("[DM_SERVICE] Cannot create %s for rumor cache", dir);
+        return;
+    }
+    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0600);
+    if (fd < 0) {
+        g_warning("[DM_SERVICE] Cannot open rumor cache for append");
+        return;
+    }
+    g_autofree char *line = g_strdup_printf(
+        "{\"wrap_id\":\"%s\",\"seal_pubkey\":\"%s\",\"rumor\":%s}\n",
+        wrap_id, seal_pubkey, rumor_json);
+    size_t len = strlen(line);
+    if (write(fd, line, len) != (ssize_t)len)
+        g_warning("[DM_SERVICE] Short write to rumor cache");
+    close(fd);
+}
+
 /* Step 3: Process decrypted rumor and update inbox */
+/* nostrc-tzxm: Shared rumor processing for freshly decrypted AND cache-served
+ * rumors. Takes ownership of @ctx (freed on every path). Requires
+ * ctx->gift_wrap_id and ctx->seal_pubkey. Everything is re-validated even for
+ * cached input (defense in depth against a tampered cache file). */
 static void
-on_rumor_decrypted(GnostrSignerService *service, const char *rumor_json,
-                   GError *error, gpointer user_data)
+dm_service_handle_rumor_json(GnostrDmService *self, DecryptContext *ctx,
+                             const char *rumor_json, gboolean from_cache)
 {
-    (void)service;
-    DecryptContext *ctx = (DecryptContext*)user_data;
-
-    if (!ctx || !ctx->service) {
-        decrypt_ctx_free(ctx);
-        return;
-    }
-
-    GnostrDmService *self = ctx->service;
-
-    /* Steal from pending (suppress destroy func) — we still need ctx fields below */
-    {
-        gpointer stolen_key = NULL;
-        g_hash_table_steal_extended(self->pending_decrypts, ctx->gift_wrap_id,
-                                     &stolen_key, NULL);
-        g_free(stolen_key);
-    }
-
-    if (!rumor_json) {
-        g_warning("[DM_SERVICE] Failed to decrypt rumor: %s",
-                  error ? error->message : "unknown");
-        decrypt_ctx_free(ctx);
-        return;
-    }
-
-    g_debug("[DM_SERVICE] Decrypted rumor: %.100s...", rumor_json);
-
     /* Parse rumor event */
     NostrEvent *rumor = nostr_event_new();
     if (nostr_event_deserialize_unsigned(rumor, rumor_json, NULL) !=
@@ -604,6 +686,10 @@ on_rumor_decrypted(GnostrSignerService *service, const char *rumor_json,
         decrypt_ctx_free(ctx);
         return;
     }
+
+    /* nostrc-tzxm: persist only fully validated rumors */
+    if (!from_cache)
+        dm_rumor_cache_store(self, ctx->gift_wrap_id, ctx->seal_pubkey, rumor_json);
 
     /* Extract message details */
     const char *content = nostr_event_get_content(rumor);
@@ -709,6 +795,41 @@ on_rumor_decrypted(GnostrSignerService *service, const char *rumor_json,
         gnostr_dm_inbox_view_set_loading(inbox, FALSE);
         g_object_unref(inbox);
     }
+}
+
+/* Step 3: Process decrypted rumor and update inbox */
+static void
+on_rumor_decrypted(GnostrSignerService *service, const char *rumor_json,
+                   GError *error, gpointer user_data)
+{
+    (void)service;
+    DecryptContext *ctx = (DecryptContext*)user_data;
+
+    if (!ctx || !ctx->service) {
+        decrypt_ctx_free(ctx);
+        return;
+    }
+
+    GnostrDmService *self = ctx->service;
+
+    /* Steal from pending (suppress destroy func) — we still need ctx fields below */
+    {
+        gpointer stolen_key = NULL;
+        g_hash_table_steal_extended(self->pending_decrypts, ctx->gift_wrap_id,
+                                     &stolen_key, NULL);
+        g_free(stolen_key);
+    }
+
+    if (!rumor_json) {
+        g_warning("[DM_SERVICE] Failed to decrypt rumor: %s",
+                  error ? error->message : "unknown");
+        decrypt_ctx_free(ctx);
+        return;
+    }
+
+    g_debug("[DM_SERVICE] Decrypted rumor: %.100s...", rumor_json);
+
+    dm_service_handle_rumor_json(self, ctx, rumor_json, FALSE);
 }
 
 /* Step 2: Decrypt seal content to get rumor */
@@ -835,6 +956,21 @@ decrypt_gift_wrap_async(GnostrDmService *self, NostrEvent *gift_wrap)
     /* Check if already processing */
     if (g_hash_table_contains(self->pending_decrypts, id)) {
         g_debug("[DM_SERVICE] Already processing gift wrap %.8s", id);
+        free(id);
+        return;
+    }
+
+    /* nostrc-tzxm: serve from the persistent rumor cache when possible —
+     * zero signer RPCs, and works even with no signer connected. */
+    dm_rumor_cache_load(self);
+    DmRumorCacheEntry *cached = g_hash_table_lookup(self->rumor_cache, id);
+    if (cached) {
+        g_debug("[DM_SERVICE] Gift wrap %.8s served from rumor cache", id);
+        DecryptContext *cctx = g_new0(DecryptContext, 1);
+        cctx->service = self;
+        cctx->gift_wrap_id = g_strdup(id);
+        cctx->seal_pubkey = g_strdup(cached->seal_pubkey);
+        dm_service_handle_rumor_json(self, cctx, cached->rumor_json, TRUE);
         free(id);
         return;
     }

@@ -52,6 +52,13 @@ struct _GnostrDmService {
     /* Pending decryptions: gift_wrap_id -> DecryptContext* */
     GHashTable *pending_decrypts;
 
+    /* nostrc-dmcache: persistent decrypted-rumor cache
+     * (gift_wrap_id -> DmRumorCacheEntry*, see gnostr-dm-service.c).
+     * Avoids re-issuing NIP-46 decrypt RPCs for wraps already decrypted
+     * in past sessions. */
+    GHashTable *rumor_cache;
+    gboolean rumor_cache_loaded;
+
     /* Whether historical gift wraps have been loaded from nostrdb */
     gboolean history_loaded;
 };
