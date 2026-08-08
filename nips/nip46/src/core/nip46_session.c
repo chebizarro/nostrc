@@ -1164,12 +1164,13 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
  * retry the SAME relay. On rejection, *out_reason (if non-NULL) is replaced
  * with the relay's reason string. */
 static int nip46_publish_rpc_event(NostrRelay *relay, NostrEvent *ev,
-                                   const char *method, char **out_reason) {
+                                   const char *method, const char *req_id,
+                                   char **out_reason) {
     Error *perr = NULL;
     bool accepted = nostr_relay_publish_and_wait(relay, ev, 2000, &perr);
     const char *url = nostr_relay_get_url_const(relay);
     if (accepted) {
-        fprintf(stderr, "[nip46] %s: accepted by %s\n", method, url);
+        fprintf(stderr, "[nip46] %s: req=%s accepted by %s\n", method, req_id, url);
         if (perr) free_error(perr);
         return 1;
     }
@@ -1178,23 +1179,23 @@ static int nip46_publish_rpc_event(NostrRelay *relay, NostrEvent *ev,
     if (strstr(msg, "rate-limited")) {
         /* nostrc-rl46: transient — NIP-01 machine-readable prefix asking us
          * to slow down and retry, NOT a permanent rejection. */
-        fprintf(stderr, "[nip46] %s: rate-limited by %s (will back off and retry): %s\n",
-                method, url, msg);
+        fprintf(stderr, "[nip46] %s: req=%s rate-limited by %s (will back off and retry): %s\n",
+                method, req_id, url, msg);
         if (out_reason) {
             free(*out_reason);
             *out_reason = strdup(msg);
         }
         rc = -2;
     } else if (strstr(msg, "rejected")) {
-        fprintf(stderr, "[nip46] %s: REJECTED by %s: %s\n", method, url, msg);
+        fprintf(stderr, "[nip46] %s: req=%s REJECTED by %s: %s\n", method, req_id, url, msg);
         if (out_reason) {
             free(*out_reason);
             *out_reason = strdup(msg);
         }
         rc = -1;
     } else {
-        fprintf(stderr, "[nip46] %s: no OK from %s within 2s (continuing): %s\n",
-                method, url, *msg ? msg : "(timeout)");
+        fprintf(stderr, "[nip46] %s: req=%s no OK from %s within 2s (continuing): %s\n",
+                method, req_id, url, *msg ? msg : "(timeout)");
         rc = 0;
     }
     if (perr) free_error(perr);
@@ -1392,7 +1393,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     for (size_t i = 0; i < pool_relay_count; i++) {
         NostrRelay *relay = s->client_pool->relays[i];
         if (relay && nostr_relay_is_connected(relay)) {
-            int prc = nip46_publish_rpc_event(relay, req_ev, method, &reject_reason);
+            int prc = nip46_publish_rpc_event(relay, req_ev, method, req_id, &reject_reason);
             if (prc == -2 && retry_at_ms && rl_attempts) {
                 /* transient: leave unattempted, schedule a backoff retry */
                 rl_attempts[i] = 1;
@@ -1408,9 +1409,12 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
 
     /* Wait for response on channel with the configured per-session timeout.
      * nostrc-koso: wait in slices; between slices, publish to relays that
-     * finished connecting after the initial publish attempt. */
-    fprintf(stderr, "[nip46] %s: waiting for response on relay subscription (timeout=%u ms)\n",
-            method, pr->timeout_ms);
+     * finished connecting after the initial publish attempt.
+     * NOTE: no subscription is created here — responses arrive via the ONE
+     * persistent per-relay subscription opened in nostr_nip46_client_start()
+     * and are dispatched to this request's channel by request id. */
+    fprintf(stderr, "[nip46] %s: req=%s waiting for response via persistent subscription (timeout=%u ms)\n",
+            method, req_id, pr->timeout_ms);
 
     void *recv_buf = NULL;
     GoSelectCase response_cases[1];
@@ -1437,7 +1441,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
                 fprintf(stderr, "[nip46] %s: %s to %s\n", method,
                         (rl_attempts && rl_attempts[i]) ? "rate-limit retry" : "late publish",
                         nostr_relay_get_url_const(relay));
-                int prc = nip46_publish_rpc_event(relay, req_ev, method, &reject_reason);
+                int prc = nip46_publish_rpc_event(relay, req_ev, method, req_id, &reject_reason);
                 if (prc == -2 && retry_at_ms && rl_attempts && rl_attempts[i] < 3) {
                     rl_attempts[i]++;
                     retry_at_ms[i] = nip46_now_ms() + 2000 * (int64_t)rl_attempts[i];
