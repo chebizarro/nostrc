@@ -449,6 +449,10 @@ static void populate_flattened_model(NostrGtkTimelineView *self, GListModel *roo
 void nostr_gtk_timeline_view_set_tree_roots(NostrGtkTimelineView *self, GListModel *roots) {
   g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
   g_return_if_fail(roots == NULL || G_IS_LIST_MODEL(roots));
+  /* Guard against a roots model whose items are not TimelineItem — an
+   * unchecked cast in populate_flattened_model would otherwise be UB. */
+  g_return_if_fail(roots == NULL ||
+                   g_type_is_a(g_list_model_get_item_type(roots), timeline_item_get_type()));
 
   /* nostrc-14lo: disconnect the previous roots handler before swapping so
    * repeated calls don't multiply handlers or leave self dangling on a
