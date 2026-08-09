@@ -715,10 +715,10 @@ static gboolean
 activate_snapshot_rich_content_idle(gpointer user_data)
 {
   GtkListItem *list_item = GTK_LIST_ITEM(user_data);
-  if (!GTK_IS_LIST_ITEM(list_item))
-    return G_SOURCE_REMOVE;
-
-  GtkWidget *row = gtk_list_item_get_child(list_item);
+  GtkWidget *row = GTK_IS_LIST_ITEM(list_item)
+      ? gtk_list_item_get_child(list_item) : NULL;
+  /* Clear the idle ID before ANY early return so cleanup_bound_row never
+   * g_source_remove()s a dead (possibly recycled) source ID. */
   if (!NOSTR_GTK_IS_NOTE_CARD_ROW(row))
     return G_SOURCE_REMOVE;
   g_object_set_data(G_OBJECT(row), "tv-rich-activation-idle-id",
