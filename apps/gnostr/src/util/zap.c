@@ -412,10 +412,11 @@ do_lnurl_fetch(LnurlFetchContext *ctx)
         ctx->request_cancellable, NULL);
   }
 
-  SoupSession *session = gnostr_get_shared_soup_session();
+  g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
   SoupMessage *msg = soup_message_new("GET", ctx->url);
 
-  if (!msg) {
+  if (!session || !msg) {
+    g_clear_object(&msg);
     if (ctx->callback) {
       GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_INVALID_LNURL,
                                 "Failed to create HTTP request");
@@ -691,12 +692,13 @@ void gnostr_zap_request_invoice_async(const GnostrLnurlPayInfo *lnurl_info,
         ctx->request_cancellable, NULL);
   }
 
-  SoupSession *session = gnostr_get_shared_soup_session();
+  g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
 
   SoupMessage *msg = soup_message_new("GET", url);
   g_free(url);
 
-  if (!msg) {
+  if (!session || !msg) {
+    g_clear_object(&msg);
     if (callback) {
       GError *err = g_error_new(GNOSTR_ZAP_ERROR, GNOSTR_ZAP_ERROR_INVOICE_FAILED,
                                 "Failed to create HTTP request");

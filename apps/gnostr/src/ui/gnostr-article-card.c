@@ -613,7 +613,7 @@ static void load_header_image(GnostrArticleCard *self, const char *url) {
   /* nostrc-jvdv.2: Respect remote media privacy setting */
   if (!gnostr_is_remote_media_allowed()) return;
 
-  SoupSession *session = gnostr_get_shared_soup_session();
+  g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
   if (!session) return;
 
   /* Create HTTP request */

@@ -719,14 +719,16 @@ void gnostr_dm_file_download_and_decrypt_async(GnostrDmFileMessage *msg,
   ctx->nonce_len = nonce_len;
 
   /* nostrc-201: Use shared SoupSession to avoid TLS cleanup issues with multiple sessions */
-  SoupSession *session = gnostr_get_shared_soup_session();
+  g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
 
   SoupMessage *soup_msg = soup_message_new("GET", msg->file_url);
-  if (!soup_msg) {
+  if (!session || !soup_msg) {
+    g_clear_object(&soup_msg);
     download_ctx_free(ctx);
     GError *err = g_error_new(GNOSTR_DM_FILE_ERROR,
                                GNOSTR_DM_FILE_ERROR_DOWNLOAD_FAILED,
-                               "Invalid download URL");
+                               session ? "Invalid download URL"
+                                       : "HTTP session unavailable");
     if (callback) callback(NULL, 0, err, user_data);
     g_error_free(err);
     return;
@@ -740,7 +742,7 @@ void gnostr_dm_file_download_and_decrypt_async(GnostrDmFileMessage *msg,
                                     NULL, on_download_complete, ctx);
 
   g_object_unref(soup_msg);
-  /* Note: Don't unref shared session - we don't own it */
+  /* The scoped strong session reference is released on return. */
 }
 
 #else /* !HAVE_SOUP3 */

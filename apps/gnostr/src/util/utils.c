@@ -237,8 +237,9 @@ SoupSession *gnostr_get_shared_soup_session(void) {
     g_debug("gnostr: Created shared SoupSession with conservative limits");
   }
 
+  SoupSession *session = g_object_ref(s_shared_session);
   g_mutex_unlock(&s_session_mutex);
-  return s_shared_session;
+  return session;
 }
 
 void gnostr_cleanup_shared_soup_session(void) {

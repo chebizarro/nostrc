@@ -50,6 +50,26 @@ typedef void (*NostrGtkMediaTextureRequestFunc)(gpointer loader,
                                                  gpointer user_data,
                                                  GDestroyNotify user_data_destroy);
 
+typedef struct _NostrGtkMediaTextureLoader NostrGtkMediaTextureLoader;
+
+/**
+ * nostr_gtk_media_texture_loader_new:
+ * @loader: (nullable): loader-specific data retained by the interface
+ * @request_func: async texture request function
+ * @loader_destroy: (nullable): destroys @loader when the final ref is dropped
+ *
+ * Creates a ref-counted loader interface. If @loader needs reference counting,
+ * pass an owned reference and its matching unref function as @loader_destroy.
+ */
+NostrGtkMediaTextureLoader *nostr_gtk_media_texture_loader_new(
+    gpointer loader,
+    NostrGtkMediaTextureRequestFunc request_func,
+    GDestroyNotify loader_destroy);
+NostrGtkMediaTextureLoader *nostr_gtk_media_texture_loader_ref(
+    NostrGtkMediaTextureLoader *loader);
+void nostr_gtk_media_texture_loader_unref(
+    NostrGtkMediaTextureLoader *loader);
+
 #define NOSTR_GTK_TYPE_NOTE_CARD_ROW (nostr_gtk_note_card_row_get_type())
 
 G_DECLARE_FINAL_TYPE(NostrGtkNoteCardRow, nostr_gtk_note_card_row, NOSTR_GTK, NOTE_CARD_ROW, GtkWidget)
@@ -216,16 +236,14 @@ void nostr_gtk_note_card_row_set_precomputed_markup(NostrGtkNoteCardRow *self,
 /**
  * nostr_gtk_note_card_row_set_media_texture_loader:
  * @self: note card row
- * @loader: (nullable): opaque loader instance, which must outlive @self
- * @request_func: (nullable): async texture request function
+ * @loader: (nullable): ref-counted media loader interface
  *
- * Injects an application-owned bounded media loader.  Passing %NULL restores
- * the nostr-gtk Soup/LRU fallback used by non-app consumers.
+ * Injects an application-owned bounded media loader. The row keeps a strong
+ * reference for its lifetime. Passing %NULL restores the nostr-gtk fallback.
  */
 void nostr_gtk_note_card_row_set_media_texture_loader(
     NostrGtkNoteCardRow *self,
-    gpointer loader,
-    NostrGtkMediaTextureRequestFunc request_func);
+    NostrGtkMediaTextureLoader *loader);
 
 /**
  * nostr_gtk_note_card_row_reserve_rich_content:

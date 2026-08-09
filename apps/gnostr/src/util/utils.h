@@ -55,7 +55,8 @@ gboolean gnostr_media_fetch_intent_is_allowed(GnostrMediaFetchIntent intent);
  * The session has conservative connection limits to avoid overwhelming
  * the TLS stack.
  *
- * Returns: (transfer none): The shared SoupSession. Do NOT unref this.
+ * Returns: (transfer full) (nullable): A strong reference to the shared
+ * SoupSession. Release it with g_object_unref().
  */
 SoupSession *gnostr_get_shared_soup_session(void);
 

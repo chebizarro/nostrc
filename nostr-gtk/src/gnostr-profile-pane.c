@@ -2581,7 +2581,7 @@ static void load_banner_async(NostrGtkProfilePane *self, const char *url) {
   /* Uses shared session from gnostr_get_shared_soup_session() */
 
   /* Fetch banner at full resolution */
-  SoupSession *session = gnostr_get_shared_soup_session();
+  g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
   if (!session) {
     g_warning("profile_pane: shared soup session unavailable for banner load");
     /* nostrc-bnr1: Clean up state so in-flight dedup doesn't permanently block

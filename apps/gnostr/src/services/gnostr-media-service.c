@@ -137,6 +137,7 @@ typedef struct {
 } DecodeJob;
 
 struct _PendingRequest {
+  gatomicrefcount ref_count;
   GnostrMediaService *service; /* strong: keeps service alive through callbacks */
   char *table_key;
   char *url;
@@ -1251,10 +1252,17 @@ decode_job_free(DecodeJob *job)
   g_free(job);
 }
 
-static void
-pending_free(PendingRequest *request)
+static PendingRequest *
+pending_ref(PendingRequest *request)
 {
-  if (!request)
+  g_atomic_ref_count_inc(&request->ref_count);
+  return request;
+}
+
+static void
+pending_unref(PendingRequest *request)
+{
+  if (!request || !g_atomic_ref_count_dec(&request->ref_count))
     return;
   for (guint i = 0; i < request->subscribers->len; i++) {
     Subscriber *subscriber = g_ptr_array_index(request->subscribers, i);
@@ -1285,8 +1293,10 @@ pending_maybe_finish(PendingRequest *request)
     return;
 
   GnostrMediaService *self = request->service;
-  g_hash_table_remove(self->pending, request->table_key);
-  pending_free(request);
+  /* Only the frame that actually removes the table entry releases its
+   * ownership reference; recursive completion may have removed it already. */
+  if (g_hash_table_remove(self->pending, request->table_key))
+    pending_unref(request);
 }
 
 static void
@@ -1308,6 +1318,9 @@ pending_fail(PendingRequest *request,
              GError *error,
              gboolean negative)
 {
+  /* Subscriber callbacks may recursively evict this account and remove the
+   * request from the service table. Keep the delivery frame alive. */
+  pending_ref(request);
   pending_network_done(request);
   if (negative)
     negative_store(request->service, request->cache_namespace, request->url,
@@ -1322,6 +1335,7 @@ pending_fail(PendingRequest *request,
   }
   g_error_free(error);
   pending_maybe_finish(request);
+  pending_unref(request);
 }
 
 typedef struct {
@@ -1441,7 +1455,7 @@ decode_texture_done(GObject *source, GAsyncResult *result, gpointer user_data)
 {
   (void)source;
   DecodeJob *job = user_data;
-  PendingRequest *request = job->request;
+  PendingRequest *request = pending_ref(job->request);
   GnostrMediaService *self = request->service;
   g_autoptr(GError) error = NULL;
   GdkTexture *texture = g_task_propagate_pointer(G_TASK(result), &error);
@@ -1484,6 +1498,7 @@ decode_texture_done(GObject *source, GAsyncResult *result, gpointer user_data)
     negative_store(self, request->cache_namespace, request->url,
                    request->kind);
   pending_maybe_finish(request);
+  pending_unref(request);
 }
 
 static void
@@ -1521,6 +1536,7 @@ schedule_texture_decode(PendingRequest *request, Subscriber *subscriber)
 static void
 process_texture_body(PendingRequest *request)
 {
+  pending_ref(request);
   gsize body_size = g_bytes_get_size(request->body);
   for (guint i = 0; i < request->subscribers->len; i++) {
     Subscriber *subscriber = g_ptr_array_index(request->subscribers, i);
@@ -1545,6 +1561,7 @@ process_texture_body(PendingRequest *request)
                      request->kind);
     pending_maybe_finish(request);
   }
+  pending_unref(request);
 }
 
 static const char *
@@ -1712,7 +1729,7 @@ static void
 parse_og_done(GObject *source, GAsyncResult *result, gpointer user_data)
 {
   (void)source;
-  PendingRequest *request = user_data;
+  PendingRequest *request = pending_ref(user_data);
   GnostrMediaService *self = request->service;
   g_autoptr(GError) error = NULL;
   GnostrOgMetadata *metadata =
@@ -1749,6 +1766,7 @@ parse_og_done(GObject *source, GAsyncResult *result, gpointer user_data)
   g_assert(request->outstanding_workers > 0);
   request->outstanding_workers--;
   pending_maybe_finish(request);
+  pending_unref(request);
 }
 
 static void
@@ -2106,7 +2124,7 @@ thumbnail_done(GObject *source, GAsyncResult *result, gpointer user_data)
 {
   GnostrMediaService *self = GNOSTR_MEDIA_SERVICE(source);
   ThumbnailJob *job = user_data;
-  PendingRequest *request = job->request;
+  PendingRequest *request = pending_ref(job->request);
   g_autoptr(GError) error = NULL;
   GBytes *bytes = g_task_propagate_pointer(G_TASK(result), &error);
 
@@ -2140,6 +2158,7 @@ thumbnail_done(GObject *source, GAsyncResult *result, gpointer user_data)
     g_bytes_unref(bytes);
   g_free(job);
   start_queued_thumbnails(self);
+  pending_unref(request);
 }
 
 static void
@@ -2215,7 +2234,7 @@ static void
 disk_lookup_done(GObject *source, GAsyncResult *result, gpointer user_data)
 {
   (void)source;
-  PendingRequest *request = user_data;
+  PendingRequest *request = pending_ref(user_data);
   g_autoptr(GError) error = NULL;
   DiskLookupResult *lookup = g_task_propagate_pointer(G_TASK(result), &error);
   request->disk_lookup_active = FALSE;
@@ -2227,9 +2246,11 @@ disk_lookup_done(GObject *source, GAsyncResult *result, gpointer user_data)
         pending_all_completed(request)) {
       request->network_done = TRUE;
       pending_maybe_finish(request);
+      pending_unref(request);
       return;
     }
     queue_network_after_disk_miss(request);
+    pending_unref(request);
     return;
   }
 
@@ -2256,6 +2277,7 @@ disk_lookup_done(GObject *source, GAsyncResult *result, gpointer user_data)
     queue_network_after_disk_miss(request);
   }
   disk_lookup_result_free(lookup);
+  pending_unref(request);
 }
 
 static void
@@ -2988,7 +3010,7 @@ send_network_request(PendingRequest *request, const char *url)
   if (!gnostr_media_url_is_safe(url, &policy_error))
     return FALSE;
 
-  SoupSession *session = gnostr_get_shared_soup_session();
+  g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
   if (!session)
     return FALSE;
 
@@ -3058,6 +3080,7 @@ pending_request_new(GnostrMediaService *self,
                     GnostrMediaResourceClass disk_resource_class)
 {
   PendingRequest *request = g_new0(PendingRequest, 1);
+  g_atomic_ref_count_init(&request->ref_count);
   request->service = g_object_ref(self);
   request->url = g_strdup(url);
   request->kind = kind;
@@ -3644,14 +3667,17 @@ gnostr_media_service_evict_account(GnostrMediaService *self,
     link = next;
   }
 
-  g_autoptr(GPtrArray) requests = g_ptr_array_new();
+  /* Snapshot strong refs: a subscriber callback may recursively evict the
+   * account and remove this or another request from the pending table. */
+  g_autoptr(GPtrArray) requests = g_ptr_array_new_with_free_func(
+      (GDestroyNotify)pending_unref);
   GHashTableIter iter;
   gpointer value;
   g_hash_table_iter_init(&iter, self->pending);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     PendingRequest *request = value;
     if (g_str_equal(request->cache_namespace, npub))
-      g_ptr_array_add(requests, request);
+      g_ptr_array_add(requests, pending_ref(request));
   }
   for (guint i = 0; i < requests->len; i++) {
     PendingRequest *request = g_ptr_array_index(requests, i);

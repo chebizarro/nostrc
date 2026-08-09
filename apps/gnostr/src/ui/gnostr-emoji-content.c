@@ -164,7 +164,7 @@ static void add_emoji_image(GnostrEmojiContent *self, GnostrCustomEmoji *emoji) 
     /* nostrc-jvdv.2: Only fetch remote emoji when remote media is allowed.
      * Cached emoji above still display regardless of the setting. */
 #ifdef HAVE_SOUP3
-    SoupSession *session = gnostr_get_shared_soup_session();
+    g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
     if (session) {
       g_autoptr(SoupMessage) msg = soup_message_new("GET", emoji->url);
       if (msg) {

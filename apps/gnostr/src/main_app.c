@@ -254,7 +254,11 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
    * Invalidate them now before storage shutdown to prevent page pinning. */
   storage_ndb_invalidate_txn_cache();
 
-  /* Step 3: Clean up shared SoupSession - now safe to destroy TLS state */
+  /* Step 3: Release the NIP-05 owner's reference, then clean up the shared
+   * SoupSession. In-flight libsoup operations retain their own references. */
+#ifdef HAVE_SOUP3
+  gnostr_nip05_set_soup_session(NULL);
+#endif
   gnostr_cleanup_shared_soup_session();
 
   /* Step 4: Clean up storage (nostrc-i26h: force-closes any remaining TLS txn) */
@@ -402,7 +406,8 @@ int main(int argc, char **argv) {
      * Must happen after nostr_gtk_init() and before any widget triggers
      * NIP-05 verification (i.e. before window creation). */
 #ifdef HAVE_SOUP3
-    gnostr_nip05_set_soup_session(gnostr_get_shared_soup_session());
+    g_autoptr(SoupSession) nip05_session = gnostr_get_shared_soup_session();
+    gnostr_nip05_set_soup_session(nip05_session);
 #endif
 
     if (gnostr_e2e_enabled()) {

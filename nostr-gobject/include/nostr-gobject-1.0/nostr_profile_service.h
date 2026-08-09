@@ -197,10 +197,10 @@ void gnostr_profile_service_request_gtask_async(gpointer service,
  *
  * Finishes the async profile request.
  *
- * Returns: (transfer none) (nullable): the profile metadata, or %NULL if
- *          not found. The returned pointer is owned by the service.
+ * Returns: (transfer full) (nullable): a profile metadata copy, or %NULL if
+ *          not found. Free it with gnostr_profile_meta_free().
  */
-const GnostrProfileMeta *gnostr_profile_service_request_gtask_finish(
+GnostrProfileMeta *gnostr_profile_service_request_gtask_finish(
     gpointer service,
     GAsyncResult *result,
     GError **error);

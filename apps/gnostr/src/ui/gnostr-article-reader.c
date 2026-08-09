@@ -273,7 +273,7 @@ static void on_header_image_ready(GObject *source, GAsyncResult *result, gpointe
 static void load_header_image(GnostrArticleReader *self, const char *url) {
   if (!url || !*url) return;
 
-  SoupSession *session = gnostr_get_shared_soup_session();
+  g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
   if (!session) return;
 
   /* nostrc-soup-dblf: Don't cancel — let old requests complete.

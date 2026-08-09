@@ -1031,7 +1031,7 @@ load_image(GnostrPictureCard *self) {
   /* nostrc-soup-dblf: Don't cancel old requests — let them complete harmlessly.
    * The GWeakRef in ThumbnailLoadCtx will detect the widget is gone. */
 
-  SoupSession *session = gnostr_get_shared_soup_session();
+  g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
   if (!session) return;
 
   /* Show spinner while loading */

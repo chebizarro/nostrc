@@ -847,7 +847,7 @@ image_viewer_begin_fetch(GnostrImageViewer *self)
 #endif
 
   /* hq-snq39: Check shared soup session before starting fetch */
-  SoupSession *session = gnostr_get_shared_soup_session();
+  g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
   if (!session) {
     g_warning("ImageViewer: shared soup session unavailable, cannot load: %s", url);
     image_viewer_set_unavailable_state(self, _("Remote images unavailable"));

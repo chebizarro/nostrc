@@ -509,8 +509,11 @@ test_rich_content_hydration_preserves_reserved_height(void)
     nostr_gtk_note_card_row_prepare_for_bind(row);
     nostr_gtk_note_card_row_set_content(row, "Rich content geometry");
     nostr_gtk_note_card_row_set_reserved_height(row, 720);
-    nostr_gtk_note_card_row_set_media_texture_loader(
-        row, &rich_media_request_count, fake_media_texture_request);
+    NostrGtkMediaTextureLoader *media_loader =
+        nostr_gtk_media_texture_loader_new(
+            &rich_media_request_count, fake_media_texture_request, NULL);
+    nostr_gtk_note_card_row_set_media_texture_loader(row, media_loader);
+    nostr_gtk_media_texture_loader_unref(media_loader);
 
     GnContentDescriptor image = {
         .type = GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE,
@@ -596,8 +599,10 @@ test_rich_content_cache_delivery_survives_unmap(void)
     g_object_ref_sink(row);
     nostr_gtk_note_card_row_prepare_for_bind(row);
     nostr_gtk_note_card_row_set_reserved_height(row, 360);
-    nostr_gtk_note_card_row_set_media_texture_loader(
-        row, &request, deferred_media_texture_request);
+    NostrGtkMediaTextureLoader *media_loader =
+        nostr_gtk_media_texture_loader_new(
+            &request, deferred_media_texture_request, NULL);
+    nostr_gtk_note_card_row_set_media_texture_loader(row, media_loader);
 
     GnContentDescriptor image = {
         .type = GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE,
@@ -639,8 +644,7 @@ test_rich_content_cache_delivery_survives_unmap(void)
     nostr_gtk_note_card_row_prepare_for_unbind(row);
     nostr_gtk_note_card_row_prepare_for_bind(row);
     nostr_gtk_note_card_row_set_reserved_height(row, 360);
-    nostr_gtk_note_card_row_set_media_texture_loader(
-        row, &request, deferred_media_texture_request);
+    nostr_gtk_note_card_row_set_media_texture_loader(row, media_loader);
     nostr_gtk_note_card_row_set_rich_content(row, descriptors, 240, 0, 0);
 
     window = present_test_window(GTK_WIDGET(row), REFERENCE_WIDTH_PX, 360);
@@ -683,6 +687,7 @@ test_rich_content_cache_delivery_survives_unmap(void)
     destroy_settled_test_window(window);
     nostr_gtk_note_card_row_prepare_for_unbind(row);
     g_object_unref(row);
+    nostr_gtk_media_texture_loader_unref(media_loader);
 }
 
 static void
@@ -857,6 +862,34 @@ test_note_card_explicit_expansion_allows_natural_height(void)
     g_object_unref(row);
 }
 
+static void
+count_loader_destroy(gpointer user_data)
+{
+    guint *destroy_count = user_data;
+    (*destroy_count)++;
+}
+
+static void
+test_media_loader_is_strongly_held(void)
+{
+    guint destroy_count = 0;
+    NostrGtkMediaTextureLoader *loader =
+        nostr_gtk_media_texture_loader_new(
+            &destroy_count, fake_media_texture_request,
+            count_loader_destroy);
+    NostrGtkNoteCardRow *row = nostr_gtk_note_card_row_new();
+    g_object_ref_sink(row);
+
+    nostr_gtk_note_card_row_set_media_texture_loader(row, loader);
+    /* Replacing with the same interface must ref before unref. */
+    nostr_gtk_note_card_row_set_media_texture_loader(row, loader);
+    nostr_gtk_media_texture_loader_unref(loader);
+    g_assert_cmpuint(destroy_count, ==, 0);
+
+    g_object_unref(row);
+    g_assert_cmpuint(destroy_count, ==, 1);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -884,6 +917,8 @@ main(int argc, char *argv[])
                     test_rich_content_buffer_bind_creates_no_expensive_children);
     g_test_add_func("/nostr-gtk/sizing/rich-content-cache-delivery-survives-unmap",
                     test_rich_content_cache_delivery_survives_unmap);
+    g_test_add_func("/nostr-gtk/note-card/media-loader-strong-ref",
+                    test_media_loader_is_strongly_held);
 
     return g_test_run();
 }

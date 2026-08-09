@@ -36,6 +36,8 @@ typedef struct {
 
 /* The service singleton structure */
 typedef struct {
+  gatomicrefcount ref_count;
+
   /* Thread safety */
   GMutex mutex;
 
@@ -77,6 +79,10 @@ G_LOCK_DEFINE_STATIC(service_singleton);
 
 /* Global relay provider */
 static GnostrRelayUrlProvider s_relay_provider = NULL;
+
+static GnostrProfileService *profile_service_ref(GnostrProfileService *svc);
+static void profile_service_unref(GnostrProfileService *svc);
+static gboolean debounce_timeout_cb(gpointer user_data);
 
 /* ============== Internal Helpers ============== */
 
@@ -176,6 +182,40 @@ void gnostr_profile_service_private_fetch_batches_clear(
   *fetch_batch_pos = 0;
 }
 
+static GnostrProfileService *profile_service_ref(GnostrProfileService *svc) {
+  g_atomic_ref_count_inc(&svc->ref_count);
+  return svc;
+}
+
+static void profile_service_free(GnostrProfileService *svc) {
+  if (svc->debounce_source_id)
+    g_source_remove(svc->debounce_source_id);
+  g_clear_pointer(&svc->pending_requests, g_hash_table_unref);
+  gnostr_profile_service_private_fetch_batches_clear(
+      &svc->fetch_batches, &svc->fetch_batch_pos);
+  if (svc->relay_urls) {
+    for (size_t i = 0; i < svc->relay_url_count; i++)
+      g_free(svc->relay_urls[i]);
+    g_free(svc->relay_urls);
+  }
+  g_clear_object(&svc->cancellable);
+  if (svc->pool && svc->owns_pool)
+    g_object_unref(svc->pool);
+  g_mutex_clear(&svc->mutex);
+  g_free(svc);
+}
+
+static void profile_service_unref(GnostrProfileService *svc) {
+  if (g_atomic_ref_count_dec(&svc->ref_count))
+    profile_service_free(svc);
+}
+
+static guint schedule_debounce(GnostrProfileService *svc) {
+  return g_timeout_add_full(G_PRIORITY_DEFAULT, svc->debounce_ms,
+                            debounce_timeout_cb, profile_service_ref(svc),
+                            (GDestroyNotify)profile_service_unref);
+}
+
 static gboolean relay_array_contains(GPtrArray *relays, const char *url) {
   if (!relays || !url || !*url) return FALSE;
   for (guint i = 0; i < relays->len; i++) {
@@ -204,8 +244,18 @@ static gboolean pending_request_merge_hints(
 }
 
 /* Convert hex string to 32-byte binary */
+static gboolean valid_pubkey_hex(const char *hex) {
+  if (!hex || strlen(hex) != 64)
+    return FALSE;
+  for (size_t i = 0; i < 64; i++) {
+    if (!g_ascii_isxdigit(hex[i]))
+      return FALSE;
+  }
+  return TRUE;
+}
+
 static gboolean hex_to_bytes32(const char *hex, unsigned char *out) {
-  if (!hex || strlen(hex) != 64) return FALSE;
+  if (!valid_pubkey_hex(hex)) return FALSE;
   for (int i = 0; i < 32; i++) {
     unsigned int b;
     if (sscanf(hex + i*2, "%2x", &b) != 1) return FALSE;
@@ -224,7 +274,6 @@ static GnostrProfileMeta *check_ndb_cache(const char *pubkey_hex) {
 
 /* Forward declarations */
 static void dispatch_next_batch(GnostrProfileService *svc);
-static gboolean debounce_timeout_cb(gpointer user_data);
 
 /* Complete a request, or retain it for one retry when hints arrived after the
  * active batch took its relay snapshot. */
@@ -240,12 +289,12 @@ static void complete_request(GnostrProfileService *svc,
     return;
   }
 
-  if (retry_for_new_hints && req->retry_with_new_hints) {
+  if (!svc->shutdown && retry_for_new_hints && req->retry_with_new_hints) {
     req->retry_with_new_hints = FALSE;
     req->in_flight = FALSE;
     if (!svc->debounce_source_id) {
       svc->debounce_source_id =
-          g_timeout_add(svc->debounce_ms, debounce_timeout_cb, svc);
+          schedule_debounce(svc);
     }
     g_mutex_unlock(&svc->mutex);
     return;
@@ -385,18 +434,18 @@ static void on_profiles_fetched(GObject *source, GAsyncResult *res, gpointer use
   g_hash_table_unref(resolved_pubkeys);
   g_hash_table_unref(batch_pubkeys);
 
-  /* Cleanup -- filters are owned by the GTask (via g_object_set_data_full
-   * with nostr_filters_free destroy notify in gnostr_pool_query_async),
-   * so do NOT free them here. */
-  if (batch) g_ptr_array_free(batch, TRUE);
-  g_free(ctx);
-
-  /* Mark fetch no longer in progress and dispatch next batch */
+  /* Mark fetch no longer in progress and dispatch next batch while the
+   * BatchFetchCtx still holds its strong service reference. */
   g_mutex_lock(&svc->mutex);
   svc->fetch_in_progress = FALSE;
   g_mutex_unlock(&svc->mutex);
 
   dispatch_next_batch(svc);
+
+  /* filters are owned by the pool's GTask destroy notify. */
+  if (batch) g_ptr_array_free(batch, TRUE);
+  profile_service_unref(ctx->svc);
+  g_free(ctx);
 }
 
 static void dispatch_next_batch(GnostrProfileService *svc) {
@@ -424,7 +473,7 @@ static void dispatch_next_batch(GnostrProfileService *svc) {
     guint pending = g_hash_table_size(svc->pending_requests);
     if (pending > 0 && !svc->debounce_source_id) {
       svc->debounce_source_id =
-          g_timeout_add(svc->debounce_ms, debounce_timeout_cb, svc);
+          schedule_debounce(svc);
     }
     g_mutex_unlock(&svc->mutex);
     return;
@@ -539,7 +588,7 @@ static void dispatch_next_batch(GnostrProfileService *svc) {
 
   /* Create context for callback */
   BatchFetchCtx *ctx = g_new0(BatchFetchCtx, 1);
-  ctx->svc = svc;
+  ctx->svc = profile_service_ref(svc);
   ctx->batch = batch; /* transfer ownership */
   ctx->filters = filters; /* transfer ownership */
 
@@ -662,6 +711,7 @@ gpointer gnostr_profile_service_get_default(void) {
 
   /* Create new service */
   GnostrProfileService *svc = g_new0(GnostrProfileService, 1);
+  g_atomic_ref_count_init(&svc->ref_count);
   g_mutex_init(&svc->mutex);
   svc->initialized = TRUE;
   svc->shutdown = FALSE;
@@ -695,15 +745,7 @@ void gnostr_profile_service_request_with_hints(
                                      GnostrProfileServiceCallback callback,
                                      gpointer user_data) {
   GnostrProfileService *svc = (GnostrProfileService*)service;
-  if (!svc || !pubkey_hex || strlen(pubkey_hex) != 64) return;
-
-  /* Validate hex characters */
-  for (size_t i = 0; i < 64; i++) {
-    char c = pubkey_hex[i];
-    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
-      return; /* Invalid hex character */
-    }
-  }
+  if (!svc || !valid_pubkey_hex(pubkey_hex)) return;
 
   g_mutex_lock(&svc->mutex);
 
@@ -739,7 +781,7 @@ void gnostr_profile_service_request_with_hints(
 
   /* LEGITIMATE TIMEOUT - Debounce profile fetching to batch requests. */
   if (!svc->debounce_source_id && !req->in_flight) {
-    svc->debounce_source_id = g_timeout_add(svc->debounce_ms, debounce_timeout_cb, svc);
+    svc->debounce_source_id = schedule_debounce(svc);
   }
 
   g_mutex_unlock(&svc->mutex);
@@ -859,19 +901,17 @@ void gnostr_profile_service_set_pool(gpointer service, gpointer pool) {
 
   g_mutex_lock(&svc->mutex);
 
-  /* Unref old pool if we own it */
-  if (svc->pool && svc->owns_pool) {
-    g_object_unref(svc->pool);
-  }
+  /* Take the new reference before releasing the old one so passing the
+   * borrowed get_pool() result back into this setter is safe. */
+  GNostrPool *new_pool = pool ? g_object_ref(pool) : NULL;
+  GNostrPool *old_pool = svc->pool;
+  gboolean owned_old_pool = svc->owns_pool;
 
-  /* Take reference to new pool */
-  if (pool) {
-    svc->pool = g_object_ref(pool);
-    svc->owns_pool = FALSE;
-  } else {
-    svc->pool = NULL;
-    svc->owns_pool = FALSE;
-  }
+  svc->pool = new_pool;
+  svc->owns_pool = new_pool != NULL;
+
+  if (old_pool && owned_old_pool)
+    g_object_unref(old_pool);
 
   g_mutex_unlock(&svc->mutex);
 }
@@ -894,6 +934,8 @@ void gnostr_profile_service_shutdown(void) {
     return;
   }
 
+  /* Detach the singleton first. BatchFetchCtx owns a strong reference for
+   * every in-flight pool query, so final destruction waits for completion. */
   GnostrProfileService *svc = s_service;
   s_service = NULL;
 
@@ -901,64 +943,60 @@ void gnostr_profile_service_shutdown(void) {
 
   g_mutex_lock(&svc->mutex);
   svc->shutdown = TRUE;
-
-  /* Cancel pending debounce */
   if (svc->debounce_source_id) {
     g_source_remove(svc->debounce_source_id);
     svc->debounce_source_id = 0;
   }
-
-  /* Cancel ongoing fetches */
-  if (svc->cancellable) {
+  if (svc->cancellable)
     g_cancellable_cancel(svc->cancellable);
-    g_object_unref(svc->cancellable);
-    svc->cancellable = NULL;
-  }
 
-  /* Free pending requests */
-  if (svc->pending_requests) {
-    g_hash_table_destroy(svc->pending_requests);
-    svc->pending_requests = NULL;
-  }
-
-  /* Free queued (but not currently active) fetch batches. */
-  gnostr_profile_service_private_fetch_batches_clear(
-      &svc->fetch_batches, &svc->fetch_batch_pos);
-
-  /* Free relay URLs */
-  if (svc->relay_urls) {
-    for (size_t i = 0; i < svc->relay_url_count; i++) {
-      g_free(svc->relay_urls[i]);
-    }
-    g_free(svc->relay_urls);
-    svc->relay_urls = NULL;
-    svc->relay_url_count = 0;
-  }
-
-  /* Unref pool if we own it */
-  if (svc->pool && svc->owns_pool) {
-    g_object_unref(svc->pool);
-    svc->pool = NULL;
-  }
-
+  /* Snapshot pending keys so every callback, including a GTask bridge, gets a
+   * terminal NULL result instead of being silently destroyed during shutdown. */
+  GPtrArray *pending_keys = g_ptr_array_new_with_free_func(g_free);
+  GHashTableIter iter;
+  gpointer key;
+  g_hash_table_iter_init(&iter, svc->pending_requests);
+  while (g_hash_table_iter_next(&iter, &key, NULL))
+    g_ptr_array_add(pending_keys, g_strdup(key));
   g_mutex_unlock(&svc->mutex);
-  g_mutex_clear(&svc->mutex);
 
-  g_free(svc);
+  for (guint i = 0; i < pending_keys->len; i++)
+    fire_callbacks(svc, g_ptr_array_index(pending_keys, i), NULL);
+  g_ptr_array_unref(pending_keys);
 
+  profile_service_unref(svc);
   g_message("[PROFILE_SERVICE] Shutdown complete");
 }
 
 /* ============== GTask-based Async API (R3: GIR-friendly) ============== */
 
-/* Bridge: old callback → GTask completion */
+static GnostrProfileMeta *profile_meta_copy(const GnostrProfileMeta *meta) {
+    if (!meta)
+        return NULL;
+    GnostrProfileMeta *copy = g_new0(GnostrProfileMeta, 1);
+    copy->pubkey_hex = g_strdup(meta->pubkey_hex);
+    copy->display_name = g_strdup(meta->display_name);
+    copy->name = g_strdup(meta->name);
+    copy->picture = g_strdup(meta->picture);
+    copy->banner = g_strdup(meta->banner);
+    copy->nip05 = g_strdup(meta->nip05);
+    copy->lud16 = g_strdup(meta->lud16);
+    copy->about = g_strdup(meta->about);
+    copy->created_at = meta->created_at;
+    return copy;
+}
+
+/* Bridge: old callback → GTask completion. The callback's meta is borrowed and
+ * is freed by the producer immediately after this function returns. */
 static void profile_request_gtask_bridge_cb(const char *pubkey_hex,
                                              const GnostrProfileMeta *meta,
                                              gpointer user_data) {
     (void)pubkey_hex;
     GTask *task = G_TASK(user_data);
-    /* Return the meta pointer (owned by service cache, not by us) */
-    g_task_return_pointer(task, (gpointer)meta, NULL);
+    if (!g_task_return_error_if_cancelled(task)) {
+        g_task_return_pointer(task, profile_meta_copy(meta),
+                              (GDestroyNotify)gnostr_profile_meta_free);
+    }
     g_object_unref(task);
 }
 
@@ -968,11 +1006,21 @@ void gnostr_profile_service_request_gtask_async(gpointer service,
                                                  GAsyncReadyCallback callback,
                                                  gpointer user_data) {
     GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+    if (g_task_return_error_if_cancelled(task)) {
+        g_object_unref(task);
+        return;
+    }
+    if (!service || !valid_pubkey_hex(pubkey_hex)) {
+        g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                                "Profile pubkey must be 64 hexadecimal characters");
+        g_object_unref(task);
+        return;
+    }
     gnostr_profile_service_request(service, pubkey_hex,
                                     profile_request_gtask_bridge_cb, task);
 }
 
-const GnostrProfileMeta *gnostr_profile_service_request_gtask_finish(
+GnostrProfileMeta *gnostr_profile_service_request_gtask_finish(
     gpointer service,
     GAsyncResult *result,
     GError **error) {

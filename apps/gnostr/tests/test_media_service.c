@@ -14,7 +14,7 @@ gnostr_get_shared_soup_session(void)
 {
   if (!test_session)
     test_session = soup_session_new();
-  return test_session;
+  return g_object_ref(test_session);
 }
 
 gboolean
@@ -344,6 +344,93 @@ test_in_flight_requests_are_coalesced(void)
   soup_server_disconnect(server);
 }
 
+
+typedef struct {
+  GMainLoop *loop;
+  guint callbacks;
+  gboolean timed_out;
+} ReentrantEvictionFixture;
+
+static void
+server_error_handler(SoupServer *server,
+                     SoupServerMessage *message,
+                     const char *path,
+                     GHashTable *query,
+                     gpointer user_data)
+{
+  (void)server;
+  (void)path;
+  (void)query;
+  (void)user_data;
+  soup_server_message_set_status(message, SOUP_STATUS_INTERNAL_SERVER_ERROR,
+                                 NULL);
+}
+
+static void
+reentrant_eviction_ready(GnostrMediaService *service,
+                         const char *url,
+                         GdkTexture *texture,
+                         const GError *error,
+                         gpointer user_data)
+{
+  (void)url;
+  ReentrantEvictionFixture *fixture = user_data;
+  fixture->callbacks++;
+  g_assert_null(texture);
+  g_assert_nonnull(error);
+  /* This used to remove and free the PendingRequest under pending_fail()'s
+   * active subscriber loop. */
+  gnostr_media_service_evict_account(service, test_namespace);
+  g_main_loop_quit(fixture->loop);
+}
+
+static gboolean
+reentrant_eviction_timeout(gpointer user_data)
+{
+  ReentrantEvictionFixture *fixture = user_data;
+  fixture->timed_out = TRUE;
+  g_main_loop_quit(fixture->loop);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+test_callback_can_reentrantly_evict_account(void)
+{
+  g_autoptr(SoupServer) server = soup_server_new(NULL, NULL);
+  soup_server_add_handler(server, "/failure", server_error_handler, NULL, NULL);
+  g_autoptr(GError) listen_error = NULL;
+  g_assert_true(soup_server_listen_local(server, 0,
+                                        SOUP_SERVER_LISTEN_IPV4_ONLY,
+                                        &listen_error));
+  g_assert_no_error(listen_error);
+  GSList *uris = soup_server_get_uris(server);
+  g_assert_nonnull(uris);
+  g_autofree char *base = g_uri_to_string(uris->data);
+  g_slist_free_full(uris, (GDestroyNotify)g_uri_unref);
+  g_autofree char *url = g_strconcat(base, "failure", NULL);
+
+  g_autoptr(GnostrMediaService) service =
+      make_service(4 * 1024 * 1024, G_USEC_PER_SEC);
+  ReentrantEvictionFixture fixture = {
+      .loop = g_main_loop_new(NULL, FALSE),
+  };
+  gnostr_media_service_request_texture(
+      service, url, GNOSTR_MEDIA_RESOURCE_INLINE, 32, 32, NULL,
+      reentrant_eviction_ready, &fixture, NULL);
+  guint timeout_id = g_timeout_add_seconds(
+      5, reentrant_eviction_timeout, &fixture);
+  g_main_loop_run(fixture.loop);
+  if (!fixture.timed_out)
+    g_source_remove(timeout_id);
+
+  g_assert_false(fixture.timed_out);
+  g_assert_cmpuint(fixture.callbacks, ==, 1);
+  GnostrMediaCacheStats stats;
+  gnostr_media_service_get_stats(service, &stats);
+  g_assert_cmpuint(stats.pending_requests, ==, 0);
+  g_main_loop_unref(fixture.loop);
+  soup_server_disconnect(server);
+}
 
 typedef struct {
   GMainLoop *loop;
@@ -1038,6 +1125,8 @@ main(int argc, char **argv)
                   test_avatar_decode_is_square_and_persisted);
   g_test_add_func("/media-service/in-flight/dedup-independent-cancel",
                   test_in_flight_requests_are_coalesced);
+  g_test_add_func("/media-service/account/reentrant-eviction-callback",
+                  test_callback_can_reentrantly_evict_account);
   g_test_add_func("/media-service/disk/hit-before-network",
                   test_disk_hit_falls_back_before_network);
   g_test_add_func("/media-service/disk/encoded-byte-budget",

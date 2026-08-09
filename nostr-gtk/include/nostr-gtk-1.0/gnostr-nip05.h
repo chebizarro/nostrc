@@ -42,12 +42,10 @@ typedef void (*GnostrNip05VerifyCallback)(GnostrNip05Result *result, gpointer us
 
 /**
  * gnostr_nip05_set_soup_session:
- * @session: (transfer none): A SoupSession to use for HTTP requests.
+ * @session: (transfer none) (nullable): A SoupSession to use for HTTP requests.
  *
- * Set the SoupSession used by NIP-05 async verification.
- * Must be called once by the application at startup, before any widget
- * triggers NIP-05 verification. The session is borrowed (not ref'd) and
- * must outlive all NIP-05 calls.
+ * Set the SoupSession used by NIP-05 async verification. The module keeps a
+ * strong reference until it is replaced or cleared with %NULL.
  *
  * If never called, gnostr_nip05_verify_async() will return
  * %GNOSTR_NIP05_STATUS_UNKNOWN (same as the !HAVE_SOUP3 fallback).

@@ -71,6 +71,45 @@ callback_data_clear(TestCallbackData *data)
   memset(data, 0, sizeof(*data));
 }
 
+typedef struct {
+  GMainLoop *loop;
+  GnostrProfileMeta *meta;
+  GError *error;
+  gboolean completed;
+  gboolean timed_out;
+} GTaskFixture;
+
+static void
+profile_gtask_done(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  GTaskFixture *fixture = user_data;
+  fixture->meta = gnostr_profile_service_request_gtask_finish(
+      NULL, result, &fixture->error);
+  fixture->completed = TRUE;
+  g_main_loop_quit(fixture->loop);
+}
+
+static gboolean
+profile_gtask_timeout(gpointer user_data)
+{
+  GTaskFixture *fixture = user_data;
+  fixture->timed_out = TRUE;
+  g_main_loop_quit(fixture->loop);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+run_gtask_fixture(GTaskFixture *fixture)
+{
+  guint timeout_id = g_timeout_add_seconds(2, profile_gtask_timeout, fixture);
+  g_main_loop_run(fixture->loop);
+  if (!fixture->timed_out)
+    g_source_remove(timeout_id);
+  g_assert_false(fixture->timed_out);
+  g_assert_true(fixture->completed);
+}
+
 /* ── Test: singleton-lifecycle ───────────────────────────────────── */
 
 static void
@@ -318,6 +357,70 @@ test_batch_queue_append_while_active(void)
   g_assert_cmpuint(fetch_batch_pos, ==, 0);
 }
 
+/* ── Test: owned GTask result and shutdown completion ────────────── */
+
+static void
+test_gtask_result_is_owned_copy(void)
+{
+  static const char *pubkey =
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  gnostr_profile_service_shutdown();
+  gnostr_profile_provider_init(8);
+  g_assert_cmpint(gnostr_profile_provider_update(
+      pubkey, "{\"display_name\":\"Owned Copy\",\"about\":\"still valid\"}"),
+      ==, 0);
+
+  gpointer svc = gnostr_profile_service_get_default();
+  gnostr_profile_service_set_debounce(svc, 1);
+  GTaskFixture fixture = { .loop = g_main_loop_new(NULL, FALSE) };
+  gnostr_profile_service_request_gtask_async(
+      svc, pubkey, NULL, profile_gtask_done, &fixture);
+  run_gtask_fixture(&fixture);
+
+  gnostr_profile_service_shutdown();
+  gnostr_profile_provider_shutdown();
+  g_assert_no_error(fixture.error);
+  g_assert_nonnull(fixture.meta);
+  g_assert_cmpstr(fixture.meta->pubkey_hex, ==, pubkey);
+  g_assert_cmpstr(fixture.meta->display_name, ==, "Owned Copy");
+  g_assert_cmpstr(fixture.meta->about, ==, "still valid");
+  gnostr_profile_meta_free(fixture.meta);
+  g_main_loop_unref(fixture.loop);
+}
+
+static void
+test_shutdown_completes_pending_gtask(void)
+{
+  gnostr_profile_service_shutdown();
+  gnostr_profile_provider_shutdown();
+  gpointer svc = gnostr_profile_service_get_default();
+  gnostr_profile_service_set_debounce(svc, 60000);
+  g_autofree char *pubkey = make_pubkey(0xa0);
+  GTaskFixture fixture = { .loop = g_main_loop_new(NULL, FALSE) };
+  gnostr_profile_service_request_gtask_async(
+      svc, pubkey, NULL, profile_gtask_done, &fixture);
+
+  gnostr_profile_service_shutdown();
+  run_gtask_fixture(&fixture);
+  g_assert_no_error(fixture.error);
+  g_assert_null(fixture.meta);
+  g_main_loop_unref(fixture.loop);
+}
+
+static void
+test_invalid_gtask_completes_with_error(void)
+{
+  gpointer svc = gnostr_profile_service_get_default();
+  GTaskFixture fixture = { .loop = g_main_loop_new(NULL, FALSE) };
+  gnostr_profile_service_request_gtask_async(
+      svc, "invalid", NULL, profile_gtask_done, &fixture);
+  run_gtask_fixture(&fixture);
+  g_assert_error(fixture.error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+  g_clear_error(&fixture.error);
+  g_main_loop_unref(fixture.loop);
+  gnostr_profile_service_shutdown();
+}
+
 /* ── Test: shutdown-cleanup ──────────────────────────────────────── */
 
 static void
@@ -429,6 +532,12 @@ main(int argc, char *argv[])
                    test_stats_accuracy);
   g_test_add_func("/nostr-gobject/profile-service/batch-queue-append-while-active",
                    test_batch_queue_append_while_active);
+  g_test_add_func("/nostr-gobject/profile-service/gtask-owned-copy",
+                   test_gtask_result_is_owned_copy);
+  g_test_add_func("/nostr-gobject/profile-service/gtask-shutdown-completion",
+                   test_shutdown_completes_pending_gtask);
+  g_test_add_func("/nostr-gobject/profile-service/gtask-invalid-error",
+                   test_invalid_gtask_completes_with_error);
   g_test_add_func("/nostr-gobject/profile-service/shutdown-cleanup",
                    test_shutdown_cleanup);
   g_test_add_func("/nostr-gobject/profile-service/set-debounce",

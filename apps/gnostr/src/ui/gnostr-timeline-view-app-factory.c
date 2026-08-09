@@ -295,10 +295,13 @@ static void on_note_card_search_hashtag(NostrGtkNoteCardRow *row, const char *ha
 
 static GtkWidget *create_timeline_note_card_row(NostrGtkTimelineView *self) {
   GtkWidget *row = GTK_WIDGET(nostr_gtk_note_card_row_new());
+  NostrGtkMediaTextureLoader *media_loader =
+      nostr_gtk_media_texture_loader_new(
+          g_object_ref(gnostr_media_service_get_default()),
+          request_row_media_texture, g_object_unref);
   nostr_gtk_note_card_row_set_media_texture_loader(
-      NOSTR_GTK_NOTE_CARD_ROW(row),
-      gnostr_media_service_get_default(),
-      request_row_media_texture);
+      NOSTR_GTK_NOTE_CARD_ROW(row), media_loader);
+  nostr_gtk_media_texture_loader_unref(media_loader);
 
   /* nostrc-hqtn: Connect all main-window-bound action signals once for the
    * row lifetime. Bind/unbind only manages per-item signals. */

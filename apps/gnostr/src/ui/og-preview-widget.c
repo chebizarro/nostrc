@@ -249,6 +249,20 @@ disconnect_external_cancellable(OgPreviewWidget *self)
 }
 
 static void
+connect_external_cancellable(OgPreviewWidget *self)
+{
+  if (!self->external_cancellable)
+    return;
+  self->external_cancelled_id = g_cancellable_connect(
+      self->external_cancellable,
+      G_CALLBACK(on_parent_cancelled),
+      self,
+      NULL);
+  if (g_cancellable_is_cancelled(self->external_cancellable))
+    g_cancellable_cancel(self->cancellable);
+}
+
+static void
 restart_cancellable(OgPreviewWidget *self)
 {
   if (self->external_cancellable && self->external_cancelled_id) {
@@ -260,16 +274,7 @@ restart_cancellable(OgPreviewWidget *self)
     g_cancellable_cancel(self->cancellable);
   g_clear_object(&self->cancellable);
   self->cancellable = g_cancellable_new();
-
-  if (self->external_cancellable) {
-    self->external_cancelled_id = g_cancellable_connect(
-        self->external_cancellable,
-        G_CALLBACK(on_parent_cancelled),
-        self,
-        NULL);
-    if (g_cancellable_is_cancelled(self->external_cancellable))
-      g_cancellable_cancel(self->cancellable);
-  }
+  connect_external_cancellable(self);
 }
 
 static void
@@ -567,6 +572,14 @@ og_preview_widget_set_url_with_cancellable(OgPreviewWidget *self,
   disconnect_external_cancellable(self);
   if (cancellable)
     self->external_cancellable = g_object_ref(cancellable);
+
+  /* set_url() intentionally avoids rebuilding same-URL UI, but a replacement
+   * parent still needs to be connected before that early return. */
+  if (url && *url && !self->disposed &&
+      g_strcmp0(self->current_url, url) == 0) {
+    connect_external_cancellable(self);
+    return;
+  }
   og_preview_widget_set_url(self, url);
 }
 

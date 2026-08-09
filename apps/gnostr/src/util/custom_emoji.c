@@ -524,15 +524,18 @@ void gnostr_emoji_cache_prefetch(const char *url) {
 
 #ifdef HAVE_SOUP3
   /* Fetch asynchronously - use shared session to avoid per-request session overhead */
-  SoupMessage *msg = soup_message_new("GET", url);
+  g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
+  g_autoptr(SoupMessage) msg = soup_message_new("GET", url);
+  if (!session || !msg)
+    return;
   EmojiCacheCtx *ctx = g_new0(EmojiCacheCtx, 1);
   ctx->url = g_strdup(url);
   ctx->target = NULL;
 
   g_debug("emoji prefetch: fetching url=%s", url);
   s_emoji_metrics.http_start++;
-  soup_session_send_and_read_async(gnostr_get_shared_soup_session(), msg, G_PRIORITY_DEFAULT, NULL, on_emoji_http_done, ctx);
-  g_object_unref(msg);
+  soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT, NULL,
+                                   on_emoji_http_done, ctx);
 #endif
 }
 

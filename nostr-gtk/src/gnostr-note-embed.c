@@ -74,7 +74,7 @@ struct _GnostrNoteEmbed {
   /* Cancellable for async operations */
   GCancellable *cancellable;
   
-  /* External cancellable from parent widget (not owned, just referenced) */
+  /* Strong reference to the parent widget's cancellable. */
   GCancellable *external_cancellable;
 
   /* Track whether relay hints have been attempted (for fallback to main pool) */
@@ -128,6 +128,7 @@ static void gnostr_note_embed_dispose(GObject *obj) {
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
   }
+  g_clear_object(&self->external_cancellable);
 
 #ifdef HAVE_SOUP3
   /* Shared session is managed globally - do not clear here */
@@ -1460,7 +1461,7 @@ static void request_profile_via_service(GnostrNoteEmbed *self, const char *pubke
  */
 void gnostr_note_embed_set_cancellable(GnostrNoteEmbed *self, GCancellable *cancellable) {
   g_return_if_fail(GNOSTR_IS_NOTE_EMBED(self));
-  self->external_cancellable = cancellable;
+  g_set_object(&self->external_cancellable, cancellable);
 }
 
 /**

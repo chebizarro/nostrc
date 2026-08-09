@@ -17,10 +17,9 @@
 #define NIP05_CACHE_TTL_SECONDS (60 * 60)  /* 1 hour cache validity */
 #define NIP05_CACHE_MAX_ENTRIES 500        /* Max cached entries */
 
-/* Injected SoupSession — set once by the app at startup via
- * gnostr_nip05_set_soup_session(). Borrowed reference; must outlive all
- * NIP-05 calls. Written once on the main thread before any widget is
- * created, then read-only — no mutex needed. */
+/* Injected SoupSession — set by the app on the main thread. This module owns
+ * a strong reference so shared-session cleanup cannot invalidate in-flight
+ * or late NIP-05 work. */
 #ifdef HAVE_SOUP3
 static SoupSession *s_nip05_session = NULL;
 #endif
@@ -61,8 +60,8 @@ void
 #ifdef HAVE_SOUP3
 gnostr_nip05_set_soup_session(SoupSession *session)
 {
-  s_nip05_session = session;
-  g_debug("nip05: SoupSession injected by app");
+  g_set_object(&s_nip05_session, session);
+  g_debug("nip05: SoupSession injection updated");
 }
 #else
 gnostr_nip05_set_soup_session(gpointer session)
@@ -606,7 +605,7 @@ void gnostr_nip05_verify_async(const char *identifier,
   soup_session_send_and_read_async(session, msg, G_PRIORITY_DEFAULT, NULL, on_nip05_http_done, ctx);
 
   g_object_unref(msg);
-  /* Note: Don't unref session - it's a borrowed reference from the app */
+  /* s_nip05_session retains the module-owned reference. */
 }
 
 #else /* !HAVE_SOUP3 */

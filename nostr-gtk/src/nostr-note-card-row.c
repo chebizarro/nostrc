@@ -44,6 +44,13 @@
 #define UI_RESOURCE "/org/nostr/gtk/ui/nostr-note-card-row.ui"
 #define GNOSTR_AVATAR_EXPECTED_URL_KEY "gnostr-avatar-expected-url"
 
+struct _NostrGtkMediaTextureLoader {
+  gatomicrefcount ref_count;
+  gpointer loader;
+  NostrGtkMediaTextureRequestFunc request_func;
+  GDestroyNotify loader_destroy;
+};
+
 static gboolean remote_media_loading_enabled(void);
 
 /* nostrc-05yz (harden-6): Label guard macro moved to gnostr-label-guard.h
@@ -131,8 +138,7 @@ struct _NostrGtkNoteCardRow {
   GtkWidget *content_label;
   GtkWidget *emoji_box;  /* NIP-30: Custom emoji display box */
   GtkWidget *media_box;
-  gpointer media_texture_loader; /* borrowed application service */
-  NostrGtkMediaTextureRequestFunc media_texture_request_func;
+  NostrGtkMediaTextureLoader *media_texture_loader; /* strong */
   GtkWidget *embed_box;
   GtkWidget *og_preview_container;
   GtkWidget *actions_box;
@@ -746,6 +752,8 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   /* NIP-73 external content IDs */
   self->external_ids_box = NULL;
   g_clear_pointer(&self->external_ids, g_ptr_array_unref);
+  g_clear_pointer(&self->media_texture_loader,
+                  nostr_gtk_media_texture_loader_unref);
   G_OBJECT_CLASS(nostr_gtk_note_card_row_parent_class)->dispose(obj);
 }
 
@@ -2392,6 +2400,40 @@ static void nostr_gtk_note_card_row_init(NostrGtkNoteCardRow *self) {
 #endif
 }
 
+NostrGtkMediaTextureLoader *
+nostr_gtk_media_texture_loader_new(
+    gpointer loader,
+    NostrGtkMediaTextureRequestFunc request_func,
+    GDestroyNotify loader_destroy)
+{
+  g_return_val_if_fail(request_func != NULL, NULL);
+  NostrGtkMediaTextureLoader *iface =
+      g_new0(NostrGtkMediaTextureLoader, 1);
+  g_atomic_ref_count_init(&iface->ref_count);
+  iface->loader = loader;
+  iface->request_func = request_func;
+  iface->loader_destroy = loader_destroy;
+  return iface;
+}
+
+NostrGtkMediaTextureLoader *
+nostr_gtk_media_texture_loader_ref(NostrGtkMediaTextureLoader *loader)
+{
+  g_return_val_if_fail(loader != NULL, NULL);
+  g_atomic_ref_count_inc(&loader->ref_count);
+  return loader;
+}
+
+void
+nostr_gtk_media_texture_loader_unref(NostrGtkMediaTextureLoader *loader)
+{
+  if (!loader || !g_atomic_ref_count_dec(&loader->ref_count))
+    return;
+  if (loader->loader_destroy)
+    loader->loader_destroy(loader->loader);
+  g_free(loader);
+}
+
 NostrGtkNoteCardRow *nostr_gtk_note_card_row_new(void) {
   return g_object_new(NOSTR_GTK_TYPE_NOTE_CARD_ROW, NULL);
 }
@@ -2399,12 +2441,14 @@ NostrGtkNoteCardRow *nostr_gtk_note_card_row_new(void) {
 void
 nostr_gtk_note_card_row_set_media_texture_loader(
     NostrGtkNoteCardRow *self,
-    gpointer loader,
-    NostrGtkMediaTextureRequestFunc request_func)
+    NostrGtkMediaTextureLoader *loader)
 {
   g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
+  if (loader)
+    nostr_gtk_media_texture_loader_ref(loader);
+  g_clear_pointer(&self->media_texture_loader,
+                  nostr_gtk_media_texture_loader_unref);
   self->media_texture_loader = loader;
-  self->media_texture_request_func = request_func;
 }
 
 void
@@ -2794,7 +2838,7 @@ static void load_media_image_internal(NostrGtkNoteCardRow *self,
 
   /* App consumers inject the bounded media service.  It serves memory-cache
    * hits before applying the network privacy policy. */
-  if (self->media_texture_loader && self->media_texture_request_func) {
+  if (self->media_texture_loader) {
     GCancellable *cancellable = g_cancellable_new();
     g_autofree gchar *request_key = g_strdup_printf(
         "%s#%" G_GUINT64_FORMAT "#%p", url, self->binding_id, picture);
@@ -2808,8 +2852,10 @@ static void load_media_image_internal(NostrGtkNoteCardRow *self,
     ctx->binding_id = self->binding_id;
     ctx->row_height_before_hydration = gtk_widget_get_height(GTK_WIDGET(self));
 
-    self->media_texture_request_func(
-        self->media_texture_loader,
+    NostrGtkMediaTextureLoader *loader =
+        nostr_gtk_media_texture_loader_ref(self->media_texture_loader);
+    loader->request_func(
+        loader->loader,
         url,
         resource_class,
         MAX(gtk_widget_get_width(GTK_WIDGET(picture)), 1),
@@ -2819,6 +2865,7 @@ static void load_media_image_internal(NostrGtkNoteCardRow *self,
         on_injected_media_texture_ready,
         ctx,
         injected_media_load_ctx_free);
+    nostr_gtk_media_texture_loader_unref(loader);
     return;
   }
 
@@ -6461,7 +6508,7 @@ static void load_article_header_image(NostrGtkNoteCardRow *self, const char *url
   SoupMessage *msg = soup_message_new("GET", url);
   if (!msg) return;
 
-  SoupSession *session = gnostr_get_shared_soup_session();
+  g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
   if (!session) {
     g_object_unref(msg);
     return;
@@ -6830,7 +6877,7 @@ static void load_video_thumbnail(NostrGtkNoteCardRow *self, const char *thumb_ur
   ctx->url = g_strdup(thumb_url);
   g_object_weak_ref(G_OBJECT(ctx->picture), on_video_thumb_picture_destroyed, ctx);
 
-  SoupSession *session = gnostr_get_shared_soup_session();
+  g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
   if (!session) {
     g_object_unref(msg);
     video_thumb_ctx_free(ctx);
