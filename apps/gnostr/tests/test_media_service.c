@@ -81,6 +81,7 @@ make_service(guint64 inline_budget, gint64 negative_ttl_usec)
   config.memory_budget_bytes[GNOSTR_MEDIA_RESOURCE_INLINE] = inline_budget;
   config.memory_budget_bytes[GNOSTR_MEDIA_RESOURCE_OG_IMAGE] = 16;
   config.memory_budget_bytes[GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER] = 16;
+  config.memory_budget_bytes[GNOSTR_MEDIA_RESOURCE_AVATAR] = inline_budget;
   config.negative_cache_max_entries = 2;
   config.negative_cache_ttl_usec = negative_ttl_usec;
   config.max_in_flight = 8;
@@ -172,6 +173,28 @@ test_cache_respects_decoded_byte_budget(void)
                    ==, 32);
   g_assert_cmpuint(stats.classes[GNOSTR_MEDIA_RESOURCE_OG_IMAGE].resident_bytes,
                    ==, 16);
+
+  gnostr_media_service_test_store_texture(
+      service, "https://example.test/avatar-1.png",
+      GNOSTR_MEDIA_RESOURCE_AVATAR, 2, 2, first);
+  gnostr_media_service_test_store_texture(
+      service, "https://example.test/avatar-2.png",
+      GNOSTR_MEDIA_RESOURCE_AVATAR, 2, 2, second);
+  gnostr_media_service_test_store_texture(
+      service, "https://example.test/avatar-3.png",
+      GNOSTR_MEDIA_RESOURCE_AVATAR, 2, 2, third);
+  gnostr_media_service_get_stats(service, &stats);
+  g_assert_cmpuint(stats.classes[GNOSTR_MEDIA_RESOURCE_AVATAR].resident_bytes,
+                   ==, 32);
+  g_assert_cmpuint(stats.classes[GNOSTR_MEDIA_RESOURCE_AVATAR].entries, ==, 2);
+  g_assert_cmpuint(stats.classes[GNOSTR_MEDIA_RESOURCE_AVATAR].evictions, ==, 1);
+  g_assert_cmpuint(stats.classes[GNOSTR_MEDIA_RESOURCE_INLINE].entries, ==, 2);
+
+  g_autoptr(GdkTexture) cached =
+      gnostr_media_service_lookup_cached_texture(
+          service, "https://example.test/avatar-2.png",
+          GNOSTR_MEDIA_RESOURCE_AVATAR, 2, 2);
+  g_assert_nonnull(cached);
 }
 
 static void
@@ -325,6 +348,8 @@ test_in_flight_requests_are_coalesced(void)
 typedef struct {
   GMainLoop *loop;
   guint callbacks;
+  int texture_width;
+  int texture_height;
   GError *error;
 } SingleTextureFixture;
 
@@ -345,6 +370,10 @@ single_texture_ready(GnostrMediaService *service,
     fixture->error = g_error_new_literal(GNOSTR_MEDIA_ERROR,
                                          GNOSTR_MEDIA_ERROR_DECODE,
                                          "Callback returned no texture");
+  else {
+    fixture->texture_width = gdk_texture_get_width(texture);
+    fixture->texture_height = gdk_texture_get_height(texture);
+  }
   g_main_loop_quit(fixture->loop);
 }
 
@@ -360,13 +389,16 @@ single_texture_timeout(gpointer user_data)
 }
 
 static void
-request_texture_and_wait(GnostrMediaService *service,
-                         const char *url,
-                         SingleTextureFixture *fixture)
+request_texture_class_and_wait(GnostrMediaService *service,
+                               const char *url,
+                               GnostrMediaResourceClass resource_class,
+                               int width,
+                               int height,
+                               SingleTextureFixture *fixture)
 {
   fixture->loop = g_main_loop_new(NULL, FALSE);
   gnostr_media_service_request_texture(
-      service, url, GNOSTR_MEDIA_RESOURCE_INLINE, 32, 32, NULL,
+      service, url, resource_class, width, height, NULL,
       single_texture_ready, fixture, NULL);
   guint timeout_id = g_timeout_add_seconds(5, single_texture_timeout, fixture);
   g_main_loop_run(fixture->loop);
@@ -375,6 +407,65 @@ request_texture_and_wait(GnostrMediaService *service,
   g_main_loop_unref(fixture->loop);
   fixture->loop = NULL;
   g_assert_no_error(fixture->error);
+}
+
+static void
+request_texture_and_wait(GnostrMediaService *service,
+                         const char *url,
+                         SingleTextureFixture *fixture)
+{
+  request_texture_class_and_wait(service, url, GNOSTR_MEDIA_RESOURCE_INLINE,
+                                 32, 32, fixture);
+}
+
+static void
+test_avatar_decode_is_square_and_persisted(void)
+{
+  g_autoptr(SoupServer) server = soup_server_new(NULL, NULL);
+  DedupFixture server_fixture = { 0 };
+  soup_server_add_handler(server, "/avatar.png", server_image_handler,
+                          &server_fixture, NULL);
+  g_autoptr(GError) listen_error = NULL;
+  g_assert_true(soup_server_listen_local(server, 0,
+                                        SOUP_SERVER_LISTEN_IPV4_ONLY,
+                                        &listen_error));
+  g_assert_no_error(listen_error);
+  GSList *uris = soup_server_get_uris(server);
+  g_assert_nonnull(uris);
+  g_autofree char *base = g_uri_to_string(uris->data);
+  g_slist_free_full(uris, (GDestroyNotify)g_uri_unref);
+  g_autofree char *url = g_strconcat(base, "avatar.png", NULL);
+
+  GnostrMediaServiceConfig config;
+  gnostr_media_service_config_init(&config);
+  config.memory_budget_bytes[GNOSTR_MEDIA_RESOURCE_AVATAR] = 1024 * 1024;
+  config.disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_AVATAR] = 1024 * 1024;
+  g_autoptr(GnostrMediaService) service = new_test_service(&config);
+  SingleTextureFixture fixture = { 0 };
+
+  request_texture_class_and_wait(service, url, GNOSTR_MEDIA_RESOURCE_AVATAR,
+                                 32, 32, &fixture);
+  g_assert_cmpint(fixture.texture_width, ==, 32);
+  g_assert_cmpint(fixture.texture_height, ==, 32);
+  g_assert_cmpuint(server_fixture.server_requests, ==, 1);
+
+  GnostrMediaCacheStats stats;
+  gnostr_media_service_get_stats(service, &stats);
+  g_assert_cmpuint(stats.classes[GNOSTR_MEDIA_RESOURCE_AVATAR].entries, ==, 1);
+  g_assert_cmpuint(stats.classes[GNOSTR_MEDIA_RESOURCE_INLINE].entries, ==, 0);
+  g_autoptr(GdkTexture) cached =
+      gnostr_media_service_lookup_cached_texture(
+          service, url, GNOSTR_MEDIA_RESOURCE_AVATAR, 32, 32);
+  g_assert_nonnull(cached);
+
+  wait_for_disk_jobs(service);
+  g_autofree char *digest = g_compute_checksum_for_string(
+      G_CHECKSUM_SHA256, url, -1);
+  g_autofree char *path = g_build_filename(
+      test_disk_root, test_namespace, "avatar", digest, NULL);
+  g_assert_true(g_file_test(path, G_FILE_TEST_IS_REGULAR));
+  g_clear_error(&fixture.error);
+  soup_server_disconnect(server);
 }
 
 static void
@@ -943,6 +1034,8 @@ main(int argc, char **argv)
                   test_cache_respects_decoded_byte_budget);
   g_test_add_func("/media-service/negative/bounded-ttl",
                   test_negative_cache_is_bounded_and_expires);
+  g_test_add_func("/media-service/avatar/square-persisted",
+                  test_avatar_decode_is_square_and_persisted);
   g_test_add_func("/media-service/in-flight/dedup-independent-cancel",
                   test_in_flight_requests_are_coalesced);
   g_test_add_func("/media-service/disk/hit-before-network",

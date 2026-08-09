@@ -23,6 +23,7 @@ G_DECLARE_FINAL_TYPE(GnostrMediaService, gnostr_media_service,
  * @GNOSTR_MEDIA_RESOURCE_INLINE: inline note images
  * @GNOSTR_MEDIA_RESOURCE_OG_IMAGE: Open Graph preview images
  * @GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER: video poster images
+ * @GNOSTR_MEDIA_RESOURCE_AVATAR: profile and small identity avatars
  *
  * Independently-budgeted media cache classes.  Memory budgets account
  * decoded texture bytes; disk budgets account encoded response bytes.
@@ -31,6 +32,7 @@ typedef enum {
   GNOSTR_MEDIA_RESOURCE_INLINE = 0,
   GNOSTR_MEDIA_RESOURCE_OG_IMAGE,
   GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER,
+  GNOSTR_MEDIA_RESOURCE_AVATAR,
   GNOSTR_MEDIA_RESOURCE_N_CLASSES
 } GnostrMediaResourceClass;
 
@@ -135,9 +137,10 @@ typedef void (*GnostrMediaOgCallback)(GnostrMediaService *service,
  * @config: configuration to initialize
  *
  * Initializes production-safe defaults.  The default singleton additionally
- * replaces the three memory and disk budgets from org.gnostr.Client GSettings
- * and tracks later setting changes.  Each setting is a separate ceiling for
- * each tier, not a combined memory-plus-disk quota.
+ * replaces the inline, Open Graph, and video-poster memory and disk budgets
+ * from org.gnostr.Client GSettings and tracks later setting changes.  The
+ * avatar class retains its production-safe default.  Each setting is a
+ * separate ceiling for each tier, not a combined memory-plus-disk quota.
  */
 void gnostr_media_service_config_init(GnostrMediaServiceConfig *config);
 
@@ -190,6 +193,21 @@ void gnostr_media_service_request_texture_with_intent(
     GnostrMediaTextureCallback callback,
     gpointer user_data,
     GDestroyNotify user_data_destroy);
+
+/**
+ * gnostr_media_service_lookup_cached_texture:
+ *
+ * Looks up a decoded texture in the bounded in-memory tier.  This never does
+ * disk I/O; callers should use the asynchronous request API on a miss.
+ *
+ * Returns: (transfer full) (nullable): a referenced cached texture
+ */
+GdkTexture *gnostr_media_service_lookup_cached_texture(
+    GnostrMediaService *service,
+    const char *url,
+    GnostrMediaResourceClass resource_class,
+    int target_width,
+    int target_height);
 
 /**
  * gnostr_media_service_request_og_metadata:

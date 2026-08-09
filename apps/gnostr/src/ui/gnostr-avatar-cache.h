@@ -34,6 +34,7 @@ void gnostr_avatar_download_async_with_intent(const char *url,
                                               GtkWidget *initials,
                                               GnostrMediaFetchIntent intent);
 void gnostr_avatar_cache_set_startup_mode(gboolean enabled);
+guint gnostr_avatar_cache_size(void);
 
 #ifdef HAVE_SOUP3
 void gnostr_avatar_download_async_soup(const char *url, GtkWidget *image, GtkWidget *initials);

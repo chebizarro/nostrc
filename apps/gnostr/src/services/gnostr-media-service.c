@@ -34,9 +34,11 @@ gboolean gnostr_media_redirect_is_safe(const char *from_url,
 #define DEFAULT_INLINE_BUDGET (500 * MIB)
 #define DEFAULT_OG_IMAGE_BUDGET (64 * MIB)
 #define DEFAULT_VIDEO_POSTER_BUDGET (64 * MIB)
+#define DEFAULT_AVATAR_BUDGET (8 * MIB)
 #define DEFAULT_INLINE_BODY_CAP ((gsize)24 * 1024 * 1024)
 #define DEFAULT_OG_IMAGE_BODY_CAP ((gsize)12 * 1024 * 1024)
 #define DEFAULT_VIDEO_POSTER_BODY_CAP ((gsize)12 * 1024 * 1024)
+#define DEFAULT_AVATAR_BODY_CAP ((gsize)8 * 1024 * 1024)
 #define DEFAULT_OG_METADATA_BODY_CAP ((gsize)2 * 1024 * 1024)
 #define READ_CHUNK_SIZE ((gsize)64 * 1024)
 #define MAX_TARGET_DIMENSION 4096
@@ -247,9 +249,11 @@ gnostr_media_service_config_init(GnostrMediaServiceConfig *config)
   config->memory_budget_bytes[GNOSTR_MEDIA_RESOURCE_INLINE] = DEFAULT_INLINE_BUDGET;
   config->memory_budget_bytes[GNOSTR_MEDIA_RESOURCE_OG_IMAGE] = DEFAULT_OG_IMAGE_BUDGET;
   config->memory_budget_bytes[GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER] = DEFAULT_VIDEO_POSTER_BUDGET;
+  config->memory_budget_bytes[GNOSTR_MEDIA_RESOURCE_AVATAR] = DEFAULT_AVATAR_BUDGET;
   config->body_size_caps[GNOSTR_MEDIA_RESOURCE_INLINE] = DEFAULT_INLINE_BODY_CAP;
   config->body_size_caps[GNOSTR_MEDIA_RESOURCE_OG_IMAGE] = DEFAULT_OG_IMAGE_BODY_CAP;
   config->body_size_caps[GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER] = DEFAULT_VIDEO_POSTER_BODY_CAP;
+  config->body_size_caps[GNOSTR_MEDIA_RESOURCE_AVATAR] = DEFAULT_AVATAR_BODY_CAP;
   config->og_metadata_body_size_cap = DEFAULT_OG_METADATA_BODY_CAP;
   config->max_in_flight = 128;
   config->max_concurrent_downloads = 6;
@@ -262,6 +266,7 @@ gnostr_media_service_config_init(GnostrMediaServiceConfig *config)
   config->disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_INLINE] = DEFAULT_INLINE_BUDGET;
   config->disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_OG_IMAGE] = DEFAULT_OG_IMAGE_BUDGET;
   config->disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER] = DEFAULT_VIDEO_POSTER_BUDGET;
+  config->disk_budget_bytes[GNOSTR_MEDIA_RESOURCE_AVATAR] = DEFAULT_AVATAR_BUDGET;
   config->disk_worker_count = DEFAULT_DISK_WORKER_COUNT;
   config->disk_max_queued_jobs = DEFAULT_DISK_MAX_QUEUED_JOBS;
   config->disk_max_queued_bytes = DEFAULT_DISK_MAX_QUEUED_BYTES;
@@ -317,7 +322,7 @@ static const char *
 disk_class_name(GnostrMediaResourceClass resource_class)
 {
   static const char *names[GNOSTR_MEDIA_RESOURCE_N_CLASSES] = {
-    "inline", "og-image", "video-poster"
+    "inline", "og-image", "video-poster", "avatar"
   };
   return resource_class >= 0 && resource_class < GNOSTR_MEDIA_RESOURCE_N_CLASSES
       ? names[resource_class] : NULL;
@@ -1321,6 +1326,7 @@ pending_fail(PendingRequest *request,
 
 typedef struct {
   GBytes *bytes;
+  GnostrMediaResourceClass resource_class;
   int target_width;
   int target_height;
 } TextureTaskData;
@@ -1330,6 +1336,29 @@ texture_task_data_free(TextureTaskData *data)
 {
   g_bytes_unref(data->bytes);
   g_free(data);
+}
+
+static GdkPixbuf *
+pixbuf_scale_cover(GdkPixbuf *source, int target_width, int target_height)
+{
+  int source_width = gdk_pixbuf_get_width(source);
+  int source_height = gdk_pixbuf_get_height(source);
+  if (source_width <= 0 || source_height <= 0)
+    return NULL;
+
+  gboolean has_alpha = gdk_pixbuf_get_has_alpha(source);
+  GdkPixbuf *result = gdk_pixbuf_new(GDK_COLORSPACE_RGB, has_alpha, 8,
+                                     target_width, target_height);
+  if (!result)
+    return NULL;
+
+  double scale = MAX((double)target_width / source_width,
+                     (double)target_height / source_height);
+  double offset_x = (target_width - source_width * scale) / 2.0;
+  double offset_y = (target_height - source_height * scale) / 2.0;
+  gdk_pixbuf_scale(source, result, 0, 0, target_width, target_height,
+                   offset_x, offset_y, scale, scale, GDK_INTERP_BILINEAR);
+  return result;
 }
 
 static void
@@ -1349,16 +1378,33 @@ decode_texture_worker(GTask *task,
   g_autoptr(GInputStream) stream =
       g_memory_input_stream_new_from_bytes(data->bytes);
   g_autoptr(GError) error = NULL;
-  g_autoptr(GdkPixbuf) pixbuf =
-      gdk_pixbuf_new_from_stream_at_scale(stream,
-                                          data->target_width,
-                                          data->target_height,
-                                          TRUE,
-                                          cancellable,
-                                          &error);
-  if (!pixbuf) {
+  int decode_width = data->target_width;
+  int decode_height = data->target_height;
+  if (data->resource_class == GNOSTR_MEDIA_RESOURCE_AVATAR) {
+    int load_size = MIN(MAX(data->target_width, data->target_height) * 2, 512);
+    decode_width = load_size;
+    decode_height = load_size;
+  }
+  g_autoptr(GdkPixbuf) loaded =
+      gdk_pixbuf_new_from_stream_at_scale(stream, decode_width, decode_height,
+                                          TRUE, cancellable, &error);
+  if (!loaded) {
     g_task_return_error(task, g_steal_pointer(&error));
     return;
+  }
+
+  g_autoptr(GdkPixbuf) covered = NULL;
+  GdkPixbuf *pixbuf = loaded;
+  if (data->resource_class == GNOSTR_MEDIA_RESOURCE_AVATAR) {
+    covered = pixbuf_scale_cover(loaded, data->target_width,
+                                 data->target_height);
+    if (!covered) {
+      g_task_return_new_error(task, GNOSTR_MEDIA_ERROR,
+                              GNOSTR_MEDIA_ERROR_DECODE,
+                              "Failed to crop avatar texture");
+      return;
+    }
+    pixbuf = covered;
   }
 
   int width = gdk_pixbuf_get_width(pixbuf);
@@ -1460,6 +1506,7 @@ schedule_texture_decode(PendingRequest *request, Subscriber *subscriber)
 
   TextureTaskData *task_data = g_new0(TextureTaskData, 1);
   task_data->bytes = g_bytes_ref(request->body);
+  task_data->resource_class = job->resource_class;
   task_data->target_width = job->target_width;
   task_data->target_height = job->target_height;
 
@@ -3094,6 +3141,27 @@ reject_common(GnostrMediaService *self,
     return TRUE;
   }
   return FALSE;
+}
+
+GdkTexture *
+gnostr_media_service_lookup_cached_texture(
+    GnostrMediaService *self,
+    const char *url,
+    GnostrMediaResourceClass resource_class,
+    int target_width,
+    int target_height)
+{
+  g_return_val_if_fail(GNOSTR_IS_MEDIA_SERVICE(self), NULL);
+  g_return_val_if_fail(url != NULL && *url != '\0', NULL);
+  g_return_val_if_fail(resource_class >= 0 &&
+                       resource_class < GNOSTR_MEDIA_RESOURCE_N_CLASSES, NULL);
+  g_return_val_if_fail(target_width > 0 && target_height > 0 &&
+                       target_width <= MAX_TARGET_DIMENSION &&
+                       target_height <= MAX_TARGET_DIMENSION, NULL);
+
+  g_autofree char *cache_namespace = current_cache_namespace(self);
+  return texture_cache_lookup(self, resource_class, cache_namespace, url,
+                              target_width, target_height);
 }
 
 void
