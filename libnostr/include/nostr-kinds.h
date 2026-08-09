@@ -74,11 +74,6 @@
 #define NOSTR_KIND_COINJOIN_POOL                 2022
 #define NOSTR_KIND_COMMUNITY_POST_APPROVAL       4550
 
-/* NIP-90: Data vending machine */
-#define NOSTR_KIND_JOB_REQUEST                   5999
-#define NOSTR_KIND_JOB_RESULT                    6999
-#define NOSTR_KIND_JOB_FEEDBACK                  7000
-
 /* NIP-29: Relay-based groups (moderation) */
 #define NOSTR_KIND_SIMPLE_GROUP_ADD_USER         9000
 #define NOSTR_KIND_SIMPLE_GROUP_REMOVE_USER      9001

@@ -144,7 +144,7 @@ static GtkWidget *relay_manager_create_nip_badge(gint nip_num) {
     case 70: tooltip = "Protected Events"; break;
     case 78: tooltip = "Arbitrary custom app data"; break;
     case 89: tooltip = "Recommended Application Handlers"; break;
-    case 90: tooltip = "Data Vending Machine"; break;
+    case 90: tooltip = "Data Vending Machine (unrecommended)"; break;
     case 94: tooltip = "File Metadata"; break;
     case 96: tooltip = "HTTP File Storage Integration"; break;
     case 98: tooltip = "HTTP Auth"; break;
