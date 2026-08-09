@@ -247,6 +247,7 @@ typedef struct {
   char *nostrconnect_secret; /* URI ?secret= handshake token (ack validation) */
   char *client_seckey_hex;   /* nostrc-80qa: client private key hex for ECDH */
   char *relay_url;           /* Relay URL for get_public_key RPC */
+  NostrNip46Session *session; /* Owned while get_public_key is in flight */
 } Nip46ConnectCtx;
 
 /* Context for get_public_key RPC result - passed to main thread */
@@ -262,6 +263,7 @@ typedef struct {
 static void nip46_connect_ctx_free(gpointer data) {
   Nip46ConnectCtx *ctx = data;
   if (ctx) {
+    if (ctx->session) nostr_nip46_session_free(ctx->session);
     g_clear_object(&ctx->self);
     g_free(ctx->signer_pubkey_hex);
     g_free(ctx->nostrconnect_uri);
@@ -362,13 +364,14 @@ static void nip46_get_pubkey_thread(GTask *task,
   (void)cancellable;
   Nip46ConnectCtx *ctx = task_data;
 
+  if (g_task_return_error_if_cancelled(task)) return;
+
   g_message("[NIP46_LOGIN] *** STARTING get_public_key RPC THREAD ***");
   g_message("[NIP46_LOGIN] Context: signer_pubkey=%s", ctx->signer_pubkey_hex);
 
   /* Reuse the session configured in on_nip46_connect_success.
    * This avoids creating a completely new relay connection that may stall. */
-  GnostrLogin *self = ctx->self;
-  NostrNip46Session *session = self ? self->nip46_session : NULL;
+  NostrNip46Session *session = ctx->session;
   if (!session) {
     g_warning("[NIP46_LOGIN] No session available for get_public_key RPC");
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
@@ -406,6 +409,12 @@ static void on_get_pubkey_done(GObject *source, GAsyncResult *result, gpointer u
             user_pubkey_hex ? user_pubkey_hex : "(null)",
             error ? error->message : "(none)");
 
+  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    g_clear_error(&error);
+    nip46_connect_ctx_free(ctx);
+    return;
+  }
+
   /* hq-9ohcb: Now that the RPC is done (success or failure), stop the
    * listener that was kept alive during the get_public_key call. */
   if (ctx->self && GNOSTR_IS_LOGIN(ctx->self)) {
@@ -423,6 +432,10 @@ static void on_get_pubkey_done(GObject *source, GAsyncResult *result, gpointer u
     nip46_connect_ctx_free(ctx);
     return;
   }
+
+  GnostrLogin *self = ctx->self;
+  self->nip46_session = ctx->session;
+  ctx->session = NULL;
 
   /* Schedule final success handling on main thread */
   Nip46PubkeyCtx *pubkey_ctx = g_new0(Nip46PubkeyCtx, 1);
@@ -499,6 +512,8 @@ static gboolean on_nip46_connect_success(gpointer data) {
   task_ctx->nostrconnect_secret = g_strdup(ctx->nostrconnect_secret);
   task_ctx->client_seckey_hex = g_strdup(ctx->client_seckey_hex);
   task_ctx->relay_url = g_strdup(ctx->relay_url);
+  task_ctx->session = self->nip46_session;
+  self->nip46_session = NULL;
 
   /* Spawn async task for get_public_key RPC */
   GTask *task = g_task_new(NULL, self->cancellable, on_get_pubkey_done, task_ctx);
@@ -1117,6 +1132,12 @@ static void on_retry_bunker_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrLogin *self = GNOSTR_LOGIN(user_data);
   if (!GNOSTR_IS_LOGIN(self)) return;
+
+  if (self->cancellable) {
+    g_cancellable_cancel(self->cancellable);
+    g_clear_object(&self->cancellable);
+    self->cancellable = g_cancellable_new();
+  }
 
   /* Reset to idle state, then user can try again */
   set_bunker_status(self, BUNKER_STATUS_IDLE, "", NULL);
