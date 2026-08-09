@@ -184,7 +184,8 @@ transfer_capped_descriptor(GPtrArray *capped,
       include = state->event_count++ < MAX_EVENT_EMBED_DESCRIPTORS;
       break;
     case GN_CONTENT_DESCRIPTOR_NOSTR_PROFILE_REF:
-      break;
+      gn_content_descriptor_free(descriptor);
+      return;
   }
 
   if (include)

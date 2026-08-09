@@ -382,6 +382,50 @@ test_descriptor_caps_order_elision_and_reservations(void)
   g_object_unref(hydrator);
 }
 
+static void
+test_many_profile_mentions_keep_markup_without_descriptors(void)
+{
+  static const char *npub =
+    "npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg";
+  const guint mention_count = 256;
+  g_autoptr(GString) content = g_string_new(NULL);
+  for (guint i = 0; i < mention_count; i++)
+    g_string_append_printf(content, "nostr:%s ", npub);
+
+  g_autoptr(GnostrTimelineHydrator) hydrator =
+    gnostr_timeline_hydrator_new(6);
+  g_autoptr(GnostrTimelineBatch) batch =
+    batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 6);
+  batch_add(batch, 1, 100, 0x43, content->str, "Author", "author", NULL,
+            TRUE);
+
+  g_autoptr(GPtrArray) items =
+    gnostr_timeline_hydrator_hydrate_batch(hydrator, batch);
+  g_assert_nonnull(items);
+  g_assert_cmpuint(items->len, ==, 1);
+
+  GnostrTimelineItemViewModel *vm = g_ptr_array_index(items, 0);
+  const GPtrArray *descriptors =
+    gnostr_timeline_item_view_model_get_content_descriptors(vm);
+  g_assert_nonnull(descriptors);
+  g_assert_cmpuint(descriptors->len, ==, 0);
+  g_assert_cmpuint(
+    gnostr_timeline_item_view_model_get_descriptor_overflow_count(vm), ==, 0);
+
+  const char *markup =
+    gnostr_timeline_item_view_model_get_rendered_content(vm);
+  g_assert_nonnull(markup);
+  g_autofree char *anchor =
+    g_strdup_printf("<a href=\"nostr:%s\">", npub);
+  guint anchor_count = 0;
+  const char *cursor = markup;
+  while ((cursor = strstr(cursor, anchor)) != NULL) {
+    anchor_count++;
+    cursor += strlen(anchor);
+  }
+  g_assert_cmpuint(anchor_count, ==, mention_count);
+}
+
 typedef struct {
   gboolean done;
   gboolean got_items;
@@ -545,6 +589,8 @@ main(int argc,
                   test_initial_text_reservation_uses_elided_parse_output);
   g_test_add_func("/gnostr/timeline-hydrator/descriptor-caps-order-elision-reservations",
                   test_descriptor_caps_order_elision_and_reservations);
+  g_test_add_func("/gnostr/timeline-hydrator/many-profile-mentions",
+                  test_many_profile_mentions_keep_markup_without_descriptors);
   g_test_add_func("/gnostr/timeline-hydrator/stale-generation-drops",
                   test_stale_generation_drops_sync_and_async);
   g_test_add_func("/gnostr/timeline-hydrator/async-cancellation",
