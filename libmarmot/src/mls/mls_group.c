@@ -1331,20 +1331,18 @@ mls_group_add_member(MlsGroup *group,
     uint8_t commit_secret[MLS_HASH_LEN];
     if (derive_commit_secret(root_path_secret, true, commit_secret) != 0) {
         free(ct_input);
-        mls_message_clear(&wire_msg);
         mls_tls_buf_free(&commit_buf);
         mls_commit_clear(&commit);
-        return MARMOT_ERR_INTERNAL;
+        goto fail_wire_msg_internal;
     }
 
     /* Update confirmed transcript hash: H(interim_old || transcript_input) */
     MlsTlsBuf conf_buf;
     if (mls_tls_buf_init(&conf_buf, MLS_HASH_LEN + ct_input_len) != 0) {
         free(ct_input);
-        mls_message_clear(&wire_msg);
         mls_tls_buf_free(&commit_buf);
         mls_commit_clear(&commit);
-        return MARMOT_ERR_MEMORY;
+        goto fail_wire_msg_memory;
     }
     mls_tls_buf_append(&conf_buf, group->interim_transcript_hash, MLS_HASH_LEN);
     mls_tls_buf_append(&conf_buf, ct_input, ct_input_len);
@@ -1362,7 +1360,7 @@ mls_group_add_member(MlsGroup *group,
     if (group_derive_epoch(group, prev_init, commit_secret, NULL) != 0) {
         mls_tls_buf_free(&commit_buf);
         mls_commit_clear(&commit);
-        return MARMOT_ERR_INTERNAL;
+        goto fail_wire_msg_internal;
     }
 
     /* Compute confirmation tag */
@@ -1372,7 +1370,7 @@ mls_group_add_member(MlsGroup *group,
                                  confirmation_tag) != 0) {
         mls_tls_buf_free(&commit_buf);
         mls_commit_clear(&commit);
-        return MARMOT_ERR_INTERNAL;
+        goto fail_wire_msg_internal;
     }
 
     /* Update interim transcript hash: H(confirmed || confirmation_tag) */
@@ -1380,7 +1378,7 @@ mls_group_add_member(MlsGroup *group,
     if (mls_tls_buf_init(&int_buf, MLS_HASH_LEN * 2) != 0) {
         mls_tls_buf_free(&commit_buf);
         mls_commit_clear(&commit);
-        return MARMOT_ERR_MEMORY;
+        goto fail_wire_msg_memory;
     }
     mls_tls_buf_append(&int_buf, group->confirmed_transcript_hash, MLS_HASH_LEN);
     mls_tls_write_opaque32(&int_buf, confirmation_tag, MLS_HASH_LEN);
@@ -1392,7 +1390,7 @@ mls_group_add_member(MlsGroup *group,
     if (mls_tls_buf_init(&welcome_buf, 2048) != 0) {
         mls_tls_buf_free(&commit_buf);
         mls_commit_clear(&commit);
-        return MARMOT_ERR_MEMORY;
+        goto fail_wire_msg_memory;
     }
 
     /* Welcome = GroupInfo encrypted to joiner's init_key */
@@ -1403,7 +1401,7 @@ mls_group_add_member(MlsGroup *group,
             mls_tls_buf_free(&commit_buf);
             mls_tls_buf_free(&welcome_buf);
             mls_commit_clear(&commit);
-            return MARMOT_ERR_INTERNAL;
+            goto fail_wire_msg_internal;
         }
         memcpy(gi.confirmation_tag, confirmation_tag, MLS_HASH_LEN);
         if (mls_group_info_sign_local(&gi, group->own_signature_key) != 0) {
@@ -1411,7 +1409,7 @@ mls_group_add_member(MlsGroup *group,
             mls_tls_buf_free(&commit_buf);
             mls_tls_buf_free(&welcome_buf);
             mls_commit_clear(&commit);
-            return MARMOT_ERR_INTERNAL;
+            goto fail_wire_msg_internal;
         }
 
         /* Serialize the signed GroupInfo */
@@ -1421,7 +1419,7 @@ mls_group_add_member(MlsGroup *group,
             mls_tls_buf_free(&commit_buf);
             mls_tls_buf_free(&welcome_buf);
             mls_commit_clear(&commit);
-            return MARMOT_ERR_INTERNAL;
+            goto fail_wire_msg_internal;
         }
         if (mls_group_info_serialize(&gi, &gi_buf) != 0) {
             mls_group_info_clear(&gi);
@@ -1429,7 +1427,7 @@ mls_group_add_member(MlsGroup *group,
             mls_tls_buf_free(&commit_buf);
             mls_tls_buf_free(&welcome_buf);
             mls_commit_clear(&commit);
-            return MARMOT_ERR_INTERNAL;
+            goto fail_wire_msg_internal;
         }
 
         /* Encrypt GroupInfo using welcome_secret derived from joiner_secret */
@@ -1446,7 +1444,7 @@ mls_group_add_member(MlsGroup *group,
             mls_tls_buf_free(&commit_buf);
             mls_tls_buf_free(&welcome_buf);
             mls_commit_clear(&commit);
-            return MARMOT_ERR_INTERNAL;
+            goto fail_wire_msg_internal;
         }
 
         uint8_t *enc_gi = malloc(gi_buf.len + MLS_AEAD_TAG_LEN);
@@ -1456,7 +1454,7 @@ mls_group_add_member(MlsGroup *group,
             mls_tls_buf_free(&commit_buf);
             mls_tls_buf_free(&welcome_buf);
             mls_commit_clear(&commit);
-            return MARMOT_ERR_MEMORY;
+            goto fail_wire_msg_memory;
         }
         size_t enc_gi_len = 0;
         if (mls_crypto_aead_encrypt(enc_gi, &enc_gi_len, welcome_key, welcome_nonce,
@@ -1467,7 +1465,7 @@ mls_group_add_member(MlsGroup *group,
             mls_tls_buf_free(&commit_buf);
             mls_tls_buf_free(&welcome_buf);
             mls_commit_clear(&commit);
-            return MARMOT_ERR_INTERNAL;
+            goto fail_wire_msg_internal;
         }
 
         uint8_t *group_secrets = NULL;
@@ -1480,7 +1478,7 @@ mls_group_add_member(MlsGroup *group,
             mls_tls_buf_free(&commit_buf);
             mls_tls_buf_free(&welcome_buf);
             mls_commit_clear(&commit);
-            return MARMOT_ERR_INTERNAL;
+            goto fail_wire_msg_internal;
         }
 
         uint8_t kem_enc[MLS_KEM_ENC_LEN];
@@ -1493,7 +1491,7 @@ mls_group_add_member(MlsGroup *group,
             mls_tls_buf_free(&commit_buf);
             mls_tls_buf_free(&welcome_buf);
             mls_commit_clear(&commit);
-            return MARMOT_ERR_MEMORY;
+            goto fail_wire_msg_memory;
         }
         size_t enc_js_len = 0;
         if (hpke_encrypt_with_label(kem_enc, enc_js, &enc_js_len, kp->init_key,
@@ -1507,7 +1505,7 @@ mls_group_add_member(MlsGroup *group,
             mls_tls_buf_free(&commit_buf);
             mls_tls_buf_free(&welcome_buf);
             mls_commit_clear(&commit);
-            return MARMOT_ERR_INTERNAL;
+            goto fail_wire_msg_internal;
         }
         free(group_secrets);
 
@@ -1530,7 +1528,7 @@ mls_group_add_member(MlsGroup *group,
                 mls_tls_buf_free(&commit_buf);
                 mls_tls_buf_free(&welcome_buf);
                 mls_commit_clear(&commit);
-                return MARMOT_ERR_INTERNAL;
+                goto fail_wire_msg_internal;
             }
             uint8_t kp_ref[MLS_HASH_LEN];
             if (mls_key_package_ref(kp, kp_ref) != 0) {
@@ -1542,7 +1540,7 @@ mls_group_add_member(MlsGroup *group,
                 mls_tls_buf_free(&welcome_buf);
                 mls_tls_buf_free(&secrets_vec);
                 mls_commit_clear(&commit);
-                return MARMOT_ERR_INTERNAL;
+                goto fail_wire_msg_internal;
             }
             if (mls_tls_write_opaque16(&secrets_vec, kp_ref, MLS_HASH_LEN) != 0 ||
                 mls_tls_write_opaque16(&secrets_vec, kem_enc, MLS_KEM_ENC_LEN) != 0 ||
@@ -1556,7 +1554,7 @@ mls_group_add_member(MlsGroup *group,
                 mls_tls_buf_free(&welcome_buf);
                 mls_tls_buf_free(&secrets_vec);
                 mls_commit_clear(&commit);
-                return MARMOT_ERR_INTERNAL;
+                goto fail_wire_msg_internal;
             }
             mls_tls_buf_free(&secrets_vec);
         }
@@ -1594,6 +1592,16 @@ mls_group_add_member(MlsGroup *group,
     sodium_memzero(commit_secret, sizeof(commit_secret));
 
     return 0;
+
+fail_wire_msg_memory:
+    rc = MARMOT_ERR_MEMORY;
+    goto fail_wire_msg;
+fail_wire_msg_internal:
+    rc = MARMOT_ERR_INTERNAL;
+fail_wire_msg:
+    mls_message_clear(&wire_msg);
+    free(pre_gc);
+    return rc;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
