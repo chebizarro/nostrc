@@ -197,9 +197,96 @@ gnostr_timeline_snapshot_row_new_from_view_model(GnostrTimelineItemViewModel *vi
 {
   g_return_val_if_fail(GNOSTR_IS_TIMELINE_ITEM_VIEW_MODEL(view_model), NULL);
 
+  /* Filter out profile reference descriptors before creating snapshot row
+   * as they are not needed after hydration and rich-content realization ignores them */
+  GnostrTimelineParsedContent *parsed_content =
+    gnostr_timeline_item_view_model_get_parsed_content(view_model);
+  GPtrArray *filtered_descriptors = NULL;
+  if (parsed_content && parsed_content->descriptors) {
+    filtered_descriptors = g_ptr_array_new_with_free_func((GDestroyNotify)gn_content_descriptor_free);
+    for (guint i = 0; i < parsed_content->descriptors->len; i++) {
+      GnContentDescriptor *descriptor = g_ptr_array_index(parsed_content->descriptors, i);
+      /* Skip profile reference descriptors as they are not needed in snapshot state */
+      if (descriptor && descriptor->type == GN_CONTENT_DESCRIPTOR_NOSTR_PROFILE_REF) {
+        gn_content_descriptor_free(descriptor);
+        continue;
+      }
+      g_ptr_array_add(filtered_descriptors, descriptor);
+    }
+  }
+
   GnostrTimelineSnapshotRow *row =
     g_object_new(GNOSTR_TYPE_TIMELINE_SNAPSHOT_ROW, NULL);
-  row->view_model = g_object_ref(view_model);
+  
+  /* Create a new view model with filtered descriptors */
+  GnostrTimelineItemViewModelSpec spec;
+  memset(&spec, 0, sizeof(spec));
+  spec.event_id = gnostr_timeline_item_view_model_get_event_id(view_model);
+  spec.note_key = gnostr_timeline_item_view_model_get_note_key(view_model);
+  spec.note_key_u64 = gnostr_timeline_item_view_model_get_note_key_u64(view_model);
+  spec.pubkey = gnostr_timeline_item_view_model_get_pubkey(view_model);
+  spec.created_at = gnostr_timeline_item_view_model_get_created_at(view_model);
+  spec.tie_breaker = gnostr_timeline_item_view_model_get_tie_breaker(view_model);
+  spec.kind = gnostr_timeline_item_view_model_get_kind(view_model);
+  spec.content = gnostr_timeline_item_view_model_get_content(view_model);
+  spec.rendered_content = gnostr_timeline_item_view_model_get_rendered_content(view_model);
+  spec.display_name = gnostr_timeline_item_view_model_get_display_name(view_model);
+  spec.handle = gnostr_timeline_item_view_model_get_handle(view_model);
+  spec.avatar_url = gnostr_timeline_item_view_model_get_avatar_url(view_model);
+  spec.avatar_fallback_label = gnostr_timeline_item_view_model_get_avatar_fallback_label(view_model);
+  spec.nip05 = gnostr_timeline_item_view_model_get_nip05(view_model);
+  spec.has_profile = gnostr_timeline_item_view_model_get_has_profile(view_model);
+  spec.avatar_state = gnostr_timeline_item_view_model_get_avatar_state(view_model);
+  spec.root_id = gnostr_timeline_item_view_model_get_root_id(view_model);
+  spec.reply_id = gnostr_timeline_item_view_model_get_reply_id(view_model);
+  spec.parent_pubkey = gnostr_timeline_item_view_model_get_parent_pubkey(view_model);
+  spec.parent_display_name = gnostr_timeline_item_view_model_get_parent_display_name(view_model);
+  spec.parent_avatar_url = gnostr_timeline_item_view_model_get_parent_avatar_url(view_model);
+  spec.parent_nip05 = gnostr_timeline_item_view_model_get_parent_nip05(view_model);
+  spec.parent_fallback_label = gnostr_timeline_item_view_model_get_parent_fallback_label(view_model);
+  spec.parent_available = gnostr_timeline_item_view_model_get_parent_available(view_model);
+  spec.quoted_event_id = gnostr_timeline_item_view_model_get_quoted_event_id(view_model);
+  spec.quote_state = gnostr_timeline_item_view_model_get_quote_state(view_model);
+  spec.quoted_pubkey = gnostr_timeline_item_view_model_get_quoted_pubkey(view_model);
+  spec.quoted_display_name = gnostr_timeline_item_view_model_get_quoted_display_name(view_model);
+  spec.quoted_content = gnostr_timeline_item_view_model_get_quoted_content(view_model);
+  spec.quoted_rendered_content = gnostr_timeline_item_view_model_get_quoted_rendered_content(view_model);
+  spec.quoted_created_at = gnostr_timeline_item_view_model_get_quoted_created_at(view_model);
+  spec.quoted_kind = gnostr_timeline_item_view_model_get_quoted_kind(view_model);
+  spec.reposted_event_id = gnostr_timeline_item_view_model_get_reposted_event_id(view_model);
+  spec.repost_state = gnostr_timeline_item_view_model_get_repost_state(view_model);
+  spec.reposted_pubkey = gnostr_timeline_item_view_model_get_reposted_pubkey(view_model);
+  spec.reposted_display_name = gnostr_timeline_item_view_model_get_reposted_display_name(view_model);
+  spec.reposted_avatar_url = gnostr_timeline_item_view_model_get_reposted_avatar_url(view_model);
+  spec.reposted_nip05 = gnostr_timeline_item_view_model_get_reposted_nip05(view_model);
+  spec.reposted_content = gnostr_timeline_item_view_model_get_reposted_content(view_model);
+  spec.reposted_rendered_content = gnostr_timeline_item_view_model_get_reposted_rendered_content(view_model);
+  spec.reposted_created_at = gnostr_timeline_item_view_model_get_reposted_created_at(view_model);
+  spec.reposted_kind = gnostr_timeline_item_view_model_get_reposted_kind(view_model);
+  spec.content_warning = gnostr_timeline_item_view_model_get_content_warning(view_model);
+  spec.relay_hint = gnostr_timeline_item_view_model_get_relay_hint(view_model);
+  spec.action_event_id = gnostr_timeline_item_view_model_get_action_event_id(view_model);
+  spec.action_pubkey = gnostr_timeline_item_view_model_get_action_pubkey(view_model);
+  spec.action_is_own_note = gnostr_timeline_item_view_model_get_action_is_own_note(view_model);
+  spec.action_logged_in = gnostr_timeline_item_view_model_get_action_logged_in(view_model);
+  spec.action_is_bookmarked = gnostr_timeline_item_view_model_get_action_is_bookmarked(view_model);
+  spec.action_is_pinned = gnostr_timeline_item_view_model_get_action_is_pinned(view_model);
+  spec.action_zap_target = gnostr_timeline_item_view_model_get_action_zap_target(view_model);
+  spec.like_count = gnostr_timeline_item_view_model_get_like_count(view_model);
+  spec.is_liked = gnostr_timeline_item_view_model_get_is_liked(view_model);
+  spec.is_reposted = gnostr_timeline_item_view_model_get_is_reposted(view_model);
+  spec.is_replied = gnostr_timeline_item_view_model_get_is_replied(view_model);
+  spec.is_zapped = gnostr_timeline_item_view_model_get_is_zapped(view_model);
+  spec.repost_count = gnostr_timeline_item_view_model_get_repost_count(view_model);
+  spec.reply_count = gnostr_timeline_item_view_model_get_reply_count(view_model);
+  spec.zap_count = gnostr_timeline_item_view_model_get_zap_count(view_model);
+  spec.zap_total_msat = gnostr_timeline_item_view_model_get_zap_total_msat(view_model);
+  spec.moderation_state = gnostr_timeline_item_view_model_get_moderation_state(view_model);
+  spec.content_descriptors = filtered_descriptors;
+  spec.descriptor_overflow_count = gnostr_timeline_item_view_model_get_descriptor_overflow_count(view_model);
+  
+  GnostrTimelineItemViewModel *filtered_view_model = gnostr_timeline_item_view_model_new(&spec);
+  row->view_model = filtered_view_model;
   row->estimated_height = estimated_height;
   row->measured_height = measured_height;
   row->effective_height = effective_height > 0.0 ? effective_height : estimated_height;
@@ -209,6 +296,7 @@ gnostr_timeline_snapshot_row_new_from_view_model(GnostrTimelineItemViewModel *vi
   row->width_bucket = width_bucket;
   row->layout_signature = g_strdup(layout_signature);
   row->geometry_measured = geometry_measured;
+  
   return row;
 }
 

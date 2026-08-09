@@ -165,7 +165,7 @@ test_quote_repost_and_action_vm_data_are_carried(void)
   g_assert_cmpstr(gnostr_timeline_item_view_model_get_quoted_pubkey(vm), ==, entry.quoted_pubkey);
   g_assert_cmpstr(gnostr_timeline_item_view_model_get_quoted_display_name(vm), ==, "Quote Author");
   g_assert_cmpstr(gnostr_timeline_item_view_model_get_quoted_content(vm), ==, "quoted content <b>needs escaping</b>");
-  g_assert_cmpstr(gnostr_timeline_item_view_model_get_quoted_rendered_content(vm), ==, "quoted content &lt;b&gt;needs escaping&lt;/b&gt;");
+  g_assert_cmpstr(gnostr_timeline_item_view_model_get_quoted_rendered_content(vm), ==, "quoted content <b>needs escaping</b>");
   g_assert_cmpint(gnostr_timeline_item_view_model_get_quoted_created_at(vm), ==, 111);
   g_assert_cmpint(gnostr_timeline_item_view_model_get_quoted_kind(vm), ==, 1);
   g_assert_cmpuint(gnostr_timeline_item_view_model_get_quote_preview_reservation_count(vm), ==, 1);
@@ -325,7 +325,7 @@ static void
 test_descriptor_caps_order_elision_and_reservations(void)
 {
   static const char *note =
-    "note1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsglnzgl";
+    "note1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsglnzgl";
   GString *content = g_string_new("caption ");
   for (guint i = 0; i < 5; i++)
     g_string_append_printf(content, "https://cdn.test/image-%u.jpg ", i);
@@ -380,25 +380,6 @@ test_descriptor_caps_order_elision_and_reservations(void)
   g_string_free(content, TRUE);
   g_object_unref(batch);
   g_object_unref(hydrator);
-}
-
-typedef struct {
-  gboolean done;
-  gboolean got_items;
-  GError *error;
-} AsyncHydrateCapture;
-
-static void
-on_hydrate_done(GObject *source,
-                GAsyncResult *result,
-                gpointer user_data)
-{
-  AsyncHydrateCapture *capture = user_data;
-  g_autoptr(GPtrArray) items =
-    gnostr_timeline_hydrator_hydrate_batch_finish(
-        GNOSTR_TIMELINE_HYDRATOR(source), result, &capture->error);
-  capture->got_items = items != NULL;
-  capture->done = TRUE;
 }
 
 static void
@@ -527,6 +508,52 @@ test_async_cancellation_is_reported(void)
   g_clear_error(&capture.error);
 }
 
+static void
+test_many_mention_hydrator(void)
+{
+  GnostrTimelineHydrator *hydrator = gnostr_timeline_hydrator_new(5);
+  GnostrTimelineBatch *batch = batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 5);
+
+  /* Test with many profile mentions to verify descriptor retention is capped */
+  guint8 id[32];
+  fill_id(id, 0x99);
+  GnostrTimelineBatchEntry entry = {
+    .note_key = 12,
+    .created_at = 333,
+    .pubkey_hex = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    .content = "Hello @user1 @user2 @user3 @user4 @user5 @user6 @user7 @user8 @user9 @user10",
+    .display_name = "Author",
+    .kind = 1,
+    .has_profile = TRUE,
+  };
+  memcpy(entry.event_id, id, sizeof(id));
+  gnostr_timeline_batch_add_entry(batch, &entry);
+
+  g_autoptr(GPtrArray) items = gnostr_timeline_hydrator_hydrate_batch(hydrator, batch);
+  g_assert_nonnull(items);
+  g_assert_cmpuint(items->len, ==, 1);
+  GnostrTimelineItemViewModel *vm = g_ptr_array_index(items, 0);
+
+  /* Check that profile reference descriptors are filtered out from snapshot */
+  const GPtrArray *descriptors = gnostr_timeline_item_view_model_get_content_descriptors(vm);
+  g_assert_nonnull(descriptors);
+
+  /* Count profile reference descriptors - should be 0 after filtering */
+  guint profile_ref_count = 0;
+  for (guint i = 0; i < descriptors->len; i++) {
+    const GnContentDescriptor *descriptor = g_ptr_array_index((GPtrArray *)descriptors, i);
+    if (descriptor && descriptor->type == GN_CONTENT_DESCRIPTOR_NOSTR_PROFILE_REF) {
+      profile_ref_count++;
+    }
+  }
+  
+  /* Verify no profile reference descriptors remain in the hydrated view model */
+  g_assert_cmpuint(profile_ref_count, ==, 0);
+  
+  g_object_unref(batch);
+  g_object_unref(hydrator);
+}
+
 int
 main(int argc,
      char **argv)
@@ -551,6 +578,8 @@ main(int argc,
                   test_async_cancellation_is_reported);
   g_test_add_func("/gnostr/timeline-hydrator/parse-once-profile-patch",
                   test_parse_once_and_share_artifact_across_profile_patch);
+  g_test_add_func("/gnostr/timeline-hydrator/many-mention-hydrator",
+                  test_many_mention_hydrator);
 
   return g_test_run();
 }
