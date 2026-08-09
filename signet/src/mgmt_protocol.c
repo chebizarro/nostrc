@@ -523,23 +523,90 @@ static void signet_mgmt_publish_contextvm_reply(SignetMgmtHandler *h,
   }
 }
 
-/* Publish a canonical NIP-59 gift-wrapped ContextVM result. */
+typedef enum {
+  SIGNET_MGMT_REPLY_LEGACY_ACK,
+  SIGNET_MGMT_REPLY_CONTEXTVM,
+} SignetMgmtReplyTransport;
+
+/* Publish either a legacy encrypted kind-28090 ack or a canonical NIP-59
+ * gift-wrapped ContextVM result, as selected by the current invocation. */
 static void signet_mgmt_publish_ack(SignetMgmtHandler *h,
                                     const char *recipient_pubkey_hex,
                                     const char *ack_content,
                                     const char *ref_event_id_hex,
-                                    int64_t now) {
-  (void)ref_event_id_hex;
-  (void)now;
-  signet_mgmt_publish_contextvm_reply(h, recipient_pubkey_hex, ack_content);
+                                    int64_t now,
+                                    SignetMgmtReplyTransport reply_transport) {
+  if (!h || !h->relays || !h->bunker_sk_hex || !ack_content) return;
+
+  if (reply_transport == SIGNET_MGMT_REPLY_CONTEXTVM) {
+    signet_mgmt_publish_contextvm_reply(h, recipient_pubkey_hex, ack_content);
+    return;
+  }
+
+  NostrEvent *evt = nostr_event_new();
+  if (!evt) return;
+
+  nostr_event_set_kind(evt, 28090);
+  nostr_event_set_created_at(evt, now);
+
+  char *encrypted_content = NULL;
+  if (recipient_pubkey_hex && recipient_pubkey_hex[0]) {
+    uint8_t sk[32] = {0};
+    uint8_t pk[32] = {0};
+    if (signet_mgmt_hex_to_bytes32(h->bunker_sk_hex, sk) &&
+        signet_mgmt_hex_to_bytes32(recipient_pubkey_hex, pk)) {
+      if (nostr_nip44_encrypt_v2(sk, pk,
+                                 (const uint8_t *)ack_content,
+                                 strlen(ack_content),
+                                 &encrypted_content) != 0) {
+        encrypted_content = NULL;
+      }
+    }
+    signet_mgmt_memzero(sk, sizeof(sk));
+  }
+
+  /* Fail closed rather than exposing management results in plaintext. */
+  if (!encrypted_content) {
+    g_warning("[signetd] mgmt ack encryption failed; refusing to publish plaintext ack");
+    nostr_event_free(evt);
+    return;
+  }
+  nostr_event_set_content(evt, encrypted_content);
+
+  NostrTags *tags = nostr_tags_new(0);
+  if (tags) {
+    if (recipient_pubkey_hex) {
+      NostrTag *p_tag = nostr_tag_new("p", recipient_pubkey_hex, NULL);
+      if (p_tag) nostr_tags_append(tags, p_tag);
+    }
+    if (ref_event_id_hex) {
+      NostrTag *e_tag = nostr_tag_new("e", ref_event_id_hex, NULL);
+      if (e_tag) nostr_tags_append(tags, e_tag);
+    }
+    nostr_event_set_tags(evt, tags);
+  }
+
+  if (nostr_event_sign(evt, h->bunker_sk_hex) == 0) {
+    char *json = nostr_event_serialize_compact(evt);
+    if (json) {
+      (void)signet_relay_pool_publish_event_json(h->relays, json);
+      free(json);
+    }
+  }
+
+  secure_wipe(encrypted_content, strlen(encrypted_content));
+  free(encrypted_content);
+  nostr_event_free(evt);
 }
 
-int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
-                                       const char *event_pubkey_hex,
-                                       const char *content_json,
-                                       SignetMgmtOp op,
-                                       const char *event_id_hex,
-                                       int64_t now);
+static int signet_mgmt_handler_handle_request_ex(
+    SignetMgmtHandler *h,
+    const char *event_pubkey_hex,
+    const char *content_json,
+    SignetMgmtOp op,
+    const char *event_id_hex,
+    int64_t now,
+    SignetMgmtReplyTransport reply_transport);
 
 static SignetMgmtOp signet_mgmt_op_from_contextvm_method(const char *method) {
   if (!method) return SIGNET_MGMT_OP_UNKNOWN;
@@ -690,7 +757,8 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
     signet_mgmt_chain_audit(h, "mgmt_unauthorized", event_pubkey_hex, NULL,
                             "deny", "not_provisioner", now);
     char *err = g_strdup("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32002,\"message\":\"sender is not an authorized Signet provisioner\"},\"id\":null}");
-    signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now);
+    signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now,
+                            SIGNET_MGMT_REPLY_CONTEXTVM);
     g_free(err);
     if (params_json) { secure_wipe(params_json, strlen(params_json)); g_free(params_json); }
     return -1;
@@ -698,7 +766,8 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
 
   if (!params_json || op == SIGNET_MGMT_OP_UNKNOWN) {
     char *err = g_strdup("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32601,\"message\":\"unknown Signet ContextVM method\"},\"id\":null}");
-    signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now);
+    signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now,
+                            SIGNET_MGMT_REPLY_CONTEXTVM);
     g_free(err);
     if (params_json) { secure_wipe(params_json, strlen(params_json)); g_free(params_json); }
     return -1;
@@ -716,8 +785,9 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
   secure_wipe(params_json, strlen(params_json));
   g_free(params_json);
   if (!encrypted) return -1;
-  int rc = signet_mgmt_handler_handle_request(h, event_pubkey_hex, encrypted,
-                                              op, event_id_hex, now);
+  int rc = signet_mgmt_handler_handle_request_ex(
+      h, event_pubkey_hex, encrypted, op, event_id_hex, now,
+      SIGNET_MGMT_REPLY_CONTEXTVM);
   free(encrypted);
   return rc;
 }
@@ -956,12 +1026,14 @@ static int signet_mgmt_decode_secret_payload(const char *payload_b64,
   return 0;
 }
 
-int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
-                                       const char *event_pubkey_hex,
-                                       const char *content_json,
-                                       SignetMgmtOp op,
-                                       const char *event_id_hex,
-                                       int64_t now) {
+static int signet_mgmt_handler_handle_request_ex(
+    SignetMgmtHandler *h,
+    const char *event_pubkey_hex,
+    const char *content_json,
+    SignetMgmtOp op,
+    const char *event_id_hex,
+    int64_t now,
+    SignetMgmtReplyTransport reply_transport) {
   if (!h) return -1;
 
   /* 1) Authorization check. agent/reissue-connect alone also admits the
@@ -1031,7 +1103,8 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
     char *ack = signet_mgmt_build_ack(NULL, false, "parse_error",
                                        parse_err ? parse_err : "invalid request", NULL);
     if (ack) {
-      signet_mgmt_publish_ack(h, event_pubkey_hex, ack, event_id_hex, now);
+      signet_mgmt_publish_ack(h, event_pubkey_hex, ack, event_id_hex, now,
+                              reply_transport);
       g_free(ack);
     }
     g_free(parse_err);
@@ -1063,7 +1136,8 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
                                          "sender is neither a provisioner nor the target agent",
                                          NULL);
       if (uack) {
-        signet_mgmt_publish_ack(h, event_pubkey_hex, uack, event_id_hex, now);
+        signet_mgmt_publish_ack(h, event_pubkey_hex, uack, event_id_hex, now,
+                                reply_transport);
         g_free(uack);
       }
       if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
@@ -1089,7 +1163,8 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
       char *dack = signet_mgmt_build_ack(req.request_id, false, "deny_listed",
                                          "agent or sender is deny-listed", NULL);
       if (dack) {
-        signet_mgmt_publish_ack(h, event_pubkey_hex, dack, event_id_hex, now);
+        signet_mgmt_publish_ack(h, event_pubkey_hex, dack, event_id_hex, now,
+                                reply_transport);
         g_free(dack);
       }
       signet_mgmt_publish_cas_audit(h, "reissue_connect", req.agent_id,
@@ -1139,7 +1214,8 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
                                          "management event rejected by replay protection",
                                          NULL);
       if (rack) {
-        signet_mgmt_publish_ack(h, event_pubkey_hex, rack, event_id_hex, now);
+        signet_mgmt_publish_ack(h, event_pubkey_hex, rack, event_id_hex, now,
+                                reply_transport);
         g_free(rack);
       }
       if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
@@ -1901,7 +1977,8 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
   /* 4) Publish ack. */
   char *ack = signet_mgmt_build_ack(req.request_id, ok, code, message, result);
   if (ack) {
-    signet_mgmt_publish_ack(h, event_pubkey_hex, ack, event_id_hex, now);
+    signet_mgmt_publish_ack(h, event_pubkey_hex, ack, event_id_hex, now,
+                            reply_transport);
     /* ack may embed secrets carried in result — wipe before free. */
     secure_wipe(ack, strlen(ack));
     g_free(ack);
@@ -1917,4 +1994,15 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
   signet_mgmt_request_clear(&req);
 
   return ok ? 0 : -1;
+}
+
+int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
+                                       const char *event_pubkey_hex,
+                                       const char *content_json,
+                                       SignetMgmtOp op,
+                                       const char *event_id_hex,
+                                       int64_t now) {
+  return signet_mgmt_handler_handle_request_ex(
+      h, event_pubkey_hex, content_json, op, event_id_hex, now,
+      SIGNET_MGMT_REPLY_LEGACY_ACK);
 }
