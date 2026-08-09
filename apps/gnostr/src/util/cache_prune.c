@@ -221,7 +221,7 @@ void gnostr_cache_prune_init(void)
   /* Try to get settings from GSettings */
   g_autoptr(GSettings) settings = NULL;
   gboolean prune_on_startup = TRUE;
-  int image_max_mb = 500;
+  int avatar_max_mb = 8;
   int ndb_max_mb = 1024;
 
   /* Check if schema is available */
@@ -234,7 +234,7 @@ void gnostr_cache_prune_init(void)
 
       if (settings) {
         prune_on_startup = g_settings_get_boolean(settings, "cache-prune-on-startup");
-        image_max_mb = g_settings_get_int(settings, "image-cache-max-mb");
+        avatar_max_mb = g_settings_get_int(settings, "avatar-cache-max-mb");
         ndb_max_mb = g_settings_get_int(settings, "ndb-cache-max-mb");
       }
     } else {
@@ -245,8 +245,8 @@ void gnostr_cache_prune_init(void)
   /* Log current cache stats */
   g_autofree char *stats = gnostr_cache_stats_string();
   g_message("cache_prune: current cache status: %s", stats);
-  g_message("cache_prune: settings: prune_on_startup=%s, image_max=%dMB, ndb_max=%dMB",
-            prune_on_startup ? "true" : "false", image_max_mb, ndb_max_mb);
+  g_message("cache_prune: settings: prune_on_startup=%s, avatar_max=%dMB, ndb_max=%dMB",
+            prune_on_startup ? "true" : "false", avatar_max_mb, ndb_max_mb);
 
   if (!prune_on_startup) {
     g_message("cache_prune: auto-prune disabled by settings");
@@ -255,8 +255,8 @@ void gnostr_cache_prune_init(void)
 
   /* Prune legacy avatars.  Media service directories self-enforce their
    * per-class budgets on write and in low-priority sweeps. */
-  if (image_max_mb > 0) {
-    int deleted = gnostr_cache_prune_images(image_max_mb);
+  if (avatar_max_mb > 0) {
+    int deleted = gnostr_cache_prune_images(avatar_max_mb);
     if (deleted > 0) {
       g_message("cache_prune: pruned %d avatar files", deleted);
     }

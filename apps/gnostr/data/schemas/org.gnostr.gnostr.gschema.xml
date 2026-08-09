@@ -267,12 +267,10 @@
     <!-- Cache size limits -->
     <key name="image-cache-max-mb" type="i">
       <default>500</default>
-      <summary>Image cache maximum size (MB)</summary>
+      <summary>Inline image cache maximum size (MB)</summary>
       <description>
-        Independently applies this limit to the legacy avatar disk cache,
-        each account's encoded inline-media disk cache, and the decoded
-        inline-media texture cache. These are separate ceilings, not a combined
-        quota. Set to 0 to disable those caches and avatar startup pruning.
+        Independently limits decoded inline-media textures and each account's
+        encoded inline-media disk cache. Set to 0 to disable both media tiers.
       </description>
     </key>
     <key name="og-image-cache-max-mb" type="i">
@@ -290,6 +288,14 @@
       <description>
         Independently limits decoded video-poster textures and each account's
         encoded video-poster disk cache. Set to 0 to disable both media tiers.
+      </description>
+    </key>
+    <key name="avatar-cache-max-mb" type="i">
+      <default>8</default>
+      <summary>Avatar cache maximum size (MB)</summary>
+      <description>
+        Independently limits decoded avatar textures and each account's encoded
+        avatar disk cache. Set to 0 to disable both media tiers.
       </description>
     </key>
     <key name="ndb-cache-max-mb" type="i">

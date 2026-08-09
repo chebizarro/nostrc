@@ -765,6 +765,275 @@ Window settings_window {
                   }
                 }
               }
+
+              Box {
+                orientation: vertical;
+                spacing: 8;
+
+                Label {
+                  label: "Cache Budgets";
+                  xalign: 0;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                Label {
+                  label: "Maximum memory and disk use for each media class. Set a budget to 0 to disable that cache.";
+                  xalign: 0;
+                  wrap: true;
+
+                  styles [
+                    "dim-label",
+                    "caption",
+                  ]
+                }
+
+                ListBox {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Inline Images";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Images displayed directly in notes";
+                          xalign: 0;
+                          wrap: true;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Box {
+                        orientation: horizontal;
+                        spacing: 6;
+                        valign: center;
+
+                        SpinButton w_inline_cache_max_mb {
+                          adjustment: Adjustment {
+                            lower: 0;
+                            upper: 2147483647;
+                            step-increment: 1;
+                            page-increment: 64;
+                          };
+                          digits: 0;
+                          numeric: true;
+                        }
+
+                        Label {
+                          label: "MB";
+
+                          styles [
+                            "dim-label",
+                          ]
+                        }
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Link Preview Images";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Images fetched from Open Graph metadata";
+                          xalign: 0;
+                          wrap: true;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Box {
+                        orientation: horizontal;
+                        spacing: 6;
+                        valign: center;
+
+                        SpinButton w_og_image_cache_max_mb {
+                          adjustment: Adjustment {
+                            lower: 0;
+                            upper: 2147483647;
+                            step-increment: 1;
+                            page-increment: 64;
+                          };
+                          digits: 0;
+                          numeric: true;
+                        }
+
+                        Label {
+                          label: "MB";
+
+                          styles [
+                            "dim-label",
+                          ]
+                        }
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Video Posters";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Generated thumbnails shown before playback";
+                          xalign: 0;
+                          wrap: true;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Box {
+                        orientation: horizontal;
+                        spacing: 6;
+                        valign: center;
+
+                        SpinButton w_video_poster_cache_max_mb {
+                          adjustment: Adjustment {
+                            lower: 0;
+                            upper: 2147483647;
+                            step-increment: 1;
+                            page-increment: 64;
+                          };
+                          digits: 0;
+                          numeric: true;
+                        }
+
+                        Label {
+                          label: "MB";
+
+                          styles [
+                            "dim-label",
+                          ]
+                        }
+                      }
+                    }
+                  }
+
+                  ListBoxRow {
+                    activatable: false;
+
+                    Box {
+                      orientation: horizontal;
+                      spacing: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                      margin-top: 8;
+                      margin-bottom: 8;
+
+                      Box {
+                        orientation: vertical;
+                        hexpand: true;
+
+                        Label {
+                          label: "Avatars";
+                          xalign: 0;
+                        }
+
+                        Label {
+                          label: "Profile pictures displayed throughout the app";
+                          xalign: 0;
+                          wrap: true;
+
+                          styles [
+                            "dim-label",
+                            "caption",
+                          ]
+                        }
+                      }
+
+                      Box {
+                        orientation: horizontal;
+                        spacing: 6;
+                        valign: center;
+
+                        SpinButton w_avatar_cache_max_mb {
+                          adjustment: Adjustment {
+                            lower: 0;
+                            upper: 2147483647;
+                            step-increment: 1;
+                            page-increment: 64;
+                          };
+                          digits: 0;
+                          numeric: true;
+                        }
+
+                        Label {
+                          label: "MB";
+
+                          styles [
+                            "dim-label",
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
             }
           };
         }

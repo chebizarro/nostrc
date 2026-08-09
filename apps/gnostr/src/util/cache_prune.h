@@ -17,7 +17,7 @@ G_BEGIN_DECLS
  * or removes them.
  *
  * Cache limits are configurable via GSettings (org.gnostr.Client):
- * - image-cache-max-mb: Max size for image cache (default 500 MB)
+ * - avatar-cache-max-mb: Max size for avatar caches (default 8 MB)
  * - ndb-cache-max-mb: Max size for nostrdb (default 1024 MB)
  * - cache-prune-on-startup: Enable/disable auto-prune (default true)
  */

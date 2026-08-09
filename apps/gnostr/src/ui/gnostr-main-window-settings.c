@@ -745,7 +745,18 @@ static void on_background_mode_changed(GtkSwitch *sw, GParamSpec *pspec, gpointe
   }
 }
 
-/* Setup media (playback) settings panel */
+static void settings_dialog_bind_media_budget(SettingsDialogCtx *ctx,
+                                                const char *object_id,
+                                                const char *settings_key) {
+  GtkSpinButton *spin =
+      GTK_SPIN_BUTTON(gtk_builder_get_object(ctx->builder, object_id));
+  if (spin) {
+    g_settings_bind(ctx->client_settings, settings_key, spin, "value",
+                    G_SETTINGS_BIND_DEFAULT);
+  }
+}
+
+/* Setup media and cache settings panel */
 static void settings_dialog_setup_media_panel(SettingsDialogCtx *ctx) {
   if (!ctx || !ctx->builder) return;
 
@@ -774,6 +785,21 @@ static void settings_dialog_setup_media_panel(SettingsDialogCtx *ctx) {
   if (w_loop) {
     gtk_switch_set_active(w_loop, g_settings_get_boolean(ctx->client_settings, "video-loop"));
     g_signal_connect(w_loop, "notify::active", G_CALLBACK(on_video_loop_changed), ctx);
+  }
+
+  static const struct {
+    const char *object_id;
+    const char *settings_key;
+  } budget_bindings[] = {
+    { "w_inline_cache_max_mb", "image-cache-max-mb" },
+    { "w_og_image_cache_max_mb", "og-image-cache-max-mb" },
+    { "w_video_poster_cache_max_mb", "video-poster-cache-max-mb" },
+    { "w_avatar_cache_max_mb", "avatar-cache-max-mb" },
+  };
+
+  for (guint i = 0; i < G_N_ELEMENTS(budget_bindings); i++) {
+    settings_dialog_bind_media_budget(ctx, budget_bindings[i].object_id,
+                                      budget_bindings[i].settings_key);
   }
 }
 

@@ -863,6 +863,308 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 </child>
                               </object>
                             </child>
+                            <child>
+                              <object class="GtkBox">
+                                <property name="orientation">1</property>
+                                <property name="spacing">8</property>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Cache Budgets</property>
+                                    <property name="xalign">0</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkLabel">
+                                    <property name="label">Maximum memory and disk use for each media class. Set a budget to 0 to disable that cache.</property>
+                                    <property name="xalign">0</property>
+                                    <property name="wrap">true</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                      <class name="caption"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBox">
+                                    <property name="selection-mode">0</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">0</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">1</property>
+                                                <property name="hexpand">true</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Inline Images</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Images displayed directly in notes</property>
+                                                    <property name="xalign">0</property>
+                                                    <property name="wrap">true</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">0</property>
+                                                <property name="spacing">6</property>
+                                                <property name="valign">3</property>
+                                                <child>
+                                                  <object class="GtkSpinButton" id="w_inline_cache_max_mb">
+                                                    <property name="adjustment">
+                                                      <object class="GtkAdjustment">
+                                                        <property name="lower">0</property>
+                                                        <property name="upper">2147483647</property>
+                                                        <property name="step-increment">1</property>
+                                                        <property name="page-increment">64</property>
+                                                      </object>
+                                                    </property>
+                                                    <property name="digits">0</property>
+                                                    <property name="numeric">true</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">MB</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">0</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">1</property>
+                                                <property name="hexpand">true</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Link Preview Images</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Images fetched from Open Graph metadata</property>
+                                                    <property name="xalign">0</property>
+                                                    <property name="wrap">true</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">0</property>
+                                                <property name="spacing">6</property>
+                                                <property name="valign">3</property>
+                                                <child>
+                                                  <object class="GtkSpinButton" id="w_og_image_cache_max_mb">
+                                                    <property name="adjustment">
+                                                      <object class="GtkAdjustment">
+                                                        <property name="lower">0</property>
+                                                        <property name="upper">2147483647</property>
+                                                        <property name="step-increment">1</property>
+                                                        <property name="page-increment">64</property>
+                                                      </object>
+                                                    </property>
+                                                    <property name="digits">0</property>
+                                                    <property name="numeric">true</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">MB</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">0</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">1</property>
+                                                <property name="hexpand">true</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Video Posters</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Generated thumbnails shown before playback</property>
+                                                    <property name="xalign">0</property>
+                                                    <property name="wrap">true</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">0</property>
+                                                <property name="spacing">6</property>
+                                                <property name="valign">3</property>
+                                                <child>
+                                                  <object class="GtkSpinButton" id="w_video_poster_cache_max_mb">
+                                                    <property name="adjustment">
+                                                      <object class="GtkAdjustment">
+                                                        <property name="lower">0</property>
+                                                        <property name="upper">2147483647</property>
+                                                        <property name="step-increment">1</property>
+                                                        <property name="page-increment">64</property>
+                                                      </object>
+                                                    </property>
+                                                    <property name="digits">0</property>
+                                                    <property name="numeric">true</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">MB</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkListBoxRow">
+                                        <property name="activatable">false</property>
+                                        <child>
+                                          <object class="GtkBox">
+                                            <property name="orientation">0</property>
+                                            <property name="spacing">12</property>
+                                            <property name="margin-start">12</property>
+                                            <property name="margin-end">12</property>
+                                            <property name="margin-top">8</property>
+                                            <property name="margin-bottom">8</property>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">1</property>
+                                                <property name="hexpand">true</property>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Avatars</property>
+                                                    <property name="xalign">0</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">Profile pictures displayed throughout the app</property>
+                                                    <property name="xalign">0</property>
+                                                    <property name="wrap">true</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                      <class name="caption"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                            <child>
+                                              <object class="GtkBox">
+                                                <property name="orientation">0</property>
+                                                <property name="spacing">6</property>
+                                                <property name="valign">3</property>
+                                                <child>
+                                                  <object class="GtkSpinButton" id="w_avatar_cache_max_mb">
+                                                    <property name="adjustment">
+                                                      <object class="GtkAdjustment">
+                                                        <property name="lower">0</property>
+                                                        <property name="upper">2147483647</property>
+                                                        <property name="step-increment">1</property>
+                                                        <property name="page-increment">64</property>
+                                                      </object>
+                                                    </property>
+                                                    <property name="digits">0</property>
+                                                    <property name="numeric">true</property>
+                                                  </object>
+                                                </child>
+                                                <child>
+                                                  <object class="GtkLabel">
+                                                    <property name="label">MB</property>
+                                                    <style>
+                                                      <class name="dim-label"/>
+                                                    </style>
+                                                  </object>
+                                                </child>
+                                              </object>
+                                            </child>
+                                          </object>
+                                        </child>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
                           </object>
                         </child>
                       </object>

@@ -46,6 +46,7 @@ gboolean gnostr_media_redirect_is_safe(const char *from_url,
 #define INLINE_BUDGET_KEY "image-cache-max-mb"
 #define OG_IMAGE_BUDGET_KEY "og-image-cache-max-mb"
 #define VIDEO_POSTER_BUDGET_KEY "video-poster-cache-max-mb"
+#define AVATAR_BUDGET_KEY "avatar-cache-max-mb"
 #define OG_METADATA_DIR "og-metadata"
 #define OG_METADATA_VERSION 1
 #define MAX_THUMBNAIL_CONCURRENCY 2
@@ -3407,6 +3408,9 @@ reload_settings_budgets(GnostrMediaService *self)
   self->texture_caches[GNOSTR_MEDIA_RESOURCE_VIDEO_POSTER].stats.budget_bytes =
       budget_from_settings(self->settings, VIDEO_POSTER_BUDGET_KEY,
                            DEFAULT_VIDEO_POSTER_BUDGET);
+  self->texture_caches[GNOSTR_MEDIA_RESOURCE_AVATAR].stats.budget_bytes =
+      budget_from_settings(self->settings, AVATAR_BUDGET_KEY,
+                           DEFAULT_AVATAR_BUDGET);
 
   for (guint i = 0; i < GNOSTR_MEDIA_RESOURCE_N_CLASSES; i++) {
     self->config.memory_budget_bytes[i] =
@@ -3479,6 +3483,9 @@ gnostr_media_service_get_default(void)
                        G_CALLBACK(settings_budget_changed), default_service);
       g_signal_connect(default_service->settings,
                        "changed::" VIDEO_POSTER_BUDGET_KEY,
+                       G_CALLBACK(settings_budget_changed), default_service);
+      g_signal_connect(default_service->settings,
+                       "changed::" AVATAR_BUDGET_KEY,
                        G_CALLBACK(settings_budget_changed), default_service);
     }
   }

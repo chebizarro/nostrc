@@ -157,8 +157,9 @@ GnostrMediaService *gnostr_media_service_new(const GnostrMediaServiceConfig *con
  * gnostr_media_service_get_default:
  *
  * Gets the process service.  Its cache budgets are read from GSettings keys
- * image-cache-max-mb, og-image-cache-max-mb, and
- * video-poster-cache-max-mb.  The returned object is owned by the service.
+ * image-cache-max-mb, og-image-cache-max-mb,
+ * video-poster-cache-max-mb, and avatar-cache-max-mb.  The returned object is
+ * owned by the service.
  *
  * Returns: (transfer none): the default media service
  */
