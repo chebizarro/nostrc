@@ -75,6 +75,28 @@ void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
     if (chan->magic != GO_CHANNEL_MAGIC) return;
     /* Must hold chan->mutex — caller is responsible (we take it here for safety) */
     nsync_mu_lock(&chan->mutex);
+
+    /* A terminal channel will never transition again, so registering after
+     * close would leave this waiter asleep forever. This can happen when a
+     * select fast-path check races with shutdown: close broadcasts before the
+     * waiter is linked, then the waiter parks. Publish the terminal wakeup
+     * directly instead of adding a registration that cannot be signaled. */
+    if (atomic_load_explicit(&chan->closed, memory_order_acquire)) {
+        /* Synchronize the predicate update with the waiter's check-and-sleep
+         * sequence. Without this mutex, close can signal after the waiter
+         * observes false but before nsync_cv_wait actually sleeps. */
+        nsync_mu_lock(&w->mutex);
+        atomic_store_explicit(&w->signaled, 1, memory_order_release);
+        if (w->fiber_handle) {
+            gof_hook_make_runnable(w->fiber_handle);
+        } else {
+            nsync_cv_signal(&w->cond);
+        }
+        nsync_mu_unlock(&w->mutex);
+        nsync_mu_unlock(&chan->mutex);
+        return;
+    }
+
     /* Avoid double-registration: check if w is already in the list */
     GoSelectWaiterNode *cur = (GoSelectWaiterNode *)chan->select_waiters;
     while (cur) {
@@ -143,27 +165,18 @@ void go_channel_cleanup_select_waiters(GoChannel *chan) {
  * Called from channel.c send/recv/close paths when state transitions occur.
  * Must be called while holding chan->mutex.
  *
- * To avoid deadlock (ABBA lock ordering with waiter->mutex), we:
- * 1. Collect waiter pointers while holding chan->mutex
- * 2. Set the atomic signaled flag (lock-free)
- * 3. Signal condition variables AFTER releasing chan->mutex
+ * The predicate update and condition-variable signal must both happen while
+ * holding waiter->mutex. Otherwise a waiter can observe signaled == 0 and a
+ * concurrent close can signal just before nsync_cv_wait puts the thread to
+ * sleep, losing the only terminal wakeup.
  *
- * The caller is responsible for calling this function, then releasing
- * chan->mutex, then calling go_channel_signal_select_waiters_finish()
- * to actually wake the waiters.
- *
- * For simplicity, we use a two-phase approach:
- * - Phase 1 (this function): Set signaled flags atomically (safe under chan->mutex)
- * - Phase 2: Caller releases chan->mutex, then signals CVs
- *
- * However, to maintain the simple single-call API, we now signal CVs
- * without holding waiter->mutex since nsync_cv_signal is safe to call
- * without the mutex (it just wakes a waiter; the waiter re-checks the
- * predicate under its own mutex).
+ * The lock order is always chan->mutex then waiter->mutex. A waiter releases
+ * waiter->mutex before unregistering from channels, so this order cannot form
+ * an ABBA cycle.
  *
  * SAFETY: Each node holds a ref on its waiter, so the waiter is guaranteed
- * to be alive when we access w->cond/w->signaled here. The ref is only
- * dropped when the node is freed (in unregister or cleanup).
+ * to be alive when we access w->mutex/w->cond/w->signaled here. The ref is
+ * only dropped when the node is freed (in unregister or cleanup).
  */
 void go_channel_signal_select_waiters(GoChannel *chan) {
     if (!chan) return;
@@ -179,19 +192,16 @@ void go_channel_signal_select_waiters(GoChannel *chan) {
             node = next;
             continue;
         }
-        /* Set signaled flag atomically — waiter checks this in cv_wait loop */
+        /* Serialize the predicate transition with the waiter's
+         * check-and-sleep sequence to prevent a lost condition-variable wake. */
+        nsync_mu_lock(&w->mutex);
         atomic_store_explicit(&w->signaled, 1, memory_order_release);
-        /* Wake the waiter — either fiber or OS thread */
         if (w->fiber_handle) {
-            /* Fiber path: make the parked fiber runnable again */
             gof_hook_make_runnable(w->fiber_handle);
         } else {
-            /* OS thread path: signal the CV without holding waiter->mutex
-             * to avoid ABBA deadlock. nsync_cv_signal is safe to call
-             * without the mutex — it just wakes a thread which will then
-             * acquire the mutex and re-check the predicate. */
             nsync_cv_signal(&w->cond);
         }
+        nsync_mu_unlock(&w->mutex);
         node = next;
     }
 }
