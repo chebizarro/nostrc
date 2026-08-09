@@ -370,6 +370,27 @@ find_rich_media_picture(GtkWidget *widget)
 }
 
 static void
+activate_rich_media_picture(GtkPicture *picture)
+{
+    g_assert_nonnull(picture);
+    g_autoptr(GListModel) controllers =
+        gtk_widget_observe_controllers(GTK_WIDGET(picture));
+    gboolean activated = FALSE;
+
+    for (guint i = 0; i < g_list_model_get_n_items(controllers); i++) {
+        g_autoptr(GObject) controller =
+            g_list_model_get_item(controllers, i);
+        if (GTK_IS_GESTURE_CLICK(controller)) {
+            g_signal_emit_by_name(controller, "released", 1, 0.0, 0.0);
+            activated = TRUE;
+            break;
+        }
+    }
+
+    g_assert_true(activated);
+}
+
+static void
 drain_main_context_for(gint64 duration_us)
 {
     gint64 deadline = g_get_monotonic_time() + duration_us;
@@ -524,6 +545,17 @@ test_rich_content_hydration_preserves_reserved_height(void)
     gtk_window_set_child(window, GTK_WIDGET(row));
     gtk_window_present(window);
 
+    /* Remote images are placeholders until explicit activation; mapping a
+     * timeline row must not leak the user's network address. */
+    drain_main_context_for(500 * G_TIME_SPAN_MILLISECOND);
+    g_assert_cmpuint(rich_media_request_count, ==, 0);
+    g_assert_cmpuint(
+        nostr_gtk_note_card_row_get_rich_child_creation_count(), ==, 3);
+
+    GtkPicture *picture = find_rich_media_picture(GTK_WIDGET(row));
+    g_assert_nonnull(picture);
+    activate_rich_media_picture(picture);
+
     gint64 deadline = g_get_monotonic_time() + 500 * G_TIME_SPAN_MILLISECOND;
     while (rich_media_request_count == 0 && g_get_monotonic_time() < deadline) {
         while (g_main_context_iteration(NULL, FALSE)) {}
@@ -531,8 +563,6 @@ test_rich_content_hydration_preserves_reserved_height(void)
     }
     while (g_main_context_iteration(NULL, FALSE)) {}
     g_assert_cmpuint(rich_media_request_count, ==, 1);
-    g_assert_cmpuint(
-        nostr_gtk_note_card_row_get_rich_child_creation_count(), ==, 3);
 
     int after_min = 0, after_nat = 0;
     gtk_widget_measure(GTK_WIDGET(row), GTK_ORIENTATION_VERTICAL,
@@ -584,12 +614,13 @@ test_rich_content_cache_delivery_survives_unmap(void)
     GtkWindow *window = present_test_window(
         GTK_WIDGET(row), REFERENCE_WIDTH_PX, 360);
 
+    GtkPicture *picture = find_rich_media_picture(GTK_WIDGET(row));
+    g_assert_nonnull(picture);
+    g_assert_cmpuint(request.request_count, ==, 0);
+    activate_rich_media_picture(picture);
     wait_for_deferred_request(&request, 1);
     deferred_media_request_complete(&request);
     while (g_main_context_iteration(NULL, FALSE)) {}
-
-    GtkPicture *picture = find_rich_media_picture(GTK_WIDGET(row));
-    g_assert_nonnull(picture);
     g_assert_nonnull(gtk_picture_get_paintable(picture));
 
     /* Model GtkListView recycling while the parent is obscured by a modal.
@@ -606,9 +637,11 @@ test_rich_content_cache_delivery_survives_unmap(void)
     nostr_gtk_note_card_row_set_rich_content(row, descriptors, 240, 0, 0);
 
     window = present_test_window(GTK_WIDGET(row), REFERENCE_WIDTH_PX, 360);
-    wait_for_deferred_request(&request, 2);
     picture = find_rich_media_picture(GTK_WIDGET(row));
     g_assert_nonnull(picture);
+    g_assert_cmpuint(request.request_count, ==, 1);
+    activate_rich_media_picture(picture);
+    wait_for_deferred_request(&request, 2);
     g_assert_null(gtk_picture_get_paintable(picture));
 
     /* A memory-cache hit is still delivered asynchronously. If the modal
