@@ -22,11 +22,12 @@ target_include_directories(gnostr-testkit
 # Enable storage_ndb test instrumentation (main-thread violation detection)
 target_compile_definitions(gnostr-testkit PUBLIC GNOSTR_TESTING)
 
-# Testkit links against nostr-gobject (for storage_ndb functions)
-# and GLib/GIO for main loop and file system utilities.
+# Testkit links against nostr-gobject (for storage_ndb functions),
+# libnostr (for canonical event IDs), and GLib/GIO utilities.
 target_link_libraries(gnostr-testkit
   PUBLIC
     nostr_gobject
+    libnostr
     PkgConfig::GLIB2
     PkgConfig::GIO2
 )

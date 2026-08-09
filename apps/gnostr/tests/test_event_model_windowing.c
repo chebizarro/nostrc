@@ -20,6 +20,7 @@
 #include "../src/model/gn-nostr-event-model.h"
 #include "../src/model/gnostr-timeline-source.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
+#include <nostr-event.h>
 
 /* MODEL_MAX_ITEMS from the model source — keep in sync */
 #define MODEL_MAX_ITEMS 100
@@ -105,15 +106,59 @@ make_event_json_with_id_and_pubkey(int kind,
                                    const char *pubkey_hex,
                                    const char *event_id_hex)
 {
-  return g_strdup_printf(
-    "{\"id\":\"%s\","
-    "\"pubkey\":\"%s\","
-    "\"created_at\":%" G_GINT64_FORMAT ","
-    "\"kind\":%d,"
-    "\"tags\":[],"
-    "\"content\":\"%s\","
-    "\"sig\":\"%0128d\"}",
-    event_id_hex, pubkey_hex, created_at, kind, content ? content : "", 0);
+  /* Canonical admission intentionally ignores a caller-declared identity.
+   * Keep the legacy argument so these tie-break fixtures remain readable, but
+   * derive the actual ID from the NIP-01 preimage via the shared testkit. */
+  (void)event_id_hex;
+  return gn_test_make_event_json_with_pubkey(kind, content, created_at,
+                                              pubkey_hex);
+}
+
+static const char *same_timestamp_pubkeys[] = {
+  "1111111111111111111111111111111111111111111111111111111111111111",
+  "2222222222222222222222222222222222222222222222222222222222222222",
+  "3333333333333333333333333333333333333333333333333333333333333333",
+};
+
+static char *
+canonical_fixture_id(int kind,
+                     const char *content,
+                     gint64 created_at,
+                     const char *pubkey_hex)
+{
+  g_autofree char *json = gn_test_make_event_json_with_pubkey(
+    kind, content, created_at, pubkey_hex);
+  g_assert_nonnull(json);
+
+  NostrEvent *event = nostr_event_new();
+  g_assert_nonnull(event);
+  g_assert_cmpint(nostr_event_deserialize_signed(event, json, NULL),
+                  ==, NOSTR_EVENT_VALIDATION_OK);
+  char *event_id = nostr_event_get_id(event);
+  nostr_event_free(event);
+  g_assert_nonnull(event_id);
+  return event_id;
+}
+
+static gint
+compare_string_descending(gconstpointer a, gconstpointer b)
+{
+  const char *left = *(const char * const *)a;
+  const char *right = *(const char * const *)b;
+  return -g_strcmp0(left, right);
+}
+
+static GPtrArray *
+same_timestamp_expected_ids(gint64 created_at)
+{
+  GPtrArray *ids = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; i < G_N_ELEMENTS(same_timestamp_pubkeys); i++) {
+    g_autofree char *content = g_strdup_printf("same-ts-%u", i);
+    g_ptr_array_add(ids, canonical_fixture_id(
+      1, content, created_at, same_timestamp_pubkeys[i]));
+  }
+  g_ptr_array_sort(ids, compare_string_descending);
+  return ids;
 }
 
 static void
@@ -126,15 +171,10 @@ ingest_same_timestamp_fixture(const guint *order,
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   };
-  static const char *pubkeys[] = {
-    "1111111111111111111111111111111111111111111111111111111111111111",
-    "2222222222222222222222222222222222222222222222222222222222222222",
-    "3333333333333333333333333333333333333333333333333333333333333333",
-  };
-
-  for (guint i = 0; i < G_N_ELEMENTS(pubkeys); i++) {
+  for (guint i = 0; i < G_N_ELEMENTS(same_timestamp_pubkeys); i++) {
     g_autofree char *profile_json = gn_test_make_event_json_with_pubkey(
-      0, "{\"display_name\":\"Fixture\"}", created_at - 1, pubkeys[i]);
+      0, "{\"display_name\":\"Fixture\"}", created_at - 1,
+      same_timestamp_pubkeys[i]);
     g_assert_true(gn_test_ndb_ingest_json(s_ndb, profile_json));
   }
 
@@ -142,7 +182,7 @@ ingest_same_timestamp_fixture(const guint *order,
     guint idx = order[i];
     g_autofree char *content = g_strdup_printf("same-ts-%u", idx);
     g_autofree char *event_json = make_event_json_with_id_and_pubkey(
-      1, content, created_at, pubkeys[idx], event_ids[idx]);
+      1, content, created_at, same_timestamp_pubkeys[idx], event_ids[idx]);
     g_assert_true(gn_test_ndb_ingest_json(s_ndb, event_json));
   }
 
@@ -156,6 +196,26 @@ count_null_terminated_strv(const char *const *values)
   if (!values) return 0;
   while (values[count]) count++;
   return count;
+}
+
+static gboolean
+wait_for_relay_count(uint64_t note_key, guint expected, gint64 timeout_us)
+{
+  const gint64 deadline = g_get_monotonic_time() + timeout_us;
+
+  do {
+    void *txn = NULL;
+    if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
+      g_auto(GStrv) relays = storage_ndb_note_get_relays(txn, note_key);
+      guint count = count_null_terminated_strv((const char *const *)relays);
+      storage_ndb_end_query(txn);
+      if (count >= expected)
+        return TRUE;
+    }
+    g_usleep(10 * 1000);
+  } while (g_get_monotonic_time() < deadline);
+
+  return FALSE;
 }
 
 static gboolean
@@ -534,12 +594,8 @@ test_same_timestamp_refresh_uses_deterministic_tie_break(void)
 {
   static const guint order_a[] = {0, 1, 2};
   static const guint order_b[] = {2, 0, 1};
-  static const char *expected[] = {
-    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  };
   const gint64 ts = 1700000100;
+  g_autoptr(GPtrArray) expected = same_timestamp_expected_ids(ts);
 
   setup_ndb();
   ingest_same_timestamp_fixture(order_a, G_N_ELEMENTS(order_a), ts);
@@ -551,8 +607,10 @@ test_same_timestamp_refresh_uses_deterministic_tie_break(void)
   g_autoptr(GPtrArray) ids_b = load_same_timestamp_ids_via_refresh();
   teardown_ndb();
 
-  assert_event_id_sequence(ids_a, expected, G_N_ELEMENTS(expected));
-  assert_event_id_sequence(ids_b, expected, G_N_ELEMENTS(expected));
+  assert_event_id_sequence(ids_a, (const char *const *)expected->pdata,
+                           expected->len);
+  assert_event_id_sequence(ids_b, (const char *const *)expected->pdata,
+                           expected->len);
 }
 
 static void
@@ -600,6 +658,9 @@ test_cross_relay_duplicate_arrivals_dedupe_and_preserve_provenance(void)
 
   g_autoptr(GObject) item = g_list_model_get_item(G_LIST_MODEL(model), 0);
   g_assert_nonnull(item);
+  g_assert_true(wait_for_relay_count(
+    gn_nostr_event_item_get_note_key(GN_NOSTR_EVENT_ITEM(item)),
+    2, 5 * G_USEC_PER_SEC));
   const char *const *relay_urls =
     gn_nostr_event_item_get_relay_urls(GN_NOSTR_EVENT_ITEM(item));
   g_assert_cmpuint(count_null_terminated_strv(relay_urls), ==, 2);
@@ -619,17 +680,8 @@ test_same_timestamp_live_insert_uses_deterministic_tie_break(void)
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   };
-  static const char *pubkeys[] = {
-    "1111111111111111111111111111111111111111111111111111111111111111",
-    "2222222222222222222222222222222222222222222222222222222222222222",
-    "3333333333333333333333333333333333333333333333333333333333333333",
-  };
-  static const char *expected[] = {
-    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  };
   const gint64 ts = 1700000200;
+  g_autoptr(GPtrArray) expected = same_timestamp_expected_ids(ts);
 
   setup_ndb();
   ingest_same_timestamp_fixture(order, G_N_ELEMENTS(order), ts);
@@ -637,13 +689,15 @@ test_same_timestamp_live_insert_uses_deterministic_tie_break(void)
   GnNostrEventModel *model = gn_nostr_event_model_new();
   for (guint i = 0; i < G_N_ELEMENTS(order); i++) {
     guint idx = order[i];
+    g_autofree char *content = g_strdup_printf("same-ts-%u", idx);
     g_autofree char *event_json = make_event_json_with_id_and_pubkey(
-      1, "live", ts, pubkeys[idx], event_ids[idx]);
+      1, content, ts, same_timestamp_pubkeys[idx], event_ids[idx]);
     gn_nostr_event_model_add_event_json(model, event_json);
   }
 
   g_autoptr(GPtrArray) ids = collect_model_event_ids(model);
-  assert_event_id_sequence(ids, expected, G_N_ELEMENTS(expected));
+  assert_event_id_sequence(ids, (const char *const *)expected->pdata,
+                           expected->len);
   assert_sorted_newest_first(model);
 
   g_object_unref(model);

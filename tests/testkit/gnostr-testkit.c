@@ -6,6 +6,7 @@
 
 #include "gnostr-testkit.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
+#include <nostr-event.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -179,8 +180,24 @@ gn_test_make_event_json_with_pubkey(int kind,
 {
     char id[65] = {0};
     char sig[129] = {0};
-    random_hex(id, 32);
     random_hex(sig, 64);
+
+    /* Unsafe-ingest fixtures intentionally retain fabricated signatures, but
+     * their declared IDs must still match the NIP-01 canonical preimage.
+     * Canonical admission no longer lets consumers treat a random declared ID
+     * as the event's identity, even when the storage test bypass is enabled. */
+    NostrEvent *event = nostr_event_new();
+    if (!event)
+        return NULL;
+    nostr_event_set_pubkey(event, pubkey_hex);
+    nostr_event_set_created_at(event, created_at);
+    nostr_event_set_kind(event, kind);
+    nostr_event_set_tags(event, nostr_tags_new(0));
+    nostr_event_set_content(event, content ? content : "");
+    NostrEventValidationStatus status = nostr_event_compute_id(event, id);
+    nostr_event_free(event);
+    if (status != NOSTR_EVENT_VALIDATION_OK)
+        return NULL;
 
     /* Escape content for JSON (minimal: escape quotes and backslashes) */
     g_autofree char *escaped = g_strescape(content ? content : "", NULL);
