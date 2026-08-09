@@ -252,18 +252,8 @@ test_listview_row_heights_bounded(void)
     gtk_scrolled_window_set_child(sw, GTK_WIDGET(lv));
     gtk_widget_set_size_request(GTK_WIDGET(sw), REFERENCE_WIDTH_PX, 600);
 
-    GtkWindow *win = GTK_WINDOW(gtk_window_new());
-    gtk_window_set_default_size(win, REFERENCE_WIDTH_PX, 600);
-    gtk_window_set_child(win, GTK_WIDGET(sw));
-
-    /* Realize and let binds happen */
-    gtk_window_present(win);
-    for (int i = 0; i < 100; i++) {
-        g_main_context_iteration(g_main_context_default(), FALSE);
-    }
-
-    /* The scrolled window should be able to constrain the content.
-     * Measure the ListView itself — its natural height may be large
+    /* The scrolled window should be able to constrain the content without
+     * presenting a native window. The ListView's natural height may be large
      * (sum of all rows), but the scrolled window should clip it. */
     int sw_min_h, sw_nat_h;
     gtk_widget_measure(GTK_WIDGET(sw), GTK_ORIENTATION_VERTICAL,
@@ -274,11 +264,8 @@ test_listview_row_heights_bounded(void)
     /* The scrolled window itself should respect its size request */
     g_assert_cmpint(sw_min_h, <=, 600);
 
-    gtk_window_destroy(win);
-
-    for (int i = 0; i < 100; i++) {
-        g_main_context_iteration(g_main_context_default(), FALSE);
-    }
+    g_object_ref_sink(sw);
+    g_object_unref(sw);
 }
 
 static void
@@ -412,6 +399,14 @@ wait_for_widget_mapped_state(GtkWidget *widget, gboolean expected_mapped)
     drain_main_context_for(100 * G_TIME_SPAN_MILLISECOND);
 }
 
+static gboolean
+display_has_monitor(void)
+{
+    GdkDisplay *display = gdk_display_get_default();
+    GListModel *monitors = display ? gdk_display_get_monitors(display) : NULL;
+    return monitors && g_list_model_get_n_items(monitors) > 0;
+}
+
 static GtkWindow *
 present_test_window(GtkWidget *child, int width, int height)
 {
@@ -482,6 +477,11 @@ fake_media_texture_request(gpointer loader,
 static void
 test_rich_content_hydration_preserves_reserved_height(void)
 {
+    if (!display_has_monitor()) {
+        g_test_skip("Native display has no monitor for safely presenting a test window");
+        return;
+    }
+
     rich_media_request_count = 0;
     nostr_gtk_note_card_row_reset_rich_child_creation_count();
     NostrGtkNoteCardRow *row = nostr_gtk_note_card_row_new();
@@ -547,6 +547,11 @@ test_rich_content_hydration_preserves_reserved_height(void)
 static void
 test_rich_content_cache_delivery_survives_unmap(void)
 {
+    if (!display_has_monitor()) {
+        g_test_skip("Native display has no monitor for safely presenting a test window");
+        return;
+    }
+
     DeferredMediaRequest request = {0};
     nostr_gtk_note_card_row_reset_rich_child_creation_count();
 
