@@ -353,8 +353,13 @@ struct _NostrGtkNoteCardRow {
   gboolean media_widgets_created;     /* TRUE after on_media_box_mapped fires */
 
   /* Fixed descriptor frames survive compatible recycle binds. Their dynamic
-   * children and bind-scoped contexts are reset on unbind. */
+   * children and bind-scoped contexts are reset on unbind. Reservation stores
+   * geometry only; descriptor copies are created during explicit activation. */
   GPtrArray *rich_frame_pool;
+  gint rich_media_reserved_height;
+  gint rich_link_preview_reserved_height;
+  gint rich_embed_reserved_height;
+  gboolean rich_content_activated;
 
   /* Binding lifecycle tracking (nostrc-534d):
    * Each time the row is bound to a list item, it gets a unique binding_id.
@@ -4506,7 +4511,7 @@ attach_rich_slot_realization(NostrGtkNoteCardRow *self,
 }
 
 void
-nostr_gtk_note_card_row_set_rich_content(
+nostr_gtk_note_card_row_reserve_rich_content(
     NostrGtkNoteCardRow *self,
     const GPtrArray *descriptors,
     double media_reserved_height,
@@ -4537,6 +4542,11 @@ nostr_gtk_note_card_row_set_rich_content(
       ? (gint)(link_preview_reserved_height + 0.999999) : 0;
   gint embed_px = embed_reserved_height > 0.0
       ? (gint)(embed_reserved_height + 0.999999) : 0;
+
+  self->rich_media_reserved_height = media_px;
+  self->rich_link_preview_reserved_height = link_px;
+  self->rich_embed_reserved_height = embed_px;
+  self->rich_content_activated = FALSE;
 
   g_autoptr(GPtrArray) eligible = g_ptr_array_new();
   for (guint i = 0; descriptors && i < descriptors->len; i++) {
@@ -4654,8 +4664,72 @@ nostr_gtk_note_card_row_set_rich_content(
     NostrGtkFixedRichFrame *fixed = (NostrGtkFixedRichFrame *)frame;
     fixed->reserved_height = MAX(slot_height, 1);
     gtk_widget_set_size_request(frame, -1, fixed->reserved_height);
-    attach_rich_slot_realization(self, frame, descriptor);
   }
+}
+
+void
+nostr_gtk_note_card_row_activate_rich_content(
+    NostrGtkNoteCardRow *self,
+    const GPtrArray *descriptors)
+{
+  g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
+  if (self->disposed || self->binding_id == 0 ||
+      self->rich_content_activated)
+    return;
+
+  g_autoptr(GPtrArray) eligible = g_ptr_array_new();
+  for (guint i = 0; descriptors && i < descriptors->len; i++) {
+    const GnContentDescriptor *descriptor =
+      g_ptr_array_index((GPtrArray *)descriptors, i);
+    if (!descriptor) continue;
+    switch (descriptor->type) {
+      case GN_CONTENT_DESCRIPTOR_MEDIA_IMAGE:
+      case GN_CONTENT_DESCRIPTOR_MEDIA_VIDEO:
+        if (self->rich_media_reserved_height > 0 &&
+            descriptor->url && *descriptor->url)
+          g_ptr_array_add(eligible, (gpointer)descriptor);
+        break;
+      case GN_CONTENT_DESCRIPTOR_LINK_PREVIEW:
+        if (self->rich_link_preview_reserved_height > 0 &&
+            descriptor->url && *descriptor->url)
+          g_ptr_array_add(eligible, (gpointer)descriptor);
+        break;
+      case GN_CONTENT_DESCRIPTOR_NOSTR_EVENT_REF:
+        if (self->rich_embed_reserved_height > 0)
+          g_ptr_array_add(eligible, (gpointer)descriptor);
+        break;
+      case GN_CONTENT_DESCRIPTOR_NOSTR_PROFILE_REF:
+        break;
+    }
+  }
+
+  if (!rich_frame_pool_is_compatible(self, eligible)) {
+    g_warning("Rich-content activation does not match the current reservation");
+    return;
+  }
+
+  for (guint i = 0; i < eligible->len; i++) {
+    RichFramePoolEntry *entry =
+      g_ptr_array_index(self->rich_frame_pool, i);
+    const GnContentDescriptor *descriptor =
+      g_ptr_array_index(eligible, i);
+    attach_rich_slot_realization(self, entry->frame, descriptor);
+  }
+  self->rich_content_activated = TRUE;
+}
+
+void
+nostr_gtk_note_card_row_set_rich_content(
+    NostrGtkNoteCardRow *self,
+    const GPtrArray *descriptors,
+    double media_reserved_height,
+    double link_preview_reserved_height,
+    double embed_reserved_height)
+{
+  nostr_gtk_note_card_row_reserve_rich_content(
+      self, descriptors, media_reserved_height,
+      link_preview_reserved_height, embed_reserved_height);
+  nostr_gtk_note_card_row_activate_rich_content(self, descriptors);
 }
 
 /**
@@ -7796,6 +7870,10 @@ void nostr_gtk_note_card_row_prepare_for_bind(NostrGtkNoteCardRow *self) {
    * but reset the flag for safety in case unbind was skipped. */
   self->media_widgets_created = FALSE;
   g_clear_pointer(&self->pending_media_items, g_ptr_array_unref);
+  self->rich_media_reserved_height = 0;
+  self->rich_link_preview_reserved_height = 0;
+  self->rich_embed_reserved_height = 0;
+  self->rich_content_activated = FALSE;
   if (self->media_box)
     gtk_widget_set_size_request(self->media_box, -1, -1);
   if (self->og_preview_container)

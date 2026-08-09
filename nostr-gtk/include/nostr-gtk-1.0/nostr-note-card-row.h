@@ -228,7 +228,7 @@ void nostr_gtk_note_card_row_set_media_texture_loader(
     NostrGtkMediaTextureRequestFunc request_func);
 
 /**
- * nostr_gtk_note_card_row_set_rich_content:
+ * nostr_gtk_note_card_row_reserve_rich_content:
  * @self: note card row
  * @descriptors: (nullable) (element-type GnContentDescriptor): ordered,
  *   immutable rich-content descriptors borrowed for this call
@@ -236,10 +236,34 @@ void nostr_gtk_note_card_row_set_media_texture_loader(
  * @link_preview_reserved_height: fixed link-preview reservation in pixels
  * @embed_reserved_height: fixed event-embed reservation in pixels
  *
- * Installs reusable fixed-size reservation frames during bind. Expensive image,
- * video, Open Graph, and event-embed children are created only after their frame
- * remains mapped through a short debounce. Compatible descriptor frame slots
- * are pooled across row recycle binds. Child swaps never change outer geometry.
+ * Builds reusable fixed-size placeholder frames without retaining descriptor
+ * data or attaching fetch/render activation. This is the lightweight bind path.
+ */
+void nostr_gtk_note_card_row_reserve_rich_content(
+    NostrGtkNoteCardRow *self,
+    const GPtrArray *descriptors,
+    double media_reserved_height,
+    double link_preview_reserved_height,
+    double embed_reserved_height);
+
+/**
+ * nostr_gtk_note_card_row_activate_rich_content:
+ * @self: note card row
+ * @descriptors: (nullable) (element-type GnContentDescriptor): descriptors used
+ *   for the most recent reservation
+ *
+ * Attaches fetch/render work to an existing reservation without changing its
+ * allocation. Call only after the row has become visible.
+ */
+void nostr_gtk_note_card_row_activate_rich_content(
+    NostrGtkNoteCardRow *self,
+    const GPtrArray *descriptors);
+
+/**
+ * nostr_gtk_note_card_row_set_rich_content:
+ *
+ * Compatibility helper that reserves and activates rich content in one call.
+ * New GtkListView bind paths should reserve first and activate after visibility.
  */
 void nostr_gtk_note_card_row_set_rich_content(
     NostrGtkNoteCardRow *self,

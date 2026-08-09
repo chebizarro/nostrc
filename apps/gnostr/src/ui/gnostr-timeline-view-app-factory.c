@@ -474,6 +474,20 @@ cleanup_bound_row(GtkWidget *row)
   }
   g_object_set_data(G_OBJECT(row), "tv-tier2-map-id", GSIZE_TO_POINTER(0));
 
+  gulong rich_map_id = (gulong)GPOINTER_TO_SIZE(
+      g_object_get_data(G_OBJECT(row), "tv-rich-activation-map-id"));
+  if (rich_map_id > 0 &&
+      g_signal_handler_is_connected(G_OBJECT(row), rich_map_id))
+    g_signal_handler_disconnect(row, rich_map_id);
+  g_object_set_data(G_OBJECT(row), "tv-rich-activation-map-id",
+                    GSIZE_TO_POINTER(0));
+
+  guint rich_idle_id = GPOINTER_TO_UINT(
+      g_object_get_data(G_OBJECT(row), "tv-rich-activation-idle-id"));
+  if (rich_idle_id > 0)
+    g_source_remove(rich_idle_id);
+  g_object_set_data(G_OBJECT(row), "tv-rich-activation-idle-id",
+                    GUINT_TO_POINTER(0));
 
   gnostr_timeline_embed_inflight_detach_row(row);
 
@@ -692,6 +706,70 @@ format_timestamp(gint64 created_at)
   char buf[64];
   strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", tm_info);
   return g_strdup(buf);
+}
+
+static gboolean
+activate_snapshot_rich_content_idle(gpointer user_data)
+{
+  GtkListItem *list_item = GTK_LIST_ITEM(user_data);
+  if (!GTK_IS_LIST_ITEM(list_item))
+    return G_SOURCE_REMOVE;
+
+  GtkWidget *row = gtk_list_item_get_child(list_item);
+  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(row))
+    return G_SOURCE_REMOVE;
+  g_object_set_data(G_OBJECT(row), "tv-rich-activation-idle-id",
+                    GUINT_TO_POINTER(0));
+
+  if (nostr_gtk_note_card_row_is_disposed(NOSTR_GTK_NOTE_CARD_ROW(row)) ||
+      !nostr_gtk_note_card_row_is_bound(NOSTR_GTK_NOTE_CARD_ROW(row)) ||
+      !gtk_widget_get_mapped(row))
+    return G_SOURCE_REMOVE;
+
+  GObject *obj = gtk_list_item_get_item(list_item);
+  if (!GNOSTR_IS_TIMELINE_SNAPSHOT_ROW(obj) ||
+      g_object_get_data(G_OBJECT(list_item), "tv-bound-item") != obj)
+    return G_SOURCE_REMOVE;
+
+  g_autoptr(GnostrTimelineItemViewModel) view_model =
+      gnostr_timeline_snapshot_row_dup_view_model(
+          GNOSTR_TIMELINE_SNAPSHOT_ROW(obj));
+  if (view_model) {
+    gulong map_id = (gulong)GPOINTER_TO_SIZE(
+        g_object_get_data(G_OBJECT(row), "tv-rich-activation-map-id"));
+    if (map_id > 0 &&
+        g_signal_handler_is_connected(G_OBJECT(row), map_id))
+      g_signal_handler_disconnect(row, map_id);
+    g_object_set_data(G_OBJECT(row), "tv-rich-activation-map-id",
+                      GSIZE_TO_POINTER(0));
+
+    nostr_gtk_note_card_row_activate_rich_content(
+        NOSTR_GTK_NOTE_CARD_ROW(row),
+        gnostr_timeline_item_view_model_get_content_descriptors(view_model));
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static void
+on_tv_snapshot_row_mapped_activate_rich(GtkWidget *widget,
+                                        gpointer user_data)
+{
+  GtkListItem *list_item = GTK_LIST_ITEM(user_data);
+  if (!GTK_IS_LIST_ITEM(list_item) ||
+      gtk_list_item_get_child(list_item) != widget)
+    return;
+
+  if (GPOINTER_TO_UINT(g_object_get_data(
+          G_OBJECT(widget), "tv-rich-activation-idle-id")) > 0)
+    return;
+
+  guint idle_id = g_idle_add_full(
+      G_PRIORITY_DEFAULT_IDLE,
+      activate_snapshot_rich_content_idle,
+      g_object_ref(list_item),
+      g_object_unref);
+  g_object_set_data(G_OBJECT(widget), "tv-rich-activation-idle-id",
+                    GUINT_TO_POINTER(idle_id));
 }
 
 static void
@@ -1052,12 +1130,21 @@ bind_row_common(NostrGtkTimelineView *self,
           snapshot_vm ? gnostr_timeline_item_view_model_get_rendered_content(snapshot_vm) : NULL);
         if (snapshot_vm) {
           GnostrTimelineSnapshotRow *snapshot_row = GNOSTR_TIMELINE_SNAPSHOT_ROW(obj);
-          nostr_gtk_note_card_row_set_rich_content(
+          const GPtrArray *descriptors =
+            gnostr_timeline_item_view_model_get_content_descriptors(snapshot_vm);
+          nostr_gtk_note_card_row_reserve_rich_content(
             NOSTR_GTK_NOTE_CARD_ROW(row),
-            gnostr_timeline_item_view_model_get_content_descriptors(snapshot_vm),
+            descriptors,
             gnostr_timeline_snapshot_row_get_media_reserved_height(snapshot_row),
             gnostr_timeline_snapshot_row_get_link_preview_reserved_height(snapshot_row),
             gnostr_timeline_snapshot_row_get_embed_reserved_height(snapshot_row));
+          if (descriptors && descriptors->len > 0) {
+            gulong map_id = g_signal_connect(
+              row, "map",
+              G_CALLBACK(on_tv_snapshot_row_mapped_activate_rich), item);
+            g_object_set_data(G_OBJECT(row), "tv-rich-activation-map-id",
+                              GSIZE_TO_POINTER((gsize)map_id));
+          }
         }
       }
     }

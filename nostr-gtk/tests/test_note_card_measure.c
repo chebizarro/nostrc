@@ -529,7 +529,8 @@ test_rich_content_hydration_preserves_reserved_height(void)
     g_ptr_array_add(descriptors, &link);
     g_ptr_array_add(descriptors, &embed);
 
-    nostr_gtk_note_card_row_set_rich_content(row, descriptors, 240, 120, 160);
+    nostr_gtk_note_card_row_reserve_rich_content(
+        row, descriptors, 240, 120, 160);
 
     int before_min = 0, before_nat = 0;
     gtk_widget_measure(GTK_WIDGET(row), GTK_ORIENTATION_VERTICAL,
@@ -545,8 +546,14 @@ test_rich_content_hydration_preserves_reserved_height(void)
     gtk_window_set_child(window, GTK_WIDGET(row));
     gtk_window_present(window);
 
-    /* Remote images are placeholders until explicit activation; mapping a
-     * timeline row must not leak the user's network address. */
+    /* Reservation remains geometry-only even after mapping. GtkListView bind
+     * can therefore reveal a fixed placeholder without starting rich work. */
+    drain_main_context_for(100 * G_TIME_SPAN_MILLISECOND);
+    g_assert_cmpuint(rich_media_request_count, ==, 0);
+    g_assert_cmpuint(
+        nostr_gtk_note_card_row_get_rich_child_creation_count(), ==, 0);
+
+    nostr_gtk_note_card_row_activate_rich_content(row, descriptors);
     drain_main_context_for(500 * G_TIME_SPAN_MILLISECOND);
     g_assert_cmpuint(rich_media_request_count, ==, 0);
     g_assert_cmpuint(
