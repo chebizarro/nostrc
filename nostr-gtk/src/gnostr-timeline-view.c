@@ -176,8 +176,23 @@ static void on_tabs_tab_selected(NostrGtkTimelineTabs *tabs_widget, guint index,
                 (guint)type, filter_value);
 }
 
+/* Signal handlers connected in init / set_tree_roots and disconnected in
+ * dispose / model swaps. Forward-declared so dispose can tear them down. */
+static void on_scroll_value_changed(GtkAdjustment *adj, gpointer user_data);
+static void on_root_items_changed(GListModel *list, guint position, guint removed, guint added, gpointer user_data);
+
 static void nostr_gtk_timeline_view_dispose(GObject *obj) {
   NostrGtkTimelineView *self = NOSTR_GTK_TIMELINE_VIEW(obj);
+
+  /* nostrc-07n9: Disconnect the scroll tracker first so that value-changed
+   * emissions triggered by teardown (model unset, template disposal) cannot
+   * re-arm the idle timeout against a dying object. */
+  if (self->root_scroller && GTK_IS_SCROLLED_WINDOW(self->root_scroller)) {
+    GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(
+        GTK_SCROLLED_WINDOW(self->root_scroller));
+    if (vadj)
+      g_signal_handlers_disconnect_by_func(vadj, on_scroll_value_changed, self);
+  }
 
   if (self->scroll_idle_id > 0) {
     g_source_remove(self->scroll_idle_id);
@@ -187,6 +202,11 @@ static void nostr_gtk_timeline_view_dispose(GObject *obj) {
   if (self->list_view && GTK_IS_LIST_VIEW(self->list_view)) {
     gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), NULL);
   }
+
+  /* nostrc-14lo: drop the roots items-changed handler before releasing our
+   * reference so the roots model cannot emit into a disposed view. */
+  if (self->tree_model)
+    g_signal_handlers_disconnect_by_func(self->tree_model, on_root_items_changed, self);
 
   g_clear_object(&self->selection_model);
   g_clear_object(&self->tree_model);
@@ -373,6 +393,12 @@ void nostr_gtk_timeline_view_set_model(NostrGtkTimelineView *self, GtkSelectionM
   g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
   if (self->selection_model == model) return;
 
+  /* nostrc-14lo: drop the roots items-changed handler before releasing our
+   * reference so the roots model cannot emit into a view it no longer
+   * belongs to. */
+  if (self->tree_model)
+    g_signal_handlers_disconnect_by_func(self->tree_model, on_root_items_changed, self);
+
   if (self->selection_model) g_clear_object(&self->selection_model);
   if (self->list_model) g_clear_object(&self->list_model);
   if (self->tree_model) g_clear_object(&self->tree_model);
@@ -422,10 +448,13 @@ static void populate_flattened_model(NostrGtkTimelineView *self, GListModel *roo
 
 void nostr_gtk_timeline_view_set_tree_roots(NostrGtkTimelineView *self, GListModel *roots) {
   g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
+  g_return_if_fail(roots == NULL || GTK_IS_TREE_LIST_MODEL(roots));
 
-  if (roots) {
-    g_signal_connect(roots, "items-changed", G_CALLBACK(on_root_items_changed), self);
-  }
+  /* nostrc-14lo: disconnect the previous roots handler before swapping so
+   * repeated calls don't multiply handlers or leave self dangling on a
+   * roots model that outlives the view. */
+  if (self->tree_model)
+    g_signal_handlers_disconnect_by_func(self->tree_model, on_root_items_changed, self);
 
   if (self->list_view) {
     gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), NULL);
@@ -437,12 +466,13 @@ void nostr_gtk_timeline_view_set_tree_roots(NostrGtkTimelineView *self, GListMod
 
   if (roots) {
     self->flattened_model = g_list_store_new(timeline_item_get_type());
-    self->tree_model = (GtkTreeListModel*)roots;
+    self->tree_model = g_object_ref(GTK_TREE_LIST_MODEL(roots));
 
     self->selection_model = GTK_SELECTION_MODEL(gtk_single_selection_new(G_LIST_MODEL(self->flattened_model)));
     g_object_ref_sink(self->selection_model);
 
     populate_flattened_model(self, roots);
+    g_signal_connect(roots, "items-changed", G_CALLBACK(on_root_items_changed), self);
   } else {
     self->tree_model = NULL;
     self->flattened_model = NULL;
@@ -570,4 +600,33 @@ gdouble nostr_gtk_timeline_view_get_scroll_velocity(NostrGtkTimelineView *self) 
   g_return_val_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self), 0.0);
 
   return self->scroll_velocity;
+}
+
+/* nostrc-wgt7: Programmatic scroll suppression for the velocity tracker. */
+void nostr_gtk_timeline_view_begin_programmatic_scroll(NostrGtkTimelineView *self) {
+  g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
+
+  if (self->root_scroller && GTK_IS_SCROLLED_WINDOW(self->root_scroller)) {
+    GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(
+        GTK_SCROLLED_WINDOW(self->root_scroller));
+    if (vadj)
+      g_signal_handlers_block_by_func(vadj, on_scroll_value_changed, self);
+  }
+}
+
+void nostr_gtk_timeline_view_end_programmatic_scroll(NostrGtkTimelineView *self) {
+  g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
+
+  if (self->root_scroller && GTK_IS_SCROLLED_WINDOW(self->root_scroller)) {
+    GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(
+        GTK_SCROLLED_WINDOW(self->root_scroller));
+    if (vadj) {
+      g_signal_handlers_unblock_by_func(vadj, on_scroll_value_changed, self);
+      /* Re-sync the tracker so the next user scroll computes velocity from
+       * the restored position instead of spiking on the jump delta. */
+      self->last_scroll_value = gtk_adjustment_get_value(vadj);
+      self->last_scroll_time = g_get_monotonic_time() / 1000;
+      self->scroll_velocity = 0.0;
+    }
+  }
 }

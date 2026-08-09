@@ -215,7 +215,11 @@ gnostr_main_window_on_timeline_restore_scroll_internal(GnostrTimelineFeedControl
   gdouble target = CLAMP(lower + MAX(0.0, scroll_y), lower, max_value);
 
   self->timeline_scroll_restore_depth++;
+  /* nostrc-wgt7: keep the widget's velocity tracker blind to the
+   * controller-driven jump so it isn't mistaken for fast user scrolling. */
+  nostr_gtk_timeline_view_begin_programmatic_scroll(NOSTR_GTK_TIMELINE_VIEW(timeline));
   gtk_adjustment_set_value(vadj, target);
+  nostr_gtk_timeline_view_end_programmatic_scroll(NOSTR_GTK_TIMELINE_VIEW(timeline));
   self->timeline_scroll_restore_depth--;
 }
 

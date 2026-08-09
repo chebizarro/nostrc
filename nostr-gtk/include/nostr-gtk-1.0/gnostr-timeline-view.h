@@ -95,6 +95,26 @@ gboolean nostr_gtk_timeline_view_is_fast_scrolling(NostrGtkTimelineView *self);
 
 gdouble nostr_gtk_timeline_view_get_scroll_velocity(NostrGtkTimelineView *self);
 
+/**
+ * nostr_gtk_timeline_view_begin_programmatic_scroll:
+ * @self: The timeline view
+ *
+ * Suppress scroll-velocity tracking while the caller changes the scroll
+ * position programmatically (e.g. controller-driven scroll restores), so
+ * the jump is not mistaken for fast user scrolling. Must be paired with
+ * nostr_gtk_timeline_view_end_programmatic_scroll(); pairs must not nest.
+ */
+void nostr_gtk_timeline_view_begin_programmatic_scroll(NostrGtkTimelineView *self);
+
+/**
+ * nostr_gtk_timeline_view_end_programmatic_scroll:
+ * @self: The timeline view
+ *
+ * Re-enable scroll-velocity tracking after a programmatic scroll and
+ * re-sync the tracker to the current position.
+ */
+void nostr_gtk_timeline_view_end_programmatic_scroll(NostrGtkTimelineView *self);
+
 G_END_DECLS
 
 #endif /* NOSTR_GTK_TIMELINE_VIEW_H */

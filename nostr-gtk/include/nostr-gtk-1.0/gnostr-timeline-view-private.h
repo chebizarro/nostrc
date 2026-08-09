@@ -1,11 +1,11 @@
 /**
  * gnostr-timeline-view-private.h — Internal struct definitions
  *
- * Exposes NostrGtkTimelineView and TimelineItem struct layouts for use
- * by app-level factory code that needs direct field access.
+ * Defines the NostrGtkTimelineView and TimelineItem struct layouts for the
+ * widget's own translation unit (nostr-gtk/src/gnostr-timeline-view.c).
  *
- * NOT installed as a public header. Only include from within the
- * nostr-gtk library or tightly-coupled app factory code.
+ * NOT installed as a public header. Do not include from app code; the
+ * app/library boundary is documented in docs/TIMELINE_LIBRARY_APP_BOUNDARY.md.
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
