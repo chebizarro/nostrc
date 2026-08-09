@@ -24,6 +24,7 @@
 #define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 #include <time.h>
+#include "go_tsan.h"
 #include "select.h"
 #include "channel.h"
 #include "fiber_hooks.h"
@@ -74,7 +75,7 @@ void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
     if (!chan || !w) return;
     if (chan->magic != GO_CHANNEL_MAGIC) return;
     /* Must hold chan->mutex — caller is responsible (we take it here for safety) */
-    nsync_mu_lock(&chan->mutex);
+    NLOCK(&chan->mutex);
 
     /* A terminal channel will never transition again, so registering after
      * close would leave this waiter asleep forever. This can happen when a
@@ -85,15 +86,15 @@ void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
         /* Synchronize the predicate update with the waiter's check-and-sleep
          * sequence. Without this mutex, close can signal after the waiter
          * observes false but before nsync_cv_wait actually sleeps. */
-        nsync_mu_lock(&w->mutex);
+        NLOCK(&w->mutex);
         atomic_store_explicit(&w->signaled, 1, memory_order_release);
         if (w->fiber_handle) {
             gof_hook_make_runnable(w->fiber_handle);
         } else {
             nsync_cv_signal(&w->cond);
         }
-        nsync_mu_unlock(&w->mutex);
-        nsync_mu_unlock(&chan->mutex);
+        NUNLOCK(&w->mutex);
+        NUNLOCK(&chan->mutex);
         return;
     }
 
@@ -101,7 +102,7 @@ void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
     GoSelectWaiterNode *cur = (GoSelectWaiterNode *)chan->select_waiters;
     while (cur) {
         if (cur->waiter == w) {
-            nsync_mu_unlock(&chan->mutex);
+            NUNLOCK(&chan->mutex);
             return; /* already registered */
         }
         cur = cur->next;
@@ -112,19 +113,19 @@ void go_channel_register_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
      * registered on multiple channels concurrently. */
     GoSelectWaiterNode *node = (GoSelectWaiterNode *)malloc(sizeof(GoSelectWaiterNode));
     if (!node) {
-        nsync_mu_unlock(&chan->mutex);
+        NUNLOCK(&chan->mutex);
         return;
     }
     node->waiter = go_select_waiter_ref(w);  /* Node takes a ref on the waiter */
     node->next = (GoSelectWaiterNode *)chan->select_waiters;
     chan->select_waiters = node;
-    nsync_mu_unlock(&chan->mutex);
+    NUNLOCK(&chan->mutex);
 }
 
 void go_channel_unregister_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
     if (!chan || !w) return;
     if (chan->magic != GO_CHANNEL_MAGIC) return;
-    nsync_mu_lock(&chan->mutex);
+    NLOCK(&chan->mutex);
     GoSelectWaiterNode **pp = (GoSelectWaiterNode **)&chan->select_waiters;
     while (*pp) {
         GoSelectWaiterNode *node = *pp;
@@ -136,7 +137,7 @@ void go_channel_unregister_select_waiter(GoChannel *chan, GoSelectWaiter *w) {
         }
         pp = &(*pp)->next;
     }
-    nsync_mu_unlock(&chan->mutex);
+    NUNLOCK(&chan->mutex);
 }
 
 /**
@@ -194,14 +195,14 @@ void go_channel_signal_select_waiters(GoChannel *chan) {
         }
         /* Serialize the predicate transition with the waiter's
          * check-and-sleep sequence to prevent a lost condition-variable wake. */
-        nsync_mu_lock(&w->mutex);
+        NLOCK(&w->mutex);
         atomic_store_explicit(&w->signaled, 1, memory_order_release);
         if (w->fiber_handle) {
             gof_hook_make_runnable(w->fiber_handle);
         } else {
             nsync_cv_signal(&w->cond);
         }
-        nsync_mu_unlock(&w->mutex);
+        NUNLOCK(&w->mutex);
         node = next;
     }
 }
@@ -371,25 +372,25 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
              * gof_hook_make_runnable(NULL). Use the waiter's mutex to make
              * the set-handle + check-signaled + park sequence atomic with
              * respect to the signaler. */
-            nsync_mu_lock(&waiter->mutex);
+            NLOCK(&waiter->mutex);
             waiter->fiber_handle = _sel_fiber;
             if (!atomic_load_explicit(&waiter->signaled, memory_order_acquire)) {
                 /* Not signaled yet — park the fiber. Release mutex before
                  * parking so the signaler can acquire it. */
-                nsync_mu_unlock(&waiter->mutex);
+                NUNLOCK(&waiter->mutex);
                 gof_hook_block_current(); /* Parks fiber — OS thread freed */
             } else {
                 /* Already signaled — don't park, just continue */
-                nsync_mu_unlock(&waiter->mutex);
+                NUNLOCK(&waiter->mutex);
             }
             waiter->fiber_handle = NULL;
         } else {
             /* OS thread path: use nsync_cv_wait */
-            nsync_mu_lock(&waiter->mutex);
+            NLOCK(&waiter->mutex);
             while (!atomic_load_explicit(&waiter->signaled, memory_order_acquire)) {
-                nsync_cv_wait(&waiter->cond, &waiter->mutex);
+                CV_WAIT_OS(&waiter->cond, &waiter->mutex);
             }
-            nsync_mu_unlock(&waiter->mutex);
+            NUNLOCK(&waiter->mutex);
         }
 
         /* Unregister before retrying (avoids stale registrations) */
@@ -514,7 +515,7 @@ GoSelectResult go_select_timeout(GoSelectCase *cases, size_t num_cases,
              *
              * RACE FIX: Same as go_select — set fiber_handle BEFORE checking
              * signaled, using mutex to make the sequence atomic. */
-            nsync_mu_lock(&waiter->mutex);
+            NLOCK(&waiter->mutex);
             waiter->fiber_handle = _sel_fiber_t;
             if (!atomic_load_explicit(&waiter->signaled, memory_order_acquire)) {
                 /* Not signaled yet — compute deadline and park */
@@ -523,25 +524,25 @@ GoSelectResult go_select_timeout(GoSelectCase *cases, size_t num_cases,
                 uint64_t _abs_deadline_ns = (uint64_t)_ts_now.tv_sec * 1000000000ull
                                           + (uint64_t)_ts_now.tv_nsec
                                           + remaining_us * 1000ull;
-                nsync_mu_unlock(&waiter->mutex);
+                NUNLOCK(&waiter->mutex);
                 gof_hook_block_current_until(_abs_deadline_ns);
             } else {
                 /* Already signaled — don't park */
-                nsync_mu_unlock(&waiter->mutex);
+                NUNLOCK(&waiter->mutex);
             }
             waiter->fiber_handle = NULL;
         } else {
             /* OS thread path: use nsync_cv_wait_with_deadline */
-            nsync_mu_lock(&waiter->mutex);
+            NLOCK(&waiter->mutex);
             while (!atomic_load_explicit(&waiter->signaled, memory_order_acquire)) {
-                int wait_rc = nsync_cv_wait_with_deadline(
+                int wait_rc = CV_WAIT_DEADLINE_OS(
                     &waiter->cond, &waiter->mutex, abs_deadline, NULL);
                 if (wait_rc != 0) {
                     /* Timeout expired */
                     break;
                 }
             }
-            nsync_mu_unlock(&waiter->mutex);
+            NUNLOCK(&waiter->mutex);
         }
 
         /* Unregister before retrying */

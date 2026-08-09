@@ -82,39 +82,9 @@ static int fiber_waiter_remove(GoFiberWaiter **list, GoFiberWaiter *w) {
     return 0;
 }
 
-// TSAN-aware mutex/condvar helpers for nsync_mu/nsync_cv
-#if defined(__has_feature)
-#  if __has_feature(thread_sanitizer)
-#    define GO_TSAN_ENABLED 1
-#  endif
-#endif
-#if defined(__SANITIZE_THREAD__)
-#  define GO_TSAN_ENABLED 1
-#endif
-#ifdef GO_ENABLE_TSAN
-#  if GO_ENABLE_TSAN
-#    ifndef GO_TSAN_ENABLED
-#      define GO_TSAN_ENABLED 1
-#    endif
-#  endif
-#endif
-
-#ifdef GO_TSAN_ENABLED
-extern void __tsan_mutex_pre_lock(void *addr, unsigned flags);
-extern void __tsan_mutex_post_lock(void *addr, unsigned flags, int recursion);
-extern void __tsan_mutex_pre_unlock(void *addr, unsigned flags);
-extern void __tsan_mutex_post_unlock(void *addr, unsigned flags);
-static inline void tsan_mu_lock(nsync_mu *m){ __tsan_mutex_pre_lock(m, 0); nsync_mu_lock(m); __tsan_mutex_post_lock(m, 0, 0); }
-static inline void tsan_mu_unlock(nsync_mu *m){ __tsan_mutex_pre_unlock(m, 0); nsync_mu_unlock(m); __tsan_mutex_post_unlock(m, 0); }
-static inline void tsan_cv_wait(nsync_cv *cv, nsync_mu *m){ __tsan_mutex_pre_unlock(m, 0); nsync_cv_wait(cv, m); __tsan_mutex_post_lock(m, 0, 0); }
-#  define NLOCK(mu_ptr)   tsan_mu_lock((mu_ptr))
-#  define NUNLOCK(mu_ptr) tsan_mu_unlock((mu_ptr))
-#  define CV_WAIT_OS(cv_ptr, mu_ptr) tsan_cv_wait((cv_ptr), (mu_ptr))
-#else
-#  define NLOCK(mu_ptr)   nsync_mu_lock((mu_ptr))
-#  define NUNLOCK(mu_ptr) nsync_mu_unlock((mu_ptr))
-#  define CV_WAIT_OS(cv_ptr, mu_ptr) nsync_cv_wait((cv_ptr), (mu_ptr))
-#endif
+/* TSAN-aware mutex/condvar helpers — shared with select.c via go_tsan.h so
+ * every file touching the same nsync_mu uses identical TSAN annotations. */
+#include "go_tsan.h"
 
 /* ── Fiber-aware CV_WAIT ──────────────────────────────────────────────
  * If called from within a fiber context, parks the fiber cooperatively
