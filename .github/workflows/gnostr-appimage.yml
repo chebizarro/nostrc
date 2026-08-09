@@ -93,7 +93,6 @@ jobs:
         run: |
           cmake --install build --prefix "$PWD/AppDir/usr"
           find AppDir/usr/bin -maxdepth 1 -type f ! -name gnostr -delete
-          cp -a build/libjson/libnostr_json.so* AppDir/usr/lib/
           rm -rf AppDir/usr/share/metainfo
           find AppDir/usr/share/applications -maxdepth 1 -type f \
             ! -name org.gnostr.gnostr.desktop -delete
