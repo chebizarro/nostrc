@@ -8,6 +8,7 @@
 #include "gnostr-login.h"
 #include "gnostr-notifications-view.h"
 #include "../ipc/gnostr-signer-service.h"
+#include "../services/gnostr-media-service.h"
 #include "../notifications/badge_manager.h"
 #include "../notifications/desktop_notify.h"
 #include "../util/blossom_settings.h"
@@ -17,6 +18,7 @@
 #include "../model/gnostr-filter-set-sync.h"
 
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
+#include <nostr-gobject-1.0/gnostr-identity.h>
 #include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/gnostr-sync-service.h>
 #include <nostr-gobject-1.0/nostr_event.h>
@@ -840,6 +842,62 @@ gnostr_main_window_on_account_switch_requested_internal(GnostrSessionView *view,
   gnostr_main_window_update_login_ui_state_internal(self);
   open_login_dialog_local(self);
   gnostr_main_window_show_toast(GTK_WIDGET(self), "Please sign in to switch accounts");
+}
+
+void
+gnostr_main_window_on_account_remove_requested_internal(GnostrSessionView *view,
+                                                        const char *npub,
+                                                        gpointer user_data)
+{
+  (void)view;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (!GNOSTR_IS_MAIN_WINDOW(self) || !npub || !*npub)
+    return;
+
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
+  if (!settings) {
+    gnostr_main_window_show_toast(GTK_WIDGET(self), _("Could not access saved accounts"));
+    return;
+  }
+
+  g_auto(GStrv) accounts = g_settings_get_strv(settings, "known-accounts");
+  g_autoptr(GPtrArray) remaining = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; accounts && accounts[i]; i++) {
+    if (g_strcmp0(accounts[i], npub) != 0)
+      g_ptr_array_add(remaining, g_strdup(accounts[i]));
+  }
+  g_ptr_array_add(remaining, NULL);
+
+  if (!g_settings_set_strv(settings, "known-accounts",
+                            (const char * const *)remaining->pdata)) {
+    gnostr_main_window_show_toast(GTK_WIDGET(self), _("Could not update saved accounts"));
+    return;
+  }
+
+  if (gnostr_identity_has_local_key(npub)) {
+    g_autoptr(GError) error = NULL;
+    if (!gnostr_identity_delete(npub, &error)) {
+      if (!g_settings_set_strv(settings, "known-accounts",
+                               (const char * const *)accounts)) {
+        g_warning("Failed to restore known accounts after keystore deletion error");
+      }
+      g_autofree char *message = g_strdup_printf(
+          _("Could not remove account: %s"),
+          error ? error->message : _("unknown keystore error"));
+      gnostr_main_window_show_toast(GTK_WIDGET(self), message);
+      return;
+    }
+  }
+
+  g_autofree char *current_npub = g_settings_get_string(settings, "current-npub");
+  if (g_strcmp0(current_npub, npub) == 0)
+    gnostr_main_window_on_avatar_logout_clicked_internal(NULL, self);
+
+  gnostr_media_service_evict_account(gnostr_media_service_get_default(), npub);
+  if (self->session_view)
+    gnostr_session_view_refresh_account_list(self->session_view);
+
+  gnostr_main_window_show_toast(GTK_WIDGET(self), _("Account removed"));
 }
 
 void

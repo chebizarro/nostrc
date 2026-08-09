@@ -313,6 +313,9 @@ void gnostr_main_window_on_view_profile_requested_internal(GnostrSessionView *sv
 void gnostr_main_window_on_account_switch_requested_internal(GnostrSessionView *view,
                                                              const char *npub,
                                                              gpointer user_data);
+void gnostr_main_window_on_account_remove_requested_internal(GnostrSessionView *view,
+                                                             const char *npub,
+                                                             gpointer user_data);
 void gnostr_main_window_init_widget_state_internal(GnostrMainWindow *self);
 void gnostr_main_window_init_runtime_state_internal(GnostrMainWindow *self);
 void gnostr_main_window_init_dm_internal(GnostrMainWindow *self);

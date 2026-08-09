@@ -46,6 +46,7 @@ typedef enum {
   SIGNAL_LOGIN_REQUESTED,
   SIGNAL_LOGOUT_REQUESTED,
   SIGNAL_ACCOUNT_SWITCH_REQUESTED,
+  SIGNAL_ACCOUNT_REMOVE_REQUESTED,
   SIGNAL_NEW_NOTES_CLICKED,
   SIGNAL_COMPOSE_REQUESTED,
   SIGNAL_BUG_REPORT_REQUESTED,
@@ -242,6 +243,7 @@ static void on_btn_login_clicked(GtkButton *btn, gpointer user_data);
 static void on_btn_logout_clicked(GtkButton *btn, gpointer user_data);
 static void on_btn_add_account_clicked(GtkButton *btn, gpointer user_data);
 static void on_account_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data);
+static void on_account_remove_clicked(GtkButton *btn, gpointer user_data);
 
 /* Helper: Truncate npub for display (e.g., "npub1abc...xyz") */
 static char *truncate_npub(const char *npub) {
@@ -298,7 +300,9 @@ static GtkWidget *create_small_avatar_overlay(GtkWidget **out_image, GtkWidget *
 }
 
 /* Helper: Create a row for an account in the account list */
-static GtkWidget *create_account_row(const char *npub, gboolean is_current) {
+static GtkWidget *create_account_row(GnostrSessionView *self,
+                                     const char *npub,
+                                     gboolean is_current) {
   GtkWidget *row = gtk_list_box_row_new();
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
   gtk_widget_set_margin_top(box, 4);
@@ -369,6 +373,15 @@ static GtkWidget *create_account_row(const char *npub, gboolean is_current) {
     gtk_box_append(GTK_BOX(box), check);
   }
 
+  GtkWidget *remove_button = gtk_button_new_from_icon_name("edit-delete-symbolic");
+  gtk_widget_add_css_class(remove_button, "flat");
+  gtk_widget_add_css_class(remove_button, "circular");
+  gtk_widget_add_css_class(remove_button, "destructive-action");
+  gtk_widget_set_tooltip_text(remove_button, _("Remove Account"));
+  g_object_set_data_full(G_OBJECT(remove_button), "npub", g_strdup(npub), g_free);
+  g_signal_connect(remove_button, "clicked", G_CALLBACK(on_account_remove_clicked), self);
+  gtk_box_append(GTK_BOX(box), remove_button);
+
   gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
 
   /* Store npub as row data for switch handler */
@@ -404,7 +417,7 @@ static void rebuild_account_list(GnostrSessionView *self) {
     for (int i = 0; accounts[i]; i++) {
       if (!accounts[i][0]) continue;  /* Skip empty strings */
       gboolean is_current = (current_npub && g_strcmp0(accounts[i], current_npub) == 0);
-      GtkWidget *row = create_account_row(accounts[i], is_current);
+      GtkWidget *row = create_account_row(self, accounts[i], is_current);
       gtk_list_box_append(self->account_list, row);
       has_accounts = TRUE;
     }
@@ -758,6 +771,65 @@ static void on_account_row_activated(GtkListBox *box, GtkListBoxRow *row, gpoint
   g_signal_emit(self, signals[SIGNAL_ACCOUNT_SWITCH_REQUESTED], 0, npub);
 }
 
+typedef struct {
+  GnostrSessionView *self;
+  char *npub;
+} AccountRemoveDialogContext;
+
+static void account_remove_dialog_context_free(AccountRemoveDialogContext *ctx) {
+  if (!ctx) return;
+  g_clear_object(&ctx->self);
+  g_free(ctx->npub);
+  g_free(ctx);
+}
+
+static void on_account_remove_confirmed(GObject *source,
+                                        GAsyncResult *result,
+                                        gpointer user_data) {
+  AccountRemoveDialogContext *ctx = user_data;
+  g_autoptr(GError) error = NULL;
+  int response = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source), result, &error);
+
+  if (error) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+      g_debug("Account removal dialog failed: %s", error->message);
+  } else if (response == 1 && GNOSTR_IS_SESSION_VIEW(ctx->self)) {
+    g_signal_emit(ctx->self, signals[SIGNAL_ACCOUNT_REMOVE_REQUESTED], 0, ctx->npub);
+  }
+
+  account_remove_dialog_context_free(ctx);
+}
+
+static void on_account_remove_clicked(GtkButton *btn, gpointer user_data) {
+  GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
+  const char *npub = g_object_get_data(G_OBJECT(btn), "npub");
+  if (!GNOSTR_IS_SESSION_VIEW(self) || !npub || !*npub) return;
+
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
+
+  if (self->avatar_popover)
+    gtk_popover_popdown(self->avatar_popover);
+
+  GtkAlertDialog *dialog = gtk_alert_dialog_new("%s", _("Remove Account?"));
+  g_autofree char *display = truncate_npub(npub);
+  g_autofree char *detail = g_strdup_printf(
+      _("This will remove %s from this device and delete any locally stored "
+        "private key. This action cannot be undone."),
+      display);
+  gtk_alert_dialog_set_detail(dialog, detail);
+  gtk_alert_dialog_set_buttons(dialog,
+                               (const char * const[]){_("Cancel"), _("Remove"), NULL});
+  gtk_alert_dialog_set_cancel_button(dialog, 0);
+  gtk_alert_dialog_set_default_button(dialog, 0);
+
+  AccountRemoveDialogContext *ctx = g_new0(AccountRemoveDialogContext, 1);
+  ctx->self = g_object_ref(self);
+  ctx->npub = g_strdup(npub);
+  gtk_alert_dialog_choose(dialog, parent, NULL, on_account_remove_confirmed, ctx);
+  g_object_unref(dialog);
+}
+
 static void on_btn_new_notes_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrSessionView *self = GNOSTR_SESSION_VIEW(user_data);
@@ -977,6 +1049,18 @@ static void gnostr_session_view_class_init(GnostrSessionViewClass *klass) {
 
   signals[SIGNAL_ACCOUNT_SWITCH_REQUESTED] = g_signal_new(
       "account-switch-requested",
+      G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST,
+      0,
+      NULL,
+      NULL,
+      g_cclosure_marshal_VOID__STRING,
+      G_TYPE_NONE,
+      1,
+      G_TYPE_STRING);
+
+  signals[SIGNAL_ACCOUNT_REMOVE_REQUESTED] = g_signal_new(
+      "account-remove-requested",
       G_TYPE_FROM_CLASS(klass),
       G_SIGNAL_RUN_LAST,
       0,

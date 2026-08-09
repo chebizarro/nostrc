@@ -75,6 +75,7 @@ const char *gnostr_session_view_get_search_text(GnostrSessionView *self);
  * - "login-requested": Emitted when sign in requested
  * - "logout-requested": Emitted when sign out clicked
  * - "account-switch-requested" (const char *npub): Emitted when user wants to switch accounts
+ * - "account-remove-requested" (const char *npub): Emitted after account removal is confirmed
  * - "new-notes-clicked": Emitted when new notes toast clicked
  * - "compose-requested": Emitted when compose button clicked
  * - "bug-report-requested": Emitted when the authenticated bug-report button is clicked

@@ -40,6 +40,8 @@ gnostr_main_window_connect_session_view_signals_internal(GnostrMainWindow *self,
   g_signal_connect(self->session_view, "logout-requested", logout_cb, self);
   g_signal_connect(self->session_view, "view-profile-requested", view_profile_cb, self);
   g_signal_connect(self->session_view, "account-switch-requested", account_switch_cb, self);
+  g_signal_connect(self->session_view, "account-remove-requested",
+                   G_CALLBACK(gnostr_main_window_on_account_remove_requested_internal), self);
   g_signal_connect(self->session_view, "new-notes-clicked", new_notes_cb, self);
   g_signal_connect(self->session_view, "compose-requested", compose_cb, self);
   g_signal_connect(self->session_view, "bug-report-requested",
