@@ -72,19 +72,10 @@ struct _NostrGtkTimelineView {
   gboolean is_fast_scrolling;
   guint scroll_idle_id;
 
-  /* nostrc-75h.1: Legacy prepend/upper scroll stabilization state.
-   * GtkAdjustment::upper compensation is skipped for compositor-backed views;
-   * main-feed scroll anchoring belongs to the feed controller, not live
-   * event-model insertion/drain or lazy row-height changes. Fields are
-   * retained for ABI/state-layout compatibility. */
-  gulong model_items_changed_handler_id;  /* unused — retained for ABI */
-  GListModel *observed_model;             /* unused — retained for ABI */
-  gdouble prev_adj_upper;
-  gboolean prepend_fixup_armed;           /* unused — retained for ABI */
-  gboolean prepend_fixup_pending;         /* unused — retained for ABI */
-  gdouble prepend_fixup_pre_value;        /* unused — retained for ABI */
-  gdouble prepend_fixup_accumulated_delta;/* unused — retained for ABI */
-  guint prepend_fixup_id;                 /* unused — retained for ABI */
+  /* nostrc-75h.1: The legacy prepend/upper scroll stabilization was removed.
+   * The widget never modifies the scroll position in response to model or
+   * adjustment changes; main-feed scroll anchoring belongs to the sliding
+   * view in GnostrTimelineFeedController. */
 
   /* nostrc-hiei: GNostr-specific metadata batching state previously
    * lived here (pending_metadata_items, metadata_batch_idle_id) and was
