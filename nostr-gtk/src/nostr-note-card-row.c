@@ -96,65 +96,10 @@ static void pending_media_item_free(gpointer data) {
   g_free(item);
 }
 
-/* Media image cache to reduce memory usage - LRU with bounded size */
-#define MEDIA_IMAGE_CACHE_MAX 50  /* Max cached media images */
-static GHashTable *s_media_image_cache = NULL;  /* URL -> GdkTexture */
-static GQueue *s_media_image_lru = NULL;        /* URL strings in LRU order */
-static GHashTable *s_media_image_lru_nodes = NULL; /* URL -> GList* node */
-
-static void ensure_media_image_cache(void) {
-  if (!s_media_image_cache) {
-    s_media_image_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
-    s_media_image_lru = g_queue_new();
-    s_media_image_lru_nodes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  }
-}
-
-static GdkTexture *media_image_cache_get(const char *url) {
-  if (!url || !s_media_image_cache) return NULL;
-  GdkTexture *tex = g_hash_table_lookup(s_media_image_cache, url);
-  if (tex) {
-    /* Touch LRU */
-    GList *node = g_hash_table_lookup(s_media_image_lru_nodes, url);
-    if (node) {
-      g_queue_unlink(s_media_image_lru, node);
-      g_queue_push_tail_link(s_media_image_lru, node);
-    }
-    return g_object_ref(tex);
-  }
-  return NULL;
-}
-
-static void media_image_cache_put(const char *url, GdkTexture *tex) {
-  if (!url || !tex) return;
-  ensure_media_image_cache();
-  
-  /* Already cached? */
-  if (g_hash_table_contains(s_media_image_cache, url)) return;
-  
-  /* Evict oldest if over limit */
-  while (g_hash_table_size(s_media_image_cache) >= MEDIA_IMAGE_CACHE_MAX &&
-         !g_queue_is_empty(s_media_image_lru)) {
-    char *oldest = g_queue_pop_head(s_media_image_lru);
-    if (oldest) {
-      g_hash_table_remove(s_media_image_lru_nodes, oldest);
-      g_hash_table_remove(s_media_image_cache, oldest);
-      g_free(oldest);
-    }
-  }
-  
-  /* Insert new entry */
-  g_hash_table_insert(s_media_image_cache, g_strdup(url), g_object_ref(tex));
-  char *lru_key = g_strdup(url);
-  GList *node = g_list_alloc();
-  node->data = lru_key;
-  g_queue_push_tail_link(s_media_image_lru, node);
-  g_hash_table_insert(s_media_image_lru_nodes, g_strdup(url), node);
-}
-
-/* Public: Get current cache size for memory stats */
+/* Retained for telemetry ABI compatibility.  Note-card media textures are
+ * owned and byte-accounted by the application media service. */
 guint nostr_gtk_media_image_cache_size(void) {
-  return s_media_image_cache ? g_hash_table_size(s_media_image_cache) : 0;
+  return 0;
 }
 
 struct _NostrGtkNoteCardRow {
@@ -2767,10 +2712,6 @@ static void on_media_decode_done(GObject *source, GAsyncResult *res, gpointer us
     if (GTK_IS_PICTURE(picture) &&
         gtk_widget_get_native(picture) != NULL &&
         gtk_widget_get_mapped(picture)) {
-      const char *url = g_object_get_data(G_OBJECT(picture), "image-url");
-      if (url) {
-        media_image_cache_put(url, texture);
-      }
       gtk_picture_set_paintable(GTK_PICTURE(picture), GDK_PAINTABLE(texture));
       GtkWidget *container = gtk_widget_get_parent(picture);
       if (container) show_loaded_image(container);
@@ -2823,30 +2764,25 @@ static void on_media_image_loaded(GObject *source, GAsyncResult *res, gpointer u
  * CRITICAL: Uses GWeakRef for the picture widget to prevent use-after-free
  * crash when GtkListView recycles rows during scrolling. */
 
-/**
- * remote_media_loading_enabled:
- *
- * Check if remote media loading is enabled via GSettings.
- *
- * Uses a static GSettings singleton pattern - the settings object is created
- * once and reused for all subsequent calls. This is acceptable because:
- * 1. GSettings automatically monitors for changes and updates cached values
- * 2. The object persists for the application lifetime (no cleanup needed)
- * 3. This function is called frequently (on every media load check)
- *
- * Returns: TRUE if remote media should be loaded, FALSE for privacy mode
- */
 static gboolean
-remote_media_loading_enabled(void) {
-  static GSettings *s = NULL;  /* Singleton - never freed (intentional) */
-  if (G_UNLIKELY(!s)) {
-    GSettingsSchemaSource *src = g_settings_schema_source_get_default();
-    if (src && g_settings_schema_source_lookup(src, "org.gnostr.Client", TRUE))
-      s = g_settings_new("org.gnostr.Client");
-    else
-      return FALSE; /* fail closed if the app privacy schema is unavailable */
+remote_media_loading_enabled(void)
+{
+  static GSettings *settings;
+  static gsize initialized;
+
+  if (g_once_init_enter(&initialized)) {
+    GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+    if (source) {
+      g_autoptr(GSettingsSchema) schema =
+          g_settings_schema_source_lookup(source, "org.gnostr.Client", TRUE);
+      if (schema && g_settings_schema_has_key(schema, "load-remote-media"))
+        settings = g_settings_new_full(schema, NULL, NULL);
+    }
+    g_once_init_leave(&initialized, 1);
   }
-  return g_settings_get_boolean(s, "load-remote-media");
+
+  return settings &&
+      g_settings_get_boolean(settings, "load-remote-media");
 }
 
 static void load_media_image_internal(NostrGtkNoteCardRow *self,
@@ -2856,20 +2792,8 @@ static void load_media_image_internal(NostrGtkNoteCardRow *self,
                                       gboolean user_initiated) {
   if (!url || !*url || !GTK_IS_PICTURE(picture)) return;
 
-  /* Privacy: skip remote fetch if disabled (still serve from cache) */
-  if (!user_initiated && !remote_media_loading_enabled()) {
-    GdkTexture *cached = media_image_cache_get(url);
-    if (cached) {
-      gtk_picture_set_paintable(picture, GDK_PAINTABLE(cached));
-      GtkWidget *container = gtk_widget_get_parent(GTK_WIDGET(picture));
-      if (container) show_loaded_image(container);
-      g_object_unref(cached);
-    }
-    return;
-  }
-
-  /* App consumers inject the bounded media service.  Keep the process-global
-   * 50-texture LRU and direct Soup path strictly as the library fallback. */
+  /* App consumers inject the bounded media service.  It serves memory-cache
+   * hits before applying the network privacy policy. */
   if (self->media_texture_loader && self->media_texture_request_func) {
     GCancellable *cancellable = g_cancellable_new();
     g_autofree gchar *request_key = g_strdup_printf(
@@ -2903,16 +2827,6 @@ static void load_media_image_internal(NostrGtkNoteCardRow *self,
   if (resource_class == NOSTR_GTK_MEDIA_RESOURCE_VIDEO_POSTER) {
     GtkWidget *container = gtk_widget_get_parent(GTK_WIDGET(picture));
     if (container) show_broken_image_fallback(container);
-    return;
-  }
-
-  /* Check fallback cache first */
-  GdkTexture *cached = media_image_cache_get(url);
-  if (cached) {
-    gtk_picture_set_paintable(picture, GDK_PAINTABLE(cached));
-    GtkWidget *container = gtk_widget_get_parent(GTK_WIDGET(picture));
-    if (container) show_loaded_image(container);
-    g_object_unref(cached);
     return;
   }
 

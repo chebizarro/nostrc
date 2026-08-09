@@ -193,6 +193,7 @@ struct _GnostrMediaService {
   char *disk_root;
   GHashTable *known_namespaces; /* namespace strings already scheduled */
   GHashTable *namespace_epochs; /* namespace -> guint64*, guarded by media_disk */
+  GHashTable *disk_directory_states; /* directory -> DiskDirectoryState*, guarded by media_disk */
   guint outstanding_disk_jobs;
   GThreadPool *disk_pool;
   GQueue disk_queue; /* DiskExecutorEntry*; main-context-only */
@@ -451,7 +452,14 @@ typedef struct {
   char *path;
   guint64 size;
   gint64 mtime;
+  GList *lru_link;
 } DiskFileEntry;
+
+typedef struct {
+  GHashTable *entries; /* borrowed DiskFileEntry.path -> DiskFileEntry */
+  GQueue lru;          /* oldest first */
+  guint64 total_bytes;
+} DiskDirectoryState;
 
 static void
 disk_file_entry_free(DiskFileEntry *entry)
@@ -460,6 +468,17 @@ disk_file_entry_free(DiskFileEntry *entry)
     return;
   g_free(entry->path);
   g_free(entry);
+}
+
+static void
+disk_directory_state_free(DiskDirectoryState *state)
+{
+  if (!state)
+    return;
+  while (!g_queue_is_empty(&state->lru))
+    disk_file_entry_free(g_queue_pop_head(&state->lru));
+  g_hash_table_unref(state->entries);
+  g_free(state);
 }
 
 static gint
@@ -501,21 +520,155 @@ scan_regular_files(const char *dir, guint64 *out_total)
   return files;
 }
 
-static guint
-prune_directory_to_budget(const char *dir, guint64 budget)
+static DiskDirectoryState *
+disk_directory_state_scan(const char *dir)
 {
   guint64 total = 0;
   g_autoptr(GPtrArray) files = scan_regular_files(dir, &total);
   g_ptr_array_sort(files, disk_file_entry_compare);
-  guint removed = 0;
-  for (guint i = 0; i < files->len && total > budget; i++) {
+
+  DiskDirectoryState *state = g_new0(DiskDirectoryState, 1);
+  state->entries = g_hash_table_new(g_str_hash, g_str_equal);
+  state->total_bytes = total;
+  for (guint i = 0; i < files->len; i++) {
     DiskFileEntry *entry = g_ptr_array_index(files, i);
-    if (g_unlink(entry->path) == 0) {
-      total -= MIN(total, entry->size);
-      removed++;
-    }
+    g_queue_push_tail(&state->lru, entry);
+    entry->lru_link = g_queue_peek_tail_link(&state->lru);
+    g_hash_table_insert(state->entries, entry->path, entry);
   }
-  return removed;
+  g_ptr_array_set_free_func(files, NULL);
+  return state;
+}
+
+static DiskDirectoryState *
+disk_directory_state_get_locked(GnostrMediaService *self, const char *dir)
+{
+  DiskDirectoryState *state =
+      g_hash_table_lookup(self->disk_directory_states, dir);
+  if (!state) {
+    state = disk_directory_state_scan(dir);
+    g_hash_table_insert(self->disk_directory_states, g_strdup(dir), state);
+  }
+  return state;
+}
+
+static void
+disk_directory_state_replace_locked(GnostrMediaService *self,
+                                    const char *dir,
+                                    DiskDirectoryState *state)
+{
+  g_hash_table_replace(self->disk_directory_states, g_strdup(dir), state);
+}
+
+static void
+disk_directory_state_forget(DiskDirectoryState *state,
+                            DiskFileEntry *entry)
+{
+  g_hash_table_remove(state->entries, entry->path);
+  if (entry->lru_link)
+    g_queue_delete_link(&state->lru, entry->lru_link);
+  state->total_bytes -= MIN(state->total_bytes, entry->size);
+  disk_file_entry_free(entry);
+}
+
+static void
+disk_directory_state_record(DiskDirectoryState *state,
+                            const char *path,
+                            guint64 size,
+                            gint64 mtime)
+{
+  DiskFileEntry *old = g_hash_table_lookup(state->entries, path);
+  if (old)
+    disk_directory_state_forget(state, old);
+
+  DiskFileEntry *entry = g_new0(DiskFileEntry, 1);
+  entry->path = g_strdup(path);
+  entry->size = size;
+  entry->mtime = mtime;
+  g_queue_push_tail(&state->lru, entry);
+  entry->lru_link = g_queue_peek_tail_link(&state->lru);
+  g_hash_table_insert(state->entries, entry->path, entry);
+  state->total_bytes += size;
+}
+
+static gboolean
+disk_directory_state_make_byte_room(DiskDirectoryState *state,
+                                    const char *replace_path,
+                                    guint64 incoming_size,
+                                    guint64 budget)
+{
+  DiskFileEntry *replaced = g_hash_table_lookup(state->entries, replace_path);
+  guint64 replaced_size = replaced ? replaced->size : 0;
+  guint64 retained = state->total_bytes - MIN(state->total_bytes, replaced_size);
+  if (incoming_size > budget)
+    return FALSE;
+
+  for (GList *link = state->lru.head;
+       retained > budget - incoming_size && link;) {
+    GList *next = link->next;
+    DiskFileEntry *entry = link->data;
+    if (entry != replaced &&
+        (g_unlink(entry->path) == 0 || errno == ENOENT)) {
+      retained -= MIN(retained, entry->size);
+      disk_directory_state_forget(state, entry);
+    }
+    link = next;
+  }
+  return retained <= budget - incoming_size;
+}
+
+static gboolean
+disk_directory_state_make_entry_room(DiskDirectoryState *state,
+                                     const char *replace_path,
+                                     guint max_entries)
+{
+  DiskFileEntry *replaced = g_hash_table_lookup(state->entries, replace_path);
+  guint retained = g_hash_table_size(state->entries) - (replaced ? 1u : 0u);
+  for (GList *link = state->lru.head;
+       retained >= max_entries && link;) {
+    GList *next = link->next;
+    DiskFileEntry *entry = link->data;
+    if (entry != replaced &&
+        (g_unlink(entry->path) == 0 || errno == ENOENT)) {
+      retained--;
+      disk_directory_state_forget(state, entry);
+    }
+    link = next;
+  }
+  return retained < max_entries;
+}
+
+static void
+disk_directory_states_remove_namespace_locked(GnostrMediaService *self,
+                                               const char *cache_namespace)
+{
+  g_autofree char *namespace_dir =
+      g_build_filename(self->disk_root, cache_namespace, NULL);
+  gsize prefix_len = strlen(namespace_dir);
+  GHashTableIter iter;
+  gpointer key;
+  g_hash_table_iter_init(&iter, self->disk_directory_states);
+  while (g_hash_table_iter_next(&iter, &key, NULL)) {
+    const char *dir = key;
+    if (g_str_has_prefix(dir, namespace_dir) &&
+        (dir[prefix_len] == G_DIR_SEPARATOR || dir[prefix_len] == '\0'))
+      g_hash_table_iter_remove(&iter);
+  }
+}
+
+static DiskDirectoryState *
+prune_directory_to_budget(const char *dir, guint64 budget)
+{
+  DiskDirectoryState *state = disk_directory_state_scan(dir);
+  for (GList *link = state->lru.head;
+       state->total_bytes > budget && link;) {
+    GList *next = link->next;
+    DiskFileEntry *entry = link->data;
+    if (g_unlink(entry->path) == 0 || errno == ENOENT)
+      disk_directory_state_forget(state, entry);
+    link = next;
+  }
+  return state;
 }
 
 static char *
@@ -2141,26 +2294,16 @@ disk_write_worker(GTask *task,
     return;
   }
   if (g_mkdir_with_parents(dir, 0700) == 0) {
-    GStatBuf old_st;
-    guint64 old_size = g_stat(path, &old_st) == 0 && S_ISREG(old_st.st_mode)
-        ? (guint64)MAX(old_st.st_size, 0) : 0;
-    guint64 total = 0;
-    g_autoptr(GPtrArray) files = scan_regular_files(dir, &total);
-    g_ptr_array_sort(files, disk_file_entry_compare);
-    for (guint i = 0;
-         i < files->len && total - MIN(total, old_size) + length > job->budget;
-         i++) {
-      DiskFileEntry *entry = g_ptr_array_index(files, i);
-      if (g_strcmp0(entry->path, path) == 0)
-        continue;
-      if (g_unlink(entry->path) == 0)
-        total -= MIN(total, entry->size);
-    }
-    if (total - MIN(total, old_size) + length <= job->budget)
+    DiskDirectoryState *state = disk_directory_state_get_locked(self, dir);
+    if (disk_directory_state_make_byte_room(state, path, length,
+                                             job->budget))
       written = g_file_set_contents(path, data, length, &error);
     if (written) {
+      GStatBuf st;
       g_chmod(path, 0600);
-      prune_directory_to_budget(dir, job->budget);
+      disk_directory_state_record(
+          state, path, length,
+          g_stat(path, &st) == 0 ? (gint64)st.st_mtime : g_get_real_time());
     }
   } else {
     g_set_error(&error, G_FILE_ERROR, g_file_error_from_errno(errno),
@@ -2442,31 +2585,34 @@ og_write_job_free(OgWriteJob *job)
   g_free(job);
 }
 
-static void
+static DiskDirectoryState *
 prune_og_metadata_dir(const char *dir, guint max_entries)
 {
-  guint64 ignored = 0;
-  g_autoptr(GPtrArray) files = scan_regular_files(dir, &ignored);
+  DiskDirectoryState *state = disk_directory_state_scan(dir);
   gint64 now = g_get_real_time();
-  for (gint i = (gint)files->len - 1; i >= 0; i--) {
-    DiskFileEntry *entry = g_ptr_array_index(files, (guint)i);
+  for (GList *link = state->lru.head; link;) {
+    GList *next = link->next;
+    DiskFileEntry *entry = link->data;
     g_autoptr(GKeyFile) keyfile = g_key_file_new();
     g_autoptr(GError) error = NULL;
     gboolean valid = g_key_file_load_from_file(keyfile, entry->path,
                                                G_KEY_FILE_NONE, &error);
     gint64 expires = valid ? g_key_file_get_int64(
         keyfile, "entry", "expires-at-usec", &error) : 0;
-    if (!valid || error || expires <= now) {
-      g_unlink(entry->path);
-      g_ptr_array_remove_index(files, (guint)i);
-    }
+    if ((!valid || error || expires <= now) &&
+        (g_unlink(entry->path) == 0 || errno == ENOENT))
+      disk_directory_state_forget(state, entry);
+    link = next;
   }
-  g_ptr_array_sort(files, disk_file_entry_compare);
-  while (files->len > max_entries) {
-    DiskFileEntry *entry = g_ptr_array_index(files, 0);
-    g_unlink(entry->path);
-    g_ptr_array_remove_index(files, 0);
+  for (GList *link = state->lru.head;
+       g_hash_table_size(state->entries) > max_entries && link;) {
+    GList *next = link->next;
+    DiskFileEntry *entry = link->data;
+    if (g_unlink(entry->path) == 0 || errno == ENOENT)
+      disk_directory_state_forget(state, entry);
+    link = next;
   }
+  return state;
 }
 
 static void
@@ -2519,10 +2665,18 @@ og_write_worker(GTask *task,
     g_task_return_boolean(task, TRUE);
     return;
   }
-  if (g_mkdir_with_parents(dir, 0700) == 0 &&
-      g_file_set_contents(path, data, length, &error)) {
-    g_chmod(path, 0600);
-    prune_og_metadata_dir(dir, job->max_entries);
+  gboolean written = FALSE;
+  if (g_mkdir_with_parents(dir, 0700) == 0) {
+    DiskDirectoryState *state = disk_directory_state_get_locked(self, dir);
+    if (disk_directory_state_make_entry_room(state, path, job->max_entries))
+      written = g_file_set_contents(path, data, length, &error);
+    if (written) {
+      GStatBuf st;
+      g_chmod(path, 0600);
+      disk_directory_state_record(
+          state, path, length,
+          g_stat(path, &st) == 0 ? (gint64)st.st_mtime : g_get_real_time());
+    }
   } else if (!error) {
     g_set_error(&error, G_FILE_ERROR, g_file_error_from_errno(errno),
                 "Failed to create OG metadata cache directory: %s",
@@ -2597,11 +2751,14 @@ sweep_worker(GTask *task,
   G_LOCK(media_disk);
   for (guint i = 0; i < GNOSTR_MEDIA_RESOURCE_N_CLASSES; i++) {
     g_autofree char *dir = disk_class_dir(self, job->cache_namespace, i);
-    prune_directory_to_budget(dir, job->budgets[i]);
+    disk_directory_state_replace_locked(
+        self, dir, prune_directory_to_budget(dir, job->budgets[i]));
   }
   g_autofree char *metadata_dir = g_build_filename(
       self->disk_root, job->cache_namespace, OG_METADATA_DIR, NULL);
-  prune_og_metadata_dir(metadata_dir, job->og_metadata_max_entries);
+  disk_directory_state_replace_locked(
+      self, metadata_dir,
+      prune_og_metadata_dir(metadata_dir, job->og_metadata_max_entries));
   G_UNLOCK(media_disk);
   g_task_return_boolean(task, TRUE);
 }
@@ -3386,6 +3543,7 @@ gnostr_media_service_evict_account(GnostrMediaService *self,
   }
   (*epoch)++;
   remove_tree_locked(namespace_dir);
+  disk_directory_states_remove_namespace_locked(self, npub);
   G_UNLOCK(media_disk);
   g_hash_table_remove(self->known_namespaces, npub);
 
@@ -3465,8 +3623,11 @@ gnostr_media_service_test_set_disk_root(GnostrMediaService *self,
   g_return_if_fail(GNOSTR_IS_MEDIA_SERVICE(self));
   g_return_if_fail(disk_root != NULL);
   g_return_if_fail(g_hash_table_size(self->known_namespaces) == 0);
+  G_LOCK(media_disk);
+  g_hash_table_remove_all(self->disk_directory_states);
   g_free(self->disk_root);
   self->disk_root = g_strdup(disk_root);
+  G_UNLOCK(media_disk);
 }
 
 void
@@ -3627,6 +3788,7 @@ gnostr_media_service_finalize(GObject *object)
   g_hash_table_unref(self->disk_coalesced);
   g_hash_table_unref(self->known_namespaces);
   g_hash_table_unref(self->namespace_epochs);
+  g_hash_table_unref(self->disk_directory_states);
   g_free(self->disk_root);
 #ifdef GNOSTR_MEDIA_SERVICE_TESTING
   if (self->test_thumbnail_data_destroy)
@@ -3659,6 +3821,9 @@ gnostr_media_service_init(GnostrMediaService *self)
   self->disk_coalesced = g_hash_table_new(g_str_hash, g_str_equal);
   self->namespace_epochs = g_hash_table_new_full(
       g_str_hash, g_str_equal, g_free, g_free);
+  self->disk_directory_states = g_hash_table_new_full(
+      g_str_hash, g_str_equal, g_free,
+      (GDestroyNotify)disk_directory_state_free);
   for (guint i = 0; i < GNOSTR_MEDIA_RESOURCE_N_CLASSES; i++)
     self->texture_caches[i].entries =
         g_hash_table_new(g_str_hash, g_str_equal);
