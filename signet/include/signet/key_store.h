@@ -202,6 +202,20 @@ SignetAdoptResult signet_key_store_adopt_agent(SignetKeyStore *ks,
  */
 int signet_key_store_revoke_agent(SignetKeyStore *ks, const char *agent_id);
 
+/**
+ * signet_key_store_evict_agent:
+ * @ks: (not nullable): a #SignetKeyStore
+ * @agent_id: (not nullable): agent identifier
+ *
+ * Remove an agent from the hot cache without changing persistent storage.
+ * Intended for callers that already committed the backing-store deletion.
+ *
+ * Returns: 0 if removed, 1 if not cached, or -1 on invalid arguments
+ *
+ * Since: 1.2
+ */
+int signet_key_store_evict_agent(SignetKeyStore *ks, const char *agent_id);
+
 /* Rotate an agent's keypair. Generates a new keypair, replaces old key in
  * both SQLCipher and hot cache.
  * out_pubkey_hex must be at least 65 bytes.

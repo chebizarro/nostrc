@@ -11,6 +11,7 @@
 #include "signet/store.h"
 #include "signet/store_audit.h"
 #include "signet/store_tokens.h"
+#include "signet/store_leases.h"
 #include "signet/revocation.h"
 #include "signet/key_store.h"
 #include "signet/audit_logger.h"
@@ -120,12 +121,49 @@ static void test_revoke_deny_precedence(void) {
   assert(deny);
   assert(!signet_deny_list_contains(deny, pub)); /* not denied yet */
 
+  const char *client_pub =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  assert(signet_store_issue_lease(store, "lease-1", "secret-1", "victim",
+                                  1900, 3000, NULL) == 0);
+  assert(signet_store_bind_client(store, "victim", pub, client_pub,
+                                  NULL, 1900) == 0);
+
+  /* Force a failure after the deny-list and lease updates. Every durable
+   * mutation must roll back, and neither hot cache may change. */
+  sqlite3 *sql_db = signet_store_get_db(store);
+  assert(sqlite3_exec(
+      sql_db,
+      "CREATE TEMP TRIGGER fail_agent_client_revoke "
+      "BEFORE UPDATE OF revoked_at ON agent_clients "
+      "BEGIN SELECT RAISE(ABORT, 'forced revocation failure'); END;",
+      NULL, NULL, NULL) == SQLITE_OK);
+  assert(signet_revoke_agent(store, ks, deny, audit, "victim", pub,
+                             "test failure", 1999) == -1);
+  assert(!signet_deny_list_contains(deny, pub));
+  SignetLeaseRecord *leases = NULL;
+  size_t lease_count = 0;
+  assert(signet_store_list_active_leases(store, "victim", 2000,
+                                         &leases, &lease_count) == 0);
+  assert(lease_count == 1);
+  signet_lease_list_free(leases, lease_count);
+  char *bound_agent = NULL;
+  assert(signet_store_lookup_client_binding(store, client_pub, 2000,
+                                             &bound_agent, NULL) == 0);
+  assert(bound_agent && strcmp(bound_agent, "victim") == 0);
+  g_free(bound_agent);
+
+  SignetLoadedKey lk;
+  memset(&lk, 0, sizeof(lk));
+  assert(signet_key_store_load_agent_key(ks, "victim", &lk));
+  signet_loaded_key_clear(&lk);
+  assert(sqlite3_exec(sql_db, "DROP TRIGGER fail_agent_client_revoke;",
+                      NULL, NULL, NULL) == SQLITE_OK);
+
   /* Full revocation must deny-list the pubkey AND wipe the key. */
   int rc = signet_revoke_agent(store, ks, deny, audit, "victim", pub, "test", 2000);
   assert(rc == 0);
   assert(signet_deny_list_contains(deny, pub)); /* deny precedence now applies */
 
-  SignetLoadedKey lk;
   memset(&lk, 0, sizeof(lk));
   assert(!signet_key_store_load_agent_key(ks, "victim", &lk)); /* key gone */
 

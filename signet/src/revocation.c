@@ -71,11 +71,11 @@ void signet_deny_list_free(SignetDenyList *dl) {
   g_free(dl);
 }
 
-int signet_deny_list_add(SignetDenyList *dl,
-                          const char *pubkey_hex,
-                          const char *agent_id,
-                          const char *reason,
-                          int64_t now) {
+static int signet_deny_list_insert(SignetDenyList *dl,
+                                    const char *pubkey_hex,
+                                    const char *agent_id,
+                                    const char *reason,
+                                    int64_t now) {
   if (!dl || !pubkey_hex) return -1;
   const char *id = agent_id ? agent_id : pubkey_hex;
 
@@ -101,17 +101,27 @@ int signet_deny_list_add(SignetDenyList *dl,
 
   int rc = (sqlite3_step(stmt) == SQLITE_DONE) ? 0 : -1;
   sqlite3_finalize(stmt);
+  return rc;
+}
 
-  if (rc == 0) {
-    g_mutex_lock(&dl->mu);
-    g_hash_table_replace(dl->cache, g_strdup(pubkey_hex),
-                         GINT_TO_POINTER(1));
-    if (agent_id)
-      g_hash_table_replace(dl->cache, g_strdup(agent_id),
-                           GINT_TO_POINTER(1));
-    g_mutex_unlock(&dl->mu);
-  }
+static void signet_deny_list_cache_add(SignetDenyList *dl,
+                                       const char *pubkey_hex,
+                                       const char *agent_id) {
+  g_mutex_lock(&dl->mu);
+  g_hash_table_replace(dl->cache, g_strdup(pubkey_hex), GINT_TO_POINTER(1));
+  if (agent_id)
+    g_hash_table_replace(dl->cache, g_strdup(agent_id), GINT_TO_POINTER(1));
+  g_mutex_unlock(&dl->mu);
+}
 
+int signet_deny_list_add(SignetDenyList *dl,
+                          const char *pubkey_hex,
+                          const char *agent_id,
+                          const char *reason,
+                          int64_t now) {
+  int rc = signet_deny_list_insert(dl, pubkey_hex, agent_id, reason, now);
+  if (rc == 0)
+    signet_deny_list_cache_add(dl, pubkey_hex, agent_id);
   return rc;
 }
 
@@ -162,30 +172,58 @@ static int signet_revoke_internal(SignetStore *store,
                                    int64_t now,
                                    bool emergency) {
   if (!store || !agent_id) return -1;
-  int rc = 0;
+
+  sqlite3 *db = signet_store_get_db(store);
+  if (!db) return -1;
+
+  /* Deny lists and persistent key stores normally borrow this exact store
+   * handle. A different connection cannot join this transaction, so reject it
+   * before changing any durable state rather than allow a split revocation. */
+  if (deny && signet_store_get_db(deny->store) != db) return -1;
+  SignetStore *key_store = keys ? signet_key_store_get_store(keys) : NULL;
+  if (key_store && signet_store_get_db(key_store) != db) return -1;
 
   /* Increment revocation counter. */
   g_atomic_int_inc(&g_signet_metrics.revoke_total);
 
-  /* 1. Add to deny list. */
-  if (deny && pubkey_hex) {
-    if (signet_deny_list_add(deny, pubkey_hex, agent_id, reason, now) < 0)
-      rc = -1;
-  }
+  int rc = -1;
+  int lease_rc = -1;
+  sqlite3_mutex *db_mutex = sqlite3_db_mutex(db);
+  sqlite3_mutex_enter(db_mutex);
 
-  /* 2. Revoke all leases for this agent. */
-  int lease_rc = signet_store_revoke_agent_leases(store, agent_id, now);
-  if (lease_rc < 0) rc = -1;
+  if (sqlite3_exec(db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) != SQLITE_OK)
+    goto done;
 
-  /* 2b. Revoke all persistent NIP-46 client bindings so bound clients cannot
-   * reconnect to the revoked identity. */
-  if (signet_store_revoke_agent_clients(store, agent_id, now) < 0) rc = -1;
+  if (deny && pubkey_hex &&
+      signet_deny_list_insert(deny, pubkey_hex, agent_id, reason, now) < 0)
+    goto rollback;
 
-  /* 3. Revoke key from key store (removes from hot cache + SQLCipher). */
-  if (keys) {
-    int key_rc = signet_key_store_revoke_agent(keys, agent_id);
-    if (key_rc < 0) rc = -1;
-  }
+  lease_rc = signet_store_revoke_agent_leases(store, agent_id, now);
+  if (lease_rc < 0) goto rollback;
+
+  if (signet_store_revoke_agent_clients(store, agent_id, now) < 0)
+    goto rollback;
+
+  if (key_store && signet_store_delete_agent(store, agent_id) < 0)
+    goto rollback;
+
+  if (sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL) != SQLITE_OK)
+    goto rollback;
+
+  rc = 0;
+  goto done;
+
+rollback:
+  (void)sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+done:
+  sqlite3_mutex_leave(db_mutex);
+  if (rc < 0) return -1;
+
+  /* Publish committed state to the hot caches only after durable success. */
+  if (deny && pubkey_hex)
+    signet_deny_list_cache_add(deny, pubkey_hex, agent_id);
+  if (keys)
+    (void)signet_key_store_evict_agent(keys, agent_id);
 
   /* 4. Audit log. */
   if (audit) {

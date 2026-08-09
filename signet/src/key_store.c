@@ -614,24 +614,35 @@ int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
   return 0;
 }
 
+int signet_key_store_evict_agent(SignetKeyStore *ks, const char *agent_id) {
+  if (!ks || !agent_id) return -1;
+
+  g_mutex_lock(&ks->mu);
+  gboolean found = g_hash_table_remove(ks->cache, agent_id);
+  g_mutex_unlock(&ks->mu);
+  return found ? 0 : 1;
+}
+
 int signet_key_store_revoke_agent(SignetKeyStore *ks, const char *agent_id) {
   if (!ks || !agent_id) return -1;
 
   g_mutex_lock(&ks->mu);
 
-  /* Remove from hot cache (wipes the key via destroy func). */
-  gboolean found = g_hash_table_remove(ks->cache, agent_id);
-
-  /* Remove from backing store. */
+  /* Delete durable state first so a store failure never leaves a live row with
+   * its corresponding hot key already wiped. */
   int store_rc = 0;
   if (ks->store) {
     store_rc = signet_store_delete_agent(ks->store, agent_id);
+    if (store_rc < 0) {
+      g_mutex_unlock(&ks->mu);
+      return -1;
+    }
   }
 
+  gboolean found = g_hash_table_remove(ks->cache, agent_id);
   g_mutex_unlock(&ks->mu);
 
   if (!found && store_rc == 1) return 1; /* not found anywhere */
-  if (store_rc < 0) return -1;
   return 0;
 }
 
