@@ -205,11 +205,11 @@ static void nostr_gtk_timeline_view_dispose(GObject *obj) {
 
   /* nostrc-14lo: drop the roots items-changed handler before releasing our
    * reference so the roots model cannot emit into a disposed view. */
-  if (self->tree_model)
-    g_signal_handlers_disconnect_by_func(self->tree_model, on_root_items_changed, self);
+  if (self->root_model)
+    g_signal_handlers_disconnect_by_func(self->root_model, on_root_items_changed, self);
 
   g_clear_object(&self->selection_model);
-  g_clear_object(&self->tree_model);
+  g_clear_object(&self->root_model);
   g_clear_object(&self->flattened_model);
   g_clear_object(&self->list_model);
 
@@ -396,12 +396,12 @@ void nostr_gtk_timeline_view_set_model(NostrGtkTimelineView *self, GtkSelectionM
   /* nostrc-14lo: drop the roots items-changed handler before releasing our
    * reference so the roots model cannot emit into a view it no longer
    * belongs to. */
-  if (self->tree_model)
-    g_signal_handlers_disconnect_by_func(self->tree_model, on_root_items_changed, self);
+  if (self->root_model)
+    g_signal_handlers_disconnect_by_func(self->root_model, on_root_items_changed, self);
 
   if (self->selection_model) g_clear_object(&self->selection_model);
   if (self->list_model) g_clear_object(&self->list_model);
-  if (self->tree_model) g_clear_object(&self->tree_model);
+  if (self->root_model) g_clear_object(&self->root_model);
   self->selection_model = model ? g_object_ref(model) : NULL;
   gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), self->selection_model);
 }
@@ -415,8 +415,8 @@ static void on_root_items_changed(GListModel *list, guint position, guint remove
   g_debug("[TREE] Root items changed: position=%u removed=%u added=%u total=%u",
            position, removed, added, g_list_model_get_n_items(list));
 
-  if (self && self->flattened_model && self->tree_model) {
-    populate_flattened_model(self, G_LIST_MODEL(self->tree_model));
+  if (self && self->flattened_model && self->root_model) {
+    populate_flattened_model(self, self->root_model);
   }
 }
 
@@ -448,33 +448,32 @@ static void populate_flattened_model(NostrGtkTimelineView *self, GListModel *roo
 
 void nostr_gtk_timeline_view_set_tree_roots(NostrGtkTimelineView *self, GListModel *roots) {
   g_return_if_fail(NOSTR_GTK_IS_TIMELINE_VIEW(self));
-  g_return_if_fail(roots == NULL || GTK_IS_TREE_LIST_MODEL(roots));
+  g_return_if_fail(roots == NULL || G_IS_LIST_MODEL(roots));
 
   /* nostrc-14lo: disconnect the previous roots handler before swapping so
    * repeated calls don't multiply handlers or leave self dangling on a
    * roots model that outlives the view. */
-  if (self->tree_model)
-    g_signal_handlers_disconnect_by_func(self->tree_model, on_root_items_changed, self);
+  if (self->root_model)
+    g_signal_handlers_disconnect_by_func(self->root_model, on_root_items_changed, self);
 
   if (self->list_view) {
     gtk_list_view_set_model(GTK_LIST_VIEW(self->list_view), NULL);
   }
 
   g_clear_object(&self->selection_model);
-  g_clear_object(&self->tree_model);
+  g_clear_object(&self->root_model);
   g_clear_object(&self->flattened_model);
 
   if (roots) {
     self->flattened_model = g_list_store_new(timeline_item_get_type());
-    self->tree_model = g_object_ref(GTK_TREE_LIST_MODEL(roots));
+    self->root_model = g_object_ref(roots);
 
     self->selection_model = GTK_SELECTION_MODEL(gtk_single_selection_new(G_LIST_MODEL(self->flattened_model)));
-    g_object_ref_sink(self->selection_model);
 
     populate_flattened_model(self, roots);
     g_signal_connect(roots, "items-changed", G_CALLBACK(on_root_items_changed), self);
   } else {
-    self->tree_model = NULL;
+    self->root_model = NULL;
     self->flattened_model = NULL;
     self->selection_model = NULL;
   }

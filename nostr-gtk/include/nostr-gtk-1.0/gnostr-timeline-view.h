@@ -52,7 +52,8 @@ void nostr_gtk_timeline_view_prepend(NostrGtkTimelineView *self,
                                    const char *content,
                                    guint depth);
 
-/* Set a tree of TimelineItem roots (GListModel of internal items); view flattens via GtkTreeListModel. */
+/* Set a tree of TimelineItem roots (GListModel of internal items); the view flattens
+ * roots and their children into the internal list store. */
 void nostr_gtk_timeline_view_set_tree_roots(NostrGtkTimelineView *self, GListModel *roots);
 
 /* Helpers for building thread trees from outside the view implementation. */

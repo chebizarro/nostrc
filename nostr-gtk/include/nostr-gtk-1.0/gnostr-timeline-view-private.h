@@ -60,7 +60,7 @@ struct _NostrGtkTimelineView {
   GtkWidget *list_view;
   GtkSelectionModel *selection_model;
   GListStore *list_model;
-  GtkTreeListModel *tree_model;
+  GListModel *root_model; /* owned; GListModel of TimelineItem roots */
   GListStore *flattened_model;
 
   /* Scroll position tracking */
