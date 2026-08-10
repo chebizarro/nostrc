@@ -1,15 +1,26 @@
 cmake_minimum_required(VERSION 3.22)
 project(libmarmot C)
 
+if(NOT COMMAND declare_component_version)
+  include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
+endif()
+option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
+
 set(MARMOT_VERSION_MAJOR 0)
 set(MARMOT_VERSION_MINOR 1)
 set(MARMOT_VERSION_PATCH 0)
-set(MARMOT_VERSION_STRING "${MARMOT_VERSION_MAJOR}.${MARMOT_VERSION_MINOR}.${MARMOT_VERSION_PATCH}")
+declare_component_version(MARMOT
+  ${MARMOT_VERSION_MAJOR}
+  ${MARMOT_VERSION_MINOR}
+  ${MARMOT_VERSION_PATCH})
+set(MARMOT_VERSION_STRING "${MARMOT_VERSION}")
 
 # Generate version header from template
+set(MARMOT_PUBLIC_VERSION_HEADER
+  "${CMAKE_CURRENT_BINARY_DIR}/include/marmot/marmot-version.h")
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-version.h.in
-  ${CMAKE_CURRENT_BINARY_DIR}/include/marmot/marmot-version.h
+  ${MARMOT_PUBLIC_VERSION_HEADER}
   @ONLY
 )
 
@@ -70,18 +81,23 @@ set(MARMOT_PUBLIC_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-error.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-types.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot/marmot-storage.h
-  ${CMAKE_CURRENT_BINARY_DIR}/include/marmot/marmot-version.h
+  ${MARMOT_PUBLIC_VERSION_HEADER}
 )
 
 # ─── Library target ──────────────────────────────────────────────────────
 add_library(marmot ${MARMOT_SOURCES})
+set(marmot_VERSION "${MARMOT_VERSION}")
 set_target_properties(marmot PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   OUTPUT_NAME marmot
-  VERSION ${MARMOT_VERSION_STRING}
   SOVERSION ${MARMOT_VERSION_MAJOR}
+  COMPONENT_VERSION_HEADER "${MARMOT_PUBLIC_VERSION_HEADER}"
+  COMPONENT_VERSION_HEADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/include"
+  COMPONENT_VERSION_HEADER_INSTALL_DIR
+    "${CMAKE_INSTALL_INCLUDEDIR}/marmot"
 )
+apply_versioning(marmot)
 
 target_include_directories(marmot
   PUBLIC

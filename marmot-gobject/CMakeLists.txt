@@ -1,15 +1,25 @@
 cmake_minimum_required(VERSION 3.22)
 project(marmot-gobject C)
 
+if(NOT COMMAND declare_component_version)
+  include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
+endif()
+option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
+
 set(MARMOT_GOBJECT_MAJOR_VERSION 1)
 set(MARMOT_GOBJECT_MINOR_VERSION 0)
 set(MARMOT_GOBJECT_MICRO_VERSION 0)
-set(MARMOT_GOBJECT_VERSION "${MARMOT_GOBJECT_MAJOR_VERSION}.${MARMOT_GOBJECT_MINOR_VERSION}.${MARMOT_GOBJECT_MICRO_VERSION}")
+declare_component_version(MARMOT_GOBJECT
+  ${MARMOT_GOBJECT_MAJOR_VERSION}
+  ${MARMOT_GOBJECT_MINOR_VERSION}
+  ${MARMOT_GOBJECT_MICRO_VERSION})
 
 # Generate version header from template
+set(MARMOT_GOBJECT_PUBLIC_VERSION_HEADER
+  "${CMAKE_CURRENT_BINARY_DIR}/include/marmot-gobject-1.0/marmot-gobject-version.h")
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot-gobject-1.0/marmot-gobject-version.h.in
-  ${CMAKE_CURRENT_BINARY_DIR}/include/marmot-gobject-1.0/marmot-gobject-version.h
+  ${MARMOT_GOBJECT_PUBLIC_VERSION_HEADER}
   @ONLY
 )
 
@@ -46,18 +56,23 @@ set(MARMOT_GOBJECT_PUBLIC_HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot-gobject-1.0/marmot-gobject-storage.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot-gobject-1.0/marmot-gobject-key-package.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/marmot-gobject-1.0/marmot-gobject-boxed.h
-  ${CMAKE_CURRENT_BINARY_DIR}/include/marmot-gobject-1.0/marmot-gobject-version.h
+  ${MARMOT_GOBJECT_PUBLIC_VERSION_HEADER}
 )
 
 # ─── Library target ──────────────────────────────────────────────────────
 add_library(marmot-gobject ${MARMOT_GOBJECT_SOURCES})
+set(marmot-gobject_VERSION "${MARMOT_GOBJECT_VERSION}")
 set_target_properties(marmot-gobject PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   OUTPUT_NAME marmot-gobject-1.0
-  VERSION ${MARMOT_GOBJECT_VERSION}
   SOVERSION ${MARMOT_GOBJECT_MAJOR_VERSION}
+  COMPONENT_VERSION_HEADER "${MARMOT_GOBJECT_PUBLIC_VERSION_HEADER}"
+  COMPONENT_VERSION_HEADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/include"
+  COMPONENT_VERSION_HEADER_INSTALL_DIR
+    "${CMAKE_INSTALL_INCLUDEDIR}/marmot-gobject-1.0"
 )
+apply_versioning(marmot-gobject)
 
 target_include_directories(marmot-gobject
   PUBLIC

@@ -7,11 +7,19 @@
 
 include(GNUInstallDirs)
 
+if(NOT COMMAND declare_component_version)
+  include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
+endif()
+option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
+
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GTK_MAJOR_VERSION 1)
 set(NOSTR_GTK_MINOR_VERSION 0)
 set(NOSTR_GTK_MICRO_VERSION 0)
-set(NOSTR_GTK_VERSION "${NOSTR_GTK_MAJOR_VERSION}.${NOSTR_GTK_MINOR_VERSION}.${NOSTR_GTK_MICRO_VERSION}")
+declare_component_version(NOSTR_GTK
+  ${NOSTR_GTK_MAJOR_VERSION}
+  ${NOSTR_GTK_MINOR_VERSION}
+  ${NOSTR_GTK_MICRO_VERSION})
 
 # ── Project root ─────────────────────────────────────────────────────
 get_filename_component(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
@@ -27,9 +35,11 @@ pkg_check_modules(JSON_GLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
 pkg_check_modules(SOUP3    QUIET    IMPORTED_TARGET libsoup-3.0)
 
 # ── Version header (configure from template) ─────────────────────────
+set(NOSTR_GTK_PUBLIC_VERSION_HEADER
+  "${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-version.h")
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gtk-1.0/nostr-gtk-version.h.in
-  ${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-version.h
+  ${NOSTR_GTK_PUBLIC_VERSION_HEADER}
   @ONLY)
 
 # ── Blueprint compilation ────────────────────────────────────────────
@@ -142,11 +152,16 @@ apply_sanitizers(gn_content_parser)
 add_library(nostr_gtk ${NOSTR_GTK_SOURCES})
 target_link_libraries(nostr_gtk PRIVATE gn_content_parser)
 
+set(nostr_gtk_VERSION "${NOSTR_GTK_VERSION}")
 set_target_properties(nostr_gtk PROPERTIES
   OUTPUT_NAME nostr-gtk-1.0
-  VERSION     ${NOSTR_GTK_VERSION}
   SOVERSION   ${NOSTR_GTK_MAJOR_VERSION}
+  COMPONENT_VERSION_HEADER "${NOSTR_GTK_PUBLIC_VERSION_HEADER}"
+  COMPONENT_VERSION_HEADER_DIR "${CMAKE_CURRENT_BINARY_DIR}"
+  COMPONENT_VERSION_HEADER_INSTALL_DIR
+    "${CMAKE_INSTALL_INCLUDEDIR}/nostr-gtk-1.0"
 )
+apply_versioning(nostr_gtk)
 
 # Project root for resolving app-layer include paths (transitional)
 get_filename_component(_NOSTR_GTK_PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)

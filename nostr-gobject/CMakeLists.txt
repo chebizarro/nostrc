@@ -7,11 +7,19 @@
 
 include(GNUInstallDirs)
 
+if(NOT COMMAND declare_component_version)
+  include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
+endif()
+option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
+
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GOBJECT_MAJOR_VERSION 1)
 set(NOSTR_GOBJECT_MINOR_VERSION 0)
 set(NOSTR_GOBJECT_MICRO_VERSION 0)
-set(NOSTR_GOBJECT_VERSION "${NOSTR_GOBJECT_MAJOR_VERSION}.${NOSTR_GOBJECT_MINOR_VERSION}.${NOSTR_GOBJECT_MICRO_VERSION}")
+declare_component_version(NOSTR_GOBJECT
+  ${NOSTR_GOBJECT_MAJOR_VERSION}
+  ${NOSTR_GOBJECT_MINOR_VERSION}
+  ${NOSTR_GOBJECT_MICRO_VERSION})
 
 # ── Find dependencies ────────────────────────────────────────────────
 find_package(PkgConfig REQUIRED)
@@ -27,9 +35,11 @@ find_library(NSYNC_LIB NAMES nsync REQUIRED)
 find_path(NSYNC_INCLUDE_DIR NAMES nsync.h REQUIRED)
 
 # ── Version header (configure from template) ─────────────────────────
+set(NOSTR_GOBJECT_PUBLIC_VERSION_HEADER
+  "${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-version.h")
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gobject-1.0/nostr-gobject-version.h.in
-  ${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-version.h
+  ${NOSTR_GOBJECT_PUBLIC_VERSION_HEADER}
   @ONLY)
 
 # ── D-Bus signer proxy (gdbus-codegen) ──────────────────────────────
@@ -146,11 +156,16 @@ if(BUILD_TESTING)
  target_compile_definitions(nostr_gobject PRIVATE GNOSTR_TESTING)
 endif()
 
+set(nostr_gobject_VERSION "${NOSTR_GOBJECT_VERSION}")
 set_target_properties(nostr_gobject PROPERTIES
   OUTPUT_NAME nostr-gobject-1.0
-  VERSION     ${NOSTR_GOBJECT_VERSION}
   SOVERSION   ${NOSTR_GOBJECT_MAJOR_VERSION}
+  COMPONENT_VERSION_HEADER "${NOSTR_GOBJECT_PUBLIC_VERSION_HEADER}"
+  COMPONENT_VERSION_HEADER_DIR "${CMAKE_CURRENT_BINARY_DIR}"
+  COMPONENT_VERSION_HEADER_INSTALL_DIR
+    "${CMAKE_INSTALL_INCLUDEDIR}/nostr-gobject-1.0"
 )
+apply_versioning(nostr_gobject)
 
 target_include_directories(nostr_gobject
   PUBLIC
