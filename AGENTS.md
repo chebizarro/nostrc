@@ -23,6 +23,64 @@ This installs the pre-push hook that enforces build verification.
 
 ---
 
+## Component Versioning Policy
+
+The independently releasable components tracked in `VERSION_MANIFEST.md` use
+[Semantic Versioning](https://semver.org/) and component-prefixed tags. Any change
+to a tracked component must assess its version impact before merge. A breaking
+change must not land without the corresponding version-source update.
+
+Public surfaces include installed headers and ABI, exported functions/types,
+CMake or pkg-config contracts, plugin APIs, supported CLI flags or
+machine-readable output, and documented configuration, storage, or wire formats.
+For each affected component, apply the highest bump required by the change:
+
+- **MAJOR**: For a stable component (`1.0.0` or later), make any
+  backward-incompatible public-surface change. Examples include removing or
+  renaming an API, changing a function signature or public struct layout,
+  changing documented behavior in a way that breaks callers, or requiring an
+  incompatible config/storage/wire migration.
+- **MINOR**: Add backward-compatible public functionality, add an optional
+  protocol/format capability, or deprecate (without removing) a public API. For
+  a `0.x` component, which is explicitly in initial development, use a MINOR
+  bump for a breaking public-surface change and call out the incompatibility in
+  the release notes.
+- **PATCH**: Make a backward-compatible bug or security fix, performance
+  improvement, packaging/build correction, or other shipped change that adds no
+  incompatible behavior or public API.
+- **No bump**: Purely internal, test-only, or documentation-only changes that do
+  not alter a shipped artifact. State that assessment in the bead or review
+  summary.
+
+Reset lower-order fields after a bump and apply one bump per component, not one
+repository-wide bump. If a change affects multiple components, evaluate and bump
+each independently.
+
+### Updating versions and the manifest
+
+Until release automation is implemented, version maintenance is deliberately
+manual because several components have duplicate CMake/Meson version sources and
+`libnostr` and `libgo` do not yet have authoritative version declarations.
+
+1. Identify every affected component and the required bump using the criteria
+   above.
+2. Update every authoritative source listed for that component in
+   `VERSION_MANIFEST.md`; duplicated CMake and Meson values must remain equal.
+3. In the same commit, update the manifest's **Declared version**. Do not change
+   **Latest release** until that exact version has a matching published
+   `<component>-v<MAJOR>.<MINOR>.<PATCH>` tag.
+4. During a release, verify the declared version against all listed sources and
+   existing tags, create/push the component tag, then update **Latest release**
+   and **Release tag** in the manifest.
+5. Mention all version decisions (including “no bump”) in the bead and peer
+   review request.
+
+The planned release-tagging script must validate source/manifest agreement and
+update the release columns automatically. Until it lands, the checklist above
+is the required process.
+
+---
+
 ## Pre-Push Requirements (MANDATORY)
 
 Before pushing ANY commits, you MUST complete these checks:
