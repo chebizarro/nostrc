@@ -1,0 +1,15 @@
+/*
+ * libgo - Go-inspired concurrency primitives for C
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+#ifndef LIBGO_VERSION_H
+#define LIBGO_VERSION_H
+
+#define LIBGO_VERSION_MAJOR @LIBGO_VERSION_MAJOR@
+#define LIBGO_VERSION_MINOR @LIBGO_VERSION_MINOR@
+#define LIBGO_VERSION_MICRO @LIBGO_VERSION_MICRO@
+#define LIBGO_VERSION_STRING "@LIBGO_VERSION@"
+
+#endif /* LIBGO_VERSION_H */

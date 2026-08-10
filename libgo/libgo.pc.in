@@ -1,0 +1,11 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: libgo
+Description: Go-inspired concurrency primitives for C
+Version: @LIBGO_VERSION@
+Libs: -L${libdir} -llibgo
+Libs.private: -lnsync -lpthread
+Cflags: -I${includedir}

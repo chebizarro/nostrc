@@ -20,6 +20,12 @@ cmake_minimum_required(VERSION 3.22)
 project(libgo C)
 enable_language(ASM)
 
+if(NOT COMMAND declare_component_version)
+  include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
+endif()
+option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
+declare_component_version(LIBGO 0 1 0)
+
 # Optional: enable more aggressive local optimizations for libgo
 include(CheckCCompilerFlag)
 include(CheckIPOSupported)
@@ -80,6 +86,25 @@ enable_testing()
 
 # Build static library exposing public headers from `include/`.
 add_library(libgo ${LIBGO_SOURCES})
+
+set(LIBGO_PUBLIC_VERSION_HEADER
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/libgo/libgo-version.h")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/libgo")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/libgo/libgo-version.h.in"
+  "${LIBGO_PUBLIC_VERSION_HEADER}"
+  @ONLY)
+
+# The component declaration uses the public LIBGO_ prefix while the target is
+# lowercase. Associate the configured public header and version with the target
+# before applying the shared versioning behavior.
+set(libgo_VERSION "${LIBGO_VERSION}")
+set_target_properties(libgo PROPERTIES
+  COMPONENT_VERSION_HEADER "${LIBGO_PUBLIC_VERSION_HEADER}"
+  COMPONENT_VERSION_HEADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated"
+  COMPONENT_VERSION_HEADER_INSTALL_DIR
+    "${CMAKE_INSTALL_INCLUDEDIR}/libgo")
+apply_versioning(libgo)
 
 target_include_directories(libgo PUBLIC include ${CMAKE_CURRENT_LIST_DIR}/../libnostr/include)
 target_compile_definitions(libgo PUBLIC NOSTR_PREFETCH_DISTANCE=${NOSTR_PREFETCH_DISTANCE})
@@ -354,6 +379,15 @@ endif()
 
 
 # Optionally, you can specify installation rules
+
+# pkg-config generation
+set(LIBGO_PKGCONF "${CMAKE_CURRENT_BINARY_DIR}/libgo.pc")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/libgo.pc.in"
+  "${LIBGO_PKGCONF}"
+  @ONLY)
+install(FILES "${LIBGO_PKGCONF}"
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
 
 # Examples (skip on Windows — chan_bench uses setenv and other POSIX-only APIs)
 if(NOT WIN32)

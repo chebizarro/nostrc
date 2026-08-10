@@ -12,7 +12,7 @@ files already declare a version.
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
 | libnostr | `libnostr/` | 1.0.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
-| libgo | `libgo/` | Unversioned | Unreleased | — | Not yet established; planned for `libgo/CMakeLists.txt` |
+| libgo | `libgo/` | 0.1.0 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 1.0.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
 | libmarmot | `libmarmot/` | 0.1.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
