@@ -1,7 +1,13 @@
 cmake_minimum_required(VERSION 3.22)
-project(gnostr VERSION 0.1.0)
+project(gnostr)
 
 include(GNUInstallDirs)
+
+if(NOT COMMAND declare_component_version)
+  include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/VersionHelpers.cmake")
+endif()
+option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
+declare_component_version(GNOSTR 0 1 0)
 
 set(APP_CLIENT_NAME "GNostr")
 set(APP_CLIENT_BIN "gnostr")
@@ -236,6 +242,12 @@ configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/src/gnostr-build-info.h.in
   ${_NOSTR_CONFIG_DIR}/gnostr-build-info.h
   @ONLY)
+
+set(gnostr_VERSION "${GNOSTR_VERSION}")
+set_target_properties(${APP_CLIENT_BIN} PROPERTIES
+  COMPONENT_VERSION_HEADER "${_NOSTR_CONFIG_DIR}/gnostr-build-info.h"
+  COMPONENT_VERSION_HEADER_DIR "${_NOSTR_CONFIG_DIR}")
+apply_versioning(${APP_CLIENT_BIN})
 
 # Include GI wrapper and core headers for SimplePool and nostr models
 target_include_directories(${APP_CLIENT_BIN} BEFORE PRIVATE
