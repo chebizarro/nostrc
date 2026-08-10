@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
 project(libnostr)
 
+if(NOT COMMAND declare_component_version)
+  include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
+endif()
+option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
+declare_component_version(NOSTR 1 0 0)
+
 # Core Nostr library. Provides event types, relays, subscriptions, filters, and utils.
 find_library(NSYNC_LIB nsync REQUIRED)
 find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
@@ -97,13 +103,30 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 ## External vendor integration removed: project uses in-tree minimal BIP39/BIP32.
 
 
-# Configure header: nostr-config.h
+# Configure public headers.
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-config.h.in
   ${CMAKE_CURRENT_BINARY_DIR}/generated/nostr-config.h @ONLY)
+set(NOSTR_PUBLIC_VERSION_HEADER
+  ${CMAKE_CURRENT_BINARY_DIR}/generated/nostr-version.h)
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr/nostr-version.h.in
+  ${NOSTR_PUBLIC_VERSION_HEADER}
+  @ONLY)
 
 # Library target (named 'nostr' so pkg-config uses -lnostr). Provide 'libnostr' alias for compatibility.
 add_library(nostr ${LIBNOSTR_SOURCES})
 add_library(libnostr ALIAS nostr)
+
+# The component declaration uses the public NOSTR_ prefix while the target is
+# lowercase. Associate the configured public header and version with the target
+# before applying the shared versioning behavior.
+set(nostr_VERSION "${NOSTR_VERSION}")
+set_target_properties(nostr PROPERTIES
+  COMPONENT_VERSION_HEADER "${NOSTR_PUBLIC_VERSION_HEADER}"
+  COMPONENT_VERSION_HEADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated"
+  COMPONENT_VERSION_HEADER_INSTALL_DIR
+    "${CMAKE_INSTALL_INCLUDEDIR}/nostr")
+apply_versioning(nostr)
 
 # Optional LTO/IPO and -fno-plt for libnostr
 include(CheckIPOSupported)
@@ -367,5 +390,5 @@ else()
   set(NOSTR_PKG_REQUIRES "")
 endif()
 set(NOSTR_PKGCONF ${CMAKE_CURRENT_BINARY_DIR}/nostr.pc)
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/nostr.pc.in ${NOSTR_PKGCONF} @ONLY)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/libnostr.pc.in ${NOSTR_PKGCONF} @ONLY)
 install(FILES ${NOSTR_PKGCONF} DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)

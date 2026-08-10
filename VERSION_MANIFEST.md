@@ -11,7 +11,7 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | Unversioned | Unreleased | — | Not yet established; planned for `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 1.0.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libgo | `libgo/` | Unversioned | Unreleased | — | Not yet established; planned for `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 1.0.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |

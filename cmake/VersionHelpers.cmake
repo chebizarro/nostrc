@@ -76,6 +76,8 @@ function(apply_versioning target)
 
   get_target_property(_version_header "${target}" COMPONENT_VERSION_HEADER)
   get_target_property(_version_header_dir "${target}" COMPONENT_VERSION_HEADER_DIR)
+  get_target_property(_version_header_install_dir "${target}"
+    COMPONENT_VERSION_HEADER_INSTALL_DIR)
 
   if(NOT _version_header OR _version_header MATCHES "-NOTFOUND$")
     set(_version_header_var "${target}_VERSION_HEADER")
@@ -100,6 +102,11 @@ function(apply_versioning target)
     "$<BUILD_INTERFACE:${_version_header_dir}>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 
+  if(NOT _version_header_install_dir OR
+      _version_header_install_dir MATCHES "-NOTFOUND$")
+    set(_version_header_install_dir "${CMAKE_INSTALL_INCLUDEDIR}")
+  endif()
+
   install(FILES "${_version_header}"
-    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+    DESTINATION "${_version_header_install_dir}")
 endfunction()

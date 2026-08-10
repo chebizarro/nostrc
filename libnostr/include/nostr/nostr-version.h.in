@@ -1,0 +1,15 @@
+/*
+ * libnostr - Core Nostr protocol library
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+#ifndef NOSTR_VERSION_H
+#define NOSTR_VERSION_H
+
+#define NOSTR_VERSION_MAJOR @NOSTR_VERSION_MAJOR@
+#define NOSTR_VERSION_MINOR @NOSTR_VERSION_MINOR@
+#define NOSTR_VERSION_MICRO @NOSTR_VERSION_MICRO@
+#define NOSTR_VERSION_STRING "@NOSTR_VERSION@"
+
+#endif /* NOSTR_VERSION_H */
