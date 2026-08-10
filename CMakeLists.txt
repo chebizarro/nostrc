@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.22)
 project(nostrc C)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+include(VersionHelpers)
+option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
+
 # =============================================================================
 # Windows/MinGW: Allow multiple definitions to resolve DLL import conflicts
 # =============================================================================
