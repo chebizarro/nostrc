@@ -22,6 +22,17 @@ declare_component_version(NOSTR_GOBJECT
   ${NOSTR_GOBJECT_MICRO_VERSION})
 
 # ── Find dependencies ────────────────────────────────────────────────
+# The root build already provides libnostr as a sibling target. Standalone
+# consumers must resolve a compatible installed CMake package instead.
+if(TARGET nostr)
+  if(NOT DEFINED NOSTR_VERSION OR NOSTR_VERSION VERSION_LESS "1.0.0")
+    message(FATAL_ERROR
+      "nostr-gobject requires NOSTR >= 1.0.0 (found ${NOSTR_VERSION})")
+  endif()
+else()
+  find_package(NOSTR 1.0.0 REQUIRED CONFIG)
+endif()
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GLIB2    REQUIRED IMPORTED_TARGET glib-2.0>=2.70)
 pkg_check_modules(GOBJECT2 REQUIRED IMPORTED_TARGET gobject-2.0>=2.70)

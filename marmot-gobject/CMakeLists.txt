@@ -29,9 +29,16 @@ pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0>=2.70)
 pkg_check_modules(GOBJECT REQUIRED IMPORTED_TARGET gobject-2.0>=2.70)
 pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0>=2.70)
 
-# libmarmot — either via sibling target or pkg-config
-if(NOT TARGET marmot)
-  pkg_check_modules(MARMOT REQUIRED IMPORTED_TARGET marmot)
+# The root build already provides libmarmot as a sibling target. Standalone
+# consumers must resolve a compatible installed CMake package instead.
+if(TARGET marmot)
+  if(NOT DEFINED MARMOT_VERSION OR MARMOT_VERSION VERSION_LESS "0.1.0")
+    message(FATAL_ERROR
+      "marmot-gobject requires MARMOT >= 0.1.0 (found ${MARMOT_VERSION})")
+  endif()
+else()
+  find_package(MARMOT 0.1.0 REQUIRED CONFIG)
+  pkg_check_modules(MARMOT REQUIRED IMPORTED_TARGET marmot>=0.1.0)
 endif()
 
 # ─── Source files ─────────────────────────────────────────────────────────

@@ -14,6 +14,17 @@ set(APP_CLIENT_BIN "gnostr")
 set(APP_CLIENT_FLATPAK_ID "org.gnostr.gnostr")
 set(APP_CLIENT_GSETTINGS "org.gnostr.gnostr")
 
+# The root build already provides nostr-gtk as a sibling target. Standalone
+# consumers must resolve a compatible installed CMake package instead.
+if(TARGET nostr_gtk)
+  if(NOT DEFINED NOSTR_GTK_VERSION OR NOSTR_GTK_VERSION VERSION_LESS "1.0.0")
+    message(FATAL_ERROR
+      "gnostr requires NOSTR_GTK >= 1.0.0 (found ${NOSTR_GTK_VERSION})")
+  endif()
+else()
+  find_package(NOSTR_GTK 1.0.0 REQUIRED CONFIG)
+endif()
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
 pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)

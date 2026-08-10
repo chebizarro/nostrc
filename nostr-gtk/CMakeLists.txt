@@ -25,6 +25,18 @@ declare_component_version(NOSTR_GTK
 get_filename_component(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 
 # ── Find dependencies ────────────────────────────────────────────────
+# The root build already provides nostr-gobject as a sibling target. Standalone
+# consumers must resolve a compatible installed CMake package instead.
+if(TARGET nostr_gobject)
+  if(NOT DEFINED NOSTR_GOBJECT_VERSION OR
+      NOSTR_GOBJECT_VERSION VERSION_LESS "1.0.0")
+    message(FATAL_ERROR
+      "nostr-gtk requires NOSTR_GOBJECT >= 1.0.0 (found ${NOSTR_GOBJECT_VERSION})")
+  endif()
+else()
+  find_package(NOSTR_GOBJECT 1.0.0 REQUIRED CONFIG)
+endif()
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK4     REQUIRED IMPORTED_TARGET gtk4>=4.6)
 pkg_check_modules(ADW      REQUIRED IMPORTED_TARGET libadwaita-1>=1.2)
