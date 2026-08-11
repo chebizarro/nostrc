@@ -26,7 +26,10 @@ This installs the pre-push hook that enforces build verification.
 ## Component Versioning Policy
 
 The independently releasable components tracked in `VERSION_MANIFEST.md` use
-[Semantic Versioning](https://semver.org/) and component-prefixed tags. Any change
+[Semantic Versioning](https://semver.org/) and component-prefixed tags. Prerelease
+tags may append a SemVer prerelease identifier, for example
+`gnostr-v0.1.0-preview`; their authoritative version sources retain the base
+version (`0.1.0`), while the manifest records the full prerelease version. Any change
 to a tracked component must assess its version impact before merge. A breaking
 change must not land without the corresponding version-source update.
 
@@ -68,7 +71,9 @@ manual because several components have duplicate CMake/Meson version sources and
    `VERSION_MANIFEST.md`; duplicated CMake and Meson values must remain equal.
 3. In the same commit, update the manifest's **Declared version**. Do not change
    **Latest release** until that exact version has a matching published
-   `<component>-v<MAJOR>.<MINOR>.<PATCH>` tag.
+   `<component>-v<MAJOR>.<MINOR>.<PATCH>[-<PRERELEASE>]` tag. For a prerelease,
+   keep **Declared version** at the base `MAJOR.MINOR.PATCH` and record the full
+   prerelease version under **Latest release**.
 4. During a release, verify the declared version against all listed sources and
    existing tags, create/push the component tag, then update **Latest release**
    and **Release tag** in the manifest.

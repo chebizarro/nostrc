@@ -28,8 +28,10 @@ particular:
   authoritative build sources.
 - Keep **Latest release** and **Release tag** unchanged for unreleased work.
 - When publishing a release, use the tag
-  `<component>-v<MAJOR>.<MINOR>.<PATCH>` (for example,
-  `libnostr-v1.2.3`) and then record that exact version and tag here.
+  `<component>-v<MAJOR>.<MINOR>.<PATCH>[-<PRERELEASE>]` (for example,
+  `libnostr-v1.2.3` or `gnostr-v0.1.0-preview`) and then record that exact
+  release version and tag here. Prereleases retain the base declared version
+  in their authoritative build sources.
 - Before publishing, inspect existing tags with
   `git tag --list '<component>-v*' --sort=-version:refname` and verify every
   listed source agrees with **Declared version**.

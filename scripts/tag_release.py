@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Mapping
 
 SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+PRERELEASE_RE = re.compile(r"^[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*$")
 COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 HEADER_VERSION_RE = re.compile(
     r'^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*_VERSION)\s+"([^"]+)"\s*$'
@@ -127,18 +128,35 @@ def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
         ) from exc
 
 
-def release_tag_name(component: str, version: str) -> str:
+def release_tag_name(
+    component: str,
+    version: str,
+    prerelease: str | None = None,
+) -> str:
     if not COMPONENT_RE.fullmatch(component):
         raise ReleaseTagError(
             "component must contain only letters, digits, dots, underscores, or hyphens"
         )
-    return f"{component}-v{version}"
+    if prerelease is not None:
+        invalid_numeric_identifier = any(
+            identifier.isdigit()
+            and len(identifier) > 1
+            and identifier.startswith("0")
+            for identifier in prerelease.split(".")
+        )
+        if not PRERELEASE_RE.fullmatch(prerelease) or invalid_numeric_identifier:
+            raise ReleaseTagError(
+                "prerelease must be a valid dot-separated SemVer prerelease identifier"
+            )
+    release_version = version if prerelease is None else f"{version}-{prerelease}"
+    return f"{component}-v{release_version}"
 
 
 def prepare_manifest_update(
     path: Path,
     component: str,
     version: str,
+    release_version: str,
     tag: str,
 ) -> str:
     lines = read_text(path).splitlines(keepends=True)
@@ -156,7 +174,7 @@ def prepare_manifest_update(
                 f"but the generated version data contains {version}"
             )
 
-        cells[3] = version
+        cells[3] = release_version
         cells[4] = f"`{tag}`"
         newline = "\n" if line.endswith("\n") else ""
         lines[index] = "| " + " | ".join(cells) + " |" + newline
@@ -193,14 +211,18 @@ def create_release(
     manifest: Path,
     component: str,
     version: str,
+    prerelease: str | None = None,
 ) -> str:
     git(repo, "rev-parse", "--is-inside-work-tree")
-    tag = release_tag_name(component, version)
+    release_version = version if prerelease is None else f"{version}-{prerelease}"
+    tag = release_tag_name(component, version, prerelease)
     if git(repo, "tag", "--list", tag).stdout.strip():
         raise ReleaseTagError(f"tag already exists: {tag}")
 
-    updated_manifest = prepare_manifest_update(manifest, component, version, tag)
-    git(repo, "tag", "-a", tag, "-m", f"Release {component} v{version}")
+    updated_manifest = prepare_manifest_update(
+        manifest, component, version, release_version, tag
+    )
+    git(repo, "tag", "-a", tag, "-m", f"Release {component} v{release_version}")
     try:
         write_text_atomic(manifest, updated_manifest)
     except ReleaseTagError as update_error:
@@ -219,9 +241,13 @@ def create_release(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Create <component>-vX.Y.Z as an annotated Git tag."
+        description="Create <component>-vX.Y.Z[-PRERELEASE] as an annotated Git tag."
     )
     parser.add_argument("component", help="component tag prefix, for example gnostr")
+    parser.add_argument(
+        "--prerelease",
+        help="optional SemVer prerelease identifier, for example preview or rc.1",
+    )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument(
         "--header",
@@ -267,7 +293,9 @@ def main(argv: list[str] | None = None) -> int:
             source,
         )
         manifest = args.manifest or args.repo / "VERSION_MANIFEST.md"
-        tag = create_release(args.repo, manifest, args.component, version)
+        tag = create_release(
+            args.repo, manifest, args.component, version, args.prerelease
+        )
     except ReleaseTagError as exc:
         print(f"tag_release.py: error: {exc}", file=sys.stderr)
         return 1
