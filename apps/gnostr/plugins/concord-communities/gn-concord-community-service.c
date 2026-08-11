@@ -4184,7 +4184,9 @@ void gn_concord_community_service_refound_async(
                          "The Concord service is not connected");
     return;
   }
-  /* A Refounding takes BAN — it is the removal a ban means (CORD-06). */
+  /* A Refounding takes BAN — it is the removal a ban means (CORD-06). The
+   * Roster is what answers that, so the plane has to exist to be asked. */
+  ensure_control_plane(state);
   if (!rotator_may_refound(state, author)) {
     return_publish_error(self, cancellable, callback, user_data,
                          G_IO_ERROR_PERMISSION_DENIED,
@@ -4316,7 +4318,12 @@ static gchar *rotation_key(const char *rotator, guint64 new_epoch,
 }
 
 typedef struct {
-  GnConcordCommunityService *service; /* borrowed */
+  /* Held, not borrowed: opening a blob is the one Concord operation that can
+   * outlive the service, because a signer answers on its own schedule. A
+   * subscription is cancelled at shutdown and a GTask holds its own source
+   * object; this has neither, so it keeps the service alive and finds
+   * `shutting_down` set rather than freed memory. */
+  GnConcordCommunityService *service;
   gchar *community_id;
   gchar *rotator;
   gchar *rotation_key;
@@ -4326,6 +4333,7 @@ typedef struct {
 static void rekey_adopt_free(gpointer data) {
   RekeyAdopt *adopt = data;
   if (!adopt) return;
+  g_clear_object(&adopt->service);
   g_free(adopt->community_id);
   g_free(adopt->rotator);
   g_free(adopt->rotation_key);
@@ -4338,9 +4346,7 @@ static void on_rekey_blob_opened(GObject *source, GAsyncResult *result,
   RekeyAdopt *adopt = user_data;
   GnConcordCommunityService *self = adopt->service;
   CommunityState *state =
-    GN_IS_CONCORD_COMMUNITY_SERVICE(self) && !self->shutting_down
-      ? find_state(self, adopt->community_id)
-      : NULL;
+    self->shutting_down ? NULL : find_state(self, adopt->community_id);
   PendingRotation *pending =
     state && state->rotations
       ? g_hash_table_lookup(state->rotations, adopt->rotation_key)
@@ -4474,6 +4480,9 @@ gboolean gn_concord_community_service_ingest_rekey_wrap(
 
   guint64 new_epoch = state->root_epoch + 1;
   nostr_concord_group_key_t key;
+  /* Authority is judged against the folded Roster, so the plane has to exist
+   * before a rotation can be honored or refused. */
+  ensure_control_plane(state);
   if (!derive_base_rekey_key(state, new_epoch, &key)) return FALSE;
 
   gboolean accepted = FALSE;
@@ -4634,7 +4643,7 @@ gboolean gn_concord_community_service_ingest_rekey_wrap(
         const RekeyEntry *entry = g_ptr_array_index(entries, i);
         if (g_strcmp0(entry->locator, own_locator) != 0) continue;
         RekeyAdopt *adopt = g_new0(RekeyAdopt, 1);
-        adopt->service = self;
+        adopt->service = g_object_ref(self);
         adopt->community_id = g_strdup(community_id);
         adopt->rotator = g_strdup(rotator);
         adopt->rotation_key = g_strdup(pending_key);

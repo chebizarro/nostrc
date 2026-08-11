@@ -2866,10 +2866,314 @@ static void test_nip44_bytes_roundtrip(void) {
   gn_concord_test_reset();
 }
 
+/* ------------------------------------------------------------------ *
+ * the Refounding (CORD-06)
+ * ------------------------------------------------------------------ */
+
+typedef struct {
+  gboolean done;
+  gboolean ok;
+  GError *error;
+} RefoundResult;
+
+static void on_refounded(GObject *source, GAsyncResult *result,
+                         gpointer user_data) {
+  RefoundResult *out = user_data;
+  out->ok = gn_concord_community_service_refound_finish(
+    GN_CONCORD_COMMUNITY_SERVICE(source), result, &out->error);
+  out->done = TRUE;
+}
+
+/* The address the *prior* root derives for the next epoch — where a rotation
+ * has to land for a current keyholder to find it, and nowhere a lapsed one
+ * can look. */
+static void base_rekey_key(const Fixture *fixture,
+                           nostr_concord_group_key_t *out) {
+  uint8_t root[32], id[32];
+  g_assert_true(nostr_concord_hex_decode_32(COMMUNITY_ROOT, root));
+  g_assert_true(nostr_concord_hex_decode_32(fixture->community_id, id));
+  g_assert_cmpint(nostr_concord_base_rekey_key(root, id, TEST_EPOCH + 1, out),
+                  ==, NOSTR_CONCORD_OK);
+}
+
+/* Carries an already-signed seal in a wrap at @key's address, the way a
+ * Rotator's own client would. */
+static gchar *wrap_at_key(const nostr_concord_group_key_t *key,
+                          const char *seal_json, gint64 created_at) {
+  char *wrap_content = NULL;
+  g_assert_cmpint(
+    nostr_concord_stream_seal(key->conv_key, seal_json, &wrap_content), ==,
+    NOSTR_CONCORD_OK);
+  char stream_sk[65], stream_pk[65];
+  nostr_concord_hex_encode_32(key->sk, stream_sk);
+  nostr_concord_hex_encode_32(key->pk, stream_pk);
+
+  g_autoptr(NostrEvent) wrap = nostr_event_new();
+  nostr_event_set_kind(wrap, CONCORD_STREAM_WRAP);
+  nostr_event_set_pubkey(wrap, stream_pk);
+  nostr_event_set_created_at(wrap, created_at);
+  nostr_event_set_content(wrap, wrap_content);
+  g_autofree gchar *ephemeral_sk = nostr_key_generate_private();
+  g_autofree gchar *ephemeral_pk = nostr_key_get_public(ephemeral_sk);
+  nostr_event_set_tags(wrap,
+                       nostr_tags_new(1, nostr_tag_new("p", ephemeral_pk,
+                                                       NULL)));
+  free(wrap_content);
+  g_assert_cmpint(nostr_event_sign(wrap, stream_sk), ==, 0);
+  return nostr_event_serialize_compact(wrap);
+}
+
+static GPtrArray *published_rekey_wraps(const Fixture *fixture) {
+  nostr_concord_group_key_t key;
+  base_rekey_key(fixture, &key);
+  char address[65];
+  nostr_concord_hex_encode_32(key.pk, address);
+  nostr_concord_group_key_clear(&key);
+
+  GPtrArray *wraps = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; gn_concord_test_published &&
+                    i < gn_concord_test_published->len; i++) {
+    const char *json = g_ptr_array_index(gn_concord_test_published, i);
+    g_autoptr(NostrEvent) event = nostr_event_new();
+    if (!nostr_event_deserialize_compact(event, json, NULL)) continue;
+    if (nostr_event_get_kind(event) != CONCORD_STREAM_WRAP) continue;
+    if (g_strcmp0(nostr_event_get_pubkey(event), address) != 0) continue;
+    g_ptr_array_add(wraps, g_strdup(json));
+  }
+  return wraps;
+}
+
+static GnConcordCommunityService *joined_service(const Fixture *fixture,
+                                                 GnostrPluginContext *context) {
+  GnConcordCommunityService *service =
+    gn_concord_community_service_new(context);
+  g_autofree gchar *bundle = build_bundle(fixture, CHANNEL_KEY, 0, 1);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(
+    gn_concord_community_service_accept_bundle(service, bundle, &error));
+  g_assert_no_error(error);
+  /* A public Channel on every side: its key comes from the community_root, so
+   * it is the plane that proves who landed on which root (CORD-03 §1). */
+  EditionOptions define =
+    owner_edition(CONCORD_VSK_CHANNEL, SECOND_CHANNEL, 1,
+                  "{\"name\":\"lounge\",\"private\":false}");
+  g_assert_true(ingest_edition(service, fixture, &define, NULL));
+  return service;
+}
+
+/* The whole rotation, both halves, against the only question that matters:
+ * afterwards, do the Rotator and the member hold the *same* new root, and
+ * does a device that never received the rotation hold nothing?
+ *
+ * The public Channel answers all three at once. Its key derives from the
+ * community_root, so an event published there after the roll opens for
+ * exactly those who converged on the new one. */
+static void test_refounding_roundtrip(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  gn_concord_test_reset();
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture.owner_pubkey;
+  g_autoptr(GnConcordCommunityService) rotator =
+    joined_service(&fixture, context);
+  g_autoptr(GnConcordCommunityService) member =
+    joined_service(&fixture, context);
+  /* A third device that never sees the rotation: the removed member's view,
+   * and the control for every claim below. */
+  g_autoptr(GnConcordCommunityService) stale =
+    joined_service(&fixture, context);
+
+  /* The Complete Memberlist decides who receives a blob, so it is acquired
+   * before the first publish (CORD-06 "Failure and races"). */
+  g_autofree gchar *join = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "join", 1686840217, "100",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    rotator, fixture.community_id, join));
+  g_assert_true(is_member(rotator, &fixture, fixture.author_pubkey));
+
+  RefoundResult refounded = { 0 };
+  gn_concord_community_service_refound_async(rotator, fixture.community_id,
+                                             NULL, on_refounded, &refounded);
+  pump();
+  g_assert_true(refounded.done);
+  g_assert_no_error(refounded.error);
+  g_assert_true(refounded.ok);
+
+  /* Two recipients — the member and the Rotator itself, which would otherwise
+   * lock itself out of the epoch it minted — fit one chunk of 120. */
+  g_autoptr(GPtrArray) wraps = published_rekey_wraps(&fixture);
+  g_assert_cmpuint(wraps->len, ==, 1);
+
+  /* The member opens its own blob by locator and adopts. */
+  gn_concord_test_signer_sk = AUTHOR_SK;
+  gn_concord_test_user_pubkey = fixture.author_pubkey;
+  g_assert_true(gn_concord_community_service_ingest_rekey_wrap(
+    member, fixture.community_id, g_ptr_array_index(wraps, 0)));
+  pump();
+
+  /* A message into the public Channel now rides a key derived from the new
+   * root, which only a device that adopted the rotation can compute. */
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture.owner_pubkey;
+  guint published_before =
+    gn_concord_test_published ? gn_concord_test_published->len : 0;
+  PublishResult outcome = { .loop = g_main_loop_new(NULL, FALSE) };
+  gn_concord_community_service_publish_message_async(
+    rotator, fixture.community_id, SECOND_CHANNEL, "after the refounding",
+    NULL, on_publish_finished, &outcome);
+  g_main_loop_run(outcome.loop);
+  g_assert_true(outcome.ok);
+  g_free(outcome.message);
+  g_main_loop_unref(outcome.loop);
+  g_assert_cmpuint(gn_concord_test_published->len, >, published_before);
+  const char *chat = g_ptr_array_index(gn_concord_test_published,
+                                       gn_concord_test_published->len - 1);
+
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    member, fixture.community_id, SECOND_CHANNEL, chat));
+  GListModel *folded = gn_concord_community_service_get_messages(
+    member, fixture.community_id, SECOND_CHANNEL);
+  g_assert_cmpuint(g_list_model_get_n_items(folded), ==, 1);
+
+  /* And the device that never received the rotation cannot even find the
+   * address: retiring a link stops joins, but this is what actually severs a
+   * reader (CORD-06 §3). */
+  g_assert_false(gn_concord_community_service_ingest_wrap(
+    stale, fixture.community_id, SECOND_CHANNEL, chat));
+
+  /* Replaying the rotation is harmless: it re-delivers the same keys rather
+   * than rolling again, which is what makes a crashed Rotator resumable
+   * instead of forking the Community on every retry. */
+  g_autoptr(GnConcordCommunityItem) settled =
+    gn_concord_community_service_lookup_community(member,
+                                                  fixture.community_id);
+  g_autoptr(GnConcordChannelItem) before =
+    gn_concord_community_item_find_channel(settled, SECOND_CHANNEL);
+  g_autofree gchar *address_before =
+    g_strdup(gn_concord_channel_item_get_stream_pubkey(before));
+  gn_concord_test_signer_sk = AUTHOR_SK;
+  gn_concord_test_user_pubkey = fixture.author_pubkey;
+  gn_concord_community_service_ingest_rekey_wrap(
+    member, fixture.community_id, g_ptr_array_index(wraps, 0));
+  pump();
+  g_autoptr(GnConcordChannelItem) after =
+    gn_concord_community_item_find_channel(settled, SECOND_CHANNEL);
+  g_assert_cmpstr(gn_concord_channel_item_get_stream_pubkey(after), ==,
+                  address_before);
+
+  gn_concord_community_service_shutdown(rotator);
+  gn_concord_community_service_shutdown(member);
+  gn_concord_community_service_shutdown(stale);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
+/* Holding a key is never authority: a member who kept the prior root can
+ * construct a perfectly shaped rotation, and every honest client drops it
+ * against the folded Roster (CORD-06 "Authority"). */
+static void test_refounding_requires_ban(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  gn_concord_test_reset();
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+
+  gn_concord_test_signer_sk = AUTHOR_SK;
+  gn_concord_test_user_pubkey = fixture.author_pubkey;
+  g_autoptr(GnConcordCommunityService) roleless =
+    joined_service(&fixture, context);
+
+  RefoundResult refounded = { 0 };
+  gn_concord_community_service_refound_async(roleless, fixture.community_id,
+                                             NULL, on_refounded, &refounded);
+  pump();
+  g_assert_true(refounded.done);
+  g_assert_false(refounded.ok);
+  g_assert_error(refounded.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  g_clear_error(&refounded.error);
+  g_assert_cmpuint(published_rekey_wraps(&fixture)->len, ==, 0);
+
+  /* The same rotation, minted by that same roleless npub with the root it
+   * legitimately holds, is refused on the way in too. */
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture.owner_pubkey;
+  g_autoptr(GnConcordCommunityService) owner_side =
+    joined_service(&fixture, context);
+  g_autofree gchar *join = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "join", 1686840217, "100",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    owner_side, fixture.community_id, join));
+  RefoundResult by_owner = { 0 };
+  gn_concord_community_service_refound_async(owner_side, fixture.community_id,
+                                             NULL, on_refounded, &by_owner);
+  pump();
+  g_assert_true(by_owner.ok);
+
+  g_autoptr(GPtrArray) wraps = published_rekey_wraps(&fixture);
+  g_assert_cmpuint(wraps->len, ==, 1);
+
+  gn_concord_test_signer_sk = AUTHOR_SK;
+  gn_concord_test_user_pubkey = fixture.author_pubkey;
+  g_autoptr(GnConcordCommunityService) receiver =
+    joined_service(&fixture, context);
+  g_assert_true(gn_concord_community_service_ingest_rekey_wrap(
+    receiver, fixture.community_id, g_ptr_array_index(wraps, 0)));
+  pump();
+
+  /* The same rotation, byte for byte, resealed by the roleless npub that
+   * legitimately holds the prior root: it lands at the right address, the
+   * wrap opens, and it is dropped on rank alone. Holding a key is never
+   * authority — which is the only reason a Refounding severs anyone. */
+  g_autoptr(GnConcordCommunityService) judge =
+    joined_service(&fixture, context);
+  g_autoptr(NostrEvent) honest = nostr_event_new();
+  g_assert_true(nostr_event_deserialize_compact(
+    honest, g_ptr_array_index(wraps, 0), NULL));
+  nostr_concord_group_key_t rekey;
+  base_rekey_key(&fixture, &rekey);
+  char *honest_seal = NULL;
+  g_assert_cmpint(nostr_concord_stream_open(rekey.conv_key,
+                                            nostr_event_get_content(honest),
+                                            &honest_seal),
+                  ==, NOSTR_CONCORD_OK);
+  g_autoptr(NostrEvent) seal = nostr_event_new();
+  g_assert_true(nostr_event_deserialize_compact(seal, honest_seal, NULL));
+  free(honest_seal);
+
+  g_autoptr(NostrEvent) forged = nostr_event_new();
+  nostr_event_set_kind(forged, CONCORD_SEAL_ENCRYPTED);
+  nostr_event_set_pubkey(forged, fixture.author_pubkey);
+  nostr_event_set_created_at(forged, nostr_event_get_created_at(seal));
+  nostr_event_set_content(forged, nostr_event_get_content(seal));
+  nostr_event_set_tags(forged, nostr_tags_new(0));
+  g_assert_cmpint(nostr_event_sign(forged, AUTHOR_SK), ==, 0);
+  g_autofree gchar *forged_json = nostr_event_serialize_compact(forged);
+  g_autofree gchar *forged_wrap =
+    wrap_at_key(&rekey, forged_json, nostr_event_get_created_at(honest));
+  nostr_concord_group_key_clear(&rekey);
+
+  g_assert_false(gn_concord_community_service_ingest_rekey_wrap(
+    judge, fixture.community_id, forged_wrap));
+
+  pump();
+  gn_concord_community_service_shutdown(roleless);
+  gn_concord_community_service_shutdown(owner_side);
+  gn_concord_community_service_shutdown(receiver);
+  gn_concord_community_service_shutdown(judge);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/concord/crypto/nip44-bytes-roundtrip",
                   test_nip44_bytes_roundtrip);
+  g_test_add_func("/concord/refound/roundtrip", test_refounding_roundtrip);
+  g_test_add_func("/concord/refound/requires-ban",
+                  test_refounding_requires_ban);
   g_test_add_func("/concord/service/accept-bundle", test_accept_bundle);
   g_test_add_func("/concord/service/reject-forged-owner",
                   test_reject_forged_owner);
