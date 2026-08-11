@@ -3701,6 +3701,583 @@ static void test_refounding_rotates_private_channels(void) {
   fixture_clear(&fixture);
 }
 
+/* ------------------------------------------------------------------ *
+ * the same-epoch race (CORD-06 "Failure and races")
+ * ------------------------------------------------------------------ */
+
+/* Two new roots the test can order by eye. A minted root is random, and a race
+ * is only testable when the test names which of the two is the lower one — so
+ * these rotations are hand-minted rather than driven through refound_async. */
+#define RACE_LOW_ROOT \
+  "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"
+#define RACE_LOW_CONTROL_ROOT \
+  "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+#define RACE_HIGH_ROOT \
+  "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0"
+#define RACE_HIGH_CONTROL_ROOT \
+  "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1"
+
+/* Grants @member a Role carrying BAN — what a Refounding takes (CORD-06
+ * "Authority"), and therefore what a second Rotator needs to exist at all. Two
+ * rotations from *one* npub at one continuity point are the same resumable
+ * rotation, so a race needs two npubs. */
+static void grant_ban(GnConcordCommunityService *service,
+                      const Fixture *fixture, const char *member) {
+  g_autofree gchar *role_content = g_strdup_printf(
+    "{\"role_id\":\"%s\",\"name\":\"Marshal\",\"position\":5,"
+    "\"permissions\":\"%" G_GUINT64_FORMAT "\"}",
+    ROLE_ID, CONCORD_PERM_BAN);
+  EditionOptions role =
+    owner_edition(CONCORD_VSK_ROLE, ROLE_ID, 1, role_content);
+  g_assert_true(ingest_edition(service, fixture, &role, NULL));
+
+  g_autofree gchar *grant_eid = grant_coordinate(fixture, member);
+  g_autofree gchar *grant_content = g_strdup_printf(
+    "{\"member\":\"%s\",\"role_ids\":[\"%s\"]}", member, ROLE_ID);
+  EditionOptions grant =
+    owner_edition(CONCORD_VSK_GRANT, grant_eid, 1, grant_content);
+  g_assert_true(ingest_edition(service, fixture, &grant, NULL));
+}
+
+/* One complete base rotation, minted by hand: @rotator_sk rolls the root to
+ * @new_root at TEST_EPOCH + 1, from the continuity point every device in these
+ * tests still holds, with one blob per recipient. Addressed under the prior
+ * root, which is where a rotation has to land for a current keyholder to find
+ * it (CORD-06 §2). */
+static gchar *mint_base_rotation(const Fixture *fixture,
+                                 const char *rotator_sk, const char *new_root,
+                                 const char *new_control_root,
+                                 const char *const *recipients, guint n) {
+  g_autofree gchar *rotator = nostr_key_get_public(rotator_sk);
+  uint8_t community[32], control_root[32], scope[32], rotator_x[32];
+  uint8_t rotator_secret[32];
+  g_assert_true(nostr_concord_hex_decode_32(fixture->community_id, community));
+  g_assert_true(nostr_concord_hex_decode_32(new_control_root, control_root));
+  g_assert_true(nostr_concord_hex_decode_32(rotator, rotator_x));
+  g_assert_true(nostr_concord_hex_decode_32(rotator_sk, rotator_secret));
+  nostr_concord_base_scope_id(scope);
+
+  nostr_concord_group_key_t signer;
+  g_assert_cmpint(nostr_concord_control_signer_key(control_root, community,
+                                                   TEST_EPOCH + 1, &signer),
+                  ==, NOSTR_CONCORD_OK);
+
+  g_autoptr(JsonBuilder) builder = json_builder_new();
+  json_builder_begin_array(builder);
+  for (guint i = 0; i < n; i++) {
+    nostr_concord_rekey_blob_t blob;
+    memset(&blob, 0, sizeof(blob));
+    blob.form = NOSTR_CONCORD_REKEY_BASE_MEMBER;
+    memcpy(blob.scope_id, scope, sizeof(scope));
+    blob.epoch = TEST_EPOCH + 1;
+    g_assert_true(nostr_concord_hex_decode_32(new_root, blob.new_key));
+    memcpy(blob.new_control_pk, signer.pk, sizeof(blob.new_control_pk));
+    blob.has_control_pk = true;
+
+    uint8_t plaintext[CONCORD_REKEY_BLOB_STAFF_BYTES];
+    size_t len = 0;
+    g_assert_cmpint(nostr_concord_rekey_blob_pack(&blob, plaintext,
+                                                  sizeof(plaintext), &len),
+                    ==, NOSTR_CONCORD_OK);
+    nostr_concord_rekey_blob_clear(&blob);
+
+    uint8_t recipient_x[32], convkey[32], locator[32];
+    g_assert_true(nostr_concord_hex_decode_32(recipients[i], recipient_x));
+    g_assert_cmpint(nostr_nip44_convkey(rotator_secret, recipient_x, convkey),
+                    ==, 0);
+    char *wrapped = NULL;
+    g_assert_cmpint(
+      nostr_nip44_encrypt_v2_with_convkey(convkey, plaintext, len, &wrapped),
+      ==, 0);
+    memset(convkey, 0, sizeof(convkey));
+    memset(plaintext, 0, sizeof(plaintext));
+    g_assert_cmpint(nostr_concord_rekey_locator(rotator_x, recipient_x, scope,
+                                                TEST_EPOCH + 1, locator),
+                    ==, NOSTR_CONCORD_OK);
+    char locator_hex[65];
+    nostr_concord_hex_encode_32(locator, locator_hex);
+
+    json_builder_begin_object(builder);
+    json_builder_set_member_name(builder, "locator");
+    json_builder_add_string_value(builder, locator_hex);
+    json_builder_set_member_name(builder, "wrapped");
+    json_builder_add_string_value(builder, wrapped);
+    json_builder_end_object(builder);
+    free(wrapped);
+  }
+  json_builder_end_array(builder);
+  nostr_concord_group_key_clear(&signer);
+  memset(rotator_secret, 0, sizeof(rotator_secret));
+
+  g_autoptr(JsonGenerator) generator = json_generator_new();
+  JsonNode *blobs = json_builder_get_root(builder);
+  json_generator_set_root(generator, blobs);
+  g_autofree gchar *content = json_generator_to_data(generator, NULL);
+  json_node_free(blobs);
+
+  /* The commitment over the root both Rotators still held: what makes these
+   * two rotations siblings at one continuity point rather than two unrelated
+   * forks (CORD-02 A.5). */
+  uint8_t prior[32], commitment[32];
+  g_assert_true(nostr_concord_hex_decode_32(COMMUNITY_ROOT, prior));
+  g_assert_cmpint(nostr_concord_epoch_commitment(TEST_EPOCH, prior, commitment),
+                  ==, NOSTR_CONCORD_OK);
+  char prevcommit[65], scope_hex[65];
+  nostr_concord_hex_encode_32(commitment, prevcommit);
+  nostr_concord_hex_encode_32(scope, scope_hex);
+  g_autofree gchar *newepoch =
+    g_strdup_printf("%d", (int)(TEST_EPOCH + 1));
+  g_autofree gchar *prevepoch = g_strdup_printf("%d", (int)TEST_EPOCH);
+
+  g_autoptr(NostrEvent) rumor = nostr_event_new();
+  nostr_event_set_kind(rumor, CONCORD_KIND_REKEY);
+  nostr_event_set_pubkey(rumor, rotator);
+  nostr_event_set_created_at(rumor, 1686840218);
+  nostr_event_set_content(rumor, content);
+  NostrTags *tags = nostr_tags_new(0);
+  tags = nostr_tags_append_unique(tags,
+                                  nostr_tag_new("scope", scope_hex, NULL));
+  tags =
+    nostr_tags_append_unique(tags, nostr_tag_new("newepoch", newepoch, NULL));
+  tags =
+    nostr_tags_append_unique(tags, nostr_tag_new("prevepoch", prevepoch, NULL));
+  tags = nostr_tags_append_unique(
+    tags, nostr_tag_new("prevcommit", prevcommit, NULL));
+  tags =
+    nostr_tags_append_unique(tags, nostr_tag_new("chunk", "0", "1", NULL));
+  nostr_event_set_tags(rumor, tags);
+  g_autofree gchar *rumor_json = nostr_event_serialize_compact(rumor);
+
+  nostr_concord_group_key_t rekey;
+  base_rekey_key(fixture, &rekey);
+  char *seal_content = NULL;
+  g_assert_cmpint(
+    nostr_concord_stream_seal(rekey.conv_key, rumor_json, &seal_content), ==,
+    NOSTR_CONCORD_OK);
+  g_autoptr(NostrEvent) seal = nostr_event_new();
+  nostr_event_set_kind(seal, CONCORD_SEAL_ENCRYPTED);
+  nostr_event_set_pubkey(seal, rotator);
+  nostr_event_set_created_at(seal, 1686840218);
+  nostr_event_set_content(seal, seal_content);
+  nostr_event_set_tags(seal, nostr_tags_new(0));
+  free(seal_content);
+  g_assert_cmpint(nostr_event_sign(seal, rotator_sk), ==, 0);
+  g_autofree gchar *seal_json = nostr_event_serialize_compact(seal);
+
+  gchar *wrap = wrap_at_key(&rekey, seal_json, 1686840218);
+  nostr_concord_group_key_clear(&rekey);
+  return wrap;
+}
+
+/* Where a public Channel's plane sits under @root. Its key comes from the
+ * community_root, so this address *is* which fork a device landed on. */
+static gchar *public_channel_address(const char *root, const char *channel_id,
+                                     guint64 epoch) {
+  uint8_t secret[32], id[32];
+  g_assert_true(nostr_concord_hex_decode_32(root, secret));
+  g_assert_true(nostr_concord_hex_decode_32(channel_id, id));
+  nostr_concord_group_key_t key;
+  g_assert_cmpint(nostr_concord_channel_key(secret, id, epoch, &key), ==,
+                  NOSTR_CONCORD_OK);
+  char hex[65];
+  nostr_concord_hex_encode_32(key.pk, hex);
+  nostr_concord_group_key_clear(&key);
+  return g_strdup(hex);
+}
+
+/* A message written into one fork's public Channel, at the address @root
+ * derives — readable only by a device that holds that root, now or retired. */
+static gchar *mint_fork_chat(const Fixture *fixture, const char *root,
+                             const char *channel_id, guint64 epoch,
+                             const char *content) {
+  uint8_t secret[32], id[32];
+  g_assert_true(nostr_concord_hex_decode_32(root, secret));
+  g_assert_true(nostr_concord_hex_decode_32(channel_id, id));
+  nostr_concord_group_key_t key;
+  g_assert_cmpint(nostr_concord_channel_key(secret, id, epoch, &key), ==,
+                  NOSTR_CONCORD_OK);
+
+  g_autofree gchar *epoch_tag = g_strdup_printf("%" G_GUINT64_FORMAT, epoch);
+  g_autoptr(NostrEvent) rumor = nostr_event_new();
+  nostr_event_set_kind(rumor, CONCORD_KIND_MESSAGE);
+  nostr_event_set_pubkey(rumor, fixture->author_pubkey);
+  nostr_event_set_created_at(rumor, 1686840300);
+  nostr_event_set_content(rumor, content);
+  nostr_event_set_tags(
+    rumor, nostr_tags_new(3, nostr_tag_new("channel", channel_id, NULL),
+                          nostr_tag_new("epoch", epoch_tag, NULL),
+                          nostr_tag_new("ms", "250", NULL)));
+  g_autofree gchar *rumor_json = nostr_event_serialize_compact(rumor);
+
+  char *seal_content = NULL;
+  g_assert_cmpint(
+    nostr_concord_stream_seal(key.conv_key, rumor_json, &seal_content), ==,
+    NOSTR_CONCORD_OK);
+  g_autoptr(NostrEvent) seal = nostr_event_new();
+  nostr_event_set_kind(seal, CONCORD_SEAL_ENCRYPTED);
+  nostr_event_set_pubkey(seal, fixture->author_pubkey);
+  nostr_event_set_created_at(seal, 1686840300);
+  nostr_event_set_content(seal, seal_content);
+  nostr_event_set_tags(seal, nostr_tags_new(0));
+  free(seal_content);
+  g_assert_cmpint(nostr_event_sign(seal, AUTHOR_SK), ==, 0);
+  g_autofree gchar *seal_json = nostr_event_serialize_compact(seal);
+
+  gchar *wrap = wrap_at_key(&key, seal_json, 1686840300);
+  nostr_concord_group_key_clear(&key);
+  return wrap;
+}
+
+static gchar *channel_address_of(GnConcordCommunityService *service,
+                                 const Fixture *fixture, const char *channel_id,
+                                 guint64 *out_epoch) {
+  g_autoptr(GnConcordCommunityItem) item =
+    gn_concord_community_service_lookup_community(service,
+                                                  fixture->community_id);
+  g_assert_nonnull(item);
+  g_autoptr(GnConcordChannelItem) channel =
+    gn_concord_community_item_find_channel(item, channel_id);
+  g_assert_nonnull(channel);
+  if (out_epoch) *out_epoch = gn_concord_channel_item_get_epoch(channel);
+  return g_strdup(gn_concord_channel_item_get_stream_pubkey(channel));
+}
+
+/* Two Refoundings reach one epoch, and every client settles on the same one.
+ *
+ * The rule is the whole of CORD-06 "Failure and races": among authorized
+ * candidates at one continuity point, the lexicographically lowest new base
+ * key wins. It has to hold whichever order the two rotations arrive in, so
+ * both orders run here — and the answer is checked against an address the test
+ * derives itself from the lower root, not merely against the other device
+ * agreeing.
+ *
+ * The public Channel is the instrument: its key comes from the community_root,
+ * so its address is a direct readout of which fork a device is on. */
+static void test_rotation_race_converges_on_lowest(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  gn_concord_test_reset();
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+
+  gn_concord_test_signer_sk = AUTHOR_SK;
+  gn_concord_test_user_pubkey = fixture.author_pubkey;
+  g_autoptr(GnConcordCommunityService) high_first =
+    joined_service(&fixture, context);
+  g_autoptr(GnConcordCommunityService) low_first =
+    joined_service(&fixture, context);
+  /* A device that receives neither rotation, to prove the fork messages below
+   * are unreadable without the root that addressed them. */
+  g_autoptr(GnConcordCommunityService) stale =
+    joined_service(&fixture, context);
+
+  g_autofree gchar *admin = nostr_key_get_public(ADMIN_SK);
+  grant_ban(high_first, &fixture, admin);
+  grant_ban(low_first, &fixture, admin);
+
+  const char *recipients[] = { fixture.owner_pubkey, fixture.author_pubkey,
+                               admin };
+  g_autofree gchar *low = mint_base_rotation(
+    &fixture, OWNER_SK, RACE_LOW_ROOT, RACE_LOW_CONTROL_ROOT, recipients, 3);
+  g_autofree gchar *high = mint_base_rotation(
+    &fixture, ADMIN_SK, RACE_HIGH_ROOT, RACE_HIGH_CONTROL_ROOT, recipients, 3);
+  g_assert_cmpstr(RACE_LOW_ROOT, <, RACE_HIGH_ROOT);
+
+  /* One device adopts the higher fork first and has to heal down to the
+   * lower one; the other adopts the lower one and must refuse the higher. */
+  g_assert_true(gn_concord_community_service_ingest_rekey_wrap(
+    high_first, fixture.community_id, high));
+  pump();
+  g_assert_true(gn_concord_community_service_ingest_rekey_wrap(
+    low_first, fixture.community_id, low));
+  pump();
+
+  guint64 epoch = 0;
+  g_autofree gchar *settled =
+    channel_address_of(low_first, &fixture, SECOND_CHANNEL, &epoch);
+  g_autofree gchar *expected =
+    public_channel_address(RACE_LOW_ROOT, SECOND_CHANNEL, epoch);
+  g_assert_cmpstr(settled, ==, expected);
+
+  g_assert_true(gn_concord_community_service_ingest_rekey_wrap(
+    high_first, fixture.community_id, low));
+  pump();
+  g_assert_true(gn_concord_community_service_ingest_rekey_wrap(
+    low_first, fixture.community_id, high));
+  pump();
+
+  /* Converged, and on the value the rule names — not merely on each other. */
+  g_autofree gchar *healed =
+    channel_address_of(high_first, &fixture, SECOND_CHANNEL, NULL);
+  g_assert_cmpstr(healed, ==, expected);
+
+  /* And the settled epoch did not re-fork upward when the higher sibling
+   * arrived late, which is exactly what a flaky fetch looks like. */
+  g_autofree gchar *unmoved =
+    channel_address_of(low_first, &fixture, SECOND_CHANNEL, NULL);
+  g_assert_cmpstr(unmoved, ==, expected);
+
+  /* Re-delivering the winner is a no-op rather than a second adopt. */
+  g_assert_true(gn_concord_community_service_ingest_rekey_wrap(
+    low_first, fixture.community_id, low));
+  pump();
+  g_autofree gchar *replayed =
+    channel_address_of(low_first, &fixture, SECOND_CHANNEL, NULL);
+  g_assert_cmpstr(replayed, ==, expected);
+
+  /* Messages sent into the losing fork stay readable on both devices: one
+   * held that root and retired it, the other opened the blob only to compare
+   * it and kept the fork's key anyway (CORD-06 "Failure and races"). */
+  g_autofree gchar *fork_chat = mint_fork_chat(
+    &fixture, RACE_HIGH_ROOT, SECOND_CHANNEL, epoch, "sent into the loser");
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    high_first, fixture.community_id, SECOND_CHANNEL, fork_chat));
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    low_first, fixture.community_id, SECOND_CHANNEL, fork_chat));
+  /* Retention is retention, not a hole: a device that never held that root
+   * cannot read it. */
+  g_assert_false(gn_concord_community_service_ingest_wrap(
+    stale, fixture.community_id, SECOND_CHANNEL, fork_chat));
+
+  /* And the epoch just left is still readable too — the same retention, one
+   * rotation earlier. */
+  g_autofree gchar *before_chat = mint_fork_chat(
+    &fixture, COMMUNITY_ROOT, SECOND_CHANNEL, epoch, "before the rotation");
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    low_first, fixture.community_id, SECOND_CHANNEL, before_chat));
+
+  gn_concord_community_service_shutdown(high_first);
+  gn_concord_community_service_shutdown(low_first);
+  gn_concord_community_service_shutdown(stale);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
+/* The retained roots are membership material: they ride the Community List to
+ * this npub's own devices (CORD-02 §8), because a fork's messages must stay
+ * readable on the phone as well as the laptop that judged the race. */
+static void test_retired_roots_ride_the_community_list(void) {
+  Fixture fixture = { 0 };
+  list_test_begin(&fixture);
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+
+  gn_concord_test_signer_sk = AUTHOR_SK;
+  gn_concord_test_user_pubkey = fixture.author_pubkey;
+  g_autoptr(GnConcordCommunityService) device =
+    joined_service(&fixture, context);
+  g_autofree gchar *admin = nostr_key_get_public(ADMIN_SK);
+  grant_ban(device, &fixture, admin);
+
+  const char *recipients[] = { fixture.owner_pubkey, fixture.author_pubkey,
+                               admin };
+  g_autofree gchar *low = mint_base_rotation(
+    &fixture, OWNER_SK, RACE_LOW_ROOT, RACE_LOW_CONTROL_ROOT, recipients, 3);
+  g_autofree gchar *high = mint_base_rotation(
+    &fixture, ADMIN_SK, RACE_HIGH_ROOT, RACE_HIGH_CONTROL_ROOT, recipients, 3);
+
+  g_assert_true(gn_concord_community_service_ingest_rekey_wrap(
+    device, fixture.community_id, low));
+  pump();
+  g_assert_true(gn_concord_community_service_ingest_rekey_wrap(
+    device, fixture.community_id, high));
+  pump();
+  pump();
+
+  JsonNode *listed = decrypt_published_document(
+    published_last_of_kind(CONCORD_COMMUNITY_LIST), AUTHOR_SK);
+  g_assert_nonnull(listed);
+  JsonArray *entries =
+    json_object_get_array_member(json_node_get_object(listed), "entries");
+  JsonObject *membership = NULL;
+  for (guint i = 0; i < json_array_get_length(entries); i++) {
+    JsonObject *candidate = json_array_get_object_element(entries, i);
+    if (g_strcmp0(json_object_get_string_member(candidate, "community_id"),
+                  fixture.community_id) == 0)
+      membership = candidate;
+  }
+  g_assert_nonnull(membership);
+  JsonObject *current = json_object_get_object_member(membership, "current");
+  g_assert_nonnull(current);
+  g_assert_cmpstr(json_object_get_string_member(current, "community_root"), ==,
+                  RACE_LOW_ROOT);
+
+  /* Both forks: the epoch left behind, and the sibling that lost. */
+  JsonArray *retired = json_object_get_array_member(current, "retired");
+  g_assert_nonnull(retired);
+  gboolean holds_prior = FALSE, holds_loser = FALSE;
+  for (guint i = 0; i < json_array_get_length(retired); i++) {
+    JsonObject *entry = json_array_get_object_element(retired, i);
+    const char *root = json_object_get_string_member(entry, "root");
+    if (g_strcmp0(root, COMMUNITY_ROOT) == 0) {
+      holds_prior = TRUE;
+      g_assert_cmpint(json_object_get_int_member(entry, "epoch"), ==,
+                      TEST_EPOCH);
+    }
+    if (g_strcmp0(root, RACE_HIGH_ROOT) == 0) {
+      holds_loser = TRUE;
+      g_assert_cmpint(json_object_get_int_member(entry, "epoch"), ==,
+                      TEST_EPOCH + 1);
+    }
+  }
+  g_assert_true(holds_prior);
+  g_assert_true(holds_loser);
+
+  /* A second device reconstructs from that entry and reads the losing fork,
+   * which is the whole point of carrying them. */
+  g_autoptr(JsonGenerator) generator = json_generator_new();
+  json_generator_set_root(generator,
+                          json_object_get_member(membership, "current"));
+  g_autofree gchar *material = json_generator_to_data(generator, NULL);
+  g_autoptr(GnConcordCommunityService) second =
+    gn_concord_community_service_new(context);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(
+    gn_concord_community_service_accept_bundle(second, material, &error));
+  g_assert_no_error(error);
+
+  guint64 epoch = 0;
+  g_autofree gchar *address =
+    channel_address_of(second, &fixture, SECOND_CHANNEL, &epoch);
+  g_autofree gchar *expected =
+    public_channel_address(RACE_LOW_ROOT, SECOND_CHANNEL, epoch);
+  g_assert_cmpstr(address, ==, expected);
+
+  g_autofree gchar *fork_chat = mint_fork_chat(
+    &fixture, RACE_HIGH_ROOT, SECOND_CHANNEL, epoch, "sent into the loser");
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    second, fixture.community_id, SECOND_CHANNEL, fork_chat));
+
+  /* An invite bundle carries no `retired` — it is join material for a
+   * stranger, and the epochs a Refounding severed are not theirs to read. A
+   * re-accepted link therefore arrives without them, and must not take the
+   * set away from the membership it refreshes. */
+  g_autoptr(JsonNode) refreshed =
+    json_node_copy(json_object_get_member(membership, "current"));
+  json_object_remove_member(json_node_get_object(refreshed), "retired");
+  g_autoptr(JsonGenerator) refresher = json_generator_new();
+  json_generator_set_root(refresher, refreshed);
+  g_autofree gchar *plain = json_generator_to_data(refresher, NULL);
+  g_assert_true(
+    gn_concord_community_service_accept_bundle(second, plain, &error));
+  g_assert_no_error(error);
+  g_autofree gchar *after_refresh = mint_fork_chat(
+    &fixture, RACE_HIGH_ROOT, SECOND_CHANNEL, epoch, "still readable");
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    second, fixture.community_id, SECOND_CHANNEL, after_refresh));
+
+  json_node_free(listed);
+  gn_concord_community_service_shutdown(device);
+  gn_concord_community_service_shutdown(second);
+  list_test_end(&fixture);
+}
+
+/* A recipient online through a whole Refounding ends up holding the same
+ * Private Channel keys as the Refounder, whichever order the two halves land
+ * in (nostrc-8h0l).
+ *
+ * The live order is the dangerous one: the base chunks publish first and the
+ * Channel rotations second, both addressed under the prior root. A device that
+ * folds the base set and adopts has, at that instant, re-derived every Channel
+ * rekey plane under the *new* root — so the rotation still sitting at the prior
+ * root's address arrives at a plane nobody is watching, and that device keeps
+ * the old Channel key while the removed member keeps reading it. Retaining the
+ * prior root is what keeps that address derivable. */
+static void test_refounding_channel_rotation_after_base(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  gn_concord_test_reset();
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture.owner_pubkey;
+  g_autoptr(GnConcordCommunityService) rotator =
+    joined_service(&fixture, context);
+  g_autoptr(GnConcordCommunityService) recipient =
+    joined_service(&fixture, context);
+
+  g_autofree gchar *join = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "join", 1686840217, "100",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    rotator, fixture.community_id, join));
+
+  uint8_t root[32], id[32];
+  g_assert_true(nostr_concord_hex_decode_32(COMMUNITY_ROOT, root));
+  g_assert_true(nostr_concord_hex_decode_32(CHANNEL_ID, id));
+  nostr_concord_group_key_t rekey;
+  g_assert_cmpint(
+    nostr_concord_channel_rekey_key(root, id, TEST_EPOCH + 1, &rekey), ==,
+    NOSTR_CONCORD_OK);
+  char channel_address[65];
+  nostr_concord_hex_encode_32(rekey.pk, channel_address);
+  nostr_concord_group_key_clear(&rekey);
+
+  guint before = gn_concord_test_published ? gn_concord_test_published->len : 0;
+  RefoundResult refounded = { 0 };
+  gn_concord_community_service_refound_async(rotator, fixture.community_id,
+                                             NULL, on_refounded, &refounded);
+  pump();
+  g_assert_true(refounded.ok);
+
+  g_autofree gchar *channel_rotation = NULL;
+  for (guint i = before; i < gn_concord_test_published->len; i++) {
+    const char *json = g_ptr_array_index(gn_concord_test_published, i);
+    g_autoptr(NostrEvent) event = nostr_event_new();
+    if (!nostr_event_deserialize_compact(event, json, NULL)) continue;
+    if (g_strcmp0(nostr_event_get_pubkey(event), channel_address) != 0)
+      continue;
+    g_free(channel_rotation);
+    channel_rotation = g_strdup(json);
+  }
+  g_assert_nonnull(channel_rotation);
+
+  g_autoptr(GPtrArray) base_wraps = published_rekey_wraps(&fixture);
+  g_assert_cmpuint(base_wraps->len, ==, 1);
+
+  /* The base first, adopted in full — the recipient is now on the new root and
+   * has re-addressed every plane it holds. */
+  gn_concord_test_signer_sk = AUTHOR_SK;
+  gn_concord_test_user_pubkey = fixture.author_pubkey;
+  g_assert_true(gn_concord_community_service_ingest_rekey_wrap(
+    recipient, fixture.community_id, g_ptr_array_index(base_wraps, 0)));
+  pump();
+
+  /* And only then the Channel rotation, at the retired root's address. */
+  g_assert_true(gn_concord_community_service_ingest_channel_rekey_wrap(
+    recipient, fixture.community_id, CHANNEL_ID, channel_rotation));
+  pump();
+
+  g_autoptr(GnConcordCommunityItem) held =
+    gn_concord_community_service_lookup_community(recipient,
+                                                  fixture.community_id);
+  g_autoptr(GnConcordChannelItem) channel =
+    gn_concord_community_item_find_channel(held, CHANNEL_ID);
+  g_assert_cmpuint(gn_concord_channel_item_get_epoch(channel), ==,
+                   TEST_EPOCH + 1);
+  g_assert_cmpstr(gn_concord_channel_item_get_key(channel), !=, CHANNEL_KEY);
+
+  /* Same key as the Refounder's, proven where it counts: a message the
+   * Refounder publishes into the rotated Channel opens here. */
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture.owner_pubkey;
+  PublishResult sent = { .loop = g_main_loop_new(NULL, FALSE) };
+  gn_concord_community_service_publish_message_async(
+    rotator, fixture.community_id, CHANNEL_ID, "after the refounding", NULL,
+    on_publish_finished, &sent);
+  g_main_loop_run(sent.loop);
+  g_assert_true(sent.ok);
+  g_free(sent.message);
+  g_main_loop_unref(sent.loop);
+  const char *chat = g_ptr_array_index(gn_concord_test_published,
+                                       gn_concord_test_published->len - 1);
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    recipient, fixture.community_id, CHANNEL_ID, chat));
+
+  gn_concord_community_service_shutdown(rotator);
+  gn_concord_community_service_shutdown(recipient);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
 /* A Private Channel rotates on its own. It is independently keyed and
  * cryptographically unrelated to the community_root (CORD-03), so severing
  * someone from one Channel costs exactly that Channel — no Refounding, no
@@ -3867,6 +4444,12 @@ int main(int argc, char **argv) {
                   test_channel_rekey_roundtrip);
   g_test_add_func("/concord/rekey/channel-refusals",
                   test_channel_rekey_refusals);
+  g_test_add_func("/concord/race/converges-on-lowest",
+                  test_rotation_race_converges_on_lowest);
+  g_test_add_func("/concord/race/retired-roots-ride-the-list",
+                  test_retired_roots_ride_the_community_list);
+  g_test_add_func("/concord/refound/channel-rotation-after-base",
+                  test_refounding_channel_rotation_after_base);
   g_test_add_func("/concord/refound/requires-ban",
                   test_refounding_requires_ban);
   g_test_add_func("/concord/service/accept-bundle", test_accept_bundle);

@@ -18,6 +18,18 @@
  * per-Channel ceiling on a backfill, not a protocol constant. */
 #define CONCORD_CHAT_PAGE 200
 
+/* CORD-06 §3: the roots this device has rotated away from and must still read
+ * with — the epoch it left behind, and the losing sibling of a same-epoch
+ * race. Every retained root is a readable epoch, so the set is a credential
+ * surface: it is bounded rather than grown with history. */
+#define CONCORD_RETIRED_ROOTS 8
+
+/* Rotations held under judgment at once. Siblings are retained now rather than
+ * cleared on every adopt (CORD-06 "Failure and races"), so the table needs a
+ * ceiling of its own — an authorized Rotator must not be able to grow it by
+ * minting. */
+#define CONCORD_MAX_PENDING_ROTATIONS 16
+
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(NostrEvent, nostr_event_free)
 
 typedef struct {
@@ -68,11 +80,29 @@ typedef struct {
   gchar *rekey_address;
   guint64 rekey_subscription;
   GHashTable *rotations; /* rotation key -> PendingRotation */
+  /* CORD-06 §3: the roots this device no longer writes under and still reads
+   * with, newest first — see retire_root(). */
+  GPtrArray *retired; /* (element-type RetiredRoot) */
+  /* The rotation plane of the continuity point the epoch held was reached
+   * from. A rotation racing the one this device adopted published there, and
+   * it is the only way a settled epoch can still hear the sibling it has to
+   * converge with (CORD-06 "Failure and races"). */
+  gchar *sibling_rekey_address;
+  guint64 sibling_rekey_subscription;
   /* Community List bookkeeping (CORD-02 §8) */
   JsonNode *list_seed;    /* the earliest epoch held; only ever moves back */
   JsonObject *list_extra; /* members of the List entry we don't understand */
   gint64 added_at;        /* ms; tiebreaks against a tombstone */
 } CommunityState;
+
+/* A root this device has stopped writing under. The write secrets are not
+ * retained beside it: a retired branch is read-only by construction, so only
+ * the Control Plane's *address* at that epoch comes along (CORD-02 §5). */
+typedef struct {
+  gchar *root; /* secret, hex */
+  guint64 epoch;
+  gchar *control_pk; /* NULL at an epoch minted before the split */
+} RetiredRoot;
 
 typedef struct {
   GnConcordCommunityService *service; /* borrowed; the service owns the sub */
@@ -161,6 +191,54 @@ static void clear_secret(gchar **secret) {
   g_clear_pointer(secret, g_free);
 }
 
+static void retired_root_free(gpointer data) {
+  RetiredRoot *retired = data;
+  if (!retired) return;
+  clear_secret(&retired->root);
+  g_free(retired->control_pk);
+  g_free(retired);
+}
+
+/* Retains a root this device stops writing under (CORD-06 §3). Two things end
+ * up here and they are the same thing: the root an adopted rotation replaced,
+ * and the root of a sibling that lost a same-epoch race — a fork real messages
+ * were sent into, either way, and unreadable the moment the root is dropped.
+ *
+ * Newest first, oldest evicted: the heal window is short, and the set is a
+ * credential surface rather than a cache, so it is bounded. Re-retiring a root
+ * already held is a replay, not a second fork. */
+static gboolean retire_root(CommunityState *state, const char *root_hex,
+                            guint64 epoch, const char *control_pk) {
+  if (!root_hex || !*root_hex) return FALSE;
+  if (!state->retired)
+    state->retired = g_ptr_array_new_with_free_func(retired_root_free);
+  for (guint i = 0; i < state->retired->len; i++) {
+    const RetiredRoot *held = g_ptr_array_index(state->retired, i);
+    if (g_strcmp0(held->root, root_hex) == 0) return FALSE;
+  }
+  RetiredRoot *retired = g_new0(RetiredRoot, 1);
+  retired->root = g_strdup(root_hex);
+  retired->epoch = epoch;
+  retired->control_pk = g_strdup(control_pk);
+  g_ptr_array_insert(state->retired, 0, retired);
+  while (state->retired->len > CONCORD_RETIRED_ROOTS)
+    g_ptr_array_remove_index(state->retired, state->retired->len - 1);
+  return TRUE;
+}
+
+/* The root the epoch held was rotated *from*. A rotation racing the one this
+ * device adopted was addressed under it, and so were the Channel rekeys of the
+ * Refounding that minted it (CORD-06 §3) — so it is the one retired root the
+ * rotation planes consult. The rest are read-only history. */
+static const char *prior_root(CommunityState *state) {
+  if (!state->retired || state->root_epoch == 0) return NULL;
+  for (guint i = 0; i < state->retired->len; i++) {
+    const RetiredRoot *retired = g_ptr_array_index(state->retired, i);
+    if (retired->epoch == state->root_epoch - 1) return retired->root;
+  }
+  return NULL;
+}
+
 static void community_state_free(gpointer data) {
   CommunityState *state = data;
   if (!state) return;
@@ -180,6 +258,8 @@ static void community_state_free(gpointer data) {
   g_clear_pointer(&state->guestbook, gn_concord_guestbook_free);
   g_free(state->guestbook_address);
   g_free(state->rekey_address);
+  g_free(state->sibling_rekey_address);
+  g_clear_pointer(&state->retired, g_ptr_array_unref);
   g_clear_pointer(&state->rotations, g_hash_table_unref);
   g_free(state->invite_creator);
   g_free(state->invite_label);
@@ -326,19 +406,13 @@ static void publish_sealed_rumor(GnConcordCommunityService *self,
  * from the community_root when public — one label, two secrets. The folded
  * type decides which, so a Control Plane edition converting a Channel moves
  * it to the other secret at the same channel_id (§2). */
-static gboolean derive_channel_key(CommunityState *state,
-                                   GnConcordChannelItem *channel,
-                                   nostr_concord_group_key_t *out) {
-  const char *key_hex = NULL;
-  if (gn_concord_channel_item_get_is_private(channel)) {
-    /* A private Channel the Control Plane defines but no invite or rekey ever
-     * delivered a key for is listed and unreadable — never silently derived
-     * from the community_root, which would address a plane nobody writes. */
-    key_hex = gn_concord_channel_item_get_key(channel);
-    if (!key_hex || !*key_hex) return FALSE;
-  } else {
-    key_hex = state->community_root;
-  }
+static gboolean derive_channel_key_from(GnConcordChannelItem *channel,
+                                        const char *key_hex,
+                                        nostr_concord_group_key_t *out) {
+  /* A private Channel the Control Plane defines but no invite or rekey ever
+   * delivered a key for is listed and unreadable — never silently derived
+   * from the community_root, which would address a plane nobody writes. */
+  if (!key_hex || !*key_hex) return FALSE;
 
   uint8_t secret[32], channel_id[32];
   if (!nostr_concord_hex_decode_32(key_hex, secret) ||
@@ -350,6 +424,55 @@ static gboolean derive_channel_key(CommunityState *state,
     secret, channel_id, gn_concord_channel_item_get_epoch(channel), out);
   memset(secret, 0, sizeof(secret));
   return status == NOSTR_CONCORD_OK;
+}
+
+static gboolean derive_channel_key(CommunityState *state,
+                                   GnConcordChannelItem *channel,
+                                   nostr_concord_group_key_t *out) {
+  return derive_channel_key_from(
+    channel,
+    gn_concord_channel_item_get_is_private(channel)
+      ? gn_concord_channel_item_get_key(channel)
+      : state->community_root,
+    out);
+}
+
+/* The key that opens a Chat wrap sitting at @address, which is the epoch it was
+ * written in: the one this device holds, or a fork it rotated away from and
+ * still reads (CORD-06 "Failure and races"). A wrap is *addressed* at its
+ * stream pk, so the address selects the key outright — no trial decryption, and
+ * no way for a retired root to open something the current one should have.
+ *
+ * A private Channel offers exactly one candidate: it is independently keyed, so
+ * a retired base root says nothing about it (CORD-03). A public Channel's key
+ * comes from the root, so every retired root is another address its messages
+ * may still sit at. */
+static gboolean select_channel_key(CommunityState *state,
+                                   GnConcordChannelItem *channel,
+                                   const char *address,
+                                   nostr_concord_group_key_t *out) {
+  nostr_concord_group_key_t key;
+  char pk_hex[65];
+  if (derive_channel_key(state, channel, &key)) {
+    nostr_concord_hex_encode_32(key.pk, pk_hex);
+    if (g_strcmp0(address, pk_hex) == 0) {
+      *out = key;
+      return TRUE;
+    }
+    nostr_concord_group_key_clear(&key);
+  }
+  if (gn_concord_channel_item_get_is_private(channel)) return FALSE;
+  for (guint i = 0; state->retired && i < state->retired->len; i++) {
+    const RetiredRoot *retired = g_ptr_array_index(state->retired, i);
+    if (!derive_channel_key_from(channel, retired->root, &key)) continue;
+    nostr_concord_hex_encode_32(key.pk, pk_hex);
+    if (g_strcmp0(address, pk_hex) == 0) {
+      *out = key;
+      return TRUE;
+    }
+    nostr_concord_group_key_clear(&key);
+  }
+  return FALSE;
 }
 
 static GListStore *channel_messages(CommunityState *state,
@@ -403,6 +526,7 @@ gboolean gn_concord_community_service_ingest_wrap(
    * jump over such a declaration leaves its cleanup handler facing
    * uninitialized memory. */
   nostr_concord_group_key_t key;
+  gboolean keyed = FALSE;
   gboolean accepted = FALSE;
   char *seal_json = NULL;
   char *rumor_json = NULL;
@@ -411,7 +535,6 @@ gboolean gn_concord_community_service_ingest_wrap(
   g_autoptr(NostrEvent) rumor = NULL;
   g_autofree gchar *rumor_id = NULL;
   g_autoptr(GnConcordMessageItem) item = NULL;
-  char stream_pk_hex[65];
   const char *ms_tag = NULL;
   guint64 rumor_epoch = 0;
   gint64 created_at = 0;
@@ -419,18 +542,18 @@ gboolean gn_concord_community_service_ingest_wrap(
   int ms = 0;
   int kind = 0;
 
-  if (!derive_channel_key(state, channel, &key)) return FALSE;
-
   /* The wrap is signed by the shared stream key, so a valid signature proves
    * only that *a* keyholder published here (CORD-01 "Binding"). */
   wrap = parse_verified_event(wrap_json);
   if (!wrap) goto done;
   if (nostr_event_get_kind(wrap) != CONCORD_STREAM_WRAP) goto done;
 
-  /* The wrap must sit at this Channel's derived address. The subscription
-   * filter already says so, but ingest is reachable without one. */
-  nostr_concord_hex_encode_32(key.pk, stream_pk_hex);
-  if (g_strcmp0(nostr_event_get_pubkey(wrap), stream_pk_hex) != 0) goto done;
+  /* The wrap must sit at an address one of this Channel's keys derives — the
+   * one held now, or a fork this device rotated away from, whose messages stay
+   * readable (CORD-06 "Failure and races"). The subscription filter already
+   * says so for the live plane, but ingest is reachable without one. */
+  keyed = select_channel_key(state, channel, nostr_event_get_pubkey(wrap), &key);
+  if (!keyed) goto done;
 
   if (nostr_concord_stream_open(key.conv_key, nostr_event_get_content(wrap),
                                 &seal_json) != NOSTR_CONCORD_OK)
@@ -508,7 +631,7 @@ done:
     memset(rumor_json, 0, strlen(rumor_json));
     free(rumor_json);
   }
-  nostr_concord_group_key_clear(&key);
+  if (keyed) nostr_concord_group_key_clear(&key);
   if (accepted) emit_update(self, community_id, GN_CONCORD_UPDATE_MESSAGES);
   return accepted;
 }
@@ -587,6 +710,33 @@ void gn_concord_community_service_refresh_channel(
   for (guint i = 0; i < events->len; i++)
     gn_concord_community_service_ingest_wrap(
       self, community_id, channel_id, g_ptr_array_index(events, i));
+
+  /* And the same page from every address this Channel used to sit at. A public
+   * Channel's key comes from the community_root, so a fork that lost a
+   * same-epoch race left its messages at an address the winner's root does not
+   * derive — they stay readable only because the losing root is retained
+   * (CORD-06 "Failure and races"). Nothing to do on a Community that never
+   * raced: the retired set is empty until the first rotation. */
+  if (gn_concord_channel_item_get_is_private(channel)) return;
+  for (guint i = 0; state->retired && i < state->retired->len; i++) {
+    const RetiredRoot *retired = g_ptr_array_index(state->retired, i);
+    nostr_concord_group_key_t key;
+    if (!derive_channel_key_from(channel, retired->root, &key)) continue;
+    char address[65];
+    nostr_concord_hex_encode_32(key.pk, address);
+    nostr_concord_group_key_clear(&key);
+    if (g_strcmp0(address, stream_pk) == 0) continue;
+
+    g_autofree gchar *retired_filter =
+      build_stream_filter(address, CONCORD_CHAT_PAGE);
+    g_autoptr(GError) retired_error = NULL;
+    g_autoptr(GPtrArray) fork = gnostr_plugin_context_query_events(
+      self->context, retired_filter, &retired_error);
+    if (!fork) continue;
+    for (guint e = 0; e < fork->len; e++)
+      gn_concord_community_service_ingest_wrap(self, community_id, channel_id,
+                                               g_ptr_array_index(fork, e));
+  }
 }
 
 void gn_concord_community_service_refresh(GnConcordCommunityService *self) {
@@ -744,6 +894,32 @@ gboolean gn_concord_community_service_accept_bundle(
     return FALSE;
   }
 
+  /* The roots this membership has rotated away from and still reads with. Only
+   * the Community List ever carries them (CORD-06 §3); an invite bundle that
+   * tried to would be handing over epochs it has no business handing over, so
+   * the set is bounded here and every entry validated before anything is kept. */
+  g_autoptr(GPtrArray) retired = NULL;
+  {
+    JsonArray *entries = object_array(bundle, "retired");
+    guint n = entries ? json_array_get_length(entries) : 0;
+    if (n > CONCORD_RETIRED_ROOTS) n = CONCORD_RETIRED_ROOTS;
+    for (guint i = 0; i < n; i++) {
+      JsonObject *entry = json_array_get_object_element(entries, i);
+      if (!entry) continue;
+      const char *root_hex = object_string(entry, "root");
+      const char *pk = object_string(entry, "control_pk");
+      gint64 epoch = object_int(entry, "epoch", -1);
+      if (!nostr_concord_is_lower_hex_32(root_hex) || epoch < 0) continue;
+      if (pk && !nostr_concord_is_lower_hex_32(pk)) continue;
+      RetiredRoot *held = g_new0(RetiredRoot, 1);
+      held->root = g_strdup(root_hex);
+      held->epoch = (guint64)epoch;
+      held->control_pk = g_strdup(pk);
+      if (!retired) retired = g_ptr_array_new_with_free_func(retired_root_free);
+      g_ptr_array_add(retired, held);
+    }
+  }
+
   CommunityState *state = community_state_new();
   state->community_id = g_strdup(community_id);
   state->owner = g_strdup(owner);
@@ -752,6 +928,7 @@ gboolean gn_concord_community_service_accept_bundle(
   state->root_epoch = (guint64)root_epoch;
   state->control_pk = g_strdup(control_pk);
   state->control_root = g_strdup(control_root);
+  state->retired = g_steal_pointer(&retired);
   state->name = g_strdup(object_string(bundle, "name"));
   /* Optional attribution: a link may name its creator and a human label
    * ("Reddit", "Conf 2026"), and an accepting joiner echoes both in their
@@ -813,9 +990,13 @@ gboolean gn_concord_community_service_accept_bundle(
   CommunityState *existing = find_state(self, community_id);
   if (existing) {
     /* A refreshed link carries no `control_root` — no bundle ever does — so a
-     * staffer re-accepting their own link must not lose their write key. */
+     * staffer re-accepting their own link must not lose their write key, and
+     * for the same reason it must not silently drop the retired roots that keep
+     * this membership's own history readable. */
     if (!state->control_root)
       state->control_root = g_steal_pointer(&existing->control_root);
+    if (!state->retired)
+      state->retired = g_steal_pointer(&existing->retired);
     state->list_seed = g_steal_pointer(&existing->list_seed);
     state->list_extra = g_steal_pointer(&existing->list_extra);
     state->added_at = existing->added_at;
@@ -905,6 +1086,28 @@ static gboolean derive_control_read_key(CommunityState *state,
   return status == NOSTR_CONCORD_OK;
 }
 
+/* The read key at a retired epoch, and the address its plane sat at: the
+ * control_pk minted with that root, or — before the split — the read
+ * derivation's own pk (CORD-02 §5). A Control edition written into a fork this
+ * device rotated away from is still a real, signed authority action, and it
+ * stays foldable for exactly as long as the root that addressed it is held. */
+static gboolean retired_control_read_key(CommunityState *state,
+                                         const RetiredRoot *retired,
+                                         nostr_concord_group_key_t *out,
+                                         char address[65]) {
+  uint8_t root[32], id[32];
+  if (!nostr_concord_hex_decode_32(retired->root, root) ||
+      !nostr_concord_hex_decode_32(state->community_id, id))
+    return FALSE;
+  nostr_concord_status_t status =
+    nostr_concord_control_read_key(root, id, retired->epoch, out);
+  memset(root, 0, sizeof(root));
+  if (status != NOSTR_CONCORD_OK) return FALSE;
+  if (retired->control_pk) g_strlcpy(address, retired->control_pk, 65);
+  else nostr_concord_hex_encode_32(out->pk, address);
+  return TRUE;
+}
+
 static gboolean ensure_control_plane(CommunityState *state) {
   if (state->control) return state->control_address != NULL;
   if (!state->community_id || !state->owner) return FALSE;
@@ -943,6 +1146,22 @@ gboolean gn_concord_community_service_ingest_control_wrap(
   gboolean accepted = gn_concord_control_plane_ingest_wrap(
     state->control, key.conv_key, state->control_address, wrap_json);
   nostr_concord_group_key_clear(&key);
+
+  /* Only where the epoch held does not open it: an edition published into an
+   * epoch this device has rotated away from — a fork that lost a same-epoch
+   * race, or the epoch just left — is read under the root retired with it. */
+  for (guint i = 0; !accepted && state->retired && i < state->retired->len;
+       i++) {
+    char address[65];
+    if (!retired_control_read_key(state,
+                                  g_ptr_array_index(state->retired, i), &key,
+                                  address))
+      continue;
+    accepted = gn_concord_control_plane_ingest_wrap(state->control,
+                                                    key.conv_key, address,
+                                                    wrap_json);
+    nostr_concord_group_key_clear(&key);
+  }
 
   if (accepted) apply_control_fold(self, state);
   return accepted;
@@ -1694,6 +1913,29 @@ static JsonNode *build_join_material(CommunityState *state,
   if (include_control_root && state->control_root) {
     json_builder_set_member_name(builder, "control_root");
     json_builder_add_string_value(builder, state->control_root);
+  }
+  /* The retired roots ride the same flag, and for the same reason: this is the
+   * List copy, which goes to this npub's own devices and nowhere else. An
+   * invite bundle must never carry them — handing a fresh joiner the epochs a
+   * Refounding severed is the one thing the whole mechanism exists to prevent
+   * (CORD-06 §3). */
+  if (include_control_root && state->retired && state->retired->len > 0) {
+    json_builder_set_member_name(builder, "retired");
+    json_builder_begin_array(builder);
+    for (guint i = 0; i < state->retired->len; i++) {
+      const RetiredRoot *retired = g_ptr_array_index(state->retired, i);
+      json_builder_begin_object(builder);
+      json_builder_set_member_name(builder, "root");
+      json_builder_add_string_value(builder, retired->root);
+      json_builder_set_member_name(builder, "epoch");
+      json_builder_add_int_value(builder, (gint64)retired->epoch);
+      if (retired->control_pk) {
+        json_builder_set_member_name(builder, "control_pk");
+        json_builder_add_string_value(builder, retired->control_pk);
+      }
+      json_builder_end_object(builder);
+    }
+    json_builder_end_array(builder);
   }
   if (state->name) {
     json_builder_set_member_name(builder, "name");
@@ -3740,11 +3982,12 @@ gboolean gn_concord_community_service_revoke_invite_finish(
 /* The address the next base rotation lands at. Both the key and the epoch are
  * the *prior* root at root_epoch + 1: precomputable by every current
  * keyholder and by nobody else (CORD-06 §2). */
-static gboolean derive_base_rekey_key(CommunityState *state, guint64 new_epoch,
-                                      nostr_concord_group_key_t *out) {
+static gboolean derive_base_rekey_key_at(CommunityState *state,
+                                         const char *root_hex,
+                                         guint64 new_epoch,
+                                         nostr_concord_group_key_t *out) {
   uint8_t root[32], id[32];
-  if (!state->community_root ||
-      !nostr_concord_hex_decode_32(state->community_root, root) ||
+  if (!root_hex || !nostr_concord_hex_decode_32(root_hex, root) ||
       !nostr_concord_hex_decode_32(state->community_id, id))
     return FALSE;
   nostr_concord_status_t status =
@@ -3753,18 +3996,22 @@ static gboolean derive_base_rekey_key(CommunityState *state, guint64 new_epoch,
   return status == NOSTR_CONCORD_OK;
 }
 
+static gboolean derive_base_rekey_key(CommunityState *state, guint64 new_epoch,
+                                      nostr_concord_group_key_t *out) {
+  return derive_base_rekey_key_at(state, state->community_root, new_epoch, out);
+}
+
 /* A single-Channel rotation's address. It derives from the *community_root*,
  * not from the Channel key it replaces (CORD-06 §2) — which is what lets a
  * member who lost the Channel key still be reached, and what keeps a
  * Refounding's Channel rekeys openable on either branch of a base race: they
  * are addressed under the prior root, never the freshly minted one. */
-static gboolean derive_channel_rekey_key(CommunityState *state,
-                                         const char *channel_id,
-                                         guint64 new_epoch,
-                                         nostr_concord_group_key_t *out) {
+static gboolean derive_channel_rekey_key_at(const char *root_hex,
+                                            const char *channel_id,
+                                            guint64 new_epoch,
+                                            nostr_concord_group_key_t *out) {
   uint8_t root[32], id[32];
-  if (!state->community_root ||
-      !nostr_concord_hex_decode_32(state->community_root, root) ||
+  if (!root_hex || !nostr_concord_hex_decode_32(root_hex, root) ||
       !nostr_concord_hex_decode_32(channel_id, id))
     return FALSE;
   nostr_concord_status_t status =
@@ -3791,17 +4038,20 @@ static gboolean held_channel_commitment(GnConcordChannelItem *channel,
 /* The continuity commitment over the key this device holds right now
  * (CORD-02 A.5). A rotation carries it as `prevcommit`, and equality proves
  * the rotation extends this very key rather than forking from another. */
-static gboolean held_epoch_commitment(CommunityState *state, char out[65]) {
+static gboolean epoch_commitment_of(const char *root_hex, guint64 epoch,
+                                    char out[65]) {
   uint8_t root[32], commitment[32];
-  if (!state->community_root ||
-      !nostr_concord_hex_decode_32(state->community_root, root))
-    return FALSE;
+  if (!root_hex || !nostr_concord_hex_decode_32(root_hex, root)) return FALSE;
   nostr_concord_status_t status =
-    nostr_concord_epoch_commitment(state->root_epoch, root, commitment);
+    nostr_concord_epoch_commitment(epoch, root, commitment);
   memset(root, 0, sizeof(root));
   if (status != NOSTR_CONCORD_OK) return FALSE;
   nostr_concord_hex_encode_32(commitment, out);
   return TRUE;
+}
+
+static gboolean held_epoch_commitment(CommunityState *state, char out[65]) {
+  return epoch_commitment_of(state->community_root, state->root_epoch, out);
 }
 
 /* Where @recipient finds its blob in a rotation @rotator minted for @epoch at
@@ -3939,6 +4189,29 @@ static void readdress_planes(GnConcordCommunityService *self,
 
 static void refresh_rekey_plane(GnConcordCommunityService *self,
                                 CommunityState *state);
+static void prune_rotations(CommunityState *state, const char *scope,
+                            guint64 kept_epoch);
+
+/* CORD-06 "Failure and races": among authorized candidates at one continuity
+ * point, the lexicographically lowest new *base* key wins. A strictly higher
+ * epoch always wins, a lower one never does, and a sibling at the epoch held
+ * wins only by being strictly lower — which makes the same-epoch heal
+ * down-only, so a flaky fetch that returns just the higher sibling can never
+ * re-fork a settled epoch. Every client runs this comparison over the same two
+ * values and computes the same winner.
+ *
+ * The control_root pair rides the winner's blobs and is never compared: it is
+ * minted with the root, so comparing it would be a second, disagreeing
+ * tiebreak over the same race. */
+static gboolean base_rotation_wins(CommunityState *state,
+                                   const char *new_root_hex,
+                                   guint64 new_epoch) {
+  if (!state->community_root) return TRUE;
+  if (new_epoch != state->root_epoch) return new_epoch > state->root_epoch;
+  /* Equal is the rotation already held: a replay re-delivers the same key and
+   * must be a no-op, not a second adopt. */
+  return g_strcmp0(new_root_hex, state->community_root) < 0;
+}
 
 /* The local half of a rotation, run identically by the Rotator that minted it
  * and by every recipient that opened a blob. The debt a Refounding pays needs
@@ -3950,6 +4223,32 @@ static void adopt_base_rotation(GnConcordCommunityService *self,
                                 const char *new_control_pk_hex,
                                 const char *new_control_root_hex,
                                 guint64 new_epoch, const char *refounder) {
+  /* The gate sits above everything, so every path into an adopt — the
+   * Rotator's own, a recipient's, a heal, a replay — converges through one
+   * comparison, and nothing below it can run for a rotation that lost. */
+  if (!base_rotation_wins(state, new_root_hex, new_epoch)) {
+    /* A sibling that lost is still a fork real messages were sent into, and
+     * this device opened its blob to compare it — so it holds that fork's key
+     * and keeps it. Retaining here is what makes retention symmetric: without
+     * it, only the client that guessed wrong first could read the loser. */
+    if (new_epoch == state->root_epoch &&
+        retire_root(state, new_root_hex, new_epoch, new_control_pk_hex))
+      /* A retained fork is membership material like any other key: it syncs so
+       * the messages sent into it stay readable on this npub's other devices
+       * too, not only on the one that happened to judge the race (CORD-02 §8).
+       * A replay of the rotation already held retains nothing and publishes
+       * nothing. */
+      publish_community_list(self);
+    return;
+  }
+
+  /* The root being replaced is retained before it is dropped: on a forward
+   * adopt that is the epoch just left — whose messages stay readable and whose
+   * rotation plane is where a competitor publishes — and on a heal it is the
+   * sibling this device briefly held (CORD-06 "Failure and races"). */
+  retire_root(state, state->community_root, state->root_epoch,
+              state->control_pk);
+
   clear_secret(&state->community_root);
   state->community_root = g_strdup(new_root_hex);
   state->root_epoch = new_epoch;
@@ -3965,13 +4264,19 @@ static void adopt_base_rotation(GnConcordCommunityService *self,
   readdress_planes(self, state);
 
   /* The Rotator's npub is the only one whose Guestbook snapshots this client
-   * honors at the new epoch (CORD-02 §5). */
+   * honors at the new epoch (CORD-02 §5). Unconditional is correct *because*
+   * of the gate above: this line is only ever reached by a winner, so on a
+   * heal it replaces the losing Refounder with the one the race settled on.
+   * Do not make it conditional — that would freeze the loser in place. */
   if (refounder && ensure_guestbook(state))
     gn_concord_guestbook_set_refounder(state->guestbook, refounder);
 
-  /* Drop rotations pending at the epoch just left: their address, their
-   * continuity point and their blobs all belong to a boundary now behind us. */
-  if (state->rotations) g_hash_table_remove_all(state->rotations);
+  /* Drop rotations pending at any *other* epoch: their address, their
+   * continuity point and their blobs all belong to a boundary now behind us.
+   * The siblings at this epoch stay — clearing them would drop a competitor
+   * still assembling the chunk set that decides the race, and settle it by
+   * fetch order instead of by the lowest key. */
+  prune_rotations(state, "base", new_epoch);
 
   refresh_rekey_plane(self, state);
   if (self->context && !self->shutting_down) {
@@ -3983,6 +4288,12 @@ static void adopt_base_rotation(GnConcordCommunityService *self,
         g_list_model_get_item(channels, i);
       gn_concord_community_service_refresh_channel(
         self, state->community_id, gn_concord_channel_item_get_id(channel));
+      /* readdress_planes() dropped every Channel rekey subscription with the
+       * rest; re-taking them here is what keeps a Refounding's own Channel
+       * rotations — published after its base chunks and addressed under the
+       * root just retired — from arriving at a plane nobody watches
+       * (nostrc-8h0l, CORD-06 §3). */
+      refresh_channel_rekey_plane(self, state, channel);
     }
     refresh_control_plane(self, state);
     refresh_guestbook(self, state);
@@ -4015,7 +4326,8 @@ static void adopt_channel_rotation(GnConcordCommunityService *self,
 
   if (self->context && !self->shutting_down) {
     g_autofree gchar *slot = g_strdup_printf("rekey:%s", channel_id);
-    const char *const stale[] = { channel_id, slot };
+    g_autofree gchar *prior_slot = g_strdup_printf("rekey0:%s", channel_id);
+    const char *const stale[] = { channel_id, slot, prior_slot };
     for (guint i = 0; i < G_N_ELEMENTS(stale); i++) {
       guint64 *subscription =
         g_hash_table_lookup(state->subscriptions, stale[i]);
@@ -4027,7 +4339,9 @@ static void adopt_channel_rotation(GnConcordCommunityService *self,
                                                  channel_id);
     refresh_channel_rekey_plane(self, state, channel);
   }
-  if (state->rotations) g_hash_table_remove_all(state->rotations);
+  /* This Channel's own stale rotations, and nothing else: a base sibling under
+   * judgment is not this rotation's business to discard. */
+  prune_rotations(state, channel_id, new_epoch);
 
   emit_update(self, state->community_id, GN_CONCORD_UPDATE_CHANNELS);
   /* The Channel key rides this membership's join material, so the rotation
@@ -4051,6 +4365,12 @@ typedef struct {
   gchar *new_root;
   gchar *new_control_root;
   gchar *new_control_pk;
+  /* The root every event of this rotation is addressed under, held from before
+   * the first publish like the Memberlist. Never re-read from the state: a
+   * heal landing mid-publish would silently relocate the remaining events to
+   * an address nobody watches, and a Refounding's Channel rekeys MUST stay at
+   * the prior root so they open on either branch of a base race (CORD-06 §3). */
+  gchar *address_root;
   gchar *prevcommit;
   guint64 new_epoch;
   guint64 prev_epoch;
@@ -4081,11 +4401,26 @@ static void rotation_mint_free(gpointer data) {
   g_clear_pointer(&mint->blobs, json_array_unref);
   clear_secret(&mint->new_root);
   clear_secret(&mint->new_control_root);
+  clear_secret(&mint->address_root);
   g_free(mint->new_control_pk);
   g_free(mint->prevcommit);
   g_clear_pointer(&mint->heads, g_ptr_array_unref);
   g_clear_pointer(&mint->channels, g_ptr_array_unref);
   g_free(mint);
+}
+
+/* A base rotation this device is still publishing has lost the race the moment
+ * the root it holds at that epoch is no longer the one being minted — either a
+ * strictly lower sibling healed it down, or the Community moved past the epoch
+ * entirely. Before its own adopt the held epoch is still the prior one, so the
+ * first clause says "not yet"; after it the roots match (CORD-06 "Failure and
+ * races"). A Channel rekey has no base to lose. */
+static gboolean base_mint_superseded(CommunityState *state,
+                                     RotationMint *mint) {
+  if (mint->channel_id) return FALSE;
+  if (state->root_epoch != mint->new_epoch)
+    return state->root_epoch > mint->new_epoch;
+  return g_strcmp0(state->community_root, mint->new_root) != 0;
 }
 
 static void rotation_wrap_next(GTask *task);
@@ -4357,6 +4692,16 @@ static void rotation_publish_next_chunk(GTask *task) {
     return;
   }
 
+  /* A losing Refounder re-issues only what its branch knew — its fresh Channel
+   * keys, already addressed under the shared prior root — and drops its minted
+   * pair with its root (CORD-06 "Failure and races"). So the remaining base
+   * chunks are abandoned the moment the race is lost: they would deliver a root
+   * this device no longer holds, to recipients that already healed past it. */
+  if (base_mint_superseded(state, mint)) {
+    refound_rekey_next_channel(task);
+    return;
+  }
+
   if (mint->chunk >= mint->n_chunks) {
     /* Publication confirmed for every chunk: only now does this device move,
      * so a mid-flight failure leaves the community on the old epoch with the
@@ -4394,9 +4739,10 @@ static void rotation_publish_next_chunk(GTask *task) {
   gboolean addressed =
     content &&
     (mint->channel_id
-       ? derive_channel_rekey_key(state, mint->channel_id, mint->channel_epoch,
-                                  &publish->key)
-       : derive_base_rekey_key(state, mint->new_epoch, &publish->key));
+       ? derive_channel_rekey_key_at(mint->address_root, mint->channel_id,
+                                     mint->channel_epoch, &publish->key)
+       : derive_base_rekey_key_at(state, mint->address_root, mint->new_epoch,
+                                  &publish->key));
   if (!addressed) {
     publish_context_free(publish);
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
@@ -4524,6 +4870,17 @@ static void refound_rekey_next_channel(GTask *task) {
       self, mint->community_id,
       g_ptr_array_index(mint->channels, mint->channel), NULL, 0,
       g_task_get_cancellable(task), on_refound_channel_rekeyed, task);
+    return;
+  }
+
+  /* The Channel keys are re-issued on the winning chain either way — they were
+   * addressed under the root both branches share — but everything downstream
+   * of here is a statement about a root the race retired: the adopt is a no-op
+   * under the down-only rule, and the compaction and the snapshot belong to
+   * the winner's epoch, minted with the winner's pair. */
+  if (base_mint_superseded(state, mint)) {
+    g_task_return_boolean(task, TRUE);
+    g_object_unref(task);
     return;
   }
 
@@ -4737,6 +5094,7 @@ void gn_concord_community_service_refound_async(
   mint->blobs = json_array_new();
   mint->prev_epoch = state->root_epoch;
   mint->new_epoch = state->root_epoch + 1;
+  mint->address_root = g_strdup(state->community_root);
   /* Held from before the first publish, like the Memberlist: the state being
    * rotated is acquired in full up front, so a mid-flight failure never
    * leaves half a rotation as the only copy. */
@@ -4866,6 +5224,10 @@ void gn_concord_community_service_rekey_channel_async(
   mint->recipients = g_ptr_array_new_with_free_func(g_free);
   mint->blobs = json_array_new();
   mint->prev_epoch = gn_concord_channel_item_get_epoch(channel);
+  /* A Channel rekey is addressed under the root held when it was minted — which
+   * inside a Refounding is deliberately the root about to be retired, the one
+   * both branches of a base race share (CORD-06 §3). */
+  mint->address_root = g_strdup(state->community_root);
 
   gboolean holds_self = FALSE;
   for (guint i = 0; i < members->len; i++) {
@@ -4940,6 +5302,7 @@ static void rekey_entry_free(gpointer data) {
 }
 
 typedef struct {
+  gchar *scope;        /* a Channel id, or "base" */
   gchar *rotator;
   guint64 new_epoch;
   guint64 prev_epoch;
@@ -4953,10 +5316,31 @@ typedef struct {
 static void pending_rotation_free(gpointer data) {
   PendingRotation *pending = data;
   if (!pending) return;
+  g_free(pending->scope);
   g_free(pending->rotator);
   g_free(pending->prevcommit);
   g_clear_pointer(&pending->chunks, g_hash_table_unref);
   g_free(pending);
+}
+
+/* Drops the rotations one scope left behind when it adopted @kept_epoch, and
+ * only those. The siblings *at* that epoch stay: a competitor at the same
+ * continuity point may still be assembling the chunk set that decides the
+ * race, and discarding it would settle the race by fetch order rather than by
+ * the lowest key (CORD-06 "Failure and races"). Another scope's rotations are
+ * not this adopt's business at all. */
+static void prune_rotations(CommunityState *state, const char *scope,
+                            guint64 kept_epoch) {
+  if (!state->rotations) return;
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, state->rotations);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    const PendingRotation *pending = value;
+    if (g_strcmp0(pending->scope, scope) != 0) continue;
+    if (pending->new_epoch == kept_epoch) continue;
+    g_hash_table_iter_remove(&iter);
+  }
 }
 
 /* One rotation is one Rotator at one continuity point. Two Rotators rekeying
@@ -5076,6 +5460,7 @@ static void on_rekey_blob_opened(GObject *source, GAsyncResult *result,
  * is one of them. */
 static void conclude_rotation(GnConcordCommunityService *self,
                               CommunityState *state, const char *channel_id,
+                              GnConcordChannelItem *channel,
                               PendingRotation *pending) {
   if (pending->concluded) return;
   for (guint i = 0; i < pending->n_chunks; i++)
@@ -5125,12 +5510,104 @@ static void conclude_rotation(GnConcordCommunityService *self,
     if (g_strcmp0(member, me) == 0) removed_self = TRUE;
   }
 
-  if (removed_self)
+  /* A rotation that carries no blob for this npub is a removal only if this
+   * device does not already hold the epoch it moves to. Under a race it often
+   * does: the sibling that lost was minted by a Rotator who never saw the
+   * winner, and reading its absent blob as a removal would announce a ban that
+   * did not happen every time two Refoundings collide (CORD-06 "Failure and
+   * races"). The authority check above is not gated the same way — a rotation
+   * that removes someone its Rotator does not outrank is dropped whether it
+   * won or lost. */
+  if (removed_self) {
+    guint64 held = channel_id && channel
+                     ? gn_concord_channel_item_get_epoch(channel)
+                     : state->root_epoch;
+    if (held >= pending->new_epoch) return;
     emit_error(self, channel_id
                        ? "A Channel was rekeyed without this account: its new "
                          "key was not delivered here"
                        : "This Community was refounded without this account: "
                          "its new keys were not delivered here");
+  }
+}
+
+/* Which plane a rotation arrived on, and therefore what it has to extend.
+ *
+ * A base rotation reaches this device at one of two addresses. The *forward*
+ * plane derives from the root held now for the next epoch. The *sibling* plane
+ * derives from the root this epoch was rotated away from, for the epoch
+ * already held — that is where a Rotator racing the same continuity point
+ * published, and without it a client that adopted one fork can never even see
+ * the other, let alone converge with it (CORD-06 "Failure and races").
+ *
+ * A Channel rotation reaches it under the root held now, or under the prior
+ * one — a Refounding addresses its Channel rekeys under the root it is about
+ * to retire, so a recipient that folds the base set first would otherwise be
+ * watching the wrong plane when they arrive (nostrc-8h0l, CORD-06 §3).
+ *
+ * The address decides, which is what keeps this honest: each candidate is a
+ * key this device can derive, and a wrap opens under exactly the one whose pk
+ * it was published at. */
+typedef struct {
+  nostr_concord_group_key_t key;
+  guint64 new_epoch;           /* the epoch this rotation moves to */
+  guint64 prev_epoch;          /* the continuity point it must extend */
+  const char *continuity_root; /* borrowed; NULL on a Channel rotation */
+} RotationPlane;
+
+static gboolean plane_addressed(nostr_concord_group_key_t *key,
+                                const char *address) {
+  char pk_hex[65];
+  nostr_concord_hex_encode_32(key->pk, pk_hex);
+  if (g_strcmp0(address, pk_hex) == 0) return TRUE;
+  nostr_concord_group_key_clear(key);
+  return FALSE;
+}
+
+static gboolean select_rotation_plane(CommunityState *state,
+                                      GnConcordChannelItem *channel,
+                                      const char *channel_id,
+                                      const char *address,
+                                      RotationPlane *out) {
+  const char *prior = prior_root(state);
+  nostr_concord_group_key_t key;
+
+  if (channel_id) {
+    guint64 new_epoch = gn_concord_channel_item_get_epoch(channel) + 1;
+    const char *roots[] = { state->community_root, prior };
+    for (guint i = 0; i < G_N_ELEMENTS(roots); i++) {
+      if (!roots[i] ||
+          !derive_channel_rekey_key_at(roots[i], channel_id, new_epoch, &key))
+        continue;
+      if (!plane_addressed(&key, address)) continue;
+      out->key = key;
+      out->new_epoch = new_epoch;
+      out->prev_epoch = new_epoch - 1;
+      /* A Channel's continuity is a commitment over the Channel key, which no
+       * base roll ever touched: only the address was in question. */
+      out->continuity_root = NULL;
+      return TRUE;
+    }
+    return FALSE;
+  }
+
+  if (derive_base_rekey_key(state, state->root_epoch + 1, &key) &&
+      plane_addressed(&key, address)) {
+    out->key = key;
+    out->new_epoch = state->root_epoch + 1;
+    out->prev_epoch = state->root_epoch;
+    out->continuity_root = state->community_root;
+    return TRUE;
+  }
+  if (prior && derive_base_rekey_key_at(state, prior, state->root_epoch, &key) &&
+      plane_addressed(&key, address)) {
+    out->key = key;
+    out->new_epoch = state->root_epoch;
+    out->prev_epoch = state->root_epoch - 1;
+    out->continuity_root = prior;
+    return TRUE;
+  }
+  return FALSE;
 }
 
 /* Opens one kind-1059 wrap from a rekey address and folds the rotation inside
@@ -5156,16 +5633,11 @@ static gboolean ingest_rotation_wrap(GnConcordCommunityService *self,
       : NULL;
   if (channel_id && !channel) return FALSE;
 
-  guint64 new_epoch = channel_id
-                        ? gn_concord_channel_item_get_epoch(channel) + 1
-                        : state->root_epoch + 1;
-  guint64 held_epoch = new_epoch - 1;
-  nostr_concord_group_key_t key;
-  if (channel_id
-        ? !derive_channel_rekey_key(state, channel_id, new_epoch, &key)
-        : !derive_base_rekey_key(state, new_epoch, &key))
-    return FALSE;
-
+  RotationPlane plane;
+  memset(&plane, 0, sizeof(plane));
+  guint64 new_epoch = 0;
+  guint64 held_epoch = 0;
+  gboolean keyed = FALSE;
   gboolean accepted = FALSE;
   char *seal_json = NULL;
   char *rumor_json = NULL;
@@ -5179,7 +5651,6 @@ static gboolean ingest_rotation_wrap(GnConcordCommunityService *self,
   const char *rotator = NULL;
   const char *prevcommit = NULL;
   JsonArray *blobs = NULL;
-  char address[65];
   char commitment[65];
   char own_locator[65];
   guint64 tag_epoch = 0;
@@ -5188,20 +5659,26 @@ static gboolean ingest_rotation_wrap(GnConcordCommunityService *self,
   guint64 chunk_total = 0;
   uint8_t scope[32], tag_scope[32];
 
-  /* The address is derived from the root this device holds, so an event that
-   * arrives here at all was published by someone who held that same root.
-   * Ingest is reachable without a subscription, so check it anyway. */
-  nostr_concord_hex_encode_32(key.pk, address);
+  /* Every candidate address is derived from a root this device holds or has
+   * held, so an event that matches one at all was published by someone who
+   * held that same root. Ingest is reachable without a subscription, so the
+   * address is checked here rather than trusted from the filter. */
   wrap = parse_verified_event(wrap_json);
   if (!wrap || nostr_event_get_kind(wrap) != CONCORD_STREAM_WRAP) goto done;
-  if (g_strcmp0(nostr_event_get_pubkey(wrap), address) != 0) goto done;
+  keyed = select_rotation_plane(state, channel, channel_id,
+                                nostr_event_get_pubkey(wrap), &plane);
+  if (!keyed) goto done;
+  new_epoch = plane.new_epoch;
+  held_epoch = plane.prev_epoch;
 
-  if (nostr_concord_stream_open(key.conv_key, nostr_event_get_content(wrap),
+  if (nostr_concord_stream_open(plane.key.conv_key,
+                                nostr_event_get_content(wrap),
                                 &seal_json) != NOSTR_CONCORD_OK)
     goto done;
   seal = parse_verified_event(seal_json);
   if (!seal || nostr_event_get_kind(seal) != CONCORD_SEAL_ENCRYPTED) goto done;
-  if (nostr_concord_stream_open(key.conv_key, nostr_event_get_content(seal),
+  if (nostr_concord_stream_open(plane.key.conv_key,
+                                nostr_event_get_content(seal),
                                 &rumor_json) != NOSTR_CONCORD_OK)
     goto done;
   rumor = parse_rumor(rumor_json);
@@ -5242,8 +5719,10 @@ static gboolean ingest_rotation_wrap(GnConcordCommunityService *self,
   prevcommit = event_tag_value(rumor, "prevcommit");
   if (!parse_epoch(event_tag_value(rumor, "prevepoch"), &prev_epoch) ||
       !prevcommit ||
-      !(channel_id ? held_channel_commitment(channel, commitment)
-                   : held_epoch_commitment(state, commitment)))
+      !(channel_id
+          ? held_channel_commitment(channel, commitment)
+          : epoch_commitment_of(plane.continuity_root, plane.prev_epoch,
+                                commitment)))
     goto done;
   if (prev_epoch != held_epoch || g_strcmp0(prevcommit, commitment) != 0) {
     if (prev_epoch > held_epoch)
@@ -5290,8 +5769,15 @@ static gboolean ingest_rotation_wrap(GnConcordCommunityService *self,
   pending_key = rotation_key(channel_id ? channel_id : "base", rotator,
                              new_epoch, prevcommit);
   pending = g_hash_table_lookup(state->rotations, pending_key);
+  /* Siblings are retained through an adopt so a race can still be judged, so
+   * the table has a ceiling of its own: an authorized Rotator minting rotation
+   * after rotation must not be able to grow it without bound. */
+  if (!pending &&
+      g_hash_table_size(state->rotations) >= CONCORD_MAX_PENDING_ROTATIONS)
+    goto done;
   if (!pending) {
     pending = g_new0(PendingRotation, 1);
+    pending->scope = g_strdup(channel_id ? channel_id : "base");
     pending->rotator = g_strdup(rotator);
     pending->new_epoch = new_epoch;
     pending->prev_epoch = prev_epoch;
@@ -5350,7 +5836,7 @@ static gboolean ingest_rotation_wrap(GnConcordCommunityService *self,
     }
   }
 
-  conclude_rotation(self, state, channel_id, pending);
+  conclude_rotation(self, state, channel_id, channel, pending);
 
 done:
   if (seal_json) {
@@ -5361,7 +5847,7 @@ done:
     memset(rumor_json, 0, strlen(rumor_json));
     free(rumor_json);
   }
-  nostr_concord_group_key_clear(&key);
+  if (keyed) nostr_concord_group_key_clear(&plane.key);
   return accepted;
 }
 
@@ -5403,47 +5889,14 @@ static void on_rekey_event(const char *event_json, gpointer user_data) {
                        binding->channel_id, event_json);
 }
 
-/* The next rotation's address for one Private Channel, subscribed the same way
- * the base one is: precomputed from the key held now, so it is live before a
- * rotation exists. A Public Channel has none — it moves with the base. */
-static void refresh_channel_rekey_plane(GnConcordCommunityService *self,
-                                        CommunityState *state,
-                                        GnConcordChannelItem *channel) {
-  if (!self->context || self->shutting_down) return;
-  if (!gn_concord_channel_item_get_is_private(channel)) return;
-  if (!gn_concord_channel_item_get_key(channel)) return;
-
-  const char *channel_id = gn_concord_channel_item_get_id(channel);
-  g_autofree gchar *slot = g_strdup_printf("rekey:%s", channel_id);
-  if (g_hash_table_contains(state->subscriptions, slot)) return;
-
-  nostr_concord_group_key_t key;
-  if (!derive_channel_rekey_key(state, channel_id,
-                                gn_concord_channel_item_get_epoch(channel) + 1,
-                                &key))
-    return;
-  char address[65];
-  nostr_concord_hex_encode_32(key.pk, address);
-  nostr_concord_group_key_clear(&key);
-
-  RekeyBinding *binding = g_new0(RekeyBinding, 1);
-  binding->service = self;
-  binding->community_id = g_strdup(state->community_id);
-  binding->channel_id = g_strdup(channel_id);
+/* Reads one rotation plane from the relays. No page limit: a rotation is only
+ * meaningful as a complete set, and a truncated one reads as a removal that
+ * never happened. */
+static void backfill_rotation_plane(GnConcordCommunityService *self,
+                                    CommunityState *state,
+                                    const char *channel_id,
+                                    const char *address) {
   g_autofree gchar *filter = build_stream_filter(address, 0);
-  guint64 id = gnostr_plugin_context_subscribe_events(
-    self->context, filter, G_CALLBACK(on_rekey_event), binding,
-    rekey_binding_free);
-  if (!id) {
-    rekey_binding_free(binding);
-    return;
-  }
-  guint64 *boxed = g_new(guint64, 1);
-  *boxed = id;
-  g_hash_table_insert(state->subscriptions, g_strdup(slot), boxed);
-
-  /* No page limit: a rotation only means anything as a complete set, and a
-   * truncated one reads as a removal that never happened. */
   g_autoptr(GError) error = NULL;
   g_autoptr(GPtrArray) events =
     gnostr_plugin_context_query_events(self->context, filter, &error);
@@ -5456,54 +5909,126 @@ static void refresh_channel_rekey_plane(GnConcordCommunityService *self,
                          g_ptr_array_index(events, i));
 }
 
-/* Subscribes the next base rotation's address alongside every other plane. It
- * is precomputed from the root held now, so it is live before a rotation
- * exists — which is the only way to catch one in real time. */
+/* Subscribes one rotation plane, then backfills it. */
+static guint64 watch_rotation_plane(GnConcordCommunityService *self,
+                                    CommunityState *state,
+                                    const char *channel_id,
+                                    const char *address) {
+  RekeyBinding *binding = g_new0(RekeyBinding, 1);
+  binding->service = self;
+  binding->community_id = g_strdup(state->community_id);
+  binding->channel_id = g_strdup(channel_id);
+  g_autofree gchar *filter = build_stream_filter(address, 0);
+  guint64 id = gnostr_plugin_context_subscribe_events(
+    self->context, filter, G_CALLBACK(on_rekey_event), binding,
+    rekey_binding_free);
+  if (!id) rekey_binding_free(binding);
+  backfill_rotation_plane(self, state, channel_id, address);
+  return id;
+}
+
+/* The next rotation's addresses for one Private Channel, subscribed the same
+ * way the base one is: precomputed from the keys held now, so they are live
+ * before a rotation exists. A Public Channel has none — it moves with the base.
+ *
+ * There are two, because a Refounding rotates its Private Channels under the
+ * root it is about to retire (CORD-06 §3). A recipient that folds the base set
+ * first — which is the live arrival order, base chunks then Channel rotations —
+ * would otherwise re-derive this plane under the new root and watch an address
+ * the rotation was never published at, keeping the old Channel key while the
+ * Refounder moved on (nostrc-8h0l). */
+static void refresh_channel_rekey_plane(GnConcordCommunityService *self,
+                                        CommunityState *state,
+                                        GnConcordChannelItem *channel) {
+  if (!self->context || self->shutting_down) return;
+  if (!gn_concord_channel_item_get_is_private(channel)) return;
+  if (!gn_concord_channel_item_get_key(channel)) return;
+
+  const char *channel_id = gn_concord_channel_item_get_id(channel);
+  guint64 new_epoch = gn_concord_channel_item_get_epoch(channel) + 1;
+  const char *slots[] = { "rekey:", "rekey0:" };
+
+  for (guint i = 0; i < G_N_ELEMENTS(slots); i++) {
+    /* Re-read the prior root each pass: a backfill on the first plane can
+     * adopt, and an adopt moves what "prior" means. */
+    const char *root = i == 0 ? state->community_root : prior_root(state);
+    if (!root) continue;
+    g_autofree gchar *slot = g_strdup_printf("%s%s", slots[i], channel_id);
+    if (g_hash_table_contains(state->subscriptions, slot)) continue;
+
+    nostr_concord_group_key_t key;
+    if (!derive_channel_rekey_key_at(root, channel_id, new_epoch, &key))
+      continue;
+    char address[65];
+    nostr_concord_hex_encode_32(key.pk, address);
+    nostr_concord_group_key_clear(&key);
+
+    guint64 id = watch_rotation_plane(self, state, channel_id, address);
+    if (!id) continue;
+    guint64 *boxed = g_new(guint64, 1);
+    *boxed = id;
+    g_hash_table_insert(state->subscriptions, g_strdup(slot), boxed);
+  }
+}
+
+/* Subscribes the base rotation's addresses alongside every other plane. Both
+ * are precomputed from roots held now, so they are live before a rotation
+ * exists — which is the only way to catch one in real time.
+ *
+ * The *forward* plane is the next epoch's, derived from the root held now. The
+ * *sibling* plane is this epoch's, derived from the root it was rotated away
+ * from: a Rotator racing the same continuity point published there, and
+ * without it a device that adopted one fork could never hear the other, so the
+ * race would settle on whichever rotation arrived first rather than on the
+ * lowest key (CORD-06 "Failure and races"). Exactly one sibling plane is kept
+ * — the continuity point of the epoch held — which is all convergence needs and
+ * keeps the subscription count flat. */
 static void refresh_rekey_plane(GnConcordCommunityService *self,
                                 CommunityState *state) {
   if (!self->context || self->shutting_down) return;
 
   nostr_concord_group_key_t key;
-  if (!derive_base_rekey_key(state, state->root_epoch + 1, &key)) return;
-  char address[65];
-  nostr_concord_hex_encode_32(key.pk, address);
+  if (derive_base_rekey_key(state, state->root_epoch + 1, &key)) {
+    char address[65];
+    nostr_concord_hex_encode_32(key.pk, address);
+    nostr_concord_group_key_clear(&key);
+
+    if (g_strcmp0(state->rekey_address, address) != 0) {
+      if (state->rekey_subscription)
+        gnostr_plugin_context_unsubscribe_events(self->context,
+                                                 state->rekey_subscription);
+      state->rekey_subscription = 0;
+      g_free(state->rekey_address);
+      state->rekey_address = g_strdup(address);
+    }
+    if (!state->rekey_subscription)
+      state->rekey_subscription =
+        watch_rotation_plane(self, state, NULL, address);
+    else
+      backfill_rotation_plane(self, state, NULL, address);
+  }
+
+  /* Derived after the forward plane's backfill, never before: that backfill can
+   * adopt, and an adopt is exactly what moves which continuity point this
+   * device's siblings hang from. */
+  const char *prior = prior_root(state);
+  if (!prior || self->shutting_down) return;
+  if (!derive_base_rekey_key_at(state, prior, state->root_epoch, &key)) return;
+  char sibling[65];
+  nostr_concord_hex_encode_32(key.pk, sibling);
   nostr_concord_group_key_clear(&key);
 
-  if (g_strcmp0(state->rekey_address, address) != 0) {
-    if (state->rekey_subscription)
-      gnostr_plugin_context_unsubscribe_events(self->context,
-                                               state->rekey_subscription);
-    state->rekey_subscription = 0;
-    g_free(state->rekey_address);
-    state->rekey_address = g_strdup(address);
+  if (g_strcmp0(state->sibling_rekey_address, sibling) != 0) {
+    if (state->sibling_rekey_subscription)
+      gnostr_plugin_context_unsubscribe_events(
+        self->context, state->sibling_rekey_subscription);
+    state->sibling_rekey_subscription = 0;
+    g_free(state->sibling_rekey_address);
+    state->sibling_rekey_address = g_strdup(sibling);
   }
-
-  if (!state->rekey_subscription) {
-    RekeyBinding *binding = g_new0(RekeyBinding, 1);
-    binding->service = self;
-    binding->community_id = g_strdup(state->community_id);
-    g_autofree gchar *filter = build_stream_filter(address, 0);
-    guint64 id = gnostr_plugin_context_subscribe_events(
-      self->context, filter, G_CALLBACK(on_rekey_event), binding,
-      rekey_binding_free);
-    if (id) state->rekey_subscription = id;
-    else rekey_binding_free(binding);
-  }
-
-  /* The backfill carries no page limit: a rotation is only meaningful as a
-   * complete set, and a truncated one reads as a removal that never
-   * happened. */
-  g_autofree gchar *filter = build_stream_filter(address, 0);
-  g_autoptr(GError) error = NULL;
-  g_autoptr(GPtrArray) events =
-    gnostr_plugin_context_query_events(self->context, filter, &error);
-  if (!events) {
-    if (error) emit_error(self, error->message);
-    return;
-  }
-  for (guint i = 0; i < events->len; i++)
-    gn_concord_community_service_ingest_rekey_wrap(
-      self, state->community_id, g_ptr_array_index(events, i));
+  if (!state->sibling_rekey_subscription)
+    state->sibling_rekey_subscription =
+      watch_rotation_plane(self, state, NULL, sibling);
 }
 
 void gn_concord_community_service_shutdown(GnConcordCommunityService *self) {
@@ -5528,6 +6053,10 @@ void gn_concord_community_service_shutdown(GnConcordCommunityService *self) {
       gnostr_plugin_context_unsubscribe_events(self->context,
                                                state->rekey_subscription);
     state->rekey_subscription = 0;
+    if (self->context && state->sibling_rekey_subscription)
+      gnostr_plugin_context_unsubscribe_events(
+        self->context, state->sibling_rekey_subscription);
+    state->sibling_rekey_subscription = 0;
     if (!state->subscriptions) continue;
     if (self->context) {
       GHashTableIter subs;

@@ -168,17 +168,47 @@ winner extended — a fork from anywhere else is still garbage. This needs
 `epoch_commitment_of(root_hex, epoch, out)`, with `held_epoch_commitment()`
 becoming a wrapper.
 
-Channel rotations keep the single-address logic. A channel-scope race is a
+### 3b. The prior-root Channel rekey plane (`nostrc-8h0l`)
+
+The same retention closes a live-path bug the Channel half left behind. A
+Refounding publishes its base chunks first and its Private Channel rotations
+second, both addressed under the prior root (`nostrc-ay29`). A recipient
+watching live receives them in that order: it folds the complete base set,
+adopts, and `readdress_planes()` drops every `rekey:<channel>` subscription and
+re-derives it under the *new* root — so the Channel rotation, still sitting at
+the prior root's address, arrives at a subscription nobody holds. That device
+keeps the old Channel key and the removed member keeps reading the Channel the
+Refounding was supposed to sever them from. An offline recipient is fine, because
+`refresh()` backfills the Channel rekey planes before the base one.
+
+So `refresh_channel_rekey_plane()` maintains **two** addresses per held Private
+Channel — the one derived from the root held now, and the one derived from the
+prior root, in the `rekey:` and `rekey0:` subscription slots — and
+`adopt_base_rotation()` re-creates them for every Channel after re-addressing,
+which it does not do today. `ingest_rotation_wrap()` accepts a Channel rotation
+at either address. Nothing else about a Channel rotation changes: its continuity
+is a commitment over the *Channel* key, which a base roll never touched, so only
+the address was ever in question.
+
+Only the *prior* root joins the rotation planes, never the whole retired set:
+older roots are read-only history, and one extra subscription per plane keeps the
+subscription count flat. `prior_root(state)` — the retired entry at
+`root_epoch - 1` — is the single helper behind both this and the base sibling
+plane of §3.
+
+A channel-scope *race* (two Rotators rekeying one Channel at one epoch) is a
 separate convergence question and is not in this bead.
 
 ## 4. The two landmines
 
-**(a) `adopt_base_rotation()` clears `state->rotations`.** Today it calls
+**(a) `adopt_base_rotation()` and `adopt_channel_rotation()` clear `state->rotations`.** Today it calls
 `g_hash_table_remove_all()`, which would drop a sibling still assembling its
 chunk set — precisely the competitor whose blob decides the race. New rule: drop
 only entries whose `new_epoch` differs from the epoch just adopted; keep the
 same-epoch siblings, because a third, even lower competitor may still be under
-judgment. Since keeping entries lets the table grow, the table gains a bound
+judgment. `adopt_channel_rotation()` has the same line and the same fix, scoped
+to its own Channel — today a Channel rotation adopted mid-race would throw away
+the base siblings under judgment. Since keeping entries lets the table grow, the table gains a bound
 (`CONCORD_MAX_PENDING_ROTATIONS = 16`); a new rotation beyond it is refused
 rather than accumulated.
 
@@ -251,28 +281,52 @@ race. What must not happen is the address moving under them mid-flight.
 > while your channel half continues. Those two are the only seams between these
 > beads.
 
-## 6. Acceptance criteria → tests
+## 6. What landed
+
+As designed, with two adjustments the implementation forced:
+
+- **The refused sibling republishes the List.** Retaining the loser's root is
+  new membership state, so the refusal branch calls `publish_community_list()`
+  too — otherwise the fork stays readable on the device that judged the race and
+  nowhere else, and is lost on restart. `retire_root()` returns whether it
+  actually retained anything, so a plain replay (equal root) publishes nothing.
+- **`derive_channel_rekey_key_at()` takes no `CommunityState`.** A Channel
+  rotation's address needs only the root and the Channel id, so the parameter
+  was dead. The base variant still takes it, for the community_id.
+
+## 7. Acceptance criteria → tests
 
 All in `tests/test-concord-service.c`. The competing rotations are hand-minted
 (the file already forges rekey wraps) rather than produced by two
 `refound_async()` calls, because a minted root is random and the test needs to
 name which one is lower.
 
-1. **Converge on the lowest, on every client.** Two BAN-authorized Rotators, two
-   rotations at one continuity point with roots `R_low < R_high`. Device 1
-   ingests high-then-low, device 2 low-then-high. Both end with the public
-   Channel's stream address equal to the address the test derives from `R_low` —
-   an assertion against a value computed independently of the code under test,
-   not merely "the two devices agree".
+`/concord/race/converges-on-lowest` — two BAN-authorized Rotators (the second
+granted a BAN Role), two rotations at one continuity point with roots
+`R_low < R_high`. Device 1 ingests high-then-low, device 2 low-then-high.
+
+1. **Converge on the lowest, on every client.** Both end with the public
+   Channel's stream address equal to the address the test derives from `R_low`
+   — an assertion against a value computed independently of the code under
+   test, not merely "the two devices agree".
 2. **No upward re-fork.** Device 2's address is unchanged across the
-   later-arriving higher sibling; and re-ingesting the winning rotation is a
-   no-op.
+   later-arriving higher sibling, and re-ingesting the winner is a no-op.
 3. **Losing-fork messages stay readable after the heal.** A message published
-   into the `R_high` fork's public Channel opens on *both* devices after they
-   settle on `R_low` — device 1 because it adopted and retired `R_high`, device 2
-   because the refused sibling was retired rather than discarded.
-4. Round-trip of the `retired` set through the Community List, and its absence
-   from an invite bundle.
+   into the `R_high` fork's public Channel opens on *both* devices — device 1
+   because it adopted and retired `R_high`, device 2 because the refused sibling
+   was retired rather than discarded — and *not* on a third device that never
+   saw either rotation. The epoch left behind reads too.
+
+`/concord/race/retired-roots-ride-the-list` — both forks appear in the List
+entry's `retired` array at their own epochs; a second device reconstructed from
+that entry lands on `R_low` and reads the losing fork; and a refresh that
+carries no `retired` (what an invite bundle looks like) does not take the set
+away.
+
+`/concord/refound/channel-rotation-after-base` — the `nostrc-8h0l` live order:
+the base set complete and adopted first, the Channel rotation delivered after,
+and the Channel key still lands — proven by opening a message the Refounder
+publishes into the rotated Channel.
 
 ASan-clean is a hard gate: the retired set holds secrets, so `retire_root()` and
 eviction go through `clear_secret()`.
