@@ -3,6 +3,11 @@ name: gnostr AppImage
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      version:
+        description: Version to use in the AppImage filename
+        required: false
+        type: string
   push:
     branches:
       - master
@@ -158,7 +163,8 @@ jobs:
           EOF
           chmod +x AppDir/AppRun
 
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
           VERSION="${VERSION//\//-}"
           ./appimage-tools/appimagetool-x86_64.AppImage \
             AppDir "gnostr-${VERSION}-x86_64.AppImage"

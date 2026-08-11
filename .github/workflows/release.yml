@@ -4,11 +4,73 @@ on:
   push:
     tags:
       - 'v*'
+      - 'libgo-v*'
+      - 'libnostr-v*'
+      - 'nostr-gobject-v*'
+      - 'nostr-gtk-v*'
+      - 'libmarmot-v*'
+      - 'marmot-gobject-v*'
+      - 'gnostr-v*'
+      - 'gnostr-signer-v*'
   workflow_dispatch:
 
 jobs:
+  detect-component:
+    name: Detect release component
+    runs-on: ubuntu-latest
+    outputs:
+      component: ${{ steps.detect.outputs.component }}
+      version: ${{ steps.detect.outputs.version }}
+    steps:
+      - name: Parse release tag
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+
+          if [[ "${tag}" =~ ^v(.+)$ ]]; then
+            component="global"
+            version="${BASH_REMATCH[1]}"
+          elif [[ "${tag}" =~ ^(.+)-v(.+)$ ]]; then
+            component="${BASH_REMATCH[1]}"
+            version="${BASH_REMATCH[2]}"
+          else
+            # Preserve workflow_dispatch behavior on branches.
+            component="global"
+            version="${tag//\//-}"
+          fi
+
+          echo "component=${component}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "Detected component '${component}' at version '${version}'"
+
+  build-source:
+    name: Build source archive
+    needs: detect-component
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Create source archive
+        run: |
+          archive="${GITHUB_REF_NAME//\//-}-source.tar.gz"
+          git archive --format=tar.gz --prefix="${GITHUB_REF_NAME}/" HEAD > "${archive}"
+          mkdir -p dist
+          mv "${archive}" dist/
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: source
+          path: dist/*-source.tar.gz
+          if-no-files-found: error
+
   build-deb:
-    name: Build .deb packages (all binaries)
+    name: Build .deb packages
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -31,31 +93,48 @@ jobs:
       - name: Stage install tree
         run: |
           cmake --install build --prefix "$PWD/stage/usr"
-      - name: Build DEBs with fpm (one per binary)
+      - name: Build DEBs with fpm
+        env:
+          COMPONENT: ${{ needs.detect-component.outputs.component }}
+          RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
         run: |
           set -e
-          mkdir -p dist
-          # gnostr
-          fpm -s dir -t deb -n gnostr -v ${GITHUB_REF_NAME#v} \
-            --prefix=/usr \
-            stage/usr/bin/gnostr=/usr/bin/gnostr \
-            stage/usr/share/icons/=usr/share/icons/ \
-            stage/usr/share/applications/=usr/share/applications/ \
-            -C . -p dist/gnostr_VERSION_ARCH.deb
-          # gnostr-signer
-          fpm -s dir -t deb -n gnostr-signer -v ${GITHUB_REF_NAME#v} \
-            --prefix=/usr \
-            stage/usr/bin/gnostr-signer=/usr/bin/gnostr-signer \
-            stage/usr/share/glib-2.0/schemas/=usr/share/glib-2.0/schemas/ \
-            stage/usr/share/dbus-1/services/=usr/share/dbus-1/services/ \
-            stage/usr/share/icons/=usr/share/icons/ \
-            stage/usr/share/applications/=usr/share/applications/ \
-            -C . -p dist/gnostr-signer_VERSION_ARCH.deb
-          # gnostr-signer-daemon
-          fpm -s dir -t deb -n gnostr-signer-daemon -v ${GITHUB_REF_NAME#v} \
-            --prefix=/usr \
-            stage/usr/bin/gnostr-signer-daemon=/usr/bin/gnostr-signer-daemon \
-            -C . -p dist/gnostr-signer-daemon_VERSION_ARCH.deb
+          mkdir -p dist package-roots
+          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "gnostr" ]]; then
+            root="package-roots/gnostr"
+            mkdir -p "${root}/usr/bin" \
+              "${root}/usr/share/applications" \
+              "${root}/usr/share/icons/hicolor/scalable/apps" \
+              "${root}/usr/share/icons/hicolor/scalable/actions"
+            cp stage/usr/bin/gnostr "${root}/usr/bin/"
+            cp stage/usr/share/applications/org.gnostr.gnostr.desktop "${root}/usr/share/applications/"
+            cp stage/usr/share/icons/hicolor/scalable/apps/org.gnostr.gnostr.svg "${root}/usr/share/icons/hicolor/scalable/apps/"
+            cp stage/usr/share/icons/hicolor/scalable/actions/gnostr-*.svg "${root}/usr/share/icons/hicolor/scalable/actions/"
+            fpm -s dir -t deb -n gnostr -v "${RELEASE_VERSION}" \
+              -C "${root}" -p dist/gnostr_VERSION_ARCH.deb .
+          fi
+          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "gnostr-signer" ]]; then
+            signer_root="package-roots/gnostr-signer"
+            mkdir -p "${signer_root}/usr/bin" \
+              "${signer_root}/usr/share/glib-2.0/schemas" \
+              "${signer_root}/usr/share/dbus-1/services" \
+              "${signer_root}/usr/share/applications" \
+              "${signer_root}/usr/share/icons/hicolor/scalable/apps"
+            cp stage/usr/bin/gnostr-signer "${signer_root}/usr/bin/"
+            cp stage/usr/share/glib-2.0/schemas/org.gnostr.Signer.gschema.xml "${signer_root}/usr/share/glib-2.0/schemas/"
+            glib-compile-schemas "${signer_root}/usr/share/glib-2.0/schemas"
+            cp stage/usr/share/dbus-1/services/org.nostr.Signer.service "${signer_root}/usr/share/dbus-1/services/"
+            cp stage/usr/share/applications/org.gnostr.Signer.desktop "${signer_root}/usr/share/applications/"
+            cp stage/usr/share/icons/hicolor/scalable/apps/org.gnostr.Signer.svg "${signer_root}/usr/share/icons/hicolor/scalable/apps/"
+            fpm -s dir -t deb -n gnostr-signer -v "${RELEASE_VERSION}" \
+              -C "${signer_root}" -p dist/gnostr-signer_VERSION_ARCH.deb .
+
+            daemon_root="package-roots/gnostr-signer-daemon"
+            mkdir -p "${daemon_root}/usr/bin"
+            cp stage/usr/bin/gnostr-signer-daemon "${daemon_root}/usr/bin/"
+            fpm -s dir -t deb -n gnostr-signer-daemon -v "${RELEASE_VERSION}" \
+              -C "${daemon_root}" -p dist/gnostr-signer-daemon_VERSION_ARCH.deb .
+          fi
       - name: Upload DEBs
         uses: actions/upload-artifact@v4
         with:
@@ -64,7 +143,11 @@ jobs:
 
   build-appimage:
     name: Build AppImage (gnostr-signer)
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -110,7 +193,7 @@ jobs:
             -d AppDir/usr/share/applications/gnostr-signer.desktop \
             --executable AppDir/usr/bin/gnostr-signer \
             --plugin gtk
-          ./appimage-tools/appimagetool-x86_64.AppImage AppDir gnostr-signer-${GITHUB_REF_NAME#v}-x86_64.AppImage
+          ./appimage-tools/appimagetool-x86_64.AppImage AppDir gnostr-signer-${RELEASE_VERSION}-x86_64.AppImage
           mkdir -p dist
           mv gnostr-signer-*.AppImage dist/
       - name: Upload AppImage
@@ -121,7 +204,11 @@ jobs:
 
   build-appimage-daemon-tcp:
     name: Build AppImage (gnostr-signer-daemon TCP)
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -165,7 +252,7 @@ jobs:
           ./appimage-tools/linuxdeploy-x86_64.AppImage --appdir AppDir \
             -d AppDir/usr/share/applications/gnostr-signer-daemon.desktop \
             --executable AppDir/usr/bin/gnostr-signer-daemon
-          ./appimage-tools/appimagetool-x86_64.AppImage AppDir gnostr-signer-daemon-tcp-${GITHUB_REF_NAME#v}-x86_64.AppImage
+          ./appimage-tools/appimagetool-x86_64.AppImage AppDir gnostr-signer-daemon-tcp-${RELEASE_VERSION}-x86_64.AppImage
           mkdir -p dist
           mv gnostr-signer-daemon-tcp-*.AppImage dist/
       - name: Upload AppImage (daemon TCP)
@@ -176,10 +263,16 @@ jobs:
 
   build-appimage-gnostr:
     name: Build AppImage (gnostr)
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' }}
     uses: ./.github/workflows/gnostr-appimage.yml
+    with:
+      version: ${{ needs.detect-component.outputs.version }}
 
   build-snap-gnostr:
     name: Build Snap (gnostr)
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -195,6 +288,8 @@ jobs:
 
   build-snap-signer:
     name: Build Snap (gnostr-signer)
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -210,6 +305,8 @@ jobs:
 
   build-snap-daemon:
     name: Build Snap (gnostr-signer-daemon)
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -225,14 +322,15 @@ jobs:
 
   create-release:
     name: Create GitHub Release and upload artifacts
-    needs: [build-deb, build-deb-tcp, build-rpm, build-rpm-tcp, build-tarball-daemon, build-tarball-daemon-tcp, build-tarball-linux, build-appimage, build-appimage-gnostr, build-appimage-daemon-tcp, build-snap-gnostr, build-snap-signer, build-snap-daemon, build-flatpak, build-flatpak-gnostr, build-macos-signer-dmg, build-macos-tarball]
+    needs: [detect-component, build-source, build-deb, build-deb-tcp, build-rpm, build-rpm-tcp, build-tarball-daemon, build-tarball-daemon-tcp, build-tarball-linux, build-appimage, build-appimage-gnostr, build-appimage-daemon-tcp, build-snap-gnostr, build-snap-signer, build-snap-daemon, build-flatpak, build-flatpak-gnostr, build-macos-signer-dmg, build-macos-tarball]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && (needs.build-source.result == 'success' || needs.build-deb.result == 'success' || needs.build-deb-tcp.result == 'success' || needs.build-rpm.result == 'success' || needs.build-rpm-tcp.result == 'success' || needs.build-tarball-daemon.result == 'success' || needs.build-tarball-daemon-tcp.result == 'success' || needs.build-tarball-linux.result == 'success' || needs.build-appimage.result == 'success' || needs.build-appimage-gnostr.result == 'success' || needs.build-appimage-daemon-tcp.result == 'success' || needs.build-snap-gnostr.result == 'success' || needs.build-snap-signer.result == 'success' || needs.build-snap-daemon.result == 'success' || needs.build-flatpak.result == 'success' || needs.build-flatpak-gnostr.result == 'success' || needs.build-macos-signer-dmg.result == 'success' || needs.build-macos-tarball.result == 'success') }}
     steps:
-      - name: Download artifacts
+      - name: Download artifacts from this workflow run
         uses: actions/download-artifact@v4
         with:
           path: dist
+          merge-multiple: true
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -242,7 +340,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-rpm:
-    name: Build RPM packages (all binaries)
+    name: Build RPM packages
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -261,32 +361,49 @@ jobs:
         run: cmake --build build -j
       - name: Stage install tree
         run: cmake --install build --prefix "$PWD/stage/usr"
-      - name: Build RPMs with fpm (one per binary)
+      - name: Build RPMs with fpm
+        env:
+          COMPONENT: ${{ needs.detect-component.outputs.component }}
+          RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
         run: |
           set -e
-          mkdir -p dist
-          # gnostr
-          fpm -s dir -t rpm -n gnostr -v ${GITHUB_REF_NAME#v} \
-            --prefix=/usr \
-            stage/usr/bin/gnostr=/usr/bin/gnostr \
-            stage/usr/share/icons/=usr/share/icons/ \
-            stage/usr/share/applications/=usr/share/applications/ \
-            -C . -p dist/gnostr_VERSION_ARCH.rpm
-          # gnostr-signer
-          fpm -s dir -t rpm -n gnostr-signer -v ${GITHUB_REF_NAME#v} \
-            --prefix=/usr \
-            stage/usr/bin/gnostr-signer=/usr/bin/gnostr-signer \
-            stage/usr/share/glib-2.0/schemas/=usr/share/glib-2.0/schemas/ \
-            stage/usr/share/dbus-1/services/=usr/share/dbus-1/services/ \
-            stage/usr/share/icons/=usr/share/icons/ \
-            stage/usr/share/applications/=usr/share/applications/ \
-            -C . -p dist/gnostr-signer_VERSION_ARCH.rpm
-          # gnostr-signer-daemon
-          fpm -s dir -t rpm -n gnostr-signer-daemon -v ${GITHUB_REF_NAME#v} \
-            --prefix=/usr \
-            stage/usr/bin/gnostr-signer-daemon=/usr/bin/gnostr-signer-daemon \
-            stage/usr/share/systemd/user/=usr/share/systemd/user/ \
-            -C . -p dist/gnostr-signer-daemon_VERSION_ARCH.rpm
+          mkdir -p dist package-roots
+          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "gnostr" ]]; then
+            root="package-roots/gnostr"
+            mkdir -p "${root}/usr/bin" \
+              "${root}/usr/share/applications" \
+              "${root}/usr/share/icons/hicolor/scalable/apps" \
+              "${root}/usr/share/icons/hicolor/scalable/actions"
+            cp stage/usr/bin/gnostr "${root}/usr/bin/"
+            cp stage/usr/share/applications/org.gnostr.gnostr.desktop "${root}/usr/share/applications/"
+            cp stage/usr/share/icons/hicolor/scalable/apps/org.gnostr.gnostr.svg "${root}/usr/share/icons/hicolor/scalable/apps/"
+            cp stage/usr/share/icons/hicolor/scalable/actions/gnostr-*.svg "${root}/usr/share/icons/hicolor/scalable/actions/"
+            fpm -s dir -t rpm -n gnostr -v "${RELEASE_VERSION}" \
+              -C "${root}" -p dist/gnostr_VERSION_ARCH.rpm .
+          fi
+          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "gnostr-signer" ]]; then
+            signer_root="package-roots/gnostr-signer"
+            mkdir -p "${signer_root}/usr/bin" \
+              "${signer_root}/usr/share/glib-2.0/schemas" \
+              "${signer_root}/usr/share/dbus-1/services" \
+              "${signer_root}/usr/share/applications" \
+              "${signer_root}/usr/share/icons/hicolor/scalable/apps"
+            cp stage/usr/bin/gnostr-signer "${signer_root}/usr/bin/"
+            cp stage/usr/share/glib-2.0/schemas/org.gnostr.Signer.gschema.xml "${signer_root}/usr/share/glib-2.0/schemas/"
+            glib-compile-schemas "${signer_root}/usr/share/glib-2.0/schemas"
+            cp stage/usr/share/dbus-1/services/org.nostr.Signer.service "${signer_root}/usr/share/dbus-1/services/"
+            cp stage/usr/share/applications/org.gnostr.Signer.desktop "${signer_root}/usr/share/applications/"
+            cp stage/usr/share/icons/hicolor/scalable/apps/org.gnostr.Signer.svg "${signer_root}/usr/share/icons/hicolor/scalable/apps/"
+            fpm -s dir -t rpm -n gnostr-signer -v "${RELEASE_VERSION}" \
+              -C "${signer_root}" -p dist/gnostr-signer_VERSION_ARCH.rpm .
+
+            daemon_root="package-roots/gnostr-signer-daemon"
+            mkdir -p "${daemon_root}/usr/bin" "${daemon_root}/usr/share/systemd/user"
+            cp stage/usr/bin/gnostr-signer-daemon "${daemon_root}/usr/bin/"
+            cp stage/usr/share/systemd/user/gnostr-signer-daemon.service "${daemon_root}/usr/share/systemd/user/"
+            fpm -s dir -t rpm -n gnostr-signer-daemon -v "${RELEASE_VERSION}" \
+              -C "${daemon_root}" -p dist/gnostr-signer-daemon_VERSION_ARCH.rpm .
+          fi
       - name: Upload RPMs
         uses: actions/upload-artifact@v4
         with:
@@ -295,7 +412,11 @@ jobs:
 
   build-tarball-daemon:
     name: Build tarball (daemon + systemd + installer)
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -316,7 +437,7 @@ jobs:
           cp build/apps/gnostr-signer/gnostr-signer-daemon tar/gnostr-signer-daemon/bin/
           cp apps/gnostr-signer/daemon/packaging/systemd/user/gnostr-signer-daemon.service tar/gnostr-signer-daemon/share/systemd/user/
           cp apps/gnostr-signer/daemon/packaging/tar/install.sh tar/gnostr-signer-daemon/scripts/
-          tar -C tar -czf gnostr-signer-daemon-${GITHUB_REF_NAME#v}-linux-x86_64.tar.gz gnostr-signer-daemon
+          tar -C tar -czf gnostr-signer-daemon-${RELEASE_VERSION}-linux-x86_64.tar.gz gnostr-signer-daemon
           mkdir -p dist
           mv gnostr-signer-daemon-*.tar.gz dist/
       - name: Upload tarball
@@ -326,8 +447,12 @@ jobs:
           path: dist/*.tar.gz
 
   build-tarball-linux:
-    name: Build Linux tarball (all binaries)
+    name: Build Linux tarball
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -343,29 +468,35 @@ jobs:
       - name: Build
         run: cmake --build build -j
       - name: Assemble tarball tree
+        env:
+          COMPONENT: ${{ needs.detect-component.outputs.component }}
         run: |
           set -e
-          VERSION=${GITHUB_REF_NAME#v}
-          mkdir -p tar/gnostr-${VERSION}/bin
-          mkdir -p tar/gnostr-${VERSION}/share/applications
-          mkdir -p tar/gnostr-${VERSION}/share/icons
-          mkdir -p tar/gnostr-${VERSION}/share/systemd/user
-          # Copy binaries
-          cp build/apps/gnostr/gnostr tar/gnostr-${VERSION}/bin/ || true
-          cp build/apps/gnostr-signer/gnostr-signer tar/gnostr-${VERSION}/bin/ || true
-          cp build/apps/gnostr-signer/gnostr-signer-daemon tar/gnostr-${VERSION}/bin/ || true
-          # Copy desktop files
-          cp apps/gnostr/data/*.desktop tar/gnostr-${VERSION}/share/applications/ 2>/dev/null || true
-          cp apps/gnostr-signer/data/*.desktop tar/gnostr-${VERSION}/share/applications/ 2>/dev/null || true
-          # Copy icons
-          cp -r apps/gnostr/data/icons/* tar/gnostr-${VERSION}/share/icons/ 2>/dev/null || true
-          cp -r apps/gnostr-signer/data/icons/* tar/gnostr-${VERSION}/share/icons/ 2>/dev/null || true
-          # Copy systemd service
-          cp apps/gnostr-signer/daemon/packaging/systemd/user/*.service tar/gnostr-${VERSION}/share/systemd/user/ 2>/dev/null || true
-          # Create tarball
-          tar -C tar -czf gnostr-${VERSION}-linux-x86_64.tar.gz gnostr-${VERSION}
+          VERSION="${RELEASE_VERSION}"
+          if [[ "${COMPONENT}" == "gnostr-signer" ]]; then
+            ROOT="gnostr-signer-${VERSION}"
+          else
+            ROOT="gnostr-${VERSION}"
+          fi
+          mkdir -p "tar/${ROOT}/bin" "tar/${ROOT}/share/applications" "tar/${ROOT}/share/icons"
+
+          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "gnostr" ]]; then
+            cp build/apps/gnostr/gnostr "tar/${ROOT}/bin/"
+            cp apps/gnostr/data/*.desktop "tar/${ROOT}/share/applications/" 2>/dev/null || true
+            cp -r apps/gnostr/data/icons/* "tar/${ROOT}/share/icons/" 2>/dev/null || true
+          fi
+          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "gnostr-signer" ]]; then
+            mkdir -p "tar/${ROOT}/share/systemd/user"
+            cp build/apps/gnostr-signer/gnostr-signer "tar/${ROOT}/bin/"
+            cp build/apps/gnostr-signer/gnostr-signer-daemon "tar/${ROOT}/bin/"
+            cp apps/gnostr-signer/data/*.desktop "tar/${ROOT}/share/applications/" 2>/dev/null || true
+            cp -r apps/gnostr-signer/data/icons/* "tar/${ROOT}/share/icons/" 2>/dev/null || true
+            cp apps/gnostr-signer/daemon/packaging/systemd/user/*.service "tar/${ROOT}/share/systemd/user/" 2>/dev/null || true
+          fi
+
+          tar -C tar -czf "${ROOT}-linux-x86_64.tar.gz" "${ROOT}"
           mkdir -p dist
-          mv gnostr-*.tar.gz dist/
+          mv "${ROOT}-linux-x86_64.tar.gz" dist/
       - name: Upload tarball
         uses: actions/upload-artifact@v4
         with:
@@ -374,7 +505,11 @@ jobs:
 
   build-rpm-tcp:
     name: Build RPM package (daemon TCP-enabled)
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -396,7 +531,7 @@ jobs:
         run: |
           set -e
           mkdir -p dist
-          fpm -s dir -t rpm -n gnostr-signer-daemon-tcp -v ${GITHUB_REF_NAME#v} \
+          fpm -s dir -t rpm -n gnostr-signer-daemon-tcp -v "${RELEASE_VERSION}" \
             --prefix=/usr \
             stage/usr/bin/gnostr-signer-daemon=/usr/bin/gnostr-signer-daemon \
             stage/usr/share/systemd/user/=usr/share/systemd/user/ \
@@ -409,7 +544,11 @@ jobs:
 
   build-tarball-daemon-tcp:
     name: Build tarball (daemon TCP-enabled)
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -430,7 +569,7 @@ jobs:
           cp build/apps/gnostr-signer/gnostr-signer-daemon tar/gnostr-signer-daemon-tcp/bin/
           cp apps/gnostr-signer/daemon/packaging/systemd/user/gnostr-signer-daemon.service tar/gnostr-signer-daemon-tcp/share/systemd/user/
           cp apps/gnostr-signer/daemon/packaging/tar/install.sh tar/gnostr-signer-daemon-tcp/scripts/
-          tar -C tar -czf gnostr-signer-daemon-tcp-${GITHUB_REF_NAME#v}-linux-x86_64.tar.gz gnostr-signer-daemon-tcp
+          tar -C tar -czf gnostr-signer-daemon-tcp-${RELEASE_VERSION}-linux-x86_64.tar.gz gnostr-signer-daemon-tcp
           mkdir -p dist
           mv gnostr-signer-daemon-tcp-*.tar.gz dist/
       - name: Upload tarball TCP
@@ -441,7 +580,11 @@ jobs:
 
   build-deb-tcp:
     name: Build .deb package (daemon TCP-enabled)
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -463,7 +606,7 @@ jobs:
         run: |
           set -e
           mkdir -p dist
-          fpm -s dir -t deb -n gnostr-signer-daemon-tcp -v ${GITHUB_REF_NAME#v} \
+          fpm -s dir -t deb -n gnostr-signer-daemon-tcp -v "${RELEASE_VERSION}" \
             --prefix=/usr \
             stage/usr/bin/gnostr-signer-daemon=/usr/bin/gnostr-signer-daemon \
             -C . -p dist/gnostr-signer-daemon-tcp_VERSION_ARCH.deb
@@ -475,6 +618,8 @@ jobs:
 
   build-flatpak:
     name: Build Flatpak (gnostr-signer)
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -499,6 +644,8 @@ jobs:
 
   build-flatpak-gnostr:
     name: Build Flatpak (gnostr)
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -523,7 +670,11 @@ jobs:
 
   build-macos-signer-dmg:
     name: Build macOS DMG (gnostr-signer)
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: macos-latest
+    env:
+      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -540,13 +691,13 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_MACOS_BUNDLE=ON \
-            -DGNOSTR_SIGNER_VERSION=${GITHUB_REF_NAME#v}
+            -DGNOSTR_SIGNER_VERSION="${RELEASE_VERSION}"
       - name: Build
         run: cmake --build build -j
       - name: Create DMG
         run: |
           cd apps/gnostr-signer/packaging/macos
-          ./create-dmg.sh --build-dir ../../../../build --version ${GITHUB_REF_NAME#v} --output-dir ../../../../dist
+          ./create-dmg.sh --build-dir ../../../../build --version "${RELEASE_VERSION}" --output-dir ../../../../dist
       - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
@@ -554,8 +705,12 @@ jobs:
           path: dist/*.dmg
 
   build-macos-tarball:
-    name: Build macOS tarball (gnostr + gnostr-signer)
+    name: Build macOS tarball (gnostr)
+    needs: detect-component
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' }}
     runs-on: macos-latest
+    env:
+      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -573,19 +728,22 @@ jobs:
       - name: Build
         run: cmake --build build -j
       - name: Create tarball
+        env:
+          COMPONENT: ${{ needs.detect-component.outputs.component }}
         run: |
           set -e
-          VERSION=${GITHUB_REF_NAME#v}
+          VERSION="${RELEASE_VERSION}"
           ARCH=$(uname -m)
-          mkdir -p tar/gnostr-${VERSION}/bin
-          # Copy binaries
-          cp build/apps/gnostr/gnostr tar/gnostr-${VERSION}/bin/ || true
-          cp build/apps/gnostr-signer/gnostr-signer tar/gnostr-${VERSION}/bin/ || true
-          cp build/apps/gnostr-signer/gnostr-signer-daemon tar/gnostr-${VERSION}/bin/ || true
-          # Create tarball
-          tar -C tar -czf gnostr-${VERSION}-macos-${ARCH}.tar.gz gnostr-${VERSION}
+          ROOT="gnostr-${VERSION}"
+          mkdir -p "tar/${ROOT}/bin"
+          cp build/apps/gnostr/gnostr "tar/${ROOT}/bin/"
+          if [[ "${COMPONENT}" == "global" ]]; then
+            cp build/apps/gnostr-signer/gnostr-signer "tar/${ROOT}/bin/"
+            cp build/apps/gnostr-signer/gnostr-signer-daemon "tar/${ROOT}/bin/"
+          fi
+          tar -C tar -czf "${ROOT}-macos-${ARCH}.tar.gz" "${ROOT}"
           mkdir -p dist
-          mv gnostr-*.tar.gz dist/
+          mv "${ROOT}-macos-${ARCH}.tar.gz" dist/
       - name: Upload tarball
         uses: actions/upload-artifact@v4
         with:
