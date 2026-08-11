@@ -337,6 +337,87 @@ static void test_invite_fragment(void) {
           NOSTR_CONCORD_ERR_BAD_FRAGMENT);
 }
 
+/* §3: the encoder and the parser are one grammar. Every case here mints a
+ * fragment and reads it back, because a link that opens in the client that
+ * minted it and nowhere else is the failure this grammar exists to prevent. */
+static void test_invite_fragment_encode(void) {
+    uint8_t token[CONCORD_INVITE_TOKEN_BYTES];
+    fill(token, sizeof(token), 0x5a);
+
+    /* The stock set is one flag, so the common invite carries zero relay
+     * bytes: version, flags, and the token. */
+    char *fragment = NULL;
+    CHECK(nostr_concord_invite_fragment_encode(token, NULL, 0, true,
+                                               &fragment) == NOSTR_CONCORD_OK);
+    CHECK(fragment != NULL);
+    if (fragment) {
+        size_t raw_len = 0;
+        uint8_t *raw = nostr_concord_b64url_decode(fragment, &raw_len);
+        CHECK(raw != NULL && raw_len == 2 + CONCORD_INVITE_TOKEN_BYTES);
+        free(raw);
+
+        nostr_concord_invite_fragment_t parsed;
+        CHECK(nostr_concord_invite_fragment_parse(fragment, &parsed) ==
+              NOSTR_CONCORD_OK);
+        CHECK(parsed.stock_relays);
+        CHECK(parsed.n_relays == 0);
+        CHECK(memcmp(parsed.token, token, sizeof(token)) == 0);
+        CHECK(parsed.version == CONCORD_INVITE_FRAGMENT_VERSION);
+        nostr_concord_invite_fragment_clear(&parsed);
+        free(fragment);
+    }
+
+    /* A dictionary relay costs one byte; a wss:// host drops its scheme; an
+     * exotic scheme rides verbatim. All three round-trip. */
+    const char *dictionary = nostr_concord_relay_dictionary_lookup(1);
+    CHECK(dictionary != NULL);
+    const char *relays[3] = { dictionary, "wss://relay.example.org",
+                              "ws://localhost:7777" };
+    fragment = NULL;
+    CHECK(nostr_concord_invite_fragment_encode(token, relays, 3, false,
+                                               &fragment) == NOSTR_CONCORD_OK);
+    if (fragment) {
+        nostr_concord_invite_fragment_t parsed;
+        CHECK(nostr_concord_invite_fragment_parse(fragment, &parsed) ==
+              NOSTR_CONCORD_OK);
+        CHECK(!parsed.stock_relays);
+        CHECK(parsed.n_relays == 3);
+        if (parsed.n_relays == 3) {
+            CHECK(strcmp(parsed.relays[0], dictionary) == 0);
+            CHECK(strcmp(parsed.relays[1], "wss://relay.example.org") == 0);
+            CHECK(strcmp(parsed.relays[2], "ws://localhost:7777") == 0);
+        }
+        CHECK(memcmp(parsed.token, token, sizeof(token)) == 0);
+        nostr_concord_invite_fragment_clear(&parsed);
+
+        /* The encoder chose the one-byte form for the dictionary entry — the
+         * whole point of the dictionary is that a link stays short enough for
+         * length-restricted platforms. */
+        size_t raw_len = 0;
+        uint8_t *raw = nostr_concord_b64url_decode(fragment, &raw_len);
+        CHECK(raw != NULL && raw_len ==
+              (size_t)(3 + 1 + (2 + strlen("relay.example.org")) +
+                       (2 + strlen("ws://localhost:7777")) +
+                       CONCORD_INVITE_TOKEN_BYTES));
+        free(raw);
+        free(fragment);
+    }
+
+    /* The fragment carries at most 3 bootstrap relays: it only needs to
+     * *find* the bundle. */
+    const char *too_many[4] = { "wss://a.example", "wss://b.example",
+                                "wss://c.example", "wss://d.example" };
+    fragment = NULL;
+    CHECK(nostr_concord_invite_fragment_encode(token, too_many, 4, false,
+                                               &fragment) ==
+          NOSTR_CONCORD_ERR_CARDINALITY);
+    CHECK(fragment == NULL);
+
+    CHECK(nostr_concord_invite_fragment_encode(NULL, NULL, 0, true,
+                                               &fragment) ==
+          NOSTR_CONCORD_ERR_NULL);
+}
+
 static void test_relay_dictionary(void) {
     size_t n = 0;
     const char *const *relays = nostr_concord_stock_relays(&n);
@@ -604,6 +685,7 @@ static void test_null_arguments(void) {
 }
 
 int main(void) {
+    test_invite_fragment_encode();
     test_edition_hash();
     test_entity_locators();
     test_permissions();

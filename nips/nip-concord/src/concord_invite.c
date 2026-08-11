@@ -59,6 +59,88 @@ void nostr_concord_invite_fragment_clear(
     memset(fragment, 0, sizeof(*fragment));
 }
 
+/* The shortest encoding of one relay: a dictionary id is a single byte, a
+ * wss:// host drops its scheme, and anything else rides verbatim. Returns the
+ * bytes written, or 0 when the URL cannot fit a length byte. */
+static size_t concord_encode_relay(const char *url, uint8_t *out,
+                                   size_t out_cap) {
+    if (!url || !*url) return 0;
+
+    for (uint8_t id = 1; id < 255; id++) {
+        const char *known = nostr_concord_relay_dictionary_lookup(id);
+        if (!known) continue;
+        if (strcmp(known, url) == 0) {
+            if (out_cap < 1) return 0;
+            out[0] = id;
+            return 1;
+        }
+    }
+
+    static const char scheme[] = "wss://";
+    size_t scheme_len = sizeof(scheme) - 1;
+    bool wss = strncmp(url, scheme, scheme_len) == 0;
+    const char *body = wss ? url + scheme_len : url;
+    size_t body_len = strlen(body);
+    if (body_len == 0 || body_len > 255) return 0;
+    if (out_cap < 2 + body_len) return 0;
+
+    out[0] = wss ? CONCORD_RELAY_ENTRY_WSS_LITERAL : CONCORD_RELAY_ENTRY_VERBATIM;
+    out[1] = (uint8_t)body_len;
+    memcpy(out + 2, body, body_len);
+    return 2 + body_len;
+}
+
+nostr_concord_status_t nostr_concord_invite_fragment_encode(
+    const uint8_t token[CONCORD_INVITE_TOKEN_BYTES],
+    const char *const *relays, size_t n_relays, bool stock_relays,
+    char **fragment_out) {
+    if (!token || !fragment_out) return NOSTR_CONCORD_ERR_NULL;
+    *fragment_out = NULL;
+
+    /* The fragment only needs to *find* the bundle, which then carries the
+     * Community's authoritative relay set (CORD-02 §6). */
+    if (stock_relays) {
+        relays = NULL;
+        n_relays = 0;
+    }
+    if (n_relays > CONCORD_MAX_RELAYS_IN_FRAGMENT)
+        return NOSTR_CONCORD_ERR_CARDINALITY;
+    if (n_relays && !relays) return NOSTR_CONCORD_ERR_NULL;
+
+    /* [version][flags][count] + at most 3 relays of 2 + 255 bytes + token. */
+    uint8_t raw[3 + CONCORD_MAX_RELAYS_IN_FRAGMENT * (2 + 255) +
+                CONCORD_INVITE_TOKEN_BYTES];
+    size_t off = 0;
+    raw[off++] = CONCORD_INVITE_FRAGMENT_VERSION;
+    raw[off++] = stock_relays ? CONCORD_FRAGMENT_FLAG_STOCK_RELAYS : 0x00;
+
+    if (!stock_relays) {
+        size_t count_at = off;
+        raw[off++] = 0;
+        uint8_t written = 0;
+        for (size_t i = 0; i < n_relays; i++) {
+            size_t n = concord_encode_relay(relays[i], raw + off,
+                                            sizeof(raw) - off -
+                                              CONCORD_INVITE_TOKEN_BYTES);
+            /* A relay too long to carry is dropped rather than failing the
+             * mint: the fragment is a bootstrap hint, and the bundle holds
+             * the authoritative set. */
+            if (n == 0) continue;
+            off += n;
+            written++;
+        }
+        raw[count_at] = written;
+    }
+
+    memcpy(raw + off, token, CONCORD_INVITE_TOKEN_BYTES);
+    off += CONCORD_INVITE_TOKEN_BYTES;
+
+    char *encoded = nostr_concord_b64url_encode(raw, off);
+    if (!encoded) return NOSTR_CONCORD_ERR_OOM;
+    *fragment_out = encoded;
+    return NOSTR_CONCORD_OK;
+}
+
 nostr_concord_status_t nostr_concord_invite_fragment_parse(
     const char *fragment, nostr_concord_invite_fragment_t *out) {
     if (!fragment || !out) return NOSTR_CONCORD_ERR_NULL;

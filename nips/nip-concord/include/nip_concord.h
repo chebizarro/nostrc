@@ -353,6 +353,24 @@ nostr_concord_status_t nostr_concord_invite_fragment_parse(
 void nostr_concord_invite_fragment_clear(
     nostr_concord_invite_fragment_t *fragment);
 
+/* §3: the inverse. Encodes `[version][flags][relays?][token:16]` at the
+ * current version, choosing the shortest form per relay: a dictionary id
+ * costs one byte, a `wss://` host drops its scheme, and anything else rides
+ * verbatim. Pass @stock_relays to select the four built-in primaries, in
+ * which case zero relay bytes follow and @relays is ignored — the common
+ * invite then carries no relay bytes at all.
+ *
+ * A fragment is never sent to any server, so this is the only place the
+ * unlock token is ever written down outside the creator's Invite List.
+ *
+ * Caller frees with free(). */
+nostr_concord_status_t nostr_concord_invite_fragment_encode(
+    const uint8_t token[CONCORD_INVITE_TOKEN_BYTES],
+    const char *const *relays,
+    size_t n_relays,
+    bool stock_relays,
+    char **fragment_out);
+
 /* The stock relay dictionary (CORD-05 §3), 1-based: id 1..4. Returns NULL for
  * an id outside the current generation. */
 const char *nostr_concord_relay_dictionary_lookup(uint8_t id);
