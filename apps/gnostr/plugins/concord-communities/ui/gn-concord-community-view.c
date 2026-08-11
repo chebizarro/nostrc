@@ -1,5 +1,6 @@
 #include "gn-concord-community-view.h"
 #include "gn-concord-composer.h"
+#include "gn-concord-invite-dialog.h"
 #include "../model/gn-concord-channel-item.h"
 #include "../model/gn-concord-message-item.h"
 
@@ -221,6 +222,20 @@ static void on_send_requested(GnConcordComposer *composer, const char *content,
     self->publish_cancellable, on_publish_done, g_object_ref(self));
 }
 
+/* --- invite links (CORD-05) --- */
+
+static void on_invites_clicked(GtkButton *button, gpointer user_data) {
+  (void)button;
+  GnConcordCommunityView *self = GN_CONCORD_COMMUNITY_VIEW(user_data);
+  GnConcordInviteDialog *dialog =
+    gn_concord_invite_dialog_new(self->service, self->community_id);
+  if (!dialog) return;
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  if (GTK_IS_WINDOW(root))
+    gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(root));
+  gtk_window_present(GTK_WINDOW(dialog));
+}
+
 static void on_service_updated(GnConcordCommunityService *service,
                                const char *community_id, guint flags,
                                gpointer user_data) {
@@ -285,8 +300,18 @@ GnConcordCommunityView *gn_concord_community_view_new(
   gtk_widget_set_margin_bottom(header, 8);
   const char *name = gn_concord_community_item_get_name(item);
   g_autofree gchar *short_id = short_hex(self->community_id);
-  gtk_box_append(GTK_BOX(header),
-                 left_label(name && *name ? name : short_id, "title-2"));
+
+  /* The title row carries the one action that changes who can *reach* this
+   * Community: minting a link flips it Public, retiring the last one flips
+   * it back (CORD-05 §5). */
+  GtkWidget *title_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  GtkWidget *title = left_label(name && *name ? name : short_id, "title-2");
+  gtk_box_append(GTK_BOX(title_row), title);
+  GtkWidget *invites = gtk_button_new_with_label("Invite links");
+  gtk_widget_set_valign(invites, GTK_ALIGN_CENTER);
+  g_signal_connect(invites, "clicked", G_CALLBACK(on_invites_clicked), self);
+  gtk_box_append(GTK_BOX(title_row), invites);
+  gtk_box_append(GTK_BOX(header), title_row);
   /* The owner is what the community_id commits to, so showing it is showing
    * the one fact the id self-certifies (CORD-02 §1). */
   g_autofree gchar *owner = short_hex(gn_concord_community_item_get_owner(item));

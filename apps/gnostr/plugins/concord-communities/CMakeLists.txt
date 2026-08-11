@@ -12,6 +12,7 @@ set(CONCORD_UI_SOURCES
   ui/gn-concord-community-row.c
   ui/gn-concord-community-view.c
   ui/gn-concord-composer.c
+  ui/gn-concord-invite-dialog.c
 )
 
 add_library(${PLUGIN_NAME} MODULE
