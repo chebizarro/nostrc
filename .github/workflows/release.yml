@@ -338,6 +338,7 @@ jobs:
         with:
           files: |
             dist/**
+          prerelease: ${{ contains(needs.detect-component.outputs.version, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
