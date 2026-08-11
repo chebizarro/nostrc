@@ -1,0 +1,10 @@
+[Plugin]
+Module=concord-communities
+Name=Concord Communities
+Description=End-to-end encrypted communities, channel browsing, chat, and invite acceptance for the NIP-CAS-0008 backup plane.
+Authors=Gnostr Contributors
+Version=0.1
+Copyright=Copyright © 2026 Gnostr Contributors
+Website=https://github.com/chebizarro/nostrc
+Loader=c
+Builtin=true

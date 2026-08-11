@@ -415,6 +415,11 @@ if (TARGET nip_communikeys)
 else()
   message(STATUS "nip_communikeys target not found — skipping Communikeys plugin (enable ENABLE_NIP_COMMUNIKEYS=ON)")
 endif()
+if (TARGET nip_concord)
+  add_subdirectory(plugins/concord-communities)
+else()
+  message(STATUS "nip_concord target not found — skipping Concord plugin (enable ENABLE_NIP_CONCORD=ON)")
+endif()
 
 # Make gnostr depend on plugins so they're built together
 add_dependencies(${APP_CLIENT_BIN}
@@ -435,6 +440,9 @@ if (TARGET nip29-groups)
 endif()
 if (TARGET communikeys-communities)
   add_dependencies(${APP_CLIENT_BIN} communikeys-communities)
+endif()
+if (TARGET concord-communities)
+  add_dependencies(${APP_CLIENT_BIN} concord-communities)
 endif()
 
 # ---- OpenSSL for DM file encryption (AES-GCM) ----

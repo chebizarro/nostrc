@@ -160,9 +160,22 @@ if(ENABLE_NIP45)
     add_subdirectory(nips/nip45)
 endif()
 
+# NIP-CAS-0008 Concord layers every plane on NIP-44, so enabling it enables
+# nip44 before the block below adds it.
+if(ENABLE_NIP_CONCORD)
+    set(ENABLE_NIP44 ON CACHE BOOL "Enable nip44" FORCE)
+endif()
+
 option(ENABLE_NIP44 "Enable nip44" ON)
 if(ENABLE_NIP44)
     add_subdirectory(nips/nip44)
+endif()
+
+# Concord is added *after* nip44: it links the in-tree nostr_nip44_core target
+# rather than an installed package, so that target must already exist.
+option(ENABLE_NIP_CONCORD "Enable NIP-CAS-0008 Concord" OFF)
+if(ENABLE_NIP_CONCORD)
+    add_subdirectory(nips/nip-concord)
 endif()
 
 # Ensure nip46's link-time dependency on nostr_nip44_core is satisfied
