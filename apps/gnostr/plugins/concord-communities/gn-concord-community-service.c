@@ -1,6 +1,7 @@
 #include "gn-concord-community-service.h"
 
 #include "gn-concord-control-plane.h"
+#include "gn-concord-guestbook.h"
 
 #include <json-glib/json-glib.h>
 #include <nip_concord.h>
@@ -36,6 +37,13 @@ typedef struct {
   GnConcordControlPlane *control;
   gchar *control_address; /* control_pk, or the legacy derivation's own pk */
   guint64 control_subscription;
+  /* The Guestbook: membership motion, off-consensus (CORD-02 §5). */
+  GnConcordGuestbook *guestbook;
+  gchar *guestbook_address;
+  guint64 guestbook_subscription;
+  /* CORD-05 §1: the link's optional attribution, echoed in the Join. */
+  gchar *invite_creator;
+  gchar *invite_label;
   /* Community List bookkeeping (CORD-02 §8) */
   JsonNode *list_seed;    /* the earliest epoch held; only ever moves back */
   JsonObject *list_extra; /* members of the List entry we don't understand */
@@ -67,7 +75,7 @@ struct _GnConcordCommunityService {
   gboolean list_applying;   /* adopting stored entries: do not republish */
 };
 
-enum { COMMUNITY_UPDATED, ERROR_REPORTED, N_SIGNALS };
+enum { COMMUNITY_UPDATED, ERROR_REPORTED, INVITE_OFFERED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 G_DEFINE_TYPE(GnConcordCommunityService, gn_concord_community_service,
@@ -75,10 +83,22 @@ G_DEFINE_TYPE(GnConcordCommunityService, gn_concord_community_service,
 
 static void publish_community_list(GnConcordCommunityService *self);
 static void load_community_list(GnConcordCommunityService *self);
+static JsonNode *build_list_entry(CommunityState *state);
 static void refresh_control_plane(GnConcordCommunityService *self,
                                   CommunityState *state);
 static void apply_control_fold(GnConcordCommunityService *self,
                               CommunityState *state);
+static void refresh_guestbook(GnConcordCommunityService *self,
+                              CommunityState *state);
+static gboolean ensure_guestbook(CommunityState *state);
+static gboolean guestbook_kick_authority(const char *actor, const char *target,
+                                         gpointer user_data);
+static void publish_membership_verb(GnConcordCommunityService *self,
+                                    CommunityState *state, const char *verb,
+                                    gboolean attribute,
+                                    GCancellable *cancellable,
+                                    GAsyncReadyCallback callback,
+                                    gpointer user_data);
 
 /* ------------------------------------------------------------------ *
  * small helpers
@@ -119,6 +139,10 @@ static void community_state_free(gpointer data) {
   g_clear_pointer(&state->subscriptions, g_hash_table_unref);
   g_clear_pointer(&state->control, gn_concord_control_plane_free);
   g_free(state->control_address);
+  g_clear_pointer(&state->guestbook, gn_concord_guestbook_free);
+  g_free(state->guestbook_address);
+  g_free(state->invite_creator);
+  g_free(state->invite_label);
   g_clear_pointer(&state->list_seed, json_node_free);
   g_clear_pointer(&state->list_extra, json_object_unref);
   g_free(state);
@@ -207,6 +231,52 @@ static gboolean parse_epoch(const char *value, guint64 *out) {
   if (value[0] == '0' && value[1] != '\0') return FALSE;
   return g_ascii_string_to_unsigned(value, 10, 0, G_MAXUINT64, out, NULL);
 }
+
+/* ------------------------------------------------------------------ *
+ * the write path's shared pieces
+ *
+ * Every durable Concord plane is written the same way — rumor, seal, wrap
+ * (CORD-01) — so Chat and Guestbook share one mint path and one carrier.
+ * ------------------------------------------------------------------ */
+
+typedef struct {
+  gchar *author;
+  nostr_concord_group_key_t key;
+} PublishContext;
+
+static void publish_context_free(gpointer data) {
+  PublishContext *publish = data;
+  if (!publish) return;
+  g_free(publish->author);
+  nostr_concord_group_key_clear(&publish->key);
+  g_free(publish);
+}
+
+static void return_publish_error(GnConcordCommunityService *self,
+                                 GCancellable *cancellable,
+                                 GAsyncReadyCallback callback,
+                                 gpointer user_data, GIOErrorEnum code,
+                                 const char *message) {
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_return_new_error(task, G_IO_ERROR, code, "%s", message);
+  g_object_unref(task);
+}
+
+/* Concord's sub-second ordering rides the rumor's ms tag, never a mutated
+ * created_at (CORD-02 §4). */
+static int split_now(gint64 *out_created_at) {
+  gint64 now_us = g_get_real_time();
+  *out_created_at = now_us / G_USEC_PER_SEC;
+  return (int)((now_us / 1000) % 1000);
+}
+
+/* Seals @rumor to the author's real key and publishes it as a stream wrap on
+ * the plane @publish->key addresses. Takes ownership of @publish. */
+static void publish_sealed_rumor(GnConcordCommunityService *self,
+                                 PublishContext *publish, NostrEvent *rumor,
+                                 gint64 created_at, GCancellable *cancellable,
+                                 GAsyncReadyCallback callback,
+                                 gpointer user_data);
 
 /* ------------------------------------------------------------------ *
  * derivations
@@ -377,6 +447,12 @@ gboolean gn_concord_community_service_ingest_wrap(
   if (!rumor_id || g_hash_table_contains(state->seen, rumor_id)) goto done;
 
   g_hash_table_add(state->seen, g_strdup(rumor_id));
+  /* Every valid event a client decrypts names its real author, and an author
+   * seen publishing is *observably present* — auto-included even if their
+   * Join never arrived (CORD-02 §5). */
+  if (ensure_guestbook(state))
+    gn_concord_guestbook_observe(state->guestbook,
+                                 nostr_event_get_pubkey(seal), order_key);
   item = gn_concord_message_item_new(
     rumor_id, nostr_event_get_pubkey(rumor), nostr_event_get_content(rumor),
     created_at, ms, order_key, kind);
@@ -491,8 +567,10 @@ void gn_concord_community_service_refresh(GnConcordCommunityService *self) {
         self, state->community_id, gn_concord_channel_item_get_id(channel));
     }
     /* Last, and unconditionally: the Control Plane is what tells this member
-     * about Channels no invite ever granted. */
+     * about Channels no invite ever granted, and the Guestbook who else is
+     * here. The Guestbook is off-consensus, so it genuinely goes last. */
     refresh_control_plane(self, state);
+    refresh_guestbook(self, state);
   }
 }
 
@@ -620,6 +698,11 @@ gboolean gn_concord_community_service_accept_bundle(
   state->root_epoch = (guint64)root_epoch;
   state->control_pk = g_strdup(control_pk);
   state->name = g_strdup(object_string(bundle, "name"));
+  /* Optional attribution: a link may name its creator and a human label
+   * ("Reddit", "Conf 2026"), and an accepting joiner echoes both in their
+   * Join, which is what makes per-link usage counters possible (CORD-05 §1). */
+  state->invite_creator = g_strdup(object_string(bundle, "creator_npub"));
+  state->invite_label = g_strdup(object_string(bundle, "label"));
   state->item = gn_concord_community_item_new(
     community_id, owner, state->name, state->root_epoch, control_pk != NULL);
 
@@ -686,6 +769,13 @@ gboolean gn_concord_community_service_accept_bundle(
       state->control_address = g_steal_pointer(&existing->control_address);
       state->control_subscription = existing->control_subscription;
       existing->control_subscription = 0;
+      state->guestbook = g_steal_pointer(&existing->guestbook);
+      state->guestbook_address = g_steal_pointer(&existing->guestbook_address);
+      state->guestbook_subscription = existing->guestbook_subscription;
+      existing->guestbook_subscription = 0;
+      if (state->guestbook)
+        gn_concord_guestbook_set_kick_authority(
+          state->guestbook, guestbook_kick_authority, state);
     }
     guint n = g_list_model_get_n_items(G_LIST_MODEL(self->communities));
     for (guint i = 0; i < n; i++) {
@@ -698,6 +788,10 @@ gboolean gn_concord_community_service_accept_bundle(
       }
     }
   }
+  /* A Join is announced for a *new* membership only: refreshing a rotated
+   * link, or restoring one this npub already holds from the Community List,
+   * is not a join and must not re-announce one. */
+  gboolean joining = existing == NULL && !self->list_applying;
   if (!state->added_at) state->added_at = g_get_real_time() / 1000;
   g_hash_table_replace(self->states, g_strdup(community_id), state);
   g_list_store_append(self->communities, state->item);
@@ -721,6 +815,9 @@ gboolean gn_concord_community_service_accept_bundle(
         self, community_id, gn_concord_channel_item_get_id(channel));
     }
     refresh_control_plane(self, state);
+    refresh_guestbook(self, state);
+    if (joining)
+      publish_membership_verb(self, state, "join", TRUE, NULL, NULL, NULL);
   }
   return TRUE;
 }
@@ -905,6 +1002,491 @@ guint64 gn_concord_community_service_get_permissions(
     : 0;
 }
 
+/* ------------------------------------------------------------------ *
+ * the Guestbook Plane (CORD-02 §5)
+ *
+ * Member-writable, unlike Control, because Joins and Leaves are each member's
+ * own word. Off-consensus: nothing in Control or Chat depends on it, so it
+ * loads last and can lag without harm.
+ * ------------------------------------------------------------------ */
+
+static gboolean derive_guestbook_key(CommunityState *state,
+                                     nostr_concord_group_key_t *out) {
+  uint8_t root[32], id[32];
+  if (!nostr_concord_hex_decode_32(state->community_root, root) ||
+      !nostr_concord_hex_decode_32(state->community_id, id))
+    return FALSE;
+  nostr_concord_status_t status =
+    nostr_concord_guestbook_key(root, id, state->root_epoch, out);
+  memset(root, 0, sizeof(root));
+  return status == NOSTR_CONCORD_OK;
+}
+
+/* A Kick is honored only if its signer holds KICK and *strictly* outranks its
+ * target — equal cannot act on equal (CORD-04 §3). The Guestbook holds no
+ * authority of its own, so it asks the Roster. */
+static gboolean guestbook_kick_authority(const char *actor, const char *target,
+                                         gpointer user_data) {
+  CommunityState *state = user_data;
+  if (!state->control) return FALSE;
+  if ((gn_concord_control_plane_get_permissions(state->control, actor) &
+       CONCORD_PERM_KICK) == 0)
+    return FALSE;
+  return gn_concord_control_plane_get_position(state->control, actor) <
+         gn_concord_control_plane_get_position(state->control, target);
+}
+
+static gboolean ensure_guestbook(CommunityState *state) {
+  if (state->guestbook) return state->guestbook_address != NULL;
+  nostr_concord_group_key_t key;
+  if (!derive_guestbook_key(state, &key)) return FALSE;
+  char address[65];
+  nostr_concord_hex_encode_32(key.pk, address);
+  nostr_concord_group_key_clear(&key);
+
+  state->guestbook = gn_concord_guestbook_new();
+  state->guestbook_address = g_strdup(address);
+  gn_concord_guestbook_set_kick_authority(state->guestbook,
+                                          guestbook_kick_authority, state);
+  return TRUE;
+}
+
+gboolean gn_concord_community_service_ingest_guestbook_wrap(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *wrap_json) {
+  g_return_val_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self), FALSE);
+  if (self->shutting_down) return FALSE;
+  CommunityState *state = find_state(self, community_id);
+  if (!state || !ensure_guestbook(state)) return FALSE;
+
+  nostr_concord_group_key_t key;
+  if (!derive_guestbook_key(state, &key)) return FALSE;
+  gboolean changed = gn_concord_guestbook_ingest_wrap(
+    state->guestbook, key.conv_key, state->guestbook_address, wrap_json);
+  nostr_concord_group_key_clear(&key);
+
+  if (changed) emit_update(self, community_id, GN_CONCORD_UPDATE_MEMBERSHIP);
+  return changed;
+}
+
+GPtrArray *gn_concord_community_service_get_members(
+    GnConcordCommunityService *self, const char *community_id) {
+  g_return_val_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self), NULL);
+  CommunityState *state = find_state(self, community_id);
+  if (!state || !ensure_guestbook(state)) return g_ptr_array_new();
+
+  /* The coalesced Guestbook, merged with observed authors, minus the
+   * Banlist, is the Complete Memberlist (CORD-02 §5). */
+  GPtrArray *members = gn_concord_guestbook_get_members(state->guestbook);
+  if (!state->control) return members;
+  for (guint i = members->len; i > 0; i--) {
+    const char *member = g_ptr_array_index(members, i - 1);
+    if (gn_concord_control_plane_is_banned(state->control, member))
+      g_ptr_array_remove_index(members, i - 1);
+  }
+  return members;
+}
+
+typedef struct {
+  GnConcordCommunityService *service;
+  gchar *community_id;
+} GuestbookBinding;
+
+static void guestbook_binding_free(gpointer data) {
+  GuestbookBinding *binding = data;
+  if (!binding) return;
+  g_free(binding->community_id);
+  g_free(binding);
+}
+
+static void on_guestbook_event(const char *event_json, gpointer user_data) {
+  GuestbookBinding *binding = user_data;
+  if (!binding || !binding->service ||
+      !GN_IS_CONCORD_COMMUNITY_SERVICE(binding->service))
+    return;
+  gn_concord_community_service_ingest_guestbook_wrap(
+    binding->service, binding->community_id, event_json);
+}
+
+static void refresh_guestbook(GnConcordCommunityService *self,
+                              CommunityState *state) {
+  if (!self->context || self->shutting_down) return;
+  if (!ensure_guestbook(state)) return;
+
+  if (!state->guestbook_subscription) {
+    GuestbookBinding *binding = g_new0(GuestbookBinding, 1);
+    binding->service = self;
+    binding->community_id = g_strdup(state->community_id);
+    g_autofree gchar *filter = build_stream_filter(state->guestbook_address, 0);
+    guint64 id = gnostr_plugin_context_subscribe_events(
+      self->context, filter, G_CALLBACK(on_guestbook_event), binding,
+      guestbook_binding_free);
+    if (id) state->guestbook_subscription = id;
+    else guestbook_binding_free(binding);
+  }
+
+  g_autofree gchar *filter = build_stream_filter(state->guestbook_address, 0);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) events =
+    gnostr_plugin_context_query_events(self->context, filter, &error);
+  if (!events) {
+    /* Off-consensus: a Guestbook that fails to load costs nothing else. */
+    if (error) emit_error(self, error->message);
+    return;
+  }
+  for (guint i = 0; i < events->len; i++)
+    gn_concord_community_service_ingest_guestbook_wrap(
+      self, state->community_id, g_ptr_array_index(events, i));
+}
+
+/* CORD-02 §5's three rumors, minus the snapshot: a Join or a Leave is the
+ * member's own self-signed word, and an accepting joiner echoes the link's
+ * creator and label so per-link usage counters are possible — all inside the
+ * token-encrypted bundle, visible to link-holders alone (CORD-05 §1). */
+static void publish_membership_verb(GnConcordCommunityService *self,
+                                    CommunityState *state, const char *verb,
+                                    gboolean attribute,
+                                    GCancellable *cancellable,
+                                    GAsyncReadyCallback callback,
+                                    gpointer user_data) {
+  const char *author = gn_concord_community_service_get_current_pubkey(self);
+  if (!author || self->shutting_down || !self->context) {
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_CLOSED,
+                         "Sign in to announce membership");
+    return;
+  }
+
+  PublishContext *publish = g_new0(PublishContext, 1);
+  publish->author = g_strdup(author);
+  if (!derive_guestbook_key(state, &publish->key)) {
+    publish_context_free(publish);
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_FAILED,
+                         "This Community's Guestbook key could not be derived");
+    return;
+  }
+
+  gint64 created_at = 0;
+  int ms = split_now(&created_at);
+  g_autofree gchar *ms_text = g_strdup_printf("%d", ms);
+
+  g_autoptr(NostrEvent) rumor = nostr_event_new();
+  nostr_event_set_kind(rumor, CONCORD_KIND_JOIN_LEAVE);
+  nostr_event_set_pubkey(rumor, author);
+  nostr_event_set_created_at(rumor, created_at);
+  nostr_event_set_content(rumor, verb);
+  NostrTags *tags = nostr_tags_new(1, nostr_tag_new("ms", ms_text, NULL));
+  if (attribute && state->invite_creator)
+    tags = nostr_tags_append_unique(
+      tags, nostr_tag_new("invite", state->invite_creator,
+                          state->invite_label ? state->invite_label : "",
+                          NULL));
+  nostr_event_set_tags(rumor, tags);
+
+  publish_sealed_rumor(self, publish, rumor, created_at, cancellable, callback,
+                       user_data);
+}
+
+/* ------------------------------------------------------------------ *
+ * leaving (CORD-02 §5, §8)
+ * ------------------------------------------------------------------ */
+
+static void on_leave_published(GObject *source, GAsyncResult *result,
+                               gpointer user_data) {
+  GnConcordCommunityService *self = GN_CONCORD_COMMUNITY_SERVICE(source);
+  GTask *task = G_TASK(user_data);
+  const char *community_id = g_task_get_task_data(task);
+
+  g_autoptr(GError) error = NULL;
+  if (!gn_concord_community_service_publish_message_finish(self, result,
+                                                           &error)) {
+    /* The Leave is the member's own word: if it never reached a relay, the
+     * membership stays, or this device would go quiet while every other one
+     * still believes it is here. */
+    g_task_return_error(task, g_steal_pointer(&error));
+    g_object_unref(task);
+    return;
+  }
+
+  CommunityState *state = find_state(self, community_id);
+  if (state) {
+    /* A tombstone is per-Community and timestamped, and the entry stays *in*
+     * the document — pruning it would let a long-offline device resurrect a
+     * Community you left, and merges would depend on gossip order
+     * (CORD-02 §8). */
+    if (!self->list_document) self->list_document = json_object_new();
+    JsonArray *stones = object_array(self->list_document, "tombstones");
+    if (!stones) {
+      stones = json_array_new();
+      json_object_set_array_member(self->list_document, "tombstones", stones);
+    }
+    JsonObject *stone = json_object_new();
+    json_object_set_string_member(stone, "community_id", community_id);
+    json_object_set_int_member(stone, "removed_at", g_get_real_time() / 1000);
+    JsonNode *node = json_node_new(JSON_NODE_OBJECT);
+    json_node_take_object(node, stone);
+    json_array_add_element(stones, node);
+
+    g_hash_table_replace(self->list_orphans, g_strdup(community_id),
+                         build_list_entry(state));
+
+    if (self->context) {
+      if (state->control_subscription)
+        gnostr_plugin_context_unsubscribe_events(self->context,
+                                                 state->control_subscription);
+      if (state->guestbook_subscription)
+        gnostr_plugin_context_unsubscribe_events(
+          self->context, state->guestbook_subscription);
+      GHashTableIter subs;
+      gpointer sub_value;
+      g_hash_table_iter_init(&subs, state->subscriptions);
+      while (g_hash_table_iter_next(&subs, NULL, &sub_value))
+        gnostr_plugin_context_unsubscribe_events(self->context,
+                                                 *(guint64 *)sub_value);
+    }
+
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(self->communities));
+    for (guint i = 0; i < n; i++) {
+      g_autoptr(GnConcordCommunityItem) current =
+        g_list_model_get_item(G_LIST_MODEL(self->communities), i);
+      if (g_strcmp0(gn_concord_community_item_get_community_id(current),
+                    community_id) == 0) {
+        g_list_store_remove(self->communities, i);
+        break;
+      }
+    }
+    g_hash_table_remove(self->states, community_id);
+  }
+
+  publish_community_list(self);
+  emit_update(self, community_id, GN_CONCORD_UPDATE_MEMBERSHIP);
+  g_task_return_boolean(task, TRUE);
+  g_object_unref(task);
+}
+
+void gn_concord_community_service_leave_async(GnConcordCommunityService *self,
+                                              const char *community_id,
+                                              GCancellable *cancellable,
+                                              GAsyncReadyCallback callback,
+                                              gpointer user_data) {
+  g_return_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self));
+  CommunityState *state = find_state(self, community_id);
+  if (!state || self->shutting_down || !self->context) {
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_NOT_FOUND,
+                         "That Community is not one of yours");
+    return;
+  }
+
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_set_task_data(task, g_strdup(community_id), g_free);
+  publish_membership_verb(self, state, "leave", FALSE, cancellable,
+                          on_leave_published, task);
+}
+
+gboolean gn_concord_community_service_leave_finish(
+    GnConcordCommunityService *self, GAsyncResult *result, GError **error) {
+  g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
+}
+
+/* ------------------------------------------------------------------ *
+ * Direct Invites (CORD-05 §6)
+ *
+ * Nostr already has an encrypted, authenticated lane to a specific npub, so a
+ * Direct Invite drops the link machinery and hands over the §1 bundle itself
+ * — a *standard* NIP-59 giftwrap, not CORD-01's reversed stream wrap: an
+ * ephemeral wrap author, the recipient in the `p` tag, and a kind-13 seal.
+ * ------------------------------------------------------------------ */
+
+typedef struct {
+  gchar *wrap_author; /* ephemeral, single-use: proves nothing */
+  gchar *inviter;     /* the seal's verified npub: who invited them */
+} DirectInvite;
+
+static void direct_invite_free(gpointer data) {
+  DirectInvite *invite = data;
+  if (!invite) return;
+  g_free(invite->wrap_author);
+  g_free(invite->inviter);
+  g_free(invite);
+}
+
+static void on_direct_seal_opened(GObject *source, GAsyncResult *result,
+                                  gpointer user_data) {
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnConcordCommunityService *self = g_task_get_source_object(task);
+  DirectInvite *invite = g_task_get_task_data(task);
+
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *rumor_json =
+    self->context ? gnostr_plugin_context_nip44_decrypt_finish(self->context,
+                                                               result, &error)
+                  : NULL;
+  if (!rumor_json) {
+    g_task_return_error(task, error ? g_steal_pointer(&error)
+                                    : g_error_new(G_IO_ERROR,
+                                                  G_IO_ERROR_INVALID_DATA,
+                                                  "The invite's seal did not "
+                                                  "open"));
+    g_object_unref(task);
+    return;
+  }
+
+  g_autoptr(NostrEvent) rumor = nostr_event_new();
+  /* NIP-59's impersonation check: renderers display rumor fields, so a rumor
+   * claiming a different author than the seal that carried it is a forgery. */
+  if (!nostr_event_deserialize_compact(rumor, rumor_json, NULL) ||
+      nostr_event_get_kind(rumor) != CONCORD_DIRECT_INVITE ||
+      g_strcmp0(nostr_event_get_pubkey(rumor), invite->inviter) != 0) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                            "That giftwrap is not a Concord invite");
+    g_object_unref(task);
+    return;
+  }
+
+  g_task_return_pointer(task, g_strdup(nostr_event_get_content(rumor)),
+                        g_free);
+  g_object_unref(task);
+}
+
+static void on_direct_wrap_opened(GObject *source, GAsyncResult *result,
+                                  gpointer user_data) {
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnConcordCommunityService *self = g_task_get_source_object(task);
+  DirectInvite *invite = g_task_get_task_data(task);
+
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *seal_json =
+    self->context ? gnostr_plugin_context_nip44_decrypt_finish(self->context,
+                                                               result, &error)
+                  : NULL;
+  if (!seal_json) {
+    g_task_return_error(task, error ? g_steal_pointer(&error)
+                                    : g_error_new(G_IO_ERROR,
+                                                  G_IO_ERROR_INVALID_DATA,
+                                                  "The giftwrap did not open"));
+    g_object_unref(task);
+    return;
+  }
+
+  /* The seal's verified npub proves who invited them — the one thing the
+   * ephemeral wrap author cannot. */
+  g_autoptr(NostrEvent) seal = parse_verified_event(seal_json);
+  if (!seal || nostr_event_get_kind(seal) != 13) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                            "That giftwrap carries no NIP-59 seal");
+    g_object_unref(task);
+    return;
+  }
+  invite->inviter = g_strdup(nostr_event_get_pubkey(seal));
+
+  gnostr_plugin_context_nip44_decrypt_async(
+    self->context, invite->inviter, nostr_event_get_content(seal),
+    g_task_get_cancellable(task), on_direct_seal_opened, task);
+}
+
+void gn_concord_community_service_open_direct_invite_async(
+    GnConcordCommunityService *self, const char *wrap_json,
+    GCancellable *cancellable, GAsyncReadyCallback callback,
+    gpointer user_data) {
+  g_return_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self));
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+
+  const char *me = gn_concord_community_service_get_current_pubkey(self);
+  g_autoptr(NostrEvent) wrap = parse_verified_event(wrap_json);
+  if (!me || self->shutting_down || !self->context || !wrap ||
+      nostr_event_get_kind(wrap) != CONCORD_STREAM_WRAP) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                            "That is not a giftwrap this npub can open");
+    g_object_unref(task);
+    return;
+  }
+  /* Addressed to a person, never a plane: the recipient rides the `p` tag. */
+  if (g_strcmp0(event_tag_value(wrap, "p"), me) != 0) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                            "That giftwrap is addressed to someone else");
+    g_object_unref(task);
+    return;
+  }
+
+  DirectInvite *invite = g_new0(DirectInvite, 1);
+  invite->wrap_author = g_strdup(nostr_event_get_pubkey(wrap));
+  g_task_set_task_data(task, invite, direct_invite_free);
+
+  gnostr_plugin_context_nip44_decrypt_async(
+    self->context, invite->wrap_author, nostr_event_get_content(wrap),
+    cancellable, on_direct_wrap_opened, task);
+}
+
+gchar *gn_concord_community_service_open_direct_invite_finish(
+    GnConcordCommunityService *self, GAsyncResult *result, GError **error) {
+  g_return_val_if_fail(g_task_is_valid(result, self), NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+static void on_offered_invite_opened(GObject *source, GAsyncResult *result,
+                                     gpointer user_data) {
+  (void)user_data;
+  GnConcordCommunityService *self = GN_CONCORD_COMMUNITY_SERVICE(source);
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *bundle =
+    gn_concord_community_service_open_direct_invite_finish(self, result,
+                                                           &error);
+  /* A giftwrap that isn't an invite is not an error worth surfacing: an
+   * inbox carries other people's traffic. */
+  if (!bundle) return;
+  /* Nothing joins, subscribes, or announces presence until the user
+   * explicitly accepts (CORD-05 §1). */
+  g_signal_emit(self, signals[INVITE_OFFERED], 0, bundle, "");
+}
+
+void gn_concord_community_service_refresh_direct_invites(
+    GnConcordCommunityService *self) {
+  g_return_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self));
+  if (!self->context || self->shutting_down) return;
+  const char *me = gn_concord_community_service_get_current_pubkey(self);
+  if (!me) return;
+
+  /* The wrap's outer `k` tag is what makes invites *indexed*: a recipient
+   * looks up exactly their invites instead of decrypting everything ever
+   * p-tagged at them. It is an unsigned hint and never authority — a client
+   * decrypting its general giftwrap inbox honors an untagged invite all the
+   * same (CORD-05 §6). */
+  g_autoptr(JsonBuilder) builder = json_builder_new();
+  json_builder_begin_object(builder);
+  json_builder_set_member_name(builder, "kinds");
+  json_builder_begin_array(builder);
+  json_builder_add_int_value(builder, CONCORD_STREAM_WRAP);
+  json_builder_end_array(builder);
+  json_builder_set_member_name(builder, "#p");
+  json_builder_begin_array(builder);
+  json_builder_add_string_value(builder, me);
+  json_builder_end_array(builder);
+  json_builder_set_member_name(builder, "#k");
+  json_builder_begin_array(builder);
+  json_builder_add_string_value(builder, "3313");
+  json_builder_end_array(builder);
+  json_builder_end_object(builder);
+  JsonNode *root = json_builder_get_root(builder);
+  g_autofree gchar *filter = node_to_json(root);
+  json_node_free(root);
+
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) events =
+    gnostr_plugin_context_query_events(self->context, filter, &error);
+  if (!events) {
+    if (error) emit_error(self, error->message);
+    return;
+  }
+  for (guint i = 0; i < events->len; i++)
+    gn_concord_community_service_open_direct_invite_async(
+      self, g_ptr_array_index(events, i), NULL, on_offered_invite_opened, NULL);
+}
+
 typedef struct {
   GnConcordCommunityService *service; /* borrowed; the service owns the sub */
   gchar *community_id;
@@ -1066,6 +1648,31 @@ static void merge_seed(CommunityState *state, JsonNode *candidate) {
   state->list_seed = json_node_copy(candidate);
 }
 
+/* One List entry: the two snapshots, when the membership began, and whatever
+ * fields this client doesn't understand, carried through untouched. */
+static JsonNode *build_list_entry(CommunityState *state) {
+  JsonNode *current = build_join_material(state);
+  merge_seed(state, current);
+
+  JsonObject *entry = json_object_new();
+  if (state->list_extra) {
+    GList *members = json_object_get_members(state->list_extra);
+    for (GList *l = members; l; l = l->next)
+      json_object_set_member(
+        entry, l->data,
+        json_node_copy(json_object_get_member(state->list_extra, l->data)));
+    g_list_free(members);
+  }
+  json_object_set_string_member(entry, "community_id", state->community_id);
+  json_object_set_member(entry, "seed", json_node_copy(state->list_seed));
+  json_object_set_member(entry, "current", current);
+  json_object_set_int_member(entry, "added_at", state->added_at);
+
+  JsonNode *node = json_node_new(JSON_NODE_OBJECT);
+  json_node_take_object(node, entry);
+  return node;
+}
+
 static gint64 tombstone_time(JsonObject *document, const char *community_id) {
   JsonArray *stones = object_array(document, "tombstones");
   if (!stones) return 0;
@@ -1111,26 +1718,7 @@ static JsonNode *build_list_document(GnConcordCommunityService *self,
     CommunityState *state = value;
     if (!state->item) continue;
 
-    JsonNode *current = build_join_material(state);
-    merge_seed(state, current);
-
-    JsonObject *entry = json_object_new();
-    if (state->list_extra) {
-      GList *members = json_object_get_members(state->list_extra);
-      for (GList *l = members; l; l = l->next)
-        json_object_set_member(
-          entry, l->data,
-          json_node_copy(json_object_get_member(state->list_extra, l->data)));
-      g_list_free(members);
-    }
-    json_object_set_string_member(entry, "community_id", state->community_id);
-    json_object_set_member(entry, "seed", json_node_copy(state->list_seed));
-    json_object_set_member(entry, "current", current);
-    json_object_set_int_member(entry, "added_at", state->added_at);
-
-    JsonNode *node = json_node_new(JSON_NODE_OBJECT);
-    json_node_take_object(node, entry);
-    json_array_add_element(entries, node);
+    json_array_add_element(entries, build_list_entry(state));
   }
 
   if (self->list_orphans) {
@@ -1645,23 +2233,6 @@ gboolean gn_concord_community_service_accept_invite_finish(
  * the write path: rumor -> seal -> wrap (CORD-01)
  * ------------------------------------------------------------------ */
 
-typedef struct {
-  gchar *community_id;
-  gchar *channel_id;
-  gchar *author;
-  nostr_concord_group_key_t key;
-} PublishContext;
-
-static void publish_context_free(gpointer data) {
-  PublishContext *publish = data;
-  if (!publish) return;
-  g_free(publish->community_id);
-  g_free(publish->channel_id);
-  g_free(publish->author);
-  nostr_concord_group_key_clear(&publish->key);
-  g_free(publish);
-}
-
 static void on_wrap_published(GObject *source, GAsyncResult *result,
                               gpointer user_data) {
   (void)source;
@@ -1785,14 +2356,46 @@ static void on_seal_signed(GObject *source, GAsyncResult *result,
     on_wrap_published, task);
 }
 
-static void return_publish_error(GnConcordCommunityService *self,
-                                 GCancellable *cancellable,
+static void publish_sealed_rumor(GnConcordCommunityService *self,
+                                 PublishContext *publish, NostrEvent *rumor,
+                                 gint64 created_at, GCancellable *cancellable,
                                  GAsyncReadyCallback callback,
-                                 gpointer user_data, GIOErrorEnum code,
-                                 const char *message) {
+                                 gpointer user_data) {
+  g_autofree gchar *rumor_json = nostr_event_serialize_compact(rumor);
+  char *seal_content = NULL;
+  if (!rumor_json ||
+      nostr_concord_stream_seal(publish->key.conv_key, rumor_json,
+                                &seal_content) != NOSTR_CONCORD_OK) {
+    publish_context_free(publish);
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_FAILED, "Failed to encrypt the rumor");
+    return;
+  }
+
+  /* The seal is signed by the author's real key — that signature is what
+   * proves who wrote the rumor, and it is the only place the identity
+   * appears (CORD-01). */
+  g_autoptr(NostrEvent) seal = nostr_event_new();
+  nostr_event_set_kind(seal, CONCORD_SEAL_ENCRYPTED);
+  nostr_event_set_pubkey(seal, publish->author);
+  nostr_event_set_created_at(seal, created_at);
+  nostr_event_set_content(seal, seal_content);
+  nostr_event_set_tags(seal, nostr_tags_new(0));
+  free(seal_content);
+
+  g_autofree gchar *seal_json = nostr_event_serialize_compact(seal);
+  if (!seal_json) {
+    publish_context_free(publish);
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_FAILED,
+                         "Failed to serialize the Concord seal");
+    return;
+  }
+
   GTask *task = g_task_new(self, cancellable, callback, user_data);
-  g_task_return_new_error(task, G_IO_ERROR, code, "%s", message);
-  g_object_unref(task);
+  g_task_set_task_data(task, publish, publish_context_free);
+  gnostr_plugin_context_request_sign_event(self->context, seal_json,
+                                           cancellable, on_seal_signed, task);
 }
 
 void gn_concord_community_service_publish_message_async(
@@ -1821,8 +2424,6 @@ void gn_concord_community_service_publish_message_async(
   }
 
   PublishContext *publish = g_new0(PublishContext, 1);
-  publish->community_id = g_strdup(community_id);
-  publish->channel_id = g_strdup(channel_id);
   publish->author = g_strdup(author);
   if (!derive_channel_key(state, channel, &publish->key)) {
     publish_context_free(publish);
@@ -1834,9 +2435,8 @@ void gn_concord_community_service_publish_message_async(
 
   /* The rumor commits its channel and epoch so a keyholder cannot re-publish
    * it into another Channel or epoch (NIP-CAS-0008, CORD-03). */
-  gint64 now_us = g_get_real_time();
-  gint64 created_at = now_us / G_USEC_PER_SEC;
-  int ms = (int)((now_us / 1000) % 1000);
+  gint64 created_at = 0;
+  int ms = split_now(&created_at);
   g_autofree gchar *epoch_text =
     g_strdup_printf("%" G_GUINT64_FORMAT,
                     gn_concord_channel_item_get_epoch(channel));
@@ -1853,42 +2453,8 @@ void gn_concord_community_service_publish_message_async(
     nostr_tag_new("epoch", epoch_text, NULL),
     nostr_tag_new("ms", ms_text, NULL)));
 
-  g_autofree gchar *rumor_json = nostr_event_serialize_compact(rumor);
-  char *seal_content = NULL;
-  if (!rumor_json ||
-      nostr_concord_stream_seal(publish->key.conv_key, rumor_json,
-                                &seal_content) != NOSTR_CONCORD_OK) {
-    publish_context_free(publish);
-    return_publish_error(self, cancellable, callback, user_data,
-                         G_IO_ERROR_FAILED,
-                         "Failed to encrypt the message rumor");
-    return;
-  }
-
-  /* The seal is signed by the author's real key — that signature is what
-   * proves who wrote the rumor, and it is the only place the identity
-   * appears (CORD-01). */
-  g_autoptr(NostrEvent) seal = nostr_event_new();
-  nostr_event_set_kind(seal, CONCORD_SEAL_ENCRYPTED);
-  nostr_event_set_pubkey(seal, author);
-  nostr_event_set_created_at(seal, created_at);
-  nostr_event_set_content(seal, seal_content);
-  nostr_event_set_tags(seal, nostr_tags_new(0));
-  free(seal_content);
-
-  g_autofree gchar *seal_json = nostr_event_serialize_compact(seal);
-  if (!seal_json) {
-    publish_context_free(publish);
-    return_publish_error(self, cancellable, callback, user_data,
-                         G_IO_ERROR_FAILED,
-                         "Failed to serialize the Concord seal");
-    return;
-  }
-
-  GTask *task = g_task_new(self, cancellable, callback, user_data);
-  g_task_set_task_data(task, publish, publish_context_free);
-  gnostr_plugin_context_request_sign_event(self->context, seal_json,
-                                           cancellable, on_seal_signed, task);
+  publish_sealed_rumor(self, publish, rumor, created_at, cancellable, callback,
+                       user_data);
 }
 
 gboolean gn_concord_community_service_publish_message_finish(
@@ -1915,6 +2481,10 @@ void gn_concord_community_service_shutdown(GnConcordCommunityService *self) {
       gnostr_plugin_context_unsubscribe_events(self->context,
                                                state->control_subscription);
     state->control_subscription = 0;
+    if (self->context && state->guestbook_subscription)
+      gnostr_plugin_context_unsubscribe_events(self->context,
+                                               state->guestbook_subscription);
+    state->guestbook_subscription = 0;
     if (!state->subscriptions) continue;
     if (self->context) {
       GHashTableIter subs;
@@ -1960,6 +2530,12 @@ static void gn_concord_community_service_class_init(
   signals[ERROR_REPORTED] = g_signal_new(
     "error-reported", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL,
     NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+  /* A Direct Invite is passive until the user decides: nothing joins,
+   * subscribes or announces presence on the strength of one arriving
+   * (CORD-05 §1, §6). The signal offers it; accepting is a separate act. */
+  signals[INVITE_OFFERED] = g_signal_new(
+    "invite-offered", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL,
+    NULL, NULL, G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
 }
 
 static void gn_concord_community_service_init(

@@ -84,6 +84,49 @@ guint64 gn_concord_community_service_get_permissions(
     GnConcordCommunityService *self, const char *community_id,
     const char *pubkey_hex);
 
+/* Ingests one kind-1059 wrap from the Community's Guestbook Plane and folds
+ * the Join, Leave or Kick inside. Public so the service tests can drive the
+ * coalesce without a relay. */
+gboolean gn_concord_community_service_ingest_guestbook_wrap(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *wrap_json);
+
+/* (element-type utf8) (transfer container): the Complete Memberlist — the
+ * coalesced Guestbook, merged with observed authors, minus the Banlist
+ * (CORD-02 §5). The strings belong to the service. */
+GPtrArray *gn_concord_community_service_get_members(
+    GnConcordCommunityService *self, const char *community_id);
+
+/* Announces a Leave on the Guestbook, then drops the membership and
+ * tombstones its Community List entry. The membership survives a Leave that
+ * never reached a relay: this device would otherwise go quiet while every
+ * other one still believes it is here. */
+void gn_concord_community_service_leave_async(GnConcordCommunityService *self,
+                                              const char *community_id,
+                                              GCancellable *cancellable,
+                                              GAsyncReadyCallback callback,
+                                              gpointer user_data);
+gboolean gn_concord_community_service_leave_finish(
+    GnConcordCommunityService *self, GAsyncResult *result, GError **error);
+
+/* Opens one standard NIP-59 giftwrap carrying a Direct Invite (CORD-05 §6)
+ * and returns the CommunityInvite bundle inside, which
+ * gn_concord_community_service_accept_bundle() then validates exactly as a
+ * fetched one. Returns NULL for a giftwrap that is not an invite — an inbox
+ * carries other people's traffic. */
+void gn_concord_community_service_open_direct_invite_async(
+    GnConcordCommunityService *self, const char *wrap_json,
+    GCancellable *cancellable, GAsyncReadyCallback callback,
+    gpointer user_data);
+gchar *gn_concord_community_service_open_direct_invite_finish(
+    GnConcordCommunityService *self, GAsyncResult *result, GError **error);
+
+/* Indexes this npub's Direct Invites and emits ::invite-offered for each one
+ * that opens. Nothing joins, subscribes or announces presence on the strength
+ * of an invite arriving — accepting is a separate, explicit act. */
+void gn_concord_community_service_refresh_direct_invites(
+    GnConcordCommunityService *self);
+
 void gn_concord_community_service_refresh(GnConcordCommunityService *self);
 void gn_concord_community_service_refresh_channel(
     GnConcordCommunityService *self, const char *community_id,

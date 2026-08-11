@@ -4,7 +4,7 @@
  * This header defines the stable plugin API for extending Gnostr with
  * NIP implementations and custom features. Plugins are loaded via libpeas 2.
  *
- * API Version: 1.3
+ * API Version: 1.4
  * Stability: Stable API functions are marked @stability: Stable
  *            Experimental functions are marked @stability: Experimental
  *
@@ -27,7 +27,7 @@ G_BEGIN_DECLS
  */
 
 #define GNOSTR_PLUGIN_API_MAJOR_VERSION 1
-#define GNOSTR_PLUGIN_API_MINOR_VERSION 3
+#define GNOSTR_PLUGIN_API_MINOR_VERSION 4
 
 /**
  * gnostr_plugin_api_check_version:
@@ -1268,6 +1268,89 @@ void gnostr_plugin_context_nip44_self_decrypt_async(GnostrPluginContext *context
 char *gnostr_plugin_context_nip44_self_decrypt_finish(GnostrPluginContext *context,
                                                       GAsyncResult        *result,
                                                       GError             **error);
+
+/* --- Pairwise Encryption (NIP-44 with another npub) --- */
+
+/**
+ * gnostr_plugin_context_nip44_encrypt_async:
+ * @context: A #GnostrPluginContext
+ * @peer_pubkey_hex: The other party's public key (64-char hex)
+ * @plaintext: The plaintext to encrypt
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: Callback when encryption completes
+ * @user_data: User data for callback
+ *
+ * Encrypt under the NIP-44 conversation key the logged-in user shares with
+ * @peer_pubkey_hex. This is the pairwise lane every person-addressed Nostr
+ * payload rides: a NIP-17 direct message, a NIP-59 seal, a NIP-CAS-0008
+ * Direct Invite (CORD-05 §6).
+ *
+ * Passing the user's own pubkey is equivalent to
+ * gnostr_plugin_context_nip44_self_encrypt_async().
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_nip44_encrypt_async(GnostrPluginContext *context,
+                                               const char          *peer_pubkey_hex,
+                                               const char          *plaintext,
+                                               GCancellable        *cancellable,
+                                               GAsyncReadyCallback  callback,
+                                               gpointer             user_data);
+
+/**
+ * gnostr_plugin_context_nip44_encrypt_finish:
+ * @context: A #GnostrPluginContext
+ * @result: The #GAsyncResult
+ * @error: (out) (optional): Return location for an error
+ *
+ * Returns: (transfer full) (nullable): The NIP-44 payload, or %NULL on error.
+ *          Free with g_free().
+ * @stability: Stable
+ */
+char *gnostr_plugin_context_nip44_encrypt_finish(GnostrPluginContext *context,
+                                                 GAsyncResult        *result,
+                                                 GError             **error);
+
+/**
+ * gnostr_plugin_context_nip44_decrypt_async:
+ * @context: A #GnostrPluginContext
+ * @peer_pubkey_hex: The other party's public key (64-char hex)
+ * @ciphertext: A NIP-44 payload
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: Callback when decryption completes
+ * @user_data: User data for callback
+ *
+ * Decrypt a NIP-44 payload from @peer_pubkey_hex.
+ *
+ * NIP-44 binds no application kind, sender, role or session identifier, so a
+ * caller MUST validate the enclosing envelope itself before trusting what
+ * comes back. For a NIP-59 giftwrap that means the usual discipline: the
+ * wrap's author is ephemeral and proves nothing, and only the seal's
+ * signature names the sender — a rumor claiming a different author than its
+ * seal is a forgery.
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_nip44_decrypt_async(GnostrPluginContext *context,
+                                               const char          *peer_pubkey_hex,
+                                               const char          *ciphertext,
+                                               GCancellable        *cancellable,
+                                               GAsyncReadyCallback  callback,
+                                               gpointer             user_data);
+
+/**
+ * gnostr_plugin_context_nip44_decrypt_finish:
+ * @context: A #GnostrPluginContext
+ * @result: The #GAsyncResult
+ * @error: (out) (optional): Return location for an error
+ *
+ * Returns: (transfer full) (nullable): The plaintext, or %NULL on error.
+ *          Free with g_free().
+ * @stability: Stable
+ */
+char *gnostr_plugin_context_nip44_decrypt_finish(GnostrPluginContext *context,
+                                                 GAsyncResult        *result,
+                                                 GError             **error);
 
 /* --- Action Handlers --- */
 

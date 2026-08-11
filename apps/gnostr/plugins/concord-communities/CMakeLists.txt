@@ -18,6 +18,7 @@ add_library(${PLUGIN_NAME} MODULE
   concord-communities-plugin.c
   gn-concord-community-service.c
   gn-concord-control-plane.c
+  gn-concord-guestbook.c
   ${CONCORD_MODEL_SOURCES}
   ${CONCORD_UI_SOURCES}
   ${CMAKE_CURRENT_SOURCE_DIR}/../../src/gnostr-plugin-api.c
@@ -66,6 +67,7 @@ if(BUILD_TESTING)
   set(CONCORD_TEST_COMMON
     gn-concord-community-service.c
     gn-concord-control-plane.c
+    gn-concord-guestbook.c
     ${CONCORD_MODEL_SOURCES}
     tests/gn-concord-plugin-api-stubs.c
   )

@@ -1249,7 +1249,7 @@ static void test_control_split_address(void) {
 }
 
 /* ------------------------------------------------------------------ *
- * the Community List (CORD-02 §8)
+ * shared harness for the tests that need a host
  * ------------------------------------------------------------------ */
 
 /* Every host completion here is a GTask returning on the caller's own stack,
@@ -1332,6 +1332,446 @@ static void list_test_end(Fixture *fixture) {
   g_clear_pointer(&g_last_filter, g_free);
   fixture_clear(fixture);
 }
+
+/* ------------------------------------------------------------------ *
+ * the Guestbook Plane (CORD-02 §5) and Direct Invites (CORD-05 §6)
+ * ------------------------------------------------------------------ */
+
+static void guestbook_key(const Fixture *fixture,
+                          nostr_concord_group_key_t *out) {
+  uint8_t root[32], id[32];
+  g_assert_true(nostr_concord_hex_decode_32(COMMUNITY_ROOT, root));
+  g_assert_true(nostr_concord_hex_decode_32(fixture->community_id, id));
+  g_assert_cmpint(nostr_concord_guestbook_key(root, id, TEST_EPOCH, out), ==,
+                  NOSTR_CONCORD_OK);
+}
+
+/* One Guestbook rumor, wrapped the way any member publishes: the plane is
+ * member-writable by design, so minting one takes nothing but the
+ * community_root — which is exactly why the fold trusts the seal's npub for
+ * authorship and nothing else. */
+static gchar *mint_guestbook_wrap(const Fixture *fixture, const char *actor_sk,
+                                  int kind, const char *content,
+                                  gint64 created_at, const char *ms_tag,
+                                  const char *target) {
+  nostr_concord_group_key_t key;
+  guestbook_key(fixture, &key);
+  g_autofree gchar *actor = nostr_key_get_public(actor_sk);
+
+  g_autoptr(NostrEvent) rumor = nostr_event_new();
+  nostr_event_set_kind(rumor, kind);
+  nostr_event_set_pubkey(rumor, actor);
+  nostr_event_set_created_at(rumor, created_at);
+  nostr_event_set_content(rumor, content);
+  NostrTags *tags = nostr_tags_new(1, nostr_tag_new("ms", ms_tag, NULL));
+  if (target)
+    tags = nostr_tags_append_unique(tags, nostr_tag_new("p", target, NULL));
+  nostr_event_set_tags(rumor, tags);
+  g_autofree gchar *rumor_json = nostr_event_serialize_compact(rumor);
+
+  char *seal_content = NULL;
+  g_assert_cmpint(
+    nostr_concord_stream_seal(key.conv_key, rumor_json, &seal_content), ==,
+    NOSTR_CONCORD_OK);
+  g_autoptr(NostrEvent) seal = nostr_event_new();
+  nostr_event_set_kind(seal, CONCORD_SEAL_ENCRYPTED);
+  nostr_event_set_pubkey(seal, actor);
+  nostr_event_set_created_at(seal, created_at);
+  nostr_event_set_content(seal, seal_content);
+  nostr_event_set_tags(seal, nostr_tags_new(0));
+  free(seal_content);
+  g_assert_cmpint(nostr_event_sign(seal, actor_sk), ==, 0);
+  g_autofree gchar *seal_json = nostr_event_serialize_compact(seal);
+
+  char *wrap_content = NULL;
+  g_assert_cmpint(
+    nostr_concord_stream_seal(key.conv_key, seal_json, &wrap_content), ==,
+    NOSTR_CONCORD_OK);
+  char stream_sk[65], stream_pk[65];
+  nostr_concord_hex_encode_32(key.sk, stream_sk);
+  nostr_concord_hex_encode_32(key.pk, stream_pk);
+
+  g_autoptr(NostrEvent) wrap = nostr_event_new();
+  nostr_event_set_kind(wrap, CONCORD_STREAM_WRAP);
+  nostr_event_set_pubkey(wrap, stream_pk);
+  nostr_event_set_created_at(wrap, created_at);
+  nostr_event_set_content(wrap, wrap_content);
+  g_autofree gchar *ephemeral_sk = nostr_key_generate_private();
+  g_autofree gchar *ephemeral_pk = nostr_key_get_public(ephemeral_sk);
+  nostr_event_set_tags(wrap,
+                       nostr_tags_new(1, nostr_tag_new("p", ephemeral_pk,
+                                                       NULL)));
+  free(wrap_content);
+  g_assert_cmpint(nostr_event_sign(wrap, stream_sk), ==, 0);
+  nostr_concord_group_key_clear(&key);
+  return nostr_event_serialize_compact(wrap);
+}
+
+static gboolean is_member(GnConcordCommunityService *service,
+                          const Fixture *fixture, const char *pubkey) {
+  g_autoptr(GPtrArray) members =
+    gn_concord_community_service_get_members(service, fixture->community_id);
+  for (guint i = 0; i < members->len; i++)
+    if (g_strcmp0(g_ptr_array_index(members, i), pubkey) == 0) return TRUE;
+  return FALSE;
+}
+
+/* A Join is a member's own word, and the coalesce keeps one final state per
+ * npub: their latest Join, Leave or Kick wins. */
+static void test_guestbook_coalesces(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+
+  g_autofree gchar *join = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "join", 1686840217, "100",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, join));
+  g_assert_true(is_member(service, &fixture, fixture.author_pubkey));
+
+  /* An older entry never supersedes a newer one, whichever order it arrives
+   * in — the comparison basis is created_at * 1000 + ms. */
+  g_autofree gchar *stale_leave = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "leave", 1686840217, "50",
+    NULL);
+  gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, stale_leave);
+  g_assert_true(is_member(service, &fixture, fixture.author_pubkey));
+
+  g_autofree gchar *leave = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "leave", 1686840217, "900",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, leave));
+  g_assert_false(is_member(service, &fixture, fixture.author_pubkey));
+
+  fixture_clear(&fixture);
+}
+
+/* An entry dated more than an hour ahead of the receiver's clock is dropped
+ * outright — ample for skew, and a deterrent against squatting "latest" with
+ * a forged future date. An out-of-range ms is dropped for the same reason:
+ * the excess would smuggle arbitrary "future" past the clock check. */
+static void test_guestbook_drops_forged_future(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  g_autofree gchar *join = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "join", now, "0", NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, join));
+
+  g_autofree gchar *forged = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "leave", now + 7200, "0",
+    NULL);
+  g_assert_false(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, forged));
+  g_assert_true(is_member(service, &fixture, fixture.author_pubkey));
+
+  /* An hour of skew is tolerated, so this one lands. */
+  g_autofree gchar *skewed = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "leave", now + 60, "0",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, skewed));
+  g_assert_false(is_member(service, &fixture, fixture.author_pubkey));
+
+  g_autofree gchar *malformed = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "join", now + 120, "1000",
+    NULL);
+  g_assert_false(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, malformed));
+  g_assert_false(is_member(service, &fixture, fixture.author_pubkey));
+
+  fixture_clear(&fixture);
+}
+
+/* An author seen publishing is observably present, auto-included even if
+ * their Join never arrived — but observation counts *forward* only, so a
+ * departed member's old history can never resurrect them. */
+static void test_guestbook_observation_counts_forward(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+
+  MintOptions options = default_options();
+  g_autofree gchar *old_message =
+    mint_wrap(&fixture, "before leaving", 1686840100, &options);
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    service, fixture.community_id, CHANNEL_ID, old_message));
+  /* No Join ever arrived, and they are a member all the same. */
+  g_assert_true(is_member(service, &fixture, fixture.author_pubkey));
+
+  g_autofree gchar *leave = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "leave", 1686840217, "0",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, leave));
+  g_assert_false(is_member(service, &fixture, fixture.author_pubkey));
+
+  /* Backfilling history older than the Leave must not resurrect them. */
+  g_autofree gchar *older =
+    mint_wrap(&fixture, "older backfill", 1686840000, &options);
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    service, fixture.community_id, CHANNEL_ID, older));
+  g_assert_false(is_member(service, &fixture, fixture.author_pubkey));
+
+  /* Activity newer than the Leave does. */
+  g_autofree gchar *newer =
+    mint_wrap(&fixture, "back again", 1686840400, &options);
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    service, fixture.community_id, CHANNEL_ID, newer));
+  g_assert_true(is_member(service, &fixture, fixture.author_pubkey));
+
+  fixture_clear(&fixture);
+}
+
+/* A Kick is honored only if its signer holds KICK and strictly outranks its
+ * target. The Guestbook holds no authority of its own; it asks the Roster. */
+static void test_guestbook_kick_needs_authority(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+  g_autofree gchar *admin = nostr_key_get_public(ADMIN_SK);
+
+  g_autofree gchar *join = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "join", 1686840217, "0",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, join));
+
+  /* From an npub the Roster ranks nowhere, a Kick is just noise. */
+  g_autofree gchar *rogue = mint_guestbook_wrap(
+    &fixture, ADMIN_SK, CONCORD_KIND_KICK, "", 1686840300, "0",
+    fixture.author_pubkey);
+  g_assert_false(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, rogue));
+  g_assert_true(is_member(service, &fixture, fixture.author_pubkey));
+
+  /* KICK writes to the Guestbook, so it is deliberately *not* one of the six
+   * staff bits — but it still takes rank, granted on the Control Plane. */
+  g_autofree gchar *role_content = g_strdup_printf(
+    "{\"role_id\":\"%s\",\"name\":\"Moderator\",\"position\":5,"
+    "\"permissions\":\"%" G_GUINT64_FORMAT "\"}",
+    ROLE_ID, CONCORD_PERM_KICK);
+  EditionOptions role =
+    owner_edition(CONCORD_VSK_ROLE, ROLE_ID, 1, role_content);
+  g_assert_true(ingest_edition(service, &fixture, &role, NULL));
+
+  g_autofree gchar *grant_eid = grant_coordinate(&fixture, admin);
+  g_autofree gchar *grant_content = g_strdup_printf(
+    "{\"member\":\"%s\",\"role_ids\":[\"%s\"]}", admin, ROLE_ID);
+  EditionOptions grant =
+    owner_edition(CONCORD_VSK_GRANT, grant_eid, 1, grant_content);
+  g_assert_true(ingest_edition(service, &fixture, &grant, NULL));
+
+  g_autofree gchar *authorized = mint_guestbook_wrap(
+    &fixture, ADMIN_SK, CONCORD_KIND_KICK, "", 1686840400, "0",
+    fixture.author_pubkey);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, authorized));
+  g_assert_false(is_member(service, &fixture, fixture.author_pubkey));
+
+  fixture_clear(&fixture);
+}
+
+/* Accepting an invite publishes a self-signed Join, echoing the link's
+ * creator and label so per-link usage counters are possible (CORD-05 §1). */
+static void test_guestbook_join_announced_on_accept(void) {
+  Fixture fixture = { 0 };
+  list_test_begin(&fixture);
+
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+  g_autoptr(GnConcordCommunityService) service =
+    gn_concord_community_service_new(context);
+
+  g_autofree gchar *bundle = build_bundle(&fixture, CHANNEL_KEY, 0, 1);
+  g_autofree gchar *attributed = g_strdup_printf(
+    "%.*s,\"creator_npub\":\"%s\",\"label\":\"Conf 2026\"}",
+    (int)(strlen(bundle) - 1), bundle, fixture.owner_pubkey);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(
+    gn_concord_community_service_accept_bundle(service, attributed, &error));
+  g_assert_no_error(error);
+  pump();
+
+  nostr_concord_group_key_t key;
+  guestbook_key(&fixture, &key);
+  char address[65];
+  nostr_concord_hex_encode_32(key.pk, address);
+  nostr_concord_group_key_clear(&key);
+
+  gchar *join_wrap = NULL;
+  for (guint i = 0; i < gn_concord_test_published->len; i++) {
+    gchar *json = g_ptr_array_index(gn_concord_test_published, i);
+    g_autoptr(NostrEvent) event = nostr_event_new();
+    if (nostr_event_deserialize_compact(event, json, NULL) &&
+        g_strcmp0(nostr_event_get_pubkey(event), address) == 0)
+      join_wrap = json;
+  }
+  g_assert_nonnull(join_wrap);
+
+  /* And the client's own reader accepts what it minted: writer and reader
+   * agreeing is the whole contract. */
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, join_wrap));
+  g_assert_true(is_member(service, &fixture, fixture.author_pubkey));
+
+  /* Restoring the same membership is not a join and announces nothing. */
+  guint published = gn_concord_test_published->len;
+  g_assert_true(
+    gn_concord_community_service_accept_bundle(service, attributed, &error));
+  pump();
+  for (guint i = published; i < gn_concord_test_published->len; i++) {
+    g_autoptr(NostrEvent) event = nostr_event_new();
+    g_assert_true(nostr_event_deserialize_compact(
+      event, g_ptr_array_index(gn_concord_test_published, i), NULL));
+    g_assert_cmpstr(nostr_event_get_pubkey(event), !=, address);
+  }
+
+  gn_concord_community_service_shutdown(service);
+  list_test_end(&fixture);
+}
+
+/* A Direct Invite is a *standard* NIP-59 giftwrap — ephemeral wrap author,
+ * recipient in the `p` tag, kind-13 seal — not CORD-01's reversed stream
+ * wrap, and the seal's verified npub proves who invited them. */
+static gchar *encrypt_to(const char *sender_sk, const char *recipient_pubkey,
+                         const char *plaintext) {
+  uint8_t sk[32], pk[32];
+  g_assert_true(nostr_hex2bin(sk, sender_sk, sizeof(sk)));
+  g_assert_true(nostr_hex2bin(pk, recipient_pubkey, sizeof(pk)));
+  char *payload = NULL;
+  g_assert_cmpint(nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)plaintext,
+                                         strlen(plaintext), &payload),
+                  ==, 0);
+  gchar *result = g_strdup(payload);
+  free(payload);
+  return result;
+}
+
+static gchar *mint_direct_invite(const Fixture *fixture, const char *bundle,
+                                 const char *recipient, gboolean impersonate) {
+  g_autofree gchar *inviter = nostr_key_get_public(OWNER_SK);
+
+  g_autoptr(NostrEvent) rumor = nostr_event_new();
+  nostr_event_set_kind(rumor, CONCORD_DIRECT_INVITE);
+  nostr_event_set_pubkey(rumor,
+                         impersonate ? fixture->author_pubkey : inviter);
+  nostr_event_set_created_at(rumor, 1686840217);
+  nostr_event_set_content(rumor, bundle);
+  nostr_event_set_tags(rumor, nostr_tags_new(0));
+  g_autofree gchar *rumor_json = nostr_event_serialize_compact(rumor);
+
+  g_autofree gchar *seal_content =
+    encrypt_to(OWNER_SK, recipient, rumor_json);
+  g_autoptr(NostrEvent) seal = nostr_event_new();
+  nostr_event_set_kind(seal, 13);
+  nostr_event_set_pubkey(seal, inviter);
+  nostr_event_set_created_at(seal, 1686840217);
+  nostr_event_set_content(seal, seal_content);
+  nostr_event_set_tags(seal, nostr_tags_new(0));
+  g_assert_cmpint(nostr_event_sign(seal, OWNER_SK), ==, 0);
+  g_autofree gchar *seal_json = nostr_event_serialize_compact(seal);
+
+  g_autofree gchar *ephemeral_sk = nostr_key_generate_private();
+  g_autofree gchar *ephemeral_pk = nostr_key_get_public(ephemeral_sk);
+  g_autofree gchar *wrap_content =
+    encrypt_to(ephemeral_sk, recipient, seal_json);
+
+  g_autoptr(NostrEvent) wrap = nostr_event_new();
+  nostr_event_set_kind(wrap, CONCORD_STREAM_WRAP);
+  nostr_event_set_pubkey(wrap, ephemeral_pk);
+  nostr_event_set_created_at(wrap, 1686840217);
+  nostr_event_set_content(wrap, wrap_content);
+  /* The one identifying outer tag Concord permits, and only here: it makes
+   * invites indexable without decrypting a whole giftwrap inbox. */
+  nostr_event_set_tags(wrap, nostr_tags_new(
+    2, nostr_tag_new("p", recipient, NULL),
+    nostr_tag_new("k", "3313", NULL)));
+  g_assert_cmpint(nostr_event_sign(wrap, ephemeral_sk), ==, 0);
+  return nostr_event_serialize_compact(wrap);
+}
+
+typedef struct {
+  GMainLoop *loop;
+  gchar *bundle;
+  gchar *message;
+} OpenResult;
+
+static void on_direct_opened(GObject *source, GAsyncResult *result,
+                             gpointer user_data) {
+  OpenResult *outcome = user_data;
+  g_autoptr(GError) error = NULL;
+  outcome->bundle = gn_concord_community_service_open_direct_invite_finish(
+    GN_CONCORD_COMMUNITY_SERVICE(source), result, &error);
+  outcome->message = error ? g_strdup(error->message) : NULL;
+  g_main_loop_quit(outcome->loop);
+}
+
+static gchar *open_direct_invite(GnConcordCommunityService *service,
+                                 const char *wrap) {
+  OpenResult outcome = { .loop = g_main_loop_new(NULL, FALSE) };
+  gn_concord_community_service_open_direct_invite_async(
+    service, wrap, NULL, on_direct_opened, &outcome);
+  g_main_loop_run(outcome.loop);
+  g_main_loop_unref(outcome.loop);
+  g_free(outcome.message);
+  return outcome.bundle;
+}
+
+static void test_direct_invite_roundtrip(void) {
+  Fixture fixture = { 0 };
+  list_test_begin(&fixture);
+
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+  g_autoptr(GnConcordCommunityService) service =
+    gn_concord_community_service_new(context);
+  g_autofree gchar *bundle = build_bundle(&fixture, CHANNEL_KEY, 0, 1);
+
+  g_autofree gchar *wrap =
+    mint_direct_invite(&fixture, bundle, fixture.author_pubkey, FALSE);
+  g_autofree gchar *offered = open_direct_invite(service, wrap);
+  g_assert_nonnull(offered);
+
+  /* No coordinate, no token, nothing to fetch — and the bundle validates
+   * exactly as a fetched one does. */
+  g_autoptr(GError) error = NULL;
+  g_assert_true(
+    gn_concord_community_service_accept_bundle(service, offered, &error));
+  g_assert_no_error(error);
+  g_assert_nonnull(gn_concord_community_service_lookup_community(
+    service, fixture.community_id));
+
+  /* A rumor claiming an author other than the seal that carried it is a
+   * forgery: NIP-59's impersonation check, and renderers display rumor
+   * fields. */
+  g_autofree gchar *forged =
+    mint_direct_invite(&fixture, bundle, fixture.author_pubkey, TRUE);
+  g_autofree gchar *refused = open_direct_invite(service, forged);
+  g_assert_null(refused);
+
+  /* And a giftwrap addressed to someone else is not this npub's to open. */
+  g_autofree gchar *stranger =
+    mint_direct_invite(&fixture, bundle, fixture.owner_pubkey, FALSE);
+  g_autofree gchar *not_mine = open_direct_invite(service, stranger);
+  g_assert_null(not_mine);
+
+  gn_concord_community_service_shutdown(service);
+  list_test_end(&fixture);
+}
+
+/* ------------------------------------------------------------------ *
+ * the Community List (CORD-02 §8)
+ * ------------------------------------------------------------------ */
+
 
 /* Accepting an invite publishes the membership as a self-encrypted kind-13302
  * document, and a *second* device holding nothing but that document and the
@@ -1595,5 +2035,16 @@ int main(int argc, char **argv) {
   g_test_add_func("/concord/control/rejections", test_control_rejections);
   g_test_add_func("/concord/control/split-address",
                   test_control_split_address);
+  g_test_add_func("/concord/guestbook/coalesces", test_guestbook_coalesces);
+  g_test_add_func("/concord/guestbook/drops-forged-future",
+                  test_guestbook_drops_forged_future);
+  g_test_add_func("/concord/guestbook/observation-counts-forward",
+                  test_guestbook_observation_counts_forward);
+  g_test_add_func("/concord/guestbook/kick-needs-authority",
+                  test_guestbook_kick_needs_authority);
+  g_test_add_func("/concord/guestbook/join-announced-on-accept",
+                  test_guestbook_join_announced_on_accept);
+  g_test_add_func("/concord/invite/direct-roundtrip",
+                  test_direct_invite_roundtrip);
   return g_test_run();
 }

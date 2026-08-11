@@ -1876,16 +1876,18 @@ on_nip44_complete(GnostrSignerService *service,
   g_object_unref(task);
 }
 
-/* Both directions are the same call with the user's own key on both sides of
- * the ECDH, so they share this entry point. */
+/* Every direction is the same call with a different peer, so they share this
+ * entry point. @peer_pubkey_hex NULL means the user themselves. */
 static void
-plugin_context_nip44_self(GnostrPluginContext *context,
-                          const char          *text,
-                          gboolean             encrypt,
-                          GCancellable        *cancellable,
-                          GAsyncReadyCallback  callback,
-                          gpointer             user_data)
+plugin_context_nip44(GnostrPluginContext *context,
+                     const char          *peer_pubkey_hex,
+                     const char          *text,
+                     gboolean             encrypt,
+                     GCancellable        *cancellable,
+                     GAsyncReadyCallback  callback,
+                     gpointer             user_data)
 {
+  (void)context;
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
 
   GnostrSignerService *signer = gnostr_signer_service_get_default();
@@ -1897,10 +1899,12 @@ plugin_context_nip44_self(GnostrPluginContext *context,
     return;
   }
 
-  /* The peer is the user themselves: a self-encrypted document is NIP-44 with
-   * one's own pubkey on both sides (NIP-CAS-0008 CORD-02 §8). */
-  const char *self_pubkey = gnostr_signer_service_get_pubkey(signer);
-  if (!self_pubkey || !*self_pubkey) {
+  /* A self-encrypted document is NIP-44 with one's own pubkey on both sides
+   * of the ECDH (NIP-CAS-0008 CORD-02 §8), so it is the pairwise call with
+   * the peer left off. */
+  const char *peer = peer_pubkey_hex;
+  if (!peer || !*peer) peer = gnostr_signer_service_get_pubkey(signer);
+  if (!peer || !*peer) {
     g_task_return_new_error(task, GNOSTR_PLUGIN_ERROR,
                             GNOSTR_PLUGIN_ERROR_NOT_LOGGED_IN,
                             "Signer exposes no public key");
@@ -1909,13 +1913,11 @@ plugin_context_nip44_self(GnostrPluginContext *context,
   }
 
   if (encrypt)
-    gnostr_signer_service_nip44_encrypt_async(signer, self_pubkey, text,
-                                              cancellable, on_nip44_complete,
-                                              task);
+    gnostr_signer_service_nip44_encrypt_async(signer, peer, text, cancellable,
+                                              on_nip44_complete, task);
   else
-    gnostr_signer_service_nip44_decrypt_async(signer, self_pubkey, text,
-                                              cancellable, on_nip44_complete,
-                                              task);
+    gnostr_signer_service_nip44_decrypt_async(signer, peer, text, cancellable,
+                                              on_nip44_complete, task);
 }
 
 void
@@ -1927,8 +1929,8 @@ gnostr_plugin_context_nip44_self_encrypt_async(GnostrPluginContext *context,
 {
   g_return_if_fail(context != NULL);
   g_return_if_fail(plaintext != NULL);
-  plugin_context_nip44_self(context, plaintext, TRUE, cancellable, callback,
-                            user_data);
+  plugin_context_nip44(context, NULL, plaintext, TRUE, cancellable, callback,
+                       user_data);
 }
 
 char *
@@ -1950,14 +1952,64 @@ gnostr_plugin_context_nip44_self_decrypt_async(GnostrPluginContext *context,
 {
   g_return_if_fail(context != NULL);
   g_return_if_fail(ciphertext != NULL);
-  plugin_context_nip44_self(context, ciphertext, FALSE, cancellable, callback,
-                            user_data);
+  plugin_context_nip44(context, NULL, ciphertext, FALSE, cancellable, callback,
+                       user_data);
 }
 
 char *
 gnostr_plugin_context_nip44_self_decrypt_finish(GnostrPluginContext *context,
                                                 GAsyncResult        *result,
                                                 GError             **error)
+{
+  (void)context;
+  g_return_val_if_fail(G_IS_TASK(result), NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+void
+gnostr_plugin_context_nip44_encrypt_async(GnostrPluginContext *context,
+                                          const char          *peer_pubkey_hex,
+                                          const char          *plaintext,
+                                          GCancellable        *cancellable,
+                                          GAsyncReadyCallback  callback,
+                                          gpointer             user_data)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(peer_pubkey_hex != NULL);
+  g_return_if_fail(plaintext != NULL);
+  plugin_context_nip44(context, peer_pubkey_hex, plaintext, TRUE, cancellable,
+                       callback, user_data);
+}
+
+char *
+gnostr_plugin_context_nip44_encrypt_finish(GnostrPluginContext *context,
+                                           GAsyncResult        *result,
+                                           GError             **error)
+{
+  (void)context;
+  g_return_val_if_fail(G_IS_TASK(result), NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+void
+gnostr_plugin_context_nip44_decrypt_async(GnostrPluginContext *context,
+                                          const char          *peer_pubkey_hex,
+                                          const char          *ciphertext,
+                                          GCancellable        *cancellable,
+                                          GAsyncReadyCallback  callback,
+                                          gpointer             user_data)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(peer_pubkey_hex != NULL);
+  g_return_if_fail(ciphertext != NULL);
+  plugin_context_nip44(context, peer_pubkey_hex, ciphertext, FALSE, cancellable,
+                       callback, user_data);
+}
+
+char *
+gnostr_plugin_context_nip44_decrypt_finish(GnostrPluginContext *context,
+                                           GAsyncResult        *result,
+                                           GError             **error)
 {
   (void)context;
   g_return_val_if_fail(G_IS_TASK(result), NULL);

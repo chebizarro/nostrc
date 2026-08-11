@@ -185,24 +185,102 @@ gboolean gnostr_plugin_context_delete_data(GnostrPluginContext *context,
  * owns the key, so the offline backend does the same self-ECDH in-process
  * with the test key. Without a key there is no identity to encrypt to, which
  * is the logged-out case. */
-static gboolean test_self_convkey(uint8_t convkey[32], GError **error) {
+static gboolean test_convkey(const char *peer_pubkey, uint8_t convkey[32],
+                             GError **error) {
   if (!gn_concord_test_signer_sk) {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
                 "Offline test backend holds no key");
     return FALSE;
   }
-  char *pubkey = nostr_key_get_public(gn_concord_test_signer_sk);
+  char *own = peer_pubkey ? NULL
+                          : nostr_key_get_public(gn_concord_test_signer_sk);
+  const char *peer = peer_pubkey ? peer_pubkey : own;
   uint8_t sk[32], pk[32];
   gboolean ok =
-    pubkey && nostr_hex2bin(sk, gn_concord_test_signer_sk, sizeof(sk)) &&
-    nostr_hex2bin(pk, pubkey, sizeof(pk)) &&
+    peer && nostr_hex2bin(sk, gn_concord_test_signer_sk, sizeof(sk)) &&
+    nostr_hex2bin(pk, peer, sizeof(pk)) &&
     nostr_nip44_convkey(sk, pk, convkey) == 0;
-  free(pubkey);
+  free(own);
   memset(sk, 0, sizeof(sk));
   if (!ok)
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                "Offline test backend could not derive the self key");
+                "Offline test backend could not derive the conversation key");
   return ok;
+}
+
+static void test_nip44_async(const char *peer_pubkey, const char *text,
+                             gboolean encrypt, GCancellable *cancellable,
+                             GAsyncReadyCallback callback,
+                             gpointer user_data) {
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  uint8_t convkey[32];
+  GError *error = NULL;
+  if (!test_convkey(peer_pubkey, convkey, &error)) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  if (encrypt) {
+    char *payload = NULL;
+    int rc = nostr_nip44_encrypt_v2_with_convkey(
+      convkey, (const uint8_t *)text, strlen(text), &payload);
+    memset(convkey, 0, sizeof(convkey));
+    if (rc != 0 || !payload) {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                              "Offline test backend failed to encrypt");
+      g_object_unref(task);
+      return;
+    }
+    g_task_return_pointer(task, payload, free);
+  } else {
+    uint8_t *plaintext = NULL;
+    size_t len = 0;
+    int rc =
+      nostr_nip44_decrypt_v2_with_convkey(convkey, text, &plaintext, &len);
+    memset(convkey, 0, sizeof(convkey));
+    if (rc != 0 || !plaintext) {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                              "Offline test backend failed to decrypt");
+      g_object_unref(task);
+      return;
+    }
+    char *result = g_strndup((const char *)plaintext, len);
+    free(plaintext);
+    g_task_return_pointer(task, result, g_free);
+  }
+  g_object_unref(task);
+}
+
+void gnostr_plugin_context_nip44_encrypt_async(
+    GnostrPluginContext *context, const char *peer_pubkey_hex,
+    const char *plaintext, GCancellable *cancellable,
+    GAsyncReadyCallback callback, gpointer user_data) {
+  (void)context;
+  test_nip44_async(peer_pubkey_hex, plaintext, TRUE, cancellable, callback,
+                   user_data);
+}
+
+char *gnostr_plugin_context_nip44_encrypt_finish(GnostrPluginContext *context,
+                                                 GAsyncResult *result,
+                                                 GError **error) {
+  (void)context;
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+void gnostr_plugin_context_nip44_decrypt_async(
+    GnostrPluginContext *context, const char *peer_pubkey_hex,
+    const char *ciphertext, GCancellable *cancellable,
+    GAsyncReadyCallback callback, gpointer user_data) {
+  (void)context;
+  test_nip44_async(peer_pubkey_hex, ciphertext, FALSE, cancellable, callback,
+                   user_data);
+}
+
+char *gnostr_plugin_context_nip44_decrypt_finish(GnostrPluginContext *context,
+                                                 GAsyncResult *result,
+                                                 GError **error) {
+  (void)context;
+  return g_task_propagate_pointer(G_TASK(result), error);
 }
 
 void gnostr_plugin_context_nip44_self_encrypt_async(
@@ -210,26 +288,7 @@ void gnostr_plugin_context_nip44_self_encrypt_async(
     GCancellable *cancellable, GAsyncReadyCallback callback,
     gpointer user_data) {
   (void)context;
-  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
-  uint8_t convkey[32];
-  GError *error = NULL;
-  if (!test_self_convkey(convkey, &error)) {
-    g_task_return_error(task, error);
-    g_object_unref(task);
-    return;
-  }
-  char *payload = NULL;
-  int rc = nostr_nip44_encrypt_v2_with_convkey(
-    convkey, (const uint8_t *)plaintext, strlen(plaintext), &payload);
-  memset(convkey, 0, sizeof(convkey));
-  if (rc != 0 || !payload) {
-    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                            "Offline test backend failed to encrypt");
-    g_object_unref(task);
-    return;
-  }
-  g_task_return_pointer(task, payload, free);
-  g_object_unref(task);
+  test_nip44_async(NULL, plaintext, TRUE, cancellable, callback, user_data);
 }
 
 char *gnostr_plugin_context_nip44_self_encrypt_finish(
@@ -243,29 +302,7 @@ void gnostr_plugin_context_nip44_self_decrypt_async(
     GCancellable *cancellable, GAsyncReadyCallback callback,
     gpointer user_data) {
   (void)context;
-  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
-  uint8_t convkey[32];
-  GError *error = NULL;
-  if (!test_self_convkey(convkey, &error)) {
-    g_task_return_error(task, error);
-    g_object_unref(task);
-    return;
-  }
-  uint8_t *plaintext = NULL;
-  size_t len = 0;
-  int rc = nostr_nip44_decrypt_v2_with_convkey(convkey, ciphertext, &plaintext,
-                                               &len);
-  memset(convkey, 0, sizeof(convkey));
-  if (rc != 0 || !plaintext) {
-    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-                            "Offline test backend failed to decrypt");
-    g_object_unref(task);
-    return;
-  }
-  char *text = g_strndup((const char *)plaintext, len);
-  free(plaintext);
-  g_task_return_pointer(task, text, g_free);
-  g_object_unref(task);
+  test_nip44_async(NULL, ciphertext, FALSE, cancellable, callback, user_data);
 }
 
 char *gnostr_plugin_context_nip44_self_decrypt_finish(
