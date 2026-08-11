@@ -3526,6 +3526,181 @@ static void test_refounding_pays_the_debt(void) {
   fixture_clear(&fixture);
 }
 
+/* A Refounding rotates the Private Channels too, and addresses them under the
+ * root it is about to retire.
+ *
+ * Rolling the base severs a banned member from every plane keyed by it, but a
+ * Private Channel is independently keyed (CORD-03): its key survives the roll,
+ * so without this the removed member reads that Channel forever. The address
+ * is the load-bearing part. Two Refoundings racing the same epoch mint two
+ * different roots, the base converges on one and the loser drops its own, so a
+ * Channel rekey sealed under a *new* root would be unreadable to everyone on
+ * the other branch — while one sealed under the prior root, which both
+ * branches held, opens on either (CORD-06 §3).
+ *
+ * So: two Refoundings, two branches, and one Channel rotation that both sides
+ * open — proven where it counts, in a message neither could read without it. */
+static void test_refounding_rotates_private_channels(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  gn_concord_test_reset();
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture.owner_pubkey;
+  g_autoptr(GnConcordCommunityService) rotator =
+    joined_service(&fixture, context);
+  /* The Refounding that loses the base race: same epoch, same prior root, a
+   * different new one. */
+  g_autoptr(GnConcordCommunityService) rival =
+    joined_service(&fixture, context);
+  g_autoptr(GnConcordCommunityService) winners_branch =
+    joined_service(&fixture, context);
+  g_autoptr(GnConcordCommunityService) losers_branch =
+    joined_service(&fixture, context);
+  /* A device that receives neither rotation: the removed member's view. */
+  g_autoptr(GnConcordCommunityService) stale =
+    joined_service(&fixture, context);
+
+  g_autofree gchar *join = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "join", 1686840217, "100",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    rotator, fixture.community_id, join));
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    rival, fixture.community_id, join));
+
+  /* The one address a Channel rotation may land at: the *prior* root, this
+   * Channel's id, and the epoch it is climbing to. Every current keyholder
+   * computes it, on either branch of the base race, and nobody else can. */
+  uint8_t root[32], id[32];
+  g_assert_true(nostr_concord_hex_decode_32(COMMUNITY_ROOT, root));
+  g_assert_true(nostr_concord_hex_decode_32(CHANNEL_ID, id));
+  nostr_concord_group_key_t rekey;
+  g_assert_cmpint(
+    nostr_concord_channel_rekey_key(root, id, TEST_EPOCH + 1, &rekey), ==,
+    NOSTR_CONCORD_OK);
+  char channel_address[65];
+  nostr_concord_hex_encode_32(rekey.pk, channel_address);
+  nostr_concord_group_key_clear(&rekey);
+
+  guint before = gn_concord_test_published ? gn_concord_test_published->len : 0;
+  RefoundResult refounded = { 0 };
+  gn_concord_community_service_refound_async(rotator, fixture.community_id,
+                                             NULL, on_refounded, &refounded);
+  pump();
+  g_assert_true(refounded.done);
+  g_assert_no_error(refounded.error);
+  g_assert_true(refounded.ok);
+  guint after_winner = gn_concord_test_published->len;
+
+  /* The Refounding published a rotation for the held Private Channel, at the
+   * prior root's address — not at one derived from the root it just minted,
+   * which no other branch could compute. */
+  g_autofree gchar *channel_rotation = NULL;
+  for (guint i = before; i < after_winner; i++) {
+    const char *json = g_ptr_array_index(gn_concord_test_published, i);
+    g_autoptr(NostrEvent) event = nostr_event_new();
+    if (!nostr_event_deserialize_compact(event, json, NULL)) continue;
+    if (g_strcmp0(nostr_event_get_pubkey(event), channel_address) != 0)
+      continue;
+    g_free(channel_rotation);
+    channel_rotation = g_strdup(json);
+  }
+  g_assert_nonnull(channel_rotation);
+
+  /* And the Refounder itself moved: the Channel climbed one epoch onto a key
+   * the banned member never receives. */
+  g_autoptr(GnConcordCommunityItem) rotated =
+    gn_concord_community_service_lookup_community(rotator,
+                                                  fixture.community_id);
+  g_autoptr(GnConcordChannelItem) rotators_channel =
+    gn_concord_community_item_find_channel(rotated, CHANNEL_ID);
+  g_assert_cmpuint(gn_concord_channel_item_get_epoch(rotators_channel), ==,
+                   TEST_EPOCH + 1);
+  g_assert_cmpstr(gn_concord_channel_item_get_key(rotators_channel), !=,
+                  CHANNEL_KEY);
+
+  /* The racing Refounding, minted from the same prior root at the same
+   * epoch. Its blobs carry a different new root: this is the fork. */
+  RefoundResult raced = { 0 };
+  gn_concord_community_service_refound_async(rival, fixture.community_id, NULL,
+                                             on_refounded, &raced);
+  pump();
+  g_assert_true(raced.ok);
+
+  g_autoptr(GPtrArray) base_wraps = published_rekey_wraps(&fixture);
+  g_assert_cmpuint(base_wraps->len, ==, 2);
+
+  /* Both members open the Channel rotation off the shared prior root, then
+   * land on opposite branches of the base race. */
+  gn_concord_test_signer_sk = AUTHOR_SK;
+  gn_concord_test_user_pubkey = fixture.author_pubkey;
+  g_assert_true(gn_concord_community_service_ingest_channel_rekey_wrap(
+    winners_branch, fixture.community_id, CHANNEL_ID, channel_rotation));
+  pump();
+  g_assert_true(gn_concord_community_service_ingest_channel_rekey_wrap(
+    losers_branch, fixture.community_id, CHANNEL_ID, channel_rotation));
+  pump();
+  g_assert_true(gn_concord_community_service_ingest_rekey_wrap(
+    winners_branch, fixture.community_id, g_ptr_array_index(base_wraps, 0)));
+  pump();
+  g_assert_true(gn_concord_community_service_ingest_rekey_wrap(
+    losers_branch, fixture.community_id, g_ptr_array_index(base_wraps, 1)));
+  pump();
+
+  /* The branches really did diverge: the public Channel's key comes from the
+   * community_root, so a message published on one branch is unreadable on the
+   * other. */
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture.owner_pubkey;
+  PublishResult on_root = { .loop = g_main_loop_new(NULL, FALSE) };
+  gn_concord_community_service_publish_message_async(
+    rotator, fixture.community_id, SECOND_CHANNEL, "on the winning root", NULL,
+    on_publish_finished, &on_root);
+  g_main_loop_run(on_root.loop);
+  g_assert_true(on_root.ok);
+  g_free(on_root.message);
+  g_main_loop_unref(on_root.loop);
+  const char *public_chat = g_ptr_array_index(gn_concord_test_published,
+                                              gn_concord_test_published->len - 1);
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    winners_branch, fixture.community_id, SECOND_CHANNEL, public_chat));
+  g_assert_false(gn_concord_community_service_ingest_wrap(
+    losers_branch, fixture.community_id, SECOND_CHANNEL, public_chat));
+
+  /* And the Private Channel opens on both, because its rotation was sealed
+   * under the root the two branches shared. The base-fork loser lost its
+   * root, not its Channels. */
+  PublishResult in_channel = { .loop = g_main_loop_new(NULL, FALSE) };
+  gn_concord_community_service_publish_message_async(
+    rotator, fixture.community_id, CHANNEL_ID, "after the refounding", NULL,
+    on_publish_finished, &in_channel);
+  g_main_loop_run(in_channel.loop);
+  g_assert_true(in_channel.ok);
+  g_free(in_channel.message);
+  g_main_loop_unref(in_channel.loop);
+  const char *private_chat = g_ptr_array_index(
+    gn_concord_test_published, gn_concord_test_published->len - 1);
+
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    winners_branch, fixture.community_id, CHANNEL_ID, private_chat));
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    losers_branch, fixture.community_id, CHANNEL_ID, private_chat));
+  /* A device still holding the prior Channel key cannot even find the
+   * address — which is the severing the Refounding was for. */
+  g_assert_false(gn_concord_community_service_ingest_wrap(
+    stale, fixture.community_id, CHANNEL_ID, private_chat));
+
+  gn_concord_community_service_shutdown(rotator);
+  gn_concord_community_service_shutdown(rival);
+  gn_concord_community_service_shutdown(winners_branch);
+  gn_concord_community_service_shutdown(losers_branch);
+  gn_concord_community_service_shutdown(stale);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
 /* A Private Channel rotates on its own. It is independently keyed and
  * cryptographically unrelated to the community_root (CORD-03), so severing
  * someone from one Channel costs exactly that Channel — no Refounding, no
@@ -3678,6 +3853,8 @@ int main(int argc, char **argv) {
   g_test_add_func("/concord/refound/roundtrip", test_refounding_roundtrip);
   g_test_add_func("/concord/refound/re-anchors-control",
                   test_refounding_re_anchors_control);
+  g_test_add_func("/concord/refound/rotates-private-channels",
+                  test_refounding_rotates_private_channels);
   g_test_add_func("/concord/refound/seeds-guestbook",
                   test_refounding_seeds_guestbook);
   g_test_add_func("/concord/refound/aborts-on-unsettled-control",
