@@ -154,6 +154,18 @@ gboolean gn_concord_community_service_ingest_guestbook_wrap(
     GnConcordCommunityService *self, const char *community_id,
     const char *wrap_json);
 
+/* Names the npub whose Refounding minted this Community's current epoch — the
+ * Rotator whose seal carried the base rekey (CORD-06 §1) — which is the only
+ * npub whose kind-3312 Guestbook snapshots this client honors (CORD-02 §5).
+ *
+ * Until the Refounding path lands (nostrc-vhtt) nothing in the service can
+ * learn a Rotator, so no snapshot is folded: a member entering a new epoch
+ * and finding their own state absent republishes a Join, which makes an
+ * unfolded snapshot a blip rather than a disappearance. */
+void gn_concord_community_service_set_refounder(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *pubkey_hex);
+
 /* (element-type utf8) (transfer container): the Complete Memberlist — the
  * coalesced Guestbook, merged with observed authors, minus the Banlist
  * (CORD-02 §5). The strings belong to the service. */

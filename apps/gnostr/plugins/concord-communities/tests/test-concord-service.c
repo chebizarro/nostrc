@@ -1487,23 +1487,13 @@ static void guestbook_key(const Fixture *fixture,
  * member-writable by design, so minting one takes nothing but the
  * community_root — which is exactly why the fold trusts the seal's npub for
  * authorship and nothing else. */
-static gchar *mint_guestbook_wrap(const Fixture *fixture, const char *actor_sk,
-                                  int kind, const char *content,
-                                  gint64 created_at, const char *ms_tag,
-                                  const char *target) {
+static gchar *seal_and_wrap_guestbook_rumor(const Fixture *fixture,
+                                            const char *actor_sk,
+                                            NostrEvent *rumor,
+                                            gint64 created_at) {
   nostr_concord_group_key_t key;
   guestbook_key(fixture, &key);
   g_autofree gchar *actor = nostr_key_get_public(actor_sk);
-
-  g_autoptr(NostrEvent) rumor = nostr_event_new();
-  nostr_event_set_kind(rumor, kind);
-  nostr_event_set_pubkey(rumor, actor);
-  nostr_event_set_created_at(rumor, created_at);
-  nostr_event_set_content(rumor, content);
-  NostrTags *tags = nostr_tags_new(1, nostr_tag_new("ms", ms_tag, NULL));
-  if (target)
-    tags = nostr_tags_append_unique(tags, nostr_tag_new("p", target, NULL));
-  nostr_event_set_tags(rumor, tags);
   g_autofree gchar *rumor_json = nostr_event_serialize_compact(rumor);
 
   char *seal_content = NULL;
@@ -1542,6 +1532,43 @@ static gchar *mint_guestbook_wrap(const Fixture *fixture, const char *actor_sk,
   g_assert_cmpint(nostr_event_sign(wrap, stream_sk), ==, 0);
   nostr_concord_group_key_clear(&key);
   return nostr_event_serialize_compact(wrap);
+}
+
+static gchar *mint_guestbook_wrap(const Fixture *fixture, const char *actor_sk,
+                                  int kind, const char *content,
+                                  gint64 created_at, const char *ms_tag,
+                                  const char *target) {
+  g_autofree gchar *actor = nostr_key_get_public(actor_sk);
+  g_autoptr(NostrEvent) rumor = nostr_event_new();
+  nostr_event_set_kind(rumor, kind);
+  nostr_event_set_pubkey(rumor, actor);
+  nostr_event_set_created_at(rumor, created_at);
+  nostr_event_set_content(rumor, content);
+  NostrTags *tags = nostr_tags_new(1, nostr_tag_new("ms", ms_tag, NULL));
+  if (target)
+    tags = nostr_tags_append_unique(tags, nostr_tag_new("p", target, NULL));
+  nostr_event_set_tags(rumor, tags);
+  return seal_and_wrap_guestbook_rumor(fixture, actor_sk, rumor, created_at);
+}
+
+/* One snapshot chunk (CORD-02 §5): present members only, all chunks of a set
+ * sharing one snapshot id and one created_at. */
+static gchar *mint_snapshot_wrap(const Fixture *fixture, const char *actor_sk,
+                                 const char *content, gint64 created_at,
+                                 const char *ms_tag, const char *snapshot_id,
+                                 const char *index, const char *count) {
+  g_autofree gchar *actor = nostr_key_get_public(actor_sk);
+  g_autoptr(NostrEvent) rumor = nostr_event_new();
+  nostr_event_set_kind(rumor, CONCORD_KIND_SNAPSHOT);
+  nostr_event_set_pubkey(rumor, actor);
+  nostr_event_set_created_at(rumor, created_at);
+  nostr_event_set_content(rumor, content);
+  NostrTags *tags = nostr_tags_new(1, nostr_tag_new("ms", ms_tag, NULL));
+  tags = nostr_tags_append_unique(
+    tags, index ? nostr_tag_new("snap", snapshot_id, index, count, NULL)
+                : nostr_tag_new("snap", snapshot_id, NULL));
+  nostr_event_set_tags(rumor, tags);
+  return seal_and_wrap_guestbook_rumor(fixture, actor_sk, rumor, created_at);
 }
 
 static gboolean is_member(GnConcordCommunityService *service,
@@ -1624,6 +1651,106 @@ static void test_guestbook_drops_forged_future(void) {
   g_assert_false(gn_concord_community_service_ingest_guestbook_wrap(
     service, fixture.community_id, malformed));
   g_assert_false(is_member(service, &fixture, fixture.author_pubkey));
+
+  fixture_clear(&fixture);
+}
+
+/* A snapshot is the refounder's *secondhand* attestation: it seeds an npub's
+ * state at its own timestamp, anything newer supersedes it, and it is honored
+ * only from the npub whose Refounding minted the epoch (CORD-02 §5). */
+static void test_guestbook_snapshot_seeds(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+  g_autofree gchar *admin = nostr_key_get_public(ADMIN_SK);
+  g_autofree gchar *listed = g_strdup_printf(
+    "[\"%s\",\"%s\"]", fixture.author_pubkey, admin);
+
+  /* With no Rotator known, an epoch nobody has proven they minted honors no
+   * snapshot at all — which is where this client sits until CORD-06 lands. */
+  g_autofree gchar *unattributed = mint_snapshot_wrap(
+    &fixture, OWNER_SK, listed, 1686840000, "0", "snap-1", "1", "1");
+  g_assert_false(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, unattributed));
+  g_assert_false(is_member(service, &fixture, admin));
+
+  gn_concord_community_service_set_refounder(service, fixture.community_id,
+                                             fixture.owner_pubkey);
+
+  /* From anyone but that npub it stays secondhand hearsay. */
+  g_autofree gchar *impostor = mint_snapshot_wrap(
+    &fixture, ADMIN_SK, listed, 1686840000, "0", "snap-2", "1", "1");
+  g_assert_false(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, impostor));
+  g_assert_false(is_member(service, &fixture, admin));
+
+  /* From the refounder it seeds every npub it lists, none of whom published
+   * anything in this epoch. */
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, unattributed));
+  g_assert_true(is_member(service, &fixture, fixture.author_pubkey));
+  g_assert_true(is_member(service, &fixture, admin));
+
+  /* A member's own word, newer, supersedes the attestation about them. */
+  g_autofree gchar *leave = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "leave", 1686840100, "0",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, leave));
+  g_assert_false(is_member(service, &fixture, fixture.author_pubkey));
+
+  /* And a snapshot newer than that Leave seeds them present again: the
+   * refounder is attesting to the state at their own, later timestamp. */
+  g_autofree gchar *later = mint_snapshot_wrap(
+    &fixture, OWNER_SK, listed, 1686840200, "0", "snap-3", "1", "1");
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, later));
+  g_assert_true(is_member(service, &fixture, fixture.author_pubkey));
+
+  fixture_clear(&fixture);
+}
+
+/* Chunks share one snapshot id and one timestamp but are independently
+ * useful: a partially received snapshot seeds whoever arrived, and absence
+ * from one means "no seed", never a negative state. */
+static void test_guestbook_snapshot_chunks_stand_alone(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+  g_autofree gchar *admin = nostr_key_get_public(ADMIN_SK);
+  gn_concord_community_service_set_refounder(service, fixture.community_id,
+                                             fixture.owner_pubkey);
+
+  /* Chunk 1 of 2 arrives; chunk 2 never does. */
+  g_autofree gchar *first = g_strdup_printf("[\"%s\"]", admin);
+  g_autofree gchar *chunk = mint_snapshot_wrap(
+    &fixture, OWNER_SK, first, 1686840000, "0", "snap-1", "1", "2");
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, chunk));
+  g_assert_true(is_member(service, &fixture, admin));
+  /* Absent from the chunk that arrived is not a Leave. */
+  g_assert_false(is_member(service, &fixture, fixture.author_pubkey));
+
+  /* A member's own Join stands regardless of what any chunk says. */
+  g_autofree gchar *join = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "join", 1686839000, "0",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, join));
+  g_assert_true(is_member(service, &fixture, fixture.author_pubkey));
+
+  /* A chunk claiming a place outside its own set is malformed, and a
+   * snapshot with no id cannot be correlated at all. */
+  g_autofree gchar *misnumbered = mint_snapshot_wrap(
+    &fixture, OWNER_SK, first, 1686840300, "0", "snap-4", "3", "2");
+  g_assert_false(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, misnumbered));
+  g_autofree gchar *unidentified = mint_snapshot_wrap(
+    &fixture, OWNER_SK, first, 1686840400, "0", "", NULL, NULL);
+  g_assert_false(gn_concord_community_service_ingest_guestbook_wrap(
+    service, fixture.community_id, unidentified));
 
   fixture_clear(&fixture);
 }
@@ -2540,6 +2667,10 @@ int main(int argc, char **argv) {
   g_test_add_func("/concord/guestbook/coalesces", test_guestbook_coalesces);
   g_test_add_func("/concord/guestbook/drops-forged-future",
                   test_guestbook_drops_forged_future);
+  g_test_add_func("/concord/guestbook/snapshot-seeds",
+                  test_guestbook_snapshot_seeds);
+  g_test_add_func("/concord/guestbook/snapshot-chunks-stand-alone",
+                  test_guestbook_snapshot_chunks_stand_alone);
   g_test_add_func("/concord/guestbook/observation-counts-forward",
                   test_guestbook_observation_counts_forward);
   g_test_add_func("/concord/guestbook/kick-needs-authority",

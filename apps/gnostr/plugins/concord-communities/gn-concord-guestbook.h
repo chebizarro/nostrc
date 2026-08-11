@@ -40,6 +40,19 @@ gboolean gn_concord_guestbook_ingest_wrap(GnConcordGuestbook *self,
                                           const char *address_hex,
                                           const char *wrap_json);
 
+/* CORD-02 §5: the npub whose Refounding minted this epoch — the Rotator whose
+ * seal carried the base rekey (CORD-06 §1). A snapshot (kind 3312) is that
+ * npub's *secondhand* attestation of who was present, so it is honored from
+ * them and from nobody else; with no refounder set, the fold honors none,
+ * which is the correct reading of an epoch nobody has proven they minted.
+ *
+ * The fold buffers nothing it refused, so a snapshot dropped for want of a
+ * Rotator is folded only if the same bytes are ingested again: a client
+ * learns the Rotator from the rekey blob before it fetches the new epoch's
+ * Guestbook. */
+void gn_concord_guestbook_set_refounder(GnConcordGuestbook *self,
+                                        const char *pubkey_hex);
+
 /* Records that @pubkey_hex was seen authoring at @order_key (CORD-02 §5's
  * ms basis). An author seen publishing is *observably present*, auto-included
  * even if their Join never arrived — but observation only counts forward, so

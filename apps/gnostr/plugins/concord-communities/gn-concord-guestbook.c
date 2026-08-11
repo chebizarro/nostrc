@@ -16,6 +16,7 @@
 
 #include "gn-concord-guestbook.h"
 
+#include <json-glib/json-glib.h>
 #include <nip_concord.h>
 #include <nostr-event.h>
 #include <nostr-tag.h>
@@ -33,6 +34,9 @@ typedef struct {
   gint64 order_key;   /* created_at * 1000 + ms */
   gchar *rumor_id;    /* the tie-break */
   gint64 observed_at; /* the newest activity seen from this npub */
+  /* Set when this state came from a refounder's snapshot rather than the
+   * member's own word (CORD-02 §5). */
+  gboolean secondhand;
 } MemberEntry;
 
 struct _GnConcordGuestbook {
@@ -40,7 +44,8 @@ struct _GnConcordGuestbook {
   GHashTable *seen;    /* rumor id -> seen */
   GnConcordKickAuthorityFunc authority;
   gpointer authority_data;
-  gint64 clock_ms; /* 0 = the real clock */
+  gchar *refounder; /* NULL until this epoch's Rotator is known */
+  gint64 clock_ms;  /* 0 = the real clock */
 };
 
 static void member_entry_free(gpointer data) {
@@ -64,16 +69,29 @@ static gint64 guestbook_now_ms(GnConcordGuestbook *self) {
   return self->clock_ms ? self->clock_ms : g_get_real_time() / 1000;
 }
 
-static const char *tag_value(const NostrEvent *event, const char *key) {
+static NostrTag *find_tag(const NostrEvent *event, const char *key) {
   NostrTags *tags = nostr_event_get_tags(event);
   if (!tags) return NULL;
   for (gsize i = 0; i < nostr_tags_size(tags); i++) {
     NostrTag *tag = nostr_tags_get(tags, i);
     if (tag && nostr_tag_size(tag) >= 2 &&
         g_strcmp0(nostr_tag_get(tag, 0), key) == 0)
-      return nostr_tag_get(tag, 1);
+      return tag;
   }
   return NULL;
+}
+
+static const char *tag_value(const NostrEvent *event, const char *key) {
+  NostrTag *tag = find_tag(event, key);
+  return tag ? nostr_tag_get(tag, 1) : NULL;
+}
+
+/* Tag values are canonical decimal: no sign, no leading zeros (CORD-01
+ * "Encoding"). */
+static gboolean parse_decimal(const char *value, guint64 *out) {
+  if (!value || !*value) return FALSE;
+  if (value[0] == '0' && value[1] != '\0') return FALSE;
+  return g_ascii_string_to_unsigned(value, 10, 0, G_MAXUINT64, out, NULL);
 }
 
 static NostrEvent *parse_verified_event(const char *event_json) {
@@ -88,22 +106,80 @@ static NostrEvent *parse_verified_event(const char *event_json) {
 }
 
 /* One coalesce step, shared by every rumor kind: the newest entry for an npub
- * wins, and a tie breaks by the lower rumor id. */
+ * wins, and a tie breaks by the lower rumor id.
+ *
+ * @secondhand marks a refounder's snapshot. It seeds at its own timestamp and
+ * anything newer supersedes it — which the ordering already does — and at an
+ * exact tie the member's own word wins, because a snapshot is an attestation
+ * about them rather than by them (CORD-02 §5). */
 static gboolean coalesce(GnConcordGuestbook *self, const char *pubkey,
                          GnConcordMemberState state, gint64 order_key,
-                         const char *rumor_id) {
+                         const char *rumor_id, gboolean secondhand) {
   MemberEntry *entry = member_entry(self, pubkey);
   if (entry->rumor_id) {
     if (order_key < entry->order_key) return FALSE;
-    if (order_key == entry->order_key &&
-        g_strcmp0(rumor_id, entry->rumor_id) >= 0)
-      return FALSE;
+    if (order_key == entry->order_key) {
+      if (secondhand && !entry->secondhand) return FALSE;
+      if (secondhand == entry->secondhand &&
+          g_strcmp0(rumor_id, entry->rumor_id) >= 0)
+        return FALSE;
+    }
   }
   gboolean changed = entry->state != state;
   entry->state = state;
   entry->order_key = order_key;
+  entry->secondhand = secondhand;
   g_free(entry->rumor_id);
   entry->rumor_id = g_strdup(rumor_id);
+  return changed;
+}
+
+/* One snapshot chunk: present members only, at the snapshot's timestamp.
+ *
+ * Chunks share one id and one created_at but are *independently useful* — a
+ * partially received snapshot seeds whoever arrived and the rest heal by
+ * observation — so a chunk folds on its own and never waits for its siblings.
+ * Absence from a snapshot means "no seed", never a negative state, so nothing
+ * here ever marks anyone departed. */
+static gboolean fold_snapshot_chunk(GnConcordGuestbook *self,
+                                    const NostrEvent *rumor,
+                                    gint64 order_key, const char *rumor_id) {
+  NostrTag *snap = find_tag(rumor, "snap");
+  if (!snap) return FALSE;
+  const char *snapshot_id = nostr_tag_get(snap, 1);
+  if (!snapshot_id || !*snapshot_id) return FALSE;
+  /* The index and count correlate the set; a chunk claiming a place outside
+   * its own set is malformed. Both 0- and 1-based writers are accepted:
+   * nothing here depends on the numbering, only on its coherence. */
+  if (nostr_tag_size(snap) >= 4) {
+    guint64 index = 0, count = 0;
+    if (!parse_decimal(nostr_tag_get(snap, 2), &index) ||
+        !parse_decimal(nostr_tag_get(snap, 3), &count) || count == 0 ||
+        index > count)
+      return FALSE;
+  }
+
+  const char *content = nostr_event_get_content(rumor);
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (!content || !json_parser_load_from_data(parser, content, -1, NULL))
+    return FALSE;
+  JsonNode *root = json_parser_get_root(parser);
+  if (!root || !JSON_NODE_HOLDS_ARRAY(root)) return FALSE;
+
+  /* A snapshot is another member's bytes that every client must hold: bound
+   * the chunk at the size the protocol chunks to (CORD-02 §5). */
+  JsonArray *members = json_node_get_array(root);
+  guint n = json_array_get_length(members);
+  if (n > CONCORD_SNAPSHOT_CHUNK_SIZE) n = CONCORD_SNAPSHOT_CHUNK_SIZE;
+
+  gboolean changed = FALSE;
+  for (guint i = 0; i < n; i++) {
+    const char *pubkey = json_array_get_string_element(members, i);
+    if (!nostr_concord_is_lower_hex_32(pubkey)) continue;
+    if (coalesce(self, pubkey, GN_CONCORD_MEMBER_PRESENT, order_key, rumor_id,
+                 TRUE))
+      changed = TRUE;
+  }
   return changed;
 }
 
@@ -159,11 +235,16 @@ gboolean gn_concord_guestbook_ingest_wrap(GnConcordGuestbook *self,
   if (g_strcmp0(nostr_event_get_pubkey(rumor), actor) != 0) goto done;
 
   kind = nostr_event_get_kind(rumor);
-  /* Snapshots (kind 3312) are the refounder's secondhand attestation and are
-   * honored only from the npub whose Refounding minted the epoch — which this
-   * client does not yet track, so it folds none. A member entering a new
-   * epoch and finding their own state absent simply publishes a fresh Join. */
-  if (kind != CONCORD_KIND_JOIN_LEAVE && kind != CONCORD_KIND_KICK) goto done;
+  /* A snapshot is the refounder's secondhand attestation, honored only from
+   * the npub whose Refounding minted this epoch. Until a Rotator is known the
+   * fold honors none, and a member finding their own state absent simply
+   * publishes a fresh Join — self-signed and unsuppressable, which is why an
+   * unfolded snapshot is a blip and never a disappearance. */
+  if (kind == CONCORD_KIND_SNAPSHOT) {
+    if (!self->refounder || g_strcmp0(actor, self->refounder) != 0) goto done;
+  } else if (kind != CONCORD_KIND_JOIN_LEAVE && kind != CONCORD_KIND_KICK) {
+    goto done;
+  }
 
   /* An `ms` outside 0..999 is malformed and its entry is dropped, not
    * interpreted, or the excess would smuggle arbitrary "future" past the
@@ -181,14 +262,19 @@ gboolean gn_concord_guestbook_ingest_wrap(GnConcordGuestbook *self,
   if (!rumor_id || g_hash_table_contains(self->seen, rumor_id)) goto done;
   g_hash_table_add(self->seen, g_strdup(rumor_id));
 
+  if (kind == CONCORD_KIND_SNAPSHOT) {
+    changed = fold_snapshot_chunk(self, rumor, order_key, rumor_id);
+    goto done;
+  }
+
   if (kind == CONCORD_KIND_JOIN_LEAVE) {
     content = nostr_event_get_content(rumor);
     if (g_strcmp0(content, "join") == 0)
       changed = coalesce(self, actor, GN_CONCORD_MEMBER_PRESENT, order_key,
-                         rumor_id);
+                         rumor_id, FALSE);
     else if (g_strcmp0(content, "leave") == 0)
       changed = coalesce(self, actor, GN_CONCORD_MEMBER_DEPARTED, order_key,
-                         rumor_id);
+                         rumor_id, FALSE);
     goto done;
   }
 
@@ -200,8 +286,8 @@ gboolean gn_concord_guestbook_ingest_wrap(GnConcordGuestbook *self,
   if (!self->authority ||
       !self->authority(actor, target, self->authority_data))
     goto done;
-  changed =
-    coalesce(self, target, GN_CONCORD_MEMBER_DEPARTED, order_key, rumor_id);
+  changed = coalesce(self, target, GN_CONCORD_MEMBER_DEPARTED, order_key,
+                     rumor_id, FALSE);
 
 done:
   if (seal_json) {
@@ -258,6 +344,14 @@ void gn_concord_guestbook_set_kick_authority(
   self->authority_data = user_data;
 }
 
+void gn_concord_guestbook_set_refounder(GnConcordGuestbook *self,
+                                        const char *pubkey_hex) {
+  g_return_if_fail(self != NULL);
+  g_free(self->refounder);
+  self->refounder = nostr_concord_is_lower_hex_32(pubkey_hex)
+                      ? g_strdup(pubkey_hex) : NULL;
+}
+
 void gn_concord_guestbook_set_clock(GnConcordGuestbook *self, gint64 now_ms) {
   g_return_if_fail(self != NULL);
   self->clock_ms = now_ms;
@@ -275,5 +369,6 @@ void gn_concord_guestbook_free(GnConcordGuestbook *self) {
   if (!self) return;
   g_hash_table_unref(self->members);
   g_hash_table_unref(self->seen);
+  g_free(self->refounder);
   g_free(self);
 }

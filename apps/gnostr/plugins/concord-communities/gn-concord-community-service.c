@@ -1115,6 +1115,15 @@ gboolean gn_concord_community_service_ingest_guestbook_wrap(
   return changed;
 }
 
+void gn_concord_community_service_set_refounder(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *pubkey_hex) {
+  g_return_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self));
+  CommunityState *state = find_state(self, community_id);
+  if (!state || !ensure_guestbook(state)) return;
+  gn_concord_guestbook_set_refounder(state->guestbook, pubkey_hex);
+}
+
 GPtrArray *gn_concord_community_service_get_members(
     GnConcordCommunityService *self, const char *community_id) {
   g_return_val_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self), NULL);
