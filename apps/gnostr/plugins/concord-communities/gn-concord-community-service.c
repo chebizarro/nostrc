@@ -3928,6 +3928,10 @@ typedef struct {
    * epoch's address once the root roll is confirmed published. */
   GPtrArray *heads;
   guint head;
+  /* CORD-06 §3: the prior epoch's present members, seeded into the new
+   * epoch's Guestbook as the last, best-effort step. */
+  guint snapshot;
+  guint n_snapshots;
 } RefoundMint;
 
 static void refound_mint_free(gpointer data) {
@@ -3948,6 +3952,7 @@ static void refound_mint_free(gpointer data) {
 static void refound_wrap_next(GTask *task);
 static void refound_publish_next_chunk(GTask *task);
 static void refound_publish_next_head(GTask *task);
+static void refound_publish_next_snapshot(GTask *task);
 
 /* Re-anchoring the Control Plane at the new epoch (CORD-06 §3).
  *
@@ -3991,8 +3996,7 @@ static void refound_publish_next_head(GTask *task) {
       self->shutting_down || !self->context) {
     /* The rotation itself succeeded the moment the blobs landed and this
      * device adopted; the compaction is the step that can be resumed. */
-    g_task_return_boolean(task, TRUE);
-    g_object_unref(task);
+    refound_publish_next_snapshot(task);
     return;
   }
 
@@ -4277,6 +4281,112 @@ static void refound_publish_next_chunk(GTask *task) {
   publish_sealed_rumor(self, publish, rumor, created_at,
                        g_task_get_cancellable(task),
                        on_refound_chunk_published, task);
+}
+
+/* Seeding the new epoch's Guestbook (CORD-06 §3).
+ *
+ * The Guestbook is off-consensus and its address moved with the root, so the
+ * new epoch starts empty: every member is present and none of them has said
+ * so *here* yet. The Refounder attests to the prior epoch's membership so a
+ * device arriving at the new epoch sees a Community rather than an empty room.
+ *
+ * It is an attestation, not a verdict, and the fold treats it that way — it
+ * seeds at the Refounder's timestamp, a member's own later word supersedes it,
+ * and it is honored only from the npub whose Refounding minted this epoch
+ * (CORD-02 §5). Absence from a snapshot is "no seed", never a removal: the
+ * removals already happened, in who did and did not receive a blob.
+ *
+ * Best-effort by design. A Refounding succeeds with or without it, because a
+ * member who enters the new epoch and finds their own state missing simply
+ * republishes a Join — which makes an unsent snapshot a blip, where a failed
+ * rotation would be a fork. */
+static void on_refound_snapshot_published(GObject *source,
+                                          GAsyncResult *result,
+                                          gpointer user_data) {
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnConcordCommunityService *self = g_task_get_source_object(task);
+  RefoundMint *mint = g_task_get_task_data(task);
+
+  g_autoptr(GError) error = NULL;
+  if (!g_task_propagate_boolean(G_TASK(result), &error) && error)
+    emit_error(self, error->message);
+
+  mint->snapshot++;
+  refound_publish_next_snapshot(task);
+}
+
+static void refound_publish_next_snapshot(GTask *task) {
+  GnConcordCommunityService *self = g_task_get_source_object(task);
+  RefoundMint *mint = g_task_get_task_data(task);
+  CommunityState *state = find_state(self, mint->community_id);
+
+  if (mint->snapshot == 0)
+    mint->n_snapshots =
+      (mint->recipients->len + CONCORD_SNAPSHOT_CHUNK_SIZE - 1) /
+      CONCORD_SNAPSHOT_CHUNK_SIZE;
+
+  if (!state || self->shutting_down || !self->context ||
+      mint->snapshot >= mint->n_snapshots) {
+    g_task_return_boolean(task, TRUE);
+    g_object_unref(task);
+    return;
+  }
+
+  PublishContext *publish = g_new0(PublishContext, 1);
+  publish->author = g_strdup(mint->author);
+  if (!derive_guestbook_key(state, &publish->key)) {
+    publish_context_free(publish);
+    emit_error(self,
+               "The new epoch's Guestbook key could not be derived, so it was "
+               "not seeded");
+    g_task_return_boolean(task, TRUE);
+    g_object_unref(task);
+    return;
+  }
+
+  guint first = mint->snapshot * CONCORD_SNAPSHOT_CHUNK_SIZE;
+  guint count =
+    MIN(CONCORD_SNAPSHOT_CHUNK_SIZE, mint->recipients->len - first);
+  g_autoptr(JsonBuilder) builder = json_builder_new();
+  json_builder_begin_array(builder);
+  for (guint i = 0; i < count; i++)
+    json_builder_add_string_value(builder,
+                                  g_ptr_array_index(mint->recipients,
+                                                    first + i));
+  json_builder_end_array(builder);
+  g_autoptr(JsonNode) content_node = json_builder_get_root(builder);
+  g_autofree gchar *content = node_to_json(content_node);
+  if (!content) {
+    publish_context_free(publish);
+    g_task_return_boolean(task, TRUE);
+    g_object_unref(task);
+    return;
+  }
+
+  gint64 created_at = 0;
+  int ms = split_now(&created_at);
+  g_autofree gchar *ms_text = g_strdup_printf("%d", ms);
+  g_autofree gchar *index_text = g_strdup_printf("%u", mint->snapshot);
+  g_autofree gchar *total_text = g_strdup_printf("%u", mint->n_snapshots);
+
+  g_autoptr(NostrEvent) rumor = nostr_event_new();
+  nostr_event_set_kind(rumor, CONCORD_KIND_SNAPSHOT);
+  nostr_event_set_pubkey(rumor, mint->author);
+  nostr_event_set_created_at(rumor, created_at);
+  nostr_event_set_content(rumor, content);
+  NostrTags *tags = nostr_tags_new(1, nostr_tag_new("ms", ms_text, NULL));
+  /* The continuity commitment names this rotation and nothing else, so a
+   * resumed Refounder re-publishes chunks under the same id rather than
+   * starting a second, competing set. */
+  tags = nostr_tags_append_unique(
+    tags, nostr_tag_new("snap", mint->prevcommit, index_text, total_text,
+                        NULL));
+  nostr_event_set_tags(rumor, tags);
+
+  publish_sealed_rumor(self, publish, rumor, created_at,
+                       g_task_get_cancellable(task),
+                       on_refound_snapshot_published, task);
 }
 
 void gn_concord_community_service_refound_async(

@@ -3347,6 +3347,88 @@ static void test_refounding_aborts_on_unsettled_control(void) {
   fixture_clear(&fixture);
 }
 
+/* The last step of a Refounding, and the one that decides whether the new
+ * epoch looks like a Community or an empty room. The Guestbook's address moved
+ * with the root, so nobody has said "I am here" at the new one yet; the
+ * Refounder attests to who was present, and a device that folds the
+ * attestation sees the same Complete Memberlist.
+ *
+ * It is best-effort and an attestation only — honored from the Refounder's
+ * npub alone, superseded by any member's own later word — so this asserts what
+ * a fresh device ends up believing, not that the snapshot is authority. */
+static void test_refounding_seeds_guestbook(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  gn_concord_test_reset();
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+  g_autofree gchar *admin = nostr_key_get_public(ADMIN_SK);
+
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture.owner_pubkey;
+  g_autoptr(GnConcordCommunityService) rotator =
+    joined_service(&fixture, context);
+
+  /* Two members besides the Rotator, both present in the prior epoch. */
+  g_autofree gchar *author_join = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "join", 1686840217, "100",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    rotator, fixture.community_id, author_join));
+  g_autofree gchar *admin_join = mint_guestbook_wrap(
+    &fixture, ADMIN_SK, CONCORD_KIND_JOIN_LEAVE, "join", 1686840218, "100",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    rotator, fixture.community_id, admin_join));
+
+  RefoundResult refounded = { 0 };
+  gn_concord_community_service_refound_async(rotator, fixture.community_id,
+                                             NULL, on_refounded, &refounded);
+  pump();
+  g_assert_true(refounded.ok);
+  g_autoptr(GPtrArray) wraps = published_rekey_wraps(&fixture);
+  g_assert_cmpuint(wraps->len, ==, 1);
+
+  /* A device that adopts the rotation and has folded no Guestbook of its own:
+   * at the new epoch it has heard from nobody. */
+  gn_concord_test_signer_sk = ADMIN_SK;
+  gn_concord_test_user_pubkey = admin;
+  g_autoptr(GnConcordCommunityService) arriving =
+    gn_concord_community_service_new(context);
+  g_autofree gchar *bundle = build_bundle(&fixture, CHANNEL_KEY, 0, 1);
+  g_assert_true(
+    gn_concord_community_service_accept_bundle(arriving, bundle, NULL));
+  g_assert_false(is_member(arriving, &fixture, fixture.author_pubkey));
+
+  g_assert_true(gn_concord_community_service_ingest_rekey_wrap(
+    arriving, fixture.community_id, g_ptr_array_index(wraps, 0)));
+  pump();
+
+  /* Everything the Rotator published, offered as a relay would: only the
+   * wraps at this device's new Guestbook address open. */
+  guint seeded = 0;
+  for (guint i = 0; i < gn_concord_test_published->len; i++)
+    if (gn_concord_community_service_ingest_guestbook_wrap(
+          arriving, fixture.community_id,
+          g_ptr_array_index(gn_concord_test_published, i)))
+      seeded++;
+  g_assert_cmpuint(seeded, ==, 1);
+
+  /* The prior epoch's memberlist, folded from the attestation alone. */
+  g_assert_true(is_member(arriving, &fixture, fixture.author_pubkey));
+  g_assert_true(is_member(arriving, &fixture, admin));
+  g_assert_true(is_member(arriving, &fixture, fixture.owner_pubkey));
+
+  /* That it folded at all is the other half of the claim: a snapshot is
+   * honored only from the npub whose Refounding minted the epoch, and this
+   * device learned that npub from the rotation it just adopted — nothing
+   * told it who to trust. */
+
+  gn_concord_community_service_shutdown(rotator);
+  gn_concord_community_service_shutdown(arriving);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/concord/crypto/nip44-bytes-roundtrip",
@@ -3354,6 +3436,8 @@ int main(int argc, char **argv) {
   g_test_add_func("/concord/refound/roundtrip", test_refounding_roundtrip);
   g_test_add_func("/concord/refound/re-anchors-control",
                   test_refounding_re_anchors_control);
+  g_test_add_func("/concord/refound/seeds-guestbook",
+                  test_refounding_seeds_guestbook);
   g_test_add_func("/concord/refound/aborts-on-unsettled-control",
                   test_refounding_aborts_on_unsettled_control);
   g_test_add_func("/concord/refound/requires-ban",
