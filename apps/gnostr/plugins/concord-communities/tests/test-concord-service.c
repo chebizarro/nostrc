@@ -3429,6 +3429,95 @@ static void test_refounding_seeds_guestbook(void) {
   fixture_clear(&fixture);
 }
 
+/* The debt a Refounding pays is incurred by the retire that empties the
+ * aggregate active-set — whoever published it. A staffer retiring the last
+ * link on their laptop must not leave every other staffer's device believing
+ * the Community is settled: everyone who ever opened that link still holds the
+ * community_root, and only rolling it severs them (CORD-06 §3). */
+static void test_refounding_debt_from_another_staffer(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+
+  /* Arriving to a Private Community owes nothing: an empty set that was never
+   * seen becoming empty is not a debt, which is what keeps a fresh device
+   * from re-raising one an earlier Refounding already paid. */
+  g_assert_false(gn_concord_community_service_refounding_due(
+    service, fixture.community_id));
+
+  g_autofree gchar *registry =
+    registry_coordinate(&fixture, fixture.owner_pubkey);
+  g_autofree gchar *listed = g_strdup_printf("[\"%s\"]", LINK_SIGNER_A);
+  EditionOptions mint =
+    owner_edition(CONCORD_VSK_INVITE_REGISTRY, registry, 1, listed);
+  g_autofree gchar *mint_hash = NULL;
+  g_assert_true(ingest_edition(service, &fixture, &mint, &mint_hash));
+  g_assert_true(
+    gn_concord_community_service_is_public(service, fixture.community_id));
+  g_assert_false(gn_concord_community_service_refounding_due(
+    service, fixture.community_id));
+
+  /* The owner retires it elsewhere; this device only ever sees the edition. */
+  EditionOptions retire =
+    owner_edition(CONCORD_VSK_INVITE_REGISTRY, registry, 2, "[]");
+  retire.prev = mint_hash;
+  g_assert_true(ingest_edition(service, &fixture, &retire, NULL));
+  g_assert_false(
+    gn_concord_community_service_is_public(service, fixture.community_id));
+  g_assert_true(gn_concord_community_service_refounding_due(
+    service, fixture.community_id));
+
+  fixture_clear(&fixture);
+}
+
+/* And the debt is paid by the rotation, not by anything remembering to clear
+ * a flag: it is recorded as the epoch that would pay it, so rolling the root
+ * that far *is* the payment. */
+static void test_refounding_pays_the_debt(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  gn_concord_test_reset();
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture.owner_pubkey;
+  g_autoptr(GnConcordCommunityService) rotator =
+    joined_service(&fixture, context);
+
+  g_autofree gchar *registry =
+    registry_coordinate(&fixture, fixture.owner_pubkey);
+  g_autofree gchar *listed = g_strdup_printf("[\"%s\"]", LINK_SIGNER_A);
+  EditionOptions mint =
+    owner_edition(CONCORD_VSK_INVITE_REGISTRY, registry, 1, listed);
+  g_autofree gchar *mint_hash = NULL;
+  g_assert_true(ingest_edition(rotator, &fixture, &mint, &mint_hash));
+  EditionOptions retire =
+    owner_edition(CONCORD_VSK_INVITE_REGISTRY, registry, 2, "[]");
+  retire.prev = mint_hash;
+  g_assert_true(ingest_edition(rotator, &fixture, &retire, NULL));
+  g_assert_true(gn_concord_community_service_refounding_due(
+    rotator, fixture.community_id));
+
+  g_autofree gchar *join = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "join", 1686840217, "100",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    rotator, fixture.community_id, join));
+
+  RefoundResult refounded = { 0 };
+  gn_concord_community_service_refound_async(rotator, fixture.community_id,
+                                             NULL, on_refounded, &refounded);
+  pump();
+  g_assert_true(refounded.ok);
+  g_assert_false(gn_concord_community_service_refounding_due(
+    rotator, fixture.community_id));
+
+  gn_concord_community_service_shutdown(rotator);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/concord/crypto/nip44-bytes-roundtrip",
@@ -3440,6 +3529,10 @@ int main(int argc, char **argv) {
                   test_refounding_seeds_guestbook);
   g_test_add_func("/concord/refound/aborts-on-unsettled-control",
                   test_refounding_aborts_on_unsettled_control);
+  g_test_add_func("/concord/refound/debt-from-another-staffer",
+                  test_refounding_debt_from_another_staffer);
+  g_test_add_func("/concord/refound/pays-the-debt",
+                  test_refounding_pays_the_debt);
   g_test_add_func("/concord/refound/requires-ban",
                   test_refounding_requires_ban);
   g_test_add_func("/concord/service/accept-bundle", test_accept_bundle);

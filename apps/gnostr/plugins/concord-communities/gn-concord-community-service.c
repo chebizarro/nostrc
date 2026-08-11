@@ -54,6 +54,13 @@ typedef struct {
    * not reached it, so rolling the root is what clears it and nothing has to
    * remember to reset a flag. */
   guint64 refounding_due_epoch;
+  /* The Public/Private state this device last folded, so a retire by *any*
+   * staffer is observed as the transition it is rather than only the one this
+   * client performed. Unset until the first fold: an initial observation is
+   * not a transition, which is what keeps a fresh device from inventing a
+   * debt out of the state it arrives to (CORD-06 §3). */
+  gboolean public_known;
+  gboolean was_public;
   /* CORD-06 §2: the next base rotation's address, derived from the root held
    * now at root_epoch + 1, and the rotations arriving there that are not yet
    * complete. A member who missed a rotation also missed the address it
@@ -1021,6 +1028,28 @@ static void apply_control_fold(GnConcordCommunityService *self,
       flags |= GN_CONCORD_UPDATE_CHANNELS;
     }
   }
+
+  /* A Refounding debt is incurred by the retire that empties the aggregate
+   * active-set, whoever published it (CORD-05 §5, CORD-06 §3). Watching the
+   * fold rather than only this client's own retire is what makes every
+   * staffer's device agree: the Community turning Private is the event, and
+   * it is visible to everyone who folds the plane.
+   *
+   * It is a *transition*, never a reading of the current state. A Registry
+   * edition carries no epoch, so "the set is empty" alone cannot distinguish
+   * a fresh retire from one a Refounding paid years ago — but a device that
+   * arrives to an empty set has observed no transition, and after a
+   * Refounding the history that contained one is no longer republished at the
+   * new epoch's address (§3's compaction). What remains is exactly the case
+   * that owes: a Community seen going Private with no rotation since. */
+  gboolean is_public = gn_concord_control_plane_is_public(state->control);
+  if (state->public_known && state->was_public && !is_public &&
+      state->refounding_due_epoch <= state->root_epoch) {
+    state->refounding_due_epoch = state->root_epoch + 1;
+    flags |= GN_CONCORD_UPDATE_MEMBERSHIP;
+  }
+  state->public_known = TRUE;
+  state->was_public = is_public;
 
   if (!flags) return;
   emit_update(self, state->community_id, flags);
