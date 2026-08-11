@@ -4064,6 +4064,11 @@ typedef struct {
    * epoch's Guestbook as the last, best-effort step. */
   guint snapshot;
   guint n_snapshots;
+  /* CORD-06 §3: the Private Channels a Refounding rotates alongside the base
+   * roll, acquired before the first publish like everything else the rotation
+   * spans. NULL on a single-Channel rekey, which rotates only its own scope. */
+  GPtrArray *channels; /* (element-type utf8) held Private Channel ids */
+  guint channel;       /* the Channel being rotated */
 } RotationMint;
 
 static void rotation_mint_free(gpointer data) {
@@ -4079,11 +4084,13 @@ static void rotation_mint_free(gpointer data) {
   g_free(mint->new_control_pk);
   g_free(mint->prevcommit);
   g_clear_pointer(&mint->heads, g_ptr_array_unref);
+  g_clear_pointer(&mint->channels, g_ptr_array_unref);
   g_free(mint);
 }
 
 static void rotation_wrap_next(GTask *task);
 static void rotation_publish_next_chunk(GTask *task);
+static void refound_rekey_next_channel(GTask *task);
 static void refound_publish_next_head(GTask *task);
 static void refound_publish_next_snapshot(GTask *task);
 
@@ -4361,12 +4368,11 @@ static void rotation_publish_next_chunk(GTask *task) {
       g_object_unref(task);
       return;
     }
-    adopt_base_rotation(self, state, mint->new_root, mint->new_control_pk,
-                        mint->new_control_root, mint->new_epoch, mint->author);
-    /* And only now the re-anchor, which CORD-06 §3 orders after confirmed
-     * publication of the root roll: a compaction at an address whose root
-     * nobody received would be a plane with no readers. */
-    refound_publish_next_head(task);
+    /* The Private Channels rotate in the gap between the last base chunk and
+     * the root swap, and the gap is the whole point: this device still holds
+     * the prior root here, so every Channel rotation is sealed and addressed
+     * under it rather than under the root just minted (CORD-06 §3). */
+    refound_rekey_next_channel(task);
     return;
   }
 
@@ -4448,6 +4454,85 @@ static void rotation_publish_next_chunk(GTask *task) {
   publish_sealed_rumor(self, publish, rumor, created_at,
                        g_task_get_cancellable(task),
                        on_rotation_chunk_published, task);
+}
+
+/* Rotating a Refounding's Private Channels (CORD-06 §3).
+ *
+ * Retiring the base root severs a removed member from every plane keyed by
+ * it, but a Private Channel is independently keyed (CORD-03): its key
+ * survives the roll untouched, so a member banned from the Community keeps
+ * reading every Private Channel they ever held until that Channel rotates
+ * too. A Refounding therefore rotates them alongside the base — the same act
+ * a Channel rekey performs alone, run once per held Channel.
+ *
+ * Each rotation is addressed under the *prior* community_root, which is
+ * simply what running here buys: `adopt_base_rotation` has not swapped the
+ * root yet, so `derive_channel_rekey_key` derives from the root every current
+ * keyholder still shares. That matters under a race — if two Refoundings
+ * collide the base converges on one winner and the losers drop their new
+ * roots, so a Channel rekey sealed under a *new* root would be unreadable to
+ * every base-fork loser, while one sealed under the shared prior root stays
+ * openable on either branch.
+ *
+ * The set is every Private Channel this device holds a key for. There is no
+ * per-Channel access model to consult — a key arrives by invite or rekey and
+ * is held or it is not — so the conservative set is the correct one:
+ * rotating a Channel nobody lost access to costs an event and nothing else,
+ * while missing one leaves a removed member reading it forever. Public
+ * Channels need nothing: their key comes from the community_root, so they
+ * rotated with the base for free.
+ *
+ * A Channel that fails to rotate is a degradation, not a failed Refounding:
+ * the base roll is already published and confirmed by the time this runs, so
+ * abandoning the rotation here would strand this device on the old epoch
+ * while every other member holds the new root. The failure is reported and
+ * the Channel stays rekeyable on its own afterwards. */
+static void on_refound_channel_rekeyed(GObject *source, GAsyncResult *result,
+                                       gpointer user_data) {
+  GTask *task = G_TASK(user_data);
+  GnConcordCommunityService *self = g_task_get_source_object(task);
+  RotationMint *mint = g_task_get_task_data(task);
+
+  g_autoptr(GError) error = NULL;
+  if (!gn_concord_community_service_rekey_channel_finish(
+        GN_CONCORD_COMMUNITY_SERVICE(source), result, &error))
+    emit_error(self, error ? error->message
+                           : "A Private Channel could not be rotated with the "
+                             "Refounding, and still holds its prior key");
+
+  mint->channel++;
+  refound_rekey_next_channel(task);
+}
+
+static void refound_rekey_next_channel(GTask *task) {
+  GnConcordCommunityService *self = g_task_get_source_object(task);
+  RotationMint *mint = g_task_get_task_data(task);
+  CommunityState *state = find_state(self, mint->community_id);
+
+  if (!state || self->shutting_down || !self->context) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                            "The Concord service was deactivated");
+    g_object_unref(task);
+    return;
+  }
+
+  if (mint->channels && mint->channel < mint->channels->len) {
+    /* No exclusions: the recipients are the Complete Memberlist the base
+     * rotation just wrapped blobs for, which is already the set with the
+     * removed member gone. */
+    gn_concord_community_service_rekey_channel_async(
+      self, mint->community_id,
+      g_ptr_array_index(mint->channels, mint->channel), NULL, 0,
+      g_task_get_cancellable(task), on_refound_channel_rekeyed, task);
+    return;
+  }
+
+  adopt_base_rotation(self, state, mint->new_root, mint->new_control_pk,
+                      mint->new_control_root, mint->new_epoch, mint->author);
+  /* And only now the re-anchor, which CORD-06 §3 orders after confirmed
+   * publication of the root roll: a compaction at an address whose root
+   * nobody received would be a plane with no readers. */
+  refound_publish_next_head(task);
 }
 
 /* Seeding the new epoch's Guestbook (CORD-06 §3).
@@ -4614,6 +4699,37 @@ void gn_concord_community_service_refound_async(
   g_autoptr(GPtrArray) heads =
     state->control ? gn_concord_control_plane_get_heads(state->control) : NULL;
 
+  /* The Private Channels this device holds a key for travel with the roll
+   * (CORD-06 §3), and like the Memberlist they are acquired before the first
+   * publish. A Public Channel is keyed from the community_root, so it rotates
+   * with the base for free and needs nothing here (CORD-03). */
+  g_autoptr(GPtrArray) private_channels =
+    g_ptr_array_new_with_free_func(g_free);
+  GListModel *channels =
+    state->item ? gn_concord_community_item_get_channels(state->item) : NULL;
+  guint n_channels = channels ? g_list_model_get_n_items(channels) : 0;
+  for (guint i = 0; i < n_channels; i++) {
+    g_autoptr(GnConcordChannelItem) channel = g_list_model_get_item(channels, i);
+    if (!gn_concord_channel_item_get_is_private(channel)) continue;
+    if (!gn_concord_channel_item_get_key(channel)) continue;
+    g_ptr_array_add(private_channels,
+                    g_strdup(gn_concord_channel_item_get_id(channel)));
+  }
+  /* A Refounding takes BAN and a Channel rekey takes MANAGE_CHANNELS, and
+   * every recipient enforces both (CORD-06 "Authority") — so a Refounder
+   * holding only BAN cannot rotate the Private Channels at all: it would
+   * publish rotations every honest member drops, and leave the banned member
+   * reading those Channels while the Community believed them severed.
+   * Refusing up front says so, rather than half-severing in silence. */
+  if (private_channels->len > 0 && !rotator_may_rekey_channel(state, author)) {
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_PERMISSION_DENIED,
+                         "Refounding a Community whose Private Channels this "
+                         "device holds also takes the MANAGE_CHANNELS "
+                         "permission, since they rotate with the base");
+    return;
+  }
+
   RotationMint *mint = g_new0(RotationMint, 1);
   mint->community_id = g_strdup(community_id);
   mint->author = g_strdup(author);
@@ -4625,6 +4741,7 @@ void gn_concord_community_service_refound_async(
    * rotated is acquired in full up front, so a mid-flight failure never
    * leaves half a rotation as the only copy. */
   mint->heads = heads ? g_ptr_array_ref(heads) : NULL;
+  mint->channels = g_steal_pointer(&private_channels);
 
   gboolean holds_self = FALSE;
   for (guint i = 0; i < members->len; i++) {
