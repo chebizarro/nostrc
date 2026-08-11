@@ -17,7 +17,7 @@ files already declare a version.
 | nostr-gtk | `nostr-gtk/` | 1.0.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
 | libmarmot | `libmarmot/` | 0.1.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.0.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
-| gnostr | `apps/gnostr/` | 0.1.0 | Unreleased | — | `apps/gnostr/CMakeLists.txt` |
+| gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0 | `gnostr-v0.1.0` | `apps/gnostr/CMakeLists.txt` |
 
 ## Maintenance
 
