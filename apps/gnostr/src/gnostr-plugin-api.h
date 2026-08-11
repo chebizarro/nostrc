@@ -4,7 +4,7 @@
  * This header defines the stable plugin API for extending Gnostr with
  * NIP implementations and custom features. Plugins are loaded via libpeas 2.
  *
- * API Version: 1.2
+ * API Version: 1.3
  * Stability: Stable API functions are marked @stability: Stable
  *            Experimental functions are marked @stability: Experimental
  *
@@ -27,7 +27,7 @@ G_BEGIN_DECLS
  */
 
 #define GNOSTR_PLUGIN_API_MAJOR_VERSION 1
-#define GNOSTR_PLUGIN_API_MINOR_VERSION 2
+#define GNOSTR_PLUGIN_API_MINOR_VERSION 3
 
 /**
  * gnostr_plugin_api_check_version:
@@ -1185,6 +1185,87 @@ void gnostr_plugin_context_request_sign_event(GnostrPluginContext *context,
                                               gpointer             user_data);
 
 char *gnostr_plugin_context_request_sign_event_finish(GnostrPluginContext *context,
+                                                      GAsyncResult        *result,
+                                                      GError             **error);
+
+/* --- Self-Encryption (NIP-44 to one's own key) --- */
+
+/**
+ * gnostr_plugin_context_nip44_self_encrypt_async:
+ * @context: A #GnostrPluginContext
+ * @plaintext: The document to encrypt
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: Callback when encryption completes
+ * @user_data: User data for callback
+ *
+ * Encrypt @plaintext under the NIP-44 conversation key the logged-in user
+ * shares with themselves (self-ECDH: their own key on both sides).
+ *
+ * This is what a self-encrypted replaceable document needs — NIP-51 private
+ * list contents, a NIP-CAS-0008 Community List (kind 13302) or Invite List
+ * (kind 13303). Without it a plugin can sign such a document but never read
+ * one back, since the key never leaves the signer.
+ *
+ * The work is routed through the same signer that owns the key, so a remote
+ * signer (NIP-46) or an OS signer (NIP-55) serves it exactly like a local
+ * one, and the secret stays where it already lives.
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_nip44_self_encrypt_async(GnostrPluginContext *context,
+                                                    const char          *plaintext,
+                                                    GCancellable        *cancellable,
+                                                    GAsyncReadyCallback  callback,
+                                                    gpointer             user_data);
+
+/**
+ * gnostr_plugin_context_nip44_self_encrypt_finish:
+ * @context: A #GnostrPluginContext
+ * @result: The #GAsyncResult
+ * @error: (out) (optional): Return location for an error
+ *
+ * Returns: (transfer full) (nullable): The NIP-44 payload, or %NULL on error.
+ *          Free with g_free().
+ * @stability: Stable
+ */
+char *gnostr_plugin_context_nip44_self_encrypt_finish(GnostrPluginContext *context,
+                                                      GAsyncResult        *result,
+                                                      GError             **error);
+
+/**
+ * gnostr_plugin_context_nip44_self_decrypt_async:
+ * @context: A #GnostrPluginContext
+ * @ciphertext: A NIP-44 payload previously encrypted to the user's own key
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: Callback when decryption completes
+ * @user_data: User data for callback
+ *
+ * The inverse of gnostr_plugin_context_nip44_self_encrypt_async(): decrypt a
+ * document the user encrypted to themselves.
+ *
+ * A NIP-44 payload carries no sender, kind or session binding, so a caller
+ * MUST validate the enclosing event itself — that the event is the kind and
+ * the author it expected — before trusting what comes back.
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_nip44_self_decrypt_async(GnostrPluginContext *context,
+                                                    const char          *ciphertext,
+                                                    GCancellable        *cancellable,
+                                                    GAsyncReadyCallback  callback,
+                                                    gpointer             user_data);
+
+/**
+ * gnostr_plugin_context_nip44_self_decrypt_finish:
+ * @context: A #GnostrPluginContext
+ * @result: The #GAsyncResult
+ * @error: (out) (optional): Return location for an error
+ *
+ * Returns: (transfer full) (nullable): The plaintext, or %NULL on error.
+ *          Free with g_free().
+ * @stability: Stable
+ */
+char *gnostr_plugin_context_nip44_self_decrypt_finish(GnostrPluginContext *context,
                                                       GAsyncResult        *result,
                                                       GError             **error);
 

@@ -14,7 +14,6 @@
 /* One Chat Plane page. The Community's own relays bound the fetch; this is the
  * per-Channel ceiling on a backfill, not a protocol constant. */
 #define CONCORD_CHAT_PAGE 200
-#define CONCORD_STORAGE_KEY "memberships"
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(NostrEvent, nostr_event_free)
 
@@ -30,6 +29,10 @@ typedef struct {
   GHashTable *messages;  /* channel id -> GListStore(GnConcordMessageItem) */
   GHashTable *seen;      /* rumor id -> GINT_TO_POINTER(1) */
   GHashTable *subscriptions; /* channel id -> subscription id in a guint64 box */
+  /* Community List bookkeeping (CORD-02 §8) */
+  JsonNode *list_seed;    /* the earliest epoch held; only ever moves back */
+  JsonObject *list_extra; /* members of the List entry we don't understand */
+  gint64 added_at;        /* ms; tiebreaks against a tombstone */
 } CommunityState;
 
 typedef struct {
@@ -45,6 +48,16 @@ struct _GnConcordCommunityService {
   GListStore *communities;
   GHashTable *states; /* community id -> CommunityState */
   gboolean shutting_down;
+
+  /* The Community List document as last read from the wire (CORD-02 §8).
+   * Retained so a republish round-trips the tombstones and the fields this
+   * client doesn't understand rather than deleting another client's work. */
+  JsonObject *list_document;
+  GHashTable *list_orphans; /* community id -> JsonNode: entries we could not
+                             * adopt, re-emitted verbatim */
+  gchar *list_author;       /* the npub the document was read for */
+  gboolean list_loaded;     /* a definitive read happened; publishing is safe */
+  gboolean list_applying;   /* adopting stored entries: do not republish */
 };
 
 enum { COMMUNITY_UPDATED, ERROR_REPORTED, N_SIGNALS };
@@ -53,7 +66,8 @@ static guint signals[N_SIGNALS];
 G_DEFINE_TYPE(GnConcordCommunityService, gn_concord_community_service,
               G_TYPE_OBJECT)
 
-static void save_memberships(GnConcordCommunityService *self);
+static void publish_community_list(GnConcordCommunityService *self);
+static void load_community_list(GnConcordCommunityService *self);
 
 /* ------------------------------------------------------------------ *
  * small helpers
@@ -92,6 +106,8 @@ static void community_state_free(gpointer data) {
   g_clear_pointer(&state->messages, g_hash_table_unref);
   g_clear_pointer(&state->seen, g_hash_table_unref);
   g_clear_pointer(&state->subscriptions, g_hash_table_unref);
+  g_clear_pointer(&state->list_seed, json_node_free);
+  g_clear_pointer(&state->list_extra, json_object_unref);
   g_free(state);
 }
 
@@ -456,6 +472,30 @@ static const char *object_string(JsonObject *object, const char *member) {
   return json_node_get_string(node);
 }
 
+/* Typed member accessors, never the *_get_array_member/_get_object_member
+ * shortcuts: those log a critical when the member is present with the wrong
+ * type, and every document read here is attacker-crafted or foreign-client
+ * input where a mistyped member is an expected shape, not a bug. */
+static JsonArray *object_array(JsonObject *object, const char *member) {
+  if (!object || !json_object_has_member(object, member)) return NULL;
+  JsonNode *node = json_object_get_member(object, member);
+  return node && JSON_NODE_HOLDS_ARRAY(node) ? json_node_get_array(node) : NULL;
+}
+
+static JsonObject *object_object(JsonObject *object, const char *member) {
+  if (!object || !json_object_has_member(object, member)) return NULL;
+  JsonNode *node = json_object_get_member(object, member);
+  return node && JSON_NODE_HOLDS_OBJECT(node) ? json_node_get_object(node)
+                                              : NULL;
+}
+
+static gchar *node_to_json(JsonNode *node) {
+  if (!node) return NULL;
+  g_autoptr(JsonGenerator) generator = json_generator_new();
+  json_generator_set_root(generator, node);
+  return json_generator_to_data(generator, NULL);
+}
+
 static gint64 object_int(JsonObject *object, const char *member,
                          gint64 fallback) {
   if (!json_object_has_member(object, member)) return fallback;
@@ -550,8 +590,8 @@ gboolean gn_concord_community_service_accept_bundle(
 
   /* A bundle is attacker-crafted input reached by following a link, so it is
    * bounded before anything is allocated from it (CORD-05 §1). */
-  if (json_object_has_member(bundle, "channels")) {
-    JsonArray *channels = json_object_get_array_member(bundle, "channels");
+  {
+    JsonArray *channels = object_array(bundle, "channels");
     guint n = channels ? json_array_get_length(channels) : 0;
     if (n > CONCORD_MAX_CHANNELS_IN_INVITE) {
       community_state_free(state);
@@ -578,8 +618,8 @@ gboolean gn_concord_community_service_accept_bundle(
 
   /* Up to 5 stable relays is the recommendation; a longer set is truncated,
    * and a bundle MUST stay usable when it is (CORD-02 §6). */
-  if (json_object_has_member(bundle, "relays")) {
-    JsonArray *relays = json_object_get_array_member(bundle, "relays");
+  {
+    JsonArray *relays = object_array(bundle, "relays");
     guint n = relays ? json_array_get_length(relays) : 0;
     if (n > CONCORD_MAX_RELAYS_IN_BUNDLE) n = CONCORD_MAX_RELAYS_IN_BUNDLE;
     g_autoptr(GPtrArray) urls = g_ptr_array_new();
@@ -593,9 +633,15 @@ gboolean gn_concord_community_service_accept_bundle(
   }
 
   /* A re-accepted link refreshes the membership in place (CORD-05 §2: the
-   * coordinate is stable, so the same URL survives every rotation). */
+   * coordinate is stable, so the same URL survives every rotation). Its List
+   * bookkeeping carries over: `added_at` is when this membership began, not
+   * when it was last refreshed, and the seed is the *earliest* epoch ever
+   * held, so a refresh must never advance it (CORD-02 §8). */
   CommunityState *existing = find_state(self, community_id);
   if (existing) {
+    state->list_seed = g_steal_pointer(&existing->list_seed);
+    state->list_extra = g_steal_pointer(&existing->list_extra);
+    state->added_at = existing->added_at;
     guint n = g_list_model_get_n_items(G_LIST_MODEL(self->communities));
     for (guint i = 0; i < n; i++) {
       g_autoptr(GnConcordCommunityItem) current =
@@ -607,10 +653,14 @@ gboolean gn_concord_community_service_accept_bundle(
       }
     }
   }
+  if (!state->added_at) state->added_at = g_get_real_time() / 1000;
   g_hash_table_replace(self->states, g_strdup(community_id), state);
   g_list_store_append(self->communities, state->item);
+  /* Adopting a membership retires whatever the stored document said about it:
+   * the fresh join material is the entry now. */
+  if (self->list_orphans) g_hash_table_remove(self->list_orphans, community_id);
 
-  save_memberships(self);
+  publish_community_list(self);
   emit_update(self, community_id,
               GN_CONCORD_UPDATE_MEMBERSHIP | GN_CONCORD_UPDATE_CHANNELS);
 
@@ -630,15 +680,20 @@ gboolean gn_concord_community_service_accept_bundle(
 }
 
 /* ------------------------------------------------------------------ *
- * persistence
+ * the Community List (CORD-02 §8)
  *
- * The host API exposes no NIP-44 self-decrypt, so a relay-hosted kind-13302
- * Community List (CORD-02 §8) cannot be read here yet. Memberships live in
- * plugin-local storage instead, in the List's own join-material shape so a
- * later bead can lift the document onto the wire unchanged.
+ * A member's memberships sync across their devices — and their *clients* — as
+ * one kind-13302 replaceable, NIP-44-encrypted to self. The host's self-ECDH
+ * pair (nostrc-2ilq) is what makes that readable from a plugin at all: the
+ * key never leaves the signer, so both directions route through it.
  * ------------------------------------------------------------------ */
 
-static gchar *serialize_membership(CommunityState *state) {
+/* The entry's join material: the bundle's *membership* subset. Never the icon
+ * (a device folds it from the Control Plane) and never the link fields —
+ * expiry and attribution belong to the invite, not to the membership. A
+ * staffer's own `control_root` would ride here too; a plain member never
+ * holds one, so nothing writes it yet. */
+static JsonNode *build_join_material(CommunityState *state) {
   g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
   json_builder_set_member_name(builder, "community_id");
@@ -698,75 +753,438 @@ static gchar *serialize_membership(CommunityState *state) {
   json_builder_end_array(builder);
   json_builder_end_object(builder);
 
-  g_autoptr(JsonGenerator) generator = json_generator_new();
-  JsonNode *root = json_builder_get_root(builder);
-  json_generator_set_root(generator, root);
-  gchar *json = json_generator_to_data(generator, NULL);
-  json_node_free(root);
-  return json;
+  return json_builder_get_root(builder);
 }
 
-static void save_memberships(GnConcordCommunityService *self) {
-  if (!self->context || self->shutting_down) return;
-  g_autoptr(JsonBuilder) builder = json_builder_new();
-  json_builder_begin_array(builder);
+static guint64 snapshot_epoch(JsonNode *snapshot) {
+  if (!snapshot || !JSON_NODE_HOLDS_OBJECT(snapshot)) return 0;
+  gint64 epoch = object_int(json_node_get_object(snapshot), "root_epoch", 0);
+  return epoch > 0 ? (guint64)epoch : 0;
+}
+
+/* The two snapshots solve opposite problems: `seed` holds the *earliest*
+ * epoch ever held (the anchor for a full-history backfill) and `current` the
+ * latest (so a fresh device reconstructs instantly). The merges mirror each
+ * other — seed keeps the lower epoch, current the higher — and an epoch tie
+ * breaks on the lexicographically lowest canonical bytes, a total order, so
+ * two devices never flap competing republishes (CORD-02 §8). */
+static void merge_seed(CommunityState *state, JsonNode *candidate) {
+  if (!candidate) return;
+  if (!state->list_seed) {
+    state->list_seed = json_node_copy(candidate);
+    return;
+  }
+  guint64 held = snapshot_epoch(state->list_seed);
+  guint64 offered = snapshot_epoch(candidate);
+  if (held < offered) return;
+  if (offered == held) {
+    g_autofree gchar *left = node_to_json(state->list_seed);
+    g_autofree gchar *right = node_to_json(candidate);
+    if (g_strcmp0(left, right) <= 0) return;
+  }
+  json_node_free(state->list_seed);
+  state->list_seed = json_node_copy(candidate);
+}
+
+static gint64 tombstone_time(JsonObject *document, const char *community_id) {
+  JsonArray *stones = object_array(document, "tombstones");
+  if (!stones) return 0;
+  gint64 newest = 0;
+  for (guint i = 0; i < json_array_get_length(stones); i++) {
+    JsonNode *node = json_array_get_element(stones, i);
+    if (!node || !JSON_NODE_HOLDS_OBJECT(node)) continue;
+    JsonObject *stone = json_node_get_object(node);
+    if (g_strcmp0(object_string(stone, "community_id"), community_id) != 0)
+      continue;
+    gint64 removed_at = object_int(stone, "removed_at", 0);
+    if (removed_at > newest) newest = removed_at;
+  }
+  return newest;
+}
+
+/* Rebuilds the document from live state, carrying forward everything this
+ * client is not the authority on: the tombstones, the top-level members it
+ * doesn't understand, the per-entry members it doesn't understand, and the
+ * entries it could not adopt. Two clients share this one document, so the
+ * round-trip discipline is what keeps one from deleting the other's work
+ * (CORD-02 §6, §8). */
+static JsonNode *build_list_document(GnConcordCommunityService *self,
+                                     GError **error) {
+  JsonObject *root = json_object_new();
+  if (self->list_document) {
+    GList *members = json_object_get_members(self->list_document);
+    for (GList *l = members; l; l = l->next) {
+      const char *name = l->data;
+      if (g_strcmp0(name, "entries") == 0) continue;
+      json_object_set_member(
+        root, name,
+        json_node_copy(json_object_get_member(self->list_document, name)));
+    }
+    g_list_free(members);
+  }
+
+  JsonArray *entries = json_array_new();
   GHashTableIter iter;
   gpointer value;
   g_hash_table_iter_init(&iter, self->states);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     CommunityState *state = value;
     if (!state->item) continue;
-    g_autofree gchar *entry = serialize_membership(state);
-    g_autoptr(JsonParser) parser = json_parser_new();
-    if (!json_parser_load_from_data(parser, entry, -1, NULL)) continue;
-    json_builder_add_value(builder,
-                           json_node_copy(json_parser_get_root(parser)));
+
+    JsonNode *current = build_join_material(state);
+    merge_seed(state, current);
+
+    JsonObject *entry = json_object_new();
+    if (state->list_extra) {
+      GList *members = json_object_get_members(state->list_extra);
+      for (GList *l = members; l; l = l->next)
+        json_object_set_member(
+          entry, l->data,
+          json_node_copy(json_object_get_member(state->list_extra, l->data)));
+      g_list_free(members);
+    }
+    json_object_set_string_member(entry, "community_id", state->community_id);
+    json_object_set_member(entry, "seed", json_node_copy(state->list_seed));
+    json_object_set_member(entry, "current", current);
+    json_object_set_int_member(entry, "added_at", state->added_at);
+
+    JsonNode *node = json_node_new(JSON_NODE_OBJECT);
+    json_node_take_object(node, entry);
+    json_array_add_element(entries, node);
   }
-  json_builder_end_array(builder);
 
-  g_autoptr(JsonGenerator) generator = json_generator_new();
-  JsonNode *root = json_builder_get_root(builder);
-  json_generator_set_root(generator, root);
-  g_autofree gchar *document = json_generator_to_data(generator, NULL);
-  json_node_free(root);
-  if (!document) return;
+  if (self->list_orphans) {
+    g_hash_table_iter_init(&iter, self->list_orphans);
+    while (g_hash_table_iter_next(&iter, NULL, &value))
+      json_array_add_element(entries, json_node_copy(value));
+  }
 
-  g_autoptr(GError) error = NULL;
-  g_autoptr(GBytes) bytes = g_bytes_new(document, strlen(document));
-  if (!gnostr_plugin_context_store_data(self->context, CONCORD_STORAGE_KEY,
-                                        bytes, &error) && error)
-    emit_error(self, error->message);
+  json_object_set_array_member(root, "entries", entries);
+  JsonNode *document = json_node_new(JSON_NODE_OBJECT);
+  json_node_take_object(document, root);
+
+  /* The 50-membership cap is a protocol constant, not client taste: the List
+   * is one NIP-44 event and NIP-44 plaintext hard-caps at 65,535 bytes. The
+   * count is not the whole budget either — join material carrying private
+   * Channel keys can overflow the event well below 50 — so the serialized
+   * size is verified before publishing, never assumed (CORD-02 §8). */
+  if (json_array_get_length(entries) > CONCORD_MAX_COMMUNITIES_IN_LIST) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_NO_SPACE,
+                "The Community List caps at %d memberships",
+                CONCORD_MAX_COMMUNITIES_IN_LIST);
+    json_node_free(document);
+    return NULL;
+  }
+  return document;
 }
 
-static void load_memberships(GnConcordCommunityService *self) {
-  if (!self->context) return;
-  g_autoptr(GError) error = NULL;
-  g_autoptr(GBytes) bytes =
-    gnostr_plugin_context_load_data(self->context, CONCORD_STORAGE_KEY, &error);
-  if (!bytes) return;
+typedef struct {
+  GnConcordCommunityService *service; /* strong: the chain outlives a panel */
+  gchar *author;
+} ListPublish;
 
-  gsize size = 0;
-  const char *data = g_bytes_get_data(bytes, &size);
-  if (!data || !size) return;
-  g_autofree gchar *document = g_strndup(data, size);
+static void list_publish_free(ListPublish *publish) {
+  if (!publish) return;
+  g_clear_object(&publish->service);
+  g_free(publish->author);
+  g_free(publish);
+}
+
+static void on_list_published(GObject *source, GAsyncResult *result,
+                              gpointer user_data) {
+  (void)source;
+  ListPublish *publish = user_data;
+  GnConcordCommunityService *self = publish->service;
+  g_autoptr(GError) error = NULL;
+  if (self->context &&
+      !gnostr_plugin_context_publish_event_finish(self->context, result,
+                                                  &error) && error)
+    emit_error(self, error->message);
+  list_publish_free(publish);
+}
+
+static void on_list_signed(GObject *source, GAsyncResult *result,
+                           gpointer user_data) {
+  (void)source;
+  ListPublish *publish = user_data;
+  GnConcordCommunityService *self = publish->service;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *signed_json =
+    self->context ? gnostr_plugin_context_request_sign_event_finish(
+                      self->context, result, &error)
+                  : NULL;
+  if (!signed_json || self->shutting_down || !self->context) {
+    if (error) emit_error(self, error->message);
+    list_publish_free(publish);
+    return;
+  }
+
+  /* The signer is the host's: confirm what came back is the document we asked
+   * for, signed by the identity we built it for. */
+  g_autoptr(NostrEvent) event = parse_verified_event(signed_json);
+  if (!event || nostr_event_get_kind(event) != CONCORD_COMMUNITY_LIST ||
+      g_strcmp0(nostr_event_get_pubkey(event), publish->author) != 0) {
+    emit_error(self, "The signer returned a different Community List");
+    list_publish_free(publish);
+    return;
+  }
+
+  gnostr_plugin_context_publish_event_async(self->context, signed_json, NULL,
+                                            on_list_published, publish);
+}
+
+static void on_list_encrypted(GObject *source, GAsyncResult *result,
+                              gpointer user_data) {
+  (void)source;
+  ListPublish *publish = user_data;
+  GnConcordCommunityService *self = publish->service;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *content =
+    self->context ? gnostr_plugin_context_nip44_self_encrypt_finish(
+                      self->context, result, &error)
+                  : NULL;
+  if (!content || self->shutting_down || !self->context) {
+    if (error) emit_error(self, error->message);
+    list_publish_free(publish);
+    return;
+  }
+
+  g_autoptr(NostrEvent) event = nostr_event_new();
+  nostr_event_set_kind(event, CONCORD_COMMUNITY_LIST);
+  nostr_event_set_pubkey(event, publish->author);
+  nostr_event_set_created_at(event, (gint64)time(NULL));
+  nostr_event_set_content(event, content);
+  nostr_event_set_tags(event, nostr_tags_new(0));
+
+  g_autofree gchar *unsigned_json = nostr_event_serialize_compact(event);
+  if (!unsigned_json) {
+    emit_error(self, "Failed to serialize the Community List");
+    list_publish_free(publish);
+    return;
+  }
+  gnostr_plugin_context_request_sign_event(self->context, unsigned_json, NULL,
+                                           on_list_signed, publish);
+}
+
+static void publish_community_list(GnConcordCommunityService *self) {
+  if (!self->context || self->shutting_down || self->list_applying) return;
+
+  /* Publishing before a definitive read would replace the wire document with
+   * whatever this session happens to hold — a failed query and a genuinely
+   * empty List are indistinguishable from here, and one of them costs the
+   * user every membership on every other device. Fail closed. */
+  const char *author = gn_concord_community_service_get_current_pubkey(self);
+  if (!self->list_loaded || !author ||
+      g_strcmp0(author, self->list_author) != 0)
+    return;
+
+  g_autoptr(GError) error = NULL;
+  JsonNode *document = build_list_document(self, &error);
+  if (!document) {
+    if (error) emit_error(self, error->message);
+    return;
+  }
+  g_autofree gchar *plaintext = node_to_json(document);
+  json_node_free(document);
+  if (!plaintext) return;
+
+  if (strlen(plaintext) > CONCORD_MAX_NIP44_PLAINTEXT) {
+    emit_error(self,
+               "This Community List no longer fits one NIP-44 event; it was "
+               "not published");
+    return;
+  }
+
+  ListPublish *publish = g_new0(ListPublish, 1);
+  publish->service = g_object_ref(self);
+  publish->author = g_strdup(author);
+  gnostr_plugin_context_nip44_self_encrypt_async(
+    self->context, plaintext, NULL, on_list_encrypted, publish);
+}
+
+/* Adopts one decrypted document. Each entry's `current` snapshot is exactly a
+ * CORD-05 §1 bundle's membership subset, so it runs the same validation an
+ * invite does — a document synced from another client is no more trusted than
+ * a link. */
+static void apply_list_document(GnConcordCommunityService *self,
+                                JsonNode *root) {
+  if (!root || !JSON_NODE_HOLDS_OBJECT(root)) return;
+  JsonObject *document = json_node_get_object(root);
+
+  g_clear_pointer(&self->list_document, json_object_unref);
+  self->list_document = json_object_ref(document);
+  if (self->list_orphans) g_hash_table_remove_all(self->list_orphans);
+
+  JsonArray *entries = object_array(document, "entries");
+  guint n = entries ? json_array_get_length(entries) : 0;
+  if (n > CONCORD_MAX_COMMUNITIES_IN_LIST)
+    n = CONCORD_MAX_COMMUNITIES_IN_LIST;
+
+  self->list_applying = TRUE;
+  for (guint i = 0; i < n; i++) {
+    JsonNode *node = json_array_get_element(entries, i);
+    if (!node || !JSON_NODE_HOLDS_OBJECT(node)) continue;
+    JsonObject *entry = json_node_get_object(node);
+    const char *community_id = object_string(entry, "community_id");
+    if (!nostr_concord_is_lower_hex_32(community_id)) continue;
+
+    /* A tombstone is permanent and the entry stays *in* the document, so a
+     * backfill can never re-add a Community you left; only a later re-join
+     * (a newer `added_at`) resurrects it (CORD-02 §8). */
+    gint64 added_at = object_int(entry, "added_at", 0);
+    gboolean adopt = added_at > tombstone_time(document, community_id);
+
+    JsonObject *current = object_object(entry, "current");
+    g_autofree gchar *material =
+      current ? node_to_json(json_object_get_member(entry, "current")) : NULL;
+    g_autoptr(GError) error = NULL;
+    if (adopt && material &&
+        gn_concord_community_service_accept_bundle(self, material, &error)) {
+      CommunityState *state = find_state(self, community_id);
+      if (state) {
+        state->added_at = added_at;
+        JsonNode *seed = json_object_has_member(entry, "seed")
+                           ? json_object_get_member(entry, "seed") : NULL;
+        if (seed && JSON_NODE_HOLDS_OBJECT(seed))
+          merge_seed(state, seed);
+        /* Round-trip whatever this client doesn't understand. */
+        g_clear_pointer(&state->list_extra, json_object_unref);
+        state->list_extra = json_object_new();
+        GList *members = json_object_get_members(entry);
+        for (GList *l = members; l; l = l->next) {
+          const char *name = l->data;
+          if (g_strcmp0(name, "community_id") == 0 ||
+              g_strcmp0(name, "seed") == 0 ||
+              g_strcmp0(name, "current") == 0 ||
+              g_strcmp0(name, "added_at") == 0)
+            continue;
+          json_object_set_member(
+            state->list_extra, name,
+            json_node_copy(json_object_get_member(entry, name)));
+        }
+        g_list_free(members);
+      }
+      continue;
+    }
+
+    /* An entry this client cannot use is still another device's membership:
+     * keep it verbatim so a republish does not silently drop it. */
+    if (error)
+      g_warning("Concord: keeping an unusable Community List entry: %s",
+                error->message);
+    g_hash_table_replace(self->list_orphans, g_strdup(community_id),
+                         json_node_copy(node));
+  }
+  self->list_applying = FALSE;
+}
+
+static void on_list_decrypted(GObject *source, GAsyncResult *result,
+                              gpointer user_data) {
+  (void)source;
+  ListPublish *load = user_data;
+  GnConcordCommunityService *self = load->service;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *document =
+    self->context ? gnostr_plugin_context_nip44_self_decrypt_finish(
+                      self->context, result, &error)
+                  : NULL;
+  if (self->shutting_down || !self->context) {
+    list_publish_free(load);
+    return;
+  }
+  if (!document) {
+    /* Unreadable is not empty: leave the List unloaded so nothing republishes
+     * over a document this client could not open. */
+    emit_error(self, error ? error->message
+                           : "The Community List could not be decrypted");
+    list_publish_free(load);
+    return;
+  }
 
   g_autoptr(JsonParser) parser = json_parser_new();
-  if (!json_parser_load_from_data(parser, document, -1, NULL)) return;
-  JsonNode *root = json_parser_get_root(parser);
-  if (!root || !JSON_NODE_HOLDS_ARRAY(root)) return;
-  JsonArray *entries = json_node_get_array(root);
-  for (guint i = 0; i < json_array_get_length(entries); i++) {
-    JsonNode *entry = json_array_get_element(entries, i);
-    if (!entry || !JSON_NODE_HOLDS_OBJECT(entry)) continue;
-    g_autoptr(JsonGenerator) generator = json_generator_new();
-    json_generator_set_root(generator, entry);
-    g_autofree gchar *json = json_generator_to_data(generator, NULL);
-    g_autoptr(GError) accept_error = NULL;
-    if (json &&
-        !gn_concord_community_service_accept_bundle(self, json, &accept_error))
-      g_warning("Concord: dropped a stored membership: %s",
-                accept_error ? accept_error->message : "unknown reason");
+  if (json_parser_load_from_data(parser, document, -1, NULL)) {
+    apply_list_document(self, json_parser_get_root(parser));
+    self->list_loaded = TRUE;
+    g_free(self->list_author);
+    self->list_author = g_strdup(load->author);
+  } else {
+    emit_error(self, "The Community List is not valid JSON");
   }
+  memset(document, 0, strlen(document));
+
+  gn_concord_community_service_refresh(self);
+  list_publish_free(load);
+}
+
+static gchar *build_own_document_filter(const char *author, int kind) {
+  g_autoptr(JsonBuilder) builder = json_builder_new();
+  json_builder_begin_object(builder);
+  json_builder_set_member_name(builder, "kinds");
+  json_builder_begin_array(builder);
+  json_builder_add_int_value(builder, kind);
+  json_builder_end_array(builder);
+  json_builder_set_member_name(builder, "authors");
+  json_builder_begin_array(builder);
+  json_builder_add_string_value(builder, author);
+  json_builder_end_array(builder);
+  json_builder_end_object(builder);
+  JsonNode *root = json_builder_get_root(builder);
+  gchar *json = node_to_json(root);
+  json_node_free(root);
+  return json;
+}
+
+static void load_community_list(GnConcordCommunityService *self) {
+  if (!self->context || self->shutting_down) return;
+  const char *author = gn_concord_community_service_get_current_pubkey(self);
+  if (!author) return;
+
+  g_autofree gchar *filter =
+    build_own_document_filter(author, CONCORD_COMMUNITY_LIST);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) events =
+    gnostr_plugin_context_query_events(self->context, filter, &error);
+  if (!events) {
+    /* A failed read is not an empty List; publishing stays disarmed. */
+    if (error) emit_error(self, error->message);
+    return;
+  }
+
+  /* One replaceable per user: the newest wins, and a NIP-44 payload binds no
+   * author, so the enclosing event's kind and author are checked here rather
+   * than trusted from the plaintext. */
+  const char *newest = NULL;
+  gint64 newest_at = -1;
+  for (guint i = 0; i < events->len; i++) {
+    const char *json = g_ptr_array_index(events, i);
+    g_autoptr(NostrEvent) event = parse_verified_event(json);
+    if (!event || nostr_event_get_kind(event) != CONCORD_COMMUNITY_LIST ||
+        g_strcmp0(nostr_event_get_pubkey(event), author) != 0 ||
+        !nostr_event_get_content(event))
+      continue;
+    gint64 created_at = nostr_event_get_created_at(event);
+    if (created_at > newest_at) {
+      newest_at = created_at;
+      newest = json;
+    }
+  }
+
+  if (!newest) {
+    /* No document is a definitive answer: this npub has no List yet, and the
+     * first accepted invite mints one. */
+    self->list_loaded = TRUE;
+    g_free(self->list_author);
+    self->list_author = g_strdup(author);
+    return;
+  }
+
+  g_autoptr(NostrEvent) event = parse_verified_event(newest);
+  ListPublish *load = g_new0(ListPublish, 1);
+  load->service = g_object_ref(self);
+  load->author = g_strdup(author);
+  gnostr_plugin_context_nip44_self_decrypt_async(
+    self->context, nostr_event_get_content(event), NULL, on_list_decrypted,
+    load);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1234,6 +1652,8 @@ static void gn_concord_community_service_dispose(GObject *object) {
   gn_concord_community_service_shutdown(self);
   g_clear_object(&self->communities);
   g_clear_pointer(&self->states, g_hash_table_unref);
+  g_clear_pointer(&self->list_document, json_object_unref);
+  g_clear_pointer(&self->list_orphans, g_hash_table_unref);
   self->context = NULL;
   G_OBJECT_CLASS(gn_concord_community_service_parent_class)->dispose(object);
 }
@@ -1241,6 +1661,7 @@ static void gn_concord_community_service_dispose(GObject *object) {
 static void gn_concord_community_service_finalize(GObject *object) {
   GnConcordCommunityService *self = GN_CONCORD_COMMUNITY_SERVICE(object);
   g_free(self->offline_user_pubkey);
+  g_free(self->list_author);
   G_OBJECT_CLASS(gn_concord_community_service_parent_class)->finalize(object);
 }
 
@@ -1262,6 +1683,8 @@ static void gn_concord_community_service_init(
   self->communities = g_list_store_new(GN_TYPE_CONCORD_COMMUNITY_ITEM);
   self->states = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
                                        community_state_free);
+  self->list_orphans = g_hash_table_new_full(
+    g_str_hash, g_str_equal, g_free, (GDestroyNotify)json_node_free);
 }
 
 GnConcordCommunityService *gn_concord_community_service_new(
@@ -1270,7 +1693,9 @@ GnConcordCommunityService *gn_concord_community_service_new(
   GnConcordCommunityService *self =
     g_object_new(GN_TYPE_CONCORD_COMMUNITY_SERVICE, NULL);
   self->context = context;
-  load_memberships(self);
+  /* The List's decrypt is asynchronous, so the fold it seeds runs from the
+   * completion; refresh here covers the no-document and offline paths. */
+  load_community_list(self);
   gn_concord_community_service_refresh(self);
   return self;
 }

@@ -13,6 +13,8 @@
 #include <nostr-event.h>
 #include <nostr-keys.h>
 #include <nostr-tag.h>
+#include <nostr-utils.h>
+#include <nostr/nip44/nip44.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +23,10 @@
 extern const char *gn_concord_test_signer_sk;
 extern const char *gn_concord_test_user_pubkey;
 extern char *gn_concord_test_published_json;
+extern GPtrArray *gn_concord_test_published;
+extern GPtrArray *(*gn_concord_test_query_hook)(const char *filter_json);
+extern gboolean gn_concord_test_query_fails;
+extern void gn_concord_test_reset(void);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(NostrEvent, nostr_event_free)
 
@@ -579,9 +585,9 @@ static void test_publish_roundtrip(void) {
   Fixture fixture = { 0 };
   fixture_init(&fixture);
 
+  gn_concord_test_reset();
   gn_concord_test_signer_sk = AUTHOR_SK;
   gn_concord_test_user_pubkey = fixture.author_pubkey;
-  g_clear_pointer(&gn_concord_test_published_json, free);
 
   /* A non-NULL context is all the service needs; every host call it makes
    * lands in the offline stubs. */
@@ -606,10 +612,19 @@ static void test_publish_roundtrip(void) {
   g_assert_nonnull(gn_concord_test_published_json);
 
   /* What went to the relay is a kind-1059 wrap authored by the Channel's
-   * derived stream key — never by the member. */
+   * derived stream key — never by the member. (The Community List rides the
+   * same publish path, so the wrap is found by kind, not by recency.) */
+  g_autofree gchar *wrap_json = NULL;
+  for (guint i = 0; i < gn_concord_test_published->len; i++) {
+    const char *json = g_ptr_array_index(gn_concord_test_published, i);
+    g_autoptr(NostrEvent) candidate = nostr_event_new();
+    if (nostr_event_deserialize_compact(candidate, json, NULL) &&
+        nostr_event_get_kind(candidate) == CONCORD_STREAM_WRAP)
+      wrap_json = g_strdup(json);
+  }
+  g_assert_nonnull(wrap_json);
   g_autoptr(NostrEvent) wrap = nostr_event_new();
-  g_assert_true(nostr_event_deserialize_compact(
-    wrap, gn_concord_test_published_json, NULL));
+  g_assert_true(nostr_event_deserialize_compact(wrap, wrap_json, NULL));
   g_assert_cmpint(nostr_event_get_kind(wrap), ==, CONCORD_STREAM_WRAP);
   g_assert_cmpstr(nostr_event_get_pubkey(wrap), !=, fixture.author_pubkey);
   g_autoptr(GnConcordCommunityItem) item =
@@ -623,8 +638,7 @@ static void test_publish_roundtrip(void) {
   /* And feeding it back through the reader yields the message, attributed to
    * the sealing member. */
   g_assert_true(gn_concord_community_service_ingest_wrap(
-    service, fixture.community_id, CHANNEL_ID,
-    gn_concord_test_published_json));
+    service, fixture.community_id, CHANNEL_ID, wrap_json));
   GListModel *messages = gn_concord_community_service_get_messages(
     service, fixture.community_id, CHANNEL_ID);
   g_assert_cmpuint(g_list_model_get_n_items(messages), ==, 1);
@@ -637,10 +651,311 @@ static void test_publish_roundtrip(void) {
                   CONCORD_KIND_MESSAGE);
 
   gn_concord_community_service_shutdown(service);
-  gn_concord_test_signer_sk = NULL;
-  gn_concord_test_user_pubkey = NULL;
-  g_clear_pointer(&gn_concord_test_published_json, free);
+  gn_concord_test_reset();
   fixture_clear(&fixture);
+}
+
+/* ------------------------------------------------------------------ *
+ * the Community List (CORD-02 §8)
+ * ------------------------------------------------------------------ */
+
+/* Every host completion here is a GTask returning on the caller's own stack,
+ * so it lands on the next main-context iteration rather than inline. */
+static void pump(void) {
+  for (int i = 0; i < 64 && g_main_context_iteration(NULL, FALSE); i++)
+    ;
+}
+
+/* The stored document the fake relay serves, and the filter it saw. */
+static gchar *g_stored_list_json = NULL;
+static gchar *g_last_filter = NULL;
+
+static GPtrArray *serve_stored_list(const char *filter_json) {
+  g_free(g_last_filter);
+  g_last_filter = g_strdup(filter_json);
+  if (!g_stored_list_json || !strstr(filter_json, "13302")) return NULL;
+  GPtrArray *events = g_ptr_array_new_with_free_func(g_free);
+  g_ptr_array_add(events, g_strdup(g_stored_list_json));
+  return events;
+}
+
+/* The last kind-13302 event the service published, or NULL. */
+static gchar *published_community_list(void) {
+  if (!gn_concord_test_published) return NULL;
+  gchar *found = NULL;
+  for (guint i = 0; i < gn_concord_test_published->len; i++) {
+    const char *json = g_ptr_array_index(gn_concord_test_published, i);
+    g_autoptr(NostrEvent) event = nostr_event_new();
+    if (!nostr_event_deserialize_compact(event, json, NULL)) continue;
+    if (nostr_event_get_kind(event) == CONCORD_COMMUNITY_LIST)
+      found = (gchar *)json;
+  }
+  return found;
+}
+
+/* Opens a published List the way another of the member's devices would: NIP-44
+ * under the conversation key they share with themselves. */
+static JsonNode *decrypt_published_list(const char *event_json) {
+  g_autoptr(NostrEvent) event = nostr_event_new();
+  g_assert_true(nostr_event_deserialize_compact(event, event_json, NULL));
+  g_assert_cmpint(nostr_event_validate(event, NULL), ==,
+                  NOSTR_EVENT_VALIDATION_OK);
+
+  g_autofree gchar *pubkey = nostr_key_get_public(AUTHOR_SK);
+  uint8_t sk[32], pk[32], convkey[32];
+  g_assert_true(nostr_hex2bin(sk, AUTHOR_SK, sizeof(sk)));
+  g_assert_true(nostr_hex2bin(pk, pubkey, sizeof(pk)));
+  g_assert_cmpint(nostr_nip44_convkey(sk, pk, convkey), ==, 0);
+
+  uint8_t *plaintext = NULL;
+  size_t len = 0;
+  g_assert_cmpint(
+    nostr_nip44_decrypt_v2_with_convkey(convkey, nostr_event_get_content(event),
+                                        &plaintext, &len),
+    ==, 0);
+  g_autofree gchar *document = g_strndup((const char *)plaintext, len);
+  free(plaintext);
+
+  JsonParser *parser = json_parser_new();
+  g_assert_true(json_parser_load_from_data(parser, document, -1, NULL));
+  JsonNode *root = json_node_copy(json_parser_get_root(parser));
+  g_object_unref(parser);
+  return root;
+}
+
+static void list_test_begin(Fixture *fixture) {
+  fixture_init(fixture);
+  gn_concord_test_reset();
+  gn_concord_test_signer_sk = AUTHOR_SK;
+  gn_concord_test_user_pubkey = fixture->author_pubkey;
+  gn_concord_test_query_hook = serve_stored_list;
+  g_clear_pointer(&g_stored_list_json, g_free);
+  g_clear_pointer(&g_last_filter, g_free);
+}
+
+static void list_test_end(Fixture *fixture) {
+  gn_concord_test_reset();
+  g_clear_pointer(&g_stored_list_json, g_free);
+  g_clear_pointer(&g_last_filter, g_free);
+  fixture_clear(fixture);
+}
+
+/* Accepting an invite publishes the membership as a self-encrypted kind-13302
+ * document, and a *second* device holding nothing but that document and the
+ * member's key reconstructs the Community from it. The two halves are the
+ * whole point of the List: without the read, memberships are stranded on the
+ * device that joined. */
+static void test_community_list_roundtrip(void) {
+  Fixture fixture = { 0 };
+  list_test_begin(&fixture);
+
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+  {
+    g_autoptr(GnConcordCommunityService) service =
+      gn_concord_community_service_new(context);
+    g_autofree gchar *bundle = build_bundle(&fixture, CHANNEL_KEY, 0, 1);
+    g_autoptr(GError) error = NULL;
+    g_assert_true(
+      gn_concord_community_service_accept_bundle(service, bundle, &error));
+    g_assert_no_error(error);
+    pump();
+    gn_concord_community_service_shutdown(service);
+  }
+
+  const char *event_json = published_community_list();
+  g_assert_nonnull(event_json);
+  g_stored_list_json = g_strdup(event_json);
+
+  /* The relay sees a replaceable signed by the member's real key, and nothing
+   * else: the join material is inside the NIP-44 payload. */
+  g_autoptr(NostrEvent) event = nostr_event_new();
+  g_assert_true(nostr_event_deserialize_compact(event, event_json, NULL));
+  g_assert_cmpstr(nostr_event_get_pubkey(event), ==, fixture.author_pubkey);
+  g_assert_null(strstr(nostr_event_get_content(event), COMMUNITY_ROOT));
+
+  JsonNode *root = decrypt_published_list(event_json);
+  JsonObject *document = json_node_get_object(root);
+  JsonArray *entries = json_object_get_array_member(document, "entries");
+  g_assert_cmpuint(json_array_get_length(entries), ==, 1);
+  JsonObject *entry = json_array_get_object_element(entries, 0);
+  g_assert_cmpstr(json_object_get_string_member(entry, "community_id"), ==,
+                  fixture.community_id);
+  g_assert_cmpint(json_object_get_int_member(entry, "added_at"), >, 0);
+
+  /* Join material is the bundle's membership subset: the keys a device needs,
+   * and on a first join the seed and the current snapshot are the same one. */
+  JsonObject *current = json_object_get_object_member(entry, "current");
+  g_assert_cmpstr(json_object_get_string_member(current, "community_root"), ==,
+                  COMMUNITY_ROOT);
+  g_assert_cmpint(json_object_get_int_member(current, "root_epoch"), ==,
+                  TEST_EPOCH);
+  JsonObject *seed = json_object_get_object_member(entry, "seed");
+  g_assert_cmpint(json_object_get_int_member(seed, "root_epoch"), ==,
+                  TEST_EPOCH);
+  json_node_free(root);
+
+  /* The second device: same npub, no local state, only the wire document. */
+  g_autoptr(GnConcordCommunityService) other =
+    gn_concord_community_service_new(context);
+  pump();
+  g_assert_cmpuint(
+    g_list_model_get_n_items(gn_concord_community_service_get_model(other)),
+    ==, 1);
+  g_autoptr(GnConcordCommunityItem) item =
+    gn_concord_community_service_lookup_community(other,
+                                                  fixture.community_id);
+  g_assert_nonnull(item);
+  g_assert_cmpstr(gn_concord_community_item_get_name(item), ==,
+                  "Incident Response");
+  /* And the reconstruction is complete enough to *read*: the Channel's derived
+   * stream address is back, which is the filter everything else hangs off. */
+  g_autoptr(GnConcordChannelItem) channel =
+    gn_concord_community_item_find_channel(item, CHANNEL_ID);
+  g_assert_nonnull(channel);
+  g_assert_true(nostr_concord_is_lower_hex_32(
+    gn_concord_channel_item_get_stream_pubkey(channel)));
+  gn_concord_community_service_shutdown(other);
+
+  list_test_end(&fixture);
+}
+
+/* Two clients share this one document, so a republish must carry forward what
+ * this client is not the authority on: the tombstones, the fields it doesn't
+ * understand, and the memberships it could not adopt. */
+static void test_community_list_round_trips_foreign_fields(void) {
+  Fixture fixture = { 0 };
+  list_test_begin(&fixture);
+
+  /* A document as another client left it: one tombstoned Community, one entry
+   * this client cannot use, and unknown fields at both levels. */
+  const char *other_id =
+    "aaaa111111111111111111111111111111111111111111111111111111111111";
+  g_autofree gchar *known = build_bundle(&fixture, CHANNEL_KEY, 0, 1);
+  g_autofree gchar *document = g_strdup_printf(
+    "{\"entries\":["
+    "{\"community_id\":\"%s\",\"added_at\":1719800000000,"
+    "\"seed\":%s,\"current\":%s,\"vector/pinned\":true},"
+    "{\"community_id\":\"%s\",\"added_at\":1719800000000,"
+    "\"current\":{\"community_id\":\"%s\"}}"
+    "],\"tombstones\":[{\"community_id\":\"%s\","
+    "\"removed_at\":1722400000000}],\"soapbox/schema\":2}",
+    fixture.community_id, known, known, other_id, other_id, other_id);
+
+  uint8_t sk[32], pk[32], convkey[32];
+  g_assert_true(nostr_hex2bin(sk, AUTHOR_SK, sizeof(sk)));
+  g_assert_true(nostr_hex2bin(pk, fixture.author_pubkey, sizeof(pk)));
+  g_assert_cmpint(nostr_nip44_convkey(sk, pk, convkey), ==, 0);
+  char *payload = NULL;
+  g_assert_cmpint(nostr_nip44_encrypt_v2_with_convkey(
+                    convkey, (const uint8_t *)document, strlen(document),
+                    &payload), ==, 0);
+
+  g_autoptr(NostrEvent) stored = nostr_event_new();
+  nostr_event_set_kind(stored, CONCORD_COMMUNITY_LIST);
+  nostr_event_set_pubkey(stored, fixture.author_pubkey);
+  nostr_event_set_created_at(stored, 1719800000);
+  nostr_event_set_content(stored, payload);
+  nostr_event_set_tags(stored, nostr_tags_new(0));
+  free(payload);
+  g_assert_cmpint(nostr_event_sign(stored, AUTHOR_SK), ==, 0);
+  g_stored_list_json = nostr_event_serialize_compact(stored);
+
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+  g_autoptr(GnConcordCommunityService) service =
+    gn_concord_community_service_new(context);
+  pump();
+
+  /* The tombstoned Community is not resurrected by a backfill — its removal
+   * is newer than its `added_at` — while the live one is adopted. */
+  g_assert_cmpuint(
+    g_list_model_get_n_items(gn_concord_community_service_get_model(service)),
+    ==, 1);
+  g_assert_nonnull(gn_concord_community_service_lookup_community(
+    service, fixture.community_id));
+
+  /* Re-accepting republishes, and the republish preserves everything. */
+  g_autoptr(GError) error = NULL;
+  g_assert_true(
+    gn_concord_community_service_accept_bundle(service, known, &error));
+  pump();
+
+  const char *event_json = published_community_list();
+  g_assert_nonnull(event_json);
+  JsonNode *root = decrypt_published_list(event_json);
+  JsonObject *republished = json_node_get_object(root);
+  g_assert_cmpint(json_object_get_int_member(republished, "soapbox/schema"),
+                  ==, 2);
+  JsonArray *stones = json_object_get_array_member(republished, "tombstones");
+  g_assert_cmpuint(json_array_get_length(stones), ==, 1);
+  g_assert_cmpstr(json_object_get_string_member(
+                    json_array_get_object_element(stones, 0), "community_id"),
+                  ==, other_id);
+
+  JsonArray *entries = json_object_get_array_member(republished, "entries");
+  g_assert_cmpuint(json_array_get_length(entries), ==, 2);
+  gboolean saw_known = FALSE, saw_orphan = FALSE;
+  for (guint i = 0; i < json_array_get_length(entries); i++) {
+    JsonObject *entry = json_array_get_object_element(entries, i);
+    const char *id = json_object_get_string_member(entry, "community_id");
+    if (g_strcmp0(id, fixture.community_id) == 0) {
+      saw_known = TRUE;
+      /* An unknown per-entry field survives an edit by this client. */
+      g_assert_true(json_object_get_boolean_member(entry, "vector/pinned"));
+      /* `added_at` is when the membership began, not when it was refreshed. */
+      g_assert_cmpint(json_object_get_int_member(entry, "added_at"), ==,
+                      1719800000000);
+    } else if (g_strcmp0(id, other_id) == 0) {
+      saw_orphan = TRUE;
+    }
+  }
+  g_assert_true(saw_known);
+  g_assert_true(saw_orphan);
+  json_node_free(root);
+
+  gn_concord_community_service_shutdown(service);
+  list_test_end(&fixture);
+}
+
+/* An unreachable relay and an empty one are indistinguishable from here, and
+ * one of them costs the user every membership on every other device. So a
+ * client that never read the document must never write one. */
+static gboolean warnings_are_not_fatal(const char *domain,
+                                       GLogLevelFlags level,
+                                       const char *message, gpointer user_data) {
+  (void)domain;
+  (void)level;
+  (void)message;
+  (void)user_data;
+  return FALSE;
+}
+
+static void test_community_list_never_published_before_read(void) {
+  Fixture fixture = { 0 };
+  list_test_begin(&fixture);
+  gn_concord_test_query_fails = TRUE;
+  /* An unreachable relay is reported, not swallowed, so the service warns its
+   * way through this test; the reporting is the point, not a defect. */
+  g_test_log_set_fatal_handler(warnings_are_not_fatal, NULL);
+
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+  g_autoptr(GnConcordCommunityService) service =
+    gn_concord_community_service_new(context);
+  g_autofree gchar *bundle = build_bundle(&fixture, CHANNEL_KEY, 0, 1);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(
+    gn_concord_community_service_accept_bundle(service, bundle, &error));
+  pump();
+
+  /* The membership is live locally — the keys are in hand — but nothing was
+   * written over the List this session could not read. */
+  g_assert_cmpuint(
+    g_list_model_get_n_items(gn_concord_community_service_get_model(service)),
+    ==, 1);
+  g_assert_null(published_community_list());
+
+  gn_concord_community_service_shutdown(service);
+  g_test_log_set_fatal_handler(NULL, NULL);
+  list_test_end(&fixture);
 }
 
 int main(int argc, char **argv) {
@@ -663,5 +978,11 @@ int main(int argc, char **argv) {
   g_test_add_func("/concord/service/publish-offline",
                   test_publish_without_signer_fails_cleanly);
   g_test_add_func("/concord/service/publish-roundtrip", test_publish_roundtrip);
+  g_test_add_func("/concord/service/community-list-roundtrip",
+                  test_community_list_roundtrip);
+  g_test_add_func("/concord/service/community-list-round-trips-foreign",
+                  test_community_list_round_trips_foreign_fields);
+  g_test_add_func("/concord/service/community-list-fails-closed",
+                  test_community_list_never_published_before_read);
   return g_test_run();
 }

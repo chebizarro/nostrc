@@ -89,13 +89,16 @@ if(BUILD_TESTING)
       ${GNOSTR_APP_DIR}/src/util
       ${PROJECT_ROOT}/nips/nip-concord/include
       ${PROJECT_ROOT}/nips/nip19/include
+      ${PROJECT_ROOT}/nips/nip44/include
       ${PROJECT_ROOT}/libnostr/include
       ${PROJECT_ROOT}/libgo/include
       ${CMAKE_BINARY_DIR}/apps/gnostr/generated
     )
+    # The offline backend stands in for the host's signer, so it does the same
+    # NIP-44 self-ECDH in-process that the real signer does out of it.
     target_link_libraries(${test_target} PRIVATE
       PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::JSON_GLIB
-      PkgConfig::LIBADWAITA nip_concord nip19
+      PkgConfig::LIBADWAITA nip_concord nip19 nostr_nip44_core
     )
     if(TARGET nostr)
       target_link_libraries(${test_target} PRIVATE nostr)

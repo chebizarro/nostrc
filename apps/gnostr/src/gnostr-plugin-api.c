@@ -1853,6 +1853,117 @@ gnostr_plugin_context_request_sign_event_finish(GnostrPluginContext *context,
   return g_task_propagate_pointer(G_TASK(result), error);
 }
 
+/* --- Self-encryption (nostrc-2ilq) --- */
+
+static void
+on_nip44_complete(GnostrSignerService *service,
+                  const char          *text,
+                  GError              *error,
+                  gpointer             user_data)
+{
+  (void)service;
+  GTask *task = G_TASK(user_data);
+
+  if (error) {
+    g_task_return_error(task, g_error_copy(error));
+  } else if (text) {
+    g_task_return_pointer(task, g_strdup(text), g_free);
+  } else {
+    g_task_return_new_error(task, GNOSTR_PLUGIN_ERROR,
+                            GNOSTR_PLUGIN_ERROR_SIGNER_REFUSED,
+                            "Signer returned no result");
+  }
+  g_object_unref(task);
+}
+
+/* Both directions are the same call with the user's own key on both sides of
+ * the ECDH, so they share this entry point. */
+static void
+plugin_context_nip44_self(GnostrPluginContext *context,
+                          const char          *text,
+                          gboolean             encrypt,
+                          GCancellable        *cancellable,
+                          GAsyncReadyCallback  callback,
+                          gpointer             user_data)
+{
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  if (!gnostr_signer_service_is_available(signer)) {
+    g_task_return_new_error(task, GNOSTR_PLUGIN_ERROR,
+                            GNOSTR_PLUGIN_ERROR_NOT_LOGGED_IN,
+                            "Signer not available");
+    g_object_unref(task);
+    return;
+  }
+
+  /* The peer is the user themselves: a self-encrypted document is NIP-44 with
+   * one's own pubkey on both sides (NIP-CAS-0008 CORD-02 §8). */
+  const char *self_pubkey = gnostr_signer_service_get_pubkey(signer);
+  if (!self_pubkey || !*self_pubkey) {
+    g_task_return_new_error(task, GNOSTR_PLUGIN_ERROR,
+                            GNOSTR_PLUGIN_ERROR_NOT_LOGGED_IN,
+                            "Signer exposes no public key");
+    g_object_unref(task);
+    return;
+  }
+
+  if (encrypt)
+    gnostr_signer_service_nip44_encrypt_async(signer, self_pubkey, text,
+                                              cancellable, on_nip44_complete,
+                                              task);
+  else
+    gnostr_signer_service_nip44_decrypt_async(signer, self_pubkey, text,
+                                              cancellable, on_nip44_complete,
+                                              task);
+}
+
+void
+gnostr_plugin_context_nip44_self_encrypt_async(GnostrPluginContext *context,
+                                               const char          *plaintext,
+                                               GCancellable        *cancellable,
+                                               GAsyncReadyCallback  callback,
+                                               gpointer             user_data)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(plaintext != NULL);
+  plugin_context_nip44_self(context, plaintext, TRUE, cancellable, callback,
+                            user_data);
+}
+
+char *
+gnostr_plugin_context_nip44_self_encrypt_finish(GnostrPluginContext *context,
+                                                GAsyncResult        *result,
+                                                GError             **error)
+{
+  (void)context;
+  g_return_val_if_fail(G_IS_TASK(result), NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+void
+gnostr_plugin_context_nip44_self_decrypt_async(GnostrPluginContext *context,
+                                               const char          *ciphertext,
+                                               GCancellable        *cancellable,
+                                               GAsyncReadyCallback  callback,
+                                               gpointer             user_data)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(ciphertext != NULL);
+  plugin_context_nip44_self(context, ciphertext, FALSE, cancellable, callback,
+                            user_data);
+}
+
+char *
+gnostr_plugin_context_nip44_self_decrypt_finish(GnostrPluginContext *context,
+                                                GAsyncResult        *result,
+                                                GError             **error)
+{
+  (void)context;
+  g_return_val_if_fail(G_IS_TASK(result), NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
 /* ============================================================================
  * ACTION HANDLERS
  * ============================================================================ */
