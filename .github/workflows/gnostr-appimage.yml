@@ -97,7 +97,10 @@ jobs:
       - name: Stage install tree
         run: |
           cmake --install build --prefix "$PWD/AppDir/usr"
-          find AppDir/usr/bin -maxdepth 1 -type f ! -name gnostr -delete
+          cp --dereference AppDir/usr/bin/gnostr "$RUNNER_TEMP/gnostr"
+          rm -f AppDir/usr/bin/*
+          install -m 0755 "$RUNNER_TEMP/gnostr" AppDir/usr/bin/gnostr
+          test ! -L AppDir/usr/bin/gnostr
           rm -rf AppDir/usr/share/metainfo
           find AppDir/usr/share/applications -maxdepth 1 -type f \
             ! -name org.gnostr.gnostr.desktop -delete
