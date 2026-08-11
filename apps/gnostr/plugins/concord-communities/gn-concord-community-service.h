@@ -64,6 +64,26 @@ gboolean gn_concord_community_service_ingest_wrap(
     GnConcordCommunityService *self, const char *community_id,
     const char *channel_id, const char *wrap_json);
 
+/* Ingests one kind-1059 wrap from the Community's Control Plane: opens it
+ * under the community_root-derived read key, verifies the plaintext seal, and
+ * folds the CORD-04 edition inside. Returns TRUE when a new edition was
+ * accepted — acceptance is not authorization, which the fold judges by the
+ * sealed actor's rank. Public so the service tests can drive the whole fold
+ * without a relay. */
+gboolean gn_concord_community_service_ingest_control_wrap(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *wrap_json);
+
+/* A member's folded rank and permissions in one Community's owner-rooted
+ * Roster. Position is lower-is-higher: the owner is 0 and a member the Roster
+ * ranks nowhere is CONCORD_POSITION_LAST (CORD-04 §3). */
+guint32 gn_concord_community_service_get_position(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *pubkey_hex);
+guint64 gn_concord_community_service_get_permissions(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *pubkey_hex);
+
 void gn_concord_community_service_refresh(GnConcordCommunityService *self);
 void gn_concord_community_service_refresh_channel(
     GnConcordCommunityService *self, const char *community_id,

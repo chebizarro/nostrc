@@ -26,6 +26,14 @@ guint64 gn_concord_channel_item_get_epoch(GnConcordChannelItem *self);
 const char *gn_concord_channel_item_get_name(GnConcordChannelItem *self);
 gboolean gn_concord_channel_item_get_is_private(GnConcordChannelItem *self);
 
+/* A Channel is *defined* in the Control Plane (CORD-03 §2), so a rename or a
+ * visibility flip arrives as an authorized edition rather than a new Channel.
+ * The `channel_id` never changes across any conversion. */
+void gn_concord_channel_item_set_name(GnConcordChannelItem *self,
+                                      const char *name);
+void gn_concord_channel_item_set_is_private(GnConcordChannelItem *self,
+                                            gboolean is_private);
+
 /* The derived Chat Plane address, x-only hex — the `authors` filter for this
  * Channel's stream. NULL until the service derives it. */
 const char *gn_concord_channel_item_get_stream_pubkey(GnConcordChannelItem *self);

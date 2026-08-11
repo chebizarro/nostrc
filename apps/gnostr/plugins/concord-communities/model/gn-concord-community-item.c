@@ -5,6 +5,7 @@ struct _GnConcordCommunityItem {
   gchar *community_id;
   gchar *owner;
   gchar *name;
+  gchar *description;
   guint64 root_epoch;
   gboolean has_control_pk;
   GListStore *channels;
@@ -24,6 +25,7 @@ static void gn_concord_community_item_finalize(GObject *object) {
   g_free(self->community_id);
   g_free(self->owner);
   g_free(self->name);
+  g_free(self->description);
   g_clear_pointer(&self->relays, g_ptr_array_unref);
   G_OBJECT_CLASS(gn_concord_community_item_parent_class)->finalize(object);
 }
@@ -69,6 +71,25 @@ const char *gn_concord_community_item_get_name(GnConcordCommunityItem *self) {
   g_return_val_if_fail(GN_IS_CONCORD_COMMUNITY_ITEM(self), NULL);
   return self->name;
 }
+void gn_concord_community_item_set_name(GnConcordCommunityItem *self,
+                                        const char *name) {
+  g_return_if_fail(GN_IS_CONCORD_COMMUNITY_ITEM(self));
+  if (g_strcmp0(self->name, name) == 0) return;
+  g_free(self->name);
+  self->name = g_strdup(name);
+}
+const char *gn_concord_community_item_get_description(
+    GnConcordCommunityItem *self) {
+  g_return_val_if_fail(GN_IS_CONCORD_COMMUNITY_ITEM(self), NULL);
+  return self->description;
+}
+void gn_concord_community_item_set_description(GnConcordCommunityItem *self,
+                                               const char *description) {
+  g_return_if_fail(GN_IS_CONCORD_COMMUNITY_ITEM(self));
+  if (g_strcmp0(self->description, description) == 0) return;
+  g_free(self->description);
+  self->description = g_strdup(description);
+}
 guint64 gn_concord_community_item_get_root_epoch(GnConcordCommunityItem *self) {
   g_return_val_if_fail(GN_IS_CONCORD_COMMUNITY_ITEM(self), 0);
   return self->root_epoch;
@@ -104,6 +125,21 @@ GnConcordChannelItem *gn_concord_community_item_find_channel(
       return g_steal_pointer(&channel);
   }
   return NULL;
+}
+
+void gn_concord_community_item_remove_channel(GnConcordCommunityItem *self,
+                                              const char *channel_id) {
+  g_return_if_fail(GN_IS_CONCORD_COMMUNITY_ITEM(self));
+  if (!channel_id) return;
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(self->channels));
+  for (guint i = 0; i < n; i++) {
+    g_autoptr(GnConcordChannelItem) channel =
+      g_list_model_get_item(G_LIST_MODEL(self->channels), i);
+    if (g_strcmp0(gn_concord_channel_item_get_id(channel), channel_id) == 0) {
+      g_list_store_remove(self->channels, i);
+      return;
+    }
+  }
 }
 
 guint gn_concord_community_item_get_channel_count(

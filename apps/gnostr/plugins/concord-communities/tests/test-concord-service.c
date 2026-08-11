@@ -656,6 +656,599 @@ static void test_publish_roundtrip(void) {
 }
 
 /* ------------------------------------------------------------------ *
+ * the Control Plane fold (CORD-04)
+ *
+ * The bundle a member joined with is a join-time snapshot; the fold is the
+ * authority. Every case here mints its own editions in-process — wrap,
+ * plaintext seal, kind-3308 rumor — so the whole fold is exercisable with no
+ * relay and no signer.
+ * ------------------------------------------------------------------ */
+
+#define CONTROL_ROOT "8888888888888888888888888888888888888888888888888888888888888888"
+#define ADMIN_SK "9999999999999999999999999999999999999999999999999999999999999999"
+#define ROLE_ID "abababababababababababababababababababababababababababababababab"
+#define SECOND_CHANNEL "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+
+typedef struct {
+  const char *actor_sk;
+  guint vsk;
+  const char *eid;
+  guint64 version;
+  const char *prev; /* the superseded edition's hash, NULL on the first */
+  const char *content;
+  const char *vac_eid;
+  guint64 vac_version;
+  const char *vac_hash;
+  /* The Control Plane's seal MUST be plaintext; this mints the wrong one. */
+  gboolean encrypted_seal;
+  /* Sign the wrap with the community_root-derived read key rather than the
+   * control_root-derived signer: the legacy, pre-split address. */
+  gboolean legacy_address;
+} EditionOptions;
+
+static void control_keys(const Fixture *fixture, gboolean legacy,
+                         nostr_concord_group_key_t *read_key,
+                         nostr_concord_group_key_t *signer_key) {
+  uint8_t root[32], id[32], control_root[32];
+  g_assert_true(nostr_concord_hex_decode_32(COMMUNITY_ROOT, root));
+  g_assert_true(nostr_concord_hex_decode_32(fixture->community_id, id));
+  g_assert_cmpint(nostr_concord_control_read_key(root, id, TEST_EPOCH, read_key),
+                  ==, NOSTR_CONCORD_OK);
+  if (legacy) return;
+  g_assert_true(nostr_concord_hex_decode_32(CONTROL_ROOT, control_root));
+  g_assert_cmpint(
+    nostr_concord_control_signer_key(control_root, id, TEST_EPOCH, signer_key),
+    ==, NOSTR_CONCORD_OK);
+}
+
+/* Mints one Control Plane edition and reports its CORD-04 §1 hash, which is
+ * what the next edition's `ep` and any `vac` citation must carry. */
+static gchar *mint_edition(const Fixture *fixture,
+                           const EditionOptions *options, gchar **out_hash) {
+  nostr_concord_group_key_t read_key, signer_key;
+  control_keys(fixture, options->legacy_address, &read_key, &signer_key);
+  const nostr_concord_group_key_t *stream =
+    options->legacy_address ? &read_key : &signer_key;
+
+  g_autofree gchar *actor = nostr_key_get_public(options->actor_sk);
+  g_autofree gchar *vsk_text = g_strdup_printf("%u", options->vsk);
+  g_autofree gchar *version_text =
+    g_strdup_printf("%" G_GUINT64_FORMAT, options->version);
+
+  g_autoptr(NostrEvent) rumor = nostr_event_new();
+  nostr_event_set_kind(rumor, CONCORD_KIND_CONTROL_EDITION);
+  nostr_event_set_pubkey(rumor, actor);
+  nostr_event_set_created_at(rumor, 1686840217);
+  nostr_event_set_content(rumor, options->content);
+
+  NostrTags *tags = nostr_tags_new(0);
+  tags = nostr_tags_append_unique(tags, nostr_tag_new("vsk", vsk_text, NULL));
+  tags = nostr_tags_append_unique(tags, nostr_tag_new("eid", options->eid, NULL));
+  tags = nostr_tags_append_unique(tags, nostr_tag_new("ev", version_text, NULL));
+  if (options->prev)
+    tags = nostr_tags_append_unique(tags,
+                                    nostr_tag_new("ep", options->prev, NULL));
+  if (options->vac_eid) {
+    g_autofree gchar *vac_version =
+      g_strdup_printf("%" G_GUINT64_FORMAT, options->vac_version);
+    tags = nostr_tags_append_unique(
+      tags, nostr_tag_new("vac", options->vac_eid, vac_version,
+                          options->vac_hash, NULL));
+  }
+  nostr_event_set_tags(rumor, tags);
+
+  g_autofree gchar *rumor_json = nostr_event_serialize_compact(rumor);
+  g_assert_nonnull(rumor_json);
+
+  /* The plaintext seal carries the rumor's serialized JSON byte-verbatim,
+   * which is what lets a compaction re-wrap it with its signature intact. */
+  g_autoptr(NostrEvent) seal = nostr_event_new();
+  char *encrypted = NULL;
+  if (options->encrypted_seal) {
+    g_assert_cmpint(
+      nostr_concord_stream_seal(read_key.conv_key, rumor_json, &encrypted), ==,
+      NOSTR_CONCORD_OK);
+    nostr_event_set_kind(seal, CONCORD_SEAL_ENCRYPTED);
+    nostr_event_set_content(seal, encrypted);
+    free(encrypted);
+  } else {
+    nostr_event_set_kind(seal, CONCORD_SEAL_PLAINTEXT);
+    nostr_event_set_content(seal, rumor_json);
+  }
+  nostr_event_set_pubkey(seal, actor);
+  nostr_event_set_created_at(seal, 1686840217);
+  nostr_event_set_tags(seal, nostr_tags_new(0));
+  g_assert_cmpint(nostr_event_sign(seal, options->actor_sk), ==, 0);
+  g_autofree gchar *seal_json = nostr_event_serialize_compact(seal);
+
+  char *wrap_content = NULL;
+  g_assert_cmpint(
+    nostr_concord_stream_seal(read_key.conv_key, seal_json, &wrap_content), ==,
+    NOSTR_CONCORD_OK);
+
+  char stream_sk[65], stream_pk[65];
+  nostr_concord_hex_encode_32(stream->sk, stream_sk);
+  nostr_concord_hex_encode_32(stream->pk, stream_pk);
+
+  g_autoptr(NostrEvent) wrap = nostr_event_new();
+  nostr_event_set_kind(wrap, CONCORD_STREAM_WRAP);
+  nostr_event_set_pubkey(wrap, stream_pk);
+  nostr_event_set_created_at(wrap, 1686840217);
+  nostr_event_set_content(wrap, wrap_content);
+  g_autofree gchar *ephemeral_sk = nostr_key_generate_private();
+  g_autofree gchar *ephemeral_pk = nostr_key_get_public(ephemeral_sk);
+  nostr_event_set_tags(wrap,
+                       nostr_tags_new(1, nostr_tag_new("p", ephemeral_pk,
+                                                       NULL)));
+  free(wrap_content);
+  g_assert_cmpint(nostr_event_sign(wrap, stream_sk), ==, 0);
+
+  if (out_hash) {
+    uint8_t eid[32], prev[32], hash[32];
+    g_assert_true(nostr_concord_hex_decode_32(options->eid, eid));
+    if (options->prev)
+      g_assert_true(nostr_concord_hex_decode_32(options->prev, prev));
+    g_assert_cmpint(
+      nostr_concord_edition_hash(eid, options->version,
+                                 options->prev ? prev : NULL,
+                                 (const uint8_t *)options->content,
+                                 strlen(options->content), hash),
+      ==, NOSTR_CONCORD_OK);
+    char hex[65];
+    nostr_concord_hex_encode_32(hash, hex);
+    *out_hash = g_strdup(hex);
+  }
+
+  nostr_concord_group_key_clear(&read_key);
+  if (!options->legacy_address) nostr_concord_group_key_clear(&signer_key);
+  return nostr_event_serialize_compact(wrap);
+}
+
+static EditionOptions owner_edition(guint vsk, const char *eid, guint64 version,
+                                    const char *content) {
+  EditionOptions options = { 0 };
+  options.actor_sk = OWNER_SK;
+  options.vsk = vsk;
+  options.eid = eid;
+  options.version = version;
+  options.content = content;
+  options.legacy_address = TRUE;
+  return options;
+}
+
+static gboolean ingest_edition(GnConcordCommunityService *service,
+                               const Fixture *fixture,
+                               const EditionOptions *options,
+                               gchar **out_hash) {
+  g_autofree gchar *wrap = mint_edition(fixture, options, out_hash);
+  return gn_concord_community_service_ingest_control_wrap(
+    service, fixture->community_id, wrap);
+}
+
+static gchar *grant_coordinate(const Fixture *fixture, const char *member) {
+  uint8_t community[32], member_bytes[32], eid[32];
+  g_assert_true(nostr_concord_hex_decode_32(fixture->community_id, community));
+  g_assert_true(nostr_concord_hex_decode_32(member, member_bytes));
+  g_assert_cmpint(nostr_concord_grant_locator(community, member_bytes, eid), ==,
+                  NOSTR_CONCORD_OK);
+  char hex[65];
+  nostr_concord_hex_encode_32(eid, hex);
+  return g_strdup(hex);
+}
+
+static gchar *banlist_coordinate(const Fixture *fixture) {
+  uint8_t community[32], eid[32];
+  g_assert_true(nostr_concord_hex_decode_32(fixture->community_id, community));
+  g_assert_cmpint(nostr_concord_banlist_locator(community, eid), ==,
+                  NOSTR_CONCORD_OK);
+  char hex[65];
+  nostr_concord_hex_encode_32(eid, hex);
+  return g_strdup(hex);
+}
+
+/* The name and relays an invite carries are a preview so a parked invite can
+ * render; the fold replaces both (CORD-02 §6). */
+static void test_control_metadata_is_authority(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+
+  g_autoptr(GnConcordCommunityItem) item =
+    gn_concord_community_service_lookup_community(service,
+                                                  fixture.community_id);
+  g_assert_cmpstr(gn_concord_community_item_get_name(item), ==,
+                  "Incident Response");
+
+  EditionOptions metadata = owner_edition(
+    CONCORD_VSK_METADATA, fixture.community_id, 1,
+    "{\"name\":\"Vector\",\"description\":\"No compromises.\","
+    "\"relays\":[\"wss://folded.example\"]}");
+  g_assert_true(ingest_edition(service, &fixture, &metadata, NULL));
+
+  g_assert_cmpstr(gn_concord_community_item_get_name(item), ==, "Vector");
+  g_assert_cmpstr(gn_concord_community_item_get_description(item), ==,
+                  "No compromises.");
+  g_assert_cmpstr(gn_concord_community_item_get_primary_relay(item), ==,
+                  "wss://folded.example");
+
+  /* A relay re-delivering the same edition is one edition: the fold dedupes
+   * on the *rumor* id, never the outer wrap's, which differs per re-wrap. */
+  g_autofree gchar *rewrapped = mint_edition(&fixture, &metadata, NULL);
+  g_assert_false(gn_concord_community_service_ingest_control_wrap(
+    service, fixture.community_id, rewrapped));
+  g_assert_cmpstr(gn_concord_community_item_get_name(item), ==, "Vector");
+
+  fixture_clear(&fixture);
+}
+
+/* A Channel is *defined* in the Control Plane, so a member learns of Channels
+ * no invite ever granted — and a rename or a deletion is an authorized,
+ * convergent edit rather than a new Channel (CORD-03 §2). */
+static void test_control_defines_channels(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+  g_autoptr(GnConcordCommunityItem) item =
+    gn_concord_community_service_lookup_community(service,
+                                                  fixture.community_id);
+  g_assert_cmpuint(gn_concord_community_item_get_channel_count(item), ==, 1);
+
+  g_autofree gchar *first = NULL;
+  EditionOptions define = owner_edition(CONCORD_VSK_CHANNEL, SECOND_CHANNEL, 1,
+                                        "{\"name\":\"lounge\","
+                                        "\"private\":false}");
+  g_assert_true(ingest_edition(service, &fixture, &define, &first));
+  g_assert_cmpuint(gn_concord_community_item_get_channel_count(item), ==, 2);
+
+  /* A public Channel needs no delivery: its key derives from the
+   * community_root, so it is readable the moment it is defined (CORD-03 §1). */
+  g_autoptr(GnConcordChannelItem) channel =
+    gn_concord_community_item_find_channel(item, SECOND_CHANNEL);
+  g_assert_nonnull(channel);
+  g_assert_cmpstr(gn_concord_channel_item_get_name(channel), ==, "lounge");
+  g_assert_false(gn_concord_channel_item_get_is_private(channel));
+
+  uint8_t root[32], id[32];
+  nostr_concord_hex_decode_32(COMMUNITY_ROOT, root);
+  nostr_concord_hex_decode_32(SECOND_CHANNEL, id);
+  nostr_concord_group_key_t key;
+  g_assert_cmpint(nostr_concord_channel_key(root, id, TEST_EPOCH, &key), ==,
+                  NOSTR_CONCORD_OK);
+  char expected[65];
+  nostr_concord_hex_encode_32(key.pk, expected);
+  g_assert_cmpstr(gn_concord_channel_item_get_stream_pubkey(channel), ==,
+                  expected);
+  nostr_concord_group_key_clear(&key);
+
+  /* A rename folds onto the same channel_id. */
+  g_autofree gchar *second = NULL;
+  EditionOptions rename = owner_edition(CONCORD_VSK_CHANNEL, SECOND_CHANNEL, 2,
+                                        "{\"name\":\"the-lounge\","
+                                        "\"private\":false}");
+  rename.prev = first;
+  g_assert_true(ingest_edition(service, &fixture, &rename, &second));
+  g_autoptr(GnConcordChannelItem) renamed =
+    gn_concord_community_item_find_channel(item, SECOND_CHANNEL);
+  g_assert_cmpstr(gn_concord_channel_item_get_name(renamed), ==, "the-lounge");
+
+  /* Refuse-downgrade: a relay replaying the first edition cannot revert it. */
+  g_autofree gchar *replay = mint_edition(&fixture, &define, NULL);
+  gn_concord_community_service_ingest_control_wrap(
+    service, fixture.community_id, replay);
+  g_autoptr(GnConcordChannelItem) still =
+    gn_concord_community_item_find_channel(item, SECOND_CHANNEL);
+  g_assert_cmpstr(gn_concord_channel_item_get_name(still), ==, "the-lounge");
+
+  /* A version 3 whose `prev` doesn't name the version 2 this client holds is
+   * a gap, not a head: the chain-intact rule drops it. */
+  EditionOptions forked = owner_edition(
+    CONCORD_VSK_CHANNEL, SECOND_CHANNEL, 3,
+    "{\"name\":\"forked\",\"private\":false}");
+  forked.prev =
+    "1111111111111111111111111111111111111111111111111111111111111111";
+  g_assert_true(ingest_edition(service, &fixture, &forked, NULL));
+  g_autoptr(GnConcordChannelItem) unforked =
+    gn_concord_community_item_find_channel(item, SECOND_CHANNEL);
+  g_assert_cmpstr(gn_concord_channel_item_get_name(unforked), ==,
+                  "the-lounge");
+
+  /* Deletion is terminal: the Channel drops from display. */
+  EditionOptions deleted = owner_edition(
+    CONCORD_VSK_CHANNEL, SECOND_CHANNEL, 3,
+    "{\"name\":\"the-lounge\",\"private\":false,\"deleted\":true}");
+  deleted.prev = second;
+  g_assert_true(ingest_edition(service, &fixture, &deleted, NULL));
+  g_assert_null(
+    gn_concord_community_item_find_channel(item, SECOND_CHANNEL));
+  g_assert_cmpuint(gn_concord_community_item_get_channel_count(item), ==, 1);
+
+  fixture_clear(&fixture);
+}
+
+/* A private Channel the Control Plane defines but no invite delivered a key
+ * for is listed and unreadable — never silently derived from the
+ * community_root, which would address a plane nobody writes (CORD-03 §1). */
+static void test_control_private_channel_without_key(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+  g_autoptr(GnConcordCommunityItem) item =
+    gn_concord_community_service_lookup_community(service,
+                                                  fixture.community_id);
+
+  EditionOptions define = owner_edition(CONCORD_VSK_CHANNEL, SECOND_CHANNEL, 1,
+                                        "{\"name\":\"staff\","
+                                        "\"private\":true}");
+  g_assert_true(ingest_edition(service, &fixture, &define, NULL));
+
+  g_autoptr(GnConcordChannelItem) channel =
+    gn_concord_community_item_find_channel(item, SECOND_CHANNEL);
+  g_assert_nonnull(channel);
+  g_assert_true(gn_concord_channel_item_get_is_private(channel));
+  g_assert_null(gn_concord_channel_item_get_stream_pubkey(channel));
+
+  fixture_clear(&fixture);
+}
+
+/* Authority is rejection, not prevention: any control_root holder can publish,
+ * and everyone else drops what doesn't map to a qualifying rank (CORD-04). */
+static void test_control_authority_is_rejection(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+  g_autoptr(GnConcordCommunityItem) item =
+    gn_concord_community_service_lookup_community(service,
+                                                  fixture.community_id);
+  g_autofree gchar *admin = nostr_key_get_public(ADMIN_SK);
+
+  /* A perfectly valid edition from an npub the Roster ranks nowhere. The wrap
+   * verifies — they hold the write key — and it changes nothing. */
+  EditionOptions rogue = owner_edition(CONCORD_VSK_METADATA,
+                                       fixture.community_id, 1,
+                                       "{\"name\":\"Seized\"}");
+  rogue.actor_sk = ADMIN_SK;
+  g_assert_true(ingest_edition(service, &fixture, &rogue, NULL));
+  g_assert_cmpstr(gn_concord_community_item_get_name(item), ==,
+                  "Incident Response");
+
+  /* The owner mints a Role carrying MANAGE_METADATA and grants it. Neither
+   * hands over a key: a Grant confers rank, never a secret. */
+  g_autofree gchar *role_content = g_strdup_printf(
+    "{\"role_id\":\"%s\",\"name\":\"Editor\",\"position\":5,"
+    "\"permissions\":\"%" G_GUINT64_FORMAT "\"}",
+    ROLE_ID, CONCORD_PERM_MANAGE_METADATA);
+  EditionOptions role =
+    owner_edition(CONCORD_VSK_ROLE, ROLE_ID, 1, role_content);
+  g_assert_true(ingest_edition(service, &fixture, &role, NULL));
+
+  g_autofree gchar *grant_eid = grant_coordinate(&fixture, admin);
+  g_autofree gchar *grant_content = g_strdup_printf(
+    "{\"member\":\"%s\",\"role_ids\":[\"%s\"]}", admin, ROLE_ID);
+  EditionOptions grant =
+    owner_edition(CONCORD_VSK_GRANT, grant_eid, 1, grant_content);
+  g_assert_true(ingest_edition(service, &fixture, &grant, NULL));
+
+  /* The rogue edition is already held; the Grant arriving *later* is what
+   * makes it fold. An edition is judged at fold time, never at arrival. */
+  g_assert_cmpstr(gn_concord_community_item_get_name(item), ==, "Seized");
+
+  /* But rank has a ceiling: no edition may claim a position at or above its
+   * own signer, so a position-5 Editor cannot mint a position-1 peer of the
+   * owner's deputies. */
+  g_autofree gchar *promotion = g_strdup_printf(
+    "{\"role_id\":\"%s\",\"name\":\"Overlord\",\"position\":1,"
+    "\"permissions\":\"%" G_GUINT64_FORMAT "\"}",
+    ROLE_ID, CONCORD_PERM_MANAGE_ROLES | CONCORD_PERM_MANAGE_METADATA);
+  EditionOptions self_promotion =
+    owner_edition(CONCORD_VSK_ROLE, ROLE_ID, 2, promotion);
+  self_promotion.actor_sk = ADMIN_SK;
+  g_autofree gchar *role_hash = NULL;
+  ingest_edition(service, &fixture, &role, &role_hash);
+  self_promotion.prev = role_hash;
+  g_assert_true(ingest_edition(service, &fixture, &self_promotion, NULL));
+  g_assert_cmpuint(
+    gn_concord_community_service_get_position(service, fixture.community_id,
+                                              admin),
+    ==, 5);
+
+  /* A Grant is honored only at its own derived coordinate: forging one into
+   * someone else's slot fails however validly it is signed. */
+  g_autofree gchar *squatted = g_strdup_printf(
+    "{\"member\":\"%s\",\"role_ids\":[\"%s\"]}", fixture.author_pubkey,
+    ROLE_ID);
+  EditionOptions misplaced =
+    owner_edition(CONCORD_VSK_GRANT, ROLE_ID, 1, squatted);
+  ingest_edition(service, &fixture, &misplaced, NULL);
+  g_assert_cmpuint(
+    gn_concord_community_service_get_position(service, fixture.community_id,
+                                              fixture.author_pubkey),
+    ==, CONCORD_POSITION_LAST);
+
+  fixture_clear(&fixture);
+}
+
+/* A reader will not honor an action until it has synced the Grant it cites,
+ * and a citation whose hash doesn't match parks exactly like an unsynced one
+ * (CORD-04 §5). It parks only its own author's action. */
+static void test_control_vac_blocks_until_synced(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+  g_autoptr(GnConcordCommunityItem) item =
+    gn_concord_community_service_lookup_community(service,
+                                                  fixture.community_id);
+  g_autofree gchar *admin = nostr_key_get_public(ADMIN_SK);
+
+  g_autofree gchar *role_content = g_strdup_printf(
+    "{\"role_id\":\"%s\",\"name\":\"Editor\",\"position\":5,"
+    "\"permissions\":\"%" G_GUINT64_FORMAT "\"}",
+    ROLE_ID, CONCORD_PERM_MANAGE_METADATA);
+  EditionOptions role =
+    owner_edition(CONCORD_VSK_ROLE, ROLE_ID, 1, role_content);
+  g_assert_true(ingest_edition(service, &fixture, &role, NULL));
+
+  g_autofree gchar *grant_eid = grant_coordinate(&fixture, admin);
+  g_autofree gchar *grant_content = g_strdup_printf(
+    "{\"member\":\"%s\",\"role_ids\":[\"%s\"]}", admin, ROLE_ID);
+  EditionOptions grant =
+    owner_edition(CONCORD_VSK_GRANT, grant_eid, 1, grant_content);
+  g_autofree gchar *grant_hash = NULL;
+  g_autofree gchar *grant_wrap = mint_edition(&fixture, &grant, &grant_hash);
+
+  /* The action arrives before the Grant it cites. */
+  EditionOptions cited = owner_edition(CONCORD_VSK_METADATA,
+                                       fixture.community_id, 1,
+                                       "{\"name\":\"Cited\"}");
+  cited.actor_sk = ADMIN_SK;
+  cited.vac_eid = grant_eid;
+  cited.vac_version = 1;
+  cited.vac_hash = grant_hash;
+  g_assert_true(ingest_edition(service, &fixture, &cited, NULL));
+  g_assert_cmpstr(gn_concord_community_item_get_name(item), ==,
+                  "Incident Response");
+
+  /* And once the cited Grant lands, it resolves. */
+  g_assert_true(gn_concord_community_service_ingest_control_wrap(
+    service, fixture.community_id, grant_wrap));
+  g_assert_cmpstr(gn_concord_community_item_get_name(item), ==, "Cited");
+
+  fixture_clear(&fixture);
+}
+
+/* Every honest client drops *every* event from a banned npub, so a banned
+ * member vanishes entirely (CORD-04 §4). */
+static void test_control_banlist_silences(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+
+  MintOptions options = default_options();
+  g_autofree gchar *before =
+    mint_wrap(&fixture, "before the ban", 1686840217, &options);
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    service, fixture.community_id, CHANNEL_ID, before));
+
+  g_autofree gchar *banlist_eid = banlist_coordinate(&fixture);
+  g_autofree gchar *banlist =
+    g_strdup_printf("[\"%s\"]", fixture.author_pubkey);
+  EditionOptions ban =
+    owner_edition(CONCORD_VSK_BANLIST, banlist_eid, 1, banlist);
+  g_assert_true(ingest_edition(service, &fixture, &ban, NULL));
+
+  g_autofree gchar *after =
+    mint_wrap(&fixture, "after the ban", 1686840400, &options);
+  g_assert_false(gn_concord_community_service_ingest_wrap(
+    service, fixture.community_id, CHANNEL_ID, after));
+
+  GListModel *messages = gn_concord_community_service_get_messages(
+    service, fixture.community_id, CHANNEL_ID);
+  g_assert_cmpuint(g_list_model_get_n_items(messages), ==, 1);
+
+  fixture_clear(&fixture);
+}
+
+/* The Control Plane's seal MUST be plaintext, and its wrap MUST sit at the
+ * address the member holds. */
+static void test_control_rejections(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+
+  /* An encrypted seal cannot survive a compaction's re-wrap, so the Control
+   * Plane refuses one outright (CORD-02 §5). */
+  EditionOptions encrypted = owner_edition(
+    CONCORD_VSK_METADATA, fixture.community_id, 1, "{\"name\":\"Sealed\"}");
+  encrypted.encrypted_seal = TRUE;
+  g_assert_false(ingest_edition(service, &fixture, &encrypted, NULL));
+
+  /* This membership carries no control_pk, so its plane is the legacy address
+   * — a wrap signed by the split-scheme signer is not on it. The two schemes
+   * never collide: different labels, different addresses. */
+  EditionOptions split = owner_edition(
+    CONCORD_VSK_METADATA, fixture.community_id, 1, "{\"name\":\"Split\"}");
+  split.legacy_address = FALSE;
+  g_assert_false(ingest_edition(service, &fixture, &split, NULL));
+
+  /* A version 1 carrying a `prev`, and a version 2 carrying none: `prev` is
+   * absent on the first edition alone. */
+  EditionOptions chained = owner_edition(
+    CONCORD_VSK_METADATA, fixture.community_id, 1, "{\"name\":\"Chained\"}");
+  chained.prev =
+    "2222222222222222222222222222222222222222222222222222222222222222";
+  g_assert_false(ingest_edition(service, &fixture, &chained, NULL));
+
+  EditionOptions orphan = owner_edition(
+    CONCORD_VSK_METADATA, fixture.community_id, 2, "{\"name\":\"Orphan\"}");
+  g_assert_false(ingest_edition(service, &fixture, &orphan, NULL));
+
+  g_autoptr(GnConcordCommunityItem) item =
+    gn_concord_community_service_lookup_community(service,
+                                                  fixture.community_id);
+  g_assert_cmpstr(gn_concord_community_item_get_name(item), ==,
+                  "Incident Response");
+
+  fixture_clear(&fixture);
+}
+
+/* On a split-key Community the address is the control_root-derived signer's,
+ * which a member holds from their invite and never derives (CORD-02 §5). */
+static void test_control_split_address(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    gn_concord_community_service_new_offline(fixture.author_pubkey);
+
+  uint8_t control_root[32], id[32];
+  g_assert_true(nostr_concord_hex_decode_32(CONTROL_ROOT, control_root));
+  g_assert_true(nostr_concord_hex_decode_32(fixture.community_id, id));
+  nostr_concord_group_key_t signer;
+  g_assert_cmpint(
+    nostr_concord_control_signer_key(control_root, id, TEST_EPOCH, &signer), ==,
+    NOSTR_CONCORD_OK);
+  char control_pk[65];
+  nostr_concord_hex_encode_32(signer.pk, control_pk);
+  nostr_concord_group_key_clear(&signer);
+
+  g_autofree gchar *bundle = build_bundle(&fixture, CHANNEL_KEY, 0, 1);
+  g_autofree gchar *with_control = g_strdup_printf(
+    "%.*s,\"control_pk\":\"%s\"}", (int)(strlen(bundle) - 1), bundle,
+    control_pk);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gn_concord_community_service_accept_bundle(
+    service, with_control, &error));
+  g_assert_no_error(error);
+
+  EditionOptions metadata = owner_edition(
+    CONCORD_VSK_METADATA, fixture.community_id, 1, "{\"name\":\"Split\"}");
+  metadata.legacy_address = FALSE;
+  g_assert_true(ingest_edition(service, &fixture, &metadata, NULL));
+
+  g_autoptr(GnConcordCommunityItem) item =
+    gn_concord_community_service_lookup_community(service,
+                                                  fixture.community_id);
+  g_assert_cmpstr(gn_concord_community_item_get_name(item), ==, "Split");
+
+  /* And the legacy address is not this Community's plane: only staff can mint
+   * a wrap that verifies at the signer's address. */
+  EditionOptions legacy = owner_edition(
+    CONCORD_VSK_METADATA, fixture.community_id, 2, "{\"name\":\"Legacy\"}");
+  legacy.legacy_address = TRUE;
+  legacy.prev =
+    "3333333333333333333333333333333333333333333333333333333333333333";
+  g_assert_false(ingest_edition(service, &fixture, &legacy, NULL));
+  g_assert_cmpstr(gn_concord_community_item_get_name(item), ==, "Split");
+
+  fixture_clear(&fixture);
+}
+
+/* ------------------------------------------------------------------ *
  * the Community List (CORD-02 §8)
  * ------------------------------------------------------------------ */
 
@@ -919,23 +1512,25 @@ static void test_community_list_round_trips_foreign_fields(void) {
 /* An unreachable relay and an empty one are indistinguishable from here, and
  * one of them costs the user every membership on every other device. So a
  * client that never read the document must never write one. */
-static gboolean warnings_are_not_fatal(const char *domain,
-                                       GLogLevelFlags level,
-                                       const char *message, gpointer user_data) {
+static void swallow_message(const char *domain, GLogLevelFlags level,
+                            const char *message, gpointer user_data) {
   (void)domain;
   (void)level;
   (void)message;
   (void)user_data;
-  return FALSE;
 }
 
 static void test_community_list_never_published_before_read(void) {
   Fixture fixture = { 0 };
   list_test_begin(&fixture);
   gn_concord_test_query_fails = TRUE;
-  /* An unreachable relay is reported, not swallowed, so the service warns its
-   * way through this test; the reporting is the point, not a defect. */
-  g_test_log_set_fatal_handler(warnings_are_not_fatal, NULL);
+  /* An unreachable relay is *reported*, not swallowed — the service warns its
+   * way through this test and that reporting is the point. Take the warnings
+   * off the test logger rather than making them non-fatal, so a real one
+   * elsewhere still fails the suite. */
+  GLogLevelFlags fatal = g_log_set_always_fatal(G_LOG_LEVEL_ERROR);
+  guint handler = g_log_set_handler(
+    NULL, G_LOG_LEVEL_WARNING | G_LOG_FLAG_RECURSION, swallow_message, NULL);
 
   GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
   g_autoptr(GnConcordCommunityService) service =
@@ -954,7 +1549,8 @@ static void test_community_list_never_published_before_read(void) {
   g_assert_null(published_community_list());
 
   gn_concord_community_service_shutdown(service);
-  g_test_log_set_fatal_handler(NULL, NULL);
+  g_log_remove_handler(NULL, handler);
+  g_log_set_always_fatal(fatal);
   list_test_end(&fixture);
 }
 
@@ -984,5 +1580,20 @@ int main(int argc, char **argv) {
                   test_community_list_round_trips_foreign_fields);
   g_test_add_func("/concord/service/community-list-fails-closed",
                   test_community_list_never_published_before_read);
+  g_test_add_func("/concord/control/metadata-is-authority",
+                  test_control_metadata_is_authority);
+  g_test_add_func("/concord/control/defines-channels",
+                  test_control_defines_channels);
+  g_test_add_func("/concord/control/private-channel-without-key",
+                  test_control_private_channel_without_key);
+  g_test_add_func("/concord/control/authority-is-rejection",
+                  test_control_authority_is_rejection);
+  g_test_add_func("/concord/control/vac-blocks-until-synced",
+                  test_control_vac_blocks_until_synced);
+  g_test_add_func("/concord/control/banlist-silences",
+                  test_control_banlist_silences);
+  g_test_add_func("/concord/control/rejections", test_control_rejections);
+  g_test_add_func("/concord/control/split-address",
+                  test_control_split_address);
   return g_test_run();
 }

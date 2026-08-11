@@ -308,6 +308,104 @@ nostr_concord_status_t nostr_concord_dissolved_key(
                                    zero_id, false, 0, out);
 }
 
+/* ---------------- control editions (CORD-04) ---------------- */
+
+static void concord_put_u64_be(uint64_t value, uint8_t out[8]) {
+    for (int i = 7; i >= 0; i--) {
+        out[i] = (uint8_t)(value & 0xffu);
+        value >>= 8;
+    }
+}
+
+nostr_concord_status_t nostr_concord_edition_hash(const uint8_t entity_id[32],
+                                                  uint64_t version,
+                                                  const uint8_t *prev,
+                                                  const uint8_t *content,
+                                                  size_t content_len,
+                                                  uint8_t hash_out[32]) {
+    if (!entity_id || !hash_out || (!content && content_len)) {
+        return NOSTR_CONCORD_ERR_NULL;
+    }
+
+    const char *label = CONCORD_LABEL_EDITION;
+    size_t label_len = strlen(label);
+    /* len64(label) || label || eid[32] || version[8] || 1 + prev[32]
+     * || len64(content). Every field is fixed-width or length-prefixed, so
+     * distinct inputs can never collide. */
+    size_t header_len = 8 + label_len + 32 + 8 + 1 + 32 + 8;
+    size_t total = header_len + content_len;
+    if (total < header_len) return NOSTR_CONCORD_ERR_OOM; /* overflow */
+
+    uint8_t *preimage = malloc(total);
+    if (!preimage) return NOSTR_CONCORD_ERR_OOM;
+
+    size_t at = 0;
+    concord_put_u64_be((uint64_t)label_len, preimage + at);
+    at += 8;
+    memcpy(preimage + at, label, label_len);
+    at += label_len;
+    memcpy(preimage + at, entity_id, 32);
+    at += 32;
+    concord_put_u64_be(version, preimage + at);
+    at += 8;
+    /* The absent-prev branch is a distinct flag byte followed by zeroes, not a
+     * shorter buffer: a first edition and one citing an all-zero prev must not
+     * share a preimage. */
+    preimage[at++] = prev ? 0x01u : 0x00u;
+    if (prev) {
+        memcpy(preimage + at, prev, 32);
+    } else {
+        memset(preimage + at, 0, 32);
+    }
+    at += 32;
+    concord_put_u64_be((uint64_t)content_len, preimage + at);
+    at += 8;
+    if (content_len) memcpy(preimage + at, content, content_len);
+    at += content_len;
+
+    int rc = concord_sha256(preimage, at, hash_out);
+    OPENSSL_cleanse(preimage, at);
+    free(preimage);
+    return rc == 0 ? NOSTR_CONCORD_OK : NOSTR_CONCORD_ERR_CRYPTO;
+}
+
+nostr_concord_status_t nostr_concord_grant_locator(
+    const uint8_t community_id[32], const uint8_t member_xonly[32],
+    uint8_t eid_out[32]) {
+    if (!community_id || !member_xonly || !eid_out) {
+        return NOSTR_CONCORD_ERR_NULL;
+    }
+    /* A.6: ikm is the community_id, the id is the member, and no epoch — the
+     * coordinate survives every Refounding. */
+    return nostr_concord_hkdf(CONCORD_LABEL_GRANT, community_id, 32,
+                              member_xonly, false, 0, eid_out);
+}
+
+nostr_concord_status_t nostr_concord_banlist_locator(
+    const uint8_t community_id[32], uint8_t eid_out[32]) {
+    if (!community_id || !eid_out) return NOSTR_CONCORD_ERR_NULL;
+    static const uint8_t zero_id[32] = { 0 };
+    return nostr_concord_hkdf(CONCORD_LABEL_BANLIST, community_id, 32, zero_id,
+                              false, 0, eid_out);
+}
+
+bool nostr_concord_parse_permissions(const char *decimal, uint64_t *out) {
+    if (!decimal || !out) return false;
+    size_t len = strlen(decimal);
+    if (len == 0 || len > 20) return false;
+    /* Canonical decimal: no sign, no leading zeros (CORD-01 "Encoding"). */
+    if (len > 1 && decimal[0] == '0') return false;
+    uint64_t value = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (decimal[i] < '0' || decimal[i] > '9') return false;
+        uint64_t digit = (uint64_t)(decimal[i] - '0');
+        if (value > (UINT64_MAX - digit) / 10u) return false;
+        value = value * 10u + digit;
+    }
+    *out = value;
+    return true;
+}
+
 /* ---------------- ordering ---------------- */
 
 bool nostr_concord_parse_ms(const char *value, int *out) {

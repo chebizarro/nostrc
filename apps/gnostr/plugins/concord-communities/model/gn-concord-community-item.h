@@ -25,6 +25,14 @@ const char *gn_concord_community_item_get_community_id(
     GnConcordCommunityItem *self);
 const char *gn_concord_community_item_get_owner(GnConcordCommunityItem *self);
 const char *gn_concord_community_item_get_name(GnConcordCommunityItem *self);
+/* The name an invite carries is a preview so a parked invite can render; the
+ * Control Plane fold is always the authority and replaces it (CORD-02 §6). */
+void gn_concord_community_item_set_name(GnConcordCommunityItem *self,
+                                        const char *name);
+const char *gn_concord_community_item_get_description(
+    GnConcordCommunityItem *self);
+void gn_concord_community_item_set_description(GnConcordCommunityItem *self,
+                                               const char *description);
 guint64 gn_concord_community_item_get_root_epoch(GnConcordCommunityItem *self);
 /* CORD-05 §1: an absent control_pk marks a legacy, pre-split Community whose
  * Control Plane folds at the legacy address instead. */
@@ -37,6 +45,10 @@ void gn_concord_community_item_add_channel(GnConcordCommunityItem *self,
                                            GnConcordChannelItem *channel);
 GnConcordChannelItem *gn_concord_community_item_find_channel(
     GnConcordCommunityItem *self, const char *channel_id);
+/* CORD-03 §2: a Channel deleted by a Control Plane edition is dropped from
+ * display. Deletion is terminal — the id is never reused. */
+void gn_concord_community_item_remove_channel(GnConcordCommunityItem *self,
+                                              const char *channel_id);
 guint gn_concord_community_item_get_channel_count(
     GnConcordCommunityItem *self);
 

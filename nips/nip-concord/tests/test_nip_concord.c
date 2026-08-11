@@ -426,6 +426,107 @@ static void test_invite_bundle(void) {
     free(content);
 }
 
+/* CORD-04 §1. Known-answer vectors computed independently from the spec's
+ * preimage: len64(label) || label || eid[32] || version_be[8] ||
+ * (prev ? 0x01||prev : 0x00||zero[32]) || len64(content) || content. The hash
+ * is what an edition's successor cites, so a drift here forks the version
+ * chain between implementations. */
+static void test_edition_hash(void) {
+    uint8_t eid[32], prev[32], hash[32];
+    fill(eid, sizeof(eid), 0x11);
+    fill(prev, sizeof(prev), 0x22);
+
+    const char *content = "{\"name\":\"Vector\"}";
+    CHECK(nostr_concord_edition_hash(eid, 4, prev, (const uint8_t *)content,
+                                     strlen(content), hash) == NOSTR_CONCORD_OK);
+    CHECK(hex_eq(
+        hash,
+        "3f43e23285bc1f2c29f6e45ef38a7198afc812f7a610b551e55795d6831b847d"));
+
+    /* A first edition: no prev, empty content. */
+    CHECK(nostr_concord_edition_hash(eid, 1, NULL, NULL, 0, hash) ==
+          NOSTR_CONCORD_OK);
+    CHECK(hex_eq(
+        hash,
+        "1ba55a9816861ce19b465f258267bcde73a4c257ece748ca16018e88594c88d9"));
+
+    /* An absent prev and an all-zero prev are different editions, which is
+     * what the flag byte buys: without it a forged "first" edition and a real
+     * one citing zeroes would share an identity. */
+    uint8_t zero[32];
+    fill(zero, sizeof(zero), 0x00);
+    CHECK(nostr_concord_edition_hash(eid, 1, zero, NULL, 0, hash) ==
+          NOSTR_CONCORD_OK);
+    CHECK(hex_eq(
+        hash,
+        "3af5a02d526368ac141b402e4f836cdae7f73a60658defd42c24ec89b1a7864c"));
+
+    /* Length-prefixing is what stops a content/version straddle from
+     * colliding: same bytes, different split, different hash. */
+    uint8_t a[32], b[32];
+    CHECK(nostr_concord_edition_hash(eid, 1, NULL, (const uint8_t *)"ab", 2,
+                                     a) == NOSTR_CONCORD_OK);
+    CHECK(nostr_concord_edition_hash(eid, 1, NULL, (const uint8_t *)"a", 1,
+                                     b) == NOSTR_CONCORD_OK);
+    CHECK(memcmp(a, b, 32) != 0);
+
+    CHECK(nostr_concord_edition_hash(NULL, 1, NULL, NULL, 0, hash) ==
+          NOSTR_CONCORD_ERR_NULL);
+}
+
+/* CORD-02 A.6: both bind to the community_id and carry no epoch, so they
+ * survive every Refounding and a fresh joiner derives the same coordinates. */
+static void test_entity_locators(void) {
+    uint8_t community_id[32], member[32], eid[32];
+    fill(community_id, sizeof(community_id), 0x33);
+    fill(member, sizeof(member), 0x44);
+
+    CHECK(nostr_concord_grant_locator(community_id, member, eid) ==
+          NOSTR_CONCORD_OK);
+    CHECK(hex_eq(
+        eid,
+        "0022856834c65a9cb1dd85cd8d566193469aeb8aac587714b224e43bc4979b2a"));
+
+    CHECK(nostr_concord_banlist_locator(community_id, eid) == NOSTR_CONCORD_OK);
+    CHECK(hex_eq(
+        eid,
+        "684b76c913bcbe305ac69e78ff41273fad48c16552ae312a57ade9765b01b485"));
+
+    /* One coordinate per member: nobody can forge entries into another's. */
+    uint8_t other[32], other_eid[32];
+    fill(other, sizeof(other), 0x45);
+    CHECK(nostr_concord_grant_locator(community_id, other, other_eid) ==
+          NOSTR_CONCORD_OK);
+    CHECK(memcmp(eid, other_eid, 32) != 0);
+}
+
+/* §3: permissions ride as a decimal string, never a bare JSON number — a
+ * number is a 64-bit float in JavaScript and corrupts silently past 2^53. */
+static void test_permissions(void) {
+    uint64_t value = 0;
+    CHECK(nostr_concord_parse_permissions("0", &value) && value == 0);
+    CHECK(nostr_concord_parse_permissions("1", &value) &&
+          value == CONCORD_PERM_MANAGE_ROLES);
+    CHECK(nostr_concord_parse_permissions("18446744073709551615", &value) &&
+          value == UINT64_MAX);
+    /* Past 2^53, where a JSON number would already have lost precision. */
+    CHECK(nostr_concord_parse_permissions("9007199254740993", &value) &&
+          value == 9007199254740993ull);
+
+    CHECK(!nostr_concord_parse_permissions("18446744073709551616", &value));
+    CHECK(!nostr_concord_parse_permissions("01", &value));
+    CHECK(!nostr_concord_parse_permissions("-1", &value));
+    CHECK(!nostr_concord_parse_permissions("", &value));
+    CHECK(!nostr_concord_parse_permissions("12a", &value));
+    CHECK(!nostr_concord_parse_permissions(NULL, &value));
+
+    /* There is no all-powerful bit: staff is an explicit, normative union, so
+     * a Role granted everything today inherits nothing added tomorrow. */
+    CHECK((CONCORD_PERMS_STAFF & CONCORD_PERM_KICK) == 0);
+    CHECK((CONCORD_PERMS_STAFF & CONCORD_PERM_MANAGE_MESSAGES) == 0);
+    CHECK((CONCORD_PERMS_STAFF & CONCORD_PERM_BAN) != 0);
+}
+
 static void test_ordering(void) {
     int ms = -1;
     CHECK(nostr_concord_parse_ms("0", &ms) && ms == 0);
@@ -503,6 +604,9 @@ static void test_null_arguments(void) {
 }
 
 int main(void) {
+    test_edition_hash();
+    test_entity_locators();
+    test_permissions();
     test_hex();
     test_b64url();
     test_community_id();

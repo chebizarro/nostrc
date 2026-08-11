@@ -70,6 +70,18 @@ gboolean gn_concord_channel_item_get_is_private(GnConcordChannelItem *self) {
   g_return_val_if_fail(GN_IS_CONCORD_CHANNEL_ITEM(self), FALSE);
   return self->is_private;
 }
+void gn_concord_channel_item_set_name(GnConcordChannelItem *self,
+                                      const char *name) {
+  g_return_if_fail(GN_IS_CONCORD_CHANNEL_ITEM(self));
+  if (g_strcmp0(self->name, name) == 0) return;
+  g_free(self->name);
+  self->name = g_strdup(name);
+}
+void gn_concord_channel_item_set_is_private(GnConcordChannelItem *self,
+                                            gboolean is_private) {
+  g_return_if_fail(GN_IS_CONCORD_CHANNEL_ITEM(self));
+  self->is_private = is_private;
+}
 const char *gn_concord_channel_item_get_stream_pubkey(
     GnConcordChannelItem *self) {
   g_return_val_if_fail(GN_IS_CONCORD_CHANNEL_ITEM(self), NULL);

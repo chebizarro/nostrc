@@ -1,5 +1,7 @@
 #include "gn-concord-community-service.h"
 
+#include "gn-concord-control-plane.h"
+
 #include <json-glib/json-glib.h>
 #include <nip_concord.h>
 #include <nostr-event.h>
@@ -29,6 +31,11 @@ typedef struct {
   GHashTable *messages;  /* channel id -> GListStore(GnConcordMessageItem) */
   GHashTable *seen;      /* rumor id -> GINT_TO_POINTER(1) */
   GHashTable *subscriptions; /* channel id -> subscription id in a guint64 box */
+  /* The Control Plane fold: the authority over everything the invite bundle
+   * only snapshotted at join time (CORD-02 §6, CORD-04). */
+  GnConcordControlPlane *control;
+  gchar *control_address; /* control_pk, or the legacy derivation's own pk */
+  guint64 control_subscription;
   /* Community List bookkeeping (CORD-02 §8) */
   JsonNode *list_seed;    /* the earliest epoch held; only ever moves back */
   JsonObject *list_extra; /* members of the List entry we don't understand */
@@ -68,6 +75,10 @@ G_DEFINE_TYPE(GnConcordCommunityService, gn_concord_community_service,
 
 static void publish_community_list(GnConcordCommunityService *self);
 static void load_community_list(GnConcordCommunityService *self);
+static void refresh_control_plane(GnConcordCommunityService *self,
+                                  CommunityState *state);
+static void apply_control_fold(GnConcordCommunityService *self,
+                              CommunityState *state);
 
 /* ------------------------------------------------------------------ *
  * small helpers
@@ -106,6 +117,8 @@ static void community_state_free(gpointer data) {
   g_clear_pointer(&state->messages, g_hash_table_unref);
   g_clear_pointer(&state->seen, g_hash_table_unref);
   g_clear_pointer(&state->subscriptions, g_hash_table_unref);
+  g_clear_pointer(&state->control, gn_concord_control_plane_free);
+  g_free(state->control_address);
   g_clear_pointer(&state->list_seed, json_node_free);
   g_clear_pointer(&state->list_extra, json_object_unref);
   g_free(state);
@@ -200,12 +213,22 @@ static gboolean parse_epoch(const char *value, guint64 *out) {
  * ------------------------------------------------------------------ */
 
 /* CORD-03 §1: a Channel's plane derives from its own key when private, and
- * from the community_root when public — one label, two secrets. */
+ * from the community_root when public — one label, two secrets. The folded
+ * type decides which, so a Control Plane edition converting a Channel moves
+ * it to the other secret at the same channel_id (§2). */
 static gboolean derive_channel_key(CommunityState *state,
                                    GnConcordChannelItem *channel,
                                    nostr_concord_group_key_t *out) {
-  const char *key_hex = gn_concord_channel_item_get_key(channel);
-  if (!key_hex || !*key_hex) key_hex = state->community_root;
+  const char *key_hex = NULL;
+  if (gn_concord_channel_item_get_is_private(channel)) {
+    /* A private Channel the Control Plane defines but no invite or rekey ever
+     * delivered a key for is listed and unreadable — never silently derived
+     * from the community_root, which would address a plane nobody writes. */
+    key_hex = gn_concord_channel_item_get_key(channel);
+    if (!key_hex || !*key_hex) return FALSE;
+  } else {
+    key_hex = state->community_root;
+  }
 
   uint8_t secret[32], channel_id[32];
   if (!nostr_concord_hex_decode_32(key_hex, secret) ||
@@ -319,6 +342,15 @@ gboolean gn_concord_community_service_ingest_wrap(
    * author than the seal that carried it is a forgery attempt. */
   if (g_strcmp0(nostr_event_get_pubkey(rumor),
                 nostr_event_get_pubkey(seal)) != 0)
+    goto done;
+
+  /* Every honest client drops *every* event from a banned npub — message,
+   * reaction, edit, or authority action — so a banned member vanishes
+   * entirely (CORD-04 §4). Silencing is instant and free; the read-cut is a
+   * rekey, the separate and heavier step. */
+  if (state->control &&
+      gn_concord_control_plane_is_banned(state->control,
+                                         nostr_event_get_pubkey(seal)))
     goto done;
 
   kind = nostr_event_get_kind(rumor);
@@ -458,6 +490,9 @@ void gn_concord_community_service_refresh(GnConcordCommunityService *self) {
       gn_concord_community_service_refresh_channel(
         self, state->community_id, gn_concord_channel_item_get_id(channel));
     }
+    /* Last, and unconditionally: the Control Plane is what tells this member
+     * about Channels no invite ever granted. */
+    refresh_control_plane(self, state);
   }
 }
 
@@ -642,6 +677,16 @@ gboolean gn_concord_community_service_accept_bundle(
     state->list_seed = g_steal_pointer(&existing->list_seed);
     state->list_extra = g_steal_pointer(&existing->list_extra);
     state->added_at = existing->added_at;
+    /* The folded Control Plane survives a refresh of the same epoch — it is
+     * the authority the refreshed bundle is only a snapshot of. A Refounding
+     * moves the plane's address, so a new epoch starts a new fold. */
+    if (existing->root_epoch == state->root_epoch &&
+        g_strcmp0(existing->control_pk, state->control_pk) == 0) {
+      state->control = g_steal_pointer(&existing->control);
+      state->control_address = g_steal_pointer(&existing->control_address);
+      state->control_subscription = existing->control_subscription;
+      existing->control_subscription = 0;
+    }
     guint n = g_list_model_get_n_items(G_LIST_MODEL(self->communities));
     for (guint i = 0; i < n; i++) {
       g_autoptr(GnConcordCommunityItem) current =
@@ -675,8 +720,243 @@ gboolean gn_concord_community_service_accept_bundle(
       gn_concord_community_service_refresh_channel(
         self, community_id, gn_concord_channel_item_get_id(channel));
     }
+    refresh_control_plane(self, state);
   }
   return TRUE;
+}
+
+/* ------------------------------------------------------------------ *
+ * the Control Plane (CORD-02 §5, CORD-04)
+ *
+ * The bundle a member joined with is a join-time snapshot; the fold is the
+ * authority. It carries Channels no invite granted, renames, visibility
+ * flips, the Roster and the Banlist — so a member who joined a year ago sees
+ * the Community as it is, not as it was handed to them.
+ * ------------------------------------------------------------------ */
+
+/* Every member derives the *read* key from the community_root; the signer
+ * derives from the staff-held control_root, which a member never has and
+ * never needs — they hold its pubkey from their invite (CORD-02 §2). */
+static gboolean derive_control_read_key(CommunityState *state,
+                                        nostr_concord_group_key_t *out) {
+  uint8_t root[32], id[32];
+  if (!nostr_concord_hex_decode_32(state->community_root, root) ||
+      !nostr_concord_hex_decode_32(state->community_id, id))
+    return FALSE;
+  nostr_concord_status_t status =
+    nostr_concord_control_read_key(root, id, state->root_epoch, out);
+  memset(root, 0, sizeof(root));
+  return status == NOSTR_CONCORD_OK;
+}
+
+static gboolean ensure_control_plane(CommunityState *state) {
+  if (state->control) return state->control_address != NULL;
+  if (!state->community_id || !state->owner) return FALSE;
+
+  state->control =
+    gn_concord_control_plane_new(state->community_id, state->owner);
+  if (!state->control) return FALSE;
+
+  if (state->control_pk) {
+    state->control_address = g_strdup(state->control_pk);
+  } else {
+    /* An epoch minted before the split had no signer key: the
+     * `concord/control` derivation alone was the plane — its pk the address
+     * and the wrap signer, its conv_key the encryption. A client MUST retain
+     * that use to read such epochs (CORD-02 §5). */
+    nostr_concord_group_key_t key;
+    if (!derive_control_read_key(state, &key)) return FALSE;
+    char address[65];
+    nostr_concord_hex_encode_32(key.pk, address);
+    state->control_address = g_strdup(address);
+    nostr_concord_group_key_clear(&key);
+  }
+  return TRUE;
+}
+
+gboolean gn_concord_community_service_ingest_control_wrap(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *wrap_json) {
+  g_return_val_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self), FALSE);
+  if (self->shutting_down) return FALSE;
+  CommunityState *state = find_state(self, community_id);
+  if (!state || !ensure_control_plane(state)) return FALSE;
+
+  nostr_concord_group_key_t key;
+  if (!derive_control_read_key(state, &key)) return FALSE;
+  gboolean accepted = gn_concord_control_plane_ingest_wrap(
+    state->control, key.conv_key, state->control_address, wrap_json);
+  nostr_concord_group_key_clear(&key);
+
+  if (accepted) apply_control_fold(self, state);
+  return accepted;
+}
+
+static void apply_control_fold(GnConcordCommunityService *self,
+                               CommunityState *state) {
+  if (!state->control || !state->item) return;
+  GnConcordUpdateFlags flags = 0;
+
+  /* The name and icon inside an invite bundle are a preview so a parked
+   * invite can render; the fold is always the authority (CORD-02 §6). */
+  const char *name = gn_concord_control_plane_get_name(state->control);
+  if (name &&
+      g_strcmp0(name, gn_concord_community_item_get_name(state->item)) != 0) {
+    gn_concord_community_item_set_name(state->item, name);
+    g_free(state->name);
+    state->name = g_strdup(name);
+    flags |= GN_CONCORD_UPDATE_MEMBERSHIP;
+  }
+
+  const char *description =
+    gn_concord_control_plane_get_description(state->control);
+  if (description &&
+      g_strcmp0(description,
+                gn_concord_community_item_get_description(state->item)) != 0) {
+    gn_concord_community_item_set_description(state->item, description);
+    flags |= GN_CONCORD_UPDATE_MEMBERSHIP;
+  }
+
+  /* The relay list lives in the metadata entity so it can evolve: a client
+   * follows the fold rather than the join-time copy (CORD-02 §6). */
+  guint n_relays = 0;
+  const char *const *relays =
+    gn_concord_control_plane_get_relays(state->control, &n_relays);
+  if (relays) {
+    gn_concord_community_item_set_relays(state->item, relays, n_relays);
+    flags |= GN_CONCORD_UPDATE_MEMBERSHIP;
+  }
+
+  GPtrArray *channels = gn_concord_control_plane_get_channels(state->control);
+  for (guint i = 0; channels && i < channels->len; i++) {
+    const GnConcordControlChannel *folded = g_ptr_array_index(channels, i);
+    g_autoptr(GnConcordChannelItem) existing =
+      gn_concord_community_item_find_channel(state->item, folded->channel_id);
+
+    /* Deletion is terminal: clients drop the Channel from display and may
+     * discard its keys, and the id is never reused (CORD-03 §2). */
+    if (folded->deleted) {
+      if (!existing) continue;
+      guint64 *subscription =
+        g_hash_table_lookup(state->subscriptions, folded->channel_id);
+      if (subscription && self->context)
+        gnostr_plugin_context_unsubscribe_events(self->context, *subscription);
+      g_hash_table_remove(state->subscriptions, folded->channel_id);
+      g_hash_table_remove(state->messages, folded->channel_id);
+      gn_concord_community_item_remove_channel(state->item,
+                                               folded->channel_id);
+      flags |= GN_CONCORD_UPDATE_CHANNELS;
+      continue;
+    }
+
+    if (!existing) {
+      /* Keys never travel on the Control Plane, so a Channel learned here
+       * arrives keyless: public means derivable from the community_root,
+       * private means listed and unreadable until a key is delivered. */
+      g_autoptr(GnConcordChannelItem) channel = gn_concord_channel_item_new(
+        folded->channel_id, NULL, state->root_epoch, folded->name,
+        folded->is_private);
+      bind_channel_stream(state, channel);
+      gn_concord_community_item_add_channel(state->item, channel);
+      flags |= GN_CONCORD_UPDATE_CHANNELS;
+      continue;
+    }
+
+    if (g_strcmp0(folded->name,
+                  gn_concord_channel_item_get_name(existing)) != 0) {
+      gn_concord_channel_item_set_name(existing, folded->name);
+      flags |= GN_CONCORD_UPDATE_CHANNELS;
+    }
+    /* A visibility flip moves the Channel to the other secret at the same
+     * channel_id, so its address changes and must be re-derived. */
+    if (folded->is_private !=
+        gn_concord_channel_item_get_is_private(existing)) {
+      gn_concord_channel_item_set_is_private(existing, folded->is_private);
+      bind_channel_stream(state, existing);
+      flags |= GN_CONCORD_UPDATE_CHANNELS;
+    }
+  }
+
+  if (!flags) return;
+  emit_update(self, state->community_id, flags);
+  /* A rename or a Channel change moves this membership's join material, and
+   * `current` is replaced on every rename (CORD-02 §8). */
+  publish_community_list(self);
+}
+
+guint32 gn_concord_community_service_get_position(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *pubkey_hex) {
+  g_return_val_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self),
+                       CONCORD_POSITION_LAST);
+  CommunityState *state = find_state(self, community_id);
+  return state && state->control
+    ? gn_concord_control_plane_get_position(state->control, pubkey_hex)
+    : CONCORD_POSITION_LAST;
+}
+
+guint64 gn_concord_community_service_get_permissions(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *pubkey_hex) {
+  g_return_val_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self), 0);
+  CommunityState *state = find_state(self, community_id);
+  return state && state->control
+    ? gn_concord_control_plane_get_permissions(state->control, pubkey_hex)
+    : 0;
+}
+
+typedef struct {
+  GnConcordCommunityService *service; /* borrowed; the service owns the sub */
+  gchar *community_id;
+} ControlBinding;
+
+static void control_binding_free(gpointer data) {
+  ControlBinding *binding = data;
+  if (!binding) return;
+  g_free(binding->community_id);
+  g_free(binding);
+}
+
+static void on_control_event(const char *event_json, gpointer user_data) {
+  ControlBinding *binding = user_data;
+  if (!binding || !binding->service ||
+      !GN_IS_CONCORD_COMMUNITY_SERVICE(binding->service))
+    return;
+  gn_concord_community_service_ingest_control_wrap(
+    binding->service, binding->community_id, event_json);
+}
+
+static void refresh_control_plane(GnConcordCommunityService *self,
+                                  CommunityState *state) {
+  if (!self->context || self->shutting_down) return;
+  if (!ensure_control_plane(state)) return;
+
+  if (!state->control_subscription) {
+    ControlBinding *binding = g_new0(ControlBinding, 1);
+    binding->service = self;
+    binding->community_id = g_strdup(state->community_id);
+    g_autofree gchar *filter = build_stream_filter(state->control_address, 0);
+    guint64 id = gnostr_plugin_context_subscribe_events(
+      self->context, filter, G_CALLBACK(on_control_event), binding,
+      control_binding_free);
+    if (id) state->control_subscription = id;
+    else control_binding_free(binding);
+  }
+
+  /* Every member keeps the *entire* Control Plane in sync — it is small and
+   * must stay complete, which is exactly why members cannot write to it
+   * (CORD-02 §5). So this backfill carries no page limit. */
+  g_autofree gchar *filter = build_stream_filter(state->control_address, 0);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) events =
+    gnostr_plugin_context_query_events(self->context, filter, &error);
+  if (!events) {
+    if (error) emit_error(self, error->message);
+    return;
+  }
+  for (guint i = 0; i < events->len; i++)
+    gn_concord_community_service_ingest_control_wrap(
+      self, state->community_id, g_ptr_array_index(events, i));
 }
 
 /* ------------------------------------------------------------------ *
@@ -1631,6 +1911,10 @@ void gn_concord_community_service_shutdown(GnConcordCommunityService *self) {
   g_hash_table_iter_init(&iter, self->states);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     CommunityState *state = value;
+    if (self->context && state->control_subscription)
+      gnostr_plugin_context_unsubscribe_events(self->context,
+                                               state->control_subscription);
+    state->control_subscription = 0;
     if (!state->subscriptions) continue;
     if (self->context) {
       GHashTableIter subs;

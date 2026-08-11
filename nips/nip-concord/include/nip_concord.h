@@ -103,6 +103,54 @@ extern "C" {
 #define CONCORD_LABEL_INVITE_LINKS "concord/invite-links"
 #define CONCORD_LABEL_INVITE_KEY "concord/invite-key"
 #define CONCORD_LABEL_COMMUNITY "concord/community"
+/* CORD-04 §1: the edition-hash domain separator. Not an HKDF label — it is
+ * length-prefixed into a SHA-256 preimage — and frozen like the rest. */
+#define CONCORD_LABEL_EDITION "vector-community/v1/edition"
+
+/* ------------------------------------------------------------------ *
+ * Permissions (CORD-04 §3, frozen bit positions)
+ *
+ * A new permission claims the next free bit; a retired one is burned, never
+ * renumbered or reused. There is no all-powerful bit: an "admin" holds the
+ * union of the management bits, so a Role granted everything today does not
+ * inherit a permission added tomorrow.
+ * ------------------------------------------------------------------ */
+
+#define CONCORD_PERM_MANAGE_ROLES ((uint64_t)1 << 0)
+#define CONCORD_PERM_MANAGE_CHANNELS ((uint64_t)1 << 1)
+#define CONCORD_PERM_MANAGE_METADATA ((uint64_t)1 << 2)
+#define CONCORD_PERM_KICK ((uint64_t)1 << 3)
+#define CONCORD_PERM_BAN ((uint64_t)1 << 4)
+#define CONCORD_PERM_MANAGE_MESSAGES ((uint64_t)1 << 5)
+#define CONCORD_PERM_CREATE_INVITE ((uint64_t)1 << 6)
+/* 1<<7 retired (was MANAGE_INVITES) */
+#define CONCORD_PERM_VIEW_AUDIT_LOG ((uint64_t)1 << 8)
+#define CONCORD_PERM_MENTION_EVERYONE ((uint64_t)1 << 9)
+/* 1<<10, 1<<12 reserved (MANAGE_EMOJI, MANAGE_EVENTS) */
+#define CONCORD_PERM_PIN_MESSAGES ((uint64_t)1 << 11)
+
+/* CORD-04 §3: the six bits whose actions land as Control editions. A member
+ * holding any of them — plus always the owner — is staff, the set that holds
+ * the control_root. Normative: a future permission whose actions are Control
+ * editions MUST amend this explicitly. */
+#define CONCORD_PERMS_STAFF                                                    \
+    (CONCORD_PERM_MANAGE_ROLES | CONCORD_PERM_MANAGE_CHANNELS |                \
+     CONCORD_PERM_MANAGE_METADATA | CONCORD_PERM_BAN |                         \
+     CONCORD_PERM_CREATE_INVITE | CONCORD_PERM_PIN_MESSAGES)
+
+/* CORD-04 §2: the owner occupies position 0 and no Role may ever claim it —
+ * an owner could otherwise create a peer nobody outranks. A roleless member
+ * is effectively last. */
+#define CONCORD_POSITION_OWNER ((uint32_t)0)
+#define CONCORD_POSITION_LAST ((uint32_t)0xffffffffu)
+
+/* CORD-04 §2: a Community carries at most 100 Roles (a client folds the 100
+ * lowest role_ids and ignores the rest) and a member holds at most 64. */
+#define CONCORD_MAX_ROLES_IN_COMMUNITY 100
+#define CONCORD_MAX_ROLES_PER_MEMBER 64
+/* CORD-04 §4: unbounded by rule, but an edition must fit its NIP-44 envelope
+ * at every layer — a practical ceiling near 500 npubs. */
+#define CONCORD_MAX_BANLIST_ENTRIES 500
 
 typedef enum {
     NOSTR_CONCORD_OK = 0,
@@ -230,6 +278,48 @@ nostr_concord_status_t nostr_concord_guestbook_key(
 nostr_concord_status_t nostr_concord_dissolved_key(
     const uint8_t community_id[32],
     nostr_concord_group_key_t *out);
+
+/* ------------------------------------------------------------------ *
+ * Control editions (CORD-04)
+ * ------------------------------------------------------------------ */
+
+/* §1: an edition's identity — what the next edition's `ep` cites — over a
+ * length-prefixed, domain-separated preimage, so two clients holding the same
+ * edition compute the same hash:
+ *
+ *   sha256( len64(label) || label || entity_id[32] || version_be[8]
+ *           || (prev ? 0x01 || prev[32] : 0x00 || zero[32])
+ *           || len64(content) || content )
+ *
+ * Every field is fixed-width or length-prefixed, so distinct inputs can never
+ * collide. Pass `prev = NULL` on a first edition. `content` is the rumor's
+ * content bytes, hashed verbatim and never re-serialized, so a compaction's
+ * re-wrap preserves the hash. */
+nostr_concord_status_t nostr_concord_edition_hash(const uint8_t entity_id[32],
+                                                  uint64_t version,
+                                                  const uint8_t *prev,
+                                                  const uint8_t *content,
+                                                  size_t content_len,
+                                                  uint8_t hash_out[32]);
+
+/* §1 Appendix A.6: the derived entity coordinates. Each binds to the
+ * community_id and never to a key or an epoch, so they survive every
+ * Refounding and a fresh joiner holding only the newest root derives the
+ * same ones. */
+nostr_concord_status_t nostr_concord_grant_locator(
+    const uint8_t community_id[32],
+    const uint8_t member_xonly[32],
+    uint8_t eid_out[32]);
+
+nostr_concord_status_t nostr_concord_banlist_locator(
+    const uint8_t community_id[32],
+    uint8_t eid_out[32]);
+
+/* §3: `permissions` rides the wire as a decimal string, never a bare number —
+ * a JSON number is a 64-bit float in JavaScript and silently corrupts past
+ * 2^53. A reader accepts either form; this parses the string one. Rejects a
+ * leading sign, leading zeros, and anything that overflows a u64. */
+bool nostr_concord_parse_permissions(const char *decimal, uint64_t *out);
 
 /* ------------------------------------------------------------------ *
  * Invites (CORD-05)
