@@ -1352,6 +1352,99 @@ char *gnostr_plugin_context_nip44_decrypt_finish(GnostrPluginContext *context,
                                                  GAsyncResult        *result,
                                                  GError             **error);
 
+/* --- Binary Pairwise Encryption (NIP-44 over raw bytes) --- */
+
+/**
+ * gnostr_plugin_context_nip44_encrypt_bytes_async:
+ * @context: A #GnostrPluginContext
+ * @peer_pubkey_hex: The other party's public key (64-char hex)
+ * @plaintext: The bytes to encrypt
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: Callback when encryption completes
+ * @user_data: User data for callback
+ *
+ * The binary form of gnostr_plugin_context_nip44_encrypt_async(): same key,
+ * same primitive, same resulting NIP-44 v2 payload, but the plaintext is a
+ * byte string rather than a C string.
+ *
+ * Use this whenever the payload is not text. A signer is reached over a
+ * transport whose parameters must be valid UTF-8 — NIP-46 carries JSON
+ * params, NIP-55L D-Bus strings — so raw bytes handed to the string entry
+ * point are rejected or silently rewritten to U+FFFD, and the signer then
+ * encrypts corrupted bytes with nothing reporting a failure. For a format
+ * whose payload width is its own declaration — a Concord CORD-06 rekey blob
+ * is 72, 104 or 136 bytes and any other width is dropped as malformed
+ * (NIP-CAS-0008 CORD-06 §1) — that is a rotation that quietly never arrives.
+ *
+ * Passing the user's own pubkey encrypts to self, as in the string lane.
+ *
+ * The signer must support the binary lane; one that does not fails the call
+ * rather than encrypting an encoded stand-in for the plaintext.
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_nip44_encrypt_bytes_async(GnostrPluginContext *context,
+                                                     const char          *peer_pubkey_hex,
+                                                     GBytes              *plaintext,
+                                                     GCancellable        *cancellable,
+                                                     GAsyncReadyCallback  callback,
+                                                     gpointer             user_data);
+
+/**
+ * gnostr_plugin_context_nip44_encrypt_bytes_finish:
+ * @context: A #GnostrPluginContext
+ * @result: The #GAsyncResult
+ * @error: (out) (optional): Return location for an error
+ *
+ * Returns: (transfer full) (nullable): The NIP-44 payload, or %NULL on error.
+ *          Free with g_free().
+ * @stability: Stable
+ */
+char *gnostr_plugin_context_nip44_encrypt_bytes_finish(GnostrPluginContext *context,
+                                                       GAsyncResult        *result,
+                                                       GError             **error);
+
+/**
+ * gnostr_plugin_context_nip44_decrypt_bytes_async:
+ * @context: A #GnostrPluginContext
+ * @peer_pubkey_hex: The other party's public key (64-char hex)
+ * @ciphertext: A NIP-44 payload
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: Callback when decryption completes
+ * @user_data: User data for callback
+ *
+ * The binary form of gnostr_plugin_context_nip44_decrypt_async(), recovering
+ * the plaintext as bytes with its exact length. The string lane truncates at
+ * the first NUL and mangles every non-UTF-8 byte on the way out, so a caller
+ * that reads a width to learn a format must use this one.
+ *
+ * NIP-44 binds no application kind, sender, role or session identifier, so a
+ * caller MUST still validate the enclosing envelope itself before trusting
+ * what comes back — decrypting proves only that the pair share a key.
+ *
+ * @stability: Stable
+ */
+void gnostr_plugin_context_nip44_decrypt_bytes_async(GnostrPluginContext *context,
+                                                     const char          *peer_pubkey_hex,
+                                                     const char          *ciphertext,
+                                                     GCancellable        *cancellable,
+                                                     GAsyncReadyCallback  callback,
+                                                     gpointer             user_data);
+
+/**
+ * gnostr_plugin_context_nip44_decrypt_bytes_finish:
+ * @context: A #GnostrPluginContext
+ * @result: The #GAsyncResult
+ * @error: (out) (optional): Return location for an error
+ *
+ * Returns: (transfer full) (nullable): The plaintext bytes, or %NULL on
+ *          error. Free with g_bytes_unref().
+ * @stability: Stable
+ */
+GBytes *gnostr_plugin_context_nip44_decrypt_bytes_finish(GnostrPluginContext *context,
+                                                         GAsyncResult        *result,
+                                                         GError             **error);
+
 /* --- Action Handlers --- */
 
 /**

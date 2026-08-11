@@ -46,6 +46,22 @@ int nostr_nip55l_nip44_encrypt(const char *plaintext, const char *peer_pub_hex,
                                const char *current_user, char **out_cipher_b64);
 int nostr_nip55l_nip44_decrypt(const char *cipher_b64, const char *peer_pub_hex,
                                const char *current_user, char **out_plaintext);
+/* Binary-safe NIP-44: the plaintext side travels as standard base64.
+ *
+ * D-Bus strings (like NIP-46 params) must be valid UTF-8, so a plaintext of
+ * raw bytes cannot ride the pair above — it is rejected or silently mangled
+ * to U+FFFD, and the signer then encrypts corrupted bytes. Protocols whose
+ * payload width is the format signal (Concord CORD-06 rekey blobs at 72, 104
+ * or 136 bytes) cannot absorb that.
+ *
+ * The ciphertext is an ordinary NIP-44 v2 payload in both directions; only
+ * the plaintext parameter/result is base64. The decode is strict and
+ * canonical, so a typo fails the call rather than shortening the plaintext.
+ * Caller frees the out parameter with free(). */
+int nostr_nip55l_nip44_encrypt_b64(const char *plaintext_b64, const char *peer_pub_hex,
+                                   const char *current_user, char **out_cipher_b64);
+int nostr_nip55l_nip44_decrypt_b64(const char *cipher_b64, const char *peer_pub_hex,
+                                   const char *current_user, char **out_plaintext_b64);
 int nostr_nip55l_decrypt_zap_event(const char *event_json,
                                    const char *current_user, char **out_json);
 int nostr_nip55l_get_relays(char **out_relays_json);

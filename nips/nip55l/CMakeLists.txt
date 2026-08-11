@@ -109,5 +109,13 @@ if (GIO_FOUND AND ENABLE_NIP55L)
           DESTINATION share/dbus-1/services RENAME org.nostr.Signer.service)
 endif()
 
+# The binary NIP-44 lane needs no D-Bus to be exercised: the service handlers
+# are pass-throughs over these ops, so the ops are where the guarantee lives.
+if (BUILD_TESTING)
+  add_executable(test_nip55l_nip44_b64 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip55l_nip44_b64.c)
+  target_link_libraries(test_nip55l_nip44_b64 PRIVATE nostr_nip55l_core nostr_nip44_core nostr)
+  add_test(NAME nip55l_nip44_b64 COMMAND test_nip55l_nip44_b64)
+endif()
+
 install(TARGETS nostr_nip55l_core)
 install(DIRECTORY ${NIP55L_INC}/ DESTINATION include/nostr/nip55l)

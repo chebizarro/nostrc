@@ -476,6 +476,51 @@ int nostr_nip55l_nip44_decrypt(const char *cipher_b64, const char *peer_pub_hex,
   *out_plaintext = out; return 0;
 }
 
+/* Binary-safe NIP-44 (see signer_ops.h). Provided by nostr_nip44_core; the
+ * decoder is strict and canonical, so a mangled parameter fails instead of
+ * yielding a shorter plaintext. */
+extern int nip44_base64_encode(const uint8_t *buf, size_t len, char **out_b64);
+extern int nip44_base64_decode(const char *b64, uint8_t **out_buf, size_t *out_len);
+
+int nostr_nip55l_nip44_encrypt_b64(const char *plaintext_b64, const char *peer_pub_hex,
+                                   const char *current_user, char **out_cipher_b64){
+  if(!plaintext_b64 || !peer_pub_hex || !out_cipher_b64) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_cipher_b64=NULL;
+  if (!is_hex_64(peer_pub_hex)) return NOSTR_SIGNER_ERROR_INVALID_KEY;
+  uint8_t pkx[32]; if (!nostr_hex2bin(pkx, peer_pub_hex, sizeof pkx)) return NOSTR_SIGNER_ERROR_INVALID_KEY;
+  uint8_t *pt=NULL; size_t pt_len=0;
+  if (nip44_base64_decode(plaintext_b64, &pt, &pt_len)!=0 || !pt) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  nostr_secure_buf sb = {0};
+  int rc = resolve_seckey_secure(current_user, &sb);
+  if (rc!=0) { memset(pt,0,pt_len); free(pt); return rc; }
+  char *b64=NULL;
+  int enc = nostr_nip44_encrypt_v2((uint8_t*)sb.ptr, pkx, pt, pt_len, &b64);
+  secure_free(&sb);
+  memset(pt,0,pt_len); free(pt);
+  if (enc!=0 || !b64) { free(b64); return NOSTR_SIGNER_ERROR_CRYPTO_FAILED; }
+  *out_cipher_b64 = b64; return 0;
+}
+
+int nostr_nip55l_nip44_decrypt_b64(const char *cipher_b64, const char *peer_pub_hex,
+                                   const char *current_user, char **out_plaintext_b64){
+  if(!cipher_b64 || !peer_pub_hex || !out_plaintext_b64) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_plaintext_b64=NULL;
+  if (!is_hex_64(peer_pub_hex)) return NOSTR_SIGNER_ERROR_INVALID_KEY;
+  uint8_t pkx[32]; if (!nostr_hex2bin(pkx, peer_pub_hex, sizeof pkx)) return NOSTR_SIGNER_ERROR_INVALID_KEY;
+  nostr_secure_buf sb = {0};
+  int rc = resolve_seckey_secure(current_user, &sb);
+  if (rc!=0) return rc;
+  uint8_t *pt=NULL; size_t pt_len=0;
+  int dec = nostr_nip44_decrypt_v2((uint8_t*)sb.ptr, pkx, cipher_b64, &pt, &pt_len);
+  secure_free(&sb);
+  if (dec!=0 || !pt) { free(pt); return NOSTR_SIGNER_ERROR_CRYPTO_FAILED; }
+  char *b64=NULL;
+  int enc = nip44_base64_encode(pt, pt_len, &b64);
+  memset(pt,0,pt_len); free(pt);
+  if (enc!=0 || !b64) { free(b64); return NOSTR_SIGNER_ERROR_BACKEND; }
+  *out_plaintext_b64 = b64; return 0;
+}
+
 int nostr_nip55l_decrypt_zap_event(const char *event_json,
                                     const char *current_user, char **out_json){
   if(!out_json || !event_json) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_json=NULL;

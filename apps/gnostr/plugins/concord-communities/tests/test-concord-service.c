@@ -8,6 +8,7 @@
 #include "../gn-concord-community-service.h"
 #include "../model/gn-concord-channel-item.h"
 
+#include <gnostr-plugin-api.h>
 #include <json-glib/json-glib.h>
 #include <nip_concord.h>
 #include <nostr-event.h>
@@ -2749,8 +2750,126 @@ static void test_invite_requires_permission(void) {
   fixture_clear(&fixture);
 }
 
+/* ------------------------------------------------------------------ *
+ * the binary pairwise lane a rekey blob rides (nostrc-3m86)
+ * ------------------------------------------------------------------ */
+
+typedef struct {
+  gboolean done;
+  GBytes *bytes;
+  char *text;
+  GError *error;
+} CryptoResult;
+
+static void on_bytes_encrypted(GObject *source, GAsyncResult *result,
+                               gpointer user_data) {
+  (void)source;
+  CryptoResult *out = user_data;
+  out->text = gnostr_plugin_context_nip44_encrypt_bytes_finish(NULL, result,
+                                                               &out->error);
+  out->done = TRUE;
+}
+
+static void on_bytes_decrypted(GObject *source, GAsyncResult *result,
+                               gpointer user_data) {
+  (void)source;
+  CryptoResult *out = user_data;
+  out->bytes = gnostr_plugin_context_nip44_decrypt_bytes_finish(NULL, result,
+                                                                &out->error);
+  out->done = TRUE;
+}
+
+static void on_text_decrypted(GObject *source, GAsyncResult *result,
+                              gpointer user_data) {
+  (void)source;
+  CryptoResult *out = user_data;
+  out->text =
+    gnostr_plugin_context_nip44_decrypt_finish(NULL, result, &out->error);
+  out->done = TRUE;
+}
+
+/* A blob is key material: high bytes, embedded NULs, sequences that are not
+ * valid UTF-8 anywhere. */
+static GBytes *blob_of_width(gsize width) {
+  guint8 *bytes = g_malloc(width);
+  for (gsize i = 0; i < width; i++) bytes[i] = (guint8)((i * 7u + 0x80u) & 0xff);
+  bytes[0] = 0x00;
+  bytes[1] = 0xff;
+  bytes[width / 2] = 0x00;
+  bytes[width - 1] = 0xc0;
+  return g_bytes_new_take(bytes, width);
+}
+
+/* Every CORD-06 rekey blob width survives the pairwise lane byte for byte.
+ * The width is the format signal — a 104-byte blob is a member's base
+ * rotation and a 136-byte one is a staff recipient's — so a substituted byte
+ * is not a recoverable error but a rotation that silently never lands. */
+static void test_nip44_bytes_roundtrip(void) {
+  gn_concord_test_reset();
+  gn_concord_test_signer_sk = OWNER_SK;
+  g_autofree char *peer = nostr_key_get_public(AUTHOR_SK);
+  g_assert_nonnull(peer);
+
+  const gsize widths[] = {72, 104, 136};
+  for (guint i = 0; i < G_N_ELEMENTS(widths); i++) {
+    g_autoptr(GBytes) blob = blob_of_width(widths[i]);
+
+    CryptoResult wrapped = {0};
+    gnostr_plugin_context_nip44_encrypt_bytes_async(
+      (GnostrPluginContext *)1, peer, blob, NULL, on_bytes_encrypted, &wrapped);
+    pump();
+    g_assert_true(wrapped.done);
+    g_assert_no_error(wrapped.error);
+    g_assert_nonnull(wrapped.text);
+
+    CryptoResult opened = {0};
+    gnostr_plugin_context_nip44_decrypt_bytes_async(
+      (GnostrPluginContext *)1, peer, wrapped.text, NULL, on_bytes_decrypted,
+      &opened);
+    pump();
+    g_assert_true(opened.done);
+    g_assert_no_error(opened.error);
+    g_assert_nonnull(opened.bytes);
+    g_assert_cmpuint(g_bytes_get_size(opened.bytes), ==, widths[i]);
+    g_assert_true(g_bytes_equal(opened.bytes, blob));
+    g_bytes_unref(opened.bytes);
+
+    /* The same payload through the string lane comes back truncated at the
+     * first NUL: the exact loss the bytes lane exists to prevent, and the
+     * reason this is a separate method pair rather than a flag. */
+    CryptoResult as_text = {0};
+    gnostr_plugin_context_nip44_decrypt_async((GnostrPluginContext *)1, peer,
+                                              wrapped.text, NULL,
+                                              on_text_decrypted, &as_text);
+    pump();
+    g_assert_true(as_text.done);
+    g_assert_no_error(as_text.error);
+    g_assert_nonnull(as_text.text);
+    g_assert_cmpuint(strlen(as_text.text), <, widths[i]);
+    g_free(as_text.text);
+
+    g_free(wrapped.text);
+  }
+
+  /* A payload that was never a valid wrap fails; it never yields empty
+   * bytes that a caller could mistake for a zero-width blob. */
+  CryptoResult junk = {0};
+  gnostr_plugin_context_nip44_decrypt_bytes_async((GnostrPluginContext *)1, peer,
+                                                  "not-a-payload", NULL,
+                                                  on_bytes_decrypted, &junk);
+  pump();
+  g_assert_true(junk.done);
+  g_assert_null(junk.bytes);
+  g_assert_nonnull(junk.error);
+  g_clear_error(&junk.error);
+
+  gn_concord_test_reset();
+}
+
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/concord/crypto/nip44-bytes-roundtrip",
+                  test_nip44_bytes_roundtrip);
   g_test_add_func("/concord/service/accept-bundle", test_accept_bundle);
   g_test_add_func("/concord/service/reject-forged-owner",
                   test_reject_forged_owner);

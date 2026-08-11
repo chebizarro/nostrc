@@ -283,6 +283,89 @@ char *gnostr_plugin_context_nip44_decrypt_finish(GnostrPluginContext *context,
   return g_task_propagate_pointer(G_TASK(result), error);
 }
 
+/* The binary lane. The real host routes it over the signer's `_b64` methods
+ * because both signer transports carry UTF-8 strings; in-process there is no
+ * transport to survive, so the backend simply encrypts the bytes as they are
+ * — which is exactly what the host's lane produces, and the point of the API:
+ * the ciphertext is an ordinary NIP-44 v2 payload either way. */
+static void test_nip44_bytes_async(const char *peer_pubkey, GBytes *plaintext,
+                                   const char *ciphertext, gboolean encrypt,
+                                   GCancellable *cancellable,
+                                   GAsyncReadyCallback callback,
+                                   gpointer user_data) {
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  uint8_t convkey[32];
+  GError *error = NULL;
+  if (!test_convkey(peer_pubkey, convkey, &error)) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  if (encrypt) {
+    gsize len = 0;
+    const guchar *bytes = g_bytes_get_data(plaintext, &len);
+    char *payload = NULL;
+    int rc = nostr_nip44_encrypt_v2_with_convkey(convkey, (const uint8_t *)bytes,
+                                                 (size_t)len, &payload);
+    memset(convkey, 0, sizeof(convkey));
+    if (rc != 0 || !payload) {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                              "Offline test backend failed to encrypt");
+      g_object_unref(task);
+      return;
+    }
+    g_task_return_pointer(task, payload, free);
+  } else {
+    uint8_t *bytes = NULL;
+    size_t len = 0;
+    int rc =
+      nostr_nip44_decrypt_v2_with_convkey(convkey, ciphertext, &bytes, &len);
+    memset(convkey, 0, sizeof(convkey));
+    if (rc != 0 || !bytes) {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                              "Offline test backend failed to decrypt");
+      g_object_unref(task);
+      return;
+    }
+    /* The exact bytes and the exact length: a caller reads the width to
+     * learn the form, so a NUL must not end it and a byte must not move. */
+    GBytes *out = g_bytes_new(bytes, len);
+    free(bytes);
+    g_task_return_pointer(task, out, (GDestroyNotify)g_bytes_unref);
+  }
+  g_object_unref(task);
+}
+
+void gnostr_plugin_context_nip44_encrypt_bytes_async(
+    GnostrPluginContext *context, const char *peer_pubkey_hex,
+    GBytes *plaintext, GCancellable *cancellable, GAsyncReadyCallback callback,
+    gpointer user_data) {
+  (void)context;
+  test_nip44_bytes_async(peer_pubkey_hex, plaintext, NULL, TRUE, cancellable,
+                         callback, user_data);
+}
+
+char *gnostr_plugin_context_nip44_encrypt_bytes_finish(
+    GnostrPluginContext *context, GAsyncResult *result, GError **error) {
+  (void)context;
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+void gnostr_plugin_context_nip44_decrypt_bytes_async(
+    GnostrPluginContext *context, const char *peer_pubkey_hex,
+    const char *ciphertext, GCancellable *cancellable,
+    GAsyncReadyCallback callback, gpointer user_data) {
+  (void)context;
+  test_nip44_bytes_async(peer_pubkey_hex, NULL, ciphertext, FALSE, cancellable,
+                         callback, user_data);
+}
+
+GBytes *gnostr_plugin_context_nip44_decrypt_bytes_finish(
+    GnostrPluginContext *context, GAsyncResult *result, GError **error) {
+  (void)context;
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
 void gnostr_plugin_context_nip44_self_encrypt_async(
     GnostrPluginContext *context, const char *plaintext,
     GCancellable *cancellable, GAsyncReadyCallback callback,

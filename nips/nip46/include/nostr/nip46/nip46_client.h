@@ -4,6 +4,7 @@
 #include "nostr/nip46/nip46_types.h"
 #include "nostr/nip46/nip46_uri.h"
 #include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -92,6 +93,29 @@ int nostr_nip46_client_nip04_encrypt_rpc(NostrNip46Session *s, const char *peer_
 int nostr_nip46_client_nip04_decrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext);
 int nostr_nip46_client_nip44_encrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext);
 int nostr_nip46_client_nip44_decrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext);
+
+/* Binary-safe NIP-44 content encrypt/decrypt via remote signer RPC.
+ *
+ * NIP-46 params are JSON strings, so a plaintext that is not valid UTF-8
+ * cannot survive the _rpc pair above — it is mangled before it ever reaches
+ * the bunker. These carry the plaintext side as standard base64
+ * (nip44_encrypt_b64 / nip44_decrypt_b64); the ciphertext is an ordinary
+ * NIP-44 v2 payload either way, so a recipient decrypts it with whichever
+ * lane suits its own payload. Use these for fixed-width binary payloads
+ * whose width is the format signal (Concord CORD-06 rekey blobs, for
+ * example), where a substituted byte is not a recoverable error.
+ *
+ * A bunker without the capability returns an error rather than encrypting
+ * base64 text as if it were the plaintext.
+ *
+ * On success *out_ciphertext / *out_plaintext are freshly allocated and the
+ * caller frees them with free(). */
+int nostr_nip46_client_nip44_encrypt_b64_rpc(NostrNip46Session *s, const char *peer_pubkey_hex,
+                                             const uint8_t *plaintext, size_t plaintext_len,
+                                             char **out_ciphertext);
+int nostr_nip46_client_nip44_decrypt_b64_rpc(NostrNip46Session *s, const char *peer_pubkey_hex,
+                                             const char *ciphertext,
+                                             uint8_t **out_plaintext, size_t *out_plaintext_len);
 
 /* nostrc-j2yu: Persistent connection API.
  * Start a persistent relay connection for efficient RPC calls.

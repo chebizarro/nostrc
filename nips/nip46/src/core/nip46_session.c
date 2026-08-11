@@ -2138,6 +2138,60 @@ int nostr_nip46_client_nip44_decrypt_rpc(NostrNip46Session *s, const char *peer_
     return 0;
 }
 
+/* Binary-safe NIP-44 over NIP-46.
+ *
+ * NIP-46 carries params as JSON strings, so a plaintext that is not valid
+ * UTF-8 cannot ride nip44_encrypt/nip44_decrypt at all: an encoder either
+ * rejects it or substitutes U+FFFD, and the bunker then encrypts corrupted
+ * bytes with nobody noticing. The _b64 method pair moves only the *plaintext*
+ * side over standard base64; the ciphertext stays an ordinary NIP-44 v2
+ * payload, byte-identical to what nip44_encrypt would produce for the same
+ * bytes. Distinct method names, not a flag: a bunker that does not know them
+ * answers with an error rather than silently encrypting the base64 text as if
+ * it were the plaintext.
+ *
+ * Provided by nostr_nip44_core; strict and canonical on decode, so a mangled
+ * response fails instead of yielding a shorter plaintext. */
+extern int nip44_base64_encode(const uint8_t *buf, size_t len, char **out_b64);
+extern int nip44_base64_decode(const char *b64, uint8_t **out_buf, size_t *out_len);
+
+int nostr_nip46_client_nip44_encrypt_b64_rpc(NostrNip46Session *s, const char *peer_pubkey_hex,
+                                             const uint8_t *plaintext, size_t plaintext_len,
+                                             char **out_ciphertext) {
+    if (!s || !peer_pubkey_hex || !plaintext || plaintext_len == 0 || !out_ciphertext) return -1;
+    *out_ciphertext = NULL;
+    char *pt_b64 = NULL;
+    if (nip44_base64_encode(plaintext, plaintext_len, &pt_b64) != 0 || !pt_b64) return -1;
+    const char *params[2] = { peer_pubkey_hex, pt_b64 };
+    char *result = nip46_rpc_call(s, "nip44_encrypt_b64", params, 2, NULL);
+    /* The encoded plaintext is as sensitive as the plaintext. */
+    memset(pt_b64, 0, strlen(pt_b64));
+    free(pt_b64);
+    if (!result) return -1;
+    *out_ciphertext = result;
+    return 0;
+}
+
+int nostr_nip46_client_nip44_decrypt_b64_rpc(NostrNip46Session *s, const char *peer_pubkey_hex,
+                                             const char *ciphertext,
+                                             uint8_t **out_plaintext, size_t *out_plaintext_len) {
+    if (!s || !peer_pubkey_hex || !ciphertext || !out_plaintext || !out_plaintext_len) return -1;
+    *out_plaintext = NULL;
+    *out_plaintext_len = 0;
+    const char *params[2] = { peer_pubkey_hex, ciphertext };
+    char *result = nip46_rpc_call(s, "nip44_decrypt_b64", params, 2, NULL);
+    if (!result) return -1;
+    uint8_t *pt = NULL;
+    size_t pt_len = 0;
+    int rc = nip44_base64_decode(result, &pt, &pt_len);
+    memset(result, 0, strlen(result));
+    free(result);
+    if (rc != 0 || !pt) return -1;
+    *out_plaintext = pt;
+    *out_plaintext_len = pt_len;
+    return 0;
+}
+
 /* Bunker API */
 NostrNip46Session *nostr_nip46_bunker_new(const NostrNip46BunkerCallbacks *cbs) {
     NostrNip46Session *s = session_new("bunker");

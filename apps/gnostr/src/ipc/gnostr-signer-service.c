@@ -1275,6 +1275,376 @@ gnostr_signer_service_nip44_decrypt_async(GnostrSignerService *self,
   }
 }
 
+/* ---- nostrc-3m86: binary-safe NIP-44 ----------------------------------
+ *
+ * Both signer transports carry their parameters as strings — NIP-46 as JSON
+ * params, NIP-55L as D-Bus strings — and both require valid UTF-8. A payload
+ * of raw bytes therefore cannot ride the pair above at all: an encoder either
+ * rejects it or substitutes U+FFFD, and the signer then encrypts corrupted
+ * bytes with nobody noticing. A format whose payload width is its own
+ * declaration (a Concord CORD-06 rekey blob is 72, 104 or 136 bytes, and any
+ * other width is dropped as malformed) cannot absorb that.
+ *
+ * The fix is the `_b64` method pair on both transports: the *plaintext* side
+ * travels as standard base64 while the ciphertext stays an ordinary NIP-44 v2
+ * payload — byte-identical to what the string lane would produce for the same
+ * bytes, so the two lanes interoperate and a recipient opens a blob with
+ * whichever one suits its own payload. A signer that does not know the
+ * methods fails the call rather than encrypting base64 text as if it were the
+ * plaintext, which is why they are distinct methods and not a flag. */
+
+typedef struct {
+  GnostrSignerService *service;
+  GnostrNip44Callback encrypt_callback;    /* encrypt: result is the payload */
+  GnostrNip44BytesCallback decrypt_callback; /* decrypt: result is the bytes */
+  gpointer user_data;
+  char *peer_pubkey;
+  GBytes *plaintext;   /* encrypt */
+  char *ciphertext;    /* decrypt */
+  gboolean is_encrypt;
+} Nip44BytesContext;
+
+static void
+nip44_bytes_context_free(Nip44BytesContext *ctx)
+{
+  if (!ctx) return;
+  g_clear_pointer(&ctx->peer_pubkey, g_free);
+  g_clear_pointer(&ctx->plaintext, g_bytes_unref);
+  if (ctx->ciphertext) {
+    memset(ctx->ciphertext, 0, strlen(ctx->ciphertext));
+    g_clear_pointer(&ctx->ciphertext, g_free);
+  }
+  g_free(ctx);
+}
+
+static void
+nip44_bytes_fail(Nip44BytesContext *ctx, GError *error)
+{
+  if (ctx->is_encrypt)
+    ctx->encrypt_callback(ctx->service, NULL, error, ctx->user_data);
+  else
+    ctx->decrypt_callback(ctx->service, NULL, error, ctx->user_data);
+}
+
+/* GLib's base64 decoder silently skips characters outside the alphabet, which
+ * would turn a corrupted response into a shorter plaintext rather than a
+ * failure — exactly the mangling this lane exists to prevent. Validate first,
+ * and require the decoded length to be the one the encoding declares. */
+static GBytes *
+nip44_b64_decode_strict(const char *s)
+{
+  if (!s) return NULL;
+  size_t len = strlen(s);
+  if (len == 0 || (len % 4) != 0) return NULL;
+  size_t pad = 0;
+  if (s[len - 1] == '=') pad = (s[len - 2] == '=') ? 2 : 1;
+  for (size_t i = 0; i < len - pad; i++) {
+    char c = s[i];
+    gboolean ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                  (c >= '0' && c <= '9') || c == '+' || c == '/';
+    if (!ok) return NULL;
+  }
+  size_t expected = (len / 4) * 3 - pad;
+  gsize decoded_len = 0;
+  guchar *decoded = g_base64_decode(s, &decoded_len);
+  if (!decoded) return NULL;
+  if ((size_t)decoded_len != expected) {
+    memset(decoded, 0, decoded_len);
+    g_free(decoded);
+    return NULL;
+  }
+  return g_bytes_new_take(decoded, decoded_len);
+}
+
+/* NIP-46 worker. The client-side b64 helpers own the encoding, so the raw
+ * bytes never become a C string on the way out. */
+static void
+nip46_nip44_bytes_thread(GTask *task, gpointer source, gpointer task_data,
+                         GCancellable *cancellable)
+{
+  Nip44BytesContext *ctx = (Nip44BytesContext *)task_data;
+  (void)source;
+  (void)cancellable;
+
+  g_mutex_lock(&ctx->service->session_mutex);
+  if (!ctx->service->nip46_session) {
+    g_mutex_unlock(&ctx->service->session_mutex);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "NIP-46 session not available - please sign in again");
+    return;
+  }
+  /* nostrc-13gf: take a real reference under the lock so a concurrent
+   * logout can never free the session under us. */
+  NostrNip46Session *session = nostr_nip46_session_ref(ctx->service->nip46_session);
+  g_mutex_unlock(&ctx->service->session_mutex);
+
+  if (ctx->is_encrypt) {
+    gsize len = 0;
+    const guchar *bytes = g_bytes_get_data(ctx->plaintext, &len);
+    char *payload = NULL;
+    int rc = nostr_nip46_client_nip44_encrypt_b64_rpc(session, ctx->peer_pubkey,
+                                                      (const uint8_t *)bytes, (size_t)len,
+                                                      &payload);
+    nostr_nip46_session_unref(session);
+    if (rc != 0 || !payload) {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                              "NIP-44 binary encryption failed (error %d)", rc);
+      return;
+    }
+    g_task_return_pointer(task, payload, g_free);
+    return;
+  }
+
+  uint8_t *plaintext = NULL;
+  size_t plaintext_len = 0;
+  int rc = nostr_nip46_client_nip44_decrypt_b64_rpc(session, ctx->peer_pubkey,
+                                                    ctx->ciphertext,
+                                                    &plaintext, &plaintext_len);
+  nostr_nip46_session_unref(session);
+  if (rc != 0 || !plaintext) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "NIP-44 binary decryption failed (error %d)", rc);
+    return;
+  }
+  GBytes *out = g_bytes_new(plaintext, plaintext_len);
+  memset(plaintext, 0, plaintext_len);
+  free(plaintext);
+  g_task_return_pointer(task, out, (GDestroyNotify)g_bytes_unref);
+}
+
+static void
+on_nip46_nip44_bytes_complete(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  Nip44BytesContext *ctx = (Nip44BytesContext *)user_data;
+  (void)source;
+
+  GError *error = NULL;
+  gpointer result = g_task_propagate_pointer(G_TASK(res), &error);
+
+  if (error) {
+    nip44_bytes_fail(ctx, error);
+    g_error_free(error);
+  } else if (ctx->is_encrypt) {
+    ctx->encrypt_callback(ctx->service, (const char *)result, NULL, ctx->user_data);
+    g_free(result);
+  } else {
+    ctx->decrypt_callback(ctx->service, (GBytes *)result, NULL, ctx->user_data);
+    g_bytes_unref((GBytes *)result);
+  }
+
+  nip44_bytes_context_free(ctx);
+}
+
+static void
+on_nip55l_nip44_encrypt_b64_complete(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  Nip44BytesContext *ctx = (Nip44BytesContext *)user_data;
+  NostrSignerProxy *proxy = (NostrSignerProxy *)source;
+
+  GError *error = NULL;
+  char *ciphertext = NULL;
+  gboolean ok = nostr_org_nostr_signer_call_nip44_encrypt_b64_finish(
+      proxy, &ciphertext, res, &error);
+
+  if (!ok) {
+    if (!error)
+      error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED, "NIP-44 binary encryption failed");
+    ctx->encrypt_callback(ctx->service, NULL, error, ctx->user_data);
+    g_error_free(error);
+  } else {
+    ctx->encrypt_callback(ctx->service, ciphertext, NULL, ctx->user_data);
+    g_free(ciphertext);
+  }
+  nip44_bytes_context_free(ctx);
+}
+
+static void
+on_nip55l_nip44_decrypt_b64_complete(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  Nip44BytesContext *ctx = (Nip44BytesContext *)user_data;
+  NostrSignerProxy *proxy = (NostrSignerProxy *)source;
+
+  GError *error = NULL;
+  char *plaintext_b64 = NULL;
+  gboolean ok = nostr_org_nostr_signer_call_nip44_decrypt_b64_finish(
+      proxy, &plaintext_b64, res, &error);
+
+  if (!ok) {
+    if (!error)
+      error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED, "NIP-44 binary decryption failed");
+    ctx->decrypt_callback(ctx->service, NULL, error, ctx->user_data);
+    g_error_free(error);
+    nip44_bytes_context_free(ctx);
+    return;
+  }
+
+  GBytes *plaintext = nip44_b64_decode_strict(plaintext_b64);
+  if (plaintext_b64) memset(plaintext_b64, 0, strlen(plaintext_b64));
+  g_free(plaintext_b64);
+  if (!plaintext) {
+    GError *bad = g_error_new(G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                              "Signer returned a malformed base64 plaintext");
+    ctx->decrypt_callback(ctx->service, NULL, bad, ctx->user_data);
+    g_error_free(bad);
+  } else {
+    ctx->decrypt_callback(ctx->service, plaintext, NULL, ctx->user_data);
+    g_bytes_unref(plaintext);
+  }
+  nip44_bytes_context_free(ctx);
+}
+
+/* Shared prologue: both directions differ only in what they hand the
+ * transport, so the state checks and proxy acquisition live in one place. */
+static Nip44BytesContext *
+nip44_bytes_begin(GnostrSignerService *self, const char *peer_pubkey,
+                  gboolean is_encrypt,
+                  GnostrNip44Callback encrypt_callback,
+                  GnostrNip44BytesCallback decrypt_callback,
+                  gpointer user_data)
+{
+  if (self->state != GNOSTR_SIGNER_STATE_CONNECTED) {
+    GError *error = g_error_new(G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                                "Signer not connected - please sign in first");
+    if (is_encrypt) encrypt_callback(self, NULL, error, user_data);
+    else decrypt_callback(self, NULL, error, user_data);
+    g_error_free(error);
+    return NULL;
+  }
+
+  Nip44BytesContext *ctx = g_new0(Nip44BytesContext, 1);
+  ctx->service = self;
+  ctx->encrypt_callback = encrypt_callback;
+  ctx->decrypt_callback = decrypt_callback;
+  ctx->user_data = user_data;
+  ctx->peer_pubkey = g_strdup(peer_pubkey);
+  ctx->is_encrypt = is_encrypt;
+  return ctx;
+}
+
+/* Returns the proxy, or NULL after reporting the failure through @ctx. */
+static NostrSignerProxy *
+nip44_bytes_nip55l_proxy(Nip44BytesContext *ctx)
+{
+  GnostrSignerService *self = ctx->service;
+  if (self->nip55l_proxy) return self->nip55l_proxy;
+
+  GError *error = NULL;
+  self->nip55l_proxy = gnostr_signer_proxy_get(&error);
+  if (!self->nip55l_proxy) {
+    GError *cb_error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                   "Failed to connect to local signer: %s",
+                                   error ? error->message : "unknown");
+    nip44_bytes_fail(ctx, cb_error);
+    g_error_free(cb_error);
+    if (error) g_error_free(error);
+    nip44_bytes_context_free(ctx);
+    return NULL;
+  }
+  return self->nip55l_proxy;
+}
+
+void
+gnostr_signer_service_nip44_encrypt_bytes_async(GnostrSignerService *self,
+                                                const char *peer_pubkey,
+                                                GBytes *plaintext,
+                                                GCancellable *cancellable,
+                                                GnostrNip44Callback callback,
+                                                gpointer user_data)
+{
+  g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
+  g_return_if_fail(peer_pubkey != NULL);
+  g_return_if_fail(plaintext != NULL);
+  g_return_if_fail(callback != NULL);
+
+  Nip44BytesContext *ctx =
+    nip44_bytes_begin(self, peer_pubkey, TRUE, callback, NULL, user_data);
+  if (!ctx) return;
+  ctx->plaintext = g_bytes_ref(plaintext);
+
+  switch (self->method) {
+    case GNOSTR_SIGNER_METHOD_NIP46: {
+      GTask *task = g_task_new(NULL, cancellable, on_nip46_nip44_bytes_complete, ctx);
+      g_task_set_task_data(task, ctx, NULL);
+      g_task_run_in_thread(task, nip46_nip44_bytes_thread);
+      g_object_unref(task);
+      break;
+    }
+
+    case GNOSTR_SIGNER_METHOD_NIP55L: {
+      NostrSignerProxy *proxy = nip44_bytes_nip55l_proxy(ctx);
+      if (!proxy) return;
+      gsize len = 0;
+      const guchar *bytes = g_bytes_get_data(plaintext, &len);
+      char *b64 = g_base64_encode(bytes, len);
+      nostr_org_nostr_signer_call_nip44_encrypt_b64(
+          proxy, b64, peer_pubkey, "" /* current_user: default */,
+          cancellable, on_nip55l_nip44_encrypt_b64_complete, ctx);
+      /* The encoded plaintext is as sensitive as the plaintext itself. */
+      memset(b64, 0, strlen(b64));
+      g_free(b64);
+      break;
+    }
+
+    case GNOSTR_SIGNER_METHOD_NONE:
+    default: {
+      GError *error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                  "No signing method available");
+      callback(self, NULL, error, user_data);
+      g_error_free(error);
+      nip44_bytes_context_free(ctx);
+      break;
+    }
+  }
+}
+
+void
+gnostr_signer_service_nip44_decrypt_bytes_async(GnostrSignerService *self,
+                                                const char *peer_pubkey,
+                                                const char *ciphertext,
+                                                GCancellable *cancellable,
+                                                GnostrNip44BytesCallback callback,
+                                                gpointer user_data)
+{
+  g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
+  g_return_if_fail(peer_pubkey != NULL);
+  g_return_if_fail(ciphertext != NULL);
+  g_return_if_fail(callback != NULL);
+
+  Nip44BytesContext *ctx =
+    nip44_bytes_begin(self, peer_pubkey, FALSE, NULL, callback, user_data);
+  if (!ctx) return;
+  ctx->ciphertext = g_strdup(ciphertext);
+
+  switch (self->method) {
+    case GNOSTR_SIGNER_METHOD_NIP46: {
+      GTask *task = g_task_new(NULL, cancellable, on_nip46_nip44_bytes_complete, ctx);
+      g_task_set_task_data(task, ctx, NULL);
+      g_task_run_in_thread(task, nip46_nip44_bytes_thread);
+      g_object_unref(task);
+      break;
+    }
+
+    case GNOSTR_SIGNER_METHOD_NIP55L: {
+      NostrSignerProxy *proxy = nip44_bytes_nip55l_proxy(ctx);
+      if (!proxy) return;
+      nostr_org_nostr_signer_call_nip44_decrypt_b64(
+          proxy, ciphertext, peer_pubkey, "" /* current_user: default */,
+          cancellable, on_nip55l_nip44_decrypt_b64_complete, ctx);
+      break;
+    }
+
+    case GNOSTR_SIGNER_METHOD_NONE:
+    default: {
+      GError *error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                  "No signing method available");
+      callback(self, NULL, error, user_data);
+      g_error_free(error);
+      nip44_bytes_context_free(ctx);
+      break;
+    }
+  }
+}
+
 /* ---- NIP-44 Convenience Wrappers ---- */
 
 typedef struct {

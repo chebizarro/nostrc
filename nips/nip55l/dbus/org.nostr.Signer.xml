@@ -33,6 +33,24 @@
       <arg type="s" direction="in" name="identity" />
       <arg type="s" direction="out" name="plaintext" />
     </method>
+    <!-- Binary-safe NIP-44: the plaintext side travels as standard base64.
+         D-Bus strings must be valid UTF-8, so a raw binary plaintext cannot
+         ride NIP44Encrypt/NIP44Decrypt at all. The ciphertext is an ordinary
+         NIP-44 v2 payload either way. Distinct method names, not a flag, so a
+         signer without the capability errors instead of encrypting base64
+         text as if it were the plaintext. -->
+    <method name="NIP44EncryptB64">
+      <arg type="s" direction="in" name="plaintextB64" />
+      <arg type="s" direction="in" name="pubKey" />
+      <arg type="s" direction="in" name="identity" />
+      <arg type="s" direction="out" name="encryptedText" />
+    </method>
+    <method name="NIP44DecryptB64">
+      <arg type="s" direction="in" name="encryptedText" />
+      <arg type="s" direction="in" name="pubKey" />
+      <arg type="s" direction="in" name="identity" />
+      <arg type="s" direction="out" name="plaintextB64" />
+    </method>
     <method name="DecryptZapEvent">
       <arg type="s" direction="in" name="eventJson" />
       <arg type="s" direction="in" name="identity" />

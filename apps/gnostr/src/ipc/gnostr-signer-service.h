@@ -276,6 +276,69 @@ void gnostr_signer_service_nip44_decrypt_async(GnostrSignerService *self,
                                                 GnostrNip44Callback callback,
                                                 gpointer user_data);
 
+/* ---- nostrc-3m86: binary-safe NIP-44 ---- */
+
+/**
+ * GnostrNip44BytesCallback:
+ * @service: The signer service
+ * @result: (nullable) (transfer none): The recovered plaintext bytes, NULL on error.
+ *          Valid only for the duration of the callback; ref it to keep it.
+ * @error: Error on failure, NULL on success
+ * @user_data: User-provided data
+ */
+typedef void (*GnostrNip44BytesCallback)(GnostrSignerService *service,
+                                          GBytes *result,
+                                          GError *error,
+                                          gpointer user_data);
+
+/**
+ * gnostr_signer_service_nip44_encrypt_bytes_async:
+ * @self: The signer service
+ * @peer_pubkey: The recipient's public key (64-char hex)
+ * @plaintext: The bytes to encrypt
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: Callback receiving the NIP-44 payload
+ * @user_data: User data for callback
+ *
+ * Encrypts arbitrary bytes under the NIP-44 conversation key shared with
+ * @peer_pubkey. Both signer transports carry parameters as UTF-8 strings, so
+ * the string lane above cannot express a plaintext that is not valid UTF-8:
+ * it is rejected or mangled to U+FFFD before the signer sees it. This routes
+ * over the `_b64` method pair instead, which carries only the plaintext side
+ * as base64 — the resulting payload is an ordinary NIP-44 v2 ciphertext,
+ * identical to what the string lane produces for the same bytes.
+ *
+ * A signer that lacks the capability fails the call, rather than encrypting
+ * base64 text as if it were the plaintext.
+ */
+void gnostr_signer_service_nip44_encrypt_bytes_async(GnostrSignerService *self,
+                                                      const char *peer_pubkey,
+                                                      GBytes *plaintext,
+                                                      GCancellable *cancellable,
+                                                      GnostrNip44Callback callback,
+                                                      gpointer user_data);
+
+/**
+ * gnostr_signer_service_nip44_decrypt_bytes_async:
+ * @self: The signer service
+ * @peer_pubkey: The sender's public key (64-char hex)
+ * @ciphertext: A NIP-44 payload
+ * @cancellable: (nullable): A #GCancellable
+ * @callback: Callback receiving the recovered bytes
+ * @user_data: User data for callback
+ *
+ * Recovers a binary plaintext from a NIP-44 payload. The string lane
+ * truncates at the first NUL and mangles any non-UTF-8 byte on the way out;
+ * this one returns the exact bytes and their exact length, which is what a
+ * format whose width is its own declaration requires.
+ */
+void gnostr_signer_service_nip44_decrypt_bytes_async(GnostrSignerService *self,
+                                                      const char *peer_pubkey,
+                                                      const char *ciphertext,
+                                                      GCancellable *cancellable,
+                                                      GnostrNip44BytesCallback callback,
+                                                      gpointer user_data);
+
 /* ---- Convenience wrapper matching D-Bus proxy pattern ---- */
 
 /**

@@ -87,6 +87,34 @@
       <arg name="plaintext" type="s" direction="out"/>
     </method>
 
+    <!--
+      NIP44EncryptB64 / NIP44DecryptB64: binary-safe NIP-44 v2.
+
+      D-Bus strings must be valid UTF-8, so a plaintext that is raw bytes
+      cannot ride NIP44Encrypt/NIP44Decrypt: it is rejected or mangled to
+      U+FFFD before the signer ever sees it. These carry the *plaintext* side
+      as standard base64; the ciphertext is an ordinary NIP-44 v2 payload,
+      byte-identical to what NIP44Encrypt would produce for the same bytes.
+      Protocols whose payload width is the format signal (Concord CORD-06
+      rekey blobs) need this lane.
+
+      Distinct methods rather than a flag: a signer without the capability
+      fails the call instead of silently encrypting the base64 text.
+    -->
+    <method name="NIP44EncryptB64">
+      <arg name="plaintext_b64" type="s" direction="in"/>
+      <arg name="peer_pubkey" type="s" direction="in"/>
+      <arg name="current_user" type="s" direction="in"/>
+      <arg name="ciphertext" type="s" direction="out"/>
+    </method>
+
+    <method name="NIP44DecryptB64">
+      <arg name="ciphertext" type="s" direction="in"/>
+      <arg name="peer_pubkey" type="s" direction="in"/>
+      <arg name="current_user" type="s" direction="in"/>
+      <arg name="plaintext_b64" type="s" direction="out"/>
+    </method>
+
     <!-- ==================== NIP-04 Encryption (Legacy, for Compatibility) ==================== -->
 
     <!--

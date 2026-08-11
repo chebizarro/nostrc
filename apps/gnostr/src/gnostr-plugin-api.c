@@ -2016,6 +2016,155 @@ gnostr_plugin_context_nip44_decrypt_finish(GnostrPluginContext *context,
   return g_task_propagate_pointer(G_TASK(result), error);
 }
 
+/* --- Binary pairwise encryption (nostrc-3m86) ---------------------------
+ *
+ * The string entry points above ride a transport whose parameters must be
+ * valid UTF-8 — NIP-46's JSON params, NIP-55L's D-Bus strings — so a payload
+ * of raw bytes cannot pass through them: an encoder either rejects it or
+ * substitutes U+FFFD, and the signer then encrypts corrupted bytes with
+ * nobody noticing. A Concord CORD-06 rekey blob is 72, 104 or 136 bytes of
+ * key material, and any other width is dropped as malformed, so the mangling
+ * is not a recoverable error — it is a rotation that silently never lands.
+ *
+ * These carry the plaintext side as base64 between client and signer while
+ * the ciphertext stays an ordinary NIP-44 v2 payload. Nothing about the wire
+ * format changes: a blob wrapped here is opened by any NIP-44 implementation
+ * on the other side. */
+
+static void
+on_nip44_bytes_encrypt_complete(GnostrSignerService *service,
+                                const char          *text,
+                                GError              *error,
+                                gpointer             user_data)
+{
+  (void)service;
+  GTask *task = G_TASK(user_data);
+
+  if (error) {
+    g_task_return_error(task, g_error_copy(error));
+  } else if (text) {
+    g_task_return_pointer(task, g_strdup(text), g_free);
+  } else {
+    g_task_return_new_error(task, GNOSTR_PLUGIN_ERROR,
+                            GNOSTR_PLUGIN_ERROR_SIGNER_REFUSED,
+                            "Signer returned no result");
+  }
+  g_object_unref(task);
+}
+
+static void
+on_nip44_bytes_decrypt_complete(GnostrSignerService *service,
+                                GBytes              *bytes,
+                                GError              *error,
+                                gpointer             user_data)
+{
+  (void)service;
+  GTask *task = G_TASK(user_data);
+
+  if (error) {
+    g_task_return_error(task, g_error_copy(error));
+  } else if (bytes) {
+    g_task_return_pointer(task, g_bytes_ref(bytes), (GDestroyNotify)g_bytes_unref);
+  } else {
+    g_task_return_new_error(task, GNOSTR_PLUGIN_ERROR,
+                            GNOSTR_PLUGIN_ERROR_SIGNER_REFUSED,
+                            "Signer returned no result");
+  }
+  g_object_unref(task);
+}
+
+/* Resolves the signer and the effective peer, or returns NULL having already
+ * failed @task. A NULL @peer_pubkey_hex means the user themselves. */
+static GnostrSignerService *
+plugin_context_nip44_bytes_signer(GTask *task, const char *peer_pubkey_hex,
+                                  const char **out_peer)
+{
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  if (!gnostr_signer_service_is_available(signer)) {
+    g_task_return_new_error(task, GNOSTR_PLUGIN_ERROR,
+                            GNOSTR_PLUGIN_ERROR_NOT_LOGGED_IN,
+                            "Signer not available");
+    g_object_unref(task);
+    return NULL;
+  }
+
+  const char *peer = peer_pubkey_hex;
+  if (!peer || !*peer) peer = gnostr_signer_service_get_pubkey(signer);
+  if (!peer || !*peer) {
+    g_task_return_new_error(task, GNOSTR_PLUGIN_ERROR,
+                            GNOSTR_PLUGIN_ERROR_NOT_LOGGED_IN,
+                            "Signer exposes no public key");
+    g_object_unref(task);
+    return NULL;
+  }
+  *out_peer = peer;
+  return signer;
+}
+
+void
+gnostr_plugin_context_nip44_encrypt_bytes_async(GnostrPluginContext *context,
+                                                const char          *peer_pubkey_hex,
+                                                GBytes              *plaintext,
+                                                GCancellable        *cancellable,
+                                                GAsyncReadyCallback  callback,
+                                                gpointer             user_data)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(peer_pubkey_hex != NULL);
+  g_return_if_fail(plaintext != NULL);
+
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  const char *peer = NULL;
+  GnostrSignerService *signer =
+    plugin_context_nip44_bytes_signer(task, peer_pubkey_hex, &peer);
+  if (!signer) return;
+
+  gnostr_signer_service_nip44_encrypt_bytes_async(
+    signer, peer, plaintext, cancellable, on_nip44_bytes_encrypt_complete, task);
+}
+
+char *
+gnostr_plugin_context_nip44_encrypt_bytes_finish(GnostrPluginContext *context,
+                                                 GAsyncResult        *result,
+                                                 GError             **error)
+{
+  (void)context;
+  g_return_val_if_fail(G_IS_TASK(result), NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+void
+gnostr_plugin_context_nip44_decrypt_bytes_async(GnostrPluginContext *context,
+                                                const char          *peer_pubkey_hex,
+                                                const char          *ciphertext,
+                                                GCancellable        *cancellable,
+                                                GAsyncReadyCallback  callback,
+                                                gpointer             user_data)
+{
+  g_return_if_fail(context != NULL);
+  g_return_if_fail(peer_pubkey_hex != NULL);
+  g_return_if_fail(ciphertext != NULL);
+
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  const char *peer = NULL;
+  GnostrSignerService *signer =
+    plugin_context_nip44_bytes_signer(task, peer_pubkey_hex, &peer);
+  if (!signer) return;
+
+  gnostr_signer_service_nip44_decrypt_bytes_async(
+    signer, peer, ciphertext, cancellable, on_nip44_bytes_decrypt_complete, task);
+}
+
+GBytes *
+gnostr_plugin_context_nip44_decrypt_bytes_finish(GnostrPluginContext *context,
+                                                 GAsyncResult        *result,
+                                                 GError             **error)
+{
+  (void)context;
+  g_return_val_if_fail(G_IS_TASK(result), NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
 /* ============================================================================
  * ACTION HANDLERS
  * ============================================================================ */

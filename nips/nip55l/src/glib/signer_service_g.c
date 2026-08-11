@@ -326,6 +326,30 @@ static gboolean handle_nip44_decrypt(NostrSigner *object, GDBusMethodInvocation 
   free(out); return TRUE;
 }
 
+/* Binary-safe NIP-44: the plaintext side is standard base64 in and out, so a
+ * payload that is not valid UTF-8 survives a transport made of strings. The
+ * ciphertext is an ordinary NIP-44 v2 payload, identical to what NIP44Encrypt
+ * would return for the same bytes. */
+static gboolean handle_nip44_encrypt_b64(NostrSigner *object, GDBusMethodInvocation *invocation,
+                                         const gchar *plaintextB64, const gchar *pubKey, const gchar *identity)
+{
+  (void)object;
+  char *out=NULL; int rc = nostr_nip55l_nip44_encrypt_b64(plaintextB64, pubKey, identity, &out);
+  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "nip44 encrypt failed"); return TRUE; }
+  nostr_signer_complete_nip44_encrypt_b64(object, invocation, out);
+  free(out); return TRUE;
+}
+
+static gboolean handle_nip44_decrypt_b64(NostrSigner *object, GDBusMethodInvocation *invocation,
+                                         const gchar *cipher, const gchar *pubKey, const gchar *identity)
+{
+  (void)object;
+  char *out=NULL; int rc = nostr_nip55l_nip44_decrypt_b64(cipher, pubKey, identity, &out);
+  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "nip44 decrypt failed"); return TRUE; }
+  nostr_signer_complete_nip44_decrypt_b64(object, invocation, out);
+  free(out); return TRUE;
+}
+
 static gboolean handle_decrypt_zap_event(NostrSigner *object, GDBusMethodInvocation *invocation,
                                          const gchar *eventJson, const gchar *identity)
 {
@@ -452,6 +476,8 @@ guint signer_export(GDBusConnection *conn, const char *object_path) {
   g_signal_connect(signer_skel, "handle-nip04-decrypt", G_CALLBACK(handle_nip04_decrypt), NULL);
   g_signal_connect(signer_skel, "handle-nip44-encrypt", G_CALLBACK(handle_nip44_encrypt), NULL);
   g_signal_connect(signer_skel, "handle-nip44-decrypt", G_CALLBACK(handle_nip44_decrypt), NULL);
+  g_signal_connect(signer_skel, "handle-nip44-encrypt-b64", G_CALLBACK(handle_nip44_encrypt_b64), NULL);
+  g_signal_connect(signer_skel, "handle-nip44-decrypt-b64", G_CALLBACK(handle_nip44_decrypt_b64), NULL);
   g_signal_connect(signer_skel, "handle-decrypt-zap-event", G_CALLBACK(handle_decrypt_zap_event), NULL);
   g_signal_connect(signer_skel, "handle-get-relays", G_CALLBACK(handle_get_relays), NULL);
   g_signal_connect(signer_skel, "handle-store-key", G_CALLBACK(handle_store_key), NULL);
