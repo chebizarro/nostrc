@@ -82,6 +82,14 @@ void gn_concord_channel_item_set_is_private(GnConcordChannelItem *self,
   g_return_if_fail(GN_IS_CONCORD_CHANNEL_ITEM(self));
   self->is_private = is_private;
 }
+void gn_concord_channel_item_set_key(GnConcordChannelItem *self,
+                                     const char *key_hex, guint64 epoch) {
+  g_return_if_fail(GN_IS_CONCORD_CHANNEL_ITEM(self));
+  if (self->key) memset(self->key, 0, strlen(self->key));
+  g_free(self->key);
+  self->key = g_strdup(key_hex);
+  self->epoch = epoch;
+}
 const char *gn_concord_channel_item_get_stream_pubkey(
     GnConcordChannelItem *self) {
   g_return_val_if_fail(GN_IS_CONCORD_CHANNEL_ITEM(self), NULL);

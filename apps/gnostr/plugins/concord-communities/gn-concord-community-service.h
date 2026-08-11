@@ -202,6 +202,39 @@ void gn_concord_community_service_refound_async(
 gboolean gn_concord_community_service_refound_finish(
     GnConcordCommunityService *self, GAsyncResult *result, GError **error);
 
+/* Rekeys one Private Channel (CORD-06 §1), severing @excluded from it while
+ * leaving every other plane exactly where it is: a Private Channel is
+ * independently keyed and cryptographically unrelated to the community_root,
+ * so a compromise or a removal there costs one Channel and not the Community
+ * (CORD-03). This is the rotation that follows removing a role's access —
+ * where a Refounding is the one that follows a ban.
+ *
+ * Takes MANAGE_CHANNELS, and the Rotator must strictly outrank everyone it
+ * excludes; a rekey that would remove a peer is refused at the mint rather
+ * than left for every recipient to drop. A public Channel has no independent
+ * rotation and is refused outright — it moves when the base does.
+ *
+ * The rotation is addressed under the *community_root*, not the Channel key it
+ * replaces, so a member who is losing the Channel is still reachable and a
+ * Refounding's Channel rekeys stay openable on either branch of a base race
+ * (CORD-06 §2). */
+void gn_concord_community_service_rekey_channel_async(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *channel_id, const char *const *excluded, guint n_excluded,
+    GCancellable *cancellable, GAsyncReadyCallback callback,
+    gpointer user_data);
+gboolean gn_concord_community_service_rekey_channel_finish(
+    GnConcordCommunityService *self, GAsyncResult *result, GError **error);
+
+/* Ingests one kind-1059 wrap from a Private Channel's rekey address, the
+ * Channel-scoped twin of the base one below: same locator search, same
+ * continuity check over the key held now, same rule that only a complete set
+ * without this npub's locator is a removal. Public so the service tests can
+ * drive the adopt path without a relay. */
+gboolean gn_concord_community_service_ingest_channel_rekey_wrap(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *channel_id, const char *wrap_json);
+
 /* Ingests one kind-1059 wrap from the base rekey address: opens it under the
  * key derived from the root held now, verifies the seal's Rotator against the
  * folded Roster, checks continuity against the key currently held, and — if

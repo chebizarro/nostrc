@@ -34,6 +34,13 @@ void gn_concord_channel_item_set_name(GnConcordChannelItem *self,
 void gn_concord_channel_item_set_is_private(GnConcordChannelItem *self,
                                             gboolean is_private);
 
+/* A rekey replaces the key and climbs the epoch together (CORD-06 §1): the
+ * pair *is* the rotation, and the Channel's plane address derives from both,
+ * so a caller that moved one without the other would address a plane nobody
+ * writes to. The key material is wiped on replacement. */
+void gn_concord_channel_item_set_key(GnConcordChannelItem *self,
+                                     const char *key_hex, guint64 epoch);
+
 /* The derived Chat Plane address, x-only hex — the `authors` filter for this
  * Channel's stream. NULL until the service derives it. */
 const char *gn_concord_channel_item_get_stream_pubkey(GnConcordChannelItem *self);

@@ -2876,6 +2876,14 @@ typedef struct {
   GError *error;
 } RefoundResult;
 
+static void on_channel_rekeyed(GObject *source, GAsyncResult *result,
+                               gpointer user_data) {
+  RefoundResult *out = user_data;
+  out->ok = gn_concord_community_service_rekey_channel_finish(
+    GN_CONCORD_COMMUNITY_SERVICE(source), result, &out->error);
+  out->done = TRUE;
+}
+
 static void on_refounded(GObject *source, GAsyncResult *result,
                          gpointer user_data) {
   RefoundResult *out = user_data;
@@ -3518,6 +3526,151 @@ static void test_refounding_pays_the_debt(void) {
   fixture_clear(&fixture);
 }
 
+/* A Private Channel rotates on its own. It is independently keyed and
+ * cryptographically unrelated to the community_root (CORD-03), so severing
+ * someone from one Channel costs exactly that Channel — no Refounding, no
+ * other plane moved.
+ *
+ * The published address is the tell: it derives from the community_root, not
+ * from the Channel key being replaced, so a member losing the Channel is still
+ * reachable at it (CORD-06 §2). */
+static void test_channel_rekey_roundtrip(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  gn_concord_test_reset();
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture.owner_pubkey;
+  g_autoptr(GnConcordCommunityService) rotator =
+    joined_service(&fixture, context);
+  g_autoptr(GnConcordCommunityService) member =
+    joined_service(&fixture, context);
+
+  g_autofree gchar *join = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "join", 1686840217, "100",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    rotator, fixture.community_id, join));
+
+  /* The address every recipient watches: the prior community_root, this
+   * Channel's id, and the epoch it is climbing to. */
+  uint8_t root[32], id[32];
+  g_assert_true(nostr_concord_hex_decode_32(COMMUNITY_ROOT, root));
+  g_assert_true(nostr_concord_hex_decode_32(CHANNEL_ID, id));
+  nostr_concord_group_key_t rekey;
+  g_assert_cmpint(
+    nostr_concord_channel_rekey_key(root, id, TEST_EPOCH + 1, &rekey), ==,
+    NOSTR_CONCORD_OK);
+  char address[65];
+  nostr_concord_hex_encode_32(rekey.pk, address);
+  nostr_concord_group_key_clear(&rekey);
+
+  guint before = gn_concord_test_published ? gn_concord_test_published->len : 0;
+  RefoundResult rekeyed = { 0 };
+  gn_concord_community_service_rekey_channel_async(
+    rotator, fixture.community_id, CHANNEL_ID, NULL, 0, NULL, on_channel_rekeyed,
+    &rekeyed);
+  pump();
+  g_assert_true(rekeyed.done);
+  g_assert_no_error(rekeyed.error);
+  g_assert_true(rekeyed.ok);
+
+  const char *rotation = NULL;
+  for (guint i = before; i < gn_concord_test_published->len; i++) {
+    const char *json = g_ptr_array_index(gn_concord_test_published, i);
+    g_autoptr(NostrEvent) event = nostr_event_new();
+    if (!nostr_event_deserialize_compact(event, json, NULL)) continue;
+    if (g_strcmp0(nostr_event_get_pubkey(event), address) == 0) rotation = json;
+  }
+  g_assert_nonnull(rotation);
+
+  /* The member adopts it, and both land on the same Channel key: a message
+   * published into the rotated Channel opens for the member and for nobody
+   * still holding the old one. */
+  gn_concord_test_signer_sk = AUTHOR_SK;
+  gn_concord_test_user_pubkey = fixture.author_pubkey;
+  g_assert_true(gn_concord_community_service_ingest_channel_rekey_wrap(
+    member, fixture.community_id, CHANNEL_ID, rotation));
+  pump();
+
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture.owner_pubkey;
+  PublishResult outcome = { .loop = g_main_loop_new(NULL, FALSE) };
+  gn_concord_community_service_publish_message_async(
+    rotator, fixture.community_id, CHANNEL_ID, "after the rekey", NULL,
+    on_publish_finished, &outcome);
+  g_main_loop_run(outcome.loop);
+  g_assert_true(outcome.ok);
+  g_free(outcome.message);
+  g_main_loop_unref(outcome.loop);
+  const char *chat = g_ptr_array_index(gn_concord_test_published,
+                                       gn_concord_test_published->len - 1);
+
+  g_assert_true(gn_concord_community_service_ingest_wrap(
+    member, fixture.community_id, CHANNEL_ID, chat));
+  /* A device still on the old Channel key cannot even find the address. */
+  g_autoptr(GnConcordCommunityService) stale =
+    joined_service(&fixture, context);
+  g_assert_false(gn_concord_community_service_ingest_wrap(
+    stale, fixture.community_id, CHANNEL_ID, chat));
+
+  /* And nothing else moved: the base epoch is where it was, so the Community
+   * owes no Refounding and every other plane is untouched. */
+  g_assert_false(gn_concord_community_service_refounding_due(
+    rotator, fixture.community_id));
+
+  gn_concord_community_service_shutdown(rotator);
+  gn_concord_community_service_shutdown(member);
+  gn_concord_community_service_shutdown(stale);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
+/* A public Channel has no independent rotation: its key comes from the
+ * community_root, so it moves when the base does and rekeying it alone would
+ * address a plane nobody else computes (CORD-03, CORD-06 §1). And a Rotator
+ * without MANAGE_CHANNELS cannot rekey at all — holding the Channel key is
+ * not authority over it. */
+static void test_channel_rekey_refusals(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  gn_concord_test_reset();
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture.owner_pubkey;
+  g_autoptr(GnConcordCommunityService) owner_side =
+    joined_service(&fixture, context);
+
+  RefoundResult public_channel = { 0 };
+  gn_concord_community_service_rekey_channel_async(
+    owner_side, fixture.community_id, SECOND_CHANNEL, NULL, 0, NULL,
+    on_channel_rekeyed, &public_channel);
+  pump();
+  g_assert_false(public_channel.ok);
+  g_assert_error(public_channel.error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+  g_clear_error(&public_channel.error);
+
+  gn_concord_test_signer_sk = AUTHOR_SK;
+  gn_concord_test_user_pubkey = fixture.author_pubkey;
+  g_autoptr(GnConcordCommunityService) roleless =
+    joined_service(&fixture, context);
+  RefoundResult unauthorized = { 0 };
+  gn_concord_community_service_rekey_channel_async(
+    roleless, fixture.community_id, CHANNEL_ID, NULL, 0, NULL,
+    on_channel_rekeyed, &unauthorized);
+  pump();
+  g_assert_false(unauthorized.ok);
+  g_assert_error(unauthorized.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  g_clear_error(&unauthorized.error);
+
+  gn_concord_community_service_shutdown(owner_side);
+  gn_concord_community_service_shutdown(roleless);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/concord/crypto/nip44-bytes-roundtrip",
@@ -3533,6 +3686,10 @@ int main(int argc, char **argv) {
                   test_refounding_debt_from_another_staffer);
   g_test_add_func("/concord/refound/pays-the-debt",
                   test_refounding_pays_the_debt);
+  g_test_add_func("/concord/rekey/channel-roundtrip",
+                  test_channel_rekey_roundtrip);
+  g_test_add_func("/concord/rekey/channel-refusals",
+                  test_channel_rekey_refusals);
   g_test_add_func("/concord/refound/requires-ban",
                   test_refounding_requires_ban);
   g_test_add_func("/concord/service/accept-bundle", test_accept_bundle);
