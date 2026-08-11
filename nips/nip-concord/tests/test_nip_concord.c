@@ -670,12 +670,215 @@ static void test_status_strings(void) {
         NOSTR_CONCORD_ERR_CRYPTO,
         NOSTR_CONCORD_ERR_BAD_FRAGMENT,
         NOSTR_CONCORD_ERR_UNSUPPORTED_VERSION,
+        NOSTR_CONCORD_ERR_CONTROL_PAIR,
     };
     for (size_t i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
         const char *s = nostr_concord_status_string(all[i]);
         CHECK(s != NULL && *s != '\0');
         CHECK(strcmp(s, "unknown status") != 0);
     }
+}
+
+/* CORD-06 §1–§2. The locator and the commitment are known-answer vectors
+ * computed independently from the Appendix A construction; the blob cases
+ * freeze the widths, since in this format the width *is* the declaration. */
+static void test_rekey(void) {
+    uint8_t owner[32], salt[32], community_id[32];
+    for (size_t i = 0; i < 32; i++) owner[i] = (uint8_t)i;
+    fill(salt, sizeof(salt), 0xaa);
+    CHECK(nostr_concord_derive_community_id(owner, salt, community_id) ==
+          NOSTR_CONCORD_OK);
+
+    uint8_t prior_root[32], channel_id[32], recipient[32];
+    fill(prior_root, sizeof(prior_root), 0x11);
+    fill(channel_id, sizeof(channel_id), 0x22);
+    fill(recipient, sizeof(recipient), 0x99);
+
+    uint8_t base_scope[32];
+    nostr_concord_base_scope_id(base_scope);
+    CHECK(nostr_concord_scope_is_base(base_scope));
+    /* All-zeroes is the base scope precisely because no Channel id can be it. */
+    CHECK(!nostr_concord_scope_is_base(channel_id));
+
+    /* The rekey addresses derive from the *prior* root at the *new* epoch, so
+     * a member who missed the last rotation cannot compute this one's
+     * address — which is the removal, not an error. */
+    nostr_concord_group_key_t base_rekey, channel_rekey;
+    CHECK(nostr_concord_base_rekey_key(prior_root, community_id, 8,
+                                       &base_rekey) == NOSTR_CONCORD_OK);
+    CHECK(hex_eq(base_rekey.sk,
+                 "16c0993a8d557ac1c5aea90a8a4d63bb3a718191bf863495f48f15e0083de9b8"));
+    CHECK(nostr_concord_channel_rekey_key(prior_root, channel_id, 8,
+                                          &channel_rekey) == NOSTR_CONCORD_OK);
+    CHECK(hex_eq(channel_rekey.sk,
+                 "e9f30d3cc41dda226efe9d4e273da406139faa47bcc3810071d3742433918076"));
+    CHECK(memcmp(base_rekey.pk, channel_rekey.pk, 32) != 0);
+
+    /* A different epoch is a different address: the next rotation is
+     * subscribable in advance and nothing else lands there. */
+    nostr_concord_group_key_t next;
+    CHECK(nostr_concord_base_rekey_key(prior_root, community_id, 9, &next) ==
+          NOSTR_CONCORD_OK);
+    CHECK(memcmp(next.pk, base_rekey.pk, 32) != 0);
+    nostr_concord_group_key_clear(&next);
+    nostr_concord_group_key_clear(&base_rekey);
+    nostr_concord_group_key_clear(&channel_rekey);
+
+    /* The locator is public-input only, so a bunker account finds its blob
+     * with no private key at all. */
+    uint8_t locator[32];
+    CHECK(nostr_concord_rekey_locator(owner, recipient, channel_id, 8,
+                                      locator) == NOSTR_CONCORD_OK);
+    CHECK(hex_eq(locator,
+                 "695f079052ac0c6b3adc6cc822c6cd5c4b0a75f944079fe3da714cf6e48e4798"));
+    CHECK(nostr_concord_rekey_locator(owner, recipient, base_scope, 8,
+                                      locator) == NOSTR_CONCORD_OK);
+    CHECK(hex_eq(locator,
+                 "e09c0b7a1de398c8d3b45b580d72c93b55e8da75fe49d9d2610618c166cbf5c0"));
+    /* Rotator and recipient concatenate in that order and never commute: a
+     * member cannot compute a locator by swapping itself in. */
+    uint8_t swapped[32];
+    CHECK(nostr_concord_rekey_locator(recipient, owner, base_scope, 8,
+                                      swapped) == NOSTR_CONCORD_OK);
+    CHECK(memcmp(swapped, locator, 32) != 0);
+
+    /* CORD-02 A.5: continuity over the key currently held. */
+    uint8_t commitment[32];
+    CHECK(nostr_concord_epoch_commitment(7, prior_root, commitment) ==
+          NOSTR_CONCORD_OK);
+    CHECK(hex_eq(commitment,
+                 "98b2178c24f8445b6a55bf7d9fd85e7ac8b2cfd9785039e31d88fbd82d58bb44"));
+
+    /* --- blobs (§1) --- */
+    uint8_t new_root[32], control_root[32];
+    fill(new_root, sizeof(new_root), 0x55);
+    fill(control_root, sizeof(control_root), 0x66);
+    nostr_concord_group_key_t signer;
+    CHECK(nostr_concord_control_signer_key(control_root, community_id, 8,
+                                           &signer) == NOSTR_CONCORD_OK);
+
+    uint8_t packed[CONCORD_REKEY_BLOB_STAFF_BYTES];
+    size_t packed_len = 0;
+    nostr_concord_rekey_blob_t blob;
+    nostr_concord_rekey_blob_t parsed;
+
+    /* A Channel rotation: 72 bytes and no Control Plane keys. */
+    memset(&blob, 0, sizeof(blob));
+    blob.form = NOSTR_CONCORD_REKEY_CHANNEL;
+    memcpy(blob.scope_id, channel_id, 32);
+    blob.epoch = 8;
+    memcpy(blob.new_key, new_root, 32);
+    CHECK(nostr_concord_rekey_blob_pack(&blob, packed, sizeof(packed),
+                                        &packed_len) == NOSTR_CONCORD_OK);
+    CHECK(packed_len == CONCORD_REKEY_BLOB_CHANNEL_BYTES);
+    CHECK(nostr_concord_rekey_blob_parse(packed, packed_len, community_id,
+                                         channel_id, 8, &parsed) ==
+          NOSTR_CONCORD_OK);
+    CHECK(parsed.form == NOSTR_CONCORD_REKEY_CHANNEL);
+    CHECK(!parsed.has_control_pk && !parsed.has_control_root);
+    CHECK(memcmp(parsed.new_key, new_root, 32) == 0);
+
+    /* Unspliceable: the scope and epoch inside the ciphertext are checked
+     * against the event's tags, so the same bytes replayed against another
+     * channel or another epoch are refused. */
+    CHECK(nostr_concord_rekey_blob_parse(packed, packed_len, community_id,
+                                         base_scope, 8, &parsed) ==
+          NOSTR_CONCORD_ERR_CHANNEL);
+    CHECK(nostr_concord_rekey_blob_parse(packed, packed_len, community_id,
+                                         channel_id, 9, &parsed) ==
+          NOSTR_CONCORD_ERR_EPOCH);
+
+    /* A base rotation to a plain member: the new root and the address its
+     * Control Plane now lives at. */
+    memset(&blob, 0, sizeof(blob));
+    blob.form = NOSTR_CONCORD_REKEY_BASE_MEMBER;
+    memcpy(blob.scope_id, base_scope, 32);
+    blob.epoch = 8;
+    memcpy(blob.new_key, new_root, 32);
+    memcpy(blob.new_control_pk, signer.pk, 32);
+    blob.has_control_pk = true;
+    CHECK(nostr_concord_rekey_blob_pack(&blob, packed, sizeof(packed),
+                                        &packed_len) == NOSTR_CONCORD_OK);
+    CHECK(packed_len == CONCORD_REKEY_BLOB_MEMBER_BYTES);
+    CHECK(nostr_concord_rekey_blob_parse(packed, packed_len, community_id,
+                                         base_scope, 8, &parsed) ==
+          NOSTR_CONCORD_OK);
+    CHECK(parsed.form == NOSTR_CONCORD_REKEY_BASE_MEMBER);
+    CHECK(parsed.has_control_pk && !parsed.has_control_root);
+
+    /* The same width against a Channel scope is not a dialect, it is
+     * malformed: a Channel rotation never carries Control Plane keys. */
+    memcpy(packed, channel_id, 32);
+    CHECK(nostr_concord_rekey_blob_parse(packed, packed_len, community_id,
+                                         channel_id, 8, &parsed) ==
+          NOSTR_CONCORD_ERR_BAD_CONTENT);
+
+    /* A staff rotation appends the control_root, and the recipient requires
+     * the pair to derive — a plane split from its own readers is refused, not
+     * adopted. */
+    memcpy(blob.new_control_root, control_root, 32);
+    blob.has_control_root = true;
+    blob.form = NOSTR_CONCORD_REKEY_BASE_STAFF;
+    CHECK(nostr_concord_rekey_blob_pack(&blob, packed, sizeof(packed),
+                                        &packed_len) == NOSTR_CONCORD_OK);
+    CHECK(packed_len == CONCORD_REKEY_BLOB_STAFF_BYTES);
+    CHECK(nostr_concord_rekey_blob_parse(packed, packed_len, community_id,
+                                         base_scope, 8, &parsed) ==
+          NOSTR_CONCORD_OK);
+    CHECK(parsed.form == NOSTR_CONCORD_REKEY_BASE_STAFF);
+    CHECK(memcmp(parsed.new_control_root, control_root, 32) == 0);
+
+    /* The pair is verified at the blob's own epoch, so the same pair offered
+     * for a different epoch does not derive. */
+    packed[39] = 9;
+    CHECK(nostr_concord_rekey_blob_parse(packed, packed_len, community_id,
+                                         base_scope, 9, &parsed) ==
+          NOSTR_CONCORD_ERR_CONTROL_PAIR);
+    packed[39] = 8;
+    packed[CONCORD_REKEY_BLOB_MEMBER_BYTES] ^= 0x01u;
+    CHECK(nostr_concord_rekey_blob_parse(packed, packed_len, community_id,
+                                         base_scope, 8, &parsed) ==
+          NOSTR_CONCORD_ERR_CONTROL_PAIR);
+
+    /* A 72-byte blob at the base scope is the legacy, pre-split form: read,
+     * never minted. */
+    memset(&blob, 0, sizeof(blob));
+    blob.form = NOSTR_CONCORD_REKEY_BASE_LEGACY;
+    memcpy(blob.scope_id, base_scope, 32);
+    blob.epoch = 8;
+    memcpy(blob.new_key, new_root, 32);
+    CHECK(nostr_concord_rekey_blob_pack(&blob, packed, sizeof(packed),
+                                        &packed_len) == NOSTR_CONCORD_OK);
+    CHECK(packed_len == CONCORD_REKEY_BLOB_CHANNEL_BYTES);
+    CHECK(nostr_concord_rekey_blob_parse(packed, packed_len, community_id,
+                                         base_scope, 8, &parsed) ==
+          NOSTR_CONCORD_OK);
+    CHECK(parsed.form == NOSTR_CONCORD_REKEY_BASE_LEGACY);
+
+    /* Any other width is dropped rather than parsed leniently. */
+    CHECK(nostr_concord_rekey_blob_parse(packed, 71, community_id, base_scope,
+                                         8, &parsed) ==
+          NOSTR_CONCORD_ERR_BAD_CONTENT);
+    CHECK(nostr_concord_rekey_blob_parse(packed, 105, community_id, base_scope,
+                                         8, &parsed) ==
+          NOSTR_CONCORD_ERR_BAD_CONTENT);
+
+    /* A form and a payload that disagree never reach the wire. */
+    blob.form = NOSTR_CONCORD_REKEY_BASE_STAFF;
+    CHECK(nostr_concord_rekey_blob_pack(&blob, packed, sizeof(packed),
+                                        &packed_len) ==
+          NOSTR_CONCORD_ERR_BAD_CONTENT);
+    blob.form = NOSTR_CONCORD_REKEY_CHANNEL;
+    CHECK(nostr_concord_rekey_blob_pack(&blob, packed, sizeof(packed),
+                                        &packed_len) ==
+          NOSTR_CONCORD_ERR_BAD_CONTENT);
+    blob.form = NOSTR_CONCORD_REKEY_BASE_LEGACY;
+    CHECK(nostr_concord_rekey_blob_pack(&blob, packed, 71, &packed_len) ==
+          NOSTR_CONCORD_ERR_BAD_CONTENT);
+
+    nostr_concord_group_key_clear(&signer);
+    nostr_concord_rekey_blob_clear(&blob);
+    nostr_concord_rekey_blob_clear(&parsed);
 }
 
 static void test_null_arguments(void) {
@@ -691,6 +894,17 @@ static void test_null_arguments(void) {
     CHECK(nostr_concord_group_key("concord/control", NULL, 32, buf, true, 0,
                                   &key) == NOSTR_CONCORD_ERR_NULL);
     CHECK(nostr_concord_invite_key(NULL, buf) == NOSTR_CONCORD_ERR_NULL);
+    CHECK(nostr_concord_rekey_locator(NULL, buf, buf, 0, buf) ==
+          NOSTR_CONCORD_ERR_NULL);
+    CHECK(nostr_concord_epoch_commitment(0, NULL, buf) ==
+          NOSTR_CONCORD_ERR_NULL);
+    CHECK(nostr_concord_rekey_blob_pack(NULL, buf, sizeof(buf), NULL) ==
+          NOSTR_CONCORD_ERR_NULL);
+    CHECK(nostr_concord_rekey_blob_parse(NULL, 72, buf, buf, 0, NULL) ==
+          NOSTR_CONCORD_ERR_NULL);
+    CHECK(!nostr_concord_scope_is_base(NULL));
+    nostr_concord_base_scope_id(NULL);
+    nostr_concord_rekey_blob_clear(NULL);
     CHECK(nostr_concord_stream_seal(buf, NULL, NULL) ==
           NOSTR_CONCORD_ERR_NULL);
     CHECK(!nostr_concord_hex_decode_32(NULL, buf));
@@ -715,6 +929,7 @@ int main(void) {
     test_stream_layers();
     test_invite_bundle();
     test_ordering();
+    test_rekey();
     test_status_strings();
     test_null_arguments();
 

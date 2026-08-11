@@ -83,6 +83,14 @@ extern "C" {
 #define CONCORD_MAX_DESCRIPTION_BYTES 10000
 /* NIP-44 hard-caps plaintext; enforce at every nesting layer (Appendix B). */
 #define CONCORD_MAX_NIP44_PLAINTEXT 65535
+/* CORD-06 §1: one rekey event carries up to 120 per-recipient blobs; a larger
+ * rotation spans several, correlated by the `chunk` tag. */
+#define CONCORD_REKEY_BLOBS_PER_EVENT 120
+/* CORD-06 §1: the wrapped plaintext is fixed-width per form, and the width
+ * *is* the form declaration — any other width is malformed and dropped. */
+#define CONCORD_REKEY_BLOB_CHANNEL_BYTES 72
+#define CONCORD_REKEY_BLOB_MEMBER_BYTES 104
+#define CONCORD_REKEY_BLOB_STAFF_BYTES 136
 /* CORD-05 §2: the off-network unlock token. */
 #define CONCORD_INVITE_TOKEN_BYTES 16
 /* CORD-05 §3: current fragment format / dictionary generation. */
@@ -103,6 +111,15 @@ extern "C" {
 #define CONCORD_LABEL_INVITE_LINKS "concord/invite-links"
 #define CONCORD_LABEL_INVITE_KEY "concord/invite-key"
 #define CONCORD_LABEL_COMMUNITY "concord/community"
+/* CORD-06: the rotation labels. The two rekey addresses derive from the
+ * *prior* community_root at the *new* epoch, so a member holding the current
+ * key precomputes exactly where the next rotation will land. */
+#define CONCORD_LABEL_REKEY_PSEUDONYM "concord/rekey-pseudonym"
+#define CONCORD_LABEL_BASE_REKEY_PSEUDONYM "concord/base-rekey-pseudonym"
+#define CONCORD_LABEL_RECIPIENT_PSEUDONYM "concord/recipient-pseudonym"
+/* CORD-02 A.5: the epoch-key commitment domain separator. Like the edition
+ * label, not an HKDF label — it prefixes a SHA-256 preimage. */
+#define CONCORD_LABEL_EPOCH_COMMITMENT "concord/epoch-key-commitment"
 /* CORD-04 §1: the edition-hash domain separator. Not an HKDF label — it is
  * length-prefixed into a SHA-256 preimage — and frozen like the rest. */
 #define CONCORD_LABEL_EDITION "vector-community/v1/edition"
@@ -171,7 +188,8 @@ typedef enum {
     NOSTR_CONCORD_ERR_SNAPSHOT_MALFORMED,
     NOSTR_CONCORD_ERR_CRYPTO,
     NOSTR_CONCORD_ERR_BAD_FRAGMENT,
-    NOSTR_CONCORD_ERR_UNSUPPORTED_VERSION
+    NOSTR_CONCORD_ERR_UNSUPPORTED_VERSION,
+    NOSTR_CONCORD_ERR_CONTROL_PAIR
 } nostr_concord_status_t;
 
 const char *nostr_concord_status_string(nostr_concord_status_t status);
@@ -278,6 +296,117 @@ nostr_concord_status_t nostr_concord_guestbook_key(
 nostr_concord_status_t nostr_concord_dissolved_key(
     const uint8_t community_id[32],
     nostr_concord_group_key_t *out);
+
+/* ------------------------------------------------------------------ *
+ * Rekeys and Refoundings (CORD-06)
+ * ------------------------------------------------------------------ */
+
+/* §1: a rotation names the key it replaces by a 32-byte scope id — a Channel
+ * id, or all-zeroes for a base rotation, which no Channel id can collide
+ * with. */
+void nostr_concord_base_scope_id(uint8_t out[32]);
+bool nostr_concord_scope_is_base(const uint8_t scope_id[32]);
+
+/* §2: the address a rotation is published at, precomputable by every current
+ * keyholder. Both derive from the *prior* community_root at the *new* epoch:
+ * a member who missed the rotation therefore also missed the address, which
+ * is exactly the removal signal.
+ *
+ * A Public Channel has no independent rekey — its key comes from the
+ * community_root, so it rotates only when the base does (CORD-03). */
+nostr_concord_status_t nostr_concord_channel_rekey_key(
+    const uint8_t prior_community_root[32],
+    const uint8_t channel_id[32],
+    uint64_t new_epoch,
+    nostr_concord_group_key_t *out);
+
+nostr_concord_status_t nostr_concord_base_rekey_key(
+    const uint8_t prior_community_root[32],
+    const uint8_t community_id[32],
+    uint64_t new_epoch,
+    nostr_concord_group_key_t *out);
+
+/* §2: where a recipient finds their own blob inside a rekey event. The inputs
+ * are all public — two x-only pubkeys, the scope and the epoch — so a NIP-46
+ * bunker account computes its locator without touching a private key. The
+ * derivation is not a secret: it is unreachable to an outsider because the
+ * locator list itself lives inside the encrypted event. */
+nostr_concord_status_t nostr_concord_rekey_locator(
+    const uint8_t rotator_xonly[32],
+    const uint8_t recipient_xonly[32],
+    const uint8_t scope_id[32],
+    uint64_t new_epoch,
+    uint8_t locator_out[32]);
+
+/* CORD-02 A.5: the continuity check a receiver runs before adopting a new
+ * key. Recompute it over the key currently held and require equality with the
+ * event's `prevcommit`; a match proves the rotation extends this very key.
+ * It is a convergence check, never a secrecy mechanism — post-removal secrecy
+ * rests entirely on a removed member receiving no blob. */
+nostr_concord_status_t nostr_concord_epoch_commitment(
+    uint64_t prev_epoch,
+    const uint8_t prev_key[32],
+    uint8_t commitment_out[32]);
+
+/* §1: one located, wrapped key, in the fixed-width plaintext form whose width
+ * declares what it carries. */
+typedef enum {
+    /* 72 bytes, Channel scope: scope_id ‖ epoch ‖ new_key. */
+    NOSTR_CONCORD_REKEY_CHANNEL = 0,
+    /* 72 bytes, base scope: a legacy, pre-split base rotation. Honored when
+     * reading old epochs and never minted anew — a compliant Rotator always
+     * mints the control_root split (CORD-02 §2). */
+    NOSTR_CONCORD_REKEY_BASE_LEGACY,
+    /* 104 bytes: a base rotation to a plain member — the new root and the new
+     * Control Plane address. */
+    NOSTR_CONCORD_REKEY_BASE_MEMBER,
+    /* 136 bytes: a base rotation to staff, appending the control_root that
+     * writes at that address (CORD-04 §3). */
+    NOSTR_CONCORD_REKEY_BASE_STAFF
+} nostr_concord_rekey_form_t;
+
+typedef struct {
+    nostr_concord_rekey_form_t form;
+    uint8_t scope_id[32];
+    uint64_t epoch;
+    uint8_t new_key[32]; /* the Channel key, or the new community_root */
+    /* Base forms only; zeroed and flagged absent on the legacy and Channel
+     * forms. */
+    uint8_t new_control_pk[32];
+    uint8_t new_control_root[32]; /* staff form only */
+    bool has_control_pk;
+    bool has_control_root;
+} nostr_concord_rekey_blob_t;
+
+void nostr_concord_rekey_blob_clear(nostr_concord_rekey_blob_t *blob);
+
+/* Serializes @blob into the plaintext a Rotator wraps under its pairwise key
+ * with the recipient. Refuses a blob whose form and populated fields
+ * disagree, so a caller cannot mint a 136-byte staff blob with no
+ * control_root in it. */
+nostr_concord_status_t nostr_concord_rekey_blob_pack(
+    const nostr_concord_rekey_blob_t *blob,
+    uint8_t *out,
+    size_t out_cap,
+    size_t *out_len);
+
+/* Parses one unwrapped blob and *binds* it: @expect_scope and @expect_epoch
+ * are the enclosing event's tag values, and a blob whose own scope or epoch
+ * differs is refused rather than adopted. That is what makes a blob
+ * unspliceable — one minted for a Channel can never be replayed against
+ * another, nor a stale epoch's against the current one.
+ *
+ * On the staff form the control pair is verified too: @community_id must
+ * derive @new_control_root to exactly @new_control_pk, so a recipient refuses
+ * a plane split from its own readers rather than adopting it. Pass a real
+ * community_id always; it is the id every recipient already holds. */
+nostr_concord_status_t nostr_concord_rekey_blob_parse(
+    const uint8_t *plaintext,
+    size_t len,
+    const uint8_t community_id[32],
+    const uint8_t expect_scope[32],
+    uint64_t expect_epoch,
+    nostr_concord_rekey_blob_t *out);
 
 /* ------------------------------------------------------------------ *
  * Control editions (CORD-04)

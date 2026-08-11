@@ -48,6 +48,12 @@ typedef struct {
   /* CORD-05 §1: the link's optional attribution, echoed in the Join. */
   gchar *invite_creator;
   gchar *invite_label;
+  /* CORD-06 §3: the first root_epoch that would pay the Refounding this
+   * Community owes — one past the epoch its last live link was retired at —
+   * or 0 when it owes none. The debt is outstanding while `root_epoch` has
+   * not reached it, so rolling the root is what clears it and nothing has to
+   * remember to reset a flag. */
+  guint64 refounding_due_epoch;
   /* Community List bookkeeping (CORD-02 §8) */
   JsonNode *list_seed;    /* the earliest epoch held; only ever moves back */
   JsonObject *list_extra; /* members of the List entry we don't understand */
@@ -1040,6 +1046,16 @@ GPtrArray *gn_concord_community_service_get_invite_links(
     : NULL;
 }
 
+gboolean gn_concord_community_service_refounding_due(
+    GnConcordCommunityService *self, const char *community_id) {
+  g_return_val_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self), FALSE);
+  CommunityState *state = find_state(self, community_id);
+  if (!state) return FALSE;
+  /* A debt of 0 is no debt, and one the root has already rolled past was
+   * paid by that rotation. */
+  return state->refounding_due_epoch > state->root_epoch;
+}
+
 gboolean gn_concord_community_service_is_public(
     GnConcordCommunityService *self, const char *community_id) {
   g_return_val_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self), FALSE);
@@ -1728,6 +1744,12 @@ static JsonNode *build_list_entry(CommunityState *state) {
   json_object_set_member(entry, "seed", json_node_copy(state->list_seed));
   json_object_set_member(entry, "current", current);
   json_object_set_int_member(entry, "added_at", state->added_at);
+  /* The Refounding debt syncs with the membership it belongs to: a staffer
+   * who retired the last link on a laptop should not find the Community
+   * looking settled on a phone (CORD-06 §3). */
+  if (state->refounding_due_epoch)
+    json_object_set_int_member(entry, "refounding_due_epoch",
+                               (gint64)state->refounding_due_epoch);
 
   JsonNode *node = json_node_new(JSON_NODE_OBJECT);
   json_node_take_object(node, entry);
@@ -1977,6 +1999,8 @@ static void apply_list_document(GnConcordCommunityService *self,
       CommunityState *state = find_state(self, community_id);
       if (state) {
         state->added_at = added_at;
+        gint64 due = object_int(entry, "refounding_due_epoch", 0);
+        if (due > 0) state->refounding_due_epoch = (guint64)due;
         JsonNode *seed = json_object_has_member(entry, "seed")
                            ? json_object_get_member(entry, "seed") : NULL;
         if (seed && JSON_NODE_HOLDS_OBJECT(seed))
@@ -1990,7 +2014,8 @@ static void apply_list_document(GnConcordCommunityService *self,
           if (g_strcmp0(name, "community_id") == 0 ||
               g_strcmp0(name, "seed") == 0 ||
               g_strcmp0(name, "current") == 0 ||
-              g_strcmp0(name, "added_at") == 0)
+              g_strcmp0(name, "added_at") == 0 ||
+              g_strcmp0(name, "refounding_due_epoch") == 0)
             continue;
           json_object_set_member(
             state->list_extra, name,
@@ -3060,14 +3085,20 @@ GPtrArray *gn_concord_community_service_get_invites(
   return links;
 }
 
-/* The Registry's new content: this creator's live coordinates, one edit
- * applied. The wire fold and the creator's own List are unioned deliberately
- * — a session that has not yet synced its own Registry would otherwise
- * publish a version that silently retires every link it hasn't seen. */
-static gchar *build_registry_content(GnConcordCommunityService *self,
-                                     CommunityState *state, const char *author,
-                                     const char *add_signer,
-                                     const char *drop_signer) {
+/* This creator's live link coordinates with one edit applied: sorted, so two
+ * of the creator's devices holding the same set mint the same bytes — and
+ * therefore the same edition hash — rather than forking the version chain
+ * over ordering alone.
+ *
+ * The wire fold and the creator's own List are unioned deliberately — a
+ * session that has not yet synced its own Registry would otherwise publish a
+ * version that silently retires every link it hasn't seen.
+ *
+ * (element-type utf8) (transfer full) */
+static GPtrArray *registry_live_set(GnConcordCommunityService *self,
+                                    CommunityState *state, const char *author,
+                                    const char *add_signer,
+                                    const char *drop_signer) {
   g_autoptr(GHashTable) seen =
     g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   g_autoptr(GPtrArray) links = g_ptr_array_new_with_free_func(g_free);
@@ -3097,10 +3128,49 @@ static gchar *build_registry_content(GnConcordCommunityService *self,
   if (add_signer && !g_hash_table_contains(seen, add_signer))
     g_ptr_array_add(links, g_strdup(add_signer));
 
-  /* Sorted, so two of the creator's devices holding the same set mint the
-   * same bytes — and therefore the same edition hash — rather than forking
-   * the version chain over ordering alone. */
   g_ptr_array_sort_values(links, (GCompareFunc)g_strcmp0);
+  return g_steal_pointer(&links);
+}
+
+/* CORD-06 §3: did this retire take the Community's *last* live link — the
+ * moment CORD-05 §5 turns it Private and CORD-06 owes it a Refounding?
+ *
+ * The aggregate is the truth, so this creator emptying their own Registry is
+ * not enough: any other creator still listing a link keeps the Community
+ * Public. Their sets come from the fold, which is also where this creator's
+ * own pre-retire set sits — the edition just published has not echoed back
+ * yet, so the fold's copy of it is skipped in favour of the set actually
+ * written. */
+static gboolean retire_emptied_active_set(GnConcordCommunityService *self,
+                                          CommunityState *state,
+                                          const char *author,
+                                          const char *retired_signer) {
+  g_autoptr(GPtrArray) mine =
+    registry_live_set(self, state, author, NULL, retired_signer);
+  if (mine->len > 0 || !state->control) return FALSE;
+
+  GPtrArray *folded_mine =
+    gn_concord_control_plane_get_creator_invite_links(state->control, author);
+  GPtrArray *aggregate =
+    gn_concord_control_plane_get_invite_links(state->control);
+  for (guint i = 0; aggregate && i < aggregate->len; i++) {
+    const char *signer = g_ptr_array_index(aggregate, i);
+    gboolean ours = FALSE;
+    for (guint j = 0; folded_mine && j < folded_mine->len && !ours; j++)
+      ours = g_strcmp0(signer, g_ptr_array_index(folded_mine, j)) == 0;
+    if (!ours) return FALSE;
+  }
+  return TRUE;
+}
+
+/* The Registry edition's content: the same set, as the JSON array §5 puts on
+ * the wire. */
+static gchar *build_registry_content(GnConcordCommunityService *self,
+                                     CommunityState *state, const char *author,
+                                     const char *add_signer,
+                                     const char *drop_signer) {
+  g_autoptr(GPtrArray) links =
+    registry_live_set(self, state, author, add_signer, drop_signer);
 
   g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_array(builder);
@@ -3328,6 +3398,21 @@ static void on_invite_registry_published(GObject *source, GAsyncResult *result,
 
   if (!self->invite_document) self->invite_document = json_object_new();
   if (mint->retiring) {
+    /* CORD-06 §3: the Registry that just landed may have been the last live
+     * link in the Community, which converts it to Private — and a
+     * Public-to-Private conversion is exactly a Refounding's other trigger.
+     * Nothing rotates yet, so record the debt against the epoch it was
+     * incurred at rather than letting the Community look settled: every
+     * holder of the link just retired still holds the `community_root` its
+     * bundle handed out, and only rolling that root severs them. */
+    CommunityState *retired_in = find_state(self, mint->community_id);
+    if (retired_in &&
+        retire_emptied_active_set(self, retired_in, mint->author,
+                                  mint->signer_pk)) {
+      retired_in->refounding_due_epoch = retired_in->root_epoch + 1;
+      publish_community_list(self);
+    }
+
     JsonArray *stones = document_array(self->invite_document, "tombstones");
     JsonObject *stone = json_object_new();
     json_object_set_string_member(stone, "token", mint->token_hex);

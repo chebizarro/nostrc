@@ -2278,6 +2278,17 @@ static const char *published_nth_of_kind(int kind, guint nth) {
 
 /* Where that event sits in the published order. The mint's whole correctness
  * argument is an ordering one, so the test asserts on positions. */
+/* The newest of a replaceable kind: the Community List is republished every
+ * time the membership changes, so the last one is the one that matters. */
+static const char *published_last_of_kind(int kind) {
+  const char *last = NULL;
+  for (guint nth = 0;; nth++) {
+    const char *json = published_nth_of_kind(kind, nth);
+    if (!json) return last;
+    last = json;
+  }
+}
+
 static gint published_index_of_kind(int kind, guint nth) {
   guint seen = 0;
   for (guint i = 0; gn_concord_test_published &&
@@ -2539,6 +2550,123 @@ static void test_invite_mint_roundtrip(void) {
     gn_concord_community_service_get_invites(service, fixture.community_id);
   g_assert_cmpuint(after->len, ==, 0);
 
+  /* Private again — but everyone who ever opened the link just retired still
+   * holds the community_root its bundle handed out, so "Private" describes
+   * who can join and not yet who can read. The Community owes a Refounding
+   * and says so until one rolls the root (CORD-06 §3). */
+  g_assert_true(gn_concord_community_service_refounding_due(
+    service, fixture.community_id));
+
+  /* The debt rides the Community List, so the staffer's other devices see it
+   * too — as the epoch that would pay it, which is what lets a Refounding
+   * clear it by happening rather than by remembering to. */
+  pump();
+  pump();
+  JsonNode *listed =
+    decrypt_published_document(published_last_of_kind(CONCORD_COMMUNITY_LIST),
+                               OWNER_SK);
+  g_assert_nonnull(listed);
+  JsonArray *listed_entries =
+    json_object_get_array_member(json_node_get_object(listed), "entries");
+  JsonObject *membership = NULL;
+  for (guint i = 0; i < json_array_get_length(listed_entries); i++) {
+    JsonObject *candidate = json_array_get_object_element(listed_entries, i);
+    if (g_strcmp0(json_object_get_string_member(candidate, "community_id"),
+                  fixture.community_id) == 0)
+      membership = candidate;
+  }
+  g_assert_nonnull(membership);
+  g_assert_cmpint(
+    json_object_get_int_member(membership, "refounding_due_epoch"), ==,
+    TEST_EPOCH + 1);
+  json_node_free(listed);
+
+  g_free(minted.url);
+  gn_concord_community_service_shutdown(service);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
+/* The Public/Private truth is the *aggregate* active-set (CORD-05 §5), so a
+ * creator emptying their own Registry while another creator still lists a
+ * live link has retired a link, not the last one — the Community stays
+ * Public and owes nothing. */
+static void test_invite_retire_leaves_other_creators_links(void) {
+  Fixture fixture = { 0 };
+  invite_test_begin(&fixture);
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+  g_autoptr(GnConcordCommunityService) service =
+    gn_concord_community_service_new(context);
+
+  g_autofree gchar *bundle = build_staff_bundle(&fixture);
+  g_autoptr(GError) accept_error = NULL;
+  g_assert_true(
+    gn_concord_community_service_accept_bundle(service, bundle,
+                                               &accept_error));
+  g_assert_no_error(accept_error);
+  pump();
+
+  /* A second creator, holding CREATE_INVITE through a Role and a Grant, with
+   * one live link of their own. */
+  g_autofree gchar *admin = nostr_key_get_public(ADMIN_SK);
+  g_autofree gchar *role_content = g_strdup_printf(
+    "{\"role_id\":\"%s\",\"name\":\"Host\",\"position\":5,"
+    "\"permissions\":\"%" G_GUINT64_FORMAT "\"}",
+    ROLE_ID, CONCORD_PERM_CREATE_INVITE);
+  EditionOptions role =
+    owner_edition(CONCORD_VSK_ROLE, ROLE_ID, 1, role_content);
+  /* This membership is a staff bundle, so its Control Plane sits at the split
+   * address the control_root signs — not the legacy derivation. */
+  role.legacy_address = FALSE;
+  g_assert_true(ingest_edition(service, &fixture, &role, NULL));
+  g_autofree gchar *grant_eid = grant_coordinate(&fixture, admin);
+  g_autofree gchar *grant_content = g_strdup_printf(
+    "{\"member\":\"%s\",\"role_ids\":[\"%s\"]}", admin, ROLE_ID);
+  EditionOptions grant =
+    owner_edition(CONCORD_VSK_GRANT, grant_eid, 1, grant_content);
+  grant.legacy_address = FALSE;
+  g_assert_true(ingest_edition(service, &fixture, &grant, NULL));
+  g_autofree gchar *admin_registry = registry_coordinate(&fixture, admin);
+  g_autofree gchar *admin_content =
+    g_strdup_printf("[\"%s\"]", LINK_SIGNER_B);
+  EditionOptions admin_mint = owner_edition(CONCORD_VSK_INVITE_REGISTRY,
+                                            admin_registry, 1, admin_content);
+  admin_mint.actor_sk = ADMIN_SK;
+  admin_mint.legacy_address = FALSE;
+  g_assert_true(ingest_edition(service, &fixture, &admin_mint, NULL));
+  g_assert_true(
+    gn_concord_community_service_is_public(service, fixture.community_id));
+
+  /* The owner mints and retires their own link. */
+  InviteResult minted = { 0 };
+  gn_concord_community_service_create_invite_async(
+    service, fixture.community_id, NULL, 0, NULL, on_invite_minted, &minted);
+  pump();
+  pump();
+  g_assert_no_error(minted.error);
+  g_assert_nonnull(minted.url);
+
+  g_autoptr(GPtrArray) live =
+    gn_concord_community_service_get_invites(service, fixture.community_id);
+  g_assert_cmpuint(live->len, ==, 1);
+  g_autofree gchar *token =
+    g_strdup(((const GnConcordInviteLink *)g_ptr_array_index(live, 0))->token);
+
+  InviteResult revoked = { 0 };
+  gn_concord_community_service_revoke_invite_async(
+    service, fixture.community_id, token, NULL, on_invite_revoked, &revoked);
+  pump();
+  pump();
+  g_assert_no_error(revoked.error);
+  g_assert_true(revoked.ok);
+
+  /* Somebody else's link is still live, so nothing turned Private and no
+   * Refounding is owed. */
+  g_assert_true(
+    gn_concord_community_service_is_public(service, fixture.community_id));
+  g_assert_false(gn_concord_community_service_refounding_due(
+    service, fixture.community_id));
+
   g_free(minted.url);
   gn_concord_community_service_shutdown(service);
   gn_concord_test_reset();
@@ -2678,6 +2806,8 @@ int main(int argc, char **argv) {
   g_test_add_func("/concord/guestbook/join-announced-on-accept",
                   test_guestbook_join_announced_on_accept);
   g_test_add_func("/concord/invite/mint-roundtrip", test_invite_mint_roundtrip);
+  g_test_add_func("/concord/invite/retire-leaves-other-creators-links",
+                  test_invite_retire_leaves_other_creators_links);
   g_test_add_func("/concord/invite/mint-fails-closed",
                   test_invite_never_minted_before_list_read);
   g_test_add_func("/concord/invite/mint-requires-permission",

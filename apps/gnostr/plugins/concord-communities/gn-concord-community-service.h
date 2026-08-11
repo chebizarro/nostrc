@@ -147,6 +147,25 @@ GPtrArray *gn_concord_community_service_get_invite_links(
 gboolean gn_concord_community_service_is_public(
     GnConcordCommunityService *self, const char *community_id);
 
+/* TRUE while this Community owes a Refounding (CORD-06 §3): its last live
+ * invite link has been retired, so it is Private again, but the base keys
+ * have not rotated.
+ *
+ * The distinction is not bookkeeping. A link hands out the `community_root`
+ * in its bundle, so everyone who ever opened the retired link still holds the
+ * key to every plane — retiring it stops new joins and nothing else. Only the
+ * Refounding that rolls the root actually severs them, and until it lands
+ * "Private" describes who can join, not who can read.
+ *
+ * The debt is recorded as the first epoch that would pay it and clears
+ * itself: rolling the root that far *is* the payment, so nothing has to
+ * remember to reset it. It is recorded by the retire that empties the set
+ * (CORD-05 §5), never inferred from a fold — a Registry edition carries no
+ * epoch, so a client backfilling one could not tell a fresh debt from one a
+ * Refounding already paid years ago. */
+gboolean gn_concord_community_service_refounding_due(
+    GnConcordCommunityService *self, const char *community_id);
+
 /* Ingests one kind-1059 wrap from the Community's Guestbook Plane and folds
  * the Join, Leave or Kick inside. Public so the service tests can drive the
  * coalesce without a relay. */

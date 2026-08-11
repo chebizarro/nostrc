@@ -19,6 +19,7 @@ add_library(nip_concord STATIC
   src/concord_crypto.c
   src/concord_derive.c
   src/concord_invite.c
+  src/concord_rekey.c
 )
 
 target_include_directories(nip_concord PUBLIC

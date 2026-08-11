@@ -33,6 +33,7 @@ const char *nostr_concord_status_string(nostr_concord_status_t status) {
     case NOSTR_CONCORD_ERR_CRYPTO: return "cryptographic operation failed";
     case NOSTR_CONCORD_ERR_BAD_FRAGMENT: return "malformed invite fragment";
     case NOSTR_CONCORD_ERR_UNSUPPORTED_VERSION: return "unsupported invite version";
+    case NOSTR_CONCORD_ERR_CONTROL_PAIR: return "control_root does not derive the offered control_pk";
     }
     return "unknown status";
 }
