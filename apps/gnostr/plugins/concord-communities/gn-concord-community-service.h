@@ -84,6 +84,17 @@ guint64 gn_concord_community_service_get_permissions(
     GnConcordCommunityService *self, const char *community_id,
     const char *pubkey_hex);
 
+/* (element-type utf8) (transfer none): the aggregate active-set of live invite
+ * links, folded from every creator's Registry (CORD-05 §5). Each entry is a
+ * link signer pubkey — a coordinate, never a token — so a member can see that
+ * links exist without being able to use one. */
+GPtrArray *gn_concord_community_service_get_invite_links(
+    GnConcordCommunityService *self, const char *community_id);
+/* That set *is* the Public/Private source of truth: non-empty means a live
+ * link exists and the Community is Public (CORD-05 §5). */
+gboolean gn_concord_community_service_is_public(
+    GnConcordCommunityService *self, const char *community_id);
+
 /* Ingests one kind-1059 wrap from the Community's Guestbook Plane and folds
  * the Join, Leave or Kick inside. Public so the service tests can drive the
  * coalesce without a relay. */

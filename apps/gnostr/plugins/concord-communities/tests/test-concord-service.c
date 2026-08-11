@@ -1248,6 +1248,137 @@ static void test_control_split_address(void) {
   fixture_clear(&fixture);
 }
 
+#define LINK_SIGNER_A "1010101010101010101010101010101010101010101010101010101010101010"
+#define LINK_SIGNER_B "2020202020202020202020202020202020202020202020202020202020202020"
+#define LINK_SIGNER_C "3030303030303030303030303030303030303030303030303030303030303030"
+
+static gchar *registry_coordinate(const Fixture *fixture,
+                                  const char *creator) {
+  uint8_t community[32], creator_bytes[32], eid[32];
+  g_assert_true(nostr_concord_hex_decode_32(fixture->community_id, community));
+  g_assert_true(nostr_concord_hex_decode_32(creator, creator_bytes));
+  g_assert_cmpint(
+    nostr_concord_invite_registry_locator(community, creator_bytes, eid), ==,
+    NOSTR_CONCORD_OK);
+  char hex[65];
+  nostr_concord_hex_encode_32(eid, hex);
+  return g_strdup(hex);
+}
+
+static gboolean links_hold(GPtrArray *links, const char *signer) {
+  for (guint i = 0; links && i < links->len; i++)
+    if (g_strcmp0(g_ptr_array_index(links, i), signer) == 0) return TRUE;
+  return FALSE;
+}
+
+/* CORD-05 §5: the Registry is the Invite List's member-facing shadow, and the
+ * aggregate active-set it folds to is the Public/Private source of truth. */
+static void test_control_invite_registry(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  g_autoptr(GnConcordCommunityService) service =
+    service_with_membership(&fixture);
+  g_autofree gchar *admin = nostr_key_get_public(ADMIN_SK);
+
+  /* A Community with no live link is Private. */
+  g_assert_false(
+    gn_concord_community_service_is_public(service, fixture.community_id));
+
+  g_autofree gchar *owner_registry =
+    registry_coordinate(&fixture, fixture.owner_pubkey);
+  g_autofree gchar *owner_content =
+    g_strdup_printf("[\"%s\"]", LINK_SIGNER_A);
+  EditionOptions mint =
+    owner_edition(CONCORD_VSK_INVITE_REGISTRY, owner_registry, 1,
+                  owner_content);
+  g_autofree gchar *mint_hash = NULL;
+  g_assert_true(ingest_edition(service, &fixture, &mint, &mint_hash));
+  g_assert_true(
+    gn_concord_community_service_is_public(service, fixture.community_id));
+  GPtrArray *links =
+    gn_concord_community_service_get_invite_links(service,
+                                                  fixture.community_id);
+  g_assert_cmpuint(links->len, ==, 1);
+  g_assert_true(links_hold(links, LINK_SIGNER_A));
+
+  /* A Registry is honored only while its author holds CREATE_INVITE: an npub
+   * the Roster ranks nowhere publishes into the void. */
+  g_autofree gchar *admin_registry = registry_coordinate(&fixture, admin);
+  g_autofree gchar *admin_content =
+    g_strdup_printf("[\"%s\"]", LINK_SIGNER_B);
+  EditionOptions rogue = owner_edition(CONCORD_VSK_INVITE_REGISTRY,
+                                       admin_registry, 1, admin_content);
+  rogue.actor_sk = ADMIN_SK;
+  g_assert_true(ingest_edition(service, &fixture, &rogue, NULL));
+  links = gn_concord_community_service_get_invite_links(service,
+                                                        fixture.community_id);
+  g_assert_cmpuint(links->len, ==, 1);
+  g_assert_false(links_hold(links, LINK_SIGNER_B));
+
+  /* The Grant arriving later is what makes it fold — authority is judged at
+   * fold time here exactly as it is for every other entity. */
+  g_autofree gchar *role_content = g_strdup_printf(
+    "{\"role_id\":\"%s\",\"name\":\"Host\",\"position\":5,"
+    "\"permissions\":\"%" G_GUINT64_FORMAT "\"}",
+    ROLE_ID, CONCORD_PERM_CREATE_INVITE);
+  EditionOptions role =
+    owner_edition(CONCORD_VSK_ROLE, ROLE_ID, 1, role_content);
+  g_assert_true(ingest_edition(service, &fixture, &role, NULL));
+  g_autofree gchar *grant_eid = grant_coordinate(&fixture, admin);
+  g_autofree gchar *grant_content = g_strdup_printf(
+    "{\"member\":\"%s\",\"role_ids\":[\"%s\"]}", admin, ROLE_ID);
+  EditionOptions grant =
+    owner_edition(CONCORD_VSK_GRANT, grant_eid, 1, grant_content);
+  g_assert_true(ingest_edition(service, &fixture, &grant, NULL));
+
+  links = gn_concord_community_service_get_invite_links(service,
+                                                        fixture.community_id);
+  g_assert_cmpuint(links->len, ==, 2);
+  g_assert_true(links_hold(links, LINK_SIGNER_A));
+  g_assert_true(links_hold(links, LINK_SIGNER_B));
+
+  /* Retiring empties the set, and an empty Registry must replace the prior
+   * one rather than reading as nothing said. */
+  EditionOptions retire = owner_edition(CONCORD_VSK_INVITE_REGISTRY,
+                                        owner_registry, 2, "[]");
+  retire.prev = mint_hash;
+  g_autofree gchar *retire_hash = NULL;
+  g_assert_true(ingest_edition(service, &fixture, &retire, &retire_hash));
+  links = gn_concord_community_service_get_invite_links(service,
+                                                        fixture.community_id);
+  g_assert_cmpuint(links->len, ==, 1);
+  g_assert_true(links_hold(links, LINK_SIGNER_B));
+
+  /* Each creator owns exactly their own list: a Registry forged into someone
+   * else's coordinate is not that creator's, however validly it is signed and
+   * however cleanly it chains onto what sits there. */
+  g_autofree gchar *squatted = g_strdup_printf("[\"%s\"]", LINK_SIGNER_C);
+  EditionOptions forgery = owner_edition(CONCORD_VSK_INVITE_REGISTRY,
+                                         owner_registry, 3, squatted);
+  forgery.actor_sk = ADMIN_SK;
+  forgery.prev = retire_hash;
+  g_assert_true(ingest_edition(service, &fixture, &forgery, NULL));
+  links = gn_concord_community_service_get_invite_links(service,
+                                                        fixture.community_id);
+  g_assert_cmpuint(links->len, ==, 1);
+  g_assert_false(links_hold(links, LINK_SIGNER_C));
+
+  /* The last retire flips the Community back to Private, which is CORD-06's
+   * Refounding trigger. */
+
+  EditionOptions admin_retire = owner_edition(CONCORD_VSK_INVITE_REGISTRY,
+                                              admin_registry, 2, "[]");
+  admin_retire.actor_sk = ADMIN_SK;
+  g_autofree gchar *admin_hash = NULL;
+  ingest_edition(service, &fixture, &rogue, &admin_hash);
+  admin_retire.prev = admin_hash;
+  g_assert_true(ingest_edition(service, &fixture, &admin_retire, NULL));
+  g_assert_false(
+    gn_concord_community_service_is_public(service, fixture.community_id));
+
+  fixture_clear(&fixture);
+}
+
 /* ------------------------------------------------------------------ *
  * shared harness for the tests that need a host
  * ------------------------------------------------------------------ */
@@ -2033,6 +2164,8 @@ int main(int argc, char **argv) {
   g_test_add_func("/concord/control/banlist-silences",
                   test_control_banlist_silences);
   g_test_add_func("/concord/control/rejections", test_control_rejections);
+  g_test_add_func("/concord/control/invite-registry",
+                  test_control_invite_registry);
   g_test_add_func("/concord/control/split-address",
                   test_control_split_address);
   g_test_add_func("/concord/guestbook/coalesces", test_guestbook_coalesces);

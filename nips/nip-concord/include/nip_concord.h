@@ -315,6 +315,14 @@ nostr_concord_status_t nostr_concord_banlist_locator(
     const uint8_t community_id[32],
     uint8_t eid_out[32]);
 
+/* CORD-05 §5: a creator's invite Registry coordinate. Bound to the creator as
+ * well as the Community, so each creator owns exactly their own list of live
+ * link coordinates and nobody can forge entries into anyone else's. */
+nostr_concord_status_t nostr_concord_invite_registry_locator(
+    const uint8_t community_id[32],
+    const uint8_t creator_xonly[32],
+    uint8_t eid_out[32]);
+
 /* §3: `permissions` rides the wire as a decimal string, never a bare number —
  * a JSON number is a 64-bit float in JavaScript and silently corrupts past
  * 2^53. A reader accepts either form; this parses the string one. Rejects a

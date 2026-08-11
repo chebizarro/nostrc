@@ -1002,6 +1002,23 @@ guint64 gn_concord_community_service_get_permissions(
     : 0;
 }
 
+GPtrArray *gn_concord_community_service_get_invite_links(
+    GnConcordCommunityService *self, const char *community_id) {
+  g_return_val_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self), NULL);
+  CommunityState *state = find_state(self, community_id);
+  return state && state->control
+    ? gn_concord_control_plane_get_invite_links(state->control)
+    : NULL;
+}
+
+gboolean gn_concord_community_service_is_public(
+    GnConcordCommunityService *self, const char *community_id) {
+  g_return_val_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self), FALSE);
+  CommunityState *state = find_state(self, community_id);
+  return state && state->control &&
+         gn_concord_control_plane_is_public(state->control);
+}
+
 /* ------------------------------------------------------------------ *
  * the Guestbook Plane (CORD-02 §5)
  *

@@ -34,6 +34,11 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(NostrEvent, nostr_event_free)
  * the Roster, which can change who may ban. Two passes settle it: the second
  * folds the Roster with the first pass's bans applied. */
 #define CONCORD_BAN_ROUNDS 2
+/* A Registry is member-folded state like every other entity, and its content
+ * is attacker-shaped the moment a creator turns hostile: bound what one
+ * creator can make every member hold. Not a protocol constant — CORD-05 §5
+ * sets none — but a ceiling far above any real creator's live link count. */
+#define CONCORD_MAX_LINKS_PER_REGISTRY 64
 
 typedef struct {
   guint vsk;
@@ -57,6 +62,11 @@ typedef struct {
   guint64 permissions;
 } ControlRole;
 
+typedef struct {
+  gchar *creator;
+  GPtrArray *links; /* gchar*, the link signer pubkeys, as listed */
+} ControlRegistry;
+
 struct _GnConcordControlPlane {
   gchar *community_id;
   gchar *owner;
@@ -76,6 +86,10 @@ struct _GnConcordControlPlane {
   gchar *description;
   GPtrArray *relays;   /* gchar*, NULL-terminated */
   GPtrArray *channels; /* GnConcordControlChannel* */
+  /* CORD-05 §5: the Registry fold. Per creator, plus the aggregate active-set
+   * that is the Public/Private source of truth. */
+  GHashTable *registries;   /* creator -> ControlRegistry* */
+  GPtrArray *active_links;  /* gchar*, sorted, deduplicated */
 };
 
 /* ------------------------------------------------------------------ *
@@ -102,6 +116,14 @@ static void control_role_free(gpointer data) {
   g_free(role->role_id);
   g_free(role->name);
   g_free(role);
+}
+
+static void control_registry_free(gpointer data) {
+  ControlRegistry *registry = data;
+  if (!registry) return;
+  g_free(registry->creator);
+  g_clear_pointer(&registry->links, g_ptr_array_unref);
+  g_free(registry);
 }
 
 static void control_channel_free(gpointer data) {
@@ -394,6 +416,11 @@ static gboolean edition_is_authorized(GnConcordControlPlane *self,
     return actor_may(self, edition->actor, CONCORD_PERM_MANAGE_CHANNELS);
   case CONCORD_VSK_BANLIST:
     return actor_may(self, edition->actor, CONCORD_PERM_BAN);
+  case CONCORD_VSK_INVITE_REGISTRY:
+    /* A Registry is honored only while its author holds CREATE_INVITE
+     * (CORD-05 §5). No rank comparison: a creator only ever edits their own
+     * coordinate, which the fold verifies separately. */
+    return actor_may(self, edition->actor, CONCORD_PERM_CREATE_INVITE);
   case CONCORD_VSK_ROLE: {
     if (!actor_may(self, edition->actor, CONCORD_PERM_MANAGE_ROLES))
       return FALSE;
@@ -631,6 +658,77 @@ static void fold_banlist(GnConcordControlPlane *self) {
   }
 }
 
+/* CORD-05 §5: every creator's Registry, folded into one aggregate active-set.
+ *
+ * The entity is bound to the creator, so the coordinate is the identity here
+ * exactly as it is for a Grant: a Registry sitting anywhere but
+ * invite_registry_locator(community_id, actor) is a forgery into someone
+ * else's list, whatever its signature says. */
+static void fold_invite_registry(GnConcordControlPlane *self) {
+  g_hash_table_remove_all(self->registries);
+  g_ptr_array_set_size(self->active_links, 0);
+
+  uint8_t community[32];
+  if (!nostr_concord_hex_decode_32(self->community_id, community)) return;
+
+  g_autoptr(GHashTable) seen =
+    g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->entities);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    const char *eid = key;
+    const ControlEdition *head =
+      select_head(self, value, CONCORD_VSK_INVITE_REGISTRY);
+    if (!head) continue;
+
+    uint8_t creator[32], expected[32];
+    char expected_hex[65] = { 0 };
+    if (!nostr_concord_hex_decode_32(head->actor, creator) ||
+        nostr_concord_invite_registry_locator(community, creator, expected) !=
+          NOSTR_CONCORD_OK)
+      continue;
+    nostr_concord_hex_encode_32(expected, expected_hex);
+    if (g_strcmp0(expected_hex, eid) != 0) continue;
+
+    /* The content is the live links' *coordinates* only — never tokens, URLs,
+     * or signing secrets — so members can see that links exist without being
+     * able to use one. */
+    g_autoptr(JsonParser) parser = json_parser_new();
+    if (!json_parser_load_from_data(parser, head->content, -1, NULL)) continue;
+    JsonNode *root = json_parser_get_root(parser);
+    if (!root || !JSON_NODE_HOLDS_ARRAY(root)) continue;
+    JsonArray *list = json_node_get_array(root);
+
+    ControlRegistry *registry = g_new0(ControlRegistry, 1);
+    registry->creator = g_strdup(head->actor);
+    registry->links = g_ptr_array_new_with_free_func(g_free);
+    guint n = json_array_get_length(list);
+    if (n > CONCORD_MAX_LINKS_PER_REGISTRY)
+      n = CONCORD_MAX_LINKS_PER_REGISTRY;
+    for (guint i = 0; i < n; i++) {
+      const char *signer = json_array_get_string_element(list, i);
+      if (!nostr_concord_is_lower_hex_32(signer)) continue;
+      g_ptr_array_add(registry->links, g_strdup(signer));
+      /* Two creators listing one coordinate is nonsense, but a hostile one
+         can mint it: the aggregate is a set, so it costs a duplicate, never a
+         double count. */
+      if (!g_hash_table_contains(seen, signer)) {
+        g_hash_table_add(seen, g_strdup(signer));
+        g_ptr_array_add(self->active_links, g_strdup(signer));
+      }
+    }
+    /* An empty Registry is a retire, and must replace the prior one rather
+     * than being dropped as uninteresting — emptying the aggregate is what
+     * flips the Community back to Private. */
+    g_hash_table_insert(self->registries, g_strdup(registry->creator),
+                        registry);
+  }
+
+  g_ptr_array_sort_values(self->active_links, (GCompareFunc)g_strcmp0);
+}
+
 static void fold_metadata(GnConcordControlPlane *self) {
   GPtrArray *entity = g_hash_table_lookup(self->entities, self->community_id);
   g_clear_pointer(&self->name, g_free);
@@ -711,6 +809,7 @@ static void fold(GnConcordControlPlane *self) {
   }
   fold_metadata(self);
   fold_channels(self);
+  fold_invite_registry(self);
   self->dirty = FALSE;
 }
 
@@ -736,6 +835,9 @@ GnConcordControlPlane *gn_concord_control_plane_new(
                                        (GDestroyNotify)g_ptr_array_unref);
   self->banned = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->channels = g_ptr_array_new_with_free_func(control_channel_free);
+  self->registries = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                           control_registry_free);
+  self->active_links = g_ptr_array_new_with_free_func(g_free);
   return self;
 }
 
@@ -750,6 +852,8 @@ void gn_concord_control_plane_free(GnConcordControlPlane *self) {
   g_hash_table_unref(self->grants);
   g_hash_table_unref(self->banned);
   g_ptr_array_unref(self->channels);
+  g_hash_table_unref(self->registries);
+  g_ptr_array_unref(self->active_links);
   g_clear_pointer(&self->relays, g_ptr_array_unref);
   g_free(self->name);
   g_free(self->description);
@@ -804,6 +908,55 @@ guint32 gn_concord_control_plane_get_position(GnConcordControlPlane *self,
   fold(self);
   return pubkey_hex ? member_position(self, pubkey_hex)
                     : CONCORD_POSITION_LAST;
+}
+
+GPtrArray *gn_concord_control_plane_get_invite_links(
+    GnConcordControlPlane *self) {
+  g_return_val_if_fail(self != NULL, NULL);
+  fold(self);
+  return self->active_links;
+}
+
+GPtrArray *gn_concord_control_plane_get_creator_invite_links(
+    GnConcordControlPlane *self, const char *creator_hex) {
+  g_return_val_if_fail(self != NULL, NULL);
+  if (!creator_hex) return NULL;
+  fold(self);
+  ControlRegistry *registry = g_hash_table_lookup(self->registries,
+                                                  creator_hex);
+  return registry ? registry->links : NULL;
+}
+
+gboolean gn_concord_control_plane_is_public(GnConcordControlPlane *self) {
+  g_return_val_if_fail(self != NULL, FALSE);
+  fold(self);
+  return self->active_links->len > 0;
+}
+
+guint64 gn_concord_control_plane_get_registry_head(
+    GnConcordControlPlane *self, const char *creator_hex,
+    const char **out_hash) {
+  g_return_val_if_fail(self != NULL, 0);
+  if (out_hash) *out_hash = NULL;
+  if (!nostr_concord_is_lower_hex_32(creator_hex)) return 0;
+  fold(self);
+
+  uint8_t community[32], creator[32], expected[32];
+  char expected_hex[65];
+  if (!nostr_concord_hex_decode_32(self->community_id, community) ||
+      !nostr_concord_hex_decode_32(creator_hex, creator) ||
+      nostr_concord_invite_registry_locator(community, creator, expected) !=
+        NOSTR_CONCORD_OK)
+    return 0;
+  nostr_concord_hex_encode_32(expected, expected_hex);
+
+  GPtrArray *entity = g_hash_table_lookup(self->entities, expected_hex);
+  if (!entity) return 0;
+  const ControlEdition *head =
+    select_head(self, entity, CONCORD_VSK_INVITE_REGISTRY);
+  if (!head) return 0;
+  if (out_hash) *out_hash = head->hash;
+  return head->version;
 }
 
 guint gn_concord_control_plane_count_editions(GnConcordControlPlane *self) {

@@ -579,6 +579,22 @@ static void test_entity_locators(void) {
     CHECK(nostr_concord_grant_locator(community_id, other, other_eid) ==
           NOSTR_CONCORD_OK);
     CHECK(memcmp(eid, other_eid, 32) != 0);
+
+    /* CORD-05 §5: the Registry is per-creator for exactly the same reason,
+     * and is a distinct label from the Grant sharing the same two inputs. */
+    uint8_t registry[32], other_registry[32];
+    CHECK(nostr_concord_invite_registry_locator(community_id, member,
+                                                registry) == NOSTR_CONCORD_OK);
+    CHECK(nostr_concord_grant_locator(community_id, member, eid) ==
+          NOSTR_CONCORD_OK);
+    CHECK(memcmp(registry, eid, 32) != 0);
+    CHECK(nostr_concord_invite_registry_locator(community_id, other,
+                                                other_registry) ==
+          NOSTR_CONCORD_OK);
+    CHECK(memcmp(registry, other_registry, 32) != 0);
+
+    CHECK(nostr_concord_invite_registry_locator(NULL, member, registry) ==
+          NOSTR_CONCORD_ERR_NULL);
 }
 
 /* §3: permissions ride as a decimal string, never a bare JSON number — a

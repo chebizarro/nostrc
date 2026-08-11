@@ -79,6 +79,32 @@ guint64 gn_concord_control_plane_get_permissions(GnConcordControlPlane *self,
 guint32 gn_concord_control_plane_get_position(GnConcordControlPlane *self,
                                               const char *pubkey_hex);
 
+/* CORD-05 §5: the Registry, the Invite List's member-facing shadow. Every
+ * creator of live public links publishes their *coordinates* into the
+ * Community as a `vsk 8` entity at a coordinate bound to the creator, so each
+ * creator owns exactly their own list. A Registry is honored only while its
+ * author holds CREATE_INVITE, and members fold every creator's into one
+ * aggregate active-set.
+ *
+ * (element-type utf8) (transfer none): link signer pubkeys, sorted, so two
+ * clients render one order. */
+GPtrArray *gn_concord_control_plane_get_invite_links(
+    GnConcordControlPlane *self);
+/* One creator's own live links, in the order their Registry lists them. NULL
+ * when that creator publishes no honored Registry. */
+GPtrArray *gn_concord_control_plane_get_creator_invite_links(
+    GnConcordControlPlane *self, const char *creator_hex);
+/* The aggregate active-set *is* the Public/Private source of truth: non-empty
+ * means a live link exists. Retiring the last one triggers a Refounding
+ * (CORD-06). */
+gboolean gn_concord_control_plane_is_public(GnConcordControlPlane *self);
+/* The version and hash of a creator's current Registry edition, so the next
+ * one chains onto it. Returns 0 — and leaves @out_hash NULL — when that
+ * creator has none, which is exactly the first edition's case. */
+guint64 gn_concord_control_plane_get_registry_head(
+    GnConcordControlPlane *self, const char *creator_hex,
+    const char **out_hash);
+
 /* Editions held, and editions parked awaiting the Grant they cite (CORD-04
  * §5 block-until-synced). Diagnostics, and the assertion surface tests need. */
 guint gn_concord_control_plane_count_editions(GnConcordControlPlane *self);

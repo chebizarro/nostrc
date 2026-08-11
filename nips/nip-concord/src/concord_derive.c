@@ -389,6 +389,18 @@ nostr_concord_status_t nostr_concord_banlist_locator(
                               false, 0, eid_out);
 }
 
+nostr_concord_status_t nostr_concord_invite_registry_locator(
+    const uint8_t community_id[32], const uint8_t creator_xonly[32],
+    uint8_t eid_out[32]) {
+    if (!community_id || !creator_xonly || !eid_out) {
+        return NOSTR_CONCORD_ERR_NULL;
+    }
+    /* A.6: ikm is the community_id, the id is the creator, and no epoch — a
+     * Registry outlives every Refounding, like every other entity. */
+    return nostr_concord_hkdf(CONCORD_LABEL_INVITE_LINKS, community_id, 32,
+                              creator_xonly, false, 0, eid_out);
+}
+
 bool nostr_concord_parse_permissions(const char *decimal, uint64_t *out) {
     if (!decimal || !out) return false;
     size_t len = strlen(decimal);
