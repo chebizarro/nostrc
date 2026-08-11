@@ -240,6 +240,11 @@ const char *signet_method_to_capability(const char *method) {
   if (strcmp(method, "nip04_decrypt") == 0) return SIGNET_CAP_NOSTR_ENCRYPT;
   if (strcmp(method, "nip44_encrypt") == 0) return SIGNET_CAP_NOSTR_ENCRYPT;
   if (strcmp(method, "nip44_decrypt") == 0) return SIGNET_CAP_NOSTR_ENCRYPT;
+  /* Binary-safe variants of the same operation: the plaintext side travels
+   * base64 so non-UTF-8 payloads survive NIP-46's JSON transport. Same key,
+   * same primitive, same capability. */
+  if (strcmp(method, "nip44_encrypt_b64") == 0) return SIGNET_CAP_NOSTR_ENCRYPT;
+  if (strcmp(method, "nip44_decrypt_b64") == 0) return SIGNET_CAP_NOSTR_ENCRYPT;
   if (strcmp(method, "Encrypt") == 0)      return SIGNET_CAP_NOSTR_ENCRYPT;
   if (strcmp(method, "Decrypt") == 0)      return SIGNET_CAP_NOSTR_ENCRYPT;
   if (strcmp(method, "GetToken") == 0)     return SIGNET_CAP_CREDENTIAL_GET_TOKEN;

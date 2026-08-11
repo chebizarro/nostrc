@@ -356,7 +356,21 @@ Policies can be updated at runtime via the SET_POLICY management command or by e
 | `nip04_decrypt`   | `[peer_pubkey_hex, ciphertext]`             | NIP-04 decrypt from a peer          |
 | `nip44_encrypt`   | `[peer_pubkey_hex, plaintext]`              | NIP-44 v2 encrypt for a peer        |
 | `nip44_decrypt`   | `[peer_pubkey_hex, ciphertext]`             | NIP-44 v2 decrypt from a peer       |
+| `nip44_encrypt_b64` | `[peer_pubkey_hex, base64(plaintext)]`    | NIP-44 v2 encrypt of raw bytes      |
+| `nip44_decrypt_b64` | `[peer_pubkey_hex, ciphertext]`           | NIP-44 v2 decrypt returning base64(plaintext) |
 | `get_relays`      | `[]`                                        | Return relay map JSON               |
+
+NIP-46 carries params as JSON strings, so a plaintext that is not valid UTF-8
+cannot round-trip `nip44_encrypt` / `nip44_decrypt`: an encoder either rejects
+it or substitutes U+FFFD. The `_b64` variants move the plaintext side over
+standard base64 (the ciphertext stays an ordinary NIP-44 v2 payload either
+way), so a caller can encrypt or recover raw binary without the key leaving
+the bunker. They are needed by protocols whose payload width is itself a
+format signal — Concord CORD-06 rekey blobs, for instance, are 72, 104, or 136
+bytes and any other width is dropped as malformed. Both map to the
+`nostr.encrypt` capability, so a policy already granting NIP-44 grants them;
+policies pinning `allow_methods` explicitly must list them to enable the
+binary-safe path.
 | `ping`            | `[]`                                        | Keepalive                           |
 
 ## D-Bus Interface

@@ -144,6 +144,8 @@ Browsers and `fido2-token` must be tested on Linux because macOS does not provid
 | `nip04_decrypt`     | `[peer_pubkey_hex, ciphertext]`     | NIP-04 decrypt ciphertext from a peer          |
 | `nip44_encrypt`     | `[peer_pubkey_hex, plaintext]`      | NIP-44 v2 encrypt plaintext for a peer         |
 | `nip44_decrypt`     | `[peer_pubkey_hex, ciphertext]`     | NIP-44 v2 decrypt ciphertext from a peer       |
+| `nip44_encrypt_b64` | `[peer_pubkey_hex, base64(plaintext)]` | NIP-44 v2 encrypt of raw (non-UTF-8) bytes  |
+| `nip44_decrypt_b64` | `[peer_pubkey_hex, ciphertext]`     | NIP-44 v2 decrypt returning base64(plaintext)  |
 | `get_relays`        | `[]`                                | Return relay map JSON                          |
 | `webauthn_get_info` | `[]`                                | Return Signet authenticator info JSON          |
 | `webauthn_make_credential` | request JSON                 | Create a passkey credential JSON response |
