@@ -173,6 +173,47 @@ gboolean gn_concord_community_service_ingest_guestbook_wrap(
     GnConcordCommunityService *self, const char *community_id,
     const char *wrap_json);
 
+/* Refounds the Community (CORD-06): rolls the `community_root`, mints a fresh
+ * `control_root` beside it (CORD-02 §2), and delivers the pair to every
+ * member of the Complete Memberlist in one located blob each — 104 bytes for
+ * a member, 136 for staff — wrapped under the pairwise key this npub shares
+ * with them, chunked at 120 recipients per event, and published at the base
+ * rekey address derived from the *prior* root at root_epoch + 1.
+ *
+ * That address is the removal: a member who missed the last rotation also
+ * missed where this one is published, and a member the Memberlist no longer
+ * carries simply receives no blob. Nothing else severs them — retiring their
+ * invite link stops new joins while everyone who ever opened it keeps the key
+ * to every plane.
+ *
+ * Takes BAN, and the Rotator must strictly outrank every member it removes
+ * (CORD-04 §3). Adopting is the last step and happens only after every chunk
+ * is published, so a mid-flight failure leaves the Community on its current
+ * epoch with the rotation resumable — re-running it re-delivers the same
+ * keys rather than forking the Community.
+ *
+ * Rolling the root is also what pays the debt
+ * gn_concord_community_service_refounding_due() reports, so nothing has to
+ * remember to clear it. */
+void gn_concord_community_service_refound_async(
+    GnConcordCommunityService *self, const char *community_id,
+    GCancellable *cancellable, GAsyncReadyCallback callback,
+    gpointer user_data);
+gboolean gn_concord_community_service_refound_finish(
+    GnConcordCommunityService *self, GAsyncResult *result, GError **error);
+
+/* Ingests one kind-1059 wrap from the base rekey address: opens it under the
+ * key derived from the root held now, verifies the seal's Rotator against the
+ * folded Roster, checks continuity against the key currently held, and — if
+ * any chunk carries this npub's locator — adopts the new epoch.
+ *
+ * Only once all `n` chunks are held and none carries this npub's locator has
+ * this member been removed. A missing chunk is never a removal. Public so the
+ * service tests can drive the whole adopt path without a relay. */
+gboolean gn_concord_community_service_ingest_rekey_wrap(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *wrap_json);
+
 /* Names the npub whose Refounding minted this Community's current epoch — the
  * Rotator whose seal carried the base rekey (CORD-06 §1) — which is the only
  * npub whose kind-3312 Guestbook snapshots this client honors (CORD-02 §5).
