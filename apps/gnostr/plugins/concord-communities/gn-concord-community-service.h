@@ -56,6 +56,58 @@ void gn_concord_community_service_accept_invite_async(
 gboolean gn_concord_community_service_accept_invite_finish(
     GnConcordCommunityService *self, GAsyncResult *result, GError **error);
 
+/* One live link from the creator's own Invite List (CORD-05 §4). The signing
+ * secret never leaves the service: a caller gets what it takes to show, copy
+ * and retire a link, never to mint a bundle at its coordinate. */
+typedef struct {
+  gchar *token;        /* hex; the link's merge key across the creator's devices */
+  gchar *community_id;
+  gchar *url;          /* the shareable link */
+  gchar *label;        /* the link's human name, or NULL */
+  gint64 created_at;   /* unix ms */
+  gint64 expires_at;   /* unix ms; 0 when the link never expires */
+} GnConcordInviteLink;
+
+void gn_concord_invite_link_free(GnConcordInviteLink *link);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(GnConcordInviteLink, gn_concord_invite_link_free)
+
+/* (element-type GnConcordInviteLink) (transfer full): this npub's live links
+ * for one Community, newest first. Empty before the Invite List has been
+ * read — an unread List is not an empty one. */
+GPtrArray *gn_concord_community_service_get_invites(
+    GnConcordCommunityService *self, const char *community_id);
+
+/* Mints a shareable invite link (CORD-05 §2): a fresh link signer, the
+ * token-encrypted kind-33301 bundle at its coordinate, the creator's Registry
+ * edition naming that coordinate (§5), and the kind-13303 Invite List entry
+ * that syncs the link to this npub's other devices (§4) — in that order, so a
+ * Registry never names a coordinate with no bundle behind it.
+ *
+ * @label is the link's optional human name ("Reddit", "Conf 2026"), echoed by
+ * an accepting joiner's Guestbook Join. @expires_at is unix ms, or 0 for a
+ * link that never expires.
+ *
+ * Gated by CREATE_INVITE, and by holding the Community's control_root: the
+ * Registry edition is a Control Plane write. Returns the URL. */
+void gn_concord_community_service_create_invite_async(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *label, gint64 expires_at, GCancellable *cancellable,
+    GAsyncReadyCallback callback, gpointer user_data);
+gchar *gn_concord_community_service_create_invite_finish(
+    GnConcordCommunityService *self, GAsyncResult *result, GError **error);
+
+/* Retires a link (CORD-05 §2): its coordinate is re-posted as a vsk-9
+ * revocation tombstone — exactly as durable as the bundle it replaces, unlike
+ * a best-effort relay deletion — then dropped from the Registry and
+ * tombstoned in the Invite List, where a tombstone always beats an entry so a
+ * stale device can never resurrect it. */
+void gn_concord_community_service_revoke_invite_async(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *token_hex, GCancellable *cancellable,
+    GAsyncReadyCallback callback, gpointer user_data);
+gboolean gn_concord_community_service_revoke_invite_finish(
+    GnConcordCommunityService *self, GAsyncResult *result, GError **error);
+
 /* Ingests one kind-1059 stream wrap: opens the wrap under the Channel's
  * conversation key, verifies the seal, and folds the rumor. Returns TRUE when
  * a new message was added. Public so the service tests can drive the whole

@@ -87,7 +87,13 @@ done:
 int nostr_nip19_encode_naddr(const NostrEntityPointer *a, char **out_bech) {
     if (!a || !a->identifier || !a->public_key || a->kind <= 0 || !out_bech) return -1;
     *out_bech = NULL;
-    size_t idlen = strlen(a->identifier); if (idlen == 0 || idlen > 255) return -1;
+    /* An empty identifier is a legitimate addressable coordinate: the d tag is
+     * a string, and "" is the one every event of a kind that needs no
+     * discriminator carries. Concord's invite bundles rely on it — the
+     * per-link signer pubkey alone makes the coordinate unique, so the naddr
+     * carries no identifier bytes (CORD-05 §2). The decoder already accepts
+     * a zero-length T=0, so this only closes the encode direction. */
+    size_t idlen = strlen(a->identifier); if (idlen > 255) return -1;
     if (strlen(a->public_key) != 64) return -1;
     uint8_t au[32]; if (!nostr_hex2bin(au, a->public_key, sizeof au)) return -1;
     uint8_t k[4] = { (uint8_t)((a->kind >> 24) & 0xff), (uint8_t)((a->kind >> 16) & 0xff), (uint8_t)((a->kind >> 8) & 0xff), (uint8_t)(a->kind & 0xff) };

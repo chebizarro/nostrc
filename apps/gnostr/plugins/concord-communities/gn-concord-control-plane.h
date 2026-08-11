@@ -105,6 +105,14 @@ guint64 gn_concord_control_plane_get_registry_head(
     GnConcordControlPlane *self, const char *creator_hex,
     const char **out_hash);
 
+/* CORD-04 §5: the Grant a non-owner actor cites when they publish — the `vac`
+ * tag's version and edition hash, which pin the exact Grant their rank rests
+ * on. Returns 0 when this member holds none, which is the owner's case and
+ * the unauthorized one alike. */
+guint64 gn_concord_control_plane_get_grant_head(GnConcordControlPlane *self,
+                                               const char *member_hex,
+                                               const char **out_hash);
+
 /* Editions held, and editions parked awaiting the Grant they cite (CORD-04
  * §5 block-until-synced). Diagnostics, and the assertion surface tests need. */
 guint gn_concord_control_plane_count_editions(GnConcordControlPlane *self);

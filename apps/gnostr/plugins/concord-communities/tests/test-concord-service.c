@@ -14,6 +14,7 @@
 #include <nostr-keys.h>
 #include <nostr-tag.h>
 #include <nostr-utils.h>
+#include <nostr/nip19/nip19.h>
 #include <nostr/nip44/nip44.h>
 
 #include <stdlib.h>
@@ -1417,17 +1418,18 @@ static gchar *published_community_list(void) {
   return found;
 }
 
-/* Opens a published List the way another of the member's devices would: NIP-44
+/* Opens a published List the way another of that npub's devices would: NIP-44
  * under the conversation key they share with themselves. */
-static JsonNode *decrypt_published_list(const char *event_json) {
+static JsonNode *decrypt_published_document(const char *event_json,
+                                            const char *author_sk) {
   g_autoptr(NostrEvent) event = nostr_event_new();
   g_assert_true(nostr_event_deserialize_compact(event, event_json, NULL));
   g_assert_cmpint(nostr_event_validate(event, NULL), ==,
                   NOSTR_EVENT_VALIDATION_OK);
 
-  g_autofree gchar *pubkey = nostr_key_get_public(AUTHOR_SK);
+  g_autofree gchar *pubkey = nostr_key_get_public(author_sk);
   uint8_t sk[32], pk[32], convkey[32];
-  g_assert_true(nostr_hex2bin(sk, AUTHOR_SK, sizeof(sk)));
+  g_assert_true(nostr_hex2bin(sk, author_sk, sizeof(sk)));
   g_assert_true(nostr_hex2bin(pk, pubkey, sizeof(pk)));
   g_assert_cmpint(nostr_nip44_convkey(sk, pk, convkey), ==, 0);
 
@@ -1445,6 +1447,10 @@ static JsonNode *decrypt_published_list(const char *event_json) {
   JsonNode *root = json_node_copy(json_parser_get_root(parser));
   g_object_unref(parser);
   return root;
+}
+
+static JsonNode *decrypt_published_list(const char *event_json) {
+  return decrypt_published_document(event_json, AUTHOR_SK);
 }
 
 static void list_test_begin(Fixture *fixture) {
@@ -2125,6 +2131,369 @@ static void test_community_list_never_published_before_read(void) {
   list_test_end(&fixture);
 }
 
+/* ------------------------------------------------------------------ *
+ * minting an invite link (CORD-05 §2, §4, §5)
+ * ------------------------------------------------------------------ */
+
+/* The nth published event of @kind, oldest first, or NULL. */
+static const char *published_nth_of_kind(int kind, guint nth) {
+  guint seen = 0;
+  for (guint i = 0; gn_concord_test_published &&
+                    i < gn_concord_test_published->len; i++) {
+    const char *json = g_ptr_array_index(gn_concord_test_published, i);
+    g_autoptr(NostrEvent) event = nostr_event_new();
+    if (!nostr_event_deserialize_compact(event, json, NULL)) continue;
+    if (nostr_event_get_kind(event) != kind) continue;
+    if (seen++ == nth) return json;
+  }
+  return NULL;
+}
+
+/* Where that event sits in the published order. The mint's whole correctness
+ * argument is an ordering one, so the test asserts on positions. */
+static gint published_index_of_kind(int kind, guint nth) {
+  guint seen = 0;
+  for (guint i = 0; gn_concord_test_published &&
+                    i < gn_concord_test_published->len; i++) {
+    const char *json = g_ptr_array_index(gn_concord_test_published, i);
+    g_autoptr(NostrEvent) event = nostr_event_new();
+    if (!nostr_event_deserialize_compact(event, json, NULL)) continue;
+    if (nostr_event_get_kind(event) != kind) continue;
+    if (seen++ == nth) return (gint)i;
+  }
+  return -1;
+}
+
+typedef struct {
+  gchar *url;
+  gboolean done;
+  gboolean ok;
+  GError *error;
+} InviteResult;
+
+static void on_invite_minted(GObject *source, GAsyncResult *result,
+                             gpointer user_data) {
+  InviteResult *out = user_data;
+  out->url = gn_concord_community_service_create_invite_finish(
+    GN_CONCORD_COMMUNITY_SERVICE(source), result, &out->error);
+  out->ok = out->url != NULL;
+  out->done = TRUE;
+}
+
+static void on_invite_revoked(GObject *source, GAsyncResult *result,
+                              gpointer user_data) {
+  InviteResult *out = user_data;
+  out->ok = gn_concord_community_service_revoke_invite_finish(
+    GN_CONCORD_COMMUNITY_SERVICE(source), result, &out->error);
+  out->done = TRUE;
+}
+
+static gchar *control_signer_address(const Fixture *fixture) {
+  uint8_t control_root[32], id[32];
+  g_assert_true(nostr_concord_hex_decode_32(CONTROL_ROOT, control_root));
+  g_assert_true(nostr_concord_hex_decode_32(fixture->community_id, id));
+  nostr_concord_group_key_t signer;
+  g_assert_cmpint(
+    nostr_concord_control_signer_key(control_root, id, TEST_EPOCH, &signer), ==,
+    NOSTR_CONCORD_OK);
+  char control_pk[65];
+  nostr_concord_hex_encode_32(signer.pk, control_pk);
+  nostr_concord_group_key_clear(&signer);
+  return g_strdup(control_pk);
+}
+
+/* Every plane is a stream of kind-1059 wraps, so a wrap is told apart by the
+ * address that signed it — the Control Plane's, here, never the Guestbook's. */
+static const char *published_nth_wrap_at(const char *address, guint nth,
+                                         gint *out_index) {
+  guint seen = 0;
+  if (out_index) *out_index = -1;
+  for (guint i = 0; gn_concord_test_published &&
+                    i < gn_concord_test_published->len; i++) {
+    const char *json = g_ptr_array_index(gn_concord_test_published, i);
+    g_autoptr(NostrEvent) event = nostr_event_new();
+    if (!nostr_event_deserialize_compact(event, json, NULL)) continue;
+    if (nostr_event_get_kind(event) != CONCORD_STREAM_WRAP) continue;
+    if (g_strcmp0(nostr_event_get_pubkey(event), address) != 0) continue;
+    if (seen++ != nth) continue;
+    if (out_index) *out_index = (gint)i;
+    return json;
+  }
+  return NULL;
+}
+
+/* A staff membership: `control_pk` addresses the Control Plane and
+ * `control_root` writes it, which is what a staffer's own Community List
+ * entry carries and no invite bundle ever does (CORD-02 §2, §8). */
+static gchar *build_staff_bundle(const Fixture *fixture) {
+  g_autofree gchar *control_pk = control_signer_address(fixture);
+  g_autofree gchar *bundle = build_bundle(fixture, CHANNEL_KEY, 0, 1);
+  return g_strdup_printf(
+    "%.*s,\"control_pk\":\"%s\",\"control_root\":\"%s\"}",
+    (int)(strlen(bundle) - 1), bundle, control_pk, CONTROL_ROOT);
+}
+
+static void invite_test_begin(Fixture *fixture) {
+  fixture_init(fixture);
+  gn_concord_test_reset();
+  /* The owner mints: their rank comes from the community_id itself, so
+   * CREATE_INVITE resolves with no Roster synced at all. */
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture->owner_pubkey;
+}
+
+/* Minting publishes three things in one order, and the order is the point: a
+ * Registry naming a coordinate with no bundle behind it reads to every member
+ * as a live link that cannot be followed. */
+static void test_invite_mint_roundtrip(void) {
+  Fixture fixture = { 0 };
+  invite_test_begin(&fixture);
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+  g_autoptr(GnConcordCommunityService) service =
+    gn_concord_community_service_new(context);
+
+  g_autofree gchar *bundle = build_staff_bundle(&fixture);
+  g_autoptr(GError) accept_error = NULL;
+  g_assert_true(
+    gn_concord_community_service_accept_bundle(service, bundle,
+                                               &accept_error));
+  g_assert_no_error(accept_error);
+  pump();
+
+  InviteResult minted = { 0 };
+  gn_concord_community_service_create_invite_async(
+    service, fixture.community_id, "Conf 2026", 0, NULL, on_invite_minted,
+    &minted);
+  pump();
+  pump();
+  g_assert_no_error(minted.error);
+  g_assert_true(minted.done);
+  g_assert_nonnull(minted.url);
+
+  /* Bundle, then Registry, then the creator's private bookkeeping. */
+  g_autofree gchar *control_pk = control_signer_address(&fixture);
+  gint registry_at = -1;
+  const char *registry_json =
+    published_nth_wrap_at(control_pk, 0, &registry_at);
+  gint bundle_at = published_index_of_kind(CONCORD_INVITE_BUNDLE, 0);
+  gint list_at = published_index_of_kind(CONCORD_INVITE_LIST, 0);
+  g_assert_nonnull(registry_json);
+  g_assert_cmpint(bundle_at, >=, 0);
+  g_assert_cmpint(registry_at, >, bundle_at);
+  g_assert_cmpint(list_at, >, registry_at);
+
+  /* The link is `$BASE/invite/<naddr>#<fragment>`, and only the naddr and the
+   * fragment are protocol. */
+  const char *hash = strchr(minted.url, '#');
+  g_assert_nonnull(hash);
+  const char *slash = strrchr(minted.url, '/');
+  g_assert_nonnull(slash);
+  g_autofree gchar *naddr = g_strndup(slash + 1, (gsize)(hash - slash - 1));
+  NostrEntityPointer *pointer = NULL;
+  g_assert_cmpint(nostr_nip19_decode_naddr(naddr, &pointer), ==, 0);
+  g_assert_cmpint(pointer->kind, ==, CONCORD_INVITE_BUNDLE);
+  /* The per-link pubkey alone makes the coordinate unique, so the identifier
+   * carries no bytes (CORD-05 §2). */
+  g_assert_cmpstr(pointer->identifier, ==, "");
+  g_autofree gchar *signer = g_strdup(pointer->public_key);
+  nostr_entity_pointer_free(pointer);
+
+  const char *bundle_json = published_nth_of_kind(CONCORD_INVITE_BUNDLE, 0);
+  g_assert_nonnull(bundle_json);
+  g_autoptr(NostrEvent) bundle_event = nostr_event_new();
+  g_assert_true(
+    nostr_event_deserialize_compact(bundle_event, bundle_json, NULL));
+  g_assert_cmpint(nostr_event_validate(bundle_event, NULL), ==,
+                  NOSTR_EVENT_VALIDATION_OK);
+  g_assert_cmpstr(nostr_event_get_pubkey(bundle_event), ==, signer);
+
+  /* The fragment is never sent to any server, so it is the only thing that
+   * opens the bundle the relay can see. */
+  nostr_concord_invite_fragment_t fragment;
+  g_assert_cmpint(nostr_concord_invite_fragment_parse(hash + 1, &fragment), ==,
+                  NOSTR_CONCORD_OK);
+  char *opened = NULL;
+  g_assert_cmpint(
+    nostr_concord_invite_bundle_decrypt(nostr_event_get_content(bundle_event),
+                                        fragment.token, &opened),
+    ==, NOSTR_CONCORD_OK);
+  nostr_concord_invite_fragment_clear(&fragment);
+  g_assert_nonnull(strstr(opened, COMMUNITY_ROOT));
+  g_assert_nonnull(strstr(opened, "Conf 2026"));
+  g_assert_nonnull(strstr(opened, fixture.owner_pubkey));
+  /* A link hands out membership, never the staff write key. */
+  g_assert_null(strstr(opened, CONTROL_ROOT));
+  free(opened);
+
+  /* The Registry edition folds back as a live link, which is what makes the
+   * Community Public. */
+  g_assert_true(gn_concord_community_service_ingest_control_wrap(
+    service, fixture.community_id, registry_json));
+  GPtrArray *links = gn_concord_community_service_get_invite_links(
+    service, fixture.community_id);
+  g_assert_cmpuint(links->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(links, 0), ==, signer);
+  g_assert_true(
+    gn_concord_community_service_is_public(service, fixture.community_id));
+
+  /* And the creator's own Invite List holds what only they may hold: the
+   * unlock token and the link signer's secret. */
+  JsonNode *root =
+    decrypt_published_document(published_nth_of_kind(CONCORD_INVITE_LIST, 0),
+                               OWNER_SK);
+  JsonArray *entries =
+    json_object_get_array_member(json_node_get_object(root), "entries");
+  g_assert_cmpuint(json_array_get_length(entries), ==, 1);
+  JsonObject *entry = json_array_get_object_element(entries, 0);
+  g_assert_cmpstr(json_object_get_string_member(entry, "community_id"), ==,
+                  fixture.community_id);
+  g_assert_cmpstr(json_object_get_string_member(entry, "url"), ==, minted.url);
+  g_assert_cmpstr(json_object_get_string_member(entry, "label"), ==,
+                  "Conf 2026");
+  g_autofree gchar *entry_signer =
+    nostr_key_get_public(json_object_get_string_member(entry, "signer_sk"));
+  g_assert_cmpstr(entry_signer, ==, signer);
+  g_autofree gchar *token =
+    g_strdup(json_object_get_string_member(entry, "token"));
+  g_assert_cmpuint(strlen(token), ==, CONCORD_INVITE_TOKEN_BYTES * 2);
+  json_node_free(root);
+
+  /* The service's own view of its links is the same one, minus the secret. */
+  g_autoptr(GPtrArray) live =
+    gn_concord_community_service_get_invites(service, fixture.community_id);
+  g_assert_cmpuint(live->len, ==, 1);
+  const GnConcordInviteLink *link = g_ptr_array_index(live, 0);
+  g_assert_cmpstr(link->url, ==, minted.url);
+  g_assert_cmpstr(link->label, ==, "Conf 2026");
+
+  /* Retiring re-posts the coordinate as a tombstone, drops it from the
+   * Registry, and tombstones it in the List — tombstone first, so live keys
+   * never outlive the listing. */
+  InviteResult revoked = { 0 };
+  gn_concord_community_service_revoke_invite_async(
+    service, fixture.community_id, token, NULL, on_invite_revoked, &revoked);
+  pump();
+  pump();
+  g_assert_no_error(revoked.error);
+  g_assert_true(revoked.ok);
+
+  gint tombstone_at = published_index_of_kind(CONCORD_INVITE_BUNDLE, 1);
+  gint retire_at = -1;
+  const char *retire_json = published_nth_wrap_at(control_pk, 1, &retire_at);
+  g_assert_nonnull(retire_json);
+  g_assert_cmpint(tombstone_at, >, list_at);
+  g_assert_cmpint(retire_at, >, tombstone_at);
+
+  g_autoptr(NostrEvent) tombstone = nostr_event_new();
+  g_assert_true(nostr_event_deserialize_compact(
+    tombstone, published_nth_of_kind(CONCORD_INVITE_BUNDLE, 1), NULL));
+  g_assert_cmpstr(nostr_event_get_pubkey(tombstone), ==, signer);
+  NostrTags *tags = nostr_event_get_tags(tombstone);
+  gboolean is_tombstone = FALSE;
+  for (gsize i = 0; i < nostr_tags_size(tags); i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (nostr_tag_size(tag) >= 2 &&
+        g_strcmp0(nostr_tag_get(tag, 0), "vsk") == 0 &&
+        g_strcmp0(nostr_tag_get(tag, 1), "9") == 0)
+      is_tombstone = TRUE;
+  }
+  g_assert_true(is_tombstone);
+
+  /* The retiring edition empties this creator's Registry, and with no live
+   * link left the Community is Private again — CORD-06's Refounding trigger. */
+  g_assert_true(gn_concord_community_service_ingest_control_wrap(
+    service, fixture.community_id, retire_json));
+  g_assert_false(
+    gn_concord_community_service_is_public(service, fixture.community_id));
+
+  /* A tombstone always beats an entry, so the link is gone from the creator's
+   * own view even though the entry stays in the document. */
+  g_autoptr(GPtrArray) after =
+    gn_concord_community_service_get_invites(service, fixture.community_id);
+  g_assert_cmpuint(after->len, ==, 0);
+
+  g_free(minted.url);
+  gn_concord_community_service_shutdown(service);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
+/* The Invite List holds every link's signing secret, so replacing one this
+ * session never read would cost the creator the ability to refresh or retire
+ * the links their other devices minted. An unreachable relay and an empty one
+ * are indistinguishable from here: fail closed. */
+static void test_invite_never_minted_before_list_read(void) {
+  Fixture fixture = { 0 };
+  invite_test_begin(&fixture);
+  gn_concord_test_query_fails = TRUE;
+  GLogLevelFlags fatal = g_log_set_always_fatal(G_LOG_LEVEL_ERROR);
+  guint handler = g_log_set_handler(
+    NULL, G_LOG_LEVEL_WARNING | G_LOG_FLAG_RECURSION, swallow_message, NULL);
+
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+  g_autoptr(GnConcordCommunityService) service =
+    gn_concord_community_service_new(context);
+  g_autofree gchar *bundle = build_staff_bundle(&fixture);
+  g_autoptr(GError) accept_error = NULL;
+  g_assert_true(
+    gn_concord_community_service_accept_bundle(service, bundle,
+                                               &accept_error));
+  pump();
+
+  InviteResult minted = { 0 };
+  gn_concord_community_service_create_invite_async(
+    service, fixture.community_id, NULL, 0, NULL, on_invite_minted, &minted);
+  pump();
+  g_assert_true(minted.done);
+  g_assert_null(minted.url);
+  g_assert_error(minted.error, G_IO_ERROR, G_IO_ERROR_PENDING);
+  /* And nothing was published: not the bundle, not the Registry edit. */
+  g_autofree gchar *control_pk = control_signer_address(&fixture);
+  g_assert_null(published_nth_of_kind(CONCORD_INVITE_BUNDLE, 0));
+  g_assert_null(published_nth_wrap_at(control_pk, 0, NULL));
+  g_clear_error(&minted.error);
+
+  gn_concord_community_service_shutdown(service);
+  g_log_remove_handler(NULL, handler);
+  g_log_set_always_fatal(fatal);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
+/* Minting is gated by CREATE_INVITE, and a member the Roster ranks nowhere
+ * holds none of it (CORD-05 §5). */
+static void test_invite_requires_permission(void) {
+  Fixture fixture = { 0 };
+  invite_test_begin(&fixture);
+  /* Not the owner this time: an ordinary member with the keys to read. */
+  gn_concord_test_signer_sk = AUTHOR_SK;
+  gn_concord_test_user_pubkey = fixture.author_pubkey;
+
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+  g_autoptr(GnConcordCommunityService) service =
+    gn_concord_community_service_new(context);
+  g_autofree gchar *bundle = build_bundle(&fixture, CHANNEL_KEY, 0, 1);
+  g_autoptr(GError) accept_error = NULL;
+  g_assert_true(
+    gn_concord_community_service_accept_bundle(service, bundle,
+                                               &accept_error));
+  pump();
+
+  InviteResult minted = { 0 };
+  gn_concord_community_service_create_invite_async(
+    service, fixture.community_id, NULL, 0, NULL, on_invite_minted, &minted);
+  pump();
+  g_assert_true(minted.done);
+  g_assert_null(minted.url);
+  g_assert_error(minted.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  g_assert_null(published_nth_of_kind(CONCORD_INVITE_BUNDLE, 0));
+  g_clear_error(&minted.error);
+
+  gn_concord_community_service_shutdown(service);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/concord/service/accept-bundle", test_accept_bundle);
@@ -2177,6 +2546,11 @@ int main(int argc, char **argv) {
                   test_guestbook_kick_needs_authority);
   g_test_add_func("/concord/guestbook/join-announced-on-accept",
                   test_guestbook_join_announced_on_accept);
+  g_test_add_func("/concord/invite/mint-roundtrip", test_invite_mint_roundtrip);
+  g_test_add_func("/concord/invite/mint-fails-closed",
+                  test_invite_never_minted_before_list_read);
+  g_test_add_func("/concord/invite/mint-requires-permission",
+                  test_invite_requires_permission);
   g_test_add_func("/concord/invite/direct-roundtrip",
                   test_direct_invite_roundtrip);
   return g_test_run();

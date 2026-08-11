@@ -27,6 +27,10 @@ typedef struct {
   gchar *community_root; /* secret, hex */
   guint64 root_epoch;
   gchar *control_pk;     /* NULL on a legacy, pre-split Community */
+  /* The staff write key (CORD-02 §2). Never in an invite bundle: it arrives
+   * inside a staff-making Grant and syncs across its holder's own devices in
+   * the Community List. A plain member holds none and needs none. */
+  gchar *control_root;
   gchar *name;
   GnConcordCommunityItem *item;
   GHashTable *messages;  /* channel id -> GListStore(GnConcordMessageItem) */
@@ -63,6 +67,14 @@ struct _GnConcordCommunityService {
   GListStore *communities;
   GHashTable *states; /* community id -> CommunityState */
   gboolean shutting_down;
+
+  /* The Invite List document as last read from the wire (CORD-05 §4): the
+   * creator's private bookkeeping, holding every minted link's unlock token
+   * and link signer secret. Retained verbatim so a republish round-trips the
+   * tombstones and whatever another client wrote. */
+  JsonObject *invite_document;
+  gchar *invite_author;   /* the npub the document was read for */
+  gboolean invite_loaded; /* a definitive read happened; publishing is safe */
 
   /* The Community List document as last read from the wire (CORD-02 §8).
    * Retained so a republish round-trips the tombstones and the fields this
@@ -131,6 +143,7 @@ static void community_state_free(gpointer data) {
   g_free(state->owner);
   g_free(state->owner_salt);
   clear_secret(&state->community_root);
+  clear_secret(&state->control_root);
   g_free(state->control_pk);
   g_free(state->name);
   g_clear_object(&state->item);
@@ -690,6 +703,17 @@ gboolean gn_concord_community_service_accept_bundle(
     return FALSE;
   }
 
+  /* A staffer's own `control_root` rides the Community List between their own
+   * devices (CORD-02 §2, §8) — never an invite bundle, which is why a
+   * *link* can never hand one out. Malformed is refused rather than ignored:
+   * a wrong write key mints wraps every member drops. */
+  const char *control_root = object_string(bundle, "control_root");
+  if (control_root && !nostr_concord_is_lower_hex_32(control_root)) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                "The invite bundle carries a malformed control_root");
+    return FALSE;
+  }
+
   CommunityState *state = community_state_new();
   state->community_id = g_strdup(community_id);
   state->owner = g_strdup(owner);
@@ -697,6 +721,7 @@ gboolean gn_concord_community_service_accept_bundle(
   state->community_root = g_strdup(community_root);
   state->root_epoch = (guint64)root_epoch;
   state->control_pk = g_strdup(control_pk);
+  state->control_root = g_strdup(control_root);
   state->name = g_strdup(object_string(bundle, "name"));
   /* Optional attribution: a link may name its creator and a human label
    * ("Reddit", "Conf 2026"), and an accepting joiner echoes both in their
@@ -757,6 +782,10 @@ gboolean gn_concord_community_service_accept_bundle(
    * held, so a refresh must never advance it (CORD-02 §8). */
   CommunityState *existing = find_state(self, community_id);
   if (existing) {
+    /* A refreshed link carries no `control_root` — no bundle ever does — so a
+     * staffer re-accepting their own link must not lose their write key. */
+    if (!state->control_root)
+      state->control_root = g_steal_pointer(&existing->control_root);
     state->list_seed = g_steal_pointer(&existing->list_seed);
     state->list_extra = g_steal_pointer(&existing->list_extra);
     state->added_at = existing->added_at;
@@ -1570,9 +1599,11 @@ static void refresh_control_plane(GnConcordCommunityService *self,
 /* The entry's join material: the bundle's *membership* subset. Never the icon
  * (a device folds it from the Control Plane) and never the link fields —
  * expiry and attribution belong to the invite, not to the membership. A
- * staffer's own `control_root` would ride here too; a plain member never
- * holds one, so nothing writes it yet. */
-static JsonNode *build_join_material(CommunityState *state) {
+ * staffer's own `control_root` rides here and nowhere else — it syncs across
+ * that staffer's own devices, and an invite bundle built from this material
+ * asks for it to be left out (CORD-02 §2, §8). */
+static JsonNode *build_join_material(CommunityState *state,
+                                     gboolean include_control_root) {
   g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
   json_builder_set_member_name(builder, "community_id");
@@ -1588,6 +1619,10 @@ static JsonNode *build_join_material(CommunityState *state) {
   if (state->control_pk) {
     json_builder_set_member_name(builder, "control_pk");
     json_builder_add_string_value(builder, state->control_pk);
+  }
+  if (include_control_root && state->control_root) {
+    json_builder_set_member_name(builder, "control_root");
+    json_builder_add_string_value(builder, state->control_root);
   }
   if (state->name) {
     json_builder_set_member_name(builder, "name");
@@ -1668,7 +1703,7 @@ static void merge_seed(CommunityState *state, JsonNode *candidate) {
 /* One List entry: the two snapshots, when the membership began, and whatever
  * fields this client doesn't understand, carried through untouched. */
 static JsonNode *build_list_entry(CommunityState *state) {
-  JsonNode *current = build_join_material(state);
+  JsonNode *current = build_join_material(state, TRUE);
   merge_seed(state, current);
 
   JsonObject *entry = json_object_new();
@@ -1763,9 +1798,13 @@ static JsonNode *build_list_document(GnConcordCommunityService *self,
   return document;
 }
 
+/* The self-encrypted document chain, shared by the Community List (CORD-02
+ * §8) and the Invite List (CORD-05 §4): both are one NIP-44 replaceable
+ * encrypted to self, and both round-trip what this client does not own. */
 typedef struct {
   GnConcordCommunityService *service; /* strong: the chain outlives a panel */
   gchar *author;
+  int kind;
 } ListPublish;
 
 static void list_publish_free(ListPublish *publish) {
@@ -1807,9 +1846,9 @@ static void on_list_signed(GObject *source, GAsyncResult *result,
   /* The signer is the host's: confirm what came back is the document we asked
    * for, signed by the identity we built it for. */
   g_autoptr(NostrEvent) event = parse_verified_event(signed_json);
-  if (!event || nostr_event_get_kind(event) != CONCORD_COMMUNITY_LIST ||
+  if (!event || nostr_event_get_kind(event) != publish->kind ||
       g_strcmp0(nostr_event_get_pubkey(event), publish->author) != 0) {
-    emit_error(self, "The signer returned a different Community List");
+    emit_error(self, "The signer returned a different document");
     list_publish_free(publish);
     return;
   }
@@ -1835,7 +1874,7 @@ static void on_list_encrypted(GObject *source, GAsyncResult *result,
   }
 
   g_autoptr(NostrEvent) event = nostr_event_new();
-  nostr_event_set_kind(event, CONCORD_COMMUNITY_LIST);
+  nostr_event_set_kind(event, publish->kind);
   nostr_event_set_pubkey(event, publish->author);
   nostr_event_set_created_at(event, (gint64)time(NULL));
   nostr_event_set_content(event, content);
@@ -1843,7 +1882,7 @@ static void on_list_encrypted(GObject *source, GAsyncResult *result,
 
   g_autofree gchar *unsigned_json = nostr_event_serialize_compact(event);
   if (!unsigned_json) {
-    emit_error(self, "Failed to serialize the Community List");
+    emit_error(self, "Failed to serialize the document");
     list_publish_free(publish);
     return;
   }
@@ -1883,6 +1922,7 @@ static void publish_community_list(GnConcordCommunityService *self) {
   ListPublish *publish = g_new0(ListPublish, 1);
   publish->service = g_object_ref(self);
   publish->author = g_strdup(author);
+  publish->kind = CONCORD_COMMUNITY_LIST;
   gnostr_plugin_context_nip44_self_encrypt_async(
     self->context, plaintext, NULL, on_list_encrypted, publish);
 }
@@ -2481,6 +2521,1050 @@ gboolean gn_concord_community_service_publish_message_finish(
 }
 
 /* ------------------------------------------------------------------ *
+ * writing the Control Plane (CORD-04 §1)
+ *
+ * A member reads this plane; staff write it. The wrap is signed by the
+ * control_root-derived signer, which is the address itself, and encrypted
+ * under the community_root-derived read key every member holds. The seal is
+ * plaintext (kind 20014) — the one plane where it must be — so a compaction
+ * can re-wrap the signed edition into a new epoch with its signature intact.
+ * ------------------------------------------------------------------ */
+
+typedef struct {
+  gchar *author;
+  nostr_concord_group_key_t write_key; /* signs the wrap: the plane's address */
+  nostr_concord_group_key_t read_key;  /* encrypts it: every member holds this */
+} ControlPublish;
+
+static void control_publish_free(gpointer data) {
+  ControlPublish *publish = data;
+  if (!publish) return;
+  g_free(publish->author);
+  nostr_concord_group_key_clear(&publish->write_key);
+  nostr_concord_group_key_clear(&publish->read_key);
+  g_free(publish);
+}
+
+/* The signer sk is staff-only and a plain member never holds one — which is
+ * the whole point of the split (CORD-02 §2). A legacy, pre-split epoch had no
+ * signer key at all: the read derivation was the plane, address and signer
+ * both, so writing it takes only membership (§5). */
+static gboolean derive_control_write_key(CommunityState *state,
+                                         nostr_concord_group_key_t *out,
+                                         GError **error) {
+  if (!state->control_pk) {
+    if (derive_control_read_key(state, out)) return TRUE;
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                "This Community's Control Plane key could not be derived");
+    return FALSE;
+  }
+
+  if (!state->control_root) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                "Only staff holding this Community's control key can publish "
+                "to its Control Plane");
+    return FALSE;
+  }
+
+  uint8_t root[32], id[32];
+  if (!nostr_concord_hex_decode_32(state->control_root, root) ||
+      !nostr_concord_hex_decode_32(state->community_id, id) ||
+      nostr_concord_control_signer_key(root, id, state->root_epoch, out) !=
+        NOSTR_CONCORD_OK) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                "This Community's Control Plane signer could not be derived");
+    return FALSE;
+  }
+
+  /* A wrap the plane's own address does not sign is one every member drops.
+   * Catching that here beats minting events nobody can fold. */
+  char pk[65];
+  nostr_concord_hex_encode_32(out->pk, pk);
+  if (g_strcmp0(pk, state->control_pk) != 0) {
+    nostr_concord_group_key_clear(out);
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                "This device's control key does not address this Community's "
+                "Control Plane");
+    return FALSE;
+  }
+  return TRUE;
+}
+
+static void on_control_wrap_published(GObject *source, GAsyncResult *result,
+                                      gpointer user_data) {
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnConcordCommunityService *self = g_task_get_source_object(task);
+  g_autoptr(GError) error = NULL;
+  if (self->shutting_down || !self->context)
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                            "The Concord service was deactivated");
+  else if (!gnostr_plugin_context_publish_event_finish(self->context, result,
+                                                       &error))
+    g_task_return_error(task, g_steal_pointer(&error));
+  else
+    g_task_return_boolean(task, TRUE);
+  g_object_unref(task);
+}
+
+static void on_control_seal_signed(GObject *source, GAsyncResult *result,
+                                   gpointer user_data) {
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnConcordCommunityService *self = g_task_get_source_object(task);
+  ControlPublish *publish = g_task_get_task_data(task);
+
+  if (self->shutting_down || !self->context) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                            "The Concord service was deactivated");
+    g_object_unref(task);
+    return;
+  }
+
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *seal_json = gnostr_plugin_context_request_sign_event_finish(
+    self->context, result, &error);
+  if (!seal_json) {
+    if (error) g_task_return_error(task, g_steal_pointer(&error));
+    else
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                              "Failed to sign the Control Plane edition");
+    g_object_unref(task);
+    return;
+  }
+
+  /* The signer is the host's: confirm what came back is the seal we asked
+   * for, signed by the identity we built it for. */
+  g_autoptr(NostrEvent) seal = parse_verified_event(seal_json);
+  if (!seal || nostr_event_get_kind(seal) != CONCORD_SEAL_PLAINTEXT ||
+      g_strcmp0(nostr_event_get_pubkey(seal), publish->author) != 0) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                            "The signer returned a different event");
+    g_object_unref(task);
+    return;
+  }
+
+  char *wrap_content = NULL;
+  if (nostr_concord_stream_seal(publish->read_key.conv_key, seal_json,
+                                &wrap_content) != NOSTR_CONCORD_OK) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Failed to encrypt the Control Plane wrap");
+    g_object_unref(task);
+    return;
+  }
+
+  g_autofree gchar *ephemeral_sk = nostr_key_generate_private();
+  g_autofree gchar *ephemeral_pk =
+    ephemeral_sk ? nostr_key_get_public(ephemeral_sk) : NULL;
+  if (ephemeral_sk) memset(ephemeral_sk, 0, strlen(ephemeral_sk));
+  char stream_sk[65], stream_pk[65];
+  nostr_concord_hex_encode_32(publish->write_key.sk, stream_sk);
+  nostr_concord_hex_encode_32(publish->write_key.pk, stream_pk);
+
+  g_autoptr(NostrEvent) wrap = nostr_event_new();
+  nostr_event_set_kind(wrap, CONCORD_STREAM_WRAP);
+  nostr_event_set_pubkey(wrap, stream_pk);
+  nostr_event_set_created_at(wrap, (gint64)time(NULL));
+  nostr_event_set_content(wrap, wrap_content);
+  nostr_event_set_tags(wrap, nostr_tags_new(1, nostr_tag_new("p", ephemeral_pk,
+                                                             NULL)));
+  free(wrap_content);
+  int signed_ok = ephemeral_pk ? nostr_event_sign(wrap, stream_sk) : -1;
+  memset(stream_sk, 0, sizeof(stream_sk));
+  g_autofree gchar *wrap_json =
+    signed_ok == 0 ? nostr_event_serialize_compact(wrap) : NULL;
+  if (!wrap_json) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "Failed to sign the Control Plane wrap");
+    g_object_unref(task);
+    return;
+  }
+
+  gnostr_plugin_context_publish_event_async(self->context, wrap_json,
+                                            g_task_get_cancellable(task),
+                                            on_control_wrap_published, task);
+}
+
+/* Publishes one CORD-04 edition. @prev_hash is the superseded edition's hash,
+ * NULL on a first edition, and the version discipline is the caller's: it
+ * only ever climbs, starting at 1, with `prev` absent on the first alone. */
+static void publish_control_edition_async(GnConcordCommunityService *self,
+                                          CommunityState *state, guint vsk,
+                                          const char *eid, guint64 version,
+                                          const char *prev_hash,
+                                          const char *content,
+                                          GCancellable *cancellable,
+                                          GAsyncReadyCallback callback,
+                                          gpointer user_data) {
+  const char *author = gn_concord_community_service_get_current_pubkey(self);
+  if (!author || !self->context || self->shutting_down) {
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_CLOSED,
+                         "Sign in to publish to this Community");
+    return;
+  }
+
+  g_autoptr(GError) error = NULL;
+  ControlPublish *publish = g_new0(ControlPublish, 1);
+  publish->author = g_strdup(author);
+  if (!derive_control_write_key(state, &publish->write_key, &error) ||
+      !derive_control_read_key(state, &publish->read_key)) {
+    control_publish_free(publish);
+    return_publish_error(self, cancellable, callback, user_data,
+                         error ? (GIOErrorEnum)error->code : G_IO_ERROR_FAILED,
+                         error ? error->message
+                               : "This Community's Control Plane read key "
+                                 "could not be derived");
+    return;
+  }
+
+  g_autofree gchar *vsk_text = g_strdup_printf("%u", vsk);
+  g_autofree gchar *version_text =
+    g_strdup_printf("%" G_GUINT64_FORMAT, version);
+
+  g_autoptr(NostrEvent) rumor = nostr_event_new();
+  nostr_event_set_kind(rumor, CONCORD_KIND_CONTROL_EDITION);
+  nostr_event_set_pubkey(rumor, author);
+  nostr_event_set_created_at(rumor, (gint64)time(NULL));
+  nostr_event_set_content(rumor, content);
+
+  NostrTags *tags = nostr_tags_new(0);
+  tags = nostr_tags_append_unique(tags, nostr_tag_new("vsk", vsk_text, NULL));
+  tags = nostr_tags_append_unique(tags, nostr_tag_new("eid", eid, NULL));
+  tags = nostr_tags_append_unique(tags,
+                                  nostr_tag_new("ev", version_text, NULL));
+  if (prev_hash)
+    tags = nostr_tags_append_unique(tags,
+                                    nostr_tag_new("ep", prev_hash, NULL));
+  /* The authority citation: the exact Grant this actor's rank rests on,
+   * pinned by coordinate, version and content hash, so a reader that has not
+   * synced it parks the action instead of dropping it (CORD-04 §5). The owner
+   * cites nothing — their rank comes from the community_id itself. */
+  if (state->control) {
+    const char *grant_hash = NULL;
+    guint64 grant_version = gn_concord_control_plane_get_grant_head(
+      state->control, author, &grant_hash);
+    if (grant_version && grant_hash) {
+      g_autofree gchar *grant_eid = NULL;
+      uint8_t community[32], member[32], locator[32];
+      char locator_hex[65];
+      if (nostr_concord_hex_decode_32(state->community_id, community) &&
+          nostr_concord_hex_decode_32(author, member) &&
+          nostr_concord_grant_locator(community, member, locator) ==
+            NOSTR_CONCORD_OK) {
+        nostr_concord_hex_encode_32(locator, locator_hex);
+        grant_eid = g_strdup(locator_hex);
+        g_autofree gchar *grant_version_text =
+          g_strdup_printf("%" G_GUINT64_FORMAT, grant_version);
+        tags = nostr_tags_append_unique(
+          tags, nostr_tag_new("vac", grant_eid, grant_version_text,
+                              grant_hash, NULL));
+      }
+    }
+  }
+  nostr_event_set_tags(rumor, tags);
+
+  g_autofree gchar *rumor_json = nostr_event_serialize_compact(rumor);
+  if (!rumor_json) {
+    control_publish_free(publish);
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_FAILED,
+                         "Failed to serialize the Control Plane edition");
+    return;
+  }
+
+  /* Plaintext means exactly that: the seal's content is the rumor's
+   * serialized JSON, carried byte-verbatim, never a NIP-44 payload. */
+  g_autoptr(NostrEvent) seal = nostr_event_new();
+  nostr_event_set_kind(seal, CONCORD_SEAL_PLAINTEXT);
+  nostr_event_set_pubkey(seal, author);
+  nostr_event_set_created_at(seal, (gint64)time(NULL));
+  nostr_event_set_content(seal, rumor_json);
+  nostr_event_set_tags(seal, nostr_tags_new(0));
+  g_autofree gchar *seal_json = nostr_event_serialize_compact(seal);
+  if (!seal_json) {
+    control_publish_free(publish);
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_FAILED,
+                         "Failed to serialize the Control Plane seal");
+    return;
+  }
+
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_set_task_data(task, publish, control_publish_free);
+  gnostr_plugin_context_request_sign_event(self->context, seal_json,
+                                           cancellable, on_control_seal_signed,
+                                           task);
+}
+
+static gboolean publish_control_edition_finish(GnConcordCommunityService *self,
+                                               GAsyncResult *result,
+                                               GError **error) {
+  g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
+}
+
+/* ------------------------------------------------------------------ *
+ * minting and retiring invite links (CORD-05 §2, §4, §5)
+ *
+ * Three things have to land for a link to exist, and the order is not
+ * arbitrary. The **bundle** goes first: a Registry naming a coordinate with
+ * no bundle behind it reads to every member as a live link that cannot be
+ * followed, where a bundle no Registry names is merely an unlisted link that
+ * works. The **Registry** edit goes second, because §5 requires one to
+ * accompany every mint and the aggregate active-set it feeds is the
+ * Community's Public/Private truth. The creator's own **Invite List** goes
+ * last: it is private bookkeeping, and an entry recorded for a link that was
+ * never published is a URL that opens nothing.
+ *
+ * Retiring runs the same order for the same reason, tombstone first. A
+ * Registry still naming a tombstoned coordinate costs a follower a clear
+ * "this link was revoked"; the reverse would leave live keys behind a URL
+ * nobody lists.
+ * ------------------------------------------------------------------ */
+
+/* The base is interchangeable — only the naddr and the fragment are protocol
+ * (CORD-05 §2) — so this is a default that opens in any Concord client, not
+ * part of the wire format. */
+#define CONCORD_INVITE_URL_BASE "https://vectorapp.io/invite/"
+
+static JsonArray *document_array(JsonObject *document, const char *member) {
+  JsonArray *array = object_array(document, member);
+  if (array) return array;
+  array = json_array_new();
+  json_object_set_array_member(document, member, array);
+  return array;
+}
+
+/* A tombstone always beats an entry, terminally, so a stale device can never
+ * resurrect a revoked link (CORD-05 §4). */
+static gboolean invite_is_revoked(JsonObject *document, const char *token) {
+  JsonArray *stones = document ? object_array(document, "tombstones") : NULL;
+  for (guint i = 0; stones && i < json_array_get_length(stones); i++) {
+    JsonNode *node = json_array_get_element(stones, i);
+    if (!node || !JSON_NODE_HOLDS_OBJECT(node)) continue;
+    if (g_strcmp0(object_string(json_node_get_object(node), "token"),
+                  token) == 0)
+      return TRUE;
+  }
+  return FALSE;
+}
+
+/* (element-type JsonObject) (transfer container): every live entry, borrowed
+ * from @document. @community_id filters; NULL takes them all. */
+static GPtrArray *invite_live_entries(JsonObject *document,
+                                      const char *community_id) {
+  GPtrArray *live = g_ptr_array_new();
+  JsonArray *entries = document ? object_array(document, "entries") : NULL;
+  for (guint i = 0; entries && i < json_array_get_length(entries); i++) {
+    JsonNode *node = json_array_get_element(entries, i);
+    if (!node || !JSON_NODE_HOLDS_OBJECT(node)) continue;
+    JsonObject *entry = json_node_get_object(node);
+    const char *token = object_string(entry, "token");
+    if (!token || !*token || invite_is_revoked(document, token)) continue;
+    if (community_id &&
+        g_strcmp0(object_string(entry, "community_id"), community_id) != 0)
+      continue;
+    g_ptr_array_add(live, entry);
+  }
+  return live;
+}
+
+/* The link signer's pubkey — the coordinate the Registry publishes — from the
+ * secret the creator kept. Deriving it beats storing it: one field cannot
+ * then disagree with the other. */
+static gchar *invite_entry_signer(JsonObject *entry) {
+  const char *signer_sk = object_string(entry, "signer_sk");
+  if (!nostr_concord_is_lower_hex_32(signer_sk)) return NULL;
+  return nostr_key_get_public(signer_sk);
+}
+
+static void publish_invite_list(GnConcordCommunityService *self) {
+  if (!self->context || self->shutting_down || !self->invite_document) return;
+
+  /* The same fail-closed rule the Community List lives by, and this document
+   * needs it more: it holds every link's signing secret, so replacing an
+   * unread one costs the creator the ability to refresh or retire the links
+   * their other devices minted (CORD-05 §4). */
+  const char *author = gn_concord_community_service_get_current_pubkey(self);
+  if (!self->invite_loaded || !author ||
+      g_strcmp0(author, self->invite_author) != 0)
+    return;
+
+  JsonNode *document = json_node_new(JSON_NODE_OBJECT);
+  json_node_set_object(document, self->invite_document);
+  g_autofree gchar *plaintext = node_to_json(document);
+  json_node_free(document);
+  if (!plaintext) return;
+
+  if (strlen(plaintext) > CONCORD_MAX_NIP44_PLAINTEXT) {
+    memset(plaintext, 0, strlen(plaintext));
+    emit_error(self,
+               "This Invite List no longer fits one NIP-44 event; it was not "
+               "published");
+    return;
+  }
+
+  ListPublish *publish = g_new0(ListPublish, 1);
+  publish->service = g_object_ref(self);
+  publish->author = g_strdup(author);
+  publish->kind = CONCORD_INVITE_LIST;
+  gnostr_plugin_context_nip44_self_encrypt_async(
+    self->context, plaintext, NULL, on_list_encrypted, publish);
+  memset(plaintext, 0, strlen(plaintext));
+}
+
+static void on_invite_list_decrypted(GObject *source, GAsyncResult *result,
+                                     gpointer user_data) {
+  (void)source;
+  ListPublish *load = user_data;
+  GnConcordCommunityService *self = load->service;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *document =
+    self->context ? gnostr_plugin_context_nip44_self_decrypt_finish(
+                      self->context, result, &error)
+                  : NULL;
+  if (self->shutting_down || !self->context) {
+    list_publish_free(load);
+    return;
+  }
+  if (!document) {
+    /* Unreadable is not empty: leave the List unloaded so nothing republishes
+     * over a document this client could not open. */
+    emit_error(self, error ? error->message
+                           : "The Invite List could not be decrypted");
+    list_publish_free(load);
+    return;
+  }
+
+  g_autoptr(JsonParser) parser = json_parser_new();
+  JsonNode *root = json_parser_load_from_data(parser, document, -1, NULL)
+                     ? json_parser_get_root(parser) : NULL;
+  if (root && JSON_NODE_HOLDS_OBJECT(root)) {
+    /* Kept verbatim: two clients can share this one document, so a republish
+     * has to round-trip the entries and fields this one doesn't understand
+     * rather than deleting another's work (CORD-02 §6, CORD-05 §4). */
+    g_clear_pointer(&self->invite_document, json_object_unref);
+    self->invite_document = json_object_ref(json_node_get_object(root));
+    self->invite_loaded = TRUE;
+    g_free(self->invite_author);
+    self->invite_author = g_strdup(load->author);
+  } else {
+    emit_error(self, "The Invite List is not valid JSON");
+  }
+  memset(document, 0, strlen(document));
+  list_publish_free(load);
+}
+
+static void load_invite_list(GnConcordCommunityService *self) {
+  if (!self->context || self->shutting_down) return;
+  const char *author = gn_concord_community_service_get_current_pubkey(self);
+  if (!author) return;
+
+  g_autofree gchar *filter =
+    build_own_document_filter(author, CONCORD_INVITE_LIST);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) events =
+    gnostr_plugin_context_query_events(self->context, filter, &error);
+  if (!events) {
+    /* A failed read is not an empty List; publishing stays disarmed. */
+    if (error) emit_error(self, error->message);
+    return;
+  }
+
+  const char *newest = NULL;
+  gint64 newest_at = -1;
+  for (guint i = 0; i < events->len; i++) {
+    const char *json = g_ptr_array_index(events, i);
+    g_autoptr(NostrEvent) event = parse_verified_event(json);
+    if (!event || nostr_event_get_kind(event) != CONCORD_INVITE_LIST ||
+        g_strcmp0(nostr_event_get_pubkey(event), author) != 0 ||
+        !nostr_event_get_content(event))
+      continue;
+    gint64 created_at = nostr_event_get_created_at(event);
+    if (created_at > newest_at) {
+      newest_at = created_at;
+      newest = json;
+    }
+  }
+
+  if (!newest) {
+    /* No document is a definitive answer: this npub has minted no links yet,
+     * and the first one mints the List. */
+    if (!self->invite_document) self->invite_document = json_object_new();
+    self->invite_loaded = TRUE;
+    g_free(self->invite_author);
+    self->invite_author = g_strdup(author);
+    return;
+  }
+
+  g_autoptr(NostrEvent) event = parse_verified_event(newest);
+  ListPublish *load = g_new0(ListPublish, 1);
+  load->service = g_object_ref(self);
+  load->author = g_strdup(author);
+  load->kind = CONCORD_INVITE_LIST;
+  gnostr_plugin_context_nip44_self_decrypt_async(
+    self->context, nostr_event_get_content(event), NULL,
+    on_invite_list_decrypted, load);
+}
+
+void gn_concord_invite_link_free(GnConcordInviteLink *link) {
+  if (!link) return;
+  g_free(link->token);
+  g_free(link->community_id);
+  g_free(link->url);
+  g_free(link->label);
+  g_free(link);
+}
+
+static gint compare_invite_links(gconstpointer a, gconstpointer b) {
+  const GnConcordInviteLink *left = *(const GnConcordInviteLink **)a;
+  const GnConcordInviteLink *right = *(const GnConcordInviteLink **)b;
+  if (left->created_at == right->created_at)
+    return g_strcmp0(left->token, right->token);
+  return left->created_at > right->created_at ? -1 : 1;
+}
+
+GPtrArray *gn_concord_community_service_get_invites(
+    GnConcordCommunityService *self, const char *community_id) {
+  g_return_val_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self), NULL);
+  GPtrArray *links =
+    g_ptr_array_new_with_free_func((GDestroyNotify)gn_concord_invite_link_free);
+  if (!self->invite_document) return links;
+
+  g_autoptr(GPtrArray) entries =
+    invite_live_entries(self->invite_document, community_id);
+  for (guint i = 0; i < entries->len; i++) {
+    JsonObject *entry = g_ptr_array_index(entries, i);
+    const char *url = object_string(entry, "url");
+    if (!url || !*url) continue;
+    GnConcordInviteLink *link = g_new0(GnConcordInviteLink, 1);
+    link->token = g_strdup(object_string(entry, "token"));
+    link->community_id = g_strdup(object_string(entry, "community_id"));
+    link->url = g_strdup(url);
+    link->label = g_strdup(object_string(entry, "label"));
+    link->created_at = object_int(entry, "created_at", 0);
+    link->expires_at = object_int(entry, "expires_at", 0);
+    g_ptr_array_add(links, link);
+  }
+  g_ptr_array_sort(links, compare_invite_links);
+  return links;
+}
+
+/* The Registry's new content: this creator's live coordinates, one edit
+ * applied. The wire fold and the creator's own List are unioned deliberately
+ * — a session that has not yet synced its own Registry would otherwise
+ * publish a version that silently retires every link it hasn't seen. */
+static gchar *build_registry_content(GnConcordCommunityService *self,
+                                     CommunityState *state, const char *author,
+                                     const char *add_signer,
+                                     const char *drop_signer) {
+  g_autoptr(GHashTable) seen =
+    g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  g_autoptr(GPtrArray) links = g_ptr_array_new_with_free_func(g_free);
+
+  GPtrArray *folded =
+    state->control ? gn_concord_control_plane_get_creator_invite_links(
+                       state->control, author)
+                   : NULL;
+  for (guint i = 0; folded && i < folded->len; i++) {
+    const char *signer = g_ptr_array_index(folded, i);
+    if (g_strcmp0(signer, drop_signer) == 0) continue;
+    if (g_hash_table_contains(seen, signer)) continue;
+    g_hash_table_add(seen, g_strdup(signer));
+    g_ptr_array_add(links, g_strdup(signer));
+  }
+
+  g_autoptr(GPtrArray) entries =
+    invite_live_entries(self->invite_document, state->community_id);
+  for (guint i = 0; i < entries->len; i++) {
+    g_autofree gchar *signer = invite_entry_signer(g_ptr_array_index(entries, i));
+    if (!signer || g_strcmp0(signer, drop_signer) == 0) continue;
+    if (g_hash_table_contains(seen, signer)) continue;
+    g_hash_table_add(seen, g_strdup(signer));
+    g_ptr_array_add(links, g_strdup(signer));
+  }
+
+  if (add_signer && !g_hash_table_contains(seen, add_signer))
+    g_ptr_array_add(links, g_strdup(add_signer));
+
+  /* Sorted, so two of the creator's devices holding the same set mint the
+   * same bytes — and therefore the same edition hash — rather than forking
+   * the version chain over ordering alone. */
+  g_ptr_array_sort_values(links, (GCompareFunc)g_strcmp0);
+
+  g_autoptr(JsonBuilder) builder = json_builder_new();
+  json_builder_begin_array(builder);
+  for (guint i = 0; i < links->len; i++)
+    json_builder_add_string_value(builder, g_ptr_array_index(links, i));
+  json_builder_end_array(builder);
+  JsonNode *root = json_builder_get_root(builder);
+  gchar *content = node_to_json(root);
+  json_node_free(root);
+  return content;
+}
+
+static gchar *registry_coordinate_for(CommunityState *state,
+                                      const char *author) {
+  uint8_t community[32], creator[32], eid[32];
+  if (!nostr_concord_hex_decode_32(state->community_id, community) ||
+      !nostr_concord_hex_decode_32(author, creator) ||
+      nostr_concord_invite_registry_locator(community, creator, eid) !=
+        NOSTR_CONCORD_OK)
+    return NULL;
+  char hex[65];
+  nostr_concord_hex_encode_32(eid, hex);
+  return g_strdup(hex);
+}
+
+typedef struct {
+  gchar *community_id;
+  gchar *author;
+  gchar *label;
+  gint64 expires_at;
+  gchar *token_hex;
+  gchar *signer_sk; /* secret: the link signer, wiped on free */
+  gchar *signer_pk;
+  gchar *url;
+  gboolean retiring;
+} InviteMint;
+
+static void invite_mint_free(gpointer data) {
+  InviteMint *mint = data;
+  if (!mint) return;
+  g_free(mint->community_id);
+  g_free(mint->author);
+  g_free(mint->label);
+  clear_secret(&mint->token_hex);
+  clear_secret(&mint->signer_sk);
+  g_free(mint->signer_pk);
+  g_free(mint->url);
+  g_free(mint);
+}
+
+/* `$BASE/invite/<naddr>#<fragment>`. The naddr is a locator and rides in the
+ * open; the fragment carries the unlock token and is never sent to any
+ * server, which is what keeps the base domain and the relays unable to open
+ * a bundle they can both see (CORD-05 §2). */
+static gchar *build_invite_url(CommunityState *state,
+                               const uint8_t token[CONCORD_INVITE_TOKEN_BYTES],
+                               const char *signer_pk, GError **error) {
+  guint n_relays = 0;
+  const char *const *relays =
+    gn_concord_community_item_get_relays(state->item, &n_relays);
+  if (n_relays > CONCORD_MAX_RELAYS_IN_FRAGMENT)
+    n_relays = CONCORD_MAX_RELAYS_IN_FRAGMENT;
+
+  /* With no relays of its own the fragment selects the stock set by one flag
+   * and carries zero relay bytes — the common invite's shortest form (§3). */
+  char *fragment = NULL;
+  nostr_concord_status_t status = nostr_concord_invite_fragment_encode(
+    token, relays, n_relays, n_relays == 0, &fragment);
+  if (status != NOSTR_CONCORD_OK || !fragment) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                "The invite fragment could not be encoded: %s",
+                nostr_concord_status_string(status));
+    return NULL;
+  }
+
+  /* The per-link pubkey alone makes the coordinate unique, so the naddr
+   * carries an empty identifier and no relay entries — as short as an naddr
+   * gets, which is what length-restricted platforms need. */
+  NostrEntityPointer pointer = {
+    .public_key = (char *)signer_pk,
+    .kind = CONCORD_INVITE_BUNDLE,
+    .identifier = (char *)"",
+    .relays = NULL,
+    .relays_count = 0
+  };
+  char *naddr = NULL;
+  if (nostr_nip19_encode_naddr(&pointer, &naddr) != 0 || !naddr) {
+    memset(fragment, 0, strlen(fragment));
+    free(fragment);
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                "The invite link's naddr could not be encoded");
+    return NULL;
+  }
+
+  gchar *url = g_strconcat(CONCORD_INVITE_URL_BASE, naddr, "#", fragment, NULL);
+  memset(fragment, 0, strlen(fragment));
+  free(fragment);
+  free(naddr);
+  return url;
+}
+
+/* Everything a mint or a retire needs before it publishes anything: the
+ * membership, the CREATE_INVITE the Control Plane fold resolves, and an
+ * Invite List this session has definitively read. */
+static CommunityState *invite_precheck(GnConcordCommunityService *self,
+                                       const char *community_id,
+                                       const char **out_author,
+                                       GError **error) {
+  CommunityState *state = find_state(self, community_id);
+  if (!state || !state->item) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                "That Community is not one of yours");
+    return NULL;
+  }
+  if (!self->context || self->shutting_down) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_CLOSED,
+                "The Concord service is not connected");
+    return NULL;
+  }
+  const char *author = gn_concord_community_service_get_current_pubkey(self);
+  if (!author) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_CLOSED,
+                "Sign in to manage this Community's invite links");
+    return NULL;
+  }
+
+  /* CORD-05 §5: minting and retiring are gated by CREATE_INVITE, which is
+   * also a staff bit — so a holder has the control_root the Registry edit
+   * needs. The owner is supreme and proven by the community_id itself. */
+  if (!ensure_control_plane(state)) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                "This Community's Control Plane could not be derived");
+    return NULL;
+  }
+  guint64 permissions =
+    gn_concord_control_plane_get_permissions(state->control, author);
+  if (!(permissions & CONCORD_PERM_CREATE_INVITE)) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                "You do not hold CREATE_INVITE in this Community");
+    return NULL;
+  }
+
+  if (!self->invite_loaded || !self->invite_document ||
+      g_strcmp0(author, self->invite_author) != 0) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_PENDING,
+                "Your Invite List has not been read yet; a link minted now "
+                "could retire the ones your other devices hold");
+    return NULL;
+  }
+
+  if (out_author) *out_author = author;
+  return state;
+}
+
+static void on_invite_registry_published(GObject *source, GAsyncResult *result,
+                                         gpointer user_data);
+
+static void on_invite_bundle_published(GObject *source, GAsyncResult *result,
+                                       gpointer user_data) {
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnConcordCommunityService *self = g_task_get_source_object(task);
+  InviteMint *mint = g_task_get_task_data(task);
+
+  g_autoptr(GError) error = NULL;
+  if (self->shutting_down || !self->context) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                            "The Concord service was deactivated");
+    g_object_unref(task);
+    return;
+  }
+  if (!gnostr_plugin_context_publish_event_finish(self->context, result,
+                                                  &error)) {
+    g_task_return_error(task, g_steal_pointer(&error));
+    g_object_unref(task);
+    return;
+  }
+
+  CommunityState *state = find_state(self, mint->community_id);
+  g_autofree gchar *eid =
+    state ? registry_coordinate_for(state, mint->author) : NULL;
+  if (!state || !eid) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "This creator's Registry coordinate could not be "
+                            "derived");
+    g_object_unref(task);
+    return;
+  }
+
+  g_autofree gchar *content = build_registry_content(
+    self, state, mint->author, mint->retiring ? NULL : mint->signer_pk,
+    mint->retiring ? mint->signer_pk : NULL);
+  const char *prev = NULL;
+  guint64 version = gn_concord_control_plane_get_registry_head(
+                      state->control, mint->author, &prev) + 1;
+  g_autofree gchar *prev_hash = g_strdup(prev);
+
+  publish_control_edition_async(
+    self, state, CONCORD_VSK_INVITE_REGISTRY, eid, version,
+    version > 1 ? prev_hash : NULL, content, g_task_get_cancellable(task),
+    on_invite_registry_published, task);
+}
+
+static void on_invite_registry_published(GObject *source, GAsyncResult *result,
+                                         gpointer user_data) {
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnConcordCommunityService *self = g_task_get_source_object(task);
+  InviteMint *mint = g_task_get_task_data(task);
+
+  g_autoptr(GError) error = NULL;
+  if (!publish_control_edition_finish(self, result, &error)) {
+    /* The bundle is already on relays, so the link works — it is simply not
+     * listed. Say so: the user's next move is to retry, not to re-mint. */
+    g_task_return_new_error(
+      task, G_IO_ERROR, G_IO_ERROR_FAILED,
+      mint->retiring
+        ? "The link was revoked but its Registry entry could not be removed: %s"
+        : "The link was published but could not be listed in this Community's "
+          "Registry: %s",
+      error ? error->message : "unknown error");
+    g_object_unref(task);
+    return;
+  }
+
+  if (!self->invite_document) self->invite_document = json_object_new();
+  if (mint->retiring) {
+    JsonArray *stones = document_array(self->invite_document, "tombstones");
+    JsonObject *stone = json_object_new();
+    json_object_set_string_member(stone, "token", mint->token_hex);
+    json_object_set_string_member(stone, "community_id", mint->community_id);
+    JsonNode *node = json_node_new(JSON_NODE_OBJECT);
+    json_node_take_object(node, stone);
+    json_array_add_element(stones, node);
+  } else {
+    JsonArray *entries = document_array(self->invite_document, "entries");
+    JsonObject *entry = json_object_new();
+    json_object_set_string_member(entry, "token", mint->token_hex);
+    json_object_set_string_member(entry, "signer_sk", mint->signer_sk);
+    json_object_set_string_member(entry, "community_id", mint->community_id);
+    json_object_set_string_member(entry, "url", mint->url);
+    if (mint->label && *mint->label)
+      json_object_set_string_member(entry, "label", mint->label);
+    json_object_set_int_member(entry, "created_at",
+                               g_get_real_time() / G_USEC_PER_SEC);
+    if (mint->expires_at > 0)
+      json_object_set_int_member(entry, "expires_at", mint->expires_at);
+    JsonNode *node = json_node_new(JSON_NODE_OBJECT);
+    json_node_take_object(node, entry);
+    json_array_add_element(entries, node);
+  }
+  publish_invite_list(self);
+
+  emit_update(self, mint->community_id, GN_CONCORD_UPDATE_MEMBERSHIP);
+  if (mint->retiring)
+    g_task_return_boolean(task, TRUE);
+  else
+    g_task_return_pointer(task, g_strdup(mint->url), g_free);
+  g_object_unref(task);
+}
+
+void gn_concord_community_service_create_invite_async(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *label, gint64 expires_at, GCancellable *cancellable,
+    GAsyncReadyCallback callback, gpointer user_data) {
+  g_return_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self));
+
+  const char *author = NULL;
+  g_autoptr(GError) error = NULL;
+  CommunityState *state =
+    invite_precheck(self, community_id, &author, &error);
+  if (!state) {
+    GTask *task = g_task_new(self, cancellable, callback, user_data);
+    g_task_return_error(task, g_steal_pointer(&error));
+    g_object_unref(task);
+    return;
+  }
+
+  /* A fresh 16-byte unlock token and a fresh link signer, both from the same
+   * CSPRNG the rest of the client's key material comes from. The signer is
+   * used for nothing else, so a link-holder can never replace or tombstone
+   * the bundle: posting to the coordinate takes a secret only the creator
+   * holds (CORD-05 §2). */
+  uint8_t token[CONCORD_INVITE_TOKEN_BYTES];
+  uint8_t entropy[32];
+  g_autofree gchar *entropy_hex = nostr_key_generate_private();
+  g_autofree gchar *signer_sk =
+    entropy_hex ? nostr_key_generate_private() : NULL;
+  g_autofree gchar *signer_pk =
+    signer_sk ? nostr_key_get_public(signer_sk) : NULL;
+  if (!signer_pk || !nostr_concord_hex_decode_32(entropy_hex, entropy)) {
+    if (entropy_hex) memset(entropy_hex, 0, strlen(entropy_hex));
+    if (signer_sk) memset(signer_sk, 0, strlen(signer_sk));
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_FAILED,
+                         "This device could not mint an invite link's keys");
+    return;
+  }
+  memcpy(token, entropy, CONCORD_INVITE_TOKEN_BYTES);
+  memset(entropy, 0, sizeof(entropy));
+  memset(entropy_hex, 0, strlen(entropy_hex));
+
+  g_autofree gchar *url = build_invite_url(state, token, signer_pk, &error);
+  if (!url) {
+    memset(token, 0, sizeof(token));
+    memset(signer_sk, 0, strlen(signer_sk));
+    GTask *task = g_task_new(self, cancellable, callback, user_data);
+    g_task_return_error(task, g_steal_pointer(&error));
+    g_object_unref(task);
+    return;
+  }
+
+  /* The bundle is the membership subset plus the link's own attribution. The
+   * `control_root` is deliberately absent: a link hands out membership, never
+   * the staff write key (CORD-02 §2). */
+  JsonNode *material = build_join_material(state, FALSE);
+  JsonObject *bundle = json_node_get_object(material);
+  json_object_set_string_member(bundle, "creator_npub", author);
+  if (label && *label) json_object_set_string_member(bundle, "label", label);
+  if (expires_at > 0)
+    json_object_set_int_member(bundle, "expires_at", expires_at);
+  g_autofree gchar *bundle_json = node_to_json(material);
+  json_node_free(material);
+
+  char *content = NULL;
+  nostr_concord_status_t status =
+    bundle_json ? nostr_concord_invite_bundle_encrypt(bundle_json, token,
+                                                      &content)
+                : NOSTR_CONCORD_ERR_NULL;
+  if (bundle_json) memset(bundle_json, 0, strlen(bundle_json));
+  if (status != NOSTR_CONCORD_OK || !content) {
+    memset(token, 0, sizeof(token));
+    memset(signer_sk, 0, strlen(signer_sk));
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_FAILED,
+                         "The invite bundle could not be encrypted");
+    return;
+  }
+
+  /* One of the few Concord events relays see bare: an addressable event at
+   * (33301, link_signer, ""), signed by the link signer itself. */
+  g_autoptr(NostrEvent) event = nostr_event_new();
+  nostr_event_set_kind(event, CONCORD_INVITE_BUNDLE);
+  nostr_event_set_pubkey(event, signer_pk);
+  nostr_event_set_created_at(event, (gint64)time(NULL));
+  nostr_event_set_content(event, content);
+  nostr_event_set_tags(event, nostr_tags_new(2, nostr_tag_new("d", "", NULL),
+                                             nostr_tag_new("vsk", "6", NULL)));
+  free(content);
+  g_autofree gchar *event_json =
+    nostr_event_sign(event, signer_sk) == 0
+      ? nostr_event_serialize_compact(event) : NULL;
+  if (!event_json) {
+    memset(token, 0, sizeof(token));
+    memset(signer_sk, 0, strlen(signer_sk));
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_FAILED,
+                         "The invite bundle could not be signed");
+    return;
+  }
+
+  char token_hex[65];
+  uint8_t padded[32] = { 0 };
+  memcpy(padded, token, CONCORD_INVITE_TOKEN_BYTES);
+  nostr_concord_hex_encode_32(padded, token_hex);
+  token_hex[CONCORD_INVITE_TOKEN_BYTES * 2] = '\0';
+
+  InviteMint *mint = g_new0(InviteMint, 1);
+  mint->community_id = g_strdup(community_id);
+  mint->author = g_strdup(author);
+  mint->label = g_strdup(label);
+  mint->expires_at = expires_at;
+  mint->token_hex = g_strdup(token_hex);
+  mint->signer_sk = g_strdup(signer_sk);
+  mint->signer_pk = g_strdup(signer_pk);
+  mint->url = g_steal_pointer(&url);
+  memset(token, 0, sizeof(token));
+  memset(token_hex, 0, sizeof(token_hex));
+  memset(signer_sk, 0, strlen(signer_sk));
+
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_set_task_data(task, mint, invite_mint_free);
+  gnostr_plugin_context_publish_event_async(self->context, event_json,
+                                            cancellable,
+                                            on_invite_bundle_published, task);
+}
+
+gchar *gn_concord_community_service_create_invite_finish(
+    GnConcordCommunityService *self, GAsyncResult *result, GError **error) {
+  g_return_val_if_fail(g_task_is_valid(result, self), NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+void gn_concord_community_service_revoke_invite_async(
+    GnConcordCommunityService *self, const char *community_id,
+    const char *token_hex, GCancellable *cancellable,
+    GAsyncReadyCallback callback, gpointer user_data) {
+  g_return_if_fail(GN_IS_CONCORD_COMMUNITY_SERVICE(self));
+
+  const char *author = NULL;
+  g_autoptr(GError) error = NULL;
+  CommunityState *state =
+    invite_precheck(self, community_id, &author, &error);
+  if (!state) {
+    GTask *task = g_task_new(self, cancellable, callback, user_data);
+    g_task_return_error(task, g_steal_pointer(&error));
+    g_object_unref(task);
+    return;
+  }
+
+  /* Retiring takes the link signer's secret, which lives in exactly one
+   * place: the creator's own Invite List (CORD-05 §2, §4). */
+  g_autoptr(GPtrArray) entries =
+    invite_live_entries(self->invite_document, community_id);
+  JsonObject *entry = NULL;
+  for (guint i = 0; i < entries->len && !entry; i++) {
+    JsonObject *candidate = g_ptr_array_index(entries, i);
+    if (g_strcmp0(object_string(candidate, "token"), token_hex) == 0)
+      entry = candidate;
+  }
+  g_autofree gchar *signer_sk =
+    entry ? g_strdup(object_string(entry, "signer_sk")) : NULL;
+  g_autofree gchar *signer_pk = entry ? invite_entry_signer(entry) : NULL;
+  if (!signer_pk || !signer_sk) {
+    if (signer_sk) memset(signer_sk, 0, strlen(signer_sk));
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_NOT_FOUND,
+                         "That link is not one this npub can retire");
+    return;
+  }
+
+  /* The tombstone replaces the bundle at its own coordinate, so it is exactly
+   * as durable as what it replaces — unlike a relay deletion, which is
+   * best-effort and ignorable (CORD-05 §2). */
+  g_autoptr(NostrEvent) event = nostr_event_new();
+  nostr_event_set_kind(event, CONCORD_INVITE_BUNDLE);
+  nostr_event_set_pubkey(event, signer_pk);
+  nostr_event_set_created_at(event, (gint64)time(NULL));
+  nostr_event_set_content(event, "");
+  nostr_event_set_tags(event, nostr_tags_new(2, nostr_tag_new("d", "", NULL),
+                                             nostr_tag_new("vsk", "9", NULL)));
+  g_autofree gchar *event_json =
+    nostr_event_sign(event, signer_sk) == 0
+      ? nostr_event_serialize_compact(event) : NULL;
+  memset(signer_sk, 0, strlen(signer_sk));
+  if (!event_json) {
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_FAILED,
+                         "The revocation tombstone could not be signed");
+    return;
+  }
+
+  InviteMint *mint = g_new0(InviteMint, 1);
+  mint->community_id = g_strdup(community_id);
+  mint->author = g_strdup(author);
+  mint->token_hex = g_strdup(token_hex);
+  mint->signer_pk = g_strdup(signer_pk);
+  mint->retiring = TRUE;
+
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_set_task_data(task, mint, invite_mint_free);
+  gnostr_plugin_context_publish_event_async(self->context, event_json,
+                                            cancellable,
+                                            on_invite_bundle_published, task);
+}
+
+gboolean gn_concord_community_service_revoke_invite_finish(
+    GnConcordCommunityService *self, GAsyncResult *result, GError **error) {
+  g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
+}
+
+/* ------------------------------------------------------------------ *
  * lifecycle and accessors
  * ------------------------------------------------------------------ */
 
@@ -2525,6 +3609,7 @@ static void gn_concord_community_service_dispose(GObject *object) {
   g_clear_pointer(&self->states, g_hash_table_unref);
   g_clear_pointer(&self->list_document, json_object_unref);
   g_clear_pointer(&self->list_orphans, g_hash_table_unref);
+  g_clear_pointer(&self->invite_document, json_object_unref);
   self->context = NULL;
   G_OBJECT_CLASS(gn_concord_community_service_parent_class)->dispose(object);
 }
@@ -2533,6 +3618,7 @@ static void gn_concord_community_service_finalize(GObject *object) {
   GnConcordCommunityService *self = GN_CONCORD_COMMUNITY_SERVICE(object);
   g_free(self->offline_user_pubkey);
   g_free(self->list_author);
+  g_free(self->invite_author);
   G_OBJECT_CLASS(gn_concord_community_service_parent_class)->finalize(object);
 }
 
@@ -2573,6 +3659,10 @@ GnConcordCommunityService *gn_concord_community_service_new(
   /* The List's decrypt is asynchronous, so the fold it seeds runs from the
    * completion; refresh here covers the no-document and offline paths. */
   load_community_list(self);
+  /* The creator's own bookkeeping, and the one document that must be read
+   * before anything replaces it: it holds every link's signing secret
+   * (CORD-05 §4). */
+  load_invite_list(self);
   gn_concord_community_service_refresh(self);
   return self;
 }

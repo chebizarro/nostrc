@@ -959,6 +959,31 @@ guint64 gn_concord_control_plane_get_registry_head(
   return head->version;
 }
 
+guint64 gn_concord_control_plane_get_grant_head(GnConcordControlPlane *self,
+                                               const char *member_hex,
+                                               const char **out_hash) {
+  g_return_val_if_fail(self != NULL, 0);
+  if (out_hash) *out_hash = NULL;
+  if (!nostr_concord_is_lower_hex_32(member_hex)) return 0;
+  fold(self);
+
+  uint8_t community[32], member[32], expected[32];
+  char expected_hex[65];
+  if (!nostr_concord_hex_decode_32(self->community_id, community) ||
+      !nostr_concord_hex_decode_32(member_hex, member) ||
+      nostr_concord_grant_locator(community, member, expected) !=
+        NOSTR_CONCORD_OK)
+    return 0;
+  nostr_concord_hex_encode_32(expected, expected_hex);
+
+  GPtrArray *entity = g_hash_table_lookup(self->entities, expected_hex);
+  if (!entity) return 0;
+  const ControlEdition *head = select_head(self, entity, CONCORD_VSK_GRANT);
+  if (!head) return 0;
+  if (out_hash) *out_hash = head->hash;
+  return head->version;
+}
+
 guint gn_concord_control_plane_count_editions(GnConcordControlPlane *self) {
   g_return_val_if_fail(self != NULL, 0);
   return g_hash_table_size(self->seen);

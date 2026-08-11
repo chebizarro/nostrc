@@ -66,6 +66,19 @@ static int test_naddr_roundtrip(void) {
     nostr_entity_pointer_free(a); nostr_entity_pointer_free(b); free(bech); return ok ? 0 : -1;
 }
 
+/* An addressable event whose d tag is empty is a coordinate like any other,
+ * and both directions have to carry it. */
+static int test_naddr_empty_identifier(void) {
+    NostrEntityPointer *a = nostr_entity_pointer_new(); if (!a) return -1;
+    a->identifier = strdup("");
+    a->public_key = strdup("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd");
+    a->kind = 33301;
+    char *bech = NULL; if (nostr_nip19_encode_naddr(a, &bech) != 0) { nostr_entity_pointer_free(a); return -1; }
+    NostrEntityPointer *b = NULL; if (nostr_nip19_decode_naddr(bech, &b) != 0) { free(bech); nostr_entity_pointer_free(a); return -1; }
+    int ok = (b && b->identifier && b->identifier[0] == '\0' && b->public_key && strcmp(b->public_key, a->public_key) == 0 && b->kind == a->kind && b->relays_count == 0);
+    nostr_entity_pointer_free(a); nostr_entity_pointer_free(b); free(bech); return ok ? 0 : -1;
+}
+
 static int test_nrelay_roundtrip(void) {
     const char *url = "wss://relay.example";
     char *bech = NULL; if (nostr_nip19_encode_nrelay(url, &bech) != 0) return -1;
@@ -79,6 +92,7 @@ int main(void) {
     if (test_nprofile_roundtrip() != 0) { fprintf(stderr, "nprofile roundtrip failed\n"); return 1; }
     if (test_nevent_roundtrip() != 0) { fprintf(stderr, "nevent roundtrip failed\n"); return 1; }
     if (test_naddr_roundtrip() != 0) { fprintf(stderr, "naddr roundtrip failed\n"); return 1; }
+    if (test_naddr_empty_identifier() != 0) { fprintf(stderr, "naddr empty identifier failed\n"); return 1; }
     if (test_nrelay_roundtrip() != 0) { fprintf(stderr, "nrelay roundtrip failed\n"); return 1; }
     printf("test_nip19_tlv: OK\n");
     return 0;
