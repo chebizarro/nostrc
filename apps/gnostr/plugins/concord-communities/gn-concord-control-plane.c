@@ -49,6 +49,11 @@ typedef struct {
   gchar *actor;    /* the seal's npub */
   gchar *rumor_id; /* the deterministic tiebreak */
   gchar *content;  /* the entity's new state, verbatim */
+  /* The signed plaintext seal this edition arrived in, byte for byte. A
+   * compaction re-wraps it into a new epoch with the original author's
+   * signature intact, which is the only reason the Control Plane's seals are
+   * plaintext at all (CORD-02 §5, CORD-06 §3). */
+  gchar *seal;
   gboolean has_vac;
   gchar *vac_eid;
   guint64 vac_version;
@@ -105,6 +110,7 @@ static void control_edition_free(gpointer data) {
   g_free(edition->actor);
   g_free(edition->rumor_id);
   g_free(edition->content);
+  g_free(edition->seal);
   g_free(edition->vac_eid);
   g_free(edition->vac_hash);
   g_free(edition);
@@ -318,6 +324,7 @@ gboolean gn_concord_control_plane_ingest_wrap(GnConcordControlPlane *self,
   edition->actor = g_strdup(nostr_event_get_pubkey(seal));
   edition->rumor_id = g_strdup(rumor_id);
   edition->content = g_strdup(content);
+  edition->seal = g_strdup(seal_json);
 
   /* The authority citation: the exact Grant the actor claims their rank
    * under, pinned by coordinate, version *and* content hash. A sync floor,
@@ -993,4 +1000,37 @@ guint gn_concord_control_plane_count_parked(GnConcordControlPlane *self) {
   g_return_val_if_fail(self != NULL, 0);
   fold(self);
   return g_hash_table_size(self->parked);
+}
+
+GPtrArray *gn_concord_control_plane_get_heads(GnConcordControlPlane *self) {
+  g_return_val_if_fail(self != NULL, NULL);
+  fold(self);
+
+  GPtrArray *heads = g_ptr_array_new_with_free_func(g_free);
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, self->entities);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    GPtrArray *entity = value;
+    /* One entity can carry editions of several kinds only if a coordinate
+     * were reused, which the eid derivations forbid — but selecting per vsk
+     * present keeps this honest against that assumption rather than resting
+     * on it. */
+    GHashTable *kinds =
+      g_hash_table_new(g_direct_hash, g_direct_equal);
+    for (guint i = 0; i < entity->len; i++) {
+      const ControlEdition *edition = g_ptr_array_index(entity, i);
+      g_hash_table_add(kinds, GUINT_TO_POINTER(edition->vsk));
+    }
+    GHashTableIter kind_iter;
+    gpointer kind;
+    g_hash_table_iter_init(&kind_iter, kinds);
+    while (g_hash_table_iter_next(&kind_iter, &kind, NULL)) {
+      const ControlEdition *head =
+        select_head(self, entity, GPOINTER_TO_UINT(kind));
+      if (head && head->seal) g_ptr_array_add(heads, g_strdup(head->seal));
+    }
+    g_hash_table_unref(kinds);
+  }
+  return heads;
 }

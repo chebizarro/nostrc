@@ -118,5 +118,24 @@ guint64 gn_concord_control_plane_get_grant_head(GnConcordControlPlane *self,
 guint gn_concord_control_plane_count_editions(GnConcordControlPlane *self);
 guint gn_concord_control_plane_count_parked(GnConcordControlPlane *self);
 
+/* (element-type utf8) (transfer full): the plane compacted to its current
+ * heads — one signed plaintext seal per entity, byte for byte as it arrived.
+ *
+ * This is what a Refounding republishes at the new epoch (CORD-06 §3). It is
+ * a re-wrap, never a re-signing: the seals are plaintext precisely so that
+ * re-encrypting them under a new epoch's read key leaves the original
+ * authors' signatures verifiable by someone who was not there. A fresh joiner
+ * folds authority from these alone — an edition whose predecessor is simply
+ * absent is not a broken chain, which is what makes trimming prior history
+ * safe rather than a fold that fails closed.
+ *
+ * Compaction is also why a Refounding stays fast: members hop across dozens
+ * of epochs without reprocessing thousands of Control events.
+ *
+ * A plane with parked editions (count_parked() above) is one whose fold is
+ * not settled, and CORD-06 §3 requires aborting a Refounding rather than
+ * compacting from a fold that is still missing a Grant it depends on. */
+GPtrArray *gn_concord_control_plane_get_heads(GnConcordControlPlane *self);
+
 G_END_DECLS
 #endif

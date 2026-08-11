@@ -3167,11 +3167,195 @@ static void test_refounding_requires_ban(void) {
   fixture_clear(&fixture);
 }
 
+/* The compaction is what a fresh joiner anchors on: the Control Plane
+ * republished at the new epoch, trimmed to one edition per entity, its
+ * original signatures intact because a Control seal is plaintext and a
+ * re-wrap never touches it (CORD-02 §5, CORD-06 §3).
+ *
+ * The test's joiner has folded nothing at all — it holds the new root and the
+ * new control_pk from its own rekey blob and not one prior edition — so the
+ * authority it ends up with can only have come from the compaction. */
+static void test_refounding_re_anchors_control(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  gn_concord_test_reset();
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+  g_autofree gchar *admin = nostr_key_get_public(ADMIN_SK);
+
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture.owner_pubkey;
+  g_autoptr(GnConcordCommunityService) rotator =
+    joined_service(&fixture, context);
+
+  /* Authority worth carrying across the boundary: a rename, and a Role with
+   * the Grant that hands it out. */
+  g_autofree gchar *first_hash = NULL;
+  EditionOptions renamed = owner_edition(CONCORD_VSK_METADATA,
+                                         fixture.community_id, 1,
+                                         "{\"name\":\"Refounded\"}");
+  g_assert_true(ingest_edition(rotator, &fixture, &renamed, &first_hash));
+  g_autofree gchar *role_content = g_strdup_printf(
+    "{\"role_id\":\"%s\",\"name\":\"Editor\",\"position\":5,"
+    "\"permissions\":\"%" G_GUINT64_FORMAT "\"}",
+    ROLE_ID, CONCORD_PERM_MANAGE_METADATA);
+  EditionOptions role =
+    owner_edition(CONCORD_VSK_ROLE, ROLE_ID, 1, role_content);
+  g_assert_true(ingest_edition(rotator, &fixture, &role, NULL));
+  g_autofree gchar *grant_eid = grant_coordinate(&fixture, admin);
+  g_autofree gchar *grant_content = g_strdup_printf(
+    "{\"member\":\"%s\",\"role_ids\":[\"%s\"]}", admin, ROLE_ID);
+  EditionOptions grant =
+    owner_edition(CONCORD_VSK_GRANT, grant_eid, 1, grant_content);
+  g_assert_true(ingest_edition(rotator, &fixture, &grant, NULL));
+
+  /* A second version of the metadata entity, so the compaction has something
+   * to trim: a joiner must land on the head, not on the history. */
+  EditionOptions final = owner_edition(CONCORD_VSK_METADATA,
+                                       fixture.community_id, 2,
+                                       "{\"name\":\"Refounded Twice\"}");
+  final.prev = first_hash;
+  g_assert_true(ingest_edition(rotator, &fixture, &final, NULL));
+
+  g_autofree gchar *join = mint_guestbook_wrap(
+    &fixture, ADMIN_SK, CONCORD_KIND_JOIN_LEAVE, "join", 1686840217, "100",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    rotator, fixture.community_id, join));
+  g_assert_true(is_member(rotator, &fixture, admin));
+
+  RefoundResult refounded = { 0 };
+  gn_concord_community_service_refound_async(rotator, fixture.community_id,
+                                             NULL, on_refounded, &refounded);
+  pump();
+  g_assert_true(refounded.ok);
+
+  g_autoptr(GPtrArray) wraps = published_rekey_wraps(&fixture);
+  g_assert_cmpuint(wraps->len, ==, 1);
+
+  /* The joiner: the membership bundle and nothing else. Its Control Plane has
+   * never seen an edition. */
+  gn_concord_test_signer_sk = ADMIN_SK;
+  gn_concord_test_user_pubkey = admin;
+  g_autoptr(GnConcordCommunityService) joiner =
+    gn_concord_community_service_new(context);
+  g_autofree gchar *bundle = build_bundle(&fixture, CHANNEL_KEY, 0, 1);
+  g_assert_true(
+    gn_concord_community_service_accept_bundle(joiner, bundle, NULL));
+  g_autoptr(GnConcordCommunityItem) item =
+    gn_concord_community_service_lookup_community(joiner,
+                                                  fixture.community_id);
+  g_assert_cmpstr(gn_concord_community_item_get_name(item), ==,
+                  "Incident Response");
+
+  g_assert_true(gn_concord_community_service_ingest_rekey_wrap(
+    joiner, fixture.community_id, g_ptr_array_index(wraps, 0)));
+  pump();
+
+  /* Everything the Rotator published, offered as a relay would: only the
+   * wraps at this joiner's Control address open, and they are the compaction.
+   * The fold that comes out of them is the Community's authority. */
+  guint anchored = 0;
+  for (guint i = 0; i < gn_concord_test_published->len; i++)
+    if (gn_concord_community_service_ingest_control_wrap(
+          joiner, fixture.community_id,
+          g_ptr_array_index(gn_concord_test_published, i)))
+      anchored++;
+  g_assert_cmpuint(anchored, >, 0);
+
+  /* The head, not the history: one metadata edition, at version 2. */
+  g_assert_cmpstr(gn_concord_community_item_get_name(item), ==,
+                  "Refounded Twice");
+  /* And the Roster, folded from a Grant this device never saw published — the
+   * original owner's signature still proves who wrote it. */
+  g_assert_cmpuint(
+    gn_concord_community_service_get_permissions(joiner, fixture.community_id,
+                                                 admin) &
+      CONCORD_PERM_MANAGE_METADATA,
+    ==, CONCORD_PERM_MANAGE_METADATA);
+  /* Compacted: five editions went in — a Channel, the two metadata versions,
+   * the Role and the Grant — and four heads came out. The superseded
+   * metadata version is exactly what a joiner never has to replay. */
+  g_assert_cmpuint(anchored, ==, 4);
+
+  gn_concord_community_service_shutdown(rotator);
+  gn_concord_community_service_shutdown(joiner);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
+/* CORD-06 §3: a Refounding whose Control events cannot all be folded must be
+ * aborted. A parked edition is exactly that — one whose Grant this device has
+ * not synced — and compacting past it would publish a plane that silently
+ * dropped an action nobody could yet judge. */
+static void test_refounding_aborts_on_unsettled_control(void) {
+  Fixture fixture = { 0 };
+  fixture_init(&fixture);
+  gn_concord_test_reset();
+  GnostrPluginContext *context = (GnostrPluginContext *)&fixture;
+  g_autofree gchar *admin = nostr_key_get_public(ADMIN_SK);
+
+  gn_concord_test_signer_sk = OWNER_SK;
+  gn_concord_test_user_pubkey = fixture.owner_pubkey;
+  g_autoptr(GnConcordCommunityService) rotator =
+    joined_service(&fixture, context);
+  g_autofree gchar *join = mint_guestbook_wrap(
+    &fixture, AUTHOR_SK, CONCORD_KIND_JOIN_LEAVE, "join", 1686840217, "100",
+    NULL);
+  g_assert_true(gn_concord_community_service_ingest_guestbook_wrap(
+    rotator, fixture.community_id, join));
+
+  /* An action citing a Grant that never arrived: held, unjudged, parked. */
+  g_autofree gchar *grant_eid = grant_coordinate(&fixture, admin);
+  g_autofree gchar *grant_content = g_strdup_printf(
+    "{\"member\":\"%s\",\"role_ids\":[\"%s\"]}", admin, ROLE_ID);
+  EditionOptions grant =
+    owner_edition(CONCORD_VSK_GRANT, grant_eid, 1, grant_content);
+  g_autofree gchar *grant_hash = NULL;
+  g_autofree gchar *grant_wrap = mint_edition(&fixture, &grant, &grant_hash);
+  EditionOptions cited = owner_edition(CONCORD_VSK_METADATA,
+                                       fixture.community_id, 1,
+                                       "{\"name\":\"Cited\"}");
+  cited.actor_sk = ADMIN_SK;
+  cited.vac_eid = grant_eid;
+  cited.vac_version = 1;
+  cited.vac_hash = grant_hash;
+  g_assert_true(ingest_edition(rotator, &fixture, &cited, NULL));
+
+  RefoundResult blocked = { 0 };
+  gn_concord_community_service_refound_async(rotator, fixture.community_id,
+                                             NULL, on_refounded, &blocked);
+  pump();
+  g_assert_true(blocked.done);
+  g_assert_false(blocked.ok);
+  g_assert_nonnull(blocked.error);
+  g_clear_error(&blocked.error);
+  /* Aborted means nothing was published: not one blob, not a partial roll. */
+  g_assert_cmpuint(published_rekey_wraps(&fixture)->len, ==, 0);
+
+  /* Once the cited Grant lands the fold settles, and the rotation proceeds. */
+  g_assert_true(gn_concord_community_service_ingest_control_wrap(
+    rotator, fixture.community_id, grant_wrap));
+  RefoundResult settled = { 0 };
+  gn_concord_community_service_refound_async(rotator, fixture.community_id,
+                                             NULL, on_refounded, &settled);
+  pump();
+  g_assert_true(settled.ok);
+  g_assert_cmpuint(published_rekey_wraps(&fixture)->len, ==, 1);
+
+  gn_concord_community_service_shutdown(rotator);
+  gn_concord_test_reset();
+  fixture_clear(&fixture);
+}
+
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/concord/crypto/nip44-bytes-roundtrip",
                   test_nip44_bytes_roundtrip);
   g_test_add_func("/concord/refound/roundtrip", test_refounding_roundtrip);
+  g_test_add_func("/concord/refound/re-anchors-control",
+                  test_refounding_re_anchors_control);
+  g_test_add_func("/concord/refound/aborts-on-unsettled-control",
+                  test_refounding_aborts_on_unsettled_control);
   g_test_add_func("/concord/refound/requires-ban",
                   test_refounding_requires_ban);
   g_test_add_func("/concord/service/accept-bundle", test_accept_bundle);

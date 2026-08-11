@@ -3924,6 +3924,10 @@ typedef struct {
   guint64 prev_epoch;
   guint chunk;
   guint n_chunks;
+  /* CORD-06 §3: the prior epoch's Control heads, re-wrapped at the new
+   * epoch's address once the root roll is confirmed published. */
+  GPtrArray *heads;
+  guint head;
 } RefoundMint;
 
 static void refound_mint_free(gpointer data) {
@@ -3937,11 +3941,120 @@ static void refound_mint_free(gpointer data) {
   clear_secret(&mint->new_control_root);
   g_free(mint->new_control_pk);
   g_free(mint->prevcommit);
+  g_clear_pointer(&mint->heads, g_ptr_array_unref);
   g_free(mint);
 }
 
 static void refound_wrap_next(GTask *task);
 static void refound_publish_next_chunk(GTask *task);
+static void refound_publish_next_head(GTask *task);
+
+/* Re-anchoring the Control Plane at the new epoch (CORD-06 §3).
+ *
+ * This is a re-wrap, never a re-signing. A Control seal is plaintext exactly
+ * so a compaction can carry the original author's signed edition into a new
+ * epoch untouched: the wrap around it moves to the new address and the new
+ * read key, while the signature inside still proves who wrote it — verifiable
+ * by a joiner who was not there when it was written.
+ *
+ * Trimming to heads is what keeps a Refounding cheap. Without it a member
+ * crossing dozens of epochs would reprocess thousands of Control events; with
+ * it the plane shrinks back to its smallest size, one edition per entity, and
+ * a fresh joiner folds the Community's authority from the compaction alone.
+ *
+ * A failure here is not a failed Refounding. The root roll is already
+ * published and adopted; existing members keep their own Control fold and
+ * degrade only to "waiting on the re-anchor", and re-publishing the same
+ * heads is idempotent, so a Refounder that dies mid-compaction resumes. */
+static void on_refound_head_published(GObject *source, GAsyncResult *result,
+                                      gpointer user_data) {
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnConcordCommunityService *self = g_task_get_source_object(task);
+  RefoundMint *mint = g_task_get_task_data(task);
+
+  g_autoptr(GError) error = NULL;
+  if (!self->shutting_down && self->context)
+    gnostr_plugin_context_publish_event_finish(self->context, result, &error);
+  if (error) emit_error(self, error->message);
+
+  mint->head++;
+  refound_publish_next_head(task);
+}
+
+static void refound_publish_next_head(GTask *task) {
+  GnConcordCommunityService *self = g_task_get_source_object(task);
+  RefoundMint *mint = g_task_get_task_data(task);
+  CommunityState *state = find_state(self, mint->community_id);
+
+  if (!mint->heads || mint->head >= mint->heads->len || !state ||
+      self->shutting_down || !self->context) {
+    /* The rotation itself succeeded the moment the blobs landed and this
+     * device adopted; the compaction is the step that can be resumed. */
+    g_task_return_boolean(task, TRUE);
+    g_object_unref(task);
+    return;
+  }
+
+  const char *seal_json = g_ptr_array_index(mint->heads, mint->head);
+  nostr_concord_group_key_t write_key, read_key;
+  g_autoptr(GError) error = NULL;
+  if (!derive_control_write_key(state, &write_key, &error) ||
+      !derive_control_read_key(state, &read_key)) {
+    emit_error(self, error ? error->message
+                           : "The new epoch's Control Plane keys could not be "
+                             "derived, so it was not re-anchored");
+    g_task_return_boolean(task, TRUE);
+    g_object_unref(task);
+    return;
+  }
+
+  char *wrap_content = NULL;
+  g_autofree gchar *ephemeral_sk = nostr_key_generate_private();
+  g_autofree gchar *ephemeral_pk =
+    ephemeral_sk ? nostr_key_get_public(ephemeral_sk) : NULL;
+  if (ephemeral_sk) memset(ephemeral_sk, 0, strlen(ephemeral_sk));
+  if (!ephemeral_pk ||
+      nostr_concord_stream_seal(read_key.conv_key, seal_json,
+                                &wrap_content) != NOSTR_CONCORD_OK) {
+    nostr_concord_group_key_clear(&write_key);
+    nostr_concord_group_key_clear(&read_key);
+    free(wrap_content);
+    emit_error(self, "A compacted Control edition could not be re-wrapped");
+    g_task_return_boolean(task, TRUE);
+    g_object_unref(task);
+    return;
+  }
+
+  char stream_sk[65], stream_pk[65];
+  nostr_concord_hex_encode_32(write_key.sk, stream_sk);
+  nostr_concord_hex_encode_32(write_key.pk, stream_pk);
+
+  g_autoptr(NostrEvent) wrap = nostr_event_new();
+  nostr_event_set_kind(wrap, CONCORD_STREAM_WRAP);
+  nostr_event_set_pubkey(wrap, stream_pk);
+  nostr_event_set_created_at(wrap, (gint64)time(NULL));
+  nostr_event_set_content(wrap, wrap_content);
+  nostr_event_set_tags(wrap, nostr_tags_new(1, nostr_tag_new("p", ephemeral_pk,
+                                                             NULL)));
+  free(wrap_content);
+  int signed_ok = nostr_event_sign(wrap, stream_sk);
+  memset(stream_sk, 0, sizeof(stream_sk));
+  nostr_concord_group_key_clear(&write_key);
+  nostr_concord_group_key_clear(&read_key);
+
+  g_autofree gchar *wrap_json =
+    signed_ok == 0 ? nostr_event_serialize_compact(wrap) : NULL;
+  if (!wrap_json) {
+    emit_error(self, "A compacted Control edition could not be signed");
+    g_task_return_boolean(task, TRUE);
+    g_object_unref(task);
+    return;
+  }
+  gnostr_plugin_context_publish_event_async(self->context, wrap_json,
+                                            g_task_get_cancellable(task),
+                                            on_refound_head_published, task);
+}
 
 static void on_refound_blob_wrapped(GObject *source, GAsyncResult *result,
                                     gpointer user_data) {
@@ -4092,8 +4205,10 @@ static void refound_publish_next_chunk(GTask *task) {
      * rotation resumable rather than stranded on a root nobody received. */
     adopt_base_rotation(self, state, mint->new_root, mint->new_control_pk,
                         mint->new_control_root, mint->new_epoch, mint->author);
-    g_task_return_boolean(task, TRUE);
-    g_object_unref(task);
+    /* And only now the re-anchor, which CORD-06 §3 orders after confirmed
+     * publication of the root roll: a compaction at an address whose root
+     * nobody received would be a plane with no readers. */
+    refound_publish_next_head(task);
     return;
   }
 
@@ -4206,6 +4321,22 @@ void gn_concord_community_service_refound_async(
     return;
   }
 
+  /* The Control Plane travels too, compacted to its heads, and CORD-06 §3
+   * requires aborting a Refounding whose Control events cannot all be folded.
+   * A parked edition is exactly that: one whose Grant this device has not
+   * synced, so its authority is undecided. Compacting past it would publish a
+   * plane that silently dropped an action nobody could yet judge. */
+  if (state->control &&
+      gn_concord_control_plane_count_parked(state->control) > 0) {
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_FAILED,
+                         "This Community's Control Plane is not fully folded "
+                         "yet, so it cannot be compacted");
+    return;
+  }
+  g_autoptr(GPtrArray) heads =
+    state->control ? gn_concord_control_plane_get_heads(state->control) : NULL;
+
   RefoundMint *mint = g_new0(RefoundMint, 1);
   mint->community_id = g_strdup(community_id);
   mint->author = g_strdup(author);
@@ -4213,6 +4344,10 @@ void gn_concord_community_service_refound_async(
   mint->blobs = json_array_new();
   mint->prev_epoch = state->root_epoch;
   mint->new_epoch = state->root_epoch + 1;
+  /* Held from before the first publish, like the Memberlist: the state being
+   * rotated is acquired in full up front, so a mid-flight failure never
+   * leaves half a rotation as the only copy. */
+  mint->heads = heads ? g_ptr_array_ref(heads) : NULL;
 
   gboolean holds_self = FALSE;
   for (guint i = 0; i < members->len; i++) {
