@@ -31,6 +31,27 @@
 static NostrConnectionPrivate *priv_try_ref(NostrConnectionPrivate *priv);
 static void priv_unref(NostrConnectionPrivate *priv);
 
+/* libnostr-idle-writable-busy-poll-20260817: Global count of connections whose
+ * writable_pending flag is set (i.e. that have queued outbound data awaiting a
+ * CLIENT_WRITEABLE callback).  The service loop's all-protocol writable
+ * fallback (the nostrc-7k6 stranded-write safety net) only fires while this
+ * count is non-zero, so idle connections never continuously arm POLLOUT and
+ * poll can sleep for its full service timeout. */
+static atomic_int g_writable_pending_conns = 0;
+
+/* Set or clear priv->writable_pending while keeping g_writable_pending_conns
+ * consistent.  MUST be called with priv->mutex held. */
+static void conn_set_writable_pending_locked(NostrConnectionPrivate *priv, int pending) {
+    pending = pending ? 1 : 0;
+    if (priv->writable_pending == pending) return;
+    priv->writable_pending = pending;
+    if (pending) {
+        atomic_fetch_add(&g_writable_pending_conns, 1);
+    } else {
+        atomic_fetch_sub(&g_writable_pending_conns, 1);
+    }
+}
+
 static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                               void *user, void *in, size_t len) {
     (void)user; // not used; use opaque user data API
@@ -272,7 +293,7 @@ send_done:
         if (priv) {
             nsync_mu_lock(&priv->mutex);
             if (priv->wsi == wsi && priv->writable_pending) {
-                priv->writable_pending = 0;
+                conn_set_writable_pending_locked(priv, 0);
                 nsync_mu_unlock(&priv->mutex);
                 lws_callback_on_writable(wsi);
             } else {
@@ -353,6 +374,18 @@ send_done:
 
             // Ask for another writable callback in case there are more messages pending
             lws_callback_on_writable(wsi);
+        } else {
+            /* Send queue drained.  Clear writable_pending so the service
+             * loop's bounded all-protocol fallback stops arming POLLOUT for
+             * this connection (libnostr-idle-writable-busy-poll-20260817).
+             * A concurrent enqueue re-sets the flag after pushing to
+             * send_channel and then calls lws_cancel_service(), so a frame
+             * enqueued in this race window is still drained promptly. */
+            nsync_mu_lock(&priv->mutex);
+            if (priv->wsi == wsi) {
+                conn_set_writable_pending_locked(priv, 0);
+            }
+            nsync_mu_unlock(&priv->mutex);
         }
         go_channel_unref(send_chan);
         priv_unref(priv);
@@ -365,7 +398,7 @@ send_done:
             lws_set_timer_usecs(wsi, 0);
             nsync_mu_lock(&priv->mutex);
             priv->wsi = NULL;
-            priv->writable_pending = 0;
+            conn_set_writable_pending_locked(priv, 0);
             priv->established = 0;  /* Mark handshake as incomplete */
             /* Reset reassembly state to prevent stale partial data from
              * being prepended to the first message on reconnect. */
@@ -805,10 +838,20 @@ static void *lws_service_loop(void *arg) {
          * wsi) a queued write can be stranded with writable_pending set but the
          * CLIENT_WRITEABLE callback never requested — e.g. a short-lived client
          * whose larger publish frame never reaches the relay (nostrc-7k6).
-         * Requesting a writable callback for every client connection each
-         * service iteration guarantees send_channel is drained; the callback is
-         * a no-op when the queue is empty. */
-        lws_callback_on_writable_all_protocol(ctx, &protocols[0]);
+         *
+         * libnostr-idle-writable-busy-poll-20260817: The fallback is now
+         * BOUNDED.  The old unconditional all-protocol writable request made
+         * every established (always-writable) TCP socket return POLLOUT
+         * immediately, so lws_service never slept and an idle process
+         * busy-polled a full core (~80k poll calls / 4s observed on edge-01).
+         * We only arm the sweep while at least one connection actually has a
+         * pending queued write; writable_pending is cleared when the queue
+         * drains (CLIENT_WRITEABLE with empty send_channel), on wait-cancel
+         * handoff, and on close/error, so the sweep self-terminates and idle
+         * sockets let poll block for the full 50 ms timeout. */
+        if (atomic_load(&g_writable_pending_conns) > 0) {
+            lws_callback_on_writable_all_protocol(ctx, &protocols[0]);
+        }
     }
     return NULL;
 }
@@ -1133,7 +1176,15 @@ void nostr_connection_close(NostrConnection *conn) {
             conn->priv->wsi = NULL;
         }
         pthread_mutex_unlock(&g_lws_mutex);
-        
+
+        /* Clear any pending-write accounting for this connection so the
+         * global writable-pending count cannot leak a permanently non-zero
+         * value (which would re-enable the service-loop POLLOUT sweep
+         * forever).  (libnostr-idle-writable-busy-poll-20260817) */
+        nsync_mu_lock(&conn->priv->mutex);
+        conn_set_writable_pending_locked(conn->priv, 0);
+        nsync_mu_unlock(&conn->priv->mutex);
+
         /* Drop our ref to the shared context; stop/destroy if last.
          * hq-5ejm4 fix (boris review): Queue close/drain and context
          * teardown MUST happen in the SAME critical section to prevent:
@@ -1294,7 +1345,7 @@ void nostr_connection_write_message(NostrConnection *conn, GoContext *ctx, char 
     nsync_mu_lock(&conn->priv->mutex);
     struct lws *wsi_again = conn->priv->wsi;
     if (wsi_again) {
-        conn->priv->writable_pending = 1;
+        conn_set_writable_pending_locked(conn->priv, 1);
     }
     nsync_mu_unlock(&conn->priv->mutex);
     if (!wsi_again) {
