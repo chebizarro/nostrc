@@ -136,6 +136,14 @@ GoContext *go_context_background(void) {
     atomic_store_explicit(&ctx->canceled, 0, memory_order_relaxed);
     atomic_store_explicit(&ctx->err_msg, NULL, memory_order_relaxed);
     atomic_store_explicit(&ctx->refcount, 1, memory_order_relaxed);
+
+    ctx->vtable = calloc(1, sizeof(GoContextInterface));
+    ctx->vtable->is_canceled = base_context_is_canceled;
+    ctx->vtable->wait = base_context_wait;
+    ctx->vtable->free = base_context_free;
+    ctx->vtable->done = base_context_done;
+    ctx->vtable->err = base_context_err;
+
     return ctx;
 }
 
