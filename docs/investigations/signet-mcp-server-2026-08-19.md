@@ -140,6 +140,19 @@ Assumptions: a fixed tool table, stdio first, Unix D-Bus for agent operations, c
 
 ## Investigation Log
 
+### Verification (orchestrator spot-checks, 2026-08-19)
+Confirmed by direct read: JSON-GLib include in `signet/src/nip5l_transport.c:28`; JSON-RPC 2.0 ack converter `signet_mgmt_ack_to_jsonrpc()` in `signet/src/mgmt_protocol.c:467+`; libmicrohttpd in `signet/src/health_server.c:21`; Go stdio MCP scaffold at `signet/sdks/go/cmd/signet-mcp/main.go` (newline-scanned stdin loop); `signet-git-credential` sidecar executable at `signet/meson.build:289`.
+
 ## Root Cause / Conclusions
 
+1. **Signet has the building blocks but not an MCP implementation.** It already has: JSON-GLib parse/build throughout the daemon; a JSON-RPC-2.0-shaped management envelope with id correlation (mgmt_protocol.c, signetctl_main.c); newline-delimited JSON socket framing (nip5l_transport.c); libmicrohttpd HTTP servers; GLib main loop + per-transport start/stop lifecycle; a capability engine with per-agent policy and rate limiting; authenticated Unix D-Bus (SO_PEERCRED UID→agent) as a ready-made security boundary; and a sidecar-executable precedent (`signet-git-credential`). A Go `signet-mcp` stdio scaffold already exists in `sdks/go` but is non-functional demo code.
+2. **What's missing is only the MCP layer itself**: initialize/version negotiation, tool schemas, tools/list+tools/call dispatch table, notification semantics, bounded stdio framing, and (optionally, later) Streamable HTTP sessions.
+3. **mcpc is not the better path today.** It is experimental (v0.1.0, no releases, dormant since 2025-06), pinned to the obsolete 2024-11-05 spec with no version negotiation, stdio-only (no Streamable HTTP), has concrete stdio framing/output defects (brace-counting reader, writes to global stdout ignoring the configured stream), MSVC-oriented CMake, and would introduce a third JSON stack (mjson) beside JSON-GLib and Jansson. The audit+patch cost roughly equals writing the small MCP subset natively.
+
 ## Recommendations
+
+1. **Build native**: a small C `signet-mcp` stdio sidecar executable (GLib/GIO + JSON-GLib), following the `signet-git-credential` pattern — stdin/stdout carry only MCP JSON-RPC; all operations go to signetd over the authenticated Unix D-Bus interfaces so UID→agent binding, capability policy, and audit are enforced server-side. Fixed tool table: get_public_key, sign_event, encrypt/decrypt, get_token, get_session (defer list_credentials — capability mapping gap in capability.c).
+2. **Keep admin separate**: expose the 17 ContextVM management ops (agent/provision etc.) only via a separately-gated admin profile that drives the existing signed/gift-wrapped kind-25910 path; never accept identity as a tool argument.
+3. **Defer Streamable HTTP** until stdio is conformant; libmicrohttpd is available as a base but MCP session/SSE/auth semantics are all new work (3–8 weeks).
+4. **Build integration**: conditional `signet-mcp` executable behind a default-OFF option in both meson.build and CMakeLists.txt; treat the Go scaffold as a test fixture or remove it.
+5. **Effort**: ~3–5 days prototype, 1.5–3 weeks production-grade stdio server. Re-evaluate mcpc only if it gains releases, current-spec negotiation, fixed bounded I/O, and portable builds.
