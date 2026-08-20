@@ -324,3 +324,4 @@
 {"id":"int-6d7bb0d8","kind":"field_change","created_at":"2026-08-11T21:48:50.544732Z","actor":"Biz","issue_id":"nostrc-r874","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-73c084f7","kind":"field_change","created_at":"2026-08-11T21:48:51.090883Z","actor":"Biz","issue_id":"nostrc-8h0l","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-406fad97","kind":"field_change","created_at":"2026-08-18T03:58:45.290455Z","actor":"Biz","issue_id":"nostrc-wjtm","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-b5bc5b96","kind":"field_change","created_at":"2026-08-20T01:45:49.167093Z","actor":"Biz","issue_id":"nostrc-1afe","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Findings appended with file:line evidence and native-vs-mcpc effort assessment"}}
