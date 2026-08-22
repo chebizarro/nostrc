@@ -171,8 +171,10 @@ Known residual gaps (accepted, documented):
   delivery.
 - SQLCipher's internal key schedule and page cache are managed by SQLCipher;
   it wipes its own key material on close but this is outside Signet's control.
-- No global `madvise(MADV_DONTDUMP)` / rlimit-core suppression; deployments
-  should disable core dumps for signetd (systemd `LimitCORE=0`).
+- On Linux, `signetd` calls `prctl(PR_SET_DUMPABLE, 0)` at startup, but
+  continues with a warning if that call fails. There is no global
+  `madvise(MADV_DONTDUMP)` or non-Linux equivalent; deployments should still
+  disable core dumps for signetd (systemd `LimitCORE=0`).
 - The ≥ 32-byte key rule is a **length floor, not an entropy measurement**: a
   long low-entropy string passes it. Operators must generate
   `SIGNET_DB_KEY`/`SIGNET_BACKUP_KEY` from a CSPRNG (e.g.

@@ -311,9 +311,6 @@ signetctl list-leases
 # Verify hash-chained audit log integrity
 signetctl verify-audit
 
-# Rotate a credential (archives old version)
-signetctl rotate-credential <credential-id>
-
 # Migrate a legacy plaintext SQLite DB to SQLCipher (requires a SQLCipher build)
 SIGNET_DB_KEY=... signetctl migrate-db
 ```
@@ -328,6 +325,50 @@ Requirements:
 - `SIGNET_PROVISIONER_NSEC` — the provisioner key that signs/authorizes intents.
 - The bunker's pubkey, so signetctl can address it: set `[nostr] bunker_pubkey`
   (npub or hex) in the config, or `SIGNET_BUNKER_PUBKEY` in the environment.
+
+## Secret-store operator workflow
+
+Credential payloads must be read from stdin or a regular owner-only file; never
+put them on the command line. Lifecycle mutations use the encrypted ContextVM
+management channel.
+
+```bash
+# Create or import an API token/credential, optionally with a Unix expiry time
+signetctl create-credential <agent-id> --type api_token --label <label> [--policy-id <id>] [--expires-at <unix>] --stdin
+signetctl import-credential <agent-id> --type credential --label <label> [--policy-id <id>] [--expires-at <unix>] --file /secure/owner-only-file
+
+# List or inspect payload-free metadata
+signetctl list-credentials [agent-id]
+signetctl inspect-credential <credential-id>
+
+# Replace the payload atomically; the prior version is archived
+signetctl rotate-credential <credential-id> [--expires-at <unix>] --stdin
+
+# Soft-revoke first; permanent deletion requires explicit confirmation
+signetctl revoke-credential <credential-id>
+signetctl delete-credential <credential-id> --confirm
+```
+
+Configure the Git helper globally, then select a credential by its stable id or
+let the helper derive `git:<host>` from `SIGNET_AGENT_ID`. It serves HTTPS only;
+`SIGNET_GIT_USERNAME` optionally overrides the username.
+
+```bash
+git config --global credential.helper '!signet-git-credential'
+export SIGNET_GIT_CREDENTIAL_ID=<credential-id>
+# Alternatively: export SIGNET_AGENT_ID=<agent-id>
+```
+
+Encrypted backup and offline restore take both keys from the environment, never
+from argv. Stop `signetd` before restore; the previous database is retained as
+`<db>.pre-restore`.
+
+```bash
+export SIGNET_DB_KEY=<store-master-key>
+export SIGNET_BACKUP_KEY=<independent-backup-key>
+signetctl backup-db /secure/signet-backup.db
+signetctl restore-db /secure/signet-backup.db --confirm
+```
 
 ## Policy Configuration
 
@@ -413,7 +454,7 @@ curl http://localhost:8080/health
 
 ## Testing & CI
 
-Signet has a real hardening test suite: 17 Meson tests / 18 CMake ctests (plus passkeys-ON entries) cover real crypto paths, rate-limit enforcement, signed-challenge authentication verification, audit hash-chain tamper detection, management replay protection, connect-secret reissue and self-service authorization, persistent client-binding pairing/reconnect/revocation, and pubkey backfill/uniqueness. `.github/workflows/signet-ci.yml` runs the Signet CI matrix, including a passkeys-ON entry.
+Signet has a real hardening test suite: 23 Meson tests / 18 CMake ctests by default. Passkeys-ON registers 27 Meson tests / 23 CMake ctests (the latter includes one disabled manual interop test). Coverage includes real crypto paths, rate-limit enforcement, signed-challenge authentication verification, audit hash-chain tamper detection, management replay protection, connect-secret reissue and self-service authorization, persistent client-binding pairing/reconnect/revocation, pubkey backfill/uniqueness, credential lifecycle (create/import/rotate/revoke, expiry, and overwrite protection), unified credential access enforcement (capability, ownership, deny/revoke precedence, lease burn, and audit redaction), the Git credential helper, `signetctl` CLI exit codes, encrypted backup/restore (tamper, wrong-key, and restart cases), and concurrency (NIP-5L/SSH bounds and port parsing). `.github/workflows/signet-ci.yml` runs the Signet CI matrix, including a passkeys-ON entry.
 
 ## Security Model
 
