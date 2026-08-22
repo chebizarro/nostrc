@@ -663,8 +663,15 @@ void signet_nip5l_server_stop(SignetNip5lServer *ns) {
   g_mutex_lock(&ns->mu);
   for (GList *it = ns->connections; it; it = it->next) {
     Nip5lConnState *cs = (Nip5lConnState *)it->data;
-    if (cs && cs->channel)
-      g_io_channel_shutdown(cs->channel, FALSE, NULL);
+    if (cs && cs->channel) {
+      /* shutdown(2) the socket rather than closing the channel: on Linux,
+       * close() does not wake a thread blocked in read(), so draining via
+       * g_io_channel_shutdown() alone deadlocks stop() against client
+       * threads parked in g_io_channel_read_line(). SHUT_RDWR forces those
+       * reads to return EOF immediately (same approach as ssh_agent.c). */
+      int fd = g_io_channel_unix_get_fd(cs->channel);
+      if (fd >= 0) shutdown(fd, SHUT_RDWR);
+    }
   }
   while (ns->active_connections > 0)
     g_cond_wait(&ns->connections_drained, &ns->mu);

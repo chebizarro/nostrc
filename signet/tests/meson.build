@@ -200,7 +200,8 @@ test('credential_access', test_credential_access)
 test('git_credential', test_git_credential)
 test('signetctl_credentials', find_program('sh'),
   args: [meson.current_source_dir() / 'test_signetctl_credentials.sh',
-         signetctl_exe.full_path()])
+         signetctl_exe.full_path()],
+  depends: signetctl_exe)
 test('item3_concurrency', test_item3_concurrency, timeout: 60)
 test('backup_restore', test_backup_restore, timeout: 60)
 

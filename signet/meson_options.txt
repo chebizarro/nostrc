@@ -41,7 +41,7 @@ option('signet_json_backend',
 
 option('signet_require_in_tree_libs',
   type: 'boolean',
-  value: true,
+  value: false,
   description: 'Require in-tree libnostr/nip46 libraries (typically built via the monorepo CMake build)'
 )
 

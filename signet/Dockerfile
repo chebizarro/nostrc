@@ -52,6 +52,16 @@ RUN cmake -B build-docker -G Ninja \
     -DLIBNOSTR_WITH_NOSTRDB=OFF \
   && cmake --build build-docker --target signetd signetctl
 
+# Validate the standalone Meson suite against the in-tree libraries produced
+# above, for both supported database backends.
+RUN meson setup signet/build-meson-sqlite signet \
+      -Dnostrc_build_dir=/src/build-docker \
+  && meson test -C signet/build-meson-sqlite --print-errorlogs
+RUN meson setup signet/build-meson-sqlcipher signet \
+      -Dnostrc_build_dir=/src/build-docker \
+      -Dsignet_use_sqlcipher=true \
+  && meson test -C signet/build-meson-sqlcipher --print-errorlogs
+
 # ============================================================================
 # Stage 2: Runtime
 # ============================================================================

@@ -25,6 +25,9 @@ project('signet', 'c',
 cc = meson.get_compiler('c')
 fs = import('fs')
 
+# Expose GNU/POSIX APIs consistently when building with strict C11 on glibc.
+add_project_arguments('-D_GNU_SOURCE', '-D_DEFAULT_SOURCE', language: 'c')
+
 # Resolve monorepo CMake build directory for in-tree libraries
 nostrc_build_dir_opt = get_option('nostrc_build_dir')
 nostrc_build_dir = fs.is_absolute(nostrc_build_dir_opt) ? nostrc_build_dir_opt : (meson.current_source_dir() / nostrc_build_dir_opt)
@@ -84,26 +87,35 @@ in_tree_archives = [
   'nips/nip11/libnip11.a',
   'libnostr/libnostr.a',
   'libgo/liblibgo.a',
-  'libnostr/libnostrdb.a',
 ]
-in_tree_link_args = []
+in_tree_candidate_link_args = []
 in_tree_found = true
 foreach rel : in_tree_archives
   ap = nostrc_build_dir / rel
   if fs.exists(ap)
-    in_tree_link_args += ap
+    in_tree_candidate_link_args += ap
   else
     in_tree_found = false
   endif
 endforeach
 
-# nostr_json is built as a shared library in the CMake tree.
+# libnostrdb is optional (the Debian builder disables it).
+nostrdb_archive = nostrc_build_dir / 'libnostr/libnostrdb.a'
+if fs.exists(nostrdb_archive)
+  in_tree_candidate_link_args += nostrdb_archive
+endif
+
+# nostr_json is built as a shared library in the CMake tree. Only accept the
+# native platform format so a macOS build mounted into Linux is not linked.
 nostr_json_dir = nostrc_build_dir / 'libjson'
-if fs.exists(nostr_json_dir / 'libnostr_json.dylib') or fs.exists(nostr_json_dir / 'libnostr_json.so')
-  in_tree_link_args += ['-L' + nostr_json_dir, '-lnostr_json', '-Wl,-rpath,' + nostr_json_dir]
+nostr_json_name = host_machine.system() == 'darwin' ? 'libnostr_json.dylib' : 'libnostr_json.so'
+if fs.exists(nostr_json_dir / nostr_json_name)
+  in_tree_candidate_link_args += ['-L' + nostr_json_dir, '-lnostr_json', '-Wl,-rpath,' + nostr_json_dir]
 else
   in_tree_found = false
 endif
+
+in_tree_link_args = in_tree_found ? in_tree_candidate_link_args : []
 
 # flatccrt is a STATIC archive that libnostrdb depends on, so it must come after
 # the archives above in the link line — add it as a positional link arg.
