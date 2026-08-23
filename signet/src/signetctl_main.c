@@ -37,6 +37,14 @@
 
 #define SIGNETCTL_VERSION "0.1.0"
 #define SIGNETCTL_TIMEOUT_SEC 10
+#define SIGNETCTL_MAIN_CONTEXT_DRAIN_LIMIT 64
+
+static void signetctl_drain_main_context(void) {
+  for (int i = 0; i < SIGNETCTL_MAIN_CONTEXT_DRAIN_LIMIT; i++) {
+    if (!g_main_context_iteration(NULL, FALSE))
+      break;
+  }
+}
 
 /* ----------------------------- usage ------------------------------------- */
 
@@ -1311,8 +1319,7 @@ int main(int argc, char **argv) {
     gboolean connected = FALSE;
     while (g_get_monotonic_time() < connect_deadline) {
       /* Drain all pending GLib sources (idle, I/O ready, timeouts). */
-      while (g_main_context_iteration(NULL, FALSE))
-        ;
+      signetctl_drain_main_context();
       if (signet_relay_pool_is_connected(rp)) {
         connected = TRUE;
         break;
@@ -1341,16 +1348,14 @@ int main(int argc, char **argv) {
       free(prov_pub);
     }
 
-    /* NPA-10: Wait for subscription EOSE instead of fixed 2s drain.
-     * On non-AUTH relays, EOSE arrives within ~1 RTT of connect.
-     * On AUTH relays, EOSE arrives after: AUTH challenge → response →
-     * OK → post-auth resubscribe → EOSE. Timeout after 5s. */
-    int64_t auth_deadline = g_get_monotonic_time() + 5000000LL; /* 5s */
-    while (g_get_monotonic_time() < auth_deadline) {
-      while (g_main_context_iteration(NULL, FALSE))
-        ;
-      if (signet_relay_pool_is_subscribed(rp)) break;
-      g_usleep(10 * 1000); /* 10ms poll */
+    /* Give the freshly-fired reply subscription a bounded settle period before
+     * publishing. Do not wait on signet_relay_pool_is_subscribed() here: the
+     * one-shot CLI only needs the listener installed, and live relay traffic can
+     * leave pool/subscription locks contended long enough to prevent publish. */
+    int64_t settle_deadline = g_get_monotonic_time() + 1000000LL; /* 1s */
+    while (g_get_monotonic_time() < settle_deadline) {
+      signetctl_drain_main_context();
+      g_usleep(10 * 1000);
     }
   }
 
@@ -1378,8 +1383,7 @@ int main(int argc, char **argv) {
     while (!ack_ctx.received) {
       if (g_get_monotonic_time() >= end_time) break;
       g_mutex_unlock(&ack_ctx.mu);
-      while (g_main_context_iteration(NULL, FALSE))
-        ;
+      signetctl_drain_main_context();
       g_usleep(5 * 1000); /* 5ms */
       g_mutex_lock(&ack_ctx.mu);
     }
