@@ -2062,8 +2062,8 @@ int signet_store_grant_provisioner(SignetStore *store,
   sqlite3_stmt *stmt = NULL;
   if (sqlite3_prepare_v2(
           store->db,
-          "INSERT INTO provisioners(pubkey_hex,granted_at,granted_by) "
-          "VALUES(?1,?2,?3) ON CONFLICT(pubkey_hex) DO NOTHING;",
+          "INSERT OR IGNORE INTO provisioners(pubkey_hex,granted_at,granted_by) "
+          "VALUES(?1,?2,?3);",
           -1, &stmt, NULL) != SQLITE_OK)
     return -1;
   sqlite3_bind_text(stmt, 1, pubkey_hex, -1, SQLITE_TRANSIENT);
