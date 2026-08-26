@@ -320,8 +320,8 @@ static void signet_config_load_keyfile(GKeyFile *kf, SignetConfig *cfg) {
   if (val) { signet_strlcpy(cfg->identity, val, sizeof(cfg->identity)); g_free(val); }
 
   /* Bunker pubkey (npub or 64-hex): lets clients such as signetctl address the
-   * bunker without needing SIGNET_BUNKER_NSEC. When SIGNET_BUNKER_NSEC is set
-   * (the daemon), the derived pubkey below overrides this. */
+   * bunker without its private key. When SIGNET_BUNKER_NSEC_FILE is set for
+   * the daemon, the derived pubkey below overrides this. */
   val = g_key_file_get_string(kf, "nostr", "bunker_pubkey", NULL);
   if (val) {
     if (g_ascii_strncasecmp(val, "npub1", 5) == 0) {
@@ -443,7 +443,7 @@ static void signet_config_load_keyfile(GKeyFile *kf, SignetConfig *cfg) {
 
 /* -------------------------- env var overrides ----------------------------- */
 
-static void signet_config_apply_env(SignetConfig *cfg) {
+static int signet_config_apply_env(SignetConfig *cfg) {
   const char *val = NULL;
 
   /* Non-secret overrides */
@@ -474,11 +474,34 @@ static void signet_config_apply_env(SignetConfig *cfg) {
     cfg->provisioner_pubkeys = signet_parse_csv(val, &cfg->n_provisioner_pubkeys);
   }
 
-  /* Secret: SIGNET_BUNKER_NSEC → derive seckey hex + pubkey hex */
+  /* Private keys are file-backed only. Refuse the legacy value-bearing
+   * environment variable without ever parsing or logging its contents. */
   val = g_getenv("SIGNET_BUNKER_NSEC");
   if (val && val[0]) {
+    g_critical("[signet] SIGNET_BUNKER_NSEC is no longer accepted; mount the "
+               "secret and set SIGNET_BUNKER_NSEC_FILE instead");
+    signet_config_clear(cfg);
+    return -1;
+  }
+
+  const char *bunker_nsec_file = g_getenv("SIGNET_BUNKER_NSEC_FILE");
+  gchar *bunker_nsec = NULL;
+  gsize bunker_nsec_len = 0;
+  if (bunker_nsec_file && bunker_nsec_file[0]) {
+    if (!g_file_get_contents(bunker_nsec_file, &bunker_nsec,
+                             &bunker_nsec_len, NULL) ||
+        bunker_nsec_len > 4096) {
+      g_critical("[signet] cannot read valid SIGNET_BUNKER_NSEC_FILE");
+      if (bunker_nsec) {
+        secure_wipe(bunker_nsec, bunker_nsec_len);
+        g_free(bunker_nsec);
+      }
+      signet_config_clear(cfg);
+      return -1;
+    }
+    g_strstrip(bunker_nsec);
+    val = bunker_nsec;
     if (g_ascii_strncasecmp(val, "nsec1", 5) == 0) {
-      /* Bech32 nsec — decode to 32 bytes, then hex encode */
       uint8_t sk[32];
       if (nostr_nip19_decode_nsec(val, sk) == 0) {
         signet_bytes_to_hex(sk, 32, cfg->remote_signer_secret_key_hex,
@@ -486,24 +509,24 @@ static void signet_config_apply_env(SignetConfig *cfg) {
         secure_wipe(sk, 32);
       }
     } else if (signet_is_hex(val, 64)) {
-      /* Raw hex secret key */
       signet_strlcpy(cfg->remote_signer_secret_key_hex, val,
-                      sizeof(cfg->remote_signer_secret_key_hex));
+                     sizeof(cfg->remote_signer_secret_key_hex));
     }
 
-    /* Derive public key */
     if (cfg->remote_signer_secret_key_hex[0]) {
       char *pub = nostr_key_get_public(cfg->remote_signer_secret_key_hex);
       if (pub) {
         signet_strlcpy(cfg->remote_signer_pubkey_hex, pub,
-                        sizeof(cfg->remote_signer_pubkey_hex));
+                       sizeof(cfg->remote_signer_pubkey_hex));
         free(pub);
       }
     }
+    secure_wipe(bunker_nsec, bunker_nsec_len);
+    g_free(bunker_nsec);
   }
 
   /* SIGNET_BUNKER_PUBKEY (npub or 64-hex): address the bunker without its nsec.
-   * Only fills when a pubkey was not already derived from SIGNET_BUNKER_NSEC. */
+   * Only fills when no pubkey was derived from SIGNET_BUNKER_NSEC_FILE. */
   val = g_getenv("SIGNET_BUNKER_PUBKEY");
   if (val && val[0] && !cfg->remote_signer_pubkey_hex[0]) {
     if (g_ascii_strncasecmp(val, "npub1", 5) == 0) {
@@ -560,6 +583,7 @@ static void signet_config_apply_env(SignetConfig *cfg) {
   if (val) signet_strlcpy(cfg->passkeys_sync_key, val, sizeof(cfg->passkeys_sync_key));
   val = g_getenv("SIGNET_PASSKEYS_SYNC_KEY_FILE");
   if (val) signet_strlcpy(cfg->passkeys_sync_key_file, val, sizeof(cfg->passkeys_sync_key_file));
+  return 0;
 }
 
 /* ------------------------------ public API -------------------------------- */
@@ -585,7 +609,7 @@ int signet_config_load(const char *path, SignetConfig *out_cfg) {
   }
 
   /* Environment variables always override. */
-  signet_config_apply_env(out_cfg);
+  if (signet_config_apply_env(out_cfg) != 0) return -1;
   signet_config_resolve_passkey_psk(out_cfg);
 
   return 0;
@@ -614,10 +638,10 @@ int signet_config_validate(const SignetConfig *cfg, char *err_buf, size_t err_bu
     return -1;
   }
 
-  /* SIGNET_BUNKER_NSEC must have been provided. */
+  /* A valid bunker key file must have been provided. */
   if (!cfg->remote_signer_secret_key_hex[0]) {
     if (err_buf && err_buf_len > 0)
-      snprintf(err_buf, err_buf_len, "SIGNET_BUNKER_NSEC not set or invalid");
+      snprintf(err_buf, err_buf_len, "SIGNET_BUNKER_NSEC_FILE not set or invalid");
     return -1;
   }
 

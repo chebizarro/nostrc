@@ -9,7 +9,7 @@
  *
  * Required environment variables (Signet refuses to start without these):
  *   SIGNET_DB_KEY      - master key for SQLCipher (min 32 bytes, base64/hex)
- *   SIGNET_BUNKER_NSEC - Signet's own bunker identity nsec (bech32 or hex)
+ *   SIGNET_BUNKER_NSEC_FILE - file containing Signet's bunker identity nsec
  *
  * Optional env overrides:
  *   SIGNET_RELAYS         - comma-separated relay URLs
@@ -153,7 +153,7 @@ typedef struct {
   char **relays;
   size_t n_relays;
 
-  /* Bunker identity (derived from SIGNET_BUNKER_NSEC at startup). */
+  /* Bunker identity (derived from SIGNET_BUNKER_NSEC_FILE at startup). */
   char remote_signer_pubkey_hex[SIGNET_MAX_HEX_32_STRLEN];
   char remote_signer_secret_key_hex[SIGNET_MAX_HEX_32_STRLEN];
 

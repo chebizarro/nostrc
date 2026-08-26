@@ -115,7 +115,7 @@ allow_headless_uv = false
 sync_key_file = /run/secrets/signet-passkey-sync-key
 ```
 
-Run `signetd` with normal `SIGNET_DB_KEY`, `SIGNET_BUNKER_NSEC`, and relay/policy configuration. The virtual CTAP adapter currently uses the daemon `[nostr] identity` value as the `SignetFidoService` `agent_id` for credentials created through the HID path, so provision policy/capability state for that identity before testing.
+Run `signetd` with normal `SIGNET_DB_KEY`, `SIGNET_BUNKER_NSEC_FILE`, and relay/policy configuration. The virtual CTAP adapter currently uses the daemon `[nostr] identity` value as the `SignetFidoService` `agent_id` for credentials created through the HID path, so provision policy/capability state for that identity before testing.
 
 Functional smoke with libfido2 tools:
 

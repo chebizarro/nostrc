@@ -121,10 +121,10 @@ USER signet
 
 # Required environment variables:
 #   SIGNET_DB_KEY       - Master key for SQLCipher
-#   SIGNET_BUNKER_NSEC  - Bunker identity nsec
+#   SIGNET_BUNKER_NSEC_FILE - Mounted file containing bunker identity nsec
 #   SIGNET_RELAYS       - Comma-separated relay URLs
 ENV SIGNET_DB_KEY="" \
-    SIGNET_BUNKER_NSEC="" \
+    SIGNET_BUNKER_NSEC_FILE="/run/secrets/signet_bunker_nsec" \
     SIGNET_RELAYS=""
 
 ENTRYPOINT ["signetd"]

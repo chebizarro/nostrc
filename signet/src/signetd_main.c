@@ -622,6 +622,21 @@ int main(int argc, char **argv) {
 #endif
   SignetStore *base_store = signet_key_store_get_store(keys);
 
+  /* Legacy provisioner config/env is a one-time bootstrap seed only. Once the
+   * policy_state marker exists, persisted grants/revocations always win. */
+  if (base_store && cfg.n_provisioner_pubkeys > 0) {
+    int seed_rc = signet_store_seed_provisioners(
+        base_store, (const char *const *)cfg.provisioner_pubkeys,
+        cfg.n_provisioner_pubkeys, signet_now_unix());
+    if (seed_rc < 0) {
+      g_critical("[signetd] failed to seed persisted provisioner policy");
+      signet_config_clear(&cfg);
+      return 1;
+    }
+    if (seed_rc == 0)
+      g_message("[signetd] seeded persisted provisioner policy from legacy configuration");
+  }
+
   /* Backfill agents.pubkey for rows created before the v3.1 pubkey column.
    * Until backfilled, those rows are invisible to pubkey-collision checks
    * (agent/adopt-existing could silently bind an already-custodied key to a

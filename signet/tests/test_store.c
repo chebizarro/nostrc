@@ -383,6 +383,42 @@ static void test_lease_cleanup_expired(void) {
   printf("test_lease_cleanup_expired: PASS\n");
 }
 
+
+static void test_provisioner_policy_seed_once_and_mutate(void) {
+  char *db_path = NULL;
+  SignetStore *store = open_test_store(&db_path);
+  const char *first[] = {
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  };
+  const char *ignored[] = {
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  };
+  int64_t now = (int64_t)time(NULL);
+
+  assert(signet_store_seed_provisioners(store, first, 1, now) == 0);
+  assert(signet_store_is_provisioner(store, first[0]));
+  assert(signet_store_seed_provisioners(store, ignored, 1, now + 1) == 1);
+  assert(!signet_store_is_provisioner(store, ignored[0]));
+
+  assert(signet_store_grant_provisioner(store, ignored[0], first[0], now + 2) == 0);
+  assert(signet_store_is_provisioner(store, ignored[0]));
+  assert(signet_store_revoke_provisioner(store, first[0]) == 0);
+  assert(!signet_store_is_provisioner(store, first[0]));
+
+  signet_store_close(store);
+
+  SignetStoreConfig cfg = { .db_path = db_path, .master_key = MASTER_KEY };
+  store = signet_store_open(&cfg);
+  assert(store != NULL);
+  assert(!signet_store_is_provisioner(store, first[0]));
+  assert(signet_store_is_provisioner(store, ignored[0]));
+
+  signet_store_close(store);
+  unlink(db_path);
+  g_free(db_path);
+  printf("test_provisioner_policy_seed_once_and_mutate: PASS\n");
+}
+
 /* ----------------------------- Store lifecycle --------------------------- */
 
 static void test_store_open_close(void) {
@@ -420,6 +456,7 @@ int main(void) {
 
   test_store_open_close();
   test_store_null_safety();
+  test_provisioner_policy_seed_once_and_mutate();
 
   test_agent_put_get();
   test_agent_not_found();

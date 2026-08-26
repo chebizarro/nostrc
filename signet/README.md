@@ -174,11 +174,11 @@ prior behavior.
 
 ```bash
 export SIGNET_DB_KEY="<base64-encoded-32-byte-key>"
-export SIGNET_BUNKER_NSEC="nsec1..."
+export SIGNET_BUNKER_NSEC_FILE="/run/secrets/signet-bunker-nsec"
 ./builddir/signetd -c signet.conf
 ```
 
-Both `SIGNET_DB_KEY` and `SIGNET_BUNKER_NSEC` are **required**. Signet refuses to start without them. In production, also set `SIGNET_REQUIRE_ENCRYPTED_DB=true` so startup fails unless SQLCipher verification succeeds.
+Both `SIGNET_DB_KEY` and `SIGNET_BUNKER_NSEC_FILE` are **required**. Signet refuses to start without them. In production, also set `SIGNET_REQUIRE_ENCRYPTED_DB=true` so startup fails unless SQLCipher verification succeeds.
 
 ### Docker
 
@@ -245,8 +245,8 @@ All configuration can be overridden with `SIGNET_`-prefixed environment variable
 | `SIGNET_DB_KEY`                | SQLCipher master key (required; hex, base64, or passphrase) |
 | `SIGNET_REQUIRE_ENCRYPTED_DB`  | Refuse to start unless the DB is SQLCipher-encrypted |
 | `SIGNET_MIGRATE_PLAINTEXT_DB`  | Auto-migrate a legacy plaintext DB to SQLCipher on open (default true; set `false` to refuse instead) |
-| `SIGNET_BUNKER_NSEC`          | Bunker identity nsec (required)          |
-| `SIGNET_PROVISIONER_NSEC`     | Provisioner nsec for signetctl           |
+| `SIGNET_BUNKER_NSEC_FILE`     | File containing bunker identity nsec (required) |
+| `SIGNET_PROVISIONER_NSEC_FILE` | File containing provisioner nsec for signetctl |
 | `SIGNET_BUNKER_PUBKEY`        | Bunker pubkey (npub/hex) for signetctl to address the bunker |
 | `SIGNET_RELAYS`                | Comma-separated relay URLs               |
 | `SIGNET_LOG_LEVEL`            | `debug`, `info`, `warn`, `error`         |
@@ -254,7 +254,7 @@ All configuration can be overridden with `SIGNET_`-prefixed environment variable
 | `SIGNET_HEALTH_PORT`          | Health endpoint port (0 to disable)      |
 | `SIGNET_AUDIT_PATH`           | Audit log file path (empty = stdout)     |
 | `SIGNET_POLICY_PATH`          | Policy file path                         |
-| `SIGNET_PROVISIONER_PUBKEYS`  | Comma-separated authorized hex pubkeys   |
+| `SIGNET_PROVISIONER_PUBKEYS`  | Legacy one-time seed used only when persisted provisioner state is absent |
 | `SIGNET_BOOTSTRAP_PORT`       | Bootstrap HTTP port (0 = disabled)       |
 | `SIGNET_DBUS_UNIX`            | Enable D-Bus Unix (`true`/`false`)       |
 | `SIGNET_DBUS_TCP`             | Enable D-Bus TCP (`true`/`false`)        |
@@ -289,6 +289,10 @@ signetctl rotate my-agent
 # Revoke an agent identity
 signetctl revoke my-agent
 
+# Persist and immediately activate provisioner authorization changes
+signetctl grant-provisioner <pubkey>
+signetctl revoke-provisioner <pubkey>
+
 # Query daemon health
 signetctl status
 
@@ -322,7 +326,7 @@ correlated by the JSON-RPC `id`). The retired custom management-event transport
 is neither emitted nor accepted.
 
 Requirements:
-- `SIGNET_PROVISIONER_NSEC` — the provisioner key that signs/authorizes intents.
+- `SIGNET_PROVISIONER_NSEC_FILE` — a mounted file containing the provisioner key that signs/authorizes intents.
 - The bunker's pubkey, so signetctl can address it: set `[nostr] bunker_pubkey`
   (npub or hex) in the config, or `SIGNET_BUNKER_PUBKEY` in the environment.
 
@@ -385,6 +389,8 @@ ttl_seconds = 3600
 ```
 
 Policies can be updated at runtime via the SET_POLICY management command or by editing the policy file and sending SIGHUP.
+
+Provisioner authorization is separate persisted state in the encrypted Signet database. `SIGNET_PROVISIONER_PUBKEYS` (and legacy `[nostr] provisioner_pubkeys`) seed that state only when it has never been initialized; later environment/config changes never overwrite grants or revocations. Authorized `config/grant-provisioner` and `config/revoke-provisioner` ContextVM intents persist before becoming effective and are visible to the next management request without a restart.
 
 ## NIP-46 Methods
 

@@ -167,8 +167,10 @@ start_daemon() {
   local log="$3"
   local audit="$4"
   write_config "$db" "$cfg" "$audit"
+  local bunker_nsec_file="${cfg}.bunker.nsec"
+  (umask 077; printf '%s\n' "$bunker_nsec" >"$bunker_nsec_file")
   SIGNET_DB_KEY="$db_key" \
-  SIGNET_BUNKER_NSEC="$bunker_nsec" \
+  SIGNET_BUNKER_NSEC_FILE="$bunker_nsec_file" \
   SIGNET_DBUS_SESSION_BUS=1 \
   SIGNET_DBUS_TEST_AGENT_ID="$agent_id" \
   SIGNET_DBUS_TEST_PROVISION_AGENT=1 \

@@ -10,7 +10,7 @@
 # Required environment variables (create .env from .env.example):
 #   cp .env.example .env   # then edit with real values
 #   SIGNET_DB_KEY       - Master key for SQLCipher (min 32 bytes, hex)
-#   SIGNET_BUNKER_NSEC  - Bunker identity nsec (bech32 nsec1... or hex)
+#   SIGNET_BUNKER_NSEC_FILE - Host path to a file containing the bunker identity nsec
 #   SIGNET_RELAYS       - Comma-separated relay URLs
 
 services:
@@ -23,13 +23,15 @@ services:
 
     environment:
       - SIGNET_DB_KEY=${SIGNET_DB_KEY}
-      - SIGNET_BUNKER_NSEC=${SIGNET_BUNKER_NSEC}
+      - SIGNET_BUNKER_NSEC_FILE=/run/secrets/signet_bunker_nsec
       - SIGNET_RELAYS=${SIGNET_RELAYS:-wss://nos.lol}
       - SIGNET_LOG_LEVEL=${SIGNET_LOG_LEVEL:-info}
       - SIGNET_PROVISIONER_PUBKEYS=${SIGNET_PROVISIONER_PUBKEYS:-}
 
     volumes:
       - signet-data:/data
+    secrets:
+      - signet_bunker_nsec
 
     ports:
       - "${SIGNET_HEALTH_PORT:-8080}:8080"
@@ -66,3 +68,7 @@ services:
 volumes:
   signet-data:
     driver: local
+
+secrets:
+  signet_bunker_nsec:
+    file: ${SIGNET_BUNKER_NSEC_FILE:-./data/bunker.nsec}

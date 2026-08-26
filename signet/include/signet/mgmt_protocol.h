@@ -17,10 +17,12 @@
  *                       existing agent (restart recovery; ContextVM-only)
  *   agent/list-clients  - list an agent's persistent NIP-46 client bindings
  *   agent/revoke-client - soft-revoke a persistent NIP-46 client binding
+ *   config/grant-provisioner - add a provisioner to persisted authorization
+ *   config/revoke-provisioner - remove a provisioner from persisted authorization
  *
  * Relay transport: NIP-59/NIP-17 gift-wrap kind 1059 carrying the inner
  *                  kind-25910 intent.
- * Authorization: inner sender pubkey must be in provisioner_pubkeys list.
+ * Authorization: inner sender pubkey must be in the persisted provisioner set.
  *                Exception: agent/reissue-connect is also authorized when the
  *                sender IS the target agent (sender pubkey equals the agent's
  *                identity pubkey) — self-service connect_secret recovery. The
@@ -80,6 +82,8 @@ typedef enum {
   SIGNET_MGMT_OP_ROTATE_CREDENTIAL,
   SIGNET_MGMT_OP_REVOKE_CREDENTIAL,
   SIGNET_MGMT_OP_DELETE_CREDENTIAL,
+  SIGNET_MGMT_OP_GRANT_PROVISIONER,
+  SIGNET_MGMT_OP_REVOKE_PROVISIONER,
 } SignetMgmtOp;
 
 /* Parsed management request from event content JSON. */
@@ -107,6 +111,7 @@ typedef struct {
   char *expected_pubkey;   /* adopt: require derived pubkey to match (owned) */
   char *connect_secret;    /* adopt: optional fixed connect secret (owned) */
   char *client_pubkey;     /* revoke-client: target NIP-46 client pubkey (owned) */
+  char *provisioner_pubkey; /* grant/revoke-provisioner target (owned) */
 
   /* Generic credential lifecycle fields. payload_b64 is sensitive and is
    * accepted only inside the encrypted ContextVM request. */
@@ -226,14 +231,15 @@ typedef struct SignetMgmtHandler SignetMgmtHandler;
 
 /**
  * SignetMgmtHandlerConfig:
- * @provisioner_pubkeys: provisioner pubkeys value.
- * @n_provisioner_pubkeys: n provisioner pubkeys value.
+ * @provisioner_pubkeys: legacy one-time provisioner seed.
+ * @n_provisioner_pubkeys: number of one-time seed entries.
  * @bunker_secret_key_hex: for signing ack events.
  * @bunker_pubkey_hex: for addressing.
  * @relay_urls: relay URLs for bunker:// URIs.
  * @n_relay_urls: n relay urls value.
  *
- * Configuration for management command authorization and acknowledgements.
+ * Configuration for initial provisioner seeding and acknowledgements. Runtime
+ * authorization is read from the key store's persisted provisioner set.
  *
  * Since: 1.0
  */

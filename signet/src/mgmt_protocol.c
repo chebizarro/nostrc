@@ -72,6 +72,8 @@ const char *signet_mgmt_op_to_string(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_ROTATE_CREDENTIAL: return "rotate_credential";
     case SIGNET_MGMT_OP_REVOKE_CREDENTIAL: return "revoke_credential";
     case SIGNET_MGMT_OP_DELETE_CREDENTIAL: return "delete_credential";
+    case SIGNET_MGMT_OP_GRANT_PROVISIONER: return "grant_provisioner";
+    case SIGNET_MGMT_OP_REVOKE_PROVISIONER: return "revoke_provisioner";
     default:                             return "unknown";
   }
 }
@@ -105,6 +107,7 @@ void signet_mgmt_request_clear(SignetMgmtRequest *req) {
   if (req->connect_secret) { secure_wipe(req->connect_secret, strlen(req->connect_secret)); g_free(req->connect_secret); }
   g_free(req->expected_pubkey);
   g_free(req->client_pubkey);
+  g_free(req->provisioner_pubkey);
   g_free(req->credential_id);
   g_free(req->secret_type);
   g_free(req->label);
@@ -205,6 +208,10 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
     const char *v = json_object_get_string_member(o, "client_pubkey");
     if (v && v[0]) out_req->client_pubkey = g_strdup(v);
   }
+  if (json_object_has_member(o, "provisioner_pubkey")) {
+    const char *v = json_object_get_string_member(o, "provisioner_pubkey");
+    if (v && v[0]) out_req->provisioner_pubkey = g_strdup(v);
+  }
   if (json_object_has_member(o, "credential_id")) {
     const char *v = json_object_get_string_member(o, "credential_id");
     if (v && v[0]) out_req->credential_id = g_strdup(v);
@@ -265,6 +272,18 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
   if (out_req->op == SIGNET_MGMT_OP_REVOKE_CLIENT &&
       (!out_req->client_pubkey || !out_req->client_pubkey[0])) {
     if (out_error) *out_error = g_strdup("revoke_client requires client_pubkey");
+    signet_mgmt_request_clear(out_req);
+    return -1;
+  }
+
+  bool provisioner_mutation =
+      out_req->op == SIGNET_MGMT_OP_GRANT_PROVISIONER ||
+      out_req->op == SIGNET_MGMT_OP_REVOKE_PROVISIONER;
+  if (provisioner_mutation &&
+      (!out_req->provisioner_pubkey ||
+       !signet_hex_to_bytes32(out_req->provisioner_pubkey, (uint8_t[32]){0}))) {
+    if (out_error) *out_error = g_strdup(
+        "grant/revoke provisioner requires a 64-hex provisioner_pubkey");
     signet_mgmt_request_clear(out_req);
     return -1;
   }
@@ -376,8 +395,7 @@ struct SignetMgmtHandler {
   SignetReplayCache *replay;      /* provisioner replay cache (owned by daemon) */
   SignetReplayCache *replay_self; /* self-service replay cache (owned by daemon) */
 
-  char **provisioner_pubkeys;
-  size_t n_provisioner_pubkeys;
+  SignetStore *provisioner_store; /* borrowed through key store */
 
   char *bunker_sk_hex;
   char *bunker_pk_hex;
@@ -401,12 +419,14 @@ SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
   h->audit = audit;
   h->policy_store = policy_store;
 
-  if (cfg->provisioner_pubkeys && cfg->n_provisioner_pubkeys > 0) {
-    h->provisioner_pubkeys = (char **)g_new0(char *, cfg->n_provisioner_pubkeys);
-    for (size_t i = 0; i < cfg->n_provisioner_pubkeys; i++) {
-      h->provisioner_pubkeys[i] = g_strdup(cfg->provisioner_pubkeys[i]);
-    }
-    h->n_provisioner_pubkeys = cfg->n_provisioner_pubkeys;
+  h->provisioner_store = keys ? signet_key_store_get_store(keys) : NULL;
+  if (h->provisioner_store && cfg->provisioner_pubkeys &&
+      cfg->n_provisioner_pubkeys > 0 &&
+      signet_store_seed_provisioners(
+          h->provisioner_store, cfg->provisioner_pubkeys,
+          cfg->n_provisioner_pubkeys, (int64_t)time(NULL)) < 0) {
+    signet_mgmt_handler_free(h);
+    return NULL;
   }
 
   if (cfg->bunker_secret_key_hex) {
@@ -433,9 +453,6 @@ SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
 
 void signet_mgmt_handler_free(SignetMgmtHandler *h) {
   if (!h) return;
-
-  for (size_t i = 0; i < h->n_provisioner_pubkeys; i++) g_free(h->provisioner_pubkeys[i]);
-  g_free(h->provisioner_pubkeys);
 
   if (h->bunker_sk_hex) {
     sodium_memzero(h->bunker_sk_hex, strlen(h->bunker_sk_hex));
@@ -627,6 +644,8 @@ static SignetMgmtOp signet_mgmt_op_from_contextvm_method(const char *method) {
   if (strcmp(method, "credential/rotate") == 0) return SIGNET_MGMT_OP_ROTATE_CREDENTIAL;
   if (strcmp(method, "credential/revoke") == 0) return SIGNET_MGMT_OP_REVOKE_CREDENTIAL;
   if (strcmp(method, "credential/delete") == 0) return SIGNET_MGMT_OP_DELETE_CREDENTIAL;
+  if (strcmp(method, "config/grant-provisioner") == 0) return SIGNET_MGMT_OP_GRANT_PROVISIONER;
+  if (strcmp(method, "config/revoke-provisioner") == 0) return SIGNET_MGMT_OP_REVOKE_PROVISIONER;
   return SIGNET_MGMT_OP_UNKNOWN;
 }
 
@@ -699,6 +718,10 @@ static char *signet_mgmt_contextvm_params_json(const char *content_json, SignetM
     json_builder_set_member_name(b, "client_pubkey");
     json_builder_add_string_value(b, json_object_get_string_member(po, "client_pubkey"));
   }
+  if (po && json_object_has_member(po, "provisioner_pubkey")) {
+    json_builder_set_member_name(b, "provisioner_pubkey");
+    json_builder_add_string_value(b, json_object_get_string_member(po, "provisioner_pubkey"));
+  }
   if (po && json_object_has_member(po, "credential_id")) {
     json_builder_set_member_name(b, "credential_id");
     json_builder_add_string_value(b, json_object_get_string_member(po, "credential_id"));
@@ -751,9 +774,7 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
    * every unknown method) remains provisioner-only and is rejected here. */
   bool defer_auth = (op == SIGNET_MGMT_OP_REISSUE_CONNECT);
   if (!defer_auth &&
-      !signet_mgmt_is_authorized(event_pubkey_hex,
-                                 (const char *const *)h->provisioner_pubkeys,
-                                 h->n_provisioner_pubkeys)) {
+      !signet_store_is_provisioner(h->provisioner_store, event_pubkey_hex)) {
     signet_mgmt_chain_audit(h, "mgmt_unauthorized", event_pubkey_hex, NULL,
                             "deny", "not_provisioner", now);
     char *err = g_strdup("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32002,\"message\":\"sender is not an authorized Signet provisioner\"},\"id\":null}");
@@ -852,6 +873,8 @@ static const char *signet_mgmt_op_audit_name(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_ROTATE_CREDENTIAL:  return "credential_rotate";
     case SIGNET_MGMT_OP_REVOKE_CREDENTIAL:  return "credential_revoke";
     case SIGNET_MGMT_OP_DELETE_CREDENTIAL:  return "credential_delete";
+    case SIGNET_MGMT_OP_GRANT_PROVISIONER:  return "mgmt_grant_provisioner";
+    case SIGNET_MGMT_OP_REVOKE_PROVISIONER: return "mgmt_revoke_provisioner";
     default:                                return NULL;
   }
 }
@@ -1043,9 +1066,7 @@ static int signet_mgmt_handler_handle_request_ex(
    * before dispatch (relay_pool NPA-01) and gift-wrapped intents take the
    * authenticated seal author from nostr_nip17_decrypt_dm. */
   bool sender_is_provisioner =
-      signet_mgmt_is_authorized(event_pubkey_hex,
-                                (const char *const *)h->provisioner_pubkeys,
-                                h->n_provisioner_pubkeys);
+      signet_store_is_provisioner(h->provisioner_store, event_pubkey_hex);
   if (!sender_is_provisioner && op != SIGNET_MGMT_OP_REISSUE_CONNECT) {
     /* Silently drop unauthorized events (no ack — do not confirm the bunker
      * exists) but record the attempt in the tamper-evident audit chain. */
@@ -1952,6 +1973,31 @@ static int signet_mgmt_handler_handle_request_ex(
       break;
     }
 
+    case SIGNET_MGMT_OP_GRANT_PROVISIONER:
+      if (signet_store_grant_provisioner(
+              h->provisioner_store, req.provisioner_pubkey,
+              event_pubkey_hex, now) == 0) {
+        ok = true;
+        code = "provisioner_granted";
+        message = g_strdup("provisioner grant persisted and active");
+      } else {
+        code = "policy_store_failed";
+        message = g_strdup("failed to persist provisioner grant");
+      }
+      break;
+
+    case SIGNET_MGMT_OP_REVOKE_PROVISIONER:
+      if (signet_store_revoke_provisioner(
+              h->provisioner_store, req.provisioner_pubkey) == 0) {
+        ok = true;
+        code = "provisioner_revoked";
+        message = g_strdup("provisioner revocation persisted and active");
+      } else {
+        code = "policy_store_failed";
+        message = g_strdup("failed to persist provisioner revocation");
+      }
+      break;
+
     default:
       code = "unknown_command";
       message = g_strdup("unknown management command");
@@ -1968,7 +2014,8 @@ static int signet_mgmt_handler_handle_request_ex(
       signet_mgmt_chain_audit(
           h, audit_op,
           (req.agent_id && req.agent_id[0]) ? req.agent_id : event_pubkey_hex,
-          audit_secret_id ? audit_secret_id : req.credential_id,
+          audit_secret_id ? audit_secret_id :
+              (req.credential_id ? req.credential_id : req.provisioner_pubkey),
           ok ? "allow" : "deny", code, now);
     }
   }

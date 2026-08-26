@@ -700,6 +700,21 @@ int signet_store_consume_connect_secret_and_bind(SignetStore *store,
                                                  int64_t now,
                                                  char **out_agent_id);
 
+/* Persisted Signet provisioner authorization policy.
+ * seed returns 0 when it initializes previously absent state, 1 when state
+ * already exists (without changing it), and -1 on error. */
+int signet_store_seed_provisioners(SignetStore *store,
+                                   const char *const *pubkeys,
+                                   size_t count,
+                                   int64_t now);
+bool signet_store_is_provisioner(SignetStore *store, const char *pubkey_hex);
+int signet_store_grant_provisioner(SignetStore *store,
+                                   const char *pubkey_hex,
+                                   const char *actor_pubkey_hex,
+                                   int64_t now);
+int signet_store_revoke_provisioner(SignetStore *store,
+                                    const char *pubkey_hex);
+
 /* Free an agent record (wipes secret key). Safe on NULL. */
 /**
  * signet_agent_record_clear:

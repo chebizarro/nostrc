@@ -512,6 +512,18 @@ static const char *SIGNET_SCHEMA_SQL =
   ");"
   "CREATE INDEX IF NOT EXISTS idx_agent_clients_agent ON agent_clients(agent_id);"
 
+  /* v4: persisted provisioner authorization policy. The state row
+   * distinguishes an intentionally empty/revoked set from never-seeded state. */
+  "CREATE TABLE IF NOT EXISTS policy_state ("
+  "  name TEXT PRIMARY KEY NOT NULL,"
+  "  initialized_at INTEGER NOT NULL"
+  ");"
+  "CREATE TABLE IF NOT EXISTS provisioners ("
+  "  pubkey_hex TEXT PRIMARY KEY NOT NULL COLLATE NOCASE,"
+  "  granted_at INTEGER NOT NULL,"
+  "  granted_by TEXT"
+  ");"
+
   /* v2: deny list for revocation */
   "CREATE TABLE IF NOT EXISTS deny_list ("
   "  pubkey_hex TEXT PRIMARY KEY NOT NULL,"
@@ -1948,6 +1960,138 @@ int signet_store_touch_agent(SignetStore *store, const char *agent_id, int64_t n
   sqlite3_finalize(stmt);
 
   return (rc == SQLITE_DONE) ? 0 : -1;
+}
+
+
+static bool signet_store_valid_pubkey_hex(const char *pubkey_hex) {
+  if (!pubkey_hex || strlen(pubkey_hex) != 64) return false;
+  for (size_t i = 0; i < 64; i++)
+    if (!g_ascii_isxdigit(pubkey_hex[i])) return false;
+  return true;
+}
+
+int signet_store_seed_provisioners(SignetStore *store,
+                                   const char *const *pubkeys,
+                                   size_t count,
+                                   int64_t now) {
+  if (!store || !store->open || !store->db || !pubkeys || count == 0)
+    return -1;
+  if (sqlite3_exec(store->db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) != SQLITE_OK)
+    return -1;
+
+  sqlite3_stmt *check = NULL;
+  int rc = sqlite3_prepare_v2(
+      store->db, "SELECT 1 FROM policy_state WHERE name='provisioners';",
+      -1, &check, NULL);
+  bool initialized = rc == SQLITE_OK && sqlite3_step(check) == SQLITE_ROW;
+  sqlite3_finalize(check);
+  if (rc != SQLITE_OK) goto fail;
+  if (initialized) {
+    if (sqlite3_exec(store->db, "COMMIT;", NULL, NULL, NULL) != SQLITE_OK)
+      goto fail_no_tx;
+    return 1;
+  }
+
+  sqlite3_stmt *insert = NULL;
+  rc = sqlite3_prepare_v2(
+      store->db,
+      "INSERT OR IGNORE INTO provisioners(pubkey_hex,granted_at,granted_by) "
+      "VALUES(?1,?2,'env-seed');",
+      -1, &insert, NULL);
+  if (rc != SQLITE_OK) goto fail;
+  for (size_t i = 0; i < count; i++) {
+    if (!signet_store_valid_pubkey_hex(pubkeys[i])) {
+      sqlite3_finalize(insert);
+      goto fail;
+    }
+    sqlite3_bind_text(insert, 1, pubkeys[i], -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(insert, 2, now);
+    rc = sqlite3_step(insert);
+    sqlite3_reset(insert);
+    sqlite3_clear_bindings(insert);
+    if (rc != SQLITE_DONE) {
+      sqlite3_finalize(insert);
+      goto fail;
+    }
+  }
+  sqlite3_finalize(insert);
+
+  sqlite3_stmt *mark = NULL;
+  rc = sqlite3_prepare_v2(
+      store->db,
+      "INSERT INTO policy_state(name,initialized_at) VALUES('provisioners',?1);",
+      -1, &mark, NULL);
+  if (rc != SQLITE_OK) goto fail;
+  sqlite3_bind_int64(mark, 1, now);
+  rc = sqlite3_step(mark);
+  sqlite3_finalize(mark);
+  if (rc != SQLITE_DONE) goto fail;
+  if (sqlite3_exec(store->db, "COMMIT;", NULL, NULL, NULL) != SQLITE_OK)
+    goto fail_no_tx;
+  return 0;
+
+fail:
+  (void)sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+fail_no_tx:
+  return -1;
+}
+
+bool signet_store_is_provisioner(SignetStore *store, const char *pubkey_hex) {
+  if (!store || !store->open || !store->db ||
+      !signet_store_valid_pubkey_hex(pubkey_hex))
+    return false;
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(
+          store->db,
+          "SELECT 1 FROM provisioners WHERE pubkey_hex=?1 COLLATE NOCASE;",
+          -1, &stmt, NULL) != SQLITE_OK)
+    return false;
+  sqlite3_bind_text(stmt, 1, pubkey_hex, -1, SQLITE_TRANSIENT);
+  bool found = sqlite3_step(stmt) == SQLITE_ROW;
+  sqlite3_finalize(stmt);
+  return found;
+}
+
+int signet_store_grant_provisioner(SignetStore *store,
+                                   const char *pubkey_hex,
+                                   const char *actor_pubkey_hex,
+                                   int64_t now) {
+  if (!store || !store->open || !store->db ||
+      !signet_store_valid_pubkey_hex(pubkey_hex))
+    return -1;
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(
+          store->db,
+          "INSERT INTO provisioners(pubkey_hex,granted_at,granted_by) "
+          "VALUES(?1,?2,?3) ON CONFLICT(pubkey_hex) DO NOTHING;",
+          -1, &stmt, NULL) != SQLITE_OK)
+    return -1;
+  sqlite3_bind_text(stmt, 1, pubkey_hex, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 2, now);
+  if (actor_pubkey_hex)
+    sqlite3_bind_text(stmt, 3, actor_pubkey_hex, -1, SQLITE_TRANSIENT);
+  else
+    sqlite3_bind_null(stmt, 3);
+  int rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  return rc == SQLITE_DONE ? 0 : -1;
+}
+
+int signet_store_revoke_provisioner(SignetStore *store,
+                                    const char *pubkey_hex) {
+  if (!store || !store->open || !store->db ||
+      !signet_store_valid_pubkey_hex(pubkey_hex))
+    return -1;
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(
+          store->db,
+          "DELETE FROM provisioners WHERE pubkey_hex=?1 COLLATE NOCASE;",
+          -1, &stmt, NULL) != SQLITE_OK)
+    return -1;
+  sqlite3_bind_text(stmt, 1, pubkey_hex, -1, SQLITE_TRANSIENT);
+  int rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  return rc == SQLITE_DONE ? 0 : -1;
 }
 
 void signet_agent_record_clear(SignetAgentRecord *rec) {

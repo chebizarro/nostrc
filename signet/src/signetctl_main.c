@@ -3,7 +3,7 @@
  * signetctl_main.c - Nostr-native management CLI for Signet.
  *
  * Publishes signed management events to relays and waits for ack responses.
- * Uses the provisioner's nsec (SIGNET_PROVISIONER_NSEC env var) to sign.
+ * Uses the provisioner's file-backed nsec (SIGNET_PROVISIONER_NSEC_FILE) to sign.
  */
 
 #include "signet/signet_config.h"
@@ -75,6 +75,10 @@ static void signetctl_usage(FILE *out) {
     "                           client must re-pair with a fresh secret\n"
     "  set-policy <agent_id> <policy-json>\n"
     "                           Set an agent policy\n"
+    "  grant-provisioner <pubkey>\n"
+    "                           Persist and activate a provisioner grant\n"
+    "  revoke-provisioner <pubkey>\n"
+    "                           Persist and activate a provisioner revocation\n"
     "  status                   Query daemon health status\n"
     "  list                     List managed agents\n"
     "\n"
@@ -110,7 +114,7 @@ static void signetctl_usage(FILE *out) {
     "  -h, --help   Show this help\n"
     "\n"
     "Environment:\n"
-    "  SIGNET_PROVISIONER_NSEC  Provisioner's nsec (required, bech32 or hex)\n"
+    "  SIGNET_PROVISIONER_NSEC_FILE  File containing provisioner nsec (required)\\n"
     "  SIGNET_RELAYS            Comma-separated relay URLs (or set in config)\n"
     "  SIGNET_DB_KEY            Store master key (local store commands)\n"
     "  SIGNET_BACKUP_KEY        Independent backup key for backup-db/restore-db\n"
@@ -147,6 +151,8 @@ static const char *signetctl_contextvm_method(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_ROTATE_CREDENTIAL: return "credential/rotate";
     case SIGNET_MGMT_OP_REVOKE_CREDENTIAL: return "credential/revoke";
     case SIGNET_MGMT_OP_DELETE_CREDENTIAL: return "credential/delete";
+    case SIGNET_MGMT_OP_GRANT_PROVISIONER: return "config/grant-provisioner";
+    case SIGNET_MGMT_OP_REVOKE_PROVISIONER: return "config/revoke-provisioner";
     default:                          return NULL;
   }
 }
@@ -158,6 +164,7 @@ static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const
                                     const char *policy_json, const char *bootstrap_pubkey,
                                     int delivery_ttl, const char *agent_nsec,
                                     const char *expected_pubkey, const char *client_pubkey,
+                                    const char *provisioner_pubkey,
                                     const char *credential_id, const char *secret_type,
                                     const char *label, const char *payload_b64,
                                     const char *credential_policy_id,
@@ -189,6 +196,10 @@ static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const
   if (client_pubkey) {
     json_builder_set_member_name(b, "client_pubkey");
     json_builder_add_string_value(b, client_pubkey);
+  }
+  if (provisioner_pubkey) {
+    json_builder_set_member_name(b, "provisioner_pubkey");
+    json_builder_add_string_value(b, provisioner_pubkey);
   }
   if (credential_id) {
     json_builder_set_member_name(b, "credential_id");
@@ -467,30 +478,51 @@ static void signetctl_on_event(const SignetRelayEventView *ev, void *user_data) 
 
 static bool signetctl_resolve_provisioner_key(char *out_sk_hex, size_t sz) {
   if (!out_sk_hex || sz < 65) return false;
-  const char *nsec = g_getenv("SIGNET_PROVISIONER_NSEC");
-  if (!nsec || !nsec[0]) return false;
+  const char *legacy = g_getenv("SIGNET_PROVISIONER_NSEC");
+  if (legacy && legacy[0]) {
+    fprintf(stderr, "signetctl: SIGNET_PROVISIONER_NSEC is no longer accepted; "
+                    "mount the secret and set SIGNET_PROVISIONER_NSEC_FILE\n");
+    return false;
+  }
+  const char *path = g_getenv("SIGNET_PROVISIONER_NSEC_FILE");
+  if (!path || !path[0]) return false;
+
+  gchar *contents = NULL;
+  gsize contents_len = 0;
+  if (!g_file_get_contents(path, &contents, &contents_len, NULL) ||
+      contents_len > 4096) {
+    fprintf(stderr, "signetctl: cannot read valid SIGNET_PROVISIONER_NSEC_FILE\n");
+    if (contents) {
+      secure_wipe(contents, contents_len);
+      g_free(contents);
+    }
+    return false;
+  }
+  g_strstrip(contents);
+  const char *nsec = contents;
+  bool ok = false;
 
   if (g_ascii_strncasecmp(nsec, "nsec1", 5) == 0) {
     uint8_t sk[32];
-    if (nostr_nip19_decode_nsec(nsec, sk) != 0) return false;
-    static const char hex[] = "0123456789abcdef";
-    for (int i = 0; i < 32; i++) {
-      out_sk_hex[i*2]   = hex[(sk[i] >> 4) & 0xF];
-      out_sk_hex[i*2+1] = hex[sk[i] & 0xF];
+    if (nostr_nip19_decode_nsec(nsec, sk) == 0) {
+      static const char hex[] = "0123456789abcdef";
+      for (int i = 0; i < 32; i++) {
+        out_sk_hex[i*2]   = hex[(sk[i] >> 4) & 0xF];
+        out_sk_hex[i*2+1] = hex[sk[i] & 0xF];
+      }
+      out_sk_hex[64] = '\0';
+      secure_wipe(sk, 32);
+      ok = true;
     }
-    out_sk_hex[64] = '\0';
-    secure_wipe(sk, 32);
-    return true;
-  }
-
-  /* Assume hex */
-  if (strlen(nsec) == 64) {
+  } else if (strlen(nsec) == 64) {
     memcpy(out_sk_hex, nsec, 64);
     out_sk_hex[64] = '\0';
-    return true;
+    ok = true;
   }
 
-  return false;
+  secure_wipe(contents, contents_len);
+  g_free(contents);
+  return ok;
 }
 
 #define SIGNETCTL_MAX_CREDENTIAL_PAYLOAD (1024u * 1024u)
@@ -629,6 +661,7 @@ int main(int argc, char **argv) {
   const char *reissue_out_path = NULL;
   bool reissue_show_secret = false;
   const char *revoke_client_pubkey = NULL;
+  const char *provisioner_pubkey = NULL;
   const char *credential_id = NULL;
   const char *credential_type = NULL;
   const char *credential_label = NULL;
@@ -706,6 +739,20 @@ int main(int argc, char **argv) {
       return 2;
     }
     revoke_client_pubkey = argv[argi++];
+  } else if (strcmp(cmd, "grant-provisioner") == 0 ||
+             strcmp(cmd, "revoke-provisioner") == 0) {
+    op = strcmp(cmd, "grant-provisioner") == 0
+           ? SIGNET_MGMT_OP_GRANT_PROVISIONER
+           : SIGNET_MGMT_OP_REVOKE_PROVISIONER;
+    if (argi >= argc) {
+      fprintf(stderr, "signetctl: %s requires <pubkey>\n", cmd);
+      return 2;
+    }
+    provisioner_pubkey = argv[argi++];
+    if (argi != argc) {
+      fprintf(stderr, "signetctl: unexpected %s argument\n", cmd);
+      return 2;
+    }
   } else if (strcmp(cmd, "adopt-existing") == 0) {
     op = SIGNET_MGMT_OP_ADOPT_EXISTING;
     if (argi >= argc) {
@@ -1193,7 +1240,7 @@ int main(int argc, char **argv) {
   /* Resolve provisioner secret key. */
   char provisioner_sk_hex[65];
   if (!signetctl_resolve_provisioner_key(provisioner_sk_hex, sizeof(provisioner_sk_hex))) {
-    fprintf(stderr, "signetctl: SIGNET_PROVISIONER_NSEC not set or invalid\n");
+    fprintf(stderr, "signetctl: SIGNET_PROVISIONER_NSEC_FILE not set or invalid\n");
     signetctl_wipe_free_string(credential_payload_b64);
     return 1;
   }
@@ -1229,7 +1276,8 @@ int main(int argc, char **argv) {
   char *intent = signetctl_build_intent(op, agent_id, request_id, policy_json,
                                         deliver_bootstrap_pubkey, delivery_ttl,
                                         adopt_sec, adopt_expected_pubkey,
-                                        revoke_client_pubkey, credential_id,
+                                        revoke_client_pubkey, provisioner_pubkey,
+                                        credential_id,
                                         credential_type, credential_label,
                                         credential_payload_b64,
                                         credential_policy_id,
@@ -1249,7 +1297,7 @@ int main(int argc, char **argv) {
                             ? cfg.remote_signer_pubkey_hex
                             : NULL;
   if (!bunker_pk) {
-    fprintf(stderr, "signetctl: bunker pubkey not configured (set SIGNET_BUNKER_NSEC / [nostr] identity)\n");
+    fprintf(stderr, "signetctl: bunker pubkey not configured (set SIGNET_BUNKER_NSEC_FILE / [nostr] bunker_pubkey)\n");
     sodium_memzero(intent, strlen(intent));
     g_free(intent);
     signet_config_clear(&cfg);
