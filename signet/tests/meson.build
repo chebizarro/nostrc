@@ -18,6 +18,14 @@ test_replay = executable('test_replay_cache',
   install: false,
 )
 
+test_memory_hardening = executable('test_memory_hardening',
+  'test_memory_hardening.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: false,
+)
+
 test_policy = executable('test_policy_engine',
   'test_policy_engine.c',
   link_with: signet_core,
@@ -140,6 +148,7 @@ test_client_bindings = executable('test_client_bindings',
 
 test('signet_smoke', test_exe)
 test('replay_cache', test_replay)
+test('memory_hardening', test_memory_hardening)
 test('policy_engine', test_policy)
 test('audit_logger', test_audit)
 test('bootstrap_contract', test_bootstrap_contract)

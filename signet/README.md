@@ -73,10 +73,12 @@ Management intents are encrypted between provisioner and bunker when transported
 - **Structured JSON Logging** — 12-factor compliant; operational audit output to stdout or file (not hash-chained; use the SQLCipher store for tamper-evident history)
 - **Health Endpoint** — `GET /health` via libmicrohttpd with Prometheus-style counters (bootstrap_total, auth_ok/denied/error, sign_total, revoke_total, active sessions/leases)
 - **Replay Protection** — In-memory rolling window with configurable TTL and clock skew tolerance
+- **Memory Budget Hardening** — `MCL_FUTURE` remains the default process lock policy, with early glibc allocator retention tuning and periodic `malloc_trim()` after request bursts
 
 ### Process Hardening
 
 - `sodium_malloc` + `mlock` on all key material (never swapped to disk)
+- `SIGNET_MLOCK_MODE=future` locks current and future process pages before secrets load; `current` and `off` are explicit constrained-runtime modes
 - `prctl(PR_SET_DUMPABLE, 0)` disables core dumps
 - `secure_wipe` / `explicit_bzero` on all secret buffers at revocation and shutdown
 - Non-root `signet` user in production (Docker)
@@ -250,6 +252,7 @@ All configuration can be overridden with `SIGNET_`-prefixed environment variable
 | `SIGNET_BUNKER_PUBKEY`        | Bunker pubkey (npub/hex) for signetctl to address the bunker |
 | `SIGNET_RELAYS`                | Comma-separated relay URLs               |
 | `SIGNET_LOG_LEVEL`            | `debug`, `info`, `warn`, `error`         |
+| `SIGNET_MLOCK_MODE`           | Process lock policy: `future` (default), `current`, or `off` |
 | `SIGNET_DB_PATH`              | SQLCipher database path                  |
 | `SIGNET_HEALTH_PORT`          | Health endpoint port (0 to disable)      |
 | `SIGNET_AUDIT_PATH`           | Audit log file path (empty = stdout)     |
@@ -397,9 +400,25 @@ curl http://localhost:8080/health
 }
 ```
 
+## Memory Budget
+
+The Docker profile budgets Signet at a 1GiB hard memory limit with a 128MiB
+reservation. That budget keeps the secure default `SIGNET_MLOCK_MODE=future`
+viable while leaving headroom for relay reconnect/auth bursts, SQLCipher, GLib,
+libwebsockets, and JSON parsing. On glibc/Linux, Signet also reduces allocator
+retention at startup and calls `malloc_trim()` every 64 NIP-46 requests after
+sensitive buffers have been wiped and freed.
+
+`future` remains the recommended production mode because it locks heap and stack
+pages allocated after startup, before any Signet secrets are loaded. Operators
+who must run inside a much smaller memory cgroup can set
+`SIGNET_MLOCK_MODE=current`; hot key material and decrypted secret payloads still
+use `sodium_malloc()`/per-allocation locking, but transient GLib heap and stack
+copies may be swappable. `SIGNET_MLOCK_MODE=off` is for local testing only.
+
 ## Testing & CI
 
-Signet has a real hardening test suite: 17 Meson tests / 18 CMake ctests (plus passkeys-ON entries) cover real crypto paths, rate-limit enforcement, signed-challenge authentication verification, audit hash-chain tamper detection, management replay protection, connect-secret reissue and self-service authorization, persistent client-binding pairing/reconnect/revocation, and pubkey backfill/uniqueness. `.github/workflows/signet-ci.yml` runs the Signet CI matrix, including a passkeys-ON entry.
+Signet has a real hardening test suite: 18 Meson tests / 19 CMake ctests (plus passkeys-ON entries) cover real crypto paths, rate-limit enforcement, signed-challenge authentication verification, audit hash-chain tamper detection, management replay protection, connect-secret reissue and self-service authorization, memory budget hardening, persistent client-binding pairing/reconnect/revocation, and pubkey backfill/uniqueness. `.github/workflows/signet-ci.yml` runs the Signet CI matrix, including a passkeys-ON entry.
 
 ## Security Model
 
@@ -408,6 +427,7 @@ Signet has a real hardening test suite: 17 Meson tests / 18 CMake ctests (plus p
 - SQLCipher provides AES-256 encryption at rest and is verified at startup with `PRAGMA cipher_version` plus a keyed read; with `SIGNET_REQUIRE_ENCRYPTED_DB=true`, verification failure stops the daemon
 - Credential payloads are envelope-encrypted with per-agent libsodium secretbox keys derived via BLAKE2b from the store DEK and agent pubkey
 - Core dumps disabled via `prctl(PR_SET_DUMPABLE, 0)`
+- Process memory locking defaults to `MCL_CURRENT|MCL_FUTURE`; allocator trimming reduces burst high-water RSS without relaxing per-allocation key locking
 - Management protocol uses NIP-44 v2 encryption between provisioner and bunker, and ACKs fail closed instead of falling back to plaintext on encryption errors
 - Relay publish reports an error when zero relays are connected instead of pretending success
 - Bootstrap tokens are single-use, time-limited, attempt-capped, and stored as SHA256 hashes; `POST /bootstrap` consumes them atomically and replay returns 403

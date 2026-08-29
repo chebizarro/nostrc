@@ -15,6 +15,7 @@
  */
 
 #include "signet/signet_config.h"
+#include "signet/memory_hardening.h"
 #include "signet/audit_logger.h"
 #include "signet/replay_cache.h"
 #include "signet/key_store.h"
@@ -82,9 +83,6 @@ static int signetd_subscribe_mgmt_kinds(SignetRelayPool *relays,
 #include <string.h>
 #include <time.h>
 
-/* Process hardening */
-#include <sys/mman.h>
-#include <sys/resource.h>
 #ifdef SIGNET_ENABLE_TEST_HOOKS
 #include <sys/types.h>
 #include <unistd.h>
@@ -485,44 +483,32 @@ int main(int argc, char **argv) {
   }
 #endif
 
-  /* Lock all current and future pages in memory — prevents key material
-   * from being swapped to disk.  sodium_malloc() locks individual allocs,
-   * but this covers GLib internals and stack frames that transiently hold
-   * secret bytes.
-   *
-   * Even with CAP_IPC_LOCK, mlockall can fail if RLIMIT_MEMLOCK is too low
-   * (Docker defaults to 64 KB).  Try to raise it first. */
-  {
-    struct rlimit rl;
-    if (getrlimit(RLIMIT_MEMLOCK, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY) {
-      rl.rlim_cur = RLIM_INFINITY;
-      rl.rlim_max = RLIM_INFINITY;
-      if (setrlimit(RLIMIT_MEMLOCK, &rl) != 0) {
-        /* CAP_IPC_LOCK allows unlimited mlock but may not grant setrlimit.
-         * Try a generous but finite limit instead. */
-        rl.rlim_cur = 512ULL * 1024 * 1024; /* 512 MiB */
-        rl.rlim_max = 512ULL * 1024 * 1024;
-        (void)setrlimit(RLIMIT_MEMLOCK, &rl);
-      }
-    }
+  signet_memory_apply_allocator_policy();
 
-    int mlock_flags = MCL_CURRENT | MCL_FUTURE;
-    if (mlockall(mlock_flags) != 0) {
-      /* MCL_FUTURE is the aggressive flag — locks every future mmap/malloc.
-       * Fall back to MCL_CURRENT which just locks the pages already mapped. */
-      if (mlockall(MCL_CURRENT) != 0) {
-        fprintf(stderr, "signetd: warning: mlockall() failed: %s\n"
-                "  Per-allocation sodium_malloc mlock is still in effect, but GLib\n"
-                "  heap and stack frames may be swappable.  To fix:\n"
-                "    Docker:  cap_add: [IPC_LOCK] + ulimits.memlock: -1\n"
-                "    systemd: MemoryDenyWriteExecute=no, LimitMEMLOCK=infinity\n"
-                "    bare:    setcap cap_ipc_lock+ep signetd\n",
-                strerror(errno));
-      } else {
-        g_message("[signetd] mlockall(MCL_CURRENT) OK (MCL_FUTURE unavailable)");
-      }
+  /* Lock pages before any secrets are loaded. SIGNET_MLOCK_MODE=future is the
+   * default and preserves the historical MCL_FUTURE behavior; current/off are
+   * explicit constrained-runtime choices that still leave sodium_malloc()
+   * per-allocation locking in effect for hot key material. */
+  {
+    int valid = 1;
+    SignetMlockMode mode = signet_mlock_mode_from_env(g_getenv("SIGNET_MLOCK_MODE"), &valid);
+    if (!valid) {
+      fprintf(stderr, "signetd: warning: invalid SIGNET_MLOCK_MODE; using future\n");
+    }
+    char mlock_err[256];
+    int mlock_rc = signet_memory_lock_process(mode, mlock_err, sizeof(mlock_err));
+    if (mlock_rc == 0) {
+      g_message("[signetd] mlock mode '%s' active", signet_mlock_mode_to_string(mode));
+    } else if (mlock_rc > 0) {
+      g_message("[signetd] %s", mlock_err);
     } else {
-      g_message("[signetd] mlockall(MCL_CURRENT|MCL_FUTURE) OK — all pages locked");
+      fprintf(stderr, "signetd: warning: %s\n"
+              "  Per-allocation sodium_malloc mlock is still in effect, but GLib\n"
+              "  heap and stack frames may be swappable. To fix:\n"
+              "    Docker:  cap_add: [IPC_LOCK] + ulimits.memlock: -1\n"
+              "    systemd: MemoryDenyWriteExecute=no, LimitMEMLOCK=infinity\n"
+              "    bare:    setcap cap_ipc_lock+ep signetd\n",
+              mlock_err);
     }
   }
 

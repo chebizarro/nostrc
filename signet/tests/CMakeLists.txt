@@ -22,6 +22,13 @@ if (TARGET PkgConfig::GLIB)
   target_link_libraries(test_replay_cache PRIVATE PkgConfig::GLIB)
 endif()
 
+# Memory hardening policy test
+add_executable(test_memory_hardening test_memory_hardening.c)
+target_link_libraries(test_memory_hardening PRIVATE signet_core)
+if (TARGET PkgConfig::GLIB)
+  target_link_libraries(test_memory_hardening PRIVATE PkgConfig::GLIB)
+endif()
+
 # Policy engine test
 add_executable(test_policy_engine test_policy_engine.c)
 target_link_libraries(test_policy_engine PRIVATE signet_core)
@@ -300,6 +307,7 @@ endif()
 # Register tests with CTest
 add_test(NAME signet_smoke COMMAND test_signet_smoke)
 add_test(NAME replay_cache COMMAND test_replay_cache)
+add_test(NAME memory_hardening COMMAND test_memory_hardening)
 add_test(NAME policy_engine COMMAND test_policy_engine)
 add_test(NAME audit_logger COMMAND test_audit_logger)
 add_test(NAME bootstrap_contract COMMAND test_bootstrap_contract)

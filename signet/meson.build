@@ -205,6 +205,7 @@ signet_includes = [
 # Core library sources (everything except main entrypoints)
 signet_core_sources = files(
   'src/signet_config.c',
+  'src/memory_hardening.c',
   'src/store.c',
   'src/audit_logger.c',
   'src/replay_cache.c',

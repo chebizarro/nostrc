@@ -17,6 +17,7 @@
 #include "signet/nip46_server.h"
 #include "signet/cascadia.h"
 #include "signet/health_server.h"  /* g_signet_metrics */
+#include "signet/memory_hardening.h"
 
 #include "signet/relay_pool.h"
 #include "signet/policy_engine.h"
@@ -1026,6 +1027,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   free(dec_err);
 
   nostr_nip46_request_free(&req);
+  signet_memory_trim_after_request();
 
   return published;
 }

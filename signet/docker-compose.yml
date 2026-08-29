@@ -12,6 +12,7 @@
 #   SIGNET_DB_KEY       - Master key for SQLCipher (min 32 bytes, hex)
 #   SIGNET_BUNKER_NSEC  - Bunker identity nsec (bech32 nsec1... or hex)
 #   SIGNET_RELAYS       - Comma-separated relay URLs
+#   SIGNET_MLOCK_MODE   - future|current|off (default future)
 
 services:
   signetd:
@@ -27,6 +28,7 @@ services:
       - SIGNET_RELAYS=${SIGNET_RELAYS:-wss://nos.lol}
       - SIGNET_LOG_LEVEL=${SIGNET_LOG_LEVEL:-info}
       - SIGNET_PROVISIONER_PUBKEYS=${SIGNET_PROVISIONER_PUBKEYS:-}
+      - SIGNET_MLOCK_MODE=${SIGNET_MLOCK_MODE:-future}
 
     volumes:
       - signet-data:/data
@@ -47,14 +49,15 @@ services:
         soft: -1              # unlimited — mlockall(MCL_FUTURE) needs this
         hard: -1
 
-    # Resource limits
+    # Resource limits. 1GiB keeps MCL_FUTURE viable during short relay/auth
+    # bursts while allocator trimming returns freed pages after the burst.
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 1G
           cpus: '1.0'
         reservations:
-          memory: 64M
+          memory: 128M
 
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/health"]
