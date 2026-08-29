@@ -735,8 +735,20 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
 
 static void *write_error(void *arg) {
     GoChannel *chan = (GoChannel *)arg;
-    go_channel_send(chan, new_error(0, "connection closed"));
+    Error *err = new_error(0, "connection closed");
+    if (go_channel_send(chan, err) != 0) {
+        free_error(err);
+    }
+    go_channel_unref(chan);
     return NULL;
+}
+
+static void schedule_write_error(GoChannel *chan) {
+    if (!chan) return;
+    if (!go_channel_ref(chan)) return;
+    if (go_fiber_compat(write_error, chan) != 0) {
+        write_error(chan);
+    }
 }
 
 // Worker: processes relay->priv->write_queue and writes frames to the connection.
@@ -1394,7 +1406,7 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
         if (req) free(req);
         if (msg_copy) free(msg_copy);
         go_channel_unref(chan); // drop the extra ref we just took
-        go_fiber_compat(write_error, chan);
+        schedule_write_error(chan);
         return chan;
     }
     req->msg = msg_copy;
@@ -1403,9 +1415,10 @@ GoChannel *nostr_relay_write(NostrRelay *r, char *msg) {
     // Enqueue request (non-blocking); if fails and context canceled, return error
     if (go_channel_send(r->priv->write_queue, req) != 0) {
         // Fallback: if cannot enqueue, surface error
-        go_fiber_compat(write_error, chan);
         free(req->msg);
         free(req);
+        go_channel_unref(chan); // drop the writer-owned ref; no writer will receive req
+        schedule_write_error(chan);
         return chan;
     }
     return chan;

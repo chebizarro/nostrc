@@ -39,6 +39,22 @@ int main(void) {
     int send_rc = go_channel_send(relay->priv->write_queue, (void*)0x1);
     assert(send_rc != 0);
 
+    GoChannel *write_ch = nostr_relay_write(relay, "closed-queue-probe");
+    assert(write_ch != NULL);
+
+    Error *write_err = NULL;
+    assert(go_channel_receive(write_ch, (void **)&write_err) == 0);
+    assert(write_err != NULL);
+    free_error(write_err);
+
+    for (int i = 0; i < 100 &&
+         atomic_load_explicit(&write_ch->refs, memory_order_acquire) != 1; i++) {
+        usleep(1000);
+    }
+    assert(atomic_load_explicit(&write_ch->refs, memory_order_acquire) == 1);
+    go_channel_close(write_ch);
+    go_channel_unref(write_ch);
+
     // Free the relay; should be safe after close and not hang
     nostr_relay_free(relay);
     go_context_free(ctx);
