@@ -287,6 +287,27 @@ int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_j
  */
 bool signet_relay_pool_is_connected(SignetRelayPool *rp);
 
+/**
+ * signet_relay_pool_dial_attempts:
+ * @rp: (not nullable): a #SignetRelayPool
+ *
+ * Total failed connection attempts across the pool's relays, as counted by
+ * libnostr's per-relay reconnect state.
+ *
+ * fp-1r0k: this exists because "the daemon stayed available while a relay was
+ * unreachable" is only meaningful if a dial was genuinely in flight at the time.
+ * Without it a test cannot tell a fast main loop from an environment where no
+ * dial ever happened, and would pass for the wrong reason. Also usable as a
+ * health signal: a climbing count with nothing connected is a bad relay URL.
+ *
+ * Thread safety: safe to call concurrently.
+ *
+ * Returns: the number of failed dials since the pool was created
+ *
+ * Since: 1.0
+ */
+unsigned signet_relay_pool_dial_attempts(SignetRelayPool *rp);
+
 /* NPA-10: Check if any active subscription has received EOSE.
  * Returns true once the relay has acknowledged our subscription by sending
  * End-of-Stored-Events. Useful for waiting until AUTH + subscribe is complete

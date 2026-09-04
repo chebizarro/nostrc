@@ -455,7 +455,12 @@ SignetRelayPool *signet_relay_pool_new(const SignetRelayPoolConfig *cfg) {
 
     for (size_t i = 0; i < cfg->n_relays; i++) {
       rp->urls[i] = g_strdup(cfg->relays[i] ? cfg->relays[i] : "");
-      nostr_simple_pool_ensure_relay(rp->pool, rp->urls[i]);
+      /* fp-1r0k: register, do not dial. This runs on signetd's startup path
+       * before the main loop exists, and the blocking variant spent up to 30s
+       * per unreachable relay here -- delaying every listener the daemon is
+       * supposed to be bringing up. libnostr's redial worker connects them in
+       * the background and keeps retrying (fp-ieg8). */
+      nostr_simple_pool_ensure_relay_async(rp->pool, rp->urls[i]);
     }
   }
 
@@ -575,6 +580,26 @@ static NostrFilters *signet_relay_pool_build_filters_locked(SignetRelayPool *rp)
   return filters;
 }
 
+/* fp-1r0k: why rp->mu is still held across the subscribe below.
+ *
+ * The stall this issue is about was NOT the mutex, it was the dial:
+ * nostr_simple_pool_subscribe() called ensure_relay for every URL, so a
+ * subscribe on an unreachable relay blocked for the libnostr connect timeout
+ * (30s, not configurable) -- and because it blocked with rp->mu held, it also
+ * blocked every caller that merely wanted to read the pool. signetd runs this
+ * from its health tick every 30s, so an unreachable relay degraded the daemon to
+ * roughly zero availability: no 25910, no NIP-46, no NIP-5L.
+ *
+ * Switching to subscribe_async removes the dial from this path entirely, which
+ * leaves a critical section that does no network I/O at all: build a filter,
+ * register URLs, fire on whatever is already connected.
+ *
+ * Keeping rp->mu is then deliberate, not an oversight. It is exactly what makes
+ * reading rp->pool safe: signet_relay_pool_set_relays() swaps rp->pool under
+ * rp->mu and hands the superseded pool to a background worker that frees it
+ * without the lock. Releasing rp->mu here would need a separate in-use guard on
+ * the inner pool to replace a guarantee we already have.
+ */
 int signet_relay_pool_subscribe_kinds(SignetRelayPool *rp, const int *kinds, size_t n_kinds) {
   if (!rp || !rp->pool) return -1;
   if (!kinds || n_kinds == 0) return 0;
@@ -597,9 +622,13 @@ int signet_relay_pool_subscribe_kinds(SignetRelayPool *rp, const int *kinds, siz
     return -1;
   }
 
-  nostr_simple_pool_subscribe(rp->pool,
-                               (const char **)rp->urls, rp->n_urls,
-                               *filters, true);
+  /* fp-1r0k: _async -- never dials on the caller's thread. Relays that are not
+   * up yet are registered and connected in the background; libnostr's reconcile
+   * pass fires this same filter set on each one as it connects (signet sets
+   * auto_unsub_on_eose false, which is what keeps that pass armed). */
+  nostr_simple_pool_subscribe_async(rp->pool,
+                                    (const char **)rp->urls, rp->n_urls,
+                                    *filters, true);
 
   g_mutex_unlock(&rp->mu);
 
@@ -635,9 +664,13 @@ int signet_relay_pool_subscribe_scoped(SignetRelayPool *rp,
     return -1;
   }
 
-  nostr_simple_pool_subscribe(rp->pool,
-                               (const char **)rp->urls, rp->n_urls,
-                               *filters, true);
+  /* fp-1r0k: _async -- never dials on the caller's thread. Relays that are not
+   * up yet are registered and connected in the background; libnostr's reconcile
+   * pass fires this same filter set on each one as it connects (signet sets
+   * auto_unsub_on_eose false, which is what keeps that pass armed). */
+  nostr_simple_pool_subscribe_async(rp->pool,
+                                    (const char **)rp->urls, rp->n_urls,
+                                    *filters, true);
 
   g_mutex_unlock(&rp->mu);
 
@@ -1175,6 +1208,21 @@ bool signet_relay_pool_is_connected(SignetRelayPool *rp) {
 
   g_mutex_unlock(&rp->mu);
   return any;
+}
+
+unsigned signet_relay_pool_dial_attempts(SignetRelayPool *rp) {
+  if (!rp || !rp->pool) return 0;
+
+  g_mutex_lock(&rp->mu);
+  NostrSimplePool *pool = rp->pool;
+  unsigned total = 0;
+  for (size_t i = 0; i < pool->relay_count; i++) {
+    if (!pool->relays[i]) continue;
+    int attempts = nostr_relay_get_reconnect_attempt(pool->relays[i]);
+    if (attempts > 0) total += (unsigned)attempts;
+  }
+  g_mutex_unlock(&rp->mu);
+  return total;
 }
 
 int64_t signet_relay_pool_update_since_from_latest(SignetRelayPool *rp) {

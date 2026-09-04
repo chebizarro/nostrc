@@ -15,6 +15,8 @@
 
 #include "signet/relay_pool.h"
 
+#include "test_check.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -374,6 +376,123 @@ static void test_null_safety(void) {
   PASS();
 }
 
+/* ---- fp-1r0k: the health-tick path must not stall the main loop ---------- */
+
+/* A hostname that cannot resolve (RFC 2606 reserves .invalid), so the relay
+ * never connects and the daemon stays in the state this issue is about. */
+#define STALL_RELAY_URL "ws://relay-fp-1r0k-does-not-exist.invalid:80"
+#define STALL_TEST_PUBKEY \
+  "1111111111111111111111111111111111111111111111111111111111111111"
+
+/* signetd_main.c runs signetd_health_tick every 250ms, and it reaches
+ * signet_relay_pool_subscribe_scoped both on the CLOSED-subscription path and
+ * after its 30s-throttled pool bounce. That subscribe used to hold rp->mu across
+ * nostr_simple_pool_subscribe -> ensure_relay -> a 30s dial, so while any
+ * configured relay was unreachable the daemon stalled roughly 30s out of every
+ * 30s -- serving no 25910 management, no NIP-46 and no NIP-5L for most of its
+ * life. A mistyped relay URL was enough to cause it.
+ *
+ * On proving it: no socket arrangement reproduces the stall, because
+ * nostr_connection_new() only blocks when libwebsockets' service thread is stuck
+ * (in practice inside a synchronous DNS lookup), and in a test environment every
+ * dial finishes in milliseconds. A bare "the tick was fast" assertion would
+ * therefore pass just as happily with the bug present. So this injects a
+ * genuinely slow dial and requires that a slow dial actually ran concurrently
+ * with the ticks before making the strong claim. */
+static void test_health_tick_does_not_stall_on_unreachable_relay(void) {
+  TEST(health_tick_does_not_stall_on_unreachable_relay);
+
+  const gint64 dial_delay_ms = 1500;
+  g_setenv("NOSTR_TEST_DIAL_DELAY_MS", "1500", TRUE);
+
+  const char *relays[] = { STALL_RELAY_URL };
+  SignetRelayPoolConfig cfg = {
+    .relays = relays,
+    .n_relays = 1,
+    .on_event = NULL,
+    .user_data = NULL,
+    .auth_sk_hex = NULL,
+  };
+
+  /* Construction is on signetd's startup path, before the main loop exists. */
+  gint64 t0 = g_get_monotonic_time();
+  SignetRelayPool *rp = signet_relay_pool_new(&cfg);
+  gint64 new_us = g_get_monotonic_time() - t0;
+  CHECK(rp != NULL);
+  CHECK(signet_relay_pool_start(rp) == 0);
+
+  const int kinds[] = { 24133, 25910, 1059 };
+  gint64 worst_tick_us = 0;
+  gint64 bounce_us = 0;
+
+  /* ~3.5s of ticks: comfortably longer than one injected 1500ms dial, so a slow
+   * dial is in flight for part of the window whatever the scheduling. */
+  for (int i = 0; i < 14; i++) {
+    gint64 tick0 = g_get_monotonic_time();
+
+    /* What the tick does every time round, all of it taking rp->mu. */
+    (void)signet_relay_pool_is_connected(rp);
+    (void)signet_relay_pool_check_sub_closed(rp);
+    CHECK(signet_relay_pool_subscribe_scoped(rp, kinds, 3,
+                                             STALL_TEST_PUBKEY, 12345) == 0);
+
+    /* And what the daemon's other listeners need concurrently -- these are the
+     * calls that used to block on rp->mu behind the dial even though they never
+     * touch the network. */
+    size_t n_urls = 0;
+    const char *const *urls = signet_relay_pool_get_urls(rp, &n_urls);
+    CHECK(n_urls == 1);
+    CHECK(strcmp(urls[0], STALL_RELAY_URL) == 0);
+
+    gint64 tick_us = g_get_monotonic_time() - tick0;
+    if (tick_us > worst_tick_us) worst_tick_us = tick_us;
+
+    /* The tick's heavier branch, throttled to once per 30s in the daemon:
+     * bounce the pool and replay the subscription. */
+    if (i == 4) {
+      gint64 b0 = g_get_monotonic_time();
+      (void)signet_relay_pool_update_since_from_latest(rp);
+      signet_relay_pool_stop(rp);
+      CHECK(signet_relay_pool_start(rp) == 0);
+      CHECK(signet_relay_pool_subscribe_scoped(rp, kinds, 3,
+                                               STALL_TEST_PUBKEY, 12345) == 0);
+      bounce_us = g_get_monotonic_time() - b0;
+    }
+
+    g_usleep(250 * 1000);
+  }
+
+  unsigned dials = signet_relay_pool_dial_attempts(rp);
+  fprintf(stderr, "[new=%lldus worst_tick=%lldus bounce=%lldus dials=%u] ",
+          (long long)new_us, (long long)worst_tick_us,
+          (long long)bounce_us, dials);
+
+  /* Nothing on the main-loop path may cost anything like a dial. With the bug,
+   * construction and every tick each cost the full injected delay -- and in
+   * production the full 30s libnostr connect timeout, per unreachable relay. */
+  CHECK(new_us < 500 * 1000);
+  CHECK(worst_tick_us < 500 * 1000);
+  /* The bounce joins libnostr worker threads, which is bounded by their 200ms
+   * select cadence -- not by any connect. */
+  CHECK(bounce_us < 1000 * 1000);
+
+  if (dials >= 1) {
+    /* Strong form: at least one dial that takes dial_delay_ms ran to completion
+     * during the window, and no tick came close to it. Availability is
+     * demonstrated against a real slow dial, not asserted in its absence. */
+    CHECK(worst_tick_us * 3 < dial_delay_ms * 1000);
+    CHECK(new_us * 3 < dial_delay_ms * 1000);
+  } else {
+    /* Report rather than pass quietly. Some environments cannot complete a dial
+     * at all, and then the concurrency this test is about was never exercised. */
+    fprintf(stderr, "[no background dial completed here; bound only] ");
+  }
+
+  g_unsetenv("NOSTR_TEST_DIAL_DELAY_MS");
+  signet_relay_pool_free(rp);
+  PASS();
+}
+
 /* ---- main ---- */
 
 int main(void) {
@@ -388,6 +507,7 @@ int main(void) {
   test_handle_malformed_json();
   test_relay_pool_urls();
   test_null_safety();
+  test_health_tick_does_not_stall_on_unreachable_relay();
 
   printf("\n--- Results: %d passed, %d failed ---\n", g_tests_passed, g_tests_failed);
   return g_tests_failed > 0 ? 1 : 0;
