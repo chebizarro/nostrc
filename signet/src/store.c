@@ -524,6 +524,19 @@ static const char *SIGNET_SCHEMA_SQL =
   "  granted_by TEXT"
   ");"
 
+  /* v4.1 (fp-56t): revocation tombstones. Under the "config is desired
+   * state" decision (D2) a SIGHUP reload applies the config's provisioner
+   * set authoritatively. Without a durable record of runtime revocations a
+   * reload would silently RESURRECT a provisioner that was revoked at
+   * runtime but is still listed in a stale config file — a security
+   * regression introduced by the reload itself. Every revocation therefore
+   * leaves a tombstone that reconciliation must honour. */
+  "CREATE TABLE IF NOT EXISTS provisioner_revocations ("
+  "  pubkey_hex TEXT PRIMARY KEY NOT NULL COLLATE NOCASE,"
+  "  revoked_at INTEGER NOT NULL,"
+  "  revoked_by TEXT"
+  ");"
+
   /* v2: deny list for revocation */
   "CREATE TABLE IF NOT EXISTS deny_list ("
   "  pubkey_hex TEXT PRIMARY KEY NOT NULL,"
@@ -2052,13 +2065,13 @@ bool signet_store_is_provisioner(SignetStore *store, const char *pubkey_hex) {
   return found;
 }
 
-int signet_store_grant_provisioner(SignetStore *store,
-                                   const char *pubkey_hex,
-                                   const char *actor_pubkey_hex,
-                                   int64_t now) {
-  if (!store || !store->open || !store->db ||
-      !signet_store_valid_pubkey_hex(pubkey_hex))
-    return -1;
+/* Grant without transaction management — caller owns any surrounding tx.
+ * An explicit grant clears any revocation tombstone: re-granting a
+ * previously revoked provisioner is a deliberate authorization decision. */
+static int signet_store_grant_provisioner_locked(SignetStore *store,
+                                                 const char *pubkey_hex,
+                                                 const char *actor_pubkey_hex,
+                                                 int64_t now) {
   sqlite3_stmt *stmt = NULL;
   if (sqlite3_prepare_v2(
           store->db,
@@ -2074,14 +2087,27 @@ int signet_store_grant_provisioner(SignetStore *store,
     sqlite3_bind_null(stmt, 3);
   int rc = sqlite3_step(stmt);
   sqlite3_finalize(stmt);
+  if (rc != SQLITE_DONE) return -1;
+
+  sqlite3_stmt *clear = NULL;
+  if (sqlite3_prepare_v2(
+          store->db,
+          "DELETE FROM provisioner_revocations WHERE pubkey_hex=?1 COLLATE NOCASE;",
+          -1, &clear, NULL) != SQLITE_OK)
+    return -1;
+  sqlite3_bind_text(clear, 1, pubkey_hex, -1, SQLITE_TRANSIENT);
+  rc = sqlite3_step(clear);
+  sqlite3_finalize(clear);
   return rc == SQLITE_DONE ? 0 : -1;
 }
 
-int signet_store_revoke_provisioner(SignetStore *store,
-                                    const char *pubkey_hex) {
-  if (!store || !store->open || !store->db ||
-      !signet_store_valid_pubkey_hex(pubkey_hex))
-    return -1;
+/* Revoke without transaction management — caller owns any surrounding tx.
+ * Always writes a tombstone so a later config reload cannot resurrect the
+ * revoked authority (fp-56t / decision D2). */
+static int signet_store_revoke_provisioner_locked(SignetStore *store,
+                                                  const char *pubkey_hex,
+                                                  const char *actor_pubkey_hex,
+                                                  int64_t now) {
   sqlite3_stmt *stmt = NULL;
   if (sqlite3_prepare_v2(
           store->db,
@@ -2091,7 +2117,286 @@ int signet_store_revoke_provisioner(SignetStore *store,
   sqlite3_bind_text(stmt, 1, pubkey_hex, -1, SQLITE_TRANSIENT);
   int rc = sqlite3_step(stmt);
   sqlite3_finalize(stmt);
+  if (rc != SQLITE_DONE) return -1;
+
+  sqlite3_stmt *tomb = NULL;
+  if (sqlite3_prepare_v2(
+          store->db,
+          "INSERT INTO provisioner_revocations(pubkey_hex,revoked_at,revoked_by) "
+          "VALUES(?1,?2,?3) "
+          "ON CONFLICT(pubkey_hex) DO UPDATE SET revoked_at=excluded.revoked_at,"
+          "revoked_by=excluded.revoked_by;",
+          -1, &tomb, NULL) != SQLITE_OK)
+    return -1;
+  sqlite3_bind_text(tomb, 1, pubkey_hex, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(tomb, 2, now);
+  if (actor_pubkey_hex)
+    sqlite3_bind_text(tomb, 3, actor_pubkey_hex, -1, SQLITE_TRANSIENT);
+  else
+    sqlite3_bind_null(tomb, 3);
+  rc = sqlite3_step(tomb);
+  sqlite3_finalize(tomb);
   return rc == SQLITE_DONE ? 0 : -1;
+}
+
+int signet_store_grant_provisioner(SignetStore *store,
+                                   const char *pubkey_hex,
+                                   const char *actor_pubkey_hex,
+                                   int64_t now) {
+  if (!store || !store->open || !store->db ||
+      !signet_store_valid_pubkey_hex(pubkey_hex))
+    return -1;
+  if (sqlite3_exec(store->db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) != SQLITE_OK)
+    return -1;
+  if (signet_store_grant_provisioner_locked(store, pubkey_hex,
+                                            actor_pubkey_hex, now) != 0) {
+    (void)sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return -1;
+  }
+  return sqlite3_exec(store->db, "COMMIT;", NULL, NULL, NULL) == SQLITE_OK ? 0 : -1;
+}
+
+int signet_store_revoke_provisioner_ex(SignetStore *store,
+                                       const char *pubkey_hex,
+                                       const char *actor_pubkey_hex,
+                                       int64_t now) {
+  if (!store || !store->open || !store->db ||
+      !signet_store_valid_pubkey_hex(pubkey_hex))
+    return -1;
+  if (sqlite3_exec(store->db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) != SQLITE_OK)
+    return -1;
+  if (signet_store_revoke_provisioner_locked(store, pubkey_hex,
+                                             actor_pubkey_hex, now) != 0) {
+    (void)sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return -1;
+  }
+  return sqlite3_exec(store->db, "COMMIT;", NULL, NULL, NULL) == SQLITE_OK ? 0 : -1;
+}
+
+int signet_store_revoke_provisioner(SignetStore *store,
+                                    const char *pubkey_hex) {
+  return signet_store_revoke_provisioner_ex(store, pubkey_hex, NULL,
+                                            (int64_t)time(NULL));
+}
+
+int signet_store_policy_state_mark_once(SignetStore *store, const char *name,
+                                        int64_t now) {
+  if (!store || !store->open || !store->db || !name || !name[0]) return -1;
+  if (sqlite3_exec(store->db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) != SQLITE_OK)
+    return -1;
+
+  sqlite3_stmt *check = NULL;
+  if (sqlite3_prepare_v2(store->db,
+                         "SELECT 1 FROM policy_state WHERE name=?1;",
+                         -1, &check, NULL) != SQLITE_OK) {
+    (void)sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return -1;
+  }
+  sqlite3_bind_text(check, 1, name, -1, SQLITE_TRANSIENT);
+  bool present = sqlite3_step(check) == SQLITE_ROW;
+  sqlite3_finalize(check);
+
+  if (present) {
+    return sqlite3_exec(store->db, "COMMIT;", NULL, NULL, NULL) == SQLITE_OK ? 1 : -1;
+  }
+
+  sqlite3_stmt *mark = NULL;
+  if (sqlite3_prepare_v2(
+          store->db,
+          "INSERT INTO policy_state(name,initialized_at) VALUES(?1,?2);",
+          -1, &mark, NULL) != SQLITE_OK) {
+    (void)sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return -1;
+  }
+  sqlite3_bind_text(mark, 1, name, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(mark, 2, now);
+  int rc = sqlite3_step(mark);
+  sqlite3_finalize(mark);
+  if (rc != SQLITE_DONE) {
+    (void)sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+    return -1;
+  }
+  return sqlite3_exec(store->db, "COMMIT;", NULL, NULL, NULL) == SQLITE_OK ? 0 : -1;
+}
+
+int64_t signet_store_provisioner_revoked_at(SignetStore *store,
+                                            const char *pubkey_hex) {
+  if (!store || !store->open || !store->db ||
+      !signet_store_valid_pubkey_hex(pubkey_hex))
+    return 0;
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(
+          store->db,
+          "SELECT revoked_at FROM provisioner_revocations "
+          "WHERE pubkey_hex=?1 COLLATE NOCASE;",
+          -1, &stmt, NULL) != SQLITE_OK)
+    return 0;
+  sqlite3_bind_text(stmt, 1, pubkey_hex, -1, SQLITE_TRANSIENT);
+  int64_t at = 0;
+  if (sqlite3_step(stmt) == SQLITE_ROW)
+    at = (int64_t)sqlite3_column_int64(stmt, 0);
+  sqlite3_finalize(stmt);
+  return at;
+}
+
+int signet_store_list_provisioners(SignetStore *store,
+                                   char ***out_pubkeys,
+                                   size_t *out_count) {
+  if (!out_pubkeys || !out_count) return -1;
+  *out_pubkeys = NULL;
+  *out_count = 0;
+  if (!store || !store->open || !store->db) return -1;
+
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(
+          store->db,
+          "SELECT pubkey_hex FROM provisioners ORDER BY pubkey_hex;",
+          -1, &stmt, NULL) != SQLITE_OK)
+    return -1;
+
+  GPtrArray *arr = g_ptr_array_new();
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    const unsigned char *pk = sqlite3_column_text(stmt, 0);
+    if (pk) g_ptr_array_add(arr, g_strdup((const char *)pk));
+  }
+  sqlite3_finalize(stmt);
+
+  *out_count = arr->len;
+  *out_pubkeys = (char **)g_ptr_array_free(arr, FALSE);
+  return 0;
+}
+
+void signet_store_free_provisioner_list(char **pubkeys, size_t count) {
+  if (!pubkeys) return;
+  for (size_t i = 0; i < count; i++) g_free(pubkeys[i]);
+  g_free(pubkeys);
+}
+
+int signet_store_reconcile_provisioners(SignetStore *store,
+                                        const char *const *desired,
+                                        size_t n_desired,
+                                        int64_t desired_source_mtime,
+                                        int64_t now,
+                                        SignetProvisionerReconcile *out) {
+  SignetProvisionerReconcile stats;
+  memset(&stats, 0, sizeof(stats));
+  if (out) memset(out, 0, sizeof(*out));
+  if (!store || !store->open || !store->db) return -1;
+
+  /* Reject the whole candidate set if any entry is malformed: a typo in the
+   * config must not silently drop authority for the rest of the fleet. */
+  for (size_t i = 0; i < n_desired; i++) {
+    if (!signet_store_valid_pubkey_hex(desired[i])) return -1;
+  }
+
+  if (sqlite3_exec(store->db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) != SQLITE_OK)
+    return -1;
+
+  /* Snapshot the currently-authorized set so we can compute removals. */
+  GHashTable *current = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  {
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(store->db,
+                           "SELECT pubkey_hex FROM provisioners;",
+                           -1, &stmt, NULL) != SQLITE_OK)
+      goto fail;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+      const unsigned char *pk = sqlite3_column_text(stmt, 0);
+      if (pk) g_hash_table_add(current, g_ascii_strdown((const char *)pk, -1));
+    }
+    sqlite3_finalize(stmt);
+  }
+
+  GHashTable *keep = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+  for (size_t i = 0; i < n_desired; i++) {
+    gchar *canon = g_ascii_strdown(desired[i], -1);
+    bool already = g_hash_table_contains(current, canon);
+
+    /* Tombstone check: a runtime revocation outranks a config entry that
+     * predates it. Only a config source written AFTER the revocation counts
+     * as a deliberate operator re-grant. desired_source_mtime <= 0 means the
+     * set came from an unstampable source (environment), which cannot have
+     * been written after the process started, so it never wins. */
+    int64_t revoked_at = 0;
+    {
+      sqlite3_stmt *stmt = NULL;
+      if (sqlite3_prepare_v2(
+              store->db,
+              "SELECT revoked_at FROM provisioner_revocations "
+              "WHERE pubkey_hex=?1 COLLATE NOCASE;",
+              -1, &stmt, NULL) != SQLITE_OK) {
+        g_free(canon);
+        g_hash_table_destroy(keep);
+        goto fail;
+      }
+      sqlite3_bind_text(stmt, 1, canon, -1, SQLITE_TRANSIENT);
+      if (sqlite3_step(stmt) == SQLITE_ROW)
+        revoked_at = (int64_t)sqlite3_column_int64(stmt, 0);
+      sqlite3_finalize(stmt);
+    }
+
+    if (revoked_at > 0 && desired_source_mtime <= revoked_at) {
+      /* Refuse to resurrect. The entry is deliberately NOT added to `keep`,
+       * so if it is somehow still authorized it gets revoked below. */
+      stats.refused_resurrect++;
+      g_free(canon);
+      continue;
+    }
+
+    g_hash_table_add(keep, g_strdup(canon));
+
+    if (already) {
+      stats.unchanged++;
+    } else {
+      if (signet_store_grant_provisioner_locked(store, canon, "config-reload",
+                                                now) != 0) {
+        g_free(canon);
+        g_hash_table_destroy(keep);
+        goto fail;
+      }
+      stats.granted++;
+    }
+    g_free(canon);
+  }
+
+  /* Config is desired state: anything authorized but no longer desired is
+   * revoked (and tombstoned, so it cannot come back by accident either). */
+  {
+    GHashTableIter it;
+    gpointer k = NULL;
+    g_hash_table_iter_init(&it, current);
+    GPtrArray *to_revoke = g_ptr_array_new_with_free_func(g_free);
+    while (g_hash_table_iter_next(&it, &k, NULL)) {
+      if (!g_hash_table_contains(keep, (const char *)k))
+        g_ptr_array_add(to_revoke, g_strdup((const char *)k));
+    }
+    for (guint i = 0; i < to_revoke->len; i++) {
+      const char *pk = (const char *)g_ptr_array_index(to_revoke, i);
+      if (signet_store_revoke_provisioner_locked(store, pk, "config-reload",
+                                                 now) != 0) {
+        g_ptr_array_free(to_revoke, TRUE);
+        g_hash_table_destroy(keep);
+        goto fail;
+      }
+      stats.revoked++;
+    }
+    g_ptr_array_free(to_revoke, TRUE);
+  }
+
+  g_hash_table_destroy(keep);
+  g_hash_table_destroy(current);
+
+  if (sqlite3_exec(store->db, "COMMIT;", NULL, NULL, NULL) != SQLITE_OK)
+    return -1;
+
+  if (out) *out = stats;
+  return 0;
+
+fail:
+  if (current) g_hash_table_destroy(current);
+  (void)sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+  return -1;
 }
 
 void signet_agent_record_clear(SignetAgentRecord *rec) {

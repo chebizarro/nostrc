@@ -70,8 +70,9 @@ struct SignetRelayPool {
  * libnostr now supports event_middleware_ex with user_data, so we pass
  * the SignetRelayPool pointer directly through the callback context. */
 
-/* Forward declaration — defined after public API section */
+/* Forward declarations — defined after public API section */
 static NostrFilters *signet_relay_pool_build_filters_locked(SignetRelayPool *rp);
+static void signet_relay_pool_clear_auth_cb_data(SignetRelayPool *rp);
 
 /* ----------------------- event middleware bridge -------------------------- */
 
@@ -453,18 +454,7 @@ void signet_relay_pool_free(SignetRelayPool *rp) {
   }
 
   /* Free per-relay auth callback data. */
-  if (rp->auth_cb_data) {
-    for (guint i = 0; i < rp->auth_cb_data->len; i++) {
-      SignetAuthCallbackData *d = (SignetAuthCallbackData *)g_ptr_array_index(rp->auth_cb_data, i);
-      if (d) {
-        memset(d->sk_hex, 0, sizeof(d->sk_hex));
-        g_mutex_clear(&d->challenge_mu);
-        free(d);
-      }
-    }
-    g_ptr_array_free(rp->auth_cb_data, TRUE);
-    rp->auth_cb_data = NULL;
-  }
+  signet_relay_pool_clear_auth_cb_data(rp);
 
   free(rp->active_kinds);
   rp->active_kinds = NULL;
@@ -820,6 +810,160 @@ int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_j
 
   g_object_unref(p);
   return 0;
+}
+
+/* Free the per-relay NIP-42 callback data owned by the pool. Caller must hold
+ * rp->mu (or otherwise guarantee no relay is still using the callbacks). */
+static void signet_relay_pool_clear_auth_cb_data(SignetRelayPool *rp) {
+  if (!rp->auth_cb_data) return;
+  for (guint i = 0; i < rp->auth_cb_data->len; i++) {
+    SignetAuthCallbackData *d =
+        (SignetAuthCallbackData *)g_ptr_array_index(rp->auth_cb_data, i);
+    if (!d) continue;
+    memset(d->sk_hex, 0, sizeof(d->sk_hex));
+    g_mutex_clear(&d->challenge_mu);
+    free(d);
+  }
+  g_ptr_array_free(rp->auth_cb_data, TRUE);
+  rp->auth_cb_data = NULL;
+}
+
+/* True when the pool is already serving exactly this URL set (order-
+ * insensitive). Caller must hold rp->mu. */
+static bool signet_relay_pool_urls_equal_locked(SignetRelayPool *rp,
+                                                const char *const *urls,
+                                                size_t n_urls) {
+  if (rp->n_urls != n_urls) return false;
+  for (size_t i = 0; i < n_urls; i++) {
+    const char *want = urls[i] ? urls[i] : "";
+    bool found = false;
+    for (size_t j = 0; j < rp->n_urls && !found; j++) {
+      if (rp->urls[j] && strcmp(rp->urls[j], want) == 0) found = true;
+    }
+    if (!found) return false;
+  }
+  return true;
+}
+
+int signet_relay_pool_set_relays(SignetRelayPool *rp,
+                                 const char *const *urls,
+                                 size_t n_urls) {
+  if (!rp || !urls || n_urls == 0) return -1;
+
+  g_mutex_lock(&rp->mu);
+
+  if (signet_relay_pool_urls_equal_locked(rp, urls, n_urls)) {
+    g_mutex_unlock(&rp->mu);
+    return 1; /* no change */
+  }
+
+  /* Build the replacement URL array first: if allocation fails we must not
+   * have torn down the working pool. */
+  char **new_urls = (char **)calloc(n_urls, sizeof(char *));
+  if (!new_urls) {
+    g_mutex_unlock(&rp->mu);
+    return -1;
+  }
+  for (size_t i = 0; i < n_urls; i++)
+    new_urls[i] = g_strdup(urls[i] ? urls[i] : "");
+
+  const gboolean was_started = rp->started;
+
+  /* libnostr's SimplePool has no "replace the relay set" primitive, and
+   * removing relays one by one leaves the subscription list pointing at
+   * connections we are about to drop. Coordinated replacement instead: swap
+   * the inner pool while keeping THIS SignetRelayPool handle alive, so every
+   * borrowed pointer held by nip46/mgmt/nip5l stays valid. */
+  NostrSimplePool *fresh = nostr_simple_pool_new();
+  if (!fresh) {
+    for (size_t i = 0; i < n_urls; i++) g_free(new_urls[i]);
+    free(new_urls);
+    g_mutex_unlock(&rp->mu);
+    return -1;
+  }
+
+  /* Publish the (empty, unstarted) replacement and take ownership of the old
+   * pool before releasing the lock, so concurrent callers see a coherent
+   * not-started pool rather than a dangling one. */
+  NostrSimplePool *old_pool = rp->pool;
+  GPtrArray *old_auth_cb_data = rp->auth_cb_data;
+  rp->pool = fresh;
+  rp->auth_cb_data = NULL;
+  rp->started = FALSE;
+
+  if (rp->urls) {
+    for (size_t i = 0; i < rp->n_urls; i++) g_free(rp->urls[i]);
+    free(rp->urls);
+  }
+  rp->urls = new_urls;
+  rp->n_urls = n_urls;
+
+  /* Tear the old pool down WITHOUT holding rp->mu. Stopping joins libnostr
+   * worker threads, and a worker may be inside signet_pool_event_middleware
+   * waiting on rp->mu — holding the lock across the join would deadlock. */
+  g_mutex_unlock(&rp->mu);
+
+  if (old_pool) {
+    if (was_started) nostr_simple_pool_stop(old_pool);
+    nostr_simple_pool_free(old_pool);
+  }
+  /* Only safe once the old pool's relays (and therefore its callbacks) are
+   * gone: this data was handed to those relays. */
+  if (old_auth_cb_data) {
+    for (guint i = 0; i < old_auth_cb_data->len; i++) {
+      SignetAuthCallbackData *d =
+          (SignetAuthCallbackData *)g_ptr_array_index(old_auth_cb_data, i);
+      if (!d) continue;
+      memset(d->sk_hex, 0, sizeof(d->sk_hex));
+      g_mutex_clear(&d->challenge_mu);
+      free(d);
+    }
+    g_ptr_array_free(old_auth_cb_data, TRUE);
+  }
+
+  g_mutex_lock(&rp->mu);
+
+  nostr_simple_pool_set_event_middleware_ex(rp->pool,
+                                            signet_pool_event_middleware, rp);
+  nostr_simple_pool_set_auto_unsub_on_eose(rp->pool, false);
+
+  for (size_t i = 0; i < rp->n_urls; i++)
+    nostr_simple_pool_ensure_relay(rp->pool, rp->urls[i]);
+
+  signet_relay_pool_register_auth(rp);
+
+  /* Restore subscription intent on the new connections. active_kinds,
+   * filter_pubkey_hex and filter_since were never cleared, so the daemon's
+   * subscriptions survive the relay change without the caller re-deriving
+   * them (and without a gap where 25910/1059 would be dropped). */
+  NostrFilters *filters = NULL;
+  if (was_started) {
+    nostr_simple_pool_start(rp->pool);
+    rp->started = TRUE;
+    filters = signet_relay_pool_build_filters_locked(rp);
+    if (filters) {
+      nostr_simple_pool_subscribe(rp->pool, (const char **)rp->urls, rp->n_urls,
+                                  *filters, true);
+    }
+  }
+
+  g_mutex_unlock(&rp->mu);
+
+  if (filters) nostr_filters_free(filters);
+  return 0;
+}
+
+size_t signet_relay_pool_get_subscribed_kinds(SignetRelayPool *rp,
+                                              int *out_kinds, size_t max_kinds) {
+  if (!rp) return 0;
+  g_mutex_lock(&rp->mu);
+  size_t n = rp->n_active_kinds;
+  if (out_kinds && max_kinds > 0) {
+    size_t copy = n < max_kinds ? n : max_kinds;
+    for (size_t i = 0; i < copy; i++) out_kinds[i] = rp->active_kinds[i];
+  }
+  g_mutex_unlock(&rp->mu);
+  return n;
 }
 
 const char *const *signet_relay_pool_get_urls(SignetRelayPool *rp, size_t *out_count) {

@@ -100,6 +100,20 @@ SignetPolicyEngine *signet_policy_engine_new(struct SignetPolicyStore *store,
  */
 void signet_policy_engine_free(SignetPolicyEngine *pe);
 
+/**
+ * signet_policy_engine_set_default_decision:
+ * @pe: (nullable): a #SignetPolicyEngine
+ * @decision: the fallback decision applied when no rule matches
+ *
+ * Update the engine's default decision in place so a config reload can apply
+ * `[policy_defaults] default_decision` without rebuilding the engine (and thus
+ * without dropping the store and audit bindings held by live callers).
+ *
+ * Since: 1.2
+ */
+void signet_policy_engine_set_default_decision(SignetPolicyEngine *pe,
+                                               SignetPolicyDecision decision);
+
 /* Evaluate a policy decision.
  *
  * identity/client/method are required.

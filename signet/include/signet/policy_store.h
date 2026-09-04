@@ -212,6 +212,28 @@ int signet_policy_store_set_identity_json(SignetPolicyStore *ps,
  */
 SignetPolicyStore *signet_policy_store_file_new(const char *path);
 
+/**
+ * signet_policy_store_reload:
+ * @ps: (not nullable): a #SignetPolicyStore
+ * @now: current unix time in seconds
+ *
+ * Reload the backing policy file immediately.
+ *
+ * The store also reloads lazily (on SIGHUP flag or TTL expiry) from inside
+ * signet_policy_store_get(). That deferral means a SIGHUP has no effect until
+ * the next policy lookup, which on an idle daemon can be arbitrarily far away.
+ * This entry point lets a signal-driven main-loop source apply the new policy
+ * at the moment the operator asked for it, and it consumes the pending lazy
+ * flag so the work is not repeated.
+ *
+ * Thread safety: safe to call concurrently with policy lookups.
+ *
+ * Returns: 0 on success, -1 if @ps is NULL or is not file-backed
+ *
+ * Since: 1.2
+ */
+int signet_policy_store_reload(SignetPolicyStore *ps, int64_t now);
+
 /* SQLCipher-backed policy store (future implementation). */
 
 #ifdef __cplusplus

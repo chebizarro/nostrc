@@ -708,12 +708,87 @@ int signet_store_seed_provisioners(SignetStore *store,
                                    size_t count,
                                    int64_t now);
 bool signet_store_is_provisioner(SignetStore *store, const char *pubkey_hex);
+/* Grant clears any revocation tombstone for the pubkey: an explicit grant is
+ * a deliberate re-authorization that supersedes an earlier revocation. */
 int signet_store_grant_provisioner(SignetStore *store,
                                    const char *pubkey_hex,
                                    const char *actor_pubkey_hex,
                                    int64_t now);
+/* Revoke and record a durable revocation tombstone (fp-56t / decision D2).
+ * The tombstone is what stops a subsequent config reload from resurrecting
+ * authority that was revoked at runtime. */
+int signet_store_revoke_provisioner_ex(SignetStore *store,
+                                       const char *pubkey_hex,
+                                       const char *actor_pubkey_hex,
+                                       int64_t now);
+/* Convenience wrapper: revokes with actor=NULL and now=time(NULL). */
 int signet_store_revoke_provisioner(SignetStore *store,
                                     const char *pubkey_hex);
+
+/* Record a one-shot policy_state marker. Returns 0 when the marker was newly
+ * written, 1 when it already existed (nothing changed), -1 on error. */
+int signet_store_policy_state_mark_once(SignetStore *store, const char *name,
+                                        int64_t now);
+
+/* Returns the unix time of the most recent revocation tombstone for
+ * @pubkey_hex, or 0 when the pubkey has never been revoked. */
+int64_t signet_store_provisioner_revoked_at(SignetStore *store,
+                                            const char *pubkey_hex);
+
+/* List the currently authorized provisioner pubkeys (lower-case hex, sorted).
+ * Returns 0 on success; caller frees with signet_store_free_provisioner_list(). */
+int signet_store_list_provisioners(SignetStore *store,
+                                   char ***out_pubkeys,
+                                   size_t *out_count);
+void signet_store_free_provisioner_list(char **pubkeys, size_t count);
+
+/**
+ * SignetProvisionerReconcile:
+ * @granted: entries newly authorized from the desired set.
+ * @revoked: entries dropped because the desired set no longer lists them.
+ * @refused_resurrect: entries present in the desired set but REFUSED because a
+ *   runtime revocation tombstone is newer than the desired set's source.
+ * @unchanged: entries already authorized and still desired.
+ *
+ * Outcome counters for signet_store_reconcile_provisioners().
+ *
+ * Since: 1.2
+ */
+typedef struct {
+  size_t granted;
+  size_t revoked;
+  size_t refused_resurrect;
+  size_t unchanged;
+} SignetProvisionerReconcile;
+
+/* Reconcile persisted provisioner authorization against a desired set
+ * (decision D2: config is desired state).
+ *
+ * @desired_source_mtime is the modification time of the source the desired set
+ * came from (the config file's mtime). Pass 0 when the set came from a source
+ * that cannot carry a timestamp, such as an environment variable — such a set
+ * can never have been authored after the process started, so it never wins
+ * against a runtime revocation.
+ *
+ * Semantics:
+ *  - desired entries not currently authorized are granted;
+ *  - authorized entries absent from the desired set are revoked and tombstoned;
+ *  - desired entries whose revocation tombstone is at or after
+ *    @desired_source_mtime are REFUSED, never re-granted, and counted in
+ *    @out->refused_resurrect. This is the guard that prevents a reload from
+ *    restoring authority that an operator revoked at runtime.
+ *
+ * The whole reconciliation runs in one transaction: either it all applies or
+ * the persisted set is left untouched.
+ *
+ * Returns 0 on success, -1 on error (including any malformed desired entry, in
+ * which case nothing is changed). */
+int signet_store_reconcile_provisioners(SignetStore *store,
+                                        const char *const *desired,
+                                        size_t n_desired,
+                                        int64_t desired_source_mtime,
+                                        int64_t now,
+                                        SignetProvisionerReconcile *out);
 
 /* Free an agent record (wipes secret key). Safe on NULL. */
 /**

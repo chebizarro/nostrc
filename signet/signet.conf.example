@@ -8,6 +8,33 @@
 #
 # All config values may be overridden by SIGNET_-prefixed environment variables.
 # Lists use semicolons as separators (GKeyFile format).
+#
+# RELOADING (SIGHUP)
+# ------------------
+# `kill -HUP <signetd pid>` re-reads this whole file, validates it, and either
+# applies it or keeps running on the last valid configuration. It also rotates
+# the audit log and reloads the policy file.
+#
+# Live-reloadable:
+#   [nostr] relays, provisioner_pubkeys, reconnect_interval_s
+#   [policy_defaults] default_decision, allowed_kinds, rate_limit_rpm
+#   [server] log_level
+#   the policy file's contents
+#
+# Restart-only (a change is WARNED in the log, never silently ignored):
+#   listeners        - [server] health_port, [bootstrap] port, [dbus] *,
+#                      [nip5l] *, [ssh_agent] *
+#   storage bindings - [store] db_path, [audit] *, [policy_defaults] policy_file,
+#                      [replay] *
+#   identity         - [nostr] identity, bunker_pubkey, [uid_map], [passkeys] *
+#
+# provisioner_pubkeys is DESIRED STATE: on reload this list wins, so removing a
+# pubkey here and sending SIGHUP revokes it. The reverse is NOT true — a
+# provisioner revoked at runtime (config/revoke-provisioner) is never restored
+# by a reload, even if this file still lists it. Runtime grants and revocations
+# are written back into this file so the two never disagree; signetd therefore
+# needs write access to it. Setting SIGNET_PROVISIONER_PUBKEYS defeats that
+# write-back — prefer the file.
 
 [server]
 log_level = info

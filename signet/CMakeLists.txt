@@ -55,6 +55,7 @@ endif()
 
 set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/signet_config.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/config_reload.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/store.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/audit_logger.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/replay_cache.c

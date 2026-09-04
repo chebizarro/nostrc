@@ -15,6 +15,7 @@
 #include "signet/audit_logger.h"
 #include "signet/revocation.h"
 #include "signet/replay_cache.h"
+#include "signet/signet_config.h"
 #include "signet/store.h"
 #include "signet/store_audit.h"
 #include "signet/store_secrets.h"
@@ -402,7 +403,47 @@ struct SignetMgmtHandler {
 
   char **relay_urls;
   size_t n_relay_urls;
+
+  /* Config file to mirror provisioner authorization into (may be NULL).
+   * Decision D2 makes config the desired state, so a runtime grant/revoke
+   * that is not written back here would be undone — or worse, reversed — by
+   * the next SIGHUP reload. */
+  char *config_path;
 };
+
+/* Mirror the persisted provisioner set into the config file so config and
+ * SQLCipher state cannot disagree. Returns 0 on success, -1 on failure (which
+ * is logged but never fails the mutation: the persisted revocation is already
+ * in force, and its tombstone independently blocks resurrection on reload). */
+static int signet_mgmt_writeback_provisioners(SignetMgmtHandler *h) {
+  if (!h || !h->config_path || !h->config_path[0]) return 0;
+
+  char **pubkeys = NULL;
+  size_t count = 0;
+  if (signet_store_list_provisioners(h->provisioner_store, &pubkeys, &count) != 0) {
+    g_warning("[signetd] provisioner config write-back skipped: cannot read "
+              "persisted provisioner set");
+    return -1;
+  }
+
+  char err[256];
+  int rc = signet_config_write_provisioners(
+      h->config_path, (const char *const *)pubkeys, count, err, sizeof(err));
+  signet_store_free_provisioner_list(pubkeys, count);
+
+  if (rc != 0) {
+    g_critical("[signetd] provisioner config write-back to '%s' FAILED: %s. "
+               "The persisted revocation tombstone still prevents a reload "
+               "from restoring revoked authority, but config and store now "
+               "disagree — fix the config file permissions and re-issue.",
+               h->config_path, err);
+    return -1;
+  }
+
+  g_message("[signetd] provisioner set written back to %s (%zu authorized)",
+            h->config_path, count);
+  return 0;
+}
 
 SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
                                            SignetRelayPool *relays,
@@ -461,7 +502,34 @@ void signet_mgmt_handler_free(SignetMgmtHandler *h) {
   g_free(h->bunker_pk_hex);
   for (size_t i = 0; i < h->n_relay_urls; i++) g_free(h->relay_urls[i]);
   g_free(h->relay_urls);
+  g_free(h->config_path);
   g_free(h);
+}
+
+void signet_mgmt_handler_set_config_path(SignetMgmtHandler *h,
+                                         const char *config_path) {
+  if (!h) return;
+  g_free(h->config_path);
+  h->config_path = (config_path && config_path[0]) ? g_strdup(config_path) : NULL;
+}
+
+int signet_mgmt_handler_set_relay_urls(SignetMgmtHandler *h,
+                                       const char *const *relay_urls,
+                                       size_t n_relay_urls) {
+  if (!h) return -1;
+
+  char **fresh = NULL;
+  if (relay_urls && n_relay_urls > 0) {
+    fresh = (char **)g_new0(char *, n_relay_urls);
+    for (size_t i = 0; i < n_relay_urls; i++)
+      fresh[i] = g_strdup(relay_urls[i] ? relay_urls[i] : "");
+  }
+
+  for (size_t i = 0; i < h->n_relay_urls; i++) g_free(h->relay_urls[i]);
+  g_free(h->relay_urls);
+  h->relay_urls = fresh;
+  h->n_relay_urls = fresh ? n_relay_urls : 0;
+  return 0;
 }
 
 void signet_mgmt_handler_set_replay_cache(SignetMgmtHandler *h,
@@ -1978,8 +2046,18 @@ static int signet_mgmt_handler_handle_request_ex(
               h->provisioner_store, req.provisioner_pubkey,
               event_pubkey_hex, now) == 0) {
         ok = true;
-        code = "provisioner_granted";
-        message = g_strdup("provisioner grant persisted and active");
+        /* Write-back, not last-writer-wins: config is the desired state, so a
+         * grant that never reaches config would be revoked by the next
+         * reload. */
+        if (signet_mgmt_writeback_provisioners(h) == 0) {
+          code = "provisioner_granted";
+          message = g_strdup("provisioner grant persisted and active");
+        } else {
+          code = "provisioner_granted_config_writeback_failed";
+          message = g_strdup("provisioner grant is active but could not be "
+                             "written back to config; it will not survive a "
+                             "reload");
+        }
       } else {
         code = "policy_store_failed";
         message = g_strdup("failed to persist provisioner grant");
@@ -1987,11 +2065,22 @@ static int signet_mgmt_handler_handle_request_ex(
       break;
 
     case SIGNET_MGMT_OP_REVOKE_PROVISIONER:
-      if (signet_store_revoke_provisioner(
-              h->provisioner_store, req.provisioner_pubkey) == 0) {
+      if (signet_store_revoke_provisioner_ex(
+              h->provisioner_store, req.provisioner_pubkey,
+              event_pubkey_hex, now) == 0) {
         ok = true;
-        code = "provisioner_revoked";
-        message = g_strdup("provisioner revocation persisted and active");
+        /* The revocation is already in force and tombstoned; write-back keeps
+         * the config file from listing authority that no longer exists. */
+        if (signet_mgmt_writeback_provisioners(h) == 0) {
+          code = "provisioner_revoked";
+          message = g_strdup("provisioner revocation persisted and active");
+        } else {
+          code = "provisioner_revoked_config_writeback_failed";
+          message = g_strdup("provisioner revocation is persisted and active; "
+                             "config write-back failed but the revocation "
+                             "tombstone still blocks it from being restored "
+                             "by a reload");
+        }
       } else {
         code = "policy_store_failed";
         message = g_strdup("failed to persist provisioner revocation");

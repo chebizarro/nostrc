@@ -50,6 +50,14 @@ test_capability = executable('test_capability',
   install: false,
 )
 
+test_config_reload = executable('test_config_reload',
+  'test_config_reload.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: false,
+)
+
 test_relay_pool = executable('test_relay_pool_protocol',
   'test_relay_pool_protocol.c',
   link_with: signet_core,
@@ -193,6 +201,7 @@ test('audit_logger', test_audit)
 test('bootstrap_contract', test_bootstrap_contract)
 test('capability', test_capability)
 test('relay_pool_protocol', test_relay_pool)
+test('config_reload', test_config_reload, timeout: 60)
 test('signing_crypto', test_signing_crypto)
 test('nostr_auth', test_nostr_auth)
 test('store_lifecycle', test_store_lifecycle)

@@ -16,6 +16,12 @@ struct SignetPolicyEngine {
   SignetPolicyDecision default_decision;
 };
 
+void signet_policy_engine_set_default_decision(SignetPolicyEngine *pe,
+                                               SignetPolicyDecision decision) {
+  if (!pe) return;
+  pe->default_decision = decision;
+}
+
 static const char *signet_policy_decision_to_string(SignetPolicyDecision d) {
   return (d == SIGNET_POLICY_DECISION_ALLOW) ? "allow" : "deny";
 }

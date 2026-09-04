@@ -10,11 +10,16 @@
  * - Startup/shutdown audit entries.
  *
  * Notes:
- * - SIGHUP handling for audit log rotation / policy reload is implemented in
- *   those modules; signetd does not intercept SIGHUP here.
+ * - SIGHUP is handled here (fp-56t) by an unconditional GLib main-loop source:
+ *   it re-reads the whole config, retains the last-valid one if the candidate
+ *   is invalid, reconfigures the relay pool, reconciles provisioner
+ *   authorization under decision D2, and reloads policy eagerly instead of
+ *   waiting for the next policy lookup. Audit log reopen is triggered from the
+ *   same source.
  */
 
 #include "signet/signet_config.h"
+#include "signet/config_reload.h"
 #include "signet/audit_logger.h"
 #include "signet/replay_cache.h"
 #include "signet/key_store.h"
@@ -94,6 +99,7 @@ static int signetd_subscribe_mgmt_kinds(SignetRelayPool *relays,
 #endif
 
 #include <glib.h>
+#include <glib-unix.h>
 #include <json-glib/json-glib.h>
 
 #define SIGNET_VERSION "0.1.0"
@@ -412,6 +418,71 @@ static gboolean signetd_health_tick(gpointer data) {
   return G_SOURCE_CONTINUE;
 }
 
+/* ---- SIGHUP reload (fp-56t) --------------------------------------------- */
+
+typedef struct {
+  SignetReloadCtx reload;
+  SignetDaemonCtx *daemon_ctx;
+  SignetAuditLogger *audit;
+  const char *config_path;
+} SignetSighupCtx;
+
+/* Re-establish the management subscription on the new relay connections.
+ * signet_relay_pool_set_relays() already replays the cached subscription
+ * intent; this additionally re-arms the accept delay so buffered history from
+ * the new relays cannot be mistaken for fresh commands. */
+static void signetd_on_relays_changed(void *user_data) {
+  SignetSighupCtx *ctx = (SignetSighupCtx *)user_data;
+  if (!ctx || !ctx->reload.relays) return;
+
+  SignetRelayPool *relays = (SignetRelayPool *)ctx->reload.relays;
+  const SignetConfig *cfg = ctx->reload.live;
+
+  if (ctx->daemon_ctx)
+    ctx->daemon_ctx->mgmt_accept_after =
+        signet_now_unix() + SIGNET_MGMT_ACCEPT_DELAY_SEC;
+
+  const char *bunker_pk = (cfg && cfg->remote_signer_pubkey_hex[0])
+                            ? cfg->remote_signer_pubkey_hex : NULL;
+  if (signetd_subscribe_mgmt_kinds(relays, bunker_pk,
+                                   signetd_mgmt_since_floor()) != 0) {
+    g_warning("[signetd] reload: failed to resubscribe after relay change");
+  } else {
+    g_message("[signetd] reload: resubscribed to management kinds on the new "
+              "relay set");
+  }
+}
+
+/* Unconditional main-loop SIGHUP source. Unlike the policy store's lazy flag
+ * — which only takes effect on the next policy lookup, i.e. never on an idle
+ * daemon — this runs the moment the signal is delivered. */
+static gboolean signetd_on_sighup(gpointer data) {
+  SignetSighupCtx *ctx = (SignetSighupCtx *)data;
+  if (!ctx) return G_SOURCE_CONTINUE;
+
+  g_message("[signetd] SIGHUP received — reloading configuration");
+
+  /* Log rotation stays wired to the same signal. */
+  signet_audit_logger_request_reopen();
+
+  SignetReloadReport report;
+  memset(&report, 0, sizeof(report));
+  if (signet_config_reload_apply(&ctx->reload, signet_now_unix(), &report) != 0) {
+    g_warning("[signetd] SIGHUP reload rejected: %s (still running on the "
+              "last-valid configuration)", report.error);
+  }
+
+  signet_audit_daemon_event(ctx->audit,
+                            report.applied ? SIGNET_AUDIT_EVENT_MGMT_APPLIED
+                                           : SIGNET_AUDIT_EVENT_ERROR,
+                            signet_now_unix(),
+                            report.applied ? "config_reload"
+                                           : "config_reload_rejected",
+                            SIGNET_VERSION, ctx->config_path);
+
+  return G_SOURCE_CONTINUE;
+}
+
 static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_data) {
   SignetDaemonCtx *ctx = (SignetDaemonCtx *)user_data;
   if (!ctx || !ctx->cfg || !ctx->nip46 || !ev) return;
@@ -622,8 +693,9 @@ int main(int argc, char **argv) {
 #endif
   SignetStore *base_store = signet_key_store_get_store(keys);
 
-  /* Legacy provisioner config/env is a one-time bootstrap seed only. Once the
-   * policy_state marker exists, persisted grants/revocations always win. */
+  /* Bootstrap seed for a database that has never carried provisioner policy.
+   * From the first seed onward the persisted set is the source of truth for
+   * authorization decisions; reloads reconcile config against it under D2. */
   if (base_store && cfg.n_provisioner_pubkeys > 0) {
     int seed_rc = signet_store_seed_provisioners(
         base_store, (const char *const *)cfg.provisioner_pubkeys,
@@ -822,6 +894,11 @@ int main(int argc, char **argv) {
   };
   SignetMgmtHandler *mgmt = signet_mgmt_handler_new(keys, relays, audit, store, &mgmt_cfg);
   dctx.mgmt = mgmt;
+
+  /* Runtime grants/revocations must be mirrored back into the config file.
+   * Config is the desired state (D2), so a revocation that never reaches
+   * config would be undone by the next SIGHUP. */
+  signet_mgmt_handler_set_config_path(mgmt, config_path);
 
   /* 8a) Challenge store (shared by bootstrap, D-Bus TCP, NIP-5L) */
   SignetChallengeStore *challenges = signet_challenge_store_new();
@@ -1090,8 +1167,35 @@ int main(int argc, char **argv) {
     .last_reconnect_attempt = 0,
   };
 
+  /* SIGHUP reload wiring (fp-56t). Installed unconditionally so an operator
+   * always has a way to apply configuration without restarting the signer. */
+  SignetSighupCtx hupctx;
+  memset(&hupctx, 0, sizeof(hupctx));
+  hupctx.reload.config_path = config_path;
+  hupctx.reload.live = &cfg;
+  hupctx.reload.relays = relays;
+  hupctx.reload.mgmt = mgmt;
+  hupctx.reload.policy = store;
+  hupctx.reload.engine = policy;
+  hupctx.reload.store = base_store;
+  hupctx.reload.on_relays_changed = signetd_on_relays_changed;
+  hupctx.reload.user_data = &hupctx;
+  hupctx.daemon_ctx = &dctx;
+  hupctx.audit = audit;
+  hupctx.config_path = config_path;
+
+  /* Converge config with persisted authorization once, before any reload can
+   * run, so "config wins" can never resurrect a revocation that predates
+   * tombstoning. */
+  if (base_store) {
+    bool adopted = false;
+    (void)signet_config_reload_adopt_persisted(&hupctx.reload, signet_now_unix(),
+                                               &adopted);
+  }
+
   g_main_loop = g_main_loop_new(NULL, FALSE);
   g_timeout_add(250, signetd_health_tick, &htctx);
+  g_unix_signal_add(SIGHUP, signetd_on_sighup, &hupctx);
   g_message("[signetd] entering event-driven main loop");
   g_main_loop_run(g_main_loop);
   g_main_loop_unref(g_main_loop);

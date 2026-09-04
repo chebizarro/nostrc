@@ -271,6 +271,55 @@ int signet_config_load(const char *path, SignetConfig *out_cfg);
  */
 int signet_config_validate(const SignetConfig *cfg, char *err_buf, size_t err_buf_len);
 
+/**
+ * signet_config_write_provisioners:
+ * @path: (not nullable): config file to rewrite
+ * @pubkeys: (nullable) (array length=n_pubkeys): authorized provisioner pubkeys
+ * @n_pubkeys: number of entries (0 writes an explicit empty list)
+ * @err_buf: (nullable): human-readable failure message
+ * @err_buf_len: length of @err_buf in bytes
+ *
+ * Write @pubkeys back into `[nostr] provisioner_pubkeys` of the config file at
+ * @path, preserving every other key. Under decision D2 the config is the
+ * desired state, so a runtime grant or revocation MUST be reflected here;
+ * otherwise the next SIGHUP would read a stale list and resurrect authority
+ * that was revoked at runtime. The replacement is atomic (temp file + fsync +
+ * rename) so a crash can never leave a truncated authorization list on disk.
+ *
+ * Returns: 0 on success, -1 on failure
+ *
+ * Since: 1.2
+ */
+int signet_config_write_provisioners(const char *path,
+                                     const char *const *pubkeys,
+                                     size_t n_pubkeys,
+                                     char *err_buf, size_t err_buf_len);
+
+/**
+ * signet_config_provisioners_from_env:
+ *
+ * Whether SIGNET_PROVISIONER_PUBKEYS is set. An env-sourced provisioner list
+ * shadows the config file, so write-back cannot correct it and reconciliation
+ * must treat it as older than any runtime revocation.
+ *
+ * Returns: %true when the environment override is present
+ *
+ * Since: 1.2
+ */
+bool signet_config_provisioners_from_env(void);
+
+/**
+ * signet_config_source_mtime:
+ * @path: (nullable): filesystem path
+ *
+ * Modification time of the config file, or 0 when it is absent/unreadable.
+ *
+ * Returns: unix seconds, or 0
+ *
+ * Since: 1.2
+ */
+int64_t signet_config_source_mtime(const char *path);
+
 #ifdef __cplusplus
 }
 #endif

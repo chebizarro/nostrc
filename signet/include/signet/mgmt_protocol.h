@@ -348,6 +348,45 @@ void signet_mgmt_handler_set_replay_cache(SignetMgmtHandler *h,
 void signet_mgmt_handler_set_self_replay_cache(SignetMgmtHandler *h,
                                                struct SignetReplayCache *replay);
 
+/**
+ * signet_mgmt_handler_set_config_path:
+ * @h: (nullable): a #SignetMgmtHandler
+ * @config_path: (nullable): path of the daemon's config file, or %NULL
+ *
+ * Bind the handler to the config file that expresses the desired provisioner
+ * set. Once bound, every successful `config/grant-provisioner` and
+ * `config/revoke-provisioner` mirrors the resulting authorization set back
+ * into `[nostr] provisioner_pubkeys`.
+ *
+ * Without this binding, config and SQLCipher authorization state drift apart,
+ * and because config is the desired state (decision D2) the next SIGHUP would
+ * resurrect a provisioner that was revoked at runtime. Write-back is what
+ * keeps the two stores from disagreeing; the persisted revocation tombstone
+ * is the independent backstop for when write-back cannot be performed.
+ *
+ * Since: 1.2
+ */
+void signet_mgmt_handler_set_config_path(SignetMgmtHandler *h,
+                                         const char *config_path);
+
+/**
+ * signet_mgmt_handler_set_relay_urls:
+ * @h: (not nullable): a #SignetMgmtHandler
+ * @relay_urls: (nullable) (array length=n_relay_urls): new relay URL set
+ * @n_relay_urls: number of elements
+ *
+ * Replace the relay URLs the handler advertises in bunker URIs, so a reloaded
+ * relay set is reflected in newly issued connect strings instead of handing
+ * agents the relays the daemon started with.
+ *
+ * Returns: 0 on success, -1 when @h is %NULL
+ *
+ * Since: 1.2
+ */
+int signet_mgmt_handler_set_relay_urls(SignetMgmtHandler *h,
+                                       const char *const *relay_urls,
+                                       size_t n_relay_urls);
+
 /* Execute an already-normalized ContextVM request. This lower-level entry
  * point exists for transport-independent tests; relay callers use
  * signet_mgmt_handler_handle_intent(). */

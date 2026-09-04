@@ -13,7 +13,11 @@
 #include <stdio.h>
 #include <errno.h>
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <glib.h>
+#include <glib/gstdio.h>
 
 /* libnostr: nsec decode + pubkey derivation */
 #include <nostr-keys.h>
@@ -613,6 +617,140 @@ int signet_config_load(const char *path, SignetConfig *out_cfg) {
   signet_config_resolve_passkey_psk(out_cfg);
 
   return 0;
+}
+
+bool signet_config_provisioners_from_env(void) {
+  const char *val = g_getenv("SIGNET_PROVISIONER_PUBKEYS");
+  return val != NULL;
+}
+
+int64_t signet_config_source_mtime(const char *path) {
+  if (!path || !path[0]) return 0;
+  GStatBuf st;
+  if (g_stat(path, &st) != 0) return 0;
+  return (int64_t)st.st_mtime;
+}
+
+int signet_config_write_provisioners(const char *path,
+                                     const char *const *pubkeys,
+                                     size_t n_pubkeys,
+                                     char *err_buf, size_t err_buf_len) {
+  if (err_buf && err_buf_len) err_buf[0] = '\0';
+  if (!path || !path[0]) {
+    if (err_buf && err_buf_len)
+      snprintf(err_buf, err_buf_len, "no config file path configured");
+    return -1;
+  }
+
+  GKeyFile *kf = g_key_file_new();
+  if (!kf) {
+    if (err_buf && err_buf_len) snprintf(err_buf, err_buf_len, "out of memory");
+    return -1;
+  }
+
+  /* Load the existing file so unrelated keys and sections survive the
+   * rewrite. A missing file is fine — we author a minimal one. */
+  GError *err = NULL;
+  if (!g_key_file_load_from_file(kf, path, G_KEY_FILE_KEEP_COMMENTS |
+                                          G_KEY_FILE_KEEP_TRANSLATIONS,
+                                 &err)) {
+    if (err && !g_error_matches(err, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
+      if (err_buf && err_buf_len)
+        snprintf(err_buf, err_buf_len, "cannot parse %s: %s", path, err->message);
+      g_error_free(err);
+      g_key_file_free(kf);
+      return -1;
+    }
+    g_clear_error(&err);
+  }
+
+  if (n_pubkeys == 0) {
+    /* An empty authorized set must be represented explicitly, otherwise the
+     * key's absence would be read as "no config opinion" on the next load. */
+    g_key_file_set_string(kf, "nostr", "provisioner_pubkeys", "");
+  } else {
+    GString *joined = g_string_new(NULL);
+    for (size_t i = 0; i < n_pubkeys; i++) {
+      if (!pubkeys[i] || !pubkeys[i][0]) continue;
+      if (joined->len > 0) g_string_append_c(joined, ',');
+      g_string_append(joined, pubkeys[i]);
+    }
+    g_key_file_set_string(kf, "nostr", "provisioner_pubkeys", joined->str);
+    g_string_free(joined, TRUE);
+  }
+
+  gsize len = 0;
+  gchar *data = g_key_file_to_data(kf, &len, &err);
+  g_key_file_free(kf);
+  if (!data) {
+    if (err_buf && err_buf_len)
+      snprintf(err_buf, err_buf_len, "serialize failed: %s",
+               err ? err->message : "unknown");
+    if (err) g_error_free(err);
+    return -1;
+  }
+
+  /* Preserve the operator's file mode; only fall back to 0600 for a file we
+   * are creating. Silently tightening permissions on an existing config could
+   * break a deployment where another account reads it. */
+  mode_t mode = 0600;
+  {
+    GStatBuf st;
+    if (g_stat(path, &st) == 0) mode = (mode_t)(st.st_mode & 0777);
+  }
+
+  /* Atomic replace: write a sibling temp file, fsync, rename. A crash mid
+   * write must never leave a truncated authorization list on disk. */
+  gchar *tmp_path = g_strdup_printf("%s.signet-tmp", path);
+  int rc = -1;
+  int fd = g_open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, mode);
+  if (fd < 0) {
+    if (err_buf && err_buf_len)
+      snprintf(err_buf, err_buf_len, "cannot create %s: %s", tmp_path,
+               g_strerror(errno));
+    goto done;
+  }
+
+  {
+    const char *p = data;
+    gsize remaining = len;
+    bool write_ok = true;
+    while (remaining > 0) {
+      ssize_t w = write(fd, p, remaining);
+      if (w < 0) {
+        if (errno == EINTR) continue;
+        write_ok = false;
+        break;
+      }
+      p += w;
+      remaining -= (gsize)w;
+    }
+    if (!write_ok || fsync(fd) != 0) {
+      if (err_buf && err_buf_len)
+        snprintf(err_buf, err_buf_len, "write failed: %s", g_strerror(errno));
+      close(fd);
+      g_unlink(tmp_path);
+      goto done;
+    }
+    close(fd);
+  }
+
+  /* g_open honours umask, so set the intended mode explicitly. */
+  (void)g_chmod(tmp_path, mode);
+
+  if (g_rename(tmp_path, path) != 0) {
+    if (err_buf && err_buf_len)
+      snprintf(err_buf, err_buf_len, "rename onto %s failed: %s", path,
+               g_strerror(errno));
+    g_unlink(tmp_path);
+    goto done;
+  }
+  rc = 0;
+
+done:
+  g_free(tmp_path);
+  g_free(data);
+  return rc;
 }
 
 int signet_config_validate(const SignetConfig *cfg, char *err_buf, size_t err_buf_len) {

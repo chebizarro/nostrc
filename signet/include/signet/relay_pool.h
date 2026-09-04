@@ -349,6 +349,51 @@ int64_t signet_relay_pool_update_since_from_latest(SignetRelayPool *rp);
  */
 const char *const *signet_relay_pool_get_urls(SignetRelayPool *rp, size_t *out_count);
 
+/**
+ * signet_relay_pool_set_relays:
+ * @rp: (not nullable): a #SignetRelayPool
+ * @urls: (not nullable) (array length=n_urls): the new relay URL set
+ * @n_urls: number of elements (must be > 0)
+ *
+ * Reconfigure the pool onto a new relay set without invalidating the
+ * #SignetRelayPool handle, so pointers already handed to the NIP-46 server,
+ * management handler and NIP-5L transport remain valid.
+ *
+ * The inner connection pool is replaced wholesale (coordinated replacement)
+ * because libnostr offers no atomic relay-set swap. Subscription intent
+ * (kinds, #p scope and since) is preserved and replayed on the new
+ * connections, so an operator changing relays under SIGHUP does not silently
+ * lose the management subscription.
+ *
+ * Thread safety: safe to call concurrently; access is serialized internally.
+ *
+ * Returns: 0 when the relay set was replaced, 1 when @urls already matches the
+ * current set (no work done), -1 on failure (the previous set stays active)
+ *
+ * Since: 1.2
+ */
+int signet_relay_pool_set_relays(SignetRelayPool *rp,
+                                 const char *const *urls,
+                                 size_t n_urls);
+
+/**
+ * signet_relay_pool_get_subscribed_kinds:
+ * @rp: (not nullable): a #SignetRelayPool
+ * @out_kinds: (nullable) (out) (array length=max_kinds): buffer for the kinds
+ * @max_kinds: capacity of @out_kinds
+ *
+ * Report the subscription intent currently cached by the pool. Pass
+ * @out_kinds = %NULL to query only the count.
+ *
+ * Thread safety: safe to call concurrently; access is serialized internally.
+ *
+ * Returns: the number of subscribed kinds (may exceed @max_kinds)
+ *
+ * Since: 1.2
+ */
+size_t signet_relay_pool_get_subscribed_kinds(SignetRelayPool *rp,
+                                              int *out_kinds, size_t max_kinds);
+
 #ifdef __cplusplus
 }
 #endif

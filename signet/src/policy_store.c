@@ -640,6 +640,21 @@ static void signet_policy_store_maybe_reload_locked(SignetPolicyStore *ps, int64
 
 /* ------------------------------ public API -------------------------------- */
 
+int signet_policy_store_reload(SignetPolicyStore *ps, int64_t now) {
+  if (!ps) return -1;
+  if (ps->backend != SIGNET_POLICY_STORE_BACKEND_FILE) return -1;
+
+  g_mutex_lock(&ps->mu);
+  /* Consume any pending lazy SIGHUP flag so the eager reload we are about to
+   * perform is not repeated on the next policy lookup. */
+  g_signet_policy_sighup_requested = 0;
+  ps->reload_requested = TRUE;
+  gboolean ok = signet_policy_store_load_file_locked(ps, now);
+  g_mutex_unlock(&ps->mu);
+
+  return ok ? 0 : -1;
+}
+
 int signet_policy_store_get(SignetPolicyStore *ps,
                             const SignetPolicyKeyView *key,
                             int64_t now,
