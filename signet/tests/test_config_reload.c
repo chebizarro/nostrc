@@ -26,6 +26,10 @@
 #include <unistd.h>
 #include <utime.h>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
 #include <glib.h>
 #include <glib/gstdio.h>
 
@@ -213,6 +217,110 @@ static void test_subscriptions_survive_relay_change(void) {
   CHECK(got[2] == 1059);
 
   signet_relay_pool_free(rp);
+  printf("PASS\n");
+}
+
+/* ------- 2b. an unreachable relay must not stall the reload (fp-e08y) ----- */
+
+/* A socket that accepts TCP but never speaks WebSocket. libnostr's connect
+ * then sits in the handshake until its 30s timeout, which is exactly the
+ * stall an operator triggers by typing a relay URL wrong. */
+static int open_stalling_listener(guint16 *out_port) {
+  int s = socket(AF_INET, SOCK_STREAM, 0);
+  CHECK(s >= 0);
+  int one = 1;
+  (void)setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0; /* ephemeral */
+  CHECK(bind(s, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+  CHECK(listen(s, 8) == 0);
+
+  socklen_t len = sizeof(addr);
+  CHECK(getsockname(s, (struct sockaddr *)&addr, &len) == 0);
+  *out_port = ntohs(addr.sin_port);
+  return s;
+}
+
+static void test_unreachable_relay_does_not_block_reload(void) {
+  printf("  TEST unreachable_relay_does_not_block_reload ... ");
+
+  guint16 port = 0;
+  int listener = open_stalling_listener(&port);
+  char *stall_url = g_strdup_printf("ws://127.0.0.1:%u", (unsigned)port);
+
+  /* Port 1 refuses immediately, so constructing the pool stays fast. */
+  const char *initial[] = { "ws://127.0.0.1:1" };
+  SignetRelayPoolConfig cfg = {
+    .relays = initial,
+    .n_relays = 1,
+    .on_event = NULL,
+    .user_data = NULL,
+  };
+  SignetRelayPool *rp = signet_relay_pool_new(&cfg);
+  CHECK(rp != NULL);
+
+  const int kinds[] = { 24133, 25910, 1059 };
+  (void)signet_relay_pool_subscribe_scoped(rp, kinds, 3, PK_A, 12345);
+
+  /* The reload itself must return promptly. Synchronously this took the full
+   * libnostr connect timeout (30s), during which signetd served nothing. */
+  const char *unreachable[] = { NULL };
+  unreachable[0] = stall_url;
+  gint64 reload_start = g_get_monotonic_time();
+  CHECK(signet_relay_pool_set_relays(rp, unreachable, 1) == 0);
+  gint64 reload_us = g_get_monotonic_time() - reload_start;
+  CHECK(reload_us < 5 * G_USEC_PER_SEC);
+
+  gint64 t0;
+
+  /* And the daemon must stay responsive while the connect runs in the
+   * background. Both of these take rp->mu, so they would block behind the
+   * dialling thread if it held the lock across the connect. */
+  t0 = g_get_monotonic_time();
+  size_t n_urls = 0;
+  const char *const *urls = signet_relay_pool_get_urls(rp, &n_urls);
+  CHECK(n_urls == 1);
+  CHECK(strcmp(urls[0], stall_url) == 0);
+
+  int got[3] = { 0, 0, 0 };
+  CHECK(signet_relay_pool_get_subscribed_kinds(rp, got, 3) == 3);
+  CHECK(got[0] == 24133);
+  CHECK(got[1] == 25910);
+  CHECK(got[2] == 1059);
+  CHECK(g_get_monotonic_time() - t0 < 5 * G_USEC_PER_SEC);
+
+  /* Closing the listener resets the pending connection, so the background
+   * dial fails fast instead of sitting out its timeout. */
+  close(listener);
+  CHECK(signet_relay_pool_wait_reconfigure(rp, 60000));
+  gint64 total_us = g_get_monotonic_time() - reload_start;
+
+  /* Say which mode this ran in rather than passing silently. Some
+   * environments (no working libwebsockets TLS context, no /dev/urandom in a
+   * sandbox) fail every connect instantly, and then no arrangement of
+   * sockets can produce the stall this test is about. When the dial WAS
+   * slow, assert the real property: the reload returned in a small fraction
+   * of the time the connect actually took. */
+  if (total_us > 500 * 1000) {
+    fprintf(stderr, "[reload=%lldus of %lldus dial] ",
+            (long long)reload_us, (long long)total_us);
+    CHECK(reload_us < total_us / 10);
+  } else {
+    fprintf(stderr, "[connects fail fast here; timing bound only] ");
+  }
+
+  /* Subscription intent survives the failed connect: nothing re-derives it,
+   * so a relay that comes up later still gets kinds 24133/25910/1059. */
+  memset(got, 0, sizeof(got));
+  CHECK(signet_relay_pool_get_subscribed_kinds(rp, got, 3) == 3);
+  CHECK(got[1] == 25910);
+
+  signet_relay_pool_free(rp);
+  g_free(stall_url);
   printf("PASS\n");
 }
 
@@ -504,6 +612,7 @@ int main(void) {
   printf("test_config_reload:\n");
   test_invalid_candidate_retains_last_valid();
   test_subscriptions_survive_relay_change();
+  test_unreachable_relay_does_not_block_reload();
   test_policy_reload_is_eager();
   test_revoked_provisioner_not_resurrected();
   test_env_sourced_set_cannot_resurrect();

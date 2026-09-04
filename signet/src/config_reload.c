@@ -369,7 +369,11 @@ int signet_config_reload_apply(const SignetReloadCtx *ctx, int64_t now,
     }
 
     if (report.relays_changed) {
-      g_message("[signetd] reload: relay set changed (%zu -> %zu relays)",
+      /* fp-e08y: the switch is immediate but the connections are dialled in
+       * the background, so this reload returns without waiting on a relay
+       * that may be unreachable. Say so, rather than implying connectivity. */
+      g_message("[signetd] reload: relay set changed (%zu -> %zu relays); "
+                "connecting in background",
                 live->n_relays, cand.n_relays);
       if (ctx->mgmt) {
         (void)signet_mgmt_handler_set_relay_urls(

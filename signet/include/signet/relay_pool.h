@@ -365,7 +365,21 @@ const char *const *signet_relay_pool_get_urls(SignetRelayPool *rp, size_t *out_c
  * connections, so an operator changing relays under SIGHUP does not silently
  * lose the management subscription.
  *
- * Thread safety: safe to call concurrently; access is serialized internally.
+ * Returns promptly (fp-e08y). The URL set is switched synchronously --
+ * signet_relay_pool_get_urls() reflects it as soon as this returns -- but
+ * tearing the old pool down and connecting the new relays happens on a
+ * background thread, because libnostr dials with a fixed 30s connect timeout
+ * per relay. Doing that inline meant a SIGHUP naming an unreachable relay
+ * froze the GLib main loop, serving no management, NIP-46 or NIP-5L traffic,
+ * for the whole timeout.
+ *
+ * A return of 0 therefore means "the new set is now the target", not "the new
+ * relays are connected" -- which is what it always meant in practice, since
+ * libnostr's ensure_relay reports no connect result. Until the connections
+ * land, publish calls fail as they already do when nothing is connected.
+ *
+ * Thread safety: safe to call concurrently; access is serialized internally,
+ * and a later call supersedes an earlier one still connecting.
  *
  * Returns: 0 when the relay set was replaced, 1 when @urls already matches the
  * current set (no work done), -1 on failure (the previous set stays active)
@@ -375,6 +389,26 @@ const char *const *signet_relay_pool_get_urls(SignetRelayPool *rp, size_t *out_c
 int signet_relay_pool_set_relays(SignetRelayPool *rp,
                                  const char *const *urls,
                                  size_t n_urls);
+
+/**
+ * signet_relay_pool_wait_reconfigure:
+ * @rp: (not nullable): a #SignetRelayPool
+ * @timeout_ms: how long to wait, in milliseconds (0 polls once)
+ *
+ * Block until no signet_relay_pool_set_relays() reconfiguration is still
+ * running in the background, or until @timeout_ms elapses.
+ *
+ * Intended for tests and for orderly shutdown paths that want the relay set
+ * settled before proceeding. The daemon's normal paths must not call this on
+ * the main loop -- waiting for a reconfigure to finish is exactly the stall
+ * fp-e08y removed.
+ *
+ * Returns: true if no reconfiguration is outstanding, false on timeout
+ *
+ * Since: 1.2
+ */
+bool signet_relay_pool_wait_reconfigure(SignetRelayPool *rp,
+                                        unsigned int timeout_ms);
 
 /**
  * signet_relay_pool_get_subscribed_kinds:

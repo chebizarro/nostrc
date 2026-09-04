@@ -64,7 +64,32 @@ struct SignetRelayPool {
 
   GMutex mu;
   gboolean started;
+
+  /* fp-e08y: relay reconfiguration runs on a background thread.
+   * libnostr's connect path blocks for up to NOSTR_CONNECT_RESULT_TIMEOUT_MS
+   * (30s, not configurable) per relay, so doing it inline meant a SIGHUP whose
+   * candidate config named an unreachable relay froze the GLib main loop --
+   * no 25910 management, no NIP-46, no NIP-5L -- for the whole timeout. */
+  GMutex   reconfig_mu;       /* serializes reconfigure workers; not rp->mu */
+  GCond    reconfig_cond;     /* broadcast when a worker retires */
+  guint    reconfig_gen;      /* bumped per set_relays  [rp->mu] */
+  guint    reconfig_pending;  /* workers in flight      [rp->mu] */
+  gboolean disposing;         /* set by _free()         [rp->mu] */
 };
+
+/* One relay-set reconfiguration, handed to a background thread. Owns
+ * everything it points at except @rp and @fresh (which rp owns). */
+typedef struct {
+  SignetRelayPool *rp;
+  NostrSimplePool *fresh;             /* pool to bring up (rp->pool at spawn) */
+  NostrSimplePool *old_pool;          /* superseded pool, to stop and free */
+  GPtrArray       *old_auth_cb_data;  /* auth data belonging to @old_pool */
+  char           **urls;              /* private copy of the target URL set */
+  size_t           n_urls;
+  guint            gen;
+  gboolean         old_started;       /* @old_pool needs stopping */
+  gboolean         restart_after;     /* pool was running: start @fresh too */
+} SignetRelayReconfigure;
 
 /* NPA-09: g_active_pool global eliminated.
  * libnostr now supports event_middleware_ex with user_data, so we pass
@@ -383,6 +408,8 @@ SignetRelayPool *signet_relay_pool_new(const SignetRelayPoolConfig *cfg) {
   if (!rp) return NULL;
 
   g_mutex_init(&rp->mu);
+  g_mutex_init(&rp->reconfig_mu);
+  g_cond_init(&rp->reconfig_cond);
 
   rp->on_event = cfg->on_event;
   rp->user_data = cfg->user_data;
@@ -400,6 +427,8 @@ SignetRelayPool *signet_relay_pool_new(const SignetRelayPoolConfig *cfg) {
   /* Create the underlying NostrSimplePool */
   rp->pool = nostr_simple_pool_new();
   if (!rp->pool) {
+    g_cond_clear(&rp->reconfig_cond);
+    g_mutex_clear(&rp->reconfig_mu);
     g_mutex_clear(&rp->mu);
     free(rp);
     return NULL;
@@ -416,6 +445,8 @@ SignetRelayPool *signet_relay_pool_new(const SignetRelayPoolConfig *cfg) {
     rp->urls = (char **)calloc(cfg->n_relays, sizeof(char *));
     if (!rp->urls) {
       nostr_simple_pool_free(rp->pool);
+      g_cond_clear(&rp->reconfig_cond);
+      g_mutex_clear(&rp->reconfig_mu);
       g_mutex_clear(&rp->mu);
       free(rp);
       return NULL;
@@ -437,6 +468,15 @@ SignetRelayPool *signet_relay_pool_new(const SignetRelayPoolConfig *cfg) {
 
 void signet_relay_pool_free(SignetRelayPool *rp) {
   if (!rp) return;
+
+  /* fp-e08y: a reconfigure worker may still be dialling relays and will touch
+   * rp->pool, rp->auth_cb_data and the filter cache. Refuse new reconfigures
+   * and wait the in-flight ones out before tearing any of that down. */
+  g_mutex_lock(&rp->mu);
+  rp->disposing = TRUE;
+  while (rp->reconfig_pending > 0)
+    g_cond_wait(&rp->reconfig_cond, &rp->mu);
+  g_mutex_unlock(&rp->mu);
 
   signet_relay_pool_stop(rp);
 
@@ -463,6 +503,8 @@ void signet_relay_pool_free(SignetRelayPool *rp) {
   g_free(rp->filter_pubkey_hex);
   rp->filter_pubkey_hex = NULL;
 
+  g_cond_clear(&rp->reconfig_cond);
+  g_mutex_clear(&rp->reconfig_mu);
   g_mutex_clear(&rp->mu);
   free(rp);
 }
@@ -845,12 +887,131 @@ static bool signet_relay_pool_urls_equal_locked(SignetRelayPool *rp,
   return true;
 }
 
+/* fp-e08y: the blocking half of a relay-set change.
+ *
+ * Runs off the caller's thread (in practice the GLib main loop, under SIGHUP)
+ * because every step here can block for tens of seconds: nostr_simple_pool_stop
+ * joins libnostr worker threads, and ensure_relay dials each relay with a
+ * 30s connect timeout.
+ *
+ * Deliberately does NOT hold rp->mu while connecting. Holding it would defeat
+ * the point -- signing, publishing and the health tick all take rp->mu, so the
+ * main loop would block on the mutex instead of on the connect. The pool it
+ * works on (@fresh) and the URL list are private to the job, and
+ * reconfig_mu keeps a later job from freeing @fresh underneath this one.
+ */
+static gpointer signet_relay_pool_reconfigure_worker(gpointer data) {
+  SignetRelayReconfigure *job = (SignetRelayReconfigure *)data;
+  SignetRelayPool *rp = job->rp;
+
+  /* Serialize against any earlier reconfigure that may still be dialling the
+   * pool this job is about to free. */
+  g_mutex_lock(&rp->reconfig_mu);
+
+  /* Tear the superseded pool down first, and without rp->mu held: stopping
+   * joins libnostr workers, and a worker may be inside
+   * signet_pool_event_middleware waiting on rp->mu. */
+  if (job->old_pool) {
+    if (job->old_started) nostr_simple_pool_stop(job->old_pool);
+    nostr_simple_pool_free(job->old_pool);
+  }
+  /* Only safe once the old pool's relays (and therefore its callbacks) are
+   * gone: this data was handed to those relays. */
+  if (job->old_auth_cb_data) {
+    for (guint i = 0; i < job->old_auth_cb_data->len; i++) {
+      SignetAuthCallbackData *d =
+          (SignetAuthCallbackData *)g_ptr_array_index(job->old_auth_cb_data, i);
+      if (!d) continue;
+      memset(d->sk_hex, 0, sizeof(d->sk_hex));
+      g_mutex_clear(&d->challenge_mu);
+      free(d);
+    }
+    g_ptr_array_free(job->old_auth_cb_data, TRUE);
+  }
+
+  /* A newer reconfigure (or a shutdown) may have landed while we waited. It
+   * owns @fresh's teardown, so stop here rather than dialling a pool nobody
+   * is going to use. */
+  g_mutex_lock(&rp->mu);
+  gboolean superseded = (rp->reconfig_gen != job->gen) || rp->disposing;
+  g_mutex_unlock(&rp->mu);
+
+  if (!superseded) {
+    /* The slow part: up to ~30s per unreachable relay. Re-check disposing
+     * between relays so a shutdown waits out at most one connect timeout
+     * rather than one per configured relay. */
+    for (size_t i = 0; i < job->n_urls && !superseded; i++) {
+      nostr_simple_pool_ensure_relay(job->fresh, job->urls[i]);
+      g_mutex_lock(&rp->mu);
+      superseded = (rp->reconfig_gen != job->gen) || rp->disposing;
+      g_mutex_unlock(&rp->mu);
+    }
+  }
+
+  if (!superseded) {
+    NostrFilters *filters = NULL;
+    gboolean do_start = FALSE;
+
+    g_mutex_lock(&rp->mu);
+    if (rp->reconfig_gen == job->gen && !rp->disposing && rp->pool == job->fresh) {
+      signet_relay_pool_register_auth(rp);
+      /* Claim the not-started -> started transition under rp->mu.
+       * nostr_simple_pool_start() is not idempotent (it pthread_creates
+       * unconditionally and overwrites pool->thread), so if the health
+       * tick's reconnect path already restarted this pool while we were
+       * dialling, leave it alone. */
+      if (job->restart_after && !rp->started) {
+        rp->started = TRUE;
+        do_start = TRUE;
+        /* Restore subscription intent on the new connections. active_kinds,
+         * filter_pubkey_hex and filter_since were never cleared, so the
+         * daemon's subscriptions survive the relay change without the caller
+         * re-deriving them. A relay still unreachable at this point picks the
+         * subscription up later regardless: signet sets auto_unsub_on_eose
+         * false, so libnostr's pool_reconcile_subs re-fires filters_shared on
+         * any relay that connects afterwards. */
+        filters = signet_relay_pool_build_filters_locked(rp);
+      }
+    }
+    g_mutex_unlock(&rp->mu);
+
+    if (do_start) {
+      nostr_simple_pool_start(job->fresh);
+      if (filters) {
+        /* Outside rp->mu: subscribe() calls ensure_relay internally, which
+         * blocks again on any relay that has not come up. */
+        nostr_simple_pool_subscribe(job->fresh, (const char **)job->urls,
+                                    job->n_urls, *filters, true);
+      }
+    }
+    if (filters) nostr_filters_free(filters);
+  }
+
+  g_mutex_unlock(&rp->reconfig_mu);
+
+  for (size_t i = 0; i < job->n_urls; i++) g_free(job->urls[i]);
+  free(job->urls);
+  free(job);
+
+  g_mutex_lock(&rp->mu);
+  rp->reconfig_pending--;
+  g_cond_broadcast(&rp->reconfig_cond);
+  g_mutex_unlock(&rp->mu);
+
+  return NULL;
+}
+
 int signet_relay_pool_set_relays(SignetRelayPool *rp,
                                  const char *const *urls,
                                  size_t n_urls) {
   if (!rp || !urls || n_urls == 0) return -1;
 
   g_mutex_lock(&rp->mu);
+
+  if (rp->disposing) {
+    g_mutex_unlock(&rp->mu);
+    return -1;
+  }
 
   if (signet_relay_pool_urls_equal_locked(rp, urls, n_urls)) {
     g_mutex_unlock(&rp->mu);
@@ -882,13 +1043,40 @@ int signet_relay_pool_set_relays(SignetRelayPool *rp,
     return -1;
   }
 
+  /* The job needs its own URL copy: rp->urls can be replaced by the next
+   * reconfigure while this job is still dialling. */
+  SignetRelayReconfigure *job =
+      (SignetRelayReconfigure *)calloc(1, sizeof(*job));
+  char **job_urls = job ? (char **)calloc(n_urls, sizeof(char *)) : NULL;
+  if (!job || !job_urls) {
+    free(job);
+    free(job_urls);
+    nostr_simple_pool_free(fresh);
+    for (size_t i = 0; i < n_urls; i++) g_free(new_urls[i]);
+    free(new_urls);
+    g_mutex_unlock(&rp->mu);
+    return -1;
+  }
+  for (size_t i = 0; i < n_urls; i++) job_urls[i] = g_strdup(new_urls[i]);
+
   /* Publish the (empty, unstarted) replacement and take ownership of the old
    * pool before releasing the lock, so concurrent callers see a coherent
    * not-started pool rather than a dangling one. */
-  NostrSimplePool *old_pool = rp->pool;
-  GPtrArray *old_auth_cb_data = rp->auth_cb_data;
+  job->rp = rp;
+  job->fresh = fresh;
+  job->old_pool = rp->pool;
+  job->old_auth_cb_data = rp->auth_cb_data;
+  job->old_started = was_started;
+  job->restart_after = was_started;
+  job->urls = job_urls;
+  job->n_urls = n_urls;
+
   rp->pool = fresh;
   rp->auth_cb_data = NULL;
+  /* The replacement pool is not running yet. Leaving started TRUE would make
+   * publish paths iterate a pool with no relays; FALSE makes them return the
+   * existing not-started error instead, and lets the worker (or the health
+   * tick, whichever gets there first) claim the start transition. */
   rp->started = FALSE;
 
   if (rp->urls) {
@@ -898,59 +1086,55 @@ int signet_relay_pool_set_relays(SignetRelayPool *rp,
   rp->urls = new_urls;
   rp->n_urls = n_urls;
 
-  /* Tear the old pool down WITHOUT holding rp->mu. Stopping joins libnostr
-   * worker threads, and a worker may be inside signet_pool_event_middleware
-   * waiting on rp->mu — holding the lock across the join would deadlock. */
+  /* Middleware and EOSE policy are pure setters -- do them here so events are
+   * dispatched correctly the moment the first connection lands, and so
+   * libnostr's reconcile pass (which is skipped for auto_unsub_on_eose pools)
+   * is armed before any subscription is fired. */
+  nostr_simple_pool_set_event_middleware_ex(fresh, signet_pool_event_middleware,
+                                            rp);
+  nostr_simple_pool_set_auto_unsub_on_eose(fresh, false);
+
+  job->gen = ++rp->reconfig_gen;
+  rp->reconfig_pending++;
+
   g_mutex_unlock(&rp->mu);
 
-  if (old_pool) {
-    if (was_started) nostr_simple_pool_stop(old_pool);
-    nostr_simple_pool_free(old_pool);
+  /* fp-e08y: everything that can block now happens here, not on the caller's
+   * thread. The relay set is already switched from the caller's point of
+   * view (get_urls reflects it immediately); only connectivity is pending.
+   * That matches the old contract, which also returned 0 without ever
+   * checking whether the connects succeeded -- ensure_relay returns void. */
+  GThread *worker = g_thread_try_new("signet-relay-reconfigure",
+                                     signet_relay_pool_reconfigure_worker,
+                                     job, NULL);
+  if (!worker) {
+    /* Cannot spawn: fall back to doing the work inline rather than leaking
+     * the old pool. Slow, but correct, and only on thread exhaustion. */
+    g_warning("[signetd] relay reconfigure: thread spawn failed, "
+              "connecting synchronously");
+    signet_relay_pool_reconfigure_worker(job);
+    return 0;
   }
-  /* Only safe once the old pool's relays (and therefore its callbacks) are
-   * gone: this data was handed to those relays. */
-  if (old_auth_cb_data) {
-    for (guint i = 0; i < old_auth_cb_data->len; i++) {
-      SignetAuthCallbackData *d =
-          (SignetAuthCallbackData *)g_ptr_array_index(old_auth_cb_data, i);
-      if (!d) continue;
-      memset(d->sk_hex, 0, sizeof(d->sk_hex));
-      g_mutex_clear(&d->challenge_mu);
-      free(d);
-    }
-    g_ptr_array_free(old_auth_cb_data, TRUE);
-  }
+  g_thread_unref(worker);
+  return 0;
+}
+
+bool signet_relay_pool_wait_reconfigure(SignetRelayPool *rp,
+                                        unsigned int timeout_ms) {
+  if (!rp) return true;
+
+  gint64 deadline = g_get_monotonic_time() + (gint64)timeout_ms * 1000;
 
   g_mutex_lock(&rp->mu);
-
-  nostr_simple_pool_set_event_middleware_ex(rp->pool,
-                                            signet_pool_event_middleware, rp);
-  nostr_simple_pool_set_auto_unsub_on_eose(rp->pool, false);
-
-  for (size_t i = 0; i < rp->n_urls; i++)
-    nostr_simple_pool_ensure_relay(rp->pool, rp->urls[i]);
-
-  signet_relay_pool_register_auth(rp);
-
-  /* Restore subscription intent on the new connections. active_kinds,
-   * filter_pubkey_hex and filter_since were never cleared, so the daemon's
-   * subscriptions survive the relay change without the caller re-deriving
-   * them (and without a gap where 25910/1059 would be dropped). */
-  NostrFilters *filters = NULL;
-  if (was_started) {
-    nostr_simple_pool_start(rp->pool);
-    rp->started = TRUE;
-    filters = signet_relay_pool_build_filters_locked(rp);
-    if (filters) {
-      nostr_simple_pool_subscribe(rp->pool, (const char **)rp->urls, rp->n_urls,
-                                  *filters, true);
+  while (rp->reconfig_pending > 0) {
+    if (!g_cond_wait_until(&rp->reconfig_cond, &rp->mu, deadline)) {
+      gboolean pending = (rp->reconfig_pending > 0);
+      g_mutex_unlock(&rp->mu);
+      return !pending;
     }
   }
-
   g_mutex_unlock(&rp->mu);
-
-  if (filters) nostr_filters_free(filters);
-  return 0;
+  return true;
 }
 
 size_t signet_relay_pool_get_subscribed_kinds(SignetRelayPool *rp,
