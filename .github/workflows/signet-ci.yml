@@ -21,16 +21,21 @@ on:
 
 jobs:
   build-and-test:
-    name: signet • passkeys=${{ matrix.passkeys }} • sqlcipher=${{ matrix.sqlcipher }}
+    name: signet • ${{ matrix.build_type }} • passkeys=${{ matrix.passkeys }} • sqlcipher=${{ matrix.sqlcipher }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         passkeys: [ 'OFF', 'ON' ]
         sqlcipher: [ 'OFF', 'ON' ]
-
-    env:
-      CMAKE_BUILD_TYPE: Debug
+        build_type: [ 'Debug' ]
+        include:
+          # fp-52iq: assurance comes from running tests the way the project is
+          # shipped. Release optimizes signet_core and defines NDEBUG, so cover
+          # the shipped configuration too instead of testing Debug only.
+          - passkeys: 'ON'
+            sqlcipher: 'ON'
+            build_type: 'Release'
 
     steps:
       - name: Checkout (with submodules)
@@ -54,7 +59,7 @@ jobs:
       - name: Configure (signet enabled)
         run: |
           cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             -DENABLE_NIP19=ON -DENABLE_NIP49=ON \
             -DWITH_NOSTRDB=ON -DLIBNOSTR_WITH_NOSTRDB=ON \
             -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF \
@@ -65,5 +70,9 @@ jobs:
       - name: Build
         run: cmake --build build -j
 
+      # fp-52iq: this is the full signet test set. CMakeLists.txt and
+      # meson.build are kept in parity, and the test_list_parity case in this
+      # run fails if they drift, so a test can no longer be meson-only and
+      # therefore absent from every shipped build.
       - name: Test (signet ctest suite)
         run: ctest --test-dir build/signet/tests --output-on-failure

@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: MIT
 #
 # Signet tests
+#
+# PARITY RULE (fp-52iq): this file and tests/CMakeLists.txt must build and run
+# the same test set. CMake is the shipped build configuration, so a test that
+# lives only here provides no assurance for releases. Add a test to BOTH lists,
+# or record the reason for the omission next to it.
 
 # fp-3126: assert() is compiled out under NDEBUG (which the CMake Release
 # build defines), taking any side-effecting call inside it with it. Tests use
@@ -109,6 +114,15 @@ test_store_lifecycle = executable('test_store_lifecycle',
 
 test_store = executable('test_store',
   'test_store.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
+  install: false,
+)
+
+test_key_store = executable('test_key_store',
+  'test_key_store.c',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
@@ -229,6 +243,12 @@ test('no_bare_assert', find_program('sh'),
   args: [meson.current_source_dir() / 'check_no_bare_assert.sh',
          meson.current_source_dir()])
 
+# fp-52iq guard: fail the suite if the CMake and meson test lists drift apart
+# again. Enforces the parity rule at the top of this file.
+test('test_list_parity', find_program('sh'),
+  args: [meson.current_source_dir() / 'check_test_parity.sh',
+         meson.current_source_dir()])
+
 test('signet_smoke', test_exe)
 test('replay_cache', test_replay)
 test('policy_engine', test_policy)
@@ -241,6 +261,7 @@ test('signing_crypto', test_signing_crypto)
 test('nostr_auth', test_nostr_auth)
 test('store_lifecycle', test_store_lifecycle)
 test('store', test_store)
+test('key_store', test_key_store)
 test('db_migration', test_db_migration)
 test('adopt_existing', test_adopt_existing)
 test('reissue_connect', test_reissue_connect)

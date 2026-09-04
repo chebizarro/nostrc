@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: MIT
 #
 # Signet tests
+#
+# PARITY RULE (fp-52iq): this file and tests/meson.build must build and run the
+# same test set. Six tests plus test_signetctl_credentials.sh once existed only
+# under meson, so the CMake CI that ships the project silently covered less than
+# the developer build -- the same "green but never executed" gap as fp-3126.
+# Add a test to BOTH lists, or record the reason for the omission next to it.
 
 # fp-3126: the repo builds Release, which defines NDEBUG, under which
 # assert(expr) expands to ((void)0) and never evaluates its argument. The
@@ -13,226 +19,61 @@ if (NOT MSVC)
   add_compile_options(-UNDEBUG)
 endif()
 
-# Smoke test
-add_executable(test_signet_smoke test_signet_smoke.c)
-target_link_libraries(test_signet_smoke PRIVATE signet_core)
-if (TARGET nostr)
-  target_link_libraries(test_signet_smoke PRIVATE nostr)
-endif()
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_signet_smoke PRIVATE PkgConfig::GLIB)
-endif()
-if (TARGET PkgConfig::JSON_GLIB)
-  target_link_libraries(test_signet_smoke PRIVATE PkgConfig::JSON_GLIB)
-endif()
+# One helper so every test gets the same link and include set that meson's
+# `signet_deps + signet_includes` provides. Previously each test hand-listed a
+# subset of libraries, which is what let the two build systems drift: adding a
+# test to CMake meant reproducing a 15-line block, so it was easy to skip.
+function(signet_add_test_executable name)
+  add_executable(${name} ${name}.c)
+  target_link_libraries(${name} PRIVATE signet_core)
+  target_include_directories(${name} PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/libnostr/include
+    ${CMAKE_SOURCE_DIR}/libgo/include
+    ${CMAKE_SOURCE_DIR}/nips/nip04/include
+    ${CMAKE_SOURCE_DIR}/nips/nip17/include
+    ${CMAKE_SOURCE_DIR}/nips/nip19/include
+    ${CMAKE_SOURCE_DIR}/nips/nip44/include
+    ${CMAKE_SOURCE_DIR}/nips/nip46/include
+  )
+  foreach (dep nostr nip19 nip44 nip04 nip11 nostr_nip17_core nostr_nip46_core)
+    if (TARGET ${dep})
+      target_link_libraries(${name} PRIVATE ${dep})
+    endif()
+  endforeach()
+  foreach (pcdep GLIB JSON_GLIB SQLITE3 SODIUM)
+    if (TARGET PkgConfig::${pcdep})
+      target_link_libraries(${name} PRIVATE PkgConfig::${pcdep})
+    endif()
+  endforeach()
+endfunction()
 
-# Replay cache test
-add_executable(test_replay_cache test_replay_cache.c)
-target_link_libraries(test_replay_cache PRIVATE signet_core)
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_replay_cache PRIVATE PkgConfig::GLIB)
-endif()
-
-# Policy engine test
-add_executable(test_policy_engine test_policy_engine.c)
-target_link_libraries(test_policy_engine PRIVATE signet_core)
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_policy_engine PRIVATE PkgConfig::GLIB)
-endif()
-if (TARGET PkgConfig::JSON_GLIB)
-  target_link_libraries(test_policy_engine PRIVATE PkgConfig::JSON_GLIB)
-endif()
-
-# Audit logger test
-add_executable(test_audit_logger test_audit_logger.c)
-target_link_libraries(test_audit_logger PRIVATE signet_core)
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_audit_logger PRIVATE PkgConfig::GLIB)
-endif()
-if (TARGET PkgConfig::JSON_GLIB)
-  target_link_libraries(test_audit_logger PRIVATE PkgConfig::JSON_GLIB)
-endif()
-
-# Bootstrap/auth contract test
-add_executable(test_bootstrap_contract test_bootstrap_contract.c)
-target_link_libraries(test_bootstrap_contract PRIVATE signet_core)
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_bootstrap_contract PRIVATE PkgConfig::GLIB)
-endif()
-if (TARGET PkgConfig::JSON_GLIB)
-  target_link_libraries(test_bootstrap_contract PRIVATE PkgConfig::JSON_GLIB)
-endif()
-
-# Store CRUD tests
-add_executable(test_store test_store.c)
-target_link_libraries(test_store PRIVATE signet_core)
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_store PRIVATE PkgConfig::GLIB)
-endif()
-
-# Key store tests
-add_executable(test_key_store test_key_store.c)
-target_link_libraries(test_key_store PRIVATE signet_core)
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_key_store PRIVATE PkgConfig::GLIB)
-endif()
-
-# Nostr auth / challenge store tests
-add_executable(test_nostr_auth test_nostr_auth.c)
-target_link_libraries(test_nostr_auth PRIVATE signet_core)
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_nostr_auth PRIVATE PkgConfig::GLIB)
-endif()
-
-# Capability / policy registry tests
-add_executable(test_capability test_capability.c)
-target_link_libraries(test_capability PRIVATE signet_core)
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_capability PRIVATE PkgConfig::GLIB)
-endif()
-
-# NPA-11: Protocol-level relay pool tests
-# SIGHUP config reload: retention, relay reconfigure, eager policy,
-# provisioner revocation precedence (fp-56t)
-add_executable(test_config_reload test_config_reload.c)
-target_link_libraries(test_config_reload PRIVATE signet_core)
-if (TARGET nostr)
-  target_link_libraries(test_config_reload PRIVATE nostr)
-endif()
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_config_reload PRIVATE PkgConfig::GLIB)
-endif()
-
-add_executable(test_relay_pool_protocol test_relay_pool_protocol.c)
-target_link_libraries(test_relay_pool_protocol PRIVATE signet_core)
-if (TARGET nostr)
-  target_link_libraries(test_relay_pool_protocol PRIVATE nostr)
-endif()
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_relay_pool_protocol PRIVATE PkgConfig::GLIB)
-endif()
-
-# Real signing / NIP-44 round-trip / envelope-at-rest crypto tests
-add_executable(test_signing_crypto test_signing_crypto.c)
-target_link_libraries(test_signing_crypto PRIVATE signet_core)
-if (TARGET nostr)
-  target_link_libraries(test_signing_crypto PRIVATE nostr)
-endif()
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_signing_crypto PRIVATE PkgConfig::GLIB)
-endif()
-if (TARGET PkgConfig::SODIUM)
-  target_link_libraries(test_signing_crypto PRIVATE PkgConfig::SODIUM)
-endif()
-
-# Store lifecycle e2e: audit chain, bootstrap token single-use, revoke deny precedence
-add_executable(test_store_lifecycle test_store_lifecycle.c)
-target_link_libraries(test_store_lifecycle PRIVATE signet_core)
-if (TARGET nostr)
-  target_link_libraries(test_store_lifecycle PRIVATE nostr)
-endif()
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_store_lifecycle PRIVATE PkgConfig::GLIB)
-endif()
-if (TARGET PkgConfig::SQLITE3)
-  target_link_libraries(test_store_lifecycle PRIVATE PkgConfig::SQLITE3)
-endif()
-if (TARGET PkgConfig::SODIUM)
-  target_link_libraries(test_store_lifecycle PRIVATE PkgConfig::SODIUM)
-endif()
-
-# Fresh connect_secret reissue (agent/reissue-connect)
-add_executable(test_reissue_connect test_reissue_connect.c)
-target_link_libraries(test_reissue_connect PRIVATE signet_core)
-if (TARGET nostr)
-  target_link_libraries(test_reissue_connect PRIVATE nostr)
-endif()
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_reissue_connect PRIVATE PkgConfig::GLIB)
-endif()
-if (TARGET PkgConfig::JSON_GLIB)
-  target_link_libraries(test_reissue_connect PRIVATE PkgConfig::JSON_GLIB)
-endif()
-if (TARGET PkgConfig::SODIUM)
-  target_link_libraries(test_reissue_connect PRIVATE PkgConfig::SODIUM)
-endif()
-
-# Management-plane replay protection
-add_executable(test_mgmt_replay test_mgmt_replay.c)
-target_link_libraries(test_mgmt_replay PRIVATE signet_core)
-if (TARGET nostr)
-  target_link_libraries(test_mgmt_replay PRIVATE nostr)
-endif()
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_mgmt_replay PRIVATE PkgConfig::GLIB)
-endif()
-if (TARGET PkgConfig::JSON_GLIB)
-  target_link_libraries(test_mgmt_replay PRIVATE PkgConfig::JSON_GLIB)
-endif()
-if (TARGET PkgConfig::SODIUM)
-  target_link_libraries(test_mgmt_replay PRIVATE PkgConfig::SODIUM)
-endif()
-
-# agents.pubkey backfill for legacy (pre-v3.1) rows
-add_executable(test_pubkey_backfill test_pubkey_backfill.c)
-target_link_libraries(test_pubkey_backfill PRIVATE signet_core)
-if (TARGET nostr)
-  target_link_libraries(test_pubkey_backfill PRIVATE nostr)
-endif()
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_pubkey_backfill PRIVATE PkgConfig::GLIB)
-endif()
-if (TARGET PkgConfig::SODIUM)
-  target_link_libraries(test_pubkey_backfill PRIVATE PkgConfig::SODIUM)
-endif()
-
-# Self-service authorization for agent/reissue-connect
-add_executable(test_reissue_self_service test_reissue_self_service.c)
-target_link_libraries(test_reissue_self_service PRIVATE signet_core)
-if (TARGET nostr)
-  target_link_libraries(test_reissue_self_service PRIVATE nostr)
-endif()
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_reissue_self_service PRIVATE PkgConfig::GLIB)
-endif()
-if (TARGET PkgConfig::JSON_GLIB)
-  target_link_libraries(test_reissue_self_service PRIVATE PkgConfig::JSON_GLIB)
-endif()
-if (TARGET PkgConfig::SODIUM)
-  target_link_libraries(test_reissue_self_service PRIVATE PkgConfig::SODIUM)
-endif()
-
-# Persistent NIP-46 client bindings
-add_executable(test_client_bindings test_client_bindings.c)
-target_link_libraries(test_client_bindings PRIVATE signet_core)
-if (TARGET nostr)
-  target_link_libraries(test_client_bindings PRIVATE nostr)
-endif()
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_client_bindings PRIVATE PkgConfig::GLIB)
-endif()
-if (TARGET PkgConfig::JSON_GLIB)
-  target_link_libraries(test_client_bindings PRIVATE PkgConfig::JSON_GLIB)
-endif()
-if (TARGET PkgConfig::SODIUM)
-  target_link_libraries(test_client_bindings PRIVATE PkgConfig::SODIUM)
-endif()
-
-# Legacy plaintext SQLite -> SQLCipher migration
-add_executable(test_db_migration test_db_migration.c)
-target_link_libraries(test_db_migration PRIVATE signet_core)
-if (TARGET nostr)
-  target_link_libraries(test_db_migration PRIVATE nostr)
-endif()
-if (TARGET PkgConfig::GLIB)
-  target_link_libraries(test_db_migration PRIVATE PkgConfig::GLIB)
-endif()
-if (TARGET PkgConfig::SQLITE3)
-  target_link_libraries(test_db_migration PRIVATE PkgConfig::SQLITE3)
-endif()
-if (TARGET PkgConfig::SODIUM)
-  target_link_libraries(test_db_migration PRIVATE PkgConfig::SODIUM)
-endif()
+# Test executables. Keep in step with the executable() list in meson.build.
+signet_add_test_executable(test_signet_smoke)             # smoke
+signet_add_test_executable(test_replay_cache)
+signet_add_test_executable(test_policy_engine)
+signet_add_test_executable(test_audit_logger)
+signet_add_test_executable(test_bootstrap_contract)       # bootstrap/auth contract
+signet_add_test_executable(test_store)                    # store CRUD
+signet_add_test_executable(test_key_store)
+signet_add_test_executable(test_nostr_auth)               # challenge store
+signet_add_test_executable(test_capability)               # policy registry
+signet_add_test_executable(test_relay_pool_protocol)      # NPA-11
+signet_add_test_executable(test_config_reload)            # SIGHUP reload (fp-56t)
+signet_add_test_executable(test_signing_crypto)           # NIP-44 round-trip
+signet_add_test_executable(test_store_lifecycle)          # audit chain, revoke precedence
+signet_add_test_executable(test_db_migration)             # plaintext -> SQLCipher
+signet_add_test_executable(test_adopt_existing)
+signet_add_test_executable(test_reissue_connect)
+signet_add_test_executable(test_mgmt_replay)
+signet_add_test_executable(test_pubkey_backfill)          # legacy agents.pubkey backfill
+signet_add_test_executable(test_reissue_self_service)
+signet_add_test_executable(test_client_bindings)          # persistent NIP-46 bindings
+signet_add_test_executable(test_credential_lifecycle)
+signet_add_test_executable(test_credential_access)
+signet_add_test_executable(test_git_credential)
+signet_add_test_executable(test_backup_restore)
+signet_add_test_executable(test_item3_concurrency)        # connection/port robustness
 
 if (SIGNET_ENABLE_PASSKEYS)
   add_executable(test_store_passkeys
@@ -319,12 +160,17 @@ if (SIGNET_ENABLE_PASSKEYS)
   endif()
 endif()
 
-# Register tests with CTest
+# Register tests with CTest. Keep in step with the test() list in meson.build.
 
 # fp-3126 guard: fail the suite if a bare assert() reappears anywhere in the
 # signet test tree. Catches new test files that never include test_check.h.
 add_test(NAME no_bare_assert
   COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/check_no_bare_assert.sh ${CMAKE_CURRENT_SOURCE_DIR})
+
+# fp-52iq guard: fail the suite if the CMake and meson test lists drift apart
+# again. Enforces the parity rule at the top of this file.
+add_test(NAME test_list_parity
+  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/check_test_parity.sh ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_test(NAME signet_smoke COMMAND test_signet_smoke)
 add_test(NAME replay_cache COMMAND test_replay_cache)
@@ -340,11 +186,25 @@ add_test(NAME config_reload COMMAND test_config_reload)
 add_test(NAME signing_crypto COMMAND test_signing_crypto)
 add_test(NAME store_lifecycle COMMAND test_store_lifecycle)
 add_test(NAME db_migration COMMAND test_db_migration)
+add_test(NAME adopt_existing COMMAND test_adopt_existing)
 add_test(NAME reissue_connect COMMAND test_reissue_connect)
 add_test(NAME mgmt_replay COMMAND test_mgmt_replay)
 add_test(NAME pubkey_backfill COMMAND test_pubkey_backfill)
 add_test(NAME reissue_self_service COMMAND test_reissue_self_service)
 add_test(NAME client_bindings COMMAND test_client_bindings)
+add_test(NAME credential_lifecycle COMMAND test_credential_lifecycle)
+add_test(NAME credential_access COMMAND test_credential_access)
+add_test(NAME git_credential COMMAND test_git_credential)
+add_test(NAME signetctl_credentials
+  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/test_signetctl_credentials.sh $<TARGET_FILE:signetctl>)
+add_test(NAME backup_restore COMMAND test_backup_restore)
+add_test(NAME item3_concurrency COMMAND test_item3_concurrency)
+
+# Match the meson timeouts for the three tests that do real socket/threading
+# work; CTest's default is 1500s, which would let a hang stall CI.
+set_tests_properties(config_reload item3_concurrency backup_restore
+  PROPERTIES TIMEOUT 60)
+
 if (SIGNET_ENABLE_PASSKEYS)
   add_test(NAME store_passkeys COMMAND test_store_passkeys)
   add_test(NAME fido_service COMMAND test_fido_service)
@@ -352,6 +212,9 @@ if (SIGNET_ENABLE_PASSKEYS)
   add_test(NAME fido_interop_external
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/run_fido_interop_external_check.sh $<TARGET_FILE:test_fido_interop_json> ${CMAKE_CURRENT_BINARY_DIR}/phase3_interop)
 
+  # CMake-only, deliberately: needs a live session D-Bus and real hardware
+  # interaction, so it is registered DISABLED for manual invocation and has no
+  # meson counterpart. Not part of the parity rule above.
   add_test(NAME live_dbus_interop_manual
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/interop/run_live_dbus_interop.sh)
   set_tests_properties(live_dbus_interop_manual PROPERTIES
