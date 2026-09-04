@@ -25,6 +25,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <errno.h>
@@ -55,7 +57,16 @@ struct SignetSshAgent {
   SignetSshUidResolver uid_resolver;
   void *uid_resolver_data;
 
+  /* Owned by the accept thread for its whole lifetime: written only before
+   * g_thread_new() in start() and after g_thread_join() in stop(), so the
+   * accept loop's reads are ordered by thread create/join and never race.
+   * Do NOT close this from stop() while the loop is live -- the descriptor
+   * number can be reused immediately by another thread and the loop would
+   * then accept() on an unrelated fd. */
   int listen_fd;
+  /* Self-pipe used to wake the accept loop out of poll() at shutdown.
+   * wake_fds[0] is read by the accept thread, wake_fds[1] written by stop(). */
+  int wake_fds[2];
   GThread *accept_thread;
   volatile gint running;
   guint active_clients;
@@ -365,15 +376,52 @@ static gpointer ssh_agent_client_thread(gpointer data) {
 
 /* ----------------------------- accept thread ------------------------------ */
 
+/* Set or clear O_NONBLOCK on fd. Returns 0 on success. */
+static int set_nonblocking(int fd, bool enable) {
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags < 0) return -1;
+  int want = enable ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK);
+  if (want == flags) return 0;
+  return fcntl(fd, F_SETFL, want) < 0 ? -1 : 0;
+}
+
 static gpointer ssh_agent_accept_loop(gpointer data) {
   SignetSshAgent *sa = (SignetSshAgent *)data;
 
   while (g_atomic_int_get(&sa->running)) {
-    int client_fd = accept(sa->listen_fd, NULL, NULL);
-    if (client_fd < 0) {
+    struct pollfd pfds[2];
+    pfds[0].fd = sa->listen_fd;
+    pfds[0].events = POLLIN;
+    pfds[0].revents = 0;
+    pfds[1].fd = sa->wake_fds[0];
+    pfds[1].events = POLLIN;
+    pfds[1].revents = 0;
+
+    int nfds = (pfds[1].fd >= 0) ? 2 : 1;
+    int pr = poll(pfds, (nfds_t)nfds, -1);
+    if (pr < 0) {
       if (errno == EINTR) continue;
       break;
     }
+    /* Shutdown requested: leave without touching listen_fd so stop() can
+     * close it safely once it has joined this thread. */
+    if (nfds == 2 && pfds[1].revents != 0) break;
+    if (!(pfds[0].revents & POLLIN)) {
+      if (pfds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) break;
+      continue;
+    }
+
+    int client_fd = accept(sa->listen_fd, NULL, NULL);
+    if (client_fd < 0) {
+      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK ||
+          errno == ECONNABORTED)
+        continue;
+      break;
+    }
+    /* The listener is non-blocking; on BSD-derived systems (macOS) the
+     * accepted socket inherits that, which would break the blocking
+     * read/write loop in handle_client(). Force it back to blocking. */
+    (void)set_nonblocking(client_fd, false);
     g_mutex_lock(&sa->clients_mu);
     if (sa->active_clients >= SSH_AGENT_MAX_CONNECTIONS) {
       g_atomic_int_inc(&g_signet_metrics.ssh_agent_connections_denied);
@@ -422,6 +470,8 @@ SignetSshAgent *signet_ssh_agent_new(const SignetSshAgentConfig *cfg) {
   sa->uid_resolver = cfg->uid_resolver;
   sa->uid_resolver_data = cfg->uid_resolver_data;
   sa->listen_fd = -1;
+  sa->wake_fds[0] = -1;
+  sa->wake_fds[1] = -1;
   sa->client_fds = g_hash_table_new(g_direct_hash, g_direct_equal);
   g_mutex_init(&sa->clients_mu);
   g_cond_init(&sa->clients_drained);
@@ -465,8 +515,35 @@ int signet_ssh_agent_start(SignetSshAgent *sa) {
     return -1;
   }
 
+  /* Self-pipe so stop() can wake the accept loop without closing listen_fd
+   * out from under it. */
+  if (pipe(sa->wake_fds) != 0) {
+    close(sa->listen_fd);
+    sa->listen_fd = -1;
+    sa->wake_fds[0] = -1;
+    sa->wake_fds[1] = -1;
+    return -1;
+  }
+  for (int i = 0; i < 2; i++) {
+    (void)fcntl(sa->wake_fds[i], F_SETFD, FD_CLOEXEC);
+    (void)set_nonblocking(sa->wake_fds[i], true);
+  }
+  /* poll() + non-blocking accept(): a peer that aborts between poll() and
+   * accept() must not wedge the loop. */
+  (void)set_nonblocking(sa->listen_fd, true);
+
   g_atomic_int_set(&sa->running, 1);
   sa->accept_thread = g_thread_new("signet-ssh-agent", ssh_agent_accept_loop, sa);
+  if (!sa->accept_thread) {
+    close(sa->listen_fd);
+    sa->listen_fd = -1;
+    close(sa->wake_fds[0]);
+    close(sa->wake_fds[1]);
+    sa->wake_fds[0] = -1;
+    sa->wake_fds[1] = -1;
+    g_atomic_int_set(&sa->running, 0);
+    return -1;
+  }
 
   return 0;
 }
@@ -476,15 +553,34 @@ void signet_ssh_agent_stop(SignetSshAgent *sa) {
 
   g_atomic_int_set(&sa->running, 0);
 
-  if (sa->listen_fd >= 0) {
-    shutdown(sa->listen_fd, SHUT_RDWR);
-    close(sa->listen_fd);
-    sa->listen_fd = -1;
+  /* Wake the accept loop via the self-pipe rather than by closing listen_fd:
+   * closing it here would both race the loop's read of listen_fd and risk the
+   * loop accept()ing on a descriptor number already reused by another thread. */
+  if (sa->wake_fds[1] >= 0) {
+    const uint8_t byte = 1;
+    ssize_t w;
+    do {
+      w = write(sa->wake_fds[1], &byte, 1);
+    } while (w < 0 && errno == EINTR);
+    (void)w;
   }
 
   if (sa->accept_thread) {
     g_thread_join(sa->accept_thread);
     sa->accept_thread = NULL;
+  }
+
+  /* The accept loop is gone, so listen_fd has no other reader. */
+  if (sa->listen_fd >= 0) {
+    shutdown(sa->listen_fd, SHUT_RDWR);
+    close(sa->listen_fd);
+    sa->listen_fd = -1;
+  }
+  for (int i = 0; i < 2; i++) {
+    if (sa->wake_fds[i] >= 0) {
+      close(sa->wake_fds[i]);
+      sa->wake_fds[i] = -1;
+    }
   }
 
   g_mutex_lock(&sa->clients_mu);
