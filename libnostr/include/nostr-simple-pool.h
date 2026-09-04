@@ -76,6 +76,27 @@ typedef struct _NostrSimplePool {
     /* nostrc-ey0f: Disposed flag to prevent double-free */
     volatile int disposed;          /* 0 = active, 1 = disposed */
 
+    /* fp-ieg8: background redial worker.
+     *
+     * libnostr's reconnect/backoff loop lives in the relay's message_loop,
+     * which nostr_relay_connect() only spawns after a connection succeeds. A
+     * relay whose FIRST dial failed had no loop, so nothing ever re-dialled it:
+     * "the pool retries in the background" was not a property this pool
+     * provided, and callers papered over it with their own periodic ticks.
+     * This worker is that retry engine. It takes only relays whose
+     * reconnection is not self-managed, and dials them on the same bounded
+     * exponential backoff message_loop uses.
+     *
+     * Its lifetime is the POOL's, not start()/stop()'s: callers stop and
+     * restart pools from latency-sensitive threads (signetd does it from its
+     * GLib main loop), and joining a thread that may be inside a connect would
+     * reintroduce exactly the stall this exists to remove. */
+    pthread_t redial_thread;
+    bool redial_thread_running;     /* worker was spawned and needs joining */
+    volatile int redial_stop;       /* set by _free() to retire the worker */
+    bool redial_enabled;            /* cleared by explicit disconnect requests */
+    struct GoChannel *redial_wake;  /* nudge: there is something to dial now */
+
     /* Timeout-audit: Wake channel for event-driven worker loop.
      * Signaled when subscriptions change or pool is stopping.
      * Allows the worker to block in go_select instead of polling. */
@@ -108,6 +129,24 @@ void nostr_simple_pool_free(NostrSimplePool *pool);
  */
 void nostr_simple_pool_ensure_relay(NostrSimplePool *pool, const char *url);
 /**
+ * nostr_simple_pool_ensure_relay_async:
+ * @pool: (transfer none): pool
+ * @url: (transfer none): relay URL
+ *
+ * Registers the relay with the pool and returns immediately. Unlike
+ * nostr_simple_pool_ensure_relay(), this never dials on the calling thread:
+ * creating the connection is left to the pool's redial worker, which brings the
+ * relay up in the background and keeps retrying on bounded backoff if it is
+ * unreachable.
+ *
+ * Use this from any thread that must not stall. nostr_connection_new() can
+ * block for up to NOSTR_CONNECT_RESULT_TIMEOUT_MS (30s, not configurable) --
+ * a synchronous DNS lookup for a mistyped hostname is enough -- so calling the
+ * blocking variant from an event loop freezes the whole process for the
+ * duration (fp-1r0k).
+ */
+void nostr_simple_pool_ensure_relay_async(NostrSimplePool *pool, const char *url);
+/**
  * nostr_simple_pool_add_relay:
  * @pool: (transfer none): pool
  * @relay: (transfer none): relay to add
@@ -132,13 +171,18 @@ bool nostr_simple_pool_remove_relay(NostrSimplePool *pool, const char *url);
  *
  * Disconnects all relays in the pool without removing them.
  * Useful before reconfiguring the relay list.
+ *
+ * fp-ieg8: this also suspends the background redial worker, which would
+ * otherwise dial straight back everything this call just dropped. The next
+ * nostr_simple_pool_start() re-arms it.
  */
 void nostr_simple_pool_disconnect_all(NostrSimplePool *pool);
 /**
  * nostr_simple_pool_start:
  * @pool: (transfer none): pool
  *
- * Starts pool workers.
+ * Starts pool workers. Idempotent: a second call on an already-running pool is
+ * a no-op rather than a second worker thread with the first one orphaned.
  */
 void nostr_simple_pool_start(NostrSimplePool *pool);
 /**
@@ -146,6 +190,11 @@ void nostr_simple_pool_start(NostrSimplePool *pool);
  * @pool: (transfer none): pool
  *
  * Stops pool workers and drains queues.
+ *
+ * fp-ieg8: deliberately does NOT wait for the background redial worker. Callers
+ * stop pools from latency-sensitive threads, and blocking on a dial that may
+ * already be in flight is the stall this whole mechanism exists to remove. The
+ * worker is retired by nostr_simple_pool_free().
  */
 void nostr_simple_pool_stop(NostrSimplePool *pool);
 /**
@@ -157,6 +206,25 @@ void nostr_simple_pool_stop(NostrSimplePool *pool);
  * @unique: whether to de-duplicate events
  */
 void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilters filters, bool unique);
+/**
+ * nostr_simple_pool_subscribe_async:
+ * @pool: (transfer none): pool
+ * @urls: (array length=url_count) (transfer none): relay URLs
+ * @url_count: number of URLs
+ * @filters: (transfer none): filters to subscribe
+ * @unique: whether to de-duplicate events
+ *
+ * Same as nostr_simple_pool_subscribe(), except relays are registered with
+ * nostr_simple_pool_ensure_relay_async() instead of being dialled inline, so
+ * this call does not block on the network.
+ *
+ * The subscription is fired on every relay that is already connected and
+ * recorded as the pool's shared filter set; relays that connect later pick it
+ * up from the worker loop's reconcile pass (<=200ms cadence). Note that pass is
+ * skipped for auto_unsub_on_eose pools -- call
+ * nostr_simple_pool_set_auto_unsub_on_eose(pool, false) if you rely on it.
+ */
+void nostr_simple_pool_subscribe_async(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilters filters, bool unique);
 /**
  * nostr_simple_pool_query_single:
  * @pool: (transfer none): pool

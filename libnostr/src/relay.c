@@ -726,6 +726,14 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
     loop_arg->relay = relay;
     loop_arg->ctx = ctx;
 
+    /* fp-ieg8: from here on this relay reconnects itself. Publish that before
+     * the loop exists rather than from inside it, so a pool redial worker that
+     * looks between pthread_create and the loop's first instruction still sees
+     * the relay as self-managed and stays out. message_loop clears it on exit. */
+    nsync_mu_lock(&relay->priv->mutex);
+    relay->priv->message_loop_active = true;
+    nsync_mu_unlock(&relay->priv->mutex);
+
     go_wait_group_add(&relay->priv->workers, 2);
     go_fiber_compat(write_operations, write_arg);
     go_fiber_compat(message_loop, loop_arg);
@@ -1010,6 +1018,16 @@ static void init_cached_env(void) {
     }
 }
 
+/* fp-ieg8: hand reconnect ownership back to the pool. Must run on every exit
+ * path out of message_loop, or a relay whose loop has died stays flagged as
+ * self-managed and nothing ever dials it again. */
+static void relay_message_loop_retire(NostrRelay *r) {
+    if (!r || !r->priv) return;
+    nsync_mu_lock(&r->priv->mutex);
+    r->priv->message_loop_active = false;
+    nsync_mu_unlock(&r->priv->mutex);
+}
+
 // Worker: reads messages from the connection, parses envelopes, dispatches,
 // and emits concise debug summaries on the optional debug_raw channel.
 // Handles automatic reconnection with exponential backoff (nostrc-4du).
@@ -1032,6 +1050,7 @@ static void *message_loop(void *arg) {
 
     if (!ctx) {
         if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: no context, exiting\n");
+        relay_message_loop_retire(r);
         go_wait_group_done(&r->priv->workers);
         return NULL;
     }
@@ -1047,6 +1066,7 @@ static void *message_loop(void *arg) {
     if (!buf || !priority_buf) {
         free(buf); free(priority_buf);
         if (ctx) go_context_unref(ctx);
+        relay_message_loop_retire(r);
         go_wait_group_done(&r->priv->workers);
         return NULL;
     }
@@ -1388,6 +1408,7 @@ static void *message_loop(void *arg) {
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] message_loop: exit\n");
     free(buf);
     free(priority_buf);
+    relay_message_loop_retire(r);
     go_context_unref(ctx);  // Release context reference (nostrc-0q4)
     go_wait_group_done(&r->priv->workers);  // Use local 'r', not freed 'arg'
     return NULL;
@@ -2076,6 +2097,83 @@ void nostr_relay_reconnect_now(NostrRelay *relay) {
     if (should_wake && relay->priv->reconnect_now) {
         (void)go_channel_try_send(relay->priv->reconnect_now, (void *)(uintptr_t)1);
     }
+}
+
+/* ========================================================================
+ * fp-ieg8: dial coordination for pool-driven redial. See relay-private.h.
+ * ======================================================================== */
+
+bool nostr_relay_reconnect_is_self_managed(NostrRelay *relay) {
+    if (!relay || !relay->priv) return false;
+    nsync_mu_lock(&relay->priv->mutex);
+    bool managed = relay->priv->message_loop_active;
+    nsync_mu_unlock(&relay->priv->mutex);
+    return managed;
+}
+
+bool nostr_relay_dial_try_claim(NostrRelay *relay) {
+    if (!relay || !relay->priv) return false;
+
+    GoContext *ctx = NULL;
+    bool claimed = false;
+
+    nsync_mu_lock(&relay->priv->mutex);
+    if (!relay->priv->dial_in_progress &&
+        !relay->priv->message_loop_active &&
+        relay->priv->auto_reconnect) {
+        relay->priv->dial_in_progress = true;
+        claimed = true;
+        ctx = relay->priv->connection_context;
+    }
+    nsync_mu_unlock(&relay->priv->mutex);
+
+    if (!claimed) return false;
+
+    /* Checked outside the relay mutex: go_context_is_canceled takes its own
+     * locks. A cancelled context means the relay is being closed or freed, and
+     * reconnecting it would resurrect a connection nobody will ever read. */
+    if (ctx && go_context_is_canceled(ctx)) {
+        nsync_mu_lock(&relay->priv->mutex);
+        relay->priv->dial_in_progress = false;
+        nsync_mu_unlock(&relay->priv->mutex);
+        return false;
+    }
+
+    return true;
+}
+
+void nostr_relay_dial_release(NostrRelay *relay, bool connected) {
+    if (!relay || !relay->priv) return;
+
+    if (connected) {
+        /* nostr_relay_connect() already reset the counters and published
+         * CONNECTED; just drop the claim. */
+        nsync_mu_lock(&relay->priv->mutex);
+        relay->priv->dial_in_progress = false;
+        nsync_mu_unlock(&relay->priv->mutex);
+        return;
+    }
+
+    nsync_mu_lock(&relay->priv->mutex);
+    relay->priv->dial_in_progress = false;
+    relay->priv->reconnect_attempt++;
+    int attempt = relay->priv->reconnect_attempt;
+    nsync_mu_unlock(&relay->priv->mutex);
+
+    /* Same curve message_loop uses: 1s doubling to a 5min ceiling, jittered.
+     * Bounded on purpose -- a relay whose hostname is a typo must not be
+     * dialled in a hot loop for the lifetime of the process. */
+    uint64_t backoff_ms = calculate_backoff_with_jitter(attempt - 1);
+
+    nsync_mu_lock(&relay->priv->mutex);
+    relay->priv->backoff_ms = backoff_ms;
+    relay->priv->next_reconnect_time_ms = get_monotonic_time_ms() + backoff_ms;
+    nsync_mu_unlock(&relay->priv->mutex);
+
+    /* Publishing BACKOFF is what makes nostr_relay_get_next_reconnect_ms()
+     * report the remaining delay, which is how the pool decides when a relay
+     * is due for its next attempt. */
+    relay_set_state(relay, NOSTR_RELAY_STATE_BACKOFF);
 }
 
 void nostr_relay_set_custom_handler(NostrRelay *relay, bool (*handler)(const char *)) {

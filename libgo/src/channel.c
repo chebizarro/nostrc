@@ -406,26 +406,39 @@ static inline int go_channel_is_full(const GoChannel *c) {
 // Runtime-tunable spin settings (read once from env)
 static int g_spin_iters = NOSTR_SPIN_ITERS;
 static int g_spin_us = NOSTR_SPIN_US;
-static int g_spin_inited = 0;
 static int g_chan_debug = 0; // enable extra logging if env set
-static inline void ensure_spin_env(void) {
-    if (NOSTR_UNLIKELY(!g_spin_inited)) {
-        const char *e1 = getenv("NOSTR_SPIN_ITERS");
-        const char *e2 = getenv("NOSTR_SPIN_US");
-        const char *ed = getenv("NOSTR_CHAN_DEBUG");
-        if (e1) {
-            long v = strtol(e1, NULL, 10);
-            if (v > 0 && v < 100000) g_spin_iters = (int)v;
-        }
-        if (e2) {
-            long v = strtol(e2, NULL, 10);
-            if (v >= 0 && v < 1000000) g_spin_us = (int)v;
-        }
-        if (ed && *ed && *ed != '0') {
-            g_chan_debug = 1;
-        }
-        g_spin_inited = 1;
+
+/* fp-ieg8: pthread_once, not a plain "if (!inited)" guard.
+ *
+ * This is on the path of every go_channel_is_closed / select try-pass, so the
+ * moment a process has two channel-using threads -- which is every pool, and now
+ * also the pool's redial worker -- two threads read and write g_spin_inited,
+ * g_spin_iters, g_spin_us and g_chan_debug with no synchronisation at all.
+ * ThreadSanitizer reports it, and it is a genuine (if benign-looking) race:
+ * nothing orders the flag's write after the values it is supposed to publish.
+ * pthread_once gives exactly the once-and-happens-before semantics intended,
+ * for the same cost after the first call. */
+static pthread_once_t g_spin_env_once = PTHREAD_ONCE_INIT;
+
+static void spin_env_init(void) {
+    const char *e1 = getenv("NOSTR_SPIN_ITERS");
+    const char *e2 = getenv("NOSTR_SPIN_US");
+    const char *ed = getenv("NOSTR_CHAN_DEBUG");
+    if (e1) {
+        long v = strtol(e1, NULL, 10);
+        if (v > 0 && v < 100000) g_spin_iters = (int)v;
     }
+    if (e2) {
+        long v = strtol(e2, NULL, 10);
+        if (v >= 0 && v < 1000000) g_spin_us = (int)v;
+    }
+    if (ed && *ed && *ed != '0') {
+        g_chan_debug = 1;
+    }
+}
+
+static inline void ensure_spin_env(void) {
+    (void)pthread_once(&g_spin_env_once, spin_env_init);
 }
 
 // Next index helpers (without mutating channel state)
