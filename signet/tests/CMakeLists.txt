@@ -2,6 +2,17 @@
 #
 # Signet tests
 
+# fp-3126: the repo builds Release, which defines NDEBUG, under which
+# assert(expr) expands to ((void)0) and never evaluates its argument. The
+# signet suite used bare assert() for side-effecting setup calls, so ctest
+# passed having executed nothing. Tests now use CHECK() from test_check.h,
+# but keep asserts live in test translation units as a second line of
+# defence -- a test file that forgets the header still gets working checks.
+# Directory-scoped, so it also covers ../src sources compiled into tests.
+if (NOT MSVC)
+  add_compile_options(-UNDEBUG)
+endif()
+
 # Smoke test
 add_executable(test_signet_smoke test_signet_smoke.c)
 target_link_libraries(test_signet_smoke PRIVATE signet_core)
@@ -309,6 +320,12 @@ if (SIGNET_ENABLE_PASSKEYS)
 endif()
 
 # Register tests with CTest
+
+# fp-3126 guard: fail the suite if a bare assert() reappears anywhere in the
+# signet test tree. Catches new test files that never include test_check.h.
+add_test(NAME no_bare_assert
+  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/check_no_bare_assert.sh ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_test(NAME signet_smoke COMMAND test_signet_smoke)
 add_test(NAME replay_cache COMMAND test_replay_cache)
 add_test(NAME policy_engine COMMAND test_policy_engine)

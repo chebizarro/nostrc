@@ -6,7 +6,7 @@
 
 #include "signet/capability.h"
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,42 +18,42 @@
 static void test_method_to_capability(void) {
   /* Well-known NIP-46 / D-Bus method names should map to capabilities. */
   const char *sign_cap = signet_method_to_capability("SignEvent");
-  assert(sign_cap != NULL);
-  assert(strcmp(sign_cap, SIGNET_CAP_NOSTR_SIGN) == 0);
+  CHECK(sign_cap != NULL);
+  CHECK(strcmp(sign_cap, SIGNET_CAP_NOSTR_SIGN) == 0);
 
   const char *enc_cap = signet_method_to_capability("Encrypt");
-  assert(enc_cap != NULL);
-  assert(strcmp(enc_cap, SIGNET_CAP_NOSTR_ENCRYPT) == 0);
+  CHECK(enc_cap != NULL);
+  CHECK(strcmp(enc_cap, SIGNET_CAP_NOSTR_ENCRYPT) == 0);
 
-  assert(strcmp(signet_method_to_capability("GetInfo"),
+  CHECK(strcmp(signet_method_to_capability("GetInfo"),
                 SIGNET_CAP_PASSKEY_GET_INFO) == 0);
-  assert(strcmp(signet_method_to_capability("MakeCredential"),
+  CHECK(strcmp(signet_method_to_capability("MakeCredential"),
                 SIGNET_CAP_PASSKEY_MAKE_CREDENTIAL) == 0);
-  assert(strcmp(signet_method_to_capability("GetAssertion"),
+  CHECK(strcmp(signet_method_to_capability("GetAssertion"),
                 SIGNET_CAP_PASSKEY_GET_ASSERTION) == 0);
-  assert(strcmp(signet_method_to_capability("ExportCredential"),
+  CHECK(strcmp(signet_method_to_capability("ExportCredential"),
                 SIGNET_CAP_PASSKEY_EXPORT) == 0);
-  assert(strcmp(signet_method_to_capability("ImportCredential"),
+  CHECK(strcmp(signet_method_to_capability("ImportCredential"),
                 SIGNET_CAP_PASSKEY_IMPORT) == 0);
-  assert(strcmp(signet_method_to_capability("webauthn_get_info"),
+  CHECK(strcmp(signet_method_to_capability("webauthn_get_info"),
                 SIGNET_CAP_PASSKEY_GET_INFO) == 0);
-  assert(strcmp(signet_method_to_capability("webauthn_make_credential"),
+  CHECK(strcmp(signet_method_to_capability("webauthn_make_credential"),
                 SIGNET_CAP_PASSKEY_MAKE_CREDENTIAL) == 0);
-  assert(strcmp(signet_method_to_capability("webauthn_get_assertion"),
+  CHECK(strcmp(signet_method_to_capability("webauthn_get_assertion"),
                 SIGNET_CAP_PASSKEY_GET_ASSERTION) == 0);
-  assert(strcmp(signet_method_to_capability("webauthn_export"),
+  CHECK(strcmp(signet_method_to_capability("webauthn_export"),
                 SIGNET_CAP_PASSKEY_EXPORT) == 0);
-  assert(strcmp(signet_method_to_capability("webauthn_import"),
+  CHECK(strcmp(signet_method_to_capability("webauthn_import"),
                 SIGNET_CAP_PASSKEY_IMPORT) == 0);
 
   /* NIP-5L style method names. */
   const char *sign_5l = signet_method_to_capability("sign_event");
-  assert(sign_5l != NULL);
-  assert(strcmp(sign_5l, SIGNET_CAP_NOSTR_SIGN) == 0);
+  CHECK(sign_5l != NULL);
+  CHECK(strcmp(sign_5l, SIGNET_CAP_NOSTR_SIGN) == 0);
 
   /* Unknown method should return NULL. */
-  assert(signet_method_to_capability("TotallyFakeMethod") == NULL);
-  assert(signet_method_to_capability(NULL) == NULL);
+  CHECK(signet_method_to_capability("TotallyFakeMethod") == NULL);
+  CHECK(signet_method_to_capability(NULL) == NULL);
 
   printf("test_method_to_capability: PASS\n");
 }
@@ -62,7 +62,7 @@ static void test_method_to_capability(void) {
 
 static void test_registry_create_free(void) {
   SignetPolicyRegistry *pr = signet_policy_registry_new();
-  assert(pr != NULL);
+  CHECK(pr != NULL);
   signet_policy_registry_free(pr);
 
   /* Free NULL should not crash. */
@@ -89,21 +89,21 @@ static void test_capability_grant(void) {
   };
 
   int rc = signet_policy_registry_add(pr, &policy);
-  assert(rc == 0);
+  CHECK(rc == 0);
 
   rc = signet_policy_registry_assign(pr, "agent-signer", "signer-policy");
-  assert(rc == 0);
+  CHECK(rc == 0);
 
   /* Agent should have the granted capabilities. */
-  assert(signet_policy_has_capability(pr, "agent-signer", SIGNET_CAP_NOSTR_SIGN));
-  assert(signet_policy_has_capability(pr, "agent-signer", SIGNET_CAP_NOSTR_ENCRYPT));
+  CHECK(signet_policy_has_capability(pr, "agent-signer", SIGNET_CAP_NOSTR_SIGN));
+  CHECK(signet_policy_has_capability(pr, "agent-signer", SIGNET_CAP_NOSTR_ENCRYPT));
 
   /* Agent should NOT have capabilities not granted. */
-  assert(!signet_policy_has_capability(pr, "agent-signer", SIGNET_CAP_SSH_SIGN));
-  assert(!signet_policy_has_capability(pr, "agent-signer", SIGNET_CAP_CREDENTIAL_GET_SESSION));
+  CHECK(!signet_policy_has_capability(pr, "agent-signer", SIGNET_CAP_SSH_SIGN));
+  CHECK(!signet_policy_has_capability(pr, "agent-signer", SIGNET_CAP_CREDENTIAL_GET_SESSION));
 
   /* Unknown agent should have no capabilities. */
-  assert(!signet_policy_has_capability(pr, "unknown-agent", SIGNET_CAP_NOSTR_SIGN));
+  CHECK(!signet_policy_has_capability(pr, "unknown-agent", SIGNET_CAP_NOSTR_SIGN));
 
   g_free(policy.name);
   signet_policy_registry_free(pr);
@@ -132,13 +132,13 @@ static void test_kind_restrictions(void) {
   signet_policy_registry_assign(pr, "kind-agent", "kind-restricted");
 
   /* Allowed kinds should pass. */
-  assert(signet_policy_allowed_kind(pr, "kind-agent", 1));
-  assert(signet_policy_allowed_kind(pr, "kind-agent", 4));
-  assert(signet_policy_allowed_kind(pr, "kind-agent", 30023));
+  CHECK(signet_policy_allowed_kind(pr, "kind-agent", 1));
+  CHECK(signet_policy_allowed_kind(pr, "kind-agent", 4));
+  CHECK(signet_policy_allowed_kind(pr, "kind-agent", 30023));
 
   /* Disallowed kind should fail. */
-  assert(!signet_policy_allowed_kind(pr, "kind-agent", 0)); /* metadata */
-  assert(!signet_policy_allowed_kind(pr, "kind-agent", 3)); /* contact list */
+  CHECK(!signet_policy_allowed_kind(pr, "kind-agent", 0)); /* metadata */
+  CHECK(!signet_policy_allowed_kind(pr, "kind-agent", 3)); /* contact list */
 
   /* Unknown agent: kind check depends on implementation (likely allows or denies). */
   /* Just ensure it doesn't crash. */
@@ -165,8 +165,8 @@ static void test_passkey_policy_decisions(void) {
     .n_disallowed_types = 0,
     .rate_limit_per_hour = 0,
   };
-  assert(signet_policy_registry_add(pr, &default_policy) == 0);
-  assert(signet_policy_registry_assign(pr, "*", "default-no-passkeys") == 0);
+  CHECK(signet_policy_registry_add(pr, &default_policy) == 0);
+  CHECK(signet_policy_registry_assign(pr, "*", "default-no-passkeys") == 0);
 
   const char *passkey_methods[] = {
     "GetInfo",
@@ -181,7 +181,7 @@ static void test_passkey_policy_decisions(void) {
     "webauthn_import",
   };
   for (size_t i = 0; i < sizeof(passkey_methods) / sizeof(passkey_methods[0]); i++) {
-    assert(!signet_policy_evaluate(pr, "agent-with-default", passkey_methods[i], -1));
+    CHECK(!signet_policy_evaluate(pr, "agent-with-default", passkey_methods[i], -1));
   }
 
   char *passkey_caps[] = {
@@ -202,15 +202,15 @@ static void test_passkey_policy_decisions(void) {
     .n_disallowed_types = 0,
     .rate_limit_per_hour = 0,
   };
-  assert(signet_policy_registry_add(pr, &passkey_policy) == 0);
-  assert(signet_policy_registry_assign(pr, "agent-passkey", "passkey-rp") == 0);
+  CHECK(signet_policy_registry_add(pr, &passkey_policy) == 0);
+  CHECK(signet_policy_registry_assign(pr, "agent-passkey", "passkey-rp") == 0);
 
   for (size_t i = 0; i < sizeof(passkey_methods) / sizeof(passkey_methods[0]); i++) {
-    assert(signet_policy_evaluate(pr, "agent-passkey", passkey_methods[i], -1));
+    CHECK(signet_policy_evaluate(pr, "agent-passkey", passkey_methods[i], -1));
   }
 
-  assert(!signet_policy_evaluate(pr, "agent-passkey", "SignEvent", 1));
-  assert(!signet_policy_evaluate(pr, "agent-passkey", "Encrypt", -1));
+  CHECK(!signet_policy_evaluate(pr, "agent-passkey", "SignEvent", 1));
+  CHECK(!signet_policy_evaluate(pr, "agent-passkey", "Encrypt", -1));
 
   g_free(default_policy.name);
   g_free(passkey_policy.name);
@@ -237,13 +237,13 @@ static void test_policy_evaluate(void) {
   signet_policy_registry_assign(pr, "eval-agent", "eval-policy");
 
   /* SignEvent should evaluate to allowed. */
-  assert(signet_policy_evaluate(pr, "eval-agent", "SignEvent", -1));
+  CHECK(signet_policy_evaluate(pr, "eval-agent", "SignEvent", -1));
 
   /* sign_event (NIP-5L) should also work. */
-  assert(signet_policy_evaluate(pr, "eval-agent", "sign_event", -1));
+  CHECK(signet_policy_evaluate(pr, "eval-agent", "sign_event", -1));
 
   /* Encrypt should be denied (not in capabilities). */
-  assert(!signet_policy_evaluate(pr, "eval-agent", "Encrypt", -1));
+  CHECK(!signet_policy_evaluate(pr, "eval-agent", "Encrypt", -1));
 
   /* GetPublicKey should evaluate (depends on impl — may be allowed or mapped). */
   /* Just ensure no crash. */
@@ -279,10 +279,10 @@ static void test_rate_limit(void) {
    * the actual enforcement assertion the old test lacked: a stubbed limiter
    * that always returned true would fail here. */
   bool first = signet_policy_rate_limit_check(pr, "rate-agent", SIGNET_CAP_NOSTR_SIGN);
-  assert(first); /* bucket starts full (burst = 1) */
+  CHECK(first); /* bucket starts full (burst = 1) */
 
   bool second = signet_policy_rate_limit_check(pr, "rate-agent", SIGNET_CAP_NOSTR_SIGN);
-  assert(!second); /* ENFORCEMENT: the limit actually blocks the 2nd request */
+  CHECK(!second); /* ENFORCEMENT: the limit actually blocks the 2nd request */
 
   /* A rapid burst must not all pass; with burst=1 and negligible refill over
    * microseconds, none of these 20 succeed. An always-allow stub yields 20. */
@@ -291,12 +291,12 @@ static void test_rate_limit(void) {
     if (signet_policy_rate_limit_check(pr, "rate-agent", SIGNET_CAP_NOSTR_SIGN))
       allowed++;
   }
-  assert(allowed == 0);
+  CHECK(allowed == 0);
 
   /* Per-capability isolation: a different capability gets its own bucket and
    * is admitted once even though NOSTR_SIGN is exhausted for this agent. */
   bool other_cap = signet_policy_rate_limit_check(pr, "rate-agent", SIGNET_CAP_NOSTR_ENCRYPT);
-  assert(other_cap);
+  CHECK(other_cap);
 
   g_free(policy.name);
   signet_policy_registry_free(pr);
@@ -317,7 +317,7 @@ static void test_rate_limit(void) {
     if (signet_policy_rate_limit_check(pr2, "free-agent", SIGNET_CAP_NOSTR_SIGN))
       free_allowed++;
   }
-  assert(free_allowed == 50);
+  CHECK(free_allowed == 50);
   g_free(unlimited.name);
   signet_policy_registry_free(pr2);
 
@@ -339,7 +339,7 @@ static void test_rate_limit(void) {
     if (signet_policy_rate_limit_check(pr3, "busy-agent", SIGNET_CAP_NOSTR_SIGN))
       high_allowed++;
   }
-  assert(high_allowed == 100);
+  CHECK(high_allowed == 100);
   g_free(high.name);
   signet_policy_registry_free(pr3);
 
@@ -353,7 +353,7 @@ static void test_policy_clear(void) {
   memset(&policy, 0, sizeof(policy));
   policy.name = g_strdup("test-clear");
   signet_agent_policy_clear(&policy);
-  assert(policy.name == NULL);
+  CHECK(policy.name == NULL);
 
   /* Clear on zeroed struct should not crash. */
   memset(&policy, 0, sizeof(policy));

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "signet/fido_ctaphid.h"
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,19 +21,19 @@ static void put_cid(uint8_t *f, uint32_t cid) {
 
 static size_t collect_payload(const uint8_t *frames, size_t frames_len,
                               uint8_t *cmd_out, uint8_t *payload, size_t payload_cap) {
-  assert(frames_len >= SIGNET_CTAPHID_REPORT_SIZE);
+  CHECK(frames_len >= SIGNET_CTAPHID_REPORT_SIZE);
   const uint8_t *f = frames;
   *cmd_out = f[4];
   size_t total = ((size_t)f[5] << 8) | f[6];
-  assert(total <= payload_cap);
+  CHECK(total <= payload_cap);
   size_t n0 = total < 57 ? total : 57;
   memcpy(payload, f + 7, n0);
   size_t copied = n0;
   uint8_t seq = 0;
   for (size_t off = SIGNET_CTAPHID_REPORT_SIZE; copied < total; off += SIGNET_CTAPHID_REPORT_SIZE) {
-    assert(off + SIGNET_CTAPHID_REPORT_SIZE <= frames_len);
+    CHECK(off + SIGNET_CTAPHID_REPORT_SIZE <= frames_len);
     f = frames + off;
-    assert(f[4] == seq++);
+    CHECK(f[4] == seq++);
     size_t chunk = total - copied;
     if (chunk > 59) chunk = 59;
     memcpy(payload + copied, f + 5, chunk);
@@ -52,16 +52,16 @@ static void test_init(void) {
 
   uint8_t *out = NULL;
   size_t out_len = 0;
-  assert(signet_ctaphid_test_process_frames(NULL, "agent", NULL, frame, sizeof(frame), &out, &out_len) == 0);
-  assert(out_len == SIGNET_CTAPHID_REPORT_SIZE);
+  CHECK(signet_ctaphid_test_process_frames(NULL, "agent", NULL, frame, sizeof(frame), &out, &out_len) == 0);
+  CHECK(out_len == SIGNET_CTAPHID_REPORT_SIZE);
   uint8_t cmd = 0;
   uint8_t payload[64];
   size_t n = collect_payload(out, out_len, &cmd, payload, sizeof(payload));
-  assert(cmd == CTAPHID_INIT);
-  assert(n == 17);
-  assert(memcmp(payload, nonce, sizeof(nonce)) == 0);
-  assert(payload[12] == 2);      /* CTAP-HID protocol version */
-  assert(payload[16] & 0x04);    /* CBOR capability */
+  CHECK(cmd == CTAPHID_INIT);
+  CHECK(n == 17);
+  CHECK(memcmp(payload, nonce, sizeof(nonce)) == 0);
+  CHECK(payload[12] == 2);      /* CTAP-HID protocol version */
+  CHECK(payload[16] & 0x04);    /* CBOR capability */
   free(out);
 }
 
@@ -83,14 +83,14 @@ static void test_fragmented_ping(void) {
 
   uint8_t *out = NULL;
   size_t out_len = 0;
-  assert(signet_ctaphid_test_process_frames(NULL, "agent", NULL, frames, sizeof(frames), &out, &out_len) == 0);
-  assert(out_len == SIGNET_CTAPHID_REPORT_SIZE * 2);
+  CHECK(signet_ctaphid_test_process_frames(NULL, "agent", NULL, frames, sizeof(frames), &out, &out_len) == 0);
+  CHECK(out_len == SIGNET_CTAPHID_REPORT_SIZE * 2);
   uint8_t cmd = 0;
   uint8_t got[128];
   size_t n = collect_payload(out, out_len, &cmd, got, sizeof(got));
-  assert(cmd == CTAPHID_PING);
-  assert(n == sizeof(payload));
-  assert(memcmp(got, payload, sizeof(payload)) == 0);
+  CHECK(cmd == CTAPHID_PING);
+  CHECK(n == sizeof(payload));
+  CHECK(memcmp(got, payload, sizeof(payload)) == 0);
   free(out);
 }
 
@@ -103,13 +103,13 @@ static void test_ctap2_get_info(void) {
 
   uint8_t *out = NULL;
   size_t out_len = 0;
-  assert(signet_ctaphid_test_process_frames(NULL, "agent", NULL, frame, sizeof(frame), &out, &out_len) == 0);
+  CHECK(signet_ctaphid_test_process_frames(NULL, "agent", NULL, frame, sizeof(frame), &out, &out_len) == 0);
   uint8_t cmd = 0;
   uint8_t payload[512];
   size_t n = collect_payload(out, out_len, &cmd, payload, sizeof(payload));
-  assert(cmd == CTAPHID_CBOR);
-  assert(n > 1);
-  assert(payload[0] == 0x00); /* CTAP2_OK */
+  CHECK(cmd == CTAPHID_CBOR);
+  CHECK(n > 1);
+  CHECK(payload[0] == 0x00); /* CTAP2_OK */
   free(out);
 }
 

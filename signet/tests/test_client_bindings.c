@@ -33,7 +33,7 @@
 #include <nostr-keys.h>
 #include <nostr/nip44/nip44.h>
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,7 +49,7 @@ static char *make_temp_path(const char *tmpl_in) {
   char tmpl[128];
   g_strlcpy(tmpl, tmpl_in, sizeof(tmpl));
   int fd = mkstemps(tmpl, (int)strlen(strrchr(tmpl_in, '.')));
-  assert(fd >= 0);
+  CHECK(fd >= 0);
   close(fd);
   unlink(tmpl);
   return g_strdup(tmpl);
@@ -66,9 +66,9 @@ static int hex_to_bytes(const char *hex, uint8_t *out, size_t n) {
 
 static void gen_keypair_hex(char sk_hex[65], char pk_hex[65]) {
   char *sk = nostr_key_generate_private();
-  assert(sk && strlen(sk) == 64);
+  CHECK(sk && strlen(sk) == 64);
   char *pk = nostr_key_get_public(sk);
-  assert(pk && strlen(pk) == 64);
+  CHECK(pk && strlen(pk) == 64);
   memcpy(sk_hex, sk, 65);
   memcpy(pk_hex, pk, 65);
   sodium_memzero(sk, strlen(sk));
@@ -82,15 +82,15 @@ static void test_store_binding_lifecycle(void) {
   char *db_path = make_temp_path("/tmp/signet-test-bindings-XXXXXX.db");
   SignetStoreConfig scfg = { .db_path = db_path, .master_key = MASTER_KEY };
   SignetStore *st = signet_store_open(&scfg);
-  assert(st != NULL);
+  CHECK(st != NULL);
 
   /* Bindings resolve only against a live agent whose CURRENT identity
    * matches the pinned pubkey — create the agent row first. */
   char a_sk[65], a_pk[65];
   gen_keypair_hex(a_sk, a_pk);
   uint8_t a_raw[32];
-  assert(hex_to_bytes(a_sk, a_raw, 32) == 0);
-  assert(signet_store_put_agent_ex(st, "stew", a_raw, 32, NULL, a_pk,
+  CHECK(hex_to_bytes(a_sk, a_raw, 32) == 0);
+  CHECK(signet_store_put_agent_ex(st, "stew", a_raw, 32, NULL, a_pk,
                                    "adopted", 900) == 0);
 
   char c1_sk[65], c1_pk[65], c2_sk[65], c2_pk[65];
@@ -98,14 +98,14 @@ static void test_store_binding_lifecycle(void) {
   gen_keypair_hex(c2_sk, c2_pk);
 
   /* Bind + lookup; the pairing-secret hash is retrievable. */
-  assert(signet_store_bind_client(st, "stew", a_pk, c1_pk, "s1", 1000) == 0);
+  CHECK(signet_store_bind_client(st, "stew", a_pk, c1_pk, "s1", 1000) == 0);
   char *agent = NULL;
   char *hash = NULL;
-  assert(signet_store_lookup_client_binding(st, c1_pk, 1001, &agent, &hash) == 0);
-  assert(agent && strcmp(agent, "stew") == 0);
+  CHECK(signet_store_lookup_client_binding(st, c1_pk, 1001, &agent, &hash) == 0);
+  CHECK(agent && strcmp(agent, "stew") == 0);
   {
     char *expect = g_compute_checksum_for_string(G_CHECKSUM_SHA256, "s1", -1);
-    assert(hash && strcmp(hash, expect) == 0);
+    CHECK(hash && strcmp(hash, expect) == 0);
     g_free(expect);
   }
   g_free(agent);
@@ -116,41 +116,41 @@ static void test_store_binding_lifecycle(void) {
   /* Uppercase input canonicalizes: bind uppercase, lookup lowercase. */
   char upper[65];
   for (int i = 0; i < 65; i++) upper[i] = (char)g_ascii_toupper(c2_pk[i]);
-  assert(signet_store_bind_client(st, "stew", a_pk, upper, NULL, 1002) == 0);
-  assert(signet_store_lookup_client_binding(st, c2_pk, 1003, &agent, NULL) == 0);
-  assert(agent && strcmp(agent, "stew") == 0);
+  CHECK(signet_store_bind_client(st, "stew", a_pk, upper, NULL, 1002) == 0);
+  CHECK(signet_store_lookup_client_binding(st, c2_pk, 1003, &agent, NULL) == 0);
+  CHECK(agent && strcmp(agent, "stew") == 0);
   g_free(agent);
   agent = NULL;
 
   /* Unknown / malformed pubkeys. */
-  assert(signet_store_lookup_client_binding(st,
+  CHECK(signet_store_lookup_client_binding(st,
       "1111111111111111111111111111111111111111111111111111111111111111",
       1004, &agent, NULL) == 1);
-  assert(signet_store_lookup_client_binding(st, "nope", 1005, &agent, NULL) == 1);
-  assert(signet_store_bind_client(st, "stew", a_pk, "nope", NULL, 1006) == -1);
+  CHECK(signet_store_lookup_client_binding(st, "nope", 1005, &agent, NULL) == 1);
+  CHECK(signet_store_bind_client(st, "stew", a_pk, "nope", NULL, 1006) == -1);
 
   /* Revoke: lookup misses; second revoke reports already-revoked. */
-  assert(signet_store_revoke_client(st, c1_pk, 2000) == 0);
-  assert(signet_store_lookup_client_binding(st, c1_pk, 2001, &agent, NULL) == 1);
-  assert(signet_store_revoke_client(st, c1_pk, 2002) == 1);
+  CHECK(signet_store_revoke_client(st, c1_pk, 2000) == 0);
+  CHECK(signet_store_lookup_client_binding(st, c1_pk, 2001, &agent, NULL) == 1);
+  CHECK(signet_store_revoke_client(st, c1_pk, 2002) == 1);
 
   /* List shows both rows, revoked one flagged. */
   SignetClientBinding *list = NULL;
   size_t count = 0;
-  assert(signet_store_list_clients(st, "stew", &list, &count) == 0);
-  assert(count == 2);
+  CHECK(signet_store_list_clients(st, "stew", &list, &count) == 0);
+  CHECK(count == 2);
   size_t revoked_seen = 0, active_seen = 0;
   for (size_t i = 0; i < count; i++) {
     if (list[i].revoked_at != 0) revoked_seen++;
     else active_seen++;
   }
-  assert(revoked_seen == 1 && active_seen == 1);
+  CHECK(revoked_seen == 1 && active_seen == 1);
   signet_client_binding_list_free(list, count);
 
   /* Re-bind clears revocation. */
-  assert(signet_store_bind_client(st, "stew", a_pk, c1_pk, NULL, 3000) == 0);
-  assert(signet_store_lookup_client_binding(st, c1_pk, 3001, &agent, NULL) == 0);
-  assert(agent && strcmp(agent, "stew") == 0);
+  CHECK(signet_store_bind_client(st, "stew", a_pk, c1_pk, NULL, 3000) == 0);
+  CHECK(signet_store_lookup_client_binding(st, c1_pk, 3001, &agent, NULL) == 0);
+  CHECK(agent && strcmp(agent, "stew") == 0);
   g_free(agent);
   agent = NULL;
 
@@ -159,22 +159,22 @@ static void test_store_binding_lifecycle(void) {
   char b_sk[65], b_pk[65];
   gen_keypair_hex(b_sk, b_pk);
   uint8_t b_raw[32];
-  assert(hex_to_bytes(b_sk, b_raw, 32) == 0);
-  assert(signet_store_put_agent_ex(st, "stew", b_raw, 32, NULL, b_pk,
+  CHECK(hex_to_bytes(b_sk, b_raw, 32) == 0);
+  CHECK(signet_store_put_agent_ex(st, "stew", b_raw, 32, NULL, b_pk,
                                    "rotated", 3500) == 0);
-  assert(signet_store_lookup_client_binding(st, c1_pk, 3501, &agent, NULL) == 1);
+  CHECK(signet_store_lookup_client_binding(st, c1_pk, 3501, &agent, NULL) == 1);
   /* Restore identity A for the remaining assertions. */
-  assert(signet_store_put_agent_ex(st, "stew", a_raw, 32, NULL, a_pk,
+  CHECK(signet_store_put_agent_ex(st, "stew", a_raw, 32, NULL, a_pk,
                                    "adopted", 3600) == 0);
-  assert(signet_store_lookup_client_binding(st, c1_pk, 3601, &agent, NULL) == 0);
+  CHECK(signet_store_lookup_client_binding(st, c1_pk, 3601, &agent, NULL) == 0);
   g_free(agent);
   agent = NULL;
 
   /* Revoke-all for the agent. */
-  assert(signet_store_revoke_agent_clients(st, "stew", 4000) == 2);
-  assert(signet_store_lookup_client_binding(st, c1_pk, 4001, &agent, NULL) == 1);
-  assert(signet_store_lookup_client_binding(st, c2_pk, 4002, &agent, NULL) == 1);
-  assert(signet_store_revoke_agent_clients(st, "stew", 4003) == 0);
+  CHECK(signet_store_revoke_agent_clients(st, "stew", 4000) == 2);
+  CHECK(signet_store_lookup_client_binding(st, c1_pk, 4001, &agent, NULL) == 1);
+  CHECK(signet_store_lookup_client_binding(st, c2_pk, 4002, &agent, NULL) == 1);
+  CHECK(signet_store_revoke_agent_clients(st, "stew", 4003) == 0);
 
   sodium_memzero(a_raw, sizeof(a_raw));
   sodium_memzero(b_raw, sizeof(b_raw));
@@ -207,7 +207,7 @@ static void n46_new_server(N46Fixture *f) {
   /* No relay pool (response publish is a no-op) and no replay cache (replay
    * semantics are covered by the NIP-46 server's own tests). */
   f->srv = signet_nip46_server_new(NULL, f->pe, f->ks, NULL, f->audit, &ncfg);
-  assert(f->srv != NULL);
+  CHECK(f->srv != NULL);
 }
 
 static void n46_setup(N46Fixture *f) {
@@ -228,7 +228,7 @@ static void n46_setup(N46Fixture *f) {
         "allow_methods = \"*\"\n"
         "allow_kinds = \"*\"\n"
         "default = \"allow\"\n";
-    assert(g_file_set_contents(f->policy_path, policy, -1, NULL));
+    CHECK(g_file_set_contents(f->policy_path, policy, -1, NULL));
   }
 
   SignetAuditLoggerConfig alc = { .path = NULL, .to_stdout = false, .flush_each_write = false };
@@ -236,19 +236,19 @@ static void n46_setup(N46Fixture *f) {
 
   SignetKeyStoreConfig kcfg = { .db_path = f->db_path, .master_key = MASTER_KEY };
   f->ks = signet_key_store_new(f->audit, &kcfg);
-  assert(f->ks != NULL);
+  CHECK(f->ks != NULL);
 
   f->ps = signet_policy_store_file_new(f->policy_path);
-  assert(f->ps != NULL);
+  CHECK(f->ps != NULL);
   SignetPolicyEngineConfig pcfg = { .default_decision = SIGNET_POLICY_DECISION_DENY };
   f->pe = signet_policy_engine_new(f->ps, f->audit, &pcfg);
-  assert(f->pe != NULL);
+  CHECK(f->pe != NULL);
 
   /* Adopt the agent with a known one-time connect secret. */
   uint8_t sk_raw[32];
-  assert(hex_to_bytes(f->stew_sk_hex, sk_raw, 32) == 0);
+  CHECK(hex_to_bytes(f->stew_sk_hex, sk_raw, 32) == 0);
   char out_pk[65] = {0};
-  assert(signet_key_store_adopt_agent(f->ks, "stew", sk_raw, f->stew_pk_hex,
+  CHECK(signet_key_store_adopt_agent(f->ks, "stew", sk_raw, f->stew_pk_hex,
                                       "one-time-secret", f->bunker_pk_hex,
                                       NULL, 0, out_pk, NULL) == SIGNET_ADOPT_OK);
   sodium_memzero(sk_raw, sizeof(sk_raw));
@@ -276,10 +276,10 @@ static void n46_teardown(N46Fixture *f) {
 static bool n46_send(N46Fixture *f, const char *client_sk, const char *client_pk,
                      const char *request_json, const char *event_id, int64_t now) {
   uint8_t sk[32], pk[32];
-  assert(hex_to_bytes(client_sk, sk, 32) == 0);
-  assert(hex_to_bytes(f->bunker_pk_hex, pk, 32) == 0);
+  CHECK(hex_to_bytes(client_sk, sk, 32) == 0);
+  CHECK(hex_to_bytes(f->bunker_pk_hex, pk, 32) == 0);
   char *cipher = NULL;
-  assert(nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)request_json,
+  CHECK(nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)request_json,
                                 strlen(request_json), &cipher) == 0 && cipher);
   sodium_memzero(sk, sizeof(sk));
 
@@ -314,7 +314,7 @@ static bool n46_get_public_key(N46Fixture *f, const char *client_sk,
 
 static char *n46_read_binding(N46Fixture *f, const char *client_pk, int64_t now) {
   SignetStore *st = signet_key_store_get_store(f->ks);
-  assert(st != NULL);
+  CHECK(st != NULL);
   char *agent = NULL;
   int rc = signet_store_lookup_client_binding(st, client_pk, now, &agent, NULL);
   if (rc != 0) return NULL;
@@ -328,32 +328,32 @@ static void test_pair_once_reconnect_freely(void) {
   int64_t now = 1752380000;
 
   /* First connect: valid secret → allowed, secret consumed, binding stored. */
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
   char *bound = n46_read_binding(&f, f.client_pk_hex, now);
-  assert(bound && strcmp(bound, "stew") == 0);
+  CHECK(bound && strcmp(bound, "stew") == 0);
   g_free(bound);
   {
     char *agent = NULL;
-    assert(signet_key_store_consume_connect_secret(f.ks, "one-time-secret", now, &agent) == 1);
+    CHECK(signet_key_store_consume_connect_secret(f.ks, "one-time-secret", now, &agent) == 1);
   }
 
   /* Daemon restart: fresh server object, empty RAM sessions, same store.
    * A request (no connect first!) resolves via the persistent binding. */
   signet_nip46_server_free(f.srv);
   n46_new_server(&f);
-  assert(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == true);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == true);
 
   /* Restarted plugin behavior: connect with the STALE consumed secret —
    * accepted because it hashes to the client's OWN recorded pairing secret. */
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e3", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e3", now) == true);
 
   /* Secretless reconnect also works. */
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e4", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e4", now) == true);
 
   /* An ARBITRARY wrong secret from the bound client is rejected — stale
    * fallback only honors the client's own former secret, so probing and
    * misconfiguration surface as auth_failed instead of being masked. */
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "totally-wrong", "e5", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "totally-wrong", "e5", now) == false);
 
   n46_teardown(&f);
   printf("test_pair_once_reconnect_freely: PASS\n");
@@ -368,10 +368,10 @@ static void test_unbound_client_rejected(void) {
   char rando_sk[65], rando_pk[65];
   gen_keypair_hex(rando_sk, rando_pk);
 
-  assert(n46_connect(&f, rando_sk, rando_pk, NULL, "e1", now) == false);
-  assert(n46_connect(&f, rando_sk, rando_pk, "wrong-secret", "e2", now) == false);
-  assert(n46_get_public_key(&f, rando_sk, rando_pk, "e3", now) == false);
-  assert(n46_read_binding(&f, rando_pk, now) == NULL);
+  CHECK(n46_connect(&f, rando_sk, rando_pk, NULL, "e1", now) == false);
+  CHECK(n46_connect(&f, rando_sk, rando_pk, "wrong-secret", "e2", now) == false);
+  CHECK(n46_get_public_key(&f, rando_sk, rando_pk, "e3", now) == false);
+  CHECK(n46_read_binding(&f, rando_pk, now) == NULL);
 
   sodium_memzero(rando_sk, sizeof(rando_sk));
   n46_teardown(&f);
@@ -384,29 +384,29 @@ static void test_revoked_binding_and_repair(void) {
   n46_setup(&f);
   int64_t now = 1752380000;
 
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
 
   /* Revoke the binding (as agent/revoke-client would). */
   SignetStore *st = signet_key_store_get_store(f.ks);
-  assert(signet_store_revoke_client(st, f.client_pk_hex, now) == 0);
+  CHECK(signet_store_revoke_client(st, f.client_pk_hex, now) == 0);
 
   /* Requests and secretless/stale reconnects are rejected at once — the
    * persistent table is authoritative, RAM session notwithstanding. */
-  assert(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == false);
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e3", now) == false);
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e4", now) == false);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e3", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e4", now) == false);
 
   /* Re-pair with a freshly reissued one-time secret. */
   char re_pk[65] = {0};
   char *fresh = NULL;
-  assert(signet_key_store_reissue_connect_secret(f.ks, "stew", NULL, NULL, NULL, 0,
+  CHECK(signet_key_store_reissue_connect_secret(f.ks, "stew", NULL, NULL, NULL, 0,
                                                  re_pk, &fresh, NULL) == 0);
-  assert(fresh != NULL);
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, fresh, "e5", now) == true);
+  CHECK(fresh != NULL);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, fresh, "e5", now) == true);
   char *bound = n46_read_binding(&f, f.client_pk_hex, now);
-  assert(bound && strcmp(bound, "stew") == 0);
+  CHECK(bound && strcmp(bound, "stew") == 0);
   g_free(bound);
-  assert(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e6", now) == true);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e6", now) == true);
 
   sodium_memzero(fresh, strlen(fresh));
   g_free(fresh);
@@ -420,15 +420,15 @@ static void test_agent_revocation_revokes_bindings(void) {
   n46_setup(&f);
   int64_t now = 1752380000;
 
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
 
   SignetStore *st = signet_key_store_get_store(f.ks);
-  assert(signet_revoke_agent(st, f.ks, NULL, NULL, "stew", f.stew_pk_hex,
+  CHECK(signet_revoke_agent(st, f.ks, NULL, NULL, "stew", f.stew_pk_hex,
                              "test revoke", now) == 0);
 
-  assert(n46_read_binding(&f, f.client_pk_hex, now) == NULL);
-  assert(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == false);
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e3", now) == false);
+  CHECK(n46_read_binding(&f, f.client_pk_hex, now) == NULL);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e3", now) == false);
 
   n46_teardown(&f);
   printf("test_agent_revocation_revokes_bindings: PASS\n");
@@ -443,21 +443,21 @@ static void test_suspended_agent_binding_refused(void) {
 
   SignetStore *st = signet_key_store_get_store(f.ks);
   SignetDenyList *deny = signet_deny_list_new(st);
-  assert(deny != NULL);
+  CHECK(deny != NULL);
   signet_nip46_server_set_deny_list(f.srv, deny);
 
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
-  assert(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == true);
 
   /* Suspend. */
-  assert(signet_deny_list_add(deny, f.stew_pk_hex, "stew", "suspended", now) == 0);
-  assert(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e3", now) == false);
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e4", now) == false);
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e5", now) == false);
+  CHECK(signet_deny_list_add(deny, f.stew_pk_hex, "stew", "suspended", now) == 0);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e3", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e4", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e5", now) == false);
 
   /* Lift. */
-  assert(signet_deny_list_remove(deny, f.stew_pk_hex) == 0);
-  assert(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e6", now) == true);
+  CHECK(signet_deny_list_remove(deny, f.stew_pk_hex) == 0);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e6", now) == true);
 
   signet_nip46_server_set_deny_list(f.srv, NULL);
   signet_deny_list_free(deny);
@@ -472,14 +472,14 @@ static void test_rotation_invalidates_binding(void) {
   n46_setup(&f);
   int64_t now = 1752380000;
 
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
-  assert(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == true);
 
   char new_pk[65] = {0};
-  assert(signet_key_store_rotate_agent(f.ks, "stew", new_pk, sizeof(new_pk)) == 0);
+  CHECK(signet_key_store_rotate_agent(f.ks, "stew", new_pk, sizeof(new_pk)) == 0);
 
-  assert(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e3", now) == false);
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e4", now) == false);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e3", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e4", now) == false);
 
   n46_teardown(&f);
   printf("test_rotation_invalidates_binding: PASS\n");
@@ -492,19 +492,19 @@ static void test_reprovision_does_not_resurrect_binding(void) {
   n46_setup(&f);
   int64_t now = 1752380000;
 
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
 
   SignetStore *st = signet_key_store_get_store(f.ks);
-  assert(signet_revoke_agent(st, f.ks, NULL, NULL, "stew", f.stew_pk_hex,
+  CHECK(signet_revoke_agent(st, f.ks, NULL, NULL, "stew", f.stew_pk_hex,
                              "test revoke", now) == 0);
 
   /* Reprovision the same agent_id with a brand-new identity. */
   char sk2[65], pk2[65];
   gen_keypair_hex(sk2, pk2);
   uint8_t sk2_raw[32];
-  assert(hex_to_bytes(sk2, sk2_raw, 32) == 0);
+  CHECK(hex_to_bytes(sk2, sk2_raw, 32) == 0);
   char out_pk[65] = {0};
-  assert(signet_key_store_adopt_agent(f.ks, "stew", sk2_raw, pk2,
+  CHECK(signet_key_store_adopt_agent(f.ks, "stew", sk2_raw, pk2,
                                       "new-secret", f.bunker_pk_hex,
                                       NULL, 0, out_pk, NULL) == SIGNET_ADOPT_OK);
   sodium_memzero(sk2_raw, sizeof(sk2_raw));
@@ -512,14 +512,14 @@ static void test_reprovision_does_not_resurrect_binding(void) {
 
   /* The old client's binding is both revoked AND pinned to the dead
    * identity — requests and secretless reconnects fail. */
-  assert(n46_read_binding(&f, f.client_pk_hex, now) == NULL);
-  assert(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == false);
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e3", now) == false);
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e4", now) == false);
+  CHECK(n46_read_binding(&f, f.client_pk_hex, now) == NULL);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e3", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e4", now) == false);
 
   /* The client CAN re-pair with the new identity's fresh secret. */
-  assert(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "new-secret", "e5", now) == true);
-  assert(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e6", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "new-secret", "e5", now) == true);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e6", now) == true);
 
   n46_teardown(&f);
   printf("test_reprovision_does_not_resurrect_binding: PASS\n");

@@ -20,7 +20,7 @@
 #include <nostr-event.h>
 #include <nostr-keys.h>
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,7 +39,7 @@ static const char *const BUNKER_PK =
 static char *make_temp_db_path(void) {
   char tmpl[] = "/tmp/signet-test-adopt-XXXXXX.db";
   int fd = mkstemps(tmpl, 3);
-  assert(fd >= 0);
+  CHECK(fd >= 0);
   close(fd);
   unlink(tmpl);
   return g_strdup(tmpl);
@@ -86,10 +86,10 @@ static uint8_t *read_file_bytes(const char *path, size_t *out_len) {
 /* Generate a fresh keypair: raw secret bytes + lowercase hex pubkey. */
 static void gen_keypair(uint8_t sk_raw[32], char pk_hex[65]) {
   char *sk_hex = nostr_key_generate_private();
-  assert(sk_hex && strlen(sk_hex) == 64);
+  CHECK(sk_hex && strlen(sk_hex) == 64);
   char *pk = nostr_key_get_public(sk_hex);
-  assert(pk && strlen(pk) == 64);
-  assert(hex_to_bytes(sk_hex, sk_raw, 32) == 0);
+  CHECK(pk && strlen(pk) == 64);
+  CHECK(hex_to_bytes(sk_hex, sk_raw, 32) == 0);
   memcpy(pk_hex, pk, 65);
   free(pk);
   sodium_memzero(sk_hex, strlen(sk_hex));
@@ -102,7 +102,7 @@ static SignetKeyStore *open_ks(char **out_path) {
   SignetAuditLogger *audit = signet_audit_logger_new(&alc);
   SignetKeyStoreConfig cfg = { .db_path = db_path, .master_key = MASTER_KEY };
   SignetKeyStore *ks = signet_key_store_new(audit, &cfg);
-  assert(ks != NULL);
+  CHECK(ks != NULL);
   *out_path = db_path;
   return ks;
 }
@@ -119,12 +119,12 @@ static void test_adopt_success(void) {
   char *uri = NULL;
   SignetAdoptResult r = signet_key_store_adopt_agent(
       ks, "adopted-1", sk_raw, pk_hex, NULL, BUNKER_PK, RELAYS, 1, out_pk, &uri);
-  assert(r == SIGNET_ADOPT_OK);
-  assert(strcmp(out_pk, pk_hex) == 0);
-  assert(uri != NULL);
-  assert(strncmp(uri, "bunker://", 9) == 0);
-  assert(strstr(uri, BUNKER_PK) != NULL);
-  assert(strstr(uri, "secret=") != NULL);
+  CHECK(r == SIGNET_ADOPT_OK);
+  CHECK(strcmp(out_pk, pk_hex) == 0);
+  CHECK(uri != NULL);
+  CHECK(strncmp(uri, "bunker://", 9) == 0);
+  CHECK(strstr(uri, BUNKER_PK) != NULL);
+  CHECK(strstr(uri, "secret=") != NULL);
 
   g_free(uri);
   sodium_memzero(sk_raw, sizeof(sk_raw));
@@ -145,8 +145,8 @@ static void test_adopt_invalid_secret(void) {
   char *uri = NULL;
   SignetAdoptResult r = signet_key_store_adopt_agent(
       ks, "bad", sk_zero, NULL, NULL, BUNKER_PK, RELAYS, 1, out_pk, &uri);
-  assert(r == SIGNET_ADOPT_ERR_INVALID_SECRET);
-  assert(uri == NULL);
+  CHECK(r == SIGNET_ADOPT_ERR_INVALID_SECRET);
+  CHECK(uri == NULL);
 
   signet_key_store_free(ks);
   unlink(db_path);
@@ -170,8 +170,8 @@ static void test_adopt_pubkey_mismatch(void) {
   char *uri = NULL;
   SignetAdoptResult r = signet_key_store_adopt_agent(
       ks, "mismatch", sk_raw, wrong_pk, NULL, BUNKER_PK, RELAYS, 1, out_pk, &uri);
-  assert(r == SIGNET_ADOPT_ERR_PUBKEY_MISMATCH);
-  assert(uri == NULL);
+  CHECK(r == SIGNET_ADOPT_ERR_PUBKEY_MISMATCH);
+  CHECK(uri == NULL);
 
   sodium_memzero(sk_raw, sizeof(sk_raw));
   signet_key_store_free(ks);
@@ -189,7 +189,7 @@ static void test_adopt_agent_exists(void) {
   gen_keypair(sk1, pk1);
   char out_pk[65] = {0};
   char *uri = NULL;
-  assert(signet_key_store_adopt_agent(ks, "dup", sk1, pk1, NULL, BUNKER_PK,
+  CHECK(signet_key_store_adopt_agent(ks, "dup", sk1, pk1, NULL, BUNKER_PK,
                                       RELAYS, 1, out_pk, &uri) == SIGNET_ADOPT_OK);
   g_free(uri); uri = NULL;
 
@@ -198,8 +198,8 @@ static void test_adopt_agent_exists(void) {
   gen_keypair(sk2, pk2);
   SignetAdoptResult r = signet_key_store_adopt_agent(
       ks, "dup", sk2, pk2, NULL, BUNKER_PK, RELAYS, 1, out_pk, &uri);
-  assert(r == SIGNET_ADOPT_ERR_AGENT_EXISTS);
-  assert(uri == NULL);
+  CHECK(r == SIGNET_ADOPT_ERR_AGENT_EXISTS);
+  CHECK(uri == NULL);
 
   sodium_memzero(sk1, sizeof(sk1));
   sodium_memzero(sk2, sizeof(sk2));
@@ -218,15 +218,15 @@ static void test_adopt_pubkey_exists(void) {
   gen_keypair(sk, pk);
   char out_pk[65] = {0};
   char *uri = NULL;
-  assert(signet_key_store_adopt_agent(ks, "agent-a", sk, pk, NULL, BUNKER_PK,
+  CHECK(signet_key_store_adopt_agent(ks, "agent-a", sk, pk, NULL, BUNKER_PK,
                                       RELAYS, 1, out_pk, &uri) == SIGNET_ADOPT_OK);
   g_free(uri); uri = NULL;
 
   /* Same key, different agent_id -> pubkey_exists. */
   SignetAdoptResult r = signet_key_store_adopt_agent(
       ks, "agent-b", sk, pk, NULL, BUNKER_PK, RELAYS, 1, out_pk, &uri);
-  assert(r == SIGNET_ADOPT_ERR_PUBKEY_EXISTS);
-  assert(uri == NULL);
+  CHECK(r == SIGNET_ADOPT_ERR_PUBKEY_EXISTS);
+  CHECK(uri == NULL);
 
   sodium_memzero(sk, sizeof(sk));
   signet_key_store_free(ks);
@@ -244,34 +244,34 @@ static void test_adopted_agent_signs(void) {
   gen_keypair(sk_raw, pk_hex);
   char out_pk[65] = {0};
   char *uri = NULL;
-  assert(signet_key_store_adopt_agent(ks, "signer", sk_raw, pk_hex, NULL, BUNKER_PK,
+  CHECK(signet_key_store_adopt_agent(ks, "signer", sk_raw, pk_hex, NULL, BUNKER_PK,
                                       RELAYS, 1, out_pk, &uri) == SIGNET_ADOPT_OK);
   g_free(uri);
 
   /* get_public_key: the stored pubkey equals the canonical one. */
   char got_pk[65] = {0};
-  assert(signet_key_store_get_agent_pubkey(ks, "signer", got_pk, sizeof(got_pk)));
-  assert(strcmp(got_pk, pk_hex) == 0);
+  CHECK(signet_key_store_get_agent_pubkey(ks, "signer", got_pk, sizeof(got_pk)));
+  CHECK(strcmp(got_pk, pk_hex) == 0);
 
   /* sign_event: load the key and produce a valid Schnorr signature. */
   SignetLoadedKey lk;
   memset(&lk, 0, sizeof(lk));
-  assert(signet_key_store_load_agent_key(ks, "signer", &lk));
-  assert(lk.secret_key && lk.secret_key_len == 32);
+  CHECK(signet_key_store_load_agent_key(ks, "signer", &lk));
+  CHECK(lk.secret_key && lk.secret_key_len == 32);
   /* The loaded key must equal the secret we supplied. */
-  assert(memcmp(lk.secret_key, sk_raw, 32) == 0);
+  CHECK(memcmp(lk.secret_key, sk_raw, 32) == 0);
 
   char sk_hex[65];
   bytes_to_hex(lk.secret_key, 32, sk_hex);
   NostrEvent *evt = nostr_event_new();
-  assert(evt);
+  CHECK(evt);
   nostr_event_set_kind(evt, 1);
   nostr_event_set_created_at(evt, 1700000000);
   nostr_event_set_content(evt, "adopted signer test");
-  assert(nostr_event_sign(evt, sk_hex) == 0);
-  assert(nostr_event_check_signature(evt));
+  CHECK(nostr_event_sign(evt, sk_hex) == 0);
+  CHECK(nostr_event_check_signature(evt));
   const char *evt_pub = nostr_event_get_pubkey(evt);
-  assert(evt_pub && strcmp(evt_pub, pk_hex) == 0);
+  CHECK(evt_pub && strcmp(evt_pub, pk_hex) == 0);
   nostr_event_free(evt);
 
   sodium_memzero(sk_hex, sizeof(sk_hex));
@@ -295,7 +295,7 @@ static void test_adopt_secret_not_on_disk(void) {
 
   char out_pk[65] = {0};
   char *uri = NULL;
-  assert(signet_key_store_adopt_agent(ks, "at-rest", sk_raw, pk_hex, NULL, BUNKER_PK,
+  CHECK(signet_key_store_adopt_agent(ks, "at-rest", sk_raw, pk_hex, NULL, BUNKER_PK,
                                       RELAYS, 1, out_pk, &uri) == SIGNET_ADOPT_OK);
   g_free(uri);
   signet_key_store_free(ks); /* checkpoints/close */
@@ -309,7 +309,7 @@ static void test_adopt_secret_not_on_disk(void) {
   char *wal = g_strdup_printf("%s-wal", db_path);
   b = read_file_bytes(wal, &n);
   if (b) { found = found || buf_contains(b, n, sk_raw, 32); free(b); }
-  assert(!found);
+  CHECK(!found);
 
   unlink(db_path);
   unlink(wal);
@@ -331,34 +331,34 @@ static void test_agent_meta_no_decrypt(void) {
 
   /* One provisioned, one adopted. */
   char prov_pk[65] = {0};
-  assert(signet_key_store_provision_agent(ks, "prov-1", NULL, NULL, 0,
+  CHECK(signet_key_store_provision_agent(ks, "prov-1", NULL, NULL, 0,
                                           prov_pk, sizeof(prov_pk), NULL) == 0);
   uint8_t sk[32]; char adopt_pk[65];
   gen_keypair(sk, adopt_pk);
   char out_pk[65] = {0}; char *uri = NULL;
-  assert(signet_key_store_adopt_agent(ks, "adopt-1", sk, adopt_pk, NULL, BUNKER_PK,
+  CHECK(signet_key_store_adopt_agent(ks, "adopt-1", sk, adopt_pk, NULL, BUNKER_PK,
                                       RELAYS, 1, out_pk, &uri) == SIGNET_ADOPT_OK);
   g_free(uri);
 
   SignetStore *store = signet_key_store_get_store(ks);
-  assert(store);
+  CHECK(store);
 
   SignetAgentMeta m;
   memset(&m, 0, sizeof(m));
-  assert(signet_store_get_agent_meta(store, "prov-1", &m) == 0);
-  assert(m.pubkey && strcmp(m.pubkey, prov_pk) == 0);
-  assert(m.provenance && strcmp(m.provenance, "provisioned") == 0);
+  CHECK(signet_store_get_agent_meta(store, "prov-1", &m) == 0);
+  CHECK(m.pubkey && strcmp(m.pubkey, prov_pk) == 0);
+  CHECK(m.provenance && strcmp(m.provenance, "provisioned") == 0);
   signet_agent_meta_clear(&m);
 
   memset(&m, 0, sizeof(m));
-  assert(signet_store_get_agent_meta(store, "adopt-1", &m) == 0);
-  assert(m.pubkey && strcmp(m.pubkey, adopt_pk) == 0);
-  assert(m.provenance && strcmp(m.provenance, "adopted") == 0);
+  CHECK(signet_store_get_agent_meta(store, "adopt-1", &m) == 0);
+  CHECK(m.pubkey && strcmp(m.pubkey, adopt_pk) == 0);
+  CHECK(m.provenance && strcmp(m.provenance, "adopted") == 0);
   signet_agent_meta_clear(&m);
 
   /* Unknown agent -> not found (1), not an error. */
   memset(&m, 0, sizeof(m));
-  assert(signet_store_get_agent_meta(store, "nope", &m) == 1);
+  CHECK(signet_store_get_agent_meta(store, "nope", &m) == 1);
 
   sodium_memzero(sk, sizeof(sk));
   signet_key_store_free(ks);
@@ -368,7 +368,7 @@ static void test_agent_meta_no_decrypt(void) {
 }
 
 int main(void) {
-  assert(sodium_init() >= 0);
+  CHECK(sodium_init() >= 0);
   test_adopt_success();
   test_adopt_invalid_secret();
   test_adopt_pubkey_mismatch();

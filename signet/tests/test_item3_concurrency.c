@@ -10,7 +10,7 @@
 #include "signet/store.h"
 #include "signet/store_secrets.h"
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -65,8 +65,8 @@ static void test_ssh_connection_flood(void) {
     .uid_resolver = resolve_test_uid,
   };
   SignetSshAgent *server = signet_ssh_agent_new(&cfg);
-  assert(server != NULL);
-  assert(signet_ssh_agent_start(server) == 0);
+  CHECK(server != NULL);
+  CHECK(signet_ssh_agent_start(server) == 0);
 
   gint denied_before =
       g_atomic_int_get(&g_signet_metrics.ssh_agent_connections_denied);
@@ -74,7 +74,7 @@ static void test_ssh_connection_flood(void) {
   for (int i = 0; i < FLOOD_CONNECTIONS; i++)
     fds[i] = connect_unix_socket(path);
 
-  assert(wait_for_counter(&g_signet_metrics.ssh_agent_connections_denied,
+  CHECK(wait_for_counter(&g_signet_metrics.ssh_agent_connections_denied,
                           denied_before));
 
   /* stop() must close idle clients and wait for every detached worker. */
@@ -93,8 +93,8 @@ static void test_nip5l_connection_flood(void) {
     .challenges = (struct SignetChallengeStore *)1,
   };
   SignetNip5lServer *server = signet_nip5l_server_new(&cfg);
-  assert(server != NULL);
-  assert(signet_nip5l_server_start(server) == 0);
+  CHECK(server != NULL);
+  CHECK(signet_nip5l_server_start(server) == 0);
 
   GMainLoop *loop = g_main_loop_new(NULL, FALSE);
   GThread *loop_thread = g_thread_new("item3-main-loop", run_main_loop, loop);
@@ -105,7 +105,7 @@ static void test_nip5l_connection_flood(void) {
   for (int i = 0; i < FLOOD_CONNECTIONS; i++)
     fds[i] = connect_unix_socket(path);
 
-  assert(wait_for_counter(&g_signet_metrics.nip5l_connections_denied,
+  CHECK(wait_for_counter(&g_signet_metrics.nip5l_connections_denied,
                           denied_before));
 
   signet_nip5l_server_stop(server);
@@ -121,10 +121,10 @@ static void test_nip5l_connection_flood(void) {
 static void assert_invalid_port_env(const char *name, const char *value) {
   g_setenv(name, value, TRUE);
   SignetConfig cfg;
-  assert(signet_config_load(NULL, &cfg) == 0);
+  CHECK(signet_config_load(NULL, &cfg) == 0);
   char err[128] = {0};
-  assert(signet_config_validate(&cfg, err, sizeof(err)) == -1);
-  assert(strstr(err, "port") != NULL);
+  CHECK(signet_config_validate(&cfg, err, sizeof(err)) == -1);
+  CHECK(strstr(err, "port") != NULL);
   signet_config_clear(&cfg);
   g_unsetenv(name);
 }
@@ -174,7 +174,7 @@ static gpointer credential_load_worker(gpointer data) {
 static void test_concurrent_signing_and_credential_retrieval(void) {
   char path[] = "/tmp/signet-item3-store-load-XXXXXX.db";
   int fd = mkstemps(path, 3);
-  assert(fd >= 0);
+  CHECK(fd >= 0);
   close(fd);
   unlink(path);
 
@@ -184,26 +184,26 @@ static void test_concurrent_signing_and_credential_retrieval(void) {
     .flush_each_write = false,
   };
   SignetAuditLogger *audit = signet_audit_logger_new(&audit_cfg);
-  assert(audit != NULL);
+  CHECK(audit != NULL);
   SignetKeyStoreConfig key_cfg = {
     .db_path = path,
     .master_key = LOAD_MASTER_KEY,
   };
   SignetKeyStore *keys = signet_key_store_new(audit, &key_cfg);
-  assert(keys != NULL);
+  CHECK(keys != NULL);
 
   uint8_t agent_secret[32];
   randombytes_buf(agent_secret, sizeof(agent_secret));
   char agent_pubkey[65] = {0};
-  assert(signet_key_store_adopt_agent(
+  CHECK(signet_key_store_adopt_agent(
       keys, "load-agent", agent_secret, NULL, NULL,
       NULL, NULL, 0, agent_pubkey, NULL) == SIGNET_ADOPT_OK);
   sodium_memzero(agent_secret, sizeof(agent_secret));
 
   SignetStore *store = signet_key_store_get_store(keys);
-  assert(store != NULL);
+  CHECK(store != NULL);
   static const char credential[] = "concurrent-credential-value";
-  assert(signet_store_put_secret(
+  CHECK(signet_store_put_secret(
       store, "load-credential", "load-agent", agent_pubkey,
       SIGNET_SECRET_API_TOKEN, "load credential",
       (const uint8_t *)credential, sizeof(credential) - 1,
@@ -224,7 +224,7 @@ static void test_concurrent_signing_and_credential_retrieval(void) {
     g_thread_join(signers[i]);
     g_thread_join(readers[i]);
   }
-  assert(g_atomic_int_get(&ctx.failures) == 0);
+  CHECK(g_atomic_int_get(&ctx.failures) == 0);
 
   signet_key_store_free(keys);
   signet_audit_logger_free(audit);
@@ -238,8 +238,8 @@ static void test_checked_port_parsing(void) {
 
   g_setenv("SIGNET_HEALTH_PORT", "0", TRUE);
   SignetConfig cfg;
-  assert(signet_config_load(NULL, &cfg) == 0);
-  assert(cfg.health_port == 0);
+  CHECK(signet_config_load(NULL, &cfg) == 0);
+  CHECK(cfg.health_port == 0);
   signet_config_clear(&cfg);
   g_unsetenv("SIGNET_HEALTH_PORT");
 
@@ -256,14 +256,14 @@ static void test_checked_port_parsing(void) {
       .challenges = (struct SignetChallengeStore *)1,
     };
     SignetBootstrapServer *bootstrap = signet_bootstrap_server_new(&bootstrap_cfg);
-    assert(bootstrap != NULL);
-    assert(signet_bootstrap_server_start(bootstrap) == -1);
+    CHECK(bootstrap != NULL);
+    CHECK(signet_bootstrap_server_start(bootstrap) == -1);
     signet_bootstrap_server_free(bootstrap);
   }
 }
 
 int main(void) {
-  assert(sodium_init() >= 0);
+  CHECK(sodium_init() >= 0);
   test_checked_port_parsing();
   test_concurrent_signing_and_credential_retrieval();
   test_ssh_connection_flood();

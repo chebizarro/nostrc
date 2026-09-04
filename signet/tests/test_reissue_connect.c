@@ -22,7 +22,7 @@
 
 #include <nostr-keys.h>
 
-#include <assert.h>
+#include "test_check.h"
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -42,7 +42,7 @@ static const char *const BUNKER_PK =
 static char *make_temp_db_path(void) {
   char tmpl[] = "/tmp/signet-test-reissue-XXXXXX.db";
   int fd = mkstemps(tmpl, 3);
-  assert(fd >= 0);
+  CHECK(fd >= 0);
   close(fd);
   unlink(tmpl);
   return g_strdup(tmpl);
@@ -60,10 +60,10 @@ static int hex_to_bytes(const char *hex, uint8_t *out, size_t n) {
 /* Generate a fresh keypair: raw secret bytes + lowercase hex pubkey. */
 static void gen_keypair(uint8_t sk_raw[32], char pk_hex[65]) {
   char *sk_hex = nostr_key_generate_private();
-  assert(sk_hex && strlen(sk_hex) == 64);
+  CHECK(sk_hex && strlen(sk_hex) == 64);
   char *pk = nostr_key_get_public(sk_hex);
-  assert(pk && strlen(pk) == 64);
-  assert(hex_to_bytes(sk_hex, sk_raw, 32) == 0);
+  CHECK(pk && strlen(pk) == 64);
+  CHECK(hex_to_bytes(sk_hex, sk_raw, 32) == 0);
   memcpy(pk_hex, pk, 65);
   free(pk);
   sodium_memzero(sk_hex, strlen(sk_hex));
@@ -76,7 +76,7 @@ static SignetKeyStore *open_ks(char **out_path) {
   SignetAuditLogger *audit = signet_audit_logger_new(&alc);
   SignetKeyStoreConfig cfg = { .db_path = db_path, .master_key = MASTER_KEY };
   SignetKeyStore *ks = signet_key_store_new(audit, &cfg);
-  assert(ks != NULL);
+  CHECK(ks != NULL);
   *out_path = db_path;
   return ks;
 }
@@ -99,7 +99,7 @@ static void test_reissue_success(void) {
 
   const char *old_secret = "fixed-old-connect-secret";
   char out_pk[65] = {0};
-  assert(signet_key_store_adopt_agent(ks, "stew", sk_raw, pk_hex, old_secret,
+  CHECK(signet_key_store_adopt_agent(ks, "stew", sk_raw, pk_hex, old_secret,
                                       BUNKER_PK, RELAYS, 1, out_pk, NULL) == SIGNET_ADOPT_OK);
 
   char re_pk[65] = {0};
@@ -107,26 +107,26 @@ static void test_reissue_success(void) {
   char *uri = NULL;
   int rc = signet_key_store_reissue_connect_secret(ks, "stew", NULL, BUNKER_PK, RELAYS, 1,
                                                    re_pk, &fresh, &uri);
-  assert(rc == 0);
-  assert(fresh != NULL && is_hex64(fresh));
-  assert(strcmp(fresh, old_secret) != 0);
-  assert(strcmp(re_pk, pk_hex) == 0);
-  assert(uri != NULL);
-  assert(strncmp(uri, "bunker://", 9) == 0);
-  assert(strstr(uri, BUNKER_PK) != NULL);
-  assert(strstr(uri, fresh) != NULL);
+  CHECK(rc == 0);
+  CHECK(fresh != NULL && is_hex64(fresh));
+  CHECK(strcmp(fresh, old_secret) != 0);
+  CHECK(strcmp(re_pk, pk_hex) == 0);
+  CHECK(uri != NULL);
+  CHECK(strncmp(uri, "bunker://", 9) == 0);
+  CHECK(strstr(uri, BUNKER_PK) != NULL);
+  CHECK(strstr(uri, fresh) != NULL);
 
   /* The OLD secret must no longer resolve. */
   char *agent = NULL;
-  assert(signet_key_store_consume_connect_secret(ks, old_secret, 1000, &agent) == 1);
-  assert(agent == NULL);
+  CHECK(signet_key_store_consume_connect_secret(ks, old_secret, 1000, &agent) == 1);
+  CHECK(agent == NULL);
 
   /* The FRESH secret resolves to the agent and consumes exactly once. */
-  assert(signet_key_store_consume_connect_secret(ks, fresh, 1000, &agent) == 0);
-  assert(agent && strcmp(agent, "stew") == 0);
+  CHECK(signet_key_store_consume_connect_secret(ks, fresh, 1000, &agent) == 0);
+  CHECK(agent && strcmp(agent, "stew") == 0);
   g_free(agent);
   agent = NULL;
-  assert(signet_key_store_consume_connect_secret(ks, fresh, 1000, &agent) == 1);
+  CHECK(signet_key_store_consume_connect_secret(ks, fresh, 1000, &agent) == 1);
 
   g_free(uri);
   sodium_memzero(fresh, strlen(fresh));
@@ -148,54 +148,54 @@ static void test_reissue_after_consumption(void) {
 
   const char *secret = "consumed-once-secret";
   char out_pk[65] = {0};
-  assert(signet_key_store_adopt_agent(ks, "stew", sk_raw, pk_hex, secret,
+  CHECK(signet_key_store_adopt_agent(ks, "stew", sk_raw, pk_hex, secret,
                                       BUNKER_PK, RELAYS, 1, out_pk, NULL) == SIGNET_ADOPT_OK);
 
   /* First connect consumes the secret. A replayed consumed secret must not
    * resolve any agent via the consume-by-value path used by NIP-46 connect. */
-  assert(signet_key_store_validate_connect_secret(ks, "stew", secret) == 0);
+  CHECK(signet_key_store_validate_connect_secret(ks, "stew", secret) == 0);
   {
     char *agent = NULL;
-    assert(signet_key_store_consume_connect_secret(ks, secret, 1000, &agent) == 1);
+    CHECK(signet_key_store_consume_connect_secret(ks, secret, 1000, &agent) == 1);
   }
 
   /* Reissue mints a fresh secret that validates again. */
   char re_pk[65] = {0};
   char *fresh = NULL;
-  assert(signet_key_store_reissue_connect_secret(ks, "stew", NULL, NULL, NULL, 0,
+  CHECK(signet_key_store_reissue_connect_secret(ks, "stew", NULL, NULL, NULL, 0,
                                                  re_pk, &fresh, NULL) == 0);
-  assert(fresh && is_hex64(fresh));
-  assert(signet_key_store_validate_connect_secret(ks, "stew", fresh) == 0);
+  CHECK(fresh && is_hex64(fresh));
+  CHECK(signet_key_store_validate_connect_secret(ks, "stew", fresh) == 0);
 
   /* Identity pinning: reissue with a mismatched expected pubkey is refused
    * (2) and does not mutate — the concurrent-rotate guard. */
   {
     char *pinned = NULL;
-    assert(signet_key_store_reissue_connect_secret(ks, "stew",
+    CHECK(signet_key_store_reissue_connect_secret(ks, "stew",
         "1111111111111111111111111111111111111111111111111111111111111111",
         NULL, NULL, 0, re_pk, &pinned, NULL) == 2);
-    assert(pinned == NULL);
+    CHECK(pinned == NULL);
     /* Pinning the CORRECT identity succeeds. */
-    assert(signet_key_store_reissue_connect_secret(ks, "stew", pk_hex,
+    CHECK(signet_key_store_reissue_connect_secret(ks, "stew", pk_hex,
         NULL, NULL, 0, re_pk, &pinned, NULL) == 0);
-    assert(pinned != NULL);
+    CHECK(pinned != NULL);
     sodium_memzero(pinned, strlen(pinned));
     g_free(pinned);
   }
 
   /* Reissue twice: only the latest secret is valid. */
   char *fresh2 = NULL;
-  assert(signet_key_store_reissue_connect_secret(ks, "stew", NULL, NULL, NULL, 0,
+  CHECK(signet_key_store_reissue_connect_secret(ks, "stew", NULL, NULL, NULL, 0,
                                                  re_pk, &fresh2, NULL) == 0);
   char *fresh3 = NULL;
-  assert(signet_key_store_reissue_connect_secret(ks, "stew", NULL, NULL, NULL, 0,
+  CHECK(signet_key_store_reissue_connect_secret(ks, "stew", NULL, NULL, NULL, 0,
                                                  re_pk, &fresh3, NULL) == 0);
-  assert(strcmp(fresh2, fresh3) != 0);
+  CHECK(strcmp(fresh2, fresh3) != 0);
   {
     char *agent = NULL;
-    assert(signet_key_store_consume_connect_secret(ks, fresh2, 1000, &agent) == 1);
-    assert(signet_key_store_consume_connect_secret(ks, fresh3, 1000, &agent) == 0);
-    assert(agent && strcmp(agent, "stew") == 0);
+    CHECK(signet_key_store_consume_connect_secret(ks, fresh2, 1000, &agent) == 1);
+    CHECK(signet_key_store_consume_connect_secret(ks, fresh3, 1000, &agent) == 0);
+    CHECK(agent && strcmp(agent, "stew") == 0);
     g_free(agent);
   }
 
@@ -218,8 +218,8 @@ static void test_reissue_unknown_agent(void) {
   char *fresh = NULL;
   int rc = signet_key_store_reissue_connect_secret(ks, "nope", NULL, BUNKER_PK, RELAYS, 1,
                                                    re_pk, &fresh, NULL);
-  assert(rc == 1);
-  assert(fresh == NULL);
+  CHECK(rc == 1);
+  CHECK(fresh == NULL);
 
   signet_key_store_free(ks);
   unlink(db_path);
@@ -229,31 +229,31 @@ static void test_reissue_unknown_agent(void) {
 
 /* 5: protocol wiring — kind/op mapping, required params, authorization. */
 static void test_protocol_wiring(void) {
-  assert(strcmp(signet_mgmt_op_to_string(SIGNET_MGMT_OP_REISSUE_CONNECT), "reissue_connect") == 0);
+  CHECK(strcmp(signet_mgmt_op_to_string(SIGNET_MGMT_OP_REISSUE_CONNECT), "reissue_connect") == 0);
 
   /* agent_id is required. */
   SignetMgmtRequest req;
   char *err = NULL;
-  assert(signet_mgmt_request_parse(SIGNET_MGMT_OP_REISSUE_CONNECT,
+  CHECK(signet_mgmt_request_parse(SIGNET_MGMT_OP_REISSUE_CONNECT,
                                    "{\"request_id\":\"r1\"}", &req, &err) != 0);
-  assert(err != NULL);
+  CHECK(err != NULL);
   g_free(err);
   err = NULL;
 
-  assert(signet_mgmt_request_parse(SIGNET_MGMT_OP_REISSUE_CONNECT,
+  CHECK(signet_mgmt_request_parse(SIGNET_MGMT_OP_REISSUE_CONNECT,
                                    "{\"agent_id\":\"stew\",\"request_id\":\"r2\"}",
                                    &req, &err) == 0);
-  assert(req.op == SIGNET_MGMT_OP_REISSUE_CONNECT);
-  assert(req.agent_id && strcmp(req.agent_id, "stew") == 0);
-  assert(req.request_id && strcmp(req.request_id, "r2") == 0);
+  CHECK(req.op == SIGNET_MGMT_OP_REISSUE_CONNECT);
+  CHECK(req.agent_id && strcmp(req.agent_id, "stew") == 0);
+  CHECK(req.request_id && strcmp(req.request_id, "r2") == 0);
   signet_mgmt_request_clear(&req);
 
   /* Only configured provisioner pubkeys are authorized. */
   const char *const provs[] = {
     "1111111111111111111111111111111111111111111111111111111111111111",
   };
-  assert(signet_mgmt_is_authorized(provs[0], provs, 1) == true);
-  assert(signet_mgmt_is_authorized(
+  CHECK(signet_mgmt_is_authorized(provs[0], provs, 1) == true);
+  CHECK(signet_mgmt_is_authorized(
              "2222222222222222222222222222222222222222222222222222222222222222",
              provs, 1) == false);
 

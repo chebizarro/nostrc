@@ -20,7 +20,7 @@
 #include <nostr-keys.h>
 #include <nostr/nip44/nip44.h>
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,7 +35,7 @@
 static char *make_temp_db_path(void) {
   char tmpl[] = "/tmp/signet-test-crypto-XXXXXX.db";
   int fd = mkstemps(tmpl, 3);
-  assert(fd >= 0);
+  CHECK(fd >= 0);
   close(fd);
   unlink(tmpl);
   return g_strdup(tmpl);
@@ -86,7 +86,7 @@ static SignetKeyStore *open_ks(char **out_path) {
   SignetAuditLogger *audit = signet_audit_logger_new(&alc);
   SignetKeyStoreConfig cfg = { .db_path = db_path, .master_key = MASTER_KEY };
   SignetKeyStore *ks = signet_key_store_new(audit, &cfg);
-  assert(ks != NULL);
+  CHECK(ks != NULL);
   *out_path = db_path;
   return ks;
 }
@@ -98,33 +98,33 @@ static void test_agent_key_signs_valid_event(void) {
   SignetKeyStore *ks = open_ks(&db_path);
 
   char pubkey_hex[65] = {0};
-  assert(signet_key_store_provision_agent(ks, "signer", NULL, NULL, 0,
+  CHECK(signet_key_store_provision_agent(ks, "signer", NULL, NULL, 0,
                                           pubkey_hex, sizeof(pubkey_hex), NULL) == 0);
-  assert(strlen(pubkey_hex) == 64);
+  CHECK(strlen(pubkey_hex) == 64);
 
   SignetLoadedKey lk;
   memset(&lk, 0, sizeof(lk));
-  assert(signet_key_store_load_agent_key(ks, "signer", &lk));
-  assert(lk.secret_key && lk.secret_key_len == 32);
+  CHECK(signet_key_store_load_agent_key(ks, "signer", &lk));
+  CHECK(lk.secret_key && lk.secret_key_len == 32);
 
   char sk_hex[65];
   bytes_to_hex(lk.secret_key, 32, sk_hex);
 
   NostrEvent *evt = nostr_event_new();
-  assert(evt);
+  CHECK(evt);
   nostr_event_set_kind(evt, 1);
   nostr_event_set_created_at(evt, 1700000000);
   nostr_event_set_content(evt, "signet signing correctness test");
-  assert(nostr_event_sign(evt, sk_hex) == 0);
+  CHECK(nostr_event_sign(evt, sk_hex) == 0);
 
   /* Independent verification of id + Schnorr signature. */
-  assert(nostr_event_check_signature(evt));
+  CHECK(nostr_event_check_signature(evt));
   const char *evt_id = nostr_event_get_id(evt);
-  assert(evt_id && strlen(evt_id) == 64);
+  CHECK(evt_id && strlen(evt_id) == 64);
 
   /* The pubkey the signature commits to must be the agent's stored pubkey. */
   const char *evt_pub = nostr_event_get_pubkey(evt);
-  assert(evt_pub && strcmp(evt_pub, pubkey_hex) == 0);
+  CHECK(evt_pub && strcmp(evt_pub, pubkey_hex) == 0);
 
   nostr_event_free(evt);
   sodium_memzero(sk_hex, sizeof(sk_hex));
@@ -141,30 +141,30 @@ static void test_nip44_roundtrip(void) {
   SignetKeyStore *ks = open_ks(&db_path);
 
   char a_pub[65] = {0}, b_pub[65] = {0}, c_pub[65] = {0};
-  assert(signet_key_store_provision_agent(ks, "alice", NULL, NULL, 0, a_pub, sizeof(a_pub), NULL) == 0);
-  assert(signet_key_store_provision_agent(ks, "bob",   NULL, NULL, 0, b_pub, sizeof(b_pub), NULL) == 0);
-  assert(signet_key_store_provision_agent(ks, "carol", NULL, NULL, 0, c_pub, sizeof(c_pub), NULL) == 0);
+  CHECK(signet_key_store_provision_agent(ks, "alice", NULL, NULL, 0, a_pub, sizeof(a_pub), NULL) == 0);
+  CHECK(signet_key_store_provision_agent(ks, "bob",   NULL, NULL, 0, b_pub, sizeof(b_pub), NULL) == 0);
+  CHECK(signet_key_store_provision_agent(ks, "carol", NULL, NULL, 0, c_pub, sizeof(c_pub), NULL) == 0);
 
   SignetLoadedKey ak, bk, ck;
   memset(&ak, 0, sizeof(ak)); memset(&bk, 0, sizeof(bk)); memset(&ck, 0, sizeof(ck));
-  assert(signet_key_store_load_agent_key(ks, "alice", &ak));
-  assert(signet_key_store_load_agent_key(ks, "bob", &bk));
-  assert(signet_key_store_load_agent_key(ks, "carol", &ck));
+  CHECK(signet_key_store_load_agent_key(ks, "alice", &ak));
+  CHECK(signet_key_store_load_agent_key(ks, "bob", &bk));
+  CHECK(signet_key_store_load_agent_key(ks, "carol", &ck));
 
   uint8_t a_pk[32], b_pk[32];
-  assert(hex_to_bytes(a_pub, a_pk, 32) == 0);
-  assert(hex_to_bytes(b_pub, b_pk, 32) == 0);
+  CHECK(hex_to_bytes(a_pub, a_pk, 32) == 0);
+  CHECK(hex_to_bytes(b_pub, b_pk, 32) == 0);
 
   const char *msg = "the ships hung in the sky much the way bricks don't";
   char *ct = NULL;
-  assert(nostr_nip44_encrypt_v2(ak.secret_key, b_pk, (const uint8_t *)msg, strlen(msg), &ct) == 0);
-  assert(ct != NULL);
-  assert(strstr(ct, "bricks") == NULL); /* ciphertext is not the plaintext */
+  CHECK(nostr_nip44_encrypt_v2(ak.secret_key, b_pk, (const uint8_t *)msg, strlen(msg), &ct) == 0);
+  CHECK(ct != NULL);
+  CHECK(strstr(ct, "bricks") == NULL); /* ciphertext is not the plaintext */
 
   /* Bob decrypts with his sk + Alice's pk. */
   uint8_t *pt = NULL; size_t pt_len = 0;
-  assert(nostr_nip44_decrypt_v2(bk.secret_key, a_pk, ct, &pt, &pt_len) == 0);
-  assert(pt && pt_len == strlen(msg) && memcmp(pt, msg, pt_len) == 0);
+  CHECK(nostr_nip44_decrypt_v2(bk.secret_key, a_pk, ct, &pt, &pt_len) == 0);
+  CHECK(pt && pt_len == strlen(msg) && memcmp(pt, msg, pt_len) == 0);
   free(pt);
 
   /* Tampered ciphertext must fail the MAC check. */
@@ -172,12 +172,12 @@ static void test_nip44_roundtrip(void) {
   char *tampered = g_strdup(ct);
   tampered[clen / 2] = (tampered[clen / 2] == 'A') ? 'B' : 'A';
   uint8_t *pt2 = NULL; size_t pt2_len = 0;
-  assert(nostr_nip44_decrypt_v2(bk.secret_key, a_pk, tampered, &pt2, &pt2_len) != 0);
+  CHECK(nostr_nip44_decrypt_v2(bk.secret_key, a_pk, tampered, &pt2, &pt2_len) != 0);
   g_free(tampered);
 
   /* A third party (carol) cannot decrypt Alice->Bob ciphertext. */
   uint8_t *pt3 = NULL; size_t pt3_len = 0;
-  assert(nostr_nip44_decrypt_v2(ck.secret_key, a_pk, ct, &pt3, &pt3_len) != 0);
+  CHECK(nostr_nip44_decrypt_v2(ck.secret_key, a_pk, ct, &pt3, &pt3_len) != 0);
 
   free(ct);
   signet_loaded_key_clear(&ak);
@@ -194,12 +194,12 @@ static void test_envelope_encryption_at_rest(void) {
   char *db_path = make_temp_db_path();
   SignetStoreConfig cfg = { .db_path = db_path, .master_key = MASTER_KEY };
   SignetStore *store = signet_store_open(&cfg);
-  assert(store);
+  CHECK(store);
 
   const char *marker = "SUPER_SECRET_PLAINTEXT_MARKER_9f3a7c";
   size_t mlen = strlen(marker);
 
-  assert(signet_store_put_secret(store, "cred-1", "agent-x", "deadbeef",
+  CHECK(signet_store_put_secret(store, "cred-1", "agent-x", "deadbeef",
                                  SIGNET_SECRET_API_TOKEN, "label",
                                  (const uint8_t *)marker, mlen, NULL,
                                  1700000000) == 0);
@@ -207,8 +207,8 @@ static void test_envelope_encryption_at_rest(void) {
   /* Round-trip: the decrypted payload matches exactly. */
   SignetSecretRecord rec;
   memset(&rec, 0, sizeof(rec));
-  assert(signet_store_get_secret(store, "cred-1", &rec) == 0);
-  assert(rec.payload && rec.payload_len == mlen && memcmp(rec.payload, marker, mlen) == 0);
+  CHECK(signet_store_get_secret(store, "cred-1", &rec) == 0);
+  CHECK(rec.payload && rec.payload_len == mlen && memcmp(rec.payload, marker, mlen) == 0);
   signet_secret_record_clear(&rec);
 
   bool enc = signet_store_is_encrypted(store);
@@ -224,7 +224,7 @@ static void test_envelope_encryption_at_rest(void) {
   char *wal = g_strdup_printf("%s-wal", db_path);
   b = read_file_bytes(wal, &n);
   if (b) { found = found || buf_contains(b, n, (const uint8_t *)marker, mlen); free(b); }
-  assert(!found);
+  CHECK(!found);
 
   unlink(db_path);
   unlink(wal);
@@ -237,7 +237,7 @@ static void test_envelope_encryption_at_rest(void) {
 }
 
 int main(void) {
-  assert(sodium_init() >= 0);
+  CHECK(sodium_init() >= 0);
   test_agent_key_signs_valid_event();
   test_nip44_roundtrip();
   test_envelope_encryption_at_rest();

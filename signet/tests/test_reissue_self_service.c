@@ -24,7 +24,7 @@
 #include <nostr-keys.h>
 #include <nostr/nip44/nip44.h>
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,7 +41,7 @@ static const char *const RELAYS[] = { "wss://relay.example" };
 static char *make_temp_db_path(void) {
   char tmpl[] = "/tmp/signet-test-selfsvc-XXXXXX.db";
   int fd = mkstemps(tmpl, 3);
-  assert(fd >= 0);
+  CHECK(fd >= 0);
   close(fd);
   unlink(tmpl);
   return g_strdup(tmpl);
@@ -58,9 +58,9 @@ static int hex_to_bytes(const char *hex, uint8_t *out, size_t n) {
 
 static void gen_keypair_hex(char sk_hex[65], char pk_hex[65]) {
   char *sk = nostr_key_generate_private();
-  assert(sk && strlen(sk) == 64);
+  CHECK(sk && strlen(sk) == 64);
   char *pk = nostr_key_get_public(sk);
-  assert(pk && strlen(pk) == 64);
+  CHECK(pk && strlen(pk) == 64);
   memcpy(sk_hex, sk, 65);
   memcpy(pk_hex, pk, 65);
   sodium_memzero(sk, strlen(sk));
@@ -91,9 +91,9 @@ static void adopt_agent(Fixture *f, const char *agent_id,
                         const char sk_hex[65], const char pk_hex[65],
                         const char *fixed_secret) {
   uint8_t sk_raw[32];
-  assert(hex_to_bytes(sk_hex, sk_raw, 32) == 0);
+  CHECK(hex_to_bytes(sk_hex, sk_raw, 32) == 0);
   char out_pk[65] = {0};
-  assert(signet_key_store_adopt_agent(f->ks, agent_id, sk_raw, pk_hex,
+  CHECK(signet_key_store_adopt_agent(f->ks, agent_id, sk_raw, pk_hex,
                                       fixed_secret, f->bunker_pk_hex,
                                       RELAYS, 1, out_pk, NULL) == SIGNET_ADOPT_OK);
   sodium_memzero(sk_raw, sizeof(sk_raw));
@@ -112,7 +112,7 @@ static void fixture_setup(Fixture *f) {
   SignetAuditLogger *audit = signet_audit_logger_new(&alc);
   SignetKeyStoreConfig kcfg = { .db_path = f->db_path, .master_key = MASTER_KEY };
   f->ks = signet_key_store_new(audit, &kcfg);
-  assert(f->ks != NULL);
+  CHECK(f->ks != NULL);
 
   const char *const provs[] = { f->prov_pk_hex };
   SignetMgmtHandlerConfig mcfg = {
@@ -124,23 +124,23 @@ static void fixture_setup(Fixture *f) {
     .n_relay_urls = 1,
   };
   f->mgmt = signet_mgmt_handler_new(f->ks, NULL, NULL, NULL, &mcfg);
-  assert(f->mgmt != NULL);
+  CHECK(f->mgmt != NULL);
 
   SignetReplayCacheConfig rcfg = { .max_entries = 128, .ttl_seconds = 300, .skew_seconds = 300 };
   f->replay = signet_replay_cache_new(&rcfg);
-  assert(f->replay != NULL);
+  CHECK(f->replay != NULL);
   signet_mgmt_handler_set_replay_cache(f->mgmt, f->replay);
 
   /* Deliberately TINY self-service replay domain so the isolation test can
    * cheaply overflow it. */
   SignetReplayCacheConfig scfg = { .max_entries = 8, .ttl_seconds = 300, .skew_seconds = 300 };
   f->replay_self = signet_replay_cache_new(&scfg);
-  assert(f->replay_self != NULL);
+  CHECK(f->replay_self != NULL);
   signet_mgmt_handler_set_self_replay_cache(f->mgmt, f->replay_self);
 
   /* Live deny list, shared with the handler exactly as signetd wires it. */
   f->deny = signet_deny_list_new(signet_key_store_get_store(f->ks));
-  assert(f->deny != NULL);
+  CHECK(f->deny != NULL);
   signet_mgmt_handler_set_deny_list(f->mgmt, f->deny);
 
   adopt_agent(f, "stew", f->stew_sk_hex, f->stew_pk_hex, "stew-initial");
@@ -166,22 +166,22 @@ static void fixture_teardown(Fixture *f) {
 static char *encrypt_to_bunker(Fixture *f, const char *sender_sk_hex,
                                const char *plaintext) {
   uint8_t sk[32], pk[32];
-  assert(hex_to_bytes(sender_sk_hex, sk, 32) == 0);
-  assert(hex_to_bytes(f->bunker_pk_hex, pk, 32) == 0);
+  CHECK(hex_to_bytes(sender_sk_hex, sk, 32) == 0);
+  CHECK(hex_to_bytes(f->bunker_pk_hex, pk, 32) == 0);
   char *cipher = NULL;
   int rc = nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)plaintext,
                                   strlen(plaintext), &cipher);
   sodium_memzero(sk, sizeof(sk));
-  assert(rc == 0 && cipher != NULL);
+  CHECK(rc == 0 && cipher != NULL);
   return cipher;
 }
 
 static char *read_connect_secret(Fixture *f, const char *agent_id) {
   SignetStore *st = signet_key_store_get_store(f->ks);
-  assert(st != NULL);
+  CHECK(st != NULL);
   SignetAgentRecord rec;
   memset(&rec, 0, sizeof(rec));
-  assert(signet_store_get_agent(st, agent_id, &rec) == 0);
+  CHECK(signet_store_get_agent(st, agent_id, &rec) == 0);
   char *secret = rec.connect_secret ? g_strdup(rec.connect_secret) : NULL;
   signet_agent_record_clear(&rec);
   return secret;
@@ -207,10 +207,10 @@ static void test_provisioner_can_reissue_any(void) {
   fixture_setup(&f);
   int64_t now = 1752380000;
 
-  assert(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-p1", now) == 0);
-  assert(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "other", "evt-p2", now) == 0);
+  CHECK(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-p1", now) == 0);
+  CHECK(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "other", "evt-p2", now) == 0);
   char *s = read_connect_secret(&f, "stew");
-  assert(s && strcmp(s, "stew-initial") != 0);
+  CHECK(s && strcmp(s, "stew-initial") != 0);
   sodium_memzero(s, strlen(s)); g_free(s);
 
   fixture_teardown(&f);
@@ -222,18 +222,18 @@ static void test_agent_can_reissue_itself(void) {
   fixture_setup(&f);
   int64_t now = 1752380000;
 
-  assert(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-s1", now) == 0);
+  CHECK(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-s1", now) == 0);
 
   /* 6: the fresh secret consumes exactly once; the old one is dead. */
   char *fresh = read_connect_secret(&f, "stew");
-  assert(fresh && strcmp(fresh, "stew-initial") != 0);
+  CHECK(fresh && strcmp(fresh, "stew-initial") != 0);
   char *agent = NULL;
-  assert(signet_key_store_consume_connect_secret(f.ks, "stew-initial", now, &agent) == 1);
-  assert(signet_key_store_consume_connect_secret(f.ks, fresh, now, &agent) == 0);
-  assert(agent && strcmp(agent, "stew") == 0);
+  CHECK(signet_key_store_consume_connect_secret(f.ks, "stew-initial", now, &agent) == 1);
+  CHECK(signet_key_store_consume_connect_secret(f.ks, fresh, now, &agent) == 0);
+  CHECK(agent && strcmp(agent, "stew") == 0);
   g_free(agent);
   agent = NULL;
-  assert(signet_key_store_consume_connect_secret(f.ks, fresh, now, &agent) == 1);
+  CHECK(signet_key_store_consume_connect_secret(f.ks, fresh, now, &agent) == 1);
   sodium_memzero(fresh, strlen(fresh)); g_free(fresh);
 
   fixture_teardown(&f);
@@ -246,9 +246,9 @@ static void test_agent_cannot_reissue_other(void) {
   int64_t now = 1752380000;
 
   /* stew (valid agent) targets "other": rejected, other's secret untouched. */
-  assert(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "other", "evt-x1", now) == -1);
+  CHECK(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "other", "evt-x1", now) == -1);
   char *s = read_connect_secret(&f, "other");
-  assert(s && strcmp(s, "other-initial") == 0);
+  CHECK(s && strcmp(s, "other-initial") == 0);
   sodium_memzero(s, strlen(s)); g_free(s);
 
   fixture_teardown(&f);
@@ -264,19 +264,19 @@ static void test_unknown_sender_cannot_reissue(void) {
   gen_keypair_hex(rando_sk, rando_pk);
 
   /* Unknown sender targeting a real agent: rejected, no mutation. */
-  assert(send_reissue(&f, rando_sk, rando_pk, "stew", "evt-u1", now) == -1);
+  CHECK(send_reissue(&f, rando_sk, rando_pk, "stew", "evt-u1", now) == -1);
   char *s = read_connect_secret(&f, "stew");
-  assert(s && strcmp(s, "stew-initial") == 0);
+  CHECK(s && strcmp(s, "stew-initial") == 0);
   sodium_memzero(s, strlen(s)); g_free(s);
 
   /* Unknown sender targeting an unknown agent: same rejection (no probing). */
-  assert(send_reissue(&f, rando_sk, rando_pk, "no-such-agent", "evt-u2", now) == -1);
+  CHECK(send_reissue(&f, rando_sk, rando_pk, "no-such-agent", "evt-u2", now) == -1);
 
   /* Unauthorized attempts must NOT mark the replay cache (auth runs before
    * the replay mark), so they cannot churn/evict legitimate entries. Proven
    * by reusing the rejected event id for an authorized request: it executes
    * rather than being reported as a duplicate. */
-  assert(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-u1", now) == 0);
+  CHECK(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-u1", now) == 0);
 
   sodium_memzero(rando_sk, sizeof(rando_sk));
   fixture_teardown(&f);
@@ -288,14 +288,14 @@ static void test_self_service_replay_executes_once(void) {
   fixture_setup(&f);
   int64_t now = 1752380000;
 
-  assert(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-r1", now) == 0);
+  CHECK(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-r1", now) == 0);
   char *first = read_connect_secret(&f, "stew");
-  assert(first != NULL);
+  CHECK(first != NULL);
 
   /* Identical redelivery (same event id) is rejected; secret is stable. */
-  assert(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-r1", now) == -1);
+  CHECK(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-r1", now) == -1);
   char *after = read_connect_secret(&f, "stew");
-  assert(after && strcmp(first, after) == 0);
+  CHECK(after && strcmp(first, after) == 0);
 
   sodium_memzero(first, strlen(first)); g_free(first);
   sodium_memzero(after, strlen(after)); g_free(after);
@@ -311,13 +311,13 @@ static void test_self_service_does_not_leak_to_other_methods(void) {
   /* An agent sending get-status (empty content, would succeed for a
    * provisioner) must be silently dropped: the self-service exception is
    * scoped to agent/reissue-connect only. */
-  assert(signet_mgmt_handler_handle_request(f.mgmt, f.stew_pk_hex, "",
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.stew_pk_hex, "",
                                           SIGNET_MGMT_OP_GET_STATUS,
                                           "evt-m1", now) == -1);
   /* Same for a mutating method. */
   char *cipher = encrypt_to_bunker(&f, f.stew_sk_hex,
                                    "{\"agent_id\":\"stew\",\"request_id\":\"rk\"}");
-  assert(signet_mgmt_handler_handle_request(f.mgmt, f.stew_pk_hex, cipher,
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.stew_pk_hex, cipher,
                                           SIGNET_MGMT_OP_ROTATE_KEY,
                                           "evt-m2", now) == -1);
   free(cipher);
@@ -335,18 +335,18 @@ static void test_self_flood_cannot_evict_provisioner_entries(void) {
   int64_t now = 1752380000;
 
   /* A provisioner mutation is executed and its event id marked. */
-  assert(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-priv", now) == 0);
+  CHECK(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-priv", now) == 0);
 
   /* Flood: 24 unique self-service events — 3x the self cache capacity (8),
    * enough to have fully cycled a shared cache of that size. */
   for (int i = 0; i < 24; i++) {
     char evt[32];
     snprintf(evt, sizeof(evt), "evt-flood-%d", i);
-    assert(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", evt, now) == 0);
+    CHECK(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", evt, now) == 0);
   }
 
   /* The captured provisioner event still cannot be replayed. */
-  assert(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-priv", now) == -1);
+  CHECK(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-priv", now) == -1);
 
   fixture_teardown(&f);
   printf("test_self_flood_cannot_evict_provisioner_entries: PASS\n");
@@ -361,28 +361,28 @@ static void test_suspended_agent_cannot_bypass(void) {
   int64_t now = 1752380000;
 
   /* Suspend stew: deny-list its pubkey WITHOUT revoking/wiping the key. */
-  assert(signet_deny_list_add(f.deny, f.stew_pk_hex, "stew", "suspended", now) == 0);
+  CHECK(signet_deny_list_add(f.deny, f.stew_pk_hex, "stew", "suspended", now) == 0);
 
   /* Self-service reissue is refused; the stored secret is untouched. */
-  assert(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-d1", now) == -1);
+  CHECK(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-d1", now) == -1);
   char *s = read_connect_secret(&f, "stew");
-  assert(s && strcmp(s, "stew-initial") == 0);
+  CHECK(s && strcmp(s, "stew-initial") == 0);
   sodium_memzero(s, strlen(s)); g_free(s);
 
   /* Even a provisioner cannot mint for a suspended agent. */
-  assert(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-d2", now) == -1);
+  CHECK(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-d2", now) == -1);
   s = read_connect_secret(&f, "stew");
-  assert(s && strcmp(s, "stew-initial") == 0);
+  CHECK(s && strcmp(s, "stew-initial") == 0);
   sodium_memzero(s, strlen(s)); g_free(s);
 
   /* Suspension is scoped: the other agent still self-services fine. */
-  assert(send_reissue(&f, f.other_sk_hex, f.other_pk_hex, "other", "evt-d3", now) == 0);
+  CHECK(send_reissue(&f, f.other_sk_hex, f.other_pk_hex, "other", "evt-d3", now) == 0);
 
   /* Lifting the suspension restores self-service. */
-  assert(signet_deny_list_remove(f.deny, f.stew_pk_hex) == 0);
-  assert(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-d4", now) == 0);
+  CHECK(signet_deny_list_remove(f.deny, f.stew_pk_hex) == 0);
+  CHECK(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-d4", now) == 0);
   s = read_connect_secret(&f, "stew");
-  assert(s && strcmp(s, "stew-initial") != 0);
+  CHECK(s && strcmp(s, "stew-initial") != 0);
   sodium_memzero(s, strlen(s)); g_free(s);
 
   fixture_teardown(&f);
@@ -397,14 +397,14 @@ static void test_revoked_agent_cannot_reissue(void) {
   int64_t now = 1752380000;
 
   SignetStore *st = signet_key_store_get_store(f.ks);
-  assert(st != NULL);
-  assert(signet_revoke_agent(st, f.ks, f.deny, NULL, "stew", f.stew_pk_hex,
+  CHECK(st != NULL);
+  CHECK(signet_revoke_agent(st, f.ks, f.deny, NULL, "stew", f.stew_pk_hex,
                              "test revoke", now) == 0);
 
   /* Self-service with the (formerly valid) agent key is refused. */
-  assert(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-v1", now) == -1);
+  CHECK(send_reissue(&f, f.stew_sk_hex, f.stew_pk_hex, "stew", "evt-v1", now) == -1);
   /* Provisioner reissue for the revoked agent fails too (row is gone). */
-  assert(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-v2", now) == -1);
+  CHECK(send_reissue(&f, f.prov_sk_hex, f.prov_pk_hex, "stew", "evt-v2", now) == -1);
 
   fixture_teardown(&f);
   printf("test_revoked_agent_cannot_reissue: PASS\n");

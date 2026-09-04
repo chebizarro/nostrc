@@ -5,7 +5,7 @@
 
 #include "signet/audit_logger.h"
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,11 +20,11 @@ static void test_audit_logger_basic(void) {
   };
 
   SignetAuditLogger *logger = signet_audit_logger_new(&cfg);
-  assert(logger != NULL);
+  CHECK(logger != NULL);
 
   /* Write a basic audit entry */
   int rc = signet_audit_log_json(logger, SIGNET_AUDIT_EVENT_STARTUP, "{\"test\":\"message\"}");
-  assert(rc == 0);
+  CHECK(rc == 0);
 
   signet_audit_logger_free(logger);
   printf("test_audit_logger_basic: PASS\n");
@@ -43,7 +43,7 @@ static void test_audit_logger_file(void) {
   };
 
   SignetAuditLogger *logger = signet_audit_logger_new(&cfg);
-  assert(logger != NULL);
+  CHECK(logger != NULL);
 
   /* Write multiple entries */
   signet_audit_log_json(logger, SIGNET_AUDIT_EVENT_STARTUP, "{\"event\":\"1\"}");
@@ -53,7 +53,7 @@ static void test_audit_logger_file(void) {
 
   /* Verify file was created */
   FILE *f = fopen(test_path, "r");
-  assert(f != NULL);
+  CHECK(f != NULL);
   
   char line[1024];
   int line_count = 0;
@@ -62,7 +62,7 @@ static void test_audit_logger_file(void) {
   }
   fclose(f);
 
-  assert(line_count >= 2);
+  CHECK(line_count >= 2);
 
   /* Cleanup */
   unlink(test_path);
@@ -73,7 +73,7 @@ static void test_audit_logger_file(void) {
 static void test_audit_logger_null_safety(void) {
   /* NULL logger should not crash */
   int rc = signet_audit_log_json(NULL, SIGNET_AUDIT_EVENT_STARTUP, "{\"test\":\"message\"}");
-  assert(rc == -1);
+  CHECK(rc == -1);
 
   signet_audit_logger_free(NULL);
 

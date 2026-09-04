@@ -11,6 +11,8 @@
  *                                    config file still lists it (decision D2)
  */
 
+#include "test_check.h"
+
 #include "signet/config_reload.h"
 #include "signet/policy_store.h"
 #include "signet/relay_pool.h"
@@ -34,19 +36,8 @@
 #define PK_B "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 #define PK_C "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 
-/* The project's CMake build is Release with -DNDEBUG, which compiles assert()
- * away entirely — taking any side-effecting call inside it with it. A
- * security regression test that silently evaluates to nothing in the shipped
- * build configuration is worse than no test, so use a check that always
- * evaluates its expression and always reports. */
-static void check_failed(const char *file, int line, const char *expr) {
-  fprintf(stderr, "\nFAIL %s:%d: %s\n", file, line, expr);
-  fflush(stderr);
-  exit(1);
-}
-
-#define CHECK(expr) \
-  do { if (!(expr)) check_failed(__FILE__, __LINE__, #expr); } while (0)
+/* CHECK() comes from test_check.h: always-evaluated, unlike assert() under
+ * the project's Release/-DNDEBUG build. See fp-3126. */
 
 static char *g_tmpdir = NULL;
 

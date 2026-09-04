@@ -5,7 +5,7 @@
 
 #include "signet/replay_cache.h"
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -18,7 +18,7 @@ static void test_replay_basic(void) {
   };
 
   SignetReplayCache *cache = signet_replay_cache_new(&cfg);
-  assert(cache != NULL);
+  CHECK(cache != NULL);
 
   int64_t now = (int64_t)time(NULL);
   const char *id1 = "event_id_1";
@@ -26,15 +26,15 @@ static void test_replay_basic(void) {
 
   /* First check should succeed */
   SignetReplayResult r1 = signet_replay_check_and_mark(cache, id1, now, now);
-  assert(r1 == SIGNET_REPLAY_OK);
+  CHECK(r1 == SIGNET_REPLAY_OK);
 
   /* Second check of same ID should be duplicate */
   SignetReplayResult r2 = signet_replay_check_and_mark(cache, id1, now, now);
-  assert(r2 == SIGNET_REPLAY_DUPLICATE);
+  CHECK(r2 == SIGNET_REPLAY_DUPLICATE);
 
   /* Different ID should succeed */
   SignetReplayResult r3 = signet_replay_check_and_mark(cache, id2, now, now);
-  assert(r3 == SIGNET_REPLAY_OK);
+  CHECK(r3 == SIGNET_REPLAY_OK);
 
   signet_replay_cache_free(cache);
   printf("test_replay_basic: PASS\n");
@@ -48,23 +48,23 @@ static void test_replay_ttl(void) {
   };
 
   SignetReplayCache *cache = signet_replay_cache_new(&cfg);
-  assert(cache != NULL);
+  CHECK(cache != NULL);
 
   int64_t now = (int64_t)time(NULL);
   const char *id = "event_id_ttl";
 
   /* Mark event */
   SignetReplayResult r1 = signet_replay_check_and_mark(cache, id, now, now);
-  assert(r1 == SIGNET_REPLAY_OK);
+  CHECK(r1 == SIGNET_REPLAY_OK);
 
   /* Should be duplicate immediately */
   SignetReplayResult r2 = signet_replay_check_and_mark(cache, id, now, now);
-  assert(r2 == SIGNET_REPLAY_DUPLICATE);
+  CHECK(r2 == SIGNET_REPLAY_DUPLICATE);
 
   /* After TTL expires, should be rejected as too old */
   int64_t future = now + 10;
   SignetReplayResult r3 = signet_replay_check_and_mark(cache, id, now, future);
-  assert(r3 == SIGNET_REPLAY_TOO_OLD);
+  CHECK(r3 == SIGNET_REPLAY_TOO_OLD);
 
   signet_replay_cache_free(cache);
   printf("test_replay_ttl: PASS\n");
@@ -78,19 +78,19 @@ static void test_replay_skew(void) {
   };
 
   SignetReplayCache *cache = signet_replay_cache_new(&cfg);
-  assert(cache != NULL);
+  CHECK(cache != NULL);
 
   int64_t now = (int64_t)time(NULL);
   const char *id = "event_id_future";
 
   /* Event from future within skew should succeed */
   SignetReplayResult r1 = signet_replay_check_and_mark(cache, id, now + 3, now);
-  assert(r1 == SIGNET_REPLAY_OK);
+  CHECK(r1 == SIGNET_REPLAY_OK);
 
   /* Event from far future should be rejected */
   const char *id2 = "event_id_far_future";
   SignetReplayResult r2 = signet_replay_check_and_mark(cache, id2, now + 100, now);
-  assert(r2 == SIGNET_REPLAY_TOO_FAR_IN_FUTURE);
+  CHECK(r2 == SIGNET_REPLAY_TOO_FAR_IN_FUTURE);
 
   signet_replay_cache_free(cache);
   printf("test_replay_skew: PASS\n");

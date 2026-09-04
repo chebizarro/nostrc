@@ -2,11 +2,18 @@
 #
 # Signet tests
 
+# fp-3126: assert() is compiled out under NDEBUG (which the CMake Release
+# build defines), taking any side-effecting call inside it with it. Tests use
+# CHECK() from test_check.h, but keep asserts live in test targets too so a
+# file that forgets the header still gets working checks.
+signet_test_c_args = ['-UNDEBUG']
+
 test_exe = executable('test_signet_smoke',
   'test_signet_smoke.c',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -15,6 +22,7 @@ test_replay = executable('test_replay_cache',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -23,6 +31,7 @@ test_policy = executable('test_policy_engine',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -31,6 +40,7 @@ test_audit = executable('test_audit_logger',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -39,6 +49,7 @@ test_bootstrap_contract = executable('test_bootstrap_contract',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -47,6 +58,7 @@ test_capability = executable('test_capability',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -55,6 +67,7 @@ test_config_reload = executable('test_config_reload',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -63,6 +76,7 @@ test_relay_pool = executable('test_relay_pool_protocol',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -71,6 +85,7 @@ test_signing_crypto = executable('test_signing_crypto',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -79,6 +94,7 @@ test_nostr_auth = executable('test_nostr_auth',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -87,6 +103,7 @@ test_store_lifecycle = executable('test_store_lifecycle',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -95,6 +112,7 @@ test_store = executable('test_store',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -103,6 +121,7 @@ test_db_migration = executable('test_db_migration',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -111,6 +130,7 @@ test_adopt_existing = executable('test_adopt_existing',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -119,6 +139,7 @@ test_reissue_connect = executable('test_reissue_connect',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -127,6 +148,7 @@ test_mgmt_replay = executable('test_mgmt_replay',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -135,6 +157,7 @@ test_pubkey_backfill = executable('test_pubkey_backfill',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -143,6 +166,7 @@ test_reissue_self_service = executable('test_reissue_self_service',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -151,6 +175,7 @@ test_client_bindings = executable('test_client_bindings',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -159,6 +184,7 @@ test_credential_lifecycle = executable('test_credential_lifecycle',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -167,6 +193,7 @@ test_credential_access = executable('test_credential_access',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -175,6 +202,7 @@ test_git_credential = executable('test_git_credential',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -183,6 +211,7 @@ test_backup_restore = executable('test_backup_restore',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
 
@@ -191,8 +220,14 @@ test_item3_concurrency = executable('test_item3_concurrency',
   link_with: signet_core,
   include_directories: signet_includes,
   dependencies: signet_deps + [in_tree_dep],
+  c_args: signet_test_c_args,
   install: false,
 )
+
+# fp-3126 guard: fail the suite if a bare assert() reappears in the test tree.
+test('no_bare_assert', find_program('sh'),
+  args: [meson.current_source_dir() / 'check_no_bare_assert.sh',
+         meson.current_source_dir()])
 
 test('signet_smoke', test_exe)
 test('replay_cache', test_replay)
@@ -229,6 +264,7 @@ if get_option('signet_enable_passkeys')
     '../src/store_passkeys.c',
     include_directories: signet_includes + [include_directories('../src')],
     dependencies: [openssl_dep, sqlite3_dep, sodium_dep],
+    c_args: signet_test_c_args,
     install: false,
   )
   test('store_passkeys', test_store_passkeys)
@@ -241,6 +277,7 @@ if get_option('signet_enable_passkeys')
     '../src/store_passkeys.c',
     include_directories: signet_includes + [include_directories('../src')],
     dependencies: [glib_dep, json_dep, openssl_dep, sqlite3_dep, sodium_dep, cbor_dep],
+    c_args: signet_test_c_args,
     install: false,
   )
   test('fido_service', test_fido_service)
@@ -250,6 +287,7 @@ if get_option('signet_enable_passkeys')
     link_with: signet_core,
     include_directories: signet_includes,
     dependencies: signet_deps,
+    c_args: signet_test_c_args,
     install: false,
   )
   test('fido_ctaphid', test_fido_ctaphid)
@@ -262,6 +300,7 @@ if get_option('signet_enable_passkeys')
     '../src/store_passkeys.c',
     include_directories: signet_includes + [include_directories('../src')],
     dependencies: [glib_dep, json_dep, openssl_dep, sqlite3_dep, sodium_dep, cbor_dep],
+    c_args: signet_test_c_args,
     install: false,
   )
   test('fido_interop_external', find_program('bash'),

@@ -21,7 +21,7 @@
 #include <nostr-keys.h>
 #include <nostr/nip44/nip44.h>
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,7 +38,7 @@ static const char *const RELAYS[] = { "wss://relay.example" };
 static char *make_temp_db_path(void) {
   char tmpl[] = "/tmp/signet-test-mgmt-replay-XXXXXX.db";
   int fd = mkstemps(tmpl, 3);
-  assert(fd >= 0);
+  CHECK(fd >= 0);
   close(fd);
   unlink(tmpl);
   return g_strdup(tmpl);
@@ -56,9 +56,9 @@ static int hex_to_bytes(const char *hex, uint8_t *out, size_t n) {
 /* Generate a fresh keypair: 64-hex secret + 64-hex pubkey. */
 static void gen_keypair_hex(char sk_hex[65], char pk_hex[65]) {
   char *sk = nostr_key_generate_private();
-  assert(sk && strlen(sk) == 64);
+  CHECK(sk && strlen(sk) == 64);
   char *pk = nostr_key_get_public(sk);
-  assert(pk && strlen(pk) == 64);
+  CHECK(pk && strlen(pk) == 64);
   memcpy(sk_hex, sk, 65);
   memcpy(pk_hex, pk, 65);
   sodium_memzero(sk, strlen(sk));
@@ -88,7 +88,7 @@ static void fixture_setup(Fixture *f, bool with_replay_cache) {
   SignetAuditLogger *audit = signet_audit_logger_new(&alc);
   SignetKeyStoreConfig kcfg = { .db_path = f->db_path, .master_key = MASTER_KEY };
   f->ks = signet_key_store_new(audit, &kcfg);
-  assert(f->ks != NULL);
+  CHECK(f->ks != NULL);
 
   const char *const provs[] = { f->prov_pk_hex };
   SignetMgmtHandlerConfig mcfg = {
@@ -102,12 +102,12 @@ static void fixture_setup(Fixture *f, bool with_replay_cache) {
   /* No relay pool: ack publishing becomes a no-op, which is fine — these
    * tests assert on handler return codes and persisted store state. */
   f->mgmt = signet_mgmt_handler_new(f->ks, NULL, NULL, NULL, &mcfg);
-  assert(f->mgmt != NULL);
+  CHECK(f->mgmt != NULL);
 
   if (with_replay_cache) {
     SignetReplayCacheConfig rcfg = { .max_entries = 128, .ttl_seconds = 300, .skew_seconds = 300 };
     f->replay = signet_replay_cache_new(&rcfg);
-    assert(f->replay != NULL);
+    CHECK(f->replay != NULL);
     signet_mgmt_handler_set_replay_cache(f->mgmt, f->replay);
   }
 }
@@ -126,13 +126,13 @@ static void fixture_teardown(Fixture *f) {
  * management transport does after gift-wrap unwrapping. Caller frees. */
 static char *encrypt_to_bunker(Fixture *f, const char *plaintext) {
   uint8_t sk[32], pk[32];
-  assert(hex_to_bytes(f->prov_sk_hex, sk, 32) == 0);
-  assert(hex_to_bytes(f->bunker_pk_hex, pk, 32) == 0);
+  CHECK(hex_to_bytes(f->prov_sk_hex, sk, 32) == 0);
+  CHECK(hex_to_bytes(f->bunker_pk_hex, pk, 32) == 0);
   char *cipher = NULL;
   int rc = nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)plaintext,
                                   strlen(plaintext), &cipher);
   sodium_memzero(sk, sizeof(sk));
-  assert(rc == 0 && cipher != NULL);
+  CHECK(rc == 0 && cipher != NULL);
   return cipher;
 }
 
@@ -141,10 +141,10 @@ static void adopt_agent(Fixture *f, const char *agent_id) {
   char sk_hex[65], pk_hex[65];
   gen_keypair_hex(sk_hex, pk_hex);
   uint8_t sk_raw[32];
-  assert(hex_to_bytes(sk_hex, sk_raw, 32) == 0);
+  CHECK(hex_to_bytes(sk_hex, sk_raw, 32) == 0);
   sodium_memzero(sk_hex, sizeof(sk_hex));
   char out_pk[65] = {0};
-  assert(signet_key_store_adopt_agent(f->ks, agent_id, sk_raw, pk_hex,
+  CHECK(signet_key_store_adopt_agent(f->ks, agent_id, sk_raw, pk_hex,
                                       "initial-secret", f->bunker_pk_hex,
                                       RELAYS, 1, out_pk, NULL) == SIGNET_ADOPT_OK);
   sodium_memzero(sk_raw, sizeof(sk_raw));
@@ -153,10 +153,10 @@ static void adopt_agent(Fixture *f, const char *agent_id) {
 /* Read the currently persisted connect_secret for an agent. Caller frees. */
 static char *read_connect_secret(Fixture *f, const char *agent_id) {
   SignetStore *st = signet_key_store_get_store(f->ks);
-  assert(st != NULL);
+  CHECK(st != NULL);
   SignetAgentRecord rec;
   memset(&rec, 0, sizeof(rec));
-  assert(signet_store_get_agent(st, agent_id, &rec) == 0);
+  CHECK(signet_store_get_agent(st, agent_id, &rec) == 0);
   char *secret = rec.connect_secret ? g_strdup(rec.connect_secret) : NULL;
   signet_agent_record_clear(&rec);
   return secret;
@@ -168,9 +168,9 @@ static void test_no_cache_duplicates_execute(void) {
   fixture_setup(&f, false);
 
   int64_t now = 1752380000;
-  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
                                           SIGNET_MGMT_OP_GET_STATUS, "evt-dup", now) == 0);
-  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
                                           SIGNET_MGMT_OP_GET_STATUS, "evt-dup", now) == 0);
 
   fixture_teardown(&f);
@@ -183,11 +183,11 @@ static void test_cache_rejects_duplicate(void) {
   fixture_setup(&f, true);
 
   int64_t now = 1752380000;
-  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
                                           SIGNET_MGMT_OP_GET_STATUS, "evt-1", now) == 0);
-  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
                                           SIGNET_MGMT_OP_GET_STATUS, "evt-1", now) == -1);
-  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, "",
                                           SIGNET_MGMT_OP_GET_STATUS, "evt-2", now) == 0);
 
   fixture_teardown(&f);
@@ -204,25 +204,25 @@ static void test_replayed_reissue_mints_once(void) {
   int64_t now = 1752380000;
 
   /* First delivery executes and replaces the connect_secret. */
-  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
                                           SIGNET_MGMT_OP_REISSUE_CONNECT, "evt-r", now) == 0);
   char *after_first = read_connect_secret(&f, "stew");
-  assert(after_first != NULL);
-  assert(strcmp(after_first, "initial-secret") != 0);
+  CHECK(after_first != NULL);
+  CHECK(strcmp(after_first, "initial-secret") != 0);
 
   /* Replay of the SAME event id is rejected and must not mint again. */
-  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
                                           SIGNET_MGMT_OP_REISSUE_CONNECT, "evt-r", now) == -1);
   char *after_replay = read_connect_secret(&f, "stew");
-  assert(after_replay != NULL);
-  assert(strcmp(after_first, after_replay) == 0);
+  CHECK(after_replay != NULL);
+  CHECK(strcmp(after_first, after_replay) == 0);
 
   /* A genuinely new request (new event id) mints a different secret. */
-  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
                                           SIGNET_MGMT_OP_REISSUE_CONNECT, "evt-r2", now) == 0);
   char *after_second = read_connect_secret(&f, "stew");
-  assert(after_second != NULL);
-  assert(strcmp(after_second, after_replay) != 0);
+  CHECK(after_second != NULL);
+  CHECK(strcmp(after_second, after_replay) != 0);
 
   sodium_memzero(after_first, strlen(after_first)); g_free(after_first);
   sodium_memzero(after_replay, strlen(after_replay)); g_free(after_replay);
@@ -241,14 +241,14 @@ static void test_missing_event_id_fails_closed(void) {
   char *cipher = encrypt_to_bunker(&f, "{\"agent_id\":\"stew\",\"request_id\":\"r1\"}");
   int64_t now = 1752380000;
 
-  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
                                           SIGNET_MGMT_OP_REISSUE_CONNECT, "", now) == -1);
-  assert(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
                                           SIGNET_MGMT_OP_REISSUE_CONNECT, NULL, now) == -1);
 
   /* The original secret is untouched. */
   char *secret = read_connect_secret(&f, "stew");
-  assert(secret != NULL && strcmp(secret, "initial-secret") == 0);
+  CHECK(secret != NULL && strcmp(secret, "initial-secret") == 0);
   sodium_memzero(secret, strlen(secret));
   g_free(secret);
 

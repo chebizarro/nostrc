@@ -12,7 +12,7 @@
 #include <nostr-keys.h>
 #include <nostr/nip44/nip44.h>
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +37,7 @@ typedef struct {
 static char *temp_db_path(void) {
   char tmpl[] = "/tmp/signet-credential-lifecycle-XXXXXX.db";
   int fd = mkstemps(tmpl, 3);
-  assert(fd >= 0);
+  CHECK(fd >= 0);
   close(fd);
   unlink(tmpl);
   return g_strdup(tmpl);
@@ -45,9 +45,9 @@ static char *temp_db_path(void) {
 
 static void keypair(char sk[65], char pk[65]) {
   char *generated = nostr_key_generate_private();
-  assert(generated && strlen(generated) == 64);
+  CHECK(generated && strlen(generated) == 64);
   char *public_key = nostr_key_get_public(generated);
-  assert(public_key && strlen(public_key) == 64);
+  CHECK(public_key && strlen(public_key) == 64);
   memcpy(sk, generated, 65);
   memcpy(pk, public_key, 65);
   sodium_memzero(generated, strlen(generated));
@@ -65,10 +65,10 @@ static char *encrypt_request(const char *sender_sk,
                              const char *bunker_pk,
                              const char *json) {
   uint8_t sk[32], pk[32];
-  assert(hex32(sender_sk, sk) == 0);
-  assert(hex32(bunker_pk, pk) == 0);
+  CHECK(hex32(sender_sk, sk) == 0);
+  CHECK(hex32(bunker_pk, pk) == 0);
   char *encrypted = NULL;
-  assert(nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)json,
+  CHECK(nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)json,
                                 strlen(json), &encrypted) == 0);
   sodium_memzero(sk, sizeof(sk));
   return encrypted;
@@ -97,7 +97,7 @@ static void setup(Fixture *f) {
     .db_path = f->db_path, .master_key = MASTER_KEY
   };
   f->keys = signet_key_store_new(f->audit, &kcfg);
-  assert(f->keys);
+  CHECK(f->keys);
 
   const char *const provisioners[] = { f->provisioner_pk };
   SignetMgmtHandlerConfig mcfg = {
@@ -107,13 +107,13 @@ static void setup(Fixture *f) {
     .bunker_pubkey_hex = f->bunker_pk,
   };
   f->mgmt = signet_mgmt_handler_new(f->keys, NULL, NULL, NULL, &mcfg);
-  assert(f->mgmt);
+  CHECK(f->mgmt);
 
   char agent_sk[65], agent_pk[65], out_pk[65] = {0};
   uint8_t raw[32];
   keypair(agent_sk, agent_pk);
-  assert(hex32(agent_sk, raw) == 0);
-  assert(signet_key_store_adopt_agent(
+  CHECK(hex32(agent_sk, raw) == 0);
+  CHECK(signet_key_store_adopt_agent(
       f->keys, "owner", raw, agent_pk, "pairing-secret",
       f->bunker_pk, NULL, 0, out_pk, NULL) == SIGNET_ADOPT_OK);
   sodium_memzero(raw, sizeof(raw));
@@ -146,47 +146,47 @@ static void test_encrypted_contextvm_lifecycle(void) {
   Fixture f;
   setup(&f);
   SignetStore *store = signet_key_store_get_store(f.keys);
-  assert(store);
+  CHECK(store);
 
   char *create = request_json("primary", "first-token-value");
-  assert(handle(&f, SIGNET_MGMT_OP_CREATE_CREDENTIAL,
+  CHECK(handle(&f, SIGNET_MGMT_OP_CREATE_CREDENTIAL,
                 create, "create-1") == 0);
   char primary_id[70];
-  assert(signet_secret_id_generate("owner", SIGNET_SECRET_API_TOKEN,
+  CHECK(signet_secret_id_generate("owner", SIGNET_SECRET_API_TOKEN,
                                    "primary", primary_id) == 0);
 
   SignetSecretMetadata metadata;
   memset(&metadata, 0, sizeof(metadata));
-  assert(signet_store_get_secret_metadata(
+  CHECK(signet_store_get_secret_metadata(
       store, primary_id, 2000000000, &metadata) == SIGNET_SECRET_OK);
-  assert(strcmp(metadata.provenance, "created") == 0);
-  assert(strcmp(metadata.created_by, f.provisioner_pk) == 0);
-  assert(strcmp(metadata.policy_id, "least-privilege") == 0);
-  assert(metadata.status == SIGNET_SECRET_STATUS_ACTIVE);
+  CHECK(strcmp(metadata.provenance, "created") == 0);
+  CHECK(strcmp(metadata.created_by, f.provisioner_pk) == 0);
+  CHECK(strcmp(metadata.policy_id, "least-privilege") == 0);
+  CHECK(metadata.status == SIGNET_SECRET_STATUS_ACTIVE);
   signet_secret_metadata_clear(&metadata);
 
   /* Same deterministic slot must refuse overwrite and preserve the payload. */
   char *duplicate = request_json("primary", "must-not-overwrite");
-  assert(handle(&f, SIGNET_MGMT_OP_CREATE_CREDENTIAL,
+  CHECK(handle(&f, SIGNET_MGMT_OP_CREATE_CREDENTIAL,
                 duplicate, "create-2") == -1);
   SignetSecretRecord record;
   memset(&record, 0, sizeof(record));
-  assert(signet_store_get_secret_at(
+  CHECK(signet_store_get_secret_at(
       store, primary_id, 2000000001, &record) == SIGNET_SECRET_OK);
-  assert(record.payload_len == strlen("first-token-value"));
-  assert(memcmp(record.payload, "first-token-value", record.payload_len) == 0);
+  CHECK(record.payload_len == strlen("first-token-value"));
+  CHECK(memcmp(record.payload, "first-token-value", record.payload_len) == 0);
   signet_secret_record_clear(&record);
 
   /* Import is a distinct provenance path, but uses the same protected payload. */
   char *imported = request_json("imported", "imported-token");
-  assert(handle(&f, SIGNET_MGMT_OP_IMPORT_CREDENTIAL,
+  CHECK(handle(&f, SIGNET_MGMT_OP_IMPORT_CREDENTIAL,
                 imported, "import-1") == 0);
   char imported_id[70];
-  assert(signet_secret_id_generate("owner", SIGNET_SECRET_API_TOKEN,
+  CHECK(signet_secret_id_generate("owner", SIGNET_SECRET_API_TOKEN,
                                    "imported", imported_id) == 0);
-  assert(signet_store_get_secret_metadata(
+  CHECK(signet_store_get_secret_metadata(
       store, imported_id, 2000000000, &metadata) == SIGNET_SECRET_OK);
-  assert(strcmp(metadata.provenance, "imported") == 0);
+  CHECK(strcmp(metadata.provenance, "imported") == 0);
   signet_secret_metadata_clear(&metadata);
 
   char *rotate_b64 =
@@ -197,31 +197,31 @@ static void test_encrypted_contextvm_lifecycle(void) {
       primary_id, rotate_b64);
   sodium_memzero(rotate_b64, strlen(rotate_b64));
   g_free(rotate_b64);
-  assert(handle(&f, SIGNET_MGMT_OP_ROTATE_CREDENTIAL,
+  CHECK(handle(&f, SIGNET_MGMT_OP_ROTATE_CREDENTIAL,
                 rotate, "rotate-1") == 0);
-  assert(signet_store_secret_history_count(store, primary_id) == 1);
-  assert(signet_store_get_secret_metadata(
+  CHECK(signet_store_secret_history_count(store, primary_id) == 1);
+  CHECK(signet_store_get_secret_metadata(
       store, primary_id, 2000000000, &metadata) == SIGNET_SECRET_OK);
-  assert(metadata.version == 2 && metadata.active_version == 2);
+  CHECK(metadata.version == 2 && metadata.active_version == 2);
   signet_secret_metadata_clear(&metadata);
 
   char *inspect = g_strdup_printf(
       "{\"request_id\":\"r\",\"credential_id\":\"%s\"}", primary_id);
-  assert(handle(&f, SIGNET_MGMT_OP_INSPECT_CREDENTIAL,
+  CHECK(handle(&f, SIGNET_MGMT_OP_INSPECT_CREDENTIAL,
                 inspect, "inspect-1") == 0);
-  assert(handle(&f, SIGNET_MGMT_OP_LIST_CREDENTIALS,
+  CHECK(handle(&f, SIGNET_MGMT_OP_LIST_CREDENTIALS,
                 "{\"request_id\":\"r\",\"agent_id\":\"owner\"}",
                 "list-1") == 0);
 
-  assert(handle(&f, SIGNET_MGMT_OP_REVOKE_CREDENTIAL,
+  CHECK(handle(&f, SIGNET_MGMT_OP_REVOKE_CREDENTIAL,
                 inspect, "revoke-1") == 0);
-  assert(signet_store_get_secret_at(
+  CHECK(signet_store_get_secret_at(
       store, primary_id, 2000000001, &record) == SIGNET_SECRET_REVOKED);
-  assert(handle(&f, SIGNET_MGMT_OP_INSPECT_CREDENTIAL,
+  CHECK(handle(&f, SIGNET_MGMT_OP_INSPECT_CREDENTIAL,
                 inspect, "inspect-revoked") == 0);
-  assert(handle(&f, SIGNET_MGMT_OP_DELETE_CREDENTIAL,
+  CHECK(handle(&f, SIGNET_MGMT_OP_DELETE_CREDENTIAL,
                 inspect, "delete-1") == 0);
-  assert(signet_store_get_secret_metadata(
+  CHECK(signet_store_get_secret_metadata(
       store, primary_id, 2000000001, &metadata) == SIGNET_SECRET_NOT_FOUND);
 
   g_free(create);
@@ -237,11 +237,11 @@ static void test_expiry_and_unauthorized(void) {
   Fixture f;
   setup(&f);
   SignetStore *store = signet_key_store_get_store(f.keys);
-  assert(store);
+  CHECK(store);
 
   SignetSecretMetadata metadata;
   memset(&metadata, 0, sizeof(metadata));
-  assert(signet_store_create_secret(
+  CHECK(signet_store_create_secret(
       store, "owner", SIGNET_SECRET_CREDENTIAL, "expires",
       (const uint8_t *)"value", 5, NULL, 2000000010,
       "created", f.provisioner_pk, 2000000000,
@@ -251,30 +251,30 @@ static void test_expiry_and_unauthorized(void) {
 
   SignetSecretRecord record;
   memset(&record, 0, sizeof(record));
-  assert(signet_store_get_secret_at(
+  CHECK(signet_store_get_secret_at(
       store, expired_id, 2000000009, &record) == SIGNET_SECRET_OK);
   signet_secret_record_clear(&record);
-  assert(signet_store_get_secret_at(
+  CHECK(signet_store_get_secret_at(
       store, expired_id, 2000000010, &record) == SIGNET_SECRET_EXPIRED);
-  assert(signet_store_rotate_secret_ex(
+  CHECK(signet_store_rotate_secret_ex(
       store, expired_id, (const uint8_t *)"new", 3,
       false, 0, 2000000011, NULL) == SIGNET_SECRET_EXPIRED);
-  assert(signet_store_rotate_secret_ex(
+  CHECK(signet_store_rotate_secret_ex(
       store, expired_id, (const uint8_t *)"new", 3,
       true, 2000000100, 2000000011, NULL) == SIGNET_SECRET_OK);
-  assert(signet_store_secret_history_count(store, expired_id) == 1);
+  CHECK(signet_store_secret_history_count(store, expired_id) == 1);
 
   char attacker_sk[65], attacker_pk[65];
   keypair(attacker_sk, attacker_pk);
   char *request = request_json("attacker", "stolen");
   char *encrypted = encrypt_request(attacker_sk, f.bunker_pk, request);
-  assert(signet_mgmt_handler_handle_request(
+  CHECK(signet_mgmt_handler_handle_request(
       f.mgmt, attacker_pk, encrypted, SIGNET_MGMT_OP_CREATE_CREDENTIAL,
       "unauthorized-1", 2000000000) == -1);
   char attacker_id[70];
-  assert(signet_secret_id_generate("owner", SIGNET_SECRET_API_TOKEN,
+  CHECK(signet_secret_id_generate("owner", SIGNET_SECRET_API_TOKEN,
                                    "attacker", attacker_id) == 0);
-  assert(signet_store_get_secret_metadata(
+  CHECK(signet_store_get_secret_metadata(
       store, attacker_id, 2000000000, &metadata) == SIGNET_SECRET_NOT_FOUND);
 
   free(encrypted);
@@ -291,20 +291,20 @@ static void test_plaintext_mutation_rejected(void) {
   Fixture f;
   setup(&f);
   SignetStore *store = signet_key_store_get_store(f.keys);
-  assert(store);
+  CHECK(store);
 
   /* Valid request JSON, but sent as raw plaintext instead of NIP-44. */
   char *create = request_json("plainette", "sneaky-token");
-  assert(signet_mgmt_handler_handle_request(
+  CHECK(signet_mgmt_handler_handle_request(
       f.mgmt, f.provisioner_pk, create, SIGNET_MGMT_OP_CREATE_CREDENTIAL,
       "plaintext-1", 2000000000) == -1);
 
   char plain_id[70];
-  assert(signet_secret_id_generate("owner", SIGNET_SECRET_API_TOKEN,
+  CHECK(signet_secret_id_generate("owner", SIGNET_SECRET_API_TOKEN,
                                    "plainette", plain_id) == 0);
   SignetSecretMetadata metadata;
   memset(&metadata, 0, sizeof(metadata));
-  assert(signet_store_get_secret_metadata(
+  CHECK(signet_store_get_secret_metadata(
       store, plain_id, 2000000000, &metadata) == SIGNET_SECRET_NOT_FOUND);
 
   g_free(create);
@@ -318,20 +318,20 @@ static void test_credential_mutation_replay_rejected(void) {
   Fixture f;
   setup(&f);
   SignetStore *store = signet_key_store_get_store(f.keys);
-  assert(store);
+  CHECK(store);
 
   SignetReplayCacheConfig rcfg = {
     .max_entries = 128, .ttl_seconds = 300, .skew_seconds = 300
   };
   SignetReplayCache *replay = signet_replay_cache_new(&rcfg);
-  assert(replay);
+  CHECK(replay);
   signet_mgmt_handler_set_replay_cache(f.mgmt, replay);
 
   char *create = request_json("replayed", "original-value");
-  assert(handle(&f, SIGNET_MGMT_OP_CREATE_CREDENTIAL,
+  CHECK(handle(&f, SIGNET_MGMT_OP_CREATE_CREDENTIAL,
                 create, "replay-evt-1") == 0);
   char cred_id[70];
-  assert(signet_secret_id_generate("owner", SIGNET_SECRET_API_TOKEN,
+  CHECK(signet_secret_id_generate("owner", SIGNET_SECRET_API_TOKEN,
                                    "replayed", cred_id) == 0);
 
   /* Replay of the SAME event id carrying a rotate must be dropped. */
@@ -341,18 +341,18 @@ static void test_credential_mutation_replay_rejected(void) {
       "{\"request_id\":\"r\",\"credential_id\":\"%s\","
       "\"payload_b64\":\"%s\"}", cred_id, b64);
   g_free(b64);
-  assert(handle(&f, SIGNET_MGMT_OP_ROTATE_CREDENTIAL,
+  CHECK(handle(&f, SIGNET_MGMT_OP_ROTATE_CREDENTIAL,
                 rotate, "replay-evt-1") == -1);
 
   SignetSecretRecord record;
   memset(&record, 0, sizeof(record));
-  assert(signet_store_get_secret_at(
+  CHECK(signet_store_get_secret_at(
       store, cred_id, 2000000001, &record) == SIGNET_SECRET_OK);
-  assert(record.payload_len == strlen("original-value"));
-  assert(memcmp(record.payload, "original-value", record.payload_len) == 0);
-  assert(record.version == 1 && record.active_version == 1);
+  CHECK(record.payload_len == strlen("original-value"));
+  CHECK(memcmp(record.payload, "original-value", record.payload_len) == 0);
+  CHECK(record.version == 1 && record.active_version == 1);
   signet_secret_record_clear(&record);
-  assert(signet_store_secret_history_count(store, cred_id) == 0);
+  CHECK(signet_store_secret_history_count(store, cred_id) == 0);
 
   /* A fresh event id still executes. */
   char *b64b = g_base64_encode((const guchar *)"rotated-value",
@@ -361,9 +361,9 @@ static void test_credential_mutation_replay_rejected(void) {
       "{\"request_id\":\"r\",\"credential_id\":\"%s\","
       "\"payload_b64\":\"%s\"}", cred_id, b64b);
   g_free(b64b);
-  assert(handle(&f, SIGNET_MGMT_OP_ROTATE_CREDENTIAL,
+  CHECK(handle(&f, SIGNET_MGMT_OP_ROTATE_CREDENTIAL,
                 rotate2, "replay-evt-2") == 0);
-  assert(signet_store_secret_history_count(store, cred_id) == 1);
+  CHECK(signet_store_secret_history_count(store, cred_id) == 1);
 
   g_free(create);
   g_free(rotate);
@@ -375,7 +375,7 @@ static void test_credential_mutation_replay_rejected(void) {
 }
 
 int main(void) {
-  assert(sodium_init() >= 0);
+  CHECK(sodium_init() >= 0);
   test_encrypted_contextvm_lifecycle();
   test_expiry_and_unauthorized();
   test_plaintext_mutation_rejected();

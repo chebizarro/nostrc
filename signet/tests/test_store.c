@@ -7,7 +7,7 @@
 #include "signet/store_secrets.h"
 #include "signet/store_leases.h"
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,7 +22,7 @@
 static char *make_temp_db_path(void) {
   char tmpl[] = "/tmp/signet-test-store-XXXXXX.db";
   int fd = mkstemps(tmpl, 3);
-  assert(fd >= 0);
+  CHECK(fd >= 0);
   close(fd);
   unlink(tmpl);
   return g_strdup(tmpl);
@@ -32,7 +32,7 @@ static SignetStore *open_test_store(char **out_path) {
   char *db_path = make_temp_db_path();
   SignetStoreConfig cfg = { .db_path = db_path, .master_key = MASTER_KEY };
   SignetStore *store = signet_store_open(&cfg);
-  assert(store != NULL);
+  CHECK(store != NULL);
   if (out_path) *out_path = db_path; else g_free(db_path);
   return store;
 }
@@ -48,18 +48,18 @@ static void test_agent_put_get(void) {
   int64_t now = (int64_t)time(NULL);
 
   int rc = signet_store_put_agent(store, "test-agent-1", sk, 32, "secret-abc", now);
-  assert(rc == 0);
+  CHECK(rc == 0);
 
   SignetAgentRecord rec;
   memset(&rec, 0, sizeof(rec));
   rc = signet_store_get_agent(store, "test-agent-1", &rec);
-  assert(rc == 0);
-  assert(rec.agent_id != NULL);
-  assert(strcmp(rec.agent_id, "test-agent-1") == 0);
-  assert(rec.secret_key_len == 32);
-  assert(memcmp(rec.secret_key, sk, 32) == 0);
-  assert(rec.connect_secret != NULL);
-  assert(strcmp(rec.connect_secret, "secret-abc") == 0);
+  CHECK(rc == 0);
+  CHECK(rec.agent_id != NULL);
+  CHECK(strcmp(rec.agent_id, "test-agent-1") == 0);
+  CHECK(rec.secret_key_len == 32);
+  CHECK(memcmp(rec.secret_key, sk, 32) == 0);
+  CHECK(rec.connect_secret != NULL);
+  CHECK(strcmp(rec.connect_secret, "secret-abc") == 0);
 
   signet_agent_record_clear(&rec);
   sodium_memzero(sk, sizeof(sk));
@@ -76,7 +76,7 @@ static void test_agent_not_found(void) {
   SignetAgentRecord rec;
   memset(&rec, 0, sizeof(rec));
   int rc = signet_store_get_agent(store, "nonexistent", &rec);
-  assert(rc == 1); /* not found */
+  CHECK(rc == 1); /* not found */
 
   signet_store_close(store);
   unlink(db_path);
@@ -94,16 +94,16 @@ static void test_agent_delete(void) {
   signet_store_put_agent(store, "del-agent", sk, 32, NULL, now);
 
   int rc = signet_store_delete_agent(store, "del-agent");
-  assert(rc == 0);
+  CHECK(rc == 0);
 
   SignetAgentRecord rec;
   memset(&rec, 0, sizeof(rec));
   rc = signet_store_get_agent(store, "del-agent", &rec);
-  assert(rc == 1); /* not found after delete */
+  CHECK(rc == 1); /* not found after delete */
 
   /* Delete non-existent returns 1. */
   rc = signet_store_delete_agent(store, "del-agent");
-  assert(rc == 1);
+  CHECK(rc == 1);
 
   sodium_memzero(sk, sizeof(sk));
   signet_store_close(store);
@@ -126,8 +126,8 @@ static void test_agent_list(void) {
   char **ids = NULL;
   size_t count = 0;
   int rc = signet_store_list_agents(store, &ids, &count);
-  assert(rc == 0);
-  assert(count == 3);
+  CHECK(rc == 0);
+  CHECK(count == 3);
 
   /* Verify all IDs present (order not guaranteed). */
   bool found_a = false, found_b = false, found_c = false;
@@ -136,7 +136,7 @@ static void test_agent_list(void) {
     if (strcmp(ids[i], "agent-b") == 0) found_b = true;
     if (strcmp(ids[i], "agent-c") == 0) found_c = true;
   }
-  assert(found_a && found_b && found_c);
+  CHECK(found_a && found_b && found_c);
 
   signet_store_free_agent_ids(ids, count);
   sodium_memzero(sk, sizeof(sk));
@@ -156,13 +156,13 @@ static void test_agent_touch(void) {
   signet_store_put_agent(store, "touch-agent", sk, 32, NULL, now);
 
   int rc = signet_store_touch_agent(store, "touch-agent", now + 100);
-  assert(rc == 0);
+  CHECK(rc == 0);
 
   SignetAgentRecord rec;
   memset(&rec, 0, sizeof(rec));
   rc = signet_store_get_agent(store, "touch-agent", &rec);
-  assert(rc == 0);
-  assert(rec.last_used == now + 100);
+  CHECK(rc == 0);
+  CHECK(rec.last_used == now + 100);
 
   signet_agent_record_clear(&rec);
   sodium_memzero(sk, sizeof(sk));
@@ -190,15 +190,15 @@ static void test_secret_put_get(void) {
                                     SIGNET_SECRET_API_TOKEN, "My API Key",
                                     (const uint8_t *)payload, strlen(payload),
                                     NULL, now);
-  assert(rc == 0);
+  CHECK(rc == 0);
 
   SignetSecretRecord rec;
   memset(&rec, 0, sizeof(rec));
   rc = signet_store_get_secret(store, "api-key-1", &rec);
-  assert(rc == 0);
-  assert(rec.payload_len == strlen(payload));
-  assert(memcmp(rec.payload, payload, rec.payload_len) == 0);
-  assert(rec.secret_type == SIGNET_SECRET_API_TOKEN);
+  CHECK(rc == 0);
+  CHECK(rec.payload_len == strlen(payload));
+  CHECK(memcmp(rec.payload, payload, rec.payload_len) == 0);
+  CHECK(rec.secret_type == SIGNET_SECRET_API_TOKEN);
 
   signet_secret_record_clear(&rec);
   sodium_memzero(sk, sizeof(sk));
@@ -225,12 +225,12 @@ static void test_secret_delete(void) {
                           NULL, now);
 
   int rc = signet_store_delete_secret(store, "del-secret");
-  assert(rc == 0);
+  CHECK(rc == 0);
 
   SignetSecretRecord rec;
   memset(&rec, 0, sizeof(rec));
   rc = signet_store_get_secret(store, "del-secret", &rec);
-  assert(rc == 1); /* not found */
+  CHECK(rc == 1); /* not found */
 
   sodium_memzero(sk, sizeof(sk));
   signet_store_close(store);
@@ -260,8 +260,8 @@ static void test_secret_list(void) {
   char **ids = NULL, **labels = NULL;
   size_t count = 0;
   int rc = signet_store_list_secrets(store, "list-agent", &ids, &labels, &count);
-  assert(rc == 0);
-  assert(count == 2);
+  CHECK(rc == 0);
+  CHECK(count == 2);
 
   signet_store_free_secret_list(ids, labels, count);
   sodium_memzero(sk, sizeof(sk));
@@ -291,15 +291,15 @@ static void test_secret_rotate(void) {
   int rc = signet_store_rotate_secret(store, "rot-key",
                                        (const uint8_t *)new_payload,
                                        strlen(new_payload), now + 60);
-  assert(rc == 0);
+  CHECK(rc == 0);
 
   /* Verify we get the new payload. */
   SignetSecretRecord rec;
   memset(&rec, 0, sizeof(rec));
   rc = signet_store_get_secret(store, "rot-key", &rec);
-  assert(rc == 0);
-  assert(rec.payload_len == strlen(new_payload));
-  assert(memcmp(rec.payload, new_payload, rec.payload_len) == 0);
+  CHECK(rc == 0);
+  CHECK(rec.payload_len == strlen(new_payload));
+  CHECK(memcmp(rec.payload, new_payload, rec.payload_len) == 0);
 
   signet_secret_record_clear(&rec);
   sodium_memzero(sk, sizeof(sk));
@@ -319,19 +319,19 @@ static void test_lease_issue_and_revoke(void) {
   int rc = signet_store_issue_lease(store, "lease-001", "session",
                                     "agent-x", now, now + 3600,
                                     "{\"test\":true}");
-  assert(rc == 0);
+  CHECK(rc == 0);
 
   /* Count active leases. */
   int active = signet_store_count_active_leases(store, now + 10);
-  assert(active >= 1);
+  CHECK(active >= 1);
 
   /* Revoke. */
   rc = signet_store_revoke_lease(store, "lease-001", now + 20);
-  assert(rc == 0);
+  CHECK(rc == 0);
 
   /* After revoke, count should be lower. */
   int after_revoke = signet_store_count_active_leases(store, now + 30);
-  assert(after_revoke < active);
+  CHECK(after_revoke < active);
 
   signet_store_close(store);
   unlink(db_path);
@@ -349,14 +349,14 @@ static void test_lease_revoke_by_agent(void) {
   signet_store_issue_lease(store, "l3", "session", "agent-z", now, now + 3600, NULL);
 
   int revoked = signet_store_revoke_agent_leases(store, "agent-y", now + 10);
-  assert(revoked == 2);
+  CHECK(revoked == 2);
 
   /* agent-z lease should still be active. */
   SignetLeaseRecord *leases = NULL;
   size_t lcount = 0;
   int rc = signet_store_list_active_leases(store, "agent-z", now + 20, &leases, &lcount);
-  assert(rc == 0);
-  assert(lcount == 1);
+  CHECK(rc == 0);
+  CHECK(lcount == 1);
   signet_lease_list_free(leases, lcount);
 
   signet_store_close(store);
@@ -375,7 +375,7 @@ static void test_lease_cleanup_expired(void) {
 
   /* Cleanup with a cutoff after expiry should remove it. */
   int cleaned = signet_store_cleanup_expired_leases(store, now + 20);
-  assert(cleaned >= 1);
+  CHECK(cleaned >= 1);
 
   signet_store_close(store);
   unlink(db_path);
@@ -395,23 +395,23 @@ static void test_provisioner_policy_seed_once_and_mutate(void) {
   };
   int64_t now = (int64_t)time(NULL);
 
-  assert(signet_store_seed_provisioners(store, first, 1, now) == 0);
-  assert(signet_store_is_provisioner(store, first[0]));
-  assert(signet_store_seed_provisioners(store, ignored, 1, now + 1) == 1);
-  assert(!signet_store_is_provisioner(store, ignored[0]));
+  CHECK(signet_store_seed_provisioners(store, first, 1, now) == 0);
+  CHECK(signet_store_is_provisioner(store, first[0]));
+  CHECK(signet_store_seed_provisioners(store, ignored, 1, now + 1) == 1);
+  CHECK(!signet_store_is_provisioner(store, ignored[0]));
 
-  assert(signet_store_grant_provisioner(store, ignored[0], first[0], now + 2) == 0);
-  assert(signet_store_is_provisioner(store, ignored[0]));
-  assert(signet_store_revoke_provisioner(store, first[0]) == 0);
-  assert(!signet_store_is_provisioner(store, first[0]));
+  CHECK(signet_store_grant_provisioner(store, ignored[0], first[0], now + 2) == 0);
+  CHECK(signet_store_is_provisioner(store, ignored[0]));
+  CHECK(signet_store_revoke_provisioner(store, first[0]) == 0);
+  CHECK(!signet_store_is_provisioner(store, first[0]));
 
   signet_store_close(store);
 
   SignetStoreConfig cfg = { .db_path = db_path, .master_key = MASTER_KEY };
   store = signet_store_open(&cfg);
-  assert(store != NULL);
-  assert(!signet_store_is_provisioner(store, first[0]));
-  assert(signet_store_is_provisioner(store, ignored[0]));
+  CHECK(store != NULL);
+  CHECK(!signet_store_is_provisioner(store, first[0]));
+  CHECK(signet_store_is_provisioner(store, ignored[0]));
 
   signet_store_close(store);
   unlink(db_path);
@@ -426,10 +426,10 @@ static void test_store_open_close(void) {
   SignetStoreConfig cfg = { .db_path = db_path, .master_key = MASTER_KEY };
 
   SignetStore *store = signet_store_open(&cfg);
-  assert(store != NULL);
-  assert(signet_store_is_open(store));
-  assert(signet_store_get_db(store) != NULL);
-  assert(signet_store_get_dek(store) != NULL);
+  CHECK(store != NULL);
+  CHECK(signet_store_is_open(store));
+  CHECK(signet_store_get_db(store) != NULL);
+  CHECK(signet_store_get_dek(store) != NULL);
 
   signet_store_close(store);
   unlink(db_path);
@@ -443,16 +443,16 @@ static void test_store_null_safety(void) {
 
   /* Opening with NULL config should return NULL. */
   SignetStore *store = signet_store_open(NULL);
-  assert(store == NULL);
+  CHECK(store == NULL);
 
   /* is_open on NULL should be false. */
-  assert(!signet_store_is_open(NULL));
+  CHECK(!signet_store_is_open(NULL));
 
   printf("test_store_null_safety: PASS\n");
 }
 
 int main(void) {
-  assert(sodium_init() >= 0);
+  CHECK(sodium_init() >= 0);
 
   test_store_open_close();
   test_store_null_safety();

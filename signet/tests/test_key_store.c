@@ -7,7 +7,7 @@
 #include "signet/key_store.h"
 #include "signet/audit_logger.h"
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,7 +21,7 @@
 static char *make_temp_db_path(void) {
   char tmpl[] = "/tmp/signet-test-ks-XXXXXX.db";
   int fd = mkstemps(tmpl, 3);
-  assert(fd >= 0);
+  CHECK(fd >= 0);
   close(fd);
   unlink(tmpl);
   return g_strdup(tmpl);
@@ -34,7 +34,7 @@ static SignetKeyStore *open_test_ks(char **out_path) {
 
   SignetKeyStoreConfig cfg = { .db_path = db_path, .master_key = MASTER_KEY };
   SignetKeyStore *ks = signet_key_store_new(audit, &cfg);
-  assert(ks != NULL);
+  CHECK(ks != NULL);
   if (out_path) *out_path = db_path; else g_free(db_path);
   /* Note: audit logger ownership not transferred; we leak it intentionally
    * for test brevity. */
@@ -52,22 +52,22 @@ static void test_provision_and_load(void) {
                                              NULL, NULL, 0,
                                              pubkey_hex, sizeof(pubkey_hex),
                                              NULL);
-  assert(rc == 0);
-  assert(strlen(pubkey_hex) == 64);
+  CHECK(rc == 0);
+  CHECK(strlen(pubkey_hex) == 64);
 
   /* Load the key back. */
   SignetLoadedKey lk;
   memset(&lk, 0, sizeof(lk));
   bool ok = signet_key_store_load_agent_key(ks, "agent-alpha", &lk);
-  assert(ok);
-  assert(lk.secret_key != NULL);
-  assert(lk.secret_key_len == 32);
+  CHECK(ok);
+  CHECK(lk.secret_key != NULL);
+  CHECK(lk.secret_key_len == 32);
 
   /* Verify pubkey matches what we got from provision. */
   char pub2[65] = {0};
   ok = signet_key_store_get_agent_pubkey(ks, "agent-alpha", pub2, sizeof(pub2));
-  assert(ok);
-  assert(strcmp(pubkey_hex, pub2) == 0);
+  CHECK(ok);
+  CHECK(strcmp(pubkey_hex, pub2) == 0);
 
   signet_loaded_key_clear(&lk);
   signet_key_store_free(ks);
@@ -83,11 +83,11 @@ static void test_load_nonexistent(void) {
   SignetLoadedKey lk;
   memset(&lk, 0, sizeof(lk));
   bool ok = signet_key_store_load_agent_key(ks, "no-such-agent", &lk);
-  assert(!ok);
+  CHECK(!ok);
 
   char pub[65] = {0};
   ok = signet_key_store_get_agent_pubkey(ks, "no-such-agent", pub, sizeof(pub));
-  assert(!ok);
+  CHECK(!ok);
 
   signet_key_store_free(ks);
   unlink(db_path);
@@ -105,17 +105,17 @@ static void test_revoke_agent(void) {
   signet_key_store_provision_agent(ks, "revoke-me", NULL, NULL, 0, pub, sizeof(pub), NULL);
 
   int rc = signet_key_store_revoke_agent(ks, "revoke-me");
-  assert(rc == 0);
+  CHECK(rc == 0);
 
   /* Should no longer be loadable. */
   SignetLoadedKey lk;
   memset(&lk, 0, sizeof(lk));
   bool ok = signet_key_store_load_agent_key(ks, "revoke-me", &lk);
-  assert(!ok);
+  CHECK(!ok);
 
   /* Revoking again should return 1 (not found). */
   rc = signet_key_store_revoke_agent(ks, "revoke-me");
-  assert(rc == 1);
+  CHECK(rc == 1);
 
   signet_key_store_free(ks);
   unlink(db_path);
@@ -143,22 +143,22 @@ static void test_rotate_agent(void) {
   /* Rotate. */
   char new_pub[65] = {0};
   int rc = signet_key_store_rotate_agent(ks, "rotate-me", new_pub, sizeof(new_pub));
-  assert(rc == 0);
-  assert(strlen(new_pub) == 64);
+  CHECK(rc == 0);
+  CHECK(strlen(new_pub) == 64);
 
   /* Pubkey should differ. */
-  assert(strcmp(old_pub, new_pub) != 0);
+  CHECK(strcmp(old_pub, new_pub) != 0);
 
   /* New key should be different. */
   SignetLoadedKey new_lk;
   memset(&new_lk, 0, sizeof(new_lk));
   signet_key_store_load_agent_key(ks, "rotate-me", &new_lk);
-  assert(memcmp(old_sk, new_lk.secret_key, 32) != 0);
+  CHECK(memcmp(old_sk, new_lk.secret_key, 32) != 0);
   signet_loaded_key_clear(&new_lk);
 
   /* Rotate non-existent agent should return 1. */
   rc = signet_key_store_rotate_agent(ks, "no-agent", new_pub, sizeof(new_pub));
-  assert(rc == 1);
+  CHECK(rc == 1);
 
   sodium_memzero(old_sk, sizeof(old_sk));
   signet_key_store_free(ks);
@@ -180,13 +180,13 @@ static void test_list_agents(void) {
   char **ids = NULL;
   size_t count = 0;
   int rc = signet_key_store_list_agents(ks, &ids, &count);
-  assert(rc == 0);
-  assert(count == 2);
+  CHECK(rc == 0);
+  CHECK(count == 2);
 
   g_strfreev(ids);
 
   uint32_t cc = signet_key_store_cache_count(ks);
-  assert(cc == 2);
+  CHECK(cc == 2);
 
   signet_key_store_free(ks);
   unlink(db_path);
@@ -204,8 +204,8 @@ static void test_null_safety(void) {
   memset(&lk, 0, sizeof(lk));
   signet_loaded_key_clear(&lk); /* empty key, should be safe */
 
-  assert(!signet_key_store_is_open(NULL));
-  assert(signet_key_store_cache_count(NULL) == 0);
+  CHECK(!signet_key_store_is_open(NULL));
+  CHECK(signet_key_store_cache_count(NULL) == 0);
 
   printf("test_null_safety: PASS\n");
 }
@@ -233,12 +233,12 @@ static void test_provision_bunker_uri(void) {
                                              bunker_pub, relays, 2,
                                              agent_pub, sizeof(agent_pub),
                                              &bunker_uri);
-  assert(rc == 0);
-  assert(strlen(agent_pub) == 64);
+  CHECK(rc == 0);
+  CHECK(strlen(agent_pub) == 64);
 
   if (bunker_uri) {
     /* Should contain "bunker://" prefix. */
-    assert(strstr(bunker_uri, "bunker://") != NULL);
+    CHECK(strstr(bunker_uri, "bunker://") != NULL);
     g_free(bunker_uri);
   }
 
@@ -249,7 +249,7 @@ static void test_provision_bunker_uri(void) {
 }
 
 int main(void) {
-  assert(sodium_init() >= 0);
+  CHECK(sodium_init() >= 0);
 
   test_null_safety();
   test_provision_and_load();

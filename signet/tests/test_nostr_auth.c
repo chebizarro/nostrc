@@ -8,7 +8,7 @@
 #include <nostr-event.h>
 #include <nostr-keys.h>
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,30 +68,30 @@ static void test_verify_valid_and_replay(void) {
 
   char *sk = nostr_key_generate_private();
   char *pk = nostr_key_get_public(sk);
-  assert(sk && pk);
+  CHECK(sk && pk);
 
   char *challenge = signet_challenge_issue(cs, "agent-auth", now);
-  assert(challenge);
+  CHECK(challenge);
 
   FleetCtx fc = { .pubkey = pk, .in_fleet = true, .denied = false, .wrong_pubkey = false };
   SignetFleetRegistry fleet = { .is_in_fleet = tf_in_fleet, .is_denied = tf_denied,
                                 .get_agent_pubkey = tf_get_pubkey, .user_data = &fc };
 
   char *ev = build_auth_event(sk, SIGNET_AUTH_KIND, challenge, "agent-auth", "signet-auth", now);
-  assert(ev);
+  CHECK(ev);
 
   /* A correctly signed event for an issued challenge verifies OK and returns
    * the agent_id + pubkey. This is the positive path the old test never had. */
   char *out_agent = NULL, *out_pk = NULL;
   SignetAuthResult r = signet_auth_verify(cs, &fleet, ev, now, &out_agent, &out_pk);
-  assert(r == SIGNET_AUTH_OK);
-  assert(out_agent && strcmp(out_agent, "agent-auth") == 0);
-  assert(out_pk && g_ascii_strcasecmp(out_pk, pk) == 0);
+  CHECK(r == SIGNET_AUTH_OK);
+  CHECK(out_agent && strcmp(out_agent, "agent-auth") == 0);
+  CHECK(out_pk && g_ascii_strcasecmp(out_pk, pk) == 0);
   g_free(out_agent); g_free(out_pk);
 
   /* Single-use: replaying the same event is rejected. */
   r = signet_auth_verify(cs, &fleet, ev, now, NULL, NULL);
-  assert(r == SIGNET_AUTH_ERR_CHALLENGE_REPLAYED);
+  CHECK(r == SIGNET_AUTH_ERR_CHALLENGE_REPLAYED);
 
   g_free(ev); g_free(challenge); free(pk); free(sk);
   signet_challenge_store_free(cs);
@@ -102,7 +102,7 @@ static void test_verify_negatives(void) {
   int64_t now = 1700000000;
   char *sk = nostr_key_generate_private();
   char *pk = nostr_key_get_public(sk);
-  assert(sk && pk);
+  CHECK(sk && pk);
 
   /* Bad signature. */
   {
@@ -112,7 +112,7 @@ static void test_verify_negatives(void) {
     SignetFleetRegistry fl = { tf_in_fleet, tf_denied, tf_get_pubkey, &fc };
     char *ev = build_auth_event(sk, SIGNET_AUTH_KIND, ch, "a", "signet-auth", now);
     char *bad = tamper_sig(ev);
-    assert(signet_auth_verify(cs, &fl, bad, now, NULL, NULL) == SIGNET_AUTH_ERR_BAD_SIGNATURE);
+    CHECK(signet_auth_verify(cs, &fl, bad, now, NULL, NULL) == SIGNET_AUTH_ERR_BAD_SIGNATURE);
     g_free(bad); g_free(ev); g_free(ch); signet_challenge_store_free(cs);
   }
 
@@ -123,7 +123,7 @@ static void test_verify_negatives(void) {
     FleetCtx fc = { pk, true, false, false };
     SignetFleetRegistry fl = { tf_in_fleet, tf_denied, tf_get_pubkey, &fc };
     char *ev = build_auth_event(sk, 1, ch, "a", "signet-auth", now);
-    assert(signet_auth_verify(cs, &fl, ev, now, NULL, NULL) == SIGNET_AUTH_ERR_WRONG_KIND);
+    CHECK(signet_auth_verify(cs, &fl, ev, now, NULL, NULL) == SIGNET_AUTH_ERR_WRONG_KIND);
     g_free(ev); g_free(ch); signet_challenge_store_free(cs);
   }
 
@@ -134,7 +134,7 @@ static void test_verify_negatives(void) {
     FleetCtx fc = { pk, true, false, false };
     SignetFleetRegistry fl = { tf_in_fleet, tf_denied, tf_get_pubkey, &fc };
     char *ev = build_auth_event(sk, SIGNET_AUTH_KIND, ch, "a", "not-signet", now);
-    assert(signet_auth_verify(cs, &fl, ev, now, NULL, NULL) == SIGNET_AUTH_ERR_WRONG_PURPOSE);
+    CHECK(signet_auth_verify(cs, &fl, ev, now, NULL, NULL) == SIGNET_AUTH_ERR_WRONG_PURPOSE);
     g_free(ev); g_free(ch); signet_challenge_store_free(cs);
   }
 
@@ -146,7 +146,7 @@ static void test_verify_negatives(void) {
     char *ev = build_auth_event(sk, SIGNET_AUTH_KIND,
                                 "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef00",
                                 "a", "signet-auth", now);
-    assert(signet_auth_verify(cs, &fl, ev, now, NULL, NULL) == SIGNET_AUTH_ERR_CHALLENGE_MISMATCH);
+    CHECK(signet_auth_verify(cs, &fl, ev, now, NULL, NULL) == SIGNET_AUTH_ERR_CHALLENGE_MISMATCH);
     g_free(ev); signet_challenge_store_free(cs);
   }
 
@@ -158,7 +158,7 @@ static void test_verify_negatives(void) {
     SignetFleetRegistry fl = { tf_in_fleet, tf_denied, tf_get_pubkey, &fc };
     char *ev = build_auth_event(sk, SIGNET_AUTH_KIND, ch, "a", "signet-auth", now);
     int64_t later = now + SIGNET_CHALLENGE_TTL_S + 1;
-    assert(signet_auth_verify(cs, &fl, ev, later, NULL, NULL) == SIGNET_AUTH_ERR_CHALLENGE_EXPIRED);
+    CHECK(signet_auth_verify(cs, &fl, ev, later, NULL, NULL) == SIGNET_AUTH_ERR_CHALLENGE_EXPIRED);
     g_free(ev); g_free(ch); signet_challenge_store_free(cs);
   }
 
@@ -169,7 +169,7 @@ static void test_verify_negatives(void) {
     FleetCtx fc = { pk, true, true /*denied*/, false };
     SignetFleetRegistry fl = { tf_in_fleet, tf_denied, tf_get_pubkey, &fc };
     char *ev = build_auth_event(sk, SIGNET_AUTH_KIND, ch, "a", "signet-auth", now);
-    assert(signet_auth_verify(cs, &fl, ev, now, NULL, NULL) == SIGNET_AUTH_ERR_DENIED);
+    CHECK(signet_auth_verify(cs, &fl, ev, now, NULL, NULL) == SIGNET_AUTH_ERR_DENIED);
     g_free(ev); g_free(ch); signet_challenge_store_free(cs);
   }
 
@@ -180,7 +180,7 @@ static void test_verify_negatives(void) {
     FleetCtx fc = { pk, true, false, true /*wrong_pubkey*/ };
     SignetFleetRegistry fl = { tf_in_fleet, tf_denied, tf_get_pubkey, &fc };
     char *ev = build_auth_event(sk, SIGNET_AUTH_KIND, ch, "a", "signet-auth", now);
-    assert(signet_auth_verify(cs, &fl, ev, now, NULL, NULL) == SIGNET_AUTH_ERR_PUBKEY_MISMATCH);
+    CHECK(signet_auth_verify(cs, &fl, ev, now, NULL, NULL) == SIGNET_AUTH_ERR_PUBKEY_MISMATCH);
     g_free(ev); g_free(ch); signet_challenge_store_free(cs);
   }
 
@@ -192,17 +192,17 @@ static void test_verify_negatives(void) {
 
 static void test_challenge_issue(void) {
   SignetChallengeStore *cs = signet_challenge_store_new();
-  assert(cs != NULL);
+  CHECK(cs != NULL);
 
   int64_t now = (int64_t)time(NULL);
   char *c1 = signet_challenge_issue(cs, "agent-1", now);
-  assert(c1 != NULL);
-  assert(strlen(c1) == 64); /* 32 bytes → 64 hex chars */
+  CHECK(c1 != NULL);
+  CHECK(strlen(c1) == 64); /* 32 bytes → 64 hex chars */
 
   /* A second challenge for same agent should be different. */
   char *c2 = signet_challenge_issue(cs, "agent-1", now + 1);
-  assert(c2 != NULL);
-  assert(strcmp(c1, c2) != 0);
+  CHECK(c2 != NULL);
+  CHECK(strcmp(c1, c2) != 0);
 
   g_free(c1);
   g_free(c2);
@@ -216,8 +216,8 @@ static void test_challenge_different_agents(void) {
 
   char *c1 = signet_challenge_issue(cs, "agent-a", now);
   char *c2 = signet_challenge_issue(cs, "agent-b", now);
-  assert(c1 != NULL && c2 != NULL);
-  assert(strcmp(c1, c2) != 0); /* unique per agent */
+  CHECK(c1 != NULL && c2 != NULL);
+  CHECK(strcmp(c1, c2) != 0); /* unique per agent */
 
   g_free(c1);
   g_free(c2);
@@ -232,7 +232,7 @@ static void test_challenge_cleanup(void) {
   /* Issue challenges at 'now'. */
   char *c1 = signet_challenge_issue(cs, "cleanup-a", now);
   char *c2 = signet_challenge_issue(cs, "cleanup-b", now);
-  assert(c1 != NULL && c2 != NULL);
+  CHECK(c1 != NULL && c2 != NULL);
   g_free(c1);
   g_free(c2);
 
@@ -241,7 +241,7 @@ static void test_challenge_cleanup(void) {
 
   /* Issuing again should still work (store is functional after cleanup). */
   char *c3 = signet_challenge_issue(cs, "cleanup-a", now + SIGNET_CHALLENGE_TTL_S + 20);
-  assert(c3 != NULL);
+  CHECK(c3 != NULL);
   g_free(c3);
 
   signet_challenge_store_free(cs);
@@ -258,15 +258,15 @@ static void test_verify_null_inputs(void) {
 
   /* NULL event JSON should return an error. */
   SignetAuthResult r = signet_auth_verify(cs, NULL, NULL, now, &agent_id, &pubkey_hex);
-  assert(r != SIGNET_AUTH_OK);
+  CHECK(r != SIGNET_AUTH_OK);
 
   /* Empty JSON string. */
   r = signet_auth_verify(cs, NULL, "", now, &agent_id, &pubkey_hex);
-  assert(r != SIGNET_AUTH_OK);
+  CHECK(r != SIGNET_AUTH_OK);
 
   /* Garbage JSON. */
   r = signet_auth_verify(cs, NULL, "{not valid json at all", now, &agent_id, &pubkey_hex);
-  assert(r != SIGNET_AUTH_OK);
+  CHECK(r != SIGNET_AUTH_OK);
 
   signet_challenge_store_free(cs);
   printf("test_verify_null_inputs: PASS\n");
@@ -276,25 +276,25 @@ static void test_verify_null_inputs(void) {
 
 static void test_auth_result_strings(void) {
   /* Every enum value should have a non-NULL string. */
-  assert(signet_auth_result_string(SIGNET_AUTH_OK) != NULL);
-  assert(signet_auth_result_string(SIGNET_AUTH_ERR_INVALID_EVENT) != NULL);
-  assert(signet_auth_result_string(SIGNET_AUTH_ERR_WRONG_KIND) != NULL);
-  assert(signet_auth_result_string(SIGNET_AUTH_ERR_BAD_SIGNATURE) != NULL);
-  assert(signet_auth_result_string(SIGNET_AUTH_ERR_MISSING_CHALLENGE) != NULL);
-  assert(signet_auth_result_string(SIGNET_AUTH_ERR_CHALLENGE_MISMATCH) != NULL);
-  assert(signet_auth_result_string(SIGNET_AUTH_ERR_CHALLENGE_EXPIRED) != NULL);
-  assert(signet_auth_result_string(SIGNET_AUTH_ERR_CHALLENGE_REPLAYED) != NULL);
-  assert(signet_auth_result_string(SIGNET_AUTH_ERR_MISSING_AGENT) != NULL);
-  assert(signet_auth_result_string(SIGNET_AUTH_ERR_MISSING_PURPOSE) != NULL);
-  assert(signet_auth_result_string(SIGNET_AUTH_ERR_WRONG_PURPOSE) != NULL);
-  assert(signet_auth_result_string(SIGNET_AUTH_ERR_PUBKEY_MISMATCH) != NULL);
-  assert(signet_auth_result_string(SIGNET_AUTH_ERR_NOT_IN_FLEET) != NULL);
-  assert(signet_auth_result_string(SIGNET_AUTH_ERR_DENIED) != NULL);
-  assert(signet_auth_result_string(SIGNET_AUTH_ERR_INTERNAL) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_OK) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_ERR_INVALID_EVENT) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_ERR_WRONG_KIND) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_ERR_BAD_SIGNATURE) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_ERR_MISSING_CHALLENGE) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_ERR_CHALLENGE_MISMATCH) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_ERR_CHALLENGE_EXPIRED) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_ERR_CHALLENGE_REPLAYED) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_ERR_MISSING_AGENT) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_ERR_MISSING_PURPOSE) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_ERR_WRONG_PURPOSE) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_ERR_PUBKEY_MISMATCH) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_ERR_NOT_IN_FLEET) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_ERR_DENIED) != NULL);
+  CHECK(signet_auth_result_string(SIGNET_AUTH_ERR_INTERNAL) != NULL);
 
   /* OK string should be human-readable. */
   const char *ok_str = signet_auth_result_string(SIGNET_AUTH_OK);
-  assert(strlen(ok_str) > 0);
+  CHECK(strlen(ok_str) > 0);
 
   printf("test_auth_result_strings: PASS\n");
 }

@@ -19,7 +19,7 @@
 #include "signet/store_audit.h"
 #include "signet/store_secrets.h"
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,7 +39,7 @@
 static char *temp_db_path(void) {
   char tmpl[] = "/tmp/signet-git-cred-XXXXXX.db";
   int fd = mkstemps(tmpl, 3);
-  assert(fd >= 0);
+  CHECK(fd >= 0);
   close(fd);
   unlink(tmpl);
   return g_strdup(tmpl);
@@ -90,11 +90,11 @@ static int test_lookup(const SignetGitCredentialQuery *query,
 static char *run_serve(const char *action, const char *input,
                        LookupCtx *lc, int *out_rc) {
   FILE *in = fmemopen((void *)input, strlen(input), "r");
-  assert(in);
+  CHECK(in);
   char *buf = NULL;
   size_t buf_len = 0;
   FILE *out = open_memstream(&buf, &buf_len);
-  assert(out);
+  CHECK(out);
   *out_rc = signet_git_credential_serve(action, in, out, test_lookup, lc);
   fclose(in);
   fclose(out);
@@ -113,7 +113,7 @@ static int count_occurrences(const char *haystack, const char *needle) {
 
 static int audit_rows_containing(SignetStore *store, const char *needle) {
   sqlite3 *db = signet_store_get_db(store);
-  assert(db);
+  CHECK(db);
   const char *sql =
       "SELECT COUNT(*) FROM audit_log WHERE "
       "instr(COALESCE(agent_id,''), ?1) > 0 OR "
@@ -121,32 +121,32 @@ static int audit_rows_containing(SignetStore *store, const char *needle) {
       "instr(COALESCE(secret_id,''), ?1) > 0 OR "
       "instr(COALESCE(detail,''), ?1) > 0;";
   sqlite3_stmt *stmt = NULL;
-  assert(sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK);
+  CHECK(sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK);
   sqlite3_bind_text(stmt, 1, needle, -1, SQLITE_TRANSIENT);
-  assert(sqlite3_step(stmt) == SQLITE_ROW);
+  CHECK(sqlite3_step(stmt) == SQLITE_ROW);
   int count = sqlite3_column_int(stmt, 0);
   sqlite3_finalize(stmt);
   return count;
 }
 
 int main(void) {
-  assert(sodium_init() >= 0);
+  CHECK(sodium_init() >= 0);
 
   char *db_path = temp_db_path();
   SignetStoreConfig scfg = { .db_path = db_path, .master_key = MASTER_KEY };
   SignetStore *store = signet_store_open(&scfg);
-  assert(store);
+  CHECK(store);
 
   int64_t now = 2000000000;
 
   /* Agents. */
   uint8_t sk[32];
   randombytes_buf(sk, sizeof(sk));
-  assert(signet_store_put_agent_ex(store, "agent-git", sk, sizeof(sk),
+  CHECK(signet_store_put_agent_ex(store, "agent-git", sk, sizeof(sk),
                                    "conn-git", PUBKEY_GIT, "provisioned",
                                    now) == 0);
   randombytes_buf(sk, sizeof(sk));
-  assert(signet_store_put_agent_ex(store, "agent-other", sk, sizeof(sk),
+  CHECK(signet_store_put_agent_ex(store, "agent-other", sk, sizeof(sk),
                                    "conn-other", PUBKEY_OTHER, "provisioned",
                                    now) == 0);
   sodium_memzero(sk, sizeof(sk));
@@ -154,7 +154,7 @@ int main(void) {
   /* Least-privilege policy: agent-git may retrieve tokens; agent-other has a
    * policy without that capability. */
   SignetPolicyRegistry *policy = signet_policy_registry_new();
-  assert(policy);
+  CHECK(policy);
   const char *token_caps[] = { SIGNET_CAP_CREDENTIAL_GET_TOKEN };
   const char *ssh_caps[] = { SIGNET_CAP_SSH_SIGN };
   SignetAgentPolicy pol;
@@ -162,29 +162,29 @@ int main(void) {
   pol.name = (char *)"git-token";
   pol.capabilities = (char **)token_caps;
   pol.n_capabilities = 1;
-  assert(signet_policy_registry_add(policy, &pol) == 0);
+  CHECK(signet_policy_registry_add(policy, &pol) == 0);
   memset(&pol, 0, sizeof(pol));
   pol.name = (char *)"no-token";
   pol.capabilities = (char **)ssh_caps;
   pol.n_capabilities = 1;
-  assert(signet_policy_registry_add(policy, &pol) == 0);
-  assert(signet_policy_registry_assign(policy, "agent-git", "git-token") == 0);
-  assert(signet_policy_registry_assign(policy, "agent-other", "no-token") == 0);
+  CHECK(signet_policy_registry_add(policy, &pol) == 0);
+  CHECK(signet_policy_registry_assign(policy, "agent-git", "git-token") == 0);
+  CHECK(signet_policy_registry_assign(policy, "agent-other", "no-token") == 0);
 
   /* Store the PAT as an api_token bound to agent-git with the derived
    * deterministic id for host github.com. */
   SignetSecretMetadata meta;
   memset(&meta, 0, sizeof(meta));
-  assert(signet_store_create_secret(store, "agent-git",
+  CHECK(signet_store_create_secret(store, "agent-git",
                                     SIGNET_SECRET_API_TOKEN,
                                     "git:github.com",
                                     (const uint8_t *)PAT_V1, strlen(PAT_V1),
                                     NULL, 0, "created", NULL, now,
                                     &meta) == SIGNET_SECRET_OK);
   char derived[70];
-  assert(signet_git_credential_derive_id("agent-git", "github.com",
+  CHECK(signet_git_credential_derive_id("agent-git", "github.com",
                                          derived) == 0);
-  assert(strcmp(derived, meta.id) == 0); /* deterministic id == stored id */
+  CHECK(strcmp(derived, meta.id) == 0); /* deterministic id == stored id */
   signet_secret_metadata_clear(&meta);
 
   LookupCtx lc = {
@@ -199,10 +199,10 @@ int main(void) {
   /* 1. Canary: authenticated get releases the PAT on the protocol stream
    * (exactly once) and nowhere else. */
   char *out = run_serve("get", GET_INPUT, &lc, &rc);
-  assert(rc == 0);
-  assert(count_occurrences(out, "password=" PAT_V1 "\n") == 1);
-  assert(count_occurrences(out, PAT_V1) == 1);
-  assert(count_occurrences(out, "username=x-access-token\n") == 1);
+  CHECK(rc == 0);
+  CHECK(count_occurrences(out, "password=" PAT_V1 "\n") == 1);
+  CHECK(count_occurrences(out, PAT_V1) == 1);
+  CHECK(count_occurrences(out, "username=x-access-token\n") == 1);
   g_free(out);
 
   /* 2. store/erase are no-ops: git can never push a secret INTO signet or
@@ -211,65 +211,65 @@ int main(void) {
                   "protocol=https\nhost=github.com\n"
                   "username=x\npassword=attacker-supplied\n\n",
                   &lc, &rc);
-  assert(rc == 0);
-  assert(out[0] == '\0');
+  CHECK(rc == 0);
+  CHECK(out[0] == '\0');
   g_free(out);
   out = run_serve("erase", GET_INPUT, &lc, &rc);
-  assert(rc == 0);
-  assert(out[0] == '\0');
+  CHECK(rc == 0);
+  CHECK(out[0] == '\0');
   g_free(out);
 
   /* 3. Unknown host: quiet miss, no output. */
   out = run_serve("get", "protocol=https\nhost=gitlab.example\n\n", &lc, &rc);
-  assert(rc == 0);
-  assert(out[0] == '\0');
+  CHECK(rc == 0);
+  CHECK(out[0] == '\0');
   g_free(out);
 
   /* 4. Wrong agent (no capability, not owner): quiet refusal, no token. */
   LookupCtx other = lc;
   other.agent_id = "agent-other";
   out = run_serve("get", GET_INPUT, &other, &rc);
-  assert(rc == 0);
-  assert(out[0] == '\0');
-  assert(strstr(out, PAT_V1) == NULL);
+  CHECK(rc == 0);
+  CHECK(out[0] == '\0');
+  CHECK(strstr(out, PAT_V1) == NULL);
   g_free(out);
 
   /* 5. Rotation-safe: same derived id serves the ACTIVE version. */
   memset(&meta, 0, sizeof(meta));
-  assert(signet_store_rotate_secret_ex(store, derived,
+  CHECK(signet_store_rotate_secret_ex(store, derived,
                                        (const uint8_t *)PAT_V2,
                                        strlen(PAT_V2), false, 0, now + 10,
                                        &meta) == SIGNET_SECRET_OK);
   signet_secret_metadata_clear(&meta);
   lc.now = now + 20;
   out = run_serve("get", GET_INPUT, &lc, &rc);
-  assert(rc == 0);
-  assert(count_occurrences(out, "password=" PAT_V2 "\n") == 1);
-  assert(strstr(out, PAT_V1) == NULL);
+  CHECK(rc == 0);
+  CHECK(count_occurrences(out, "password=" PAT_V2 "\n") == 1);
+  CHECK(strstr(out, PAT_V1) == NULL);
   g_free(out);
 
   /* 6. Revoked PAT: helper goes quiet, fails closed. */
   memset(&meta, 0, sizeof(meta));
-  assert(signet_store_revoke_secret(store, derived, now + 30, &meta) ==
+  CHECK(signet_store_revoke_secret(store, derived, now + 30, &meta) ==
          SIGNET_SECRET_OK);
   signet_secret_metadata_clear(&meta);
   lc.now = now + 40;
   out = run_serve("get", GET_INPUT, &lc, &rc);
-  assert(rc == 0);
-  assert(out[0] == '\0');
+  CHECK(rc == 0);
+  CHECK(out[0] == '\0');
   g_free(out);
 
   /* 7. Audit: every retrieval outcome is chained; the PAT never appears in
    * the audit trail; deny paths are recorded. */
   int64_t broken_id = 0;
-  assert(signet_audit_verify_chain(store, 0, 0, &broken_id) == 0);
-  assert(signet_audit_log_count(store) >= 4); /* allow, deny, allow, revoked */
-  assert(audit_rows_containing(store, PAT_V1) == 0);
-  assert(audit_rows_containing(store, PAT_V2) == 0);
-  assert(audit_rows_containing(store, "ghp_") == 0);
-  assert(audit_rows_containing(store, "\"decision\":\"allow\"") > 0);
-  assert(audit_rows_containing(store, "\"reason\":\"no_capability\"") > 0);
-  assert(audit_rows_containing(store, "\"reason\":\"revoked\"") > 0);
+  CHECK(signet_audit_verify_chain(store, 0, 0, &broken_id) == 0);
+  CHECK(signet_audit_log_count(store) >= 4); /* allow, deny, allow, revoked */
+  CHECK(audit_rows_containing(store, PAT_V1) == 0);
+  CHECK(audit_rows_containing(store, PAT_V2) == 0);
+  CHECK(audit_rows_containing(store, "ghp_") == 0);
+  CHECK(audit_rows_containing(store, "\"decision\":\"allow\"") > 0);
+  CHECK(audit_rows_containing(store, "\"reason\":\"no_capability\"") > 0);
+  CHECK(audit_rows_containing(store, "\"reason\":\"revoked\"") > 0);
 
   signet_policy_registry_free(policy);
   signet_store_close(store);

@@ -16,7 +16,7 @@
 #include "signet/key_store.h"
 #include "signet/audit_logger.h"
 
-#include <assert.h>
+#include "test_check.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,7 +31,7 @@
 static char *make_temp_db_path(void) {
   char tmpl[] = "/tmp/signet-test-life-XXXXXX.db";
   int fd = mkstemps(tmpl, 3);
-  assert(fd >= 0);
+  CHECK(fd >= 0);
   close(fd);
   unlink(tmpl);
   return g_strdup(tmpl);
@@ -49,26 +49,26 @@ static void test_audit_hash_chain(void) {
   char *db = make_temp_db_path();
   SignetStoreConfig cfg = { .db_path = db, .master_key = MASTER_KEY };
   SignetStore *store = signet_store_open(&cfg);
-  assert(store);
+  CHECK(store);
 
-  assert(signet_audit_log_append(store, 1000, "agent-1", "provision", NULL, "test", "{\"x\":1}") == 0);
-  assert(signet_audit_log_append(store, 1001, "agent-1", "sign",      NULL, "test", "{\"x\":2}") == 0);
-  assert(signet_audit_log_append(store, 1002, "agent-2", "revoke",    NULL, "test", "{\"x\":3}") == 0);
-  assert(signet_audit_log_count(store) == 3);
+  CHECK(signet_audit_log_append(store, 1000, "agent-1", "provision", NULL, "test", "{\"x\":1}") == 0);
+  CHECK(signet_audit_log_append(store, 1001, "agent-1", "sign",      NULL, "test", "{\"x\":2}") == 0);
+  CHECK(signet_audit_log_append(store, 1002, "agent-2", "revoke",    NULL, "test", "{\"x\":3}") == 0);
+  CHECK(signet_audit_log_count(store) == 3);
 
   int64_t broken = -1;
-  assert(signet_audit_verify_chain(store, 0, 0, &broken) == 0); /* intact */
+  CHECK(signet_audit_verify_chain(store, 0, 0, &broken) == 0); /* intact */
 
   /* Tamper a committed row's detail directly. The stored entry_hash was
    * computed over the original detail, so recomputation must now diverge. */
   sqlite3 *db2 = signet_store_get_db(store);
-  assert(sqlite3_exec(db2, "UPDATE audit_log SET detail='{\"x\":99}' WHERE id=2;",
+  CHECK(sqlite3_exec(db2, "UPDATE audit_log SET detail='{\"x\":99}' WHERE id=2;",
                       NULL, NULL, NULL) == SQLITE_OK);
 
   broken = -1;
   int rc = signet_audit_verify_chain(store, 0, 0, &broken);
-  assert(rc == 1);        /* chain reported broken */
-  assert(broken >= 2);    /* at/after the tampered row */
+  CHECK(rc == 1);        /* chain reported broken */
+  CHECK(broken >= 2);    /* at/after the tampered row */
 
   signet_store_close(store);
   cleanup_db(db);
@@ -80,23 +80,23 @@ static void test_bootstrap_token_single_use(void) {
   char *db = make_temp_db_path();
   SignetStoreConfig cfg = { .db_path = db, .master_key = MASTER_KEY };
   SignetStore *store = signet_store_open(&cfg);
-  assert(store);
+  CHECK(store);
 
   const char *th  = "aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44";
   const char *pub = "11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff";
-  assert(signet_store_put_bootstrap_token(store, th, "agent-b", pub, 1000, 1000 + 3600) == 0);
+  CHECK(signet_store_put_bootstrap_token(store, th, "agent-b", pub, 1000, 1000 + 3600) == 0);
 
   /* Valid before use. */
-  assert(signet_store_verify_bootstrap_token(store, th, "agent-b", pub, 1100) == SIGNET_TOKEN_OK);
+  CHECK(signet_store_verify_bootstrap_token(store, th, "agent-b", pub, 1100) == SIGNET_TOKEN_OK);
 
   /* Consume marks it used (this is what POST /bootstrap now does). */
-  assert(signet_store_consume_bootstrap_token(store, th, 1100) == 0);
+  CHECK(signet_store_consume_bootstrap_token(store, th, 1100) == 0);
 
   /* Replay is now rejected as already-used. */
-  assert(signet_store_verify_bootstrap_token(store, th, "agent-b", pub, 1100) == SIGNET_TOKEN_ALREADY_USED);
+  CHECK(signet_store_verify_bootstrap_token(store, th, "agent-b", pub, 1100) == SIGNET_TOKEN_ALREADY_USED);
 
   /* Consuming a second time cannot transition again. */
-  assert(signet_store_consume_bootstrap_token(store, th, 1100) == -1);
+  CHECK(signet_store_consume_bootstrap_token(store, th, 1100) == -1);
 
   signet_store_close(store);
   cleanup_db(db);
@@ -110,66 +110,66 @@ static void test_revoke_deny_precedence(void) {
   SignetAuditLogger *audit = signet_audit_logger_new(&alc);
   SignetKeyStoreConfig kcfg = { .db_path = db, .master_key = MASTER_KEY };
   SignetKeyStore *ks = signet_key_store_new(audit, &kcfg);
-  assert(ks);
+  CHECK(ks);
 
   char pub[65] = {0};
-  assert(signet_key_store_provision_agent(ks, "victim", NULL, NULL, 0, pub, sizeof(pub), NULL) == 0);
+  CHECK(signet_key_store_provision_agent(ks, "victim", NULL, NULL, 0, pub, sizeof(pub), NULL) == 0);
 
   SignetStore *store = signet_key_store_get_store(ks);
-  assert(store);
+  CHECK(store);
   SignetDenyList *deny = signet_deny_list_new(store);
-  assert(deny);
-  assert(!signet_deny_list_contains(deny, pub)); /* not denied yet */
+  CHECK(deny);
+  CHECK(!signet_deny_list_contains(deny, pub)); /* not denied yet */
 
   const char *client_pub =
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-  assert(signet_store_issue_lease(store, "lease-1", "secret-1", "victim",
+  CHECK(signet_store_issue_lease(store, "lease-1", "secret-1", "victim",
                                   1900, 3000, NULL) == 0);
-  assert(signet_store_bind_client(store, "victim", pub, client_pub,
+  CHECK(signet_store_bind_client(store, "victim", pub, client_pub,
                                   NULL, 1900) == 0);
 
   /* Force a failure after the deny-list and lease updates. Every durable
    * mutation must roll back, and neither hot cache may change. */
   sqlite3 *sql_db = signet_store_get_db(store);
-  assert(sqlite3_exec(
+  CHECK(sqlite3_exec(
       sql_db,
       "CREATE TEMP TRIGGER fail_agent_client_revoke "
       "BEFORE UPDATE OF revoked_at ON agent_clients "
       "BEGIN SELECT RAISE(ABORT, 'forced revocation failure'); END;",
       NULL, NULL, NULL) == SQLITE_OK);
-  assert(signet_revoke_agent(store, ks, deny, audit, "victim", pub,
+  CHECK(signet_revoke_agent(store, ks, deny, audit, "victim", pub,
                              "test failure", 1999) == -1);
-  assert(!signet_deny_list_contains(deny, pub));
+  CHECK(!signet_deny_list_contains(deny, pub));
   SignetLeaseRecord *leases = NULL;
   size_t lease_count = 0;
-  assert(signet_store_list_active_leases(store, "victim", 2000,
+  CHECK(signet_store_list_active_leases(store, "victim", 2000,
                                          &leases, &lease_count) == 0);
-  assert(lease_count == 1);
+  CHECK(lease_count == 1);
   signet_lease_list_free(leases, lease_count);
   char *bound_agent = NULL;
-  assert(signet_store_lookup_client_binding(store, client_pub, 2000,
+  CHECK(signet_store_lookup_client_binding(store, client_pub, 2000,
                                              &bound_agent, NULL) == 0);
-  assert(bound_agent && strcmp(bound_agent, "victim") == 0);
+  CHECK(bound_agent && strcmp(bound_agent, "victim") == 0);
   g_free(bound_agent);
 
   SignetLoadedKey lk;
   memset(&lk, 0, sizeof(lk));
-  assert(signet_key_store_load_agent_key(ks, "victim", &lk));
+  CHECK(signet_key_store_load_agent_key(ks, "victim", &lk));
   signet_loaded_key_clear(&lk);
-  assert(sqlite3_exec(sql_db, "DROP TRIGGER fail_agent_client_revoke;",
+  CHECK(sqlite3_exec(sql_db, "DROP TRIGGER fail_agent_client_revoke;",
                       NULL, NULL, NULL) == SQLITE_OK);
 
   /* Full revocation must deny-list the pubkey AND wipe the key. */
   int rc = signet_revoke_agent(store, ks, deny, audit, "victim", pub, "test", 2000);
-  assert(rc == 0);
-  assert(signet_deny_list_contains(deny, pub)); /* deny precedence now applies */
+  CHECK(rc == 0);
+  CHECK(signet_deny_list_contains(deny, pub)); /* deny precedence now applies */
 
   memset(&lk, 0, sizeof(lk));
-  assert(!signet_key_store_load_agent_key(ks, "victim", &lk)); /* key gone */
+  CHECK(!signet_key_store_load_agent_key(ks, "victim", &lk)); /* key gone */
 
   /* Un-deny works too. */
-  assert(signet_deny_list_remove(deny, pub) == 0);
-  assert(!signet_deny_list_contains(deny, pub));
+  CHECK(signet_deny_list_remove(deny, pub) == 0);
+  CHECK(!signet_deny_list_contains(deny, pub));
 
   signet_deny_list_free(deny);
   signet_key_store_free(ks);
@@ -178,7 +178,7 @@ static void test_revoke_deny_precedence(void) {
 }
 
 int main(void) {
-  assert(sodium_init() >= 0);
+  CHECK(sodium_init() >= 0);
   test_audit_hash_chain();
   test_bootstrap_token_single_use();
   test_revoke_deny_precedence();
