@@ -386,7 +386,7 @@ static void test_null_safety(void) {
 
 /* signetd_main.c runs signetd_health_tick every 250ms, and it reaches
  * signet_relay_pool_subscribe_scoped both on the CLOSED-subscription path and
- * after its 30s-throttled pool bounce. That subscribe used to hold rp->mu across
+ * on its 30s-throttled reconnect path. That subscribe used to hold rp->mu across
  * nostr_simple_pool_subscribe -> ensure_relay -> a 30s dial, so while any
  * configured relay was unreachable the daemon stalled roughly 30s out of every
  * 30s -- serving no 25910 management, no NIP-46 and no NIP-5L for most of its
@@ -448,11 +448,12 @@ static void test_health_tick_does_not_stall_on_unreachable_relay(void) {
     if (tick_us > worst_tick_us) worst_tick_us = tick_us;
 
     /* The tick's heavier branch, throttled to once per 30s in the daemon:
-     * bounce the pool and replay the subscription. */
+     * advance `since`, make sure the pool is running, replay the
+     * subscription. fp-rym6 removed the stop()/start() bounce this used to
+     * mirror; what is left must still cost nothing like a dial. */
     if (i == 4) {
       gint64 b0 = g_get_monotonic_time();
       (void)signet_relay_pool_update_since_from_latest(rp);
-      signet_relay_pool_stop(rp);
       CHECK(signet_relay_pool_start(rp) == 0);
       CHECK(signet_relay_pool_subscribe_scoped(rp, kinds, 3,
                                                STALL_TEST_PUBKEY, 12345) == 0);
@@ -463,7 +464,7 @@ static void test_health_tick_does_not_stall_on_unreachable_relay(void) {
   }
 
   unsigned dials = signet_relay_pool_dial_attempts(rp);
-  fprintf(stderr, "[new=%lldus worst_tick=%lldus bounce=%lldus dials=%u] ",
+  fprintf(stderr, "[new=%lldus worst_tick=%lldus reconnect_branch=%lldus dials=%u] ",
           (long long)new_us, (long long)worst_tick_us,
           (long long)bounce_us, dials);
 
@@ -472,8 +473,9 @@ static void test_health_tick_does_not_stall_on_unreachable_relay(void) {
    * production the full 30s libnostr connect timeout, per unreachable relay. */
   CHECK(new_us < 500 * 1000);
   CHECK(worst_tick_us < 500 * 1000);
-  /* The bounce joins libnostr worker threads, which is bounded by their 200ms
-   * select cadence -- not by any connect. */
+  /* The reconnect branch no longer joins libnostr worker threads either, so it
+   * is now bounded by the same reasoning as an ordinary tick rather than by
+   * their 200ms select cadence. */
   CHECK(bounce_us < 1000 * 1000);
 
   if (dials >= 1) {
@@ -493,6 +495,115 @@ static void test_health_tick_does_not_stall_on_unreachable_relay(void) {
   PASS();
 }
 
+/* ---- fp-rym6: the reconnect branch must not take the pool down ----------- */
+
+/* signetd_health_tick's disconnected branch used to stop() and start() the
+ * pool, because before fp-ieg8 that bounce -- specifically the subscribe that
+ * followed it -- was the only thing that ever dialled a relay again. The
+ * daemon was the retry engine. This pins the property that makes removing it
+ * safe: with the tick doing nothing but re-subscribing, an unreachable relay
+ * is still dialled, repeatedly, by libnostr.
+ *
+ * It asserts through signet's own API rather than libnostr's, so it also
+ * covers the wiring: signet_relay_pool_new() must register relays with the
+ * async primitive that leaves them to the redial worker (a revert to the
+ * blocking ensure_relay would dial once on the caller's thread and then sit
+ * there), and the tick's remaining calls must not disturb that.
+ *
+ * On what a bounce would add: nothing here. stop()/start() do not dial --
+ * stop() joins the pool worker and drops subscriptions, start() spawns the
+ * worker -- and the redial worker's lifetime is deliberately the pool's, not
+ * start()/stop()'s, so it keeps retrying either way. */
+static void test_relays_redial_without_a_pool_bounce(void) {
+  TEST(relays_redial_without_a_pool_bounce);
+
+  const char *relays[] = { STALL_RELAY_URL };
+  SignetRelayPoolConfig cfg = {
+    .relays = relays,
+    .n_relays = 1,
+    .on_event = NULL,
+    .user_data = NULL,
+    .auth_sk_hex = NULL,
+  };
+  SignetRelayPool *rp = signet_relay_pool_new(&cfg);
+  CHECK(rp != NULL);
+  CHECK(signet_relay_pool_start(rp) == 0);
+
+  /* Run the tick the daemon now runs -- the cheap per-tick reads plus, once,
+   * the whole of its throttled reconnect branch -- and otherwise just watch.
+   * Nothing in here dials, so every dial counted below came from libnostr.
+   *
+   * Two attempts, not one: one attempt only proves something dialled once,
+   * which the pool would have done at registration. Two proves a retry loop
+   * that outlives the tick. The curve is 1s doubling with jitter, so attempt 2
+   * is due around 3s in; the budget is generous against a loaded machine. */
+  const int kinds[] = { 24133, 25910, 1059 };
+  const gint64 budget_us = 20 * G_TIME_SPAN_SECOND;
+  gint64 t0 = g_get_monotonic_time();
+  unsigned dials = 0;
+  int ticks = 0;
+
+  while (g_get_monotonic_time() - t0 < budget_us) {
+    (void)signet_relay_pool_is_connected(rp);
+    (void)signet_relay_pool_check_sub_closed(rp);
+
+    if (ticks == 2) {
+      /* The throttled branch, in full. */
+      (void)signet_relay_pool_update_since_from_latest(rp);
+      CHECK(signet_relay_pool_start(rp) == 0);
+      CHECK(signet_relay_pool_subscribe_scoped(rp, kinds, 3,
+                                               STALL_TEST_PUBKEY, 12345) == 0);
+    }
+    ticks++;
+
+    dials = signet_relay_pool_dial_attempts(rp);
+    if (dials >= 2) break;
+    if (signet_relay_pool_is_connected(rp)) break;
+    g_usleep(250 * 1000);
+  }
+
+  gint64 elapsed_us = g_get_monotonic_time() - t0;
+  bool connected = signet_relay_pool_is_connected(rp);
+  bool in_flight = signet_relay_pool_dial_in_flight(rp);
+  fprintf(stderr, "[%u dial attempts in %lldms across %d ticks, no bounce, "
+                  "in_flight=%d] ",
+          dials, (long long)(elapsed_us / 1000), ticks, (int)in_flight);
+
+  /* THE property, asserted in every environment: something dialled this relay,
+   * and it was not this test -- the loop above only reads and re-subscribes.
+   * Delete libnostr's redial worker and all three of these go false and stay
+   * false for the full 20s budget, which is exactly the state signetd was in
+   * before fp-ieg8 and the reason it had to bounce the pool itself.
+   *
+   * in_flight is what keeps this assertable where a dial can hang: an
+   * environment that cannot complete a connect still shows CONNECTING, and
+   * only "nobody is dialling" shows none of the three. */
+  CHECK_MSG(dials >= 1 || connected || in_flight,
+            "relay was never dialled: nothing retries it but the tick");
+
+  if (connected) {
+    /* A resolver that hijacks NXDOMAIN turns the unreachable relay into a
+     * connected one, and then the retry cadence never runs. Say so rather than
+     * passing quietly. */
+    fprintf(stderr, "[%s unexpectedly resolved; retry cadence not exercised] ",
+            STALL_RELAY_URL);
+  } else if (dials >= 2) {
+    /* Stronger form: it kept retrying, and on a bounded curve rather than a
+     * hot loop. The 1s-doubling curve cannot fit many attempts into the
+     * window; a regression to dialling once per tick blows past this. */
+    CHECK(dials <= (unsigned)(elapsed_us / (400 * 1000)) + 3);
+  } else {
+    /* Reported, not asserted away: where a single dial never returns (the
+     * ThreadSanitizer tree wedges libwebsockets' service thread) no test that
+     * dials can observe a second attempt. The claim above still held. */
+    fprintf(stderr, "[fewer than 2 dials completed here; cadence not "
+                    "asserted] ");
+  }
+
+  signet_relay_pool_free(rp);
+  PASS();
+}
+
 /* ---- main ---- */
 
 int main(void) {
@@ -508,6 +619,7 @@ int main(void) {
   test_relay_pool_urls();
   test_null_safety();
   test_health_tick_does_not_stall_on_unreachable_relay();
+  test_relays_redial_without_a_pool_bounce();
 
   printf("\n--- Results: %d passed, %d failed ---\n", g_tests_passed, g_tests_failed);
   return g_tests_failed > 0 ? 1 : 0;

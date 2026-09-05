@@ -370,14 +370,54 @@ static gboolean signetd_health_tick(gpointer data) {
                                  signetd_mgmt_since_floor());
   }
 
-  /* Explicit reconnect with 30s throttle. */
+  /* fp-rym6: re-subscription with a 30s throttle. Reconnecting is libnostr's.
+   *
+   * This used to bounce the pool -- stop() then start() -- because before
+   * fp-ieg8 that bounce, and specifically the subscribe that followed it, was
+   * the only thing that ever dialled a relay again. Both halves now belong to
+   * libnostr, and between them they cover every relay the bounce did:
+   *
+   *   * a relay that connected and then dropped keeps its own message_loop.
+   *     The loop does NOT exit on a drop -- it backs off on the same
+   *     1s->5min jittered curve, reconnects in place, and re-fires that
+   *     relay's live subscriptions itself. It exits only when the relay's
+   *     context is cancelled or auto-reconnect is off, i.e. when the relay is
+   *     deliberately finished, and stop()/start() would not have revived
+   *     those either.
+   *   * a relay with no live loop -- never connected, or the loop exited --
+   *     is claimed by the pool's redial worker on the same curve, and the
+   *     pool worker's reconcile pass fires the shared filter set on it as it
+   *     comes up (signet sets auto_unsub_on_eose false, which is what keeps
+   *     that pass armed).
+   *
+   * So the bounce reconnected nothing. What it did do was take rp->mu and,
+   * holding it, join the pool worker and drop every subscription -- once every
+   * 30s for as long as any relay was unreachable. Publishes did not fail
+   * during that window (they take the same mutex, so they queue behind it),
+   * they stalled; and the ordering is the deadlock fp-e08y already documents
+   * on the reconfigure path, where the fix was to stop the pool WITHOUT
+   * rp->mu: the worker being joined can itself be blocked on rp->mu inside
+   * signet_pool_event_middleware, which it reaches whenever it drains an
+   * event -- including events buffered before the disconnect this branch is
+   * reacting to. signet_relay_pool_stop() still holds rp->mu across the join
+   * (fp-d6a0); this path, the most frequent way to reach it, no longer calls
+   * it at all.
+   *
+   * start() stays, and is not redundant: signet_relay_pool_set_relays()
+   * publishes the replacement pool as not-started and lets the reconfigure
+   * worker or this tick claim the transition, whichever gets there first, and
+   * the pool worker must be running for the reconcile pass to subscribe on
+   * relays as they come back. It is idempotent and dials nothing. The
+   * re-subscribe stays too: it republishes the filter set carrying the `since`
+   * just advanced above, so a relay that reconnects afterwards resumes from
+   * that floor instead of the one it was subscribed with. */
   if (!snap.relay_connected) {
     int64_t now_ts = signet_now_unix();
     if (now_ts - ctx->last_reconnect_attempt >= 30) {
       ctx->last_reconnect_attempt = now_ts;
-      g_message("[signetd] relay disconnected \u2014 restarting pool");
+      g_message("[signetd] relay disconnected — libnostr is redialling; "
+                "refreshing the subscription");
       signet_relay_pool_update_since_from_latest(ctx->relays);
-      signet_relay_pool_stop(ctx->relays);
       if (signet_relay_pool_start(ctx->relays) == 0) {
         if (ctx->daemon_ctx)
           ctx->daemon_ctx->mgmt_accept_after = signet_now_unix() + SIGNET_MGMT_ACCEPT_DELAY_SEC;
@@ -385,7 +425,7 @@ static gboolean signetd_health_tick(gpointer data) {
                                      ctx->cfg->remote_signer_pubkey_hex[0]
                                        ? ctx->cfg->remote_signer_pubkey_hex : NULL,
                                      signetd_mgmt_since_floor());
-        g_message("[signetd] relay pool restarted and resubscribed");
+        g_message("[signetd] relay subscription refreshed");
       }
       snap.relay_connected = signet_relay_pool_is_connected(ctx->relays);
     }

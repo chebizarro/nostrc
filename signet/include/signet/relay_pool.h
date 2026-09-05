@@ -308,6 +308,29 @@ bool signet_relay_pool_is_connected(SignetRelayPool *rp);
  */
 unsigned signet_relay_pool_dial_attempts(SignetRelayPool *rp);
 
+/**
+ * signet_relay_pool_dial_in_flight:
+ * @rp: (not nullable): a #SignetRelayPool
+ *
+ * True while any relay in the pool is mid-connect (libnostr state CONNECTING).
+ *
+ * fp-rym6: companion to signet_relay_pool_dial_attempts(). A failed dial bumps
+ * the attempt count, but a dial that has not returned yet bumps nothing, so
+ * "attempts == 0" conflates "nothing is dialling this relay" -- the regression
+ * worth catching, since libnostr's redial worker is now the only thing that
+ * retries -- with "a dial is in flight", which is all an environment whose
+ * resolver or websocket stack hangs can ever show. Distinguishing them is what
+ * lets a test assert that a relay got picked up at all, rather than reporting
+ * and passing whenever it cannot tell.
+ *
+ * Thread safety: safe to call concurrently.
+ *
+ * Returns: %true if at least one relay is currently connecting
+ *
+ * Since: 1.0
+ */
+bool signet_relay_pool_dial_in_flight(SignetRelayPool *rp);
+
 /* NPA-10: Check if any active subscription has received EOSE.
  * Returns true once the relay has acknowledged our subscription by sending
  * End-of-Stored-Events. Useful for waiting until AUTH + subscribe is complete

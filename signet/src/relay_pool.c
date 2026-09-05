@@ -988,11 +988,14 @@ static gpointer signet_relay_pool_reconfigure_worker(gpointer data) {
     g_mutex_lock(&rp->mu);
     if (rp->reconfig_gen == job->gen && !rp->disposing && rp->pool == job->fresh) {
       signet_relay_pool_register_auth(rp);
-      /* Claim the not-started -> started transition under rp->mu.
-       * nostr_simple_pool_start() is not idempotent (it pthread_creates
-       * unconditionally and overwrites pool->thread), so if the health
-       * tick's reconnect path already restarted this pool while we were
-       * dialling, leave it alone. */
+      /* Claim the not-started -> started transition under rp->mu, so that
+       * exactly one of us replays the subscription below. fp-ieg8 made
+       * nostr_simple_pool_start() itself idempotent -- it used to
+       * pthread_create unconditionally and orphan the previous worker -- but
+       * rp->started is signet's own state and the publish paths gate on it,
+       * so the transition still needs claiming: the health tick can be
+       * starting this same pool concurrently (fp-rym6 leaves that start in
+       * place; it is what covers a pool this worker never reaches). */
       if (job->restart_after && !rp->started) {
         rp->started = TRUE;
         do_start = TRUE;
@@ -1223,6 +1226,24 @@ unsigned signet_relay_pool_dial_attempts(SignetRelayPool *rp) {
   }
   g_mutex_unlock(&rp->mu);
   return total;
+}
+
+bool signet_relay_pool_dial_in_flight(SignetRelayPool *rp) {
+  if (!rp || !rp->pool) return false;
+
+  g_mutex_lock(&rp->mu);
+  NostrSimplePool *pool = rp->pool;
+  bool dialing = false;
+  for (size_t i = 0; i < pool->relay_count; i++) {
+    if (!pool->relays[i]) continue;
+    if (nostr_relay_get_connection_state(pool->relays[i]) ==
+        NOSTR_RELAY_STATE_CONNECTING) {
+      dialing = true;
+      break;
+    }
+  }
+  g_mutex_unlock(&rp->mu);
+  return dialing;
 }
 
 int64_t signet_relay_pool_update_since_from_latest(SignetRelayPool *rp) {
