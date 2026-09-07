@@ -2,7 +2,10 @@
 
 struct _GnCommunikeysCommunityItem {
   GObject parent_instance;
-  gchar *pubkey;
+  gchar *address;
+  gchar *owner_pubkey;
+  gchar *community_id;
+  gchar *name;
   gchar *main_relay;
   gchar *description;
   gchar *definition_id;
@@ -15,7 +18,10 @@ G_DEFINE_TYPE(GnCommunikeysCommunityItem, gn_communikeys_community_item,
 
 static void gn_communikeys_community_item_finalize(GObject *object) {
   GnCommunikeysCommunityItem *self = GN_COMMUNIKEYS_COMMUNITY_ITEM(object);
-  g_free(self->pubkey);
+  g_free(self->address);
+  g_free(self->owner_pubkey);
+  g_free(self->community_id);
+  g_free(self->name);
   g_free(self->main_relay);
   g_free(self->description);
   g_free(self->definition_id);
@@ -33,11 +39,16 @@ static void gn_communikeys_community_item_init(
 
 GnCommunikeysCommunityItem *gn_communikeys_community_item_new(
     const nostr_communikeys_definition_t *definition,
+    const char *definition_address,
     const char *definition_id, gint64 created_at) {
   g_return_val_if_fail(definition != NULL && definition->valid, NULL);
+  g_return_val_if_fail(definition_address != NULL, NULL);
   GnCommunikeysCommunityItem *self =
     g_object_new(GN_TYPE_COMMUNIKEYS_COMMUNITY_ITEM, NULL);
-  self->pubkey = g_strdup(definition->pubkey);
+  self->address = g_strdup(definition_address);
+  self->owner_pubkey = g_strdup(definition->branch.owner);
+  self->community_id = g_strdup(definition->branch.community_id);
+  self->name = g_strdup(definition->name);
   self->main_relay = definition->relays_len
     ? g_strdup(definition->relays[0]) : NULL;
   self->description = g_strdup(definition->description);
@@ -45,15 +56,21 @@ GnCommunikeysCommunityItem *gn_communikeys_community_item_new(
   self->created_at = created_at;
   for (gsize i = 0; i < definition->sections_len; i++) {
     g_autoptr(GnCommunikeysSectionItem) section =
-      gn_communikeys_section_item_new(definition->pubkey,
+      gn_communikeys_section_item_new(definition_address,
                                       &definition->sections[i]);
     g_list_store_append(self->sections, section);
   }
   return self;
 }
 
-const char *gn_communikeys_community_item_get_pubkey(
-    GnCommunikeysCommunityItem *self) { return self->pubkey; }
+const char *gn_communikeys_community_item_get_address(
+    GnCommunikeysCommunityItem *self) { return self->address; }
+const char *gn_communikeys_community_item_get_owner_pubkey(
+    GnCommunikeysCommunityItem *self) { return self->owner_pubkey; }
+const char *gn_communikeys_community_item_get_community_id(
+    GnCommunikeysCommunityItem *self) { return self->community_id; }
+const char *gn_communikeys_community_item_get_name(
+    GnCommunikeysCommunityItem *self) { return self->name; }
 const char *gn_communikeys_community_item_get_main_relay(
     GnCommunikeysCommunityItem *self) { return self->main_relay; }
 const char *gn_communikeys_community_item_get_description(

@@ -10,7 +10,7 @@ struct _GnCommunikeysCommunityView {
   GtkBox parent_instance;
   GnCommunikeysCommunityService *service;
   GnCommunikeysCommunityItem *item;
-  gchar *pubkey;
+  gchar *address; /* exact definition address 32222:<owner>:<communityId> */
   GtkBox *overview;
   GnCommunikeysComposer *composer;
   GtkLabel *composer_status;
@@ -98,17 +98,28 @@ static void rebuild_overview(GnCommunikeysCommunityView *self) {
     gtk_widget_set_margin_end(assignment, 12);
     gtk_box_append(GTK_BOX(card), assignment);
 
-    g_autofree gchar *coordinate = g_strdup_printf(
-      "ACL: 30000:%s:%s%s%s",
-      gn_communikeys_section_item_get_acl_publisher(section),
-      gn_communikeys_section_item_get_acl_identifier(section),
-      gn_communikeys_section_item_get_acl_relay(section) ? " · " : "",
-      gn_communikeys_section_item_get_acl_relay(section)
-        ? gn_communikeys_section_item_get_acl_relay(section) : "");
-    GtkWidget *acl = left_label(coordinate, "dim-label");
-    gtk_widget_set_margin_start(acl, 12);
-    gtk_widget_set_margin_end(acl, 12);
-    gtk_box_append(GTK_BOX(card), acl);
+    guint list_count =
+      gn_communikeys_section_item_get_profile_list_count(section);
+    for (guint j = 0; j < list_count; j++) {
+      const char *relay =
+        gn_communikeys_section_item_get_profile_list_relay(section, j);
+      g_autofree gchar *coordinate = g_strdup_printf(
+        "ACL shard: 30000:%s:%s%s%s",
+        gn_communikeys_section_item_get_profile_list_author(section, j),
+        gn_communikeys_section_item_get_profile_list_identifier(section, j),
+        relay ? " · " : "", relay ? relay : "");
+      GtkWidget *acl = left_label(coordinate, "dim-label");
+      gtk_widget_set_margin_start(acl, 12);
+      gtk_widget_set_margin_end(acl, 12);
+      gtk_box_append(GTK_BOX(card), acl);
+    }
+    if (list_count == 0) {
+      GtkWidget *acl = left_label(
+        "No profile lists — owner and delegated authors only", "dim-label");
+      gtk_widget_set_margin_start(acl, 12);
+      gtk_widget_set_margin_end(acl, 12);
+      gtk_box_append(GTK_BOX(card), acl);
+    }
 
     g_autofree gchar *state = g_strdup_printf(
       "%s · %u member%s",
@@ -163,10 +174,10 @@ static void update_publish_controls(GnCommunikeysCommunityView *self) {
     gn_communikeys_community_service_get_current_pubkey(self->service);
   gboolean can_kind_9 = user &&
     gn_communikeys_community_service_author_can_publish(
-      self->service, self->pubkey, 9, user);
+      self->service, self->address, 9, user);
   gboolean can_kind_11 = user &&
     gn_communikeys_community_service_author_can_publish(
-      self->service, self->pubkey, 11, user);
+      self->service, self->address, 11, user);
   gboolean chat = can_kind_9 || can_kind_11;
   gn_communikeys_composer_set_allowed_kinds(
     self->composer, can_kind_9, can_kind_11);
@@ -180,15 +191,15 @@ static void update_publish_controls(GnCommunikeysCommunityView *self) {
 }
 
 static void on_service_updated(GnCommunikeysCommunityService *service,
-                               const char *pubkey, guint flags,
+                               const char *address, guint flags,
                                gpointer user_data) {
   (void)flags;
   GnCommunikeysCommunityView *self =
     GN_COMMUNIKEYS_COMMUNITY_VIEW(user_data);
-  if (g_strcmp0(pubkey, self->pubkey) != 0) return;
+  if (g_strcmp0(address, self->address) != 0) return;
   g_clear_object(&self->item);
   self->item = gn_communikeys_community_service_lookup_community(
-    service, self->pubkey);
+    service, self->address);
   rebuild_overview(self);
   update_publish_controls(self);
 }
@@ -312,7 +323,7 @@ static void on_send_requested(GnCommunikeysComposer *composer,
   gn_communikeys_composer_set_send_sensitive(composer, FALSE);
   set_status(self->composer_status, "Requesting signature…", FALSE);
   gn_communikeys_community_service_publish_exclusive_async(
-    self->service, self->pubkey, kind, content,
+    self->service, self->address, kind, content,
     self->chat_cancellable, on_chat_done, g_object_ref(self));
 }
 
@@ -349,20 +360,29 @@ static void on_publish_target(GtkButton *button, gpointer user_data) {
     return;
   }
   g_autofree gchar *identifier = g_uuid_string_random();
-  nostr_communikeys_target_t target = {
-    .pubkey = self->pubkey,
-    .relay = (char *)gn_communikeys_community_item_get_main_relay(self->item)
-  };
+  /* One adjacent h+a pair targeting THIS exact branch. */
+  nostr_communikeys_community_target_t target;
+  memset(&target, 0, sizeof(target));
+  nostr_communikeys_branch_t branch;
+  if (!nostr_communikeys_branch_parse(self->address, &branch)) {
+    set_status(self->target_status, "Invalid community branch address.", TRUE);
+    return;
+  }
+  target.branch = branch;
+  memcpy(target.community_id, branch.community_id, sizeof(target.community_id));
+  target.relay = (char *)gn_communikeys_community_item_get_main_relay(self->item);
+  /* The current user signs as CURATOR; the original may have any author. */
   nostr_communikeys_targeted_publication_t publication = {
     .identifier = identifier,
+    .has_source = true,
     .reference_type = strchr(reference, ':')
       ? NOSTR_COMMUNIKEYS_REFERENCE_ADDRESS
       : NOSTR_COMMUNIKEYS_REFERENCE_EVENT,
     .reference = (char *)reference,
     .reference_relay = NULL,
-    .reference_author = (char *)author,
+    .reference_author = NULL,
     .original_kind = gtk_spin_button_get_value_as_int(self->target_kind),
-    .original_author = (char *)author,
+    .curator = (char *)author,
     .targets = &target,
     .targets_len = 1
   };
@@ -418,7 +438,7 @@ static void gn_communikeys_community_view_dispose(GObject *object) {
 static void gn_communikeys_community_view_finalize(GObject *object) {
   GnCommunikeysCommunityView *self =
     GN_COMMUNIKEYS_COMMUNITY_VIEW(object);
-  g_free(self->pubkey);
+  g_free(self->address);
   G_OBJECT_CLASS(gn_communikeys_community_view_parent_class)->finalize(object);
 }
 static void gn_communikeys_community_view_class_init(
@@ -443,16 +463,22 @@ GnCommunikeysCommunityView *gn_communikeys_community_view_new(
     g_object_new(GN_TYPE_COMMUNIKEYS_COMMUNITY_VIEW, NULL);
   self->service = g_object_ref(service);
   self->item = g_object_ref(item);
-  self->pubkey = g_strdup(
-    gn_communikeys_community_item_get_pubkey(item));
+  self->address = g_strdup(
+    gn_communikeys_community_item_get_address(item));
 
   GtkWidget *header = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
   gtk_widget_set_margin_start(header, 12);
   gtk_widget_set_margin_end(header, 12);
   gtk_widget_set_margin_top(header, 10);
   gtk_widget_set_margin_bottom(header, 8);
-  g_autofree gchar *title = short_pubkey(self->pubkey);
-  gtk_box_append(GTK_BOX(header), left_label(title, "title-2"));
+  /* Definition-native metadata: the name tag is the display name. */
+  gtk_box_append(GTK_BOX(header), left_label(
+    gn_communikeys_community_item_get_name(item), "title-2"));
+  g_autofree gchar *owner_short = short_pubkey(
+    gn_communikeys_community_item_get_owner_pubkey(item));
+  g_autofree gchar *branch_line = g_strdup_printf(
+    "Branch owner %s", owner_short);
+  gtk_box_append(GTK_BOX(header), left_label(branch_line, "dim-label"));
   gtk_box_append(GTK_BOX(header), left_label(
     gn_communikeys_community_item_get_description(item), NULL));
   gtk_box_append(GTK_BOX(header), left_label(
@@ -475,7 +501,7 @@ GnCommunikeysCommunityView *gn_communikeys_community_view_new(
   gtk_stack_add_titled(stack, overview_scroll, "sections", "Sections");
 
   GListModel *messages = gn_communikeys_community_service_get_messages(
-    service, self->pubkey);
+    service, self->address);
   GtkWidget *chat = model_page(
     messages, G_CALLBACK(on_message_setup), G_CALLBACK(on_message_bind),
     "No authorized kind-9/11 publications.");
@@ -491,7 +517,7 @@ GnCommunikeysCommunityView *gn_communikeys_community_view_new(
   gtk_stack_add_titled(stack, chat, "chat", "Chat");
 
   GListModel *targets = gn_communikeys_community_service_get_targets(
-    service, self->pubkey);
+    service, self->address);
   GtkWidget *target_page = model_page(
     targets, G_CALLBACK(on_target_setup), G_CALLBACK(on_target_bind),
     "No verified targeted publications.");
@@ -521,7 +547,7 @@ GnCommunikeysCommunityView *gn_communikeys_community_view_new(
   gtk_box_append(GTK_BOX(editor), GTK_WIDGET(self->target_publish));
   gtk_box_append(GTK_BOX(target_page), editor);
   self->target_status = GTK_LABEL(gtk_label_new(
-    "The original, author, kind, targets, and section ACL are verified before signing."));
+    "The original, its author's grants, kind, and branch targets are verified before signing."));
   gtk_label_set_wrap(self->target_status, TRUE);
   gtk_widget_add_css_class(GTK_WIDGET(self->target_status), "dim-label");
   gtk_widget_set_margin_start(GTK_WIDGET(self->target_status), 12);

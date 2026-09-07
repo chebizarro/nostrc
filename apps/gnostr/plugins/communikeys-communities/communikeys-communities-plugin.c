@@ -55,7 +55,9 @@ static const char *get_name(GnostrPlugin *plugin) {
 }
 static const char *get_description(GnostrPlugin *plugin) {
   (void)plugin;
-  return "Pubkey-owned communities using NIP-CAS-0007 profile-list access.";
+  return "Communikeys V2 communities: kind-32222 branch definitions on "
+         "opaque community IDs with union profile-list access "
+         "(NIP-CAS-0007).";
 }
 static const char * const *get_authors(GnostrPlugin *plugin) {
   (void)plugin;
@@ -63,11 +65,11 @@ static const char * const *get_authors(GnostrPlugin *plugin) {
   return authors;
 }
 static const char *get_version(GnostrPlugin *plugin) {
-  (void)plugin; return "0.2";
+  (void)plugin; return "0.3";
 }
 static const int *get_supported_kinds(GnostrPlugin *plugin, gsize *n_kinds) {
   (void)plugin;
-  static const int kinds[] = { 9, 11, 10222, 30000, 30222 };
+  static const int kinds[] = { 9, 11, 30000, 30222, 32222 };
   if (n_kinds) *n_kinds = G_N_ELEMENTS(kinds);
   return kinds;
 }

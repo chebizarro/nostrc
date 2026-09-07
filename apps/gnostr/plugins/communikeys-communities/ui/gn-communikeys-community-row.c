@@ -50,9 +50,14 @@ void gn_communikeys_community_row_bind(
   g_return_if_fail(GN_IS_COMMUNIKEYS_COMMUNITY_ROW(self));
   g_return_if_fail(GN_IS_COMMUNIKEYS_COMMUNITY_ITEM(item));
   g_set_object(&self->item, item);
-  const char *pubkey = gn_communikeys_community_item_get_pubkey(item);
-  g_autofree gchar *title = pubkey && strlen(pubkey) > 16
-    ? g_strdup_printf("%.16s…", pubkey) : g_strdup(pubkey);
+  /* Display name comes from the definition's required name tag; the owner
+   * suffix keeps same-ID branches visually distinct. */
+  const char *owner = gn_communikeys_community_item_get_owner_pubkey(item);
+  g_autofree gchar *owner_short = owner && strlen(owner) > 8
+    ? g_strdup_printf("%.8s…", owner) : g_strdup(owner);
+  g_autofree gchar *title = g_strdup_printf(
+    "%s · %s",
+    gn_communikeys_community_item_get_name(item), owner_short);
   gtk_label_set_text(self->title, title);
   gtk_label_set_text(self->description,
     gn_communikeys_community_item_get_description(item));

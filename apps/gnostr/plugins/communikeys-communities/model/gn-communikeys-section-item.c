@@ -5,13 +5,17 @@ typedef struct {
   gchar *subtype;
 } Assignment;
 
+typedef struct {
+  gchar *author;
+  gchar *identifier;
+  gchar *relay;
+} ProfileListRef;
+
 struct _GnCommunikeysSectionItem {
   GObject parent_instance;
-  gchar *community_pubkey;
+  gchar *definition_address;
   gchar *name;
-  gchar *acl_publisher;
-  gchar *acl_identifier;
-  gchar *acl_relay;
+  GArray *profile_lists;
   GArray *assignments;
   GPtrArray *badges;
   GPtrArray *members;
@@ -27,6 +31,13 @@ static void assignment_clear(gpointer data) {
   g_free(assignment->subtype);
 }
 
+static void profile_list_ref_clear(gpointer data) {
+  ProfileListRef *ref = data;
+  g_free(ref->author);
+  g_free(ref->identifier);
+  g_free(ref->relay);
+}
+
 static gint string_compare(gconstpointer a, gconstpointer b) {
   const char * const *sa = a;
   const char * const *sb = b;
@@ -35,11 +46,9 @@ static gint string_compare(gconstpointer a, gconstpointer b) {
 
 static void gn_communikeys_section_item_finalize(GObject *object) {
   GnCommunikeysSectionItem *self = GN_COMMUNIKEYS_SECTION_ITEM(object);
-  g_free(self->community_pubkey);
+  g_free(self->definition_address);
   g_free(self->name);
-  g_free(self->acl_publisher);
-  g_free(self->acl_identifier);
-  g_free(self->acl_relay);
+  g_clear_pointer(&self->profile_lists, g_array_unref);
   g_clear_pointer(&self->assignments, g_array_unref);
   g_clear_pointer(&self->badges, g_ptr_array_unref);
   g_clear_pointer(&self->members, g_ptr_array_unref);
@@ -56,6 +65,8 @@ static void gn_communikeys_section_item_init(
     GnCommunikeysSectionItem *self) {
   self->assignments = g_array_new(FALSE, FALSE, sizeof(Assignment));
   g_array_set_clear_func(self->assignments, assignment_clear);
+  self->profile_lists = g_array_new(FALSE, FALSE, sizeof(ProfileListRef));
+  g_array_set_clear_func(self->profile_lists, profile_list_ref_clear);
   self->badges = g_ptr_array_new_with_free_func(g_free);
   self->members = g_ptr_array_new_with_free_func(g_free);
   self->acl_state = GN_COMMUNIKEYS_ACL_UNRESOLVED;
@@ -63,17 +74,24 @@ static void gn_communikeys_section_item_init(
 }
 
 GnCommunikeysSectionItem *gn_communikeys_section_item_new(
-    const char *community_pubkey,
+    const char *definition_address,
     const nostr_communikeys_section_t *section) {
-  g_return_val_if_fail(community_pubkey != NULL, NULL);
+  g_return_val_if_fail(definition_address != NULL, NULL);
   g_return_val_if_fail(section != NULL, NULL);
   GnCommunikeysSectionItem *self =
     g_object_new(GN_TYPE_COMMUNIKEYS_SECTION_ITEM, NULL);
-  self->community_pubkey = g_strdup(community_pubkey);
+  self->definition_address = g_strdup(definition_address);
   self->name = g_strdup(section->name);
-  self->acl_publisher = g_strdup(section->profile_list.pubkey);
-  self->acl_identifier = g_strdup(section->profile_list.identifier);
-  self->acl_relay = g_strdup(section->profile_list.relay);
+  for (gsize i = 0; i < section->profile_lists_len; i++) {
+    const nostr_communikeys_profile_list_ref_t *source =
+      &section->profile_lists[i];
+    ProfileListRef ref = {
+      .author = g_strdup(source->coordinate.pubkey),
+      .identifier = g_strdup(source->coordinate.identifier),
+      .relay = g_strdup(source->coordinate.relay)
+    };
+    g_array_append_val(self->profile_lists, ref);
+  }
   for (gsize i = 0; i < section->assignments_len; i++) {
     Assignment assignment = {
       .kind = section->assignments[i].kind,
@@ -82,39 +100,47 @@ GnCommunikeysSectionItem *gn_communikeys_section_item_new(
     g_array_append_val(self->assignments, assignment);
   }
   for (gsize i = 0; i < section->badges_len; i++)
-    g_ptr_array_add(self->badges, g_strdup(section->badges[i]));
-  if (g_strcmp0(self->acl_publisher, community_pubkey) != 0)
+    g_ptr_array_add(self->badges, g_strdup(section->badges[i].coordinate));
+  if (section->profile_lists_len == 0)
     gn_communikeys_section_item_set_acl(
-      self, GN_COMMUNIKEYS_ACL_UNTRUSTED_PUBLISHER,
-      "Untrusted ACL publisher — policy requires the community key",
+      self, GN_COMMUNIKEYS_ACL_GRANT_FREE,
+      "Grant-free section — owner and referenced delegated authors only",
       NULL, 0);
   return self;
 }
 
-const char *gn_communikeys_section_item_get_community_pubkey(
+const char *gn_communikeys_section_item_get_definition_address(
     GnCommunikeysSectionItem *self) {
   g_return_val_if_fail(GN_IS_COMMUNIKEYS_SECTION_ITEM(self), NULL);
-  return self->community_pubkey;
+  return self->definition_address;
 }
 const char *gn_communikeys_section_item_get_name(
     GnCommunikeysSectionItem *self) {
   g_return_val_if_fail(GN_IS_COMMUNIKEYS_SECTION_ITEM(self), NULL);
   return self->name;
 }
-const char *gn_communikeys_section_item_get_acl_publisher(
+guint gn_communikeys_section_item_get_profile_list_count(
     GnCommunikeysSectionItem *self) {
-  g_return_val_if_fail(GN_IS_COMMUNIKEYS_SECTION_ITEM(self), NULL);
-  return self->acl_publisher;
+  g_return_val_if_fail(GN_IS_COMMUNIKEYS_SECTION_ITEM(self), 0);
+  return self->profile_lists->len;
 }
-const char *gn_communikeys_section_item_get_acl_identifier(
-    GnCommunikeysSectionItem *self) {
+const char *gn_communikeys_section_item_get_profile_list_author(
+    GnCommunikeysSectionItem *self, guint index) {
   g_return_val_if_fail(GN_IS_COMMUNIKEYS_SECTION_ITEM(self), NULL);
-  return self->acl_identifier;
+  if (index >= self->profile_lists->len) return NULL;
+  return g_array_index(self->profile_lists, ProfileListRef, index).author;
 }
-const char *gn_communikeys_section_item_get_acl_relay(
-    GnCommunikeysSectionItem *self) {
+const char *gn_communikeys_section_item_get_profile_list_identifier(
+    GnCommunikeysSectionItem *self, guint index) {
   g_return_val_if_fail(GN_IS_COMMUNIKEYS_SECTION_ITEM(self), NULL);
-  return self->acl_relay;
+  if (index >= self->profile_lists->len) return NULL;
+  return g_array_index(self->profile_lists, ProfileListRef, index).identifier;
+}
+const char *gn_communikeys_section_item_get_profile_list_relay(
+    GnCommunikeysSectionItem *self, guint index) {
+  g_return_val_if_fail(GN_IS_COMMUNIKEYS_SECTION_ITEM(self), NULL);
+  if (index >= self->profile_lists->len) return NULL;
+  return g_array_index(self->profile_lists, ProfileListRef, index).relay;
 }
 guint gn_communikeys_section_item_get_assignment_count(
     GnCommunikeysSectionItem *self) {

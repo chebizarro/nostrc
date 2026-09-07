@@ -20,15 +20,20 @@ typedef struct {
   gint64 created_at;
 } AclSlot;
 
+/* One community BRANCH, keyed by its exact definition address
+ * "32222:<owner>:<communityId>". Same-ID branches from different owners are
+ * independent states with independent metadata, grants, and content. */
 typedef struct {
-  gchar *pubkey;
+  gchar *address;
+  gchar *owner;
+  gchar *community_id;
   NostrEvent *definition_event;
   nostr_communikeys_definition_t definition;
   gboolean has_definition;
   gchar *definition_id;
   gint64 definition_created_at;
   GnCommunikeysCommunityItem *item;
-  AclSlot *acls;
+  AclSlot **acls; /* [section][profile-list reference] — multi-shard slots */
   GListStore *messages;
   GListStore *targets;
 } CommunityState;
@@ -43,7 +48,7 @@ struct _GnCommunikeysCommunityService {
   GnostrPluginContext *context; /* host-owned */
   gchar *offline_user_pubkey;
   GListStore *communities;
-  GHashTable *states;   /* pubkey -> CommunityState */
+  GHashTable *states;   /* definition address -> CommunityState */
   GHashTable *originals; /* event id/address -> NostrEvent */
   GPtrArray *raw_exclusive; /* RawEvent */
   GPtrArray *raw_targets;   /* RawEvent */
@@ -79,9 +84,9 @@ static void emit_error(GnCommunikeysCommunityService *self,
 }
 
 static void emit_update(GnCommunikeysCommunityService *self,
-                        const char *pubkey,
+                        const char *address,
                         GnCommunikeysUpdateFlags flags) {
-  g_signal_emit(self, signals[COMMUNITY_UPDATED], 0, pubkey, (guint)flags);
+  g_signal_emit(self, signals[COMMUNITY_UPDATED], 0, address, (guint)flags);
 }
 
 static void acl_slot_clear(AclSlot *slot) {
@@ -93,9 +98,13 @@ static void acl_slot_clear(AclSlot *slot) {
 
 static void community_state_clear_definition(CommunityState *state) {
   if (!state) return;
-  if (state->acls && state->has_definition)
-    for (gsize i = 0; i < state->definition.sections_len; i++)
-      acl_slot_clear(&state->acls[i]);
+  if (state->acls && state->has_definition) {
+    for (gsize i = 0; i < state->definition.sections_len; i++) {
+      for (gsize j = 0; j < state->definition.sections[i].profile_lists_len; j++)
+        acl_slot_clear(&state->acls[i][j]);
+      g_free(state->acls[i]);
+    }
+  }
   g_clear_pointer(&state->acls, g_free);
   if (state->has_definition)
     nostr_communikeys_definition_clear(&state->definition);
@@ -110,15 +119,21 @@ static void community_state_free(gpointer data) {
   CommunityState *state = data;
   if (!state) return;
   community_state_clear_definition(state);
-  g_free(state->pubkey);
+  g_free(state->address);
+  g_free(state->owner);
+  g_free(state->community_id);
   g_clear_object(&state->messages);
   g_clear_object(&state->targets);
   g_free(state);
 }
 
-static CommunityState *community_state_new(const char *pubkey) {
+static CommunityState *community_state_new(const char *address,
+                                           const char *owner,
+                                           const char *community_id) {
   CommunityState *state = g_new0(CommunityState, 1);
-  state->pubkey = g_strdup(pubkey);
+  state->address = g_strdup(address);
+  state->owner = g_strdup(owner);
+  state->community_id = g_strdup(community_id);
   state->messages = g_list_store_new(GN_TYPE_COMMUNIKEYS_MESSAGE_ITEM);
   state->targets = g_list_store_new(GN_TYPE_COMMUNIKEYS_TARGETED_ITEM);
   return state;
@@ -148,17 +163,17 @@ static gboolean raw_cache_add(GPtrArray *cache, const char *id,
 }
 
 static CommunityState *find_state(GnCommunikeysCommunityService *self,
-                                  const char *pubkey) {
-  return pubkey ? g_hash_table_lookup(self->states, pubkey) : NULL;
+                                  const char *address) {
+  return address ? g_hash_table_lookup(self->states, address) : NULL;
 }
 
 static gint find_community_index(GnCommunikeysCommunityService *self,
-                                 const char *pubkey) {
+                                 const char *address) {
   guint n = g_list_model_get_n_items(G_LIST_MODEL(self->communities));
   for (guint i = 0; i < n; i++) {
     g_autoptr(GnCommunikeysCommunityItem) item =
       g_list_model_get_item(G_LIST_MODEL(self->communities), i);
-    if (g_strcmp0(gn_communikeys_community_item_get_pubkey(item), pubkey) == 0)
+    if (g_strcmp0(gn_communikeys_community_item_get_address(item), address) == 0)
       return (gint)i;
   }
   return -1;
@@ -273,6 +288,10 @@ static gboolean resolve_assignment(CommunityState *state, int kind,
   return TRUE;
 }
 
+/* V2 grant evaluation: the union of current valid `p` grants across every
+ * shard the section references, plus the owner's inherent authority and the
+ * structural role of referenced delegated list authors — all evaluated by
+ * nostr_communikeys_author_can_publish. */
 static gboolean state_author_can_publish(CommunityState *state, int kind,
                                          const char *author_pubkey,
                                          gsize *section_index_out) {
@@ -280,12 +299,22 @@ static gboolean state_author_can_publish(CommunityState *state, int kind,
   const char *subtype = NULL;
   if (!author_pubkey ||
       !resolve_assignment(state, kind, &section_index, &subtype) ||
-      !state->acls || !state->acls[section_index].event)
+      !state->acls)
     return FALSE;
-  if (!nostr_communikeys_author_can_publish(
-        &state->definition, kind, subtype,
-        state->acls[section_index].event, author_pubkey))
-    return FALSE;
+  const nostr_communikeys_section_t *section =
+    &state->definition.sections[section_index];
+  const NostrEvent **events = NULL;
+  gsize events_len = 0;
+  if (section->profile_lists_len) {
+    events = g_new0(const NostrEvent *, section->profile_lists_len);
+    for (gsize i = 0; i < section->profile_lists_len; i++)
+      if (state->acls[section_index][i].event)
+        events[events_len++] = state->acls[section_index][i].event;
+  }
+  gboolean allowed = nostr_communikeys_author_can_publish(
+    &state->definition, kind, subtype, events, events_len, author_pubkey);
+  g_free(events);
+  if (!allowed) return FALSE;
   if (section_index_out) *section_index_out = section_index;
   return TRUE;
 }
@@ -329,7 +358,7 @@ static void cache_original(GnCommunikeysCommunityService *self,
   }
 }
 
-static NostrEvent *resolve_original(
+static NostrEvent *resolve_sourced_original(
     GnCommunikeysCommunityService *self,
     const nostr_communikeys_targeted_publication_t *publication) {
   NostrEvent *original =
@@ -365,6 +394,97 @@ static NostrEvent *resolve_original(
   return g_hash_table_lookup(self->originals, publication->reference);
 }
 
+/* Sourceless wrapper (V2): the original uses the wrapper `d` as its targeting
+ * `h` and shares the wrapper author. */
+static NostrEvent *resolve_sourceless_original(
+    GnCommunikeysCommunityService *self,
+    const NostrEvent *wrapper,
+    const nostr_communikeys_targeted_publication_t *publication) {
+  if (self->context) {
+    int kind = publication->original_kind;
+    g_autoptr(GError) error = NULL;
+    g_autofree gchar *filter = build_filter(
+      &kind, 1, publication->curator, "#h", publication->identifier, 20);
+    g_autoptr(GPtrArray) events = gnostr_plugin_context_query_events(
+      self->context, filter, &error);
+    if (events)
+      for (guint i = 0; i < events->len; i++) {
+        g_autoptr(NostrEvent) parsed = NULL;
+        if (parse_verified_event(g_ptr_array_index(events, i), &parsed, NULL))
+          cache_original(self, parsed);
+      }
+  }
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, self->originals);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    NostrEvent *candidate = value;
+    if (!candidate) continue;
+    if (nostr_event_get_kind(candidate) != publication->original_kind) continue;
+    if (g_strcmp0(nostr_event_get_pubkey(candidate),
+                  publication->curator) != 0) continue;
+    if (nostr_communikeys_targeted_publication_validate(
+          (NostrEvent *)wrapper, candidate) == NOSTR_COMMUNIKEYS_OK)
+      return candidate;
+  }
+  return NULL;
+}
+
+static NostrEvent *resolve_original(
+    GnCommunikeysCommunityService *self,
+    const NostrEvent *wrapper,
+    const nostr_communikeys_targeted_publication_t *publication) {
+  return publication->has_source
+    ? resolve_sourced_original(self, publication)
+    : resolve_sourceless_original(self, wrapper, publication);
+}
+
+/* Recomputes one section's ACL presentation from its shard slots: the
+ * effective member set is the union of current valid `p` grants across every
+ * referenced coordinate. */
+static void update_section_acl_view(CommunityState *state,
+                                    gsize section_index) {
+  if (!state->item || !state->acls) return;
+  const nostr_communikeys_section_t *section =
+    &state->definition.sections[section_index];
+  g_autoptr(GnCommunikeysSectionItem) item =
+    gn_communikeys_community_item_get_section(state->item, (guint)section_index);
+  if (!item) return;
+  if (section->profile_lists_len == 0) return; /* stays GRANT_FREE */
+
+  GPtrArray *members = g_ptr_array_new_with_free_func(g_free);
+  guint resolved = 0;
+  for (gsize i = 0; i < section->profile_lists_len; i++) {
+    AclSlot *slot = &state->acls[section_index][i];
+    if (!slot->event) continue;
+    nostr_communikeys_profile_list_t list;
+    if (nostr_communikeys_profile_list_parse(
+          slot->event,
+          section->profile_lists[i].coordinate.pubkey,
+          section->profile_lists[i].coordinate.identifier,
+          &list) != NOSTR_COMMUNIKEYS_OK)
+      continue;
+    resolved++;
+    for (gsize j = 0; j < list.members_len; j++)
+      g_ptr_array_add(members, g_strdup(list.members[j]));
+    nostr_communikeys_profile_list_clear(&list);
+  }
+  if (resolved == 0) {
+    gn_communikeys_section_item_set_acl(
+      item, GN_COMMUNIKEYS_ACL_UNRESOLVED,
+      "ACL not loaded — publishing disabled", NULL, 0);
+  } else {
+    g_autofree gchar *status = g_strdup_printf(
+      "Verified profile-list ACL (%u of %u shard%s, union of grants)",
+      resolved, (guint)section->profile_lists_len,
+      section->profile_lists_len == 1 ? "" : "s");
+    gn_communikeys_section_item_set_acl(
+      item, GN_COMMUNIKEYS_ACL_VERIFIED, status,
+      (char * const *)members->pdata, members->len);
+  }
+  g_ptr_array_unref(members);
+}
+
 static gboolean ingest_definition(GnCommunikeysCommunityService *self,
                                   NostrEvent *event,
                                   const char *event_id) {
@@ -380,7 +500,15 @@ static gboolean ingest_definition(GnCommunikeysCommunityService *self,
     return FALSE;
   }
 
-  CommunityState *state = find_state(self, definition.pubkey);
+  char *address_raw = nostr_communikeys_branch_format(&definition.branch);
+  if (!address_raw) {
+    nostr_communikeys_definition_clear(&definition);
+    return FALSE;
+  }
+  g_autofree gchar *address = g_strdup(address_raw);
+  free(address_raw);
+
+  CommunityState *state = find_state(self, address);
   if (state &&
       !event_is_newer(nostr_event_get_created_at(event), event_id,
                       state->definition_created_at, state->definition_id)) {
@@ -388,10 +516,11 @@ static gboolean ingest_definition(GnCommunikeysCommunityService *self,
     return FALSE;
   }
 
-  gint model_index = find_community_index(self, definition.pubkey);
+  gint model_index = find_community_index(self, address);
   if (!state) {
-    state = community_state_new(definition.pubkey);
-    g_hash_table_insert(self->states, g_strdup(definition.pubkey), state);
+    state = community_state_new(address, definition.branch.owner,
+                                definition.branch.community_id);
+    g_hash_table_insert(self->states, g_strdup(address), state);
   } else {
     community_state_clear_definition(state);
   }
@@ -401,9 +530,14 @@ static gboolean ingest_definition(GnCommunikeysCommunityService *self,
   state->definition_event = clone_event(event);
   state->definition_id = g_strdup(event_id);
   state->definition_created_at = nostr_event_get_created_at(event);
-  state->acls = g_new0(AclSlot, definition.sections_len);
+  state->acls = g_new0(AclSlot *, definition.sections_len);
+  for (gsize i = 0; i < definition.sections_len; i++)
+    state->acls[i] = g_new0(AclSlot,
+                            definition.sections[i].profile_lists_len
+                              ? definition.sections[i].profile_lists_len : 1);
   state->item = gn_communikeys_community_item_new(
-    &state->definition, state->definition_id, state->definition_created_at);
+    &state->definition, state->address,
+    state->definition_id, state->definition_created_at);
 
   if (model_index >= 0) {
     g_list_store_remove(self->communities, (guint)model_index);
@@ -413,9 +547,9 @@ static gboolean ingest_definition(GnCommunikeysCommunityService *self,
   }
 
   rebuild_authorized_content(self);
-  emit_update(self, state->pubkey, GN_COMMUNIKEYS_UPDATE_DEFINITION);
+  emit_update(self, state->address, GN_COMMUNIKEYS_UPDATE_DEFINITION);
   if (self->context)
-    gn_communikeys_community_service_refresh_community(self, state->pubkey);
+    gn_communikeys_community_service_refresh_community(self, state->address);
   return TRUE;
 }
 
@@ -430,48 +564,48 @@ static gboolean ingest_acl(GnCommunikeysCommunityService *self,
   g_hash_table_iter_init(&iter, self->states);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     CommunityState *state = value;
+    if (!state->has_definition) continue;
     for (gsize i = 0; i < state->definition.sections_len; i++) {
       nostr_communikeys_section_t *section = &state->definition.sections[i];
-      if (g_strcmp0(section->profile_list.pubkey, publisher) != 0 ||
-          g_strcmp0(section->profile_list.identifier, identifier) != 0)
-        continue;
-      g_autoptr(GnCommunikeysSectionItem) item =
-        gn_communikeys_community_item_get_section(state->item, (guint)i);
-      if (g_strcmp0(publisher, state->pubkey) != 0) {
-        gn_communikeys_section_item_set_acl(
-          item, GN_COMMUNIKEYS_ACL_UNTRUSTED_PUBLISHER,
-          "Untrusted ACL publisher — policy requires the community key",
-          NULL, 0);
-        continue;
-      }
+      for (gsize j = 0; j < section->profile_lists_len; j++) {
+        const nostr_communikeys_profile_list_ref_t *ref =
+          &section->profile_lists[j];
+        /* V2: list authors are ordinary delegated signers. Only the exact
+         * referenced coordinate counts — placement is authoritative. */
+        if (g_strcmp0(ref->coordinate.pubkey, publisher) != 0 ||
+            g_strcmp0(ref->coordinate.identifier, identifier) != 0)
+          continue;
 
-      nostr_communikeys_profile_list_t list;
-      nostr_communikeys_status_t status =
-        nostr_communikeys_profile_list_parse(
-          event, state->pubkey, section->profile_list.identifier, &list);
-      if (status != NOSTR_COMMUNIKEYS_OK) {
-        if (!state->acls[i].event)
-          gn_communikeys_section_item_set_acl(
-            item, GN_COMMUNIKEYS_ACL_INVALID,
-            nostr_communikeys_status_string(status), NULL, 0);
-        continue;
-      }
-      if (!event_is_newer(nostr_event_get_created_at(event), event_id,
-                          state->acls[i].created_at, state->acls[i].id)) {
+        nostr_communikeys_profile_list_t list;
+        nostr_communikeys_status_t status =
+          nostr_communikeys_profile_list_parse(
+            event, ref->coordinate.pubkey,
+            ref->coordinate.identifier, &list);
+        if (status != NOSTR_COMMUNIKEYS_OK) {
+          if (!state->acls[i][j].event) {
+            g_autoptr(GnCommunikeysSectionItem) item =
+              gn_communikeys_community_item_get_section(state->item, (guint)i);
+            if (item)
+              gn_communikeys_section_item_set_acl(
+                item, GN_COMMUNIKEYS_ACL_INVALID,
+                nostr_communikeys_status_string(status), NULL, 0);
+          }
+          continue;
+        }
         nostr_communikeys_profile_list_clear(&list);
-        continue;
-      }
+        if (!event_is_newer(nostr_event_get_created_at(event), event_id,
+                            state->acls[i][j].created_at,
+                            state->acls[i][j].id))
+          continue;
 
-      acl_slot_clear(&state->acls[i]);
-      state->acls[i].event = clone_event(event);
-      state->acls[i].id = g_strdup(event_id);
-      state->acls[i].created_at = nostr_event_get_created_at(event);
-      gn_communikeys_section_item_set_acl(
-        item, GN_COMMUNIKEYS_ACL_VERIFIED, "Verified profile-list ACL",
-        list.members, list.members_len);
-      nostr_communikeys_profile_list_clear(&list);
-      accepted = TRUE;
-      emit_update(self, state->pubkey, GN_COMMUNIKEYS_UPDATE_ACL);
+        acl_slot_clear(&state->acls[i][j]);
+        state->acls[i][j].event = clone_event(event);
+        state->acls[i][j].id = g_strdup(event_id);
+        state->acls[i][j].created_at = nostr_event_get_created_at(event);
+        update_section_acl_view(state, i);
+        accepted = TRUE;
+        emit_update(self, state->address, GN_COMMUNIKEYS_UPDATE_ACL);
+      }
     }
   }
   if (accepted) rebuild_authorized_content(self);
@@ -512,30 +646,41 @@ static gboolean process_exclusive_event(GnCommunikeysCommunityService *self,
                                         NostrEvent *event,
                                         const char *event_json,
                                         gboolean emit_changed) {
-  char community_pubkey[65] = {0};
-  if (nostr_communikeys_exclusive_validate(event, community_pubkey) !=
+  char community_id[65] = {0};
+  if (nostr_communikeys_exclusive_validate(event, community_id) !=
       NOSTR_COMMUNIKEYS_OK)
     return FALSE;
-  CommunityState *state = find_state(self, community_pubkey);
-  gsize section_index = 0;
-  if (!state || !state_author_can_publish(
-        state, nostr_event_get_kind(event),
-        nostr_event_get_pubkey(event), &section_index))
-    return FALSE;
 
-  g_autofree gchar *id = nostr_event_get_id(event);
-  if (!id || message_store_has(state->messages, id)) return FALSE;
-  const char *section_name =
-    state->definition.sections[section_index].name;
-  g_autoptr(GnCommunikeysMessageItem) item =
-    gn_communikeys_message_item_new(
-      id, event_json, nostr_event_get_created_at(event),
-      nostr_event_get_kind(event), nostr_event_get_pubkey(event),
-      nostr_event_get_content(event), section_name);
-  message_store_insert_sorted(state->messages, item);
-  if (emit_changed)
-    emit_update(self, state->pubkey, GN_COMMUNIKEYS_UPDATE_EXCLUSIVE);
-  return TRUE;
+  /* An h-only event does not identify a branch (V2 §Canonical Naddr): admit
+   * it independently into every branch sharing the community ID whose own
+   * authority admits the author — never merge or silently select. */
+  gboolean accepted = FALSE;
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, self->states);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    CommunityState *state = value;
+    if (g_strcmp0(state->community_id, community_id) != 0) continue;
+    gsize section_index = 0;
+    if (!state_author_can_publish(
+          state, nostr_event_get_kind(event),
+          nostr_event_get_pubkey(event), &section_index))
+      continue;
+    g_autofree gchar *id = nostr_event_get_id(event);
+    if (!id || message_store_has(state->messages, id)) continue;
+    const char *section_name =
+      state->definition.sections[section_index].name;
+    g_autoptr(GnCommunikeysMessageItem) item =
+      gn_communikeys_message_item_new(
+        id, event_json, nostr_event_get_created_at(event),
+        nostr_event_get_kind(event), nostr_event_get_pubkey(event),
+        nostr_event_get_content(event), section_name);
+    message_store_insert_sorted(state->messages, item);
+    accepted = TRUE;
+    if (emit_changed)
+      emit_update(self, state->address, GN_COMMUNIKEYS_UPDATE_EXCLUSIVE);
+  }
+  return accepted;
 }
 
 static gboolean targeted_store_insert(GListStore *store,
@@ -587,7 +732,7 @@ static gboolean process_target_event(GnCommunikeysCommunityService *self,
     nostr_communikeys_targeted_publication_clear(&publication);
     return FALSE;
   }
-  NostrEvent *original = resolve_original(self, &publication);
+  NostrEvent *original = resolve_original(self, event, &publication);
   if (!original ||
       nostr_communikeys_targeted_publication_validate(event, original) !=
         NOSTR_COMMUNIKEYS_OK) {
@@ -595,27 +740,34 @@ static gboolean process_target_event(GnCommunikeysCommunityService *self,
     return FALSE;
   }
 
+  /* Curator wrappers are valid: authorize the ORIGINAL author's grants in
+   * each targeted branch, not the wrapper signer's. */
+  const char *original_author = nostr_event_get_pubkey(original);
   g_autofree gchar *id = nostr_event_get_id(event);
   gboolean accepted = FALSE;
   for (gsize i = 0; i < publication.targets_len; i++) {
-    CommunityState *state =
-      find_state(self, publication.targets[i].pubkey);
+    char *address_raw =
+      nostr_communikeys_branch_format(&publication.targets[i].branch);
+    if (!address_raw) continue;
+    CommunityState *state = find_state(self, address_raw);
+    free(address_raw);
     gsize section_index = 0;
     if (!state || !state_author_can_publish(
           state, publication.original_kind,
-          publication.original_author, &section_index))
+          original_author, &section_index))
       continue;
     g_autoptr(GnCommunikeysTargetedItem) item =
       gn_communikeys_targeted_item_new(
         id, publication.identifier, nostr_event_get_created_at(event),
-        publication.original_author, publication.reference,
+        publication.curator,
+        publication.has_source ? publication.reference : "(sourceless)",
         publication.original_kind, nostr_event_get_content(original),
         state->definition.sections[section_index].name,
         (guint)publication.targets_len);
     if (targeted_store_insert(state->targets, item)) {
       accepted = TRUE;
       if (emit_changed)
-        emit_update(self, state->pubkey, GN_COMMUNIKEYS_UPDATE_TARGETED);
+        emit_update(self, state->address, GN_COMMUNIKEYS_UPDATE_TARGETED);
     }
   }
   nostr_communikeys_targeted_publication_clear(&publication);
@@ -712,28 +864,31 @@ static void query_and_ingest(GnCommunikeysCommunityService *self,
 }
 
 void gn_communikeys_community_service_refresh_community(
-    GnCommunikeysCommunityService *self, const char *community_pubkey) {
+    GnCommunikeysCommunityService *self, const char *definition_address) {
   g_return_if_fail(GN_IS_COMMUNIKEYS_COMMUNITY_SERVICE(self));
-  CommunityState *state = find_state(self, community_pubkey);
+  CommunityState *state = find_state(self, definition_address);
   if (!state || !self->context || self->shutting_down) return;
 
   for (gsize i = 0; i < state->definition.sections_len; i++) {
     nostr_communikeys_section_t *section = &state->definition.sections[i];
-    int kind = NOSTR_COMMUNIKEYS_KIND_PROFILE_LIST;
-    g_autofree gchar *filter = build_filter(
-      &kind, 1, section->profile_list.pubkey, "#d",
-      section->profile_list.identifier, 20);
-    query_and_ingest(self, filter);
+    for (gsize j = 0; j < section->profile_lists_len; j++) {
+      int kind = NOSTR_COMMUNIKEYS_KIND_PROFILE_LIST;
+      g_autofree gchar *filter = build_filter(
+        &kind, 1, section->profile_lists[j].coordinate.pubkey, "#d",
+        section->profile_lists[j].coordinate.identifier, 20);
+      query_and_ingest(self, filter);
+    }
   }
   const int exclusive_kinds[] = {9, 11};
   g_autofree gchar *exclusive = build_filter(
     exclusive_kinds, G_N_ELEMENTS(exclusive_kinds), NULL,
-    "#h", community_pubkey, MAX_CACHED_EVENTS);
+    "#h", state->community_id, MAX_CACHED_EVENTS);
   query_and_ingest(self, exclusive);
 
+  /* V2 wrappers are discovered by #h=<communityId>, never by #p. */
   int target_kind = CAS_TARGETED_PUBLICATION;
   g_autofree gchar *targets = build_filter(
-    &target_kind, 1, NULL, "#p", community_pubkey, MAX_CACHED_EVENTS);
+    &target_kind, 1, NULL, "#h", state->community_id, MAX_CACHED_EVENTS);
   query_and_ingest(self, targets);
 }
 
@@ -748,7 +903,7 @@ void gn_communikeys_community_service_refresh(
 
 static void subscribe(GnCommunikeysCommunityService *self) {
   self->definition_subscription = gnostr_plugin_context_subscribe_events(
-    self->context, "{\"kinds\":[10222]}",
+    self->context, "{\"kinds\":[32222]}",
     G_CALLBACK(on_event), self, NULL);
   self->acl_subscription = gnostr_plugin_context_subscribe_events(
     self->context, "{\"kinds\":[30000]}",
@@ -853,23 +1008,23 @@ GListModel *gn_communikeys_community_service_get_model(
 
 GnCommunikeysCommunityItem *
 gn_communikeys_community_service_lookup_community(
-    GnCommunikeysCommunityService *self, const char *pubkey) {
+    GnCommunikeysCommunityService *self, const char *definition_address) {
   g_return_val_if_fail(GN_IS_COMMUNIKEYS_COMMUNITY_SERVICE(self), NULL);
-  CommunityState *state = find_state(self, pubkey);
+  CommunityState *state = find_state(self, definition_address);
   return state && state->item ? g_object_ref(state->item) : NULL;
 }
 
 GListModel *gn_communikeys_community_service_get_messages(
-    GnCommunikeysCommunityService *self, const char *community_pubkey) {
+    GnCommunikeysCommunityService *self, const char *definition_address) {
   g_return_val_if_fail(GN_IS_COMMUNIKEYS_COMMUNITY_SERVICE(self), NULL);
-  CommunityState *state = find_state(self, community_pubkey);
+  CommunityState *state = find_state(self, definition_address);
   return state ? G_LIST_MODEL(state->messages) : NULL;
 }
 
 GListModel *gn_communikeys_community_service_get_targets(
-    GnCommunikeysCommunityService *self, const char *community_pubkey) {
+    GnCommunikeysCommunityService *self, const char *definition_address) {
   g_return_val_if_fail(GN_IS_COMMUNIKEYS_COMMUNITY_SERVICE(self), NULL);
-  CommunityState *state = find_state(self, community_pubkey);
+  CommunityState *state = find_state(self, definition_address);
   return state ? G_LIST_MODEL(state->targets) : NULL;
 }
 
@@ -882,11 +1037,11 @@ const char *gn_communikeys_community_service_get_current_pubkey(
 }
 
 gboolean gn_communikeys_community_service_author_can_publish(
-    GnCommunikeysCommunityService *self, const char *community_pubkey,
+    GnCommunikeysCommunityService *self, const char *definition_address,
     int kind, const char *author_pubkey) {
   g_return_val_if_fail(GN_IS_COMMUNIKEYS_COMMUNITY_SERVICE(self), FALSE);
   return state_author_can_publish(
-    find_state(self, community_pubkey), kind, author_pubkey, NULL);
+    find_state(self, definition_address), kind, author_pubkey, NULL);
 }
 
 static gboolean validate_signed_publication(
@@ -909,16 +1064,27 @@ static gboolean validate_signed_publication(
 
   int kind = nostr_event_get_kind(event);
   if (kind == 9 || kind == 11) {
-    char community[65] = {0};
-    if (nostr_communikeys_exclusive_validate(event, community) !=
-          NOSTR_COMMUNIKEYS_OK ||
-        !gn_communikeys_community_service_author_can_publish(
-          self, community, kind, current)) {
-      g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
-                  "Current ACL no longer permits this publication");
+    char community_id[65] = {0};
+    if (nostr_communikeys_exclusive_validate(event, community_id) !=
+        NOSTR_COMMUNIKEYS_OK) {
+      g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                  "Signer changed the community scope tag");
       return FALSE;
     }
-    return TRUE;
+    /* At least one branch sharing this community ID must still admit the
+     * signer. */
+    GHashTableIter iter;
+    gpointer value;
+    g_hash_table_iter_init(&iter, self->states);
+    while (g_hash_table_iter_next(&iter, NULL, &value)) {
+      CommunityState *state = value;
+      if (g_strcmp0(state->community_id, community_id) == 0 &&
+          state_author_can_publish(state, kind, current, NULL))
+        return TRUE;
+    }
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                "Current ACL no longer permits this publication");
+    return FALSE;
   }
   if (kind == CAS_TARGETED_PUBLICATION) {
     nostr_communikeys_targeted_publication_t publication;
@@ -933,14 +1099,21 @@ static gboolean validate_signed_publication(
       publication.original_kind != 11 &&
       publication.original_kind != CAS_TARGETED_PUBLICATION;
     NostrEvent *original =
-      nonexclusive ? resolve_original(self, &publication) : NULL;
+      nonexclusive ? resolve_original(self, event, &publication) : NULL;
     gboolean valid = original &&
       nostr_communikeys_targeted_publication_validate(event, original) ==
         NOSTR_COMMUNIKEYS_OK;
-    for (gsize i = 0; valid && i < publication.targets_len; i++)
-      valid = gn_communikeys_community_service_author_can_publish(
-        self, publication.targets[i].pubkey,
-        publication.original_kind, current);
+    /* Curator model: the ORIGINAL author's grants gate every target. */
+    const char *original_author =
+      original ? nostr_event_get_pubkey(original) : NULL;
+    for (gsize i = 0; valid && i < publication.targets_len; i++) {
+      char *address =
+        nostr_communikeys_branch_format(&publication.targets[i].branch);
+      valid = address != NULL &&
+        gn_communikeys_community_service_author_can_publish(
+          self, address, publication.original_kind, original_author);
+      free(address);
+    }
     nostr_communikeys_targeted_publication_clear(&publication);
     if (!valid) {
       g_set_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
@@ -1037,15 +1210,17 @@ static void return_publish_error(GnCommunikeysCommunityService *self,
 }
 
 void gn_communikeys_community_service_publish_exclusive_async(
-    GnCommunikeysCommunityService *self, const char *community_pubkey,
+    GnCommunikeysCommunityService *self, const char *definition_address,
     int kind, const char *content, GCancellable *cancellable,
     GAsyncReadyCallback callback, gpointer user_data) {
   g_return_if_fail(GN_IS_COMMUNIKEYS_COMMUNITY_SERVICE(self));
   const char *author =
     gn_communikeys_community_service_get_current_pubkey(self);
+  CommunityState *state = find_state(self, definition_address);
   if (!author || !content || !*content || (kind != 9 && kind != 11) ||
+      !state ||
       !gn_communikeys_community_service_author_can_publish(
-        self, community_pubkey, kind, author)) {
+        self, definition_address, kind, author)) {
     return_publish_error(
       self, cancellable, callback, user_data,
       G_IO_ERROR_PERMISSION_DENIED,
@@ -1053,12 +1228,14 @@ void gn_communikeys_community_service_publish_exclusive_async(
     return;
   }
 
+  /* The branch address resolves authority; the event carries the OPAQUE
+   * community ID as its exactly-one h tag. */
   g_autoptr(NostrEvent) event = nostr_event_new();
   nostr_event_set_kind(event, kind);
   nostr_event_set_pubkey(event, author);
   nostr_event_set_created_at(event, (gint64)time(NULL));
   nostr_event_set_content(event, content);
-  if (!nostr_communikeys_exclusive_add_h(event, community_pubkey)) {
+  if (!nostr_communikeys_exclusive_add_h(event, state->community_id)) {
     return_publish_error(self, cancellable, callback, user_data,
                          G_IO_ERROR_INVALID_ARGUMENT,
                          "Invalid Communikeys community identifier");
@@ -1082,8 +1259,10 @@ void gn_communikeys_community_service_publish_target_async(
   g_return_if_fail(GN_IS_COMMUNIKEYS_COMMUNITY_SERVICE(self));
   const char *author =
     gn_communikeys_community_service_get_current_pubkey(self);
+  /* The wrapper signer is the curator: it MAY differ from the original
+   * author, but it must be the current user. */
   if (!publication || !author ||
-      g_strcmp0(publication->original_author, author) != 0 ||
+      (publication->curator && g_strcmp0(publication->curator, author) != 0) ||
       publication->original_kind == 9 ||
       publication->original_kind == 11 ||
       publication->original_kind == CAS_TARGETED_PUBLICATION ||
@@ -1095,11 +1274,50 @@ void gn_communikeys_community_service_publish_target_async(
     return;
   }
 
-  NostrEvent *original = resolve_original(self, publication);
+  /* Fill relay hints from each targeted branch's main relay and dedupe on
+   * the exact definition address. */
+  g_autofree nostr_communikeys_community_target_t *targets =
+    g_new0(nostr_communikeys_community_target_t, publication->targets_len);
+  GHashTable *seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  gboolean known = TRUE;
+  for (gsize i = 0; i < publication->targets_len; i++) {
+    char *address =
+      nostr_communikeys_branch_format(&publication->targets[i].branch);
+    CommunityState *state = address ? find_state(self, address) : NULL;
+    if (!state || g_hash_table_contains(seen, address)) {
+      free(address);
+      known = FALSE;
+      break;
+    }
+    g_hash_table_add(seen, g_strdup(address));
+    free(address);
+    targets[i] = publication->targets[i];
+    if (!targets[i].relay)
+      targets[i].relay = (char *)
+        gn_communikeys_community_item_get_main_relay(state->item);
+  }
+  g_hash_table_unref(seen);
+  if (!known) {
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_INVALID_ARGUMENT,
+                         "Unknown or duplicate community branch target");
+    return;
+  }
+
+  nostr_communikeys_targeted_publication_t normalized = *publication;
+  normalized.curator = (char *)author;
+  normalized.targets = targets;
   g_autoptr(NostrEvent) probe =
     nostr_communikeys_targeted_publication_to_event(
-      publication, (gint64)time(NULL));
-  if (!original || !probe ||
+      &normalized, (gint64)time(NULL));
+  if (!probe) {
+    return_publish_error(self, cancellable, callback, user_data,
+                         G_IO_ERROR_INVALID_ARGUMENT,
+                         "Invalid kind-30222 targeting record");
+    return;
+  }
+  NostrEvent *original = resolve_original(self, probe, &normalized);
+  if (!original ||
       nostr_communikeys_targeted_publication_validate(probe, original) !=
         NOSTR_COMMUNIKEYS_OK) {
     return_publish_error(self, cancellable, callback, user_data,
@@ -1108,45 +1326,24 @@ void gn_communikeys_community_service_publish_target_async(
     return;
   }
 
-  g_autofree nostr_communikeys_target_t *targets =
-    g_new0(nostr_communikeys_target_t, publication->targets_len);
-  GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal);
-  gboolean permitted = TRUE;
+  /* Authorize the ORIGINAL author against every targeted branch. */
+  const char *original_author = nostr_event_get_pubkey(original);
   for (gsize i = 0; i < publication->targets_len; i++) {
-    CommunityState *state =
-      find_state(self, publication->targets[i].pubkey);
-    if (!state ||
-        g_hash_table_contains(seen, publication->targets[i].pubkey) ||
-        !state_author_can_publish(
-          state, publication->original_kind, author, NULL)) {
-      permitted = FALSE;
-      break;
+    char *address =
+      nostr_communikeys_branch_format(&publication->targets[i].branch);
+    gboolean permitted = address != NULL &&
+      gn_communikeys_community_service_author_can_publish(
+        self, address, publication->original_kind, original_author);
+    free(address);
+    if (!permitted) {
+      return_publish_error(self, cancellable, callback, user_data,
+                           G_IO_ERROR_PERMISSION_DENIED,
+                           "A verified ACL does not permit one or more targets");
+      return;
     }
-    g_hash_table_add(seen, publication->targets[i].pubkey);
-    targets[i].pubkey = publication->targets[i].pubkey;
-    targets[i].relay = (char *)
-      gn_communikeys_community_item_get_main_relay(state->item);
-  }
-  g_hash_table_unref(seen);
-  if (!permitted) {
-    return_publish_error(self, cancellable, callback, user_data,
-                         G_IO_ERROR_PERMISSION_DENIED,
-                         "A verified ACL does not permit one or more targets");
-    return;
   }
 
-  nostr_communikeys_targeted_publication_t normalized = *publication;
-  normalized.targets = targets;
-  g_autoptr(NostrEvent) event =
-    nostr_communikeys_targeted_publication_to_event(
-      &normalized, (gint64)time(NULL));
-  if (!event) {
-    return_publish_error(self, cancellable, callback, user_data,
-                         G_IO_ERROR_INVALID_ARGUMENT,
-                         "Invalid kind-30222 targeting record");
-    return;
-  }
-  sign_and_publish(self, event, cancellable, callback, user_data);
+  sign_and_publish(self, probe, cancellable, callback, user_data);
 }
 
 gboolean gn_communikeys_community_service_publish_target_finish(

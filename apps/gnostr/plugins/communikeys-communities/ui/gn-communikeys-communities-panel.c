@@ -90,7 +90,7 @@ static void on_activate(GtkListView *list, guint position,
   gtk_box_append(GTK_BOX(self->detail_holder), detail);
   gtk_stack_set_visible_child_name(self->navigation, "detail");
   gn_communikeys_community_service_refresh_community(
-    self->service, gn_communikeys_community_item_get_pubkey(item));
+    self->service, gn_communikeys_community_item_get_address(item));
 }
 
 static void on_error(GnCommunikeysCommunityService *service,
@@ -173,7 +173,7 @@ static GtkWidget *make_communities_page(
   gtk_widget_add_css_class(empty_title, "title-2");
   gtk_box_append(GTK_BOX(empty), empty_title);
   GtkWidget *empty_text = gtk_label_new(
-    "Signed kind-10222 definitions will appear here.");
+    "Signed kind-32222 community definitions will appear here.");
   gtk_widget_add_css_class(empty_text, "dim-label");
   gtk_box_append(GTK_BOX(empty), empty_text);
   gtk_stack_add_named(self->list_stack, empty, "empty");

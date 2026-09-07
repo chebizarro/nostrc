@@ -12,7 +12,10 @@ typedef enum {
   GN_COMMUNIKEYS_ACL_VERIFIED,
   GN_COMMUNIKEYS_ACL_MISSING,
   GN_COMMUNIKEYS_ACL_INVALID,
-  GN_COMMUNIKEYS_ACL_UNTRUSTED_PUBLISHER
+  /* A section that references no profile lists: valid, contributes no
+   * section-specific member grants (owner and referenced delegated list
+   * authors retain their inherent/structural authority). */
+  GN_COMMUNIKEYS_ACL_GRANT_FREE
 } GnCommunikeysAclState;
 
 #define GN_TYPE_COMMUNIKEYS_SECTION_ITEM (gn_communikeys_section_item_get_type())
@@ -20,19 +23,23 @@ G_DECLARE_FINAL_TYPE(GnCommunikeysSectionItem, gn_communikeys_section_item,
                      GN, COMMUNIKEYS_SECTION_ITEM, GObject)
 
 GnCommunikeysSectionItem *gn_communikeys_section_item_new(
-    const char *community_pubkey,
+    const char *definition_address,
     const nostr_communikeys_section_t *section);
 
-const char *gn_communikeys_section_item_get_community_pubkey(
+const char *gn_communikeys_section_item_get_definition_address(
     GnCommunikeysSectionItem *self);
 const char *gn_communikeys_section_item_get_name(
     GnCommunikeysSectionItem *self);
-const char *gn_communikeys_section_item_get_acl_publisher(
+/* Section-referenced kind-30000 profile-list coordinates (V2: zero or more
+ * per section; the effective grant set is the union across all of them). */
+guint gn_communikeys_section_item_get_profile_list_count(
     GnCommunikeysSectionItem *self);
-const char *gn_communikeys_section_item_get_acl_identifier(
-    GnCommunikeysSectionItem *self);
-const char *gn_communikeys_section_item_get_acl_relay(
-    GnCommunikeysSectionItem *self);
+const char *gn_communikeys_section_item_get_profile_list_author(
+    GnCommunikeysSectionItem *self, guint index);
+const char *gn_communikeys_section_item_get_profile_list_identifier(
+    GnCommunikeysSectionItem *self, guint index);
+const char *gn_communikeys_section_item_get_profile_list_relay(
+    GnCommunikeysSectionItem *self, guint index);
 guint gn_communikeys_section_item_get_assignment_count(
     GnCommunikeysSectionItem *self);
 gboolean gn_communikeys_section_item_get_assignment(
@@ -53,7 +60,8 @@ const char *gn_communikeys_section_item_get_member(
 gboolean gn_communikeys_section_item_has_member(
     GnCommunikeysSectionItem *self, const char *pubkey);
 
-/* Service-owned mutation helpers. */
+/* Service-owned mutation helpers. Members are the UNION across every shard
+ * the section references. */
 void gn_communikeys_section_item_set_acl(
     GnCommunikeysSectionItem *self, GnCommunikeysAclState state,
     const char *status, char * const *members, gsize members_len);
