@@ -442,6 +442,76 @@ done:
   return result;
 }
 
+SignetAdoptResult signet_key_store_restore_agent(SignetKeyStore *ks,
+                                                 const char *agent_id,
+                                                 const uint8_t secret_key[32],
+                                                 const char *expected_pubkey_hex,
+                                                 char out_pubkey_hex[65]) {
+  if (!ks || !agent_id || !agent_id[0] || !secret_key || !out_pubkey_hex)
+    return SIGNET_ADOPT_ERR_INTERNAL;
+
+  char sk_hex[65];
+  for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", secret_key[i]);
+  sk_hex[64] = '\0';
+  char *pk_hex = nostr_key_get_public(sk_hex);
+  sodium_memzero(sk_hex, sizeof(sk_hex));
+  if (!pk_hex || strlen(pk_hex) != 64) {
+    free(pk_hex);
+    return SIGNET_ADOPT_ERR_INVALID_SECRET;
+  }
+  if (expected_pubkey_hex && expected_pubkey_hex[0] &&
+      g_ascii_strcasecmp(pk_hex, expected_pubkey_hex) != 0) {
+    free(pk_hex);
+    return SIGNET_ADOPT_ERR_PUBKEY_MISMATCH;
+  }
+
+  SignetAdoptResult result = SIGNET_ADOPT_ERR_INTERNAL;
+  g_mutex_lock(&ks->mu);
+
+  bool exists = g_hash_table_contains(ks->cache, agent_id);
+  if (!exists && ks->store) {
+    SignetAgentRecord rec;
+    memset(&rec, 0, sizeof(rec));
+    int grc = signet_store_get_agent(ks->store, agent_id, &rec);
+    if (grc == 0) {
+      exists = true;
+      signet_agent_record_clear(&rec);
+    } else if (grc < 0) {
+      goto done;
+    }
+  }
+  if (!exists) {
+    result = SIGNET_ADOPT_ERR_AGENT_NOT_FOUND;
+    goto done;
+  }
+
+  if (ks->store) {
+    int rc = signet_store_restore_agent_key(
+        ks->store, agent_id, secret_key, pk_hex, "restored");
+    if (rc == 1) {
+      bool in_use = false;
+      if (signet_store_pubkey_in_use(ks->store, pk_hex, agent_id, &in_use) == 0 &&
+          in_use)
+        result = SIGNET_ADOPT_ERR_PUBKEY_EXISTS;
+      else
+        result = SIGNET_ADOPT_ERR_AGENT_NOT_FOUND;
+      goto done;
+    }
+    if (rc != 0) goto done;
+  }
+
+  SignetCacheEntry *entry = signet_cache_entry_new(secret_key, (int64_t)time(NULL));
+  if (!entry) goto done;
+  g_hash_table_replace(ks->cache, g_strdup(agent_id), entry);
+  g_strlcpy(out_pubkey_hex, pk_hex, 65);
+  result = SIGNET_ADOPT_OK;
+
+done:
+  g_mutex_unlock(&ks->mu);
+  free(pk_hex);
+  return result;
+}
+
 int signet_key_store_validate_connect_secret(SignetKeyStore *ks,
                                               const char *agent_id,
                                               const char *provided_secret) {

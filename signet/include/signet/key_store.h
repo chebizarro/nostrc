@@ -130,6 +130,7 @@ typedef enum {
   SIGNET_ADOPT_ERR_AGENT_EXISTS = -3,
   SIGNET_ADOPT_ERR_PUBKEY_EXISTS = -4,
   SIGNET_ADOPT_ERR_INTERNAL = -5,
+  SIGNET_ADOPT_ERR_AGENT_NOT_FOUND = -6,
 } SignetAdoptResult;
 
 /**
@@ -184,6 +185,15 @@ SignetAdoptResult signet_key_store_adopt_agent(SignetKeyStore *ks,
                                                size_t n_relay_urls,
                                                char out_pubkey_hex[65],
                                                char **out_bunker_uri);
+
+/* Restore an existing agent to a supplied canonical key while preserving its
+ * persistent NIP-46 bindings and operational metadata. The agent must already
+ * exist. The caller must zeroize secret_key after the call. */
+SignetAdoptResult signet_key_store_restore_agent(SignetKeyStore *ks,
+                                                 const char *agent_id,
+                                                 const uint8_t secret_key[32],
+                                                 const char *expected_pubkey_hex,
+                                                 char out_pubkey_hex[65]);
 
 /* Revoke an agent. Removes from hot cache and SQLCipher.
  * Returns 0 on success, 1 if not found, -1 on error. */

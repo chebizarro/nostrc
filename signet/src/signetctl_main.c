@@ -63,6 +63,10 @@ static void signetctl_usage(FILE *out) {
     "                 [--expected-pubkey <hex>] [--deliver <bootstrap_pubkey>] [--ttl <sec>]\n"
     "                           Adopt an existing (BYO) keypair as an agent\n"
     "                           (--sec - reads the secret from stdin)\n"
+    "  restore-existing <agent_id> (--sec <nsec-or-hex|->|--sec-from-store <db>)\n"
+    "                 [--expected-pubkey <hex>]\n"
+    "                           Restore an existing agent identity without\n"
+    "                           revoking its persistent client bindings\n"
     "  reissue-connect <agent_id> [--out <path>] [--show-secret]\n"
     "                           Mint a fresh one-time connect_secret for an\n"
     "                           existing agent (restart recovery). --out writes\n"
@@ -137,6 +141,7 @@ static const char *signetctl_contextvm_method(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_LIST_AGENTS:     return "agent/list";
     case SIGNET_MGMT_OP_ROTATE_KEY:      return "agent/rotate-key";
     case SIGNET_MGMT_OP_ADOPT_EXISTING:  return "agent/adopt-existing";
+    case SIGNET_MGMT_OP_RESTORE_EXISTING:return "agent/restore-existing";
     case SIGNET_MGMT_OP_REISSUE_CONNECT: return "agent/reissue-connect";
     case SIGNET_MGMT_OP_LIST_CLIENTS:    return "agent/list-clients";
     case SIGNET_MGMT_OP_REVOKE_CLIENT:   return "agent/revoke-client";
@@ -625,6 +630,8 @@ int main(int argc, char **argv) {
   const char *deliver_bootstrap_pubkey = NULL;
   int delivery_ttl = 600;
   const char *adopt_sec = NULL;
+  const char *restore_store_path = NULL;
+  char restore_sec_hex[65] = {0};
   const char *adopt_expected_pubkey = NULL;
   const char *reissue_out_path = NULL;
   bool reissue_show_secret = false;
@@ -706,16 +713,23 @@ int main(int argc, char **argv) {
       return 2;
     }
     revoke_client_pubkey = argv[argi++];
-  } else if (strcmp(cmd, "adopt-existing") == 0) {
-    op = SIGNET_MGMT_OP_ADOPT_EXISTING;
+  } else if (strcmp(cmd, "adopt-existing") == 0 ||
+             strcmp(cmd, "restore-existing") == 0) {
+    bool restoring = strcmp(cmd, "restore-existing") == 0;
+    op = restoring ? SIGNET_MGMT_OP_RESTORE_EXISTING
+                   : SIGNET_MGMT_OP_ADOPT_EXISTING;
     if (argi >= argc) {
-      fprintf(stderr, "signetctl: adopt-existing requires <agent_id>\n");
+      fprintf(stderr, "signetctl: %s requires <agent_id>\n", cmd);
       return 2;
     }
     agent_id = argv[argi++];
     while (argi < argc) {
       if (strcmp(argv[argi], "--sec") == 0 && (argi + 1) < argc) {
         adopt_sec = argv[argi + 1];
+        argi += 2;
+      } else if (restoring && strcmp(argv[argi], "--sec-from-store") == 0 &&
+                 (argi + 1) < argc) {
+        restore_store_path = argv[argi + 1];
         argi += 2;
       } else if (strcmp(argv[argi], "--expected-pubkey") == 0 && (argi + 1) < argc) {
         adopt_expected_pubkey = argv[argi + 1];
@@ -727,15 +741,19 @@ int main(int argc, char **argv) {
         delivery_ttl = atoi(argv[argi + 1]);
         argi += 2;
       } else {
-        fprintf(stderr, "signetctl: unknown adopt-existing option '%s'\n", argv[argi]);
+        fprintf(stderr, "signetctl: unknown %s option '%s'\n", cmd, argv[argi]);
         return 2;
       }
     }
-    if (!adopt_sec || !adopt_sec[0]) {
-      fprintf(stderr, "signetctl: adopt-existing requires --sec <nsec-or-hex>\n");
+    if ((!adopt_sec || !adopt_sec[0]) && !restore_store_path) {
+      fprintf(stderr, "signetctl: %s requires a secret source\n", cmd);
       return 2;
     }
-    if (strcmp(adopt_sec, "-") == 0) {
+    if (adopt_sec && restore_store_path) {
+      fprintf(stderr, "signetctl: choose exactly one secret source\n");
+      return 2;
+    }
+    if (adopt_sec && strcmp(adopt_sec, "-") == 0) {
       /* Read the secret from stdin so it never appears in argv / shell history. */
       static char sec_stdin[256];
       if (!fgets(sec_stdin, sizeof(sec_stdin), stdin)) {
@@ -748,6 +766,34 @@ int main(int argc, char **argv) {
         return 2;
       }
       adopt_sec = sec_stdin;
+    }
+    if (restore_store_path) {
+      const char *db_key = g_getenv("SIGNET_DB_KEY");
+      if (!db_key || !db_key[0]) {
+        fprintf(stderr, "signetctl: SIGNET_DB_KEY is required for --sec-from-store\n");
+        return 2;
+      }
+      SignetStoreConfig scfg = {
+        .db_path = restore_store_path,
+        .master_key = db_key,
+        .read_only = true,
+      };
+      SignetStore *source = signet_store_open(&scfg);
+      SignetAgentRecord rec;
+      memset(&rec, 0, sizeof(rec));
+      if (!source || signet_store_get_agent(source, agent_id, &rec) != 0 ||
+          !rec.secret_key || rec.secret_key_len != 32) {
+        fprintf(stderr, "signetctl: cannot recover agent from source store\n");
+        if (source) signet_store_close(source);
+        signet_agent_record_clear(&rec);
+        return 1;
+      }
+      for (int i = 0; i < 32; i++)
+        sprintf(restore_sec_hex + i * 2, "%02x", rec.secret_key[i]);
+      restore_sec_hex[64] = '\0';
+      signet_agent_record_clear(&rec);
+      signet_store_close(source);
+      adopt_sec = restore_sec_hex;
     }
   } else if (strcmp(cmd, "set-policy") == 0) {
     op = SIGNET_MGMT_OP_SET_POLICY;
@@ -1395,7 +1441,8 @@ int main(int argc, char **argv) {
       fprintf(stderr, "Error reply:\n%s\n", ack_ctx.response_json);
       exit_code = 1;
     } else {
-      if (op == SIGNET_MGMT_OP_ADOPT_EXISTING) {
+      if (op == SIGNET_MGMT_OP_ADOPT_EXISTING ||
+          op == SIGNET_MGMT_OP_RESTORE_EXISTING) {
         signetctl_print_adopt_result(ack_ctx.response_json);
         exit_code = 0;
       } else if (op == SIGNET_MGMT_OP_REISSUE_CONNECT) {
@@ -1412,6 +1459,7 @@ int main(int argc, char **argv) {
   }
 
 cleanup:
+  sodium_memzero(restore_sec_hex, sizeof(restore_sec_hex));
   free(event_json);
   if (rp) {
     signet_relay_pool_stop(rp);

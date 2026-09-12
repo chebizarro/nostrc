@@ -1425,6 +1425,60 @@ int signet_store_put_agent(SignetStore *store,
                                    connect_secret, NULL, "provisioned", now);
 }
 
+int signet_store_restore_agent_key(SignetStore *store,
+                                   const char *agent_id,
+                                   const uint8_t secret_key[32],
+                                   const char *pubkey_hex,
+                                   const char *provenance) {
+  if (!store || !store->open || !agent_id || !secret_key || !pubkey_hex ||
+      strlen(pubkey_hex) != 64) return -1;
+
+  char canonical_pubkey[65];
+  for (int i = 0; i < 64; i++) {
+    if (!g_ascii_isxdigit(pubkey_hex[i])) return -1;
+    canonical_pubkey[i] = (char)g_ascii_tolower(pubkey_hex[i]);
+  }
+  canonical_pubkey[64] = '\0';
+
+  bool in_use = false;
+  if (signet_store_pubkey_in_use(store, canonical_pubkey, agent_id, &in_use) != 0)
+    return -1;
+  if (in_use) return 1;
+
+  uint8_t nonce[SIGNET_NONCE_LEN];
+  randombytes_buf(nonce, sizeof(nonce));
+  const size_t ct_len = SIGNET_NSEC_LEN + SIGNET_CIPHERTEXT_EXTRA;
+  uint8_t ciphertext[SIGNET_NSEC_LEN + SIGNET_CIPHERTEXT_EXTRA];
+  if (crypto_secretbox_easy(ciphertext, secret_key, SIGNET_NSEC_LEN,
+                            nonce, store->dek) != 0) return -1;
+
+  const char *sql =
+      "UPDATE agents SET encrypted_nsec=?, nonce=?, algo='xsalsa20poly1305', "
+      "pubkey=?, provenance=? WHERE agent_id=?;";
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL);
+  if (rc == SQLITE_OK) {
+    sqlite3_bind_blob(stmt, 1, ciphertext, (int)ct_len, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(stmt, 2, nonce, SIGNET_NONCE_LEN, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, canonical_pubkey, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4,
+                      (provenance && provenance[0]) ? provenance : "restored",
+                      -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 5, agent_id, -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(stmt);
+  }
+  int changed = sqlite3_changes(store->db);
+  if (stmt) sqlite3_finalize(stmt);
+  sodium_memzero(ciphertext, sizeof(ciphertext));
+  sodium_memzero(nonce, sizeof(nonce));
+  if (rc != SQLITE_DONE) {
+    int xerr = sqlite3_extended_errcode(store->db);
+    return (xerr == SQLITE_CONSTRAINT_UNIQUE ||
+            xerr == SQLITE_CONSTRAINT_PRIMARYKEY) ? 1 : -1;
+  }
+  return changed == 1 ? 0 : 1;
+}
+
 int signet_store_pubkey_in_use(SignetStore *store,
                                const char *pubkey_hex,
                                const char *exclude_agent_id,

@@ -62,6 +62,7 @@ const char *signet_mgmt_op_to_string(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_LIST_AGENTS:     return "list_agents";
     case SIGNET_MGMT_OP_ROTATE_KEY:      return "rotate_key";
     case SIGNET_MGMT_OP_ADOPT_EXISTING:  return "adopt_existing";
+    case SIGNET_MGMT_OP_RESTORE_EXISTING:return "restore_existing";
     case SIGNET_MGMT_OP_REISSUE_CONNECT: return "reissue_connect";
     case SIGNET_MGMT_OP_LIST_CLIENTS:    return "list_clients";
     case SIGNET_MGMT_OP_REVOKE_CLIENT:   return "revoke_client";
@@ -237,6 +238,7 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
                          out_req->op == SIGNET_MGMT_OP_SET_POLICY ||
                          out_req->op == SIGNET_MGMT_OP_ROTATE_KEY ||
                          out_req->op == SIGNET_MGMT_OP_ADOPT_EXISTING ||
+                         out_req->op == SIGNET_MGMT_OP_RESTORE_EXISTING ||
                          out_req->op == SIGNET_MGMT_OP_REISSUE_CONNECT ||
                          out_req->op == SIGNET_MGMT_OP_LIST_CLIENTS ||
                          out_req->op == SIGNET_MGMT_OP_CREATE_CREDENTIAL ||
@@ -255,9 +257,10 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
     return -1;
   }
 
-  if (out_req->op == SIGNET_MGMT_OP_ADOPT_EXISTING &&
+  if ((out_req->op == SIGNET_MGMT_OP_ADOPT_EXISTING ||
+       out_req->op == SIGNET_MGMT_OP_RESTORE_EXISTING) &&
       (!out_req->agent_nsec || !out_req->agent_nsec[0])) {
-    if (out_error) *out_error = g_strdup("adopt_existing requires agent_nsec");
+    if (out_error) *out_error = g_strdup("identity restore/adopt requires agent_nsec");
     signet_mgmt_request_clear(out_req);
     return -1;
   }
@@ -617,6 +620,7 @@ static SignetMgmtOp signet_mgmt_op_from_contextvm_method(const char *method) {
   if (strcmp(method, "agent/list") == 0) return SIGNET_MGMT_OP_LIST_AGENTS;
   if (strcmp(method, "agent/rotate-key") == 0) return SIGNET_MGMT_OP_ROTATE_KEY;
   if (strcmp(method, "agent/adopt-existing") == 0) return SIGNET_MGMT_OP_ADOPT_EXISTING;
+  if (strcmp(method, "agent/restore-existing") == 0) return SIGNET_MGMT_OP_RESTORE_EXISTING;
   if (strcmp(method, "agent/reissue-connect") == 0) return SIGNET_MGMT_OP_REISSUE_CONNECT;
   if (strcmp(method, "agent/list-clients") == 0) return SIGNET_MGMT_OP_LIST_CLIENTS;
   if (strcmp(method, "agent/revoke-client") == 0) return SIGNET_MGMT_OP_REVOKE_CLIENT;
@@ -842,6 +846,7 @@ static const char *signet_mgmt_op_audit_name(SignetMgmtOp op) {
   switch (op) {
     case SIGNET_MGMT_OP_PROVISION_AGENT:    return "mgmt_provision_agent";
     case SIGNET_MGMT_OP_ADOPT_EXISTING:     return "mgmt_adopt_existing";
+    case SIGNET_MGMT_OP_RESTORE_EXISTING:   return "mgmt_restore_existing";
     case SIGNET_MGMT_OP_REVOKE_AGENT:       return "mgmt_revoke_agent";
     case SIGNET_MGMT_OP_ROTATE_KEY:         return "mgmt_rotate_key";
     case SIGNET_MGMT_OP_REISSUE_CONNECT:    return "mgmt_reissue_connect";
@@ -1279,7 +1284,9 @@ static int signet_mgmt_handler_handle_request_ex(
       break;
     }
 
-    case SIGNET_MGMT_OP_ADOPT_EXISTING: {
+    case SIGNET_MGMT_OP_ADOPT_EXISTING:
+    case SIGNET_MGMT_OP_RESTORE_EXISTING: {
+      const bool restoring = req.op == SIGNET_MGMT_OP_RESTORE_EXISTING;
       /* Decode the supplied secret: nsec bech32 or 64-char hex. */
       uint8_t sk_raw[32];
       bool decoded = false;
@@ -1329,25 +1336,34 @@ static int signet_mgmt_handler_handle_request_ex(
       if (h->deny && signet_deny_list_contains(h->deny, derived_pk)) {
         code = "deny_listed";
         message = g_strdup("pubkey is deny-listed");
-        signet_mgmt_publish_cas_audit(h, "adopt_existing", req.agent_id, "deny_listed", now);
+        signet_mgmt_publish_cas_audit(
+            h, restoring ? "restore_existing" : "adopt_existing",
+            req.agent_id, "deny_listed", now);
         sodium_memzero(sk_raw, sizeof(sk_raw));
         break;
       }
 
       char pubkey_hex[65];
       char *bunker_uri = NULL;
-      SignetAdoptResult ar = signet_key_store_adopt_agent(
-          h->keys, req.agent_id, sk_raw,
-          req.expected_pubkey, req.connect_secret,
-          h->bunker_pk_hex,
-          (const char *const *)h->relay_urls, h->n_relay_urls,
-          pubkey_hex, &bunker_uri);
+      SignetAdoptResult ar;
+      if (restoring) {
+        ar = signet_key_store_restore_agent(
+            h->keys, req.agent_id, sk_raw, req.expected_pubkey, pubkey_hex);
+      } else {
+        ar = signet_key_store_adopt_agent(
+            h->keys, req.agent_id, sk_raw,
+            req.expected_pubkey, req.connect_secret,
+            h->bunker_pk_hex,
+            (const char *const *)h->relay_urls, h->n_relay_urls,
+            pubkey_hex, &bunker_uri);
+      }
       sodium_memzero(sk_raw, sizeof(sk_raw));
 
       if (ar == SIGNET_ADOPT_OK) {
         ok = true;
-        code = "adopted";
-        message = g_strdup_printf("agent %s adopted", req.agent_id);
+        code = restoring ? "restored" : "adopted";
+        message = g_strdup_printf("agent %s %s", req.agent_id,
+                                  restoring ? "restored" : "adopted");
         if (bunker_uri) {
           char *escaped_uri = g_strescape(bunker_uri, NULL);
           result = g_strdup_printf(
@@ -1356,7 +1372,9 @@ static int signet_mgmt_handler_handle_request_ex(
           g_free(escaped_uri);
         } else {
           result = g_strdup_printf(
-              "{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"adopted\":true}",
+              restoring
+                ? "{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"restored\":true}"
+                : "{\"agent_id\":\"%s\",\"pubkey\":\"%s\",\"adopted\":true}",
               req.agent_id, pubkey_hex);
         }
         if (req.deliver && req.bootstrap_pubkey && req.bootstrap_pubkey[0] && bunker_uri) {
@@ -1376,17 +1394,22 @@ static int signet_mgmt_handler_handle_request_ex(
             g_free(old);
           }
         }
-        signet_mgmt_publish_cas_audit(h, "adopt_existing", req.agent_id, "ok", now);
+        signet_mgmt_publish_cas_audit(
+            h, restoring ? "restore_existing" : "adopt_existing",
+            req.agent_id, "ok", now);
       } else {
         switch (ar) {
           case SIGNET_ADOPT_ERR_INVALID_SECRET:  code = "invalid_secret"; break;
           case SIGNET_ADOPT_ERR_PUBKEY_MISMATCH: code = "pubkey_mismatch"; break;
           case SIGNET_ADOPT_ERR_AGENT_EXISTS:    code = "agent_exists"; break;
+          case SIGNET_ADOPT_ERR_AGENT_NOT_FOUND: code = "not_found"; break;
           case SIGNET_ADOPT_ERR_PUBKEY_EXISTS:   code = "pubkey_exists"; break;
           default:                               code = "adopt_failed"; break;
         }
         message = g_strdup_printf("failed to adopt agent (%s)", code);
-        signet_mgmt_publish_cas_audit(h, "adopt_existing", req.agent_id, code, now);
+        signet_mgmt_publish_cas_audit(
+            h, restoring ? "restore_existing" : "adopt_existing",
+            req.agent_id, code, now);
       }
       g_free(bunker_uri);
       break;

@@ -367,6 +367,70 @@ static void test_agent_meta_no_decrypt(void) {
   printf("test_agent_meta_no_decrypt: PASS\n");
 }
 
+/* A mistaken rotation can be reversed without revoking persistent clients. */
+static void test_restore_existing_preserves_client_binding(void) {
+  char *db_path = NULL;
+  SignetKeyStore *ks = open_ks(&db_path);
+  SignetStore *store = signet_key_store_get_store(ks);
+  assert(store);
+
+  uint8_t original_sk[32]; char original_pk[65];
+  gen_keypair(original_sk, original_pk);
+  char out_pk[65] = {0}; char *uri = NULL;
+  assert(signet_key_store_adopt_agent(
+      ks, "stew", original_sk, original_pk, NULL, BUNKER_PK, RELAYS, 1,
+      out_pk, &uri) == SIGNET_ADOPT_OK);
+  g_free(uri);
+
+  const char *client_pk =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  assert(signet_store_bind_client(store, "stew", original_pk, client_pk,
+                                  "pairing-secret", 100) == 0);
+  char *agent = NULL;
+  assert(signet_store_lookup_client_binding(store, client_pk, 101,
+                                            &agent, NULL) == 0);
+  assert(strcmp(agent, "stew") == 0);
+  g_free(agent);
+
+  char rotated_pk[65] = {0};
+  assert(signet_key_store_rotate_agent(ks, "stew", rotated_pk,
+                                       sizeof(rotated_pk)) == 0);
+  agent = NULL;
+  assert(signet_store_lookup_client_binding(store, client_pk, 102,
+                                            &agent, NULL) == 1);
+  assert(agent == NULL);
+
+  memset(out_pk, 0, sizeof(out_pk));
+  assert(signet_key_store_restore_agent(ks, "stew", original_sk,
+                                        original_pk, out_pk) == SIGNET_ADOPT_OK);
+  assert(strcmp(out_pk, original_pk) == 0);
+  agent = NULL;
+  assert(signet_store_lookup_client_binding(store, client_pk, 103,
+                                            &agent, NULL) == 0);
+  assert(strcmp(agent, "stew") == 0);
+  g_free(agent);
+
+  SignetAgentMeta meta;
+  memset(&meta, 0, sizeof(meta));
+  assert(signet_store_get_agent_meta(store, "stew", &meta) == 0);
+  assert(strcmp(meta.pubkey, original_pk) == 0);
+  assert(strcmp(meta.provenance, "restored") == 0);
+  signet_agent_meta_clear(&meta);
+
+  uint8_t absent_sk[32]; char absent_pk[65];
+  gen_keypair(absent_sk, absent_pk);
+  assert(signet_key_store_restore_agent(ks, "absent", absent_sk,
+                                        absent_pk, out_pk) ==
+         SIGNET_ADOPT_ERR_AGENT_NOT_FOUND);
+
+  sodium_memzero(original_sk, sizeof(original_sk));
+  sodium_memzero(absent_sk, sizeof(absent_sk));
+  signet_key_store_free(ks);
+  unlink(db_path);
+  g_free(db_path);
+  printf("test_restore_existing_preserves_client_binding: PASS\n");
+}
+
 int main(void) {
   assert(sodium_init() >= 0);
   test_adopt_success();
@@ -377,6 +441,7 @@ int main(void) {
   test_adopted_agent_signs();
   test_adopt_secret_not_on_disk();
   test_agent_meta_no_decrypt();
+  test_restore_existing_preserves_client_binding();
   printf("All adopt-existing tests passed!\n");
   return 0;
 }
