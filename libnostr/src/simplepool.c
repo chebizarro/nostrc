@@ -1169,8 +1169,17 @@ void *simple_pool_thread_func(void *arg) {
         NostrSubscription **local_subs = NULL;
         if (local_count > 0 && pool->subs) {
             local_subs = malloc(local_count * sizeof(NostrSubscription *));
-            if (local_subs)
-                memcpy(local_subs, pool->subs, local_count * sizeof(NostrSubscription *));
+            if (local_subs) {
+                memcpy(local_subs, pool->subs,
+                       local_count * sizeof(NostrSubscription *));
+                /* fp-kxe0: each snapshot owns a reference until the worker has
+                 * finished selecting and draining it. Re-subscribe may remove
+                 * the pool's reference concurrently, but cannot deallocate a
+                 * subscription still present in this snapshot. */
+                for (size_t i = 0; i < local_count; i++) {
+                    if (local_subs[i]) nostr_subscription_ref(local_subs[i]);
+                }
+            }
         }
         pthread_mutex_unlock(&pool->pool_mutex);
 
@@ -1223,6 +1232,11 @@ void *simple_pool_thread_func(void *arg) {
         if (!pool->running) {
             free(cases);
             free(recv_bufs);
+            if (local_subs) {
+                for (size_t i = 0; i < local_count; i++) {
+                    if (local_subs[i]) nostr_subscription_unref(local_subs[i]);
+                }
+            }
             free(local_subs);
             break;
         }
@@ -1290,6 +1304,11 @@ void *simple_pool_thread_func(void *arg) {
         free(batch);
         free(cases);
         free(recv_bufs);
+        if (local_subs) {
+            for (size_t i = 0; i < local_count; i++) {
+                if (local_subs[i]) nostr_subscription_unref(local_subs[i]);
+            }
+        }
         free(local_subs);
     }
 
@@ -1408,6 +1427,29 @@ static void pool_subscribe_impl(NostrSimplePool *pool, const char **urls,
     // Replace pool->filters_shared (must hold mutex — concurrent subscribe calls race)
     GoContext *bg = go_context_background();
     pthread_mutex_lock(&pool->pool_mutex);
+
+    /* fp-kxe0: a subscribe call replaces the pool's subscription intent. Retire
+     * every subscription using the previous filters before publishing the new
+     * generation, otherwise each reconnect/re-subscribe leaves another live
+     * REQ in both the relay map and pool->subs.
+     *
+     * The pool worker takes a reference while snapshotting pool->subs, so
+     * nostr_subscription_free() only drops the pool's reference when a worker
+     * is still selecting/draining that subscription. The worker releases its
+     * snapshot reference after the iteration, preventing the old pointer from
+     * being deallocated underneath it. */
+    if (pool->subs) {
+        for (size_t i = 0; i < pool->subs_count; i++) {
+            NostrSubscription *sub = pool->subs[i];
+            if (!sub) continue;
+            nostr_subscription_unsubscribe(sub);
+            nostr_subscription_close(sub, NULL);
+            nostr_subscription_free(sub);
+        }
+        free(pool->subs);
+        pool->subs = NULL;
+        pool->subs_count = 0;
+    }
     if (pool->filters_shared) {
         nostr_filters_free(pool->filters_shared);
     }

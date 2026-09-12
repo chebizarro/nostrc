@@ -531,18 +531,23 @@ int signet_relay_pool_start(SignetRelayPool *rp) {
 }
 
 void signet_relay_pool_stop(SignetRelayPool *rp) {
-  if (!rp || !rp->pool) return;
+  if (!rp) return;
 
+  /* Serialize with reconfigure before borrowing rp->pool. A set_relays()
+   * worker frees the superseded pool under reconfig_mu, so it cannot free the
+   * pool selected here until stop has finished joining its worker. */
+  g_mutex_lock(&rp->reconfig_mu);
   g_mutex_lock(&rp->mu);
-  if (!rp->started) {
-    g_mutex_unlock(&rp->mu);
-    return;
-  }
-
-  nostr_simple_pool_stop(rp->pool);
+  NostrSimplePool *pool = rp->pool;
+  gboolean was_started = rp->started;
   rp->started = FALSE;
-
   g_mutex_unlock(&rp->mu);
+
+  /* Match the reconfigure path's lock ordering: never hold rp->mu across
+   * nostr_simple_pool_stop(). It joins the libnostr pool worker, which may be
+   * waiting for rp->mu in signet_pool_event_middleware to record last_event_ts. */
+  if (was_started && pool) nostr_simple_pool_stop(pool);
+  g_mutex_unlock(&rp->reconfig_mu);
 }
 
 /* NPA-04: Build a NostrFilters* from cached kinds + optional scoped params.

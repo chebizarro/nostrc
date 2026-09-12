@@ -324,6 +324,43 @@ static void test_unreachable_relay_does_not_block_reload(void) {
   printf("PASS\n");
 }
 
+/* -------- 2c. stop and relay replacement serialize pool ownership -------- */
+
+static gpointer stop_relay_pool_thread(gpointer data) {
+  signet_relay_pool_stop((SignetRelayPool *)data);
+  return NULL;
+}
+
+static void test_stop_serializes_with_relay_reconfigure(void) {
+  printf("  TEST stop_serializes_with_relay_reconfigure ... ");
+
+  for (int i = 0; i < 8; i++) {
+    const char *initial[] = { "ws://127.0.0.1:1" };
+    SignetRelayPoolConfig cfg = {
+      .relays = initial,
+      .n_relays = 1,
+      .on_event = NULL,
+      .user_data = NULL,
+    };
+    SignetRelayPool *rp = signet_relay_pool_new(&cfg);
+    CHECK(rp != NULL);
+    CHECK(signet_relay_pool_start(rp) == 0);
+
+    GThread *stopper = g_thread_new("signet-stop-test",
+                                    stop_relay_pool_thread, rp);
+    CHECK(stopper != NULL);
+
+    const char *replacement[] = { "ws://127.0.0.1:2" };
+    CHECK(signet_relay_pool_set_relays(rp, replacement, 1) == 0);
+
+    g_thread_join(stopper);
+    CHECK(signet_relay_pool_wait_reconfigure(rp, 60000));
+    signet_relay_pool_free(rp);
+  }
+
+  printf("PASS\n");
+}
+
 /* -------------------- 3. eager policy reload ------------------------------ */
 
 static void test_policy_reload_is_eager(void) {
@@ -613,6 +650,7 @@ int main(void) {
   test_invalid_candidate_retains_last_valid();
   test_subscriptions_survive_relay_change();
   test_unreachable_relay_does_not_block_reload();
+  test_stop_serializes_with_relay_reconfigure();
   test_policy_reload_is_eager();
   test_revoked_provisioner_not_resurrected();
   test_env_sourced_set_cannot_resurrect();
