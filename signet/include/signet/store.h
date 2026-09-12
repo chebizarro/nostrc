@@ -271,6 +271,16 @@ int signet_store_put_agent_ex(SignetStore *store,
                               const char *provenance,
                               int64_t now);
 
+/* Replace only an existing agent's custody key and public identity. Preserves
+ * connect_secret, created_at, last_used, leases, and NIP-46 client bindings.
+ * Returns 0 on success, 1 when agent_id is absent or the pubkey belongs to a
+ * different agent, and -1 on error. */
+int signet_store_restore_agent_key(SignetStore *store,
+                                   const char *agent_id,
+                                   const uint8_t secret_key[32],
+                                   const char *pubkey_hex,
+                                   const char *provenance);
+
 /* Report whether pubkey_hex is already bound to some agent (optionally excluding
  * exclude_agent_id). Only detects agents whose pubkey column is populated.
  * Returns 0 on success (sets *out_in_use), -1 on error. */
