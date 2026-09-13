@@ -2122,10 +2122,10 @@ static int signet_store_revoke_provisioner_locked(SignetStore *store,
   sqlite3_stmt *tomb = NULL;
   if (sqlite3_prepare_v2(
           store->db,
-          "INSERT INTO provisioner_revocations(pubkey_hex,revoked_at,revoked_by) "
-          "VALUES(?1,?2,?3) "
-          "ON CONFLICT(pubkey_hex) DO UPDATE SET revoked_at=excluded.revoked_at,"
-          "revoked_by=excluded.revoked_by;",
+          /* Debian's deployed SQLCipher 3.4 embeds SQLite older than 3.24,
+           * so use the portable replacement form rather than UPSERT syntax. */
+          "INSERT OR REPLACE INTO provisioner_revocations"
+          "(pubkey_hex,revoked_at,revoked_by) VALUES(?1,?2,?3);",
           -1, &tomb, NULL) != SQLITE_OK)
     return -1;
   sqlite3_bind_text(tomb, 1, pubkey_hex, -1, SQLITE_TRANSIENT);

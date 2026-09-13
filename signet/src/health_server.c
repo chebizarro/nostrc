@@ -105,8 +105,7 @@ signet_handle_ready(SignetHealthServer *hs, struct MHD_Connection *connection) {
   snap_copy = hs->snap;
   g_mutex_unlock(&hs->mu);
 
-  /* Ready = DB open AND fleet synced. */
-  bool ready = snap_copy.db_open && snap_copy.fleet_synced;
+  bool ready = signet_health_snapshot_is_ready(&snap_copy);
   unsigned int status = ready ? MHD_HTTP_OK : MHD_HTTP_SERVICE_UNAVAILABLE;
   const char *body = ready ? "{\"ready\":true}" : "{\"ready\":false}";
 
@@ -117,6 +116,12 @@ signet_handle_ready(SignetHealthServer *hs, struct MHD_Connection *connection) {
   enum MHD_Result ret = MHD_queue_response(connection, status, resp);
   MHD_destroy_response(resp);
   return ret;
+}
+
+bool signet_health_snapshot_is_ready(const SignetHealthSnapshot *snap) {
+  return snap && snap->db_open && snap->key_store_available &&
+         snap->policy_store_loaded && snap->relay_connected &&
+         snap->fleet_synced;
 }
 
 /* ----------------------------- /metrics handler --------------------------- */

@@ -50,6 +50,7 @@ endfunction()
 
 # Test executables. Keep in step with the executable() list in meson.build.
 signet_add_test_executable(test_signet_smoke)             # smoke
+signet_add_test_executable(test_health_readiness)
 signet_add_test_executable(test_replay_cache)
 signet_add_test_executable(test_policy_engine)
 signet_add_test_executable(test_audit_logger)
@@ -173,6 +174,7 @@ add_test(NAME test_list_parity
   COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/check_test_parity.sh ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_test(NAME signet_smoke COMMAND test_signet_smoke)
+add_test(NAME health_readiness COMMAND test_health_readiness)
 add_test(NAME replay_cache COMMAND test_replay_cache)
 add_test(NAME policy_engine COMMAND test_policy_engine)
 add_test(NAME audit_logger COMMAND test_audit_logger)

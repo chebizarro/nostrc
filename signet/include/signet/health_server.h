@@ -134,6 +134,11 @@ typedef struct {
   uint64_t ssh_agent_connections_denied;
 } SignetHealthSnapshot;
 
+/* Ready only when the signer can serve its authoritative Nostr request path:
+ * the database and stores are usable, at least one relay is connected, and
+ * the scoped management/NIP-46 subscription has completed EOSE. */
+bool signet_health_snapshot_is_ready(const SignetHealthSnapshot *snap);
+
 /* Create health server. Returns NULL on OOM. */
 /**
  * signet_health_server_new:

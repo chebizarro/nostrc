@@ -347,6 +347,7 @@ typedef struct {
   SignetDaemonCtx *daemon_ctx;
   int64_t started_at;
   int64_t last_reconnect_attempt;
+  int64_t fleet_sync_last_ts;
 } HealthTimerCtx;
 
 static gboolean signetd_health_tick(gpointer data) {
@@ -437,6 +438,11 @@ static gboolean signetd_health_tick(gpointer data) {
   snap.relay_count = snap.relay_connected ? (uint32_t)ctx->cfg->n_relays : 0;
   snap.policy_store_loaded = (ctx->store != NULL);
   snap.key_store_available = (ctx->keys != NULL);
+  snap.fleet_synced = snap.relay_connected &&
+                      signet_relay_pool_is_subscribed(ctx->relays);
+  if (snap.fleet_synced)
+    ctx->fleet_sync_last_ts = signet_now_unix();
+  snap.fleet_sync_last_ts = ctx->fleet_sync_last_ts;
 
   snap.sign_total = (uint64_t)g_atomic_int_get(&g_signet_metrics.sign_total);
   snap.auth_total_ok = (uint64_t)g_atomic_int_get(&g_signet_metrics.auth_ok);
@@ -1205,6 +1211,7 @@ int main(int argc, char **argv) {
     .daemon_ctx = &dctx,
     .started_at = started_at,
     .last_reconnect_attempt = 0,
+    .fleet_sync_last_ts = 0,
   };
 
   /* SIGHUP reload wiring (fp-56t). Installed unconditionally so an operator
