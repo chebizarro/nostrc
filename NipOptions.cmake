@@ -329,3 +329,9 @@ if(ENABLE_NIPB0)
     add_subdirectory(nips/nipb0)
 endif()
 
+
+# NIP-CAS-0010: OTLP-over-Nostr telemetry transport (kinds 24900-24902)
+option(ENABLE_NIP_CAS0010 "Enable NIP-CAS-0010 (OTLP-over-Nostr transport)" ON)
+if(ENABLE_NIP_CAS0010)
+    add_subdirectory(nips/nip-cas0010)
+endif()
