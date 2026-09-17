@@ -325,7 +325,8 @@ int nostr_otel_publish_via_pool(NostrEvent *event, void *user_data);
 
 typedef enum {
     NOSTR_OTEL_ADMISSION_DROP = 0, /**< reject events from unadmitted pubkeys */
-    NOSTR_OTEL_ADMISSION_FLAG = 1  /**< deliver them with admitted = false */
+    NOSTR_OTEL_ADMISSION_FLAG = 1, /**< deliver them with admitted = false */
+    NOSTR_OTEL_ADMISSION_OPEN = 2  /**< explicitly admit every valid signer */
 } NostrOtelAdmissionPolicy;
 
 /** Returns: whether @pubkey_hex (x-only, lowercase hex) is admitted. */
@@ -352,7 +353,7 @@ typedef void (*NostrOtelErrorFn)(int err, const NostrEvent *event, void *user_da
 typedef struct {
     const NostrOtelSignal *signals; /**< NULL/0 => all three signals */
     size_t signal_count;
-    NostrOtelAdmitFn admit;         /**< NULL admits every validly signed event */
+    NostrOtelAdmitFn admit;         /**< required unless policy is OPEN */
     void *admit_user_data;
     NostrOtelAdmissionPolicy policy;
     size_t max_decoded_bytes;       /**< 0 => default */

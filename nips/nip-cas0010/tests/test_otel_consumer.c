@@ -92,20 +92,40 @@ static NostrOtelConsumer *make_consumer(Capture *cap, ErrCapture *errs, NostrOte
     return consumer;
 }
 
+static void test_admission_required(void) {
+    Capture cap = {0};
+    NostrOtelConsumerConfig cfg = {
+        .handler = capture_handler,
+        .handler_user_data = &cap,
+        .policy = NOSTR_OTEL_ADMISSION_DROP,
+    };
+    NostrOtelConsumer *consumer = NULL;
+    OTEL_CHECK_RC(nostr_otel_consumer_new(&cfg, &consumer), NOSTR_OTEL_ERR_INVALID_ARG);
+    OTEL_CHECK(consumer == NULL, "failed construction leaves output NULL");
+
+    cfg.policy = NOSTR_OTEL_ADMISSION_FLAG;
+    OTEL_CHECK_RC(nostr_otel_consumer_new(&cfg, &consumer), NOSTR_OTEL_ERR_INVALID_ARG);
+    OTEL_CHECK(consumer == NULL, "flag policy also requires an admitter");
+
+    cfg.policy = NOSTR_OTEL_ADMISSION_OPEN;
+    OTEL_CHECK_RC(nostr_otel_consumer_new(&cfg, &consumer), NOSTR_OTEL_OK);
+    nostr_otel_consumer_free(consumer);
+}
+
 static void test_valid_event(void) {
     OtelTestSigner ts;
     otel_test_signer_init(&ts);
     Capture cap = {0};
     ErrCapture errs = {0};
     NostrOtelConsumer *consumer = make_consumer(&cap, &errs, NULL, NULL,
-                                                NOSTR_OTEL_ADMISSION_DROP);
+                                                NOSTR_OTEL_ADMISSION_OPEN);
 
     char *content = identity_content("otlp-bytes");
     NostrEvent *event = sign_event(&ts, NOSTR_OTEL_KIND_TRACES, standard_tags(true), content);
     OTEL_CHECK_RC(nostr_otel_consumer_process(consumer, event), NOSTR_OTEL_OK);
     OTEL_CHECK(cap.calls == 1, "handler invoked once");
     OTEL_CHECK(cap.signal == NOSTR_OTEL_SIGNAL_TRACES, "signal");
-    OTEL_CHECK(cap.admitted, "no admitter admits everything");
+    OTEL_CHECK(cap.admitted, "explicit open admission admits signer");
     OTEL_CHECK(strcmp(cap.pubkey, otel_test_signer_pubkey(&ts)) == 0,
                "payload attributed to the signing pubkey");
     OTEL_CHECK(cap.payload_len == strlen("otlp-bytes"), "payload length");
@@ -125,7 +145,7 @@ static void test_missing_enc_defaults(void) {
     Capture cap = {0};
     ErrCapture errs = {0};
     NostrOtelConsumer *consumer = make_consumer(&cap, &errs, NULL, NULL,
-                                                NOSTR_OTEL_ADMISSION_DROP);
+                                                NOSTR_OTEL_ADMISSION_OPEN);
 
     char *content = identity_content("no-enc-tag");
     NostrEvent *event = sign_event(&ts, NOSTR_OTEL_KIND_TRACES, standard_tags(false), content);
@@ -147,7 +167,7 @@ static void test_tampered_content_rejected(void) {
     Capture cap = {0};
     ErrCapture errs = {0};
     NostrOtelConsumer *consumer = make_consumer(&cap, &errs, NULL, NULL,
-                                                NOSTR_OTEL_ADMISSION_DROP);
+                                                NOSTR_OTEL_ADMISSION_OPEN);
 
     char *content = identity_content("authentic-otlp");
     NostrEvent *event = sign_event(&ts, NOSTR_OTEL_KIND_TRACES, standard_tags(true), content);
@@ -173,7 +193,7 @@ static void test_tampered_tag_rejected(void) {
     Capture cap = {0};
     ErrCapture errs = {0};
     NostrOtelConsumer *consumer = make_consumer(&cap, &errs, NULL, NULL,
-                                                NOSTR_OTEL_ADMISSION_DROP);
+                                                NOSTR_OTEL_ADMISSION_OPEN);
 
     char *content = identity_content("otlp-bytes");
     NostrEvent *event = sign_event(&ts, NOSTR_OTEL_KIND_TRACES, standard_tags(true), content);
@@ -237,7 +257,7 @@ static void test_signed_malformed_tags_rejected(void) {
         Capture cap = {0};
         ErrCapture errs = {0};
         NostrOtelConsumer *consumer = make_consumer(&cap, &errs, NULL, NULL,
-                                                    NOSTR_OTEL_ADMISSION_DROP);
+                                                    NOSTR_OTEL_ADMISSION_OPEN);
         NostrEvent *event = sign_event(&ts, NOSTR_OTEL_KIND_TRACES, cases[i].tags, content);
         int rc = nostr_otel_consumer_process(consumer, event);
         OTEL_CHECK(rc == cases[i].expected, cases[i].name);
@@ -263,6 +283,7 @@ static void test_unexpected_kind(void) {
         .handler_user_data = &cap,
         .on_error = capture_error,
         .error_user_data = &errs,
+        .policy = NOSTR_OTEL_ADMISSION_OPEN,
     };
     NostrOtelConsumer *consumer = NULL;
     OTEL_CHECK_RC(nostr_otel_consumer_new(&cfg, &consumer), NOSTR_OTEL_OK);
@@ -347,7 +368,7 @@ static void test_handler_failure_surfaces(void) {
     cap.handler_rc = -1;
     ErrCapture errs = {0};
     NostrOtelConsumer *consumer = make_consumer(&cap, &errs, NULL, NULL,
-                                                NOSTR_OTEL_ADMISSION_DROP);
+                                                NOSTR_OTEL_ADMISSION_OPEN);
     char *content = identity_content("otlp-bytes");
     NostrEvent *event = sign_event(&ts, NOSTR_OTEL_KIND_TRACES, standard_tags(true), content);
     OTEL_CHECK_RC(nostr_otel_consumer_process(consumer, event), NOSTR_OTEL_ERR_HANDLER);
@@ -364,7 +385,7 @@ static void test_bad_content_rejected(void) {
     Capture cap = {0};
     ErrCapture errs = {0};
     NostrOtelConsumer *consumer = make_consumer(&cap, &errs, NULL, NULL,
-                                                NOSTR_OTEL_ADMISSION_DROP);
+                                                NOSTR_OTEL_ADMISSION_OPEN);
     /* Signed, but the content is not valid base64. */
     NostrEvent *event = sign_event(&ts, NOSTR_OTEL_KIND_TRACES, standard_tags(true), "not!b64");
     OTEL_CHECK_RC(nostr_otel_consumer_process(consumer, event), NOSTR_OTEL_ERR_MALFORMED_EVENT);
@@ -375,6 +396,7 @@ static void test_bad_content_rejected(void) {
 }
 
 int main(void) {
+    test_admission_required();
     test_valid_event();
     test_missing_enc_defaults();
     test_tampered_content_rejected();

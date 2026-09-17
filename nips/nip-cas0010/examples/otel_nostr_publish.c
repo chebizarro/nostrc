@@ -34,6 +34,11 @@ static void on_error(int err, const NostrEvent *event, void *user_data) {
             nostr_otel_strerror(err));
 }
 
+static bool admit_pubkey(const char *pubkey, void *user_data) {
+    const char *allowed = (const char *)user_data;
+    return pubkey && allowed && strcmp(pubkey, allowed) == 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "usage: %s <relay-url> [<relay-url> ...]\n", argv[0]);
@@ -69,6 +74,8 @@ int main(int argc, char **argv) {
     NostrOtelConsumerConfig ccfg = {
         .handler = on_signal,
         .on_error = on_error,
+        .admit = admit_pubkey,
+        .admit_user_data = (void *)nostr_otel_local_signer_pubkey(local),
         .policy = NOSTR_OTEL_ADMISSION_DROP,
     };
     NostrOtelConsumer *consumer = NULL;

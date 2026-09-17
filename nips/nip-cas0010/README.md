@@ -57,8 +57,9 @@ ON); otherwise the module is identity-only and requesting zstd returns
 ## Consumer
 
 `nostr_otel_consumer_process()` verifies the id+signature, checks the kind,
-validates the tags, applies the admission policy (`DROP` or `FLAG`), decodes the
-body and invokes the handler. It touches no network, so a relay subscription
+validates the tags, applies the admission policy (`DROP` or `FLAG` with a
+required admit callback, or explicit `OPEN`), decodes the body and invokes the
+handler. It touches no network, so a relay subscription
 (`nostr_otel_consumer_subscribe()` over `NostrSimplePool`), a bridge, or a test
 can all feed it events.
 

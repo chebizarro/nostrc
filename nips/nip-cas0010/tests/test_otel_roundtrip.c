@@ -79,6 +79,7 @@ static void run_roundtrip(NostrOtelCompression compression, size_t max_event_byt
     NostrOtelConsumerConfig ccfg = {
         .signals = signals,
         .signal_count = 1,
+        .policy = NOSTR_OTEL_ADMISSION_OPEN,
         .handler = reassemble,
         .handler_user_data = &r,
     };
@@ -93,7 +94,7 @@ static void run_roundtrip(NostrOtelCompression compression, size_t max_event_byt
     OTEL_CHECK(r.len == total, "reassembled length matches input");
     OTEL_CHECK(memcmp(r.bytes, expected, total) == 0, "OTLP bytes survive the round trip");
     OTEL_CHECK(strcmp(r.pubkey, otel_test_signer_pubkey(&ts)) == 0, "attributed to signer");
-    OTEL_CHECK(r.all_admitted, "admitted by default");
+    OTEL_CHECK(r.all_admitted, "admitted by explicit open policy");
 
     free(r.bytes);
     free(payloads);

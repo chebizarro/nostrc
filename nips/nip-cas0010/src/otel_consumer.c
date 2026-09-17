@@ -33,7 +33,11 @@ int nostr_otel_consumer_new(const NostrOtelConsumerConfig *cfg, NostrOtelConsume
     if (!cfg || !cfg->handler) return NOSTR_OTEL_ERR_INVALID_ARG;
     if (cfg->signal_count > OTEL_MAX_SIGNALS) return NOSTR_OTEL_ERR_INVALID_ARG;
     if (cfg->signal_count > 0 && !cfg->signals) return NOSTR_OTEL_ERR_INVALID_ARG;
-    if (cfg->policy != NOSTR_OTEL_ADMISSION_DROP && cfg->policy != NOSTR_OTEL_ADMISSION_FLAG) {
+    if (cfg->policy != NOSTR_OTEL_ADMISSION_DROP && cfg->policy != NOSTR_OTEL_ADMISSION_FLAG &&
+        cfg->policy != NOSTR_OTEL_ADMISSION_OPEN) {
+        return NOSTR_OTEL_ERR_INVALID_ARG;
+    }
+    if (!cfg->admit && cfg->policy != NOSTR_OTEL_ADMISSION_OPEN) {
         return NOSTR_OTEL_ERR_INVALID_ARG;
     }
 
@@ -145,7 +149,7 @@ int nostr_otel_consumer_process(NostrOtelConsumer *consumer, NostrEvent *event) 
     if (rc != NOSTR_OTEL_OK) goto fail;
 
     /* 4. Admission on the signing pubkey. */
-    bool admitted = consumer->admit == NULL ||
+    bool admitted = consumer->policy == NOSTR_OTEL_ADMISSION_OPEN ||
                     consumer->admit(event->pubkey, consumer->admit_user_data);
     if (!admitted && consumer->policy != NOSTR_OTEL_ADMISSION_FLAG) {
         rc = NOSTR_OTEL_ERR_UNADMITTED;
