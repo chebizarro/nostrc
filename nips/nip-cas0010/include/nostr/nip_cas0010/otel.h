@@ -11,6 +11,16 @@
  * protobuf/JSON: the caller supplies already-encoded OTLP bytes and receives the
  * same bytes back on the consumer side.
  *
+ * REDACTION IS THE CALLER'S RESPONSIBILITY. Events are plaintext (base64 is
+ * not encryption) and readable by any relay subscriber, and this module cannot
+ * see inside the opaque OTLP bytes, so it performs no redaction. Redact
+ * secrets/PII (secret-like attribute keys; Authorization/Bearer credentials,
+ * nsec1 keys, bunker:// URIs, Cashu tokens, JWTs, URL userinfo, secret env
+ * assignments, hex private keys in attribute values, log bodies, span names and
+ * status messages) BEFORE serializing and passing OTLP bytes to
+ * nostr_otel_producer_build_event() / nostr_otel_producer_publish(). See
+ * README.md "Redaction is the caller's responsibility".
+ *
  * Wire rules implemented here (NIP-CAS-0010 §3):
  *   - `event.content` is ALWAYS base64 (standard alphabet, padded), even for
  *     the `identity` compression.
@@ -280,7 +290,8 @@ void nostr_otel_producer_free(NostrOtelProducer *producer);
  * @len: body length
  * @out_event: (out) (transfer full): signed event
  *
- * Builds and signs a single event without publishing it. Returns
+ * Builds and signs a single event without publishing it. @body is NOT
+ * redacted: the caller must scrub secrets/PII before serializing it. Returns
  * NOSTR_OTEL_ERR_BATCH_TOO_LARGE when the encoded content exceeds the
  * configured cap. Caller frees *@out_event with nostr_event_free().
  *
@@ -298,7 +309,8 @@ int nostr_otel_producer_build_event(NostrOtelProducer *producer, NostrOtelSignal
  * @out_event_count: (out) (optional): number of events published
  *
  * Batches @payloads into as few events as fit under the per-event cap and
- * publishes each. Payloads are concatenated, which is the protobuf
+ * publishes each. @payloads are published as-is (plaintext): redact
+ * secrets/PII before serializing them. Payloads are concatenated, which is the protobuf
  * repeated-field merge of OTLP `TracesData`/`MetricsData`/`LogsData` messages,
  * so a batch decodes as one OTLP message on the consumer side.
  *

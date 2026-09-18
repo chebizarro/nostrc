@@ -17,6 +17,37 @@ the consumer hands the same bytes back, attributed to the signing pubkey. Any
 OTLP structure awareness (building `TracesData`, splitting an oversized single
 message) belongs to the caller.
 
+## Redaction is the caller's responsibility
+
+Telemetry events are **plaintext**: `content` is only base64, never encrypted, and
+any client subscribed to kinds 24900–24902 on the relay can read it. Because this
+module treats OTLP as opaque bytes it **cannot redact anything** — it has no view
+of attributes or log bodies (NIP-CAS-0010 security review §4.4, finding G3).
+
+**Redact before passing OTLP bytes to `nostr_otel_producer_build_event()` /
+`nostr_otel_producer_publish()`.** Apply the same default-on policy the Go
+(`otelnostr.RedactionPolicy`) and TypeScript (loom-worker `redact.ts`) SDKs use,
+at the point where you still hold structured OTLP (before serialization):
+
+- replace values of attributes whose key segment is secret-like (`password`,
+  `token`, `api_key`, `authorization`, `cookie`, `nsec`, `private_key`, `bunker`,
+  `mnemonic`, `credentials`, …) — resource, scope, span, span event/link, log
+  record and metric data point attributes, and log body map entries;
+- scrub embedded secrets from every string attribute, log body, span name and
+  status message: `Authorization`/`Bearer`/`Basic` credentials, `nsec1…` keys,
+  `bunker://`/`nostrconnect://` URIs, `cashuA…`/`cashuB…` tokens, JWTs,
+  `scheme://user:pass@` userinfo, sensitive URL query parameters, secret-named
+  environment assignments (`*_TOKEN=`, `*_PASSWORD=`) and hex private keys;
+- cap string values (4 KiB);
+- never put secrets or free text in the `service` tag or recipients — tags are
+  plaintext too.
+
+Error strings (e.g. from config parsing or a Signet/NIP-46 connect failure) can
+echo bunker URIs or relay credentials; do not export them unredacted. The
+collector distribution (`cascadia-go/collector/distribution`) applies a
+`redaction` processor as defence in depth, but it does not see events published
+directly to relays, so producer-side redaction is mandatory.
+
 ## Wire rules
 
 - `event.content` is **always** base64 — including the `identity` compression.
