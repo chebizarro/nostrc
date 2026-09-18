@@ -223,13 +223,20 @@ typedef struct {
 } NostrOtelSigner;
 
 /**
- * NostrOtelLocalSigner:
+ * NostrOtelLocalSigner: (skip)
  *
- * Convenience local-private-key signer. It exists for TESTS and local
- * development only — production producers MUST use a Signet/NIP-46 signer.
+ * TEST-ONLY local (raw private key) signer. It is compiled and declared ONLY
+ * when NOSTR_OTEL_ENABLE_TEST_SIGNER is defined — the CMake option of the same
+ * name defaults to OFF, so a shipped build of this module contains no
+ * nostr_otel_local_signer_* symbol. Production producers MUST supply their own
+ * NostrOtelSignFn backed by Signet / NIP-46; the fleet's Signet-first policy
+ * forbids raw private keys in producer processes.
+ *
  * No private key is ever embedded in this module; the caller supplies one,
  * typically from nostr_key_generate_private().
  */
+#ifdef NOSTR_OTEL_ENABLE_TEST_SIGNER
+
 typedef struct NostrOtelLocalSigner NostrOtelLocalSigner;
 
 /** Returns: (transfer full) (nullable): signer holding a copy of @privkey_hex. */
@@ -240,6 +247,8 @@ void nostr_otel_local_signer_free(NostrOtelLocalSigner *signer);
 int nostr_otel_local_signer_bind(NostrOtelLocalSigner *signer, NostrOtelSigner *out);
 /** Returns: (transfer none) (nullable): the signer's x-only public key hex. */
 const char *nostr_otel_local_signer_pubkey(const NostrOtelLocalSigner *signer);
+
+#endif /* NOSTR_OTEL_ENABLE_TEST_SIGNER */
 
 /* -------------------------------------------------------------- producer */
 
