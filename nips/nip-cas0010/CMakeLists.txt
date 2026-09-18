@@ -11,6 +11,7 @@ add_library(nostr_nip_cas0010_core OBJECT
     src/otel_encoding.c
     src/otel_producer.c
     src/otel_consumer.c
+    src/otel_replay.c
 )
 
 target_include_directories(nostr_nip_cas0010_core
@@ -21,7 +22,8 @@ target_include_directories(nostr_nip_cas0010_core
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(nostr_nip_cas0010_core PUBLIC nostr)
+find_package(Threads REQUIRED)
+target_link_libraries(nostr_nip_cas0010_core PUBLIC nostr Threads::Threads)
 
 set_target_properties(nostr_nip_cas0010_core PROPERTIES
     C_STANDARD 11
@@ -56,6 +58,7 @@ set(NIP_CAS0010_TESTS
     test_otel_encoding
     test_otel_producer
     test_otel_consumer
+    test_otel_replay
     test_otel_roundtrip
 )
 
@@ -66,6 +69,7 @@ if(BUILD_TESTING)
             PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests
+                ${CMAKE_CURRENT_SOURCE_DIR}/src
                 ${CMAKE_SOURCE_DIR}/libnostr/include
         )
         target_link_libraries(${test_name} nostr_nip_cas0010_core nostr)

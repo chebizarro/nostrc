@@ -94,6 +94,23 @@ handler. It touches no network, so a relay subscription
 (`nostr_otel_consumer_subscribe()` over `NostrSimplePool`), a bridge, or a test
 can all feed it events.
 
+### Replay and freshness
+
+Telemetry events are ephemeral and validly signed, so a captured event could
+otherwise be replayed at a consumer forever. `process()` therefore applies two
+defences before decoding the body, mirroring the relay-side ones:
+
+- a bounded seen-event-id LRU (`seen_cache_size`, default 100k ids, remembered
+  for `seen_cache_ttl_seconds`, default twice the freshness window) rejecting
+  duplicates with `NOSTR_OTEL_ERR_REPLAYED`;
+- a `created_at` window (`max_clock_skew_seconds`, default ±120 s in both
+  directions) rejecting stale and future-dated events with
+  `NOSTR_OTEL_ERR_STALE_EVENT`.
+
+Both are on by default and can be disabled explicitly with `disable_dedup` /
+`disable_freshness`. Ids are remembered only once an event has passed every
+cheaper check, so rejected traffic cannot churn the cache.
+
 ## Build & test
 
 ```sh
