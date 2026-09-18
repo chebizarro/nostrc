@@ -361,6 +361,78 @@ static void test_admission(void) {
     otel_test_signer_clear(&stranger);
 }
 
+/* Pubkey swap with id recompute: the attacker takes an admitted producer's
+ * event, rewrites the body and re-signs the whole thing under their own key.
+ * The result is *internally consistent* — pubkey, id and signature all agree —
+ * so signature verification alone cannot catch it. Only admission can, and the
+ * attribution the consumer reports must name the real signer, never the
+ * producer whose event was copied. */
+static void test_pubkey_reattribution_rejected(void) {
+    OtelTestSigner producer, attacker;
+    otel_test_signer_init(&producer);
+    otel_test_signer_init(&attacker);
+    g_allowed = otel_test_signer_pubkey(&producer);
+
+    char *content = identity_content("authentic-otlp");
+    NostrEvent *authentic = sign_event(&producer, NOSTR_OTEL_KIND_TRACES, standard_tags(true),
+                                       content);
+
+    NostrEvent *forged = otel_test_event_copy(authentic);
+    char *forged_body = identity_content("forged-otlp-xx");
+    free(forged->content);
+    forged->content = forged_body;
+    free(forged->sig);
+    forged->sig = NULL;
+    OTEL_CHECK(attacker.signer.sign(forged, attacker.signer.user_data) == 0, "re-sign failed");
+    OTEL_CHECK(strcmp(forged->pubkey, otel_test_signer_pubkey(&attacker)) == 0,
+               "re-signed event must carry the attacker pubkey");
+    OTEL_CHECK(strcmp(forged->id, authentic->id) != 0, "re-signed event must have a new id");
+
+    /* The forgery is cryptographically valid: with admission open it is
+     * accepted, which proves the id and signature really were recomputed and
+     * that the rejections below come from admission, not a malformed event. */
+    Capture open_cap = {0};
+    ErrCapture open_errs = {0};
+    NostrOtelConsumer *open = make_consumer(&open_cap, &open_errs, NULL, NULL,
+                                            NOSTR_OTEL_ADMISSION_OPEN);
+    OTEL_CHECK_RC(nostr_otel_consumer_process(open, forged), NOSTR_OTEL_OK);
+    OTEL_CHECK(open_cap.calls == 1, "re-signed event must be internally consistent");
+    nostr_otel_consumer_free(open);
+
+    /* DROP: a different, unadmitted signer — the copied body buys nothing. */
+    Capture cap = {0};
+    ErrCapture errs = {0};
+    NostrOtelConsumer *drop = make_consumer(&cap, &errs, admit_only_allowed, NULL,
+                                            NOSTR_OTEL_ADMISSION_DROP);
+    OTEL_CHECK_RC(nostr_otel_consumer_process(drop, forged), NOSTR_OTEL_ERR_UNADMITTED);
+    OTEL_CHECK(cap.calls == 0, "re-attributed event must not reach the handler");
+    OTEL_CHECK(errs.last_err == NOSTR_OTEL_ERR_UNADMITTED, "drop reported");
+    nostr_otel_consumer_free(drop);
+
+    /* FLAG: delivered, but attributed to the attacker and marked unadmitted. */
+    Capture flag_cap = {0};
+    ErrCapture flag_errs = {0};
+    NostrOtelConsumer *flag = make_consumer(&flag_cap, &flag_errs, admit_only_allowed, NULL,
+                                            NOSTR_OTEL_ADMISSION_FLAG);
+    OTEL_CHECK_RC(nostr_otel_consumer_process(flag, forged), NOSTR_OTEL_OK);
+    OTEL_CHECK(flag_cap.calls == 1, "flagged event delivered");
+    OTEL_CHECK(!flag_cap.admitted, "re-attributed event marked unadmitted");
+    OTEL_CHECK(strcmp(flag_cap.pubkey, otel_test_signer_pubkey(&attacker)) == 0,
+               "attribution must name the real signer, not the copied producer");
+    OTEL_CHECK(strcmp(flag_cap.pubkey, otel_test_signer_pubkey(&producer)) != 0,
+               "attribution must never name the producer");
+    OTEL_CHECK(flag_cap.payload_len == strlen("forged-otlp-xx") &&
+                   memcmp(flag_cap.payload, "forged-otlp-xx", flag_cap.payload_len) == 0,
+               "handler sees the attacker body");
+    nostr_otel_consumer_free(flag);
+
+    free(content);
+    nostr_event_free(authentic);
+    nostr_event_free(forged);
+    otel_test_signer_clear(&producer);
+    otel_test_signer_clear(&attacker);
+}
+
 static void test_handler_failure_surfaces(void) {
     OtelTestSigner ts;
     otel_test_signer_init(&ts);
@@ -404,6 +476,7 @@ int main(void) {
     test_signed_malformed_tags_rejected();
     test_unexpected_kind();
     test_admission();
+    test_pubkey_reattribution_rejected();
     test_handler_failure_surfaces();
     test_bad_content_rejected();
     printf("test_otel_consumer: OK\n");
