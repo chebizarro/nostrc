@@ -63,9 +63,31 @@ directly to relays, so producer-side redaction is mandatory.
 
 Signing is a function pointer (`NostrOtelSignFn`), so the caller supplies the
 identity — normally **Signet / NIP-46** (`signet/`, `nips/nip46`). No private key
-is embedded anywhere in this module. `nostr_otel_local_signer_*` is a
-convenience local-key signer for **tests and local development only**; the tests
-generate ephemeral keys with `nostr_key_generate_private()`.
+is embedded anywhere in this module.
+
+### The test-only local signer is not in the shipped library
+
+`nostr_otel_local_signer_*` is a raw-private-key signer for **tests and local
+development only**, and documentation is not a build boundary — so it is behind
+a build guard:
+
+- Source lives in `src/otel_local_signer.c`, wrapped in
+  `#ifdef NOSTR_OTEL_ENABLE_TEST_SIGNER`; the prototypes in
+  `include/nostr/nip_cas0010/otel.h` are guarded by the same macro.
+- The CMake option `NOSTR_OTEL_ENABLE_TEST_SIGNER` **defaults to OFF**, so a
+  default build of `nostr_nip_cas0010_core` contains **no**
+  `nostr_otel_local_signer_*` symbol at all. Verify with:
+  `nm build/.../nostr_nip_cas0010_core.dir/src/*.o | grep local_signer` (no output).
+- The module's tests still exercise it: they compile
+  `src/otel_local_signer.c` into each test binary as a test-local helper, with
+  `NOSTR_OTEL_ENABLE_TEST_SIGNER` defined for that target only.
+- `-DNOSTR_OTEL_ENABLE_TEST_SIGNER=ON` puts it back into the library (with a
+  loud configure-time warning). Never ship such a build: the fleet's
+  Signet-first policy forbids raw private keys in producer processes.
+- `BUILD_NIP_CAS0010_EXAMPLES` also defaults to **OFF** because
+  `examples/otel_nostr_publish.c` signs with this test signer (it generates an
+  ephemeral key with `nostr_key_generate_private()`); when built, the example
+  gets the same test-local helper rather than a library symbol.
 
 ## Batching
 
@@ -93,6 +115,23 @@ required admit callback, or explicit `OPEN`), decodes the body and invokes the
 handler. It touches no network, so a relay subscription
 (`nostr_otel_consumer_subscribe()` over `NostrSimplePool`), a bridge, or a test
 can all feed it events.
+
+### Replay and freshness
+
+Telemetry events are ephemeral and validly signed, so a captured event could
+otherwise be replayed at a consumer forever. `process()` therefore applies two
+defences before decoding the body, mirroring the relay-side ones:
+
+- a bounded seen-event-id LRU (`seen_cache_size`, default 100k ids, remembered
+  for `seen_cache_ttl_seconds`, default twice the freshness window) rejecting
+  duplicates with `NOSTR_OTEL_ERR_REPLAYED`;
+- a `created_at` window (`max_clock_skew_seconds`, default ±120 s in both
+  directions) rejecting stale and future-dated events with
+  `NOSTR_OTEL_ERR_STALE_EVENT`.
+
+Both are on by default and can be disabled explicitly with `disable_dedup` /
+`disable_freshness`. Ids are remembered only once an event has passed every
+cheaper check, so rejected traffic cannot churn the cache.
 
 ## Build & test
 

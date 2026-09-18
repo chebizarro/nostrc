@@ -25,6 +25,8 @@ const char *nostr_otel_strerror(int code) {
     case NOSTR_OTEL_ERR_PUBLISH: return "publish failed";
     case NOSTR_OTEL_ERR_COMPRESSION: return "compression failed";
     case NOSTR_OTEL_ERR_HANDLER: return "handler reported failure";
+    case NOSTR_OTEL_ERR_REPLAYED: return "duplicate event id (replay)";
+    case NOSTR_OTEL_ERR_STALE_EVENT: return "event created_at outside freshness window";
     default: return "unknown error";
     }
 }

@@ -5,7 +5,12 @@
  * Usage:
  *   otel_nostr_publish <relay-url> [<relay-url> ...]
  *
- * Signing: this example uses the local-private-key convenience signer with an
+ * Build: this example is OFF by default (-DBUILD_NIP_CAS0010_EXAMPLES=ON),
+ * because it signs with the TEST-ONLY local raw-key signer. That signer is not
+ * part of the shipped library (CMake option NOSTR_OTEL_ENABLE_TEST_SIGNER,
+ * default OFF); the example links its own copy of src/otel_local_signer.c.
+ *
+ * Signing: this example uses the test-only local-private-key signer with an
  * EPHEMERAL key generated at start-up. Production producers must supply their
  * own NostrOtelSignFn backed by Signet / NIP-46 — the signer is a plain
  * function pointer precisely so no private key has to exist in this process.

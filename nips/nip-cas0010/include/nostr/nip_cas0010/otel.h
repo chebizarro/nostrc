@@ -72,6 +72,10 @@ extern "C" {
 #define NOSTR_OTEL_DEFAULT_COMPRESSION_THRESHOLD 1024u
 /** Consumer bound on decoded body size (decompression-bomb guard). */
 #define NOSTR_OTEL_DEFAULT_MAX_DECODED_BYTES (16u * 1024u * 1024u)
+/** Consumer `created_at` freshness window, in both directions (seconds). */
+#define NOSTR_OTEL_DEFAULT_MAX_CLOCK_SKEW_SECONDS 120
+/** Consumer bound on the number of remembered event ids (replay cache). */
+#define NOSTR_OTEL_DEFAULT_SEEN_CACHE_SIZE 100000u
 
 /* ---------------------------------------------------------------- errors */
 
@@ -89,7 +93,9 @@ typedef enum {
     NOSTR_OTEL_ERR_SIGN = -10,
     NOSTR_OTEL_ERR_PUBLISH = -11,
     NOSTR_OTEL_ERR_COMPRESSION = -12,
-    NOSTR_OTEL_ERR_HANDLER = -13
+    NOSTR_OTEL_ERR_HANDLER = -13,
+    NOSTR_OTEL_ERR_REPLAYED = -14,    /**< duplicate event id (replay) */
+    NOSTR_OTEL_ERR_STALE_EVENT = -15  /**< created_at outside the freshness window */
 } NostrOtelError;
 
 /** Returns: (transfer none): static human-readable description of @code. */
@@ -223,13 +229,20 @@ typedef struct {
 } NostrOtelSigner;
 
 /**
- * NostrOtelLocalSigner:
+ * NostrOtelLocalSigner: (skip)
  *
- * Convenience local-private-key signer. It exists for TESTS and local
- * development only — production producers MUST use a Signet/NIP-46 signer.
+ * TEST-ONLY local (raw private key) signer. It is compiled and declared ONLY
+ * when NOSTR_OTEL_ENABLE_TEST_SIGNER is defined — the CMake option of the same
+ * name defaults to OFF, so a shipped build of this module contains no
+ * nostr_otel_local_signer_* symbol. Production producers MUST supply their own
+ * NostrOtelSignFn backed by Signet / NIP-46; the fleet's Signet-first policy
+ * forbids raw private keys in producer processes.
+ *
  * No private key is ever embedded in this module; the caller supplies one,
  * typically from nostr_key_generate_private().
  */
+#ifdef NOSTR_OTEL_ENABLE_TEST_SIGNER
+
 typedef struct NostrOtelLocalSigner NostrOtelLocalSigner;
 
 /** Returns: (transfer full) (nullable): signer holding a copy of @privkey_hex. */
@@ -240,6 +253,8 @@ void nostr_otel_local_signer_free(NostrOtelLocalSigner *signer);
 int nostr_otel_local_signer_bind(NostrOtelLocalSigner *signer, NostrOtelSigner *out);
 /** Returns: (transfer none) (nullable): the signer's x-only public key hex. */
 const char *nostr_otel_local_signer_pubkey(const NostrOtelLocalSigner *signer);
+
+#endif /* NOSTR_OTEL_ENABLE_TEST_SIGNER */
 
 /* -------------------------------------------------------------- producer */
 
@@ -359,6 +374,13 @@ typedef struct {
 /** Returns: 0 on success; non-zero is surfaced as NOSTR_OTEL_ERR_HANDLER. */
 typedef int (*NostrOtelHandlerFn)(const NostrOtelReceived *received, void *user_data);
 
+/**
+ * Supplies the current unix time in seconds. Used for the `created_at`
+ * freshness window and replay-cache expiry; tests only, production leaves it
+ * NULL and the consumer calls time().
+ */
+typedef int64_t (*NostrOtelClockFn)(void *user_data);
+
 /** Observes rejected events and handler failures. */
 typedef void (*NostrOtelErrorFn)(int err, const NostrEvent *event, void *user_data);
 
@@ -369,6 +391,20 @@ typedef struct {
     void *admit_user_data;
     NostrOtelAdmissionPolicy policy;
     size_t max_decoded_bytes;       /**< 0 => default */
+    /**
+     * Accepted `created_at` deviation from now, in both directions; 0 selects
+     * NOSTR_OTEL_DEFAULT_MAX_CLOCK_SKEW_SECONDS (120s). Stale and future-dated
+     * events are rejected with NOSTR_OTEL_ERR_STALE_EVENT. Negative is invalid.
+     */
+    int64_t max_clock_skew_seconds;
+    bool disable_freshness;         /**< turns the window off (not recommended) */
+    /** Replay-cache bound; 0 selects NOSTR_OTEL_DEFAULT_SEEN_CACHE_SIZE (100k). */
+    size_t seen_cache_size;
+    /** How long an id is remembered; 0 selects twice the freshness window. */
+    int64_t seen_cache_ttl_seconds;
+    bool disable_dedup;             /**< turns replay rejection off (not recommended) */
+    NostrOtelClockFn now;           /**< optional clock override; tests only */
+    void *now_user_data;
     NostrOtelHandlerFn handler;     /**< required */
     void *handler_user_data;
     NostrOtelErrorFn on_error;      /**< optional */
@@ -403,10 +439,15 @@ NostrFilters *nostr_otel_consumer_filters(const NostrOtelConsumer *consumer);
  * @event: (transfer none): event to verify, validate, decode and dispatch
  *
  * Verifies the id+signature, checks the kind against the configured signals,
- * validates `domain`/`schema`/`enc` tags, applies the admission policy, decodes
- * the body and invokes the handler with the opaque OTLP bytes attributed to the
+ * validates `domain`/`schema`/`enc` tags, checks the `created_at` freshness
+ * window, applies the admission policy, rejects replayed event ids, decodes the
+ * body and invokes the handler with the opaque OTLP bytes attributed to the
  * signing pubkey. It touches no network, so bridges and tests can feed events
  * from any source.
+ *
+ * Duplicates are reported as NOSTR_OTEL_ERR_REPLAYED and events outside the
+ * freshness window as NOSTR_OTEL_ERR_STALE_EVENT. Both defences are on by
+ * default; see NostrOtelConsumerConfig.
  *
  * Returns: NOSTR_OTEL_OK or a negative NostrOtelError.
  */
