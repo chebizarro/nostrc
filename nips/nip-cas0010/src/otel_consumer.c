@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "otel_internal.h"
 
@@ -14,11 +15,21 @@ struct NostrOtelConsumer {
     void *admit_user_data;
     NostrOtelAdmissionPolicy policy;
     size_t max_decoded_bytes;
+    int64_t max_clock_skew_seconds;
+    bool disable_freshness;
+    NostrOtelSeenCache *seen; /**< owned; NULL when dedup is disabled */
+    NostrOtelClockFn now;
+    void *now_user_data;
     NostrOtelHandlerFn handler;
     void *handler_user_data;
     NostrOtelErrorFn on_error;
     void *error_user_data;
 };
+
+static int64_t consumer_now(const NostrOtelConsumer *consumer) {
+    if (consumer->now) return consumer->now(consumer->now_user_data);
+    return (int64_t)time(NULL);
+}
 
 static bool consumer_accepts(const NostrOtelConsumer *consumer, NostrOtelSignal signal) {
     for (size_t i = 0; i < consumer->signal_count; i++) {
@@ -38,6 +49,9 @@ int nostr_otel_consumer_new(const NostrOtelConsumerConfig *cfg, NostrOtelConsume
         return NOSTR_OTEL_ERR_INVALID_ARG;
     }
     if (!cfg->admit && cfg->policy != NOSTR_OTEL_ADMISSION_OPEN) {
+        return NOSTR_OTEL_ERR_INVALID_ARG;
+    }
+    if (cfg->max_clock_skew_seconds < 0 || cfg->seen_cache_ttl_seconds < 0) {
         return NOSTR_OTEL_ERR_INVALID_ARG;
     }
 
@@ -64,6 +78,21 @@ int nostr_otel_consumer_new(const NostrOtelConsumerConfig *cfg, NostrOtelConsume
     consumer->policy = cfg->policy;
     consumer->max_decoded_bytes =
         cfg->max_decoded_bytes ? cfg->max_decoded_bytes : NOSTR_OTEL_DEFAULT_MAX_DECODED_BYTES;
+    consumer->max_clock_skew_seconds = cfg->max_clock_skew_seconds
+                                           ? cfg->max_clock_skew_seconds
+                                           : NOSTR_OTEL_DEFAULT_MAX_CLOCK_SKEW_SECONDS;
+    consumer->disable_freshness = cfg->disable_freshness;
+    consumer->now = cfg->now;
+    consumer->now_user_data = cfg->now_user_data;
+    if (!cfg->disable_dedup) {
+        int64_t ttl = cfg->seen_cache_ttl_seconds ? cfg->seen_cache_ttl_seconds
+                                                  : 2 * consumer->max_clock_skew_seconds;
+        consumer->seen = nostr_otel_seen_cache_new(cfg->seen_cache_size, ttl);
+        if (!consumer->seen) {
+            free(consumer);
+            return NOSTR_OTEL_ERR_NOMEM;
+        }
+    }
     consumer->handler = cfg->handler;
     consumer->handler_user_data = cfg->handler_user_data;
     consumer->on_error = cfg->on_error;
@@ -73,6 +102,8 @@ int nostr_otel_consumer_new(const NostrOtelConsumerConfig *cfg, NostrOtelConsume
 }
 
 void nostr_otel_consumer_free(NostrOtelConsumer *consumer) {
+    if (!consumer) return;
+    nostr_otel_seen_cache_free(consumer->seen);
     free(consumer);
 }
 
@@ -148,7 +179,19 @@ int nostr_otel_consumer_process(NostrOtelConsumer *consumer, NostrEvent *event) 
     rc = nostr_otel_parse_encoding(event->tags, &enc);
     if (rc != NOSTR_OTEL_OK) goto fail;
 
-    /* 4. Admission on the signing pubkey. */
+    /* 4. Freshness: a captured event must not stay replayable forever. The
+     *    window matches the relay-side defence (default +/-120s). */
+    int64_t now = consumer_now(consumer);
+    if (!consumer->disable_freshness) {
+        int64_t drift = now - event->created_at;
+        if (drift > consumer->max_clock_skew_seconds ||
+            -drift > consumer->max_clock_skew_seconds) {
+            rc = NOSTR_OTEL_ERR_STALE_EVENT;
+            goto fail;
+        }
+    }
+
+    /* 5. Admission on the signing pubkey. */
     bool admitted = consumer->policy == NOSTR_OTEL_ADMISSION_OPEN ||
                     consumer->admit(event->pubkey, consumer->admit_user_data);
     if (!admitted && consumer->policy != NOSTR_OTEL_ADMISSION_FLAG) {
@@ -156,7 +199,23 @@ int nostr_otel_consumer_process(NostrOtelConsumer *consumer, NostrEvent *event) 
         goto fail;
     }
 
-    /* 5. Decode the opaque OTLP bytes. */
+    /* 6. Replay: an id is only remembered once the event has passed every
+     *    cheaper check, so rejected traffic cannot fill or churn the cache. */
+    if (consumer->seen) {
+        bool duplicate = false;
+        if (!event->id) {
+            rc = NOSTR_OTEL_ERR_INVALID_SIGNATURE;
+            goto fail;
+        }
+        rc = nostr_otel_seen_cache_observe(consumer->seen, event->id, now, &duplicate);
+        if (rc != NOSTR_OTEL_OK) goto fail;
+        if (duplicate) {
+            rc = NOSTR_OTEL_ERR_REPLAYED;
+            goto fail;
+        }
+    }
+
+    /* 7. Decode the opaque OTLP bytes. */
     uint8_t *body = NULL;
     size_t body_len = 0;
     rc = nostr_otel_decode_body(event->content ? event->content : "", enc,
