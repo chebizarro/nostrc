@@ -1,0 +1,31 @@
+# Convenience wrappers for nostrc developer workflows.
+#
+# NOTE: nostrc builds with CMake/Meson, not make. This Makefile only provides
+# thin shortcuts (currently the Linux VM test loop). For normal builds use:
+#   cmake -S . -B build -DENABLE_NOSTR_HOMED=ON && cmake --build build
+#
+# VM test loop (nostr-homed Linux portable parity, beads nostrc-rb0e.15):
+#   make -f Makefile.vm vm-test VM_SSH=ubuntu@192.168.64.5
+#   make -f Makefile.vm vm-test-asan VM_SSH=ubuntu@192.168.64.5
+#   make -f Makefile.vm vm-test-full VM_SSH=ubuntu@192.168.64.5   # cmake + meson suites
+
+.DEFAULT_GOAL := help
+.PHONY: help vm-test vm-test-asan vm-test-full
+
+help:
+	@echo "nostrc convenience targets (builds use CMake/Meson directly):"
+	@echo "  make -f Makefile.vm vm-test       VM_SSH=user@host   # Linux portable build+test in a VM"
+	@echo "  make -f Makefile.vm vm-test-asan  VM_SSH=user@host   # same, with ASan/UBSan"
+	@echo "  make -f Makefile.vm vm-test-full  VM_SSH=user@host   # cmake + meson suites"
+	@echo ""
+	@echo "Extra env: VM_PORT, VM_SSH_KEY, BRANCH, LOG_DIR, SKIP_DEPS, SUDO, JOBS"
+	@echo "See scripts/vm-linux-ci.sh for details."
+
+vm-test:
+	@scripts/vm-linux-ci.sh
+
+vm-test-asan:
+	@SANITIZE=1 scripts/vm-linux-ci.sh
+
+vm-test-full:
+	@RUN_MESON=1 scripts/vm-linux-ci.sh
