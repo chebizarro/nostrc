@@ -8,7 +8,13 @@
 extern "C" {
 #endif
 
+/* Generate a cryptographically random 256-bit lowercase-hex request ID.
+ * The caller owns the returned string and frees it with free(). */
+char *nostr_nip46_request_id_generate(void);
+
 /* Build/parse JSON strings for NIP-46 requests and responses (unencrypted).
+ * Parsers reject duplicate object keys, oversized messages, and invalid field
+ * types. For compatibility, responses may carry both result and error.
  *
  * Response parsing semantics:
  *  - If the "result" field is a JSON string, `out->result` is that plain string (no quotes).

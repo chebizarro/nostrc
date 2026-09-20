@@ -15,7 +15,9 @@ static int test_bunker_connect(void) {
     char **relays = NULL; size_t n = 0; if (nostr_nip46_session_get_relays(s, &relays, &n) != 0) { printf("get relays fail\n"); nostr_nip46_session_free(s); return 5; }
     if (n < 1 || !relays[0] || strcmp(relays[0], "wss://relay.one") != 0) { printf("relay mismatch\n"); for (size_t i=0;i<n;++i) free(relays[i]); free(relays); nostr_nip46_session_free(s); return 6; }
     for (size_t i=0;i<n;++i) free(relays[i]); free(relays);
-    char *sec = NULL; (void)nostr_nip46_session_get_secret(s, &sec); if (!sec || strcmp(sec, "sec") != 0) { printf("secret mismatch\n"); free(sec); nostr_nip46_session_free(s); return 7; }
+    char *token = NULL; (void)nostr_nip46_session_get_connect_token(s, &token); if (!token || strcmp(token, "sec") != 0) { printf("token mismatch\n"); free(token); nostr_nip46_session_free(s); return 7; }
+    free(token);
+    char *sec = NULL; (void)nostr_nip46_session_get_secret(s, &sec); if (!sec || strlen(sec) != 64 || strcmp(sec, "sec") == 0) { printf("transport secret mismatch\n"); free(sec); nostr_nip46_session_free(s); return 8; }
     free(sec);
     nostr_nip46_session_free(s);
     return 0;

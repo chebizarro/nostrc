@@ -1,271 +1,172 @@
 #include "nostr/nip46/nip46_msg.h"
-#include "json.h"
+#include <jansson.h>
+#include <openssl/rand.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 
-/* Minimal JSON string escaper: returns newly allocated string without quotes.
- * Escapes: \ " \b \f \n \r \t and any char < 0x20 as \u00XX. */
-static char *escape_json_string(const char *s) {
-    if (!s) return strdup("");
-    size_t len = 0;
-    for (const unsigned char *p = (const unsigned char*)s; *p; ++p) {
-        unsigned char c = *p;
-        switch (c) {
-            case '"': case '\\': len += 2; break;
-            case '\b': case '\f': case '\n': case '\r': case '\t': len += 2; break;
-            default:
-                if (c < 0x20) len += 6; /* \u00XX */
-                else len += 1;
-        }
+#define MESSAGE_MAX (64u * 1024u)
+#define ID_MAX 256u
+#define METHOD_MAX 128u
+#define PARAM_MAX 64u
+
+static json_t *load_object(const char *text) {
+    if (!text || strlen(text) > MESSAGE_MAX) return NULL;
+    json_error_t error;
+    json_t *root = json_loads(text, JSON_REJECT_DUPLICATES, &error);
+    if (!root || !json_is_object(root)) {
+        json_decref(root);
+        return NULL;
     }
-    char *out = (char*)malloc(len + 1);
-    if (!out) return NULL;
-    char *q = out;
-    for (const unsigned char *p = (const unsigned char*)s; *p; ++p) {
-        unsigned char c = *p;
-        switch (c) {
-            case '"': *q++ = '\\'; *q++ = '"'; break;
-            case '\\': *q++ = '\\'; *q++ = '\\'; break;
-            case '\b': *q++ = '\\'; *q++ = 'b'; break;
-            case '\f': *q++ = '\\'; *q++ = 'f'; break;
-            case '\n': *q++ = '\\'; *q++ = 'n'; break;
-            case '\r': *q++ = '\\'; *q++ = 'r'; break;
-            case '\t': *q++ = '\\'; *q++ = 't'; break;
-            default:
-                if (c < 0x20) {
-                    static const char hex[] = "0123456789abcdef";
-                    *q++ = '\\'; *q++ = 'u'; *q++ = '0'; *q++ = '0';
-                    *q++ = hex[(c >> 4) & 0xF];
-                    *q++ = hex[c & 0xF];
-                } else {
-                    *q++ = (char)c;
-                }
-        }
-    }
-    *q = '\0';
-    return out;
+    return root;
 }
 
-/* Split a top-level JSON array into raw element substrings (no unquoting).
- * Assumes input starts with '[' and is a valid JSON array or at least
- * balanced enough for bracket/brace and string tracking.
- * Returns 0 on success; on success, '*out_items' is a newly allocated vector
- * of newly allocated strings for each element; '*out_n' is set to count.
- */
-static int json_array_split_raw(const char *raw_array,
-                                char ***out_items,
-                                size_t *out_n) {
-    if (out_items) *out_items = NULL; if (out_n) *out_n = 0;
-    if (!raw_array || raw_array[0] != '[' || !out_items || !out_n) return -1;
-    const char *p = raw_array;
-    // Skip leading '['
-    p++;
-    // Skip whitespace
-    while (*p && isspace((unsigned char)*p)) p++;
-    if (*p == ']') { // empty array
-        *out_items = (char**)calloc(0, sizeof(char*));
-        if (!*out_items) return -1; *out_n = 0; return 0;
+static char *dump_compact(json_t *value) {
+    char *text = json_dumps(value, JSON_COMPACT | JSON_ENSURE_ASCII | JSON_ENCODE_ANY);
+    if (text && strlen(text) > MESSAGE_MAX) {
+        free(text);
+        return NULL;
     }
-    size_t cap = 4, count = 0;
-    char **items = (char**)malloc(cap * sizeof(char*));
-    if (!items) return -1;
-    int depth_obj = 0, depth_arr = 0; int in_str = 0; int esc = 0;
-    const char *elem_start = p;
-    for (; *p; ++p) {
-        char c = *p;
-        if (in_str) {
-            if (esc) { esc = 0; continue; }
-            if (c == '\\') { esc = 1; continue; }
-            if (c == '"') { in_str = 0; continue; }
-            continue;
-        }
-        if (c == '"') { in_str = 1; continue; }
-        if (c == '{') { depth_obj++; continue; }
-        if (c == '}') { if (depth_obj>0) depth_obj--; continue; }
-        if (c == '[') { depth_arr++; continue; }
-        if (c == ']') {
-            if (depth_arr == 0 && depth_obj == 0) {
-                // End of the top-level array; capture last element
-                const char *elem_end = p; // exclusive
-                // Trim trailing whitespace from elem_end back
-                const char *q = elem_end; while (q>elem_start && isspace((unsigned char)q[-1])) q--;
-                size_t len = (size_t)(q - elem_start);
-                if (len > 0) {
-                    char *s = (char*)malloc(len + 1);
-                    if (!s) { for (size_t i=0;i<count;++i) free(items[i]); free(items); return -1; }
-                    memcpy(s, elem_start, len); s[len] = '\0';
-                    if (count == cap) { cap *= 2; char **tmp = (char**)realloc(items, cap*sizeof(char*)); if(!tmp){ for(size_t i=0;i<count;++i) free(items[i]); free(items); free(s); return -1; } items = tmp; }
-                    items[count++] = s;
-                }
-                // Success
-                *out_items = items; *out_n = count; return 0;
-            } else {
-                if (depth_arr>0) depth_arr--; continue;
-            }
-        }
-        if (c == ',' && depth_obj == 0 && depth_arr == 0) {
-            // End of element
-            const char *elem_end = p; // exclusive
-            // Trim trailing whitespace
-            const char *q = elem_end; while (q>elem_start && isspace((unsigned char)q[-1])) q--;
-            size_t len = (size_t)(q - elem_start);
-            char *s = (char*)malloc(len + 1);
-            if (!s) { for (size_t i=0;i<count;++i) free(items[i]); free(items); return -1; }
-            memcpy(s, elem_start, len); s[len] = '\0';
-            if (count == cap) { cap *= 2; char **tmp = (char**)realloc(items, cap*sizeof(char*)); if(!tmp){ for(size_t i=0;i<count;++i) free(items[i]); free(items); free(s); return -1; } items = tmp; }
-            items[count++] = s;
-            // Move start to next non-space after comma
-            p++; while (*p && isspace((unsigned char)*p)) p++;
-            elem_start = p; if (!*p) break; // malformed
-            p--; // will be incremented by loop
-            continue;
-        }
+    return text;
+}
+
+char *nostr_nip46_request_id_generate(void) {
+    unsigned char random[32];
+    static const char hex[] = "0123456789abcdef";
+    if (RAND_bytes(random, sizeof(random)) != 1) return NULL;
+    char *id = malloc(65u);
+    if (!id) { memset(random, 0, sizeof(random)); return NULL; }
+    for (size_t i = 0; i < sizeof(random); i++) {
+        id[i * 2u] = hex[random[i] >> 4];
+        id[i * 2u + 1u] = hex[random[i] & 0x0fu];
     }
-    // Malformed array
-    for (size_t i=0;i<count;++i) free(items[i]);
-    free(items);
+    id[64] = '\0';
+    memset(random, 0, sizeof(random));
+    return id;
+}
+
+char *nostr_nip46_request_build(const char *id, const char *method,
+                                const char *const *params, size_t n_params) {
+    if (!id || !*id || strlen(id) > ID_MAX || !method || !*method ||
+        strlen(method) > METHOD_MAX || n_params > PARAM_MAX ||
+        (n_params && !params)) return NULL;
+    json_t *root = json_object();
+    json_t *array = json_array();
+    if (!root || !array || json_object_set_new(root, "id", json_string(id)) ||
+        json_object_set_new(root, "method", json_string(method))) goto fail;
+    for (size_t i = 0; i < n_params; i++) {
+        if (!params[i] || strlen(params[i]) > MESSAGE_MAX ||
+            json_array_append_new(array, json_string(params[i]))) goto fail;
+    }
+    if (json_object_set(root, "params", array)) goto fail;
+    json_decref(array);
+    array = NULL;
+    char *text = dump_compact(root);
+    json_decref(root);
+    return text;
+fail:
+    json_decref(array);
+    json_decref(root);
+    return NULL;
+}
+
+int nostr_nip46_request_parse(const char *text, NostrNip46Request *out) {
+    if (!out) return -1;
+    memset(out, 0, sizeof(*out));
+    json_t *root = load_object(text);
+    if (!root) return -1;
+    json_t *id = json_object_get(root, "id");
+    json_t *method = json_object_get(root, "method");
+    json_t *params = json_object_get(root, "params");
+    if (!json_is_string(id) || !json_is_string(method) || !json_is_array(params) ||
+        !*json_string_value(id) || strlen(json_string_value(id)) > ID_MAX ||
+        !*json_string_value(method) || strlen(json_string_value(method)) > METHOD_MAX ||
+        json_array_size(params) > PARAM_MAX) goto fail;
+    out->id = strdup(json_string_value(id));
+    out->method = strdup(json_string_value(method));
+    out->n_params = json_array_size(params);
+    if (!out->id || !out->method) goto fail;
+    if (out->n_params) {
+        out->params = calloc(out->n_params, sizeof(*out->params));
+        if (!out->params) goto fail;
+    }
+    for (size_t i = 0; i < out->n_params; i++) {
+        json_t *item = json_array_get(params, i);
+        out->params[i] = json_is_string(item)
+            ? strdup(json_string_value(item)) : dump_compact(item);
+        if (!out->params[i]) goto fail;
+    }
+    json_decref(root);
+    return 0;
+fail:
+    json_decref(root);
+    nostr_nip46_request_free(out);
     return -1;
 }
 
-char *nostr_nip46_request_build(const char *id,
-                                const char *method,
-                                const char *const *params,
-                                size_t n_params) {
-    if (!id || !method) return NULL;
-    char *eid = escape_json_string(id);
-    char *emethod = escape_json_string(method);
-    if (!eid || !emethod) { free(eid); free(emethod); return NULL; }
-    /* Prepare params: ALL params are JSON strings per NIP-46 spec.
-     * Previously this code auto-detected JSON objects/arrays and embedded them
-     * raw, but NIP-46 requires params like sign_event to be JSON-stringified
-     * (e.g., params:["{\"kind\":7,...}"] not params:[{"kind":7,...}]). */
-    char **eparams = NULL;
-    size_t *plen = NULL;
-    if (n_params > 0) {
-        eparams = (char**)calloc(n_params, sizeof(char*));
-        plen = (size_t*)calloc(n_params, sizeof(size_t));
-        if (!eparams || !plen) { free(eparams); free(plen); free(eid); free(emethod); return NULL; }
-        for (size_t i = 0; i < n_params; ++i) {
-            const char *p = (params && params[i]) ? params[i] : "";
-            eparams[i] = escape_json_string(p);
-            if (!eparams[i]) {
-                for (size_t j = 0; j < i; ++j) free(eparams[j]);
-                free(eparams); free(plen); free(eid); free(emethod); return NULL;
-            }
-            plen[i] = 2 + strlen(eparams[i]); /* quotes around escaped */
-        }
-    }
-    size_t cap = 32 + strlen(eid) + strlen(emethod);
-    cap += 2; /* [] */
-    for (size_t i = 0; i < n_params; ++i) {
-        cap += plen[i];
-        if (i + 1 < n_params) cap += 1; /* comma */
-    }
-    size_t buf_size = cap + 32;
-    char *buf = (char*)malloc(buf_size);
-    if (!buf) { if (eparams){ for (size_t i=0;i<n_params;++i) free(eparams[i]); free(eparams);} free(plen); free(eid); free(emethod); return NULL; }
-    char *q = buf;
-    q += snprintf(q, buf_size, "{\"id\":\"%s\",\"method\":\"%s\",\"params\":[", eid, emethod);
-    for (size_t i = 0; i < n_params; ++i) {
-        if (i) *q++ = ',';
-        *q++ = '"';
-        size_t l = strlen(eparams[i]); memcpy(q, eparams[i], l); q += l;
-        *q++ = '"';
-    }
-    *q++ = ']'; *q++ = '}'; *q = '\0';
-    for (size_t i = 0; i < n_params; ++i) free(eparams ? eparams[i] : NULL);
-    free(eparams); free(plen);
-    free(eid); free(emethod);
-    return buf;
-}
-
-int nostr_nip46_request_parse(const char *json, NostrNip46Request *out) {
-    if (!json || !out) return -1; memset(out, 0, sizeof(*out));
-    if (nostr_json_get_string(json, "id", &out->id) != 0) return -1;
-    if (nostr_json_get_string(json, "method", &out->method) != 0) return -1;
-
-    // First try to parse as array of strings (legacy behavior)
-    int need_fallback = 0;
-    if (nostr_json_get_string_array(json, "params", &out->params, &out->n_params) != 0 || out->n_params == 0) {
-        need_fallback = 1;
-    } else {
-        // Check if any params are NULL (happens when elements aren't strings)
-        for (size_t i = 0; i < out->n_params; ++i) {
-            if (!out->params[i]) {
-                need_fallback = 1;
-                break;
-            }
-        }
-    }
-
-    if (need_fallback) {
-        // Free any partially allocated params from string_array attempt
-        if (out->params) {
-            for (size_t i = 0; i < out->n_params; ++i) {
-                free(out->params[i]);
-            }
-            free(out->params);
-            out->params = NULL;
-            out->n_params = 0;
-        }
-
-        // Fallback: get raw params array and split into raw elements
-        char *raw = NULL;
-        if (nostr_json_get_raw(json, "params", &raw) == 0 && raw) {
-            // raw is the compact JSON for the array (e.g., "[ {..}, 123, \"x\" ]")
-            // Split top-level elements
-            char **items = NULL; size_t n = 0;
-            if (json_array_split_raw(raw, &items, &n) == 0) {
-                out->params = items;
-                out->n_params = n;
-            }
-            free(raw);
-        }
-    }
-    return 0;
-}
-
 void nostr_nip46_request_free(NostrNip46Request *req) {
-    if (!req) return; free(req->id); free(req->method);
-    if (req->params) {
-        for (size_t i = 0; i < req->n_params; ++i) free(req->params[i]);
-        free(req->params);
-    }
+    if (!req) return;
+    free(req->id); free(req->method);
+    if (req->params)
+        for (size_t i = 0; i < req->n_params; i++) free(req->params[i]);
+    free(req->params);
     memset(req, 0, sizeof(*req));
 }
 
 char *nostr_nip46_response_build_ok(const char *id, const char *result_json) {
-    if (!id || !result_json) return NULL;
-    /* +1 for NUL terminator to avoid truncation by snprintf */
-    size_t cap = strlen(result_json) + strlen(id) + 32 + 1;
-    char *buf = (char*)malloc(cap);
-    if (!buf) return NULL;
-    snprintf(buf, cap, "{\"id\":\"%s\",\"result\":%s}", id, result_json);
-    return buf;
+    if (!id || !*id || strlen(id) > ID_MAX || !result_json ||
+        strlen(result_json) > MESSAGE_MAX) return NULL;
+    json_error_t error;
+    json_t *result = json_loads(result_json, JSON_REJECT_DUPLICATES | JSON_DECODE_ANY, &error);
+    json_t *root = json_object();
+    if (!result || !root || json_object_set_new(root, "id", json_string(id)) ||
+        json_object_set(root, "result", result)) {
+        json_decref(result); json_decref(root); return NULL;
+    }
+    json_decref(result);
+    char *text = dump_compact(root);
+    json_decref(root);
+    return text;
 }
 
 char *nostr_nip46_response_build_err(const char *id, const char *error_msg) {
-    if (!id || !error_msg) return NULL;
-    /* +1 for NUL terminator to avoid truncation by snprintf */
-    size_t cap = strlen(error_msg) + strlen(id) + 32 + 1;
-    char *buf = (char*)malloc(cap);
-    if (!buf) return NULL;
-    snprintf(buf, cap, "{\"id\":\"%s\",\"error\":\"%s\"}", id, error_msg);
-    return buf;
+    if (!id || !*id || strlen(id) > ID_MAX || !error_msg ||
+        strlen(error_msg) > MESSAGE_MAX) return NULL;
+    json_t *root = json_object();
+    if (!root || json_object_set_new(root, "id", json_string(id)) ||
+        json_object_set_new(root, "error", json_string(error_msg))) {
+        json_decref(root); return NULL;
+    }
+    char *text = dump_compact(root);
+    json_decref(root);
+    return text;
 }
 
-int nostr_nip46_response_parse(const char *json, NostrNip46Response *out) {
-    if (!json || !out) return -1; memset(out, 0, sizeof(*out));
-    if (nostr_json_get_string(json, "id", &out->id) != 0) return -1;
-    /* Prefer string forms; if not string, capture compact raw JSON for result. */
-    if (nostr_json_get_string(json, "result", &out->result) != 0) {
-        (void)nostr_json_get_raw(json, "result", &out->result);
-    }
-    (void)nostr_json_get_string(json, "error", &out->error);
+int nostr_nip46_response_parse(const char *text, NostrNip46Response *out) {
+    if (!out) return -1;
+    memset(out, 0, sizeof(*out));
+    json_t *root = load_object(text);
+    if (!root) return -1;
+    json_t *id = json_object_get(root, "id");
+    json_t *result = json_object_get(root, "result");
+    json_t *error = json_object_get(root, "error");
+    if (!json_is_string(id) || !*json_string_value(id) ||
+        strlen(json_string_value(id)) > ID_MAX || (!result && !error) ||
+        (error && !json_is_string(error))) goto fail;
+    out->id = strdup(json_string_value(id));
+    if (result) out->result = json_is_string(result)
+        ? strdup(json_string_value(result)) : dump_compact(result);
+    if (error) out->error = strdup(json_string_value(error));
+    if (!out->id || (result && !out->result) || (error && !out->error)) goto fail;
+    json_decref(root);
     return 0;
+fail:
+    json_decref(root);
+    nostr_nip46_response_free(out);
+    return -1;
 }
 
 void nostr_nip46_response_free(NostrNip46Response *res) {
-    if (!res) return; free(res->id); free(res->result); free(res->error); memset(res,0,sizeof(*res));
+    if (!res) return;
+    free(res->id); free(res->result); free(res->error);
+    memset(res, 0, sizeof(*res));
 }

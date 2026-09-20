@@ -200,17 +200,21 @@ static int test_session_get_client_pubkey(void) {
     return 0;
 }
 
-static int test_session_get_secret_bunker(void) {
+static int test_session_secret_roles_bunker(void) {
     const char *uri = "bunker://0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                       "?relay=wss%3A%2F%2Frelay.com&secret=my-auth-token";
     NostrNip46Session *s = nostr_nip46_client_new();
     TEST_ASSERT(s != NULL, "session created");
     TEST_ASSERT(nostr_nip46_client_connect(s, uri, NULL) == 0, "connect succeeds");
 
+    char *token = NULL;
+    TEST_ASSERT(nostr_nip46_session_get_connect_token(s, &token) == 0, "get token succeeds");
+    TEST_ASSERT_EQ_STR(token, "my-auth-token", "token matches");
+    free(token);
     char *secret = NULL;
-    TEST_ASSERT(nostr_nip46_session_get_secret(s, &secret) == 0, "get_secret succeeds");
-    TEST_ASSERT_EQ_STR(secret, "my-auth-token", "secret matches");
-
+    TEST_ASSERT(nostr_nip46_session_get_secret(s, &secret) == 0, "get transport secret succeeds");
+    TEST_ASSERT(secret && strlen(secret) == 64, "transport secret generated independently");
+    TEST_ASSERT(strcmp(secret, "my-auth-token") != 0, "token is not transport secret");
     free(secret);
     nostr_nip46_session_free(s);
     return 0;
@@ -342,9 +346,13 @@ static int test_client_reconnect_clears_old_state(void) {
     for (size_t i = 0; i < n; i++) free(relays[i]);
     free(relays);
 
+    char *token = NULL;
+    TEST_ASSERT(nostr_nip46_session_get_connect_token(s, &token) == 0, "get token");
+    TEST_ASSERT_EQ_STR(token, "secret2", "correct replacement token");
+    free(token);
     char *secret = NULL;
-    TEST_ASSERT(nostr_nip46_session_get_secret(s, &secret) == 0, "get secret");
-    TEST_ASSERT_EQ_STR(secret, "secret2", "correct secret");
+    TEST_ASSERT(nostr_nip46_session_get_secret(s, &secret) == 0, "get transport secret");
+    TEST_ASSERT(secret && strlen(secret) == 64, "transport secret remains independent");
     free(secret);
 
     nostr_nip46_session_free(s);
@@ -375,7 +383,7 @@ int main(void) {
     RUN_TEST(test_session_set_relays_empty);
     RUN_TEST(test_session_get_remote_pubkey);
     RUN_TEST(test_session_get_client_pubkey);
-    RUN_TEST(test_session_get_secret_bunker);
+    RUN_TEST(test_session_secret_roles_bunker);
     RUN_TEST(test_client_set_secret_valid);
     RUN_TEST(test_client_set_secret_invalid_length);
     RUN_TEST(test_client_set_secret_invalid_hex);

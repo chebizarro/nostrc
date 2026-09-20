@@ -1,93 +1,87 @@
-project('nostr-homed', 'c', default_options: ['c_std=c11', 'warning_level=3', 'werror=true'])
+project('nostr-homed', 'c', version: '0.2.0',
+  default_options: ['c_std=c11', 'warning_level=3', 'werror=true'])
 
 cc = meson.get_compiler('c')
+python = import('python').find_installation(required: false)
+inc = include_directories('include', 'src/auth', 'src/identity')
 
-jann = dependency('jansson', required: true)
-glib = dependency('glib-2.0', version: '>=2.56')
-gobject = dependency('gobject-2.0', version: '>=2.56')
-gio = dependency('gio-2.0', version: '>=2.56')
-openssl = dependency('openssl', required: true)
-secp = cc.find_library('secp256k1', required: true)
-sqlite3 = dependency('sqlite3', required: true)
-curl = dependency('libcurl', required: true)
-fuse3 = dependency('fuse3', required: true)
-
-inc = include_directories('include', '../..//libnostr/include', '../..//libjson/include', '../..//libgo/include')
-
-# ── libgo (pre-built by CMake) ─────────────────────────────────────────
-# relay_fetch.c uses GoChannel + go_select_timeout for async event waiting.
-_cmake_build = meson.project_source_root() / '../../build'
-libgo_static = cc.find_library('libgo',
-  dirs: [_cmake_build / 'libgo'],
-  static: true,
-  required: false)
-go_fiber_static = cc.find_library('go_fiber',
-  dirs: [_cmake_build / 'libgo'],
-  static: true,
-  required: false)
-nsync_dep = cc.find_library('nsync', required: true)
-
-nh_common_src = files(
-  'src/common/nostr_manifest.c',
-  'src/common/nostr_cache.c',
-  'src/common/relay_fetch.c',
-  'src/common/blossom_client.c',
-  'src/common/secrets_tmpfs.c',
-  'src/common/secrets_decrypt.c',
-  'src/common/nip46_client_dbus.c',
-  'src/common/util.c',
-)
-
-nh_common_deps = [jann, glib, gobject, gio, openssl, sqlite3, curl, fuse3, secp, nsync_dep]
-if libgo_static.found()
-  nh_common_deps += libgo_static
-endif
-if go_fiber_static.found()
-  nh_common_deps += go_fiber_static
+if get_option('auth_install').enabled()
+  error('auth_install is unavailable: broker, PAM client, peer binding, and activation policy are incomplete; use -Dauth_core=enabled for portable tests only')
 endif
 
-nh_common = static_library('nostr_homed_common', nh_common_src,
-  include_directories: inc,
-  dependencies: nh_common_deps
-)
-
-nostrfs = executable('nostrfs', 'src/fs/nostrfs.c', include_directories: inc,
-  link_with: nh_common,
-  dependencies: [fuse3])
-
-nss_nostr = shared_library('nss_nostr', 'src/nss/nss_nostr.c', include_directories: inc,
-  link_with: nh_common,
-  soversion: '2',
-  install: true, install_dir: get_option('libdir'))
-
-pam = dependency('libpam', required: false)
-if pam.found()
-  pam_nostr = shared_library('pam_nostr', 'src/pam/pam_nostr.c', include_directories: inc,
-    link_with: nh_common,
-    dependencies: [pam, glib, gio],
-    install: true, install_dir: join_paths(get_option('libdir'), 'security'))
-else
-  message('libpam not found; skipping pam_nostr module')
+if get_option('experimental_roaming').enabled()
+  error('experimental_roaming is not part of the portable Meson checkpoint; use the explicit CMake experimental target until dependency discovery is replaced')
 endif
 
-nostr_homectl = executable('nostr-homectl', 'src/ctl/nostr-homectl.c', include_directories: inc,
-  link_with: nh_common,
-  dependencies: [glib, gio],
-  install: true)
-
-install_data('config/nss_nostr.conf.sample', install_dir: get_option('sysconfdir'))
-install_data('dbus/org.nostr.Homed1.xml', install_dir: join_paths(get_option('datadir'), 'dbus-1', 'interfaces'))
-# User services — see docs/SYSTEMD_TOPOLOGY.md
-# Use pkg-config systemduserunitdir; fall back to lib/systemd/user
-systemd_dep = dependency('systemd', required: false)
-if systemd_dep.found()
-  systemd_user_unit_dir = systemd_dep.get_variable(pkgconfig: 'systemduserunitdir')
-else
-  systemd_user_unit_dir = join_paths(get_option('prefix'), 'lib', 'systemd', 'user')
-  message('systemd not found via pkg-config; using fallback: ' + systemd_user_unit_dir)
+if get_option('auth_core').enabled()
+  jansson = dependency('jansson', required: true)
+  openssl = dependency('openssl', required: true)
+  nostr = dependency('nostr', required: true)
+  libgo = dependency('libgo', required: true)
+  auth_core = static_library('nostr_auth_core',
+    'src/auth/auth_protocol.c',
+    'src/auth/auth_transaction.c',
+    'src/auth/auth_challenge.c',
+    'src/auth/auth_vault.c',
+    'src/auth/provider_local.c',
+    include_directories: inc,
+    dependencies: [jansson, openssl, nostr, libgo])
+  auth_core_dep = declare_dependency(
+    link_with: auth_core,
+    include_directories: inc,
+    dependencies: [jansson, openssl, nostr, libgo])
 endif
-install_data('systemd/user/nostr-homectl.service', install_dir: systemd_user_unit_dir)
-install_data('systemd/user/nostrfs@.service', install_dir: systemd_user_unit_dir)
 
-# Tests
-subdir('tests')
+if get_option('identity_core').enabled()
+  sqlite3 = dependency('sqlite3', required: true)
+  identity_openssl = dependency('openssl', required: true)
+  identity_core = static_library('nostr_identity_core',
+    'src/identity/identity_common.c',
+    'src/identity/identity_config.c',
+    'src/identity/identity_store.c',
+    'src/identity/identity_reader.c',
+    'src/identity/identity_projection.c',
+    include_directories: inc,
+    dependencies: [sqlite3, identity_openssl])
+  identity_core_dep = declare_dependency(
+    link_with: identity_core,
+    include_directories: inc,
+    dependencies: [sqlite3, identity_openssl])
+endif
+
+if get_option('auth_core').enabled() and get_option('identity_core').enabled()
+  auth_identity = static_library('nostr_auth_identity',
+    'src/auth/auth_transaction_identity.c',
+    include_directories: inc,
+    dependencies: [auth_core_dep, identity_core_dep])
+  auth_identity_dep = declare_dependency(link_with: auth_identity,
+    dependencies: [auth_core_dep, identity_core_dep])
+endif
+
+if get_option('domain_config').enabled()
+  if not python.found()
+    error('domain_config requires Python 3')
+  endif
+  domain_share = join_paths(get_option('datadir'), 'nostr-homed', 'domain')
+  install_data(
+    'config/domain-route.conf.sample',
+    'config/smb.conf.winbind.sample',
+    'packaging/domain/domain-profile.manifest.json.sample',
+    'packaging/domain/ROLLBACK.md',
+    'packaging/pam/nostr-winbind-policy.md',
+    'docs/SAMBA_AD_LOGIN.md',
+    install_dir: domain_share)
+  install_data('packaging/domain/validate_domain_profile.py',
+    install_mode: 'rwxr-xr-x',
+    install_dir: join_paths(get_option('libexecdir'), 'nostr-homed'))
+endif
+
+if get_option('homed_tests')
+  subdir('tests')
+endif
+
+pkg = import('pkgconfig')
+pkg.generate(
+  name: 'nostr-homed',
+  description: 'Version metadata for opt-in Nostr login and experimental roaming components',
+  version: meson.project_version())

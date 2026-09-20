@@ -1,0 +1,447 @@
+{
+  "build_contract": {
+    "auth_install": "configure refusal until broker/PAM/peer/policy implementation is complete",
+    "cmake": {
+      "component_gate": "ENABLE_NOSTR_HOMED",
+      "features": [
+        "NOSTR_HOMED_ENABLE_AUTH_CORE",
+        "NOSTR_HOMED_ENABLE_IDENTITY_CORE",
+        "NOSTR_HOMED_ENABLE_DOMAIN_CONFIG",
+        "NOSTR_HOMED_ENABLE_AUTH_INSTALL",
+        "NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING"
+      ]
+    },
+    "default": "all nostr-homed subfeatures disabled",
+    "meson": {
+      "features": [
+        "auth_core",
+        "identity_core",
+        "domain_config",
+        "auth_install",
+        "experimental_roaming"
+      ]
+    },
+    "portable_excludes": [
+      "PAM",
+      "FUSE",
+      "GDM",
+      "curl",
+      "Blossom",
+      "user session bus",
+      "user signer"
+    ]
+  },
+  "cases": [
+    {
+      "id": "gdm.break_glass_console",
+      "required": true,
+      "suite": "gdm"
+    },
+    {
+      "id": "gdm.real_pam_worker_dispatch",
+      "required": true,
+      "suite": "gdm"
+    },
+    {
+      "id": "gdm.local_provider_login",
+      "required": true,
+      "suite": "gdm"
+    },
+    {
+      "id": "gdm.external_provider_login",
+      "required": true,
+      "suite": "gdm"
+    },
+    {
+      "id": "gdm.provider_choice_cancel",
+      "required": true,
+      "suite": "gdm"
+    },
+    {
+      "id": "gdm.lock_unlock_both_providers",
+      "required": true,
+      "suite": "gdm"
+    },
+    {
+      "id": "gdm.suspend_resume_both_providers",
+      "required": true,
+      "suite": "gdm"
+    },
+    {
+      "id": "gdm.controlled_relay_frames_and_disconnects",
+      "required": true,
+      "suite": "gdm"
+    },
+    {
+      "id": "gdm.real_external_signer_approval",
+      "required": true,
+      "suite": "gdm"
+    },
+    {
+      "id": "gdm.login_logout_100_cycles_per_provider",
+      "required": true,
+      "suite": "gdm"
+    },
+    {
+      "id": "gdm.no_secret_canary_in_evidence",
+      "required": true,
+      "suite": "gdm"
+    },
+    {
+      "id": "smb.dedicated_instance_isolation",
+      "required": true,
+      "suite": "smb"
+    },
+    {
+      "id": "smb.tdbsam_lifecycle_and_sid_stability",
+      "required": true,
+      "suite": "smb"
+    },
+    {
+      "id": "smb.windows_explorer_interop",
+      "required": true,
+      "suite": "smb"
+    },
+    {
+      "id": "smb.gnome_files_gvfs_interop",
+      "required": true,
+      "suite": "smb"
+    },
+    {
+      "id": "smb.old_password_rejected_after_rotation",
+      "required": true,
+      "suite": "smb"
+    },
+    {
+      "id": "smb.disable_expiry_restart_revocation",
+      "required": true,
+      "suite": "smb"
+    },
+    {
+      "id": "smb.no_secret_canary_in_evidence",
+      "required": true,
+      "suite": "smb"
+    },
+    {
+      "id": "winbind.ad_join_and_trust",
+      "required": true,
+      "suite": "winbind"
+    },
+    {
+      "id": "winbind.nss_idmap_ranges",
+      "required": true,
+      "suite": "winbind"
+    },
+    {
+      "id": "winbind.real_gdm_pam_dispatch",
+      "required": true,
+      "suite": "winbind"
+    },
+    {
+      "id": "winbind.kerberos_cache_contract",
+      "required": true,
+      "suite": "winbind"
+    },
+    {
+      "id": "winbind.no_cross_route_fallback",
+      "required": true,
+      "suite": "winbind"
+    },
+    {
+      "id": "winbind.dc_unavailable_offline_disabled",
+      "required": true,
+      "suite": "winbind"
+    },
+    {
+      "id": "winbind.no_secret_canary_in_evidence",
+      "required": true,
+      "suite": "winbind"
+    }
+  ],
+  "component_owners": {
+    "A": "identity authority, projection, NSS, local homes",
+    "B": "shared auth protocol/broker/PAM/local provider and system policy",
+    "C": "NIP-46 core and auth provider_nip46",
+    "D": "root/homed build, versions, pkg-config, packages, domain/Samba configs, activation/rollback, acceptance matrix"
+  },
+  "generated_from_plan": "docs/plans/nostr-linux-samba-login-2026-09-19.md",
+  "implementation_checkout": {
+    "branch": "feat/nostr-linux-samba-login-20260920",
+    "tracker": "/Users/bizarro/Documents/Projects/nostrc (coordinator-owned, read-only to implementation agents)",
+    "worktree": "rp-worktree-feat-nostr-linux-samba-login-202-befee189-45b1b44e"
+  },
+  "matrix_id": "nostr-linux-samba-login-d0",
+  "portable_checks": [
+    {
+      "artifact": "CTest log",
+      "command": "cmake root opt-in with LIBNOSTR_WITH_NOSTRDB=OFF; build auth/identity tests; ctest -L portable",
+      "id": "build.cmake_auth_identity",
+      "owner": "D integrating A/B"
+    },
+    {
+      "artifact": "Meson test log",
+      "command": "meson setup with auth_core, identity_core, domain_config enabled; meson test",
+      "id": "build.meson_auth_identity",
+      "owner": "D integrating A/B"
+    },
+    {
+      "artifact": "unit-test log",
+      "command": "python3 tests/unit/test_domain_profile.py",
+      "id": "domain.strict_profile",
+      "owner": "D"
+    },
+    {
+      "artifact": "sorted staged file manifest",
+      "command": "DESTDIR staged install inventory",
+      "id": "package.inert_install",
+      "owner": "D"
+    },
+    {
+      "artifact": "unit-test log",
+      "command": "python3 tests/acceptance/test_acceptance_runner.py",
+      "id": "acceptance.contract",
+      "owner": "D0/D"
+    }
+  ],
+  "roles": {
+    "controlled_relay": {
+      "pins": {
+        "fixture_sha256": null,
+        "implementation_revision": null
+      },
+      "reason": "No deterministic relay fault injector is configured.",
+      "required": true,
+      "required_pins": [
+        "implementation_revision",
+        "fixture_sha256"
+      ],
+      "state": "unavailable"
+    },
+    "controlled_signer": {
+      "pins": {
+        "capability_profile_sha256": null,
+        "implementation_revision": null,
+        "nip44_revision": null,
+        "nip46_revision": null
+      },
+      "reason": "No controllable cryptographic NIP-46 signer is configured.",
+      "required": true,
+      "required_pins": [
+        "implementation_revision",
+        "nip46_revision",
+        "nip44_revision",
+        "capability_profile_sha256"
+      ],
+      "state": "unavailable"
+    },
+    "desktop_gdm": {
+      "pins": {
+        "architecture": "amd64",
+        "gdm_package": null,
+        "gnome_shell_package": null,
+        "image_sha256": null,
+        "pam_package": null,
+        "systemd_package": null,
+        "ubuntu_release": "24.04"
+      },
+      "reason": "No snapshot-capable Ubuntu amd64 GDM/GNOME VM is configured.",
+      "required": true,
+      "required_pins": [
+        "image_sha256",
+        "ubuntu_release",
+        "architecture",
+        "gdm_package",
+        "gnome_shell_package",
+        "pam_package",
+        "systemd_package"
+      ],
+      "state": "unavailable"
+    },
+    "external_signer": {
+      "pins": {
+        "capability_profile_sha256": null,
+        "product": "Amber candidate",
+        "version_or_deployment_id": null
+      },
+      "reason": "No named real external signer/device has been pinned and paired.",
+      "required": true,
+      "required_pins": [
+        "product",
+        "version_or_deployment_id",
+        "capability_profile_sha256"
+      ],
+      "state": "unavailable"
+    },
+    "fault_injection": {
+      "pins": {
+        "profile_sha256": null
+      },
+      "reason": "Network, clock, disk, process, and database fault injection is not configured.",
+      "required": true,
+      "required_pins": [
+        "profile_sha256"
+      ],
+      "state": "unavailable"
+    },
+    "gnome_files_client": {
+      "pins": {
+        "gvfs_package": null,
+        "image_sha256": null,
+        "nautilus_package": null
+      },
+      "reason": "No pinned GNOME Files/GVfs client is configured.",
+      "required": true,
+      "required_pins": [
+        "image_sha256",
+        "nautilus_package",
+        "gvfs_package"
+      ],
+      "state": "unavailable"
+    },
+    "joined_desktop": {
+      "pins": {
+        "architecture": "amd64",
+        "idmap_contract_sha256": null,
+        "image_sha256": null,
+        "pam_winbind_package": null,
+        "ubuntu_release": "24.04",
+        "winbind_package": null
+      },
+      "reason": "No domain-joined GDM desktop VM is configured.",
+      "required": true,
+      "required_pins": [
+        "image_sha256",
+        "ubuntu_release",
+        "architecture",
+        "winbind_package",
+        "pam_winbind_package",
+        "idmap_contract_sha256"
+      ],
+      "state": "unavailable"
+    },
+    "package_snapshot": {
+      "pins": {
+        "asan_ubsan": null,
+        "compiler": null,
+        "manifest_sha256": null,
+        "snapshot_id": null,
+        "tsan": null
+      },
+      "reason": "No immutable package repository snapshot is configured.",
+      "required": true,
+      "required_pins": [
+        "snapshot_id",
+        "manifest_sha256",
+        "compiler",
+        "asan_ubsan",
+        "tsan"
+      ],
+      "state": "unavailable"
+    },
+    "samba_ad_dc": {
+      "pins": {
+        "domain_fixture_id": null,
+        "image_sha256": null,
+        "samba_package": null
+      },
+      "reason": "No separate Samba AD DC is configured.",
+      "required": true,
+      "required_pins": [
+        "image_sha256",
+        "samba_package",
+        "domain_fixture_id"
+      ],
+      "state": "unavailable"
+    },
+    "standalone_samba": {
+      "pins": {
+        "architecture": "amd64",
+        "config_sha256": null,
+        "image_sha256": null,
+        "samba_package": null,
+        "ubuntu_release": "24.04"
+      },
+      "reason": "No dedicated standalone Samba VM is configured.",
+      "required": true,
+      "required_pins": [
+        "image_sha256",
+        "ubuntu_release",
+        "architecture",
+        "samba_package",
+        "config_sha256"
+      ],
+      "state": "unavailable"
+    },
+    "windows_client": {
+      "pins": {
+        "build": null,
+        "edition": "Windows 11 24H2",
+        "image_sha256": null
+      },
+      "reason": "No Windows client VM is configured.",
+      "required": true,
+      "required_pins": [
+        "image_sha256",
+        "edition",
+        "build"
+      ],
+      "state": "unavailable"
+    }
+  },
+  "schema_version": 1,
+  "suites": {
+    "gdm": {
+      "adapter_env": "NOSTR_ACCEPTANCE_GDM_ADAPTER",
+      "required_roles": [
+        "desktop_gdm",
+        "controlled_relay",
+        "controlled_signer",
+        "external_signer",
+        "package_snapshot",
+        "fault_injection"
+      ],
+      "timeout_seconds": 14400
+    },
+    "smb": {
+      "adapter_env": "NOSTR_ACCEPTANCE_SMB_ADAPTER",
+      "required_roles": [
+        "standalone_samba",
+        "windows_client",
+        "gnome_files_client",
+        "package_snapshot",
+        "fault_injection"
+      ],
+      "timeout_seconds": 7200
+    },
+    "winbind": {
+      "adapter_env": "NOSTR_ACCEPTANCE_WINBIND_ADAPTER",
+      "required_roles": [
+        "desktop_gdm",
+        "samba_ad_dc",
+        "joined_desktop",
+        "package_snapshot",
+        "fault_injection"
+      ],
+      "timeout_seconds": 7200
+    }
+  },
+  "support_claim": "candidate-only",
+  "version_plan": {
+    "libnostr": {
+      "decision": "no bump; consumed without source/public change"
+    },
+    "nip46": {
+      "decision": "no invented version; owner must establish authoritative source",
+      "declared": "Unversioned"
+    },
+    "nostr_homed": {
+      "declared": "0.2.0",
+      "latest_release": "Unreleased",
+      "reason": "public incompatible build/config/package contract",
+      "tag": null
+    },
+    "signer": {
+      "decision": "no bump; unchanged"
+    }
+  }
+}

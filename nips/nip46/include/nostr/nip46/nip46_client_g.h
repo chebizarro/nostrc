@@ -1,7 +1,10 @@
 /* nostrc-8ya7: GLib async wrappers for NIP-46 client RPC.
  *
  * These wrap the synchronous NIP-46 client API with GAsyncReadyCallback
- * and GTask, suitable for use from GTK applications.
+ * and GTask, suitable for use from GTK applications. Each task retains the
+ * session until task-data teardown. GCancellable is checked before and after
+ * the synchronous RPC; active per-request interruption requires the additive
+ * request cancellation API and is not claimed by these compatibility wrappers.
  *
  * Pattern:
  *   nostr_nip46_client_sign_event_g_async(session, json, cancel, cb, ud);

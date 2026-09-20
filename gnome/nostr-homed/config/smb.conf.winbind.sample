@@ -1,0 +1,18 @@
+# Candidate Samba/AD client settings. This is not installed as smb.conf.
+[global]
+security = ads
+workgroup = EXAMPLE
+realm = EXAMPLE.TEST
+kerberos method = secrets and keytab
+dedicated keytab file = /etc/krb5.keytab
+winbind use default domain = no
+winbind offline logon = no
+winbind refresh tickets = yes
+winbind enum users = no
+winbind enum groups = no
+idmap config * : backend = tdb
+idmap config * : range = 1000000-1099999
+idmap config EXAMPLE : backend = rid
+idmap config EXAMPLE : range = 1100000-1999999
+template homedir = /home/%D/%U
+template shell = /bin/bash

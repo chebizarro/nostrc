@@ -63,6 +63,7 @@ static int mock_context_init(MockContext *ctx) {
     char client_uri[256];
     snprintf(client_uri, sizeof(client_uri), "bunker://%s?secret=%s", ctx->bunker_pk, CLIENT_SK);
     if (nostr_nip46_client_connect(ctx->client, client_uri, NULL) != 0) return -1;
+    if (nostr_nip46_client_set_secret(ctx->client, CLIENT_SK) != 0) return -1;
 
     /* Create bunker session */
     ctx->bunker = nostr_nip46_bunker_new(NULL);
@@ -73,6 +74,7 @@ static int mock_context_init(MockContext *ctx) {
     char bunker_uri[256];
     snprintf(bunker_uri, sizeof(bunker_uri), "bunker://%s?secret=%s", ctx->client_pk, BUNKER_SK);
     if (nostr_nip46_client_connect(ctx->bunker, bunker_uri, NULL) != 0) return -1;
+    if (nostr_nip46_client_set_secret(ctx->bunker, BUNKER_SK) != 0) return -1;
 
     return 0;
 }
@@ -342,6 +344,7 @@ static int test_rpc_connect_with_authorize_callback(void) {
     char client_uri[256];
     snprintf(client_uri, sizeof(client_uri), "bunker://%s?secret=%s", bunker_pk, CLIENT_SK);
     TEST_ASSERT(nostr_nip46_client_connect(client, client_uri, NULL) == 0, "client connect");
+    TEST_ASSERT(nostr_nip46_client_set_secret(client, CLIENT_SK) == 0, "client key");
 
     /* Create bunker with callback */
     NostrNip46Session *bunker = nostr_nip46_bunker_new(&cbs);
@@ -352,6 +355,7 @@ static int test_rpc_connect_with_authorize_callback(void) {
     char bunker_uri[256];
     snprintf(bunker_uri, sizeof(bunker_uri), "bunker://%s?secret=%s", client_pk, BUNKER_SK);
     TEST_ASSERT(nostr_nip46_client_connect(bunker, bunker_uri, NULL) == 0, "bunker connect");
+    TEST_ASSERT(nostr_nip46_client_set_secret(bunker, BUNKER_SK) == 0, "bunker key");
 
     /* Send connect request.
      * NIP-46 connect params: [remote_signer_pubkey, secret, permissions] */
@@ -392,6 +396,7 @@ static int test_rpc_connect_denied_by_callback(void) {
     char client_uri[256];
     snprintf(client_uri, sizeof(client_uri), "bunker://%s?secret=%s", bunker_pk, CLIENT_SK);
     nostr_nip46_client_connect(client, client_uri, NULL);
+    nostr_nip46_client_set_secret(client, CLIENT_SK);
 
     NostrNip46Session *bunker = nostr_nip46_bunker_new(&cbs);
     TEST_ASSERT(nostr_nip46_session_set_transport_mode(
@@ -401,6 +406,7 @@ static int test_rpc_connect_denied_by_callback(void) {
     char bunker_uri[256];
     snprintf(bunker_uri, sizeof(bunker_uri), "bunker://%s?secret=%s", client_pk, BUNKER_SK);
     nostr_nip46_client_connect(bunker, bunker_uri, NULL);
+    nostr_nip46_client_set_secret(bunker, BUNKER_SK);
 
     /* NIP-46 connect params: [remote_signer_pubkey, secret, permissions] */
     const char *params[] = {client_pk, "", "sign_event"};
@@ -471,6 +477,7 @@ static int test_rpc_sign_event_custom_callback(void) {
     char client_uri[256];
     snprintf(client_uri, sizeof(client_uri), "bunker://%s?secret=%s", bunker_pk, CLIENT_SK);
     nostr_nip46_client_connect(client, client_uri, NULL);
+    nostr_nip46_client_set_secret(client, CLIENT_SK);
 
     NostrNip46Session *bunker = nostr_nip46_bunker_new(&cbs);
     TEST_ASSERT(nostr_nip46_session_set_transport_mode(
@@ -480,6 +487,7 @@ static int test_rpc_sign_event_custom_callback(void) {
     char bunker_uri[256];
     snprintf(bunker_uri, sizeof(bunker_uri), "bunker://%s?secret=%s", client_pk, BUNKER_SK);
     nostr_nip46_client_connect(bunker, bunker_uri, NULL);
+    nostr_nip46_client_set_secret(bunker, BUNKER_SK);
 
     /* Connect first to grant permission */
     const char *conn_params[] = {client_pk, "sign_event"};

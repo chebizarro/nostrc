@@ -44,7 +44,8 @@ typedef struct PendingRequest {
     GoChannel *response_chan;   /* Channel to send response to waiting caller */
     uint32_t timeout_ms;        /* nostrc-32yf: Per-request timeout */
     int64_t submit_time_us;     /* nostrc-32yf: Monotonic submit timestamp (usec) */
-    int cancelled;              /* nostrc-32yf: Set to 1 if request was cancelled */
+    int cancelled;              /* Protected by pending_mutex */
+    int delivered;              /* At most one response can win */
     struct PendingRequest *next;
 } PendingRequest;
 
@@ -92,7 +93,8 @@ struct NostrNip46Session {
     /* parsed URI fields */
     char *remote_pubkey_hex;   /* from bunker:// */
     char *client_pubkey_hex;   /* from nostrconnect:// */
-    char *secret;              /* optional */
+    char *secret;              /* client transport private key */
+    char *connect_token;       /* URI secret= authorization token */
     char **relays; size_t n_relays;
     /* testing/transport placeholder */
     char *last_reply_json;
@@ -232,9 +234,9 @@ static PendingRequest *pending_request_new(const char *request_id, uint32_t time
     }
 
     pr->timeout_ms = timeout_ms;
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    pr->submit_time_us = (int64_t)tv.tv_sec * 1000000 + (int64_t)tv.tv_usec;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    pr->submit_time_us = (int64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000;
     pr->cancelled = 0;
     pr->next = NULL;
     return pr;
@@ -245,6 +247,10 @@ static void pending_request_add(NostrNip46Session *s, PendingRequest *req) {
     if (!s || !req) return;
 
     pthread_mutex_lock(&s->pending_mutex);
+    if (__atomic_load_n(&s->shutting_down, __ATOMIC_ACQUIRE)) {
+        req->cancelled = 1;
+        go_channel_close(req->response_chan);
+    }
     req->next = s->pending_requests;
     s->pending_requests = req;
     pthread_mutex_unlock(&s->pending_mutex);
@@ -271,17 +277,46 @@ static PendingRequest *pending_request_find_and_remove(NostrNip46Session *s, con
     return result;
 }
 
-/* Cancel and free a pending request by ID. */
-static void pending_request_cancel(NostrNip46Session *s, const char *request_id) {
-    PendingRequest *pr = pending_request_find_and_remove(s, request_id);
-    if (pr) {
-        if (pr->response_chan) {
-            go_channel_close(pr->response_chan);
-            go_channel_free(pr->response_chan);
+/* Delivery and terminalization share one lock. The waiter remains the sole
+ * owner until it unlinks the request; callbacks never retain a raw pointer
+ * beyond this critical section. This also deduplicates relay delivery. */
+static int pending_request_deliver(NostrNip46Session *s, const char *id,
+                                   char *response_json) {
+    int accepted = 0;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    int64_t now_us = (int64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000;
+    pthread_mutex_lock(&s->pending_mutex);
+    for (PendingRequest *pr = s->pending_requests; pr; pr = pr->next) {
+        if (strcmp(pr->request_id, id)) continue;
+        if (!pr->cancelled && !pr->delivered &&
+            now_us - pr->submit_time_us < (int64_t)pr->timeout_ms * 1000 &&
+            go_channel_try_send(pr->response_chan, response_json) == 0) {
+            pr->delivered = 1;
+            accepted = 1;
         }
-        free(pr->request_id);
-        free(pr);
+        break;
     }
+    pthread_mutex_unlock(&s->pending_mutex);
+    return accepted;
+}
+
+static void pending_request_free(PendingRequest *pr) {
+    if (!pr) return;
+    if (pr->response_chan) {
+        go_channel_close(pr->response_chan);
+        void *abandoned = NULL;
+        if (go_channel_try_receive(pr->response_chan, &abandoned) == 0)
+            free(abandoned);
+        go_channel_free(pr->response_chan);
+    }
+    free(pr->request_id);
+    free(pr);
+}
+
+/* Called only by the request owner after it stops waiting. */
+static void pending_request_cancel(NostrNip46Session *s, const char *request_id) {
+    pending_request_free(pending_request_find_and_remove(s, request_id));
 }
 
 /* Common helpers */
@@ -441,6 +476,7 @@ static void session_destroy(NostrNip46Session *s) {
     if (s->remote_pubkey_hex) { free(s->remote_pubkey_hex); }
     if (s->client_pubkey_hex) { free(s->client_pubkey_hex); }
     if (s->secret) { memset(s->secret, 0, strlen(s->secret)); free(s->secret); }
+    if (s->connect_token) { memset(s->connect_token, 0, strlen(s->connect_token)); free(s->connect_token); }
     if (s->relays) { for (size_t i=0;i<s->n_relays;++i) free(s->relays[i]); free(s->relays); }
     if (s->last_reply_json) free(s->last_reply_json);
     /* free ACL */
@@ -453,12 +489,7 @@ static void session_destroy(NostrNip46Session *s) {
     PendingRequest *pr = s->pending_requests;
     while (pr) {
         PendingRequest *next = pr->next;
-        if (pr->response_chan) {
-            go_channel_close(pr->response_chan);
-            go_channel_free(pr->response_chan);
-        }
-        free(pr->request_id);
-        free(pr);
+        pending_request_free(pr);
         pr = next;
     }
     s->pending_requests = NULL;
@@ -568,15 +599,24 @@ int nostr_nip46_client_connect(NostrNip46Session *s,
     /* Reset stored fields */
     if (s->remote_pubkey_hex) { free(s->remote_pubkey_hex); s->remote_pubkey_hex=NULL; }
     if (s->client_pubkey_hex) { free(s->client_pubkey_hex); s->client_pubkey_hex=NULL; }
-    if (s->secret) { memset(s->secret,0,strlen(s->secret)); free(s->secret); s->secret=NULL; }
+    if (s->connect_token) { memset(s->connect_token,0,strlen(s->connect_token)); free(s->connect_token); s->connect_token=NULL; }
     if (s->relays) { for(size_t i=0;i<s->n_relays;++i) free(s->relays[i]); free(s->relays); s->relays=NULL; s->n_relays=0; }
 
     if (strncmp(bunker_uri, "bunker://", 9) == 0) {
         NostrNip46BunkerURI u; if (nostr_nip46_uri_parse_bunker(bunker_uri, &u) != 0) return -1;
         if (!is_valid_pubkey_hex_relaxed(u.remote_signer_pubkey_hex)) { nostr_nip46_uri_bunker_free(&u); return -1; }
         s->remote_pubkey_hex = u.remote_signer_pubkey_hex; u.remote_signer_pubkey_hex=NULL;
-        s->secret = u.secret; u.secret=NULL;
+        s->connect_token = u.secret; u.secret=NULL;
         s->relays = u.relays; s->n_relays = u.n_relays; u.relays=NULL; u.n_relays=0;
+        /* A bunker URI never supplies a transport private key. Generate one
+         * for client sessions unless the caller already installed one. */
+        if (!s->secret && s->note && strcmp(s->note, "client") == 0) {
+            s->secret = nostr_key_generate_private();
+            if (!s->secret) {
+                nostr_nip46_uri_bunker_free(&u);
+                return -1;
+            }
+        }
         fprintf(stderr, "[nip46] client_connect: parsed bunker URI, %zu relays:\n", s->n_relays);
         for (size_t i = 0; i < s->n_relays && s->relays; i++) {
             fprintf(stderr, "  relay[%zu]: %s\n", i, s->relays[i] ? s->relays[i] : "(null)");
@@ -587,7 +627,7 @@ int nostr_nip46_client_connect(NostrNip46Session *s,
         NostrNip46ConnectURI u; if (nostr_nip46_uri_parse_connect(bunker_uri, &u) != 0) return -1;
         if (!is_valid_pubkey_hex_relaxed(u.client_pubkey_hex)) { nostr_nip46_uri_connect_free(&u); return -1; }
         s->client_pubkey_hex = u.client_pubkey_hex; u.client_pubkey_hex=NULL;
-        s->secret = u.secret; u.secret=NULL;
+        s->connect_token = u.secret; u.secret=NULL;
         s->relays = u.relays; s->n_relays = u.n_relays; u.relays=NULL; u.n_relays=0;
         nostr_nip46_uri_connect_free(&u);
         return 0;
@@ -691,7 +731,7 @@ static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
             /* Check if this relay belongs to the pool */
             for (size_t i = 0; i < e->pool->relay_count; i++) {
                 if (e->pool->relays[i] == incoming->relay) {
-                    session = e->session;
+                    session = nostr_nip46_session_ref(e->session);
                     break;
                 }
             }
@@ -707,7 +747,7 @@ static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
 
     if (!session->secret) {
         fprintf(stderr, "[nip46] persistent_cb: session has no secret for decryption\n");
-        return;
+        goto done;
     }
 
     /* nostrc-nip46-fix: Validate sender is the expected signer.
@@ -717,7 +757,7 @@ static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
         if (strcmp(sender_pubkey, session->remote_pubkey_hex) != 0) {
             fprintf(stderr, "[nip46] persistent_cb: ignoring response from unexpected signer %s (expected %s)\n",
                     sender_pubkey, session->remote_pubkey_hex);
-            return;
+            goto done;
         }
     }
 
@@ -729,13 +769,13 @@ static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
         !response_json) {
         fprintf(stderr, "[nip46] persistent_cb: decrypt failed (mode=%s)\n",
                 nostr_nip46_transport_mode_name(session->transport_mode));
-        return;
+        goto done;
     }
 
     if (!nostr_json_is_valid(response_json)) {
         fprintf(stderr, "[nip46] persistent_cb: invalid JSON\n");
         free(response_json);
-        return;
+        goto done;
     }
 
     /* Extract response ID */
@@ -743,40 +783,14 @@ static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
     if (nostr_json_get_string(response_json, "id", &resp_id) != 0 || !resp_id) {
         fprintf(stderr, "[nip46] persistent_cb: no id field in response\n");
         free(response_json);
-        return;
+        goto done;
     }
 
-    /* Find and remove matching pending request */
-    PendingRequest *pending = pending_request_find_and_remove(session, resp_id);
+    if (!pending_request_deliver(session, resp_id, response_json))
+        free(response_json);
     free(resp_id);
-
-    if (!pending) {
-        /* Normal: signer relays may echo duplicate responses, or signer apps
-         * may send a second response (e.g. error after success) for the same
-         * request ID.  The first response was already dispatched. */
-        fprintf(stderr, "[nip46] persistent_cb: ignoring duplicate/late response (already handled)\n");
-        free(response_json);
-        return;
-    }
-
-    /* Send response to waiting caller via channel */
-    if (pending->response_chan) {
-        /* Send the response JSON string (ownership transferred to receiver) */
-        if (go_channel_send(pending->response_chan, response_json) != 0) {
-            fprintf(stderr, "[nip46] persistent_cb: failed to send response to channel\n");
-            free(response_json);
-        }
-        /* Don't free response_json here - ownership transferred to channel receiver */
-    } else {
-        free(response_json);
-    }
-
-    /* CRITICAL: Do NOT free pending request here!
-     * The caller (nip46_rpc_call) owns the pending request and will free it
-     * after receiving the response from the channel. Freeing here causes
-     * use-after-free race condition. */
-
-    fprintf(stderr, "[nip46] persistent_cb: dispatched response to pending request\n");
+done:
+    nostr_nip46_session_unref(session);
 }
 
 /* nostrc-4cp/F25: Relay connection readiness is signaled by libnostr's
@@ -992,10 +1006,6 @@ static uint32_t nip46_effective_timeout(const NostrNip46Session *s) {
 static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
                             const char **params, size_t n_params,
                             char **out_response_pubkey);
-
-/* Request ID counter for unique IDs.
- * Combined with timestamp and pid to prevent collision with stale responses. */
-static unsigned int s_nip46_req_counter = 0;
 
 int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, char **out_signed_event_json) {
     if (!s) {
@@ -1278,11 +1288,16 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
 
     fprintf(stderr, "[nip46] %s: building request\n", method);
 
-    /* Build request JSON with unique ID.
-     * Include pid to prevent collision with stale responses from previous sessions. */
-    char req_id[48];
-    snprintf(req_id, sizeof(req_id), "%lx_%x_%u",
-             (unsigned long)time(NULL), (unsigned)getpid(), ++s_nip46_req_counter);
+    /* A fresh random ID prevents cross-thread counter races and stale-response
+     * collisions across process/session restarts. */
+    char req_id[65];
+    char *generated_id = nostr_nip46_request_id_generate();
+    if (!generated_id) {
+        fprintf(stderr, "[nip46] %s: ERROR: failed to generate request id\n", method);
+        return NULL;
+    }
+    memcpy(req_id, generated_id, sizeof(req_id));
+    free(generated_id);
     fprintf(stderr, "[nip46] %s: request id = %s\n", method, req_id);
     char *req = nostr_nip46_request_build(req_id, method, params, n_params);
     if (!req) {
@@ -1423,13 +1438,14 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     response_cases[0].recv_buf = &recv_buf;
 
     GoSelectResult response_sel = { .selected_case = -1, .ok = false };
-    uint32_t waited_ms = 0;
-    while (waited_ms < pr->timeout_ms) {
-        uint32_t slice = pr->timeout_ms - waited_ms;
+    int64_t deadline_ms = pr->submit_time_us / 1000 + pr->timeout_ms;
+    while (nip46_now_ms() < deadline_ms) {
+        int64_t remaining_ms = deadline_ms - nip46_now_ms();
+        if (remaining_ms <= 0) break;
+        uint32_t slice = (uint32_t)remaining_ms;
         if (slice > 500) slice = 500;
         response_sel = go_select_timeout(response_cases, 1, slice);
         if (response_sel.selected_case == 0) break;
-        waited_ms += slice;
         /* Late publish: relays that connected after the first attempt, plus
          * nostrc-rl46 backoff retries for relays that answered rate-limited. */
         size_t unattempted = 0;
@@ -1508,10 +1524,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
         fprintf(stderr, "[nip46] %s: invalid response JSON\n", method);
         free(response_json);
         /* Clean up channel since we received the response */
-        go_channel_close(pr->response_chan);
-        go_channel_free(pr->response_chan);
-        free(pr->request_id);
-        free(pr);
+        pending_request_cancel(s, req_id);
         return NULL;
     }
 
@@ -1523,10 +1536,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
         fprintf(stderr, "[nip46] %s: received error response: %s\n", method, err_msg);
         free(err_msg);
         free(response_json);
-        go_channel_close(pr->response_chan);
-        go_channel_free(pr->response_chan);
-        free(pr->request_id);
-        free(pr);
+        pending_request_cancel(s, req_id);
         return NULL;
     }
     free(err_msg);
@@ -1535,10 +1545,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     if (nostr_json_get_string(response_json, "result", &result) != 0 || !result) {
         fprintf(stderr, "[nip46] %s: no result field in response\n", method);
         free(response_json);
-        go_channel_close(pr->response_chan);
-        go_channel_free(pr->response_chan);
-        free(pr->request_id);
-        free(pr);
+        pending_request_cancel(s, req_id);
         return NULL;
     }
 
@@ -1546,10 +1553,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     fprintf(stderr, "[nip46] %s: SUCCESS - result: %.50s\n", method, result);
 
     /* Clean up pending request (channel already drained) */
-    go_channel_close(pr->response_chan);
-    go_channel_free(pr->response_chan);
-    free(pr->request_id);
-    free(pr);
+    pending_request_cancel(s, req_id);
 
     /* Note: out_response_pubkey not supported in simplified version.
      * The callback dispatches response JSON, not the sender pubkey.
@@ -1602,6 +1606,22 @@ static RpcJob *rpc_queue_pop_locked(NostrNip46Session *s, int dedicated_interact
     return job;
 }
 
+/* Preserve the published caller-owned callback contract. Result and error are
+ * transferred exactly once to a non-NULL callback; otherwise discarded here. */
+static void nip46_async_deliver(NostrNip46Session *s,
+                                NostrNip46AsyncCallback callback,
+                                void *user_data,
+                                char *result,
+                                const char *error_literal) {
+    char *error = error_literal ? strdup(error_literal) : NULL;
+    if (!callback) {
+        free(result);
+        free(error);
+        return;
+    }
+    callback(s, result, error, user_data);
+}
+
 /* Worker threads are DETACHED and each holds a session reference taken at
  * spawn time.  There is deliberately no pthread_join anywhere:
  *  - teardown cannot deadlock on self-join when a job/flush callback
@@ -1632,14 +1652,8 @@ static void *nip46_rpc_worker_main(void *arg) {
         char *result = nip46_rpc_call(s, job->method,
                                       (const char **)job->params, job->n_params,
                                       NULL);
-        if (job->callback) {
-            if (result) {
-                job->callback(s, result, NULL, job->user_data);
-            } else {
-                job->callback(s, NULL, "RPC call failed", job->user_data);
-            }
-        }
-        free(result);
+        nip46_async_deliver(s, job->callback, job->user_data, result,
+                            result ? NULL : "RPC call failed");
         rpc_job_free(job);
     }
 
@@ -1704,9 +1718,8 @@ static void nip46_rpc_queue_shutdown(NostrNip46Session *s) {
         RpcJob *job = lists[l];
         while (job) {
             RpcJob *next = job->next;
-            if (job->callback) {
-                job->callback(s, NULL, "session closing", job->user_data);
-            }
+            nip46_async_deliver(s, job->callback, job->user_data, NULL,
+                                "session closing");
             rpc_job_free(job);
             job = next;
         }
@@ -1718,13 +1731,13 @@ static void nip46_rpc_call_async(NostrNip46Session *s, const char *method,
                                   NostrNip46AsyncCallback callback,
                                   void *user_data) {
     if (!s || !method) {
-        if (callback) callback(s, NULL, "invalid arguments", user_data);
+        nip46_async_deliver(s, callback, user_data, NULL, "invalid arguments");
         return;
     }
 
     RpcJob *job = (RpcJob *)calloc(1, sizeof(RpcJob));
     if (!job) {
-        if (callback) callback(s, NULL, "out of memory", user_data);
+        nip46_async_deliver(s, callback, user_data, NULL, "out of memory");
         return;
     }
     job->method = strdup(method);
@@ -1732,19 +1745,24 @@ static void nip46_rpc_call_async(NostrNip46Session *s, const char *method,
     job->user_data = user_data;
     if (!job->method) {
         rpc_job_free(job);
-        if (callback) callback(s, NULL, "out of memory", user_data);
+        nip46_async_deliver(s, callback, user_data, NULL, "out of memory");
         return;
     }
     if (params && n_params > 0) {
         job->params = (char **)calloc(n_params, sizeof(char *));
         if (!job->params) {
             rpc_job_free(job);
-            if (callback) callback(s, NULL, "out of memory", user_data);
+            nip46_async_deliver(s, callback, user_data, NULL, "out of memory");
             return;
         }
         job->n_params = n_params;
         for (size_t i = 0; i < n_params; i++) {
             job->params[i] = params[i] ? strdup(params[i]) : NULL;
+            if (params[i] && !job->params[i]) {
+                rpc_job_free(job);
+                nip46_async_deliver(s, callback, user_data, NULL, "out of memory");
+                return;
+            }
             if (job->params[i]) job->bytes += strlen(job->params[i]);
         }
     }
@@ -1756,13 +1774,13 @@ static void nip46_rpc_call_async(NostrNip46Session *s, const char *method,
     if (s->q_shutdown) {
         pthread_mutex_unlock(&s->q_mutex);
         rpc_job_free(job);
-        if (callback) callback(s, NULL, "session closing", user_data);
+        nip46_async_deliver(s, callback, user_data, NULL, "session closing");
         return;
     }
     if (rpc_queue_start_locked(s) != 0) {
         pthread_mutex_unlock(&s->q_mutex);
         rpc_job_free(job);
-        if (callback) callback(s, NULL, "failed to start rpc workers", user_data);
+        nip46_async_deliver(s, callback, user_data, NULL, "failed to start rpc workers");
         return;
     }
     size_t cap = interactive ? NIP46_RPC_QUEUE_MAX_HI : NIP46_RPC_QUEUE_MAX_LO;
@@ -1772,7 +1790,7 @@ static void nip46_rpc_call_async(NostrNip46Session *s, const char *method,
         fprintf(stderr, "[nip46] %s: rpc queue full (%zu jobs / %zu bytes) - rejecting request\n",
                 method, len, s->q_bytes);
         rpc_job_free(job);
-        if (callback) callback(s, NULL, "rpc queue full", user_data);
+        nip46_async_deliver(s, callback, user_data, NULL, "rpc queue full");
         return;
     }
     s->q_bytes += job->bytes;
@@ -1798,7 +1816,8 @@ void nostr_nip46_client_sign_event_async(NostrNip46Session *s,
                                           NostrNip46AsyncCallback callback,
                                           void *user_data) {
     if (!s || !event_json) {
-        if (callback) callback(s, NULL, "session or event_json is NULL", user_data);
+        nip46_async_deliver(s, callback, user_data, NULL,
+                            "session or event_json is NULL");
         return;
     }
     const char *params[1] = { event_json };
@@ -1811,16 +1830,16 @@ void nostr_nip46_client_connect_rpc_async(NostrNip46Session *s,
                                            NostrNip46AsyncCallback callback,
                                            void *user_data) {
     if (!s) {
-        if (callback) callback(s, NULL, "session is NULL", user_data);
+        nip46_async_deliver(s, callback, user_data, NULL, "session is NULL");
         return;
     }
     if (!s->remote_pubkey_hex) {
-        if (callback) callback(s, NULL, "no remote_pubkey_hex", user_data);
+        nip46_async_deliver(s, callback, user_data, NULL, "no remote_pubkey_hex");
         return;
     }
     const char *params[3];
     params[0] = s->remote_pubkey_hex;
-    params[1] = connect_secret ? connect_secret : "";
+    params[1] = connect_secret ? connect_secret : (s->connect_token ? s->connect_token : "");
     params[2] = perms ? perms : "";
     nip46_rpc_call_async(s, "connect", params, 3, callback, user_data);
 }
@@ -1829,7 +1848,7 @@ void nostr_nip46_client_get_public_key_rpc_async(NostrNip46Session *s,
                                                   NostrNip46AsyncCallback callback,
                                                   void *user_data) {
     if (!s) {
-        if (callback) callback(s, NULL, "session is NULL", user_data);
+        nip46_async_deliver(s, callback, user_data, NULL, "session is NULL");
         return;
     }
     nip46_rpc_call_async(s, "get_public_key", NULL, 0, callback, user_data);
@@ -1850,6 +1869,7 @@ void nostr_nip46_client_cancel_all(NostrNip46Session *s) {
      * are freed by the session destructor's leftover sweep. */
     pthread_mutex_lock(&s->pending_mutex);
     for (PendingRequest *pr = s->pending_requests; pr; pr = pr->next) {
+        pr->cancelled = 1;
         if (pr->response_chan) {
             go_channel_close(pr->response_chan);
         }
@@ -1877,7 +1897,7 @@ int nostr_nip46_client_connect_rpc(NostrNip46Session *s,
         return -1;
     }
     params[n_params++] = s->remote_pubkey_hex;
-    params[n_params++] = connect_secret ? connect_secret : "";
+    params[n_params++] = connect_secret ? connect_secret : (s->connect_token ? s->connect_token : "");
     params[n_params++] = perms ? perms : "";
 
     /* Note: Do NOT update remote_pubkey_hex here. For bunker:// flow,
@@ -2670,6 +2690,7 @@ static char *dupstr(const char *s){ if(!s) return NULL; size_t n=strlen(s); char
 int nostr_nip46_session_get_remote_pubkey(const NostrNip46Session *s, char **out_hex){ if(!s||!out_hex) return -1; *out_hex = dupstr(s->remote_pubkey_hex); return 0; }
 int nostr_nip46_session_get_client_pubkey(const NostrNip46Session *s, char **out_hex){ if(!s||!out_hex) return -1; *out_hex = dupstr(s->client_pubkey_hex); return 0; }
 int nostr_nip46_session_get_secret(const NostrNip46Session *s, char **out_secret){ if(!s||!out_secret) return -1; *out_secret = dupstr(s->secret); return 0; }
+int nostr_nip46_session_get_connect_token(const NostrNip46Session *s, char **out_token){ if(!s||!out_token) return -1; *out_token = dupstr(s->connect_token); return 0; }
 int nostr_nip46_session_get_relays(const NostrNip46Session *s, char ***out_relays, size_t *out_n){ if(!s||!out_relays||!out_n) return -1; *out_relays=NULL; *out_n=0; if(!s->relays||s->n_relays==0) return 0; char **arr=(char**)malloc(sizeof(char*)*s->n_relays); if(!arr) return -1; for(size_t i=0;i<s->n_relays;++i){ arr[i]=dupstr(s->relays[i]); if(!arr[i]){ for(size_t j=0;j<i;++j) free(arr[j]); free(arr); return -1; } } *out_relays=arr; *out_n=s->n_relays; return 0; }
 
 int nostr_nip46_session_set_transport_mode(

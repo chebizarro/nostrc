@@ -173,11 +173,8 @@ if(SANITIZE)
   endforeach()
 endif()
 
-# Optional nostr-homed subproject (GNOME roaming home)
-option(ENABLE_NOSTR_HOMED "Build GNOME nostr-homed (NSS/PAM/FUSE/ctl)" OFF)
-if (ENABLE_NOSTR_HOMED)
-  add_subdirectory(gnome/nostr-homed)
-endif()
+# Optional nostr-homed component. All deployable subfeatures remain opt-in.
+option(ENABLE_NOSTR_HOMED "Configure opt-in nostr-homed components" OFF)
 
 # Feature toggles
 option(WITH_NOSTRDB "Build nostrdb storage component" ON)
@@ -354,6 +351,12 @@ if(BUILD_LIBHANAMI)
 endif()
 
 include(${CMAKE_SOURCE_DIR}/NipOptions.cmake)
+
+# nostr-homed consumes libnostr and, for experimental roaming only, NIP-19.
+# Register it after those targets exist; its own features are disabled by default.
+if (ENABLE_NOSTR_HOMED)
+  add_subdirectory(gnome/nostr-homed)
+endif()
 
 # libhanami: Blossom filesystem extension & tools for libgit2 (requires nip34)
 # Must come after NipOptions so the nip34 target exists.

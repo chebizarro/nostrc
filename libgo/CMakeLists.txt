@@ -24,7 +24,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(LIBGO 0 1 0)
+declare_component_version(LIBGO 0 1 1)
 
 # Optional: enable more aggressive local optimizations for libgo
 include(CheckCCompilerFlag)
@@ -429,8 +429,19 @@ apply_sanitizers(long_adder_demo)
 apply_sanitizers(chan_bench)
 endif() # NOT WIN32 — skip examples
 # Intentionally do not apply warnings-as-errors to examples to keep demos buildable across toolchains
-# install(TARGETS nostr DESTINATION lib)
-# install(DIRECTORY include/ DESTINATION include)
+install(TARGETS libgo
+  ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+
+# Install the public umbrella and its transitive header closure. Internal fiber
+# hooks and the version-header template remain build-tree implementation inputs.
+install(FILES
+  include/go.h include/blocking_executor.h include/channel.h include/context.h
+  include/counter.h include/error.h include/go_auto.h include/gtime.h
+  include/hash_map.h include/int_array.h include/refptr.h include/select.h
+  include/string_array.h include/ticker.h include/wait_group.h
+  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 
 ###############################################
 # Fiber runtime (separate library): go_fiber  #

@@ -1,0 +1,12 @@
+option('auth_core', type: 'feature', value: 'disabled',
+  description: 'Build non-installed auth protocol/provider core and portable tests')
+option('identity_core', type: 'feature', value: 'disabled',
+  description: 'Build non-installed identity authority/reader core and portable tests')
+option('domain_config', type: 'feature', value: 'disabled',
+  description: 'Install inert winbind/domain examples and validator')
+option('experimental_roaming', type: 'feature', value: 'disabled',
+  description: 'Legacy FUSE/Blossom roaming-home experiment (not portable)')
+option('auth_install', type: 'feature', value: 'disabled',
+  description: 'Install system broker/PAM authentication product (not yet available)')
+option('homed_tests', type: 'boolean', value: true,
+  description: 'Build tests for enabled nostr-homed features')

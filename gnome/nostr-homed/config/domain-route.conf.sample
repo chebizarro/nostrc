@@ -1,0 +1,19 @@
+# Inert validation input. Installing this file does not modify NSS or PAM.
+[routing]
+nostr_prefix = n_
+domain_separator = \
+require_fully_qualified = true
+no_cross_route_fallback = true
+
+[identity_ranges]
+nostr = 200000-299999
+standalone_smb = 500000-599999
+idmap_default = 1000000-1099999
+idmap_primary = 1100000-1999999
+
+[domain]
+name = EXAMPLE
+realm = EXAMPLE.TEST
+offline_login = false
+home_template = /home/%D/%U
+home_mode = 0700

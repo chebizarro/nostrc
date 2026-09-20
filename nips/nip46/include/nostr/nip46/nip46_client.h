@@ -14,8 +14,11 @@ extern "C" {
  * The callback fires on a background thread — callers must marshal
  * to the GTK/GLib main thread if they need to touch UI.
  *
- * result_json: heap-allocated result on success (caller frees), NULL on error.
- * error_msg:   heap-allocated error string on failure (caller frees), NULL on success.
+ * result_json: heap-allocated result on success (caller frees with free()), NULL on error.
+ * error_msg:   heap-allocated error string on failure (caller frees with free()), NULL on success.
+ * Ownership transfers exactly once to a non-NULL callback. The const qualifier
+ * is retained for source compatibility; cast away const only when passing the
+ * allocation to free(). With a NULL callback the library discards both values.
  */
 typedef void (*NostrNip46AsyncCallback)(NostrNip46Session *session,
                                         const char *result_json,
@@ -28,7 +31,10 @@ typedef void (*NostrNip46AsyncCallback)(NostrNip46Session *session,
 /* Client session (no GLib) */
 NostrNip46Session *nostr_nip46_client_new(void);
 
-/* bunker_uri may be bunker:// or nostrconnect:// per spec. requested_perms_csv optional. */
+/* bunker_uri may be bunker:// or nostrconnect:// per spec. requested_perms_csv optional.
+ * URI secret= is retained as a connect authorization token. For a client
+ * bunker:// session an independent transport key is generated locally; callers
+ * may replace it explicitly with nostr_nip46_client_set_secret(). */
 int nostr_nip46_client_connect(NostrNip46Session *s,
                                const char *bunker_uri,
                                const char *requested_perms_csv);

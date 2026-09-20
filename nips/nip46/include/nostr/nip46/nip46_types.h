@@ -57,7 +57,10 @@ void nostr_nip46_session_unref(NostrNip46Session *s);
 /* Introspection for tests and simple clients (returned strings/arrays are malloc'd) */
 int  nostr_nip46_session_get_remote_pubkey(const NostrNip46Session *s, char **out_hex);
 int  nostr_nip46_session_get_client_pubkey(const NostrNip46Session *s, char **out_hex);
+/* Transport private key and URI authorization token are intentionally distinct.
+ * Both returned values are malloc-owned by the caller. */
 int  nostr_nip46_session_get_secret(const NostrNip46Session *s, char **out_secret);
+int  nostr_nip46_session_get_connect_token(const NostrNip46Session *s, char **out_token);
 int  nostr_nip46_session_get_relays(const NostrNip46Session *s, char ***out_relays, size_t *out_n);
 int  nostr_nip46_session_set_relays(NostrNip46Session *s, const char *const *relays, size_t n_relays);
 int  nostr_nip46_session_take_last_reply_json(NostrNip46Session *s, char **out_json);

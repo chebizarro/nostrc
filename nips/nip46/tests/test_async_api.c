@@ -6,18 +6,23 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <time.h>
 
 static int callback_called = 0;
-static const char *last_error = NULL;
+static char *last_error = NULL;
 
 static void test_callback(NostrNip46Session *session,
                           const char *result_json,
                           const char *error_msg,
                           void *user_data) {
     (void)session;
-    (void)result_json;
+    free(last_error);
+    last_error = error_msg ? strdup(error_msg) : NULL;
+    free((void *)result_json);
+    free((void *)error_msg);
     callback_called = 1;
-    last_error = error_msg;
     if (user_data) {
         int *flag = (int *)user_data;
         *flag = 1;
@@ -108,12 +113,57 @@ static void test_session_state_machine(void) {
     printf("PASS: test_session_state_machine\n");
 }
 
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    unsigned completed;
+} AsyncCompletion;
+
+static void owned_failure(NostrNip46Session *session, const char *result,
+                          const char *error, void *data) {
+    (void)session;
+    AsyncCompletion *completion = data;
+    assert(result == NULL);
+    assert(error != NULL);
+    /* Both worker errors and shutdown/queue rejection errors are caller-owned. */
+    free((void *)result);
+    free((void *)error);
+    pthread_mutex_lock(&completion->mutex);
+    completion->completed++;
+    pthread_cond_signal(&completion->cond);
+    pthread_mutex_unlock(&completion->mutex);
+}
+
+static void test_async_owner_release(void) {
+    AsyncCompletion completion = {
+        PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0
+    };
+    NostrNip46Session *session = nostr_nip46_client_new();
+    assert(session);
+    enum { REQUESTS = 100 };
+    for (int i = 0; i < REQUESTS; i++)
+        nostr_nip46_client_sign_event_async(session, "{}", owned_failure, &completion);
+    nostr_nip46_session_free(session);
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_sec += 10;
+    pthread_mutex_lock(&completion.mutex);
+    while (completion.completed < REQUESTS)
+        assert(pthread_cond_timedwait(&completion.cond, &completion.mutex, &deadline) == 0);
+    assert(completion.completed == REQUESTS);
+    pthread_mutex_unlock(&completion.mutex);
+    pthread_cond_destroy(&completion.cond);
+    pthread_mutex_destroy(&completion.mutex);
+}
+
 int main(void) {
     test_timeout_config();
     test_async_null_session();
     test_async_null_event_json();
     test_cancel_all_empty();
     test_session_state_machine();
+    test_async_owner_release();
+    free(last_error);
     printf("\nAll async API tests passed.\n");
     return 0;
 }
