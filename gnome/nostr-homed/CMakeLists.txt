@@ -7,6 +7,11 @@ include(CTest)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+# -std=c11 is strict ISO; glibc then hides POSIX/BSD functions (strdup, mkstemp, ...)
+# unless a feature-test macro is set. Without it they become implicit int, truncating
+# returned 64-bit pointers (segfaults on Linux; masked on macOS). _DEFAULT_SOURCE
+# enables the POSIX.1-2008 + BSD set (covers both strdup and mkstemp).
+add_compile_definitions(_DEFAULT_SOURCE)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(NOSTR_HOMED_ENABLE_AUTH_CORE
