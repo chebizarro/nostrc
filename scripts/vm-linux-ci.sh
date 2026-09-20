@@ -80,7 +80,8 @@ if [ ! -d "$SRC/.git" ]; then
   git clone --no-recurse-submodules "$REPO_URL" "$SRC" >"$LOGS/01-clone.log" 2>&1
 fi
 git -C "$SRC" fetch --prune origin "$BRANCH" >>"$LOGS/01-clone.log" 2>&1
-git -C "$SRC" checkout -B "$BRANCH" "origin/$BRANCH" >>"$LOGS/01-clone.log" 2>&1
+git -C "$SRC" reset --hard HEAD >>"$LOGS/01-clone.log" 2>&1 || true
+git -C "$SRC" checkout -f -B "$BRANCH" "origin/$BRANCH" >>"$LOGS/01-clone.log" 2>&1
 git -C "$SRC" reset --hard "origin/$BRANCH" >>"$LOGS/01-clone.log" 2>&1
 note "commit: $(git -C "$SRC" rev-parse --short HEAD) $(git -C "$SRC" log -1 --pretty=%s)"
 
