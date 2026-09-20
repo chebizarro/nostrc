@@ -786,7 +786,7 @@ nh_identity_rc nh_identity_operation_begin_enroll(
   unsigned char digest[32];
   char home[NH_IDENTITY_HOME_CAP], account_id[NH_IDENTITY_UUID_CAP];
   const char *shell, *home_mode;
-  uint32_t allocated;
+  uint32_t allocated = 0;
   bool exists = false;
   int written;
   nh_identity_rc result;

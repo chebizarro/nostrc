@@ -48,7 +48,7 @@ if(NOSTR_HOMED_ENABLE_AUTH_CORE)
     src/auth/auth_challenge.c
     src/auth/auth_vault.c
     src/auth/provider_local.c)
-  target_compile_options(nostr_auth_core PRIVATE -Wall -Wextra -Werror)
+  target_compile_options(nostr_auth_core PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
   target_include_directories(nostr_auth_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/auth)
@@ -80,6 +80,14 @@ endif()
 
 if(NOSTR_HOMED_ENABLE_IDENTITY_CORE)
   find_package(SQLite3 REQUIRED)
+  # find_package(SQLite3) creates a directory-scoped imported target; in an
+  # in-tree/root build another subdirectory may have found SQLite3 first, leaving
+  # SQLite3::SQLite3 invisible here. Synthesize it from the cached result if so.
+  if(NOT TARGET SQLite3::SQLite3)
+    add_library(SQLite3::SQLite3 INTERFACE IMPORTED)
+    target_include_directories(SQLite3::SQLite3 INTERFACE ${SQLite3_INCLUDE_DIRS})
+    target_link_libraries(SQLite3::SQLite3 INTERFACE ${SQLite3_LIBRARIES})
+  endif()
   find_package(OpenSSL REQUIRED)
 
   add_library(nostr_identity_core STATIC
@@ -88,7 +96,7 @@ if(NOSTR_HOMED_ENABLE_IDENTITY_CORE)
     src/identity/identity_store.c
     src/identity/identity_reader.c
     src/identity/identity_projection.c)
-  target_compile_options(nostr_identity_core PRIVATE -Wall -Wextra -Werror)
+  target_compile_options(nostr_identity_core PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
   target_include_directories(nostr_identity_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/identity)
@@ -161,6 +169,14 @@ if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
   find_package(OpenSSL REQUIRED)
   find_package(Threads REQUIRED)
   find_package(SQLite3 REQUIRED)
+  # find_package(SQLite3) creates a directory-scoped imported target; in an
+  # in-tree/root build another subdirectory may have found SQLite3 first, leaving
+  # SQLite3::SQLite3 invisible here. Synthesize it from the cached result if so.
+  if(NOT TARGET SQLite3::SQLite3)
+    add_library(SQLite3::SQLite3 INTERFACE IMPORTED)
+    target_include_directories(SQLite3::SQLite3 INTERFACE ${SQLite3_INCLUDE_DIRS})
+    target_link_libraries(SQLite3::SQLite3 INTERFACE ${SQLite3_LIBRARIES})
+  endif()
   find_package(CURL REQUIRED)
   find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
   list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
