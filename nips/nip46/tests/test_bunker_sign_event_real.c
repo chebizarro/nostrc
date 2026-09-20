@@ -24,10 +24,12 @@ int main(void){
     if (nostr_nip46_session_set_transport_mode(bun, NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION) != 0) return 1;
     char uri_bunker[256]; snprintf(uri_bunker, sizeof(uri_bunker), "bunker://%s?secret=%s", client_pk_sec1, bunker_sk);
     if (nostr_nip46_client_connect(bun, uri_bunker, NULL) != 0){ printf("bun set secret fail\n"); nostr_nip46_session_free(bun); return 2; }
+    if (nostr_nip46_client_set_secret(bun, bunker_sk) != 0) return 2;
 
     NostrNip46Session *cli = nostr_nip46_client_new(); if(!cli){ printf("cli new fail\n"); nostr_nip46_session_free(bun); return 3; }
     char uri_client[256]; snprintf(uri_client, sizeof(uri_client), "bunker://%s?secret=%s", bunker_pk_sec1, client_sk);
     if (nostr_nip46_client_connect(cli, uri_client, NULL) != 0){ printf("cli connect fail\n"); nostr_nip46_session_free(cli); nostr_nip46_session_free(bun); return 4; }
+    if (nostr_nip46_client_set_secret(cli, client_sk) != 0) return 4;
 
     /* First, connect with permission to sign_event */
     {

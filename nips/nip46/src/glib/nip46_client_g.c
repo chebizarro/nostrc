@@ -22,6 +22,7 @@ typedef struct {
 static void sign_event_data_free(gpointer data) {
     SignEventData *d = data;
     if (d) {
+        nostr_nip46_session_unref(d->session);
         g_free(d->event_json);
         g_free(d);
     }
@@ -74,7 +75,7 @@ nostr_nip46_client_sign_event_g_async(NostrNip46Session   *session,
     g_task_set_source_tag(task, nostr_nip46_client_sign_event_g_async);
 
     SignEventData *d = g_new0(SignEventData, 1);
-    d->session = session;
+    d->session = nostr_nip46_session_ref(session);
     d->event_json = g_strdup(event_json);
     g_task_set_task_data(task, d, sign_event_data_free);
 
@@ -100,6 +101,9 @@ typedef struct {
 static void connect_rpc_data_free(gpointer data) {
     ConnectRpcData *d = data;
     if (d) {
+        nostr_nip46_session_unref(d->session);
+        if (d->connect_secret)
+            memset(d->connect_secret, 0, strlen(d->connect_secret));
         g_free(d->connect_secret);
         g_free(d->perms);
         g_free(d);
@@ -154,7 +158,7 @@ nostr_nip46_client_connect_rpc_g_async(NostrNip46Session   *session,
     g_task_set_source_tag(task, nostr_nip46_client_connect_rpc_g_async);
 
     ConnectRpcData *d = g_new0(ConnectRpcData, 1);
-    d->session = session;
+    d->session = nostr_nip46_session_ref(session);
     d->connect_secret = g_strdup(connect_secret);
     d->perms = g_strdup(perms);
     g_task_set_task_data(task, d, connect_rpc_data_free);
@@ -177,7 +181,9 @@ typedef struct {
 } GetPubkeyData;
 
 static void get_pubkey_data_free(gpointer data) {
-    g_free(data);
+    GetPubkeyData *d = data;
+    if (d) nostr_nip46_session_unref(d->session);
+    g_free(d);
 }
 
 static void
@@ -225,7 +231,7 @@ nostr_nip46_client_get_public_key_rpc_g_async(NostrNip46Session   *session,
     g_task_set_source_tag(task, nostr_nip46_client_get_public_key_rpc_g_async);
 
     GetPubkeyData *d = g_new0(GetPubkeyData, 1);
-    d->session = session;
+    d->session = nostr_nip46_session_ref(session);
     g_task_set_task_data(task, d, get_pubkey_data_free);
 
     g_task_run_in_thread(task, get_pubkey_rpc_thread);

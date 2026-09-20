@@ -17,4 +17,7 @@ enum nss_status _nss_nostr_getgrnam_r(const char *name, struct group *grp,
 enum nss_status _nss_nostr_getgrgid_r(gid_t gid, struct group *grp,
                                       char *buffer, size_t buflen, int *errnop);
 
+enum nss_status _nss_nostr_initgroups_dyn(const char *user, gid_t group,
+    long *start, long *size, gid_t **groupsp, long limit, int *errnop);
+
 #endif /* NSS_NOSTR_H */

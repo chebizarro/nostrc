@@ -36,6 +36,20 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/nip46_client_g.c)
   endif()
 endif()
 
+# Caller ownership and GLib lifetime regressions.
+add_executable(test_nip46_pending_lifetime tests/test_pending_lifetime.c)
+target_link_libraries(test_nip46_pending_lifetime PRIVATE nostr_nip46_core)
+add_test(NAME test_nip46_pending_lifetime COMMAND test_nip46_pending_lifetime)
+set_tests_properties(test_nip46_pending_lifetime PROPERTIES TIMEOUT 60)
+add_executable(test_nip46_caller_hardening tests/test_caller_hardening.c)
+target_link_libraries(test_nip46_caller_hardening PRIVATE nostr_nip46_core)
+add_test(NAME test_nip46_caller_hardening COMMAND test_nip46_caller_hardening)
+if(TARGET nostr_nip46_glib)
+  add_executable(test_nip46_glib_lifetime tests/test_glib_lifetime.c)
+  target_link_libraries(test_nip46_glib_lifetime PRIVATE nostr_nip46_glib)
+  add_test(NAME test_nip46_glib_lifetime COMMAND test_nip46_glib_lifetime)
+endif()
+
 # Tests
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_uri.c)
   add_executable(test_nip46_uri tests/test_uri.c)

@@ -18,8 +18,11 @@ static int test_bunker_multi_relays(void) {
     if (n >= 1 && strcmp(relays[0], "wss://relay.one") != 0) rc = 7;
     if (n >= 2 && strcmp(relays[1], "wss://relay.two/path") != 0) rc = 8;
     for (size_t i=0;i<n;++i) free(relays[i]); free(relays);
+    char *token=NULL; (void)nostr_nip46_session_get_connect_token(s, &token);
+    if (!token || strcmp(token, "a b") != 0) rc = 9;
+    free(token);
     char *sec=NULL; (void)nostr_nip46_session_get_secret(s, &sec);
-    if (!sec || strcmp(sec, "a b") != 0) rc = 9;
+    if (!sec || strlen(sec) != 64 || !strcmp(sec, "a b")) rc = 10;
     free(sec);
     nostr_nip46_session_free(s);
     if (rc) { printf("test_bunker_multi_relays rc=%d\n", rc); }

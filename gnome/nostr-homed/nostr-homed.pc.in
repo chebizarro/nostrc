@@ -1,10 +1,9 @@
 prefix=@CMAKE_INSTALL_PREFIX@
 exec_prefix=${prefix}
-libdir=@CMAKE_INSTALL_LIBDIR@
-includedir=${prefix}/include
+libdir=@CMAKE_INSTALL_FULL_LIBDIR@
+includedir=@CMAKE_INSTALL_FULL_INCLUDEDIR@
 
 Name: nostr-homed
-Description: Nostr-backed roaming home components (NSS, PAM, FUSE, control)
-Version: 0.1.0
-Libs: -L${libdir} -lnostr_homed_common
-Cflags: -I${includedir}
+Description: Version metadata for opt-in Nostr login and experimental roaming components
+Version: @PROJECT_VERSION@
+# This component does not install a public link library or headers yet.

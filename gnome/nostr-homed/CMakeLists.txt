@@ -1,194 +1,211 @@
 cmake_minimum_required(VERSION 3.18)
-project(nostr_homed C)
+project(nostr_homed VERSION 0.2.0 LANGUAGES C)
 
-# Compiler flags
+include(GNUInstallDirs)
+include(CTest)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-add_compile_options(-Wall -Wextra -Werror)
+set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Dependencies
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(JANSSON REQUIRED jansson)
-pkg_check_modules(GLIB2 REQUIRED glib-2.0>=2.56 gobject-2.0>=2.56 gio-2.0>=2.56)
-find_package(OpenSSL REQUIRED)
-find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
-find_package(Threads REQUIRED)
-find_package(SQLite3 REQUIRED)
-find_package(CURL REQUIRED)
+option(NOSTR_HOMED_ENABLE_AUTH_CORE
+  "Build non-installed authentication protocol/provider core and tests" OFF)
+option(NOSTR_HOMED_ENABLE_IDENTITY_CORE
+  "Build non-installed identity authority/reader core and tests" OFF)
+option(NOSTR_HOMED_ENABLE_DOMAIN_CONFIG
+  "Install inert winbind/domain examples and validator (never activates PAM)" OFF)
+option(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING
+  "Build the legacy FUSE/Blossom roaming-home experiment" OFF)
+option(NOSTR_HOMED_ENABLE_AUTH_INSTALL
+  "Install the system broker/PAM authentication product" OFF)
+option(NOSTR_HOMED_BUILD_TESTS "Build tests for enabled nostr-homed features" ON)
 
-# FUSE3
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-find_package(FUSE3 QUIET)
+if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+  message(FATAL_ERROR
+    "nostr-homed authentication installation is not available yet: the broker, "
+    "PAM client, peer binding, and activation policy are incomplete. Build "
+    "NOSTR_HOMED_ENABLE_AUTH_CORE for portable tests only.")
+endif()
 
-# Optional libseccomp
-find_package(Libseccomp)
+find_package(Python3 COMPONENTS Interpreter QUIET)
 
-# Include dirs
-include_directories(
-  ${CMAKE_SOURCE_DIR}/libnostr/include
-  ${CMAKE_SOURCE_DIR}/libjson/include
-  ${CMAKE_SOURCE_DIR}/libgo/include
-  ${CMAKE_SOURCE_DIR}/nips/nip19/include
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${JANSSON_INCLUDE_DIRS}
-  ${GLIB2_INCLUDE_DIRS}
-  ${SQLite3_INCLUDE_DIRS}
-  ${FUSE3_INCLUDE_DIRS}
-)
-
-link_directories(
-  ${JANSSON_LIBRARY_DIRS}
-  ${GLIB2_LIBRARY_DIRS}
-)
-
-# Common sources
-set(NH_COMMON
-  src/common/nostr_manifest.c
-  src/common/nostr_cache.c
-  src/common/relay_fetch.c
-  src/common/blossom_client.c
-  src/common/secrets_tmpfs.c
-  src/common/secrets_decrypt.c
-  src/common/nip46_client_dbus.c
-  src/common/util.c
-)
-
-add_library(nostr_homed_common STATIC ${NH_COMMON})
-target_link_libraries(nostr_homed_common PUBLIC
-  libnostr nostr_json libgo
-  nip19
-  ${JANSSON_LIBRARIES}
-  ${GLIB2_LIBRARIES}
-  OpenSSL::Crypto
-  ${SECP256K1_LIB}
-  SQLite::SQLite3
-  CURL::libcurl
-  Threads::Threads
-)
-
-if (UNIX AND NOT APPLE)
-  # NSS module (Linux)
-  add_library(nss_nostr SHARED src/nss/nss_nostr.c)
-  set_target_properties(nss_nostr PROPERTIES OUTPUT_NAME "nss_nostr" SOVERSION 2)
-  target_link_libraries(nss_nostr PRIVATE nostr_homed_common ${GLIB2_LIBRARIES} SQLite::SQLite3)
-
-  # PAM module (Linux) — requires libpam headers
-  pkg_check_modules(PAM pam)
-  if (PAM_FOUND)
-    add_library(pam_nostr SHARED src/pam/pam_nostr.c)
-    set_target_properties(pam_nostr PROPERTIES OUTPUT_NAME "pam_nostr")
-    target_link_libraries(pam_nostr PRIVATE nostr_homed_common ${GLIB2_LIBRARIES} ${PAM_LIBRARIES})
-    target_include_directories(pam_nostr PRIVATE ${PAM_INCLUDE_DIRS})
+if(NOSTR_HOMED_ENABLE_AUTH_CORE)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
+  find_package(OpenSSL REQUIRED)
+  if(TARGET libnostr)
+    set(_homed_nostr libnostr)
   else()
-    message(STATUS "libpam not found; skipping pam_nostr module")
+    pkg_check_modules(NOSTR REQUIRED IMPORTED_TARGET nostr)
+    pkg_check_modules(LIBGO REQUIRED IMPORTED_TARGET libgo)
+    set(_homed_nostr PkgConfig::NOSTR PkgConfig::LIBGO)
+  endif()
+
+  add_library(nostr_auth_core STATIC
+    src/auth/auth_protocol.c
+    src/auth/auth_transaction.c
+    src/auth/auth_challenge.c
+    src/auth/auth_vault.c
+    src/auth/provider_local.c)
+  target_compile_options(nostr_auth_core PRIVATE -Wall -Wextra -Werror)
+  target_include_directories(nostr_auth_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/auth)
+  target_link_libraries(nostr_auth_core PUBLIC
+    ${_homed_nostr} PkgConfig::JANSSON OpenSSL::Crypto)
+
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_auth_protocol tests/unit/test_auth_protocol.c)
+    target_link_libraries(test_auth_protocol PRIVATE nostr_auth_core)
+    add_executable(test_auth_transaction tests/unit/test_auth_transaction.c)
+    target_link_libraries(test_auth_transaction PRIVATE nostr_auth_core)
+    add_executable(test_auth_vault tests/unit/test_auth_vault.c)
+    target_link_libraries(test_auth_vault PRIVATE nostr_auth_core)
+    add_executable(test_auth_challenge tests/unit/test_auth_challenge.c)
+    target_link_libraries(test_auth_challenge PRIVATE nostr_auth_core)
+    add_executable(test_provider_local tests/integration/test_provider_local.c)
+    target_link_libraries(test_provider_local PRIVATE nostr_auth_core)
+
+    add_test(NAME homed_auth_protocol COMMAND test_auth_protocol)
+    add_test(NAME homed_auth_transaction COMMAND test_auth_transaction)
+    add_test(NAME homed_auth_vault COMMAND test_auth_vault)
+    add_test(NAME homed_auth_challenge COMMAND test_auth_challenge)
+    add_test(NAME homed_provider_local COMMAND test_provider_local)
+    set_tests_properties(
+      homed_auth_protocol homed_auth_transaction homed_auth_vault homed_auth_challenge homed_provider_local
+      PROPERTIES LABELS "nostr-homed;portable;auth" TIMEOUT 60)
   endif()
 endif()
 
-# FUSE filesystem
-if (FUSE3_FOUND)
+if(NOSTR_HOMED_ENABLE_IDENTITY_CORE)
+  find_package(SQLite3 REQUIRED)
+  find_package(OpenSSL REQUIRED)
+
+  add_library(nostr_identity_core STATIC
+    src/identity/identity_common.c
+    src/identity/identity_config.c
+    src/identity/identity_store.c
+    src/identity/identity_reader.c
+    src/identity/identity_projection.c)
+  target_compile_options(nostr_identity_core PRIVATE -Wall -Wextra -Werror)
+  target_include_directories(nostr_identity_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/identity)
+  target_link_libraries(nostr_identity_core PUBLIC SQLite3::SQLite3 OpenSSL::Crypto)
+
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_identity_store tests/identity/test_identity_store.c)
+    target_link_libraries(test_identity_store PRIVATE nostr_identity_core)
+    add_executable(test_identity_config tests/identity/test_identity_config.c)
+    target_link_libraries(test_identity_config PRIVATE nostr_identity_core)
+    add_executable(test_identity_fixtures tests/identity/test_identity_fixtures.c)
+    target_compile_definitions(test_identity_fixtures PRIVATE
+      IDENTITY_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/identity/fixtures")
+    target_link_libraries(test_identity_fixtures PRIVATE nostr_identity_core)
+    add_test(NAME homed_identity_store COMMAND test_identity_store)
+    add_test(NAME homed_identity_config COMMAND test_identity_config)
+    add_test(NAME homed_identity_fixtures COMMAND test_identity_fixtures)
+    set_tests_properties(homed_identity_store homed_identity_config homed_identity_fixtures
+      PROPERTIES LABELS "nostr-homed;portable;identity" TIMEOUT 60)
+  endif()
+endif()
+
+if(NOSTR_HOMED_ENABLE_AUTH_CORE AND NOSTR_HOMED_ENABLE_IDENTITY_CORE)
+  target_sources(nostr_auth_core PRIVATE src/auth/auth_transaction_identity.c)
+  target_link_libraries(nostr_auth_core PUBLIC nostr_identity_core)
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_auth_transaction_identity tests/integration/test_auth_transaction_identity.c)
+    target_link_libraries(test_auth_transaction_identity PRIVATE nostr_auth_core)
+    add_test(NAME homed_auth_transaction_identity COMMAND test_auth_transaction_identity)
+    set_tests_properties(homed_auth_transaction_identity
+      PROPERTIES LABELS "nostr-homed;portable;auth;identity" TIMEOUT 60)
+  endif()
+endif()
+
+if(NOSTR_HOMED_ENABLE_DOMAIN_CONFIG)
+  if(NOT Python3_Interpreter_FOUND)
+    message(FATAL_ERROR "NOSTR_HOMED_ENABLE_DOMAIN_CONFIG requires Python 3")
+  endif()
+  set(_domain_share "${CMAKE_INSTALL_DATADIR}/nostr-homed/domain")
+  install(FILES
+    config/domain-route.conf.sample
+    config/smb.conf.winbind.sample
+    packaging/domain/domain-profile.manifest.json.sample
+    packaging/domain/ROLLBACK.md
+    packaging/pam/nostr-winbind-policy.md
+    docs/SAMBA_AD_LOGIN.md
+    DESTINATION "${_domain_share}")
+  install(PROGRAMS packaging/domain/validate_domain_profile.py
+    DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/nostr-homed")
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_test(NAME homed_domain_profile
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/test_domain_profile.py")
+    set_tests_properties(homed_domain_profile
+      PROPERTIES LABELS "nostr-homed;portable;domain" TIMEOUT 30)
+  endif()
+endif()
+
+if(NOSTR_HOMED_BUILD_TESTS AND Python3_Interpreter_FOUND)
+  add_test(NAME homed_acceptance_runner_contract
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/acceptance/test_acceptance_runner.py")
+  set_tests_properties(homed_acceptance_runner_contract
+    PROPERTIES LABELS "nostr-homed;portable;acceptance-contract" TIMEOUT 30)
+endif()
+
+if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
+  pkg_check_modules(GLIB2 REQUIRED IMPORTED_TARGET
+    glib-2.0>=2.56 gobject-2.0>=2.56 gio-2.0>=2.56)
+  find_package(OpenSSL REQUIRED)
+  find_package(Threads REQUIRED)
+  find_package(SQLite3 REQUIRED)
+  find_package(CURL REQUIRED)
+  find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
+  list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+  find_package(FUSE3 REQUIRED)
+  if(NOT TARGET nip19)
+    message(FATAL_ERROR "Experimental roaming requires ENABLE_NIP19=ON")
+  endif()
+
+  add_library(nostr_homed_common STATIC
+    src/common/nostr_manifest.c
+    src/common/nostr_cache.c
+    src/common/relay_fetch.c
+    src/common/blossom_client.c
+    src/common/secrets_tmpfs.c
+    src/common/secrets_decrypt.c
+    src/common/nip46_client_dbus.c
+    src/common/util.c)
+  target_include_directories(nostr_homed_common PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(nostr_homed_common PUBLIC
+    libnostr nostr_json libgo nip19 PkgConfig::JANSSON PkgConfig::GLIB2
+    OpenSSL::Crypto ${SECP256K1_LIB} SQLite3::SQLite3 CURL::libcurl Threads::Threads)
+
   add_executable(nostrfs src/fs/nostrfs.c)
   target_compile_definitions(nostrfs PRIVATE FUSE_USE_VERSION=30)
   target_compile_options(nostrfs PRIVATE -Wno-misleading-indentation -Wno-format-truncation)
+  target_include_directories(nostrfs PRIVATE ${FUSE3_INCLUDE_DIRS})
   target_link_libraries(nostrfs PRIVATE nostr_homed_common ${FUSE3_LIBRARIES})
-  install(TARGETS nostrfs RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-else()
-  message(WARNING "FUSE3 not found; skipping nostrfs build (required on target distros)")
+  add_executable(nostr-homectl src/ctl/nostr-homectl.c)
+  target_link_libraries(nostr-homectl PRIVATE nostr_homed_common PkgConfig::GLIB2)
+
+  install(TARGETS nostrfs nostr-homectl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  install(FILES dbus/org.nostr.Homed1.xml
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)
+  pkg_get_variable(SYSTEMD_USER_UNIT_DIR systemd systemduserunitdir)
+  if(NOT SYSTEMD_USER_UNIT_DIR)
+    set(SYSTEMD_USER_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/user")
+  endif()
+  install(FILES
+    systemd/user/nostr-homectl.service
+    systemd/user/nostrfs@.service
+    DESTINATION "${SYSTEMD_USER_UNIT_DIR}")
 endif()
 
-# Control CLI + DBus service
-add_executable(nostr-homectl src/ctl/nostr-homectl.c)
-target_link_libraries(nostr-homectl PRIVATE nostr_homed_common ${GLIB2_LIBRARIES} ${GLIB2_GIO_LIBRARIES})
-
-# Install rules (distro libdirs vary; default to lib)
-include(GNUInstallDirs)
-if (TARGET nss_nostr)
-  install(TARGETS nss_nostr LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
-endif()
-if (TARGET pam_nostr)
-  install(TARGETS pam_nostr LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/security)
-endif()
-install(TARGETS nostr-homectl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-
-# Sample configuration
-install(FILES config/nss_nostr.conf.sample DESTINATION ${CMAKE_INSTALL_SYSCONFDIR})
-
-# DBus and systemd files
-if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/dbus/org.nostr.Homed1.xml)
-  install(FILES dbus/org.nostr.Homed1.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)
-endif()
-# User services — see docs/SYSTEMD_TOPOLOGY.md
-# Use pkg-config to find the correct systemd user unit directory;
-# fall back to lib/systemd/user (NOT under multiarch libdir).
-execute_process(
-  COMMAND ${PKG_CONFIG_EXECUTABLE} --variable=systemduserunitdir systemd
-  OUTPUT_VARIABLE SYSTEMD_USER_UNIT_DIR
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-  RESULT_VARIABLE _sd_rc
-)
-if (NOT _sd_rc EQUAL 0 OR SYSTEMD_USER_UNIT_DIR STREQUAL "")
-  set(SYSTEMD_USER_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/user")
-  message(STATUS "systemd pkg-config not found; using fallback: ${SYSTEMD_USER_UNIT_DIR}")
-endif()
-message(STATUS "systemd user unit dir: ${SYSTEMD_USER_UNIT_DIR}")
-if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/systemd/user/nostr-homectl.service)
-  install(FILES systemd/user/nostr-homectl.service DESTINATION ${SYSTEMD_USER_UNIT_DIR})
-endif()
-if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/systemd/user/nostrfs@.service)
-  install(FILES systemd/user/nostrfs@.service DESTINATION ${SYSTEMD_USER_UNIT_DIR})
-endif()
-
-# Tests
-enable_testing()
-add_executable(test_manifest tests/unit/test_manifest.c src/common/nostr_manifest.c src/common/util.c)
-target_link_libraries(test_manifest PRIVATE ${JANSSON_LIBRARIES})
-add_executable(test_cache tests/unit/test_cache.c src/common/nostr_cache.c src/common/util.c)
-target_link_libraries(test_cache PRIVATE SQLite::SQLite3 OpenSSL::Crypto)
-add_test(NAME test_manifest COMMAND test_manifest)
-set_tests_properties(test_manifest PROPERTIES TIMEOUT 30)
-add_test(NAME test_cache COMMAND test_cache)
-set_tests_properties(test_cache PROPERTIES TIMEOUT 30)
-add_executable(test_cache_config tests/unit/test_cache_config.c src/common/nostr_cache.c src/common/util.c)
-target_link_libraries(test_cache_config PRIVATE SQLite::SQLite3 OpenSSL::Crypto)
-add_test(NAME test_cache_config COMMAND test_cache_config)
-set_tests_properties(test_cache_config PROPERTIES TIMEOUT 30)
-add_executable(test_uid_map tests/unit/test_uid_map.c src/common/nostr_cache.c src/common/util.c)
-target_link_libraries(test_uid_map PRIVATE SQLite::SQLite3 OpenSSL::Crypto)
-add_test(NAME test_uid_map COMMAND test_uid_map)
-set_tests_properties(test_uid_map PROPERTIES TIMEOUT 30)
-add_executable(test_groups tests/unit/test_groups.c src/common/nostr_cache.c src/common/util.c)
-target_link_libraries(test_groups PRIVATE SQLite::SQLite3 OpenSSL::Crypto)
-add_test(NAME test_groups COMMAND test_groups)
-set_tests_properties(test_groups PROPERTIES TIMEOUT 30)
-
-# Integration test for nostrfs (requires FUSE3 and privileged/container env)
-if (FUSE3_FOUND)
-  add_test(NAME nostrfs_integration
-           COMMAND bash ${CMAKE_SOURCE_DIR}/gnome/nostr-homed/tests/integration/run_nostrfs_basic.sh)
-  set_tests_properties(nostrfs_integration PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-  set_tests_properties(nostrfs_integration PROPERTIES TIMEOUT 120)
-  add_test(NAME nostrfs_writeback_integration
-           COMMAND bash ${CMAKE_SOURCE_DIR}/gnome/nostr-homed/tests/integration/run_nostrfs_writeback.sh)
-  set_tests_properties(nostrfs_writeback_integration PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-  set_tests_properties(nostrfs_writeback_integration PROPERTIES TIMEOUT 180)
-  add_test(NAME e2e_real_signer
-           COMMAND bash ${CMAKE_SOURCE_DIR}/gnome/nostr-homed/tests/integration/run_e2e_real_signer_test.sh)
-  set_tests_properties(e2e_real_signer PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-  set_tests_properties(e2e_real_signer PROPERTIES TIMEOUT 120)
-endif()
-
-# Mock signer and secrets decrypt integration test
-add_executable(mock_signer tests/integration/mock_signer.c)
-target_link_libraries(mock_signer PRIVATE ${GLIB2_LIBRARIES} ${GLIB2_GIO_LIBRARIES})
-
-add_executable(test_secrets_decrypt tests/integration/test_secrets_decrypt.c)
-target_link_libraries(test_secrets_decrypt PRIVATE nostr_homed_common ${GLIB2_LIBRARIES} ${GLIB2_GIO_LIBRARIES})
-
-add_test(NAME secrets_decrypt_integration
-         COMMAND bash ${CMAKE_SOURCE_DIR}/gnome/nostr-homed/tests/integration/run_mock_signer_test.sh)
-set_tests_properties(secrets_decrypt_integration PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-set_tests_properties(secrets_decrypt_integration PROPERTIES TIMEOUT 30)
-
-# Packaging pkg-config where useful
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/nostr-homed.pc.in ${CMAKE_CURRENT_BINARY_DIR}/nostr-homed.pc @ONLY)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/nostr-homed.pc DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+# Version metadata only: there is no installed nostr-homed link library.
+configure_file(nostr-homed.pc.in nostr-homed.pc @ONLY)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-homed.pc"
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")

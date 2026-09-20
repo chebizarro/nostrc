@@ -22,6 +22,7 @@ int main(void){
     snprintf(uri_client, sizeof(uri_client), "bunker://%s?secret=%s", bunker_pk_sec1, client_sk);
     NostrNip46Session *cli = nostr_nip46_client_new(); if(!cli){ printf("cli new fail\n"); return 1; }
     if (nostr_nip46_client_connect(cli, uri_client, NULL) != 0){ printf("cli connect fail\n"); nostr_nip46_session_free(cli); return 2; }
+    if (nostr_nip46_client_set_secret(cli, client_sk) != 0) return 2;
 
     /* Bunker session: set its own secret via the same parser */
     char uri_bunker[256];
@@ -29,6 +30,7 @@ int main(void){
     NostrNip46Session *bun = nostr_nip46_bunker_new(NULL); if(!bun){ printf("bun new fail\n"); nostr_nip46_session_free(cli); return 3; }
     if (nostr_nip46_session_set_transport_mode(bun, NOSTR_NIP46_TRANSPORT_NIP04_AEAD_V2_EXTENSION) != 0) return 3;
     if (nostr_nip46_client_connect(bun, uri_bunker, NULL) != 0){ printf("bun set secret fail\n"); nostr_nip46_session_free(bun); nostr_nip46_session_free(cli); return 4; }
+    if (nostr_nip46_client_set_secret(bun, bunker_sk) != 0) return 4;
 
     /* Build a get_public_key request */
     char *req_json = nostr_nip46_request_build("1", "get_public_key", NULL, 0);

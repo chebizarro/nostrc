@@ -10,14 +10,14 @@ extern "C" {
 typedef struct {
     char *remote_signer_pubkey_hex; /* required */
     char **relays; size_t n_relays; /* optional */
-    char *secret; /* optional */
+    char *secret; /* optional connect authorization token, never a private key */
 } NostrNip46BunkerURI;
 
 /* nostrconnect://<client-pubkey>?relay=...&secret=...&perms=...&name=...&url=...&image=... */
 typedef struct {
     char *client_pubkey_hex; /* required */
     char **relays; size_t n_relays; /* optional */
-    char *secret; /* optional */
+    char *secret; /* optional connect authorization token, never a private key */
     char *perms_csv; /* optional */
     char *name; char *url; char *image; /* optional */
 } NostrNip46ConnectURI;

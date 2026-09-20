@@ -1,0 +1,15 @@
+# Identity-authority storage and allocation only.
+# General authentication, PAM, sockets, workers, and providers are configured
+# by nostr-authd and are intentionally not accepted here.
+authority_path=/var/lib/nostr-auth/private/authority.db
+projection_path=/var/lib/nostr-auth/nss.db
+home_root=/home
+default_shell=/bin/bash
+uid_min=200000
+uid_max=299999
+domain_default_min=1000000
+domain_default_max=1099999
+domain_rid_min=1100000
+domain_rid_max=1999999
+standalone_smb_min=500000
+standalone_smb_max=599999

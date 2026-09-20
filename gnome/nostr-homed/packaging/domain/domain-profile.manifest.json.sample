@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "activation_ready": false,
+  "d4_evidence_sha256": null,
+  "package_pins": {
+    "libpam-runtime": null,
+    "libpam-winbind": null,
+    "samba": null,
+    "winbind": null
+  },
+  "pam_files": [],
+  "rollback_dir": "/var/lib/nostr-auth/rollback/domain-profile",
+  "notes": "Template only. D4 real joined-host evidence and exact pre-activation PAM hashes are unavailable."
+}

@@ -136,6 +136,7 @@ static int test_nip04_cross_session_roundtrip(void) {
     char uri[256];
     snprintf(uri, sizeof(uri), "bunker://%s?secret=%s", client_pk, bunker_sk);
     TEST_ASSERT(nostr_nip46_client_connect(bunker, uri, NULL) == 0, "bunker connect");
+    TEST_ASSERT(nostr_nip46_client_set_secret(bunker, bunker_sk) == 0, "set bunker key");
 
     char *decrypted = NULL;
     TEST_ASSERT(nostr_nip46_client_nip04_decrypt(bunker, client_pk, cipher, &decrypted) == 0, "decrypt");
@@ -201,6 +202,7 @@ static int test_nip44_cross_session_roundtrip(void) {
     char uri[256];
     snprintf(uri, sizeof(uri), "bunker://%s?secret=%s", client_pk, bunker_sk);
     TEST_ASSERT(nostr_nip46_client_connect(bunker, uri, NULL) == 0, "bunker connect");
+    TEST_ASSERT(nostr_nip46_client_set_secret(bunker, bunker_sk) == 0, "set bunker key");
 
     char *decrypted = NULL;
     TEST_ASSERT(nostr_nip46_client_nip44_decrypt(bunker, client_pk, cipher, &decrypted) == 0, "decrypt");
