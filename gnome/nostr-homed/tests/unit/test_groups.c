@@ -1,9 +1,10 @@
 #include "nostr_cache.h"
 #include <assert.h>
+#include "../nh_test.h"
 #include <stdio.h>
 #include <string.h>
 
-static void expect_int(int cond, const char *msg){ if (!cond){ fprintf(stderr, "FAIL: %s\n", msg); assert(cond); } }
+static void expect_int(int cond, const char *msg){ if (!cond){ fprintf(stderr, "FAIL: %s\n", msg); NH_CHECK(cond); } }
 
 int main(void){
   nh_cache c;

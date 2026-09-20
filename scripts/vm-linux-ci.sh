@@ -9,10 +9,9 @@
 # VM is (arm64 on Apple Silicon is expected; the amd64 release pin — nostrc-rb0e.14
 # — is satisfied elsewhere).
 #
-# IMPORTANT: builds Debug on purpose. The portable tests put their work inside
-# assert(); a build type that defines NDEBUG (Release/RelWithDebInfo) compiles
-# those out and the suite becomes vacuous (and some tests then deref
-# uninitialized memory). Do not "optimise" this to RelWithDebInfo.
+# Builds Debug for better diagnostics. The tests use NH_CHECK (always-on), so
+# they are no longer vacuous under NDEBUG (nostrc-rb0e.16); Debug just keeps
+# symbols/asserts handy when a failure needs gdb.
 #
 # It does NOT test PAM/NSS/GDM/Samba login: that runtime does not install yet
 # (NOSTR_HOMED_ENABLE_AUTH_INSTALL is a configure-time FATAL_ERROR).

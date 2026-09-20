@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include "../nh_test.h"
 #include "nostr_manifest.h"
 
 int main(void){
@@ -11,16 +12,16 @@ int main(void){
                    "}";
   nh_manifest m; int rc = nh_manifest_parse_json(js, &m);
   if (rc != 0) { fprintf(stderr, "nh_manifest_parse_json failed: %d\n", rc); return 1; }
-  assert(rc == 0);
-  assert(m.version == 2);
-  assert(m.entries_len == 1);
-  assert(strcmp(m.entries[0].path, "/README.txt")==0);
-  assert(strcmp(m.entries[0].cid, "abc")==0);
-  assert(m.entries[0].size == 5);
-  assert(m.entries[0].mode == 420);
-  assert(m.entries[0].mtime == 123);
-  assert(m.links_len == 1);
-  assert(strcmp(m.links[0].path, "/docs")==0);
+  NH_CHECK(rc == 0);
+  NH_CHECK(m.version == 2);
+  NH_CHECK(m.entries_len == 1);
+  NH_CHECK(strcmp(m.entries[0].path, "/README.txt")==0);
+  NH_CHECK(strcmp(m.entries[0].cid, "abc")==0);
+  NH_CHECK(m.entries[0].size == 5);
+  NH_CHECK(m.entries[0].mode == 420);
+  NH_CHECK(m.entries[0].mtime == 123);
+  NH_CHECK(m.links_len == 1);
+  NH_CHECK(strcmp(m.links[0].path, "/docs")==0);
   nh_manifest_free(&m);
   puts("ok");
   return 0;

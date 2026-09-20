@@ -5,6 +5,7 @@
 #include "nostr_identity.h"
 
 #include <assert.h>
+#include "../nh_test.h"
 #include <errno.h>
 #include <sqlite3.h>
 #include <stdio.h>
@@ -30,8 +31,8 @@ static void fill_hex(char out[65], char value) {
 static void sql_expect_failure(const char *path, const char *sql) {
   sqlite3 *db = NULL;
   char *error = NULL;
-  assert(sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK);
-  assert(sqlite3_exec(db, sql, NULL, NULL, &error) != SQLITE_OK);
+  NH_CHECK(sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK);
+  NH_CHECK(sqlite3_exec(db, sql, NULL, NULL, &error) != SQLITE_OK);
   sqlite3_free(error);
   sqlite3_close(db);
 }
@@ -71,8 +72,8 @@ int main(void) {
   const uint8_t secret[] = {0xde, 0xad, 0xbe, 0xef};
   const char *op_enroll = "00000000-0000-4000-8000-000000000001";
 
-  assert(mkdtemp(temporary));
-  assert(chmod(temporary, 0700) == 0);
+  NH_CHECK(mkdtemp(temporary));
+  NH_CHECK(chmod(temporary, 0700) == 0);
   snprintf(db_path, sizeof(db_path), "%s/authority.db", temporary);
   snprintf(projection_path, sizeof(projection_path), "%s/nss.db", temporary);
   snprintf(lock_path, sizeof(lock_path), "%s/authority.lock", temporary);
@@ -81,109 +82,109 @@ int main(void) {
   snprintf(config.projection_path, sizeof(config.projection_path), "%s", projection_path);
   snprintf(config.home_root, sizeof(config.home_root), "%s/home", temporary);
   config.uid_min = 200000u; config.uid_max = 200004u;
-  assert(nh_identity_config_validate(&config) == NH_IDENTITY_OK);
+  NH_CHECK(nh_identity_config_validate(&config) == NH_IDENTITY_OK);
   memset(&options, 0, sizeof(options));
   options.config = &config;
   options.ownership_probe = ownership_probe;
   options.flags = NH_IDENTITY_STORE_CREATE;
 
-  assert(nh_identity_store_open(&options, &store) == NH_IDENTITY_OK);
-  assert(stat(db_path, &st) == 0 && (st.st_mode & 0777) == 0600);
-  assert(nh_identity_store_get_info(store, &initial_info) == NH_IDENTITY_OK);
-  assert(initial_info.schema_version == 1 && initial_info.authority_generation == 1);
-  assert(nh_identity_store_open(&options, &second) == NH_IDENTITY_BUSY);
-  assert(second == NULL);
+  NH_CHECK(nh_identity_store_open(&options, &store) == NH_IDENTITY_OK);
+  NH_CHECK(stat(db_path, &st) == 0 && (st.st_mode & 0777) == 0600);
+  NH_CHECK(nh_identity_store_get_info(store, &initial_info) == NH_IDENTITY_OK);
+  NH_CHECK(initial_info.schema_version == 1 && initial_info.authority_generation == 1);
+  NH_CHECK(nh_identity_store_open(&options, &second) == NH_IDENTITY_BUSY);
+  NH_CHECK(second == NULL);
 
   child = fork();
-  assert(child >= 0);
+  NH_CHECK(child >= 0);
   if (child == 0) {
     nh_identity_store *child_store = NULL;
     nh_identity_rc rc = nh_identity_store_open(&options, &child_store);
     if (child_store) nh_identity_store_close(child_store);
     _exit(rc == NH_IDENTITY_BUSY ? 0 : 1);
   }
-  assert(waitpid(child, &child_status, 0) == child);
-  assert(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+  NH_CHECK(waitpid(child, &child_status, 0) == child);
+  NH_CHECK(WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
 
   fill_hex(key_a, 'a'); fill_hex(key_b, 'b'); fill_hex(key_c, 'c');
   memset(&enroll, 0, sizeof(enroll));
   enroll.username = "n_alice"; enroll.pubkey_hex = key_a;
   enroll.home_mode = NH_IDENTITY_HOME_CREATE;
-  assert(nh_identity_operation_begin_enroll(store, op_enroll, &enroll,
+  NH_CHECK(nh_identity_operation_begin_enroll(store, op_enroll, &enroll,
                                              &operation) == NH_IDENTITY_OK);
-  assert(!operation.replayed && operation.phase == NH_IDENTITY_PHASE_RESERVED);
-  assert(nh_identity_store_lookup_by_name(store, "n_alice", &account) == NH_IDENTITY_OK);
-  assert(account.uid == 200001u && account.gid == 200001u);
-  assert(account.status == NH_IDENTITY_STATUS_ENROLLING && !account.projectable);
-  assert(strcmp(account.pubkey_hex, key_a) == 0);
-  assert(nh_identity_store_get_info(store, &after_enroll) == NH_IDENTITY_OK);
-  assert(after_enroll.authority_generation == initial_info.authority_generation + 1);
+  NH_CHECK(!operation.replayed && operation.phase == NH_IDENTITY_PHASE_RESERVED);
+  NH_CHECK(nh_identity_store_lookup_by_name(store, "n_alice", &account) == NH_IDENTITY_OK);
+  NH_CHECK(account.uid == 200001u && account.gid == 200001u);
+  NH_CHECK(account.status == NH_IDENTITY_STATUS_ENROLLING && !account.projectable);
+  NH_CHECK(strcmp(account.pubkey_hex, key_a) == 0);
+  NH_CHECK(nh_identity_store_get_info(store, &after_enroll) == NH_IDENTITY_OK);
+  NH_CHECK(after_enroll.authority_generation == initial_info.authority_generation + 1);
 
-  assert(nh_identity_operation_begin_enroll(store, op_enroll, &enroll,
+  NH_CHECK(nh_identity_operation_begin_enroll(store, op_enroll, &enroll,
                                              &replay) == NH_IDENTITY_OK);
-  assert(replay.replayed && strcmp(replay.account_id, operation.account_id) == 0);
-  assert(nh_identity_store_get_info(store, &after_replay) == NH_IDENTITY_OK);
-  assert(after_replay.authority_generation == after_enroll.authority_generation);
+  NH_CHECK(replay.replayed && strcmp(replay.account_id, operation.account_id) == 0);
+  NH_CHECK(nh_identity_store_get_info(store, &after_replay) == NH_IDENTITY_OK);
+  NH_CHECK(after_replay.authority_generation == after_enroll.authority_generation);
   enroll.username = "n_changed";
-  assert(nh_identity_operation_begin_enroll(store, op_enroll, &enroll,
+  NH_CHECK(nh_identity_operation_begin_enroll(store, op_enroll, &enroll,
     &replay) == NH_IDENTITY_OPERATION_MISMATCH);
 
   enroll.username = "n_alice"; enroll.pubkey_hex = key_b;
-  assert(nh_identity_operation_begin_enroll(store,
+  NH_CHECK(nh_identity_operation_begin_enroll(store,
     "00000000-0000-4000-8000-000000000002", &enroll, &replay) ==
     NH_IDENTITY_CONFLICT);
   enroll.username = "n_other"; enroll.pubkey_hex = key_a;
-  assert(nh_identity_operation_begin_enroll(store,
+  NH_CHECK(nh_identity_operation_begin_enroll(store,
     "00000000-0000-4000-8000-000000000003", &enroll, &replay) ==
     NH_IDENTITY_CONFLICT);
 
-  assert(nh_identity_operation_advance_home(store, op_enroll,
+  NH_CHECK(nh_identity_operation_advance_home(store, op_enroll,
     NH_IDENTITY_PHASE_RESERVED, NH_IDENTITY_PHASE_STAGED, &staged,
     &operation) == NH_IDENTITY_OK);
-  assert(nh_identity_operation_advance_home(store, op_enroll,
+  NH_CHECK(nh_identity_operation_advance_home(store, op_enroll,
     NH_IDENTITY_PHASE_RESERVED, NH_IDENTITY_PHASE_STAGED, &staged,
     &operation) == NH_IDENTITY_OK && operation.replayed);
   {
     nh_identity_home_evidence wrong = {11, 999};
-    assert(nh_identity_operation_advance_home(store, op_enroll,
+    NH_CHECK(nh_identity_operation_advance_home(store, op_enroll,
       NH_IDENTITY_PHASE_RESERVED, NH_IDENTITY_PHASE_STAGED, &wrong,
       &operation) == NH_IDENTITY_BAD_STATE);
   }
-  assert(nh_identity_operation_advance_home(store, op_enroll,
+  NH_CHECK(nh_identity_operation_advance_home(store, op_enroll,
     NH_IDENTITY_PHASE_STAGED, NH_IDENTITY_PHASE_INSTALLED, &installed,
     &operation) == NH_IDENTITY_OK);
-  assert(nh_identity_store_lookup_by_id(store, account.account_id, &account) == NH_IDENTITY_OK);
-  assert(account.projectable && account.status == NH_IDENTITY_STATUS_ENROLLING);
+  NH_CHECK(nh_identity_store_lookup_by_id(store, account.account_id, &account) == NH_IDENTITY_OK);
+  NH_CHECK(account.projectable && account.status == NH_IDENTITY_STATUS_ENROLLING);
 
-  assert(nh_identity_provider_stage(store,
+  NH_CHECK(nh_identity_provider_stage(store,
     "00000000-0000-4000-8000-000000000004", account.account_id,
     NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY, 1, "{\"cipher\":\"v1\"}",
     secret, sizeof(secret), provider_id) == NH_IDENTITY_OK);
-  assert(nh_identity_store_provider_get(store, account.account_id,
+  NH_CHECK(nh_identity_store_provider_get(store, account.account_id,
     NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY, false, &provider) == NH_IDENTITY_OK);
-  assert(provider.secret_blob_len == sizeof(secret) &&
+  NH_CHECK(provider.secret_blob_len == sizeof(secret) &&
          memcmp(provider.secret_blob, secret, sizeof(secret)) == 0);
   memset(&attestation, 0, sizeof(attestation));
   snprintf(attestation.pubkey_hex, sizeof(attestation.pubkey_hex), "%s", key_a);
   attestation.key_generation = account.key_generation + 1;
-  assert(nh_identity_provider_activate(store,
+  NH_CHECK(nh_identity_provider_activate(store,
     "00000000-0000-4000-8000-000000000005", provider_id, &attestation) ==
     NH_IDENTITY_STALE_GENERATION);
   attestation.key_generation = account.key_generation;
-  assert(nh_identity_provider_activate(store,
+  NH_CHECK(nh_identity_provider_activate(store,
     "00000000-0000-4000-8000-000000000005", provider_id, &attestation) ==
     NH_IDENTITY_OK);
-  assert(nh_identity_store_provider_get(store, account.account_id,
+  NH_CHECK(nh_identity_store_provider_get(store, account.account_id,
     NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY, true, &provider) == NH_IDENTITY_OK);
   {
     char replayed_provider[NH_IDENTITY_UUID_CAP];
-    assert(nh_identity_provider_stage(store,
+    NH_CHECK(nh_identity_provider_stage(store,
       "00000000-0000-4000-8000-000000000004", account.account_id,
       NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY, 1, "{\"cipher\":\"v1\"}",
       secret, sizeof(secret), replayed_provider) == NH_IDENTITY_OK);
-    assert(strcmp(replayed_provider, provider_id) == 0);
+    NH_CHECK(strcmp(replayed_provider, provider_id) == 0);
   }
-  assert(nh_identity_store_recheck(store, account.account_id,
+  NH_CHECK(nh_identity_store_recheck(store, account.account_id,
     account.key_generation, account.authority_generation, NULL, NULL) ==
     NH_IDENTITY_NOT_ACTIVE);
 
@@ -194,94 +195,94 @@ int main(void) {
       fprintf(stderr, "publish failed: %s (%s)\n",
         nh_identity_rc_name(publish_result),
         nh_identity_store_error_detail(store));
-    assert(publish_result == NH_IDENTITY_OK);
+    NH_CHECK(publish_result == NH_IDENTITY_OK);
   }
-  assert(projection_generation == 1);
-  assert(nh_identity_operation_get(store, op_enroll, &operation) == NH_IDENTITY_OK);
-  assert(operation.phase == NH_IDENTITY_PHASE_PROJECTED);
-  assert(nh_identity_reader_open(projection_path, &reader) ==
+  NH_CHECK(projection_generation == 1);
+  NH_CHECK(nh_identity_operation_get(store, op_enroll, &operation) == NH_IDENTITY_OK);
+  NH_CHECK(operation.phase == NH_IDENTITY_PHASE_PROJECTED);
+  NH_CHECK(nh_identity_reader_open(projection_path, &reader) ==
     NH_IDENTITY_READER_FOUND);
-  assert(nh_identity_reader_getpwnam(reader, "n_alice", &passwd_record,
+  NH_CHECK(nh_identity_reader_getpwnam(reader, "n_alice", &passwd_record,
     reader_buffer, 2, &reader_required) == NH_IDENTITY_READER_TOO_SMALL);
-  assert(reader_required > 2);
-  assert(nh_identity_reader_getpwnam(reader, "n_alice", &passwd_record,
+  NH_CHECK(reader_required > 2);
+  NH_CHECK(nh_identity_reader_getpwnam(reader, "n_alice", &passwd_record,
     reader_buffer, sizeof(reader_buffer), &reader_required) ==
     NH_IDENTITY_READER_FOUND);
-  assert(passwd_record.uid == account.uid &&
+  NH_CHECK(passwd_record.uid == account.uid &&
          strcmp(passwd_record.home, account.home) == 0);
-  assert(nh_identity_reader_getpwnam(reader, "invalid", &passwd_record,
+  NH_CHECK(nh_identity_reader_getpwnam(reader, "invalid", &passwd_record,
     reader_buffer, sizeof(reader_buffer), &reader_required) ==
     NH_IDENTITY_READER_NOT_FOUND);
-  assert(nh_identity_reader_getgrgid(reader, account.gid, &group_record,
+  NH_CHECK(nh_identity_reader_getgrgid(reader, account.gid, &group_record,
     reader_buffer, sizeof(reader_buffer), &reader_required) ==
     NH_IDENTITY_READER_FOUND);
-  assert(strcmp(group_record.name, "n_alice") == 0);
+  NH_CHECK(strcmp(group_record.name, "n_alice") == 0);
   nh_identity_reader_close(reader); reader = NULL;
-  assert(stat(projection_path, &st) == 0 && (st.st_mode & 0777) == 0644);
+  NH_CHECK(stat(projection_path, &st) == 0 && (st.st_mode & 0777) == 0644);
   {
     char journal_path[300], wal_path[300];
     snprintf(journal_path, sizeof(journal_path), "%s-journal", projection_path);
     snprintf(wal_path, sizeof(wal_path), "%s-wal", projection_path);
-    assert(access(journal_path, F_OK) != 0 && access(wal_path, F_OK) != 0);
+    NH_CHECK(access(journal_path, F_OK) != 0 && access(wal_path, F_OK) != 0);
   }
   {
     ino_t old_inode = st.st_ino;
-    assert(chmod(temporary, 0500) == 0);
-    assert(nh_identity_store_publish_projection(store, NULL) ==
+    NH_CHECK(chmod(temporary, 0500) == 0);
+    NH_CHECK(nh_identity_store_publish_projection(store, NULL) ==
       NH_IDENTITY_STORAGE_ERROR);
-    assert(chmod(temporary, 0700) == 0);
-    assert(stat(projection_path, &st) == 0 && st.st_ino == old_inode);
-    assert(nh_identity_reader_open(projection_path, &reader) ==
+    NH_CHECK(chmod(temporary, 0700) == 0);
+    NH_CHECK(stat(projection_path, &st) == 0 && st.st_ino == old_inode);
+    NH_CHECK(nh_identity_reader_open(projection_path, &reader) ==
       NH_IDENTITY_READER_FOUND);
-    assert(nh_identity_reader_getpwnam(reader, "n_alice", &passwd_record,
+    NH_CHECK(nh_identity_reader_getpwnam(reader, "n_alice", &passwd_record,
       reader_buffer, sizeof(reader_buffer), &reader_required) ==
       NH_IDENTITY_READER_FOUND);
     nh_identity_reader_close(reader); reader = NULL;
   }
-  assert(nh_identity_operation_activate(store, op_enroll, &operation) ==
+  NH_CHECK(nh_identity_operation_activate(store, op_enroll, &operation) ==
     NH_IDENTITY_OK);
-  assert(nh_identity_store_lookup_by_id(store, account.account_id, &account) ==
+  NH_CHECK(nh_identity_store_lookup_by_id(store, account.account_id, &account) ==
     NH_IDENTITY_OK);
-  assert(account.status == NH_IDENTITY_STATUS_ACTIVE);
-  assert(nh_identity_store_recheck(store, account.account_id,
+  NH_CHECK(account.status == NH_IDENTITY_STATUS_ACTIVE);
+  NH_CHECK(nh_identity_store_recheck(store, account.account_id,
     account.key_generation, account.authority_generation, NULL, NULL) ==
     NH_IDENTITY_OK);
 
-  assert(nh_identity_account_replace_identity(store,
+  NH_CHECK(nh_identity_account_replace_identity(store,
     "00000000-0000-4000-8000-000000000006", account.account_id, key_c, true) ==
     NH_IDENTITY_OK);
-  assert(nh_identity_store_lookup_by_id(store, account.account_id, &account) == NH_IDENTITY_OK);
-  assert(account.status == NH_IDENTITY_STATUS_DISABLED &&
+  NH_CHECK(nh_identity_store_lookup_by_id(store, account.account_id, &account) == NH_IDENTITY_OK);
+  NH_CHECK(account.status == NH_IDENTITY_STATUS_DISABLED &&
          account.key_generation == 2 && account.enabled_providers == 0 &&
          strcmp(account.pubkey_hex, key_c) == 0);
-  assert(nh_identity_store_publish_projection(store, NULL) == NH_IDENTITY_OK);
-  assert(nh_identity_reader_open(projection_path, &reader) ==
+  NH_CHECK(nh_identity_store_publish_projection(store, NULL) == NH_IDENTITY_OK);
+  NH_CHECK(nh_identity_reader_open(projection_path, &reader) ==
     NH_IDENTITY_READER_FOUND);
-  assert(nh_identity_reader_getpwnam(reader, "n_alice", &passwd_record,
+  NH_CHECK(nh_identity_reader_getpwnam(reader, "n_alice", &passwd_record,
     reader_buffer, sizeof(reader_buffer), &reader_required) ==
     NH_IDENTITY_READER_FOUND);
   nh_identity_reader_close(reader); reader = NULL;
-  assert(nh_identity_store_recheck(store, account.account_id,
+  NH_CHECK(nh_identity_store_recheck(store, account.account_id,
     account.key_generation, account.authority_generation, NULL, NULL) ==
     NH_IDENTITY_NOT_ACTIVE);
-  assert(nh_identity_account_set_status(store,
+  NH_CHECK(nh_identity_account_set_status(store,
     "00000000-0000-4000-8000-000000000007", account.account_id,
     NH_IDENTITY_STATUS_RETIRED) == NH_IDENTITY_OK);
-  assert(nh_identity_store_lookup_by_id(store, account.account_id, &retired) == NH_IDENTITY_OK);
-  assert(retired.status == NH_IDENTITY_STATUS_RETIRED && retired.pubkey_hex[0] == '\0');
-  assert(nh_identity_store_publish_projection(store, NULL) == NH_IDENTITY_OK);
-  assert(nh_identity_reader_open(projection_path, &reader) ==
+  NH_CHECK(nh_identity_store_lookup_by_id(store, account.account_id, &retired) == NH_IDENTITY_OK);
+  NH_CHECK(retired.status == NH_IDENTITY_STATUS_RETIRED && retired.pubkey_hex[0] == '\0');
+  NH_CHECK(nh_identity_store_publish_projection(store, NULL) == NH_IDENTITY_OK);
+  NH_CHECK(nh_identity_reader_open(projection_path, &reader) ==
     NH_IDENTITY_READER_FOUND);
-  assert(nh_identity_reader_getpwnam(reader, "n_alice", &passwd_record,
+  NH_CHECK(nh_identity_reader_getpwnam(reader, "n_alice", &passwd_record,
     reader_buffer, sizeof(reader_buffer), &reader_required) ==
     NH_IDENTITY_READER_FOUND);
   nh_identity_reader_close(reader); reader = NULL;
 
   enroll.username = "n_bob"; enroll.pubkey_hex = key_b;
-  assert(nh_identity_operation_begin_enroll(store,
+  NH_CHECK(nh_identity_operation_begin_enroll(store,
     "00000000-0000-4000-8000-000000000008", &enroll, &operation) == NH_IDENTITY_OK);
-  assert(nh_identity_store_lookup_by_name(store, "n_bob", &next) == NH_IDENTITY_OK);
-  assert(next.uid == 200002u && next.uid != retired.uid);
+  NH_CHECK(nh_identity_store_lookup_by_name(store, "n_bob", &next) == NH_IDENTITY_OK);
+  NH_CHECK(next.uid == 200002u && next.uid != retired.uid);
 
   nh_identity_store_close(store); store = NULL;
   sql_expect_failure(db_path, "UPDATE accounts SET uid=299999 WHERE username='n_bob'");
@@ -291,18 +292,18 @@ int main(void) {
 
   {
     sqlite3 *db = NULL;
-    assert(sqlite3_open_v2(db_path, &db, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK);
-    assert(sqlite3_exec(db, "PRAGMA user_version=2", NULL, NULL, NULL) == SQLITE_OK);
+    NH_CHECK(sqlite3_open_v2(db_path, &db, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK);
+    NH_CHECK(sqlite3_exec(db, "PRAGMA user_version=2", NULL, NULL, NULL) == SQLITE_OK);
     sqlite3_close(db);
     options.flags = 0;
-    assert(nh_identity_store_open(&options, &store) == NH_IDENTITY_SCHEMA_UNSUPPORTED);
-    assert(store == NULL);
-    assert(sqlite3_open_v2(db_path, &db, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK);
-    assert(sqlite3_exec(db, "PRAGMA user_version=1;DELETE FROM metadata WHERE key='authority_id'",
+    NH_CHECK(nh_identity_store_open(&options, &store) == NH_IDENTITY_SCHEMA_UNSUPPORTED);
+    NH_CHECK(store == NULL);
+    NH_CHECK(sqlite3_open_v2(db_path, &db, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK);
+    NH_CHECK(sqlite3_exec(db, "PRAGMA user_version=1;DELETE FROM metadata WHERE key='authority_id'",
                         NULL, NULL, NULL) == SQLITE_OK);
     sqlite3_close(db);
-    assert(nh_identity_store_open(&options, &store) == NH_IDENTITY_STORAGE_ERROR);
-    assert(store == NULL);
+    NH_CHECK(nh_identity_store_open(&options, &store) == NH_IDENTITY_STORAGE_ERROR);
+    NH_CHECK(store == NULL);
   }
 
   remove_tree(temporary, db_path, lock_path);
