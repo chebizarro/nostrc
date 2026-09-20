@@ -44,7 +44,9 @@ NostrTag *nostr_tag_new(const char *key, ...) {
 }
 
 void nostr_tag_free(NostrTag *tag) {
-    string_array_free(tag);
+    if (!tag) return;
+    string_array_free(tag); /* frees data + strings, not the struct */
+    free(tag);              /* nostr_tag_new heap-allocated it via new_string_array */
 }
 
 bool nostr_tag_starts_with(NostrTag *tag, NostrTag *prefix) {
