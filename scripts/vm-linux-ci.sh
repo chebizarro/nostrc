@@ -111,7 +111,10 @@ CAND="$(grep -oE "add_executable\(test_[a-z_0-9]+" "$SRC/gnome/nostr-homed/CMake
 CONFIGURED="$(ninja -C "$BUILD" -t targets all 2>/dev/null | cut -d: -f1)"
 TARGETS=""
 for t in $CAND; do
-  if printf "%s\n" "$CONFIGURED" | grep -qxE "(.*/)?$t"; then TARGETS="$TARGETS $t"; fi
+  # here-string (not a pipe): with `set -o pipefail`, `printf ... | grep -q`
+  # lets grep close the pipe early on a match, SIGPIPE-ing printf and marking the
+  # pipe failed, which would drop most matches. A here-string avoids that.
+  if grep -qxE "(.*/)?$t" <<< "$CONFIGURED"; then TARGETS="$TARGETS $t"; fi
 done
 note "test targets: $(echo $TARGETS | wc -w)"
 cmake --build "$BUILD" -j "$JOBS" --target $TARGETS nss_nostr nostr-authd pam_nostr nh-seed-authority >"$LOGS/03-build.log" 2>&1 \
