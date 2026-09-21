@@ -179,7 +179,11 @@ static void conn_reset_proof(conn_state *cs) {
 
 /* ---- login operations -------------------------------------------------- */
 
-static nh_auth_result do_begin_login(conn_state *cs, const char *payload_json) {
+/* Runs BEGIN_LOGIN and, on OK, returns the account's enabled_providers bitmask
+ * so the caller can echo the available provider set back to the client. */
+static nh_auth_result do_begin_login(conn_state *cs, const char *payload_json,
+                                     uint32_t *providers_out) {
+  if (providers_out) *providers_out = 0;
   if (cs->tx) return NH_AUTH_RESULT_PROTOCOL_ERROR; /* one tx per connection */
   json_t *root = NULL;
   const char *username = json_str(payload_json, "username", &root);
@@ -195,9 +199,29 @@ static nh_auth_result do_begin_login(conn_state *cs, const char *payload_json) {
                                   &cs->tx);
     result = tx_rc_result(rc);
   }
+  if (providers_out && result == NH_AUTH_RESULT_OK && cs->tx) {
+    const nh_identity_account *account =
+        nh_auth_transaction_get_account(cs->tx);
+    if (account) *providers_out = account->enabled_providers;
+  }
   if (root) json_decref(root);
   if (sroot) json_decref(sroot);
   return result;
+}
+
+/* Builds a JSON array of canonical provider names ("local","nip46") from the
+ * enabled_providers bitmask returned by do_begin_login. Returned array is
+ * owned by the caller; must be json_decref'd or handed to json_object_set_new. */
+static json_t *providers_json(uint32_t enabled_providers) {
+  json_t *arr = json_array();
+  if (!arr) return NULL;
+  if (enabled_providers &
+      NH_IDENTITY_PROVIDER_BIT(NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY))
+    json_array_append_new(arr, json_string("local"));
+  if (enabled_providers &
+      NH_IDENTITY_PROVIDER_BIT(NH_IDENTITY_PROVIDER_NIP46_BUNKER))
+    json_array_append_new(arr, json_string("nip46"));
+  return arr;
 }
 
 /* Map the optional "provider" payload field to a provider type. When the
@@ -372,8 +396,26 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
       if (root) json_decref(root);
       return respond(fd, req, op, r);
     }
-    case NH_AUTH_OP_BEGIN_LOGIN:
-      return respond(fd, req, op, do_begin_login(cs, req->payload_json));
+    case NH_AUTH_OP_BEGIN_LOGIN: {
+      uint32_t providers = 0;
+      nh_auth_result r = do_begin_login(cs, req->payload_json, &providers);
+      if (r != NH_AUTH_RESULT_OK) return respond(fd, req, op, r);
+      /* Set providers BEFORE result so on any failure only one owner needs to
+       * be decref'd: json_object_set_new steals its value reference even on
+       * failure, so if the providers set fails the array is already gone;
+       * if the result set fails the array is safely inside payload. */
+      json_t *payload = json_object();
+      json_t *arr = providers_json(providers);
+      if (!payload || !arr ||
+          json_object_set_new(payload, "providers", arr) != 0 ||
+          json_object_set_new(payload, "result",
+                              json_string(nh_auth_result_name(r))) != 0) {
+        if (payload) json_decref(payload);
+        else if (arr) json_decref(arr);
+        return respond(fd, req, op, NH_AUTH_RESULT_INTERNAL_ERROR);
+      }
+      return send_payload(fd, req, op, payload);
+    }
     case NH_AUTH_OP_SELECT_PROVIDER:
       return respond(fd, req, op, do_select_provider(cs, req->payload_json));
     case NH_AUTH_OP_SUBMIT_UNLOCK: {
