@@ -20,6 +20,7 @@
 #include "auth_broker.h"
 #include "auth_client.h"
 #include "auth_vault.h"
+#include "nostr-keys.h"
 #include "nostr_auth_protocol.h"
 #include "nostr_identity.h"
 
@@ -30,13 +31,21 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static const char *PUBKEY =
+/* Two accounts, two distinct keypairs — the accounts table has
+ * `pubkey_hex TEXT UNIQUE`, so both users cannot share a key. Keypair A
+ * (secp256k1 SK=1) is the classic well-known key; keypair B (SK=2) is
+ * derived at runtime via nostr_key_get_public so we don't hard-code a
+ * dependent constant. The NIP-46 client transport key is SK=3 — distinct
+ * from either account key so a bug swapping the two would show up. */
+static const char *PUBKEY_A =
     "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+static const char *SK_B_HEX =
+    "0000000000000000000000000000000000000000000000000000000000000002";
+static const char *PASSPHRASE = "correct horse battery staple";
+static const char *NIP46_CLIENT_SK =
+    "0000000000000000000000000000000000000000000000000000000000000003";
 static const char *ALICE_PK_SEC1 =
     "0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798";
-static const char *PASSPHRASE = "correct horse battery staple";
-static const char *CLIENT_SK =
-    "0000000000000000000000000000000000000000000000000000000000000002";
 
 static nh_identity_ownership_result available(void *c, const char *n,
                                               uint32_t u, uint32_t g) {
@@ -73,21 +82,23 @@ static void hex_to_bytes(const char *hex, uint8_t *out, size_t out_len) {
   }
 }
 
-/* Seals a real local encrypted vault for `account_id` bound to `provider_id`,
- * then reseals the staged provider secret_blob with it. Mirrors the seeding
+/* Seals a real local encrypted vault whose plaintext key is `sk_bytes` (the
+ * account's own secp256k1 private key), bound to (provider_id, account_id,
+ * pubkey_hex, key_generation) from the account this vault belongs to. The
+ * binding uses the account's OWN pubkey/generation, not a shared constant.
+ * Then swaps it into the staged provider's secret_blob. Mirrors the seeding
  * path from test_broker_login.c. */
 static void seal_and_reseal_local(nh_identity_store *store,
                                   const nh_identity_account *account,
                                   const char *provider_id,
-                                  const char *op_reseal) {
-  uint8_t secret[32] = {0};
-  secret[31] = 1; /* secp256k1 SK 1 -> PUBKEY */
+                                  const char *op_reseal,
+                                  const uint8_t sk_bytes[32]) {
   nh_auth_vault_binding binding = {provider_id, account->account_id,
                                    account->pubkey_hex,
                                    account->key_generation};
   uint8_t *blob = NULL;
   size_t blob_len = 0;
-  NH_CHECK(nh_auth_vault_seal(secret, (const uint8_t *)PASSPHRASE,
+  NH_CHECK(nh_auth_vault_seal(sk_bytes, (const uint8_t *)PASSPHRASE,
                               strlen(PASSPHRASE), &binding, &blob,
                               &blob_len) == NH_AUTH_VAULT_OK);
   NH_CHECK(nh_identity_provider_reseal(store, op_reseal, provider_id, blob,
@@ -95,15 +106,18 @@ static void seal_and_reseal_local(nh_identity_store *store,
   free(blob);
 }
 
-/* Enrolls `username` and installs its home. Returns the loaded account
- * struct via *account_out. `op_enroll` and the two home_evidence values must
- * be unique across seed calls in the same store. */
+/* Enrolls `username` with `pubkey_hex` and installs its home. Returns the
+ * loaded account struct via *account_out. `op_enroll`, `pubkey_hex`, the
+ * username, and the home_evidence values must all be unique across seed
+ * calls in the same store — the identity store enforces UNIQUE on all of
+ * them. */
 static void enroll_active(nh_identity_store *store, const char *username,
-                          const char *op_enroll, uint64_t home_inode,
+                          const char *pubkey_hex, const char *op_enroll,
+                          uint64_t home_inode,
                           nh_identity_account *account_out) {
   nh_identity_enroll_request enroll = {0};
   enroll.username = username;
-  enroll.pubkey_hex = PUBKEY;
+  enroll.pubkey_hex = pubkey_hex;
   enroll.home_mode = NH_IDENTITY_HOME_CREATE;
   nh_identity_operation_state state;
   NH_CHECK(nh_identity_operation_begin_enroll(store, op_enroll, &enroll,
@@ -121,28 +135,41 @@ static void enroll_active(nh_identity_store *store, const char *username,
            NH_IDENTITY_OK);
 }
 
-/* Seed n_local (only local) and n_both (local + nip46) in a fresh store.
- * The seed sequence uses per-account operation ids and per-account
- * home_inode values to keep the identity store's uniqueness checks happy. */
+/* Seed n_local (only local, keypair A) and n_both (local + nip46, keypair B)
+ * in a fresh store. Distinct keypairs are mandatory: accounts.pubkey_hex is
+ * UNIQUE in the schema, so reusing PUBKEY_A across both users would abort
+ * the second enroll. Per-account operation ids, home_inode values, usernames
+ * and pubkeys are all held distinct. Every vault binding and attestation is
+ * bound to its OWN account's pubkey and key_generation. */
 static void seed(const char *dir) {
+  /* Derive keypair B (pubkey for SK=2) at runtime so the constant follows
+   * whichever curve/derivation libnostr uses. */
+  char *pubkey_b = nostr_key_get_public(SK_B_HEX);
+  NH_CHECK(pubkey_b && strlen(pubkey_b) == 64);
+
   nh_identity_store *store = open_store(dir, NH_IDENTITY_STORE_CREATE);
   nh_identity_operation_state state;
-
-  /* --- n_local: single local provider ---------------------------------- */
-  nh_identity_account acct_local;
-  enroll_active(store, "n_local", "00000000-0000-4000-8000-000000000001", 101,
-                &acct_local);
-  char pid_local[NH_IDENTITY_UUID_CAP];
   const uint8_t placeholder[] = {1, 2, 3, 4};
+
+  uint8_t sk_a[32] = {0};
+  sk_a[31] = 1; /* secp256k1 SK 1 -> PUBKEY_A */
+  uint8_t sk_b[32];
+  hex_to_bytes(SK_B_HEX, sk_b, sizeof sk_b);
+
+  /* --- n_local: keypair A, single local provider ----------------------- */
+  nh_identity_account acct_local;
+  enroll_active(store, "n_local", PUBKEY_A,
+                "00000000-0000-4000-8000-000000000001", 101, &acct_local);
+  char pid_local[NH_IDENTITY_UUID_CAP];
   NH_CHECK(nh_identity_provider_stage(
                store, "00000000-0000-4000-8000-000000000002",
                acct_local.account_id,
                NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY, 1, "{}", placeholder,
                sizeof placeholder, pid_local) == NH_IDENTITY_OK);
   seal_and_reseal_local(store, &acct_local, pid_local,
-                        "00000000-0000-4000-8000-000000000003");
+                        "00000000-0000-4000-8000-000000000003", sk_a);
   nh_identity_proof_attestation att_local = {0};
-  strcpy(att_local.pubkey_hex, PUBKEY);
+  strcpy(att_local.pubkey_hex, acct_local.pubkey_hex);
   att_local.key_generation = acct_local.key_generation;
   NH_CHECK(nh_identity_provider_activate(
                store, "00000000-0000-4000-8000-000000000004", pid_local,
@@ -153,10 +180,10 @@ static void seed(const char *dir) {
                store, "00000000-0000-4000-8000-000000000001", &state) ==
            NH_IDENTITY_OK);
 
-  /* --- n_both: local + nip46 ------------------------------------------- */
+  /* --- n_both: keypair B, local + nip46 -------------------------------- */
   nh_identity_account acct_both;
-  enroll_active(store, "n_both", "00000000-0000-4000-8000-000000000010", 201,
-                &acct_both);
+  enroll_active(store, "n_both", pubkey_b,
+                "00000000-0000-4000-8000-000000000010", 201, &acct_both);
   char pid_both_local[NH_IDENTITY_UUID_CAP];
   NH_CHECK(nh_identity_provider_stage(
                store, "00000000-0000-4000-8000-000000000011",
@@ -164,27 +191,32 @@ static void seed(const char *dir) {
                NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY, 1, "{}", placeholder,
                sizeof placeholder, pid_both_local) == NH_IDENTITY_OK);
   seal_and_reseal_local(store, &acct_both, pid_both_local,
-                        "00000000-0000-4000-8000-000000000012");
+                        "00000000-0000-4000-8000-000000000012", sk_b);
   nh_identity_proof_attestation att_both_local = {0};
-  strcpy(att_both_local.pubkey_hex, PUBKEY);
+  strcpy(att_both_local.pubkey_hex, acct_both.pubkey_hex);
   att_both_local.key_generation = acct_both.key_generation;
   NH_CHECK(nh_identity_provider_activate(
                store, "00000000-0000-4000-8000-000000000013", pid_both_local,
                &att_both_local) == NH_IDENTITY_OK);
 
+  /* nip46 provider record: public_config carries a bunker URI naming keypair
+   * A here for shape only — the login-with(nip46) path is exercised in
+   * test_broker_login_nip46.c against a matching in-process bunker. This
+   * test just proves BEGIN_LOGIN reports both providers; the nip46 secret
+   * blob is stored raw and never signed with. */
   char config[512];
   snprintf(config, sizeof config,
            "{\"bunker_uri\":\"bunker://%s?secret=nhtest\"}", ALICE_PK_SEC1);
-  uint8_t secret_bytes[32];
-  hex_to_bytes(CLIENT_SK, secret_bytes, sizeof secret_bytes);
+  uint8_t nip46_client_secret[32];
+  hex_to_bytes(NIP46_CLIENT_SK, nip46_client_secret, sizeof nip46_client_secret);
   char pid_both_nip46[NH_IDENTITY_UUID_CAP];
   NH_CHECK(nh_identity_provider_stage(
                store, "00000000-0000-4000-8000-000000000014",
                acct_both.account_id, NH_IDENTITY_PROVIDER_NIP46_BUNKER, 1,
-               config, secret_bytes, sizeof secret_bytes, pid_both_nip46) ==
-           NH_IDENTITY_OK);
+               config, nip46_client_secret, sizeof nip46_client_secret,
+               pid_both_nip46) == NH_IDENTITY_OK);
   nh_identity_proof_attestation att_both_nip46 = {0};
-  strcpy(att_both_nip46.pubkey_hex, PUBKEY);
+  strcpy(att_both_nip46.pubkey_hex, acct_both.pubkey_hex);
   att_both_nip46.key_generation = acct_both.key_generation;
   NH_CHECK(nh_identity_provider_activate(
                store, "00000000-0000-4000-8000-000000000015", pid_both_nip46,
@@ -196,6 +228,7 @@ static void seed(const char *dir) {
                store, "00000000-0000-4000-8000-000000000010", &state) ==
            NH_IDENTITY_OK);
   nh_identity_store_close(store);
+  free(pubkey_b);
 }
 
 /* Serve `server_conns` broker connections in a child, returning the parent-
@@ -300,6 +333,9 @@ static void test_begin_reports_providers(const char *dir, int is_root) {
 
 /* --- Test 3: login_with(local) succeeds against the both-providers account. */
 static void test_login_with_local(const char *dir, int is_root) {
+  /* Uses n_both's vault (sealed with keypair B's SK). If the vault binding
+   * had accidentally been sealed against another account's pubkey/generation,
+   * verification would return INVALID_PROOF here rather than OK. */
   struct broker_child bc = spawn_broker(dir, 1);
   nh_auth_result r = NH_AUTH_RESULT_INTERNAL_ERROR;
   NH_CHECK(nh_auth_client_login_with(bc.client_fd, "n_both", "gdm-password",

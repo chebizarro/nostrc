@@ -138,10 +138,13 @@ if(NOSTR_HOMED_ENABLE_IDENTITY_CORE)
     target_compile_definitions(test_identity_fixtures PRIVATE
       IDENTITY_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/identity/fixtures")
     target_link_libraries(test_identity_fixtures PRIVATE nostr_identity_core)
+    add_executable(test_two_accounts_seed tests/identity/test_two_accounts_seed.c)
+    target_link_libraries(test_two_accounts_seed PRIVATE nostr_identity_core)
     add_test(NAME homed_identity_store COMMAND test_identity_store)
     add_test(NAME homed_identity_config COMMAND test_identity_config)
     add_test(NAME homed_identity_fixtures COMMAND test_identity_fixtures)
-    set_tests_properties(homed_identity_store homed_identity_config homed_identity_fixtures
+    add_test(NAME homed_two_accounts_seed COMMAND test_two_accounts_seed)
+    set_tests_properties(homed_identity_store homed_identity_config homed_identity_fixtures homed_two_accounts_seed
       PROPERTIES LABELS "nostr-homed;portable;identity" TIMEOUT 60)
   endif()
 endif()
