@@ -45,6 +45,16 @@ void nh_auth_broker_set_clock(nh_auth_broker *broker,
 int nh_auth_broker_set_ratelimit_config(nh_auth_broker *broker,
                                         const nh_auth_ratelimit_config *config);
 
+/* Enables persistent rate-limit storage at `path`, or reverts to in-memory-only
+ * when path is NULL or empty. The current rate-limit policy is preserved; any
+ * counters accumulated in the previous mode are discarded (persistent state on
+ * disk survives independently, so re-opening the same path restores it). When
+ * persistence is enabled the limiter uses wall-clock time internally so that
+ * cooldowns survive a broker restart (the broker's monotonic clock resets on
+ * reboot). Returns 0 on success, -1 on OOM or a SQLite failure; on failure the
+ * previous limiter is retained. Not thread safe with active connections. */
+int nh_auth_broker_set_ratelimit_path(nh_auth_broker *broker, const char *path);
+
 /* Reads one request from a connected AUTH-endpoint SOCK_SEQPACKET fd (auth.sock,
  * uid 0 only for login), enforces the SO_PEERCRED/endpoint ACL, dispatches it,
  * and writes one response.  Returns 0 if a response was sent, -1 on transport

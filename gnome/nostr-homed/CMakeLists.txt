@@ -58,6 +58,17 @@ if(NOSTR_HOMED_ENABLE_AUTH_CORE)
     set(_homed_nostr PkgConfig::NOSTR PkgConfig::LIBGO)
   endif()
 
+  # auth_ratelimit's optional persistent backing uses SQLite3. Ensure the
+  # imported target exists in this scope (find_package creates a
+  # directory-scoped imported target — another subdirectory may have found
+  # SQLite3 first, leaving SQLite3::SQLite3 invisible here; synthesize it).
+  find_package(SQLite3 REQUIRED)
+  if(NOT TARGET SQLite3::SQLite3)
+    add_library(SQLite3::SQLite3 INTERFACE IMPORTED)
+    target_include_directories(SQLite3::SQLite3 INTERFACE ${SQLite3_INCLUDE_DIRS})
+    target_link_libraries(SQLite3::SQLite3 INTERFACE ${SQLite3_LIBRARIES})
+  endif()
+
   add_library(nostr_auth_core STATIC
     src/auth/auth_protocol.c
     src/auth/auth_transaction.c
@@ -71,7 +82,7 @@ if(NOSTR_HOMED_ENABLE_AUTH_CORE)
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/auth)
   target_link_libraries(nostr_auth_core PUBLIC
-    ${_homed_nostr} PkgConfig::JANSSON OpenSSL::Crypto)
+    ${_homed_nostr} PkgConfig::JANSSON OpenSSL::Crypto SQLite3::SQLite3)
   # The NIP-46 external-signer provider consumes the in-tree nip46 client. In
   # an in-tree build (with ENABLE_NIP46=ON, the default) the target already
   # exists; in a stand-alone build fall back to pkg-config.
@@ -93,14 +104,17 @@ if(NOSTR_HOMED_ENABLE_AUTH_CORE)
     target_link_libraries(test_auth_challenge PRIVATE nostr_auth_core)
     add_executable(test_provider_local tests/integration/test_provider_local.c)
     target_link_libraries(test_provider_local PRIVATE nostr_auth_core)
+    add_executable(test_ratelimit_persist tests/integration/test_ratelimit_persist.c)
+    target_link_libraries(test_ratelimit_persist PRIVATE nostr_auth_core)
 
     add_test(NAME homed_auth_protocol COMMAND test_auth_protocol)
     add_test(NAME homed_auth_transaction COMMAND test_auth_transaction)
     add_test(NAME homed_auth_vault COMMAND test_auth_vault)
     add_test(NAME homed_auth_challenge COMMAND test_auth_challenge)
     add_test(NAME homed_provider_local COMMAND test_provider_local)
+    add_test(NAME homed_ratelimit_persist COMMAND test_ratelimit_persist)
     set_tests_properties(
-      homed_auth_protocol homed_auth_transaction homed_auth_vault homed_auth_challenge homed_provider_local
+      homed_auth_protocol homed_auth_transaction homed_auth_vault homed_auth_challenge homed_provider_local homed_ratelimit_persist
       PROPERTIES LABELS "nostr-homed;portable;auth" TIMEOUT 60)
   endif()
 endif()
