@@ -120,6 +120,27 @@ if(NOSTR_HOMED_ENABLE_AUTH_CORE)
     set_tests_properties(
       homed_auth_protocol homed_auth_transaction homed_auth_vault homed_auth_challenge homed_provider_local homed_ratelimit_persist homed_auth_worker
       PROPERTIES LABELS "nostr-homed;portable;auth" TIMEOUT 60)
+
+    # Live NIP-46 external-signer proof (nostrc-ot2c C6/C7). Provider-level;
+    # dials the live bunker + relay when NH_NIP46_LIVE=1 is set at run time,
+    # otherwise prints SKIP and returns 0. Registered under `live;manual;nip46`
+    # labels so the default `ctest` run does not pick it up; invoke
+    # explicitly with `ctest -L live` (or run the binary directly) after
+    # ensuring outbound access to wss://bunker.sharegap.net and
+    # wss://relay.sharegap.net and an interlocutor config on disk.
+    add_executable(test_broker_login_nip46_live
+      tests/integration/test_broker_login_nip46_live.c)
+    if(TARGET nostr_nip46_core)
+      target_link_libraries(test_broker_login_nip46_live PRIVATE
+        nostr_auth_core nostr_nip46_core)
+    else()
+      target_link_libraries(test_broker_login_nip46_live PRIVATE
+        nostr_auth_core PkgConfig::NOSTR_NIP46)
+    endif()
+    add_test(NAME homed_broker_login_nip46_live
+      COMMAND test_broker_login_nip46_live)
+    set_tests_properties(homed_broker_login_nip46_live
+      PROPERTIES LABELS "nostr-homed;live;manual;nip46" TIMEOUT 180)
   endif()
 endif()
 
