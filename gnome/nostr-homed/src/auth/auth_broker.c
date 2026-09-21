@@ -4,6 +4,7 @@
 #include "auth_challenge.h"
 #include "auth_peer.h"
 #include "auth_provider.h"
+#include "auth_ratelimit.h"
 #include "auth_transaction.h"
 #include "nostr-event.h"
 #include "nostr_auth_protocol.h"
@@ -27,6 +28,9 @@ struct nh_auth_broker {
   nh_identity_store *store;
   nh_auth_authority authority;
   nh_smb_authority *smb_authority; /* Borrowed; may be NULL. */
+  nh_auth_broker_clock_fn clock_fn;
+  void *clock_ctx;
+  nh_auth_ratelimit *ratelimit;
 };
 
 /* Per-connection login state (single-owner, one transaction per connection). */
@@ -42,6 +46,18 @@ typedef struct conn_state {
   nh_auth_provider_event_type provider_event;
 } conn_state;
 
+static uint64_t default_now_ms(void *ctx) {
+  (void)ctx;
+  struct timespec ts;
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+  return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
+static uint64_t broker_now_ms(const nh_auth_broker *broker) {
+  if (broker && broker->clock_fn) return broker->clock_fn(broker->clock_ctx);
+  return default_now_ms(NULL);
+}
+
 nh_auth_broker *nh_auth_broker_new(nh_identity_store *store) {
   if (!store) return NULL;
   nh_auth_broker *broker = calloc(1, sizeof *broker);
@@ -49,10 +65,21 @@ nh_auth_broker *nh_auth_broker_new(nh_identity_store *store) {
   broker->store = store;
   broker->authority = nh_auth_authority_from_store(store);
   broker->smb_authority = NULL;
+  broker->clock_fn = NULL;
+  broker->clock_ctx = NULL;
+  broker->ratelimit = nh_auth_ratelimit_new(NULL);
+  if (!broker->ratelimit) {
+    free(broker);
+    return NULL;
+  }
   return broker;
 }
 
-void nh_auth_broker_free(nh_auth_broker *broker) { free(broker); }
+void nh_auth_broker_free(nh_auth_broker *broker) {
+  if (!broker) return;
+  nh_auth_ratelimit_free(broker->ratelimit);
+  free(broker);
+}
 
 void nh_auth_broker_set_smb_authority(nh_auth_broker *broker,
                                       nh_smb_authority *authority) {
@@ -60,10 +87,21 @@ void nh_auth_broker_set_smb_authority(nh_auth_broker *broker,
   broker->smb_authority = authority;
 }
 
-static uint64_t now_ms(void) {
-  struct timespec ts;
-  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
-  return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+void nh_auth_broker_set_clock(nh_auth_broker *broker,
+                              nh_auth_broker_clock_fn fn, void *context) {
+  if (!broker) return;
+  broker->clock_fn = fn;
+  broker->clock_ctx = context;
+}
+
+int nh_auth_broker_set_ratelimit_config(nh_auth_broker *broker,
+                                        const nh_auth_ratelimit_config *config) {
+  if (!broker) return -1;
+  nh_auth_ratelimit *replacement = nh_auth_ratelimit_new(config);
+  if (!replacement) return -1;
+  nh_auth_ratelimit_free(broker->ratelimit);
+  broker->ratelimit = replacement;
+  return 0;
 }
 
 static void read_boot_id(char out[37]) {
@@ -213,12 +251,22 @@ static nh_auth_result do_begin_login(conn_state *cs, const char *payload_json,
   nh_auth_result result = NH_AUTH_RESULT_PROTOCOL_ERROR;
   if (username && username[0] && strlen(username) <= NH_IDENTITY_USERNAME_MAX &&
       service && service[0]) {
-    nh_auth_begin_request request = {NH_AUTH_PURPOSE_LINUX_LOGIN, username,
-                                     service, now_ms()};
-    nh_auth_transaction_rc rc =
-        nh_auth_transaction_begin(&cs->broker->authority, &cs->peer, &request,
-                                  &cs->tx);
-    result = tx_rc_result(rc);
+    uint64_t now = broker_now_ms(cs->broker);
+    /* Rate-limit BEGIN_LOGIN by username. The check is a strict gate: no
+     * BEGIN_LOGIN inside a cooldown reaches the SM, so an attacker cannot use
+     * BEGIN_LOGIN to keep a transaction alive or observe SM state during
+     * lockout. The failure counter is not ticked here — only SUBMIT_UNLOCK
+     * failures increment it. Do not rate-limit CHECK_ACCOUNT (handled at the
+     * dispatch site). */
+    if (!nh_auth_ratelimit_check(cs->broker->ratelimit, username, now)) {
+      result = NH_AUTH_RESULT_RATE_LIMITED;
+    } else {
+      nh_auth_begin_request request = {NH_AUTH_PURPOSE_LINUX_LOGIN, username,
+                                       service, now};
+      nh_auth_transaction_rc rc = nh_auth_transaction_begin(
+          &cs->broker->authority, &cs->peer, &request, &cs->tx);
+      result = tx_rc_result(rc);
+    }
   }
   if (providers_out && result == NH_AUTH_RESULT_OK && cs->tx) {
     const nh_identity_account *account =
@@ -252,7 +300,7 @@ static nh_auth_result do_begin_smb_proof(conn_state *cs,
     return NH_AUTH_RESULT_PROTOCOL_ERROR;
   }
   nh_auth_begin_request request = {NH_AUTH_PURPOSE_SMB_CREDENTIAL, NULL,
-                                   service, now_ms()};
+                                   service, broker_now_ms(cs->broker)};
   nh_auth_transaction_rc rc =
       nh_auth_transaction_begin(&cs->broker->authority, &cs->peer, &request,
                                 &cs->tx);
@@ -321,7 +369,7 @@ static nh_auth_result do_select_provider(conn_state *cs,
   if (pick_provider_type(payload_json, account, &provider_type) != 0)
     return NH_AUTH_RESULT_PROTOCOL_ERROR;
 
-  uint64_t now = now_ms();
+  uint64_t now = broker_now_ms(cs->broker);
   nh_auth_transaction_rc rc = nh_auth_transaction_select_provider(
       cs->tx, &cs->peer, provider_type, now);
   if (rc != NH_AUTH_TX_OK) return tx_rc_result(rc);
@@ -395,6 +443,26 @@ static nh_auth_result do_submit_unlock(conn_state *cs, const char *payload_json,
   *have_receipt = 0;
   if (!cs->tx || !cs->provider || !cs->challenge_built)
     return NH_AUTH_RESULT_PROTOCOL_ERROR;
+
+  /* Broker-layer deadline guard: if the challenge deadline has already
+   * passed we return EXPIRED without engaging the provider or the SM. This
+   * mirrors the SM's own start/finish_verification checks (which also fire
+   * TX_DEADLINE past the challenge deadline and are mapped to EXPIRED via
+   * tx_rc_result) but avoids invoking the provider on a doomed request. */
+  uint64_t now = broker_now_ms(cs->broker);
+  if (cs->challenge.deadline_monotonic_ms &&
+      now >= cs->challenge.deadline_monotonic_ms)
+    return NH_AUTH_RESULT_EXPIRED;
+
+  /* Rate-limit SUBMIT_UNLOCK by the account's username (same key used at
+   * BEGIN_LOGIN). This is a defence-in-depth check for the case where a
+   * cooldown fires between BEGIN_LOGIN and SUBMIT_UNLOCK on the same
+   * connection. */
+  const nh_identity_account *account = nh_auth_transaction_get_account(cs->tx);
+  if (account && account->username[0] &&
+      !nh_auth_ratelimit_check(cs->broker->ratelimit, account->username, now))
+    return NH_AUTH_RESULT_RATE_LIMITED;
+
   json_t *root = NULL;
   const char *secret = json_str(payload_json, "secret", &root);
   if (!secret || !secret[0] || strlen(secret) > NH_AUTH_SECRET_MAX) {
@@ -412,16 +480,15 @@ static nh_auth_result do_submit_unlock(conn_state *cs, const char *payload_json,
 
   nh_auth_proof_rc proof;
   if (cs->provider_event == NH_AUTH_PROVIDER_SIGNED_EVENT && cs->signed_json) {
-    const nh_identity_account *account = nh_auth_transaction_get_account(cs->tx);
-    proof = nh_auth_challenge_verify(&cs->challenge, cs->signed_json, now_ms(),
-                                     account);
+    proof = nh_auth_challenge_verify(&cs->challenge, cs->signed_json,
+                                     broker_now_ms(cs->broker), account);
   } else if (cs->provider_event == NH_AUTH_PROVIDER_DENIED) {
     proof = NH_AUTH_PROOF_INVALID; /* wrong passphrase */
   } else {
     proof = NH_AUTH_PROOF_CRYPTO_ERROR;
   }
 
-  uint64_t now = now_ms();
+  now = broker_now_ms(cs->broker);
   nh_auth_transaction_rc rc =
       nh_auth_transaction_start_verification(cs->tx, &cs->peer, now);
   if (rc != NH_AUTH_TX_OK) return tx_rc_result(rc);
@@ -483,7 +550,7 @@ static nh_auth_result build_smb_payload(nh_auth_broker *broker,
   nh_smb_issue_request req = {0};
   req.account = *account;
   req.binding = binding;
-  req.now_monotonic_ms = now_ms();
+  req.now_monotonic_ms = broker_now_ms(broker);
   /* 5 minute credential lifetime by default; matches the receipt window. */
   req.lifetime_ms = 5u * 60u * 1000u;
   nh_smb_envelope env;
@@ -601,7 +668,38 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
     case NH_AUTH_OP_SUBMIT_UNLOCK: {
       nh_auth_receipt receipt;
       int have = 0;
+      /* Capture the username BEFORE running the submit so that we can update
+       * the rate-limit state after the SM has finalised (the SM may have
+       * already zeroed its account struct on failure paths in future
+       * revisions; grabbing the copy up front is the safe idiom). */
+      char rl_key[NH_IDENTITY_USERNAME_CAP + 1];
+      rl_key[0] = '\0';
+      if (cs->tx) {
+        const nh_identity_account *acct = nh_auth_transaction_get_account(cs->tx);
+        if (acct && acct->username[0]) {
+          size_t n = strnlen(acct->username, NH_IDENTITY_USERNAME_CAP);
+          memcpy(rl_key, acct->username, n);
+          rl_key[n] = '\0';
+        }
+      }
       nh_auth_result r = do_submit_unlock(cs, req->payload_json, &receipt, &have);
+      /* Update rate-limit state:
+       *   OK               → clear counter/cooldown (successful auth).
+       *   INVALID_PROOF    → tick a failure. Only genuine wrong-proof outcomes
+       *                      count towards the budget; protocol errors,
+       *                      transport failures and internal errors do not.
+       *   RATE_LIMITED     → already gated, no state change.
+       *   EXPIRED/other    → no state change (deadlines are not attacker-
+       *                      controlled and should not consume the budget).
+       */
+      if (rl_key[0]) {
+        uint64_t now = broker_now_ms(cs->broker);
+        if (r == NH_AUTH_RESULT_OK) {
+          nh_auth_ratelimit_reset(cs->broker->ratelimit, rl_key);
+        } else if (r == NH_AUTH_RESULT_INVALID_PROOF) {
+          nh_auth_ratelimit_record_failure(cs->broker->ratelimit, rl_key, now);
+        }
+      }
       if (r == NH_AUTH_RESULT_OK && have) {
         nh_auth_purpose purpose = nh_auth_transaction_get_purpose(cs->tx);
         const nh_identity_account *account =
