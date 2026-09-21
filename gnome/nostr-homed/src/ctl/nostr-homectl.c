@@ -13,6 +13,7 @@
 #include <jansson.h>
 #include <sys/statvfs.h>
 #include "nostr/nip19/nip19.h"
+#include "nostr_homectl_test_seam.h"
 
 static const char *BUS_NAME = "org.nostr.Homed1";
 static const char *OBJ_PATH = "/org/nostr/Homed1";
@@ -38,7 +39,10 @@ static const char *get_namespace_env(const char *envname, const char *defv){
   const char *v = getenv(envname); return (v && *v) ? v : defv;
 }
 
-static int dbus_get_signer_npub(char **out_npub){
+/* Real implementations of the test seam hooks. They are only invoked through
+ * the function pointers below, so tests can substitute failures at each
+ * boundary without touching production code. */
+static int dbus_get_signer_npub_impl(char **out_npub){
   if (out_npub) *out_npub = NULL;
   const char *busname = "org.nostr.Signer";
   GError *err=NULL; GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
@@ -49,7 +53,7 @@ static int dbus_get_signer_npub(char **out_npub){
   g_object_unref(bus); return rc;
 }
 
-static int is_mountpoint(const char *path){
+static int is_mountpoint_impl(const char *path){
   if (!path || !*path) return 0;
   struct stat st, pst;
   if (stat(path, &st) != 0) return 0;
@@ -59,6 +63,47 @@ static int is_mountpoint(const char *path){
   if (stat(parent, &pst) != 0) return 0;
   return st.st_dev != pst.st_dev;
 }
+
+static int mkdir_p_impl(const char *path, int mode){
+  return g_mkdir_with_parents(path, mode);
+}
+
+/* Wait synchronously for `systemctl <action> <unit>` and return 0 iff
+ * systemctl spawned, exited normally, and returned status 0. Anything else
+ * (spawn failure, wait failure, non-zero exit, signal termination) is -1. */
+static int systemctl_run_wait(const char *action, const char *unit){
+  GError *err = NULL;
+  GSubprocess *proc = g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, &err,
+                                       "systemctl", action, unit, NULL);
+  if (!proc){
+    if (err) g_error_free(err);
+    return -1;
+  }
+  GError *werr = NULL;
+  gboolean waited = g_subprocess_wait(proc, NULL, &werr);
+  int rc = -1;
+  if (!waited){
+    if (werr) g_error_free(werr);
+  } else if (!g_subprocess_get_if_exited(proc)){
+    /* Killed by signal or similar. */
+  } else {
+    rc = (g_subprocess_get_exit_status(proc) == 0) ? 0 : -1;
+  }
+  g_object_unref(proc);
+  return rc;
+}
+
+static int systemctl_start_impl(const char *unit){ return systemctl_run_wait("start", unit); }
+static int systemctl_stop_impl(const char *unit){ return systemctl_run_wait("stop", unit); }
+
+/* Test seam function-pointer definitions (default: real implementations).
+ * Declared in nostr_homectl_test_seam.h so focused roaming tests can
+ * override them at runtime. */
+int (*nh_hook_dbus_get_signer_npub)(char **) = dbus_get_signer_npub_impl;
+int (*nh_hook_is_mountpoint)(const char *)   = is_mountpoint_impl;
+int (*nh_hook_mkdir_p)(const char *, int)    = mkdir_p_impl;
+int (*nh_hook_systemctl_start)(const char *) = systemctl_start_impl;
+int (*nh_hook_systemctl_stop)(const char *)  = systemctl_stop_impl;
 
 static int usage(const char *argv0){
   fprintf(stderr, "Usage: %s [--daemon]\n"
@@ -70,7 +115,7 @@ static int usage(const char *argv0){
 
 /**
  * check-config: validate /etc/nss_nostr.conf (or a custom path).
- * Local operation — does not require D-Bus.
+ * Local operation -- does not require D-Bus.
  */
 static int nh_check_config(const char *conf_path){
   printf("checking %s ...\n", conf_path);
@@ -187,35 +232,66 @@ int nh_open_session(const char *username){
   }
   /* Mountpoint switched to /home/<user> */
   char mnt[256]; snprintf(mnt, sizeof mnt, "/home/%s", username);
-  g_mkdir_with_parents(mnt, 0700);
-  /* Start nostrfs via systemd template unit */
-  GError *err=NULL;
   gchar *svc = g_strdup_printf("nostrfs@%s.service", username);
-  GSubprocess *proc = g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, &err, "systemctl", "start", svc, NULL);
-  if (!proc){
-    fprintf(stderr, "OpenSession: systemctl start %s failed: %s\n", svc, err?err->message:"error");
-    if (err) g_error_free(err);
-  } else {
-    /* Wait for systemctl to complete — the unit is active when this returns. */
-    g_subprocess_wait(proc, NULL, NULL);
-    g_object_unref(proc);
+
+  int rc = 0;
+  int mount_ready = 0;
+
+  /* Step 1: ensure the mountpoint exists. */
+  if (nh_hook_mkdir_p(mnt, 0700) != 0){
+    fprintf(stderr,
+            "OpenSession: cannot create mountpoint %s: %s\n",
+            mnt, strerror(errno));
+    rc = -1;
   }
-  /* After systemctl start returns, the mount should be ready (or failed). */
-  if (!is_mountpoint(mnt)) {
-    fprintf(stderr, "OpenSession: mountpoint %s not ready after service start\n", mnt);
+
+  /* Step 2: start nostrfs via systemd template unit. Only if the mountpoint
+   * was created; otherwise there is nowhere to mount and no unit to run. */
+  int service_started = 0;
+  if (rc == 0){
+    if (nh_hook_systemctl_start(svc) != 0){
+      fprintf(stderr,
+              "OpenSession: systemctl start %s failed (spawn/exit non-zero)\n",
+              svc);
+      rc = -1;
+    } else {
+      service_started = 1;
+    }
   }
-  /* Persist status, pid and mountpoint */
+
+  /* Step 3: verify the mount is live. systemctl start returning success does
+   * not by itself prove the FUSE mount succeeded, and even a failed start
+   * must never leave "mounted" recorded in the cache. */
+  if (service_started){
+    if (!nh_hook_is_mountpoint(mnt)){
+      fprintf(stderr,
+              "OpenSession: mountpoint %s not ready after service start\n",
+              mnt);
+      rc = -1;
+    } else {
+      mount_ready = 1;
+    }
+  }
+
+  /* Persist status honestly. On failure record "failed" (never "mounted"),
+   * and don't advertise a bogus mount path/pid. */
   nh_cache c; if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf")==0){
     char key[256];
-    snprintf(key, sizeof key, "status.%s", username); nh_cache_set_setting(&c, key, "mounted");
-    snprintf(key, sizeof key, "mount.%s", username); nh_cache_set_setting(&c, key, mnt);
-    /* Store unit name as pid surrogate */
-    snprintf(key, sizeof key, "pid.%s", username); nh_cache_set_setting(&c, key, svc);
+    snprintf(key, sizeof key, "status.%s", username);
+    nh_cache_set_setting(&c, key, mount_ready ? "mounted" : "failed");
+    if (mount_ready){
+      snprintf(key, sizeof key, "mount.%s", username); nh_cache_set_setting(&c, key, mnt);
+      /* Store unit name as pid surrogate */
+      snprintf(key, sizeof key, "pid.%s", username); nh_cache_set_setting(&c, key, svc);
+    }
     nh_cache_close(&c);
   }
   g_free(svc);
-  printf("nostr-homectl: OpenSession %s (mounted %s)\n", username, mnt);
-  return 0;
+  if (rc == 0)
+    printf("nostr-homectl: OpenSession %s (mounted %s)\n", username, mnt);
+  else
+    fprintf(stderr, "nostr-homectl: OpenSession %s FAILED\n", username);
+  return rc;
 }
 int nh_close_session(const char *username){
   if (!username || !*username) return -1;
@@ -227,15 +303,8 @@ int nh_close_session(const char *username){
     nh_cache_close(&c);
   }
   /* Stop systemd template unit; systemd will handle unmount */
-  GError *err=NULL; gchar *svc = g_strdup_printf("nostrfs@%s.service", username);
-  GSubprocess *u = g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, &err, "systemctl", "stop", svc, NULL);
-  if (!u) {
-    if (err) { g_error_free(err); }
-  } else {
-    /* Wait for systemctl stop to complete — unmount happens during stop. */
-    g_subprocess_wait(u, NULL, NULL);
-    g_object_unref(u);
-  }
+  gchar *svc = g_strdup_printf("nostrfs@%s.service", username);
+  (void)nh_hook_systemctl_stop(svc);
   g_free(svc);
   /* Update status */
   if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf")==0){
@@ -249,11 +318,11 @@ int nh_warm_cache(const char *namespace_hint){
    * Falls back to HOMED_NAMESPACE env, then "personal". */
   const char *ns = (namespace_hint && *namespace_hint) ? namespace_hint
                    : get_namespace_env("HOMED_NAMESPACE", "personal");
-  /* Get signer pubkey — required as author filter on all relay fetches.
+  /* Get signer pubkey -- required as author filter on all relay fetches.
    * Without this, any publisher on a shared relay could inject a fake
    * manifest/secrets envelope. */
   char *npub = NULL;
-  if (dbus_get_signer_npub(&npub) != 0 || !npub) {
+  if (nh_hook_dbus_get_signer_npub(&npub) != 0 || !npub) {
     fprintf(stderr, "WarmCache: cannot get signer pubkey\n");
     return -1;
   }
@@ -268,6 +337,8 @@ int nh_warm_cache(const char *namespace_hint){
   const char *relays_default[] = { "wss://nos.lol", "wss://nostr.wine" };
   const char **relays = relays_default; size_t relays_n = 2;
   int relays_owned = 0;
+  int rc = -1;
+  char *json = NULL;
   /* Check settings for profile-provided relays */
   char relays_json[1024]; relays_json[0] = '\0';
   nh_cache cR; if (nh_cache_open_configured(&cR, "/etc/nss_nostr.conf")==0){
@@ -299,17 +370,24 @@ int nh_warm_cache(const char *namespace_hint){
     if (relays_owned){ for (size_t i=0;i<relays_n;i++) free((void*)relays[i]); free((void*)relays); }
     relays = (const char**)net_relays; relays_n = net_count; relays_owned = 1;
   }
-  char *json = NULL; if (nh_fetch_latest_manifest_json(relays, relays_n, author_hex, ns, &json) != 0){
-    fprintf(stderr, "WarmCache: fetch failed\n"); return -1;
+  if (nh_fetch_latest_manifest_json(relays, relays_n, author_hex, ns, &json) != 0){
+    fprintf(stderr, "WarmCache: fetch failed\n");
+    goto out;
   }
-  nh_manifest m; if (nh_manifest_parse_json(json, &m) != 0){ free(json); fprintf(stderr, "WarmCache: parse failed\n"); return -1; }
+  nh_manifest m;
+  if (nh_manifest_parse_json(json, &m) != 0){
+    fprintf(stderr, "WarmCache: parse failed\n");
+    goto out;
+  }
   /* Persist manifest JSON for later nostrfs consumption */
-  nh_cache c0; if (nh_cache_open_configured(&c0, "/etc/nss_nostr.conf")==0){ char mkey[128]; snprintf(mkey, sizeof mkey, "manifest.%s", ns); nh_cache_set_setting(&c0, mkey, json); nh_cache_close(&c0); }
-  nh_manifest_free(&m); free(json);
-  if (relays_owned){ for (size_t i=0;i<relays_n;i++) free((void*)relays[i]); free((void*)relays); }
+  nh_cache c0m; if (nh_cache_open_configured(&c0m, "/etc/nss_nostr.conf")==0){ char mkey[128]; snprintf(mkey, sizeof mkey, "manifest.%s", ns); nh_cache_set_setting(&c0m, mkey, json); nh_cache_close(&c0m); }
+  nh_manifest_free(&m);
+
   /* Mount secrets tmpfs under /run/nostr-homed/secrets (best effort). */
   (void)nh_secrets_mount_tmpfs("/run/nostr-homed/secrets");
-  /* Fetch and decrypt secrets (best effort). */
+  /* Fetch and decrypt secrets (best effort). This is the LAST consumer of
+   * (relays, relays_n); freeing them earlier would be a use-after-free
+   * (beads nostrc-nxpb.7). */
   do {
     char *se_j = NULL; if (nh_fetch_latest_secrets_json(relays, relays_n, author_hex, ns, &se_j) != 0) break;
     char *pt = NULL; if (nh_secrets_decrypt_via_signer(se_j, &pt) != 0 || !pt){ free(se_j); break; }
@@ -318,8 +396,9 @@ int nh_warm_cache(const char *namespace_hint){
     if (fp){ fwrite(pt, 1, strlen(pt), fp); fclose(fp); (void)chmod("/run/nostr-homed/secrets/secrets.json", 0600); }
     free(pt);
   } while (0);
+
   /* Mark warmed in cache */
-  nh_cache c; if (nh_cache_open_configured(&c, "/etc/nss_nostr.conf")==0){ nh_cache_set_setting(&c, "warmcache", "1"); nh_cache_close(&c); }
+  nh_cache cW; if (nh_cache_open_configured(&cW, "/etc/nss_nostr.conf")==0){ nh_cache_set_setting(&cW, "warmcache", "1"); nh_cache_close(&cW); }
   /* Provision deterministic UID/GID mapping for NSS if username is known */
   do {
     char userbuf[128]="";
@@ -333,18 +412,30 @@ int nh_warm_cache(const char *namespace_hint){
       }
     }
     if (!userbuf[0]) break; /* username unknown; skip provisioning */
-    char *npub=NULL; if (dbus_get_signer_npub(&npub) != 0 || !npub) break;
-    nh_cache cU; if (nh_cache_open_configured(&cU, "/etc/nss_nostr.conf")!=0){ g_free(npub); break; }
-    uint32_t uid = nh_cache_map_npub_to_uid(&cU, npub);
+    char *npub2=NULL; if (nh_hook_dbus_get_signer_npub(&npub2) != 0 || !npub2) break;
+    nh_cache cU; if (nh_cache_open_configured(&cU, "/etc/nss_nostr.conf")!=0){ g_free(npub2); break; }
+    uint32_t uid = nh_cache_map_npub_to_uid(&cU, npub2);
     uint32_t gid = uid;
     char home[256]; snprintf(home, sizeof home, "/home/%s", userbuf);
     (void)nh_cache_ensure_primary_group(&cU, userbuf, gid);
-    (void)nh_cache_upsert_user(&cU, uid, npub, userbuf, gid, home);
+    (void)nh_cache_upsert_user(&cU, uid, npub2, userbuf, gid, home);
     nh_cache_close(&cU);
-    g_free(npub);
+    g_free(npub2);
   } while (0);
   printf("nostr-homectl: WarmCache completed\n");
-  return 0;
+  rc = 0;
+
+out:
+  /* Now safe to release the (possibly-owned) relay list -- no consumer above
+   * touches it after this point. On every early-exit above (fetch/parse
+   * failure), the goto lands here so we still free the array (fixes the
+   * historic leak of relays_owned on the error path). */
+  free(json);
+  if (relays_owned){
+    for (size_t i=0;i<relays_n;i++) free((void*)relays[i]);
+    free((void*)relays);
+  }
+  return rc;
 }
 int nh_get_status(const char *username, char *buf, size_t buflen){
   if (!buf || buflen==0) return -1;
@@ -355,7 +446,7 @@ int nh_get_status(const char *username, char *buf, size_t buflen){
     /* Live mount check as a fallback */
     if (username && *username){
       char mnt[256]=""; snprintf(key, sizeof key, "mount.%s", username); (void)nh_cache_get_setting(&c, key, mnt, sizeof mnt);
-      if (mnt[0]){ if (is_mountpoint(mnt)) strncpy(st, "mounted", sizeof st - 1); }
+      if (mnt[0]){ if (nh_hook_is_mountpoint(mnt)) strncpy(st, "mounted", sizeof st - 1); }
     }
     nh_cache_close(&c);
   }

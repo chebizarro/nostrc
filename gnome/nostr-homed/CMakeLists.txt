@@ -390,6 +390,53 @@ if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
   target_link_libraries(nostr-homectl PRIVATE nostr_homed_common PkgConfig::GLIB2)
 
   install(TARGETS nostrfs nostr-homectl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+  # Focused roaming regression tests for beads nostrc-nxpb.7 and nostrc-nxpb.8.
+  # These recompile nostr-homectl.c into a test binary (renaming the daemon
+  # main via -Dmain=nh_homectl_main_unused) and use the internal test seam
+  # (include/nostr_homectl_test_seam.h) to inject failures at each boundary
+  # (relay fetches, systemctl start, mkdir, is_mountpoint). They do not
+  # require D-Bus, systemd, FUSE, or a live relay; they run under ASan.
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_homectl_relay_lifetime
+      src/ctl/nostr-homectl.c
+      tests/integ/test_homectl_relay_lifetime.c)
+    target_compile_definitions(test_homectl_relay_lifetime PRIVATE
+      main=nh_homectl_main_unused)
+    target_include_directories(test_homectl_relay_lifetime PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../nips/nip19/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../libnostr/include)
+    target_compile_options(test_homectl_relay_lifetime PRIVATE
+      -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable
+      -Wno-format-truncation)
+    target_link_libraries(test_homectl_relay_lifetime PRIVATE
+      PkgConfig::GLIB2 PkgConfig::JANSSON)
+    add_test(NAME homed_homectl_relay_lifetime
+      COMMAND test_homectl_relay_lifetime)
+    set_tests_properties(homed_homectl_relay_lifetime PROPERTIES
+      LABELS "nostr-homed;experimental-roaming;roaming-safety" TIMEOUT 60)
+
+    add_executable(test_homectl_open_session_failures
+      src/ctl/nostr-homectl.c
+      tests/integ/test_homectl_open_session_failures.c)
+    target_compile_definitions(test_homectl_open_session_failures PRIVATE
+      main=nh_homectl_main_unused)
+    target_include_directories(test_homectl_open_session_failures PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../nips/nip19/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../libnostr/include)
+    target_compile_options(test_homectl_open_session_failures PRIVATE
+      -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable
+      -Wno-format-truncation)
+    target_link_libraries(test_homectl_open_session_failures PRIVATE
+      PkgConfig::GLIB2 PkgConfig::JANSSON)
+    add_test(NAME homed_homectl_open_session_failures
+      COMMAND test_homectl_open_session_failures)
+    set_tests_properties(homed_homectl_open_session_failures PROPERTIES
+      LABELS "nostr-homed;experimental-roaming;roaming-safety" TIMEOUT 60)
+  endif()
+
   install(FILES dbus/org.nostr.Homed1.xml
     DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)
   pkg_get_variable(SYSTEMD_USER_UNIT_DIR systemd systemduserunitdir)
