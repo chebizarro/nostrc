@@ -517,6 +517,9 @@ static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpoi
   if (reg_id == 0) fprintf(stderr, "nostr-homectl: failed to register object\n");
 }
 
+/* Production entry point: skipped by focused tests that recompile
+ * nostr-homectl.c into their own binary (they pass -DNH_HOMECTL_NO_MAIN=1). */
+#ifndef NH_HOMECTL_NO_MAIN
 int main(int argc, char **argv){
   if (argc >= 2 && strcmp(argv[1], "--daemon")==0){
     GMainLoop *loop = NULL;
@@ -567,3 +570,4 @@ int main(int argc, char **argv){
   g_object_unref(bus);
   return usage(argv[0]);
 }
+#endif /* !NH_HOMECTL_NO_MAIN */

@@ -103,14 +103,23 @@ cmake -S "$SRC" -B "$BUILD" "${CMAKE_ARGS[@]}" >"$LOGS/02-configure.log" 2>&1 \
   || { tail -40 "$LOGS/02-configure.log"; exit 1; }
 
 log "building nostr-homed test targets"
-TARGETS="$(grep -oE "add_executable\(test_[a-z_0-9]+" "$SRC/gnome/nostr-homed/CMakeLists.txt" | sed "s/add_executable(//" | sort -u)"
+# Candidate homed test targets (scoped to the nostr-homed CMakeLists), then keep
+# only those that actually exist in THIS configuration -- option-gated tests
+# (e.g. experimental-roaming) are simply skipped instead of failing the build
+# with "unknown target".
+CAND="$(grep -oE "add_executable\(test_[a-z_0-9]+" "$SRC/gnome/nostr-homed/CMakeLists.txt" | sed "s/add_executable(//" | sort -u)"
+CONFIGURED="$(ninja -C "$BUILD" -t targets all 2>/dev/null | cut -d: -f1)"
+TARGETS=""
+for t in $CAND; do
+  if printf "%s\n" "$CONFIGURED" | grep -qxE "(.*/)?$t"; then TARGETS="$TARGETS $t"; fi
+done
 note "test targets: $(echo $TARGETS | wc -w)"
 cmake --build "$BUILD" -j "$JOBS" --target $TARGETS nss_nostr nostr-authd pam_nostr nh-seed-authority >"$LOGS/03-build.log" 2>&1 \
   || { tail -60 "$LOGS/03-build.log"; exit 1; }
 
 log "running portable ctest suite"
 RC=0
-ctest --test-dir "$BUILD" -L "portable|auth-runtime|smb" --output-on-failure >"$LOGS/04-ctest.log" 2>&1 || RC=$?
+ctest --test-dir "$BUILD" -L "portable|auth-runtime|smb|roaming-safety" --output-on-failure >"$LOGS/04-ctest.log" 2>&1 || RC=$?
 note "$(grep -E "tests passed|tests failed" "$LOGS/04-ctest.log" | tail -1)"
 FAILED="$(grep -E "\*\*\*Failed|SEGFAULT|Failed " "$LOGS/04-ctest.log" | grep -oE "homed_[a-z_]+" | sort -u | tr "\n" " " || true)"
 [ -n "$FAILED" ] && note "failing: $FAILED"

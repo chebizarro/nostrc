@@ -392,9 +392,9 @@ if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
   install(TARGETS nostrfs nostr-homectl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
   # Focused roaming regression tests for beads nostrc-nxpb.7 and nostrc-nxpb.8.
-  # These recompile nostr-homectl.c into a test binary (renaming the daemon
-  # main via -Dmain=nh_homectl_main_unused) and use the internal test seam
-  # (include/nostr_homectl_test_seam.h) to inject failures at each boundary
+  # These recompile nostr-homectl.c into a test binary (the daemon
+  # production main is skipped via -DNH_HOMECTL_NO_MAIN=1) and use the
+  # internal test seam (include/nostr_homectl_test_seam.h) to inject failures at each boundary
   # (relay fetches, systemctl start, mkdir, is_mountpoint). They do not
   # require D-Bus, systemd, FUSE, or a live relay; they run under ASan.
   if(NOSTR_HOMED_BUILD_TESTS)
@@ -402,7 +402,7 @@ if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
       src/ctl/nostr-homectl.c
       tests/integ/test_homectl_relay_lifetime.c)
     target_compile_definitions(test_homectl_relay_lifetime PRIVATE
-      main=nh_homectl_main_unused)
+      NH_HOMECTL_NO_MAIN=1)
     target_include_directories(test_homectl_relay_lifetime PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/include
       ${CMAKE_CURRENT_SOURCE_DIR}/../../nips/nip19/include
@@ -421,7 +421,7 @@ if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
       src/ctl/nostr-homectl.c
       tests/integ/test_homectl_open_session_failures.c)
     target_compile_definitions(test_homectl_open_session_failures PRIVATE
-      main=nh_homectl_main_unused)
+      NH_HOMECTL_NO_MAIN=1)
     target_include_directories(test_homectl_open_session_failures PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/include
       ${CMAKE_CURRENT_SOURCE_DIR}/../../nips/nip19/include
