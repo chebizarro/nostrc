@@ -88,6 +88,7 @@ CMAKE_ARGS=(-G Ninja -DCMAKE_BUILD_TYPE=Debug
   -DENABLE_NOSTR_HOMED=ON -DLIBNOSTR_WITH_NOSTRDB=OFF
   -DNOSTR_HOMED_ENABLE_AUTH_CORE=ON -DNOSTR_HOMED_ENABLE_IDENTITY_CORE=ON
   -DNOSTR_HOMED_ENABLE_DOMAIN_CONFIG=ON
+  -DNOSTR_HOMED_ENABLE_NSS=ON -DNOSTR_HOMED_ENABLE_AUTH_RUNTIME=ON
   -DBUILD_APPS=OFF -DBUILD_NOSTR_GTK=OFF)
 if [ "$SANITIZE" = "1" ]; then
   SAN="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
@@ -104,12 +105,12 @@ cmake -S "$SRC" -B "$BUILD" "${CMAKE_ARGS[@]}" >"$LOGS/02-configure.log" 2>&1 \
 log "building nostr-homed test targets"
 TARGETS="$(grep -oE "add_executable\(test_[a-z_0-9]+" "$SRC/gnome/nostr-homed/CMakeLists.txt" | sed "s/add_executable(//" | sort -u)"
 note "test targets: $(echo $TARGETS | wc -w)"
-cmake --build "$BUILD" -j "$JOBS" --target $TARGETS >"$LOGS/03-build.log" 2>&1 \
+cmake --build "$BUILD" -j "$JOBS" --target $TARGETS nss_nostr nostr-authd >"$LOGS/03-build.log" 2>&1 \
   || { tail -60 "$LOGS/03-build.log"; exit 1; }
 
 log "running portable ctest suite"
 RC=0
-ctest --test-dir "$BUILD" -L portable --output-on-failure >"$LOGS/04-ctest.log" 2>&1 || RC=$?
+ctest --test-dir "$BUILD" -L "portable|auth-runtime" --output-on-failure >"$LOGS/04-ctest.log" 2>&1 || RC=$?
 note "$(grep -E "tests passed|tests failed" "$LOGS/04-ctest.log" | tail -1)"
 FAILED="$(grep -E "\*\*\*Failed|SEGFAULT|Failed " "$LOGS/04-ctest.log" | grep -oE "homed_[a-z_]+" | sort -u | tr "\n" " " || true)"
 [ -n "$FAILED" ] && note "failing: $FAILED"
