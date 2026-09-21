@@ -12,6 +12,11 @@ int nh_auth_client_connect(const char *socket_path, int *fd_out);
 int nh_auth_client_check_account(int fd, const char *username,
                                  nh_auth_result *result_out);
 
+/* Drives BEGIN_LOGIN -> SELECT_PROVIDER(local) -> SUBMIT_UNLOCK on one
+ * connection and returns the final broker result. */
+int nh_auth_client_login(int fd, const char *username, const char *service,
+                         const char *passphrase, nh_auth_result *result_out);
+
 void nh_auth_client_close(int fd);
 
 #endif /* NH_AUTH_CLIENT_H */

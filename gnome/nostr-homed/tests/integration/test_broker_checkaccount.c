@@ -96,8 +96,8 @@ int main(void) {
     nh_identity_store *store = open_readonly(dir);
     nh_auth_broker *broker = nh_auth_broker_new(store);
     NH_CHECK(broker);
-    for (int i = 0; i < checks; i++)
-      (void)nh_auth_broker_handle_connection(broker, sv[1]);
+    (void)checks;
+    (void)nh_auth_broker_handle_connection(broker, sv[1]);
     nh_auth_broker_free(broker);
     nh_identity_store_close(store);
     close(sv[1]);

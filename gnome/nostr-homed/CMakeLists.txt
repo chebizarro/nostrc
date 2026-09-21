@@ -182,6 +182,11 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
     add_test(NAME homed_broker_checkaccount COMMAND test_broker_checkaccount)
     set_tests_properties(homed_broker_checkaccount
       PROPERTIES LABELS "nostr-homed;auth-runtime" TIMEOUT 60)
+    add_executable(test_broker_login tests/integration/test_broker_login.c)
+    target_link_libraries(test_broker_login PRIVATE nostr_auth_runtime)
+    add_test(NAME homed_broker_login COMMAND test_broker_login)
+    set_tests_properties(homed_broker_login
+      PROPERTIES LABELS "nostr-homed;auth-runtime" TIMEOUT 120)
   endif()
 endif()
 
