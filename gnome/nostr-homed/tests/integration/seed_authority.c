@@ -11,13 +11,12 @@
 #endif
 #include "auth_vault.h"
 #include "nostr_identity.h"
+#include "nostr-keys.h"
 #include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static const char *PUBKEY =
-    "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
 static nh_identity_ownership_result available(void *c, const char *n,
                                               uint32_t u, uint32_t g) {
@@ -25,11 +24,27 @@ static nh_identity_ownership_result available(void *c, const char *n,
   return NH_IDENTITY_OWNERSHIP_FREE;
 }
 
+static int hex32(const char *hex, uint8_t out[32]) {
+  if (!hex || strlen(hex) != 64) return -1;
+  for (int i = 0; i < 32; i++) {
+    unsigned v;
+    if (sscanf(hex + i * 2, "%2x", &v) != 1) return -1;
+    out[i] = (uint8_t)v;
+  }
+  return 0;
+}
+
 #define CHECK(cond, msg) do { if (!(cond)) { fprintf(stderr, "seed: %s\n", msg); return 1; } } while (0)
 
 int main(int argc, char **argv) {
-  if (argc != 4) { fprintf(stderr, "usage: %s <dir> <username> <passphrase>\n", argv[0]); return 2; }
+  if (argc < 4 || argc > 6) { fprintf(stderr, "usage: %s <dir> <username> <passphrase> [auth_privkey_hex] [vault_privkey_hex]\n", argv[0]); return 2; }
   const char *dir = argv[1], *username = argv[2], *passphrase = argv[3];
+  const char *auth_sk = (argc >= 5) ? argv[4] : "0000000000000000000000000000000000000000000000000000000000000001";
+  const char *vault_sk = (argc >= 6) ? argv[5] : auth_sk;
+  char *pubkey = nostr_key_get_public(auth_sk);
+  if (!pubkey || strlen(pubkey) != 64) { fprintf(stderr, "seed: bad auth private key\n"); return 2; }
+  uint8_t secret[32];
+  if (hex32(vault_sk, secret) != 0) { fprintf(stderr, "seed: bad vault private key\n"); return 2; }
   if (strlen(passphrase) < NH_AUTH_VAULT_PASSPHRASE_MIN) {
     fprintf(stderr, "seed: passphrase must be >= %u chars\n", NH_AUTH_VAULT_PASSPHRASE_MIN);
     return 2;
@@ -49,7 +64,7 @@ int main(int argc, char **argv) {
 
   nh_identity_enroll_request enroll = {0};
   enroll.username = username;
-  enroll.pubkey_hex = PUBKEY;
+  enroll.pubkey_hex = pubkey;
   enroll.home_mode = NH_IDENTITY_HOME_CREATE;
   nh_identity_operation_state state;
   const char *op = "00000000-0000-4000-8000-000000000001";
@@ -65,7 +80,7 @@ int main(int argc, char **argv) {
           account.account_id, NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY, 1, "{}",
           placeholder, sizeof placeholder, provider_id) == NH_IDENTITY_OK, "provider stage");
   nh_identity_proof_attestation attestation = {0};
-  strcpy(attestation.pubkey_hex, PUBKEY);
+  strcpy(attestation.pubkey_hex, pubkey);
   attestation.key_generation = account.key_generation;
   CHECK(nh_identity_provider_activate(store, "00000000-0000-4000-8000-000000000003",
           provider_id, &attestation) == NH_IDENTITY_OK, "provider activate");
@@ -73,9 +88,7 @@ int main(int argc, char **argv) {
   CHECK(nh_identity_operation_activate(store, op, &state) == NH_IDENTITY_OK, "activate account");
   CHECK(nh_identity_store_lookup_by_name(store, username, &account) == NH_IDENTITY_OK, "relookup");
 
-  uint8_t secret[32] = {0};
-  secret[31] = 1;
-  nh_auth_vault_binding binding = {provider_id, account.account_id, PUBKEY, account.key_generation};
+  nh_auth_vault_binding binding = {provider_id, account.account_id, pubkey, account.key_generation};
   uint8_t *blob = NULL; size_t blob_len = 0;
   CHECK(nh_auth_vault_seal(secret, (const uint8_t *)passphrase, strlen(passphrase),
           &binding, &blob, &blob_len) == NH_AUTH_VAULT_OK, "vault seal");
@@ -94,6 +107,7 @@ int main(int argc, char **argv) {
   sqlite3_finalize(st);
   sqlite3_close(raw);
   free(blob);
-  printf("seeded active account %s (uid=%u) in %s\n", username, account.uid, dir);
+  printf("seeded %s (uid=%u) pubkey=%s in %s\n", username, account.uid, pubkey, dir);
+  free(pubkey);
   return 0;
 }
