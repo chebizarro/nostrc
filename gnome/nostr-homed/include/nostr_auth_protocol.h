@@ -73,4 +73,9 @@ int nh_auth_operation_allowed(nh_auth_endpoint endpoint,
  * are rejected. The caller owns *packet_out and must wipe it if secret. */
 int nh_auth_recv_packet(int fd, unsigned char **packet_out, size_t *packet_len);
 
+/* Serializes one request/response envelope and writes it as a single
+ * SOCK_SEQPACKET record. payload_json must be a JSON object string (NULL or
+ * empty is treated as {}). No ancillary data is sent. Returns 0 on success. */
+int nh_auth_send_message(int fd, const nh_auth_message *message);
+
 #endif

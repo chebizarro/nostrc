@@ -20,6 +20,8 @@ option(NOSTR_HOMED_ENABLE_IDENTITY_CORE
   "Build non-installed identity authority/reader core and tests" OFF)
 option(NOSTR_HOMED_ENABLE_NSS
   "Build and install the read-only libnss_nostr NSS module (requires identity core)" OFF)
+option(NOSTR_HOMED_ENABLE_AUTH_RUNTIME
+  "Build the auth broker daemon/client transport nostr-authd (requires auth+identity cores)" OFF)
 option(NOSTR_HOMED_ENABLE_DOMAIN_CONFIG
   "Install inert winbind/domain examples and validator (never activates PAM)" OFF)
 option(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING
@@ -154,6 +156,33 @@ if(NOSTR_HOMED_ENABLE_NSS)
   install(TARGETS nss_nostr LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
   install(FILES config/nss.conf.sample
     DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-homed")
+endif()
+
+# B-owned auth runtime (stage 1): SOCK_SEQPACKET transport, SO_PEERCRED peer
+# snapshot, ACL enforcement, and a broker connection handler serving
+# CHECK_ACCOUNT against the identity authority. Not installed yet; the login
+# proof flow, systemd units and AUTH_INSTALL wiring arrive in later stages.
+if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
+  if(NOT (NOSTR_HOMED_ENABLE_AUTH_CORE AND NOSTR_HOMED_ENABLE_IDENTITY_CORE))
+    message(FATAL_ERROR
+      "NOSTR_HOMED_ENABLE_AUTH_RUNTIME requires NOSTR_HOMED_ENABLE_AUTH_CORE and NOSTR_HOMED_ENABLE_IDENTITY_CORE")
+  endif()
+  add_library(nostr_auth_runtime STATIC
+    src/auth/auth_peer.c src/auth/auth_client.c src/auth/auth_broker.c)
+  target_compile_options(nostr_auth_runtime PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_include_directories(nostr_auth_runtime PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/auth)
+  target_link_libraries(nostr_auth_runtime PUBLIC nostr_auth_core nostr_identity_core)
+  add_executable(nostr-authd src/auth/nostr-authd.c)
+  target_compile_options(nostr-authd PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_link_libraries(nostr-authd PRIVATE nostr_auth_runtime)
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_broker_checkaccount tests/integration/test_broker_checkaccount.c)
+    target_link_libraries(test_broker_checkaccount PRIVATE nostr_auth_runtime)
+    add_test(NAME homed_broker_checkaccount COMMAND test_broker_checkaccount)
+    set_tests_properties(homed_broker_checkaccount
+      PROPERTIES LABELS "nostr-homed;auth-runtime" TIMEOUT 60)
+  endif()
 endif()
 
 if(NOSTR_HOMED_ENABLE_DOMAIN_CONFIG)

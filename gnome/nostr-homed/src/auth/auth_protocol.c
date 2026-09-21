@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "nostr_auth_protocol.h"
 
 #include <errno.h>
@@ -78,4 +79,41 @@ int nh_auth_recv_packet(int fd,unsigned char **out,size_t *out_len) {
   ssize_t n=recvmsg(fd,&msg,flags);
   if(n<=0 || (size_t)n>NH_AUTH_PACKET_MAX || (msg.msg_flags&(MSG_TRUNC|MSG_CTRUNC)) || msg.msg_controllen!=0) { int saved=errno; free(buf); errno=saved; return -1; }
   *out=buf; *out_len=(size_t)n; return 0;
+}
+
+int nh_auth_send_message(int fd, const nh_auth_message *m) {
+  if (m == NULL || m->operation == 0) return -1;
+  const char *op = nh_auth_operation_name(m->operation);
+  if (op == NULL) return -1;
+  json_t *payload = NULL;
+  if (m->payload_json && m->payload_json[0]) {
+    json_error_t e;
+    payload = json_loads(m->payload_json, JSON_REJECT_DUPLICATES, &e);
+    if (!payload || !json_is_object(payload)) { if (payload) json_decref(payload); return -1; }
+  } else {
+    payload = json_object();
+    if (!payload) return -1;
+  }
+  json_t *root = json_object();
+  if (!root) { json_decref(payload); return -1; }
+  int bad = json_object_set_new(root, "version", json_integer(NH_AUTH_PROTOCOL_VERSION))
+    || json_object_set_new(root, "operation", json_string(op))
+    || json_object_set_new(root, "request_id", json_string(m->request_id))
+    || json_object_set_new(root, "transaction_id", json_string(m->transaction_id))
+    || json_object_set_new(root, "payload", payload); /* steals payload */
+  if (bad) { json_decref(root); return -1; }
+  char *text = json_dumps(root, JSON_COMPACT);
+  json_decref(root);
+  if (!text) return -1;
+  size_t len = strlen(text);
+  int rc = -1;
+  if (len && len <= NH_AUTH_PACKET_MAX) {
+    struct iovec iov = { text, len };
+    struct msghdr msg = {0};
+    msg.msg_iov = &iov; msg.msg_iovlen = 1;
+    ssize_t n = sendmsg(fd, &msg, MSG_NOSIGNAL);
+    rc = (n == (ssize_t)len) ? 0 : -1;
+  }
+  free(text);
+  return rc;
 }
