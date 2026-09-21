@@ -62,6 +62,7 @@ if(NOSTR_HOMED_ENABLE_AUTH_CORE)
     src/auth/auth_protocol.c
     src/auth/auth_transaction.c
     src/auth/auth_challenge.c
+    src/auth/auth_ratelimit.c
     src/auth/auth_vault.c
     src/auth/provider_local.c
     src/auth/provider_nip46.c)
@@ -215,6 +216,11 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
     target_link_libraries(test_broker_login_providers PRIVATE nostr_auth_runtime)
     add_test(NAME homed_broker_login_providers COMMAND test_broker_login_providers)
     set_tests_properties(homed_broker_login_providers
+      PROPERTIES LABELS "nostr-homed;auth-runtime" TIMEOUT 120)
+    add_executable(test_broker_hardening tests/integration/test_broker_hardening.c)
+    target_link_libraries(test_broker_hardening PRIVATE nostr_auth_runtime)
+    add_test(NAME homed_broker_hardening COMMAND test_broker_hardening)
+    set_tests_properties(homed_broker_hardening
       PROPERTIES LABELS "nostr-homed;auth-runtime" TIMEOUT 120)
     add_executable(test_broker_login_nip46 tests/integration/test_broker_login_nip46.c)
     # Test drives an in-process bunker via the nip46 core, so link it directly.

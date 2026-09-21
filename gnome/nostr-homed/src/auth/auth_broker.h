@@ -1,7 +1,10 @@
 #ifndef NH_AUTH_BROKER_H
 #define NH_AUTH_BROKER_H
 
+#include "auth_ratelimit.h"
 #include "nostr_identity.h"
+
+#include <stdint.h>
 
 typedef struct nh_auth_broker nh_auth_broker;
 
@@ -22,6 +25,25 @@ void nh_auth_broker_free(nh_auth_broker *broker);
  * (the broker responds PROVIDER_UNAVAILABLE).  Pass NULL to detach. */
 void nh_auth_broker_set_smb_authority(nh_auth_broker *broker,
                                       nh_smb_authority *authority);
+
+/* Testable monotonic clock seam. All broker time reads (transaction begin
+ * timestamps, deadline checks, provider expiry, receipt binding time, and
+ * rate-limit bookkeeping) go through this hook. Production leaves it unset,
+ * in which case the broker reads CLOCK_MONOTONIC directly. Tests inject a
+ * function that returns a controllable millisecond counter. Passing fn=NULL
+ * restores the default clock. Not thread safe with active connections. */
+typedef uint64_t (*nh_auth_broker_clock_fn)(void *context);
+void nh_auth_broker_set_clock(nh_auth_broker *broker,
+                              nh_auth_broker_clock_fn fn, void *context);
+
+/* Overrides the per-account failed-proof rate-limit policy. Passing NULL
+ * restores the built-in defaults (see auth_ratelimit.h). Any state accumulated
+ * with the previous policy is cleared. Not thread safe with active
+ * connections. Returns 0 on success, -1 if the new policy could not be
+ * constructed (max_failures == 0 or OOM); on failure the previous policy is
+ * retained. */
+int nh_auth_broker_set_ratelimit_config(nh_auth_broker *broker,
+                                        const nh_auth_ratelimit_config *config);
 
 /* Reads one request from a connected AUTH-endpoint SOCK_SEQPACKET fd (auth.sock,
  * uid 0 only for login), enforces the SO_PEERCRED/endpoint ACL, dispatches it,
