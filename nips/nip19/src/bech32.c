@@ -158,14 +158,14 @@ int nostr_b32_to_5bit(const uint8_t *in8, size_t in8_len, uint8_t **out5, size_t
     if (!in8 || !out5) return -1; *out5 = NULL; if (out5_len) *out5_len = 0;
     size_t outcap = (in8_len * 8 + 4) / 5;
     uint8_t *out = (uint8_t *)malloc(outcap);
-    size_t outn = 0; int acc = 0; int bits = 0;
+    size_t outn = 0; uint32_t acc = 0; int bits = 0;
     for (size_t i = 0; i < in8_len; ++i) {
-        acc = (acc << 8) | in8[i]; bits += 8;
+        acc = (acc << 8) | (uint32_t)in8[i]; bits += 8;
         while (bits >= 5) {
-            out[outn++] = (acc >> (bits - 5)) & 31; bits -= 5;
+            out[outn++] = (uint8_t)((acc >> (bits - 5)) & 31u); bits -= 5;
         }
     }
-    if (bits > 0) out[outn++] = (acc << (5 - bits)) & 31; // pad
+    if (bits > 0) out[outn++] = (uint8_t)((acc << (5 - bits)) & 31u); // pad
     *out5 = out; if (out5_len) *out5_len = outn;
     return 0;
 }
@@ -174,12 +174,12 @@ int nostr_b32_to_8bit(const uint8_t *in5, size_t in5_len, uint8_t **out8, size_t
     if (!in5 || !out8) return -1; *out8 = NULL; if (out8_len) *out8_len = 0;
     size_t outcap = (in5_len * 5) / 8 + 1;
     uint8_t *out = (uint8_t *)malloc(outcap);
-    size_t outn = 0; int acc = 0; int bits = 0;
+    size_t outn = 0; uint32_t acc = 0; int bits = 0;
     for (size_t i = 0; i < in5_len; ++i) {
         if (in5[i] >> 5) { free(out); return -1; }
-        acc = (acc << 5) | in5[i]; bits += 5;
+        acc = (acc << 5) | (uint32_t)in5[i]; bits += 5;
         if (bits >= 8) {
-            out[outn++] = (acc >> (bits - 8)) & 0xff; bits -= 8;
+            out[outn++] = (uint8_t)((acc >> (bits - 8)) & 0xffu); bits -= 8;
         }
     }
     *out8 = out; if (out8_len) *out8_len = outn;

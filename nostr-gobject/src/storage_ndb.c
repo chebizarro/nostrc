@@ -808,6 +808,10 @@ void storage_ndb_set_notify_callback(storage_ndb_notify_fn fn, void *ctx)
 {
   g_sub_cb = fn;
   g_sub_cb_ctx = ctx;
+  /* Push the callback down to libnostr's nostrdb backend so that the next
+   * ln_ndb_open() forwards it to nostrdb via ndb_config.sub_cb. libnostr no
+   * longer reaches up into this layer, which lets it link as a shared lib. */
+  ln_ndb_set_sub_callback((ln_ndb_sub_notify_fn)fn, ctx);
 }
 
 void storage_ndb_get_notify_callback(storage_ndb_notify_fn *fn_out, void **ctx_out)

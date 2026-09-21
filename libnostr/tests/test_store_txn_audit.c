@@ -19,15 +19,6 @@
 /* Exported by the nostrdb backend for shutdown/cache maintenance. */
 void ln_ndb_force_close_txn_cache(void);
 
-/* ndb_backend.c optionally asks the nostr-gobject storage layer for a
- * subscription callback. This standalone libnostr test does not use one. */
-typedef void (*storage_ndb_notify_fn)(void *ctx, uint64_t subid);
-void storage_ndb_get_notify_callback(storage_ndb_notify_fn *fn_out, void **ctx_out)
-{
-    if (fn_out) *fn_out = NULL;
-    if (ctx_out) *ctx_out = NULL;
-}
-
 static int rm_tree_cb(const char *path, const struct stat *st, int typeflag, struct FTW *ftwbuf)
 {
     (void)st;

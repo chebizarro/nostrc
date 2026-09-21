@@ -67,6 +67,20 @@ int ln_store_stat_json(ln_store *s, char **json_out);
  * Returns NULL for non-nostrdb backends. Caller must cast appropriately. */
 void *ln_store_get_backend_handle(ln_store *s);
 
+/* Register a subscription notification callback for the nostrdb backend.
+ *
+ * The callback is passed to nostrdb via ndb_config.sub_cb when the next
+ * ln_ndb_open() runs. Higher layers (e.g. nostr-gobject storage_ndb)
+ * register their notifier here before opening the store; this avoids
+ * libnostr making an upward extern reference to the wrapping layer, which
+ * breaks shared-library link order.
+ *
+ * Passing fn=NULL clears the callback. Thread-safety: the setter is a
+ * plain store; call it before ln_ndb_open() from a single-threaded
+ * initialization path. */
+typedef void (*ln_ndb_sub_notify_fn)(void *ctx, uint64_t subid);
+void ln_ndb_set_sub_callback(ln_ndb_sub_notify_fn fn, void *ctx);
+
 #ifdef __cplusplus
 }
 #endif

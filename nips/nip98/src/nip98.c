@@ -176,7 +176,7 @@ NostrEvent *nostr_nip98_create_auth_event(const char *url,
     /* method tag: HTTP method */
     tags->data[1] = new_string_array(2);
     if (!tags->data[1]) {
-        string_array_free(tags->data[0]);
+        nostr_tag_free(tags->data[0]);
         free(tags->data);
         free(tags);
         nostr_event_free(event);
@@ -189,8 +189,8 @@ NostrEvent *nostr_nip98_create_auth_event(const char *url,
     if (payload_sha256_hex) {
         tags->data[2] = new_string_array(2);
         if (!tags->data[2]) {
-            string_array_free(tags->data[0]);
-            string_array_free(tags->data[1]);
+            nostr_tag_free(tags->data[0]);
+            nostr_tag_free(tags->data[1]);
             free(tags->data);
             free(tags);
             nostr_event_free(event);

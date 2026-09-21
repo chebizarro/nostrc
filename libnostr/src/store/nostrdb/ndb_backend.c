@@ -55,6 +55,19 @@ static pthread_key_t tls_txn_key;
 static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
 static void tls_init(void);
 
+/* Subscription notification callback registered by higher layers
+ * (e.g. nostr-gobject storage_ndb) via ln_ndb_set_sub_callback().
+ * Read once by ln_ndb_open() and passed to nostrdb via ndb_config.sub_cb.
+ * See the extern declaration in include/libnostr_store.h. */
+static ln_ndb_sub_notify_fn g_sub_notify_fn = NULL;
+static void *g_sub_notify_ctx = NULL;
+
+void ln_ndb_set_sub_callback(ln_ndb_sub_notify_fn fn, void *ctx)
+{
+    g_sub_notify_fn = fn;
+    g_sub_notify_ctx = ctx;
+}
+
 /* nostrc-uaf1 / nostrc-mrj: TLS destructors can run after a store is closed.
  * Track live nostrdb handles individually instead of using one process-global
  * alive bit, so closing store B does not make store A's TLS cleanup leak its
@@ -263,16 +276,14 @@ static int ln_ndb_open(ln_store **out, const char *path, const char *opts_json)
   cfg.filter_context = NULL;
   cfg.ingest_filter = NULL;
 
-  /* Get subscription callback from storage_ndb layer (if set before init) */
-  {
-    typedef void (*storage_ndb_notify_fn)(void *ctx, uint64_t subid);
-    extern void storage_ndb_get_notify_callback(storage_ndb_notify_fn *fn_out, void **ctx_out);
-    storage_ndb_notify_fn sub_fn = NULL;
-    void *sub_ctx = NULL;
-    storage_ndb_get_notify_callback(&sub_fn, &sub_ctx);
-    cfg.sub_cb = (ndb_sub_fn)sub_fn;
-    cfg.sub_cb_ctx = sub_ctx;
-  }
+  /* Subscription callback previously registered via ln_ndb_set_sub_callback().
+   *
+   * Higher layers (nostr-gobject storage_ndb) push their notifier into
+   * libnostr before ln_ndb_open() runs, so we only read local state here.
+   * This avoids an upward extern reference to the wrapping layer, which
+   * would fail to resolve when libnostr is built as a shared library. */
+  cfg.sub_cb = (ndb_sub_fn)g_sub_notify_fn;
+  cfg.sub_cb_ctx = g_sub_notify_ctx;
 
   if (opts_json && *opts_json) {
     long long v = 0;
