@@ -75,6 +75,7 @@ if(NOSTR_HOMED_ENABLE_AUTH_CORE)
     src/auth/auth_challenge.c
     src/auth/auth_ratelimit.c
     src/auth/auth_vault.c
+    src/auth/auth_worker.c
     src/auth/provider_local.c
     src/auth/provider_nip46.c)
   target_compile_options(nostr_auth_core PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
@@ -106,6 +107,8 @@ if(NOSTR_HOMED_ENABLE_AUTH_CORE)
     target_link_libraries(test_provider_local PRIVATE nostr_auth_core)
     add_executable(test_ratelimit_persist tests/integration/test_ratelimit_persist.c)
     target_link_libraries(test_ratelimit_persist PRIVATE nostr_auth_core)
+    add_executable(test_auth_worker tests/integration/test_auth_worker.c)
+    target_link_libraries(test_auth_worker PRIVATE nostr_auth_core)
 
     add_test(NAME homed_auth_protocol COMMAND test_auth_protocol)
     add_test(NAME homed_auth_transaction COMMAND test_auth_transaction)
@@ -113,8 +116,9 @@ if(NOSTR_HOMED_ENABLE_AUTH_CORE)
     add_test(NAME homed_auth_challenge COMMAND test_auth_challenge)
     add_test(NAME homed_provider_local COMMAND test_provider_local)
     add_test(NAME homed_ratelimit_persist COMMAND test_ratelimit_persist)
+    add_test(NAME homed_auth_worker COMMAND test_auth_worker)
     set_tests_properties(
-      homed_auth_protocol homed_auth_transaction homed_auth_vault homed_auth_challenge homed_provider_local homed_ratelimit_persist
+      homed_auth_protocol homed_auth_transaction homed_auth_vault homed_auth_challenge homed_provider_local homed_ratelimit_persist homed_auth_worker
       PROPERTIES LABELS "nostr-homed;portable;auth" TIMEOUT 60)
   endif()
 endif()
