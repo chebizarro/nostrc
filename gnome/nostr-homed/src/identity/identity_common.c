@@ -154,9 +154,9 @@ int nh_identity_operation_type_to_text(nh_identity_operation_type type,
                                        const char **out) {
   static const char *const names[] = {NULL, "enroll", "import", "repair_home",
     "provider_stage", "provider_activate", "provider_discard", "set_status",
-    "replace_identity"};
+    "replace_identity", "provider_reseal"};
   if (!out || type < NH_IDENTITY_OPERATION_ENROLL ||
-      type > NH_IDENTITY_OPERATION_REPLACE_IDENTITY) return -1;
+      type > NH_IDENTITY_OPERATION_PROVIDER_RESEAL) return -1;
   *out = names[(unsigned int)type];
   return 0;
 }
@@ -167,7 +167,7 @@ int nh_identity_operation_type_from_text(const char *text,
   const char *name;
   if (!text || !out) return -1;
   for (i = NH_IDENTITY_OPERATION_ENROLL;
-       i <= NH_IDENTITY_OPERATION_REPLACE_IDENTITY; i++) {
+       i <= NH_IDENTITY_OPERATION_PROVIDER_RESEAL; i++) {
     if (nh_identity_operation_type_to_text(i, &name) == 0 &&
         strcmp(text, name) == 0) { *out = i; return 0; }
   }

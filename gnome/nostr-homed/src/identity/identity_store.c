@@ -66,7 +66,7 @@ static const char authority_schema[] =
   " account_id TEXT REFERENCES accounts(account_id),"
   " type TEXT NOT NULL CHECK(type IN('enroll','import','repair_home',"
   " 'provider_stage','provider_activate','provider_discard','set_status',"
-  " 'replace_identity')),"
+  " 'replace_identity','provider_reseal')),"
   " phase TEXT NOT NULL CHECK(phase IN"
   " ('reserved','staged','installed','projected','complete')),"
   " outcome TEXT NOT NULL CHECK(outcome IN"
@@ -1335,6 +1335,64 @@ nh_identity_rc nh_identity_provider_activate(
   if (result == NH_IDENTITY_OK)
     result = insert_operation(store, operation_id, account_id,
       NH_IDENTITY_OPERATION_PROVIDER_ACTIVATE, NH_IDENTITY_PHASE_COMPLETE,
+      NH_IDENTITY_OUTCOME_DONE, digest, NH_IDENTITY_HOME_CREATE);
+  if (result == NH_IDENTITY_OK) result = nh_identity_bump_generation(store, NULL);
+  if (result == NH_IDENTITY_OK) result = nh_identity_commit(store);
+  if (result != NH_IDENTITY_OK) nh_identity_rollback(store);
+  return result;
+}
+
+nh_identity_rc nh_identity_provider_reseal(
+    nh_identity_store *store, const char *operation_id, const char *provider_id,
+    const uint8_t *secret_blob, size_t secret_blob_len) {
+  struct digest_builder builder = {{0}, 0};
+  unsigned char digest[32];
+  nh_identity_operation_state replay;
+  char account_id[NH_IDENTITY_UUID_CAP];
+  bool exists = false;
+  sqlite3_stmt *statement = NULL;
+  int rc;
+  nh_identity_rc result;
+  if (!store || !nh_identity_uuid_is_valid(operation_id) ||
+      !nh_identity_uuid_is_valid(provider_id) || !secret_blob ||
+      secret_blob_len == 0 || secret_blob_len > NH_IDENTITY_PROVIDER_SECRET_MAX)
+    return NH_IDENTITY_INVALID;
+  if (digest_text(&builder, "provider_reseal") ||
+      digest_text(&builder, provider_id) ||
+      digest_add(&builder, secret_blob, secret_blob_len) ||
+      digest_finish(&builder, digest)) return NH_IDENTITY_INVALID;
+  result = operation_replay(store, operation_id,
+    NH_IDENTITY_OPERATION_PROVIDER_RESEAL, digest, &replay, &exists);
+  if (result != NH_IDENTITY_OK || exists) return result;
+  /* Only a staged (enabled=0) provider may be resealed. */
+  rc = sqlite3_prepare_v2(store->db,
+    "SELECT account_id FROM providers WHERE provider_id=? AND enabled=0",
+    -1, &statement, NULL);
+  if (rc == SQLITE_OK) rc = sqlite3_bind_text(statement, 1, provider_id, -1, SQLITE_STATIC);
+  if (rc == SQLITE_OK) rc = sqlite3_step(statement);
+  if (rc == SQLITE_DONE) result = NH_IDENTITY_NOT_FOUND;
+  else if (rc != SQLITE_ROW ||
+           copy_column(statement, 0, account_id, sizeof(account_id)))
+    result = rc == SQLITE_ROW ? NH_IDENTITY_STORAGE_ERROR
+                              : nh_identity_sqlite_result(store, rc, "find staged provider");
+  sqlite3_finalize(statement);
+  if (result != NH_IDENTITY_OK) return result;
+  result = nh_identity_begin(store);
+  if (result != NH_IDENTITY_OK) return result;
+  rc = sqlite3_prepare_v2(store->db,
+    "UPDATE providers SET secret_blob=?,updated_at=strftime('%s','now')"
+    " WHERE provider_id=? AND enabled=0", -1, &statement, NULL);
+  if (rc == SQLITE_OK) rc = sqlite3_bind_blob(statement, 1, secret_blob,
+                                              (int)secret_blob_len, SQLITE_STATIC);
+  if (rc == SQLITE_OK) rc = sqlite3_bind_text(statement, 2, provider_id, -1, SQLITE_STATIC);
+  if (rc == SQLITE_OK) rc = sqlite3_step(statement);
+  sqlite3_finalize(statement);
+  result = nh_identity_sqlite_result(store, rc, "reseal provider");
+  if (result == NH_IDENTITY_OK && sqlite3_changes(store->db) != 1)
+    result = NH_IDENTITY_BAD_STATE;
+  if (result == NH_IDENTITY_OK)
+    result = insert_operation(store, operation_id, account_id,
+      NH_IDENTITY_OPERATION_PROVIDER_RESEAL, NH_IDENTITY_PHASE_COMPLETE,
       NH_IDENTITY_OUTCOME_DONE, digest, NH_IDENTITY_HOME_CREATE);
   if (result == NH_IDENTITY_OK) result = nh_identity_bump_generation(store, NULL);
   if (result == NH_IDENTITY_OK) result = nh_identity_commit(store);

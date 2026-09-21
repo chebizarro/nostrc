@@ -17,7 +17,6 @@
 #include "auth_vault.h"
 #include "nostr_auth_protocol.h"
 #include "nostr_identity.h"
-#include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,38 +79,21 @@ static void seed(const char *dir) {
   nh_identity_proof_attestation attestation = {0};
   strcpy(attestation.pubkey_hex, PUBKEY);
   attestation.key_generation = account.key_generation;
-  NH_CHECK(nh_identity_provider_activate(store, "00000000-0000-4000-8000-000000000003",
-             provider_id, &attestation) == NH_IDENTITY_OK);
-  NH_CHECK(nh_identity_store_publish_projection(store, NULL) == NH_IDENTITY_OK);
-  NH_CHECK(nh_identity_operation_activate(store, op, &state) == NH_IDENTITY_OK);
-
-  /* Fresh account snapshot -> current key_generation for the vault binding. */
-  NH_CHECK(nh_identity_store_lookup_by_name(store, "n_alice", &account) == NH_IDENTITY_OK);
   uint8_t secret[32] = {0};
   secret[31] = 1; /* secp256k1 private key 1 -> PUBKEY */
   nh_auth_vault_binding binding = {provider_id, account.account_id, PUBKEY,
                                    account.key_generation};
-  uint8_t *blob = NULL;
-  size_t blob_len = 0;
+  uint8_t *blob = NULL; size_t blob_len = 0;
   NH_CHECK(nh_auth_vault_seal(secret, (const uint8_t *)PASSPHRASE,
              strlen(PASSPHRASE), &binding, &blob, &blob_len) == NH_AUTH_VAULT_OK);
-  nh_identity_store_close(store); /* release the sole-writer lock */
-
-  char db[1024];
-  snprintf(db, sizeof db, "%s/authority.db", dir);
-  sqlite3 *raw = NULL;
-  NH_CHECK(sqlite3_open(db, &raw) == SQLITE_OK);
-  sqlite3_stmt *st = NULL;
-  NH_CHECK(sqlite3_prepare_v2(raw,
-             "UPDATE providers SET secret_blob=? WHERE provider_id=?", -1, &st,
-             NULL) == SQLITE_OK);
-  NH_CHECK(sqlite3_bind_blob(st, 1, blob, (int)blob_len, SQLITE_STATIC) == SQLITE_OK);
-  NH_CHECK(sqlite3_bind_text(st, 2, provider_id, -1, SQLITE_STATIC) == SQLITE_OK);
-  NH_CHECK(sqlite3_step(st) == SQLITE_DONE);
-  NH_CHECK(sqlite3_changes(raw) == 1);
-  sqlite3_finalize(st);
-  sqlite3_close(raw);
+  NH_CHECK(nh_identity_provider_reseal(store, "00000000-0000-4000-8000-000000000004",
+             provider_id, blob, blob_len) == NH_IDENTITY_OK);
   free(blob);
+  NH_CHECK(nh_identity_provider_activate(store, "00000000-0000-4000-8000-000000000003",
+             provider_id, &attestation) == NH_IDENTITY_OK);
+  NH_CHECK(nh_identity_store_publish_projection(store, NULL) == NH_IDENTITY_OK);
+  NH_CHECK(nh_identity_operation_activate(store, op, &state) == NH_IDENTITY_OK);
+  nh_identity_store_close(store);
 }
 
 static nh_auth_result login(int server_conns, const char *dir,

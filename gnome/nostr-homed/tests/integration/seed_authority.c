@@ -12,7 +12,6 @@
 #include "auth_vault.h"
 #include "nostr_identity.h"
 #include "nostr-keys.h"
-#include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -79,6 +78,15 @@ int main(int argc, char **argv) {
   CHECK(nh_identity_provider_stage(store, "00000000-0000-4000-8000-000000000002",
           account.account_id, NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY, 1, "{}",
           placeholder, sizeof placeholder, provider_id) == NH_IDENTITY_OK, "provider stage");
+  /* Seal the vault to the assigned provider_id, then reseal the staged record
+   * (no direct DB write). */
+  nh_auth_vault_binding binding = {provider_id, account.account_id, pubkey, account.key_generation};
+  uint8_t *blob = NULL; size_t blob_len = 0;
+  CHECK(nh_auth_vault_seal(secret, (const uint8_t *)passphrase, strlen(passphrase),
+          &binding, &blob, &blob_len) == NH_AUTH_VAULT_OK, "vault seal");
+  CHECK(nh_identity_provider_reseal(store, "00000000-0000-4000-8000-000000000004",
+          provider_id, blob, blob_len) == NH_IDENTITY_OK, "provider reseal");
+  free(blob);
   nh_identity_proof_attestation attestation = {0};
   strcpy(attestation.pubkey_hex, pubkey);
   attestation.key_generation = account.key_generation;
@@ -86,27 +94,8 @@ int main(int argc, char **argv) {
           provider_id, &attestation) == NH_IDENTITY_OK, "provider activate");
   CHECK(nh_identity_store_publish_projection(store, NULL) == NH_IDENTITY_OK, "publish");
   CHECK(nh_identity_operation_activate(store, op, &state) == NH_IDENTITY_OK, "activate account");
-  CHECK(nh_identity_store_lookup_by_name(store, username, &account) == NH_IDENTITY_OK, "relookup");
-
-  nh_auth_vault_binding binding = {provider_id, account.account_id, pubkey, account.key_generation};
-  uint8_t *blob = NULL; size_t blob_len = 0;
-  CHECK(nh_auth_vault_seal(secret, (const uint8_t *)passphrase, strlen(passphrase),
-          &binding, &blob, &blob_len) == NH_AUTH_VAULT_OK, "vault seal");
   nh_identity_store_close(store);
 
-  char db[1024];
-  snprintf(db, sizeof db, "%s/authority.db", dir);
-  sqlite3 *raw = NULL;
-  CHECK(sqlite3_open(db, &raw) == SQLITE_OK, "sqlite open");
-  sqlite3_stmt *st = NULL;
-  CHECK(sqlite3_prepare_v2(raw, "UPDATE providers SET secret_blob=? WHERE provider_id=?",
-          -1, &st, NULL) == SQLITE_OK, "prepare");
-  sqlite3_bind_blob(st, 1, blob, (int)blob_len, SQLITE_STATIC);
-  sqlite3_bind_text(st, 2, provider_id, -1, SQLITE_STATIC);
-  CHECK(sqlite3_step(st) == SQLITE_DONE && sqlite3_changes(raw) == 1, "swap secret_blob");
-  sqlite3_finalize(st);
-  sqlite3_close(raw);
-  free(blob);
   printf("seeded %s (uid=%u) pubkey=%s in %s\n", username, account.uid, pubkey, dir);
   free(pubkey);
   return 0;

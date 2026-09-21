@@ -99,7 +99,8 @@ typedef enum nh_identity_operation_type {
   NH_IDENTITY_OPERATION_PROVIDER_ACTIVATE = 5,
   NH_IDENTITY_OPERATION_PROVIDER_DISCARD = 6,
   NH_IDENTITY_OPERATION_SET_STATUS = 7,
-  NH_IDENTITY_OPERATION_REPLACE_IDENTITY = 8
+  NH_IDENTITY_OPERATION_REPLACE_IDENTITY = 8,
+  NH_IDENTITY_OPERATION_PROVIDER_RESEAL = 9
 } nh_identity_operation_type;
 
 typedef enum nh_identity_operation_phase {
@@ -316,6 +317,12 @@ nh_identity_rc nh_identity_provider_activate(
     nh_identity_store *store, const char *operation_id,
     const char *provider_id,
     const nh_identity_proof_attestation *attestation);
+/* Replaces the encrypted secret of a staged (not-yet-activated) provider. Lets
+ * enrollment seal a vault bound to the provider_id the store assigned, then
+ * store it, without a direct DB write. */
+nh_identity_rc nh_identity_provider_reseal(
+    nh_identity_store *store, const char *operation_id, const char *provider_id,
+    const uint8_t *secret_blob, size_t secret_blob_len);
 nh_identity_rc nh_identity_provider_discard(
     nh_identity_store *store, const char *operation_id,
     const char *provider_id);
