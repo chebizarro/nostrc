@@ -402,6 +402,18 @@ if(NOSTR_HOMED_ENABLE_SMB)
     set_tests_properties(homed_smb_credential
       PROPERTIES LABELS "nostr-homed;smb" TIMEOUT 60)
   endif()
+
+  # Standalone driver used by tests/acceptance/run_tdbsam.sh on a
+  # Samba-provisioned VM.  Not a ctest — the acceptance script wires it
+  # against real smbpasswd/pdbedit.  See beads nostrc-rb0e.7.
+  add_executable(tdbsam_driver
+    tests/integration/tdbsam_driver.c)
+  target_compile_options(tdbsam_driver PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_compile_definitions(tdbsam_driver PRIVATE _DEFAULT_SOURCE=1)
+  target_include_directories(tdbsam_driver PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/smb)
+  target_link_libraries(tdbsam_driver PRIVATE nostr_smb_tdbsam)
 endif()
 
 # Version metadata only: there is no installed nostr-homed link library.
