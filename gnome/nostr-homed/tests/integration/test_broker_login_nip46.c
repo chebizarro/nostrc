@@ -66,70 +66,110 @@ static const char *WRONG_PK_SEC1 =
 struct signer_ctx {
   NostrNip46Session *bunker;
   char *bunker_pk_xonly; /* 64-char lowercase-hex xonly pubkey of the signer */
+  int connected;         /* one-shot per-fork: send NIP-46 connect before sign */
 };
 
-/* Bridge the provider's sign_event call at the in-process bunker. The
- * provider hands us its owning client session, we encrypt the request with
- * it, feed the ciphertext to the bunker's handle_cipher entry point, and
- * decrypt the reply — no relay involved. */
-static nh_auth_nip46_sign_status test_sign(NostrNip46Session *client,
-                                           const char *unsigned_event_json,
-                                           char **out_signed_event_json,
-                                           void *user_data) {
-  struct signer_ctx *ctx = user_data;
-  *out_signed_event_json = NULL;
-  if (!ctx || !ctx->bunker || !ctx->bunker_pk_xonly) return NH_AUTH_NIP46_SIGN_FAILED;
-
-  const char *params[1] = {unsigned_event_json};
-  char *req_json = nostr_nip46_request_build("nh1", "sign_event", params, 1);
-  if (!req_json) return NH_AUTH_NIP46_SIGN_FAILED;
-
+/* Round-trip one plaintext NIP-46 request through the in-process bunker:
+ * client-side encrypt -> nostr_nip46_bunker_handle_cipher -> client-side
+ * decrypt -> parse. Returns 0 on transport success (out_resp populated),
+ * -1 on any transport/crypto failure. The caller inspects out_resp.error /
+ * out_resp.result to distinguish protocol-level denial from success. */
+static int bridge_call(NostrNip46Session *client, struct signer_ctx *ctx,
+                       const char *plain_request_json,
+                       NostrNip46Response *out_resp) {
+  memset(out_resp, 0, sizeof *out_resp);
   char *cipher_req = NULL;
-  if (nostr_nip46_client_nip04_encrypt(client, ctx->bunker_pk_xonly, req_json,
-                                       &cipher_req) != 0 ||
-      !cipher_req) {
-    free(req_json);
-    return NH_AUTH_NIP46_SIGN_FAILED;
-  }
-  free(req_json);
-
+  if (nostr_nip46_client_nip04_encrypt(client, ctx->bunker_pk_xonly,
+                                       plain_request_json, &cipher_req) != 0 ||
+      !cipher_req)
+    return -1;
   /* The bunker needs the client's xonly pubkey to encrypt the reply back. */
   char *client_secret = NULL;
   if (nostr_nip46_session_get_secret(client, &client_secret) != 0 ||
       !client_secret) {
     free(cipher_req);
-    return NH_AUTH_NIP46_SIGN_FAILED;
+    return -1;
   }
   char *client_pk_x = nostr_key_get_public(client_secret);
   memset(client_secret, 0, strlen(client_secret));
   free(client_secret);
   if (!client_pk_x) {
     free(cipher_req);
-    return NH_AUTH_NIP46_SIGN_FAILED;
+    return -1;
   }
-
   char *cipher_reply = NULL;
   int hrc = nostr_nip46_bunker_handle_cipher(ctx->bunker, client_pk_x,
                                              cipher_req, &cipher_reply);
   free(cipher_req);
   free(client_pk_x);
-  if (hrc != 0 || !cipher_reply) return NH_AUTH_NIP46_SIGN_FAILED;
-
+  if (hrc != 0 || !cipher_reply) return -1;
   char *plain = NULL;
   if (nostr_nip46_client_nip04_decrypt(client, ctx->bunker_pk_xonly,
                                        cipher_reply, &plain) != 0 || !plain) {
     free(cipher_reply);
-    return NH_AUTH_NIP46_SIGN_FAILED;
+    return -1;
   }
   free(cipher_reply);
-
-  NostrNip46Response resp = {0};
-  int prc = nostr_nip46_response_parse(plain, &resp);
+  int prc = nostr_nip46_response_parse(plain, out_resp);
   free(plain);
-  if (prc != 0) return NH_AUTH_NIP46_SIGN_FAILED;
-  if (resp.error) {
+  return prc == 0 ? 0 : -1;
+}
+
+/* One-shot connect RPC: sets the bunker ACL for our client pubkey so the
+ * subsequent sign_event call is not rejected with "forbidden". Idempotent —
+ * safe to skip on subsequent calls. NIP-46 connect params are
+ * [remote_signer_pubkey, secret?, perms_csv?]. */
+static int bridge_do_connect(NostrNip46Session *client,
+                             struct signer_ctx *ctx) {
+  const char *params[3] = {ctx->bunker_pk_xonly, "", "sign_event"};
+  char *req_json = nostr_nip46_request_build("nh_c", "connect", params, 3);
+  if (!req_json) return -1;
+  NostrNip46Response resp = {0};
+  int rc = bridge_call(client, ctx, req_json, &resp);
+  free(req_json);
+  if (rc != 0) { nostr_nip46_response_free(&resp); return -1; }
+  int ok = !resp.error && resp.result != NULL;
+  nostr_nip46_response_free(&resp);
+  return ok ? 0 : -1;
+}
+
+/* Bridge the provider's sign_event call at the in-process bunker. Sends a
+ * one-shot connect RPC on first use so the bunker's per-client ACL grants
+ * sign_event (see nips/nip46/tests/test_bunker_sign_event_real.c for the
+ * shape of the connect/sign handshake). */
+static nh_auth_nip46_sign_status test_sign(NostrNip46Session *client,
+                                           const char *unsigned_event_json,
+                                           char **out_signed_event_json,
+                                           void *user_data) {
+  struct signer_ctx *ctx = user_data;
+  *out_signed_event_json = NULL;
+  if (!ctx || !ctx->bunker || !ctx->bunker_pk_xonly)
+    return NH_AUTH_NIP46_SIGN_FAILED;
+
+  if (!ctx->connected) {
+    if (bridge_do_connect(client, ctx) != 0)
+      return NH_AUTH_NIP46_SIGN_UNAVAILABLE;
+    ctx->connected = 1;
+  }
+
+  const char *params[1] = {unsigned_event_json};
+  char *req_json = nostr_nip46_request_build("nh1", "sign_event", params, 1);
+  if (!req_json) return NH_AUTH_NIP46_SIGN_FAILED;
+  NostrNip46Response resp = {0};
+  int rc = bridge_call(client, ctx, req_json, &resp);
+  free(req_json);
+  if (rc != 0) {
     nostr_nip46_response_free(&resp);
-    return NH_AUTH_NIP46_SIGN_DENIED;
+    return NH_AUTH_NIP46_SIGN_FAILED;
+  }
+  if (resp.error) {
+    nh_auth_nip46_sign_status status =
+        (strcmp(resp.error, "forbidden") == 0 ||
+         strcmp(resp.error, "denied") == 0)
+            ? NH_AUTH_NIP46_SIGN_DENIED
+            : NH_AUTH_NIP46_SIGN_FAILED;
+    nostr_nip46_response_free(&resp);
+    return status;
   }
   if (!resp.result) {
     nostr_nip46_response_free(&resp);
