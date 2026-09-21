@@ -139,11 +139,14 @@ int main(int argc, char **argv) {
     nh_auth_broker_set_smb_authority(broker, smb);
   }
 #else
+  /* SMB compiled out: the user socket + journal are inert. Consume
+   * smb_journal_path so -Werror=unused-but-set-variable does not fire on a
+   * SMB-disabled build (the journal path is only read inside the SMB block). */
+  (void)smb_journal_path;
   if (user_socket_path) {
     fprintf(stderr,
             "nostr-authd: this build has SMB disabled; user socket ignored\n");
     user_socket_path = NULL;
-    smb_journal_path = NULL;
   }
 #endif
 

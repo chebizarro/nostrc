@@ -54,6 +54,26 @@ static const char *pinned_provider(int argc, const char **argv) {
   return NULL;
 }
 
+/* Map a broker result to a PAM code. The mapping is the contract the GDM/system
+ * stacking relies on (see packaging/pam/gdm-password.sample, beads nostrc-o1ho):
+ *
+ *   OK               -> PAM_SUCCESS         (accept; stack: success=done)
+ *   UNKNOWN_ACCOUNT  -> PAM_USER_UNKNOWN    (not a nostr account; stack:
+ *                                            user_unknown=ignore -> fall through
+ *                                            to the Unix stack for local users)
+ *   broker down /    -> PAM_AUTHINFO_UNAVAIL (transient; stack:
+ *   transport error                          authinfo_unavail=ignore -> fall
+ *                                            through so a stopped broker never
+ *                                            bricks local login)
+ *   DISABLED         -> PAM_ACCT_EXPIRED    } a KNOWN account that failed:
+ *   RATE_LIMITED     -> PAM_MAXTRIES        } these are HARD failures. The stack
+ *   INVALID_PROOF /  -> PAM_AUTH_ERR        } uses default=die so a failed nostr
+ *   DENIED / etc.                           } proof is denied and is NEVER
+ *                                             downgraded to Unix password auth.
+ *
+ * The unlisted `default` maps to PAM_AUTHINFO_UNAVAIL (treated as transient),
+ * never to a silent success, so an unexpected result can only fall through to
+ * the Unix stack, not accept. */
 static int map_result(nh_auth_result r) {
   switch (r) {
     case NH_AUTH_RESULT_OK: return PAM_SUCCESS;

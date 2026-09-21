@@ -137,14 +137,24 @@ run is the substantive installed-system proof of the broker + PAM stack.
 
 A real graphical login cannot be driven headlessly.  The sample GDM stack at
 `packaging/pam/gdm-password.sample` stacks `pam_nostr.so` above the stock
-`common-auth` include with `[success=done authinfo_unavail=ignore
-default=ignore]`, so:
+`common-auth` include with
+`[success=done new_authtok_reqd=done user_unknown=ignore authinfo_unavail=ignore default=die]`.
+This is the deliberate **strict-deny** posture (beads nostrc-o1ho) — nostr is
+authoritative for nostr accounts, while non-nostr users and broker outages fall
+through safely:
 
-- broker + correct proof for a nostr account -> GDM proceeds to session;
-- broker denial for a nostr account -> `success=done` short-circuits the
-  cascade, so `common-auth` does NOT run and the login is refused;
-- broker unreachable or account unknown -> `authinfo_unavail=ignore`
-  falls through to `common-auth` and the local Unix stack decides.
+- broker + correct proof for a nostr account -> `success=done`; GDM proceeds to
+  session and `common-auth` is NOT consulted;
+- broker DENIAL for a **known** nostr account (wrong passphrase / denied /
+  rate-limited / disabled -> `PAM_AUTH_ERR` / `PAM_MAXTRIES` /
+  `PAM_ACCT_EXPIRED`) -> `default=die` refuses the login immediately. Crucially
+  it does **not** fall through to `common-auth`, so a failed nostr proof can
+  never be downgraded to (or bypassed by) a local Unix password;
+- account **unknown** to the broker -> `user_unknown=ignore`: an ordinary local
+  user falls through to `common-auth` and logs in with Unix auth as usual;
+- broker **unreachable** / transport error -> `authinfo_unavail=ignore`: falls
+  through so a stopped broker never bricks local login (a nostr-only account
+  then simply fails at `common-auth`).
 
 Manual verification steps (from a graphical console, NOT over SSH — the risk
 of locking yourself out is real):
@@ -157,7 +167,9 @@ of locking yourself out is real):
 3. `sudo systemctl restart gdm`
 4. At the greeter, click *Not listed?*, type `n_alice`, then supply the vault
    passphrase.  On success GDM enters the seeded home; on wrong passphrase
-   the greeter reports failure (mapped from `PAM_MAXTRIES`).
+   the greeter reports failure and the login is refused (a wrong proof
+   yields `PAM_AUTH_ERR`, or `PAM_MAXTRIES` once the retry budget is spent; either
+   way `default=die` stops the stack without falling through to Unix).
 5. Restore: `sudo cp /etc/pam.d/gdm-password.bak /etc/pam.d/gdm-password`
    and `sudo systemctl restart gdm`.
 
