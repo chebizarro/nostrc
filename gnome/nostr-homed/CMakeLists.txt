@@ -109,7 +109,8 @@ if(NOSTR_HOMED_ENABLE_IDENTITY_CORE)
     src/identity/identity_config.c
     src/identity/identity_store.c
     src/identity/identity_reader.c
-    src/identity/identity_projection.c)
+    src/identity/identity_projection.c
+    src/identity/identity_home.c)
   target_compile_options(nostr_identity_core PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
   target_include_directories(nostr_identity_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

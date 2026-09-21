@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
   nh_identity_config_defaults(&config);
   snprintf(config.authority_path, sizeof config.authority_path, "%s/authority.db", dir);
   snprintf(config.projection_path, sizeof config.projection_path, "%s/nss.db", dir);
-  snprintf(config.home_root, sizeof config.home_root, "%s/home", dir);
+  snprintf(config.home_root, sizeof config.home_root, "/home");
   nh_identity_store_options options = {0};
   options.config = &config;
   options.ownership_probe = available;
@@ -54,11 +54,9 @@ int main(int argc, char **argv) {
   nh_identity_operation_state state;
   const char *op = "00000000-0000-4000-8000-000000000001";
   CHECK(nh_identity_operation_begin_enroll(store, op, &enroll, &state) == NH_IDENTITY_OK, "enroll");
-  nh_identity_home_evidence staged = {11, 101}, installed = {11, 202};
-  CHECK(nh_identity_operation_advance_home(store, op, NH_IDENTITY_PHASE_RESERVED,
-          NH_IDENTITY_PHASE_STAGED, &staged, &state) == NH_IDENTITY_OK, "stage home");
-  CHECK(nh_identity_operation_advance_home(store, op, NH_IDENTITY_PHASE_STAGED,
-          NH_IDENTITY_PHASE_INSTALLED, &installed, &state) == NH_IDENTITY_OK, "install home");
+  nh_identity_home_options hopts = {0}; /* empty home (no skel) */
+  nh_identity_rc hrc = nh_identity_home_prepare(store, op, &hopts, &state);
+  if (hrc != NH_IDENTITY_OK) { fprintf(stderr, "seed: home prepare: %s (need root, /home writable)\n", nh_identity_rc_name(hrc)); return 1; }
   nh_identity_account account;
   CHECK(nh_identity_store_lookup_by_name(store, username, &account) == NH_IDENTITY_OK, "lookup");
   char provider_id[NH_IDENTITY_UUID_CAP];

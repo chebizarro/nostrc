@@ -82,6 +82,22 @@ int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc, const char **argv) {
   return PAM_SUCCESS;
 }
 
+int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
+                        const char **argv) {
+  (void)flags; (void)argc; (void)argv;
+  const char *user = NULL;
+  pam_get_user(pamh, &user, NULL);
+  pam_syslog(pamh, LOG_INFO, "nostr: open_session %s", user ? user : "?");
+  /* Local homes are provisioned at enrollment; nothing to mount here. */
+  return PAM_SUCCESS;
+}
+
+int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc,
+                         const char **argv) {
+  (void)pamh; (void)flags; (void)argc; (void)argv;
+  return PAM_SUCCESS;
+}
+
 int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags, int argc,
                      const char **argv) {
   (void)flags;
