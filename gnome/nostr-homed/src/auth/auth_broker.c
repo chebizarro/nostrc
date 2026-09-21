@@ -200,26 +200,61 @@ static nh_auth_result do_begin_login(conn_state *cs, const char *payload_json) {
   return result;
 }
 
-static nh_auth_result do_select_provider(conn_state *cs) {
+/* Map the optional "provider" payload field to a provider type. When the
+ * client does not name a provider, prefer NIP-46 if the account has it
+ * enabled (external signer beats a local passphrase prompt), otherwise fall
+ * back to the local encrypted vault. Unknown names are a protocol error. */
+static int pick_provider_type(const char *payload_json,
+                              const nh_identity_account *account,
+                              nh_identity_provider_type *out) {
+  json_t *root = NULL;
+  const char *name = payload_json ? json_str(payload_json, "provider", &root)
+                                  : NULL;
+  int rc = 0;
+  if (name && *name) {
+    if (!strcmp(name, "local") || !strcmp(name, "local_encrypted_key"))
+      *out = NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY;
+    else if (!strcmp(name, "nip46") || !strcmp(name, "nip46_bunker") ||
+             !strcmp(name, "bunker"))
+      *out = NH_IDENTITY_PROVIDER_NIP46_BUNKER;
+    else
+      rc = -1;
+  } else if (account->enabled_providers &
+             NH_IDENTITY_PROVIDER_BIT(NH_IDENTITY_PROVIDER_NIP46_BUNKER)) {
+    *out = NH_IDENTITY_PROVIDER_NIP46_BUNKER;
+  } else {
+    *out = NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY;
+  }
+  if (root) json_decref(root);
+  return rc;
+}
+
+static nh_auth_result do_select_provider(conn_state *cs,
+                                         const char *payload_json) {
   if (!cs->tx) return NH_AUTH_RESULT_PROTOCOL_ERROR;
+  const nh_identity_account *account = nh_auth_transaction_get_account(cs->tx);
+  if (!account) return NH_AUTH_RESULT_INTERNAL_ERROR;
+
+  nh_identity_provider_type provider_type;
+  if (pick_provider_type(payload_json, account, &provider_type) != 0)
+    return NH_AUTH_RESULT_PROTOCOL_ERROR;
+
   uint64_t now = now_ms();
   nh_auth_transaction_rc rc = nh_auth_transaction_select_provider(
-      cs->tx, &cs->peer, NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY, now);
+      cs->tx, &cs->peer, provider_type, now);
   if (rc != NH_AUTH_TX_OK) return tx_rc_result(rc);
   uint64_t challenge_deadline = 0;
   rc = nh_auth_transaction_begin_proof(cs->tx, &cs->peer, now,
                                        &challenge_deadline);
   if (rc != NH_AUTH_TX_OK) return tx_rc_result(rc);
 
-  const nh_identity_account *account = nh_auth_transaction_get_account(cs->tx);
-  if (!account) return NH_AUTH_RESULT_INTERNAL_ERROR;
   nh_identity_store_info info;
   if (nh_identity_store_get_info(cs->broker->store, &info) != NH_IDENTITY_OK)
     return NH_AUTH_RESULT_STORAGE_ERROR;
   nh_identity_provider_record rec;
   if (nh_identity_store_provider_get(cs->broker->store, account->account_id,
-                                     NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY,
-                                     true, &rec) != NH_IDENTITY_OK)
+                                     provider_type, true, &rec) !=
+      NH_IDENTITY_OK)
     return NH_AUTH_RESULT_PROVIDER_UNAVAILABLE;
 
   char boot_id[37];
@@ -244,11 +279,13 @@ static nh_auth_result do_select_provider(conn_state *cs) {
 
   char *unsigned_json = nostr_event_serialize_compact(cs->challenge.event);
   if (!unsigned_json) return NH_AUTH_RESULT_INTERNAL_ERROR;
-  cs->provider = nh_auth_provider_local_new(provider_emit, cs);
+  cs->provider = (provider_type == NH_IDENTITY_PROVIDER_NIP46_BUNKER)
+                     ? nh_auth_provider_nip46_new(provider_emit, cs)
+                     : nh_auth_provider_local_new(provider_emit, cs);
   nh_auth_result result = NH_AUTH_RESULT_PROVIDER_UNAVAILABLE;
   if (cs->provider) {
     nh_auth_provider_snapshot snap = {0};
-    snap.type = NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY;
+    snap.type = provider_type;
     snap.provider_id = rec.provider_id;
     snap.account_id = account->account_id;
     snap.pubkey_hex = account->pubkey_hex;
@@ -338,7 +375,7 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
     case NH_AUTH_OP_BEGIN_LOGIN:
       return respond(fd, req, op, do_begin_login(cs, req->payload_json));
     case NH_AUTH_OP_SELECT_PROVIDER:
-      return respond(fd, req, op, do_select_provider(cs));
+      return respond(fd, req, op, do_select_provider(cs, req->payload_json));
     case NH_AUTH_OP_SUBMIT_UNLOCK: {
       nh_auth_receipt receipt;
       int have = 0;

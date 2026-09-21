@@ -63,13 +63,23 @@ if(NOSTR_HOMED_ENABLE_AUTH_CORE)
     src/auth/auth_transaction.c
     src/auth/auth_challenge.c
     src/auth/auth_vault.c
-    src/auth/provider_local.c)
+    src/auth/provider_local.c
+    src/auth/provider_nip46.c)
   target_compile_options(nostr_auth_core PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
   target_include_directories(nostr_auth_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/auth)
   target_link_libraries(nostr_auth_core PUBLIC
     ${_homed_nostr} PkgConfig::JANSSON OpenSSL::Crypto)
+  # The NIP-46 external-signer provider consumes the in-tree nip46 client. In
+  # an in-tree build (with ENABLE_NIP46=ON, the default) the target already
+  # exists; in a stand-alone build fall back to pkg-config.
+  if(TARGET nostr_nip46_core)
+    target_link_libraries(nostr_auth_core PUBLIC nostr_nip46_core)
+  else()
+    pkg_check_modules(NOSTR_NIP46 REQUIRED IMPORTED_TARGET nostr-nip46)
+    target_link_libraries(nostr_auth_core PUBLIC PkgConfig::NOSTR_NIP46)
+  endif()
 
   if(NOSTR_HOMED_BUILD_TESTS)
     add_executable(test_auth_protocol tests/unit/test_auth_protocol.c)
@@ -194,6 +204,18 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
     target_link_libraries(test_broker_login PRIVATE nostr_auth_runtime)
     add_test(NAME homed_broker_login COMMAND test_broker_login)
     set_tests_properties(homed_broker_login
+      PROPERTIES LABELS "nostr-homed;auth-runtime" TIMEOUT 120)
+    add_executable(test_broker_login_nip46 tests/integration/test_broker_login_nip46.c)
+    # Test drives an in-process bunker via the nip46 core, so link it directly.
+    if(TARGET nostr_nip46_core)
+      target_link_libraries(test_broker_login_nip46 PRIVATE
+        nostr_auth_runtime nostr_nip46_core)
+    else()
+      target_link_libraries(test_broker_login_nip46 PRIVATE
+        nostr_auth_runtime PkgConfig::NOSTR_NIP46)
+    endif()
+    add_test(NAME homed_broker_login_nip46 COMMAND test_broker_login_nip46)
+    set_tests_properties(homed_broker_login_nip46
       PROPERTIES LABELS "nostr-homed;auth-runtime" TIMEOUT 120)
     add_executable(nh-seed-authority tests/integration/seed_authority.c)
     target_link_libraries(nh-seed-authority PRIVATE nostr_auth_runtime)
