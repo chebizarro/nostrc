@@ -15,9 +15,18 @@
 #include <time.h>
 #include <unistd.h>
 
+/* SMB is optional at compile time. When NH_AUTH_BROKER_ENABLE_SMB is defined
+ * the runtime is built together with the D5 SMB credential core and the
+ * broker can mint SMB passwords on a verified SMB_CREDENTIAL proof; without
+ * it the SMB path returns PROVIDER_UNAVAILABLE at request time. */
+#ifdef NH_AUTH_BROKER_ENABLE_SMB
+#  include "smb_credential.h"
+#endif
+
 struct nh_auth_broker {
   nh_identity_store *store;
   nh_auth_authority authority;
+  nh_smb_authority *smb_authority; /* Borrowed; may be NULL. */
 };
 
 /* Per-connection login state (single-owner, one transaction per connection). */
@@ -39,10 +48,17 @@ nh_auth_broker *nh_auth_broker_new(nh_identity_store *store) {
   if (!broker) return NULL;
   broker->store = store;
   broker->authority = nh_auth_authority_from_store(store);
+  broker->smb_authority = NULL;
   return broker;
 }
 
 void nh_auth_broker_free(nh_auth_broker *broker) { free(broker); }
+
+void nh_auth_broker_set_smb_authority(nh_auth_broker *broker,
+                                      nh_smb_authority *authority) {
+  if (!broker) return;
+  broker->smb_authority = authority;
+}
 
 static uint64_t now_ms(void) {
   struct timespec ts;
@@ -108,6 +124,11 @@ static int send_payload(int fd, const nh_auth_message *request,
   response.transaction_id[0] = '\0';
   response.payload_json = payload_json;
   int rc = nh_auth_send_message(fd, &response);
+  /* Wipe: response.payload_json may echo the SMB password. */
+  if (payload_json) {
+    volatile char *w = (volatile char *)payload_json;
+    for (size_t i = 0; payload_json[i]; i++) w[i] = 0;
+  }
   free(payload_json);
   return rc;
 }
@@ -207,6 +228,43 @@ static nh_auth_result do_begin_login(conn_state *cs, const char *payload_json,
   if (root) json_decref(root);
   if (sroot) json_decref(sroot);
   return result;
+}
+
+/* Runs BEGIN_SMB_PROOF: the peer is proving its OWN identity (SO_PEERCRED uid
+ * comes from cs->peer). No `username` is accepted from the client; the
+ * transaction resolves the account by uid. `service` is optional and defaults
+ * to "smb-credential" so the challenge machinery has a non-empty string. */
+static nh_auth_result do_begin_smb_proof(conn_state *cs,
+                                         const char *payload_json,
+                                         uint32_t *providers_out) {
+  if (providers_out) *providers_out = 0;
+  if (cs->tx) return NH_AUTH_RESULT_PROTOCOL_ERROR;
+#ifndef NH_AUTH_BROKER_ENABLE_SMB
+  (void)payload_json;
+  return NH_AUTH_RESULT_PROVIDER_UNAVAILABLE;
+#else
+  if (!cs->broker->smb_authority) return NH_AUTH_RESULT_PROVIDER_UNAVAILABLE;
+  json_t *sroot = NULL;
+  const char *service = json_str(payload_json, "service", &sroot);
+  if (!service || !service[0]) service = "smb-credential";
+  if (strlen(service) > 64) {
+    if (sroot) json_decref(sroot);
+    return NH_AUTH_RESULT_PROTOCOL_ERROR;
+  }
+  nh_auth_begin_request request = {NH_AUTH_PURPOSE_SMB_CREDENTIAL, NULL,
+                                   service, now_ms()};
+  nh_auth_transaction_rc rc =
+      nh_auth_transaction_begin(&cs->broker->authority, &cs->peer, &request,
+                                &cs->tx);
+  nh_auth_result result = tx_rc_result(rc);
+  if (providers_out && result == NH_AUTH_RESULT_OK && cs->tx) {
+    const nh_identity_account *account =
+        nh_auth_transaction_get_account(cs->tx);
+    if (account) *providers_out = account->enabled_providers;
+  }
+  if (sroot) json_decref(sroot);
+  return result;
+#endif
 }
 
 /* Builds a JSON array of canonical provider names ("local","nip46") from the
@@ -377,11 +435,117 @@ static nh_auth_result do_submit_unlock(conn_state *cs, const char *payload_json,
   return NH_AUTH_RESULT_OK;
 }
 
+/* Encode a receipt token as a hex-string binding for the SMB journal.  The
+ * SMB authority only records this opaque string; the raw receipt never
+ * leaves the broker. */
+static void hex_encode(char *out, const uint8_t *bytes, size_t len) {
+  static const char d[] = "0123456789abcdef";
+  for (size_t i = 0; i < len; i++) {
+    out[i * 2] = d[bytes[i] >> 4];
+    out[i * 2 + 1] = d[bytes[i] & 0xf];
+  }
+  out[len * 2] = '\0';
+}
+
+/* Build the LINUX_LOGIN success payload (receipt hex). */
+static nh_auth_result build_login_payload(const nh_auth_receipt *receipt,
+                                          json_t **payload_out) {
+  json_t *payload = json_object();
+  if (!payload) return NH_AUTH_RESULT_INTERNAL_ERROR;
+  char hex[NH_AUTH_RECEIPT_LEN * 2 + 1];
+  hex_encode(hex, receipt->token, NH_AUTH_RECEIPT_LEN);
+  if (json_object_set_new(payload, "result",
+                          json_string(nh_auth_result_name(NH_AUTH_RESULT_OK))) != 0 ||
+      json_object_set_new(payload, "receipt", json_string(hex)) != 0) {
+    json_decref(payload);
+    return NH_AUTH_RESULT_INTERNAL_ERROR;
+  }
+  *payload_out = payload;
+  return NH_AUTH_RESULT_OK;
+}
+
+/* Build the SMB_CREDENTIAL success payload: mint a password against the
+ * attached SMB authority and package it into the response. Wipes the mint
+ * envelope after copying its contents into the JSON payload. The caller
+ * (send_payload) will additionally wipe the encoded payload bytes on the
+ * wire buffer. */
+static nh_auth_result build_smb_payload(nh_auth_broker *broker,
+                                        const nh_auth_receipt *receipt,
+                                        const nh_identity_account *account,
+                                        json_t **payload_out) {
+#ifndef NH_AUTH_BROKER_ENABLE_SMB
+  (void)broker; (void)receipt; (void)account; (void)payload_out;
+  return NH_AUTH_RESULT_PROVIDER_UNAVAILABLE;
+#else
+  if (!broker->smb_authority) return NH_AUTH_RESULT_PROVIDER_UNAVAILABLE;
+  char binding[NH_AUTH_RECEIPT_LEN * 2 + 1];
+  hex_encode(binding, receipt->token, NH_AUTH_RECEIPT_LEN);
+  nh_smb_issue_request req = {0};
+  req.account = *account;
+  req.binding = binding;
+  req.now_monotonic_ms = now_ms();
+  /* 5 minute credential lifetime by default; matches the receipt window. */
+  req.lifetime_ms = 5u * 60u * 1000u;
+  nh_smb_envelope env;
+  memset(&env, 0, sizeof env);
+  nh_smb_rc smb_rc = nh_smb_credential_issue(broker->smb_authority, &req, &env);
+  /* Wipe binding: it names the receipt token. */
+  volatile char *bw = (volatile char *)binding;
+  for (size_t i = 0; i < sizeof binding; i++) bw[i] = 0;
+  if (smb_rc != NH_SMB_OK) {
+    nh_smb_envelope_clear(&env);
+    switch (smb_rc) {
+      case NH_SMB_INVALID: return NH_AUTH_RESULT_PROTOCOL_ERROR;
+      case NH_SMB_NO_MEMORY:
+      case NH_SMB_INTERNAL: return NH_AUTH_RESULT_INTERNAL_ERROR;
+      case NH_SMB_STORAGE_ERROR: return NH_AUTH_RESULT_STORAGE_ERROR;
+      case NH_SMB_PASSDB_ERROR: return NH_AUTH_RESULT_PROVIDER_UNAVAILABLE;
+      case NH_SMB_NOT_FOUND: return NH_AUTH_RESULT_UNKNOWN_ACCOUNT;
+      default: return NH_AUTH_RESULT_INTERNAL_ERROR;
+    }
+  }
+  json_t *payload = json_object();
+  json_t *cred = json_object();
+  if (!payload || !cred) {
+    if (payload) json_decref(payload);
+    if (cred) json_decref(cred);
+    nh_smb_envelope_clear(&env);
+    return NH_AUTH_RESULT_INTERNAL_ERROR;
+  }
+  int bad =
+      json_object_set_new(payload, "result",
+                          json_string(nh_auth_result_name(NH_AUTH_RESULT_OK))) ||
+      json_object_set_new(cred, "credential_id",
+                          json_string(env.credential_id)) ||
+      json_object_set_new(cred, "username", json_string(env.username)) ||
+      json_object_set_new(cred, "password",
+                          json_stringn((const char *)env.password.ptr,
+                                       env.password_len)) ||
+      json_object_set_new(cred, "issued_at_ms",
+                          json_integer((json_int_t)env.issued_at_ms)) ||
+      json_object_set_new(cred, "expires_at_ms",
+                          json_integer((json_int_t)env.expires_at_ms)) ||
+      json_object_set_new(payload, "credential", cred);
+  /* Zeroize the volatile envelope once its contents are in the JSON tree;
+   * the plaintext is now in the payload buffer and the response text will
+   * be wiped by send_payload after transmit. */
+  nh_smb_envelope_clear(&env);
+  if (bad) {
+    /* On failure the cred object may have been transferred via _set_new;
+     * decrefing payload releases everything reachable. */
+    json_decref(payload);
+    return NH_AUTH_RESULT_INTERNAL_ERROR;
+  }
+  *payload_out = payload;
+  return NH_AUTH_RESULT_OK;
+#endif
+}
+
 /* ---- dispatch ---------------------------------------------------------- */
 
 static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
   nh_auth_operation op = req->operation;
-  if (!nh_auth_operation_allowed(NH_AUTH_ENDPOINT_AUTH, op, cs->peer.uid,
+  if (!nh_auth_operation_allowed(cs->peer.endpoint, op, cs->peer.uid,
                                  cs->tx != NULL))
     return respond(fd, req, op, NH_AUTH_RESULT_DENIED);
 
@@ -416,6 +580,22 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
       }
       return send_payload(fd, req, op, payload);
     }
+    case NH_AUTH_OP_BEGIN_SMB_PROOF: {
+      uint32_t providers = 0;
+      nh_auth_result r = do_begin_smb_proof(cs, req->payload_json, &providers);
+      if (r != NH_AUTH_RESULT_OK) return respond(fd, req, op, r);
+      json_t *payload = json_object();
+      json_t *arr = providers_json(providers);
+      if (!payload || !arr ||
+          json_object_set_new(payload, "providers", arr) != 0 ||
+          json_object_set_new(payload, "result",
+                              json_string(nh_auth_result_name(r))) != 0) {
+        if (payload) json_decref(payload);
+        else if (arr) json_decref(arr);
+        return respond(fd, req, op, NH_AUTH_RESULT_INTERNAL_ERROR);
+      }
+      return send_payload(fd, req, op, payload);
+    }
     case NH_AUTH_OP_SELECT_PROVIDER:
       return respond(fd, req, op, do_select_provider(cs, req->payload_json));
     case NH_AUTH_OP_SUBMIT_UNLOCK: {
@@ -423,20 +603,22 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
       int have = 0;
       nh_auth_result r = do_submit_unlock(cs, req->payload_json, &receipt, &have);
       if (r == NH_AUTH_RESULT_OK && have) {
-        json_t *payload = json_object();
-        char hex[NH_AUTH_RECEIPT_LEN * 2 + 1];
-        static const char d[] = "0123456789abcdef";
-        for (size_t i = 0; i < NH_AUTH_RECEIPT_LEN; i++) {
-          hex[i * 2] = d[receipt.token[i] >> 4];
-          hex[i * 2 + 1] = d[receipt.token[i] & 0xf];
+        nh_auth_purpose purpose = nh_auth_transaction_get_purpose(cs->tx);
+        const nh_identity_account *account =
+            nh_auth_transaction_get_account(cs->tx);
+        json_t *payload = NULL;
+        nh_auth_result build_r;
+        if (purpose == NH_AUTH_PURPOSE_SMB_CREDENTIAL && account) {
+          build_r = build_smb_payload(cs->broker, &receipt, account, &payload);
+        } else {
+          build_r = build_login_payload(&receipt, &payload);
         }
-        hex[NH_AUTH_RECEIPT_LEN * 2] = '\0';
-        if (!payload ||
-            json_object_set_new(payload, "result",
-                                json_string(nh_auth_result_name(r))) != 0 ||
-            json_object_set_new(payload, "receipt", json_string(hex)) != 0) {
+        /* Wipe the local receipt copy regardless of build outcome. */
+        volatile uint8_t *rw = (volatile uint8_t *)receipt.token;
+        for (size_t i = 0; i < NH_AUTH_RECEIPT_LEN; i++) rw[i] = 0;
+        if (build_r != NH_AUTH_RESULT_OK) {
           if (payload) json_decref(payload);
-          return respond(fd, req, op, NH_AUTH_RESULT_INTERNAL_ERROR);
+          return respond(fd, req, op, build_r);
         }
         return send_payload(fd, req, op, payload);
       }
@@ -462,13 +644,9 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
   }
 }
 
-int nh_auth_broker_handle_connection(nh_auth_broker *broker, int fd) {
-  if (!broker) return -1;
-  conn_state cs;
-  memset(&cs, 0, sizeof cs);
-  cs.broker = broker;
-  if (nh_auth_peer_from_fd(fd, NH_AUTH_ENDPOINT_AUTH, &cs.peer) != 0) return -1;
-
+/* Shared connection driver: peer is already populated (endpoint set by the
+ * caller). Reads/dispatches until the socket closes. */
+static int drive_connection(nh_auth_broker *broker, int fd, conn_state *cs) {
   int rc = 0;
   for (;;) {
     unsigned char *packet = NULL;
@@ -481,13 +659,32 @@ int nh_auth_broker_handle_connection(nh_auth_broker *broker, int fd) {
       rc = respond(fd, NULL, NH_AUTH_OP_CHECK_ACCOUNT,
                    NH_AUTH_RESULT_PROTOCOL_ERROR);
     } else {
-      rc = handle_request(&cs, fd, &request);
+      rc = handle_request(cs, fd, &request);
       nh_auth_message_clear(&request);
     }
     if (rc != 0) break;
   }
 
-  conn_reset_proof(&cs);
-  if (cs.tx) nh_auth_transaction_free(cs.tx);
+  conn_reset_proof(cs);
+  if (cs->tx) nh_auth_transaction_free(cs->tx);
+  (void)broker;
   return rc;
+}
+
+int nh_auth_broker_handle_connection(nh_auth_broker *broker, int fd) {
+  if (!broker) return -1;
+  conn_state cs;
+  memset(&cs, 0, sizeof cs);
+  cs.broker = broker;
+  if (nh_auth_peer_from_fd(fd, NH_AUTH_ENDPOINT_AUTH, &cs.peer) != 0) return -1;
+  return drive_connection(broker, fd, &cs);
+}
+
+int nh_auth_broker_handle_user_connection(nh_auth_broker *broker, int fd) {
+  if (!broker) return -1;
+  conn_state cs;
+  memset(&cs, 0, sizeof cs);
+  cs.broker = broker;
+  if (nh_auth_peer_from_fd(fd, NH_AUTH_ENDPOINT_USER, &cs.peer) != 0) return -1;
+  return drive_connection(broker, fd, &cs);
 }

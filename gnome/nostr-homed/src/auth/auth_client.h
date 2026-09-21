@@ -2,8 +2,11 @@
 #define NH_AUTH_CLIENT_H
 
 #include "nostr_auth_protocol.h"
+#include "nostr_identity.h"
+#include "secure_buf.h"
 
 #include <stddef.h>
+#include <stdint.h>
 
 /* Maximum invalid interactive attempts a PAM run allows before giving up. The
  * budget is enforced by the PAM module; kept here so tests can pin the value. */
@@ -25,6 +28,22 @@ typedef struct nh_auth_provider_list {
   size_t count;
   char names[NH_AUTH_PROVIDER_LIST_CAP][NH_AUTH_PROVIDER_NAME_MAX + 1];
 } nh_auth_provider_list;
+
+/* Volatile SMB credential envelope returned by nh_auth_client_smb_proof_with.
+ * The password lives in a mlock'd secure buffer; the caller MUST invoke
+ * nh_auth_smb_envelope_clear() before dropping the struct. Safe on a
+ * zero-initialised envelope. */
+#define NH_AUTH_SMB_CREDENTIAL_ID_CAP 37u
+#define NH_AUTH_SMB_PASSWORD_MAX_LEN 64u
+
+typedef struct nh_auth_smb_envelope {
+  char credential_id[NH_AUTH_SMB_CREDENTIAL_ID_CAP];
+  char username[NH_IDENTITY_USERNAME_CAP];
+  uint64_t issued_at_ms;
+  uint64_t expires_at_ms;
+  size_t password_len; /* excludes trailing NUL */
+  nostr_secure_buf password;
+} nh_auth_smb_envelope;
 
 /* True iff the list contains the canonical provider name. */
 int nh_auth_provider_list_has(const nh_auth_provider_list *list,
@@ -54,6 +73,14 @@ int nh_auth_client_begin_login(int fd, const char *username, const char *service
                                nh_auth_provider_list *providers_out,
                                nh_auth_result *result_out);
 
+/* Sends BEGIN_SMB_PROOF for the connected peer's OWN identity (SO_PEERCRED
+ * uid). Requires a USER-endpoint (user.sock) connection. `service` may be
+ * NULL to accept the broker's default. On OK, fills *providers_out with the
+ * account's enabled providers. Returns 0 on transport success. */
+int nh_auth_client_begin_smb_proof(int fd, const char *service,
+                                   nh_auth_provider_list *providers_out,
+                                   nh_auth_result *result_out);
+
 /* Drives SELECT_PROVIDER(provider) -> SUBMIT_UNLOCK on a connection that has
  * already completed BEGIN_LOGIN. `provider` must be a canonical name (see
  * NH_AUTH_PROVIDER_NAME_*). For "local", `passphrase` must be non-NULL and is
@@ -75,6 +102,21 @@ int nh_auth_client_login_with(int fd, const char *username, const char *service,
 /* Backwards-compatible convenience wrapper: forces provider="local". */
 int nh_auth_client_login(int fd, const char *username, const char *service,
                          const char *passphrase, nh_auth_result *result_out);
+
+/* Drives BEGIN_SMB_PROOF -> SELECT_PROVIDER -> SUBMIT_UNLOCK on one
+ * user.sock connection. On NH_AUTH_RESULT_OK, *envelope_out is populated
+ * with the freshly-minted password in a zeroizing secure buffer; the caller
+ * MUST invoke nh_auth_smb_envelope_clear once the password has been handed
+ * off (or immediately on error). On any other result envelope_out is left
+ * untouched (still safe to clear). Returns 0 on transport success, -1 on
+ * transport failure. */
+int nh_auth_client_smb_proof_with(int fd, const char *service,
+                                  const char *provider, const char *passphrase,
+                                  nh_auth_smb_envelope *envelope_out,
+                                  nh_auth_result *result_out);
+
+/* Wipes and frees an SMB envelope. Safe on {0}. */
+void nh_auth_smb_envelope_clear(nh_auth_smb_envelope *envelope);
 
 void nh_auth_client_close(int fd);
 

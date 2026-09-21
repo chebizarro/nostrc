@@ -1,17 +1,34 @@
-/* nostr-authd: minimal auth broker daemon (stage 1).
+/* nostr-authd: broker daemon.
  *
- * Listens on a SOCK_SEQPACKET auth.sock, and for each connection enforces the
- * SO_PEERCRED/endpoint ACL and dispatches one request via the broker. Currently
- * serves CHECK_ACCOUNT against the identity authority; the login proof flow and
- * concurrency/deadline/receipt machinery arrive in later stages. Tracks
- * nostrc-zcll.2. Not installed yet.
+ * Listens on auth.sock (SO_PEERCRED-privileged, uid 0 only, for login) and,
+ * when configured with an SMB journal path, ALSO listens on user.sock
+ * (SO_PEERCRED-tagged, any uid, own-account SMB proof). Each connection is
+ * driven serially by the broker.
  *
- * Usage: nostr-authd <socket-path> <authority-dir>
+ * Isolation choice (bucket B0 / D6 nostrc-rb0e.7): the SMB authority is
+ * still isolated at the type/data-flow level — a distinct nh_smb_authority
+ * with its own SQLite journal and passdb adapter — but it is hosted inside
+ * the same nostr-authd process on a separate SEQPACKET socket for this
+ * increment. A dedicated nostr-smbd binary can later split it out without
+ * changing the broker or the wire protocol; the choice is deliberately
+ * reversible because user.sock is a distinct filesystem endpoint bound to
+ * a distinct authority object.
+ *
+ * Usage:
+ *   nostr-authd <auth-socket-path> <authority-dir>
+ *   nostr-authd <auth-socket-path> <authority-dir> <user-socket-path> <smb-journal-path>
  */
 #define _GNU_SOURCE
 #include "auth_broker.h"
 #include "nostr_identity.h"
 
+#ifdef NH_AUTH_BROKER_ENABLE_SMB
+#  include "passdb_tdbsam.h"
+#  include "smb_credential.h"
+#endif
+
+#include <errno.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,13 +47,43 @@ static nh_identity_ownership_result probe(void *c, const char *n, uint32_t u,
   return NH_IDENTITY_OWNERSHIP_FREE;
 }
 
+/* Bind a SEQPACKET listener at `path` with the given socket mode.  Any
+ * pre-existing entry is unlinked first: nostr-authd is the sole owner of its
+ * sockets. Returns the listening fd or -1 on failure. */
+static int bind_listener(const char *path, mode_t mode) {
+  struct sockaddr_un addr;
+  memset(&addr, 0, sizeof addr);
+  addr.sun_family = AF_UNIX;
+  if (strlen(path) >= sizeof addr.sun_path) {
+    fprintf(stderr, "nostr-authd: socket path too long: %s\n", path);
+    return -1;
+  }
+  strcpy(addr.sun_path, path);
+  int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+  if (fd < 0) { perror("socket"); return -1; }
+  unlink(path);
+  mode_t old = umask(0777 & ~mode);
+  int bad = bind(fd, (struct sockaddr *)&addr, sizeof addr) != 0;
+  umask(old);
+  if (bad) { perror("bind"); close(fd); return -1; }
+  /* umask alone is a race with newer glibc/kernel; belt-and-braces chmod. */
+  (void)chmod(path, mode);
+  if (listen(fd, 16) != 0) { perror("listen"); close(fd); unlink(path); return -1; }
+  return fd;
+}
+
 int main(int argc, char **argv) {
-  if (argc != 3) {
-    fprintf(stderr, "usage: %s <socket-path> <authority-dir>\n", argv[0]);
+  if (argc != 3 && argc != 5) {
+    fprintf(stderr,
+            "usage: %s <auth-socket-path> <authority-dir>\n"
+            "       %s <auth-socket-path> <authority-dir> <user-socket-path> <smb-journal-path>\n",
+            argv[0], argv[0]);
     return 2;
   }
-  const char *socket_path = argv[1];
+  const char *auth_socket_path = argv[1];
   const char *dir = argv[2];
+  const char *user_socket_path = (argc == 5) ? argv[3] : NULL;
+  const char *smb_journal_path = (argc == 5) ? argv[4] : NULL;
 
   nh_identity_config config;
   nh_identity_config_defaults(&config);
@@ -55,26 +102,54 @@ int main(int argc, char **argv) {
   nh_auth_broker *broker = nh_auth_broker_new(store);
   if (!broker) { nh_identity_store_close(store); return 1; }
 
-  struct sockaddr_un addr;
-  memset(&addr, 0, sizeof addr);
-  addr.sun_family = AF_UNIX;
-  if (strlen(socket_path) >= sizeof addr.sun_path) {
-    fprintf(stderr, "nostr-authd: socket path too long\n");
+#ifdef NH_AUTH_BROKER_ENABLE_SMB
+  nh_smb_authority *smb = NULL;
+  nh_smb_passdb_tdbsam *tdbsam = NULL;
+  if (user_socket_path) {
+    tdbsam = nh_smb_passdb_tdbsam_new(NULL, NULL);
+    if (!tdbsam) {
+      fprintf(stderr, "nostr-authd: cannot create tdbsam adapter\n");
+      nh_auth_broker_free(broker); nh_identity_store_close(store); return 1;
+    }
+    nh_smb_rc srr = nh_smb_authority_open(smb_journal_path,
+                                          &nh_smb_passdb_tdbsam_ops,
+                                          tdbsam, &smb);
+    if (srr != NH_SMB_OK) {
+      fprintf(stderr, "nostr-authd: cannot open smb journal %s: %s\n",
+              smb_journal_path, nh_smb_rc_name(srr));
+      nh_smb_passdb_tdbsam_free(tdbsam);
+      nh_auth_broker_free(broker); nh_identity_store_close(store); return 1;
+    }
+    nh_auth_broker_set_smb_authority(broker, smb);
+  }
+#else
+  if (user_socket_path) {
+    fprintf(stderr,
+            "nostr-authd: this build has SMB disabled; user socket ignored\n");
+    user_socket_path = NULL;
+    smb_journal_path = NULL;
+  }
+#endif
+
+  int listener_auth = bind_listener(auth_socket_path, 0600); /* privileged */
+  if (listener_auth < 0) {
+#ifdef NH_AUTH_BROKER_ENABLE_SMB
+    if (smb) nh_smb_authority_close(smb);
+    if (tdbsam) nh_smb_passdb_tdbsam_free(tdbsam);
+#endif
     nh_auth_broker_free(broker); nh_identity_store_close(store); return 1;
   }
-  strcpy(addr.sun_path, socket_path);
-  int listener = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
-  if (listener < 0) { perror("socket"); nh_auth_broker_free(broker); nh_identity_store_close(store); return 1; }
-  unlink(socket_path);
-  mode_t old = umask(0077); /* auth.sock is privileged: 0600 */
-  if (bind(listener, (struct sockaddr *)&addr, sizeof addr) != 0) {
-    perror("bind"); umask(old); close(listener);
-    nh_auth_broker_free(broker); nh_identity_store_close(store); return 1;
-  }
-  umask(old);
-  if (listen(listener, 16) != 0) {
-    perror("listen"); close(listener); unlink(socket_path);
-    nh_auth_broker_free(broker); nh_identity_store_close(store); return 1;
+  int listener_user = -1;
+  if (user_socket_path) {
+    listener_user = bind_listener(user_socket_path, 0666); /* world-connectable */
+    if (listener_user < 0) {
+      close(listener_auth); unlink(auth_socket_path);
+#ifdef NH_AUTH_BROKER_ENABLE_SMB
+      if (smb) nh_smb_authority_close(smb);
+      if (tdbsam) nh_smb_passdb_tdbsam_free(tdbsam);
+#endif
+      nh_auth_broker_free(broker); nh_identity_store_close(store); return 1;
+    }
   }
 
   struct sigaction sa = {0};
@@ -83,16 +158,45 @@ int main(int argc, char **argv) {
   sigaction(SIGTERM, &sa, NULL);
   signal(SIGPIPE, SIG_IGN);
 
-  fprintf(stderr, "nostr-authd: listening on %s\n", socket_path);
+  fprintf(stderr, "nostr-authd: auth listening on %s%s%s\n",
+          auth_socket_path,
+          user_socket_path ? ", user on " : "",
+          user_socket_path ? user_socket_path : "");
   while (!g_stop) {
-    int fd = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
-    if (fd < 0) continue; /* EINTR on signal -> loop checks g_stop */
-    (void)nh_auth_broker_handle_connection(broker, fd);
-    close(fd);
+    struct pollfd pfd[2];
+    nfds_t nfd = 0;
+    pfd[nfd].fd = listener_auth; pfd[nfd].events = POLLIN; pfd[nfd].revents = 0; nfd++;
+    if (listener_user >= 0) {
+      pfd[nfd].fd = listener_user; pfd[nfd].events = POLLIN; pfd[nfd].revents = 0; nfd++;
+    }
+    int pr = poll(pfd, nfd, -1);
+    if (pr < 0) {
+      if (errno == EINTR) continue;
+      perror("poll"); break;
+    }
+    for (nfds_t i = 0; i < nfd; i++) {
+      if (!(pfd[i].revents & POLLIN)) continue;
+      int fd = accept4(pfd[i].fd, NULL, NULL, SOCK_CLOEXEC);
+      if (fd < 0) continue;
+      if (pfd[i].fd == listener_auth) {
+        (void)nh_auth_broker_handle_connection(broker, fd);
+      } else {
+        (void)nh_auth_broker_handle_user_connection(broker, fd);
+      }
+      close(fd);
+    }
   }
 
-  close(listener);
-  unlink(socket_path);
+  close(listener_auth);
+  unlink(auth_socket_path);
+  if (listener_user >= 0) {
+    close(listener_user);
+    if (user_socket_path) unlink(user_socket_path);
+  }
+#ifdef NH_AUTH_BROKER_ENABLE_SMB
+  if (smb) { nh_auth_broker_set_smb_authority(broker, NULL); nh_smb_authority_close(smb); }
+  if (tdbsam) nh_smb_passdb_tdbsam_free(tdbsam);
+#endif
   nh_auth_broker_free(broker);
   nh_identity_store_close(store);
   fprintf(stderr, "nostr-authd: stopped\n");
