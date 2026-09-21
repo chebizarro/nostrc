@@ -542,8 +542,21 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND NOSTR_HOMED_ENABLE_SMB)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/smb)
   target_link_libraries(nostr-smb-acquire PRIVATE
     nostr_auth_runtime nostr_smb_core)
-  # Install: intentionally not wired — desktop packaging owns final layout.
-  # A follow-up may install to CMAKE_INSTALL_BINDIR under a packaging opt.
+  # D7 desktop mount helper (beads nostrc-rb0e.8): a shell wrapper that
+  # consumes the credentials= file written by nostr-smb-acquire and mounts
+  # the SMB share via mount.cifs (default) or gvfs (--mode gvfs).  It is
+  # not compiled — it is a small POSIX shell tool — so we install it as a
+  # PROGRAM alongside the acquire binary when AUTH_INSTALL is on.  The
+  # acceptance script gnome/nostr-homed/tests/acceptance/run_smb_mount_vm.sh
+  # exercises the full mint -> mount -> revoke path on a disposable VM.
+  configure_file(src/smb/nostr-smb-mount.sh
+    "${CMAKE_CURRENT_BINARY_DIR}/nostr-smb-mount" COPYONLY)
+  if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+    install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/nostr-smb-mount"
+            DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    install(TARGETS nostr-smb-acquire
+            RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+  endif()
   if(NOSTR_HOMED_BUILD_TESTS)
     # Rebuild the acquire core into the test binary with NH_SMB_ACQUIRE_NO_MAIN
     # so we can drive it without exec'ing the CLI or depending on a tty.
