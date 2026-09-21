@@ -28,6 +28,8 @@ option(NOSTR_HOMED_ENABLE_DOMAIN_CONFIG
   "Install inert winbind/domain examples and validator (never activates PAM)" OFF)
 option(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING
   "Build the legacy FUSE/Blossom roaming-home experiment" OFF)
+option(NOSTR_HOMED_ENABLE_SMB
+  "Build the standalone SMB credential authority core (D5)" OFF)
 option(NOSTR_HOMED_ENABLE_AUTH_INSTALL
   "Install the system broker/PAM authentication product" OFF)
 option(NOSTR_HOMED_BUILD_TESTS "Build tests for enabled nostr-homed features" ON)
@@ -303,6 +305,64 @@ if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
     systemd/user/nostr-homectl.service
     systemd/user/nostrfs@.service
     DESTINATION "${SYSTEMD_USER_UNIT_DIR}")
+endif()
+
+
+# D5-owned SMB credential authority core.  Isolated from the broker: mints
+# short-lived random SMB passwords after the broker has produced an
+# SMB_CREDENTIAL proof receipt, installs them via a pluggable passdb adapter,
+# and journals issuance metadata (never the password) in SQLite.  Ships a
+# real tdbsam adapter that shells out to smbpasswd/pdbedit for VM testing.
+if(NOSTR_HOMED_ENABLE_SMB)
+  if(NOT NOSTR_HOMED_ENABLE_IDENTITY_CORE)
+    message(FATAL_ERROR
+      "NOSTR_HOMED_ENABLE_SMB requires NOSTR_HOMED_ENABLE_IDENTITY_CORE for nh_identity_account")
+  endif()
+  find_package(SQLite3 REQUIRED)
+  if(NOT TARGET SQLite3::SQLite3)
+    add_library(SQLite3::SQLite3 INTERFACE IMPORTED)
+    target_include_directories(SQLite3::SQLite3 INTERFACE ${SQLite3_INCLUDE_DIRS})
+    target_link_libraries(SQLite3::SQLite3 INTERFACE ${SQLite3_LIBRARIES})
+  endif()
+
+  # Core (portable, mockable).  Never embeds the real adapter.
+  add_library(nostr_smb_core STATIC src/smb/smb_credential.c)
+  target_compile_options(nostr_smb_core PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_include_directories(nostr_smb_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/smb)
+  # smb_credential.h pulls nostr_identity.h; and the .c uses secure_buf from
+  # libnostr.  Link to the identity core (which already publishes the include
+  # path) and to libnostr for secure_alloc/secure_free/secure_wipe.
+  target_link_libraries(nostr_smb_core PUBLIC nostr_identity_core SQLite3::SQLite3)
+  if(TARGET libnostr)
+    target_link_libraries(nostr_smb_core PUBLIC libnostr)
+  else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(NOSTR_FOR_SMB REQUIRED IMPORTED_TARGET nostr)
+    target_link_libraries(nostr_smb_core PUBLIC PkgConfig::NOSTR_FOR_SMB)
+  endif()
+
+  # Real Samba adapter: not linked into the core, built separately so the
+  # daemon (added in D6) can pick it up.  Requires a Samba VM to test end-to-end.
+  add_library(nostr_smb_tdbsam STATIC src/smb/passdb_tdbsam.c)
+  target_compile_options(nostr_smb_tdbsam PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_include_directories(nostr_smb_tdbsam PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/smb)
+  target_link_libraries(nostr_smb_tdbsam PUBLIC nostr_smb_core)
+
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_smb_credential
+      tests/integration/test_smb_credential.c)
+    target_compile_options(test_smb_credential PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    target_link_libraries(test_smb_credential PRIVATE nostr_smb_core)
+    add_test(NAME homed_smb_credential COMMAND test_smb_credential)
+    set_tests_properties(homed_smb_credential
+      PROPERTIES LABELS "nostr-homed;smb" TIMEOUT 60)
+  endif()
 endif()
 
 # Version metadata only: there is no installed nostr-homed link library.
