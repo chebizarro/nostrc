@@ -1,0 +1,26 @@
+# /etc/pam.d/nostr-login — broker-backed proof service for pamtester(1), su -,
+# or other utilities that consult a named PAM service.
+#
+# This is the minimal PAM stack that authenticates a nostr account through the
+# installed pam_nostr.so + nostr-authd broker.  Copy to /etc/pam.d/nostr-login
+# (mode 0644, owner root:root) after installing:
+#
+#   /usr/lib/<multiarch>/security/pam_nostr.so
+#   /usr/sbin/nostr-authd    (systemd unit nostr-authd.service)
+#   /usr/lib/<multiarch>/libnss_nostr.so.2
+#
+# Seed an account and start the broker before use:
+#
+#   sudo nh-seed-authority /var/lib/nostr-auth n_alice '<passphrase>'
+#   sudo systemctl start nostr-authd.service
+#
+# Proof (correct passphrase -> success, wrong -> auth failure):
+#
+#   printf 'passphrase\n' | sudo pamtester -v nostr-login n_alice authenticate
+#
+# `provider=local` pins the local encrypted vault non-interactively; drop it to
+# get the interactive local/remote choice.
+auth     required pam_nostr.so socket=/run/nostr-auth/auth.sock
+account  required pam_nostr.so socket=/run/nostr-auth/auth.sock
+password required pam_deny.so
+session  required pam_permit.so
