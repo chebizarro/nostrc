@@ -111,6 +111,9 @@ static int client_op_raw(int fd, nh_auth_operation op, json_t *payload /*stolen*
   request.payload_json = payload_json;
   if (gen_request_id(request.request_id) != 0) { free(payload_json); return -1; }
   int rc = nh_auth_send_message(fd, &request);
+  /* Wipe the sent payload buffer: it may hold a passphrase. */
+  volatile char *w = (volatile char *)payload_json;
+  for (size_t i = 0; payload_json[i]; i++) w[i] = 0;
   free(payload_json);
   if (rc != 0) return -1;
 
@@ -119,7 +122,12 @@ static int client_op_raw(int fd, nh_auth_operation op, json_t *payload /*stolen*
   if (nh_auth_recv_packet(fd, &packet, &packet_len) != 0) return -1;
   nh_auth_message response;
   rc = nh_auth_message_parse(packet, packet_len, &response);
-  free(packet);
+  /* Wipe the received packet: it may hold an SMB password. */
+  if (packet) {
+    volatile unsigned char *pw = (volatile unsigned char *)packet;
+    for (size_t i = 0; i < packet_len; i++) pw[i] = 0;
+    free(packet);
+  }
   if (rc != 0) return -1;
   *response_json_out = response.payload_json ? strdup(response.payload_json)
                                              : strdup("{}");
@@ -165,6 +173,31 @@ int nh_auth_client_check_account(int fd, const char *username,
   return client_op(fd, NH_AUTH_OP_CHECK_ACCOUNT, payload, result_out);
 }
 
+static int parse_providers(const char *response_json,
+                           nh_auth_provider_list *providers_out) {
+  if (!providers_out) return 0;
+  json_error_t e;
+  json_t *root = json_loads(response_json, 0, &e);
+  if (!root) return -1;
+  json_t *arr = json_object_get(root, "providers");
+  if (arr && json_is_array(arr)) {
+    size_t idx;
+    json_t *v;
+    json_array_foreach(arr, idx, v) {
+      if (!json_is_string(v)) continue;
+      if (providers_out->count >= NH_AUTH_PROVIDER_LIST_CAP) break;
+      const char *s = json_string_value(v);
+      if (!s) continue;
+      size_t sl = strlen(s);
+      if (sl > NH_AUTH_PROVIDER_NAME_MAX) continue;
+      memcpy(providers_out->names[providers_out->count], s, sl + 1);
+      providers_out->count++;
+    }
+  }
+  json_decref(root);
+  return 0;
+}
+
 int nh_auth_client_begin_login(int fd, const char *username, const char *service,
                                nh_auth_provider_list *providers_out,
                                nh_auth_result *result_out) {
@@ -181,28 +214,32 @@ int nh_auth_client_begin_login(int fd, const char *username, const char *service
   if (client_op_raw(fd, NH_AUTH_OP_BEGIN_LOGIN, begin, &response_json) != 0)
     return -1;
   int rc = extract_result(response_json, result_out);
-  if (rc == 0 && *result_out == NH_AUTH_RESULT_OK && providers_out) {
-    json_error_t e;
-    json_t *root = json_loads(response_json, 0, &e);
-    if (root) {
-      json_t *arr = json_object_get(root, "providers");
-      if (arr && json_is_array(arr)) {
-        size_t idx;
-        json_t *v;
-        json_array_foreach(arr, idx, v) {
-          if (!json_is_string(v)) continue;
-          if (providers_out->count >= NH_AUTH_PROVIDER_LIST_CAP) break;
-          const char *s = json_string_value(v);
-          if (!s) continue;
-          size_t sl = strlen(s);
-          if (sl > NH_AUTH_PROVIDER_NAME_MAX) continue;
-          memcpy(providers_out->names[providers_out->count], s, sl + 1);
-          providers_out->count++;
-        }
-      }
-      json_decref(root);
+  if (rc == 0 && *result_out == NH_AUTH_RESULT_OK && providers_out)
+    (void)parse_providers(response_json, providers_out);
+  free(response_json);
+  return rc;
+}
+
+int nh_auth_client_begin_smb_proof(int fd, const char *service,
+                                   nh_auth_provider_list *providers_out,
+                                   nh_auth_result *result_out) {
+  if (!result_out) return -1;
+  if (providers_out) memset(providers_out, 0, sizeof *providers_out);
+
+  json_t *begin = json_object();
+  if (!begin) return -1;
+  if (service && service[0]) {
+    if (json_object_set_new(begin, "service", json_string(service))) {
+      json_decref(begin);
+      return -1;
     }
   }
+  char *response_json = NULL;
+  if (client_op_raw(fd, NH_AUTH_OP_BEGIN_SMB_PROOF, begin, &response_json) != 0)
+    return -1;
+  int rc = extract_result(response_json, result_out);
+  if (rc == 0 && *result_out == NH_AUTH_RESULT_OK && providers_out)
+    (void)parse_providers(response_json, providers_out);
   free(response_json);
   return rc;
 }
@@ -253,4 +290,127 @@ int nh_auth_client_login(int fd, const char *username, const char *service,
   return nh_auth_client_login_with(fd, username, service,
                                    NH_AUTH_PROVIDER_NAME_LOCAL, passphrase,
                                    result_out);
+}
+
+void nh_auth_smb_envelope_clear(nh_auth_smb_envelope *e) {
+  if (!e) return;
+  if (e->password.ptr) secure_free(&e->password);
+  secure_wipe(e->credential_id, sizeof e->credential_id);
+  secure_wipe(e->username, sizeof e->username);
+  e->password_len = 0;
+  e->issued_at_ms = 0;
+  e->expires_at_ms = 0;
+}
+
+/* Populates *env from the SUBMIT_UNLOCK response payload. Returns 0 on
+ * success, -1 if any required field is missing or ill-typed. Wipes any
+ * partial state on failure. */
+static int parse_smb_envelope(const char *response_json,
+                              nh_auth_smb_envelope *env) {
+  json_error_t e;
+  json_t *root = json_loads(response_json, 0, &e);
+  if (!root) return -1;
+  int rc = -1;
+  json_t *cred = json_object_get(root, "credential");
+  if (!cred || !json_is_object(cred)) goto done;
+  json_t *jcid = json_object_get(cred, "credential_id");
+  json_t *juser = json_object_get(cred, "username");
+  json_t *jpw = json_object_get(cred, "password");
+  json_t *jiat = json_object_get(cred, "issued_at_ms");
+  json_t *jexp = json_object_get(cred, "expires_at_ms");
+  if (!jcid || !json_is_string(jcid) || !juser || !json_is_string(juser) ||
+      !jpw || !json_is_string(jpw) || !jiat || !json_is_integer(jiat) ||
+      !jexp || !json_is_integer(jexp))
+    goto done;
+  const char *cid = json_string_value(jcid);
+  const char *user = json_string_value(juser);
+  const char *pw = json_string_value(jpw);
+  size_t pw_len = jpw ? json_string_length(jpw) : 0;
+  if (strlen(cid) >= sizeof env->credential_id ||
+      strlen(user) >= sizeof env->username ||
+      pw_len == 0 || pw_len > NH_AUTH_SMB_PASSWORD_MAX_LEN)
+    goto done;
+  nostr_secure_buf buf = secure_alloc(pw_len + 1);
+  if (!buf.ptr) goto done;
+  memcpy(buf.ptr, pw, pw_len);
+  ((char *)buf.ptr)[pw_len] = '\0';
+  strncpy(env->credential_id, cid, sizeof env->credential_id - 1);
+  env->credential_id[sizeof env->credential_id - 1] = '\0';
+  strncpy(env->username, user, sizeof env->username - 1);
+  env->username[sizeof env->username - 1] = '\0';
+  env->issued_at_ms = (uint64_t)json_integer_value(jiat);
+  env->expires_at_ms = (uint64_t)json_integer_value(jexp);
+  env->password_len = pw_len;
+  env->password = buf;
+  rc = 0;
+done:
+  /* Best-effort: wipe the parsed password string in the JSON tree. jansson
+   * strings are immutable at the API level but the underlying bytes live in
+   * a heap-allocated buffer we can overwrite via json_string_value(). */
+  if (cred && json_is_object(cred)) {
+    json_t *jpw2 = json_object_get(cred, "password");
+    if (jpw2 && json_is_string(jpw2)) {
+      const char *s = json_string_value(jpw2);
+      if (s) {
+        volatile char *v = (volatile char *)s;
+        for (size_t i = 0; s[i]; i++) v[i] = 0;
+      }
+    }
+  }
+  json_decref(root);
+  return rc;
+}
+
+int nh_auth_client_smb_proof_with(int fd, const char *service,
+                                  const char *provider, const char *passphrase,
+                                  nh_auth_smb_envelope *envelope_out,
+                                  nh_auth_result *result_out) {
+  if (!provider || !result_out || !envelope_out) return -1;
+  memset(envelope_out, 0, sizeof *envelope_out);
+  int is_nip46 = !strcmp(provider, NH_AUTH_PROVIDER_NAME_NIP46);
+  if (!is_nip46 && strcmp(provider, NH_AUTH_PROVIDER_NAME_LOCAL) != 0)
+    return -1;
+  if (!is_nip46 && !passphrase) return -1;
+
+  if (nh_auth_client_begin_smb_proof(fd, service, NULL, result_out) != 0)
+    return -1;
+  if (*result_out != NH_AUTH_RESULT_OK) return 0;
+
+  json_t *select = json_object();
+  if (!select ||
+      json_object_set_new(select, "provider", json_string(provider))) {
+    if (select) json_decref(select);
+    return -1;
+  }
+  if (client_op(fd, NH_AUTH_OP_SELECT_PROVIDER, select, result_out) != 0)
+    return -1;
+  if (*result_out != NH_AUTH_RESULT_OK &&
+      *result_out != NH_AUTH_RESULT_INTERACTION_REQUIRED)
+    return 0;
+
+  const char *secret = is_nip46 ? NH_AUTH_CLIENT_APPROVE_TOKEN : passphrase;
+  json_t *unlock = json_object();
+  if (!unlock || json_object_set_new(unlock, "secret", json_string(secret))) {
+    if (unlock) json_decref(unlock);
+    return -1;
+  }
+  char *response_json = NULL;
+  if (client_op_raw(fd, NH_AUTH_OP_SUBMIT_UNLOCK, unlock, &response_json) != 0)
+    return -1;
+  int rc = extract_result(response_json, result_out);
+  if (rc == 0 && *result_out == NH_AUTH_RESULT_OK) {
+    if (parse_smb_envelope(response_json, envelope_out) != 0) {
+      /* Malformed envelope: turn it into an internal error so the caller
+       * doesn't act on partial state. */
+      *result_out = NH_AUTH_RESULT_INTERNAL_ERROR;
+      nh_auth_smb_envelope_clear(envelope_out);
+    }
+  }
+  /* Wipe the response text before releasing it: it echoes the password. */
+  if (response_json) {
+    volatile char *v = (volatile char *)response_json;
+    for (size_t i = 0; response_json[i]; i++) v[i] = 0;
+  }
+  free(response_json);
+  return rc;
 }

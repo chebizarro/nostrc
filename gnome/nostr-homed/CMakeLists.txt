@@ -423,3 +423,29 @@ if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
   install(FILES config/auth.conf.sample
     DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-homed")
 endif()
+
+
+# ----------------------------------------------------------------------------
+# D6 (nostrc-rb0e.7): SMB proof endpoint wiring.
+#
+# When both the auth runtime and the D5 SMB credential core are enabled,
+# link the runtime against the SMB core, propagate the NH_AUTH_BROKER_ENABLE_SMB
+# compile flag, and build the headless SMB proof integration test.
+# Self-contained block; touches only targets defined earlier in this file.
+# ----------------------------------------------------------------------------
+if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND NOSTR_HOMED_ENABLE_SMB)
+  target_compile_definitions(nostr_auth_runtime PUBLIC NH_AUTH_BROKER_ENABLE_SMB=1)
+  target_link_libraries(nostr_auth_runtime PUBLIC nostr_smb_core)
+  # The daemon shells out through the real tdbsam adapter when the user socket
+  # is configured; keep it linked so `nostr-authd` can drive Samba on a VM.
+  target_link_libraries(nostr-authd PRIVATE nostr_smb_tdbsam)
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_smb_proof tests/integration/test_smb_proof.c)
+    target_compile_options(test_smb_proof PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    target_link_libraries(test_smb_proof PRIVATE nostr_auth_runtime nostr_smb_core)
+    add_test(NAME homed_smb_proof COMMAND test_smb_proof)
+    set_tests_properties(homed_smb_proof
+      PROPERTIES LABELS "nostr-homed;auth-runtime;smb" TIMEOUT 120)
+  endif()
+endif()
