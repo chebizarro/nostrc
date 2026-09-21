@@ -343,3 +343,8 @@
 {"id":"int-f9e49771","kind":"field_change","created_at":"2026-09-20T10:10:29.645371Z","actor":"Biz","issue_id":"nostrc-zcll.2","extra":{"field":"assignee","new_value":"orchestrator-auth","old_value":""}}
 {"id":"int-aeeed470","kind":"field_change","created_at":"2026-09-20T16:43:56.846437Z","actor":"Biz","issue_id":"nostrc-nxpb.4","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-0800e04b","kind":"field_change","created_at":"2026-09-20T16:43:56.847281Z","actor":"Biz","issue_id":"nostrc-nxpb.4","extra":{"field":"assignee","new_value":"orchestrator-identity","old_value":""}}
+{"id":"int-4fa5c236","kind":"field_change","created_at":"2026-09-20T23:15:01.550408Z","actor":"Biz","issue_id":"nostrc-rb0e.15","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-970017e9","kind":"field_change","created_at":"2026-09-20T23:24:12.305368Z","actor":"Biz","issue_id":"nostrc-zcll.8","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-2361149d","kind":"field_change","created_at":"2026-09-20T23:33:11.9872Z","actor":"Biz","issue_id":"nostrc-rb0e.16","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-bc419603","kind":"field_change","created_at":"2026-09-20T23:38:28.515122Z","actor":"Biz","issue_id":"nostrc-dhqz","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-4f8e464a","kind":"field_change","created_at":"2026-09-21T04:17:33.144743Z","actor":"Biz","issue_id":"nostrc-nxpb.9","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
