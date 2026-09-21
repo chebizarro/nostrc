@@ -18,6 +18,8 @@ option(NOSTR_HOMED_ENABLE_AUTH_CORE
   "Build non-installed authentication protocol/provider core and tests" OFF)
 option(NOSTR_HOMED_ENABLE_IDENTITY_CORE
   "Build non-installed identity authority/reader core and tests" OFF)
+option(NOSTR_HOMED_ENABLE_NSS
+  "Build and install the read-only libnss_nostr NSS module (requires identity core)" OFF)
 option(NOSTR_HOMED_ENABLE_DOMAIN_CONFIG
   "Install inert winbind/domain examples and validator (never activates PAM)" OFF)
 option(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING
@@ -134,6 +136,24 @@ if(NOSTR_HOMED_ENABLE_AUTH_CORE AND NOSTR_HOMED_ENABLE_IDENTITY_CORE)
     set_tests_properties(homed_auth_transaction_identity
       PROPERTIES LABELS "nostr-homed;portable;auth;identity" TIMEOUT 60)
   endif()
+endif()
+
+# A-owned NSS runtime: the read-only glibc module that projects the identity
+# store's SQLite snapshot into passwd/group. Installs libnss_nostr.so.2 into the
+# system library path plus the nss_nostr.conf sample. Requires the identity core.
+if(NOSTR_HOMED_ENABLE_NSS)
+  if(NOT NOSTR_HOMED_ENABLE_IDENTITY_CORE)
+    message(FATAL_ERROR
+      "NOSTR_HOMED_ENABLE_NSS requires NOSTR_HOMED_ENABLE_IDENTITY_CORE")
+  endif()
+  add_library(nss_nostr MODULE src/nss/nss_nostr.c)
+  # glibc dlopens the module by the exact filename libnss_<service>.so.2.
+  set_target_properties(nss_nostr PROPERTIES
+    PREFIX "libnss_" OUTPUT_NAME "nostr" SUFFIX ".so.2")
+  target_link_libraries(nss_nostr PRIVATE nostr_identity_core)
+  install(TARGETS nss_nostr LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+  install(FILES config/nss.conf.sample
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-homed")
 endif()
 
 if(NOSTR_HOMED_ENABLE_DOMAIN_CONFIG)
