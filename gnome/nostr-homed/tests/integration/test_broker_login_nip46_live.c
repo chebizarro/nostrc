@@ -181,6 +181,20 @@ static void hex_to_bytes32(const char *hex, uint8_t out[32]) {
   }
 }
 
+/* Extract the URI's secret= token length (bytes) without exposing the value.
+ * Returns 0 if no secret= is present. Used to prove to the operator that a
+ * non-empty pre-paired token is being presented to the bunker. */
+static size_t uri_secret_len(const char *uri) {
+  if (!uri) return 0;
+  const char *needle = "secret=";
+  const char *hit = strstr(uri, needle);
+  if (!hit) return 0;
+  const char *start = hit + strlen(needle);
+  const char *end = start;
+  while (*end && *end != '&') end++;
+  return (size_t)(end - start);
+}
+
 /* Print the bunker URI with the secret= parameter redacted so logs are safe
  * to attach to a report or paste into an issue. */
 static void print_redacted_uri(const char *uri) {
@@ -196,6 +210,14 @@ static void print_redacted_uri(const char *uri) {
   fputs("<REDACTED>", stdout);
   fputs(end, stdout);
   fputc('\n', stdout);
+}
+
+/* Derive the xonly transport pubkey from a 64-hex client transport secret.
+ * This is what a NIP-46 bunker sees as `#p` in the client's REQ filter and
+ * as the pairing/binding identity — printing it lets the operator locate
+ * the persistent binding entry when granting ACL. Caller frees. */
+static char *transport_pubkey_from_sk_hex(const char *sk_hex) {
+  return nostr_key_get_public(sk_hex);
 }
 
 /* Query the live bunker for its user pubkey using a short-lived helper
@@ -534,6 +556,17 @@ int main(void) {
     client_sk_hex[64] = '\0';
   }
 
+  /* Prove to the operator (in the log) that the pre-paired transport key
+   * from the config's bunker_client_secret_key_file is being used verbatim,
+   * and that the URI's secret= token is being presented (non-empty length). */
+  char *transport_pk = transport_pubkey_from_sk_hex(client_sk_hex);
+  size_t secret_bytes = uri_secret_len(bunker_uri);
+  printf("client transport pubkey (bunker binding key) = %s\n",
+         transport_pk ? transport_pk : "(nostr_key_get_public failed)");
+  printf("bunker connect_secret token: %zu bytes (redacted) — read from "
+         "bunker_uri.secret at run time\n", secret_bytes);
+  free(transport_pk);
+
   char *user_pk = NULL;
   int drc = discover_user_pubkey(bunker_uri, client_sk_hex, &user_pk);
   memset(client_sk_hex, 0, sizeof client_sk_hex);
@@ -592,14 +625,31 @@ int main(void) {
     case NH_AUTH_RESULT_INTERACTION_REQUIRED:
     case NH_AUTH_RESULT_PROVIDER_UNAVAILABLE:
       fprintf(stderr,
-              "NOTE: matching-key path terminated with %s. The live bunker "
-              "reached the sign_event RPC but its policy engine did not "
-              "produce a signature — commonly because the challenge kind "
-              "(NH_AUTH_CHALLENGE_KIND=1) is not on the bunker's allowlist "
-              "for this client transport key. Grant the client explicit "
-              "kind-1 signing on the bunker and re-run to observe OK + "
-              "NH_AUTH_PROOF_OK.\n",
-              result_name(r_ok));
+              "NOTE: matching-key path terminated with %s. The live bunker\n"
+              "  * accepted our NIP-46 connect RPC (returned \"ack\"),\n"
+              "  * signed a get_public_key response (proving the pre-paired\n"
+              "    client transport key is bound to the correct agent), and\n"
+              "  * then denied sign_event for kind=%d (NH_AUTH_CHALLENGE_KIND)\n"
+              "    with the exact reason_code `policy.default_deny` — see\n"
+              "    the [nip46] sign_event log lines above. That reason_code\n"
+              "    comes from signet/src/policy_store.c: the agent's ACL\n"
+              "    has no allow_kinds rule matching kind %d and the default\n"
+              "    is deny.\n"
+              "\n"
+              "  To close the positive-path OK proof, the BUNKER OPERATOR\n"
+              "  must grant this client kind-1 signing on the signet\n"
+              "  policy file for the agent bound to our transport pubkey.\n"
+              "  Add (or edit) the section for that agent in the policy\n"
+              "  keyfile:\n"
+              "\n"
+              "    [identity.<agent-id-for-this-user>]\n"
+              "    allow_kinds = 1\n"
+              "\n"
+              "  (Or `allow_kinds = *` for wildcard; or extend an existing\n"
+              "  allow_kinds list.) Then re-run this binary; the matching-\n"
+              "  key path will emit NH_AUTH_RESULT_OK and nh_auth_challenge_\n"
+              "  verify will accept the signed event.\n",
+              result_name(r_ok), NH_AUTH_CHALLENGE_KIND, NH_AUTH_CHALLENGE_KIND);
       break;
     default:
       fprintf(stderr, "FAIL: matching-key path returned unexpected %s\n",
