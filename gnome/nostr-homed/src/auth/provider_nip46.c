@@ -180,10 +180,17 @@ static int prepare(nh_auth_provider *base, const nh_auth_provider_snapshot *s) {
   release_session(p);
   p->session = nostr_nip46_client_new();
   int ok = p->session != NULL;
-  if (ok) ok = nostr_nip46_client_connect(p->session, bunker_uri, NULL) == 0;
+  /* Install the client transport secret BEFORE parsing the bunker URI:
+   * nostr_nip46_client_connect() auto-generates a fresh transport key when
+   * the session doesn't already carry one (the URI never supplies it), and
+   * that generation can fail transiently (e.g. RAND_bytes not yet seeded on
+   * macOS after other libnostr subsystems have started). By pre-seeding the
+   * secret, connect skips the generation entirely and cannot fail on that
+   * path. */
   if (ok)
     ok = nostr_nip46_client_set_secret(p->session,
                                        (const char *)p->secret_hex.ptr) == 0;
+  if (ok) ok = nostr_nip46_client_connect(p->session, bunker_uri, NULL) == 0;
   if (cfg_root) json_decref(cfg_root);
   if (!ok) {
     release_session(p);
@@ -211,6 +218,34 @@ static int prepare(nh_auth_provider *base, const nh_auth_provider_snapshot *s) {
       return -1;
     }
     p->session_started = 1;
+
+    /* Real bunkers gate sign_event behind an explicit `connect` RPC that
+     * authorises the transport pubkey and requested permissions. The URI's
+     * `secret=` param is the authorisation token; passing NULL here lets
+     * the client library reuse the parsed token. Failure here means the
+     * bunker will not honour a subsequent sign_event, so surface it as
+     * UNAVAILABLE rather than proceeding to a doomed proof.
+     *
+     * The auth challenge is kind NH_AUTH_CHALLENGE_KIND. Some bunkers apply
+     * a policy engine that permits sign_event only for whitelisted kinds
+     * (returning `policy.default_deny` on anything else); ask explicitly
+     * for the challenge kind so a kind-scoped ACL can grant it without
+     * unlocking arbitrary-kind signing. Bunkers that do not understand the
+     * `sign_event:<kind>` extension still see `sign_event` and either grant
+     * blanket sign or deny — the outcome is unchanged. */
+    char *connect_result = NULL;
+    int connect_rc = nostr_nip46_client_connect_rpc(
+        p->session, NULL, "sign_event,sign_event:1", &connect_result);
+    if (connect_result) {
+      secure_wipe(connect_result, strlen(connect_result));
+      free(connect_result);
+    }
+    if (connect_rc != 0) {
+      release_session(p);
+      emit_event(p, NH_AUTH_PROVIDER_UNAVAILABLE,
+                 NH_AUTH_RESULT_PROVIDER_UNAVAILABLE, NULL, 0);
+      return -1;
+    }
   }
 
   emit_event(p, NH_AUTH_PROVIDER_READY, NH_AUTH_RESULT_OK, NULL, 0);
