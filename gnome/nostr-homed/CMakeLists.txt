@@ -196,7 +196,24 @@ if(NOSTR_HOMED_ENABLE_NSS)
   set_target_properties(nss_nostr PROPERTIES
     PREFIX "libnss_" OUTPUT_NAME "nostr" SUFFIX ".so.2")
   target_link_libraries(nss_nostr PRIVATE nostr_identity_core)
+  # glibc's NSS loader dlopen()s libnss_nostr.so.2 by bare name and searches
+  # ONLY the standard runtime library path -- on multiarch Debian/Ubuntu that is
+  # /usr/lib/<triplet> (e.g. /usr/lib/x86_64-linux-gnu), NOT the PAM security/
+  # subdir and NOT /usr/local/lib.  GNUInstallDirs resolves CMAKE_INSTALL_LIBDIR
+  # to the multiarch libdir only when CMAKE_INSTALL_PREFIX is /usr, so a release
+  # install MUST configure with -DCMAKE_INSTALL_PREFIX=/usr.  Warn loudly if the
+  # resolved path is one glibc will not search, so a mis-set prefix fails visibly
+  # at configure time instead of silently producing an NSS module getent ignores.
   install(TARGETS nss_nostr LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+  message(STATUS
+    "nostr-homed: NSS module installs to ${CMAKE_INSTALL_FULL_LIBDIR}/libnss_nostr.so.2")
+  if(NOT CMAKE_INSTALL_FULL_LIBDIR MATCHES "^/(usr/)?lib")
+    message(WARNING
+      "nostr-homed: CMAKE_INSTALL_FULL_LIBDIR=${CMAKE_INSTALL_FULL_LIBDIR} is not a "
+      "path glibc's NSS loader searches; libnss_nostr.so.2 will be installed where "
+      "getent cannot find it. Configure with -DCMAKE_INSTALL_PREFIX=/usr for a real "
+      "login install.")
+  endif()
   install(FILES config/nss.conf.sample
     DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-homed")
 endif()
@@ -455,6 +472,16 @@ if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
     set(SYSTEMD_SYSTEM_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/system")
   endif()
   set(NH_AUTHD_PATH "${CMAKE_INSTALL_FULL_SBINDIR}/nostr-authd")
+  # On SMB-enabled builds the daemon also serves the own-account USER endpoint
+  # (user.sock) and needs the SMB issuance journal path; otherwise it runs the
+  # two-argument AUTH-only form.  nostr-authd tolerates the 4-arg form on
+  # SMB-disabled builds (it warns and ignores the user socket), but emitting the
+  # matching form keeps the shipped unit honest about the build.
+  if(NOSTR_HOMED_ENABLE_SMB)
+    set(NH_AUTHD_ARGS "/run/nostr-auth/auth.sock /var/lib/nostr-auth /run/nostr-auth/user.sock /var/lib/nostr-auth/smb.db")
+  else()
+    set(NH_AUTHD_ARGS "/run/nostr-auth/auth.sock /var/lib/nostr-auth")
+  endif()
   configure_file(systemd/nostr-authd.service.in
     "${CMAKE_CURRENT_BINARY_DIR}/nostr-authd.service" @ONLY)
   install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-authd.service"

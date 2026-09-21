@@ -323,17 +323,27 @@ static char *default_creds_path(FILE *err) {
   if (xdg && xdg[0] == '/') {
     base = xdg;
   } else {
+    /* No session runtime dir (e.g. a headless uid launched via setpriv with
+     * a cleared environment).  Fall back to /tmp/nostr-smb-<uid>, which unlike
+     * XDG_RUNTIME_DIR is NOT guaranteed to exist yet, so we must create it
+     * ourselves before the nostr-smb child directory below. */
     snprintf(fallback, sizeof fallback, "/tmp/nostr-smb-%u",
              (unsigned)geteuid());
     base = fallback;
+    if (mkdir(fallback, 0700) != 0 && errno != EEXIST) {
+      if (err) fprintf(err, "nostr-smb-acquire: mkdir(%s): %s\n", fallback,
+                       strerror(errno));
+      return NULL;
+    }
   }
   int n1 = snprintf(buf, sizeof buf, "%s/nostr-smb", base);
   if (n1 < 0 || (size_t)n1 >= sizeof buf) {
     if (err) fprintf(err, "nostr-smb-acquire: creds dir path too long\n");
     return NULL;
   }
-  /* mkdir -p (one level).  0700 is plenty; parents (XDG_RUNTIME_DIR) are
-   * already user-private per the freedesktop spec. */
+  /* mkdir the leaf.  0700 is plenty; the parent is either XDG_RUNTIME_DIR
+   * (already user-private per the freedesktop spec) or the fallback base we
+   * just created above. */
   if (mkdir(buf, 0700) != 0 && errno != EEXIST) {
     if (err) fprintf(err, "nostr-smb-acquire: mkdir(%s): %s\n", buf,
                      strerror(errno));
@@ -456,13 +466,14 @@ int main(int argc, char **argv) {
     wipe_stack(pw, n);
     if (pw_heap) free(pw);
   }
-  free(default_path);
-
+  /* Report before freeing default_path: sink.creds_path may alias it, so
+   * the fprintf must happen while the buffer is still live. */
   if (st == NH_SMB_ACQUIRE_OK && sink.creds_path) {
     fprintf(stderr, "nostr-smb-acquire: wrote %s (user=%s)\n",
             sink.creds_path,
             diag.account_username[0] ? diag.account_username : "?");
   }
+  free(default_path);
   return cli_exit_code(st);
 }
 
