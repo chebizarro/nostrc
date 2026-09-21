@@ -1,0 +1,29 @@
+[Unit]
+Description=Nostr authentication broker (nostr-authd)
+Documentation=https://github.com/chebizarro/nostrc
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=@NH_AUTHD_PATH@ /run/nostr-auth/auth.sock /var/lib/nostr-auth
+Restart=on-failure
+RestartSec=1
+# auth.sock lives in a private 0700 runtime dir; authority.db in a 0700 state dir.
+RuntimeDirectory=nostr-auth
+RuntimeDirectoryMode=0700
+StateDirectory=nostr-auth
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/nostr-auth
+# hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

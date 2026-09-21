@@ -32,11 +32,14 @@ option(NOSTR_HOMED_ENABLE_AUTH_INSTALL
   "Install the system broker/PAM authentication product" OFF)
 option(NOSTR_HOMED_BUILD_TESTS "Build tests for enabled nostr-homed features" ON)
 
-if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+# Installing the login runtime requires the broker/PAM/NSS pieces to be built.
+# Fail loudly rather than silently omitting authentication.
+if(NOSTR_HOMED_ENABLE_AUTH_INSTALL AND NOT (NOSTR_HOMED_ENABLE_AUTH_RUNTIME
+    AND NOSTR_HOMED_ENABLE_PAM AND NOSTR_HOMED_ENABLE_NSS))
   message(FATAL_ERROR
-    "nostr-homed authentication installation is not available yet: the broker, "
-    "PAM client, peer binding, and activation policy are incomplete. Build "
-    "NOSTR_HOMED_ENABLE_AUTH_CORE for portable tests only.")
+    "NOSTR_HOMED_ENABLE_AUTH_INSTALL installs the broker/PAM/NSS login runtime "
+    "and requires NOSTR_HOMED_ENABLE_AUTH_RUNTIME, NOSTR_HOMED_ENABLE_PAM and "
+    "NOSTR_HOMED_ENABLE_NSS to be ON.")
 endif()
 
 find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -305,3 +308,27 @@ endif()
 configure_file(nostr-homed.pc.in nostr-homed.pc @ONLY)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-homed.pc"
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
+
+# Installed login runtime (AUTH_INSTALL): broker daemon, PAM module and systemd
+# unit. The NSS module is installed by its own block. Accounts are not shipped.
+if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+  install(TARGETS nostr-authd RUNTIME DESTINATION "${CMAKE_INSTALL_SBINDIR}")
+  set(NH_PAM_MODULE_DIR "${CMAKE_INSTALL_LIBDIR}/security"
+      CACHE STRING "Directory for the installed pam_nostr.so module")
+  install(TARGETS pam_nostr LIBRARY DESTINATION "${NH_PAM_MODULE_DIR}")
+  set(SYSTEMD_SYSTEM_UNIT_DIR "")
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_get_variable(SYSTEMD_SYSTEM_UNIT_DIR systemd systemdsystemunitdir)
+  endif()
+  if(NOT SYSTEMD_SYSTEM_UNIT_DIR)
+    set(SYSTEMD_SYSTEM_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/system")
+  endif()
+  set(NH_AUTHD_PATH "${CMAKE_INSTALL_FULL_SBINDIR}/nostr-authd")
+  configure_file(systemd/nostr-authd.service.in
+    "${CMAKE_CURRENT_BINARY_DIR}/nostr-authd.service" @ONLY)
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-authd.service"
+    DESTINATION "${SYSTEMD_SYSTEM_UNIT_DIR}")
+  install(FILES config/auth.conf.sample
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-homed")
+endif()

@@ -1,0 +1,7 @@
+# nostr-authd broker configuration (sample).
+#
+# The stage-1/2 daemon takes the socket path and authority directory as
+# command-line arguments (see the shipped systemd unit); this sample documents
+# the expected locations. authority.db must live in a root-owned 0700 directory.
+authority_dir=/var/lib/nostr-auth
+socket_path=/run/nostr-auth/auth.sock
