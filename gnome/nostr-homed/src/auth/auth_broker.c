@@ -31,6 +31,8 @@ struct nh_auth_broker {
   nh_auth_broker_clock_fn clock_fn;
   void *clock_ctx;
   nh_auth_ratelimit *ratelimit;
+  nh_auth_ratelimit_config ratelimit_config;
+  char *ratelimit_path; /* NULL => in-memory only. */
 };
 
 /* Per-connection login state (single-owner, one transaction per connection). */
@@ -67,7 +69,9 @@ nh_auth_broker *nh_auth_broker_new(nh_identity_store *store) {
   broker->smb_authority = NULL;
   broker->clock_fn = NULL;
   broker->clock_ctx = NULL;
-  broker->ratelimit = nh_auth_ratelimit_new(NULL);
+  nh_auth_ratelimit_config_defaults(&broker->ratelimit_config);
+  broker->ratelimit_path = NULL;
+  broker->ratelimit = nh_auth_ratelimit_new(&broker->ratelimit_config);
   if (!broker->ratelimit) {
     free(broker);
     return NULL;
@@ -78,6 +82,7 @@ nh_auth_broker *nh_auth_broker_new(nh_identity_store *store) {
 void nh_auth_broker_free(nh_auth_broker *broker) {
   if (!broker) return;
   nh_auth_ratelimit_free(broker->ratelimit);
+  free(broker->ratelimit_path);
   free(broker);
 }
 
@@ -97,10 +102,47 @@ void nh_auth_broker_set_clock(nh_auth_broker *broker,
 int nh_auth_broker_set_ratelimit_config(nh_auth_broker *broker,
                                         const nh_auth_ratelimit_config *config) {
   if (!broker) return -1;
-  nh_auth_ratelimit *replacement = nh_auth_ratelimit_new(config);
-  if (!replacement) return -1;
+  nh_auth_ratelimit_config cfg;
+  if (config) {
+    cfg = *config;
+  } else {
+    nh_auth_ratelimit_config_defaults(&cfg);
+  }
+  nh_auth_ratelimit *replacement = NULL;
+  if (broker->ratelimit_path) {
+    if (nh_auth_ratelimit_open_persistent(broker->ratelimit_path, &cfg,
+                                          NULL, NULL, &replacement) != 0)
+      return -1;
+  } else {
+    replacement = nh_auth_ratelimit_new(&cfg);
+    if (!replacement) return -1;
+  }
   nh_auth_ratelimit_free(broker->ratelimit);
   broker->ratelimit = replacement;
+  broker->ratelimit_config = cfg;
+  return 0;
+}
+
+int nh_auth_broker_set_ratelimit_path(nh_auth_broker *broker, const char *path) {
+  if (!broker) return -1;
+  nh_auth_ratelimit *replacement = NULL;
+  char *stored = NULL;
+  if (path && *path) {
+    stored = strdup(path);
+    if (!stored) return -1;
+    if (nh_auth_ratelimit_open_persistent(stored, &broker->ratelimit_config,
+                                          NULL, NULL, &replacement) != 0) {
+      free(stored);
+      return -1;
+    }
+  } else {
+    replacement = nh_auth_ratelimit_new(&broker->ratelimit_config);
+    if (!replacement) return -1;
+  }
+  nh_auth_ratelimit_free(broker->ratelimit);
+  broker->ratelimit = replacement;
+  free(broker->ratelimit_path);
+  broker->ratelimit_path = stored;
   return 0;
 }
 

@@ -102,6 +102,22 @@ int main(int argc, char **argv) {
   nh_auth_broker *broker = nh_auth_broker_new(store);
   if (!broker) { nh_identity_store_close(store); return 1; }
 
+  /* Optional persistent rate-limit backing. If NH_AUTH_RATELIMIT_PATH is set
+   * (typically /var/lib/nostr-auth/ratelimit.db) the broker's per-account
+   * failed-proof throttle is loaded from and persisted to that SQLite file so
+   * an active cooldown survives a restart of nostr-authd. Unset => in-memory,
+   * matching the pre-B1p behaviour. */
+  {
+    const char *rl_path = getenv("NH_AUTH_RATELIMIT_PATH");
+    if (rl_path && *rl_path) {
+      if (nh_auth_broker_set_ratelimit_path(broker, rl_path) != 0) {
+        fprintf(stderr,
+                "nostr-authd: cannot open rate-limit store %s; continuing in-memory\n",
+                rl_path);
+      }
+    }
+  }
+
 #ifdef NH_AUTH_BROKER_ENABLE_SMB
   nh_smb_authority *smb = NULL;
   nh_smb_passdb_tdbsam *tdbsam = NULL;
