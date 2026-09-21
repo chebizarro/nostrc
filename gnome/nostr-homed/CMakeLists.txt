@@ -452,3 +452,52 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND NOSTR_HOMED_ENABLE_SMB)
       PROPERTIES LABELS "nostr-homed;auth-runtime;smb" TIMEOUT 120)
   endif()
 endif()
+
+# ----------------------------------------------------------------------------
+# D7 (nostrc-rb0e.8): desktop SMB credential acquisition client.
+#
+# Builds `nostr-smb-acquire` — a user-facing tool that connects to
+# /run/nostr-auth/user.sock, drives BEGIN_SMB_PROOF via the D6 auth_client
+# helper, and delivers the minted password as a Samba credentials= file
+# (mode 0600) or, with --stdout, to a one-shot pipe.  The proof/vault
+# and passdb wiring live in the runtime + smb_core; this block adds only
+# the new tool and its headless integration test.
+#
+# Self-contained: gated on the SAME options as the D6 block above so the
+# targets it links against (nostr_auth_runtime, nostr_smb_core) are known
+# to exist.  Adds NO new options and does not disturb targets defined
+# earlier.  An install rule is intentionally NOT emitted here; the desktop
+# packaging bucket owns tool install layouts.
+# ----------------------------------------------------------------------------
+if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND NOSTR_HOMED_ENABLE_SMB)
+  add_executable(nostr-smb-acquire
+    src/smb/nostr-smb-acquire.c)
+  target_compile_options(nostr-smb-acquire PRIVATE
+    -std=c11 -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_compile_definitions(nostr-smb-acquire PRIVATE _DEFAULT_SOURCE=1)
+  target_include_directories(nostr-smb-acquire PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/smb)
+  target_link_libraries(nostr-smb-acquire PRIVATE
+    nostr_auth_runtime nostr_smb_core)
+  # Install: intentionally not wired — desktop packaging owns final layout.
+  # A follow-up may install to CMAKE_INSTALL_BINDIR under a packaging opt.
+  if(NOSTR_HOMED_BUILD_TESTS)
+    # Rebuild the acquire core into the test binary with NH_SMB_ACQUIRE_NO_MAIN
+    # so we can drive it without exec'ing the CLI or depending on a tty.
+    add_executable(test_smb_acquire
+      tests/integration/test_smb_acquire.c
+      src/smb/nostr-smb-acquire.c)
+    target_compile_options(test_smb_acquire PRIVATE
+      -std=c11 -Wall -Wextra -Werror -Wno-misleading-indentation)
+    target_compile_definitions(test_smb_acquire PRIVATE
+      _DEFAULT_SOURCE=1 NH_SMB_ACQUIRE_NO_MAIN=1)
+    target_include_directories(test_smb_acquire PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/smb
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(test_smb_acquire PRIVATE
+      nostr_auth_runtime nostr_smb_core)
+    add_test(NAME homed_smb_acquire COMMAND test_smb_acquire)
+    set_tests_properties(homed_smb_acquire
+      PROPERTIES LABELS "nostr-homed;smb" TIMEOUT 120)
+  endif()
+endif()
