@@ -5,14 +5,28 @@
 #include "identity_internal.h"
 
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
+/* Open the projection strictly read-only. We use SQLite's URI form with
+ * `immutable=1` so SQLite skips journal/WAL bookkeeping (no side-effect
+ * creation of `<db>-wal` or `<db>-shm` on lookup, per the A3/A5 acceptance
+ * criteria). Paths that would confuse the URI parser (containing `?`, `#`,
+ * or `%`) are refused rather than silently escaped — projection paths are
+ * ordinary absolute filesystem paths in every supported deployment. */
 static int reader_open_db(const nh_identity_reader *reader, sqlite3 **out) {
-  int flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX;
+  int flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_URI;
+  char uri[NH_IDENTITY_HOME_CAP + 32];
+  int written;
   *out = NULL;
-  return sqlite3_open_v2(reader->path, out, flags, NULL);
+  if (strchr(reader->path, '?') || strchr(reader->path, '#') ||
+      strchr(reader->path, '%'))
+    return SQLITE_CANTOPEN;
+  written = snprintf(uri, sizeof uri, "file:%s?immutable=1", reader->path);
+  if (written < 0 || (size_t)written >= sizeof uri) return SQLITE_CANTOPEN;
+  return sqlite3_open_v2(uri, out, flags, NULL);
 }
 
 static int pragma_value(sqlite3 *db, const char *sql, sqlite3_int64 *out) {
