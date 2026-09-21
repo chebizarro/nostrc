@@ -166,6 +166,29 @@ GNOME greeter renders them as prompts — no greeter-side plugin is required.
 When the interactive local/remote provider choice needs to appear, GDM's
 greeter uses the same `PAM_PROMPT_ECHO_ON` conversation to surface it.
 
+## 5b — Close the live NIP-46 external-signer proof (C7)
+
+When the sample GDM stack is driven with the NIP-46 provider (a real
+bunker instead of the local vault), the pre-login challenge is a
+`sign_event` for kind `NH_AUTH_CHALLENGE_KIND` = 1. If the bunker's
+signet policy store has no `allow_kinds` rule permitting kind 1 for
+the agent bound to our pre-paired client transport key, the broker
+reports `invalid_proof` with `reason_code=policy.default_deny` and
+GDM refuses the login even though connect + `get_public_key`
+succeed.
+
+Grant the kind turnkey with `signet/tools/grant-login-kind.sh`
+(see `signet/docs/GRANT_LOGIN_KIND.md` for the full walkthrough,
+the exact `signetctl set-policy` invocation, and the single
+operator-supplied secret — `SIGNET_PROVISIONER_NSEC_FILE`). Then
+confirm the positive path with:
+
+```sh
+NH_NIP46_LIVE=1 <build>/gnome/nostr-homed/test_broker_login_nip46_live
+```
+
+Beads: `nostrc-ot2c.7` (C7), `nostrc-7t61` (C7-operator ACL grant).
+
 ## 6 — Uninstall / lab teardown
 
 The install layout is entirely under `/usr` + `/etc` + `/var/lib/nostr-auth`.
