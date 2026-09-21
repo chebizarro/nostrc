@@ -22,6 +22,8 @@ option(NOSTR_HOMED_ENABLE_NSS
   "Build and install the read-only libnss_nostr NSS module (requires identity core)" OFF)
 option(NOSTR_HOMED_ENABLE_AUTH_RUNTIME
   "Build the auth broker daemon/client transport nostr-authd (requires auth+identity cores)" OFF)
+option(NOSTR_HOMED_ENABLE_PAM
+  "Build the broker-backed pam_nostr.so PAM module (requires auth runtime + libpam)" OFF)
 option(NOSTR_HOMED_ENABLE_DOMAIN_CONFIG
   "Install inert winbind/domain examples and validator (never activates PAM)" OFF)
 option(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING
@@ -187,7 +189,26 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
     add_test(NAME homed_broker_login COMMAND test_broker_login)
     set_tests_properties(homed_broker_login
       PROPERTIES LABELS "nostr-homed;auth-runtime" TIMEOUT 120)
+    add_executable(nh-seed-authority tests/integration/seed_authority.c)
+    target_link_libraries(nh-seed-authority PRIVATE nostr_auth_runtime)
   endif()
+endif()
+
+# B4: broker-backed PAM module. Authentication succeeds only via broker proof.
+if(NOSTR_HOMED_ENABLE_PAM)
+  if(NOT NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
+    message(FATAL_ERROR "NOSTR_HOMED_ENABLE_PAM requires NOSTR_HOMED_ENABLE_AUTH_RUNTIME")
+  endif()
+  find_path(PAM_INCLUDE_DIR security/pam_modules.h)
+  find_library(PAM_LIBRARY NAMES pam)
+  if(NOT PAM_INCLUDE_DIR OR NOT PAM_LIBRARY)
+    message(FATAL_ERROR "NOSTR_HOMED_ENABLE_PAM requires libpam headers (libpam0g-dev)")
+  endif()
+  add_library(pam_nostr MODULE src/pam/pam_nostr_broker.c)
+  set_target_properties(pam_nostr PROPERTIES PREFIX "" OUTPUT_NAME "pam_nostr")
+  target_compile_options(pam_nostr PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_include_directories(pam_nostr PRIVATE ${PAM_INCLUDE_DIR})
+  target_link_libraries(pam_nostr PRIVATE nostr_auth_runtime ${PAM_LIBRARY})
 endif()
 
 if(NOSTR_HOMED_ENABLE_DOMAIN_CONFIG)
