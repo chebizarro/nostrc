@@ -1,0 +1,3 @@
+# Native format is deliberate for the phase-1 internal PPA (D-13). Upstream
+# switch to 3.0 (quilt) is tracked with the archive-NEW readiness beads.
+nostrc source: native-package-with-dash-version

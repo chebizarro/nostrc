@@ -1,0 +1,3 @@
+usr/lib/*/libnostr-json.so
+usr/lib/*/pkgconfig/libnostr-json.pc
+usr/lib/*/pkgconfig/nostr_json.pc

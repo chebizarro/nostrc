@@ -1,0 +1,19 @@
+nostrc (0.3.0-1) UNRELEASED; urgency=medium
+
+  * Initial Debian source package for the nostrc monorepo.
+  * Phase 1 (nostrc-rb0e.3 D2, nostrc-rb0e.10 D9): headless
+    nostr-login stack.
+    - libnss-nostr: read-only NSS module (libnss_nostr.so.2).
+    - libpam-nostr: broker-backed PAM module + pam-auth-update profile.
+    - nostr-authd: auth broker daemon + hardened systemd unit.
+    - nostr-homectl: headless identity-authority CLI (NOSTR_HOMED_ENABLE_CTL)
+      plus nostr-homed-seed provisioning tool.
+    - nostr-homed-smb: nostr-smb-acquire / nostr-smb-mount.
+    - nostr-homed-domain: inert winbind samples + validator (arch:all).
+    - nostr-login: metapackage.
+  * Also ships the core runtime the login stack links against:
+    libnostr1, libnostrgo0, libnostr-json1 and their -dev packages.
+  * Built with NOSTR_WITH_GLIB=OFF so libnostr1 and the whole nostr-login
+    Depends closure carry no GLib (D-14 headless ABI).
+
+ -- GNostr Project <gnostr@example.com>  Tue, 22 Sep 2026 00:00:00 +0000

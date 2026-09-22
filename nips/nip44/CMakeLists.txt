@@ -12,7 +12,7 @@ set(NIP44_CORE_SRC
   ${CMAKE_CURRENT_SOURCE_DIR}/src/core/nip44_base64.c
 )
 
-add_library(nostr_nip44_core ${NIP44_CORE_SRC})
+add_library(nostr_nip44_core STATIC ${NIP44_CORE_SRC})
 target_include_directories(nostr_nip44_core PUBLIC ${NIP44_INC})
 find_package(OpenSSL REQUIRED)
 find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)

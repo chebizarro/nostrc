@@ -1,0 +1,227 @@
+Source: nostrc
+Section: admin
+Priority: optional
+Maintainer: GNostr Project <gnostr@example.com>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.20),
+               ninja-build,
+               pkg-config,
+               python3,
+               libssl-dev,
+               libsecp256k1-dev,
+               libsqlite3-dev,
+               libjansson-dev,
+               libwebsockets-dev,
+               libnsync-dev,
+               libpam0g-dev,
+               libcurl4-openssl-dev,
+               libsodium-dev,
+               chrpath
+Standards-Version: 4.6.2
+Homepage: https://github.com/chebizarro/nostrc
+Vcs-Browser: https://github.com/chebizarro/nostrc
+Vcs-Git: https://github.com/chebizarro/nostrc.git
+Rules-Requires-Root: no
+
+Package: libnostr1
+Section: libs
+Architecture: any
+Multi-Arch: same
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Nostr protocol implementation for C (headless ABI)
+ libnostr is a C implementation of the Nostr protocol: event/tag encoding,
+ signing/verification (secp256k1), transport (libwebsockets) and helper types.
+ .
+ This package ships the shared library libnostr.so.1 built with the
+ GLib-free (headless) ABI (NOSTR_WITH_GLIB=OFF, decision D-14) so servers
+ can install the nostr login stack with no GLib/GTK/GNOME dependency.
+
+Package: libnostr-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends: libnostr1 (= ${binary:Version}),
+         libnostr-json-dev (= ${binary:Version}),
+         libnostrgo-dev (= ${binary:Version}),
+         libssl-dev,
+         libsecp256k1-dev,
+         libwebsockets-dev,
+         libnsync-dev,
+         ${misc:Depends}
+Description: Nostr protocol implementation for C -- development files
+ Development files for libnostr: headers under /usr/include/nostr/ and
+ the nostr.pc pkg-config metadata for the GLib-free (headless) ABI.
+
+Package: libnostrgo0
+Section: libs
+Architecture: any
+Multi-Arch: same
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Go-inspired concurrency primitives for C
+ libnostrgo provides Go-inspired concurrency primitives (channels,
+ wait groups, tickers, contexts, refcounts, error propagation) used by
+ libnostr and the nostrc runtime.
+ .
+ The library was renamed from `libgo` (which collides with gccgo's
+ runtime in Debian) as decision D-3; the on-disk soname is
+ libnostrgo.so.0.
+
+Package: libnostrgo-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends: libnostrgo0 (= ${binary:Version}),
+         libnsync-dev,
+         ${misc:Depends}
+Description: Go-inspired concurrency primitives for C -- development files
+ Development files for libnostrgo: headers under /usr/include/ and
+ pkg-config metadata (libnostrgo.pc, with a libgo.pc compatibility
+ symlink for one release).
+
+Package: libnostr-json1
+Section: libs
+Architecture: any
+Multi-Arch: same
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Nostr JSON interop layer (jansson wrappers for libnostr)
+ libnostr-json is the jansson-backed JSON interop layer for libnostr
+ (encoding/decoding events, filters and query strings). The library was
+ renamed from `nostr_json` per decision D-4; a compatibility symlink
+ libnostr_json.so is shipped alongside for one release.
+
+Package: libnostr-json-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends: libnostr-json1 (= ${binary:Version}),
+         libjansson-dev,
+         ${misc:Depends}
+Description: Nostr JSON interop layer -- development files
+ Development files for libnostr-json: headers and pkg-config metadata
+ (libnostr-json.pc, with an nostr_json.pc compatibility symlink for one
+ release).
+
+Package: libnss-nostr
+Section: admin
+Architecture: any
+Multi-Arch: same
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: NSS module projecting the nostr identity authority into passwd/group
+ libnss-nostr installs the read-only glibc NSS module libnss_nostr.so.2
+ which projects nostr-authd's identity authority (a SQLite projection
+ written atomically by the broker) into passwd/group lookups. Admins wire
+ it into /etc/nsswitch.conf; the module reads its configuration from
+ /etc/nss_nostr.conf.
+ .
+ Install nostr-login for the full broker+PAM+NSS login stack.
+
+Package: libpam-nostr
+Section: admin
+Architecture: any
+Multi-Arch: same
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         libpam-runtime (>= 1.0.1-6),
+         nostr-authd (>= ${source:Version})
+Recommends: libnss-nostr (>= ${source:Version})
+Description: PAM module authenticating against the nostr auth broker
+ libpam-nostr installs pam_nostr.so, the broker-backed PAM authenticator
+ that consults nostr-authd via /run/nostr-auth/auth.sock. It also ships
+ the pam-auth-update profile /usr/share/pam-configs/nostr so admins can
+ compose pam_nostr into common-auth / common-account with
+ `pam-auth-update --package` rather than editing gdm-password or
+ common-auth by hand.
+ .
+ Semantics are the strict-deny posture (beads nostrc-o1ho): known nostr
+ accounts with a failed proof are refused (default=die), unknown accounts
+ fall through to Unix auth (user_unknown=ignore), and a stopped broker
+ never bricks local login (authinfo_unavail=ignore).
+
+Package: nostr-authd
+Section: admin
+Architecture: any
+Multi-Arch: foreign
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Nostr authentication broker daemon
+ nostr-authd is the SOCK_SEQPACKET broker that mediates authentication for
+ the nostr-homed login stack. It vends CHECK_ACCOUNT / BEGIN_LOGIN /
+ SUBMIT_PROOF over the privileged /run/nostr-auth/auth.sock, backs a
+ local-vault provider (encrypted authority.db) and a NIP-46 external
+ signer provider, and re-publishes a read-only NSS projection consumed by
+ libnss_nostr.so.2.
+ .
+ Ships a hardened systemd unit
+ (RuntimeDirectory=nostr-auth/0711, StateDirectory=nostr-auth/0700,
+ ProtectSystem=strict, RestrictAddressFamilies=AF_UNIX,
+ MemoryDenyWriteExecute=yes) and the /etc/nostr-auth/auth.conf conffile.
+
+Package: nostr-homectl
+Section: admin
+Architecture: any
+Multi-Arch: foreign
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}, nostr-authd (>= ${source:Version})
+Description: Headless identity-authority admin CLI for nostr-homed
+ nostr-homectl is the GLib-free / FUSE-free identity-authority admin CLI
+ (NOSTR_HOMED_ENABLE_CTL, decision D-11). It queries and mutates the
+ authority store owned by nostr-authd -- listing accounts, exporting the
+ read-only NSS projection, and driving disable/enable transitions.
+ .
+ Also ships nostr-homed-seed (the provisioning tool renamed from
+ nh-seed-authority) in /usr/sbin, which mints the encrypted vault and
+ the NSS projection for new accounts.
+
+Package: nostr-homed-smb
+Section: admin
+Architecture: any
+Multi-Arch: foreign
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         cifs-utils,
+         nostr-authd (>= ${source:Version})
+Recommends: samba-common-bin
+Suggests: gvfs-backends
+Description: SMB credential acquisition tools for nostr-homed
+ nostr-smb-acquire drives BEGIN_SMB_PROOF against nostr-authd's
+ /run/nostr-auth/user.sock and delivers the minted, short-lived SMB
+ password as a Samba credentials= file (mode 0600) or, with --stdout,
+ to a one-shot pipe. nostr-smb-mount is the shell wrapper that consumes
+ that credentials file and mounts the share via mount.cifs (default) or
+ gvfs (--mode gvfs).
+ .
+ Install this together with nostr-login for a headless server that
+ authenticates SMB shares through the nostr broker.
+
+Package: nostr-homed-domain
+Section: admin
+Architecture: all
+Depends: ${misc:Depends}, python3
+Description: Inert winbind / Samba AD domain samples for nostr-homed
+ Ships the winbind and Samba AD configuration samples used by nostr-homed
+ to document a domain-joined deployment, plus the
+ validate_domain_profile.py profile validator. Nothing in this package
+ activates PAM or winbind -- it is inert by design and is safe to install
+ on a stock host.
+
+Package: nostr-login
+Section: metapackages
+Architecture: all
+Depends: ${misc:Depends},
+         libnss-nostr (>= ${source:Version}),
+         libpam-nostr (>= ${source:Version}),
+         nostr-authd (>= ${source:Version}),
+         nostr-homectl (>= ${source:Version})
+Recommends: nostr-homed-smb (>= ${source:Version})
+Suggests: nostr-homed-domain (>= ${source:Version})
+Description: Headless nostr login stack (metapackage)
+ Depends on the four components that make up a working nostr login stack
+ on a headless server: the NSS projection (libnss-nostr), the broker-backed
+ PAM module (libpam-nostr), the auth broker daemon (nostr-authd) and the
+ identity-authority admin CLI (nostr-homectl).
+ .
+ The dependency closure is deliberately headless (decision D-14): no
+ GTK/GNOME/gvfs/libsecret/libpeas/webkit/gstreamer/FUSE, and no GLib.

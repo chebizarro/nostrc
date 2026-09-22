@@ -1,0 +1,3 @@
+usr/lib/*/libnss_nostr.so.2
+etc/nss_nostr.conf
+usr/share/nostr-homed/nostr-homed-cache.legacy.conf.sample

@@ -205,8 +205,15 @@ endif()
 if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-fstack-protector-strong -fno-strict-aliasing)
   # _FORTIFY_SOURCE is incompatible with sanitizers (ASAN sets it to 0)
-  # Only add when not using sanitizers to avoid macro redefinition errors
-  if (NOT (GO_ENABLE_ASAN OR GO_ENABLE_UBSAN OR GO_ENABLE_TSAN))
+  # Only add when not using sanitizers to avoid macro redefinition errors.
+  # Also skip when the distro build environment (e.g. Debian's
+  # dpkg-buildflags hardening) already puts -D_FORTIFY_SOURCE=<n> in
+  # CFLAGS/CPPFLAGS; a duplicate -D_FORTIFY_SOURCE=2 then triggers a
+  # `-Werror` `"_FORTIFY_SOURCE" redefined` diagnostic in targets
+  # compiled with -Werror (auth_core, nip55l_glib, ...).
+  set(_nostr_env_cflags "$ENV{CFLAGS} $ENV{CPPFLAGS} $ENV{DEB_CFLAGS} $ENV{DEB_CPPFLAGS}")
+  string(FIND "${_nostr_env_cflags}" "_FORTIFY_SOURCE" _nostr_fortify_pos)
+  if (NOT (GO_ENABLE_ASAN OR GO_ENABLE_UBSAN OR GO_ENABLE_TSAN) AND _nostr_fortify_pos EQUAL -1)
     add_compile_options(-D_FORTIFY_SOURCE=2)
   endif()
   # Position independent for shared libs

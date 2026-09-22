@@ -1,0 +1,4 @@
+# PAM modules are dlopen()ed by libpam under a fixed filename (pam_nostr.so)
+# from /usr/lib/<multiarch>/security/. They are not public shared libraries:
+# no -dev, no shlibs, no symbols file, and the executable bit is expected.
+libpam-nostr: shared-library-is-executable

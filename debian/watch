@@ -1,0 +1,4 @@
+version=4
+opts="mode=git" \
+  https://github.com/chebizarro/nostrc \
+  refs/tags/v?(\d\S*) debian

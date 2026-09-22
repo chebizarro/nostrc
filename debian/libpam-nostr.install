@@ -1,0 +1,4 @@
+usr/lib/*/security/pam_nostr.so
+usr/share/pam-configs/nostr
+usr/share/doc/libpam-nostr/examples/pam/*
+usr/share/doc/libpam-nostr/nostr.pam-configs.annotated

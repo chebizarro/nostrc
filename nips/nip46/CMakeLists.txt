@@ -10,7 +10,7 @@ set(NIP46_CORE_SRC
   ${CMAKE_CURRENT_SOURCE_DIR}/src/core/nip46_msg.c
 )
 
-add_library(nostr_nip46_core ${NIP46_CORE_SRC})
+add_library(nostr_nip46_core STATIC ${NIP46_CORE_SRC})
 target_include_directories(nostr_nip46_core PUBLIC ${NIP46_INC})
 # Ensure nip44/nip04 headers are visible and libraries linked
 target_include_directories(nostr_nip46_core PUBLIC
@@ -23,7 +23,8 @@ set(NIP46_GLIB_SRC
   ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/nip46_client_g.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/nip46_bunker_g.c
 )
-if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/nip46_client_g.c)
+# B11/D-14: gated on NOSTR_WITH_GLIB so headless builds don't require GIO.
+if (NOSTR_WITH_GLIB AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/nip46_client_g.c)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(GIO REQUIRED gio-2.0)
   add_library(nostr_nip46_glib ${NIP46_GLIB_SRC})

@@ -1,0 +1,3 @@
+usr/lib/*/libnostr.so
+usr/lib/*/pkgconfig/nostr.pc
+usr/include/nostr/*
