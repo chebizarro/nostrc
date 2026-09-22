@@ -7,5 +7,5 @@ Name: libnostrgo
 Description: Go-inspired concurrency primitives for C (formerly libgo)
 Version: @LIBGO_VERSION@
 Libs: -L${libdir} -lnostrgo
-Libs.private: -lnsync -lpthread
+Libs.private: @LIBNOSTRGO_PC_NSYNC_LIB@-lpthread
 Cflags: -I${includedir}

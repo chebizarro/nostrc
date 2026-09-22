@@ -28,9 +28,13 @@ pkg_check_modules(LWS REQUIRED libwebsockets)
 include_directories(${LWS_INCLUDE_DIRS})
 pkg_check_modules(GLIB QUIET IMPORTED_TARGET glib-2.0>=2.50 gobject-2.0>=2.50)
 
-# Find the nsync library and headers manually (synchronization primitives)
-find_library(NSYNC_LIB NAMES nsync REQUIRED)
-find_path(NSYNC_INCLUDE_DIR NAMES nsync.h REQUIRED)
+# nsync is resolved centrally by cmake/FindOrVendorNsync.cmake (system or
+# vendored via the third_party/nsync submodule).  Guard so this file works
+# standalone too (nostrc-dd5y).
+if(NOT DEFINED _NOSTR_FIND_OR_VENDOR_NSYNC_DONE)
+  list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/../cmake")
+  include(FindOrVendorNsync)
+endif()
 
 # Include the nsync headers
 include_directories(${NSYNC_INCLUDE_DIR})
@@ -86,7 +90,7 @@ if (GLIB_FOUND)
   target_link_libraries(nostr_json PRIVATE PkgConfig::GLIB)
 endif()
 target_link_libraries(nostr_json PUBLIC PkgConfig::JANSSON)
-target_link_libraries(nostr_json PRIVATE ${NSYNC_LIB} libnostr ${LWS_LIBRARIES})
+target_link_libraries(nostr_json PRIVATE nostrc::nsync libnostr ${LWS_LIBRARIES})
 
 # Install rules for libjson (nostr_json -> libnostr-json)
 include(GNUInstallDirs)
