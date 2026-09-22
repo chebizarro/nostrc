@@ -181,35 +181,90 @@ static void wipe(char *s) {
  * (docs/reviews/qr-greeter-render-spike-2026-09-22.md) rules the half-block
  * QR NO-GO in the graphical greeter (proportional Cantarell + label wrap),
  * so we only emit it when we can be reasonably sure the client renders in a
- * monospace terminal — real TTY / ssh / pamtester. Wrong-way false negatives
- * are safe (the URI + pairing code always ship); the danger is a wrong-way
- * false positive that mangles the greeter, so err on the side of "no QR". */
+ * monospace terminal — real TTY / ssh / pamtester. The safe default is
+ * graphical: a wrong-way false positive (block QR on the greeter) is what
+ * ruined the earlier phone-test rig screenshot when PAM_TTY under Wayland
+ * GDM came through as /dev/tty1 and matched the naive "/dev/tty" prefix
+ * test — see docs/reviews/phone-test-rig-2026-09-22.md.
+ *
+ * Rules (all must hold to return 1 = text-console):
+ *   1. PAM_SERVICE must NOT be a known graphical greeter (any name
+ *      starting with "gdm", any name containing "gnome"/"lightdm"/"sddm",
+ *      or literal "xdm"). These own a graphical surface unconditionally.
+ *   2. PAM_XDISPLAY must be unset (X greeters set it; Wayland greeters
+ *      leave it unset, so its absence is not by itself proof of text).
+ *   3. PAM_TTY must be a real console path (/dev/tty[0-9]+, tty[0-9]+,
+ *      a pts, the literal "ssh" or "console"). ":0"/":wayland-0" are
+ *      explicit graphical markers.
+ *   4. PAM_SERVICE must ALSO be a known-text service (login,
+ *      nostr-login, sshd/ssh, su*, sudo*, systemd-user, or pamtester's
+ *      default check_user). A GDM stack that happens to plumb
+ *      PAM_TTY = /dev/tty1 without an XDG display marker will fail
+ *      rule 1 but this guards any other future graphical stack that
+ *      slips through the name check. */
+static int service_is_graphical(const char *service) {
+  if (!service || !service[0]) return 0;
+  if (!strncmp(service, "gdm", 3)) return 1;        /* gdm-password, ... */
+  if (strstr(service, "gnome")) return 1;           /* gnome-*, *-gnome-* */
+  if (strstr(service, "lightdm")) return 1;
+  if (strstr(service, "sddm")) return 1;
+  if (!strcmp(service, "xdm")) return 1;
+  return 0;
+}
+
+static int service_is_known_text(const char *service) {
+  if (!service || !service[0]) return 0;
+  if (!strcmp(service, "login")) return 1;
+  if (!strcmp(service, "nostr-login")) return 1;
+  if (!strcmp(service, "sshd") || !strcmp(service, "ssh")) return 1;
+  if (!strncmp(service, "su", 2) &&
+      (service[2] == '\0' || service[2] == '-')) return 1;   /* su, su-l */
+  if (!strncmp(service, "sudo", 4) &&
+      (service[4] == '\0' || service[4] == '-')) return 1;   /* sudo, sudo-i */
+  if (!strcmp(service, "systemd-user")) return 1;
+  if (!strcmp(service, "check_user")) return 1;              /* pamtester */
+  return 0;
+}
+
 static int is_text_console(pam_handle_t *pamh, const char *service) {
+  /* Rule 1: any known graphical service short-circuits to graphical.
+   * gdm-password on Wayland plumbs PAM_TTY=/dev/tty1, which naïvely
+   * matches "/dev/tty" and would fall through to the text branch and
+   * mangle the greeter with an unreadable block QR — the concrete
+   * failure this whole reshuffle exists to fix.  Any service whose name
+   * is a known display manager or GNOME shell service owns a graphical
+   * surface unconditionally. */
+  if (service_is_graphical(service)) return 0;
+
+  /* Rule 2: PAM_XDISPLAY set means an X-hosted graphical greeter. */
   const char *xdisplay = NULL;
 #ifdef PAM_XDISPLAY
   pam_get_item(pamh, PAM_XDISPLAY, (const void **)&xdisplay);
   if (xdisplay && xdisplay[0]) return 0;
 #endif
+
+  /* Rule 3: an explicit graphical PAM_TTY (":0" / ":1" / ":wayland-*")
+   * is a definitive graphical marker even without PAM_XDISPLAY. */
   const char *tty = NULL;
   pam_get_item(pamh, PAM_TTY, (const void **)&tty);
-  if (tty && tty[0]) {
-    /* A graphical greeter passes ":0" / ":1" / ":wayland-0" as PAM_TTY. */
-    if (tty[0] == ':') return 0;
-    if (!strncmp(tty, "/dev/tty", 8)) return 1;
-    if (!strncmp(tty, "tty", 3)) return 1;
-    if (!strncmp(tty, "pts/", 4) || !strncmp(tty, "/dev/pts/", 9)) return 1;
-    /* ssh sets PAM_TTY = "ssh". */
-    if (!strcmp(tty, "ssh")) return 1;
-    if (!strcmp(tty, "console")) return 1;
-  }
-  if (service) {
-    if (!strncmp(service, "gdm", 3)) return 0;
-    if (!strcmp(service, "lightdm") || !strcmp(service, "sddm") ||
-        !strcmp(service, "xdm")) return 0;
-  }
-  /* Default to text — pamtester / lockable services / init-style ttys
-   * never set PAM_XDISPLAY. */
-  return 1;
+  if (tty && tty[0] == ':') return 0;
+
+  /* Rule 4: a known-text service (login / nostr-login / sshd / su* /
+   * sudo* / systemd-user / pamtester's check_user) is authoritative for
+   * the text-console path.  pamtester in particular does not set
+   * PAM_TTY unless invoked with -h, so we cannot require a
+   * console-looking PAM_TTY here without breaking the nostr-login smoke
+   * path that the render-spike review depends on. */
+  if (service_is_known_text(service)) return 1;
+
+  /* Rule 5: an unrecognised service defaults to graphical.  The URI
+   * and pairing code still ship via the broker's greeter artifact
+   * (/run/nostr-auth/greeter/current.png), so a false negative here
+   * just means the caller has to point their signer at the on-screen
+   * QR rather than a block QR embedded in a pam_info payload — never
+   * a hard fail.  A false positive would mangle the greeter, which is
+   * the outcome we're preventing. */
+  return 0;
 }
 
 /* Render the QR pane the PAM module hands the user. On the graphical
@@ -227,11 +282,19 @@ static void render_qr_info(pam_handle_t *pamh, const nh_auth_display *disp,
                          : "Scan this with your Nostr signer app";
 
   if (!text_console) {
-    /* Graphical greeter: short pairing code + hint only. */
+    /* Graphical greeter: SHORT message only — pairing code plus a hint
+     * that points at the QR the greeter extension renders on-screen.
+     * No URI dump, no block QR (both are unreadable in the greeter's
+     * proportional Cantarell font per the render-spike review).
+     * Ignores disp->hint deliberately so the on-screen text ALWAYS
+     * matches: "Pairing code: X / Scan the QR code shown on screen with
+     * your Nostr signer app". */
+    (void)hint;
     char msg[256];
     snprintf(msg, sizeof msg,
-             "%s\nPairing code: %s\nWaiting for your signer\xe2\x80\xa6",
-             hint, disp->pairing_code);
+             "Pairing code: %s\n"
+             "Scan the QR code shown on screen with your Nostr signer app",
+             disp->pairing_code);
     pam_info(pamh, "%s", msg);
     return;
   }

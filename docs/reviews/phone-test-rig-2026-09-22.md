@@ -19,10 +19,18 @@
   card that never overlaps the greeter user block — see
   `docs/reviews/gdm-qr-extension-2026-09-22.md` for the prior top-centre
   version's overlap failure at 1280×800).
-- Screenshots proving the polish: `/tmp/rig-final/greeter-01-idle.png`
-  (Nostr User + QR card on the right, avatar and password entry
-  unobscured), `/tmp/rig-final/greeter-03-hidden.png` (extension hides
-  after tx retire).
+- Screenshots proving the polish (post PAM fix, current):
+  `/tmp/rig-final/greeter-05-post-pam-fix-qr.png` — Nostr User avatar
+  and password entry centred, a SHORT `Pairing code: 22F4-088C /
+  Scan the QR code shown on screen with your Nostr signer app` line
+  under the entry (no block QR, no URI dump — see §7.1), and the
+  right-side QR card with the matching pairing code; Ubuntu logo
+  fully visible at the bottom.  `/tmp/rig-final/greeter-06-post-pam-fix-idle.png`
+  — after ESC, the extension hides and the greeter is back to the
+  clean tile list.  Older reference shot at
+  `/tmp/rig-final/greeter-01-idle.png` still shows the layout polish
+  but pre-dates the PAM fix so its centre still carries the block QR
+  garbage — kept for the layout-fix diff, not as a maintainer target.
 - Seeded pubkey (maintainer's npub, bech32 checksum verified):
   `cdee943cbb19c51ab847a66d5d774373aa9f63d287246bb59b0827fa5e637400`
   (`npub1ehhfg09mr8z34wz85ek46a6rww4f7c7jsujxhdvmpqnl5hnrwsqq2szjqv`).
@@ -201,6 +209,66 @@ camera will see, but through a virsh screenshot capture at 1280×800.
 Pairing code `3653-B4D1` visible in the screenshot matches the first 8
 hex of the client pubkey `3653b4d1…`, as required by the design's 4-4
 dashed pairing scheme.
+
+## 7.1 PAM graphical/text-console detection fix
+
+`gnome/nostr-homed/src/pam/pam_nostr_broker.c` — the `is_text_console()`
+heuristic was reshuffled to default to graphical and require positive
+proof of a text console before emitting the block QR.  The earlier
+version keyed on `PAM_TTY` first, which under Wayland-GDM comes through
+as `/dev/tty1` and naïvely matched the `"/dev/tty"` prefix — the
+graphical greeter then rendered the half-block QR (proportional
+Cantarell wraps every module; unscannable, and it overflowed onto the
+Ubuntu logo — see the older `/tmp/qr-ext/greeter-02-prompt.png`).
+
+New rules, in order:
+
+1. `service_is_graphical(service)` short-circuits to graphical if
+   `PAM_SERVICE` starts with `gdm` (`gdm-password`,
+   `gdm-launch-environment`, …), contains `gnome`/`lightdm`/`sddm`,
+   or is literal `xdm`.
+2. `PAM_XDISPLAY` set → graphical (X greeters only; Wayland leaves it
+   unset).
+3. An explicit graphical `PAM_TTY` (`:0` / `:1` / `:wayland-*`) →
+   graphical.
+4. `service_is_known_text(service)` is authoritative for text-console:
+   `login`, `nostr-login`, `sshd`/`ssh`, `su`/`su-l`,
+   `sudo`/`sudo-i`, `systemd-user`, `check_user` (pamtester default).
+5. Anything else → graphical (safe default).
+
+Rule 4 is authoritative even without `PAM_TTY` because `pamtester`
+without `-h` leaves `PAM_TTY` unset — requiring a console-looking TTY
+plus a known-text service was too strict and broke the
+`nostr-login` smoke path.
+
+On the graphical branch of `render_qr_info()` the `pam_info` payload
+is a fixed 2-line message that always reads `Pairing code: X /
+Scan the QR code shown on screen with your Nostr signer app` (no URI
+dump, no block QR).  The broker's `hint` field is ignored on the
+graphical path so on-screen text is stable across account
+configurations.  The text-console branch still emits the half-block
+QR + URI + pairing code (design D11), verified with
+`printf 'qr\n' | pamtester -v nostr-login n_bizarro authenticate`
+on the guest — see the standin_ok-style log embedded below.
+
+Text-console proof (guest pts, service `nostr-login`, timed out
+waiting for a signer after 12 s, block QR present):
+
+    pamtester: invoking pam_start(nostr-login, n_bizarro, ...)
+    pamtester: performing operation - authenticate
+    pamtester: Authentication failure
+    Scan this with your Nostr signer app:
+
+      █▀▀▀▀▀█  ▄▀▀█  ▄██▄▄███ ▄ █  █▀▀█ ████▄▄█ █▀▀▀▀▀█
+      █ ███ █ ▄ ▀▄██▄▀▄█▄ ▄ ▄█▄█▄ █▄█▀██ ▄▄▄ █▀ █ ███ █
+      … (half-block QR of the nostrconnect:// URI, elided) …
+      █ ▀▀▀ █ ▄ ▀▄  ▄  ██▄▀▀▄█▀█▀▀▄ ▄▀▄▄▀ ▀ ▀█  █▀▄▀  ▄
+      ▀▀▀▀▀▀▀ ▀  ▀▀ ▀▀  ▀  ▀▀▀▀▀  ▀▀▀ ▀ ▀ ▀ ▀      ▀  ▀
+
+    Or open this link on your phone:
+    nostrconnect://d8413ad5…?relay=wss%3A%2F%2Fnos.lol&secret=<REDACTED>&perms=sign_event%3A1&name=GNOME-QR-BIZARRO
+
+    Pairing code: D841-3AD5
 
 ## 7. What was polished on this branch
 
