@@ -45,7 +45,7 @@ first).
 Sequenced to avoid CMakeLists collisions: Track A (tree-wide target renames) runs
 SOLO first; Tracks B and C run concurrently against the renamed tree.
 
-- [ ] Track A (core lib ABI/naming hygiene, SOLO): B1 add VERSION/SOVERSION to every
+- [x] Track A (MERGED 31d804fb; SONAMEs+renames+GLib-pin, static+shared green): B1 add VERSION/SOVERSION to every
   installed lib; B2/D-3 rename libgo target+artifact -> libnostrgo (fix liblibgo
   double-prefix + gccgo collision) incl libgo.pc.in + ALL consumers; D-4 rename
   nostr_json -> libnostr-json (SONAME + .pc + one-release compat symlink); B11/D-14
