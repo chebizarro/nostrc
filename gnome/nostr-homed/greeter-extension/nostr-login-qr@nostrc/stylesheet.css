@@ -1,0 +1,35 @@
+/* nostr-login-qr@nostrc — greeter QR panel styles.
+ *
+ * The GDM greeter uses a dark theme; render the QR on a solid white plate so
+ * scanners always see maximum contrast regardless of the underlying wallpaper
+ * or theme.
+ */
+
+.nostr-login-qr-panel {
+    background-color: rgba(30, 30, 30, 0.92);
+    color: #f0f0f0;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 14px;
+    padding: 18px;
+    spacing: 12px;
+}
+
+.nostr-login-qr-image {
+    background-color: #ffffff;
+    padding: 10px;
+    border-radius: 6px;
+}
+
+.nostr-login-qr-pairing {
+    font-family: monospace;
+    font-size: 16pt;
+    font-weight: bold;
+    color: #ffffff;
+    padding-top: 4px;
+}
+
+.nostr-login-qr-hint {
+    font-size: 11pt;
+    color: rgba(240, 240, 240, 0.85);
+    padding: 0 6px;
+}

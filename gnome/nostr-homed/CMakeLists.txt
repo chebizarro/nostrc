@@ -38,6 +38,12 @@ option(NOSTR_HOMED_ENABLE_AUTH_INSTALL
 # both flags produce a `nostr-homectl` binary and are mutually exclusive.
 option(NOSTR_HOMED_ENABLE_CTL
   "Build the headless identity-authority nostr-homectl (requires identity core)" OFF)
+# Greeter-side gnome-shell extension that renders the pending NIP-46 QR pairing
+# in the GDM login dialog.  Purely display code (JS + CSS + metadata); no C
+# artefacts.  Independent of every other option here so packagers can ship the
+# extension without pulling in the auth runtime.
+option(NOSTR_HOMED_ENABLE_GREETER_EXTENSION
+  "Install the gnome-shell greeter extension nostr-login-qr@nostrc" OFF)
 option(NOSTR_HOMED_BUILD_TESTS "Build tests for enabled nostr-homed features" ON)
 
 if(NOSTR_HOMED_ENABLE_CTL AND NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
@@ -677,6 +683,31 @@ endif()
 # earlier.  An install rule is intentionally NOT emitted here; the desktop
 # packaging bucket owns tool install layouts.
 # ----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# Greeter QR extension (nostrc-z1fb / zcll.6):
+#
+# A tiny gnome-shell extension that watches /run/nostr-auth/greeter/current.json
+# and renders the pending NIP-46 QR pairing in the GDM login dialog.  Data-only:
+# three files installed under the system-wide gnome-shell extensions dir so
+# gdm picks it up in "gdm" session mode.  Enabling the extension for the
+# greeter is a dconf keyfile change (see greeter-extension/README.md) and is
+# intentionally NOT done from CMake — packagers own that policy.
+# ----------------------------------------------------------------------------
+if(NOSTR_HOMED_ENABLE_GREETER_EXTENSION)
+  set(NH_GREETER_EXT_UUID "nostr-login-qr@nostrc")
+  set(NH_GREETER_EXT_SRC
+      "${CMAKE_CURRENT_SOURCE_DIR}/greeter-extension/${NH_GREETER_EXT_UUID}")
+  set(NH_GREETER_EXT_DEST
+      "${CMAKE_INSTALL_DATADIR}/gnome-shell/extensions/${NH_GREETER_EXT_UUID}")
+  install(FILES
+      "${NH_GREETER_EXT_SRC}/metadata.json"
+      "${NH_GREETER_EXT_SRC}/extension.js"
+      "${NH_GREETER_EXT_SRC}/stylesheet.css"
+    DESTINATION "${NH_GREETER_EXT_DEST}")
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/greeter-extension/README.md"
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}/greeter-extension")
+endif()
+
 if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND NOSTR_HOMED_ENABLE_SMB)
   add_executable(nostr-smb-acquire
     src/smb/nostr-smb-acquire.c)
