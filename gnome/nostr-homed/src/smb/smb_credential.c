@@ -495,9 +495,16 @@ nh_smb_rc nh_smb_credential_issue(nh_smb_authority *a,
     return r;
   }
 
-  /* Populate envelope. */
-  strncpy(out->credential_id, credential_id, sizeof out->credential_id - 1);
-  strncpy(out->username, req->account.username, sizeof out->username - 1);
+  /* Populate envelope. Both `credential_id` (mint_credential_id -> 36-char
+   * UUID + NUL) and `req->account.username` (valid_username -> <=32 chars +
+   * NUL) live in fixed-size buffers the same size as the destination fields.
+   * strncpy(dst, src, sizeof(dst)-1) triggers -Werror=stringop-truncation
+   * under -O2 (GCC 13) because when strlen(src) == sizeof(dst)-1 the NUL is
+   * dropped; memcpy the whole buffer and NUL-terminate explicitly instead. */
+  memcpy(out->credential_id, credential_id, sizeof out->credential_id);
+  out->credential_id[sizeof out->credential_id - 1] = '\0';
+  memcpy(out->username, req->account.username, sizeof out->username);
+  out->username[sizeof out->username - 1] = '\0';
   out->issued_at_ms = req->now_monotonic_ms;
   out->expires_at_ms = expires_at_ms;
   out->password_len = pw_len;
@@ -648,13 +655,16 @@ nh_smb_rc nh_smb_authority_lookup_active(nh_smb_authority *a,
   const unsigned char *cid = sqlite3_column_text(stmt, 0);
   const unsigned char *un = sqlite3_column_text(stmt, 1);
   const unsigned char *pk = sqlite3_column_text(stmt, 3);
-  if (cid) strncpy(out->credential_id, (const char *)cid,
-                   sizeof out->credential_id - 1);
-  if (un) strncpy(out->username, (const char *)un,
-                  sizeof out->username - 1);
+  /* SQLite text is a dynamically-sized C string; snprintf bounds the copy
+   * AND always NUL-terminates. Replaces strncpy(dst, src, sizeof(dst)-1)
+   * which could drop the terminator (same -Wstringop-truncation family). */
+  if (cid) snprintf(out->credential_id, sizeof out->credential_id, "%s",
+                    (const char *)cid);
+  if (un) snprintf(out->username, sizeof out->username, "%s",
+                   (const char *)un);
   out->uid = (uint32_t)sqlite3_column_int64(stmt, 2);
-  if (pk) strncpy(out->pubkey_hex, (const char *)pk,
-                  sizeof out->pubkey_hex - 1);
+  if (pk) snprintf(out->pubkey_hex, sizeof out->pubkey_hex, "%s",
+                   (const char *)pk);
   out->issued_at_ms = (uint64_t)sqlite3_column_int64(stmt, 4);
   out->expires_at_ms = (uint64_t)sqlite3_column_int64(stmt, 5);
   out->revoked_at_ms = sqlite3_column_type(stmt, 6) == SQLITE_NULL
