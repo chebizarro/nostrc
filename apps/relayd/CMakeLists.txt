@@ -12,8 +12,13 @@ pkg_check_modules(LWS REQUIRED libwebsockets)
 
 find_package(OpenSSL REQUIRED)
 find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
-find_library(NSYNC_LIB nsync REQUIRED)
-find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
+# nsync resolved centrally by cmake/FindOrVendorNsync.cmake (system or
+# vendored copy from third_party/nsync).  Guard so this file works if
+# apps/relayd is ever configured as a standalone project (nostrc-dd5y).
+if(NOT DEFINED _NOSTR_FIND_OR_VENDOR_NSYNC_DONE)
+  list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+  include(FindOrVendorNsync)
+endif()
 include_directories(${NSYNC_INCLUDE_DIR})
 
 add_library(relay_security STATIC

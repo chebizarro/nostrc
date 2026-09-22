@@ -170,57 +170,12 @@ static void wipe(char *s) {
   while (*p) *p++ = 0;
 }
 
-/* Optional greeter-artifact PNG producer (design §5.3, §6, decision D3).
- * The broker publishes /run/nostr-auth/greeter/current.json; the greeter
- * extension expects a sibling current.png. Rendering happens here (not in
- * the broker) so qrcodegen stays out of the root daemon.
- *
- * Called only when the PAM conversation is a graphical greeter (the text
- * console has the half-block QR inline). Best-effort: any I/O failure is a
- * no-op — the pairing code + URI still show. */
-#ifndef NH_PAM_GREETER_DIR
-#define NH_PAM_GREETER_DIR "/run/nostr-auth/greeter"
-#endif
-#ifndef NH_PAM_GREETER_PNG
-#define NH_PAM_GREETER_PNG "current.png"
-#endif
-
-static const char *pam_greeter_dir(void) {
-  const char *env = getenv("NOSTR_HOMED_GREETER_DIR");
-  return (env && env[0]) ? env : NH_PAM_GREETER_DIR;
-}
-
-static void publish_greeter_png(const nh_auth_display *disp) {
-  if (!disp || !disp->uri[0]) return;
-  const char *dir = pam_greeter_dir();
-  struct stat st;
-  if (stat(dir, &st) != 0) {
-    if (mkdir(dir, 0755) != 0) return;
-  } else if (!S_ISDIR(st.st_mode)) {
-    return;
-  }
-  unsigned char *png = NULL;
-  size_t plen = 0;
-  if (nh_pam_qr_render_png(disp->uri, 9, 8, &png, &plen) != NH_QR_RENDER_OK ||
-      !png)
-    return;
-  char tmp[512], dst[512];
-  int n1 = snprintf(dst, sizeof dst, "%s/%s", dir, NH_PAM_GREETER_PNG);
-  int n2 = snprintf(tmp, sizeof tmp, "%s/%s.tmp", dir, NH_PAM_GREETER_PNG);
-  if (n1 <= 0 || (size_t)n1 >= sizeof dst || n2 <= 0 ||
-      (size_t)n2 >= sizeof tmp) { free(png); return; }
-  int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-  if (fd < 0) { free(png); return; }
-  ssize_t off = 0;
-  while ((size_t)off < plen) {
-    ssize_t w = write(fd, png + off, plen - (size_t)off);
-    if (w < 0) { close(fd); unlink(tmp); free(png); return; }
-    off += w;
-  }
-  close(fd);
-  if (rename(tmp, dst) != 0) unlink(tmp);
-  free(png);
-}
+/* Note: the greeter-artifact PNG is now produced by the broker
+ * (nh_broker_greeter_artifact_write in auth_conf.c) so a single publish
+ * always drops both current.json + current.png atomically. This module
+ * used to render the PNG here for the graphical-greeter path; that
+ * responsibility moved to the broker so the artifact is complete for
+ * any producer, including headless integration tests. */
 
 /* Heuristic: is this PAM conversation running on a text console? The design
  * (docs/reviews/qr-greeter-render-spike-2026-09-22.md) rules the half-block
@@ -317,7 +272,6 @@ typedef struct qr_render_ctx {
 static void qr_display_cb(void *ctx, const nh_auth_display *display) {
   qr_render_ctx *c = ctx;
   render_qr_info(c->pamh, display, c->text_console);
-  if (!c->text_console) publish_greeter_png(display);
 }
 
 int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,

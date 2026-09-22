@@ -36,6 +36,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* Budgets are subordinate to the broker's NH_AUTH_CHALLENGE_LIFETIME_SEC
  * (120 s → ~78 s scan window). Design §4.1. */
@@ -197,13 +198,25 @@ static void free_relays(char **relays, size_t n) {
 static json_t *build_display_payload(nip46_qr_provider *p, uint32_t wait_ms) {
   json_t *o = json_object();
   if (!o) return NULL;
+  /* expires_at is an ABSOLUTE unix-seconds timestamp (design §5.3 + the
+   * greeter-extension consumer contract in greeter-extension/README.md).
+   * The gnome-shell extension compares it against
+   * Math.floor(GLib.get_real_time()/1e6) and hides when
+   * expires_at <= now_sec, so a relative "expires_in_ms" here would make
+   * the QR look already expired. Compute the deadline from CLOCK_REALTIME
+   * at publish time. expires_in_ms is kept so PAM can still drive a local
+   * countdown, but the artifact/wire truth is expires_at. */
+  time_t now_sec = time(NULL);
+  int64_t expires_at = (int64_t)now_sec + (int64_t)(wait_ms / 1000u);
   if (json_object_set_new(o, "kind", json_string("nostrconnect")) ||
       json_object_set_new(o, "uri", json_string(p->uri)) ||
       json_object_set_new(o, "pairing_code", json_string(p->pairing_code)) ||
       json_object_set_new(o, "hint",
                           json_string("Scan this with your Nostr signer app")) ||
       json_object_set_new(o, "expires_in_ms",
-                          json_integer((json_int_t)wait_ms))) {
+                          json_integer((json_int_t)wait_ms)) ||
+      json_object_set_new(o, "expires_at",
+                          json_integer((json_int_t)expires_at))) {
     json_decref(o);
     return NULL;
   }

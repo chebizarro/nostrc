@@ -69,7 +69,9 @@ typedef struct nh_auth_display {
   char uri[NH_AUTH_DISPLAY_URI_MAX];
   char hint[NH_AUTH_DISPLAY_HINT_MAX];
   char pairing_code[NH_AUTH_DISPLAY_PAIRING_MAX];
-  uint32_t expires_in_ms;
+  uint32_t expires_in_ms;   /* relative — for PAM's local countdown only */
+  int64_t expires_at;       /* ABSOLUTE unix seconds — matches the artifact
+                             * and the greeter-extension consumer contract */
 } nh_auth_display;
 
 /* Connects to a broker SOCK_SEQPACKET endpoint. Returns 0 and sets *fd_out. */

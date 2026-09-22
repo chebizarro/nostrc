@@ -38,6 +38,12 @@ option(NOSTR_HOMED_ENABLE_AUTH_INSTALL
 # both flags produce a `nostr-homectl` binary and are mutually exclusive.
 option(NOSTR_HOMED_ENABLE_CTL
   "Build the headless identity-authority nostr-homectl (requires identity core)" OFF)
+# Greeter-side gnome-shell extension that renders the pending NIP-46 QR pairing
+# in the GDM login dialog.  Purely display code (JS + CSS + metadata); no C
+# artefacts.  Independent of every other option here so packagers can ship the
+# extension without pulling in the auth runtime.
+option(NOSTR_HOMED_ENABLE_GREETER_EXTENSION
+  "Install the gnome-shell greeter extension nostr-login-qr@nostrc" OFF)
 option(NOSTR_HOMED_BUILD_TESTS "Build tests for enabled nostr-homed features" ON)
 
 if(NOSTR_HOMED_ENABLE_CTL AND NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
@@ -282,13 +288,34 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
     message(FATAL_ERROR
       "NOSTR_HOMED_ENABLE_AUTH_RUNTIME requires NOSTR_HOMED_ENABLE_AUTH_CORE and NOSTR_HOMED_ENABLE_IDENTITY_CORE")
   endif()
+  # Vendored Nayuki qrcodegen (MIT) + our thin half-block / PNG wrapper.
+  # Linked into the runtime because the greeter-artifact writer
+  # (nh_broker_greeter_artifact_write) produces the sibling PNG alongside
+  # current.json in a single publish. See the producer notes in
+  # gnome/nostr-homed/greeter-extension/README.md — the extension expects
+  # both files present. This relaxes design decision D3 in exchange for a
+  # self-contained artifact and a testable "png next to json" invariant.
+  # The library is ~1 kLoC of pure arithmetic on URIs we generated
+  # ourselves; the blast radius against sshd/login (which dlopen
+  # pam_nostr) is unchanged because the shared code path lives in the
+  # broker daemon, not the PAM module.
+  add_library(nostr_qrcodegen STATIC
+    third_party/qrcodegen/qrcodegen.c)
+  target_include_directories(nostr_qrcodegen PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qrcodegen)
+  target_compile_options(nostr_qrcodegen PRIVATE
+    -Wall -Wno-error -Wno-misleading-indentation)
+  set_property(TARGET nostr_qrcodegen PROPERTY POSITION_INDEPENDENT_CODE ON)
+
   add_library(nostr_auth_runtime STATIC
     src/auth/auth_peer.c src/auth/auth_client.c src/auth/auth_broker.c
-    src/auth/auth_conf.c)
+    src/auth/auth_conf.c src/pam/pam_qr_render.c)
+  target_include_directories(nostr_auth_runtime PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/pam)
   target_compile_options(nostr_auth_runtime PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
   target_include_directories(nostr_auth_runtime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/auth)
-  target_link_libraries(nostr_auth_runtime PUBLIC nostr_auth_core nostr_identity_core)
+  target_link_libraries(nostr_auth_runtime PUBLIC nostr_auth_core nostr_identity_core nostr_qrcodegen)
   add_executable(nostr-authd src/auth/nostr-authd.c)
   target_compile_options(nostr-authd PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
   target_link_libraries(nostr-authd PRIVATE nostr_auth_runtime)
@@ -368,19 +395,12 @@ if(NOSTR_HOMED_ENABLE_PAM)
   if(NOT PAM_INCLUDE_DIR OR NOT PAM_LIBRARY)
     message(FATAL_ERROR "NOSTR_HOMED_ENABLE_PAM requires libpam headers (libpam0g-dev)")
   endif()
-  # Vendored Nayuki qrcodegen (MIT). Linked ONLY into pam_nostr.so and
-  # the QR renderer unit test — the root broker stays qrcodegen-free
-  # (design decisions D2, D3).
-  add_library(nostr_qrcodegen STATIC
-    third_party/qrcodegen/qrcodegen.c)
-  target_include_directories(nostr_qrcodegen PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qrcodegen)
-  target_compile_options(nostr_qrcodegen PRIVATE
-    -Wall -Wno-error -Wno-misleading-indentation)
-  set_property(TARGET nostr_qrcodegen PROPERTY POSITION_INDEPENDENT_CODE ON)
+  # nostr_qrcodegen was moved to a top-level target above (runtime block)
+  # so it is available to both the broker daemon and pam_nostr. Kept as a
+  # comment for grep-lookup: the definition used to live here.
 
   add_library(pam_nostr MODULE
-    src/pam/pam_nostr_broker.c src/pam/pam_qr_render.c)
+    src/pam/pam_nostr_broker.c)
   set_target_properties(pam_nostr PROPERTIES PREFIX "" OUTPUT_NAME "pam_nostr")
   target_compile_options(pam_nostr PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
   target_include_directories(pam_nostr PRIVATE
@@ -388,7 +408,7 @@ if(NOSTR_HOMED_ENABLE_PAM)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pam
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qrcodegen)
   target_link_libraries(pam_nostr PRIVATE
-    nostr_auth_runtime nostr_qrcodegen ${PAM_LIBRARY})
+    nostr_auth_runtime ${PAM_LIBRARY})
 
   if(NOSTR_HOMED_BUILD_TESTS)
     add_executable(test_qr_render tests/unit/test_qr_render.c
@@ -731,6 +751,31 @@ endif()
 # earlier.  An install rule is intentionally NOT emitted here; the desktop
 # packaging bucket owns tool install layouts.
 # ----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# Greeter QR extension (nostrc-z1fb / zcll.6):
+#
+# A tiny gnome-shell extension that watches /run/nostr-auth/greeter/current.json
+# and renders the pending NIP-46 QR pairing in the GDM login dialog.  Data-only:
+# three files installed under the system-wide gnome-shell extensions dir so
+# gdm picks it up in "gdm" session mode.  Enabling the extension for the
+# greeter is a dconf keyfile change (see greeter-extension/README.md) and is
+# intentionally NOT done from CMake — packagers own that policy.
+# ----------------------------------------------------------------------------
+if(NOSTR_HOMED_ENABLE_GREETER_EXTENSION)
+  set(NH_GREETER_EXT_UUID "nostr-login-qr@nostrc")
+  set(NH_GREETER_EXT_SRC
+      "${CMAKE_CURRENT_SOURCE_DIR}/greeter-extension/${NH_GREETER_EXT_UUID}")
+  set(NH_GREETER_EXT_DEST
+      "${CMAKE_INSTALL_DATADIR}/gnome-shell/extensions/${NH_GREETER_EXT_UUID}")
+  install(FILES
+      "${NH_GREETER_EXT_SRC}/metadata.json"
+      "${NH_GREETER_EXT_SRC}/extension.js"
+      "${NH_GREETER_EXT_SRC}/stylesheet.css"
+    DESTINATION "${NH_GREETER_EXT_DEST}")
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/greeter-extension/README.md"
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}/greeter-extension")
+endif()
+
 if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND NOSTR_HOMED_ENABLE_SMB)
   add_executable(nostr-smb-acquire
     src/smb/nostr-smb-acquire.c)

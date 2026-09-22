@@ -11,6 +11,7 @@
  * extension consumes for live QR rendering. See auth_broker.h. */
 #define _GNU_SOURCE
 #include "auth_broker.h"
+#include "pam_qr_render.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -21,6 +22,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #define GREETER_DIR_DEFAULT "/run/nostr-auth/greeter"
@@ -148,6 +150,30 @@ static int write_atomic(const char *dst, mode_t mode, const void *data,
   return 0;
 }
 
+/* Render the URI's QR into a PNG and drop it next to current.json.
+ * Design decision D3 said "keep the encoder out of the root daemon";
+ * we relax that here because the greeter-extension consumer contract
+ * requires current.png alongside current.json for every publish, and
+ * having two disjoint producers (broker for JSON, PAM for PNG) leaves the
+ * artifact incomplete whenever a broker-only test or a non-PAM caller
+ * publishes. Vendored Nayuki qrcodegen is ~1 kLoC of pure arithmetic on
+ * an input we generated ourselves; linking it into the runtime is safe.
+ * Failure is non-fatal: a missing PNG leaves the extension hidden but
+ * does not break login. */
+static void publish_greeter_png(const char *dir, const char *uri) {
+  if (!dir || !uri || !uri[0]) return;
+  unsigned char *png = NULL;
+  size_t plen = 0;
+  if (nh_pam_qr_render_png(uri, 9, 8, &png, &plen) != NH_QR_RENDER_OK ||
+      !png)
+    return;
+  char path[600];
+  int n = snprintf(path, sizeof path, "%s/%s", dir, GREETER_PNG_NAME);
+  if (n <= 0 || (size_t)n >= sizeof path) { free(png); return; }
+  (void)write_atomic(path, 0644, png, plen);
+  free(png);
+}
+
 int nh_broker_greeter_artifact_write(const char *tx_id,
                                      const char *display_json) {
   if (!display_json || !display_json[0]) return -1;
@@ -164,18 +190,41 @@ int nh_broker_greeter_artifact_write(const char *tx_id,
   json_t *uri = json_object_get(root, "uri");
   json_t *pairing = json_object_get(root, "pairing_code");
   json_t *hint = json_object_get(root, "hint");
-  json_t *expires = json_object_get(root, "expires_in_ms");
+  /* Prefer the provider's absolute expires_at (unix seconds); fall back to
+   * time(NULL) + expires_in_ms/1000 for older providers. The greeter
+   * extension (greeter-extension/nostr-login-qr@nostrc/extension.js)
+   * expects an ABSOLUTE unix-seconds timestamp and hides when
+   * now_sec >= expires_at — emitting a relative duration would make the
+   * QR look already expired. */
+  json_t *expires_at_j = json_object_get(root, "expires_at");
+  json_t *expires_in_j = json_object_get(root, "expires_in_ms");
   if (!uri || !json_is_string(uri) || !pairing || !json_is_string(pairing)) {
     json_decref(root);
     return -1;
   }
+  int64_t expires_at = 0;
+  if (expires_at_j && json_is_integer(expires_at_j)) {
+    expires_at = (int64_t)json_integer_value(expires_at_j);
+  } else if (expires_in_j && json_is_integer(expires_in_j)) {
+    json_int_t rel = json_integer_value(expires_in_j);
+    if (rel > 0)
+      expires_at = (int64_t)time(NULL) + (int64_t)(rel / 1000);
+  }
 
+  /* Copy uri_str out of the parsed root so we can render the PNG after
+   * the JSON tree is released. */
+  char *uri_copy = strdup(json_string_value(uri));
   json_t *out = json_object();
-  if (!out) { json_decref(root); return -1; }
+  if (!out || !uri_copy) {
+    if (out) json_decref(out);
+    free(uri_copy);
+    json_decref(root);
+    return -1;
+  }
   int bad =
       json_object_set_new(out, "tx_id", json_string(tx_id ? tx_id : "")) ||
       json_object_set_new(out, "png", json_string(GREETER_PNG_NAME)) ||
-      json_object_set_new(out, "uri", json_string(json_string_value(uri))) ||
+      json_object_set_new(out, "uri", json_string(uri_copy)) ||
       json_object_set_new(out, "pairing_code",
                           json_string(json_string_value(pairing))) ||
       json_object_set_new(out, "hint",
@@ -183,21 +232,23 @@ int nh_broker_greeter_artifact_write(const char *tx_id,
                               ? json_string(json_string_value(hint))
                               : json_string("")) ||
       json_object_set_new(out, "expires_at",
-                          expires && json_is_integer(expires)
-                              ? json_integer(json_integer_value(expires))
-                              : json_integer(0));
+                          json_integer((json_int_t)expires_at));
   json_decref(root);
-  if (bad) { json_decref(out); return -1; }
+  if (bad) { json_decref(out); free(uri_copy); return -1; }
 
   char *j = json_dumps(out, JSON_COMPACT);
   json_decref(out);
-  if (!j) return -1;
+  if (!j) { free(uri_copy); return -1; }
   char path[600];
   int nprint = snprintf(path, sizeof path, "%s/%s", dir, GREETER_JSON_NAME);
   int rc = -1;
   if (nprint > 0 && (size_t)nprint < sizeof path)
     rc = write_atomic(path, 0644, j, strlen(j));
   free(j);
+  /* Best-effort PNG next to the manifest — the greeter extension expects
+   * both files present at every publish. Non-fatal on failure. */
+  if (rc == 0) publish_greeter_png(dir, uri_copy);
+  free(uri_copy);
   return rc;
 }
 

@@ -289,6 +289,16 @@ static void parse_display(const char *response_json, nh_auth_display *out) {
     json_int_t v = json_integer_value(ex);
     if (v > 0 && v <= 0xffffffffLL) out->expires_in_ms = (uint32_t)v;
   }
+  /* expires_at is the absolute unix-seconds deadline emitted by the
+   * broker (design §5.3 + greeter-extension consumer contract). PAM does
+   * not currently render it — it uses expires_in_ms for a local
+   * countdown — but the field is parsed so future callers (and tests)
+   * can assert the wire truth. */
+  json_t *eat = json_object_get(disp, "expires_at");
+  if (eat && json_is_integer(eat)) {
+    json_int_t v = json_integer_value(eat);
+    if (v > 0) out->expires_at = (int64_t)v;
+  }
   json_decref(root);
 }
 

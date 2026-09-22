@@ -39,6 +39,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 /* Well-known secp256k1 private key 1; xonly pubkey below. */
@@ -289,14 +290,55 @@ static void seed(const char *dir) {
 
 /* File-scope display callback: samples the greeter-artifact filesystem
  * when the broker attaches a display block to SELECT_PROVIDER, which is
- * BEFORE the long-blocking SUBMIT_UNLOCK. */
-static const char *g_probe_path;
+ * BEFORE the long-blocking SUBMIT_UNLOCK. Also parses the on-disk
+ * current.json and records expires_at + png sibling existence so the test
+ * can assert the greeter-extension consumer contract. */
+static const char *g_probe_path;   /* .../current.json */
 static int *g_probe_seen;
+static int64_t g_probe_expires_at;
+static int g_probe_png_present;
+
 static void probe_cb(void *ctx, const nh_auth_display *d) {
   (void)ctx; (void)d;
   if (!g_probe_path || !g_probe_seen) return;
   struct stat st;
-  if (stat(g_probe_path, &st) == 0) *g_probe_seen = 1;
+  if (stat(g_probe_path, &st) != 0) return;
+  *g_probe_seen = 1;
+
+  /* Slurp current.json and extract expires_at + png. */
+  FILE *f = fopen(g_probe_path, "rb");
+  if (!f) return;
+  char buf[4096];
+  size_t n = fread(buf, 1, sizeof buf - 1, f);
+  fclose(f);
+  buf[n] = '\0';
+  json_error_t je;
+  json_t *root = json_loads(buf, 0, &je);
+  if (!root) return;
+  json_t *ea = json_object_get(root, "expires_at");
+  if (ea && json_is_integer(ea))
+    g_probe_expires_at = (int64_t)json_integer_value(ea);
+  json_t *png = json_object_get(root, "png");
+  if (png && json_is_string(png)) {
+    const char *base = json_string_value(png);
+    if (base && !strchr(base, '/') && strcmp(base, "..") != 0) {
+      char png_path[512];
+      /* Sibling next to current.json. */
+      char dir[400];
+      size_t dl = strlen(g_probe_path);
+      const char *slash = strrchr(g_probe_path, '/');
+      if (slash && (size_t)(slash - g_probe_path) < sizeof dir) {
+        memcpy(dir, g_probe_path, slash - g_probe_path);
+        dir[slash - g_probe_path] = '\0';
+        if (snprintf(png_path, sizeof png_path, "%s/%s", dir, base) > 0) {
+          struct stat pst;
+          if (stat(png_path, &pst) == 0) g_probe_png_present = 1;
+        }
+      }
+      (void)dl;
+    }
+  }
+  json_decref(root);
 }
 
 /* BEGIN_LOGIN -> SELECT_PROVIDER("nip46qr") -> SUBMIT_UNLOCK on one
@@ -349,6 +391,8 @@ static nh_auth_result run_login(const char *dir, const char *greeter_dir,
   g_probe_path = probe_path;
   g_probe_seen = artifact_seen_out;
   *artifact_seen_out = 0;
+  g_probe_expires_at = 0;
+  g_probe_png_present = 0;
 
   nh_auth_result result = NH_AUTH_RESULT_INTERNAL_ERROR;
   int rc = client_login_qr(sv[0], "n_qralice", &result);
@@ -384,6 +428,20 @@ int main(void) {
   if (is_root) {
     NH_CHECK(seen);      /* artifact appeared during the tx */
     NH_CHECK(removed);   /* and was removed after the tx retired */
+    /* expires_at MUST be absolute unix seconds in the near future (design
+     * §5.3 / greeter-extension consumer contract). Reject 0, past, or a
+     * relative-looking value (e.g. 78000). */
+    time_t now_sec = time(NULL);
+    printf("qr artifact expires_at=%lld now=%lld png_present=%d\n",
+           (long long)g_probe_expires_at, (long long)now_sec,
+           g_probe_png_present);
+    NH_CHECK(g_probe_expires_at > now_sec);
+    NH_CHECK(g_probe_expires_at >= now_sec + 60);
+    NH_CHECK(g_probe_expires_at <= now_sec + 130);
+    /* PNG must exist next to current.json — the PAM producer path writes
+     * it via publish_greeter_png in the same process as the broker
+     * (tests fork the broker; the QR provider runs there too). */
+    NH_CHECK(g_probe_png_present);
   }
 
   if (is_root) {

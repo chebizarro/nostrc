@@ -227,12 +227,17 @@ if(GO_ENABLE_LTO)
   endif()
 endif()
 
-# Find the nsync library and headers manually; used by tests and may be used by
-# consumers for synchronization in conjunction with libgo.
-find_library(NSYNC_LIB nsync REQUIRED)
-find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
+# nsync is resolved centrally by cmake/FindOrVendorNsync.cmake (system or
+# vendored via the third_party/nsync submodule).  NSYNC_LIB / NSYNC_INCLUDE_DIR
+# are populated there; the ``nostrc::nsync`` INTERFACE target bundles both.
+# Guard here so this file also works when configured standalone
+# (add_subdirectory(libgo) without the parent CMakeLists including the module).
+if(NOT DEFINED _NOSTR_FIND_OR_VENDOR_NSYNC_DONE)
+  list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/../cmake")
+  include(FindOrVendorNsync)
+endif()
 
-# Include the nsync headers
+# Include the nsync headers directory-wide for the many test/example targets.
 include_directories(${NSYNC_INCLUDE_DIR})
 
 # When building libgo as a shared library, we must link nsync directly;
@@ -241,9 +246,25 @@ include_directories(${NSYNC_INCLUDE_DIR})
 # nsync contains C++ objects (pthread_key_win32.cc on Windows); when linking
 # via a C compiler the C++ runtime must be added explicitly.
 if(WIN32)
-  target_link_libraries(nostrgo PUBLIC ${NSYNC_LIB} pthread stdc++)
+  target_link_libraries(nostrgo PUBLIC nostrc::nsync pthread stdc++)
 else()
-  target_link_libraries(nostrgo PUBLIC ${NSYNC_LIB} pthread)
+  target_link_libraries(nostrgo PUBLIC nostrc::nsync pthread)
+endif()
+
+# When nsync is vendored (statically built from third_party/nsync) and
+# libnostrgo itself is a shared library, force-load ALL nsync object files
+# into libnostrgo.so so downstream consumers get the full nsync API via
+# ``-lnostrgo`` and no DT_NEEDED entry for libnsync.so is produced.  In the
+# system-nsync mode this branch is a no-op; the DT_NEEDED libnsync.so entry
+# is the expected behaviour there.
+get_target_property(_nostrgo_type nostrgo TYPE)
+if(NOSTRC_NSYNC_VENDORED AND _nostrgo_type STREQUAL "SHARED_LIBRARY")
+  if(APPLE)
+    target_link_options(nostrgo PRIVATE "-Wl,-force_load,$<TARGET_FILE:nsync>")
+  elseif(NOT WIN32)
+    target_link_options(nostrgo PRIVATE
+      -Wl,--whole-archive $<TARGET_FILE:nsync> -Wl,--no-whole-archive)
+  endif()
 endif()
 set_property(TARGET nostrgo PROPERTY POSITION_INDEPENDENT_CODE ON)
 target_include_directories(nostrgo PUBLIC ${NSYNC_INCLUDE_DIR})
@@ -393,6 +414,16 @@ endif()
 # `libgo.pc -> libnostrgo.pc` is installed alongside it so consumers on the
 # old spelling keep working during the transition.
 set(LIBNOSTRGO_PKGCONF "${CMAKE_CURRENT_BINARY_DIR}/libnostrgo.pc")
+# Libs.private:
+#   * system nsync -> "-lnsync -lpthread"  (consumers must link nsync)
+#   * vendored nsync -> "-lpthread"        (nsync is folded into libnostrgo.so
+#                                            via --whole-archive; downstream
+#                                            gets nsync symbols transitively)
+if(NOSTRC_NSYNC_VENDORED)
+  set(LIBNOSTRGO_PC_NSYNC_LIB "")
+else()
+  set(LIBNOSTRGO_PC_NSYNC_LIB "-lnsync ")
+endif()
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/libnostrgo.pc.in"
   "${LIBNOSTRGO_PKGCONF}"
