@@ -153,6 +153,13 @@ static void event_bus_emit_closed(const char *relay_url, const char *subscriptio
  * Use pthread_create with 32 MB stack when ASan is active.
  * ======================================================================== */
 
+/* __has_feature is a Clang builtin; GCC's preprocessor errors on the
+ * __has_feature(...) token even when defined(__has_feature) is false (both
+ * operands are macro-expanded before && is evaluated). Shim it to 0 so the
+ * ASan detection below is portable to GCC (which uses __SANITIZE_ADDRESS__). */
+#ifndef __has_feature
+#define __has_feature(x) 0
+#endif
 #if defined(__SANITIZE_ADDRESS__) || \
     (defined(__has_feature) && __has_feature(address_sanitizer))
 #define POOL_ASAN_ACTIVE 1
