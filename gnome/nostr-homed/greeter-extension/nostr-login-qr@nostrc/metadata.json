@@ -1,0 +1,8 @@
+{
+    "uuid": "nostr-login-qr@nostrc",
+    "name": "Nostr Login QR",
+    "description": "Renders a NIP-46 QR code in the GDM greeter (and lock screen) while a login pairing is pending. Reads /run/nostr-auth/greeter/current.{json,png} published by the nostr-authd broker.",
+    "shell-version": ["46"],
+    "session-modes": ["gdm", "unlock-dialog"],
+    "url": "https://github.com/nostrc/nostrc"
+}
