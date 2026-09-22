@@ -117,28 +117,49 @@ esac
 
 # --- unmount branch --------------------------------------------------------
 if [ "$unmount" = "1" ]; then
-  [ "${#positional[@]}" -eq 1 ] || { usage; die 1 "--unmount takes exactly one argument (mountpoint)"; }
-  mp="${positional[0]}"
-  if command -v mountpoint >/dev/null 2>&1 && ! mountpoint -q "$mp"; then
-    log "not a mountpoint: $mp"
-    exit 0
+  [ "${#positional[@]}" -eq 1 ] || { usage; die 1 "--unmount takes exactly one argument (mountpoint-or-uri)"; }
+  target="${positional[0]}"
+  # If the caller passed an smb:// URI, this is unambiguously a gvfs unmount.
+  case "$target" in
+    smb://*)
+      command -v gio >/dev/null 2>&1 || die 5 "gio not found; cannot unmount $target"
+      [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] \
+        || die 3 "no DBUS_SESSION_BUS_ADDRESS — gvfs unmount needs a session bus"
+      gio mount -u "$target" >/dev/null 2>&1 && exit 0
+      die 5 "gio mount -u failed for $target"
+      ;;
+  esac
+  mp="$target"
+  # cifs path: MP is a real filesystem mountpoint we can umount(2).
+  if command -v mountpoint >/dev/null 2>&1 && mountpoint -q "$mp"; then
+    if umount "$mp" >/dev/null 2>&1; then exit 0; fi
+    if command -v sudo >/dev/null 2>&1 && sudo -n umount "$mp" >/dev/null 2>&1; then exit 0; fi
+    die 5 "umount failed: $mp"
   fi
-  # Try cifs (umount) first, then gvfs.
-  if umount "$mp" >/dev/null 2>&1; then exit 0; fi
-  if [ -n "${SUDO:-sudo}" ] && command -v sudo >/dev/null 2>&1; then
-    if sudo -n umount "$mp" >/dev/null 2>&1; then exit 0; fi
-  fi
-  # gvfs uses `gio mount -u smb://...`; ask the caller to specify the URI
-  # for gvfs unmount instead.
-  if command -v gio >/dev/null 2>&1; then
-    # Best-effort: iterate active gvfs mounts and unmount matches.
+  # Not a cifs mountpoint — try gvfs.  Iterate active smb:// mounts and
+  # unmount every one whose fuse leaf corresponds to a mount this helper
+  # could have created (server+share match if MP was passed as UNC-like
+  # //HOST/SHARE; otherwise unmount all smb:// as a best-effort).
+  if command -v gio >/dev/null 2>&1 && [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+    match=""
+    case "$mp" in
+      //*/*) match="${mp#//}" ;;  # host/share
+    esac
+    unmounted=0
     while IFS= read -r line; do
       case "$line" in
-        smb://*) gio mount -u "$line" >/dev/null 2>&1 && exit 0 ;;
+        smb://*)
+          if [ -z "$match" ] || [ "${line#smb://}" != "${line#smb://*"$match"*}" ]; then
+            gio mount -u "$line" >/dev/null 2>&1 && unmounted=$((unmounted+1))
+          fi
+          ;;
       esac
-    done < <(gio mount --list 2>/dev/null | awk '/Mount\(/ {print $NF}')
+    done < <(gio mount --list 2>/dev/null | awk '/-> smb:\/\// {print $NF}')
+    [ "$unmounted" -gt 0 ] && exit 0
   fi
-  die 5 "unmount failed: $mp"
+  # Nothing was a mountpoint and nothing matched under gvfs — no-op.
+  log "not a mountpoint and no matching gvfs mount: $mp"
+  exit 0
 fi
 
 # --- positional args -------------------------------------------------------
@@ -230,14 +251,16 @@ case "$mode" in
     command -v gio >/dev/null 2>&1 \
       || die 3 "gio not found (install gvfs)"
     # gio can't consume a credentials file directly; it drives an
-    # interactive GMountOperation.  We prime it by writing 3 lines to
-    # stdin: username, domain, password.  Domain is left blank for
-    # standalone Samba.  A missing session bus / gvfs-backends yields a
-    # clear diagnostic, mapped to exit code 3.
+    # interactive GMountOperation.  A missing session bus / gvfs
+    # backends yields a clear diagnostic, mapped to exit code 3.
     if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
-      die 3 "no DBUS_SESSION_BUS_ADDRESS — gvfs needs a session bus"
+      die 3 "no DBUS_SESSION_BUS_ADDRESS — gvfs needs a session bus (try dbus-run-session --)"
     fi
-    # Extract host + share from the UNC and build the smb:// URI.
+    # Extract host + share from the UNC and build the smb:// URI.  The
+    # username is embedded in the URI so the gvfs SMB backend advertises
+    # a default and skips the USER prompt in its ask-password call.  We
+    # therefore only need to feed the remaining prompts (Domain and
+    # Password, in that order) on stdin.
     host_share="${unc#//}"
     smb_uri="smb://$cred_user@$host_share"
     pw="$(awk -F= '/^password=/{sub(/^password=/,""); print; exit}' "$creds" || true)"
@@ -246,13 +269,26 @@ case "$mode" in
       printf 'gio mount %q\n' "$smb_uri"
       exit 0
     fi
-    # `gio mount` reads username/domain/password from stdin when the
-    # server issues an auth challenge.  We wipe pw from the environment
-    # by only piping into gio, and never assigning it to a subshell var
-    # visible via /proc/*/environ.
-    if ! printf '%s\n\n%s\n' "$cred_user" "$pw" \
-         | gio mount "$smb_uri"; then
-      die 4 "gio mount failed for $smb_uri"
+    # `gio mount` reads Domain (blank -> WORKGROUP default) then Password
+    # from stdin when the server issues an auth challenge.  Feeding just
+    # those two lines means that on auth failure the second ask-password
+    # loop hits EOF and gio exits non-zero rather than hanging forever
+    # on the retry prompt.  We never assign pw to a subshell variable
+    # that would show in /proc/*/environ.
+    #
+    # gvfs mounts land at $XDG_RUNTIME_DIR/gvfs/smb-share:server=...,
+    # not at MOUNTPOINT — the MOUNTPOINT arg is retained for parity with
+    # the cifs branch but is not the on-disk location for gvfs.
+    if ! printf '\n%s\n' "$pw" | gio mount "$smb_uri"; then
+      die 4 "gio mount failed for $smb_uri (revoked credential? auth flags mismatch?)"
+    fi
+    # Post-mount verification: the fuse mirror must be visible.
+    fuse_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/gvfs"
+    fuse_leaf="smb-share:server=${host_share%%/*},share=${host_share#*/},user=$cred_user"
+    if [ -d "$fuse_dir/$fuse_leaf" ]; then
+      log "gvfs mount visible at $fuse_dir/$fuse_leaf"
+    else
+      log "warning: expected gvfs fuse entry not found at $fuse_dir/$fuse_leaf"
     fi
     log "note: gvfs mounts appear under \$XDG_RUNTIME_DIR/gvfs/, not at $mp"
     ;;
