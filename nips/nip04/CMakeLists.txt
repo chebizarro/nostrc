@@ -15,7 +15,7 @@ find_package(OpenSSL REQUIRED)
 find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
 
 # Create the library
-add_library(nip04 ${SOURCES})
+add_library(nip04 STATIC ${SOURCES})
 target_link_libraries(nip04 PUBLIC nostr OpenSSL::Crypto ${SECP256K1_LIB})
 
 # Option: disable legacy ?iv= decrypt fallback at compile time

@@ -1,0 +1,27 @@
+# Phase 1 (nostrc-rb0e.3 / D9): the following files build as part of the
+# monorepo but are intentionally NOT packaged in this phase. They will be
+# picked up by later phase packages (GObject / GTK / desktop / apps).
+usr/bin/gnostr-neg
+usr/bin/nostr-signer-cli
+usr/bin/nostr-signer-daemon
+usr/share/dbus-1/services/org.nostr.Signer.service
+
+# NIP libraries are aggregated (D-6): the plan calls for folding them
+# into libnostr1 or a single libnostr-nips0 package, not per-NIP debs.
+# Phase 1 does not ship them.
+usr/include/nip40.h
+usr/lib/libnip04.a
+usr/lib/libnip05.so
+usr/lib/libnip25.so
+usr/lib/libnostr_nip77.a
+usr/lib/x86_64-linux-gnu/libnip19.so
+usr/lib/x86_64-linux-gnu/libnostr_nip55l_core.so
+usr/lib/x86_64-linux-gnu/libnostr_nip55l_glib.so
+
+# Test binary that installs via a stray CMake rule (build-tree leak).
+tmp/nostrc-build/nostrc-0.3.0/obj-x86_64-linux-gnu/tools/test_relay_eose
+
+# Phase 1 does not ship a libnostr-homed-dev package; nostr-homed.pc is
+# multiarch-specific and would be a lintian ERROR in an arch:foreign
+# daemon package. Defer to the future -dev package.
+usr/lib/x86_64-linux-gnu/pkgconfig/nostr-homed.pc

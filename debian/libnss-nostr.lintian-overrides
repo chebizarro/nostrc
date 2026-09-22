@@ -1,0 +1,6 @@
+# NSS modules are dlopen()ed by glibc under the fixed filename
+# libnss_<svc>.so.2 (the ".2" is glibc's NSS interface version, not a SONAME).
+# The library therefore has no SONAME by design and is not a public shared
+# library; do not ship a -dev, shlibs, or symbols file for it.
+libnss-nostr: sharedobject-in-library-directory-missing-soname
+libnss-nostr: shared-library-is-executable

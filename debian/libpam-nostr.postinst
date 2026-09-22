@@ -1,0 +1,26 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Register pam_nostr with Debian's PAM composition framework.
+        # `Default: no` in /usr/share/pam-configs/nostr keeps activation an
+        # explicit admin act — admins run `sudo pam-auth-update` and tick
+        # nostr, or set it interactively.
+        if command -v pam-auth-update >/dev/null 2>&1; then
+            pam-auth-update --package
+        fi
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

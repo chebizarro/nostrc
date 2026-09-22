@@ -1,0 +1,12 @@
+nostrc — Debian source package
+==============================
+
+This is a `3.0 (native)` package for the phase-1 internal PPA (decision
+D-13). Upstream lives at https://github.com/chebizarro/nostrc and the
+archive-NEW upload will switch to `3.0 (quilt)` once the packaging
+metadata (symbols files, watch file accuracy, upstream signature key)
+is complete.
+
+Only the headless nostr-login stack is packaged from this source in
+phase 1; the GObject / GTK / desktop-app layers will follow in later
+phases as separate binary packages from the same source.

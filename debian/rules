@@ -1,0 +1,106 @@
+#!/usr/bin/make -f
+# debian/rules for nostrc phase 1: headless nostr-login stack (D-14).
+# Build the GLib-free libnostr ABI and only the components that constitute
+# the headless login stack — no GTK, no GObject, no apps, no libhanami,
+# no signet, no marmot, no roaming/FUSE.
+
+export DH_VERBOSE = 1
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+
+%:
+	dh $@ --buildsystem=cmake+ninja
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH) \
+		-DBUILD_SHARED_LIBS=ON \
+		-DNOSTR_WITH_GLIB=OFF \
+		-DBUILD_APPS=OFF \
+		-DBUILD_NOSTR_GOBJECT=OFF \
+		-DBUILD_NOSTR_GTK=OFF \
+		-DBUILD_LIBHANAMI=OFF \
+		-DBUILD_LIBMARMOT=OFF \
+		-DBUILD_MARMOT_GOBJECT=OFF \
+		-DBUILD_RELAYD=OFF \
+		-DSIGNET_ENABLE=OFF \
+		-DWITH_NOSTRDB=OFF \
+		-DLIBNOSTR_WITH_NOSTRDB=OFF \
+		-DWITH_NIP77_NOSTRDB=OFF \
+		-DBUILD_TESTING=OFF \
+		-DBUILD_TESTING_FRAMEWORK=OFF \
+		-DENABLE_NIP57=OFF \
+		-DENABLE_NIP5F=OFF \
+		-DENABLE_NOSTR_HOMED=ON \
+		-DNOSTR_HOMED_ENABLE_AUTH_CORE=ON \
+		-DNOSTR_HOMED_ENABLE_IDENTITY_CORE=ON \
+		-DNOSTR_HOMED_ENABLE_NSS=ON \
+		-DNOSTR_HOMED_ENABLE_AUTH_RUNTIME=ON \
+		-DNOSTR_HOMED_ENABLE_PAM=ON \
+		-DNOSTR_HOMED_ENABLE_SMB=ON \
+		-DNOSTR_HOMED_ENABLE_CTL=ON \
+		-DNOSTR_HOMED_ENABLE_DOMAIN_CONFIG=ON \
+		-DNOSTR_HOMED_ENABLE_AUTH_INSTALL=ON \
+		-DNOSTR_HOMED_BUILD_TESTS=OFF
+
+override_dh_auto_test:
+	# Tests disabled via BUILD_TESTING=OFF; nothing to run.
+
+override_dh_auto_install:
+	dh_auto_install
+	# Ship /etc/nostr-auth/auth.conf as a real conffile (CMake only stages
+	# the sample under /usr/share/nostr-homed/). Copy the sample verbatim
+	# into /etc/nostr-auth/ so dh_installdeb picks it up as a conffile.
+	install -d debian/tmp/etc/nostr-auth
+	install -m 0644 debian/tmp/usr/share/nostr-homed/auth.conf.sample \
+		debian/tmp/etc/nostr-auth/auth.conf
+	# nostr-homed's PROJECT_NAME is `nostr_homed` (underscore), so CMake's
+	# CMAKE_INSTALL_DOCDIR lands docs under /usr/share/doc/nostr_homed —
+	# not a valid Debian doc dir name. Rename to the owning package's dir.
+	# GNUInstallDirs was first included in the root nostrc project, so
+	# CMAKE_INSTALL_DOCDIR resolves to share/doc/nostrc for every
+	# subproject including nostr-homed. Move nostr-homed's shipped PAM
+	# examples into the owning binary package's doc dir.
+	# pam-auth-update parses /usr/share/pam-configs/<name> as a strict
+	# Debian control-format file and does not tolerate `#`-comment lines.
+	# The shipped source file starts with a 40+ line rationale header — copy
+	# it into libpam-nostr's doc dir for provenance and strip the header from
+	# the installed profile so the postinst pam-auth-update run is silent.
+	if [ -f debian/tmp/usr/share/pam-configs/nostr ]; then \
+		mkdir -p debian/tmp/usr/share/doc/libpam-nostr; \
+		cp debian/tmp/usr/share/pam-configs/nostr \
+			debian/tmp/usr/share/doc/libpam-nostr/nostr.pam-configs.annotated; \
+		sed -i '/^Name:/,$$!d' debian/tmp/usr/share/pam-configs/nostr; \
+	fi
+	if [ -d debian/tmp/usr/share/doc/nostrc/examples/pam ]; then \
+		mkdir -p debian/tmp/usr/share/doc/libpam-nostr/examples; \
+		cp -a debian/tmp/usr/share/doc/nostrc/examples/pam \
+			debian/tmp/usr/share/doc/libpam-nostr/examples/; \
+		rm -rf debian/tmp/usr/share/doc/nostrc/examples/pam; \
+		rmdir --ignore-fail-on-non-empty debian/tmp/usr/share/doc/nostrc/examples debian/tmp/usr/share/doc/nostrc 2>/dev/null || true; \
+	fi
+
+override_dh_shlibdeps:
+	# nostr-homed-seed is installed via install(PROGRAMS $<TARGET_FILE:...>
+	# RENAME ...) which copies the build-tree binary verbatim, preserving
+	# the build-tree RUNPATH set by CMake. Strip it before shlibdeps so
+	# lintian's custom-library-search-path ERROR does not fire.
+	if [ -x debian/nostr-homectl/usr/sbin/nostr-homed-seed ]; then \
+		chrpath -d debian/nostr-homectl/usr/sbin/nostr-homed-seed || true; \
+	fi
+	dh_shlibdeps -a
+
+override_dh_makeshlibs:
+	# pam_nostr.so and libnss_nostr.so.2 are loadable modules, not public
+	# shared libraries — they must NOT be listed in shlibs (P5 of the
+	# packaging plan). dh_shlibdeps still runs against them for their own
+	# dependencies.
+	dh_makeshlibs -Xpam_nostr -Xlibnss_nostr
+
+override_dh_installsystemd:
+	# Do not auto-start or enable nostr-authd: an unseeded broker has no
+	# accounts, so admins must seed with nostr-homed-seed first.
+	dh_installsystemd --no-start --no-enable --name=nostr-authd

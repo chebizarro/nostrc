@@ -1,0 +1,2 @@
+usr/share/nostr-homed/domain/*
+usr/libexec/nostr-homed/validate_domain_profile.py
