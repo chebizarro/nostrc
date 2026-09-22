@@ -12,9 +12,13 @@
 #include "auth_vault.h"
 #include "nostr_identity.h"
 #include "nostr-keys.h"
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 
 static nh_identity_ownership_result available(void *c, const char *n,
@@ -35,11 +39,61 @@ static int hex32(const char *hex, uint8_t out[32]) {
 
 #define CHECK(cond, msg) do { if (!(cond)) { fprintf(stderr, "seed: %s\n", msg); return 1; } } while (0)
 
+/* B5-profile: fetch kind-0 metadata for @username (pubkey @pubkey_hex) via
+ * the shipped `nostr-homed-profile refresh` CLI. Best-effort: never blocks
+ * or fails the seed. Skipped when NH_SEED_NO_PROFILE=1 is exported (used
+ * by CI which cannot reach public relays). */
+static void seed_profile_refresh(const char *username, const char *pubkey_hex) {
+  if (!username || !pubkey_hex) return;
+  const char *skip = getenv("NH_SEED_NO_PROFILE");
+  if (skip && *skip && !(skip[0] == '0' && skip[1] == '\0')) {
+    fprintf(stderr, "seed: --fetch-profile skipped (NH_SEED_NO_PROFILE set)\n");
+    return;
+  }
+  /* Fork + exec so a CLI stall (no relays reachable) cannot hang the
+   * seeder past its own timeout window. */
+  pid_t pid = fork();
+  if (pid < 0) { fprintf(stderr, "seed: fork for profile refresh: %s\n", strerror(errno)); return; }
+  if (pid == 0) {
+    char pk_arg[80];
+    snprintf(pk_arg, sizeof pk_arg, "--pubkey=%s", pubkey_hex);
+    /* Absolute path override: NH_PROFILE_CLI, otherwise search PATH. */
+    const char *cli = getenv("NH_PROFILE_CLI");
+    if (!cli || !*cli) cli = "nostr-homed-profile";
+    char *args[] = {
+      (char *)cli, (char *)"refresh", (char *)username, pk_arg, NULL,
+    };
+    if (cli[0] == '/') execv(cli, args); else execvp(cli, args);
+    fprintf(stderr, "seed: exec %s: %s\n", cli, strerror(errno));
+    _exit(0); /* best-effort */
+  }
+  int st = 0;
+  while (waitpid(pid, &st, 0) < 0) { if (errno != EINTR) break; }
+  if (WIFEXITED(st))
+    fprintf(stderr, "seed: profile refresh rc=%d\n", WEXITSTATUS(st));
+}
+
 int main(int argc, char **argv) {
-  if (argc < 4 || argc > 6) { fprintf(stderr, "usage: %s <dir> <username> <passphrase> [auth_privkey_hex] [vault_privkey_hex]\n", argv[0]); return 2; }
-  const char *dir = argv[1], *username = argv[2], *passphrase = argv[3];
-  const char *auth_sk = (argc >= 5) ? argv[4] : "0000000000000000000000000000000000000000000000000000000000000001";
-  const char *vault_sk = (argc >= 6) ? argv[5] : auth_sk;
+  /* Positional: <dir> <username> <passphrase> [auth_privkey_hex] [vault_privkey_hex]
+   * Flags (may appear after the positional args):
+   *   --fetch-profile / --no-fetch-profile — default is on. */
+  int fetch_profile = 1;
+  const char *pos[5] = {0};
+  size_t np = 0;
+  for (int i = 1; i < argc; i++) {
+    const char *a = argv[i];
+    if (strcmp(a, "--fetch-profile") == 0)         { fetch_profile = 1; continue; }
+    if (strcmp(a, "--no-fetch-profile") == 0)      { fetch_profile = 0; continue; }
+    if (np < 5) pos[np++] = a;
+    else { fprintf(stderr, "usage: %s <dir> <username> <passphrase> [auth_privkey_hex] [vault_privkey_hex] [--fetch-profile|--no-fetch-profile]\n", argv[0]); return 2; }
+  }
+  if (np < 3) {
+    fprintf(stderr, "usage: %s <dir> <username> <passphrase> [auth_privkey_hex] [vault_privkey_hex] [--fetch-profile|--no-fetch-profile]\n", argv[0]);
+    return 2;
+  }
+  const char *dir = pos[0], *username = pos[1], *passphrase = pos[2];
+  const char *auth_sk = (np >= 4) ? pos[3] : "0000000000000000000000000000000000000000000000000000000000000001";
+  const char *vault_sk = (np >= 5) ? pos[4] : auth_sk;
   char *pubkey = nostr_key_get_public(auth_sk);
   if (!pubkey || strlen(pubkey) != 64) { fprintf(stderr, "seed: bad auth private key\n"); return 2; }
   uint8_t secret[32];
@@ -97,6 +151,9 @@ int main(int argc, char **argv) {
   nh_identity_store_close(store);
 
   printf("seeded %s (uid=%u) pubkey=%s in %s\n", username, account.uid, pubkey, dir);
+
+  if (fetch_profile) seed_profile_refresh(username, pubkey);
+
   free(pubkey);
   return 0;
 }

@@ -32,3 +32,29 @@ socket_path=/run/nostr-auth/auth.sock
 # connection for ~78 s; without this an N-tab greeter is cheap DoS against
 # the root daemon (design §8.4). Default 4.
 #nip46_qr_max_concurrent=4
+
+# ---- Nostr profile → GDM avatar/name (AccountsService) --------------------
+# The broker refreshes each account's kind-0 (user metadata: name,
+# display_name, picture) after a successful login and installs it into
+# AccountsService via SetIconFile/SetRealName, so the stock GDM tile,
+# login dialog, and lock screen render the user's real face instead of
+# the generic avatar + "Nostr User" gecos. The picture is downloaded in
+# a dropped-privilege child (setuid to profile_image_user), constrained
+# to https:// + non-private peers + <=2 MiB + image/*, then re-encoded
+# via GdkPixbuf to a bounded PNG. See docs/reviews/nostr-profile-avatar-*.md.
+#
+# profile_relays — comma-separated wss://... list queried for kind-0.
+# Cap: NH_AUTH_CONF_RELAYS_MAX (4). Defaults to
+#   wss://relay.damus.io, wss://nos.lol
+# when unset.
+#profile_relays=wss://relay.damus.io,wss://nos.lol
+#
+# profile_fetch — "on" (default) enables the seed-time and post-login
+# refreshes; "off" disables both, leaving AccountsService untouched.
+#profile_fetch=on
+#
+# profile_image_user — the unprivileged Unix user the image downloader
+# drops to before dialling the picture URL. MUST NOT be root. Default
+# "nobody"; sites that ship a dedicated user like `nostr-profile` set it
+# here.
+#profile_image_user=nobody
