@@ -139,17 +139,42 @@ crashed broker leaving stale state).
   the initial `CREATED` and subsequent `CHANGED` events).
 - Debounces bursts of monitor events (100 ms) so one publish → one
   refresh.
-- Renders the QR image + pairing code + hint in a floating panel
-  positioned top-centre of the primary monitor's greeter.
+- **Preferred mode** ("inline centered"): while the artifact is live, the
+  extension locates the current `LoginDialog` / `UnlockDialog` `AuthPrompt`
+  (by St style class `login-dialog-prompt-layout` — shared between both
+  dialogs since gnome-shell 3.36), hides the `login-dialog-prompt-entry`
+  (password entry + eye toggle), and inserts the QR card in the entry's
+  slot so the QR appears centred directly under the avatar / username.
+  Message labels the shell renders that would duplicate the card's
+  pairing code or hint (`login-dialog-message` / `login-dialog-message-hint`
+  containing "Pairing code" or "Scan the QR") are also hidden so the
+  card is the sole source of on-screen instructions; message-warning
+  labels ("Sorry, that didn't work") are never touched.
+- **Fallback mode** ("floating"): if the `AuthPrompt` cannot be located
+  (unusual shell version, dialog still being built), the extension
+  renders the same QR card as a floating widget off to the right of the
+  primary monitor so the QR is still scannable — this matches the
+  earlier v1 layout documented in
+  `docs/reviews/phone-test-rig-2026-09-22.md`.  The extension retries
+  the inline attach a few times over ~2.4 s in case the dialog is
+  still being built when the artifact publishes.
 - Hides when:
   - `current.json` is missing;
   - `current.json` fails to parse (any JSON error, oversize file,
     non-object payload);
   - `expires_at` has passed;
   - `current.png` is missing or fails to decode as a pixbuf.
-- Never mutates the login dialog itself.  If any of the extension's
+- On hide the hidden `login-dialog-prompt-entry` and any suppressed
+  message labels are restored to their prior `.visible` state so the
+  underlying dialog is byte-identical to what the shell rendered before
+  we intervened.  Never mutates the login/unlock dialog outside the
+  window during which the artifact is live.  If any of the extension's
   own state is missing or throws, the panel simply stays hidden — the
   underlying GDM/PAM flow is unaffected.
+- If the host `AuthPrompt` is torn down while the card is attached
+  (e.g. `LoginDialog` rebuild after Escape) the extension detects the
+  `destroy` signal, drops references, and rebuilds its own container so
+  a subsequent publish can reattach cleanly.
 
 ## Enabling for GDM
 
@@ -181,6 +206,58 @@ entirely.
 To fully uninstall, `rm -rf
 /usr/share/gnome-shell/extensions/nostr-login-qr@nostrc` and revert the
 dconf keyfile.
+
+## Enabling for the lock screen (`unlock-dialog` mode)
+
+The lock screen runs inside the **user's** gnome-shell process (not
+GDM's), transitioned into `session-modes: ["unlock-dialog"]`.  The
+extension is only loaded there if the user's `org.gnome.shell
+enabled-extensions` list carries `nostr-login-qr@nostrc`.  The
+greeter's dconf keyfile above (`/etc/dconf/db/gdm.d/…`) is scoped to
+the `gdm` profile and does **not** cover user sessions — for the
+lock-screen path you need a *user-scope* enablement.
+
+System-wide default for every user session (recommended for deployments
+where the whole herd is on nostr-homed):
+
+```sh
+sudo tee /etc/dconf/profile/user >/dev/null <<'EOF'
+user-db:user
+system-db:local
+EOF
+
+sudo install -d -m 0755 /etc/dconf/db/local.d
+sudo tee /etc/dconf/db/local.d/10-nostr-login-qr >/dev/null <<'EOF'
+[org/gnome/shell]
+enabled-extensions=['nostr-login-qr@nostrc']
+EOF
+
+sudo dconf update
+```
+
+Existing user sessions pick this up on next shell restart (log out /
+log back in, or `sudo systemctl restart gdm` if no live sessions).
+New logins pick it up automatically.  The extension only draws in
+`unlock-dialog` mode inside user sessions — normal desktop use is not
+affected because the extension does not declare the `user` session
+mode.
+
+Per-user opt-in (useful for testing without touching site-wide dconf):
+
+```sh
+gsettings set org.gnome.shell enabled-extensions "['nostr-login-qr@nostrc']"
+```
+
+Run as the target user in an already-open session.  Verify with:
+
+```sh
+gsettings get org.gnome.shell enabled-extensions
+# -> ['nostr-login-qr@nostrc']
+```
+
+The artifact directory `/run/nostr-auth/greeter/` must remain readable
+to the user's shell process — the shipped broker publishes with dir
+mode `0755` and file mode `0644`, which is what `unlock-dialog` needs.
 
 ## Install (from this repo)
 
