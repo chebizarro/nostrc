@@ -50,6 +50,15 @@ if(TARGET nostr_nip46_glib)
   add_test(NAME test_nip46_glib_lifetime COMMAND test_nip46_glib_lifetime)
 endif()
 
+
+# C1 hardening consolidation (nostrc-ot2c.2)
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip46_c1_hardening.c)
+  add_executable(test_nip46_c1_hardening tests/test_nip46_c1_hardening.c)
+  target_link_libraries(test_nip46_c1_hardening PRIVATE nostr_nip46_core)
+  add_test(NAME test_nip46_c1_hardening COMMAND test_nip46_c1_hardening)
+  set_tests_properties(test_nip46_c1_hardening PROPERTIES TIMEOUT 60)
+endif()
+
 # Tests
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_uri.c)
   add_executable(test_nip46_uri tests/test_uri.c)
