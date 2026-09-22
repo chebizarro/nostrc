@@ -54,12 +54,12 @@ SOLO first; Tracks B and C run concurrently against the renamed tree.
   shared build green on Linux, SONAMEs present, renames consistent, .pc correct.
   (Full two-ABI libnostr1 + libnostr-glib1 PRODUCTIZATION is deferred to Phase 2
   packaging; pre-phase only pins the flag so each ABI is reproducible.)
-- [ ] Track B (nostr-homed shippability, after A): B4 install nh-seed-authority as
+- [x] Track B (MERGED; seeder installable, headless NOSTR_HOMED_ENABLE_CTL [ldd-clean], pam-configs profile, nss_nostr.conf, +SMB -O2 release fix): B4 install nh-seed-authority as
   nostr-homed-seed outside BUILD_TESTS; B5/D-11 GLib-free NOSTR_HOMED_ENABLE_CTL so
   nostr-homectl ships headless (decoupled from EXPERIMENTAL_ROAMING/FUSE); B6 author
   /usr/share/pam-configs/nostr matching gdm-password.sample semantics; B7 resolve
   nss.conf.sample vs nss_nostr.conf.sample and ship a real /etc/nss_nostr.conf.
-- [ ] Track C (server install dirs, after A, concurrent with B): B9 GNUInstallDirs
+- [x] Track C (MERGED; GNUInstallDirs signet+relayd, hardened nostr-relayd.service, signet MHD compile/link lock-step): B9 GNUInstallDirs
   destinations for signet + relayd (currently relative bin); B10 add a nostr-relayd
   systemd system unit.
 
