@@ -840,6 +840,46 @@ static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
         }
     }
 
+    /* C4 (nostrc-ot2c.5): admit only responses whose OUTER envelope names
+     * us as recipient. A NIP-46 response MUST carry a ["p", <client_pk>]
+     * tag with our derived client pubkey; without this check any event
+     * with the right kind + author would be handed to decrypt using our
+     * private key, which is a needless attacker oracle even when the
+     * ciphertext will fail to open. */
+    if (session->derived_client_pubkey) {
+        NostrTags *tags = (NostrTags *)nostr_event_get_tags(ev);
+        int p_tag_matches = 0;
+        if (tags) {
+            size_t ntags = nostr_tags_size(tags);
+            for (size_t i = 0; i < ntags; i++) {
+                NostrTag *t = nostr_tags_get(tags, i);
+                if (!t || nostr_tag_size(t) < 2) continue;
+                const char *k = nostr_tag_get_key(t);
+                const char *v = nostr_tag_get_value(t);
+                if (k && v && !strcmp(k, "p") &&
+                    !strcmp(v, session->derived_client_pubkey)) {
+                    p_tag_matches = 1;
+                    break;
+                }
+            }
+        }
+        if (!p_tag_matches) {
+            fprintf(stderr, "[nip46] persistent_cb: dropping response with no p-tag for our client pk %s\n",
+                    session->derived_client_pubkey);
+            goto done;
+        }
+    }
+
+    /* C4: verify the outer event signature BEFORE handing the content to
+     * the crypto oracle. libnostr's relay ingest may already validate on
+     * receive; the extra check here is defence-in-depth and makes the
+     * admission policy independent of transport-layer configuration. */
+    if (!nostr_event_check_signature(ev)) {
+        fprintf(stderr, "[nip46] persistent_cb: dropping response with bad signature from %s\n",
+                sender_pubkey);
+        goto done;
+    }
+
     /* Decrypt only with the session-negotiated transport. Never infer a
      * different mode from attacker-controlled ciphertext shape. */
     char *response_json = NULL;
@@ -872,17 +912,28 @@ done:
     nostr_nip46_session_unref(session);
 }
 
-/* nostrc-4cp/F25: Relay connection readiness is signaled by libnostr's
- * relay state callback instead of a polling monitor thread. */
+static int64_t nip46_now_ms(void);
+
+/* nostrc-4cp/F25 + C3 (nostrc-ot2c.4): relay lifecycle callback.
+ *
+ * Every CONNECTED transition signals the connect channel so a start-up
+ * waiter can count "N relays up" without a polling loop. DISCONNECTED /
+ * BACKOFF transitions are logged so a reconnect story is observable in
+ * the trace instead of quietly disappearing between OK/CLOSED frames. */
 static void nip46_relay_state_cb(NostrRelay *relay,
                                  NostrRelayConnectionState old_state,
                                  NostrRelayConnectionState new_state,
                                  void *user_data) {
-    (void)relay;
     (void)old_state;
     GoChannel *chan = (GoChannel *)user_data;
-    if (chan && new_state == NOSTR_RELAY_STATE_CONNECTED) {
-        go_channel_try_send(chan, (void *)(intptr_t)1);
+    const char *url = relay ? nostr_relay_get_url_const(relay) : "(unknown)";
+    if (new_state == NOSTR_RELAY_STATE_CONNECTED) {
+        if (chan) go_channel_try_send(chan, (void *)(intptr_t)1);
+        fprintf(stderr, "[nip46] relay_state: %s CONNECTED\n", url);
+    } else if (new_state == NOSTR_RELAY_STATE_DISCONNECTED) {
+        fprintf(stderr, "[nip46] relay_state: %s DISCONNECTED\n", url);
+    } else if (new_state == NOSTR_RELAY_STATE_BACKOFF) {
+        fprintf(stderr, "[nip46] relay_state: %s BACKOFF (reconnecting)\n", url);
     }
 }
 
@@ -957,6 +1008,12 @@ int nostr_nip46_client_start(NostrNip46Session *s) {
         }
     }
 
+    /* C3: register the session in the pool->session registry BEFORE the
+     * pool is started. Persistent event middleware might dispatch as soon
+     * as any relay handshake completes; this ordering keeps ownership
+     * discoverable and prevents dropping the very first response. */
+    session_registry_add(s->client_pool, s);
+
     nostr_simple_pool_start(s->client_pool);
 
     /* Wait for connection signal via channel select with 5s timeout */
@@ -970,26 +1027,27 @@ int nostr_nip46_client_start(NostrNip46Session *s) {
 
     int connected = (conn_sel.selected_case == 0 && conn_sel.ok);
 
-    /* nostrc-koso: With multiple relays, waiting only for the FIRST connection
-     * races the rest: the response subscription below fails silently on relays
-     * whose websocket isn't up yet (nostr_subscription_fire requires a live
-     * connection and is never retried), and the RPC publish skips them too.
-     * Kind 24133 is ephemeral, so a request published before a signer's relay
-     * connects is lost forever — signers that listen on a single relay (e.g.
-     * nsec.app on relay.nsec.app) then never see the request. Give the
-     * remaining relays a short grace window to finish connecting. */
+    /* nostrc-koso + C3: With multiple relays we still need every relay to
+     * come up (or the 3 s grace bound to expire) before the RPC publish
+     * would start missing them. Every CONNECTED transition wakes us via
+     * nip46_relay_state_cb, so this wait is purely event-driven — the
+     * only "time" here is the outer 3 s cap on a permanently-broken
+     * relay, NOT a polling interval. */
     if (connected && s->client_pool->relay_count > 1) {
-        for (int waited_ms = 0; waited_ms < 3000; waited_ms += 100) {
+        int64_t start_ms = nip46_now_ms();
+        while (nip46_now_ms() - start_ms < 3000) {
             size_t up = 0;
             for (size_t i = 0; i < s->client_pool->relay_count; i++) {
                 NostrRelay *r = s->client_pool->relays[i];
                 if (r && nostr_relay_is_connected(r)) up++;
             }
             if (up >= s->client_pool->relay_count) break;
-            /* Use the connect channel as the wait primitive; a received
-             * signal or a 100ms timeout both just re-check the counts. */
+            int64_t remain = 3000 - (nip46_now_ms() - start_ms);
+            if (remain <= 0) break;
             connect_recv = NULL;
-            (void)go_select_timeout(connect_cases, 1, 100);
+            GoSelectResult r = go_select_timeout(connect_cases, 1, (uint32_t)remain);
+            /* Loop reacts to the next CONNECTED signal or exits on cap. */
+            if (r.selected_case < 0) break;
         }
     }
 
@@ -1029,9 +1087,7 @@ int nostr_nip46_client_start(NostrNip46Session *s) {
                                 s->n_relays, *filters, true);
     nostr_filters_free(filters);
 
-    /* nostrc-kk9f: Register session in registry for callback dispatch */
-    session_registry_add(s->client_pool, s);
-
+    /* C3: session already registered before pool start; no re-registration. */
     s->client_pool_started = 1;
     s->state = NIP46_STATE_CONNECTED;
     fprintf(stderr, "[nip46] client_start: persistent pool started with %zu relay(s)\n",
