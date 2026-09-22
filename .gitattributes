@@ -1,7 +1,3 @@
-
-# Use bd merge for beads JSONL files
-.beads/issues.jsonl merge=beads
-
 # Beads exports are generated from the dolt DB; union-merge to avoid spurious
 # conflicts on the JSONL cache (bd re-exports authoritative content after merge).
 .beads/issues.jsonl merge=union
