@@ -111,6 +111,8 @@ set(NOSTR_GOBJECT_SOURCES
   src/gnostr-relays.c
   src/gnostr-mute-list.c
   src/gnostr-sync-service.c
+  src/gnostr-signer-bridge.c
+  src/gnostr-app-bridge.c
   ${SIGNER_PROXY_C}
 )
 
@@ -155,6 +157,8 @@ set(NOSTR_GOBJECT_HEADERS
   include/nostr-gobject-1.0/gnostr-relays.h
   include/nostr-gobject-1.0/gnostr-mute-list.h
   include/nostr-gobject-1.0/gnostr-sync-service.h
+  include/nostr-gobject-1.0/gnostr-signer-bridge.h
+  include/nostr-gobject-1.0/gnostr-app-bridge.h
 )
 
 # ── Library target ───────────────────────────────────────────────────

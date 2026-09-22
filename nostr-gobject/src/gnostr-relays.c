@@ -7,8 +7,7 @@
 #ifndef GNOSTR_RELAY_TEST_ONLY
 #include <nostr-gobject-1.0/nostr_pool.h>
 #include <nostr-gobject-1.0/nostr_relay.h>
-#include "../../apps/gnostr/src/util/relay_info.h"
-#include "../../apps/gnostr/src/util/utils.h"
+#include "gnostr-app-bridge.h"
 #endif
 
 /* Constructor-injected GSettings schema ID */
@@ -1070,7 +1069,7 @@ void gnostr_get_write_relay_urls_into(GPtrArray *out) {
 /* --- NIP-65 Publishing Implementation --- */
 
 #ifndef GNOSTR_RELAY_TEST_ONLY
-#include "../../apps/gnostr/src/ipc/gnostr-signer-service.h"
+#include "gnostr-signer-bridge.h"
 #include "nostr-relay.h"
 #include <time.h>
 
@@ -1154,7 +1153,7 @@ static void on_nip65_sign_complete(GObject *source, GAsyncResult *res, gpointer 
   g_autoptr(GError) error = NULL;
   gchar *signed_event_json = NULL;
 
-  gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
+  gboolean ok = gnostr_signer_bridge_sign_event_finish(res, &signed_event_json, &error);
 
   if (!ok || !signed_event_json) {
     g_warning("nip65: signing failed: %s", error ? error->message : "unknown error");
@@ -1197,31 +1196,31 @@ static void on_nip65_sign_complete(GObject *source, GAsyncResult *res, gpointer 
     const gchar *url = (const gchar*)g_ptr_array_index(all_urls, i);
     gboolean valid = TRUE;
 
-    GnostrRelayInfo *relay_info = gnostr_relay_info_cache_get(url);
+    GnostrRelayInfo *relay_info = gnostr_app_bridge_relay_info_cache_get(url);
     if (relay_info) {
-      GnostrRelayValidationResult *validation = gnostr_relay_info_validate_event(
+      GnostrRelayValidationResult *validation = gnostr_app_bridge_relay_info_validate_event(
         relay_info, nip65_content, nip65_content_len, nip65_tag_count, nip65_created_at, nip65_serialized_len);
-      if (!gnostr_relay_validation_result_is_valid(validation)) {
-        gchar *errors = gnostr_relay_validation_result_format_errors(validation);
+      if (!gnostr_app_bridge_relay_validation_result_is_valid(validation)) {
+        gchar *errors = gnostr_app_bridge_relay_validation_result_format_errors(validation);
         g_debug("nip65: skipping %s due to limit violations: %s", url, errors ? errors : "unknown");
         g_free(errors);
         valid = FALSE;
       }
-      gnostr_relay_validation_result_free(validation);
+      gnostr_app_bridge_relay_validation_result_free(validation);
 
       if (valid) {
         /* nostrc-23: Check auth_required / payment_required before publishing */
         GnostrRelayValidationResult *pub_validation =
-            gnostr_relay_info_validate_for_publishing(relay_info);
-        if (!gnostr_relay_validation_result_is_valid(pub_validation)) {
-          gchar *errors = gnostr_relay_validation_result_format_errors(pub_validation);
+            gnostr_app_bridge_relay_info_validate_for_publishing(relay_info);
+        if (!gnostr_app_bridge_relay_validation_result_is_valid(pub_validation)) {
+          gchar *errors = gnostr_app_bridge_relay_validation_result_format_errors(pub_validation);
           g_debug("nip65: skipping %s due to publish policy: %s", url, errors ? errors : "unknown");
           g_free(errors);
           valid = FALSE;
         }
-        gnostr_relay_validation_result_free(pub_validation);
+        gnostr_app_bridge_relay_validation_result_free(pub_validation);
       }
-      gnostr_relay_info_free(relay_info);
+      gnostr_app_bridge_relay_info_free(relay_info);
     }
 
     if (valid)
@@ -1230,7 +1229,7 @@ static void on_nip65_sign_complete(GObject *source, GAsyncResult *res, gpointer 
   g_ptr_array_free(all_urls, TRUE);
 
   g_free(signed_event_json);
-  gnostr_publish_to_relays_async(event, relay_urls,
+  gnostr_app_bridge_publish_to_relays_async(event, relay_urls,
       nip65_publish_done, ctx);
   /* event + relay_urls ownership transferred; ctx freed in callback */
 }
@@ -1255,9 +1254,9 @@ nip65_publish_done(guint success_count, guint fail_count, gpointer user_data)
 void gnostr_nip65_publish_async(GPtrArray *nip65_relays,
                                  GnostrNip65PublishCallback callback,
                                  gpointer user_data) {
-  /* Check if signer service is available */
-  GnostrSignerService *signer = gnostr_signer_service_get_default();
-  if (!gnostr_signer_service_is_available(signer)) {
+  /* Check if signer service is available (higher layer registers it via
+   * gnostr_signer_bridge_install in apps/gnostr — nostrc-ecrx) */
+  if (!gnostr_signer_bridge_is_available()) {
     if (callback) callback(FALSE, "Signer not available", user_data);
     return;
   }
@@ -1277,11 +1276,10 @@ void gnostr_nip65_publish_async(GPtrArray *nip65_relays,
   ctx->user_data = user_data;
   ctx->event_json = event_json;
 
-  /* Call unified signer service (uses NIP-46 or NIP-55L based on login method) */
-  gnostr_sign_event_async(
+  /* Call unified signer service via bridge (uses NIP-46 or NIP-55L based on
+   * login method). Higher layer supplies the implementation. */
+  gnostr_signer_bridge_sign_event_async(
     event_json,
-    "",        /* current_user: ignored */
-    "gnostr",  /* app_id: ignored */
     NULL,      /* cancellable */
     on_nip65_sign_complete,
     ctx

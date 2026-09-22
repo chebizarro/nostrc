@@ -17,9 +17,10 @@
 #include "nostr-tag.h"
 
 #ifndef GNOSTR_MUTE_LIST_TEST_ONLY
-#include "../../apps/gnostr/src/util/utils.h"
-#include "../../apps/gnostr/src/ipc/signer_ipc.h"
-#include "../../apps/gnostr/src/ipc/gnostr-signer-service.h"
+#include "gnostr-app-bridge.h"
+#include "gnostr-signer-bridge.h"
+#include <nostr-gobject-1.0/nostr_utils.h>  /* gnostr_ensure_hex_pubkey */
+#include "signer_proxy.h" /* gdbus-codegen — in nostr-gobject binary dir */
 #include "json.h"
 #include "nostr-filter.h"
 #include "nostr-event.h"
@@ -449,7 +450,7 @@ static void on_private_entries_decrypted(GObject *source, GAsyncResult *res, gpo
     DecryptPrivateContext *ctx = (DecryptPrivateContext *)user_data;
     if (!ctx) return;
 
-    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+    NostrOrgNostrSigner *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
     g_autoptr(GError) error = NULL;
     char *decrypted_json = NULL;
 
@@ -478,7 +479,7 @@ static void decrypt_private_entries_async(GNostrMuteList *self,
     if (!self || !encrypted_content || !*encrypted_content || !user_pubkey) return;
 
     g_autoptr(GError) error = NULL;
-    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&error);
+    NostrOrgNostrSigner *proxy = gnostr_signer_bridge_proxy_get(&error);
     if (!proxy) {
         g_debug("mute_list: cannot decrypt private entries - signer not available: %s",
                 error ? error->message : "unknown");
@@ -1077,7 +1078,7 @@ static void publish_to_relays(SaveContext *ctx, const char *signed_event_json) {
     GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
     gnostr_load_relays_into(relay_urls);
 
-    gnostr_publish_to_relays_async(event, relay_urls,
+    gnostr_app_bridge_publish_to_relays_async(event, relay_urls,
         mute_list_publish_done, ctx);
     /* event + relay_urls ownership transferred; ctx freed in callback */
 }
@@ -1116,7 +1117,7 @@ static void on_mute_list_sign_complete(GObject *source, GAsyncResult *res, gpoin
     g_autoptr(GError) error = NULL;
     char *signed_event_json = NULL;
 
-    gboolean ok = gnostr_sign_event_finish(res, &signed_event_json, &error);
+    gboolean ok = gnostr_signer_bridge_sign_event_finish(res, &signed_event_json, &error);
 
     if (!ok || !signed_event_json) {
         g_warning("mute_list: signing failed: %s", error ? error->message : "unknown error");
@@ -1232,7 +1233,7 @@ static void on_private_tags_encrypted(GObject *source, GAsyncResult *res, gpoint
     SaveContext *ctx = (SaveContext *)user_data;
     if (!ctx) return;
 
-    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
+    NostrOrgNostrSigner *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
     g_autoptr(GError) error = NULL;
     char *encrypted_content = NULL;
 
@@ -1254,9 +1255,8 @@ static void on_private_tags_encrypted(GObject *source, GAsyncResult *res, gpoint
 
 /* Build and sign the event with given content */
 static void proceed_to_sign(SaveContext *ctx, const char *encrypted_content) {
-    /* Check if signer service is available */
-    GnostrSignerService *signer = gnostr_signer_service_get_default();
-    if (!gnostr_signer_service_is_available(signer)) {
+    /* Check if signer service is available (via registered bridge — nostrc-ecrx) */
+    if (!gnostr_signer_bridge_is_available()) {
         if (ctx->callback) ctx->callback(ctx->mute_list, FALSE, "Signer not available", ctx->user_data);
         save_context_free(ctx);
         return;
@@ -1331,11 +1331,10 @@ static void proceed_to_sign(SaveContext *ctx, const char *encrypted_content) {
     g_free(ctx->event_json);
     ctx->event_json = event_json;
 
-    /* Call unified signer service (uses NIP-46 or NIP-55L based on login method) */
-    gnostr_sign_event_async(
+    /* Call unified signer service via bridge (uses NIP-46 or NIP-55L based on
+     * login method). Higher layer supplies the implementation. */
+    gnostr_signer_bridge_sign_event_async(
         event_json,
-        "",        /* current_user: ignored */
-        "gnostr",  /* app_id: ignored */
         NULL,      /* cancellable */
         on_mute_list_sign_complete,
         ctx
@@ -1350,9 +1349,8 @@ void gnostr_mute_list_save_async(GNostrMuteList *self,
         return;
     }
 
-    /* Check if signer service is available */
-    GnostrSignerService *signer = gnostr_signer_service_get_default();
-    if (!gnostr_signer_service_is_available(signer)) {
+    /* Check if signer service is available (via registered bridge — nostrc-ecrx) */
+    if (!gnostr_signer_bridge_is_available()) {
         if (callback) callback(self, FALSE, "Signer not available", user_data);
         return;
     }
@@ -1375,7 +1373,7 @@ void gnostr_mute_list_save_async(GNostrMuteList *self,
      * because the unified signer service doesn't yet support NIP-44 encrypt.
      * This is a separate issue to address in a future task. */
     g_autoptr(GError) proxy_err = NULL;
-    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
+    NostrOrgNostrSigner *proxy = gnostr_signer_bridge_proxy_get(&proxy_err);
 
     /* If there are private entries and we have user pubkey and proxy, encrypt them first */
     if (ctx->private_tags_json && ctx->user_pubkey && proxy) {

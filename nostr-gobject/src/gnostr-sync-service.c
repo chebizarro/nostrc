@@ -15,7 +15,7 @@
  */
 
 #include "gnostr-sync-service.h"
-#include "../../apps/gnostr/src/sync/neg-client.h"
+#include <nostr-gobject-1.0/gnostr-app-bridge.h>
 #include <nostr-gobject-1.0/nostr_event_bus.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>
 #include <string.h>
@@ -296,7 +296,8 @@ do_sync(GNostrSyncService *self)
   emit_bus_event(GNOSTR_SYNC_TOPIC_STARTED, relay_url);
 
   const char *authors[1] = { author_hex };
-  gnostr_neg_sync_kinds_for_authors_async(relay_url, SYNC_KINDS, SYNC_KIND_COUNT,
+  gnostr_app_bridge_neg_sync_kinds_for_authors_async(
+                                          relay_url, SYNC_KINDS, SYNC_KIND_COUNT,
                                           authors, 1,
                                           self->cancellable,
                                           on_sync_done, g_object_ref(self));
@@ -310,7 +311,7 @@ on_sync_done(GObject *source, GAsyncResult *res, gpointer user_data)
 
   g_autoptr(GError) error = NULL;
   GnostrNegSyncStats stats = {0};
-  gboolean ok = gnostr_neg_sync_kinds_finish(res, &stats, &error);
+  gboolean ok = gnostr_app_bridge_neg_sync_kinds_finish(res, &stats, &error);
 
   if (ok) {
     self->state = GNOSTR_SYNC_IDLE;

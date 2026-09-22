@@ -14,22 +14,13 @@
 
 #include <glib.h>
 #include <gio/gio.h>
+/* nostrc-ecrx: GnostrKeyInfo + GnostrKeystoreError + GNOSTR_KEYSTORE_ERROR
+ * are defined by the nostr-gobject bridge header so both the app-side
+ * keystore implementation (this file) and the library's identity
+ * consumer (nostr-gobject/src/gnostr-identity.c) see the same layout. */
+#include <nostr-gobject-1.0/gnostr-app-bridge.h>
 
 G_BEGIN_DECLS
-
-/**
- * GnostrKeyInfo:
- * @npub: The bech32-encoded public key (npub1...)
- * @label: Human-readable label for the key
- * @created_at: Unix timestamp when the key was stored
- *
- * Information about a stored key (does not contain the actual secret).
- */
-typedef struct {
-  char *npub;
-  char *label;
-  gint64 created_at;
-} GnostrKeyInfo;
 
 /**
  * gnostr_keystore_available:
@@ -224,27 +215,10 @@ void gnostr_key_info_free(GnostrKeyInfo *info);
  */
 GnostrKeyInfo *gnostr_key_info_copy(const GnostrKeyInfo *info);
 
-/* Error domain */
-#define GNOSTR_KEYSTORE_ERROR (gnostr_keystore_error_quark())
+/* Error domain quark. GNOSTR_KEYSTORE_ERROR macro and the enum come from
+ * the bridge header included above. This function is the app-side quark
+ * that the app installs into the bridge at startup. */
 GQuark gnostr_keystore_error_quark(void);
-
-/**
- * GnostrKeystoreError:
- * @GNOSTR_KEYSTORE_ERROR_NOT_AVAILABLE: Secure storage not available
- * @GNOSTR_KEYSTORE_ERROR_NOT_FOUND: Key not found
- * @GNOSTR_KEYSTORE_ERROR_ACCESS_DENIED: Access denied (user cancelled auth)
- * @GNOSTR_KEYSTORE_ERROR_INVALID_KEY: Invalid key format
- * @GNOSTR_KEYSTORE_ERROR_STORAGE_FULL: Storage is full
- * @GNOSTR_KEYSTORE_ERROR_FAILED: Generic failure
- */
-typedef enum {
-  GNOSTR_KEYSTORE_ERROR_NOT_AVAILABLE,
-  GNOSTR_KEYSTORE_ERROR_NOT_FOUND,
-  GNOSTR_KEYSTORE_ERROR_ACCESS_DENIED,
-  GNOSTR_KEYSTORE_ERROR_INVALID_KEY,
-  GNOSTR_KEYSTORE_ERROR_STORAGE_FULL,
-  GNOSTR_KEYSTORE_ERROR_FAILED
-} GnostrKeystoreError;
 
 G_END_DECLS
 

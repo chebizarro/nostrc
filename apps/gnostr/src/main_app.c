@@ -19,6 +19,7 @@
 #include "sync/gnostr-sync-bridge.h"
 #include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/gnostr-identity.h>
+#include "ipc/gnostr-signer-bridge-install.h"
 #include <go.h>          /* go(), go_fiber_compat() */
 #include "search-provider/gnostr-shell-search-provider.h"
 /* nostrc-deferred-free: Fiber scheduler removed — go_fiber_compat() is reverted
@@ -340,6 +341,11 @@ int main(int argc, char **argv) {
    * any identity/relay helpers touch GSettings. */
   gnostr_relays_init("org.gnostr.gnostr");
   gnostr_identity_init("org.gnostr.Client");
+
+  /* nostrc-ecrx: register the app-layer signer implementation with the
+   * nostr-gobject signer bridge so gnostr-relays.c / gnostr-mute-list.c
+   * can call into GnostrSignerService without a layering violation. */
+  gnostr_signer_bridge_install_default();
 
   /* nostrc-deferred-free: Fiber scheduler and blocking executor removed.
    * go_fiber_compat() is reverted to OS threads (nostrc-b0h-revert in go.c),

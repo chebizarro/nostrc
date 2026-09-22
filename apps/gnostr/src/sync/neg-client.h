@@ -13,6 +13,10 @@
 #define NEG_CLIENT_H
 
 #include <gio/gio.h>
+/* nostrc-ecrx: GnostrNegSyncStats is defined by the library bridge so
+ * both the app producer (this file) and the nostr-gobject consumer
+ * (gnostr-sync-service.c) see the same struct layout. */
+#include <nostr-gobject-1.0/gnostr-app-bridge.h>
 
 G_BEGIN_DECLS
 
@@ -28,13 +32,6 @@ typedef enum {
   GNOSTR_NEG_ERROR_CANCELLED,
   GNOSTR_NEG_ERROR_LOCAL
 } GnostrNegErrorCode;
-
-typedef struct {
-  guint local_count;    /* Events in local NDB for synced kinds */
-  guint rounds;         /* Negentropy protocol rounds completed */
-  guint events_fetched; /* Events fetched from relay (0 if in_sync) */
-  gboolean in_sync;     /* TRUE if local and remote fingerprints match */
-} GnostrNegSyncStats;
 
 /**
  * gnostr_neg_sync_kinds_async:

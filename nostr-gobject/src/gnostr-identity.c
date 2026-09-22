@@ -6,7 +6,7 @@
  */
 
 #include "gnostr-identity.h"
-#include "../../apps/gnostr/src/util/keystore.h"
+#include <nostr-gobject-1.0/gnostr-app-bridge.h>
 #include <nostr-gobject-1.0/nostr_keys.h>
 #include <string.h>
 
@@ -73,7 +73,7 @@ GNostrIdentity *gnostr_identity_get_current(void) {
 
   GNostrIdentity *identity = g_new0(GNostrIdentity, 1);
   identity->npub = npub;
-  identity->has_local_key = gnostr_keystore_has_key(npub);
+  identity->has_local_key = gnostr_app_bridge_keystore_has_key(npub);
 
   if (identity->has_local_key) {
     identity->signer_type = g_strdup("local");
@@ -99,7 +99,7 @@ void gnostr_identity_set_current(const char *npub) {
 }
 
 GList *gnostr_identity_list_stored(GError **error) {
-  GList *keys = gnostr_keystore_list_keys(error);
+  GList *keys = gnostr_app_bridge_keystore_list_keys(error);
   if (!keys) return NULL;
 
   GList *identities = NULL;
@@ -115,7 +115,7 @@ GList *gnostr_identity_list_stored(GError **error) {
     identities = g_list_prepend(identities, identity);
   }
 
-  g_list_free_full(keys, (GDestroyNotify)gnostr_key_info_free);
+  g_list_free_full(keys, (GDestroyNotify)gnostr_app_bridge_key_info_free);
 
   return g_list_reverse(identities);
 }
@@ -158,7 +158,7 @@ char *gnostr_identity_import_nsec(const char *nsec,
   if (!npub) return NULL;
 
   /* Store in secure storage */
-  if (!gnostr_keystore_store_key(npub, nsec, label, error)) {
+  if (!gnostr_app_bridge_keystore_store_key(npub, nsec, label, error)) {
     g_free(npub);
     return NULL;
   }
@@ -223,7 +223,7 @@ char *gnostr_identity_import_nsec_finish(GAsyncResult *result,
 }
 
 char *gnostr_identity_get_nsec(const char *npub, GError **error) {
-  return gnostr_keystore_retrieve_key(npub, error);
+  return gnostr_app_bridge_keystore_retrieve_key(npub, error);
 }
 
 /* Async get nsec implementation */
@@ -276,15 +276,15 @@ char *gnostr_identity_get_nsec_finish(GAsyncResult *result,
 }
 
 gboolean gnostr_identity_delete(const char *npub, GError **error) {
-  return gnostr_keystore_delete_key(npub, error);
+  return gnostr_app_bridge_keystore_delete_key(npub, error);
 }
 
 gboolean gnostr_identity_has_local_key(const char *npub) {
-  return gnostr_keystore_has_key(npub);
+  return gnostr_app_bridge_keystore_has_key(npub);
 }
 
 gboolean gnostr_identity_secure_storage_available(void) {
-  return gnostr_keystore_available();
+  return gnostr_app_bridge_keystore_available();
 }
 
 void gnostr_identity_clear_nsec(char *nsec) {
