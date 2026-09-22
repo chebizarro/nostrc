@@ -16,6 +16,7 @@
  * SELECT_PROVIDER / nh_auth_client_login_with. */
 #define NH_AUTH_PROVIDER_NAME_LOCAL "local"
 #define NH_AUTH_PROVIDER_NAME_NIP46 "nip46"
+#define NH_AUTH_PROVIDER_NAME_NIP46_QR "nip46qr"
 
 /* Provider list returned by BEGIN_LOGIN. Two providers exist today; the array
  * is sized for headroom. Names are canonical lowercase ASCII (see the
@@ -50,10 +51,28 @@ int nh_auth_provider_list_has(const nh_auth_provider_list *list,
                               const char *canonical_name);
 
 /* Parses a raw provider choice — as typed at a PAM prompt — into one of the
- * canonical names. Accepts only trimmed lowercase ASCII "local" or
- * "remote"/"nip46"; any non-printable, non-ASCII, or unknown token yields
- * NULL. The returned pointer is a static string literal ("local" / "nip46"). */
+ * canonical names. Accepts only trimmed lowercase ASCII: "local",
+ * "remote"/"nip46", or "qr"/"nip46qr". Any non-printable, non-ASCII, or
+ * unknown token yields NULL. The returned pointer is a static string
+ * literal ("local" / "nip46" / "nip46qr"). */
 const char *nh_auth_provider_choice_parse(const char *raw);
+
+/* Optional display payload returned by SELECT_PROVIDER for the QR /
+ * nostrconnect flow (design §5.3). All fields are NUL-terminated. Absent
+ * (kind[0] == '\0') for the local / bunker paths. */
+#define NH_AUTH_DISPLAY_URI_MAX 512u
+#define NH_AUTH_DISPLAY_HINT_MAX 128u
+#define NH_AUTH_DISPLAY_PAIRING_MAX 16u
+
+typedef struct nh_auth_display {
+  char kind[16];                            /* "nostrconnect" (or "") */
+  char uri[NH_AUTH_DISPLAY_URI_MAX];
+  char hint[NH_AUTH_DISPLAY_HINT_MAX];
+  char pairing_code[NH_AUTH_DISPLAY_PAIRING_MAX];
+  uint32_t expires_in_ms;   /* relative — for PAM's local countdown only */
+  int64_t expires_at;       /* ABSOLUTE unix seconds — matches the artifact
+                             * and the greeter-extension consumer contract */
+} nh_auth_display;
 
 /* Connects to a broker SOCK_SEQPACKET endpoint. Returns 0 and sets *fd_out. */
 int nh_auth_client_connect(const char *socket_path, int *fd_out);
@@ -91,6 +110,23 @@ int nh_auth_client_begin_smb_proof(int fd, const char *service,
 int nh_auth_client_submit_selection(int fd, const char *provider,
                                     const char *passphrase,
                                     nh_auth_result *result_out);
+
+/* Split SELECT_PROVIDER / SUBMIT_UNLOCK entrypoint so the PAM module can
+ * render the display payload between the two RPCs. Runs SELECT_PROVIDER,
+ * fills *display_out (zeroed first) if the broker attached a display
+ * object, then invokes `on_display` (may be NULL) BEFORE the long-blocking
+ * SUBMIT_UNLOCK. `secret` is sent as the SUBMIT_UNLOCK payload; for the QR
+ * flow pass "qr", for the local flow the passphrase, for the pre-paired
+ * bunker flow "approve". Returns 0 on transport success. */
+typedef void (*nh_auth_display_callback)(void *ctx,
+                                         const nh_auth_display *display);
+
+int nh_auth_client_submit_selection_display(int fd, const char *provider,
+                                            const char *secret,
+                                            nh_auth_display *display_out,
+                                            nh_auth_display_callback on_display,
+                                            void *on_display_ctx,
+                                            nh_auth_result *result_out);
 
 /* Drives BEGIN_LOGIN -> SELECT_PROVIDER(provider) -> SUBMIT_UNLOCK on one
  * connection and returns the final broker result. See

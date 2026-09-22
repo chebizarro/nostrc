@@ -228,3 +228,75 @@ sudo rm -f /run/nostr-auth/greeter/current.{json,png}
 
 The panel must disappear as soon as `current.json` is removed, and must
 also disappear if `expires_at` is set to a past unix time.
+
+## Producer implementation notes (nostr-authd side)
+
+This section is a producer-side supplement to the consumer contract above.
+Nothing in it changes the wire shape; it documents how the shipped
+`nostr-authd` broker + `pam_nostr` module actually publish the drop today.
+
+### Atomic write
+
+Both files are written to `<basename>.tmp` in the same directory and then
+`rename(2)`'d into place, so a `Gio.FileMonitor` observer never sees a
+half-written file. Both files are produced together by the broker
+(`gnome/nostr-homed/src/auth/auth_conf.c`, `nh_broker_greeter_artifact_write`)
+so one publish = one JSON + one PNG. Design decision D3 originally kept
+the QR encoder out of the root daemon; we deliberately relax that in the
+shipped implementation because the extension expects both files on every
+publish and having two disjoint producers (broker for JSON, PAM for PNG)
+would leave the artifact incomplete for non-PAM callers, including our
+own headless integration tests. Vendored Nayuki qrcodegen (MIT) is
+~1 kLoC of pure arithmetic on a URI we generated ourselves, so the
+blast radius on the root daemon is small.
+
+### PNG format
+
+The PAM-produced PNG is a monochrome greyscale (PNG colour type 0, 8-bit)
+image with each QR module rendered as a `scale × scale` pixel block. The
+shipped encoder uses `scale = 8` at the design's version-9 cap, yielding a
+`(size + 4) * 8 × (size + 4) * 8` PNG (typically 456×456 for a
+~200-byte URI). Foreground is `0x00`, background `0xff`, no palette or
+filter tricks — a stock PNG decoder handles it.
+
+### `expires_at` is absolute unix-seconds
+
+The broker computes `expires_at = time(NULL) + <wait_budget_ms>/1000` at
+publish time and writes it into `current.json` as a plain integer number
+of seconds. The extension's `now >= expires_at` hide check therefore
+compares seconds against seconds. A missing or non-positive value is
+treated as "no expiry" per the consumer contract. Example:
+
+```json
+{ "tx_id": "…", "png": "current.png",
+  "uri": "nostrconnect://…",
+  "pairing_code": "A1B2-C3D4",
+  "expires_at": 1758560000,
+  "hint": "Scan with your Nostr signer" }
+```
+
+The provider's internal per-attempt scan budget (78 000 ms at the default)
+is also exposed to `pam_nostr` as `expires_in_ms` on the
+`SELECT_PROVIDER` reply so the PAM module can drive its own local
+countdown; the artifact JSON on disk (which the extension reads) uses
+only the absolute `expires_at`. The wire `display` object carries both
+fields; a client that only understands one is guaranteed to get the
+right units.
+
+### Removal on retire
+
+`current.json` and `current.png` are both `unlink(2)`'d by the broker as
+soon as the login transaction retires — success, denial, expiry, cancel,
+or the client socket closing — via `nh_broker_greeter_artifact_remove()`
+called from `conn_reset_proof`. Removing `current.json` is the primary
+hide signal per the consumer contract; the extension also self-hides on
+`expires_at` elapsed for the crashed-broker case.
+
+### Test seam
+
+Headless tests can point the drop at a per-test tmpdir via
+`nh_broker_greeter_artifact_set_dir(path)` (declared in
+`gnome/nostr-homed/src/auth/auth_broker.h`) so
+`test_broker_login_nip46_qr` can assert the presence + shape of both
+files without touching `/run/nostr-auth/greeter`. Production leaves the
+directory at the default and never calls the seam.

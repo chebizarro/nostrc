@@ -12,7 +12,24 @@
 typedef struct NostrNip46Session NostrNip46Session;
 
 typedef struct nh_auth_provider nh_auth_provider;
-typedef enum nh_auth_provider_event_type { NH_AUTH_PROVIDER_READY=1, NH_AUTH_PROVIDER_UNLOCK_REQUIRED, NH_AUTH_PROVIDER_APPROVAL_PENDING, NH_AUTH_PROVIDER_SIGNED_EVENT, NH_AUTH_PROVIDER_DENIED, NH_AUTH_PROVIDER_UNAVAILABLE, NH_AUTH_PROVIDER_INTERACTION_REQUIRED, NH_AUTH_PROVIDER_FAILED } nh_auth_provider_event_type;
+typedef enum nh_auth_provider_event_type {
+  NH_AUTH_PROVIDER_READY=1,
+  NH_AUTH_PROVIDER_UNLOCK_REQUIRED,
+  NH_AUTH_PROVIDER_APPROVAL_PENDING,
+  NH_AUTH_PROVIDER_SIGNED_EVENT,
+  NH_AUTH_PROVIDER_DENIED,
+  NH_AUTH_PROVIDER_UNAVAILABLE,
+  NH_AUTH_PROVIDER_INTERACTION_REQUIRED,
+  NH_AUTH_PROVIDER_FAILED,
+  /* Client-initiated NIP-46 (QR/nostrconnect) needs the broker (and
+   * PAM) to render something to the user BEFORE the blocking wait.
+   * event.data is a NUL-terminated JSON object:
+   *   {"kind":"nostrconnect","uri":"...",
+   *    "pairing_code":"XXXX-XXXX","hint":"...",
+   *    "expires_in_ms":N}
+   * data_len excludes the trailing NUL. Design §5.2. */
+  NH_AUTH_PROVIDER_DISPLAY_REQUIRED
+} nh_auth_provider_event_type;
 
 typedef struct nh_auth_provider_snapshot {
   nh_identity_provider_type type;
@@ -73,5 +90,45 @@ typedef nh_auth_nip46_sign_status (*nh_auth_nip46_sign_fn)(
     char **out_signed_event_json, void *user_data);
 
 void nh_auth_provider_nip46_set_sign_hook(nh_auth_nip46_sign_fn fn, void *ctx);
+
+/* NIP-46 QR (client-initiated `nostrconnect://`) provider — design §5.1.
+ * Snapshot must have type NH_IDENTITY_PROVIDER_NIP46_QR; public_config_json is
+ * either empty or {"mode":"nostrconnect","relays":["wss://..."]}. secret_blob
+ * is ignored (the client keypair is per-login and ephemeral). The provider
+ * emits NH_AUTH_PROVIDER_DISPLAY_REQUIRED with the URI + pairing code before
+ * the wait, then SIGNED_EVENT on success. submit_unlock's payload is ignored
+ * (the ~78 s scan window is bounded by the challenge deadline). */
+nh_auth_provider *nh_auth_provider_nip46_qr_new(nh_auth_provider_event_fn emit,
+                                                void *emit_context);
+
+/* Compiled-in default relay when neither public_config_json nor auth.conf
+ * pins one (design decision D4). */
+#define NH_AUTH_NIP46_QR_DEFAULT_RELAY "wss://bunker.sharegap.net"
+
+/* Test hook: pin the QR default relay list. Pass NULL/0 to reset. Callers
+ * must keep the string storage valid until they reset the override. */
+void nh_auth_provider_nip46_qr_set_default_relays(const char *const *relays,
+                                                  size_t n_relays);
+
+/* Test hook: swap the real relay-backed await_connect / RPC path for an
+ * in-process bunker driver. Called after the URI has been minted, with the
+ * ready-to-use URI and the provider's client session. The hook must drive
+ * the same shape as a real signer: get_public_key MUST match the account
+ * pubkey; return a signed challenge (identical shape to the pre-paired
+ * bunker sign hook). Set to NULL to restore the real relay path. */
+typedef nh_auth_nip46_sign_status (*nh_auth_nip46_qr_signer_fn)(
+    NostrNip46Session *client, const char *nostrconnect_uri,
+    const char *unsigned_event_json, const char *expected_account_pubkey_hex,
+    char **out_signed_event_json, void *user_data);
+
+void nh_auth_provider_nip46_qr_set_signer_hook(nh_auth_nip46_qr_signer_fn fn,
+                                               void *ctx);
+
+/* Derive the pairing code shown in the greeter from the client pubkey. First
+ * 8 hex chars, upper-cased, hyphenated (`"A1B2-C3D4"`). Buffer must be at
+ * least 10 bytes. Returns 0 on success, -1 on invalid input. Never derived
+ * from the connect secret (design §8.1). */
+int nh_auth_provider_nip46_qr_pairing_code(const char *client_pubkey_hex,
+                                           char out[10]);
 
 #endif

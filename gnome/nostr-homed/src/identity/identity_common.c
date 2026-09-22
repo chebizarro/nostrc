@@ -135,6 +135,8 @@ int nh_identity_provider_type_to_text(nh_identity_provider_type type,
     *out = "local_encrypted_key";
   else if (type == NH_IDENTITY_PROVIDER_NIP46_BUNKER)
     *out = "nip46_bunker";
+  else if (type == NH_IDENTITY_PROVIDER_NIP46_QR)
+    *out = "nip46_qr";
   else return -1;
   return 0;
 }
@@ -146,6 +148,8 @@ int nh_identity_provider_type_from_text(const char *text,
     *out = NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY;
   else if (strcmp(text, "nip46_bunker") == 0)
     *out = NH_IDENTITY_PROVIDER_NIP46_BUNKER;
+  else if (strcmp(text, "nip46_qr") == 0)
+    *out = NH_IDENTITY_PROVIDER_NIP46_QR;
   else return -1;
   return 0;
 }

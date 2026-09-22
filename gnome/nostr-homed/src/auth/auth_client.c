@@ -91,6 +91,8 @@ const char *nh_auth_provider_choice_parse(const char *raw) {
   if (!strcmp(buf, "local")) return NH_AUTH_PROVIDER_NAME_LOCAL;
   if (!strcmp(buf, "remote") || !strcmp(buf, "nip46"))
     return NH_AUTH_PROVIDER_NAME_NIP46;
+  if (!strcmp(buf, "qr") || !strcmp(buf, "nip46qr"))
+    return NH_AUTH_PROVIDER_NAME_NIP46_QR;
   return NULL;
 }
 
@@ -247,11 +249,73 @@ int nh_auth_client_begin_smb_proof(int fd, const char *service,
 int nh_auth_client_submit_selection(int fd, const char *provider,
                                     const char *passphrase,
                                     nh_auth_result *result_out) {
+  return nh_auth_client_submit_selection_display(fd, provider, passphrase,
+                                                 NULL, NULL, NULL, result_out);
+}
+
+/* Parses the optional display block from a SELECT_PROVIDER response
+ * payload. Never fatal — a malformed display leaves *out zeroed. */
+static void parse_display(const char *response_json, nh_auth_display *out) {
+  if (!out) return;
+  memset(out, 0, sizeof *out);
+  if (!response_json) return;
+  json_error_t je;
+  json_t *root = json_loads(response_json, 0, &je);
+  if (!root) return;
+  json_t *disp = json_object_get(root, "display");
+  if (!disp || !json_is_object(disp)) { json_decref(root); return; }
+  json_t *k = json_object_get(disp, "kind");
+  json_t *u = json_object_get(disp, "uri");
+  json_t *h = json_object_get(disp, "hint");
+  json_t *pc = json_object_get(disp, "pairing_code");
+  json_t *ex = json_object_get(disp, "expires_in_ms");
+  if (k && json_is_string(k)) {
+    const char *v = json_string_value(k);
+    if (v) { strncpy(out->kind, v, sizeof out->kind - 1); }
+  }
+  if (u && json_is_string(u)) {
+    const char *v = json_string_value(u);
+    if (v) { strncpy(out->uri, v, sizeof out->uri - 1); }
+  }
+  if (h && json_is_string(h)) {
+    const char *v = json_string_value(h);
+    if (v) { strncpy(out->hint, v, sizeof out->hint - 1); }
+  }
+  if (pc && json_is_string(pc)) {
+    const char *v = json_string_value(pc);
+    if (v) { strncpy(out->pairing_code, v, sizeof out->pairing_code - 1); }
+  }
+  if (ex && json_is_integer(ex)) {
+    json_int_t v = json_integer_value(ex);
+    if (v > 0 && v <= 0xffffffffLL) out->expires_in_ms = (uint32_t)v;
+  }
+  /* expires_at is the absolute unix-seconds deadline emitted by the
+   * broker (design §5.3 + greeter-extension consumer contract). PAM does
+   * not currently render it — it uses expires_in_ms for a local
+   * countdown — but the field is parsed so future callers (and tests)
+   * can assert the wire truth. */
+  json_t *eat = json_object_get(disp, "expires_at");
+  if (eat && json_is_integer(eat)) {
+    json_int_t v = json_integer_value(eat);
+    if (v > 0) out->expires_at = (int64_t)v;
+  }
+  json_decref(root);
+}
+
+int nh_auth_client_submit_selection_display(int fd, const char *provider,
+                                            const char *secret,
+                                            nh_auth_display *display_out,
+                                            nh_auth_display_callback on_display,
+                                            void *on_display_ctx,
+                                            nh_auth_result *result_out) {
   if (!provider || !result_out) return -1;
   int is_nip46 = !strcmp(provider, NH_AUTH_PROVIDER_NAME_NIP46);
-  if (!is_nip46 && strcmp(provider, NH_AUTH_PROVIDER_NAME_LOCAL) != 0)
-    return -1;
-  if (!is_nip46 && !passphrase) return -1;
+  int is_qr = !strcmp(provider, NH_AUTH_PROVIDER_NAME_NIP46_QR);
+  int is_local = !strcmp(provider, NH_AUTH_PROVIDER_NAME_LOCAL);
+  if (!is_nip46 && !is_qr && !is_local) return -1;
+  if (is_local && !secret) return -1;
+
+  if (display_out) memset(display_out, 0, sizeof *display_out);
 
   json_t *select = json_object();
   if (!select ||
@@ -259,15 +323,36 @@ int nh_auth_client_submit_selection(int fd, const char *provider,
     if (select) json_decref(select);
     return -1;
   }
-  if (client_op(fd, NH_AUTH_OP_SELECT_PROVIDER, select, result_out) != 0)
+  char *sel_response = NULL;
+  if (client_op_raw(fd, NH_AUTH_OP_SELECT_PROVIDER, select, &sel_response) != 0)
     return -1;
+  if (extract_result(sel_response, result_out) != 0) {
+    free(sel_response);
+    return -1;
+  }
+  /* Best-effort display parse regardless of provider — old servers omit
+   * it, new servers may include it for future flows too. */
+  nh_auth_display local_disp;
+  nh_auth_display *disp = display_out ? display_out : &local_disp;
+  parse_display(sel_response, disp);
+  free(sel_response);
+  if (disp->kind[0] && on_display) on_display(on_display_ctx, disp);
+
   if (*result_out != NH_AUTH_RESULT_OK &&
       *result_out != NH_AUTH_RESULT_INTERACTION_REQUIRED)
     return 0;
 
-  const char *secret = is_nip46 ? NH_AUTH_CLIENT_APPROVE_TOKEN : passphrase;
+  /* SUBMIT_UNLOCK secret payload: local sends the passphrase; pre-paired
+   * bunker sends the placeholder "approve"; QR sends the placeholder
+   * "qr". The provider ignores the value on the external-signer paths. */
+  const char *submit_secret;
+  if (is_local) submit_secret = secret;
+  else if (is_qr) submit_secret = "qr";
+  else submit_secret = NH_AUTH_CLIENT_APPROVE_TOKEN;
+
   json_t *unlock = json_object();
-  if (!unlock || json_object_set_new(unlock, "secret", json_string(secret))) {
+  if (!unlock ||
+      json_object_set_new(unlock, "secret", json_string(submit_secret))) {
     if (unlock) json_decref(unlock);
     return -1;
   }

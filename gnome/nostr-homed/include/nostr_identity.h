@@ -86,7 +86,12 @@ typedef enum nh_identity_origin {
 
 typedef enum nh_identity_provider_type {
   NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY = 1,
-  NH_IDENTITY_PROVIDER_NIP46_BUNKER = 2
+  NH_IDENTITY_PROVIDER_NIP46_BUNKER = 2,
+  /* NIP-46 QR / nostrconnect:// client-initiated pairing at the greeter
+   * (design nip46-qr-login-greeter.md §5, decision D1). Record carries a
+   * relay list in public_config_json only; secret_blob is unused (the
+   * client keypair is ephemeral per login). */
+  NH_IDENTITY_PROVIDER_NIP46_QR = 3
 } nh_identity_provider_type;
 
 #define NH_IDENTITY_PROVIDER_BIT(type_) (1u << (unsigned int)(type_))

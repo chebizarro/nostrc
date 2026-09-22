@@ -31,10 +31,15 @@
 
 #include "auth_client.h"
 #include "nostr_auth_protocol.h"
+#include "pam_qr_render.h"
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <syslog.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #ifndef NH_PAM_DEFAULT_SOCKET
 #define NH_PAM_DEFAULT_SOCKET "/run/nostr-auth/auth.sock"
@@ -141,7 +146,7 @@ static int resolve_provider(pam_handle_t *pamh, const char *pinned,
 
   /* Interactive choice. Loop until the user types an accepted token or the
    * per-invocation invalid-attempt budget is exhausted. */
-  const char *prompt = "Sign in with (local/remote): ";
+  const char *prompt = "Sign in with (local/remote/qr): ";
   while (*attempts_left > 0) {
     char *reply = NULL;
     int rc = converse(pamh, PAM_PROMPT_ECHO_ON, prompt, &reply);
@@ -154,7 +159,7 @@ static int resolve_provider(pam_handle_t *pamh, const char *pinned,
     }
     (*attempts_left)--;
     if (*attempts_left == 0) break;
-    pam_error(pamh, "Unknown provider. Type 'local' or 'remote'.");
+    pam_error(pamh, "Unknown provider. Type 'local', 'remote', or 'qr'.");
   }
   return PAM_MAXTRIES;
 }
@@ -163,6 +168,110 @@ static void wipe(char *s) {
   if (!s) return;
   volatile char *p = (volatile char *)s;
   while (*p) *p++ = 0;
+}
+
+/* Note: the greeter-artifact PNG is now produced by the broker
+ * (nh_broker_greeter_artifact_write in auth_conf.c) so a single publish
+ * always drops both current.json + current.png atomically. This module
+ * used to render the PNG here for the graphical-greeter path; that
+ * responsibility moved to the broker so the artifact is complete for
+ * any producer, including headless integration tests. */
+
+/* Heuristic: is this PAM conversation running on a text console? The design
+ * (docs/reviews/qr-greeter-render-spike-2026-09-22.md) rules the half-block
+ * QR NO-GO in the graphical greeter (proportional Cantarell + label wrap),
+ * so we only emit it when we can be reasonably sure the client renders in a
+ * monospace terminal — real TTY / ssh / pamtester. Wrong-way false negatives
+ * are safe (the URI + pairing code always ship); the danger is a wrong-way
+ * false positive that mangles the greeter, so err on the side of "no QR". */
+static int is_text_console(pam_handle_t *pamh, const char *service) {
+  const char *xdisplay = NULL;
+#ifdef PAM_XDISPLAY
+  pam_get_item(pamh, PAM_XDISPLAY, (const void **)&xdisplay);
+  if (xdisplay && xdisplay[0]) return 0;
+#endif
+  const char *tty = NULL;
+  pam_get_item(pamh, PAM_TTY, (const void **)&tty);
+  if (tty && tty[0]) {
+    /* A graphical greeter passes ":0" / ":1" / ":wayland-0" as PAM_TTY. */
+    if (tty[0] == ':') return 0;
+    if (!strncmp(tty, "/dev/tty", 8)) return 1;
+    if (!strncmp(tty, "tty", 3)) return 1;
+    if (!strncmp(tty, "pts/", 4) || !strncmp(tty, "/dev/pts/", 9)) return 1;
+    /* ssh sets PAM_TTY = "ssh". */
+    if (!strcmp(tty, "ssh")) return 1;
+    if (!strcmp(tty, "console")) return 1;
+  }
+  if (service) {
+    if (!strncmp(service, "gdm", 3)) return 0;
+    if (!strcmp(service, "lightdm") || !strcmp(service, "sddm") ||
+        !strcmp(service, "xdm")) return 0;
+  }
+  /* Default to text — pamtester / lockable services / init-style ttys
+   * never set PAM_XDISPLAY. */
+  return 1;
+}
+
+/* Render the QR pane the PAM module hands the user. On the graphical
+ * greeter we ship pairing + hint only (the greeter extension renders the
+ * real PNG from /run/nostr-auth/greeter/current.png). On a text console we
+ * additionally embed a half-block QR of the URI so a user can scan
+ * directly. The whole message is emitted in ONE PAM_TEXT_INFO — splitting
+ * would hide the QR on shells that only show the most recent info line
+ * (design §3.4 emission rule). */
+static void render_qr_info(pam_handle_t *pamh, const nh_auth_display *disp,
+                           int text_console) {
+  if (!disp || !disp->uri[0]) return;
+  const char *hint = disp->hint[0]
+                         ? disp->hint
+                         : "Scan this with your Nostr signer app";
+
+  if (!text_console) {
+    /* Graphical greeter: short pairing code + hint only. */
+    char msg[256];
+    snprintf(msg, sizeof msg,
+             "%s\nPairing code: %s\nWaiting for your signer\xe2\x80\xa6",
+             hint, disp->pairing_code);
+    pam_info(pamh, "%s", msg);
+    return;
+  }
+
+  /* Text console: half-block QR + URI + pairing code. ECC L, version cap 9
+   * per design D11. */
+  char *qr_txt = NULL;
+  size_t qr_len = 0;
+  nh_qr_render_rc rr = nh_pam_qr_render_halfblock(disp->uri, 9, &qr_txt,
+                                                  &qr_len);
+  size_t need = qr_len + strlen(disp->uri) + strlen(disp->pairing_code) + 256;
+  char *buf = malloc(need);
+  if (!buf) { free(qr_txt); return; }
+  if (rr == NH_QR_RENDER_OK && qr_txt) {
+    snprintf(buf, need,
+             "%s:\n\n%s\nOr open this link on your phone:\n%s\n\n"
+             "Pairing code: %s",
+             hint, qr_txt, disp->uri, disp->pairing_code);
+  } else {
+    snprintf(buf, need,
+             "%s\nOpen this link on your phone or paste into your Nostr signer:\n%s\n\n"
+             "Pairing code: %s",
+             hint, disp->uri, disp->pairing_code);
+  }
+  pam_info(pamh, "%s", buf);
+  free(buf);
+  free(qr_txt);
+}
+
+/* Adapter passed to nh_auth_client_submit_selection_display so the QR
+ * display is rendered exactly once between SELECT_PROVIDER and the
+ * blocking SUBMIT_UNLOCK (design §5.4 render-then-wait sequence). */
+typedef struct qr_render_ctx {
+  pam_handle_t *pamh;
+  int text_console;
+} qr_render_ctx;
+
+static void qr_display_cb(void *ctx, const nh_auth_display *display) {
+  qr_render_ctx *c = ctx;
+  render_qr_info(c->pamh, display, c->text_console);
 }
 
 int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
@@ -208,20 +317,21 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   if (prc != PAM_SUCCESS) return prc;
 
   int is_nip46 = !strcmp(chosen, NH_AUTH_PROVIDER_NAME_NIP46);
+  int is_qr = !strcmp(chosen, NH_AUTH_PROVIDER_NAME_NIP46_QR);
   if (is_nip46)
     pam_info(pamh,
              "Approve the sign-in request on your Nostr signer (bunker).");
+  int text_console = is_text_console(pamh, service);
 
-  /* Passphrase retry loop for the local provider. Each SUBMIT_UNLOCK runs on a
-   * fresh connection because the broker retires the transaction after any
-   * verification outcome. For the nip46 provider the placeholder secret is
-   * derived from the client library and we only try once (unless the bunker
-   * responds with a transient signal). */
+  /* Retry loop. Local: passphrase re-prompt on each attempt. NIP-46 bunker:
+   * one attempt (bunker denial is terminal). NIP-46 QR: one attempt (we
+   * mint a fresh URI + pairing per retry via the broker, so the outer
+   * budget still applies but no re-prompt on this side). */
   int last_pam_rc = PAM_AUTH_ERR;
   nh_auth_result result = NH_AUTH_RESULT_INTERNAL_ERROR;
   while (attempts_left > 0) {
     char *pass = NULL;
-    if (!is_nip46) {
+    if (!is_nip46 && !is_qr) {
       /* Force a re-prompt by clearing any cached PAM_AUTHTOK so failed retries
        * do not silently replay the previous input. */
       pam_set_item(pamh, PAM_AUTHTOK, NULL);
@@ -236,7 +346,24 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
       pam_syslog(pamh, LOG_ERR, "nostr: cannot reach broker at %s", sock);
       return PAM_AUTHINFO_UNAVAIL;
     }
-    trc = nh_auth_client_login_with(fd, user, service, chosen, pass, &result);
+    if (is_qr) {
+      /* Split flow: begin_login first so we can then run the display-aware
+       * select/submit split (design §5.4). */
+      nh_auth_provider_list disc;
+      nh_auth_result br = NH_AUTH_RESULT_INTERNAL_ERROR;
+      trc = nh_auth_client_begin_login(fd, user, service, &disc, &br);
+      if (trc != 0 || br != NH_AUTH_RESULT_OK) {
+        nh_auth_client_close(fd);
+        pam_syslog(pamh, LOG_ERR, "nostr: qr begin_login %s -> %s", user,
+                   nh_auth_result_name(br));
+        return trc != 0 ? PAM_AUTHINFO_UNAVAIL : map_result(br);
+      }
+      qr_render_ctx rctx = {pamh, text_console};
+      trc = nh_auth_client_submit_selection_display(
+          fd, chosen, NULL, NULL, qr_display_cb, &rctx, &result);
+    } else {
+      trc = nh_auth_client_login_with(fd, user, service, chosen, pass, &result);
+    }
     nh_auth_client_close(fd);
     if (pass) { wipe(pass); free(pass); }
     if (trc != 0) {
@@ -258,8 +385,9 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     if (!retryable) return last_pam_rc;
     attempts_left--;
     if (attempts_left == 0) break;
-    if (is_nip46) {
-      /* The bunker denied approval; do not silently loop forever. */
+    if (is_nip46 || is_qr) {
+      /* Signer denied approval or the scan window elapsed; do not silently
+       * loop forever. */
       return last_pam_rc;
     }
     pam_error(pamh, "Nostr passphrase incorrect. Try again.");

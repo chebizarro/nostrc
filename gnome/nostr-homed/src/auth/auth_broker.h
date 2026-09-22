@@ -68,4 +68,68 @@ int nh_auth_broker_handle_connection(nh_auth_broker *broker, int fd);
  * attached authority and returns it once. */
 int nh_auth_broker_handle_user_connection(nh_auth_broker *broker, int fd);
 
+/* auth.conf parsing (design decision D12).
+ *
+ * Trivial `key=value` format, `#` and `;` line comments, no sections. Unknown
+ * keys are ignored with an implicit warning (never fatal). Missing file /
+ * missing keys leave *out with all zero fields.
+ *
+ * Recognised keys today (Phase 3, greeter QR flow):
+ *   nip46_qr_relays        Comma-separated list of relay URLs. First relay is
+ *                          the one embedded in the QR; subsequent relays are
+ *                          used for the client subscription. Cap: 4.
+ *   nip46_qr_wait_ms       Overrides the per-attempt QR wait budget (default
+ *                          78 000 ms). Must fit in uint32.
+ *   nip46_qr_render        "auto" | "qr" | "uri" — hint for the PAM module.
+ *   nip46_qr_max_concurrent Broker-wide cap on simultaneous QR waits.
+ *
+ * Fields the parser fills are DOCUMENTED here; callers copy pointers/strings
+ * out before dropping the config struct. */
+#define NH_AUTH_CONF_RELAYS_MAX 4u
+#define NH_AUTH_CONF_RELAY_URL_MAX 255u
+
+typedef struct nh_auth_conf {
+  char nip46_qr_relays[NH_AUTH_CONF_RELAYS_MAX][NH_AUTH_CONF_RELAY_URL_MAX + 1];
+  size_t nip46_qr_relays_count;
+  uint32_t nip46_qr_wait_ms;         /* 0 = unset */
+  char nip46_qr_render[8];           /* "" | "auto" | "qr" | "uri" */
+  uint32_t nip46_qr_max_concurrent;  /* 0 = unset */
+} nh_auth_conf;
+
+/* Reads path (may be NULL / missing) into *out. Zeros *out first. Returns 0
+ * on any outcome (missing file, malformed lines) — the design deliberately
+ * makes this non-fatal so a startup misconfig can't brick logins. */
+int nh_auth_conf_load(const char *path, nh_auth_conf *out);
+
+/* Configure the broker's global QR fallback relay list. Overrides the
+ * compiled-in NH_AUTH_NIP46_QR_DEFAULT_RELAY. Callers must keep the string
+ * storage alive (typically inside an nh_auth_conf owned by the daemon).
+ * Pass relays=NULL / n_relays=0 to reset. */
+void nh_auth_broker_set_qr_default_relays(const char *const *relays,
+                                          size_t n_relays);
+
+/* Greeter artifact drop — the broker writes /run/nostr-auth/greeter/
+ * current.json (and, when a PNG source is available, current.png) so a
+ * gnome-shell greeter extension can render the QR image live. Design §5.3
+ * and greeter-extension/README.md. Contract implemented here:
+ *   {"tx_id":"...","png":"current.png","uri":"...","pairing_code":"...",
+ *    "expires_at":<monotonic-ms>,"hint":"..."}
+ * The PNG is only produced by an optional side channel (see
+ * pam_qr_render); the broker just publishes what it has.
+ *
+ * write() overwrites atomically (write to <name>.tmp + rename). remove()
+ * unlinks best-effort and is safe to call when nothing was written.
+ *
+ * write() returns 0 on success, -1 on any I/O failure (never fatal to a
+ * login — the artifact is a rendering hint). */
+int nh_broker_greeter_artifact_write(const char *tx_id,
+                                     const char *display_json);
+void nh_broker_greeter_artifact_remove(void);
+
+/* Override the greeter-artifact directory. NULL/"" resets to the default
+ * (/run/nostr-auth/greeter). The path is not created recursively; the
+ * broker will attempt to mkdir the leaf with mode 0755. Test seam only —
+ * production leaves it at the default so gdm's greeter can find it. */
+void nh_broker_greeter_artifact_set_dir(const char *dir);
+
 #endif /* NH_AUTH_BROKER_H */

@@ -5,3 +5,30 @@
 # the expected locations. authority.db must live in a root-owned 0700 directory.
 authority_dir=/var/lib/nostr-auth
 socket_path=/run/nostr-auth/auth.sock
+
+# ---- NIP-46 QR (nostrconnect://) login at the GDM greeter ------------------
+# The client-initiated QR flow (design docs/designs/nip46-qr-login-greeter.md
+# §4.3) uses a relay to pair the greeter with the user's phone signer. The
+# first relay listed is the one embedded in the QR itself; additional relays
+# are only used for the client subscription. Cap: 4 relays parsed, first goes
+# into the QR.
+#
+# Compiled-in default is wss://bunker.sharegap.net (design decision D4). A
+# per-account override lives in the identity provider record's
+# public_config_json; this key is the site-wide fallback.
+#nip46_qr_relays=wss://bunker.sharegap.net
+
+# Per-attempt scan window in milliseconds (default 78000, cannot exceed the
+# broker's challenge lifetime minus a small setup budget — design §4.1 clamp).
+#nip46_qr_wait_ms=78000
+
+# Hint to the PAM module: "auto" | "qr" | "uri". The Phase-0 spike ruled the
+# in-dialog half-block QR NO-GO for the graphical greeter, so v1 defaults to
+# "uri" there; text consoles (tty/ssh/pamtester) always render the half-block
+# QR regardless of this setting.
+#nip46_qr_render=uri
+
+# Broker-wide cap on simultaneous QR waits. Each in-flight QR holds a relay
+# connection for ~78 s; without this an N-tab greeter is cheap DoS against
+# the root daemon (design §8.4). Default 4.
+#nip46_qr_max_concurrent=4

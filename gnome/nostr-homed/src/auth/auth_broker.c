@@ -44,8 +44,10 @@ typedef struct conn_state {
   nh_auth_challenge challenge;
   int challenge_built;
   char *signed_json;      /* captured provider SIGNED_EVENT */
+  char *display_json;     /* captured provider DISPLAY_REQUIRED payload */
   nh_auth_result provider_result;
   nh_auth_provider_event_type provider_event;
+  int greeter_artifact_published;
 } conn_state;
 
 static uint64_t default_now_ms(void *ctx) {
@@ -258,6 +260,21 @@ static const char *json_str(const char *payload_json, const char *key,
 
 static void provider_emit(void *context, const nh_auth_provider_event *event) {
   conn_state *cs = context;
+  /* DISPLAY_REQUIRED does NOT overwrite the last outcome-shaped provider
+   * event (READY / APPROVAL_PENDING / SIGNED_EVENT / DENIED / FAILED /...):
+   * the SELECT_PROVIDER response payload is built from provider_result, and
+   * DISPLAY_REQUIRED is metadata that rides alongside it. */
+  if (event->type == NH_AUTH_PROVIDER_DISPLAY_REQUIRED) {
+    if (event->data && event->data_len && event->data_len < 4096) {
+      free(cs->display_json);
+      cs->display_json = malloc(event->data_len + 1);
+      if (cs->display_json) {
+        memcpy(cs->display_json, event->data, event->data_len);
+        cs->display_json[event->data_len] = '\0';
+      }
+    }
+    return;
+  }
   cs->provider_event = event->type;
   cs->provider_result = event->result;
   if (event->type == NH_AUTH_PROVIDER_SIGNED_EVENT && event->data &&
@@ -275,6 +292,17 @@ static void conn_reset_proof(conn_state *cs) {
   if (cs->provider) { cs->provider->ops->destroy(cs->provider); cs->provider = NULL; }
   if (cs->challenge_built) { nh_auth_challenge_clear(&cs->challenge); cs->challenge_built = 0; }
   if (cs->signed_json) { free(cs->signed_json); cs->signed_json = NULL; }
+  if (cs->display_json) {
+    /* URI contains the connect secret — wipe before free. */
+    volatile char *w = (volatile char *)cs->display_json;
+    for (size_t i = 0; cs->display_json[i]; i++) w[i] = 0;
+    free(cs->display_json);
+    cs->display_json = NULL;
+  }
+  if (cs->greeter_artifact_published) {
+    nh_broker_greeter_artifact_remove();
+    cs->greeter_artifact_published = 0;
+  }
   cs->provider_event = 0;
 }
 
@@ -369,6 +397,9 @@ static json_t *providers_json(uint32_t enabled_providers) {
   if (enabled_providers &
       NH_IDENTITY_PROVIDER_BIT(NH_IDENTITY_PROVIDER_NIP46_BUNKER))
     json_array_append_new(arr, json_string("nip46"));
+  if (enabled_providers &
+      NH_IDENTITY_PROVIDER_BIT(NH_IDENTITY_PROVIDER_NIP46_QR))
+    json_array_append_new(arr, json_string("nip46qr"));
   return arr;
 }
 
@@ -389,11 +420,17 @@ static int pick_provider_type(const char *payload_json,
     else if (!strcmp(name, "nip46") || !strcmp(name, "nip46_bunker") ||
              !strcmp(name, "bunker"))
       *out = NH_IDENTITY_PROVIDER_NIP46_BUNKER;
+    else if (!strcmp(name, "nip46qr") || !strcmp(name, "qr") ||
+             !strcmp(name, "nip46_qr"))
+      *out = NH_IDENTITY_PROVIDER_NIP46_QR;
     else
       rc = -1;
   } else if (account->enabled_providers &
              NH_IDENTITY_PROVIDER_BIT(NH_IDENTITY_PROVIDER_NIP46_BUNKER)) {
     *out = NH_IDENTITY_PROVIDER_NIP46_BUNKER;
+  } else if (account->enabled_providers &
+             NH_IDENTITY_PROVIDER_BIT(NH_IDENTITY_PROVIDER_NIP46_QR)) {
+    *out = NH_IDENTITY_PROVIDER_NIP46_QR;
   } else {
     *out = NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY;
   }
@@ -424,10 +461,12 @@ static nh_auth_result do_select_provider(conn_state *cs,
   if (nh_identity_store_get_info(cs->broker->store, &info) != NH_IDENTITY_OK)
     return NH_AUTH_RESULT_STORAGE_ERROR;
   nh_identity_provider_record rec;
-  if (nh_identity_store_provider_get(cs->broker->store, account->account_id,
-                                     provider_type, true, &rec) !=
-      NH_IDENTITY_OK)
-    return NH_AUTH_RESULT_PROVIDER_UNAVAILABLE;
+  {
+    nh_identity_rc grc = nh_identity_store_provider_get(
+        cs->broker->store, account->account_id, provider_type, true, &rec);
+    if (grc != NH_IDENTITY_OK)
+      return NH_AUTH_RESULT_PROVIDER_UNAVAILABLE;
+  }
 
   char boot_id[37];
   read_boot_id(boot_id);
@@ -451,9 +490,17 @@ static nh_auth_result do_select_provider(conn_state *cs,
 
   char *unsigned_json = nostr_event_serialize_compact(cs->challenge.event);
   if (!unsigned_json) return NH_AUTH_RESULT_INTERNAL_ERROR;
-  cs->provider = (provider_type == NH_IDENTITY_PROVIDER_NIP46_BUNKER)
-                     ? nh_auth_provider_nip46_new(provider_emit, cs)
-                     : nh_auth_provider_local_new(provider_emit, cs);
+  switch (provider_type) {
+    case NH_IDENTITY_PROVIDER_NIP46_BUNKER:
+      cs->provider = nh_auth_provider_nip46_new(provider_emit, cs);
+      break;
+    case NH_IDENTITY_PROVIDER_NIP46_QR:
+      cs->provider = nh_auth_provider_nip46_qr_new(provider_emit, cs);
+      break;
+    default:
+      cs->provider = nh_auth_provider_local_new(provider_emit, cs);
+      break;
+  }
   nh_auth_result result = NH_AUTH_RESULT_PROVIDER_UNAVAILABLE;
   if (cs->provider) {
     nh_auth_provider_snapshot snap = {0};
@@ -705,8 +752,34 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
       }
       return send_payload(fd, req, op, payload);
     }
-    case NH_AUTH_OP_SELECT_PROVIDER:
-      return respond(fd, req, op, do_select_provider(cs, req->payload_json));
+    case NH_AUTH_OP_SELECT_PROVIDER: {
+      nh_auth_result r = do_select_provider(cs, req->payload_json);
+      /* When the provider handed back a display payload (currently only the
+       * NIP-46 QR / nostrconnect flow does), publish it into the greeter-
+       * artifact drop and echo it in the response for the PAM module. Old
+       * clients ignore the unknown field per NH_AUTH_PROTOCOL_VERSION=1
+       * additive-optional-fields rule (design §5.3, D8). */
+      if (cs->display_json && cs->display_json[0]) {
+        if (!cs->greeter_artifact_published) {
+          const char *tx_id = cs->tx ? nh_auth_transaction_get_id(cs->tx) : "";
+          if (nh_broker_greeter_artifact_write(tx_id ? tx_id : "",
+                                               cs->display_json) == 0)
+            cs->greeter_artifact_published = 1;
+        }
+        json_t *payload = json_object();
+        json_error_t je;
+        json_t *disp = json_loads(cs->display_json, 0, &je);
+        if (payload && disp &&
+            json_object_set_new(payload, "result",
+                                json_string(nh_auth_result_name(r))) == 0 &&
+            json_object_set_new(payload, "display", disp) == 0) {
+          return send_payload(fd, req, op, payload);
+        }
+        if (payload) json_decref(payload);
+        if (disp) json_decref(disp);
+      }
+      return respond(fd, req, op, r);
+    }
     case NH_AUTH_OP_SUBMIT_UNLOCK: {
       nh_auth_receipt receipt;
       int have = 0;
