@@ -40,6 +40,27 @@ debian/), D-9 (collapse per-app debian/ into one source package), D-10 (build
 profiles later), D-12 (gnostr-desktop has NO dep on nostr-login), D-13 (PPA+COPR
 first).
 
+
+## Phase 1 status — 2026-09-22
+
+- [x] **Debian source package (headless nostr-login stack) — DONE, merged 3e3ae0da.**
+  One `nostrc` source -> 13 debs (libnostr1/-dev, libnostrgo0/-dev, libnostr-json1/-dev,
+  libnss-nostr, libpam-nostr, nostr-authd, nostr-homectl, nostr-homed-smb,
+  nostr-homed-domain, nostr-login meta). Built GLib-free (D-14 headless ABI).
+  `dpkg-buildpackage` green on amd64; `lintian -EI` 0 errors; nostr-login Depends
+  closure has NO glib/gtk/gvfs/etc (dependency-purity gate); install-smoke from the
+  packages verified (getent via packaged NSS, pamtester via packaged PAM +
+  pam-auth-update) with a clean apt-purge revert. Post-merge: CI harness 23/23 on
+  x86_64 + shared full-tree green.
+- [ ] **Fedora .spec (same headless set) — NEXT.** Generalize
+  apps/gnostr-signer/packaging/rpm/gnostr-signer.spec; build via mock (Fedora chroot)
+  or best-effort rpmlint on the Ubuntu box; nss-nostr/pam-nostr/nostr-authd/
+  nostr-homectl/nostr-homed-smb + core libs.
+- Deferred to Phase 2+: libnostr-glib1 (the GLib ABI, D-14 (c) other half), GObject/
+  introspection (Phase 3), desktop apps (Phase 4), servers/experimental (Phase 5).
+
+---
+
 ## Pre-phase execution tracks (blockers B1-B11)
 
 Sequenced to avoid CMakeLists collisions: Track A (tree-wide target renames) runs
