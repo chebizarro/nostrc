@@ -73,6 +73,22 @@ int main(void) {
   OK(c.nip46_qr_wait_ms == 0);
   OK(strcmp(c.nip46_qr_render, "qr") == 0);
 
+  /* B5-profile: profile_relays / profile_fetch / profile_image_user. */
+  write_file(tmp,
+             "profile_relays=wss://relay.damus.io , wss://nos.lol,not-a-url\n"
+             "profile_fetch=on\n"
+             "profile_image_user=nostr-profile\n");
+  OK(nh_auth_conf_load(tmp, &c) == 0);
+  OK(c.profile_relays_count == 2);
+  OK(strcmp(c.profile_relays[0], "wss://relay.damus.io") == 0);
+  OK(strcmp(c.profile_relays[1], "wss://nos.lol") == 0);
+  OK(c.profile_fetch == 1);
+  OK(strcmp(c.profile_image_user, "nostr-profile") == 0);
+
+  write_file(tmp, "profile_fetch=off\n");
+  OK(nh_auth_conf_load(tmp, &c) == 0);
+  OK(c.profile_fetch == 2);
+
   unlink(tmp);
   puts("RESULT: PASS");
   return 0;

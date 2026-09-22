@@ -84,6 +84,24 @@ static void parse_relays_csv(nh_auth_conf *out, char *value) {
   }
 }
 
+/* Same shape as parse_relays_csv but populates profile_relays. Kept
+ * separate so the two lists can diverge without accidental crossover. */
+static void parse_profile_relays_csv(nh_auth_conf *out, char *value) {
+  out->profile_relays_count = 0;
+  char *save = NULL;
+  for (char *tok = strtok_r(value, ",", &save); tok;
+       tok = strtok_r(NULL, ",", &save)) {
+    tok = trim(tok);
+    if (!*tok) continue;
+    if (out->profile_relays_count >= NH_AUTH_CONF_RELAYS_MAX) break;
+    if (strncmp(tok, "ws://", 5) != 0 && strncmp(tok, "wss://", 6) != 0)
+      continue;
+    if (copy_bounded(out->profile_relays[out->profile_relays_count],
+                     NH_AUTH_CONF_RELAY_URL_MAX + 1, tok) == 0)
+      out->profile_relays_count++;
+  }
+}
+
 int nh_auth_conf_load(const char *path, nh_auth_conf *out) {
   if (!out) return 0;
   memset(out, 0, sizeof *out);
@@ -113,6 +131,18 @@ int nh_auth_conf_load(const char *path, nh_auth_conf *out) {
                          value);
     } else if (!strcmp(key, "nip46_qr_max_concurrent")) {
       (void)parse_uint32(value, &out->nip46_qr_max_concurrent);
+    } else if (!strcmp(key, "profile_relays")) {
+      parse_profile_relays_csv(out, value);
+    } else if (!strcmp(key, "profile_fetch")) {
+      if (!strcasecmp(value, "on") || !strcmp(value, "1") ||
+          !strcasecmp(value, "true") || !strcasecmp(value, "yes"))
+        out->profile_fetch = 1;
+      else if (!strcasecmp(value, "off") || !strcmp(value, "0") ||
+               !strcasecmp(value, "false") || !strcasecmp(value, "no"))
+        out->profile_fetch = 2;
+    } else if (!strcmp(key, "profile_image_user")) {
+      (void)copy_bounded(out->profile_image_user,
+                         sizeof out->profile_image_user, value);
     } else {
       /* Non-fatal: unknown keys are ignored. */
     }

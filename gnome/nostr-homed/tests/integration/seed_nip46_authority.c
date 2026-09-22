@@ -38,6 +38,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #define MAX_RELAYS 4
 
@@ -94,8 +97,38 @@ static void usage(const char *argv0) {
           "usage: %s <dir> <username> <pubkey_hex> --provider=nip46qr|nip46 "
           "[--relay=wss://... ...] [--name=<display>] "
           "[--bunker-uri=bunker://...] [--client-sk-file=<path>] "
-          "[--home-root=<path>]\n",
+          "[--home-root=<path>] [--fetch-profile|--no-fetch-profile]\n",
           argv0);
+}
+
+/* B5-profile: shell out to `nostr-homed-profile refresh` after a
+ * successful NIP-46 seed. Best-effort; a stalled or offline relay
+ * cannot fail the seed. */
+static void seed_profile_refresh(const char *username,
+                                 const char *pubkey_hex) {
+  if (!username || !pubkey_hex) return;
+  const char *skip = getenv("NH_SEED_NO_PROFILE");
+  if (skip && *skip && !(skip[0] == '0' && skip[1] == '\0')) {
+    fprintf(stderr, "seed-nip46: --fetch-profile skipped (NH_SEED_NO_PROFILE)\n");
+    return;
+  }
+  pid_t pid = fork();
+  if (pid < 0) { fprintf(stderr, "seed-nip46: fork: %s\n", strerror(errno)); return; }
+  if (pid == 0) {
+    char pk_arg[80];
+    snprintf(pk_arg, sizeof pk_arg, "--pubkey=%s", pubkey_hex);
+    const char *cli = getenv("NH_PROFILE_CLI");
+    if (!cli || !*cli) cli = "nostr-homed-profile";
+    char *args[] = {
+      (char *)cli, (char *)"refresh", (char *)username, pk_arg, NULL,
+    };
+    if (cli[0] == '/') execv(cli, args); else execvp(cli, args);
+    _exit(0);
+  }
+  int st = 0;
+  while (waitpid(pid, &st, 0) < 0) { if (errno != EINTR) break; }
+  if (WIFEXITED(st))
+    fprintf(stderr, "seed-nip46: profile refresh rc=%d\n", WEXITSTATUS(st));
 }
 
 /* Compose public_config_json for the QR provider. Owned by caller (malloc). */
@@ -130,12 +163,16 @@ int main(int argc, char **argv) {
   const char *home_root = "/home";
   char *relays[MAX_RELAYS];
   size_t n_relays = 0;
+  int fetch_profile = 1;
 
   /* Positional first, then flags. */
   int posix = 0;
   for (int i = 1; i < argc; i++) {
     const char *a = argv[i];
     if (a[0] == '-' && a[1] == '-') {
+      /* Boolean flags with no `=value` land here first. */
+      if (!strcmp(a, "--fetch-profile"))    { fetch_profile = 1; continue; }
+      if (!strcmp(a, "--no-fetch-profile")) { fetch_profile = 0; continue; }
       const char *eq = strchr(a, '=');
       if (!eq) { usage(argv[0]); return 2; }
       size_t klen = (size_t)(eq - a);
@@ -315,6 +352,9 @@ int main(int argc, char **argv) {
 
   printf("seeded %s (uid=%u) pubkey=%s provider=%s in %s\n", username,
          account.uid, pubkey_hex, provider_name, dir);
+
+  if (fetch_profile) seed_profile_refresh(username, pubkey_hex);
+
   free(config);
   for (size_t i = 0; i < n_relays; i++) free(relays[i]);
   return 0;

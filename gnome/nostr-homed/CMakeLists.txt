@@ -44,6 +44,11 @@ option(NOSTR_HOMED_ENABLE_CTL
 # extension without pulling in the auth runtime.
 option(NOSTR_HOMED_ENABLE_GREETER_EXTENSION
   "Install the gnome-shell greeter extension nostr-login-qr@nostrc" OFF)
+# B5-profile: Nostr kind-0 → AccountsService (avatar + real name at GDM).
+# The seeders and broker post-login hook link the profile library; the
+# unprivileged image-downloader helper is a separate installable binary.
+option(NOSTR_HOMED_ENABLE_PROFILE
+  "Build the Nostr kind-0 → AccountsService avatar/name bridge (requires auth runtime + gdk-pixbuf + libcurl + gio-2.0)" OFF)
 option(NOSTR_HOMED_BUILD_TESTS "Build tests for enabled nostr-homed features" ON)
 
 if(NOSTR_HOMED_ENABLE_CTL AND NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
@@ -402,6 +407,90 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
     add_executable(qr_signer_standin tests/integration/qr_signer_standin.c)
     target_link_libraries(qr_signer_standin PRIVATE
       nostr_auth_runtime PkgConfig::NOSTR_NIP46)
+  endif()
+endif()
+
+# B5-profile: Nostr kind-0 → AccountsService bridge. Split into three
+# artefacts so the security-critical picture download runs unprivileged:
+#   - nostr_profile_core: relay fetch + sanitisers + metadata parser
+#                         + fork/exec runner + AccountsService installer.
+#                         Linked into the broker and seeders (they call
+#                         nh_profile_refresh() directly).
+#   - nostr-homed-profile: operator CLI (installed as sbin) — invoked
+#                         both by the broker post-login hook and by
+#                         operators for `nostr-homed-profile refresh <user>`.
+#   - nostr-homed-profile-image: unprivileged HTTP fetcher + GdkPixbuf
+#                         decoder. Never linked into the broker.
+if(NOSTR_HOMED_ENABLE_PROFILE)
+  if(NOT NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
+    message(FATAL_ERROR
+      "NOSTR_HOMED_ENABLE_PROFILE requires NOSTR_HOMED_ENABLE_AUTH_RUNTIME")
+  endif()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(GDK_PIXBUF REQUIRED IMPORTED_TARGET gdk-pixbuf-2.0)
+  pkg_check_modules(GIO2 REQUIRED IMPORTED_TARGET gio-2.0)
+  find_package(CURL REQUIRED)
+  # relay_fetch.c also compiles into nostr_homed_common under the
+  # experimental-roaming build; keep those two targets non-overlapping.
+  if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
+    message(FATAL_ERROR
+      "NOSTR_HOMED_ENABLE_PROFILE and NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING "
+      "both compile src/common/relay_fetch.c; enable only one at a time.")
+  endif()
+
+  add_library(nostr_profile_core STATIC
+    src/common/relay_fetch.c
+    src/profile/profile_sanitize.c
+    src/profile/profile_metadata.c
+    src/profile/profile_image.c
+    src/profile/profile_accounts.c
+    src/profile/profile_refresh.c)
+  target_compile_options(nostr_profile_core PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_include_directories(nostr_profile_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/auth)
+  target_link_libraries(nostr_profile_core PUBLIC
+    nostr_auth_runtime PkgConfig::JANSSON PkgConfig::GIO2 SQLite3::SQLite3)
+
+  add_executable(nostr-homed-profile src/profile/nostr-homed-profile.c)
+  target_link_libraries(nostr-homed-profile PRIVATE nostr_profile_core)
+
+  add_executable(nostr-homed-profile-image
+    src/profile/nostr-homed-profile-image.c
+    src/profile/profile_sanitize.c)
+  target_compile_options(nostr-homed-profile-image PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_include_directories(nostr-homed-profile-image PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(nostr-homed-profile-image PRIVATE
+    PkgConfig::GDK_PIXBUF CURL::libcurl)
+
+  if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+    install(TARGETS nostr-homed-profile
+      RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR})
+    install(TARGETS nostr-homed-profile-image
+      RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/nostr-homed)
+  endif()
+
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_profile_sanitize
+      tests/unit/test_profile_sanitize.c
+      src/profile/profile_sanitize.c)
+    target_include_directories(test_profile_sanitize PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_options(test_profile_sanitize PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_test(NAME homed_profile_sanitize COMMAND test_profile_sanitize)
+    set_tests_properties(homed_profile_sanitize
+      PROPERTIES LABELS "nostr-homed;portable;profile" TIMEOUT 30)
+
+    add_executable(test_profile_metadata
+      tests/unit/test_profile_metadata.c)
+    target_link_libraries(test_profile_metadata PRIVATE nostr_profile_core)
+    add_test(NAME homed_profile_metadata COMMAND test_profile_metadata)
+    set_tests_properties(homed_profile_metadata
+      PROPERTIES LABELS "nostr-homed;portable;profile" TIMEOUT 30)
   endif()
 endif()
 

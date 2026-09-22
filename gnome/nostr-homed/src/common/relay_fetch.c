@@ -29,6 +29,14 @@ typedef struct {
     char *namespace_name;
     GoChannel *ch;
     gboolean done;
+    /* When TRUE the middleware validates the event signature and asserts
+     * the event pubkey equals author_hex, then serialises the FULL event
+     * (id/pubkey/kind/tags/content/sig) into the channel — used by the
+     * profile fetcher which needs a verifiable envelope. When FALSE the
+     * middleware delivers just the event `content` string, matching the
+     * legacy manifest/secrets/profile-relays fetchers. */
+    gboolean verify_signature;
+    gboolean capture_event;
 } RelayFetchRequest;
 
 typedef struct {
@@ -105,16 +113,27 @@ relay_fetch_middleware(NostrIncomingEvent *in, void *user_data)
     RelayFetchService *svc = user_data;
     if (!svc || !in || !in->event) return;
 
-    const char *content = nostr_event_get_content(in->event);
-    if (!content) return;
-
     g_mutex_lock(&svc->mutex);
     for (guint i = 0; i < svc->requests->len; i++) {
         RelayFetchRequest *req = g_ptr_array_index(svc->requests, i);
         if (!req || req->done) continue;
         if (!event_matches_request(in->event, req)) continue;
 
-        char *dup = strdup(content);
+        /* Signature verification is opt-in per request. The profile
+         * fetcher demands it; the legacy fetchers rely on relay hygiene +
+         * downstream envelope validation. */
+        if (req->verify_signature) {
+            if (!nostr_event_check_signature(in->event)) break;
+            /* event_matches_request already checked pubkey and kind. */
+        }
+
+        char *dup = NULL;
+        if (req->capture_event) {
+            dup = nostr_event_serialize_compact(in->event);
+        } else {
+            const char *content = nostr_event_get_content(in->event);
+            if (content) dup = strdup(content);
+        }
         if (dup && go_channel_try_send(req->ch, dup) == 0) {
             req->done = TRUE;
         } else if (dup) {
@@ -235,6 +254,42 @@ int nh_fetch_latest_secrets_json(const char **relays, size_t num_relays,
                                  char **out_json) {
     const char *ns = (namespace_name && *namespace_name) ? namespace_name : "personal";
     return fetch_latest_content(relays, num_relays, author_hex, ns, 30079, out_json);
+}
+
+/* ── Verified kind-0 (user metadata) fetch ──────────────────── */
+
+int nh_fetch_latest_kind0_verified(const char **relays, size_t num_relays,
+                                   const char *author_hex,
+                                   char **out_event_json) {
+    if (!out_event_json || !relays || num_relays == 0 || !author_hex) return -1;
+    *out_event_json = NULL;
+
+    RelayFetchService *svc = relay_fetch_service_get();
+    if (!svc) return -1;
+
+    for (size_t i = 0; i < num_relays; i++)
+        if (relays[i] && *relays[i])
+            nostr_simple_pool_ensure_relay(svc->pool, relays[i]);
+
+    RelayFetchRequest *req = relay_fetch_request_new(0, author_hex, NULL);
+    req->verify_signature = TRUE;
+    req->capture_event = TRUE;
+    relay_fetch_service_add_request(svc, req);
+
+    NostrFilter *f = nostr_filter_new();
+    nostr_filter_add_kind(f, 0);
+    nostr_filter_add_author(f, author_hex);
+    nostr_filter_set_limit(f, 1);
+    nostr_simple_pool_query_single(svc->pool, relays, num_relays, *f);
+    nostr_filter_free(f);
+
+    char *json = channel_receive_string(req->ch, FETCH_TIMEOUT_MS);
+
+    relay_fetch_service_remove_request(svc, req);
+    relay_fetch_request_free(req);
+
+    if (json) { *out_event_json = json; return 0; }
+    return -1;
 }
 
 /* ── Profile relays fetch (kind 30078) ──────────────────────── */

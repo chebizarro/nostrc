@@ -94,6 +94,17 @@ typedef struct nh_auth_conf {
   uint32_t nip46_qr_wait_ms;         /* 0 = unset */
   char nip46_qr_render[8];           /* "" | "auto" | "qr" | "uri" */
   uint32_t nip46_qr_max_concurrent;  /* 0 = unset */
+
+  /* B5-profile: relays queried for kind-0 (user metadata) events, and the
+   * on/off switch for the post-login refresh hook. When
+   * profile_relays_count == 0 the profile refresher falls back to its own
+   * compiled-in default list (docs/reviews/nostr-profile-avatar…). */
+  char profile_relays[NH_AUTH_CONF_RELAYS_MAX][NH_AUTH_CONF_RELAY_URL_MAX + 1];
+  size_t profile_relays_count;
+  /* Tri-state: 0 = unset (default on), 1 = on, 2 = off. */
+  uint8_t profile_fetch;
+  /* Uname the image-downloader helper drops to. "" = "nobody". */
+  char profile_image_user[64];
 } nh_auth_conf;
 
 /* Reads path (may be NULL / missing) into *out. Zeros *out first. Returns 0

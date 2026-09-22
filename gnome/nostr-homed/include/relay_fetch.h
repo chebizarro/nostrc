@@ -38,6 +38,26 @@ int nh_fetch_latest_secrets_json(const char **relays, size_t num_relays,
                                  const char *namespace_name,
                                  char **out_json);
 
+/**
+ * Fetch the latest kind-0 (user metadata) event for the given pubkey and
+ * return its VERIFIED, RE-SERIALIZED compact JSON representation. The
+ * returned JSON is a full Nostr event object (id/pubkey/kind/created_at/
+ * tags/content/sig); the signature is validated against the event id and
+ * the event's pubkey is checked to equal @author_hex before delivery. A
+ * kind-0 event whose signature does not verify, whose pubkey mismatches,
+ * or whose kind is not 0 is silently skipped and the caller sees a
+ * fetch-timeout instead — never an unverified event.
+ *
+ * @author_hex: 64-char lowercase-hex xonly pubkey (REQUIRED).
+ * @out_event_json: on success, receives a newly-allocated compact JSON
+ *                  string (caller owns and free()s).
+ * Returns 0 on success, -1 on timeout / no verified event within the
+ * fetch window / OOM.
+ */
+int nh_fetch_latest_kind0_verified(const char **relays, size_t num_relays,
+                                   const char *author_hex,
+                                   char **out_event_json);
+
 #ifdef __cplusplus
 }
 #endif

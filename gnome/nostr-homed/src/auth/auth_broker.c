@@ -9,10 +9,15 @@
 #include "nostr-event.h"
 #include "nostr_auth_protocol.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <jansson.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -526,6 +531,69 @@ static nh_auth_result do_select_provider(conn_state *cs,
   return result;
 }
 
+/* B5-profile: rate-limited fire-and-forget refresh of the account's
+ * kind-0 → AccountsService state after a successful login. Runs as a
+ * detached grandchild so the broker never blocks on a slow relay or a
+ * hung D-Bus call. Enforces a ≤ once-per-hour throttle by mtime of
+ * /var/lib/nostr-auth/profile/<user>.json; when NH_PROFILE_FETCH=off
+ * (or the env override is "off") the hook is disabled entirely.
+ *
+ * Never returns an error to the login path — the greeter avatar is a
+ * cosmetic surface that must fall back cleanly when broken. */
+static void profile_refresh_hook_maybe(const char *username,
+                                       const char *pubkey_hex) {
+  if (!username || !*username || !pubkey_hex || strlen(pubkey_hex) != 64) return;
+  const char *toggle = getenv("NH_PROFILE_FETCH");
+  if (toggle && (!strcasecmp(toggle, "off") || !strcmp(toggle, "0") ||
+                 !strcasecmp(toggle, "no") || !strcasecmp(toggle, "false")))
+    return;
+
+  /* Throttle: refuse if the cache mtime is < 1h old. */
+  {
+    const char *dir = getenv("NH_PROFILE_CACHE_DIR");
+    if (!dir || !*dir) dir = "/var/lib/nostr-auth/profile";
+    char path[512];
+    int pn = snprintf(path, sizeof path, "%s/%s.json", dir, username);
+    if (pn > 0 && (size_t)pn < sizeof path) {
+      struct stat st;
+      if (stat(path, &st) == 0) {
+        time_t now = time(NULL);
+        if (now - st.st_mtime < 3600) return;
+      }
+    }
+  }
+
+  /* Double-fork so we don't need to reap; init inherits the grandchild. */
+  pid_t p1 = fork();
+  if (p1 < 0) return;
+  if (p1 == 0) {
+    if (setsid() < 0) _exit(0);
+    pid_t p2 = fork();
+    if (p2 < 0) _exit(0);
+    if (p2 > 0) _exit(0);
+
+    /* Grandchild: exec the CLI. Redirect stdio to /dev/null so any
+     * per-fetch chatter cannot pollute the broker's journal. */
+    int devnull = open("/dev/null", O_RDWR | O_CLOEXEC);
+    if (devnull >= 0) { dup2(devnull, 0); dup2(devnull, 1); dup2(devnull, 2); close(devnull); }
+
+    char pk_arg[80];
+    snprintf(pk_arg, sizeof pk_arg, "--pubkey=%s", pubkey_hex);
+    /* Ensure the ≤1h throttle is honoured inside the CLI too. */
+    char throttle_arg[64] = "--throttle-seconds=3600";
+    const char *cli = getenv("NH_PROFILE_CLI");
+    if (!cli || !*cli) cli = "nostr-homed-profile";
+    char *args[] = {
+      (char *)cli, (char *)"refresh", (char *)username,
+      pk_arg, throttle_arg, NULL,
+    };
+    if (cli[0] == '/') execv(cli, args); else execvp(cli, args);
+    _exit(0);
+  }
+  int st = 0;
+  while (waitpid(p1, &st, 0) < 0) { if (errno != EINTR) break; }
+}
+
 static nh_auth_result do_submit_unlock(conn_state *cs, const char *payload_json,
                                        nh_auth_receipt *receipt_out,
                                        int *have_receipt) {
@@ -814,6 +882,15 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
         } else if (r == NH_AUTH_RESULT_INVALID_PROOF) {
           nh_auth_ratelimit_record_failure(cs->broker->ratelimit, rl_key, now);
         }
+      }
+      /* B5-profile: only fire on genuine LINUX_LOGIN successes. SMB
+       * credential mints are a different purpose and would double-fire
+       * every 30 seconds during an SMB unlock loop. */
+      if (r == NH_AUTH_RESULT_OK && cs->tx) {
+        nh_auth_purpose purpose = nh_auth_transaction_get_purpose(cs->tx);
+        const nh_identity_account *acct = nh_auth_transaction_get_account(cs->tx);
+        if (purpose == NH_AUTH_PURPOSE_LINUX_LOGIN && acct)
+          profile_refresh_hook_maybe(acct->username, acct->pubkey_hex);
       }
       if (r == NH_AUTH_RESULT_OK && have) {
         nh_auth_purpose purpose = nh_auth_transaction_get_purpose(cs->tx);
