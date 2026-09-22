@@ -3453,14 +3453,15 @@ int nostr_nip46_bunker_connect_to_client(NostrNip46Session *s,
         if (rc != 0) { nostr_nip46_uri_connect_free(&u); return -1; }
     }
 
-    /* Wait briefly for at least one pool relay to be fully connected before
-     * publishing. Without this the publish is fire-and-forget: a WebSocket
-     * that has not finished its handshake yet drops the connect event
-     * silently, forcing callers (the phone-signer stand-in, greeter tests,
-     * this NIP-46 client) to retry with sleep. Cap at 3 s so a permanently
-     * broken relay does not stall the caller. Waking is event-driven via
-     * the pool's redial thread — this loop is a bounded backoff, not a
-     * polling interval. (nostrc-fix-nip46-await-dispatch) */
+    /* Wait briefly for at least one pool relay to complete its WebSocket
+     * handshake before publishing. `nostr_relay_is_connected` returns true
+     * as soon as `wsi != NULL` — set synchronously by
+     * lws_client_connect_via_info before the HTTP upgrade completes — so
+     * publishing on it can enqueue an EVENT into a socket the relay never
+     * acknowledged, and the caller sees a "success" that produced nothing.
+     * `nostr_relay_is_established` waits for the actual handshake. Cap at
+     * 3 s so a permanently broken relay does not stall the caller. Bounded
+     * backoff, not a polling interval. (nostrc-fix-nip46-await-dispatch) */
     if (s->pool) {
         int64_t start_ms = nip46_now_ms();
         while (nip46_now_ms() - start_ms < 3000) {
@@ -3468,7 +3469,7 @@ int nostr_nip46_bunker_connect_to_client(NostrNip46Session *s,
             pthread_mutex_lock(&s->pool->pool_mutex);
             for (size_t i = 0; i < s->pool->relay_count; i++) {
                 if (s->pool->relays[i] &&
-                    nostr_relay_is_connected(s->pool->relays[i])) {
+                    nostr_relay_is_established(s->pool->relays[i])) {
                     any_up = 1;
                     break;
                 }
