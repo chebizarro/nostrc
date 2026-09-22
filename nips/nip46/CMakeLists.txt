@@ -210,6 +210,14 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_response_validation.c)
   add_test(NAME test_nip46_response_validation COMMAND test_nip46_response_validation)
 endif()
 
+# nostrc-z1fb Phase 1: nostrconnect:// client-initiated QR login library tests
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nostrconnect_qr_login.c)
+  add_executable(test_nip46_nostrconnect_qr_login tests/test_nostrconnect_qr_login.c)
+  target_link_libraries(test_nip46_nostrconnect_qr_login PRIVATE nostr_nip46_core)
+  add_test(NAME test_nip46_nostrconnect_qr_login COMMAND test_nip46_nostrconnect_qr_login)
+  set_tests_properties(test_nip46_nostrconnect_qr_login PROPERTIES TIMEOUT 60)
+endif()
+
 # Mocked E2E tests for sign-in flows
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip46_e2e_mock.c)
   add_executable(test_nip46_e2e_mock tests/test_nip46_e2e_mock.c)

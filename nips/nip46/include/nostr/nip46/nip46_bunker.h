@@ -26,6 +26,26 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
                                      const char *ciphertext,
                                      char **out_cipher_reply);
 
+/* nostrc-z1fb Phase 1: consume a `nostrconnect://` URI (the headless "phone
+ * signer" side of QR login).
+ *
+ * Parses the URI (client_pubkey, relays, secret, perms), sets the bunker's
+ * transport identity from the session's existing bunker secret, calls
+ * `nostr_nip46_bunker_listen()` on the URI's relays (subscription BEFORE
+ * publish, per C3), grants the client ACL for the requested perms, and
+ * publishes a NIP-46 `connect` request event addressed to the client
+ * pubkey. The event payload is
+ *   {"id":"…","method":"connect","params":[<client_pk>,<secret>,<perms>]}
+ * — the same shape a mobile signer emits when it scans the QR.
+ *
+ * After this returns 0 the bunker keeps listening; incoming `sign_event` /
+ * `get_public_key` are handled by the existing `bunker_handle_cipher` path
+ * with the ACL just granted (secret is never re-checked — the client
+ * validates it on receipt of this event).
+ *
+ * Returns 0 on success, -1 on error. */
+int nostr_nip46_bunker_connect_to_client(NostrNip46Session *s, const char *nostrconnect_uri);
+
 #ifdef __cplusplus
 }
 #endif

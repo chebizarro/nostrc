@@ -197,3 +197,109 @@ fail:
     nostr_nip46_uri_connect_free(out);
     return -1;
 }
+
+/* nostrc-z1fb Phase 1: URI builder. RFC-3986 unreserved chars pass through
+ * literally; everything else (including ':', '/', '?', '&', '=' and the
+ * high bit) is percent-encoded so an embedded relay wss://host or a
+ * comma-separated perms list never terminates the query prematurely. */
+static int is_unreserved_uc(unsigned char c) {
+    return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||
+           c=='-'||c=='.'||c=='_'||c=='~';
+}
+
+static char *pct_encode(const char *s) {
+    if (!s) return NULL;
+    size_t n = strlen(s);
+    /* Worst case: every byte encodes to 3 chars. */
+    char *out = (char *)malloc(n * 3u + 1u);
+    if (!out) return NULL;
+    static const char hex[] = "0123456789ABCDEF";
+    size_t j = 0;
+    for (size_t i = 0; i < n; ++i) {
+        unsigned char c = (unsigned char)s[i];
+        if (is_unreserved_uc(c)) {
+            out[j++] = (char)c;
+        } else {
+            out[j++] = '%';
+            out[j++] = hex[(c >> 4) & 0xF];
+            out[j++] = hex[c & 0xF];
+        }
+    }
+    out[j] = '\0';
+    return out;
+}
+
+/* Append `piece` to `*buf` growing as needed. Returns 0/-1. */
+static int append_str(char **buf, size_t *len, size_t *cap, const char *piece) {
+    if (!piece) return 0;
+    size_t pn = strlen(piece);
+    if (*len + pn + 1u > *cap) {
+        size_t ncap = (*cap ? *cap : 128u);
+        while (ncap < *len + pn + 1u) ncap *= 2u;
+        char *nb = (char *)realloc(*buf, ncap);
+        if (!nb) return -1;
+        *buf = nb;
+        *cap = ncap;
+    }
+    memcpy(*buf + *len, piece, pn);
+    *len += pn;
+    (*buf)[*len] = '\0';
+    return 0;
+}
+
+static int append_kv(char **buf, size_t *len, size_t *cap, int *first,
+                     const char *key, const char *raw_value) {
+    if (!raw_value) return 0;
+    char *enc = pct_encode(raw_value);
+    if (!enc) return -1;
+    if (append_str(buf, len, cap, *first ? "?" : "&")) { free(enc); return -1; }
+    *first = 0;
+    if (append_str(buf, len, cap, key)) { free(enc); return -1; }
+    if (append_str(buf, len, cap, "=")) { free(enc); return -1; }
+    int rc = append_str(buf, len, cap, enc);
+    /* enc may contain a percent-encoded secret; wipe before free. */
+    memset(enc, 0, strlen(enc));
+    free(enc);
+    return rc;
+}
+
+int nostr_nip46_uri_build_connect(const NostrNip46ConnectURI *in, char **out_uri) {
+    if (!in || !out_uri) return -1;
+    *out_uri = NULL;
+    if (!in->client_pubkey_hex) return -1;
+    if (!valid_pubkey(in->client_pubkey_hex)) return -1;
+
+    char *buf = NULL;
+    size_t len = 0, cap = 0;
+    if (append_str(&buf, &len, &cap, "nostrconnect://")) goto fail;
+    if (append_str(&buf, &len, &cap, in->client_pubkey_hex)) goto fail;
+
+    int first = 1;
+    if (in->relays && in->n_relays) {
+        for (size_t i = 0; i < in->n_relays; ++i) {
+            if (!in->relays[i]) continue;
+            if (append_kv(&buf, &len, &cap, &first, "relay", in->relays[i])) goto fail;
+        }
+    }
+    if (in->secret && *in->secret) {
+        if (append_kv(&buf, &len, &cap, &first, "secret", in->secret)) goto fail;
+    }
+    if (in->perms_csv && *in->perms_csv) {
+        if (append_kv(&buf, &len, &cap, &first, "perms", in->perms_csv)) goto fail;
+    }
+    if (in->name && *in->name) {
+        if (append_kv(&buf, &len, &cap, &first, "name", in->name)) goto fail;
+    }
+    if (in->url && *in->url) {
+        if (append_kv(&buf, &len, &cap, &first, "url", in->url)) goto fail;
+    }
+    if (in->image && *in->image) {
+        if (append_kv(&buf, &len, &cap, &first, "image", in->image)) goto fail;
+    }
+
+    *out_uri = buf;
+    return 0;
+fail:
+    if (buf) { memset(buf, 0, len); free(buf); }
+    return -1;
+}

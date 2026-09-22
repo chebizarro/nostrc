@@ -264,6 +264,68 @@ typedef enum {
 /* nostrc-32yf: Query the current session state. */
 NostrNip46State nostr_nip46_client_get_state_public(const NostrNip46Session *s);
 
+/* nostrc-z1fb Phase 1: client-initiated (`nostrconnect://`) QR login helpers.
+ *
+ * The client mints an ephemeral secp256k1 keypair and a 16-byte random
+ * pairing secret (RAND_bytes), populates `s` (client_pubkey_hex from the
+ * derived pubkey, secret = ephemeral private key, connect_token = the
+ * 32-hex-char pairing secret, relays = supplied list) and emits a
+ * `nostrconnect://<pk>?relay=…&secret=…&perms=…&name=…` URI ready for QR
+ * rendering. Perms / name are optional (pass NULL to omit).
+ *
+ * The URI embeds the pairing secret; treat *out_uri as sensitive at every
+ * callsite. The ephemeral private key never leaves the session (in
+ * s->secret, wiped in session_destroy).
+ *
+ * Returns 0 on success, -1 on error. */
+int nostr_nip46_client_new_qr_session(NostrNip46Session *s,
+                                      const char *const *relays,
+                                      size_t n_relays,
+                                      const char *perms_csv,
+                                      const char *name,
+                                      char **out_uri);
+
+/* nostrc-z1fb Phase 1: wait for an unsolicited `connect` from a signer that
+ * scanned this session's `nostrconnect://` URI.
+ *
+ * The client must already have `client_start()` running so the persistent
+ * per-relay subscription is up (C3 subscription-before-publish). This call
+ * arms an "unsolicited-connect" waiter alongside the pending-request table
+ * so `nip46_persistent_client_cb` routes a signer-initiated `connect`
+ * (which carries an id the client never issued) to this waiter instead of
+ * dropping it.
+ *
+ * Accepts BOTH interop shapes emitted by real signers:
+ *   {"id":"…","method":"connect","params":[<client_pk>,<secret>,<perms>]}
+ *   {"id":"…","result":"<secret>"}
+ *
+ * The secret is compared in constant time; on match the waiter records the
+ * event author as the signer pubkey (via nostr_nip46_client_set_signer_pubkey)
+ * and returns 0 with *out_signer_pubkey_hex filled with a fresh heap copy
+ * the caller must free(). Wrong / absent secret → dropped silently, the
+ * wait continues. The secret is single-use: on first successful match the
+ * waiter is invalidated so a replay cannot re-adopt a different signer.
+ *
+ * Returns 0 on success, -1 on timeout / error / cancellation. */
+int nostr_nip46_client_await_connect(NostrNip46Session *s,
+                                     const char *expected_secret,
+                                     uint32_t timeout_ms,
+                                     char **out_signer_pubkey_hex);
+
+/* nostrc-z1fb Phase 1: test-only ingest hook.
+ *
+ * Deterministic tests do NOT run a real relay pool, so they cannot exercise
+ * `await_connect` via `nip46_persistent_client_cb`. This helper accepts a
+ * plaintext NIP-46 request/response as if it had just been decrypted and
+ * runs the same dispatch (pending-request delivery first, then unsolicited-
+ * connect waiter). Not for production callers.
+ *
+ * Returns 1 if dispatched to the connect waiter, 0 if dispatched to a
+ * pending request (or dropped), -1 on invalid input. */
+int nostr_nip46_client_test_ingest_plaintext(NostrNip46Session *s,
+                                             const char *sender_pubkey_hex,
+                                             const char *plaintext_json);
+
 #ifdef __cplusplus
 }
 #endif
