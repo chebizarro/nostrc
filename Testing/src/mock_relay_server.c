@@ -28,6 +28,8 @@
 #define RING_DEPTH 64
 
 /* Per-connection state */
+#define MOCK_MAX_SUBS_PER_CONN 16
+#define MOCK_MAX_FILTERS_PER_SUB 8
 typedef struct MockConnection {
     struct lws *wsi;
     struct MockConnection *next;
@@ -37,8 +39,13 @@ typedef struct MockConnection {
     int ring_head;
     int ring_tail;
     int ring_count;
-    /* Active subscriptions - simplified: store sub_id only */
-    char *subscriptions[16];
+    /* Active subscriptions: id + per-sub filter JSON strings (owned).
+     * nostrc-fix-nip46-await-dispatch: needed so incoming EVENT frames
+     * can be dispatched to matching subscribers on other connections
+     * (the real-relay behaviour a NIP-46 handshake test relies on). */
+    char *subscriptions[MOCK_MAX_SUBS_PER_CONN];
+    char *sub_filters[MOCK_MAX_SUBS_PER_CONN][MOCK_MAX_FILTERS_PER_SUB];
+    int sub_filter_counts[MOCK_MAX_SUBS_PER_CONN];
     int sub_count;
 } MockConnection;
 
@@ -116,6 +123,19 @@ static const struct lws_protocols protocols[] = {
     },
     {
         .name = "nostr",
+        .callback = mock_ws_callback,
+        .per_session_data_size = sizeof(MockConnection*),
+        .rx_buffer_size = MAX_MSG_SIZE,
+    },
+    /* Libnostr's client subscribes with Sec-WebSocket-Protocol "wss" (see
+     * libnostr/src/connection.c: `ci.protocol = "wss"`). Without a matching
+     * server-side entry the LWS handshake either drops the subprotocol
+     * header silently or, on some LWS builds, rejects the upgrade — the
+     * client-visible symptom is a wsi that never reaches ESTABLISHED and a
+     * pool that never dispatches. Register the same name so real-socket
+     * NIP-46 tests can complete the handshake. */
+    {
+        .name = "wss",
         .callback = mock_ws_callback,
         .per_session_data_size = sizeof(MockConnection*),
         .rx_buffer_size = MAX_MSG_SIZE,
@@ -275,6 +295,9 @@ void nostr_mock_server_free(NostrMockRelayServer *server) {
         }
         for (int i = 0; i < conn->sub_count; i++) {
             free(conn->subscriptions[i]);
+            for (int f = 0; f < conn->sub_filter_counts[i]; f++) {
+                free(conn->sub_filters[i][f]);
+            }
         }
         free(conn);
         conn = next;
@@ -645,7 +668,6 @@ static int mock_ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
             server->conn_count++;
             server->conn_total++;
             nsync_mu_unlock(&server->mutex);
-
             break;
         }
 
@@ -673,6 +695,9 @@ static int mock_ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
             }
             for (int i = 0; i < conn->sub_count; i++) {
                 free(conn->subscriptions[i]);
+                for (int f = 0; f < conn->sub_filter_counts[i]; f++) {
+                    free(conn->sub_filters[i][f]);
+                }
             }
             free(conn);
             *conn_ptr = NULL;
@@ -775,9 +800,16 @@ static void handle_req_envelope(NostrMockRelayServer *server, MockConnection *co
     nsync_mu_lock(&server->mutex);
     server->subs_received++;
 
-    /* Store subscription ID */
-    if (conn->sub_count < 16) {
-        conn->subscriptions[conn->sub_count++] = strdup(sub_id);
+    /* Store subscription ID + a serialised copy of every filter in the REQ.
+     * The filter JSON strings are owned and freed on CLOSE / connection tear-
+     * down. Storing them enables handle_event_envelope to dispatch matching
+     * inbound EVENTs to this subscription (real-relay behaviour). */
+    int sub_slot = -1;
+    if (conn->sub_count < MOCK_MAX_SUBS_PER_CONN) {
+        sub_slot = conn->sub_count;
+        conn->subscriptions[sub_slot] = strdup(sub_id);
+        conn->sub_filter_counts[sub_slot] = 0;
+        conn->sub_count++;
     }
 
     /* Collect filters */
@@ -785,6 +817,16 @@ static void handle_req_envelope(NostrMockRelayServer *server, MockConnection *co
     json_t **filters = malloc(filter_count * sizeof(json_t *));
     for (size_t i = 0; i < filter_count; i++) {
         filters[i] = json_array_get(root, i + 2);
+    }
+
+    if (sub_slot >= 0) {
+        for (size_t i = 0;
+             i < filter_count && (int)i < MOCK_MAX_FILTERS_PER_SUB; i++) {
+            char *fs = json_dumps(filters[i], JSON_COMPACT);
+            if (fs) {
+                conn->sub_filters[sub_slot][conn->sub_filter_counts[sub_slot]++] = fs;
+            }
+        }
     }
 
     /* Match against seeded events */
@@ -878,12 +920,48 @@ static void handle_event_envelope(NostrMockRelayServer *server, MockConnection *
         event_str = NULL;
     }
 
+    /* Broadcast to all matching subscriptions on every connection BEFORE
+     * releasing ownership of event_str: real relays echo an accepted EVENT
+     * to every subscriber whose REQ filter matches. Without this, a NIP-46
+     * bunker publish never reaches the client waiting on await_connect.
+     * (nostrc-fix-nip46-await-dispatch) */
+    char *broadcast_copy = NULL;
+    if (valid && event_str) broadcast_copy = strdup(event_str);
+
     nsync_mu_lock(&server->mutex);
     if (server->published_count < MAX_EVENTS && event_str) {
         server->published_events[server->published_count++] = event_str;
         nsync_cv_broadcast(&server->cond_publish);
     } else {
         free(event_str);
+    }
+
+    if (broadcast_copy) {
+        for (MockConnection *c = server->connections; c; c = c->next) {
+            for (int s = 0; s < c->sub_count; s++) {
+                const char *sub_id_i = c->subscriptions[s];
+                if (!sub_id_i) continue;
+                bool any_match = false;
+                for (int f = 0; f < c->sub_filter_counts[s] && !any_match; f++) {
+                    const char *fj = c->sub_filters[s][f];
+                    if (fj && filter_matches_event_json(fj, broadcast_copy)) {
+                        any_match = true;
+                    }
+                }
+                if (any_match) {
+                    size_t env_size = strlen(broadcast_copy) + strlen(sub_id_i) + 32;
+                    char *env = malloc(env_size);
+                    if (env) {
+                        snprintf(env, env_size, "[\"EVENT\",\"%s\",%s]",
+                                 sub_id_i, broadcast_copy);
+                        send_to_connection(c, env);
+                        free(env);
+                        server->events_matched++;
+                    }
+                }
+            }
+        }
+        free(broadcast_copy);
     }
     nsync_mu_unlock(&server->mutex);
 
@@ -918,14 +996,26 @@ static void handle_close_envelope(NostrMockRelayServer *server, MockConnection *
     nsync_mu_lock(&server->mutex);
     server->close_received++;
 
-    /* Remove subscription from connection */
+    /* Remove subscription from connection (id + filter strings). */
     for (int i = 0; i < conn->sub_count; i++) {
         if (conn->subscriptions[i] && strcmp(conn->subscriptions[i], sub_id) == 0) {
             free(conn->subscriptions[i]);
-            /* Shift remaining subscriptions */
+            for (int f = 0; f < conn->sub_filter_counts[i]; f++) {
+                free(conn->sub_filters[i][f]);
+                conn->sub_filters[i][f] = NULL;
+            }
+            conn->sub_filter_counts[i] = 0;
+            /* Shift remaining subscriptions (id + filter arrays). */
             for (int j = i; j < conn->sub_count - 1; j++) {
                 conn->subscriptions[j] = conn->subscriptions[j + 1];
+                conn->sub_filter_counts[j] = conn->sub_filter_counts[j + 1];
+                for (int f = 0; f < MOCK_MAX_FILTERS_PER_SUB; f++) {
+                    conn->sub_filters[j][f] = conn->sub_filters[j + 1][f];
+                    conn->sub_filters[j + 1][f] = NULL;
+                }
             }
+            conn->subscriptions[conn->sub_count - 1] = NULL;
+            conn->sub_filter_counts[conn->sub_count - 1] = 0;
             conn->sub_count--;
             break;
         }

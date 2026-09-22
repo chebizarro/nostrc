@@ -406,6 +406,60 @@ set_tests_properties(Nip46MockRelay PROPERTIES
     LABELS "nip46;signer;integration"
 )
 
+# ---------------------------------------------------------------------------
+# nostrc-fix-nip46-await-dispatch: QR handshake over a real WebSocket.
+# Guards against the pool-dispatch stall that broke live QR logins for
+# nostr-authd (see docs/reviews/nip46-greeter-acceptance-2026-09-22.md §5).
+# ---------------------------------------------------------------------------
+add_executable(test_nip46_qr_socket tests/test_nip46_qr_socket.c)
+target_link_libraries(test_nip46_qr_socket PRIVATE
+    nostr_nip46_core
+    nostr_testing
+    libnostr
+    nostr_json
+    ${NSYNC_LIB}
+    ${LWS_LIBRARIES}
+    PkgConfig::JANSSON
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    ${SECP256K1_LIBRARIES}
+    pthread
+)
+target_include_directories(test_nip46_qr_socket PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/nips/nip46/include
+    ${CMAKE_SOURCE_DIR}/libnostr/include
+    ${NSYNC_INCLUDE_DIR}
+    ${SECP256K1_INCLUDE_DIRS}
+    ${LWS_INCLUDE_DIRS}
+)
+target_link_directories(test_nip46_qr_socket PRIVATE
+    ${SECP256K1_LIBRARY_DIRS}
+    ${LWS_LIBRARY_DIRS}
+)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    if(GO_ENABLE_TSAN)
+        target_compile_options(test_nip46_qr_socket PRIVATE -fsanitize=thread)
+        target_link_options(test_nip46_qr_socket PRIVATE -fsanitize=thread)
+    else()
+        if(GO_ENABLE_ASAN)
+            target_compile_options(test_nip46_qr_socket PRIVATE -fsanitize=address)
+            target_link_options(test_nip46_qr_socket PRIVATE -fsanitize=address)
+        endif()
+        if(GO_ENABLE_UBSAN)
+            target_compile_options(test_nip46_qr_socket PRIVATE -fsanitize=undefined)
+            target_link_options(test_nip46_qr_socket PRIVATE -fsanitize=undefined)
+        endif()
+    endif()
+endif()
+
+add_test(NAME Nip46QRSocket COMMAND test_nip46_qr_socket)
+set_tests_properties(Nip46QRSocket PROPERTIES
+    TIMEOUT 90
+    LABELS "nip46;signer;integration;socket"
+)
+
 # ============================================================================
 # Install Rules
 # ============================================================================
