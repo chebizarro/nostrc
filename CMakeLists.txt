@@ -6,6 +6,12 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(VersionHelpers)
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 
+# Resolve nsync once for the whole tree: prefer the system copy when
+# available, otherwise build the vendored submodule under third_party/nsync.
+# Exposes the ``nostrc::nsync`` INTERFACE target plus NSYNC_LIB / NSYNC_INCLUDE_DIR
+# for legacy call sites.  See cmake/FindOrVendorNsync.cmake (nostrc-dd5y).
+include(FindOrVendorNsync)
+
 # =============================================================================
 # Windows/MinGW: Allow multiple definitions to resolve DLL import conflicts
 # =============================================================================
@@ -427,10 +433,9 @@ endif()
 # Examples
 add_executable(relay_smoke examples/relay_smoke.c)
 target_link_libraries(relay_smoke PRIVATE libnostr nostr_json)
-find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
-target_include_directories(relay_smoke PRIVATE ${NSYNC_INCLUDE_DIR})
-find_library(NSYNC_LIB nsync REQUIRED)
-target_link_libraries(relay_smoke PRIVATE ${NSYNC_LIB})
+# nsync resolved once at the top of this file; nostrc::nsync (INTERFACE)
+# carries include dirs + link line for both system and vendored modes.
+target_link_libraries(relay_smoke PRIVATE nostrc::nsync)
 apply_sanitizers(relay_smoke)
 
 # NostrdB store demo (optional; requires an installed 'nostrdb' library)
@@ -494,11 +499,9 @@ if (TARGET nostr)
       target_include_directories(json_provider_demo PRIVATE 
         libnostr/include 
         ${CMAKE_BINARY_DIR}/libnostr/generated)
-      # nsync dependency required via libgo headers used transitively
-      find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
-      target_include_directories(json_provider_demo PRIVATE ${NSYNC_INCLUDE_DIR})
-      find_library(NSYNC_LIB nsync REQUIRED)
-      target_link_libraries(json_provider_demo PRIVATE ${NSYNC_LIB})
+      # nsync dependency required via libgo headers used transitively;
+      # nostrc::nsync is resolved centrally (system or vendored copy).
+      target_link_libraries(json_provider_demo PRIVATE nostrc::nsync)
       apply_sanitizers(json_provider_demo)
     endif()
   endif()
@@ -514,9 +517,8 @@ if (NOSTR_ENABLE_GI)
   find_program(G_IR_SCANNER g-ir-scanner)
   find_program(G_IR_COMPILER g-ir-compiler)
   if (G_IR_SCANNER AND G_IR_COMPILER)
-    # Includes needed for headers referenced by libnostr public headers
-    find_path(NSYNC_INCLUDE_DIR nsync.h)
-
+    # Includes needed for headers referenced by libnostr public headers.
+    # NSYNC_INCLUDE_DIR is set by cmake/FindOrVendorNsync.cmake (system or vendored).
     set(NOSTR_GI_LIBGO_INCLUDE_DIRS
       ${CMAKE_SOURCE_DIR}/libgo/include
       ${CMAKE_SOURCE_DIR}/libgo/include/go

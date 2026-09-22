@@ -10,3 +10,7 @@
 	url = https://github.com/damus-io/nostrdb.git
 	branch = master
 	shallow = true
+[submodule "third_party/nsync"]
+	path = third_party/nsync
+	url = https://github.com/google/nsync.git
+	shallow = true

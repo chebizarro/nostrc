@@ -73,13 +73,22 @@ BuildRequires:  pkgconfig(libwebsockets)
 BuildRequires:  pkgconfig(libsodium)
 BuildRequires:  pkgconfig(libcurl)
 BuildRequires:  pam-devel
-# nsync-devel is NOT in Fedora 41/42 stock repos as of 2026-09-22 (D-1
-# assumed availability in both Debian and Fedora; the Debian assumption
-# holds, the Fedora one does NOT).  Operators must supply nsync via a
-# COPR overlay or vendor it -- see the evidence doc under docs/reviews/.
-# The BuildRequires stays declared so real Fedora builds (with a COPR
-# repo enabled) resolve it correctly.
+# nsync is vendored in-tree at third_party/nsync (git submodule pinned to a
+# release tag) and built statically as part of the CMake configure step.
+# The vendored copy is folded into libnostrgo.so via --whole-archive, so
+# no runtime nsync-devel/libnsync package is required and no DT_NEEDED
+# libnsync.so entry is emitted.  See cmake/FindOrVendorNsync.cmake and the
+# tracked issue nostrc-dd5y.
+#
+# Opt back into a system nsync (COPR overlay etc.) with:
+#   %bcond_with system_nsync
+# and pass -DNOSTR_USE_SYSTEM_NSYNC=ON via %cmake below.  Left off by default
+# so Fedora 41/42 (which do not ship nsync-devel) build natively without a
+# third-party overlay enabled.
+%bcond_with system_nsync
+%if %{with system_nsync}
 BuildRequires:  nsync-devel
+%endif
 BuildRequires:  systemd-rpm-macros
 
 %description
@@ -136,7 +145,9 @@ Requires:       libnostrgo-devel%{?_isa} = %{version}-%{release}
 Requires:       openssl-devel
 Requires:       libsecp256k1-devel
 Requires:       libwebsockets-devel
+%if %{with system_nsync}
 Requires:       nsync-devel
+%endif
 
 %description -n libnostr-devel
 Headers under %{_includedir}/nostr/ and the nostr.pc pkg-config metadata
@@ -156,7 +167,9 @@ libnostrgo.so.0.
 %package -n libnostrgo-devel
 Summary:        Development files for libnostrgo
 Requires:       libnostrgo%{?_isa} = %{version}-%{release}
+%if %{with system_nsync}
 Requires:       nsync-devel
+%endif
 
 %description -n libnostrgo-devel
 Headers under %{_includedir}/ (go.h and closure) and the libnostrgo.pc
@@ -557,6 +570,25 @@ find %{buildroot} -depth -type d -empty -delete 2>/dev/null || :
 %{_includedir}/ticker.h
 %{_includedir}/wait_group.h
 %{_includedir}/libgo/
+# Vendored nsync public headers (installed by cmake/FindOrVendorNsync.cmake
+# when NOSTRC_NSYNC_VENDORED=TRUE, i.e. the default Fedora build).  Owned
+# by libnostrgo-devel so downstream consumers of libnostrgo can #include
+# <nsync.h> without installing a separate nsync-devel package.
+%if %{without system_nsync}
+%{_includedir}/nsync.h
+%{_includedir}/nsync_atomic.h
+%{_includedir}/nsync_counter.h
+%{_includedir}/nsync_cpp.h
+%{_includedir}/nsync_cv.h
+%{_includedir}/nsync_debug.h
+%{_includedir}/nsync_mu.h
+%{_includedir}/nsync_mu_wait.h
+%{_includedir}/nsync_note.h
+%{_includedir}/nsync_once.h
+%{_includedir}/nsync_time.h
+%{_includedir}/nsync_time_internal.h
+%{_includedir}/nsync_waiter.h
+%endif
 
 %files -n libnostr-json
 %license LICENSE
