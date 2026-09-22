@@ -80,11 +80,14 @@ BuildRequires:  pam-devel
 # libnsync.so entry is emitted.  See cmake/FindOrVendorNsync.cmake and the
 # tracked issue nostrc-dd5y.
 #
-# Opt back into a system nsync (COPR overlay etc.) with:
-#   %bcond_with system_nsync
-# and pass -DNOSTR_USE_SYSTEM_NSYNC=ON via %cmake below.  Left off by default
-# so Fedora 41/42 (which do not ship nsync-devel) build natively without a
-# third-party overlay enabled.
+# Opt back into a system nsync (COPR overlay etc.) by passing
+# `--with system_nsync` to rpmbuild / mock and adding
+# -DNOSTR_USE_SYSTEM_NSYNC=ON to the CMake invocation below.  Left off by
+# default so Fedora 41/42 (which do not ship nsync-devel) build natively
+# without a third-party overlay enabled.
+# (Macro names in this comment are intentionally NOT prefixed with a percent
+# sign so rpm does not expand them during parse; see %%bcond_with and %%cmake
+# in the rpm docs.)
 %bcond_with system_nsync
 %if %{with system_nsync}
 BuildRequires:  nsync-devel
