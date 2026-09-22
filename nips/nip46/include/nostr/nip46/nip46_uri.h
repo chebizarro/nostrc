@@ -25,6 +25,17 @@ typedef struct {
 int nostr_nip46_uri_parse_bunker(const char *uri, NostrNip46BunkerURI *out);
 int nostr_nip46_uri_parse_connect(const char *uri, NostrNip46ConnectURI *out);
 
+/* nostrc-z1fb Phase 1: build a nostrconnect:// URI from a caller-populated
+ * NostrNip46ConnectURI. Percent-encodes every value (relay URLs, secret,
+ * perms, name, url, image); the client_pubkey_hex is emitted verbatim.
+ *
+ * Requires: in->client_pubkey_hex non-NULL and hex-valid. Any relay whose
+ * pointer is NULL is skipped. The caller owns *out_uri (free() when done).
+ * The URI is NEVER logged automatically because it embeds the connect
+ * secret; treat it as sensitive at every callsite.
+ * Returns 0 on success, -1 on error. */
+int nostr_nip46_uri_build_connect(const NostrNip46ConnectURI *in, char **out_uri);
+
 void nostr_nip46_uri_bunker_free(NostrNip46BunkerURI *u);
 void nostr_nip46_uri_connect_free(NostrNip46ConnectURI *u);
 

@@ -15,6 +15,7 @@
 #include "error.h"
 #include "secure_buf.h"
 #include "json.h"
+#include <openssl/rand.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,6 +90,21 @@ typedef struct PendingRequest {
     struct PendingRequest *next;
 } PendingRequest;
 
+/* nostrc-z1fb Phase 1: unsolicited-connect waiter.
+ *
+ * A `nostrconnect://` client sits idle after `client_start` waiting for the
+ * signer to send an unsolicited `connect` (an id the client never issued,
+ * so the pending-request table cannot dispatch it). One waiter per session
+ * — the QR handshake is single-use per attempt; a fresh attempt mints a
+ * fresh URI and a fresh waiter. Guarded by `pending_mutex` alongside the
+ * pending-request table so the callback's dispatch is one critical
+ * section. */
+typedef struct ConnectWaiter {
+    char *expected_secret;   /* NUL-terminated; wiped + freed on cleanup */
+    GoChannel *chan;         /* capacity-1; receives strdup(signer_pubkey_hex) */
+    int consumed;            /* 1 once matched — single-use, prevents replay */
+} ConnectWaiter;
+
 /* nostrc-13gf: Bounded prioritized RPC work queue.
  * Replaces the old one-detached-pthread-per-async-RPC model, which could
  * spawn unbounded threads during bulk DM hydration. */
@@ -161,6 +177,10 @@ struct NostrNip46Session {
     pthread_mutex_t pending_mutex;        /* Protects pending_requests */
     PendingRequest *pending_requests;     /* Linked list of pending RPC requests */
     char *derived_client_pubkey;          /* Client pubkey derived from secret */
+
+    /* nostrc-z1fb Phase 1: unsolicited-connect waiter for nostrconnect://.
+     * Guarded by pending_mutex. NULL when no `await_connect` is armed. */
+    ConnectWaiter *connect_waiter;
 
     /* nostrc-5wj9: Configurable request timeout (0 = use default) */
     uint32_t timeout_ms;
@@ -579,6 +599,23 @@ static void session_destroy(NostrNip46Session *s) {
     pthread_mutex_destroy(&s->q_mutex);
     pthread_cond_destroy(&s->q_cond);
     if (s->derived_client_pubkey) { free(s->derived_client_pubkey); }
+    if (s->connect_waiter) {
+        if (s->connect_waiter->expected_secret) {
+            memset(s->connect_waiter->expected_secret, 0,
+                   strlen(s->connect_waiter->expected_secret));
+            free(s->connect_waiter->expected_secret);
+        }
+        if (s->connect_waiter->chan) {
+            /* Drain any dangling delivery to prevent a leaked signer_pubkey. */
+            go_channel_close(s->connect_waiter->chan);
+            void *pending = NULL;
+            if (go_channel_try_receive(s->connect_waiter->chan, &pending) == 0)
+                free(pending);
+            go_channel_free(s->connect_waiter->chan);
+        }
+        free(s->connect_waiter);
+        s->connect_waiter = NULL;
+    }
     free(s);
 }
 
@@ -789,6 +826,13 @@ int nostr_nip46_client_get_public_key(NostrNip46Session *s, char **out_user_pubk
 /* nostrc-kk9f: Event callback for persistent client pool.
  * Routes incoming NIP-46 responses to pending RPC requests.
  * Decrypts the event, parses the response, matches by ID, and dispatches via channel. */
+/* nostrc-z1fb Phase 1: try to deliver an inbound plaintext to the
+ * unsolicited-connect waiter. Returns 1 iff consumed (waiter matched or
+ * definitively rejected the event as ours), 0 otherwise. */
+static int nip46_try_deliver_unsolicited_connect(NostrNip46Session *s,
+                                                 const char *sender_pubkey_hex,
+                                                 const char *plaintext_json);
+
 static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
     if (!incoming || !incoming->event || !incoming->relay) return;
 
@@ -905,8 +949,17 @@ static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
         goto done;
     }
 
-    if (!pending_request_deliver(session, resp_id, response_json))
-        free(response_json);
+    if (!pending_request_deliver(session, resp_id, response_json)) {
+        /* nostrc-z1fb Phase 1: no pending request owns this id — check for
+         * an unsolicited-connect waiter. The signer-side `connect` request
+         * carries an id the client never issued, so it lands here. */
+        if (!nip46_try_deliver_unsolicited_connect(session, sender_pubkey,
+                                                   response_json)) {
+            free(response_json);
+        } else {
+            free(response_json);
+        }
+    }
     free(resp_id);
 done:
     nostr_nip46_session_unref(session);
@@ -3049,3 +3102,376 @@ static void acl_set_perms(NostrNip46Session *s, const char *client_pk, const cha
     s->acl_head=e;
 }
 static int acl_has_perm(const NostrNip46Session *s, const char *client_pk, const char *method){ if(!s||!client_pk||!method) return 0; for(const struct PermEntry *it=s->acl_head; it; it=it->next){ if(it->client_pk && strcmp(it->client_pk, client_pk)==0){ if(it->n_methods==0) return 0; for(size_t i=0;i<it->n_methods;++i){ if(it->methods[i] && strcmp(it->methods[i], method)==0) return 1; } return 0; } } return 0; }
+
+/* ==========================================================================
+ * nostrc-z1fb Phase 1: nostrconnect:// client-initiated QR login
+ * ========================================================================== */
+
+/* Constant-time equality on NUL-terminated strings. Returns 1 if equal, 0
+ * otherwise. Length is compared first (leaks only the length equality
+ * decision, not any content), then bytes are XORed into an accumulator.
+ * Callers use this on the pairing secret which is public-length-safe. */
+static int nip46_ct_streq(const char *a, const char *b) {
+    if (!a || !b) return 0;
+    size_t la = strlen(a), lb = strlen(b);
+    if (la != lb) return 0;
+    unsigned char diff = 0;
+    for (size_t i = 0; i < la; ++i) diff |= (unsigned char)(a[i] ^ b[i]);
+    return diff == 0;
+}
+
+/* Try to deliver an inbound plaintext NIP-46 message to the connect waiter.
+ * Accepts both interop shapes:
+ *   {"id":"…","method":"connect","params":[<client_pk>,<secret>,<perms>]}
+ *   {"id":"…","result":"<secret>"}
+ * On secret match (constant-time): sets session->remote_pubkey_hex from the
+ * event author, signals the waiter with a heap copy of the signer pubkey,
+ * and marks the waiter consumed. Wrong secret is silently dropped so
+ * timing/logging never reveals whether a probe hit the right session. */
+static int nip46_try_deliver_unsolicited_connect(NostrNip46Session *s,
+                                                 const char *sender_pubkey_hex,
+                                                 const char *plaintext_json) {
+    if (!s || !sender_pubkey_hex || !plaintext_json) return 0;
+    if (!nostr_json_is_valid(plaintext_json)) return 0;
+
+    /* Extract the candidate secret. Prefer the request shape's params[1]. */
+    char *candidate = NULL;
+    NostrNip46Request req = {0};
+    int is_connect_request = 0;
+    if (nostr_nip46_request_parse(plaintext_json, &req) == 0 &&
+        req.method && strcmp(req.method, "connect") == 0) {
+        is_connect_request = 1;
+        /* NIP-46 spec: params = [remote_signer_pubkey, secret, perms].
+         * Some signers omit remote_signer_pubkey and start with secret. */
+        if (req.n_params >= 2 && req.params[1])
+            candidate = strdup(req.params[1]);
+        else if (req.n_params >= 1 && req.params[0])
+            candidate = strdup(req.params[0]);
+    }
+    nostr_nip46_request_free(&req);
+
+    if (!candidate) {
+        /* Fallback: response-shape {"id":…,"result":"<secret>"}. */
+        NostrNip46Response resp = {0};
+        if (nostr_nip46_response_parse(plaintext_json, &resp) == 0 &&
+            resp.result && !resp.error) {
+            candidate = strdup(resp.result);
+        }
+        nostr_nip46_response_free(&resp);
+    }
+
+    if (!candidate) return 0;
+
+    pthread_mutex_lock(&s->pending_mutex);
+    ConnectWaiter *w = s->connect_waiter;
+    if (!w || w->consumed || !w->expected_secret) {
+        pthread_mutex_unlock(&s->pending_mutex);
+        memset(candidate, 0, strlen(candidate));
+        free(candidate);
+        return 0;
+    }
+    int match = nip46_ct_streq(candidate, w->expected_secret);
+    memset(candidate, 0, strlen(candidate));
+    free(candidate);
+    if (!match) {
+        pthread_mutex_unlock(&s->pending_mutex);
+        fprintf(stderr, "[nip46] await_connect: wrong-secret event dropped (still waiting)\n");
+        /* Consumed = we recognised it as ours to inspect (dropped either way);
+         * returning 1 tells the callback not to fall through to a stale
+         * response path. But since there is no such path (the callback just
+         * frees), returning 0 is equivalent. Keep it explicit: 1. */
+        return 1;
+    }
+    /* Match — record signer pubkey and signal. */
+    w->consumed = 1;
+    /* Wipe expected_secret NOW so a leak of the session between match and
+     * cleanup cannot re-expose the pairing token. */
+    memset(w->expected_secret, 0, strlen(w->expected_secret));
+    free(w->expected_secret);
+    w->expected_secret = NULL;
+
+    char *signer_copy = strdup(sender_pubkey_hex);
+    /* remote_pubkey_hex is only set here; pins subsequent responses via the
+     * existing sender-check in nip46_persistent_client_cb. */
+    if (s->remote_pubkey_hex) free(s->remote_pubkey_hex);
+    s->remote_pubkey_hex = strdup(sender_pubkey_hex);
+    if (!signer_copy) {
+        /* Best-effort: still wake the waiter with a NULL so it can fail cleanly. */
+        go_channel_try_send(w->chan, NULL);
+    } else {
+        if (go_channel_try_send(w->chan, signer_copy) != 0) {
+            /* Channel full or closed — the waiter already gave up. */
+            free(signer_copy);
+        }
+    }
+    pthread_mutex_unlock(&s->pending_mutex);
+    fprintf(stderr, "[nip46] await_connect: matched, signer=%s\n", sender_pubkey_hex);
+    return 1;
+}
+
+/* Test-only ingest: bypasses relay pool / crypto, invokes the same dispatch. */
+int nostr_nip46_client_test_ingest_plaintext(NostrNip46Session *s,
+                                             const char *sender_pubkey_hex,
+                                             const char *plaintext_json) {
+    if (!s || !sender_pubkey_hex || !plaintext_json) return -1;
+    if (!nostr_json_is_valid(plaintext_json)) return -1;
+
+    /* First: extract id and try pending-request delivery (same order as the
+     * real callback). Duplicate the payload so ownership matches the real
+     * path (delivery consumes the pointer on success). */
+    char *resp_id = NULL;
+    if (nostr_json_get_string(plaintext_json, "id", &resp_id) == 0 && resp_id) {
+        char *dup_for_pending = strdup(plaintext_json);
+        if (dup_for_pending) {
+            if (pending_request_deliver(s, resp_id, dup_for_pending)) {
+                free(resp_id);
+                return 0;
+            }
+            free(dup_for_pending);
+        }
+    }
+    free(resp_id);
+    return nip46_try_deliver_unsolicited_connect(s, sender_pubkey_hex, plaintext_json)
+               ? 1 : 0;
+}
+
+static int nip46_bytes_to_hex(const unsigned char *in, size_t n, char *out_hex_2n_plus_1) {
+    static const char hex[] = "0123456789abcdef";
+    for (size_t i = 0; i < n; ++i) {
+        out_hex_2n_plus_1[2*i]   = hex[(in[i] >> 4) & 0xF];
+        out_hex_2n_plus_1[2*i+1] = hex[in[i] & 0xF];
+    }
+    out_hex_2n_plus_1[2*n] = '\0';
+    return 0;
+}
+
+int nostr_nip46_client_new_qr_session(NostrNip46Session *s,
+                                      const char *const *relays,
+                                      size_t n_relays,
+                                      const char *perms_csv,
+                                      const char *name,
+                                      char **out_uri) {
+    if (!s || !relays || !n_relays || !out_uri) return -1;
+    *out_uri = NULL;
+
+    /* 1) Ephemeral client keypair. */
+    char *priv_hex = nostr_key_generate_private();
+    if (!priv_hex) return -1;
+    char *pub_hex = nostr_key_get_public(priv_hex);
+    if (!pub_hex) { memset(priv_hex, 0, strlen(priv_hex)); free(priv_hex); return -1; }
+
+    /* 2) 16-byte pairing secret. */
+    unsigned char sec_bytes[16];
+    if (RAND_bytes(sec_bytes, sizeof(sec_bytes)) != 1) {
+        memset(priv_hex, 0, strlen(priv_hex)); free(priv_hex); free(pub_hex);
+        return -1;
+    }
+    char sec_hex[33];
+    nip46_bytes_to_hex(sec_bytes, sizeof(sec_bytes), sec_hex);
+    memset(sec_bytes, 0, sizeof(sec_bytes));
+
+    /* 3) Duplicate relays into the session. */
+    char **relay_dup = (char **)calloc(n_relays, sizeof(char *));
+    if (!relay_dup) {
+        memset(priv_hex, 0, strlen(priv_hex)); free(priv_hex); free(pub_hex);
+        memset(sec_hex, 0, sizeof(sec_hex));
+        return -1;
+    }
+    for (size_t i = 0; i < n_relays; ++i) {
+        if (!relays[i]) { relay_dup[i] = NULL; continue; }
+        relay_dup[i] = strdup(relays[i]);
+        if (!relay_dup[i]) {
+            for (size_t j = 0; j < i; ++j) free(relay_dup[j]);
+            free(relay_dup);
+            memset(priv_hex, 0, strlen(priv_hex)); free(priv_hex); free(pub_hex);
+            memset(sec_hex, 0, sizeof(sec_hex));
+            return -1;
+        }
+    }
+
+    /* 4) Build URI FIRST (so any failure leaves the session untouched). */
+    NostrNip46ConnectURI in = {0};
+    in.client_pubkey_hex = pub_hex;
+    in.relays = relay_dup;
+    in.n_relays = n_relays;
+    in.secret = sec_hex;
+    in.perms_csv = (char *)perms_csv;
+    in.name = (char *)name;
+    char *uri = NULL;
+    if (nostr_nip46_uri_build_connect(&in, &uri) != 0 || !uri) {
+        for (size_t i = 0; i < n_relays; ++i) free(relay_dup[i]);
+        free(relay_dup);
+        memset(priv_hex, 0, strlen(priv_hex)); free(priv_hex); free(pub_hex);
+        memset(sec_hex, 0, sizeof(sec_hex));
+        return -1;
+    }
+
+    /* 5) Adopt into the session (replace anything previously set). */
+    if (s->secret) { memset(s->secret, 0, strlen(s->secret)); free(s->secret); }
+    s->secret = priv_hex;
+    if (s->client_pubkey_hex) free(s->client_pubkey_hex);
+    s->client_pubkey_hex = pub_hex;
+    if (s->connect_token) { memset(s->connect_token, 0, strlen(s->connect_token)); free(s->connect_token); }
+    s->connect_token = strdup(sec_hex);
+    memset(sec_hex, 0, sizeof(sec_hex));
+    if (s->relays) {
+        for (size_t i = 0; i < s->n_relays; ++i) free(s->relays[i]);
+        free(s->relays);
+    }
+    s->relays = relay_dup;
+    s->n_relays = n_relays;
+
+    if (!s->connect_token) {
+        /* strdup failure on the token — undo. */
+        memset(uri, 0, strlen(uri)); free(uri);
+        return -1;
+    }
+    *out_uri = uri;
+    return 0;
+}
+
+int nostr_nip46_client_await_connect(NostrNip46Session *s,
+                                     const char *expected_secret,
+                                     uint32_t timeout_ms,
+                                     char **out_signer_pubkey_hex) {
+    if (!s || !expected_secret || !*expected_secret || !out_signer_pubkey_hex)
+        return -1;
+    *out_signer_pubkey_hex = NULL;
+
+    /* Arm the waiter. Refuse a second concurrent wait: the design mints
+     * a fresh URI + waiter per attempt and the previous waiter must be
+     * consumed / timed-out before the next one arms. */
+    ConnectWaiter *w = (ConnectWaiter *)calloc(1, sizeof(*w));
+    if (!w) return -1;
+    w->expected_secret = strdup(expected_secret);
+    w->chan = go_channel_create(1);
+    if (!w->expected_secret || !w->chan) {
+        if (w->expected_secret) { memset(w->expected_secret, 0, strlen(w->expected_secret)); free(w->expected_secret); }
+        if (w->chan) go_channel_free(w->chan);
+        free(w);
+        return -1;
+    }
+
+    pthread_mutex_lock(&s->pending_mutex);
+    if (s->connect_waiter) {
+        pthread_mutex_unlock(&s->pending_mutex);
+        fprintf(stderr, "[nip46] await_connect: waiter already armed\n");
+        memset(w->expected_secret, 0, strlen(w->expected_secret));
+        free(w->expected_secret);
+        go_channel_free(w->chan);
+        free(w);
+        return -1;
+    }
+    s->connect_waiter = w;
+    pthread_mutex_unlock(&s->pending_mutex);
+
+    /* Wait with the caller-supplied timeout. */
+    void *recv_buf = NULL;
+    GoSelectCase cases[1];
+    cases[0].op = GO_SELECT_RECEIVE;
+    cases[0].chan = w->chan;
+    cases[0].recv_buf = &recv_buf;
+    GoSelectResult sel = go_select_timeout(cases, 1, timeout_ms);
+
+    /* Detach the waiter under the same lock so the dispatch cannot signal
+     * after we return. */
+    pthread_mutex_lock(&s->pending_mutex);
+    s->connect_waiter = NULL;
+    int consumed = w->consumed;
+    pthread_mutex_unlock(&s->pending_mutex);
+
+    int rc = -1;
+    if (sel.selected_case == 0 && sel.ok && recv_buf) {
+        *out_signer_pubkey_hex = (char *)recv_buf;
+        recv_buf = NULL;
+        rc = 0;
+    } else if (consumed) {
+        /* Match happened but channel returned nothing (allocation failure). */
+        rc = -1;
+    } else {
+        fprintf(stderr, "[nip46] await_connect: timed out after %u ms\n", timeout_ms);
+        rc = -1;
+    }
+
+    /* Cleanup waiter. Any late signal that raced with the detach lands in
+     * a closed channel; drain it. */
+    if (w->expected_secret) {
+        memset(w->expected_secret, 0, strlen(w->expected_secret));
+        free(w->expected_secret);
+    }
+    if (w->chan) {
+        go_channel_close(w->chan);
+        void *late = NULL;
+        if (go_channel_try_receive(w->chan, &late) == 0) free(late);
+        go_channel_free(w->chan);
+    }
+    free(w);
+    return rc;
+}
+
+/* ==========================================================================
+ * nostrc-z1fb Phase 1: bunker consumes a nostrconnect:// URI
+ * ========================================================================== */
+
+int nostr_nip46_bunker_connect_to_client(NostrNip46Session *s,
+                                         const char *nostrconnect_uri) {
+    if (!s || !nostrconnect_uri) return -1;
+    if (strncmp(nostrconnect_uri, "nostrconnect://", 15) != 0) return -1;
+
+    NostrNip46ConnectURI u = {0};
+    if (nostr_nip46_uri_parse_connect(nostrconnect_uri, &u) != 0) return -1;
+    if (!u.client_pubkey_hex || !u.n_relays || !u.secret) {
+        nostr_nip46_uri_connect_free(&u);
+        return -1;
+    }
+
+    /* Ensure bunker has a signing key. If the caller has not supplied one
+     * via set_secret / an existing session, mint a fresh identity. */
+    if (!s->secret) {
+        char *sk = nostr_key_generate_private();
+        if (!sk) { nostr_nip46_uri_connect_free(&u); return -1; }
+        s->secret = sk;
+    }
+    if (!s->bunker_secret_hex) {
+        s->bunker_secret_hex = strdup(s->secret);
+        if (!s->bunker_secret_hex) { nostr_nip46_uri_connect_free(&u); return -1; }
+    }
+    if (!s->bunker_pubkey_hex) {
+        s->bunker_pubkey_hex = nostr_key_get_public(s->bunker_secret_hex);
+        if (!s->bunker_pubkey_hex) { nostr_nip46_uri_connect_free(&u); return -1; }
+    }
+
+    /* Grant ACL for the client so subsequent sign_event/get_public_key from
+     * this client are honoured. */
+    if (is_valid_pubkey_hex_relaxed(u.client_pubkey_hex)) {
+        acl_set_perms(s, u.client_pubkey_hex, u.perms_csv);
+    }
+
+    /* Bring up the relay transport if not already listening. */
+    if (!s->listening) {
+        int rc = nostr_nip46_bunker_listen(s, (const char *const *)u.relays, u.n_relays);
+        if (rc != 0) { nostr_nip46_uri_connect_free(&u); return -1; }
+    }
+
+    /* Build the connect request event: params = [client_pk, secret, perms]. */
+    char *req_id = nostr_nip46_request_id_generate();
+    if (!req_id) { nostr_nip46_uri_connect_free(&u); return -1; }
+    const char *params[3];
+    size_t n_params = 0;
+    params[n_params++] = u.client_pubkey_hex;
+    params[n_params++] = u.secret;
+    if (u.perms_csv && *u.perms_csv) params[n_params++] = u.perms_csv;
+
+    char *req_json = nostr_nip46_request_build(req_id, "connect", params, n_params);
+    free(req_id);
+    if (!req_json) { nostr_nip46_uri_connect_free(&u); return -1; }
+
+    int rc = nip46_publish_response(s, u.client_pubkey_hex, req_json);
+    /* nip46_publish_response encrypts + signs + publishes; the "response"
+     * naming is historical — the transport is the same for signer-initiated
+     * connect requests. */
+    secure_wipe(req_json, strlen(req_json));
+    free(req_json);
+    nostr_nip46_uri_connect_free(&u);
+    return rc;
+}
