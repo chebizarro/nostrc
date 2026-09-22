@@ -33,8 +33,35 @@ Locked (supersede the recommendations in §10 where they differ):
   reproducible. This doubles the libnostr build matrix — accepted for a clean
   GLib-free server footprint.
 
-Still open (defaults = §10 recommendation unless the maintainer says otherwise):
-D-2, D-4, D-5, D-7, D-8, D-9, D-10, D-12, D-13.
+**Round 2 (2026-09-21): all remaining defaults APPROVED** — D-2 (monorepo Version +
+per-lib SONAMEs), D-4 (rename nostr_json -> libnostr-json + compat symlink), D-5
+(base 2-arg unit + smb drop-in), D-7 (document-only nsswitch for v1), D-8 (top-level
+debian/), D-9 (collapse per-app debian/ into one source package), D-10 (build
+profiles later), D-12 (gnostr-desktop has NO dep on nostr-login), D-13 (PPA+COPR
+first).
+
+## Pre-phase execution tracks (blockers B1-B11)
+
+Sequenced to avoid CMakeLists collisions: Track A (tree-wide target renames) runs
+SOLO first; Tracks B and C run concurrently against the renamed tree.
+
+- [ ] Track A (core lib ABI/naming hygiene, SOLO): B1 add VERSION/SOVERSION to every
+  installed lib; B2/D-3 rename libgo target+artifact -> libnostrgo (fix liblibgo
+  double-prefix + gccgo collision) incl libgo.pc.in + ALL consumers; D-4 rename
+  nostr_json -> libnostr-json (SONAME + .pc + one-release compat symlink); B11/D-14
+  pin NOSTR_WITH_GLIB explicitly + reproducibly (no silent auto-detect); B3 keep
+  BUILD_SHARED_LIBS=ON building the whole tree green. Done when: full static AND
+  shared build green on Linux, SONAMEs present, renames consistent, .pc correct.
+  (Full two-ABI libnostr1 + libnostr-glib1 PRODUCTIZATION is deferred to Phase 2
+  packaging; pre-phase only pins the flag so each ABI is reproducible.)
+- [ ] Track B (nostr-homed shippability, after A): B4 install nh-seed-authority as
+  nostr-homed-seed outside BUILD_TESTS; B5/D-11 GLib-free NOSTR_HOMED_ENABLE_CTL so
+  nostr-homectl ships headless (decoupled from EXPERIMENTAL_ROAMING/FUSE); B6 author
+  /usr/share/pam-configs/nostr matching gdm-password.sample semantics; B7 resolve
+  nss.conf.sample vs nss_nostr.conf.sample and ship a real /etc/nss_nostr.conf.
+- [ ] Track C (server install dirs, after A, concurrent with B): B9 GNUInstallDirs
+  destinations for signet + relayd (currently relative bin); B10 add a nostr-relayd
+  systemd system unit.
 
 ---
 
