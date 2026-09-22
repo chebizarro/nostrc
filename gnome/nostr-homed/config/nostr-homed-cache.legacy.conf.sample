@@ -1,14 +1,22 @@
-# /etc/nss_nostr.conf — nostr-homed configuration
+# LEGACY roaming-cache configuration (not the NSS module conffile).
 #
-# This file is read by libnss_nostr, pam_nostr, nostrfs, and nostr-homectl.
-# All four components use the same config path: /etc/nss_nostr.conf
+# This documents the key=value schema of the pre-nostrc-svyg roaming/nostrfs
+# cache stored at /var/lib/nostr-homed/cache.db and the deterministic UID
+# allocator that hashed npub -> uid in [uid_base, uid_base+uid_range). The
+# roaming/nostrfs stack is gated behind NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING
+# and is NOT part of the installable nostr-login product.
+#
+# The production NSS module reads /etc/nss_nostr.conf (single key
+# `projection_path=...`) — see config/nss_nostr.conf for the real conffile.
+# This sample is kept as documentation for anyone bringing the roaming
+# experiment back online; do NOT install it as /etc/nss_nostr.conf.
 #
 # Syntax
 # ------
 # - Lines starting with '#' are comments.
 # - Blank lines are ignored.
 # - Format: key=value  (no spaces around '=').
-#
+
 # Keys
 # ----
 #

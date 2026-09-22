@@ -1,0 +1,55 @@
+# /usr/share/pam-configs/nostr — pam-auth-update profile for pam_nostr.so
+#
+# Registers the broker-backed nostr PAM module with Debian's pam-auth-update
+# framework so admins can enable it declaratively with
+#
+#   sudo pam-auth-update
+#
+# instead of overwriting gdm-password or common-auth by hand. pam-auth-update
+# composes the Auth-Type/Account-Type blocks below into the standard PAM
+# includes (common-auth, common-account) that gdm-password, sshd, sudo etc.
+# already `@include`, so no gdm3-owned conffile is ever touched.
+#
+# Semantics mirror the shipped packaging/pam/gdm-password.sample exactly —
+# the deliberate strict-deny posture from beads nostrc-o1ho:
+#
+#   success        -> done   : broker accepted the proof; stack proceeds and
+#                              the Unix stack (`pam_unix`) is NOT consulted.
+#   user_unknown   -> ignore : account is not a nostr account (broker returned
+#                              NH_AUTH_RESULT_UNKNOWN_ACCOUNT); fall through
+#                              to common-auth so ordinary local users log in.
+#   authinfo_unavail -> ignore : broker unreachable / transport error; fall
+#                              through so a stopped broker never bricks local
+#                              login. A nostr-only account will then simply
+#                              fail at common-auth.
+#   default        -> die    : a KNOWN nostr account that FAILED its proof
+#                              (invalid_proof / denied / rate-limited /
+#                              disabled -> PAM_AUTH_ERR / PAM_MAXTRIES /
+#                              PAM_ACCT_EXPIRED) denies immediately. It MUST
+#                              NOT fall through to Unix password auth,
+#                              otherwise a wrong nostr proof could be bypassed
+#                              by a local password.
+#
+# `Default: no` keeps activation an explicit admin act (rollback = re-run
+# pam-auth-update and untick nostr, or `pam-auth-update --package --remove nostr`
+# on package removal). Priority 384 places pam_nostr ABOVE pam_unix (priority
+# 256) so the broker gets first look for nostr accounts before Unix ever runs.
+#
+# Prerequisites (see docs/INSTALLED_LOGIN.md):
+#   - nostr-authd running with auth.sock at /run/nostr-auth/auth.sock
+#   - libnss_nostr.so.2 on glibc's search path
+#   - /etc/nsswitch.conf lists `nostr` on passwd and group lines
+#   - /etc/nss_nostr.conf points at the read-only projection nss.db
+Name: Nostr authentication (broker-backed)
+Default: no
+Priority: 384
+Auth-Type: Primary
+Auth:
+	[success=end new_authtok_reqd=ok user_unknown=ignore authinfo_unavail=ignore default=die]	pam_nostr.so socket=/run/nostr-auth/auth.sock
+Auth-Initial:
+	[success=end new_authtok_reqd=ok user_unknown=ignore authinfo_unavail=ignore default=die]	pam_nostr.so socket=/run/nostr-auth/auth.sock
+Account-Type: Primary
+Account:
+	[success=end user_unknown=ignore authinfo_unavail=ignore default=die]	pam_nostr.so socket=/run/nostr-auth/auth.sock
+Account-Initial:
+	[success=end user_unknown=ignore authinfo_unavail=ignore default=die]	pam_nostr.so socket=/run/nostr-auth/auth.sock

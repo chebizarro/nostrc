@@ -32,7 +32,25 @@ option(NOSTR_HOMED_ENABLE_SMB
   "Build the standalone SMB credential authority core (D5)" OFF)
 option(NOSTR_HOMED_ENABLE_AUTH_INSTALL
   "Install the system broker/PAM authentication product" OFF)
+# D-11 / B5: headless identity-authority admin CLI (nostr-homectl) — a
+# GLib-free / FUSE-free build decoupled from the experimental FUSE/D-Bus
+# roaming stack. Independent of NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING;
+# both flags produce a `nostr-homectl` binary and are mutually exclusive.
+option(NOSTR_HOMED_ENABLE_CTL
+  "Build the headless identity-authority nostr-homectl (requires identity core)" OFF)
 option(NOSTR_HOMED_BUILD_TESTS "Build tests for enabled nostr-homed features" ON)
+
+if(NOSTR_HOMED_ENABLE_CTL AND NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
+  message(FATAL_ERROR
+    "NOSTR_HOMED_ENABLE_CTL and NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING both "
+    "define a `nostr-homectl` target. Enable one and only one — CTL for the "
+    "headless identity-authority admin CLI, EXPERIMENTAL_ROAMING for the "
+    "FUSE/D-Bus roaming experiment.")
+endif()
+if(NOSTR_HOMED_ENABLE_CTL AND NOT NOSTR_HOMED_ENABLE_IDENTITY_CORE)
+  message(FATAL_ERROR
+    "NOSTR_HOMED_ENABLE_CTL requires NOSTR_HOMED_ENABLE_IDENTITY_CORE")
+endif()
 
 # Installing the login runtime requires the broker/PAM/NSS pieces to be built.
 # Fail loudly rather than silently omitting authentication.
@@ -235,7 +253,21 @@ if(NOSTR_HOMED_ENABLE_NSS)
       "getent cannot find it. Configure with -DCMAKE_INSTALL_PREFIX=/usr for a real "
       "login install.")
   endif()
-  install(FILES config/nss.conf.sample
+  # B7 (nostrc-rb0e.3 / packaging-plan §6.6): ship the real /etc/nss_nostr.conf
+  # as a distro conffile so libnss_nostr.so.2 works out of the box. Debian/Fedora
+  # packaging MUST mark this as %config(noreplace) / debian conffile so admin
+  # edits survive upgrades — the CMake install(FILES) only stages the file into
+  # DESTDIR; conffile semantics belong to the distro packaging layer.
+  # DESTINATION uses CMAKE_INSTALL_FULL_SYSCONFDIR so the /usr -> /etc
+  # special case in GNUInstallDirs resolves correctly (a relative
+  # CMAKE_INSTALL_SYSCONFDIR of "etc" would land under /usr/etc when the
+  # prefix is /usr).
+  install(FILES config/nss_nostr.conf
+    DESTINATION "${CMAKE_INSTALL_FULL_SYSCONFDIR}")
+  # Documentation sibling: the legacy roaming-cache key=value schema
+  # (db_path/uid_base/uid_range). NOT the NSS module conffile — ships under
+  # /usr/share/doc-adjacent so operators can rebuild the roaming experiment.
+  install(FILES config/nostr-homed-cache.legacy.conf.sample
     DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-homed")
 endif()
 
@@ -290,9 +322,16 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
     add_test(NAME homed_broker_login_nip46 COMMAND test_broker_login_nip46)
     set_tests_properties(homed_broker_login_nip46
       PROPERTIES LABELS "nostr-homed;auth-runtime" TIMEOUT 120)
-    add_executable(nh-seed-authority tests/integration/seed_authority.c)
-    target_link_libraries(nh-seed-authority PRIVATE nostr_auth_runtime)
   endif()
+
+  # B4 (nostrc-rb0e.3): nh-seed-authority is the mandatory provisioning tool
+  # documented in docs/INSTALLED_LOGIN.md §2. Build it unconditionally with
+  # the auth runtime — the test suite still consumes the same binary as a
+  # test helper, but its installability no longer depends on
+  # NOSTR_HOMED_BUILD_TESTS. Install rule lives under AUTH_INSTALL and
+  # renames it to `nostr-homed-seed` in sbin.
+  add_executable(nh-seed-authority tests/integration/seed_authority.c)
+  target_link_libraries(nh-seed-authority PRIVATE nostr_auth_runtime)
 endif()
 
 # B4: broker-backed PAM module. Authentication succeeds only via broker proof.
@@ -556,6 +595,44 @@ if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
     DESTINATION "${SYSTEMD_SYSTEM_UNIT_DIR}")
   install(FILES config/auth.conf.sample
     DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-homed")
+
+  # B4 (nostrc-rb0e.3): install nh-seed-authority as /usr/sbin/nostr-homed-seed.
+  # The build target keeps its original name so existing test infrastructure
+  # that greps for `nh-seed-authority` in the build tree keeps working.
+  # install(TARGETS) does not honour RENAME; use install(PROGRAMS) against the
+  # generator-expression build path so the shipped filename matches
+  # docs/INSTALLED_LOGIN.md §2 (`nostr-homed-seed`) while the build target
+  # keeps its original name.
+  install(PROGRAMS $<TARGET_FILE:nh-seed-authority>
+    DESTINATION "${CMAKE_INSTALL_SBINDIR}"
+    RENAME nostr-homed-seed)
+
+  # B6 (nostrc-rb0e.3 / packaging-plan §6.3): pam-auth-update profile so admins
+  # can compose pam_nostr into common-auth / common-account via
+  # `pam-auth-update` (Debian) instead of overwriting gdm-password. Semantics
+  # match packaging/pam/gdm-password.sample exactly (strict-deny posture).
+  install(FILES packaging/pam/nostr
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/pam-configs")
+  install(FILES packaging/pam/gdm-password.sample
+                packaging/pam/nostr-login.sample
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}/examples/pam")
+endif()
+
+# B5 / D-11: headless identity-authority admin CLI. Builds nostr-homectl on
+# top of nostr_identity_core alone -- no GLib, no FUSE, no D-Bus session bus.
+# Independent of NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING; the target name
+# collision is prevented by the mutual-exclusion check above.
+if(NOSTR_HOMED_ENABLE_CTL)
+  add_executable(nostr-homectl src/ctl/nostr-homectl-headless.c)
+  target_compile_options(nostr-homectl PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_include_directories(nostr-homectl PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(nostr-homectl PRIVATE nostr_identity_core)
+  if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+    install(TARGETS nostr-homectl
+      RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+  endif()
 endif()
 
 

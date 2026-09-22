@@ -1,2 +1,0 @@
-# Read-only NSS projection. No private authority path is valid in this file.
-projection_path=/var/lib/nostr-auth/nss.db
