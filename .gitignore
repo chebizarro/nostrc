@@ -125,3 +125,6 @@ state.json
 .dolt/
 *.db
 .beads-credential-key
+
+# NIP-46 one-time login bundles (secrets) — never commit
+*.login
