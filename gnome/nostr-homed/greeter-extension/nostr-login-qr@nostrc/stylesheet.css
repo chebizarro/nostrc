@@ -1,25 +1,52 @@
-/* nostr-login-qr@nostrc — greeter QR panel styles.
+/* nostr-login-qr@nostrc — greeter/lock-screen QR panel styles.
  *
- * The GDM greeter uses a dark theme; render the QR on a solid white plate so
- * scanners always see maximum contrast regardless of the underlying wallpaper
- * or theme.  The card sits as its own block off to the right of the login
- * dialog (see extension.js `_positionContainer`), so its outer padding is
- * kept generous enough that it reads as intentional chrome rather than as a
- * loose overlay dropped on top of the user stack.
+ * The extension renders a QR card in one of two modes:
  *
- * Padding value here (18px each side) MUST stay in sync with
- * `PANEL_CHROME_PX = 36` in extension.js — the container width math assumes
- * chrome = 2 * 18.
+ *   .nostr-login-qr-panel-inline    — reparented into the AuthPrompt of the
+ *                                     current LoginDialog / UnlockDialog,
+ *                                     centred under the username, replacing
+ *                                     the password entry.  This is the
+ *                                     preferred mode.
+ *
+ *   .nostr-login-qr-panel-floating  — floating fallback off to the right of
+ *                                     the primary monitor when we cannot
+ *                                     locate the AuthPrompt (unknown shell
+ *                                     version, transient state).
+ *
+ * The QR image itself is always drawn on a solid white plate so scanners see
+ * maximum contrast regardless of the underlying wallpaper or theme.
+ *
+ * Padding value on `.nostr-login-qr-panel-floating` (18px each side) MUST
+ * stay in sync with `PANEL_CHROME_PX = 36` in extension.js — the container
+ * width math for the floating card assumes chrome = 2 * 18.
  */
 
 .nostr-login-qr-panel {
-    background-color: rgba(24, 24, 26, 0.94);
     color: #f4f4f4;
+    spacing: 10px;
+}
+
+.nostr-login-qr-panel-floating {
+    background-color: rgba(24, 24, 26, 0.94);
     border: 1px solid rgba(255, 255, 255, 0.16);
     border-radius: 16px;
     padding: 18px;
-    spacing: 10px;
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* Inline mode: we're already inside the AuthPrompt, which owns its own
+ * dark backdrop.  Skip the outer card chrome so the QR panel reads as part
+ * of the prompt rather than as a nested widget stacked on top of it.
+ * Padding + spacing tightened so the QR + pairing code line fits inside
+ * the AuthPrompt vertical band at 1280x800 without pushing into the
+ * greeter's Ubuntu branding logo directly beneath the dialog. */
+.nostr-login-qr-panel-inline {
+    background-color: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 4px 0 0 0;
+    spacing: 4px;
 }
 
 .nostr-login-qr-image {
@@ -30,10 +57,10 @@
 
 .nostr-login-qr-pairing {
     font-family: monospace;
-    font-size: 15pt;
+    font-size: 14pt;
     font-weight: bold;
     color: #ffffff;
-    padding-top: 6px;
+    padding-top: 4px;
 }
 
 .nostr-login-qr-hint {
