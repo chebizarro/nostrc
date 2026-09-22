@@ -362,3 +362,29 @@ which is a subset of §8.6 above.
   partial run (see `docs/reviews/nip46-greeter-acceptance-2026-09-22.md`
   §5) proved it silently drops `["EVENT",…]` publishes for our
   ephemeral clients.  Don't use it here.
+
+## 8. REAL-PHONE RESULT — 2026-09-22 17:44 UTC — SUCCESS
+
+The maintainer logged into GNOME at the real GDM greeter by scanning the QR card with
+their phone NIP-46 signer app holding the operator key (`npub1ehhfg…szjqv`). Broker
+journal (`nostr-authd`) and the real `gdm-password` PAM service recorded:
+
+```
+17:44:16 [nip46] await_connect: matched, signer=ba68d81925a53db21d5c56a336981ab1c4336d4e8425e79ee0c2d4e3a373859f
+17:44:18 [nip46] get_public_key: SUCCESS - result: cdee943cbb19c51ab847a66d5d774373aa9f63d287246bb59b0827fa5e637400
+17:44:19 [nip46] sign_event: SUCCESS
+17:44:19 gdm-password]: pam_nostr(gdm-password:auth): nostr: authenticate n_bizarro (nip46qr) -> ok
+```
+
+`loginctl` showed the uid-200000 session active on seat0. This closes the "human with a
+phone at the console" manual step: the client-initiated `nostrconnect://` QR login is
+proven with a real, independent signer implementation (not the in-repo stand-in).
+Earlier `invalid_proof` lines that day are the wrong-key negative smoke tests and
+scan-window timeouts. Maintainer feedback: the on-screen arrangement of the QR card vs
+the greeter elements is "a bit wonky" — layout polish follow-up (nostrc-zcll.6).
+
+Observation: `loginctl` reported the session user as `n_smbd7g` for uid 200000 — a
+leftover local /etc/passwd user from the D7 gvfs acceptance shares uid 200000 with the
+seeded account (files precede nostr in nsswitch for uid lookups). Cosmetic here, but
+the seeder/authority should avoid uids already present in /etc/passwd, and acceptance
+scripts must userdel their throwaway users — follow-up filed.
