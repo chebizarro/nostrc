@@ -26,7 +26,17 @@ ProtectHome=yes
 PrivateTmp=yes
 ProtectControlGroups=yes
 ProtectKernelTunables=yes
-RestrictAddressFamilies=AF_UNIX
+# AF_INET and AF_INET6 are required for the NIP-46 QR / bunker flows —
+# the broker dials the configured signer relays (design D4: default
+# wss://bunker.sharegap.net) via libwebsockets, which opens a TCP/TLS
+# socket. Restricting to AF_UNIX only silently prevents the WebSocket
+# connect, then breaks event delivery on the persistent client
+# subscription (broker sees the REQ go out, then never receives any
+# incoming envelope), which manifests as `await_connect: timed out`
+# and PAM_AUTH_ERR at the greeter even when the phone signer answered
+# correctly. Nostrc-zcll.7 acceptance evidence: see
+# docs/reviews/nip46-greeter-acceptance-2026-09-22.md.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 
