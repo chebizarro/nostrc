@@ -3,9 +3,9 @@ exec_prefix=${prefix}
 libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
 includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
 
-Name: libgo
-Description: Go-inspired concurrency primitives for C
+Name: libnostrgo
+Description: Go-inspired concurrency primitives for C (formerly libgo)
 Version: @LIBGO_VERSION@
-Libs: -L${libdir} -llibgo
+Libs: -L${libdir} -lnostrgo
 Libs.private: -lnsync -lpthread
 Cflags: -I${includedir}

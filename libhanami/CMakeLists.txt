@@ -10,6 +10,21 @@ project(libhanami C)
 
 include(GNUInstallDirs)
 
+# B1 (packaging plan): declare a component version so apply_versioning() can
+# stamp VERSION + SOVERSION on the installed shared library.
+if(NOT COMMAND declare_component_version)
+  include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
+endif()
+option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
+set(HANAMI_VERSION_MAJOR 0)
+set(HANAMI_VERSION_MINOR 1)
+set(HANAMI_VERSION_MICRO 0)
+declare_component_version(HANAMI
+  ${HANAMI_VERSION_MAJOR}
+  ${HANAMI_VERSION_MINOR}
+  ${HANAMI_VERSION_MICRO})
+set(HANAMI_VERSION_STRING "${HANAMI_VERSION}")
+
 # --- Dependencies ---
 
 # libgit2 (required)
@@ -66,6 +81,18 @@ set(HANAMI_SOURCES
 add_library(hanami ${HANAMI_SOURCES})
 add_library(libhanami ALIAS hanami)
 
+# Bridge component version vars (declare_component_version stored them under the
+# HANAMI_ prefix; the target is lowercase `hanami`) and apply VERSION + SOVERSION
+# (B1). The generated HANAMI-version.h is installed into include/hanami/.
+set(hanami_VERSION   "${HANAMI_VERSION}")
+set(hanami_SOVERSION "${HANAMI_VERSION_MAJOR}")
+set_target_properties(hanami PROPERTIES
+  COMPONENT_VERSION_HEADER "${HANAMI_VERSION_HEADER}"
+  COMPONENT_VERSION_HEADER_DIR "${HANAMI_VERSION_HEADER_DIR}"
+  COMPONENT_VERSION_HEADER_INSTALL_DIR
+    "${CMAKE_INSTALL_INCLUDEDIR}/hanami")
+apply_versioning(hanami)
+
 target_compile_features(hanami PRIVATE c_std_11)
 target_compile_options(hanami PRIVATE -Wall -Wextra -Wpedantic)
 
@@ -121,6 +148,7 @@ endif()
 
 # --- pkg-config ---
 
+set(HANAMI_PKG_VERSION "${HANAMI_VERSION}")
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/hanami.pc.in
   ${CMAKE_CURRENT_BINARY_DIR}/hanami.pc

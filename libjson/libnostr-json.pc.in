@@ -3,9 +3,9 @@ exec_prefix=${prefix}
 libdir=@CMAKE_INSTALL_FULL_LIBDIR@
 includedir=@CMAKE_INSTALL_FULL_INCLUDEDIR@/nostr
 
-Name: nostr_json
-Description: Nostr JSON interop layer (jansson wrappers for libnostr)
-Version: @PROJECT_VERSION@
+Name: libnostr-json
+Description: Nostr JSON interop layer (jansson wrappers for libnostr; formerly nostr_json)
+Version: @NOSTR_JSON_VERSION@
 Requires: jansson
-Libs: -L${libdir} -lnostr_json
+Libs: -L${libdir} -lnostr-json
 Cflags: -I${includedir}

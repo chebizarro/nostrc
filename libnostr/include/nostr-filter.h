@@ -111,7 +111,10 @@ GType nostr_filter_get_type(void);
 #endif
 
 /* GLib autoptr cleanup functions (available when building with GLib) */
-#if defined(NOSTR_HAVE_GLIB) || defined(__GI_SCANNER__)
+/* Guard against a defined-but-zero NOSTR_HAVE_GLIB (see libnostr/CMakeLists
+ * around NOSTR_WITH_GLIB) so headers included in a GLib-free ABI don't try to
+ * pull glib-object.h when GLib isn't on the include path. */
+#if (defined(NOSTR_HAVE_GLIB) && NOSTR_HAVE_GLIB) || defined(__GI_SCANNER__)
 #include <glib-object.h>
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(NostrFilter, nostr_filter_free)
 /* NostrFilterBuilder cleanup declared after builder type definition below */
@@ -467,7 +470,7 @@ NostrFilter *nostr_filter_builder_build(NostrFilterBuilder *builder);
 void nostr_filter_builder_free(NostrFilterBuilder *builder);
 
 /* GLib autoptr cleanup for NostrFilterBuilder */
-#if defined(NOSTR_HAVE_GLIB) || defined(__GI_SCANNER__)
+#if (defined(NOSTR_HAVE_GLIB) && NOSTR_HAVE_GLIB) || defined(__GI_SCANNER__)
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(NostrFilterBuilder, nostr_filter_builder_free)
 #endif
 

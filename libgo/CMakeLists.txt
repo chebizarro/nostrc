@@ -84,8 +84,15 @@ set(LIBGO_SOURCES
 # Enable CTest for module-specific tests
 enable_testing()
 
-# Build static library exposing public headers from `include/`.
-add_library(libgo ${LIBGO_SOURCES})
+# Build library exposing public headers from `include/`.
+#
+# B2 / D-3 (packaging plan): the installed artifact is renamed to `libnostrgo`
+# so it no longer collides with gccgo's Debian `libgo` package and no longer
+# emits the `liblibgo.a` double-prefix. In-tree CMake consumers may reference
+# either the new canonical target `nostrgo` or the compatibility ALIAS `libgo`
+# (kept for one release to avoid touching ~250 consumer references at once).
+add_library(nostrgo ${LIBGO_SOURCES})
+add_library(libgo ALIAS nostrgo)
 
 set(LIBGO_PUBLIC_VERSION_HEADER
   "${CMAKE_CURRENT_BINARY_DIR}/generated/libgo/libgo-version.h")
@@ -96,26 +103,27 @@ configure_file(
   @ONLY)
 
 # The component declaration uses the public LIBGO_ prefix while the target is
-# lowercase. Associate the configured public header and version with the target
-# before applying the shared versioning behavior.
-set(libgo_VERSION "${LIBGO_VERSION}")
-set_target_properties(libgo PROPERTIES
+# `nostrgo`. Bridge VERSION + SOVERSION explicitly so apply_versioning() can
+# stamp a real SONAME on shared builds (B1).
+set(nostrgo_VERSION   "${LIBGO_VERSION}")
+set(nostrgo_SOVERSION "${LIBGO_VERSION_MAJOR}")
+set_target_properties(nostrgo PROPERTIES
   COMPONENT_VERSION_HEADER "${LIBGO_PUBLIC_VERSION_HEADER}"
   COMPONENT_VERSION_HEADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated"
   COMPONENT_VERSION_HEADER_INSTALL_DIR
     "${CMAKE_INSTALL_INCLUDEDIR}/libgo")
-apply_versioning(libgo)
+apply_versioning(nostrgo)
 
-target_include_directories(libgo PUBLIC include ${CMAKE_CURRENT_LIST_DIR}/../libnostr/include)
-target_compile_definitions(libgo PUBLIC NOSTR_PREFETCH_DISTANCE=${NOSTR_PREFETCH_DISTANCE})
-target_compile_definitions(libgo PUBLIC NOSTR_CACHELINE=${NOSTR_CACHELINE})
+target_include_directories(nostrgo PUBLIC include ${CMAKE_CURRENT_LIST_DIR}/../libnostr/include)
+target_compile_definitions(nostrgo PUBLIC NOSTR_PREFETCH_DISTANCE=${NOSTR_PREFETCH_DISTANCE})
+target_compile_definitions(nostrgo PUBLIC NOSTR_CACHELINE=${NOSTR_CACHELINE})
 
 # Allow A/B testing of refined signaling vs broadcast.
 option(GO_CHANNEL_REFINED_SIGNALING "Use single-wakeup signaling in channels (signal on 0->1 and full->not-full)" ON)
 if(GO_CHANNEL_REFINED_SIGNALING)
-  target_compile_definitions(libgo PUBLIC NOSTR_REFINED_SIGNALING=1)
+  target_compile_definitions(nostrgo PUBLIC NOSTR_REFINED_SIGNALING=1)
 else()
-  target_compile_definitions(libgo PUBLIC NOSTR_REFINED_SIGNALING=0)
+  target_compile_definitions(nostrgo PUBLIC NOSTR_REFINED_SIGNALING=0)
 endif()
 
 # Optionally derive channel occupancy from indices to avoid hot size updates
@@ -131,17 +139,17 @@ if (GO_ENABLE_TSAN)
   set(GO_CHANNEL_MPMC_SLOTS OFF CACHE BOOL "Enable MPMC lock-free per-slot sequence protocol for channels" FORCE)
 endif()
 if(GO_CHANNEL_DERIVE_SIZE)
-  target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_DERIVE_SIZE=1)
+  target_compile_definitions(nostrgo PRIVATE NOSTR_CHANNEL_DERIVE_SIZE=1)
 endif()
 if(GO_CHANNEL_ATOMIC_TRY)
-  target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_ATOMIC_TRY=1)
+  target_compile_definitions(nostrgo PRIVATE NOSTR_CHANNEL_ATOMIC_TRY=1)
 else()
-  target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_ATOMIC_TRY=0)
+  target_compile_definitions(nostrgo PRIVATE NOSTR_CHANNEL_ATOMIC_TRY=0)
 endif()
 if(GO_CHANNEL_MPMC_SLOTS)
-  target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_MPMC_SLOTS=1)
+  target_compile_definitions(nostrgo PRIVATE NOSTR_CHANNEL_MPMC_SLOTS=1)
 else()
-  target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_MPMC_SLOTS=0)
+  target_compile_definitions(nostrgo PRIVATE NOSTR_CHANNEL_MPMC_SLOTS=0)
 endif()
 
 # No additional link requirements for the core library here.
@@ -149,27 +157,27 @@ endif()
 # Optionally disable metrics in hot paths for maximum throughput
 option(GO_CHANNEL_DISABLE_METRICS "Compile out channel hot-path metrics" OFF)
 if(GO_CHANNEL_DISABLE_METRICS)
-  target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_DISABLE_METRICS=1)
+  target_compile_definitions(nostrgo PRIVATE NOSTR_CHANNEL_DISABLE_METRICS=1)
 endif()
 
 # Optionally enforce power-of-two capacity (round up) for faster masking
 option(GO_CHANNEL_ENFORCE_POW2_CAP "Round capacity up to next power of two for channels" OFF)
 if(GO_CHANNEL_ENFORCE_POW2_CAP)
-  target_compile_definitions(libgo PRIVATE NOSTR_CHANNEL_ENFORCE_POW2_CAP=1)
+  target_compile_definitions(nostrgo PRIVATE NOSTR_CHANNEL_ENFORCE_POW2_CAP=1)
 endif()
 
 # Optional arch-specific short-wait hints
 option(GO_CHANNEL_X86_TPAUSE "Use x86 WAITPKG TPAUSE for short waits" OFF)
 if(GO_CHANNEL_X86_TPAUSE)
-  target_compile_definitions(libgo PRIVATE NOSTR_X86_TPAUSE=1)
+  target_compile_definitions(nostrgo PRIVATE NOSTR_X86_TPAUSE=1)
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64|i.86")
-    target_compile_options(libgo PRIVATE -mwaitpkg)
+    target_compile_options(nostrgo PRIVATE -mwaitpkg)
   endif()
 endif()
 
 option(GO_CHANNEL_ARM_WFE "Use ARM WFE/SEV for short waits and wakeups" OFF)
 if(GO_CHANNEL_ARM_WFE)
-  target_compile_definitions(libgo PRIVATE NOSTR_ARM_WFE=1)
+  target_compile_definitions(nostrgo PRIVATE NOSTR_ARM_WFE=1)
 endif()
 
 # Sanitizer options
@@ -201,20 +209,20 @@ function(apply_sanitizers target)
   endif()
 endfunction()
 
-apply_warnings(libgo)
-apply_sanitizers(libgo)
-apply_libgo_optimizations(libgo)
+apply_warnings(nostrgo)
+apply_sanitizers(nostrgo)
+apply_libgo_optimizations(nostrgo)
 
 # Optional LTO for libgo
 if(GO_ENABLE_LTO)
   check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
   if(ipo_supported)
-    set_property(TARGET libgo PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    set_property(TARGET nostrgo PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
   else()
     check_c_compiler_flag("-flto" HAS_FLTO)
     if(HAS_FLTO)
-      target_compile_options(libgo PRIVATE -flto)
-      target_link_options(libgo PRIVATE -flto)
+      target_compile_options(nostrgo PRIVATE -flto)
+      target_link_options(nostrgo PRIVATE -flto)
     endif()
   endif()
 endif()
@@ -233,12 +241,12 @@ include_directories(${NSYNC_INCLUDE_DIR})
 # nsync contains C++ objects (pthread_key_win32.cc on Windows); when linking
 # via a C compiler the C++ runtime must be added explicitly.
 if(WIN32)
-  target_link_libraries(libgo PUBLIC ${NSYNC_LIB} pthread stdc++)
+  target_link_libraries(nostrgo PUBLIC ${NSYNC_LIB} pthread stdc++)
 else()
-  target_link_libraries(libgo PUBLIC ${NSYNC_LIB} pthread)
+  target_link_libraries(nostrgo PUBLIC ${NSYNC_LIB} pthread)
 endif()
-set_property(TARGET libgo PROPERTY POSITION_INDEPENDENT_CODE ON)
-target_include_directories(libgo PUBLIC ${NSYNC_INCLUDE_DIR})
+set_property(TARGET nostrgo PROPERTY POSITION_INDEPENDENT_CODE ON)
+target_include_directories(nostrgo PUBLIC ${NSYNC_INCLUDE_DIR})
 
 # Create the test executables for channels and contexts
 add_executable(go_context_cancel_test tests/go_context_cancel_test.c)
@@ -380,14 +388,23 @@ endif()
 
 # Optionally, you can specify installation rules
 
-# pkg-config generation
-set(LIBGO_PKGCONF "${CMAKE_CURRENT_BINARY_DIR}/libgo.pc")
+# pkg-config generation. D-3: the installed .pc is `libnostrgo.pc` with
+# `Libs: -lnostrgo` and `Name: libnostrgo`. A one-release compat symlink
+# `libgo.pc -> libnostrgo.pc` is installed alongside it so consumers on the
+# old spelling keep working during the transition.
+set(LIBNOSTRGO_PKGCONF "${CMAKE_CURRENT_BINARY_DIR}/libnostrgo.pc")
 configure_file(
-  "${CMAKE_CURRENT_SOURCE_DIR}/libgo.pc.in"
-  "${LIBGO_PKGCONF}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/libnostrgo.pc.in"
+  "${LIBNOSTRGO_PKGCONF}"
   @ONLY)
-install(FILES "${LIBGO_PKGCONF}"
+install(FILES "${LIBNOSTRGO_PKGCONF}"
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
+install(CODE "
+  set(_pcdir \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/pkgconfig\")
+  file(MAKE_DIRECTORY \"\${_pcdir}\")
+  execute_process(COMMAND \"${CMAKE_COMMAND}\" -E create_symlink
+    libnostrgo.pc \"\${_pcdir}/libgo.pc\")
+")
 
 # Examples (skip on Windows — chan_bench uses setenv and other POSIX-only APIs)
 if(NOT WIN32)
@@ -429,7 +446,7 @@ apply_sanitizers(long_adder_demo)
 apply_sanitizers(chan_bench)
 endif() # NOT WIN32 — skip examples
 # Intentionally do not apply warnings-as-errors to examples to keep demos buildable across toolchains
-install(TARGETS libgo
+install(TARGETS nostrgo
   ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
   RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")

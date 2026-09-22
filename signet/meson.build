@@ -86,7 +86,7 @@ in_tree_archives = [
   'nips/nip44/libnostr_nip44_core.a',
   'nips/nip11/libnip11.a',
   'libnostr/libnostr.a',
-  'libgo/liblibgo.a',
+  'libgo/libnostrgo.a',
 ]
 in_tree_candidate_link_args = []
 in_tree_found = true
@@ -105,13 +105,25 @@ if fs.exists(nostrdb_archive)
   in_tree_candidate_link_args += nostrdb_archive
 endif
 
-# nostr_json is built as a shared library in the CMake tree. Only accept the
-# native platform format so a macOS build mounted into Linux is not linked.
+# nostr_json is built as a shared library in the CMake tree. D-4 renamed the
+# on-disk artifact from `libnostr_json.{so,dylib}` to `libnostr-json.{so,dylib}`;
+# accept both spellings during the compat window so this meson build works
+# against either an old or new CMake tree. Only the native platform format is
+# tried so a macOS build mounted into Linux is not linked.
 nostr_json_dir = nostrc_build_dir / 'libjson'
-nostr_json_name = host_machine.system() == 'darwin' ? 'libnostr_json.dylib' : 'libnostr_json.so'
-if fs.exists(nostr_json_dir / nostr_json_name)
-  in_tree_candidate_link_args += ['-L' + nostr_json_dir, '-lnostr_json', '-Wl,-rpath,' + nostr_json_dir]
+if host_machine.system() == 'darwin'
+  _nj_candidates = [['libnostr-json.dylib', 'nostr-json'], ['libnostr_json.dylib', 'nostr_json']]
 else
+  _nj_candidates = [['libnostr-json.so', 'nostr-json'], ['libnostr_json.so', 'nostr_json']]
+endif
+_nj_found = false
+foreach _nj : _nj_candidates
+  if not _nj_found and fs.exists(nostr_json_dir / _nj[0])
+    in_tree_candidate_link_args += ['-L' + nostr_json_dir, '-l' + _nj[1], '-Wl,-rpath,' + nostr_json_dir]
+    _nj_found = true
+  endif
+endforeach
+if not _nj_found
   in_tree_found = false
 endif
 

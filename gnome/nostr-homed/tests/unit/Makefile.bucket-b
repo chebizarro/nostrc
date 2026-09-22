@@ -24,9 +24,9 @@ run: all
 # shared test registration lands. This target supports an existing build tree.
 challenge:
 	@test -n "$(LIBNOSTR_BUILD)" || (echo 'set LIBNOSTR_BUILD to a built libnostr directory' >&2; exit 2)
-	$(CC) $(CFLAGS) test_auth_challenge.c ../../src/auth/auth_challenge.c -L$(LIBNOSTR_BUILD) -lnostr -L$(dir $(LIBNOSTR_BUILD))/libgo -llibgo $(LDLIBS) $(shell pkg-config --libs libwebsockets) -lsecp256k1 -o test_auth_challenge
+	$(CC) $(CFLAGS) test_auth_challenge.c ../../src/auth/auth_challenge.c -L$(LIBNOSTR_BUILD) -lnostr -L$(dir $(LIBNOSTR_BUILD))/libgo -lnostrgo $(LDLIBS) $(shell pkg-config --libs libwebsockets) -lsecp256k1 -o test_auth_challenge
 provider-local:
 	@test -n "$(LIBNOSTR_BUILD)" || (echo 'set LIBNOSTR_BUILD to a built libnostr directory' >&2; exit 2)
-	$(CC) $(CFLAGS) ../integration/test_provider_local.c ../../src/auth/auth_challenge.c ../../src/auth/auth_vault.c ../../src/auth/provider_local.c -L$(LIBNOSTR_BUILD) -lnostr -L$(dir $(LIBNOSTR_BUILD))/libgo -llibgo $(LDLIBS) $(shell pkg-config --libs libwebsockets) -lsecp256k1 -o test_provider_local
+	$(CC) $(CFLAGS) ../integration/test_provider_local.c ../../src/auth/auth_challenge.c ../../src/auth/auth_vault.c ../../src/auth/provider_local.c -L$(LIBNOSTR_BUILD) -lnostr -L$(dir $(LIBNOSTR_BUILD))/libgo -lnostrgo $(LDLIBS) $(shell pkg-config --libs libwebsockets) -lsecp256k1 -o test_provider_local
 clean:
 	rm -f test_auth_protocol test_auth_vault test_auth_transaction test_auth_transaction_identity test_auth_challenge test_provider_local

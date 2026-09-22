@@ -64,7 +64,18 @@ function(declare_component_version name major minor micro)
   endif()
 endfunction()
 
-# Make a declared component version header part of a target's public interface.
+# Make a declared component version header part of a target's public interface,
+# and (for shared/module libraries that are installed) set VERSION + SOVERSION.
+#
+# Version lookup precedence for a target `T`:
+#   VERSION   ← ${T}_VERSION       (fallback: none — helper is a no-op then)
+#   SOVERSION ← ${T}_SOVERSION     (fallback: MAJOR component parsed from VERSION)
+#
+# Callers whose target name differs from the declared component prefix should
+# bridge the values before calling apply_versioning, e.g. for target `nostr`
+# declared as component `NOSTR`:
+#     set(nostr_VERSION   "${NOSTR_VERSION}")
+#     set(nostr_SOVERSION "${NOSTR_VERSION_MAJOR}")
 function(apply_versioning target)
   if(NOT ENABLE_COMPONENT_VERSIONING)
     return()
@@ -94,8 +105,28 @@ function(apply_versioning target)
   endif()
 
   set(_version_var "${target}_VERSION")
+  set(_soversion_var "${target}_SOVERSION")
+  set(_version_value "")
   if(DEFINED ${_version_var})
-    set_property(TARGET "${target}" PROPERTY VERSION "${${_version_var}}")
+    set(_version_value "${${_version_var}}")
+    set_property(TARGET "${target}" PROPERTY VERSION "${_version_value}")
+  endif()
+
+  # SOVERSION: prefer explicit ${target}_SOVERSION, else derive MAJOR from VERSION.
+  # Setting SOVERSION on STATIC/OBJECT libs is harmless (CMake ignores it on
+  # non-shared artifacts), so we set it unconditionally when a value is known.
+  # NOTE: `if(_soversion_value)` would be FALSE for the string "0" (CMake treats
+  # the literal 0 as a false boolean), so we check the string length instead --
+  # SOVERSION=0 is a valid, common choice for pre-1.0 libraries.
+  set(_soversion_value "")
+  if(DEFINED ${_soversion_var})
+    set(_soversion_value "${${_soversion_var}}")
+  elseif(_version_value)
+    string(REGEX MATCH "^[0-9]+" _soversion_value "${_version_value}")
+  endif()
+  string(LENGTH "${_soversion_value}" _soversion_len)
+  if(_soversion_len GREATER 0)
+    set_property(TARGET "${target}" PROPERTY SOVERSION "${_soversion_value}")
   endif()
 
   target_include_directories("${target}" PUBLIC

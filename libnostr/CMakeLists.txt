@@ -15,19 +15,29 @@ find_path(NSYNC_INCLUDE_DIR nsync.h REQUIRED)
 include_directories(include)
 include_directories(${NSYNC_INCLUDE_DIR})
 
-# Optional GLib/GObject for integration layer (no hard dependency for core)
-option(NOSTR_WITH_GLIB "Enable GLib integration headers" ON)
+# Optional GLib/GObject integration layer.
+#
+# B11 / D-14 (packaging plan): NOSTR_WITH_GLIB is an EXPLICIT, reproducible
+# choice per build. It selects between two ABIs the packaging plan intends to
+# ship as separate distro packages in Phase 2:
+#   - NOSTR_WITH_GLIB=OFF -> libnostr1        (GLib-free headless ABI)
+#   - NOSTR_WITH_GLIB=ON  -> libnostr-glib1   (GLib-integrated ABI)
+# The productization of these as two co-installable packages is deferred to
+# Phase 2; the pre-phase contract here is only that each ABI is DETERMINISTIC
+# for a given flag value -- no silent auto-detection based on what happens to
+# be installed on the build host.
+option(NOSTR_WITH_GLIB "Enable GLib integration layer in libnostr (fails if requested but unavailable)" ON)
 find_package(PkgConfig REQUIRED)
 if(NOSTR_WITH_GLIB)
-  pkg_check_modules(GLIB QUIET IMPORTED_TARGET glib-2.0>=2.50 gobject-2.0>=2.50)
-  if(GLIB_FOUND)
-    add_definitions(-DNOSTR_HAVE_GLIB=1)
-  else()
-    add_definitions(-DNOSTR_HAVE_GLIB=0)
-  endif()
-else()
-  add_definitions(-DNOSTR_HAVE_GLIB=0)
+  # REQUIRED (not QUIET): if the caller asked for GLib, missing GLib is a
+  # configure-time error, not a silent downgrade.
+  pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0>=2.50 gobject-2.0>=2.50)
+  add_definitions(-DNOSTR_HAVE_GLIB=1)
 endif()
+# NOTE: intentionally do NOT `add_definitions(-DNOSTR_HAVE_GLIB=0)` for the OFF
+# branch -- public headers check with `#if defined(NOSTR_HAVE_GLIB) && ...`, and
+# a defined-but-zero macro would still trigger `#include <glib-object.h>` on
+# hosts without GLib on the include path.
 
 # Find the libwebsockets package
 pkg_check_modules(LWS REQUIRED libwebsockets)
@@ -81,8 +91,9 @@ endif()
 # GI thin wrappers for macros/aliases
 # (pointer helpers moved into core utils.c)
 
-# Optional GLib bridge for JSON provider
-if(NOSTR_WITH_GLIB AND GLIB_FOUND)
+# Optional GLib bridge for JSON provider. Gated ONLY on NOSTR_WITH_GLIB so the
+# resulting ABI is a deterministic function of the flag (B11/D-14).
+if(NOSTR_WITH_GLIB)
   list(APPEND LIBNOSTR_SOURCES src/nostr_json_glib.c)
   # Boxed type registrations
   list(APPEND LIBNOSTR_SOURCES src/nostr_event_boxed.c src/nostr_filter_boxed.c)
@@ -93,7 +104,7 @@ if(NOSTR_WITH_GLIB AND GLIB_FOUND)
 endif()
 
 set(LIBNOSTR_LIBS ${NSYNC_LIB})
-if(NOSTR_WITH_GLIB AND GLIB_FOUND)
+if(NOSTR_WITH_GLIB)
   list(APPEND LIBNOSTR_LIBS ${GLIB_LIBRARIES})
 endif()
 
@@ -119,8 +130,10 @@ add_library(libnostr ALIAS nostr)
 
 # The component declaration uses the public NOSTR_ prefix while the target is
 # lowercase. Associate the configured public header and version with the target
-# before applying the shared versioning behavior.
-set(nostr_VERSION "${NOSTR_VERSION}")
+# before applying the shared versioning behavior. The SOVERSION bridge below
+# is what gives shared builds a real SONAME (libnostr.so.<MAJOR>) -- B1.
+set(nostr_VERSION   "${NOSTR_VERSION}")
+set(nostr_SOVERSION "${NOSTR_VERSION_MAJOR}")
 set_target_properties(nostr PROPERTIES
   COMPONENT_VERSION_HEADER "${NOSTR_PUBLIC_VERSION_HEADER}"
   COMPONENT_VERSION_HEADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated"
@@ -186,7 +199,7 @@ find_package(OpenSSL REQUIRED)
 find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
 # libnostr uses SSL_CTX APIs (TLS policy), so link both SSL and Crypto
 target_link_libraries(nostr PUBLIC ${LWS_LIBRARIES} libgo OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIB})
-if(NOSTR_WITH_GLIB AND GLIB_FOUND)
+if(NOSTR_WITH_GLIB)
   target_link_libraries(nostr PUBLIC PkgConfig::GLIB)
 endif()
 
@@ -200,10 +213,13 @@ target_include_directories(nostr
   ${CMAKE_CURRENT_SOURCE_DIR}/src/store
 )
 
-if(GLIB_FOUND)
+if(NOSTR_WITH_GLIB)
   target_compile_definitions(nostr PUBLIC NOSTR_HAVE_GLIB=1)
   target_include_directories(nostr PUBLIC ${GLIB_INCLUDE_DIRS})
 endif()
+# When NOSTR_WITH_GLIB=OFF the macro must remain UNDEFINED (not defined to 0)
+# so downstream `#if defined(NOSTR_HAVE_GLIB)` checks in public headers do the
+# right thing.
 target_compile_definitions(nostr PUBLIC NOSTR_HAVE_LIBGO=1)
 
 # Optional nostrdb backend (Phase A: flag only; backend implementation added in later phases)
@@ -383,8 +399,9 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/generated/nostr-config.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr)
 
-# pkg-config generation
-if(GLIB_FOUND)
+# pkg-config generation. Deterministic on NOSTR_WITH_GLIB alone so the produced
+# nostr.pc `Requires:` line does not vary by build host (B11).
+if(NOSTR_WITH_GLIB)
   set(NOSTR_PKG_REQUIRES "glib-2.0 >= 2.50, gobject-2.0 >= 2.50")
 else()
   set(NOSTR_PKG_REQUIRES "")
