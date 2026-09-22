@@ -294,3 +294,70 @@ was not a stale-state fluke.
     dialog, QR centered.
   - `greeter-16-unlocked.png` — desktop after QR unlock.
   - `greeter-17-wrong-key-qr.png` — wrong-key rejection UI.
+
+## Addendum 2026-09-22 (v3 layout tightening)
+
+Maintainer feedback on v2 (see `greeter-04-static.png` + `greeter-15-unlock-retry.png`):
+
+1. At 1280×800 the hint line under the pairing code overlapped the
+   Ubuntu branding logo.
+2. The card was offset ~24 px left of the avatar/username axis
+   because the entry row inherited by the card contains the “‹”
+   back button.
+
+Fixes shipped on this same branch (same commit as the addendum):
+
+- `extension.js`: walk from the entry up to the direct child of the
+  `AuthPrompt` (the row that owns the entry — in shell 46 the
+  `login-dialog-prompt-layout`’s horizontal `[back][entry][eye]` row)
+  and insert our card at *the row’s slot in the AuthPrompt*, then
+  hide the whole row.  The AuthPrompt is a vertical BoxLayout centred
+  on the dialog’s horizontal axis, so the card is now centred on
+  the same axis as the avatar and username label above it.  Escape
+  still cancels the flow — the AuthPrompt intercepts key events
+  regardless of the row’s visibility — so hiding the row costs the
+  visible cancel affordance but not the functional one.
+- `extension.js`: drop the hint line in inline mode (was
+  “Scan with your Nostr signer app”), storing its prior visibility
+  so the floating fallback still shows it.  The PAM stack still
+  emits a short “scan the QR” message elsewhere; the QR image + the
+  pairing code line under it are enough on-screen.
+- `extension.js`: `IMAGE_DISPLAY_PX` 300 → 260.
+- `stylesheet.css`: inline mode padding + spacing tightened
+  (`padding: 4px 0 0 0; spacing: 4px`) and the pairing-code line
+  shrunk one point (`15pt` → `14pt`).  Floating fallback styles are
+  unchanged.
+
+Re-verification on the same rig (screenshots pulled to
+`/tmp/rig-v3/` on this workstation):
+
+| Screenshot                       | Dialog / state                                                  | Assertion                                                                                                    |
+| :------------------------------- | :-------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------- |
+| `login-01.png`                   | LoginDialog, live broker publish, `Biz` (n_bizarro)             | QR centred on avatar axis, pairing `FB63-EDA8` under, Ubuntu logo well below.                                |
+| `login-06-pwprompt.png`          | LoginDialog, `GNOME Debug Operator`, no artifact                | Password entry visible with `‹` back button + eye toggle. No regression.                                    |
+| `login-07-static-centered.png`   | LoginDialog, Debug Operator, static manifest `A1B2-C3D4`        | QR centred on avatar axis (x≈510–770, avatar centre 640), no hint line, pairing code clears the Ubuntu logo. |
+| `login-08-restored.png`          | LoginDialog, Debug Operator, artifact retired                   | Password entry restored verbatim (`‹` + entry + eye).                                                       |
+| `unlock-12.png`, `unlock-13-live.png` | UnlockDialog, n_qrlock live artifact                        | QR centred on avatar axis, pairing code line under.                                                          |
+| `unlock-14-desktop.png`          | UnlockDialog completed, standin unlocked                        | Ubuntu welcome desktop, session `LockedHint=no`.                                                             |
+
+`zbarimg --raw` decoded every live/static QR captured in this run
+byte-for-byte, confirming the 260 px size stays scannable at
+1280×800:
+
+    login-01.png            → nostrconnect://fb63eda8…&name=GNOME-QR-BIZARRO
+    login-07-static-centered.png → nostrconnect://a1b2c3d4…&name=EXT-V3-CENTERED
+    unlock-12.png           → nostrconnect://d9bbdad2…&name=GNOME
+    unlock-13-live.png      → nostrconnect://51ad919b…&name=GNOME
+
+Broker + PAM confirm the unlock loop completed with the correct
+standin:
+
+    23:07:05 [nip46] await_connect: matched, signer=fb26bbd028f7…492b8b5c
+    23:07:06 [nip46] get_public_key: SUCCESS - result: fb26bbd028f7…
+    23:07:07 [nip46] sign_event:    SUCCESS
+    23:07:07 pam_nostr(gdm-password:auth): nostr: authenticate n_qrlock (nip46qr) -> ok
+
+Rig left running in the same state as end of the v2 addendum:
+n_qrlock session 1358 active on tty2, extension deployed at
+`/usr/share/gnome-shell/extensions/nostr-login-qr@nostrc/`, both
+dconf enablements in place.

@@ -34,10 +34,12 @@ const MANIFEST_DIR = '/run/nostr-auth/greeter';
 const MANIFEST_NAME = 'current.json';
 const DEFAULT_PNG_NAME = 'current.png';
 const MANIFEST_PATH = `${MANIFEST_DIR}/${MANIFEST_NAME}`;
-// QR display size in px.  ~300 gives a comfortable phone-scan target at
-// 1280x800 while leaving room for the pairing code + hint under it without
-// the card growing taller than the greeter's vertical safe area.
-const IMAGE_DISPLAY_PX = 300;
+// QR display size in px.  260 keeps the card + pairing code line under the
+// AuthPrompt vertical band at 1280x800 without colliding with the Ubuntu
+// branding logo directly beneath the greeter dialog.  Still nearest-
+// neighbour, still comfortably scannable by a phone camera at that pixel
+// density (verified with `zbarimg` on the framebuffer capture).
+const IMAGE_DISPLAY_PX = 260;
 // Outside margin between the floating fallback card and the monitor's right
 // edge (also used as a minimum gap from the login dialog on narrow screens).
 const EDGE_MARGIN_PX = 40;
@@ -147,6 +149,7 @@ export default class NostrLoginQrExtension extends Extension {
         this._suppressedMessages = [];
         this._entryDestroyId = 0;
         this._hostEntry = null;
+        this._hintPrevVisible = undefined;
 
         try {
             this._buildContainer();
@@ -488,31 +491,44 @@ export default class NostrLoginQrExtension extends Extension {
 
         const entry = this._findEntryIn(authPrompt);
         if (!entry) return false;
-        const entryParent = entry.get_parent();
-        if (!entryParent) return false;
 
-        // Find the entry's index in its parent so we insert the card in
-        // the same slot the entry occupied.  If the parent's children
-        // list changes under us we're safe because we only insert once.
-        const siblings = entryParent.get_children();
+        // Walk from the entry up through its ancestor chain until we reach
+        // the direct child of the AuthPrompt.  The AuthPrompt is a vertical
+        // BoxLayout whose children are centered on the dialog's horizontal
+        // axis (the avatar / username sit in the same stack).  The entry
+        // itself lives inside an inner horizontal row that also carries the
+        // "back" (`‹`) button + eye-toggle, so if we insert at the entry's
+        // slot the card inherits that row's leftward offset (~24 px on
+        // shell 46 at 1280x800).  Inserting at the row's slot in the
+        // AuthPrompt keeps the card centered under the avatar / username.
+        let host = entry;
+        let hostParent = host.get_parent();
+        while (hostParent && hostParent !== authPrompt) {
+            host = hostParent;
+            hostParent = host.get_parent();
+        }
+        if (hostParent !== authPrompt || !host) {
+            // Entry isn't a descendant of the AuthPrompt we found —
+            // extremely unlikely, but bail rather than dance.
+            return false;
+        }
+
+        const siblings = authPrompt.get_children();
         let insertIndex = 0;
         for (let i = 0; i < siblings.length; i++) {
-            if (siblings[i] === entry) { insertIndex = i; break; }
+            if (siblings[i] === host) { insertIndex = i; break; }
         }
 
         // Track what we hide so we can restore it verbatim on retire.
         this._hiddenActors = [];
-        try { entry.visible = false; } catch (_e) {}
-        this._hiddenActors.push(entry);
-        // Hide any sibling that also carries the entry class (both
-        // _passwordEntry and _textEntry may exist).
-        for (const s of siblings) {
-            if (s === entry) continue;
-            if (_hasStyleClass(s, AUTH_ENTRY_CLASS)) {
-                try { s.visible = false; } catch (_e) {}
-                this._hiddenActors.push(s);
-            }
-        }
+        // Hide the whole entry row (`host`).  On shell 46 this is the
+        // horizontal BoxLayout containing [back-button][entry][eye-toggle].
+        // Escape still cancels the flow (AuthPrompt intercepts key events
+        // regardless of the row's visibility), so we don't lose the cancel
+        // affordance functionally — only visually, which is the price of
+        // getting the QR properly centered under the avatar.
+        try { host.visible = false; } catch (_e) {}
+        this._hiddenActors.push(host);
 
         // Hide PAM message labels that duplicate the card's pairing code
         // or its hint.  Never touch message-warning labels (real errors
@@ -561,12 +577,29 @@ export default class NostrLoginQrExtension extends Extension {
         try {
             this._container.x_align = Clutter.ActorAlign.CENTER;
         } catch (_e) {}
+        // Drop the hint line in inline mode.  At 1280x800 the QR + pairing
+        // code + hint would collide with the Ubuntu branding logo drawn
+        // directly below the dialog; the PAM stack still emits a short
+        // "scan the QR" message that the shell shows elsewhere, and we
+        // already suppress that above only when it duplicates the pairing
+        // code.  On retire we restore the hint's prior visibility so the
+        // floating fallback (when it comes back into use) still shows it.
+        if (this._hintLabel) {
+            let hintVis = true;
+            try { hintVis = this._hintLabel.visible; } catch (_e) {}
+            this._hintPrevVisible = hintVis;
+            try { this._hintLabel.visible = false; } catch (_e) {}
+        }
         try {
-            entryParent.insert_child_at_index(this._container, insertIndex);
+            authPrompt.insert_child_at_index(this._container, insertIndex);
         } catch (e) {
             _safeLog(`insert_child_at_index failed: ${e.message}`);
             // Best-effort restore + bail: caller will retry / fall back.
             this._restoreHiddenActors();
+            if (this._hintLabel && this._hintPrevVisible !== undefined) {
+                try { this._hintLabel.visible = this._hintPrevVisible; } catch (_e2) {}
+                this._hintPrevVisible = undefined;
+            }
             try { Main.layoutManager.uiGroup.add_child(this._container); } catch (_e2) {}
             try {
                 this._container.remove_style_class_name('nostr-login-qr-panel-inline');
@@ -604,6 +637,7 @@ export default class NostrLoginQrExtension extends Extension {
         this._hostEntry = null;
         this._hiddenActors = [];
         this._suppressedMessages = [];
+        this._hintPrevVisible = undefined;
         // Rebuild the container from scratch so a subsequent publish can
         // reattach.  Best-effort: if _buildContainer throws we log and
         // give up gracefully.
@@ -636,6 +670,10 @@ export default class NostrLoginQrExtension extends Extension {
         }
         this._entryDestroyId = 0;
         this._restoreHiddenActors();
+        if (this._hintLabel && this._hintPrevVisible !== undefined) {
+            try { this._hintLabel.visible = this._hintPrevVisible; } catch (_e) {}
+            this._hintPrevVisible = undefined;
+        }
         if (this._container) {
             try {
                 if (this._container.get_parent())
