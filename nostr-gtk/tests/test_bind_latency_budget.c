@@ -13,9 +13,19 @@
 #include <glib.h>
 
 /* ASan/UBSan relaxation: sanitizer builds are ~5-10x slower.
- * Scale timing budgets accordingly to avoid CI flakes. */
+ * Scale timing budgets accordingly to avoid CI flakes.
+ *
+ * __has_feature is a Clang builtin; GCC macro-expands both operands of `&&`
+ * before short-circuiting, so a bare `__has_feature(...)` token errors under
+ * GCC even when `defined(__has_feature)` is false. Shim it to 0 so the
+ * sanitizer detection compiles on GCC (which uses __SANITIZE_ADDRESS__ /
+ * __SANITIZE_THREAD__ instead). Matches the fix in
+ * nostr-gobject/src/nostr_simple_pool.c. */
+#ifndef __has_feature
+#  define __has_feature(x) 0
+#endif
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) \
-    || (defined(__has_feature) && (__has_feature(address_sanitizer) || __has_feature(thread_sanitizer)))
+    || __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
 #  define SANITIZER_SLOWDOWN 10
 #else
 #  define SANITIZER_SLOWDOWN 1

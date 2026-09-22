@@ -18,8 +18,16 @@
 
 /* ASan/UBSan relaxation: sanitizer builds are ~5-10x slower.
  * TIMING_BUDGET_US(base_us) returns a relaxed budget under sanitizers. */
+/* __has_feature is a Clang builtin; shim to 0 for GCC portability -- GCC
+ * expands both `&&` operands before short-circuiting, so a bare
+ * `__has_feature(...)` token errors under GCC even when
+ * `defined(__has_feature)` is false. Matches the fix in
+ * nostr-gobject/src/nostr_simple_pool.c. */
+#ifndef __has_feature
+#  define __has_feature(x) 0
+#endif
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) \
-    || (defined(__has_feature) && (__has_feature(address_sanitizer) || __has_feature(thread_sanitizer)))
+    || __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
 #  define SANITIZER_SLOWDOWN 10
 #else
 #  define SANITIZER_SLOWDOWN 1
