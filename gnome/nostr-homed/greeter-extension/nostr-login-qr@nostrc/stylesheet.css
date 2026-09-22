@@ -2,34 +2,42 @@
  *
  * The GDM greeter uses a dark theme; render the QR on a solid white plate so
  * scanners always see maximum contrast regardless of the underlying wallpaper
- * or theme.
+ * or theme.  The card sits as its own block off to the right of the login
+ * dialog (see extension.js `_positionContainer`), so its outer padding is
+ * kept generous enough that it reads as intentional chrome rather than as a
+ * loose overlay dropped on top of the user stack.
+ *
+ * Padding value here (18px each side) MUST stay in sync with
+ * `PANEL_CHROME_PX = 36` in extension.js — the container width math assumes
+ * chrome = 2 * 18.
  */
 
 .nostr-login-qr-panel {
-    background-color: rgba(30, 30, 30, 0.92);
-    color: #f0f0f0;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 14px;
+    background-color: rgba(24, 24, 26, 0.94);
+    color: #f4f4f4;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 16px;
     padding: 18px;
-    spacing: 12px;
+    spacing: 10px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
 }
 
 .nostr-login-qr-image {
     background-color: #ffffff;
     padding: 10px;
-    border-radius: 6px;
+    border-radius: 8px;
 }
 
 .nostr-login-qr-pairing {
     font-family: monospace;
-    font-size: 16pt;
+    font-size: 15pt;
     font-weight: bold;
     color: #ffffff;
-    padding-top: 4px;
+    padding-top: 6px;
 }
 
 .nostr-login-qr-hint {
     font-size: 11pt;
     color: rgba(240, 240, 240, 0.85);
-    padding: 0 6px;
+    padding: 0 4px 2px 4px;
 }

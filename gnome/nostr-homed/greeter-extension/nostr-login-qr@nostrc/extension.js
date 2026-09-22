@@ -27,7 +27,16 @@ const MANIFEST_DIR = '/run/nostr-auth/greeter';
 const MANIFEST_NAME = 'current.json';
 const DEFAULT_PNG_NAME = 'current.png';
 const MANIFEST_PATH = `${MANIFEST_DIR}/${MANIFEST_NAME}`;
-const IMAGE_DISPLAY_PX = 320;
+// QR display size in px.  ~300 gives a comfortable phone-scan target at
+// 1280x800 while leaving room for the pairing code + hint under it without
+// the card growing taller than the greeter's vertical safe area.
+const IMAGE_DISPLAY_PX = 300;
+// Outside margin between the card and the monitor's right edge (also used
+// as a minimum gap from the login dialog on narrow screens).
+const EDGE_MARGIN_PX = 40;
+// Internal padding built into the stylesheet's `.nostr-login-qr-panel`
+// (18px * 2) — kept in sync here so the panel width math is exact.
+const PANEL_CHROME_PX = 36;
 const MAX_MANIFEST_BYTES = 8 * 1024;
 
 function _safeLog(msg) {
@@ -140,12 +149,32 @@ export default class NostrLoginQrExtension extends Extension {
         if (!this._container) return;
         const monitor = Main.layoutManager.primaryMonitor;
         if (!monitor) return;
-        const panelWidth = IMAGE_DISPLAY_PX + 40;
-        // Top-center of the primary monitor.  The login dialog is centered
-        // vertically on the same monitor, so this sits above it without
-        // overlapping in the common 1280x800+ layouts.
-        const x = monitor.x + Math.max(0, Math.floor((monitor.width - panelWidth) / 2));
-        const y = monitor.y + 40;
+
+        // The QR card lives as its own block to the RIGHT of the primary
+        // monitor, vertically centred.  The greeter's user/entry stack is
+        // centred, so a right-side anchor never overlaps the display name
+        // or the password field (which the earlier top-centre anchor did on
+        // 1280x800 — see greeter-02-prompt.png in the QR extension review).
+        //
+        // On very narrow screens (< ~900 px wide) there isn't room to sit
+        // beside the login stack without crowding it; in that case we fall
+        // back to top-centre — which is only reached on unusual setups
+        // because GDM itself needs comfortable width to render.
+        const panelWidth = IMAGE_DISPLAY_PX + PANEL_CHROME_PX;
+        const panelHeight = this._container.get_preferred_height(panelWidth)[1]
+            || (IMAGE_DISPLAY_PX + 120);
+        const narrow = monitor.width < panelWidth * 2 + 340;
+
+        let x;
+        let y;
+        if (narrow) {
+            x = monitor.x + Math.max(0, Math.floor((monitor.width - panelWidth) / 2));
+            y = monitor.y + EDGE_MARGIN_PX;
+        } else {
+            x = monitor.x + monitor.width - panelWidth - EDGE_MARGIN_PX;
+            y = monitor.y + Math.max(EDGE_MARGIN_PX,
+                Math.floor((monitor.height - panelHeight) / 2));
+        }
         this._container.set_position(x, y);
         this._container.set_width(panelWidth);
     }
@@ -369,7 +398,7 @@ export default class NostrLoginQrExtension extends Extension {
         });
         actor.set_content(image);
         // Nearest-neighbour so QR modules stay crisp when we upscale from
-        // e.g. 41x41 native to 320x320 display.
+        // e.g. 41x41 native to 300x300 display.
         try {
             actor.set_content_scaling_filters(
                 Clutter.ScalingFilter.NEAREST,
