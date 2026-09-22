@@ -186,11 +186,17 @@ nh_auth_transaction_rc nh_auth_transaction_select_provider(
   if (t->state != NH_AUTH_TX_POLICY_CHECKED)
     return NH_AUTH_TX_BAD_STATE;
   if (provider != NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY &&
-      provider != NH_IDENTITY_PROVIDER_NIP46_BUNKER)
+      provider != NH_IDENTITY_PROVIDER_NIP46_BUNKER &&
+      provider != NH_IDENTITY_PROVIDER_NIP46_QR)
     return NH_AUTH_TX_INVALID;
   if (!(t->account.enabled_providers & NH_IDENTITY_PROVIDER_BIT(provider)))
     return NH_AUTH_TX_UNAUTHORIZED;
   t->provider = provider;
+  /* Local providers gate on an input (passphrase); the two NIP-46
+   * variants (pre-paired bunker and client-initiated QR) both hand
+   * approval to an external signer, so they enter PREPARING_PROVIDER
+   * to let the provider mint transport state (URI, ephemeral key,
+   * relay pool) before begin_proof. */
   t->state = provider == NH_IDENTITY_PROVIDER_LOCAL_ENCRYPTED_KEY
                  ? NH_AUTH_TX_WAITING_INPUT
                  : NH_AUTH_TX_PREPARING_PROVIDER;

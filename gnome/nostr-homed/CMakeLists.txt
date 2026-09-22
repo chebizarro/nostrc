@@ -95,7 +95,9 @@ if(NOSTR_HOMED_ENABLE_AUTH_CORE)
     src/auth/auth_vault.c
     src/auth/auth_worker.c
     src/auth/provider_local.c
-    src/auth/provider_nip46.c)
+    src/auth/provider_nip46.c
+    src/auth/provider_nip46_verify.c
+    src/auth/provider_nip46_qr.c)
   target_compile_options(nostr_auth_core PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
   target_include_directories(nostr_auth_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -281,7 +283,8 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
       "NOSTR_HOMED_ENABLE_AUTH_RUNTIME requires NOSTR_HOMED_ENABLE_AUTH_CORE and NOSTR_HOMED_ENABLE_IDENTITY_CORE")
   endif()
   add_library(nostr_auth_runtime STATIC
-    src/auth/auth_peer.c src/auth/auth_client.c src/auth/auth_broker.c)
+    src/auth/auth_peer.c src/auth/auth_client.c src/auth/auth_broker.c
+    src/auth/auth_conf.c)
   target_compile_options(nostr_auth_runtime PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
   target_include_directories(nostr_auth_runtime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/src/auth)
@@ -310,6 +313,27 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
     add_test(NAME homed_broker_hardening COMMAND test_broker_hardening)
     set_tests_properties(homed_broker_hardening
       PROPERTIES LABELS "nostr-homed;auth-runtime" TIMEOUT 120)
+    add_executable(test_broker_login_nip46_qr tests/integration/test_broker_login_nip46_qr.c)
+    if(TARGET nostr_nip46_core)
+      target_link_libraries(test_broker_login_nip46_qr PRIVATE
+        nostr_auth_runtime nostr_nip46_core)
+    else()
+      target_link_libraries(test_broker_login_nip46_qr PRIVATE
+        nostr_auth_runtime PkgConfig::NOSTR_NIP46)
+    endif()
+    add_test(NAME homed_broker_login_nip46_qr COMMAND test_broker_login_nip46_qr)
+    set_tests_properties(homed_broker_login_nip46_qr
+      PROPERTIES LABELS "nostr-homed;auth-runtime;nip46" TIMEOUT 120)
+    add_executable(test_auth_conf tests/unit/test_auth_conf.c)
+    target_link_libraries(test_auth_conf PRIVATE nostr_auth_runtime)
+    add_test(NAME homed_auth_conf COMMAND test_auth_conf)
+    set_tests_properties(homed_auth_conf
+      PROPERTIES LABELS "nostr-homed;portable;auth-runtime" TIMEOUT 30)
+    add_executable(test_pairing_code tests/unit/test_pairing_code.c)
+    target_link_libraries(test_pairing_code PRIVATE nostr_auth_runtime)
+    add_test(NAME homed_pairing_code COMMAND test_pairing_code)
+    set_tests_properties(homed_pairing_code
+      PROPERTIES LABELS "nostr-homed;portable;auth-runtime" TIMEOUT 30)
     add_executable(test_broker_login_nip46 tests/integration/test_broker_login_nip46.c)
     # Test drives an in-process bunker via the nip46 core, so link it directly.
     if(TARGET nostr_nip46_core)
@@ -344,11 +368,41 @@ if(NOSTR_HOMED_ENABLE_PAM)
   if(NOT PAM_INCLUDE_DIR OR NOT PAM_LIBRARY)
     message(FATAL_ERROR "NOSTR_HOMED_ENABLE_PAM requires libpam headers (libpam0g-dev)")
   endif()
-  add_library(pam_nostr MODULE src/pam/pam_nostr_broker.c)
+  # Vendored Nayuki qrcodegen (MIT). Linked ONLY into pam_nostr.so and
+  # the QR renderer unit test — the root broker stays qrcodegen-free
+  # (design decisions D2, D3).
+  add_library(nostr_qrcodegen STATIC
+    third_party/qrcodegen/qrcodegen.c)
+  target_include_directories(nostr_qrcodegen PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qrcodegen)
+  target_compile_options(nostr_qrcodegen PRIVATE
+    -Wall -Wno-error -Wno-misleading-indentation)
+  set_property(TARGET nostr_qrcodegen PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+  add_library(pam_nostr MODULE
+    src/pam/pam_nostr_broker.c src/pam/pam_qr_render.c)
   set_target_properties(pam_nostr PROPERTIES PREFIX "" OUTPUT_NAME "pam_nostr")
   target_compile_options(pam_nostr PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
-  target_include_directories(pam_nostr PRIVATE ${PAM_INCLUDE_DIR})
-  target_link_libraries(pam_nostr PRIVATE nostr_auth_runtime ${PAM_LIBRARY})
+  target_include_directories(pam_nostr PRIVATE
+    ${PAM_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/pam
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qrcodegen)
+  target_link_libraries(pam_nostr PRIVATE
+    nostr_auth_runtime nostr_qrcodegen ${PAM_LIBRARY})
+
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_qr_render tests/unit/test_qr_render.c
+      src/pam/pam_qr_render.c)
+    target_compile_options(test_qr_render PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    target_include_directories(test_qr_render PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/pam
+      ${CMAKE_CURRENT_SOURCE_DIR}/third_party/qrcodegen)
+    target_link_libraries(test_qr_render PRIVATE nostr_qrcodegen)
+    add_test(NAME homed_qr_render COMMAND test_qr_render)
+    set_tests_properties(homed_qr_render
+      PROPERTIES LABELS "nostr-homed;portable;pam" TIMEOUT 30)
+  endif()
 endif()
 
 if(NOSTR_HOMED_ENABLE_DOMAIN_CONFIG)

@@ -51,7 +51,7 @@ static const char authority_schema[] =
   "CREATE TABLE providers("
   " provider_id TEXT PRIMARY KEY CHECK(length(provider_id)=36),"
   " account_id TEXT NOT NULL REFERENCES accounts(account_id),"
-  " type TEXT NOT NULL CHECK(type IN('local_encrypted_key','nip46_bunker')),"
+  " type TEXT NOT NULL CHECK(type IN('local_encrypted_key','nip46_bunker','nip46_qr')),"
   " enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN(0,1)),"
   " format_version INTEGER NOT NULL CHECK(format_version>=1),"
   " public_config_json TEXT NOT NULL CHECK(length(public_config_json)<=4096),"
@@ -382,7 +382,7 @@ static const char account_select[] =
   "SELECT a.account_id,a.username,a.uid,a.gid,a.home,a.shell,a.status,a.origin,"
   "a.projectable,a.key_generation,COALESCE(i.pubkey_hex,''),"
   "COALESCE((SELECT SUM(CASE p.type WHEN 'local_encrypted_key' THEN 2"
-  " WHEN 'nip46_bunker' THEN 4 ELSE 0 END) FROM providers p"
+  " WHEN 'nip46_bunker' THEN 4 WHEN 'nip46_qr' THEN 8 ELSE 0 END) FROM providers p"
   " WHERE p.account_id=a.account_id AND p.enabled=1),0)"
   " FROM accounts a LEFT JOIN identities i ON i.account_id=a.account_id ";
 

@@ -21,6 +21,7 @@
 #include "auth_provider.h"
 #include "secure_buf.h"
 #include "nostr-event.h"
+#include "provider_nip46_verify.h"
 #include "nostr/nip46/nip46_client.h"
 #include "nostr/nip46/nip46_types.h"
 
@@ -325,26 +326,15 @@ static int submit_unlock(nh_auth_provider *base, const uint8_t *secret,
     return 0;
   }
 
-  /* Strict verify: parse the returned event, recompute the id and confirm it
-   * matches the challenge we asked to be signed, and confirm the pubkey is
-   * the account we authenticated. Anything else is treated as INVALID_PROOF
-   * so a rogue bunker cannot swap identities under us. The broker's
-   * nh_auth_challenge_verify re-checks the full binding once we hand the
-   * signed event back. */
-  NostrEvent *event = nostr_event_new();
-  int good = 0;
-  char id[65];
-  if (event &&
-      nostr_event_deserialize_signed(event, signed_json, NULL) ==
-          NOSTR_EVENT_VALIDATION_OK &&
-      nostr_event_compute_id(event, id) == NOSTR_EVENT_VALIDATION_OK &&
-      strcmp(id, p->expected_id) == 0 && event->pubkey &&
-      strcmp(event->pubkey, p->pubkey) == 0 &&
-      nostr_event_check_signature(event)) {
-    good = 1;
-  }
-  if (event) nostr_event_free(event);
-
+  /* Strict verify: parse the returned event, recompute the id and confirm
+   * it matches the challenge we asked to be signed, and confirm the pubkey
+   * is the account we authenticated. Anything else is treated as
+   * INVALID_PROOF so a rogue bunker cannot swap identities under us. The
+   * broker's nh_auth_challenge_verify re-checks the full binding once we
+   * hand the signed event back. Shared with the QR provider — see
+   * provider_nip46_verify.[ch]. */
+  int good = nh_nip46_verify_signed_challenge(signed_json, p->expected_id,
+                                              p->pubkey);
   if (!good) {
     secure_wipe(signed_json, strlen(signed_json));
     free(signed_json);

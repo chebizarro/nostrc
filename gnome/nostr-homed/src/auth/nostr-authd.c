@@ -102,6 +102,23 @@ int main(int argc, char **argv) {
   nh_auth_broker *broker = nh_auth_broker_new(store);
   if (!broker) { nh_identity_store_close(store); return 1; }
 
+  /* Load /etc/nostr-auth/auth.conf (or NH_AUTH_CONF override) so QR-login
+   * defaults can be pinned per site. Non-fatal — the file may not exist yet
+   * and every key has a compiled-in default (design D12). */
+  static nh_auth_conf conf; /* module-scope: pointers stay valid for broker */
+  {
+    const char *conf_path = getenv("NH_AUTH_CONF");
+    if (!conf_path || !*conf_path) conf_path = "/etc/nostr-auth/auth.conf";
+    (void)nh_auth_conf_load(conf_path, &conf);
+    if (conf.nip46_qr_relays_count > 0) {
+      static const char *relay_ptrs[NH_AUTH_CONF_RELAYS_MAX];
+      for (size_t i = 0; i < conf.nip46_qr_relays_count; i++)
+        relay_ptrs[i] = conf.nip46_qr_relays[i];
+      nh_auth_broker_set_qr_default_relays(relay_ptrs,
+                                           conf.nip46_qr_relays_count);
+    }
+  }
+
   /* Optional persistent rate-limit backing. If NH_AUTH_RATELIMIT_PATH is set
    * (typically /var/lib/nostr-auth/ratelimit.db) the broker's per-account
    * failed-proof throttle is loaded from and persisted to that SQLite file so
