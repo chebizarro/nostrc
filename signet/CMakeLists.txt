@@ -65,7 +65,6 @@ set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/relay_pool.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/nip46_server.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mgmt_protocol.c
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/health_server.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/store_tokens.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/store_secrets.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/store_leases.c
@@ -150,8 +149,22 @@ if (TARGET PkgConfig::SODIUM)
   target_link_libraries(signet_core PRIVATE PkgConfig::SODIUM)
 endif()
 
+# Health server: /health, /ready and /metrics endpoints via libmicrohttpd.
+# libmicrohttpd is optional; when absent the daemon compiles a stub that
+# reports the endpoint as disabled instead of leaving MHD_* symbols unresolved
+# at link time (bead nostrc-y4u4). Compile AND link must stay in lock-step:
+# selecting the real source alone without linking libmicrohttpd caused undefined
+# MHD_* references when libmicrohttpd-dev headers were present but no explicit
+# link edge existed.
 if (TARGET PkgConfig::MHD)
+  target_sources(signet_core PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/health_server.c)
   target_link_libraries(signet_core PRIVATE PkgConfig::MHD)
+  target_compile_definitions(signet_core PRIVATE SIGNET_HAVE_MHD=1)
+else()
+  message(STATUS "signet: libmicrohttpd not found; compiling health_server stub (endpoint disabled)")
+  target_sources(signet_core PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/health_server_stub.c)
 endif()
 
 if (TARGET PkgConfig::CURL)
@@ -184,10 +197,17 @@ target_include_directories(signetctl PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip19/incl
 add_executable(signet-git-credential ${CMAKE_CURRENT_SOURCE_DIR}/src/git_credential_main.c)
 target_link_libraries(signet-git-credential PRIVATE signet_core)
 
-install(TARGETS signetd signetctl signet-git-credential RUNTIME DESTINATION bin)
+include(GNUInstallDirs)
+# signetd is a long-running daemon: install under sbin per FHS 3.0.
+# signetctl + signet-git-credential are user-facing tools: install under bin.
+install(TARGETS signetd
+  RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR})
+install(TARGETS signetctl signet-git-credential
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/signet.conf.example)
-  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/signet.conf.example DESTINATION share/nostrc)
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/signet.conf.example
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/nostrc)
 endif()
 
 # Tests

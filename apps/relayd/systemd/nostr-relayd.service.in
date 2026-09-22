@@ -1,0 +1,43 @@
+[Unit]
+Description=Nostr relay daemon (nostr-relayd)
+Documentation=https://github.com/chebizarro/nostrc
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# relayd currently ignores argv and loads "relay.toml" from cwd; WorkingDirectory
+# anchors that lookup at /etc/nostrc (packagers should drop a real relay.toml
+# alongside the shipped share/nostrc/relay.toml.example).
+WorkingDirectory=/etc/nostrc
+ExecStart=@NOSTR_RELAYD_EXEC@
+Restart=on-failure
+RestartSec=1
+# Runtime scratch and persistent storage (e.g. nostrdb LMDB) live under the
+# systemd-managed directories below.
+RuntimeDirectory=nostr-relayd
+RuntimeDirectoryMode=0750
+StateDirectory=nostr-relayd
+StateDirectoryMode=0700
+# hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -114,10 +114,37 @@ if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
 
-install(TARGETS nostrc-relayd RUNTIME DESTINATION bin)
+include(GNUInstallDirs)
+# nostrc-relayd is a network daemon: install under sbin per FHS 3.0.
+install(TARGETS nostrc-relayd
+  RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR})
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/relay.toml.example)
-  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/relay.toml.example DESTINATION share/nostrc)
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/relay.toml.example
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/nostrc)
 endif()
+
+# --- systemd system unit ---------------------------------------------------
+# Install nostr-relayd.service into the pkg-config-reported systemd system
+# unit directory when systemd.pc is available, otherwise a sane fallback under
+# CMAKE_INSTALL_PREFIX. Modeled on gnome/nostr-homed/systemd/nostr-authd.
+set(NOSTR_RELAYD_SYSTEMD_SYSTEM_UNIT_DIR "")
+find_package(PkgConfig QUIET)
+if (PkgConfig_FOUND)
+  pkg_get_variable(NOSTR_RELAYD_SYSTEMD_SYSTEM_UNIT_DIR systemd systemdsystemunitdir)
+endif()
+if (NOT NOSTR_RELAYD_SYSTEMD_SYSTEM_UNIT_DIR)
+  set(NOSTR_RELAYD_SYSTEMD_SYSTEM_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/system")
+endif()
+
+# ExecStart carries no CLI args because relayd_main.c currently ignores argv
+# and reads "relay.toml" from the current working directory. WorkingDirectory
+# below anchors that lookup at /etc/nostrc so admins drop relay.toml alongside
+# the shipped share/nostrc/relay.toml.example.
+set(NOSTR_RELAYD_EXEC "${CMAKE_INSTALL_FULL_SBINDIR}/nostrc-relayd")
+configure_file(systemd/nostr-relayd.service.in
+  "${CMAKE_CURRENT_BINARY_DIR}/nostr-relayd.service" @ONLY)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-relayd.service"
+  DESTINATION "${NOSTR_RELAYD_SYSTEMD_SYSTEM_UNIT_DIR}")
 
 # Apply global sanitizer flags to ensure TSAN/ASAN/UBSAN DSOs are linked
 if (COMMAND apply_sanitizers)
