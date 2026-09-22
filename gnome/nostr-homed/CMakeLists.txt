@@ -383,6 +383,26 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
   # renames it to `nostr-homed-seed` in sbin.
   add_executable(nh-seed-authority tests/integration/seed_authority.c)
   target_link_libraries(nh-seed-authority PRIVATE nostr_auth_runtime)
+
+  # nostrc-zcll.7 acceptance: sibling seeder that enrols a NIP-46 provider
+  # (QR / nostrconnect, or pre-paired bunker) instead of a local vault.
+  # Test helper only; not installed. See tests/integration/seed_nip46_authority.c.
+  add_executable(nh-seed-nip46-authority tests/integration/seed_nip46_authority.c)
+  target_link_libraries(nh-seed-nip46-authority PRIVATE nostr_auth_runtime)
+
+  # nostrc-zcll.7 acceptance: headless "phone signer" that consumes a live
+  # nostrconnect:// URI, dials its relays with a supplied signing key, and
+  # answers get_public_key + sign_event. Drives real-relay QR acceptance
+  # (positive + wrong-key negative). Not installed.
+  if(TARGET nostr_nip46_core)
+    add_executable(qr_signer_standin tests/integration/qr_signer_standin.c)
+    target_link_libraries(qr_signer_standin PRIVATE
+      nostr_auth_runtime nostr_nip46_core)
+  elseif(NOSTR_NIP46_FOUND)
+    add_executable(qr_signer_standin tests/integration/qr_signer_standin.c)
+    target_link_libraries(qr_signer_standin PRIVATE
+      nostr_auth_runtime PkgConfig::NOSTR_NIP46)
+  endif()
 endif()
 
 # B4: broker-backed PAM module. Authentication succeeds only via broker proof.
