@@ -173,6 +173,79 @@ void nostr_nip46_client_get_public_key_rpc_async(NostrNip46Session *s,
  * Callbacks for cancelled requests will fire with error_msg="cancelled". */
 void nostr_nip46_client_cancel_all(NostrNip46Session *s);
 
+/* C2 (nostrc-ot2c.3): Per-request cancellation handle + deadline options.
+ *
+ * NostrNip46CancelHandle is an opaque, thread-safe, refcounted handle that
+ * lets a caller cancel a specific in-flight RPC without racing the
+ * session-wide cancel_all path. It is safe to hold across threads and to
+ * call `_cancel()` from any thread (including a signal handler-adjacent
+ * context such as GCancellable::cancelled).
+ *
+ * A single handle may be attached to at most one active request at a time;
+ * cancelling it fires the wake-up on the currently-attached request (if
+ * any) and marks the handle so that any subsequent RPC started with the
+ * same handle also aborts immediately.
+ *
+ * Lifetime: caller owns a reference from _new(); pass to the RPC via
+ * NostrNip46RequestOptions.cancel_handle; when done, call _unref(). The
+ * RPC internally takes an extra ref for the duration of the wait.
+ */
+typedef struct NostrNip46CancelHandle NostrNip46CancelHandle;
+
+NostrNip46CancelHandle *nostr_nip46_cancel_handle_new(void);
+NostrNip46CancelHandle *nostr_nip46_cancel_handle_ref(NostrNip46CancelHandle *h);
+void nostr_nip46_cancel_handle_unref(NostrNip46CancelHandle *h);
+void nostr_nip46_cancel_handle_cancel(NostrNip46CancelHandle *h);
+int  nostr_nip46_cancel_handle_is_cancelled(const NostrNip46CancelHandle *h);
+
+/* Per-request options carried into the _opts sync/async entrypoints below.
+ *   - deadline_ms: absolute deadline on CLOCK_MONOTONIC in milliseconds. 0
+ *     falls back to the session default (nostr_nip46_client_get_timeout).
+ *     The deadline covers the entire RPC (rate-limit gate, publish, and
+ *     response wait); once reached the call returns with an error.
+ *   - cancel_handle: optional cancellation handle. When cancelled the
+ *     response wait is interrupted at the next 500 ms poll boundary at
+ *     the latest, and the pending request is torn down safely.
+ * Both fields may be zero/NULL to fall back to legacy behaviour. */
+typedef struct {
+    int64_t deadline_ms;
+    NostrNip46CancelHandle *cancel_handle;
+} NostrNip46RequestOptions;
+
+/* Sync _opts variants. On success, *out_signed_event_json / *out_result /
+ * *out_user_pubkey_hex is a fresh heap allocation the caller frees with
+ * free(). Old signatures above remain wrappers around these. */
+int nostr_nip46_client_sign_event_opts(NostrNip46Session *s,
+                                       const char *event_json,
+                                       const NostrNip46RequestOptions *opts,
+                                       char **out_signed_event_json);
+int nostr_nip46_client_connect_rpc_opts(NostrNip46Session *s,
+                                        const char *connect_secret,
+                                        const char *perms,
+                                        const NostrNip46RequestOptions *opts,
+                                        char **out_result);
+int nostr_nip46_client_get_public_key_rpc_opts(NostrNip46Session *s,
+                                               const NostrNip46RequestOptions *opts,
+                                               char **out_user_pubkey_hex);
+
+/* Async _opts variants. Ownership of the cancel handle (if any) stays with
+ * the caller; the RPC takes its own reference for the duration. */
+void nostr_nip46_client_sign_event_async_opts(NostrNip46Session *s,
+                                              const char *event_json,
+                                              const NostrNip46RequestOptions *opts,
+                                              NostrNip46AsyncCallback callback,
+                                              void *user_data);
+void nostr_nip46_client_connect_rpc_async_opts(NostrNip46Session *s,
+                                               const char *connect_secret,
+                                               const char *perms,
+                                               const NostrNip46RequestOptions *opts,
+                                               NostrNip46AsyncCallback callback,
+                                               void *user_data);
+void nostr_nip46_client_get_public_key_rpc_async_opts(NostrNip46Session *s,
+                                                      const NostrNip46RequestOptions *opts,
+                                                      NostrNip46AsyncCallback callback,
+                                                      void *user_data);
+
 /* nostrc-32yf: Session state machine.
  * State transitions:
  *   DISCONNECTED -> CONNECTING  (client_start called)

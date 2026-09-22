@@ -59,6 +59,14 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip46_c1_hardening.c)
   set_tests_properties(test_nip46_c1_hardening PROPERTIES TIMEOUT 60)
 endif()
 
+# C2 per-request lifecycle (nostrc-ot2c.3)
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip46_request_lifecycle.c)
+  add_executable(test_nip46_request_lifecycle tests/test_nip46_request_lifecycle.c)
+  target_link_libraries(test_nip46_request_lifecycle PRIVATE nostr_nip46_core)
+  add_test(NAME test_nip46_request_lifecycle COMMAND test_nip46_request_lifecycle)
+  set_tests_properties(test_nip46_request_lifecycle PROPERTIES TIMEOUT 60)
+endif()
+
 # Tests
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_uri.c)
   add_executable(test_nip46_uri tests/test_uri.c)

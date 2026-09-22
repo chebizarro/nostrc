@@ -28,6 +28,16 @@ static void sign_event_data_free(gpointer data) {
     }
 }
 
+/* C2 (nostrc-ot2c.3): translate a fired GCancellable into a cancel-handle
+ * signal so the sync RPC's response wait is interrupted mid-flight instead
+ * of only being observed after the RPC returns. Called from the same thread
+ * that triggered g_cancellable_cancel(). */
+static void nip46_g_cancel_relay(GCancellable *cancellable, gpointer user_data) {
+    (void)cancellable;
+    NostrNip46CancelHandle *h = user_data;
+    nostr_nip46_cancel_handle_cancel(h);
+}
+
 static void
 sign_event_thread(GTask        *task,
                   gpointer      source_object,
@@ -43,8 +53,19 @@ sign_event_thread(GTask        *task,
         return;
     }
 
+    NostrNip46CancelHandle *handle = nostr_nip46_cancel_handle_new();
+    gulong hook = 0;
+    if (cancellable && handle) {
+        hook = g_cancellable_connect(cancellable,
+            G_CALLBACK(nip46_g_cancel_relay), handle, NULL);
+    }
+    NostrNip46RequestOptions opts = { .deadline_ms = 0, .cancel_handle = handle };
+
     char *signed_event = NULL;
-    int rc = nostr_nip46_client_sign_event(d->session, d->event_json, &signed_event);
+    int rc = nostr_nip46_client_sign_event_opts(d->session, d->event_json, &opts, &signed_event);
+
+    if (cancellable && hook) g_cancellable_disconnect(cancellable, hook);
+    if (handle) nostr_nip46_cancel_handle_unref(handle);
 
     if (g_cancellable_is_cancelled(cancellable)) {
         free(signed_event);
@@ -125,9 +146,20 @@ connect_rpc_thread(GTask        *task,
         return;
     }
 
+    NostrNip46CancelHandle *handle = nostr_nip46_cancel_handle_new();
+    gulong hook = 0;
+    if (cancellable && handle) {
+        hook = g_cancellable_connect(cancellable,
+            G_CALLBACK(nip46_g_cancel_relay), handle, NULL);
+    }
+    NostrNip46RequestOptions opts = { .deadline_ms = 0, .cancel_handle = handle };
+
     char *result = NULL;
-    int rc = nostr_nip46_client_connect_rpc(d->session, d->connect_secret,
-                                             d->perms, &result);
+    int rc = nostr_nip46_client_connect_rpc_opts(d->session, d->connect_secret,
+                                                  d->perms, &opts, &result);
+
+    if (cancellable && hook) g_cancellable_disconnect(cancellable, hook);
+    if (handle) nostr_nip46_cancel_handle_unref(handle);
 
     if (g_cancellable_is_cancelled(cancellable)) {
         free(result);
@@ -201,8 +233,19 @@ get_pubkey_rpc_thread(GTask        *task,
         return;
     }
 
+    NostrNip46CancelHandle *handle = nostr_nip46_cancel_handle_new();
+    gulong hook = 0;
+    if (cancellable && handle) {
+        hook = g_cancellable_connect(cancellable,
+            G_CALLBACK(nip46_g_cancel_relay), handle, NULL);
+    }
+    NostrNip46RequestOptions opts = { .deadline_ms = 0, .cancel_handle = handle };
+
     char *pubkey = NULL;
-    int rc = nostr_nip46_client_get_public_key_rpc(d->session, &pubkey);
+    int rc = nostr_nip46_client_get_public_key_rpc_opts(d->session, &opts, &pubkey);
+
+    if (cancellable && hook) g_cancellable_disconnect(cancellable, hook);
+    if (handle) nostr_nip46_cancel_handle_unref(handle);
 
     if (g_cancellable_is_cancelled(cancellable)) {
         free(pubkey);

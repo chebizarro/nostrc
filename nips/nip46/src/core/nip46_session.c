@@ -38,12 +38,52 @@ typedef enum {
     NIP46_STATE_STOPPING           /* Shutting down */
 } Nip46SessionState;
 
+/* C2 (nostrc-ot2c.3): opaque, thread-safe cancellation handle.
+ *
+ * The handle is intentionally minimal: an atomic cancelled flag polled by
+ * the RPC wait loop at each 500 ms slice boundary. This bounds cancel
+ * latency well below the default 30 s response timeout without introducing
+ * cross-thread callback lock ordering. Callers may share one handle across
+ * threads; a single handle may be attached to at most one active request
+ * at a time (documented at the public API). */
+struct NostrNip46CancelHandle {
+    int cancelled;   /* atomic via __atomic_* */
+    int refcount;    /* atomic via __atomic_* */
+};
+
+NostrNip46CancelHandle *nostr_nip46_cancel_handle_new(void) {
+    NostrNip46CancelHandle *h = (NostrNip46CancelHandle *)calloc(1, sizeof(*h));
+    if (!h) return NULL;
+    __atomic_store_n(&h->refcount, 1, __ATOMIC_RELAXED);
+    __atomic_store_n(&h->cancelled, 0, __ATOMIC_RELAXED);
+    return h;
+}
+NostrNip46CancelHandle *nostr_nip46_cancel_handle_ref(NostrNip46CancelHandle *h) {
+    if (!h) return NULL;
+    __atomic_add_fetch(&h->refcount, 1, __ATOMIC_RELAXED);
+    return h;
+}
+void nostr_nip46_cancel_handle_unref(NostrNip46CancelHandle *h) {
+    if (!h) return;
+    if (__atomic_sub_fetch(&h->refcount, 1, __ATOMIC_ACQ_REL) == 0) free(h);
+}
+void nostr_nip46_cancel_handle_cancel(NostrNip46CancelHandle *h) {
+    if (!h) return;
+    __atomic_store_n(&h->cancelled, 1, __ATOMIC_RELEASE);
+}
+int nostr_nip46_cancel_handle_is_cancelled(const NostrNip46CancelHandle *h) {
+    if (!h) return 0;
+    return __atomic_load_n(&((NostrNip46CancelHandle *)h)->cancelled, __ATOMIC_ACQUIRE);
+}
+
 /* Pending RPC request entry - waiting for response from signer */
 typedef struct PendingRequest {
     char *request_id;           /* RPC request ID to match response */
     GoChannel *response_chan;   /* Channel to send response to waiting caller */
-    uint32_t timeout_ms;        /* nostrc-32yf: Per-request timeout */
+    uint32_t timeout_ms;        /* nostrc-32yf: Per-request timeout (backward compat) */
     int64_t submit_time_us;     /* nostrc-32yf: Monotonic submit timestamp (usec) */
+    int64_t deadline_us;        /* C2 nostrc-ot2c.3: absolute CLOCK_MONOTONIC (usec) */
+    NostrNip46CancelHandle *cancel_handle; /* C2: optional; strong ref while attached */
     int cancelled;              /* Protected by pending_mutex */
     int delivered;              /* At most one response can win */
     struct PendingRequest *next;
@@ -59,6 +99,11 @@ typedef struct RpcJob {
     size_t bytes;                /* retained payload size, for the byte cap */
     NostrNip46AsyncCallback callback;
     void *user_data;
+    /* C2 (nostrc-ot2c.3): optional per-request options. When present, the
+     * queued job carries its own ref to the cancel handle so the caller may
+     * fire-and-forget while cancellation stays effective. */
+    int64_t deadline_ms;                    /* 0 = session default */
+    NostrNip46CancelHandle *cancel_handle;  /* strong ref, NULL if unset */
     struct RpcJob *next;
 } RpcJob;
 
@@ -213,7 +258,9 @@ static NostrNip46Session *session_registry_find(NostrSimplePool *pool) {
 /* nostrc-kk9f: Pending request helper functions.
  * Create a new pending request with a response channel.
  * nostrc-32yf: Now records per-request timeout and submit time. */
-static PendingRequest *pending_request_new(const char *request_id, uint32_t timeout_ms) {
+static PendingRequest *pending_request_new_ex(const char *request_id,
+                                              int64_t deadline_us,
+                                              NostrNip46CancelHandle *cancel_handle) {
     if (!request_id) return NULL;
 
     PendingRequest *pr = (PendingRequest *)calloc(1, sizeof(PendingRequest));
@@ -233,12 +280,39 @@ static PendingRequest *pending_request_new(const char *request_id, uint32_t time
         return NULL;
     }
 
-    pr->timeout_ms = timeout_ms;
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     pr->submit_time_us = (int64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000;
+    if (deadline_us <= 0) deadline_us = pr->submit_time_us + (int64_t)NOSTR_NIP46_DEFAULT_TIMEOUT_MS * 1000;
+    pr->deadline_us = deadline_us;
+    /* Preserve legacy field for the deliver() timeout arithmetic and
+     * for backward-compatible white-box tests that only pass a relative
+     * timeout via pending_request_new(). */
+    int64_t remaining_us = deadline_us - pr->submit_time_us;
+    if (remaining_us < 0) remaining_us = 0;
+    pr->timeout_ms = (uint32_t)((remaining_us + 999) / 1000);
+    pr->cancel_handle = cancel_handle ? nostr_nip46_cancel_handle_ref(cancel_handle) : NULL;
     pr->cancelled = 0;
     pr->next = NULL;
+    /* Honor a handle that was already cancelled before the request was
+     * registered — the very next deliver/wait sees it and terminates. */
+    if (pr->cancel_handle &&
+        nostr_nip46_cancel_handle_is_cancelled(pr->cancel_handle)) {
+        pr->cancelled = 1;
+    }
+    return pr;
+}
+
+/* Backward-compatible constructor kept for the white-box lifetime test and
+ * legacy callers that carry only a relative timeout. Leaves deadline_us
+ * at 0 so pending_request_deliver's fallback recomputes the deadline from
+ * submit_time_us + timeout_ms — preserving the ability of white-box tests
+ * to rewind submit_time_us to force expiry without a wall-clock sleep. */
+static PendingRequest *pending_request_new(const char *request_id, uint32_t timeout_ms) {
+    PendingRequest *pr = pending_request_new_ex(request_id, 0, NULL);
+    if (!pr) return NULL;
+    pr->timeout_ms = timeout_ms;
+    pr->deadline_us = 0;
     return pr;
 }
 
@@ -289,8 +363,12 @@ static int pending_request_deliver(NostrNip46Session *s, const char *id,
     pthread_mutex_lock(&s->pending_mutex);
     for (PendingRequest *pr = s->pending_requests; pr; pr = pr->next) {
         if (strcmp(pr->request_id, id)) continue;
+        int64_t effective_deadline = pr->deadline_us
+            ? pr->deadline_us
+            : pr->submit_time_us + (int64_t)pr->timeout_ms * 1000;
         if (!pr->cancelled && !pr->delivered &&
-            now_us - pr->submit_time_us < (int64_t)pr->timeout_ms * 1000 &&
+            now_us < effective_deadline &&
+            !(pr->cancel_handle && nostr_nip46_cancel_handle_is_cancelled(pr->cancel_handle)) &&
             go_channel_try_send(pr->response_chan, response_json) == 0) {
             pr->delivered = 1;
             accepted = 1;
@@ -310,6 +388,7 @@ static void pending_request_free(PendingRequest *pr) {
             free(abandoned);
         go_channel_free(pr->response_chan);
     }
+    if (pr->cancel_handle) nostr_nip46_cancel_handle_unref(pr->cancel_handle);
     free(pr->request_id);
     free(pr);
 }
@@ -1002,39 +1081,32 @@ static uint32_t nip46_effective_timeout(const NostrNip46Session *s) {
     return NOSTR_NIP46_DEFAULT_TIMEOUT_MS;
 }
 
-/* Forward declaration for RPC helper used by sign_event and other calls */
+/* Forward declaration for RPC helper used by sign_event and other calls.
+ * The _opts variant carries C2 (nostrc-ot2c.3) per-request deadline and
+ * cancellation-handle options; the legacy signature stays as a wrapper. */
 static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
                             const char **params, size_t n_params,
                             char **out_response_pubkey);
+static char *nip46_rpc_call_opts(NostrNip46Session *s, const char *method,
+                                 const char **params, size_t n_params,
+                                 const NostrNip46RequestOptions *opts,
+                                 char **out_response_pubkey);
 
-int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, char **out_signed_event_json) {
-    if (!s) {
-        fprintf(stderr, "[nip46] sign_event: ERROR -1: session is NULL\n");
-        return -1;
-    }
-    if (!event_json) {
-        fprintf(stderr, "[nip46] sign_event: ERROR -1: event_json is NULL\n");
-        return -1;
-    }
-    if (!out_signed_event_json) {
-        fprintf(stderr, "[nip46] sign_event: ERROR -1: out param is NULL\n");
-        return -1;
-    }
+int nostr_nip46_client_sign_event_opts(NostrNip46Session *s,
+                                       const char *event_json,
+                                       const NostrNip46RequestOptions *opts,
+                                       char **out_signed_event_json) {
+    if (!s || !event_json || !out_signed_event_json) return -1;
     *out_signed_event_json = NULL;
-
-    fprintf(stderr, "[nip46] sign_event: signing event (%.50s...)\n", event_json);
-
-    /* Use the common RPC helper which handles stale response retries */
     const char *params[1] = { event_json };
-    char *result = nip46_rpc_call(s, "sign_event", params, 1, NULL);
-    if (!result) {
-        fprintf(stderr, "[nip46] sign_event: ERROR -1: RPC call failed\n");
-        return -1;
-    }
-
-    fprintf(stderr, "[nip46] sign_event: SUCCESS - got signed event\n");
+    char *result = nip46_rpc_call_opts(s, "sign_event", params, 1, opts, NULL);
+    if (!result) return -1;
     *out_signed_event_json = result;
     return 0;
+}
+
+int nostr_nip46_client_sign_event(NostrNip46Session *s, const char *event_json, char **out_signed_event_json) {
+    return nostr_nip46_client_sign_event_opts(s, event_json, NULL, out_signed_event_json);
 }
 
 int nostr_nip46_client_ping(NostrNip46Session *s) {
@@ -1159,6 +1231,7 @@ void nostr_nip46_client_set_rate_limit(NostrNip46Session *s,
 
 static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
                                  const char **params, size_t n_params,
+                                 const NostrNip46RequestOptions *opts,
                                  char **out_response_pubkey);
 
 /* nostrc-qpow: Publish an RPC event and wait briefly for the relay's OK so
@@ -1226,14 +1299,43 @@ static void nip46_rpc_note_rate_limited(NostrNip46Session *s) {
 
 /* nostrc-prkl: Throttled entry point - every client RPC (sign_event,
  * nip44_encrypt/decrypt, connect, get_public_key, sync and async variants)
- * funnels through here, so the gate bounds total signer-relay traffic. */
+ * funnels through here, so the gate bounds total signer-relay traffic.
+ * C2 (nostrc-ot2c.3): the _opts variant plumbs a per-request absolute
+ * deadline and cancellation handle all the way down to the response wait
+ * loop. The legacy signature keeps behaviour unchanged for existing callers. */
 static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
                             const char **params, size_t n_params,
                             char **out_response_pubkey) {
+    return nip46_rpc_call_opts(s, method, params, n_params, NULL, out_response_pubkey);
+}
+
+static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
+                                 const char **params, size_t n_params,
+                                 const NostrNip46RequestOptions *opts,
+                                 char **out_response_pubkey);
+
+static char *nip46_rpc_call_opts(NostrNip46Session *s, const char *method,
+                                 const char **params, size_t n_params,
+                                 const NostrNip46RequestOptions *opts,
+                                 char **out_response_pubkey) {
     if (out_response_pubkey) *out_response_pubkey = NULL;
     if (!s || !method) return NULL;
+    /* Fast-path: pre-cancelled handle should never reach the gate. */
+    if (opts && opts->cancel_handle &&
+        nostr_nip46_cancel_handle_is_cancelled(opts->cancel_handle)) {
+        fprintf(stderr, "[nip46] %s: pre-cancelled - skipping RPC\n", method);
+        return NULL;
+    }
     if (nip46_rpc_gate_acquire(s, method) != 0) return NULL;
-    char *result = nip46_rpc_call_impl(s, method, params, n_params,
+    /* Re-check cancellation after the gate; a queued caller may have been
+     * cancelled while blocked waiting for a slot. */
+    if (opts && opts->cancel_handle &&
+        nostr_nip46_cancel_handle_is_cancelled(opts->cancel_handle)) {
+        nip46_rpc_gate_release(s);
+        fprintf(stderr, "[nip46] %s: cancelled at gate - skipping RPC\n", method);
+        return NULL;
+    }
+    char *result = nip46_rpc_call_impl(s, method, params, n_params, opts,
                                        out_response_pubkey);
     nip46_rpc_gate_release(s);
     return result;
@@ -1241,6 +1343,7 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
 
 static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
                                  const char **params, size_t n_params,
+                                 const NostrNip46RequestOptions *opts,
                                  char **out_response_pubkey) {
     if (out_response_pubkey) *out_response_pubkey = NULL;
     if (!s || !method) return NULL;
@@ -1317,9 +1420,20 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     secure_wipe(req, strlen(req));
     free(req);
 
-    /* nostrc-3l6f: Create pending request with response channel */
-    uint32_t timeout = nip46_effective_timeout(s);
-    PendingRequest *pr = pending_request_new(req_id, timeout);
+    /* nostrc-3l6f + C2: Create pending request with the request-specific
+     * deadline. If opts->deadline_ms is provided it is treated as an
+     * absolute CLOCK_MONOTONIC ms; otherwise we fall back to now +
+     * session default so the pending struct still stores an absolute
+     * deadline usable by the shared delivery path. */
+    int64_t deadline_us = 0;
+    if (opts && opts->deadline_ms > 0) {
+        deadline_us = opts->deadline_ms * 1000;
+    } else {
+        uint32_t timeout = nip46_effective_timeout(s);
+        deadline_us = (nip46_now_ms() + (int64_t)timeout) * 1000;
+    }
+    PendingRequest *pr = pending_request_new_ex(
+        req_id, deadline_us, opts ? opts->cancel_handle : NULL);
     if (!pr) {
         fprintf(stderr, "[nip46] %s: ERROR: failed to create pending request\n", method);
         free(cipher);
@@ -1438,8 +1552,19 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     response_cases[0].recv_buf = &recv_buf;
 
     GoSelectResult response_sel = { .selected_case = -1, .ok = false };
-    int64_t deadline_ms = pr->submit_time_us / 1000 + pr->timeout_ms;
+    /* C2: absolute deadline covers the whole wait phase; deadline_us is
+     * either supplied via opts or the session default. */
+    int64_t deadline_ms = pr->deadline_us
+        ? pr->deadline_us / 1000
+        : pr->submit_time_us / 1000 + pr->timeout_ms;
+    int cancelled_by_handle = 0;
     while (nip46_now_ms() < deadline_ms) {
+        /* C2: interrupt the wait as soon as the caller cancels. */
+        if (opts && opts->cancel_handle &&
+            nostr_nip46_cancel_handle_is_cancelled(opts->cancel_handle)) {
+            cancelled_by_handle = 1;
+            break;
+        }
         int64_t remaining_ms = deadline_ms - nip46_now_ms();
         if (remaining_ms <= 0) break;
         uint32_t slice = (uint32_t)remaining_ms;
@@ -1487,7 +1612,9 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     nostr_event_free(req_ev);
 
     if (response_sel.selected_case < 0) {
-        if (published == 0 && nacked > 0) {
+        if (cancelled_by_handle) {
+            fprintf(stderr, "[nip46] %s: cancelled by caller handle\n", method);
+        } else if (published == 0 && nacked > 0) {
             fprintf(stderr, "[nip46] %s: ERROR: all relays rejected the request: %s\n",
                     method, reject_reason ? reject_reason : "(unknown reason)");
         } else if (published == 0) {
@@ -1575,6 +1702,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
 
 static void rpc_job_free(RpcJob *job) {
     if (!job) return;
+    if (job->cancel_handle) nostr_nip46_cancel_handle_unref(job->cancel_handle);
     free(job->method);
     if (job->params) {
         for (size_t i = 0; i < job->n_params; i++)
@@ -1649,11 +1777,20 @@ static void *nip46_rpc_worker_main(void *arg) {
         }
         pthread_mutex_unlock(&s->q_mutex);
 
-        char *result = nip46_rpc_call(s, job->method,
-                                      (const char **)job->params, job->n_params,
-                                      NULL);
-        nip46_async_deliver(s, job->callback, job->user_data, result,
-                            result ? NULL : "RPC call failed");
+        NostrNip46RequestOptions job_opts = {
+            .deadline_ms = job->deadline_ms,
+            .cancel_handle = job->cancel_handle,
+        };
+        char *result = nip46_rpc_call_opts(s, job->method,
+                                           (const char **)job->params, job->n_params,
+                                           &job_opts, NULL);
+        const char *err = NULL;
+        if (!result) {
+            err = (job->cancel_handle &&
+                   nostr_nip46_cancel_handle_is_cancelled(job->cancel_handle))
+                ? "cancelled" : "RPC call failed";
+        }
+        nip46_async_deliver(s, job->callback, job->user_data, result, err);
         rpc_job_free(job);
     }
 
@@ -1726,12 +1863,33 @@ static void nip46_rpc_queue_shutdown(NostrNip46Session *s) {
     }
 }
 
+/* C2: async gate + queue; the _opts variant is the canonical entrypoint. */
+static void nip46_rpc_call_async_opts(NostrNip46Session *s, const char *method,
+                                       const char **params, size_t n_params,
+                                       const NostrNip46RequestOptions *opts,
+                                       NostrNip46AsyncCallback callback,
+                                       void *user_data);
+
 static void nip46_rpc_call_async(NostrNip46Session *s, const char *method,
                                   const char **params, size_t n_params,
                                   NostrNip46AsyncCallback callback,
                                   void *user_data) {
+    nip46_rpc_call_async_opts(s, method, params, n_params, NULL, callback, user_data);
+}
+
+static void nip46_rpc_call_async_opts(NostrNip46Session *s, const char *method,
+                                       const char **params, size_t n_params,
+                                       const NostrNip46RequestOptions *opts,
+                                       NostrNip46AsyncCallback callback,
+                                       void *user_data) {
     if (!s || !method) {
         nip46_async_deliver(s, callback, user_data, NULL, "invalid arguments");
+        return;
+    }
+    /* C2: reject pre-cancelled fire-and-forget jobs immediately. */
+    if (opts && opts->cancel_handle &&
+        nostr_nip46_cancel_handle_is_cancelled(opts->cancel_handle)) {
+        nip46_async_deliver(s, callback, user_data, NULL, "cancelled");
         return;
     }
 
@@ -1743,6 +1901,11 @@ static void nip46_rpc_call_async(NostrNip46Session *s, const char *method,
     job->method = strdup(method);
     job->callback = callback;
     job->user_data = user_data;
+    if (opts) {
+        job->deadline_ms = opts->deadline_ms;
+        if (opts->cancel_handle)
+            job->cancel_handle = nostr_nip46_cancel_handle_ref(opts->cancel_handle);
+    }
     if (!job->method) {
         rpc_job_free(job);
         nip46_async_deliver(s, callback, user_data, NULL, "out of memory");
@@ -1811,24 +1974,32 @@ static void nip46_rpc_call_async(NostrNip46Session *s, const char *method,
 
 /* nostrc-5wj9: Public async API implementations */
 
-void nostr_nip46_client_sign_event_async(NostrNip46Session *s,
-                                          const char *event_json,
-                                          NostrNip46AsyncCallback callback,
-                                          void *user_data) {
+void nostr_nip46_client_sign_event_async_opts(NostrNip46Session *s,
+                                              const char *event_json,
+                                              const NostrNip46RequestOptions *opts,
+                                              NostrNip46AsyncCallback callback,
+                                              void *user_data) {
     if (!s || !event_json) {
         nip46_async_deliver(s, callback, user_data, NULL,
                             "session or event_json is NULL");
         return;
     }
     const char *params[1] = { event_json };
-    nip46_rpc_call_async(s, "sign_event", params, 1, callback, user_data);
+    nip46_rpc_call_async_opts(s, "sign_event", params, 1, opts, callback, user_data);
+}
+void nostr_nip46_client_sign_event_async(NostrNip46Session *s,
+                                          const char *event_json,
+                                          NostrNip46AsyncCallback callback,
+                                          void *user_data) {
+    nostr_nip46_client_sign_event_async_opts(s, event_json, NULL, callback, user_data);
 }
 
-void nostr_nip46_client_connect_rpc_async(NostrNip46Session *s,
-                                           const char *connect_secret,
-                                           const char *perms,
-                                           NostrNip46AsyncCallback callback,
-                                           void *user_data) {
+void nostr_nip46_client_connect_rpc_async_opts(NostrNip46Session *s,
+                                               const char *connect_secret,
+                                               const char *perms,
+                                               const NostrNip46RequestOptions *opts,
+                                               NostrNip46AsyncCallback callback,
+                                               void *user_data) {
     if (!s) {
         nip46_async_deliver(s, callback, user_data, NULL, "session is NULL");
         return;
@@ -1841,17 +2012,30 @@ void nostr_nip46_client_connect_rpc_async(NostrNip46Session *s,
     params[0] = s->remote_pubkey_hex;
     params[1] = connect_secret ? connect_secret : (s->connect_token ? s->connect_token : "");
     params[2] = perms ? perms : "";
-    nip46_rpc_call_async(s, "connect", params, 3, callback, user_data);
+    nip46_rpc_call_async_opts(s, "connect", params, 3, opts, callback, user_data);
+}
+void nostr_nip46_client_connect_rpc_async(NostrNip46Session *s,
+                                           const char *connect_secret,
+                                           const char *perms,
+                                           NostrNip46AsyncCallback callback,
+                                           void *user_data) {
+    nostr_nip46_client_connect_rpc_async_opts(s, connect_secret, perms, NULL, callback, user_data);
 }
 
-void nostr_nip46_client_get_public_key_rpc_async(NostrNip46Session *s,
-                                                  NostrNip46AsyncCallback callback,
-                                                  void *user_data) {
+void nostr_nip46_client_get_public_key_rpc_async_opts(NostrNip46Session *s,
+                                                      const NostrNip46RequestOptions *opts,
+                                                      NostrNip46AsyncCallback callback,
+                                                      void *user_data) {
     if (!s) {
         nip46_async_deliver(s, callback, user_data, NULL, "session is NULL");
         return;
     }
-    nip46_rpc_call_async(s, "get_public_key", NULL, 0, callback, user_data);
+    nip46_rpc_call_async_opts(s, "get_public_key", NULL, 0, opts, callback, user_data);
+}
+void nostr_nip46_client_get_public_key_rpc_async(NostrNip46Session *s,
+                                                  NostrNip46AsyncCallback callback,
+                                                  void *user_data) {
+    nostr_nip46_client_get_public_key_rpc_async_opts(s, NULL, callback, user_data);
 }
 
 /* nostrc-5wj9: Cancel all pending RPC requests.
@@ -1881,59 +2065,54 @@ void nostr_nip46_client_cancel_all(NostrNip46Session *s) {
  * This must be called after parsing bunker:// URI but before other operations.
  * The session must have: remote_pubkey_hex, secret (client key), relays.
  * On success, returns "ack" or the connect secret. Caller must free. */
+int nostr_nip46_client_connect_rpc_opts(NostrNip46Session *s,
+                                        const char *connect_secret,
+                                        const char *perms,
+                                        const NostrNip46RequestOptions *opts,
+                                        char **out_result) {
+    if (!s || !out_result) return -1;
+    *out_result = NULL;
+    if (!s->remote_pubkey_hex) return -1;
+    const char *params[3] = {
+        s->remote_pubkey_hex,
+        connect_secret ? connect_secret : (s->connect_token ? s->connect_token : ""),
+        perms ? perms : ""
+    };
+    char *result = nip46_rpc_call_opts(s, "connect", params, 3, opts, NULL);
+    if (!result) return -1;
+    *out_result = result;
+    return 0;
+}
+
 int nostr_nip46_client_connect_rpc(NostrNip46Session *s,
                                    const char *connect_secret,
                                    const char *perms,
                                    char **out_result) {
-    if (!s || !out_result) return -1;
-    *out_result = NULL;
-
-    /* Build connect params: [remote_signer_pubkey, optional_secret, optional_perms] */
-    const char *params[3];
-    size_t n_params = 0;
-
-    if (!s->remote_pubkey_hex) {
-        fprintf(stderr, "[nip46] connect_rpc: ERROR: no remote_pubkey_hex\n");
-        return -1;
-    }
-    params[n_params++] = s->remote_pubkey_hex;
-    params[n_params++] = connect_secret ? connect_secret : (s->connect_token ? s->connect_token : "");
-    params[n_params++] = perms ? perms : "";
-
-    /* Note: Do NOT update remote_pubkey_hex here. For bunker:// flow,
-     * the signer listens for messages tagged with the URI's pubkey.
-     * Only nostrconnect:// flow should update the pubkey (done in login code). */
-    char *result = nip46_rpc_call(s, "connect", params, n_params, NULL);
-    if (!result) {
-        return -1;
-    }
-
-    *out_result = result;
-    return 0;
+    return nostr_nip46_client_connect_rpc_opts(s, connect_secret, perms, NULL, out_result);
 }
 
 /* nostrc-nip46-rpc: Send get_public_key RPC to remote signer.
  * Returns the user's actual pubkey (may differ from remote_signer_pubkey).
  * On success, returns hex pubkey. Caller must free. */
-int nostr_nip46_client_get_public_key_rpc(NostrNip46Session *s, char **out_user_pubkey_hex) {
+int nostr_nip46_client_get_public_key_rpc_opts(NostrNip46Session *s,
+                                               const NostrNip46RequestOptions *opts,
+                                               char **out_user_pubkey_hex) {
     if (!s || !out_user_pubkey_hex) return -1;
     *out_user_pubkey_hex = NULL;
-
-    char *result = nip46_rpc_call(s, "get_public_key", NULL, 0, NULL);
-    if (!result) {
-        return -1;
-    }
-
-    /* Validate it looks like a pubkey (64 hex chars) */
-    size_t len = strlen(result);
-    if (len != 64) {
-        fprintf(stderr, "[nip46] get_public_key_rpc: ERROR: invalid pubkey length %zu\n", len);
+    char *result = nip46_rpc_call_opts(s, "get_public_key", NULL, 0, opts, NULL);
+    if (!result) return -1;
+    if (strlen(result) != 64) {
+        fprintf(stderr, "[nip46] get_public_key_rpc: ERROR: invalid pubkey length %zu\n",
+                strlen(result));
         free(result);
         return -1;
     }
-
     *out_user_pubkey_hex = result;
     return 0;
+}
+
+int nostr_nip46_client_get_public_key_rpc(NostrNip46Session *s, char **out_user_pubkey_hex) {
+    return nostr_nip46_client_get_public_key_rpc_opts(s, NULL, out_user_pubkey_hex);
 }
 
 /* Local transport crypto for kind-24133 protocol messages. */
