@@ -1,0 +1,61 @@
+# rpmlint filters for the nostrc SRPM (Fedora Phase 1 -- headless
+# nostr-login stack).  Point rpmlint at this file with `--config` when
+# running the RPM checks:
+#
+#     rpmlint --config packaging/rpm/rpmlint.toml \
+#             /path/to/RPMS/x86_64/*.rpm /path/to/RPMS/noarch/*.rpm
+#
+# Filters are matched against the full rpmlint output line.  Each entry
+# below documents WHY the diagnostic is expected for this package set --
+# please justify any new entry inline before adding it.
+
+Filters = [
+    # Technical vocabulary the aspell en_US dictionary does not know: Nostr
+    # protocol / library / daemon names, POSIX/Fedora acronyms, and file
+    # extensions.  Suppressing the whole spelling-error class rather than
+    # adding hundreds of per-word entries.
+    "spelling-error",
+
+    # pam_nostr.so is a NEW third-party PAM module; the Fedora "authorized
+    # module" list rpmlint checks against pre-dates it.  This is the same
+    # posture Debian took via the libpam-nostr lintian override
+    # (`shared-library-is-executable`).  When pam_nostr is upstreamed
+    # into Fedora's PAM package audit, drop this filter.
+    "pam-unauthorized-module pam_nostr\\.so",
+
+    # NSS modules are dlopen'd by glibc under the fixed name
+    # libnss_<svc>.so.2; the ".2" is glibc's NSS interface version, not a
+    # SONAME.  The module deliberately has no SONAME by design (this
+    # mirrors the libnss-nostr Debian lintian override).
+    "nss-nostr.*: W: no-soname /usr/lib64/libnss_nostr\\.so\\.2",
+
+    # D-4 decision: ship an unversioned libnostr_json.so compat symlink in
+    # the RUNTIME package (libnostr-json), not the -devel package, for one
+    # release so existing consumers of the old target name still link.
+    # rpmlint's rule that unversioned .so belongs in -devel is correct in
+    # general but wrong for this deliberate compat.
+    "devel-file-in-non-devel-package /usr/lib64/libnostr_json\\.so",
+
+    # The core protocol library (libnostr) calls SSL_CTX_set_cipher_list()
+    # from its TLS bootstrap.  Fedora's crypto policy check flags any use
+    # of that API (recommending SSL_CTX_set_ciphersuites() instead), but
+    # the codepath is preserved for OpenSSL 1.1 compatibility and is
+    # gated by Fedora's system-wide crypto policy at runtime.  Tracked
+    # upstream; not a packaging bug.
+    "crypto-policy-non-compliance-openssl",
+
+    # nostr-authd / nostr-homectl / nostr-homed-smb / nss-nostr do not
+    # yet ship man pages.  Not a Fedora rpmlint ERROR (`W:` only) but
+    # noisy in reports; filtered until B-follow-on adds them.
+    "no-manual-page-for-binary",
+    "no-documentation",
+
+    # rpmlint spec-file suggestion; not a defect for a build that has
+    # `BUILD_TESTING=OFF` and no runnable checks to invoke.
+    "no-%check-section",
+
+    # `no-buildroot-tag` is a stale Fedora rpmlint warning.  Fedora's
+    # rpm 4.19+ auto-defines %{buildroot}; explicit BuildRoot: is not
+    # required and is discouraged.
+    "no-buildroot-tag",
+]
