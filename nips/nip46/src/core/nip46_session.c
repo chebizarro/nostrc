@@ -15,6 +15,7 @@
 #include "error.h"
 #include "secure_buf.h"
 #include "json.h"
+#include <jansson.h>
 #include <openssl/rand.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -693,6 +694,10 @@ void nostr_nip46_session_free(NostrNip46Session *s) {
     /* 6. transport teardown - nobody is inside the RPC path anymore */
     nostr_nip46_client_stop(s);
     if (s->pool) {
+        /* nostrc-zcll.7: unregister the bunker pool so the middleware can
+         * no longer find this session. Paired with session_registry_add
+         * in bunker_listen. */
+        session_registry_remove(s->pool);
         nostr_simple_pool_stop(s->pool);
         nostr_simple_pool_free(s->pool);
         s->pool = NULL;
@@ -2512,27 +2517,167 @@ NostrNip46Session *nostr_nip46_bunker_new(const NostrNip46BunkerCallbacks *cbs) 
     return s;
 }
 
-/* Callback for incoming NIP-46 events from the relay pool */
+/* Callback for incoming NIP-46 events from the relay pool.
+ *
+ * nostrc-zcll.7 (final acceptance fix): the bunker session's pool middleware
+ * used to be a no-op logger. Any real RPC (`get_public_key`, `sign_event`)
+ * that a client posted to the bunker was silently dropped because nothing
+ * called `nostr_nip46_bunker_handle_cipher` on the incoming event. That
+ * broke the QR / nostrconnect:// flow after the initial `connect`: the
+ * broker's `get_public_key` timed out even though the signer received it.
+ *
+ * The dispatch here mirrors the client-side `nip46_persistent_client_cb`:
+ * look up the session from the pool via the registry, verify the event is
+ * addressed to us, hand the ciphertext to `bunker_handle_cipher`, then
+ * build+sign+publish the encrypted reply event through the same pool. The
+ * session's ACL still gates `sign_event` (via `handle_cipher`), so a rogue
+ * client cannot obtain a signature merely by reaching the middleware.
+ */
 static void nip46_event_middleware(NostrIncomingEvent *incoming) {
-    /* Note: This callback handles incoming kind 24133 events.
-     * The actual request handling is done via nostr_nip46_bunker_handle_cipher
-     * which is typically called by higher-level code that receives these events.
-     * For now, we log the incoming event for debugging purposes.
-     * Full async processing would require storing a session reference and
-     * integrating with an event loop (GLib, libevent, etc). */
-    if (!incoming || !incoming->event) return;
+    if (!incoming || !incoming->event || !incoming->relay) return;
 
     NostrEvent *ev = incoming->event;
-    int kind = nostr_event_get_kind(ev);
+    if (nostr_event_get_kind(ev) != NOSTR_EVENT_KIND_NIP46) return;
 
-    if (kind == NOSTR_EVENT_KIND_NIP46 && getenv("NOSTR_DEBUG")) {
+    const char *content = nostr_event_get_content(ev);
+    const char *sender_pubkey = nostr_event_get_pubkey(ev);
+    if (!content || !sender_pubkey) return;
+
+    if (getenv("NOSTR_DEBUG")) {
         const char *id = ev->id;
-        const char *pubkey = nostr_event_get_pubkey(ev);
-        fprintf(stderr, "[nip46] received kind %d event id=%s from=%s\n",
-                kind, id ? id : "(null)", pubkey ? pubkey : "(null)");
+        fprintf(stderr,
+                "[nip46] received kind %d event id=%s from=%s\n",
+                NOSTR_EVENT_KIND_NIP46, id ? id : "(null)", sender_pubkey);
     }
 
-    /* Event ownership: the pool will free the event after callback returns */
+    /* Find the bunker session whose pool owns this relay. Take a ref so the
+     * session can't be torn down while we're using it. */
+    NostrNip46Session *session = NULL;
+    pthread_mutex_lock(&s_session_registry_mutex);
+    for (SessionRegistryEntry *e = s_session_registry; e; e = e->next) {
+        if (e->pool) {
+            for (size_t i = 0; i < e->pool->relay_count; i++) {
+                if (e->pool->relays[i] == incoming->relay) {
+                    session = nostr_nip46_session_ref(e->session);
+                    break;
+                }
+            }
+            if (session) break;
+        }
+    }
+    pthread_mutex_unlock(&s_session_registry_mutex);
+    if (!session) return;
+
+    /* Only bunker-listening sessions dispatch RPCs here; client sessions
+     * use their own persistent-client callback. */
+    if (!session->secret || !session->listening ||
+        !session->bunker_pubkey_hex || !session->bunker_secret_hex ||
+        !session->pool) {
+        nostr_nip46_session_unref(session);
+        return;
+    }
+
+    /* Ignore our own echoed events (relays may fan an EVENT we published
+     * back to our own subscription). */
+    if (!strcmp(sender_pubkey, session->bunker_pubkey_hex)) {
+        nostr_nip46_session_unref(session);
+        return;
+    }
+
+    /* Require a p-tag naming this bunker; the subscription filter should
+     * already guarantee this, but defence in depth. */
+    NostrTags *tags = (NostrTags *)nostr_event_get_tags(ev);
+    int p_tag_matches = 0;
+    if (tags) {
+        size_t ntags = nostr_tags_size(tags);
+        for (size_t i = 0; i < ntags; i++) {
+            NostrTag *t = nostr_tags_get(tags, i);
+            if (!t || nostr_tag_size(t) < 2) continue;
+            const char *k = nostr_tag_get_key(t);
+            const char *v = nostr_tag_get_value(t);
+            if (k && v && !strcmp(k, "p") &&
+                !strcmp(v, session->bunker_pubkey_hex)) {
+                p_tag_matches = 1;
+                break;
+            }
+        }
+    }
+    if (!p_tag_matches) {
+        nostr_nip46_session_unref(session);
+        return;
+    }
+
+    /* Verify the outer event signature before handing the content to the
+     * decrypt/handle path. Defence in depth even when the pool has already
+     * verified. */
+    if (!nostr_event_check_signature(ev)) {
+        if (getenv("NOSTR_DEBUG")) {
+            fprintf(stderr,
+                    "[nip46] event_middleware: dropping event with bad "
+                    "signature from %s\n", sender_pubkey);
+        }
+        nostr_nip46_session_unref(session);
+        return;
+    }
+
+    /* Dispatch. handle_cipher decrypts, parses, calls ACL, builds and
+     * encrypts the reply. */
+    char *cipher_reply = NULL;
+    int rc = nostr_nip46_bunker_handle_cipher(session, sender_pubkey, content,
+                                              &cipher_reply);
+    if (rc != 0 || !cipher_reply) {
+        if (cipher_reply) free(cipher_reply);
+        nostr_nip46_session_unref(session);
+        return;
+    }
+
+    /* Build the reply event (kind 24133, ciphertext content, p-tag to
+     * sender), sign with the bunker key, and publish through the pool. */
+    NostrEvent *rep = nostr_event_new();
+    if (!rep) {
+        free(cipher_reply);
+        nostr_nip46_session_unref(session);
+        return;
+    }
+    nostr_event_set_kind(rep, NOSTR_EVENT_KIND_NIP46);
+    nostr_event_set_pubkey(rep, session->bunker_pubkey_hex);
+    nostr_event_set_content(rep, cipher_reply);
+    nostr_event_set_created_at(rep, (int64_t)time(NULL));
+    NostrTags *rep_tags = nostr_tags_new(1,
+        nostr_tag_new("p", sender_pubkey, NULL));
+    if (rep_tags) nostr_event_set_tags(rep, rep_tags);
+
+    nostr_secure_buf sb = secure_alloc(32);
+    if (sb.ptr &&
+        parse_sk32(session->bunker_secret_hex, (unsigned char *)sb.ptr) == 0 &&
+        nostr_event_sign_secure(rep, &sb) == 0) {
+        int published = 0;
+        pthread_mutex_lock(&session->pool->pool_mutex);
+        for (size_t i = 0; i < session->pool->relay_count; i++) {
+            NostrRelay *rel = session->pool->relays[i];
+            if (rel && nostr_relay_is_connected(rel)) {
+                nostr_relay_publish(rel, rep);
+                published++;
+            }
+        }
+        pthread_mutex_unlock(&session->pool->pool_mutex);
+        if (getenv("NOSTR_DEBUG")) {
+            fprintf(stderr,
+                    "[nip46] event_middleware: published reply to %d "
+                    "relay(s) (recipient=%s)\n",
+                    published, sender_pubkey);
+        }
+    } else if (getenv("NOSTR_DEBUG")) {
+        fprintf(stderr,
+                "[nip46] event_middleware: sign/publish reply failed\n");
+    }
+    if (sb.ptr) secure_free(&sb);
+    nostr_event_free(rep);
+    free(cipher_reply);
+    nostr_nip46_session_unref(session);
+
+    /* Event ownership: the pool will free the incoming event after we
+     * return. */
 }
 
 int nostr_nip46_bunker_listen(NostrNip46Session *s, const char *const *relays, size_t n_relays) {
@@ -2633,6 +2778,11 @@ int nostr_nip46_bunker_listen(NostrNip46Session *s, const char *const *relays, s
 
     /* Subscribe to all relays */
     nostr_simple_pool_subscribe(s->pool, (const char **)relays, n_relays, *filters, true /* dedup */);
+
+    /* nostrc-zcll.7: register the bunker pool so `nip46_event_middleware`
+     * can look up this session from an incoming event's relay pointer and
+     * dispatch RPCs. Idempotent — safe if already registered. */
+    session_registry_add(s->pool, s);
 
     /* Start the pool worker thread */
     nostr_simple_pool_start(s->pool);
@@ -2906,7 +3056,20 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
                     if (!signed_json) {
                         reply_json = nostr_nip46_response_build_err(req.id, "serialize_failed");
                     } else {
-                        reply_json = nostr_nip46_response_build_ok(req.id, signed_json);
+                        /* nostrc-zcll.7: NIP-46 spec requires sign_event's
+                         * `result` to be a JSON STRING containing the signed
+                         * event JSON, not a nested object. Encode via
+                         * jansson so `response_build_ok`'s `json_loads`
+                         * lands a string in `result`. */
+                        json_t *sj = json_string(signed_json);
+                        char *sj_enc = sj ? json_dumps(sj, JSON_ENCODE_ANY | JSON_COMPACT) : NULL;
+                        if (sj) json_decref(sj);
+                        if (!sj_enc) {
+                            reply_json = nostr_nip46_response_build_err(req.id, "serialize_failed");
+                        } else {
+                            reply_json = nostr_nip46_response_build_ok(req.id, sj_enc);
+                            free(sj_enc);
+                        }
                         free(signed_json);
                     }
                 }
@@ -3101,7 +3264,31 @@ static void acl_set_perms(NostrNip46Session *s, const char *client_pk, const cha
     e->next=s->acl_head;
     s->acl_head=e;
 }
-static int acl_has_perm(const NostrNip46Session *s, const char *client_pk, const char *method){ if(!s||!client_pk||!method) return 0; for(const struct PermEntry *it=s->acl_head; it; it=it->next){ if(it->client_pk && strcmp(it->client_pk, client_pk)==0){ if(it->n_methods==0) return 0; for(size_t i=0;i<it->n_methods;++i){ if(it->methods[i] && strcmp(it->methods[i], method)==0) return 1; } return 0; } } return 0; }
+/* nostrc-zcll.7 final acceptance: NIP-46 URI perms carry method[:qualifier]
+ * tokens (e.g. `sign_event:1` grants sign_event for kind 1). The stored ACL
+ * token therefore does not always equal the bare method name a caller
+ * passes to `acl_has_perm`; a strict strcmp mistakenly denies every
+ * qualified grant. Match against the leading `method` prefix — the entry
+ * grants at least that method — and continue treating an unqualified stored
+ * token as an exact match. */
+static int acl_has_perm(const NostrNip46Session *s, const char *client_pk, const char *method){
+    if(!s||!client_pk||!method) return 0;
+    size_t method_len = strlen(method);
+    for(const struct PermEntry *it=s->acl_head; it; it=it->next){
+        if(it->client_pk && strcmp(it->client_pk, client_pk)==0){
+            if(it->n_methods==0) return 0;
+            for(size_t i=0;i<it->n_methods;++i){
+                const char *stored = it->methods[i];
+                if(!stored) continue;
+                if(strcmp(stored, method)==0) return 1;
+                if(strncmp(stored, method, method_len)==0 &&
+                   stored[method_len] == ':') return 1;
+            }
+            return 0;
+        }
+    }
+    return 0;
+}
 
 /* ==========================================================================
  * nostrc-z1fb Phase 1: nostrconnect:// client-initiated QR login

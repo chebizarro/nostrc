@@ -250,16 +250,35 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  /* nostrc-zcll.7: derive per-username operation UUIDs so a single
+   * authority can host more than one seeded account (a hardcoded UUID
+   * triple collided with previous seeds and returned INVALID on the
+   * second call). Use the FNV-1a hash of the username to keep the
+   * function deterministic but distinct per account. */
+  uint32_t uhash = 0x811c9dc5u;
+  for (const char *p = username; *p; ++p) {
+    uhash ^= (uint8_t)*p;
+    uhash *= 0x01000193u;
+  }
+  char op_enroll[NH_IDENTITY_UUID_CAP];
+  char op_stage[NH_IDENTITY_UUID_CAP];
+  char op_activate[NH_IDENTITY_UUID_CAP];
+  snprintf(op_enroll,   sizeof op_enroll,
+           "00000000-0000-4000-8000-%08x0001", uhash);
+  snprintf(op_stage,    sizeof op_stage,
+           "00000000-0000-4000-8000-%08x0002", uhash);
+  snprintf(op_activate, sizeof op_activate,
+           "00000000-0000-4000-8000-%08x0003", uhash);
+
   nh_identity_enroll_request enroll = {0};
   enroll.username = username;
   enroll.pubkey_hex = pubkey_hex;
   enroll.home_mode = NH_IDENTITY_HOME_CREATE;
   nh_identity_operation_state state;
-  const char *op = "00000000-0000-4000-8000-00000000abcd";
-  CHECK(nh_identity_operation_begin_enroll(store, op, &enroll, &state) ==
+  CHECK(nh_identity_operation_begin_enroll(store, op_enroll, &enroll, &state) ==
             NH_IDENTITY_OK, "enroll begin");
   nh_identity_home_options hopts = {0};
-  nh_identity_rc hrc = nh_identity_home_prepare(store, op, &hopts, &state);
+  nh_identity_rc hrc = nh_identity_home_prepare(store, op_enroll, &hopts, &state);
   if (hrc != NH_IDENTITY_OK) {
     fprintf(stderr,
             "seed-nip46: home prepare: %s (need root, %s writable)\n",
@@ -277,7 +296,7 @@ int main(int argc, char **argv) {
       ? NH_IDENTITY_PROVIDER_NIP46_QR
       : NH_IDENTITY_PROVIDER_NIP46_BUNKER;
   CHECK(nh_identity_provider_stage(store,
-            "00000000-0000-4000-8000-00000000abce", account.account_id,
+            op_stage, account.account_id,
             ptype, 1, config, secret_blob, secret_len, provider_id) ==
             NH_IDENTITY_OK, "provider stage");
 
@@ -285,11 +304,11 @@ int main(int argc, char **argv) {
   strcpy(attestation.pubkey_hex, pubkey_hex);
   attestation.key_generation = account.key_generation;
   CHECK(nh_identity_provider_activate(store,
-            "00000000-0000-4000-8000-00000000abcf", provider_id,
+            op_activate, provider_id,
             &attestation) == NH_IDENTITY_OK, "provider activate");
   CHECK(nh_identity_store_publish_projection(store, NULL) == NH_IDENTITY_OK,
         "publish projection");
-  CHECK(nh_identity_operation_activate(store, op, &state) == NH_IDENTITY_OK,
+  CHECK(nh_identity_operation_activate(store, op_enroll, &state) == NH_IDENTITY_OK,
         "operation activate");
 
   nh_identity_store_close(store);
