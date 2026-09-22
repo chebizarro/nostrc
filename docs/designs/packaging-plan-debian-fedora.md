@@ -11,6 +11,33 @@ integration).
 
 ---
 
+## Maintainer decisions — 2026-09-21 (round 1)
+
+Locked (supersede the recommendations in §10 where they differ):
+
+- **D-1 (nsync):** available in Ubuntu 24.04+ (and Fedora `nsync-devel`). Do NOT
+  vendor — declare a normal build-dep. Re-confirm Debian 13 at packaging time.
+- **D-3 (libgo rename):** rename the library artifact to **`libnostrgo`**
+  (fixes the `liblibgo.a` double-prefix and the gccgo `libgo` collision). Debian
+  runtime pkg `libnostrgo0` / `-dev`; Fedora `libnostrgo` / `-devel`. Update all
+  consumers + `libgo.pc.in`.
+- **D-6 (NIP libs):** ship as **one** aggregate package **`libnostr-nips0`**
+  (`/-dev`), not per-NIP and not folded into `libnostr1`.
+- **D-11 (nostr-homectl):** split into a **GLib-free headless** CLI behind a new
+  `NOSTR_HOMED_ENABLE_CTL` option, decoupled from `EXPERIMENTAL_ROAMING`/FUSE, so
+  `nostr-login` ships a real headless admin CLI.
+- **D-14 (GLib in libnostr):** option **(c) two ABIs** — `libnostr1` GLib-free
+  (default headless ABI) **+** `libnostr-glib1` with GLib integration. Headless
+  stack links `libnostr1`; the GObject/desktop layers link `libnostr-glib1`. Pin
+  `NOSTR_WITH_GLIB` explicitly per build (no auto-detect) so each ABI is
+  reproducible. This doubles the libnostr build matrix — accepted for a clean
+  GLib-free server footprint.
+
+Still open (defaults = §10 recommendation unless the maintainer says otherwise):
+D-2, D-4, D-5, D-7, D-8, D-9, D-10, D-12, D-13.
+
+---
+
 ## 0. Scope, goal, and the one-sentence thesis
 
 Decompose the `nostrc` monorepo into a set of distro packages that follow
@@ -778,20 +805,20 @@ existing `apps/gnostr-signer/packaging/debian/*.install`, `*.postinst`, `*.trigg
 
 | ID | Decision | Options | Recommendation |
 |---|---|---|---|
-| **D-1** | **nsync availability.** `libgo`/`libnostr`/`libjson`/`relayd` all `find_library(nsync REQUIRED)`. The existing `debian/control` build-depends on `libnsync-dev`. Is that package actually in Debian/Ubuntu? Fedora ships `nsync-devel`. | (a) confirm it exists; (b) vendor nsync into `third_party/`; (c) replace with pthreads/futex primitives | **Verify first.** If absent from Debian, this blocks *every* package — resolve before phase 1. |
+| **D-1** ✅ | **nsync availability.** `libgo`/`libnostr`/`libjson`/`relayd` all `find_library(nsync REQUIRED)`. The existing `debian/control` build-depends on `libnsync-dev`. Is that package actually in Debian/Ubuntu? Fedora ships `nsync-devel`. | (a) confirm it exists; (b) vendor nsync into `third_party/`; (c) replace with pthreads/futex primitives | **Verify first.** If absent from Debian, this blocks *every* package — resolve before phase 1. |
 | **D-2** | **Version scheme.** Per-component versions (`libnostr` 1.0.0, `libgo` 0.1.1, `nostr-homed` 0.2.0) vs one distro source version. | (a) monorepo `Version:` + per-lib SONAMEs; (b) split sources so each keeps its own version | **(a).** Keeps `VERSION_MANIFEST.md` authoritative upstream; SONAMEs carry ABI. |
-| **D-3** | **`libgo` name collision** with gccgo's `libgo` in Debian, plus the `liblibgo.a` artifact bug. | (a) rename lib to `libnostrgo` + pkg `libnostr-go0`; (b) keep name, accept collision risk | **(a).** Rename now, before anything ships. |
+| **D-3** ✅ | **`libgo` name collision** with gccgo's `libgo` in Debian, plus the `liblibgo.a` artifact bug. | (a) rename lib to `libnostrgo` + pkg `libnostr-go0`; (b) keep name, accept collision risk | **(a).** Rename now, before anything ships. |
 | **D-4** | **`nostr_json` naming.** Underscore in SONAME and `.pc`. | (a) rename to `libnostr-json` + `nostr-json.pc` (symlink old); (b) keep | **(a)**, with a compat symlink for one release. |
 | **D-5** | **`nostr-authd` unit argument form.** SMB build emits the 4-arg `ExecStart`, but `nostr-homed-smb` is a separate package. | (a) always ship 4-arg (daemon tolerates it); (b) base unit 2-arg + a drop-in from `nostr-homed-smb` | **(b)** is cleaner; **(a)** is cheaper. Maintainer's call. |
-| **D-6** | **NIP libraries as packages.** ~50 targets, mixed OBJECT/static, no ABI story. | (a) fold into `libnostr1`; (b) one `libnostr-nips0`; (c) per-NIP packages | **(a).** Revisit only for an external consumer. |
+| **D-6** ✅ | **NIP libraries as packages.** ~50 targets, mixed OBJECT/static, no ABI story. | (a) fold into `libnostr1`; (b) one `libnostr-nips0`; (c) per-NIP packages | **(a).** Revisit only for an external consumer. |
 | **D-7** | **`nsswitch.conf` activation.** | (a) document only; (b) debconf prompt; (c) postinst `sed` | **(a)** for v1; Fedora uses `authselect` regardless. |
 | **D-8** | **Where `debian/` lives.** | (a) top-level `debian/`; (b) `packaging/debian/` + gbp overlay; (c) separate packaging branch | **(a)** for the first cut. |
 | **D-9** | **Retire the per-app `debian/` dirs?** `apps/gnostr-signer/packaging/debian/` declares its own source package but configures the root CMake project. | (a) collapse into one source package, keep the `.install`/maintainer scripts; (b) keep both | **(a).** Two `debian/control` files racing over one build tree is untenable. |
 | **D-10** | **Build profiles now or later.** Headless-only rebuilds currently need the full GTK4 build-dep set. | (a) later (after phase 1); (b) now | **(a).** Runtime independence — the actual requirement — is already satisfied. |
-| **D-11** | **`nostr-homectl` scope.** Roaming CLI vs headless identity-authority CLI. | (a) split into a GLib-free `NOSTR_HOMED_ENABLE_CTL`; (b) ship it in `nostrfs` and give `nostr-login` a different admin tool | **(a).** The maintainer explicitly wants it headless. |
+| **D-11** ✅ | **`nostr-homectl` scope.** Roaming CLI vs headless identity-authority CLI. | (a) split into a GLib-free `NOSTR_HOMED_ENABLE_CTL`; (b) ship it in `nostrfs` and give `nostr-login` a different admin tool | **(a).** The maintainer explicitly wants it headless. |
 | **D-12** | **Does `gnostr-desktop` depend on `nostr-login`?** | (a) no dependency, both co-installable; (b) `Recommends` | **(a).** A GNOME workstation should not silently install a PAM/NSS stack. |
 | **D-13** | **Upstream targets.** Debian/Fedora archive submission vs PPA/COPR. | (a) PPA + COPR first; (b) go straight to NEW/Fedora review | **(a).** Several §8 blockers (nsync, symbols files, `watch` file accuracy) are hard archive gates. |
-| **D-14** | **Does `libnostr1` carry GLib?** `NOSTR_WITH_GLIB=ON` is the default and links GLib PUBLIC, putting `glib-2.0`/`gobject-2.0` in `nostr.pc` `Requires:`. | (a) pin `ON` everywhere — one `libnostr1`, accepts `libglib2.0-0` in the headless closure; (b) pin `OFF` everywhere — smallest server footprint, but the GObject layers then need their own GLib bridge; (c) two ABIs (`libnostr1` + `libnostr-glib1`) | **(a)** unless the maintainer wants a strictly GLib-free server profile. (c) doubles the ABI surface for little gain. Whichever is chosen, **pin it** (B11) — the current auto-detection is non-reproducible. |
+| **D-14** ✅ | **Does `libnostr1` carry GLib?** `NOSTR_WITH_GLIB=ON` is the default and links GLib PUBLIC, putting `glib-2.0`/`gobject-2.0` in `nostr.pc` `Requires:`. | (a) pin `ON` everywhere — one `libnostr1`, accepts `libglib2.0-0` in the headless closure; (b) pin `OFF` everywhere — smallest server footprint, but the GObject layers then need their own GLib bridge; (c) two ABIs (`libnostr1` + `libnostr-glib1`) | **(a)** unless the maintainer wants a strictly GLib-free server profile. (c) doubles the ABI surface for little gain. Whichever is chosen, **pin it** (B11) — the current auto-detection is non-reproducible. |
 
 ---
 
