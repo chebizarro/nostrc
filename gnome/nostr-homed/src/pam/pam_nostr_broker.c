@@ -383,10 +383,23 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
    * canonicalising module in the stock stack (pam_krb5, sssd) uses
    * this same idiom, so GDM will honour it. syslog once so the
    * mapping is auditable in journalctl. */
+  /* Remember the original NIP-05 identifier across the reconnect so
+   * we can re-assert it on the second BEGIN_LOGIN — without this the
+   * greeter-artifact `account.identifier` field is missing on the QR
+   * flow, since the fresh connection's BEGIN_LOGIN runs with the
+   * canonical username and never re-invokes the NIP-05 resolver. */
+  char saved_identifier[sizeof canon.identifier];
+  saved_identifier[0] = '\0';
   if (canon.canonical[0] && strcmp(canon.canonical, user) != 0) {
     pam_syslog(pamh, LOG_INFO, "nostr: identifier %s -> %s",
                canon.identifier[0] ? canon.identifier : user,
                canon.canonical);
+    if (canon.identifier[0]) {
+      size_t idn = strnlen(canon.identifier, sizeof canon.identifier);
+      if (idn >= sizeof saved_identifier) idn = sizeof saved_identifier - 1;
+      memcpy(saved_identifier, canon.identifier, idn);
+      saved_identifier[idn] = '\0';
+    }
     /* pam_set_item copies the string; it does not take ownership. */
     if (pam_set_item(pamh, PAM_USER, canon.canonical) != PAM_SUCCESS) {
       pam_syslog(pamh, LOG_ERR,
@@ -438,10 +451,15 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     }
     if (is_qr) {
       /* Split flow: begin_login first so we can then run the display-aware
-       * select/submit split (design §5.4). */
+       * select/submit split (design §5.4). Re-assert the NIP-05 identifier
+       * (if we canonicalised one above) so the broker can attach it to the
+       * greeter artifact's account block on this connection. */
       nh_auth_provider_list disc;
       nh_auth_result br = NH_AUTH_RESULT_INTERNAL_ERROR;
-      trc = nh_auth_client_begin_login(fd, user, service, &disc, &br);
+      trc = nh_auth_client_begin_login_with_identifier(
+          fd, user, service,
+          saved_identifier[0] ? saved_identifier : NULL,
+          &disc, NULL, &br);
       if (trc != 0 || br != NH_AUTH_RESULT_OK) {
         nh_auth_client_close(fd);
         pam_syslog(pamh, LOG_ERR, "nostr: qr begin_login %s -> %s", user,

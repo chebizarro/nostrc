@@ -520,6 +520,47 @@ only the absolute `expires_at`. The wire `display` object carries both
 fields; a client that only understands one is guaranteed to get the
 right units.
 
+### `account.identifier` preservation across the PAM canonicalisation reconnect (nostrc-bit0 follow-up)
+
+The GDM/PAM stack authenticates over two distinct broker connections:
+`pam_nostr` first opens `auth.sock` and runs `BEGIN_LOGIN` with whatever
+the user typed at the greeter, which may be a NIP-05 (e.g.
+`chebizarro@coinos.io`). The broker resolves the identifier to the
+canonical local username on THAT connection and stashes the normalised
+address on its per-connection state.  The module then rewrites
+`PAM_USER` to the canonical name (so `pam_unix`, session setup, and the
+`gdm-session-worker` see the local uid) and closes the first
+connection.  It then opens a SECOND connection for the actual
+`SELECT_PROVIDER` / `SUBMIT_UNLOCK` cycle — and this second connection's
+`BEGIN_LOGIN` runs with the canonical username (`n_bizarro`), which has
+no `@`, so the broker's NIP-05 resolver is never invoked and the
+per-connection identifier stays empty.  Without the mitigation below
+the greeter artifact's `account.identifier` field would be missing
+throughout the QR pairing even though the user did enter a NIP-05.
+
+The PAM module works around this by re-asserting the ORIGINAL normalised
+NIP-05 as an additive-optional `identifier` field on the second
+connection's `BEGIN_LOGIN` payload.  The broker validates the assertion
+against the account it just resolved:
+
+  1. The field must parse as a well-formed NIP-05 address.
+  2. NIP-05 resolution must be enabled in the broker.
+  3. The rate limiter must permit the address (same limiter as the
+     canonicalisation path, so this side channel cannot be abused to
+     bypass cooldowns).
+  4. The address must resolve — via the broker's `(address → pubkey)`
+     cache first, falling through to the helper on a miss — to the
+     SAME `pubkey_hex` as the account named by `username`.
+
+Only when all four hold does the broker echo the address into the
+greeter artifact's `account.identifier`.  A malformed, rate-limited,
+unresolved, or mismatched assertion is silently dropped (logged at
+`LOG_NOTICE`) — never fatal to the login.  This prevents a hostile
+client from claiming an arbitrary identifier for an account it happens
+to be authenticating for.  In production the second call is almost
+always a cache hit from the first connection's resolution moments
+earlier, so the extra validation costs one string compare.
+
 ### Removal on retire
 
 `current.json` and `current.png` are both `unlink(2)`'d by the broker as

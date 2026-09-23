@@ -504,6 +504,80 @@ static nh_auth_result resolve_nip05_to_username(conn_state *cs,
   return NH_AUTH_RESULT_OK;
 }
 
+/* Validate a client-asserted NIP-05 `identifier` against the pubkey of
+ * the account this BEGIN_LOGIN just resolved to, and — only on match —
+ * stash the normalised address on cs->nip05_identifier so
+ * fill_greeter_account carries it into the artifact's account block.
+ *
+ * Semantics chosen to keep the surface hostile-client-safe:
+ *   - malformed NIP-05      -> ignore (LOG_NOTICE)
+ *   - resolver disabled     -> ignore (silent; NIP-05 is off system-wide)
+ *   - rate-limited          -> ignore (LOG_NOTICE): callers cannot use
+ *                              this path to bypass the throttle
+ *   - resolver failure      -> ignore (LOG_NOTICE)
+ *   - pubkey mismatch       -> ignore (LOG_NOTICE): the identifier does
+ *                              NOT belong to this account
+ *   - match                 -> stash on cs->nip05_identifier
+ * Never sets cs->nip05_canonical: the BEGIN_LOGIN reply's
+ * account_username field is meaningful only when the CALLER supplied
+ * an identifier as `username` (i.e. was asking the broker to
+ * canonicalise). Here the caller has already canonicalised. */
+static void apply_asserted_identifier(conn_state *cs, const char *asserted,
+                                      const nh_identity_account *account) {
+  nh_nip05_address addr;
+  if (nh_nip05_parse(asserted, &addr) != 0) {
+    syslog(LOG_NOTICE,
+           "nostr: asserted identifier malformed — ignoring");
+    return;
+  }
+  if (!cs->broker->nip05_enabled || !cs->broker->nip05_resolver ||
+      !cs->broker->nip05_cache)
+    return;
+  uint64_t now_ms = broker_now_ms(cs->broker);
+  if (!nh_auth_ratelimit_check(cs->broker->ratelimit, addr.address, now_ms)) {
+    syslog(LOG_NOTICE,
+           "nostr: asserted identifier %s rate-limited — ignoring",
+           addr.address);
+    return;
+  }
+  int64_t now_s = (int64_t)time(NULL);
+  nh_nip05_result r;
+  nh_nip05_rc rrc = nh_nip05_cache_lookup(cs->broker->nip05_cache,
+                                          addr.address, now_s, &r);
+  if (rrc == NH_NIP05_ERR_INTERNAL) {
+    /* miss sentinel — resolve through the helper (same code path as
+     * resolve_nip05_to_username, so a cache hit from the earlier
+     * connection's canonicalisation is the common case in production). */
+    rrc = (nh_nip05_rc)cs->broker->nip05_resolver(
+        cs->broker->nip05_resolver_ctx, &addr, &r);
+    if (rrc == NH_NIP05_OK)
+      nh_nip05_cache_put_positive(cs->broker->nip05_cache, addr.address,
+                                  now_s, &r);
+    else
+      nh_nip05_cache_put_negative(cs->broker->nip05_cache, addr.address,
+                                  now_s, rrc);
+  }
+  if (rrc != NH_NIP05_OK) {
+    syslog(LOG_NOTICE,
+           "nostr: asserted identifier %s did not resolve (rc=%d)",
+           addr.address, (int)rrc);
+    return;
+  }
+  if (strcmp(r.pubkey_hex, account->pubkey_hex) != 0) {
+    syslog(LOG_NOTICE,
+           "nostr: asserted identifier %s resolves to a different pubkey "
+           "than %s — ignoring", addr.address, account->username);
+    return;
+  }
+  size_t idn = strnlen(addr.address, sizeof addr.address);
+  if (idn >= sizeof cs->nip05_identifier)
+    idn = sizeof cs->nip05_identifier - 1;
+  memcpy(cs->nip05_identifier, addr.address, idn);
+  cs->nip05_identifier[idn] = '\0';
+  syslog(LOG_INFO, "nostr: asserted identifier %s -> %s (matched)",
+         addr.address, account->username);
+}
+
 /* Runs BEGIN_LOGIN and, on OK, returns the account's enabled_providers bitmask
  * so the caller can echo the available provider set back to the client. */
 static nh_auth_result do_begin_login(conn_state *cs, const char *payload_json,
@@ -562,6 +636,30 @@ static nh_auth_result do_begin_login(conn_state *cs, const char *payload_json,
     const nh_identity_account *account =
         nh_auth_transaction_get_account(cs->tx);
     if (account) *providers_out = account->enabled_providers;
+  }
+
+  /* Optional client-asserted `identifier` (nostrc-bit0 follow-up).
+   *
+   * PAM canonicalises PAM_USER on its first BEGIN_LOGIN and then
+   * closes that connection; the second BEGIN_LOGIN it opens after
+   * pam_set_item(PAM_USER) carries the canonical local username, so
+   * the resolver above never runs and cs->nip05_identifier stays
+   * empty — the greeter artifact then loses the pretty NIP-05
+   * label. The PAM module works around this by re-asserting the
+   * originally typed identifier on the second connection; we validate
+   * it against the just-resolved account here so a hostile client
+   * cannot invent an identifier for an account it authenticates.
+   * A malformed or mismatched identifier is silently dropped
+   * (logged at LOG_NOTICE) — never fatal. */
+  if (result == NH_AUTH_RESULT_OK && cs->tx && cs->nip05_identifier[0] == '\0') {
+    json_t *iroot = NULL;
+    const char *asserted = json_str(payload_json, "identifier", &iroot);
+    if (asserted && asserted[0] && strlen(asserted) <= NH_NIP05_ADDRESS_MAX) {
+      const nh_identity_account *account =
+          nh_auth_transaction_get_account(cs->tx);
+      if (account) apply_asserted_identifier(cs, asserted, account);
+    }
+    if (iroot) json_decref(iroot);
   }
   if (root) json_decref(root);
   if (sroot) json_decref(sroot);

@@ -31,11 +31,13 @@
 #include "nostr/nip46/nip46_msg.h"
 #include "nostr/nip46/nip46_types.h"
 #include "nostr/nip46/nip46_uri.h"
+#include "nostr_nip05.h"
 
 #include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -297,6 +299,10 @@ static const char *g_probe_path;   /* .../current.json */
 static int *g_probe_seen;
 static int64_t g_probe_expires_at;
 static int g_probe_png_present;
+/* nostrc-bit0 follow-up: greeter-artifact `account.identifier` — non-empty
+ * when the artifact carried the field, "" when the field was absent. */
+static char g_probe_account_identifier[NH_NIP05_ADDRESS_MAX + 1];
+static int g_probe_account_identifier_present;
 
 static void probe_cb(void *ctx, const nh_auth_display *d) {
   (void)ctx; (void)d;
@@ -338,17 +344,40 @@ static void probe_cb(void *ctx, const nh_auth_display *d) {
       (void)dl;
     }
   }
+  /* Capture account.identifier so the identifier-preservation tests can
+   * assert on it: field present -> record the value, field absent ->
+   * leave g_probe_account_identifier_present == 0. */
+  json_t *acct = json_object_get(root, "account");
+  if (acct && json_is_object(acct)) {
+    json_t *ident = json_object_get(acct, "identifier");
+    if (ident && json_is_string(ident)) {
+      const char *v = json_string_value(ident);
+      if (v) {
+        size_t n = strlen(v);
+        if (n >= sizeof g_probe_account_identifier)
+          n = sizeof g_probe_account_identifier - 1;
+        memcpy(g_probe_account_identifier, v, n);
+        g_probe_account_identifier[n] = '\0';
+        g_probe_account_identifier_present = 1;
+      }
+    }
+  }
   json_decref(root);
 }
 
 /* BEGIN_LOGIN -> SELECT_PROVIDER("nip46qr") -> SUBMIT_UNLOCK on one
- * connection. Returns 0 on transport success and sets *result_out. */
-static int client_login_qr(int fd, const char *username,
-                           nh_auth_result *result_out) {
+ * connection. Returns 0 on transport success and sets *result_out.
+ * When `identifier` is non-NULL/non-empty it is asserted on
+ * BEGIN_LOGIN (nostrc-bit0 follow-up). */
+static int client_login_qr_ex(int fd, const char *username,
+                              const char *identifier,
+                              nh_auth_result *result_out) {
   nh_auth_provider_list providers;
   nh_auth_result br = NH_AUTH_RESULT_INTERNAL_ERROR;
-  if (nh_auth_client_begin_login(fd, username, "gdm-password", &providers,
-                                 &br) != 0)
+  if (nh_auth_client_begin_login_with_identifier(
+          fd, username, "gdm-password",
+          identifier && identifier[0] ? identifier : NULL,
+          &providers, NULL, &br) != 0)
     return -1;
   if (br != NH_AUTH_RESULT_OK) { *result_out = br; return 0; }
   return nh_auth_client_submit_selection_display(
@@ -356,11 +385,43 @@ static int client_login_qr(int fd, const char *username,
       result_out);
 }
 
+static int client_login_qr(int fd, const char *username,
+                           nh_auth_result *result_out) {
+  return client_login_qr_ex(fd, username, NULL, result_out);
+}
+
+/* Stub NIP-05 resolver installed in the broker child. Returns the
+ * pubkey configured in @stub_resolver_pk_hex for any NIP-05 whose
+ * local part matches @stub_resolver_local (case-insensitive, since
+ * nh_nip05_parse preserves the local part). */
+static const char *g_stub_resolver_pk_hex;
+static const char *g_stub_resolver_local;
+static int stub_nip05_resolver(void *ctx, const struct nh_nip05_address *addr,
+                               struct nh_nip05_result *result_out) {
+  (void)ctx;
+  if (!addr || !result_out || !g_stub_resolver_pk_hex ||
+      !g_stub_resolver_local)
+    return NH_NIP05_ERR_INTERNAL;
+  if (strcasecmp(addr->local, g_stub_resolver_local) != 0)
+    return NH_NIP05_ERR_NAME;
+  memset(result_out, 0, sizeof *result_out);
+  strncpy(result_out->pubkey_hex, g_stub_resolver_pk_hex,
+          sizeof result_out->pubkey_hex - 1);
+  return NH_NIP05_OK;
+}
+
 /* Fork the broker and drive one QR login through it. `mode` picks the
- * signer's behaviour and (for OK vs WRONG_KEY) the bunker signing key. */
+ * signer's behaviour and (for OK vs WRONG_KEY) the bunker signing key.
+ * When @asserted_identifier is non-NULL the client re-asserts it on
+ * BEGIN_LOGIN, and the broker child installs a stub NIP-05 resolver
+ * returning @resolver_pk_hex for that identifier's local part
+ * (nostrc-bit0 follow-up: greeter-artifact identifier preservation). */
 static nh_auth_result run_login(const char *dir, const char *greeter_dir,
                                 test_mode mode, int *artifact_seen_out,
-                                int *artifact_removed_out) {
+                                int *artifact_removed_out,
+                                const char *asserted_identifier,
+                                const char *resolver_pk_hex,
+                                const char *resolver_local) {
   int sv[2];
   NH_CHECK(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0);
   pid_t pid = fork();
@@ -377,6 +438,16 @@ static nh_auth_result run_login(const char *dir, const char *greeter_dir,
     nh_identity_store *store = open_store(dir, 0);
     nh_auth_broker *broker = nh_auth_broker_new(store);
     NH_CHECK(broker);
+    if (resolver_pk_hex && resolver_pk_hex[0] && resolver_local &&
+        resolver_local[0]) {
+      /* Enable NIP-05 in the broker and route resolutions through the
+       * stub so the client's asserted identifier can be validated
+       * without touching the network. */
+      nh_auth_broker_set_nip05(broker, 1, NULL, NULL, 600);
+      g_stub_resolver_pk_hex = resolver_pk_hex;
+      g_stub_resolver_local = resolver_local;
+      nh_auth_broker_set_nip05_resolver(broker, stub_nip05_resolver, NULL);
+    }
     (void)nh_auth_broker_handle_connection(broker, sv[1]);
     nh_auth_broker_free(broker);
     nh_identity_store_close(store);
@@ -393,9 +464,12 @@ static nh_auth_result run_login(const char *dir, const char *greeter_dir,
   *artifact_seen_out = 0;
   g_probe_expires_at = 0;
   g_probe_png_present = 0;
+  g_probe_account_identifier[0] = '\0';
+  g_probe_account_identifier_present = 0;
 
   nh_auth_result result = NH_AUTH_RESULT_INTERNAL_ERROR;
-  int rc = client_login_qr(sv[0], "n_qralice", &result);
+  int rc = client_login_qr_ex(sv[0], "n_qralice", asserted_identifier,
+                              &result);
   NH_CHECK(rc == 0);
   close(sv[0]);
   int status = 0;
@@ -422,7 +496,8 @@ int main(void) {
    * at BEGIN_LOGIN before the provider ever runs (identical to the
    * pre-paired bunker test's behaviour). */
   int seen = 0, removed = 0;
-  nh_auth_result r = run_login(dir, greeter, MODE_OK, &seen, &removed);
+  nh_auth_result r = run_login(dir, greeter, MODE_OK, &seen, &removed,
+                               NULL, NULL, NULL);
   printf("qr matching signer -> %s\n", nh_auth_result_name(r));
   NH_CHECK(r == (is_root ? NH_AUTH_RESULT_OK : NH_AUTH_RESULT_DENIED));
   if (is_root) {
@@ -453,7 +528,8 @@ int main(void) {
      * matches the pre-paired bunker test\'s wrong-key expectation and
      * keeps the "did not accept" outcome PAM-visible without downgrading
      * to the Unix stack. */
-    r = run_login(dir, greeter, MODE_WRONG_KEY, &seen, &removed);
+    r = run_login(dir, greeter, MODE_WRONG_KEY, &seen, &removed,
+                  NULL, NULL, NULL);
     printf("qr wrong-key signer -> %s\n", nh_auth_result_name(r));
     NH_CHECK(r == NH_AUTH_RESULT_INVALID_PROOF);
     NH_CHECK(removed);
@@ -466,9 +542,43 @@ int main(void) {
      * Design §4.1 asks for INTERACTION_REQUIRED to be distinguishable —
      * that finer-grained mapping is a broker-level policy change tracked
      * separately; the QR provider itself already emits the design event. */
-    r = run_login(dir, greeter, MODE_TIMEOUT, &seen, &removed);
+    r = run_login(dir, greeter, MODE_TIMEOUT, &seen, &removed,
+                  NULL, NULL, NULL);
     printf("qr timeout -> %s\n", nh_auth_result_name(r));
     NH_CHECK(r == NH_AUTH_RESULT_INVALID_PROOF);
+    NH_CHECK(removed);
+
+    /* nostrc-bit0 follow-up: greeter-artifact `account.identifier`
+     * is preserved when the PAM module re-asserts the original NIP-05
+     * on the second BEGIN_LOGIN after canonicalisation. Positive
+     * case: stub NIP-05 resolver returns ALICE_PK for the asserted
+     * identifier, so the broker validates the match and echoes the
+     * identifier into the artifact's account block. */
+    r = run_login(dir, greeter, MODE_OK, &seen, &removed,
+                  "alice@nip05.example", ALICE_PK, "alice");
+    printf("qr matching identifier -> %s ident_present=%d ident=\"%s\"\n",
+           nh_auth_result_name(r), g_probe_account_identifier_present,
+           g_probe_account_identifier);
+    NH_CHECK(r == NH_AUTH_RESULT_OK);
+    NH_CHECK(seen);
+    NH_CHECK(g_probe_account_identifier_present);
+    NH_CHECK(strcmp(g_probe_account_identifier, "alice@nip05.example") == 0);
+    NH_CHECK(removed);
+
+    /* Negative case: the stub resolver returns a DIFFERENT pubkey
+     * (an all-`a` placeholder) for the asserted identifier's local
+     * part, so the broker MUST reject it and omit `account.identifier`
+     * from the artifact. The rest of the artifact (username,
+     * display_name where present, avatar) is unaffected. */
+    static const char *OTHER_PK =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    r = run_login(dir, greeter, MODE_OK, &seen, &removed,
+                  "mallory@nip05.example", OTHER_PK, "mallory");
+    printf("qr mismatched identifier -> %s ident_present=%d\n",
+           nh_auth_result_name(r), g_probe_account_identifier_present);
+    NH_CHECK(r == NH_AUTH_RESULT_OK);
+    NH_CHECK(seen);
+    NH_CHECK(!g_probe_account_identifier_present);
     NH_CHECK(removed);
   }
 
