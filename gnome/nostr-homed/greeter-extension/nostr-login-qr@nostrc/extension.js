@@ -81,6 +81,11 @@ const AUTH_ENTRY_CLASS = 'login-dialog-prompt-entry';
 // live so the dialog does not double-render the identity above our own
 // avatar block.  Restored verbatim on retire.
 const USER_WIDGET_CLASSES = ['user-widget'];
+// Label inside a gnome-shell UserWidget — `_label` in userWidget.js carries
+// this class.  We read its text to decide whether the native widget already
+// names the resolved account (tile-click flow) or is showing a stale typed
+// string (NIP-05 flow).
+const USER_WIDGET_LABEL_CLASS = 'user-widget-label';
 // Message labels the shell renders as PAM_TEXT_INFO / PAM_ERROR_MSG.
 // We hide any that duplicate the pairing code the card already displays.
 const AUTH_MESSAGE_CLASSES = [
@@ -470,7 +475,20 @@ export default class NostrLoginQrExtension extends Extension {
         // Resolve the optional account block first so we can size the QR
         // down when we also have identity to render above it.  A missing,
         // malformed or empty account object leaves v2 behaviour intact.
-        const account = this._extractAccount(manifest);
+        //
+        // Then decide whether to actually override GDM's own user widget.
+        // In the tile-click flow (user picked their tile at the greeter, or
+        // the unlock dialog was populated from the live session) GDM's
+        // avatar + name is already correct — we should leave it alone and
+        // just insert the QR + pairing code below.  Only override when the
+        // dialog would otherwise show the wrong identity (NIP-05 flow: the
+        // typed string + a generic icon), when the visible label doesn't
+        // match the resolved account, or when we can't find a native user
+        // widget to defer to.  Passing null through the rest of the pipeline
+        // yields v2 behaviour: no identity block from us, QR back at 260 px,
+        // native user widget untouched.
+        const rawAccount = this._extractAccount(manifest);
+        const account = this._resolveAccountOverride(rawAccount);
         const qrSize = account ? IMAGE_DISPLAY_PX_WITH_ACCOUNT : IMAGE_DISPLAY_PX;
         this._currentQrSize = qrSize;
         try {
@@ -894,6 +912,7 @@ export default class NostrLoginQrExtension extends Extension {
         if (!account) {
             try { this._accountBox.visible = false; } catch (_e) {}
             try { this._avatarBin.set_child(null); } catch (_e) {}
+            try { this._avatarBin.set_style(null); } catch (_e) {}
             try {
                 this._displayNameLabel.text = '';
                 this._displayNameLabel.visible = false;
@@ -905,25 +924,52 @@ export default class NostrLoginQrExtension extends Extension {
             return;
         }
 
-        let avatarActor = null;
-        if (account.avatar_path)
-            avatarActor = this._loadAvatarActor(account.avatar_path, AVATAR_DISPLAY_PX);
-        if (!avatarActor) {
-            // Generic fallback so we still render *something* above the QR
-            // rather than an empty circle when the producer omitted the PNG
-            // or the pixbuf failed to load.  Uses the shell's own symbolic
-            // avatar so it themes with the surrounding dialog.
+        // Circular avatar: render the PNG as the BACKGROUND of the St.Bin
+        // and let CSS's `border-radius: 999px` on `.nostr-login-qr-avatar`
+        // clip it to a circle.  This is exactly the technique gnome-shell's
+        // own userWidget.js uses to draw the AccountsService avatar: a
+        // Clutter image actor with border-radius does NOT clip (the pixels
+        // extend past the rounded box), but St's border-radius clips the
+        // widget's BACKGROUND correctly.  Path safety is already enforced
+        // upstream by `_extractAccount` — `account.avatar_path` only ever
+        // points inside `MANIFEST_DIR` (basename-only, existence-checked).
+        let avatarStyled = false;
+        if (account.avatar_path) {
             try {
-                avatarActor = new St.Icon({
+                const uri = Gio.File.new_for_path(account.avatar_path).get_uri();
+                this._avatarBin.set_child(null);
+                // background-size: cover — fill the 100 px circle regardless
+                // of the source PNG's aspect ratio, matching gnome-shell's
+                // own avatar rendering.  The neutral background-color from
+                // the stylesheet is drawn beneath so a partially-transparent
+                // PNG still reads as a filled circle rather than a hole.
+                this._avatarBin.set_style(
+                    `background-image: url("${uri}"); background-size: cover;`);
+                avatarStyled = true;
+            } catch (e) {
+                _safeLog(`avatar background style failed for ${account.avatar_path}: ${e.message}`);
+            }
+        }
+        if (!avatarStyled) {
+            // Generic fallback so we still render *something* in the circle
+            // rather than an empty plate when the producer omitted the PNG
+            // or the URI construction failed.  Uses the shell's own symbolic
+            // avatar so it themes with the surrounding dialog.  Clear any
+            // prior inline background-image so a stale avatar can't bleed
+            // through beneath the fallback icon.
+            try { this._avatarBin.set_style(null); } catch (_e) {}
+            let fallback = null;
+            try {
+                fallback = new St.Icon({
                     icon_name: 'avatar-default-symbolic',
                     icon_size: AVATAR_DISPLAY_PX,
                     style_class: 'nostr-login-qr-avatar-fallback',
                 });
             } catch (_e) {
-                avatarActor = null;
+                fallback = null;
             }
+            try { this._avatarBin.set_child(fallback); } catch (_e) {}
         }
-        try { this._avatarBin.set_child(avatarActor); } catch (_e) {}
 
         const label = account.display_name || '';
         try {
@@ -940,56 +986,76 @@ export default class NostrLoginQrExtension extends Extension {
         try { this._accountBox.visible = true; } catch (_e) {}
     }
 
-    _loadAvatarActor(path, displaySize) {
-        let pixbuf;
+    _resolveAccountOverride(rawAccount) {
+        // Wrap `_shouldOverrideNativeWidget` in a try/catch so a bug in
+        // the detection path (unusual shell version, mid-transition dialog
+        // state) can never silently drop the identity block — we default to
+        // OVERRIDE on failure, which matches v3's prior behaviour and is
+        // strictly safer than leaving the wrong name / generic icon on
+        // screen with our QR beneath it.
+        if (!rawAccount) return null;
         try {
-            pixbuf = GdkPixbuf.Pixbuf.new_from_file(path);
+            return this._shouldOverrideNativeWidget(rawAccount)
+                ? rawAccount
+                : null;
         } catch (e) {
-            _safeLog(`avatar pixbuf load failed for ${path}: ${e.message}`);
-            return null;
+            _safeLog(`native-widget detection failed, defaulting to override: ${e.message}`);
+            return rawAccount;
         }
-        if (!pixbuf) return null;
-        const width = pixbuf.get_width();
-        const height = pixbuf.get_height();
-        if (width <= 0 || height <= 0 || width > 4096 || height > 4096) {
-            _safeLog(`refusing implausible avatar pixbuf size ${width}x${height}`);
-            return null;
+    }
+
+    _shouldOverrideNativeWidget(account) {
+        // Return true when we should hide GDM's own user widget and render
+        // our resolved account identity above the QR; false when GDM's
+        // widget is already correct (tile-click flow) and we should just
+        // slot the QR + pairing code into the AuthPrompt beneath it.
+        //
+        // Primary signal: an `identifier` field means the login started via
+        // NIP-05 at "Not listed?", so GDM's dialog is showing the raw typed
+        // string (e.g. `chebizarro@coinos.io`) with a generic avatar until
+        // pam_nostr canonicalises the name.  Always override in that case.
+        if (account.identifier) return true;
+
+        // Belt-and-braces: does the AuthPrompt already carry a `user-widget`
+        // whose visible label names this account?  If we can't find a widget
+        // to compare against we default to override so we don't regress the
+        // v3 look for unusual shell versions.
+        const authPrompt = this._findAuthPrompt();
+        if (!authPrompt) return true;
+        const userWidgets = [];
+        _collectDescendantsByAnyClass(
+            authPrompt,
+            USER_WIDGET_CLASSES,
+            userWidgets,
+            this._container);
+        if (userWidgets.length === 0) return true;
+
+        // GDM's UserWidget label may hold either the canonical username
+        // (`n_bizarro`) or the AccountsService real-name (`Biz`); accept
+        // either as "already correct" so both tile-click variants keep the
+        // native widget.  Empty strings on both sides never match.
+        const wantNames = [];
+        if (account.username)
+            wantNames.push(account.username.toLowerCase().trim());
+        if (account.display_name)
+            wantNames.push(account.display_name.toLowerCase().trim());
+        if (wantNames.length === 0) return true;
+
+        for (const w of userWidgets) {
+            const labelActor = _findDescendantByStyleClass(
+                w, USER_WIDGET_LABEL_CLASS, this._container);
+            let text = '';
+            try {
+                text = (labelActor && (labelActor.text
+                    || (labelActor.clutter_text && labelActor.clutter_text.text))
+                    || '').toString();
+            } catch (_e) {}
+            const norm = text.toLowerCase().trim();
+            if (!norm) continue;
+            if (wantNames.indexOf(norm) !== -1)
+                return false;
         }
-        const image = new Clutter.Image();
-        const hasAlpha = pixbuf.get_has_alpha();
-        const fmt = hasAlpha
-            ? Cogl.PixelFormat.RGBA_8888
-            : Cogl.PixelFormat.RGB_888;
-        let ok = false;
-        try {
-            ok = image.set_data(
-                pixbuf.get_pixels(),
-                fmt,
-                width,
-                height,
-                pixbuf.get_rowstride());
-        } catch (e) {
-            _safeLog(`avatar Clutter.Image.set_data threw: ${e.message}`);
-            return null;
-        }
-        if (!ok) {
-            _safeLog('avatar Clutter.Image.set_data returned false');
-            return null;
-        }
-        const actor = new Clutter.Actor({
-            width: displaySize,
-            height: displaySize,
-            reactive: false,
-        });
-        actor.set_content(image);
-        // LINEAR for a photo/user avatar (unlike the nearest-neighbour QR
-        // upscale) so a small source PNG scales up without visible mosaic.
-        try {
-            actor.set_content_scaling_filters(
-                Clutter.ScalingFilter.LINEAR,
-                Clutter.ScalingFilter.LINEAR);
-        } catch (_e) {}
-        return actor;
+        return true;
     }
 
     _loadPngActor(path, displaySize) {
