@@ -117,6 +117,25 @@ int main(int argc, char **argv) {
       nh_auth_broker_set_qr_default_relays(relay_ptrs,
                                            conf.nip46_qr_relays_count);
     }
+    /* NIP-05 identifier resolution (B5-NIP-05, nostrc-bit0). Enabled
+     * by default so a fresh install lets users type their NIP-05 at
+     * the GDM greeter's "Not listed?" prompt out of the box; a site
+     * admin can disable it via `nip05_resolve = off` in auth.conf.
+     * Drop-user defaults to nip05_image_user, then profile_image_user,
+     * then "nobody" — same helper is fine to reuse.
+     * Helper path override lives in NH_NIP05_HELPER for headless
+     * integration tests. */
+    {
+      int enabled = (conf.nip05_resolve != 2); /* 0 unset => on, 1 on, 2 off */
+      const char *helper = getenv("NH_NIP05_HELPER");
+      const char *duser = conf.nip05_image_user[0]
+                             ? conf.nip05_image_user
+                             : (conf.profile_image_user[0]
+                                    ? conf.profile_image_user
+                                    : NULL);
+      nh_auth_broker_set_nip05(broker, enabled, helper, duser,
+                               (int)conf.nip05_cache_ttl_seconds);
+    }
   }
 
   /* Optional persistent rate-limit backing. If NH_AUTH_RATELIMIT_PATH is set

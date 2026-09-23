@@ -361,9 +361,10 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     return PAM_AUTHINFO_UNAVAIL;
   }
   nh_auth_provider_list providers;
+  nh_auth_login_canonical canon;
   nh_auth_result begin_result = NH_AUTH_RESULT_INTERNAL_ERROR;
-  int trc = nh_auth_client_begin_login(fd, user, service, &providers,
-                                       &begin_result);
+  int trc = nh_auth_client_begin_login_ex(fd, user, service, &providers,
+                                          &canon, &begin_result);
   nh_auth_client_close(fd);
   if (trc != 0) {
     pam_syslog(pamh, LOG_ERR, "nostr: broker transport failure for %s", user);
@@ -373,6 +374,32 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     pam_syslog(pamh, LOG_NOTICE, "nostr: begin_login %s -> %s", user,
                nh_auth_result_name(begin_result));
     return map_result(begin_result);
+  }
+  /* NIP-05 canonicalisation (B5-NIP-05, nostrc-bit0). The broker
+   * resolved an `@`-containing identifier to a local account and
+   * echoed the canonical username; rewrite PAM_USER so downstream
+   * modules (pam_unix account, session setup, pam_env, gdm-session-
+   * worker's login-record writer, ...) see the local uid. Every
+   * canonicalising module in the stock stack (pam_krb5, sssd) uses
+   * this same idiom, so GDM will honour it. syslog once so the
+   * mapping is auditable in journalctl. */
+  if (canon.canonical[0] && strcmp(canon.canonical, user) != 0) {
+    pam_syslog(pamh, LOG_INFO, "nostr: identifier %s -> %s",
+               canon.identifier[0] ? canon.identifier : user,
+               canon.canonical);
+    /* pam_set_item copies the string; it does not take ownership. */
+    if (pam_set_item(pamh, PAM_USER, canon.canonical) != PAM_SUCCESS) {
+      pam_syslog(pamh, LOG_ERR,
+                 "nostr: pam_set_item(PAM_USER=%s) failed — refusing",
+                 canon.canonical);
+      return PAM_AUTHINFO_UNAVAIL;
+    }
+    /* Re-fetch PAM_USER so subsequent syslog / retry messages name the
+     * canonical account rather than the identifier. pam_get_user
+     * updates our `user` pointer. */
+    user = NULL;
+    if (pam_get_user(pamh, &user, NULL) != PAM_SUCCESS || !user || !user[0])
+      return PAM_USER_UNKNOWN;
   }
 
   const char *chosen = NULL;

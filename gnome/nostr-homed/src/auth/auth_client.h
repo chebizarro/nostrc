@@ -92,6 +92,37 @@ int nh_auth_client_begin_login(int fd, const char *username, const char *service
                                nh_auth_provider_list *providers_out,
                                nh_auth_result *result_out);
 
+/* NIP-05 canonicalisation hints attached to a BEGIN_LOGIN reply.
+ *
+ * When the client supplies a NIP-05 identifier as `username`
+ * (e.g. "chebizarro@coinos.io") and the broker resolves it to an
+ * enrolled account, the reply carries the canonical local username
+ * and the identifier-as-typed so the PAM module can:
+ *   1. syslog the mapping (identifier -> canonical);
+ *   2. pam_set_item(PAM_USER, canonical) so downstream PAM modules
+ *      see the local uid;
+ *   3. publish the identifier into the greeter artifact's `account`
+ *      object so the GDM greeter can show the pretty NIP-05 label
+ *      next to the avatar.
+ *
+ * When the client already supplied the canonical username these
+ * fields are empty (canonical[0] == '\0'). The struct is safe to
+ * pass to nh_auth_client_begin_login_ex zero-initialised. */
+typedef struct nh_auth_login_canonical {
+  char canonical[NH_IDENTITY_USERNAME_CAP];      /* local username */
+  char identifier[256];                          /* NIP-05 as typed */
+} nh_auth_login_canonical;
+
+/* Extended BEGIN_LOGIN that additionally captures the NIP-05
+ * canonicalisation hints from the reply. `canonical_out` may be
+ * NULL; when non-NULL it is zeroed first and populated on
+ * NH_AUTH_RESULT_OK when the broker provided the fields. */
+int nh_auth_client_begin_login_ex(int fd, const char *username,
+                                  const char *service,
+                                  nh_auth_provider_list *providers_out,
+                                  nh_auth_login_canonical *canonical_out,
+                                  nh_auth_result *result_out);
+
 /* Sends BEGIN_SMB_PROOF for the connected peer's OWN identity (SO_PEERCRED
  * uid). Requires a USER-endpoint (user.sock) connection. `service` may be
  * NULL to accept the broker's default. On OK, fills *providers_out with the

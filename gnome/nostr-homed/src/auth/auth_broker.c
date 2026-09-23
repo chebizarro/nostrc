@@ -8,6 +8,7 @@
 #include "auth_transaction.h"
 #include "nostr-event.h"
 #include "nostr_auth_protocol.h"
+#include "nostr_nip05.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -18,6 +19,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <syslog.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -38,6 +40,22 @@ struct nh_auth_broker {
   nh_auth_ratelimit *ratelimit;
   nh_auth_ratelimit_config ratelimit_config;
   char *ratelimit_path; /* NULL => in-memory only. */
+
+  /* NIP-05 login identifier resolution (B5-NIP-05, nostrc-bit0).
+   * When @nip05_enabled is off, an `@`-containing username follows
+   * the ordinary username code path (typically UNKNOWN_ACCOUNT).
+   * The (address -> pubkey) cache clamps how many .well-known/
+   * fetches a burst of login attempts can generate, and the
+   * shared per-key rate limiter (via broker->ratelimit) throttles
+   * BEGIN_LOGIN by NIP-05 address so a greeter attacker cannot
+   * use the login screen as an unbounded SSRF probe. */
+  int nip05_enabled;
+  char *nip05_helper_path;      /* NULL => search PATH */
+  char *nip05_drop_user;        /* NULL => "nobody" */
+  int nip05_positive_ttl;       /* seconds; 0 => compile default */
+  nh_nip05_cache *nip05_cache;
+  nh_auth_broker_nip05_resolver_fn nip05_resolver;
+  void *nip05_resolver_ctx;
 };
 
 /* Per-connection login state (single-owner, one transaction per connection). */
@@ -53,6 +71,17 @@ typedef struct conn_state {
   nh_auth_result provider_result;
   nh_auth_provider_event_type provider_event;
   int greeter_artifact_published;
+  /* NIP-05 canonicalisation state (B5-NIP-05).
+   *   nip05_identifier — the address as typed at the greeter,
+   *     normalised (local case preserved, domain lower-cased).
+   *     Empty when the login did not go through NIP-05.
+   *   nip05_canonical  — the canonical local username the identifier
+   *     resolved to. Also empty for a non-NIP-05 login.
+   *  These are echoed back in the BEGIN_LOGIN reply and, if we later
+   *  publish a greeter artifact, into the artifact's `account` block
+   *  so the greeter can show the label + avatar. */
+  char nip05_identifier[NH_NIP05_ADDRESS_MAX + 1];
+  char nip05_canonical[NH_IDENTITY_USERNAME_CAP + 1];
 } conn_state;
 
 static uint64_t default_now_ms(void *ctx) {
@@ -90,7 +119,55 @@ void nh_auth_broker_free(nh_auth_broker *broker) {
   if (!broker) return;
   nh_auth_ratelimit_free(broker->ratelimit);
   free(broker->ratelimit_path);
+  nh_nip05_cache_free(broker->nip05_cache);
+  free(broker->nip05_helper_path);
+  free(broker->nip05_drop_user);
   free(broker);
+}
+
+/* Default NIP-05 resolver: fork/exec nostr-homed-nip05. Tests replace
+ * it via nh_auth_broker_set_nip05_resolver to avoid shelling out. */
+static int default_nip05_resolver(void *ctx, const nh_nip05_address *addr,
+                                  nh_nip05_result *result_out) {
+  nh_auth_broker *b = ctx;
+  return (int)nh_nip05_client_resolve(b ? b->nip05_helper_path : NULL,
+                                       b ? b->nip05_drop_user : NULL,
+                                       addr, result_out);
+}
+
+void nh_auth_broker_set_nip05(nh_auth_broker *broker, int enabled,
+                              const char *helper_path,
+                              const char *drop_user,
+                              int positive_ttl_seconds) {
+  if (!broker) return;
+  broker->nip05_enabled = enabled ? 1 : 0;
+  if (helper_path) {
+    char *dup = strdup(helper_path);
+    if (dup) { free(broker->nip05_helper_path); broker->nip05_helper_path = dup; }
+  }
+  if (drop_user) {
+    char *dup = strdup(drop_user);
+    if (dup) { free(broker->nip05_drop_user); broker->nip05_drop_user = dup; }
+  }
+  broker->nip05_positive_ttl = positive_ttl_seconds;
+  if (!broker->nip05_cache) {
+    broker->nip05_cache = nh_nip05_cache_new(positive_ttl_seconds);
+  } else {
+    nh_nip05_cache_set_positive_ttl(broker->nip05_cache, positive_ttl_seconds);
+  }
+  if (!broker->nip05_resolver) {
+    broker->nip05_resolver = default_nip05_resolver;
+    broker->nip05_resolver_ctx = broker;
+  }
+}
+
+void nh_auth_broker_set_nip05_resolver(nh_auth_broker *broker,
+                                       nh_auth_broker_nip05_resolver_fn fn,
+                                       void *ctx) {
+  if (!broker) return;
+  if (fn) { broker->nip05_resolver = fn; broker->nip05_resolver_ctx = ctx; }
+  else    { broker->nip05_resolver = default_nip05_resolver;
+            broker->nip05_resolver_ctx = broker; }
 }
 
 void nh_auth_broker_set_smb_authority(nh_auth_broker *broker,
@@ -313,6 +390,120 @@ static void conn_reset_proof(conn_state *cs) {
 
 /* ---- login operations -------------------------------------------------- */
 
+/* NIP-05 -> canonical local username.
+ *
+ * Uses the broker's (address -> pubkey) cache to clamp repeated
+ * lookups (and the shared per-key rate limiter to clamp bursts).
+ * On a successful resolution *canonical_out is populated with the
+ * canonical local username of the enrolled account, and
+ * cs->nip05_identifier / cs->nip05_canonical are populated so the
+ * BEGIN_LOGIN reply and any subsequent greeter artifact can carry
+ * the label. Returns:
+ *   NH_AUTH_RESULT_OK              — identifier resolved to a
+ *                                     known enrolled account.
+ *   NH_AUTH_RESULT_UNKNOWN_ACCOUNT — identifier failed validation,
+ *                                     resolved to a pubkey with no
+ *                                     enrolled account (v1 alias-only
+ *                                     policy — no JIT enrolment),
+ *                                     or the resolver refused.
+ *   NH_AUTH_RESULT_RATE_LIMITED    — throttle refused a fresh
+ *                                     resolve for this address.
+ *   NH_AUTH_RESULT_INTERNAL_ERROR  — resolver/helper glitch. Caller
+ *                                     should surface transient failure.
+ */
+static nh_auth_result resolve_nip05_to_username(conn_state *cs,
+                                                const char *raw_username,
+                                                char *canonical_out,
+                                                size_t canonical_cap) {
+  if (!cs || !cs->broker || !cs->broker->nip05_enabled ||
+      !cs->broker->nip05_resolver || !cs->broker->nip05_cache ||
+      !raw_username || !canonical_out || canonical_cap == 0)
+    return NH_AUTH_RESULT_UNKNOWN_ACCOUNT;
+  canonical_out[0] = '\0';
+
+  nh_nip05_address addr;
+  if (nh_nip05_parse(raw_username, &addr) != 0)
+    return NH_AUTH_RESULT_UNKNOWN_ACCOUNT;
+
+  /* Rate-limit resolutions per address. Uses the SAME limiter as
+   * SUBMIT_UNLOCK's per-account throttle so a caller cannot circumvent
+   * cooldowns by cycling identifier <-> canonical. The negative cache
+   * below handles narrower "same-address burst" cases where the
+   * limiter has been cleared by a successful auth. */
+  uint64_t now_ms = broker_now_ms(cs->broker);
+  if (!nh_auth_ratelimit_check(cs->broker->ratelimit, addr.address, now_ms))
+    return NH_AUTH_RESULT_RATE_LIMITED;
+
+  int64_t now_s = (int64_t)time(NULL);
+  nh_nip05_result r;
+  nh_nip05_rc rrc = nh_nip05_cache_lookup(cs->broker->nip05_cache,
+                                          addr.address, now_s, &r);
+  int cached = 0;
+  if (rrc == NH_NIP05_OK) {
+    cached = 1;
+  } else if (rrc == NH_NIP05_ERR_INTERNAL) {
+    /* miss sentinel — actually resolve */
+    rrc = (nh_nip05_rc)cs->broker->nip05_resolver(
+        cs->broker->nip05_resolver_ctx, &addr, &r);
+    if (rrc == NH_NIP05_OK)
+      nh_nip05_cache_put_positive(cs->broker->nip05_cache, addr.address,
+                                  now_s, &r);
+    else
+      nh_nip05_cache_put_negative(cs->broker->nip05_cache, addr.address,
+                                  now_s, rrc);
+  }
+  /* Any other rrc value came from the negative-cache path. */
+
+  if (rrc != NH_NIP05_OK) {
+    /* Never log the pubkey (there wasn't one) or the fetched body
+     * (we never see it here). Just the address and class. */
+    syslog(LOG_NOTICE,
+           "nostr: nip05 resolve %s -> failed rc=%d%s",
+           addr.address, (int)rrc, cached ? " (cached)" : "");
+    /* SSRF / transport / content / json / name failures all surface
+     * as UNKNOWN_ACCOUNT to the client. PRIV means the helper still
+     * ran as root — that's a config bug, not a user error, but we
+     * still refuse the login rather than escalating it. */
+    return NH_AUTH_RESULT_UNKNOWN_ACCOUNT;
+  }
+
+  nh_identity_account acct;
+  nh_identity_rc irc = nh_identity_store_lookup_by_pubkey(cs->broker->store,
+                                                          r.pubkey_hex,
+                                                          &acct);
+  if (irc == NH_IDENTITY_NOT_FOUND) {
+    /* Alias-only in v1: JIT enrolment is tracked in a follow-up bead
+     * (nostrc-037i). Don't leak "the identifier resolved but the
+     * pubkey isn't enrolled" as a distinct signal — the greeter
+     * treats UNKNOWN_ACCOUNT uniformly. */
+    syslog(LOG_NOTICE,
+           "nostr: nip05 %s -> pubkey unknown to authority",
+           addr.address);
+    return NH_AUTH_RESULT_UNKNOWN_ACCOUNT;
+  }
+  if (irc != NH_IDENTITY_OK) return NH_AUTH_RESULT_STORAGE_ERROR;
+
+  size_t un = strnlen(acct.username, sizeof acct.username);
+  if (un == 0 || un + 1 > canonical_cap)
+    return NH_AUTH_RESULT_INTERNAL_ERROR;
+  memcpy(canonical_out, acct.username, un);
+  canonical_out[un] = '\0';
+
+  /* Stash on the connection so the BEGIN_LOGIN reply and any
+   * subsequent SELECT_PROVIDER greeter artifact can echo the
+   * identifier + canonical username. */
+  size_t idn = strnlen(addr.address, sizeof addr.address);
+  if (idn >= sizeof cs->nip05_identifier)
+    idn = sizeof cs->nip05_identifier - 1;
+  memcpy(cs->nip05_identifier, addr.address, idn);
+  cs->nip05_identifier[idn] = '\0';
+  memcpy(cs->nip05_canonical, canonical_out, un + 1);
+
+  syslog(LOG_INFO, "nostr: nip05 %s -> %s%s", addr.address, canonical_out,
+         cached ? " (cached)" : "");
+  return NH_AUTH_RESULT_OK;
+}
+
 /* Runs BEGIN_LOGIN and, on OK, returns the account's enabled_providers bitmask
  * so the caller can echo the available provider set back to the client. */
 static nh_auth_result do_begin_login(conn_state *cs, const char *payload_json,
@@ -324,7 +515,30 @@ static nh_auth_result do_begin_login(conn_state *cs, const char *payload_json,
   json_t *sroot = NULL;
   const char *service = json_str(payload_json, "service", &sroot);
   nh_auth_result result = NH_AUTH_RESULT_PROTOCOL_ERROR;
-  if (username && username[0] && strlen(username) <= NH_IDENTITY_USERNAME_MAX &&
+
+  /* NIP-05 canonicalisation happens BEFORE we bound-check against
+   * NH_IDENTITY_USERNAME_MAX so a full-length identifier (up to 254
+   * bytes) is not rejected as "too long a username" — we bound it
+   * against NH_NIP05_ADDRESS_MAX here instead. Never mutates the
+   * client-supplied buffer; canonical is copied into a local. */
+  char canonical_buf[NH_IDENTITY_USERNAME_CAP + 1];
+  canonical_buf[0] = '\0';
+  const char *effective_username = username;
+  if (username && username[0] && service && service[0] &&
+      strchr(username, '@') != NULL &&
+      strlen(username) <= NH_NIP05_ADDRESS_MAX) {
+    nh_auth_result nrc = resolve_nip05_to_username(cs, username, canonical_buf,
+                                                   sizeof canonical_buf);
+    if (nrc != NH_AUTH_RESULT_OK) {
+      if (root) json_decref(root);
+      if (sroot) json_decref(sroot);
+      return nrc;
+    }
+    effective_username = canonical_buf;
+  }
+
+  if (effective_username && effective_username[0] &&
+      strlen(effective_username) <= NH_IDENTITY_USERNAME_MAX &&
       service && service[0]) {
     uint64_t now = broker_now_ms(cs->broker);
     /* Rate-limit BEGIN_LOGIN by username. The check is a strict gate: no
@@ -333,10 +547,11 @@ static nh_auth_result do_begin_login(conn_state *cs, const char *payload_json,
      * lockout. The failure counter is not ticked here — only SUBMIT_UNLOCK
      * failures increment it. Do not rate-limit CHECK_ACCOUNT (handled at the
      * dispatch site). */
-    if (!nh_auth_ratelimit_check(cs->broker->ratelimit, username, now)) {
+    if (!nh_auth_ratelimit_check(cs->broker->ratelimit, effective_username, now)) {
       result = NH_AUTH_RESULT_RATE_LIMITED;
     } else {
-      nh_auth_begin_request request = {NH_AUTH_PURPOSE_LINUX_LOGIN, username,
+      nh_auth_begin_request request = {NH_AUTH_PURPOSE_LINUX_LOGIN,
+                                       effective_username,
                                        service, now};
       nh_auth_transaction_rc rc = nh_auth_transaction_begin(
           &cs->broker->authority, &cs->peer, &request, &cs->tx);
@@ -529,6 +744,87 @@ static nh_auth_result do_select_provider(conn_state *cs,
   }
   free(unsigned_json);
   return result;
+}
+
+/* Best-effort read of an account's display name from the profile
+ * cache (populated by nh_profile_refresh — the post-login hook
+ * below). Reads /var/lib/nostr-auth/profile/<user>.json (or the path
+ * in NH_PROFILE_CACHE_DIR) and returns 0 with a bounded copy of
+ * "display_name" (fallback: "name") on success. Never blocks or
+ * fetches. */
+static int read_profile_display_name(const char *username, char *out,
+                                     size_t cap) {
+  if (!username || !username[0] || !out || cap < 2) return -1;
+  out[0] = '\0';
+  /* Refuse a slash so an attacker who can somehow get a canonical
+   * username through the auth path cannot pivot into a directory
+   * traversal here. The identity store enforces this too. */
+  if (strchr(username, '/') || strchr(username, '\\')) return -1;
+  const char *dir = getenv("NH_PROFILE_CACHE_DIR");
+  if (!dir || !*dir) dir = "/var/lib/nostr-auth/profile";
+  char path[512];
+  int n = snprintf(path, sizeof path, "%s/%s.json", dir, username);
+  if (n <= 0 || (size_t)n >= sizeof path) return -1;
+  FILE *f = fopen(path, "re");
+  if (!f) return -1;
+  char buf[8192];
+  size_t got = fread(buf, 1, sizeof buf - 1, f);
+  fclose(f);
+  if (got == 0) return -1;
+  buf[got] = '\0';
+  json_error_t je;
+  json_t *root = json_loads(buf, 0, &je);
+  if (!root || !json_is_object(root)) { if (root) json_decref(root); return -1; }
+  const char *pick = NULL;
+  json_t *dn = json_object_get(root, "display_name");
+  if (dn && json_is_string(dn)) {
+    const char *v = json_string_value(dn);
+    if (v && *v) pick = v;
+  }
+  if (!pick) {
+    json_t *nm = json_object_get(root, "name");
+    if (nm && json_is_string(nm)) {
+      const char *v = json_string_value(nm);
+      if (v && *v) pick = v;
+    }
+  }
+  int rc = -1;
+  if (pick) {
+    size_t pl = strlen(pick);
+    if (pl + 1 <= cap) { memcpy(out, pick, pl + 1); rc = 0; }
+    else { memcpy(out, pick, cap - 1); out[cap - 1] = '\0'; rc = 0; }
+  }
+  json_decref(root);
+  return rc;
+}
+
+/* Populate a greeter account block from the connection's transaction.
+ * Never blocks; missing pieces are silently omitted. */
+static void fill_greeter_account(conn_state *cs,
+                                 nh_broker_greeter_account *acct_out,
+                                 char *display_buf, size_t display_cap,
+                                 char *icon_path_buf, size_t icon_cap) {
+  memset(acct_out, 0, sizeof *acct_out);
+  const nh_identity_account *account =
+      cs->tx ? nh_auth_transaction_get_account(cs->tx) : NULL;
+  if (!account || !account->username[0]) return;
+  acct_out->username = account->username;
+  if (display_buf && display_cap > 0) {
+    display_buf[0] = '\0';
+    (void)read_profile_display_name(account->username, display_buf, display_cap);
+    if (display_buf[0]) acct_out->display_name = display_buf;
+  }
+  if (cs->nip05_identifier[0]) acct_out->identifier = cs->nip05_identifier;
+  if (icon_path_buf && icon_cap > 0) {
+    icon_path_buf[0] = '\0';
+    int n = snprintf(icon_path_buf, icon_cap,
+                     "/var/lib/AccountsService/icons/%s", account->username);
+    if (n > 0 && (size_t)n < icon_cap) {
+      struct stat st;
+      if (stat(icon_path_buf, &st) == 0 && S_ISREG(st.st_mode))
+        acct_out->icon_source_path = icon_path_buf;
+    }
+  }
 }
 
 /* B5-profile: rate-limited fire-and-forget refresh of the account's
@@ -802,6 +1098,23 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
         else if (arr) json_decref(arr);
         return respond(fd, req, op, NH_AUTH_RESULT_INTERNAL_ERROR);
       }
+      /* Additive protocol v1 fields (nostrc-bit0): tell the caller
+       * which canonical local username the (possibly NIP-05)
+       * identifier resolved to, and echo the identifier so the PAM
+       * module can syslog + publish it into the greeter artifact.
+       * A non-NIP-05 login leaves cs->nip05_canonical[0] == '\0'
+       * and both fields are omitted (old clients ignore unknown
+       * additive fields per §5.3). */
+      if (cs->nip05_canonical[0]) {
+        if (json_object_set_new(payload, "account_username",
+                                json_string(cs->nip05_canonical)) != 0 ||
+            (cs->nip05_identifier[0] &&
+             json_object_set_new(payload, "identifier",
+                                 json_string(cs->nip05_identifier)) != 0)) {
+          json_decref(payload);
+          return respond(fd, req, op, NH_AUTH_RESULT_INTERNAL_ERROR);
+        }
+      }
       return send_payload(fd, req, op, payload);
     }
     case NH_AUTH_OP_BEGIN_SMB_PROOF: {
@@ -830,8 +1143,25 @@ static int handle_request(conn_state *cs, int fd, const nh_auth_message *req) {
       if (cs->display_json && cs->display_json[0]) {
         if (!cs->greeter_artifact_published) {
           const char *tx_id = cs->tx ? nh_auth_transaction_get_id(cs->tx) : "";
+          nh_broker_greeter_account acct;
+          char display_buf[128];
+          char icon_path_buf[512];
+          fill_greeter_account(cs, &acct, display_buf, sizeof display_buf,
+                               icon_path_buf, sizeof icon_path_buf);
+          /* First-attempt avatar/display-name gap: when the profile
+           * cache doesn't exist yet the greeter shows the label
+           * without the avatar. Kick the fire-and-forget profile
+           * refresh hook so the sibling avatar appears on the next
+           * greeter attempt (throttled to ≤ once/hour inside the
+           * hook so a login-attempt spam cannot drive relay traffic). */
+          const nh_identity_account *pa =
+              cs->tx ? nh_auth_transaction_get_account(cs->tx) : NULL;
+          if (pa && (!acct.icon_source_path || !acct.display_name))
+            profile_refresh_hook_maybe(pa->username, pa->pubkey_hex);
+
           if (nh_broker_greeter_artifact_write(tx_id ? tx_id : "",
-                                               cs->display_json) == 0)
+                                               cs->display_json,
+                                               acct.username ? &acct : NULL) == 0)
             cs->greeter_artifact_published = 1;
         }
         json_t *payload = json_object();
