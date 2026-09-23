@@ -232,11 +232,12 @@ static void parse_canonical(const char *response_json,
   json_decref(root);
 }
 
-int nh_auth_client_begin_login_ex(int fd, const char *username,
-                                  const char *service,
-                                  nh_auth_provider_list *providers_out,
-                                  nh_auth_login_canonical *canonical_out,
-                                  nh_auth_result *result_out) {
+int nh_auth_client_begin_login_with_identifier(
+    int fd, const char *username, const char *service,
+    const char *identifier,
+    nh_auth_provider_list *providers_out,
+    nh_auth_login_canonical *canonical_out,
+    nh_auth_result *result_out) {
   if (!username || !service || !result_out) return -1;
   if (providers_out) memset(providers_out, 0, sizeof *providers_out);
   if (canonical_out) memset(canonical_out, 0, sizeof *canonical_out);
@@ -246,6 +247,16 @@ int nh_auth_client_begin_login_ex(int fd, const char *username,
       json_object_set_new(begin, "service", json_string(service))) {
     if (begin) json_decref(begin);
     return -1;
+  }
+  /* Additive-optional payload field: the caller asserts the NIP-05
+   * identifier that canonicalised to `username` on an earlier
+   * connection so the broker can carry it into the greeter artifact.
+   * Old brokers ignore unknown payload keys per §5.3. */
+  if (identifier && identifier[0]) {
+    if (json_object_set_new(begin, "identifier", json_string(identifier))) {
+      json_decref(begin);
+      return -1;
+    }
   }
   char *response_json = NULL;
   if (client_op_raw(fd, NH_AUTH_OP_BEGIN_LOGIN, begin, &response_json) != 0)
@@ -257,6 +268,15 @@ int nh_auth_client_begin_login_ex(int fd, const char *username,
   }
   free(response_json);
   return rc;
+}
+
+int nh_auth_client_begin_login_ex(int fd, const char *username,
+                                  const char *service,
+                                  nh_auth_provider_list *providers_out,
+                                  nh_auth_login_canonical *canonical_out,
+                                  nh_auth_result *result_out) {
+  return nh_auth_client_begin_login_with_identifier(
+      fd, username, service, NULL, providers_out, canonical_out, result_out);
 }
 
 int nh_auth_client_begin_login(int fd, const char *username, const char *service,

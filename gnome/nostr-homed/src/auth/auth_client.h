@@ -123,6 +123,29 @@ int nh_auth_client_begin_login_ex(int fd, const char *username,
                                   nh_auth_login_canonical *canonical_out,
                                   nh_auth_result *result_out);
 
+/* BEGIN_LOGIN variant that additionally asserts a NIP-05 `identifier`
+ * to the broker (nostrc-bit0 follow-up: greeter-artifact identifier
+ * preservation across the PAM canonicalisation reconnect). When
+ * `identifier` is NULL or empty this behaves exactly like
+ * nh_auth_client_begin_login_ex.
+ *
+ * The identifier is intended for the case where the caller has ALREADY
+ * canonicalised a NIP-05 to its local username on an earlier connection
+ * and is now reopening BEGIN_LOGIN with the canonical username — the
+ * broker would otherwise have no way to reattach the identifier to the
+ * connection's greeter-artifact account block. The broker validates the
+ * asserted identifier and only echoes it into the artifact when it
+ * resolves (via the shared cache / rate-limit path) to the SAME pubkey
+ * as the account named by `username`; a malformed or mismatched
+ * identifier is silently ignored (never fatal). Old brokers that do
+ * not know the field ignore it per §5.3 additive-optional-fields. */
+int nh_auth_client_begin_login_with_identifier(
+    int fd, const char *username, const char *service,
+    const char *identifier,
+    nh_auth_provider_list *providers_out,
+    nh_auth_login_canonical *canonical_out,
+    nh_auth_result *result_out);
+
 /* Sends BEGIN_SMB_PROOF for the connected peer's OWN identity (SO_PEERCRED
  * uid). Requires a USER-endpoint (user.sock) connection. `service` may be
  * NULL to accept the broker's default. On OK, fills *providers_out with the
