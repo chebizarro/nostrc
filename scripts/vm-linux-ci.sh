@@ -107,7 +107,11 @@ log "building nostr-homed test targets"
 # only those that actually exist in THIS configuration -- option-gated tests
 # (e.g. experimental-roaming) are simply skipped instead of failing the build
 # with "unknown target".
-CAND="$(grep -oE "add_executable\(test_[a-z_0-9]+" "$SRC/gnome/nostr-homed/CMakeLists.txt" | sed "s/add_executable(//" | sort -u)"
+# Discover homed executables the tests depend on: not just test_* — some ctests
+# invoke driver executables (e.g. porthome_smallhome_driver) that also need to
+# be built. Pull every add_executable() name from the CMakeLists and let the
+# ninja-configured intersection below filter to what actually exists.
+CAND="$(grep -oE "add_executable\([a-z_0-9]+" "$SRC/gnome/nostr-homed/CMakeLists.txt" | sed "s/add_executable(//" | sort -u)"
 CONFIGURED="$(ninja -C "$BUILD" -t targets all 2>/dev/null | cut -d: -f1)"
 TARGETS=""
 for t in $CAND; do
