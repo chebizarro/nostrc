@@ -200,11 +200,46 @@ static int parse_providers(const char *response_json,
   return 0;
 }
 
-int nh_auth_client_begin_login(int fd, const char *username, const char *service,
-                               nh_auth_provider_list *providers_out,
-                               nh_auth_result *result_out) {
+/* Parse account_username / identifier out of the BEGIN_LOGIN reply.
+ * These are additive fields the broker attaches when the caller
+ * supplied a NIP-05 identifier as `username`; absence is normal for
+ * a canonical-username login. Bounded copies; malformed values are
+ * silently dropped (the PAM module falls back to whatever it typed). */
+static void parse_canonical(const char *response_json,
+                            nh_auth_login_canonical *out) {
+  if (!out) return;
+  memset(out, 0, sizeof *out);
+  if (!response_json) return;
+  json_error_t je;
+  json_t *root = json_loads(response_json, 0, &je);
+  if (!root) return;
+  json_t *cu = json_object_get(root, "account_username");
+  if (cu && json_is_string(cu)) {
+    const char *v = json_string_value(cu);
+    if (v && *v) {
+      size_t n = strlen(v);
+      if (n < sizeof out->canonical) memcpy(out->canonical, v, n + 1);
+    }
+  }
+  json_t *id = json_object_get(root, "identifier");
+  if (id && json_is_string(id)) {
+    const char *v = json_string_value(id);
+    if (v && *v) {
+      size_t n = strlen(v);
+      if (n < sizeof out->identifier) memcpy(out->identifier, v, n + 1);
+    }
+  }
+  json_decref(root);
+}
+
+int nh_auth_client_begin_login_ex(int fd, const char *username,
+                                  const char *service,
+                                  nh_auth_provider_list *providers_out,
+                                  nh_auth_login_canonical *canonical_out,
+                                  nh_auth_result *result_out) {
   if (!username || !service || !result_out) return -1;
   if (providers_out) memset(providers_out, 0, sizeof *providers_out);
+  if (canonical_out) memset(canonical_out, 0, sizeof *canonical_out);
 
   json_t *begin = json_object();
   if (!begin || json_object_set_new(begin, "username", json_string(username)) ||
@@ -216,10 +251,19 @@ int nh_auth_client_begin_login(int fd, const char *username, const char *service
   if (client_op_raw(fd, NH_AUTH_OP_BEGIN_LOGIN, begin, &response_json) != 0)
     return -1;
   int rc = extract_result(response_json, result_out);
-  if (rc == 0 && *result_out == NH_AUTH_RESULT_OK && providers_out)
-    (void)parse_providers(response_json, providers_out);
+  if (rc == 0 && *result_out == NH_AUTH_RESULT_OK) {
+    if (providers_out) (void)parse_providers(response_json, providers_out);
+    if (canonical_out) parse_canonical(response_json, canonical_out);
+  }
   free(response_json);
   return rc;
+}
+
+int nh_auth_client_begin_login(int fd, const char *username, const char *service,
+                               nh_auth_provider_list *providers_out,
+                               nh_auth_result *result_out) {
+  return nh_auth_client_begin_login_ex(fd, username, service, providers_out,
+                                       NULL, result_out);
 }
 
 int nh_auth_client_begin_smb_proof(int fd, const char *service,

@@ -201,6 +201,112 @@ NH_NIP46_LIVE=1 <build>/gnome/nostr-homed/test_broker_login_nip46_live
 
 Beads: `nostrc-ot2c.7` (C7), `nostrc-7t61` (C7-operator ACL grant).
 
+## 5c — NIP-05 login identifier (B5-NIP-05, nostrc-bit0)
+
+The broker accepts a NIP-05 address (`local@domain`) at the GDM
+"Not listed?" prompt as an alternative to the local username: it
+resolves the address to a pubkey, looks the pubkey up in the identity
+authority, and — if the pubkey is enrolled — canonicalises `PAM_USER`
+to the local account's username before continuing the QR (NIP-46
+`nostrconnect://`) flow.
+
+### Alias policy (v1)
+
+NIP-05 is treated **strictly as an identifier hint**.  Authentication
+is unchanged: the signed challenge is bound to the account pubkey, so
+a forged NIP-05 that happens to resolve to somebody else's pubkey
+still cannot sign for them.
+
+Enrolment is **alias-only**: an address must resolve to a pubkey that
+is *already* enrolled.  If the pubkey is unknown the broker returns
+`UNKNOWN_ACCOUNT` (mapped to `PAM_USER_UNKNOWN`) — no local account is
+ever created just because a stranger typed a valid NIP-05 at the
+greeter.  Just-in-time enrolment (an allowlist-gated auto-provision)
+is tracked as follow-up bead `nostrc-037i` and is off in v1.
+
+### Resolver isolation
+
+The `.well-known/nostr.json` fetch runs in an unprivileged helper:
+
+```
+/usr/libexec/nostr-homed/nostr-homed-nip05 <local@domain>
+```
+
+The helper drops to `nobody` before `curl_easy_perform`; refuses to run
+as root; enforces `https://` only (no `http`, no redirects to non-https);
+caps the body at 64 KiB, the timeout at 10 s, and redirects at 3; and —
+crucially — checks every resolved peer sockaddr against the profile's
+SSRF gate (`nh_profile_ssrf_check_sockaddr`, shared with the avatar
+helper) so RFC1918 / loopback / link-local / CGNAT / ULA destinations
+are refused *before* the first byte is sent.  Exit codes are 64 (arg),
+65 (SSRF refused), 66 (transport), 67 (content-type), 68 (JSON parse),
+69 (name not found or not hex), 70 (helper still running as root), 71
+(internal/OOM).
+
+The broker itself never opens a socket for NIP-05 resolution.  It also
+carries an in-memory `(address → pubkey, relay hints)` cache
+(positive TTL default 10 min; negative TTL 60 s) and rate-limits
+resolution attempts per address using the same throttle that governs
+`SUBMIT_UNLOCK` failures — a greeter attacker cannot turn the login
+screen into an unbounded SSRF probe or DoS amplifier against a
+third-party issuer.
+
+### `auth.conf` keys
+
+Both keys live in the flat `/etc/nostr-auth/auth.conf` alongside
+`nip46_qr_relays`.  Missing keys leave the compiled-in defaults;
+malformed values are silently ignored per the design's non-fatal-
+config rule.
+
+| Key | Default | Notes |
+|---|---|---|
+| `nip05_resolve` | `on` | `on` / `off`.  When `off` the broker treats an `@`-containing username exactly like any other username (typically `UNKNOWN_ACCOUNT`). |
+| `nip05_cache_ttl` | `600` (seconds) | Positive-hit TTL for the in-memory `(address → pubkey)` cache.  The negative TTL (SSRF / transport / name failures) is fixed at 60 s. |
+| `nip05_image_user` | `` (empty) | Uname the helper drops to.  Falls back to `profile_image_user`, then `nobody`. |
+
+Environment override: `NH_NIP05_HELPER=/absolute/path/to/nostr-homed-nip05`
+tells the broker where to find the helper (default: search `PATH`).
+The shipped systemd drop-in
+`/etc/systemd/system/nostr-authd.service.d/20-nip05.conf` sets it to
+`/usr/libexec/nostr-homed/nostr-homed-nip05`.
+
+### Wire protocol changes (additive, protocol v1)
+
+The `BEGIN_LOGIN` reply gains two optional fields when the caller
+supplied a NIP-05 identifier:
+
+- `"account_username": "n_bizarro"` — the canonical local username
+  the identifier resolved to; `pam_nostr` calls
+  `pam_set_item(PAM_USER, ...)` with this value so downstream PAM
+  modules see the local uid.
+- `"identifier": "chebizarro@coinos.io"` — the address as typed
+  (normalized).  Republished in the greeter artifact's `account`
+  block so the extension can show the pretty NIP-05 label.
+
+Both fields are absent for a canonical-username login.  Old clients
+ignore unknown additive fields per §5.3 (D8).
+
+### Greeter artifact addition
+
+`nh_broker_greeter_artifact_write` optionally emits an `account` block
+into `/run/nostr-auth/greeter/current.json` and copies the
+`/var/lib/AccountsService/icons/<user>` icon as `avatar.png` next to
+the manifest — see
+`gnome/nostr-homed/greeter-extension/README.md#account-block-b5-nip-05-nostrc-bit0`
+for the consumer contract.
+
+### PAM syslog trail
+
+Every login records the mapping when the identifier differs from the
+canonical username, e.g.:
+
+```
+gdm-password][…]: pam_nostr(gdm-password:auth): nostr: identifier chebizarro@coinos.io -> n_bizarro
+nostr-authd[…]: nostr: nip05 chebizarro@coinos.io -> n_bizarro (cached)
+```
+
+Never the fetched body, never the pubkey (already logged at enrolment).
+
 ## 6 — Uninstall / lab teardown
 
 The install layout is entirely under `/usr` + `/etc` + `/var/lib/nostr-auth`.

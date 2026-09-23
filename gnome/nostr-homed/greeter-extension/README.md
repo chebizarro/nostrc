@@ -78,7 +78,13 @@ directory layout is the contract:
     "uri": "nostrconnect://<64-hex>?relay=wss%3A%2F%2Fbunker.sharegap.net&secret=<32-hex>&perms=sign_event%3A1&name=GNOME",
     "pairing_code": "6131-6232",
     "expires_at": 1758560000,
-    "hint": "Scan with your Nostr signer"
+    "hint": "Scan with your Nostr signer",
+    "account": {
+        "username": "n_bizarro",
+        "display_name": "Biz",
+        "identifier": "chebizarro@coinos.io",
+        "avatar": "avatar.png"
+    }
 }
 ```
 
@@ -92,9 +98,44 @@ Field semantics:
 | `pairing_code` | string | yes | Short human cross-check the signer app also shows.  Rendered under the QR as `Pairing code: <value>`.  Truncated to 64 chars. |
 | `expires_at` | number | yes | Unix seconds.  When `now >= expires_at`, the extension hides the panel and schedules a re-check.  Non-numeric / non-positive values are treated as "no expiry". |
 | `hint` | string | no | One line of guidance shown under the pairing code.  Default: `"Scan with your Nostr signer"`.  Truncated to 256 chars. |
+| `account` | object | no | Present when the broker knows which account's login is pending. See below. |
 
 Any extra fields are tolerated and ignored.  The manifest is capped at
 8 KiB by the extension; anything larger is rejected.
+
+### `account` block (B5-NIP-05, nostrc-bit0)
+
+The broker attaches an `account` block whenever it can name the
+account whose login is pending — either because the client typed the
+canonical local username directly, or because a NIP-05 identifier
+(e.g. `chebizarro@coinos.io`) canonicalised to one at BEGIN_LOGIN.
+
+| Field | Type | Required | Notes |
+|---|---|:---:|---|
+| `username` | string | yes (when `account` is present) | Canonical local username (matches `passwd`). |
+| `display_name` | string | no | Real name from the AccountsService profile cache (`/var/lib/nostr-auth/profile/<user>.json`, fields `display_name` → `name`).  Omitted if the cache is empty; the greeter should fall back to `username`. |
+| `identifier` | string | no | The NIP-05 as typed at the greeter (normalized: local case preserved, domain lower-cased). Present **only** when the login was initiated via NIP-05 — omitted for canonical-username logins so the extension shows the plain user label. |
+| `avatar` | string | no | Basename of the sibling PNG under `/run/nostr-auth/greeter/`.  Present only when the broker successfully copied `/var/lib/AccountsService/icons/<user>` into the greeter drop as `avatar.png` (mode `0644`, root-owned).  Absent when no cached icon exists (fresh account) or the copy failed; the greeter should fall back to the generic avatar. |
+
+Sibling file when `avatar` is emitted:
+
+```
+/run/nostr-auth/greeter/
+├── current.json       — as above, with "account" and "avatar":"avatar.png"
+├── current.png        — the QR PNG
+└── avatar.png         — copy of the AccountsService icon (root-owned, 0644)
+```
+
+The broker removes `avatar.png` together with `current.{json,png}` on
+transaction retire (`nh_broker_greeter_artifact_remove`) so a subsequent
+attempt for a different account never leaves the previous face on
+screen.
+
+The producer never mutates AccountsService itself — the icon is
+already up to date by the time the account tile shows in GDM.  The
+avatar sibling is a copy because the greeter's gnome-shell process
+(running as `gdm`) cannot read `/var/lib/AccountsService/icons/`
+directly on the shipped Ubuntu setup.
 
 ### `current.png`
 

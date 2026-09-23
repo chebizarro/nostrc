@@ -314,7 +314,9 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
 
   add_library(nostr_auth_runtime STATIC
     src/auth/auth_peer.c src/auth/auth_client.c src/auth/auth_broker.c
-    src/auth/auth_conf.c src/pam/pam_qr_render.c)
+    src/auth/auth_conf.c src/pam/pam_qr_render.c
+    src/nip05/nip05_validate.c src/nip05/nip05_client.c
+    src/nip05/nip05_cache.c)
   target_include_directories(nostr_auth_runtime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pam)
   target_compile_options(nostr_auth_runtime PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
@@ -361,6 +363,14 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
     add_test(NAME homed_auth_conf COMMAND test_auth_conf)
     set_tests_properties(homed_auth_conf
       PROPERTIES LABELS "nostr-homed;portable;auth-runtime" TIMEOUT 30)
+    # B5-NIP-05 (nostrc-bit0): parser + URL assembly + well-known JSON
+    # parser + cache TTL. The helper's live HTTPS behaviour is covered
+    # by the aarch64 VM integration run (docs/reviews/nip05-login-*.md).
+    add_executable(test_nip05 tests/unit/test_nip05.c)
+    target_link_libraries(test_nip05 PRIVATE nostr_auth_runtime)
+    add_test(NAME homed_nip05 COMMAND test_nip05)
+    set_tests_properties(homed_nip05
+      PROPERTIES LABELS "nostr-homed;portable;auth-runtime;nip05" TIMEOUT 30)
     add_executable(test_pairing_code tests/unit/test_pairing_code.c)
     target_link_libraries(test_pairing_code PRIVATE nostr_auth_runtime)
     add_test(NAME homed_pairing_code COMMAND test_pairing_code)
@@ -466,10 +476,28 @@ if(NOSTR_HOMED_ENABLE_PROFILE)
   target_link_libraries(nostr-homed-profile-image PRIVATE
     PkgConfig::GDK_PIXBUF CURL::libcurl)
 
+  # B5-NIP-05 (nostrc-bit0): unprivileged NIP-05 resolver. Shares the
+  # profile_sanitize SSRF gate + refused-range list so the two greeter
+  # fetchers (avatar picture, .well-known/nostr.json) stay on one
+  # policy — a single security review covers both. Not linked into
+  # the broker (the parent is nip05_client.c in nostr_auth_runtime).
+  add_executable(nostr-homed-nip05
+    src/nip05/nostr-homed-nip05.c
+    src/nip05/nip05_validate.c
+    src/profile/profile_sanitize.c)
+  target_compile_options(nostr-homed-nip05 PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_include_directories(nostr-homed-nip05 PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(nostr-homed-nip05 PRIVATE
+    PkgConfig::JANSSON CURL::libcurl)
+
   if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
     install(TARGETS nostr-homed-profile
       RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR})
     install(TARGETS nostr-homed-profile-image
+      RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/nostr-homed)
+    install(TARGETS nostr-homed-nip05
       RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/nostr-homed)
   endif()
 

@@ -28,6 +28,7 @@
 #define GREETER_DIR_DEFAULT "/run/nostr-auth/greeter"
 #define GREETER_JSON_NAME   "current.json"
 #define GREETER_PNG_NAME    "current.png"
+#define GREETER_AVATAR_NAME "avatar.png"
 
 static char g_greeter_dir[512];
 
@@ -143,6 +144,22 @@ int nh_auth_conf_load(const char *path, nh_auth_conf *out) {
     } else if (!strcmp(key, "profile_image_user")) {
       (void)copy_bounded(out->profile_image_user,
                          sizeof out->profile_image_user, value);
+    } else if (!strcmp(key, "nip05_resolve")) {
+      /* Tri-state: 0 = unset (default on), 1 = on, 2 = off. Same
+       * shape as profile_fetch so a site admin can flip it with the
+       * same idiom. */
+      if (!strcasecmp(value, "on") || !strcmp(value, "1") ||
+          !strcasecmp(value, "true") || !strcasecmp(value, "yes"))
+        out->nip05_resolve = 1;
+      else if (!strcasecmp(value, "off") || !strcmp(value, "0") ||
+               !strcasecmp(value, "false") || !strcasecmp(value, "no"))
+        out->nip05_resolve = 2;
+    } else if (!strcmp(key, "nip05_cache_ttl") ||
+               !strcmp(key, "nip05_cache_ttl_seconds")) {
+      (void)parse_uint32(value, &out->nip05_cache_ttl_seconds);
+    } else if (!strcmp(key, "nip05_image_user")) {
+      (void)copy_bounded(out->nip05_image_user,
+                         sizeof out->nip05_image_user, value);
     } else {
       /* Non-fatal: unknown keys are ignored. */
     }
@@ -204,8 +221,37 @@ static void publish_greeter_png(const char *dir, const char *uri) {
   free(png);
 }
 
+/* Copy a source PNG into <dir>/avatar.png (mode 0644). Returns 0 on
+ * success. Non-fatal caller-side — greeter still gets the account
+ * block without an avatar field. Bounded reads (16 KiB) so a very
+ * large icon (AccountsService caps at 1 MiB but the extension only
+ * renders a tile) doesn't push the greeter drop above the extension's
+ * 8 KiB manifest budget (the avatar PNG is a sibling, not embedded).
+ * We still cap at 512 KiB defensively because the avatar is copied on
+ * every login attempt and we don't want a symlinked pathological file
+ * to keep us busy. */
+#define AVATAR_COPY_CAP (512u * 1024u)
+static int copy_avatar(const char *dir, const char *src) {
+  if (!dir || !src || !src[0]) return -1;
+  FILE *in = fopen(src, "rb");
+  if (!in) return -1;
+  char dst[600];
+  int n = snprintf(dst, sizeof dst, "%s/%s", dir, GREETER_AVATAR_NAME);
+  if (n <= 0 || (size_t)n >= sizeof dst) { fclose(in); return -1; }
+  unsigned char *buf = malloc(AVATAR_COPY_CAP);
+  if (!buf) { fclose(in); return -1; }
+  size_t total = fread(buf, 1, AVATAR_COPY_CAP, in);
+  int overrun = (fgetc(in) != EOF);
+  fclose(in);
+  int rc = -1;
+  if (!overrun && total > 0) rc = write_atomic(dst, 0644, buf, total);
+  free(buf);
+  return rc;
+}
+
 int nh_broker_greeter_artifact_write(const char *tx_id,
-                                     const char *display_json) {
+                                     const char *display_json,
+                                     const nh_broker_greeter_account *account) {
   if (!display_json || !display_json[0]) return -1;
   const char *dir = greeter_dir();
   if (ensure_dir(dir) != 0) return -1;
@@ -266,6 +312,42 @@ int nh_broker_greeter_artifact_write(const char *tx_id,
   json_decref(root);
   if (bad) { json_decref(out); free(uri_copy); return -1; }
 
+  /* Attach the optional account block. Copy the avatar FIRST so we
+   * only claim "avatar":"avatar.png" if the sibling file made it to
+   * disk — otherwise the extension would flash a broken image tile
+   * for the ~200 ms between the JSON publish and our failed copy.
+   * A missing icon source is normal on first login (AccountsService
+   * icon appears after the profile-refresh hook runs post-login);
+   * we still emit username + display_name + identifier so the
+   * greeter can show the label immediately. */
+  if (account && account->username && account->username[0]) {
+    int have_avatar = 0;
+    if (account->icon_source_path && account->icon_source_path[0])
+      have_avatar = (copy_avatar(dir, account->icon_source_path) == 0);
+
+    json_t *ao = json_object();
+    int abad = !ao;
+    if (!abad)
+      abad = json_object_set_new(ao, "username",
+                                 json_string(account->username)) != 0;
+    if (!abad && account->display_name && account->display_name[0])
+      abad = json_object_set_new(ao, "display_name",
+                                 json_string(account->display_name)) != 0;
+    if (!abad && account->identifier && account->identifier[0])
+      abad = json_object_set_new(ao, "identifier",
+                                 json_string(account->identifier)) != 0;
+    if (!abad && have_avatar)
+      abad = json_object_set_new(ao, "avatar",
+                                 json_string(GREETER_AVATAR_NAME)) != 0;
+    if (!abad)
+      abad = json_object_set_new(out, "account", ao) != 0;
+    else if (ao)
+      json_decref(ao);
+    /* Failure to build the account block is non-fatal: publish the
+     * base manifest without it rather than dropping the whole login
+     * artifact. */
+  }
+
   char *j = json_dumps(out, JSON_COMPACT);
   json_decref(out);
   if (!j) { free(uri_copy); return -1; }
@@ -288,6 +370,11 @@ void nh_broker_greeter_artifact_remove(void) {
   if (snprintf(path, sizeof path, "%s/%s", dir, GREETER_JSON_NAME) > 0)
     (void)unlink(path);
   if (snprintf(path, sizeof path, "%s/%s", dir, GREETER_PNG_NAME) > 0)
+    (void)unlink(path);
+  /* Retire the account avatar too so a subsequent login for a
+   * different user cannot flash the previous account's face. Safe
+   * when nothing was written — unlink of a missing file is silent. */
+  if (snprintf(path, sizeof path, "%s/%s", dir, GREETER_AVATAR_NAME) > 0)
     (void)unlink(path);
 }
 

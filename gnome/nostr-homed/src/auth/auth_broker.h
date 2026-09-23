@@ -45,6 +45,35 @@ void nh_auth_broker_set_clock(nh_auth_broker *broker,
 int nh_auth_broker_set_ratelimit_config(nh_auth_broker *broker,
                                         const nh_auth_ratelimit_config *config);
 
+/* Enable/disable NIP-05 identifier resolution at BEGIN_LOGIN. When
+ * disabled the broker treats an `@`-containing username exactly like
+ * any other username (typically UNKNOWN_ACCOUNT). @drop_user is the
+ * uname the unprivileged nostr-homed-nip05 helper drops to; NULL
+ * defaults to "nobody". @helper_path may be NULL to look the helper
+ * up on PATH; tests set it to the build-tree binary. @positive_ttl
+ * is the (address -> pubkey) cache TTL in seconds; 0 selects the
+ * built-in default (600 s). Safe to call at any time; existing
+ * cache entries survive a TTL change and re-evaluate at next lookup.
+ * Not thread safe with active connections. */
+void nh_auth_broker_set_nip05(nh_auth_broker *broker, int enabled,
+                              const char *helper_path,
+                              const char *drop_user,
+                              int positive_ttl_seconds);
+
+/* Test seam: override the resolver function so unit tests can exercise
+ * the broker's BEGIN_LOGIN canonicalisation path without shelling out
+ * to the real helper. The default resolver runs the helper via
+ * nh_nip05_client_resolve; passing NULL restores the default. Not
+ * thread safe with active connections. */
+struct nh_nip05_address;
+struct nh_nip05_result;
+typedef int /* nh_nip05_rc */ (*nh_auth_broker_nip05_resolver_fn)(
+    void *ctx, const struct nh_nip05_address *addr,
+    struct nh_nip05_result *result_out);
+void nh_auth_broker_set_nip05_resolver(nh_auth_broker *broker,
+                                       nh_auth_broker_nip05_resolver_fn fn,
+                                       void *ctx);
+
 /* Enables persistent rate-limit storage at `path`, or reverts to in-memory-only
  * when path is NULL or empty. The current rate-limit policy is preserved; any
  * counters accumulated in the previous mode are discarded (persistent state on
@@ -105,6 +134,23 @@ typedef struct nh_auth_conf {
   uint8_t profile_fetch;
   /* Uname the image-downloader helper drops to. "" = "nobody". */
   char profile_image_user[64];
+
+  /* NIP-05 login identifier resolution (B5-NIP-05, nostrc-bit0):
+   *   nip05_resolve — Tri-state: 0 = unset (default on), 1 = on,
+   *                   2 = off. When off the broker treats an
+   *                   `@`-containing username exactly like any
+   *                   other username (typically UNKNOWN_ACCOUNT).
+   *   nip05_cache_ttl_seconds — positive-cache TTL in seconds for
+   *                   the broker's (address -> pubkey) cache. 0 =
+   *                   use compile-time default (600 s). The negative
+   *                   TTL (SSRF / transport / NAME failures) is
+   *                   fixed at NH_NIP05_CACHE_NEGATIVE_TTL_SEC so
+   *                   the config surface stays small.
+   *   nip05_image_user — uname the NIP-05 helper drops to;
+   *                   defaults to profile_image_user, then "nobody". */
+  uint8_t nip05_resolve;
+  uint32_t nip05_cache_ttl_seconds;
+  char nip05_image_user[64];
 } nh_auth_conf;
 
 /* Reads path (may be NULL / missing) into *out. Zeros *out first. Returns 0
@@ -119,14 +165,42 @@ int nh_auth_conf_load(const char *path, nh_auth_conf *out);
 void nh_auth_broker_set_qr_default_relays(const char *const *relays,
                                           size_t n_relays);
 
+/* Optional account-block payload for the greeter artifact. Populated
+ * by the broker whenever it has enough information to name the
+ * account whose login is pending — either because the client typed
+ * the canonical local username directly, or because a NIP-05
+ * identifier canonicalised to one. Any field may be NULL/empty to
+ * skip its emission; when the whole struct is NULL the "account"
+ * block is omitted entirely (matches the pre-NIP-05 artifact shape).
+ *
+ * `icon_source_path` is copied under the greeter directory as
+ * `avatar.png` (0644, root-owned) if it exists and is readable;
+ * on failure the manifest omits the "avatar" field but the rest of
+ * the account block is still emitted so the greeter has the label
+ * even without a picture. Typical value:
+ * `/var/lib/AccountsService/icons/<user>`. */
+typedef struct nh_broker_greeter_account {
+  const char *username;        /* canonical local username */
+  const char *display_name;    /* profile display / real name; may be "" */
+  const char *identifier;      /* NIP-05 as typed; NULL if not via NIP-05 */
+  const char *icon_source_path;/* absolute path to source PNG; NULL to skip */
+} nh_broker_greeter_account;
+
 /* Greeter artifact drop — the broker writes /run/nostr-auth/greeter/
  * current.json (and, when a PNG source is available, current.png) so a
  * gnome-shell greeter extension can render the QR image live. Design §5.3
  * and greeter-extension/README.md. Contract implemented here:
  *   {"tx_id":"...","png":"current.png","uri":"...","pairing_code":"...",
- *    "expires_at":<monotonic-ms>,"hint":"..."}
- * The PNG is only produced by an optional side channel (see
- * pam_qr_render); the broker just publishes what it has.
+ *    "expires_at":<monotonic-ms>,"hint":"...",
+ *    "account":{"username":"...","display_name":"...","identifier":"...",
+ *               "avatar":"avatar.png"}}
+ * The `account` block is present only when the caller passes a non-NULL
+ * @account; "identifier" appears only when @account->identifier is
+ * non-empty (i.e. the login was initiated via NIP-05); "avatar" appears
+ * only when a source PNG was copied successfully.
+ *
+ * The QR PNG (`current.png`) is only produced by an optional side
+ * channel (see pam_qr_render); the broker just publishes what it has.
  *
  * write() overwrites atomically (write to <name>.tmp + rename). remove()
  * unlinks best-effort and is safe to call when nothing was written.
@@ -134,7 +208,8 @@ void nh_auth_broker_set_qr_default_relays(const char *const *relays,
  * write() returns 0 on success, -1 on any I/O failure (never fatal to a
  * login — the artifact is a rendering hint). */
 int nh_broker_greeter_artifact_write(const char *tx_id,
-                                     const char *display_json);
+                                     const char *display_json,
+                                     const nh_broker_greeter_account *account);
 void nh_broker_greeter_artifact_remove(void);
 
 /* Override the greeter-artifact directory. NULL/"" resets to the default
