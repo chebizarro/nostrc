@@ -1,0 +1,26 @@
+# /etc/security/group.conf snippet — grant the seated user the
+# `nostr-auth-greeter` supplementary group at session-open time so the
+# gnome-shell running the lock screen (session-mode unlock-dialog) can
+# read /run/nostr-auth/greeter/current.json + current.png + avatar.png
+# while a NIP-46 re-auth is pending.
+#
+# Install as:
+#   sudo install -m 0644 nostr-auth-greeter.group.conf.sample \
+#     /etc/security/group.conf.d/50-nostr-auth-greeter.conf
+# (or append its non-comment line to /etc/security/group.conf on
+# distros that don't ship a /etc/security/group.conf.d drop-in dir).
+#
+# Precondition: /etc/pam.d/login (and the display-manager service, e.g.
+# gdm-password / gdm-launch-environment) must `auth optional
+# pam_group.so` — Debian/Ubuntu ships /etc/pam.d/login with pam_group
+# already enabled; other distros may need to add the line by hand.
+#
+# Format: services;terminals;users;times;groups
+# The wildcards below give any user, on any tty/service, at any time,
+# the `nostr-auth-greeter` group at session start.  Tighten `users` to
+# a specific member list (e.g. `n_bizarro|n_alice`) if only certain
+# accounts should be able to render the QR panel on their lock screen.
+#
+# See docs/reviews/greeter-artifact-secret-confidentiality-2026-09-22.md
+# (beads nostrc-3c7n, references nostrc-zcll.6).
+*; *; *; Al0000-2400; nostr-auth-greeter

@@ -16,12 +16,14 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <jansson.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <syslog.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -30,10 +32,58 @@
 #define GREETER_PNG_NAME    "current.png"
 #define GREETER_AVATAR_NAME "avatar.png"
 
+/* Confidentiality: current.json embeds the full nostrconnect:// URI
+ * including its one-time `secret=…` pairing token, and current.png
+ * encodes the same URI in the QR modules. World-readable 0644 files
+ * let any local unprivileged user race the phone signer and BURN the
+ * single-use secret — the pubkey gate refuses their proof but the
+ * victim's login/unlock fails (griefing / DoS). See
+ * docs/reviews/greeter-artifact-secret-confidentiality-2026-09-22.md
+ * and beads nostrc-3c7n. Publish the drop dir 0750 and the files
+ * 0640, root:nostr-auth-greeter — only members of that group (gdm at
+ * the greeter, the seated user during unlock via pam_group) can read
+ * the manifest / QR. */
+#define GREETER_GROUP_DEFAULT "nostr-auth-greeter"
+#define GREETER_DIR_MODE      0750
+#define GREETER_FILE_MODE     0640
+
 static char g_greeter_dir[512];
+static char g_greeter_group[64] = GREETER_GROUP_DEFAULT;
 
 static const char *greeter_dir(void) {
   return g_greeter_dir[0] ? g_greeter_dir : GREETER_DIR_DEFAULT;
+}
+
+static const char *greeter_group(void) {
+  return g_greeter_group[0] ? g_greeter_group : GREETER_GROUP_DEFAULT;
+}
+
+/* Resolve the configured group name to a gid. Returns (gid_t)-1 on
+ * lookup failure and logs the miss at most once per name — the caller
+ * treats -1 as "no chown", which keeps the artifact publishable
+ * (root:root, still 0640 so unprivileged reads are denied) even on a
+ * host where the sysusers.d snippet has not been applied yet. */
+static gid_t greeter_gid(void) {
+  static char logged_missing[64];
+  const char *name = greeter_group();
+  errno = 0;
+  struct group *gr = getgrnam(name);
+  if (gr) return gr->gr_gid;
+  if (strncmp(logged_missing, name, sizeof logged_missing) != 0) {
+    /* Best-effort remember-and-warn: subsequent calls with the same
+     * name stay silent, so a persistently misconfigured host does not
+     * flood the journal on every publish. A different group name
+     * (typically only in tests) resets the memo. */
+    snprintf(logged_missing, sizeof logged_missing, "%s", name);
+    syslog(LOG_WARNING,
+           "nostr-authd: greeter group '%s' not found (getgrnam errno=%d) — "
+           "publishing artifact 0640 root:root; the greeter extension will "
+           "not be able to read /run/nostr-auth/greeter/ until the "
+           "nostr-auth-greeter group is created (see sysusers.d snippet in "
+           "packaging/sysusers.d/).",
+           name, errno);
+  }
+  return (gid_t)-1;
 }
 
 void nh_broker_greeter_artifact_set_dir(const char *dir) {
@@ -41,6 +91,15 @@ void nh_broker_greeter_artifact_set_dir(const char *dir) {
   size_t n = strlen(dir);
   if (n >= sizeof g_greeter_dir) { g_greeter_dir[0] = '\0'; return; }
   memcpy(g_greeter_dir, dir, n + 1);
+}
+
+void nh_broker_greeter_artifact_set_group(const char *name) {
+  if (!name || !name[0]) {
+    snprintf(g_greeter_group, sizeof g_greeter_group, "%s",
+             GREETER_GROUP_DEFAULT);
+    return;
+  }
+  snprintf(g_greeter_group, sizeof g_greeter_group, "%s", name);
 }
 
 static char *trim(char *s) {
@@ -168,22 +227,53 @@ int nh_auth_conf_load(const char *path, nh_auth_conf *out) {
   return 0;
 }
 
-/* Ensure the greeter dir exists (best effort — a systemd tmpfiles.d entry
- * or the daemon's ExecStartPre normally owns creation). */
+/* Ensure the greeter dir exists and enforce the confidentiality
+ * posture (mode 0750, group=greeter_gid). systemd's RuntimeDirectory=
+ * / ExecStartPre normally owns creation on the production host; we
+ * re-apply chmod+chgrp on every publish so a directory recreated by
+ * hand (e.g. during headless tests, or after a stale-state cleanup)
+ * still ends up with the right permissions before we drop the
+ * pairing-secret-bearing manifest into it. */
 static int ensure_dir(const char *dir) {
   struct stat st;
-  if (stat(dir, &st) == 0) return S_ISDIR(st.st_mode) ? 0 : -1;
-  if (mkdir(dir, 0755) == 0) return 0;
-  return -1;
+  int existed = (stat(dir, &st) == 0);
+  if (existed) {
+    if (!S_ISDIR(st.st_mode)) return -1;
+  } else {
+    if (mkdir(dir, GREETER_DIR_MODE) != 0) return -1;
+  }
+  /* chmod+chgrp after mkdir so umask cannot loosen the mode; on
+   * pre-existing dirs we still re-tighten in case an operator or an
+   * older broker left mode 0755. Failures are non-fatal — an EPERM
+   * from chown means we're running unprivileged in a test (where the
+   * broker's own uid already owns the tmpdir) or the group could not
+   * be resolved, and either way the tighter chmod above still holds. */
+  int rc_chmod = chmod(dir, GREETER_DIR_MODE);
+  (void)rc_chmod;
+  gid_t gid = greeter_gid();
+  if (gid != (gid_t)-1) {
+    int rc_chown = chown(dir, (uid_t)-1, gid);
+    (void)rc_chown;
+  }
+  return 0;
 }
 
-/* Best-effort atomic write: write to <dst>.tmp, chmod, then rename. */
-static int write_atomic(const char *dst, mode_t mode, const void *data,
-                        size_t len) {
+/* Best-effort atomic write with confidentiality bits enforced BEFORE
+ * the rename: create <dst>.tmp with mode 0 (so an interleaved reader
+ * cannot observe a wider mode even for a scheduler tick), fchown to
+ * the greeter group (when resolvable), fchmod to `mode`, then rename.
+ * The final artifact is never briefly world-readable — this is the
+ * property that closes the racing-signer griefing hole described at
+ * docs/reviews/greeter-artifact-secret-confidentiality-2026-09-22.md. */
+static int write_atomic_locked(const char *dst, mode_t mode, gid_t gid,
+                               const void *data, size_t len) {
   char tmp[600];
   int nprint = snprintf(tmp, sizeof tmp, "%s.tmp", dst);
   if (nprint <= 0 || (size_t)nprint >= sizeof tmp) return -1;
-  int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode);
+  /* Open with mode 0 so umask cannot widen us and any concurrent
+   * opener (there shouldn't be one, but a hostile local user watching
+   * the dir with inotify could try) sees a strictly narrower window. */
+  int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0);
   if (fd < 0) return -1;
   ssize_t off = 0;
   while ((size_t)off < len) {
@@ -191,7 +281,26 @@ static int write_atomic(const char *dst, mode_t mode, const void *data,
     if (w < 0) { if (errno == EINTR) continue; close(fd); unlink(tmp); return -1; }
     off += w;
   }
-  if (fchmod(fd, mode) != 0) { /* not fatal — mode came from O_CREAT */ }
+  /* Set group ownership BEFORE widening the mode — otherwise the file
+   * spends a scheduler tick as root:root with mode 0640, which the
+   * seated user (member of nostr-auth-greeter but not root) cannot
+   * read. gid == (gid_t)-1 means "group lookup failed"; we leave the
+   * file root:root and still ship it 0640 so the pairing secret stays
+   * confidential (the greeter extension just won't be able to render
+   * this publish; that is a UX regression, not a security regression). */
+  if (gid != (gid_t)-1) {
+    int rc_fchown = fchown(fd, (uid_t)-1, gid);
+    /* Non-fatal — an EPERM here means we're headless / unprivileged
+     * (the running uid does not own the target gid). The file is
+     * still narrower than the pre-fix 0644 world-readable posture:
+     * fchmod(0640) below denies "other". */
+    (void)rc_fchown;
+  }
+  if (fchmod(fd, mode) != 0) {
+    close(fd);
+    unlink(tmp);
+    return -1;
+  }
   if (close(fd) != 0) { unlink(tmp); return -1; }
   if (rename(tmp, dst) != 0) { unlink(tmp); return -1; }
   return 0;
@@ -217,7 +326,9 @@ static void publish_greeter_png(const char *dir, const char *uri) {
   char path[600];
   int n = snprintf(path, sizeof path, "%s/%s", dir, GREETER_PNG_NAME);
   if (n <= 0 || (size_t)n >= sizeof path) { free(png); return; }
-  (void)write_atomic(path, 0644, png, plen);
+  /* Same confidentiality rules as current.json — the QR encodes the
+   * pairing secret so it must land 0640 root:nostr-auth-greeter. */
+  (void)write_atomic_locked(path, GREETER_FILE_MODE, greeter_gid(), png, plen);
   free(png);
 }
 
@@ -244,7 +355,13 @@ static int copy_avatar(const char *dir, const char *src) {
   int overrun = (fgetc(in) != EOF);
   fclose(in);
   int rc = -1;
-  if (!overrun && total > 0) rc = write_atomic(dst, 0644, buf, total);
+  /* Avatar mode matches the manifest (0640 root:nostr-auth-greeter):
+   * although the avatar itself is not a secret, keeping the whole
+   * drop directory at one mode/group means the greeter extension
+   * either can read every file or none, so a partial-read failure
+   * mode (label + missing face, or vice versa) cannot happen. */
+  if (!overrun && total > 0)
+    rc = write_atomic_locked(dst, GREETER_FILE_MODE, greeter_gid(), buf, total);
   free(buf);
   return rc;
 }
@@ -355,7 +472,8 @@ int nh_broker_greeter_artifact_write(const char *tx_id,
   int nprint = snprintf(path, sizeof path, "%s/%s", dir, GREETER_JSON_NAME);
   int rc = -1;
   if (nprint > 0 && (size_t)nprint < sizeof path)
-    rc = write_atomic(path, 0644, j, strlen(j));
+    rc = write_atomic_locked(path, GREETER_FILE_MODE, greeter_gid(),
+                             j, strlen(j));
   free(j);
   /* Best-effort PNG next to the manifest — the greeter extension expects
    * both files present at every publish. Non-fatal on failure. */
