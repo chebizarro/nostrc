@@ -363,6 +363,19 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
     add_test(NAME homed_auth_conf COMMAND test_auth_conf)
     set_tests_properties(homed_auth_conf
       PROPERTIES LABELS "nostr-homed;portable;auth-runtime" TIMEOUT 30)
+    # Greeter-artifact confidentiality (beads nostrc-3c7n / nostrc-zcll.6):
+    # assert mode 0640 + group ownership on current.json / current.png /
+    # avatar.png and mode 0750 + group ownership on the drop dir. Runs
+    # unprivileged; the test seam pins the group to one the running uid
+    # already belongs to.
+    add_executable(test_greeter_artifact_perms
+      tests/unit/test_greeter_artifact_perms.c)
+    target_link_libraries(test_greeter_artifact_perms PRIVATE
+      nostr_auth_runtime)
+    add_test(NAME homed_greeter_artifact_perms
+      COMMAND test_greeter_artifact_perms)
+    set_tests_properties(homed_greeter_artifact_perms
+      PROPERTIES LABELS "nostr-homed;portable;auth-runtime;security" TIMEOUT 30)
     # B5-NIP-05 (nostrc-bit0): parser + URL assembly + well-known JSON
     # parser + cache TTL. The helper's live HTTPS behaviour is covered
     # by the aarch64 VM integration run (docs/reviews/nip05-login-*.md).
@@ -806,6 +819,19 @@ if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
     DESTINATION "${SYSTEMD_SYSTEM_UNIT_DIR}")
   install(FILES config/auth.conf.sample
     DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-homed")
+  # Greeter-artifact confidentiality (beads nostrc-3c7n, references
+  # nostrc-zcll.6): provision the nostr-auth-greeter system group so
+  # the ExecStartPre in nostr-authd.service can `install -d -g
+  # nostr-auth-greeter` /run/nostr-auth/greeter and the broker can
+  # chown current.{json,png} + avatar.png to it. The sysusers.d(5)
+  # snippet runs at boot / package install; packaging still needs to
+  # add gdm to the group (postinst) and drop the pam_group sample into
+  # /etc/security/group.conf.d — see the sample below for the exact
+  # incantation.
+  install(FILES packaging/sysusers.d/nostr-auth-greeter.conf
+    DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sysusers.d")
+  install(FILES packaging/pam/nostr-auth-greeter.group.conf.sample
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}/examples/pam")
 
   # B4 (nostrc-rb0e.3): install nh-seed-authority as /usr/sbin/nostr-homed-seed.
   # The build target keeps its original name so existing test infrastructure

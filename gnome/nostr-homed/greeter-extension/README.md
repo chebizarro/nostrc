@@ -49,25 +49,62 @@ directory layout is the contract:
 
 ```
 /run/nostr-auth/           mode 0711, root:root
-└── greeter/               mode 0755, root:root
-    ├── current.json       mode 0644, root:root
-    └── current.png        mode 0644, root:root
+└── greeter/               mode 0750, root:nostr-auth-greeter
+    ├── current.json       mode 0640, root:nostr-auth-greeter
+    ├── current.png        mode 0640, root:nostr-auth-greeter
+    └── avatar.png         mode 0640, root:nostr-auth-greeter  (optional)
 ```
 
 - `/run/nostr-auth` is `0711` so the `gdm` user (uid 124 on the reference
   Ubuntu 24.04 build) can `x`-traverse to `greeter/` without being able
   to list the parent, which may hold sockets or per-seat state.
-- `/run/nostr-auth/greeter` is `0755` so `gdm-x-session` /
-  `gnome-shell --gdm-mode` can `read` + `x` — required for
-  `Gio.FileMonitor` on the directory and for `load_contents` on the
-  manifest.
-- Both files are `0644`, `root:root`.  Nothing under `greeter/` is a
-  secret in the strong sense: the `nostrconnect://` URI encoded in the
-  QR contains a one-time pairing secret whose only purpose is to prove
-  that a signer saw *this* screen (see the design §8.1); if a local
-  unprivileged user reads it the worst they can do is race the phone,
-  and the outcome is still gated by the account-pubkey binding checks
-  (§8.3).  Do not add any other files to this directory.
+- `/run/nostr-auth/greeter` is `0750` and group-owned by
+  `nostr-auth-greeter`.  `gdm-x-session` / `gnome-shell --gdm-mode`
+  and the seated user during `unlock-dialog` both belong to that
+  group; every other local uid is denied.  The read + traverse bits
+  needed by `Gio.FileMonitor` on the directory and by `load_contents`
+  on the manifest are exactly what the group grants.
+- Each file is `0640`, `root:nostr-auth-greeter`.  The manifest
+  embeds the full `nostrconnect://` URI **including its one-time
+  `secret=…` pairing token**, and `current.png` encodes the same URI
+  in the QR modules — a world-readable drop lets any local uid race
+  the phone signer and burn the single-use secret, which manifests
+  as the victim's own login/unlock failing (griefing / DoS).  The
+  account-pubkey binding checks (§8.3) still reject the racing
+  signer's proof, but they cannot un-burn a spent secret.  Do not
+  add any other files to this directory; do not loosen the mode.
+  See `docs/reviews/greeter-artifact-secret-confidentiality-2026-09-22.md`
+  (beads `nostrc-3c7n`).
+
+### `nostr-auth-greeter` group — deployment
+
+The `nostr-auth-greeter` group is provisioned by the shipped
+`sysusers.d(5)` snippet (installed as
+`/usr/lib/sysusers.d/nostr-auth-greeter.conf`) so the broker's
+`ExecStartPre` can `install -d -g nostr-auth-greeter
+/run/nostr-auth/greeter` at every service start.  Packaging must
+still add the group to the accounts that need to read the drop:
+
+- **gdm** (greeter path — session-mode `gdm`):
+  `sudo gpasswd -a gdm nostr-auth-greeter` (Debian/Ubuntu) or
+  `sudo usermod -a -G nostr-auth-greeter gdm` (Fedora).  gdm picks
+  the new supplementary group up on its next process restart, i.e.
+  after `systemctl restart gdm` or the next boot.
+- **seated user** (lock-screen path — session-mode `unlock-dialog`):
+  add `pam_group.so` to `/etc/pam.d/login` (Debian/Ubuntu ships this
+  by default) and drop the shipped sample
+  (`${docdir}/examples/pam/nostr-auth-greeter.group.conf.sample`)
+  into `/etc/security/group.conf.d/50-nostr-auth-greeter.conf` so the
+  supplementary group is granted at session-open time and persists
+  for the entire login session.  Users pick it up on their next
+  fresh login.
+
+If the group does not resolve at broker publish time the manifest is
+still written 0640 but stays owned `root:root` — the greeter
+extension will not be able to read it and the QR panel simply does
+not render for that pairing; the pairing secret is never exposed.
+The broker logs `nostr-authd: greeter group '<name>' not found ...`
+once per boot to make the misconfiguration visible in the journal.
 
 ### `current.json`
 
@@ -159,11 +196,14 @@ Field semantics:
 ### `avatar.png` (optional, sibling to `current.png`)
 
 ```
-/run/nostr-auth/greeter/avatar.png    mode 0644, root:root
+/run/nostr-auth/greeter/avatar.png    mode 0640, root:nostr-auth-greeter
 ```
 
 - Sits next to `current.png` under `/run/nostr-auth/greeter/`, same
-  ownership + mode.  The `account.avatar` field is a basename-only
+  ownership + mode as the manifest (`0640
+  root:nostr-auth-greeter`).  Not a secret in isolation, but the mode
+  matches the other files in the drop so a partial-read failure
+  (label + missing face, or vice versa) cannot happen.  The `account.avatar` field is a basename-only
   reference into this directory (not an arbitrary path); the extension
   refuses to load images from anywhere else on disk.
 - Any PNG the producer chooses.  For the circular mask to read cleanly
@@ -190,7 +230,7 @@ canonical local username directly, or because a NIP-05 identifier
 | `username` | string | yes (when `account` is present) | Canonical local username (matches `passwd`). |
 | `display_name` | string | no | Real name from the AccountsService profile cache (`/var/lib/nostr-auth/profile/<user>.json`, fields `display_name` → `name`).  Omitted if the cache is empty; the greeter should fall back to `username`. |
 | `identifier` | string | no | The NIP-05 as typed at the greeter (normalized: local case preserved, domain lower-cased). Present **only** when the login was initiated via NIP-05 — omitted for canonical-username logins so the extension shows the plain user label. |
-| `avatar` | string | no | Basename of the sibling PNG under `/run/nostr-auth/greeter/`.  Present only when the broker successfully copied `/var/lib/AccountsService/icons/<user>` into the greeter drop as `avatar.png` (mode `0644`, root-owned).  Absent when no cached icon exists (fresh account) or the copy failed; the greeter should fall back to the generic avatar. |
+| `avatar` | string | no | Basename of the sibling PNG under `/run/nostr-auth/greeter/`.  Present only when the broker successfully copied `/var/lib/AccountsService/icons/<user>` into the greeter drop as `avatar.png` (mode `0640`, root:nostr-auth-greeter).  Absent when no cached icon exists (fresh account) or the copy failed; the greeter should fall back to the generic avatar. |
 
 Sibling file when `avatar` is emitted:
 
@@ -198,7 +238,7 @@ Sibling file when `avatar` is emitted:
 /run/nostr-auth/greeter/
 ├── current.json       — as above, with "account" and "avatar":"avatar.png"
 ├── current.png        — the QR PNG
-└── avatar.png         — copy of the AccountsService icon (root-owned, 0644)
+└── avatar.png         — copy of the AccountsService icon (root:nostr-auth-greeter, 0640)
 ```
 
 The broker removes `avatar.png` together with `current.{json,png}` on
@@ -231,12 +271,23 @@ Atomic publish (broker side):
 ```sh
 umask 022
 install -d -m 0711 /run/nostr-auth
-install -d -m 0755 /run/nostr-auth/greeter
+install -d -m 0750 -g nostr-auth-greeter /run/nostr-auth/greeter
 qrencode -t PNG -l L -o /run/nostr-auth/greeter/.current.png.new "$URI"
+chgrp nostr-auth-greeter /run/nostr-auth/greeter/.current.png.new
+chmod 0640              /run/nostr-auth/greeter/.current.png.new
 mv /run/nostr-auth/greeter/.current.png.new /run/nostr-auth/greeter/current.png
+umask 037
 printf '%s' "$MANIFEST_JSON" > /run/nostr-auth/greeter/.current.json.new
+chgrp nostr-auth-greeter /run/nostr-auth/greeter/.current.json.new
 mv /run/nostr-auth/greeter/.current.json.new /run/nostr-auth/greeter/current.json
 ```
+
+The in-tree broker (`nh_broker_greeter_artifact_write` in
+`gnome/nostr-homed/src/auth/auth_conf.c`) enforces the confidentiality
+posture by opening the `.tmp` files at mode `0` (nothing readable),
+`fchown`'ing to the greeter group and `fchmod`'ing to `0640`
+**before** `rename(2)` — so the atomic swap never exposes a widened
+mode to an inotify-watching attacker.
 
 Retire (broker side):
 
@@ -379,7 +430,12 @@ gsettings get org.gnome.shell enabled-extensions
 
 The artifact directory `/run/nostr-auth/greeter/` must remain readable
 to the user's shell process — the shipped broker publishes with dir
-mode `0755` and file mode `0644`, which is what `unlock-dialog` needs.
+mode `0750` (group-owned `nostr-auth-greeter`) and file mode `0640`,
+so the seated user must be a member of `nostr-auth-greeter` to
+render the QR panel on their lock screen.  Deploy the shipped
+`pam_group` sample so `pam_login` grants the group at session-open
+time; see the "Producer contract" section above for the exact
+install steps.
 
 ## Install (from this repo)
 

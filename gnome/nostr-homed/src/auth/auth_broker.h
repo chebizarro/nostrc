@@ -214,8 +214,26 @@ void nh_broker_greeter_artifact_remove(void);
 
 /* Override the greeter-artifact directory. NULL/"" resets to the default
  * (/run/nostr-auth/greeter). The path is not created recursively; the
- * broker will attempt to mkdir the leaf with mode 0755. Test seam only —
- * production leaves it at the default so gdm's greeter can find it. */
+ * broker will attempt to mkdir the leaf with mode 0750 owned by the
+ * greeter group (see nh_broker_greeter_artifact_set_group). Test seam
+ * only — production leaves it at the default so gdm's greeter can find
+ * it. */
 void nh_broker_greeter_artifact_set_dir(const char *dir);
+
+/* Override the confidentiality group applied to the greeter-artifact
+ * directory and its files. The broker publishes /run/nostr-auth/greeter/
+ * mode 0750 and current.{json,png} + avatar.png mode 0640, chown'd to
+ * root:<group>, so that only members of that group (gdm at the greeter,
+ * the seated user for unlock-dialog via pam_group) can read the
+ * one-time NIP-46 pairing secret carried by the manifest and QR.
+ *
+ * NULL/"" resets to the default ("nostr-auth-greeter"). A group name
+ * that fails to resolve at write time is treated as "no group" — the
+ * files are still published mode 0640 root:root (readable only to
+ * root; the greeter extension will NOT be able to render but the
+ * pairing secret is protected), and the failure is logged once.
+ * Test seam so headless tests can pick a group the running uid is
+ * already a member of. */
+void nh_broker_greeter_artifact_set_group(const char *group_name);
 
 #endif /* NH_AUTH_BROKER_H */

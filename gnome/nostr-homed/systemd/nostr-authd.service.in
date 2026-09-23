@@ -14,8 +14,23 @@ RestartSec=1
 # SO_PEERCRED).  The directory is 0711 (traverse-only, not listable) so an
 # unprivileged account uid can reach user.sock; it cannot open auth.sock
 # because that socket is mode 0600.  authority.db lives in a 0700 state dir.
+#
+# greeter/ is a child of the runtime dir that holds the pairing-secret-
+# bearing NIP-46 QR artifact (current.json + current.png + avatar.png).
+# It MUST be group-scoped to nostr-auth-greeter so only gdm and the
+# seated user (during unlock-dialog, via pam_group) can read it — the
+# manifest embeds the one-time `secret=` pairing token and world-
+# readable 0755+0644 lets any local uid burn it. See
+# docs/reviews/greeter-artifact-secret-confidentiality-2026-09-22.md
+# (beads nostrc-3c7n, references nostrc-zcll.6). The `nostr-auth-greeter`
+# group is provisioned by the shipped sysusers.d snippet
+# (packaging/sysusers.d/nostr-auth-greeter.conf); the greeter/ subdir is
+# (re)created and re-tightened here in an ExecStartPre so the broker
+# never has to trust that a stale bind-mount / hand-edit left the
+# directory at the correct mode+group.
 RuntimeDirectory=nostr-auth
 RuntimeDirectoryMode=0711
+ExecStartPre=/usr/bin/install -d -m 0750 -o root -g nostr-auth-greeter /run/nostr-auth/greeter
 StateDirectory=nostr-auth
 StateDirectoryMode=0700
 ReadWritePaths=/var/lib/nostr-auth
