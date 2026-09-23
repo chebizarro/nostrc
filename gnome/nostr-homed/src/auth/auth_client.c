@@ -53,7 +53,7 @@ void nh_auth_client_close(int fd) {
 }
 
 static int result_from_name(const char *name, nh_auth_result *out) {
-  for (int r = 0; r <= NH_AUTH_RESULT_INTERNAL_ERROR; r++) {
+  for (int r = 0; r <= NH_AUTH_RESULT_MAX; r++) {
     const char *n = nh_auth_result_name((nh_auth_result)r);
     if (n && name && !strcmp(n, name)) { *out = (nh_auth_result)r; return 0; }
   }
@@ -560,6 +560,72 @@ int nh_auth_client_smb_proof_with(int fd, const char *service,
     volatile char *v = (volatile char *)response_json;
     for (size_t i = 0; response_json[i]; i++) v[i] = 0;
   }
+  free(response_json);
+  return rc;
+}
+
+/* ────────────────────────────────────────────────────────────────────
+ * Portable-home Phase 2 (bead nostrc-89rj): PROVISION_HOME / WAIT_HOME.
+ * The broker returns NH_AUTH_RESULT_NOT_SUPPORTED when built without
+ * porthome; PAM's open_session treats that as a no-op success. Additive
+ * per the protocol contract (old clients never call the new ops). */
+
+/* Parse porthome-progress fields (bytes / total_bytes / files /
+ * total_files) out of a WAIT_HOME response. All fields are optional. */
+static void parse_porthome_progress(const char *json,
+                                    nh_auth_porthome_progress *out) {
+  if (!out) return;
+  memset(out, 0, sizeof *out);
+  if (!json) return;
+  json_error_t je;
+  json_t *root = json_loads(json, 0, &je);
+  if (!root) return;
+  json_t *v;
+  if ((v = json_object_get(root, "bytes")) && json_is_integer(v))
+    out->bytes = (uint64_t)json_integer_value(v);
+  if ((v = json_object_get(root, "total_bytes")) && json_is_integer(v))
+    out->total_bytes = (uint64_t)json_integer_value(v);
+  if ((v = json_object_get(root, "files")) && json_is_integer(v))
+    out->files = (uint32_t)json_integer_value(v);
+  if ((v = json_object_get(root, "total_files")) && json_is_integer(v))
+    out->total_files = (uint32_t)json_integer_value(v);
+  json_decref(root);
+}
+
+int nh_auth_client_provision_home(int fd, const char *username,
+                                  const char *service, uint32_t timeout_ms,
+                                  nh_auth_result *result_out) {
+  if (!result_out) return -1;
+  json_t *payload = json_object();
+  if (!payload) return -1;
+  int bad = 0;
+  if (username && *username)
+    bad |= json_object_set_new(payload, "username", json_string(username));
+  if (service && *service)
+    bad |= json_object_set_new(payload, "service", json_string(service));
+  if (timeout_ms)
+    bad |= json_object_set_new(payload, "timeout_ms",
+                               json_integer((json_int_t)timeout_ms));
+  if (bad) { json_decref(payload); return -1; }
+  return client_op(fd, NH_AUTH_OP_PROVISION_HOME, payload, result_out);
+}
+
+int nh_auth_client_wait_home(int fd, uint32_t timeout_ms,
+                             nh_auth_porthome_progress *progress_out,
+                             nh_auth_result *result_out) {
+  if (!result_out) return -1;
+  json_t *payload = json_object();
+  if (!payload) return -1;
+  if (json_object_set_new(payload, "timeout_ms",
+                          json_integer((json_int_t)timeout_ms)) != 0) {
+    json_decref(payload);
+    return -1;
+  }
+  char *response_json = NULL;
+  if (client_op_raw(fd, NH_AUTH_OP_WAIT_HOME, payload, &response_json) != 0)
+    return -1;
+  int rc = extract_result(response_json, result_out);
+  if (rc == 0) parse_porthome_progress(response_json, progress_out);
   free(response_json);
   return rc;
 }

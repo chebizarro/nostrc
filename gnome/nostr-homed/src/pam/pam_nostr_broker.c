@@ -508,13 +508,126 @@ int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc, const char **argv) {
   return PAM_SUCCESS;
 }
 
+/* porthome_wait_ms=<n> — optional PAM arg overriding the default
+ * 60 s bounded WAIT_HOME budget. Broker never blocks longer than
+ * this; PAM MUST NOT be held past login_deadline (design §5.3). */
+#define NH_PAM_PORTHOME_WAIT_MS_DEFAULT 60000u
+#define NH_PAM_PORTHOME_WAIT_MS_CAP     120000u
+static uint32_t porthome_wait_ms(int argc, const char **argv) {
+  for (int i = 0; i < argc; i++) {
+    if (!strncmp(argv[i], "porthome_wait_ms=", 17)) {
+      unsigned long v = strtoul(argv[i] + 17, NULL, 10);
+      if (v > 0 && v <= NH_PAM_PORTHOME_WAIT_MS_CAP)
+        return (uint32_t)v;
+    }
+  }
+  return NH_PAM_PORTHOME_WAIT_MS_DEFAULT;
+}
+
 int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
                         const char **argv) {
-  (void)flags; (void)argc; (void)argv;
+  (void)flags;
   const char *user = NULL;
-  pam_get_user(pamh, &user, NULL);
-  pam_syslog(pamh, LOG_INFO, "nostr: open_session %s", user ? user : "?");
-  /* Local homes are provisioned at enrollment; nothing to mount here. */
+  if (pam_get_user(pamh, &user, NULL) != PAM_SUCCESS || !user || !user[0])
+    return PAM_SUCCESS;  /* nothing to do; ordinary session */
+  pam_syslog(pamh, LOG_INFO, "nostr: open_session %s", user);
+
+  /* Portable-home Phase 2 (bead nostrc-89rj): ask the broker to
+   * materialise the account's home from the encrypted manifest.
+   * The broker returns NOT_SUPPORTED when the account has no
+   * portable-home provider record or when the broker was built
+   * without NH_AUTH_BROKER_ENABLE_PORTHOME — in either case the
+   * ordinary local home path stands and open_session succeeds.
+   *
+   * LIMITED_MODE (relay unreachable, manifest missing,
+   * per-file cap tripped) is a first-class outcome, not an error:
+   * PAM_SUCCESS + pam_info("...limited mode...") + putenv
+   * NOSTR_HOME_STATE=limited so the sync daemon can retry later
+   * without pushing (design §5.3 no-push interlock). */
+  const char *sock = socket_path(argc, argv);
+  int fd = -1;
+  if (nh_auth_client_connect(sock, &fd) != 0) {
+    pam_syslog(pamh, LOG_NOTICE, "nostr: open_session: broker unreachable"
+                                 " — skipping portable-home");
+    return PAM_SUCCESS;
+  }
+
+  nh_auth_result r = NH_AUTH_RESULT_INTERNAL_ERROR;
+  int trc = nh_auth_client_provision_home(fd, user, "open_session", 0, &r);
+  if (trc != 0) {
+    nh_auth_client_close(fd);
+    pam_syslog(pamh, LOG_NOTICE, "nostr: open_session: PROVISION_HOME"
+                                 " transport failure — skipping");
+    return PAM_SUCCESS;
+  }
+
+  /* NOT_SUPPORTED = account has no portable home OR broker built
+   * without porthome. Either way, no work to do. */
+  if (r == NH_AUTH_RESULT_NOT_SUPPORTED) {
+    nh_auth_client_close(fd);
+    return PAM_SUCCESS;
+  }
+
+  /* OK (synchronous provision) or IN_PROGRESS (async job). On
+   * IN_PROGRESS we poll with WAIT_HOME until the broker's bounded
+   * wait returns terminal. */
+  if (r == NH_AUTH_RESULT_OK) {
+    (void)pam_putenv(pamh, "NOSTR_HOME_STATE=ready");
+    nh_auth_client_close(fd);
+    return PAM_SUCCESS;
+  }
+
+  if (r != NH_AUTH_RESULT_IN_PROGRESS && r != NH_AUTH_RESULT_LIMITED_MODE) {
+    /* Any other unexpected outcome — a real failure. Do NOT let
+     * PAM fail here (the user is already authenticated); fall
+     * through into LIMITED_MODE so the session opens empty and
+     * the sync daemon retries. */
+    nh_auth_client_close(fd);
+    pam_syslog(pamh, LOG_WARNING, "nostr: PROVISION_HOME -> %s;"
+                                  " opening limited session",
+               nh_auth_result_name(r));
+    (void)pam_putenv(pamh, "NOSTR_HOME_STATE=limited");
+    pam_info(pamh, "Your portable home is unavailable — signing you"
+                   " in with a limited session. Files created now"
+                   " will sync when the connection returns.");
+    return PAM_SUCCESS;
+  }
+
+  /* Poll WAIT_HOME until terminal or budget exhausted. The broker
+   * enforces its own cap per request; we set the total budget
+   * across polls too. */
+  uint32_t budget = porthome_wait_ms(argc, argv);
+  uint32_t per_call = budget > 5000 ? 5000 : budget;
+  nh_auth_result final = r;
+  nh_auth_porthome_progress prog;
+  memset(&prog, 0, sizeof prog);
+  while (budget > 0 && (final == NH_AUTH_RESULT_IN_PROGRESS ||
+                        final == NH_AUTH_RESULT_INTERACTION_REQUIRED)) {
+    if (nh_auth_client_wait_home(fd, per_call, &prog, &final) != 0) {
+      /* Broker went away mid-wait — treat as limited. */
+      final = NH_AUTH_RESULT_LIMITED_MODE;
+      break;
+    }
+    if (per_call > budget) per_call = budget;
+    budget = budget > per_call ? budget - per_call : 0;
+  }
+  nh_auth_client_close(fd);
+
+  if (final == NH_AUTH_RESULT_OK) {
+    (void)pam_putenv(pamh, "NOSTR_HOME_STATE=ready");
+    return PAM_SUCCESS;
+  }
+  if (final == NH_AUTH_RESULT_INTERNAL_ERROR) {
+    /* Hard failure (crypto mismatch, invariant broken). Do NOT
+     * mount a corrupt home — refuse to open the session. */
+    pam_error(pamh, "Your portable home is corrupt. Refusing to"
+                    " open the session. Contact your administrator.");
+    return PAM_SESSION_ERR;
+  }
+  /* LIMITED_MODE (or IN_PROGRESS at deadline). Login proceeds. */
+  (void)pam_putenv(pamh, "NOSTR_HOME_STATE=limited");
+  pam_info(pamh, "Your portable home is loading in the background."
+                 " You may see fewer files until sync completes.");
   return PAM_SUCCESS;
 }
 

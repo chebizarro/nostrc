@@ -32,6 +32,8 @@ typedef enum nh_auth_operation {
   NH_AUTH_OP_OPEN_LOCAL_SESSION,
   NH_AUTH_OP_CLOSE_LOCAL_SESSION,
   NH_AUTH_OP_BEGIN_SMB_PROOF,
+  NH_AUTH_OP_PROVISION_HOME,
+  NH_AUTH_OP_WAIT_HOME,
   NH_AUTH_OP_ADMIN
 } nh_auth_operation;
 
@@ -50,8 +52,18 @@ typedef enum nh_auth_result {
   NH_AUTH_RESULT_INTERACTION_REQUIRED,
   NH_AUTH_RESULT_STORAGE_ERROR,
   NH_AUTH_RESULT_PROTOCOL_ERROR,
-  NH_AUTH_RESULT_INTERNAL_ERROR
+  NH_AUTH_RESULT_INTERNAL_ERROR,
+  /* Portable-home (Phase 2) additions. Additive-optional per the
+   * protocol contract; older brokers never emit them. */
+  NH_AUTH_RESULT_IN_PROGRESS,
+  NH_AUTH_RESULT_LIMITED_MODE,
+  NH_AUTH_RESULT_NOT_SUPPORTED
 } nh_auth_result;
+
+/* Sentinel for iterators that walk the result-code range without
+ * hard-coding a numeric tail (used by nh_auth_result_name callers
+ * in auth_client.c). */
+#define NH_AUTH_RESULT_MAX NH_AUTH_RESULT_NOT_SUPPORTED
 
 typedef struct nh_auth_message {
   nh_auth_operation operation;

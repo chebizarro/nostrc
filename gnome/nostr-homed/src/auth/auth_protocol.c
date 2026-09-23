@@ -13,7 +13,7 @@ static const op_name operations[] = {
   {NH_AUTH_OP_SUBMIT_UNLOCK,"SubmitUnlock"},{NH_AUTH_OP_WAIT_RESULT,"WaitResult"},
   {NH_AUTH_OP_CANCEL,"Cancel"},{NH_AUTH_OP_CHECK_ACCOUNT,"CheckAccount"},
   {NH_AUTH_OP_OPEN_LOCAL_SESSION,"OpenLocalSession"},{NH_AUTH_OP_CLOSE_LOCAL_SESSION,"CloseLocalSession"},
-  {NH_AUTH_OP_BEGIN_SMB_PROOF,"BeginSmbProof"},{NH_AUTH_OP_ADMIN,"Admin"}
+  {NH_AUTH_OP_BEGIN_SMB_PROOF,"BeginSmbProof"},{NH_AUTH_OP_PROVISION_HOME,"ProvisionHome"},{NH_AUTH_OP_WAIT_HOME,"WaitHome"},{NH_AUTH_OP_ADMIN,"Admin"}
 };
 
 const char *nh_auth_operation_name(nh_auth_operation op) {
@@ -26,7 +26,7 @@ static nh_auth_operation parse_op(const char *s) {
   return 0;
 }
 const char *nh_auth_result_name(nh_auth_result r) {
-  static const char *names[]={"ok","unknown_account","disabled","not_ready","denied","invalid_proof","expired","cancelled","rate_limited","provider_unavailable","network_unavailable","interaction_required","storage_error","protocol_error","internal_error"};
+  static const char *names[]={"ok","unknown_account","disabled","not_ready","denied","invalid_proof","expired","cancelled","rate_limited","provider_unavailable","network_unavailable","interaction_required","storage_error","protocol_error","internal_error","in_progress","limited_mode","not_supported"};
   return (unsigned)r < sizeof names/sizeof names[0] ? names[r] : NULL;
 }
 static int lower_hex(const char *s, size_t n) {
@@ -58,6 +58,7 @@ int nh_auth_operation_allowed(nh_auth_endpoint ep,nh_auth_operation op,uid_t uid
     if (uid!=0) return 0;
     if (op==NH_AUTH_OP_BEGIN_SMB_PROOF) return 0;
     if (op==NH_AUTH_OP_SELECT_PROVIDER||op==NH_AUTH_OP_SUBMIT_UNLOCK||op==NH_AUTH_OP_WAIT_RESULT||op==NH_AUTH_OP_CANCEL) return owns;
+    if (op==NH_AUTH_OP_PROVISION_HOME||op==NH_AUTH_OP_WAIT_HOME) return 1;
     return 1;
   }
   if (ep==NH_AUTH_ENDPOINT_USER) {

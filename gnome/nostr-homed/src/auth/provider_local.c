@@ -1,4 +1,6 @@
 #include "auth_provider.h"
+#include <openssl/hmac.h>
+#include <openssl/evp.h>
 #include "auth_vault.h"
 #include "auth_worker.h"
 #include "nostr-event.h"
@@ -176,16 +178,98 @@ static int local_child_unlock_sign(const uint8_t *input, size_t input_len,
     e->pubkey && strcmp(e->pubkey, pubkey_hex) == 0 &&
     nostr_event_sign_secure(e, &key) == 0 &&
     nostr_event_validate(e, NULL) == NOSTR_EVENT_VALIDATION_OK;
+  /* PORTHOME wrap-seed derivation (bead nostrc-ck6i,
+   * nostrc-h10m).
+   *
+   * With `key` still holding the unlocked account private
+   * key, derive HKDF-SHA256(salt="porthome/v1/wrap",
+   * ikm=priv_key) -> 32-byte wrap_seed. We prepend the seed
+   * to the output stream as a fixed-shape prefix so the
+   * parent can extract it before the JSON event.
+   *
+   * Wire format written to out_fd:
+   *   "PORTHOME_SEED=" || 64 lowercase hex || "\n" || <signed_json>
+   *
+   * The seed IS key material — it derives home_key. The
+   * parent broker mlocks it, feeds it to the porthome job
+   * and wipes it. The pipe is a private per-fork anonymous
+   * pipe; the runtime already wipes the input and output
+   * buffers after use (nh_auth_worker_run). */
+  uint8_t _porthome_seed[32];
+  int _porthome_seed_ok = 0;
+  if (ok && key.ptr && key.len == 32) {
+    /* HKDF salt string kept in sync with nh_porthome_wrapkey.c
+     * (NH_PORTHOME_WRAPKEY_SALT_LOCAL = "porthome/v1/wrap").
+     * We inline the derivation here rather than link the
+     * porthome library into the child — the child must stay
+     * minimal and headless. */
+    /* Full HKDF-SHA256 via the in-tree helper reachable from
+     * the auth core: extract+expand — but the auth core does
+     * not export it. So compute inline using EVP_HMAC. */
+    /* Extract: PRK = HMAC(salt, ikm) */
+    const char *_salt = "porthome/v1/wrap";
+    unsigned char _prk[32]; unsigned int _prk_len = 0;
+    if (HMAC(EVP_sha256(), (const unsigned char *)_salt,
+             (int)strlen(_salt), (const unsigned char *)key.ptr, 32,
+             _prk, &_prk_len) && _prk_len == 32) {
+      /* Expand for L=32: OKM_1 = HMAC(PRK, T0 || info || 0x01)
+       * with T0 = empty, info = empty. */
+      unsigned char _ctr = 0x01;
+      unsigned int _okm_len = 0;
+      if (HMAC(EVP_sha256(), _prk, 32, &_ctr, 1,
+               _porthome_seed, &_okm_len) && _okm_len == 32)
+        _porthome_seed_ok = 1;
+    }
+    /* Best-effort wipe PRK. */
+    volatile unsigned char *_prkw = (volatile unsigned char *)_prk;
+    for (int _i = 0; _i < 32; _i++) _prkw[_i] = 0;
+  }
   secure_free(&key);
   if (ok) out = nostr_event_serialize_compact(e);
   nostr_event_free(e);
   free(cj_z);
-  if (!out) return NH_LOCAL_CHILD_PROOF_BAD;
+  if (!out) {
+    if (_porthome_seed_ok) {
+      volatile unsigned char *_sw =
+          (volatile unsigned char *)_porthome_seed;
+      for (int _i = 0; _i < 32; _i++) _sw[_i] = 0;
+    }
+    return NH_LOCAL_CHILD_PROOF_BAD;
+  }
 
+  /* Compose the prefix + JSON in one buffer. */
   size_t out_len = strlen(out);
+  size_t prefix_len = 0;
+  char prefix[16 + 64 + 1 + 1];
+  if (_porthome_seed_ok) {
+    static const char _hexd[] = "0123456789abcdef";
+    memcpy(prefix, "PORTHOME_SEED=", 14);
+    for (int _i = 0; _i < 32; _i++) {
+      prefix[14 + _i*2]     = _hexd[(_porthome_seed[_i] >> 4) & 0xF];
+      prefix[14 + _i*2 + 1] = _hexd[_porthome_seed[_i] & 0xF];
+    }
+    prefix[14 + 64] = '\n';
+    prefix_len = 14 + 64 + 1;
+  }
+  /* Wipe the raw seed once its hex is safely in `prefix`
+   * (the parent pipe carries it, but this child copy is done). */
+  if (_porthome_seed_ok) {
+    volatile unsigned char *_sw =
+        (volatile unsigned char *)_porthome_seed;
+    for (int _i = 0; _i < 32; _i++) _sw[_i] = 0;
+  }
   int wrc = 0;
   size_t off = 0;
-  while (off < out_len) {
+  while (off < prefix_len) {
+    ssize_t n = write(out_fd, prefix + off, prefix_len - off);
+    if (n <= 0) { wrc = -1; break; }
+    off += (size_t)n;
+  }
+  /* Wipe the on-stack prefix copy after send. */
+  volatile char *_pw = (volatile char *)prefix;
+  for (size_t _i = 0; _i < sizeof prefix; _i++) _pw[_i] = 0;
+  off = 0;
+  while (wrc == 0 && off < out_len) {
     ssize_t n = write(out_fd, out + off, out_len - off);
     if (n < 0) { wrc = -1; break; }
     if (n == 0) { wrc = -1; break; }
@@ -294,6 +378,54 @@ static int submit(nh_auth_provider *b, const uint8_t *secret, size_t n) {
 
   switch (ws) {
     case NH_AUTH_WORKER_OK:
+      /* PORTHOME wrap-seed prefix extraction (bead nostrc-ck6i).
+       * The child prepends "PORTHOME_SEED=<64hex>\n" to the
+       * output when the derivation succeeded. We consume it here
+       * — everything after the newline is the signed JSON event
+       * that the rest of the auth stack expects. */
+      if (out && out_len >= 14 + 64 + 1 &&
+          memcmp(out, "PORTHOME_SEED=", 14) == 0 &&
+          out[14 + 64] == '\n') {
+        char _seed_hex[65]; memcpy(_seed_hex, out + 14, 64);
+        _seed_hex[64] = '\0';
+        uint8_t _seed_bytes[32]; int _seed_ok = 1;
+        for (int _i = 0; _i < 32 && _seed_ok; _i++) {
+          char h = _seed_hex[_i*2], l = _seed_hex[_i*2+1];
+          int hi = (h >= '0' && h <= '9') ? h - '0'
+                 : (h >= 'a' && h <= 'f') ? 10 + h - 'a' : -1;
+          int lo = (l >= '0' && l <= '9') ? l - '0'
+                 : (l >= 'a' && l <= 'f') ? 10 + l - 'a' : -1;
+          if (hi < 0 || lo < 0) { _seed_ok = 0; break; }
+          _seed_bytes[_i] = (uint8_t)((hi << 4) | lo);
+        }
+        if (_seed_ok) {
+          extern int nh_auth_broker_porthome_deposit_wrap_seed(
+              const char *account_id, const uint8_t seed[32]);
+          (void)nh_auth_broker_porthome_deposit_wrap_seed(
+              p->account_id, _seed_bytes);
+        }
+        /* Wipe local copies of the seed material. */
+        volatile uint8_t *_sw =
+            (volatile uint8_t *)_seed_bytes;
+        for (int _i = 0; _i < 32; _i++) _sw[_i] = 0;
+        volatile char *_hw =
+            (volatile char *)_seed_hex;
+        for (int _i = 0; _i < 65; _i++) _hw[_i] = 0;
+        /* Wipe the prefix inside `out` before shortening. */
+        volatile uint8_t *_pw = (volatile uint8_t *)out;
+        for (size_t _i = 0; _i < 14 + 64 + 1; _i++) _pw[_i] = 0;
+        /* Advance out past the prefix. Emit the JSON tail. */
+        size_t prefix = 14 + 64 + 1;
+        if (out_len > prefix && (out_len - prefix) <= NH_AUTH_PROOF_MAX) {
+          emit(p, NH_AUTH_PROVIDER_SIGNED_EVENT, NH_AUTH_RESULT_OK,
+               out + prefix, out_len - prefix);
+        } else {
+          emit(p, NH_AUTH_PROVIDER_FAILED,
+               NH_AUTH_RESULT_INVALID_PROOF, NULL, 0);
+        }
+        free(out);
+        return 0;
+      }
       if (out && out_len > 0 && out_len <= NH_AUTH_PROOF_MAX) {
         emit(p, NH_AUTH_PROVIDER_SIGNED_EVENT, NH_AUTH_RESULT_OK, out, out_len);
       } else {

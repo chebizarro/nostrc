@@ -210,4 +210,46 @@ void nh_auth_smb_envelope_clear(nh_auth_smb_envelope *envelope);
 
 void nh_auth_client_close(int fd);
 
+
+/* ────────────────────────────────────────────────────────────────────
+ * Portable-home Phase 2 (bead nostrc-h10m, nostrc-89rj):
+ *
+ *   PROVISION_HOME — instruct the broker to (asynchronously) fetch the
+ *     account's encrypted home manifest from its configured relays,
+ *     decrypt it with the wrap-key channel (local vault OR NIP-46
+ *     nip44_decrypt), and materialize into the account's staged home
+ *     directory via nh_identity_home_prepare (§D5 label callback).
+ *     Broker returns immediately with one of:
+ *       OK             — synchronously provisioned / nothing to do
+ *       IN_PROGRESS    — job started; caller must call WAIT_HOME
+ *       NOT_SUPPORTED  — broker built without porthome (or account has
+ *                        no portable-home provider record enabled)
+ *
+ *   WAIT_HOME       — bounded-timeout wait on a pending provisioning
+ *     job. Returns one of {OK, IN_PROGRESS, LIMITED_MODE, FAILED}.
+ *     LIMITED_MODE means the manifest could not be fetched: PAM MUST
+ *     let login proceed with an empty session and MUST NOT allow the
+ *     sync daemon to push (design §5.3 / §6.4 interlock).
+ *
+ * Progress hints are best-effort — an old broker sends zeros. */
+typedef struct nh_auth_porthome_progress {
+  uint64_t bytes;         /* bytes fetched so far */
+  uint64_t total_bytes;   /* 0 if not yet known */
+  uint32_t files;         /* files materialised so far */
+  uint32_t total_files;   /* files declared by the manifest */
+} nh_auth_porthome_progress;
+
+/* Send PROVISION_HOME. `username`/`service` are informational for the
+ * broker's audit log (the broker uses the connection's SO_PEERCRED uid
+ * to authorise — PAM is uid 0). `timeout_ms` is a soft hint. Returns 0
+ * on transport success. */
+int nh_auth_client_provision_home(int fd, const char *username,
+                                  const char *service, uint32_t timeout_ms,
+                                  nh_auth_result *result_out);
+
+/* Send WAIT_HOME. Broker MUST NOT block longer than `timeout_ms`.
+ * `progress_out` may be NULL. Returns 0 on transport success. */
+int nh_auth_client_wait_home(int fd, uint32_t timeout_ms,
+                             nh_auth_porthome_progress *progress_out,
+                             nh_auth_result *result_out);
 #endif /* NH_AUTH_CLIENT_H */
