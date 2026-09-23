@@ -103,6 +103,81 @@ Field semantics:
 Any extra fields are tolerated and ignored.  The manifest is capped at
 8 KiB by the extension; anything larger is rejected.
 
+### `account` (optional identity block)
+
+When the broker has resolved the pending login to a specific enrolled
+account — typically because the user entered a NIP-05 identifier at
+`"Not listed?"` and `pam_nostr` canonicalised it via the broker before
+gnome-shell rewrote the dialog's own user widget — it MAY include an
+`account` object.  The extension renders this above the QR, overriding
+the dialog's typed name + generic avatar for the duration of the
+pairing and restoring both verbatim on retire.
+
+```json
+{
+  ...
+  "account": {
+    "username":     "n_bizarro",
+    "display_name": "Biz",
+    "identifier":   "chebizarro@coinos.io",
+    "avatar":       "avatar.png"
+  }
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|:---:|---|
+| `username` | string | no | Local canonical account name.  Used as a fallback label when `display_name` is missing.  Truncated to 64 chars. |
+| `display_name` | string | no | Prominent label shown above the QR.  Truncated to 128 chars. |
+| `identifier` | string | no | Smaller line under `display_name`.  Present only when the login started via NIP-05; the extension shows it verbatim.  Truncated to 128 chars. |
+| `avatar` | string | no | Basename **only** of a PNG inside `/run/nostr-auth/greeter/` (same drop directory as `current.png`).  Slashes, `..`, empty strings, and any non-basename value are rejected — the extension falls back to the shell's own `avatar-default-symbolic`.  Never loads from outside the drop directory. |
+
+Field semantics:
+
+- Every field is optional.  A missing / empty / malformed `account`
+  object is treated as "no account" (v2 behaviour: the dialog's own
+  avatar + username stay visible, the QR + pairing code render below
+  them at the original size).  This is enforced defensively — the
+  extension NEVER breaks the login/unlock dialog on a bad account
+  block.
+- If any of `display_name`, `identifier`, or a loadable `avatar` is
+  present, the extension:
+  1. renders the account identity block above the QR (avatar ~100 px,
+     `display_name` as the prominent label, `identifier` as a smaller
+     muted line beneath — falling back to `username` for the label
+     when `display_name` is empty);
+  2. hides the dialog's own user widget (avatar + typed name) so the
+     display reads as one identity;
+  3. shrinks the QR from 260 px → 220 px so the whole stack still
+     clears the greeter's Ubuntu branding logo at 1280×800 (verified
+     scannable with `zbarimg` on the framebuffer capture).
+- On retire (`current.json` unlinked, `expires_at` elapsed, host
+  dialog rebuilt) the hidden user widget is restored to its previous
+  `.visible` state and the QR bin is reset to 260 px so a subsequent
+  publish without an `account` block behaves byte-identically to v2.
+
+### `avatar.png` (optional, sibling to `current.png`)
+
+```
+/run/nostr-auth/greeter/avatar.png    mode 0644, root:root
+```
+
+- Sits next to `current.png` under `/run/nostr-auth/greeter/`, same
+  ownership + mode.  The `account.avatar` field is a basename-only
+  reference into this directory (not an arbitrary path); the extension
+  refuses to load images from anywhere else on disk.
+- Any PNG the producer chooses.  For the circular mask to read cleanly
+  the producer should supply a square crop with an alpha channel
+  (or a pre-cropped circle) — the extension applies `border-radius`
+  to the avatar bin but does not re-mask the raw pixels.
+- Loaded via `GdkPixbuf.Pixbuf.new_from_file` and scaled with
+  `Clutter.ScalingFilter.LINEAR` (photo/avatar), unlike the QR's
+  nearest-neighbour upscale.  Same size cap as the QR image
+  (implausible dimensions >4096 px are refused).
+- If the file is missing or fails to decode the extension falls back
+  to the shell's own `avatar-default-symbolic` at the same size, so
+  the label + identifier still render.
+
 ### `account` block (B5-NIP-05, nostrc-bit0)
 
 The broker attaches an `account` block whenever it can name the
@@ -186,11 +261,16 @@ crashed broker leaving stale state).
   dialogs since gnome-shell 3.36), hides the `login-dialog-prompt-entry`
   (password entry + eye toggle), and inserts the QR card in the entry's
   slot so the QR appears centred directly under the avatar / username.
-  Message labels the shell renders that would duplicate the card's
-  pairing code or hint (`login-dialog-message` / `login-dialog-message-hint`
-  containing "Pairing code" or "Scan the QR") are also hidden so the
-  card is the sole source of on-screen instructions; message-warning
-  labels ("Sorry, that didn't work") are never touched.
+  When the manifest carries an `account` object the extension ALSO
+  hides the dialog's own `user-widget` (avatar + typed username, which
+  gnome-shell captured before `pam_nostr` canonicalised the name) and
+  renders its own avatar + `display_name` + `identifier` block above
+  the QR — see the account contract above.  Message labels the shell
+  renders that would duplicate the card's pairing code or hint
+  (`login-dialog-message` / `login-dialog-message-hint` containing
+  "Pairing code" or "Scan the QR") are also hidden so the card is the
+  sole source of on-screen instructions; message-warning labels
+  ("Sorry, that didn't work") are never touched.
 - **Fallback mode** ("floating"): if the `AuthPrompt` cannot be located
   (unusual shell version, dialog still being built), the extension
   renders the same QR card as a floating widget off to the right of the
@@ -205,13 +285,14 @@ crashed broker leaving stale state).
     non-object payload);
   - `expires_at` has passed;
   - `current.png` is missing or fails to decode as a pixbuf.
-- On hide the hidden `login-dialog-prompt-entry` and any suppressed
-  message labels are restored to their prior `.visible` state so the
-  underlying dialog is byte-identical to what the shell rendered before
-  we intervened.  Never mutates the login/unlock dialog outside the
-  window during which the artifact is live.  If any of the extension's
-  own state is missing or throws, the panel simply stays hidden — the
-  underlying GDM/PAM flow is unaffected.
+- On hide the hidden `login-dialog-prompt-entry`, the dialog's own
+  `user-widget` (if it was hidden for the `account` block), and any
+  suppressed message labels are restored to their prior `.visible`
+  state so the underlying dialog is byte-identical to what the shell
+  rendered before we intervened.  Never mutates the login/unlock
+  dialog outside the window during which the artifact is live.  If
+  any of the extension's own state is missing or throws, the panel
+  simply stays hidden — the underlying GDM/PAM flow is unaffected.
 - If the host `AuthPrompt` is torn down while the card is attached
   (e.g. `LoginDialog` rebuild after Escape) the extension detects the
   `destroy` signal, drops references, and rebuilds its own container so
@@ -346,6 +427,44 @@ sudo rm -f /run/nostr-auth/greeter/current.{json,png}
 
 The panel must disappear as soon as `current.json` is removed, and must
 also disappear if `expires_at` is set to a past unix time.
+
+### Smoke test with a resolved `account`
+
+Same as above, but ALSO drop an `avatar.png` next to `current.png` and
+include an `account` object in the manifest.  Uses an AccountsService
+avatar as a stand-in for whatever the broker will produce; any PNG at
+`0644` works.
+
+```sh
+URI='nostrconnect://a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718?relay=wss%3A%2F%2Fnos.lol&secret=deadbeefcafef00ddeadbeefcafef00d&name=GNOME'
+EXPIRES=$(( $(date +%s) + 300 ))
+sudo install -d -m 0711 /run/nostr-auth
+sudo install -d -m 0755 /run/nostr-auth/greeter
+sudo qrencode -t PNG -l L -o /run/nostr-auth/greeter/current.png "$URI"
+sudo cp /var/lib/AccountsService/icons/<some-user> /run/nostr-auth/greeter/avatar.png
+sudo chmod 0644 /run/nostr-auth/greeter/current.png /run/nostr-auth/greeter/avatar.png
+sudo tee /run/nostr-auth/greeter/current.json >/dev/null <<EOF
+{
+  "tx_id": "acct-smoketest",
+  "png": "current.png",
+  "uri": "$URI",
+  "pairing_code": "ACCT-C0DE",
+  "expires_at": $EXPIRES,
+  "hint": "Scan with your Nostr signer",
+  "account": {
+    "username":     "n_bizarro",
+    "display_name": "Biz",
+    "identifier":   "chebizarro@coinos.io",
+    "avatar":       "avatar.png"
+  }
+}
+EOF
+```
+
+The greeter dialog should render `n_bizarro`'s avatar + "Biz" +
+"chebizarro@coinos.io" above the (shrunken) QR, replacing the dialog's
+own avatar / username for the duration of the pairing.  Removing
+`current.json` restores the dialog's own user widget verbatim.
 
 ## Producer implementation notes (nostr-authd side)
 

@@ -40,6 +40,19 @@ const MANIFEST_PATH = `${MANIFEST_DIR}/${MANIFEST_NAME}`;
 // neighbour, still comfortably scannable by a phone camera at that pixel
 // density (verified with `zbarimg` on the framebuffer capture).
 const IMAGE_DISPLAY_PX = 260;
+// When the manifest carries an `account` block we render an avatar +
+// display_name + identifier above the QR (replacing the dialog's own
+// avatar / username, which was looked up before PAM canonicalised the
+// name — see docs/reviews/greeter-qr-account-identity-2026-09-22.md).
+// Shrink the QR a touch to keep the whole stack clear of the Ubuntu
+// branding logo at 1280x800; 220 still decodes cleanly with `zbarimg`.
+const IMAGE_DISPLAY_PX_WITH_ACCOUNT = 220;
+const AVATAR_DISPLAY_PX = 100;
+// Bounds on user-supplied identity strings from the manifest.  Kept short
+// so a rogue producer can't push a giant label into the AuthPrompt band.
+const ACCOUNT_LABEL_MAX = 128;
+const ACCOUNT_IDENTIFIER_MAX = 128;
+const ACCOUNT_USERNAME_MAX = 64;
 // Outside margin between the floating fallback card and the monitor's right
 // edge (also used as a minimum gap from the login dialog on narrow screens).
 const EDGE_MARGIN_PX = 40;
@@ -61,6 +74,13 @@ const CENTER_ATTACH_RETRIES = 8;
 // gnome-shell 46's compiled libshell-14.so.
 const AUTH_PROMPT_CLASS = 'login-dialog-prompt-layout';
 const AUTH_ENTRY_CLASS = 'login-dialog-prompt-entry';
+// UserWidget (avatar + username) that AuthPrompt renders above the entry.
+// gnome-shell's userWidget.js applies `user-widget` on the container that
+// holds the avatar + label; shell 46's greeter carries it verbatim.  We
+// hide any descendant carrying this class while an account artifact is
+// live so the dialog does not double-render the identity above our own
+// avatar block.  Restored verbatim on retire.
+const USER_WIDGET_CLASSES = ['user-widget'];
 // Message labels the shell renders as PAM_TEXT_INFO / PAM_ERROR_MSG.
 // We hide any that duplicate the pairing code the card already displays.
 const AUTH_MESSAGE_CLASSES = [
@@ -136,6 +156,10 @@ export default class NostrLoginQrExtension extends Extension {
         this._imageBin = null;
         this._codeLabel = null;
         this._hintLabel = null;
+        this._accountBox = null;
+        this._avatarBin = null;
+        this._displayNameLabel = null;
+        this._identifierLabel = null;
         this._fileMonitor = null;
         this._dirMonitor = null;
         this._expiryTimeoutId = 0;
@@ -147,9 +171,18 @@ export default class NostrLoginQrExtension extends Extension {
         this._centerHost = null;
         this._hiddenActors = [];
         this._suppressedMessages = [];
+        this._suppressedUserWidgets = [];
         this._entryDestroyId = 0;
         this._hostEntry = null;
         this._hintPrevVisible = undefined;
+        // Set by _applyAccount from the current manifest so _attachCentered
+        // knows whether to also hide the dialog's own avatar / username.
+        // Null → v2 behaviour (leave dialog identity alone).
+        this._pendingAccount = null;
+        // Actual QR size in effect for the current publish; may drop from
+        // IMAGE_DISPLAY_PX to IMAGE_DISPLAY_PX_WITH_ACCOUNT when an account
+        // block is above it so the whole stack still clears the Ubuntu logo.
+        this._currentQrSize = IMAGE_DISPLAY_PX;
 
         try {
             this._buildContainer();
@@ -183,6 +216,10 @@ export default class NostrLoginQrExtension extends Extension {
         this._imageBin = null;
         this._codeLabel = null;
         this._hintLabel = null;
+        this._accountBox = null;
+        this._avatarBin = null;
+        this._displayNameLabel = null;
+        this._identifierLabel = null;
     }
 
     _buildContainer() {
@@ -195,6 +232,37 @@ export default class NostrLoginQrExtension extends Extension {
             visible: false,
             x_align: Clutter.ActorAlign.CENTER,
         });
+        // Account identity block — avatar + display name + identifier.
+        // Rendered above the QR when the manifest's `account` object is
+        // present; kept hidden otherwise so a manifest with no account
+        // behaves byte-identically to v2.
+        this._accountBox = new St.BoxLayout({
+            vertical: true,
+            style_class: 'nostr-login-qr-account',
+            visible: false,
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        this._avatarBin = new St.Bin({
+            style_class: 'nostr-login-qr-avatar',
+            width: AVATAR_DISPLAY_PX,
+            height: AVATAR_DISPLAY_PX,
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        this._displayNameLabel = new St.Label({
+            style_class: 'nostr-login-qr-display-name',
+            text: '',
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        this._displayNameLabel.clutter_text.set_line_wrap(false);
+        this._identifierLabel = new St.Label({
+            style_class: 'nostr-login-qr-identifier',
+            text: '',
+            x_align: Clutter.ActorAlign.CENTER,
+        });
+        this._identifierLabel.clutter_text.set_line_wrap(false);
+        this._accountBox.add_child(this._avatarBin);
+        this._accountBox.add_child(this._displayNameLabel);
+        this._accountBox.add_child(this._identifierLabel);
         this._imageBin = new St.Bin({
             style_class: 'nostr-login-qr-image',
             width: IMAGE_DISPLAY_PX,
@@ -213,6 +281,7 @@ export default class NostrLoginQrExtension extends Extension {
             x_align: Clutter.ActorAlign.CENTER,
         });
         this._hintLabel.clutter_text.set_line_wrap(true);
+        box.add_child(this._accountBox);
         box.add_child(this._imageBin);
         box.add_child(this._codeLabel);
         box.add_child(this._hintLabel);
@@ -397,12 +466,25 @@ export default class NostrLoginQrExtension extends Extension {
             this._hide();
             return;
         }
-        const imageActor = this._loadPngActor(pngPath, IMAGE_DISPLAY_PX);
+
+        // Resolve the optional account block first so we can size the QR
+        // down when we also have identity to render above it.  A missing,
+        // malformed or empty account object leaves v2 behaviour intact.
+        const account = this._extractAccount(manifest);
+        const qrSize = account ? IMAGE_DISPLAY_PX_WITH_ACCOUNT : IMAGE_DISPLAY_PX;
+        this._currentQrSize = qrSize;
+        try {
+            this._imageBin.width = qrSize;
+            this._imageBin.height = qrSize;
+        } catch (_e) {}
+
+        const imageActor = this._loadPngActor(pngPath, qrSize);
         if (!imageActor) {
             this._hide();
             return;
         }
         this._imageBin.set_child(imageActor);
+        this._applyAccount(account);
 
         const code = _asString(manifest.pairing_code, 64);
         const hint = _asString(manifest.hint, 256) || 'Scan with your Nostr signer';
@@ -426,6 +508,13 @@ export default class NostrLoginQrExtension extends Extension {
             // AuthPrompt is still being built when we publish (fresh
             // unlock dialog, greeter transitioning from user list).
             this._scheduleCenterRetry(code);
+        } else if (this._hintLabel) {
+            // Inline mode always hides the hint — _refreshUnsafe reset it
+            // to visible above and _attachCentered's early-return path
+            // skips hiding when we're already centered from a prior refresh
+            // (e.g. broker pushing a new pairing_code).  Re-hide here so
+            // repeated refreshes stay consistent with the first attach.
+            try { this._hintLabel.visible = false; } catch (_e) {}
         }
 
         if (hasExpiry) {
@@ -529,6 +618,28 @@ export default class NostrLoginQrExtension extends Extension {
         // getting the QR properly centered under the avatar.
         try { host.visible = false; } catch (_e) {}
         this._hiddenActors.push(host);
+
+        // If we have a resolved account, hide the dialog's own avatar +
+        // username block: it was populated from the string the user typed
+        // at "Not listed?" (e.g. the raw NIP-05 "chebizarro@coinos.io")
+        // and a generic avatar, before pam_nostr canonicalised the name
+        // via the broker.  We render the true account identity ourselves
+        // inside our container.  Restored verbatim on retire.
+        this._suppressedUserWidgets = [];
+        if (this._pendingAccount) {
+            const userWidgets = [];
+            _collectDescendantsByAnyClass(
+                authPrompt,
+                USER_WIDGET_CLASSES,
+                userWidgets,
+                this._container);
+            for (const w of userWidgets) {
+                let wasVisible = true;
+                try { wasVisible = w.visible; } catch (_e) {}
+                try { w.visible = false; } catch (_e) {}
+                this._suppressedUserWidgets.push({actor: w, visible: wasVisible});
+            }
+        }
 
         // Hide PAM message labels that duplicate the card's pairing code
         // or its hint.  Never touch message-warning labels (real errors
@@ -637,6 +748,10 @@ export default class NostrLoginQrExtension extends Extension {
         this._hostEntry = null;
         this._hiddenActors = [];
         this._suppressedMessages = [];
+        // User-widget tracking references the dead AuthPrompt subtree; drop
+        // it too so we never try to restore visibility on a destroyed actor.
+        this._suppressedUserWidgets = [];
+        this._pendingAccount = null;
         this._hintPrevVisible = undefined;
         // Rebuild the container from scratch so a subsequent publish can
         // reattach.  Best-effort: if _buildContainer throws we log and
@@ -645,6 +760,10 @@ export default class NostrLoginQrExtension extends Extension {
         this._imageBin = null;
         this._codeLabel = null;
         this._hintLabel = null;
+        this._accountBox = null;
+        this._avatarBin = null;
+        this._displayNameLabel = null;
+        this._identifierLabel = null;
         try {
             this._buildContainer();
         } catch (e) {
@@ -661,6 +780,14 @@ export default class NostrLoginQrExtension extends Extension {
             try { s.actor.visible = s.visible; } catch (_e) {}
         }
         this._suppressedMessages = [];
+        // Restore the dialog's own user widget (avatar + username) to its
+        // prior visibility.  Tracked per-actor so an already-hidden widget
+        // (e.g. dialog rebuilding) stays hidden rather than being turned
+        // on by our restore path.
+        for (const s of this._suppressedUserWidgets) {
+            try { s.actor.visible = s.visible; } catch (_e) {}
+        }
+        this._suppressedUserWidgets = [];
     }
 
     _detachCentered() {
@@ -696,6 +823,19 @@ export default class NostrLoginQrExtension extends Extension {
     _hide() {
         this._clearRetryTimeout();
         this._detachCentered();
+        // Clear account state so a subsequent publish starts fresh; the
+        // account block collapses to invisible until _applyAccount decides
+        // to show it again.
+        this._applyAccount(null);
+        // Restore the QR bin to the base size so a subsequent publish with
+        // no account object doesn't inherit the shrunken size.
+        this._currentQrSize = IMAGE_DISPLAY_PX;
+        if (this._imageBin) {
+            try {
+                this._imageBin.width = IMAGE_DISPLAY_PX;
+                this._imageBin.height = IMAGE_DISPLAY_PX;
+            } catch (_e) {}
+        }
         if (this._container) {
             this._container.visible = false;
             this._container.hide();
@@ -703,6 +843,153 @@ export default class NostrLoginQrExtension extends Extension {
         if (this._imageBin) {
             this._imageBin.set_child(null);
         }
+    }
+
+    _extractAccount(manifest) {
+        // Returns {display_name, identifier, avatar_path} when the manifest
+        // carries a usable `account` object, else null.  Malformed / partial
+        // account data never throws — the QR flow keeps working with v2
+        // behaviour (no identity block).
+        const acc = manifest ? manifest.account : null;
+        if (!acc || typeof acc !== 'object' || Array.isArray(acc))
+            return null;
+
+        const username = _asString(acc.username, ACCOUNT_USERNAME_MAX);
+        const displayName = _asString(acc.display_name, ACCOUNT_LABEL_MAX);
+        const identifier = _asString(acc.identifier, ACCOUNT_IDENTIFIER_MAX);
+        // Fall back to the account username when display_name is missing —
+        // matches the contract's "any field may be missing" guarantee.
+        const label = displayName || username;
+
+        let avatarPath = null;
+        if (typeof acc.avatar === 'string' && acc.avatar.length > 0) {
+            // Never load an image from outside the greeter drop directory:
+            // basename-only (no slashes, no traversal, no NUL), then join
+            // with MANIFEST_DIR.
+            if (_isBasename(acc.avatar)) {
+                const p = `${MANIFEST_DIR}/${acc.avatar}`;
+                if (GLib.file_test(p, GLib.FileTest.EXISTS))
+                    avatarPath = p;
+            } else {
+                _safeLog('rejecting account.avatar with unsafe value');
+            }
+        }
+
+        // Require at least one field to be meaningful — an entirely empty
+        // account object is treated as "no account" so we don't hide the
+        // dialog's own user widget in exchange for nothing.
+        if (!label && !identifier && !avatarPath)
+            return null;
+
+        return {
+            display_name: label,
+            identifier,
+            avatar_path: avatarPath,
+        };
+    }
+
+    _applyAccount(account) {
+        this._pendingAccount = account || null;
+        if (!this._accountBox) return;
+        if (!account) {
+            try { this._accountBox.visible = false; } catch (_e) {}
+            try { this._avatarBin.set_child(null); } catch (_e) {}
+            try {
+                this._displayNameLabel.text = '';
+                this._displayNameLabel.visible = false;
+            } catch (_e) {}
+            try {
+                this._identifierLabel.text = '';
+                this._identifierLabel.visible = false;
+            } catch (_e) {}
+            return;
+        }
+
+        let avatarActor = null;
+        if (account.avatar_path)
+            avatarActor = this._loadAvatarActor(account.avatar_path, AVATAR_DISPLAY_PX);
+        if (!avatarActor) {
+            // Generic fallback so we still render *something* above the QR
+            // rather than an empty circle when the producer omitted the PNG
+            // or the pixbuf failed to load.  Uses the shell's own symbolic
+            // avatar so it themes with the surrounding dialog.
+            try {
+                avatarActor = new St.Icon({
+                    icon_name: 'avatar-default-symbolic',
+                    icon_size: AVATAR_DISPLAY_PX,
+                    style_class: 'nostr-login-qr-avatar-fallback',
+                });
+            } catch (_e) {
+                avatarActor = null;
+            }
+        }
+        try { this._avatarBin.set_child(avatarActor); } catch (_e) {}
+
+        const label = account.display_name || '';
+        try {
+            this._displayNameLabel.text = label;
+            this._displayNameLabel.visible = label.length > 0;
+        } catch (_e) {}
+
+        const ident = account.identifier || '';
+        try {
+            this._identifierLabel.text = ident;
+            this._identifierLabel.visible = ident.length > 0;
+        } catch (_e) {}
+
+        try { this._accountBox.visible = true; } catch (_e) {}
+    }
+
+    _loadAvatarActor(path, displaySize) {
+        let pixbuf;
+        try {
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file(path);
+        } catch (e) {
+            _safeLog(`avatar pixbuf load failed for ${path}: ${e.message}`);
+            return null;
+        }
+        if (!pixbuf) return null;
+        const width = pixbuf.get_width();
+        const height = pixbuf.get_height();
+        if (width <= 0 || height <= 0 || width > 4096 || height > 4096) {
+            _safeLog(`refusing implausible avatar pixbuf size ${width}x${height}`);
+            return null;
+        }
+        const image = new Clutter.Image();
+        const hasAlpha = pixbuf.get_has_alpha();
+        const fmt = hasAlpha
+            ? Cogl.PixelFormat.RGBA_8888
+            : Cogl.PixelFormat.RGB_888;
+        let ok = false;
+        try {
+            ok = image.set_data(
+                pixbuf.get_pixels(),
+                fmt,
+                width,
+                height,
+                pixbuf.get_rowstride());
+        } catch (e) {
+            _safeLog(`avatar Clutter.Image.set_data threw: ${e.message}`);
+            return null;
+        }
+        if (!ok) {
+            _safeLog('avatar Clutter.Image.set_data returned false');
+            return null;
+        }
+        const actor = new Clutter.Actor({
+            width: displaySize,
+            height: displaySize,
+            reactive: false,
+        });
+        actor.set_content(image);
+        // LINEAR for a photo/user avatar (unlike the nearest-neighbour QR
+        // upscale) so a small source PNG scales up without visible mosaic.
+        try {
+            actor.set_content_scaling_filters(
+                Clutter.ScalingFilter.LINEAR,
+                Clutter.ScalingFilter.LINEAR);
+        } catch (_e) {}
+        return actor;
     }
 
     _loadPngActor(path, displaySize) {

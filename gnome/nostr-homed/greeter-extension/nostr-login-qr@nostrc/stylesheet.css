@@ -68,3 +68,38 @@
     color: rgba(240, 240, 240, 0.85);
     padding: 0 4px 2px 4px;
 }
+
+/* Account identity block — avatar + display name + identifier — rendered
+ * above the QR when the broker's manifest carries an `account` object.
+ * The avatar is masked to a circle via border-radius; producers should
+ * supply a PNG with an alpha channel (or a square crop) for the mask to
+ * read as a clean circle.  Falls back to the shell's own symbolic
+ * `avatar-default-symbolic` when the PNG is missing / malformed. */
+.nostr-login-qr-account {
+    spacing: 4px;
+    padding-bottom: 6px;
+}
+
+.nostr-login-qr-avatar {
+    background-color: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.24);
+}
+
+.nostr-login-qr-avatar-fallback {
+    color: rgba(240, 240, 240, 0.85);
+    icon-size: 96px;
+}
+
+.nostr-login-qr-display-name {
+    font-size: 14pt;
+    font-weight: bold;
+    color: #ffffff;
+    padding-top: 4px;
+}
+
+.nostr-login-qr-identifier {
+    font-size: 10pt;
+    color: rgba(240, 240, 240, 0.70);
+    padding-bottom: 2px;
+}
