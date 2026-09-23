@@ -33,6 +33,7 @@
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 #include <openssl/crypto.h>
 
@@ -132,10 +133,6 @@ void nh_auth_porthome_set_test_hook(const uint8_t *sealed_manifest,
   g_next_test_sealed_len = sealed_len;
   g_next_test_fetch = fetch;
   g_next_test_fetch_ctx = fetch_ctx;
-}
-
-static void job_retain(nh_auth_porthome_job *j) {
-  if (j) atomic_fetch_add(&j->refcount, 1);
 }
 
 static void job_release(nh_auth_porthome_job *j) {

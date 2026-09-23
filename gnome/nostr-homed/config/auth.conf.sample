@@ -58,3 +58,43 @@ socket_path=/run/nostr-auth/auth.sock
 # "nobody"; sites that ship a dedicated user like `nostr-profile` set it
 # here.
 #profile_image_user=nobody
+
+# ---- Portable home (Phase 2, bead nostrc-h10m) -----------------------------
+# Encrypted-home materialisation at login. Requires the broker to be built
+# with -DNOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL=ON; without that these keys
+# are recognised but no PROVISION_HOME job is ever started (the broker
+# responds NOT_SUPPORTED and pam_sm_open_session skips through to the
+# ordinary local home path).
+#
+# Relays queried for the kind-30078 home pointer, comma-separated. First
+# non-empty wins: per-account override in the provider record, then the
+# user's NIP-65 (fetched by the profile subsystem), then this. No hard-coded
+# fallback (design §5.1 D13) — leaving this empty means the account is NOT
+# portable-home capable.
+#home_relays=
+
+# Blossom servers queried for encrypted chunk and manifest blobs, comma-
+# separated. https:// only. Design §5.2 D14 recommends >= 2 configured with
+# BUD-04 mirror to a third. Same first-non-empty resolution order as
+# home_relays: per-account -> NIP-65 kind-10063 -> this key.
+#blossom_servers=
+
+# Per-file byte cap enforced by the provisioner (bytes). 0 or unset ->
+# default 2 GiB (design §5.4). Trip = NH_PORTHOME_PROV_BUDGET -> broker
+# reports LIMITED_MODE.
+#porthome_bandwidth_bytes_per_load=
+
+# Per-file wall-clock cap in seconds. 0 or unset -> default 120 s. Same
+# trip semantics as bandwidth cap.
+#porthome_load_timeout_sec=
+
+# Per-home total byte cap. 0 or unset -> default 20 GiB (design §5.4).
+#porthome_max_home_bytes=
+
+# First-login wrap-key enrollment (design §4.3): when 'on', a fresh
+# random 32-byte seed is generated at the broker, handed to the signer
+# for nip44_encrypt, and the ciphertext persisted as the account's
+# wrapped_home_key so the next login can unwrap it via nip44_decrypt.
+# Off by default because it introduces a one-time bunker approval; must
+# be explicitly enabled by the operator.
+#porthome_enroll_wrap_key=off

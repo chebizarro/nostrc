@@ -399,10 +399,21 @@ static int submit(nh_auth_provider *b, const uint8_t *secret, size_t n) {
           _seed_bytes[_i] = (uint8_t)((hi << 4) | lo);
         }
         if (_seed_ok) {
+          /* Weak declaration so the base nostr_auth_core archive
+           * (which owns this TU) links even when the porthome
+           * runtime glue is absent (packaging-purity gate). At
+           * runtime the symbol resolves to auth_porthome.c's
+           * implementation when the runtime is linked in, or to
+           * NULL when it is not — in which case we silently drop
+           * the seed (broker's PROVISION_HOME will report
+           * NOT_SUPPORTED and PAM will open an ordinary local
+           * home). See auth_porthome.[ch]. */
           extern int nh_auth_broker_porthome_deposit_wrap_seed(
-              const char *account_id, const uint8_t seed[32]);
-          (void)nh_auth_broker_porthome_deposit_wrap_seed(
-              p->account_id, _seed_bytes);
+              const char *account_id, const uint8_t seed[32])
+              __attribute__((weak));
+          if (nh_auth_broker_porthome_deposit_wrap_seed)
+            (void)nh_auth_broker_porthome_deposit_wrap_seed(
+                p->account_id, _seed_bytes);
         }
         /* Wipe local copies of the seed material. */
         volatile uint8_t *_sw =

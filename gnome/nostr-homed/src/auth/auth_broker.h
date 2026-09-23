@@ -151,6 +151,37 @@ typedef struct nh_auth_conf {
   uint8_t nip05_resolve;
   uint32_t nip05_cache_ttl_seconds;
   char nip05_image_user[64];
+
+  /* Portable-home Phase 2 (bead nostrc-h10m, nostrc-89rj):
+   *   home_relays              — comma-separated wss:// list
+                                  used to fetch the encrypted
+                                  home-pointer event (kind
+                                  30078). No hard-coded fallback
+                                  (design §D13); empty means the
+                                  account is NOT portable-home
+                                  capable.
+   *   blossom_servers          — comma-separated https:// list
+                                  of Blossom endpoints. See
+                                  design §5.2 D14 (quorum >= 2).
+   *   porthome_bandwidth_bytes_per_load — per-file byte cap.
+                                  0 = default (2 GiB).
+   *   porthome_load_timeout_sec — per-file wall-clock cap.
+                                  0 = default (120 s).
+   *   porthome_max_home_bytes  — per-home total cap. 0 = 20 GiB.
+   *   porthome_enroll_wrap_key — on|off. When on, first-login
+                                  asks the signer to nip44_encrypt
+                                  a fresh 32-byte seed and persists
+                                  the ciphertext as wrapped_home_key.
+                                  Off by default (must be enabled
+                                  by the operator; design §4.3). */
+  char home_relays[NH_AUTH_CONF_RELAYS_MAX][NH_AUTH_CONF_RELAY_URL_MAX + 1];
+  size_t home_relays_count;
+  char blossom_servers[NH_AUTH_CONF_RELAYS_MAX][NH_AUTH_CONF_RELAY_URL_MAX + 1];
+  size_t blossom_servers_count;
+  uint64_t porthome_bandwidth_bytes_per_load;
+  uint32_t porthome_load_timeout_sec;
+  uint64_t porthome_max_home_bytes;
+  uint8_t  porthome_enroll_wrap_key;   /* 0=unset(off), 1=on, 2=off */
 } nh_auth_conf;
 
 /* Reads path (may be NULL / missing) into *out. Zeros *out first. Returns 0

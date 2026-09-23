@@ -162,6 +162,38 @@ static void parse_profile_relays_csv(nh_auth_conf *out, char *value) {
   }
 }
 
+
+static void parse_home_relays_csv(nh_auth_conf *out, char *value) {
+  out->home_relays_count = 0;
+  char *save = NULL;
+  for (char *tok = strtok_r(value, ",", &save); tok;
+       tok = strtok_r(NULL, ",", &save)) {
+    tok = trim(tok);
+    if (!*tok) continue;
+    if (out->home_relays_count >= NH_AUTH_CONF_RELAYS_MAX) break;
+    if (strncmp(tok, "ws://", 5) != 0 && strncmp(tok, "wss://", 6) != 0)
+      continue;
+    if (copy_bounded(out->home_relays[out->home_relays_count],
+                     NH_AUTH_CONF_RELAY_URL_MAX + 1, tok) == 0)
+      out->home_relays_count++;
+  }
+}
+
+static void parse_blossom_servers_csv(nh_auth_conf *out, char *value) {
+  out->blossom_servers_count = 0;
+  char *save = NULL;
+  for (char *tok = strtok_r(value, ",", &save); tok;
+       tok = strtok_r(NULL, ",", &save)) {
+    tok = trim(tok);
+    if (!*tok) continue;
+    if (out->blossom_servers_count >= NH_AUTH_CONF_RELAYS_MAX) break;
+    if (strncmp(tok, "https://", 8) != 0) continue;
+    if (copy_bounded(out->blossom_servers[out->blossom_servers_count],
+                     NH_AUTH_CONF_RELAY_URL_MAX + 1, tok) == 0)
+      out->blossom_servers_count++;
+  }
+}
+
 int nh_auth_conf_load(const char *path, nh_auth_conf *out) {
   if (!out) return 0;
   memset(out, 0, sizeof *out);
@@ -219,6 +251,29 @@ int nh_auth_conf_load(const char *path, nh_auth_conf *out) {
     } else if (!strcmp(key, "nip05_image_user")) {
       (void)copy_bounded(out->nip05_image_user,
                          sizeof out->nip05_image_user, value);
+    } else if (!strcmp(key, "home_relays")) {
+      parse_home_relays_csv(out, value);
+    } else if (!strcmp(key, "blossom_servers")) {
+      parse_blossom_servers_csv(out, value);
+    } else if (!strcmp(key, "porthome_bandwidth_bytes_per_load")) {
+      char *end = NULL; errno = 0;
+      unsigned long long v = strtoull(value, &end, 10);
+      if (!errno && end && !*end)
+        out->porthome_bandwidth_bytes_per_load = (uint64_t)v;
+    } else if (!strcmp(key, "porthome_load_timeout_sec")) {
+      (void)parse_uint32(value, &out->porthome_load_timeout_sec);
+    } else if (!strcmp(key, "porthome_max_home_bytes")) {
+      char *end = NULL; errno = 0;
+      unsigned long long v = strtoull(value, &end, 10);
+      if (!errno && end && !*end)
+        out->porthome_max_home_bytes = (uint64_t)v;
+    } else if (!strcmp(key, "porthome_enroll_wrap_key")) {
+      if (!strcasecmp(value, "on") || !strcmp(value, "1") ||
+          !strcasecmp(value, "true") || !strcasecmp(value, "yes"))
+        out->porthome_enroll_wrap_key = 1;
+      else if (!strcasecmp(value, "off") || !strcmp(value, "0") ||
+               !strcasecmp(value, "false") || !strcasecmp(value, "no"))
+        out->porthome_enroll_wrap_key = 2;
     } else {
       /* Non-fatal: unknown keys are ignored. */
     }

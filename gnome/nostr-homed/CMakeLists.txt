@@ -323,7 +323,13 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
     src/auth/auth_peer.c src/auth/auth_client.c src/auth/auth_broker.c
     src/auth/auth_conf.c src/pam/pam_qr_render.c
     src/nip05/nip05_validate.c src/nip05/nip05_client.c
-    src/nip05/nip05_cache.c)
+    src/nip05/nip05_cache.c
+    # Portable-home Phase 2 broker glue (bead nostrc-89rj).
+    # ALWAYS compiled — the #else branch inside supplies stubs
+    # so provider_local.c can weak-link the wrap-seed cache
+    # without pulling in libnostr_porthome. NH_AUTH_BROKER_ENABLE_PORTHOME
+    # is defined below (only when the experimental option is on).
+    src/auth/auth_porthome.c)
   target_include_directories(nostr_auth_runtime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pam)
   target_compile_options(nostr_auth_runtime PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation)
@@ -1031,6 +1037,8 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     src/porthome/nh_porthome_manifest.c
     src/porthome/nh_porthome_blossom.c
     src/porthome/nh_porthome_cbor.c
+    src/porthome/nh_porthome_wrapkey.c
+    src/porthome/nh_porthome_provision.c
     ${_porthome_nip44_hkdf})
   target_compile_options(nostr_porthome PRIVATE
     -Wall -Wextra -Werror -Wno-misleading-indentation)
@@ -1043,6 +1051,31 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
   target_link_libraries(nostr_porthome
     PUBLIC OpenSSL::Crypto ${_porthome_hanami})
 
+  # ────────────────────────────────────────────────────────────────
+  # Portable-home Phase 2 (bead nostrc-89rj, nostrc-ck6i):
+  # broker-side glue. Only when the auth runtime is also built.
+  # Adds src/auth/auth_porthome.c to nostr_auth_runtime with
+  # NH_AUTH_BROKER_ENABLE_PORTHOME defined so PROVISION_HOME/
+  # WAIT_HOME dispatch handlers do real work. The runtime picks
+  # up nostr_porthome as a PUBLIC dep so pam_nostr and the broker
+  # can both call into the porthome primitives — the packaging
+  # gate is that this whole branch only runs when the operator
+  # has explicitly enabled NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL.
+  if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
+    # Turn on the real handlers inside the always-compiled
+    # auth_porthome.c and pull in libnostr_porthome. When the
+    # experimental option is OFF this whole block is skipped, so
+    # the runtime keeps the #else stubs and does not link the
+    # porthome archive / libhanami.
+    target_compile_definitions(nostr_auth_runtime PUBLIC
+      NH_AUTH_BROKER_ENABLE_PORTHOME=1)
+    target_link_libraries(nostr_auth_runtime PUBLIC nostr_porthome)
+  endif()
+
+  # ────────────────────────────────────────────────────────────
+  # Phase-2 unit tests: wrap-key derivation vectors and
+  # provisioner LIMITED_MODE interlock.
+  # ────────────────────────────────────────────────────────────
   # Phase 1 does NOT install — the library is an intermediate for the
   # Phase-2 provisioner and sync daemon. Explicitly no install rules.
 
@@ -1088,6 +1121,41 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
       set_tests_properties(homed_porthome_smallhome PROPERTIES
         LABELS "nostr-homed;porthome;portable" TIMEOUT 180
         ENVIRONMENT "NH_PORTHOME_ALLOW_INSECURE=1")
+    endif()
+
+    # Phase 2: wrap-seed derivation vectors (nostrc-ck6i).
+    add_executable(test_porthome_wrapkey tests/unit/test_porthome_wrapkey.c)
+    target_link_libraries(test_porthome_wrapkey PRIVATE nostr_porthome)
+    target_compile_options(test_porthome_wrapkey PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_test(NAME homed_porthome_wrapkey COMMAND test_porthome_wrapkey)
+    set_tests_properties(homed_porthome_wrapkey PROPERTIES
+      LABELS "nostr-homed;porthome;portable" TIMEOUT 30)
+
+    # Phase 2: provisioner (materialize + LIMITED_MODE interlock).
+    add_executable(test_porthome_provision tests/unit/test_porthome_provision.c)
+    target_link_libraries(test_porthome_provision PRIVATE nostr_porthome)
+    target_compile_options(test_porthome_provision PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_test(NAME homed_porthome_provision COMMAND test_porthome_provision)
+    set_tests_properties(homed_porthome_provision PROPERTIES
+      LABELS "nostr-homed;porthome;portable" TIMEOUT 60)
+
+    # Phase 2: broker integration test (PROVISION_HOME + WAIT_HOME
+    # dispatch, no relay). Requires the AUTH_RUNTIME so it links into
+    # the same broker binary that includes auth_porthome.c.
+    if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
+      add_executable(test_porthome_broker_wait
+        tests/integration/test_porthome_broker_wait.c)
+      target_link_libraries(test_porthome_broker_wait PRIVATE
+        nostr_auth_runtime nostr_porthome)
+      target_compile_options(test_porthome_broker_wait PRIVATE
+        -Wall -Wextra -Werror -Wno-misleading-indentation)
+      add_test(NAME homed_porthome_broker_wait
+        COMMAND test_porthome_broker_wait)
+      set_tests_properties(homed_porthome_broker_wait PROPERTIES
+        LABELS "nostr-homed;porthome;portable;auth-runtime" TIMEOUT 60
+        SKIP_RETURN_CODE 77)
     endif()
   endif()
 endif()
