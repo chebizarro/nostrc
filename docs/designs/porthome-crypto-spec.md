@@ -194,3 +194,9 @@ Reviewers of D4 should confirm each of the following against §3–§7:
 - [ ] The nonce-reuse hazard analysis in §6 correctly locates the only failure to a SHA-256 collision, and no operational path can bypass the HKDF `info` binding.
 - [ ] Name encryption (§7) is a keyed hash, not a promise of confidentiality against an attacker with `name_key`; that trade is documented and accepted here.
 - [ ] The Phase-1 API surface (§8) does not expose the seed after derivation and cleanses failure-path buffers.
+
+---
+
+## D4 approval — 2026-09-23
+
+Maintainer APPROVED D4 (convergent encryption) as specified in this document. Phase 2 may commit to this scheme: HKDF-SHA256 with the domain-separation constants in §2, two-stage nonce+key derivation from `SHA256(plaintext)` (§3), ChaCha20-Poly1305 sealed-blob layout (§4), strict decode (§5), and the per-home convergence property (§6.1). Signer key handoff uses NIP-46 `nip44_decrypt` of `wrapped_home_key` per §3; `home_key` MUST live in an `mlock`'d page in Phase 2 (per §3 note). No changes to the spec accompany this approval.
