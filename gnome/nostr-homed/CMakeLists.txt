@@ -50,6 +50,13 @@ option(NOSTR_HOMED_ENABLE_GREETER_EXTENSION
 option(NOSTR_HOMED_ENABLE_PROFILE
   "Build the Nostr kind-0 → AccountsService avatar/name bridge (requires auth runtime + gdk-pixbuf + libcurl + gio-2.0)" OFF)
 option(NOSTR_HOMED_BUILD_TESTS "Build tests for enabled nostr-homed features" ON)
+# Phase-1 primitives for the portable-home epic (nostrc-h10m). Ships a
+# STANDALONE library `libnostr_porthome.a` (crypto + manifest + Blossom
+# wrapper) NOT linked into the base nostr-login stack. Requires libhanami
+# and OpenSSL. Every public header is loudly marked EXPERIMENTAL — see
+# docs/designs/porthome-crypto-spec.md.
+option(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL
+  "Build the experimental portable-home primitives library (requires libhanami)" OFF)
 
 if(NOSTR_HOMED_ENABLE_CTL AND NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
   message(FATAL_ERROR
@@ -982,5 +989,105 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND NOSTR_HOMED_ENABLE_SMB)
     add_test(NAME homed_smb_acquire COMMAND test_smb_acquire)
     set_tests_properties(homed_smb_acquire
       PROPERTIES LABELS "nostr-homed;smb" TIMEOUT 120)
+  endif()
+endif()
+
+
+# ────────────────────────────────────────────────────────────────────
+# Portable-home Phase 1 primitives (bead nostrc-h10m). EXPERIMENTAL.
+# ────────────────────────────────────────────────────────────────────
+if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
+  find_package(OpenSSL REQUIRED)
+
+  # Reuse the in-tree HKDF/HMAC-SHA256 primitives from nip44 rather than
+  # linking a whole libnip44. We compile the single translation unit into
+  # our own static library — the file has no external state and no
+  # non-crypto dependencies.
+  set(_porthome_nip44_hkdf
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../nips/nip44/src/core/nip44_hkdf_hmac.c")
+  if(NOT EXISTS "${_porthome_nip44_hkdf}")
+    message(FATAL_ERROR
+      "NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL needs "
+      "${_porthome_nip44_hkdf} but the file is missing.")
+  endif()
+
+  # libhanami is the substrate for the Blossom wrapper. In the in-tree
+  # build (root CMakeLists.txt) libhanami's add_subdirectory() runs
+  # AFTER gnome/nostr-homed/, so `if(TARGET hanami)` here is always
+  # false. CMake tolerates linking to a target defined later in the
+  # same configure pass, so we just spell the name and let the linker
+  # phase resolve it. A stand-alone build (with pkg-config-installed
+  # libhanami) is out of Phase-1 scope; a future BUILD_STANDALONE knob
+  # can add pkg_check_modules(HANAMI ...) here.
+  if(NOT BUILD_LIBHANAMI)
+    message(FATAL_ERROR
+      "NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL requires BUILD_LIBHANAMI=ON "
+      "(the in-tree libhanami provides the Blossom client).")
+  endif()
+  set(_porthome_hanami hanami)
+
+  add_library(nostr_porthome STATIC
+    src/porthome/nh_porthome_crypto.c
+    src/porthome/nh_porthome_manifest.c
+    src/porthome/nh_porthome_blossom.c
+    src/porthome/nh_porthome_cbor.c
+    ${_porthome_nip44_hkdf})
+  target_compile_options(nostr_porthome PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_compile_definitions(nostr_porthome PUBLIC
+    NH_PORTHOME_EXPERIMENTAL=1)
+  target_include_directories(nostr_porthome PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_include_directories(nostr_porthome PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome)
+  target_link_libraries(nostr_porthome
+    PUBLIC OpenSSL::Crypto ${_porthome_hanami})
+
+  # Phase 1 does NOT install — the library is an intermediate for the
+  # Phase-2 provisioner and sync daemon. Explicitly no install rules.
+
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_porthome_crypto tests/unit/test_porthome_crypto.c)
+    target_link_libraries(test_porthome_crypto PRIVATE nostr_porthome)
+    target_compile_options(test_porthome_crypto PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_test(NAME homed_porthome_crypto COMMAND test_porthome_crypto)
+    set_tests_properties(homed_porthome_crypto PROPERTIES
+      LABELS "nostr-homed;porthome;portable" TIMEOUT 60)
+
+    add_executable(test_porthome_manifest tests/unit/test_porthome_manifest.c)
+    target_link_libraries(test_porthome_manifest PRIVATE nostr_porthome)
+    target_compile_options(test_porthome_manifest PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_test(NAME homed_porthome_manifest COMMAND test_porthome_manifest)
+    set_tests_properties(homed_porthome_manifest PROPERTIES
+      LABELS "nostr-homed;porthome;portable" TIMEOUT 60)
+
+    add_executable(test_porthome_blossom_guards
+      tests/unit/test_porthome_blossom_guards.c)
+    target_link_libraries(test_porthome_blossom_guards PRIVATE nostr_porthome)
+    target_compile_options(test_porthome_blossom_guards PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_test(NAME homed_porthome_blossom_guards
+      COMMAND test_porthome_blossom_guards)
+    set_tests_properties(homed_porthome_blossom_guards PROPERTIES
+      LABELS "nostr-homed;porthome;portable" TIMEOUT 30)
+
+    # Driver used by the Python integration test; not a standalone add_test.
+    add_executable(porthome_smallhome_driver
+      tests/integration/porthome_smallhome_driver.c)
+    target_link_libraries(porthome_smallhome_driver PRIVATE nostr_porthome)
+    target_compile_options(porthome_smallhome_driver PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+
+    if(Python3_Interpreter_FOUND)
+      add_test(NAME homed_porthome_smallhome
+        COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_porthome_smallhome.py"
+          "$<TARGET_FILE:porthome_smallhome_driver>")
+      set_tests_properties(homed_porthome_smallhome PROPERTIES
+        LABELS "nostr-homed;porthome;portable" TIMEOUT 180
+        ENVIRONMENT "NH_PORTHOME_ALLOW_INSECURE=1")
+    endif()
   endif()
 endif()
