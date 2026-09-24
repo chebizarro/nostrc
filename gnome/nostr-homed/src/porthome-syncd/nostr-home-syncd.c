@@ -219,14 +219,29 @@ int main(int argc, char **argv) {
     nh_syncd_state *state = NULL;
     bool snap_unknown = false;
     (void)nh_syncd_state_load(cfg.state_dir, &state, &snap_unknown);
-    if (snap_unknown) {
-        fprintf(stderr, "syncd: snapshot base unknown; push disabled (I2 will rescan)\n");
-    }
+
     nh_syncd_ignore *ig = NULL;
     if (nh_syncd_ignore_new(cfg.home, &ig) != NH_SYNCD_OK) {
         fprintf(stderr, "syncd: ignore init failed\n");
         nh_syncd_lock_release(lk); free_cfg(&cfg); return 6;
     }
+
+    /* I2 §6.4: if the snapshot base is unknown, do an ADDITIVE rescan
+     * of $HOME and mark NOSTR_HOME_STATE=partial. The push path will
+     * refuse to run until a real pull path rebuilds base. */
+    if (snap_unknown) {
+        fprintf(stderr,
+                "syncd: snapshot base unknown; running additive rescan + setting partial state\n");
+        (void)nh_syncd_rescan_home_additive(state, cfg.home, ig, cfg.state_dir);
+        (void)nh_syncd_partial_state_set(cfg.state_dir);
+    }
+
+    /* Interlocks now include the file marker in addition to the env
+     * variable — the I2 marker file is authoritative because it
+     * survives across daemon restarts. */
+    const char *state_marker = nh_syncd_partial_state_is_set(cfg.state_dir)
+                              ? "partial" : getenv("NOSTR_HOME_STATE");
+    ilk.nostr_home_state = state_marker;
     nh_syncd_batcher *ba = NULL;
     if (nh_syncd_batcher_new(now_ns_monotonic, NULL, 0, 0, &ba) != NH_SYNCD_OK) {
         nh_syncd_ignore_free(ig); nh_syncd_lock_release(lk); free_cfg(&cfg); return 6;

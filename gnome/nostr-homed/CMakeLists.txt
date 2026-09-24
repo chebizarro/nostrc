@@ -1339,7 +1339,10 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     src/porthome-syncd/nh_syncd_lock.c
     src/porthome-syncd/nh_syncd_interlocks.c
     src/porthome-syncd/nh_syncd_pusher.c
-    src/porthome-syncd/nh_syncd_subscription.c)
+    src/porthome-syncd/nh_syncd_subscription.c
+    # I2 additions (bead nostrc-p6qp) — pull path + reconciler.
+    src/porthome-syncd/nh_syncd_reconcile.c
+    src/porthome-syncd/nh_syncd_pull.c)
   target_compile_options(nostr_syncd_core PRIVATE
     -Wall -Wextra -Werror -Wno-misleading-indentation -Wno-unused-parameter)
   target_compile_definitions(nostr_syncd_core PUBLIC
@@ -1395,6 +1398,19 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     target_link_libraries(test_syncd_push_e2e PRIVATE nostr_syncd_core)
     add_test(NAME homed_syncd_push_e2e COMMAND test_syncd_push_e2e)
     set_tests_properties(homed_syncd_push_e2e PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 120)
+
+    # I2 (bead nostrc-p6qp) — reconciler unit + pull integration.
+    add_executable(test_syncd_reconcile tests/unit/test_syncd_reconcile.c)
+    target_link_libraries(test_syncd_reconcile PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_reconcile COMMAND test_syncd_reconcile)
+    set_tests_properties(homed_syncd_reconcile PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 60)
+
+    add_executable(test_syncd_pull_e2e tests/integration/test_syncd_pull_e2e.c)
+    target_link_libraries(test_syncd_pull_e2e PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_pull_e2e COMMAND test_syncd_pull_e2e)
+    set_tests_properties(homed_syncd_pull_e2e PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 120)
   endif()
 endif()

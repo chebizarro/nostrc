@@ -424,6 +424,169 @@ int  nh_syncd_subscription_start(const char *const *relays, size_t n_relays,
                                  nh_syncd_subscription **out);
 void nh_syncd_subscription_stop(nh_syncd_subscription *s);
 
+/* ────────────────────────────────────────────────────────────────────
+ * I2 additions — pull path + three-way reconciler + conflict policy.
+ *
+ * Sibling to the push seam above. All declarations below are owned by
+ * Item 2 (bead nostrc-p6qp, parent nostrc-h10m). Do not extend without
+ * coordinating with the I1/I3 owners.
+ *
+ * See docs/designs/home-from-relay.md §6.3 (pull + merge) and §6.4
+ * (interlocks) for behaviour; docs/reviews/porthome-syncd-pull-2026-09-23.md
+ * for v1 punts + reproducers.
+ * ──────────────────────────────────────────────────────────────────── */
+
+/* Persisted marker for §6.4 "unknown / rebuilding base". Written at
+ * `${state_dir}/state` as a single line: "partial\n" or "ok\n". Absent
+ * file counts as "ok". The daemon main loads this before checking
+ * interlocks and passes it into `nh_syncd_interlocks.nostr_home_state`. */
+#define NH_SYNCD_STATE_MARKER_FILE   "state"
+#define NH_SYNCD_STATE_MARKER_PARTIAL "partial"
+#define NH_SYNCD_STATE_MARKER_OK      "ok"
+
+int  nh_syncd_partial_state_set  (const char *state_dir);
+int  nh_syncd_partial_state_clear(const char *state_dir);
+/* Returns 1 iff the marker file exists AND says "partial", 0 otherwise
+ * (missing / unreadable / "ok"). Never returns < 0. */
+int  nh_syncd_partial_state_is_set(const char *state_dir);
+
+/* Result of a single reconcile pass. Owned by caller; free with
+ * nh_syncd_reconcile_result_free. */
+typedef struct nh_syncd_reconcile_result nh_syncd_reconcile_result;
+
+/* Introspection: counts of what happened. */
+size_t nh_syncd_reconcile_result_applied     (const nh_syncd_reconcile_result *r);
+size_t nh_syncd_reconcile_result_deleted     (const nh_syncd_reconcile_result *r);
+size_t nh_syncd_reconcile_result_push_queued (const nh_syncd_reconcile_result *r);
+size_t nh_syncd_reconcile_result_conflicts   (const nh_syncd_reconcile_result *r);
+
+/* Access the i-th push-queue candidate (rel-path). */
+const char *nh_syncd_reconcile_result_push_at (const nh_syncd_reconcile_result *r, size_t i);
+/* Access the i-th conflict record. `out_rel` is the original relpath,
+ * `out_conflict_path` is the sibling `.conflict-*` path that got
+ * written (rel to $HOME). Either may be NULL if the caller doesn't
+ * need it. Returns 0 on success. */
+int nh_syncd_reconcile_result_conflict_at(const nh_syncd_reconcile_result *r,
+                                          size_t i,
+                                          const char **out_rel,
+                                          const char **out_conflict_path);
+
+void nh_syncd_reconcile_result_free(nh_syncd_reconcile_result *r);
+
+/* Notification hook. If set, called ONCE at the end of a reconcile
+ * pass that produced at least one conflict, with a
+ * space-separated list of rel-paths (NUL-terminated). The default
+ * behaviour when this is NULL and NOSTR_HOMED_SYNCD_NOTIFY!=0 is to
+ * exec `notify-send` if it is on $PATH; if that fails the notification
+ * is dropped (best effort — the conflict files themselves are the
+ * durable record). */
+typedef void (*nh_syncd_notify_fn)(void *ud, const char *summary,
+                                   const char *body);
+
+/* Reconcile config. All fields optional except manifest + home_key. */
+typedef struct {
+    const nh_porthome_manifest *manifest; /* remote (decoded) */
+    uint64_t                    remote_generation;
+    uint8_t                     home_key[NH_PORTHOME_KEY_LEN];
+
+    /* Sink for fetching sealed chunk bytes by 64-hex address.
+     * Signature matches nh_porthome_prov_fetch_fn — we accept the exact
+     * function pointer so callers can share a Blossom-backed sink with
+     * the fetch helper. Returns 0 on success (heap buffer via free()). */
+    int (*fetch_chunk)(void *ctx, const char *sha256_hex,
+                       uint8_t **out_ct, size_t *out_ct_len);
+    void *fetch_chunk_ctx;
+
+    /* Device name embedded in `.conflict-<device>-<ISO8601>` file
+     * names. NULL → gethostname(). */
+    const char *device_name;
+
+    /* Batcher receives local-only changes so the push path picks them
+     * up. May be NULL — in that case local-only changes are logged
+     * only (used by the "cold start, additive-only" rescan path). */
+    nh_syncd_batcher *push_queue;
+
+    /* Notifier for conflict summary. NULL → default (see above). */
+    nh_syncd_notify_fn notify;
+    void              *notify_ud;
+
+    /* Test seam: overrides the wall clock used to stamp conflict file
+     * names.  0 → gettimeofday(). Unix time in seconds. */
+    int64_t            clock_epoch_secs_override;
+} nh_syncd_reconcile_cfg;
+
+/* Run one reconcile pass. `state` is mutated in place: applied entries
+ * are upserted, deleted-from-remote entries are removed, and the local
+ * generation is set to max(local, remote_generation). Persists state
+ * to `state_dir_for_persist` if non-NULL. Returns 0 on success. */
+int nh_syncd_reconcile_from_manifest(const nh_syncd_reconcile_cfg *cfg,
+                                     nh_syncd_state           *state,
+                                     const char               *root_dir,
+                                     const nh_syncd_ignore    *ignore,
+                                     const char               *state_dir_for_persist,
+                                     nh_syncd_reconcile_result **out_result,
+                                     char                    **out_error_msg);
+
+/* Rescan $HOME additively — every regular file becomes a "candidate
+ * for push" record. The state's `files` map is populated (kind/mode/
+ * mtime_ns/size/content_hash_hex; chunk_addrs_hex left empty until a
+ * push actually chunks + uploads). Writes the partial-state marker.
+ * Never deletes anything. Used when snapshot.json is missing/corrupt
+ * per §6.4. */
+int nh_syncd_rescan_home_additive(nh_syncd_state    *state,
+                                  const char        *root_dir,
+                                  const nh_syncd_ignore *ignore,
+                                  const char        *state_dir_for_persist);
+
+/* Pull glue: build a reconcile config and pointer callback that feeds
+ * a live subscription. The callback verifies the event (kind, author,
+ * d-tag, signature), decrypts the sealed CBOR under `home_key`, and
+ * — if the decoded generation strictly exceeds state's local — runs
+ * `nh_syncd_reconcile_from_manifest`. Compose with
+ * nh_syncd_subscription_start(). */
+typedef struct nh_syncd_pull_ctx nh_syncd_pull_ctx;
+
+typedef struct {
+    /* Same as nh_syncd_reconcile_cfg less `manifest`+`remote_generation`. */
+    uint8_t                     home_key[NH_PORTHOME_KEY_LEN];
+    int (*fetch_chunk)(void *ctx, const char *sha256_hex,
+                       uint8_t **out_ct, size_t *out_ct_len);
+    void *fetch_chunk_ctx;
+    const char *device_name;
+    nh_syncd_batcher *push_queue;
+    nh_syncd_notify_fn notify;
+    void              *notify_ud;
+
+    /* Live-relay context. */
+    nh_syncd_state *state;             /* mutated on every applied EVENT */
+    const char     *root_dir;
+    const nh_syncd_ignore *ignore;
+    const char     *state_dir_for_persist;
+
+    /* The pubkey we expect to see on inbound pointers. */
+    const char     *account_pubkey_hex;
+    /* The `d` tag we expect. */
+    const char     *d_tag;
+} nh_syncd_pull_opts;
+
+int  nh_syncd_pull_ctx_new (const nh_syncd_pull_opts *opts,
+                            nh_syncd_pull_ctx **out);
+void nh_syncd_pull_ctx_free(nh_syncd_pull_ctx *c);
+
+/* The nh_syncd_on_remote_pointer_fn compatible entry point. Wire this
+ * as the subscription's callback with `c` as `cb_ud`. */
+void nh_syncd_pull_on_pointer(void *ud,
+                              const char *event_id_hex,
+                              int64_t     created_at,
+                              const char *d_tag,
+                              const char *content_hex_or_b64);
+
+/* Introspection for tests. */
+uint64_t nh_syncd_pull_ctx_last_applied_generation(const nh_syncd_pull_ctx *c);
+size_t   nh_syncd_pull_ctx_total_conflicts(const nh_syncd_pull_ctx *c);
+size_t   nh_syncd_pull_ctx_total_events(const nh_syncd_pull_ctx *c);
+
+
 #ifdef __cplusplus
 }
 #endif
