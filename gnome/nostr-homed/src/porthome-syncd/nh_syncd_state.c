@@ -525,3 +525,40 @@ int nh_syncd_state_save_remote_(const nh_syncd_state *s, const char *state_dir) 
     free(d);
     return rc;
 }
+
+/* Not in the public header — used by the pull-path reconciler (I2). Copy
+ * out the recorded chunk_addrs_hex for `rel` as a heap array of heap
+ * strings, plus its length. On absent / non-file rows, *out_n = 0 and
+ * *out is NULL. Caller frees each string then the array. */
+int nh_syncd_state_get_chunk_addrs_(const nh_syncd_state *s,
+                                    const char *rel,
+                                    char ***out,
+                                    size_t *out_n)
+{
+    if (out) *out = NULL;
+    if (out_n) *out_n = 0;
+    if (!s || !rel || !s->files) return NH_SYNCD_ERR_ARG;
+    json_t *row = json_object_get(s->files, rel);
+    if (!json_is_object(row)) return NH_SYNCD_OK;
+    json_t *arr = json_object_get(row, "chunk_addrs_hex");
+    if (!json_is_array(arr)) return NH_SYNCD_OK;
+    size_t n = json_array_size(arr);
+    if (n == 0) return NH_SYNCD_OK;
+    char **a = calloc(n, sizeof *a);
+    if (!a) return NH_SYNCD_ERR_OOM;
+    for (size_t i = 0; i < n; i++) {
+        const char *v = json_string_value(json_array_get(arr, i));
+        a[i] = strdup(v ? v : "");
+        if (!a[i]) {
+            for (size_t k = 0; k < i; k++) free(a[k]);
+            free(a);
+            return NH_SYNCD_ERR_OOM;
+        }
+    }
+    if (out) *out = a; else {
+        for (size_t i = 0; i < n; i++) free(a[i]);
+        free(a);
+    }
+    if (out_n) *out_n = n;
+    return NH_SYNCD_OK;
+}
