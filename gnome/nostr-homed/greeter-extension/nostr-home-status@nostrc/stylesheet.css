@@ -1,0 +1,23 @@
+/*
+ * nostr-home-status@nostrc — stylesheet.
+ *
+ * A single glyph plus a short state label in the panel. The popup
+ * uses the shell's default PopupMenuItem look.
+ */
+
+.nostr-home-status-glyph {
+    font-size: 14px;
+    font-weight: bold;
+    padding-right: 4px;
+}
+
+.nostr-home-status-label {
+    font-family: monospace;
+    font-size: 12px;
+}
+
+.nostr-home-status-pathrow .popup-menu-item-label {
+    font-family: monospace;
+    font-size: 10px;
+    color: #888;
+}

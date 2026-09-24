@@ -20,6 +20,7 @@
 
 #define _GNU_SOURCE
 #include "nh_syncd_cache.h"
+#include "nh_porthome_notify.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -211,12 +212,27 @@ int nh_syncd_sweep_run_once(const nh_syncd_sweep_cfg *cfg,
     if (out_dropped) *out_dropped = dropped;
     if (out_reuploaded) *out_reuploaded = reuploaded;
 
-    if (dropped > 0 && cfg->notify_fn) {
+    if (dropped > 0) {
         char summary[256];
         snprintf(summary, sizeof summary,
                  "Your Blossom server dropped %zu blob%s (re-uploaded %zu)",
                  dropped, dropped == 1 ? "" : "s", reuploaded);
-        cfg->notify_fn(cfg->notify_ud, dropped, reuploaded, summary);
+        if (cfg->notify_fn) {
+            cfg->notify_fn(cfg->notify_ud, dropped, reuploaded, summary);
+        } else {
+            /* Phase 5 I1: unified seam. A caller-provided notify_fn
+             * still bypasses the seam so unit tests keep observing
+             * every fire; the default path throttles per (category,
+             * key) so a bouncing server can't rate-abuse the desktop. */
+            static nh_porthome_notifier *n = NULL;
+            if (!n) n = nh_porthome_notifier_new();
+            char key[64];
+            snprintf(key, sizeof key, "dropped=%zu", dropped);
+            (void)nh_porthome_notify(n,
+                "nostr-home-syncd", "folder-remote",
+                summary, NULL,
+                NH_NOTIFY_CAT_SWEEP, key);
+        }
     }
     log_msg("sweep done: %zu blobs checked, %zu dropped, %zu re-uploaded",
             n, dropped, reuploaded);

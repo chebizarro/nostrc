@@ -12,6 +12,7 @@
 
 #define _GNU_SOURCE
 #include "nh_fuse_source.h"
+#include "nh_porthome_notify.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -206,7 +207,30 @@ void nh_fuse_source_stats(const nh_fuse_source *s, nh_fuse_source_stats_t *out) 
 static void note_miss(nh_fuse_source *s, const char *rel, int errcode) {
     s->stats.misses++;
     s->stats.last_miss_epoch = now_wall_secs();
-    if (s->on_miss) s->on_miss(s->on_miss_ud, rel, errcode);
+    if (s->on_miss) {
+        s->on_miss(s->on_miss_ud, rel, errcode);
+        return;
+    }
+    /* Phase 5 I1: default offline-miss desktop notification. Callers
+     * that inject their own on_miss (tests, the daemon's status writer)
+     * bypass this path. The per-key throttle (design D8 §6.5) means a
+     * flurry of read misses on the same file coalesces into one pop. */
+    static nh_porthome_notifier *n = NULL;
+    if (!n) {
+        n = nh_porthome_notifier_new();
+        /* Slightly wider window than the sweep default — reads bounce
+         * more often on flaky links and we don't want to spam. */
+        nh_porthome_notifier_set_window(n, 900);
+    }
+    char summary[128];
+    snprintf(summary, sizeof summary,
+             "Portable home: read failed (offline / server unreachable)");
+    (void)nh_porthome_notify(n,
+        "nostr-home-fuse", "network-error-symbolic",
+        summary,
+        rel ? rel : "",
+        NH_NOTIFY_CAT_OFFLINE_MISS,
+        rel ? rel : "chunk");
 }
 
 int nh_fuse_source_chunk(nh_fuse_source *s,

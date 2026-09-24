@@ -46,6 +46,7 @@
 #include "nh_syncd.h"
 #include "nh_porthome_crypto.h"
 #include "nh_porthome_manifest.h"
+#include "nh_porthome_notify.h"
 
 #include <jansson.h>
 
@@ -458,29 +459,25 @@ static int build_conflict_path(const char *rel, const char *device,
 }
 
 /* ────────────────── notify-send fallback ───────────────────────── */
-
+/* Prior to Phase 5 I1 this open-coded fork()/execlp("notify-send", …).
+ * That path now lives inside nh_porthome_notify(), which adds
+ * per-(category,key) throttling and quiet-hours honouring while
+ * keeping the fork+exec semantics + NOSTR_HOMED_SYNCD_NOTIFY kill
+ * switch intact. See gnome/nostr-homed/include/nh_porthome_notify.h. */
 static void default_notify(const char *summary, const char *body) {
-    /* Skip if disabled. */
-    const char *env = getenv("NOSTR_HOMED_SYNCD_NOTIFY");
-    if (env && !strcmp(env, "0")) return;
-
-    pid_t pid = fork();
-    if (pid < 0) return;
-    if (pid == 0) {
-        /* Suppress stderr — notify-send's absence is a soft failure. */
-        int dn = open("/dev/null", O_WRONLY | O_CLOEXEC);
-        if (dn >= 0) { dup2(dn, 2); close(dn); }
-        execlp("notify-send", "notify-send",
-               "--app-name=nostr-home-syncd",
-               "--icon=folder-remote",
-               summary ? summary : "portable home",
-               body    ? body    : "",
-               (char *)NULL);
-        _exit(127);
-    }
-    /* Reap non-blocking so we don't leak zombies. */
-    int status = 0;
-    (void)waitpid(pid, &status, WNOHANG);
+    static nh_porthome_notifier *n = NULL;
+    if (!n) n = nh_porthome_notifier_new();
+    /* Reconcile emits a single accumulated notification per pass;
+     * throttle on the summary string (dropped_count-sensitive), so
+     * repeated identical passes collapse but a "count changed" pass
+     * still surfaces. */
+    (void)nh_porthome_notify(n,
+        "nostr-home-syncd",
+        "folder-remote",
+        summary,
+        body,
+        NH_NOTIFY_CAT_CONFLICT,
+        summary ? summary : "");
 }
 
 /* Called at end of pass with the accumulated conflict list. `paths` is

@@ -72,6 +72,13 @@ option(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL
 # gains a libfuse3 or nh_fuse_* dependency.
 option(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL
   "Build the experimental read-only portable-home FUSE overlay nostr-home-fuse (requires SYNCD_EXPERIMENTAL + libfuse3)" OFF)
+# Phase 5 I1 (bead nostrc-h10m.1). Panel indicator that renders the
+# portable-home status file in the user session. Purely data-driven
+# (JS + CSS + metadata); ships nothing that runs C. Independent of
+# every runtime option — packagers can install the extension without
+# pulling any auth/porthome C code.
+option(NOSTR_HOMED_ENABLE_PORTHOME_STATUS_EXTENSION
+  "Install the user-session gnome-shell extension nostr-home-status@nostrc" OFF)
 
 if(NOSTR_HOMED_ENABLE_CTL AND NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
   message(FATAL_ERROR
@@ -974,6 +981,25 @@ if(NOSTR_HOMED_ENABLE_GREETER_EXTENSION)
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/greeter-extension")
 endif()
 
+# Phase 5 I1 (bead nostrc-h10m.1): optional user-session status
+# indicator extension. Data-only; three files land under the system
+# gnome-shell extensions dir. Enabling per user is policy — the
+# extension does NOT auto-enable itself.
+if(NOSTR_HOMED_ENABLE_PORTHOME_STATUS_EXTENSION)
+  set(NH_STATUS_EXT_UUID "nostr-home-status@nostrc")
+  set(NH_STATUS_EXT_SRC
+      "${CMAKE_CURRENT_SOURCE_DIR}/greeter-extension/${NH_STATUS_EXT_UUID}")
+  set(NH_STATUS_EXT_DEST
+      "${CMAKE_INSTALL_DATADIR}/gnome-shell/extensions/${NH_STATUS_EXT_UUID}")
+  install(FILES
+      "${NH_STATUS_EXT_SRC}/metadata.json"
+      "${NH_STATUS_EXT_SRC}/extension.js"
+      "${NH_STATUS_EXT_SRC}/stylesheet.css"
+    DESTINATION "${NH_STATUS_EXT_DEST}")
+  install(FILES "${NH_STATUS_EXT_SRC}/README.md"
+    DESTINATION "${CMAKE_INSTALL_DOCDIR}/status-extension")
+endif()
+
 if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND NOSTR_HOMED_ENABLE_SMB)
   add_executable(nostr-smb-acquire
     src/smb/nostr-smb-acquire.c)
@@ -1076,6 +1102,65 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome)
   target_link_libraries(nostr_porthome
     PUBLIC OpenSSL::Crypto ${_porthome_hanami})
+
+  # ────────────────────────────────────────────────────────────────
+  # Phase 5 I1 (bead nostrc-h10m.1): unified UX seams.
+  # nostr_porthome_common ships the shared notification throttler +
+  # quiet-hours module (nh_porthome_notify.{h,c}) AND the atomic
+  # porthome-status.json merge helper (nh_porthome_status.{h,c}).
+  # STATIC and non-installed. Linked into nostr_syncd_core, the FUSE
+  # binary, and the nostr-home-status CLI so all three writers merge
+  # into one file with one throttle policy.
+  # ────────────────────────────────────────────────────────────────
+  add_library(nostr_porthome_common STATIC
+    src/porthome-common/nh_porthome_notify.c
+    src/porthome-common/nh_porthome_status.c)
+  target_compile_options(nostr_porthome_common PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_include_directories(nostr_porthome_common PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  set_property(TARGET nostr_porthome_common PROPERTY
+    POSITION_INDEPENDENT_CODE ON)
+
+  # Operator CLI. Installed under bin when AUTH_INSTALL is on so a
+  # release build ships `nostr-home-status` alongside the other homed
+  # operator tools. Not built when AUTH_INSTALL is off — the CLI is a
+  # tiny wrapper on the common library and testing the library
+  # directly is more useful than exercising argv parsing.
+  add_executable(nostr-home-status
+    src/porthome-common/nostr-home-status.c)
+  target_compile_options(nostr-home-status PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_link_libraries(nostr-home-status PRIVATE
+    nostr_porthome_common)
+
+  if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+    install(TARGETS nostr-home-status
+      RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+  endif()
+
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_porthome_notify
+      tests/unit/test_porthome_notify.c)
+    target_link_libraries(test_porthome_notify PRIVATE
+      nostr_porthome_common)
+    target_compile_options(test_porthome_notify PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_test(NAME homed_porthome_notify COMMAND test_porthome_notify)
+    set_tests_properties(homed_porthome_notify PROPERTIES
+      LABELS "nostr-homed;porthome;portable" TIMEOUT 30
+      ENVIRONMENT "NOSTR_HOMED_SYNCD_NOTIFY=0")
+
+    add_executable(test_porthome_status
+      tests/unit/test_porthome_status.c)
+    target_link_libraries(test_porthome_status PRIVATE
+      nostr_porthome_common)
+    target_compile_options(test_porthome_status PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_test(NAME homed_porthome_status COMMAND test_porthome_status)
+    set_tests_properties(homed_porthome_status PROPERTIES
+      LABELS "nostr-homed;porthome;portable" TIMEOUT 30)
+  endif()
 
   # ────────────────────────────────────────────────────────────────
   # Portable-home Phase 2.5 (bead nostrc-9k4g):
@@ -1367,7 +1452,7 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
   target_include_directories(nostr_syncd_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(nostr_syncd_core PUBLIC
-    nostr_porthome PkgConfig::JANSSON Threads::Threads)
+    nostr_porthome nostr_porthome_common PkgConfig::JANSSON Threads::Threads)
   # libnostr is required for the kind-30078 publish path and the
   # SimplePool subscription. In in-tree build the target `nostr` is
   # defined by libnostr's subdirectory; stand-alone builds fall back

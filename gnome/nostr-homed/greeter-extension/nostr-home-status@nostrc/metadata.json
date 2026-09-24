@@ -1,0 +1,8 @@
+{
+    "uuid": "nostr-home-status@nostrc",
+    "name": "Nostr Portable Home Status",
+    "description": "Panel indicator showing the portable-home sync/mount state. Reads $XDG_STATE_HOME/nostr-homed/porthome-status.json (falling back to ~/.local/state/nostr-homed/porthome-status.json). NEVER surfaces secret material.",
+    "shell-version": ["46", "47"],
+    "session-modes": ["user"],
+    "url": "https://github.com/nostrc/nostrc"
+}
