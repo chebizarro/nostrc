@@ -42,7 +42,10 @@ static void usage(FILE *f) {
     fprintf(f,
         "Usage: nostr-home-status [--json] [--field <path>]\n"
         "                          [--quiet-hours-set HH:MM-HH:MM|off]\n"
-        "                          [--path] [--help]\n");
+        "                          [--path] [--help]\n"
+        "       nostr-home-status quota [--json]\n"
+        "                          [--set-override BYTES | --clear-override]\n"
+        "                          [--reload] [--help]\n");
 }
 
 /* Extract a value by dot path from raw JSON. Very small — handles
@@ -194,7 +197,190 @@ static int cmd_quiet_hours_set(const char *arg) {
     return 0;
 }
 
+
+/* ─────────────── `nostr-home-status quota` subcommand ─────────────── */
+
+static char *quota_config_dir_(void) {
+    const char *xdg = getenv("XDG_CONFIG_HOME");
+    char buf[512];
+    if (xdg && *xdg) {
+        snprintf(buf, sizeof buf, "%s/nostr-homed", xdg);
+    } else {
+        const char *home = getenv("HOME");
+        if (!home || !*home) return NULL;
+        snprintf(buf, sizeof buf, "%s/.config/nostr-homed", home);
+    }
+    return strdup(buf);
+}
+
+static int mkdirp_600_(const char *dir) {
+    char tmp[512];
+    snprintf(tmp, sizeof tmp, "%s", dir);
+    for (char *p = tmp + 1; *p; ++p) {
+        if (*p == '/') {
+            *p = 0;
+            if (mkdir(tmp, 0700) != 0 && errno != EEXIST) return -1;
+            *p = '/';
+        }
+    }
+    if (mkdir(tmp, 0700) != 0 && errno != EEXIST) return -1;
+    return 0;
+}
+
+/* Read status → extract a scalar field under status.syncd.<key>.
+ * Returns 0 on hit (heap-alloc'd), -ENOENT if absent. */
+static int status_scalar_(const char *field, char **out) {
+    char *path = nh_porthome_status_default_path();
+    if (!path) return -ENOMEM;
+    char *body = NULL; size_t body_len = 0;
+    int rc = nh_porthome_status_read(path, &body, &body_len);
+    free(path);
+    if (rc != 0) return rc;
+    rc = lookup_dotted(body, body_len, field, out);
+    free(body);
+    return rc;
+}
+
+static void print_quota_json(uint64_t bytes,
+                             const char *source,
+                             uint64_t used_bytes,
+                             uint32_t pinned,
+                             uint32_t evict_rate) {
+    printf("{\"cache_quota_bytes\":%llu,"
+           "\"cache_quota_source\":\"%s\","
+           "\"cache_bytes\":%llu,"
+           "\"pinned_gen_count\":%u,"
+           "\"evict_rate_1h\":%u}\n",
+           (unsigned long long)bytes,
+           source ? source : "default",
+           (unsigned long long)used_bytes,
+           (unsigned)pinned,
+           (unsigned)evict_rate);
+}
+
+static void print_quota_pretty(uint64_t bytes,
+                               const char *source,
+                               uint64_t used_bytes,
+                               uint32_t pinned,
+                               uint32_t evict_rate) {
+    printf("cache quota:     %llu bytes (source=%s)\n",
+           (unsigned long long)bytes, source ? source : "default");
+    printf("cache used:      %llu bytes\n", (unsigned long long)used_bytes);
+    printf("pinned gens:     %u\n", (unsigned)pinned);
+    printf("evict rate/1h:   %u\n", (unsigned)evict_rate);
+}
+
+/* Best-effort SIGHUP delivery to the user-scope sync service. Returns
+ * 0 if the systemctl command exited 0. Non-fatal — the CLI still
+ * exits with the value the operator likely expected. */
+static int reload_syncd_(void) {
+    /* Prefer systemctl --user reload if available. Fall back to sending
+     * SIGHUP to any nostr-home-syncd process owned by this uid. */
+    int rc = system("systemctl --user reload nostr-home-sync.service"
+                    " >/dev/null 2>&1");
+    if (rc == 0) return 0;
+    (void)system("pkill -HUP -u $(id -u) -x nostr-home-syncd >/dev/null 2>&1");
+    return 0;
+}
+
+static int cmd_quota(int argc, char **argv) {
+    bool as_json = false;
+    bool set_override = false;
+    bool clear_override = false;
+    bool do_reload = false;
+    const char *set_val = NULL;
+
+    for (int i = 0; i < argc; ++i) {
+        const char *a = argv[i];
+        if (!strcmp(a, "--json"))      { as_json = true;         continue; }
+        if (!strcmp(a, "--reload"))    { do_reload = true;       continue; }
+        if (!strcmp(a, "--help") || !strcmp(a, "-h")) {
+            usage(stdout);
+            return 0;
+        }
+        if (!strcmp(a, "--set-override") && i + 1 < argc) {
+            set_override = true; set_val = argv[++i]; continue;
+        }
+        if (!strcmp(a, "--clear-override")) { clear_override = true; continue; }
+        fprintf(stderr, "unknown argument: %s\n", a);
+        usage(stderr);
+        return 2;
+    }
+    if (set_override && clear_override) {
+        fprintf(stderr, "--set-override and --clear-override are mutually exclusive\n");
+        return 2;
+    }
+
+    /* Mutations. */
+    if (set_override) {
+        char *end = NULL;
+        unsigned long long v = strtoull(set_val, &end, 10);
+        if (!end || *end != '\0' || v == 0) {
+            fprintf(stderr, "invalid --set-override value: %s (want a decimal integer of bytes)\n",
+                    set_val);
+            return 2;
+        }
+        char *dir = quota_config_dir_();
+        if (!dir) { fprintf(stderr, "$HOME unset; cannot resolve config path\n"); return 1; }
+        if (mkdirp_600_(dir) != 0) { fprintf(stderr, "mkdir %s: %s\n", dir, strerror(errno)); free(dir); return 1; }
+        char path[600];
+        snprintf(path, sizeof path, "%s/cache-quota", dir);
+        free(dir);
+        FILE *f = fopen(path, "we");
+        if (!f) { fprintf(stderr, "open %s: %s\n", path, strerror(errno)); return 1; }
+        fprintf(f, "%llu\n", v);
+        (void)fchmod(fileno(f), 0600);
+        fclose(f);
+        printf("quota override: %llu bytes -> %s\n", v, path);
+        printf("note: syncd will pick up the new value on next SIGHUP\n");
+        if (do_reload) reload_syncd_();
+        return 0;
+    }
+    if (clear_override) {
+        char *dir = quota_config_dir_();
+        if (!dir) { fprintf(stderr, "$HOME unset; cannot resolve config path\n"); return 1; }
+        char path[600];
+        snprintf(path, sizeof path, "%s/cache-quota", dir);
+        free(dir);
+        if (unlink(path) != 0 && errno != ENOENT) {
+            fprintf(stderr, "unlink %s: %s\n", path, strerror(errno));
+            return 1;
+        }
+        printf("quota override: cleared\n");
+        printf("note: syncd will pick up the change on next SIGHUP\n");
+        if (do_reload) reload_syncd_();
+        return 0;
+    }
+
+    /* Read-side: pull from status.syncd. */
+    char *q_bytes  = NULL, *q_source = NULL, *c_bytes = NULL,
+         *pinned  = NULL, *evictr  = NULL;
+    (void)status_scalar_("syncd.cache_quota_bytes",  &q_bytes);
+    (void)status_scalar_("syncd.cache_quota_source", &q_source);
+    (void)status_scalar_("syncd.cache_bytes",        &c_bytes);
+    (void)status_scalar_("syncd.pinned_gen_count",   &pinned);
+    (void)status_scalar_("syncd.evict_rate_1h",      &evictr);
+
+    uint64_t qb = q_bytes ? strtoull(strip_quotes(q_bytes), NULL, 10) : 0ull;
+    uint64_t cb = c_bytes ? strtoull(strip_quotes(c_bytes), NULL, 10) : 0ull;
+    uint32_t pn = pinned  ? (uint32_t)strtoul(strip_quotes(pinned), NULL, 10) : 0u;
+    uint32_t er = evictr  ? (uint32_t)strtoul(strip_quotes(evictr), NULL, 10) : 0u;
+    const char *src = q_source ? strip_quotes(q_source) : "unknown";
+
+    if (as_json) print_quota_json(qb, src, cb, pn, er);
+    else          print_quota_pretty(qb, src, cb, pn, er);
+
+    free(q_bytes); free(q_source); free(c_bytes); free(pinned); free(evictr);
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    /* Subcommand dispatch. `quota` gets a dedicated parser
+     * so its argv can accept flag pairs like --set-override 42.
+     * Everything else routes through the flat --field/--json path. */
+    if (argc >= 2 && !strcmp(argv[1], "quota")) {
+        return cmd_quota(argc - 2, argv + 2);
+    }
     bool as_json = false;
     bool show_path = false;
     const char *field = NULL;

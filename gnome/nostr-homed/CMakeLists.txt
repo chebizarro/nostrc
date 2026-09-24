@@ -1450,6 +1450,11 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     # I2 additions (bead nostrc-p6qp) — pull path + reconciler.
     src/porthome-syncd/nh_syncd_reconcile.c
     src/porthome-syncd/nh_syncd_pull.c
+    # Phase 5 I3 / h10m.1.1 (bead nostrc-8hw8 + nostrc-h10m.1.1):
+    # syncd contribution to porthome-status.json. Compiled into
+    # nostr_syncd_core so both the daemon binary and unit tests
+    # can drive it without touching the fuse writer.
+    src/porthome-syncd/nh_syncd_status.c
     # Phase 4 P4-I (bead nostrc-1u55) — lazy-subtree prefix matcher.
     # Additive: an empty matcher never matches so behaviour is
     # preserved for callers that pass NULL for cfg->lazy.
@@ -1522,6 +1527,23 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     target_link_libraries(test_syncd_cache_lru PRIVATE nostr_syncd_core)
     add_test(NAME homed_syncd_cache_lru COMMAND test_syncd_cache_lru)
     set_tests_properties(homed_syncd_cache_lru PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
+
+    # ── Phase 5 I3 (nostrc-8hw8) — quota + thrash + auto-eviction ──
+    add_executable(test_syncd_quota tests/unit/test_syncd_quota.c)
+    target_link_libraries(test_syncd_quota PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_quota COMMAND test_syncd_quota)
+    set_tests_properties(homed_syncd_quota PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
+
+    # ── Phase 5 h10m.1.1 — daemon-side status writers + recent ring ──
+    add_executable(test_porthome_status_daemon_writers
+      tests/unit/test_porthome_status_daemon_writers.c)
+    target_link_libraries(test_porthome_status_daemon_writers PRIVATE
+      nostr_syncd_core)
+    add_test(NAME homed_porthome_status_daemon_writers
+      COMMAND test_porthome_status_daemon_writers)
+    set_tests_properties(homed_porthome_status_daemon_writers PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
 
     add_executable(test_syncd_pin_ring tests/unit/test_syncd_pin_ring.c)
@@ -1678,7 +1700,7 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fuse
     ${FUSE3_INCLUDE_DIRS})
   target_link_libraries(nostr-home-fuse PRIVATE
-    nostr_syncd_core nostr_porthome ${FUSE3_LIBRARIES})
+    nostr_syncd_core nostr_porthome nostr_porthome_common ${FUSE3_LIBRARIES})
   # sd_notify is optional — link when the systemd library is present.
   find_package(PkgConfig QUIET)
   if(PkgConfig_FOUND)
@@ -1764,7 +1786,7 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
       ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fuse)
     # nh_fuse_source.h transitively pulls in libhanami's public headers;
     # linking nostr_porthome exports the include path we need.
-    target_link_libraries(test_fuse_status PRIVATE nostr_porthome)
+    target_link_libraries(test_fuse_status PRIVATE nostr_porthome nostr_porthome_common)
     add_test(NAME homed_fuse_status COMMAND test_fuse_status)
     set_tests_properties(homed_fuse_status PROPERTIES
       LABELS "nostr-homed;porthome;portable-fuse;portable" TIMEOUT 30)

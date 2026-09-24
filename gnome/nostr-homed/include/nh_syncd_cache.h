@@ -68,6 +68,11 @@ typedef enum {
     NH_SYNCD_CACHE_ERR_QUOTA       = -306, /* single blob larger than quota */
     NH_SYNCD_CACHE_ERR_UPLOAD      = -307,
     NH_SYNCD_CACHE_ERR_HEAD        = -308,
+    /* Quota enforcement (Phase 5 I3): a put would push the cache
+     * over quota AND every remaining byte on disk is currently
+     * pinned by the generation ring. The caller should surface a
+     * LIMITED_MODE notification and treat the fetch as dropped. */
+    NH_SYNCD_CACHE_ERR_QUOTA_PINNED = -309,
 } nh_syncd_cache_status;
 
 /* Retention: pin any blob referenced by the last N generations (§6.5). */
@@ -168,6 +173,73 @@ int  nh_syncd_cache_sweep(nh_syncd_cache *c,
 int  nh_syncd_cache_forbid_remote_delete(const char *reason);
 
 /* ─────────────────────────────────────────────────────────────────
+ * Phase 5 I3 — quota policy, override discovery, thrash notifier.
+ * ───────────────────────────────────────────────────────────────── */
+
+/* Env override honoured by nh_syncd_cache_effective_quota(). */
+#define NH_SYNCD_CACHE_QUOTA_ENV "NOSTR_HOMED_PORTHOME_CACHE_QUOTA_BYTES"
+
+/* On-disk override, checked when the env var is unset. Contents: a
+ * single decimal integer (bytes) with optional trailing newline. */
+#define NH_SYNCD_CACHE_QUOTA_CONFIG_REL "nostr-homed/cache-quota"
+
+/* Guards on the operator override (§6.5 quota knobs). */
+#define NH_SYNCD_CACHE_QUOTA_OVERRIDE_MIN (1ull   * 1024ull * 1024ull * 1024ull)  /*   1 GiB */
+#define NH_SYNCD_CACHE_QUOTA_OVERRIDE_MAX (200ull * 1024ull * 1024ull * 1024ull)  /* 200 GiB */
+
+/* Thrash-detection defaults (§6.5: a user-visible notification when
+ * eviction is thrashing > N/hr). */
+#define NH_SYNCD_CACHE_THRASH_WINDOW_SECS   3600u
+#define NH_SYNCD_CACHE_THRASH_DEFAULT_LIMIT 100u
+#define NH_SYNCD_CACHE_THRASH_ENV           "NOSTR_HOMED_PORTHOME_QUOTA_THRASH_THRESHOLD"
+
+/* Compute the effective quota including overrides. Layering:
+ *   1. $NOSTR_HOMED_PORTHOME_CACHE_QUOTA_BYTES if valid.
+ *   2. Else contents of $XDG_CONFIG_HOME/nostr-homed/cache-quota.
+ *   3. Else nh_syncd_cache_default_quota(cache_dir).
+ * Override values are clamped to [MIN_OVERRIDE, MAX_OVERRIDE]; values
+ * outside that band are ignored (fall through to the next layer).
+ * If out_source is non-NULL, it is set to one of:
+ *   "env", "config", "default"
+ * — a stable slug the CLI + status writer surface to operators. */
+uint64_t nh_syncd_cache_effective_quota(const char *cache_dir,
+                                        const char **out_source);
+
+/* Recompute the effective quota and update the cache in-place.
+ * Callable at any time (syncd wires this to SIGHUP). Returns the
+ * new quota value. */
+uint64_t nh_syncd_cache_reload_quota(nh_syncd_cache *c);
+
+/* Evict-thrash notification callback. Fires the FIRST time the
+ * eviction count within a rolling NH_SYNCD_CACHE_THRASH_WINDOW_SECS
+ * window exceeds `threshold`, and again only after the window rolls
+ * over and the threshold is re-breached. `evict_count` is the count
+ * that tripped the limiter; `first_evict_epoch` is the head of the
+ * rolling window in Unix seconds. */
+typedef void (*nh_syncd_cache_evict_notify_fn)(void *ud,
+                                               unsigned evict_count,
+                                               unsigned threshold,
+                                               int64_t  first_evict_epoch);
+
+/* Register the evict-thrash callback. NULL fn clears the callback.
+ * The threshold defaults to NH_SYNCD_CACHE_THRASH_DEFAULT_LIMIT and
+ * can be overridden via $NOSTR_HOMED_PORTHOME_QUOTA_THRASH_THRESHOLD
+ * at cache open time. */
+void nh_syncd_cache_set_evict_notify(nh_syncd_cache *c,
+                                     nh_syncd_cache_evict_notify_fn fn,
+                                     void *ud);
+
+/* Toggle put-time auto-eviction (Phase 5 I3). OFF at cache_open;
+ * fuse + syncd flip it ON immediately after open so every
+ * pull-write path enforces the quota. Tests that pre-date the
+ * behaviour keep the OFF default and drive sweep manually. */
+void nh_syncd_cache_set_auto_evict(nh_syncd_cache *c, bool on);
+
+/* Introspection for status writers + tests. */
+unsigned nh_syncd_cache_evict_count_1h(const nh_syncd_cache *c);
+unsigned nh_syncd_cache_thrash_threshold(const nh_syncd_cache *c);
+
+/* ─────────────────────────────────────────────────────────────────
  * Generation pin ring (persisted, ring of size N=10).
  * ───────────────────────────────────────────────────────────────── */
 
@@ -220,10 +292,10 @@ int  nh_syncd_pin_ring_apply(const nh_syncd_pin_ring *r,
  * an optional notification once per sweep when dropped > 0.
  * ───────────────────────────────────────────────────────────────── */
 
-typedef void (*nh_syncd_notify_fn)(void *ud,
-                                   size_t dropped,
-                                   size_t reuploaded,
-                                   const char *summary);
+typedef void (*nh_syncd_sweep_notify_fn)(void *ud,
+                                         size_t dropped,
+                                         size_t reuploaded,
+                                         const char *summary);
 
 /* Per-server HEAD test seam. `server` is the base URL string; return
  *   1 => exists, 0 => 404 / missing, <0 => network/other error. */
@@ -252,7 +324,7 @@ typedef struct {
     long   timeout_seconds;
 
     /* Notification hook (optional). */
-    nh_syncd_notify_fn    notify_fn;
+    nh_syncd_sweep_notify_fn    notify_fn;
     void                 *notify_ud;
 
     /* Test seams. */

@@ -46,6 +46,8 @@
 #include "nh_porthome_blossom.h"
 #include "nh_porthome_crypto.h"
 #include "nh_syncd_cache.h"
+#include "nh_porthome_notify.h"
+#include "nh_porthome_status.h"
 
 #include <fuse3/fuse.h>
 #include <fuse3/fuse_lowlevel.h>
@@ -123,12 +125,40 @@ static void fh_free(nh_fuse_fh *fh) {
 static uint64_t g_last_notify_epoch = 0;
 static const uint64_t NOTIFY_INTERVAL_SECS = 10 * 60;
 
+/* Phase 5 I3 / h10m.1.1 — last-error snapshot mirrored into
+ * porthome-status.json under the "fuse" key. */
+static char    g_last_err_class[64] = "";
+static int64_t g_last_err_ts        = 0;
+
+static void set_last_err(const char *class_slug) {
+    snprintf(g_last_err_class, sizeof g_last_err_class,
+             "%s", class_slug ? class_slug : "");
+    g_last_err_ts = (int64_t)time(NULL);
+}
+
+static void write_unified_status(void) {
+    nh_fuse_source_stats_t st = {0};
+    if (g_source) nh_fuse_source_stats(g_source, &st);
+    uint64_t gen = g_table ? nh_fuse_table_generation(g_table) : 0ull;
+    uint64_t cbytes = g_cache ? nh_syncd_cache_used_bytes(g_cache) : 0ull;
+    (void)nh_fuse_write_status_unified(NULL,
+                                       g_session != NULL,
+                                       g_mountpoint,
+                                       gen,
+                                       cbytes,
+                                       &st,
+                                       g_last_err_class,
+                                       g_last_err_ts);
+}
+
 static void write_status_json(void) {
     if (!g_status_path) return;
     nh_fuse_source_stats_t st = {0};
     if (g_source) nh_fuse_source_stats(g_source, &st);
     uint64_t gen = g_table ? nh_fuse_table_generation(g_table) : 0ull;
     (void)nh_fuse_write_status(g_status_path, g_session != NULL, gen, &st);
+    /* Mirror into the unified porthome-status.json under "fuse". */
+    write_unified_status();
 }
 
 static void maybe_notify_miss(void) {
@@ -156,7 +186,21 @@ static void maybe_notify_miss(void) {
 }
 
 static void on_source_miss(void *ud, const char *rel, int errcode) {
-    (void)ud; (void)rel; (void)errcode;
+    (void)ud; (void)rel;
+    /* Bucket the errno into a small stable slug so operators
+     * can grep status output. */
+    const char *cls = "unknown";
+    switch (-errcode) {
+        case 0:               cls = "none"; break;
+        case 5:  /* EIO */    cls = "tier3-eio"; break;
+        case 12: /* ENOMEM */ cls = "oom"; break;
+        case 61: /* ENODATA on macOS - just fallback */
+        case 74: /* EBADMSG on Linux */ cls = "decrypt-failed"; break;
+        case 110: /* ETIMEDOUT */ cls = "timeout"; break;
+        case 101: /* ENETUNREACH */ cls = "offline"; break;
+        default: cls = "tier3-error"; break;
+    }
+    set_last_err(cls);
     maybe_notify_miss();
     write_status_json();
 }
@@ -384,6 +428,9 @@ static void *nhf_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 
 static void nhf_destroy(void *ud) {
     (void)ud;
+    /* mount teardown — clear the last-error slot so a subsequent
+     * clean unmount doesn't leave a stale class in the status. */
+    set_last_err("");
     if (g_source) { nh_fuse_source_close(g_source); g_source = NULL; }
     if (g_table)  { nh_fuse_table_free(g_table); g_table = NULL; }
     /* Session is being torn down by fuse_main's unmount + destroy path;
@@ -548,6 +595,7 @@ int main(int argc, char **argv) {
     char *cdir = nh_syncd_cache_default_dir();
     if (cdir) {
         (void)nh_syncd_cache_open(cdir, 0, &g_cache);
+        if (g_cache) nh_syncd_cache_set_auto_evict(g_cache, true);
         free(cdir);
     }
 
@@ -615,6 +663,9 @@ int main(int argc, char **argv) {
                 nh_fuse_table_entry_count(g_table),
                 g_mountpoint);
         write_status_json();
+        /* Even in harness mode, land a `fuse` key so operators
+         * can eyeball porthome-status.json without a real mount. */
+        write_unified_status();
         nh_fuse_source_close(g_source); g_source = NULL;
         nh_fuse_table_free(g_table); g_table = NULL;
         if (g_blossom) nh_porthome_blossom_free(g_blossom);

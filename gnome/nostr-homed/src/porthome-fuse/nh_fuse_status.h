@@ -45,6 +45,22 @@ int nh_fuse_write_status(const char *path,
                          uint64_t generation,
                          const nh_fuse_source_stats_t *stats);
 
+/* Phase 5 I3 / h10m.1.1 — mirror the same fields into the unified
+ * porthome-status.json under the "fuse" key. Additional inputs
+ * capture the mountpoint (surfaced so the CLI can print it) and
+ * the last error's class + Unix-second timestamp (design §D9).
+ * `unified_path` may be NULL to use the default resolver in
+ * nh_porthome_status.h. Returns 0 on success, -errno otherwise.
+ * Never touches non-fuse keys — the merge helper handles that. */
+int nh_fuse_write_status_unified(const char *unified_path,
+                                 bool mounted,
+                                 const char *mountpoint,
+                                 uint64_t generation,
+                                 uint64_t cache_bytes,
+                                 const nh_fuse_source_stats_t *stats,
+                                 const char *last_error_class,
+                                 int64_t last_error_ts);
+
 #ifdef __cplusplus
 }
 #endif

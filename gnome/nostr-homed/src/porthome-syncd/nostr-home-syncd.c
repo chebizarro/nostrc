@@ -36,17 +36,18 @@
  */
 
 #include "nh_syncd.h"
-/* nh_syncd_cache.h collides with nh_syncd.h on nh_syncd_notify_fn.
- * Forward-declare only what we need from the cache side. */
-struct nh_syncd_pin_ring;
-#define NH_SYNCD_PR_OK 0
-#define NH_SYNCD_PR_ERR_JSON -303
-extern char *nh_syncd_cache_default_pin_path(void);
-extern int   nh_syncd_pin_ring_open(const char *json_path,
-                                    struct nh_syncd_pin_ring **out);
-extern void  nh_syncd_pin_ring_close(struct nh_syncd_pin_ring *r);
-extern int   nh_syncd_pin_ring_promote_from_snapshot(struct nh_syncd_pin_ring *r,
-                                                     const char *state_dir);
+/* nh_syncd_cache.h and nh_syncd.h historically collided on
+ * nh_syncd_notify_fn (see nh_syncd_pull.c note). We now
+ * include the full cache header above — the collision is
+ * benign because the daemon binary doesn't pull nh_syncd_pull.c's
+ * local forward-decl. Pin-ring codes are the ones from the cache
+ * header (NH_SYNCD_CACHE_OK / NH_SYNCD_CACHE_ERR_JSON). */
+#define NH_SYNCD_PR_OK      NH_SYNCD_CACHE_OK
+#define NH_SYNCD_PR_ERR_JSON NH_SYNCD_CACHE_ERR_JSON
+#include "nh_syncd_cache.h"
+#include "nh_syncd_status.h"
+#include "nh_porthome_notify.h"
+#include "nh_porthome_status.h"
 #include "nh_syncd_watcher.h"
 
 #include <errno.h>
@@ -68,6 +69,54 @@ extern int   nh_syncd_pin_ring_promote_from_snapshot(struct nh_syncd_pin_ring *r
 
 static volatile sig_atomic_t g_reload = 0;
 static volatile sig_atomic_t g_stop   = 0;
+
+/* Phase 5 I3 shared state (single-threaded main loop; the evict
+ * notify callback fires from cache put paths that are also on
+ * this thread today). */
+static nh_syncd_cache          *g_cache      = NULL;
+static nh_porthome_notifier    *g_notifier   = NULL;
+static nh_syncd_status_writer  *g_status     = NULL;
+
+static void refresh_cache_stats_locked(void) {
+    if (!g_cache || !g_status) return;
+    nh_syncd_status_set_cache_bytes(g_status,
+        nh_syncd_cache_used_bytes(g_cache));
+    nh_syncd_status_set_evict_rate(g_status,
+        nh_syncd_cache_evict_count_1h(g_cache));
+}
+
+static void syncd_status_flush(void) {
+    if (!g_status) return;
+    refresh_cache_stats_locked();
+    (void)nh_syncd_status_emit(g_status, NULL);
+}
+
+static void on_evict_thrash(void *ud,
+                            unsigned evict_count,
+                            unsigned threshold,
+                            int64_t  first_evict_epoch) {
+    (void)ud; (void)first_evict_epoch;
+    if (!g_notifier) return;
+    char summary[128];
+    char body[192];
+    snprintf(summary, sizeof summary,
+             "portable home cache thrashing");
+    snprintf(body, sizeof body,
+             "%u cache evictions in the last hour (threshold %u)."
+             " Consider raising the quota with `nostr-home-status quota --set-override`.",
+             evict_count, threshold);
+    (void)nh_porthome_notify(g_notifier,
+                             "nostr-home-sync",
+                             "folder-remote",
+                             summary,
+                             body,
+                             NH_NOTIFY_CAT_LIMITED_MODE,
+                             "cache-thrashing");
+    nh_syncd_status_set_last_error(g_status, "cache-thrashing");
+    nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_LIMITED);
+    syncd_status_flush();
+}
+
 
 static uint64_t now_ns_monotonic(void *ud) {
     (void)ud;
@@ -353,6 +402,41 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* Phase 5 I3: open the local blob cache with the effective
+     * quota + wire the evict-thrash notification into the shared
+     * notifier. Cache open failure is warn-only — a syncd without
+     * a local cache still pushes; quota reporting just drops out. */
+    char *cdir = nh_syncd_cache_default_dir();
+    if (cdir) {
+        int cr = nh_syncd_cache_open(cdir, 0, &g_cache);
+        if (cr != NH_SYNCD_CACHE_OK) {
+            fprintf(stderr, "syncd: cache open failed rc=%d (dir=%s)\n", cr, cdir);
+            g_cache = NULL;
+        }
+        free(cdir);
+    }
+    g_notifier = nh_porthome_notifier_new();
+    g_status   = nh_syncd_status_writer_new();
+    if (g_cache) {
+        nh_syncd_cache_set_evict_notify(g_cache, on_evict_thrash, NULL);
+        nh_syncd_cache_set_auto_evict(g_cache, true);
+        const char *qsrc = "default";
+        uint64_t qval = nh_syncd_cache_effective_quota(nh_syncd_cache_dir(g_cache), &qsrc);
+        nh_syncd_status_set_cache_quota(g_status, qval, qsrc);
+        nh_syncd_status_set_cache_bytes(g_status,
+            nh_syncd_cache_used_bytes(g_cache));
+    }
+    if (pin_ring) {
+        nh_syncd_status_set_pinned_count(g_status,
+            (uint32_t)nh_syncd_pin_ring_size(pin_ring));
+    }
+    nh_porthome_notifier_set_record(g_notifier,
+                                    nh_syncd_status_notify_record,
+                                    g_status);
+    nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_IDLE);
+    (void)nh_porthome_status_ensure_dir();
+    syncd_status_flush();
+
     install_signals(-1);
 
     if (dry_run) {
@@ -376,7 +460,17 @@ int main(int argc, char **argv) {
     /* Poll loop. */
     struct pollfd pfd = { nh_syncd_watcher_fd(wa), POLLIN, 0 };
     while (!g_stop) {
-        if (g_reload) { g_reload = 0; nh_syncd_ignore_reload(ig, cfg.home); }
+        if (g_reload) {
+            g_reload = 0;
+            nh_syncd_ignore_reload(ig, cfg.home);
+            if (g_cache) {
+                const char *qsrc = "default";
+                uint64_t nv = nh_syncd_cache_reload_quota(g_cache);
+                (void)nh_syncd_cache_effective_quota(nh_syncd_cache_dir(g_cache), &qsrc);
+                nh_syncd_status_set_cache_quota(g_status, nv, qsrc);
+                syncd_status_flush();
+            }
+        }
         uint64_t next_ms = nh_syncd_batcher_next_tick_ms(ba);
         int t = next_ms == UINT64_MAX ? -1 :
                 (next_ms > 3600000ull ? 3600000 : (int)next_ms);
@@ -420,6 +514,8 @@ int main(int argc, char **argv) {
                 int pushed = nh_syncd_push_batch(&pc, state, batch,
                                                  cfg.home, ig, &ilk,
                                                  cfg.state_dir, &emsg);
+                nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_PUSHING);
+                syncd_status_flush();
                 if (pushed == NH_SYNCD_OK) {
                     fprintf(stderr, "syncd: batch %llu OK gen=%llu\n",
                             (unsigned long long)nh_syncd_batch_id(batch),
@@ -431,12 +527,21 @@ int main(int argc, char **argv) {
                         int prc = nh_syncd_pin_ring_promote_from_snapshot(pin_ring, cfg.state_dir);
                         if (prc != NH_SYNCD_PR_OK)
                             fprintf(stderr, "syncd: pin_ring promote (push) rc=%d\n", prc);
+                        nh_syncd_status_set_pinned_count(g_status,
+                            (uint32_t)nh_syncd_pin_ring_size(pin_ring));
                     }
+                    nh_syncd_status_set_last_push_gen(g_status,
+                        nh_syncd_state_get_local_generation(state));
+                    nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_IDLE);
+                    nh_syncd_status_set_last_error(g_status, "");
                 } else {
                     fprintf(stderr, "syncd: batch %llu FAILED rc=%d %s\n",
                             (unsigned long long)nh_syncd_batch_id(batch),
                             pushed, emsg ? emsg : "");
+                    nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_ERROR);
+                    nh_syncd_status_set_last_error(g_status, "push-failed");
                 }
+                syncd_status_flush();
                 free(emsg);
                 memset(seed, 0, sizeof seed);
                 memset(pc.home_key, 0, sizeof pc.home_key);
@@ -456,6 +561,9 @@ cleanup:
     nh_syncd_ignore_free(ig);
     if (pin_ring) nh_syncd_pin_ring_close(pin_ring);
     free(pin_path);
+    if (g_status)   { nh_syncd_status_writer_free(g_status);   g_status = NULL; }
+    if (g_notifier) { nh_porthome_notifier_free(g_notifier);   g_notifier = NULL; }
+    if (g_cache)    { nh_syncd_cache_close(g_cache);           g_cache = NULL; }
     nh_syncd_lock_release(lk);
     free_cfg(&cfg);
     return 0;

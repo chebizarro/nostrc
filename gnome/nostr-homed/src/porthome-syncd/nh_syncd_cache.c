@@ -170,6 +170,78 @@ uint64_t nh_syncd_cache_default_quota(const char *cache_dir) {
     return fs_cap < abs_cap ? fs_cap : abs_cap;
 }
 
+/* ─────────────── Phase 5 I3 quota override helpers ─────────────── */
+
+static char *quota_config_path_(void) {
+    const char *xdg = getenv("XDG_CONFIG_HOME");
+    char buf[512];
+    if (xdg && *xdg) {
+        snprintf(buf, sizeof buf, "%s/%s", xdg, NH_SYNCD_CACHE_QUOTA_CONFIG_REL);
+    } else {
+        const char *home = getenv("HOME");
+        if (!home || !*home) return NULL;
+        snprintf(buf, sizeof buf, "%s/.config/%s", home,
+                 NH_SYNCD_CACHE_QUOTA_CONFIG_REL);
+    }
+    return xstrdup(buf);
+}
+
+/* Parse a bytes value from a NUL-terminated string. Trims trailing
+ * whitespace/newline. Returns 0 on parse error or values outside the
+ * override guard band. */
+static uint64_t parse_override_bytes_(const char *raw) {
+    if (!raw || !*raw) return 0;
+    while (*raw == ' ' || *raw == '\t') ++raw;
+    if (!*raw) return 0;
+    char *endp = NULL;
+    unsigned long long v = strtoull(raw, &endp, 10);
+    if (!endp || endp == raw) return 0;
+    while (*endp) {
+        if (*endp != ' ' && *endp != '\t' && *endp != '\n' &&
+            *endp != '\r') return 0;
+        ++endp;
+    }
+    if (v < NH_SYNCD_CACHE_QUOTA_OVERRIDE_MIN) return 0;
+    if (v > NH_SYNCD_CACHE_QUOTA_OVERRIDE_MAX) return 0;
+    return (uint64_t)v;
+}
+
+static uint64_t load_override_from_file_(void) {
+    char *p = quota_config_path_();
+    if (!p) return 0;
+    FILE *f = fopen(p, "re");
+    free(p);
+    if (!f) return 0;
+    char buf[64] = {0};
+    size_t n = fread(buf, 1, sizeof buf - 1, f);
+    (void)n;
+    fclose(f);
+    return parse_override_bytes_(buf);
+}
+
+uint64_t nh_syncd_cache_effective_quota(const char *cache_dir,
+                                        const char **out_source) {
+    if (out_source) *out_source = "default";
+    const char *env = getenv(NH_SYNCD_CACHE_QUOTA_ENV);
+    if (env && *env) {
+        uint64_t v = parse_override_bytes_(env);
+        if (v) {
+            if (out_source) *out_source = "env";
+            return v;
+        }
+        log_err("effective_quota: env %s=%s rejected (must be [%llu, %llu])",
+                NH_SYNCD_CACHE_QUOTA_ENV, env,
+                (unsigned long long)NH_SYNCD_CACHE_QUOTA_OVERRIDE_MIN,
+                (unsigned long long)NH_SYNCD_CACHE_QUOTA_OVERRIDE_MAX);
+    }
+    uint64_t cfg = load_override_from_file_();
+    if (cfg) {
+        if (out_source) *out_source = "config";
+        return cfg;
+    }
+    return nh_syncd_cache_default_quota(cache_dir);
+}
+
 /* ─── pin registry (in-memory refcount table) ─────────────────────── */
 
 typedef struct pin_node {
@@ -190,8 +262,20 @@ static size_t pin_bucket(const char *hex) {
 struct nh_syncd_cache {
     char     *dir;
     uint64_t  quota_bytes;
+    /* Phase 5 I3: quota source slug ("env"|"config"|"default") kept
+     * for the status writer. Points into rodata; not owned. */
+    const char *quota_source;
+    /* Thrash detector (§6.5): rolling 1-hour window. */
+    unsigned  thrash_threshold;
+    unsigned  evict_count;          /* within the current window     */
+    int64_t   window_start_epoch;   /* head of the current window    */
+    int       window_notified;      /* already fired for this window */
+    int       auto_evict_on_put;    /* Phase 5 I3 opt-in            */
+    /* Evict-notify seam. */
+    nh_syncd_cache_evict_notify_fn evict_notify_fn;
+    void                          *evict_notify_ud;
     pin_node *pins[PIN_BUCKETS];
-    pthread_mutex_t mu; /* guards pins + rng seed */
+    pthread_mutex_t mu; /* guards pins + rng seed + thrash state */
     uint32_t  rng_state;
 };
 
@@ -266,14 +350,40 @@ int nh_syncd_cache_open(const char *dir, uint64_t quota_bytes,
     if (!c) return NH_SYNCD_CACHE_ERR_OOM;
     c->dir = xstrdup(dir);
     if (!c->dir) { free(c); return NH_SYNCD_CACHE_ERR_OOM; }
-    c->quota_bytes = quota_bytes ? quota_bytes
-                                 : nh_syncd_cache_default_quota(dir);
+    if (quota_bytes) {
+        c->quota_bytes  = quota_bytes;
+        c->quota_source = "explicit";
+    } else {
+        c->quota_bytes  = nh_syncd_cache_effective_quota(dir, &c->quota_source);
+    }
+    /* Thrash threshold (§6.5). Env override widens or narrows the
+     * default. Values outside [1, 100000] are ignored — a runaway env
+     * shouldn't silently disable the guard. */
+    c->thrash_threshold = NH_SYNCD_CACHE_THRASH_DEFAULT_LIMIT;
+    const char *th_env = getenv(NH_SYNCD_CACHE_THRASH_ENV);
+    if (th_env && *th_env) {
+        char *endp = NULL;
+        unsigned long v = strtoul(th_env, &endp, 10);
+        if (endp && *endp == '\0' && v >= 1ul && v <= 100000ul)
+            c->thrash_threshold = (unsigned)v;
+    }
+    c->evict_count        = 0;
+    c->window_start_epoch = 0;
+    c->window_notified    = 0;
+    c->evict_notify_fn    = NULL;
+    c->evict_notify_ud    = NULL;
     pthread_mutex_init(&c->mu, NULL);
     struct timeval tv; gettimeofday(&tv, NULL);
     c->rng_state = (uint32_t)(tv.tv_usec ^ (getpid() << 16));
 
     /* Best-effort tmp cleanup at open time. */
     (void)nh_syncd_cache_cleanup_stale_tmps(c);
+
+    fprintf(stderr,
+            "nh_syncd_cache: dir=%s quota_bytes=%llu (source=%s) thrash_threshold=%u/hr\n",
+            c->dir, (unsigned long long)c->quota_bytes,
+            c->quota_source ? c->quota_source : "default",
+            c->thrash_threshold);
 
     *out = c;
     return NH_SYNCD_CACHE_OK;
@@ -292,6 +402,89 @@ void nh_syncd_cache_close(nh_syncd_cache *c) {
 
 const char *nh_syncd_cache_dir(const nh_syncd_cache *c) { return c ? c->dir : NULL; }
 uint64_t nh_syncd_cache_quota_bytes(const nh_syncd_cache *c) { return c ? c->quota_bytes : 0; }
+
+uint64_t nh_syncd_cache_reload_quota(nh_syncd_cache *c) {
+    if (!c) return 0;
+    const char *src = "default";
+    uint64_t v = nh_syncd_cache_effective_quota(c->dir, &src);
+    pthread_mutex_lock(&c->mu);
+    c->quota_bytes  = v;
+    c->quota_source = src;
+    pthread_mutex_unlock(&c->mu);
+    fprintf(stderr,
+            "nh_syncd_cache: reload dir=%s quota_bytes=%llu (source=%s)\n",
+            c->dir, (unsigned long long)v, src);
+    return v;
+}
+
+void nh_syncd_cache_set_evict_notify(nh_syncd_cache *c,
+                                     nh_syncd_cache_evict_notify_fn fn,
+                                     void *ud) {
+    if (!c) return;
+    pthread_mutex_lock(&c->mu);
+    c->evict_notify_fn = fn;
+    c->evict_notify_ud = ud;
+    pthread_mutex_unlock(&c->mu);
+}
+
+void nh_syncd_cache_set_auto_evict(nh_syncd_cache *c, bool on) {
+    if (!c) return;
+    pthread_mutex_lock(&c->mu);
+    c->auto_evict_on_put = on ? 1 : 0;
+    pthread_mutex_unlock(&c->mu);
+}
+
+unsigned nh_syncd_cache_evict_count_1h(const nh_syncd_cache *c) {
+    if (!c) return 0;
+    nh_syncd_cache *mc = (nh_syncd_cache *)c;
+    pthread_mutex_lock(&mc->mu);
+    /* Roll the window forward on read so callers see a fresh number. */
+    int64_t now = (int64_t)time(NULL);
+    if (mc->window_start_epoch &&
+        now - mc->window_start_epoch >= (int64_t)NH_SYNCD_CACHE_THRASH_WINDOW_SECS) {
+        mc->evict_count        = 0;
+        mc->window_start_epoch = 0;
+        mc->window_notified    = 0;
+    }
+    unsigned v = mc->evict_count;
+    pthread_mutex_unlock(&mc->mu);
+    return v;
+}
+
+unsigned nh_syncd_cache_thrash_threshold(const nh_syncd_cache *c) {
+    return c ? c->thrash_threshold : 0u;
+}
+
+/* Update the rolling thrash window with `n_new` evictions. Fires the
+ * notify hook AT MOST ONCE PER WINDOW when count > threshold. */
+static void thrash_note_locked(nh_syncd_cache *c, unsigned n_new) {
+    if (n_new == 0) return;
+    int64_t now = (int64_t)time(NULL);
+    if (!c->window_start_epoch ||
+        now - c->window_start_epoch >= (int64_t)NH_SYNCD_CACHE_THRASH_WINDOW_SECS) {
+        c->window_start_epoch = now;
+        c->evict_count        = 0;
+        c->window_notified    = 0;
+    }
+    c->evict_count += n_new;
+    if (!c->window_notified &&
+        c->evict_count > c->thrash_threshold &&
+        c->evict_notify_fn) {
+        nh_syncd_cache_evict_notify_fn fn = c->evict_notify_fn;
+        void *ud                          = c->evict_notify_ud;
+        unsigned cnt                       = c->evict_count;
+        unsigned thr                       = c->thrash_threshold;
+        int64_t  start                     = c->window_start_epoch;
+        c->window_notified = 1;
+        /* Release the lock before firing — the notifier may re-enter
+         * status writers or the notification seam that fork()s. */
+        pthread_mutex_unlock(&c->mu);
+        fn(ud, cnt, thr, start);
+        pthread_mutex_lock(&c->mu);
+    }
+}
+
+
 
 /* ─── put / get / has ─────────────────────────────────────────────── */
 
@@ -402,11 +595,34 @@ int nh_syncd_cache_put(nh_syncd_cache *c, const char *hex,
         /* If a concurrent writer beat us, target now exists — success. */
         if (stat(target, &st) == 0 && S_ISREG(st.st_mode)) {
             unlink(tmp);
-            return NH_SYNCD_CACHE_OK;
+            goto put_enforce;
         }
         log_err("put: rename %s -> %s: %s", tmp, target, strerror(errno));
         unlink(tmp);
         return NH_SYNCD_CACHE_ERR_IO;
+    }
+put_enforce:
+    /* Phase 5 I3: auto-eviction after put. Two failure modes we
+     * surface distinctly:
+     *   - sweep couldn't bring us back under quota (all remaining
+     *     bytes are pinned) → NH_SYNCD_CACHE_ERR_QUOTA_PINNED
+     *   - sweep evicted the blob we just wrote (the only unpinned
+     *     candidate, and it happened to be the LRU pick because
+     *     the pinned generation set already saturates the cache)
+     *     → also NH_SYNCD_CACHE_ERR_QUOTA_PINNED. The caller must
+     *     surface LIMITED_MODE and treat this fetch as dropped. */
+    if (c->auto_evict_on_put &&
+        nh_syncd_cache_used_bytes(c) > c->quota_bytes) {
+        size_t   ev = 0;
+        uint64_t rc = 0;
+        (void)nh_syncd_cache_sweep(c, &ev, &rc);
+        if (nh_syncd_cache_used_bytes(c) > c->quota_bytes ||
+            !nh_syncd_cache_has(c, hex)) {
+            log_err("put: quota %llu exceeded and blob %s could not "
+                    "be retained (pins block reclaim)",
+                    (unsigned long long)c->quota_bytes, hex);
+            return NH_SYNCD_CACHE_ERR_QUOTA_PINNED;
+        }
     }
     return NH_SYNCD_CACHE_OK;
 }
@@ -552,6 +768,13 @@ int nh_syncd_cache_sweep(nh_syncd_cache *c,
     if (out_evicted) *out_evicted = evicted;
     if (out_reclaimed) *out_reclaimed = reclaimed;
     free(lc.arr);
+    /* Phase 5 I3: thrash accounting. Runs under the cache mutex so
+     * the window rollover and notify decision are consistent. */
+    if (evicted) {
+        pthread_mutex_lock(&c->mu);
+        thrash_note_locked(c, (unsigned)evicted);
+        pthread_mutex_unlock(&c->mu);
+    }
     return NH_SYNCD_CACHE_OK;
 }
 
