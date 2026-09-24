@@ -1,0 +1,61 @@
+[Unit]
+Description=Portable-home sync daemon (nostr-home-syncd)
+Documentation=https://github.com/chebizarro/nostrc
+# We want this after the graphical session bootstrap so DBus/notify-send
+# work; the daemon itself does not require the display, but the sweep
+# fires desktop notifications when a Blossom server drops blobs.
+After=default.target
+# The daemon runs its own long-lived REQ subscription to the pointer
+# relay set (kind 30078). Requires the network — but not network-online
+# for a user unit, which is a system-level target.
+
+[Service]
+Type=simple
+# EXPERIMENTAL. Gated behind NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL at
+# build time; the install rule (CMakeLists.txt) only emits this unit
+# when SYNCD_EXPERIMENTAL is ON. See docs/designs/home-from-relay.md
+# §6 for the design, §6.5 for the retention/GC policy this daemon
+# enforces, and §7.2 for the packaging split.
+ExecStart=@NH_SYNCD_BIN_PATH@
+Restart=on-failure
+RestartSec=5
+
+# ─── Hardening ─────────────────────────────────────────────────────
+# The daemon is user-scope: it MUST see $HOME (that's what it snapshots
+# and re-materialises). ProtectHome=* is therefore inappropriate; we
+# grant explicit read/write access via ReadWritePaths=%h instead. See
+# nostrfs@.service for the alternative shape (that unit uses
+# ProtectHome=read-only because it mounts its own overlay).
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=%h
+# The daemon touches only user-owned paths:
+#   $XDG_STATE_HOME/nostr-homed/     (snapshot.json, generation, remote.json, pinned.json, sync.lock)
+#   $XDG_CACHE_HOME/nostr-homed/blobs/  (LRU cache, §6.5)
+#   ~/.config/nostr-homed/ignore     (read-only)
+#   the tree under $HOME              (read via inotify, sync path)
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+# AF_UNIX for D-Bus (desktop notifications), AF_INET/AF_INET6 for the
+# libnostr WebSocket relay and libcurl Blossom PUT/HEAD (same rationale
+# as nostr-authd's Restrict block — a pure AF_UNIX policy would silently
+# break the sync loop). No AF_NETLINK / AF_PACKET.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# No capabilities. User-scope units run with CAP_ empty by default;
+# do NOT add any.
+
+[Install]
+WantedBy=default.target

@@ -1339,7 +1339,13 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     src/porthome-syncd/nh_syncd_lock.c
     src/porthome-syncd/nh_syncd_interlocks.c
     src/porthome-syncd/nh_syncd_pusher.c
-    src/porthome-syncd/nh_syncd_subscription.c)
+    src/porthome-syncd/nh_syncd_subscription.c
+    # I3 (bead nostrc-p6qp): local blob cache + generation pin ring +
+    # weekly HEAD sweep (§6.5). Compiled unconditionally when SYNCD is
+    # ON so tests link against a single archive.
+    src/porthome-syncd/nh_syncd_cache.c
+    src/porthome-syncd/nh_syncd_pin_ring.c
+    src/porthome-syncd/nh_syncd_sweep.c)
   target_compile_options(nostr_syncd_core PRIVATE
     -Wall -Wextra -Werror -Wno-misleading-indentation -Wno-unused-parameter)
   target_compile_definitions(nostr_syncd_core PUBLIC
@@ -1396,6 +1402,81 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     add_test(NAME homed_syncd_push_e2e COMMAND test_syncd_push_e2e)
     set_tests_properties(homed_syncd_push_e2e PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 120)
+
+    # ── I3 (bead nostrc-p6qp) — cache + pin ring + sweep tests ──────
+    add_executable(test_syncd_cache tests/unit/test_syncd_cache.c)
+    target_link_libraries(test_syncd_cache PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_cache COMMAND test_syncd_cache)
+    set_tests_properties(homed_syncd_cache PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
+
+    add_executable(test_syncd_cache_lru tests/unit/test_syncd_cache_lru.c)
+    target_link_libraries(test_syncd_cache_lru PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_cache_lru COMMAND test_syncd_cache_lru)
+    set_tests_properties(homed_syncd_cache_lru PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
+
+    add_executable(test_syncd_pin_ring tests/unit/test_syncd_pin_ring.c)
+    target_link_libraries(test_syncd_pin_ring PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_pin_ring COMMAND test_syncd_pin_ring)
+    set_tests_properties(homed_syncd_pin_ring PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
+
+    add_executable(test_syncd_sweep tests/integration/test_syncd_sweep.c)
+    target_link_libraries(test_syncd_sweep PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_sweep COMMAND test_syncd_sweep)
+    set_tests_properties(homed_syncd_sweep PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 60)
+
+    # OFF-closure verification: when AUTH_RUNTIME is also on, prove
+    # nostr-authd has no nh_syncd_cache_ / nostr-home-syncd symbols.
+    # (When AUTH_RUNTIME is off the check is a no-op — nothing to
+    # inspect.)
+    if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND TARGET nostr-authd)
+      add_test(NAME homed_syncd_off_closure
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_syncd_off_closure.sh
+                $<TARGET_FILE:nostr-authd>)
+      set_tests_properties(homed_syncd_off_closure PROPERTIES
+        LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 15)
+    endif()
+  endif()
+
+  # ── I3 (bead nostrc-p6qp) — install rule for the daemon + user unit ──
+  # Suggested package name for downstream packaging (Phase 3 wrap-up):
+  #   Debian:  nostr-home-sync   (Provides: nostr-home-syncd)
+  #   Fedora:  nostr-home-sync
+  # Actual debian/ and rpm/ specs land under nostrc-rb0e; this block only
+  # stages the payload at the FHS-correct locations.
+  if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+    install(TARGETS nostr-home-syncd RUNTIME
+            DESTINATION "${CMAKE_INSTALL_BINDIR}")
+
+    pkg_get_variable(NH_SYNCD_USER_UNIT_DIR systemd systemduserunitdir)
+    if(NOT NH_SYNCD_USER_UNIT_DIR)
+      set(NH_SYNCD_USER_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/user")
+    endif()
+    set(NH_SYNCD_BIN_PATH "${CMAKE_INSTALL_FULL_BINDIR}/nostr-home-syncd")
+    configure_file(systemd/user/nostr-home-sync.service.in
+                   "${CMAKE_CURRENT_BINARY_DIR}/nostr-home-sync.service"
+                   @ONLY)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-home-sync.service"
+            DESTINATION "${NH_SYNCD_USER_UNIT_DIR}")
+    # The cache library is compiled into nostr_syncd_core (STATIC) —
+    # it's part of the daemon binary, not a separately installed .so.
+  endif()
+
+  # Packaging smoke test (DESTDIR staging). Runs `cmake --install` into
+  # a scratch DESTDIR and asserts the binary + unit landed at their
+  # expected relative paths. Fast, hermetic, no root required.
+  if(NOSTR_HOMED_BUILD_TESTS AND NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+    add_test(NAME homed_syncd_install_smoke
+      COMMAND ${CMAKE_COMMAND} -E env
+              CMAKE_BINARY_DIR=${CMAKE_BINARY_DIR}
+              CMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}
+              NH_SYNCD_USER_UNIT_DIR=${NH_SYNCD_USER_UNIT_DIR}
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_syncd_install_smoke.sh)
+    set_tests_properties(homed_syncd_install_smoke PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 60)
   endif()
 endif()
 
