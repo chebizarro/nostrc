@@ -145,6 +145,15 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bunker_connect_auth.c)
   add_test(NAME test_nip46_bunker_connect_auth COMMAND test_nip46_bunker_connect_auth)
 endif()
 
+# Bead nostrc-pvha: bunker's default handler for nip44_encrypt /
+# nip44_decrypt, the wire the broker's portable-home wrap-key hand-off
+# runs on.
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bunker_nip44.c)
+  add_executable(test_nip46_bunker_nip44 tests/test_bunker_nip44.c)
+  target_link_libraries(test_nip46_bunker_nip44 PRIVATE nostr_nip46_core)
+  add_test(NAME test_nip46_bunker_nip44 COMMAND test_nip46_bunker_nip44)
+endif()
+
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bunker_sign_event_cb.c)
   add_executable(test_nip46_bunker_sign_event_cb tests/test_bunker_sign_event_cb.c)
   target_link_libraries(test_nip46_bunker_sign_event_cb PRIVATE nostr_nip46_core)

@@ -15,7 +15,11 @@ extern "C" {
  * plugin ABI.  Do not serialize these structs or enum representations.
  */
 
-#define NH_IDENTITY_AUTHORITY_SCHEMA_VERSION 1u
+/* Schema v2 (2026-09-23): providers.wrapped_home_key BLOB column added
+ * for portable-home NIP-46 signer key handoff (design §4.3, bead
+ * nostrc-pvha). NULL for existing rows after migration; populated on
+ * first successful nip44_encrypt of a fresh wrap seed. */
+#define NH_IDENTITY_AUTHORITY_SCHEMA_VERSION 2u
 #define NH_IDENTITY_PROJECTION_SCHEMA_VERSION 1u
 #define NH_IDENTITY_PROJECTION_APPLICATION_ID 0x4e485031u /* "NHP1" */
 
@@ -32,6 +36,11 @@ extern "C" {
 #define NH_IDENTITY_PROVIDER_CONFIG_MAX 4096u
 #define NH_IDENTITY_PROVIDER_CONFIG_CAP (NH_IDENTITY_PROVIDER_CONFIG_MAX + 1u)
 #define NH_IDENTITY_PROVIDER_SECRET_MAX 4096u
+/* Wrapped-home-key ciphertext (NIP-44 v2 base64) stored on the provider
+ * record. NIP-44 v2 caps plaintext at 65535 B; a 32-byte plaintext seals
+ * to ~130 base64 chars, well under this cap. The upper bound is
+ * defensive against a provider that returns something too long. */
+#define NH_IDENTITY_WRAPPED_HOME_KEY_MAX 512u
 #define NH_IDENTITY_READER_BUF_MAX 512u
 
 #define NH_IDENTITY_DEFAULT_UID_MIN 200000u
@@ -208,6 +217,13 @@ typedef struct nh_identity_provider_record {
   char public_config_json[NH_IDENTITY_PROVIDER_CONFIG_CAP];
   uint8_t secret_blob[NH_IDENTITY_PROVIDER_SECRET_MAX];
   size_t secret_blob_len;
+  /* Portable-home NIP-46 wrapped_home_key ciphertext. Empty (len==0)
+   * when unset (default for accounts that never went through the
+   * porthome enrollment flow, and for local vault providers). Public
+   * metadata — not a secret; the plaintext is the 32-byte wrap seed and
+   * only the signer can decrypt it via nip44_decrypt (design §4.3). */
+  uint8_t wrapped_home_key[NH_IDENTITY_WRAPPED_HOME_KEY_MAX];
+  size_t wrapped_home_key_len;
 } nh_identity_provider_record;
 
 /* Store lifecycle. Open holds the sole-writer lock until close. */
@@ -331,6 +347,18 @@ nh_identity_rc nh_identity_provider_reseal(
 nh_identity_rc nh_identity_provider_discard(
     nh_identity_store *store, const char *operation_id,
     const char *provider_id);
+
+/*
+ * Persist the wrapped_home_key ciphertext for an enabled provider record
+ * (portable-home NIP-46 enrollment, design §4.3). Writes are atomic;
+ * `blob_len == 0` clears the field. Refuses length > NH_IDENTITY_
+ * WRAPPED_HOME_KEY_MAX. No operation record is written — this is a
+ * metadata refresh a client can perform on every successful login (the
+ * value is idempotent under the same signer key).
+ */
+nh_identity_rc nh_identity_provider_set_wrapped_home_key(
+    nh_identity_store *store, const char *provider_id,
+    const uint8_t *blob, size_t blob_len);
 
 /* Linux local-home operations. Require euid 0; never activate or publish an
  * account. skel_path is a root-controlled approved directory; NULL creates an

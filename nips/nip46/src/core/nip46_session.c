@@ -3077,6 +3077,89 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
             }
         }
         }
+    } else if (strcmp(req.method, "nip44_encrypt") == 0 ||
+               strcmp(req.method, "nip44_decrypt") == 0) {
+        /* nostrc-pvha: portable-home wrap-seed self-encrypt round-trip.
+         *
+         * The client asks the bunker to nip44_encrypt / nip44_decrypt
+         * against a peer pubkey using the bunker's own private key. For
+         * the porthome enrollment path the peer is the account's own
+         * pubkey (self-encrypt); the bunker doesn't know that, and
+         * doesn't need to — the shape is generic "encrypt/decrypt with
+         * my key toward `peer`". No callback is supplied by the
+         * standin, so we derive the shared key from `s->secret` +
+         * `peer` and use libnostr's nip44 v2 primitives directly.
+         *
+         * ACL: default-perms include nip44_encrypt / nip44_decrypt (see
+         * acl_set_perms below). A client that connected with a narrower
+         * perms= list does not gain these methods by accident. */
+        int is_enc = (strcmp(req.method, "nip44_encrypt") == 0);
+        if (!acl_has_perm(s, client_pubkey_hex, req.method)) {
+            reply_json = nostr_nip46_response_build_err(req.id, "forbidden");
+        } else if (req.n_params < 2 || !req.params ||
+                   !req.params[0] || !req.params[1]) {
+            reply_json = nostr_nip46_response_build_err(req.id, "invalid_params");
+        } else {
+            const char *peer = req.params[0];
+            const char *payload = req.params[1];
+            unsigned char sk[32] = {0};
+            unsigned char pk[32] = {0};
+            char *result = NULL;
+            int op_rc = -1;
+            if (parse_sk32(s->secret, sk) == 0 &&
+                parse_peer_xonly32(peer, pk) == 0) {
+                if (is_enc) {
+                    op_rc = nostr_nip44_encrypt_v2(
+                        sk, pk, (const uint8_t *)payload,
+                        strlen(payload), &result);
+                } else {
+                    uint8_t *plain = NULL;
+                    size_t plain_len = 0;
+                    op_rc = nostr_nip44_decrypt_v2(sk, pk, payload,
+                                                   &plain, &plain_len);
+                    if (op_rc == 0 && plain) {
+                        result = (char *)malloc(plain_len + 1);
+                        if (result) {
+                            memcpy(result, plain, plain_len);
+                            result[plain_len] = '\0';
+                        } else {
+                            op_rc = -1;
+                        }
+                        secure_wipe(plain, plain_len);
+                        free(plain);
+                    } else if (plain) {
+                        secure_wipe(plain, plain_len);
+                        free(plain);
+                    }
+                }
+            }
+            secure_wipe(sk, sizeof(sk));
+            secure_wipe(pk, sizeof(pk));
+            if (op_rc != 0 || !result) {
+                free(result);
+                reply_json = nostr_nip46_response_build_err(
+                    req.id, is_enc ? "encrypt_failed" : "decrypt_failed");
+            } else {
+                /* NIP-46 spec: result is a JSON STRING. Encode via
+                 * jansson so response_build_ok's json_loads lands a
+                 * string in `result`. */
+                json_t *js = json_string(result);
+                char *js_enc = js ? json_dumps(js, JSON_ENCODE_ANY | JSON_COMPACT)
+                                  : NULL;
+                if (js) json_decref(js);
+                if (!js_enc) {
+                    reply_json = nostr_nip46_response_build_err(req.id, "serialize_failed");
+                } else {
+                    reply_json = nostr_nip46_response_build_ok(req.id, js_enc);
+                    free(js_enc);
+                }
+                /* Wipe plaintext before free — it is either the wrap
+                 * seed itself (decrypt) or its base64 wrap (encrypt);
+                 * both are as sensitive as the seed. */
+                secure_wipe(result, strlen(result));
+                free(result);
+            }
+        }
     } else if (strcmp(req.method, "connect") == 0) {
         /* NIP-46 connect params: [remote_signer_pubkey, secret, permissions]
          * ACL should be set for the CLIENT'S pubkey (from event author), not params[0].

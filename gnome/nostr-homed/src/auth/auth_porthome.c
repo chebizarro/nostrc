@@ -20,6 +20,8 @@
 #include "nh_porthome_wrapkey.h"
 #include "nh_porthome_sandbox.h"
 #include "auth_porthome_fetch.h"
+#include "nostr/nip46/nip46_client.h"
+#include "nostr/nip46/nip46_types.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -715,6 +717,211 @@ int nh_auth_broker_porthome_take_wrap_seed(const char *account_id,
   return -1;
 }
 
+/* ───────────────────────────────────────────────────────────────
+ * Bead nostrc-pvha: NIP-46 wrap-key enrollment / unwrap on login.
+ *
+ * The provider post-verify hook (called from provider_nip46.c and
+ * provider_nip46_qr.c) uses the live signer session to either fetch
+ * (nip44_decrypt) or mint+persist (nip44_encrypt) the wrap seed, then
+ * deposits the seed into the wrap cache above. Everything runs inside
+ * the same PAM window that already blocks for sign_event, so the
+ * broker's WAIT_HOME budget covers it.
+ * ─────────────────────────────────────────────────────────────── */
+
+static pthread_mutex_t g_pvha_mutex = PTHREAD_MUTEX_INITIALIZER;
+static nh_identity_store *g_pvha_store;
+static int g_pvha_enroll_wrap_key;
+
+void nh_auth_broker_porthome_install(nh_identity_store *store,
+                                     int enroll_wrap_key) {
+  pthread_mutex_lock(&g_pvha_mutex);
+  g_pvha_store = store;
+  g_pvha_enroll_wrap_key = enroll_wrap_key ? 1 : 0;
+  pthread_mutex_unlock(&g_pvha_mutex);
+}
+
+static int hex_lc(uint8_t nibble) {
+  return (nibble < 10) ? ('0' + nibble) : ('a' + nibble - 10);
+}
+
+static void bytes_to_hex64(const uint8_t in[32], char out[65]) {
+  for (int i = 0; i < 32; i++) {
+    out[i * 2]     = (char)hex_lc((in[i] >> 4) & 0xf);
+    out[i * 2 + 1] = (char)hex_lc(in[i] & 0xf);
+  }
+  out[64] = '\0';
+}
+
+static int try_load_provider_and_ct(const char *account_id,
+                                    char **out_provider_id,
+                                    uint8_t **out_ct_bytes,
+                                    size_t *out_ct_len,
+                                    int *out_have_ct) {
+  *out_provider_id = NULL;
+  *out_ct_bytes = NULL;
+  *out_ct_len = 0;
+  *out_have_ct = 0;
+
+  nh_identity_provider_record rec;
+  memset(&rec, 0, sizeof rec);
+  /* Try QR first, then bunker — an account MAY have both types staged,
+   * but only one is enabled per (account,type) by the providers index.
+   * For the porthome flow either is fine. */
+  nh_identity_rc rc = nh_identity_store_provider_get(
+      g_pvha_store, account_id, NH_IDENTITY_PROVIDER_NIP46_QR, true, &rec);
+  if (rc != NH_IDENTITY_OK) {
+    memset(&rec, 0, sizeof rec);
+    rc = nh_identity_store_provider_get(
+        g_pvha_store, account_id, NH_IDENTITY_PROVIDER_NIP46_BUNKER, true, &rec);
+  }
+  if (rc != NH_IDENTITY_OK) {
+    /* Wipe potential secret_blob bytes even on failure. */
+    OPENSSL_cleanse(&rec, sizeof rec);
+    return -1;
+  }
+
+  *out_provider_id = strdup(rec.provider_id);
+  if (!*out_provider_id) {
+    OPENSSL_cleanse(&rec, sizeof rec);
+    return -1;
+  }
+  if (rec.wrapped_home_key_len > 0) {
+    uint8_t *b = malloc(rec.wrapped_home_key_len);
+    if (!b) {
+      free(*out_provider_id); *out_provider_id = NULL;
+      OPENSSL_cleanse(&rec, sizeof rec);
+      return -1;
+    }
+    memcpy(b, rec.wrapped_home_key, rec.wrapped_home_key_len);
+    *out_ct_bytes = b;
+    *out_ct_len = rec.wrapped_home_key_len;
+    *out_have_ct = 1;
+  }
+  OPENSSL_cleanse(&rec, sizeof rec);
+  return 0;
+}
+
+int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
+    void *nip46_session, const char *account_id,
+    const char *account_pubkey_hex) {
+  if (!nip46_session || !account_id || !account_pubkey_hex ||
+      strlen(account_pubkey_hex) != 64)
+    return 0; /* nothing to do */
+
+  nh_identity_store *store;
+  int enroll_on;
+  pthread_mutex_lock(&g_pvha_mutex);
+  store = g_pvha_store;
+  enroll_on = g_pvha_enroll_wrap_key;
+  pthread_mutex_unlock(&g_pvha_mutex);
+  if (!store) return 0; /* broker not opted-in */
+
+  char *provider_id = NULL;
+  uint8_t *ct_bytes = NULL;
+  size_t ct_len = 0;
+  int have_ct = 0;
+  if (try_load_provider_and_ct(account_id, &provider_id,
+                               &ct_bytes, &ct_len, &have_ct) != 0) {
+    /* No NIP-46 provider record — nothing to do. Silent no-op so a
+     * bunker-only account that hasn't enrolled porthome still logs in
+     * cleanly. */
+    free(provider_id);
+    free(ct_bytes);
+    return 0;
+  }
+
+  NostrNip46Session *s = (NostrNip46Session *)nip46_session;
+  uint8_t seed[32] = {0};
+  int seed_valid = 0;
+
+  if (have_ct) {
+    /* Wire the ciphertext as a NUL-terminated ASCII string — NIP-44 v2
+     * ciphertexts are base64 ASCII, so we stored the bytes verbatim.
+     * A stray non-ASCII byte from a corrupted row would fail the
+     * bunker's canonical base64 decode; we still guard against
+     * embedded NULs by refusing early. */
+    for (size_t i = 0; i < ct_len; i++) {
+      if (ct_bytes[i] == 0) { free(provider_id); free(ct_bytes); return -1; }
+    }
+    char *ct_z = malloc(ct_len + 1);
+    if (!ct_z) { free(provider_id); free(ct_bytes); return -1; }
+    memcpy(ct_z, ct_bytes, ct_len);
+    ct_z[ct_len] = '\0';
+    char *pt = NULL;
+    int rc = nostr_nip46_client_nip44_decrypt_rpc(
+        s, account_pubkey_hex, ct_z, &pt);
+    OPENSSL_cleanse(ct_z, ct_len);
+    free(ct_z);
+    if (rc != 0 || !pt) {
+      free(pt);
+      free(provider_id); free(ct_bytes);
+      /* Signer refused / offline / mismatched key. Login already
+       * succeeded on the auth axis — return -1 so the caller can
+       * decide whether to surface anything. Provision path falls back
+       * to NOT_SUPPORTED because no seed lands in the cache. */
+      return -1;
+    }
+    /* Accept 32 raw bytes or 64 lowercase hex. */
+    if (nh_porthome_wrap_seed_from_nip44_plaintext(
+            (const uint8_t *)pt, strlen(pt), seed) == NH_PORTHOME_OK) {
+      seed_valid = 1;
+    }
+    OPENSSL_cleanse(pt, strlen(pt));
+    free(pt);
+  } else if (enroll_on) {
+    /* Mint a fresh 32-byte seed and ask the signer to nip44_encrypt
+     * it (self-encrypt: peer == account_pubkey). The RPC accepts a
+     * UTF-8 plaintext; encode the seed as 64 lowercase hex so the JSON
+     * transport is safe. The signer's nip44 v2 output is base64 ASCII
+     * which we persist verbatim as the wrapped_home_key BLOB. */
+    if (nh_porthome_wrap_seed_random(seed) != NH_PORTHOME_OK) {
+      free(provider_id); free(ct_bytes);
+      return -1;
+    }
+    char seed_hex[65];
+    bytes_to_hex64(seed, seed_hex);
+    char *ct_out = NULL;
+    int rc = nostr_nip46_client_nip44_encrypt_rpc(
+        s, account_pubkey_hex, seed_hex, &ct_out);
+    /* Wipe the seed_hex copy immediately — the bytes-of-hex are
+     * as sensitive as the seed itself. */
+    OPENSSL_cleanse(seed_hex, sizeof seed_hex);
+    if (rc != 0 || !ct_out) {
+      free(ct_out);
+      OPENSSL_cleanse(seed, sizeof seed);
+      free(provider_id); free(ct_bytes);
+      return -1;
+    }
+    size_t ct_out_len = strlen(ct_out);
+    if (ct_out_len == 0 || ct_out_len > NH_IDENTITY_WRAPPED_HOME_KEY_MAX) {
+      OPENSSL_cleanse(ct_out, ct_out_len);
+      free(ct_out);
+      OPENSSL_cleanse(seed, sizeof seed);
+      free(provider_id); free(ct_bytes);
+      return -1;
+    }
+    nh_identity_rc srx = nh_identity_provider_set_wrapped_home_key(
+        store, provider_id, (const uint8_t *)ct_out, ct_out_len);
+    OPENSSL_cleanse(ct_out, ct_out_len);
+    free(ct_out);
+    if (srx != NH_IDENTITY_OK) {
+      OPENSSL_cleanse(seed, sizeof seed);
+      free(provider_id); free(ct_bytes);
+      return -1;
+    }
+    seed_valid = 1;
+  }
+
+  int deposit_rc = 0;
+  if (seed_valid) {
+    deposit_rc = nh_auth_broker_porthome_deposit_wrap_seed(account_id, seed);
+  }
+  OPENSSL_cleanse(seed, sizeof seed);
+  free(provider_id);
+  free(ct_bytes);
+  return deposit_rc;
+}
+
 
 /* ────────────────────────────────────────────────────────────────────
  * Phase 2.5B fetch-helper sandbox seam (bead nostrc-ww50).
@@ -826,6 +1033,16 @@ int nh_auth_broker_porthome_deposit_wrap_seed(const char *a,
 int nh_auth_broker_porthome_take_wrap_seed(const char *a,
                                            uint8_t out[32]) {
   (void)a; (void)out; return -1;
+}
+void nh_auth_broker_porthome_install(nh_identity_store *store,
+                                     int enroll_wrap_key) {
+  (void)store; (void)enroll_wrap_key;
+}
+int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
+    void *nip46_session, const char *account_id,
+    const char *account_pubkey_hex) {
+  (void)nip46_session; (void)account_id; (void)account_pubkey_hex;
+  return 0;
 }
 
 int nh_auth_broker_porthome_run_fetch(const char *helper_path,

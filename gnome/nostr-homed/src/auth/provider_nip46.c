@@ -234,9 +234,15 @@ static int prepare(nh_auth_provider *base, const nh_auth_provider_snapshot *s) {
      * unlocking arbitrary-kind signing. Bunkers that do not understand the
      * `sign_event:<kind>` extension still see `sign_event` and either grant
      * blanket sign or deny — the outcome is unchanged. */
+    /* Portable-home (bead nostrc-pvha) needs nip44_encrypt / nip44_decrypt
+     * for the wrap-key hand-off. Requesting them here is authoritative:
+     * a bunker that refuses one of the methods surfaces as UNAVAILABLE
+     * rather than silently failing at wrap-time (design §4.3). */
     char *connect_result = NULL;
     int connect_rc = nostr_nip46_client_connect_rpc(
-        p->session, NULL, "sign_event,sign_event:1", &connect_result);
+        p->session, NULL,
+        "sign_event,sign_event:1,nip44_encrypt,nip44_decrypt",
+        &connect_result);
     if (connect_result) {
       secure_wipe(connect_result, strlen(connect_result));
       free(connect_result);
@@ -341,6 +347,26 @@ static int submit_unlock(nh_auth_provider *base, const uint8_t *secret,
     emit_event(p, NH_AUTH_PROVIDER_FAILED, NH_AUTH_RESULT_INVALID_PROOF,
                NULL, 0);
     return 0;
+  }
+
+  /* nostrc-pvha: portable-home wrap-key hand-off. When the runtime
+   * embedding porthome has installed a store handle, use the same
+   * live signer session to either fetch (nip44_decrypt of the
+   * account's wrapped_home_key) or mint+persist (nip44_encrypt of a
+   * fresh seed) BEFORE the runtime emits SIGNED_EVENT. That way the
+   * seed is already deposited by the time PROVISION_HOME runs.
+   *
+   * Weak-linked so the base nostr_auth_core archive links cleanly
+   * even when the porthome runtime glue is absent (packaging-purity
+   * gate). A NULL symbol resolves to "no-op" behaviour — the auth
+   * flow proceeds unchanged and PROVISION_HOME will report
+   * NOT_SUPPORTED. */
+  extern int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
+      void *nip46_session, const char *account_id,
+      const char *account_pubkey_hex) __attribute__((weak));
+  if (nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46) {
+    (void)nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
+        p->session, p->account_id, p->pubkey);
   }
 
   emit_event(p, NH_AUTH_PROVIDER_SIGNED_EVENT, NH_AUTH_RESULT_OK, signed_json,

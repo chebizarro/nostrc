@@ -136,6 +136,45 @@ int nh_auth_broker_porthome_deposit_wrap_seed(const char *account_id,
 int nh_auth_broker_porthome_take_wrap_seed(const char *account_id,
                                            uint8_t out_seed[32]);
 
+/* Bead nostrc-pvha: install broker-scoped state that the NIP-46 provider
+ * post-verify hook needs (identity-store handle for reading/writing
+ * wrapped_home_key, and the auth.conf porthome_enroll_wrap_key flag).
+ * Called once from nostr-authd.c after config parse. `store` is a
+ * borrowed pointer; the broker owns it. Idempotent — a second call
+ * replaces the previous state. Passing store=NULL disables the hook. */
+void nh_auth_broker_porthome_install(nh_identity_store *store,
+                                     int enroll_wrap_key);
+
+/* Called by provider_nip46 / provider_nip46_qr after a successful
+ * sign_event verify, BEFORE emitting SIGNED_EVENT to the runtime. When
+ * PORTHOME is enabled at build time AND the broker has installed a
+ * store handle (nh_auth_broker_porthome_install), this helper:
+ *
+ *   1. Reads the account's enabled NIP-46 provider record.
+ *   2. If wrapped_home_key is non-empty: calls
+ *      nostr_nip46_client_nip44_decrypt_rpc(peer=account_pubkey_hex,
+ *      ct=<wrapped_home_key as ASCII>) to obtain the 32-byte plaintext
+ *      seed, deposits it into the wrap-seed cache (mlock'd).
+ *   3. Else, if enroll_wrap_key is on: RAND_bytes a fresh 32-byte seed,
+ *      calls nostr_nip46_client_nip44_encrypt_rpc(peer=account_pubkey_hex,
+ *      pt=<64-hex of seed>), persists the ciphertext to the provider
+ *      record, and deposits the plaintext into the cache.
+ *   4. Else: no-op (PROVISION_HOME will map to NOT_SUPPORTED).
+ *
+ * The session is borrowed. All secret plaintext buffers are
+ * OPENSSL_cleanse'd before free. NEVER logs the seed or the plaintext.
+ * Returns 0 on success (including the "nothing to do" case: PORTHOME
+ * not built, no store installed, no NIP-46 provider record, or
+ * enrollment disabled with no existing ciphertext). Returns -1 on a
+ * hard signer failure that the caller should surface as UNAVAILABLE.
+ *
+ * The session pointer is typed void* here to keep this header free of
+ * a NIP-46 build dependency — both callers already include the NIP-46
+ * headers. */
+int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
+    void *nip46_session, const char *account_id,
+    const char *account_pubkey_hex);
+
 /* Phase 2.5B (bead nostrc-ww50): fork+drop-privs sandbox around the
  * portable-home NETWORK FETCH. The broker never dials relays or
  * Blossom itself; it exec()s the `nostr-home-fetch` helper (bead

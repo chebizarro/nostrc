@@ -91,7 +91,8 @@ int main(void) {
   NH_CHECK(nh_identity_store_open(&options, &store) == NH_IDENTITY_OK);
   NH_CHECK(stat(db_path, &st) == 0 && (st.st_mode & 0777) == 0600);
   NH_CHECK(nh_identity_store_get_info(store, &initial_info) == NH_IDENTITY_OK);
-  NH_CHECK(initial_info.schema_version == 1 && initial_info.authority_generation == 1);
+  /* Schema v2 (bead nostrc-pvha) added providers.wrapped_home_key. */
+  NH_CHECK(initial_info.schema_version == 2 && initial_info.authority_generation == 1);
   NH_CHECK(nh_identity_store_open(&options, &second) == NH_IDENTITY_BUSY);
   NH_CHECK(second == NULL);
 
@@ -291,13 +292,20 @@ int main(void) {
   sql_expect_failure(db_path, "DELETE FROM accounts WHERE username='n_bob'");
 
   {
+    /* Bumped to v3 (bead nostrc-pvha): v2 is the current schema, so a
+     * future/unknown version must still be refused. */
     sqlite3 *db = NULL;
     NH_CHECK(sqlite3_open_v2(db_path, &db, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK);
-    NH_CHECK(sqlite3_exec(db, "PRAGMA user_version=2", NULL, NULL, NULL) == SQLITE_OK);
+    NH_CHECK(sqlite3_exec(db, "PRAGMA user_version=3", NULL, NULL, NULL) == SQLITE_OK);
     sqlite3_close(db);
     options.flags = 0;
     NH_CHECK(nh_identity_store_open(&options, &store) == NH_IDENTITY_SCHEMA_UNSUPPORTED);
     NH_CHECK(store == NULL);
+    /* v1 with an intact metadata row now MIGRATES to v2 on open (bead
+     * nostrc-pvha); we probe that in the sibling v1-to-v2 test above.
+     * The residual assertion here is that a v1 DB with a broken
+     * metadata table (authority_id row missing) still fails cleanly
+     * during the post-migration get_info step. */
     NH_CHECK(sqlite3_open_v2(db_path, &db, SQLITE_OPEN_READWRITE, NULL) == SQLITE_OK);
     NH_CHECK(sqlite3_exec(db, "PRAGMA user_version=1;DELETE FROM metadata WHERE key='authority_id'",
                         NULL, NULL, NULL) == SQLITE_OK);

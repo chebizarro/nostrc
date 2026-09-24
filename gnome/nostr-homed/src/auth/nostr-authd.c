@@ -136,6 +136,22 @@ int main(int argc, char **argv) {
       nh_auth_broker_set_nip05(broker, enabled, helper, duser,
                                (int)conf.nip05_cache_ttl_seconds);
     }
+
+    /* Portable-home (bead nostrc-pvha): install the identity store
+     * handle so provider_nip46's post-verify hook can read/write
+     * providers.wrapped_home_key. The enroll_wrap_key flag (auth.conf
+     * `porthome_enroll_wrap_key = on|off`, 0=unset -> off) gates
+     * first-login enrollment: without it the hook only reads existing
+     * ciphertext and never mints or persists a new seed. Weak-linked
+     * so a build without NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL
+     * still links (the stub is a no-op). */
+    extern void nh_auth_broker_porthome_install(
+        nh_identity_store *store, int enroll_wrap_key)
+        __attribute__((weak));
+    if (nh_auth_broker_porthome_install) {
+      int enroll = (conf.porthome_enroll_wrap_key == 1) ? 1 : 0;
+      nh_auth_broker_porthome_install(store, enroll);
+    }
   }
 
   /* Optional persistent rate-limit backing. If NH_AUTH_RATELIMIT_PATH is set
@@ -252,6 +268,14 @@ int main(int argc, char **argv) {
   if (smb) { nh_auth_broker_set_smb_authority(broker, NULL); nh_smb_authority_close(smb); }
   if (tdbsam) nh_smb_passdb_tdbsam_free(tdbsam);
 #endif
+  /* Detach the porthome hook's borrowed store handle BEFORE we close
+   * the store; a late-arriving login would otherwise deref a freed
+   * sqlite handle. Weak-linked (see install site above). */
+  extern void nh_auth_broker_porthome_install(
+      nh_identity_store *store, int enroll_wrap_key)
+      __attribute__((weak));
+  if (nh_auth_broker_porthome_install)
+    nh_auth_broker_porthome_install(NULL, 0);
   nh_auth_broker_free(broker);
   nh_identity_store_close(store);
   fprintf(stderr, "nostr-authd: stopped\n");

@@ -271,9 +271,13 @@ static int prepare(nh_auth_provider *base,
   }
 
   char *uri = NULL;
-  if (nostr_nip46_client_new_qr_session(p->session, relays, n_relays,
-                                        "sign_event:1", display_name,
-                                        &uri) != 0 ||
+  /* Portable-home (bead nostrc-pvha): request nip44_encrypt/_decrypt
+   * up-front so a QR bunker that speaks strict-perms ACLs grants them
+   * on the initial connect rather than rejecting the wrap round-trip. */
+  if (nostr_nip46_client_new_qr_session(
+          p->session, relays, n_relays,
+          "sign_event:1,nip44_encrypt,nip44_decrypt",
+          display_name, &uri) != 0 ||
       !uri) {
     release_session(p);
     free(uri);
@@ -475,6 +479,17 @@ static int submit_unlock(nh_auth_provider *base, const uint8_t *secret,
     emit_event(p, NH_AUTH_PROVIDER_FAILED, NH_AUTH_RESULT_INVALID_PROOF, NULL,
                0);
     return 0;
+  }
+
+  /* nostrc-pvha: portable-home wrap-key hand-off (same pattern as
+   * provider_nip46.c). Weak-linked so the base archive links cleanly
+   * without the porthome runtime glue. */
+  extern int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
+      void *nip46_session, const char *account_id,
+      const char *account_pubkey_hex) __attribute__((weak));
+  if (nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46) {
+    (void)nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
+        p->session, p->account_id, p->pubkey);
   }
 
   emit_event(p, NH_AUTH_PROVIDER_SIGNED_EVENT, NH_AUTH_RESULT_OK, signed_json,

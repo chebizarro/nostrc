@@ -56,6 +56,10 @@ static const char authority_schema[] =
   " format_version INTEGER NOT NULL CHECK(format_version>=1),"
   " public_config_json TEXT NOT NULL CHECK(length(public_config_json)<=4096),"
   " secret_blob BLOB NOT NULL CHECK(length(secret_blob)<=4096),"
+  /* wrapped_home_key: portable-home NIP-46 wrap-key ciphertext.
+   * Optional (NULL); populated by the broker on first successful
+   * nip44_encrypt of a fresh seed and read on subsequent logins. */
+  " wrapped_home_key BLOB DEFAULT NULL CHECK(wrapped_home_key IS NULL OR length(wrapped_home_key)<=512),"
   " created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);"
   "CREATE UNIQUE INDEX providers_one_enabled"
   " ON providers(account_id,type) WHERE enabled=1;"
@@ -94,7 +98,7 @@ static const char authority_schema[] =
   "CREATE TRIGGER accounts_retired_immutable BEFORE UPDATE ON accounts"
   " WHEN OLD.status='retired'"
   " BEGIN SELECT RAISE(ABORT,'retired account is immutable'); END;"
-  "PRAGMA user_version=1;";
+  "PRAGMA user_version=2;";
 
 static int path_parent(const char *path, char *out, size_t out_size) {
   const char *slash;
@@ -314,6 +318,36 @@ nh_identity_rc nh_identity_store_open(const nh_identity_store_options *options,
   result = schema_version(store->db, &version);
   if (result != NH_IDENTITY_OK) goto fail;
   if (version == 0) { result = NH_IDENTITY_NOT_INITIALIZED; goto fail; }
+  /* In-place migration v1 -> v2 (bead nostrc-pvha): add the
+   * providers.wrapped_home_key BLOB column. Idempotent — sqlite
+   * ALTER TABLE ADD COLUMN fails cleanly if it already exists, so we
+   * detect via PRAGMA table_info rather than swallowing errors. */
+  if (version == 1u) {
+    sqlite3_stmt *_mig_stmt = NULL;
+    int _mig_has = 0;
+    int _mig_rc = sqlite3_prepare_v2(store->db,
+        "SELECT 1 FROM pragma_table_info('providers') WHERE name='wrapped_home_key'",
+        -1, &_mig_stmt, NULL);
+    if (_mig_rc == SQLITE_OK) {
+      if (sqlite3_step(_mig_stmt) == SQLITE_ROW) _mig_has = 1;
+    }
+    sqlite3_finalize(_mig_stmt);
+    if (!_mig_has) {
+      result = exec_sql(store,
+        "BEGIN IMMEDIATE;"
+        "ALTER TABLE providers ADD COLUMN wrapped_home_key BLOB DEFAULT NULL"
+        " CHECK(wrapped_home_key IS NULL OR length(wrapped_home_key)<=512);"
+        "PRAGMA user_version=2;"
+        "COMMIT;",
+        "migrate providers to schema v2");
+      if (result != NH_IDENTITY_OK) { nh_identity_rollback(store); goto fail; }
+    } else {
+      /* Column already there — just bump the version. */
+      result = exec_sql(store, "PRAGMA user_version=2", "bump schema version");
+      if (result != NH_IDENTITY_OK) goto fail;
+    }
+    version = 2u;
+  }
   if (version != NH_IDENTITY_AUTHORITY_SCHEMA_VERSION) {
     result = NH_IDENTITY_SCHEMA_UNSUPPORTED; goto fail;
   }
@@ -515,7 +549,7 @@ nh_identity_rc nh_identity_store_provider_get(
     return NH_IDENTITY_INVALID;
   rc = sqlite3_prepare_v2(store->db,
     "SELECT provider_id,account_id,type,enabled,format_version,"
-    "public_config_json,secret_blob FROM providers"
+    "public_config_json,secret_blob,wrapped_home_key FROM providers"
     " WHERE account_id=? AND type=? AND enabled=?", -1, &statement, NULL);
   if (rc == SQLITE_OK) rc = sqlite3_bind_text(statement, 1, account_id, -1, SQLITE_STATIC);
   if (rc == SQLITE_OK) rc = sqlite3_bind_text(statement, 2, type_text, -1, SQLITE_STATIC);
@@ -540,9 +574,57 @@ nh_identity_rc nh_identity_store_provider_get(
       out->format_version = (uint32_t)sqlite3_column_int64(statement, 4);
       if (blob_len > 0) memcpy(out->secret_blob, blob, (size_t)blob_len);
       out->secret_blob_len = (size_t)blob_len;
+      /* wrapped_home_key column may be NULL (default) or a BLOB. Refuse
+       * an oversized value rather than truncating — the schema CHECK
+       * caps it at 512 B but a concurrent writer with a stale schema
+       * could technically insert more; we treat that as corruption. */
+      if (sqlite3_column_type(statement, 7) != SQLITE_NULL) {
+        const void *wblob = sqlite3_column_blob(statement, 7);
+        int wlen = sqlite3_column_bytes(statement, 7);
+        if (wlen < 0 ||
+            (size_t)wlen > sizeof(out->wrapped_home_key)) {
+          result = NH_IDENTITY_STORAGE_ERROR;
+        } else if (wlen > 0 && wblob) {
+          memcpy(out->wrapped_home_key, wblob, (size_t)wlen);
+          out->wrapped_home_key_len = (size_t)wlen;
+        }
+      }
     }
   }
   sqlite3_finalize(statement);
+  return result;
+}
+
+nh_identity_rc nh_identity_provider_set_wrapped_home_key(
+    nh_identity_store *store, const char *provider_id,
+    const uint8_t *blob, size_t blob_len) {
+  sqlite3_stmt *statement = NULL;
+  int rc;
+  nh_identity_rc result;
+  if (!store || !nh_identity_uuid_is_valid(provider_id) ||
+      blob_len > NH_IDENTITY_WRAPPED_HOME_KEY_MAX)
+    return NH_IDENTITY_INVALID;
+  if (blob_len > 0 && !blob) return NH_IDENTITY_INVALID;
+  result = nh_identity_begin(store);
+  if (result != NH_IDENTITY_OK) return result;
+  rc = sqlite3_prepare_v2(store->db,
+    "UPDATE providers SET wrapped_home_key=?,updated_at=strftime('%s','now')"
+    " WHERE provider_id=? AND enabled=1", -1, &statement, NULL);
+  if (rc == SQLITE_OK) {
+    if (blob_len == 0)
+      rc = sqlite3_bind_null(statement, 1);
+    else
+      rc = sqlite3_bind_blob(statement, 1, blob, (int)blob_len, SQLITE_STATIC);
+  }
+  if (rc == SQLITE_OK) rc = sqlite3_bind_text(statement, 2, provider_id, -1, SQLITE_STATIC);
+  if (rc == SQLITE_OK) rc = sqlite3_step(statement);
+  sqlite3_finalize(statement);
+  result = nh_identity_sqlite_result(store, rc, "set wrapped_home_key");
+  if (result == NH_IDENTITY_OK && sqlite3_changes(store->db) == 0)
+    result = NH_IDENTITY_NOT_FOUND;
+  if (result == NH_IDENTITY_OK) result = nh_identity_bump_generation(store, NULL);
+  if (result == NH_IDENTITY_OK) result = nh_identity_commit(store);
+  if (result != NH_IDENTITY_OK) nh_identity_rollback(store);
   return result;
 }
 
