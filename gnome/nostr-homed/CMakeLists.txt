@@ -57,6 +57,14 @@ option(NOSTR_HOMED_BUILD_TESTS "Build tests for enabled nostr-homed features" ON
 # docs/designs/porthome-crypto-spec.md.
 option(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL
   "Build the experimental portable-home primitives library (requires libhanami)" OFF)
+# Phase-3 (bead nostrc-p6qp). Ships the user-scoped sync daemon
+# nostr-home-syncd + a small libnostr_syncd_core the unit + integration
+# tests link against. Gated behind its own option ON TOP OF the
+# porthome-experimental gate so a base build never links a daemon that
+# depends on libnostr / libhanami into pam_nostr / nostr-authd. Nothing
+# built here installs — packaging + systemd unit are I3.
+option(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL
+  "Build the experimental user-scoped nostr-home-syncd daemon (requires porthome experimental + libnostr)" OFF)
 
 if(NOSTR_HOMED_ENABLE_CTL AND NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
   message(FATAL_ERROR
@@ -1299,3 +1307,95 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     endif()
   endif()
 endif()
+
+
+# ────────────────────────────────────────────────────────────────────
+# Portable-home Phase 3 (bead nostrc-p6qp) — user-scoped sync daemon.
+# EXPERIMENTAL. Gated behind NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL on
+# top of NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL so a base build
+# never drags libnostr / libhanami into nostr-authd / pam_nostr.
+#
+# Ships:
+#   - libnostr_syncd_core (STATIC, non-installed): state, ignore
+#     matcher, batcher, lock, interlocks, subscription seam and push
+#     closure. Unit + integration tests link against this without
+#     bringing in the inotify main loop.
+#   - nostr-home-syncd (executable, non-installed in I1): the daemon.
+#     I3 owns the systemd --user unit and any install rules.
+# ────────────────────────────────────────────────────────────────────
+if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
+  if(NOT NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
+    message(FATAL_ERROR
+      "NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL requires NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL")
+  endif()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
+  find_package(Threads REQUIRED)
+
+  add_library(nostr_syncd_core STATIC
+    src/porthome-syncd/nh_syncd_state.c
+    src/porthome-syncd/nh_syncd_ignore.c
+    src/porthome-syncd/nh_syncd_batcher.c
+    src/porthome-syncd/nh_syncd_lock.c
+    src/porthome-syncd/nh_syncd_interlocks.c
+    src/porthome-syncd/nh_syncd_pusher.c
+    src/porthome-syncd/nh_syncd_subscription.c)
+  target_compile_options(nostr_syncd_core PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation -Wno-unused-parameter)
+  target_compile_definitions(nostr_syncd_core PUBLIC
+    NH_SYNCD_EXPERIMENTAL=1)
+  target_include_directories(nostr_syncd_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(nostr_syncd_core PUBLIC
+    nostr_porthome PkgConfig::JANSSON Threads::Threads)
+  # libnostr is required for the kind-30078 publish path and the
+  # SimplePool subscription. In in-tree build the target `nostr` is
+  # defined by libnostr's subdirectory; stand-alone builds fall back
+  # to pkg-config.
+  if(TARGET nostr)
+    target_link_libraries(nostr_syncd_core PUBLIC nostr)
+  else()
+    pkg_check_modules(NOSTR_FOR_SYNCD REQUIRED IMPORTED_TARGET libnostr)
+    target_link_libraries(nostr_syncd_core PUBLIC PkgConfig::NOSTR_FOR_SYNCD)
+  endif()
+
+  # Daemon binary. Only additional source is the inotify watcher +
+  # the poll-loop main. Not installed in I1.
+  add_executable(nostr-home-syncd
+    src/porthome-syncd/nostr-home-syncd.c
+    src/porthome-syncd/nh_syncd_watcher.c)
+  target_compile_options(nostr-home-syncd PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation -Wno-unused-parameter
+    -Wno-format-truncation)
+  target_include_directories(nostr-home-syncd PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd)
+  target_link_libraries(nostr-home-syncd PRIVATE nostr_syncd_core)
+
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_syncd_ignore  tests/unit/test_syncd_ignore.c)
+    target_link_libraries(test_syncd_ignore  PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_ignore COMMAND test_syncd_ignore)
+    set_tests_properties(homed_syncd_ignore PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
+
+    add_executable(test_syncd_batcher tests/unit/test_syncd_batcher.c)
+    target_link_libraries(test_syncd_batcher PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_batcher COMMAND test_syncd_batcher)
+    set_tests_properties(homed_syncd_batcher PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
+
+    add_executable(test_syncd_state tests/unit/test_syncd_state.c)
+    target_link_libraries(test_syncd_state PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_state COMMAND test_syncd_state)
+    set_tests_properties(homed_syncd_state PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
+
+    add_executable(test_syncd_push_e2e
+      tests/integration/test_syncd_push_e2e.c)
+    target_link_libraries(test_syncd_push_e2e PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_push_e2e COMMAND test_syncd_push_e2e)
+    set_tests_properties(homed_syncd_push_e2e PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 120)
+  endif()
+endif()
+
