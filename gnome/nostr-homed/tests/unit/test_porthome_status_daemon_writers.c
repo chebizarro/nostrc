@@ -131,6 +131,123 @@ static void test_concurrent_fuse_untouched(const char *path) {
     printf("concurrent_fuse_untouched OK\n");
 }
 
+
+static void test_recent_head_dedupe(const char *path) {
+    /* Bead nostrc-u40q: 5 consecutive PUSH-DONE notifications with the
+     * same (cat, key_hash8) collapse into a single head slot with
+     * count=5; then a DIFFERENT event advances the head and drops the
+     * count field again (count==1 → omitted for backward compat). */
+    (void)unlink(path);
+    nh_syncd_status_writer *w = nh_syncd_status_writer_new();
+
+    for (int i = 0; i < 5; ++i) {
+        nh_syncd_status_notify_record(w,
+                                      (int64_t)(2000 + i),
+                                      NH_NOTIFY_CAT_SWEEP,
+                                      "same-key",   /* key    */
+                                      "push-done",  /* summary */
+                                      "",           /* body   */
+                                      true);
+    }
+    assert(nh_syncd_status_emit(w, path) == 0);
+    {
+        char *body = NULL; size_t body_len = 0;
+        assert(nh_porthome_status_read(path, &body, &body_len) == 0);
+        /* Head carries count=5 for the collapsed burst; ts is the
+         * newest timestamp (2004). */
+        assert(strstr(body, "\"count\":5") != NULL);
+        assert(strstr(body, "\"ts\":2004") != NULL);
+        /* And only ONE array entry — the older duplicates were
+         * folded into the head. Count opening '{' inside recent[]. */
+        const char *arr = strstr(body, "\"recent\":[");
+        assert(arr != NULL);
+        const char *arr_end = strchr(arr, ']');
+        assert(arr_end != NULL);
+        int braces = 0;
+        for (const char *p = arr; p < arr_end; ++p)
+            if (*p == '{') braces++;
+        assert(braces == 1);
+        free(body);
+    }
+
+    /* Push a DIFFERENT event → new head, no count field. */
+    nh_syncd_status_notify_record(w, /*ts=*/2010,
+                                  NH_NOTIFY_CAT_SWEEP,
+                                  "other-key",
+                                  "push-done-2",
+                                  "", true);
+    assert(nh_syncd_status_emit(w, path) == 0);
+    {
+        char *body = NULL; size_t body_len = 0;
+        assert(nh_porthome_status_read(path, &body, &body_len) == 0);
+        /* Two array entries now — head is the newest (other-key),
+         * the collapsed burst is at recent[1]. */
+        const char *pHead = strstr(body, "\"summary\":\"push-done-2\"");
+        const char *pTail = strstr(body, "\"summary\":\"push-done\"");
+        assert(pHead && pTail && pHead < pTail);
+        /* Head entry has NO count field (count==1 → omitted for
+         * backward compatibility with pre-u40q consumers). Look at
+         * the substring bounded by the head entry's { ... }. */
+        const char *arr = strstr(body, "\"recent\":[");
+        assert(arr != NULL);
+        const char *head_open = strchr(arr, '{');
+        assert(head_open != NULL);
+        const char *head_close = strchr(head_open, '}');
+        assert(head_close != NULL);
+        size_t head_len = (size_t)(head_close - head_open);
+        char head_slice[512];
+        if (head_len >= sizeof head_slice) head_len = sizeof head_slice - 1;
+        memcpy(head_slice, head_open, head_len);
+        head_slice[head_len] = '\0';
+        assert(strstr(head_slice, "\"count\":") == NULL);
+        /* And the older (deduped) entry preserves its count=5. */
+        assert(strstr(body, "\"count\":5") != NULL);
+        free(body);
+    }
+
+    /* One more same-key hit AFTER the head advanced → head (other-key)
+     * gets count=2 rather than a new slot; the older collapsed entry
+     * is unchanged. */
+    nh_syncd_status_notify_record(w, /*ts=*/2011,
+                                  NH_NOTIFY_CAT_SWEEP,
+                                  "other-key",
+                                  "push-done-2b",
+                                  "", true);
+    assert(nh_syncd_status_emit(w, path) == 0);
+    {
+        char *body = NULL; size_t body_len = 0;
+        assert(nh_porthome_status_read(path, &body, &body_len) == 0);
+        /* Head slot updates its ts + summary and shows count=2. */
+        assert(strstr(body, "\"count\":2") != NULL);
+        assert(strstr(body, "\"ts\":2011") != NULL);
+        assert(strstr(body, "\"summary\":\"push-done-2b\"") != NULL);
+        /* Older collapsed burst still there. */
+        assert(strstr(body, "\"count\":5") != NULL);
+        free(body);
+    }
+
+    /* Different CATEGORY with the same key must NOT collapse. */
+    nh_syncd_status_notify_record(w, /*ts=*/2020,
+                                  NH_NOTIFY_CAT_CONFLICT,
+                                  "other-key",  /* same key text */
+                                  "conflict",
+                                  "", true);
+    assert(nh_syncd_status_emit(w, path) == 0);
+    {
+        char *body = NULL; size_t body_len = 0;
+        assert(nh_porthome_status_read(path, &body, &body_len) == 0);
+        /* New head has a different category slug — must not carry
+         * a count field yet, and the SWEEP burst is still visible
+         * further down the array. */
+        assert(strstr(body, "\"cat\":\"conflict\"") != NULL);
+        assert(strstr(body, "\"count\":5") != NULL);
+        free(body);
+    }
+
+    nh_syncd_status_writer_free(w);
+    printf("recent_head_dedupe OK\n");
+}
+
 int main(void) {
     char tmpl[] = "/tmp/nh_porthome_status_daemon.XXXXXX";
     int fd = mkstemp(tmpl); assert(fd >= 0);
@@ -139,6 +256,7 @@ int main(void) {
     test_syncd_key_replaces_and_preserves_peers(tmpl);
     test_recent_ring_rollover(tmpl);
     test_concurrent_fuse_untouched(tmpl);
+    test_recent_head_dedupe(tmpl);
 
     unlink(tmpl);
     char lock[300]; snprintf(lock, sizeof lock, "%s.lock", tmpl);

@@ -1245,9 +1245,13 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     target_compile_definitions(nostr_auth_runtime PUBLIC
       NH_AUTH_BROKER_ENABLE_PORTHOME=1)
     target_sources(nostr_auth_runtime PRIVATE
-      src/auth/auth_porthome_fetch.c)
+      src/auth/auth_porthome_fetch.c
+      # Bead nostrc-3o91 — provisioner "provisioner" key writer.
+      # Compiled behind NH_AUTH_BROKER_ENABLE_PORTHOME so the
+      # base link closure is unchanged when experimental is off.
+      src/auth/auth_porthome_status.c)
     target_link_libraries(nostr_auth_runtime PUBLIC
-      nostr_porthome nostr_porthome_fetch_ctl)
+      nostr_porthome nostr_porthome_fetch_ctl nostr_porthome_common)
     # If the helper was built above, point the spawner at its build-time
     # location by default so an installed run without the packaging
     # split still finds it. Operators override with NH_PORTHOME_FETCH_HELPER.
@@ -1405,6 +1409,19 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
       set_tests_properties(homed_porthome_broker_wait PROPERTIES
         LABELS "nostr-homed;porthome;portable;auth-runtime" TIMEOUT 60
         SKIP_RETURN_CODE 77)
+
+      # Bead nostrc-3o91 — provisioner "provisioner" key writer:
+      # state machine + peer-key preservation.
+      add_executable(test_porthome_provisioner_status
+        tests/unit/test_porthome_provisioner_status.c)
+      target_link_libraries(test_porthome_provisioner_status PRIVATE
+        nostr_auth_runtime)
+      target_compile_options(test_porthome_provisioner_status PRIVATE
+        -Wall -Wextra -Werror -Wno-misleading-indentation)
+      add_test(NAME homed_porthome_provisioner_status
+        COMMAND test_porthome_provisioner_status)
+      set_tests_properties(homed_porthome_provisioner_status PROPERTIES
+        LABELS "nostr-homed;porthome;portable;auth-runtime" TIMEOUT 30)
     endif()
   endif()
 endif()

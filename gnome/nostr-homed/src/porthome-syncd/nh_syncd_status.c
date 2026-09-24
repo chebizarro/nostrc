@@ -29,6 +29,13 @@ typedef struct {
     uint32_t            key_hash8; /* first 32 bits of fnv1a(key)         */
     char                summary[64];
     bool                delivered;
+    /* Head-dedup counter (bead nostrc-u40q). A brand-new entry starts
+     * at 1; if the next record shares the (cat, key_hash8) of the
+     * current head slot we bump this in place and refresh `ts`
+     * instead of pushing a new slot. Emitted as an OPTIONAL "count"
+     * field on the JSON body — omitted when count==1 so pre-u40q
+     * consumers of porthome-status.json.recent[] parse unchanged. */
+    uint32_t            count;
 } recent_slot;
 
 struct nh_syncd_status_writer {
@@ -152,16 +159,39 @@ static void recent_append_locked(nh_syncd_status_writer *w,
                                  const char *key,
                                  const char *summary,
                                  bool delivered) {
+    uint32_t hash = fnv1a32(key ? key : "");
+    /* Head-dedup (bead nostrc-u40q): if the incoming record has the
+     * SAME (cat, key_hash8) as the current head slot, bump its count
+     * and refresh ts instead of pushing a new slot. Keeps a tight
+     * throttled burst (e.g. 20 sweep-dropped repeats) from wiping the
+     * ring of every other event. Summary + delivered on the head
+     * slot are also refreshed to the newest values so the UI keeps
+     * showing what happened most recently. */
+    if (w->recent_count > 0) {
+        recent_slot *head = &w->recent[w->recent_head];
+        if (head->cat == cat && head->key_hash8 == hash) {
+            head->ts        = ts;
+            head->delivered = delivered;
+            snprintf(head->summary, sizeof head->summary, "%s",
+                     summary ? summary : "");
+            /* Saturate at UINT32_MAX in the vanishingly unlikely
+             * event of overflow — the ring is short-lived. */
+            if (head->count < 0xffffffffu) head->count++;
+            else                            head->count = 0xffffffffu;
+            return;
+        }
+    }
     unsigned next = (w->recent_head + 1u) % NH_SYNCD_STATUS_RECENT_CAP;
     /* On the very first insertion, keep head at slot 0. */
     unsigned target = (w->recent_count == 0) ? 0u : next;
     recent_slot *s = &w->recent[target];
     s->ts        = ts;
     s->cat       = cat;
-    s->key_hash8 = fnv1a32(key ? key : "");
+    s->key_hash8 = hash;
     snprintf(s->summary, sizeof s->summary, "%s",
              summary ? summary : "");
     s->delivered = delivered;
+    s->count     = 1;
     w->recent_head = target;
     if (w->recent_count < NH_SYNCD_STATUS_RECENT_CAP) w->recent_count++;
 }
@@ -250,19 +280,37 @@ int nh_syncd_status_emit(nh_syncd_status_writer *w, const char *path) {
         const recent_slot *s = &recent[idx];
         char sum_esc[128];
         (void)nh_porthome_json_escape(s->summary, sum_esc, sizeof sum_esc);
-        if (appendf(body, sizeof body, &off,
-                    "%s{\"ts\":%" PRId64
-                    ",\"cat\":\"%s\","
-                    "\"key_hash8\":\"%08x\","
-                    "\"summary\":\"%s\","
-                    "\"delivered\":%s}",
-                    i ? "," : "",
-                    (int64_t)s->ts,
-                    nh_porthome_notify_category_slug(s->cat),
-                    (unsigned)s->key_hash8,
-                    sum_esc,
-                    s->delivered ? "true" : "false") != 0)
-            return -1;
+        if (s->count > 1u) {
+            if (appendf(body, sizeof body, &off,
+                        "%s{\"ts\":%" PRId64
+                        ",\"cat\":\"%s\","
+                        "\"key_hash8\":\"%08x\","
+                        "\"summary\":\"%s\","
+                        "\"delivered\":%s,"
+                        "\"count\":%u}",
+                        i ? "," : "",
+                        (int64_t)s->ts,
+                        nh_porthome_notify_category_slug(s->cat),
+                        (unsigned)s->key_hash8,
+                        sum_esc,
+                        s->delivered ? "true" : "false",
+                        (unsigned)s->count) != 0)
+                return -1;
+        } else {
+            if (appendf(body, sizeof body, &off,
+                        "%s{\"ts\":%" PRId64
+                        ",\"cat\":\"%s\","
+                        "\"key_hash8\":\"%08x\","
+                        "\"summary\":\"%s\","
+                        "\"delivered\":%s}",
+                        i ? "," : "",
+                        (int64_t)s->ts,
+                        nh_porthome_notify_category_slug(s->cat),
+                        (unsigned)s->key_hash8,
+                        sum_esc,
+                        s->delivered ? "true" : "false") != 0)
+                return -1;
+        }
     }
     if (appendf(body, sizeof body, &off, "]}") != 0) return -1;
 

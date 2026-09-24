@@ -20,6 +20,7 @@
 #include "nh_porthome_wrapkey.h"
 #include "nh_porthome_sandbox.h"
 #include "auth_porthome_fetch.h"
+#include "auth_porthome_status.h"
 #include "nostr/nip46/nip46_client.h"
 #include "nostr/nip46/nip46_types.h"
 
@@ -77,7 +78,20 @@ struct nh_auth_porthome_job {
 
   /* Progress artifact path (owned). */
   char *progress_path;
+
+  /* Bead nostrc-3o91 — provisioner "provisioner" key writer +
+   * cached per-account routing so a completed job can drop the
+   * status body under the account's XDG_STATE_HOME even from
+   * this root-side thread. `home` is a snapshot of
+   * nh_identity_account.home taken at start; NUL if unavailable
+   * (older account rows) — in that case the emit call is skipped
+   * and provisioner status stays a no-op for the login. */
+  nh_provisioner_status_writer *pstat;
+  char   account_home[512];
+  uid_t  account_uid;
+  gid_t  account_gid;
 };
+
 
 static pthread_mutex_t g_reg_mutex = PTHREAD_MUTEX_INITIALIZER;
 static nh_auth_porthome_job *g_reg[REG_CAP];
@@ -114,6 +128,7 @@ void nh_auth_porthome_registry_shutdown(void) {
     }
     free(g_reg[i]->progress_path);
     free(g_reg[i]->test_sealed_manifest);
+    nh_provisioner_status_writer_free(g_reg[i]->pstat);
     OPENSSL_cleanse(g_reg[i]->wrap_seed, sizeof g_reg[i]->wrap_seed);
     free(g_reg[i]);
     g_reg[i] = NULL;
@@ -145,6 +160,7 @@ static void job_release(nh_auth_porthome_job *j) {
   /* Last ref: caller must have already joined the thread. */
   free(j->progress_path);
   free(j->test_sealed_manifest);
+  nh_provisioner_status_writer_free(j->pstat);
   OPENSSL_cleanse(j->wrap_seed, sizeof j->wrap_seed);
   free(j);
 }
@@ -199,7 +215,18 @@ static int helper_progress_cb(void *ctx, uint64_t bytes, uint64_t files,
   nh_auth_porthome_job *j = (nh_auth_porthome_job *)ctx;
   if (!j) return 0;
   atomic_store(&j->bytes, bytes);
-  atomic_store(&j->files, (uint32_t)(files > 0xffffffffu ? 0xffffffffu : files));
+  uint32_t files_u32 = (uint32_t)(files > 0xffffffffu ? 0xffffffffu : files);
+  atomic_store(&j->files, files_u32);
+  /* Mirror the helper's file-count ticks into the provisioner
+   * status writer so the "provisioner" key's chunks_done reflects
+   * mid-fetch progress. total_files is 0 until the helper reports
+   * it via the artifact path — surface pending as (total_files -
+   * files) when known, else 0. */
+  if (j->pstat) {
+    uint32_t total = atomic_load(&j->total_files);
+    uint32_t pending = (total > files_u32) ? (total - files_u32) : 0u;
+    nh_provisioner_status_set_chunks(j->pstat, files_u32, pending);
+  }
   if (atomic_load(&j->cancelled)) return 1;
   (void)phase;
   return 0;
@@ -310,9 +337,29 @@ static nh_identity_rc label_write_into(void *ctx, int home_fd) {
 
 /* Job worker thread: derive home_key, call nh_identity_home_prepare
  * with the label callback (which runs the provisioner). */
+/* Small helper: emit the provisioner status body under the account
+ * home, if the caller populated it. Silently drops on empty home
+ * (older store rows) — the login still proceeds. Override via
+ * NH_PORTHOME_STATUS_DIR (tests) which takes precedence over the
+ * account home path. */
+static void emit_pstat(nh_auth_porthome_job *j) {
+  if (!j || !j->pstat) return;
+  const char *override = getenv("NH_PORTHOME_STATUS_DIR");
+  if ((!j->account_home[0]) && (!override || !*override)) return;
+  (void)nh_provisioner_status_emit(j->pstat, j->account_home,
+                                   j->account_uid, j->account_gid,
+                                   override);
+}
+
 static void *job_run(void *arg) {
   nh_auth_porthome_job *j = (nh_auth_porthome_job *)arg;
   atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_RUNNING);
+
+  /* Bead nostrc-3o91: PREPARING transition on entry. */
+  nh_provisioner_status_set_state(j->pstat, NH_PROV_ST_PREPARING);
+  nh_provisioner_status_set_last_error_class(j->pstat, "");
+  emit_pstat(j);
+  nh_provisioner_notify(j->pstat, "start", "Provisioning home", "");
 
   label_ctx lc = {0};
   lc.job = j;
@@ -407,6 +454,12 @@ static void *job_run(void *arg) {
     const char *off = getenv("NH_PORTHOME_FETCH_HELPER");
     if (!hp || access(hp, X_OK) != 0 || (off && strcmp(off, "off") == 0)) {
       atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_LIMITED);
+      /* Bead nostrc-3o91: early LIMITED bailout — record. */
+      nh_provisioner_status_set_state(j->pstat, NH_PROV_ST_ERROR);
+      nh_provisioner_status_set_last_error_class(j->pstat, "network");
+      emit_pstat(j);
+      nh_provisioner_notify(j->pstat, "error:network",
+                            "Provisioning unavailable", "");
       goto done;
     }
     /* Derive an account-pubkey and derived home_root_id for the
@@ -425,6 +478,12 @@ static void *job_run(void *arg) {
       memcpy(buf + 32, "porthome/v1/home-root-id-derive", 32);
       if (nh_porthome_sha256(buf, sizeof buf, tmp) != 0) {
         atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_LIMITED);
+        /* Bead nostrc-3o91: early LIMITED bailout — record. */
+        nh_provisioner_status_set_state(j->pstat, NH_PROV_ST_ERROR);
+        nh_provisioner_status_set_last_error_class(j->pstat, "network");
+        emit_pstat(j);
+        nh_provisioner_notify(j->pstat, "error:network",
+                              "Provisioning unavailable", "");
         goto done;
       }
       nh_porthome_hex64(tmp, lc.home_root_id_hex);
@@ -443,6 +502,12 @@ static void *job_run(void *arg) {
                "%s", acct.pubkey_hex);
     } else {
       atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_LIMITED);
+      /* Bead nostrc-3o91: early LIMITED bailout — record. */
+      nh_provisioner_status_set_state(j->pstat, NH_PROV_ST_ERROR);
+      nh_provisioner_status_set_last_error_class(j->pstat, "network");
+      emit_pstat(j);
+      nh_provisioner_notify(j->pstat, "error:network",
+                            "Provisioning unavailable", "");
       goto done;
     }
     snprintf(lc.d_tag, sizeof lc.d_tag, "nostr-homed.home.v1:personal");
@@ -454,6 +519,12 @@ static void *job_run(void *arg) {
     lc.use_helper = 1;
   } else {
     atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_LIMITED);
+    /* Bead nostrc-3o91: early LIMITED bailout — record. */
+    nh_provisioner_status_set_state(j->pstat, NH_PROV_ST_ERROR);
+    nh_provisioner_status_set_last_error_class(j->pstat, "network");
+    emit_pstat(j);
+    nh_provisioner_notify(j->pstat, "error:network",
+                          "Provisioning unavailable", "");
     goto done;
   }
 
@@ -470,6 +541,12 @@ static void *job_run(void *arg) {
       (state.outcome != NH_IDENTITY_OUTCOME_PENDING &&
        state.outcome != NH_IDENTITY_OUTCOME_DONE)) {
     atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_LIMITED);
+    /* Bead nostrc-3o91: early LIMITED bailout — record. */
+    nh_provisioner_status_set_state(j->pstat, NH_PROV_ST_ERROR);
+    nh_provisioner_status_set_last_error_class(j->pstat, "network");
+    emit_pstat(j);
+    nh_provisioner_notify(j->pstat, "error:network",
+                          "Provisioning unavailable", "");
     goto done;
   }
 
@@ -480,10 +557,21 @@ static void *job_run(void *arg) {
   opts.label_context = &lc;
 
   nh_identity_operation_state after;
+  /* Bead nostrc-3o91: about to run the labeler → provisioner is
+   * FETCHING (helper-path OR in-process materializer). */
+  nh_provisioner_status_set_state(j->pstat, NH_PROV_ST_FETCHING);
+  emit_pstat(j);
   rc = nh_identity_home_prepare(j->store, j->tx_id, &opts, &after);
   int cur = atomic_load(&j->state);
   if (rc == NH_IDENTITY_OK) {
     atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_OK);
+    /* Bead nostrc-3o91: terminal DONE + record ts. Also
+     * emit a done notification (throttled). */
+    nh_provisioner_status_set_state(j->pstat, NH_PROV_ST_DONE);
+    nh_provisioner_status_set_last_provisioned_ts(j->pstat,
+                                                  (int64_t)time(NULL));
+    emit_pstat(j);
+    nh_provisioner_notify(j->pstat, "done", "Home provisioned", "");
     /* W(3): drop the wrap seed to the per-uid runtime path so the
      * user-session syncd can pick it up without env plumbing. Warn-only;
      * failure keeps the env fallback path viable. */
@@ -497,6 +585,25 @@ static void *job_run(void *arg) {
     /* Labeler didn't tag a terminal state; treat as LIMITED so PAM
      * lets login proceed with the existing/empty home. */
     atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_LIMITED);
+    nh_provisioner_status_set_state(j->pstat, NH_PROV_ST_ERROR);
+    nh_provisioner_status_set_last_error_class(j->pstat, "unknown");
+    emit_pstat(j);
+    nh_provisioner_notify(j->pstat, "error:unknown",
+                          "Provisioning failed", "");
+  } else {
+    /* Terminal error/limited was tagged by the labeler — surface
+     * as ERROR with a best-effort class slug from the job state. */
+    const char *cls = (cur == NH_AUTH_PORTHOME_JOB_LIMITED)
+                        ? "network" : "unknown";
+    nh_provisioner_status_set_state(j->pstat, NH_PROV_ST_ERROR);
+    nh_provisioner_status_set_last_error_class(j->pstat, cls);
+    emit_pstat(j);
+    {
+      char slug[32];
+      snprintf(slug, sizeof slug, "error:%s", cls);
+      nh_provisioner_notify(j->pstat, slug,
+                            "Provisioning limited", "");
+    }
   }
 
 done:
@@ -547,6 +654,16 @@ int nh_auth_porthome_start(const nh_auth_porthome_config *config,
   (void)mlock(j->wrap_seed, sizeof j->wrap_seed);
   j->store = store;
   j->config = *config;
+  /* Bead nostrc-3o91: cache the routing bits + allocate the
+   * provisioner status writer. Failure to allocate is fatal to
+   * status reporting only — the provisioning job still runs. */
+  j->pstat = nh_provisioner_status_writer_new();
+  j->account_uid = (uid_t)account->uid;
+  j->account_gid = (gid_t)account->gid;
+  if (account->home[0]) {
+    strncpy(j->account_home, account->home,
+            sizeof j->account_home - 1);
+  }
 
   /* Consume any pending test-hook injection (single-shot). */
   if (g_next_test_sealed && g_next_test_sealed_len && g_next_test_fetch) {
