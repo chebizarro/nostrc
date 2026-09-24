@@ -810,3 +810,9 @@ env fallback, no key bytes in any log).
   (W(3) consumer), `src/fs/nostrfs.c` (legacy, untouched).
 - Beads: `nostrc-h10m` (epic), `nostrc-p6qp` (Phase 3 syncd), `nostrc-6quj`
   (feature-off `-Werror` CI precedent).
+
+---
+
+## Decision: lazy-subtree skip — 2026-09-24
+
+Maintainer APPROVED the lazy-subtree skip in `nh_syncd_reconcile` (design §15 item 1). P4-I MAY add a subtree-prefix skip inside the reconciler that suppresses eager materialization of paths under the porthome mountpoint (default `$HOME/Portable`), leaving those files to be fetched on demand by the FUSE overlay. The skip MUST be strictly opt-in via a new auth.conf knob (default OFF) so a syncd built against master remains behavior-preserving. The skip MUST NOT delete files that already exist under the skipped subtree from a prior reconcile — additive suppression only, never a destructive rewrite (§5.3/§6.4 no-push interlock discipline).
