@@ -41,6 +41,7 @@
 
 #include "nh_fuse_key.h"
 #include "nh_fuse_source.h"
+#include "nh_fuse_status.h"
 #include "nh_fuse_table.h"
 #include "nh_porthome_blossom.h"
 #include "nh_porthome_crypto.h"
@@ -124,27 +125,10 @@ static const uint64_t NOTIFY_INTERVAL_SECS = 10 * 60;
 
 static void write_status_json(void) {
     if (!g_status_path) return;
-    char tmp[512];
-    int n = snprintf(tmp, sizeof tmp, "%s.tmp", g_status_path);
-    if (n <= 0 || n >= (int)sizeof tmp) return;
-    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-    if (fd < 0) return;
     nh_fuse_source_stats_t st = {0};
     if (g_source) nh_fuse_source_stats(g_source, &st);
-    char body[512];
-    int m = snprintf(body, sizeof body,
-        "{\"schema\":1,\"mounted\":%s,\"generation\":%" PRIu64
-        ",\"tier0\":true,\"hits_local\":%" PRIu64
-        ",\"hits_cache\":%" PRIu64
-        ",\"fetches\":%" PRIu64
-        ",\"misses\":%" PRIu64
-        ",\"last_miss_epoch\":%" PRIu64 "}\n",
-        g_session ? "true" : "false",
-        g_table ? nh_fuse_table_generation(g_table) : 0ull,
-        st.hits_local, st.hits_cache, st.fetches, st.misses, st.last_miss_epoch);
-    if (m > 0 && m < (int)sizeof body) (void)write(fd, body, (size_t)m);
-    close(fd);
-    (void)rename(tmp, g_status_path);
+    uint64_t gen = g_table ? nh_fuse_table_generation(g_table) : 0ull;
+    (void)nh_fuse_write_status(g_status_path, g_session != NULL, gen, &st);
 }
 
 static void maybe_notify_miss(void) {
@@ -383,6 +367,15 @@ static void *nhf_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
     cfg->entry_timeout = 1.0;
     cfg->attr_timeout = 1.0;
     cfg->negative_timeout = 0.0;
+    /* Capture the live session so write_status_json() can report
+     * mounted:true. The high-level API sets fuse_get_context()->fuse
+     * before init fires; fuse_get_session(fuse) yields the low-level
+     * session pointer that fuse_main assembled through session_new +
+     * session_mount. Bead nostrc-h4tv. */
+    struct fuse_context *fctx = fuse_get_context();
+    if (fctx && fctx->fuse) {
+        g_session = fuse_get_session(fctx->fuse);
+    }
     write_status_json();
     /* Notify systemd after mount is live. */
     (void)sd_notify(0, "READY=1");
@@ -393,6 +386,9 @@ static void nhf_destroy(void *ud) {
     (void)ud;
     if (g_source) { nh_fuse_source_close(g_source); g_source = NULL; }
     if (g_table)  { nh_fuse_table_free(g_table); g_table = NULL; }
+    /* Session is being torn down by fuse_main's unmount + destroy path;
+     * clear our reference so the final status write reports mounted:false. */
+    g_session = NULL;
     write_status_json();
 }
 

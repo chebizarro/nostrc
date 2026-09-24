@@ -67,6 +67,11 @@ struct nh_fuse_source {
     void                  (*on_miss)(void *ud, const char *rel_path, int errcode);
     void                   *on_miss_ud;
 
+    /* Optional tier-3 test seam; see nh_fuse_source.h. */
+    int                   (*blossom_fetch_fn)(void *ud, const char *sha256_hex,
+                                              uint8_t **out_data, size_t *out_len);
+    void                   *blossom_fetch_ud;
+
     nh_fuse_source_stats_t  stats;
 };
 
@@ -144,6 +149,8 @@ int nh_fuse_source_open(const nh_fuse_source_cfg *cfg, nh_fuse_source **out) {
                                                   : NH_FUSE_OFFLINE_BUDGET_MS_DEFAULT;
     s->on_miss = cfg->on_miss;
     s->on_miss_ud = cfg->on_miss_ud;
+    s->blossom_fetch_fn = cfg->blossom_fetch;
+    s->blossom_fetch_ud = cfg->blossom_fetch_ud;
 
     /* Copy home_key onto an mlock'd page. */
     long ps = sysconf(_SC_PAGESIZE);
@@ -220,51 +227,94 @@ int nh_fuse_source_chunk(nh_fuse_source *s,
         return 0;
     }
 
-    /* Tier 2: local sealed-blob cache. */
+    /* Tier 2: local sealed-blob cache.
+     *
+     * If the sealed blob is present but decrypt fails (AEAD tag mismatch,
+     * address-vs-content disagreement, or a size we cannot even shape as
+     * a chunk), we treat the on-disk entry as POISONED per design §3.3:
+     *   "a pinned blob that only misses tier 2 due to on-disk corruption
+     *    is treated as a tier-3 fetch, not as an error".
+     * Concretely: log at NOTICE (never the home_key), unlink(2) the
+     * poisoned file so a subsequent tier-3 populate lands fresh, then
+     * fall through to tier 3. If tier 3 also fails, EIO propagates as
+     * before. The safety property "corrupt cache never emits wrong
+     * plaintext" is preserved — decrypt still refuses garbage; we just
+     * no longer strand the read on it. */
     if (s->cache) {
         char *path = nh_syncd_cache_get_path(s->cache, sha256_hex);
         if (path) {
             /* Read the sealed blob, decrypt, insert plaintext. */
             int fd = open(path, O_RDONLY | O_CLOEXEC);
-            free(path);
             if (fd >= 0) {
                 struct stat st;
                 if (fstat(fd, &st) == 0 && st.st_size > 0) {
                     uint8_t *ct = malloc((size_t)st.st_size);
-                    if (!ct) { close(fd); return -ENOMEM; }
+                    if (!ct) { close(fd); free(path); return -ENOMEM; }
                     size_t off = 0;
+                    int io_failed = 0;
                     while (off < (size_t)st.st_size) {
                         ssize_t r = read(fd, ct + off, (size_t)st.st_size - off);
-                        if (r < 0) { if (errno == EINTR) continue; free(ct); close(fd); return -EIO; }
+                        if (r < 0) {
+                            if (errno == EINTR) continue;
+                            io_failed = 1;
+                            break;
+                        }
                         if (r == 0) break;
                         off += (size_t)r;
                     }
                     close(fd);
+                    if (io_failed) {
+                        OPENSSL_cleanse(ct, off);
+                        free(ct);
+                        free(path);
+                        return -EIO;
+                    }
                     uint8_t *pt = NULL; size_t pt_len = 0;
                     int dr = nh_porthome_decrypt_chunk(s->home_key_locked,
                                                       ct, off, &pt, &pt_len);
                     OPENSSL_cleanse(ct, off);
                     free(ct);
-                    if (dr != 0) { note_miss(s, NULL, EIO); return -EIO; }
-                    int ir = lru_insert(s, sha256_hex, pt, pt_len);
-                    if (ir != 0) { OPENSSL_cleanse(pt, pt_len); free(pt); return ir; }
-                    *out_pt = pt; *out_len = pt_len;
-                    s->stats.hits_cache++;
-                    return 0;
+                    if (dr == 0) {
+                        int ir = lru_insert(s, sha256_hex, pt, pt_len);
+                        if (ir != 0) { OPENSSL_cleanse(pt, pt_len); free(pt); free(path); return ir; }
+                        *out_pt = pt; *out_len = pt_len;
+                        s->stats.hits_cache++;
+                        free(path);
+                        return 0;
+                    }
+                    /* Poisoned tier-2 entry. */
+                    fprintf(stderr,
+                            "porthome-fuse: NOTICE tier-2 cache entry %s "
+                            "failed AEAD verify (rc=%d); invalidating and "
+                            "falling through to tier-3\n",
+                            sha256_hex, dr);
+                    if (unlink(path) != 0 && errno != ENOENT) {
+                        fprintf(stderr,
+                                "porthome-fuse: NOTICE unlink poisoned "
+                                "tier-2 entry %s failed errno=%d\n",
+                                sha256_hex, errno);
+                    }
+                    /* Fall through to tier 3. */
+                } else {
+                    /* Empty or unstatable — treat as absent, walk to tier 3. */
                 }
-                close(fd);
             }
+            free(path);
         }
     }
 
-    /* Tier 3: Blossom fetch — content-sha verified in the wrapper. */
-    if (!s->blossom) { note_miss(s, NULL, EIO); return -EIO; }
+    /* Tier 3: Blossom fetch — content-sha verified in the wrapper (or by
+     * the test seam if wired). */
+    bool have_seam = (s->blossom_fetch_fn != NULL);
+    if (!s->blossom && !have_seam) { note_miss(s, NULL, EIO); return -EIO; }
 
     /* Bounded budget. The Blossom wrapper does its own per-request
      * timeout; we do NOT layer a second one on top (double-budget
      * bugs) — instead we log and treat any negative rc as terminal. */
     uint8_t *ct = NULL; size_t ct_len = 0;
-    int rc = nh_porthome_blossom_fetch(s->blossom, sha256_hex, &ct, &ct_len);
+    int rc = have_seam
+        ? s->blossom_fetch_fn(s->blossom_fetch_ud, sha256_hex, &ct, &ct_len)
+        : nh_porthome_blossom_fetch(s->blossom, sha256_hex, &ct, &ct_len);
     if (rc != 0 || !ct) {
         note_miss(s, NULL, EIO);
         return (rc == NH_PORTHOME_BLOSSOM_ERR_NOT_FOUND) ? -ENOENT : -EIO;

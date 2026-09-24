@@ -57,6 +57,15 @@ typedef struct {
      * miss is chunk-only. `errcode` is a positive errno (EIO, ENOENT). */
     void (*on_miss)(void *ud, const char *rel_path, int errcode);
     void                 *on_miss_ud;
+    /* Test seam. When non-NULL, called instead of nh_porthome_blossom_fetch
+     * for tier 3. Return-value contract mirrors the wrapper: 0 on success
+     * (with *out_data malloc'd, caller free()s), NH_PORTHOME_BLOSSOM_ERR_NOT_FOUND
+     * for a definitive 404, any other negative on failure. Bytes returned
+     * are trusted the same way the wrapper's own content-sha check would
+     * have trusted them — the seam is responsible for that guarantee. */
+    int  (*blossom_fetch)(void *ud, const char *sha256_hex,
+                          uint8_t **out_data, size_t *out_len);
+    void  *blossom_fetch_ud;
 } nh_fuse_source_cfg;
 
 int  nh_fuse_source_open (const nh_fuse_source_cfg *cfg, nh_fuse_source **out);

@@ -1573,6 +1573,7 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
     src/porthome-fuse/nostr-home-fuse.c
     src/porthome-fuse/nh_fuse_key.c
     src/porthome-fuse/nh_fuse_source.c
+    src/porthome-fuse/nh_fuse_status.c
     src/porthome-fuse/nh_fuse_table.c)
   target_compile_definitions(nostr-home-fuse PRIVATE FUSE_USE_VERSION=31)
   target_compile_options(nostr-home-fuse PRIVATE
@@ -1632,6 +1633,46 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
     target_link_libraries(test_fuse_key PRIVATE nostr_porthome)
     add_test(NAME homed_fuse_key COMMAND test_fuse_key)
     set_tests_properties(homed_fuse_key PROPERTIES
+      LABELS "nostr-homed;porthome;portable-fuse;portable" TIMEOUT 30)
+
+    # Regression: tier-2 AEAD failure must fall through to tier 3
+    # (bead nostrc-zw8v). Wrong-bytes-for-hash cache entry + stub
+    # Blossom serving the correct sealed bytes → read succeeds AND
+    # the poisoned cache entry is evicted / replaced.
+    add_executable(test_fuse_source_poison
+      tests/unit/test_fuse_source_poison.c
+      src/porthome-fuse/nh_fuse_source.c)
+    target_compile_options(test_fuse_source_poison PRIVATE
+      -Wall -Wextra -Wno-error -Wno-misleading-indentation
+      -Wno-unused-parameter)
+    target_include_directories(test_fuse_source_poison PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fuse)
+    target_link_libraries(test_fuse_source_poison PRIVATE
+      nostr_syncd_core nostr_porthome)
+    add_test(NAME homed_fuse_source_poison COMMAND test_fuse_source_poison)
+    set_tests_properties(homed_fuse_source_poison PROPERTIES
+      LABELS "nostr-homed;porthome;portable-fuse;portable" TIMEOUT 60)
+
+    # Regression: fuse-status.json's mounted flag reflects the session
+    # (bead nostrc-h4tv). Exercises the extracted writer with a fake
+    # non-NULL session pointer and then with NULL to prove both
+    # transitions. Full-mount coverage is deferred to the harness /
+    # live-smoke run.
+    add_executable(test_fuse_status
+      tests/unit/test_fuse_status.c
+      src/porthome-fuse/nh_fuse_status.c)
+    target_compile_options(test_fuse_status PRIVATE
+      -Wall -Wextra -Wno-error -Wno-misleading-indentation
+      -Wno-unused-parameter)
+    target_include_directories(test_fuse_status PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fuse)
+    # nh_fuse_source.h transitively pulls in libhanami's public headers;
+    # linking nostr_porthome exports the include path we need.
+    target_link_libraries(test_fuse_status PRIVATE nostr_porthome)
+    add_test(NAME homed_fuse_status COMMAND test_fuse_status)
+    set_tests_properties(homed_fuse_status PROPERTIES
       LABELS "nostr-homed;porthome;portable-fuse;portable" TIMEOUT 30)
 
     # Integration: harness mode exercises the wiring without needing
