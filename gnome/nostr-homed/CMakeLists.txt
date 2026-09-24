@@ -1688,8 +1688,10 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
   add_executable(nostr-home-fuse
     src/porthome-fuse/nostr-home-fuse.c
     src/porthome-fuse/nh_fuse_key.c
+    src/porthome-fuse/nh_fuse_reload.c
     src/porthome-fuse/nh_fuse_source.c
     src/porthome-fuse/nh_fuse_status.c
+    src/porthome-fuse/nh_fuse_status_writer.c
     src/porthome-fuse/nh_fuse_table.c)
   target_compile_definitions(nostr-home-fuse PRIVATE FUSE_USE_VERSION=31)
   target_compile_options(nostr-home-fuse PRIVATE
@@ -1699,8 +1701,10 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fuse
     ${FUSE3_INCLUDE_DIRS})
+  find_package(Threads REQUIRED)
   target_link_libraries(nostr-home-fuse PRIVATE
-    nostr_syncd_core nostr_porthome nostr_porthome_common ${FUSE3_LIBRARIES})
+    nostr_syncd_core nostr_porthome nostr_porthome_common ${FUSE3_LIBRARIES}
+    Threads::Threads)
   # sd_notify is optional — link when the systemd library is present.
   find_package(PkgConfig QUIET)
   if(PkgConfig_FOUND)
@@ -1790,6 +1794,40 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
     add_test(NAME homed_fuse_status COMMAND test_fuse_status)
     set_tests_properties(homed_fuse_status PROPERTIES
       LABELS "nostr-homed;porthome;portable-fuse;portable" TIMEOUT 30)
+
+    # nostrc-k4j4 — evict-thrash callback + rich fuse status writer.
+    add_executable(test_fuse_evict_notify
+      tests/unit/test_fuse_evict_notify.c
+      src/porthome-fuse/nh_fuse_status.c
+      src/porthome-fuse/nh_fuse_status_writer.c)
+    target_compile_options(test_fuse_evict_notify PRIVATE
+      -Wall -Wextra -Wno-error -Wno-misleading-indentation
+      -Wno-unused-parameter)
+    target_include_directories(test_fuse_evict_notify PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fuse)
+    target_link_libraries(test_fuse_evict_notify PRIVATE
+      nostr_syncd_core nostr_porthome nostr_porthome_common Threads::Threads)
+    add_test(NAME homed_fuse_evict_notify COMMAND test_fuse_evict_notify)
+    set_tests_properties(homed_fuse_evict_notify PROPERTIES
+      LABELS "nostr-homed;porthome;portable-fuse;portable" TIMEOUT 60)
+
+    # nostrc-plo4 — inotify-driven snapshot reload semantics.
+    add_executable(test_fuse_snapshot_reload
+      tests/unit/test_fuse_snapshot_reload.c
+      src/porthome-fuse/nh_fuse_reload.c
+      src/porthome-fuse/nh_fuse_table.c)
+    target_compile_options(test_fuse_snapshot_reload PRIVATE
+      -Wall -Wextra -Wno-error -Wno-misleading-indentation
+      -Wno-unused-parameter)
+    target_include_directories(test_fuse_snapshot_reload PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fuse)
+    target_link_libraries(test_fuse_snapshot_reload PRIVATE
+      nostr_syncd_core nostr_porthome nostr_porthome_common Threads::Threads)
+    add_test(NAME homed_fuse_snapshot_reload COMMAND test_fuse_snapshot_reload)
+    set_tests_properties(homed_fuse_snapshot_reload PROPERTIES
+      LABELS "nostr-homed;porthome;portable-fuse;portable" TIMEOUT 60)
 
     # Integration: harness mode exercises the wiring without needing
     # /dev/fuse — CI-friendly. Ships alongside real-mount scripts that

@@ -40,8 +40,10 @@
 #define FUSE_USE_VERSION 31
 
 #include "nh_fuse_key.h"
+#include "nh_fuse_reload.h"
 #include "nh_fuse_source.h"
 #include "nh_fuse_status.h"
+#include "nh_fuse_status_writer.h"
 #include "nh_fuse_table.h"
 #include "nh_porthome_blossom.h"
 #include "nh_porthome_crypto.h"
@@ -71,6 +73,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
+#include <pthread.h>
 #include <unistd.h>
 
 /* Fallback for older systemd headers. When systemd is unavailable we
@@ -84,8 +87,12 @@
 static int sd_notify(int u, const char *s) { (void)u; (void)s; return 0; }
 #endif
 
-/* Globals — single-threaded FUSE loop; simple state. */
+/* Globals — FUSE dispatcher is single-threaded (design D13), but the
+ * inotify-driven snapshot reload (nostrc-plo4) runs on a helper
+ * pthread. g_table is protected by g_table_rw: FUSE handlers take
+ * rdlock, the reload thread takes wrlock for the swap. */
 static nh_fuse_table    *g_table         = NULL;
+static pthread_rwlock_t  g_table_rw      = PTHREAD_RWLOCK_INITIALIZER;
 static nh_fuse_source   *g_source        = NULL;
 static nh_syncd_cache   *g_cache         = NULL;
 static nh_porthome_blossom_t *g_blossom  = NULL;
@@ -97,6 +104,14 @@ static uint32_t          g_gid_us        = 0;
 static _Atomic uint64_t  g_open_seq      = 0;
 static int               g_fuse_lock_fd  = -1;
 static struct fuse_session *g_session    = NULL;
+
+/* nostrc-k4j4: notifier + status writer for evict thrash + snapshot
+ * reload failure events. */
+static nh_porthome_notifier    *g_notifier      = NULL;
+static nh_fuse_status_writer   *g_status_writer = NULL;
+
+/* nostrc-plo4: inotify-driven snapshot reload. */
+static nh_fuse_reload_t        *g_reload        = NULL;
 
 typedef struct {
     /* Immutable for the life of the fh: entry snapshot at open() time. */
@@ -139,8 +154,15 @@ static void set_last_err(const char *class_slug) {
 static void write_unified_status(void) {
     nh_fuse_source_stats_t st = {0};
     if (g_source) nh_fuse_source_stats(g_source, &st);
+    pthread_rwlock_rdlock(&g_table_rw);
     uint64_t gen = g_table ? nh_fuse_table_generation(g_table) : 0ull;
+    pthread_rwlock_unlock(&g_table_rw);
     uint64_t cbytes = g_cache ? nh_syncd_cache_used_bytes(g_cache) : 0ull;
+    unsigned evr    = g_cache ? nh_syncd_cache_evict_count_1h(g_cache) : 0u;
+    /* Two writers exist: the stateless flat writer (kept for backward
+     * compat + any external consumers still parsing the older shape)
+     * and the new writer that adds recent[]. Both merge into the same
+     * "fuse" key; the last one wins. Emit the rich one last. */
     (void)nh_fuse_write_status_unified(NULL,
                                        g_session != NULL,
                                        g_mountpoint,
@@ -149,13 +171,26 @@ static void write_unified_status(void) {
                                        &st,
                                        g_last_err_class,
                                        g_last_err_ts);
+    if (g_status_writer) {
+        nh_fuse_status_writer_set_mounted    (g_status_writer, g_session != NULL);
+        nh_fuse_status_writer_set_mountpoint (g_status_writer, g_mountpoint);
+        nh_fuse_status_writer_set_generation (g_status_writer, gen);
+        nh_fuse_status_writer_set_cache_bytes(g_status_writer, cbytes);
+        nh_fuse_status_writer_set_stats      (g_status_writer, &st);
+        nh_fuse_status_writer_set_last_error (g_status_writer,
+                                              g_last_err_class, g_last_err_ts);
+        nh_fuse_status_writer_set_evict_rate (g_status_writer, evr);
+        (void)nh_fuse_status_writer_emit(g_status_writer, NULL);
+    }
 }
 
 static void write_status_json(void) {
     if (!g_status_path) return;
     nh_fuse_source_stats_t st = {0};
     if (g_source) nh_fuse_source_stats(g_source, &st);
+    pthread_rwlock_rdlock(&g_table_rw);
     uint64_t gen = g_table ? nh_fuse_table_generation(g_table) : 0ull;
+    pthread_rwlock_unlock(&g_table_rw);
     (void)nh_fuse_write_status(g_status_path, g_session != NULL, gen, &st);
     /* Mirror into the unified porthome-status.json under "fuse". */
     write_unified_status();
@@ -207,13 +242,101 @@ static void on_source_miss(void *ud, const char *rel, int errcode) {
 
 /* ─── FUSE operations ────────────────────────────────────────────── */
 
+/* nostrc-plo4: rdlock helpers so table lookups race-free with a
+ * background swap. Kept trivial so callers stay legible. */
+static inline void table_rdlock(void)   { pthread_rwlock_rdlock(&g_table_rw); }
+static inline void table_unlock(void)   { pthread_rwlock_unlock(&g_table_rw); }
+
+/* Snapshot a table_find into caller-owned fields so the rdlock can be
+ * released before running the FUSE fill callbacks. Handlers that only
+ * need e->kind + mode + size use the copy directly; open() extracts
+ * chunk lists under the lock and then releases it. */
+
+/* nostrc-k4j4: evict-thrash surface. Mirrors the syncd on_evict_thrash
+ * (docs/reviews/porthome-quotas-live-2026-09-24.md). Throttling is
+ * handled inside the notifier. */
+static void on_evict_thrash(void *ud,
+                            unsigned evict_count,
+                            unsigned threshold,
+                            int64_t  first_evict_epoch) {
+    (void)ud; (void)first_evict_epoch;
+    if (!g_notifier) return;
+    char summary[128];
+    char body[192];
+    snprintf(summary, sizeof summary,
+             "portable home cache thrashing (fuse)");
+    snprintf(body, sizeof body,
+             "%u cache evictions in the last hour (threshold %u) inside the "
+             "portable-home FUSE mount. Consider raising the quota with "
+             "`nostr-home-status quota --set-override`.",
+             evict_count, threshold);
+    (void)nh_porthome_notify(g_notifier,
+                             "nostr-home-fuse",
+                             "folder-remote",
+                             summary,
+                             body,
+                             NH_NOTIFY_CAT_LIMITED_MODE,
+                             "fuse-cache-thrashing");
+    set_last_err("cache-thrashing");
+    write_status_json();
+}
+
+/* nostrc-plo4: reload load + swap + fail callbacks. */
+static int reload_load(void *ud, const char *state_dir,
+                       nh_fuse_table **out_new) {
+    (void)ud;
+    if (!state_dir || !out_new) return -EINVAL;
+    return nh_fuse_table_load(state_dir, g_uid_us, g_gid_us, out_new);
+}
+static void reload_swap(void *ud, nh_fuse_table *nt) {
+    (void)ud;
+    if (!nt) return;
+    pthread_rwlock_wrlock(&g_table_rw);
+    nh_fuse_table *old = g_table;
+    g_table = nt;
+    pthread_rwlock_unlock(&g_table_rw);
+    /* Free the old table AFTER releasing the wrlock — nothing new can
+     * take a pointer into it once g_table has flipped. Handlers that
+     * hold a stale rdlock-scoped pointer are impossible because the
+     * wrlock was exclusive across their whole rdlock window. */
+    if (old) nh_fuse_table_free(old);
+    /* Re-write the status file so operators see the generation bump
+     * immediately. */
+    write_status_json();
+    fprintf(stderr, "porthome-fuse: snapshot reloaded gen=%" PRIu64 "\n",
+            nh_fuse_table_generation(nt));
+}
+static void reload_fail(void *ud, int rc) {
+    (void)ud;
+    fprintf(stderr,
+            "porthome-fuse: NOTICE snapshot reload failed rc=%d — keeping "
+            "current generation\n", rc);
+    set_last_err("snapshot-reload-failed");
+    if (g_notifier) {
+        char body[128];
+        snprintf(body, sizeof body,
+                 "New snapshot rejected (rc=%d). Continuing to serve the "
+                 "current generation.", rc);
+        (void)nh_porthome_notify(g_notifier,
+                                 "nostr-home-fuse",
+                                 "folder-remote",
+                                 "portable home snapshot reload failed",
+                                 body,
+                                 NH_NOTIFY_CAT_LIMITED_MODE,
+                                 "fuse-snapshot-reload-failed");
+    }
+    write_status_json();
+}
+
+
 static int nhf_getattr(const char *path, struct stat *st,
                        struct fuse_file_info *fi) {
     (void)fi;
     memset(st, 0, sizeof *st);
     const char *rel = (path && path[0] == '/') ? path + 1 : path;
+    table_rdlock();
     const nh_fuse_entry_t *e = nh_fuse_table_find(g_table, rel);
-    if (!e) return -ENOENT;
+    if (!e) { table_unlock(); return -ENOENT; }
     st->st_uid = g_uid_us;
     st->st_gid = g_gid_us;
     st->st_nlink = 1;
@@ -233,6 +356,7 @@ static int nhf_getattr(const char *path, struct stat *st,
     st->st_mtim.tv_nsec = (long)(e->mtime_ns % 1000000000ull);
     st->st_atim = st->st_mtim;
     st->st_ctim = st->st_mtim;
+    table_unlock();
     return 0;
 }
 
@@ -253,25 +377,30 @@ static int nhf_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                        enum fuse_readdir_flags flags) {
     (void)off; (void)fi; (void)flags;
     const char *rel = (path && path[0] == '/') ? path + 1 : path;
+    table_rdlock();
     const nh_fuse_entry_t *e = nh_fuse_table_find(g_table, rel);
-    if (!e) return -ENOENT;
-    if (e->kind != NH_FUSE_KIND_DIR) return -ENOTDIR;
+    if (!e) { table_unlock(); return -ENOENT; }
+    if (e->kind != NH_FUSE_KIND_DIR) { table_unlock(); return -ENOTDIR; }
     filler(buf, ".",  NULL, 0, 0);
     filler(buf, "..", NULL, 0, 0);
     readdir_ud u = { buf, filler };
-    return nh_fuse_table_readdir(g_table, rel, readdir_cb, &u);
+    int rc = nh_fuse_table_readdir(g_table, rel, readdir_cb, &u);
+    table_unlock();
+    return rc;
 }
 
 static int nhf_readlink(const char *path, char *buf, size_t len) {
     const char *rel = (path && path[0] == '/') ? path + 1 : path;
+    table_rdlock();
     const nh_fuse_entry_t *e = nh_fuse_table_find(g_table, rel);
-    if (!e) return -ENOENT;
-    if (e->kind != NH_FUSE_KIND_SYMLINK) return -EINVAL;
+    if (!e) { table_unlock(); return -ENOENT; }
+    if (e->kind != NH_FUSE_KIND_SYMLINK) { table_unlock(); return -EINVAL; }
     const char *t = e->symlink_target ? e->symlink_target : "";
     size_t tn = strlen(t);
     if (tn + 1 > len) tn = len - 1;
     memcpy(buf, t, tn);
     buf[tn] = '\0';
+    table_unlock();
     return 0;
 }
 
@@ -281,13 +410,14 @@ static int nhf_open(const char *path, struct fuse_file_info *fi) {
     if (acc != O_RDONLY) return -EROFS;
     if (fi->flags & (O_CREAT | O_TRUNC | O_APPEND)) return -EROFS;
     const char *rel = (path && path[0] == '/') ? path + 1 : path;
+    table_rdlock();
     const nh_fuse_entry_t *e = nh_fuse_table_find(g_table, rel);
-    if (!e) return -ENOENT;
-    if (e->kind == NH_FUSE_KIND_DIR) return -EISDIR;
-    if (e->kind == NH_FUSE_KIND_SYMLINK) return -ELOOP;
+    if (!e) { table_unlock(); return -ENOENT; }
+    if (e->kind == NH_FUSE_KIND_DIR) { table_unlock(); return -EISDIR; }
+    if (e->kind == NH_FUSE_KIND_SYMLINK) { table_unlock(); return -ELOOP; }
 
     nh_fuse_fh *fh = calloc(1, sizeof *fh);
-    if (!fh) return -ENOMEM;
+    if (!fh) { table_unlock(); return -ENOMEM; }
     fh->generation = nh_fuse_table_generation(g_table);
     strncpy(fh->rel, e->rel ? e->rel : rel, NH_FUSE_MAX_PATH_BYTES);
     fh->rel[NH_FUSE_MAX_PATH_BYTES] = '\0';
@@ -296,15 +426,20 @@ static int nhf_open(const char *path, struct fuse_file_info *fi) {
     memcpy(fh->content_hash_hex, e->content_hash_hex, sizeof fh->content_hash_hex);
     if (e->n_chunks > 0) {
         fh->chunks_hex = calloc(e->n_chunks, sizeof *fh->chunks_hex);
-        if (!fh->chunks_hex) { fh_free(fh); return -ENOMEM; }
+        if (!fh->chunks_hex) { fh_free(fh); table_unlock(); return -ENOMEM; }
         for (size_t i = 0; i < e->n_chunks; i++) {
             fh->chunks_hex[i] = strdup(e->chunks_hex[i]);
-            if (!fh->chunks_hex[i]) { fh_free(fh); return -ENOMEM; }
+            if (!fh->chunks_hex[i]) { fh_free(fh); table_unlock(); return -ENOMEM; }
         }
         fh->n_chunks = e->n_chunks;
     }
+    table_unlock();
     fi->fh = (uint64_t)(uintptr_t)fh;
-    /* Content immutable within a generation. */
+    /* Content immutable within a generation — kernel_cache=1 in init.
+     * Note the fh carries its own copy of chunks_hex + declared_size so
+     * subsequent nhf_read calls DO NOT need to consult g_table for
+     * content resolution: an already-open handle keeps serving its
+     * captured generation across snapshot reloads (nostrc-plo4). */
     fi->keep_cache = 1;
     return 0;
 }
@@ -317,13 +452,16 @@ static int nhf_read(const char *path, char *buf, size_t len, off_t off,
     if (fh->stale) return -EIO;
     /* Detect stale-open: generation changed AND our entry no longer
      * exists at the same path in the new table. */
+    table_rdlock();
     if (fh->generation != nh_fuse_table_generation(g_table)) {
         const nh_fuse_entry_t *e = nh_fuse_table_find(g_table, fh->rel);
         if (!e || e->kind != NH_FUSE_KIND_FILE) {
+            table_unlock();
             fh->stale = true;
             return -EIO;
         }
     }
+    table_unlock();
     /* Chunk size: defaults to design's 4 MiB. Overridable via
      * NH_FUSE_CHUNK_SIZE for live-acceptance rigs whose Blossom
      * server enforces a smaller PUT ceiling than the design chunk
@@ -431,8 +569,13 @@ static void nhf_destroy(void *ud) {
     /* mount teardown — clear the last-error slot so a subsequent
      * clean unmount doesn't leave a stale class in the status. */
     set_last_err("");
+    /* nostrc-plo4: stop the reload watcher before freeing g_table so
+     * no wrlock races us during teardown. */
+    if (g_reload) { nh_fuse_reload_free(g_reload); g_reload = NULL; }
     if (g_source) { nh_fuse_source_close(g_source); g_source = NULL; }
+    pthread_rwlock_wrlock(&g_table_rw);
     if (g_table)  { nh_fuse_table_free(g_table); g_table = NULL; }
+    pthread_rwlock_unlock(&g_table_rw);
     /* Session is being torn down by fuse_main's unmount + destroy path;
      * clear our reference so the final status write reports mounted:false. */
     g_session = NULL;
@@ -599,6 +742,22 @@ int main(int argc, char **argv) {
         free(cdir);
     }
 
+    /* nostrc-k4j4: notifier + rich status writer. Wired here so an
+     * evict-thrash callback fires even before the FUSE session is
+     * mounted (evictions can be caused by tier-3 pre-fetches inside
+     * nhf_init if any). The record callback mirrors every notify
+     * attempt into the "fuse" key's recent[] ring. */
+    g_notifier      = nh_porthome_notifier_new();
+    g_status_writer = nh_fuse_status_writer_new();
+    if (g_status_writer && g_mountpoint)
+        nh_fuse_status_writer_set_mountpoint(g_status_writer, g_mountpoint);
+    if (g_notifier && g_status_writer) {
+        nh_porthome_notifier_set_record(g_notifier,
+            nh_fuse_status_writer_notify_record, g_status_writer);
+    }
+    if (g_cache && g_notifier)
+        nh_syncd_cache_set_evict_notify(g_cache, on_evict_thrash, NULL);
+
     /* Open Blossom client (fetch only — no signer). Server list from
      * $NH_FUSE_BLOSSOM (comma-separated https URLs). If unset the
      * client is not created; tier 3 will EIO — the mount still
@@ -667,7 +826,11 @@ int main(int argc, char **argv) {
          * can eyeball porthome-status.json without a real mount. */
         write_unified_status();
         nh_fuse_source_close(g_source); g_source = NULL;
+        pthread_rwlock_wrlock(&g_table_rw);
         nh_fuse_table_free(g_table); g_table = NULL;
+        pthread_rwlock_unlock(&g_table_rw);
+        if (g_notifier)      { nh_porthome_notifier_free(g_notifier); g_notifier = NULL; }
+        if (g_status_writer) { nh_fuse_status_writer_free(g_status_writer); g_status_writer = NULL; }
         if (g_blossom) nh_porthome_blossom_free(g_blossom);
         if (g_cache) nh_syncd_cache_close(g_cache);
         free(home); free(g_state_dir); free(g_mountpoint); free(g_status_path);
@@ -687,6 +850,29 @@ int main(int argc, char **argv) {
                      "fsname=nostr-home,subtype=porthome";
     fargv[fargc] = NULL;
 
+    /* nostrc-plo4: spawn the inotify-driven snapshot reload watcher.
+     * Failure to open inotify (exotic FS) is soft — the module reports
+     * disabled and the mount still serves reads; case (f) simply
+     * regresses to "unmount+remount to see a new generation". */
+    {
+        nh_fuse_reload_cfg rcfg = {
+            .state_dir       = g_state_dir,
+            .watch_basename  = "snapshot.json",
+            .debounce_ms     = 250,
+            .disable_inotify = false,
+            .load_fn         = reload_load,   .load_ud = NULL,
+            .swap_fn         = reload_swap,   .swap_ud = NULL,
+            .fail_fn         = reload_fail,   .fail_ud = NULL,
+        };
+        int rr = nh_fuse_reload_new(&rcfg, &g_reload);
+        if (rr != 0) {
+            fprintf(stderr,
+                    "porthome-fuse: NOTICE reload watcher init rc=%d — "
+                    "continuing without inotify\n", rr);
+            g_reload = NULL;
+        }
+    }
+
     /* Post-mount self-check must happen from a helper — fuse_main is
      * blocking. Rely on the init callback to sd_notify READY=1; the
      * mountpoint st_dev comparison is a manual verification we do
@@ -694,7 +880,11 @@ int main(int argc, char **argv) {
      */
     int rrc = fuse_main(fargc, fargv, &g_ops, NULL);
 
-    /* Cleanup. */
+    /* Cleanup. nhf_destroy already tore down g_reload (idempotent) but
+     * defend against paths that skip it. */
+    if (g_reload) { nh_fuse_reload_free(g_reload); g_reload = NULL; }
+    if (g_notifier)      { nh_porthome_notifier_free(g_notifier); g_notifier = NULL; }
+    if (g_status_writer) { nh_fuse_status_writer_free(g_status_writer); g_status_writer = NULL; }
     if (g_blossom) nh_porthome_blossom_free(g_blossom);
     if (g_cache) nh_syncd_cache_close(g_cache);
     free(home); free(g_state_dir); free(g_mountpoint); free(g_status_path);
