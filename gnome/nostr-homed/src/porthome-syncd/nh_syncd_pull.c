@@ -44,6 +44,13 @@
 #define _GNU_SOURCE
 
 #include "nh_syncd.h"
+/* Do NOT pull in nh_syncd_cache.h here: it redefines nh_syncd_notify_fn
+ * with a different signature (a design wart, kept for source-compat).
+ * We only need one function + one status constant — declare locally. */
+struct nh_syncd_pin_ring;
+#define NH_SYNCD_CACHE_OK_LOCAL 0
+extern int nh_syncd_pin_ring_promote_from_snapshot(struct nh_syncd_pin_ring *r,
+                                                   const char *state_dir);
 #include "nh_porthome_crypto.h"
 #include "nh_porthome_manifest.h"
 
@@ -180,6 +187,17 @@ void nh_syncd_pull_on_pointer(void *ud,
         c->last_applied_generation = remote_gen;
         atomic_fetch_add(&c->total_conflicts,
                          nh_syncd_reconcile_result_conflicts(res));
+        /* W(1)(b): promote from snapshot on the post-reconcile state.
+         * The reconciler has already persisted snapshot.json via
+         * state_dir_for_persist, so promote_from_snapshot reads the
+         * fresh generation + blob set. Warn-only on failure. */
+        if (c->opts.pin_ring && c->opts.state_dir_for_persist) {
+            int prc = nh_syncd_pin_ring_promote_from_snapshot(
+                (struct nh_syncd_pin_ring *)c->opts.pin_ring,
+                c->opts.state_dir_for_persist);
+            if (prc != NH_SYNCD_CACHE_OK_LOCAL)
+                fprintf(stderr, "syncd/pull: pin_ring promote rc=%d\n", prc);
+        }
     } else if (emsg) {
         fprintf(stderr, "syncd/pull: reconcile rc=%d msg=%s\n", rrc, emsg);
     }

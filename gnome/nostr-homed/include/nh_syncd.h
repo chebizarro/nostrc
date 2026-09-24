@@ -567,6 +567,12 @@ typedef struct {
     const char     *account_pubkey_hex;
     /* The `d` tag we expect. */
     const char     *d_tag;
+
+    /* W(1)(b): optional generation pin ring (design §6.5). When set,
+     * every successful reconcile promotes the current post-reconcile
+     * snapshot into the ring so blobs referenced by the last N=10
+     * generations are pinned against LRU eviction. NULL disables. */
+    struct nh_syncd_pin_ring *pin_ring;
 } nh_syncd_pull_opts;
 
 int  nh_syncd_pull_ctx_new (const nh_syncd_pull_opts *opts,

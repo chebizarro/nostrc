@@ -1425,11 +1425,40 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     set_tests_properties(homed_syncd_pin_ring PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
 
+    # W(1) — daemon-wire coverage: promote_from_snapshot walks a
+    # ${state_dir}/snapshot.json exactly like the daemon does after
+    # nh_syncd_push_batch and nh_syncd_reconcile succeed.
+    add_executable(test_syncd_pin_ring_from_snapshot
+      tests/unit/test_syncd_pin_ring_from_snapshot.c)
+    target_link_libraries(test_syncd_pin_ring_from_snapshot PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_pin_ring_from_snapshot
+      COMMAND test_syncd_pin_ring_from_snapshot)
+    set_tests_properties(homed_syncd_pin_ring_from_snapshot PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
+
     add_executable(test_syncd_sweep tests/integration/test_syncd_sweep.c)
     target_link_libraries(test_syncd_sweep PRIVATE nostr_syncd_core)
     add_test(NAME homed_syncd_sweep COMMAND test_syncd_sweep)
     set_tests_properties(homed_syncd_sweep PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 60)
+
+    # W(2) — real-Blossom sweep operator probe (bead nostrc-p6qp).
+    # NOT a CTest case: it hits real infra and must be operator-driven.
+    add_executable(nostr-home-sweep-probe
+      tests/integration/nostr_home_sweep_probe.c)
+    target_link_libraries(nostr-home-sweep-probe PRIVATE
+      nostr_syncd_core nostr_porthome nostr)
+    target_compile_options(nostr-home-sweep-probe PRIVATE
+      -Wall -Wextra -Wno-misleading-indentation -Wno-unused-parameter)
+
+    # W(3) — broker-seed-drop <-> syncd handoff coverage (bead nostrc-p6qp).
+    add_executable(test_syncd_broker_seed_drop
+      tests/integration/test_syncd_broker_seed_drop.c)
+    target_link_libraries(test_syncd_broker_seed_drop PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_broker_seed_drop
+      COMMAND test_syncd_broker_seed_drop $<TARGET_FILE:nostr-home-syncd>)
+    set_tests_properties(homed_syncd_broker_seed_drop PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
 
     # OFF-closure verification: when AUTH_RUNTIME is also on, prove
     # nostr-authd has no nh_syncd_cache_ / nostr-home-syncd symbols.
