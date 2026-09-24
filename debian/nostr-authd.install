@@ -2,3 +2,4 @@ usr/sbin/nostr-authd
 usr/lib/systemd/system/nostr-authd.service
 etc/nostr-auth/auth.conf
 usr/share/nostr-homed/auth.conf.sample
+usr/lib/sysusers.d/nostr-auth-greeter.conf

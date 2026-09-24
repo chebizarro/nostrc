@@ -10,19 +10,35 @@
 
 export DH_VERBOSE = 1
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
-# Phase 5 (bead nostrc-h10m.2) — the portable-home broker glue
-# (auth_porthome*.c) trips three -Werror analyses that only fire
-# under the debian hardening set (D_FORTIFY_SOURCE=3 + -O3 + LTO):
-#   - -Werror=maybe-uninitialized (auth_porthome_fetch.c:199)
-#   - -Werror=unused-result       (auth_porthome.c:1125, chown())
-#   - -Werror=stringop-truncation (auth_porthome.c:438, 537, strncpy)
-# The upstream CMake target already sets -Werror; overriding at the
-# CMake level would leak into the local build. Downgrade at the deb
-# packaging layer only. Tracked separately as a runtime clean-up.
-# Force-include a small wrapper that guards _GNU_SOURCE with an
-# #ifndef so files defining it themselves (e.g. auth_protocol.c)
-# do not trip -Werror -Wcpp. See debian/porthome-featuretest.h.
-export DEB_CFLAGS_MAINT_APPEND = -Wno-error=maybe-uninitialized -Wno-error=unused-result -Wno-error=stringop-truncation -Wno-error=unused-variable -include $(CURDIR)/debian/porthome-featuretest.h
+# Phase 5 (bead nostrc-h10m.3) — the three -Werror findings that
+# only fire under the debian hardening set (D_FORTIFY_SOURCE=3 +
+# -O3 + LTO) in auth_porthome*.c are now fixed upstream:
+#   - -Werror=maybe-uninitialized (auth_porthome_fetch.c: unified
+#     scope, removed goto-past-declaration)
+#   - -Werror=unused-result       (auth_porthome.c: chown() return
+#     checked + logged, non-fatal)
+#   - -Werror=stringop-truncation (auth_porthome.c: strncpy replaced
+#     with snprintf so the destination is always null-terminated)
+# The corresponding -Wno-error=maybe-uninitialized override has
+# been dropped (the auth_porthome_fetch.c fix is scoped-complete).
+# -Wno-error=unused-result and -Wno-error=stringop-truncation are
+# retained because the SAME warning classes still fire in files
+# outside auth_porthome*.c that are owned by other agents:
+#   * unused-result:
+#     - src/porthome/nh_porthome_provision.c   (fchownat)
+#     - src/porthome-common/nh_porthome_status.c (write)
+#     - src/porthome-common/nostr-home-status.c  (system)
+#     - src/porthome-syncd/nh_syncd_reconcile.c  (asprintf)
+#   * stringop-truncation:
+#     - src/porthome-syncd/nh_syncd_state.c      (strncpy)
+# Tracked as nostrc-cvqe; once those land drop both overrides.
+# -Wno-error=unused-variable remains because it still fires
+# elsewhere in the tree under LTO.
+# The -include of debian/porthome-featuretest.h remains: it force-
+# includes <limits.h> and <time.h> and defines _GNU_SOURCE (with an
+# #ifndef guard) for translation units in libgo and elsewhere that
+# still assume the older glibc defaults.
+export DEB_CFLAGS_MAINT_APPEND = -Wno-error=unused-result -Wno-error=stringop-truncation -Wno-error=unused-variable -include $(CURDIR)/debian/porthome-featuretest.h
 
 DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 

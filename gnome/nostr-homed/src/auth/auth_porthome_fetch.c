@@ -183,18 +183,21 @@ static void drain_progress(int stdout_fd, uint64_t deadline_ms,
         int pr = poll(&pfd, 1, wait);
         if (pr < 0) { if (errno == EINTR) continue; return; }
         if (pr == 0) return;
-        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-            /* Try a final read then return. */
-            ssize_t n = read(stdout_fd, chunk, sizeof chunk);
-            if (n <= 0) return;
-            /* Fall through to lex the chunk. */
-            goto have_chunk;
-        }
+        /* nostrc-h10m.3: unify `n` into a single scope so GCC's
+         * -Wmaybe-uninitialized under -O3+LTO can prove it is always
+         * assigned before the split loop below (the previous version
+         * jumped past an inner declaration via `goto have_chunk`). */
+        ssize_t n = 0;
+        int hup = (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0;
         {
-            ssize_t n = read(stdout_fd, chunk, sizeof chunk);
-            if (n < 0) { if (errno == EINTR) continue; return; }
-            if (n == 0) return; /* EOF */
-        have_chunk:;
+            n = read(stdout_fd, chunk, sizeof chunk);
+            if (hup) {
+                /* Final read on hangup/err: EOF or error → done. */
+                if (n <= 0) return;
+            } else {
+                if (n < 0) { if (errno == EINTR) continue; return; }
+                if (n == 0) return; /* EOF */
+            }
             /* Split at '\n', accumulate up to MAX_PROGRESS_LINE. */
             for (ssize_t i = 0; i < n; i++) {
                 unsigned char c = chunk[i];

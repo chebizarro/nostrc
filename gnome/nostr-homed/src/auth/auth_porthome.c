@@ -435,8 +435,12 @@ static void *job_run(void *arg) {
     nh_identity_account acct;
     if (nh_identity_store_lookup_by_id(j->store, j->account_id, &acct)
         == NH_IDENTITY_OK && acct.pubkey_hex[0]) {
-      strncpy(lc.account_pubkey_hex, acct.pubkey_hex,
-              sizeof lc.account_pubkey_hex - 1);
+      /* nostrc-h10m.3: use snprintf to copy the pubkey hex — this
+       * guarantees null-termination and silences GCC's
+       * -Wstringop-truncation. The 64-char hex fits inside the
+       * 65-byte destination with room for the terminator. */
+      snprintf(lc.account_pubkey_hex, sizeof lc.account_pubkey_hex,
+               "%s", acct.pubkey_hex);
     } else {
       atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_LIMITED);
       goto done;
@@ -534,8 +538,11 @@ int nh_auth_porthome_start(const nh_auth_porthome_config *config,
   atomic_init(&j->total_bytes, 0);
   atomic_init(&j->files, 0);
   atomic_init(&j->total_files, 0);
-  strncpy(j->account_id, account->account_id, sizeof j->account_id - 1);
-  strncpy(j->tx_id, tx_id, sizeof j->tx_id - 1);
+  /* nostrc-h10m.3: snprintf both copies so the destination is always
+   * null-terminated even if the source is exactly as long as the
+   * buffer — silences -Wstringop-truncation under -O3+LTO. */
+  snprintf(j->account_id, sizeof j->account_id, "%s", account->account_id);
+  snprintf(j->tx_id, sizeof j->tx_id, "%s", tx_id);
   memcpy(j->wrap_seed, wrap_seed, 32);
   (void)mlock(j->wrap_seed, sizeof j->wrap_seed);
   j->store = store;
@@ -1122,7 +1129,14 @@ int nh_auth_broker_porthome_drop_seed_for_uid(uid_t uid,
   /* Chown the per-uid dir to <uid>:<uid> so only the target user can
    * traverse it. Best effort — if we're not root the chown fails and
    * we still write with root:uid on the file itself. */
-  (void)chown(udir, uid, uid);
+  /* nostrc-h10m.3: check chown() return to silence -Wunused-result;
+   * the failure is genuinely non-fatal (see above) so we log at INFO
+   * and continue rather than abort. */
+  if (chown(udir, uid, uid) != 0) {
+    syslog(LOG_INFO,
+           "porthome/seed-drop: chown(%s, %u, %u) failed errno=%d (non-fatal; file still written with correct uid)",
+           udir, (unsigned)uid, (unsigned)uid, errno);
+  }
 
   char hex[65]; seed_to_hex64(seed, hex);
   /* Two drop files, both read-once-and-unlink by their respective

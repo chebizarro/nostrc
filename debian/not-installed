@@ -20,22 +20,22 @@ usr/lib/*/libnostr_nip55l_core.so
 usr/lib/*/libnostr_nip55l_glib.so
 
 # Test binary that installs via a stray CMake rule (build-tree leak).
-# The build path prefix varies by builder — glob both known variants.
+# Broader glob catches every build dir (nostrc-build, nostrc-porthome-pkg,
+# nostrc-h10m-pkg, ...). Upstream fix tracked in nostrc-t58t.
 tmp/nostrc-build/nostrc-0.3.0/obj-*-linux-gnu/tools/test_relay_eose
-tmp/nostrc-porthome-pkg/obj-*-linux-gnu/tools/test_relay_eose
+tmp/nostrc-*/obj-*-linux-gnu/tools/test_relay_eose
+
+# Orphan (nostrc-t58t): the porthome-common status CLI is built by CMake
+# but not yet claimed by any .install file — the natural home is
+# nostr-home-sync.install (semantic sibling of nostr-home-syncd). Owner
+# is Worker B / porthome-common; suppress until they land the package
+# assignment so the deb build succeeds.
+usr/bin/nostr-home-status
 
 # Phase 1 does not ship a libnostr-homed-dev package; nostr-homed.pc is
 # multiarch-specific and would be a lintian ERROR in an arch:foreign
 # daemon package. Defer to the future -dev package.
 usr/lib/*/pkgconfig/nostr-homed.pc
-
-# Phase 1 orphan (nostrc-rb0e / auth-install): the greeter-account
-# sysusers snippet is installed by the AUTH_INSTALL block but no Phase-1
-# .install claims it. Owner is nostr-authd's greeter-artifact path
-# (packaging/pam/nostr-auth-greeter.group.conf.sample). Suppressed here
-# so dh_missing does not gate the build; adding it to nostr-authd.install
-# is tracked as a follow-up (nostrc-h10m.4).
-usr/lib/sysusers.d/nostr-auth-greeter.conf
 
 # Phase 5 (bead nostrc-h10m.2): libhanami0 ships the runtime shared
 # library only. No libhanami-dev this phase — the portable-home stack
