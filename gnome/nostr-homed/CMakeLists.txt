@@ -1203,6 +1203,18 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     target_compile_options(porthome_smallhome_driver PRIVATE
       -Wall -Wextra -Werror -Wno-misleading-indentation)
 
+    # Bead nostrc-9k4g.1: nostr-home-publisher — operator / test tool
+    # that captures + uploads a fixture directory AND publishes the
+    # kind-30078 pointer to a real relay. NOT installed in the base
+    # package. Links libnostr for the relay publish path (already
+    # available at the base level).
+    add_executable(nostr-home-publisher
+      tests/integration/nostr_home_publisher.c)
+    target_link_libraries(nostr-home-publisher PRIVATE
+      nostr_porthome nostr)
+    target_compile_options(nostr-home-publisher PRIVATE
+      -Wall -Wextra -Wno-misleading-indentation -Wno-unused-parameter)
+
     if(Python3_Interpreter_FOUND)
       add_test(NAME homed_porthome_smallhome
         COMMAND "${Python3_EXECUTABLE}"
