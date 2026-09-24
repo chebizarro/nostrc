@@ -274,6 +274,16 @@ int nh_auth_conf_load(const char *path, nh_auth_conf *out) {
       else if (!strcasecmp(value, "off") || !strcmp(value, "0") ||
                !strcasecmp(value, "false") || !strcasecmp(value, "no"))
         out->porthome_enroll_wrap_key = 2;
+    } else if (!strcmp(key, "porthome_fetch_helper")) {
+      /* Absolute path only — the sandbox refuses to execve a relative
+       * argv[0]. A misconfigured relative path silently drops us into
+       * LIMITED_MODE instead of a mystery exec failure. */
+      if (value[0] == '/')
+        (void)copy_bounded(out->porthome_fetch_helper,
+                           sizeof out->porthome_fetch_helper, value);
+    } else if (!strcmp(key, "porthome_fetch_user")) {
+      (void)copy_bounded(out->porthome_fetch_user,
+                         sizeof out->porthome_fetch_user, value);
     } else {
       /* Non-fatal: unknown keys are ignored. */
     }

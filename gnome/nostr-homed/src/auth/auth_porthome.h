@@ -136,6 +136,67 @@ int nh_auth_broker_porthome_deposit_wrap_seed(const char *account_id,
 int nh_auth_broker_porthome_take_wrap_seed(const char *account_id,
                                            uint8_t out_seed[32]);
 
+/* Phase 2.5B (bead nostrc-ww50): fork+drop-privs sandbox around the
+ * portable-home NETWORK FETCH. The broker never dials relays or
+ * Blossom itself; it exec()s the `nostr-home-fetch` helper (bead
+ * nostrc-9k4g) under nh_porthome_spawn_sandboxed. This function is
+ * the broker's public seam — the concurrent 9k4g agent calls it from
+ * inside job_run's fetch closure, before the materialisation step
+ * that follows (materialisation stays as root because it writes
+ * through the identity-layer staging dirfd).
+ *
+ *   helper_path  Absolute path resolved from auth.conf
+ *                (porthome_fetch_helper), or NULL for the compile-time
+ *                default /usr/libexec/nostr-homed/nostr-home-fetch.
+ *   drop_user    Preferred unprivileged uid; NULL selects the
+ *                sandbox default (nostr-home-fetch, falling back to
+ *                nobody if that account is missing).
+ *   argv_tail    NULL-terminated extra args appended after argv[0].
+ *                Copied by value — the caller owns the storage.
+ *   stdin_fd/stdout_fd/stderr_fd  Passed through to the child; the
+ *                caller retains their side of any pipe(). Use -1 for
+ *                /dev/null (stdin/stdout) or "inherit journal" (stderr).
+ *   deadline_ms  Wall-clock deadline enforced by the sandbox waiter
+ *                (SIGTERM then SIGKILL on overrun). 0 disables.
+ *   out_exit     Set to the helper's exit code (0 on clean exit) on
+ *                any successful spawn+reap. -1 if the helper died to
+ *                a signal.
+ *   out_signal   Set to the signal that terminated the helper, or 0.
+ *   out_timed_out  Set to 1 if the sandbox reaper killed the helper
+ *                for exceeding @deadline_ms.
+ *
+ * Returns 0 on success (helper spawned and reaped), -1 on any spawn
+ * failure — the caller maps the helper's exit code onto
+ * LIMITED_MODE vs FAILED. Exit codes 64-69 come from the helper
+ * (network / decode / SSRF-refused / decode-failure classes — treat
+ * as LIMITED_MODE); anything else (70+ or a signal) is FAILED so the
+ * broker's WAIT_HOME response is honest about the split. */
+int nh_auth_broker_porthome_run_fetch(const char *helper_path,
+                                      const char *drop_user,
+                                      char *const argv_tail[],
+                                      int stdin_fd, int stdout_fd,
+                                      int stderr_fd,
+                                      uint32_t deadline_ms,
+                                      int *out_exit,
+                                      int *out_signal,
+                                      int *out_timed_out);
+
+/* Classify a helper exit code onto the WAIT_HOME job-state axis.
+ *   0             -> NH_AUTH_PORTHOME_JOB_OK
+ *   64..69        -> NH_AUTH_PORTHOME_JOB_LIMITED (network/decode/SSRF)
+ *   anything else -> NH_AUTH_PORTHOME_JOB_FAILED (internal / signal)
+ *
+ * A helper terminated by signal (exit == -1) is FAILED. Non-zero
+ * @signal (even alongside a good exit) is FAILED — we never treat a
+ * KILL'd helper as a merely-limited outcome. */
+int nh_auth_broker_porthome_classify_fetch_exit(int exit_code, int signal);
+
+/* Compile-time default helper path (matches design §7.2 install rule).
+ * The concurrent 9k4g agent may override this via its config lookup;
+ * the constant is exported so tests share the same string. */
+#define NH_AUTH_BROKER_PORTHOME_DEFAULT_HELPER \
+    "/usr/libexec/nostr-homed/nostr-home-fetch"
+
 #ifdef __cplusplus
 }
 #endif

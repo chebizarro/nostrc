@@ -182,6 +182,17 @@ typedef struct nh_auth_conf {
   uint32_t porthome_load_timeout_sec;
   uint64_t porthome_max_home_bytes;
   uint8_t  porthome_enroll_wrap_key;   /* 0=unset(off), 1=on, 2=off */
+  /* Phase 2.5B (bead nostrc-ww50):
+   *   porthome_fetch_helper — absolute path of the unprivileged
+   *                    fetch helper binary (bead nostrc-9k4g's
+   *                    nostr-home-fetch). Default:
+   *                    /usr/libexec/nostr-homed/nostr-home-fetch.
+   *   porthome_fetch_user  — Unix user the broker drops to before
+   *                    exec-ing the fetch helper. Default:
+   *                    nostr-home-fetch (falls back to nobody at
+   *                    spawn time if the user is missing). */
+  char porthome_fetch_helper[NH_AUTH_CONF_RELAY_URL_MAX + 1];
+  char porthome_fetch_user[64];
 } nh_auth_conf;
 
 /* Reads path (may be NULL / missing) into *out. Zeros *out first. Returns 0

@@ -843,6 +843,13 @@ if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
   # incantation.
   install(FILES packaging/sysusers.d/nostr-auth-greeter.conf
     DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sysusers.d")
+  # Phase 2.5B (bead nostrc-ww50): provision the dedicated helper user
+  # `nostr-home-fetch` for the portable-home fetch sandbox. Only useful
+  # when the experimental option is on, but the snippet is cheap to
+  # ship unconditionally — an idle "u nostr-home-fetch" costs one row
+  # in /etc/passwd, and shipping it here avoids a second postinst hook.
+  install(FILES packaging/sysusers.d/nostr-home-fetch.conf
+    DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sysusers.d")
   install(FILES packaging/pam/nostr-auth-greeter.group.conf.sample
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/examples/pam")
 
@@ -1039,6 +1046,10 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     src/porthome/nh_porthome_cbor.c
     src/porthome/nh_porthome_wrapkey.c
     src/porthome/nh_porthome_provision.c
+    # Phase 2.5B: fork+drop-privs sandbox for the fetch helper
+    # (bead nostrc-ww50). Header lives under include/. Only linked
+    # when NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL is on.
+    src/porthome/nh_porthome_sandbox.c
     ${_porthome_nip44_hkdf})
   target_compile_options(nostr_porthome PRIVATE
     -Wall -Wextra -Werror -Wno-misleading-indentation)
@@ -1140,6 +1151,44 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     add_test(NAME homed_porthome_provision COMMAND test_porthome_provision)
     set_tests_properties(homed_porthome_provision PROPERTIES
       LABELS "nostr-homed;porthome;portable" TIMEOUT 60)
+
+    # Phase 2.5B: fork+drop-privs sandbox around the fetch helper
+    # (bead nostrc-ww50). Runs unprivileged (parent uid != 0) — the
+    # sandbox recognises this via NH_PORTHOME_SANDBOX_ALLOW_NONROOT and
+    # exercises fd-hygiene, no_new_privs, rlimit, and env allow-list
+    # code paths without requiring a root test rig.
+    add_executable(test_porthome_sandbox tests/unit/test_porthome_sandbox.c)
+    target_link_libraries(test_porthome_sandbox PRIVATE nostr_porthome)
+    target_compile_options(test_porthome_sandbox PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_test(NAME homed_porthome_sandbox COMMAND test_porthome_sandbox)
+    set_tests_properties(homed_porthome_sandbox PROPERTIES
+      LABELS "nostr-homed;porthome;portable;security" TIMEOUT 60
+      ENVIRONMENT "NH_PORTHOME_SANDBOX_ALLOW_NONROOT=1")
+
+    # Companion stub the sandbox integration test forks. It attempts a
+    # trio of privileged actions (write /etc/passwd, bind :80, spin
+    # CPU) and reports outcomes via its exit code. Kept small so a
+    # single translation unit exercises three sandbox invariants
+    # without dragging test infrastructure into the child.
+    add_executable(porthome_sandbox_stub
+      tests/integration/porthome_sandbox_stub.c)
+    target_compile_options(porthome_sandbox_stub PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+
+    add_executable(test_porthome_sandbox_integration
+      tests/integration/test_porthome_sandbox_integration.c)
+    target_link_libraries(test_porthome_sandbox_integration PRIVATE
+      nostr_porthome)
+    target_compile_options(test_porthome_sandbox_integration PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_dependencies(test_porthome_sandbox_integration porthome_sandbox_stub)
+    add_test(NAME homed_porthome_sandbox_integration
+      COMMAND test_porthome_sandbox_integration
+        $<TARGET_FILE:porthome_sandbox_stub>)
+    set_tests_properties(homed_porthome_sandbox_integration PROPERTIES
+      LABELS "nostr-homed;porthome;portable;security" TIMEOUT 60
+      ENVIRONMENT "NH_PORTHOME_SANDBOX_ALLOW_NONROOT=1")
 
     # Phase 2: broker integration test (PROVISION_HOME + WAIT_HOME
     # dispatch, no relay). Requires the AUTH_RUNTIME so it links into

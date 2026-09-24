@@ -98,3 +98,19 @@ socket_path=/run/nostr-auth/auth.sock
 # Off by default because it introduces a one-time bunker approval; must
 # be explicitly enabled by the operator.
 #porthome_enroll_wrap_key=off
+
+# Phase 2.5B fetch-helper sandbox (bead nostrc-ww50). The relay/Blossom
+# fetch runs OUT-OF-PROCESS in the `nostr-home-fetch` binary, executed
+# under a dedicated system user. The broker (nostr-authd) keeps root
+# only for the materialisation step that follows.
+#
+# porthome_fetch_helper — absolute path to the fetch helper. Default
+# is /usr/libexec/nostr-homed/nostr-home-fetch (bead nostrc-9k4g).
+#porthome_fetch_helper=/usr/libexec/nostr-homed/nostr-home-fetch
+#
+# porthome_fetch_user — Unix account to drop into before exec-ing the
+# helper. sysusers.d(5) provisions this at boot from
+# packaging/sysusers.d/nostr-home-fetch.conf. If missing the sandbox
+# falls back to `nobody` at spawn time (the hardening posture is
+# preserved either way).
+#porthome_fetch_user=nostr-home-fetch
