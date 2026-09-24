@@ -480,6 +480,15 @@ static void *job_run(void *arg) {
   int cur = atomic_load(&j->state);
   if (rc == NH_IDENTITY_OK) {
     atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_OK);
+    /* W(3): drop the wrap seed to the per-uid runtime path so the
+     * user-session syncd can pick it up without env plumbing. Warn-only;
+     * failure keeps the env fallback path viable. */
+    nh_identity_account acct2;
+    if (nh_identity_store_lookup_by_id(j->store, j->account_id, &acct2)
+        == NH_IDENTITY_OK && acct2.uid != 0) {
+      (void)nh_auth_broker_porthome_drop_seed_for_uid((uid_t)acct2.uid,
+                                                       j->wrap_seed);
+    }
   } else if (cur == NH_AUTH_PORTHOME_JOB_RUNNING) {
     /* Labeler didn't tag a terminal state; treat as LIMITED so PAM
      * lets login proceed with the existing/empty home. */
@@ -997,6 +1006,130 @@ int nh_auth_broker_porthome_classify_fetch_exit(int exit_code, int signal) {
   return NH_AUTH_PORTHOME_JOB_FAILED;
 }
 
+
+/* ────────────────────────────────────────────────────────────────────
+ * W(3) — per-user runtime seed drop (bead nostrc-p6qp).
+ *
+ * The user-session syncd (nostr-home-syncd, runs unprivileged under
+ * `systemd --user`) needs the 32-byte wrap seed to derive its home_key.
+ * Historically it read NOSTR_HOMED_SYNCD_{NSEC,SEED}_HEX from the env.
+ *
+ * We add a minimal, disk-only handoff: after a successful home
+ * materialisation the broker atomically drops the seed into
+ *   /run/nostr-auth/session/<uid>/home_seed
+ * mode 0600, owned by root:uid (chown so the target uid can read+unlink).
+ * /run is tmpfs on modern systemd; the file never survives a reboot.
+ *
+ * The user-session syncd reads the file ONCE on start, then unlink(2)s
+ * and mlock(2)s the value in memory. Nothing else on disk beyond that
+ * ephemeral runtime file.
+ *
+ * We chose the file drop over the alternative (per-user AF_UNIX socket
+ * gated by SO_PEERCRED) because:
+ *   - No broker-side protocol change (no wire, no version bump).
+ *   - No long-lived accept()ing listener in nostr-authd.
+ *   - The tmpfs guarantee already gives us the "no persistence" property.
+ *   - Ownership + 0600 gives us the "only that uid can read it" property.
+ *
+ * On any error the drop is warn-only: the daemon still falls back to the
+ * env-var seam so headless / test paths keep working. Never logs the
+ * seed value. */
+
+#ifndef NH_AUTH_BROKER_PORTHOME_SESSION_DIR
+#define NH_AUTH_BROKER_PORTHOME_SESSION_DIR "/run/nostr-auth/session"
+#endif
+
+/* Overrideable by tests (e.g. tmpdir under /tmp). NULL / "" resets to
+ * the compile-time default. */
+static char g_session_dir[512];
+static const char *session_dir(void) {
+  return g_session_dir[0] ? g_session_dir : NH_AUTH_BROKER_PORTHOME_SESSION_DIR;
+}
+void nh_auth_broker_porthome_set_session_dir(const char *dir) {
+  if (!dir || !*dir) { g_session_dir[0] = '\0'; return; }
+  size_t n = strlen(dir);
+  if (n >= sizeof g_session_dir) { g_session_dir[0] = '\0'; return; }
+  memcpy(g_session_dir, dir, n + 1);
+}
+
+static int hex_lc_char(uint8_t nibble) {
+  return (nibble < 10) ? ('0' + nibble) : ('a' + nibble - 10);
+}
+static void seed_to_hex64(const uint8_t in[32], char out[65]) {
+  for (int i = 0; i < 32; i++) {
+    out[i*2]     = (char)hex_lc_char((in[i] >> 4) & 0xf);
+    out[i*2 + 1] = (char)hex_lc_char(in[i] & 0xf);
+  }
+  out[64] = '\0';
+}
+
+int nh_auth_broker_porthome_drop_seed_for_uid(uid_t uid,
+                                              const uint8_t seed[32]) {
+  if (!seed) return -1;
+  const char *base = session_dir();
+  /* mkdir -p the base + per-uid subdir. Ignore EEXIST. */
+  if (mkdir(base, 0755) != 0 && errno != EEXIST) {
+    syslog(LOG_INFO, "porthome/seed-drop: mkdir(%s) failed errno=%d", base, errno);
+    return -1;
+  }
+  char udir[600];
+  if (snprintf(udir, sizeof udir, "%s/%u", base, (unsigned)uid) >= (int)sizeof udir)
+    return -1;
+  if (mkdir(udir, 0700) != 0 && errno != EEXIST) {
+    syslog(LOG_INFO, "porthome/seed-drop: mkdir(%s) failed errno=%d", udir, errno);
+    return -1;
+  }
+  /* Chown the per-uid dir to <uid>:<uid> so only the target user can
+   * traverse it. Best effort — if we're not root the chown fails and
+   * we still write with root:uid on the file itself. */
+  (void)chown(udir, uid, uid);
+
+  char path[700], tmp[720];
+  if (snprintf(path, sizeof path, "%s/home_seed", udir) >= (int)sizeof path) return -1;
+  if (snprintf(tmp,  sizeof tmp,  "%s.tmp.%d",  path, (int)getpid()) >= (int)sizeof tmp) return -1;
+
+  char hex[65]; seed_to_hex64(seed, hex);
+  int rc = -1;
+  int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+  if (fd < 0) {
+    syslog(LOG_INFO, "porthome/seed-drop: open tmp failed errno=%d", errno);
+    OPENSSL_cleanse(hex, sizeof hex);
+    return -1;
+  }
+  size_t off = 0, want = 64;  /* write 64 hex chars, no trailing newline */
+  while (off < want) {
+    ssize_t w = write(fd, hex + off, want - off);
+    if (w < 0) { if (errno == EINTR) continue; goto out; }
+    off += (size_t)w;
+  }
+  if (fchmod(fd, 0600) != 0) goto out;
+  /* Ownership: mode 0600 requires uid to BE the owner to read. Chown
+   * to (uid,uid). The user can then unlink after read (which is what
+   * the syncd does) — that's fine because the sole legitimate reader
+   * IS that uid, and the broker never re-writes to the same path in
+   * a single session. */
+  if (fchown(fd, uid, uid) != 0) {
+    syslog(LOG_INFO, "porthome/seed-drop: fchown(fd,%u,%u) failed errno=%d",
+           (unsigned)uid, (unsigned)uid, errno);
+    /* Keep going. If we're not root and the caller uid IS us, the
+     * existing owner is already correct (unit-test path). */
+  }
+  if (fsync(fd) != 0) goto out;
+  close(fd); fd = -1;
+  if (rename(tmp, path) != 0) {
+    syslog(LOG_INFO, "porthome/seed-drop: rename failed errno=%d", errno);
+    goto out;
+  }
+  syslog(LOG_INFO, "porthome/seed-drop: dropped seed for uid=%u at %s",
+         (unsigned)uid, path);
+  rc = 0;
+out:
+  if (fd >= 0) close(fd);
+  if (rc != 0) (void)unlink(tmp);
+  OPENSSL_cleanse(hex, sizeof hex);
+  return rc;
+}
+
 #else  /* !NH_AUTH_BROKER_ENABLE_PORTHOME */
 
 int  nh_auth_porthome_registry_init(void)     { return 0; }
@@ -1066,5 +1199,11 @@ int nh_auth_broker_porthome_classify_fetch_exit(int exit_code, int signal) {
   (void)exit_code; (void)signal;
   return (int)NH_AUTH_PORTHOME_JOB_FAILED;
 }
+
+int nh_auth_broker_porthome_drop_seed_for_uid(uid_t uid,
+                                              const uint8_t seed[32]) {
+  (void)uid; (void)seed; return -1;
+}
+void nh_auth_broker_porthome_set_session_dir(const char *dir) { (void)dir; }
 
 #endif /* NH_AUTH_BROKER_ENABLE_PORTHOME */

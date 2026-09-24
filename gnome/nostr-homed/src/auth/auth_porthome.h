@@ -236,6 +236,13 @@ int nh_auth_broker_porthome_classify_fetch_exit(int exit_code, int signal);
 #define NH_AUTH_BROKER_PORTHOME_DEFAULT_HELPER \
     "/usr/libexec/nostr-homed/nostr-home-fetch"
 
+
+/* W(3) — per-user runtime seed drop (bead nostrc-p6qp).
+ * See auth_porthome.c for the design rationale. */
+int  nh_auth_broker_porthome_drop_seed_for_uid(uid_t uid,
+                                               const uint8_t seed[32]);
+void nh_auth_broker_porthome_set_session_dir(const char *dir);
+
 #ifdef __cplusplus
 }
 #endif

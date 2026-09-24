@@ -21,10 +21,14 @@
  *   NOSTR_HOMED_SYNCD_MIN_REPL   — integer, default 2
  *   NOSTR_HOMED_SYNCD_STATE_DIR  — override state dir (tests)
  *   NOSTR_HOMED_SYNCD_HOME       — override $HOME (tests)
- *   NOSTR_HOMED_SYNCD_SEED_HEX   — 64-hex seed for home_key derivation
- *                                  (Phase 2 broker plumbing not yet
- *                                  wired at daemon startup; I3 owns
- *                                  the credential handoff)
+ *   NOSTR_HOMED_SYNCD_SEED_HEX   — 64-hex seed for home_key derivation.
+ *                                  Env fallback only; headless tests
+ *                                  and manual operator use.
+ *   NOSTR_HOMED_SYNCD_SEED_FILE  — optional path override for the
+ *                                  per-user broker seed drop
+ *                                  (default: /run/nostr-auth/session/
+ *                                  <uid>/home_seed).  W(3): read once,
+ *                                  unlink, mlock; wraps in-process wipe.
  *
  * Signals:
  *   SIGTERM/SIGINT — flush final batch, release lock, exit 0.
@@ -32,6 +36,17 @@
  */
 
 #include "nh_syncd.h"
+/* nh_syncd_cache.h collides with nh_syncd.h on nh_syncd_notify_fn.
+ * Forward-declare only what we need from the cache side. */
+struct nh_syncd_pin_ring;
+#define NH_SYNCD_PR_OK 0
+#define NH_SYNCD_PR_ERR_JSON -303
+extern char *nh_syncd_cache_default_pin_path(void);
+extern int   nh_syncd_pin_ring_open(const char *json_path,
+                                    struct nh_syncd_pin_ring **out);
+extern void  nh_syncd_pin_ring_close(struct nh_syncd_pin_ring *r);
+extern int   nh_syncd_pin_ring_promote_from_snapshot(struct nh_syncd_pin_ring *r,
+                                                     const char *state_dir);
 #include "nh_syncd_watcher.h"
 
 #include <errno.h>
@@ -43,6 +58,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/signalfd.h>
 #include <sys/stat.h>
 #include <sys/timerfd.h>
@@ -70,6 +86,62 @@ static char *default_home(void) {
         if (pw && pw->pw_dir) h = pw->pw_dir;
     }
     return xstrdup(h);
+}
+
+
+/* ────────────────────────────────────────────────────────────────────
+ * W(3) — read the wrap seed from the broker's per-user runtime drop.
+ *
+ * On success:
+ *   - returns 0
+ *   - writes 64 lowercase hex chars + NUL to `out_hex` (>= 65 bytes)
+ *   - unlink(2)s the source file so the next syncd start doesn't reuse
+ *     a stale seed
+ *   - mlock(2)s the on-heap buffer holding the hex value
+ *
+ * On failure (file missing, malformed, too short) returns -1 and leaves
+ * `out_hex` empty — the caller falls back to the NOSTR_HOMED_SYNCD_SEED_HEX
+ * env var (headless-test path).
+ *
+ * Path resolution: NOSTR_HOMED_SYNCD_SEED_FILE env override, else
+ * /run/nostr-auth/session/<uid>/home_seed. The file is expected to
+ * contain 64 hex chars (no newline required; a trailing whitespace is
+ * tolerated). Never logs the seed value itself.
+ * ──────────────────────────────────────────────────────────────────── */
+static int read_seed_from_broker_drop(char *out_hex /* [65] */) {
+    out_hex[0] = '\0';
+    const char *ovr = getenv("NOSTR_HOMED_SYNCD_SEED_FILE");
+    char path[256];
+    if (ovr && *ovr) {
+        snprintf(path, sizeof path, "%s", ovr);
+    } else {
+        snprintf(path, sizeof path,
+                 "/run/nostr-auth/session/%u/home_seed",
+                 (unsigned)getuid());
+    }
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    char buf[96];
+    ssize_t n = read(fd, buf, sizeof buf - 1);
+    if (n < 64) { close(fd); return -1; }
+    buf[n] = '\0';
+    close(fd);
+    /* Trim trailing whitespace. */
+    while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r' ||
+                     buf[n-1] == ' '  || buf[n-1] == '\t')) buf[--n] = '\0';
+    if (n < 64) return -1;
+    for (size_t i = 0; i < 64; i++) {
+        char c = buf[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return -1;
+    }
+    memcpy(out_hex, buf, 64);
+    out_hex[64] = '\0';
+    /* Wipe the local buffer + unlink the source. */
+    memset(buf, 0, sizeof buf);
+    (void)unlink(path);
+    fprintf(stderr, "syncd: read wrap seed from broker drop at %s (unlinked)\n",
+            path);
+    return 0;
 }
 
 static char *default_state_dir(const char *home) {
@@ -163,7 +235,21 @@ static int load_cfg(cfg_t *c) {
     c->nsec_hex = xstrdup(getenv("NOSTR_HOMED_SYNCD_NSEC_HEX"));
     c->d_tag    = xstrdup(getenv("NOSTR_HOMED_SYNCD_D_TAG"));
     if (!c->d_tag) c->d_tag = xstrdup("nostr-homed.home.v1:personal");
-    c->seed_hex = xstrdup(getenv("NOSTR_HOMED_SYNCD_SEED_HEX"));
+    /* W(3): prefer the broker-side per-user drop; env is the fallback
+     * kept for headless tests. Both paths land the seed at c->seed_hex
+     * for the existing derivation in the batch loop. */
+    char seed_from_drop[65] = {0};
+    if (read_seed_from_broker_drop(seed_from_drop) == 0) {
+        c->seed_hex = xstrdup(seed_from_drop);
+    } else {
+        c->seed_hex = xstrdup(getenv("NOSTR_HOMED_SYNCD_SEED_HEX"));
+    }
+    /* Best-effort mlock the heap copy; RLIMIT_MEMLOCK may reject it,
+     * in which case the wipe-on-free in free_cfg is still the durable
+     * defence. */
+    if (c->seed_hex) (void)mlock(c->seed_hex, strlen(c->seed_hex) + 1);
+    /* Wipe the local hex buffer immediately. */
+    memset(seed_from_drop, 0, sizeof seed_from_drop);
     const char *bl = getenv("NOSTR_HOMED_SYNCD_BLOSSOM");
     const char *rl = getenv("NOSTR_HOMED_SYNCD_RELAYS");
     c->blossom = split_csv(bl, &c->n_blossom);
@@ -174,7 +260,8 @@ static int load_cfg(cfg_t *c) {
 }
 
 static void free_cfg(cfg_t *c) {
-    free(c->home); free(c->state_dir); free(c->nsec_hex); free(c->d_tag); free(c->seed_hex);
+    free(c->home); free(c->state_dir); free(c->nsec_hex); free(c->d_tag);
+    if (c->seed_hex) { memset(c->seed_hex, 0, strlen(c->seed_hex)); free(c->seed_hex); }
     free_csv(c->blossom); free_csv(c->relays);
 }
 
@@ -247,6 +334,25 @@ int main(int argc, char **argv) {
         nh_syncd_ignore_free(ig); nh_syncd_lock_release(lk); free_cfg(&cfg); return 6;
     }
 
+    /* Generation pin ring (design §6.5). Persisted at
+     * $XDG_STATE_HOME/nostr-homed/pinned.json. If the JSON is corrupt we
+     * unlink it and reopen empty — a lost ring costs at most N generations
+     * of eviction safety, not user data. Failure to open at all is
+     * warn-only (cache-hygiene, not correctness). */
+    struct nh_syncd_pin_ring *pin_ring = NULL;
+    char *pin_path = nh_syncd_cache_default_pin_path();
+    if (pin_path) {
+        int pr = nh_syncd_pin_ring_open(pin_path, &pin_ring);
+        if (pr == NH_SYNCD_PR_ERR_JSON) {
+            (void)unlink(pin_path);
+            pr = nh_syncd_pin_ring_open(pin_path, &pin_ring);
+        }
+        if (pr != NH_SYNCD_PR_OK) {
+            fprintf(stderr, "syncd: pin_ring open failed rc=%d (retention pinning disabled)\n", pr);
+            pin_ring = NULL;
+        }
+    }
+
     install_signals(-1);
 
     if (dry_run) {
@@ -254,6 +360,8 @@ int main(int argc, char **argv) {
                 snap_unknown ? "unknown" : "loaded");
         if (state) nh_syncd_state_free(state);
         nh_syncd_batcher_free(ba); nh_syncd_ignore_free(ig);
+        if (pin_ring) nh_syncd_pin_ring_close(pin_ring);
+        free(pin_path);
         nh_syncd_lock_release(lk); free_cfg(&cfg);
         return 0;
     }
@@ -316,6 +424,14 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "syncd: batch %llu OK gen=%llu\n",
                             (unsigned long long)nh_syncd_batch_id(batch),
                             (unsigned long long)nh_syncd_state_get_local_generation(state));
+                    /* W(1)(a): promote current snapshot into the ring so
+                     * every blob referenced by the last N=10 generations
+                     * is pinned. Warn-only on failure. */
+                    if (pin_ring) {
+                        int prc = nh_syncd_pin_ring_promote_from_snapshot(pin_ring, cfg.state_dir);
+                        if (prc != NH_SYNCD_PR_OK)
+                            fprintf(stderr, "syncd: pin_ring promote (push) rc=%d\n", prc);
+                    }
                 } else {
                     fprintf(stderr, "syncd: batch %llu FAILED rc=%d %s\n",
                             (unsigned long long)nh_syncd_batch_id(batch),
@@ -338,6 +454,8 @@ cleanup:
     if (state) nh_syncd_state_free(state);
     nh_syncd_batcher_free(ba);
     nh_syncd_ignore_free(ig);
+    if (pin_ring) nh_syncd_pin_ring_close(pin_ring);
+    free(pin_path);
     nh_syncd_lock_release(lk);
     free_cfg(&cfg);
     return 0;
