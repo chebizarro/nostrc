@@ -166,6 +166,36 @@ uint64_t       nh_syncd_entry_mtime_ns(const nh_syncd_entry *e);
 /* content_hash_hex is NUL-terminated (64 hex) or "" for dirs/symlinks. */
 const char    *nh_syncd_entry_content_hash_hex(const nh_syncd_entry *e);
 
+/* ────────────────────────────────────────────────────────────────────
+ * Additive getters for external readers (Phase 4 P4-I, bead nostrc-1u55).
+ *
+ * The FUSE overlay (nostr-home-fuse) needs to walk snapshot.json to
+ * build its in-memory namespace without duplicating the JSON schema.
+ * These getters expose read-only introspection of every entry — no
+ * behaviour change, no new writers.
+ *
+ * `nh_syncd_state_at`: iterate entries by insertion order (jansson's
+ * default). `out_rel_path` receives a borrowed pointer valid for the
+ * lifetime of the state. Returns NULL when `i` is out of range.
+ *
+ * These getters use thread-local storage (like `_find`) so callers
+ * must consume the result before calling any state accessor from the
+ * same thread. The FUSE mount snapshots the whole table at load
+ * time; it does not hold multiple entries live.
+ * ──────────────────────────────────────────────────────────────────── */
+const nh_syncd_entry *nh_syncd_state_at(const nh_syncd_state *s, size_t i,
+                                        const char **out_rel_path);
+uint32_t     nh_syncd_entry_mode          (const nh_syncd_entry *e);
+uint32_t     nh_syncd_entry_uid           (const nh_syncd_entry *e);
+uint32_t     nh_syncd_entry_gid           (const nh_syncd_entry *e);
+size_t       nh_syncd_entry_chunk_count   (const nh_syncd_entry *e);
+/* Returns a borrowed 64-hex + NUL pointer (or NULL when `i` is out of
+ * range). Valid until the next call on this state from the same
+ * thread. */
+const char  *nh_syncd_entry_chunk_at      (const nh_syncd_entry *e, size_t i);
+/* Returns "" (never NULL) for non-symlinks. */
+const char  *nh_syncd_entry_symlink_target(const nh_syncd_entry *e);
+
 /* Initialise a fresh state (empty). Caller frees with _free(). Used by
  * `nostr-home-syncd --init` and by tests. */
 int nh_syncd_state_new(const char *root_abs,
@@ -227,6 +257,52 @@ nh_syncd_ignore_kind nh_syncd_ignore_check(const nh_syncd_ignore *ig,
  * IN_CREATE for a plain file). */
 nh_syncd_ignore_kind nh_syncd_ignore_check_path(const nh_syncd_ignore *ig,
                                                 const char *rel_path);
+
+/* ────────────────────────────────────────────────────────────────────
+ * Lazy-subtree matcher (Phase 4 P4-I, bead nostrc-1u55).
+ *
+ * Strictly opt-in: an empty matcher matches nothing and reconcile
+ * behaves identically to earlier versions (behavior-preserving).
+ *
+ * Prefixes are $HOME-relative directory paths (no leading '/'). A
+ * prefix matches an entry rel_path when the entry is exactly the
+ * prefix or begins with `<prefix>/`. Empty / whitespace-only
+ * lines are ignored; '#' starts a comment.
+ *
+ * Load order (any of the following, in decreasing priority):
+ *   1. `nh_syncd_lazy_new_from_string(csv_prefixes, ...)` — used by
+ *      tests and to expose an env-var / config-file knob;
+ *   2. `nh_syncd_lazy_new(home_dir, ...)` — reads
+ *      `~/.config/nostr-homed/lazy` if present.
+ *
+ * When plugged into `nh_syncd_reconcile_cfg.lazy` the reconciler
+ * SUPPRESSES eager materialization of matching entries — their
+ * metadata is still recorded in snapshot.json (so the FUSE mount can
+ * serve them on demand) but no bytes are written to $HOME. Existing
+ * files under a lazy prefix from prior reconciles are NEVER deleted:
+ * remote-delete records that fall under a lazy prefix become
+ * warn-logged no-ops (additive suppression only, per maintainer
+ * approval note at the foot of docs/designs/nostrfs-porthome-overlay.md).
+ * ──────────────────────────────────────────────────────────────────── */
+
+typedef struct nh_syncd_lazy nh_syncd_lazy;
+
+/* Empty matcher (never matches). */
+int  nh_syncd_lazy_new_empty(nh_syncd_lazy **out);
+/* Read `~/.config/nostr-homed/lazy` if present. Missing file → empty
+ * matcher (not an error). */
+int  nh_syncd_lazy_new(const char *home_dir, nh_syncd_lazy **out);
+/* Parse comma- and/or newline-separated prefixes from a string. */
+int  nh_syncd_lazy_new_from_string(const char *prefixes, nh_syncd_lazy **out);
+
+void nh_syncd_lazy_free(nh_syncd_lazy *lz);
+
+/* Test seams. */
+int    nh_syncd_lazy_add_prefix(nh_syncd_lazy *lz, const char *prefix);
+size_t nh_syncd_lazy_prefix_count(const nh_syncd_lazy *lz);
+
+/* Returns true iff `rel_path` falls under any lazy prefix (or IS one). */
+bool nh_syncd_lazy_covers(const nh_syncd_lazy *lz, const char *rel_path);
 
 /* ────────────────────────────────────────────────────────────────────
  * Batcher (debounce + coalesce, fixed-clock testable).
@@ -513,6 +589,15 @@ typedef struct {
     /* Test seam: overrides the wall clock used to stamp conflict file
      * names.  0 → gettimeofday(). Unix time in seconds. */
     int64_t            clock_epoch_secs_override;
+
+    /* Phase 4 P4-I (bead nostrc-1u55): opt-in lazy subtree matcher.
+     * When non-NULL, entries whose rel_path falls under any prefix
+     * held by `lazy` are recorded in snapshot.json but their bytes
+     * are NOT materialized to $HOME. Remote-delete records for paths
+     * under a lazy prefix become warn-logged no-ops (additive
+     * suppression only — never destroy files that already exist).
+     * NULL preserves prior behaviour exactly. */
+    const nh_syncd_lazy *lazy;
 } nh_syncd_reconcile_cfg;
 
 /* Run one reconcile pass. `state` is mutated in place: applied entries

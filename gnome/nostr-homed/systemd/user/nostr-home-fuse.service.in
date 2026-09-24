@@ -1,0 +1,55 @@
+[Unit]
+Description=Portable-home read-only overlay (nostr-home-fuse)
+Documentation=https://github.com/chebizarro/nostrc
+# The FUSE mount reads snapshot.json written by the syncd; keep them
+# ordered so the mount can find a namespace on first login. The mount
+# still tolerates a missing snapshot (exits cleanly with code 3).
+After=nostr-home-sync.service
+Wants=nostr-home-sync.service
+# Torn down with the graphical session so the mount does not outlive
+# gnome-session as a "Transport endpoint is not connected" directory.
+PartOf=graphical-session.target
+
+[Service]
+# EXPERIMENTAL. Gated behind NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL
+# at build time; the install rule (CMakeLists.txt) only emits this unit
+# when both AUTH_INSTALL and PORTHOME_FUSE_EXPERIMENTAL are ON.
+# See docs/designs/nostrfs-porthome-overlay.md §5.1 for the shape.
+Type=notify
+ExecStart=@NH_FUSE_BIN_PATH@
+ExecStopPost=-/bin/fusermount3 -u -z %h/Portable
+Restart=on-failure
+RestartSec=5
+# Clean exits: 3 = no/bad snapshot, 4 = no seed, 5 = already mounted.
+RestartPreventExitStatus=3 4 5
+LimitCORE=0
+
+# ─── Hardening ─────────────────────────────────────────────────────
+# NOT ProtectHome=* — this unit mounts inside $HOME.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=%h
+PrivateTmp=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+# The @mount group is required for FUSE session mount; @system-service
+# gives us the ordinary I/O syscalls.
+SystemCallFilter=@system-service @mount
+UMask=0077
+DeviceAllow=/dev/fuse rw
+# libcurl / libnostr websocket + AF_UNIX for D-Bus (notify-send).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# No CAP_* here — user-scope units cannot grant CAP_SYS_ADMIN; FUSE
+# mount goes through the setuid fusermount3 helper as usual.
+
+[Install]
+WantedBy=default.target

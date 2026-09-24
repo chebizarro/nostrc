@@ -1063,6 +1063,46 @@ static void seed_to_hex64(const uint8_t in[32], char out[65]) {
   out[64] = '\0';
 }
 
+/* Write `hex64` (64 lowercase hex chars, no NUL required in the file)
+ * to <udir>/<name> using tmp + fsync + rename + fchown+fchmod.
+ * Returns 0 on success, -1 on any failure. Wipes local buffers on exit. */
+static int drop_hex_file(const char *udir, const char *name, uid_t uid,
+                         const char hex64[65]) {
+  char path[800], tmp[840];
+  if (snprintf(path, sizeof path, "%s/%s", udir, name) >= (int)sizeof path) return -1;
+  if (snprintf(tmp,  sizeof tmp,  "%s.tmp.%d", path, (int)getpid()) >= (int)sizeof tmp) return -1;
+  int rc = -1;
+  int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+  if (fd < 0) {
+    syslog(LOG_INFO, "porthome/seed-drop: open tmp %s failed errno=%d", tmp, errno);
+    return -1;
+  }
+  size_t off = 0, want = 64;
+  while (off < want) {
+    ssize_t w = write(fd, hex64 + off, want - off);
+    if (w < 0) { if (errno == EINTR) continue; goto out; }
+    off += (size_t)w;
+  }
+  if (fchmod(fd, 0600) != 0) goto out;
+  if (fchown(fd, uid, uid) != 0) {
+    syslog(LOG_INFO, "porthome/seed-drop: fchown(%s,%u,%u) failed errno=%d",
+           name, (unsigned)uid, (unsigned)uid, errno);
+    /* keep going — see note above */
+  }
+  if (fsync(fd) != 0) goto out;
+  close(fd); fd = -1;
+  if (rename(tmp, path) != 0) {
+    syslog(LOG_INFO, "porthome/seed-drop: rename %s failed errno=%d", path, errno);
+    goto out;
+  }
+  syslog(LOG_INFO, "porthome/seed-drop: dropped %s for uid=%u", name, (unsigned)uid);
+  rc = 0;
+out:
+  if (fd >= 0) close(fd);
+  if (rc != 0) (void)unlink(tmp);
+  return rc;
+}
+
 int nh_auth_broker_porthome_drop_seed_for_uid(uid_t uid,
                                               const uint8_t seed[32]) {
   if (!seed) return -1;
@@ -1084,50 +1124,24 @@ int nh_auth_broker_porthome_drop_seed_for_uid(uid_t uid,
    * we still write with root:uid on the file itself. */
   (void)chown(udir, uid, uid);
 
-  char path[700], tmp[720];
-  if (snprintf(path, sizeof path, "%s/home_seed", udir) >= (int)sizeof path) return -1;
-  if (snprintf(tmp,  sizeof tmp,  "%s.tmp.%d",  path, (int)getpid()) >= (int)sizeof tmp) return -1;
-
   char hex[65]; seed_to_hex64(seed, hex);
-  int rc = -1;
-  int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-  if (fd < 0) {
-    syslog(LOG_INFO, "porthome/seed-drop: open tmp failed errno=%d", errno);
-    OPENSSL_cleanse(hex, sizeof hex);
-    return -1;
-  }
-  size_t off = 0, want = 64;  /* write 64 hex chars, no trailing newline */
-  while (off < want) {
-    ssize_t w = write(fd, hex + off, want - off);
-    if (w < 0) { if (errno == EINTR) continue; goto out; }
-    off += (size_t)w;
-  }
-  if (fchmod(fd, 0600) != 0) goto out;
-  /* Ownership: mode 0600 requires uid to BE the owner to read. Chown
-   * to (uid,uid). The user can then unlink after read (which is what
-   * the syncd does) — that's fine because the sole legitimate reader
-   * IS that uid, and the broker never re-writes to the same path in
-   * a single session. */
-  if (fchown(fd, uid, uid) != 0) {
-    syslog(LOG_INFO, "porthome/seed-drop: fchown(fd,%u,%u) failed errno=%d",
-           (unsigned)uid, (unsigned)uid, errno);
-    /* Keep going. If we're not root and the caller uid IS us, the
-     * existing owner is already correct (unit-test path). */
-  }
-  if (fsync(fd) != 0) goto out;
-  close(fd); fd = -1;
-  if (rename(tmp, path) != 0) {
-    syslog(LOG_INFO, "porthome/seed-drop: rename failed errno=%d", errno);
-    goto out;
-  }
-  syslog(LOG_INFO, "porthome/seed-drop: dropped seed for uid=%u at %s",
-         (unsigned)uid, path);
-  rc = 0;
-out:
-  if (fd >= 0) close(fd);
-  if (rc != 0) (void)unlink(tmp);
+  /* Two drop files, both read-once-and-unlink by their respective
+   * consumers so a session-scope daemon restart cannot recover the
+   * seed (broker GET_HOME_SEED is the long-term fix — HFR §10.1,
+   * design §D6c, filed as follow-up). Symmetric: same mode / owner /
+   * atomic rename. Best-effort — a failure on the second drop must
+   * not roll back the first, because the syncd already relies on
+   * the primary drop and blocking it would silently break the sync
+   * path. Both failures are warn-only; the FUSE mount then falls
+   * back to NH_FUSE_SEED_HEX / NH_FUSE_SEED_FILE. */
+  int rc_primary = drop_hex_file(udir, "home_seed",      uid, hex);
+  int rc_fuse    = drop_hex_file(udir, "home_seed.fuse", uid, hex);
   OPENSSL_cleanse(hex, sizeof hex);
-  return rc;
+  /* Report success iff the primary syncd drop succeeded. The FUSE
+   * drop is warn-only. */
+  if (rc_fuse != 0)
+    syslog(LOG_INFO, "porthome/seed-drop: home_seed.fuse drop failed (warn-only); FUSE mount will fall back to env");
+  return rc_primary;
 }
 
 #else  /* !NH_AUTH_BROKER_ENABLE_PORTHOME */

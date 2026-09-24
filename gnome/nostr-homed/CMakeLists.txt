@@ -65,6 +65,13 @@ option(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL
 # built here installs — packaging + systemd unit are I3.
 option(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL
   "Build the experimental user-scoped nostr-home-syncd daemon (requires porthome experimental + libnostr)" OFF)
+# Phase 4 P4-I (bead nostrc-1u55). Ships the read-only FUSE 3 overlay
+# nostr-home-fuse. Gated on top of SYNCD_EXPERIMENTAL (which is gated
+# on top of PORTHOME_EXPERIMENTAL) and requires FUSE3. Nothing is
+# built when OFF — the base pam_nostr / nostr-authd closure never
+# gains a libfuse3 or nh_fuse_* dependency.
+option(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL
+  "Build the experimental read-only portable-home FUSE overlay nostr-home-fuse (requires SYNCD_EXPERIMENTAL + libfuse3)" OFF)
 
 if(NOSTR_HOMED_ENABLE_CTL AND NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
   message(FATAL_ERROR
@@ -1348,7 +1355,11 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     src/porthome-syncd/nh_syncd_sweep.c
     # I2 additions (bead nostrc-p6qp) — pull path + reconciler.
     src/porthome-syncd/nh_syncd_reconcile.c
-    src/porthome-syncd/nh_syncd_pull.c)
+    src/porthome-syncd/nh_syncd_pull.c
+    # Phase 4 P4-I (bead nostrc-1u55) — lazy-subtree prefix matcher.
+    # Additive: an empty matcher never matches so behaviour is
+    # preserved for callers that pass NULL for cfg->lazy.
+    src/porthome-syncd/nh_syncd_lazy.c)
   target_compile_options(nostr_syncd_core PRIVATE
     -Wall -Wextra -Werror -Wno-misleading-indentation -Wno-unused-parameter)
   target_compile_definitions(nostr_syncd_core PUBLIC
@@ -1479,6 +1490,20 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     set_tests_properties(homed_syncd_reconcile PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 60)
 
+    # Phase 4 P4-I (bead nostrc-1u55) — lazy matcher unit + reconcile
+    # additive-suppression regression.
+    add_executable(test_syncd_lazy tests/unit/test_syncd_lazy.c)
+    target_link_libraries(test_syncd_lazy PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_lazy COMMAND test_syncd_lazy)
+    set_tests_properties(homed_syncd_lazy PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable-fuse;portable" TIMEOUT 30)
+
+    add_executable(test_syncd_lazy_reconcile tests/unit/test_syncd_lazy_reconcile.c)
+    target_link_libraries(test_syncd_lazy_reconcile PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_lazy_reconcile COMMAND test_syncd_lazy_reconcile)
+    set_tests_properties(homed_syncd_lazy_reconcile PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable-fuse;portable" TIMEOUT 60)
+
     add_executable(test_syncd_pull_e2e tests/integration/test_syncd_pull_e2e.c)
     target_link_libraries(test_syncd_pull_e2e PRIVATE nostr_syncd_core)
     add_test(NAME homed_syncd_pull_e2e COMMAND test_syncd_pull_e2e)
@@ -1522,6 +1547,124 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
               ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_syncd_install_smoke.sh)
     set_tests_properties(homed_syncd_install_smoke PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 60)
+  endif()
+endif()
+
+
+# ────────────────────────────────────────────────────────────────────
+# Portable-home Phase 4 (bead nostrc-1u55) — read-only FUSE overlay.
+# EXPERIMENTAL. Gated behind NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL
+# on top of NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL (which requires
+# NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL). Nothing is built or linked
+# into the base pam_nostr / nostr-authd closure when OFF. See
+# docs/designs/nostrfs-porthome-overlay.md.
+# ────────────────────────────────────────────────────────────────────
+if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
+  if(NOT NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
+    message(FATAL_ERROR
+      "NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL requires "
+      "NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL (the FUSE overlay reuses "
+      "the syncd cache/pin/manifest machinery).")
+  endif()
+  list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+  find_package(FUSE3 REQUIRED)
+
+  add_executable(nostr-home-fuse
+    src/porthome-fuse/nostr-home-fuse.c
+    src/porthome-fuse/nh_fuse_key.c
+    src/porthome-fuse/nh_fuse_source.c
+    src/porthome-fuse/nh_fuse_table.c)
+  target_compile_definitions(nostr-home-fuse PRIVATE FUSE_USE_VERSION=31)
+  target_compile_options(nostr-home-fuse PRIVATE
+    -Wall -Wextra -Wno-error -Wno-misleading-indentation
+    -Wno-unused-parameter -Wno-format-truncation)
+  target_include_directories(nostr-home-fuse PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fuse
+    ${FUSE3_INCLUDE_DIRS})
+  target_link_libraries(nostr-home-fuse PRIVATE
+    nostr_syncd_core nostr_porthome ${FUSE3_LIBRARIES})
+  # sd_notify is optional — link when the systemd library is present.
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(SYSTEMD QUIET IMPORTED_TARGET libsystemd)
+    if(SYSTEMD_FOUND)
+      target_link_libraries(nostr-home-fuse PRIVATE PkgConfig::SYSTEMD)
+    endif()
+  endif()
+
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_fuse_table tests/unit/test_fuse_table.c
+      src/porthome-fuse/nh_fuse_table.c)
+    target_compile_options(test_fuse_table PRIVATE
+      -Wall -Wextra -Wno-error -Wno-misleading-indentation
+      -Wno-unused-parameter)
+    target_include_directories(test_fuse_table PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fuse)
+    target_link_libraries(test_fuse_table PRIVATE nostr_syncd_core)
+    add_test(NAME homed_fuse_table COMMAND test_fuse_table)
+    set_tests_properties(homed_fuse_table PROPERTIES
+      LABELS "nostr-homed;porthome;portable-fuse;portable" TIMEOUT 30)
+
+    add_executable(test_fuse_source tests/unit/test_fuse_source.c
+      src/porthome-fuse/nh_fuse_source.c)
+    target_compile_options(test_fuse_source PRIVATE
+      -Wall -Wextra -Wno-error -Wno-misleading-indentation
+      -Wno-unused-parameter)
+    target_include_directories(test_fuse_source PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fuse)
+    target_link_libraries(test_fuse_source PRIVATE
+      nostr_syncd_core nostr_porthome)
+    add_test(NAME homed_fuse_source COMMAND test_fuse_source)
+    set_tests_properties(homed_fuse_source PROPERTIES
+      LABELS "nostr-homed;porthome;portable-fuse;portable" TIMEOUT 60)
+
+    add_executable(test_fuse_key tests/unit/test_fuse_key.c
+      src/porthome-fuse/nh_fuse_key.c)
+    target_compile_options(test_fuse_key PRIVATE
+      -Wall -Wextra -Wno-error -Wno-misleading-indentation
+      -Wno-unused-parameter)
+    target_include_directories(test_fuse_key PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fuse)
+    target_link_libraries(test_fuse_key PRIVATE nostr_porthome)
+    add_test(NAME homed_fuse_key COMMAND test_fuse_key)
+    set_tests_properties(homed_fuse_key PROPERTIES
+      LABELS "nostr-homed;porthome;portable-fuse;portable" TIMEOUT 30)
+
+    # Integration: harness mode exercises the wiring without needing
+    # /dev/fuse — CI-friendly. Ships alongside real-mount scripts that
+    # SKIP when /dev/fuse or fusermount3 is absent.
+    add_test(NAME homed_fuse_harness
+      COMMAND ${CMAKE_COMMAND} -E env
+              NH_FUSE_TEST_HARNESS=1
+              NH_FUSE_STATE_DIR=${CMAKE_CURRENT_BINARY_DIR}/fuse_test_state
+              NH_FUSE_MOUNTPOINT=${CMAKE_CURRENT_BINARY_DIR}/fuse_test_mp
+              NH_FUSE_STATUS_DIR=${CMAKE_CURRENT_BINARY_DIR}/fuse_test_status
+              NH_FUSE_SEED_HEX=1111111111111111111111111111111111111111111111111111111111111111
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/run_porthome_fuse_harness.sh
+              $<TARGET_FILE:nostr-home-fuse>)
+    set_tests_properties(homed_fuse_harness PROPERTIES
+      LABELS "nostr-homed;porthome;portable-fuse;portable" TIMEOUT 60)
+  endif()
+
+  if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+    install(TARGETS nostr-home-fuse RUNTIME
+            DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    pkg_get_variable(NH_FUSE_USER_UNIT_DIR systemd systemduserunitdir)
+    if(NOT NH_FUSE_USER_UNIT_DIR)
+      set(NH_FUSE_USER_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/user")
+    endif()
+    set(NH_FUSE_BIN_PATH "${CMAKE_INSTALL_FULL_BINDIR}/nostr-home-fuse")
+    configure_file(systemd/user/nostr-home-fuse.service.in
+                   "${CMAKE_CURRENT_BINARY_DIR}/nostr-home-fuse.service"
+                   @ONLY)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-home-fuse.service"
+            DESTINATION "${NH_FUSE_USER_UNIT_DIR}")
+    install(FILES packaging/ignore.d/portable
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-homed/ignore.d")
   endif()
 endif()
 

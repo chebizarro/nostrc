@@ -41,6 +41,10 @@ struct nh_syncd_entry {
     size_t         chunk_addrs_n;
     /* For symlinks: heap C-string. NULL otherwise. */
     char          *symlink_target;
+    /* Phase 4 P4-I: borrowed pointers into the underlying jansson
+     * `chunk_addrs_hex` array and `symlink_target` string for the
+     * currently-bound row. Populated by _find / _at at each call. */
+    json_t        *row_ref;
 };
 
 struct nh_syncd_state {
@@ -365,6 +369,7 @@ const nh_syncd_entry *nh_syncd_state_find(const nh_syncd_state *s, const char *r
     if (!json_is_object(row)) return NULL;
 
     memset(&g_entry, 0, sizeof g_entry);
+    g_entry.row_ref = row; /* borrowed for the current lookup */
     json_t *jk = json_object_get(row, "kind");
     json_t *jm = json_object_get(row, "mode");
     json_t *ju = json_object_get(row, "uid");
@@ -394,6 +399,67 @@ uint64_t nh_syncd_entry_size(const nh_syncd_entry *e)          { return e ? e->s
 uint64_t nh_syncd_entry_mtime_ns(const nh_syncd_entry *e)      { return e ? e->mtime_ns : 0; }
 const char *nh_syncd_entry_content_hash_hex(const nh_syncd_entry *e) {
     return e ? e->content_hash_hex : "";
+}
+uint32_t nh_syncd_entry_mode(const nh_syncd_entry *e) { return e ? e->mode : 0; }
+uint32_t nh_syncd_entry_uid(const nh_syncd_entry *e)  { return e ? e->uid  : 0; }
+uint32_t nh_syncd_entry_gid(const nh_syncd_entry *e)  { return e ? e->gid  : 0; }
+
+/* ────────────────────────────────────────────────────────────────────
+ * Additive getters for external readers (Phase 4 P4-I, bead nostrc-1u55).
+ *
+ * Chunk / symlink accessors read the jansson row stashed on the tls
+ * entry by the most recent _find / _at call. Callers must consume
+ * these accessors on the entry they just obtained, before any
+ * subsequent state call on the same thread — this matches the
+ * lifetime rule the header documents.
+ * ──────────────────────────────────────────────────────────────────── */
+
+static _Thread_local char g_chunk_scratch[65];
+static _Thread_local char g_symlink_scratch[4096];
+
+size_t nh_syncd_entry_chunk_count(const nh_syncd_entry *e) {
+    if (!e || !e->row_ref) return 0;
+    json_t *arr = json_object_get(e->row_ref, "chunk_addrs_hex");
+    if (!json_is_array(arr)) return 0;
+    return (size_t)json_array_size(arr);
+}
+
+const char *nh_syncd_entry_chunk_at(const nh_syncd_entry *e, size_t i) {
+    if (!e || !e->row_ref) return NULL;
+    json_t *arr = json_object_get(e->row_ref, "chunk_addrs_hex");
+    if (!json_is_array(arr) || i >= json_array_size(arr)) return NULL;
+    const char *v = json_string_value(json_array_get(arr, i));
+    if (!v) return NULL;
+    strncpy(g_chunk_scratch, v, sizeof g_chunk_scratch - 1);
+    g_chunk_scratch[sizeof g_chunk_scratch - 1] = '\0';
+    return g_chunk_scratch;
+}
+
+const char *nh_syncd_entry_symlink_target(const nh_syncd_entry *e) {
+    if (!e || !e->row_ref) return "";
+    const char *v = json_string_value(json_object_get(e->row_ref, "symlink_target"));
+    if (!v) return "";
+    strncpy(g_symlink_scratch, v, sizeof g_symlink_scratch - 1);
+    g_symlink_scratch[sizeof g_symlink_scratch - 1] = '\0';
+    return g_symlink_scratch;
+}
+
+const nh_syncd_entry *nh_syncd_state_at(const nh_syncd_state *s, size_t i,
+                                        const char **out_rel_path) {
+    if (!s || !s->files) return NULL;
+    size_t n = (size_t)json_object_size(s->files);
+    if (i >= n) return NULL;
+    size_t k = 0;
+    const char *key = NULL;
+    json_t *val = NULL;
+    json_object_foreach(s->files, key, val) {
+        if (k == i) {
+            if (out_rel_path) *out_rel_path = key;
+            return nh_syncd_state_find(s, key);
+        }
+        k++;
+    }
+    return NULL;
 }
 
 /* Internal helper used by the pusher. Set or replace a file entry. */

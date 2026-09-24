@@ -1,0 +1,11 @@
+# nostr-homed ignore drop-in — belt-and-braces exclusion of the
+# portable-home FUSE mountpoint. The primary defence is the xdev
+# check in nh_syncd_ignore (mount is on a different st_dev, so
+# capture ignores it automatically). This file makes the intent
+# explicit for operators who inspect the ignore set.
+#
+# The mount lives at $HOME/Portable by default; users can override
+# via NH_FUSE_MOUNTPOINT / ~/.config/nostr-homed/fuse.conf, in which
+# case they should add the chosen path to ~/.config/nostr-homed/ignore
+# too.
+Portable/

@@ -972,6 +972,85 @@ int nh_syncd_reconcile_from_manifest(const nh_syncd_reconcile_cfg *cfg,
             }
         }
 
+        /* Phase 4 P4-I: lazy-subtree skip (bead nostrc-1u55).
+         *
+         * If the entry falls under a lazy prefix AND the local slot
+         * does not have a materialized copy from a prior reconcile,
+         * suppress all writes. We still update snapshot.json below
+         * (via apply_remote_entry variants that record metadata) but
+         * we never touch the working tree — those bytes come from
+         * the FUSE overlay on demand.
+         *
+         * If a materialized copy already exists (local_absent is
+         * false), the maintainer's approval note is explicit:
+         * NEVER delete it. We fall through to normal handling for
+         * writes but DROP any remote-delete for this path — it's
+         * suppressed with a warn log rather than becoming a conflict.
+         */
+        bool lazy_covers = cfg->lazy && nh_syncd_lazy_covers(cfg->lazy, b->rel);
+        if (lazy_covers) {
+            if (remote_absent && !local_absent) {
+                /* Remote-delete under a lazy subtree that has a
+                 * materialized local copy. Refuse to delete. Warn
+                 * once so operators see it in the log. */
+                fprintf(stderr,
+                        "syncd/reconcile: lazy subtree shadowed remote-delete %s "
+                        "(kept; additive-only suppression)\n", b->rel);
+                /* Snapshot still tracks the entry — do NOT clear it. */
+                continue;
+            }
+            if (!remote_absent && local_absent) {
+                /* Lazy entry: record metadata only, no bytes. Snapshot
+                 * gets the manifest's kind/mode/size/chunks so the
+                 * FUSE overlay can serve reads without a materialized
+                 * $HOME copy. */
+                const nh_porthome_entry *e = remote;
+                char **addrs = NULL;
+                if (e->kind == NH_PORTHOME_KIND_FILE && e->chunks_len) {
+                    addrs = calloc(e->chunks_len, sizeof *addrs);
+                    if (!addrs) { rc = NH_SYNCD_ERR_OOM; goto done; }
+                    for (size_t k = 0; k < e->chunks_len; k++) {
+                        addrs[k] = malloc(65);
+                        if (!addrs[k]) {
+                            for (size_t j = 0; j < k; j++) free(addrs[j]);
+                            free(addrs); rc = NH_SYNCD_ERR_OOM; goto done;
+                        }
+                        hex_of(e->chunks[k].sha256, 32, addrs[k]);
+                    }
+                }
+                int ur;
+                if (e->kind == NH_PORTHOME_KIND_DIR) {
+                    ur = nh_syncd_state_upsert_dir_(state, b->rel,
+                            e->mode & 0777, (uint32_t)getuid(),
+                            (uint32_t)getgid(), e->mtime_ns);
+                } else if (e->kind == NH_PORTHOME_KIND_SYMLINK) {
+                    ur = nh_syncd_state_upsert_symlink_(state, b->rel,
+                            e->mode & 0777, (uint32_t)getuid(),
+                            (uint32_t)getgid(), e->mtime_ns,
+                            e->symlink_target ? e->symlink_target : "");
+                } else {
+                    ur = nh_syncd_state_upsert_file_(state, b->rel,
+                            e->mode & 0777, (uint32_t)getuid(),
+                            (uint32_t)getgid(), e->mtime_ns,
+                            e->size, ""/*content_hash*/,
+                            (const char *const *)addrs, e->chunks_len);
+                }
+                if (addrs) {
+                    for (size_t k = 0; k < e->chunks_len; k++) free(addrs[k]);
+                    free(addrs);
+                }
+                if (ur != 0) { rc = ur; goto done; }
+                res->applied++;
+                continue;
+            }
+            /* Otherwise (both changed / both present) fall through
+             * to normal handling — a lazy entry that DID get
+             * materialized in the past is handled like a normal
+             * entry: writes still land under $HOME, deletes still
+             * turn into conflicts, etc. The suppression is additive
+             * for cold entries only. */
+        }
+
         if (local_changed && remote_changed) {
             /* CONFLICT branch. */
             if (remote_absent) {
@@ -1035,6 +1114,11 @@ int nh_syncd_reconcile_from_manifest(const nh_syncd_reconcile_cfg *cfg,
         const nh_porthome_entry *e = &cfg->manifest->entries[i];
         if (!e->path_enc || !rel_ok(e->path_enc)) continue;
         if (e->kind == NH_PORTHOME_KIND_FILE) continue;   /* v1 punt */
+        /* Phase 4 P4-I: opaque-name entries under lazy prefixes still
+         * skip materialization (path_enc is a hex hash so this check
+         * is defensive — the prefix will rarely match — but keeping
+         * the guard is cheap). */
+        if (cfg->lazy && nh_syncd_lazy_covers(cfg->lazy, e->path_enc)) continue;
         int ar = apply_remote_entry(cfg, state, home_fd, e->path_enc, e, out_error_msg);
         if (ar == 0) res->applied++;
     }

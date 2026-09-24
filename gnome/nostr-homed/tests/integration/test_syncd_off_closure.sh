@@ -26,12 +26,24 @@ fi
 # archive members.
 if nm -a "${BIN}" 2>/dev/null \
    | awk '{print $NF}' \
-   | grep -E '(nh_syncd_cache_|nostr_home_syncd|nh_syncd_sweep_|nh_syncd_pin_ring_)' \
+   | grep -E '(nh_syncd_cache_|nostr_home_syncd|nh_syncd_sweep_|nh_syncd_pin_ring_|nh_fuse_)' \
    >/tmp/off-closure-$$; then
-    echo "FAIL: nostr-authd contains SYNCD symbols:" >&2
+    echo "FAIL: nostr-authd contains SYNCD or FUSE symbols:" >&2
     cat /tmp/off-closure-$$ >&2
     rm -f /tmp/off-closure-$$
     exit 1
+fi
+
+# libfuse3 must never appear in the broker's ldd closure — Phase 4
+# P4-I ships nostr-home-fuse as a SEPARATE binary and the
+# NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL gate must keep
+# libfuse3 out of pam_nostr / nostr-authd even when it is ON.
+if command -v ldd >/dev/null 2>&1; then
+    if ldd "${BIN}" 2>/dev/null | grep -qi 'libfuse'; then
+        echo "FAIL: nostr-authd links libfuse:" >&2
+        ldd "${BIN}" | grep -i libfuse >&2
+        exit 1
+    fi
 fi
 
 rm -f /tmp/off-closure-$$
