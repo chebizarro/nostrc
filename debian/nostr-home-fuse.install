@@ -1,0 +1,3 @@
+usr/bin/nostr-home-fuse
+usr/lib/systemd/user/nostr-home-fuse.service
+usr/share/nostr-homed/ignore.d/portable

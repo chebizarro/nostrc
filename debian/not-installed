@@ -25,3 +25,11 @@ tmp/nostrc-build/nostrc-0.3.0/obj-x86_64-linux-gnu/tools/test_relay_eose
 # multiarch-specific and would be a lintian ERROR in an arch:foreign
 # daemon package. Defer to the future -dev package.
 usr/lib/x86_64-linux-gnu/pkgconfig/nostr-homed.pc
+
+# Phase 5 (bead nostrc-h10m.2): libhanami0 ships the runtime shared
+# library only. No libhanami-dev this phase — the portable-home stack
+# has no third-party consumers yet and no downstream API stability is
+# promised. Drop the -devel bits (pkg-config + headers) so dh_missing
+# does not warn.
+usr/lib/*/pkgconfig/hanami.pc
+usr/include/hanami/*

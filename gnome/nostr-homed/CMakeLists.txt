@@ -1213,8 +1213,17 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
       $<IF:$<TARGET_EXISTS:nostr>,nostr,PkgConfig::NOSTR>
       PkgConfig::_PH_GLIB
       OpenSSL::Crypto)
-    # Not installed as part of the base package; the packaging split
-    # in design §7.2 puts it under /usr/libexec/nostr-homed later.
+    # Phase 5 packaging (bead nostrc-h10m.2): install the unprivileged
+    # fetch helper under libexec so the nostr-home-sync binary package
+    # can ship it. The broker resolves the helper via the
+    # NH_PORTHOME_FETCH_HELPER env override (see auth_porthome_fetch.c);
+    # packagers should export NH_PORTHOME_FETCH_HELPER=%{_libexecdir}/nostr-homed/nostr-home-fetch
+    # in a distro drop-in if the compile-time default (build tree) is
+    # not the shipped location.
+    if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+      install(TARGETS nostr-home-fetch
+              RUNTIME DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/nostr-homed")
+    endif()
   endif()
 
   # ────────────────────────────────────────────────────────────────

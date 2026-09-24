@@ -16,6 +16,9 @@ Build-Depends: debhelper-compat (= 13),
                libpam0g-dev,
                libcurl4-openssl-dev,
                libsodium-dev,
+               libgit2-dev,
+               libfuse3-dev,
+               libsystemd-dev,
                chrpath
 Standards-Version: 4.6.2
 Homepage: https://github.com/chebizarro/nostrc
@@ -225,3 +228,79 @@ Description: Headless nostr login stack (metapackage)
  .
  The dependency closure is deliberately headless (decision D-14): no
  GTK/GNOME/gvfs/libsecret/libpeas/webkit/gstreamer/FUSE, and no GLib.
+
+
+# Portable-home Phase 5 packaging (bead nostrc-h10m.2 / design
+# home-from-relay.md §7.2 + nostrfs-porthome-overlay.md §D9).
+# The base nostr-login stack (headless) is UNCHANGED — these three
+# packages are additive and only pulled in when the operator opts
+# into portable homes. libhanami0 is factored out so both the sync
+# and the FUSE overlay share it without either bundling the .so.
+
+Package: libhanami0
+Section: libs
+Architecture: any
+Multi-Arch: same
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Blossom / git / SQLite helper library (nostrc portable-home)
+ libhanami is the shared substrate the nostrc portable-home stack
+ links against: Blossom BUD-01/02/04 client (HTTP via libcurl),
+ a Merkle-friendly SQLite index, and small git/libgit2 helpers.
+ .
+ Ships libhanami.so.0. Currently consumed only by nostr-home-sync
+ and nostr-home-fuse; no public API commitment yet.
+
+Package: nostr-home-sync
+Section: admin
+Architecture: any
+Multi-Arch: foreign
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         libhanami0 (= ${binary:Version}),
+         libnostr1 (= ${binary:Version}),
+         nostr-authd (>= ${source:Version}),
+         adduser
+Recommends: libnotify-bin
+Description: Portable-home sync daemon for nostr-homed (EXPERIMENTAL)
+ nostr-home-syncd is the user-scoped sync daemon that materializes,
+ tracks and re-uploads a portable $HOME snapshot to Blossom under
+ kind-30078 relay pointers (design docs/designs/home-from-relay.md
+ §6). It runs unprivileged as the login user under
+ nostr-home-sync.service (systemd --user) and never touches system
+ state.
+ .
+ Also ships the unprivileged fetch helper
+ /usr/libexec/nostr-homed/nostr-home-fetch that nostr-authd's
+ PROVISION_HOME job forks + drop-privs execs, and the sysusers.d(5)
+ snippet that provisions the dedicated `nostr-home-fetch` account
+ used by the sandbox (see docs/designs/home-from-relay.md §8.2).
+ .
+ EXPERIMENTAL: the wire format is versioned but not yet frozen; the
+ daemon carries the NH_PORTHOME_EXPERIMENTAL / NH_SYNCD_EXPERIMENTAL
+ compile-time flags and every public artefact is documented as such.
+
+Package: nostr-home-fuse
+Section: admin
+Architecture: any
+Multi-Arch: foreign
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         libhanami0 (= ${binary:Version}),
+         libnostr1 (= ${binary:Version}),
+         fuse3
+Recommends: nostr-home-sync (= ${binary:Version})
+Description: Read-only portable-home FUSE overlay for nostr-homed (EXPERIMENTAL)
+ nostr-home-fuse mounts the current portable-home snapshot as a
+ read-only view under $HOME/Portable, streaming cold subtrees from
+ Blossom on demand (design docs/designs/nostrfs-porthome-overlay.md).
+ The mount is torn down at logout via PartOf=graphical-session.target.
+ .
+ Depends on fuse3 for the setuid fusermount3 helper that performs the
+ mount; the daemon itself runs as the login user and holds no
+ privileges beyond the FUSE session. Requires a running
+ nostr-home-syncd to produce snapshot.json; Recommends the companion
+ package for that reason.
+ .
+ EXPERIMENTAL: gated behind NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL
+ at build time; the wire format and mount policy may change.

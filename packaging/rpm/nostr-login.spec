@@ -6,6 +6,13 @@
 # Fedora mirror of top-level debian/ — decisions D-2, D-3, D-4, D-6, D-8, D-9,
 # D-11, D-14 apply verbatim.  See docs/designs/packaging-plan-debian-fedora.md.
 #
+# Phase 5 (bead nostrc-h10m.2): additive portable-home stack — libhanami +
+# nostr-home-sync (nostr-home-syncd + user unit + fetch helper + sysusers
+# snippet) + nostr-home-fuse (FUSE overlay + user unit + ignore.d snippet).
+# Gated behind NOSTR_HOMED_ENABLE_PORTHOME_* — the headless nostr-login
+# closure is UNCHANGED (dep-purity gate stays green).  See design docs
+# home-from-relay.md §7.2 and nostrfs-porthome-overlay.md §D9.
+#
 # Build:
 #   1. Build a source tarball whose top directory is nostrc-%{version}/:
 #        git archive --format=tar.gz --prefix=nostrc-0.3.0/ \
@@ -72,6 +79,9 @@ BuildRequires:  pkgconfig(sqlite3)
 BuildRequires:  pkgconfig(libwebsockets)
 BuildRequires:  pkgconfig(libsodium)
 BuildRequires:  pkgconfig(libcurl)
+BuildRequires:  pkgconfig(libgit2)
+BuildRequires:  pkgconfig(fuse3)
+BuildRequires:  pkgconfig(libsystemd)
 BuildRequires:  pam-devel
 # nsync is vendored in-tree at third_party/nsync (git submodule pinned to a
 # release tag) and built statically as part of the CMake configure step.
@@ -306,6 +316,74 @@ validate_domain_profile.py profile validator.  Nothing in this package
 activates PAM or winbind -- it is inert by design and is safe to install
 on a stock host.
 
+# --- Portable-home Phase 5 (bead nostrc-h10m.2) --------------------------------
+#
+# Additive subpackages for the experimental portable-home stack matching the
+# split in docs/designs/home-from-relay.md §7.2 and
+# docs/designs/nostrfs-porthome-overlay.md §D9 (§D16 packaging decision).
+# The base nostr-login stack (headless, D-14) is UNCHANGED — these packages
+# only pull in when the operator opts in, and libhanami is factored out so
+# both the sync daemon and the FUSE overlay share it.
+
+# --- Sub-package: libhanami --------------------------------------------------
+%package -n libhanami
+Summary:        Blossom / git / SQLite helper library (nostrc portable-home)
+
+%description -n libhanami
+libhanami is the shared substrate the nostrc portable-home stack links
+against: the Blossom BUD-01/02/04 client (HTTP via libcurl), a
+Merkle-friendly SQLite index, and small git/libgit2 helpers.  Ships
+libhanami.so.0.  Consumed only by nostr-home-sync and nostr-home-fuse;
+no public API commitment yet.
+
+# --- Sub-package: nostr-home-sync --------------------------------------------
+%package -n nostr-home-sync
+Summary:        Portable-home sync daemon for nostr-homed (EXPERIMENTAL)
+Requires:       libhanami%{?_isa}  = %{version}-%{release}
+Requires:       libnostr%{?_isa}   = %{version}-%{release}
+Requires:       nostr-authd%{?_isa} = %{version}-%{release}
+Recommends:     libnotify
+%{?systemd_requires}
+
+%description -n nostr-home-sync
+nostr-home-syncd is the user-scoped sync daemon that materializes, tracks
+and re-uploads a portable $HOME snapshot to Blossom under kind-30078 relay
+pointers (design docs/designs/home-from-relay.md §6).  It runs unprivileged
+as the login user under nostr-home-sync.service (systemd --user).
+
+Also ships the unprivileged fetch helper
+%{_libexecdir}/nostr-homed/nostr-home-fetch that nostr-authd's
+PROVISION_HOME job forks + drop-privs execs, and the sysusers.d(5) snippet
+that provisions the dedicated `nostr-home-fetch` account used by the
+sandbox (docs/designs/home-from-relay.md §8.2).
+
+EXPERIMENTAL: the wire format is versioned but not yet frozen; the daemon
+carries the NH_PORTHOME_EXPERIMENTAL / NH_SYNCD_EXPERIMENTAL compile-time
+flags and every public artefact is documented as such.
+
+# --- Sub-package: nostr-home-fuse --------------------------------------------
+%package -n nostr-home-fuse
+Summary:        Read-only portable-home FUSE overlay for nostr-homed (EXPERIMENTAL)
+Requires:       libhanami%{?_isa}  = %{version}-%{release}
+Requires:       libnostr%{?_isa}   = %{version}-%{release}
+Requires:       fuse3
+Recommends:     nostr-home-sync%{?_isa} = %{version}-%{release}
+%{?systemd_requires}
+
+%description -n nostr-home-fuse
+nostr-home-fuse mounts the current portable-home snapshot as a read-only
+view under $HOME/Portable, streaming cold subtrees from Blossom on demand
+(design docs/designs/nostrfs-porthome-overlay.md).  The mount is torn down
+at logout via PartOf=graphical-session.target.
+
+Depends on fuse3 for the setuid fusermount3 helper that performs the mount;
+the daemon itself runs as the login user and holds no privileges beyond
+the FUSE session.  Requires a running nostr-home-syncd to produce
+snapshot.json; Recommends the companion package for that reason.
+
+EXPERIMENTAL: gated behind NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL
+at build time; the wire format and mount policy may change.
+
 # --- Prep / build / install --------------------------------------------------
 
 %prep
@@ -347,6 +425,10 @@ on a stock host.
     -DNOSTR_HOMED_ENABLE_DOMAIN_CONFIG=ON \
     -DNOSTR_HOMED_ENABLE_AUTH_INSTALL=ON \
     -DNOSTR_HOMED_BUILD_TESTS=OFF \
+    -DBUILD_LIBHANAMI=ON \
+    -DNOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL=ON \
+    -DNOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL=ON \
+    -DNOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL=ON \
     %{nil}
 
 %cmake_build
@@ -502,6 +584,12 @@ rm -f  %{buildroot}%{_libdir}/libnostr_nip55l_glib.so
 #       not-installed exclusion for the same file).
 rm -f  %{buildroot}%{_libdir}/pkgconfig/nostr-homed.pc
 #
+#    e) libhanami-devel bits (Phase 5): no third-party consumers this cycle,
+#       so drop hanami.pc + the public headers to keep the runtime lib alone
+#       in libhanami.  Matches debian/not-installed.
+rm -f  %{buildroot}%{_libdir}/pkgconfig/hanami.pc
+rm -rf %{buildroot}%{_includedir}/hanami
+#
 #    d) test_relay_eose: an upstream CMake install() rule ships a build-tree
 #       binary to an ABSOLUTE build-tree path (out of DESTDIR discipline).
 #       rpmbuild still catches it inside %{buildroot}/... -- scrub the
@@ -522,6 +610,34 @@ find %{buildroot} -depth -type d -empty -delete 2>/dev/null || :
 
 %postun -n nostr-authd
 %systemd_postun_with_restart nostr-authd.service
+
+# --- Portable-home Phase 5 scriptlets ---------------------------------------
+# Both user units follow the same posture as nostr-authd: do NOT auto-enable
+# or auto-start.  The sync daemon needs a broker seed drop before it does
+# anything useful; the FUSE overlay needs a snapshot.  Users run
+# `systemctl --user enable nostr-home-sync nostr-home-fuse` after
+# provisioning their portable identity.  systemd-sysusers runs on install
+# (via %sysusers_create_compat below) so the nostr-home-fetch helper
+# account exists.
+
+%post -n nostr-home-sync
+%systemd_user_post nostr-home-sync.service
+%sysusers_create_compat %{_sysusersdir}/nostr-home-fetch.conf
+
+%preun -n nostr-home-sync
+%systemd_user_preun nostr-home-sync.service
+
+%postun -n nostr-home-sync
+%systemd_user_postun nostr-home-sync.service
+
+%post -n nostr-home-fuse
+%systemd_user_post nostr-home-fuse.service
+
+%preun -n nostr-home-fuse
+%systemd_user_preun nostr-home-fuse.service
+
+%postun -n nostr-home-fuse
+%systemd_user_postun nostr-home-fuse.service
 
 # Fedora rpmbuild auto-generates ldconfig %post / %postun for any subpackage
 # owning %{_libdir}/*.so.<SOVERSION>.  We do NOT ship manual ldconfig
@@ -645,6 +761,26 @@ find %{buildroot} -depth -type d -empty -delete 2>/dev/null || :
 %dir %{_datadir}/nostr-homed/domain
 %{_datadir}/nostr-homed/domain/*
 %{_libexecdir}/nostr-homed/validate_domain_profile.py
+
+
+%files -n libhanami
+%license LICENSE
+%{_libdir}/libhanami.so.0
+%{_libdir}/libhanami.so.0.*
+
+%files -n nostr-home-sync
+%license LICENSE
+%{_bindir}/nostr-home-syncd
+%{_userunitdir}/nostr-home-sync.service
+%{_libexecdir}/nostr-homed/nostr-home-fetch
+%{_sysusersdir}/nostr-home-fetch.conf
+
+%files -n nostr-home-fuse
+%license LICENSE
+%{_bindir}/nostr-home-fuse
+%{_userunitdir}/nostr-home-fuse.service
+%dir %{_datadir}/nostr-homed/ignore.d
+%{_datadir}/nostr-homed/ignore.d/portable
 
 # --- Changelog ---------------------------------------------------------------
 

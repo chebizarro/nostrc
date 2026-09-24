@@ -1,8 +1,12 @@
 #!/usr/bin/make -f
-# debian/rules for nostrc phase 1: headless nostr-login stack (D-14).
-# Build the GLib-free libnostr ABI and only the components that constitute
-# the headless login stack — no GTK, no GObject, no apps, no libhanami,
-# no signet, no marmot, no roaming/FUSE.
+# debian/rules for nostrc phase 1 + phase 5 (portable-home) packaging.
+# Phase 1: headless nostr-login stack (D-14) — libnostr (GLib-free ABI),
+# NSS/PAM/authd/homectl/SMB/domain, no GTK/GObject/apps/marmot/roaming.
+# Phase 5 (bead nostrc-h10m.2): additive portable-home stack —
+# libhanami0 + nostr-home-sync (nostr-home-syncd + user unit + fetch
+# helper + sysusers snippet) + nostr-home-fuse (FUSE overlay + user
+# unit + ignore.d snippet). Gated behind NOSTR_HOMED_ENABLE_PORTHOME_*
+# — the headless closure is UNCHANGED (dep-purity check in P5).
 
 export DH_VERBOSE = 1
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
@@ -22,7 +26,7 @@ override_dh_auto_configure:
 		-DBUILD_APPS=OFF \
 		-DBUILD_NOSTR_GOBJECT=OFF \
 		-DBUILD_NOSTR_GTK=OFF \
-		-DBUILD_LIBHANAMI=OFF \
+		-DBUILD_LIBHANAMI=ON \
 		-DBUILD_LIBMARMOT=OFF \
 		-DBUILD_MARMOT_GOBJECT=OFF \
 		-DBUILD_RELAYD=OFF \
@@ -44,7 +48,10 @@ override_dh_auto_configure:
 		-DNOSTR_HOMED_ENABLE_CTL=ON \
 		-DNOSTR_HOMED_ENABLE_DOMAIN_CONFIG=ON \
 		-DNOSTR_HOMED_ENABLE_AUTH_INSTALL=ON \
-		-DNOSTR_HOMED_BUILD_TESTS=OFF
+		-DNOSTR_HOMED_BUILD_TESTS=OFF \
+		-DNOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL=ON \
+		-DNOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL=ON \
+		-DNOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL=ON
 
 override_dh_auto_test:
 	# Tests disabled via BUILD_TESTING=OFF; nothing to run.
@@ -104,3 +111,13 @@ override_dh_installsystemd:
 	# Do not auto-start or enable nostr-authd: an unseeded broker has no
 	# accounts, so admins must seed with nostr-homed-seed first.
 	dh_installsystemd --no-start --no-enable --name=nostr-authd
+
+override_dh_installsystemduser:
+	# Portable-home user units (nostr-home-sync, nostr-home-fuse) are
+	# opt-in per session — they need a broker seed drop (§6.1) before
+	# they do useful work, so do NOT enable them globally at package
+	# install time. Users run `systemctl --user enable
+	# nostr-home-sync.service nostr-home-fuse.service` after
+	# provisioning their portable identity. This matches the base
+	# nostr-authd posture above.
+	dh_installsystemduser --no-start --no-enable
