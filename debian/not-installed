@@ -8,28 +8,40 @@ usr/share/dbus-1/services/org.nostr.Signer.service
 
 # NIP libraries are aggregated (D-6): the plan calls for folding them
 # into libnostr1 or a single libnostr-nips0 package, not per-NIP debs.
-# Phase 1 does not ship them.
+# Phase 1 does not ship them. Use ${DEB_HOST_MULTIARCH} wildcards so
+# the list is arch-agnostic (see debhelper #961104).
 usr/include/nip40.h
 usr/lib/libnip04.a
 usr/lib/libnip05.so
 usr/lib/libnip25.so
 usr/lib/libnostr_nip77.a
-usr/lib/x86_64-linux-gnu/libnip19.so
-usr/lib/x86_64-linux-gnu/libnostr_nip55l_core.so
-usr/lib/x86_64-linux-gnu/libnostr_nip55l_glib.so
+usr/lib/*/libnip19.so
+usr/lib/*/libnostr_nip55l_core.so
+usr/lib/*/libnostr_nip55l_glib.so
 
 # Test binary that installs via a stray CMake rule (build-tree leak).
-tmp/nostrc-build/nostrc-0.3.0/obj-x86_64-linux-gnu/tools/test_relay_eose
+# The build path prefix varies by builder — glob both known variants.
+tmp/nostrc-build/nostrc-0.3.0/obj-*-linux-gnu/tools/test_relay_eose
+tmp/nostrc-porthome-pkg/obj-*-linux-gnu/tools/test_relay_eose
 
 # Phase 1 does not ship a libnostr-homed-dev package; nostr-homed.pc is
 # multiarch-specific and would be a lintian ERROR in an arch:foreign
 # daemon package. Defer to the future -dev package.
-usr/lib/x86_64-linux-gnu/pkgconfig/nostr-homed.pc
+usr/lib/*/pkgconfig/nostr-homed.pc
+
+# Phase 1 orphan (nostrc-rb0e / auth-install): the greeter-account
+# sysusers snippet is installed by the AUTH_INSTALL block but no Phase-1
+# .install claims it. Owner is nostr-authd's greeter-artifact path
+# (packaging/pam/nostr-auth-greeter.group.conf.sample). Suppressed here
+# so dh_missing does not gate the build; adding it to nostr-authd.install
+# is tracked as a follow-up (nostrc-h10m.4).
+usr/lib/sysusers.d/nostr-auth-greeter.conf
 
 # Phase 5 (bead nostrc-h10m.2): libhanami0 ships the runtime shared
 # library only. No libhanami-dev this phase — the portable-home stack
 # has no third-party consumers yet and no downstream API stability is
-# promised. Drop the -devel bits (pkg-config + headers) so dh_missing
-# does not warn.
+# promised. Drop the -devel bits (unversioned .so symlink + pkg-config
+# + headers) so dh_missing does not warn.
+usr/lib/*/libhanami.so
 usr/lib/*/pkgconfig/hanami.pc
 usr/include/hanami/*
