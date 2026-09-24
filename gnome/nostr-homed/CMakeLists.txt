@@ -1442,6 +1442,19 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
       set_tests_properties(homed_syncd_off_closure PROPERTIES
         LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 15)
     endif()
+
+    # I2 (bead nostrc-p6qp) — reconciler unit + pull integration.
+    add_executable(test_syncd_reconcile tests/unit/test_syncd_reconcile.c)
+    target_link_libraries(test_syncd_reconcile PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_reconcile COMMAND test_syncd_reconcile)
+    set_tests_properties(homed_syncd_reconcile PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 60)
+
+    add_executable(test_syncd_pull_e2e tests/integration/test_syncd_pull_e2e.c)
+    target_link_libraries(test_syncd_pull_e2e PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_pull_e2e COMMAND test_syncd_pull_e2e)
+    set_tests_properties(homed_syncd_pull_e2e PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 120)
   endif()
 
   # ── I3 (bead nostrc-p6qp) — install rule for the daemon + user unit ──
@@ -1480,18 +1493,6 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
               ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_syncd_install_smoke.sh)
     set_tests_properties(homed_syncd_install_smoke PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 60)
-    # I2 (bead nostrc-p6qp) — reconciler unit + pull integration.
-    add_executable(test_syncd_reconcile tests/unit/test_syncd_reconcile.c)
-    target_link_libraries(test_syncd_reconcile PRIVATE nostr_syncd_core)
-    add_test(NAME homed_syncd_reconcile COMMAND test_syncd_reconcile)
-    set_tests_properties(homed_syncd_reconcile PROPERTIES
-      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 60)
-
-    add_executable(test_syncd_pull_e2e tests/integration/test_syncd_pull_e2e.c)
-    target_link_libraries(test_syncd_pull_e2e PRIVATE nostr_syncd_core)
-    add_test(NAME homed_syncd_pull_e2e COMMAND test_syncd_pull_e2e)
-    set_tests_properties(homed_syncd_pull_e2e PROPERTIES
-      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 120)
   endif()
 endif()
 
