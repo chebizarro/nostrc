@@ -18,6 +18,7 @@
 #include "nh_porthome_manifest.h"
 #include "nh_porthome_provision.h"
 #include "nh_porthome_wrapkey.h"
+#include "nh_porthome_sandbox.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -522,6 +523,81 @@ int nh_auth_broker_porthome_take_wrap_seed(const char *account_id,
   return -1;
 }
 
+
+/* ────────────────────────────────────────────────────────────────────
+ * Phase 2.5B fetch-helper sandbox seam (bead nostrc-ww50).
+ *
+ * The 9k4g agent's helper does the real network work; this glue just
+ * spawns the helper under nh_porthome_spawn_sandboxed, waits with a
+ * wall-clock deadline, and returns the exit class so the WAIT_HOME
+ * handler can still distinguish LIMITED_MODE (network / decode /
+ * SSRF-refused) from FAILED (internal / killed).
+ *
+ * Materialisation stays in the broker as root — the labeler in
+ * label_write_into() writes through nh_identity_home_prepare's
+ * staging descriptor, which cannot be handed across the exec()
+ * boundary without giving the helper write access to /var/lib and
+ * defeating the whole point of dropping privileges. That split
+ * matches design §7.2 exactly.
+ * ──────────────────────────────────────────────────────────────────── */
+
+int nh_auth_broker_porthome_run_fetch(const char *helper_path,
+                                      const char *drop_user,
+                                      char *const argv_tail[],
+                                      int stdin_fd, int stdout_fd,
+                                      int stderr_fd,
+                                      uint32_t deadline_ms,
+                                      int *out_exit,
+                                      int *out_signal,
+                                      int *out_timed_out) {
+  if (out_exit)     *out_exit = -1;
+  if (out_signal)   *out_signal = 0;
+  if (out_timed_out) *out_timed_out = 0;
+
+  const char *hp = (helper_path && helper_path[0])
+                   ? helper_path
+                   : NH_AUTH_BROKER_PORTHOME_DEFAULT_HELPER;
+  if (hp[0] != '/') return -1;
+
+  /* Build a fresh argv[] on the stack — argv_tail may be NULL. Cap at
+   * a small number of tail args; the helper's CLI (see 9k4g) is short. */
+  enum { MAX_TAIL = 16 };
+  char *argv[MAX_TAIL + 2];
+  size_t n = 0;
+  argv[n++] = (char *)hp;
+  if (argv_tail) {
+    for (size_t i = 0; i < MAX_TAIL && argv_tail[i]; i++)
+      argv[n++] = argv_tail[i];
+  }
+  argv[n] = NULL;
+
+  /* Route the drop-user hint through the sandbox test seam so a
+   * per-broker config value overrides the sandbox's compile-time
+   * default. Cleared after the spawn returns so a subsequent caller
+   * that didn't set a drop_user gets defaults back. */
+  if (drop_user && drop_user[0])
+    nh_porthome_sandbox_set_drop_user(drop_user);
+
+  pid_t pid = 0;
+  nh_porthome_sandbox_rc srx = nh_porthome_spawn_sandboxed(
+      argv, NULL, stdin_fd, stdout_fd, stderr_fd, deadline_ms, &pid);
+  if (drop_user && drop_user[0])
+    nh_porthome_sandbox_set_drop_user(NULL);
+  if (srx != NH_PORTHOME_SANDBOX_OK) return -1;
+
+  int rc = nh_porthome_sandbox_wait(pid, deadline_ms,
+                                    out_exit, out_signal, out_timed_out);
+  return rc;
+}
+
+int nh_auth_broker_porthome_classify_fetch_exit(int exit_code, int signal) {
+  if (signal != 0) return NH_AUTH_PORTHOME_JOB_FAILED;
+  if (exit_code == 0) return NH_AUTH_PORTHOME_JOB_OK;
+  if (exit_code >= 64 && exit_code <= 69)
+    return NH_AUTH_PORTHOME_JOB_LIMITED;
+  return NH_AUTH_PORTHOME_JOB_FAILED;
+}
+
 #else  /* !NH_AUTH_BROKER_ENABLE_PORTHOME */
 
 int  nh_auth_porthome_registry_init(void)     { return 0; }
@@ -558,6 +634,28 @@ int nh_auth_broker_porthome_deposit_wrap_seed(const char *a,
 int nh_auth_broker_porthome_take_wrap_seed(const char *a,
                                            uint8_t out[32]) {
   (void)a; (void)out; return -1;
+}
+
+int nh_auth_broker_porthome_run_fetch(const char *helper_path,
+                                      const char *drop_user,
+                                      char *const argv_tail[],
+                                      int stdin_fd, int stdout_fd,
+                                      int stderr_fd,
+                                      uint32_t deadline_ms,
+                                      int *out_exit,
+                                      int *out_signal,
+                                      int *out_timed_out) {
+  (void)helper_path; (void)drop_user; (void)argv_tail;
+  (void)stdin_fd; (void)stdout_fd; (void)stderr_fd;
+  (void)deadline_ms;
+  if (out_exit) *out_exit = -1;
+  if (out_signal) *out_signal = 0;
+  if (out_timed_out) *out_timed_out = 0;
+  return -1;
+}
+int nh_auth_broker_porthome_classify_fetch_exit(int exit_code, int signal) {
+  (void)exit_code; (void)signal;
+  return (int)NH_AUTH_PORTHOME_JOB_FAILED;
 }
 
 #endif /* NH_AUTH_BROKER_ENABLE_PORTHOME */

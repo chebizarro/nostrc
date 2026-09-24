@@ -31,6 +31,16 @@ RestartSec=1
 RuntimeDirectory=nostr-auth
 RuntimeDirectoryMode=0711
 ExecStartPre=/usr/bin/install -d -m 0750 -o root -g nostr-auth-greeter /run/nostr-auth/greeter
+# Phase 2.5B portable-home fetch sandbox (bead nostrc-ww50). The broker
+# fork+drop-privs execs `nostr-home-fetch` as the dedicated system user
+# provisioned by packaging/sysusers.d/nostr-home-fetch.conf (installed
+# to /usr/lib/sysusers.d). systemd-sysusers processes that at boot and
+# on package install, so no ExecStartPre is required here. On hosts
+# where sysusers has not run — e.g. some container images — the
+# sandbox falls back to `nobody` at spawn time; the hardening posture
+# (no_new_privs, rlimits, fd hygiene, cleared env) is preserved either
+# way. To provision the account by hand:
+#     systemd-sysusers /usr/lib/sysusers.d/nostr-home-fetch.conf
 StateDirectory=nostr-auth
 StateDirectoryMode=0700
 ReadWritePaths=/var/lib/nostr-auth
