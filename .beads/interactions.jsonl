@@ -365,3 +365,7 @@
 {"id":"int-be0ab29e","kind":"field_change","created_at":"2026-09-23T04:54:58.73966Z","actor":"Biz","issue_id":"nostrc-bit0","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-47bb0a01","kind":"field_change","created_at":"2026-09-24T05:44:33.760304Z","actor":"Biz","issue_id":"nostrc-pvha","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-153e9ea4","kind":"field_change","created_at":"2026-09-24T05:44:35.816851Z","actor":"Biz","issue_id":"nostrc-9k4g.1","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-e4fd3b2a","kind":"field_change","created_at":"2026-09-24T08:43:20.031572Z","actor":"Biz","issue_id":"nostrc-zw8v","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-116c417a","kind":"field_change","created_at":"2026-09-24T08:43:22.883728Z","actor":"Biz","issue_id":"nostrc-h4tv","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-9134a143","kind":"field_change","created_at":"2026-09-24T08:51:54.629679Z","actor":"Biz","issue_id":"nostrc-zw8v","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"fixed"}}
+{"id":"int-9d7f2248","kind":"field_change","created_at":"2026-09-24T08:52:04.177629Z","actor":"Biz","issue_id":"nostrc-h4tv","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"fixed"}}
