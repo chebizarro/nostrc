@@ -19,6 +19,7 @@
 #include "nh_porthome_provision.h"
 #include "nh_porthome_wrapkey.h"
 #include "nh_porthome_sandbox.h"
+#include "auth_porthome_fetch.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -173,7 +174,34 @@ typedef struct label_ctx {
   uint8_t        home_key[32];
   nh_porthome_prov_fetch_fn fetch;
   void *         fetch_ctx;
+  /* Real-fetch path (Phase 2.5, bead nostrc-9k4g). When use_helper is
+   * true, label_write_into spawns the nostr-home-fetch subprocess
+   * against `home_fd` instead of running the in-process materializer.
+   * `account_pubkey_hex` / `home_key_hex` / `home_root_id_hex` /
+   * `d_tag` are pre-rendered; `relays`/`servers` are borrowed pointers
+   * whose lifetime is the enclosing job_run() frame. */
+  int          use_helper;
+  char         account_pubkey_hex[65];
+  char         home_key_hex[65];
+  char         home_root_id_hex[65];
+  char         d_tag[97];
+  const char **relays;
+  size_t       relays_count;
+  const char **blossom_servers;
+  size_t       blossom_servers_count;
+  int          allow_insecure;
 } label_ctx;
+
+static int helper_progress_cb(void *ctx, uint64_t bytes, uint64_t files,
+                              int phase) {
+  nh_auth_porthome_job *j = (nh_auth_porthome_job *)ctx;
+  if (!j) return 0;
+  atomic_store(&j->bytes, bytes);
+  atomic_store(&j->files, (uint32_t)(files > 0xffffffffu ? 0xffffffffu : files));
+  if (atomic_load(&j->cancelled)) return 1;
+  (void)phase;
+  return 0;
+}
 
 /* Provisioner progress hooks are limited to bytes + files; feed those
  * into the job's atomic counters so WAIT_HOME can report them. Called
@@ -206,7 +234,54 @@ static nh_identity_rc label_write_into(void *ctx, int home_fd) {
   opts.progress_path      = lc->job->progress_path;
 
   nh_porthome_prov_status pr;
-  if (lc->sealed_manifest && lc->sealed_len) {
+  if (lc->use_helper) {
+    /* Real-fetch path: spawn nostr-home-fetch, which fetches the
+     * kind-30078 pointer over WSS, verifies signature+pubkey, decodes
+     * the sealed CBOR manifest, and materialises chunks into home_fd
+     * via the same nh_porthome_materialize_sealed_into_fd path used
+     * by the in-process branch. On any recoverable failure the helper
+     * exits 71/72/73/74/65 — mapped to LIMITED by the spawner. */
+    nh_auth_porthome_fetch_args fa = {0};
+    fa.account_pubkey_hex     = lc->account_pubkey_hex;
+    fa.home_root_id_hex       = lc->home_root_id_hex;
+    fa.home_key_hex           = lc->home_key_hex;
+    fa.d_tag                  = lc->d_tag;
+    fa.relays                 = lc->relays;
+    fa.relays_count           = lc->relays_count;
+    fa.blossom_servers        = lc->blossom_servers;
+    fa.blossom_servers_count  = lc->blossom_servers_count;
+    fa.bandwidth_cap_bytes    = lc->job->config.bandwidth_bytes_per_load;
+    fa.per_file_timeout_sec   = lc->job->config.load_timeout_sec;
+    fa.max_total_bytes        = lc->job->config.max_home_bytes;
+    fa.relay_timeout_ms       = 10000u;
+    fa.allow_insecure         = lc->allow_insecure;
+    fa.staging_fd             = home_fd;
+    fa.staging_dir            = NULL;
+    fa.total_timeout_ms       = 300000u;
+
+    nh_auth_porthome_fetch_progress_cb cb = { .fn = helper_progress_cb,
+                                              .ctx = lc->job };
+    int helper_exit = -1;
+    nh_auth_porthome_fetch_result fr =
+        nh_auth_porthome_fetch_spawn(&fa, &cb, &helper_exit);
+    switch (fr) {
+    case NH_PORTHOME_FETCH_RES_OK:
+      pr = NH_PORTHOME_PROV_OK;
+      break;
+    case NH_PORTHOME_FETCH_RES_LIMITED:
+    case NH_PORTHOME_FETCH_RES_UNAVAILABLE:
+      syslog(LOG_INFO, "porthome fetch helper LIMITED (exit=%d)",
+             helper_exit);
+      pr = NH_PORTHOME_PROV_LIMITED;
+      break;
+    case NH_PORTHOME_FETCH_RES_FAILED:
+    default:
+      syslog(LOG_WARNING, "porthome fetch helper FAILED (exit=%d)",
+             helper_exit);
+      pr = NH_PORTHOME_PROV_INVARIANT;
+      break;
+    }
+  } else if (lc->sealed_manifest && lc->sealed_len) {
     pr = nh_porthome_materialize_sealed_into_fd(
         home_fd, lc->sealed_manifest, lc->sealed_len,
         lc->home_key, lc->fetch, lc->fetch_ctx, &opts, lc->job->tx_id);
@@ -244,16 +319,133 @@ static void *job_run(void *arg) {
     goto done;
   }
 
-  /* Phase 2 fetch source:
-   *   - test hook (present) -> synthetic in-memory manifest + fetcher
-   *   - otherwise -> LIMITED (real relay fetch is Phase 2.5+ scope,
-   *     tracked in the follow-up; this ensures the LIMITED_MODE
-   *     interlock is the default when no manifest is available). */
+  /* Phase 2.5 fetch source ordering (bead nostrc-9k4g):
+   *   1. explicit test hook   -> synthetic in-memory manifest + fetcher
+   *   2. real fetch helper    -> spawn nostr-home-fetch subprocess if
+   *                              enabled (NH_PORTHOME_FETCH_HELPER not
+   *                              "off", helper binary present, config
+   *                              or environment supplies relays+servers)
+   *   3. otherwise            -> LIMITED (design §5.3 interlock).
+   *
+   * The env-var relay/server fallback lets the operator flip on the
+   * real fetcher without threading auth.conf through auth_broker.c
+   * (bead nostrc-ww50 is coordinating the broker-side wiring). */
+  const char **relay_ptrs = NULL;
+  const char **server_ptrs = NULL;
+  size_t relay_n = 0, server_n = 0;
+  /* Materialise config arrays into pointer arrays (label_ctx borrows
+   * the pointers, so their storage must outlive the call to
+   * nh_identity_home_prepare below — we keep them on the stack). */
+  const char *relay_stack[16];
+  const char *server_stack[16];
+  char env_relays[1024];
+  char env_servers[1024];
+  int allow_insecure_env = 0;
+
+  if (j->config.home_relays_count > 0 && j->config.home_relays) {
+    for (size_t i = 0; i < j->config.home_relays_count && relay_n < 16; i++) {
+      if (j->config.home_relays[i] && j->config.home_relays[i][0])
+        relay_stack[relay_n++] = j->config.home_relays[i];
+    }
+    relay_ptrs = relay_stack;
+  } else {
+    const char *e = getenv("NH_PORTHOME_FETCH_RELAYS");
+    if (e && e[0]) {
+      size_t l = strlen(e);
+      if (l < sizeof env_relays) {
+        memcpy(env_relays, e, l + 1);
+        char *p = env_relays;
+        while (p && *p && relay_n < 16) {
+          char *comma = strchr(p, ',');
+          if (comma) *comma = '\0';
+          if (*p) relay_stack[relay_n++] = p;
+          p = comma ? comma + 1 : NULL;
+        }
+        relay_ptrs = relay_stack;
+      }
+    }
+  }
+  if (j->config.blossom_servers_count > 0 && j->config.blossom_servers) {
+    for (size_t i = 0; i < j->config.blossom_servers_count && server_n < 16; i++) {
+      if (j->config.blossom_servers[i] && j->config.blossom_servers[i][0])
+        server_stack[server_n++] = j->config.blossom_servers[i];
+    }
+    server_ptrs = server_stack;
+  } else {
+    const char *e = getenv("NH_PORTHOME_FETCH_BLOSSOM_SERVERS");
+    if (e && e[0]) {
+      size_t l = strlen(e);
+      if (l < sizeof env_servers) {
+        memcpy(env_servers, e, l + 1);
+        char *p = env_servers;
+        while (p && *p && server_n < 16) {
+          char *comma = strchr(p, ',');
+          if (comma) *comma = '\0';
+          if (*p) server_stack[server_n++] = p;
+          p = comma ? comma + 1 : NULL;
+        }
+        server_ptrs = server_stack;
+      }
+    }
+  }
+  {
+    const char *e = getenv("NH_PORTHOME_ALLOW_INSECURE");
+    if (e && strcmp(e, "1") == 0) allow_insecure_env = 1;
+  }
+
   if (j->test_sealed_manifest && j->test_sealed_len && j->test_fetch) {
     lc.sealed_manifest = j->test_sealed_manifest;
     lc.sealed_len      = j->test_sealed_len;
     lc.fetch           = (nh_porthome_prov_fetch_fn)j->test_fetch;
     lc.fetch_ctx       = j->test_fetch_ctx;
+  } else if (relay_n > 0 && server_n > 0) {
+    /* Try the real helper. Look it up first — if unavailable, fall
+     * through to LIMITED without spawning. */
+    const char *hp = nh_auth_porthome_fetch_helper_path();
+    const char *off = getenv("NH_PORTHOME_FETCH_HELPER");
+    if (!hp || access(hp, X_OK) != 0 || (off && strcmp(off, "off") == 0)) {
+      atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_LIMITED);
+      goto done;
+    }
+    /* Derive an account-pubkey and derived home_root_id for the
+     * helper's control payload. account_pubkey_hex is stored on the
+     * job (populated by nh_auth_porthome_start via the account arg). */
+    /* Render home_key hex. */
+    nh_porthome_hex64(lc.home_key, lc.home_key_hex);
+    /* Derive a stable home_root_id from home_key + tag. This is opaque
+     * per-home; the helper does not currently verify it against the
+     * decoded manifest but plumbing it now keeps the wire schema
+     * ready for Phase 3. */
+    {
+      uint8_t tmp[32];
+      uint8_t buf[32 + 32];
+      memcpy(buf, lc.home_key, 32);
+      memcpy(buf + 32, "porthome/v1/home-root-id-derive", 32);
+      if (nh_porthome_sha256(buf, sizeof buf, tmp) != 0) {
+        atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_LIMITED);
+        goto done;
+      }
+      nh_porthome_hex64(tmp, lc.home_root_id_hex);
+    }
+    /* Account pubkey and d-tag. The account struct is not directly
+     * addressable from the job (it was consumed by
+     * nh_auth_porthome_start); we look it up now via the store. */
+    nh_identity_account acct;
+    if (nh_identity_store_lookup_by_id(j->store, j->account_id, &acct)
+        == NH_IDENTITY_OK && acct.pubkey_hex[0]) {
+      strncpy(lc.account_pubkey_hex, acct.pubkey_hex,
+              sizeof lc.account_pubkey_hex - 1);
+    } else {
+      atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_LIMITED);
+      goto done;
+    }
+    snprintf(lc.d_tag, sizeof lc.d_tag, "nostr-homed.home.v1:personal");
+    lc.relays = relay_ptrs;
+    lc.relays_count = relay_n;
+    lc.blossom_servers = server_ptrs;
+    lc.blossom_servers_count = server_n;
+    lc.allow_insecure = allow_insecure_env;
+    lc.use_helper = 1;
   } else {
     atomic_store(&j->state, NH_AUTH_PORTHOME_JOB_LIMITED);
     goto done;

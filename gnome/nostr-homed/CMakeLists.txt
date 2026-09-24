@@ -1063,6 +1063,61 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     PUBLIC OpenSSL::Crypto ${_porthome_hanami})
 
   # ────────────────────────────────────────────────────────────────
+  # Portable-home Phase 2.5 (bead nostrc-9k4g):
+  # unprivileged fetch helper (nostr-home-fetch) + broker spawner.
+  # The helper is a separate executable so its libnostr / libcurl /
+  # libhanami dep closure never enters nostr-authd or pam_nostr.
+  # ────────────────────────────────────────────────────────────────
+
+  # Tiny standalone parser library — no libnostr / libhanami dep. Used
+  # by the helper AND by the broker spawner, so both parsers agree by
+  # construction. Also independently unit-testable.
+  add_library(nostr_porthome_fetch_ctl STATIC
+    src/porthome-fetch/porthome_fetch_ctl.c)
+  target_compile_options(nostr_porthome_fetch_ctl PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_include_directories(nostr_porthome_fetch_ctl PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fetch)
+
+  # The helper binary. Only built when we have a libnostr (for the
+  # relay REQ / EOSE lifecycle) plus curl (transitively via libhanami)
+  # plus the porthome primitives. Runs unprivileged — never installed
+  # into the base package.
+  find_package(PkgConfig QUIET)
+  set(_porthome_fetch_libnostr_ok TRUE)
+  if(NOT TARGET nostr)
+    if(PKG_CONFIG_FOUND)
+      pkg_check_modules(NOSTR QUIET IMPORTED_TARGET libnostr)
+      if(NOT NOSTR_FOUND)
+        set(_porthome_fetch_libnostr_ok FALSE)
+      endif()
+    else()
+      set(_porthome_fetch_libnostr_ok FALSE)
+    endif()
+  endif()
+  find_package(PkgConfig QUIET)
+  pkg_check_modules(_PH_GLIB QUIET IMPORTED_TARGET glib-2.0)
+  if(NOT _PH_GLIB_FOUND)
+    set(_porthome_fetch_libnostr_ok FALSE)
+  endif()
+
+  if(_porthome_fetch_libnostr_ok)
+    add_executable(nostr-home-fetch
+      src/porthome-fetch/nostr-home-fetch.c)
+    target_compile_options(nostr-home-fetch PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    target_include_directories(nostr-home-fetch PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fetch)
+    target_link_libraries(nostr-home-fetch PRIVATE
+      nostr_porthome nostr_porthome_fetch_ctl
+      $<IF:$<TARGET_EXISTS:nostr>,nostr,PkgConfig::NOSTR>
+      PkgConfig::_PH_GLIB
+      OpenSSL::Crypto)
+    # Not installed as part of the base package; the packaging split
+    # in design §7.2 puts it under /usr/libexec/nostr-homed later.
+  endif()
+
+  # ────────────────────────────────────────────────────────────────
   # Portable-home Phase 2 (bead nostrc-89rj, nostrc-ck6i):
   # broker-side glue. Only when the auth runtime is also built.
   # Adds src/auth/auth_porthome.c to nostr_auth_runtime with
@@ -1080,7 +1135,17 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     # porthome archive / libhanami.
     target_compile_definitions(nostr_auth_runtime PUBLIC
       NH_AUTH_BROKER_ENABLE_PORTHOME=1)
-    target_link_libraries(nostr_auth_runtime PUBLIC nostr_porthome)
+    target_sources(nostr_auth_runtime PRIVATE
+      src/auth/auth_porthome_fetch.c)
+    target_link_libraries(nostr_auth_runtime PUBLIC
+      nostr_porthome nostr_porthome_fetch_ctl)
+    # If the helper was built above, point the spawner at its build-time
+    # location by default so an installed run without the packaging
+    # split still finds it. Operators override with NH_PORTHOME_FETCH_HELPER.
+    if(TARGET nostr-home-fetch)
+      target_compile_definitions(nostr_auth_runtime PRIVATE
+        NH_PORTHOME_FETCH_HELPER_PATH="$<TARGET_FILE:nostr-home-fetch>")
+    endif()
   endif()
 
   # ────────────────────────────────────────────────────────────
@@ -1115,6 +1180,20 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     add_test(NAME homed_porthome_blossom_guards
       COMMAND test_porthome_blossom_guards)
     set_tests_properties(homed_porthome_blossom_guards PROPERTIES
+      LABELS "nostr-homed;porthome;portable" TIMEOUT 30)
+
+    # Phase 2.5 (bead nostrc-9k4g): control-payload parser + progress-line
+    # codec. Deliberately links ONLY the tiny standalone library — no
+    # libnostr / libhanami / libcurl — so the base test matrix runs it
+    # even when the helper binary itself does not build.
+    add_executable(test_porthome_fetch_ctl
+      tests/unit/test_porthome_fetch_ctl.c)
+    target_link_libraries(test_porthome_fetch_ctl PRIVATE
+      nostr_porthome_fetch_ctl)
+    target_compile_options(test_porthome_fetch_ctl PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_test(NAME homed_porthome_fetch_ctl COMMAND test_porthome_fetch_ctl)
+    set_tests_properties(homed_porthome_fetch_ctl PROPERTIES
       LABELS "nostr-homed;porthome;portable" TIMEOUT 30)
 
     # Driver used by the Python integration test; not a standalone add_test.
