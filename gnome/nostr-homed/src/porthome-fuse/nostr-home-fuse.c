@@ -296,11 +296,21 @@ static int nhf_read(const char *path, char *buf, size_t len, off_t off,
             return -EIO;
         }
     }
+    /* Chunk size: defaults to design's 4 MiB. Overridable via
+     * NH_FUSE_CHUNK_SIZE for live-acceptance rigs whose Blossom
+     * server enforces a smaller PUT ceiling than the design chunk
+     * size (bead nostrc-1u55 live-smoke). */
+    size_t chunk_size = 4u * 1024u * 1024u;
+    const char *cs_env = getenv("NH_FUSE_CHUNK_SIZE");
+    if (cs_env && *cs_env) {
+        unsigned long long v = strtoull(cs_env, NULL, 10);
+        if (v >= 4096ull && v <= 4194304ull) chunk_size = (size_t)v;
+    }
     ssize_t r = nh_fuse_source_pread(g_source, fh->rel, fh->content_hash_hex,
                                      fh->size,
                                      (const char * const *)fh->chunks_hex,
                                      fh->n_chunks,
-                                     /* chunk_size */ (4u * 1024u * 1024u),
+                                     chunk_size,
                                      buf, len, off);
     if (r < 0) {
         write_status_json();

@@ -1648,6 +1648,20 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
               $<TARGET_FILE:nostr-home-fuse>)
     set_tests_properties(homed_fuse_harness PROPERTIES
       LABELS "nostr-homed;porthome;portable-fuse;portable" TIMEOUT 60)
+
+    # Live-acceptance operator tool (bead nostrc-1u55). Publishes a
+    # fixture home to real Blossom + relay AND writes a snapshot.json
+    # the FUSE mount can consume. Not a CTest case — operator-driven
+    # for the porthome-fuse live smoke.
+    add_executable(porthome-fuse-fixture
+      tests/integration/porthome_fuse_fixture.c)
+    target_compile_options(porthome-fuse-fixture PRIVATE
+      -Wall -Wextra -Wno-error -Wno-misleading-indentation
+      -Wno-unused-parameter)
+    target_include_directories(porthome-fuse-fixture PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(porthome-fuse-fixture PRIVATE
+      nostr_syncd_core nostr_porthome nostr)
   endif()
 
   if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
