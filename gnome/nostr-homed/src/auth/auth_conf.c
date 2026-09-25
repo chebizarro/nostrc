@@ -283,6 +283,17 @@ int nh_auth_conf_load(const char *path, nh_auth_conf *out) {
         if (v > 120) v = 120;
         out->porthome_nip46_decrypt_timeout_sec = v;
       }
+    } else if (!strcmp(key, "porthome_wrap_key_denied_skip_sec")) {
+      /* Bead nostrc-2mri. Per-provider skip cache TTL. 0 disables the
+       * cache; a hostile-large value is clamped to 24 h so a
+       * mis-configured value cannot lock a user out of PROVISION_HOME
+       * indefinitely — a re-pairing of the signer (which resets the
+       * cache) always recovers. */
+      uint32_t v = 0;
+      if (parse_uint32(value, &v) == 0) {
+        if (v > 86400u) v = 86400u;
+        out->porthome_wrap_key_denied_skip_sec = v;
+      }
     } else if (!strcmp(key, "porthome_fetch_helper")) {
       /* Absolute path only — the sandbox refuses to execve a relative
        * argv[0]. A misconfigured relative path silently drops us into

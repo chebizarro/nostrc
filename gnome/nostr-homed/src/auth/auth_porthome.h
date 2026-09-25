@@ -146,24 +146,72 @@ void nh_auth_broker_porthome_install(nh_identity_store *store,
                                      int enroll_wrap_key,
                                      uint32_t nip46_decrypt_timeout_sec);
 
-/* Test hook (bead nostrc-ck6i). When set, the wrap-key hand-off in
+/* Bead nostrc-8hc9: wrap-key RPC outcome class.
+ *
+ * Broker-owned enum kept independent of the NIP-46 client library's
+ * NostrNip46RpcError so auth_porthome.h stays free of a NIP-46 build
+ * dependency (this header is included by the base auth_broker archive
+ * whose link closure must not pull libnostr in). The mapping between
+ * the two enums lives in auth_porthome.c.
+ *
+ * The three failure classes correspond to the three log tags emitted
+ * by pvha_log_class (wrap-key-signer-offline / wrap-key-denied /
+ * wrap-key-decrypt-failed). Bead nostrc-2mri latches DENIED and
+ * DECRYPT_FAILED into a per-provider skip cache; SIGNER_OFFLINE is
+ * treated as transient and never latches. */
+typedef enum {
+  NH_AUTH_PORTHOME_WRAP_OK = 0,
+  NH_AUTH_PORTHOME_WRAP_ERR_SIGNER_OFFLINE,
+  NH_AUTH_PORTHOME_WRAP_ERR_DENIED,
+  NH_AUTH_PORTHOME_WRAP_ERR_DECRYPT_FAILED,
+} nh_auth_porthome_wrap_err;
+
+/* Test hook (bead nostrc-ck6i, extended in nostrc-8hc9). When set,
+ * the wrap-key hand-off in
  * nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46 replaces its
  * two NIP-46 client RPCs with these in-process function pointers,
- * so unit tests can exercise the enroll / unwrap / denied paths
- * without standing up a real bunker + relay pool. Callbacks:
- *   encrypt(session, peer_pk_hex, plaintext, &out_ciphertext, ctx)
- *   decrypt(session, peer_pk_hex, ciphertext, &out_plaintext, ctx)
+ * so unit tests can exercise the enroll / unwrap / denied /
+ * decrypt-failed / offline paths without standing up a real bunker +
+ * relay pool. Callbacks:
+ *   encrypt(session, peer_pk_hex, plaintext, &out_ciphertext, &out_err, ctx)
+ *   decrypt(session, peer_pk_hex, ciphertext, &out_plaintext, &out_err, ctx)
  * Each returns 0 on success; the helper wipes and free()s *out on
- * the failure path only. Setting both to NULL restores the real
- * nostr_nip46_client_nip44_* path. */
+ * the failure path only. When the callback returns non-zero it MAY
+ * populate *out_err with a failure class; out_err is guaranteed
+ * non-NULL by the caller. A hook that leaves out_err at
+ * NH_AUTH_PORTHOME_WRAP_OK on a non-zero return is treated as
+ * SIGNER_OFFLINE (the pre-nostrc-8hc9 default). Setting both hooks
+ * to NULL restores the real nostr_nip46_client_nip44_*_rpc_ex path. */
 typedef int (*nh_auth_porthome_nip44_fn)(void *session,
                                          const char *peer_pubkey_hex,
                                          const char *in,
                                          char **out,
+                                         nh_auth_porthome_wrap_err *out_err,
                                          void *ctx);
 void nh_auth_broker_porthome_set_nip44_hooks(
     nh_auth_porthome_nip44_fn encrypt, void *encrypt_ctx,
     nh_auth_porthome_nip44_fn decrypt, void *decrypt_ctx);
+
+/* Bead nostrc-2mri: reset the wrap-key outcome cache for a provider.
+ *
+ * Called from provider_nip46 / provider_nip46_qr on a fresh signer
+ * PAIRING (a successful `connect` from a client-initiated
+ * nostrconnect flow) so a previously-denied wrap-key hand-off is
+ * re-attempted next login instead of being skipped for the TTL.
+ * No-op when PORTHOME is disabled or the broker has no store handle
+ * installed. Safe to call from provider code without a store handle
+ * of its own — the broker's installed store is used. */
+void nh_auth_broker_porthome_wrap_key_reset(const char *provider_id);
+
+/* Bead nostrc-2mri: per-provider wrap-key skip cache TTL (seconds).
+ *
+ * Called from nostr-authd after config parse. 0 disables the cache
+ * entirely — every login retries. Values above 24 h are clamped to
+ * 24 h so a hostile-large config value cannot lock a user out of
+ * PROVISION_HOME indefinitely (a re-pairing always recovers, but the
+ * TTL must be finite regardless). Default when this setter is never
+ * called is 900 s = 15 min. */
+void nh_auth_broker_porthome_set_wrap_key_denied_skip_sec(uint32_t sec);
 
 /* Called by provider_nip46 / provider_nip46_qr after a successful
  * sign_event verify, BEFORE emitting SIGNED_EVENT to the runtime. When

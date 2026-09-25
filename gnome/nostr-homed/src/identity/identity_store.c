@@ -60,6 +60,17 @@ static const char authority_schema[] =
    * Optional (NULL); populated by the broker on first successful
    * nip44_encrypt of a fresh seed and read on subsequent logins. */
   " wrapped_home_key BLOB DEFAULT NULL CHECK(wrapped_home_key IS NULL OR length(wrapped_home_key)<=512),"
+  /* wrap_key_ok_last_outcome / wrap_key_ok_ts (bead nostrc-2mri):
+   * per-provider skip cache for the wrap-key hand-off. See
+   * nh_identity_provider_set_wrap_key_outcome. Both are NULL for
+   * rows that have never attempted the hand-off; the CHECK
+   * whitelists the four canonical enum strings so a corrupted row
+   * does not silently become "unknown status". */
+  " wrap_key_ok_last_outcome TEXT DEFAULT NULL"
+  "   CHECK(wrap_key_ok_last_outcome IS NULL OR wrap_key_ok_last_outcome"
+  "         IN('ok','denied','signer-offline','decrypt-failed')),"
+  " wrap_key_ok_ts INTEGER DEFAULT NULL"
+  "   CHECK(wrap_key_ok_ts IS NULL OR wrap_key_ok_ts>=0),"
   " created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);"
   "CREATE UNIQUE INDEX providers_one_enabled"
   " ON providers(account_id,type) WHERE enabled=1;"
@@ -98,7 +109,7 @@ static const char authority_schema[] =
   "CREATE TRIGGER accounts_retired_immutable BEFORE UPDATE ON accounts"
   " WHEN OLD.status='retired'"
   " BEGIN SELECT RAISE(ABORT,'retired account is immutable'); END;"
-  "PRAGMA user_version=2;";
+  "PRAGMA user_version=3;";
 
 static int path_parent(const char *path, char *out, size_t out_size) {
   const char *slash;
@@ -348,6 +359,44 @@ nh_identity_rc nh_identity_store_open(const nh_identity_store_options *options,
     }
     version = 2u;
   }
+  /* In-place migration v2 -> v3 (bead nostrc-2mri): add the
+   * providers.wrap_key_ok_last_outcome + wrap_key_ok_ts columns for
+   * the per-provider wrap-key hand-off skip cache. Strictly additive
+   * — existing rows get NULL/0 for the new columns and the broker's
+   * cache-check treats that as UNSET (retry every login until an
+   * outcome is recorded). Idempotent via a pragma_table_info probe
+   * so a partial upgrade cannot fail on ADD COLUMN of a name that
+   * already exists. */
+  if (version == 2u) {
+    sqlite3_stmt *_mig_stmt = NULL;
+    int _mig_has = 0;
+    int _mig_rc = sqlite3_prepare_v2(store->db,
+        "SELECT 1 FROM pragma_table_info('providers') WHERE name='wrap_key_ok_last_outcome'",
+        -1, &_mig_stmt, NULL);
+    if (_mig_rc == SQLITE_OK) {
+      if (sqlite3_step(_mig_stmt) == SQLITE_ROW) _mig_has = 1;
+    }
+    sqlite3_finalize(_mig_stmt);
+    if (!_mig_has) {
+      result = exec_sql(store,
+        "BEGIN IMMEDIATE;"
+        "ALTER TABLE providers ADD COLUMN wrap_key_ok_last_outcome TEXT"
+        "  DEFAULT NULL"
+        "  CHECK(wrap_key_ok_last_outcome IS NULL OR wrap_key_ok_last_outcome"
+        "        IN('ok','denied','signer-offline','decrypt-failed'));"
+        "ALTER TABLE providers ADD COLUMN wrap_key_ok_ts INTEGER"
+        "  DEFAULT NULL"
+        "  CHECK(wrap_key_ok_ts IS NULL OR wrap_key_ok_ts>=0);"
+        "PRAGMA user_version=3;"
+        "COMMIT;",
+        "migrate providers to schema v3");
+      if (result != NH_IDENTITY_OK) { nh_identity_rollback(store); goto fail; }
+    } else {
+      result = exec_sql(store, "PRAGMA user_version=3", "bump schema version to 3");
+      if (result != NH_IDENTITY_OK) goto fail;
+    }
+    version = 3u;
+  }
   if (version != NH_IDENTITY_AUTHORITY_SCHEMA_VERSION) {
     result = NH_IDENTITY_SCHEMA_UNSUPPORTED; goto fail;
   }
@@ -549,7 +598,8 @@ nh_identity_rc nh_identity_store_provider_get(
     return NH_IDENTITY_INVALID;
   rc = sqlite3_prepare_v2(store->db,
     "SELECT provider_id,account_id,type,enabled,format_version,"
-    "public_config_json,secret_blob,wrapped_home_key FROM providers"
+    "public_config_json,secret_blob,wrapped_home_key,"
+    "wrap_key_ok_last_outcome,wrap_key_ok_ts FROM providers"
     " WHERE account_id=? AND type=? AND enabled=?", -1, &statement, NULL);
   if (rc == SQLITE_OK) rc = sqlite3_bind_text(statement, 1, account_id, -1, SQLITE_STATIC);
   if (rc == SQLITE_OK) rc = sqlite3_bind_text(statement, 2, type_text, -1, SQLITE_STATIC);
@@ -589,10 +639,111 @@ nh_identity_rc nh_identity_store_provider_get(
           out->wrapped_home_key_len = (size_t)wlen;
         }
       }
+      /* wrap_key_ok_last_outcome / wrap_key_ok_ts (bead nostrc-2mri).
+       * Both NULL for pre-migration rows and rows that have never
+       * attempted the wrap-key hand-off; the CHECK constraint in the
+       * schema guarantees the string is one of the canonical enum
+       * values so an unknown string here is corruption. */
+      out->wrap_key_outcome = NH_IDENTITY_WRAP_KEY_OUTCOME_UNSET;
+      out->wrap_key_outcome_ts = 0;
+      if (sqlite3_column_type(statement, 8) != SQLITE_NULL) {
+        const unsigned char *oc = sqlite3_column_text(statement, 8);
+        if (oc) {
+          if (!strcmp((const char *)oc, "ok"))
+            out->wrap_key_outcome = NH_IDENTITY_WRAP_KEY_OUTCOME_OK;
+          else if (!strcmp((const char *)oc, "denied"))
+            out->wrap_key_outcome = NH_IDENTITY_WRAP_KEY_OUTCOME_DENIED;
+          else if (!strcmp((const char *)oc, "signer-offline"))
+            out->wrap_key_outcome = NH_IDENTITY_WRAP_KEY_OUTCOME_SIGNER_OFFLINE;
+          else if (!strcmp((const char *)oc, "decrypt-failed"))
+            out->wrap_key_outcome = NH_IDENTITY_WRAP_KEY_OUTCOME_DECRYPT_FAILED;
+          else
+            result = NH_IDENTITY_STORAGE_ERROR;
+        }
+      }
+      if (result == NH_IDENTITY_OK &&
+          sqlite3_column_type(statement, 9) != SQLITE_NULL) {
+        sqlite3_int64 ts = sqlite3_column_int64(statement, 9);
+        if (ts < 0) result = NH_IDENTITY_STORAGE_ERROR;
+        else out->wrap_key_outcome_ts = (uint64_t)ts;
+      }
     }
   }
   sqlite3_finalize(statement);
   return result;
+}
+
+/* Bead nostrc-2mri: helper that translates the outcome enum to the
+ * canonical schema string, or returns NULL for UNSET (caller binds
+ * NULL). Keeps the two write paths (set + reset) DRY. */
+static const char *wrap_key_outcome_to_text(nh_identity_wrap_key_outcome oc) {
+  switch (oc) {
+  case NH_IDENTITY_WRAP_KEY_OUTCOME_OK:              return "ok";
+  case NH_IDENTITY_WRAP_KEY_OUTCOME_DENIED:          return "denied";
+  case NH_IDENTITY_WRAP_KEY_OUTCOME_SIGNER_OFFLINE:  return "signer-offline";
+  case NH_IDENTITY_WRAP_KEY_OUTCOME_DECRYPT_FAILED:  return "decrypt-failed";
+  case NH_IDENTITY_WRAP_KEY_OUTCOME_UNSET:
+  default: return NULL;
+  }
+}
+
+nh_identity_rc nh_identity_provider_set_wrap_key_outcome(
+    nh_identity_store *store, const char *provider_id,
+    nh_identity_wrap_key_outcome outcome, uint64_t ts) {
+  sqlite3_stmt *statement = NULL;
+  int rc;
+  nh_identity_rc result;
+  const char *text;
+  if (!store || !nh_identity_uuid_is_valid(provider_id))
+    return NH_IDENTITY_INVALID;
+  /* Validate the enum against the schema CHECK to fail fast rather
+   * than surface a constraint error from SQLite. */
+  if (outcome != NH_IDENTITY_WRAP_KEY_OUTCOME_UNSET &&
+      outcome != NH_IDENTITY_WRAP_KEY_OUTCOME_OK &&
+      outcome != NH_IDENTITY_WRAP_KEY_OUTCOME_DENIED &&
+      outcome != NH_IDENTITY_WRAP_KEY_OUTCOME_SIGNER_OFFLINE &&
+      outcome != NH_IDENTITY_WRAP_KEY_OUTCOME_DECRYPT_FAILED)
+    return NH_IDENTITY_INVALID;
+  text = wrap_key_outcome_to_text(outcome);
+  result = nh_identity_begin(store);
+  if (result != NH_IDENTITY_OK) return result;
+  rc = sqlite3_prepare_v2(store->db,
+    /* Use COALESCE so ts=0 with a non-UNSET outcome records the
+     * current time; a caller that wants explicit test-controlled
+     * timestamps passes a non-zero value. */
+    "UPDATE providers SET"
+    " wrap_key_ok_last_outcome=?,"
+    " wrap_key_ok_ts=CASE WHEN ?1 IS NULL THEN NULL"
+    "                    WHEN ?2=0 THEN CAST(strftime('%s','now') AS INTEGER)"
+    "                    ELSE ?2 END,"
+    " updated_at=strftime('%s','now')"
+    " WHERE provider_id=?3", -1, &statement, NULL);
+  if (rc == SQLITE_OK) {
+    if (!text) rc = sqlite3_bind_null(statement, 1);
+    else       rc = sqlite3_bind_text(statement, 1, text, -1, SQLITE_STATIC);
+  }
+  if (rc == SQLITE_OK)
+    rc = sqlite3_bind_int64(statement, 2, (sqlite3_int64)ts);
+  if (rc == SQLITE_OK)
+    rc = sqlite3_bind_text(statement, 3, provider_id, -1, SQLITE_STATIC);
+  if (rc == SQLITE_OK) rc = sqlite3_step(statement);
+  sqlite3_finalize(statement);
+  result = nh_identity_sqlite_result(store, rc, "set wrap_key_ok_last_outcome");
+  if (result == NH_IDENTITY_OK && sqlite3_changes(store->db) == 0)
+    result = NH_IDENTITY_NOT_FOUND;
+  /* No authority-generation bump — this is a per-login cache field,
+   * not projected state. Bumping on every login would defeat the
+   * point of the cache (the NSS projection would re-publish for a
+   * value the projection never reads). */
+  if (result == NH_IDENTITY_OK) result = nh_identity_commit(store);
+  if (result != NH_IDENTITY_OK) nh_identity_rollback(store);
+  return result;
+}
+
+nh_identity_rc nh_identity_provider_wrap_key_reset(
+    nh_identity_store *store, const char *provider_id) {
+  return nh_identity_provider_set_wrap_key_outcome(
+      store, provider_id, NH_IDENTITY_WRAP_KEY_OUTCOME_UNSET, 0);
 }
 
 nh_identity_rc nh_identity_provider_set_wrapped_home_key(

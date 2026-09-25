@@ -871,12 +871,41 @@ static int g_pvha_enroll_wrap_key;
 #define NH_PVHA_DEFAULT_TIMEOUT_SEC 30u
 #define NH_PVHA_MAX_TIMEOUT_SEC     120u
 static uint32_t g_pvha_nip44_timeout_ms;
+/* Bead nostrc-2mri. Per-provider wrap-key skip cache TTL, seconds.
+ * 0 disables the cache; 24 h hard cap (see auth.conf docs). Applied
+ * inside nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46 before
+ * paying the RPC. */
+#define NH_PVHA_WRAP_SKIP_DEFAULT_SEC 900u
+#define NH_PVHA_WRAP_SKIP_MAX_SEC     86400u
+static uint32_t g_pvha_wrap_denied_skip_sec = NH_PVHA_WRAP_SKIP_DEFAULT_SEC;
 
 /* Test-only nip44 RPC replacements (see auth_porthome.h). */
 static nh_auth_porthome_nip44_fn g_pvha_nip44_encrypt_fn;
 static void *g_pvha_nip44_encrypt_ctx;
 static nh_auth_porthome_nip44_fn g_pvha_nip44_decrypt_fn;
 static void *g_pvha_nip44_decrypt_ctx;
+
+/* Bead nostrc-8hc9: map libnostr's NostrNip46RpcError enum onto the
+ * broker-owned wrap-err enum. Keeps the porthome header free of a
+ * NIP-46 build dependency (the enum values themselves are broker
+ * concepts anyway — the log tag layer only cares about three
+ * classes, not the six the wire distinguishes). */
+static nh_auth_porthome_wrap_err
+pvha_wrap_err_from_nip46(NostrNip46RpcError e) {
+  switch (e) {
+  case NOSTR_NIP46_RPC_OK:
+    return NH_AUTH_PORTHOME_WRAP_OK;
+  case NOSTR_NIP46_RPC_ERR_DENIED:
+    return NH_AUTH_PORTHOME_WRAP_ERR_DENIED;
+  case NOSTR_NIP46_RPC_ERR_PROTOCOL:
+  case NOSTR_NIP46_RPC_ERR_DECRYPT:
+    return NH_AUTH_PORTHOME_WRAP_ERR_DECRYPT_FAILED;
+  case NOSTR_NIP46_RPC_ERR_TRANSPORT:
+  case NOSTR_NIP46_RPC_ERR_TIMEOUT:
+  default:
+    return NH_AUTH_PORTHOME_WRAP_ERR_SIGNER_OFFLINE;
+  }
+}
 
 void nh_auth_broker_porthome_install(nh_identity_store *store,
                                      int enroll_wrap_key,
@@ -889,6 +918,32 @@ void nh_auth_broker_porthome_install(nh_identity_store *store,
   g_pvha_enroll_wrap_key = enroll_wrap_key ? 1 : 0;
   g_pvha_nip44_timeout_ms = sec * 1000u;
   pthread_mutex_unlock(&g_pvha_mutex);
+}
+
+/* Bead nostrc-2mri: broker-scoped installer for the wrap-key skip
+ * cache TTL. Called from nostr-authd.c after config parse. Kept
+ * separate from _install so the existing 3-arg install signature is
+ * unchanged (weak-linked; changing arity would break older link
+ * closures). 0 disables the cache; > 24 h is clamped. */
+void nh_auth_broker_porthome_set_wrap_key_denied_skip_sec(uint32_t sec) {
+  if (sec > NH_PVHA_WRAP_SKIP_MAX_SEC) sec = NH_PVHA_WRAP_SKIP_MAX_SEC;
+  pthread_mutex_lock(&g_pvha_mutex);
+  g_pvha_wrap_denied_skip_sec = sec;
+  pthread_mutex_unlock(&g_pvha_mutex);
+}
+
+void nh_auth_broker_porthome_wrap_key_reset(const char *provider_id) {
+  if (!provider_id || !*provider_id) return;
+  nh_identity_store *store;
+  pthread_mutex_lock(&g_pvha_mutex);
+  store = g_pvha_store;
+  pthread_mutex_unlock(&g_pvha_mutex);
+  if (!store) return;
+  nh_identity_rc rc = nh_identity_provider_wrap_key_reset(store, provider_id);
+  if (rc != NH_IDENTITY_OK && rc != NH_IDENTITY_NOT_FOUND) {
+    syslog(LOG_INFO,
+           "porthome_wrap_key: reset for provider failed rc=%d", (int)rc);
+  }
 }
 
 void nh_auth_broker_porthome_set_nip44_hooks(
@@ -963,19 +1018,27 @@ static int try_load_provider_and_ct(const char *account_id,
   return 0;
 }
 
-/* Bead nostrc-ck6i. Central error-class logger for the wrap-key
- * hand-off. The three classes match the DELIVER contract:
+/* Bead nostrc-ck6i (bead nostrc-8hc9 refinement). Central error-class
+ * logger for the wrap-key hand-off. The three classes correspond to
+ * the three broker-scoped nh_auth_porthome_wrap_err values:
  *   wrap-key-signer-offline — the signer never answered / RPC hung
  *                             through the timeout / transport dead.
  *   wrap-key-denied         — the signer answered with a policy
  *                             refusal (perms not granted, ACL block).
  *   wrap-key-decrypt-failed — the signer answered, but the plaintext
- *                             was malformed or the ciphertext row was
- *                             corrupted / persist failed.
- * At present the client library returns a single -1 for all three;
- * this helper still records the intent so a later error-class refinement
- * (e.g. nip46 error-object introspection) is a one-liner. Never logs
- * the plaintext, ciphertext, seed or peer pubkey. */
+ *                             was malformed / ciphertext corrupted /
+ *                             AEAD tag failed / persist failed.
+ * Never logs the plaintext, ciphertext, seed or peer pubkey. */
+static const char *pvha_class_tag(nh_auth_porthome_wrap_err e) {
+  switch (e) {
+  case NH_AUTH_PORTHOME_WRAP_ERR_DENIED:          return "wrap-key-denied";
+  case NH_AUTH_PORTHOME_WRAP_ERR_DECRYPT_FAILED:  return "wrap-key-decrypt-failed";
+  case NH_AUTH_PORTHOME_WRAP_ERR_SIGNER_OFFLINE:  return "wrap-key-signer-offline";
+  case NH_AUTH_PORTHOME_WRAP_OK:
+  default:                                        return "wrap-key-ok";
+  }
+}
+
 static void pvha_log_class(const char *class_tag, const char *ctx) {
   syslog(LOG_WARNING,
          "porthome_wrap_key: %s: %s",
@@ -983,39 +1046,148 @@ static void pvha_log_class(const char *class_tag, const char *ctx) {
          ctx ? ctx : "");
 }
 
+/* Convert a bead-2mri outcome enum onto the log-class tag. */
+static const char *pvha_outcome_class_tag(nh_identity_wrap_key_outcome o) {
+  switch (o) {
+  case NH_IDENTITY_WRAP_KEY_OUTCOME_DENIED:
+    return "wrap-key-denied";
+  case NH_IDENTITY_WRAP_KEY_OUTCOME_DECRYPT_FAILED:
+    return "wrap-key-decrypt-failed";
+  case NH_IDENTITY_WRAP_KEY_OUTCOME_SIGNER_OFFLINE:
+    return "wrap-key-signer-offline";
+  case NH_IDENTITY_WRAP_KEY_OUTCOME_OK:
+    return "wrap-key-ok";
+  case NH_IDENTITY_WRAP_KEY_OUTCOME_UNSET:
+  default:
+    return "wrap-key-unknown";
+  }
+}
+
+/* Translate a broker-side wrap_err into the persisted outcome enum. */
+static nh_identity_wrap_key_outcome
+pvha_outcome_from_wrap_err(nh_auth_porthome_wrap_err e) {
+  switch (e) {
+  case NH_AUTH_PORTHOME_WRAP_OK:
+    return NH_IDENTITY_WRAP_KEY_OUTCOME_OK;
+  case NH_AUTH_PORTHOME_WRAP_ERR_DENIED:
+    return NH_IDENTITY_WRAP_KEY_OUTCOME_DENIED;
+  case NH_AUTH_PORTHOME_WRAP_ERR_DECRYPT_FAILED:
+    return NH_IDENTITY_WRAP_KEY_OUTCOME_DECRYPT_FAILED;
+  case NH_AUTH_PORTHOME_WRAP_ERR_SIGNER_OFFLINE:
+  default:
+    return NH_IDENTITY_WRAP_KEY_OUTCOME_SIGNER_OFFLINE;
+  }
+}
+
 /* Invoke nip44_decrypt via the test hook if installed, else the real
  * client RPC. Applies the configured timeout to the live session
- * *before* the real RPC only — hooks manage their own scheduling. */
+ * *before* the real RPC only — hooks manage their own scheduling.
+ * nostrc-8hc9: *out_err (non-NULL) is populated with the failure
+ * class on any non-zero return. */
 static int pvha_nip44_decrypt(NostrNip46Session *s,
                               const char *peer_pubkey_hex,
                               const char *ct_z,
-                              char **out_pt) {
+                              char **out_pt,
+                              nh_auth_porthome_wrap_err *out_err) {
+  nh_auth_porthome_wrap_err local = NH_AUTH_PORTHOME_WRAP_OK;
+  if (!out_err) out_err = &local;
+  *out_err = NH_AUTH_PORTHOME_WRAP_OK;
   pthread_mutex_lock(&g_pvha_mutex);
   nh_auth_porthome_nip44_fn hook = g_pvha_nip44_decrypt_fn;
   void *hook_ctx = g_pvha_nip44_decrypt_ctx;
   uint32_t timeout_ms = g_pvha_nip44_timeout_ms;
   pthread_mutex_unlock(&g_pvha_mutex);
-  if (hook)
-    return hook((void *)s, peer_pubkey_hex, ct_z, out_pt, hook_ctx);
+  if (hook) {
+    int rc = hook((void *)s, peer_pubkey_hex, ct_z, out_pt, out_err, hook_ctx);
+    /* Legacy hook contract preservation: a hook that returns non-zero
+     * without setting an explicit class is treated as SIGNER_OFFLINE
+     * (the pre-nostrc-8hc9 default). */
+    if (rc != 0 && *out_err == NH_AUTH_PORTHOME_WRAP_OK)
+      *out_err = NH_AUTH_PORTHOME_WRAP_ERR_SIGNER_OFFLINE;
+    return rc;
+  }
   if (timeout_ms)
     nostr_nip46_client_set_timeout(s, timeout_ms);
-  return nostr_nip46_client_nip44_decrypt_rpc(s, peer_pubkey_hex, ct_z, out_pt);
+  NostrNip46RpcError nerr = NOSTR_NIP46_RPC_OK;
+  int rc = nostr_nip46_client_nip44_decrypt_rpc_ex(
+      s, peer_pubkey_hex, ct_z, out_pt, &nerr);
+  if (rc != 0) *out_err = pvha_wrap_err_from_nip46(nerr);
+  return rc;
 }
 
 static int pvha_nip44_encrypt(NostrNip46Session *s,
                               const char *peer_pubkey_hex,
                               const char *pt_z,
-                              char **out_ct) {
+                              char **out_ct,
+                              nh_auth_porthome_wrap_err *out_err) {
+  nh_auth_porthome_wrap_err local = NH_AUTH_PORTHOME_WRAP_OK;
+  if (!out_err) out_err = &local;
+  *out_err = NH_AUTH_PORTHOME_WRAP_OK;
   pthread_mutex_lock(&g_pvha_mutex);
   nh_auth_porthome_nip44_fn hook = g_pvha_nip44_encrypt_fn;
   void *hook_ctx = g_pvha_nip44_encrypt_ctx;
   uint32_t timeout_ms = g_pvha_nip44_timeout_ms;
   pthread_mutex_unlock(&g_pvha_mutex);
-  if (hook)
-    return hook((void *)s, peer_pubkey_hex, pt_z, out_ct, hook_ctx);
+  if (hook) {
+    int rc = hook((void *)s, peer_pubkey_hex, pt_z, out_ct, out_err, hook_ctx);
+    if (rc != 0 && *out_err == NH_AUTH_PORTHOME_WRAP_OK)
+      *out_err = NH_AUTH_PORTHOME_WRAP_ERR_SIGNER_OFFLINE;
+    return rc;
+  }
   if (timeout_ms)
     nostr_nip46_client_set_timeout(s, timeout_ms);
-  return nostr_nip46_client_nip44_encrypt_rpc(s, peer_pubkey_hex, pt_z, out_ct);
+  NostrNip46RpcError nerr = NOSTR_NIP46_RPC_OK;
+  int rc = nostr_nip46_client_nip44_encrypt_rpc_ex(
+      s, peer_pubkey_hex, pt_z, out_ct, &nerr);
+  if (rc != 0) *out_err = pvha_wrap_err_from_nip46(nerr);
+  return rc;
+}
+
+/* Bead nostrc-2mri: load the provider row's wrap-key skip-cache state
+ * without pulling the wrapped_home_key BLOB again. Returns
+ * NH_IDENTITY_NOT_FOUND when no enabled NIP-46 provider exists (the
+ * orchestrator has already treated that as a silent no-op). Fills
+ * *out_outcome and *out_ts on OK; otherwise both are UNSET/0. */
+static nh_identity_rc pvha_load_cache_state(
+    nh_identity_store *store, const char *account_id,
+    nh_identity_wrap_key_outcome *out_outcome, uint64_t *out_ts) {
+  *out_outcome = NH_IDENTITY_WRAP_KEY_OUTCOME_UNSET;
+  *out_ts = 0;
+  nh_identity_provider_record rec;
+  memset(&rec, 0, sizeof rec);
+  nh_identity_rc rc = nh_identity_store_provider_get(
+      store, account_id, NH_IDENTITY_PROVIDER_NIP46_QR, true, &rec);
+  if (rc != NH_IDENTITY_OK) {
+    memset(&rec, 0, sizeof rec);
+    rc = nh_identity_store_provider_get(
+        store, account_id, NH_IDENTITY_PROVIDER_NIP46_BUNKER, true, &rec);
+  }
+  if (rc == NH_IDENTITY_OK) {
+    *out_outcome = (nh_identity_wrap_key_outcome)rec.wrap_key_outcome;
+    *out_ts = rec.wrap_key_outcome_ts;
+  }
+  OPENSSL_cleanse(&rec, sizeof rec);
+  return rc;
+}
+
+/* Bead nostrc-2mri: interpret the cached outcome + timestamp.
+ * Returns non-zero when the caller should SKIP the RPC. `ttl_sec == 0`
+ * disables the cache entirely. Only DENIED and DECRYPT_FAILED latch;
+ * SIGNER_OFFLINE never latches (transient network / bunker offline
+ * shouldn't turn into a policy-refusal loop). */
+static int pvha_should_skip_cached(nh_identity_wrap_key_outcome outcome,
+                                   uint64_t ts, uint32_t ttl_sec,
+                                   uint64_t now, uint32_t *out_remaining) {
+  if (out_remaining) *out_remaining = 0;
+  if (ttl_sec == 0) return 0;
+  if (outcome != NH_IDENTITY_WRAP_KEY_OUTCOME_DENIED &&
+      outcome != NH_IDENTITY_WRAP_KEY_OUTCOME_DECRYPT_FAILED)
+    return 0;
+  if (ts == 0 || now < ts) return 0;
+  uint64_t elapsed = now - ts;
+  if (elapsed >= (uint64_t)ttl_sec) return 0;
+  if (out_remaining) *out_remaining = (uint32_t)((uint64_t)ttl_sec - elapsed);
+  return 1;
 }
 
 int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
@@ -1027,11 +1199,45 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
 
   nh_identity_store *store;
   int enroll_on;
+  uint32_t skip_ttl;
   pthread_mutex_lock(&g_pvha_mutex);
   store = g_pvha_store;
   enroll_on = g_pvha_enroll_wrap_key;
+  skip_ttl = g_pvha_wrap_denied_skip_sec;
   pthread_mutex_unlock(&g_pvha_mutex);
   if (!store) return 0; /* broker not opted-in */
+
+  /* Bead nostrc-2mri: consult the skip cache BEFORE loading the
+   * wrapped_home_key BLOB. If the previous attempt latched (DENIED
+   * or DECRYPT_FAILED) within the TTL, log-and-skip. The account's
+   * pubkey is logged as an 8-hex prefix so operators can correlate
+   * lines without leaking the full key. */
+  nh_identity_wrap_key_outcome cached_outcome =
+      NH_IDENTITY_WRAP_KEY_OUTCOME_UNSET;
+  uint64_t cached_ts = 0;
+  (void)pvha_load_cache_state(store, account_id, &cached_outcome, &cached_ts);
+  uint64_t now_sec = (uint64_t)time(NULL);
+  uint32_t remaining_sec = 0;
+  if (pvha_should_skip_cached(cached_outcome, cached_ts, skip_ttl, now_sec,
+                              &remaining_sec)) {
+    char pubkey8[9] = {0};
+    memcpy(pubkey8, account_pubkey_hex, 8);
+    syslog(LOG_INFO,
+           "porthome: skipping nip44_decrypt for account %s… due to recent"
+           " %s (ts=%llu, ttl=%us)",
+           pubkey8, pvha_outcome_class_tag(cached_outcome),
+           (unsigned long long)cached_ts, remaining_sec);
+    /* Emit the mirrored WARNING tag so the log-class filter picks the
+     * skip up alongside real failures. `-cached` suffix distinguishes
+     * "skipped by broker" from "signer said no this round". */
+    if (cached_outcome == NH_IDENTITY_WRAP_KEY_OUTCOME_DENIED)
+      pvha_log_class("wrap-key-denied-cached",
+                     "skipped by broker skip-cache");
+    else
+      pvha_log_class("wrap-key-decrypt-failed-cached",
+                     "skipped by broker skip-cache");
+    return -1;
+  }
 
   char *provider_id = NULL;
   uint8_t *ct_bytes = NULL;
@@ -1050,8 +1256,15 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
   NostrNip46Session *s = (NostrNip46Session *)nip46_session;
   uint8_t seed[32] = {0};
   int seed_valid = 0;
+  /* Track the outcome to record on the provider row. Defaults to
+   * UNSET; each terminal path assigns it before falling through to
+   * the persist step. */
+  nh_identity_wrap_key_outcome outcome_to_record =
+      NH_IDENTITY_WRAP_KEY_OUTCOME_UNSET;
+  int had_attempt = 0;
 
   if (have_ct) {
+    had_attempt = 1;
     /* Wire the ciphertext as a NUL-terminated ASCII string — NIP-44 v2
      * ciphertexts are base64 ASCII, so we stored the bytes verbatim.
      * A stray non-ASCII byte from a corrupted row would fail the
@@ -1059,7 +1272,11 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
      * embedded NULs by refusing early. */
     for (size_t i = 0; i < ct_len; i++) {
       if (ct_bytes[i] == 0) {
-        pvha_log_class("wrap-key-decrypt-failed", "ciphertext contains NUL");
+        pvha_log_class(pvha_class_tag(NH_AUTH_PORTHOME_WRAP_ERR_DECRYPT_FAILED),
+                       "ciphertext contains NUL");
+        (void)nh_identity_provider_set_wrap_key_outcome(
+            store, provider_id,
+            NH_IDENTITY_WRAP_KEY_OUTCOME_DECRYPT_FAILED, now_sec);
         free(provider_id); free(ct_bytes); return -1;
       }
     }
@@ -1068,58 +1285,72 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
     memcpy(ct_z, ct_bytes, ct_len);
     ct_z[ct_len] = '\0';
     char *pt = NULL;
-    int rc = pvha_nip44_decrypt(s, account_pubkey_hex, ct_z, &pt);
+    nh_auth_porthome_wrap_err werr = NH_AUTH_PORTHOME_WRAP_OK;
+    int rc = pvha_nip44_decrypt(s, account_pubkey_hex, ct_z, &pt, &werr);
     OPENSSL_cleanse(ct_z, ct_len);
     free(ct_z);
     if (rc != 0 || !pt) {
       free(pt);
-      free(provider_id); free(ct_bytes);
       /* Signer refused / offline / mismatched key. Login already
        * succeeded on the auth axis — return -1 so the caller can
        * decide whether to surface anything. Provision path falls back
-       * to NOT_SUPPORTED because no seed lands in the cache. Emit a
-       * WARNING with the class most likely to be true today: the client
-       * library returns -1 for any non-OK outcome, so we log the
-       * broadest class ("signer-offline") — an operator seeing this
-       * without a network incident should suspect a policy denial. */
-      pvha_log_class("wrap-key-signer-offline",
+       * to NOT_SUPPORTED because no seed lands in the cache. nostrc-8hc9
+       * uses the classified error to pick a specific log tag; nostrc-2mri
+       * persists it so subsequent logins can skip. */
+      outcome_to_record = pvha_outcome_from_wrap_err(werr);
+      pvha_log_class(pvha_class_tag(werr),
                      "nip44_decrypt returned no plaintext");
+      (void)nh_identity_provider_set_wrap_key_outcome(
+          store, provider_id, outcome_to_record, now_sec);
+      free(provider_id); free(ct_bytes);
       return -1;
     }
     /* Accept 32 raw bytes or 64 lowercase hex. */
     if (nh_porthome_wrap_seed_from_nip44_plaintext(
             (const uint8_t *)pt, strlen(pt), seed) == NH_PORTHOME_OK) {
       seed_valid = 1;
+      outcome_to_record = NH_IDENTITY_WRAP_KEY_OUTCOME_OK;
     } else {
-      pvha_log_class("wrap-key-decrypt-failed",
+      outcome_to_record = NH_IDENTITY_WRAP_KEY_OUTCOME_DECRYPT_FAILED;
+      pvha_log_class(pvha_class_tag(NH_AUTH_PORTHOME_WRAP_ERR_DECRYPT_FAILED),
                      "plaintext not 32-raw / 64-hex");
     }
     OPENSSL_cleanse(pt, strlen(pt));
     free(pt);
   } else if (enroll_on) {
+    had_attempt = 1;
     /* Mint a fresh 32-byte seed and ask the signer to nip44_encrypt
      * it (self-encrypt: peer == account_pubkey). The RPC accepts a
      * UTF-8 plaintext; encode the seed as 64 lowercase hex so the JSON
      * transport is safe. The signer's nip44 v2 output is base64 ASCII
      * which we persist verbatim as the wrapped_home_key BLOB. */
     if (nh_porthome_wrap_seed_random(seed) != NH_PORTHOME_OK) {
-      pvha_log_class("wrap-key-decrypt-failed", "RAND_bytes failed");
+      pvha_log_class(pvha_class_tag(NH_AUTH_PORTHOME_WRAP_ERR_DECRYPT_FAILED),
+                     "RAND_bytes failed");
+      /* Don't record a wrap-cache outcome for local RAND failure —
+       * it's a broker-internal fault, not a signer or ciphertext
+       * problem, and latching it would penalise the account for our
+       * bug. */
       free(provider_id); free(ct_bytes);
       return -1;
     }
     char seed_hex[65];
     bytes_to_hex64(seed, seed_hex);
     char *ct_out = NULL;
-    int rc = pvha_nip44_encrypt(s, account_pubkey_hex, seed_hex, &ct_out);
+    nh_auth_porthome_wrap_err werr = NH_AUTH_PORTHOME_WRAP_OK;
+    int rc = pvha_nip44_encrypt(s, account_pubkey_hex, seed_hex, &ct_out, &werr);
     /* Wipe the seed_hex copy immediately — the bytes-of-hex are
      * as sensitive as the seed itself. */
     OPENSSL_cleanse(seed_hex, sizeof seed_hex);
     if (rc != 0 || !ct_out) {
       free(ct_out);
       OPENSSL_cleanse(seed, sizeof seed);
-      free(provider_id); free(ct_bytes);
-      pvha_log_class("wrap-key-denied",
+      outcome_to_record = pvha_outcome_from_wrap_err(werr);
+      pvha_log_class(pvha_class_tag(werr),
                      "nip44_encrypt returned no ciphertext (enrollment)");
+      (void)nh_identity_provider_set_wrap_key_outcome(
+          store, provider_id, outcome_to_record, now_sec);
+      free(provider_id); free(ct_bytes);
       return -1;
     }
     size_t ct_out_len = strlen(ct_out);
@@ -1127,9 +1358,12 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
       OPENSSL_cleanse(ct_out, ct_out_len);
       free(ct_out);
       OPENSSL_cleanse(seed, sizeof seed);
-      free(provider_id); free(ct_bytes);
-      pvha_log_class("wrap-key-decrypt-failed",
+      outcome_to_record = NH_IDENTITY_WRAP_KEY_OUTCOME_DECRYPT_FAILED;
+      pvha_log_class(pvha_class_tag(NH_AUTH_PORTHOME_WRAP_ERR_DECRYPT_FAILED),
                      "nip44_encrypt ciphertext size out of range");
+      (void)nh_identity_provider_set_wrap_key_outcome(
+          store, provider_id, outcome_to_record, now_sec);
+      free(provider_id); free(ct_bytes);
       return -1;
     }
     nh_identity_rc srx = nh_identity_provider_set_wrapped_home_key(
@@ -1138,12 +1372,16 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
     free(ct_out);
     if (srx != NH_IDENTITY_OK) {
       OPENSSL_cleanse(seed, sizeof seed);
-      free(provider_id); free(ct_bytes);
-      pvha_log_class("wrap-key-decrypt-failed",
+      outcome_to_record = NH_IDENTITY_WRAP_KEY_OUTCOME_DECRYPT_FAILED;
+      pvha_log_class(pvha_class_tag(NH_AUTH_PORTHOME_WRAP_ERR_DECRYPT_FAILED),
                      "identity store rejected wrapped_home_key persist");
+      (void)nh_identity_provider_set_wrap_key_outcome(
+          store, provider_id, outcome_to_record, now_sec);
+      free(provider_id); free(ct_bytes);
       return -1;
     }
     seed_valid = 1;
+    outcome_to_record = NH_IDENTITY_WRAP_KEY_OUTCOME_OK;
   }
 
   int deposit_rc = 0;
@@ -1151,6 +1389,13 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
     deposit_rc = nh_auth_broker_porthome_deposit_wrap_seed(account_id, seed);
   }
   OPENSSL_cleanse(seed, sizeof seed);
+  /* Only persist an outcome when we actually attempted the hand-off.
+   * The "no work to do" arm (no ciphertext + enroll_off) leaves the
+   * cache alone. */
+  if (had_attempt) {
+    (void)nh_identity_provider_set_wrap_key_outcome(
+        store, provider_id, outcome_to_record, now_sec);
+  }
   free(provider_id);
   free(ct_bytes);
   return deposit_rc;
@@ -1422,6 +1667,12 @@ void nh_auth_broker_porthome_set_nip44_hooks(
     nh_auth_porthome_nip44_fn encrypt, void *encrypt_ctx,
     nh_auth_porthome_nip44_fn decrypt, void *decrypt_ctx) {
   (void)encrypt; (void)encrypt_ctx; (void)decrypt; (void)decrypt_ctx;
+}
+void nh_auth_broker_porthome_set_wrap_key_denied_skip_sec(uint32_t sec) {
+  (void)sec;
+}
+void nh_auth_broker_porthome_wrap_key_reset(const char *provider_id) {
+  (void)provider_id;
 }
 int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
     void *nip46_session, const char *account_id,

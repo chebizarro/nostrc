@@ -18,8 +18,18 @@ extern "C" {
 /* Schema v2 (2026-09-23): providers.wrapped_home_key BLOB column added
  * for portable-home NIP-46 signer key handoff (design §4.3, bead
  * nostrc-pvha). NULL for existing rows after migration; populated on
- * first successful nip44_encrypt of a fresh wrap seed. */
-#define NH_IDENTITY_AUTHORITY_SCHEMA_VERSION 2u
+ * first successful nip44_encrypt of a fresh wrap seed.
+ *
+ * Schema v3 (2026-09-25, bead nostrc-2mri): providers gains two
+ * additive columns for the per-provider wrap-key hand-off skip cache:
+ *   wrap_key_ok_last_outcome TEXT — one of 'ok', 'denied',
+ *                                    'signer-offline', 'decrypt-failed'
+ *                                    (nullable; NULL for pre-migration
+ *                                    rows and rows that never attempted
+ *                                    the wrap-key hand-off).
+ *   wrap_key_ok_ts           INTEGER — unix seconds of the last outcome
+ *                                    write (0 when unset). */
+#define NH_IDENTITY_AUTHORITY_SCHEMA_VERSION 3u
 #define NH_IDENTITY_PROJECTION_SCHEMA_VERSION 1u
 #define NH_IDENTITY_PROJECTION_APPLICATION_ID 0x4e485031u /* "NHP1" */
 
@@ -224,7 +234,35 @@ typedef struct nh_identity_provider_record {
    * only the signer can decrypt it via nip44_decrypt (design §4.3). */
   uint8_t wrapped_home_key[NH_IDENTITY_WRAPPED_HOME_KEY_MAX];
   size_t wrapped_home_key_len;
+  /* Bead nostrc-2mri: per-provider wrap-key hand-off outcome cache.
+   *
+   * wrap_key_outcome — one of NH_IDENTITY_WRAP_KEY_OUTCOME_*. UNSET
+   *   for pre-migration rows and rows that never attempted the
+   *   wrap-key hand-off. Read on every login to decide whether to
+   *   skip the RPC; written after each attempt (and cleared on a
+   *   fresh signer pairing).
+   * wrap_key_outcome_ts — unix seconds of the last write. 0 when
+   *   wrap_key_outcome is UNSET. */
+  int      wrap_key_outcome;      /* nh_identity_wrap_key_outcome */
+  uint64_t wrap_key_outcome_ts;
 } nh_identity_provider_record;
+
+/* Bead nostrc-2mri: wrap-key hand-off outcome cache values.
+ *
+ * Stored as a short TEXT enum on the row (SQLite side) and read back
+ * as this integer enum. The four states map directly onto the
+ * nh_auth_porthome_wrap_err classes plus a success value: OK does
+ * not latch (subsequent logins re-check freshly); DENIED and
+ * DECRYPT_FAILED latch for the configured skip TTL; SIGNER_OFFLINE
+ * is recorded for observability but does not latch. UNSET means "no
+ * attempt has been recorded yet". */
+typedef enum nh_identity_wrap_key_outcome {
+  NH_IDENTITY_WRAP_KEY_OUTCOME_UNSET = 0,
+  NH_IDENTITY_WRAP_KEY_OUTCOME_OK = 1,
+  NH_IDENTITY_WRAP_KEY_OUTCOME_DENIED = 2,
+  NH_IDENTITY_WRAP_KEY_OUTCOME_SIGNER_OFFLINE = 3,
+  NH_IDENTITY_WRAP_KEY_OUTCOME_DECRYPT_FAILED = 4,
+} nh_identity_wrap_key_outcome;
 
 /* Store lifecycle. Open holds the sole-writer lock until close. */
 nh_identity_rc nh_identity_store_open(const nh_identity_store_options *options,
@@ -359,6 +397,35 @@ nh_identity_rc nh_identity_provider_discard(
 nh_identity_rc nh_identity_provider_set_wrapped_home_key(
     nh_identity_store *store, const char *provider_id,
     const uint8_t *blob, size_t blob_len);
+
+/*
+ * Bead nostrc-2mri: record the outcome of a wrap-key hand-off RPC.
+ * Writes wrap_key_ok_last_outcome + wrap_key_ok_ts on the provider
+ * row atomically. `outcome` MUST be one of the non-UNSET values;
+ * passing UNSET clears both columns (equivalent to
+ * nh_identity_provider_wrap_key_reset). `ts` is unix seconds; a
+ * value of 0 lets the store fill it with the current time.
+ *
+ * No operation record is written — this is metadata a client
+ * refreshes on every login. The row is looked up by provider_id
+ * without an enabled-filter so a staged provider can be updated
+ * before activation if a future call site needs that; today the
+ * broker only writes to enabled rows.
+ */
+nh_identity_rc nh_identity_provider_set_wrap_key_outcome(
+    nh_identity_store *store, const char *provider_id,
+    nh_identity_wrap_key_outcome outcome, uint64_t ts);
+
+/*
+ * Bead nostrc-2mri: clear the wrap-key outcome cache on a provider
+ * row. Called from the broker after a signer PAIRING flow succeeds
+ * so a stale DENIED entry does not survive a fresh permission
+ * grant. Equivalent to
+ * nh_identity_provider_set_wrap_key_outcome(store, provider_id,
+ * NH_IDENTITY_WRAP_KEY_OUTCOME_UNSET, 0).
+ */
+nh_identity_rc nh_identity_provider_wrap_key_reset(
+    nh_identity_store *store, const char *provider_id);
 
 /* Linux local-home operations. Require euid 0; never activate or publish an
  * account. skel_path is a root-controlled approved directory; NULL creates an

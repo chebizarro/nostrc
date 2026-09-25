@@ -43,6 +43,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #define CK(expr, tag)                                            \
@@ -162,15 +163,24 @@ static int            g_decrypt_should_fail;
 static int            g_decrypt_calls;
 static char           g_last_peer_pubkey[65];
 
+/* nostrc-8hc9: the hook can drive a specific wrap_err class on failure
+ * so the DENIED sub-test can assert every branch of the log-class
+ * mapping without spinning a real bunker. Zero means SIGNER_OFFLINE
+ * (the pre-8hc9 default, exercised by the legacy DENIED case). */
+static nh_auth_porthome_wrap_err g_decrypt_fail_err;
+
 static int hook_nip44_decrypt(void *session,
                               const char *peer_pubkey_hex,
-                              const char *in, char **out, void *ctx) {
+                              const char *in, char **out,
+                              nh_auth_porthome_wrap_err *out_err,
+                              void *ctx) {
     (void)session; (void)in; (void)ctx;
     g_decrypt_calls++;
     if (peer_pubkey_hex && strlen(peer_pubkey_hex) == 64)
         memcpy(g_last_peer_pubkey, peer_pubkey_hex, 65);
     if (g_decrypt_should_fail) {
         *out = NULL;
+        if (out_err) *out_err = g_decrypt_fail_err;
         return -1;
     }
     /* Emit the expected plaintext as a NUL-terminated buffer. The
@@ -204,7 +214,9 @@ static int  g_encrypt_should_fail;
 
 static int hook_nip44_encrypt(void *session,
                               const char *peer_pubkey_hex,
-                              const char *in, char **out, void *ctx) {
+                              const char *in, char **out,
+                              nh_auth_porthome_wrap_err *out_err,
+                              void *ctx) {
     (void)session; (void)ctx;
     g_encrypt_calls++;
     if (peer_pubkey_hex && strlen(peer_pubkey_hex) == 64)
@@ -213,6 +225,7 @@ static int hook_nip44_encrypt(void *session,
     g_last_encrypt_plaintext = strdup(in ? in : "");
     if (g_encrypt_should_fail) {
         *out = NULL;
+        if (out_err) *out_err = NH_AUTH_PORTHOME_WRAP_ERR_DENIED;
         return -1;
     }
     *out = strdup(g_encrypt_ct_out);
@@ -361,6 +374,14 @@ static void test_enroll(const char *dir) {
     nh_identity_store_close(store);
 }
 
+/* Bead nostrc-8hc9: drive each wrap_err class through the decrypt
+ * hook and confirm the orchestrator persists the correct outcome
+ * enum on the provider row. Log-tag verification is exercised
+ * indirectly via the persisted enum since the pvha_log_class output
+ * goes to syslog (not easily captured without shimming syslog(3)
+ * inside the test binary) — the enum → log-tag mapping is a static
+ * table in auth_porthome.c, so a persisted DENIED unambiguously
+ * proves the "wrap-key-denied" tag was picked. */
 static void test_denied(const char *dir) {
     nh_identity_store *store = open_store(dir);
     nh_identity_account acct;
@@ -375,26 +396,192 @@ static void test_denied(const char *dir) {
        "persist wrapped_home_key");
 
     nh_auth_broker_porthome_install(store, /*enroll=*/0, /*timeout=*/0);
+    /* nostrc-2mri: disable the skip-cache for this sub-test so each
+     * class-drive is a fresh RPC (the cache is exercised in
+     * test_denied_cache below). */
+    nh_auth_broker_porthome_set_wrap_key_denied_skip_sec(0);
 
     /* Drain any leftover from previous sub-tests. */
     drain_cache(acct.account_id);
 
-    g_decrypt_should_fail = 1;
-    g_decrypt_calls = 0;
     install_hooks(0, 1);
 
+    struct {
+        nh_auth_porthome_wrap_err err;
+        nh_identity_wrap_key_outcome persisted;
+        const char *tag;
+    } cases[] = {
+        {NH_AUTH_PORTHOME_WRAP_ERR_SIGNER_OFFLINE,
+         NH_IDENTITY_WRAP_KEY_OUTCOME_SIGNER_OFFLINE, "signer-offline"},
+        {NH_AUTH_PORTHOME_WRAP_ERR_DENIED,
+         NH_IDENTITY_WRAP_KEY_OUTCOME_DENIED, "denied"},
+        {NH_AUTH_PORTHOME_WRAP_ERR_DECRYPT_FAILED,
+         NH_IDENTITY_WRAP_KEY_OUTCOME_DECRYPT_FAILED, "decrypt-failed"},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        g_decrypt_should_fail = 1;
+        g_decrypt_fail_err = cases[i].err;
+        g_decrypt_calls = 0;
+
+        int rc = nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
+            (void *)(uintptr_t)0xdeadbeef, acct.account_id, PUBKEY_HEX);
+        CK(rc == -1, "denied: orchestrator surfaces -1");
+        CK(g_decrypt_calls == 1, "denied: decrypt called exactly once");
+
+        /* No seed deposited => cache take returns error. */
+        uint8_t tmp[32];
+        CK(nh_auth_broker_porthome_take_wrap_seed(acct.account_id, tmp) != 0,
+           "denied: seed-cache empty for this account");
+
+        /* Provider row should record the expected outcome + a fresh ts. */
+        nh_identity_provider_record rec;
+        memset(&rec, 0, sizeof rec);
+        CK(nh_identity_store_provider_get(
+               store, acct.account_id, NH_IDENTITY_PROVIDER_NIP46_BUNKER,
+               true, &rec) == NH_IDENTITY_OK,
+           "denied: provider row readable");
+        CK((int)rec.wrap_key_outcome == (int)cases[i].persisted,
+           cases[i].tag);
+        CK(rec.wrap_key_outcome_ts > 0,
+           "denied: wrap_key_outcome_ts populated");
+    }
+
+    /* Also drive the enrollment arm's DENIED classification: no
+     * wrapped_home_key + enroll on + encrypt hook fails. Reset the
+     * row first. */
+    nh_auth_broker_porthome_install(NULL, 0, 0);
+    CK(nh_identity_provider_wrap_key_reset(store, provider_id) ==
+           NH_IDENTITY_OK,
+       "denied: reset cache row for enroll sub-case");
+    CK(nh_identity_provider_set_wrapped_home_key(store, provider_id, NULL, 0)
+           == NH_IDENTITY_OK,
+       "denied: clear wrapped_home_key for enroll sub-case");
+    nh_auth_broker_porthome_install(store, /*enroll=*/1, /*timeout=*/0);
+    nh_auth_broker_porthome_set_wrap_key_denied_skip_sec(0);
+    g_encrypt_calls = 0;
+    g_encrypt_should_fail = 1;
+    install_hooks(1, 1);
     int rc = nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
         (void *)(uintptr_t)0xdeadbeef, acct.account_id, PUBKEY_HEX);
-    CK(rc == -1, "denied: orchestrator surfaces -1");
-    CK(g_decrypt_calls == 1, "denied: decrypt called exactly once");
-
-    /* No seed deposited => cache take returns error. */
-    uint8_t tmp[32];
-    CK(nh_auth_broker_porthome_take_wrap_seed(acct.account_id, tmp) != 0,
-       "denied: cache empty for this account");
+    CK(rc == -1, "denied: enrollment arm surfaces -1");
+    CK(g_encrypt_calls == 1, "denied: enrollment encrypt called once");
+    nh_identity_provider_record rec;
+    memset(&rec, 0, sizeof rec);
+    CK(nh_identity_store_provider_get(
+           store, acct.account_id, NH_IDENTITY_PROVIDER_NIP46_BUNKER,
+           true, &rec) == NH_IDENTITY_OK,
+       "denied: provider row readable after enroll denied");
+    CK(rec.wrap_key_outcome == NH_IDENTITY_WRAP_KEY_OUTCOME_DENIED,
+       "denied: enrollment failure persists DENIED (hook returned DENIED)");
+    g_encrypt_should_fail = 0;
 
     install_hooks(0, 0);
     nh_auth_broker_porthome_install(NULL, 0, 0);
+    nh_auth_broker_porthome_set_wrap_key_denied_skip_sec(
+        900u); /* restore default so later sub-tests are unaffected */
+    nh_identity_store_close(store);
+}
+
+/* Bead nostrc-2mri: exercise the per-provider skip cache directly.
+ *
+ * Seeds the provider row with wrap_key_ok_last_outcome + ts, then
+ * verifies:
+ *  (a) DENIED + ts within TTL → orchestrator SKIPS the RPC and
+ *      surfaces -1 without calling the hook;
+ *  (b) DENIED + ts OUTSIDE TTL → orchestrator DOES call the RPC;
+ *  (c) SIGNER_OFFLINE + ts within TTL → orchestrator DOES call the
+ *      RPC (transient class never latches);
+ *  (d) A signer PAIRING reset clears the row and unblocks the RPC;
+ *  (e) TTL=0 disables the cache — DENIED + fresh ts still calls. */
+static void test_denied_cache(const char *dir) {
+    nh_identity_store *store = open_store(dir);
+    nh_identity_account acct;
+    char provider_id[NH_IDENTITY_UUID_CAP];
+    seed_account_with_nip46_provider(store, &acct, provider_id);
+
+    const uint8_t ct[] = "MOCK_NIP44_CT:existing_row";
+    CK(nh_identity_provider_set_wrapped_home_key(
+           store, provider_id, ct, sizeof ct - 1) == NH_IDENTITY_OK,
+       "cache: persist wrapped_home_key");
+
+    nh_auth_broker_porthome_install(store, /*enroll=*/0, /*timeout=*/0);
+    nh_auth_broker_porthome_set_wrap_key_denied_skip_sec(900);
+    drain_cache(acct.account_id);
+    install_hooks(0, 1);
+
+    uint64_t now = (uint64_t)time(NULL);
+
+    /* (a) DENIED within TTL → skip. */
+    CK(nh_identity_provider_set_wrap_key_outcome(
+           store, provider_id, NH_IDENTITY_WRAP_KEY_OUTCOME_DENIED,
+           now - 100) == NH_IDENTITY_OK,
+       "cache: seed DENIED ts=now-100");
+    g_decrypt_calls = 0;
+    g_decrypt_should_fail = 1;
+    g_decrypt_fail_err = NH_AUTH_PORTHOME_WRAP_ERR_DENIED;
+    int rc = nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
+        (void *)(uintptr_t)0xdeadbeef, acct.account_id, PUBKEY_HEX);
+    CK(rc == -1, "cache: skip returns -1");
+    CK(g_decrypt_calls == 0,
+       "cache: DENIED within TTL SKIPS the hook");
+
+    /* (b) DENIED outside TTL → call. */
+    CK(nh_identity_provider_set_wrap_key_outcome(
+           store, provider_id, NH_IDENTITY_WRAP_KEY_OUTCOME_DENIED,
+           now - 1000) == NH_IDENTITY_OK,
+       "cache: seed DENIED ts=now-1000");
+    g_decrypt_calls = 0;
+    rc = nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
+        (void *)(uintptr_t)0xdeadbeef, acct.account_id, PUBKEY_HEX);
+    CK(rc == -1, "cache: stale DENIED still returns -1 via RPC");
+    CK(g_decrypt_calls == 1,
+       "cache: DENIED outside TTL CALLS the hook");
+
+    /* (c) SIGNER_OFFLINE within TTL → call (never latches). */
+    CK(nh_identity_provider_set_wrap_key_outcome(
+           store, provider_id, NH_IDENTITY_WRAP_KEY_OUTCOME_SIGNER_OFFLINE,
+           now - 10) == NH_IDENTITY_OK,
+       "cache: seed SIGNER_OFFLINE ts=now-10");
+    g_decrypt_calls = 0;
+    rc = nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
+        (void *)(uintptr_t)0xdeadbeef, acct.account_id, PUBKEY_HEX);
+    CK(g_decrypt_calls == 1,
+       "cache: SIGNER_OFFLINE never latches; RPC is retried");
+    (void)rc;
+
+    /* (d) Reset via the exposed helper clears any latched entry. */
+    CK(nh_identity_provider_set_wrap_key_outcome(
+           store, provider_id, NH_IDENTITY_WRAP_KEY_OUTCOME_DENIED,
+           now - 5) == NH_IDENTITY_OK,
+       "cache: seed DENIED for reset test");
+    nh_auth_broker_porthome_wrap_key_reset(provider_id);
+    nh_identity_provider_record rec;
+    memset(&rec, 0, sizeof rec);
+    CK(nh_identity_store_provider_get(
+           store, acct.account_id, NH_IDENTITY_PROVIDER_NIP46_BUNKER,
+           true, &rec) == NH_IDENTITY_OK,
+       "cache: read provider row after reset");
+    CK(rec.wrap_key_outcome == NH_IDENTITY_WRAP_KEY_OUTCOME_UNSET,
+       "cache: reset clears outcome to UNSET");
+    CK(rec.wrap_key_outcome_ts == 0,
+       "cache: reset clears ts to 0");
+
+    /* (e) TTL=0 disables the cache. */
+    nh_auth_broker_porthome_set_wrap_key_denied_skip_sec(0);
+    CK(nh_identity_provider_set_wrap_key_outcome(
+           store, provider_id, NH_IDENTITY_WRAP_KEY_OUTCOME_DENIED,
+           now) == NH_IDENTITY_OK,
+       "cache: seed DENIED for TTL=0 case");
+    g_decrypt_calls = 0;
+    rc = nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
+        (void *)(uintptr_t)0xdeadbeef, acct.account_id, PUBKEY_HEX);
+    CK(g_decrypt_calls == 1,
+       "cache: TTL=0 disables skip; RPC is called");
+    (void)rc;
+
+    install_hooks(0, 0);
+    nh_auth_broker_porthome_install(NULL, 0, 0);
+    nh_auth_broker_porthome_set_wrap_key_denied_skip_sec(900);
     nh_identity_store_close(store);
 }
 
@@ -406,13 +593,15 @@ int main(void) {
     char *base = mkdtemp(tmpl);
     CK(base, "mkdtemp");
 
-    char d1[128], d2[128], d3[128];
+    char d1[128], d2[128], d3[128], d4[128];
     snprintf(d1, sizeof d1, "%s/unwrap", base);
     snprintf(d2, sizeof d2, "%s/enroll", base);
     snprintf(d3, sizeof d3, "%s/denied", base);
+    snprintf(d4, sizeof d4, "%s/cache", base);
     CK(mkdir(d1, 0700) == 0, "mkdir unwrap");
     CK(mkdir(d2, 0700) == 0, "mkdir enroll");
     CK(mkdir(d3, 0700) == 0, "mkdir denied");
+    CK(mkdir(d4, 0700) == 0, "mkdir cache");
 
     test_unwrap(d1);
     printf("PASS: unwrap round-trip\n");
@@ -421,7 +610,10 @@ int main(void) {
     printf("PASS: enroll round-trip\n");
 
     test_denied(d3);
-    printf("PASS: denied fallback\n");
+    printf("PASS: denied class discrimination\n");
+
+    test_denied_cache(d4);
+    printf("PASS: denied-cache skip / reset / ttl\n");
 
     free(g_last_encrypt_plaintext);
     rmtree(base);

@@ -188,6 +188,15 @@ typedef struct nh_auth_conf {
    * clamped to 120; the hard cap keeps a mis-configured or hostile
    * bunker from parking the PAM window forever. Bead nostrc-ck6i. */
   uint32_t porthome_nip46_decrypt_timeout_sec;
+  /* porthome_wrap_key_denied_skip_sec — per-provider wrap-key cache TTL.
+   * When a wrap-key hand-off returns DENIED or DECRYPT_FAILED, the
+   * broker persists that outcome + a timestamp on the provider row.
+   * Subsequent logins within this many seconds SKIP the RPC and go
+   * straight to LIMITED_MODE instead of paying another round-trip and
+   * emitting another WARNING. 0 disables the cache (every login
+   * retries); values above 86400 are clamped to 86400 (24 h).
+   * Default (0-unset) is 900 s = 15 min. Bead nostrc-2mri. */
+  uint32_t porthome_wrap_key_denied_skip_sec;
   /* Phase 2.5B (bead nostrc-ww50):
    *   porthome_fetch_helper — absolute path of the unprivileged
    *                    fetch helper binary (bead nostrc-9k4g's

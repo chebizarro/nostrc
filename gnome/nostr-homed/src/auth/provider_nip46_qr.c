@@ -399,6 +399,19 @@ static nh_auth_nip46_sign_status real_signer(nip46_qr_provider *p,
     return NH_AUTH_NIP46_SIGN_TIMEOUT;
   free(signer_pk); /* set_signer_pubkey was already done inside await */
 
+  /* Bead nostrc-2mri: a successful signer PAIRING (`nostrconnect://`
+   * `connect` handshake) means the user just re-granted permissions,
+   * so any stale wrap-key skip-cache entry from a previous denial is
+   * no longer authoritative. Clear it so the wrap-key hand-off below
+   * (via the maybe_enroll_or_unwrap post-verify hook) is re-attempted
+   * fresh. Weak-linked so the base archive links cleanly without the
+   * porthome runtime glue; a NULL symbol is a silent no-op. */
+  extern void nh_auth_broker_porthome_wrap_key_reset(const char *provider_id)
+      __attribute__((weak));
+  if (nh_auth_broker_porthome_wrap_key_reset && p->provider_id[0]) {
+    nh_auth_broker_porthome_wrap_key_reset(p->provider_id);
+  }
+
   nostr_nip46_client_set_timeout(p->session, NH_NIP46_QR_RPC_MS);
 
   /* Step 5: get_public_key. MUST match the account pubkey. */

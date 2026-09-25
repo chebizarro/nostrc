@@ -156,6 +156,18 @@ int main(int argc, char **argv) {
       nh_auth_broker_porthome_install(
           store, enroll, conf.porthome_nip46_decrypt_timeout_sec);
     }
+
+    /* Bead nostrc-2mri: per-provider wrap-key skip cache TTL. Kept as
+     * a separate installer so the 3-arg _install symbol stays
+     * unchanged (weak-linked; arity change would break older link
+     * closures). 0 disables the cache; the setter clamps hostile-
+     * large values internally. */
+    extern void nh_auth_broker_porthome_set_wrap_key_denied_skip_sec(
+        uint32_t sec) __attribute__((weak));
+    if (nh_auth_broker_porthome_set_wrap_key_denied_skip_sec) {
+      nh_auth_broker_porthome_set_wrap_key_denied_skip_sec(
+          conf.porthome_wrap_key_denied_skip_sec);
+    }
   }
 
   /* Optional persistent rate-limit backing. If NH_AUTH_RATELIMIT_PATH is set

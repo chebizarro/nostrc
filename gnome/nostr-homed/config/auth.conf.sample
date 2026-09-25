@@ -106,6 +106,19 @@ socket_path=/run/nostr-auth/auth.sock
 # LIMITED_MODE; login itself is unaffected.
 #porthome_nip46_decrypt_timeout_sec=30
 
+# Per-provider wrap-key skip cache TTL in seconds (bead nostrc-2mri).
+# When a wrap-key hand-off is denied by the signer (or the ciphertext
+# fails to decode), the broker persists a "last outcome + timestamp"
+# on the provider row and SKIPS the NIP-46 RPC on subsequent logins
+# until the TTL expires. That saves a full RPC round-trip and a
+# WARNING per login when the bunker has revoked wrap-key perms.
+# Transient signer-offline outcomes never latch — only DENIED and
+# DECRYPT_FAILED do. A successful re-pairing (`connect` from a fresh
+# nostrconnect QR flow) resets the cache immediately. 0 disables the
+# cache (retries on every login); values above 86400 are clamped to
+# 86400. Default (0 or unset) is 900 s = 15 min.
+#porthome_wrap_key_denied_skip_sec=900
+
 # Phase 2.5B fetch-helper sandbox (bead nostrc-ww50). The relay/Blossom
 # fetch runs OUT-OF-PROCESS in the `nostr-home-fetch` binary, executed
 # under a dedicated system user. The broker (nostr-authd) keeps root
