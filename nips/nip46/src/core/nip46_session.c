@@ -1197,7 +1197,10 @@ static uint32_t nip46_effective_timeout(const NostrNip46Session *s) {
 
 /* Forward declaration for RPC helper used by sign_event and other calls.
  * The _opts variant carries C2 (nostrc-ot2c.3) per-request deadline and
- * cancellation-handle options; the legacy signature stays as a wrapper. */
+ * cancellation-handle options; the legacy signature stays as a wrapper.
+ * nostrc-8hc9: _opts_ex threads an optional out_err pointer so callers
+ * that need to distinguish transport / timeout / signer-denied / decode
+ * failures can. The other two names are thin wrappers that pass NULL. */
 static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
                             const char **params, size_t n_params,
                             char **out_response_pubkey);
@@ -1205,6 +1208,11 @@ static char *nip46_rpc_call_opts(NostrNip46Session *s, const char *method,
                                  const char **params, size_t n_params,
                                  const NostrNip46RequestOptions *opts,
                                  char **out_response_pubkey);
+static char *nip46_rpc_call_opts_ex(NostrNip46Session *s, const char *method,
+                                    const char **params, size_t n_params,
+                                    const NostrNip46RequestOptions *opts,
+                                    char **out_response_pubkey,
+                                    NostrNip46RpcError *out_err);
 
 int nostr_nip46_client_sign_event_opts(NostrNip46Session *s,
                                        const char *event_json,
@@ -1346,7 +1354,48 @@ void nostr_nip46_client_set_rate_limit(NostrNip46Session *s,
 static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
                                  const char **params, size_t n_params,
                                  const NostrNip46RequestOptions *opts,
-                                 char **out_response_pubkey);
+                                 char **out_response_pubkey,
+                                 NostrNip46RpcError *out_err);
+
+/* nostrc-8hc9: classify a NIP-46 response's `error` string.
+ *
+ * The signer returns a free-form message; there is no wire-level error
+ * code. We inspect the string case-insensitively for well-known bunker
+ * denial/protocol vocabulary and default UNKNOWN → DENIED, because a
+ * signer that answered ≠ ok is more likely to keep refusing than to
+ * suddenly recover. Callers that latch on DENIED should still time out
+ * the latch so a fixed permission grant recovers on its own. */
+static NostrNip46RpcError nip46_classify_error_string(const char *err) {
+    if (!err || !*err) return NOSTR_NIP46_RPC_ERR_DENIED;
+    /* Case-insensitive substring scan — canonicalise a shortish copy. */
+    char buf[128];
+    size_t n = 0;
+    for (; err[n] && n + 1 < sizeof buf; n++) {
+        unsigned char c = (unsigned char)err[n];
+        buf[n] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : (char)c;
+    }
+    buf[n] = '\0';
+    /* Protocol-shape errors: the request itself was rejected as
+     * malformed, or the method is not implemented. Retrying with the
+     * same payload will not help. */
+    if (strstr(buf, "invalid") || strstr(buf, "malformed") ||
+        strstr(buf, "method not found") || strstr(buf, "unknown method") ||
+        strstr(buf, "not implemented") || strstr(buf, "bad request") ||
+        strstr(buf, "syntax") || strstr(buf, "unsupported"))
+        return NOSTR_NIP46_RPC_ERR_PROTOCOL;
+    /* Policy refusals — signer explicitly said no. */
+    if (strstr(buf, "restrict") || strstr(buf, "denied") ||
+        strstr(buf, "deny") || strstr(buf, "permission") ||
+        strstr(buf, "unauthorized") || strstr(buf, "unauthorised") ||
+        strstr(buf, "not allowed") || strstr(buf, "acl") ||
+        strstr(buf, "policy") || strstr(buf, "forbid") ||
+        strstr(buf, "reject") || strstr(buf, "no perm"))
+        return NOSTR_NIP46_RPC_ERR_DENIED;
+    /* Unknown error string: safe default is DENIED so the caller doesn't
+     * latch a transient signer-offline into a policy refusal loop, but
+     * also doesn't keep hammering a signer that just said "no". */
+    return NOSTR_NIP46_RPC_ERR_DENIED;
+}
 
 /* nostrc-qpow: Publish an RPC event and wait briefly for the relay's OK so
  * delivery failures are visible instead of silent. Some general-purpose
@@ -1426,31 +1475,54 @@ static char *nip46_rpc_call(NostrNip46Session *s, const char *method,
 static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
                                  const char **params, size_t n_params,
                                  const NostrNip46RequestOptions *opts,
-                                 char **out_response_pubkey);
+                                 char **out_response_pubkey,
+                                 NostrNip46RpcError *out_err);
 
 static char *nip46_rpc_call_opts(NostrNip46Session *s, const char *method,
                                  const char **params, size_t n_params,
                                  const NostrNip46RequestOptions *opts,
                                  char **out_response_pubkey) {
+    return nip46_rpc_call_opts_ex(s, method, params, n_params, opts,
+                                  out_response_pubkey, NULL);
+}
+
+static char *nip46_rpc_call_opts_ex(NostrNip46Session *s, const char *method,
+                                    const char **params, size_t n_params,
+                                    const NostrNip46RequestOptions *opts,
+                                    char **out_response_pubkey,
+                                    NostrNip46RpcError *out_err) {
     if (out_response_pubkey) *out_response_pubkey = NULL;
-    if (!s || !method) return NULL;
+    if (out_err) *out_err = NOSTR_NIP46_RPC_OK;
+    if (!s || !method) {
+        /* Bad-argument shape → PROTOCOL. There's no wire involvement
+         * so TRANSPORT/TIMEOUT would be misleading. */
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
+        return NULL;
+    }
     /* Fast-path: pre-cancelled handle should never reach the gate. */
     if (opts && opts->cancel_handle &&
         nostr_nip46_cancel_handle_is_cancelled(opts->cancel_handle)) {
         fprintf(stderr, "[nip46] %s: pre-cancelled - skipping RPC\n", method);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_TIMEOUT;
         return NULL;
     }
-    if (nip46_rpc_gate_acquire(s, method) != 0) return NULL;
+    if (nip46_rpc_gate_acquire(s, method) != 0) {
+        /* Session is closing — no wire attempt was made. Report
+         * TRANSPORT so callers treat it like an unreachable signer. */
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_TRANSPORT;
+        return NULL;
+    }
     /* Re-check cancellation after the gate; a queued caller may have been
      * cancelled while blocked waiting for a slot. */
     if (opts && opts->cancel_handle &&
         nostr_nip46_cancel_handle_is_cancelled(opts->cancel_handle)) {
         nip46_rpc_gate_release(s);
         fprintf(stderr, "[nip46] %s: cancelled at gate - skipping RPC\n", method);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_TIMEOUT;
         return NULL;
     }
     char *result = nip46_rpc_call_impl(s, method, params, n_params, opts,
-                                       out_response_pubkey);
+                                       out_response_pubkey, out_err);
     nip46_rpc_gate_release(s);
     return result;
 }
@@ -1458,13 +1530,19 @@ static char *nip46_rpc_call_opts(NostrNip46Session *s, const char *method,
 static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
                                  const char **params, size_t n_params,
                                  const NostrNip46RequestOptions *opts,
-                                 char **out_response_pubkey) {
+                                 char **out_response_pubkey,
+                                 NostrNip46RpcError *out_err) {
     if (out_response_pubkey) *out_response_pubkey = NULL;
-    if (!s || !method) return NULL;
+    if (out_err) *out_err = NOSTR_NIP46_RPC_OK;
+    if (!s || !method) {
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
+        return NULL;
+    }
 
     /* nostrc-32yf: Reject calls during shutdown */
     if (s->state == NIP46_STATE_STOPPING) {
         fprintf(stderr, "[nip46] %s: ERROR: session is stopping\n", method);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_TRANSPORT;
         return NULL;
     }
 
@@ -1472,14 +1550,17 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     const char *peer = s->remote_pubkey_hex;
     if (!peer) {
         fprintf(stderr, "[nip46] %s: ERROR: no remote pubkey in session\n", method);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
         return NULL;
     }
     if (!s->secret) {
         fprintf(stderr, "[nip46] %s: ERROR: no secret key in session\n", method);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
         return NULL;
     }
     if (s->n_relays == 0 || !s->relays) {
         fprintf(stderr, "[nip46] %s: ERROR: no relays in session\n", method);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_TRANSPORT;
         return NULL;
     }
 
@@ -1496,6 +1577,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
             pthread_mutex_unlock(&s->pending_mutex);
             if (rc != 0) {
                 fprintf(stderr, "[nip46] %s: ERROR: failed to start persistent pool\n", method);
+                if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_TRANSPORT;
                 return NULL;
             }
         } else {
@@ -1511,6 +1593,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     char *generated_id = nostr_nip46_request_id_generate();
     if (!generated_id) {
         fprintf(stderr, "[nip46] %s: ERROR: failed to generate request id\n", method);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
         return NULL;
     }
     memcpy(req_id, generated_id, sizeof(req_id));
@@ -1519,6 +1602,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     char *req = nostr_nip46_request_build(req_id, method, params, n_params);
     if (!req) {
         fprintf(stderr, "[nip46] %s: ERROR: failed to build request JSON\n", method);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
         return NULL;
     }
 
@@ -1529,6 +1613,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
                 method, nostr_nip46_transport_mode_name(s->transport_mode));
         secure_wipe(req, strlen(req));
         free(req);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
         return NULL;
     }
     secure_wipe(req, strlen(req));
@@ -1551,6 +1636,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     if (!pr) {
         fprintf(stderr, "[nip46] %s: ERROR: failed to create pending request\n", method);
         free(cipher);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
         return NULL;
     }
 
@@ -1571,6 +1657,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
             pending_request_cancel(s, req_id);
             free(cipher);
             nostr_event_free(req_ev);
+            if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
             return NULL;
         }
     }
@@ -1586,6 +1673,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
         pending_request_cancel(s, req_id);
         free(cipher);
         nostr_event_free(req_ev);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
         return NULL;
     }
 
@@ -1596,6 +1684,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
         pending_request_cancel(s, req_id);
         free(cipher);
         nostr_event_free(req_ev);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
         return NULL;
     }
     memcpy(sb.ptr, sk_sign, 32);
@@ -1607,6 +1696,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
         pending_request_cancel(s, req_id);
         free(cipher);
         nostr_event_free(req_ev);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
         return NULL;
     }
     secure_free(&sb);
@@ -1728,14 +1818,18 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     if (response_sel.selected_case < 0) {
         if (cancelled_by_handle) {
             fprintf(stderr, "[nip46] %s: cancelled by caller handle\n", method);
+            if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_TIMEOUT;
         } else if (published == 0 && nacked > 0) {
             fprintf(stderr, "[nip46] %s: ERROR: all relays rejected the request: %s\n",
                     method, reject_reason ? reject_reason : "(unknown reason)");
+            if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_TRANSPORT;
         } else if (published == 0) {
             fprintf(stderr, "[nip46] %s: ERROR: no relay ever connected to publish to\n", method);
+            if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_TRANSPORT;
         } else {
             fprintf(stderr, "[nip46] %s: timed out waiting for response after %u ms\n",
                     method, pr->timeout_ms);
+            if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_TIMEOUT;
         }
         free(reject_reason);
         pending_request_cancel(s, req_id);
@@ -1749,6 +1843,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
         /* Channel closed without response (session shutdown or relay disconnect) */
         fprintf(stderr, "[nip46] %s: channel closed without response\n", method);
         pending_request_cancel(s, req_id);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_TRANSPORT;
         return NULL;
     }
 
@@ -1757,6 +1852,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
     if (!response_json) {
         fprintf(stderr, "[nip46] %s: received NULL response\n", method);
         pending_request_cancel(s, req_id);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
         return NULL;
     }
 
@@ -1766,15 +1862,18 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
         free(response_json);
         /* Clean up channel since we received the response */
         pending_request_cancel(s, req_id);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
         return NULL;
     }
 
-    /* Check for error */
+    /* Check for error. nostrc-8hc9: classify the signer's `error` string
+     * so callers can distinguish policy denials from protocol errors. */
     char *err_msg = NULL;
     if (nostr_json_has_key(response_json, "error") &&
         nostr_json_get_type(response_json, "error") == NOSTR_JSON_STRING &&
         nostr_json_get_string(response_json, "error", &err_msg) == 0 && err_msg && *err_msg) {
         fprintf(stderr, "[nip46] %s: received error response: %s\n", method, err_msg);
+        if (out_err) *out_err = nip46_classify_error_string(err_msg);
         free(err_msg);
         free(response_json);
         pending_request_cancel(s, req_id);
@@ -1787,6 +1886,7 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
         fprintf(stderr, "[nip46] %s: no result field in response\n", method);
         free(response_json);
         pending_request_cancel(s, req_id);
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
         return NULL;
     }
 
@@ -2431,24 +2531,56 @@ int nostr_nip46_client_nip04_decrypt_rpc(NostrNip46Session *s, const char *peer_
     return 0;
 }
 
-int nostr_nip46_client_nip44_encrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext) {
-    if (!s || !peer_pubkey_hex || !plaintext || !out_ciphertext) return -1;
-    *out_ciphertext = NULL;
+int nostr_nip46_client_nip44_encrypt_rpc_ex(NostrNip46Session *s,
+                                            const char *peer_pubkey_hex,
+                                            const char *plaintext,
+                                            char **out_ciphertext,
+                                            NostrNip46RpcError *out_err) {
+    if (out_ciphertext) *out_ciphertext = NULL;
+    if (out_err) *out_err = NOSTR_NIP46_RPC_OK;
+    if (!s || !peer_pubkey_hex || !plaintext || !out_ciphertext) {
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
+        return -1;
+    }
     const char *params[2] = { peer_pubkey_hex, plaintext };
-    char *result = nip46_rpc_call(s, "nip44_encrypt", params, 2, NULL);
+    char *result = nip46_rpc_call_opts_ex(s, "nip44_encrypt", params, 2,
+                                          NULL, NULL, out_err);
     if (!result) return -1;
     *out_ciphertext = result;
     return 0;
 }
 
-int nostr_nip46_client_nip44_decrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext) {
-    if (!s || !peer_pubkey_hex || !ciphertext || !out_plaintext) return -1;
-    *out_plaintext = NULL;
+int nostr_nip46_client_nip44_encrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *plaintext, char **out_ciphertext) {
+    /* nostrc-8hc9: thin wrapper over _ex; discards error class for
+     * callers that only care about success/failure. */
+    return nostr_nip46_client_nip44_encrypt_rpc_ex(
+        s, peer_pubkey_hex, plaintext, out_ciphertext, NULL);
+}
+
+int nostr_nip46_client_nip44_decrypt_rpc_ex(NostrNip46Session *s,
+                                            const char *peer_pubkey_hex,
+                                            const char *ciphertext,
+                                            char **out_plaintext,
+                                            NostrNip46RpcError *out_err) {
+    if (out_plaintext) *out_plaintext = NULL;
+    if (out_err) *out_err = NOSTR_NIP46_RPC_OK;
+    if (!s || !peer_pubkey_hex || !ciphertext || !out_plaintext) {
+        if (out_err) *out_err = NOSTR_NIP46_RPC_ERR_PROTOCOL;
+        return -1;
+    }
     const char *params[2] = { peer_pubkey_hex, ciphertext };
-    char *result = nip46_rpc_call(s, "nip44_decrypt", params, 2, NULL);
+    char *result = nip46_rpc_call_opts_ex(s, "nip44_decrypt", params, 2,
+                                          NULL, NULL, out_err);
     if (!result) return -1;
     *out_plaintext = result;
     return 0;
+}
+
+int nostr_nip46_client_nip44_decrypt_rpc(NostrNip46Session *s, const char *peer_pubkey_hex, const char *ciphertext, char **out_plaintext) {
+    /* nostrc-8hc9: thin wrapper over _ex; discards error class for
+     * callers that only care about success/failure. */
+    return nostr_nip46_client_nip44_decrypt_rpc_ex(
+        s, peer_pubkey_hex, ciphertext, out_plaintext, NULL);
 }
 
 /* Binary-safe NIP-44 over NIP-46.

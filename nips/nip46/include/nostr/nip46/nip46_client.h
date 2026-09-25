@@ -123,6 +123,64 @@ int nostr_nip46_client_nip44_decrypt_b64_rpc(NostrNip46Session *s, const char *p
                                              const char *ciphertext,
                                              uint8_t **out_plaintext, size_t *out_plaintext_len);
 
+/* nostrc-8hc9: RPC failure classes.
+ *
+ * The legacy _rpc entrypoints (above) return -1 for every failure, which
+ * blinds callers to the difference between "signer is offline" (retry
+ * later) and "signer refused" (don't spam). The _ex variants classify
+ * the outcome so callers (e.g. porthome wrap-key hand-off) can react
+ * differently:
+ *
+ *   OK        The RPC completed and *out_* was populated.
+ *   TRANSPORT No relay ever connected / every relay rejected the publish
+ *             (persistent transport failure — network, relay policy).
+ *   TIMEOUT   The RPC published successfully but no response arrived
+ *             within the session's deadline (signer offline / lagging).
+ *   DENIED    The signer answered with a NIP-46 error string that
+ *             parses as a policy refusal ("restricted", "denied",
+ *             "unauthorized", "permission", "policy", "reject", …).
+ *             Any un-classified non-empty error string also lands here
+ *             because the signer said something ≠ ok — the safe latch
+ *             is "assume it doesn't want to answer".
+ *   PROTOCOL  The response was malformed: invalid JSON, wrong shape,
+ *             missing "result" field, base64 decode failure on the
+ *             result, or a signer error string that clearly denotes a
+ *             protocol problem ("invalid", "malformed", "method not
+ *             found", "unknown method", "syntax", …). The ciphertext /
+ *             method is unlikely to succeed on retry.
+ *   DECRYPT   The response decoded fine but authenticated decryption of
+ *             the transport payload failed. Rarely surfaced from this
+ *             layer today (the persistent subscription silently drops
+ *             undecryptable events, which shows up as TIMEOUT), but
+ *             reserved so callers can adopt without another signature
+ *             change if the transport layer starts propagating it.
+ *
+ * All values are stable across builds; new classes may be appended. */
+typedef enum {
+    NOSTR_NIP46_RPC_OK = 0,
+    NOSTR_NIP46_RPC_ERR_TRANSPORT,
+    NOSTR_NIP46_RPC_ERR_TIMEOUT,
+    NOSTR_NIP46_RPC_ERR_DENIED,
+    NOSTR_NIP46_RPC_ERR_PROTOCOL,
+    NOSTR_NIP46_RPC_ERR_DECRYPT
+} NostrNip46RpcError;
+
+/* nostrc-8hc9: Extended-error variants of the content-encrypt/decrypt
+ * RPCs. Behave identically to the legacy _rpc functions above except
+ * that *out_err (when non-NULL) receives the failure class on any
+ * non-zero return. On success out_err is set to NOSTR_NIP46_RPC_OK.
+ * The legacy _rpc functions remain unchanged and delegate to these. */
+int nostr_nip46_client_nip44_encrypt_rpc_ex(NostrNip46Session *s,
+                                            const char *peer_pubkey_hex,
+                                            const char *plaintext,
+                                            char **out_ciphertext,
+                                            NostrNip46RpcError *out_err);
+int nostr_nip46_client_nip44_decrypt_rpc_ex(NostrNip46Session *s,
+                                            const char *peer_pubkey_hex,
+                                            const char *ciphertext,
+                                            char **out_plaintext,
+                                            NostrNip46RpcError *out_err);
+
 /* nostrc-j2yu: Persistent connection API.
  * Start a persistent relay connection for efficient RPC calls.
  * This should be called after nostr_nip46_client_connect() has parsed the bunker URI.
