@@ -1226,6 +1226,73 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     endif()
   endif()
 
+
+  # ────────────────────────────────────────────────────────────────
+  # Portable-home Phase 2 follow-up (bead nostrc-89rj / nostrc-5fdu):
+  # nostr-homed-provision CLI — user-facing operator tool mirroring
+  # the broker's PROVISION_HOME code path. Ships in $BINDIR under
+  # NOSTR_HOMED_ENABLE_AUTH_INSTALL alongside nostr-home-status.
+  #
+  # Links the full porthome stack (libhanami transitively via
+  # nostr_porthome, libnostr for kind-30078 signing).  It is a
+  # USER-SPACE operator tool; the dep-purity gate on nostr-authd +
+  # pam_nostr is enforced separately below (they never grow a link
+  # to this binary or to nostr_provision_cli).
+  # ────────────────────────────────────────────────────────────────
+
+  # Non-network helper library — pure JSON codec + filesystem walk.
+  # Unit-testable without any transport dep.
+  add_library(nostr_provision_cli STATIC
+    src/porthome/nh_provision_cli.c)
+  target_compile_options(nostr_provision_cli PRIVATE
+    -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_include_directories(nostr_provision_cli PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fetch
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(nostr_provision_cli PUBLIC
+    nostr_porthome nostr_porthome_common)
+  set_property(TARGET nostr_provision_cli PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+  # Only wire the binary when libnostr is available (for keypair gen)
+  # and the fetch helper builds — mirrors the nostr-home-fetch gate.
+  if(_porthome_fetch_libnostr_ok)
+    add_executable(nostr-homed-provision
+      src/porthome/nostr-homed-provision.c)
+    target_compile_options(nostr-homed-provision PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    target_include_directories(nostr-homed-provision PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-fetch)
+    target_link_libraries(nostr-homed-provision PRIVATE
+      nostr_provision_cli
+      nostr_porthome nostr_porthome_fetch_ctl nostr_porthome_common
+      $<IF:$<TARGET_EXISTS:nostr>,nostr,PkgConfig::NOSTR>
+      OpenSSL::Crypto)
+    # If nostr-home-fetch was built above, point the pull spawner at
+    # the sibling build-tree binary so a source build "just works".
+    if(TARGET nostr-home-fetch)
+      target_compile_definitions(nostr-homed-provision PRIVATE
+        NH_PORTHOME_PROVISION_HELPER="$<TARGET_FILE:nostr-home-fetch>")
+    endif()
+    if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+      install(TARGETS nostr-homed-provision
+              RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    endif()
+  endif()
+
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_executable(test_provision_cli
+      tests/unit/test_provision_cli.c)
+    target_compile_options(test_provision_cli PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    target_link_libraries(test_provision_cli PRIVATE
+      nostr_provision_cli nostr_porthome_fetch_ctl)
+    add_test(NAME homed_provision_cli COMMAND test_provision_cli)
+    set_tests_properties(homed_provision_cli PROPERTIES
+      LABELS "nostr-homed;porthome;portable" TIMEOUT 30)
+  endif()
+
   # ────────────────────────────────────────────────────────────────
   # Portable-home Phase 2 (bead nostrc-89rj, nostrc-ck6i):
   # broker-side glue. Only when the auth runtime is also built.

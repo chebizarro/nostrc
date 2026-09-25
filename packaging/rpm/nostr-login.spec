@@ -772,6 +772,7 @@ find %{buildroot} -depth -type d -empty -delete 2>/dev/null || :
 %license LICENSE
 %{_bindir}/nostr-home-syncd
 %{_bindir}/nostr-home-status
+%{_bindir}/nostr-homed-provision
 %{_userunitdir}/nostr-home-sync.service
 %{_libexecdir}/nostr-homed/nostr-home-fetch
 %{_sysusersdir}/nostr-home-fetch.conf
