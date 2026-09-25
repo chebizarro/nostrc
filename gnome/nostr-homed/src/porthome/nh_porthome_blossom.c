@@ -31,11 +31,17 @@
  *   NOSTR_HOMED_BLOSSOM_PNG_SHIM=1
  * in the pusher's environment. Unset or "0" keeps the legacy raw-bytes
  * behaviour bit-for-bit.
+ *
+ * The decision MUST agree with the identical check made in cmd_push
+ * (nostr-homed-provision.c) and nh_syncd_pusher.c when they compute
+ * the manifest chunk address — otherwise the manifest hash and the
+ * Blossom URL disagree and pulls 404 (nostrc-wmb5). We route both
+ * through hanami_blossom_shim_active() so a single implementation
+ * governs every call site.
  */
 static int nh_porthome_shim_enabled(void)
 {
-    const char *e = getenv("NOSTR_HOMED_BLOSSOM_PNG_SHIM");
-    return (e && e[0] == '1' && e[1] == '\0') ? 1 : 0;
+    return hanami_blossom_shim_active() ? 1 : 0;
 }
 
 struct nh_porthome_blossom {

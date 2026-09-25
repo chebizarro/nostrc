@@ -115,6 +115,53 @@ hanami_blossom_shim_encode(const uint8_t *ct, size_t ct_len,
                            uint8_t *out, size_t out_cap);
 
 /**
+ * hanami_blossom_shim_active:
+ *
+ * Returns: true iff the pusher should shim-wrap every ciphertext blob
+ *          before hashing + uploading to Blossom. Callers on both sides
+ *          of the "compute-hash / upload" boundary (the porthome
+ *          provisioner in cmd_push, the syncd pusher's per-chunk loop,
+ *          and the Blossom-client wrapper in nh_porthome_blossom.c) MUST
+ *          consult this function to make the same decision — otherwise
+ *          the manifest chunk_hash and the Blossom URL disagree and
+ *          pulls 404 on every chunk (regression that bit nostrc-jmx0).
+ *
+ *          v1 impl: reads the environment variable
+ *          `NOSTR_HOMED_BLOSSOM_PNG_SHIM`; returns true iff the value is
+ *          exactly the single character "1". The check is uncached so a
+ *          test process can toggle the variable between calls. When the
+ *          eventual capability-cache-driven auto-shim (nostrc-si30)
+ *          lands, this function is where the per-server signal folds in.
+ *
+ *          The env-var check is O(1) and side-effect-free.
+ */
+bool
+hanami_blossom_shim_active(void);
+
+/**
+ * hanami_blossom_shim_sha256:
+ * @ct: (nullable if @ct_len == 0): ciphertext bytes
+ * @ct_len: length of @ct
+ * @out_hash: (out): 32-byte buffer to receive sha256(shim_prefix || ct)
+ *
+ * Computes the SHA-256 of the concatenation of the deterministic
+ * 41-byte PNG shim prefix (built by hanami_blossom_shim_encode with
+ * IDAT length = @ct_len) and @ct, without allocating a shim||ct
+ * buffer. The resulting hash is the "authoritative Blossom address"
+ * of the shimmed chunk — the exact 32 bytes that MUST appear in the
+ * porthome manifest for the pull to find the chunk on Blossom.
+ *
+ * Returns: HANAMI_OK on success;
+ *          HANAMI_ERR_INVALID_ARG if @out_hash is NULL,
+ *              @ct is NULL while @ct_len > 0, or
+ *              @ct_len > UINT32_MAX (the shim's IDAT length field is
+ *              32-bit).
+ */
+hanami_error_t
+hanami_blossom_shim_sha256(const uint8_t *ct, size_t ct_len,
+                           uint8_t out_hash[32]);
+
+/**
  * hanami_blossom_shim_detect:
  * @buf: bytes to inspect
  * @len: length of @buf

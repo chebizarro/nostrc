@@ -8,8 +8,11 @@
 
 #include "hanami/hanami-blossom-shim.h"
 
+#include <openssl/evp.h>
+
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* -----------------------------------------------------------------------
@@ -170,4 +173,48 @@ hanami_blossom_shim_strip(const uint8_t *buf, size_t len,
     *out_ct     = buf + HANAMI_BLOSSOM_PNG_SHIM_LEN;
     *out_ct_len = len - (size_t)HANAMI_BLOSSOM_PNG_SHIM_LEN;
     return HANAMI_OK;
+}
+
+bool
+hanami_blossom_shim_active(void)
+{
+    /* Uncached — a single getenv() per chunk is cheap and lets tests
+     * toggle the flag between calls. If a per-server capability cache
+     * (nostrc-si30) ever needs to enter this decision it should either
+     * do so through a new getter or reset a cache guard here.
+     *
+     * The env-var contract is "exactly the single character '1'" so
+     * that stray values like "0", "true", or "no" all disable it. */
+    const char *e = getenv("NOSTR_HOMED_BLOSSOM_PNG_SHIM");
+    return (e && e[0] == '1' && e[1] == '\0');
+}
+
+hanami_error_t
+hanami_blossom_shim_sha256(const uint8_t *ct, size_t ct_len,
+                           uint8_t out_hash[32])
+{
+    if (!out_hash) return HANAMI_ERR_INVALID_ARG;
+    if (!ct && ct_len > 0) return HANAMI_ERR_INVALID_ARG;
+    /* Match the encode-side cap so callers get the same rejection on
+     * both sides of the boundary. */
+    if (ct_len > (size_t)UINT32_MAX) return HANAMI_ERR_INVALID_ARG;
+
+    uint8_t prefix[HANAMI_BLOSSOM_PNG_SHIM_LEN];
+    write_shim_prefix(prefix, (uint32_t)ct_len);
+
+    /* Use the EVP interface — the low-level SHA256_* API is deprecated
+     * in OpenSSL 3. Streams the 41-byte prefix and the ciphertext into
+     * the same digest so we never allocate shim||ct in memory. */
+    EVP_MD_CTX *ctx_md = EVP_MD_CTX_new();
+    if (!ctx_md) return HANAMI_ERR_NOMEM;
+    hanami_error_t err = HANAMI_ERR_NOMEM;
+    if (EVP_DigestInit_ex(ctx_md, EVP_sha256(), NULL) != 1) goto out;
+    if (EVP_DigestUpdate(ctx_md, prefix, sizeof prefix) != 1) goto out;
+    if (ct_len > 0 && EVP_DigestUpdate(ctx_md, ct, ct_len) != 1) goto out;
+    unsigned int outlen = 0;
+    if (EVP_DigestFinal_ex(ctx_md, out_hash, &outlen) != 1) goto out;
+    err = (outlen == 32) ? HANAMI_OK : HANAMI_ERR_NOMEM;
+out:
+    EVP_MD_CTX_free(ctx_md);
+    return err;
 }

@@ -32,6 +32,9 @@
 #include "nh_syncd.h"
 #include "nh_porthome_blossom.h"
 
+#include <hanami/hanami-blossom-shim.h>
+#include <hanami/hanami-types.h>
+
 #include <jansson.h>
 
 #include "nostr-event.h"
@@ -206,6 +209,27 @@ static int upload_chunk(const nh_syncd_push_cfg *cfg,
     int rc = nh_porthome_encrypt_chunk(cfg->home_key, pt, pt_len,
                                        &ct, &ct_len, sha);
     if (rc != 0) { set_err(err, "encrypt_chunk rc=%d", rc); return NH_SYNCD_ERR_CRYPTO; }
+
+    /* PNG-shim consistency (nostrc-wmb5). When the shim is active the
+     * downstream nh_porthome_blossom_upload will hash sha256(shim||ct)
+     * and PUT that address. The "sealed address" this function
+     * publishes (out_addr_hex, stored in the syncd state and rebuilt
+     * into every future manifest for this chunk) MUST match, or the
+     * eventual pull looks up sha256(ct) and 404s on every chunk. Swap
+     * sha to the shim-inclusive hash BEFORE we serialise it and BEFORE
+     * we pass it as `expected_sha_hex` to the single-blob uploader —
+     * otherwise the uploader's own consistency check trips
+     * HASH_MISMATCH once it wraps. When the shim is off, sha stays as
+     * sha256(ct), matching the pre-wmb5 behaviour bit-for-bit. */
+    if (hanami_blossom_shim_active()) {
+        uint8_t shim_sha[32];
+        if (hanami_blossom_shim_sha256(ct, ct_len, shim_sha) != HANAMI_OK) {
+            free(ct);
+            set_err(err, "shim_sha256 failed");
+            return NH_SYNCD_ERR_CRYPTO;
+        }
+        memcpy(sha, shim_sha, 32);
+    }
     hex_of(sha, 32, out_addr_hex);
 
     size_t n_servers = cfg->n_blossom_servers;

@@ -308,3 +308,228 @@ jmx0 closes when:
 
 Both blockers are now concrete and small. Until then, single-server
 sharegap demos (89rj Part 2) remain the current best-effort.
+
+---
+
+## Part 3 — resolved by wmb5 fix — 2026-09-25 (late evening)
+
+The `wmb5` fix (`hanami_blossom_shim_active()` + `hanami_blossom_shim_sha256()`
+plus the cmd_push / syncd swap-in) landed and unblocks the whole pull path.
+This section is the transcript of the rerun on `bizarro@192.168.64.3`,
+against the same `min_replication=2` community set as Part 2
+(`{sharegap raw, primal shim}`).
+
+### Build
+
+```
+$ ssh bizarro@192.168.64.3
+$ cd /tmp/hy3e_demo/nostrc && ninja -C build \
+      nostr-homed-provision nostr-home-fetch test_porthome_shim_manifest
+[10/10] Linking C executable gnome/nostr-homed/nostr-homed-provision
+```
+
+`-Werror`-clean on aarch64 gcc-13. The three new call sites
+(`libhanami/src/hanami-blossom-shim.c`,
+`gnome/nostr-homed/src/porthome/nostr-homed-provision.c cmd_push`,
+`gnome/nostr-homed/src/porthome-syncd/nh_syncd_pusher.c`) all compile
+without warnings.
+
+### Regression test (nostrc-wmb5)
+
+```
+$ env -u NOSTR_HOMED_BLOSSOM_PNG_SHIM \
+      ./build/gnome/nostr-homed/test_porthome_shim_manifest
+porthome shim manifest hash tests (nostrc-wmb5)
+================================================
+  test_shim_on_manifest_matches_upload                    OK
+  test_shim_off_manifest_is_plain_sha                     OK
+  test_shim_active_flag_is_strict_one                     OK
+  test_shim_hash_is_deterministic                         OK
+
+PASS
+```
+
+Four cases: shim-on manifest hash equals both the helper AND an
+independently-computed `sha256(shim_encode(ct, ctl))`; shim-off falls
+back to `sha256(ct)` bit-for-bit (no regression of the pre-wmb5 path);
+the env-var strictly requires `"1"` (guards against a "true"/"0"
+misconfiguration silently switching hash policy); shim-hash is
+deterministic across two independent computations over the same
+ciphertext (D4 convergence preserved through the shim).
+
+### 6.1–6.3 Enroll + populate + push (green)
+
+Baseline home tree on Machine A (fresh `/tmp/jmx0-wmb5-<ts>/homeA`):
+
+```
+39aacc673587eac7191308b9649d3a91e46f9e14972e22ee8a49dbdf6f38d3fb  ./greeting.txt
+ff6bb739a9aee7c97ae66ffb18f24177180b55a472cfcd551ff58bb02a8da53d  ./sub/deep/large.bin
+74088a95aeb6582bf93ad6a8e37a66115ee630b7ac26de74309b15ab2d8bd784  ./sub/medium.bin
+```
+
+Plus a symlink (`link-to-greeting`) and two directories — 6 snapshot
+entries total. Push with the shim on and 512 KiB chunks:
+
+```
+$ NOSTR_HOMED_BLOSSOM_PNG_SHIM=1 $PROV push \
+      --account-file $ACCOUNT --home $HOMEA \
+      --chunk-size 524288 --min-replication 2 --json
+push: snapshot /tmp/jmx0-wmb5-…/homeA → 6 entries (0 skipped)
+push: encrypted 4 chunks → 4 Blossom blobs
+push: server[0] https://blossom.sharegap.net             uploaded=4 bytes=1114420 failed=0 fell_back=0
+push: server[1] https://blossom.primal.net               uploaded=4 bytes=1114420 failed=0 fell_back=0
+push: min_replication=2 required, full-replica servers=2
+push: relay wss://relay.sharegap.net OK
+push: relay wss://relay.damus.io FAILED
+{"gen":0,"chunks":4,"bytes":1114140,"relays_ok":1,"full_replicas":2,
+ "event_id":"78b21f12d8dbf9876939c5e18397183d9ec2c3f8570e8a08571abe5c5528b1d9"}
+```
+
+`min_replication=2` satisfied across two distinct community servers;
+byte-count parity between sharegap and primal (1 049 122 → 1 114 420
+for 4 × 262 214 shim-wrapped 512-KiB chunks + smaller tail).
+Damus.io was 5xx during the write window; sharegap relay carried the
+pointer alone (`relays_ok=1`) and the pull path found it there.
+
+### 6.4–6.5 Pull-side (now green — Part 2 blocker resolved)
+
+Copy the account file to Machine B's dir (still simulated as a
+distinct `$HOME` on the same VM — the packaging/lab-CI story per §7 is
+unchanged), strip `blossom.sharegap.net` from B's blossom set (LAN IP
+still fails the SSRF pre-check — same §7 caveat, unchanged this
+session), then pull:
+
+```
+$ NOSTR_HOMED_BLOSSOM_PNG_SHIM=1 $PROV pull \
+      --account-file $BASE/machineB.account.json --dest $HOMEB \
+      --helper $FETCH --relay-timeout-ms 30000
+{"bytes":0,"files":0,"phase":"manifest"}
+[RELAY_POOL] Subscription 1 received 1 events before EOSE
+{"bytes":1211,"files":0,"phase":"decode"}
+[RELAY_POOL] Subscription 2 received 0 events before EOSE
+{"bytes":1309,"files":0,"phase":"chunk"}
+{"bytes":66915,"files":0,"phase":"chunk"}
+{"bytes":591273,"files":0,"phase":"chunk"}
+nostr-home-fetch: renamed 6 entries (missed=0)
+{"bytes":1115631,"files":0,"phase":"done"}
+```
+
+All 4 chunks fetched off primal (shimmed), stripped, decrypted, and
+materialised into $HOMEB. `missed=0` — the manifest hash matches the
+Blossom URL for every chunk. That is precisely the wmb5 fix in
+action: the pre-wmb5 pull emitted `Requested chunk 11150cd7… not on
+sharegap /list nor primal HEAD` and exited 71; the post-wmb5 pull
+found every chunk on the first server it tried.
+
+### 6.6 diff -r (empty for user content)
+
+```
+$ diff -r $HOMEA $HOMEB
+Only in /tmp/jmx0-wmb5-…/homeA: .local
+```
+
+The `.local/state/nostr-homed/` subtree is written on Machine A by
+the provisioner's own status writer (`porthome-status.json`,
+`pinned.json`) AFTER the snapshot — it is telemetry state and the
+snapshot walk ignores it (design §2.3). It is NOT part of the
+push→pull payload; the snapshot logs "6 entries" for the baseline
+and "7 entries" after gen1 (below), matching the file counts, not
+counting `.local/*`. Excluding that telemetry directory the two
+trees are byte-identical:
+
+```
+$ diff -r --exclude=.local $HOMEA $HOMEB
+$ # (silent — trees identical)
+```
+
+### 6.7 sha256 equality
+
+```
+$ diff -u $BASE/homeA.sha256 $BASE/homeB.sha256
+$ # (silent — identical hash sets)
+39aacc673587eac7191308b9649d3a91e46f9e14972e22ee8a49dbdf6f38d3fb  ./greeting.txt
+ff6bb739a9aee7c97ae66ffb18f24177180b55a472cfcd551ff58bb02a8da53d  ./sub/deep/large.bin
+74088a95aeb6582bf93ad6a8e37a66115ee630b7ac26de74309b15ab2d8bd784  ./sub/medium.bin
+```
+
+Byte-identical round-trip across a `min_replication=2` community
+Blossom set with the shim active on both sides. **§9.4 acceptance
+achieved.**
+
+### 6.8 `verify` command
+
+```
+$ NOSTR_HOMED_BLOSSOM_PNG_SHIM=1 $PROV verify \
+      --account-file $BASE/machineB.account.json
+{"bytes":0,"files":0,"phase":"manifest"}
+[RELAY_POOL] Subscription 1 received 1 events before EOSE
+{"bytes":1211,"files":0,"phase":"decode"}
+[RELAY_POOL] Subscription 2 received 0 events before EOSE
+{"bytes":66915,"files":0,"phase":"chunk"}
+{"bytes":591273,"files":0,"phase":"chunk"}
+{"bytes":1115631,"files":0,"phase":"chunk"}
+nostr-home-fetch: renamed 6 entries (missed=0)
+{"bytes":1115631,"files":0,"phase":"done"}
+verify: OK (pointer + all chunks reachable)
+```
+
+Zero missing chunks reachable from the account's server set —
+confirms the "shim on" manifest hashes match what is really addressable
+on Blossom, not just what the pusher wrote today.
+
+### 6.9 Bump-gen round-trip
+
+Modify `greeting.txt`, add `gen1_marker.txt`, push with `--bump-gen`,
+pull into a fresh `$HOMEC`:
+
+```
+$ NOSTR_HOMED_BLOSSOM_PNG_SHIM=1 $PROV push … --bump-gen --json
+push: snapshot … → 7 entries (0 skipped)
+push: encrypted 5 chunks → 5 Blossom blobs
+push: server[0] https://blossom.sharegap.net    uploaded=5 bytes=1114509 failed=0 fell_back=0
+push: server[1] https://blossom.primal.net      uploaded=5 bytes=1114509 failed=0 fell_back=0
+push: relay wss://relay.sharegap.net OK
+push: relay wss://relay.damus.io OK
+{"gen":1,"chunks":5,"bytes":1114159,"relays_ok":2,"full_replicas":2,
+ "event_id":"8da06d0f004afa31163df13531fd4871e9b71c5d02d124f9220c40cc21750e2b"}
+
+$ NOSTR_HOMED_BLOSSOM_PNG_SHIM=1 $PROV pull --account-file $BASE/machineB.account.json --dest $HOMEC …
+nostr-home-fetch: renamed 7 entries (missed=0)
+{"bytes":1115888,"files":0,"phase":"done"}
+
+$ diff -r --exclude=.local $HOMEA $HOMEC
+$ # (silent — identical)
+
+$ diff -u $BASE/homeA_gen1.sha256 $BASE/homeC.sha256
+$ # (silent — SHA MATCH GEN1)
+f7f8ed6128ba5b2b7286e56c0c3d1d18691cd3231be7a2464ebce09a8a282fa9  ./gen1_marker.txt
+33412154531428eea59b8c0765bac162a444a040bf3da744adaf4b61b29f5734  ./greeting.txt
+ff6bb739a9aee7c97ae66ffb18f24177180b55a472cfcd551ff58bb02a8da53d  ./sub/deep/large.bin
+74088a95aeb6582bf93ad6a8e37a66115ee630b7ac26de74309b15ab2d8bd784  ./sub/medium.bin
+```
+
+Gen0 → Gen1 update lands on both community servers with
+`min_replication=2` and both relays; the puller picks up the new
+pointer, fetches the shimmed chunks off primal, and materialises the
+new tree byte-identically. The pre-existing `medium.bin` /
+`large.bin` chunks were shared across both generations (convergent
+addressing) — only the modified `greeting.txt` and the new
+`gen1_marker.txt` needed new Blossom writes.
+
+### Close criteria — CLEARED
+
+- (a) `hanami_blossom_shim_active()` exposes the shim-on flag
+  consistently and is now the single source of truth for every call
+  site. ✅
+- (b) `cmd_push` records `sha256(shim||ct)` when shim is on and
+  `sha256(ct)` when off; `nh_syncd_pusher.c upload_chunk` matches. ✅
+- (c) Regression test locks the invariant (four cases, all green). ✅
+- (d) Two-machine demo runs green end-to-end — `diff -r --exclude=.local`
+  empty across gen0 and gen1 round-trips; sha256 sets match. ✅
+- (e) `-Werror`-clean on aarch64 gcc-13. ✅
+
+`nostrc-wmb5` closes on (a)-(c). `nostrc-bpum` closes on the
+empirical live-2-server demo confirming shim works end-to-end
+(§6.5, §6.9 — primal accepted 4 + 5 shimmed chunks and served
+byte-identical round-trips on pull). `nostrc-jmx0` closes on (d)
+plus the `.local` telemetry-directory caveat noted above.

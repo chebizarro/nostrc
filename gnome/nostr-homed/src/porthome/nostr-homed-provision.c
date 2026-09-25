@@ -39,6 +39,7 @@
 #include "nh_porthome_status.h"
 #include "nh_porthome_wrapkey.h"
 
+#include <hanami/hanami-blossom-shim.h>
 #include <hanami/hanami-types.h>
 
 #include "nostr-event.h"
@@ -1296,19 +1297,41 @@ static int cmd_push(int argc, char **argv) {
                     fprintf(stderr, "push: encrypt_chunk %s [%zu]: %d\n", e->rel_path, ci, erc);
                     per_file_rc = NH_PROV_CLI_EXIT_CRYPTO; break;
                 }
+                /* PNG-shim consistency (nostrc-wmb5). When the shim is
+                 * active, nh_porthome_blossom_upload_batch will hash
+                 * sha256(shim||ct) and PUT that address to Blossom. The
+                 * manifest chunk row we build here therefore MUST use
+                 * the same shim-inclusive hash — otherwise the pull
+                 * looks up sha256(ct), Blossom returns 404, and the
+                 * whole home materialises as empty. Compute it locally
+                 * (no allocation of shim||ct — the helper hashes the
+                 * 41-byte prefix then updates over ct) and swap it in
+                 * BEFORE we record it in blob_hex_strs / chs[ci].sha256.
+                 * When the shim is off, addr stays sha256(ct) — the
+                 * pre-wmb5 behaviour bit-for-bit. */
+                if (hanami_blossom_shim_active()) {
+                    uint8_t shim_addr[32];
+                    if (hanami_blossom_shim_sha256(ct, ctl, shim_addr) != HANAMI_OK) {
+                        free(ct); per_file_rc = NH_PROV_CLI_EXIT_INTERNAL; break;
+                    }
+                    memcpy(addr, shim_addr, 32);
+                }
                 /* Stash into batch. */
                 if (n_blobs >= max_blobs) { /* defensive; should never trip */
                     free(ct); per_file_rc = NH_PROV_CLI_EXIT_INTERNAL; break;
                 }
                 batch[n_blobs].bytes = ct;
                 batch[n_blobs].len   = ctl;
-                batch[n_blobs].expected_sha256_hex = NULL;
-                blob_bufs[n_blobs] = ct;
-                /* Record chunk hex + wire to manifest chunk row. */
+                /* Cross-check: pass the shim-inclusive hash as the
+                 * expected sha to the batch uploader so a divergence
+                 * fails fast instead of silently corrupting the
+                 * manifest. */
                 char hex[65];
                 nh_porthome_hex64(addr, hex);
+                blob_bufs[n_blobs] = ct;
                 blob_hex_strs[n_blobs] = strdup(hex);
                 if (!blob_hex_strs[n_blobs]) { per_file_rc = NH_PROV_CLI_EXIT_INTERNAL; break; }
+                batch[n_blobs].expected_sha256_hex = blob_hex_strs[n_blobs];
                 memcpy(chs[ci].sha256, addr, 32);
                 chs[ci].size = (uint32_t)ctl;
                 chs[ci].chunk_key_id = 0;

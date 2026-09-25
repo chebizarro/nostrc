@@ -1353,6 +1353,24 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     set_tests_properties(homed_porthome_manifest PROPERTIES
       LABELS "nostr-homed;porthome;portable" TIMEOUT 60)
 
+    # PNG-shim manifest-hash regression (nostrc-wmb5). Locks in the
+    # cmd_push / syncd invariant that the manifest chunk_hash is
+    # sha256(shim||ct) when NOSTR_HOMED_BLOSSOM_PNG_SHIM=1 and
+    # sha256(ct) when the flag is off. Also guards the strict "==1"
+    # env-var contract so a stray "true"/"0" cannot silently switch
+    # hash policies. Runs the flag toggling itself; must NOT inherit
+    # a non-empty value from the test-suite environment.
+    add_executable(test_porthome_shim_manifest
+      tests/unit/test_porthome_shim_manifest.c)
+    target_link_libraries(test_porthome_shim_manifest PRIVATE nostr_porthome)
+    target_compile_options(test_porthome_shim_manifest PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_test(NAME homed_porthome_shim_manifest
+             COMMAND test_porthome_shim_manifest)
+    set_tests_properties(homed_porthome_shim_manifest PROPERTIES
+      LABELS "nostr-homed;porthome;shim;portable" TIMEOUT 30
+      ENVIRONMENT "NOSTR_HOMED_BLOSSOM_PNG_SHIM=")
+
     # Schema-v2 round-trip + v1 parse-forward + dot-dot/slash rejection.
     # Bead nostrc-q25o.
     add_executable(test_porthome_manifest_v2
