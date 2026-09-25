@@ -695,16 +695,57 @@ int main(int argc, char **argv) {
         .progress_path      = NULL, /* progress goes on stdout, not a file */
     };
 
-    nh_porthome_prov_status pr = nh_porthome_materialize_sealed_into_fd(
-        staging_fd, sealed_manifest, sealed_len, home_key,
-        fetch_chunk_cb, &fc, &pv, NULL);
-
+    /* Decode + materialize + rename walk (schema v2 — nostrc-q25o/bms6).
+     *
+     * We inline the three phases here (rather than calling the
+     * `_sealed_into_fd` wrapper) because the post-materialise rename
+     * walk needs the decoded manifest object. Semantics preserved:
+     *   - decode fail → LIMITED (never touch existing home).
+     *   - materialise → same status mapping as before.
+     *   - rename walk fail → distinct EXIT_RENAME (78); the tree is
+     *     partly renamed but the parent broker discards the mktemp
+     *     destination on any non-zero exit. */
+    nh_porthome_manifest *m_decoded = NULL;
+    int mrc = nh_porthome_manifest_decode_sealed(sealed_manifest, sealed_len,
+                                                 home_key, &m_decoded);
     free(sealed_manifest);
+
+    nh_porthome_prov_status pr;
+    if (mrc != NH_PORTHOME_OK || !m_decoded) {
+        pr = NH_PORTHOME_PROV_LIMITED;
+        fprintf(stderr,
+                "nostr-home-fetch: manifest decode failed (rc=%d) — LIMITED\n",
+                mrc);
+    } else {
+        pr = nh_porthome_materialize_into_fd(
+            staging_fd, m_decoded, home_key,
+            fetch_chunk_cb, &fc, &pv, NULL);
+    }
     nh_porthome_blossom_free(bl);
 
     int rc = NH_PORTHOME_FETCH_EXIT_OK;
     switch (pr) {
     case NH_PORTHOME_PROV_OK:
+        /* Post-materialise rename walk: v2 manifests get the path_enc →
+         * plaintext-basename rename here; v1 manifests short-circuit
+         * with renamed=0 missed=m->entries_len (see
+         * nh_porthome_rename_walk). */
+        {
+            size_t renamed = 0, missed = 0;
+            int rw = nh_porthome_rename_walk(staging_fd, m_decoded,
+                                             &renamed, &missed);
+            if (rw != NH_PORTHOME_OK) {
+                fprintf(stderr,
+                        "nostr-home-fetch: rename walk failed rc=%d "
+                        "(renamed=%zu missed=%zu)\n",
+                        rw, renamed, missed);
+                rc = NH_PORTHOME_FETCH_EXIT_RENAME;
+                break;
+            }
+            fprintf(stderr,
+                    "nostr-home-fetch: renamed %zu entries (missed=%zu)\n",
+                    renamed, missed);
+        }
         g_bytes = fc.running_bytes;
         emit_progress(NH_PORTHOME_FETCH_PHASE_DONE, 1);
         rc = NH_PORTHOME_FETCH_EXIT_OK;
@@ -733,6 +774,10 @@ int main(int argc, char **argv) {
         break;
     }
 
+    if (m_decoded) {
+        nh_porthome_manifest_dispose(m_decoded);
+        free(m_decoded);
+    }
     OPENSSL_cleanse(home_key, sizeof home_key);
     OPENSSL_cleanse(&ctl, sizeof ctl);
     if (close_staging) close(staging_fd);

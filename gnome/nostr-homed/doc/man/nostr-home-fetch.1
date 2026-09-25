@@ -76,6 +76,16 @@ Decrypt failure.
 .TP 4
 .B 76
 Internal error (I/O, allocator, unexpected state).
+.TP 4
+.B 78
+Post-materialise rename walk failed. The manifest and chunks landed
+correctly under path_enc names but the schema-v2 rename walk from
+path_enc components to plaintext basenames either hit a collision
+(hostile pointer with two entries sharing a plaintext basename under
+the same parent) or an I/O error. The staging tree is only partly
+renamed and the parent broker MUST discard it (equivalent to LIMITED
+semantics; the mktemp destination is never installed on a non-zero
+exit). Introduced with schema v2 (nostrc-bms6).
 .RE
 .SH CONTROL JSON
 The helper reads a JSON object from stdin (bounded at 16 KiB). Required

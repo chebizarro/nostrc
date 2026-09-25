@@ -292,6 +292,29 @@ int nh_porthome_decrypt_manifest(const uint8_t home_key[32],
 }
 
 /* ────────────────────────────────────────────────────────────────────
+ * Name-field AEAD (schema-v2, nostrc-q25o).
+ * Same seal_v1/open_v1 machinery as chunks/manifests but with the
+ * name-purpose salt so a ciphertext produced under one purpose cannot
+ * be redirected to another. Convergent (same plaintext → same bytes)
+ * per D4. Callers use this to seal per-entry basenames and symlink
+ * targets alongside the one-way `path_enc` HMAC form.
+ * ──────────────────────────────────────────────────────────────────── */
+
+int nh_porthome_encrypt_name_field(const uint8_t home_key[32],
+                                   const uint8_t *pt, size_t pt_len,
+                                   uint8_t **out_ct, size_t *out_ct_len) {
+    return seal_v1(home_key, SALT_NAME, sizeof(SALT_NAME) - 1,
+                   pt, pt_len, out_ct, out_ct_len, NULL);
+}
+
+int nh_porthome_decrypt_name_field(const uint8_t home_key[32],
+                                   const uint8_t *ct, size_t ct_len,
+                                   uint8_t **out_pt, size_t *out_pt_len) {
+    return open_v1(home_key, SALT_NAME, sizeof(SALT_NAME) - 1,
+                   ct, ct_len, out_pt, out_pt_len);
+}
+
+/* ────────────────────────────────────────────────────────────────────
  * Name encryption (keyed hash; spec §7)
  * ──────────────────────────────────────────────────────────────────── */
 

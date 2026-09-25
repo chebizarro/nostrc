@@ -33,7 +33,16 @@
 extern "C" {
 #endif
 
-#define NH_PORTHOME_MANIFEST_SCHEMA_VERSION  1u
+/* Schema versions in flight.
+ *   v1 (legacy): path_enc only. Emitted by pre-q25o pushes. Parse-forward
+ *                only — the encoder never produces v1 again.
+ *   v2 (current, nostrc-q25o): additive `name_sealed` + (for symlinks)
+ *                `link_target_sealed` fields carrying the operator-visible
+ *                plaintext under a home-key-derived AEAD. Enables the
+ *                rename walk in nostr-home-fetch (nostrc-bms6). */
+#define NH_PORTHOME_MANIFEST_SCHEMA_VERSION_V1  1u
+#define NH_PORTHOME_MANIFEST_SCHEMA_VERSION_V2  2u
+#define NH_PORTHOME_MANIFEST_SCHEMA_VERSION     NH_PORTHOME_MANIFEST_SCHEMA_VERSION_V2
 
 /* Hard caps (mirror design §5.4). Any decoded value exceeding a cap is
  * a fatal parse error (NH_PORTHOME_MANIFEST_ERR_TOO_LARGE). */
@@ -73,18 +82,45 @@ typedef struct {
     size_t            chunks_len;
     /* Only present when kind == SYMLINK. Owned. */
     char *symlink_target;
+
+    /* ── Schema v2 (nostrc-q25o) — additive plaintext-name material ──
+     *
+     * The decoder stores the raw sealed bytes into `name_sealed` /
+     * `link_target_sealed` (strict CBOR: opaque byte-strings, no
+     * inner parsing). The plaintext members below are populated by
+     * `nh_porthome_manifest_open_names(m, home_key)` (called by the
+     * `_sealed` wrapper on decode). Absent on v1 manifests. Owned. */
+    uint8_t *name_sealed;
+    size_t   name_sealed_len;
+    /* NUL-terminated single-component basename (UTF-8, ≤ 255 bytes).
+     * Rejected during open_names if it contains '/', NUL, '\', or
+     * equals "." / ".." (path-smuggling defence). */
+    char    *name_plain;
+
+    /* Only meaningful when kind == SYMLINK. Owned. */
+    uint8_t *link_target_sealed;
+    size_t   link_target_sealed_len;
+    char    *link_target_plain;
 } nh_porthome_entry;
 
 typedef struct {
-    uint32_t version;                                  /* Schema version — MUST equal 1. */
+    uint32_t version;                                  /* Schema version — 1 (parse-forward) or 2 (current). */
     uint8_t  home_root_id[NH_PORTHOME_SHA256_LEN];     /* Opaque root identifier (per-home). */
     nh_porthome_entry *entries;                        /* Owned. */
     size_t            entries_len;
 } nh_porthome_manifest;
 
-/* Constructors and destructor. */
+/* Constructors and destructor.
+ *
+ * `nh_porthome_manifest_init` produces a v1-shaped manifest for
+ * backward compat with pre-q25o callers (syncd, existing tests).
+ * `nh_porthome_manifest_init_v2` produces a v2 manifest — the encoder
+ * will then require the v2 add helpers (which populate `name_plain`)
+ * and refuse to serialize entries that lack sealed-name material. */
 int  nh_porthome_manifest_init(nh_porthome_manifest *out,
                                const uint8_t home_root_id[NH_PORTHOME_SHA256_LEN]);
+int  nh_porthome_manifest_init_v2(nh_porthome_manifest *out,
+                                  const uint8_t home_root_id[NH_PORTHOME_SHA256_LEN]);
 void nh_porthome_manifest_dispose(nh_porthome_manifest *m);
 void nh_porthome_entry_dispose(nh_porthome_entry *e);
 
@@ -115,6 +151,46 @@ int nh_porthome_manifest_add_symlink(nh_porthome_manifest *m,
                                      char *symlink_target /* moved */);
 
 /* ────────────────────────────────────────────────────────────────────
+ * Schema-v2 constructors (nostrc-q25o).
+ *
+ * Same shape as the v1 add helpers plus a plaintext-name parameter
+ * (single basename, ≤ 255 bytes; must not be "." / "..", must not
+ * contain '/', '\\' or NUL). The manifest encoder AEAD-seals it under
+ * a home-key-derived key and emits K_E_NAME_SEALED. Ownership of the
+ * plaintext `name` string moves into the manifest (the encoder copies
+ * it into `name_plain` and free()s it in dispose).
+ *
+ * The v1 helpers above continue to compile against unchanged callers
+ * (syncd, fuse) and leave `name_plain` NULL — the encoder will then
+ * skip the name_sealed slot for those entries, which the design allows
+ * during the migration. New code SHOULD prefer the v2 helpers. */
+int nh_porthome_manifest_add_file_v2(nh_porthome_manifest *m,
+                                     char *path_enc /* moved */,
+                                     char *name /* moved: plaintext basename */,
+                                     uint32_t mode,
+                                     uint32_t uid_hint,
+                                     uint32_t gid_hint,
+                                     uint64_t mtime_ns,
+                                     uint64_t size,
+                                     const nh_porthome_chunk *chunks,
+                                     size_t chunks_len);
+int nh_porthome_manifest_add_dir_v2(nh_porthome_manifest *m,
+                                    char *path_enc,
+                                    char *name,
+                                    uint32_t mode,
+                                    uint32_t uid_hint,
+                                    uint32_t gid_hint,
+                                    uint64_t mtime_ns);
+int nh_porthome_manifest_add_symlink_v2(nh_porthome_manifest *m,
+                                        char *path_enc,
+                                        char *name,
+                                        uint32_t mode,
+                                        uint32_t uid_hint,
+                                        uint32_t gid_hint,
+                                        uint64_t mtime_ns,
+                                        char *symlink_target /* moved */);
+
+/* ────────────────────────────────────────────────────────────────────
  * Codec (canonical CBOR + strict decoding)
  * ──────────────────────────────────────────────────────────────────── */
 
@@ -139,13 +215,67 @@ int nh_porthome_manifest_encode(const nh_porthome_manifest *m,
 int nh_porthome_manifest_decode(const uint8_t *cbor, size_t cbor_len,
                                 nh_porthome_manifest **out);
 
-/* Encrypted round-trip (convenience): encode + AEAD-seal. Caller frees. */
+/* Encrypted round-trip (convenience): encode + AEAD-seal. Caller frees.
+ * `encode_sealed` seals every entry's plaintext name material FIRST
+ * (in-place assignment of e->name_sealed etc.), then AEAD-seals the
+ * canonical CBOR under the manifest key. `decode_sealed` reverses:
+ * strict CBOR parse THEN `nh_porthome_manifest_open_names` on the
+ * result so downstream code sees `name_plain` / `symlink_target`
+ * populated for v2 pointers (and NULL for v1). */
 int nh_porthome_manifest_encode_sealed(const nh_porthome_manifest *m,
                                        const uint8_t home_key[NH_PORTHOME_KEY_LEN],
                                        uint8_t **out, size_t *out_len);
 int nh_porthome_manifest_decode_sealed(const uint8_t *sealed, size_t sealed_len,
                                        const uint8_t home_key[NH_PORTHOME_KEY_LEN],
                                        nh_porthome_manifest **out);
+
+/* ────────────────────────────────────────────────────────────────────
+ * Name-material seal / open (schema v2, nostrc-q25o)
+ * ──────────────────────────────────────────────────────────────────── */
+
+/* Populate `name_sealed` (and `link_target_sealed` for symlinks) from
+ * `name_plain` (and `symlink_target`) on every entry that has plaintext
+ * set. Existing sealed bytes are freed and rewritten. Called by
+ * `encode_sealed`; exported so tests can drive it. */
+int nh_porthome_manifest_seal_names(nh_porthome_manifest *m,
+                                    const uint8_t home_key[NH_PORTHOME_KEY_LEN]);
+
+/* Populate `name_plain` (and `symlink_target`) from `name_sealed`
+ * (and `link_target_sealed`) on every entry that has sealed bytes.
+ * REJECTS the whole manifest (returns NH_PORTHOME_ERR_PATH) if any
+ * decrypted basename is "." / ".." / contains '/' or NUL, or if a
+ * symlink target is absolute or exceeds NH_PORTHOME_MAX_SYMLINK_LEN.
+ * v1 manifests (no sealed bytes) succeed with plaintext members left
+ * NULL — the fetch materialiser detects that and skips its rename
+ * walk. Called by `decode_sealed`; exported so tests can drive it. */
+int nh_porthome_manifest_open_names(nh_porthome_manifest *m,
+                                    const uint8_t home_key[NH_PORTHOME_KEY_LEN]);
+
+/* ────────────────────────────────────────────────────────────────────
+ * Rename walk (nostrc-bms6) — post-materialise convergence
+ *
+ * After `nh_porthome_materialize_into_fd` writes every entry under its
+ * path_enc name into `staging_fd`, call this to rename each `path_enc`
+ * leaf to its `name_plain` counterpart. Depth-first (children before
+ * parents), openat/renameat under `staging_fd`, RENAME_EXCHANGE where
+ * available. On v1 manifests (name_plain absent) returns OK with no
+ * work done — path_enc names stay on disk.
+ *
+ * Idempotency: not partial-safe. A crash mid-walk leaves a mixed tree
+ * that the caller MUST discard (nostr-homed-provision pull writes
+ * into a mktemp destination and installs atomically; that discipline
+ * makes the walk effectively one-shot). Collisions (rename target
+ * already exists in the parent) return NH_PORTHOME_ERR_PATH — this
+ * asserts the path_enc-uniqueness invariant the strict parser already
+ * checks at the wire level.
+ *
+ * `out_renamed_count` (optional) receives the number of entries
+ * renamed. `out_missed_count` (optional) receives the number of
+ * entries skipped due to missing name_plain (v1-mixed). */
+int nh_porthome_rename_walk(int staging_fd,
+                            const nh_porthome_manifest *m,
+                            size_t *out_renamed_count,
+                            size_t *out_missed_count);
 
 #ifdef __cplusplus
 }

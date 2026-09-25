@@ -1083,6 +1083,7 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
   add_library(nostr_porthome STATIC
     src/porthome/nh_porthome_crypto.c
     src/porthome/nh_porthome_manifest.c
+    src/porthome/nh_porthome_rename.c
     src/porthome/nh_porthome_blossom.c
     src/porthome/nh_porthome_cbor.c
     src/porthome/nh_porthome_wrapkey.c
@@ -1350,6 +1351,30 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
       -Wall -Wextra -Werror -Wno-misleading-indentation)
     add_test(NAME homed_porthome_manifest COMMAND test_porthome_manifest)
     set_tests_properties(homed_porthome_manifest PROPERTIES
+      LABELS "nostr-homed;porthome;portable" TIMEOUT 60)
+
+    # Schema-v2 round-trip + v1 parse-forward + dot-dot/slash rejection.
+    # Bead nostrc-q25o.
+    add_executable(test_porthome_manifest_v2
+      tests/unit/test_porthome_manifest_v2.c)
+    target_link_libraries(test_porthome_manifest_v2 PRIVATE nostr_porthome)
+    target_compile_options(test_porthome_manifest_v2 PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_test(NAME homed_porthome_manifest_v2
+             COMMAND test_porthome_manifest_v2)
+    set_tests_properties(homed_porthome_manifest_v2 PROPERTIES
+      LABELS "nostr-homed;porthome;portable" TIMEOUT 60)
+
+    # Rename-walk depth-first / collision / v1 short-circuit. Bead
+    # nostrc-bms6.
+    add_executable(test_porthome_rename_walk
+      tests/unit/test_porthome_rename_walk.c)
+    target_link_libraries(test_porthome_rename_walk PRIVATE nostr_porthome)
+    target_compile_options(test_porthome_rename_walk PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_test(NAME homed_porthome_rename_walk
+             COMMAND test_porthome_rename_walk)
+    set_tests_properties(homed_porthome_rename_walk PROPERTIES
       LABELS "nostr-homed;porthome;portable" TIMEOUT 60)
 
     add_executable(test_porthome_blossom_guards

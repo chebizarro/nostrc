@@ -1178,7 +1178,10 @@ static int cmd_push(int argc, char **argv) {
         /* Falls back to wrap_seed (syncd convention). */
         memcpy(root_id, seed, NH_PORTHOME_SHA256_LEN);
     }
-    if (nh_porthome_manifest_init(&m, root_id) != 0) {
+    /* Schema v2 (nostrc-q25o): new pointers always carry sealed
+     * plaintext names so the fetch materialiser can rename path_enc →
+     * plaintext basename after materialise (nostrc-bms6). */
+    if (nh_porthome_manifest_init_v2(&m, root_id) != 0) {
         nh_porthome_blossom_free(bl);
         free(server_urls); free(signer_pk);
         OPENSSL_cleanse(seed, sizeof seed);
@@ -1224,17 +1227,28 @@ static int cmd_push(int argc, char **argv) {
             fprintf(stderr, "push: encrypt_path(%s) failed\n", e->rel_path);
             build_rc = NH_PROV_CLI_EXIT_CRYPTO; break;
         }
+        /* Extract the plaintext basename from rel_path — the last '/' -
+         * separated component. This is what the schema-v2 manifest
+         * carries in the sealed-name slot (nostrc-q25o). The rest of
+         * the path is already covered by parent-directory entries whose
+         * own name_plain seals cover THEIR basenames. */
+        const char *slash = strrchr(e->rel_path, '/');
+        const char *base_c = slash ? slash + 1 : e->rel_path;
+        char *name_plain = strdup(base_c);
+        if (!name_plain) { free(penc); build_rc = NH_PROV_CLI_EXIT_INTERNAL; break; }
 
         if (e->kind == NH_PROV_WALK_KIND_DIR) {
-            if (nh_porthome_manifest_add_dir(&m, penc, e->mode,
+            if (nh_porthome_manifest_add_dir_v2(&m, penc, name_plain, e->mode,
                     e->uid_hint, e->gid_hint, e->mtime_ns) != 0) {
+                free(name_plain);
                 build_rc = NH_PROV_CLI_EXIT_INTERNAL; break;
             }
         } else if (e->kind == NH_PROV_WALK_KIND_SYMLINK) {
             char *dup = strdup(e->symlink_target ? e->symlink_target : "");
-            if (!dup) { free(penc); build_rc = NH_PROV_CLI_EXIT_INTERNAL; break; }
-            if (nh_porthome_manifest_add_symlink(&m, penc, e->mode,
+            if (!dup) { free(name_plain); free(penc); build_rc = NH_PROV_CLI_EXIT_INTERNAL; break; }
+            if (nh_porthome_manifest_add_symlink_v2(&m, penc, name_plain, e->mode,
                     e->uid_hint, e->gid_hint, e->mtime_ns, dup) != 0) {
+                free(name_plain);
                 build_rc = NH_PROV_CLI_EXIT_INTERNAL; break;
             }
         } else if (e->kind == NH_PROV_WALK_KIND_FILE) {
@@ -1302,15 +1316,17 @@ static int cmd_push(int argc, char **argv) {
                 free(chs); free(penc);
                 build_rc = per_file_rc; break;
             }
-            int arc = nh_porthome_manifest_add_file(&m, penc, e->mode,
+            int arc = nh_porthome_manifest_add_file_v2(&m, penc, name_plain, e->mode,
                         e->uid_hint, e->gid_hint, e->mtime_ns,
                         e->size, chs, n_chunks);
-            free(chs); /* add_file copies */
+            free(chs); /* add_file_v2 copies */
             if (arc != 0) {
-                fprintf(stderr, "push: manifest_add_file(%s) rc=%d\n", e->rel_path, arc);
+                fprintf(stderr, "push: manifest_add_file_v2(%s) rc=%d\n", e->rel_path, arc);
+                free(name_plain);
                 build_rc = NH_PROV_CLI_EXIT_INTERNAL; break;
             }
         } else {
+            free(name_plain);
             free(penc);
         }
     }

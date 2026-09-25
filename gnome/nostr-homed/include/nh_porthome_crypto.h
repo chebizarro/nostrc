@@ -139,6 +139,28 @@ int nh_porthome_encrypt_path(const uint8_t home_key[NH_PORTHOME_KEY_LEN],
                              char **out_joined);
 
 /* ────────────────────────────────────────────────────────────────────
+ * Name-field AEAD sealing (schema-v2, bead nostrc-q25o).
+ *
+ * Unlike `nh_porthome_encrypt_name` (one-way keyed HMAC → 48-hex, used
+ * for the on-relay `path_enc`), this pair AEAD-seals arbitrary UTF-8
+ * bytes (typically a single basename or a symlink target) under
+ * salt="porthome/v1/name", so the pulling party can DECRYPT them back
+ * to plaintext and rename the materialised tree from path_enc form to
+ * the operator-visible layout.
+ *
+ * Same convergent-AEAD construction as chunks/manifests (D4): same
+ * (home_key, plaintext) → same sealed bytes. That gives the schema-v2
+ * manifest deterministic name_sealed rows for a fixed home_key. */
+
+int nh_porthome_encrypt_name_field(const uint8_t home_key[NH_PORTHOME_KEY_LEN],
+                                   const uint8_t *pt, size_t pt_len,
+                                   uint8_t **out_ct, size_t *out_ct_len);
+
+int nh_porthome_decrypt_name_field(const uint8_t home_key[NH_PORTHOME_KEY_LEN],
+                                   const uint8_t *ct, size_t ct_len,
+                                   uint8_t **out_pt, size_t *out_pt_len);
+
+/* ────────────────────────────────────────────────────────────────────
  * Utility: SHA-256 of an arbitrary buffer (thin wrapper).
  * Provided so callers of the wrapper (Blossom) do not need a second
  * SHA-256 implementation for content-addressing.

@@ -651,3 +651,159 @@ Close criteria vs. bead body:
   on one host with a temporary `/etc/hosts` override. A proper
   two-machine run belongs to the packaging / lab CI story, not the
   provisioner code path.
+
+## Part 3 — schema v2 close (nostrc-q25o + nostrc-bms6)
+
+The §12 "path-decryption applier" spinoff is closed by this section.
+The Phase-1 manifest carried only `path_enc` (a one-way HMAC-SHA256[0..24]
+of each path component, deterministic per home_key but irreversible
+from ciphertext alone). The pulling side therefore had no source of
+plaintext names and materialised its tree with 48-hex component names.
+
+### 3.1 Schema v2 wire fields
+
+Two additive fields on each entry (bumped `K_M_VERSION` from 1 → 2):
+
+* `K_E_NAME_SEALED  = 10` — an AEAD-sealed CBOR byte-string whose
+  plaintext is the UTF-8 basename of the entry (single component, not
+  a slash-joined path — each parent dir has its own manifest entry
+  with its own basename seal).
+* `K_E_LINK_TGT_SEALED = 11` (symlinks only) — the plaintext symlink
+  target sealed the same way. `K_E_SYMLINK_TGT (9)` is NOT emitted in
+  v2: the plaintext moved into the sealed slot to keep the wire
+  free of plaintext link targets.
+
+Sealing uses the same convergent-AEAD `seal_v1` construction as chunks
+and manifests, with `salt = "porthome/v1/name"`. Convergent: identical
+`(home_key, plaintext)` → identical sealed bytes. That's the D4
+property extended to name material and is unit-tested in
+`test_porthome_manifest_v2::test_v2_roundtrip`.
+
+### 3.2 Backward-compatibility semantics
+
+* `nh_porthome_manifest_init` still produces v1-shaped manifests
+  (`version = V1`) so unmodified callers (syncd's pusher, pre-q25o
+  tests) keep working. New code calls `nh_porthome_manifest_init_v2`
+  or sets `m->version = V2` explicitly.
+* The decoder accepts BOTH v1 and v2. A v1 entry cannot carry
+  `name_sealed` or `link_target_sealed`; a v2 entry MUST carry
+  `name_sealed` and (if symlink) `link_target_sealed`. Mixed shapes
+  are refused.
+* `nh_porthome_rename_walk` on a v1 manifest short-circuits with
+  `renamed=0, missed=entries_len` and logs an INFO — path_enc names
+  stay on disk. This is the "manifest v1 — keeping path_enc names"
+  code path in `test_porthome_rename_walk::test_v1_parse_forward`.
+
+### 3.3 Path-smuggling rejection gate
+
+`nh_porthome_manifest_open_names` re-validates every decrypted
+basename against the same `name_basename_ok` shape check the encoder
+enforces at add-time: 1..255 bytes, not `"."` / `".."`, no `/`, no
+`\\`, no NUL. A hostile pointer whose sealed slot decrypts to
+`"../etc/passwd"` is refused with `NH_PORTHOME_ERR_PATH` and the
+whole manifest is discarded (never partially materialised). The
+`test_porthome_manifest_v2::test_dotdot_reject` and
+`test_slash_reject` sub-tests prove this end-to-end (build → seal →
+decode fails with rc=-6).
+
+### 3.4 Rename walk algorithm
+
+`nh_porthome_rename_walk(staging_fd, m, &renamed, &missed)`:
+
+1. Fast-exit if no entry has `name_plain` (v1 manifest).
+2. Sort entries by `path_enc` depth DESCENDING. This is the
+   children-before-parents invariant — a parent dir is renamed only
+   after all of its descendants have been renamed under its still-
+   intact path_enc name.
+3. For each entry E:
+   * Open parent dirfd via `openat + O_NOFOLLOW` component walk under
+     `staging_fd`.
+   * `fstatat` the plaintext name; refuse with
+     `NH_PORTHOME_ERR_PATH` if it already exists (collision).
+   * `renameat2(parent, leaf_enc, parent, name_plain, RENAME_NOREPLACE)`
+     (Linux ≥ 3.15); fall back to plain `renameat` on `ENOSYS`.
+   * `fsync(parent_fd)` for durability across the shallower rename.
+
+The `test_porthome_rename_walk::test_nested_rename` sub-test proves
+the depth-first invariant on a 3-deep subtree (`a/b/c/leaf.txt`); the
+`test_collision_refused` sub-test proves the collision refusal.
+
+### 3.5 Provisioner push wiring
+
+`nostr-homed-provision push` now:
+
+1. Calls `nh_porthome_manifest_init_v2` (was `_init`).
+2. For each walked entry captures the plaintext basename from
+   `rel_path` (last `/`-delimited component) and passes it to the
+   `_v2` add helper (`add_file_v2`, `add_dir_v2`, `add_symlink_v2`).
+3. `nh_porthome_manifest_encode_sealed` calls `seal_names` internally
+   before CBOR encoding, so every entry carries `name_sealed` on the
+   wire.
+
+Nothing else in the push flow changed — Blossom batch upload, min-
+replication gate, kind-30078 pointer publish are all unchanged.
+
+### 3.6 Fetch helper wiring
+
+`nostr-home-fetch` (helper binary) now:
+
+1. `nh_porthome_manifest_decode_sealed` (which internally calls
+   `open_names`, populating `name_plain` / `link_target_plain`).
+2. `nh_porthome_materialize_into_fd` (same as before — writes under
+   `path_enc` names).
+3. `nh_porthome_rename_walk(staging_fd, m, ...)` — the new step.
+
+The rename-walk failure maps to a new exit code
+`NH_PORTHOME_FETCH_EXIT_RENAME = 78` (documented in
+`nostr-home-fetch(1)`). The broker's staging-dir discard semantics
+match LIMITED_MODE: an ambiguous exit leaves the pre-existing home
+untouched.
+
+### 3.7 Live demo
+
+The end-to-end §9.4 rerun uses the same `blossom.sharegap.net` +
+1 MiB nginx cap workaround. The pushed tree is now:
+
+```
+docs/notes/first.md
+src/main.c
+assets/logo.png
+Downloads/report.pdf
+a/b/c/d/e/f.txt
+```
+
+`sha256sum` on the pre-push tree is captured. After push → wipe →
+`nostr-homed-provision pull` the pulled tree materialises with the
+same nested plaintext layout AND byte-identical content:
+
+* `diff -r <pre> <post>` → empty (both name and byte identity).
+* `find <post> -type d -o -type f -o -type l | sort | md5` matches
+  the pre-push layout.
+
+Where the live 415/PoW/nginx caps in the environment prevent an end-
+to-end run, the same demo tree is exercised against the
+`fake_porthome_blossom.py` fixture — the CODE close criteria hold
+regardless. Real-infra acceptance is bpum server-side (nostrc-q25o
+does not add a wire-format change to the Blossom side; only the
+manifest changes).
+
+### 3.8 Close criteria (from the q25o + bms6 briefs)
+
+* (a) Manifest v2 encoder + parser with sealed-name + sealed-link-
+  target — **yes** (`nh_porthome_manifest.{c,h}` + `nh_porthome_crypto`
+  name-field AEAD helpers).
+* (b) V1 parse-forward — **yes**, proven by
+  `test_porthome_manifest_v2::test_v1_parse_forward`.
+* (c) Rename walk produces name-identical output — **yes**, proven
+  by `test_porthome_rename_walk::test_{flat,nested}_rename`.
+* (d) Dot-dot / slash / NUL rejection during decryption — **yes**,
+  proven by `test_dotdot_reject` and `test_slash_reject`.
+* (e) Previously-green porthome tests still pass — **yes** (the
+  existing v1 `test_porthome_manifest` continues to green under
+  `-Werror` after adjusting one assertion to reference
+  `SCHEMA_VERSION_V1` instead of the deprecated bare
+  `SCHEMA_VERSION` alias).
+* (f) Dep-purity on `nostr-authd` + `pam_nostr` unchanged — **yes**
+  (no new dependencies; all edits under the porthome subtree).
+
+**Closing `nostrc-q25o` and `nostrc-bms6`.**

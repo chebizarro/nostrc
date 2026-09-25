@@ -71,7 +71,11 @@ static int test_encode_decode_roundtrip(int n) {
     nh_porthome_manifest *m2 = NULL;
     ASSERT_EQ(nh_porthome_manifest_decode(cbor, cbor_len, &m2), 0);
     ASSERT(m2 != NULL);
-    ASSERT_EQ(m2->version, NH_PORTHOME_MANIFEST_SCHEMA_VERSION);
+    /* This fixture uses v1 add helpers (init defaults to V1 for
+     * backward-compat with pre-q25o callers). Schema v2 exercises the
+     * additive name_sealed / link_target_sealed slots and lives in
+     * test_porthome_manifest_v2.c. */
+    ASSERT_EQ(m2->version, NH_PORTHOME_MANIFEST_SCHEMA_VERSION_V1);
     ASSERT_EQ(memcmp(m2->home_root_id, m.home_root_id, 32), 0);
     ASSERT_EQ(m2->entries_len, m.entries_len);
     for (size_t i = 0; i < m.entries_len; i++) {
@@ -165,10 +169,13 @@ static int test_reject_oversize(void) {
 }
 
 static int test_reject_unknown_version(void) {
-    /* Hand-craft a canonical CBOR manifest header with version=2. */
+    /* Hand-craft a canonical CBOR manifest header with version=3 —
+     * nostrc-q25o added v2 as the second accepted version, so we use
+     * v3 here as the "unknown" version the strict decoder must
+     * refuse. */
     /* map(3): 0xA3
      *   uint(1): 0x01
-     *   uint(2): 0x02    ← version, expected to be refused
+     *   uint(3): 0x03    ← version, expected to be refused
      *   uint(2): 0x02
      *   bstr(32): 0x58 0x20 <32 bytes>
      *   uint(3): 0x03
@@ -177,7 +184,7 @@ static int test_reject_unknown_version(void) {
     uint8_t buf[64];
     size_t p = 0;
     buf[p++] = 0xA3;
-    buf[p++] = 0x01; buf[p++] = 0x02;       /* version=2 */
+    buf[p++] = 0x01; buf[p++] = 0x03;       /* version=3 (unknown) */
     buf[p++] = 0x02; buf[p++] = 0x58; buf[p++] = 0x20;
     for (int i = 0; i < 32; i++) buf[p++] = (uint8_t)i;
     buf[p++] = 0x03; buf[p++] = 0x80;

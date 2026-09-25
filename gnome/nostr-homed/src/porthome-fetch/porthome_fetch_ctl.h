@@ -66,6 +66,12 @@ extern "C" {
 #define NH_PORTHOME_FETCH_EXIT_TIMEOUT        74
 #define NH_PORTHOME_FETCH_EXIT_DECRYPT_FAIL   75
 #define NH_PORTHOME_FETCH_EXIT_INTERNAL       76
+/* Schema-v2 rename-walk failure (nostrc-bms6). The manifest and all
+ * chunks materialised OK, but the post-materialise rename walk from
+ * path_enc → plaintext basenames failed (collision or IO). Distinct
+ * from DECRYPT_FAIL so the broker can distinguish "hostile pointer"
+ * from "convergence failure late in the pipeline". */
+#define NH_PORTHOME_FETCH_EXIT_RENAME         78
 
 typedef struct nh_porthome_fetch_ctl {
     /* All hex fields are validated as exactly 64 lowercase hex chars. */
