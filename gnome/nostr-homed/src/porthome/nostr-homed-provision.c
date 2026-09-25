@@ -428,14 +428,19 @@ static int cmd_enroll(int argc, char **argv) {
                 (void)mkdir("/run/nostr-auth",         0755);
                 (void)mkdir("/run/nostr-auth/session", 0755);
                 (void)mkdir(dir,                        0700);
-                (void)chown(dir, (uid_t)uid, (gid_t)uid);
+                /* Best-effort ownership fix; gated by root uid and dir
+                 * mode 0700 above. Return value intentionally ignored —
+                 * some glibc versions mark chown warn_unused_result and
+                 * plain (void) casts do not suppress that. */
+                if (chown(dir, (uid_t)uid, (gid_t)uid) != 0) { /* ignored */ }
                 int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
                 if (fd < 0) {
                     fprintf(stderr, "open %s: %s\n", path, strerror(errno));
                 } else {
                     ssize_t w = write(fd, a.wrap_seed_hex, 64);
                     (void)w;
-                    (void)fchown(fd, (uid_t)uid, (gid_t)uid);
+                    /* Best-effort; see chown() comment above. */
+                    if (fchown(fd, (uid_t)uid, (gid_t)uid) != 0) { /* ignored */ }
                     (void)fchmod(fd, 0600);
                     close(fd);
                     fprintf(stderr,
@@ -1694,7 +1699,9 @@ static int cmd_verify(int argc, char **argv) {
     /* Wipe the staging dir on the way out. Best effort. */
     char rmcmd[512];
     snprintf(rmcmd, sizeof rmcmd, "rm -rf -- %s", dest);
-    if (rmcmd[0]) (void)system(rmcmd);
+    /* Best-effort cleanup of the staging dir; result ignored intentionally.
+     * `(void)system(...)` does not suppress warn_unused_result on newer glibc. */
+    if (rmcmd[0]) { int _rc = system(rmcmd); (void)_rc; }
 
     int verify_rc;
     switch (rc) {
