@@ -19,18 +19,9 @@ usr/lib/*/libnip19.so
 usr/lib/*/libnostr_nip55l_core.so
 usr/lib/*/libnostr_nip55l_glib.so
 
-# Test binary that installs via a stray CMake rule (build-tree leak).
-# Broader glob catches every build dir (nostrc-build, nostrc-porthome-pkg,
-# nostrc-h10m-pkg, ...). Upstream fix tracked in nostrc-t58t.
-tmp/nostrc-build/nostrc-0.3.0/obj-*-linux-gnu/tools/test_relay_eose
-tmp/nostrc-*/obj-*-linux-gnu/tools/test_relay_eose
-
-# Orphan (nostrc-t58t): the porthome-common status CLI is built by CMake
-# but not yet claimed by any .install file — the natural home is
-# nostr-home-sync.install (semantic sibling of nostr-home-syncd). Owner
-# is Worker B / porthome-common; suppress until they land the package
-# assignment so the deb build succeeds.
-usr/bin/nostr-home-status
+# nostrc-t58t: upstream now gates the test_relay_eose install rule on
+# BUILD_TESTING (tools/CMakeLists.txt), and the porthome-common CLI is
+# now claimed by nostr-home-sync.install. Both prior orphans removed.
 
 # Phase 1 does not ship a libnostr-homed-dev package; nostr-homed.pc is
 # multiarch-specific and would be a lintian ERROR in an arch:foreign

@@ -448,7 +448,12 @@ int nh_porthome_status_write_key(const char *path,
         off += w;
     }
     /* Trailing newline for `cat` friendliness. Best-effort. */
-    (void)write(fd, "\n", 1);
+    /* nostrc-cvqe: check write result — retry on EINTR, swallow the rest */
+    {
+        ssize_t wr;
+        do { wr = write(fd, "\n", 1); } while (wr < 0 && errno == EINTR);
+        (void)wr; /* status file remains valid without the trailing newline */
+    }
     if (close(fd) != 0) {
         int e = -errno;
         (void)unlink(tmp); free(merged); close(lfd); return e;

@@ -389,8 +389,9 @@ const nh_syncd_entry *nh_syncd_state_find(const nh_syncd_state *s, const char *r
         g_hash[sizeof g_hash - 1] = '\0';
     } else g_hash[0] = '\0';
     /* Publish through a static so accessors don't fabricate pointers. */
-    g_entry.content_hash_hex[0] = '\0';
-    strncpy(g_entry.content_hash_hex, g_hash, sizeof g_entry.content_hash_hex - 1);
+    /* nostrc-cvqe: null-term guaranteed — snprintf caps at buf-1 and NULs */
+    snprintf(g_entry.content_hash_hex, sizeof g_entry.content_hash_hex,
+             "%s", g_hash);
     return &g_entry;
 }
 

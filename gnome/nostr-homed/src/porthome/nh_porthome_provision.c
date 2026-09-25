@@ -16,6 +16,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <syslog.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -82,8 +83,13 @@ static int walk_and_mkdirs(int base_fd, const char *path, int is_dir,
         if (mkdirat(cur, name, 0700) != 0) {
             if (errno != EEXIST) { close(cur); return NH_PORTHOME_PROV_IO; }
         } else {
-            /* Chown fresh dirs to the target uid/gid. */
-            (void)fchownat(cur, name, uid, gid, AT_SYMLINK_NOFOLLOW);
+            /* Chown fresh dirs to the target uid/gid. Best-effort. */
+            /* nostrc-cvqe: check chown result */
+            if (fchownat(cur, name, uid, gid, AT_SYMLINK_NOFOLLOW) != 0) {
+                syslog(LOG_WARNING,
+                       "porthome: fchownat(%s) failed: %s",
+                       name, strerror(errno));
+            }
         }
         int next = openat(cur, name,
                           O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
@@ -169,7 +175,11 @@ static int apply_symlink(int base_fd, const nh_porthome_entry *e,
         close(parent_fd);
         return e2 == EEXIST ? NH_PORTHOME_PROV_OK : NH_PORTHOME_PROV_IO;
     }
-    (void)fchownat(parent_fd, leaf, uid, gid, AT_SYMLINK_NOFOLLOW);
+    /* nostrc-cvqe: check chown result — best-effort per current semantics */
+    if (fchownat(parent_fd, leaf, uid, gid, AT_SYMLINK_NOFOLLOW) != 0) {
+        syslog(LOG_WARNING, "porthome: fchownat(%s) failed: %s",
+               leaf, strerror(errno));
+    }
     close(parent_fd);
     return NH_PORTHOME_PROV_OK;
 }
@@ -182,7 +192,11 @@ static int apply_dir(int base_fd, const nh_porthome_entry *e,
     /* Apply masked mode. */
     uint32_t mode = e->mode & 0777;
     (void)fchmod(dirfd, (mode_t)mode);
-    (void)fchown(dirfd, uid, gid);
+    /* nostrc-cvqe: check chown result — best-effort */
+    if (fchown(dirfd, uid, gid) != 0) {
+        syslog(LOG_WARNING,
+               "porthome: fchown(dir) failed: %s", strerror(errno));
+    }
     close(dirfd);
     return NH_PORTHOME_PROV_OK;
 }

@@ -7,5 +7,9 @@ target_include_directories(test_relay_eose PRIVATE
     ${CMAKE_SOURCE_DIR}/libgo/include
 )
 
-# Install to build/tools for easy access
-install(TARGETS test_relay_eose DESTINATION ${CMAKE_BINARY_DIR}/tools)
+# Install to build/tools for easy access. Gated on BUILD_TESTING
+# (nostrc-t58t) so the binary does not leak into DESTDIR staging trees
+# under distro packaging (dh_missing had to whitelist every build dir).
+if(BUILD_TESTING)
+    install(TARGETS test_relay_eose DESTINATION ${CMAKE_BINARY_DIR}/tools)
+endif()

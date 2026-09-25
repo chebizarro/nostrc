@@ -1,4 +1,5 @@
 usr/bin/nostr-home-syncd
+usr/bin/nostr-home-status
 usr/lib/systemd/user/nostr-home-sync.service
 usr/libexec/nostr-homed/nostr-home-fetch
 usr/lib/sysusers.d/nostr-home-fetch.conf

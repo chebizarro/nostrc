@@ -36,6 +36,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static void usage(FILE *f) {
@@ -271,15 +272,25 @@ static void print_quota_pretty(uint64_t bytes,
 }
 
 /* Best-effort SIGHUP delivery to the user-scope sync service. Returns
- * 0 if the systemctl command exited 0. Non-fatal — the CLI still
- * exits with the value the operator likely expected. */
+ * 0 if the systemctl reload OR the pkill fallback exited 0; nonzero
+ * when both delivery paths failed so callers can surface a hint. */
 static int reload_syncd_(void) {
     /* Prefer systemctl --user reload if available. Fall back to sending
      * SIGHUP to any nostr-home-syncd process owned by this uid. */
     int rc = system("systemctl --user reload nostr-home-sync.service"
                     " >/dev/null 2>&1");
     if (rc == 0) return 0;
-    (void)system("pkill -HUP -u $(id -u) -x nostr-home-syncd >/dev/null 2>&1");
+    /* nostrc-cvqe: surface pkill fallback failure — check system() rc
+     * and return nonzero so the CLI exit code reflects it. */
+    int prc = system("pkill -HUP -u $(id -u) -x nostr-home-syncd"
+                     " >/dev/null 2>&1");
+    if (prc == -1 || !WIFEXITED(prc) || WEXITSTATUS(prc) != 0) {
+        fprintf(stderr,
+                "warning: could not signal nostr-home-syncd "
+                "(systemctl reload rc=%d, pkill rc=%d); the new value "
+                "will apply on the next syncd restart\n", rc, prc);
+        return 1;
+    }
     return 0;
 }
 
@@ -333,7 +344,7 @@ static int cmd_quota(int argc, char **argv) {
         fclose(f);
         printf("quota override: %llu bytes -> %s\n", v, path);
         printf("note: syncd will pick up the new value on next SIGHUP\n");
-        if (do_reload) reload_syncd_();
+        if (do_reload && reload_syncd_() != 0) return 1;
         return 0;
     }
     if (clear_override) {
@@ -348,7 +359,7 @@ static int cmd_quota(int argc, char **argv) {
         }
         printf("quota override: cleared\n");
         printf("note: syncd will pick up the change on next SIGHUP\n");
-        if (do_reload) reload_syncd_();
+        if (do_reload && reload_syncd_() != 0) return 1;
         return 0;
     }
 

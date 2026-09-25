@@ -1186,10 +1186,12 @@ static int rescan_walk(int home_fd, const char *rel_prefix,
     while ((de = readdir(d)) != NULL) {
         if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
         char *rel = NULL;
-        if (rel_prefix[0])
-            asprintf(&rel, "%s/%s", rel_prefix, de->d_name);
-        else
+        /* nostrc-cvqe: check asprintf — on -1 the ptr is indeterminate */
+        if (rel_prefix[0]) {
+            if (asprintf(&rel, "%s/%s", rel_prefix, de->d_name) < 0) rel = NULL;
+        } else {
             rel = strdup(de->d_name);
+        }
         if (!rel) continue;
         struct stat st;
         if (fstatat(home_fd, rel, &st, AT_SYMLINK_NOFOLLOW) != 0) { free(rel); continue; }
