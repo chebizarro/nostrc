@@ -17,4 +17,11 @@ void nh_syncd_watcher_free(nh_syncd_watcher *w);
 int  nh_syncd_watcher_fd(const nh_syncd_watcher *w);
 int  nh_syncd_watcher_drain(nh_syncd_watcher *w);
 
+/* xnxd part 2 — attach state baseline for overflow-driven rescans. */
+void     nh_syncd_watcher_set_state       (nh_syncd_watcher *w,
+                                           nh_syncd_state *state);
+int      nh_syncd_watcher_force_rescan    (nh_syncd_watcher *w);
+uint64_t nh_syncd_watcher_overflow_count  (const nh_syncd_watcher *w);
+uint64_t nh_syncd_watcher_rescan_count    (const nh_syncd_watcher *w);
+
 #endif

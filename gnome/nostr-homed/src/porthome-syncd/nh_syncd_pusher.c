@@ -122,58 +122,162 @@ static void hex_of(const uint8_t *b, size_t n, char *out) {
     out[n * 2] = '\0';
 }
 
-/* Upload one plaintext chunk after encryption, honouring
- * min_replication across the configured server set. On success writes
- * the 64-hex sealed address to `out_addr_hex`. */
+/* Milliseconds since the monotonic epoch (best-effort; wrap-safe
+ * differences only). */
+static uint64_t mono_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+}
+
+/* Per-server PUT using the porthome-common Blossom wrapper. Opens a
+ * single-endpoint wrapper each call so `nh_porthome_blossom_upload`'s
+ * fan-out is reduced to exactly one server — the syncd pusher owns the
+ * outer per-server iteration. Coordinated with the porthome-common
+ * contract (see nh_porthome_blossom.h): the wrapper stays multi-server
+ * capable; syncd just narrows its input list.
+ *
+ * Returns 0 on accept, an NH_SYNCD_ERR_* on refusal. */
+static int upload_chunk_to_one_server(const nh_syncd_push_cfg *cfg,
+                                      const char *server_url,
+                                      const uint8_t *ct, size_t ct_len,
+                                      const char *expected_sha_hex,
+                                      int *out_http_status,
+                                      uint64_t *out_ms) {
+    if (out_http_status) *out_http_status = 0;
+    uint64_t t0 = mono_ms();
+
+    /* Test seam wins. */
+    if (cfg->upload_to_server_fn) {
+        int rc = cfg->upload_to_server_fn(cfg->upload_to_server_ud,
+                                          server_url, ct, ct_len,
+                                          expected_sha_hex,
+                                          out_http_status, out_ms);
+        if (out_ms && *out_ms == 0) *out_ms = mono_ms() - t0;
+        return rc == 0 ? NH_SYNCD_OK : NH_SYNCD_ERR_UPLOAD;
+    }
+
+    /* Real path: single-endpoint wrapper. */
+    const char *one[1] = { server_url };
+    nh_porthome_blossom_opts_t bopts = {0};
+    bopts.servers        = one;
+    bopts.n_servers      = 1;
+    bopts.max_blob_bytes = ct_len + NH_PORTHOME_SEAL_OVERHEAD + 4096;
+    nh_porthome_blossom_t *one_bl = NULL;
+    if (nh_porthome_blossom_new(&bopts, cfg->bud02_signer, &one_bl) != 0) {
+        if (out_ms) *out_ms = mono_ms() - t0;
+        return NH_SYNCD_ERR_UPLOAD;
+    }
+    char echo[65];
+    int urc = nh_porthome_blossom_upload(one_bl, ct, ct_len,
+                                         expected_sha_hex, echo);
+    nh_porthome_blossom_free(one_bl);
+    if (out_ms) *out_ms = mono_ms() - t0;
+    /* We don't get a raw HTTP status back through the wrapper's
+     * boundary; leave 0 unless a test seam supplied one. */
+    return urc == 0 ? NH_SYNCD_OK : NH_SYNCD_ERR_UPLOAD;
+}
+
+/* Upload one plaintext chunk after encryption, iterating the configured
+ * server list explicitly so `min_replication` is a HARD requirement.
+ *
+ * On success writes the 64-hex sealed address to `out_addr_hex` and
+ * fills `*out_result` with per-server outcomes.
+ *
+ * Returns:
+ *   NH_SYNCD_OK                              — quorum met
+ *   NH_SYNCD_ERR_INSUFFICIENT_REPLICATION    — < min_replication accepts
+ *   NH_SYNCD_ERR_UPLOAD                      — zero accepts
+ *   NH_SYNCD_ERR_CRYPTO                      — encryption failure
+ *
+ * `bl` is retained for HEAD-set probing when the caller has already
+ * built one. May be NULL — the daemon still records the sealed address
+ * in the snapshot in that case (test-injection path when
+ * `n_blossom_servers == 0`). */
 static int upload_chunk(const nh_syncd_push_cfg *cfg,
                         nh_porthome_blossom_t *bl,
                         const uint8_t *pt, size_t pt_len,
                         char out_addr_hex[65],
+                        nh_syncd_upload_result *out_result,
                         char **err) {
+    if (out_result) memset(out_result, 0, sizeof *out_result);
+
     uint8_t *ct = NULL; size_t ct_len = 0; uint8_t sha[32];
     int rc = nh_porthome_encrypt_chunk(cfg->home_key, pt, pt_len,
                                        &ct, &ct_len, sha);
     if (rc != 0) { set_err(err, "encrypt_chunk rc=%d", rc); return NH_SYNCD_ERR_CRYPTO; }
-
     hex_of(sha, 32, out_addr_hex);
 
-    /* No blossom wrapper wired (n_blossom_servers==0). The encrypted
-     * chunk was still built and its sealed address computed — the
-     * daemon will record that address in the snapshot so a later
-     * live-Blossom sweep (I3) can re-upload if necessary. This is
-     * the test-injection path; production always has bl!=NULL. */
-    if (!bl) { free(ct); return NH_SYNCD_OK; }
-
-    /* HEAD across the set first: if the fake wrapper already knows
-     * of the address on >= min_replication servers, we can skip PUT.
-     * The current wrapper's `has()` returns a single bool ("any
-     * server has it") which is sufficient to skip in the common case;
-     * treating any single positive HEAD as satisfying the target is a
-     * deliberate simplification for I1 (matches how blossom.sharegap
-     * responds — a HEAD hit means at least one authoritative server
-     * has the object). Otherwise PUT. */
-    bool present = false;
-    (void)nh_porthome_blossom_has(bl, out_addr_hex, &present);
-
+    size_t n_servers = cfg->n_blossom_servers;
     size_t need = cfg->min_replication ? cfg->min_replication
                                        : NH_SYNCD_DEFAULT_MIN_REPLICATION;
-    if (!present || need > 1) {
-        char echo[65];
-        int urc = nh_porthome_blossom_upload(bl, ct, ct_len,
-                                             out_addr_hex, echo);
-        if (urc != 0) {
-            free(ct);
-            set_err(err, "blossom_upload rc=%d", urc);
-            return NH_SYNCD_ERR_UPLOAD;
-        }
-        /* The wrapper's upload attempts every configured server in
-         * order and returns success on the first that OKs. For
-         * min_replication > 1 we currently rely on that single OK
-         * plus the operator having ordered their server list so the
-         * primary is redundant. A future enhancement will iterate
-         * explicitly per server; the seam is present here. */
+
+    /* Test-injection path: no servers configured. Sealed address is
+     * still recorded in the snapshot so a later live-Blossom sweep
+     * (I3) can re-upload if necessary. Treat this as "quorum vacuously
+     * met" — matches the pre-xnxd behaviour driven by test_syncd_push_e2e. */
+    if (n_servers == 0) {
+        free(ct);
+        if (out_result) { out_result->total = 0; out_result->succeeded = 0; }
+        return NH_SYNCD_OK;
     }
+
+    /* Optional HEAD fast-path for the common "need == 1, blob already
+     * present on some server" case. Skipped when the test seam is in
+     * play (the seam simulates fresh uploads and would break on a
+     * real-transport HEAD to a fake URL) and skipped when we can't tell
+     * per-server which server responded (any need > 1 forces a full
+     * per-server PUT loop for accurate accounting anyway). */
+    if (bl && need == 1 && !cfg->upload_to_server_fn) {
+        bool present = false;
+        (void)nh_porthome_blossom_has(bl, out_addr_hex, &present);
+        if (present) {
+            if (out_result) {
+                out_result->total = n_servers;
+                out_result->succeeded = 1;
+                out_result->per_server[0].server_url    = cfg->blossom_servers[0];
+                out_result->per_server[0].http_status   = 200;
+                out_result->per_server[0].bytes_uploaded = 0;
+                out_result->per_server[0].error_class   = 0;
+            }
+            free(ct);
+            return NH_SYNCD_OK;
+        }
+    }
+
+    /* Per-server iteration. */
+    if (out_result) out_result->total = n_servers;
+    size_t successes = 0;
+    size_t recorded = n_servers > NH_SYNCD_MAX_SERVERS_PER_UPLOAD
+                    ? NH_SYNCD_MAX_SERVERS_PER_UPLOAD
+                    : n_servers;
+    for (size_t si = 0; si < n_servers; si++) {
+        int http = 0;
+        uint64_t ms = 0;
+        int urc = upload_chunk_to_one_server(cfg, cfg->blossom_servers[si],
+                                             ct, ct_len, out_addr_hex,
+                                             &http, &ms);
+        if (si < recorded && out_result) {
+            out_result->per_server[si].server_url     = cfg->blossom_servers[si];
+            out_result->per_server[si].http_status    = http;
+            out_result->per_server[si].bytes_uploaded = (urc == NH_SYNCD_OK) ? ct_len : 0;
+            out_result->per_server[si].elapsed_ms     = ms;
+            out_result->per_server[si].error_class    = (urc == NH_SYNCD_OK) ? 0 : urc;
+        }
+        if (urc == NH_SYNCD_OK) successes++;
+    }
+    if (out_result) out_result->succeeded = successes;
     free(ct);
+
+    if (successes == 0) {
+        set_err(err, "no server accepted (0/%zu)", n_servers);
+        return NH_SYNCD_ERR_UPLOAD;
+    }
+    if (successes < need) {
+        set_err(err, "insufficient replication (%zu/%zu, need %zu)",
+                successes, n_servers, need);
+        return NH_SYNCD_ERR_INSUFFICIENT_REPLICATION;
+    }
     return NH_SYNCD_OK;
 }
 
@@ -334,6 +438,13 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
     if (!cfg || !state || !batch || !root_dir || !ignore || !ilk)
         return NH_SYNCD_ERR_ARG;
 
+    /* xnxd part 1: track worst per-server outcome across every chunk we
+     * upload in this batch. On success the pusher hands `worst_result`
+     * to the summary callback so status readers see the tightest quorum
+     * the batch achieved. `worst_error_class` is empty on OK. */
+    nh_syncd_upload_result worst_result = {0};
+    const char *worst_error_class = NULL;
+
     /* Interlock 1: limited-mode / partial. */
     int rc = nh_syncd_interlocks_check(ilk);
     if (rc != NH_SYNCD_OK) return rc;
@@ -458,8 +569,20 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
             size_t want = pt_len - off;
             if (want > NH_SYNCD_CHUNK_SIZE) want = NH_SYNCD_CHUNK_SIZE;
             char hex[65];
-            int urc = upload_chunk(cfg, bl, pt + off, want, hex, out_error_msg);
+            nh_syncd_upload_result ur = {0};
+            int urc = upload_chunk(cfg, bl, pt + off, want, hex, &ur, out_error_msg);
+            /* Track worst-observed replication so the summary callback
+             * reports the tightest quorum this batch achieved. First
+             * chunk seeds; subsequent chunks demote by min(). */
+            if (worst_result.total == 0 && ur.total > 0) {
+                worst_result = ur;
+            } else if (ur.total > 0 && ur.succeeded < worst_result.succeeded) {
+                worst_result = ur;
+            }
             if (urc != NH_SYNCD_OK) {
+                worst_error_class = (urc == NH_SYNCD_ERR_INSUFFICIENT_REPLICATION)
+                                    ? "insufficient-replication"
+                                    : "upload-failed";
                 for (size_t j = 0; j < ci; j++) free(addrs[j]);
                 free(addrs); free(pt);
                 rc = urc; goto fail;
@@ -539,10 +662,15 @@ int nh_syncd_push_batch(const nh_syncd_push_cfg *cfg,
         }
     }
 
+    if (cfg->on_upload_summary)
+        cfg->on_upload_summary(cfg->on_upload_summary_ud, &worst_result);
     if (bl) nh_porthome_blossom_free(bl);
     return NH_SYNCD_OK;
 
 fail:
+    if (cfg->on_upload_summary)
+        cfg->on_upload_summary(cfg->on_upload_summary_ud, &worst_result);
+    (void)worst_error_class;
     if (bl) nh_porthome_blossom_free(bl);
     return rc;
 }

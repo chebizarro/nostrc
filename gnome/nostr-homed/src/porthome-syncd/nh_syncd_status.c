@@ -50,6 +50,10 @@ struct nh_syncd_status_writer {
     uint64_t            cache_quota;
     char                cache_quota_source[24];
     uint32_t            evict_rate_1h;
+    /* xnxd part 1: last push's worst-chunk replication summary. */
+    uint32_t            last_upload_servers_ok;
+    uint32_t            last_upload_servers_total;
+    char                last_upload_error_class[48];
     /* Rolling recent[] — head is the most recent slot. `count` grows
      * up to NH_SYNCD_STATUS_RECENT_CAP and then stays saturated. */
     recent_slot         recent[NH_SYNCD_STATUS_RECENT_CAP];
@@ -150,6 +154,21 @@ void nh_syncd_status_set_evict_rate(nh_syncd_status_writer *w,
                                     uint32_t per_hour) {
     WITH_LOCK(w, { w->evict_rate_1h = per_hour; });
 }
+void nh_syncd_status_set_last_upload_servers(nh_syncd_status_writer *w,
+                                             uint32_t ok, uint32_t total) {
+    WITH_LOCK(w, {
+        w->last_upload_servers_ok    = ok;
+        w->last_upload_servers_total = total;
+    });
+}
+void nh_syncd_status_set_last_upload_error_class(nh_syncd_status_writer *w,
+                                                 const char *class_slug) {
+    WITH_LOCK(w, {
+        snprintf(w->last_upload_error_class,
+                 sizeof w->last_upload_error_class,
+                 "%s", class_slug ? class_slug : "");
+    });
+}
 
 /* ─────────────── recent[] append ─────────────── */
 
@@ -245,6 +264,10 @@ int nh_syncd_status_emit(nh_syncd_status_writer *w, const char *path) {
     char qs[24];
     memcpy(qs, w->cache_quota_source, sizeof qs);
     uint32_t evr    = w->evict_rate_1h;
+    uint32_t upok   = w->last_upload_servers_ok;
+    uint32_t uptot  = w->last_upload_servers_total;
+    char     upcls[48];
+    memcpy(upcls, w->last_upload_error_class, sizeof upcls);
     unsigned rc     = w->recent_count;
     unsigned head   = w->recent_head;
     recent_slot recent[NH_SYNCD_STATUS_RECENT_CAP];
@@ -253,10 +276,12 @@ int nh_syncd_status_emit(nh_syncd_status_writer *w, const char *path) {
 
     char err_esc[128]  = {0};
     char qs_esc[64]    = {0};
+    char upcls_esc[128] = {0};
     (void)nh_porthome_json_escape(err, err_esc, sizeof err_esc);
     (void)nh_porthome_json_escape(qs,  qs_esc,  sizeof qs_esc);
+    (void)nh_porthome_json_escape(upcls, upcls_esc, sizeof upcls_esc);
 
-    char body[2048];
+    char body[2560];
     size_t off = 0;
     if (appendf(body, sizeof body, &off,
                 "{\"state\":\"%s\","
@@ -268,9 +293,13 @@ int nh_syncd_status_emit(nh_syncd_status_writer *w, const char *path) {
                 "\"cache_quota_bytes\":%" PRIu64 ","
                 "\"cache_quota_source\":\"%s\","
                 "\"evict_rate_1h\":%u,"
+                "\"last_upload_servers_ok\":%u,"
+                "\"last_upload_servers_total\":%u,"
+                "\"last_upload_error_class\":\"%s\","
                 "\"recent\":[",
                 nh_syncd_status_state_slug(state),
-                lpg, lpg2, err_esc, pinned, cb, cq, qs_esc, evr) != 0)
+                lpg, lpg2, err_esc, pinned, cb, cq, qs_esc, evr,
+                upok, uptot, upcls_esc) != 0)
         return -1;
 
     /* Emit recent[] most-recent-first. Walk backward from `head`. */

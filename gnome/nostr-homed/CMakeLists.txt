@@ -1637,6 +1637,24 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     set_tests_properties(homed_syncd_lazy_reconcile PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable-fuse;portable" TIMEOUT 60)
 
+    # ── xnxd part 1 — per-server upload accounting (multi-server pusher) ──
+    add_executable(test_syncd_pusher_multi_server
+      tests/unit/test_syncd_pusher_multi_server.c)
+    target_link_libraries(test_syncd_pusher_multi_server PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_pusher_multi_server
+      COMMAND test_syncd_pusher_multi_server)
+    set_tests_properties(homed_syncd_pusher_multi_server PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
+
+    # ── xnxd part 2 — full-tree rescan diff (missed-inotify recovery) ──
+    add_executable(test_syncd_rescan_overflow
+      tests/unit/test_syncd_rescan_overflow.c)
+    target_link_libraries(test_syncd_rescan_overflow PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_rescan_overflow
+      COMMAND test_syncd_rescan_overflow)
+    set_tests_properties(homed_syncd_rescan_overflow PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
+
     add_executable(test_syncd_pull_e2e tests/integration/test_syncd_pull_e2e.c)
     target_link_libraries(test_syncd_pull_e2e PRIVATE nostr_syncd_core)
     add_test(NAME homed_syncd_pull_e2e COMMAND test_syncd_pull_e2e)

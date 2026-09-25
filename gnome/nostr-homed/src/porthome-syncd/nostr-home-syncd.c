@@ -18,12 +18,23 @@
  *   NOSTR_HOMED_SYNCD_RELAYS     — wss://... comma-separated
  *   NOSTR_HOMED_SYNCD_D_TAG      — pointer d-tag (default matches
  *                                  design §2.2 personal home)
- *   NOSTR_HOMED_SYNCD_MIN_REPL   — integer, default 2
- *   NOSTR_HOMED_SYNCD_STATE_DIR  — override state dir (tests)
- *   NOSTR_HOMED_SYNCD_HOME       — override $HOME (tests)
+ *   NOSTR_HOMED_SYNCD_MIN_REPL         — integer, default 2 (legacy name)
+ *   NOSTR_HOMED_SYNCD_MIN_REPLICATION  — integer, default 2 (preferred; xnxd)
+ *   NOSTR_HOMED_SYNCD_STATE_DIR        — override state dir (tests)
+ *   NOSTR_HOMED_SYNCD_HOME             — override $HOME (tests)
+ *   NOSTR_HOMED_SYNCD_RESCAN_INTERVAL_SEC — periodic full-tree rescan
+ *                                  tick (xnxd part 2). 0/unset disables;
+ *                                  otherwise a rescan fires that often
+ *                                  to close inotify add_watch race gaps.
+ *   NOSTR_HOMED_SYNCD_TEST_MODE  — when "1", allows the NOSTR_HOMED_SYNCD_SEED_HEX
+ *                                  env fallback (see below) to seed
+ *                                  home_key without the broker drop.
+ *                                  Off in production; unit tests set it.
  *   NOSTR_HOMED_SYNCD_SEED_HEX   — 64-hex seed for home_key derivation.
- *                                  Env fallback only; headless tests
- *                                  and manual operator use.
+ *                                  ONLY consulted when TEST_MODE=1; the
+ *                                  production credential handoff is the
+ *                                  broker seed drop at
+ *                                  /run/nostr-auth/session/<uid>/home_seed.
  *   NOSTR_HOMED_SYNCD_SEED_FILE  — optional path override for the
  *                                  per-user broker seed drop
  *                                  (default: /run/nostr-auth/session/
@@ -273,6 +284,9 @@ typedef struct {
     char  **relays;   size_t n_relays;
     char   *seed_hex;
     size_t  min_repl;
+    uint32_t rescan_interval_sec;    /* xnxd part 2 */
+    bool     test_mode;               /* xnxd part 3 */
+    bool     seed_from_broker;        /* xnxd part 3: audit-friendly flag */
 } cfg_t;
 
 static int load_cfg(cfg_t *c) {
@@ -284,14 +298,24 @@ static int load_cfg(cfg_t *c) {
     c->nsec_hex = xstrdup(getenv("NOSTR_HOMED_SYNCD_NSEC_HEX"));
     c->d_tag    = xstrdup(getenv("NOSTR_HOMED_SYNCD_D_TAG"));
     if (!c->d_tag) c->d_tag = xstrdup("nostr-homed.home.v1:personal");
-    /* W(3): prefer the broker-side per-user drop; env is the fallback
-     * kept for headless tests. Both paths land the seed at c->seed_hex
-     * for the existing derivation in the batch loop. */
+    /* xnxd part 3: prefer the broker-side per-user drop; the env
+     * fallback is now GATED behind NOSTR_HOMED_SYNCD_TEST_MODE=1 so
+     * production installs can't silently fall back to a caller-provided
+     * seed if the broker handoff is broken.  When TEST_MODE is off and
+     * the drop is missing the daemon refuses to derive home_key and the
+     * batch loop reports "seed unset" per-batch (existing behaviour). */
+    const char *tm = getenv("NOSTR_HOMED_SYNCD_TEST_MODE");
+    c->test_mode = (tm && *tm && strcmp(tm, "0") != 0);
     char seed_from_drop[65] = {0};
     if (read_seed_from_broker_drop(seed_from_drop) == 0) {
         c->seed_hex = xstrdup(seed_from_drop);
-    } else {
+        c->seed_from_broker = true;
+    } else if (c->test_mode) {
         c->seed_hex = xstrdup(getenv("NOSTR_HOMED_SYNCD_SEED_HEX"));
+        c->seed_from_broker = false;
+    } else {
+        c->seed_hex = NULL;
+        c->seed_from_broker = false;
     }
     /* Best-effort mlock the heap copy; RLIMIT_MEMLOCK may reject it,
      * in which case the wipe-on-free in free_cfg is still the durable
@@ -303,8 +327,14 @@ static int load_cfg(cfg_t *c) {
     const char *rl = getenv("NOSTR_HOMED_SYNCD_RELAYS");
     c->blossom = split_csv(bl, &c->n_blossom);
     c->relays  = split_csv(rl, &c->n_relays);
-    const char *mr = getenv("NOSTR_HOMED_SYNCD_MIN_REPL");
-    c->min_repl = mr ? (size_t)strtoul(mr, NULL, 10) : NH_SYNCD_DEFAULT_MIN_REPLICATION;
+    /* xnxd part 1: accept both env names; the longer form is the design
+     * doc's canonical spelling. Priority: MIN_REPLICATION wins if set. */
+    const char *mr = getenv("NOSTR_HOMED_SYNCD_MIN_REPLICATION");
+    if (!mr || !*mr) mr = getenv("NOSTR_HOMED_SYNCD_MIN_REPL");
+    c->min_repl = (mr && *mr) ? (size_t)strtoul(mr, NULL, 10)
+                              : NH_SYNCD_DEFAULT_MIN_REPLICATION;
+    const char *ri = getenv("NOSTR_HOMED_SYNCD_RESCAN_INTERVAL_SEC");
+    c->rescan_interval_sec = (ri && *ri) ? (uint32_t)strtoul(ri, NULL, 10) : 0;
     return 0;
 }
 
@@ -312,6 +342,19 @@ static void free_cfg(cfg_t *c) {
     free(c->home); free(c->state_dir); free(c->nsec_hex); free(c->d_tag);
     if (c->seed_hex) { memset(c->seed_hex, 0, strlen(c->seed_hex)); free(c->seed_hex); }
     free_csv(c->blossom); free_csv(c->relays);
+}
+
+/* xnxd part 1: cfg->on_upload_summary hook — copies the pusher's
+ * worst-chunk replication into the syncd status writer so external
+ * readers see the tightest quorum this batch achieved. Called on both
+ * success and failure paths. */
+static void syncd_on_upload_summary(void *ud,
+                                    const nh_syncd_upload_result *r)
+{
+    (void)ud;
+    if (!g_status || !r) return;
+    nh_syncd_status_set_last_upload_servers(g_status,
+        (uint32_t)r->succeeded, (uint32_t)r->total);
 }
 
 int main(int argc, char **argv) {
@@ -456,6 +499,17 @@ int main(int argc, char **argv) {
         fprintf(stderr, "syncd: inotify init failed\n");
         goto cleanup;
     }
+    /* xnxd part 2: give the watcher the state baseline so IN_Q_OVERFLOW
+     * and the periodic rescan tick both have something to diff against. */
+    nh_syncd_watcher_set_state(wa, state);
+
+    /* xnxd part 2: periodic rescan tick. Independent of the 15-minute
+     * force-flush. Default OFF (env unset / 0). When enabled the
+     * watcher's force_rescan runs on that cadence so add_watch races
+     * (rmdir+mkdir on a watched dir) are closed on the next tick even
+     * if IN_Q_OVERFLOW never fires. */
+    struct timespec last_rescan;
+    clock_gettime(CLOCK_MONOTONIC, &last_rescan);
 
     /* Poll loop. */
     struct pollfd pfd = { nh_syncd_watcher_fd(wa), POLLIN, 0 };
@@ -474,6 +528,22 @@ int main(int argc, char **argv) {
         uint64_t next_ms = nh_syncd_batcher_next_tick_ms(ba);
         int t = next_ms == UINT64_MAX ? -1 :
                 (next_ms > 3600000ull ? 3600000 : (int)next_ms);
+        /* xnxd part 2: cap poll timeout at the rescan tick when set. */
+        if (cfg.rescan_interval_sec > 0) {
+            struct timespec now_ts;
+            clock_gettime(CLOCK_MONOTONIC, &now_ts);
+            uint64_t elapsed_ms =
+                (uint64_t)(now_ts.tv_sec  - last_rescan.tv_sec)  * 1000ull +
+                (uint64_t)((now_ts.tv_nsec - last_rescan.tv_nsec) / 1000000);
+            uint64_t interval_ms = (uint64_t)cfg.rescan_interval_sec * 1000ull;
+            if (elapsed_ms >= interval_ms) {
+                (void)nh_syncd_watcher_force_rescan(wa);
+                last_rescan = now_ts;
+            } else {
+                uint64_t until_next = interval_ms - elapsed_ms;
+                if (t < 0 || (int)until_next < t) t = (int)until_next;
+            }
+        }
         int pr = poll(&pfd, 1, t);
         if (pr < 0) { if (errno == EINTR) continue; break; }
         if (pfd.revents & POLLIN) nh_syncd_watcher_drain(wa);
@@ -489,6 +559,8 @@ int main(int argc, char **argv) {
                 pc.n_relays          = cfg.n_relays;
                 pc.event_signer_nsec_hex = cfg.nsec_hex;
                 pc.d_tag             = cfg.d_tag;
+                pc.on_upload_summary = syncd_on_upload_summary;
+                pc.on_upload_summary_ud = NULL;
                 /* home_key/root_id derivation from the broker seed
                  * belongs to I3's credential handoff; for now the
                  * daemon refuses to push without a seed. */
@@ -517,6 +589,7 @@ int main(int argc, char **argv) {
                 nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_PUSHING);
                 syncd_status_flush();
                 if (pushed == NH_SYNCD_OK) {
+                    nh_syncd_status_set_last_upload_error_class(g_status, "");
                     fprintf(stderr, "syncd: batch %llu OK gen=%llu\n",
                             (unsigned long long)nh_syncd_batch_id(batch),
                             (unsigned long long)nh_syncd_state_get_local_generation(state));
@@ -539,7 +612,22 @@ int main(int argc, char **argv) {
                             (unsigned long long)nh_syncd_batch_id(batch),
                             pushed, emsg ? emsg : "");
                     nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_ERROR);
-                    nh_syncd_status_set_last_error(g_status, "push-failed");
+                    /* xnxd part 1: distinguish the replication classes so
+                     * status readers can tell "quorum missed" from an
+                     * outright transport failure. Generation was NOT
+                     * advanced in either case (nh_syncd_push_batch guarantee). */
+                    if (pushed == NH_SYNCD_ERR_INSUFFICIENT_REPLICATION) {
+                        nh_syncd_status_set_last_error(g_status,
+                                                       "insufficient-replication");
+                        nh_syncd_status_set_last_upload_error_class(g_status,
+                                                                    "insufficient-replication");
+                    } else if (pushed == NH_SYNCD_ERR_UPLOAD) {
+                        nh_syncd_status_set_last_error(g_status, "upload-failed");
+                        nh_syncd_status_set_last_upload_error_class(g_status,
+                                                                    "upload-failed");
+                    } else {
+                        nh_syncd_status_set_last_error(g_status, "push-failed");
+                    }
                 }
                 syncd_status_flush();
                 free(emsg);

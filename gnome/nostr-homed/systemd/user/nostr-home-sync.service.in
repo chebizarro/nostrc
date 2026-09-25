@@ -11,6 +11,16 @@ After=default.target
 
 [Service]
 Type=simple
+# xnxd part 3 credential-handoff audit (2026-09-24):
+#   - NOSTR_HOMED_SYNCD_SEED_HEX is NOT PassEnvironment-listed here; the
+#     daemon only reads it as an env fallback when NOSTR_HOMED_SYNCD_TEST_MODE=1
+#     (headless test path). Production credential handoff is the broker
+#     seed drop at /run/nostr-auth/session/<uid>/home_seed written by
+#     auth_porthome (Phase 3 W3) and consumed via read_seed_from_broker_drop
+#     in nostr-home-syncd.c.
+#   - Do NOT re-add PassEnvironment=NOSTR_HOMED_SYNCD_SEED_HEX. If a
+#     future revision needs to preseed for CI, gate it behind
+#     NOSTR_HOMED_SYNCD_TEST_MODE=1 in the same service block.
 # EXPERIMENTAL. Gated behind NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL at
 # build time; the install rule (CMakeLists.txt) only emits this unit
 # when SYNCD_EXPERIMENTAL is ON. See docs/designs/home-from-relay.md

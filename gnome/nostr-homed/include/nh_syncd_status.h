@@ -79,6 +79,18 @@ void nh_syncd_status_set_cache_quota   (nh_syncd_status_writer *w,
 void nh_syncd_status_set_evict_rate    (nh_syncd_status_writer *w,
                                         uint32_t per_hour);
 
+/* xnxd part 1 — per-server upload accounting fields.
+ *
+ * `servers_ok` / `servers_total` describe the LAST push closure's WORST
+ * chunk (i.e. the chunk with the fewest server accepts). `error_class`
+ * is empty on success, or "insufficient-replication" / "upload-failed"
+ * on the classes the pusher surfaces. Rendered under
+ * status.syncd.last_upload_servers_ok / _total / _error_class. */
+void nh_syncd_status_set_last_upload_servers(nh_syncd_status_writer *w,
+                                             uint32_t ok, uint32_t total);
+void nh_syncd_status_set_last_upload_error_class(nh_syncd_status_writer *w,
+                                                 const char *class_slug);
+
 /* Emit — build the syncd key body and merge it into porthome-status.
  * `path` may be NULL to use nh_porthome_status_default_path(). Returns
  * 0 on success (whatever nh_porthome_status_write_key returned). */

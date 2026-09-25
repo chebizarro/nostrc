@@ -1271,3 +1271,136 @@ int nh_syncd_rescan_home_additive(nh_syncd_state *state,
     return NH_SYNCD_OK;
 }
 
+/* ──────────────────── xnxd part 2 — rescan diff ─────────────────────── */
+
+/* Recursive walk that pushes CREATE / MODIFY into a batcher for every
+ * on-disk entry that diverges from `state`. Marks each path it visits
+ * in `seen` (jansson object: key -> json_true). Never mutates `state`.
+ *
+ * Deliberate simplifications:
+ *   - We compare against the state's cached (size, mtime_ns) tuple —
+ *     the same pair the pusher uses for its unchanged short-circuit.
+ *     A hash divergence with identical size+mtime is treated as
+ *     unchanged; that's the same latitude the inotify path has.
+ *   - Ignore checks reuse nh_syncd_ignore_check with the current
+ *     stat data; excluded paths are neither pushed nor marked seen,
+ *     so the DELETE sweep does not touch them either. */
+static int rescan_diff_walk(int home_fd, const char *rel_prefix,
+                            const nh_syncd_state *state,
+                            const nh_syncd_ignore *ignore,
+                            nh_syncd_batcher *batcher,
+                            json_t *seen,
+                            int depth,
+                            nh_syncd_rescan_stats *st)
+{
+    if (depth > 32) return 0;
+    int dfd = (rel_prefix[0] == '\0')
+              ? dup(home_fd)
+              : openat(home_fd, rel_prefix,
+                       O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dfd < 0) return 0;
+    DIR *d = fdopendir(dfd);
+    if (!d) { close(dfd); return 0; }
+    struct dirent *de;
+    while ((de = readdir(d)) != NULL) {
+        if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
+        char *rel = NULL;
+        if (rel_prefix[0]) {
+            if (asprintf(&rel, "%s/%s", rel_prefix, de->d_name) < 0) rel = NULL;
+        } else {
+            rel = strdup(de->d_name);
+        }
+        if (!rel) continue;
+        struct stat s2;
+        if (fstatat(home_fd, rel, &s2, AT_SYMLINK_NOFOLLOW) != 0) {
+            free(rel); continue;
+        }
+        if (ignore) {
+            if (nh_syncd_ignore_check(ignore, rel,
+                                      (uint64_t)s2.st_dev,
+                                      (uint32_t)s2.st_mode)
+                != NH_SYNCD_IGNORE_PASS) {
+                free(rel); continue;
+            }
+        }
+        json_object_set_new(seen, rel, json_true());
+        const nh_syncd_entry *cur = nh_syncd_state_find(state, rel);
+        uint64_t mt = (uint64_t)s2.st_mtim.tv_sec * 1000000000ull
+                    + (uint64_t)s2.st_mtim.tv_nsec;
+        if (S_ISDIR(s2.st_mode)) {
+            if (!cur || nh_syncd_entry_kind(cur) != NH_SYNCD_KIND_DIR ||
+                nh_syncd_entry_mtime_ns(cur) != mt) {
+                if (batcher) (void)nh_syncd_batcher_push(batcher, rel,
+                    cur ? NH_SYNCD_CHANGE_MODIFY : NH_SYNCD_CHANGE_CREATE);
+                if (st) (cur ? st->modified++ : st->added++);
+            } else if (st) {
+                st->unchanged++;
+            }
+            rescan_diff_walk(home_fd, rel, state, ignore, batcher,
+                             seen, depth + 1, st);
+        } else if (S_ISLNK(s2.st_mode)) {
+            if (!cur || nh_syncd_entry_kind(cur) != NH_SYNCD_KIND_SYMLINK ||
+                nh_syncd_entry_mtime_ns(cur) != mt) {
+                if (batcher) (void)nh_syncd_batcher_push(batcher, rel,
+                    cur ? NH_SYNCD_CHANGE_MODIFY : NH_SYNCD_CHANGE_CREATE);
+                if (st) (cur ? st->modified++ : st->added++);
+            } else if (st) {
+                st->unchanged++;
+            }
+        } else if (S_ISREG(s2.st_mode)) {
+            if (!cur || nh_syncd_entry_kind(cur) != NH_SYNCD_KIND_FILE ||
+                nh_syncd_entry_size(cur) != (uint64_t)s2.st_size ||
+                nh_syncd_entry_mtime_ns(cur) != mt) {
+                if (batcher) (void)nh_syncd_batcher_push(batcher, rel,
+                    cur ? NH_SYNCD_CHANGE_MODIFY : NH_SYNCD_CHANGE_CREATE);
+                if (st) (cur ? st->modified++ : st->added++);
+            } else if (st) {
+                st->unchanged++;
+            }
+        }
+        free(rel);
+    }
+    closedir(d);
+    return 0;
+}
+
+int nh_syncd_rescan_diff(const nh_syncd_state    *state,
+                         const char              *root_dir,
+                         const nh_syncd_ignore   *ignore,
+                         nh_syncd_batcher        *batcher,
+                         nh_syncd_rescan_stats   *out_stats)
+{
+    if (!state || !root_dir) return NH_SYNCD_ERR_ARG;
+    if (out_stats) memset(out_stats, 0, sizeof *out_stats);
+    int fd = open(root_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0) return NH_SYNCD_ERR_IO;
+
+    json_t *seen = json_object();
+    if (!seen) { close(fd); return NH_SYNCD_ERR_OOM; }
+
+    (void)rescan_diff_walk(fd, "", state, ignore, batcher, seen, 0, out_stats);
+    close(fd);
+
+    /* Sweep for state entries that we did NOT visit — those are
+     * DELETES. Iterate state via the public `_at` accessor. */
+    size_t n = nh_syncd_state_file_count(state);
+    for (size_t i = 0; i < n; i++) {
+        const char *rel = NULL;
+        const nh_syncd_entry *e = nh_syncd_state_at(state, i, &rel);
+        if (!e || !rel) continue;
+        if (json_object_get(seen, rel)) continue;
+        /* Skip ignored paths — mirror the walk's filter. Path-only is
+         * enough here (we have no stat data for a missing file). */
+        if (ignore &&
+            nh_syncd_ignore_check_path(ignore, rel) != NH_SYNCD_IGNORE_PASS)
+            continue;
+        if (batcher) (void)nh_syncd_batcher_push(batcher, rel,
+                                                 NH_SYNCD_CHANGE_DELETE);
+        if (out_stats) out_stats->deleted++;
+    }
+
+    json_decref(seen);
+    return NH_SYNCD_OK;
+}
+
+

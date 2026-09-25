@@ -62,6 +62,14 @@ struct nh_syncd_watcher {
     nh_syncd_ignore *ignore;
     nh_syncd_batcher *batcher;
     wd_ent  *bucket[256];
+    /* xnxd part 2: state pointer (borrowed) used by the rescan-diff
+     * trigger. May be NULL when the daemon hasn't loaded a state yet;
+     * in that case IN_Q_OVERFLOW is logged but the diff is skipped
+     * (there is no baseline to diff against — the next batch push will
+     * seed one). */
+    nh_syncd_state *state;
+    uint64_t overflow_count;
+    uint64_t rescan_count;
 };
 
 static unsigned wd_hash(int wd) { return (unsigned)wd & 0xff; }
@@ -166,6 +174,49 @@ int nh_syncd_watcher_new(const char *home,
     return NH_SYNCD_OK;
 }
 
+/* xnxd part 2: attach the state pointer so overflow-driven rescans
+ * have a baseline to diff against. Optional; safe on NULL watcher. */
+void nh_syncd_watcher_set_state(struct nh_syncd_watcher *w,
+                                nh_syncd_state *state) {
+    if (w) w->state = state;
+}
+uint64_t nh_syncd_watcher_overflow_count(const struct nh_syncd_watcher *w) {
+    return w ? w->overflow_count : 0;
+}
+uint64_t nh_syncd_watcher_rescan_count(const struct nh_syncd_watcher *w) {
+    return w ? w->rescan_count : 0;
+}
+
+/* Public trigger — rebuild watches under $HOME then diff the tree vs
+ * `state` into the batcher. Called on IN_Q_OVERFLOW and by the periodic
+ * rescan tick. Returns 0 on success (even if no work fell out); < 0 on
+ * error. Never crashes on a NULL state — logs and skips the diff. */
+int nh_syncd_watcher_force_rescan(struct nh_syncd_watcher *w) {
+    if (!w) return NH_SYNCD_ERR_ARG;
+    w->rescan_count++;
+    /* Rebuild watches: the kernel keeps the descriptors we already have,
+     * but a create/delete race during the overflow may have dropped
+     * subtrees.  add_watches skips watches it already owns via
+     * inotify_add_watch's idempotence (same wd returned; wd_insert
+     * would double-insert — cheap to tolerate, small ring). */
+    (void)add_watches(w, "");
+    if (!w->state) {
+        fprintf(stderr, "syncd/watcher: rescan skipped — no state baseline\n");
+        return 0;
+    }
+    nh_syncd_rescan_stats st = {0};
+    int rc = nh_syncd_rescan_diff(w->state, w->home, w->ignore,
+                                  w->batcher, &st);
+    fprintf(stderr,
+            "syncd/watcher: rescan done added=%llu modified=%llu deleted=%llu"
+            " unchanged=%llu rc=%d\n",
+            (unsigned long long)st.added,
+            (unsigned long long)st.modified,
+            (unsigned long long)st.deleted,
+            (unsigned long long)st.unchanged, rc);
+    return rc;
+}
+
 void nh_syncd_watcher_free(struct nh_syncd_watcher *w) {
     if (!w) return;
     if (w->fd >= 0) close(w->fd);
@@ -195,6 +246,22 @@ int nh_syncd_watcher_drain(struct nh_syncd_watcher *w) {
         }
         for (char *p = buf; p < buf + len; ) {
             struct inotify_event *ev = (struct inotify_event *)p;
+            /* xnxd part 2: IN_Q_OVERFLOW arrives as a synthetic event
+             * with wd == -1. The kernel has dropped an unknown number
+             * of events; the only correct response is to walk $HOME
+             * and diff against state so the reconcile pipeline sees
+             * every add/change/remove that inotify would have driven. */
+            if (ev->mask & IN_Q_OVERFLOW) {
+                w->overflow_count++;
+                fprintf(stderr,
+                        "syncd/watcher: WARNING IN_Q_OVERFLOW #%llu — "
+                        "triggering full-tree rescan\n",
+                        (unsigned long long)w->overflow_count);
+                (void)nh_syncd_watcher_force_rescan(w);
+                p += sizeof(struct inotify_event) + ev->len;
+                n_events++;
+                continue;
+            }
             const char *dir_rel = wd_lookup(w, ev->wd);
             if (dir_rel && ev->len > 0) {
                 char child[PATH_MAX];

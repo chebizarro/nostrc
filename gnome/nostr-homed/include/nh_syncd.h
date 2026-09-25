@@ -56,6 +56,12 @@ typedef enum {
     NH_SYNCD_ERR_CRYPTO            = -211,
     NH_SYNCD_ERR_MANIFEST          = -212,
     NH_SYNCD_ERR_PATH              = -213,
+    /* xnxd part 1: fewer than min_replication Blossom servers accepted the
+     * upload. Distinct from NH_SYNCD_ERR_UPLOAD (which means no server
+     * accepted at all) — the generation MUST NOT advance either way, but
+     * this class lets status readers surface partial-replication ambiguity
+     * (some servers OK, quorum not met). */
+    NH_SYNCD_ERR_INSUFFICIENT_REPLICATION = -214,
 } nh_syncd_status;
 
 /* Constant reserved for the I3 local blob cache directory (§6.5). The
@@ -427,6 +433,63 @@ typedef int (*nh_syncd_publish_fn)(void *ud,
                                    size_t sealed_len,
                                    char out_event_id[65]);
 
+/* xnxd part 1 — per-server upload accounting.
+ *
+ * The pusher iterates the configured Blossom servers explicitly (rather
+ * than delegating to the wrapper's "return on first OK" fan-out) so it
+ * can enforce `min_replication` as a HARD requirement. Every server
+ * attempt fills one `nh_syncd_server_outcome` slot; the aggregate is
+ * summarised via `nh_syncd_upload_result` and surfaced through the
+ * `on_upload_summary` cfg callback (status writer wiring lives in the
+ * daemon main). No public API is broken — every new field on the cfg is
+ * optional and defaults to legacy behaviour when zero-initialised.
+ *
+ * `error_class`:
+ *   0                                    = server accepted
+ *   NH_SYNCD_ERR_UPLOAD                  = server refused / network
+ *   NH_SYNCD_ERR_INSUFFICIENT_REPLICATION = aggregate: quorum missed
+ */
+typedef struct {
+    /* Borrowed pointer into cfg->blossom_servers[i] (owned by caller). */
+    const char *server_url;
+    /* HTTP status; 0 when the transport failed before an answer. */
+    int         http_status;
+    /* Bytes actually uploaded (== chunk ciphertext length on success). */
+    uint64_t    bytes_uploaded;
+    /* Wall-clock ms for this server's attempt (best-effort). */
+    uint64_t    elapsed_ms;
+    /* 0 on success, else an NH_SYNCD_ERR_* value. */
+    int         error_class;
+} nh_syncd_server_outcome;
+
+#define NH_SYNCD_MAX_SERVERS_PER_UPLOAD 16u
+
+typedef struct {
+    /* Configured server count for this push. */
+    size_t total;
+    /* Servers that returned an accept. */
+    size_t succeeded;
+    /* Per-server slots; filled in cfg->blossom_servers[] order. */
+    nh_syncd_server_outcome per_server[NH_SYNCD_MAX_SERVERS_PER_UPLOAD];
+} nh_syncd_upload_result;
+
+/* Per-server upload test seam. When set, the pusher calls this INSTEAD
+ * of opening a per-server nh_porthome_blossom_t. Returns 0 on accept,
+ * < 0 on refuse. Fills `*out_http_status` and `*out_ms` best-effort so
+ * callers can propagate them into nh_syncd_upload_result. */
+typedef int (*nh_syncd_upload_to_server_fn)(void *ud,
+                                            const char *server_url,
+                                            const uint8_t *ct, size_t ct_len,
+                                            const char *sha256_hex,
+                                            int *out_http_status,
+                                            uint64_t *out_ms);
+
+/* Summary hook fired ONCE per nh_syncd_push_batch — reports the
+ * WORST-observed replication across every chunk the batch uploaded
+ * (i.e. `min(succeeded across all chunks)`). NULL disables. */
+typedef void (*nh_syncd_on_upload_summary_fn)(void *ud,
+                                              const nh_syncd_upload_result *worst);
+
 typedef struct {
     /* Blossom transport. */
     const char *const *blossom_servers;
@@ -455,6 +518,12 @@ typedef struct {
 
     /* Address of the kind-30078 pointer. */
     const char        *d_tag;                       /* NULL => default */
+
+    /* xnxd part 1 additions (all optional / additive). */
+    nh_syncd_upload_to_server_fn upload_to_server_fn;
+    void                        *upload_to_server_ud;
+    nh_syncd_on_upload_summary_fn on_upload_summary;
+    void                         *on_upload_summary_ud;
 } nh_syncd_push_cfg;
 
 /* Execute the push pipeline once for `batch`. On success the state's
@@ -622,6 +691,40 @@ int nh_syncd_rescan_home_additive(nh_syncd_state    *state,
                                   const char        *root_dir,
                                   const nh_syncd_ignore *ignore,
                                   const char        *state_dir_for_persist);
+
+/* xnxd part 2 — full-tree rescan diff for missed inotify events.
+ *
+ * Walk `root_dir` (respecting `ignore`), compare against `state`, and
+ * push one CREATE / MODIFY / DELETE record into `batcher` per divergence.
+ * Never mutates `state`; leaves that to the push closure downstream so
+ * the reconcile pipeline (I2) sees the same shape it does for inotify.
+ *
+ * Idempotency contract: on a tree that matches `state` exactly, returns
+ * 0 events and pushes nothing into the batcher. Same walk logic as the
+ * additive rescan but the sink is the batcher (not the state), so the
+ * caller can drive its normal debounce → push_batch loop.
+ *
+ * Uses `nh_syncd_state_at` to iterate the persistent snapshot; requires
+ * O(n_files) additional heap for the "seen" set (a small jansson
+ * object). Bounded by the ignore matcher and NH_SYNCD_MAX_RESCAN_DEPTH
+ * (32 levels).
+ *
+ * `out_stats` may be NULL. When set it receives:
+ *   `added`, `modified`, `deleted`, `unchanged`.
+ */
+typedef struct {
+    uint64_t added;
+    uint64_t modified;
+    uint64_t deleted;
+    uint64_t unchanged;
+} nh_syncd_rescan_stats;
+
+int nh_syncd_rescan_diff(const nh_syncd_state    *state,
+                         const char              *root_dir,
+                         const nh_syncd_ignore   *ignore,
+                         nh_syncd_batcher        *batcher,
+                         nh_syncd_rescan_stats   *out_stats);
+
 
 /* Pull glue: build a reconcile config and pointer callback that feeds
  * a live subscription. The callback verifies the event (kind, author,
