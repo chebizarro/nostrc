@@ -1,3 +1,4 @@
 usr/bin/nostr-home-fuse
 usr/lib/systemd/user/nostr-home-fuse.service
 usr/share/nostr-homed/ignore.d/portable
+usr/share/man/man8/nostr-home-fuse.8

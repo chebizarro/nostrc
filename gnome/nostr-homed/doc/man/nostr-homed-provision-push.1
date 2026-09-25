@@ -1,0 +1,134 @@
+.TH NOSTR-HOMED-PROVISION-PUSH 1 "2026-09-25" "nostr-homed 0.3" "User Commands"
+.SH NAME
+nostr-homed-provision-push \- snapshot, encrypt and publish a portable-home tree
+.SH SYNOPSIS
+.B nostr-homed-provision push
+\fB\-\-account\-file\fR \fIPATH\fR
+[\fB\-\-home\fR \fIDIR\fR]
+[\fB\-\-chunk\-size\fR \fIBYTES\fR]
+[\fB\-\-relay\fR \fIwss://...\fR]...
+[\fB\-\-blossom\fR \fIhttps://...\fR]...
+[\fB\-\-min\-replication\fR \fIN\fR]
+[\fB\-\-bump\-gen\fR]
+[\fB\-\-json\fR]
+[\fB\-\-dry\-run\fR]
+.SH DESCRIPTION
+Snapshots a home tree, encrypts and uploads chunks to Blossom, and publishes
+a new kind-30078 pointer. Reuses the exact
+.I nh_syncd_push_batch
+implementation that
+.BR nostr-home-syncd (8)
+runs internally, so a manual push produces a snapshot that is
+bit-for-bit indistinguishable from a daemon push.
+.PP
+When a pointer already exists at the target d-tag, the caller MUST supply
+.B \-\-bump\-gen
+to publish a gen+1 pointer. Attempting to overwrite a pointer without a
+generation bump is refused; the mistake is common enough that the CLI never
+does it implicitly.
+.SH OPTIONS
+.TP
+.B \-\-account\-file \fIPATH\fR
+0600 account file. Required.
+.TP
+.B \-\-home \fIDIR\fR
+Home tree to snapshot. Default:
+.IR $HOME .
+.TP
+.B \-\-chunk\-size \fIBYTES\fR
+Chunk size in bytes. Default 4 MiB. Clamped to the closed range [64 KiB, 8 MiB];
+values outside that range are silently rounded to the nearest bound.
+.TP
+.B \-\-relay \fIwss://...\fR
+Additional relay, appended to the account file for this push (repeatable).
+.TP
+.B \-\-blossom \fIhttps://...\fR
+Additional Blossom server, appended to the account file for this push
+(repeatable).
+.TP
+.B \-\-min\-replication \fIN\fR
+Refuse the push if fewer than N Blossom servers hold every chunk after
+upload. Default 2. On failure, exit code is 77 and no pointer is published.
+.TP
+.B \-\-bump\-gen
+Publish gen+1. Required when a pointer already exists.
+.TP
+.B \-\-json
+Emit a structured JSON summary on stdout (chunk hashes, per-server
+replication table, pointer id) instead of the default text summary.
+.TP
+.B \-\-dry\-run
+Print the planned manifest \(em chunk boundaries, hashes if the tree is
+already ingested \(em and exit. No relay traffic, no Blossom upload.
+.TP
+.B \-h ", " \-\-help
+Print usage and exit.
+.SH EXIT CODES
+.RS
+.TP 4
+.B 0
+Success (all chunks meet
+.BR \-\-min\-replication ,
+pointer published).
+.TP 4
+.B 2
+Bad argument.
+.TP 4
+.B 71
+Relay or Blossom transport failure.
+.TP 4
+.B 75
+Cryptographic failure (encrypt, sign, or wrap).
+.TP 4
+.B 76
+Internal error (I/O on the local tree, snapshot inconsistency).
+.TP 4
+.B 77
+Insufficient replication \(em at least one chunk landed on fewer than
+.B \-\-min\-replication
+servers. Retry after the transient error clears; no pointer is published.
+.RE
+.SH EXAMPLES
+Routine daily push, requiring 2\-way replication:
+.PP
+.RS
+.nf
+nostr-homed-provision push \\
+    \-\-account\-file ~/.config/nostr-homed/abcd1234.account.json \\
+    \-\-bump\-gen
+.fi
+.RE
+.PP
+Preview what would be uploaded, without touching the network:
+.PP
+.RS
+.nf
+nostr-homed-provision push \\
+    \-\-account\-file ...account.json \-\-dry\-run
+.fi
+.RE
+.PP
+High\-replication push after adding a third Blossom mirror:
+.PP
+.RS
+.nf
+nostr-homed-provision push \\
+    \-\-account\-file ...account.json \\
+    \-\-blossom https://blossom-3.example \\
+    \-\-min\-replication 3 \\
+    \-\-bump\-gen \-\-json
+.fi
+.RE
+.SH FILES
+.TP
+.I <home>/.local/state/nostr-homed/porthome-status.json
+Updated after every successful push; contains the new pointer id and
+generation.
+.SH SECURITY
+The push path holds the account secret and derived home_key in memory. Both
+are held in mlocked, secure-heap buffers and wiped before exit. The
+account file mode is re-checked before each read.
+.SH SEE ALSO
+.BR nostr-homed-provision (1),
+.BR nostr-homed-provision-verify (1),
+.BR nostr-home-syncd (8)

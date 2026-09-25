@@ -1,0 +1,68 @@
+.TH NOSTR-HOMED-PROVISION-VERIFY 1 "2026-09-25" "nostr-homed 0.3" "User Commands"
+.SH NAME
+nostr-homed-provision-verify \- fetch the current pointer and HEAD-check every chunk
+.SH SYNOPSIS
+.B nostr-homed-provision verify
+\fB\-\-account\-file\fR \fIPATH\fR
+[\fB\-\-json\fR]
+[\fB\-\-relay\-timeout\-ms\fR \fIMS\fR]
+.SH DESCRIPTION
+Fetches the current kind-30078 pointer, decrypts the manifest, then issues a
+Blossom HEAD to every server in the account list for every chunk hash. Reports
+per-chunk replication counts.
+.PP
+Unlike
+.BR nostr-homed-provision-pull (1),
+verify never downloads a chunk body \(em it only probes for presence. This
+makes it cheap enough to run from cron.
+.SH OPTIONS
+.TP
+.B \-\-account\-file \fIPATH\fR
+0600 account file. Required.
+.TP
+.B \-\-json
+Emit one JSON object per chunk on stdout (JSONL): chunk hash, size, per-server
+status (HEAD result code plus latency). Otherwise a compact text table.
+.TP
+.B \-\-relay\-timeout\-ms \fIMS\fR
+Total budget for the pointer fetch. Default 10000.
+.TP
+.B \-h ", " \-\-help
+Print usage and exit.
+.SH EXIT CODES
+.RS
+.TP 4
+.B 0
+All chunks are present on at least one server.
+.TP 4
+.B 2
+Bad argument.
+.TP 4
+.B 5
+At least one chunk is missing from every server. Details in the output.
+.TP 4
+.B 71
+Network failure during pointer fetch.
+.TP 4
+.B 72
+Manifest decode failure.
+.TP 4
+.B 75
+Crypto failure (manifest decrypt).
+.TP 4
+.B 76
+Internal error.
+.RE
+.SH EXAMPLES
+Nightly cron check with a machine-parseable JSON output:
+.PP
+.RS
+.nf
+nostr-homed-provision verify \\
+    \-\-account\-file ~/.config/nostr-homed/abcd1234.account.json \\
+    \-\-json > /var/log/porthome-verify.$(date +%F).jsonl
+.fi
+.RE
+.SH SEE ALSO
+.BR nostr-homed-provision (1),
+.BR nostr-homed-provision-push (1)

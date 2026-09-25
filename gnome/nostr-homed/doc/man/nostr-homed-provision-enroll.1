@@ -1,0 +1,150 @@
+.TH NOSTR-HOMED-PROVISION-ENROLL 1 "2026-09-25" "nostr-homed 0.3" "User Commands"
+.SH NAME
+nostr-homed-provision-enroll \- generate a portable-home identity and write an account file
+.SH SYNOPSIS
+.B nostr-homed-provision enroll
+[\fB\-\-pubkey\fR \fIHEX\fR \fB\-\-secret\fR \fIHEX\fR]
+[\fB\-\-relay\fR \fIwss://...\fR]...
+[\fB\-\-blossom\fR \fIhttps://...\fR]...
+[\fB\-\-d\-tag\fR \fISTR\fR]
+[\fB\-\-out\-dir\fR \fIDIR\fR]
+[\fB\-\-seed\-drop\fR \fB\-\-uid\fR \fIUID\fR]
+[\fB\-\-publish\fR]
+[\fB\-\-dry\-run\fR]
+[\fB\-\-redact\fR]
+.SH DESCRIPTION
+Generates a fresh secp256k1 identity, derives a wrap_seed and home_key,
+writes a 0600 account file, and optionally publishes the initial (gen 0)
+kind-30078 pointer to the configured relays. If
+.B \-\-pubkey
+and
+.B \-\-secret
+are supplied, the existing identity is imported instead of generated.
+.PP
+The account file is the durable record of the portable-home identity: it is
+the input to
+.BR nostr-homed-provision-push (1),
+.BR nostr-homed-provision-pull (1),
+and
+.BR nostr-homed-provision-verify (1),
+and the material that the broker seed-drop path feeds to
+.BR nostr-home-syncd (8)
+and
+.BR nostr-home-fuse (8).
+.SH OPTIONS
+.TP
+.B \-\-pubkey \fIHEX\fR
+Use HEX as the account pubkey. Must be paired with
+.BR \-\-secret .
+.TP
+.B \-\-secret \fIHEX\fR
+Use HEX as the account nsec (raw 64-hex, no bech32 wrapper).
+.TP
+.B \-\-relay \fIwss://...\fR
+Add a home relay. Repeatable.
+.TP
+.B \-\-blossom \fIhttps://...\fR
+Add a Blossom server. Repeatable.
+.TP
+.B \-\-d\-tag \fISTR\fR
+Override the pointer d-tag. Default:
+.IR nostr-homed.home.v1:personal .
+.TP
+.B \-\-out\-dir \fIDIR\fR
+Write \fB<pubkey8>.account.json\fR to DIR (0600). If omitted, the file goes
+to stdout in a JSON block and no persistent artifact is left behind.
+.TP
+.B \-\-seed\-drop
+Also write \fB/run/nostr-auth/session/<uid>/home_seed\fR (mode 0400, owned
+by the target uid). Requires
+.B \-\-uid
+and root.
+.TP
+.B \-\-uid \fIUID\fR
+Target uid for the seed-drop.
+.TP
+.B \-\-publish
+After enrolment, publish the empty gen-0 pointer to every
+.BR \-\-relay .
+Uses the same publish path as
+.BR push .
+.TP
+.B \-\-dry\-run
+Print planned actions only. No file writes, no relay traffic.
+.TP
+.B \-\-redact
+Replace secret fields with \(dqREDACTED\(dq in stdout output. Safe for
+pasting into tickets.
+.TP
+.B \-h ", " \-\-help
+Print usage and exit.
+.SH FILES
+.TP
+.I <out-dir>/<pubkey8>.account.json
+Account file (mode 0600).
+.TP
+.I /run/nostr-auth/session/<uid>/home_seed
+Broker seed drop, when
+.B \-\-seed\-drop
+is used. Mode 0400; owned by the target uid.
+.SH SECURITY
+Runs OpenSSL secure heap; sets RLIMIT_CORE=0; wipes secret buffers before
+exit. The account file mode is enforced at write time and re-checked before
+any subsequent read. The seed drop is written atomically (temp + rename)
+and never left with a wider mode.
+.SH EXIT CODES
+.RS
+.TP 4
+.B 0
+Success.
+.TP 4
+.B 1
+Malformed input (missing required option, invalid hex).
+.TP 4
+.B 2
+Invalid combination (e.g.
+.B \-\-pubkey
+without
+.BR \-\-secret ).
+.TP 4
+.B 5
+File-system or permission error writing the account file.
+.TP 4
+.B 71
+Publish failed (relay unreachable or refused). Only with
+.BR \-\-publish .
+.TP 4
+.B 75
+Crypto error during key derivation.
+.RE
+.SH EXAMPLES
+Fresh identity with two relays and two Blossom servers, initial pointer
+published:
+.PP
+.RS
+.nf
+nostr-homed-provision enroll \\
+    \-\-relay wss://relay.example \\
+    \-\-relay wss://relay.backup \\
+    \-\-blossom https://blossom.example \\
+    \-\-blossom https://blossom.backup \\
+    \-\-out\-dir ~/.config/nostr-homed \\
+    \-\-publish
+.fi
+.RE
+.PP
+System-level provisioning that hands the seed to the broker session:
+.PP
+.RS
+.nf
+sudo nostr-homed-provision enroll \\
+    \-\-relay wss://relay.example \\
+    \-\-blossom https://blossom.example \\
+    \-\-out\-dir /var/lib/nostr-auth/accounts \\
+    \-\-seed\-drop \-\-uid 1001
+.fi
+.RE
+.SH SEE ALSO
+.BR nostr-homed-provision (1),
+.BR nostr-homed-provision-push (1),
+.BR nostr-home-syncd (8)

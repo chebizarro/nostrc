@@ -1,0 +1,98 @@
+.TH NOSTR-HOMED-PROVISION-PULL 1 "2026-09-25" "nostr-homed 0.3" "User Commands"
+.SH NAME
+nostr-homed-provision-pull \- fetch pointer + manifest + chunks into a staging directory
+.SH SYNOPSIS
+.B nostr-homed-provision pull
+\fB\-\-account\-file\fR \fIPATH\fR
+[\fB\-\-dest\fR \fIDIR\fR]
+[\fB\-\-allow\-insecure\fR]
+[\fB\-\-relay\-timeout\-ms\fR \fIMS\fR]
+[\fB\-\-helper\fR \fIPATH\fR]
+.SH DESCRIPTION
+Forks and executes
+.BR nostr-home-fetch (1)
+with the account file's pubkey, home_key, relay list, and Blossom list, and
+materializes the current pointer + manifest + chunks into a staging
+directory. Semantics (SSRF gate, per-chunk timeout, size caps) mirror the
+broker's PROVISION_HOME code path exactly \(em this is the same helper the
+broker uses, invoked with the same control JSON.
+.PP
+Use \fBpull\fR to bootstrap a new machine from an existing account file,
+or to recover a snapshot on demand without waiting for
+.BR nostr-home-syncd (8).
+.SH OPTIONS
+.TP
+.B \-\-account\-file \fIPATH\fR
+0600 account file (see
+.BR nostr-homed-provision-enroll (1)).
+Required.
+.TP
+.B \-\-dest \fIDIR\fR
+Materialize the home into DIR. Default: an
+.BR mkdtemp (3)
+directory under
+.IR $TMPDIR .
+The path is printed on stdout after a successful fetch.
+.TP
+.B \-\-allow\-insecure
+Pass \fB\-\-allow\-insecure\fR through to the fetch helper. Permits http://
+URLs and private/link-local Blossom hosts.
+.TP
+.B \-\-relay\-timeout\-ms \fIMS\fR
+Total budget for the pointer fetch (kind-30078 REQ). Default 10000.
+.TP
+.B \-\-helper \fIPATH\fR
+Override the fetch helper binary. Default:
+.IR $CMAKE_INSTALL_FULL_LIBEXECDIR/nostr-homed/nostr-home-fetch .
+.TP
+.B \-h ", " \-\-help
+Print usage and exit.
+.SH EXIT CODES
+Exit codes are forwarded verbatim from
+.BR nostr-home-fetch (1):
+.RS
+.TP 4
+.B 0
+Success.
+.TP 4
+.B 64
+Bad argument.
+.TP 4
+.B 65
+SSRF gate rejected a Blossom host or scheme.
+.TP 4
+.B 71
+Network failure (relay unreachable, Blossom 5xx, DNS).
+.TP 4
+.B 72
+Manifest decode failure.
+.TP 4
+.B 73
+Size cap exceeded (chunk or manifest).
+.TP 4
+.B 74
+Timeout.
+.TP 4
+.B 75
+Decrypt failure.
+.TP 4
+.B 76
+Internal error.
+.RE
+.SH EXAMPLES
+Restore a home from a fresh checkout of the account file:
+.PP
+.RS
+.nf
+nostr-homed-provision pull \\
+    \-\-account\-file ~/.config/nostr-homed/abcd1234.account.json \\
+    \-\-dest /tmp/porthome-restore
+.fi
+.RE
+.SH FILES
+.TP
+.I <dest>/**
+Materialized home tree.
+.SH SEE ALSO
+.BR nostr-homed-provision (1),
+.BR nostr-home-fetch (1)

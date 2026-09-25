@@ -1,0 +1,123 @@
+.TH NOSTR-HOME-FUSE 8 "2026-09-25" "nostr-homed 0.3" "System Manager's Manual"
+.SH NAME
+nostr-home-fuse \- read-only portable-home FUSE overlay
+.SH SYNOPSIS
+.B nostr-home-fuse
+.SH DESCRIPTION
+.B nostr-home-fuse
+mounts the current portable-home snapshot at
+.I $HOME/Portable
+(or
+.BR $NH_FUSE_MOUNTPOINT )
+as a read-only FUSE3 filesystem. The tree is served from the on-disk
+snapshot the syncd maintains under
+.IR $XDG_STATE_HOME/nostr-homed ,
+with per-file chunks decrypted on demand. Writes are refused with
+.BR EROFS ;
+the writable path is the real home, published back by
+.BR nostr-home-syncd (8).
+.PP
+The mount is per-user and runs under
+.B systemd \-\-user
+via
+.IR nostr-home-fuse.service .
+It requires a running
+.BR nostr-home-syncd (8)
+to produce and rotate snapshots.
+.SH ENVIRONMENT
+.TP
+.B NH_FUSE_MOUNTPOINT
+Mountpoint override. Default:
+.IR $HOME/Portable .
+The directory is created (mode 0700) if it does not exist.
+.TP
+.B NH_FUSE_STATE_DIR
+Override the snapshot state directory. Default:
+.IR $XDG_STATE_HOME/nostr-homed .
+.TP
+.B NH_FUSE_HOME
+Override
+.I $HOME
+for the tier-0 pread path (tests only).
+.TP
+.B NH_FUSE_STATUS_DIR
+Override
+.I $XDG_RUNTIME_DIR/nostr-homed
+for the status writer.
+.TP
+.B NH_FUSE_CHUNK_SIZE
+Force a chunk size (bytes). Live-acceptance rigs only; production reads
+the manifest.
+.TP
+.B NH_FUSE_SEED_FILE
+Override the broker seed drop path. Default same as
+.BR nostr-home-syncd (8).
+.TP
+.B NH_FUSE_SEED_HEX
+Inline seed for headless tests. Ignored unless the source tree was built
+with the test harness.
+.TP
+.B NH_FUSE_NO_LOOP
+When set to 1, skip
+.BR fuse_loop (3):
+mount, notify readiness, exit. For lifecycle tests.
+.TP
+.B NH_FUSE_TEST_HARNESS
+When set to 1, skip the actual
+.B fuse_mount
+call \(em runs table + reload plumbing against an empty mount surface. For
+CI without /dev/fuse.
+.TP
+.B NOSTR_HOMED_PORTHOME_FUSE_NO_INOTIFY
+When set to 1, disable the inotify-based snapshot reloader and fall back
+to polling. Escape hatch for kernels where inotify on the state directory
+is unreliable.
+.TP
+.B NOSTR_HOMED_SYNCD_NOTIFY
+When set to 0, disable D-Bus notifications back to syncd on reload.
+Diagnostic use.
+.SH FILES
+.TP
+.I $HOME/Portable
+Default mountpoint.
+.TP
+.I $XDG_STATE_HOME/nostr-homed/snapshots/
+Snapshot store maintained by
+.BR nostr-home-syncd (8).
+.TP
+.I /run/nostr-auth/session/<uid>/home_seed
+Broker seed drop \(em same source as syncd. Read once, mlocked.
+.TP
+.I $XDG_RUNTIME_DIR/nostr-homed/porthome-fuse-status.json
+Per-mount status file (mounted state, current pointer id, reload
+generation).
+.SH EXIT CODES
+.RS
+.TP 4
+.B 0
+Clean unmount.
+.TP 4
+.B 3
+State directory or $HOME not resolvable.
+.TP 4
+.B 6
+Mountpoint creation failure.
+.RE
+.SH SIGNALS
+.TP
+.B SIGTERM
+Clean unmount and exit.
+.TP
+.B SIGUSR1
+Force snapshot reload.
+.SH SECURITY
+Runs as the login user; sets
+.B RLIMIT_CORE
+to 0 before touching the seed; refuses to run as root; enforces
+.B allow_other=no
+on the mount so only the owning uid can read it.
+.SH SEE ALSO
+.BR nostr-home-syncd (8),
+.BR nostr-home-status (1),
+.BR nostr-homed-provision (1),
+.BR fuse (8)

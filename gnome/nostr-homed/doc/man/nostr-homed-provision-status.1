@@ -1,0 +1,101 @@
+.TH NOSTR-HOMED-PROVISION-STATUS 1 "2026-09-25" "nostr-homed 0.3" "User Commands"
+.SH NAME
+nostr-homed-provision-status \- inspect porthome-status.json for an arbitrary home
+.SH SYNOPSIS
+.B nostr-homed-provision status
+[\fB\-\-home\fR \fIDIR\fR | \fB\-\-uid\fR \fIUID\fR]
+[\fB\-\-json\fR]
+[\fB\-\-field\fR \fIPATH\fR]
+[\fB\-\-path\fR]
+.SH DESCRIPTION
+Reads
+.I <home>/.local/state/nostr-homed/porthome-status.json
+and pretty-prints it, dumps it as raw JSON, or extracts a single scalar
+field. Home resolution is either explicit via
+.B \-\-home\ DIR
+or via
+.BR getpwuid (3)
+lookup with
+.BR \-\-uid\ UID .
+.PP
+This command has the same schema as
+.BR nostr-home-status (1),
+but is intended for the operator case where the caller wants to inspect
+another user's home (e.g. from a support script running as root).
+.SH OPTIONS
+.TP
+.B \-\-home \fIDIR\fR
+Use DIR as the home root. The status file is expected at
+.IR DIR/.local/state/nostr-homed/porthome-status.json .
+.TP
+.B \-\-uid \fIUID\fR
+Resolve the home via
+.BR getpwuid (3).
+Requires the caller to have libnss access to the target uid's entry.
+.TP
+.B \-\-json
+Emit the file verbatim as JSON on stdout.
+.TP
+.B \-\-field \fIPATH\fR
+Print a single scalar, using the same dotted syntax as
+.BR nostr-home-status (1)
+(e.g.
+.IR syncd.state ,
+.IR fuse.mounted ,
+.IR provisioner.last_push ).
+Exit 1 if the field is missing.
+.TP
+.B \-\-path
+Print the resolved status file path and exit. Useful for scripts.
+.TP
+.B \-h ", " \-\-help
+Print usage and exit.
+.SH EXIT CODES
+.RS
+.TP 4
+.B 0
+Success (status file read and requested output emitted).
+.TP 4
+.B 1
+Malformed JSON, or
+.B \-\-field
+matched no key.
+.TP 4
+.B 2
+Bad argument (both
+.BR \-\-home " and " \-\-uid ,
+or neither).
+.TP 4
+.B 3
+Status file does not exist. Distinguish from exit 1 because a missing file
+usually means the target home is not managed by porthome, not a bug.
+.RE
+.SH EXAMPLES
+Pretty-print the current user's syncd state:
+.PP
+.RS
+.nf
+nostr-homed-provision status \-\-home ~ \-\-field syncd.state
+.fi
+.RE
+.PP
+Machine-readable dump of another user's status:
+.PP
+.RS
+.nf
+sudo nostr-homed-provision status \-\-uid 1001 \-\-json | jq .
+.fi
+.RE
+.SH FILES
+.TP
+.I <home>/.local/state/nostr-homed/porthome-status.json
+Status file. Written by
+.BR nostr-home-syncd (8),
+.BR nostr-home-fuse (8),
+and
+.BR nostr-homed-provision (1)
+itself.
+.SH SEE ALSO
+.BR nostr-homed-provision (1),
+.BR nostr-home-status (1),
+.BR nostr-home-syncd (8)

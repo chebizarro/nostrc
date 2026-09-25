@@ -2008,3 +2008,33 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
   endif()
 endif()
 
+
+# ────────────────────────────────────────────────────────────────
+# nostrc-s6ke: manpages
+#
+# Hand-written troff, checked into doc/man/. Installed alongside the
+# portable-home binaries so the deb + rpm subpackages ship them.
+# Gated on the same NOSTR_HOMED_ENABLE_AUTH_INSTALL flag as the
+# binaries; the manpages are useless without them.
+#
+# Man1: nostr-homed-provision(1) + five subcommand pages,
+#       nostr-home-status(1), nostr-home-fetch(1).
+# Man8: nostr-home-syncd(8), nostr-home-fuse(8).
+# ────────────────────────────────────────────────────────────────
+if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+  set(NH_MAN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/doc/man")
+  install(FILES
+      "${NH_MAN_DIR}/nostr-homed-provision.1"
+      "${NH_MAN_DIR}/nostr-homed-provision-enroll.1"
+      "${NH_MAN_DIR}/nostr-homed-provision-status.1"
+      "${NH_MAN_DIR}/nostr-homed-provision-pull.1"
+      "${NH_MAN_DIR}/nostr-homed-provision-push.1"
+      "${NH_MAN_DIR}/nostr-homed-provision-verify.1"
+      "${NH_MAN_DIR}/nostr-home-status.1"
+      "${NH_MAN_DIR}/nostr-home-fetch.1"
+    DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
+  install(FILES
+      "${NH_MAN_DIR}/nostr-home-syncd.8"
+      "${NH_MAN_DIR}/nostr-home-fuse.8"
+    DESTINATION "${CMAKE_INSTALL_MANDIR}/man8")
+endif()

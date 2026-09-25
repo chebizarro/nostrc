@@ -142,3 +142,36 @@ gdbus introspect --session \
   --object-path /org/nostr/Homed1
 ```
 
+
+## Portable-home operator quickstart
+
+The portable-home stack (`nostr-home-syncd`, `nostr-home-fuse`,
+`nostr-homed-provision`, `nostr-home-fetch`) is a separate deliverable from
+the login stack above. It gives an existing account a Nostr-relay-backed,
+Blossom-stored, resumable home tree that follows the user between machines.
+Operator workflow, from a fresh account file to a first push:
+
+```sh
+# 1. Provision a new identity; publish the empty (gen 0) pointer.
+nostr-homed-provision enroll \
+    --relay wss://relay.example \
+    --blossom https://blossom.example \
+    --out-dir ~/.config/nostr-homed \
+    --publish
+
+# 2. Snapshot the home tree, upload chunks, publish gen 1.
+nostr-homed-provision push \
+    --account-file ~/.config/nostr-homed/<pubkey8>.account.json \
+    --bump-gen
+
+# 3. Check that the daemon is happy and the mount is up.
+nostr-home-status --field syncd.state
+nostr-home-status --field fuse.mounted
+```
+
+The daemon (`nostr-home-syncd`) does step 2 automatically after the initial
+enrolment; the CLI is for provisioning, manual publishes, and disaster
+recovery. See `man nostr-homed-provision(1)` for the full operator
+reference, `man nostr-home-syncd(8)` for the daemon, and
+`docs/porthome-operator-guide.md` for the end-to-end story
+(broker → syncd → mount → provisioner).

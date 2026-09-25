@@ -1,0 +1,144 @@
+.TH NOSTR-HOME-SYNCD 8 "2026-09-25" "nostr-homed 0.3" "System Manager's Manual"
+.SH NAME
+nostr-home-syncd \- user-scoped portable-home sync daemon
+.SH SYNOPSIS
+.B nostr-home-syncd
+[\fB\-\-check\fR]
+.SH DESCRIPTION
+.B nostr-home-syncd
+is the user-scoped background daemon that watches
+.I $HOME
+via inotify, chunks and encrypts changed files, uploads them to the
+configured Blossom servers, and republishes the kind-30078 pointer when
+the batch closes. It always runs as the login user under
+.B systemd \-\-user
+via
+.IR nostr-home-sync.service ;
+running as root is a bug.
+.PP
+The daemon takes no command-line configuration beyond the
+.B \-\-check
+dry-run switch. Everything else is provided through environment variables
+in the user unit file. Secret material is delivered to the daemon via a
+per-session broker seed drop, described in
+.B FILES
+below.
+.SH OPTIONS
+.TP
+.B \-\-check
+Exercise the lock, interlock, and ignore-list stacks; report status; exit.
+No network traffic, no snapshot, no publish. Safe to run alongside a live
+daemon (subject to the lock).
+.SH ENVIRONMENT
+Required (unless
+.B NOSTR_HOMED_SYNCD_TEST_MODE
+is set, see below):
+.TP
+.B NOSTR_HOMED_SYNCD_NSEC_HEX
+64-hex secp256k1 signer for the kind-30078 pointer.
+.TP
+.B NOSTR_HOMED_SYNCD_BLOSSOM
+Comma-separated list of https:// Blossom server URLs.
+.TP
+.B NOSTR_HOMED_SYNCD_RELAYS
+Comma-separated list of wss:// relay URLs.
+.PP
+Optional:
+.TP
+.B NOSTR_HOMED_SYNCD_D_TAG
+Pointer d-tag override. Default:
+.IR nostr-homed.home.v1:personal .
+.TP
+.B NOSTR_HOMED_SYNCD_MIN_REPLICATION
+Minimum Blossom replication before publishing. Default 2. The legacy name
+.B NOSTR_HOMED_SYNCD_MIN_REPL
+is accepted for backwards compatibility.
+.TP
+.B NOSTR_HOMED_SYNCD_STATE_DIR
+Override the state directory. Default:
+.IR $XDG_STATE_HOME/nostr-homed .
+.TP
+.B NOSTR_HOMED_SYNCD_HOME
+Override
+.I $HOME
+(tests only).
+.TP
+.B NOSTR_HOMED_SYNCD_RESCAN_INTERVAL_SEC
+Periodic full-tree rescan tick. 0 or unset disables. Non-zero closes
+inotify
+.B IN_Q_OVERFLOW
+and add-watch race gaps.
+.TP
+.B NOSTR_HOMED_SYNCD_SEED_FILE
+Override the broker seed drop path. Default:
+.IR /run/nostr-auth/session/<uid>/home_seed .
+Read-once, unlinked, mlocked.
+.TP
+.B NOSTR_HOMED_SYNCD_TEST_MODE
+When set to 1, permits the (otherwise disabled)
+.B NOSTR_HOMED_SYNCD_SEED_HEX
+env fallback so tests can seed home_key without a broker drop. MUST be off
+in production.
+.TP
+.B NOSTR_HOMED_SYNCD_SEED_HEX
+64-hex seed for home_key derivation. Consulted only when TEST_MODE=1.
+.SH FILES
+.TP
+.I /run/nostr-auth/session/<uid>/home_seed
+Broker seed drop, mode 0400, owned by the target uid. The daemon reads it
+once, unlinks it, and holds the derived home_key in mlocked memory for the
+process lifetime.
+.TP
+.I $XDG_STATE_HOME/nostr-homed/sync.lock
+flock() sentinel that prevents two daemons for the same home from running
+concurrently. A collision is not an error: the second instance exits 0.
+.TP
+.I $XDG_STATE_HOME/nostr-homed/porthome-status.json
+Status file; kept up to date by the daemon.
+.TP
+.I ~/.nostr-home-limited
+If present, the daemon refuses to start (\(dqlimited mode\(dq). Used by
+admins to disable per-user sync without editing unit files.
+.SH EXIT CODES
+.RS
+.TP 4
+.B 0
+Clean shutdown, or another instance already holds the sync.lock.
+.TP 4
+.B 2
+Configuration failure (missing NSEC, missing Blossom, missing relays).
+.TP 4
+.B 3
+Refused to run \(em
+.I ~/.nostr-home-limited
+present.
+.TP 4
+.B 4
+Refused to run \(em NOSTR_HOME_STATE=partial in the environment.
+.TP 4
+.B 5
+Failed to acquire sync.lock for reasons other than contention.
+.RE
+.SH SIGNALS
+.TP
+.B SIGTERM
+Clean shutdown \(em finish the in-flight batch, publish (or roll back)
+the pointer, release the lock, exit 0.
+.TP
+.B SIGHUP
+Re-read the per-user quota override written by
+.BR nostr-home-status (1)
+.BR quota .
+.SH SECURITY
+Runs as the login user with the systemd
+.B User=
+directive; never gains capabilities; state and secrets are constrained to
+.IR $HOME " and " /run/nostr-auth/session/<uid>/ .
+Sets
+.B RLIMIT_CORE
+to 0. Wipes home_key on exit.
+.SH SEE ALSO
+.BR nostr-homed-provision (1),
+.BR nostr-home-status (1),
+.BR nostr-home-fuse (8),
+.BR systemctl (1)

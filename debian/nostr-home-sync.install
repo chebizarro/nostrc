@@ -4,3 +4,12 @@ usr/bin/nostr-homed-provision
 usr/lib/systemd/user/nostr-home-sync.service
 usr/libexec/nostr-homed/nostr-home-fetch
 usr/lib/sysusers.d/nostr-home-fetch.conf
+usr/share/man/man1/nostr-homed-provision.1
+usr/share/man/man1/nostr-homed-provision-enroll.1
+usr/share/man/man1/nostr-homed-provision-status.1
+usr/share/man/man1/nostr-homed-provision-pull.1
+usr/share/man/man1/nostr-homed-provision-push.1
+usr/share/man/man1/nostr-homed-provision-verify.1
+usr/share/man/man1/nostr-home-status.1
+usr/share/man/man1/nostr-home-fetch.1
+usr/share/man/man8/nostr-home-syncd.8

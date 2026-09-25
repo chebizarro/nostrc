@@ -776,6 +776,16 @@ find %{buildroot} -depth -type d -empty -delete 2>/dev/null || :
 %{_userunitdir}/nostr-home-sync.service
 %{_libexecdir}/nostr-homed/nostr-home-fetch
 %{_sysusersdir}/nostr-home-fetch.conf
+# nostrc-s6ke: manpages
+%{_mandir}/man1/nostr-homed-provision.1*
+%{_mandir}/man1/nostr-homed-provision-enroll.1*
+%{_mandir}/man1/nostr-homed-provision-status.1*
+%{_mandir}/man1/nostr-homed-provision-pull.1*
+%{_mandir}/man1/nostr-homed-provision-push.1*
+%{_mandir}/man1/nostr-homed-provision-verify.1*
+%{_mandir}/man1/nostr-home-status.1*
+%{_mandir}/man1/nostr-home-fetch.1*
+%{_mandir}/man8/nostr-home-syncd.8*
 
 %files -n nostr-home-fuse
 %license LICENSE
@@ -783,6 +793,8 @@ find %{buildroot} -depth -type d -empty -delete 2>/dev/null || :
 %{_userunitdir}/nostr-home-fuse.service
 %dir %{_datadir}/nostr-homed/ignore.d
 %{_datadir}/nostr-homed/ignore.d/portable
+# nostrc-s6ke: manpages
+%{_mandir}/man8/nostr-home-fuse.8*
 
 # --- Changelog ---------------------------------------------------------------
 

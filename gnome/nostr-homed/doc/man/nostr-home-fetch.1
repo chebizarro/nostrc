@@ -1,0 +1,98 @@
+.TH NOSTR-HOME-FETCH 1 "2026-09-25" "nostr-homed 0.3" "User Commands"
+.SH NAME
+nostr-home-fetch \- unprivileged portable-home fetch helper (broker + provisioner spawn)
+.SH SYNOPSIS
+.B nostr-home-fetch
+(\fB\-\-staging\-fd\fR \fIN\fR | \fB\-\-staging\-dir\fR \fIPATH\fR)
+[\fB\-\-allow\-insecure\fR]
+.PP
+Control JSON is read from stdin (max 16 KiB).
+.SH DESCRIPTION
+.B nostr-home-fetch
+is the single-purpose helper binary that materializes a portable-home tree
+(pointer + manifest + chunks) into a staging directory. It is designed to
+be exec'd by a parent process (the broker
+.BR nostr-authd (8),
+or
+.BR nostr-homed-provision-pull (1))
+after privileges have been dropped to a dedicated unprivileged uid.
+.PP
+The helper never reads from /run/nostr-auth or the account file itself \(em
+the caller passes the pubkey, home_key, relay list and Blossom list as a
+control-JSON blob on stdin. All Blossom hosts are subject to the SSRF gate:
+private ranges (RFC 1918, link-local, ULA, loopback) and non-https:// URLs
+are rejected unless
+.B \-\-allow\-insecure
+is set.
+.PP
+The helper refuses to run as root. This is deliberate \(em the entire
+security model assumes an unprivileged process. Callers must fork, drop, then
+exec.
+.SH OPTIONS
+.TP
+.B \-\-staging\-fd \fIN\fR
+Write materialized files below the open directory file descriptor N (passed
+via
+.BR fdopendir (3)-compatible
+inheritance). Mutually exclusive with
+.BR \-\-staging\-dir .
+.TP
+.B \-\-staging\-dir \fIPATH\fR
+Write materialized files below PATH. The helper creates PATH if it does not
+exist. Mutually exclusive with
+.BR \-\-staging\-fd .
+.TP
+.B \-\-allow\-insecure
+Skip the SSRF gate on Blossom hosts. For interop tests only.
+.TP
+.B \-h ", " \-\-help
+Print usage and exit.
+.SH EXIT CODES
+.RS
+.TP 4
+.B 0
+Success. Staging directory is populated.
+.TP 4
+.B 64
+Bad argument (missing staging target; both targets; refuse-to-run-as-root).
+.TP 4
+.B 65
+SSRF gate rejected a Blossom host or scheme.
+.TP 4
+.B 71
+Network failure (relay unreachable, Blossom 5xx, DNS).
+.TP 4
+.B 72
+Manifest decode failure.
+.TP 4
+.B 73
+Size cap exceeded (chunk or manifest larger than the compiled ceiling).
+.TP 4
+.B 74
+Timeout budget exceeded.
+.TP 4
+.B 75
+Decrypt failure.
+.TP 4
+.B 76
+Internal error (I/O, allocator, unexpected state).
+.RE
+.SH CONTROL JSON
+The helper reads a JSON object from stdin (bounded at 16 KiB). Required
+keys: pubkey (64-hex), home_key (64-hex), relays (array of wss:// URLs),
+blossom (array of https:// URLs). Optional keys: relay_timeout_ms,
+chunk_size_max, allow_insecure (bool). See the source of
+.I porthome_fetch_ctl.h
+for the exhaustive schema.
+.SH STDOUT / STDERR
+Stdout is detached before any network I/O: the helper saves the caller's
+original stdout as a private progress channel and redirects the shared
+stdout to /dev/null. This prevents stray printf calls from libnostr or
+libcurl from corrupting the parent broker's progress lexer. Human-readable
+diagnostics go to stderr; the progress channel emits structured NDJSON.
+.SH SECURITY
+Refuses to run as root or euid 0. Enforces a per-fetch total-time budget.
+Bounds all remote size reads. Wipes the home_key from memory before exit.
+.SH SEE ALSO
+.BR nostr-homed-provision-pull (1),
+.BR nostr-home-syncd (8)

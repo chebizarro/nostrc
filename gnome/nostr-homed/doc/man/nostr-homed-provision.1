@@ -1,0 +1,188 @@
+.TH NOSTR-HOMED-PROVISION 1 "2026-09-25" "nostr-homed 0.3" "User Commands"
+.SH NAME
+nostr-homed-provision \- portable-home provisioning CLI (enroll / push / pull / verify / status)
+.SH SYNOPSIS
+.B nostr-homed-provision
+.I subcommand
+[\fIoptions\fR]
+.SH DESCRIPTION
+.B nostr-homed-provision
+is the user-facing operator CLI that mirrors the broker's PROVISION_HOME code
+path. It generates a portable-home identity, publishes and reads back the
+kind-30078 pointer, and drives the same snapshot / chunk / encrypt / batch /
+publish pipeline that
+.BR nostr-home-syncd (8)
+runs in the background.
+.PP
+The tool is intentionally linked against the full porthome stack (libhanami +
+libnostr + libcurl). It is a user-space operator tool, NOT a component of
+.BR nostr-authd (8)
+or
+.BR pam_nostr (8) \(em
+those daemons enforce a much narrower dependency closure. Use this tool from
+a shell (or a provisioning ansible role), never from a PAM stack.
+.SH SUBCOMMANDS
+.TP
+.B enroll
+Generate a fresh identity + wrap_seed + home_key stack; write a 0600
+account file suitable for the seed-authority / broker seed drop. Optionally
+publish the initial empty (gen 0) pointer to the configured relays.
+.TP
+.B status
+Pretty-print, JSON-dump, or single-field query the
+.I porthome-status.json
+under a caller-selected home. Same schema as
+.BR nostr-home-status (1),
+scoped to any home (not just the caller's).
+.TP
+.B pull
+Fork+exec
+.BR nostr-home-fetch (1)
+against a
+.B --dest
+staging directory. Mirrors the broker's semantics: SSRF-gated fetch, size
+caps, network-timeout budget, exit codes forwarded verbatim from the helper.
+.TP
+.B push
+Snapshot a home tree, encrypt + upload chunks to Blossom, publish a new
+kind-30078 pointer. Reuses the same
+.I nh_syncd_push_batch
+implementation the daemon uses.
+.B --dry-run
+prints the manifest plan without touching any relay or Blossom server.
+.TP
+.B verify
+Fetch the current pointer, decrypt the manifest, then HEAD-check every chunk
+across the configured Blossom server list. Reports per-chunk replication
+counts and returns 5 if any chunk falls below the requested threshold.
+.SH GLOBAL OPTIONS
+Each subcommand has its own option set; see the per-subcommand pages. Common
+options that appear in most subcommands:
+.TP
+.B \-\-account\-file \fIPATH\fR
+Read pubkey, home_key, relay list and Blossom server list from PATH (the
+0600 file produced by
+.B enroll\c
+).
+.TP
+.B \-\-json
+Emit machine-readable JSON on stdout instead of a text summary.
+.TP
+.B \-\-dry\-run
+Print planned actions; do not open any relay connection, do not write any
+file outside the CLI's own stderr.
+.TP
+.B \-\-relay \fIwss://...\fR
+Append a home relay. Repeatable. Also written back to the account file when
+supplied alongside
+.B --account-file
+in
+.BR push .
+.TP
+.B \-\-blossom \fIhttps://...\fR
+Append a Blossom server. Repeatable.
+.TP
+.B \-\-allow\-insecure
+Permit http:// URLs and private/link-local Blossom hosts. Off by default;
+the SSRF gate rejects those otherwise.
+.TP
+.B \-\-min\-replication \fIN\fR
+(\fBpush\fR only.) Refuse the push if fewer than N Blossom servers hold every
+chunk. Default 2. Exit code 77 on insufficient replication.
+.SH FILES
+.TP
+.I <out-dir>/<pubkey8>.account.json
+0600 account file emitted by
+.BR enroll .
+Contains pubkey, secret, home_key, relay list, Blossom list, d-tag.
+.TP
+.I /run/nostr-auth/session/<uid>/home_seed
+Broker seed drop path. Written by
+.B enroll \-\-seed\-drop
+(requires
+.B --uid
+and root). Consumed by
+.BR nostr-home-syncd (8)
+and
+.BR nostr-home-fuse (8).
+.TP
+.I <home>/.local/state/nostr-homed/porthome-status.json
+Status file read by
+.B status
+(and by
+.BR nostr-home-status (1)).
+.SH ENVIRONMENT
+.TP
+.B NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL
+Must be set at build time; the CLI is gated behind this feature flag in
+CMake. Runtime environment variables consumed by individual subcommands are
+documented on their own pages.
+.SH EXIT CODES
+Exit codes are subcommand-specific; see the per-subcommand pages. Broadly:
+.RS
+.PP
+0 success, 1 malformed input or field miss, 2 bad argument, 3 missing state
+file, 5 chunk missing on verify, 65 SSRF gate rejection, 71 network failure,
+72 manifest decode failure, 75 crypto failure, 76 internal error, 77
+insufficient replication.
+.RE
+.SH SECURITY
+The tool holds secret key material in memory. It sets
+.B RLIMIT_CORE
+to zero and calls
+.BR mlock (2)
+on secret buffers. Account files are written with mode 0600.
+.B \-\-redact
+replaces secret fields with \(dqREDACTED\(dq in stdout, useful for pasting
+into tickets. Never log the account file contents; the pubkey is safe to
+publish, everything else is not.
+.SH EXAMPLES
+Provision an identity and publish the initial pointer:
+.PP
+.RS
+.nf
+nostr-homed-provision enroll \\
+    \-\-relay wss://relay.example \\
+    \-\-blossom https://blossom.example \\
+    \-\-out\-dir ~/.config/nostr-homed \\
+    \-\-publish
+.fi
+.RE
+.PP
+Push the current home:
+.PP
+.RS
+.nf
+nostr-homed-provision push \\
+    \-\-account\-file ~/.config/nostr-homed/abcd1234.account.json \\
+    \-\-bump\-gen \-\-min\-replication 2
+.fi
+.RE
+.PP
+Verify replication and check current syncd state:
+.PP
+.RS
+.nf
+nostr-homed-provision verify \-\-account\-file ...account.json
+nostr-home-status \-\-field syncd.state
+.fi
+.RE
+.SH SEE ALSO
+.BR nostr-homed-provision-enroll (1),
+.BR nostr-homed-provision-status (1),
+.BR nostr-homed-provision-pull (1),
+.BR nostr-homed-provision-push (1),
+.BR nostr-homed-provision-verify (1),
+.BR nostr-home-status (1),
+.BR nostr-home-fetch (1),
+.BR nostr-home-syncd (8),
+.BR nostr-home-fuse (8)
+.PP
+Design docs shipped with the source tree:
+.I gnome/nostr-homed/docs/DESIGN.md \c
+(home-from-relay §7.2, nostrfs-porthome-overlay §D9).
+.SH AUTHORS
+The nostrc contributors.
+.SH HISTORY
+Introduced in nostr-homed 0.3 as the operator front-end for the
+portable-home stack (Phase 5 / bead nostrc-89rj).
