@@ -329,6 +329,117 @@ static void test_validate_pubkey_mismatch(void)
     nostr_event_free(ev);
 }
 
+/* ---- Batch event creation (nostrc-xeby) ---- */
+
+static void test_create_batch_auth_event_shape(void)
+{
+    /* Three deterministic 64-hex hashes. */
+    const char *h1 = "11111111111111111111111111111111"
+                     "11111111111111111111111111111111";
+    const char *h2 = "22222222222222222222222222222222"
+                     "22222222222222222222222222222222";
+    const char *h3 = "33333333333333333333333333333333"
+                     "33333333333333333333333333333333";
+    const char *const hashes[3] = { h1, h2, h3 };
+
+    NostrEvent *ev = hanami_bud02_create_batch_auth_event(
+        HANAMI_BUD02_ACTION_UPLOAD, hashes, 3, 0, NULL);
+    assert(ev != NULL);
+
+    /* Kind must be 24242. */
+    assert(nostr_event_get_kind(ev) == HANAMI_BUD02_KIND);
+
+    /* Enumerate tags: expect one "t", one "expiration", three "x", NO "server". */
+    NostrTags *tags = ev->tags;
+    assert(tags != NULL);
+    int n_t = 0, n_exp = 0, n_x = 0, n_srv = 0;
+    int seen_h1 = 0, seen_h2 = 0, seen_h3 = 0;
+    for (size_t i = 0; i < tags->count; i++) {
+        NostrTag *tag = tags->data[i];
+        assert(tag != NULL && tag->size >= 2);
+        const char *k = string_array_get(tag, 0);
+        const char *v = string_array_get(tag, 1);
+        if (strcmp(k, "t") == 0) { n_t++; assert(strcmp(v, "upload") == 0); }
+        else if (strcmp(k, "expiration") == 0) { n_exp++; }
+        else if (strcmp(k, "x") == 0) {
+            n_x++;
+            if (strcmp(v, h1) == 0) seen_h1++;
+            else if (strcmp(v, h2) == 0) seen_h2++;
+            else if (strcmp(v, h3) == 0) seen_h3++;
+        }
+        else if (strcmp(k, "server") == 0) { n_srv++; }
+    }
+    assert(n_t == 1);
+    assert(n_exp == 1);
+    assert(n_x == 3);
+    assert(n_srv == 0); /* Default: NO server tag (blossom.band-safe) */
+    assert(seen_h1 == 1 && seen_h2 == 1 && seen_h3 == 1);
+
+    /* Expiration default: now + 120s window; upper bound now + 900s cap. */
+    int64_t now = (int64_t)time(NULL);
+    int64_t exp = hanami_bud02_get_expiration(ev);
+    assert(exp > now);
+    assert(exp - now <= HANAMI_BUD02_BATCH_MAX_EXPIRATION);
+    assert(exp - now >= HANAMI_BUD02_BATCH_DEFAULT_EXPIRATION - 5); /* small clock slack */
+
+    /* Signature verifies over the full N-x-tag event. */
+    assert(nostr_event_sign(ev, TEST_PRIVATE_KEY) == 0);
+    hanami_bud02_result_t vres = hanami_bud02_validate_auth_event(
+        ev, HANAMI_BUD02_ACTION_UPLOAD, NULL);
+    assert(vres == HANAMI_BUD02_OK);
+
+    nostr_event_free(ev);
+}
+
+static void test_create_batch_auth_event_with_server_tag(void)
+{
+    /* Callers that KNOW the server tolerates a server tag (via probe)
+     * may pass it. Must round-trip through the "server" accessor. */
+    const char *h[1] = { "aaaa11112222333344445555666677778888"
+                         "9999aaaabbbbccccddddeeeeffff0000" };
+    NostrEvent *ev = hanami_bud02_create_batch_auth_event(
+        HANAMI_BUD02_ACTION_UPLOAD, h, 1, 0,
+        "https://blossom.sharegap.net");
+    assert(ev != NULL);
+    const char *srv = hanami_bud02_get_server(ev);
+    assert(srv != NULL);
+    assert(strcmp(srv, "https://blossom.sharegap.net") == 0);
+    nostr_event_free(ev);
+}
+
+static void test_create_batch_auth_event_expiration_cap(void)
+{
+    /* Caller-provided expiration that exceeds the 900s cap MUST be
+     * clamped down. */
+    const char *h[1] = { "0000000000000000000000000000000000000000000000000000000000000000" };
+    int64_t now = (int64_t)time(NULL);
+    int64_t huge = now + 4 * 3600; /* 4 hours — well past cap */
+    NostrEvent *ev = hanami_bud02_create_batch_auth_event(
+        HANAMI_BUD02_ACTION_UPLOAD, h, 1, huge, NULL);
+    assert(ev != NULL);
+    int64_t exp = hanami_bud02_get_expiration(ev);
+    assert(exp - now <= HANAMI_BUD02_BATCH_MAX_EXPIRATION + 1);
+    nostr_event_free(ev);
+}
+
+static void test_create_batch_auth_event_null_params(void)
+{
+    /* count=0 -> NULL */
+    const char *h[1] = { "aaaa" };
+    assert(hanami_bud02_create_batch_auth_event(
+        HANAMI_BUD02_ACTION_UPLOAD, h, 0, 0, NULL) == NULL);
+    /* NULL array */
+    assert(hanami_bud02_create_batch_auth_event(
+        HANAMI_BUD02_ACTION_UPLOAD, NULL, 1, 0, NULL) == NULL);
+    /* NULL element */
+    const char *hbad[2] = { "aaaa", NULL };
+    assert(hanami_bud02_create_batch_auth_event(
+        HANAMI_BUD02_ACTION_UPLOAD, hbad, 2, 0, NULL) == NULL);
+    /* Bad action */
+    assert(hanami_bud02_create_batch_auth_event(
+        (hanami_bud02_action_t)99, h, 1, 0, NULL) == NULL);
+}
+
 static void test_validate_missing_expiration(void)
 {
     /* Manually create an event without expiration tag */
@@ -403,6 +514,12 @@ int main(void)
     TEST(create_auth_event_with_server);
     TEST(create_auth_event_custom_expiration);
     TEST(create_auth_event_null_params);
+
+    /* Batch event creation (nostrc-xeby) */
+    TEST(create_batch_auth_event_shape);
+    TEST(create_batch_auth_event_with_server_tag);
+    TEST(create_batch_auth_event_expiration_cap);
+    TEST(create_batch_auth_event_null_params);
 
     /* Header roundtrip */
     TEST(auth_header_roundtrip);

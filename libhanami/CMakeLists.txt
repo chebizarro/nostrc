@@ -67,6 +67,7 @@ set(HANAMI_SOURCES
   # Future sources will be added here as components are implemented:
   src/hanami-index.c
   src/hanami-bud02-auth.c
+  src/hanami-server-capability.c
   src/hanami-blossom-client.c
   src/hanami-odb-backend.c
   src/hanami-refdb-backend.c
@@ -169,6 +170,16 @@ install(TARGETS hanami
 install(DIRECTORY include/hanami/
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hanami)
 
+# --- Optional live capability probe tool (nostrc-ypn2) ---
+# Not installed. Enable with -DHANAMI_BUILD_LIVE_PROBE=ON when you want to
+# smoke the probe against real Blossom servers from a workstation.
+option(HANAMI_BUILD_LIVE_PROBE "Build the live Blossom capability probe tool (out-of-tree smoke test)" OFF)
+if(HANAMI_BUILD_LIVE_PROBE)
+  add_executable(hanami-probe-capabilities-live tools/probe_capabilities_live.c)
+  target_compile_features(hanami-probe-capabilities-live PRIVATE c_std_11)
+  target_link_libraries(hanami-probe-capabilities-live PRIVATE hanami)
+endif()
+
 # --- Tests ---
 
 if(BUILD_TESTING)
@@ -222,6 +233,20 @@ if(BUILD_TESTING)
 
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-hanami-blossom-client)
+  endif()
+
+  # Batch upload + probe (nostrc-xeby / nostrc-ypn2)
+  add_executable(test-hanami-blossom-batch tests/test_hanami_blossom_batch.c)
+  target_compile_features(test-hanami-blossom-batch PRIVATE c_std_11)
+  target_link_libraries(test-hanami-blossom-batch PRIVATE hanami nostr pthread)
+  add_test(NAME test-hanami-blossom-batch COMMAND test-hanami-blossom-batch)
+  set_tests_properties(test-hanami-blossom-batch PROPERTIES
+    TIMEOUT 60
+    LABELS "libhanami;blossom;batch;unit"
+  )
+
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-blossom-batch)
   endif()
 
   add_executable(test-hanami-odb-backend tests/test_hanami_odb_backend.c)

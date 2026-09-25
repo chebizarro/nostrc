@@ -128,6 +128,64 @@ int nh_porthome_blossom_has(nh_porthome_blossom_t *c,
 int nh_porthome_blossom_delete(nh_porthome_blossom_t *c,
                                const char *sha256_hex);
 
+/* ----- Batch upload (nostrc-xeby / nostrc-ypn2 wire-in) ----- */
+
+/**
+ * nh_porthome_blossom_batch_blob_t:
+ * One blob in a batch. Fields borrowed; caller keeps storage alive for
+ * the duration of the call. If `expected_sha256_hex` is NULL, the hash
+ * is computed from the bytes; otherwise it is verified.
+ */
+typedef struct {
+    const uint8_t *bytes;
+    size_t         len;
+    const char    *expected_sha256_hex; /* nullable; if set, MUST match */
+    /* Filled on return: 64-char lowercase hex + NUL. */
+    char           sha256_hex[65];
+} nh_porthome_blossom_batch_blob_t;
+
+/**
+ * nh_porthome_blossom_batch_per_server_t:
+ * Per-server accounting for one batch call. Populated on return; caller
+ * sizes to n_servers.
+ */
+typedef struct {
+    const char *server_url;      /* borrowed from blossom_t; do not free */
+    size_t      chunks_uploaded; /* # blobs the server accepted (2xx)   */
+    size_t      bytes_uploaded;  /* sum of accepted blob sizes          */
+    size_t      chunks_failed;   /* # blobs the server refused          */
+    int         batch_fell_back; /* 1 if the batch header was dropped mid-call */
+} nh_porthome_blossom_batch_per_server_t;
+
+/**
+ * nh_porthome_blossom_upload_batch:
+ * @c: client handle
+ * @blobs: array of @n blobs
+ * @n: number of blobs; MUST be > 0
+ * @out_per_server: (out) (nullable): per-server accounting (size ≥ n_servers)
+ *
+ * Uploads all @n blobs to every configured server using libhanami's
+ * batch API (single kind-24242 auth event shared across the N PUTs;
+ * automatic fall-back to per-blob auth on any 401; session-scoped
+ * capability cache). Return semantics match nh_porthome_blossom_upload:
+ * success iff at least one server accepted every blob.
+ *
+ * Note: this is provisioner-first — the design assumes the caller
+ * bundles a whole set of chunks destined for the same server list into
+ * one call. syncd's ongoing per-chunk pushes still use the single-blob
+ * nh_porthome_blossom_upload path today.
+ *
+ * min_replication semantics: this call returns OK if EVERY blob got
+ * ≥ 1 server accept; callers that need ≥ 2 confirmed copies must
+ * consult @out_per_server.
+ *
+ * Returns 0 on success, else the first per-blob failure code.
+ */
+int nh_porthome_blossom_upload_batch(nh_porthome_blossom_t *c,
+                                     nh_porthome_blossom_batch_blob_t *blobs,
+                                     size_t n,
+                                     nh_porthome_blossom_batch_per_server_t *out_per_server);
+
 #ifdef __cplusplus
 }
 #endif

@@ -7,13 +7,21 @@
 #include "hanami/hanami-blossom-client.h"
 #include "hanami/hanami-bud02-auth.h"
 #include "hanami/hanami-index.h"
+#include "hanami/hanami-server-capability.h"
 #include "nostr-event.h"
+#include "nostr-tag.h"
+#include "nostr-keys.h"
 
 #include <curl/curl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <inttypes.h>
+#include <time.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <openssl/sha.h>
 
 /* =========================================================================
  * Internal structures
@@ -25,6 +33,9 @@ struct hanami_blossom_client {
     long timeout;           /* Seconds */
     hanami_signer_t signer; /* Copied at creation */
     bool has_signer;
+    /* Session-scoped per-server capability record (nostrc-xeby / ypn2).
+     * Not persisted; lives for the lifetime of this client handle. */
+    hanami_server_capabilities_t caps;
 };
 
 /* Dynamic buffer for curl write callbacks */
@@ -345,8 +356,16 @@ hanami_error_t hanami_blossom_client_new(const hanami_blossom_client_opts_t *opt
         c->has_signer = true;
     }
 
+    hanami_server_capabilities_init(&c->caps);
+
     *out = c;
     return HANAMI_OK;
+}
+
+const hanami_server_capabilities_t *
+hanami_blossom_get_capabilities(hanami_blossom_client_t *client)
+{
+    return client ? &client->caps : NULL;
 }
 
 void hanami_blossom_client_free(hanami_blossom_client_t *client)
@@ -691,6 +710,498 @@ hanami_error_t hanami_blossom_list(hanami_blossom_client_t *client,
 
     *out_json = (char *)buf.data;
     *out_len = buf.len;
+    return HANAMI_OK;
+}
+
+/* =========================================================================
+ * Batch upload + capability probe (nostrc-xeby / nostrc-ypn2)
+ * ========================================================================= */
+
+/* Execute one PUT of `data` (len) to endpoint/upload with the given
+ * "Nostr <b64>" header value (NOT the "Authorization:" prefix — this
+ * helper adds it). Records HTTP status + hanami_error into out params.
+ *
+ * The sha256_hex parameter is currently only used for a future
+ * per-blob path — Blossom BUD-02 accepts PUTs at /upload (not /<hash>);
+ * the server derives the address from sha256(body).
+ */
+static void put_one_blob(hanami_blossom_client_t *c,
+                         const char *sha256_hex,
+                         const uint8_t *data, size_t len,
+                         const char *auth_header_value,
+                         long *out_status,
+                         hanami_error_t *out_err)
+{
+    (void)sha256_hex;
+    *out_status = 0;
+    *out_err = HANAMI_ERR_NETWORK;
+
+    char *url = build_url(c, "upload");
+    if (!url) { *out_err = HANAMI_ERR_NOMEM; return; }
+
+    CURL *curl = setup_curl(c, url);
+    if (!curl) { free(url); *out_err = HANAMI_ERR_NOMEM; return; }
+
+    size_t hlen = 15 + 1 + strlen(auth_header_value) + 1; /* "Authorization: " + val + NUL */
+    char *full = malloc(hlen);
+    if (!full) { curl_easy_cleanup(curl); free(url); *out_err = HANAMI_ERR_NOMEM; return; }
+    snprintf(full, hlen, "Authorization: %s", auth_header_value);
+
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)len);
+
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, full);
+    headers = curl_slist_append(headers, "Content-Type: application/octet-stream");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    dyn_buf_t resp; dyn_buf_init(&resp);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
+
+    CURLcode rc = curl_easy_perform(curl);
+    long status = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    free(url);
+    free(full);
+    dyn_buf_free(&resp);
+
+    if (rc != CURLE_OK) {
+        *out_err = curl_code_to_error(rc);
+        *out_status = 0;
+    } else {
+        *out_status = status;
+        *out_err = http_status_to_error(status);
+    }
+}
+
+/* Sign an unsigned event with the client's signer. Returns a NEW event
+ * (parsed back from the signed JSON) or NULL. The input `ev` is not
+ * modified in a durable way — caller still owns it. */
+static NostrEvent *sign_event_via_client(const hanami_blossom_client_t *c,
+                                          NostrEvent *ev)
+{
+    if (!c->has_signer) return NULL;
+    nostr_event_set_pubkey(ev, c->signer.pubkey);
+
+    char *unsigned_json = nostr_event_serialize_compact(ev);
+    if (!unsigned_json) return NULL;
+
+    char *signed_json = NULL;
+    hanami_error_t err = c->signer.sign(unsigned_json, &signed_json,
+                                         c->signer.user_data);
+    free(unsigned_json);
+    if (err != HANAMI_OK || !signed_json) {
+        free(signed_json);
+        return NULL;
+    }
+
+    NostrEvent *signed_ev = nostr_event_new();
+    if (!signed_ev) { free(signed_json); return NULL; }
+    if (nostr_event_deserialize_compact(signed_ev, signed_json, NULL) != 1) {
+        nostr_event_free(signed_ev);
+        free(signed_json);
+        return NULL;
+    }
+    free(signed_json);
+    return signed_ev;
+}
+
+/* Mint a batch auth header value ("Nostr <b64>") shared across N blobs.
+ * server_url_or_null: pass NULL to OMIT the server tag (default). */
+static char *mint_batch_auth_header(hanami_blossom_client_t *c,
+                                    const char *const *hashes, size_t count,
+                                    const char *server_url_or_null)
+{
+    NostrEvent *ev = hanami_bud02_create_batch_auth_event(
+        HANAMI_BUD02_ACTION_UPLOAD, hashes, count, 0, server_url_or_null);
+    if (!ev) return NULL;
+    NostrEvent *signed_ev = sign_event_via_client(c, ev);
+    nostr_event_free(ev);
+    if (!signed_ev) return NULL;
+    char *hv = hanami_bud02_create_auth_header(signed_ev);
+    nostr_event_free(signed_ev);
+    return hv;
+}
+
+/* Mint a per-blob auth header value. Server tag omitted by default
+ * (cross-server-safe posture; the legacy hanami_blossom_upload keeps
+ * its old behaviour of including the tag for backward compat). */
+static char *mint_single_auth_header(hanami_blossom_client_t *c,
+                                     const char *hash)
+{
+    NostrEvent *ev = hanami_bud02_create_auth_event(
+        HANAMI_BUD02_ACTION_UPLOAD, hash, 0, NULL);
+    if (!ev) return NULL;
+    NostrEvent *signed_ev = sign_event_via_client(c, ev);
+    nostr_event_free(ev);
+    if (!signed_ev) return NULL;
+    char *hv = hanami_bud02_create_auth_header(signed_ev);
+    nostr_event_free(signed_ev);
+    return hv;
+}
+
+hanami_error_t hanami_blossom_upload_batch(hanami_blossom_client_t *c,
+                                           const hanami_blossom_blob_t *blobs,
+                                           size_t count,
+                                           hanami_blossom_batch_result_t *out_results)
+{
+    if (!c || !blobs || count == 0 || !out_results)
+        return HANAMI_ERR_INVALID_ARG;
+    if (!c->has_signer)
+        return HANAMI_ERR_AUTH;
+
+    /* Pre-zero results. */
+    for (size_t i = 0; i < count; i++) {
+        out_results[i].http_status = 0;
+        out_results[i].error = HANAMI_ERR_NETWORK;
+        out_results[i].error_class = NULL;
+    }
+
+    /* Validate hashes up-front (avoids doing PUTs on a bad batch). */
+    for (size_t i = 0; i < count; i++) {
+        if (!blobs[i].sha256_hex || strlen(blobs[i].sha256_hex) != 64)
+            return HANAMI_ERR_INVALID_ARG;
+        if (!blobs[i].bytes && blobs[i].len > 0)
+            return HANAMI_ERR_INVALID_ARG;
+    }
+
+    /* Optional pre-connect probe (nostrc-ypn2). Skipped if the kill-switch
+     * env var is set, or if we've already probed this session. */
+    if (c->caps.last_probe_ts == 0) {
+        const char *skip = getenv("NOSTR_HOMED_HANAMI_SKIP_CAPABILITY_PROBE");
+        if (!skip || strcmp(skip, "1") != 0) {
+            (void)hanami_server_probe_capabilities(c);
+        }
+    }
+
+    /* Decide whether to try the batch path first. */
+    bool try_batch = (c->caps.batch_ok != HANAMI_CAP_NO);
+
+    const char **hashes = NULL;
+    char *batch_header = NULL;
+
+    if (try_batch) {
+        hashes = malloc(count * sizeof(*hashes));
+        if (!hashes) return HANAMI_ERR_NOMEM;
+        for (size_t i = 0; i < count; i++)
+            hashes[i] = blobs[i].sha256_hex;
+
+        const char *srv = (c->caps.server_tag_ok == HANAMI_CAP_YES)
+                              ? c->endpoint : NULL;
+        batch_header = mint_batch_auth_header(c, hashes, count, srv);
+        if (!batch_header) {
+            free(hashes);
+            for (size_t i = 0; i < count; i++)
+                out_results[i].error_class = "auth";
+            return HANAMI_ERR_AUTH;
+        }
+    }
+
+    bool any_failed = false;
+    hanami_error_t last_err = HANAMI_OK;
+    bool fell_back_this_call = false;
+
+    for (size_t i = 0; i < count; i++) {
+        const hanami_blossom_blob_t *b = &blobs[i];
+        long status = 0;
+        hanami_error_t err = HANAMI_ERR_NETWORK;
+        const char *cls = NULL;
+
+        if (try_batch) {
+            put_one_blob(c, b->sha256_hex, b->bytes, b->len,
+                         batch_header, &status, &err);
+            if (status == 401) {
+                /* Definitive rejection of the batch header. Flip cache,
+                 * fall back for THIS blob and every subsequent blob. */
+                c->caps.batch_ok = HANAMI_CAP_NO;
+                c->caps.last_401_ts = (int64_t)time(NULL);
+                try_batch = false;
+                fell_back_this_call = true;
+                free(batch_header);
+                batch_header = NULL;
+
+                char *hdr = mint_single_auth_header(c, b->sha256_hex);
+                if (!hdr) {
+                    err = HANAMI_ERR_AUTH;
+                    status = 0;
+                    cls = "auth";
+                } else {
+                    put_one_blob(c, b->sha256_hex, b->bytes, b->len,
+                                 hdr, &status, &err);
+                    free(hdr);
+                    cls = "batch-fell-back";
+                }
+            }
+        } else {
+            char *hdr = mint_single_auth_header(c, b->sha256_hex);
+            if (!hdr) {
+                err = HANAMI_ERR_AUTH;
+                status = 0;
+                cls = "auth";
+            } else {
+                put_one_blob(c, b->sha256_hex, b->bytes, b->len,
+                             hdr, &status, &err);
+                free(hdr);
+                if (fell_back_this_call)
+                    cls = "batch-fell-back";
+            }
+        }
+
+        out_results[i].http_status = status;
+        out_results[i].error = err;
+
+        if (err == HANAMI_OK) {
+            out_results[i].error_class =
+                (cls && strcmp(cls, "batch-fell-back") == 0) ? cls : NULL;
+        } else {
+            if (!cls) {
+                if (status == 401 || status == 403)      cls = "auth";
+                else if (status >= 400 && status < 500)  cls = "http-4xx";
+                else if (status >= 500)                  cls = "http-5xx";
+                else                                     cls = "network";
+            }
+            out_results[i].error_class = cls;
+            any_failed = true;
+            last_err = err;
+        }
+    }
+
+    free(batch_header);
+    free(hashes);
+
+    /* Full batch succeeded end-to-end: latch batch_ok=YES so future calls
+     * skip re-probing the batch question. */
+    if (!any_failed && !fell_back_this_call &&
+        c->caps.batch_ok == HANAMI_CAP_UNKNOWN)
+        c->caps.batch_ok = HANAMI_CAP_YES;
+
+    return any_failed ? last_err : HANAMI_OK;
+}
+
+/* ---- Probe internals (ephemeral key, session-random blobs) ---- */
+
+static int probe_random_bytes(uint8_t *buf, size_t len)
+{
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) return -1;
+    size_t off = 0;
+    while (off < len) {
+        ssize_t n = read(fd, buf + off, len - off);
+        if (n <= 0) { close(fd); return -1; }
+        off += (size_t)n;
+    }
+    close(fd);
+    return 0;
+}
+
+static void probe_sha256_hex(const uint8_t *data, size_t len, char out_hex[65])
+{
+    uint8_t md[32];
+    SHA256(data, len, md);
+    static const char hx[] = "0123456789abcdef";
+    for (int i = 0; i < 32; i++) {
+        out_hex[2*i]   = hx[md[i] >> 4];
+        out_hex[2*i+1] = hx[md[i] & 0xF];
+    }
+    out_hex[64] = '\0';
+}
+
+/* Mint a probe auth header signed with an ephemeral key.
+ * `batch=true` uses the batch constructor with all N hashes;
+ * `batch=false` uses the single constructor with hashes[0]. */
+static char *probe_mint_header(const char *sk_hex,
+                               const char *const *hashes, size_t count,
+                               const char *server_url_or_null,
+                               bool batch,
+                               hanami_bud02_action_t action)
+{
+    NostrEvent *ev = NULL;
+    if (batch) {
+        ev = hanami_bud02_create_batch_auth_event(
+            action, hashes, count, 0, server_url_or_null);
+    } else {
+        ev = hanami_bud02_create_auth_event(
+            action, hashes ? hashes[0] : NULL, 0, server_url_or_null);
+    }
+    if (!ev) return NULL;
+    if (nostr_event_sign(ev, sk_hex) != 0) {
+        nostr_event_free(ev);
+        return NULL;
+    }
+    char *hv = hanami_bud02_create_auth_header(ev);
+    nostr_event_free(ev);
+    return hv;
+}
+
+/* Best-effort DELETE with the given "Nostr <b64>" header. Ignores errors. */
+static void probe_delete_blob(hanami_blossom_client_t *c,
+                              const char *sha256_hex,
+                              const char *auth_header_value)
+{
+    char *url = build_url(c, sha256_hex);
+    if (!url) return;
+    CURL *curl = setup_curl(c, url);
+    if (!curl) { free(url); return; }
+
+    size_t hlen = 15 + 1 + strlen(auth_header_value) + 1;
+    char *full = malloc(hlen);
+    if (!full) { curl_easy_cleanup(curl); free(url); return; }
+    snprintf(full, hlen, "Authorization: %s", auth_header_value);
+
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, full);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    /* Cap probe cleanup at 5 s so a slow server can't wedge us. */
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+
+    (void)curl_easy_perform(curl);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    free(url);
+    free(full);
+}
+
+hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
+{
+    if (!c) return HANAMI_ERR_INVALID_ARG;
+
+    /* Ephemeral secp256k1 keypair — never leaves this stack frame. */
+    char *sk_hex = nostr_key_generate_private();
+    if (!sk_hex) return HANAMI_ERR_NOSTR;
+
+    /* Two 1 KiB session-random blobs. */
+    uint8_t blob1[1024], blob2[1024];
+    if (probe_random_bytes(blob1, sizeof blob1) != 0 ||
+        probe_random_bytes(blob2, sizeof blob2) != 0) {
+        free(sk_hex);
+        return HANAMI_ERR_NETWORK;
+    }
+    char h1[65], h2[65];
+    probe_sha256_hex(blob1, sizeof blob1, h1);
+    probe_sha256_hex(blob2, sizeof blob2, h2);
+
+    /* (a) Reachability probe — BUD-01 HEAD on a session-random hash.
+     * Any HTTP response (2xx/4xx) means the server answered. */
+    {
+        uint8_t reach_rand[32];
+        char reach_hash[65];
+        if (probe_random_bytes(reach_rand, sizeof reach_rand) == 0) {
+            static const char hx[] = "0123456789abcdef";
+            for (int i = 0; i < 32; i++) {
+                reach_hash[2*i]   = hx[reach_rand[i] >> 4];
+                reach_hash[2*i+1] = hx[reach_rand[i] & 0xF];
+            }
+            reach_hash[64] = '\0';
+
+            char *url = build_url(c, reach_hash);
+            if (url) {
+                CURL *curl = curl_easy_init();
+                if (curl) {
+                    curl_easy_setopt(curl, CURLOPT_URL, url);
+                    curl_easy_setopt(curl, CURLOPT_USERAGENT, c->user_agent);
+                    curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+                    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+                    CURLcode rc = curl_easy_perform(curl);
+                    if (rc == CURLE_OK) {
+                        long st = 0;
+                        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &st);
+                        if (st > 0) c->caps.reachable = true;
+                    }
+                    curl_easy_cleanup(curl);
+                }
+                free(url);
+            }
+        }
+    }
+
+    /* (b) server-tag tolerance — PUT h1 with single-x event that has
+     * a `server` tag. 2xx -> YES; 401/403 -> NO; other 4xx -> UNKNOWN. */
+    bool put_b_success = false;
+    {
+        const char *hh[1] = { h1 };
+        char *hv = probe_mint_header(sk_hex, hh, 1, c->endpoint,
+                                     false, HANAMI_BUD02_ACTION_UPLOAD);
+        if (hv) {
+            long st = 0; hanami_error_t err;
+            put_one_blob(c, h1, blob1, sizeof blob1, hv, &st, &err);
+            free(hv);
+            if (st >= 200 && st < 300) {
+                c->caps.server_tag_ok = HANAMI_CAP_YES;
+                put_b_success = true;
+            } else if (st == 401 || st == 403) {
+                c->caps.server_tag_ok = HANAMI_CAP_NO;
+            }
+        }
+    }
+
+    /* (c) batch viability — one event with x=[h1,h2], PUT h1 then h2.
+     * Any 401 -> NO; both 2xx -> YES; other 4xx -> UNKNOWN. */
+    bool put_c_success_h1 = false, put_c_success_h2 = false;
+    {
+        const char *hh[2] = { h1, h2 };
+        char *hv = probe_mint_header(sk_hex, hh, 2, NULL,
+                                     true, HANAMI_BUD02_ACTION_UPLOAD);
+        if (hv) {
+            long st1 = 0, st2 = 0; hanami_error_t err;
+            put_one_blob(c, h1, blob1, sizeof blob1, hv, &st1, &err);
+            put_one_blob(c, h2, blob2, sizeof blob2, hv, &st2, &err);
+            free(hv);
+            bool any_401 = (st1 == 401 || st2 == 401);
+            bool both_ok = (st1 >= 200 && st1 < 300) &&
+                           (st2 >= 200 && st2 < 300);
+            if (any_401) {
+                c->caps.batch_ok = HANAMI_CAP_NO;
+                c->caps.last_401_ts = (int64_t)time(NULL);
+            } else if (both_ok) {
+                c->caps.batch_ok = HANAMI_CAP_YES;
+                put_c_success_h1 = true;
+                put_c_success_h2 = true;
+            }
+        }
+    }
+
+    /* (d) strict-x binding — event with x=[h1], PUT blob2 (hash H2).
+     * 401 -> STRICT; 2xx/non-auth 4xx -> PERMISSIVE. */
+    {
+        const char *hh[1] = { h1 };
+        char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
+                                     false, HANAMI_BUD02_ACTION_UPLOAD);
+        if (hv) {
+            long st = 0; hanami_error_t err;
+            put_one_blob(c, h2, blob2, sizeof blob2, hv, &st, &err);
+            free(hv);
+            if (st == 401 || st == 403) {
+                c->caps.strict_x_binding = HANAMI_CAP_YES;
+                c->caps.last_401_ts = (int64_t)time(NULL);
+            } else if (st > 0) {
+                c->caps.strict_x_binding = HANAMI_CAP_NO;
+            }
+        }
+    }
+
+    c->caps.last_probe_ts = (int64_t)time(NULL);
+
+    /* Best-effort cleanup. Only bothers with blobs we saw stored (2xx).
+     * Uses the same ephemeral key so per-pubkey delete auth matches. */
+    if (put_b_success || put_c_success_h1) {
+        const char *hh[1] = { h1 };
+        char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
+                                     false, HANAMI_BUD02_ACTION_DELETE);
+        if (hv) { probe_delete_blob(c, h1, hv); free(hv); }
+    }
+    if (put_c_success_h2) {
+        const char *hh[1] = { h2 };
+        char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
+                                     false, HANAMI_BUD02_ACTION_DELETE);
+        if (hv) { probe_delete_blob(c, h2, hv); free(hv); }
+    }
+
+    free(sk_hex);
     return HANAMI_OK;
 }
 

@@ -261,6 +261,104 @@ fail:
     return NULL;
 }
 
+NostrEvent *hanami_bud02_create_batch_auth_event(hanami_bud02_action_t action,
+                                                 const char *const *sha256_hex_array,
+                                                 size_t count,
+                                                 int64_t expiration,
+                                                 const char *server_url)
+{
+    if (!sha256_hex_array || count == 0)
+        return NULL;
+
+    const char *action_str = hanami_bud02_action_str(action);
+    if (!action_str)
+        return NULL;
+
+    /* Validate every hash pointer up-front so we don't leak a
+     * half-built event on later error. */
+    for (size_t i = 0; i < count; i++) {
+        if (!sha256_hex_array[i])
+            return NULL;
+    }
+
+    NostrEvent *event = nostr_event_new();
+    if (!event)
+        return NULL;
+
+    int64_t now = (int64_t)time(NULL);
+    nostr_event_set_kind(event, HANAMI_BUD02_KIND);
+    nostr_event_set_created_at(event, now);
+    nostr_event_set_content(event, "Authorize (batch)");
+
+    /* Expiration policy:
+     *  - 0 or negative -> default 120s
+     *  - anything > cap -> clamp to cap
+     * Prevents callers from minting long-lived tokens by accident. */
+    if (expiration <= 0)
+        expiration = now + HANAMI_BUD02_BATCH_DEFAULT_EXPIRATION;
+    if (expiration - now > HANAMI_BUD02_BATCH_MAX_EXPIRATION)
+        expiration = now + HANAMI_BUD02_BATCH_MAX_EXPIRATION;
+
+    /* Tag layout: [t] + N * [x] + [expiration] + optional [server] */
+    size_t tag_count = 2 + count; /* t + expiration + N x */
+    if (server_url) tag_count++;
+
+    NostrTags *tags = malloc(sizeof(NostrTags));
+    if (!tags) {
+        nostr_event_free(event);
+        return NULL;
+    }
+    tags->data = malloc(tag_count * sizeof(StringArray *));
+    if (!tags->data) {
+        free(tags);
+        nostr_event_free(event);
+        return NULL;
+    }
+    tags->count = 0;
+    tags->capacity = tag_count;
+
+    /* [t, action] */
+    {
+        StringArray *t_tag = make_tag2("t", action_str);
+        if (!t_tag) goto batch_fail;
+        tags->data[tags->count++] = t_tag;
+    }
+
+    /* N * [x, hash_i] */
+    for (size_t i = 0; i < count; i++) {
+        StringArray *x_tag = make_tag2("x", sha256_hex_array[i]);
+        if (!x_tag) goto batch_fail;
+        tags->data[tags->count++] = x_tag;
+    }
+
+    /* [expiration, ts] */
+    {
+        char exp_str[32];
+        snprintf(exp_str, sizeof(exp_str), "%" PRId64, expiration);
+        StringArray *exp_tag = make_tag2("expiration", exp_str);
+        if (!exp_tag) goto batch_fail;
+        tags->data[tags->count++] = exp_tag;
+    }
+
+    /* Optional [server, url] — omit by default (blossom.band rejects) */
+    if (server_url) {
+        StringArray *srv_tag = make_tag2("server", server_url);
+        if (!srv_tag) goto batch_fail;
+        tags->data[tags->count++] = srv_tag;
+    }
+
+    nostr_event_set_tags(event, tags);
+    return event;
+
+batch_fail:
+    for (size_t i = 0; i < tags->count; i++)
+        string_array_free(tags->data[i]);
+    free(tags->data);
+    free(tags);
+    nostr_event_free(event);
+    return NULL;
+}
+
 /* =========================================================================
  * Header creation/parsing
  * ========================================================================= */

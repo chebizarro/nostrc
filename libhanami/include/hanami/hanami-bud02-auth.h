@@ -36,6 +36,15 @@ typedef struct _NostrEvent NostrEvent;
 /** Default expiration window in seconds (5 minutes) */
 #define HANAMI_BUD02_DEFAULT_EXPIRATION 300
 
+/** Default batch-auth expiration window in seconds (2 minutes).
+ *  Kept short because the batch header may be reused across N PUTs; a
+ *  smaller window bounds the damage of a leaked header. */
+#define HANAMI_BUD02_BATCH_DEFAULT_EXPIRATION 120
+
+/** Hard cap on batch expiration window (15 minutes). Prevents callers
+ *  from minting long-lived tokens by accident. */
+#define HANAMI_BUD02_BATCH_MAX_EXPIRATION 900
+
 /* =========================================================================
  * Types
  * ========================================================================= */
@@ -109,6 +118,45 @@ NostrEvent *hanami_bud02_create_auth_event(hanami_bud02_action_t action,
                                            const char *sha256_hex,
                                            int64_t expiration,
                                            const char *server_url);
+
+/**
+ * hanami_bud02_create_batch_auth_event:
+ * @action: the BUD-02 action (typically upload)
+ * @sha256_hex_array: array of SHA-256 hashes (each 64-char hex), one per blob
+ * @count: number of hashes in @sha256_hex_array; MUST be > 0
+ * @expiration: expiration unix timestamp (0 = default: now + 120s;
+ *              capped at now + 900s to bound token lifetime).
+ * @server_url: (nullable): optional "server" tag. By default (NULL) this
+ *              tag is OMITTED — some Blossom servers (e.g. blossom.band)
+ *              reject any server-tag variant. Callers that know the
+ *              server tolerates the tag (from a capability probe) may
+ *              pass a URL; the default MUST remain "omit".
+ *
+ * Create an unsigned kind 24242 event with ONE ["t", <action>] tag,
+ * ONE ["expiration", <ts>] tag, and N ["x", <hash_i>] tags — one per
+ * blob in the batch. This single signed event is used as the shared
+ * `Authorization:` header across all N PUTs in a batch upload.
+ *
+ * The batch semantics are BUD-02-compatible: servers whose auth layer
+ * checks "sha256(request-body) is IN the event's x-tag list" (as
+ * observed on blossom.sharegap.net, blossom.band without the server tag,
+ * and blossom.primal.net; docs/reviews/porthome-blossom-batch-auth-2026-09-24.md)
+ * accept this shape. Callers MUST be prepared for a per-server fallback
+ * to one-x-per-event on a 401 (session-scoped negative cache lives in
+ * hanami-server-capability).
+ *
+ * Caller must sign with nostr_event_sign() before use (or pass the
+ * event to the higher-level batch upload API which handles signing).
+ *
+ * Returns: newly allocated NostrEvent, or NULL on error (bad action,
+ *          NULL/empty array, allocation failure). Caller must free with
+ *          nostr_event_free().
+ */
+NostrEvent *hanami_bud02_create_batch_auth_event(hanami_bud02_action_t action,
+                                                 const char *const *sha256_hex_array,
+                                                 size_t count,
+                                                 int64_t expiration,
+                                                 const char *server_url);
 
 /* =========================================================================
  * Header creation/parsing (Nostr base64 scheme)

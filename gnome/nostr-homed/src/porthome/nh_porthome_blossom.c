@@ -275,3 +275,108 @@ int nh_porthome_blossom_delete(nh_porthome_blossom_t *c, const char *sha256_hex)
     }
     return fatal;
 }
+
+/* ---- Batch upload (nostrc-xeby wire-in) ------------------------------
+ *
+ * Provisioner-first: the primary consumer today is the Phase-2 provisioner
+ * (a fresh $HOME uploads dozens of chunks all at once). syncd's on-going
+ * single-chunk pushes stay on nh_porthome_blossom_upload; changing that
+ * loop would require touching per-server accounting in nh_syncd_pusher.c
+ * beyond a small refactor — deferred to a follow-up bead if wanted.
+ */
+
+int nh_porthome_blossom_upload_batch(nh_porthome_blossom_t *c,
+                                     nh_porthome_blossom_batch_blob_t *blobs,
+                                     size_t n,
+                                     nh_porthome_blossom_batch_per_server_t *out_per_server) {
+    if (!c || !blobs || n == 0) return NH_PORTHOME_BLOSSOM_ERR_ARG;
+    if (c->n_servers == 0) return NH_PORTHOME_BLOSSOM_ERR_ARG;
+
+    /* Hash + size-cap check per blob, up-front. */
+    for (size_t i = 0; i < n; i++) {
+        if (!blobs[i].bytes && blobs[i].len > 0) return NH_PORTHOME_BLOSSOM_ERR_ARG;
+        if (blobs[i].len > c->max_blob_bytes) return NH_PORTHOME_BLOSSOM_ERR_TOO_LARGE;
+
+        uint8_t hash[32];
+        if (nh_porthome_sha256(blobs[i].bytes, blobs[i].len, hash) != NH_PORTHOME_OK)
+            return NH_PORTHOME_BLOSSOM_ERR_OOM;
+        char hex[65];
+        nh_porthome_hex64(hash, hex);
+        if (blobs[i].expected_sha256_hex &&
+            strncasecmp(blobs[i].expected_sha256_hex, hex, 64) != 0)
+            return NH_PORTHOME_BLOSSOM_ERR_HASH_MISMATCH;
+        memcpy(blobs[i].sha256_hex, hex, 65);
+    }
+
+    if (out_per_server) {
+        for (size_t si = 0; si < c->n_servers; si++) {
+            out_per_server[si].server_url      = c->servers[si];
+            out_per_server[si].chunks_uploaded = 0;
+            out_per_server[si].bytes_uploaded  = 0;
+            out_per_server[si].chunks_failed   = 0;
+            out_per_server[si].batch_fell_back = 0;
+        }
+    }
+
+    /* Build the libhanami blob array once. */
+    hanami_blossom_blob_t *hblobs = (hanami_blossom_blob_t *)calloc(n, sizeof(*hblobs));
+    hanami_blossom_batch_result_t *results =
+        (hanami_blossom_batch_result_t *)calloc(n, sizeof(*results));
+    if (!hblobs || !results) { free(hblobs); free(results); return NH_PORTHOME_BLOSSOM_ERR_OOM; }
+    for (size_t i = 0; i < n; i++) {
+        hblobs[i].sha256_hex = blobs[i].sha256_hex;
+        hblobs[i].bytes      = blobs[i].bytes;
+        hblobs[i].len        = blobs[i].len;
+    }
+
+    /* Track per-blob acceptance across servers. A blob is "success" iff
+     * at least one server accepted it. */
+    unsigned char *accepted = (unsigned char *)calloc(n, 1);
+    if (!accepted) { free(hblobs); free(results); return NH_PORTHOME_BLOSSOM_ERR_OOM; }
+
+    int last = NH_PORTHOME_BLOSSOM_ERR_NETWORK;
+
+    for (size_t si = 0; si < c->n_servers; si++) {
+        hanami_blossom_client_t *hc = NULL;
+        if (open_client(c, si, &hc) != HANAMI_OK) {
+            last = NH_PORTHOME_BLOSSOM_ERR_NETWORK;
+            if (out_per_server) out_per_server[si].chunks_failed = n;
+            continue;
+        }
+
+        hanami_error_t rc = hanami_blossom_upload_batch(hc, hblobs, n, results);
+        (void)rc; /* aggregate rc; we look at per-blob results directly */
+
+        int server_fell_back = 0;
+        for (size_t i = 0; i < n; i++) {
+            if (results[i].error == HANAMI_OK) {
+                accepted[i] = 1;
+                if (out_per_server) {
+                    out_per_server[si].chunks_uploaded++;
+                    out_per_server[si].bytes_uploaded += blobs[i].len;
+                }
+            } else {
+                if (out_per_server) out_per_server[si].chunks_failed++;
+                if (results[i].error == HANAMI_ERR_AUTH)
+                    last = NH_PORTHOME_BLOSSOM_ERR_AUTH;
+                else
+                    last = NH_PORTHOME_BLOSSOM_ERR_NETWORK;
+            }
+            if (results[i].error_class &&
+                strcmp(results[i].error_class, "batch-fell-back") == 0)
+                server_fell_back = 1;
+        }
+        if (out_per_server) out_per_server[si].batch_fell_back = server_fell_back;
+
+        hanami_blossom_client_free(hc);
+    }
+
+    /* Every blob needs ≥ 1 server accept. */
+    int all_ok = 1;
+    for (size_t i = 0; i < n; i++) {
+        if (!accepted[i]) { all_ok = 0; break; }
+    }
+
+    free(accepted); free(hblobs); free(results);
+    return all_ok ? NH_PORTHOME_BLOSSOM_OK : last;
+}
