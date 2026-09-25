@@ -68,6 +68,7 @@ set(HANAMI_SOURCES
   src/hanami-index.c
   src/hanami-bud02-auth.c
   src/hanami-server-capability.c
+  src/hanami-blossom-shim.c
   src/hanami-blossom-client.c
   src/hanami-odb-backend.c
   src/hanami-refdb-backend.c
@@ -261,6 +262,20 @@ if(BUILD_TESTING)
 
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-hanami-blossom-content-type)
+  endif()
+
+  # PNG-shim primitives for body-sniffer bypass (nostrc-bpum)
+  add_executable(test-hanami-blossom-shim tests/test_hanami_blossom_shim.c)
+  target_compile_features(test-hanami-blossom-shim PRIVATE c_std_11)
+  target_link_libraries(test-hanami-blossom-shim PRIVATE hanami)
+  add_test(NAME test-hanami-blossom-shim COMMAND test-hanami-blossom-shim)
+  set_tests_properties(test-hanami-blossom-shim PROPERTIES
+    TIMEOUT 30
+    LABELS "libhanami;blossom;shim;unit"
+  )
+
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-blossom-shim)
   endif()
 
   add_executable(test-hanami-odb-backend tests/test_hanami_odb_backend.c)

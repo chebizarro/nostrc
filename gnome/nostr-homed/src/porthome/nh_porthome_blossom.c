@@ -11,6 +11,7 @@
 #include "nh_porthome_crypto.h"
 
 #include <hanami/hanami-blossom-client.h>
+#include <hanami/hanami-blossom-shim.h>
 #include <hanami/hanami-types.h>
 
 #include <ctype.h>
@@ -20,6 +21,22 @@
 #include <strings.h>
 #include <time.h>
 #include <unistd.h>
+
+/* PNG-shim opt-in (nostrc-bpum). When enabled, every uploaded blob is
+ * wrapped in the deterministic PNG shim (see hanami-blossom-shim.h)
+ * BEFORE hashing — the manifest chunk_hash IS sha256(shim||ciphertext).
+ * The decision applies uniformly to every server in this session; a
+ * per-server opt-in with mixed-mode manifests is intentionally out of
+ * scope for v1 (see the shim review §3). Enable by exporting
+ *   NOSTR_HOMED_BLOSSOM_PNG_SHIM=1
+ * in the pusher's environment. Unset or "0" keeps the legacy raw-bytes
+ * behaviour bit-for-bit.
+ */
+static int nh_porthome_shim_enabled(void)
+{
+    const char *e = getenv("NOSTR_HOMED_BLOSSOM_PNG_SHIM");
+    return (e && e[0] == '1' && e[1] == '\0') ? 1 : 0;
+}
 
 struct nh_porthome_blossom {
     char **servers;             /* owned */
@@ -154,13 +171,39 @@ int nh_porthome_blossom_upload(nh_porthome_blossom_t *c,
     if (!c || (!data && len) || !out_sha256_hex) return NH_PORTHOME_BLOSSOM_ERR_ARG;
     if (len > c->max_blob_bytes) return NH_PORTHOME_BLOSSOM_ERR_TOO_LARGE;
 
+    /* PNG-shim (nostrc-bpum): if enabled, wrap the ciphertext in a
+     * deterministic PNG prefix BEFORE hashing. The manifest chunk_hash
+     * IS sha256(shim||ct); the fetcher recognises the PNG signature at
+     * the head of the downloaded blob and strips 41 bytes before
+     * decrypting. Convergence is preserved: same ciphertext -> same
+     * shimmed bytes -> same sha256. */
+    const uint8_t *upload_bytes = data;
+    size_t         upload_len   = len;
+    uint8_t       *shim_buf     = NULL;
+    if (nh_porthome_shim_enabled()) {
+        size_t enclen = hanami_blossom_shim_encoded_len(len);
+        if (enclen > c->max_blob_bytes) return NH_PORTHOME_BLOSSOM_ERR_TOO_LARGE;
+        shim_buf = (uint8_t *)malloc(enclen);
+        if (!shim_buf) return NH_PORTHOME_BLOSSOM_ERR_OOM;
+        if (hanami_blossom_shim_encode(data, len, shim_buf, enclen) != HANAMI_OK) {
+            free(shim_buf);
+            return NH_PORTHOME_BLOSSOM_ERR_ARG;
+        }
+        upload_bytes = shim_buf;
+        upload_len   = enclen;
+    }
+
     uint8_t hash[32];
-    if (nh_porthome_sha256(data, len, hash) != NH_PORTHOME_OK)
+    if (nh_porthome_sha256(upload_bytes, upload_len, hash) != NH_PORTHOME_OK) {
+        free(shim_buf);
         return NH_PORTHOME_BLOSSOM_ERR_OOM;
+    }
     char hex[65];
     nh_porthome_hex64(hash, hex);
-    if (expected_sha256_hex && strncasecmp(expected_sha256_hex, hex, 64) != 0)
+    if (expected_sha256_hex && strncasecmp(expected_sha256_hex, hex, 64) != 0) {
+        free(shim_buf);
         return NH_PORTHOME_BLOSSOM_ERR_HASH_MISMATCH;
+    }
     memcpy(out_sha256_hex, hex, 65);
 
     /* Upload to EVERY server so a subsequent read from any live server
@@ -176,7 +219,7 @@ int nh_porthome_blossom_upload(nh_porthome_blossom_t *c,
             hanami_blossom_client_t *hc = NULL;
             if (open_client(c, si, &hc) != HANAMI_OK) { last = NH_PORTHOME_BLOSSOM_ERR_NETWORK; goto next_try; }
             hanami_blob_descriptor_t *desc = NULL;
-            hanami_error_t rc = hanami_blossom_upload(hc, data, len, hex, &desc);
+            hanami_error_t rc = hanami_blossom_upload(hc, upload_bytes, upload_len, hex, &desc);
             hanami_blossom_client_free(hc);
             if (desc) hanami_blob_descriptor_free(desc);
             if (rc == HANAMI_OK) { server_ok = 1; break; }
@@ -188,6 +231,7 @@ int nh_porthome_blossom_upload(nh_porthome_blossom_t *c,
         }
         if (server_ok) successes++;
     }
+    free(shim_buf);
     return successes >= 1 ? NH_PORTHOME_BLOSSOM_OK : last;
 }
 
@@ -292,19 +336,83 @@ int nh_porthome_blossom_upload_batch(nh_porthome_blossom_t *c,
     if (!c || !blobs || n == 0) return NH_PORTHOME_BLOSSOM_ERR_ARG;
     if (c->n_servers == 0) return NH_PORTHOME_BLOSSOM_ERR_ARG;
 
+    /* PNG-shim (nostrc-bpum): if enabled, wrap every blob's ciphertext
+     * BEFORE hashing so the manifest chunk_hash reflects sha256(shim||
+     * ct). Shimmed bytes are held in a parallel array whose lifetime
+     * runs the length of this call. */
+    int shim_on = nh_porthome_shim_enabled();
+    uint8_t **shim_bufs = NULL;
+    if (shim_on) {
+        shim_bufs = (uint8_t **)calloc(n, sizeof(*shim_bufs));
+        if (!shim_bufs) return NH_PORTHOME_BLOSSOM_ERR_OOM;
+    }
+
     /* Hash + size-cap check per blob, up-front. */
     for (size_t i = 0; i < n; i++) {
-        if (!blobs[i].bytes && blobs[i].len > 0) return NH_PORTHOME_BLOSSOM_ERR_ARG;
-        if (blobs[i].len > c->max_blob_bytes) return NH_PORTHOME_BLOSSOM_ERR_TOO_LARGE;
+        if (!blobs[i].bytes && blobs[i].len > 0) {
+            if (shim_bufs) {
+                for (size_t j = 0; j < i; j++) free(shim_bufs[j]);
+                free(shim_bufs);
+            }
+            return NH_PORTHOME_BLOSSOM_ERR_ARG;
+        }
+        if (blobs[i].len > c->max_blob_bytes) {
+            if (shim_bufs) {
+                for (size_t j = 0; j < i; j++) free(shim_bufs[j]);
+                free(shim_bufs);
+            }
+            return NH_PORTHOME_BLOSSOM_ERR_TOO_LARGE;
+        }
+
+        const uint8_t *up_bytes = blobs[i].bytes;
+        size_t         up_len   = blobs[i].len;
+        if (shim_on) {
+            size_t enclen = hanami_blossom_shim_encoded_len(blobs[i].len);
+            if (enclen > c->max_blob_bytes) {
+                for (size_t j = 0; j < i; j++) free(shim_bufs[j]);
+                free(shim_bufs);
+                return NH_PORTHOME_BLOSSOM_ERR_TOO_LARGE;
+            }
+            shim_bufs[i] = (uint8_t *)malloc(enclen);
+            if (!shim_bufs[i]) {
+                for (size_t j = 0; j < i; j++) free(shim_bufs[j]);
+                free(shim_bufs);
+                return NH_PORTHOME_BLOSSOM_ERR_OOM;
+            }
+            if (hanami_blossom_shim_encode(blobs[i].bytes, blobs[i].len,
+                                           shim_bufs[i], enclen) != HANAMI_OK) {
+                for (size_t j = 0; j <= i; j++) free(shim_bufs[j]);
+                free(shim_bufs);
+                return NH_PORTHOME_BLOSSOM_ERR_ARG;
+            }
+            up_bytes = shim_bufs[i];
+            up_len   = enclen;
+            /* Redirect the caller's blob record onto the shimmed
+             * bytes for the remainder of this call. The porthome
+             * caller only uses these fields as inputs to the batch
+             * uploader, so the temporary swap is safe. */
+            blobs[i].bytes = up_bytes;
+            blobs[i].len   = up_len;
+        }
 
         uint8_t hash[32];
-        if (nh_porthome_sha256(blobs[i].bytes, blobs[i].len, hash) != NH_PORTHOME_OK)
+        if (nh_porthome_sha256(up_bytes, up_len, hash) != NH_PORTHOME_OK) {
+            if (shim_bufs) {
+                for (size_t j = 0; j < n; j++) free(shim_bufs[j]);
+                free(shim_bufs);
+            }
             return NH_PORTHOME_BLOSSOM_ERR_OOM;
+        }
         char hex[65];
         nh_porthome_hex64(hash, hex);
         if (blobs[i].expected_sha256_hex &&
-            strncasecmp(blobs[i].expected_sha256_hex, hex, 64) != 0)
+            strncasecmp(blobs[i].expected_sha256_hex, hex, 64) != 0) {
+            if (shim_bufs) {
+                for (size_t j = 0; j < n; j++) free(shim_bufs[j]);
+                free(shim_bufs);
+            }
             return NH_PORTHOME_BLOSSOM_ERR_HASH_MISMATCH;
+        }
         memcpy(blobs[i].sha256_hex, hex, 65);
     }
 
@@ -378,5 +486,9 @@ int nh_porthome_blossom_upload_batch(nh_porthome_blossom_t *c,
     }
 
     free(accepted); free(hblobs); free(results);
+    if (shim_bufs) {
+        for (size_t j = 0; j < n; j++) free(shim_bufs[j]);
+        free(shim_bufs);
+    }
     return all_ok ? NH_PORTHOME_BLOSSOM_OK : last;
 }

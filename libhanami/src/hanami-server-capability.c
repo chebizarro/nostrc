@@ -15,6 +15,8 @@ void hanami_server_capabilities_init(hanami_server_capabilities_t *caps)
     caps->batch_ok          = HANAMI_CAP_UNKNOWN;
     caps->server_tag_ok     = HANAMI_CAP_UNKNOWN;
     caps->strict_x_binding  = HANAMI_CAP_UNKNOWN;
+    caps->raw_random_ok     = HANAMI_CAP_UNKNOWN;
+    caps->png_shim_ok       = HANAMI_CAP_UNKNOWN;
     caps->last_probe_ts     = 0;
     caps->last_401_ts       = 0;
     caps->reachable         = false;

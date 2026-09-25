@@ -73,6 +73,23 @@ typedef struct {
     hanami_capability_state_t batch_ok;
     hanami_capability_state_t server_tag_ok;
     hanami_capability_state_t strict_x_binding;
+    /**
+     * raw_random_ok: YES if a plain random-bytes upload was accepted
+     * (2xx) by this server, NO if it was rejected 4xx by a body-sniffer
+     * (typically 415 "unsupported media type"). See nostrc-bpum +
+     * docs/reviews/porthome-blossom-content-type-2026-09-25.md §2.
+     */
+    hanami_capability_state_t raw_random_ok;
+    /**
+     * png_shim_ok: YES if an upload wrapped in the deterministic
+     * hanami-blossom-shim PNG prefix (see hanami-blossom-shim.h) was
+     * accepted (2xx) by this server. Together with raw_random_ok this
+     * tells the pusher whether it needs the shim on this endpoint.
+     * Empirical validation against blossom.band / blossom.primal.net
+     * is a follow-up item (nostrc-bpum probe extension) — the flag is
+     * shipped UNKNOWN by default and flipped by an explicit probe.
+     */
+    hanami_capability_state_t png_shim_ok;
     /** Unix timestamp of last probe (0 = never probed). */
     int64_t last_probe_ts;
     /** Unix timestamp of last observed 401 (0 = none). */

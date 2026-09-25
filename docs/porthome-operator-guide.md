@@ -288,6 +288,54 @@ causes: relay requires NIP-42 auth and the daemon is not carrying it
 (known-broken; use a relay that does not gate kind-30078), or the
 account is out-of-quota on the relay. Check the relay's own logs.
 
+### 5.1 Blossom body-sniffer 415 (community servers)
+
+Some community Blossom servers (`blossom.band`, `blossom.primal.net`)
+run body-sniffing content-policy filters that reject encrypted portable-
+home chunks with `415 Unsupported Media Type` — the chunks look like
+random bytes and libmagic-style detectors classify them as
+`application/octet-stream`. Two knobs are available to the operator:
+
+* **`NOSTR_HOMED_HANAMI_UPLOAD_CONTENT_TYPE`** — swap the outgoing
+  `Content-Type` header of PUT /upload requests. Empirical evidence
+  (see `docs/reviews/porthome-blossom-content-type-2026-09-25.md` §2)
+  says this alone does not unlock band/primal — their sniffers ignore
+  the header. Useful only when an operator conversation opens a
+  specific allowlisted CT for a specific server.
+
+* **`NOSTR_HOMED_BLOSSOM_PNG_SHIM=1`** (opt-in — off by default) —
+  wrap every uploaded chunk in a deterministic 41-byte PNG prefix so
+  the body sniffer classifies the blob as `image/png`. The prefix
+  becomes part of the addressable blob (`sha256(shim||ciphertext)`
+  is what goes in the manifest); the fetch helper recognises the PNG
+  signature at the head of the downloaded blob and strips 41 bytes
+  before decrypting. D4 convergence is preserved because the shim is
+  deterministic in the ciphertext bytes and length. Live-probe
+  validation against blossom.band / blossom.primal.net is pending
+  (see `docs/reviews/porthome-blossom-shim-2026-09-25.md` §5).
+
+  Turn it on for the entire push run and every server in the
+  destination set — the design does not support mixed-mode manifests
+  in v1. Runtime cost is +41 bytes per chunk. Fetchers detect and
+  strip regardless of the env var, so upgrading the pusher to shim
+  without redeploying fetchers is safe.
+
+Neither knob affects existing pushes if unset — the legacy raw-bytes
+wire is bit-identical to the pre-bpum behaviour.
+
+**Suggested default Blossom set (as of 2026-09-25):**
+
+```
+--blossom https://blossom.sharegap.net
+# Add band/primal only after a live probe confirms shim=1 unlocks them:
+# --blossom https://blossom.band
+# --blossom https://blossom.primal.net
+```
+
+Recommend keeping a self-hosted or partner Blossom server in the
+default enroll suggestions — community-run servers may change
+content policy at any time.
+
 ## 6. Uninstall / rotate
 
 To rotate an identity (compromised seed, or migrating to a new hosting
