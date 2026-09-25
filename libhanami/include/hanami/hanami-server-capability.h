@@ -49,9 +49,25 @@ typedef enum {
 } hanami_capability_state_t;
 
 /**
+ * Maximum length of a Content-Type string (including trailing NUL).
+ * Long enough for e.g. "application/vnd.blossom.v1+octet-stream" plus
+ * a handful of parameters; a value longer than this is rejected.
+ */
+#define HANAMI_PREFERRED_CT_MAX 64
+
+/**
  * hanami_server_capabilities_t:
  * Per-server capability record. All fields default to UNKNOWN / 0 until
  * a probe or observed 401 flips them.
+ *
+ * preferred_content_type: session-scoped per-server override of the
+ * upload Content-Type header (nostrc-bpum). Empty string ("") means
+ * "use client default", which is itself either the env-var override
+ * NOSTR_HOMED_HANAMI_UPLOAD_CONTENT_TYPE or the compile-time default
+ * HANAMI_BLOSSOM_UPLOAD_CONTENT_TYPE (application/octet-stream). Set
+ * this when a probe or an observed 415 tells us a specific server
+ * prefers a non-default Content-Type. Length is bounded by
+ * HANAMI_PREFERRED_CT_MAX (including the trailing NUL).
  */
 typedef struct {
     hanami_capability_state_t batch_ok;
@@ -63,6 +79,8 @@ typedef struct {
     int64_t last_401_ts;
     /** True if reachability probe (BUD-01 HEAD/GET) succeeded. */
     bool reachable;
+    /** Per-server upload Content-Type override; "" = use client default. */
+    char preferred_content_type[HANAMI_PREFERRED_CT_MAX];
 } hanami_server_capabilities_t;
 
 /**

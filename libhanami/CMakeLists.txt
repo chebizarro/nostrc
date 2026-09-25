@@ -249,6 +249,20 @@ if(BUILD_TESTING)
     apply_sanitizers(test-hanami-blossom-batch)
   endif()
 
+  # Upload Content-Type resolver (nostrc-bpum)
+  add_executable(test-hanami-blossom-content-type tests/test_hanami_blossom_content_type.c)
+  target_compile_features(test-hanami-blossom-content-type PRIVATE c_std_11)
+  target_link_libraries(test-hanami-blossom-content-type PRIVATE hanami nostr pthread)
+  add_test(NAME test-hanami-blossom-content-type COMMAND test-hanami-blossom-content-type)
+  set_tests_properties(test-hanami-blossom-content-type PROPERTIES
+    TIMEOUT 60
+    LABELS "libhanami;blossom;content-type;unit"
+  )
+
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-blossom-content-type)
+  endif()
+
   add_executable(test-hanami-odb-backend tests/test_hanami_odb_backend.c)
   target_compile_features(test-hanami-odb-backend PRIVATE c_std_11)
   target_link_libraries(test-hanami-odb-backend PRIVATE hanami PkgConfig::LIBGIT2 PkgConfig::SQLITE3)

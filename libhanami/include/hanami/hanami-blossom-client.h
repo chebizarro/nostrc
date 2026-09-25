@@ -27,6 +27,30 @@ extern "C" {
 typedef struct hanami_blossom_client hanami_blossom_client_t;
 
 /* =========================================================================
+ * Upload Content-Type (nostrc-bpum)
+ * =========================================================================
+ *
+ * Blossom PUT /upload sends a body Content-Type header. Community servers
+ * (blossom.band, blossom.primal.net) apply body-sniffing content-policy
+ * filters that reject 415 Unsupported Media Type for encrypted porthome
+ * chunks (which are indistinguishable from random bytes). See
+ * docs/reviews/porthome-blossom-content-type-2026-09-25.md.
+ *
+ * Resolution order at PUT time:
+ *   1. Per-server preferred_content_type in the capability cache
+ *      (populated by a probe or set explicitly by an operator via
+ *      hanami_blossom_client_set_upload_content_type). Empty string
+ *      means "not set — use client default".
+ *   2. Environment override NOSTR_HOMED_HANAMI_UPLOAD_CONTENT_TYPE
+ *      (read at each PUT to allow lab experimentation without restart).
+ *   3. Compile-time HANAMI_BLOSSOM_UPLOAD_CONTENT_TYPE default.
+ */
+#ifndef HANAMI_BLOSSOM_UPLOAD_CONTENT_TYPE
+#define HANAMI_BLOSSOM_UPLOAD_CONTENT_TYPE "application/octet-stream"
+#endif
+#define HANAMI_BLOSSOM_UPLOAD_CT_ENV "NOSTR_HOMED_HANAMI_UPLOAD_CONTENT_TYPE"
+
+/* =========================================================================
  * Configuration
  * ========================================================================= */
 
@@ -253,6 +277,27 @@ hanami_error_t hanami_blossom_upload_batch(hanami_blossom_client_t *client,
  */
 const hanami_server_capabilities_t *
 hanami_blossom_get_capabilities(hanami_blossom_client_t *client);
+
+/**
+ * hanami_blossom_client_set_upload_content_type:
+ * @client: client handle
+ * @content_type: (nullable): a NUL-terminated Content-Type string to send
+ *                on this client's PUT /upload requests, or NULL / ""
+ *                to clear the per-server override and fall back to the
+ *                env-var / compile-time default.
+ *
+ * Session-scoped, per-client. The value is stored in the capability
+ * cache's `preferred_content_type` field and takes precedence over the
+ * NOSTR_HOMED_HANAMI_UPLOAD_CONTENT_TYPE env var and the compile-time
+ * HANAMI_BLOSSOM_UPLOAD_CONTENT_TYPE default. Truncated to fit
+ * HANAMI_PREFERRED_CT_MAX (bytes including trailing NUL).
+ *
+ * Returns: HANAMI_OK on success, HANAMI_ERR_INVALID_ARG on NULL client
+ *          or a content_type exceeding HANAMI_PREFERRED_CT_MAX-1 bytes.
+ */
+hanami_error_t
+hanami_blossom_client_set_upload_content_type(hanami_blossom_client_t *client,
+                                              const char *content_type);
 
 /* =========================================================================
  * Per-server capability probe (nostrc-ypn2)

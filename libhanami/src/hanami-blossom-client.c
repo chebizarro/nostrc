@@ -368,6 +368,80 @@ hanami_blossom_get_capabilities(hanami_blossom_client_t *client)
     return client ? &client->caps : NULL;
 }
 
+hanami_error_t
+hanami_blossom_client_set_upload_content_type(hanami_blossom_client_t *client,
+                                              const char *content_type)
+{
+    if (!client) return HANAMI_ERR_INVALID_ARG;
+    if (!content_type || !*content_type) {
+        client->caps.preferred_content_type[0] = '\0';
+        return HANAMI_OK;
+    }
+    size_t n = strlen(content_type);
+    if (n >= HANAMI_PREFERRED_CT_MAX) return HANAMI_ERR_INVALID_ARG;
+    /* Reject CR/LF to prevent header injection. */
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)content_type[i];
+        if (c == '\r' || c == '\n' || c == '\0') return HANAMI_ERR_INVALID_ARG;
+    }
+    memcpy(client->caps.preferred_content_type, content_type, n + 1);
+    return HANAMI_OK;
+}
+
+/* Resolve the Content-Type value to send on PUT /upload. Precedence:
+ *   1. c->caps.preferred_content_type (per-server override; empty = skip)
+ *   2. env HANAMI_BLOSSOM_UPLOAD_CT_ENV (lab / operator override)
+ *   3. HANAMI_BLOSSOM_UPLOAD_CONTENT_TYPE (compile-time default)
+ * Returns a pointer into a caller-supplied 128-byte buffer. Never NULL.
+ * The buffer is used only when the env value is chosen; static strings
+ * are returned directly when they fit. Any embedded CR/LF or NUL in the
+ * env value is treated as "not set" (defence-in-depth against a malicious
+ * env override).
+ */
+static const char *resolve_upload_content_type(const hanami_blossom_client_t *c,
+                                               char buf[HANAMI_PREFERRED_CT_MAX])
+{
+    if (c && c->caps.preferred_content_type[0] != '\0') {
+        /* Per-server override wins; copy into caller buf for uniformity. */
+        size_t n = strnlen(c->caps.preferred_content_type,
+                           HANAMI_PREFERRED_CT_MAX);
+        if (n > 0 && n < HANAMI_PREFERRED_CT_MAX) {
+            memcpy(buf, c->caps.preferred_content_type, n);
+            buf[n] = '\0';
+            return buf;
+        }
+    }
+    const char *env = getenv(HANAMI_BLOSSOM_UPLOAD_CT_ENV);
+    if (env && *env) {
+        size_t n = strnlen(env, HANAMI_PREFERRED_CT_MAX);
+        if (n > 0 && n < HANAMI_PREFERRED_CT_MAX) {
+            int clean = 1;
+            for (size_t i = 0; i < n; i++) {
+                unsigned char ch = (unsigned char)env[i];
+                if (ch == '\r' || ch == '\n' || ch == '\0') { clean = 0; break; }
+            }
+            if (clean) {
+                memcpy(buf, env, n);
+                buf[n] = '\0';
+                return buf;
+            }
+        }
+    }
+    return HANAMI_BLOSSOM_UPLOAD_CONTENT_TYPE;
+}
+
+/* Format a full "Content-Type: <value>" header string into `out` of size
+ * `cap`. Returns 0 on success, -1 if truncated. */
+static int format_content_type_header(const hanami_blossom_client_t *c,
+                                      char *out, size_t cap)
+{
+    char ctbuf[HANAMI_PREFERRED_CT_MAX];
+    const char *ct = resolve_upload_content_type(c, ctbuf);
+    int n = snprintf(out, cap, "Content-Type: %s", ct);
+    if (n < 0 || (size_t)n >= cap) return -1;
+    return 0;
+}
+
 void hanami_blossom_client_free(hanami_blossom_client_t *client)
 {
     if (!client) return;
@@ -559,9 +633,16 @@ hanami_error_t hanami_blossom_upload(hanami_blossom_client_t *client,
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)len);
 
+    char cth[HANAMI_PREFERRED_CT_MAX + 16];
+    if (format_content_type_header(client, cth, sizeof cth) != 0) {
+        /* Should be unreachable — resolver-produced values are bounded
+         * by HANAMI_PREFERRED_CT_MAX; fall back to the compile-time default. */
+        snprintf(cth, sizeof cth, "Content-Type: %s",
+                 HANAMI_BLOSSOM_UPLOAD_CONTENT_TYPE);
+    }
     struct curl_slist *headers = NULL;
     headers = curl_slist_append(headers, auth_header);
-    headers = curl_slist_append(headers, "Content-Type: application/octet-stream");
+    headers = curl_slist_append(headers, cth);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
     dyn_buf_t resp;
@@ -751,9 +832,14 @@ static void put_one_blob(hanami_blossom_client_t *c,
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)len);
 
+    char cth[HANAMI_PREFERRED_CT_MAX + 16];
+    if (format_content_type_header(c, cth, sizeof cth) != 0) {
+        snprintf(cth, sizeof cth, "Content-Type: %s",
+                 HANAMI_BLOSSOM_UPLOAD_CONTENT_TYPE);
+    }
     struct curl_slist *headers = NULL;
     headers = curl_slist_append(headers, full);
-    headers = curl_slist_append(headers, "Content-Type: application/octet-stream");
+    headers = curl_slist_append(headers, cth);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
     dyn_buf_t resp; dyn_buf_init(&resp);
