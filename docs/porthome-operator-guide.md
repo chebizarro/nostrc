@@ -311,14 +311,34 @@ random bytes and libmagic-style detectors classify them as
   signature at the head of the downloaded blob and strips 41 bytes
   before decrypting. D4 convergence is preserved because the shim is
   deterministic in the ciphertext bytes and length. Live-probe
-  validation against blossom.band / blossom.primal.net is pending
-  (see `docs/reviews/porthome-blossom-shim-2026-09-25.md` §5).
+  validation on blossom.primal.net returned `200 OK` (hy3e §2);
+  blossom.band still 500s (its full PNG decoder blows up on the
+  truncated IDAT). See
+  `docs/reviews/porthome-hy3e-shim-live-probe-2026-09-25.md`.
 
   Turn it on for the entire push run and every server in the
   destination set — the design does not support mixed-mode manifests
   in v1. Runtime cost is +41 bytes per chunk. Fetchers detect and
   strip regardless of the env var, so upgrading the pusher to shim
   without redeploying fetchers is safe.
+
+  **Default is now auto-decide (`nostrc-si30`).** With the env var
+  unset, the pusher runs a body-sniffer probe against each
+  destination server at push start (1 raw + 1 shim PUT per server,
+  capped) and flips the shim on iff at least one server has
+  `raw_random_ok=NO && png_shim_ok=YES`. The decision is recorded on
+  the `push:` log line:
+
+  ```
+  push: shim=on  (auto: https://blossom.primal.net requires it — raw_random_ok=no, png_shim_ok=yes)
+  push: shim=off (auto: all 2 servers accept raw bytes)
+  push: shim=on  (forced by NOSTR_HOMED_BLOSSOM_PNG_SHIM=1)
+  ```
+
+  Explicit `=1` / `=0` still wins over auto-decide. Set
+  `NOSTR_HOMED_HANAMI_SKIP_CAPABILITY_PROBE=1` to disable the probe
+  entirely — the pusher then falls back to env-var-only semantics
+  (default off).
 
 Neither knob affects existing pushes if unset — the legacy raw-bytes
 wire is bit-identical to the pre-bpum behaviour.
@@ -327,14 +347,20 @@ wire is bit-identical to the pre-bpum behaviour.
 
 ```
 --blossom https://blossom.sharegap.net
-# Add band/primal only after a live probe confirms shim=1 unlocks them:
-# --blossom https://blossom.band
-# --blossom https://blossom.primal.net
+# primal.net is now known-good with the auto-decide shim:
+--blossom https://blossom.primal.net
+# blossom.band is NOT in the default set — its full PNG decoder
+# rejects the shim (500). Reintroduce only after the fuller-PNG shim
+# lands.
 ```
 
 Recommend keeping a self-hosted or partner Blossom server in the
 default enroll suggestions — community-run servers may change
-content policy at any time.
+content policy at any time. The `packaging/lab-blossom/` recipe
+in this repository is a minimum-fuss lab / CI Blossom you can stand
+up on your own public IP; see its `README.md` for the SSRF
+pre-check requirement (the fetcher refuses private-range Blossom
+URLs — the recipe MUST run on a publicly-routable host).
 
 ## 6. Uninstall / rotate
 

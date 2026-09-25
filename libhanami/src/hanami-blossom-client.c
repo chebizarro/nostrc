@@ -5,6 +5,7 @@
  */
 
 #include "hanami/hanami-blossom-client.h"
+#include "hanami/hanami-blossom-shim.h"
 #include "hanami/hanami-bud02-auth.h"
 #include "hanami/hanami-index.h"
 #include "hanami/hanami-server-capability.h"
@@ -1270,6 +1271,91 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
         }
     }
 
+    /* (e) raw-random body-sniffer probe (nostrc-prli). Upload one
+     * fresh 1 KiB session-random blob with a single-x auth event and
+     * the client's default Content-Type (typically
+     * application/octet-stream). 2xx -> raw_random_ok=YES; a body-
+     * sniffer 4xx (415 unsupported media type, 400 content-mismatch)
+     * -> raw_random_ok=NO. 401/403 leaves the flag UNKNOWN — that
+     * failure is auth, not content-policy, and shouldn't feed into
+     * the shim auto-decide. */
+    uint8_t blob3[1024];
+    char h3[65];
+    bool put_e_success = false;
+    if (probe_random_bytes(blob3, sizeof blob3) == 0) {
+        probe_sha256_hex(blob3, sizeof blob3, h3);
+        const char *hh[1] = { h3 };
+        char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
+                                     false, HANAMI_BUD02_ACTION_UPLOAD);
+        if (hv) {
+            long st = 0; hanami_error_t err;
+            put_one_blob(c, h3, blob3, sizeof blob3, hv, &st, &err);
+            free(hv);
+            if (st >= 200 && st < 300) {
+                c->caps.raw_random_ok = HANAMI_CAP_YES;
+                put_e_success = true;
+            } else if (st == 400 || st == 415 || st == 422 ||
+                       (st >= 500 && st < 600)) {
+                /* 4xx content-policy or 5xx decoder blowup — either way
+                 * this server did not accept the raw random bytes. */
+                c->caps.raw_random_ok = HANAMI_CAP_NO;
+            }
+        }
+    }
+
+    /* (f) PNG-shim body-sniffer probe (nostrc-prli). Wrap the SAME
+     * fresh 1 KiB random blob with the deterministic 41-byte PNG
+     * shim, upload with Content-Type: image/png, single-x auth over
+     * the shim-inclusive sha256. 2xx -> png_shim_ok=YES; 4xx/5xx ->
+     * png_shim_ok=NO. This is the empirical test that unlocked
+     * blossom.primal.net in hy3e §2 while blossom.band's full-PNG
+     * decoder still returned 500 on the truncated IDAT stream. */
+    bool put_f_success = false;
+    char h_shim[65] = {0};
+    {
+        size_t enc_len = hanami_blossom_shim_encoded_len(sizeof blob3);
+        uint8_t *shim_buf = (uint8_t *)malloc(enc_len);
+        if (shim_buf) {
+            if (hanami_blossom_shim_encode(blob3, sizeof blob3,
+                                           shim_buf, enc_len) == HANAMI_OK) {
+                probe_sha256_hex(shim_buf, enc_len, h_shim);
+                const char *hh[1] = { h_shim };
+                char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
+                                             false,
+                                             HANAMI_BUD02_ACTION_UPLOAD);
+                if (hv) {
+                    /* Temporarily flip the client's preferred
+                     * Content-Type to image/png so put_one_blob picks
+                     * it up; restore afterwards. */
+                    char saved_ct[HANAMI_PREFERRED_CT_MAX];
+                    memcpy(saved_ct, c->caps.preferred_content_type,
+                           sizeof saved_ct);
+                    (void)hanami_blossom_client_set_upload_content_type(
+                              c, "image/png");
+
+                    long st = 0; hanami_error_t err;
+                    put_one_blob(c, h_shim, shim_buf, enc_len, hv,
+                                 &st, &err);
+                    free(hv);
+
+                    /* Restore whatever was there before (including
+                     * "empty" == client default). */
+                    memcpy(c->caps.preferred_content_type, saved_ct,
+                           sizeof saved_ct);
+
+                    if (st >= 200 && st < 300) {
+                        c->caps.png_shim_ok = HANAMI_CAP_YES;
+                        put_f_success = true;
+                    } else if (st == 400 || st == 415 || st == 422 ||
+                               (st >= 500 && st < 600)) {
+                        c->caps.png_shim_ok = HANAMI_CAP_NO;
+                    }
+                }
+            }
+            free(shim_buf);
+        }
+    }
+
     c->caps.last_probe_ts = (int64_t)time(NULL);
 
     /* Best-effort cleanup. Only bothers with blobs we saw stored (2xx).
@@ -1285,6 +1371,18 @@ hanami_error_t hanami_server_probe_capabilities(hanami_blossom_client_t *c)
         char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
                                      false, HANAMI_BUD02_ACTION_DELETE);
         if (hv) { probe_delete_blob(c, h2, hv); free(hv); }
+    }
+    if (put_e_success) {
+        const char *hh[1] = { h3 };
+        char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
+                                     false, HANAMI_BUD02_ACTION_DELETE);
+        if (hv) { probe_delete_blob(c, h3, hv); free(hv); }
+    }
+    if (put_f_success) {
+        const char *hh[1] = { h_shim };
+        char *hv = probe_mint_header(sk_hex, hh, 1, NULL,
+                                     false, HANAMI_BUD02_ACTION_DELETE);
+        if (hv) { probe_delete_blob(c, h_shim, hv); free(hv); }
     }
 
     free(sk_hex);

@@ -1,0 +1,19 @@
+# packaging/lab-blossom/.gitignore
+#
+# Never commit TLS material or accumulated blob state from an operator's
+# lab run.
+
+# TLS material — belongs on the deployment host, NOT in the repo.
+*.pem
+*.key
+*.crt
+*.csr
+
+# Runtime blob store — created by docker-compose at bring-up.
+blobs/
+data/
+
+# Local overrides.
+docker-compose.override.yml
+*.local.yaml
+*.local.yml

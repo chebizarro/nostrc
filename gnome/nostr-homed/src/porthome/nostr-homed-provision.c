@@ -51,6 +51,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <stdbool.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1177,6 +1178,47 @@ static int cmd_push(int argc, char **argv) {
         return NH_PROV_CLI_EXIT_INTERNAL;
     }
 
+    /* Auto-shim decision (nostrc-si30) — resolved ONCE at push start and
+     * used consistently for manifest hashing AND upload. The URL-keyed
+     * capability cache in libhanami holds the answer; if any destination
+     * server has raw_random_ok=NO && png_shim_ok=YES the shim goes on for
+     * the whole push. The env-var override (NOSTR_HOMED_BLOSSOM_PNG_SHIM)
+     * still trumps auto-decide when explicitly "1" or "0".
+     *
+     * Log the reason so the field operator sees WHY the shim flipped —
+     * this is the single most common thing to misread from a `push` log
+     * when a manifest mismatches Blossom addressing (nostrc-wmb5). */
+    hanami_blossom_shim_reason_t shim_reason = HANAMI_SHIM_REASON_UNKNOWN;
+    char shim_reason_url[256] = {0};
+    bool push_shim_on = hanami_blossom_shim_active_for_ex(
+        server_urls, a.n_blossom_servers,
+        &shim_reason, shim_reason_url, sizeof shim_reason_url);
+    switch (shim_reason) {
+    case HANAMI_SHIM_REASON_ENV_FORCE_ON:
+        fprintf(stderr,
+                "push: shim=on (forced by NOSTR_HOMED_BLOSSOM_PNG_SHIM=1)\n");
+        break;
+    case HANAMI_SHIM_REASON_ENV_FORCE_OFF:
+        fprintf(stderr,
+                "push: shim=off (forced by NOSTR_HOMED_BLOSSOM_PNG_SHIM=0)\n");
+        break;
+    case HANAMI_SHIM_REASON_AUTO_REQUIRED:
+        fprintf(stderr,
+                "push: shim=on (auto: %s requires it — raw_random_ok=no, png_shim_ok=yes)\n",
+                shim_reason_url[0] ? shim_reason_url : "(server)");
+        break;
+    case HANAMI_SHIM_REASON_AUTO_RAW_OK:
+        fprintf(stderr,
+                "push: shim=off (auto: all %zu servers accept raw bytes)\n",
+                a.n_blossom_servers);
+        break;
+    case HANAMI_SHIM_REASON_AUTO_FALLBACK:
+    default:
+        fprintf(stderr, "push: shim=%s (auto: fallback — capabilities unknown)\n",
+                push_shim_on ? "on" : "off");
+        break;
+    }
+
     /* ── Build the manifest + per-file chunk list + shared blob batch. ── */
     nh_porthome_manifest m;
     uint8_t root_id[NH_PORTHOME_SHA256_LEN];
@@ -1309,7 +1351,13 @@ static int cmd_push(int argc, char **argv) {
                  * BEFORE we record it in blob_hex_strs / chs[ci].sha256.
                  * When the shim is off, addr stays sha256(ct) — the
                  * pre-wmb5 behaviour bit-for-bit. */
-                if (hanami_blossom_shim_active()) {
+                if (push_shim_on) {
+                    /* Auto-decided ONCE at push start (see the
+                     * push_shim_on assignment above). Using a frozen
+                     * flag rather than re-reading the env-var per
+                     * chunk guarantees the manifest chunk_hash matches
+                     * whatever address the uploader ultimately PUTs on
+                     * Blossom. */
                     uint8_t shim_addr[32];
                     if (hanami_blossom_shim_sha256(ct, ctl, shim_addr) != HANAMI_OK) {
                         free(ct); per_file_rc = NH_PROV_CLI_EXIT_INTERNAL; break;

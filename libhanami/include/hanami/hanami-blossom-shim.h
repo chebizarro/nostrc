@@ -61,6 +61,7 @@
 #define HANAMI_BLOSSOM_SHIM_H
 
 #include "hanami-types.h"
+#include "hanami-server-capability.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -201,6 +202,91 @@ hanami_error_t
 hanami_blossom_shim_strip(const uint8_t *buf, size_t len,
                           const uint8_t **out_ct,
                           size_t *out_ct_len);
+
+/**
+ * hanami_blossom_shim_active_for:
+ * @server_urls: array of destination Blossom endpoint URLs
+ * @count: number of URLs in @server_urls
+ *
+ * Probe-driven auto-shim decision (nostrc-si30). Returns true iff the
+ * pusher should shim-wrap every ciphertext blob before hashing +
+ * uploading for THIS push, given the destination server set.
+ *
+ * Precedence:
+ *   1. Explicit env-var override always wins:
+ *        NOSTR_HOMED_BLOSSOM_PNG_SHIM=1  -> true  (force shim)
+ *        NOSTR_HOMED_BLOSSOM_PNG_SHIM=0  -> false (force raw)
+ *   2. Otherwise the decision is per-server, driven by the capability
+ *      cache populated by hanami_server_probe_capabilities:
+ *        - ANY server with raw_random_ok=NO AND png_shim_ok=YES -> true
+ *        - ALL servers with raw_random_ok=YES                    -> false
+ *        - otherwise (UNKNOWN or ambiguous)                      -> false
+ *   3. If some server's capability is UNKNOWN, this function will run
+ *      hanami_server_probe_capabilities inline against that server so
+ *      the auto-decide has real data — UNLESS
+ *      NOSTR_HOMED_HANAMI_SKIP_CAPABILITY_PROBE=1 is set, in which case
+ *      it falls back to hanami_blossom_shim_active() (env-var only).
+ *
+ * The URL-keyed capability cache is session-scoped (process-local) and
+ * lives inside libhanami. Callers do NOT need to plumb hanami clients
+ * through — @server_urls is enough to drive the decision.
+ *
+ * @count == 0 or @server_urls == NULL falls back to
+ * hanami_blossom_shim_active() (the env-var-only reader).
+ */
+bool
+hanami_blossom_shim_active_for(const char *const *server_urls, size_t count);
+
+/**
+ * hanami_blossom_shim_cache_reset:
+ *
+ * Clears the URL-keyed capability cache used by
+ * hanami_blossom_shim_active_for. For tests and diagnostics.
+ */
+void hanami_blossom_shim_cache_reset(void);
+
+/**
+ * hanami_blossom_shim_cache_set:
+ * @server_url: NUL-terminated Blossom endpoint URL
+ * @raw_random_ok: cached raw-random probe outcome for this URL
+ * @png_shim_ok:   cached PNG-shim probe outcome for this URL
+ *
+ * Explicitly seeds the shim module's per-URL cache. Used by tests and
+ * by callers that already ran the probe (via hanami_server_probe_
+ * capabilities) and want to hand the result back to the auto-decide
+ * helper without triggering a duplicate probe.
+ */
+void hanami_blossom_shim_cache_set(const char *server_url,
+                                   hanami_capability_state_t raw_random_ok,
+                                   hanami_capability_state_t png_shim_ok);
+
+/**
+ * hanami_blossom_shim_reason_t:
+ * Diagnostic label describing WHY the last hanami_blossom_shim_active_for
+ * call returned the value it did. Written by the helper into a small
+ * thread-unsafe scratch buffer that callers can pass to the log line.
+ */
+typedef enum {
+    HANAMI_SHIM_REASON_UNKNOWN   = 0,
+    HANAMI_SHIM_REASON_ENV_FORCE_ON,  /* NOSTR_HOMED_BLOSSOM_PNG_SHIM=1 */
+    HANAMI_SHIM_REASON_ENV_FORCE_OFF, /* NOSTR_HOMED_BLOSSOM_PNG_SHIM=0 */
+    HANAMI_SHIM_REASON_AUTO_REQUIRED, /* probe: server needs shim */
+    HANAMI_SHIM_REASON_AUTO_RAW_OK,   /* probe: all servers accept raw */
+    HANAMI_SHIM_REASON_AUTO_FALLBACK, /* probe skipped / UNKNOWN caps */
+} hanami_blossom_shim_reason_t;
+
+/**
+ * hanami_blossom_shim_active_for_ex:
+ *
+ * As hanami_blossom_shim_active_for but also fills in @out_reason and
+ * (if non-NULL) writes the URL that tipped the decision into
+ * @out_reason_url_buf (size @url_buf_cap). Used by the pusher log line.
+ */
+bool
+hanami_blossom_shim_active_for_ex(const char *const *server_urls, size_t count,
+                                  hanami_blossom_shim_reason_t *out_reason,
+                                  char *out_reason_url_buf,
+                                  size_t url_buf_cap);
 
 #ifdef __cplusplus
 }

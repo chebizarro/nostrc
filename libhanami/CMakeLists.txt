@@ -278,6 +278,37 @@ if(BUILD_TESTING)
     apply_sanitizers(test-hanami-blossom-shim)
   endif()
 
+  # Probe-driven auto-shim decision (nostrc-si30)
+  add_executable(test-hanami-blossom-shim-auto tests/test_hanami_blossom_shim_auto.c)
+  target_compile_features(test-hanami-blossom-shim-auto PRIVATE c_std_11)
+  target_link_libraries(test-hanami-blossom-shim-auto PRIVATE hanami)
+  add_test(NAME test-hanami-blossom-shim-auto COMMAND test-hanami-blossom-shim-auto)
+  set_tests_properties(test-hanami-blossom-shim-auto PROPERTIES
+    TIMEOUT 30
+    LABELS "libhanami;blossom;shim;auto;unit"
+  )
+
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-blossom-shim-auto)
+  endif()
+
+  # Raw + shim body-sniffer probe extension (nostrc-prli)
+  add_executable(test-hanami-server-capability-probe-shim
+                 tests/test_hanami_server_capability_probe_shim.c)
+  target_compile_features(test-hanami-server-capability-probe-shim PRIVATE c_std_11)
+  target_link_libraries(test-hanami-server-capability-probe-shim
+                        PRIVATE hanami nostr pthread)
+  add_test(NAME test-hanami-server-capability-probe-shim
+           COMMAND test-hanami-server-capability-probe-shim)
+  set_tests_properties(test-hanami-server-capability-probe-shim PROPERTIES
+    TIMEOUT 60
+    LABELS "libhanami;blossom;probe;shim;unit"
+  )
+
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-hanami-server-capability-probe-shim)
+  endif()
+
   add_executable(test-hanami-odb-backend tests/test_hanami_odb_backend.c)
   target_compile_features(test-hanami-odb-backend PRIVATE c_std_11)
   target_link_libraries(test-hanami-odb-backend PRIVATE hanami PkgConfig::LIBGIT2 PkgConfig::SQLITE3)

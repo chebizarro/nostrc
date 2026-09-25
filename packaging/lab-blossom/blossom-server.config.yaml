@@ -1,0 +1,44 @@
+# blossom-server.config.yaml
+#
+# Configuration for the lab Blossom server (nostrc-4f9v). Only the
+# fields we deliberately override are set; everything else stays on
+# the upstream default (see hzrd149/blossom-server/README for the
+# full schema). The purpose here is a PERMISSIVE store:
+#
+#   - No auth beyond BUD-02's built-in kind-24242 event check.
+#   - No content sniffing / mime enforcement (encrypted porthome
+#     chunks look like random bytes; a sniffer would 415 them).
+#   - No thumbnailing / rewriting (byte-for-byte round trip).
+#   - No allow / deny list on pubkeys.
+#   - 8 MiB size cap (well above the 4 MiB porthome chunk).
+#
+# WARNING: this configuration is DELIBERATELY permissive. Do NOT
+# expose the server to the open internet without additional guards
+# (rate-limiting at nginx, allowlisted pubkeys, tighter size caps).
+
+publish_hash: false
+enabled_actions:
+  upload: true
+  list:   true
+  get:    true
+  delete: true
+
+storage:
+  # Bind-mounted at /data/blobs (see docker-compose.yml).
+  backend: local
+  local:
+    dir: /data/blobs
+
+rules:
+  # Deliberately empty — no upload restrictions on mime or size beyond
+  # the MAX_FILE_SIZE env var. Encrypted porthome chunks are random
+  # bytes; any content-policy filter refuses them.
+  upload: []
+
+# Rate-limits (per-IP): loose lab defaults. The lab CI runs a handful of
+# pushes per hour; production would set these an order of magnitude
+# lower. Values are "requests / minute".
+rate_limits:
+  upload: 300
+  list:   600
+  get:    1200

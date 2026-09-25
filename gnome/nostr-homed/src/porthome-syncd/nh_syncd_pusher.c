@@ -210,18 +210,25 @@ static int upload_chunk(const nh_syncd_push_cfg *cfg,
                                        &ct, &ct_len, sha);
     if (rc != 0) { set_err(err, "encrypt_chunk rc=%d", rc); return NH_SYNCD_ERR_CRYPTO; }
 
-    /* PNG-shim consistency (nostrc-wmb5). When the shim is active the
-     * downstream nh_porthome_blossom_upload will hash sha256(shim||ct)
-     * and PUT that address. The "sealed address" this function
-     * publishes (out_addr_hex, stored in the syncd state and rebuilt
-     * into every future manifest for this chunk) MUST match, or the
-     * eventual pull looks up sha256(ct) and 404s on every chunk. Swap
-     * sha to the shim-inclusive hash BEFORE we serialise it and BEFORE
-     * we pass it as `expected_sha_hex` to the single-blob uploader —
-     * otherwise the uploader's own consistency check trips
-     * HASH_MISMATCH once it wraps. When the shim is off, sha stays as
-     * sha256(ct), matching the pre-wmb5 behaviour bit-for-bit. */
-    if (hanami_blossom_shim_active()) {
+    /* PNG-shim consistency (nostrc-wmb5) + auto-decide (nostrc-si30).
+     * When the shim is active the downstream nh_porthome_blossom_upload
+     * will hash sha256(shim||ct) and PUT that address. The "sealed
+     * address" this function publishes (out_addr_hex, stored in the
+     * syncd state and rebuilt into every future manifest for this
+     * chunk) MUST match, or the eventual pull looks up sha256(ct) and
+     * 404s on every chunk. Swap sha to the shim-inclusive hash BEFORE
+     * we serialise it and BEFORE we pass it as `expected_sha_hex` to
+     * the single-blob uploader — otherwise the uploader's own
+     * consistency check trips HASH_MISMATCH once it wraps.
+     *
+     * We consult the SAME auto-decide helper that
+     * nh_porthome_blossom.c's shim gate uses. Both call sites walk the
+     * same cfg->blossom_servers[] list, so libhanami's URL-keyed cache
+     * makes them agree (a probe run on any URL is memoised for the
+     * process). The env-var override still wins when set. */
+    bool shim_on = hanami_blossom_shim_active_for(
+        cfg->blossom_servers, cfg->n_blossom_servers);
+    if (shim_on) {
         uint8_t shim_sha[32];
         if (hanami_blossom_shim_sha256(ct, ct_len, shim_sha) != HANAMI_OK) {
             free(ct);

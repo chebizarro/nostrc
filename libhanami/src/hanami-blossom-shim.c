@@ -7,9 +7,11 @@
  */
 
 #include "hanami/hanami-blossom-shim.h"
+#include "hanami/hanami-blossom-client.h"
 
 #include <openssl/evp.h>
 
+#include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -179,14 +181,255 @@ bool
 hanami_blossom_shim_active(void)
 {
     /* Uncached — a single getenv() per chunk is cheap and lets tests
-     * toggle the flag between calls. If a per-server capability cache
-     * (nostrc-si30) ever needs to enter this decision it should either
-     * do so through a new getter or reset a cache guard here.
-     *
-     * The env-var contract is "exactly the single character '1'" so
-     * that stray values like "0", "true", or "no" all disable it. */
+     * toggle the flag between calls. See hanami_blossom_shim_active_for
+     * for the probe-driven auto-decide (nostrc-si30) that folds
+     * capability data into the decision. */
     const char *e = getenv("NOSTR_HOMED_BLOSSOM_PNG_SHIM");
     return (e && e[0] == '1' && e[1] == '\0');
+}
+
+/* -----------------------------------------------------------------------
+ * Auto-shim decision (nostrc-si30) — URL-keyed capability cache.
+ *
+ * A tiny process-local map keyed by the exact endpoint URL. Each entry
+ * remembers the raw_random_ok / png_shim_ok flags observed by a probe.
+ * The map is grow-only within a process (Blossom endpoint sets are
+ * bounded to a small handful for real-world pushers), thread-guarded
+ * by a mutex around insert + lookup.
+ *
+ * The cache is populated in two ways:
+ *   1. Explicit seed via hanami_blossom_shim_cache_set — used by tests
+ *      and by callers that already ran a probe on a real client.
+ *   2. Lazy probe from hanami_blossom_shim_active_for — mints a
+ *      short-lived hanami_blossom_client_t against the URL and calls
+ *      hanami_server_probe_capabilities, then copies the flags back.
+ * ---------------------------------------------------------------------- */
+
+typedef struct shim_cache_entry {
+    char *url;                                    /* strdup'd, owned */
+    hanami_capability_state_t raw_random_ok;
+    hanami_capability_state_t png_shim_ok;
+    int64_t last_probe_ts;
+    struct shim_cache_entry *next;
+} shim_cache_entry_t;
+
+static shim_cache_entry_t *g_shim_cache_head = NULL;
+static pthread_mutex_t     g_shim_cache_mu   = PTHREAD_MUTEX_INITIALIZER;
+
+/* Refresh window on the URL-keyed cache; matches the probe review
+ * discipline (§porthome-blossom-shim §6). Set to 24 h; entries older
+ * than this are re-probed. Session-scoped so this only matters for
+ * long-running processes (syncd). */
+#define SHIM_CACHE_REFRESH_SECONDS ((int64_t)24 * 60 * 60)
+
+/* MUST be called with g_shim_cache_mu held. */
+static shim_cache_entry_t *shim_cache_find_locked(const char *url)
+{
+    for (shim_cache_entry_t *e = g_shim_cache_head; e; e = e->next) {
+        if (e->url && strcmp(e->url, url) == 0) return e;
+    }
+    return NULL;
+}
+
+/* MUST be called with g_shim_cache_mu held. */
+static shim_cache_entry_t *shim_cache_insert_locked(const char *url)
+{
+    shim_cache_entry_t *e = (shim_cache_entry_t *)calloc(1, sizeof(*e));
+    if (!e) return NULL;
+    e->url = url ? strdup(url) : NULL;
+    if (url && !e->url) { free(e); return NULL; }
+    e->raw_random_ok = HANAMI_CAP_UNKNOWN;
+    e->png_shim_ok   = HANAMI_CAP_UNKNOWN;
+    e->last_probe_ts = 0;
+    e->next = g_shim_cache_head;
+    g_shim_cache_head = e;
+    return e;
+}
+
+void hanami_blossom_shim_cache_reset(void)
+{
+    pthread_mutex_lock(&g_shim_cache_mu);
+    shim_cache_entry_t *e = g_shim_cache_head;
+    while (e) {
+        shim_cache_entry_t *n = e->next;
+        free(e->url);
+        free(e);
+        e = n;
+    }
+    g_shim_cache_head = NULL;
+    pthread_mutex_unlock(&g_shim_cache_mu);
+}
+
+void hanami_blossom_shim_cache_set(const char *url,
+                                   hanami_capability_state_t raw_random_ok,
+                                   hanami_capability_state_t png_shim_ok)
+{
+    if (!url) return;
+    pthread_mutex_lock(&g_shim_cache_mu);
+    shim_cache_entry_t *e = shim_cache_find_locked(url);
+    if (!e) e = shim_cache_insert_locked(url);
+    if (e) {
+        e->raw_random_ok = raw_random_ok;
+        e->png_shim_ok   = png_shim_ok;
+        /* Explicit seed counts as a fresh observation — the caller
+         * either ran a real probe or asserted a known truth. */
+        e->last_probe_ts = 1; /* non-zero sentinel */
+    }
+    pthread_mutex_unlock(&g_shim_cache_mu);
+}
+
+/* Read env-var override. Returns:
+ *   +1 -> explicit "1" (force shim ON)
+ *    0 -> explicit "0" (force shim OFF)
+ *   -1 -> unset or malformed value (auto-decide)
+ */
+static int shim_env_override(void)
+{
+    const char *e = getenv("NOSTR_HOMED_BLOSSOM_PNG_SHIM");
+    if (!e || !e[0]) return -1;
+    if (e[0] == '1' && e[1] == '\0') return 1;
+    if (e[0] == '0' && e[1] == '\0') return 0;
+    return -1;
+}
+
+/* Probe kill-switch check — matches upload_batch's behaviour so
+ * NOSTR_HOMED_HANAMI_SKIP_CAPABILITY_PROBE=1 blocks EVERY probe. */
+static bool shim_probe_disabled(void)
+{
+    const char *e = getenv("NOSTR_HOMED_HANAMI_SKIP_CAPABILITY_PROBE");
+    return (e && e[0] == '1' && e[1] == '\0');
+}
+
+/* Run the extended probe against @url and copy raw/png flags back into
+ * the cache under the URL. No-op if url is NULL/empty or the probe is
+ * disabled. Uses an ephemeral key inside libhanami's probe — no signer
+ * is required. */
+static void shim_probe_url(const char *url)
+{
+    if (!url || !url[0]) return;
+    if (shim_probe_disabled()) return;
+
+    hanami_blossom_client_opts_t opts = {0};
+    opts.endpoint        = url;
+    opts.timeout_seconds = 10;
+    opts.user_agent      = "libhanami/shim-probe (nostrc-si30)";
+    hanami_blossom_client_t *c = NULL;
+    if (hanami_blossom_client_new(&opts, NULL, &c) != HANAMI_OK) return;
+
+    (void)hanami_server_probe_capabilities(c);
+    const hanami_server_capabilities_t *caps =
+        hanami_blossom_get_capabilities(c);
+
+    if (caps) {
+        pthread_mutex_lock(&g_shim_cache_mu);
+        shim_cache_entry_t *e = shim_cache_find_locked(url);
+        if (!e) e = shim_cache_insert_locked(url);
+        if (e) {
+            e->raw_random_ok = caps->raw_random_ok;
+            e->png_shim_ok   = caps->png_shim_ok;
+            e->last_probe_ts = caps->last_probe_ts ? caps->last_probe_ts : 1;
+        }
+        pthread_mutex_unlock(&g_shim_cache_mu);
+    }
+
+    hanami_blossom_client_free(c);
+}
+
+bool
+hanami_blossom_shim_active_for_ex(const char *const *server_urls, size_t count,
+                                  hanami_blossom_shim_reason_t *out_reason,
+                                  char *out_reason_url_buf,
+                                  size_t url_buf_cap)
+{
+    if (out_reason) *out_reason = HANAMI_SHIM_REASON_UNKNOWN;
+    if (out_reason_url_buf && url_buf_cap > 0) out_reason_url_buf[0] = '\0';
+
+    int env = shim_env_override();
+    if (env == 1) {
+        if (out_reason) *out_reason = HANAMI_SHIM_REASON_ENV_FORCE_ON;
+        return true;
+    }
+    if (env == 0) {
+        if (out_reason) *out_reason = HANAMI_SHIM_REASON_ENV_FORCE_OFF;
+        return false;
+    }
+
+    /* No URL context or all callers explicitly opted out of probing:
+     * fall back to the env-var-only reader. */
+    if (!server_urls || count == 0) {
+        if (out_reason) *out_reason = HANAMI_SHIM_REASON_AUTO_FALLBACK;
+        return hanami_blossom_shim_active();
+    }
+
+    /* Ensure a cache entry per URL; probe UNKNOWNs lazily. */
+    for (size_t i = 0; i < count; i++) {
+        const char *u = server_urls[i];
+        if (!u || !u[0]) continue;
+
+        pthread_mutex_lock(&g_shim_cache_mu);
+        shim_cache_entry_t *e = shim_cache_find_locked(u);
+        bool need_probe = false;
+        if (!e) {
+            e = shim_cache_insert_locked(u);
+            need_probe = true;
+        } else if (e->last_probe_ts == 0) {
+            need_probe = true;
+        }
+        pthread_mutex_unlock(&g_shim_cache_mu);
+
+        if (need_probe) shim_probe_url(u);
+    }
+
+    /* Evaluate. Rule 1: any (raw=NO && shim=YES) wins → shim ON. */
+    for (size_t i = 0; i < count; i++) {
+        const char *u = server_urls[i];
+        if (!u || !u[0]) continue;
+        pthread_mutex_lock(&g_shim_cache_mu);
+        shim_cache_entry_t *e = shim_cache_find_locked(u);
+        bool require_shim = (e &&
+                             e->raw_random_ok == HANAMI_CAP_NO &&
+                             e->png_shim_ok   == HANAMI_CAP_YES);
+        pthread_mutex_unlock(&g_shim_cache_mu);
+        if (require_shim) {
+            if (out_reason) *out_reason = HANAMI_SHIM_REASON_AUTO_REQUIRED;
+            if (out_reason_url_buf && url_buf_cap > 0) {
+                size_t n = strlen(u);
+                if (n >= url_buf_cap) n = url_buf_cap - 1;
+                memcpy(out_reason_url_buf, u, n);
+                out_reason_url_buf[n] = '\0';
+            }
+            return true;
+        }
+    }
+
+    /* Rule 2: all servers raw_random_ok=YES → shim OFF. */
+    bool all_raw_ok = true;
+    for (size_t i = 0; i < count; i++) {
+        const char *u = server_urls[i];
+        if (!u || !u[0]) { all_raw_ok = false; break; }
+        pthread_mutex_lock(&g_shim_cache_mu);
+        shim_cache_entry_t *e = shim_cache_find_locked(u);
+        bool ok = (e && e->raw_random_ok == HANAMI_CAP_YES);
+        pthread_mutex_unlock(&g_shim_cache_mu);
+        if (!ok) { all_raw_ok = false; break; }
+    }
+    if (all_raw_ok) {
+        if (out_reason) *out_reason = HANAMI_SHIM_REASON_AUTO_RAW_OK;
+        return false;
+    }
+
+    /* Rule 3: at least one server UNKNOWN and probe couldn't (or wouldn't)
+     * fill it in. Default: shim OFF (conservative — the env-var override
+     * exists for the operator who KNOWS they need it). */
+    if (out_reason) *out_reason = HANAMI_SHIM_REASON_AUTO_FALLBACK;
+    return false;
+}
+
+bool
+hanami_blossom_shim_active_for(const char *const *server_urls, size_t count)
+{
+    return hanami_blossom_shim_active_for_ex(server_urls, count,
+                                             NULL, NULL, 0);
 }
 
 hanami_error_t

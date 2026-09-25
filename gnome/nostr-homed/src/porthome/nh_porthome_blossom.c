@@ -22,28 +22,6 @@
 #include <time.h>
 #include <unistd.h>
 
-/* PNG-shim opt-in (nostrc-bpum). When enabled, every uploaded blob is
- * wrapped in the deterministic PNG shim (see hanami-blossom-shim.h)
- * BEFORE hashing — the manifest chunk_hash IS sha256(shim||ciphertext).
- * The decision applies uniformly to every server in this session; a
- * per-server opt-in with mixed-mode manifests is intentionally out of
- * scope for v1 (see the shim review §3). Enable by exporting
- *   NOSTR_HOMED_BLOSSOM_PNG_SHIM=1
- * in the pusher's environment. Unset or "0" keeps the legacy raw-bytes
- * behaviour bit-for-bit.
- *
- * The decision MUST agree with the identical check made in cmd_push
- * (nostr-homed-provision.c) and nh_syncd_pusher.c when they compute
- * the manifest chunk address — otherwise the manifest hash and the
- * Blossom URL disagree and pulls 404 (nostrc-wmb5). We route both
- * through hanami_blossom_shim_active() so a single implementation
- * governs every call site.
- */
-static int nh_porthome_shim_enabled(void)
-{
-    return hanami_blossom_shim_active() ? 1 : 0;
-}
-
 struct nh_porthome_blossom {
     char **servers;             /* owned */
     size_t n_servers;
@@ -52,6 +30,46 @@ struct nh_porthome_blossom {
     size_t max_blob_bytes;
     const hanami_signer_t *signer; /* borrowed */
 };
+
+/* PNG-shim opt-in (nostrc-bpum) with probe-driven auto-decide (nostrc-si30).
+ *
+ * When enabled, every uploaded blob is wrapped in the deterministic PNG
+ * shim (see hanami-blossom-shim.h) BEFORE hashing — the manifest
+ * chunk_hash IS sha256(shim||ciphertext). The decision applies uniformly
+ * to every server in this push; a per-server opt-in with mixed-mode
+ * manifests is intentionally out of scope for v1 (see the shim review
+ * §3).
+ *
+ * Decision precedence (all cross-checked with cmd_push /
+ * nh_syncd_pusher::upload_chunk so the manifest chunk_hash and the
+ * Blossom URL never disagree, or pulls 404 — nostrc-wmb5):
+ *
+ *   1. NOSTR_HOMED_BLOSSOM_PNG_SHIM=1  -> shim on  (env force)
+ *   2. NOSTR_HOMED_BLOSSOM_PNG_SHIM=0  -> shim off (env force)
+ *   3. env unset -> hanami_blossom_shim_active_for(servers, count):
+ *        - any server with raw_random_ok=NO && png_shim_ok=YES -> ON
+ *        - all servers with raw_random_ok=YES                  -> OFF
+ *        - otherwise (UNKNOWN)                                 -> OFF
+ *      Capability data comes from hanami_server_probe_capabilities;
+ *      inline probes run against UNKNOWN servers unless disabled by
+ *      NOSTR_HOMED_HANAMI_SKIP_CAPABILITY_PROBE=1.
+ *
+ * Because the shim module's URL-keyed cache is process-scoped, the
+ * three call sites (this file's upload/upload_batch, cmd_push's manifest
+ * hashing, nh_syncd_pusher's upload_chunk) reach identical verdicts as
+ * long as they pass the same server list.
+ */
+static int nh_porthome_shim_enabled_for(const nh_porthome_blossom_t *c)
+{
+    if (!c || c->n_servers == 0) {
+        /* No context — fall back to the env-var-only reader so the
+         * pre-si30 semantics still hold for any callers that construct
+         * the wrapper with zero servers (currently none, but safe). */
+        return hanami_blossom_shim_active() ? 1 : 0;
+    }
+    return hanami_blossom_shim_active_for(
+               (const char *const *)c->servers, c->n_servers) ? 1 : 0;
+}
 
 /* URL sanity: https:// only, no user-info, no fragment, no whitespace,
  * no localhost / 127. / [::1] literal. Case-insensitive scheme. */
@@ -186,7 +204,7 @@ int nh_porthome_blossom_upload(nh_porthome_blossom_t *c,
     const uint8_t *upload_bytes = data;
     size_t         upload_len   = len;
     uint8_t       *shim_buf     = NULL;
-    if (nh_porthome_shim_enabled()) {
+    if (nh_porthome_shim_enabled_for(c)) {
         size_t enclen = hanami_blossom_shim_encoded_len(len);
         if (enclen > c->max_blob_bytes) return NH_PORTHOME_BLOSSOM_ERR_TOO_LARGE;
         shim_buf = (uint8_t *)malloc(enclen);
@@ -346,7 +364,7 @@ int nh_porthome_blossom_upload_batch(nh_porthome_blossom_t *c,
      * BEFORE hashing so the manifest chunk_hash reflects sha256(shim||
      * ct). Shimmed bytes are held in a parallel array whose lifetime
      * runs the length of this call. */
-    int shim_on = nh_porthome_shim_enabled();
+    int shim_on = nh_porthome_shim_enabled_for(c);
     uint8_t **shim_bufs = NULL;
     if (shim_on) {
         shim_bufs = (uint8_t **)calloc(n, sizeof(*shim_bufs));
