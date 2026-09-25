@@ -31,6 +31,13 @@
 
 #include <openssl/crypto.h>
 
+/* Bead nostrc-ww50: use the fork+drop-privs sandbox instead of
+ * bare fork+execv so the helper runs as `nostr-home-fetch`/nobody
+ * with PR_SET_NO_NEW_PRIVS, PR_SET_DUMPABLE=0, minimal env, closed
+ * fds, and RLIMIT_AS/CPU/FSIZE/NOFILE caps. Without this the helper
+ * would refuse to start (its main() rejects euid==0). */
+#include "nh_porthome_sandbox.h"
+
 /* Compile-time default. Can be overridden via CMake:
  *   -DNH_PORTHOME_FETCH_HELPER_PATH="/opt/whatever/nostr-home-fetch" */
 #ifndef NH_PORTHOME_FETCH_HELPER_PATH
@@ -220,7 +227,8 @@ static void drain_progress(int stdout_fd, uint64_t deadline_ms,
     }
 }
 
-/* Reap child, best effort. */
+/* Reap child, best effort. Used on the write-failure early-exit;
+ * the happy path reaps via nh_porthome_sandbox_wait. */
 static void reap(pid_t pid, int *status) {
     for (;;) {
         int st = 0;
@@ -311,7 +319,17 @@ nh_auth_porthome_fetch_spawn(const nh_auth_porthome_fetch_args *a,
     /* If the caller gave us a staging fd, we must make sure it is
      * inheritable across exec — clear FD_CLOEXEC on a duplicate we
      * control. */
+    /* Hoist declarations so the goto io_fail; on the dup() failure
+     * path doesn't skip past any initializer. */
     int child_staging_fd = -1;
+    char fd_arg[32];
+    char *argv[8];
+    int argi = 0;
+    int keep_arr[1];
+    size_t keep_n = 0;
+    pid_t pid = -1;
+    nh_porthome_sandbox_rc srx = NH_PORTHOME_SANDBOX_OK;
+
     if (a->staging_fd >= 0) {
         child_staging_fd = dup(a->staging_fd);
         if (child_staging_fd < 0) goto io_fail;
@@ -320,9 +338,6 @@ nh_auth_porthome_fetch_spawn(const nh_auth_porthome_fetch_args *a,
     }
 
     /* Argv. Two forms: fd-based or dir-based. */
-    char fd_arg[32];
-    char *argv[8];
-    int argi = 0;
     argv[argi++] = (char *)helper;
     if (child_staging_fd >= 0) {
         snprintf(fd_arg, sizeof fd_arg, "%d", child_staging_fd);
@@ -335,8 +350,26 @@ nh_auth_porthome_fetch_spawn(const nh_auth_porthome_fetch_args *a,
     if (a->allow_insecure) argv[argi++] = "--allow-insecure";
     argv[argi] = NULL;
 
-    pid_t pid = fork();
-    if (pid < 0) {
+    /* Hand off to the sandbox (bead nostrc-ww50). It drops privs to
+     * `nostr-home-fetch`/nobody, installs PR_SET_NO_NEW_PRIVS +
+     * PR_SET_DUMPABLE=0, applies RLIMIT_AS/CPU/FSIZE/NOFILE caps,
+     * closes every fd not in the keep-list, and execve()s the helper.
+     *
+     * We must keep child_staging_fd alive across close_fds_except AND
+     * across execve — CLOEXEC was already cleared above so execve
+     * inherits it. The sandbox's default deadline is enforced later
+     * by nh_porthome_sandbox_wait; we pass tmo through both places to
+     * keep the two paths in sync. */
+    if (child_staging_fd >= 0) {
+        keep_arr[keep_n++] = child_staging_fd;
+    }
+    srx = nh_porthome_spawn_sandboxed_ex(
+        argv, /* envp= */ NULL,
+        in_pipe[0], out_pipe[1], /* stderr inherit journal */ -1,
+        keep_n ? keep_arr : NULL, keep_n,
+        /* deadline_ms — advisory hint only; wait enforces it */ 0,
+        &pid);
+    if (srx != NH_PORTHOME_SANDBOX_OK || pid < 0) {
     io_fail:
         if (in_pipe[0]  != -1) close(in_pipe[0]);
         if (in_pipe[1]  != -1) close(in_pipe[1]);
@@ -344,19 +377,11 @@ nh_auth_porthome_fetch_spawn(const nh_auth_porthome_fetch_args *a,
         if (out_pipe[1] != -1) close(out_pipe[1]);
         if (child_staging_fd >= 0) close(child_staging_fd);
         OPENSSL_cleanse(ctl, sizeof ctl);
+        /* NOT_ROOT and NO_USER are configuration errors; anything
+         * else is a spawn failure. Map to FAILED so the broker
+         * surfaces the honest split via WAIT_HOME. */
+        if (exit_code_out) *exit_code_out = -1;
         return NH_PORTHOME_FETCH_RES_FAILED;
-    }
-    if (pid == 0) {
-        /* Child: rewire fds and exec. */
-        if (dup2(in_pipe[0], STDIN_FILENO) < 0) _exit(NH_PORTHOME_FETCH_EXIT_INTERNAL);
-        if (dup2(out_pipe[1], STDOUT_FILENO) < 0) _exit(NH_PORTHOME_FETCH_EXIT_INTERNAL);
-        close(in_pipe[0]); close(in_pipe[1]);
-        close(out_pipe[0]); close(out_pipe[1]);
-        /* Disable core dumps: control payload contains home_key. */
-        struct rlimit no_core = {0, 0};
-        (void)setrlimit(RLIMIT_CORE, &no_core);
-        execv(helper, argv);
-        _exit(NH_PORTHOME_FETCH_EXIT_INTERNAL);
     }
     /* Parent. */
     close(in_pipe[0]);
@@ -389,24 +414,18 @@ nh_auth_porthome_fetch_spawn(const nh_auth_porthome_fetch_args *a,
     if (cancel) kill(pid, SIGTERM);
     close(out_pipe[0]);
 
-    /* Reap the child. Enforce the deadline by SIGKILL if still alive. */
-    int status = 0;
-    for (uint64_t rem;;) {
-        pid_t r = waitpid(pid, &status, WNOHANG);
-        if (r == pid) break;
-        if (r < 0 && errno != EINTR) break;
-        rem = now_ms();
-        if (rem >= deadline) {
-            kill(pid, SIGKILL);
-            reap(pid, &status);
-            signal(SIGPIPE, old_pipe);
-            if (exit_code_out) *exit_code_out = -1;
-            return NH_PORTHOME_FETCH_RES_LIMITED; /* timeout → LIMITED */
-        }
-        struct timespec ts = { .tv_sec = 0, .tv_nsec = 20 * 1000 * 1000 };
-        nanosleep(&ts, NULL);
-    }
+    /* Reap via the sandbox waiter so SIGTERM→SIGKILL escalation and
+     * timed_out reporting stay consistent with the rest of the
+     * porthome fetch path. */
+    int exit_code = -1, sig = 0, timed = 0;
+    int wait_rc = nh_porthome_sandbox_wait(pid, tmo, &exit_code, &sig, &timed);
     signal(SIGPIPE, old_pipe);
+    if (wait_rc != 0 || timed || sig != 0) {
+        if (exit_code_out) *exit_code_out = -1;
+        return NH_PORTHOME_FETCH_RES_LIMITED; /* timeout / signal → LIMITED */
+    }
+    /* Rebuild a status word so map_exit's WIFEXITED path handles it. */
+    int status = (exit_code & 0xff) << 8;
     return map_exit(status, exit_code_out);
 }
 

@@ -228,6 +228,56 @@ static void test_fallback_user_api(void) {
   fprintf(stderr, "PASS fallback-user api readable\n");
 }
 
+/* Case 6 (bead nostrc-ww50 wire-in): a caller-supplied keep_fds
+ * survives close_fds_except AND the execve() FD_CLOEXEC gate. This
+ * proves the seam the auth_porthome_fetch spawner relies on to pass
+ * the staging dirfd through to `nostr-home-fetch --staging-fd N`. */
+static void test_keep_fds(void) {
+  char shpath[512];
+  if (which("sh", shpath, sizeof shpath) != 0) { fputs("SKIP: no sh\n", stderr); return; }
+
+  /* Pipe A: captures the child's `ls /proc/self/fd` listing on stdout. */
+  int pipe_a[2]; if (pipe(pipe_a) != 0) { perror("pipe"); exit(1); }
+  /* Extra fd we want to survive into the child. dup /dev/null so we
+   * can point at it deterministically. Clear FD_CLOEXEC so execve
+   * keeps it — this mirrors the auth_porthome_fetch spawner. */
+  int extra = open("/dev/null", O_RDONLY);
+  assert(extra >= 3);
+  int fl = fcntl(extra, F_GETFD);
+  assert(fl >= 0);
+  assert(fcntl(extra, F_SETFD, fl & ~FD_CLOEXEC) == 0);
+
+  char cmd[128];
+  snprintf(cmd, sizeof cmd,
+           "test -e /proc/self/fd/%d && echo KEEP-OK || echo KEEP-MISSING", extra);
+  char *argv[] = { shpath, (char *)"-c", cmd, NULL };
+  int keep[1] = { extra };
+  pid_t pid = 0;
+  nh_porthome_sandbox_rc rc = nh_porthome_spawn_sandboxed_ex(
+      argv, NULL, -1, pipe_a[1], -1, keep, 1, 5000, &pid);
+  assert(rc == NH_PORTHOME_SANDBOX_OK);
+  close(pipe_a[1]);
+
+  int exit_code = -1, sig = 0, timed = 0;
+  int wrc = nh_porthome_sandbox_wait(pid, 10000, &exit_code, &sig, &timed);
+  assert(wrc == 0 && exit_code == 0 && sig == 0);
+
+  char buf[128] = {0};
+  read_all(pipe_a[0], buf, sizeof buf);
+  close(pipe_a[0]);
+  close(extra);
+  if (strstr(buf, "KEEP-OK")) {
+    fprintf(stderr, "PASS keep_fds inherited\n");
+  } else if (strstr(buf, "KEEP-MISSING")) {
+    fprintf(stderr, "FAIL keep_fds NOT inherited: %s\n", buf);
+    assert(0);
+  } else {
+    /* /proc missing (rare CI). The exit-code check above still shows
+     * the sandbox path completed cleanly, but we skip the assertion. */
+    fprintf(stderr, "SKIP keep_fds (no /proc line): %s\n", buf);
+  }
+}
+
 int main(void) {
   /* Nudge the sandbox with a tighter CPU cap for the sh probes so a
    * runaway `sh -c` under test doesn't hang the suite. */
@@ -245,6 +295,7 @@ int main(void) {
   test_not_root_refusal();
   test_relative_argv_refused();
   test_fallback_user_api();
+  test_keep_fds();
   fprintf(stderr, "test_porthome_sandbox: ALL PASS\n");
   return 0;
 }

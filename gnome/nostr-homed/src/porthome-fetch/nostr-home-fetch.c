@@ -63,6 +63,11 @@
 
 #include <openssl/crypto.h>
 
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
 /* libnostr client. */
 #include "nostr-simple-pool.h"
 #include "nostr-filter.h"
@@ -294,6 +299,144 @@ static int fetch_chunk_cb(void *ctx, const char *sha256_hex,
     return 0;
 }
 
+/* ─────────────────── SSRF pre-resolution gate ──────────────────
+ *
+ * nh_porthome_blossom_url_ok already enforces the URL-string half of
+ * the SSRF gate (https-only, no user-info, no obvious loopback literal).
+ * libhanami's blossom client wraps libcurl but does not expose a
+ * CURLOPT_OPENSOCKETFUNCTION seam, so we DNS-pre-resolve here and
+ * refuse any host whose resolved address is not public-unicast.
+ *
+ * This does NOT defend against active DNS rebinding at request time
+ * (the OS resolver may return a different IP later). It DOES defend
+ * against the most common misconfigurations (a Blossom URL pointing
+ * at a LAN address, a link-local resolver, or 127.0.0.1 via a wildcard
+ * DNS entry). The design (§8.2) accepts this — the sandbox drops the
+ * helper to `nostr-home-fetch`/nobody so a real DNS-rebinding
+ * exploit would still land inside the sandbox, not on the broker.
+ */
+static int is_ipv4_public_unicast(uint32_t hb) {
+    uint8_t a = (uint8_t)(hb >> 24);
+    uint8_t b = (uint8_t)(hb >> 16);
+    if (a == 0) return 0;                       /* 0.0.0.0/8 */
+    if (a == 10) return 0;                      /* 10.0.0.0/8 */
+    if (a == 127) return 0;                     /* 127.0.0.0/8 */
+    if (a == 169 && b == 254) return 0;         /* 169.254.0.0/16 */
+    if (a == 172 && (b & 0xf0) == 16) return 0; /* 172.16.0.0/12 */
+    if (a == 192 && b == 168) return 0;         /* 192.168.0.0/16 */
+    if (a == 100 && (b & 0xc0) == 64) return 0; /* CGNAT 100.64/10 */
+    if ((a & 0xf0) == 0xe0) return 0;           /* 224/4 multicast */
+    if ((a & 0xf0) == 0xf0) return 0;           /* 240/4 reserved */
+    if (hb == 0xffffffffu) return 0;            /* broadcast */
+    return 1;
+}
+
+static int is_ipv6_public_unicast(const struct in6_addr *a) {
+    const uint8_t *b = a->s6_addr;
+    int all_zero = 1;
+    for (int i = 0; i < 16; i++) if (b[i]) { all_zero = 0; break; }
+    if (all_zero) return 0;                     /* :: */
+    int loopback = 1;
+    for (int i = 0; i < 15; i++) if (b[i]) { loopback = 0; break; }
+    if (loopback && b[15] == 1) return 0;       /* ::1 */
+    if (b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 0 && b[4] == 0 &&
+        b[5] == 0 && b[6] == 0 && b[7] == 0 && b[8] == 0 && b[9] == 0 &&
+        b[10] == 0xff && b[11] == 0xff) {
+        uint32_t hb = ((uint32_t)b[12] << 24) | ((uint32_t)b[13] << 16) |
+                      ((uint32_t)b[14] << 8) | (uint32_t)b[15];
+        return is_ipv4_public_unicast(hb);      /* ::ffff:v4 */
+    }
+    if (b[0] == 0xfe && (b[1] & 0xc0) == 0x80) return 0;  /* fe80::/10 link-local */
+    if ((b[0] & 0xfe) == 0xfc) return 0;                  /* fc00::/7 ULA */
+    if (b[0] == 0xff) return 0;                           /* ff00::/8 multicast */
+    return 1;
+}
+
+/* Extract the hostname from an https:// URL. Writes up to @cap-1 bytes
+ * to @host and NUL-terminates. Returns 0 on success. */
+static int url_host(const char *url, char *host, size_t cap) {
+    if (!url || strncasecmp(url, "https://", 8) != 0) {
+        /* Also accept http:// when NH_PORTHOME_ALLOW_INSECURE is set. */
+        if (strncasecmp(url, "http://", 7) != 0) return -1;
+    }
+    const char *p = url + (strncasecmp(url, "https://", 8) == 0 ? 8 : 7);
+    /* Strip user-info (should not be present — the URL sanity check
+     * refuses it, but belt and braces). Userinfo may contain ':' so we
+     * end the search at '/' only. */
+    {
+        const char *slash = strchr(p, '/');
+        const char *at = strchr(p, '@');
+        if (at && (!slash || at < slash)) p = at + 1;
+    }
+    /* IPv6 literal? */
+    size_t hlen = 0;
+    if (*p == '[') {
+        p++;
+        while (*p && *p != ']') {
+            if (hlen + 1 >= cap) return -1;
+            host[hlen++] = *p++;
+        }
+        if (*p != ']') return -1;
+    } else {
+        while (*p && *p != ':' && *p != '/') {
+            if (hlen + 1 >= cap) return -1;
+            host[hlen++] = *p++;
+        }
+    }
+    host[hlen] = '\0';
+    return hlen > 0 ? 0 : -1;
+}
+
+/* Returns 0 iff every resolved sockaddr for @host is public-unicast.
+ * Returns -1 on any private/reserved address OR resolution failure. */
+static int host_all_addrs_public(const char *host) {
+    if (!host || !*host) return -1;
+    struct addrinfo hints, *res = NULL;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_ADDRCONFIG;
+    int gerr = getaddrinfo(host, NULL, &hints, &res);
+    if (gerr != 0 || !res) return -1;
+    int ok = 1;
+    for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
+        if (ai->ai_family == AF_INET) {
+            const struct sockaddr_in *in = (const struct sockaddr_in *)ai->ai_addr;
+            if (!is_ipv4_public_unicast(ntohl(in->sin_addr.s_addr))) { ok = 0; break; }
+        } else if (ai->ai_family == AF_INET6) {
+            const struct sockaddr_in6 *in6 = (const struct sockaddr_in6 *)ai->ai_addr;
+            if (!is_ipv6_public_unicast(&in6->sin6_addr)) { ok = 0; break; }
+        } else {
+            ok = 0; break;
+        }
+    }
+    freeaddrinfo(res);
+    return ok ? 0 : -1;
+}
+
+/* Pre-resolve every Blossom server host from the control payload;
+ * refuse the whole run if ANY host resolves to a private / link-local
+ * / loopback address. This is a syntactic + name-resolution SSRF gate
+ * BEFORE libhanami-blossom opens its libcurl handle. Returns 0 iff
+ * all hosts passed. */
+static int ssrf_precheck_servers(const nh_porthome_fetch_ctl *c) {
+    for (size_t i = 0; i < c->blossom_servers_count; i++) {
+        char host[256];
+        if (url_host(c->blossom_servers[i], host, sizeof host) != 0) {
+            fprintf(stderr, "nostr-home-fetch: cannot parse host from %s\n",
+                    c->blossom_servers[i]);
+            return -1;
+        }
+        if (host_all_addrs_public(host) != 0) {
+            fprintf(stderr,
+                    "nostr-home-fetch: SSRF refuse blossom server host=%s (private/link-local/loopback address)\n",
+                    host);
+            return -1;
+        }
+    }
+    return 0;
+}
+
 /* ─────────────────────────── main ─────────────────────────────── */
 
 static int read_stdin_bounded(uint8_t **out, size_t *out_len, size_t cap) {
@@ -464,6 +607,36 @@ int main(int argc, char **argv) {
         OPENSSL_cleanse(&ctl, sizeof ctl);
         if (close_staging) close(staging_fd);
         return NH_PORTHOME_FETCH_EXIT_INTERNAL;
+    }
+
+    /* Env override for the relay pointer timeout. Prevents an operator
+     * from re-signing the broker config when a specific site needs a
+     * longer window (slow bunker, high-latency link). Larger of the
+     * two wins so the payload default (from auth.conf) is a floor.
+     * NOSTR_HOMED_PORTHOME_POINTER_TIMEOUT_MS = uint32 milliseconds. */
+    {
+        const char *e = getenv("NOSTR_HOMED_PORTHOME_POINTER_TIMEOUT_MS");
+        if (e && *e) {
+            char *endp = NULL;
+            unsigned long v = strtoul(e, &endp, 10);
+            if (endp && *endp == '\0' && v > 0 && v <= 600000ul) {
+                if ((uint32_t)v > ctl.relay_timeout_ms)
+                    ctl.relay_timeout_ms = (uint32_t)v;
+            }
+        }
+    }
+
+    /* SSRF pre-resolution gate — refuse before any bytes cross the
+     * network if a Blossom server host resolves to a private address.
+     * The URL-syntax half was enforced by the broker via
+     * nh_porthome_blossom_url_ok when it accepted the payload; this
+     * belt-and-braces gate defends against a DNS entry that maps a
+     * public-looking name to a LAN target. */
+    if (ssrf_precheck_servers(&ctl) != 0) {
+        OPENSSL_cleanse(home_key, sizeof home_key);
+        OPENSSL_cleanse(&ctl, sizeof ctl);
+        if (close_staging) close(staging_fd);
+        return NH_PORTHOME_FETCH_EXIT_SSRF;
     }
 
     /* Phase 1: relay fetch. */

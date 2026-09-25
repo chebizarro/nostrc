@@ -1309,6 +1309,19 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
     set_tests_properties(homed_porthome_fetch_ctl PROPERTIES
       LABELS "nostr-homed;porthome;portable" TIMEOUT 30)
 
+    # Bead nostrc-9k4g: SSRF pre-resolution helpers used by the fetch
+    # binary. The test embeds a copy of the helpers so it links only
+    # against libc / netdb — no libnostr / libhanami / libcurl —
+    # keeping the base test matrix able to run it.
+    add_executable(test_porthome_fetch_ssrf
+      tests/unit/test_porthome_fetch_ssrf.c)
+    target_compile_options(test_porthome_fetch_ssrf PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    add_test(NAME homed_porthome_fetch_ssrf COMMAND test_porthome_fetch_ssrf)
+    set_tests_properties(homed_porthome_fetch_ssrf PROPERTIES
+      LABELS "nostr-homed;porthome;portable" TIMEOUT 30)
+
+
     # Driver used by the Python integration test; not a standalone add_test.
     add_executable(porthome_smallhome_driver
       tests/integration/porthome_smallhome_driver.c)

@@ -115,6 +115,22 @@ nh_porthome_sandbox_rc nh_porthome_spawn_sandboxed(
     uint32_t deadline_ms,
     pid_t *out_pid);
 
+/* Same as nh_porthome_spawn_sandboxed but additionally preserves
+ * @keep_fds[0..@n_keep_fds) in the child. The caller MUST clear
+ * FD_CLOEXEC on each fd it wants to survive execve() BEFORE calling
+ * (execve honors CLOEXEC even for fds skipped by close_fds_except).
+ * A NULL / zero-length keep list is equivalent to the base function.
+ * Bead nostrc-ww50: required so the fetch spawner can pass a
+ * staging dirfd inheritable through to `nostr-home-fetch`. */
+nh_porthome_sandbox_rc nh_porthome_spawn_sandboxed_ex(
+    char *const argv[],
+    char *const envp[],
+    int stdin_fd, int stdout_fd, int stderr_fd,
+    const int *keep_fds, size_t n_keep_fds,
+    uint32_t deadline_ms,
+    pid_t *out_pid);
+
+
 /* Wait for a sandboxed child with a wall-clock deadline. If the child
  * exceeds @deadline_ms this function SIGKILLs it (via a two-step
  * SIGTERM/SIGKILL) and reaps the corpse. Passing 0 disables the timer

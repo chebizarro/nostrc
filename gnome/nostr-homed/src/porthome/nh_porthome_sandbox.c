@@ -158,9 +158,10 @@ static int setrlimit_soft_hard(int res, rlim_t v) {
   return setrlimit(res, &rl);
 }
 
-nh_porthome_sandbox_rc nh_porthome_spawn_sandboxed(
+nh_porthome_sandbox_rc nh_porthome_spawn_sandboxed_ex(
     char *const argv[], char *const envp[],
     int stdin_fd, int stdout_fd, int stderr_fd,
+    const int *keep_fds, size_t n_keep_fds,
     uint32_t deadline_ms,
     pid_t *out_pid) {
   (void)deadline_ms; /* wait-side hint — see nh_porthome_sandbox_wait */
@@ -234,9 +235,31 @@ nh_porthome_sandbox_rc nh_porthome_spawn_sandboxed(
     /* Deny new core dumps — belt-and-braces alongside PR_SET_DUMPABLE=0. */
     (void)setrlimit_soft_hard(RLIMIT_CORE, 0);
 
-    /* 5. Close every fd that isn't stdio. Only 0/1/2 survive. */
-    int keep[3] = { 0, 1, 2 };
-    close_fds_except(keep, 3);
+    /* 5. Close every fd that isn't stdio (or explicitly kept). Only
+     *    0/1/2 + @keep_fds[] survive. Bead nostrc-ww50: the auth
+     *    fetch spawner passes the child_staging_fd through here so the
+     *    helper can inherit it via `--staging-fd N`. */
+    {
+      /* Cap the kept-fds list to a sane size so a rogue caller can't
+       * blow the stack; NH_KEEP_MAX = NOFILE default (64). */
+      #define NH_SANDBOX_KEEP_MAX 64
+      int keep[NH_SANDBOX_KEEP_MAX];
+      size_t nk = 0;
+      keep[nk++] = 0;
+      keep[nk++] = 1;
+      keep[nk++] = 2;
+      for (size_t i = 0; i < n_keep_fds && nk < NH_SANDBOX_KEEP_MAX; i++) {
+        int fd = keep_fds ? keep_fds[i] : -1;
+        if (fd < 0) continue;
+        /* dedupe against stdio, but preserve if caller passes 0/1/2
+         * explicitly — the loop below happily walks either way. */
+        int dupe = 0;
+        for (size_t j = 0; j < nk; j++) if (keep[j] == fd) { dupe = 1; break; }
+        if (!dupe) keep[nk++] = fd;
+      }
+      close_fds_except(keep, nk);
+      #undef NH_SANDBOX_KEEP_MAX
+    }
 
     /* 6. Exec. Use the caller-supplied env if any, else our allow-list.
      *    argv[0] is absolute (checked in the parent). */
@@ -303,4 +326,16 @@ int nh_porthome_sandbox_wait(pid_t pid, uint32_t deadline_ms,
     if (out_signal) *out_signal = WTERMSIG(status);
   }
   return 0;
+}
+
+/* Thin wrapper preserving the pre-ww50 signature — no extra fds
+ * survive close_fds_except beyond 0/1/2. */
+nh_porthome_sandbox_rc nh_porthome_spawn_sandboxed(
+    char *const argv[], char *const envp[],
+    int stdin_fd, int stdout_fd, int stderr_fd,
+    uint32_t deadline_ms,
+    pid_t *out_pid) {
+  return nh_porthome_spawn_sandboxed_ex(
+      argv, envp, stdin_fd, stdout_fd, stderr_fd,
+      NULL, 0, deadline_ms, out_pid);
 }
