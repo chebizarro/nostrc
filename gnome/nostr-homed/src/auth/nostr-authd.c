@@ -146,11 +146,15 @@ int main(int argc, char **argv) {
      * so a build without NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL
      * still links (the stub is a no-op). */
     extern void nh_auth_broker_porthome_install(
-        nh_identity_store *store, int enroll_wrap_key)
+        nh_identity_store *store, int enroll_wrap_key,
+        uint32_t nip46_decrypt_timeout_sec)
         __attribute__((weak));
     if (nh_auth_broker_porthome_install) {
       int enroll = (conf.porthome_enroll_wrap_key == 1) ? 1 : 0;
-      nh_auth_broker_porthome_install(store, enroll);
+      /* nostrc-ck6i: 0 => broker uses its 30 s default; >120 s
+       * is clamped inside the installer. */
+      nh_auth_broker_porthome_install(
+          store, enroll, conf.porthome_nip46_decrypt_timeout_sec);
     }
   }
 
@@ -272,10 +276,11 @@ int main(int argc, char **argv) {
    * the store; a late-arriving login would otherwise deref a freed
    * sqlite handle. Weak-linked (see install site above). */
   extern void nh_auth_broker_porthome_install(
-      nh_identity_store *store, int enroll_wrap_key)
+      nh_identity_store *store, int enroll_wrap_key,
+      uint32_t nip46_decrypt_timeout_sec)
       __attribute__((weak));
   if (nh_auth_broker_porthome_install)
-    nh_auth_broker_porthome_install(NULL, 0);
+    nh_auth_broker_porthome_install(NULL, 0, 0);
   nh_auth_broker_free(broker);
   nh_identity_store_close(store);
   fprintf(stderr, "nostr-authd: stopped\n");

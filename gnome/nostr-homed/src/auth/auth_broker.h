@@ -182,6 +182,12 @@ typedef struct nh_auth_conf {
   uint32_t porthome_load_timeout_sec;
   uint64_t porthome_max_home_bytes;
   uint8_t  porthome_enroll_wrap_key;   /* 0=unset(off), 1=on, 2=off */
+  /* porthome_nip46_decrypt_timeout_sec — wall-clock cap the broker
+   * applies to the NIP-46 nip44_decrypt/nip44_encrypt RPCs used for
+   * the wrap-key hand-off. 0 = default (30 s). Values above 120 are
+   * clamped to 120; the hard cap keeps a mis-configured or hostile
+   * bunker from parking the PAM window forever. Bead nostrc-ck6i. */
+  uint32_t porthome_nip46_decrypt_timeout_sec;
   /* Phase 2.5B (bead nostrc-ww50):
    *   porthome_fetch_helper — absolute path of the unprivileged
    *                    fetch helper binary (bead nostrc-9k4g's

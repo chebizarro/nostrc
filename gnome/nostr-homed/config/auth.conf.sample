@@ -99,6 +99,13 @@ socket_path=/run/nostr-auth/auth.sock
 # be explicitly enabled by the operator.
 #porthome_enroll_wrap_key=off
 
+# NIP-46 nip44_decrypt/nip44_encrypt wall-clock cap for the wrap-key
+# hand-off (bead nostrc-ck6i). 0 or unset -> default 30 s; values above
+# 120 are clamped to 120. A remote signer that does not answer within
+# this window fails the wrap step and PROVISION_HOME falls back to
+# LIMITED_MODE; login itself is unaffected.
+#porthome_nip46_decrypt_timeout_sec=30
+
 # Phase 2.5B fetch-helper sandbox (bead nostrc-ww50). The relay/Blossom
 # fetch runs OUT-OF-PROCESS in the `nostr-home-fetch` binary, executed
 # under a dedicated system user. The broker (nostr-authd) keeps root

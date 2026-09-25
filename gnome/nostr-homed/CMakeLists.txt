@@ -1503,6 +1503,22 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL)
       set_tests_properties(homed_porthome_provisioner_status PROPERTIES
         LABELS "nostr-homed;porthome;portable;auth-runtime" TIMEOUT 30)
     endif()
+
+      # Bead nostrc-ck6i — wrap-key hand-off orchestrator (unwrap /
+      # enroll / denied fallback). Uses the auth-runtime because
+      # nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46 and the
+      # nip44-hook setter live in the same translation unit that only
+      # links when NH_AUTH_BROKER_ENABLE_PORTHOME is set.
+      add_executable(test_porthome_wrapkey_nip46
+        tests/unit/test_porthome_wrapkey_nip46.c)
+      target_link_libraries(test_porthome_wrapkey_nip46 PRIVATE
+        nostr_auth_runtime nostr_porthome)
+      target_compile_options(test_porthome_wrapkey_nip46 PRIVATE
+        -Wall -Wextra -Werror -Wno-misleading-indentation)
+      add_test(NAME homed_porthome_wrapkey_nip46
+        COMMAND test_porthome_wrapkey_nip46)
+      set_tests_properties(homed_porthome_wrapkey_nip46 PROPERTIES
+        LABELS "nostr-homed;porthome;portable;auth-runtime" TIMEOUT 30)
   endif()
 endif()
 

@@ -864,12 +864,41 @@ int nh_auth_broker_porthome_take_wrap_seed(const char *account_id,
 static pthread_mutex_t g_pvha_mutex = PTHREAD_MUTEX_INITIALIZER;
 static nh_identity_store *g_pvha_store;
 static int g_pvha_enroll_wrap_key;
+/* Bead nostrc-ck6i. Wall-clock cap around the NIP-46 nip44 RPCs used
+ * for the wrap-key hand-off. Zero => 30 s default; the installer
+ * clamps values > 120 s. Applied via nostr_nip46_client_set_timeout()
+ * immediately before each RPC. */
+#define NH_PVHA_DEFAULT_TIMEOUT_SEC 30u
+#define NH_PVHA_MAX_TIMEOUT_SEC     120u
+static uint32_t g_pvha_nip44_timeout_ms;
+
+/* Test-only nip44 RPC replacements (see auth_porthome.h). */
+static nh_auth_porthome_nip44_fn g_pvha_nip44_encrypt_fn;
+static void *g_pvha_nip44_encrypt_ctx;
+static nh_auth_porthome_nip44_fn g_pvha_nip44_decrypt_fn;
+static void *g_pvha_nip44_decrypt_ctx;
 
 void nh_auth_broker_porthome_install(nh_identity_store *store,
-                                     int enroll_wrap_key) {
+                                     int enroll_wrap_key,
+                                     uint32_t nip46_decrypt_timeout_sec) {
+  uint32_t sec = nip46_decrypt_timeout_sec ? nip46_decrypt_timeout_sec
+                                           : NH_PVHA_DEFAULT_TIMEOUT_SEC;
+  if (sec > NH_PVHA_MAX_TIMEOUT_SEC) sec = NH_PVHA_MAX_TIMEOUT_SEC;
   pthread_mutex_lock(&g_pvha_mutex);
   g_pvha_store = store;
   g_pvha_enroll_wrap_key = enroll_wrap_key ? 1 : 0;
+  g_pvha_nip44_timeout_ms = sec * 1000u;
+  pthread_mutex_unlock(&g_pvha_mutex);
+}
+
+void nh_auth_broker_porthome_set_nip44_hooks(
+    nh_auth_porthome_nip44_fn encrypt, void *encrypt_ctx,
+    nh_auth_porthome_nip44_fn decrypt, void *decrypt_ctx) {
+  pthread_mutex_lock(&g_pvha_mutex);
+  g_pvha_nip44_encrypt_fn = encrypt;
+  g_pvha_nip44_encrypt_ctx = encrypt_ctx;
+  g_pvha_nip44_decrypt_fn = decrypt;
+  g_pvha_nip44_decrypt_ctx = decrypt_ctx;
   pthread_mutex_unlock(&g_pvha_mutex);
 }
 
@@ -934,6 +963,61 @@ static int try_load_provider_and_ct(const char *account_id,
   return 0;
 }
 
+/* Bead nostrc-ck6i. Central error-class logger for the wrap-key
+ * hand-off. The three classes match the DELIVER contract:
+ *   wrap-key-signer-offline — the signer never answered / RPC hung
+ *                             through the timeout / transport dead.
+ *   wrap-key-denied         — the signer answered with a policy
+ *                             refusal (perms not granted, ACL block).
+ *   wrap-key-decrypt-failed — the signer answered, but the plaintext
+ *                             was malformed or the ciphertext row was
+ *                             corrupted / persist failed.
+ * At present the client library returns a single -1 for all three;
+ * this helper still records the intent so a later error-class refinement
+ * (e.g. nip46 error-object introspection) is a one-liner. Never logs
+ * the plaintext, ciphertext, seed or peer pubkey. */
+static void pvha_log_class(const char *class_tag, const char *ctx) {
+  syslog(LOG_WARNING,
+         "porthome_wrap_key: %s: %s",
+         class_tag ? class_tag : "unknown",
+         ctx ? ctx : "");
+}
+
+/* Invoke nip44_decrypt via the test hook if installed, else the real
+ * client RPC. Applies the configured timeout to the live session
+ * *before* the real RPC only — hooks manage their own scheduling. */
+static int pvha_nip44_decrypt(NostrNip46Session *s,
+                              const char *peer_pubkey_hex,
+                              const char *ct_z,
+                              char **out_pt) {
+  pthread_mutex_lock(&g_pvha_mutex);
+  nh_auth_porthome_nip44_fn hook = g_pvha_nip44_decrypt_fn;
+  void *hook_ctx = g_pvha_nip44_decrypt_ctx;
+  uint32_t timeout_ms = g_pvha_nip44_timeout_ms;
+  pthread_mutex_unlock(&g_pvha_mutex);
+  if (hook)
+    return hook((void *)s, peer_pubkey_hex, ct_z, out_pt, hook_ctx);
+  if (timeout_ms)
+    nostr_nip46_client_set_timeout(s, timeout_ms);
+  return nostr_nip46_client_nip44_decrypt_rpc(s, peer_pubkey_hex, ct_z, out_pt);
+}
+
+static int pvha_nip44_encrypt(NostrNip46Session *s,
+                              const char *peer_pubkey_hex,
+                              const char *pt_z,
+                              char **out_ct) {
+  pthread_mutex_lock(&g_pvha_mutex);
+  nh_auth_porthome_nip44_fn hook = g_pvha_nip44_encrypt_fn;
+  void *hook_ctx = g_pvha_nip44_encrypt_ctx;
+  uint32_t timeout_ms = g_pvha_nip44_timeout_ms;
+  pthread_mutex_unlock(&g_pvha_mutex);
+  if (hook)
+    return hook((void *)s, peer_pubkey_hex, pt_z, out_ct, hook_ctx);
+  if (timeout_ms)
+    nostr_nip46_client_set_timeout(s, timeout_ms);
+  return nostr_nip46_client_nip44_encrypt_rpc(s, peer_pubkey_hex, pt_z, out_ct);
+}
+
 int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
     void *nip46_session, const char *account_id,
     const char *account_pubkey_hex) {
@@ -974,15 +1058,17 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
      * bunker's canonical base64 decode; we still guard against
      * embedded NULs by refusing early. */
     for (size_t i = 0; i < ct_len; i++) {
-      if (ct_bytes[i] == 0) { free(provider_id); free(ct_bytes); return -1; }
+      if (ct_bytes[i] == 0) {
+        pvha_log_class("wrap-key-decrypt-failed", "ciphertext contains NUL");
+        free(provider_id); free(ct_bytes); return -1;
+      }
     }
     char *ct_z = malloc(ct_len + 1);
     if (!ct_z) { free(provider_id); free(ct_bytes); return -1; }
     memcpy(ct_z, ct_bytes, ct_len);
     ct_z[ct_len] = '\0';
     char *pt = NULL;
-    int rc = nostr_nip46_client_nip44_decrypt_rpc(
-        s, account_pubkey_hex, ct_z, &pt);
+    int rc = pvha_nip44_decrypt(s, account_pubkey_hex, ct_z, &pt);
     OPENSSL_cleanse(ct_z, ct_len);
     free(ct_z);
     if (rc != 0 || !pt) {
@@ -991,13 +1077,22 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
       /* Signer refused / offline / mismatched key. Login already
        * succeeded on the auth axis — return -1 so the caller can
        * decide whether to surface anything. Provision path falls back
-       * to NOT_SUPPORTED because no seed lands in the cache. */
+       * to NOT_SUPPORTED because no seed lands in the cache. Emit a
+       * WARNING with the class most likely to be true today: the client
+       * library returns -1 for any non-OK outcome, so we log the
+       * broadest class ("signer-offline") — an operator seeing this
+       * without a network incident should suspect a policy denial. */
+      pvha_log_class("wrap-key-signer-offline",
+                     "nip44_decrypt returned no plaintext");
       return -1;
     }
     /* Accept 32 raw bytes or 64 lowercase hex. */
     if (nh_porthome_wrap_seed_from_nip44_plaintext(
             (const uint8_t *)pt, strlen(pt), seed) == NH_PORTHOME_OK) {
       seed_valid = 1;
+    } else {
+      pvha_log_class("wrap-key-decrypt-failed",
+                     "plaintext not 32-raw / 64-hex");
     }
     OPENSSL_cleanse(pt, strlen(pt));
     free(pt);
@@ -1008,14 +1103,14 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
      * transport is safe. The signer's nip44 v2 output is base64 ASCII
      * which we persist verbatim as the wrapped_home_key BLOB. */
     if (nh_porthome_wrap_seed_random(seed) != NH_PORTHOME_OK) {
+      pvha_log_class("wrap-key-decrypt-failed", "RAND_bytes failed");
       free(provider_id); free(ct_bytes);
       return -1;
     }
     char seed_hex[65];
     bytes_to_hex64(seed, seed_hex);
     char *ct_out = NULL;
-    int rc = nostr_nip46_client_nip44_encrypt_rpc(
-        s, account_pubkey_hex, seed_hex, &ct_out);
+    int rc = pvha_nip44_encrypt(s, account_pubkey_hex, seed_hex, &ct_out);
     /* Wipe the seed_hex copy immediately — the bytes-of-hex are
      * as sensitive as the seed itself. */
     OPENSSL_cleanse(seed_hex, sizeof seed_hex);
@@ -1023,6 +1118,8 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
       free(ct_out);
       OPENSSL_cleanse(seed, sizeof seed);
       free(provider_id); free(ct_bytes);
+      pvha_log_class("wrap-key-denied",
+                     "nip44_encrypt returned no ciphertext (enrollment)");
       return -1;
     }
     size_t ct_out_len = strlen(ct_out);
@@ -1031,6 +1128,8 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
       free(ct_out);
       OPENSSL_cleanse(seed, sizeof seed);
       free(provider_id); free(ct_bytes);
+      pvha_log_class("wrap-key-decrypt-failed",
+                     "nip44_encrypt ciphertext size out of range");
       return -1;
     }
     nh_identity_rc srx = nh_identity_provider_set_wrapped_home_key(
@@ -1040,6 +1139,8 @@ int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
     if (srx != NH_IDENTITY_OK) {
       OPENSSL_cleanse(seed, sizeof seed);
       free(provider_id); free(ct_bytes);
+      pvha_log_class("wrap-key-decrypt-failed",
+                     "identity store rejected wrapped_home_key persist");
       return -1;
     }
     seed_valid = 1;
@@ -1313,8 +1414,14 @@ int nh_auth_broker_porthome_take_wrap_seed(const char *a,
   (void)a; (void)out; return -1;
 }
 void nh_auth_broker_porthome_install(nh_identity_store *store,
-                                     int enroll_wrap_key) {
-  (void)store; (void)enroll_wrap_key;
+                                     int enroll_wrap_key,
+                                     uint32_t nip46_decrypt_timeout_sec) {
+  (void)store; (void)enroll_wrap_key; (void)nip46_decrypt_timeout_sec;
+}
+void nh_auth_broker_porthome_set_nip44_hooks(
+    nh_auth_porthome_nip44_fn encrypt, void *encrypt_ctx,
+    nh_auth_porthome_nip44_fn decrypt, void *decrypt_ctx) {
+  (void)encrypt; (void)encrypt_ctx; (void)decrypt; (void)decrypt_ctx;
 }
 int nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46(
     void *nip46_session, const char *account_id,

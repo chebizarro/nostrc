@@ -274,6 +274,15 @@ int nh_auth_conf_load(const char *path, nh_auth_conf *out) {
       else if (!strcasecmp(value, "off") || !strcmp(value, "0") ||
                !strcasecmp(value, "false") || !strcasecmp(value, "no"))
         out->porthome_enroll_wrap_key = 2;
+    } else if (!strcmp(key, "porthome_nip46_decrypt_timeout_sec")) {
+      /* Bead nostrc-ck6i. Applied around nip44_decrypt / nip44_encrypt
+       * during the wrap-key hand-off. Silently clamped to <= 120 s so
+       * a hostile config cannot stall the login window. */
+      uint32_t v = 0;
+      if (parse_uint32(value, &v) == 0) {
+        if (v > 120) v = 120;
+        out->porthome_nip46_decrypt_timeout_sec = v;
+      }
     } else if (!strcmp(key, "porthome_fetch_helper")) {
       /* Absolute path only — the sandbox refuses to execve a relative
        * argv[0]. A misconfigured relative path silently drops us into

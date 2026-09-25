@@ -143,7 +143,27 @@ int nh_auth_broker_porthome_take_wrap_seed(const char *account_id,
  * borrowed pointer; the broker owns it. Idempotent — a second call
  * replaces the previous state. Passing store=NULL disables the hook. */
 void nh_auth_broker_porthome_install(nh_identity_store *store,
-                                     int enroll_wrap_key);
+                                     int enroll_wrap_key,
+                                     uint32_t nip46_decrypt_timeout_sec);
+
+/* Test hook (bead nostrc-ck6i). When set, the wrap-key hand-off in
+ * nh_auth_broker_porthome_maybe_enroll_or_unwrap_nip46 replaces its
+ * two NIP-46 client RPCs with these in-process function pointers,
+ * so unit tests can exercise the enroll / unwrap / denied paths
+ * without standing up a real bunker + relay pool. Callbacks:
+ *   encrypt(session, peer_pk_hex, plaintext, &out_ciphertext, ctx)
+ *   decrypt(session, peer_pk_hex, ciphertext, &out_plaintext, ctx)
+ * Each returns 0 on success; the helper wipes and free()s *out on
+ * the failure path only. Setting both to NULL restores the real
+ * nostr_nip46_client_nip44_* path. */
+typedef int (*nh_auth_porthome_nip44_fn)(void *session,
+                                         const char *peer_pubkey_hex,
+                                         const char *in,
+                                         char **out,
+                                         void *ctx);
+void nh_auth_broker_porthome_set_nip44_hooks(
+    nh_auth_porthome_nip44_fn encrypt, void *encrypt_ctx,
+    nh_auth_porthome_nip44_fn decrypt, void *decrypt_ctx);
 
 /* Called by provider_nip46 / provider_nip46_qr after a successful
  * sign_event verify, BEFORE emitting SIGNED_EVENT to the runtime. When
