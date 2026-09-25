@@ -393,12 +393,15 @@ static int walk_(const char *root_abs, const char *rel,
             !strcmp(de->d_name, ".git")) continue;
 
         char child_rel[4096];
+        int nr;
         if (rel && *rel)
-            snprintf(child_rel, sizeof child_rel, "%s/%s", rel, de->d_name);
+            nr = snprintf(child_rel, sizeof child_rel, "%s/%s", rel, de->d_name);
         else
-            snprintf(child_rel, sizeof child_rel, "%s", de->d_name);
+            nr = snprintf(child_rel, sizeof child_rel, "%s", de->d_name);
+        if (nr < 0 || (size_t)nr >= sizeof child_rel) continue; /* path too long */
         char child_abs[4096];
-        snprintf(child_abs, sizeof child_abs, "%s/%s", abs, de->d_name);
+        int na = snprintf(child_abs, sizeof child_abs, "%s/%s", abs, de->d_name);
+        if (na < 0 || (size_t)na >= sizeof child_abs) continue; /* path too long */
 
         struct stat st;
         if (lstat(child_abs, &st) != 0) continue;
