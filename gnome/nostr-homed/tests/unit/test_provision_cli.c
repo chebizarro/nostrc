@@ -207,6 +207,141 @@ static void test_render_fetch_ctl(void) {
     fprintf(stderr, "OK  render_fetch_ctl\n");
 }
 
+
+
+/* ── 7. push_real_dry_shape: walk produces the expected manifest plan ── */
+static void test_push_real_dry_shape(void) {
+    char tmpl[] = "/tmp/nhp-real-XXXXXX";
+    char *dir = mkdtemp(tmpl);
+    assert(dir);
+    /* Tree: 3 files (small, medium, boundary), 1 subdir, 1 symlink. */
+    char sub[512];
+    snprintf(sub, sizeof sub, "%s/subdir", dir);
+    mkdir(sub, 0700);
+
+    char fp[512];
+    snprintf(fp, sizeof fp, "%s/hello.txt", dir);
+    assert(mkfile(fp, "hello world\n", 12) == 0);
+
+    snprintf(fp, sizeof fp, "%s/subdir/inner.bin", dir);
+    size_t big = 5u * 1024u * 1024u;
+    char *buf = malloc(big);
+    assert(buf);
+    memset(buf, 0xa5, big);
+    assert(mkfile(fp, buf, big) == 0);
+    free(buf);
+
+    /* Symlink relative — pointing at hello.txt. */
+    char link[512]; snprintf(link, sizeof link, "%s/hello.link", dir);
+    assert(symlink("hello.txt", link) == 0);
+
+    nh_prov_walk_entry *entries = NULL;
+    size_t n = 0, skipped = 0;
+    int r = nh_prov_walk_home(dir, NULL, &entries, &n, &skipped);
+    assert(r == 0);
+    /* Expect at least: subdir, hello.txt, inner.bin, hello.link (5 entries) */
+    assert(n >= 4);
+    int seen_dir = 0, seen_symlink = 0, seen_file_big = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (entries[i].kind == NH_PROV_WALK_KIND_DIR &&
+            strcmp(entries[i].rel_path, "subdir") == 0) seen_dir = 1;
+        if (entries[i].kind == NH_PROV_WALK_KIND_SYMLINK &&
+            strcmp(entries[i].rel_path, "hello.link") == 0) {
+            assert(entries[i].symlink_target &&
+                   strcmp(entries[i].symlink_target, "hello.txt") == 0);
+            seen_symlink = 1;
+        }
+        if (entries[i].kind == NH_PROV_WALK_KIND_FILE &&
+            strcmp(entries[i].rel_path, "subdir/inner.bin") == 0 &&
+            entries[i].size == big) seen_file_big = 1;
+    }
+    assert(seen_dir && seen_symlink && seen_file_big);
+
+    /* Chunk-size normalise: default 4 MiB, clamp low/high. */
+    assert(nh_prov_normalize_chunk_size(0)       == 4u * 1024u * 1024u);
+    assert(nh_prov_normalize_chunk_size(1)       == 64u * 1024u);
+    assert(nh_prov_normalize_chunk_size(999)     == 64u * 1024u);
+    assert(nh_prov_normalize_chunk_size(1u<<30)  == 8u * 1024u * 1024u);
+    assert(nh_prov_normalize_chunk_size(1u<<20)  == 1u * 1024u * 1024u);
+
+    /* Chunk-count math (5 MiB @ 4 MiB → 2). */
+    uint64_t cs = nh_prov_normalize_chunk_size(0);
+    uint64_t nc = (big + cs - 1) / cs;
+    assert(nc == 2);
+
+    nh_prov_free_walk(entries, n);
+    char rm[600]; snprintf(rm, sizeof rm, "rm -rf -- %s", dir);
+    (void)system(rm);
+    fprintf(stderr, "OK  push_real_dry_shape\n");
+}
+
+/* ── 8. push_convergent_encryption — D4: same (home_key, pt) → same ct ── */
+#include "nh_porthome_crypto.h"
+static void test_push_convergent_encryption(void) {
+    uint8_t seed[32]; for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i ^ 0xA5);
+    uint8_t home_key[32];
+    assert(nh_porthome_key_derive(seed, home_key) == 0);
+
+    /* Encrypt the same 1 MiB plaintext twice under the same home_key. */
+    size_t n = 1u * 1024u * 1024u;
+    uint8_t *pt = malloc(n);
+    assert(pt);
+    for (size_t i = 0; i < n; i++) pt[i] = (uint8_t)(i * 31u);
+
+    uint8_t *ct1 = NULL, *ct2 = NULL;
+    size_t   c1 = 0, c2 = 0;
+    uint8_t  addr1[32], addr2[32];
+    assert(nh_porthome_encrypt_chunk(home_key, pt, n, &ct1, &c1, addr1) == 0);
+    assert(nh_porthome_encrypt_chunk(home_key, pt, n, &ct2, &c2, addr2) == 0);
+    assert(c1 == c2);
+    /* D4: byte-identical ciphertext + address (convergent). */
+    assert(memcmp(ct1, ct2, c1) == 0);
+    assert(memcmp(addr1, addr2, 32) == 0);
+    /* Wire layout: version=0x01, then nonce(12), then ct, then tag(16). */
+    assert(ct1[0] == 0x01);
+    assert(c1 == n + 1 + 12 + 16);
+
+    /* Different home_key → different ciphertext + address. */
+    seed[0] ^= 0xff;
+    uint8_t home_key_b[32];
+    assert(nh_porthome_key_derive(seed, home_key_b) == 0);
+    uint8_t *ct3 = NULL; size_t c3 = 0; uint8_t addr3[32];
+    assert(nh_porthome_encrypt_chunk(home_key_b, pt, n, &ct3, &c3, addr3) == 0);
+    assert(c3 == c1);
+    assert(memcmp(ct1, ct3, c1) != 0);
+    assert(memcmp(addr1, addr3, 32) != 0);
+
+    free(ct1); free(ct2); free(ct3); free(pt);
+    fprintf(stderr, "OK  push_convergent_encryption\n");
+}
+
+/* ── 9. push_min_replication_gate — synthetic per-server accounting ── */
+static void test_push_min_replication_gate(void) {
+    /* 3 servers, 10 chunks. Server 0 accepted all 10, servers 1 and 2
+     * dropped some. Full-replica count = 1 → below default min=2. */
+    uint32_t up[3]  = {10, 7, 0};
+    uint32_t fail[3] = {0, 3, 10};
+    size_t r = nh_prov_count_full_replicas(up, fail, 3, 10);
+    assert(r == 1);
+
+    /* Two full replicas → OK for min=2. */
+    uint32_t up2[3]  = {10, 10, 4};
+    uint32_t fail2[3] = {0, 0, 6};
+    assert(nh_prov_count_full_replicas(up2, fail2, 3, 10) == 2);
+
+    /* Every server holds a full replica. */
+    uint32_t up3[3]  = {10, 10, 10};
+    uint32_t fail3[3] = {0, 0, 0};
+    assert(nh_prov_count_full_replicas(up3, fail3, 3, 10) == 3);
+
+    /* n_chunks==0 (empty push) — vacuously OK if any server observed. */
+    uint32_t up4[1] = {0};
+    uint32_t fail4[1] = {0};
+    assert(nh_prov_count_full_replicas(up4, fail4, 1, 0) == 1);
+
+    fprintf(stderr, "OK  push_min_replication_gate\n");
+}
+
 int main(void) {
     test_account_round_trip();
     test_account_rejects_unknown_keys();
@@ -214,6 +349,9 @@ int main(void) {
     test_split_csv();
     test_push_dry_run();
     test_render_fetch_ctl();
+    test_push_real_dry_shape();
+    test_push_convergent_encryption();
+    test_push_min_replication_gate();
     fprintf(stderr, "all tests OK\n");
     return 0;
 }

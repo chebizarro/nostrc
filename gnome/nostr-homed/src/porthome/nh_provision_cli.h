@@ -120,6 +120,94 @@ char *nh_prov_render_fetch_ctl(const nh_prov_account *a,
                                int allow_insecure,
                                size_t *out_len);
 
+
+/* ────────────────────────────────────────────────────────────────────
+ * Real push helpers (nh_provision_cli.c) — shared between the CLI and
+ * unit tests so the transport-heavy code in nostr-homed-provision.c can
+ * stay narrow.
+ * ──────────────────────────────────────────────────────────────────── */
+
+/* Normalise a caller-supplied --chunk-size against the design defaults.
+ * 0 (or unset) → 4 MiB. Values < 64 KiB clamp up to 64 KiB. Values
+ * > 8 MiB clamp down to 8 MiB. The design's canonical chunk size is
+ * 4 MiB and this normalisation never changes it. */
+uint64_t nh_prov_normalize_chunk_size(uint64_t requested);
+
+/* Snapshot-walk output row. `symlink_target` is populated iff kind ==
+ * SYMLINK; `chunks` and `n_chunks` stay 0 (populated by the CLI's
+ * transport step, not here). Owned strings must be freed via
+ * nh_prov_free_walk. */
+typedef enum {
+    NH_PROV_WALK_KIND_FILE    = 1,
+    NH_PROV_WALK_KIND_DIR     = 2,
+    NH_PROV_WALK_KIND_SYMLINK = 3,
+} nh_prov_walk_kind;
+
+typedef struct {
+    char             *rel_path;       /* Owned. */
+    nh_prov_walk_kind kind;
+    uint32_t          mode;           /* & 0777 */
+    uint32_t          uid_hint;
+    uint32_t          gid_hint;
+    uint64_t          mtime_ns;
+    uint64_t          size;           /* file size in bytes; 0 for dir/symlink */
+    char             *symlink_target; /* Owned; only for SYMLINK. */
+} nh_prov_walk_entry;
+
+/* Walk `home_abs` recursively, capping depth at 32, skipping the
+ * standard state / cache directories (.local, .cache, .git). Entries
+ * with world-writable bits (0002), setuid (04000) or setgid (02000)
+ * are refused with a warning printed to `warn` (may be NULL) and
+ * counted in `*out_skipped`. Absolute-only paths inside the tree are
+ * refused. Symlink targets are recorded, not traversed.
+ *
+ * Returns 0 on success; *out_entries points at a heap-allocated array
+ * of `*out_n` entries (caller frees via nh_prov_free_walk). On
+ * failure, returns -errno and no allocations. */
+int nh_prov_walk_home(const char *home_abs,
+                      FILE *warn,
+                      nh_prov_walk_entry **out_entries,
+                      size_t *out_n,
+                      size_t *out_skipped);
+
+/* Release everything nh_prov_walk_home allocated. */
+void nh_prov_free_walk(nh_prov_walk_entry *entries, size_t n);
+
+/* min_replication gate.
+ *
+ * Given `per_server[si].chunks_uploaded` values from a completed
+ * nh_porthome_blossom_upload_batch call, count servers that hold a
+ * full replica of every one of `n_chunks` blobs in the batch (i.e.
+ * chunks_uploaded[si] == n_chunks AND chunks_failed[si] == 0). Return
+ * that count.  Callers refuse to advance the generation when the
+ * returned value is < min_replication. */
+size_t nh_prov_count_full_replicas(const uint32_t *chunks_uploaded,
+                                   const uint32_t *chunks_failed,
+                                   size_t n_servers,
+                                   uint64_t n_chunks);
+
+/* Atomic 0600 rewrite of an account file.  Uses the same rename(2)-
+ * from-<path>.tmp.<pid> discipline as the status writer.  Returns 0
+ * on success, -errno on failure. */
+int nh_prov_account_write_file(const char *path, const nh_prov_account *a);
+
+/* Write / update the local push-side generation ring at `path` (typ.
+ * <home>/.local/state/nostr-homed/pinned.json).  Idempotent: if the
+ * last slot is the same generation, it is replaced; otherwise the new
+ * slot is appended and the ring is trimmed to the last N generations
+ * (default 10).  Hashes are 64-char lowercase hex (Blossom addresses).
+ *
+ * The file uses the same schema syncd's nh_syncd_pin_ring writer
+ * emits (schema:1, capacity, generations:[{gen, hashes}]).  A
+ * subsequent syncd start-up over the same $HOME picks it up without
+ * loss.  Non-hex64 entries in `hashes` are ignored (this matches
+ * syncd's promote path).  Returns 0 on success, -errno on failure. */
+int nh_prov_pinned_ring_promote(const char *path,
+                                uint64_t generation,
+                                const char *const *hashes,
+                                size_t n_hashes,
+                                size_t ring_capacity);
+
 #ifdef __cplusplus
 }
 #endif

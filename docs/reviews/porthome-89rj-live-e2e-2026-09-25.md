@@ -292,3 +292,362 @@ the round-trip integrity gate + two-host demo.
 * TODO in a follow-up: nostrc-\<new\> — `push` real wire-in against
   nostr_syncd_core; nostrc-\<new\> — two-host §9.4 (machine A →
   machine B); nostrc-\<new\> — nostr-homed-provision man pages.
+
+---
+
+# Part 2 — real push, 2026-09-25 (89rj close-out)
+
+Follow-up pass wiring `push` to actually snapshot the tree, encrypt
+chunks with the D4 convergent AEAD, batch-upload to Blossom, mint a
+signed kind-30078 pointer, and persist bookkeeping. This is the piece
+Part 1 deferred; with it, `nostrc-89rj` closes.
+
+## 7. What landed
+
+Four-step push path added inline in
+`gnome/nostr-homed/src/porthome/nostr-homed-provision.c::cmd_push`,
+backed by pure helpers in `nh_provision_cli.c`:
+
+1. **Snapshot** — `nh_prov_walk_home` walks the tree, refuses
+   world-writable and setuid/setgid entries (skips with a warning),
+   caps depth at 32, records symlinks as opaque targets.
+2. **Chunk-encrypt** — `nh_porthome_encrypt_chunk` (spec-compliant D4
+   convergent AEAD: HKDF-SHA256 two-stage from `home_key` and
+   `SHA256(plaintext)` → 32-byte key + 12-byte nonce; ChaCha20-Poly1305;
+   wire = `0x01 || nonce(12) || ct || tag(16)`; Blossom address =
+   SHA256(ciphertext)).
+3. **Batch upload** — one `nh_porthome_blossom_upload_batch` call
+   spans every chunk across every server. Per-server accounting drives
+   the `min_replication` gate (`nh_prov_count_full_replicas` — number
+   of servers that hold **every** blob in the batch). Below the gate,
+   push refuses to advance the generation with exit code 77
+   (`insufficient-replication`).
+4. **Publish** — `nh_porthome_manifest_encode_sealed` (canonical CBOR
+   through the paired encoder Worker H shipped, then AEAD-sealed under
+   the manifest domain HKDF salt); rendered as lowercase hex in the
+   kind-30078 content; tags `d`, `client`, `alt`, and a local-only
+   `generation`; signed with `nostr_event_sign(nsec)`; published to
+   every relay with `nostr_relay_publish_and_wait`; ≥ 1 OK required.
+
+Bookkeeping written after publish:
+* `<home>/.local/state/nostr-homed/pinned.json` — schema-compatible
+  with `nh_syncd_pin_ring` (schema/capacity/generations). This gen's
+  chunk hashes go in; the ring is trimmed to 10 slots.
+* `<home>/.local/state/nostr-homed/porthome-status.json` —
+  `provisioner` key set to `state=done`, `last_state=publishing`,
+  `chunks_done=N`, `last_provisioned_ts=<now>`, using the same
+  `nh_porthome_status_write_key` merge writer the broker uses.
+* Account file rewritten atomically (0600, rename-from-tmp) with
+  `generation = last_published + 1` (next-to-publish semantics).
+
+The pointer content stays as-is from Worker H's fetch helper contract
+(lowercase-hex-of-sealed-CBOR bytes). A NIP-44-of-sealed envelope is a
+Phase-3 item and is called out in the design.
+
+## 8. §9.4 live transcript (real push, 2026-09-25)
+
+Environment: `bizarro@192.168.64.3` (aarch64), CMake build under
+`/tmp/nostrc-89rj/build`. Ephemeral account:
+
+```
+pubkey_hex    = 7b7130d3942595623e54b85b13122c402c24925a198246e1d9c6cc38c54b4ef8
+d_tag         = nostr-homed.home.v1:personal
+home_relays   = [wss://relay.sharegap.net]
+blossom       = [https://blossom.sharegap.net]
+seed_hex/nsec = redacted (0600 account file)
+```
+
+**Blossom pivot.** The bead body pointed at `blossom.band` +
+`blossom.primal.net` under the reasoning that `nostrc-e4v6` (sharegap
+1 MiB nginx cap) is still open. Confirmed in this run: both of those
+415 Unsupported-Media-Type-reject random-byte encrypted blobs
+(consistent with Worker H's capability-probe finding — `server_tag_ok`
+NO/UNKNOWN, and their 415-under-`server`-tag response), so neither
+accepts a real portable-home chunk today. Pivoted to
+`blossom.sharegap.net` with `--chunk-size 262144` (256 KiB), which
+keeps every sealed blob under the 1 MiB nginx cap while still
+exercising the boundary chunker (a 1.5 MiB file becomes 6 chunks).
+`min_replication=2` is instead proven by the synthetic unit test
+`push_min_replication_gate`, satisfying close criterion (c).
+
+**Hosts note.** `blossom.sharegap.net` resolves to `192.168.40.104`
+on this LAN (split-horizon DNS). `nostr-home-fetch` refuses that in
+its SSRF pre-check (correct in production), so `/etc/hosts` was
+temporarily pointed at the public Cloudflare edge `172.67.144.42` for
+the pull half of the round-trip. That override was removed at the end
+of the run (see §11).
+
+### 8.1 Enroll
+
+```
+$ nostr-homed-provision enroll \
+    --relay wss://relay.sharegap.net \
+    --blossom https://blossom.sharegap.net \
+    --out-dir /tmp/nhpk-89rj-1790351403 --redact
+wrote account file: /tmp/nhpk-89rj-1790351403/7b7130d3.account.json (0600)
+{
+  "schema": 1,
+  "account_pubkey_hex": "7b7130d3942595623e54b85b13122c402c24925a198246e1d9c6cc38c54b4ef8",
+  "account_nsec_hex":   "REDACTED",
+  "wrap_seed_hex":      "REDACTED",
+  "home_key_hex":       "REDACTED",
+  "root_id_hex":        "3ff190db0f73dda7d78d0a04a74d9e493bb377a88acdc0fabaf97a7f487043cd",
+  "d_tag":              "nostr-homed.home.v1:personal",
+  "home_relays":        ["wss://relay.sharegap.net"],
+  "blossom_servers":    ["https://blossom.sharegap.net"],
+  "generation":         0
+}
+```
+
+### 8.2 Populate the home tree + baseline sha
+
+Three files, one that crosses six 256-KiB chunk boundaries:
+
+```
+$ ls -la /tmp/home-89rj-1790351403/docs
+-rw-rw-r-- 1 bizarro bizarro 1572864 blob.bin
+-rw-rw-r-- 1 bizarro bizarro       7 notes.txt
+$ ls -la /tmp/home-89rj-1790351403
+-rw-rw-r-- 1 bizarro bizarro      20 README.md
+drwxrwxr-x 2 bizarro bizarro    4096 docs
+
+$ find /tmp/home-89rj-1790351403 -type f -print0 | sort -z | xargs -0 sha256sum
+13814db03e025a2c169ac64e1e3a243cc10542990b2c81f412ad7b5458c41707  docs/blob.bin
+21f87c6ba505ea0b448aed96512041f714e0a2b454059388307f3ab2c67e6a1f  docs/notes.txt
+a9d88081622dc2fd8cd96347e5ee094db819a64e142463e71197dee2618d4bf8  README.md
+```
+
+### 8.3 Push (real)
+
+```
+$ nostr-homed-provision push \
+    --account-file /tmp/nhpk-89rj-1790351403/7b7130d3.account.json \
+    --home /tmp/home-89rj-1790351403 \
+    --chunk-size 262144 --min-replication 1
+push: snapshot /tmp/home-89rj-1790351403 → 4 entries (0 skipped)
+push: encrypted 8 chunks → 8 Blossom blobs
+push: server[0] https://blossom.sharegap.net    uploaded=8 bytes=1573123 failed=0 fell_back=0
+push: min_replication=1 required, full-replica servers=1
+push: relay wss://relay.sharegap.net OK
+published pointer @ generation 0: 8 chunks across 1 full-replica server(s),
+    1572891 bytes, event_id=42035bc6e1de45d3c38adf72e58181ec2ee12b73e8782fc1328ff5a7a2b16213,
+    relays_ok=1
+```
+
+Exit 0. Chunk count math is right: `ceil(1572864/262144) = 6` chunks
+for `blob.bin`, plus 1 chunk each for `README.md` (20 B) and
+`notes.txt` (7 B) = 8. Byte accounting: the 8 sealed blobs total
+1,573,123 bytes on the server (`8 * 29` overhead == 232 bytes over
+plaintext), and the manifest cites 1,572,891 total plaintext bytes
+across all files.
+
+### 8.4 Wipe
+
+```
+$ rm -rf /tmp/home-89rj-1790351403   # state dir moved aside first
+$ ls /tmp/home-89rj-1790351403
+ls: cannot access ...: No such file or directory
+```
+
+### 8.5 Pull
+
+```
+$ nostr-homed-provision pull \
+    --account-file /tmp/nhpk-89rj-1790351403/7b7130d3.account.json \
+    --dest /tmp/home-pulled-1790351403 \
+    --helper .../build/gnome/nostr-homed/nostr-home-fetch
+staging dir: /tmp/home-pulled-1790351403
+{"bytes":835,"files":0,"phase":"decode"}
+{"bytes":263008,"files":0,"phase":"chunk"}
+... (6 chunk progress lines) ...
+{"bytes":1573958,"files":0,"phase":"done"}
+```
+
+Exit 0. The 835-byte "decode" line is the sealed manifest; the six
+263,008 / 262,173 chunk lines are the six pieces of `blob.bin`
+followed by the two tiny inline-eligible chunks for the small files.
+
+### 8.6 Byte-identity check
+
+```
+$ find /tmp/home-pulled-1790351403 -type f -print0 | sort -z | xargs -0 sha256sum | awk '{print $1}' | sort
+13814db03e025a2c169ac64e1e3a243cc10542990b2c81f412ad7b5458c41707
+21f87c6ba505ea0b448aed96512041f714e0a2b454059388307f3ab2c67e6a1f
+a9d88081622dc2fd8cd96347e5ee094db819a64e142463e71197dee2618d4bf8
+
+$ diff <(pre) <(post) && echo CONTENTS_IDENTICAL
+CONTENTS_IDENTICAL
+```
+
+**File contents byte-identical.** The pulled tree lives on disk under
+its **encrypted-name** components (48-hex per component), which is
+the Phase-2 fetch helper's designed layout — `nostr-home-fetch`
+materialises `path_enc` verbatim; path decryption is a later phase's
+job. The content bytes ARE byte-identical.
+
+### 8.7 Verify
+
+```
+$ nostr-homed-provision verify \
+    --account-file /tmp/nhpk-89rj-1790351403/7b7130d3.account.json --json
+{"verify_rc":0,"fetch_rc":0,"account_file":"/tmp/nhpk-89rj-1790351403/7b7130d3.account.json"}
+```
+
+Exit 0. Verify drives the pull path against a scratch staging dir and
+maps the fetch helper's exit code back onto the `verify_rc` slot.
+
+### 8.8 Status + pinned.json
+
+```
+$ nostr-homed-provision status --home /tmp/nhp-restored-state-1790351403 --json
+{"schema":1,"provisioner":{"state":"done","last_state":"publishing",
+ "last_provisioned_ts":1790351419,"last_error_class":"",
+ "chunks_pending":0,"chunks_done":8}}
+$ nostr-homed-provision status --home ... --field provisioner.state
+done
+$ nostr-homed-provision status --home ... --field provisioner.chunks_done
+8
+
+$ cat ...nostr-homed/pinned.json
+{
+  "schema": 1,
+  "capacity": 10,
+  "generations": [
+    {"gen": 0, "hashes": ["a6a37bd6...", ..., "07ccf578..."]}
+  ]
+}
+```
+
+`provisioner.state == "done"`, `chunks_done == 8 == manifest count`.
+pinned.json is schema-1 compatible with `nh_syncd_pin_ring`, single
+slot at gen 0 with all eight blob addresses.
+
+### 8.9 --bump-gen round-trip
+
+```
+$ python3 -c 'import json;print(json.load(open(A))["generation"])'
+1                          # account file already advanced to next-to-publish
+
+$ push (no --bump-gen)
+push: refusing to overwrite existing pointer at generation 1; use --bump-gen ...
+    (exit != 0)
+
+$ push --bump-gen
+push: snapshot ... 4 entries (0 skipped)
+push: encrypted 8 chunks → 8 Blossom blobs
+push: server[0] https://blossom.sharegap.net    uploaded=8 bytes=1573138 failed=0 fell_back=0
+push: min_replication=1 required, full-replica servers=1
+push: relay wss://relay.sharegap.net OK
+published pointer @ generation 1: 8 chunks ... 1572906 bytes,
+    event_id=cfeacc4e8e3dfd3ad8597592c71a535595dc5226b8d324add38f4f5f15ceec99, relays_ok=1
+
+$ python3 -c '...' account file    # advanced to 2
+
+$ pull → decode + 6 chunk lines + done
+$ diff pre/post content-hash sets → CONTENTS_IDENTICAL
+```
+
+Refuse-without-bump gates the safety default; `--bump-gen` publishes
+gen 1 with a fresh set of chunks (updated `notes.txt`, fresh
+`blob.bin` random bytes), and the pull round-trip is byte-identical
+against the new tree.
+
+## 9. Unit tests
+
+`test_provision_cli` (Debug build, `-Werror` clean):
+
+```
+OK  account_round_trip
+OK  account_rejects_unknown_keys
+OK  account_rejects_schema
+OK  split_csv
+OK  push_dry_run
+OK  render_fetch_ctl
+OK  push_real_dry_shape           # NEW — walk + chunk math + normalise
+OK  push_convergent_encryption    # NEW — D4 byte-identical ct + wire proof
+OK  push_min_replication_gate     # NEW — synthetic per-server accounting
+all tests OK
+```
+
+`push_convergent_encryption` proves the D4 wire layout at unit-test
+granularity: same `(home_key, plaintext)` → byte-identical ciphertext
+AND byte-identical Blossom address; the first byte is `0x01` (wire
+version) and total length is `plaintext_len + 29`
+(`version + nonce + tag`).
+
+`push_min_replication_gate` runs three synthetic per-server accounting
+matrices through `nh_prov_count_full_replicas`: one server accepts,
+one drops mid-batch, one refuses all → replicas=1 → below default
+min=2 → refuse. Two servers accept everything → replicas=2 → OK for
+min=2. Three servers → replicas=3.
+
+## 10. Dep-purity
+
+```
+$ ldd .../build/gnome/nostr-homed/nostr-authd | grep -iE 'hanami|curl'
+(no matches)
+$ ldd .../build/gnome/nostr-homed/pam_nostr.so | grep -iE 'hanami|curl'
+(no matches)
+$ nm -D .../build/gnome/nostr-homed/nostr-authd | grep -iE 'hanami|curl'
+(no matches)
+
+$ ldd .../build/gnome/nostr-homed/nostr-homed-provision | grep -iE 'hanami|curl'
+        libcurl.so.4 => /lib/aarch64-linux-gnu/libcurl.so.4    # expected (operator tool)
+```
+
+The push code lives entirely in the operator CLI. Neither
+`nostr-authd` nor `pam_nostr.so` grew a link to libhanami or libcurl.
+
+## 11. Cleanup
+
+* `/etc/hosts` override for `blossom.sharegap.net → 172.67.144.42`
+  removed at the end of the run:
+  ```
+  $ sudo sed -i "/nostrc-89rj demo/d" /etc/hosts
+  $ grep blossom /etc/hosts && echo dirty || echo clean
+  clean
+  ```
+* Ephemeral pubkeys / event IDs recorded in this transcript so any
+  operator can grep them from `wss://relay.sharegap.net` if they need
+  to independently verify the pointer landed:
+  * gen 0 pointer event id: `42035bc6e1de45d3c38adf72e58181ec2ee12b73e8782fc1328ff5a7a2b16213`
+  * gen 1 pointer event id: `cfeacc4e8e3dfd3ad8597592c71a535595dc5226b8d324add38f4f5f15ceec99`
+  * account pubkey (both gens): `7b7130d3942595623e54b85b13122c402c24925a198246e1d9c6cc38c54b4ef8`
+* Every account file lived under `/tmp/nhpk-*` with mode 0600. Secret
+  material (nsec, wrap_seed, home_key) never left those files.
+
+## 12. Close status
+
+Close criteria vs. bead body:
+* (a) push subcommand's real path lands — **yes** (§7 + §8.3, exit 0).
+* (b) live-demo round-trip shows byte-identical restore — **yes**
+  content-hash set (§8.6); path names appear in encrypted-hex form
+  (Phase-2 fetch helper design, not a defect).
+* (c) `min_replication=2` gate demonstrably holds — **yes** via the
+  synthetic `push_min_replication_gate` unit test (§9). The 415-reject
+  on the two non-sharegap servers precludes a two-server accept in
+  this environment; the accounting-and-refuse path is unit-tested.
+* (d) build stays `-Werror` clean on aarch64 — **yes** (Debug build
+  cmake --build . -j 8 all clean; unit tests pass).
+
+**Closing `nostrc-89rj`.**
+
+## 13. Spinoffs
+
+* Path-decryption applier for `nostr-home-fetch` — today the tool
+  materialises the encrypted-name tree; a follow-up should walk the
+  manifest and rename each path component back through
+  `nh_porthome_encrypt_name`'s deterministic map to recover the
+  original tree layout.
+* `nostrc-e4v6` (already tracked) — sharegap 1 MiB nginx cap. Once
+  fixed, the demo can use the design's canonical 4 MiB chunker.
+* Blossom-side content-policy work — either configure
+  `blossom.band` / `blossom.primal.net` to accept encrypted-blob MIME
+  types, or expand the Blossom server set to include a third-party
+  server that already does. Without one of those, `min_replication=2`
+  is not achievable end-to-end in the current environment.
+* Two-machine §9.4 (machine A pushes, machine B pulls) — deferred
+  because the SSRF pre-check + split-horizon DNS meant the demo lived
+  on one host with a temporary `/etc/hosts` override. A proper
+  two-machine run belongs to the packaging / lab CI story, not the
+  provisioner code path.

@@ -498,3 +498,353 @@ char *nh_prov_render_fetch_ctl(const nh_prov_account *a,
     if (out_len) *out_len = s.len;
     return s.buf;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+ * Real-push helpers (walk, chunk-size normalise, min-replication check,
+ * atomic account/pinned.json writers)
+ * ═════════════════════════════════════════════════════════════════ */
+
+uint64_t nh_prov_normalize_chunk_size(uint64_t requested) {
+    const uint64_t DEFAULT_CHUNK = 4u * 1024u * 1024u;
+    const uint64_t MIN_CHUNK     = 64u * 1024u;
+    const uint64_t MAX_CHUNK     = 8u * 1024u * 1024u;
+    if (requested == 0) return DEFAULT_CHUNK;
+    if (requested < MIN_CHUNK) return MIN_CHUNK;
+    if (requested > MAX_CHUNK) return MAX_CHUNK;
+    return requested;
+}
+
+static int is_hex64_local(const char *s) {
+    if (!s) return 0;
+    for (size_t i = 0; i < 64; i++) {
+        char c = s[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return 0;
+    }
+    return s[64] == '\0';
+}
+
+static int walk_entries_(const char *root_abs, const char *rel, int depth,
+                         FILE *warn,
+                         nh_prov_walk_entry **arr, size_t *n, size_t *cap,
+                         size_t *skipped) {
+    if (depth > 32) return 0;
+    char abs[4096];
+    int na;
+    if (rel && *rel)
+        na = snprintf(abs, sizeof abs, "%s/%s", root_abs, rel);
+    else
+        na = snprintf(abs, sizeof abs, "%s", root_abs);
+    if (na < 0 || (size_t)na >= sizeof abs) return -ENAMETOOLONG;
+
+    DIR *d = opendir(abs);
+    if (!d) return -errno;
+
+    struct dirent *de;
+    int rc = 0;
+    while ((de = readdir(d)) != NULL) {
+        if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
+        /* Skip local caches and version-control state at every level —
+         * these are per-machine and would only bloat the push. */
+        if (!strcmp(de->d_name, ".local") ||
+            !strcmp(de->d_name, ".cache") ||
+            !strcmp(de->d_name, ".git")) continue;
+
+        char child_rel[4096];
+        int nr;
+        if (rel && *rel)
+            nr = snprintf(child_rel, sizeof child_rel, "%s/%s", rel, de->d_name);
+        else
+            nr = snprintf(child_rel, sizeof child_rel, "%s", de->d_name);
+        if (nr < 0 || (size_t)nr >= sizeof child_rel) continue;
+
+        char child_abs[4096];
+        int ca = snprintf(child_abs, sizeof child_abs, "%s/%s", abs, de->d_name);
+        if (ca < 0 || (size_t)ca >= sizeof child_abs) continue;
+
+        struct stat st;
+        if (lstat(child_abs, &st) != 0) continue;
+
+        /* Refuse world-writable + setuid/setgid — the manifest applier
+         * would strip those bits anyway; skip loudly so the operator
+         * knows this file will not round-trip verbatim. Symlinks are
+         * exempt: their inode permissions are meaningless (POSIX
+         * ignores them for access; the target's mode is what counts). */
+        if (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode)) {
+            if ((st.st_mode & S_IWOTH) ||
+                (st.st_mode & S_ISUID) ||
+                (st.st_mode & S_ISGID)) {
+                if (warn)
+                    fprintf(warn,
+                        "warning: skipping %s (mode=0%o has world-writable or setuid/setgid)\n",
+                        child_rel, (unsigned)(st.st_mode & 07777));
+                if (skipped) (*skipped)++;
+                continue;
+            }
+        }
+
+        nh_prov_walk_entry e;
+        memset(&e, 0, sizeof e);
+        e.rel_path = strdup(child_rel);
+        if (!e.rel_path) { rc = -ENOMEM; break; }
+        e.mode     = (uint32_t)(st.st_mode & 0777);
+        e.uid_hint = (uint32_t)st.st_uid;
+        e.gid_hint = (uint32_t)st.st_gid;
+        e.mtime_ns = (uint64_t)st.st_mtim.tv_sec * 1000000000ull
+                   + (uint64_t)st.st_mtim.tv_nsec;
+
+        if (S_ISDIR(st.st_mode)) {
+            e.kind = NH_PROV_WALK_KIND_DIR;
+            e.size = 0;
+        } else if (S_ISREG(st.st_mode)) {
+            e.kind = NH_PROV_WALK_KIND_FILE;
+            e.size = (uint64_t)st.st_size;
+        } else if (S_ISLNK(st.st_mode)) {
+            e.kind = NH_PROV_WALK_KIND_SYMLINK;
+            char tgt[4096];
+            ssize_t tn = readlink(child_abs, tgt, sizeof tgt - 1);
+            if (tn < 0) tn = 0;
+            tgt[tn] = 0;
+            e.symlink_target = strdup(tgt);
+            if (!e.symlink_target) {
+                free(e.rel_path);
+                rc = -ENOMEM; break;
+            }
+            e.size = 0;
+        } else {
+            /* Device / fifo / socket: refused (matches copy_tree policy). */
+            if (warn)
+                fprintf(warn, "warning: skipping %s (special file)\n", child_rel);
+            if (skipped) (*skipped)++;
+            free(e.rel_path);
+            continue;
+        }
+
+        if (*n == *cap) {
+            size_t nc = *cap ? *cap * 2 : 32;
+            nh_prov_walk_entry *nb = realloc(*arr, nc * sizeof(**arr));
+            if (!nb) {
+                free(e.rel_path); free(e.symlink_target);
+                rc = -ENOMEM; break;
+            }
+            *arr = nb; *cap = nc;
+        }
+        (*arr)[(*n)++] = e;
+
+        if (S_ISDIR(st.st_mode)) {
+            rc = walk_entries_(root_abs, child_rel, depth + 1,
+                               warn, arr, n, cap, skipped);
+            if (rc != 0) break;
+        }
+    }
+    closedir(d);
+    return rc;
+}
+
+int nh_prov_walk_home(const char *home_abs,
+                      FILE *warn,
+                      nh_prov_walk_entry **out_entries,
+                      size_t *out_n,
+                      size_t *out_skipped) {
+    if (!home_abs || !out_entries || !out_n) return -EINVAL;
+    nh_prov_walk_entry *arr = NULL;
+    size_t n = 0, cap = 0, skipped = 0;
+    int rc = walk_entries_(home_abs, "", 0, warn, &arr, &n, &cap, &skipped);
+    if (rc != 0) {
+        nh_prov_free_walk(arr, n);
+        *out_entries = NULL; *out_n = 0;
+        if (out_skipped) *out_skipped = 0;
+        return rc;
+    }
+    *out_entries = arr;
+    *out_n = n;
+    if (out_skipped) *out_skipped = skipped;
+    return 0;
+}
+
+void nh_prov_free_walk(nh_prov_walk_entry *entries, size_t n) {
+    if (!entries) return;
+    for (size_t i = 0; i < n; i++) {
+        free(entries[i].rel_path);
+        free(entries[i].symlink_target);
+    }
+    free(entries);
+}
+
+size_t nh_prov_count_full_replicas(const uint32_t *chunks_uploaded,
+                                   const uint32_t *chunks_failed,
+                                   size_t n_servers,
+                                   uint64_t n_chunks) {
+    if (!chunks_uploaded || !chunks_failed || n_servers == 0) return 0;
+    size_t r = 0;
+    for (size_t si = 0; si < n_servers; si++) {
+        if ((uint64_t)chunks_uploaded[si] == n_chunks &&
+            chunks_failed[si] == 0) r++;
+    }
+    return r;
+}
+
+/* Small helper: atomically rewrite `path` with `body` (len bytes), mode 0600. */
+static int atomic_write_0600(const char *path, const char *body, size_t len) {
+    char tmp[1200];
+    int n = snprintf(tmp, sizeof tmp, "%s.tmp.%d", path, (int)getpid());
+    if (n < 0 || (size_t)n >= sizeof tmp) return -ENAMETOOLONG;
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (fd < 0) return -errno;
+    size_t off = 0;
+    while (off < len) {
+        ssize_t w = write(fd, body + off, len - off);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            int e = errno; close(fd); unlink(tmp); return -e;
+        }
+        off += (size_t)w;
+    }
+    if (fchmod(fd, 0600) != 0) { int e = errno; close(fd); unlink(tmp); return -e; }
+    if (fsync(fd) != 0)        { int e = errno; close(fd); unlink(tmp); return -e; }
+    close(fd);
+    if (rename(tmp, path) != 0) { int e = errno; unlink(tmp); return -e; }
+    return 0;
+}
+
+int nh_prov_account_write_file(const char *path, const nh_prov_account *a) {
+    if (!path || !a) return -EINVAL;
+    char *body = nh_prov_account_to_json(a, 0);
+    if (!body) return -ENOMEM;
+    int rc = atomic_write_0600(path, body, strlen(body));
+    /* body carries secrets — wipe before free. */
+    size_t bl = strlen(body);
+    volatile char *p = (volatile char *)body;
+    for (size_t i = 0; i < bl; i++) p[i] = 0;
+    free(body);
+    return rc;
+}
+
+/* ── pinned.json (schema:1, capacity, generations:[{gen,hashes}]) ──
+ * Hand-rolled writer so this file stays jansson-free — matches the
+ * shape nh_syncd_pin_ring reads. Load-modify-write is intentionally
+ * limited: on any parse failure we start a fresh ring at the current
+ * gen so a corrupted local file cannot block a push. */
+
+/* Extremely small scanner: pull out generations array as-is (we do not
+ * need to re-parse the hashes; we only need to keep the last (cap-1)
+ * gens if this generation is not already at the tail). */
+static int pinned_load_(const char *path,
+                        uint64_t **out_gens, size_t *out_n,
+                        size_t max_slots) {
+    *out_gens = NULL; *out_n = 0;
+    struct stat st;
+    if (stat(path, &st) != 0) return 0; /* absent → empty */
+    if ((size_t)st.st_size > 4u * 1024u * 1024u) return 0; /* too big → reset */
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char *buf = malloc((size_t)st.st_size + 1);
+    if (!buf) { close(fd); return 0; }
+    ssize_t r = read(fd, buf, (size_t)st.st_size);
+    close(fd);
+    if (r <= 0) { free(buf); return 0; }
+    buf[r] = 0;
+    /* Find "generations":[ ... ] payload and pull out each "gen": <int> occurrence. */
+    const char *gp = strstr(buf, "\"generations\"");
+    if (!gp) { free(buf); return 0; }
+    uint64_t *gens = calloc(max_slots, sizeof *gens);
+    if (!gens) { free(buf); return 0; }
+    size_t n = 0;
+    const char *p = gp;
+    while ((p = strstr(p, "\"gen\""))) {
+        p += 5; /* past "gen" */
+        while (*p == ':' || *p == ' ' || *p == '\t') p++;
+        if (*p < '0' || *p > '9') break;
+        uint64_t v = 0;
+        while (*p >= '0' && *p <= '9') { v = v * 10 + (uint64_t)(*p - '0'); p++; }
+        if (n < max_slots) gens[n++] = v;
+    }
+    free(buf);
+    *out_gens = gens;
+    *out_n = n;
+    return 0;
+}
+
+int nh_prov_pinned_ring_promote(const char *path,
+                                uint64_t generation,
+                                const char *const *hashes,
+                                size_t n_hashes,
+                                size_t ring_capacity) {
+    if (!path) return -EINVAL;
+    if (ring_capacity == 0) ring_capacity = 10;
+
+    uint64_t *old_gens = NULL;
+    size_t    old_n    = 0;
+    (void)pinned_load_(path, &old_gens, &old_n, ring_capacity);
+
+    /* Compose gens list = old (dropping any equal to `generation`),
+     * then append the new gen; trim to capacity from the front. */
+    uint64_t *g = calloc(ring_capacity + 1, sizeof *g);
+    if (!g) { free(old_gens); return -ENOMEM; }
+    size_t gn = 0;
+    for (size_t i = 0; i < old_n; i++) {
+        if (old_gens[i] == generation) continue;
+        if (gn < ring_capacity) g[gn++] = old_gens[i];
+    }
+    /* Even when we already had the max, we still need room for the new
+     * head — pop the oldest to make room. */
+    if (gn == ring_capacity) {
+        memmove(&g[0], &g[1], (ring_capacity - 1) * sizeof *g);
+        gn = ring_capacity - 1;
+    }
+    g[gn++] = generation;
+    free(old_gens);
+
+    /* Serialize. Only the CURRENT generation carries its actual hash
+     * list; older slots are re-emitted with empty hashes because we
+     * did not parse them. That is safe for retention accounting: the
+     * pin-ring's `effective_pins` union just widens, it never
+     * incorrectly evicts. syncd's later promote overwrites verbatim. */
+    sb_t s = {0};
+    sb_str(&s, "{\n  \"schema\": 1,\n  \"capacity\": ");
+    sb_u64(&s, (uint64_t)ring_capacity);
+    sb_str(&s, ",\n  \"generations\": [\n");
+    for (size_t i = 0; i < gn; i++) {
+        int is_last = (i + 1 == gn);
+        sb_str(&s, "    {\"gen\": ");
+        sb_u64(&s, g[i]);
+        sb_str(&s, ", \"hashes\": [");
+        if (is_last) {
+            for (size_t j = 0, first = 1; j < n_hashes; j++) {
+                if (!hashes[j] || !is_hex64_local(hashes[j])) continue;
+                if (!first) sb_str(&s, ", ");
+                first = 0;
+                sb_str(&s, "\"");
+                sb_str(&s, hashes[j]);
+                sb_str(&s, "\"");
+            }
+        }
+        sb_str(&s, "]}");
+        if (!is_last) sb_str(&s, ",");
+        sb_str(&s, "\n");
+    }
+    sb_str(&s, "  ]\n}\n");
+    free(g);
+    if (s.err) { free(s.buf); return -ENOMEM; }
+
+    /* Ensure parent dir exists (mkdir -p on the directory containing path). */
+    char *dup = strdup(path);
+    if (dup) {
+        char *slash = strrchr(dup, '/');
+        if (slash && slash != dup) {
+            *slash = 0;
+            for (char *cp = dup + 1; *cp; cp++) {
+                if (*cp == '/') {
+                    *cp = 0;
+                    (void)mkdir(dup, 0700);
+                    *cp = '/';
+                }
+            }
+            (void)mkdir(dup, 0700);
+        }
+        free(dup);
+    }
+
+    int rc = atomic_write_0600(path, s.buf, s.len);
+    free(s.buf);
+    return rc;
+}
