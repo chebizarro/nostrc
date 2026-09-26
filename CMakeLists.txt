@@ -554,6 +554,13 @@ if (ENABLE_NOSTR_SETTINGS)
   add_subdirectory(gnome/nostr-settings)
 endif()
 
+# GNOME Shell extension "Nostr" (nostrc-33f1): Quick Settings relay toggle,
+# relay stats, wallet balance. Self-contained block; installs data only.
+option(ENABLE_NOSTR_SHELL_EXTENSION "Install the Nostr GNOME Shell extension (nostr@nostr.org)" OFF)
+if (ENABLE_NOSTR_SHELL_EXTENSION)
+  add_subdirectory(gnome/nostr-shell-extension)
+endif()
+
 ## GLib demo: only if libnostr built with GLib support
 if (TARGET nostr)
   get_target_property(_nostr_defs nostr COMPILE_DEFINITIONS)

@@ -638,6 +638,24 @@ org.nostr.SessionRelay1 statistics, storage limits, NIP-65 list, NIP-11),
 Notifications, Wallet (NWC pairing and budgets via org.nostr.Wallet1), Media
 servers (BUD-03) and Files (nostr-seal / nostr-share defaults).
 
+# --- Sub-package: gnome-shell-extension-nostr --------------------------------
+%package -n gnome-shell-extension-nostr
+Summary:        GNOME Shell extension: Nostr relay toggle and wallet balance
+BuildArch:      noarch
+Requires:       gnome-shell >= 46
+Requires:       gnome-shell < 49
+Recommends:     nostrc-session-relay = %{version}-%{release}
+Recommends:     nostr-settings = %{version}-%{release}
+Suggests:       nostr-wallet-agent = %{version}-%{release}
+Suggests:       nostr-notify = %{version}-%{release}
+%description -n gnome-shell-extension-nostr
+A "Nostr Relay" Quick Settings toggle for the per-user session relay, with
+the same systemd user unit semantics as Nostr Settings (enable+start the
+socket; disable, then stop) and live statistics from org.nostr.SessionRelay1.
+Its menu shows nostr-notify status, the Nostr Wallet Connect balance from
+nostr-wallet-agent (never prompting from the panel) and opens Nostr Settings.
+Enable with `gnome-extensions enable nostr@nostr.org`.
+
 # --- Sub-package: nostrc-samba-server ----------------------------------------
 %package -n nostrc-samba-server
 Summary:        Dedicated Samba file-server for the Nostr auth broker (Wave 4)
@@ -722,6 +740,7 @@ the `application/vnd.nostr.sealed` (`*.nsealed`) MIME type.
     -DENABLE_NOSTR_WALLET_AGENT=ON \
     -DENABLE_NOSTR_NAUTILUS=ON \
     -DENABLE_NOSTR_SETTINGS=ON \
+    -DENABLE_NOSTR_SHELL_EXTENSION=ON \
     -DSIGNET_ENABLE=OFF \
     -DWITH_NOSTRDB=OFF \
     -DLIBNOSTR_WITH_NOSTRDB=OFF \
@@ -1356,6 +1375,22 @@ fi
 %{_datadir}/glib-2.0/schemas/org.nostr.Settings.gschema.xml
 %dir %{_datadir}/doc/nostr-settings
 %{_datadir}/doc/nostr-settings/README.md
+
+%files -n gnome-shell-extension-nostr
+%dir %{_datadir}/gnome-shell/extensions/nostr@nostr.org
+%{_datadir}/gnome-shell/extensions/nostr@nostr.org/metadata.json
+%{_datadir}/gnome-shell/extensions/nostr@nostr.org/extension.js
+%{_datadir}/gnome-shell/extensions/nostr@nostr.org/prefs.js
+%dir %{_datadir}/gnome-shell/extensions/nostr@nostr.org/lib
+%{_datadir}/gnome-shell/extensions/nostr@nostr.org/lib/dbus.js
+%{_datadir}/gnome-shell/extensions/nostr@nostr.org/lib/relay.js
+%{_datadir}/gnome-shell/extensions/nostr@nostr.org/lib/state.js
+%{_datadir}/gnome-shell/extensions/nostr@nostr.org/lib/wallet.js
+%dir %{_datadir}/gnome-shell/extensions/nostr@nostr.org/icons
+%{_datadir}/gnome-shell/extensions/nostr@nostr.org/icons/nostr-relay-symbolic.svg
+%{_datadir}/glib-2.0/schemas/org.gnome.shell.extensions.nostr.gschema.xml
+%dir %{_datadir}/doc/gnome-shell-extension-nostr
+%{_datadir}/doc/gnome-shell-extension-nostr/README.md
 
 %files -n nostrc-samba-server
 %license LICENSE

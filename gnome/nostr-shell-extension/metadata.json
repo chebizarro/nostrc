@@ -1,0 +1,14 @@
+{
+  "uuid": "nostr@nostr.org",
+  "name": "Nostr",
+  "description": "Nostr on the GNOME desktop: a Quick Settings toggle for the per-user session relay (same on/off semantics as Nostr Settings) with live relay statistics, message-notification status, your Nostr Wallet Connect balance and a shortcut to Nostr Settings. Needs the nostrc session relay; the wallet line needs nostr-wallet-agent.",
+  "shell-version": [
+    "46",
+    "47",
+    "48"
+  ],
+  "url": "https://github.com/chebizarro/nostrc/tree/master/gnome/nostr-shell-extension",
+  "settings-schema": "org.gnome.shell.extensions.nostr",
+  "gettext-domain": "nostr-shell-extension",
+  "version-name": "0.4.0"
+}
