@@ -32,7 +32,9 @@ Build-Depends: debhelper-compat (= 13),
                libsecret-1-dev,
 # nostr-seal (nostrc-da9c) .nsealed handler + nostr-share (nostrc-1xak) dialog.
                libgtk-4-dev,
-               libadwaita-1-dev (>= 1.5)
+               libadwaita-1-dev (>= 1.5),
+# nostr-nautilus (nostrc-xlf3): libnautilus-extension-4 (Nautilus 43+).
+               libnautilus-extension-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/chebizarro/nostrc
 Vcs-Browser: https://github.com/chebizarro/nostrc
@@ -353,6 +355,25 @@ Description: Share to Nostr from any GNOME app's Open With menu
  upload and the exact event JSON is shown before signing. The libadwaita
  dialog opens when a display is available; `nostr-share --no-ui` and
  `--dry-run` work headless.
+
+Package: nostr-nautilus
+Section: gnome
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         nostr-share (>= ${source:Version})
+Recommends: nostr-seal (>= ${source:Version})
+Enhances: nautilus
+Description: Nostr items in the GNOME Files context menu
+ nostr-nautilus is a Files (Nautilus 43+) extension that adds "Share to
+ Nostr…", "Upload to Blossom…", "Encrypt for Nostr Contact…" and
+ "Decrypt…" to the right-click menu, plus "Share This Repository to
+ Nostr…" on the background of a git checkout. Each item launches
+ nostr-share or nostr-seal, which show the preview, sign through
+ org.nostr.Signer and encrypt; the extension itself holds no keys and
+ makes no network calls.
+ .
+ It is the modern replacement for the retired seahorse-nautilus
+ integration. Items only appear for file types the tools accept.
 
 Package: nostrc-samba-server
 Section: admin

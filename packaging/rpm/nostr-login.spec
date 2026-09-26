@@ -96,6 +96,8 @@ BuildRequires:  pkgconfig(libsecret-1)
 # nostr-seal (nostrc-da9c): nostr-seal-gtk .nsealed double-click handler.
 BuildRequires:  pkgconfig(gtk4)
 BuildRequires:  pkgconfig(libadwaita-1) >= 1.5
+# nostr-nautilus (nostrc-xlf3): Files extension, libnautilus-extension-4.
+BuildRequires:  pkgconfig(libnautilus-extension-4) >= 43
 # nostr-share dialog (nostrc-1xak)
 # nsync is vendored in-tree at third_party/nsync (git submodule pinned to a
 # release tag) and built statically as part of the CMake configure step.
@@ -545,6 +547,20 @@ handed to nostr-dav. org.nostr.Share.desktop registers it for Open With.
 Signing goes through org.nostr.Signer; image metadata is stripped before
 upload and the exact event JSON is shown before signing.
 
+# --- Sub-package: nostr-nautilus (nostrc-xlf3) -------------------------------
+%package -n nostr-nautilus
+Summary:        Nostr items in the GNOME Files context menu
+Requires:       nostr-share%{?_isa} = %{version}-%{release}
+Recommends:     nostr-seal%{?_isa} = %{version}-%{release}
+Enhances:       nautilus
+%description -n nostr-nautilus
+A Files (Nautilus 43+) extension that adds "Share to Nostr…", "Upload to
+Blossom…", "Encrypt for Nostr Contact…" and "Decrypt…" to the right-click
+menu, plus "Share This Repository to Nostr…" on the background of a git
+checkout. Each item launches nostr-share or nostr-seal, which preview, sign
+through org.nostr.Signer and encrypt; the extension holds no keys and makes
+no network calls. Modern replacement for seahorse-nautilus.
+
 # --- Sub-package: nostrc-samba-server ----------------------------------------
 %package -n nostrc-samba-server
 Summary:        Dedicated Samba file-server for the Nostr auth broker (Wave 4)
@@ -622,6 +638,7 @@ the `application/vnd.nostr.sealed` (`*.nsealed`) MIME type.
     -DENABLE_NOSTR_DISPATCHER=ON \
     -DENABLE_NOSTR_SEAL=ON \
     -DENABLE_NOSTR_SHARE=ON \
+    -DENABLE_NOSTR_NAUTILUS=ON \
     -DSIGNET_ENABLE=OFF \
     -DWITH_NOSTRDB=OFF \
     -DLIBNOSTR_WITH_NOSTRDB=OFF \
@@ -1195,6 +1212,13 @@ fi
 %dir %{_datadir}/nostr-share
 %{_datadir}/nostr-share/nostr-share.conf.example
 %{_datadir}/nostr-share/README.md
+
+%files -n nostr-nautilus
+%license LICENSE
+%{_libdir}/nautilus/extensions-4/libnostr-nautilus.so
+%{_libexecdir}/nostr-nautilus-seal
+%dir %{_datadir}/doc/nostr-nautilus
+%doc %{_datadir}/doc/nostr-nautilus/README.md
 
 %files -n nostrc-samba-server
 %license LICENSE
