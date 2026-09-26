@@ -50,6 +50,11 @@ static int sd_is_socket_unix(int fd, int t, int lst, const char *path, size_t pl
 #include "nostr-relay-server.h"
 #include "nostr-storage.h"
 #include "relayd_config.h"
+#include "session_dbus.h"
+
+#ifndef NSR_VERSION
+#define NSR_VERSION "0"
+#endif
 
 /* Shutdown flag flipped by SIGTERM/SIGINT. The library also installs its own
  * signal handlers once run() is called; before then we must catch the signal
@@ -299,8 +304,28 @@ static int load_session_config(RelaydConfig *out) {
   return relayd_config_load(path[0] ? path : NULL, out);
 }
 
+static void usage(FILE *out) {
+  fprintf(out,
+          "usage: nostr-session-relayd [--stats]\n"
+          "\n"
+          "Per-user session relay on $XDG_RUNTIME_DIR/nostr/relay.sock (normally\n"
+          "socket-activated by nostr-session-relay.socket).\n"
+          "\n"
+          "  --stats   print the running daemon's org.nostr.SessionRelay1 stats\n"
+          "  --help    show this help\n");
+}
+
 int main(int argc, char **argv) {
-  (void)argc; (void)argv;
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--stats") == 0) return nsr_dbus_print_stats();
+    if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+      usage(stdout);
+      return 0;
+    }
+    fprintf(stderr, "nostr-session-relayd: unknown argument '%s'\n", argv[i]);
+    usage(stderr);
+    return 2;
+  }
 
   /* Own SIGINT/SIGTERM until the library takes over its own handlers in
    * `nostr_relay_server_run()`. We keep the flag so the library can also
@@ -362,6 +387,18 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  /* Read-only stats on the session bus (org.nostr.SessionRelay1). Never
+   * fatal: without a session bus the relay still serves relay.sock. */
+  NsrDbusInfo dbus_info = {
+      .cfg = &cfg,
+      .storage = st,
+      .storage_backend = st ? driver : "none",
+      .requested_backend = driver,
+      .storage_dir = storage_dir,
+      .version = NSR_VERSION,
+  };
+  nsr_dbus_start(&dbus_info);
+
   /* Notify systemd we're up. Harmless no-op when not under `Type=notify`. */
   (void)sd_notify(0, "READY=1\nSTATUS=session relay accepting connections");
 
@@ -376,6 +413,8 @@ int main(int argc, char **argv) {
   int rc = nostr_relay_server_run(&server_cfg);
 
   (void)sd_notify(0, "STOPPING=1");
+  /* Before closing storage: the D-Bus thread may be counting through it. */
+  nsr_dbus_stop();
 
   /* Only unlink when we own the socket (fallback bind). Never unlink a
    * systemd-owned socket — that fights the .socket unit's contract. */

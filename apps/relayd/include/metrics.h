@@ -23,6 +23,20 @@ void metrics_on_oversize_reject(void);
 
 char *metrics_build_json(void);
 
+/* Point-in-time copy of the gauges/counters other threads may display
+ * (the session relay's org.nostr.SessionRelay1 D-Bus thread). Counters
+ * are updated with relaxed atomics by the event-loop thread, so reading
+ * them from another thread is race-free; the fields are individually,
+ * not mutually, consistent. */
+typedef struct {
+  unsigned long connections_current;
+  unsigned long connections_total;
+  unsigned long subs_current;
+  unsigned long events_streamed;
+} RelaydMetricsSnapshot;
+
+void metrics_snapshot(RelaydMetricsSnapshot *out);
+
 #ifdef __cplusplus
 }
 #endif
