@@ -506,6 +506,8 @@ endif()
 
 if (ENABLE_NOSTR_SHARE)
   add_subdirectory(gnome/nostr-share)
+endif()
+
 if (ENABLE_NOSTR_SEARCH_PROVIDER)
   add_subdirectory(gnome/nostr-search-provider)
 endif()
