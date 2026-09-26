@@ -77,5 +77,5 @@ until `pam_systemd` sets up the logind session.
 |------------------|-----------------------------------------|
 | homectl service  | `systemd/user/nostr-homectl.service`    |
 | nostrfs template | `systemd/user/nostrfs@.service`         |
-| PAM module       | `src/pam/pam_nostr.c`                   |
+| PAM module       | `src/pam/pam_nostr_broker.c`            |
 | D-Bus interface  | `dbus/org.nostr.Homed1.xml`             |
