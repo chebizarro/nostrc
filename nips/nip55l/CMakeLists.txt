@@ -138,8 +138,8 @@ if (BUILD_TESTING)
   # Core contract tests for the D1.a / D2 landings: SignEvent returns the
   # complete signed event JSON, GetRelays reads explicit per-user config only.
   # Keys are passed as explicit hex/nsec selectors so no test reaches
-  # libsecret, the Keychain, or a session bus. Fuzz harness and a real-service
-  # D-Bus contract test are follow-ups (see the nip55l/README roadmap).
+  # libsecret, the Keychain, or a session bus. Fuzz harnesses and the
+  # real-service D-Bus contract test wire below (nostrc-tf3b).
   foreach(t sign_event_json getrelays)
     add_executable(test_nip55l_${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_${t}.c)
     target_link_libraries(test_nip55l_${t} PRIVATE nostr_nip55l_core nostr_nip44_core nostr)
@@ -147,6 +147,86 @@ if (BUILD_TESTING)
     add_test(NAME nip55l_${t} COMMAND test_nip55l_${t})
     set_tests_properties(nip55l_${t} PROPERTIES LABELS "nip55l;signer;unit" TIMEOUT 60)
   endforeach()
+
+  # --- Real-service D-Bus contract test (nostrc-tf3b) -----------------------
+  # Spins up a private session bus with GTestDBus, spawns the actual
+  # nostr-signer-daemon on it, and drives StoreKey / GetPublicKey / SignEvent
+  # / NIP44EncryptB64 / NIP44DecryptB64 / GetRelays / ClearKey through the
+  # generated gdbus glue. Requires the GLib service + the daemon binary
+  # (so gated on GIO_FOUND + ENABLE_NIP55L, matching the daemon target).
+  if (GIO_FOUND AND ENABLE_NIP55L)
+    add_executable(test_nip55l_dbus_contract
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_signer_dbus_contract.c)
+    target_link_libraries(test_nip55l_dbus_contract PRIVATE
+      nostr_nip55l_core nostr nostr_nip44_core PkgConfig::GIO)
+    target_compile_options(test_nip55l_dbus_contract PRIVATE
+      -Wall -Wextra -Werror)
+    # The test locates the daemon by absolute build path.
+    target_compile_definitions(test_nip55l_dbus_contract PRIVATE
+      "NIP55L_DAEMON_PATH=\"$<TARGET_FILE:nostr-signer-daemon>\"")
+    add_dependencies(test_nip55l_dbus_contract nostr-signer-daemon)
+    add_test(NAME nip55l_dbus_contract COMMAND test_nip55l_dbus_contract)
+    set_tests_properties(nip55l_dbus_contract PROPERTIES
+      LABELS "nip55l;signer;integration;dbus"
+      TIMEOUT 120)
+  endif()
+
+  # --- libFuzzer harnesses + corpus replay (nostrc-tf3b) --------------------
+  # Shape matches tests/CMakeLists.txt: with ENABLE_FUZZING_RUNTIME=ON the
+  # target is a libFuzzer binary (Clang only); otherwise it is a deterministic
+  # corpus-replay binary that links tests/fuzz_driver_main.c and can run
+  # under ctest with either GCC or Clang.
+  if (ENABLE_FUZZING)
+    set(NIP55L_FUZZ_TARGETS
+      relays             fuzz_relays.c              relays
+      sign_event_json    fuzz_sign_event_json.c     sign_event
+      nip44_b64          fuzz_nip44_b64.c           nip44_b64
+      decrypt_zap_event  fuzz_decrypt_zap_event.c   zap_event
+    )
+    list(LENGTH NIP55L_FUZZ_TARGETS _nip55l_fuzz_len)
+    math(EXPR _nip55l_fuzz_last "${_nip55l_fuzz_len} - 1")
+    foreach(_i RANGE 0 ${_nip55l_fuzz_last} 3)
+      list(GET NIP55L_FUZZ_TARGETS ${_i} _name)
+      math(EXPR _j "${_i} + 1")
+      math(EXPR _k "${_i} + 2")
+      list(GET NIP55L_FUZZ_TARGETS ${_j} _src)
+      list(GET NIP55L_FUZZ_TARGETS ${_k} _corpus)
+      set(_tgt fuzz_nip55l_${_name})
+      set(_src_path ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/${_src})
+      set(_corpus_path ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/corpus/${_corpus})
+      if (ENABLE_FUZZING_RUNTIME)
+        # Live libFuzzer binary: Clang + libclang_rt.fuzzer required.
+        if (NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+          message(FATAL_ERROR "ENABLE_FUZZING_RUNTIME requires Clang for nip55l fuzz targets")
+        endif()
+        add_executable(${_tgt} ${_src_path})
+        target_link_libraries(${_tgt} PRIVATE nostr_nip55l_core nostr_nip44_core nostr)
+        target_compile_options(${_tgt} PRIVATE
+          -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer -g)
+        target_link_options(${_tgt} PRIVATE
+          -fsanitize=fuzzer,address,undefined)
+      else()
+        # Corpus-replay binary: same fuzz object linked with the shared
+        # deterministic driver from tests/fuzz_driver_main.c. Runs under
+        # ctest and stays compatible with GCC.
+        add_executable(${_tgt}_replay ${_src_path}
+                       ${CMAKE_SOURCE_DIR}/tests/fuzz_driver_main.c)
+        target_link_libraries(${_tgt}_replay PRIVATE
+          nostr_nip55l_core nostr_nip44_core nostr)
+        if (CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+          target_compile_options(${_tgt}_replay PRIVATE
+            -fsanitize=address,undefined -fno-omit-frame-pointer -g)
+          target_link_options(${_tgt}_replay PRIVATE
+            -fsanitize=address,undefined)
+        endif()
+        add_test(NAME nip55l_fuzz_${_name}_replay
+                 COMMAND ${_tgt}_replay ${_corpus_path})
+        set_tests_properties(nip55l_fuzz_${_name}_replay PROPERTIES
+          LABELS "nip55l;signer;fuzz;replay"
+          TIMEOUT 120)
+      endif()
+    endforeach()
+  endif()
 endif()
 
 install(TARGETS nostr_nip55l_core)
