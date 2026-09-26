@@ -151,10 +151,10 @@ else()
   target_sources(nostr-session-relayd PRIVATE src/session/session_dbus.c)
   message(STATUS "nostr-session-relayd: gio-2.0 not found; org.nostr.SessionRelay1 disabled")
 endif()
-if(DEFINED PROJECT_VERSION AND NOT PROJECT_VERSION STREQUAL "")
-  target_compile_definitions(nostr-session-relayd PRIVATE NSR_VERSION="${PROJECT_VERSION}")
-elseif(DEFINED CMAKE_PROJECT_VERSION AND NOT CMAKE_PROJECT_VERSION STREQUAL "")
-  target_compile_definitions(nostr-session-relayd PRIVATE NSR_VERSION="${CMAKE_PROJECT_VERSION}")
+# The tree has no project VERSION; packagers may pass -DNOSTR_SESSION_RELAYD_VERSION=…
+if(NOSTR_SESSION_RELAYD_VERSION)
+  target_compile_definitions(nostr-session-relayd PRIVATE
+    NSR_VERSION="${NOSTR_SESSION_RELAYD_VERSION}")
 endif()
 
 # Link the same nostrdb storage the system daemon uses so the per-user

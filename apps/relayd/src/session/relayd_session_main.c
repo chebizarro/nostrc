@@ -53,7 +53,7 @@ static int sd_is_socket_unix(int fd, int t, int lst, const char *path, size_t pl
 #include "session_dbus.h"
 
 #ifndef NSR_VERSION
-#define NSR_VERSION "0"
+#define NSR_VERSION "" /* unknown: the build did not pass one */
 #endif
 
 /* Shutdown flag flipped by SIGTERM/SIGINT. The library also installs its own

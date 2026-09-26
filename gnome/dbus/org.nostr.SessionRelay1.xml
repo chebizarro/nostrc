@@ -65,7 +65,7 @@
            storage_backend s, requested_storage_backend s, storage_path s,
            supported_nips au, retention_supported b,
            connections_total t, subscriptions u, events_streamed t,
-           version s.
+           version s ("" when the build carries no version).
          Unknown keys must be ignored by clients (additive evolution). -->
     <method name="GetStats">
       <arg name="stats" type="a{sv}" direction="out"/>
