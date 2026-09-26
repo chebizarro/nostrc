@@ -136,6 +136,27 @@ if(PkgConfig_FOUND)
   endif()
 endif()
 
+# org.nostr.SessionRelay1 read-only stats on the session bus (nostrc-janr).
+# Optional: without GIO the daemon builds exactly as before and --stats
+# reports it is unsupported. GIO is not an auth-surface dependency (the
+# dep-purity gate covers nostr-authd / pam_nostr only).
+pkg_check_modules(SESSION_RELAYD_GIO QUIET IMPORTED_TARGET gio-2.0>=2.76)
+if(SESSION_RELAYD_GIO_FOUND)
+  target_sources(nostr-session-relayd PRIVATE src/session/session_dbus.c)
+  target_compile_definitions(nostr-session-relayd PRIVATE NSR_HAVE_GDBUS=1)
+  target_link_libraries(nostr-session-relayd PRIVATE PkgConfig::SESSION_RELAYD_GIO)
+  install(FILES ${CMAKE_SOURCE_DIR}/gnome/dbus/org.nostr.SessionRelay1.xml
+          DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)
+else()
+  target_sources(nostr-session-relayd PRIVATE src/session/session_dbus.c)
+  message(STATUS "nostr-session-relayd: gio-2.0 not found; org.nostr.SessionRelay1 disabled")
+endif()
+# The tree has no project VERSION; packagers may pass -DNOSTR_SESSION_RELAYD_VERSION=…
+if(NOSTR_SESSION_RELAYD_VERSION)
+  target_compile_definitions(nostr-session-relayd PRIVATE
+    NSR_VERSION="${NOSTR_SESSION_RELAYD_VERSION}")
+endif()
+
 # Link the same nostrdb storage the system daemon uses so the per-user
 # ~/.local/share/nostr/session-relay/ path can back a real store.
 if (TARGET nostrdb_storage)

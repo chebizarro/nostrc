@@ -105,6 +105,28 @@ ns_config_load(GError **error)
     if (s > 0)
       cfg->ok_wait_sec = (guint)s;
   }
+  if (g_key_file_has_key(kf, NS_CONFIG_GROUP, "default_text_kind", NULL)) {
+    gint k = g_key_file_get_integer(kf, NS_CONFIG_GROUP, "default_text_kind", NULL);
+    if (k != NS_KIND_NOTE && k != NS_KIND_ARTICLE) {
+      g_set_error(error, NS_ERROR, NS_ERROR_BAD_INPUT,
+                  "%s: default_text_kind must be %d or %d", cfg->config_path,
+                  NS_KIND_NOTE, NS_KIND_ARTICLE);
+      ns_config_free(cfg);
+      return NULL;
+    }
+    cfg->text_kind = k;
+  }
+  if (g_key_file_has_key(kf, NS_CONFIG_GROUP, "keep_metadata", NULL)) {
+    GError *b = NULL;
+    cfg->keep_metadata = g_key_file_get_boolean(kf, NS_CONFIG_GROUP, "keep_metadata", &b);
+    if (b != NULL) {
+      g_set_error(error, NS_ERROR, NS_ERROR_BAD_INPUT,
+                  "%s: keep_metadata must be true or false", cfg->config_path);
+      g_error_free(b);
+      ns_config_free(cfg);
+      return NULL;
+    }
+  }
   g_autofree gchar *dav = g_key_file_get_string(kf, NS_CONFIG_GROUP, "dav_url", NULL);
   if (dav != NULL && *g_strstrip(dav) != '\0')
     cfg->dav_url = g_steal_pointer(&dav);

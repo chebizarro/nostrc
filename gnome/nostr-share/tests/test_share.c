@@ -620,6 +620,63 @@ test_git_repo_announcement(void)
   g_assert_null(strstr(p->unsigned_json, "tok@"));
 }
 
+/* default_text_kind / keep_metadata (written by org.nostr.Settings). */
+static void
+test_config_text_defaults(void)
+{
+  g_autofree gchar *conf = tmpfile_with("nostr-share.conf",
+    "[nostr-share]\ndefault_text_kind=30023\nkeep_metadata=true\n", 57);
+  const gchar *saved = g_getenv("NOSTR_SHARE_CONFIG");
+  g_autofree gchar *restore = g_strdup(saved);
+  g_setenv("NOSTR_SHARE_CONFIG", conf, TRUE);
+  GError *err = NULL;
+  NsConfig *cfg = ns_config_load(&err);
+  g_assert_no_error(err);
+  g_assert_cmpint(cfg->text_kind, ==, NS_KIND_ARTICLE);
+  g_assert_true(cfg->keep_metadata);
+  g_strfreev(cfg->home_relays);
+  cfg->home_relays = g_strsplit("wss://w1.test", ";", -1);
+
+  /* Plain text → article by default; --kind 1 still wins. */
+  const gchar *texts[] = { "hello world", NULL };
+  g_autoptr(NsShare) s = share_new(cfg, texts, NULL, NULL, 0, &err);
+  g_assert_no_error(err);
+  g_assert_cmpint(((NsPost *)g_ptr_array_index(s->posts, 0))->action, ==, NS_ACTION_ARTICLE);
+  g_assert_true(ns_share_set_kind(s, NS_KIND_NOTE, &err));
+  g_assert_cmpint(((NsPost *)g_ptr_array_index(s->posts, 0))->action, ==, NS_ACTION_NOTE);
+
+  /* Markdown and URLs are unaffected by the text default. */
+  g_autofree gchar *conf2 = tmpfile_with("nostr-share.conf",
+    "[nostr-share]\ndefault_text_kind=30023\n", 38);
+  g_setenv("NOSTR_SHARE_CONFIG", conf2, TRUE);
+  NsConfig *cfg2 = ns_config_load(&err);
+  g_assert_no_error(err);
+  g_assert_false(cfg2->keep_metadata);
+  const gchar *urls[] = { "https://example.com/a", NULL };
+  g_autoptr(NsShare) s2 = share_new(cfg2, NULL, urls, NULL, 0, &err);
+  g_assert_no_error(err);
+  g_assert_cmpint(((NsPost *)g_ptr_array_index(s2->posts, 0))->action, ==, NS_ACTION_NOTE);
+
+  /* Bad values are errors naming the file. */
+  g_autofree gchar *bad = tmpfile_with("nostr-share.conf",
+    "[nostr-share]\ndefault_text_kind=1063\n", 37);
+  g_setenv("NOSTR_SHARE_CONFIG", bad, TRUE);
+  g_assert_null(ns_config_load(&err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_BAD_INPUT);
+  g_assert_nonnull(strstr(err->message, "default_text_kind"));
+  g_clear_error(&err);
+  g_autofree gchar *bad2 = tmpfile_with("nostr-share.conf",
+    "[nostr-share]\nkeep_metadata=maybe\n", 34);
+  g_setenv("NOSTR_SHARE_CONFIG", bad2, TRUE);
+  g_assert_null(ns_config_load(&err));
+  g_clear_error(&err);
+
+  if (restore != NULL)
+    g_setenv("NOSTR_SHARE_CONFIG", restore, TRUE);
+  else
+    g_unsetenv("NOSTR_SHARE_CONFIG");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -637,6 +694,7 @@ main(int argc, char **argv)
   g_test_add_func("/nostr-share/share/calendar-dav", test_calendar_to_dav);
   g_test_add_func("/nostr-share/share/git-public-urls", test_git_public_urls);
   g_test_add_func("/nostr-share/share/git-repo", test_git_repo_announcement);
+  g_test_add_func("/nostr-share/share/config-text-defaults", test_config_text_defaults);
   int rc = g_test_run();
   relays_reset();
   free(K.sk);

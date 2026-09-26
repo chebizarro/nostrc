@@ -18,6 +18,25 @@ libadwaita ≥ 1.5 is available): it lists the recipients, preselects the
 signer's active identity (`GetPublicKey`), and opens the file next to the
 sealed one after the signer approves the request.
 
+### Defaults (`~/.config/nostr/seal.conf`)
+
+Optional; `$NOSTR_SEAL_CONFIG` overrides the path. Edited by the Files page
+of Nostr Settings (`org.nostr.Settings`) or by hand — see
+`data/seal.conf.example` (installed to `/usr/share/doc/nostr-seal/`).
+
+```ini
+[seal]
+default_recipients=npub1alice…;npub1bob…   # used when encrypt names no --to/--to-self/--passphrase
+include_self=true                          # …plus your signer identity
+work_factor=16                             # scrypt log2(N) for --passphrase without --work-factor (16..20)
+```
+
+Defaults never mix with explicit recipients: any `--to`, `--to-self` or
+`--passphrase` on the command line ignores `default_recipients` /
+`include_self`. When the defaults are used the CLI says so on stderr. A
+malformed file or recipient makes `encrypt` fail rather than seal for a
+different set of people.
+
 ## Why not "just NIP-44"?
 
 NIP-44 v2 is a *message* cipher: plaintext is capped at 65 535 bytes, it
@@ -199,6 +218,7 @@ sparse file seals and opens in ~21 MiB RSS). Limits: 2^22 chunks per file
 
 | ctest | Covers |
 |---|---|
+| `nostr_seal_config` | `seal.conf` parsing (missing / valid / bad recipient / bad values) and the CLI sealing for the configured default recipient |
 | `nostr_seal_unit` | 0 B / 1 B / C−1 / exactly one chunk / C+1 / multi-chunk round trips and exact size geometry; exactly one default chunk; 3-recipient; wrong recipient / wrong key; tamper matrix (header fields, key commitment, own and foreign stanzas, transplanted stanza from another file, chunk bytes and tags, chunk swap, dropped chunk, index, footer, truncation, append); identical chunks seal differently; passphrase round-trip with NFKC, wrong passphrase, work-factor cap; pipe input; decrypt refuses a pipe |
 | `nostr_seal_big` | multi-GB streaming by fd on a sparse file (`NSEAL_TEST_BIG_BYTES`, default 3 GiB + 12 345), bounded RSS |
 | `nostr_seal_signer` | CLI ↔ real `nostr-signer-daemon` on a private bus: `--to-self`, `inspect`, decrypt through `NIP44DeriveConversationKey`, not-a-recipient, signer policy deny, passphrase via `--passphrase-file` |

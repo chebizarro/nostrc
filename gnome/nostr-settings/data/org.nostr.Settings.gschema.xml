@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  org.nostr.Settings holds window state ONLY. Every preference the app
+  edits lives in the owning daemon's own configuration (see README.md,
+  "Where settings are stored").
+-->
+<schemalist>
+  <schema id="org.nostr.Settings" path="/org/nostr/Settings/">
+    <key name="window-width" type="i">
+      <default>760</default>
+      <summary>Window width</summary>
+    </key>
+    <key name="window-height" type="i">
+      <default>640</default>
+      <summary>Window height</summary>
+    </key>
+    <key name="window-maximized" type="b">
+      <default>false</default>
+      <summary>Whether the window is maximized</summary>
+    </key>
+    <key name="last-page" type="s">
+      <default>'identity'</default>
+      <summary>Page shown when the window opens</summary>
+      <description>One of identity, relays, notifications, wallet, media, files.</description>
+    </key>
+  </schema>
+</schemalist>

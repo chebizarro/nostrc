@@ -622,6 +622,22 @@ checkout. Each item launches nostr-share or nostr-seal, which preview, sign
 through org.nostr.Signer and encrypt; the extension holds no keys and makes
 no network calls. Modern replacement for seahorse-nautilus.
 
+# --- Sub-package: nostr-settings --------------------------------------------
+%package -n nostr-settings
+Summary:        Nostr Settings: preferences for Nostr on the GNOME desktop
+Requires:       libadwaita
+Requires:       libnostr-publish%{?_isa} = %{version}-%{release}
+Recommends:     nostrc-session-relay = %{version}-%{release}
+Recommends:     nostr-notify = %{version}-%{release}
+Recommends:     nostr-wallet-agent = %{version}-%{release}
+Suggests:       seahorse
+%description -n nostr-settings
+A libadwaita preferences window (org.nostr.Settings) that edits each Nostr
+desktop service's own configuration: Identity, Relays (session relay on/off,
+org.nostr.SessionRelay1 statistics, storage limits, NIP-65 list, NIP-11),
+Notifications, Wallet (NWC pairing and budgets via org.nostr.Wallet1), Media
+servers (BUD-03) and Files (nostr-seal / nostr-share defaults).
+
 # --- Sub-package: nostrc-samba-server ----------------------------------------
 %package -n nostrc-samba-server
 Summary:        Dedicated Samba file-server for the Nostr auth broker (Wave 4)
@@ -705,6 +721,7 @@ the `application/vnd.nostr.sealed` (`*.nsealed`) MIME type.
     -DNMH_MOZILLA_HOSTS_DIR=%{_libdir}/mozilla/native-messaging-hosts \
     -DENABLE_NOSTR_WALLET_AGENT=ON \
     -DENABLE_NOSTR_NAUTILUS=ON \
+    -DENABLE_NOSTR_SETTINGS=ON \
     -DSIGNET_ENABLE=OFF \
     -DWITH_NOSTRDB=OFF \
     -DLIBNOSTR_WITH_NOSTRDB=OFF \
@@ -1239,6 +1256,7 @@ fi
 %{_libexecdir}/nostr-session-relayd
 %{_userunitdir}/nostr-session-relay.service
 %{_userunitdir}/nostr-session-relay.socket
+%{_datadir}/dbus-1/interfaces/org.nostr.SessionRelay1.xml
 
 %files -n nostrc-relayd
 %license LICENSE
@@ -1331,6 +1349,14 @@ fi
 %dir %{_datadir}/doc/nostr-nautilus
 %doc %{_datadir}/doc/nostr-nautilus/README.md
 
+%files -n nostr-settings
+%{_bindir}/nostr-settings
+%{_datadir}/applications/org.nostr.Settings.desktop
+%{_datadir}/dbus-1/services/org.nostr.Settings.service
+%{_datadir}/glib-2.0/schemas/org.nostr.Settings.gschema.xml
+%dir %{_datadir}/doc/nostr-settings
+%{_datadir}/doc/nostr-settings/README.md
+
 %files -n nostrc-samba-server
 %license LICENSE
 %dir %{_sysconfdir}/nostr-auth/servers.d
@@ -1353,6 +1379,7 @@ fi
 %{_datadir}/mime/packages/nostr-seal.xml
 %dir %{_datadir}/doc/nostr-seal
 %doc %{_datadir}/doc/nostr-seal/README.md
+%doc %{_datadir}/doc/nostr-seal/seal.conf.example
 
 # --- Changelog ---------------------------------------------------------------
 

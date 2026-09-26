@@ -52,6 +52,7 @@ add_library(nostr_seal_core STATIC
   src/nseal.c
   src/nseal-output.c
   src/nseal-signer.c
+  src/nseal-config.c
   ${_ns_porthome_crypto})
 target_include_directories(nostr_seal_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -69,7 +70,7 @@ target_link_libraries(nostr-seal PRIVATE nostr_seal_core)
 include(GNUInstallDirs)
 install(TARGETS nostr-seal RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES data/nostr-seal.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/mime/packages)
-install(FILES README.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/nostr-seal)
+install(FILES README.md data/seal.conf.example DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/nostr-seal)
 
 # Optional libadwaita front-end: the double-click handler for
 # application/vnd.nostr.sealed. The .desktop file only ships with it.
@@ -93,6 +94,15 @@ if(BUILD_TESTING)
   target_compile_options(test-nostr-seal PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(test-nostr-seal PRIVATE nostr_seal_core)
   add_test(NAME nostr_seal_unit COMMAND test-nostr-seal)
+
+  # ~/.config/nostr/seal.conf defaults (written by org.nostr.Settings).
+  add_executable(test-nostr-seal-config tests/test-nseal-config.c)
+  target_compile_options(test-nostr-seal-config PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(test-nostr-seal-config PRIVATE nostr_seal_core)
+  target_compile_definitions(test-nostr-seal-config PRIVATE
+    "NSEAL_CLI_PATH=\"$<TARGET_FILE:nostr-seal>\"")
+  add_test(NAME nostr_seal_config COMMAND test-nostr-seal-config)
+  set_tests_properties(nostr_seal_config PROPERTIES LABELS "nostr-seal" TIMEOUT 60)
   set_tests_properties(nostr_seal_unit PROPERTIES LABELS "nostr-seal" TIMEOUT 120)
 
   # Multi-GB streaming on a sparse file (bytes: NSEAL_TEST_BIG_BYTES).

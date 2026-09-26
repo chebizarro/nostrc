@@ -1,0 +1,17 @@
+# nostr-seal defaults — copy to ~/.config/nostr/seal.conf
+# (or point $NOSTR_SEAL_CONFIG at it). Every key is optional. The Files page
+# of Nostr Settings (org.nostr.Settings) edits this file.
+
+[seal]
+
+# Recipients used by `nostr-seal encrypt FILE` when the command line names
+# no --to, --to-self or --passphrase. npub1… or 64-hex, `;` separated.
+# The CLI prints that it is using them. A malformed entry is an error.
+#default_recipients=npub1alice…;npub1bob…
+
+# Also seal for your signer's active identity in that case (like --to-self).
+#include_self=true
+
+# scrypt cost (log2 N) for --passphrase when --work-factor is not given.
+# 16 (default, ~64 MiB) … 20 (~1 GiB, very slow to open).
+#work_factor=16

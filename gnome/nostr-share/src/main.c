@@ -256,7 +256,7 @@ main(int argc, char **argv)
       .forced_kind   = kind,
       .to            = to,
       .title         = title,
-      .keep_metadata = keep_metadata,
+      .keep_metadata = keep_metadata || cfg->keep_metadata,
       .texts         = (const gchar *const *)texts,
       .args          = (const gchar *const *)rest,
     };

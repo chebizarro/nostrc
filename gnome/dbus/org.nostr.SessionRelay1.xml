@@ -1,0 +1,74 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!--
+  org.nostr.SessionRelay1 — read-only statistics of the per-user session
+  relay (nostr-session-relayd, apps/relayd/src/session/). Bead nostrc-janr.
+
+  Bus name:    org.nostr.SessionRelay1 (session bus)
+  Object path: /org/nostr/SessionRelay1
+
+  Owned by the running daemon only. There is deliberately NO D-Bus
+  activation file: the relay is socket-activated by
+  nostr-session-relay.socket, and a stats poll must never start a relay
+  the user switched off. Clients should call with
+  G_DBUS_CALL_FLAGS_NO_AUTO_START and treat "name has no owner" as
+  "not running".
+
+  Properties change continuously (Uptime) and are NOT change-notified:
+  poll GetStats() (one round trip for everything) at the rate you
+  display it. Everything here is non-secret; any process of the same
+  user may read it.
+-->
+<node>
+  <interface name="org.nostr.SessionRelay1">
+    <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="false"/>
+
+    <!-- Events held by the storage backend. 0 when StorageBackend is
+         "none" (a cache-less relay stores nothing); -1 when a backend is
+         open but could not count. Cached for up to 30 s. -->
+    <property name="EventCount" type="x" access="read"/>
+
+    <!-- Disk space allocated under StoragePath, in bytes (du semantics:
+         allocated blocks, not apparent size). Cached for up to 5 s. -->
+    <property name="StorageBytes" type="t" access="read"/>
+
+    <!-- WebSocket clients currently connected over relay.sock. -->
+    <property name="ConnectedClients" type="u" access="read"/>
+
+    <!-- Seconds since the daemon started (monotonic clock). -->
+    <property name="Uptime" type="t" access="read"/>
+
+    <!-- Storage driver actually in use: "nostrdb", or "none" when the
+         relay runs cache-less (driver not built in, or open failed) and
+         therefore stores nothing (see bead nostrc-prqu.5). -->
+    <property name="StorageBackend" type="s" access="read"/>
+
+    <!-- Driver named by session-relay.conf `storage_driver` (default
+         "nostrdb"); differs from StorageBackend when it was unavailable. -->
+    <property name="RequestedStorageBackend" type="s" access="read"/>
+
+    <!-- Storage directory ($XDG_DATA_HOME/nostr/session-relay). -->
+    <property name="StoragePath" type="s" access="read"/>
+
+    <!-- NIPs advertised in the relay's NIP-11 document. -->
+    <property name="SupportedNips" type="au" access="read"/>
+
+    <!-- TRUE once the daemon enforces the retention_* keys of
+         session-relay.conf. FALSE today: eviction is designed
+         (docs/designs/nostrdb-retention-eviction-policy.md) but not
+         implemented (bead nostrc-8rxk); settings UIs must not pretend
+         the knobs take effect. -->
+    <property name="RetentionSupported" type="b" access="read"/>
+
+    <!-- Every property above plus traffic counters, in one call. Keys:
+           event_count x, storage_bytes t, connected_clients u, uptime t,
+           storage_backend s, requested_storage_backend s, storage_path s,
+           supported_nips au, retention_supported b,
+           connections_total t, subscriptions u, events_streamed t,
+           version s ("" when the build carries no version).
+         Unknown keys must be ignored by clients (additive evolution). -->
+    <method name="GetStats">
+      <arg name="stats" type="a{sv}" direction="out"/>
+    </method>
+  </interface>
+</node>

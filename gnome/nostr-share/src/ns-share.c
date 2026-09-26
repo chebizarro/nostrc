@@ -204,6 +204,16 @@ caption_with_urls(const NsShare *share)
   return g_string_free(s, FALSE);
 }
 
+/* Plain text follows the configured default_text_kind unless a kind was
+ * chosen explicitly (--kind or the dialog's picker). */
+static gint
+text_forced(const NsShare *share, NsInputClass cls, gint forced)
+{
+  if (forced != 0 || cls != NS_CLASS_TEXT || share->cfg == NULL)
+    return forced;
+  return share->cfg->text_kind;
+}
+
 static gboolean
 replan(NsShare *share, GError **error)
 {
@@ -301,7 +311,7 @@ replan(NsShare *share, GError **error)
         share->urls->len > 0)
       cls = NS_CLASS_URL;
     NsAction a;
-    if (!ns_kind_resolve(cls, forced, &a, error))
+    if (!ns_kind_resolve(cls, text_forced(share, cls, forced), &a, error))
       return FALSE;
     NsPost *p = ns_post_new(a, cls);
     p->text = g_strdup(caption);
@@ -313,7 +323,8 @@ replan(NsShare *share, GError **error)
 
   if (posts->len == 0 && share->allow_empty) {
     NsAction a;
-    if (!ns_kind_resolve(share->text_class, forced, &a, error))
+    if (!ns_kind_resolve(share->text_class,
+                         text_forced(share, share->text_class, forced), &a, error))
       return FALSE;
     NsPost *p = ns_post_new(a, share->text_class);
     p->text = g_strdup("");

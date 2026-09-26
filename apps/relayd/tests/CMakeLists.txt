@@ -82,6 +82,22 @@ if(UNIX AND NOT APPLE AND NOT CYGWIN)
   )
 endif()
 
+# org.nostr.SessionRelay1: spawn the real daemon on a private GTestDBus
+# session bus (headless; fallback-binds relay.sock in a temp runtime dir),
+# check GetStats / properties / introspection against the shipped XML and
+# the --stats CLI (nostrc-janr).
+if(UNIX AND NOT APPLE AND NOT CYGWIN AND SESSION_RELAYD_GIO_FOUND)
+  add_executable(test_session_relay_dbus test_session_relay_dbus.c)
+  target_link_libraries(test_session_relay_dbus PRIVATE PkgConfig::SESSION_RELAYD_GIO)
+  target_compile_definitions(test_session_relay_dbus PRIVATE
+    NSR_INTERFACE_XML="${CMAKE_SOURCE_DIR}/gnome/dbus/org.nostr.SessionRelay1.xml")
+  add_test(NAME relayd_session_relay_dbus COMMAND test_session_relay_dbus)
+  set_tests_properties(relayd_session_relay_dbus PROPERTIES
+    TIMEOUT 60
+    ENVIRONMENT "NOSTR_SESSION_RELAYD=$<TARGET_FILE:nostr-session-relayd>"
+    LABELS "relay;session-relay;dbus;integration")
+endif()
+
 if(COMMAND apply_sanitizers)
   apply_sanitizers(relayd_ingress_security)
   apply_sanitizers(relayd_rate_limit_security)

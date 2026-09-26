@@ -19,3 +19,24 @@ upstream_mode = direct
 # Ignored when the signer's GetRelays returns a non-empty list. This is
 # the only field the daemon reads for its direct upstream mode.
 home_relays = wss://relay.damus.io;wss://nostr.wine
+
+# ─── Presentation policy (reserved — NOT yet read by the daemon) ─────────
+# These keys are part of the config format so the Notifications page of
+# Nostr Settings (org.nostr.Settings) and the daemon agree on one file, but
+# nostr-notify-daemon ignores them until bead nostrc-prqu.16 lands; the
+# Settings page shows them disabled until then. Defaults below are the
+# daemon's current fixed behaviour.
+#
+# DM bodies are ALWAYS the fixed string "You have a new encrypted direct message.":
+# the notifier never decrypts or previews NIP-17 content (§3.3 D3 F14).
+# There is deliberately no key to change that.
+#
+# notify_groups  — NIP-29 group messages (kinds 9-12).
+#notify_groups = true
+# notify_dms     — NIP-17 gift-wrapped DMs (kind 1059) addressed to you.
+#notify_dms = true
+# group_preview  — show an 80-char plaintext preview of group messages;
+#                  false = fixed body, like DMs.
+#group_preview = true
+# sound          — play the desktop's message sound with each notification.
+#sound = false

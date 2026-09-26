@@ -145,7 +145,10 @@ nostr-share asks your signer for your pubkey, then:
 `~/.config/nostr-share/nostr-share.conf` (or `$NOSTR_SHARE_CONFIG`); see
 `nostr-share.conf.example`. Keys: `home_relays`, `blossom_servers`,
 `upstream_mode`, `max_upload_mib` (default 100), `ok_wait_sec`
-(default 15), `dav_url`.
+(default 15), `dav_url`, `default_text_kind` (1 or 30023; kind for plain
+text when `--kind` is absent, default 1), `keep_metadata` (default for
+`--keep-metadata`, default false). The Files page of Nostr Settings
+(`org.nostr.Settings`) edits the last two.
 
 ## For app authors
 

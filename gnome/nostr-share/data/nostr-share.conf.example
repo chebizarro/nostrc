@@ -27,6 +27,18 @@
 # Largest file to upload, in MiB.
 #max_upload_mib=100
 
+# Kind for plain text (`-t TEXT`, text/plain) when --kind is not given:
+#   1      a short note (default)
+#   30023  a long-form article (NIP-23; addressable — re-sharing the same
+#          title replaces the earlier article)
+#default_text_kind=1
+
+# Default for --keep-metadata: allow uploading media whose metadata
+# (GPS, camera, timestamps) cannot be stripped — HEIC/AVIF/TIFF, video,
+# audio. Supported images (JPEG/PNG/WebP/GIF) are always stripped either
+# way. The dialog still shows the metadata banner.
+#keep_metadata=false
+
 # Seconds to wait for relays to answer OK before giving up.
 #ok_wait_sec=15
 
