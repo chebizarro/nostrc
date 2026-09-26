@@ -238,7 +238,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <child>
                                   <object class="AdwActionRow" id="row_server_url">
                                     <property name="title" translatable="yes">Server URL</property>
-                                    <property name="subtitle">http://127.0.0.1:7654</property>
+                                    <property name="subtitle">http://127.0.0.1:7680</property>
                                     <child type="suffix">
                                       <object class="GtkButton" id="btn_copy_url">
                                         <property name="icon-name">edit-copy-symbolic</property>

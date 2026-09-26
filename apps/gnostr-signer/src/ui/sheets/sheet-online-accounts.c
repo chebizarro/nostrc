@@ -3,19 +3,35 @@
  * SPDX-License-Identifier: MIT
  *
  * Three-step wizard:
- *   1. Start nostr-dav.service (systemd --user)
- *   2. Provision bearer token, show connection details, copy to clipboard
- *   3. Open GNOME Settings → Online Accounts, show success
+ *   1. Start nostr-dav.service (systemd --user); wait for the credentials file.
+ *   2. Read the bearer token from $XDG_CONFIG_HOME/nostr-dav/token (0600 file
+ *      nostr-dav writes on first launch — see nostrc-0e7k). Show it to copy.
+ *   3. Open GNOME Settings -> Online Accounts.
+ *
+ * History (nostrc-0e7k): the pre-hardening wizard minted its own random token
+ * and pointed at port 7654. nostr-dav now owns credentials (fails closed at
+ * startup and writes a 0600 token file), listens on 127.0.0.1:7680, and
+ * refuses to bind off loopback. This wizard reads the file nostr-dav writes;
+ * it never invents a token, so what the user sees is what the server will
+ * actually accept.
  */
 
 #include "sheet-online-accounts.h"
 
+#include <errno.h>
 #include <gio/gio.h>
+#include <glib/gstdio.h>
 #include <string.h>
 
-/* Default nostr-dav listen port */
-#define NOSTR_DAV_PORT 7654
-#define NOSTR_DAV_URL  "http://127.0.0.1:7654"
+/* nostr-dav listen address after the fix-closed landing (nostrc-0e7k). */
+#define NOSTR_DAV_PORT 7680
+#define NOSTR_DAV_URL  "http://127.0.0.1:7680"
+
+/* How long to poll for the token file after starting the service. The 0600
+ * file appears synchronously in nostr-dav's startup path, so this is a
+ * safety margin for the transient dbus/systemd race, not a real wait. */
+#define TOKEN_POLL_INTERVAL_MS 200
+#define TOKEN_POLL_ATTEMPTS    25    /* 5 seconds total */
 
 struct _SheetOnlineAccounts {
   AdwDialog parent_instance;
@@ -44,6 +60,8 @@ struct _SheetOnlineAccounts {
   /* State */
   gchar *bearer_token;
   gboolean service_started;
+  guint token_poll_id;
+  guint token_poll_attempts;
 };
 
 G_DEFINE_TYPE(SheetOnlineAccounts, sheet_online_accounts, ADW_TYPE_DIALOG)
@@ -82,6 +100,81 @@ show_service_status(SheetOnlineAccounts *self,
   gtk_label_set_text(self->lbl_service_status, text);
 }
 
+/* Build the on-disk path nostr-dav writes its bearer token to. Prefers
+ * $XDG_CONFIG_HOME, falls back to ~/.config per the XDG base-directory spec;
+ * a relative XDG_CONFIG_HOME is ignored, same way nostr-dav resolves it. */
+static gchar *
+nostr_dav_token_path(void)
+{
+  const gchar *xdg = g_getenv("XDG_CONFIG_HOME");
+  if (xdg && xdg[0] == '/')
+    return g_build_filename(xdg, "nostr-dav", "token", NULL);
+  const gchar *home = g_get_home_dir();
+  if (!home || !*home) return NULL;
+  return g_build_filename(home, ".config", "nostr-dav", "token", NULL);
+}
+
+/* Reads the token nostr-dav wrote. NULL if the file is missing, unreadable,
+ * or empty; caller frees. Trims trailing whitespace so a hand-edited file
+ * with a newline works. */
+static gchar *
+read_nostr_dav_token(GError **error)
+{
+  g_autofree gchar *path = nostr_dav_token_path();
+  if (!path) {
+    g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_FAILED,
+                "Cannot resolve XDG_CONFIG_HOME or $HOME");
+    return NULL;
+  }
+  gchar *contents = NULL;
+  gsize len = 0;
+  if (!g_file_get_contents(path, &contents, &len, error))
+    return NULL;
+  g_strchomp(contents);
+  if (contents[0] == '\0') {
+    g_free(contents);
+    g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_FAILED,
+                "%s is empty; nostr-dav has not yet written a token", path);
+    return NULL;
+  }
+  return contents;
+}
+
+/* Polls for nostr-dav's token file after we start the service. Runs in the
+ * main loop, one shot per interval; on success it advances to step 2. */
+static gboolean
+poll_for_token(gpointer user_data)
+{
+  SheetOnlineAccounts *self = user_data;
+  self->token_poll_attempts++;
+
+  GError *err = NULL;
+  gchar *tok = read_nostr_dav_token(&err);
+  if (tok) {
+    g_clear_pointer(&self->bearer_token, g_free);
+    self->bearer_token = tok;
+    adw_action_row_set_subtitle(self->row_password, "••••••••••••");
+    show_service_status(self, "Bridge is running", FALSE, TRUE);
+    adw_navigation_view_push_by_tag(self->nav_view, "step-token");
+    self->token_poll_id = 0;
+    return G_SOURCE_REMOVE;
+  }
+
+  if (self->token_poll_attempts >= TOKEN_POLL_ATTEMPTS) {
+    g_warning("nostr-dav: token file not present after %u attempts: %s",
+              self->token_poll_attempts, err ? err->message : "unknown");
+    g_clear_error(&err);
+    show_service_status(self,
+      "Could not read nostr-dav credentials. Run `nostr-dav --show-credentials` in a terminal, or check `journalctl --user -u nostr-dav`.",
+      FALSE, FALSE);
+    self->token_poll_id = 0;
+    return G_SOURCE_REMOVE;
+  }
+
+  g_clear_error(&err);
+  return G_SOURCE_CONTINUE;
+}
+
 /* ---- Service management ---- */
 
 static void
@@ -107,25 +200,14 @@ on_systemctl_finished(GObject *source, GAsyncResult *result, gpointer user_data)
   }
 
   self->service_started = TRUE;
-  show_service_status(self, "Bridge is running", FALSE, TRUE);
 
-  /* Generate a bearer token.
-   * In production this would call nd_token_store_ensure_token().
-   * For the wizard, we generate a simple random token and store it
-   * via secret-tool or libsecret. */
-  if (self->bearer_token == NULL) {
-    /* Generate 32 random bytes, base64url encode */
-    guchar buf[32];
-    for (int i = 0; i < 32; i++)
-      buf[i] = (guchar)g_random_int_range(0, 256);
-    self->bearer_token = g_base64_encode(buf, 32);
+  /* Fast path: the token file is often already there before systemctl start
+   * returns; if not, poll a few times so the wizard is not racing systemd. */
+  self->token_poll_attempts = 0;
+  if (poll_for_token(self) == G_SOURCE_CONTINUE) {
+    show_service_status(self, "Reading credentials…", TRUE, FALSE);
+    self->token_poll_id = g_timeout_add(TOKEN_POLL_INTERVAL_MS, poll_for_token, self);
   }
-
-  /* Update the password row with masked display */
-  adw_action_row_set_subtitle(self->row_password, "••••••••••••");
-
-  /* Navigate to step 2 */
-  adw_navigation_view_push_by_tag(self->nav_view, "step-token");
 }
 
 static void
@@ -140,23 +222,27 @@ start_nostr_dav_service(SheetOnlineAccounts *self)
     "systemctl", "--user", "start", "nostr-dav.service", NULL);
 
   if (proc == NULL) {
-    /* systemctl not available (macOS dev) — proceed anyway for testing */
-    g_warning("nostr-dav: systemctl not available: %s", err->message);
-    g_error_free(err);
+    /* systemctl not available (macOS dev, sandboxed session). Try reading
+     * a token file that may already exist so the developer can still exercise
+     * the wizard end-to-end; otherwise show the manual recipe. */
+    g_warning("nostr-dav: systemctl not available: %s", err ? err->message : "?");
+    g_clear_error(&err);
 
-    self->service_started = TRUE;
-    show_service_status(self, "Bridge ready (manual mode)", FALSE, TRUE);
-
-    /* Generate token */
-    if (self->bearer_token == NULL) {
-      guchar buf[32];
-      for (int i = 0; i < 32; i++)
-        buf[i] = (guchar)g_random_int_range(0, 256);
-      self->bearer_token = g_base64_encode(buf, 32);
+    GError *read_err = NULL;
+    gchar *tok = read_nostr_dav_token(&read_err);
+    if (tok) {
+      g_clear_pointer(&self->bearer_token, g_free);
+      self->bearer_token = tok;
+      self->service_started = TRUE;
+      show_service_status(self, "Bridge ready (manual mode)", FALSE, TRUE);
+      adw_action_row_set_subtitle(self->row_password, "••••••••••••");
+      adw_navigation_view_push_by_tag(self->nav_view, "step-token");
+    } else {
+      g_clear_error(&read_err);
+      show_service_status(self,
+        "Start `systemctl --user start nostr-dav.service` in a terminal, then reopen this wizard.",
+        FALSE, FALSE);
     }
-
-    adw_action_row_set_subtitle(self->row_password, "••••••••••••");
-    adw_navigation_view_push_by_tag(self->nav_view, "step-token");
     return;
   }
 
@@ -251,7 +337,15 @@ static void
 sheet_online_accounts_dispose(GObject *obj)
 {
   SheetOnlineAccounts *self = SHEET_ONLINE_ACCOUNTS(obj);
-  g_clear_pointer(&self->bearer_token, g_free);
+  if (self->token_poll_id) {
+    g_source_remove(self->token_poll_id);
+    self->token_poll_id = 0;
+  }
+  if (self->bearer_token) {
+    /* Best effort: wipe before free so a heap dump doesn't see the token. */
+    memset(self->bearer_token, 0, strlen(self->bearer_token));
+    g_clear_pointer(&self->bearer_token, g_free);
+  }
   G_OBJECT_CLASS(sheet_online_accounts_parent_class)->dispose(obj);
 }
 
@@ -290,6 +384,8 @@ sheet_online_accounts_init(SheetOnlineAccounts *self)
 
   self->bearer_token = NULL;
   self->service_started = FALSE;
+  self->token_poll_id = 0;
+  self->token_poll_attempts = 0;
 
   /* Connect signals */
   g_signal_connect(self->btn_step1_next, "clicked",
