@@ -22,13 +22,13 @@ ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=%h/.local/state/nostr-notify
 PrivateTmp=yes
-ProtectClock=yes
 ProtectHostname=yes
-# No ProtectKernelLogs= / ProtectKernelModules=: they drop CAP_SYSLOG /
-# CAP_SYS_MODULE from the bounding set, which systemd --user cannot do
-# (the unit fails with 218/CAPABILITIES on start), and an unprivileged
-# user service never holds those capabilities anyway. Same posture as
-# nostr-dav.service. Discovered by nostrc-qngf installed-unit acceptance.
+# No ProtectClock= / ProtectKernelLogs= / ProtectKernelModules=: these
+# drop CAP_SYS_TIME / CAP_WAKE_ALARM / CAP_SYSLOG / CAP_SYS_MODULE from
+# the bounding set, which systemd --user cannot do (the unit fails with
+# 218/CAPABILITIES on start), and an unprivileged user service never
+# holds those capabilities anyway. Same posture as nostr-dav.service.
+# Discovered by nostrc-qngf installed-unit acceptance (nostrc-8oon).
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 LockPersonality=yes
