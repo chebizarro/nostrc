@@ -62,6 +62,26 @@ if(UNIX AND NOT APPLE AND NOT CYGWIN)
   endif()
 endif()
 
+# Session-relay peercred acceptance: spawns the built binary, asserts
+# fallback-bound socket is 0600, and round-trips a same-UID connect.
+# Linux-only (SO_PEERCRED); CTest reports SKIP on other platforms.
+if(UNIX AND NOT APPLE AND NOT CYGWIN)
+  add_executable(test_session_relay_peercred test_session_relay_peercred.c)
+  target_include_directories(test_session_relay_peercred PRIVATE
+    ${CMAKE_SOURCE_DIR}/apps/relayd/include)
+  add_test(
+    NAME relayd_session_relay_peercred
+    COMMAND test_session_relay_peercred
+  )
+  set_tests_properties(relayd_session_relay_peercred PROPERTIES
+    TIMEOUT 30
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT
+      "NOSTR_SESSION_RELAYD=$<TARGET_FILE:nostr-session-relayd>"
+    LABELS "relay;session-relay;peercred;integration"
+  )
+endif()
+
 if(COMMAND apply_sanitizers)
   apply_sanitizers(relayd_ingress_security)
   apply_sanitizers(relayd_rate_limit_security)

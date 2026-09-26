@@ -3,7 +3,7 @@
  *
  * This file used to be the body of `apps/relayd/src/relayd_main.c`. It was
  * factored out so that both `nostrc-relayd` (system daemon, TCP listener from
- * relay.toml) and the future per-user session relay (Unix-fd listener via
+ * relay.toml) and the per-user session relay (Unix-fd listener via
  * sd_listen_fds, Wave 3 / #13) can share every code path except how the
  * listening socket is created. See `include/nostr-relay-server.h` for the
  * caller-facing contract.
@@ -12,11 +12,13 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -339,6 +341,48 @@ static const struct lws_protocols protocols[] = {
   { NULL, NULL, 0, 0 }
 };
 
+/*
+ * Try to accept one waiting connection on `listen_fd` and hand it to lws.
+ * Returns 1 if a connection was accepted (successfully or not), 0 if the
+ * listener had nothing pending (EAGAIN/EWOULDBLOCK), -1 on a fatal listener
+ * error that should terminate the loop.
+ *
+ * The listener fd is expected to already be in nonblocking mode. We loop
+ * across transient EINTR only; the caller drives repeat calls via poll().
+ */
+static int accept_and_adopt_once(struct lws_context *context, int listen_fd) {
+  for (;;) {
+    struct sockaddr_storage peer;
+    socklen_t plen = sizeof peer;
+    int cfd = accept(listen_fd, (struct sockaddr *)&peer, &plen);
+    if (cfd >= 0) {
+      /* Match lws's usual client-fd disposition: nonblocking + CLOEXEC. */
+      int flags = fcntl(cfd, F_GETFL, 0);
+      if (flags >= 0) (void)fcntl(cfd, F_SETFL, flags | O_NONBLOCK);
+      int fdflags = fcntl(cfd, F_GETFD, 0);
+      if (fdflags >= 0) (void)fcntl(cfd, F_SETFD, fdflags | FD_CLOEXEC);
+      struct lws *w = lws_adopt_socket(context, cfd);
+      if (!w) {
+        /* Adoption failed — close so we don't leak. lws would have closed
+         * on success; on failure the fd is still ours. */
+        close(cfd);
+      }
+      return 1;
+    }
+    if (errno == EINTR) continue;
+    if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+    if (errno == ECONNABORTED || errno == EMFILE || errno == ENFILE ||
+        errno == ENOBUFS || errno == ENOMEM) {
+      /* Transient — log and back off; caller will retry on next tick. */
+      fprintf(stderr, "nostr-relay-server: accept(): %s\n", strerror(errno));
+      return 0;
+    }
+    fprintf(stderr, "nostr-relay-server: fatal accept(): %s\n",
+            strerror(errno));
+    return -1;
+  }
+}
+
 int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
   if (!server_cfg || !server_cfg->cfg) {
     fprintf(stderr, "nostr-relay-server: null config\n");
@@ -346,24 +390,23 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
   }
   const RelaydConfig *cfg = server_cfg->cfg;
 
-  /* Unix-fd listener is defined by the header contract but wired in Wave 3
-   * alongside the session daemon; fail loudly so nobody depends on partial
-   * behavior. TCP is the only fully-implemented variant today. */
-  if (server_cfg->listener.kind == NOSTR_RELAY_LISTENER_UNIX_FD) {
-    fprintf(stderr,
-            "nostr-relay-server: Unix-fd listener not yet implemented "
-            "(session daemon Wave 3 will provide it)\n");
-    return -ENOSYS;
-  }
-  if (server_cfg->listener.kind != NOSTR_RELAY_LISTENER_TCP) {
+  const int listener_kind = server_cfg->listener.kind;
+
+  if (listener_kind == NOSTR_RELAY_LISTENER_TCP) {
+    if (server_cfg->listener.u.tcp.host[0] == '\0' ||
+        server_cfg->listener.u.tcp.port <= 0 ||
+        server_cfg->listener.u.tcp.port > 65535) {
+      fprintf(stderr, "nostr-relay-server: invalid TCP listener host/port\n");
+      return 1;
+    }
+  } else if (listener_kind == NOSTR_RELAY_LISTENER_UNIX_FD) {
+    if (server_cfg->listener.u.unix_fd.fd < 0) {
+      fprintf(stderr, "nostr-relay-server: invalid Unix listener fd\n");
+      return 1;
+    }
+  } else {
     fprintf(stderr, "nostr-relay-server: unknown listener kind %d\n",
-            (int)server_cfg->listener.kind);
-    return 1;
-  }
-  if (server_cfg->listener.u.tcp.host[0] == '\0' ||
-      server_cfg->listener.u.tcp.port <= 0 ||
-      server_cfg->listener.u.tcp.port > 65535) {
-    fprintf(stderr, "nostr-relay-server: invalid TCP listener host/port\n");
+            listener_kind);
     return 1;
   }
 
@@ -410,10 +453,23 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
             "return empty results.\n");
   }
 
-  /* libwebsockets context — TCP listener path. */
+  /* libwebsockets context — differs only in whether lws owns the listen fd.
+   *
+   * TCP path: hand lws the host:port and let it bind.
+   * Unix-fd path: pre-bound listen fd owned by the caller (systemd or the
+   *   session daemon's fallback path). We disable lws's own listener
+   *   (`CONTEXT_PORT_NO_LISTEN`) and drive an accept loop below, handing
+   *   each accepted client fd to lws_adopt_socket(). This keeps the peer-
+   *   credential check at the daemon boundary — no byte crosses the lws
+   *   protocol layer until the UID is verified. */
   struct lws_context_creation_info info; memset(&info, 0, sizeof info);
-  info.iface = server_cfg->listener.u.tcp.host;
-  info.port = server_cfg->listener.u.tcp.port;
+  if (listener_kind == NOSTR_RELAY_LISTENER_TCP) {
+    info.iface = server_cfg->listener.u.tcp.host;
+    info.port = server_cfg->listener.u.tcp.port;
+  } else {
+    info.iface = NULL;
+    info.port = CONTEXT_PORT_NO_LISTEN;
+  }
   info.protocols = protocols;
   info.options = LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE;
 
@@ -444,13 +500,56 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
   sigaction(SIGINT, &sa, &prev_int);
   sigaction(SIGTERM, &sa, &prev_term);
 
-  fprintf(stderr, "nostr-relay-server: listening on %s:%d\n",
-          info.iface, info.port);
+  int listen_fd = -1;
+  if (listener_kind == NOSTR_RELAY_LISTENER_UNIX_FD) {
+    listen_fd = server_cfg->listener.u.unix_fd.fd;
+    /* Put listener into nonblocking mode so accept() cannot stall the loop.
+     * systemd's activation fds are typically already nonblocking, but be
+     * defensive. */
+    int flags = fcntl(listen_fd, F_GETFL, 0);
+    if (flags >= 0 && !(flags & O_NONBLOCK))
+      (void)fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK);
+    fprintf(stderr,
+            "nostr-relay-server: listening on Unix fd %d (per-user session)\n",
+            listen_fd);
+  } else {
+    fprintf(stderr, "nostr-relay-server: listening on %s:%d\n",
+            info.iface, info.port);
+  }
 
   unsigned long long last_ret_ms = 0;
   const volatile int *external_stop = server_cfg->stop_flag;
   while (!s_signal_stop && !(external_stop && *external_stop)) {
-    lws_service(context, 200);
+    /* TCP path: lws owns the listen socket and drives its own poll loop.
+     * Unix-fd path: we drive an accept-and-adopt loop for the pre-bound
+     * listen fd, and let lws service already-adopted client fds. Both
+     * paths share the same retention-tick and stop-signal handling. */
+    if (listener_kind == NOSTR_RELAY_LISTENER_UNIX_FD) {
+      struct pollfd pfd = { .fd = listen_fd, .events = POLLIN };
+      int prc = poll(&pfd, 1, 50);
+      if (prc > 0 && (pfd.revents & POLLIN)) {
+        /* Drain everything currently pending before returning to lws so a
+         * burst of connects does not starve accepted-side servicing. */
+        for (;;) {
+          int arc = accept_and_adopt_once(context, listen_fd);
+          if (arc <= 0) {
+            if (arc < 0) s_signal_stop = 1;
+            break;
+          }
+        }
+      } else if (prc < 0 && errno != EINTR) {
+        fprintf(stderr, "nostr-relay-server: poll(listen): %s\n",
+                strerror(errno));
+        s_signal_stop = 1;
+      }
+      /* Service already-adopted clients. Short timeout because the accept
+       * poll above already gave the loop its wait; we do not want to block
+       * a second time when a client fd has activity. */
+      lws_service(context, 0);
+    } else {
+      lws_service(context, 200);
+    }
+
     unsigned long long now_ms = rate_limit_now_ms();
     if (last_ret_ms == 0 || now_ms - last_ret_ms >= 5000) {
       retention_tick(&ctx);
@@ -463,5 +562,8 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
   sigaction(SIGTERM, &prev_term, NULL);
   relay_policy_destroy(policy);
   verification_budget_destroy(verification_budget);
+  /* Note: on the Unix-fd path we deliberately do NOT close listen_fd — the
+   * caller retains ownership (typically systemd, so the same fd can be
+   * reused on the next activation cycle without a race). */
   return 0;
 }

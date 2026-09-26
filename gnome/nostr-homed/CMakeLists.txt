@@ -761,6 +761,30 @@ if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
     systemd/user/nostr-homectl.service
     systemd/user/nostrfs@.service
     DESTINATION "${SYSTEMD_USER_UNIT_DIR}")
+
+  # --- Wave 3 / #13 -----------------------------------------------------
+  # Session-scoped local relay: socket-activated, per-user. The socket unit
+  # owns the fd at $XDG_RUNTIME_DIR/nostr/relay.sock; the service unit is
+  # `Type=notify` and PartOf=graphical-session.target. Binaries live under
+  # ${CMAKE_INSTALL_FULL_LIBEXECDIR} (built by apps/relayd; enabled via
+  # NOSTR_HOMED_ENABLE_SESSION_RELAY_UNITS to keep the option explicit).
+  set(NOSTR_SESSION_RELAYD_EXEC "${CMAKE_INSTALL_FULL_LIBEXECDIR}/nostr-session-relayd")
+  configure_file(systemd/user/nostr-session-relay.service.in
+    "${CMAKE_CURRENT_BINARY_DIR}/nostr-session-relay.service" @ONLY)
+  install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/nostr-session-relay.service"
+    systemd/user/nostr-session-relay.socket
+    DESTINATION "${SYSTEMD_USER_UNIT_DIR}")
+
+  # --- Wave 3 / #14 -----------------------------------------------------
+  # NIP-29 + NIP-17 background notification daemon. Runs After= the session
+  # relay so the socket exists before the notifier connects, but falls back
+  # to home_relays if the socket is absent.
+  set(NOSTR_NOTIFY_DAEMON_EXEC "${CMAKE_INSTALL_FULL_LIBEXECDIR}/nostr-notify-daemon")
+  configure_file(systemd/user/nostr-notify.service.in
+    "${CMAKE_CURRENT_BINARY_DIR}/nostr-notify.service" @ONLY)
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-notify.service"
+    DESTINATION "${SYSTEMD_USER_UNIT_DIR}")
 endif()
 
 
@@ -2288,6 +2312,89 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
     install(FILES packaging/ignore.d/portable
             DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-homed/ignore.d")
   endif()
+endif()
+
+
+# ────────────────────────────────────────────────────────────────
+# Wave 3 / #14: NIP-29 + NIP-17 background notification daemon
+#
+# Standalone binary — deliberately separate from gnostr-signer-daemon
+# (Finding 4: cannot share the signer's key surface; lifecycle mismatch;
+# goa-postmortem "don't fork/overload desktop-service daemons"). Owns
+# GApplication ID `org.nostr.NotifyDaemon` so its `app.open-in-gnostr`
+# action does not collide with GNostr's `org.gnostr.Client` ID.
+#
+# Dependencies: libnostr (relay+subscription+event), nip19 (npub decode),
+# gio (GNotification + session bus watcher). No keyring, no signing —
+# read-only observer.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+  pkg_check_modules(NOSTR_NOTIFY_GIO QUIET IMPORTED_TARGET gio-2.0)
+endif()
+
+if(NOSTR_NOTIFY_GIO_FOUND)
+  find_package(Threads REQUIRED)
+  add_executable(nostr-notify-daemon
+    src/notify/nostr-notify-daemon.c
+    src/notify/notify_subs.c
+    src/notify/notify_gnotification.c
+  )
+  target_include_directories(nostr-notify-daemon PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/notify
+    ${CMAKE_SOURCE_DIR}/libnostr/include
+    ${CMAKE_SOURCE_DIR}/libgo/include
+    ${CMAKE_SOURCE_DIR}/nips/nip19/include
+  )
+  target_compile_options(nostr-notify-daemon PRIVATE
+    -Wall -Wextra -Wno-error -Wno-unused-parameter -Wno-format-truncation)
+  target_link_libraries(nostr-notify-daemon PRIVATE
+    PkgConfig::NOSTR_NOTIFY_GIO
+    nostr
+    nip19
+    Threads::Threads)
+
+  if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+    install(TARGETS nostr-notify-daemon RUNTIME
+            DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}")
+    # nostr-notify.conf.example is a per-user reference; ship under the
+    # documentation share so packagers can drop a copy in /etc/xdg/nostr-
+    # notify/ or point users at it in a man page.
+    install(FILES config/nostr-notify.conf.example
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-notify")
+  endif()
+
+  if(NOSTR_HOMED_BUILD_TESTS)
+    # test_notify_sub: assert opacity of DM notification body, ≤80-char
+    # NIP-29 preview, per §3.3 Piece B tests.
+    add_executable(test_notify_sub
+      tests/unit/test_notify_sub.c
+      src/notify/notify_gnotification.c
+    )
+    target_include_directories(test_notify_sub PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/notify)
+    target_compile_options(test_notify_sub PRIVATE
+      -Wall -Wextra -Wno-error -Wno-unused-parameter)
+    target_link_libraries(test_notify_sub PRIVATE
+      PkgConfig::NOSTR_NOTIFY_GIO)
+    add_test(NAME notify_sub COMMAND test_notify_sub)
+    set_tests_properties(notify_sub PROPERTIES
+      LABELS "nostr-homed;notify" TIMEOUT 30)
+
+    # test_notify_suppress: exercise the generation-guard primitive
+    # under concurrent snapshot + bump.
+    add_executable(test_notify_suppress
+      tests/unit/test_notify_suppress.c)
+    target_include_directories(test_notify_suppress PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/notify)
+    target_compile_options(test_notify_suppress PRIVATE
+      -Wall -Wextra -Wno-error -Wno-unused-parameter)
+    target_link_libraries(test_notify_suppress PRIVATE Threads::Threads)
+    add_test(NAME notify_suppress COMMAND test_notify_suppress)
+    set_tests_properties(notify_suppress PROPERTIES
+      LABELS "nostr-homed;notify;suppression" TIMEOUT 30)
+  endif()
+else()
+  message(STATUS "nostr-notify-daemon: gio-2.0 not found; skipping build.")
 endif()
 
 

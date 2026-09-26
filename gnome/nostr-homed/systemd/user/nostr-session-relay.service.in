@@ -1,0 +1,49 @@
+[Unit]
+Description=Nostr per-user session relay
+Documentation=https://github.com/chebizarro/nostrc
+# The socket unit owns fd creation; systemd will start us on demand via
+# socket activation. Requires= keeps the pair coherent.
+Requires=nostr-session-relay.socket
+After=nostr-session-relay.socket
+# Bound to the graphical session — logout stops it so the LMDB store
+# always closes cleanly.
+PartOf=graphical-session.target
+
+[Service]
+# Type=notify: relayd_session_main.c calls sd_notify(READY=1) once the
+# storage is open and the accept loop is armed. Explicit readiness beats
+# a race against consumers that connect while we are still initializing.
+Type=notify
+ExecStart=@NOSTR_SESSION_RELAYD_EXEC@
+# 5s bounded shutdown drain, matching the SIGTERM contract in §3.4.
+TimeoutStopSec=6s
+Restart=on-failure
+RestartSec=2
+
+# ─── Hardening ─────────────────────────────────────────────────────
+NoNewPrivileges=yes
+ProtectSystem=strict
+# Storage lives at ~/.local/share/nostr/session-relay/; carve out just
+# that path plus the runtime dir where the socket lives.
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/nostr/session-relay
+ReadWritePaths=%t/nostr
+PrivateTmp=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# AF_UNIX for the local socket + AF_INET/AF_INET6 for upstream federation.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+
+[Install]
+WantedBy=default.target

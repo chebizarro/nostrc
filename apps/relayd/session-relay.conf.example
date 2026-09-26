@@ -1,0 +1,57 @@
+# nostr-session-relayd config — copy to
+#   $XDG_CONFIG_HOME/nostr/session-relay.conf
+# (or $HOME/.config/nostr/session-relay.conf if XDG_CONFIG_HOME is unset).
+# All values shown are defaults; the file is optional.
+
+# Storage driver — nostrdb is the only implementation shipped in-tree.
+storage_driver = "nostrdb"
+
+# NIP-42 authentication policy. The Unix socket itself is the auth boundary,
+# so we default to `off`. Set to `optional` or `required` only if you share
+# the machine with other users you do not trust (in which case you also
+# want stricter DBus policy — see §3.2 D3 caveat).
+auth = "off"
+
+# Protocol limits. Match the system relayd defaults; the session relay is
+# lightly loaded so these are typically fine to leave alone.
+max_filters              = 10
+max_limit                = 500
+max_subs                 = 1
+max_event_bytes          = 262144
+
+rate_ops_per_sec         = 20
+rate_burst               = 40
+rate_event_cost          = 5
+
+replay_cache_capacity    = 65536
+replay_ttl_seconds       = 900
+future_skew_seconds      = 600
+past_skew_seconds        = 0
+
+# Signature verification budget — the session relay verifies inbound events
+# just like the system daemon; keep these conservative to bound CPU during
+# federation catch-up.
+verification_cost                    = 5
+verification_conn_per_sec            = 40
+verification_conn_burst              = 80
+verification_ip_per_sec              = 200
+verification_ip_burst                = 400
+verification_global_per_sec          = 2000
+verification_global_burst            = 4000
+verification_max_ips                 = 4096
+verification_max_jobs                = 64
+verification_max_bytes               = 16777216
+verification_negative_cache_entries  = 4096
+verification_negative_ttl_seconds    = 30
+
+# NIP-11 identity — advertised to any local client that requests it.
+name        = "session-relay"
+software    = "nostrc"
+version     = "0.1"
+description = "Per-user session-scoped local relay"
+contact     = ""
+
+# Retention policy for the local nostrdb cache is enforced by the retention
+# tick in libnostr-relay-server; default 7d / 256 MiB budget applies from
+# the shared runtime limits and does not have a config knob here yet.
+negentropy_enabled = 0

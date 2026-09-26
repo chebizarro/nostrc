@@ -1,0 +1,21 @@
+# nostr-notify-daemon config — copy to
+#   $XDG_CONFIG_HOME/nostr-notify/nostr-notify.conf
+# (or $HOME/.config/nostr-notify/nostr-notify.conf if XDG_CONFIG_HOME is unset).
+#
+# The daemon prefers `org.nostr.Signer.GetRelays` when available. This
+# config file is the fallback + policy source.
+
+[notify]
+# Upstream policy — mirror of nostr-dav's D4 policy.
+#   direct         : subscribe to home_relays over wss:// (v1 default).
+#   session_relay  : subscribe to $XDG_RUNTIME_DIR/nostr/relay.sock via the
+#                    per-user session relay (Piece A). NOTE: v1 wiring is
+#                    stubbed — libnostr's ws client speaks ws://+wss:// only;
+#                    the daemon logs a warning and falls back to `direct`.
+#                    A libnostr unix:// transport is tracked separately.
+upstream_mode = direct
+
+# Home relays — a semicolon-separated list of wss:// or ws:// URLs.
+# Ignored when the signer's GetRelays returns a non-empty list. This is
+# the only field the daemon reads for its direct upstream mode.
+home_relays = wss://relay.damus.io;wss://nostr.wine

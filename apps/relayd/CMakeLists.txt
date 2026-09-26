@@ -98,6 +98,68 @@ target_link_libraries(nostrc-relayd
     ${SECP256K1_LIB}
 )
 
+# --- nostr-session-relayd (Wave 3 / #13) ----------------------------------
+# Per-user session relay: adopts a Unix-domain listen fd (systemd socket
+# activation preferred; fallback bind under $XDG_RUNTIME_DIR/nostr/). Shares
+# libnostr-relay-server with the system daemon; the differences are the
+# listener (Unix-fd vs TCP), the storage path (per-user), and the sd_notify
+# handshake.
+add_executable(nostr-session-relayd
+  src/session/relayd_session_main.c
+  src/session/session_routing.c
+)
+target_include_directories(nostr-session-relayd PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/session
+  ${LWS_INCLUDE_DIRS}
+)
+target_link_directories(nostr-session-relayd PRIVATE ${LWS_LIBRARY_DIRS})
+target_link_libraries(nostr-session-relayd
+  PRIVATE
+    nostr-relay-server
+    nostr
+    nostr_json
+    ${NSYNC_LIB}
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    ${SECP256K1_LIB}
+)
+
+# Optional libsystemd dependency: sd_listen_fds + sd_notify + sd_is_socket_unix.
+# The session daemon falls back to a stub implementation when systemd headers
+# are absent (macOS dev builds), but the Linux install must link libsystemd
+# so socket activation works.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+  pkg_check_modules(SESSION_RELAYD_SYSTEMD QUIET IMPORTED_TARGET libsystemd)
+  if(SESSION_RELAYD_SYSTEMD_FOUND)
+    target_link_libraries(nostr-session-relayd PRIVATE PkgConfig::SESSION_RELAYD_SYSTEMD)
+  endif()
+endif()
+
+# Link the same nostrdb storage the system daemon uses so the per-user
+# ~/.local/share/nostr/session-relay/ path can back a real store.
+if (TARGET nostrdb_storage)
+  target_link_libraries(nostr-session-relayd PRIVATE nostrdb_storage)
+  if (NOT TARGET nostrdb)
+    set(_NDB_VENDOR_DIR ${CMAKE_SOURCE_DIR}/third_party/nostrdb)
+    if (EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
+      if (APPLE)
+        target_link_options(nostr-session-relayd PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
+        target_link_libraries(nostr-session-relayd PRIVATE "-framework Security")
+      else()
+        target_link_options(nostr-session-relayd PRIVATE -Wl,--whole-archive ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
+      endif()
+    endif()
+    if (EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+      if (APPLE)
+        target_link_libraries(nostr-session-relayd PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
+      else()
+        target_link_options(nostr-session-relayd PRIVATE -Wl,--whole-archive ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a -Wl,--no-whole-archive)
+      endif()
+    endif()
+  endif()
+endif()
+
 # Link nostrdb storage component if available
 if (TARGET nostrdb_storage)
   target_link_libraries(nostrc-relayd PRIVATE nostrdb_storage)
@@ -144,6 +206,11 @@ include(GNUInstallDirs)
 # nostrc-relayd is a network daemon: install under sbin per FHS 3.0.
 install(TARGETS nostrc-relayd
   RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR})
+# nostr-session-relayd is a per-user session daemon (not a network daemon):
+# ship under libexec so it does not appear on user PATH by mistake — systemd
+# --user activates it by absolute path.
+install(TARGETS nostr-session-relayd
+  RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/relay.toml.example)
   install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/relay.toml.example
     DESTINATION ${CMAKE_INSTALL_DATADIR}/nostrc)

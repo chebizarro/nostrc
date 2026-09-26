@@ -1,0 +1,25 @@
+[Unit]
+Description=Nostr per-user session relay socket
+Documentation=https://github.com/chebizarro/nostrc
+# The socket unit owns creation of $XDG_RUNTIME_DIR/nostr/relay.sock, its
+# mode, and its cleanup on stop. The session-relay service must never
+# unlink this socket (see the plan §3.2 D3 socket-owner contract).
+PartOf=graphical-session.target
+
+[Socket]
+# %t → $XDG_RUNTIME_DIR under systemd --user. This path is what desktop
+# consumers (nostr-notify-daemon, nostr-dav's session-relay fallback,
+# GNostr's local-relay client) connect to.
+ListenStream=%t/nostr/relay.sock
+# 0600 + $XDG_RUNTIME_DIR ownership together make the socket single-user
+# by construction. SO_PEERCRED at accept() is defense-in-depth.
+SocketMode=0600
+# systemd creates the parent directory automatically when ListenStream
+# points inside %t, but be explicit so `systemd-analyze verify` is quiet
+# on older systemd versions.
+DirectoryMode=0700
+Accept=no
+
+[Install]
+# Bound to the graphical session — logout stops it and reclaims the fd.
+WantedBy=sockets.target

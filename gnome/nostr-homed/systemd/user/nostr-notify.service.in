@@ -1,0 +1,42 @@
+[Unit]
+Description=Nostr NIP-29 + NIP-17 notification daemon
+Documentation=https://github.com/chebizarro/nostrc
+# The notifier tries $XDG_RUNTIME_DIR/nostr/relay.sock first when
+# upstream_mode=session_relay; keep ordering with the session relay so
+# activation races are quiet even though the daemon can idle without it.
+After=nostr-session-relay.service
+Wants=nostr-session-relay.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=@NOSTR_NOTIFY_DAEMON_EXEC@
+Restart=on-failure
+RestartSec=5
+
+# ─── Hardening ─────────────────────────────────────────────────────
+# The daemon needs read-only signer keys via DBus + AF_INET for direct-mode
+# home_relays fallback. No keyring access; no secret material.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/nostr-notify
+PrivateTmp=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+MemoryMax=96M
+
+[Install]
+WantedBy=default.target
