@@ -35,34 +35,53 @@ target_link_libraries(relay_security
   PRIVATE OpenSSL::Crypto
 )
 
-add_executable(nostrc-relayd
-  src/relayd_main.c
+# --- libnostr-relay-server -----------------------------------------------
+# Reusable relay-server core factored out of nostrc-relayd (#12). Static on
+# purpose: this library is in-tree only (no external ABI to maintain) and the
+# two consumers (`nostrc-relayd` today; the per-user session relay in Wave 3)
+# both live in this repo. Public entry point:
+#     apps/relayd/include/nostr-relay-server.h -> nostr_relay_server_run()
+add_library(nostr-relay-server STATIC
+  src/relay_server.c
   src/relayd_config.c
+  src/policy_decider.c
   src/protocol_nip01.c
-  src/protocol_nip45.c
   src/protocol_nip11.c
   src/protocol_nip42.c
+  src/protocol_nip45.c
   src/protocol_nip50.c
   src/protocol_nip77.c
   src/retention.c
   src/metrics.c
 )
-
-# Build a reusable static library for tests needing NIP-01 policy helpers
-add_library(relayd_core STATIC
-  src/policy_decider.c
-  src/metrics.c
+target_include_directories(nostr-relay-server PUBLIC
+  ${CMAKE_SOURCE_DIR}/apps/relayd/include
+  ${CMAKE_SOURCE_DIR}/libnostr/include
+  ${CMAKE_SOURCE_DIR}/nips/nip11/include
+  ${CMAKE_SOURCE_DIR}/nips/nip86/include
 )
-target_link_libraries(relayd_core
+target_include_directories(nostr-relay-server PRIVATE ${LWS_INCLUDE_DIRS})
+target_link_libraries(nostr-relay-server
   PUBLIC
     relay_security
-  PRIVATE
     nostr
+  PRIVATE
     nostr_json
     ${NSYNC_LIB}
     OpenSSL::SSL
     OpenSSL::Crypto
     ${SECP256K1_LIB}
+)
+target_link_directories(nostr-relay-server PUBLIC ${LWS_LIBRARY_DIRS})
+target_link_libraries(nostr-relay-server PUBLIC ${LWS_LIBRARIES})
+
+# Back-compat alias for existing test targets and any downstream in-tree
+# consumers that used to link `relayd_core` for policy helpers + metrics.
+# Both symbols now live inside nostr-relay-server.
+add_library(relayd_core ALIAS nostr-relay-server)
+
+add_executable(nostrc-relayd
+  src/relayd_main.c
 )
 
 target_include_directories(nostrc-relayd PRIVATE ${LWS_INCLUDE_DIRS})
@@ -70,7 +89,7 @@ target_link_directories(nostrc-relayd PRIVATE ${LWS_LIBRARY_DIRS})
 
 target_link_libraries(nostrc-relayd
   PRIVATE
-    relay_security
+    nostr-relay-server
     nostr
     nostr_json
     ${NSYNC_LIB}
@@ -106,10 +125,12 @@ if (TARGET nostrdb_storage)
   endif()
 endif()
 
-# Link NIP-11 module if available and set compile define
+# Link NIP-11 module if available and set compile define. The NIP-11 handler
+# lives inside libnostr-relay-server, so the module is linked to the lib and
+# the HAVE_NIP11 define propagates to any consumer through PUBLIC.
 if (TARGET nip11)
-  target_link_libraries(nostrc-relayd PRIVATE nip11)
-  target_compile_definitions(nostrc-relayd PRIVATE HAVE_NIP11=1)
+  target_link_libraries(nostr-relay-server PUBLIC nip11)
+  target_compile_definitions(nostr-relay-server PUBLIC HAVE_NIP11=1)
 endif()
 
 # NIP-86 integration intentionally disabled for relayd link; relayd has
