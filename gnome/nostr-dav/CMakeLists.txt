@@ -108,7 +108,8 @@ if (BUILD_TESTING)
   target_compile_options(nostr-dav-test-harness PRIVATE ${ND_WARNING_FLAGS})
 
   foreach(_nd_test IN ITEMS dav_propfind auth_required store_sqlite
-                            relay_sync publish_rollback)
+                            relay_sync publish_rollback
+                            relay_transport_libsoup)
     string(REPLACE "_" "-" _nd_test_dash ${_nd_test})
     add_executable(test-nostr-dav-${_nd_test_dash} tests/test_${_nd_test}.c)
     target_link_libraries(test-nostr-dav-${_nd_test_dash} PRIVATE

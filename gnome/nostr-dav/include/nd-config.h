@@ -74,12 +74,11 @@ typedef struct {
   GStrv    home_relays;      /* owned NULL-terminated array; NULL when
                               * empty (matches g_key_file_get_string_list). */
 
-  /* Opt-in gate for the relay subscribe + publish stack (plan Track 2
-   * D4/D5). Defaults to FALSE because the production WebSocket transport
-   * is not yet wired — leaving it OFF keeps DAV writes local, avoids the
-   * outbox looping forever on scaffold-only transports, and matches the
-   * pre-Track-2 behaviour. The follow-up bead flips this to default ON
-   * when the WebSocket backend lands. */
+  /* Gate for the relay subscribe + publish stack (plan Track 2 D4/D5).
+   * Defaults to TRUE now that bead nostrc-tu6y has wired a real
+   * libsoup 3 WebSocket transport. Setting it FALSE in nostr-dav.conf
+   * makes the daemon serve DAV locally and stop staging outbox rows —
+   * useful for offline-first workflows or air-gapped smoke testing. */
   gboolean enable_publish;
 } NdConfig;
 

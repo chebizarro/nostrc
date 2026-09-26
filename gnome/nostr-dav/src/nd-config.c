@@ -55,7 +55,11 @@ nd_config_init_defaults(NdConfig *config)
   config->publish_quorum = ND_PUBLISH_QUORUM_DEFAULT;
   config->account_pubkey = NULL;
   config->home_relays    = NULL;
-  config->enable_publish = FALSE;
+  /* Real libsoup 3 WebSocket transport landed in bead nostrc-tu6y —
+   * publish + relay sync are on by default. Operators who want DAV
+   * writes to stay local can flip `enable_publish=false` in
+   * nostr-dav.conf. */
+  config->enable_publish = TRUE;
 }
 
 void
@@ -67,7 +71,7 @@ nd_config_clear(NdConfig *config)
   g_clear_pointer(&config->home_relays, g_strfreev);
   config->upstream_mode  = ND_UPSTREAM_MODE_DEFAULT;
   config->publish_quorum = ND_PUBLISH_QUORUM_DEFAULT;
-  config->enable_publish = FALSE;
+  config->enable_publish = TRUE;
 }
 
 gboolean

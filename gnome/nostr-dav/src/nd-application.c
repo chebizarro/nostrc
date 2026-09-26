@@ -28,6 +28,7 @@
 
 #include <glib.h>
 #include <gio/gio.h>
+#include <json-glib/json-glib.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -48,6 +49,13 @@
 #define ND_LOCK_WAIT_STEPS    50
 #define ND_LOCK_WAIT_STEP_US  (100 * 1000)
 
+/* NIP-42 client-auth event kind. */
+#define ND_NIP42_AUTH_KIND    22242
+
+/* Outbox tick cadence. Backoff floor is 60 s so 30 s keeps the tick
+ * responsive to newly staged rows without hammering the DB. */
+#define ND_PUBLISHER_TICK_SEC 30
+
 struct _NdApplication {
   GApplication      parent_instance;
 
@@ -60,6 +68,7 @@ struct _NdApplication {
   NdRelaySync      *relay_sync;
   NdCalendarStore  *cal_store;
   NdContactStore   *contact_store;
+  guint             publisher_tick_id;
   int               lock_fd;
   int               exit_status;
 };
@@ -116,15 +125,122 @@ acquire_instance_lock(NdApplication *self, GError **error)
   return FALSE;
 }
 
+/* ---- OK-frame trampoline: relay → publisher ---- */
+
+static void
+on_relay_ok(NdRelayTransport *transport,
+            const gchar      *event_id,
+            gboolean          accepted,
+            const gchar      *reason,
+            gpointer          user_data)
+{
+  NdApplication *self = user_data;
+  if (self->publisher == NULL)
+    return;
+  const gchar *url = nd_relay_transport_get_url(transport);
+  nd_publisher_record_ok(self->publisher, url, event_id, accepted, reason);
+}
+
+/* ---- NIP-42 AUTH signer: relay challenge → signed kind-22242 event ----
+ *
+ * Minimum viable implementation per plan / bead nostrc-lq12: when a
+ * relay pushes ["AUTH", <challenge>], build the tag list, sign via the
+ * existing DBus signer, and hand the JSON back so the transport can
+ * emit ["AUTH", <event>]. Further edge cases (auth-required retry loop,
+ * multiple challenges in flight, cached challenge reuse) stay with
+ * nostrc-lq12. */
+static gchar *
+on_relay_auth(NdRelayTransport *transport,
+              const gchar      *challenge,
+              gpointer          user_data)
+{
+  NdApplication *self = user_data;
+  if (self->signer == NULL || challenge == NULL)
+    return NULL;
+
+  const gchar *relay_url = nd_relay_transport_get_url(transport);
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+
+  g_autoptr(JsonBuilder) b = json_builder_new();
+  json_builder_begin_object(b);
+  json_builder_set_member_name(b, "kind");
+  json_builder_add_int_value(b, ND_NIP42_AUTH_KIND);
+  json_builder_set_member_name(b, "created_at");
+  json_builder_add_int_value(b, now);
+  json_builder_set_member_name(b, "content");
+  json_builder_add_string_value(b, "");
+  json_builder_set_member_name(b, "tags");
+  json_builder_begin_array(b);
+    json_builder_begin_array(b);
+      json_builder_add_string_value(b, "relay");
+      json_builder_add_string_value(b, relay_url ? relay_url : "");
+    json_builder_end_array(b);
+    json_builder_begin_array(b);
+      json_builder_add_string_value(b, "challenge");
+      json_builder_add_string_value(b, challenge);
+    json_builder_end_array(b);
+  json_builder_end_array(b);
+  json_builder_end_object(b);
+
+  g_autoptr(JsonNode) root = json_builder_get_root(b);
+  g_autoptr(JsonGenerator) gen = json_generator_new();
+  json_generator_set_root(gen, root);
+  g_autofree gchar *unsigned_json = json_generator_to_data(gen, NULL);
+  if (unsigned_json == NULL)
+    return NULL;
+
+  GError *sign_err = NULL;
+  gchar *signed_json =
+    nd_signer_sign_event_json(self->signer, unsigned_json, NULL, &sign_err);
+  if (signed_json == NULL) {
+    g_debug("nostr-dav: NIP-42 AUTH sign failed for %s: %s",
+            relay_url ? relay_url : "(null)",
+            sign_err ? sign_err->message : "unknown");
+    g_clear_error(&sign_err);
+    return NULL;
+  }
+  return signed_json;
+}
+
 static NdRelayTransport *
 session_transport_factory(const gchar *relay_url, gpointer user_data)
 {
-  (void)user_data;
-  /* Real WebSocket wiring is a follow-up bead; the factory hands out a
-   * scaffold transport so the sync + publisher plumbing is testable in
-   * a running daemon (connects will fail loud, staged rows stay
-   * pending and retry). */
-  return nd_relay_transport_new_websocket(relay_url);
+  NdApplication *self = user_data;
+  NdRelayTransport *t = nd_relay_transport_new_websocket(relay_url);
+  if (t == NULL)
+    return NULL;
+
+  if (self != NULL && self->publisher != NULL) {
+    /* Bind the transport into the publisher's send-side cache so
+     * dispatch_row() can find it without an extra factory call, then
+     * point OK envelopes at the publisher for ACK accounting.
+     *
+     * Ownership: the sync layer takes ownership of the returned
+     * transport ref. The publisher's `bound` hash holds an unowned
+     * pointer; nd_publisher_free() clears the hash without touching the
+     * transports. tear_down() drops the sync (and therefore the
+     * transport refs) before it frees the publisher, so no dangling
+     * lookups. */
+    nd_publisher_bind_transport(self->publisher, relay_url, t);
+    nd_relay_transport_set_ok_callback(t, on_relay_ok, self);
+  }
+  if (self != NULL && self->signer != NULL)
+    nd_relay_transport_set_auth_callback(t, on_relay_auth, self);
+
+  return t;
+}
+
+/* ---- Publisher outbox tick ---- */
+
+static gboolean
+publisher_tick(gpointer user_data)
+{
+  NdApplication *self = user_data;
+  if (self->publisher == NULL)
+    return G_SOURCE_REMOVE;
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  (void)nd_publisher_tick(self->publisher, now);
+  return G_SOURCE_CONTINUE;
 }
 
 static gboolean
@@ -162,9 +278,9 @@ bring_up(NdApplication *self, GError **error)
    *     on top of that. If the session bus is unreachable (headless
    *     build, tests) or the signer proxy fails to build, the local
    *     store still serves DAV — publishes just cannot be attempted.
-   *     The gate defaults to OFF while the WebSocket transport is a
-   *     scaffold (see nd-relay-transport.c) so the outbox does not spin
-   *     against a `NOT_SUPPORTED` backend. */
+   *     The gate defaults ON now that the libsoup 3 WebSocket transport
+   *     is live (bead nostrc-tu6y); operators can flip it off in
+   *     nostr-dav.conf if they want DAV-only mode. */
   if (!self->config.enable_publish) {
     g_message("nostr-dav: publish + relay-sync disabled "
               "(enable_publish is off in %s)", config_path);
@@ -188,6 +304,9 @@ bring_up(NdApplication *self, GError **error)
   if (self->signer != NULL) {
     self->cal_store     = nd_calendar_store_new(self->db);
     self->contact_store = nd_contact_store_new(self->db);
+    /* NB: the publisher MUST be constructed before the sync layer so the
+     * session_transport_factory can bind each transport into the
+     * publisher's send-side cache as the sync layer materialises it. */
     self->publisher = nd_publisher_new(self->db, self->signer,
                                         session_transport_factory, self);
     nd_publisher_configure(self->publisher,
@@ -204,6 +323,12 @@ bring_up(NdApplication *self, GError **error)
                             self->config.home_relays,
                             self->config.upstream_mode);
     nd_relay_sync_start(self->relay_sync);
+
+    /* Drive the outbox on a periodic tick. Runs on the app's default
+     * main context, which is the same context the WebSocket callbacks
+     * fire on, so there is no cross-thread hazard on self->publisher. */
+    self->publisher_tick_id =
+      g_timeout_add_seconds(ND_PUBLISHER_TICK_SEC, publisher_tick, self);
   }
 
 listen:
@@ -224,6 +349,13 @@ listen:
 static void
 tear_down(NdApplication *self)
 {
+  /* Stop the periodic tick BEFORE anything the tick touches gets freed
+   * — otherwise a still-armed source may fire during teardown and
+   * dereference a released publisher/db. */
+  if (self->publisher_tick_id != 0) {
+    g_source_remove(self->publisher_tick_id);
+    self->publisher_tick_id = 0;
+  }
   if (self->dav_server)
     nd_dav_server_stop(self->dav_server);
   g_clear_object(&self->dav_server);

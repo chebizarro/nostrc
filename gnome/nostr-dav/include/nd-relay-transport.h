@@ -73,13 +73,69 @@ typedef void (*NdRelayTransportStateCallback)(NdRelayTransport *transport,
  * nd_relay_transport_new_websocket:
  * @url: `wss://…` or `ws://…`
  *
- * Returns: (transfer full): a libsoup-backed transport (not yet
- *   connected). Currently a scaffold — production WebSocket wiring lands
- *   in a follow-up bead. The scaffold's connect method reports
- *   %G_IO_ERROR_NOT_SUPPORTED so a nostr-dav build without the follow-up
- *   still passes `-Werror` and refuses to appear healthy.
+ * Returns: (transfer full): a libsoup 3 SoupWebsocketConnection-backed
+ *   transport (not yet connected). Reconnect uses exponential backoff
+ *   (60 s → 60 min). The transport parses inbound NIP-01 envelopes and
+ *   fans them out through the primary listener plus (if registered) the
+ *   OK-frame and AUTH-frame callbacks.
  */
 NdRelayTransport *nd_relay_transport_new_websocket(const gchar *url);
+
+/**
+ * NdRelayTransportOkCallback:
+ * @event_id: hex64 event id from the OK envelope (never NULL)
+ * @accepted: %TRUE if the relay accepted the event
+ * @reason: (nullable): the relay's OK reason string; NIP-01 prefixes
+ *   include `duplicate:`, `invalid:`, `blocked:`, `banned:`,
+ *   `rate-limited:`, `restricted:`, `auth-required:`, `error:`
+ *
+ * Fired once per `["OK",...]` envelope. Publishers use this to record
+ * per-relay ACKs against their in-flight rows without having to re-parse
+ * every generic listener callback.
+ */
+typedef void (*NdRelayTransportOkCallback)(NdRelayTransport *transport,
+                                           const gchar      *event_id,
+                                           gboolean          accepted,
+                                           const gchar      *reason,
+                                           gpointer          user_data);
+
+/**
+ * nd_relay_transport_set_ok_callback:
+ *
+ * Registers an OK-frame consumer. Passing @cb = NULL clears the binding.
+ * Independent of nd_relay_transport_set_listener() — both fire on OK.
+ */
+void nd_relay_transport_set_ok_callback(NdRelayTransport          *self,
+                                        NdRelayTransportOkCallback cb,
+                                        gpointer                   user_data);
+
+/**
+ * NdRelayTransportAuthCallback:
+ * @challenge: server-issued NIP-42 challenge string (never NULL)
+ *
+ * Returns: (transfer full) (nullable): signed NIP-42 kind-22242 event
+ *   JSON to send back in an `["AUTH", <event>]` envelope. Returning NULL
+ *   silently drops the challenge; the transport does not retry AUTH.
+ *   The callback runs on the transport's main context — implementations
+ *   that need to make blocking IPC calls (DBus signer) must arrange for
+ *   that themselves.
+ */
+typedef gchar *(*NdRelayTransportAuthCallback)(NdRelayTransport *transport,
+                                               const gchar      *challenge,
+                                               gpointer          user_data);
+
+/**
+ * nd_relay_transport_set_auth_callback:
+ *
+ * Registers a NIP-42 AUTH signer. Passing @cb = NULL clears the binding
+ * and reverts the transport to ignoring AUTH challenges (relays that
+ * require AUTH will refuse subsequent EVENTs — the publisher classifies
+ * those as permanent). Independent of the generic listener; a listener
+ * still sees the raw envelope.
+ */
+void nd_relay_transport_set_auth_callback(NdRelayTransport            *self,
+                                          NdRelayTransportAuthCallback cb,
+                                          gpointer                     user_data);
 
 /**
  * nd_relay_transport_new_fixture:
