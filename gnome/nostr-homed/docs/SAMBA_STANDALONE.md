@@ -72,16 +72,18 @@ path.
 
 ### 2. Startup reconciliation
 
-On `nh_smb_authority_open()` the authority enumerates the passdb
-via `pdbedit -L -s <smb.conf.standalone>`, diffs the returned
-username list against the active issuance rows in
-`/var/lib/nostr-auth/smb.db`, and refuses readiness if either side
-has a user the other doesn't (`NH_SMB_RECONCILE_REQUIRED`).
+On `nh_smb_authority_open_ex()` the authority enumerates the passdb via
+`pdbedit -L -s <smb.conf.standalone>`. On the first open of an empty SMB
+journal, it records any operator-preseeded passdb usernames in a separate
+`adopted_passdb` table and writes a one-time bootstrap marker. It logs the
+number adopted; it does not invent Nostr credential metadata for them.
 
-The failure is loud on purpose — an operator has to `nostr-authctl
-smb-reconcile --dry-run` and decide whether the drift is a legit
-recovery (passdb restored from backup, journal reset) or an
-adversarial edit.  The authority does **not** auto-repair.
+On every later open, the passdb usernames must match the union of active
+issuance rows and adopted usernames in `/var/lib/nostr-auth/smb.db`. A
+mismatch refuses readiness (`NH_SMB_RECONCILE_REQUIRED`); there is no
+automatic repair after bootstrap. When a Nostr-issued credential replaces an
+adopted account, that account leaves `adopted_passdb`. An operator must
+investigate and reconcile post-bootstrap drift before restarting authd.
 
 ### 3. Rotation semantics
 

@@ -34,8 +34,8 @@
 #include <string.h>
 
 int main(int argc, char **argv) {
-  if (argc != 3) {
-    fprintf(stderr, "usage: %s <journal-path> <smb.conf-path>\n", argv[0]);
+  if (argc != 3 && argc != 5) {
+    fprintf(stderr, "usage: %s <journal-path> <smb.conf-path> [revoke <username>]\n", argv[0]);
     return 2;
   }
   const char *journal = argv[1];
@@ -50,6 +50,10 @@ int main(int argc, char **argv) {
   nh_smb_rc rc = nh_smb_authority_open_ex(journal, smb_conf,
                                           &nh_smb_passdb_tdbsam_ops,
                                           t, &a);
+  if (rc == NH_SMB_OK && argc == 5) {
+    if (strcmp(argv[3], "revoke") != 0) rc = NH_SMB_INVALID;
+    else rc = nh_smb_credential_revoke(a, argv[4], NH_SMB_REVOKE_ADMIN);
+  }
   const char *name = nh_smb_rc_name(rc);
   fprintf(stdout, "%s\n", name);
   if (a) {
