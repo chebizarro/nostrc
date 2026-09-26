@@ -28,20 +28,10 @@
 #include <libsecret/secret.h>
 #include <sys/types.h>
 #include <unistd.h>
-/* Identity-backed storage: one item per identity; attributes allow selection by key_id or npub. */
-static const SecretSchema SIGNER_IDENTITY_SCHEMA = {
-  "org.gnostr.Signer/identity",
-  SECRET_SCHEMA_NONE,
-  {
-    { "key_id",   SECRET_SCHEMA_ATTRIBUTE_STRING },
-    { "npub",     SECRET_SCHEMA_ATTRIBUTE_STRING },
-    { "label",    SECRET_SCHEMA_ATTRIBUTE_STRING },
-    { "hardware", SECRET_SCHEMA_ATTRIBUTE_STRING },
-    { "owner_uid",      SECRET_SCHEMA_ATTRIBUTE_STRING },
-    { "owner_username", SECRET_SCHEMA_ATTRIBUTE_STRING },
-    { NULL, 0 }
-  }
-};
+/* Identity-backed storage: one item per identity; attributes allow selection
+ * by key_id or npub. The schema (org.gnostr.Signer/identity) is owned by
+ * gnome/seahorse (gnostr-secret) — nostrc-bml6. */
+#include "seahorse/secret_store.h"
 #endif
 
 #ifdef NIP55L_HAVE_KEYCHAIN
@@ -171,7 +161,7 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
         gchar uid_buf[32];
         g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
         g_hash_table_insert(attrs, (gpointer)"owner_uid", (gpointer)uid_buf);
-        GList *items = secret_service_search_sync(service, &SIGNER_IDENTITY_SCHEMA, attrs,
+        GList *items = secret_service_search_sync(service, &gnostr_secret_schema, attrs,
                                                   SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK, NULL, &gerr);
         g_hash_table_unref(attrs);
         if (gerr) { g_error_free(gerr); gerr = NULL; }
@@ -247,13 +237,13 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
     int rc_l = NOSTR_SIGNER_ERROR_NOT_FOUND;
     GError *gerr = NULL;
     /* Try lookup by key_id */
-    gchar *secret = secret_password_lookup_sync(&SIGNER_IDENTITY_SCHEMA, NULL, &gerr,
+    gchar *secret = secret_password_lookup_sync(&gnostr_secret_schema, NULL, &gerr,
                                                 "key_id", cand,
                                                 NULL);
     if (gerr) { g_error_free(gerr); gerr = NULL; }
     if (!secret) {
       /* Try lookup by npub */
-      secret = secret_password_lookup_sync(&SIGNER_IDENTITY_SCHEMA, NULL, &gerr,
+      secret = secret_password_lookup_sync(&gnostr_secret_schema, NULL, &gerr,
                                            "npub", cand,
                                            NULL);
       if (gerr) { g_error_free(gerr); gerr = NULL; }
@@ -280,7 +270,7 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
         g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
         g_hash_table_insert(attrs, (gpointer)"owner_uid", (gpointer)uid_buf);
         GError *gerr2 = NULL;
-        GList *items = secret_service_search_sync(service, &SIGNER_IDENTITY_SCHEMA, attrs,
+        GList *items = secret_service_search_sync(service, &gnostr_secret_schema, attrs,
                                                   SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK, NULL, &gerr2);
         g_hash_table_unref(attrs);
         if (gerr2) { g_error_free(gerr2); gerr2 = NULL; }
@@ -853,18 +843,19 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
   const char *key_id_attr = sel_in ? sel_in : npub;
   GError *gerr = NULL;
   gchar uid_buf[32]; g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
-  gboolean ok = secret_password_store_sync(&SIGNER_IDENTITY_SCHEMA,
-                                           SECRET_COLLECTION_DEFAULT,
-                                           "Gnostr Identity Key",
-                                             sk_hex,
-                                            NULL,
-                                            &gerr,
-                                            "key_id", key_id_attr,
-                                            "npub", npub,
-                                            "owner_uid", uid_buf,
-                                            "hardware", "false",
-                                            NULL);
-  if (gerr) { g_error_free(gerr); }
+  const GnostrSecretIdentity ident = {
+    .key_id = key_id_attr,
+    .npub = npub,
+    /* A caller-chosen selector that is not the npub doubles as the label. */
+    .label = (sel_in && strcmp(sel_in, npub) != 0) ? sel_in : NULL,
+    .owner_uid = uid_buf,
+    .origin = GNOSTR_SECRET_ORIGIN_SOFTWARE,
+  };
+  gboolean ok = gnostr_secret_store_save(&ident, sk_hex, &gerr);
+  if (gerr) {
+    g_warning("nip55l: StoreKey: secret service store failed: %s", gerr->message);
+    g_error_free(gerr);
+  }
   /* Publish the just-stored key to the in-process cache so the next
    * GetPublicKey / SignEvent never has to round-trip libsecret. This is the
    * key half of nostrc-7g9d — without it, resolve_seckey_hex(NULL, ...)
@@ -946,10 +937,10 @@ int nostr_nip55l_clear_key(const char *identity){
 #ifdef NIP55L_HAVE_LIBSECRET
   const char *sel = (identity && *identity) ? identity : "";
   GError *gerr = NULL;
-  gboolean ok1 = secret_password_clear_sync(&SIGNER_IDENTITY_SCHEMA, NULL, &gerr,
+  gboolean ok1 = secret_password_clear_sync(&gnostr_secret_schema, NULL, &gerr,
                                             "key_id", sel, NULL);
   if (gerr) { g_error_free(gerr); gerr = NULL; }
-  gboolean ok2 = secret_password_clear_sync(&SIGNER_IDENTITY_SCHEMA, NULL, &gerr,
+  gboolean ok2 = secret_password_clear_sync(&gnostr_secret_schema, NULL, &gerr,
                                             "npub", sel, NULL);
   if (gerr) { g_error_free(gerr); }
   return (ok1 || ok2) ? 0 : NOSTR_SIGNER_ERROR_NOT_FOUND;
@@ -990,7 +981,7 @@ static SecretItem *find_identity_item(const char *selector){
   /* Try key_id */
   GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
   g_hash_table_insert(attrs, (gpointer)"key_id", (gpointer)selector);
-  GList *items = secret_service_search_sync(service, &SIGNER_IDENTITY_SCHEMA, attrs,
+  GList *items = secret_service_search_sync(service, &gnostr_secret_schema, attrs,
                                             SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK, NULL, &gerr);
   g_hash_table_unref(attrs);
   if (gerr) { g_error_free(gerr); gerr = NULL; }
@@ -1004,7 +995,7 @@ static SecretItem *find_identity_item(const char *selector){
   /* Try npub */
   attrs = g_hash_table_new(g_str_hash, g_str_equal);
   g_hash_table_insert(attrs, (gpointer)"npub", (gpointer)selector);
-  items = secret_service_search_sync(service, &SIGNER_IDENTITY_SCHEMA, attrs,
+  items = secret_service_search_sync(service, &gnostr_secret_schema, attrs,
                                      SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK, NULL, &gerr);
   g_hash_table_unref(attrs);
   if (gerr) { g_error_free(gerr); gerr = NULL; }
@@ -1054,7 +1045,7 @@ int nostr_nip55l_set_owner(const char *selector, uid_t uid, const char *username
   else
     g_hash_table_remove(a, "owner_username");
   GError *gerr = NULL;
-  gboolean ok = secret_item_set_attributes_sync(item, &SIGNER_IDENTITY_SCHEMA, a, NULL, &gerr);
+  gboolean ok = secret_item_set_attributes_sync(item, &gnostr_secret_schema, a, NULL, &gerr);
   if (a) g_hash_table_unref(a);
   if (gerr) { g_error_free(gerr); }
   g_object_unref(item);
@@ -1073,12 +1064,239 @@ int nostr_nip55l_clear_owner(const char *selector){
   g_hash_table_remove(a, "owner_uid");
   g_hash_table_remove(a, "owner_username");
   GError *gerr = NULL;
-  gboolean ok = secret_item_set_attributes_sync(item, &SIGNER_IDENTITY_SCHEMA, a, NULL, &gerr);
+  gboolean ok = secret_item_set_attributes_sync(item, &gnostr_secret_schema, a, NULL, &gerr);
   if (a) g_hash_table_unref(a);
   if (gerr) { g_error_free(gerr); }
   g_object_unref(item);
   return ok ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
 #else
   (void)selector; return NOSTR_SIGNER_ERROR_NOT_FOUND;
+#endif
+}
+
+/* ---------------------------------------------------------------------------
+ * One-shot keyring migration (nostrc-bml6)
+ *
+ * Re-stores key material found under the legacy schemas
+ * (org.gnostr.Signer/key from gnostr-signer's removed secret-storage.c, and
+ * the Seahorse helper's former org.gnostr.Key) under the unified
+ * org.gnostr.Signer/identity schema, then deletes each original.
+ *
+ * Idempotent: re-storing an identical item replaces it in place, and an
+ * original is only deleted after its replacement was stored. A marker item
+ * (org.gnostr.Signer/migration name=legacy-keys-v1) is written once a pass
+ * leaves nothing retryable behind, and short-circuits every later start.
+ * When no legacy item exists the marker is not written: that would force an
+ * unlock prompt at daemon start just to record that there was nothing to do,
+ * and the two attribute-only searches it would save cost no prompt.
+ * ------------------------------------------------------------------------- */
+
+#ifdef NIP55L_HAVE_LIBSECRET
+#define NIP55L_MIGRATION_MARKER "legacy-keys-v1"
+
+typedef enum { MIG_OK, MIG_SKIP, MIG_RETRY } mig_result;
+
+static gboolean migration_marker_present(SecretService *service){
+  GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
+  g_hash_table_insert(attrs, (gpointer)"name", (gpointer)NIP55L_MIGRATION_MARKER);
+  GList *items = secret_service_search_sync(service, &gnostr_secret_migration_schema,
+                                            attrs, SECRET_SEARCH_NONE, NULL, NULL);
+  g_hash_table_unref(attrs);
+  gboolean present = items != NULL;
+  g_list_free_full(items, g_object_unref);
+  return present;
+}
+
+static GList *search_legacy(SecretService *service, const SecretSchema *schema,
+                            SecretSearchFlags flags, GError **error){
+  /* Empty attribute set: libsecret matches on xdg:schema = schema->name. */
+  GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
+  GList *items = secret_service_search_sync(service, schema, attrs,
+                                            flags | SECRET_SEARCH_ALL, NULL, error);
+  g_hash_table_unref(attrs);
+  return items;
+}
+
+/* Secret text (64-hex or nsec1) → lowercase 64-hex; NULL if neither. */
+static char *secret_text_to_sk_hex(const char *sec){
+  if (!sec) return NULL;
+  if (is_hex_64(sec)) {
+    char *hex = strdup(sec);
+    for (char *p = hex; p && *p; p++) *p = (char)g_ascii_tolower(*p);
+    return hex;
+  }
+  if (strncmp(sec, "nsec1", 5) == 0) {
+    uint8_t sk[32];
+    if (nostr_nip19_decode_nsec(sec, sk) != 0) return NULL;
+    char *hex = bin_to_hex(sk, 32);
+    secure_wipe(sk, sizeof sk);
+    return hex;
+  }
+  return NULL;
+}
+
+static char *npub_from_sk_hex(const char *sk_hex){
+  char *pk_hex = nostr_key_get_public(sk_hex);
+  if (!pk_hex) return NULL;
+  uint8_t pk[32];
+  char *npub = NULL;
+  if (nostr_hex2bin(pk, pk_hex, sizeof pk) && nostr_nip19_encode_npub(pk, &npub) != 0) npub = NULL;
+  free(pk_hex);
+  return npub;
+}
+
+static mig_result migrate_one(SecretItem *item, GnostrSecretLegacyKind kind,
+                              const char *schema_name, const char *uid_buf){
+  mig_result res = MIG_RETRY;
+  GHashTable *legacy = secret_item_get_attributes(item);
+  GnostrSecretIdentity id;
+  const gchar *why = NULL;
+  SecretValue *sv = NULL;
+  char *sk_hex = NULL, *npub = NULL;
+  GError *err = NULL;
+
+  if (!gnostr_secret_legacy_to_identity(kind, legacy, &id, &why)) {
+    g_message("nip55l: keyring-migration: leaving %s item in place: %s", schema_name, why);
+    res = MIG_SKIP;
+    goto out;
+  }
+  sv = secret_item_get_secret(item);
+  if (!sv) {
+    /* Still locked (unlock prompt dismissed) or secret failed to load. */
+    g_message("nip55l: keyring-migration: %s item secret unavailable (locked?); will retry",
+              schema_name);
+    goto out;
+  }
+  sk_hex = secret_text_to_sk_hex(secret_value_get_text(sv));
+  npub = sk_hex ? npub_from_sk_hex(sk_hex) : NULL;
+  if (!npub) {
+    g_message("nip55l: keyring-migration: leaving %s item in place: secret is not a secp256k1 private key",
+              schema_name);
+    res = MIG_SKIP;
+    goto out;
+  }
+  if (id.npub && *id.npub && strcmp(id.npub, npub) != 0)
+    g_message("nip55l: keyring-migration: %s item npub attribute %s does not match its key; using %s",
+              schema_name, id.npub, npub);
+  /* Same selector convention as StoreKey: a friendly name that is not the
+   * npub becomes key_id, so the legacy label keeps selecting this key; the
+   * npub still resolves through the daemon's npub fallback lookup. */
+  id.key_id = (id.label && *id.label && strcmp(id.label, npub) != 0) ? id.label : npub;
+  id.npub = npub;
+  id.owner_uid = uid_buf;
+
+  if (!gnostr_secret_store_save(&id, sk_hex, &err)) {
+    g_message("nip55l: keyring-migration: re-store of %s failed: %s; will retry",
+              npub, err ? err->message : "unknown");
+    g_clear_error(&err);
+    goto out;
+  }
+  if (!secret_item_delete_sync(item, NULL, &err)) {
+    /* The copy exists; the next pass re-stores it in place and retries. */
+    g_message("nip55l: keyring-migration: %s migrated but legacy item not deleted: %s; will retry",
+              npub, err ? err->message : "unknown");
+    g_clear_error(&err);
+    goto out;
+  }
+  res = MIG_OK;
+
+out:
+  if (sk_hex) { secure_wipe(sk_hex, strlen(sk_hex)); free(sk_hex); }
+  free(npub);
+  if (sv) secret_value_unref(sv);
+  if (legacy) g_hash_table_unref(legacy);
+  return res;
+}
+#endif /* NIP55L_HAVE_LIBSECRET */
+
+int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out){
+  nostr_nip55l_keyring_migration r;
+  memset(&r, 0, sizeof r);
+#ifdef NIP55L_HAVE_LIBSECRET
+  static const struct {
+    const SecretSchema *schema;
+    GnostrSecretLegacyKind kind;
+  } sources[] = {
+    { &gnostr_secret_legacy_signer_key_schema, GNOSTR_SECRET_LEGACY_SIGNER_KEY },
+    { &gnostr_secret_legacy_helper_schema,     GNOSTR_SECRET_LEGACY_HELPER_KEY },
+  };
+  int rc = 0;
+  GError *err = NULL;
+  gboolean retry_later = FALSE;
+  gchar uid_buf[32];
+  g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
+  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, &err);
+  if (!service) {
+    g_clear_error(&err);
+    rc = NOSTR_SIGNER_ERROR_BACKEND;
+    goto done;
+  }
+  if (migration_marker_present(service)) {
+    r.already_done = 1;
+    goto done;
+  }
+
+  /* Attribute-only probe: works on locked collections without prompting. */
+  for (size_t i = 0; i < G_N_ELEMENTS(sources); i++) {
+    GList *items = search_legacy(service, sources[i].schema, SECRET_SEARCH_NONE, &err);
+    if (err) { g_clear_error(&err); rc = NOSTR_SIGNER_ERROR_BACKEND; }
+    r.found += g_list_length(items);
+    g_list_free_full(items, g_object_unref);
+  }
+  if (rc != 0 || r.found == 0) goto done;
+
+  unsigned processed = 0;
+  for (size_t i = 0; i < G_N_ELEMENTS(sources); i++) {
+    GList *items = search_legacy(service, sources[i].schema,
+                                 SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS, &err);
+    if (err) {
+      g_message("nip55l: keyring-migration: %s search failed: %s; will retry",
+                sources[i].schema->name, err->message);
+      g_clear_error(&err);
+      retry_later = TRUE;
+    }
+    for (GList *l = items; l; l = l->next) {
+      processed++;
+      switch (migrate_one(l->data, sources[i].kind, sources[i].schema->name, uid_buf)) {
+        case MIG_OK:    r.migrated++; break;
+        case MIG_SKIP:  r.skipped++;  break;
+        case MIG_RETRY: r.failed++;   break;
+      }
+    }
+    g_list_free_full(items, g_object_unref);
+  }
+
+  /* The unlocking search must see everything the probe saw: a shortfall
+   * (e.g. a backend that hides items when the unlock prompt is dismissed)
+   * must not be mistaken for completion, or those items would be stranded
+   * behind the marker. */
+  if (processed < r.found) {
+    g_message("nip55l: keyring-migration: probe saw %u legacy item(s), unlocked search %u; will retry",
+              r.found, processed);
+    retry_later = TRUE;
+  }
+
+  if (!retry_later && r.failed == 0) {
+    r.marker_written = secret_password_store_sync(&gnostr_secret_migration_schema,
+                                                  SECRET_COLLECTION_DEFAULT,
+                                                  "Nostr signer migration marker (not a key)",
+                                                  NIP55L_MIGRATION_MARKER, NULL, &err,
+                                                  "name", NIP55L_MIGRATION_MARKER,
+                                                  NULL) ? 1 : 0;
+    if (err) {
+      g_message("nip55l: keyring-migration: marker not written: %s", err->message);
+      g_clear_error(&err);
+    }
+  } else {
+    rc = NOSTR_SIGNER_ERROR_BACKEND;
+  }
+
+done:
+  if (service) g_object_unref(service);
+  if (out) *out = r;
+  return rc;
+#else
+  if (out) *out = r;
+  return 0;
 #endif
 }

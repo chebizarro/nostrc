@@ -1,9 +1,6 @@
 #include <gtk/gtk.h>
 #include "../accounts_store.h"
 #include "../secure-delete.h"
-#ifdef GNOSTR_HAVE_LIBSECRET
-#include "gnome/seahorse/secret_store.h"
-#endif
 #include <gio/gio.h>
 #include <nostr/nip55l/signer_ops.h>
 #if !defined(_WIN32) && !defined(__MINGW32__)
@@ -75,6 +72,41 @@ static void clear_list(GtkWidget *list) {
 
 typedef struct { SettingsUI *ui; gchar *id; } RemoveCtx;
 
+static void remove_clear_key_done(GObject *src, GAsyncResult *res, gpointer user_data) {
+  g_autofree gchar *id = user_data;
+  GError *err = NULL;
+  GVariant *ret = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &err);
+  if (err) {
+    g_warning("ClearKey for removed identity %s failed: %s", id, err->message);
+    g_clear_error(&err);
+    return;
+  }
+  gboolean ok = FALSE;
+  g_variant_get(ret, "(b)", &ok);
+  g_variant_unref(ret);
+  if (!ok) g_message("ClearKey for removed identity %s: no stored key", id);
+}
+
+/* nostrc-bml6: key material lives only in the signer daemon's keyring, so
+ * removing an identity asks the daemon to drop it rather than touching the
+ * Secret Service from the GUI. Best-effort: the account entry is removed
+ * either way; a refusal (mutations disabled) is logged. */
+static void request_daemon_clear_key(const gchar *id) {
+  GError *err = NULL;
+  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
+  if (!bus) {
+    g_warning("ClearKey for removed identity %s: no session bus: %s", id,
+              err ? err->message : "unknown");
+    g_clear_error(&err);
+    return;
+  }
+  g_dbus_connection_call(bus, SIGNER_NAME, SIGNER_PATH, "org.nostr.Signer", "ClearKey",
+                         g_variant_new("(s)", id), G_VARIANT_TYPE("(b)"),
+                         G_DBUS_CALL_FLAGS_NONE, 5000, NULL, remove_clear_key_done,
+                         g_strdup(id));
+  g_object_unref(bus);
+}
+
 static void on_remove_confirm(GObject *source, GAsyncResult *res, gpointer user_data) {
   (void)source;
   RemoveCtx *rc = user_data;
@@ -82,15 +114,7 @@ static void on_remove_confirm(GObject *source, GAsyncResult *res, gpointer user_
   int resp = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source), res, &err);
   if (err) { g_warning("Remove confirm failed: %s", err->message); g_clear_error(&err); }
   if (resp == 0 && rc && rc->ui && rc->ui->as && rc->id) {
-    /* Delete secret material for this identity (npub) before removing from store */
-    #ifdef GNOSTR_HAVE_LIBSECRET
-    GError *derr = NULL;
-    if (!gnostr_secret_store_delete_by_identity(rc->id, NULL, &derr)){
-      if (derr) { g_warning("Failed to delete secret for %s: %s", rc->id, derr->message); g_clear_error(&derr); }
-    }
-    #else
-    g_message("Secret deletion not available (libsecret not present). Skipping delete for %s", rc->id);
-    #endif
+    request_daemon_clear_key(rc->id);
     accounts_store_remove(rc->ui->as, rc->id, NULL);
     accounts_store_save(rc->ui->as, NULL);
     extern void gnostr_settings_page_refresh(GtkWidget*, AccountsStore*);

@@ -205,21 +205,19 @@ endif()
 # nostr-gobject include dir (also provided by nostr_gobject PUBLIC interface)
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nostr-gobject/include)
 
-# Include project root so we can include gnome/seahorse/secret_store.h from the app
+# Include project root for cross-tree headers.
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR})
 
-# If Seahorse helper lib is built, link it to enable secret deletion helpers
-if (TARGET gnostr-secret)
-  target_link_libraries(${APP_SIGNER_BIN} PRIVATE gnostr-secret)
-  target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_HAVE_LIBSECRET=1)
-endif()
-
-# Note: GNOSTR_HAVE_LIBSECRET is only defined when gnostr-secret target exists
-# (above), because settings_page.c uses functions from that library.
-# We still link libsecret directly for secret-storage.c basic operations.
-if (LIBSECRET_FOUND AND NOT TARGET gnostr-secret)
+# nostrc-bml6: the GUI does not write key material to the Secret Service;
+# StoreKey/ClearKey go to the signer daemon (org.nostr.Signer), which owns
+# the gnostr-secret schema. GNOSTR_HAVE_LIBSECRET is deliberately NOT
+# defined here: the `if (TARGET gnostr-secret)` that used to define it never
+# fired (apps/ is configured before gnome/seahorse), and now that nip55l
+# builds gnostr-secret first it would switch on dormant parallel keyring
+# writers in secret_store.c/session code. libsecret stays linked as before.
+if (LIBSECRET_FOUND)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::LIBSECRET)
-  message(STATUS "gnostr-signer: libsecret linked (without gnostr-secret helpers)")
+  message(STATUS "gnostr-signer: libsecret linked")
 elseif(APPLE)
   # macOS: Link Security.framework for Keychain support
   find_library(SECURITY_FRAMEWORK Security REQUIRED)
@@ -284,9 +282,6 @@ if (UNIX AND NOT APPLE)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE m)
 endif()
 
-# Do not enable GNOSTR_HAVE_LIBSECRET unless helper lib is built; otherwise
-# we'd reference symbols not linked into the app.
-
 # Daemon providing DBus (55L) and UDS (5F) fallback (skeleton now)
 # Skip on Windows — daemon requires NIP55L (DBus), NIP5F (Unix sockets), sys/un.h
 if(NOT WIN32)
@@ -326,11 +321,9 @@ endif()
 if (TARGET nip19)
   target_link_libraries(gnostr_signer_bunker_core PUBLIC nip19)
 endif()
-# Same secret-backend selection as the GUI build above.
-if (TARGET gnostr-secret)
-  target_link_libraries(gnostr_signer_bunker_core PUBLIC gnostr-secret)
-  target_compile_definitions(gnostr_signer_bunker_core PRIVATE GNOSTR_HAVE_LIBSECRET=1)
-elseif (LIBSECRET_FOUND)
+# Same secret-backend selection as the GUI build above (no
+# GNOSTR_HAVE_LIBSECRET; see the note there).
+if (LIBSECRET_FOUND)
   target_link_libraries(gnostr_signer_bunker_core PUBLIC PkgConfig::LIBSECRET)
 endif()
 if (SODIUM_FOUND)
