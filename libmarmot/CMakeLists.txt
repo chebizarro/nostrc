@@ -289,5 +289,8 @@ if(BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/tests
   )
-  add_test(NAME marmot_test_interop COMMAND test_marmot_interop)
+  # The suite locates tests/vectors/mdk relative to its working directory;
+  # pin it so out-of-tree builds do not silently skip the MDK vectors.
+  add_test(NAME marmot_test_interop COMMAND test_marmot_interop
+           WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
