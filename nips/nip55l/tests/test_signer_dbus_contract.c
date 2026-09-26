@@ -6,6 +6,11 @@
  * pre-populated ACL) → parse and cryptographically verify the returned
  * event → NIP44EncryptB64 → NIP44DecryptB64 → GetRelays → StoreKey /
  * ClearKey (best-effort; libsecret required and skipped clean if absent).
+ * Phase 3 (nostrc-bml6, needs gnome-keyring-daemon; skipped clean if absent)
+ * runs a real Secret Service on the private bus: legacy-schema items seeded
+ * before the daemon starts must be migrated to org.gnostr.Signer/identity
+ * and be usable for SignEvent, StoreKey must write the unified schema, and
+ * the per-keyring marker must stop a second migration pass.
  * Also asserts the daemon's error path shape: malformed input →
  * Error.InvalidInput; GetRelays on a fresh install → Error.NotFound;
  * mutations without the escape hatch → Error.PermissionDenied.
@@ -28,9 +33,11 @@
 #include <glib/gstdio.h>
 
 #include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -40,6 +47,12 @@
 #include <nostr-utils.h>
 #include <nostr/nip19/nip19.h>
 #include <nostr/nip44/nip44.h>
+
+#ifdef NIP55L_TEST_HAVE_LIBSECRET
+#include <libsecret/secret.h>
+#include <nostr/nip55l/signer_ops.h>
+#include "seahorse/secret_store.h"
+#endif
 
 #ifndef NIP55L_DAEMON_PATH
 #error "NIP55L_DAEMON_PATH must be defined by the build (path to nostr-signer-daemon)"
@@ -71,9 +84,9 @@ static gboolean on_timeout(gpointer ud) {
   WaitCtx *w = ud; g_main_loop_quit(w->loop); return G_SOURCE_REMOVE;
 }
 
-static void wait_for_name(GDBusConnection *bus, guint timeout_s) {
+static void wait_for_named(GDBusConnection *bus, const char *name, guint timeout_s) {
   WaitCtx w = { g_main_loop_new(NULL, FALSE), FALSE };
-  guint watch = g_bus_watch_name_on_connection(bus, BUS_NAME,
+  guint watch = g_bus_watch_name_on_connection(bus, name,
                                                G_BUS_NAME_WATCHER_FLAGS_NONE,
                                                on_appeared, NULL, &w, NULL);
   guint to = g_timeout_add_seconds(timeout_s, on_timeout, &w);
@@ -82,6 +95,10 @@ static void wait_for_name(GDBusConnection *bus, guint timeout_s) {
   g_bus_unwatch_name(watch);
   g_main_loop_unref(w.loop);
   CHECK(w.appeared);
+}
+
+static void wait_for_name(GDBusConnection *bus, guint timeout_s) {
+  wait_for_named(bus, BUS_NAME, timeout_s);
 }
 
 static GVariant *call(GDBusConnection *bus, const char *method, GVariant *args,
@@ -114,6 +131,7 @@ static char *npub_to_hex(const char *npub) {
 
 typedef struct {
   GTestDBus  *tbus;
+  GSubprocess *keyring;  /* phase 3 only: gnome-keyring-daemon on tbus */
   GSubprocess *daemon;
   GDBusConnection *bus;
   char *tmpdir;
@@ -122,7 +140,13 @@ typedef struct {
   char *npub;     /* npub of the pk */
 } Ctx;
 
-static void ctx_setup(Ctx *ctx, gboolean allow_mutations, gboolean write_relays) {
+/* pre_daemon runs on the private bus before the daemon is spawned (phase 3
+ * starts a keyring and seeds legacy items there). extra_acl is appended to
+ * the [SignEvent] section. */
+typedef void (*PreDaemonFn)(Ctx *ctx, gpointer data);
+
+static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_relays,
+                           const char *extra_acl, PreDaemonFn pre_daemon, gpointer data) {
   memset(ctx, 0, sizeof *ctx);
 
   /* Isolated $XDG_CONFIG_HOME / $HOME so the real user's configs are safe. */
@@ -166,7 +190,10 @@ static void ctx_setup(Ctx *ctx, gboolean allow_mutations, gboolean write_relays)
     char *gnostr_dir = g_build_filename(xdg_cfg, "gnostr", NULL);
     g_mkdir_with_parents(gnostr_dir, 0700);
     char *acl = g_build_filename(gnostr_dir, "signer-acl.ini", NULL);
-    write_file(acl, "[SignEvent]\ncontract-test:=allow\n");
+    gchar *body = g_strdup_printf("[SignEvent]\ncontract-test:=allow\n%s",
+                                  extra_acl ? extra_acl : "");
+    write_file(acl, body);
+    g_free(body);
     g_free(acl);
     g_free(gnostr_dir);
   }
@@ -188,6 +215,8 @@ static void ctx_setup(Ctx *ctx, gboolean allow_mutations, gboolean write_relays)
   ctx->tbus = g_test_dbus_new(G_TEST_DBUS_NONE);
   g_test_dbus_up(ctx->tbus);
 
+  if (pre_daemon) pre_daemon(ctx, data);
+
   GError *err = NULL;
   ctx->daemon = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
                                  G_SUBPROCESS_FLAGS_STDERR_SILENCE,
@@ -207,14 +236,44 @@ static void ctx_setup(Ctx *ctx, gboolean allow_mutations, gboolean write_relays)
   g_free(xdg_cfg); g_free(xdg_data); g_free(xdg_runtime);
 }
 
+static void ctx_setup(Ctx *ctx, gboolean allow_mutations, gboolean write_relays) {
+  ctx_setup_full(ctx, allow_mutations, write_relays, NULL, NULL, NULL);
+}
+
 static void ctx_teardown(Ctx *ctx) {
   if (ctx->daemon) {
     g_subprocess_force_exit(ctx->daemon);
     (void)g_subprocess_wait(ctx->daemon, NULL, NULL);
     g_object_unref(ctx->daemon);
   }
+  if (ctx->keyring) {
+    g_subprocess_force_exit(ctx->keyring);
+    (void)g_subprocess_wait(ctx->keyring, NULL, NULL);
+  }
   if (ctx->bus) g_object_unref(ctx->bus);
-  if (ctx->tbus) { g_test_dbus_down(ctx->tbus); g_object_unref(ctx->tbus); }
+  if (ctx->tbus) {
+    if (ctx->keyring) {
+      /* libsecret's sync API parks proxies (and their session-bus refs) on
+       * private main contexts that are never iterated again, so the bus
+       * singleton is never finalized and g_test_dbus_down — also run by
+       * GTestDBus's dispose — stalls on its 30 s weak-notify timeout. The
+       * keyring fixture runs last: stop the bus without that check and let
+       * process exit reclaim the GTestDBus object. */
+#ifdef NIP55L_TEST_HAVE_LIBSECRET
+      secret_service_disconnect();
+#endif
+      GDBusConnection *singleton = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+      if (singleton) {
+        g_dbus_connection_set_exit_on_close(singleton, FALSE);
+        g_object_unref(singleton);
+      }
+      g_test_dbus_stop(ctx->tbus);
+    } else {
+      g_test_dbus_down(ctx->tbus);
+      g_object_unref(ctx->tbus);
+    }
+  }
+  g_clear_object(&ctx->keyring);
   if (ctx->tmpdir) {
     /* Best-effort recursive cleanup; a leftover tmpdir is a hygiene issue,
      * not a test failure. */
@@ -498,6 +557,245 @@ static gboolean try_store_and_clear_key(Ctx *ctx) {
 }
 
 /* ---------------------------------------------------------------------------
+ * Phase 3: real Secret Service (nostrc-bml6)
+ * ------------------------------------------------------------------------- */
+
+#ifdef NIP55L_TEST_HAVE_LIBSECRET
+
+typedef struct { char *sk_hex, *pk_hex, *npub, *nsec; } TestKey;
+
+static void test_key_new(TestKey *k) {
+  k->sk_hex = nostr_key_generate_private();
+  CHECK(k->sk_hex != NULL);
+  k->pk_hex = nostr_key_get_public(k->sk_hex);
+  CHECK(k->pk_hex != NULL);
+  uint8_t b[32];
+  CHECK(nostr_hex2bin(b, k->pk_hex, 32));
+  CHECK(nostr_nip19_encode_npub(b, &k->npub) == 0 && k->npub);
+  CHECK(nostr_hex2bin(b, k->sk_hex, 32));
+  CHECK(nostr_nip19_encode_nsec(b, &k->nsec) == 0 && k->nsec);
+}
+
+static void test_key_free(TestKey *k) {
+  free(k->sk_hex); free(k->pk_hex); free(k->npub); free(k->nsec);
+}
+
+typedef struct {
+  TestKey legacy_signer;   /* org.gnostr.Signer/key, hex secret */
+  TestKey legacy_helper;   /* org.gnostr.Key, nsec secret */
+  TestKey legacy_hardware; /* org.gnostr.Key origin=hardware: must stay */
+  TestKey pre_bml6;        /* old daemon attribute set under the same schema */
+} Phase3;
+
+/* Items of schema, optionally filtered by one attribute, secrets loaded. */
+static GList *search_items(const SecretSchema *schema, const char *attr, const char *value) {
+  GError *err = NULL;
+  SecretService *svc = secret_service_get_sync(SECRET_SERVICE_OPEN_SESSION, NULL, &err);
+  if (!svc) { g_printerr("secret service: %s\n", err ? err->message : "?"); exit(1); }
+  GHashTable *a = g_hash_table_new(g_str_hash, g_str_equal);
+  if (attr) g_hash_table_insert(a, (gpointer)attr, (gpointer)value);
+  GList *items = secret_service_search_sync(svc, schema, a,
+      SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS, NULL, &err);
+  g_hash_table_unref(a);
+  if (err) { g_printerr("search: %s\n", err->message); exit(1); }
+  g_object_unref(svc);
+  return items;
+}
+
+static guint count_items(const SecretSchema *schema, const char *attr, const char *value) {
+  GList *items = search_items(schema, attr, value);
+  guint n = g_list_length(items);
+  g_list_free_full(items, g_object_unref);
+  return n;
+}
+
+static void seed(const SecretSchema *schema, const char *label, const char *secret, ...) {
+  va_list ap;
+  va_start(ap, secret);
+  GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
+  const char *k;
+  while ((k = va_arg(ap, const char *)) != NULL)
+    g_hash_table_insert(attrs, (gpointer)k, (gpointer)va_arg(ap, const char *));
+  va_end(ap);
+  GError *err = NULL;
+  if (!secret_password_storev_sync(schema, attrs, SECRET_COLLECTION_DEFAULT, label,
+                                   secret, NULL, &err)) {
+    g_printerr("seed %s: %s\n", schema->name, err ? err->message : "?");
+    exit(1);
+  }
+  g_hash_table_unref(attrs);
+}
+
+/* Start gnome-keyring-daemon on the private bus (login keyring unlocked
+ * from stdin, so no prompter is ever needed) and seed legacy items. */
+static void phase3_pre_daemon(Ctx *ctx, gpointer data) {
+  Phase3 *p = data;
+  gchar *gk = g_find_program_in_path("gnome-keyring-daemon");
+  CHECK(gk != NULL);
+  GError *err = NULL;
+  ctx->keyring = g_subprocess_new(G_SUBPROCESS_FLAGS_STDIN_PIPE |
+                                  G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
+                                  G_SUBPROCESS_FLAGS_STDERR_SILENCE,
+                                  &err, gk, "--foreground", "--unlock",
+                                  "--components=secrets", NULL);
+  g_free(gk);
+  if (!ctx->keyring) { g_printerr("spawn keyring: %s\n", err ? err->message : "?"); exit(1); }
+  GOutputStream *in = g_subprocess_get_stdin_pipe(ctx->keyring);
+  CHECK(g_output_stream_write_all(in, "contract-test", 13, NULL, NULL, &err));
+  CHECK(g_output_stream_close(in, NULL, &err));
+  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
+  CHECK(bus != NULL);
+  wait_for_named(bus, "org.freedesktop.secrets", 20);
+  g_object_unref(bus);
+
+  seed(&gnostr_secret_legacy_signer_key_schema, "Nostr Key: Legacy Main",
+       p->legacy_signer.sk_hex,
+       "application", "gnostr-signer", "label", "Legacy Main",
+       "npub", p->legacy_signer.npub, "key_type", "nostr",
+       "created_at", "2025-01-01T00:00:00Z", NULL);
+  seed(&gnostr_secret_legacy_helper_schema, "Nostr key", p->legacy_helper.nsec,
+       "type", "nostr-key", "npub", p->legacy_helper.npub, "uid", "bob",
+       "curve", "secp256k1", "origin", "software", NULL);
+  seed(&gnostr_secret_legacy_helper_schema, "Nostr key", "pkcs11:token=yubikey;id=9c",
+       "type", "nostr-key", "npub", p->legacy_hardware.npub, "uid", "token",
+       "curve", "secp256k1", "origin", "hardware", "hardware_slot", "9c", NULL);
+  /* What StoreKey wrote before the schema gained curve/origin. */
+  gchar uid_buf[32];
+  g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
+  seed(&gnostr_secret_schema, "Gnostr Identity Key", p->pre_bml6.sk_hex,
+       "key_id", p->pre_bml6.npub, "npub", p->pre_bml6.npub,
+       "owner_uid", uid_buf, "hardware", "false", NULL);
+}
+
+static const char *attr(GHashTable *a, const char *k) {
+  const char *v = g_hash_table_lookup(a, k);
+  return v ? v : "";
+}
+
+/* The single unified item for npub, checked against the expectations. A
+ * non-empty label is also the key_id selector (StoreKey's convention). */
+static void check_unified(const TestKey *k, const char *want_label_attr) {
+  GList *items = search_items(&gnostr_secret_schema, "npub", k->npub);
+  CHECK(g_list_length(items) == 1);
+  SecretItem *it = items->data;
+  GHashTable *a = secret_item_get_attributes(it);
+  gchar uid_buf[32];
+  g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
+  CHECK(g_strcmp0(attr(a, "key_id"),
+                  *want_label_attr ? want_label_attr : k->npub) == 0);
+  CHECK(g_strcmp0(attr(a, "curve"), "secp256k1") == 0);
+  CHECK(g_strcmp0(attr(a, "origin"), "software") == 0);
+  CHECK(g_strcmp0(attr(a, "hardware"), "false") == 0);
+  CHECK(g_strcmp0(attr(a, "owner_uid"), uid_buf) == 0);
+  CHECK(g_strcmp0(attr(a, "label"), want_label_attr) == 0);
+  g_hash_table_unref(a);
+  gchar *label = secret_item_get_label(it);
+  gchar *want = gnostr_secret_store_build_label(want_label_attr, k->npub);
+  CHECK(g_strcmp0(label, want) == 0);
+  g_free(label); g_free(want);
+  SecretValue *sv = secret_item_get_secret(it);
+  CHECK(sv != NULL && g_strcmp0(secret_value_get_text(sv), k->sk_hex) == 0);
+  secret_value_unref(sv);
+  g_list_free_full(items, g_object_unref);
+}
+
+static void run_phase3(void) {
+  gchar *gk = g_find_program_in_path("gnome-keyring-daemon");
+  if (!gk) {
+    g_print("SKIP phase 3: gnome-keyring-daemon not installed\n");
+    return;
+  }
+  g_free(gk);
+
+  Phase3 p;
+  test_key_new(&p.legacy_signer);
+  test_key_new(&p.legacy_helper);
+  test_key_new(&p.legacy_hardware);
+  test_key_new(&p.pre_bml6);
+  gchar *acl = g_strdup_printf("contract-test:%s=allow\ncontract-test:Legacy Main=allow\n",
+                               p.legacy_signer.npub);
+
+  Ctx ctx;
+  ctx_setup_full(&ctx, /*allow_mutations=*/TRUE, /*write_relays=*/FALSE, acl,
+                 phase3_pre_daemon, &p);
+
+  /* The daemon migrates off the main loop; the marker is its last write. */
+  gboolean done = FALSE;
+  for (int i = 0; i < 150 && !done; i++) {
+    done = count_items(&gnostr_secret_migration_schema, NULL, NULL) == 1;
+    if (!done) g_usleep(100 * 1000);
+  }
+  CHECK(done);
+
+  /* Legacy software keys: moved, originals gone. */
+  CHECK(count_items(&gnostr_secret_legacy_signer_key_schema, NULL, NULL) == 0);
+  CHECK(count_items(&gnostr_secret_legacy_helper_schema, "npub", p.legacy_helper.npub) == 0);
+  check_unified(&p.legacy_signer, "Legacy Main");
+  check_unified(&p.legacy_helper, "bob");   /* nsec normalized to hex */
+  /* Hardware reference: left in place, not copied. */
+  CHECK(count_items(&gnostr_secret_legacy_helper_schema, "npub", p.legacy_hardware.npub) == 1);
+  CHECK(count_items(&gnostr_secret_schema, "npub", p.legacy_hardware.npub) == 0);
+
+  /* The daemon signs with a migrated key selected by npub (key_id is the
+   * legacy label, so this exercises the npub fallback lookup), and by the
+   * legacy label as selector. */
+  for (int sel = 0; sel < 2; sel++) {
+    const char *selector = sel == 0 ? p.legacy_signer.npub : "Legacy Main";
+    int64_t now = (int64_t)time(NULL);
+    gchar *tmpl = g_strdup_printf(
+        "{\"kind\":1,\"created_at\":%lld,\"tags\":[],\"content\":\"migrated\"}",
+        (long long)now);
+    GError *err = NULL;
+    GVariant *ret = call(ctx.bus, "SignEvent",
+                         g_variant_new("(sss)", tmpl, selector, "contract-test"),
+                         "(s)", &err);
+    if (!ret) { g_printerr("SignEvent(migrated): %s\n", err ? err->message : "?"); exit(1); }
+    const char *signed_json = NULL;
+    g_variant_get(ret, "(&s)", &signed_json);
+    assert_signed_event(signed_json, p.legacy_signer.pk_hex, 1, now);
+    g_variant_unref(ret);
+    g_free(tmpl);
+  }
+
+  /* StoreKey writes the unified attribute set and replaces the pre-bml6
+   * item for the same identity instead of duplicating it. */
+  {
+    GError *err = NULL;
+    GVariant *ret = call(ctx.bus, "StoreKey",
+                         g_variant_new("(ss)", p.pre_bml6.sk_hex, ""), "(bs)", &err);
+    if (!ret) { g_printerr("StoreKey(pre-bml6): %s\n", err ? err->message : "?"); exit(1); }
+    g_variant_unref(ret);
+    check_unified(&p.pre_bml6, "");
+  }
+
+  /* StoreKey → GetPublicKey → ClearKey against the real keyring. */
+  CHECK(try_store_and_clear_key(&ctx));
+
+  /* Marker: a later pass is a no-op, even with a new legacy item present. */
+  {
+    TestKey late;
+    test_key_new(&late);
+    seed(&gnostr_secret_legacy_signer_key_schema, "Nostr Key: Late", late.sk_hex,
+         "application", "gnostr-signer", "label", "Late", "npub", late.npub,
+         "key_type", "nostr", NULL);
+    nostr_nip55l_keyring_migration r;
+    CHECK(nostr_nip55l_migrate_legacy_keys(&r) == 0);
+    CHECK(r.already_done == 1 && r.found == 0 && r.migrated == 0);
+    CHECK(count_items(&gnostr_secret_legacy_signer_key_schema, "npub", late.npub) == 1);
+    test_key_free(&late);
+  }
+
+  ctx_teardown(&ctx);
+  g_free(acl);
+  test_key_free(&p.legacy_signer);
+  test_key_free(&p.legacy_helper);
+  test_key_free(&p.legacy_hardware);
+  test_key_free(&p.pre_bml6);
+  g_print("PASS phase 3 (real keyring: legacy migration, unified StoreKey, marker)\n");
+}
+#endif /* NIP55L_TEST_HAVE_LIBSECRET */
+
+/* ---------------------------------------------------------------------------
  * Main
  * ------------------------------------------------------------------------- */
 
@@ -532,6 +830,12 @@ int main(void) {
     g_print("PASS phase 2 (mutations, relays.conf%s)\n",
             stored ? ", StoreKey/ClearKey verified" : "");
   }
+
+#ifdef NIP55L_TEST_HAVE_LIBSECRET
+  run_phase3();
+#else
+  g_print("SKIP phase 3: built without libsecret\n");
+#endif
 
   g_print("test_nip55l_dbus_contract: PASS\n");
   return 0;

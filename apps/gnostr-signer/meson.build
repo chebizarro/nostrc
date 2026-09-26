@@ -141,7 +141,6 @@ app_sources = files(
   'src/relay_info.c',
   'src/relay_store.c',
   'src/secret_store.c',
-  'src/secret-storage.c',
   'src/secure-delete.c',
   'src/secure-mem.c',
   'src/secure-memory.c',

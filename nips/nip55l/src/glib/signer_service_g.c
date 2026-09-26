@@ -522,6 +522,36 @@ static gboolean handle_clear_key(NostrSigner *object, GDBusMethodInvocation *inv
 }
 
 
+/* nostrc-bml6: move keys out of the legacy libsecret schemas once per
+ * keyring. Off the main loop so an unlock prompt (only raised when legacy
+ * items exist) never delays D-Bus service. The outcome goes to the journal. */
+static gpointer keyring_migration_thread(gpointer data) {
+  (void)data;
+  nostr_nip55l_keyring_migration r;
+  int rc = nostr_nip55l_migrate_legacy_keys(&r);
+  if (r.already_done) {
+    g_debug("keyring-migration: marker present, nothing to do");
+  } else if (r.found > 0 || rc != 0) {
+    g_message("keyring-migration: rc=%d found=%u migrated=%u skipped=%u failed=%u marker=%s",
+              rc, r.found, r.migrated, r.skipped, r.failed,
+              r.marker_written ? "written" : "not-written");
+  }
+  return NULL;
+}
+
+static void start_keyring_migration(void) {
+  static gsize started = 0;
+  if (!g_once_init_enter(&started)) return;
+  GError *err = NULL;
+  GThread *t = g_thread_try_new("keyring-migrate", keyring_migration_thread, NULL, &err);
+  if (t) g_thread_unref(t);
+  else {
+    g_warning("keyring-migration: could not start thread: %s", err ? err->message : "unknown");
+    g_clear_error(&err);
+  }
+  g_once_init_leave(&started, 1);
+}
+
 guint signer_export(GDBusConnection *conn, const char *object_path) {
   (void)conn;
   if (signer_skel) return 1;
@@ -544,6 +574,7 @@ guint signer_export(GDBusConnection *conn, const char *object_path) {
   if (!g_dbus_interface_skeleton_export(G_DBUS_INTERFACE_SKELETON(signer_skel), conn, object_path, NULL)) {
     g_object_unref(signer_skel); signer_skel = NULL; return 0;
   }
+  start_keyring_migration();
   return 1; /* dummy reg id */
 }
 

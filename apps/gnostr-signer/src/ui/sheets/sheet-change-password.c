@@ -16,7 +16,6 @@
 #include "../app-resources.h"
 #include "../widgets/gn-secure-entry.h"
 #include "../../accounts_store.h"
-#include "../../secret-storage.h"
 #include "../../keyboard-nav.h"
 #include <string.h>
 

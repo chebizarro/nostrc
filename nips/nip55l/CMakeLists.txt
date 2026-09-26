@@ -27,6 +27,13 @@ if (PkgConfig_FOUND)
     if (LIBSECRET_FOUND)
       target_link_libraries(nostr_nip55l_core PUBLIC PkgConfig::LIBSECRET)
       target_compile_definitions(nostr_nip55l_core PRIVATE -DNIP55L_HAVE_LIBSECRET)
+      # nostrc-bml6: the key schema is owned by gnome/seahorse (gnostr-secret).
+      # PRIVATE so its usage requirements do not leak into consumers.
+      if (NOT TARGET gnostr-secret)
+        add_subdirectory(${CMAKE_SOURCE_DIR}/gnome/seahorse
+                         ${CMAKE_BINARY_DIR}/gnome/seahorse)
+      endif()
+      target_link_libraries(nostr_nip55l_core PRIVATE gnostr-secret)
     endif()
   endif()
 endif()
@@ -148,6 +155,18 @@ if (BUILD_TESTING)
     set_tests_properties(nip55l_${t} PROPERTIES LABELS "nip55l;signer;unit" TIMEOUT 60)
   endforeach()
 
+  # Unified libsecret key schema (nostrc-bml6): schema shape, identity and
+  # legacy attribute mapping, Seahorse label. Pure functions, no keyring.
+  if (TARGET gnostr-secret)
+    add_executable(test_nip55l_keyring_schema
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_keyring_schema.c)
+    target_link_libraries(test_nip55l_keyring_schema PRIVATE gnostr-secret)
+    target_compile_options(test_nip55l_keyring_schema PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME nip55l_keyring_schema COMMAND test_nip55l_keyring_schema)
+    set_tests_properties(nip55l_keyring_schema PROPERTIES
+      LABELS "nip55l;signer;unit;keyring" TIMEOUT 60)
+  endif()
+
   # --- Real-service D-Bus contract test (nostrc-tf3b) -----------------------
   # Spins up a private session bus with GTestDBus, spawns the actual
   # nostr-signer-daemon on it, and drives StoreKey / GetPublicKey / SignEvent
@@ -165,6 +184,12 @@ if (BUILD_TESTING)
     target_compile_definitions(test_nip55l_dbus_contract PRIVATE
       "NIP55L_DAEMON_PATH=\"$<TARGET_FILE:nostr-signer-daemon>\"")
     add_dependencies(test_nip55l_dbus_contract nostr-signer-daemon)
+    # Phase 3 (nostrc-bml6): real gnome-keyring on the private bus, when
+    # the signer was built against libsecret.
+    if (TARGET gnostr-secret)
+      target_link_libraries(test_nip55l_dbus_contract PRIVATE gnostr-secret)
+      target_compile_definitions(test_nip55l_dbus_contract PRIVATE NIP55L_TEST_HAVE_LIBSECRET)
+    endif()
     add_test(NAME nip55l_dbus_contract COMMAND test_nip55l_dbus_contract)
     set_tests_properties(nip55l_dbus_contract PROPERTIES
       LABELS "nip55l;signer;integration;dbus"

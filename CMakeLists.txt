@@ -472,7 +472,9 @@ endif()
 if (GNOSTR_ENABLE_SEAHORSE_HELPERS)
   pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
   pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
-  add_subdirectory(gnome/seahorse)
+  if (NOT TARGET gnostr-secret)  # nips/nip55l may have added it already
+    add_subdirectory(gnome/seahorse)
+  endif()
 endif()
 
 if (GNOSTR_WITH_PKCS11)

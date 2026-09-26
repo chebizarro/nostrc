@@ -95,6 +95,24 @@ int nostr_nip55l_relays_normalize_json(const char *doc, size_t len, char **out_r
  * not a relay URL, NOT_FOUND if n == 0. */
 int nostr_nip55l_relays_from_list(const char *const *urls, size_t n, char **out_relays_json);
 
+/* One-shot keyring migration (nostrc-bml6). Moves private keys stored under
+ * the legacy libsecret schemas (org.gnostr.Signer/key, org.gnostr.Key) to the
+ * unified org.gnostr.Signer/identity schema and deletes the originals.
+ * Idempotent; guarded by a per-keyring marker item once a pass completes.
+ * The daemon runs it once at startup. Returns 0 when nothing is left to
+ * retry (including "no Secret Service support compiled in"),
+ * NOSTR_SIGNER_ERROR_BACKEND when the Secret Service was unreachable or some
+ * item must be retried on a later start. *out is always filled. */
+typedef struct {
+  int already_done;       /* marker present: nothing was searched */
+  unsigned found;         /* legacy items seen */
+  unsigned migrated;      /* re-stored under the unified schema, original deleted */
+  unsigned skipped;       /* permanently unmigratable (hardware ref / not a key); left in place */
+  unsigned failed;        /* transient failure; retried on the next start */
+  int marker_written;     /* this pass wrote the completion marker */
+} nostr_nip55l_keyring_migration;
+int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out);
+
 /* Optional private key storage using libsecret when available. */
 int nostr_nip55l_store_key(const char *key, const char *identity);
 int nostr_nip55l_clear_key(const char *identity);
