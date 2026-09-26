@@ -1,8 +1,9 @@
-# nostr-signer-webext-host — NIP-07 native-messaging host (nostrc-jjyp).
+# nostr-signer-webext-host — NIP-07 / WebLN native-messaging host (nostrc-jjyp).
 #
 # Bridges the browser extension in browser-extension/nip07/ to the desktop
-# signer daemon org.nostr.Signer over the session bus. Headless and small on
-# purpose: GLib/GIO + json-glib only, no libnostr, no key material.
+# signer daemon org.nostr.Signer (window.nostr) and the wallet agent
+# org.nostr.Wallet1 (window.webln) over the session bus. Headless and small
+# on purpose: GLib/GIO + json-glib only, no libnostr, no key material.
 #
 # Reached three ways:
 #   * apps/gnostr-signer (BUILD_APPS + BUILD_NATIVE_HOST) for dev builds
@@ -50,7 +51,8 @@ add_library(nmh_core STATIC
   nm_policy.c
   nm_router.c
   nm_provider_nip07.c
-  nm_provider_webln.c)
+  nm_provider_webln.c
+  nm_webln.c)
 target_include_directories(nmh_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(nmh_core PUBLIC c_std_11)
 target_compile_options(nmh_core PRIVATE ${NMH_WARN})
@@ -91,7 +93,7 @@ endif()
 
 # ---- tests ------------------------------------------------------------------
 if(BUILD_TESTING)
-  foreach(t framing policy errors router)
+  foreach(t framing policy errors router webln)
     add_executable(test_nmh_${t} tests/test_nm_${t}.c)
     target_compile_options(test_nmh_${t} PRIVATE ${NMH_WARN})
     target_link_libraries(test_nmh_${t} PRIVATE nmh_core)
@@ -116,6 +118,25 @@ if(BUILD_TESTING)
       LABELS "nostr-signer-webext-host;dbus" TIMEOUT 120)
   endif()
 
+  # WebLN end-to-end: the real host against the real nostr-wallet-agent on a
+  # private GTestDBus bus (headless, ephemeral pairing store). The agent is
+  # told to trust the build-tree host via its test-build-only
+  # NOSTR_WALLET_AGENT_ORIGIN_BRIDGES override (defaults to BUILD_TESTING,
+  # and is defined later: the agent directory is added after this one).
+  if(ENABLE_NOSTR_WALLET_AGENT AND
+     (NOT DEFINED NOSTR_WALLET_AGENT_ORIGIN_BRIDGE_ENV OR NOSTR_WALLET_AGENT_ORIGIN_BRIDGE_ENV))
+    add_executable(test_nmh_webln_e2e tests/test_nm_webln_e2e.c)
+    target_compile_options(test_nmh_webln_e2e PRIVATE ${NMH_WARN})
+    target_link_libraries(test_nmh_webln_e2e PRIVATE nmh_core)
+    target_compile_definitions(test_nmh_webln_e2e PRIVATE
+      "NMH_AGENT_PATH=\"$<TARGET_FILE:nostr-wallet-agent>\""
+      "NMH_HOST_PATH=\"$<TARGET_FILE:${NMH_BIN}>\"")
+    add_dependencies(test_nmh_webln_e2e nostr-wallet-agent ${NMH_BIN})
+    add_test(NAME nostr_signer_webext_host_webln_e2e COMMAND test_nmh_webln_e2e)
+    set_tests_properties(nostr_signer_webext_host_webln_e2e PROPERTIES
+      LABELS "nostr-signer-webext-host;dbus" TIMEOUT 120)
+  endif()
+
   # Extension-side policy (origin derivation, event validation, permission
   # categories) — plain Node, no browser.
   find_program(NMH_NODE node)
@@ -123,6 +144,10 @@ if(BUILD_TESTING)
   if(NMH_NODE AND EXISTS ${NMH_EXT_TEST})
     add_test(NAME nostr_signer_webext_extension_policy COMMAND ${NMH_NODE} ${NMH_EXT_TEST})
     set_tests_properties(nostr_signer_webext_extension_policy PROPERTIES
+      LABELS "nostr-signer-webext-host" TIMEOUT 60)
+    add_test(NAME nostr_signer_webext_extension_webln
+             COMMAND ${NMH_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/../../../browser-extension/nip07/tests/webln.test.js)
+    set_tests_properties(nostr_signer_webext_extension_webln PROPERTIES
       LABELS "nostr-signer-webext-host" TIMEOUT 60)
   endif()
 endif()

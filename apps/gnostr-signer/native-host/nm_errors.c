@@ -20,6 +20,10 @@ static const struct {
   [NM_ERR_TOO_LARGE]          = { "too_large",          "Message too large" },
   [NM_ERR_UNSUPPORTED]        = { "unsupported",        "Not supported" },
   [NM_ERR_INTERNAL]           = { "internal",           "Internal signer error" },
+  [NM_ERR_NOT_PAIRED]         = { "not_paired",         "No Lightning wallet is connected to this computer" },
+  [NM_ERR_WALLET_UNAVAILABLE] = { "wallet_unavailable", "The desktop wallet (org.nostr.Wallet1) is not reachable" },
+  [NM_ERR_BUDGET_EXCEEDED]    = { "budget_exceeded",    "The payment exceeds this site's daily budget" },
+  [NM_ERR_WALLET_ERROR]       = { "wallet_error",       "The wallet refused the request" },
 };
 
 const gchar *nm_error_code_str(NmErrorCode code) {

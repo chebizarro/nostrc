@@ -50,7 +50,7 @@ static void test_hello(void) {
   g_assert_cmpint(json_object_get_int_member(res, "protocol"), ==, NM_PROTOCOL_VERSION);
   JsonObject *prov = json_object_get_object_member(res, "providers");
   g_assert_cmpuint(json_array_get_length(json_object_get_array_member(prov, "nip07")), ==, 7);
-  g_assert_true(json_object_has_member(prov, "webln"));
+  g_assert_cmpuint(json_array_get_length(json_object_get_array_member(prov, "webln")), ==, 10);
   nm_router_free(r); g_ptr_array_unref(s.replies);
 }
 
@@ -117,7 +117,7 @@ static void test_event_validation_precedes_signer(void) {
   nm_router_free(r); g_ptr_array_unref(s.replies);
 }
 
-static void test_signer_unavailable_and_webln_stub(void) {
+static void test_signer_unavailable(void) {
   Sink s; NmRouter *r = new_router(&s);
   assert_error(roundtrip(r, &s, "{\"id\":\"u1\",\"method\":\"getPublicKey\",\"origin\":\"https://a.example\"}"),
                "u1", "signer_unavailable");
@@ -125,10 +125,46 @@ static void test_signer_unavailable_and_webln_stub(void) {
     "{\"id\":\"u2\",\"method\":\"signEvent\",\"origin\":\"http://localhost:5173\","
     "\"params\":{\"event\":{\"kind\":1,\"tags\":[],\"content\":\"x\",\"created_at\":1}}}"),
     "u2", "signer_unavailable");
-  JsonObject *o = roundtrip(r, &s, "{\"id\":\"w1\",\"method\":\"webln.sendPayment\",\"origin\":\"https://a.example\"}");
-  assert_error(o, "w1", "unsupported");
-  g_assert_nonnull(strstr(json_object_get_string_member(json_object_get_object_member(o, "error"), "message"),
-                          "nostrc-yka8"));
+  g_assert_cmpuint(nm_router_in_flight(r), ==, 0);
+  nm_router_free(r); g_ptr_array_unref(s.replies);
+}
+
+#define BOLT11 "lnbc2500u1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygspp5qqqsyqcyq5rqwzqf" \
+               "qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdq5xysxxatsyp3k7enxv4jsxqzpu9qrsgquk0rl77nj30yxdy8j9vdx" \
+               "85fkpmdla2087ne0xh8nhedh8w27kyke0lp53ut353s06fv3qfegext0eh0ymjpf39tuven09sam30g4vgpfna3rh"
+
+/* WebLN with no session bus: validation first, then wallet_unavailable;
+ * webln.status needs no origin and reports the wallet as unavailable. */
+static void test_webln_without_wallet(void) {
+  Sink s; NmRouter *r = new_router(&s);
+  JsonObject *o = roundtrip(r, &s, "{\"id\":\"s1\",\"method\":\"webln.status\"}");
+  JsonObject *st = json_object_get_object_member(o, "result");
+  g_assert_false(json_object_get_boolean_member(st, "available"));
+  g_assert_false(json_object_get_boolean_member(st, "paired"));
+  g_assert_cmpstr(json_object_get_string_member(st, "reason"), ==, "wallet_unavailable");
+
+  assert_error(roundtrip(r, &s, "{\"id\":\"w0\",\"method\":\"webln.getInfo\"}"), "w0", "origin_denied");
+  assert_error(roundtrip(r, &s, "{\"id\":\"w1\",\"method\":\"webln.sendPayment\",\"origin\":\"https://a.example\"}"),
+               "w1", "invalid_request");
+  assert_error(roundtrip(r, &s, "{\"id\":\"w2\",\"method\":\"webln.sendPayment\",\"origin\":\"https://a.example\","
+                                "\"params\":{\"paymentRequest\":\"" BOLT11 "\"}}"),
+               "w2", "wallet_unavailable");
+  assert_error(roundtrip(r, &s, "{\"id\":\"w3\",\"method\":\"webln.makeInvoice\",\"origin\":\"https://a.example\","
+                                "\"params\":{\"amount\":4294968}}"),
+               "w3", "too_large");
+  assert_error(roundtrip(r, &s, "{\"id\":\"w4\",\"method\":\"webln.makeInvoice\",\"origin\":\"https://a.example\"}"),
+               "w4", "invalid_request");
+  assert_error(roundtrip(r, &s, "{\"id\":\"w5\",\"method\":\"webln.makeInvoice\",\"origin\":\"https://a.example\","
+                                "\"params\":{\"amount\":\"21\",\"defaultMemo\":\"coffee\"}}"),
+               "w5", "wallet_unavailable");
+  assert_error(roundtrip(r, &s, "{\"id\":\"w6\",\"method\":\"webln.keysend\",\"origin\":\"https://a.example\"}"),
+               "w6", "unsupported");
+  assert_error(roundtrip(r, &s, "{\"id\":\"w7\",\"method\":\"webln.signMessage\",\"origin\":\"https://a.example\"}"),
+               "w7", "unsupported");
+  assert_error(roundtrip(r, &s, "{\"id\":\"w8\",\"method\":\"webln.enable\",\"origin\":\"https://a.example\"}"),
+               "w8", "wallet_unavailable");
+  assert_error(roundtrip(r, &s, "{\"id\":\"w9\",\"method\":\"webln.getBalance\",\"origin\":\"https://a.example\"}"),
+               "w9", "wallet_unavailable");
   g_assert_cmpuint(nm_router_in_flight(r), ==, 0);
   nm_router_free(r); g_ptr_array_unref(s.replies);
 }
@@ -141,6 +177,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/nmh/router/malformed", test_malformed);
   g_test_add_func("/nmh/router/origin-policy", test_origin_policy);
   g_test_add_func("/nmh/router/event-validation-first", test_event_validation_precedes_signer);
-  g_test_add_func("/nmh/router/signer-unavailable-webln-stub", test_signer_unavailable_and_webln_stub);
+  g_test_add_func("/nmh/router/signer-unavailable", test_signer_unavailable);
+  g_test_add_func("/nmh/router/webln-without-wallet", test_webln_without_wallet);
   return g_test_run();
 }

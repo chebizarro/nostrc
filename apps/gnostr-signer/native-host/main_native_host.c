@@ -1,12 +1,18 @@
 /* main_native_host.c - nostr-signer-webext-host (nostrc-jjyp)
  *
- * Native-messaging host for the NIP-07 browser extension
+ * Native-messaging host for the NIP-07 / WebLN browser extension
  * (browser-extension/nip07/). The browser launches it through the
  * org.nostr.signer_bridge host manifest and talks to it over stdin/stdout
  * with 4-byte length-prefixed JSON frames. Every window.nostr call is
  * forwarded to the desktop signer daemon org.nostr.Signer on the session
  * bus with the page origin as app_id, so web clients use the
- * desktop-managed identity and the signer's own approval UI.
+ * desktop-managed identity and the signer's own approval UI; window.webln
+ * calls go to the wallet agent org.nostr.Wallet1 with the page origin as
+ * the principal (nm_provider_webln.c).
+ *
+ * One process per browser connection: it exits on stdin EOF and never
+ * forks or execs, so nothing else ever holds its bus connection (the
+ * wallet agent authorises origin assertions by this executable's pid).
  *
  * Threading: a reader thread blocks on stdin and hands whole frames to the
  * main context; all routing, D-Bus I/O and stdout writes happen on the
@@ -33,9 +39,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/resource.h>
-#ifdef __linux__
-#include <sys/prctl.h>
-#endif
 
 #ifndef NM_HOST_VERSION
 #define NM_HOST_VERSION "0.2.0"
@@ -56,12 +59,16 @@ typedef struct {
   gsize len;
 } FrameEvent;
 
+/* No core files (decrypted NIP-04/44 plaintext passes through memory).
+ * The process deliberately stays *dumpable*: PR_SET_DUMPABLE=0 would make
+ * /proc/<pid>/exe unreadable to the wallet agent, which verifies this
+ * executable before accepting a web origin (org.nostr.Wallet1 *For
+ * methods), so every WebLN call would be refused. Same-user ptrace is
+ * outside the threat model anyway (such a process can call the signer
+ * directly), and Yama's ptrace_scope still applies. */
 static void disable_core_dumps(void) {
   struct rlimit rl = { 0, 0 };
   (void)setrlimit(RLIMIT_CORE, &rl);
-#ifdef __linux__
-  (void)prctl(PR_SET_DUMPABLE, 0);
-#endif
 }
 
 static void on_reply(const gchar *json, gsize len, gpointer user_data) {
@@ -133,9 +140,10 @@ static void usage(void) {
   g_printerr(
     "Usage: %s [--identity NPUB]\n"
     "\n"
-    "Native-messaging host for the NIP-07 (window.nostr) browser extension.\n"
-    "Launched by the browser via the org.nostr.signer_bridge host manifest;\n"
-    "forwards every request to org.nostr.Signer on the session bus.\n"
+    "Native-messaging host for the NIP-07 (window.nostr) / WebLN (window.webln)\n"
+    "browser extension. Launched by the browser via the org.nostr.signer_bridge\n"
+    "host manifest; forwards requests to org.nostr.Signer / org.nostr.Wallet1\n"
+    "on the session bus.\n"
     "\n"
     "  --identity NPUB   signer identity selector (default: active identity)\n"
     "  -h, --help        this help\n"
@@ -145,6 +153,7 @@ static void usage(void) {
     "  NOSTR_SIGNER_BRIDGE_IDENTITY        same as --identity\n"
     "  NOSTR_SIGNER_BRIDGE_CALL_TIMEOUT_MS  non-interactive call timeout (30000)\n"
     "  NOSTR_SIGNER_BRIDGE_APPROVAL_TIMEOUT_MS  approval call timeout (120000)\n"
+    "  NOSTR_SIGNER_BRIDGE_WALLET_TIMEOUT_MS    wallet (WebLN) call timeout (190000)\n"
     "  NOSTR_SIGNER_BRIDGE_DEBUG=1         debug logging to stderr\n",
     PROGRAM_NAME);
 }
@@ -187,6 +196,8 @@ int main(int argc, char **argv) {
     .call_timeout_ms = env_int("NOSTR_SIGNER_BRIDGE_CALL_TIMEOUT_MS", 30000),
     .approval_timeout_ms = env_int("NOSTR_SIGNER_BRIDGE_APPROVAL_TIMEOUT_MS", 120000),
     .signer_bus_name = "org.nostr.Signer",
+    .wallet_bus_name = "org.nostr.Wallet1",
+    .wallet_timeout_ms = env_int("NOSTR_SIGNER_BRIDGE_WALLET_TIMEOUT_MS", 190000),
   };
   h.router = nm_router_new(NULL, &cfg, on_reply, &h);
 
