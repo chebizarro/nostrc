@@ -1,0 +1,7 @@
+[D-BUS Service]
+Name=org.nostr.Wallet1
+# With systemd user sessions activation is delegated to the
+# nostr-wallet-agent.service unit (and its sandbox); Exec is the fallback
+# for dbus-daemon setups without systemd activation.
+Exec=@CMAKE_INSTALL_FULL_BINDIR@/nostr-wallet-agent --gapplication-service
+SystemdService=nostr-wallet-agent.service

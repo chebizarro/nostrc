@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Preferences of nostr-wallet-agent (org.nostr.Wallet1).
+  Per-application budgets are NOT settings: they live with their spend
+  ledger in $XDG_STATE_HOME/nostr-wallet/budgets.json (see README).
+-->
+<schemalist>
+  <schema id="org.nostr.Wallet" path="/org/nostr/Wallet/">
+    <key name="request-timeout" type="u">
+      <range min="5" max="600"/>
+      <default>60</default>
+      <summary>Wallet request timeout (seconds)</summary>
+      <description>How long to wait for the wallet's NIP-47 response. Requests also carry a matching NIP-40 expiration so the wallet will not execute them later.</description>
+    </key>
+    <key name="approval-timeout" type="u">
+      <range min="10" max="3600"/>
+      <default>120</default>
+      <summary>Approval dialog timeout (seconds)</summary>
+      <description>An unanswered approval dialog is treated as "Deny" after this long.</description>
+    </key>
+    <key name="always-confirm-payments" type="b">
+      <default>false</default>
+      <summary>Confirm every payment</summary>
+      <description>Ask before every payment, even when it fits the application's daily budget.</description>
+    </key>
+    <key name="max-auto-pay-msat" type="t">
+      <default>0</default>
+      <summary>Largest payment approved automatically (msat)</summary>
+      <description>Payments above this amount are always confirmed, whatever the daily budget. 0 means no per-payment cap.</description>
+    </key>
+    <key name="trusted-apps" type="as">
+      <default>['org.nostr.Settings']</default>
+      <summary>Wallet settings applications</summary>
+      <description>Application ids allowed to pair/unpair and to read or change other applications' budgets without a confirmation dialog.</description>
+    </key>
+  </schema>
+</schemalist>

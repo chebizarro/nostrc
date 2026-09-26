@@ -300,3 +300,115 @@ gboolean gnostr_secret_store_delete_by_identity(const gchar *npub,
   g_object_unref(service);
   return all_ok;
 }
+
+/* ---- Nostr Wallet Connect pairing (nostrc-yka8) ---- */
+
+const SecretSchema gnostr_secret_wallet_schema = {
+  .name = GNOSTR_SECRET_WALLET_SCHEMA_NAME,
+  .flags = SECRET_SCHEMA_NONE,
+  .attributes = {
+    { "wallet_pubkey", SECRET_SCHEMA_ATTRIBUTE_STRING },
+    { "client_pubkey", SECRET_SCHEMA_ATTRIBUTE_STRING },
+    { "relay",         SECRET_SCHEMA_ATTRIBUTE_STRING },
+    { "lud16",         SECRET_SCHEMA_ATTRIBUTE_STRING },
+    { "created_at",    SECRET_SCHEMA_ATTRIBUTE_STRING },
+    { NULL, 0 }
+  }
+};
+
+/* 8 hex chars, like the identity schema's "fingerprint". */
+#define GNOSTR_SECRET_LABEL_HEX_PREFIX 8
+
+gchar *gnostr_secret_wallet_build_label(const gchar *lud16,
+                                        const gchar *wallet_pubkey){
+  if (!is_set(wallet_pubkey)) return NULL;
+  gchar *short_pk = strlen(wallet_pubkey) > GNOSTR_SECRET_LABEL_HEX_PREFIX
+    ? g_strdup_printf("%.*s…", GNOSTR_SECRET_LABEL_HEX_PREFIX, wallet_pubkey)
+    : g_strdup(wallet_pubkey);
+  gchar *label = is_set(lud16)
+    ? g_strdup_printf("Nostr Wallet Connect: %s (%s)", lud16, short_pk)
+    : g_strdup_printf("Nostr Wallet Connect: %s", short_pk);
+  g_free(short_pk);
+  return label;
+}
+
+/* Delete wallet items whose attribute set differs from keep (NULL = all). */
+static gboolean wallet_delete_others(GHashTable *keep, GError **error){
+  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, error);
+  if (!service) return FALSE;
+  GHashTable *match = g_hash_table_new(g_str_hash, g_str_equal);
+  GError *local_err = NULL;
+  GList *items = secret_service_search_sync(service, &gnostr_secret_wallet_schema, match,
+                                            SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK,
+                                            NULL, &local_err);
+  g_hash_table_unref(match);
+  if (local_err) {
+    g_propagate_error(error, local_err);
+    g_object_unref(service);
+    return FALSE;
+  }
+  gboolean all_ok = TRUE;
+  for (GList *l = items; l; l = l->next) {
+    SecretItem *item = l->data;
+    if (keep) {
+      GHashTable *ia = secret_item_get_attributes(item);
+      gboolean same = ia && same_attribute_set(ia, keep);
+      if (ia) g_hash_table_unref(ia);
+      if (same) continue;
+    }
+    if (!secret_item_delete_sync(item, NULL, &local_err)) {
+      all_ok = FALSE;
+      if (error && !*error) g_propagate_error(error, local_err);
+      else g_clear_error(&local_err);
+      local_err = NULL;
+    }
+  }
+  g_list_free_full(items, g_object_unref);
+  g_object_unref(service);
+  return all_ok;
+}
+
+gboolean gnostr_secret_wallet_save(const GnostrSecretWallet *wallet,
+                                   const gchar *nwc_uri,
+                                   GError **error){
+  if (!is_set(nwc_uri)) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "pairing URI required");
+    return FALSE;
+  }
+  if (!wallet || !is_set(wallet->wallet_pubkey)) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "wallet_pubkey required");
+    return FALSE;
+  }
+  GHashTable *attrs = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, g_free);
+  put(attrs, "wallet_pubkey", wallet->wallet_pubkey);
+  put(attrs, "client_pubkey", wallet->client_pubkey);
+  put(attrs, "relay", wallet->relay);
+  put(attrs, "lud16", wallet->lud16);
+  put(attrs, "created_at", wallet->created_at);
+  gchar *label = gnostr_secret_wallet_build_label(wallet->lud16, wallet->wallet_pubkey);
+  gboolean ok = secret_password_storev_sync(&gnostr_secret_wallet_schema, attrs,
+                                            SECRET_COLLECTION_DEFAULT, label,
+                                            nwc_uri, NULL, error);
+  if (ok) {
+    GError *prune_err = NULL;
+    if (!wallet_delete_others(attrs, &prune_err)) {
+      g_debug("gnostr-secret: could not drop previous wallet pairing: %s",
+              prune_err ? prune_err->message : "unknown");
+      g_clear_error(&prune_err);
+    }
+  }
+  g_free(label);
+  g_hash_table_unref(attrs);
+  return ok;
+}
+
+gchar *gnostr_secret_wallet_lookup(GError **error){
+  GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
+  gchar *uri = secret_password_lookupv_sync(&gnostr_secret_wallet_schema, attrs, NULL, error);
+  g_hash_table_unref(attrs);
+  return uri;
+}
+
+gboolean gnostr_secret_wallet_delete_all(GError **error){
+  return wallet_delete_others(NULL, error);
+}

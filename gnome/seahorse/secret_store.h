@@ -127,6 +127,55 @@ gboolean gnostr_secret_store_delete_by_identity(const gchar *npub,
                                                 const gchar *label,
                                                 GError **error);
 
+/* ---- Nostr Wallet Connect pairing (nostrc-yka8) ---------------------------
+ *
+ * A different secret class from identity keys, so it gets its own schema
+ * rather than overloading the npub-keyed identity schema: the item secret is
+ * the whole nostr+walletconnect:// URI (it embeds the NWC *client* secret —
+ * a per-pairing key, never the user's Nostr identity — plus relays and the
+ * optional lud16). The only writer is nostr-wallet-agent (org.nostr.Wallet1);
+ * applications reach the wallet over D-Bus and never read this item.
+ *
+ * Attributes (all strings):
+ *   wallet_pubkey   hex pubkey of the wallet service (URI authority)
+ *   client_pubkey   hex pubkey derived from the URI secret
+ *   relay           first relay URL of the pairing
+ *   lud16           lightning address advertised by the URI (optional)
+ *   created_at      ISO-8601 timestamp (optional)
+ *
+ * The agent keeps exactly one pairing: saving deletes every other item under
+ * this schema. */
+#define GNOSTR_SECRET_WALLET_SCHEMA_NAME "org.gnostr.WalletConnection"
+
+extern const SecretSchema gnostr_secret_wallet_schema;
+
+typedef struct {
+  const gchar *wallet_pubkey;
+  const gchar *client_pubkey;
+  const gchar *relay;
+  const gchar *lud16;
+  const gchar *created_at;
+} GnostrSecretWallet;
+
+/* Seahorse label: "Nostr Wallet Connect: <lud16> (<wallet pubkey prefix>…)",
+ * or "Nostr Wallet Connect: <wallet pubkey prefix>…" without lud16. NULL when
+ * wallet_pubkey is NULL/empty. Free with g_free(). */
+gchar *gnostr_secret_wallet_build_label(const gchar *lud16,
+                                        const gchar *wallet_pubkey);
+
+/* Store nwc_uri as the one wallet pairing, then delete every other item under
+ * gnostr_secret_wallet_schema. wallet_pubkey is required. Blocking. */
+gboolean gnostr_secret_wallet_save(const GnostrSecretWallet *wallet,
+                                   const gchar *nwc_uri,
+                                   GError **error);
+
+/* The stored pairing URI, or NULL (error unset) when there is none. Blocking;
+ * may trigger a keyring unlock prompt. Free with secret_password_free(). */
+gchar *gnostr_secret_wallet_lookup(GError **error);
+
+/* Delete every wallet pairing item. TRUE when nothing is left. Blocking. */
+gboolean gnostr_secret_wallet_delete_all(GError **error);
+
 G_END_DECLS
 
 #endif /* GNOME_SEAHORSE_SECRET_STORE_H */

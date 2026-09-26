@@ -98,6 +98,8 @@ BuildRequires:  pkgconfig(gtk4)
 BuildRequires:  pkgconfig(libadwaita-1) >= 1.5
 # nostr-share dialog (nostrc-1xak)
 BuildRequires:  pkgconfig(gdk-pixbuf-2.0)
+# nostr-wallet-agent (nostrc-yka8): libadwaita approval dialogs.
+BuildRequires:  pkgconfig(libadwaita-1) >= 1.4
 # nsync is vendored in-tree at third_party/nsync (git submodule pinned to a
 # release tag) and built statically as part of the CMake configure step.
 # The vendored copy is folded into libnostrgo.so via --whole-archive, so
@@ -583,6 +585,24 @@ session bus with the page origin as app_id, so web clients use the
 desktop-managed identity and the signer's approval dialogs. The host holds
 no keys. Installs the host and its Firefox / Chromium / Chrome manifests;
 the extension itself is installed separately (see the README).
+# --- Sub-package: nostr-wallet-agent ------------------------------------------
+%package -n nostr-wallet-agent
+Summary:        Nostr Wallet Connect (NIP-47) agent for the desktop session
+Requires:       libadwaita
+Requires:       libsecret
+Recommends:     gnome-keyring
+%{?systemd_requires}
+%description -n nostr-wallet-agent
+`nostr-wallet-agent` owns the desktop's Nostr Wallet Connect pairing and
+exposes it as the session D-Bus service `org.nostr.Wallet1` (GetBalance,
+MakeInvoice, PayInvoice, LookupInvoice, ListTransactions, Pair, per-application
+budgets). Applications never see the pairing secret, which is kept in the
+Secret Service keyring; the agent identifies callers from their bus
+credentials and asks for approval in a libadwaita dialog whenever a payment
+exceeds the caller's daily budget. It is also the handler for lightning:,
+bitcoin: (BIP-21 with a lightning= invoice) and nostr+walletconnect: links.
+D-Bus activated through the shipped `nostr-wallet-agent.service` user unit;
+nothing is enabled at install time.
 
 # --- Sub-package: nostrc-samba-server ----------------------------------------
 %package -n nostrc-samba-server
@@ -665,6 +685,7 @@ the `application/vnd.nostr.sealed` (`*.nsealed`) MIME type.
     -DENABLE_NOSTR_SIGNER_WEBEXT_HOST=ON \
     -DNOSTR_SIGNER_WEBEXT_INSTALL_BROWSER_MANIFESTS=ON \
     -DNMH_MOZILLA_HOSTS_DIR=%{_libdir}/mozilla/native-messaging-hosts \
+    -DENABLE_NOSTR_WALLET_AGENT=ON \
     -DSIGNET_ENABLE=OFF \
     -DWITH_NOSTRDB=OFF \
     -DLIBNOSTR_WITH_NOSTRDB=OFF \
@@ -993,6 +1014,15 @@ find %{buildroot} -depth -type d -empty -delete 2>/dev/null || :
 %systemd_user_postun nostr-dav.service
 %systemd_user_postun nostr-dav-dirs.service
 
+%post -n nostr-wallet-agent
+%systemd_user_post nostr-wallet-agent.service
+
+%preun -n nostr-wallet-agent
+%systemd_user_preun nostr-wallet-agent.service
+
+%postun -n nostr-wallet-agent
+%systemd_user_postun nostr-wallet-agent.service
+
 %post -n nostrc-samba-server
 %systemd_post nostr-smbd.service
 %sysusers_create_compat %{_sysusersdir}/nostr-smb-share.conf
@@ -1267,6 +1297,15 @@ fi
 %{_datadir}/nostr-signer-webext-host/install-user-manifests.sh
 %dir %{_datadir}/doc/nostr-signer-webext-host
 %{_datadir}/doc/nostr-signer-webext-host/README.md
+%files -n nostr-wallet-agent
+%{_bindir}/nostr-wallet-agent
+%{_userunitdir}/nostr-wallet-agent.service
+%{_datadir}/dbus-1/services/org.nostr.Wallet1.service
+%{_datadir}/dbus-1/interfaces/org.nostr.Wallet1.xml
+%{_datadir}/applications/org.nostr.Wallet.desktop
+%{_datadir}/glib-2.0/schemas/org.nostr.Wallet.gschema.xml
+%dir %{_datadir}/doc/nostr-wallet-agent
+%{_datadir}/doc/nostr-wallet-agent/README.md
 
 %files -n nostrc-samba-server
 %license LICENSE

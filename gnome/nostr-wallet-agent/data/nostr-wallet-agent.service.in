@@ -1,0 +1,38 @@
+[Unit]
+Description=Nostr Wallet Connect agent (org.nostr.Wallet1)
+Documentation=https://github.com/chebizarro/nostrc/tree/master/gnome/nostr-wallet-agent
+# Approval dialogs need the graphical session; without one the agent still
+# answers D-Bus but denies anything that needs the user (fails closed).
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=org.nostr.Wallet1
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/nostr-wallet-agent --gapplication-service
+Restart=on-failure
+RestartSec=5
+
+# Hardening — namespace-free only. The agent identifies callers by reading
+# /proc/<pid>/{exe,root/.flatpak-info} of other processes of the same user
+# (ptrace-read access). Any mount-namespacing option (ProtectSystem=,
+# ProtectHome=, PrivateTmp=, ProtectKernel*=, ProtectControlGroups=,
+# ReadWritePaths=) makes `systemd --user` run the unit in a user namespace,
+# which loses that access and turns every caller into "unidentified"
+# (verified on Ubuntu 24.04). Seccomp/no-new-privs based options are safe.
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+StateDirectory=nostr-wallet
+StateDirectoryMode=0700
+# GTK may JIT shaders under some renderers; W^X stays off for the UI.
+# MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=default.target

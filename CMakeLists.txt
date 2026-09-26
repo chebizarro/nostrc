@@ -467,6 +467,7 @@ option(ENABLE_NOSTR_DAV "Build localhost CalDAV/CardDAV/WebDAV bridge daemon" OF
 option(ENABLE_NOSTR_DISPATCHER "Build nostr-dispatcher (nostr: link kind router, org.nostr.Dispatcher1)" OFF)
 option(ENABLE_NOSTR_SEAL "Build nostr-seal (encrypt files for npubs / a passphrase)" OFF)
 option(ENABLE_NOSTR_SEARCH_PROVIDER "Build nostr-search-provider (GNOME Shell search over the session relay)" OFF)
+option(ENABLE_NOSTR_WALLET_AGENT "Build nostr-wallet-agent (org.nostr.Wallet1 NWC session service)" OFF)
 
 if (GNOSTR_ENABLE_SEAHORSE_HELPERS OR GNOSTR_WITH_PKCS11)
   find_package(PkgConfig REQUIRED)
@@ -489,6 +490,7 @@ endif()
 option(ENABLE_LIBNOSTR_PUBLISH "Build libnostr-publish (shared relay publish core; implied by ENABLE_NOSTR_DAV)" OFF)
 option(ENABLE_NOSTR_SHARE "Build nostr-share (Share to Nostr CLI + dialog; needs BUILD_LIBHANAMI)" OFF)
 if (ENABLE_LIBNOSTR_PUBLISH OR ENABLE_NOSTR_DAV OR ENABLE_NOSTR_SHARE)
+if (ENABLE_LIBNOSTR_PUBLISH OR ENABLE_NOSTR_DAV OR ENABLE_NOSTR_WALLET_AGENT)
   add_subdirectory(gnome/libnostr-publish)
 endif()
 
@@ -516,6 +518,10 @@ endif()
 option(ENABLE_NOSTR_SIGNER_WEBEXT_HOST "Build nostr-signer-webext-host (NIP-07 native-messaging host -> org.nostr.Signer)" OFF)
 if (ENABLE_NOSTR_SIGNER_WEBEXT_HOST AND NOT TARGET nostr-signer-webext-host)
   add_subdirectory(apps/gnostr-signer/native-host)
+endif()
+
+if (ENABLE_NOSTR_WALLET_AGENT)
+  add_subdirectory(gnome/nostr-wallet-agent)
 endif()
 
 ## GLib demo: only if libnostr built with GLib support
