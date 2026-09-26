@@ -45,8 +45,10 @@ typedef enum {
  * @NOSTR_PUBLISH_UPSTREAM_DIRECT_ONLY: publish to the write relays.
  *
  * Consumed by nostr_publish_policy_select_targets() only; the publisher
- * engine publishes to whatever relay set it is given. (nostr-dav does not
- * map its informational `nostr_dav_upstream_mode` key onto this yet.)
+ * engine publishes to whatever relay set it is given. nostr-dav does not
+ * map its `nostr_dav_upstream_mode` key onto this yet: that key is
+ * informational there today, so session_relay_only still publishes
+ * directly to home relays (privacy gap tracked in bead nostrc-862u).
  */
 typedef enum {
   NOSTR_PUBLISH_UPSTREAM_SESSION_RELAY_OR_DIRECT = 0,
@@ -123,6 +125,9 @@ guint nostr_publish_policy_required_acks(const NostrPublishPolicy *policy,
  * [@session_relay_url] when known, else @write_relays. Order is preserved
  * and exact duplicates dropped; the session relay is never mixed with
  * write relays (it forwards upstream itself).
+ *
+ * Intended for nostr-share (nostrc-1xak). nostr-dav does not call it
+ * yet; enforcing its upstream mode through this helper is nostrc-862u.
  *
  * Returns: (transfer full) (nullable): a non-empty relay set, or NULL
  *   with @error set to NOSTR_PUBLISH_ERROR_NO_RELAYS when the policy

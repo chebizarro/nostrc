@@ -71,6 +71,9 @@ ptr_array_to_strv(GPtrArray *arr)
   return (GStrv)g_ptr_array_free(arr, FALSE);
 }
 
+/* Not yet used by nostr-dav: its nostr_dav_upstream_mode is informational
+ * and session_relay_only still publishes directly to home relays. Wiring
+ * this in is a behaviour change tracked in bead nostrc-862u. */
 GStrv
 nostr_publish_policy_select_targets(const NostrPublishPolicy *policy,
                                     const gchar *const       *write_relays,
