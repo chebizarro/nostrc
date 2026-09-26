@@ -510,6 +510,7 @@ endif()
 
 if (ENABLE_NOSTR_SEARCH_PROVIDER)
   add_subdirectory(gnome/nostr-search-provider)
+endif()
 # NIP-07 browser bridge host (nostrc-jjyp). apps/gnostr-signer adds the same
 # directory for dev builds; this path serves BUILD_APPS=OFF packaging.
 option(ENABLE_NOSTR_SIGNER_WEBEXT_HOST "Build nostr-signer-webext-host (NIP-07 native-messaging host -> org.nostr.Signer)" OFF)
