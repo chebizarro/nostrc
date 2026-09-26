@@ -96,15 +96,16 @@ const MGR_XML = `<node><interface name="org.freedesktop.systemd1.Manager">
 const UNIT_XML = `<node><interface name="org.freedesktop.systemd1.Unit">
   <property name="LoadState" type="s" access="read"/><property name="ActiveState" type="s" access="read"/>
   <property name="SubState" type="s" access="read"/><property name="UnitFileState" type="s" access="read"/>
+  <property name="Job" type="(uo)" access="read"/>
 </interface></node>`;
 
 const esc = n => n.replace(/[^A-Za-z0-9]/g, c => `_${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
 const unitPath = n => `/org/freedesktop/systemd1/unit/${esc(n)}`;
 const calls = [];
 const units = {
-    'nostr-session-relay.socket': {LoadState: 'loaded', ActiveState: 'inactive', SubState: 'dead', UnitFileState: 'disabled'},
-    'nostr-session-relay.service': {LoadState: 'loaded', ActiveState: 'inactive', SubState: 'dead', UnitFileState: 'static'},
-    'nostr-notify.service': {LoadState: 'loaded', ActiveState: 'active', SubState: 'running', UnitFileState: 'enabled'},
+    'nostr-session-relay.socket': {LoadState: 'loaded', ActiveState: 'inactive', SubState: 'dead', UnitFileState: 'disabled', Job: [0, '/']},
+    'nostr-session-relay.service': {LoadState: 'loaded', ActiveState: 'inactive', SubState: 'dead', UnitFileState: 'static', Job: [0, '/']},
+    'nostr-notify.service': {LoadState: 'loaded', ActiveState: 'active', SubState: 'running', UnitFileState: 'enabled', Job: [0, '/']},
 };
 const unitObjs = {};
 let failEnable = false;
@@ -113,9 +114,19 @@ function setUnit(name, props) {
     for (const [k, v] of Object.entries(props))
         unitObjs[name].emit_property_changed(k, new GLib.Variant('s', v));
 }
+// Like systemd: Start/StopUnit return once the job is queued; it finishes
+// later. No PropertiesChanged for the change (nobody called Subscribe), so
+// the monitor must notice the pending Job and settle by itself.
+function queueJob(name, props) {
+    units[name].Job = [7, '/org/freedesktop/systemd1/job/7'];
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+        Object.assign(units[name], props, {Job: [0, '/']});
+        return GLib.SOURCE_REMOVE;
+    });
+}
 for (const name of Object.keys(units)) {
     const impl = {};
-    for (const p of ['LoadState', 'ActiveState', 'SubState', 'UnitFileState'])
+    for (const p of ['LoadState', 'ActiveState', 'SubState', 'UnitFileState', 'Job'])
         Object.defineProperty(impl, p, {get: () => units[name][p]});
     unitObjs[name] = Gio.DBusExportedObject.wrapJSObject(UNIT_XML, impl);
     unitObjs[name].export(service, unitPath(name));
@@ -154,12 +165,12 @@ const mgrImpl = {
     StartUnit(n) {
         calls.push(`StartUnit(${n})`);
         if (n.endsWith('.socket'))
-            setUnit(n, {ActiveState: 'active', SubState: 'listening'});
+            queueJob(n, {ActiveState: 'active', SubState: 'listening'});
         return '/org/freedesktop/systemd1/job/1';
     },
     StopUnit(n) {
         calls.push(`StopUnit(${n})`);
-        setUnit(n, {ActiveState: 'inactive', SubState: 'dead'});
+        queueJob(n, {ActiveState: 'inactive', SubState: 'dead'});
         return '/org/freedesktop/systemd1/job/2';
     },
 };
@@ -187,7 +198,8 @@ ok(!calls.includes('Subscribe'), 'relay: never calls Manager.Subscribe (shared s
 calls.length = 0;
 relay.setEnabled(true);
 ok(relayView(relayState).subtitle === 'Turning on…', 'relay: busy while plan runs');
-ok(waitFor(() => !relayState.busy && relayView(relayState).status === 'listening', 'on'), 'relay: on → listening');
+ok(waitFor(() => !relayState.busy && relayView(relayState).status === 'listening', 'on'),
+    'relay: on → listening (queued job settles without signals)');
 const planOn = calls.filter(c => !c.startsWith('LoadUnit'));
 ok(same(planOn, ['EnableUnitFiles(nostr-session-relay.socket)', 'Reload',
     'StartUnit(nostr-session-relay.socket)']), 'relay: on plan order matches nostr-settings',
@@ -222,7 +234,13 @@ ok(relayView(relayState, 'en-US').subtitle === '1,234 events · 12.3 MB', 'relay
 // Off: disable first, then stop service and socket; relay leaves the bus.
 calls.length = 0;
 relay.setEnabled(false);
-ok(waitFor(() => !relayState.busy && relayView(relayState).status === 'off', 'off'), 'relay: off → off');
+ok(waitFor(() => !relayState.busy && relayView(relayState).status === 'off', 'off'),
+    'relay: off → off (queued stop jobs settle without signals)');
+spin(1200);
+const settledEvents = relayEvents;
+spin(2000);
+ok(relayEvents === settledEvents, 'relay: settle stops once no job is pending (no steady polling)',
+    `${relayEvents - settledEvents} re-reads in 2 s`);
 const planOff = calls.filter(c => !c.startsWith('LoadUnit'));
 ok(same(planOff, ['DisableUnitFiles(nostr-session-relay.socket)', 'Reload',
     'StopUnit(nostr-session-relay.service)', 'StopUnit(nostr-session-relay.socket)']),

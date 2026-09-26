@@ -12,7 +12,10 @@
 //   monitor deliberately never calls Subscribe/Unsubscribe itself. gnome-shell
 //   and every extension share one bus connection and systemd tracks the
 //   subscription per connection, so an Unsubscribe here could silently cancel
-//   somebody else's.
+//   somebody else's. Because StartUnit/StopUnit return once the job is
+//   *queued*, a re-read that still finds a job pending (Unit.Job) or a unit
+//   in a transitional state re-reads every 500 ms until it settles (at most
+//   20 s) — a bounded settle after a change, not a poll.
 // * Statistics come from org.nostr.SessionRelay1 only while that name has an
 //   owner. Every call uses NO_AUTO_START and the relay ships no D-Bus
 //   activation file, so watching the panel never starts the relay.
@@ -42,6 +45,8 @@ const CALL_TIMEOUT = 5000;
 // take a moment (same value as nss-systemd.c).
 const JOB_TIMEOUT = 25000;
 const DEBOUNCE_MS = 250;
+const SETTLE_MS = 500;
+const SETTLE_MAX = 40;
 
 const UNITS = Object.freeze({socket: RELAY_SOCKET, service: RELAY_SERVICE, notify: NOTIFY_SERVICE});
 
@@ -65,6 +70,8 @@ export class RelayMonitor {
         this._watchId = 0;
         this._timerId = 0;
         this._debounceId = 0;
+        this._settleId = 0;
+        this._settleCount = 0;
         this._interval = clampRefresh(60);
         this._resyncing = false;
         this._resyncAgain = false;
@@ -143,6 +150,7 @@ export class RelayMonitor {
             this._error = errorMessage(e);
         }
         this._busy = null;
+        this._settleCount = 0;
         this._emit();
         this._resync();
     }
@@ -166,6 +174,10 @@ export class RelayMonitor {
         if (this._debounceId) {
             GLib.Source.remove(this._debounceId);
             this._debounceId = 0;
+        }
+        if (this._settleId) {
+            GLib.Source.remove(this._settleId);
+            this._settleId = 0;
         }
         this._onChanged = null;
     }
@@ -222,12 +234,14 @@ export class RelayMonitor {
             timeout: CALL_TIMEOUT, cancellable: this._cancellable,
         });
         const [props] = r.deepUnpack();
-        const str = k => (props[k] ? props[k].deepUnpack() : null);
+        const val = k => (props[k] ? props[k].deepUnpack() : null);
+        const job = val('Job'); // (uo): [id, path], id 0 = no job
         return {
-            loadState: str('LoadState'),
-            activeState: str('ActiveState'),
-            subState: str('SubState'),
-            unitFileState: str('UnitFileState'),
+            loadState: val('LoadState'),
+            activeState: val('ActiveState'),
+            subState: val('SubState'),
+            unitFileState: val('UnitFileState'),
+            jobPending: Array.isArray(job) && job[0] !== 0,
         };
     }
 
@@ -257,10 +271,28 @@ export class RelayMonitor {
             this._resyncing = false;
         }
         this._emit();
+        this._maybeSettle();
         if (this._resyncAgain) {
             this._resyncAgain = false;
             this._resync();
         }
+    }
+
+    _maybeSettle() {
+        const transitional = Object.values(this._units).some(u => u &&
+            (u.jobPending || u.activeState === 'activating' || u.activeState === 'deactivating'));
+        if (!transitional) {
+            this._settleCount = 0;
+            return;
+        }
+        if (this._destroyed || this._settleId || this._settleCount >= SETTLE_MAX)
+            return;
+        this._settleCount++;
+        this._settleId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, SETTLE_MS, () => {
+            this._settleId = 0;
+            this._resync();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     async _fetchStats() {
