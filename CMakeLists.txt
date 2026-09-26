@@ -466,6 +466,7 @@ option(GNOSTR_WITH_PKCS11 "Build p11-kit module" OFF)
 option(ENABLE_NOSTR_DAV "Build localhost CalDAV/CardDAV/WebDAV bridge daemon" OFF)
 option(ENABLE_NOSTR_DISPATCHER "Build nostr-dispatcher (nostr: link kind router, org.nostr.Dispatcher1)" OFF)
 option(ENABLE_NOSTR_SEAL "Build nostr-seal (encrypt files for npubs / a passphrase)" OFF)
+option(ENABLE_NOSTR_SEARCH_PROVIDER "Build nostr-search-provider (GNOME Shell search over the session relay)" OFF)
 
 if (GNOSTR_ENABLE_SEAHORSE_HELPERS OR GNOSTR_WITH_PKCS11)
   find_package(PkgConfig REQUIRED)
@@ -505,6 +506,8 @@ endif()
 
 if (ENABLE_NOSTR_SHARE)
   add_subdirectory(gnome/nostr-share)
+if (ENABLE_NOSTR_SEARCH_PROVIDER)
+  add_subdirectory(gnome/nostr-search-provider)
 endif()
 
 ## GLib demo: only if libnostr built with GLib support

@@ -1,0 +1,38 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!--
+  org.gnome.Shell.SearchProvider2 as implemented by nostr-search-provider
+  (bead nostrc-hwwn), embedded at build time. Upstream definition:
+  gnome-shell data/dbus-interfaces/org.gnome.ShellSearchProvider2.xml.
+
+  XUbuntuCancel is Ubuntu's gnome-shell extension of the interface: it is
+  called when the user changes the search, and finishes any in-flight
+  search early with partial results. Upstream Shell never calls it.
+-->
+<node>
+  <interface name="org.gnome.Shell.SearchProvider2">
+    <method name="GetInitialResultSet">
+      <arg type="as" name="terms" direction="in"/>
+      <arg type="as" name="results" direction="out"/>
+    </method>
+    <method name="GetSubsearchResultSet">
+      <arg type="as" name="previous_results" direction="in"/>
+      <arg type="as" name="terms" direction="in"/>
+      <arg type="as" name="results" direction="out"/>
+    </method>
+    <method name="GetResultMetas">
+      <arg type="as" name="identifiers" direction="in"/>
+      <arg type="aa{sv}" name="metas" direction="out"/>
+    </method>
+    <method name="ActivateResult">
+      <arg type="s" name="identifier" direction="in"/>
+      <arg type="as" name="terms" direction="in"/>
+      <arg type="u" name="timestamp" direction="in"/>
+    </method>
+    <method name="LaunchSearch">
+      <arg type="as" name="terms" direction="in"/>
+      <arg type="u" name="timestamp" direction="in"/>
+    </method>
+    <method name="XUbuntuCancel"/>
+  </interface>
+</node>

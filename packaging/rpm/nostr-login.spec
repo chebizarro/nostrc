@@ -97,6 +97,7 @@ BuildRequires:  pkgconfig(libsecret-1)
 BuildRequires:  pkgconfig(gtk4)
 BuildRequires:  pkgconfig(libadwaita-1) >= 1.5
 # nostr-share dialog (nostrc-1xak)
+BuildRequires:  pkgconfig(gdk-pixbuf-2.0)
 # nsync is vendored in-tree at third_party/nsync (git submodule pinned to a
 # release tag) and built statically as part of the CMake configure step.
 # The vendored copy is folded into libnostrgo.so via --whole-archive, so
@@ -545,6 +546,28 @@ handed to nostr-dav. org.nostr.Share.desktop registers it for Open With.
 Signing goes through org.nostr.Signer; image metadata is stripped before
 upload and the exact event JSON is shown before signing.
 
+# --- Sub-package: nostr-search-provider (nostrc-hwwn) ------------------------
+%package -n nostr-search-provider
+Summary:        GNOME Shell search provider for Nostr profiles and notes
+Requires:       libnostr%{?_isa} = %{version}-%{release}
+Requires:       glib2
+Requires:       json-glib
+Requires:       libsoup3
+Requires:       jansson
+Requires:       gdk-pixbuf2
+Recommends:     nostr-dispatcher%{?_isa} = %{version}-%{release}
+Recommends:     nostrc-session-relay%{?_isa} = %{version}-%{release}
+Enhances:       gnome-shell
+
+%description -n nostr-search-provider
+Type an npub/nprofile/note/nevent/naddr identifier, a NIP-05 address or
+keywords into the GNOME Activities overview and get matching Nostr
+profiles, notes and articles from the per-user session relay (NIP-50
+search when available, else a bounded local scan; always answers within a
+deadline). Results open through nostr-dispatcher. NIP-05 look-ups and
+avatar caching can be disabled in ~/.config/nostr/search-provider.conf.
+The org.nostr.SearchProvider service is D-Bus activated and exits idle.
+
 # --- Sub-package: nostrc-samba-server ----------------------------------------
 %package -n nostrc-samba-server
 Summary:        Dedicated Samba file-server for the Nostr auth broker (Wave 4)
@@ -622,6 +645,7 @@ the `application/vnd.nostr.sealed` (`*.nsealed`) MIME type.
     -DENABLE_NOSTR_DISPATCHER=ON \
     -DENABLE_NOSTR_SEAL=ON \
     -DENABLE_NOSTR_SHARE=ON \
+    -DENABLE_NOSTR_SEARCH_PROVIDER=ON \
     -DSIGNET_ENABLE=OFF \
     -DWITH_NOSTRDB=OFF \
     -DLIBNOSTR_WITH_NOSTRDB=OFF \
@@ -1195,6 +1219,18 @@ fi
 %dir %{_datadir}/nostr-share
 %{_datadir}/nostr-share/nostr-share.conf.example
 %{_datadir}/nostr-share/README.md
+
+%files -n nostr-search-provider
+%license LICENSE
+%{_bindir}/nostr-search-provider
+%{_userunitdir}/nostr-search-provider.service
+%{_datadir}/applications/org.nostr.SearchProvider.desktop
+%{_datadir}/dbus-1/services/org.nostr.SearchProvider.service
+%dir %{_datadir}/gnome-shell
+%dir %{_datadir}/gnome-shell/search-providers
+%{_datadir}/gnome-shell/search-providers/org.nostr.SearchProvider.ini
+%dir %{_datadir}/doc/nostr-search-provider
+%{_datadir}/doc/nostr-search-provider/README.md
 
 %files -n nostrc-samba-server
 %license LICENSE

@@ -1,0 +1,6 @@
+usr/bin/nostr-search-provider
+usr/lib/systemd/user/nostr-search-provider.service
+usr/share/applications/org.nostr.SearchProvider.desktop
+usr/share/dbus-1/services/org.nostr.SearchProvider.service
+usr/share/gnome-shell/search-providers/org.nostr.SearchProvider.ini
+usr/share/doc/nostr-search-provider/README.md
