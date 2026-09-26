@@ -23,9 +23,9 @@ override_dh_auto_build:
 
 override_dh_auto_install:
 	dh_auto_install
-	# Ensure D-Bus service file has correct path
-	sed -i 's|@CMAKE_INSTALL_FULL_BINDIR@|/usr/bin|g' \
-		debian/tmp/usr/share/dbus-1/services/org.nostr.Signer.service || true
+	# The D-Bus activation file is configure_file()d by CMake; fail the build
+	# if an unconfigured @VAR@ literal ever reaches the package again.
+	! grep -q '@' debian/tmp/usr/share/dbus-1/services/org.nostr.Signer.service
 
 override_dh_installsystemd:
 	dh_installsystemd --user --name=gnostr-signer-daemon

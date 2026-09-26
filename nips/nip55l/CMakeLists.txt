@@ -105,8 +105,26 @@ if (GIO_FOUND AND ENABLE_NIP55L)
   target_link_libraries(nostr-signer-cli PRIVATE PkgConfig::GIO)
 
   install(TARGETS nostr_nip55l_glib nostr-signer-daemon nostr-signer-cli)
-  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/dbus/org.nostr.Signer.service.in
-          DESTINATION share/dbus-1/services RENAME org.nostr.Signer.service)
+
+  # D-Bus activation for org.nostr.Signer is owned by apps/gnostr-signer
+  # (its daemon exports this same GLib service). Installing a second
+  # org.nostr.Signer.service here would collide on the same path, so the
+  # standalone daemon's activation file is opt-in for headless installs that
+  # ship no gnostr-signer. The template is configured, never copied: an
+  # installed file must carry an absolute Exec= path, not a CMake literal.
+  if (ENABLE_NIP55L_STANDALONE_ACTIVATION)
+    include(GNUInstallDirs)
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dbus/org.nostr.Signer.service.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Signer.service @ONLY)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Signer.service
+            DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/dbus-1/services)
+    if (BUILD_TESTING)
+      add_test(NAME nip55l_dbus_service_configured
+               COMMAND ${CMAKE_COMMAND}
+                       -DSERVICE_FILE=${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Signer.service
+                       -P ${CMAKE_SOURCE_DIR}/cmake/CheckDbusServiceFile.cmake)
+    endif()
+  endif()
 endif()
 
 # The binary NIP-44 lane needs no D-Bus to be exercised: the service handlers
@@ -115,6 +133,20 @@ if (BUILD_TESTING)
   add_executable(test_nip55l_nip44_b64 ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_nip55l_nip44_b64.c)
   target_link_libraries(test_nip55l_nip44_b64 PRIVATE nostr_nip55l_core nostr_nip44_core nostr)
   add_test(NAME nip55l_nip44_b64 COMMAND test_nip55l_nip44_b64)
+  set_tests_properties(nip55l_nip44_b64 PROPERTIES LABELS "nip55l;signer;unit;nip44-binary" TIMEOUT 60)
+
+  # Core contract tests for the D1.a / D2 landings: SignEvent returns the
+  # complete signed event JSON, GetRelays reads explicit per-user config only.
+  # Keys are passed as explicit hex/nsec selectors so no test reaches
+  # libsecret, the Keychain, or a session bus. Fuzz harness and a real-service
+  # D-Bus contract test are follow-ups (see the nip55l/README roadmap).
+  foreach(t sign_event_json getrelays)
+    add_executable(test_nip55l_${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_${t}.c)
+    target_link_libraries(test_nip55l_${t} PRIVATE nostr_nip55l_core nostr_nip44_core nostr)
+    target_compile_options(test_nip55l_${t} PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME nip55l_${t} COMMAND test_nip55l_${t})
+    set_tests_properties(nip55l_${t} PROPERTIES LABELS "nip55l;signer;unit" TIMEOUT 60)
+  endforeach()
 endif()
 
 install(TARGETS nostr_nip55l_core)

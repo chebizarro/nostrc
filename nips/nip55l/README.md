@@ -1,5 +1,10 @@
 # NIP-55L Linux Signer
 
+**Component version: 0.2.0** (tracked in `/VERSION_MANIFEST.md`; authoritative
+source `NOSTR_NIP55L_VERSION_*` in `include/nostr/nip55l/signer_ops.h`).
+0.2.0 is a breaking change for D-Bus clients: `SignEvent` now returns the
+complete signed event JSON instead of the bare signature — see below.
+
 This component provides a local signer daemon exposing a GLib/GDBus interface for Nostr signing and peer-to-peer encryption (NIP-04 and NIP-44 v2). It also ships a small CLI that talks to the DBus service.
 
 - Service name: `org.nostr.Signer`
@@ -43,7 +48,23 @@ export NOSTR_SIGNER_NSEC=nsec1...
 build/nips/nip55l/nostr-signer-daemon
 ```
 
-Service file (`dbus/org.nostr.Signer.service.in`, installed as `org.nostr.Signer.service`) installs to `share/dbus-1/services/` to enable auto-activation on Linux.
+### D-Bus activation
+
+`org.nostr.Signer.service` is owned by **gnostr-signer**, which activates
+`gnostr-signer-daemon` (the same `nips/nip55l` GLib service plus the GUI's
+approval flow). This tree does **not** install an activation file by default,
+so the two packages never ship conflicting copies of the same path.
+
+Headless installs that want `nostr-signer-daemon` auto-activated without
+gnostr-signer build with:
+
+```
+cmake -S . -B build -DENABLE_NIP55L_STANDALONE_ACTIVATION=ON
+```
+
+which configures `dbus/org.nostr.Signer.service.in` (absolute `Exec=` path)
+and installs it to `share/dbus-1/services/`. Do not enable it alongside a
+gnostr-signer package.
 
 ## Key resolution order
 
@@ -63,8 +84,13 @@ Interface: `org.nostr.Signer`
 - `GetPublicKey() -> (s npub)`
   - Returns the `npub1...` for the current secret key.
 
-- `SignEvent(in s eventJson, in s currentUser, in s requester) -> (s signedJson)`
-  - Signs a Nostr event JSON. `currentUser` may be empty to use resolution order above.
+- `SignEvent(in s eventJson, in s currentUser, in s requester) -> (s signed_event)`
+  - Signs a Nostr event JSON and returns the **complete signed event JSON**
+    (`id`, `pubkey`, `created_at`, `kind`, `tags`, `content`, `sig`).
+    `pubkey` is always the signing key's; `created_at` 0 is filled with now.
+    `currentUser` may be empty to use resolution order above.
+  - Since 0.2.0. Earlier versions returned only the 128-hex signature; the
+    D-Bus type (`s`) did not change, so update callers to parse JSON.
 
 - `NIP04Encrypt(in s plaintext, in s peerPubHex, in s currentUser) -> (s cipherB64)`
 - `NIP04Decrypt(in s cipherB64, in s peerPubHex, in s currentUser) -> (s plaintext)`
@@ -72,8 +98,18 @@ Interface: `org.nostr.Signer`
 - `NIP44Encrypt(in s plaintext, in s peerPubHex, in s currentUser) -> (s cipherB64)`
 - `NIP44Decrypt(in s cipherB64, in s peerPubHex, in s currentUser) -> (s plaintext)`
 
+- `NIP44EncryptB64` / `NIP44DecryptB64`: binary-safe NIP-44 (plaintext side is base64).
+
 - `GetRelays() -> (s relaysJson)`
-  - Stub; currently returns NOT_FOUND.
+  - JSON array of the user's explicitly configured relays. Sources, first
+    match wins: `$XDG_CONFIG_HOME/nostr/relays.conf` (a JSON array of
+    `ws://`/`wss://` URL strings), then the relay list set in gnostr-signer
+    (GSettings `org.gnostr.Signer` `relays`, user-written value only, not the
+    schema default).
+  - No network access: NIP-65 lists are never fetched to answer this.
+  - `org.nostr.Signer.Error.NotFound` when nothing is configured — callers
+    fall back to their own relays; `org.nostr.Signer.Error.InvalidConfig`
+    when `relays.conf` is malformed.
 
 - `StoreKey(in s key, in s identity) -> (b ok)`
   - Stores a private key (64-hex or `nsec1...`) in Secret Service under schema `org.nostr.Signer`, attribute `identity`. Optional feature; returns error if libsecret is unavailable.
@@ -82,7 +118,8 @@ Interface: `org.nostr.Signer`
 - `ClearKey(in s identity) -> (b ok)`
   - Clears stored key for `identity`. Same ACL/rate limit as above.
 
-Errors are returned as GLib `G_IO_ERROR_*` over DBus. Core error codes map to generic DBus failure for now.
+Errors are D-Bus error names under `org.nostr.Signer.Error.*`
+(`nip55l_dbus_errors.h`); see `docs/dbus-interface.md` for the table.
 
 ## CLI
 
@@ -134,6 +171,10 @@ nostr-signer-cli nip44-decrypt "$C" <peer_hex>
 
 ## Roadmap
 
-- Implement `GetRelays()` integration with profile/store
 - DBus error code mapping refinement and richer error domains
 - Expand integration tests for DBus + CLI
+- Structured fuzz harness for `StoreKey` / `SignEvent` / `GetRelays` / NIP-44
+  base64 inputs (deferred from D1.a; tracked separately)
+- Real-service D-Bus contract test on a private `GTestDBus` bus (deferred; the
+  in-tree consumer coverage lives in `apps/gnostr-signer/tests/test-dbus.c`
+  and `gnome/nostr-homed/tests/integration/test_mock_signer_contract.c`)

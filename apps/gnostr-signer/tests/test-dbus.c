@@ -16,6 +16,7 @@
 #include <gio/gio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
 #include <signal.h>
 #include <sys/types.h>
@@ -23,6 +24,8 @@
 
 #include <keys.h>
 #include <nostr-utils.h>
+#include <nostr-event.h>
+#include <json.h>
 #include <nostr/nip19/nip19.h>
 #include <nostr/nip44/nip44.h>
 #include <nostr/nip04.h>
@@ -110,6 +113,25 @@ generate_test_keypair(DbusFixture *fix)
     g_assert_nonnull(fix->test_npub);
 
     free(pk_hex);
+}
+
+/* Helper: a SignEvent reply must be the complete signed event (nip55l
+ * 0.2.0): strict signed-event shape, canonical id, valid Schnorr signature,
+ * signed by the expected key. Returns TRUE only if all of that holds. */
+static gboolean
+signed_event_reply_ok(const gchar *reply, const gchar *want_sk_hex)
+{
+    if (!reply || reply[0] != '{') return FALSE;
+    NostrEvent *ev = nostr_event_new();
+    gboolean ok = nostr_event_deserialize_signed(ev, reply, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+                  nostr_event_validate(ev, NULL) == NOSTR_EVENT_VALIDATION_OK;
+    if (ok && want_sk_hex) {
+        char *pk = nostr_key_get_public(want_sk_hex);
+        ok = pk && g_strcmp0(pk, nostr_event_get_pubkey(ev)) == 0;
+        free(pk);
+    }
+    nostr_event_free(ev);
+    return ok;
 }
 
 /* Helper: Create mock service implementation using GDBus skeleton
@@ -317,16 +339,34 @@ handle_method_call(GDBusConnection       *connection,
             return;
         }
 
-        /* Generate mock signature (64 bytes hex = 128 chars) */
-        /* In real implementation this would be a Schnorr signature */
-        gchar sig[129];
-        for (int i = 0; i < 128; i++) {
-            sig[i] = "0123456789abcdef"[g_random_int_range(0, 16)];
+        /* nip55l 0.2.0 contract: sign for real with the stored key and
+         * return the complete signed event JSON, as the real service does. */
+        g_mutex_lock(&mock_state.lock);
+        gchar *sk_hex = g_strdup(mock_state.stored_sk_hex);
+        g_mutex_unlock(&mock_state.lock);
+        if (!sk_hex) {
+            g_dbus_method_invocation_return_dbus_error(invocation,
+                "org.nostr.Signer.Error.NoKeyConfigured", "no key configured");
+            return;
         }
-        sig[128] = '\0';
-
+        NostrEvent *ev = nostr_event_new();
+        char *signed_json = NULL;
+        if (nostr_event_deserialize(ev, event_json) == 0) {
+            if (nostr_event_get_created_at(ev) == 0)
+                nostr_event_set_created_at(ev, (int64_t)time(NULL));
+            if (nostr_event_sign(ev, sk_hex) == 0)
+                signed_json = nostr_event_serialize(ev);
+        }
+        nostr_event_free(ev);
+        g_free(sk_hex);
+        if (!signed_json) {
+            g_dbus_method_invocation_return_dbus_error(invocation,
+                ERR_INVALID_INPUT, "event JSON is not a valid Nostr event");
+            return;
+        }
         g_dbus_method_invocation_return_value(invocation,
-            g_variant_new("(s)", sig));
+            g_variant_new("(s)", signed_json));
+        free(signed_json);
         return;
     }
 
@@ -704,7 +744,7 @@ static const gchar introspection_xml[] =
     "      <arg name='event_json' type='s' direction='in'/>"
     "      <arg name='current_user' type='s' direction='in'/>"
     "      <arg name='app_id' type='s' direction='in'/>"
-    "      <arg name='signature' type='s' direction='out'/>"
+    "      <arg name='signed_event' type='s' direction='out'/>"
     "    </method>"
     "    <method name='NIP04Encrypt'>"
     "      <arg name='plaintext' type='s' direction='in'/>"
@@ -1189,16 +1229,12 @@ test_dbus_sign_event_approved(DbusFixture *fix, gconstpointer user_data)
     g_assert_no_error(error);
     g_assert_nonnull(result);
 
-    const gchar *signature = NULL;
-    g_variant_get(result, "(&s)", &signature);
+    const gchar *signed_event = NULL;
+    g_variant_get(result, "(&s)", &signed_event);
 
-    /* Signature should be 128 hex characters (64 bytes) */
-    g_assert_cmpuint(strlen(signature), ==, 128);
-
-    /* Verify all characters are hex */
-    for (size_t i = 0; i < 128; i++) {
-        g_assert_true(g_ascii_isxdigit(signature[i]));
-    }
+    /* The complete signed event, signed by the configured key - not a bare
+     * 128-hex signature (the pre-0.2.0 contract). */
+    g_assert_true(signed_event_reply_ok(signed_event, fix->test_key_hex));
 
     g_variant_unref(result);
 }
@@ -2230,9 +2266,9 @@ concurrent_sign_thread(gpointer user_data)
 
         g_mutex_lock(&data->mutex);
         if (result) {
-            const gchar *sig = NULL;
-            g_variant_get(result, "(&s)", &sig);
-            if (sig && strlen(sig) == 128) {
+            const gchar *signed_event = NULL;
+            g_variant_get(result, "(&s)", &signed_event);
+            if (signed_event_reply_ok(signed_event, data->fix->test_key_hex)) {
                 data->requests_completed++;
             }
             g_variant_unref(result);
@@ -2302,8 +2338,7 @@ test_dbus_sign_malformed_json(DbusFixture *fix, gconstpointer user_data)
 
     mock_acl_allow("*");
 
-    /* Malformed JSON - note: mock currently just checks for empty,
-     * but real implementation would validate JSON */
+    /* Malformed JSON: the signer must refuse to sign it. */
     result = g_dbus_proxy_call_sync(
         fix->proxy,
         "SignEvent",
@@ -2313,12 +2348,13 @@ test_dbus_sign_malformed_json(DbusFixture *fix, gconstpointer user_data)
         NULL,
         &error);
 
-    /* Mock returns signature anyway, but this tests the protocol flow */
-    if (result) {
-        g_variant_unref(result);
-    } else {
-        g_clear_error(&error);
-    }
+    /* Not an event: a typed InvalidInput error, never a "signature". */
+    g_assert_null(result);
+    g_assert_nonnull(error);
+    gchar *remote = g_dbus_error_get_remote_error(error);
+    g_assert_cmpstr(remote, ==, ERR_INVALID_INPUT);
+    g_free(remote);
+    g_clear_error(&error);
 }
 
 static void
@@ -2406,9 +2442,9 @@ test_dbus_sign_very_large_event(DbusFixture *fix, gconstpointer user_data)
     g_assert_no_error(error);
     g_assert_nonnull(result);
 
-    const gchar *signature = NULL;
-    g_variant_get(result, "(&s)", &signature);
-    g_assert_cmpuint(strlen(signature), ==, 128);
+    const gchar *signed_event = NULL;
+    g_variant_get(result, "(&s)", &signed_event);
+    g_assert_true(signed_event_reply_ok(signed_event, fix->test_key_hex));
 
     g_variant_unref(result);
     g_free(event_json);

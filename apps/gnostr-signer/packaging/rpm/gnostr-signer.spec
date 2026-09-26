@@ -164,9 +164,9 @@ desktop-file-install \
     --dir=%{buildroot}%{_datadir}/applications \
     apps/gnostr-signer/packaging/appimage/gnostr-signer.desktop
 
-# Install D-Bus service file (process template if needed)
+# Install D-Bus service file from its template
 sed 's|@CMAKE_INSTALL_FULL_BINDIR@|%{_bindir}|g' \
-    apps/gnostr-signer/data/org.nostr.Signer.service > \
+    apps/gnostr-signer/data/org.nostr.Signer.service.in > \
     %{buildroot}%{_datadir}/dbus-1/services/%{dbus_name}.service
 
 # Install systemd user unit

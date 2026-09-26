@@ -302,6 +302,47 @@ target_include_directories(gnostr-signer-daemon PRIVATE ${NSYNC_INCLUDE_DIR})
 find_library(NSYNC_LIB nsync REQUIRED)
 target_link_libraries(gnostr-signer-daemon PRIVATE nostr_nip55l_glib nostr_nip5f_core nip04 PkgConfig::GLIB ${NSYNC_LIB})
 
+# NIP-46 bunker mode (--bunker). bunker_service.c and its GTK-free closure
+# (settings, accounts, secret store, sessions, rate limiter, history) build
+# into a static library for the headless daemon; the GUI keeps compiling its
+# own copy through APP_SRC.
+add_library(gnostr_signer_bunker_core STATIC
+  src/bunker_service.c src/accounts_store.c src/client_session.c
+  src/event_history.c src/gn-signer-error.c src/key_provider.c
+  src/key_provider_secp256k1.c src/rate-limiter.c src/secret_store.c
+  src/secure-delete.c src/secure-mem.c src/secure-memory.c
+  src/settings_manager.c)
+target_compile_features(gnostr_signer_bunker_core PRIVATE c_std_11)
+target_include_directories(gnostr_signer_bunker_core
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
+  PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/include ${CMAKE_SOURCE_DIR}/nips/nip46/include
+          ${CMAKE_SOURCE_DIR}/nips/nip19/include ${CMAKE_SOURCE_DIR}/libnostr/include
+          ${CMAKE_SOURCE_DIR}/nostr-gobject/include ${CMAKE_SOURCE_DIR})
+target_link_libraries(gnostr_signer_bunker_core PUBLIC
+  PkgConfig::GLIB PkgConfig::JSON_GLIB nostr_gobject nostr_nip55l_core)
+if (TARGET nostr_nip46_core)
+  target_link_libraries(gnostr_signer_bunker_core PUBLIC nostr_nip46_core)
+endif()
+if (TARGET nip19)
+  target_link_libraries(gnostr_signer_bunker_core PUBLIC nip19)
+endif()
+# Same secret-backend selection as the GUI build above.
+if (TARGET gnostr-secret)
+  target_link_libraries(gnostr_signer_bunker_core PUBLIC gnostr-secret)
+  target_compile_definitions(gnostr_signer_bunker_core PRIVATE GNOSTR_HAVE_LIBSECRET=1)
+elseif (LIBSECRET_FOUND)
+  target_link_libraries(gnostr_signer_bunker_core PUBLIC PkgConfig::LIBSECRET)
+endif()
+if (SODIUM_FOUND)
+  target_link_libraries(gnostr_signer_bunker_core PUBLIC PkgConfig::SODIUM)
+  target_compile_definitions(gnostr_signer_bunker_core PRIVATE GNOSTR_HAVE_SODIUM=1 HAVE_SODIUM=1)
+endif()
+if (SECP256K1_FOUND)
+  target_link_libraries(gnostr_signer_bunker_core PUBLIC PkgConfig::SECP256K1)
+  target_compile_definitions(gnostr_signer_bunker_core PRIVATE HAVE_SECP256K1=1)
+endif()
+target_link_libraries(gnostr-signer-daemon PRIVATE gnostr_signer_bunker_core)
+
 # Link libsodium for daemon secure memory if available
 if (SODIUM_FOUND)
   target_link_libraries(gnostr-signer-daemon PRIVATE PkgConfig::SODIUM)
@@ -343,8 +384,26 @@ endif()
 
 # GSettings schema
 install(FILES data/org.gnostr.Signer.gschema.xml DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/glib-2.0/schemas)
-# DBus service (session)
-install(FILES data/org.nostr.Signer.service DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/dbus-1/services)
+# DBus activation (session). gnostr-signer is the single owner of
+# org.nostr.Signer.service; nips/nip55l installs its own copy only with
+# ENABLE_NIP55L_STANDALONE_ACTIVATION, and the two must never coexist.
+if(ENABLE_NIP55L_STANDALONE_ACTIVATION)
+  message(FATAL_ERROR
+    "ENABLE_NIP55L_STANDALONE_ACTIVATION=ON installs nips/nip55l's org.nostr.Signer.service, "
+    "which gnostr-signer also owns. Build gnostr-signer with it OFF (the default).")
+endif()
+# Configured, not copied: the installed file needs an absolute Exec= path.
+configure_file(data/org.nostr.Signer.service.in
+               ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Signer.service @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Signer.service
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/dbus-1/services)
+if(BUILD_TESTING)
+  add_test(NAME gnostr_signer_dbus_service_configured
+           COMMAND ${CMAKE_COMMAND}
+                   -DSERVICE_FILE=${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Signer.service
+                   -P ${CMAKE_SOURCE_DIR}/cmake/CheckDbusServiceFile.cmake)
+  set_tests_properties(gnostr_signer_dbus_service_configured PROPERTIES LABELS "signer;packaging")
+endif()
 # Systemd user unit (daemon) — Unix only
 if(NOT WIN32)
   install(FILES daemon/packaging/systemd/user/gnostr-signer-daemon.service

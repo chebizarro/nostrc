@@ -3,11 +3,16 @@ Description=GNostr Signer Daemon - Secure Nostr Key Management Service
 Documentation=https://github.com/chebizarro/nostrc
 After=default.target dbus.service
 Wants=dbus.service
+# A daemon that loses org.nostr.Signer to another owner exits nonzero
+# (NAME_TAKEN); cap restarts so a stale second package cannot flap-loop.
+StartLimitIntervalSec=60s
+StartLimitBurst=3
 
 [Service]
 Type=dbus
 BusName=org.nostr.Signer
 ExecStart=/usr/bin/gnostr-signer-daemon
+# NIP-46 bunker mode: see gnostr-signer-daemon.service.d/bunker.conf.example
 ExecReload=/bin/kill -HUP $MAINPID
 
 # Set endpoint with unix socket by default under XDG_RUNTIME_DIR
@@ -17,8 +22,6 @@ Environment=G_MESSAGES_DEBUG=
 # Restart policy
 Restart=on-failure
 RestartSec=5s
-StartLimitInterval=60s
-StartLimitBurst=3
 
 # Resource limits
 LimitNOFILE=4096

@@ -28,7 +28,7 @@
     <!-- ==================== Signing Methods ==================== -->
 
     <!--
-      SignEvent: Sign a Nostr event JSON and return the Schnorr signature.
+      SignEvent: Sign a Nostr event JSON and return the complete signed event.
       May trigger user approval dialog if no cached ACL decision exists.
 
       Parameters:
@@ -36,19 +36,24 @@
         current_user - Identity selector (npub, key_id, or empty for default)
         app_id      - Application identifier for ACL (uses D-Bus sender if empty)
 
-      Returns: signature (string) - Hex-encoded 64-byte Schnorr signature
+      Returns: signed_event (string) - The complete signed event JSON: id,
+        pubkey, created_at, kind, tags, content and sig. pubkey is always the
+        signing key's; a zero or missing created_at is filled with the current
+        time. (nip55l 0.2.0 contract. Earlier signers returned only the
+        hex-encoded 64-byte Schnorr signature; parse the result as JSON.)
 
       Errors:
-        org.nostr.Signer.Error.InvalidInput  - Malformed event JSON
-        org.nostr.Signer.Error.ApprovalDenied - User denied the request
-        org.nostr.Signer.Error.RateLimited   - Rate limit exceeded (100ms cooldown)
-        org.nostr.Signer.Error.Internal      - Signing operation failed
+        org.nostr.Signer.Error.InvalidInput    - Malformed event JSON
+        org.nostr.Signer.Error.ApprovalDenied  - User denied the request
+        org.nostr.Signer.Error.RateLimited     - Rate limit exceeded (100ms cooldown)
+        org.nostr.Signer.Error.NoKeyConfigured - No key for the identity
+        org.nostr.Signer.Error.Internal        - Signing operation failed
     -->
     <method name="SignEvent">
       <arg name="event_json" type="s" direction="in"/>
       <arg name="current_user" type="s" direction="in"/>
       <arg name="app_id" type="s" direction="in"/>
-      <arg name="signature" type="s" direction="out"/>
+      <arg name="signed_event" type="s" direction="out"/>
     </method>
 
     <!-- ==================== NIP-44 Encryption (Modern, Recommended) ==================== -->
@@ -163,8 +168,14 @@
     <!-- ==================== Relay Configuration ==================== -->
 
     <!--
-      GetRelays: Returns the list of configured relay URLs.
+      GetRelays: Returns the user's explicitly configured relay URLs, read
+      from $XDG_CONFIG_HOME/nostr/relays.conf, else the relays set in
+      gnostr-signer. Never fetched from the network.
       Returns: relays_json (string) - JSON array of relay URLs
+      Errors:
+        org.nostr.Signer.Error.NotFound      - Nothing configured; callers
+                                               fall back to their own relays
+        org.nostr.Signer.Error.InvalidConfig - relays.conf is malformed
     -->
     <method name="GetRelays">
       <arg name="relays_json" type="s" direction="out"/>

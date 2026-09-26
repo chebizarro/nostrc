@@ -261,8 +261,14 @@ install_data('data/org.gnostr.Signer.gschema.xml',
   install_dir: get_option('datadir') / 'glib-2.0' / 'schemas',
 )
 
-# Install D-Bus service file
-install_data('data/org.nostr.Signer.service',
+# Install D-Bus activation file, configured with the absolute daemon path
+dbus_service_conf = configuration_data()
+dbus_service_conf.set('CMAKE_INSTALL_FULL_BINDIR', get_option('prefix') / get_option('bindir'))
+configure_file(
+  input: 'data/org.nostr.Signer.service.in',
+  output: 'org.nostr.Signer.service',
+  configuration: dbus_service_conf,
+  format: 'cmake@',
   install_dir: get_option('datadir') / 'dbus-1' / 'services',
 )
 

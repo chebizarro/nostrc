@@ -10,6 +10,7 @@
 #include "nostr_dbus.h"
 #include <openssl/evp.h>
 #include <gio/gio.h>
+#include "nostr-event.h"
 
 /* Base64url encode (no padding). Caller must free result. */
 static char *base64url_encode(const unsigned char *data, size_t len){
@@ -86,8 +87,9 @@ static size_t file_read(void *ptr, size_t size, size_t nmemb, void *userdata){
  *   tags: [["u",url],["method","PUT"],["payload",sha256hex]]
  *   content: ""
  *
- * Signs via org.nostr.Signer.SignEvent, then base64url-encodes the
- * signed event JSON. Returns "Nostr <b64url>" or NULL on failure.
+ * Signs via org.nostr.Signer.SignEvent, which returns the complete signed
+ * event (nip55l 0.2.0), verifies it, then base64url-encodes that JSON.
+ * Returns "Nostr <b64url>" or NULL on failure.
  * Caller must free the result.
  */
 static char *build_nip98_auth_header(const char *url, const char *sha256hex){
@@ -121,24 +123,25 @@ static char *build_nip98_auth_header(const char *url, const char *sha256hex){
     return NULL;
   }
 
-  const char *sig = NULL;
-  g_variant_get(ret, "(&s)", &sig);
-
-  /* Build the signed event JSON with the signature included.
-   * Re-serialize with sig field appended. */
-  char signed_json[4096];
-  snprintf(signed_json, sizeof signed_json,
-    "{\"kind\":27235,\"created_at\":%lld,"
-    "\"tags\":[[\"u\",\"%s\"],[\"method\",\"PUT\"],[\"payload\",\"%s\"]],"
-    "\"content\":\"\",\"sig\":\"%s\"}",
-    (long long)now, url, sha256hex, sig ? sig : "");
-
-  g_variant_unref(ret);
-  g_object_unref(bus);
+  /* The reply is the signed event itself. Send it only if it is a
+   * well-formed, correctly signed kind-27235 event: a server would reject
+   * anything else, and a malformed reply must not become a header. */
+  const char *signed_json = NULL;
+  g_variant_get(ret, "(&s)", &signed_json);
+  int ok = 0;
+  NostrEvent *ev = nostr_event_new();
+  if (ev && signed_json &&
+      nostr_event_deserialize_signed(ev, signed_json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+      nostr_event_check_signature(ev) && nostr_event_get_kind(ev) == 27235) {
+    ok = 1;
+  }
+  if (ev) nostr_event_free(ev);
 
   /* Base64url encode the signed event JSON */
-  char *b64 = base64url_encode((const unsigned char*)signed_json,
-                                strlen(signed_json));
+  char *b64 = ok ? base64url_encode((const unsigned char*)signed_json,
+                                     strlen(signed_json)) : NULL;
+  g_variant_unref(ret);
+  g_object_unref(bus);
   if (!b64) return NULL;
 
   /* Build "Nostr <b64url>" header value */

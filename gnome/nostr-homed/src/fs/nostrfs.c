@@ -213,17 +213,41 @@ static int dbus_get_npub(char **out_npub){
   g_object_unref(bus); return rc;
 }
 
-static int dbus_sign_event_set_sig(NostrEvent *ev){
-  char *json = nostr_event_serialize_compact(ev); if (!json) return -1;
+/* org.nostr.Signer.SignEvent returns the complete signed event (nip55l
+ * 0.2.0). The reply is only accepted if it verifies (canonical id + Schnorr
+ * sig) and is signed by the key we asked about; it then replaces the
+ * template, so the id/pubkey/sig that get published all come from one
+ * signing operation. */
+static int dbus_sign_event(NostrEvent *tmpl, NostrEvent **out_signed){
+  *out_signed = NULL;
+  char *json = nostr_event_serialize_compact(tmpl); if (!json) return -1;
   const char *busname = nh_signer_bus_name();
   GError *err=NULL; GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
   if (!bus){ if (err) g_error_free(err); free(json); return -1; }
-  /* current_user/app_id left empty for now */
+  /* current_user left empty: the signer's default identity */
   GVariant *ret = g_dbus_connection_call_sync(bus, busname, "/org/nostr/signer", "org.nostr.Signer", "SignEvent",
-                   g_variant_new("(sss)", json, "", "nostrfs"), G_VARIANT_TYPE_TUPLE, G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
+                   g_variant_new("(sss)", json, "", "nostrfs"), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
   free(json);
-  int rc=-1; if (ret){ const char *sig=NULL; g_variant_get(ret, "(s)", &sig); if (sig){ nostr_event_set_sig(ev, sig); rc=0; } g_variant_unref(ret);} if (err){ warn_throttle("sign", "SignEvent failed"); g_error_free(err);} 
-  g_object_unref(bus); return rc;
+  g_object_unref(bus);
+  if (!ret){ warn_throttle("sign", "SignEvent failed"); if (err) g_error_free(err); return -1; }
+  const char *signed_json = NULL; g_variant_get(ret, "(&s)", &signed_json);
+  NostrEvent *signed_ev = nostr_event_new();
+  int rc = -1;
+  if (signed_ev && signed_json &&
+      nostr_event_deserialize_signed(signed_ev, signed_json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+      nostr_event_check_signature(signed_ev)) {
+    const char *want = nostr_event_get_pubkey(tmpl);
+    const char *got = nostr_event_get_pubkey(signed_ev);
+    if (want && got && strcmp(want, got) == 0 &&
+        nostr_event_get_kind(signed_ev) == nostr_event_get_kind(tmpl)) rc = 0;
+    else warn_throttle("sign", "SignEvent signed with an unexpected key or kind");
+  } else {
+    warn_throttle("sign", "SignEvent reply is not a valid signed event");
+  }
+  g_variant_unref(ret);
+  if (rc != 0){ if (signed_ev) nostr_event_free(signed_ev); return -1; }
+  *out_signed = signed_ev;
+  return 0;
 }
 
 static void publish_best_effort(nostrfs_ctx *ctx, const char *content_json){
@@ -242,7 +266,9 @@ static void publish_best_effort(nostrfs_ctx *ctx, const char *content_json){
     if (t){ NostrTags *tags = nostr_tags_new(1, t); if (tags) nostr_event_set_tags(ev, tags); }
   }
   char *npub=NULL; if (dbus_get_npub(&npub)==0 && npub){ char pkh[65]; if (decode_npub_hex(npub, pkh)==0) nostr_event_set_pubkey(ev, pkh); free(npub);} else { /* no pubkey; skip */ nostr_event_free(ev); return; }
-  if (dbus_sign_event_set_sig(ev) != 0){ nostr_event_free(ev); return; }
+  { NostrEvent *signed_ev = NULL;
+    if (dbus_sign_event(ev, &signed_ev) != 0){ nostr_event_free(ev); return; }
+    nostr_event_free(ev); ev = signed_ev; }
   /* Build a base bootstrap relay list from RELAYS_DEFAULT or fallback */
   const char *env = getenv("RELAYS_DEFAULT"); const char *fallback = "wss://nos.lol,wss://nostr.wine";
   const char *base_list[16]; size_t base_count = 0;

@@ -1,11 +1,23 @@
 #ifndef NOSTR_NIP55L_SIGNER_OPS_H
 #define NOSTR_NIP55L_SIGNER_OPS_H
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/* nip55l component version (see VERSION_MANIFEST.md). 0.2.0: the
+ * org.nostr.Signer.SignEvent D-Bus method returns the complete signed event
+ * JSON (nostr_nip55l_sign_event_json) instead of the bare signature. */
+#define NOSTR_NIP55L_VERSION_MAJOR 0
+#define NOSTR_NIP55L_VERSION_MINOR 2
+#define NOSTR_NIP55L_VERSION_PATCH 0
+#define NOSTR_NIP55L_VERSION_STRING "0.2.0"
+
 int nostr_nip55l_get_public_key(char **out_npub);
+/* Returns only the 128-hex Schnorr signature. In-process helper; the D-Bus
+ * SignEvent method no longer returns this shape (see sign_event_json). */
 int nostr_nip55l_sign_event(const char *event_json,
                             const char *current_user,
                             const char *app_id,
@@ -21,7 +33,10 @@ int nostr_nip55l_sign_event_full(const char *event_json,
                                  char **out_pubkey_hex,
                                  char **out_signature);
 /* Sign an event and return the complete signed event JSON.
- * The returned JSON includes id, pubkey, created_at, kind, tags, content, sig.
+ * The returned JSON includes id, pubkey, created_at, kind, tags, content, sig;
+ * pubkey is always the signing key's (any caller-supplied pubkey is replaced)
+ * and a zero created_at is filled with the current time.
+ * This is what org.nostr.Signer.SignEvent returns over D-Bus.
  * Caller frees the result with free(). */
 int nostr_nip55l_sign_event_json(const char *event_json,
                                  const char *current_user,
@@ -64,7 +79,21 @@ int nostr_nip55l_nip44_decrypt_b64(const char *cipher_b64, const char *peer_pub_
                                    const char *current_user, char **out_plaintext_b64);
 int nostr_nip55l_decrypt_zap_event(const char *event_json,
                                    const char *current_user, char **out_json);
+/* GetRelays: the user's explicitly configured relays as a JSON array of
+ * normalised ws:// / wss:// URL strings, read from
+ * $XDG_CONFIG_HOME/nostr/relays.conf (default ~/.config/nostr/relays.conf).
+ * Never touches the network.
+ * Returns NOSTR_SIGNER_ERROR_NOT_FOUND when the file is absent or lists no
+ * relays, NOSTR_SIGNER_ERROR_INVALID_JSON when it is malformed. */
 int nostr_nip55l_get_relays(char **out_relays_json);
+/* Parse and normalise a relays.conf document: a JSON array of relay URL
+ * strings (no JSON escapes, at most 64 entries, 64 KiB). Scheme and host are
+ * lowercased, a bare trailing "/" is dropped, duplicates are removed.
+ * NOT_FOUND for an empty array, INVALID_JSON for anything else malformed. */
+int nostr_nip55l_relays_normalize_json(const char *doc, size_t len, char **out_relays_json);
+/* Same normalisation for an in-memory URL list. INVALID_ARG if any entry is
+ * not a relay URL, NOT_FOUND if n == 0. */
+int nostr_nip55l_relays_from_list(const char *const *urls, size_t n, char **out_relays_json);
 
 /* Optional private key storage using libsecret when available. */
 int nostr_nip55l_store_key(const char *key, const char *identity);

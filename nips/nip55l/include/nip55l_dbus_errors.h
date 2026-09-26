@@ -8,5 +8,9 @@
 #define ORG_NOSTR_SIGNER_ERR_INVALID_INPUT  "org.nostr.Signer.Error.InvalidInput"
 #define ORG_NOSTR_SIGNER_ERR_INTERNAL       "org.nostr.Signer.Error.Internal"
 #define ORG_NOSTR_SIGNER_ERR_NO_KEY         "org.nostr.Signer.Error.NoKeyConfigured"
+/* GetRelays: nothing configured. Callers fall back to their own relays. */
+#define ORG_NOSTR_SIGNER_ERR_NOT_FOUND      "org.nostr.Signer.Error.NotFound"
+/* GetRelays: $XDG_CONFIG_HOME/nostr/relays.conf exists but is malformed. */
+#define ORG_NOSTR_SIGNER_ERR_INVALID_CONFIG "org.nostr.Signer.Error.InvalidConfig"
 
 #endif /* NIP55L_DBUS_ERRORS_H */

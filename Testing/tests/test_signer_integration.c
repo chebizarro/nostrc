@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "nostr/nip55l/signer_ops.h"
+#include "nostr/nip55l/error.h"
 #include "nostr-event.h"
 #include "nostr-keys.h"
 #include "nostr-json.h"
@@ -288,21 +289,31 @@ static int test_nip44_unicode(const char *peer_pk_hex) {
     return 0;
 }
 
-/* Test 6: GetRelays returns valid JSON */
+/* Test 6: GetRelays returns either a valid JSON array of relays or NOT_FOUND
+ *
+ * As of nip55l 0.2.0 GetRelays no longer returns a stub "[]" placeholder: it
+ * reads $XDG_CONFIG_HOME/nostr/relays.conf (or the gnostr-signer relays
+ * GSetting) and returns NOT_FOUND when neither source has an entry. Callers
+ * fall back to their own configured relays; treating this as fatal was the
+ * old contract. Nothing this integration harness owns writes a relays.conf
+ * ahead of time, so on a fresh CI host we expect NOT_FOUND; when a developer
+ * has one configured we accept the resulting array. */
 static int test_get_relays(void) {
-    TEST_START("GetRelays returns valid JSON");
+    TEST_START("GetRelays returns configured relays or NOT_FOUND");
 
     char *relays = NULL;
     int rc = nostr_nip55l_get_relays(&relays);
-    if (rc != 0) TEST_FAIL("nostr_nip55l_get_relays returned error");
+    if (rc == NOSTR_SIGNER_ERROR_NOT_FOUND) {
+        if (relays != NULL) TEST_FAIL("NOT_FOUND must set relays=NULL");
+        TEST_PASS();
+        return 0;
+    }
+    if (rc != 0) TEST_FAIL("nostr_nip55l_get_relays returned unexpected error");
     if (!relays) TEST_FAIL("relays is NULL");
-
-    /* Should be valid JSON (at minimum an empty array) */
     if (relays[0] != '[') {
         free(relays);
         TEST_FAIL("relays not a JSON array");
     }
-
     free(relays);
     TEST_PASS();
     return 0;

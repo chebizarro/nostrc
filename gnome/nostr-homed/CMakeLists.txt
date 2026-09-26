@@ -733,6 +733,22 @@ if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
       COMMAND test_homectl_open_session_failures)
     set_tests_properties(homed_homectl_open_session_failures PROPERTIES
       LABELS "nostr-homed;experimental-roaming;roaming-safety" TIMEOUT 60)
+
+    # org.nostr.Signer mock used by the integration runners. It signs for
+    # real with a fixed test key, so its SignEvent replies follow the nip55l
+    # 0.2.0 contract (complete signed event JSON) that nostrfs and the
+    # Blossom NIP-98 path verify. The contract test drives it on a private
+    # bus and checks the reply cryptographically.
+    add_executable(mock_signer tests/integration/mock_signer.c)
+    target_link_libraries(mock_signer PRIVATE libnostr nip19 PkgConfig::GLIB2)
+    target_compile_options(mock_signer PRIVATE -Wall -Wextra -Werror)
+    add_executable(test_mock_signer_contract tests/integration/test_mock_signer_contract.c)
+    target_link_libraries(test_mock_signer_contract PRIVATE libnostr nip19 PkgConfig::GLIB2)
+    target_compile_options(test_mock_signer_contract PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME homed_mock_signer_contract
+      COMMAND test_mock_signer_contract $<TARGET_FILE:mock_signer>)
+    set_tests_properties(homed_mock_signer_contract PROPERTIES
+      LABELS "nostr-homed;experimental-roaming;signer-contract" TIMEOUT 60)
   endif()
 
   install(FILES dbus/org.nostr.Homed1.xml

@@ -3,11 +3,19 @@
     <method name="GetPublicKey">
       <arg type="s" direction="out" name="npub" />
     </method>
+    <!-- SignEvent (nip55l 0.2.0): signs an unsigned event and returns the
+         COMPLETE signed event JSON - id, pubkey, created_at, kind, tags,
+         content and sig. pubkey is always the signing key's; a zero or
+         missing created_at is filled with the current time. Before 0.2.0
+         this method returned only the 128-hex Schnorr signature; callers
+         must parse signed_event rather than treat it as a signature.
+         Errors: Error.InvalidInput (not an event), Error.ApprovalDenied,
+         Error.RateLimited, Error.NoKeyConfigured, Error.Internal. -->
     <method name="SignEvent">
       <arg type="s" direction="in" name="eventJson" />
       <arg type="s" direction="in" name="identity" />
       <arg type="s" direction="in" name="app_id" />
-      <arg type="s" direction="out" name="signature" />
+      <arg type="s" direction="out" name="signed_event" />
     </method>
     <method name="NIP04Encrypt">
       <arg type="s" direction="in" name="plaintext" />
@@ -56,6 +64,12 @@
       <arg type="s" direction="in" name="identity" />
       <arg type="s" direction="out" name="decryptedEvent" />
     </method>
+    <!-- GetRelays: JSON array of the user's explicitly configured relay
+         URLs, from $XDG_CONFIG_HOME/nostr/relays.conf, else the relays set
+         in gnostr-signer. Never fetched from the network. Returns
+         Error.NotFound when nothing is configured - callers fall back to
+         their own relay set - and Error.InvalidConfig for a malformed
+         relays.conf. -->
     <method name="GetRelays">
       <arg type="s" direction="out" name="relaysJson" />
     </method>

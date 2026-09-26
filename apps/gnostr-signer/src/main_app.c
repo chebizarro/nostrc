@@ -293,7 +293,10 @@ static void on_approval_requested(GDBusConnection *connection,
   (void)connection; (void)sender_name; (void)object_path; (void)interface_name; (void)signal_name;
   AppUI *ui = (AppUI*)user_data;
   const gchar *app_id=NULL, *identity=NULL, *kind=NULL, *preview=NULL, *request_id=NULL;
-  g_variant_get(parameters, "(sssss)", &app_id, &identity, &kind, &preview, &request_id);
+  g_variant_get(parameters, "(&s&s&s&s&s)", &app_id, &identity, &kind, &preview, &request_id);
+  /* The main window can be created after the subscription (onboarding runs
+   * first on a fresh install), so parent the dialog on whatever is active. */
+  ui->win = global_app ? gtk_application_get_active_window(global_app) : NULL;
   g_message("ApprovalRequested: app_id=%s identity=%s kind=%s request_id=%s", app_id?app_id:"(null)", identity?identity:"(null)", kind?kind:"(null)", request_id?request_id:"(null)");
   /* De-dup: if we already have a pending prompt for this request_id, ignore duplicates */
   if (ui && ui->pending && request_id && *request_id) {
@@ -571,11 +574,32 @@ static void on_secrets_sync_complete(AccountsStore *as, gpointer user_data) {
 /* Global deferred state for D-Bus connection */
 static GDBusConnection *deferred_dbus_conn = NULL;
 static guint deferred_dbus_signal_subscription = 0;
+static guint deferred_dbus_completed_subscription = 0;
+/* Lives for the process: the signal subscriptions reference it. */
+static AppUI *approval_ui = NULL;
+
+/* ApprovalCompleted: the daemon resolved a request (here, from another
+ * client, or on its own). Forget it so a later prompt is not suppressed. */
+static void on_approval_completed(GDBusConnection *connection,
+                                  const gchar *sender_name,
+                                  const gchar *object_path,
+                                  const gchar *interface_name,
+                                  const gchar *signal_name,
+                                  GVariant *parameters,
+                                  gpointer user_data){
+  (void)connection; (void)sender_name; (void)object_path; (void)interface_name; (void)signal_name;
+  AppUI *ui = (AppUI*)user_data;
+  const gchar *request_id = NULL; gboolean decision = FALSE;
+  g_variant_get(parameters, "(&sb)", &request_id, &decision);
+  g_debug("ApprovalCompleted: request_id=%s decision=%s", request_id ? request_id : "(null)",
+          decision ? "allow" : "deny");
+  if (ui && ui->pending && request_id) g_hash_table_remove(ui->pending, request_id);
+}
 
 /* Callback when async D-Bus connection completes */
 static void on_dbus_connected(GObject *source, GAsyncResult *res, gpointer user_data) {
   (void)source;
-  (void)user_data;
+  AccountsStore *as = (AccountsStore*)user_data;
 
   GError *err = NULL;
   deferred_dbus_conn = g_bus_get_finish(res, &err);
@@ -588,6 +612,24 @@ static void on_dbus_connected(GObject *source, GAsyncResult *res, gpointer user_
   }
 
   g_debug("D-Bus connection established in deferred init");
+
+  /* Subscribe to the daemon's approval signals. Without this, a SignEvent
+   * that needs the user's decision waits on a prompt nobody shows. */
+  approval_ui = g_new0(AppUI, 1);
+  approval_ui->bus = deferred_dbus_conn;
+  approval_ui->accounts = as;
+  approval_ui->policy = policy_store_new();
+  policy_store_load(approval_ui->policy);
+  approval_ui->pending = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  deferred_dbus_signal_subscription = g_dbus_connection_signal_subscribe(
+      deferred_dbus_conn, SIGNER_NAME, SIGNER_NAME, "ApprovalRequested", SIGNER_PATH,
+      NULL, G_DBUS_SIGNAL_FLAGS_NONE, on_approval_requested, approval_ui, NULL);
+  deferred_dbus_completed_subscription = g_dbus_connection_signal_subscribe(
+      deferred_dbus_conn, SIGNER_NAME, SIGNER_NAME, "ApprovalCompleted", SIGNER_PATH,
+      NULL, G_DBUS_SIGNAL_FLAGS_NONE, on_approval_completed, approval_ui, NULL);
+  g_debug("Subscribed to %s approval signals (ids %u, %u)", SIGNER_NAME,
+          deferred_dbus_signal_subscription, deferred_dbus_completed_subscription);
+
   STARTUP_TIME_END(STARTUP_PHASE_DBUS);
 }
 
@@ -611,7 +653,7 @@ static gboolean deferred_init_cb(gpointer user_data) {
 
   /* Start async D-Bus connection (for approval signal subscription) */
   STARTUP_TIME_BEGIN(STARTUP_PHASE_DBUS);
-  g_bus_get(G_BUS_TYPE_SESSION, NULL, on_dbus_connected, NULL);
+  g_bus_get(G_BUS_TYPE_SESSION, NULL, on_dbus_connected, as);
 
   startup_timing_measure_end(deferred_start, "deferred-init-scheduled", 50);
 

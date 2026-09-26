@@ -158,6 +158,22 @@ static gchar *build_event_preview(const char *event_json){
   for (gsize i=0;i<len;i++){ if (frag[i]=='\n' || frag[i]=='\r') frag[i]=' '; }
   return frag;
 }
+/* Map a core signing failure onto the D-Bus error a caller can act on. */
+static void return_sign_error(GDBusMethodInvocation *invocation, int rc){
+  switch (rc) {
+    case NOSTR_SIGNER_ERROR_INVALID_JSON:
+    case NOSTR_SIGNER_ERROR_INVALID_ARG:
+      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "event JSON is not a valid Nostr event");
+      break;
+    case NOSTR_SIGNER_ERROR_NOT_FOUND:
+      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_KEY, "no key configured for this identity");
+      break;
+    default:
+      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "sign failed");
+      break;
+  }
+}
+
 /* ========== Generated handler glue ========== */
 static gboolean handle_get_public_key(NostrSigner *object, GDBusMethodInvocation *invocation)
 {
@@ -190,10 +206,11 @@ static gboolean handle_sign_event(NostrSigner *object, GDBusMethodInvocation *in
   gboolean acl_decision = FALSE;
   if (acl_load_decision("SignEvent", app_id, identity, &acl_decision)) {
     if (acl_decision) {
-      char *sig=NULL; int rc = nostr_nip55l_sign_event(eventJson, identity, app_id, &sig);
-      if (rc!=0 || !sig) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "sign failed"); return TRUE; }
-      nostr_signer_complete_sign_event(object, invocation, sig);
-      free(sig); return TRUE;
+      /* nip55l 0.2.0 contract: SignEvent returns the complete signed event. */
+      char *signed_json=NULL; int rc = nostr_nip55l_sign_event_json(eventJson, identity, app_id, &signed_json);
+      if (rc!=0 || !signed_json) { return_sign_error(invocation, rc); return TRUE; }
+      nostr_signer_complete_sign_event(object, invocation, signed_json);
+      free(signed_json); return TRUE;
     } else {
       g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy");
       return TRUE;
@@ -247,13 +264,13 @@ static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocatio
             g_message("approve: identity empty and active npub unavailable (rc=%d)", grc);
           }
         }
-        char *sig=NULL; int rc = nostr_nip55l_sign_event(ps->event_json, ps->identity, ps->app_id, &sig);
+        char *signed_json=NULL; int rc = nostr_nip55l_sign_event_json(ps->event_json, ps->identity, ps->app_id, &signed_json);
         g_message("approve: signing rc=%d app_id=%s identity=%s", rc, ps->app_id?ps->app_id:"(null)", ps->identity?ps->identity:"(null)");
-        if (rc==0 && sig) {
+        if (rc==0 && signed_json) {
           nostr_signer_complete_approve_request(object, invocation, TRUE);
-          g_dbus_method_invocation_return_value(ps->invocation, g_variant_new("(s)", sig));
-          g_message("approve: sign success, returning signature");
-          free(sig);
+          nostr_signer_complete_sign_event(object, ps->invocation, signed_json);
+          g_message("approve: sign success, returning signed event");
+          free(signed_json);
           if (remember) {
             acl_save_decision("SignEvent",
                               (ps->app_id && *ps->app_id) ? ps->app_id : (sender?sender:""),
@@ -263,7 +280,7 @@ static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocatio
           }
         } else {
           g_message("approve: sign failed, returning error");
-          g_dbus_method_invocation_return_dbus_error(ps->invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "sign failed");
+          return_sign_error(ps->invocation, rc);
           nostr_signer_complete_approve_request(object, invocation, FALSE);
         }
       } else {
@@ -360,10 +377,51 @@ static gboolean handle_decrypt_zap_event(NostrSigner *object, GDBusMethodInvocat
   free(out); return TRUE;
 }
 
+/* GetRelays source 2: the relay set a user configured in the gnostr-signer
+ * GUI (GSettings org.gnostr.Signer "relays"). Only an explicitly written
+ * value counts; the schema default is a list of public relays, not the
+ * user's configuration. Absent schema (headless nip55l install) = no source. */
+#define GNOSTR_SIGNER_SCHEMA_ID "org.gnostr.Signer"
+static int get_relays_from_gsettings(char **out_json){
+  *out_json = NULL;
+  GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+  GSettingsSchema *schema = src ? g_settings_schema_source_lookup(src, GNOSTR_SIGNER_SCHEMA_ID, TRUE) : NULL;
+  if (!schema) return NOSTR_SIGNER_ERROR_NOT_FOUND;
+  gboolean has_key = g_settings_schema_has_key(schema, "relays");
+  g_settings_schema_unref(schema);
+  if (!has_key) return NOSTR_SIGNER_ERROR_NOT_FOUND;
+  GSettings *settings = g_settings_new(GNOSTR_SIGNER_SCHEMA_ID);
+  GVariant *user = g_settings_get_user_value(settings, "relays");
+  g_object_unref(settings);
+  if (!user) return NOSTR_SIGNER_ERROR_NOT_FOUND;
+  gsize n = 0;
+  const gchar **urls = g_variant_get_strv(user, &n);
+  int rc = nostr_nip55l_relays_from_list(urls, n, out_json);
+  g_free(urls);
+  g_variant_unref(user);
+  if (rc == NOSTR_SIGNER_ERROR_INVALID_ARG) {
+    g_warning("GetRelays: ignoring invalid relay URL in %s relays setting", GNOSTR_SIGNER_SCHEMA_ID);
+    rc = NOSTR_SIGNER_ERROR_NOT_FOUND;
+  }
+  return rc;
+}
+
 static gboolean handle_get_relays(NostrSigner *object, GDBusMethodInvocation *invocation)
 {
   (void)object;
   char *out=NULL; int rc = nostr_nip55l_get_relays(&out);
+  if (rc == NOSTR_SIGNER_ERROR_NOT_FOUND) rc = get_relays_from_gsettings(&out);
+  if (rc == NOSTR_SIGNER_ERROR_NOT_FOUND) {
+    /* Expected state, not a failure: callers fall back to their own relays. */
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_NOT_FOUND,
+      "no relays configured ($XDG_CONFIG_HOME/nostr/relays.conf or gnostr-signer relays)");
+    return TRUE;
+  }
+  if (rc == NOSTR_SIGNER_ERROR_INVALID_JSON) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_CONFIG,
+      "relays.conf is malformed: expected a JSON array of ws:// or wss:// URL strings");
+    return TRUE;
+  }
   if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "get relays failed"); return TRUE; }
   nostr_signer_complete_get_relays(object, invocation, out);
   free(out); return TRUE;

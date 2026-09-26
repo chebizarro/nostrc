@@ -5,6 +5,7 @@
 #include "nostr/nip55l/signer_ops.h"
 #include "nostr/nip55l/error.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -577,14 +578,193 @@ int nostr_nip55l_decrypt_zap_event(const char *event_json,
   *out_json = js; return 0;
 }
 
+/* ---- GetRelays: explicit per-user relay configuration ----
+ *
+ * The signer answers GetRelays only from configuration the user (or an
+ * enrollment tool) wrote down; it never fetches NIP-65 lists from the
+ * network. The document is a JSON array of ws:// or wss:// URL strings.
+ * Relay URLs never need JSON escapes, so the parser refuses them rather than
+ * decoding them: anything that is not a plain printable URL is a
+ * configuration error, reported as such instead of being silently dropped. */
+
+#define NIP55L_RELAYS_MAX_DOC   (64u * 1024u)
+#define NIP55L_RELAYS_MAX_COUNT 64u
+#define NIP55L_RELAY_URL_MAX    512u
+
+typedef struct {
+  char *v[NIP55L_RELAYS_MAX_COUNT];
+  size_t n;
+} relay_set;
+
+static void relay_set_clear(relay_set *rs){
+  for (size_t i = 0; i < rs->n; i++) free(rs->v[i]);
+  rs->n = 0;
+}
+
+static int ascii_prefix_ci(const char *s, size_t len, const char *prefix){
+  size_t pl = strlen(prefix);
+  if (len < pl) return 0;
+  for (size_t i = 0; i < pl; i++) {
+    char c = s[i];
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    if (c != prefix[i]) return 0;
+  }
+  return 1;
+}
+
+/* Lowercases scheme and host, drops a bare trailing "/" path. NULL if the
+ * URL is not an acceptable relay URL. */
+static char *relay_url_normalize(const char *s, size_t len){
+  if (!s || len == 0 || len > NIP55L_RELAY_URL_MAX) return NULL;
+  size_t scheme_len;
+  if (ascii_prefix_ci(s, len, "wss://")) scheme_len = 6;
+  else if (ascii_prefix_ci(s, len, "ws://")) scheme_len = 5;
+  else return NULL;
+  for (size_t i = 0; i < len; i++) {
+    unsigned char c = (unsigned char)s[i];
+    if (c <= 0x20 || c >= 0x7f || c == '"' || c == '\\' || c == '<' || c == '>') return NULL;
+  }
+  size_t host_end = scheme_len;
+  while (host_end < len && s[host_end] != '/' && s[host_end] != '?' && s[host_end] != '#') host_end++;
+  if (host_end == scheme_len) return NULL;
+  char *out = (char*)malloc(len + 1);
+  if (!out) return NULL;
+  memcpy(out, s, len);
+  out[len] = '\0';
+  for (size_t i = 0; i < host_end; i++) {
+    if (out[i] >= 'A' && out[i] <= 'Z') out[i] = (char)(out[i] - 'A' + 'a');
+  }
+  if (host_end == len - 1 && out[host_end] == '/') out[host_end] = '\0';
+  return out;
+}
+
+/* Takes ownership of url. 0 on success (duplicates are dropped), -1 when the
+ * set is full. */
+static int relay_set_add(relay_set *rs, char *url){
+  for (size_t i = 0; i < rs->n; i++) {
+    if (strcmp(rs->v[i], url) == 0) { free(url); return 0; }
+  }
+  if (rs->n >= NIP55L_RELAYS_MAX_COUNT) { free(url); return -1; }
+  rs->v[rs->n++] = url;
+  return 0;
+}
+
+static int relay_set_to_json(const relay_set *rs, char **out_json){
+  size_t cap = 3;
+  for (size_t i = 0; i < rs->n; i++) cap += strlen(rs->v[i]) + 3;
+  char *js = (char*)malloc(cap);
+  if (!js) return NOSTR_SIGNER_ERROR_BACKEND;
+  size_t off = 0;
+  js[off++] = '[';
+  for (size_t i = 0; i < rs->n; i++) {
+    if (i) js[off++] = ',';
+    js[off++] = '"';
+    size_t l = strlen(rs->v[i]);
+    memcpy(js + off, rs->v[i], l);
+    off += l;
+    js[off++] = '"';
+  }
+  js[off++] = ']';
+  js[off] = '\0';
+  *out_json = js;
+  return 0;
+}
+
+static size_t json_skip_ws(const char *s, size_t len, size_t i){
+  while (i < len && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r')) i++;
+  return i;
+}
+
+static int relays_parse_doc(const char *doc, size_t len, relay_set *rs){
+  if (memchr(doc, '\0', len)) return -1;
+  size_t i = json_skip_ws(doc, len, 0);
+  if (i >= len || doc[i] != '[') return -1;
+  i = json_skip_ws(doc, len, i + 1);
+  if (i < len && doc[i] == ']') {
+    i = json_skip_ws(doc, len, i + 1);
+    return i == len ? 0 : -1;
+  }
+  for (;;) {
+    if (i >= len || doc[i] != '"') return -1;
+    size_t start = ++i;
+    while (i < len && doc[i] != '"') {
+      unsigned char c = (unsigned char)doc[i];
+      if (c == '\\' || c < 0x20) return -1;
+      i++;
+    }
+    if (i >= len) return -1;
+    char *url = relay_url_normalize(doc + start, i - start);
+    if (!url) return -1;
+    if (relay_set_add(rs, url) != 0) return -1;
+    i = json_skip_ws(doc, len, i + 1);
+    if (i < len && doc[i] == ',') { i = json_skip_ws(doc, len, i + 1); continue; }
+    if (i < len && doc[i] == ']') { i = json_skip_ws(doc, len, i + 1); break; }
+    return -1;
+  }
+  return i == len ? 0 : -1;
+}
+
+int nostr_nip55l_relays_normalize_json(const char *doc, size_t len, char **out_relays_json){
+  if (!doc || !out_relays_json) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_relays_json = NULL;
+  if (len > NIP55L_RELAYS_MAX_DOC) return NOSTR_SIGNER_ERROR_INVALID_JSON;
+  relay_set rs = {0};
+  if (relays_parse_doc(doc, len, &rs) != 0) { relay_set_clear(&rs); return NOSTR_SIGNER_ERROR_INVALID_JSON; }
+  if (rs.n == 0) return NOSTR_SIGNER_ERROR_NOT_FOUND;
+  int rc = relay_set_to_json(&rs, out_relays_json);
+  relay_set_clear(&rs);
+  return rc;
+}
+
+int nostr_nip55l_relays_from_list(const char *const *urls, size_t n, char **out_relays_json){
+  if (!out_relays_json || (n && !urls)) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_relays_json = NULL;
+  relay_set rs = {0};
+  for (size_t i = 0; i < n; i++) {
+    char *url = urls[i] ? relay_url_normalize(urls[i], strlen(urls[i])) : NULL;
+    if (!url || relay_set_add(&rs, url) != 0) { relay_set_clear(&rs); return NOSTR_SIGNER_ERROR_INVALID_ARG; }
+  }
+  if (rs.n == 0) return NOSTR_SIGNER_ERROR_NOT_FOUND;
+  int rc = relay_set_to_json(&rs, out_relays_json);
+  relay_set_clear(&rs);
+  return rc;
+}
+
+/* $XDG_CONFIG_HOME/nostr/relays.conf, falling back to ~/.config per the XDG
+ * base-directory spec (a relative XDG_CONFIG_HOME is ignored). */
+static char *relays_conf_path(void){
+  const char *xdg = getenv("XDG_CONFIG_HOME");
+  const char *home = getenv("HOME");
+  const char *base = NULL, *mid = "";
+  if (xdg && xdg[0] == '/') base = xdg;
+  else if (home && *home) { base = home; mid = "/.config"; }
+  else return NULL;
+  const char *tail = "/nostr/relays.conf";
+  size_t n = strlen(base) + strlen(mid) + strlen(tail) + 1;
+  char *p = (char*)malloc(n);
+  if (!p) return NULL;
+  snprintf(p, n, "%s%s%s", base, mid, tail);
+  return p;
+}
+
 int nostr_nip55l_get_relays(char **out_relays_json){
   if(!out_relays_json) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_relays_json=NULL;
-  /* Return an empty list for now to indicate no configured relays instead of NOT_FOUND. */
-  const char *empty = "[]";
-  char *dup = strdup(empty);
-  if (!dup) return NOSTR_SIGNER_ERROR_BACKEND;
-  *out_relays_json = dup;
-  return 0;
+  char *path = relays_conf_path();
+  if (!path) return NOSTR_SIGNER_ERROR_NOT_FOUND;
+  FILE *fp = fopen(path, "rb");
+  free(path);
+  if (!fp) return NOSTR_SIGNER_ERROR_NOT_FOUND;
+  char *doc = (char*)malloc(NIP55L_RELAYS_MAX_DOC + 1);
+  if (!doc) { fclose(fp); return NOSTR_SIGNER_ERROR_BACKEND; }
+  size_t len = fread(doc, 1, NIP55L_RELAYS_MAX_DOC + 1, fp);
+  int read_err = ferror(fp);
+  fclose(fp);
+  int rc;
+  if (read_err) rc = NOSTR_SIGNER_ERROR_BACKEND;
+  else if (len > NIP55L_RELAYS_MAX_DOC) rc = NOSTR_SIGNER_ERROR_INVALID_JSON;
+  else rc = nostr_nip55l_relays_normalize_json(doc, len, out_relays_json);
+  free(doc);
+  return rc;
 }
 
 int nostr_nip55l_store_key(const char *key, const char *identity){

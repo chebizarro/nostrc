@@ -29,6 +29,12 @@ The daemon supports D-Bus activation. When a client calls a method on `org.nostr
 
 Service file location: `/usr/share/dbus-1/services/org.nostr.Signer.service`
 
+Exactly one package owns that file: **gnostr-signer** installs it, activating
+`gnostr-signer-daemon` (via `SystemdService=gnostr-signer-daemon.service`).
+The standalone `nips/nip55l` daemon (`nostr-signer-daemon`) installs its own
+copy only when built with `-DENABLE_NIP55L_STANDALONE_ACTIVATION=ON` (default
+OFF), for headless installs that ship no gnostr-signer. Never install both.
+
 ## Interface: org.nostr.Signer
 
 ### Methods
@@ -55,14 +61,20 @@ Returns the public key (npub) for the currently active identity.
 
 #### SignEvent
 
-Signs a Nostr event and returns the signature. May trigger user approval dialog.
+Signs a Nostr event and returns the complete signed event JSON. May trigger user approval dialog.
+
+> **Contract change (nip55l 0.2.0).** Before 0.2.0 this method returned only
+> the 128-hex Schnorr signature. It now returns the whole signed event, so
+> callers get `id`, `pubkey` and `sig` together from one consistent signing
+> operation. The D-Bus signature is unchanged (`s`), so an old caller will not
+> fail to marshal — it must be updated to parse the result as JSON.
 
 ```xml
 <method name="SignEvent">
   <arg name="event_json" type="s" direction="in"/>
   <arg name="current_user" type="s" direction="in"/>
   <arg name="app_id" type="s" direction="in"/>
-  <arg name="signature" type="s" direction="out"/>
+  <arg name="signed_event" type="s" direction="out"/>
 </method>
 ```
 
@@ -72,12 +84,17 @@ Signs a Nostr event and returns the signature. May trigger user approval dialog.
 - `app_id` (string): Application identifier for ACL (uses D-Bus sender if empty)
 
 **Returns**:
-- `signature` (string): Hex-encoded Schnorr signature (64 bytes / 128 hex chars)
+- `signed_event` (string): the complete signed event JSON —
+  `{"id":…,"pubkey":…,"created_at":…,"kind":…,"tags":[…],"content":…,"sig":…}`.
+  `pubkey` is always the signing key's (a caller-supplied value is replaced),
+  so callers should verify `id`/`sig` against the returned event, not against
+  the template they sent.
 
 **Errors**:
 - `org.nostr.Signer.Error.InvalidInput`: Malformed event JSON
 - `org.nostr.Signer.Error.ApprovalDenied`: User denied the signing request
 - `org.nostr.Signer.Error.RateLimited`: Too many requests in short period
+- `org.nostr.Signer.Error.NoKeyConfigured`: No key for the requested identity
 - `org.nostr.Signer.Error.Internal`: Signing operation failed
 
 **Notes**:
@@ -206,7 +223,8 @@ Decrypts the content of a zap receipt event (NIP-57).
 
 #### GetRelays
 
-Returns the list of configured relay URLs.
+Returns the user's explicitly configured relay URLs. The signer never fetches
+NIP-65 relay lists from the network to answer this.
 
 ```xml
 <method name="GetRelays">
@@ -214,8 +232,20 @@ Returns the list of configured relay URLs.
 </method>
 ```
 
+Sources, first match wins:
+1. `$XDG_CONFIG_HOME/nostr/relays.conf` (default `~/.config/nostr/relays.conf`):
+   a JSON array of `ws://` / `wss://` URL strings, e.g. `["wss://relay.example"]`.
+2. The relay list set in gnostr-signer (GSettings `org.gnostr.Signer` `relays`),
+   only when the user has written it — the schema default does not count.
+
 **Returns**:
-- `relays_json` (string): JSON array of relay URLs (e.g., `["wss://nos.lol"]`)
+- `relays_json` (string): JSON array of normalised relay URLs (lowercase
+  scheme/host, no bare trailing `/`, duplicates removed), e.g. `["wss://nos.lol"]`
+
+**Errors**:
+- `org.nostr.Signer.Error.NotFound`: nothing configured. This is an expected
+  state: callers fall back to their own configured relays, never treat it as fatal.
+- `org.nostr.Signer.Error.InvalidConfig`: `relays.conf` exists but is malformed.
 
 ---
 
@@ -349,6 +379,9 @@ Emitted when an approval request has been resolved.
 | `org.nostr.Signer.Error.ApprovalDenied` | User denied the operation |
 | `org.nostr.Signer.Error.InvalidInput` | Malformed input data |
 | `org.nostr.Signer.Error.Internal` | Internal error or backend failure |
+| `org.nostr.Signer.Error.NoKeyConfigured` | No key configured for the identity |
+| `org.nostr.Signer.Error.NotFound` | `GetRelays`: no relays configured (fall back) |
+| `org.nostr.Signer.Error.InvalidConfig` | `GetRelays`: `relays.conf` is malformed |
 | `org.nostr.Signer.InvalidKey` | Invalid private key format |
 | `org.nostr.Signer.InvalidArgument` | Invalid method argument |
 | `org.nostr.Signer.NotFound` | Key or identity not found |
@@ -459,12 +492,12 @@ event = {
 
 # Sign the event
 try:
-    signature = signer.SignEvent(
+    signed = json.loads(signer.SignEvent(
         json.dumps(event),  # event_json
         "",                  # current_user (empty = default identity)
         "my-app"            # app_id
-    )
-    print(f"Signature: {signature}")
+    ))
+    print(f"Signed event {signed['id']} sig={signed['sig']}")
 except Exception as e:
     print(f"Signing failed: {e}")
 
@@ -566,12 +599,13 @@ service.getInterface(
       pubkey: ''
     });
 
-    signer.SignEvent(event, '', 'node-app', (err, signature) => {
+    signer.SignEvent(event, '', 'node-app', (err, signedEvent) => {
       if (err) {
         console.error('SignEvent error:', err);
         return;
       }
-      console.log('Signature:', signature);
+      const signed = JSON.parse(signedEvent);
+      console.log('Signed event:', signed.id, signed.sig);
     });
 
     // NIP-44 encryption
@@ -664,9 +698,9 @@ int main(int argc, char *argv[]) {
         g_printerr("SignEvent failed: %s\n", error->message);
         g_error_free(error);
     } else {
-        const gchar *signature;
-        g_variant_get(result, "(&s)", &signature);
-        g_print("Signature: %s\n", signature);
+        const gchar *signed_event;
+        g_variant_get(result, "(&s)", &signed_event);
+        g_print("Signed event: %s\n", signed_event);
         g_variant_unref(result);
     }
 
@@ -820,7 +854,7 @@ The full interface definition is available at:
       <arg name="event_json" type="s" direction="in"/>
       <arg name="current_user" type="s" direction="in"/>
       <arg name="app_id" type="s" direction="in"/>
-      <arg name="signature" type="s" direction="out"/>
+      <arg name="signed_event" type="s" direction="out"/>
     </method>
 
     <method name="NIP44Encrypt">
@@ -923,6 +957,30 @@ other-app:npub1xyz789=deny:1706745600
 ```
 
 Format: `app_id:identity=decision[:expiry_unix_timestamp]`
+
+---
+
+## Signer and Login Broker Boundary
+
+The session signer (`org.nostr.Signer`) and the pre-login broker
+(`nostr-authd` + `pam_nostr`) **do not talk to each other**, in either
+direction, and must not be bridged.
+
+- The signer is **app-facing**: post-login, session bus, user-owned secrets,
+  admission by "same session user + session-bus policy". It has no
+  pidfd/transaction machinery and must not gain the broker's.
+- `nostr-authd` is **pre-login and authoritative**: a system daemon with
+  `auth.sock` (0600) / `user.sock` (0666) and SO_PEERCRED admission
+  (`gnome/nostr-homed/docs/AUTH_PROTOCOL.md`). Its local-key provider signs
+  challenges in its own sandboxed worker with its own vault; it cannot depend
+  on a user-session service, which does not exist at the greeter.
+- The one cross-consumer is porthome's wrap-key path, which calls
+  `NIP44Encrypt`/`NIP44Decrypt` on the session signer. That is a *porthome*
+  consumer of the signer, not an authd edge, and it is unaffected by the
+  0.2.0 `SignEvent` change.
+
+The dependency-purity gate (`scripts/check-authd-dep-purity.sh`) enforces that
+`nostr-authd` and `pam_nostr.so` link no signer client library.
 
 ---
 

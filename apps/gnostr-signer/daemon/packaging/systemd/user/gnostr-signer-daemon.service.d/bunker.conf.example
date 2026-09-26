@@ -1,0 +1,20 @@
+# Drop-in: run gnostr-signer-daemon with NIP-46 bunker mode enabled.
+#
+# Install as ~/.config/systemd/user/gnostr-signer-daemon.service.d/bunker.conf
+# then: systemctl --user daemon-reload && systemctl --user restart gnostr-signer-daemon
+#
+# The daemon refuses to start in bunker mode (journal: BUNKER_*) unless the
+# gnostr-signer settings (GSettings org.gnostr.Signer) have:
+#   bunker-enabled          true
+#   bunker-relays           the relays clients reach the bunker through
+#   bunker-allowed-pubkeys  the client pubkeys (hex) allowed to connect;
+#                           never empty, an empty list would admit anyone
+# and a default or active identity with a private key. Requests are signed
+# without prompting only for bunker-auto-approve-kinds or clients with a
+# session approved in the gnostr-signer GUI; the daemon refuses the rest.
+
+[Service]
+ExecStart=
+ExecStart=/usr/bin/gnostr-signer-daemon --bunker
+# The base unit only permits loopback IP; bunker mode must reach its relays.
+IPAddressDeny=
