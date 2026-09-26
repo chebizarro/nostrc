@@ -25,7 +25,6 @@ target_include_directories(${PLUGIN_NAME} PRIVATE
     ${PROJECT_ROOT}/libnostr/include
     ${PROJECT_ROOT}/libnostr/generated
     ${PROJECT_ROOT}/nips/nip47/include
-    ${PROJECT_ROOT}/nips/nip04/include
     ${CMAKE_BINARY_DIR}/apps/gnostr/generated
 )
 # nsync headers (cache var set by libnostr's find_path)
@@ -50,9 +49,6 @@ if(TARGET nostr)
 endif()
 if(TARGET nostr_nip47_core)
     target_link_libraries(${PLUGIN_NAME} PRIVATE nostr_nip47_core)
-endif()
-if(TARGET nip04)
-    target_link_libraries(${PLUGIN_NAME} PRIVATE nip04)
 endif()
 
 # Allow undefined symbols - they're resolved when the plugin is loaded by the host app

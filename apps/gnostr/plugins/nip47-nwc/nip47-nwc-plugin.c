@@ -1,8 +1,20 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * nip47-nwc-plugin.c - NIP-47 Nostr Wallet Connect Plugin
  *
- * Implements NIP-47 (Nostr Wallet Connect) for Lightning wallet integration.
- * Handles event kinds 13194 (info), 23194 (request), 23195 (response).
+ * Thin client of the desktop wallet agent (nostr-wallet-agent,
+ * org.nostr.Wallet1, bead nostrc-yka8). The NIP-47 protocol, the pairing
+ * secret and the relay connection live in the agent; this plugin keeps its
+ * public API, signals and settings page and forwards to D-Bus:
+ *
+ *   connect()          -> Pair(uri)          (user-confirmed by the agent)
+ *   disconnect()       -> Unpair()           (user-confirmed by the agent)
+ *   get_balance_async  -> GetBalance()
+ *   pay_invoice_async  -> PayInvoice(bolt11, amount)  (agent budget/approval)
+ *   make_invoice_async -> MakeInvoice(amount, description, expiry)
+ *   state / pubkey / relay / lud16 <- Paired / WalletPubkey / Relays / Lud16
+ *
+ * A URI stored by earlier versions in plugin storage is handed to Pair()
+ * once and then deleted, so no plaintext pairing secret remains.
  *
  * Copyright (C) 2026 Gnostr Contributors
  */
@@ -11,18 +23,18 @@
 #include <gnostr-plugin-api.h>
 #include <libpeas.h>
 #include <nostr/nip47/nwc.h>
-#include <nostr/nip04.h>
-#include <nostr-event.h>
-#include <nostr-tag.h>
-#include <json.h>
 #include <string.h>
-#include <time.h>
 
-/* Plugin data storage key for connection URI */
+/* Legacy (pre-agent) plugin storage key for the connection URI */
 #define NWC_STORAGE_KEY_URI "connection-uri"
 
-/* NWC response timeout in milliseconds */
-#define NWC_RESPONSE_TIMEOUT_MS 30000
+#define WALLET_BUS_NAME  "org.nostr.Wallet1"
+#define WALLET_PATH      "/org/nostr/Wallet1"
+#define WALLET_IFACE     "org.nostr.Wallet1"
+
+/* Payments may wait on the agent's approval dialog (120 s) plus the wallet
+ * (60 s); do not let D-Bus time out first. */
+#define WALLET_CALL_TIMEOUT_MS G_MAXINT
 
 /* Singleton instance */
 static Nip47NwcPlugin *default_plugin = NULL;
@@ -34,22 +46,18 @@ struct _Nip47NwcPlugin
   GnostrPluginContext *context;
   gboolean active;
 
-  /* Connection state */
+  /* Connection state (mirrors the agent's Paired property) */
   Nip47NwcState state;
   gchar *last_error;
 
-  /* Parsed connection data */
+  /* Cached agent properties (never the secret) */
   gchar *wallet_pubkey_hex;
-  gchar *secret_hex;
-  gchar *client_pubkey_hex;
-  gchar **relays;
+  gchar *relay;
   gchar *lud16;
 
-  /* Pending requests: request_event_id -> GTask */
-  GHashTable *pending_requests;
-
-  /* Event subscription for NWC responses */
-  guint64 response_subscription;
+  GDBusProxy   *proxy;
+  GCancellable *cancellable;
+  gchar        *pending_pair_uri;   /* connect() before the proxy exists */
 };
 
 /* Signals */
@@ -89,17 +97,10 @@ GQuark nip47_nwc_error_quark(void) {
  * Internal Helpers
  * ============================================================================ */
 
-static void nip47_nwc_plugin_clear_connection(Nip47NwcPlugin *self) {
-  g_clear_pointer(&self->wallet_pubkey_hex, g_free);
-  g_clear_pointer(&self->secret_hex, g_free);
-  g_clear_pointer(&self->client_pubkey_hex, g_free);
-  g_clear_pointer(&self->lud16, g_free);
-  g_clear_pointer(&self->last_error, g_free);
-
-  if (self->relays) {
-    g_strfreev(self->relays);
-    self->relays = NULL;
-  }
+static void wipe_free(gchar *s) {
+  if (!s) return;
+  memset(s, 0, strlen(s));
+  g_free(s);
 }
 
 static void nip47_nwc_plugin_set_state(Nip47NwcPlugin *self, Nip47NwcState state) {
@@ -110,378 +111,185 @@ static void nip47_nwc_plugin_set_state(Nip47NwcPlugin *self, Nip47NwcState state
   }
 }
 
-/* Derive client public key from secret */
-static gchar *derive_client_pubkey(const gchar *secret_hex) {
-  if (!secret_hex || strlen(secret_hex) != 64) return NULL;
+static void set_error(Nip47NwcPlugin *self, const gchar *message) {
+  g_free(self->last_error);
+  self->last_error = g_strdup(message);
+  nip47_nwc_plugin_set_state(self, NIP47_NWC_STATE_ERROR);
+}
 
-  /* Use nostr_key_get_public from libnostr */
-  extern char *nostr_key_get_public(const char *sk);
-  return nostr_key_get_public(secret_hex);
+static gchar *proxy_string(GDBusProxy *proxy, const gchar *name) {
+  g_autoptr(GVariant) v = proxy ? g_dbus_proxy_get_cached_property(proxy, name) : NULL;
+  if (!v || !g_variant_is_of_type(v, G_VARIANT_TYPE_STRING)) return NULL;
+  const gchar *s = g_variant_get_string(v, NULL);
+  return (s && *s) ? g_strdup(s) : NULL;
+}
+
+/* Refresh cached values from the agent's properties. */
+static void sync_from_proxy(Nip47NwcPlugin *self) {
+  g_autoptr(GVariant) paired_v = self->proxy
+    ? g_dbus_proxy_get_cached_property(self->proxy, "Paired") : NULL;
+  gboolean paired = paired_v && g_variant_get_boolean(paired_v);
+
+  g_free(self->wallet_pubkey_hex);
+  g_free(self->lud16);
+  g_free(self->relay);
+  self->wallet_pubkey_hex = paired ? proxy_string(self->proxy, "WalletPubkey") : NULL;
+  self->lud16 = paired ? proxy_string(self->proxy, "Lud16") : NULL;
+  self->relay = NULL;
+  if (paired) {
+    g_autoptr(GVariant) rv = g_dbus_proxy_get_cached_property(self->proxy, "Relays");
+    if (rv && g_variant_is_of_type(rv, G_VARIANT_TYPE_STRING_ARRAY) && g_variant_n_children(rv) > 0) {
+      g_autoptr(GVariant) first = g_variant_get_child_value(rv, 0);
+      self->relay = g_variant_dup_string(first, NULL);
+    }
+  }
+
+  g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_WALLET_PUBKEY]);
+  g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_RELAY]);
+  g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_LUD16]);
+
+  if (paired && self->wallet_pubkey_hex) {
+    g_clear_pointer(&self->last_error, g_free);
+    nip47_nwc_plugin_set_state(self, NIP47_NWC_STATE_CONNECTED);
+  } else if (self->state != NIP47_NWC_STATE_CONNECTING && self->state != NIP47_NWC_STATE_ERROR) {
+    nip47_nwc_plugin_set_state(self, NIP47_NWC_STATE_DISCONNECTED);
+  }
+}
+
+/* Map an org.nostr.Wallet1 error onto the plugin's error domain. */
+static GError *map_wallet_error(GError *error) {
+  gint code = NIP47_NWC_ERROR_REQUEST_FAILED;
+  g_autofree gchar *remote = g_dbus_error_get_remote_error(error);
+  if (remote) {
+    if (g_str_has_suffix(remote, ".Timeout")) code = NIP47_NWC_ERROR_TIMEOUT;
+    else if (g_str_has_suffix(remote, ".WalletError")) code = NIP47_NWC_ERROR_WALLET_ERROR;
+    else if (g_str_has_suffix(remote, ".NotPaired")) code = NIP47_NWC_ERROR_CONNECTION_FAILED;
+    else if (g_str_has_suffix(remote, ".InvalidArgs")) code = NIP47_NWC_ERROR_INVALID_URI;
+  } else if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
+             g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_NAME_HAS_NO_OWNER)) {
+    code = NIP47_NWC_ERROR_CONNECTION_FAILED;
+  }
+  g_dbus_error_strip_remote_error(error);
+  GError *mapped = g_error_new_literal(NIP47_NWC_ERROR, code, error->message);
+  g_error_free(error);
+  return mapped;
 }
 
 /* ============================================================================
- * NWC Request/Response Handling
+ * Wallet agent calls
  * ============================================================================ */
 
-/* Pending request context */
-typedef struct {
-  Nip47NwcPlugin *plugin;
-  gchar *request_event_id;
-  gchar *method;
-  guint timeout_id;
-} NwcPendingRequest;
-
-static void nwc_pending_request_free(NwcPendingRequest *req) {
-  if (!req) return;
-  if (req->timeout_id > 0) {
-    g_source_remove(req->timeout_id);
-  }
-  g_free(req->request_event_id);
-  g_free(req->method);
-  g_free(req);
-}
-
-static gboolean nwc_request_timeout_cb(gpointer user_data) {
-  NwcPendingRequest *req = (NwcPendingRequest *)user_data;
-  Nip47NwcPlugin *self = req->plugin;
-
-  req->timeout_id = 0;
-
-  /* Find and complete the task with timeout error */
-  GTask *task = g_hash_table_lookup(self->pending_requests, req->request_event_id);
-  if (task) {
-    g_task_return_new_error(task, NIP47_NWC_ERROR, NIP47_NWC_ERROR_TIMEOUT,
-                            "NWC %s request timed out after %d ms",
-                            req->method, NWC_RESPONSE_TIMEOUT_MS);
-    g_hash_table_remove(self->pending_requests, req->request_event_id);
-  }
-
-  return G_SOURCE_REMOVE;
-}
-
-/* Build and sign a NWC request event using proper NostrEvent API */
-static gchar *build_nwc_request_json(Nip47NwcPlugin *self,
-                                     const gchar *method,
-                                     const gchar *params_json,
-                                     gchar **out_event_id,
-                                     GError **error) {
-  if (!self->secret_hex || !self->wallet_pubkey_hex || !self->client_pubkey_hex) {
-    g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_CONNECTION_FAILED,
-                "NWC connection not initialized");
-    return NULL;
-  }
-
-  /* Build request body JSON: {"method": "...", "params": {...}} */
-  GString *body = g_string_new("{\"method\":\"");
-  g_string_append(body, method);
-  g_string_append(body, "\",\"params\":");
-  if (params_json && *params_json) {
-    g_string_append(body, params_json);
-  } else {
-    g_string_append(body, "{}");
-  }
-  g_string_append(body, "}");
-
-  /* Encrypt content with NIP-04 */
-  char *encrypted_content = NULL;
-  char *encrypt_error = NULL;
-
-  int enc_result = nostr_nip04_encrypt(
-    body->str,
-    self->wallet_pubkey_hex,
-    self->secret_hex,
-    &encrypted_content,
-    &encrypt_error);
-
-  g_string_free(body, TRUE);
-
-  if (enc_result != 0 || !encrypted_content) {
-    g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_REQUEST_FAILED,
-                "NIP-04 encryption failed: %s", encrypt_error ? encrypt_error : "unknown error");
-    if (encrypt_error) free(encrypt_error);
-    return NULL;
-  }
-
-  /* Create NostrEvent using proper API */
-  NostrEvent *event = nostr_event_new();
-  if (!event) {
-    g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_REQUEST_FAILED,
-                "Failed to create event");
-    free(encrypted_content);
-    return NULL;
-  }
-
-  /* Set event fields */
-  nostr_event_set_kind(event, NWC_KIND_REQUEST);
-  nostr_event_set_created_at(event, (int64_t)time(NULL));
-  nostr_event_set_pubkey(event, self->client_pubkey_hex);
-  nostr_event_set_content(event, encrypted_content);
-  free(encrypted_content);
-
-  /* Create "p" tag for wallet pubkey */
-  NostrTag *p_tag = nostr_tag_new("p", self->wallet_pubkey_hex, NULL);
-  NostrTags *tags = nostr_tags_new(1, p_tag);
-  nostr_event_set_tags(event, tags);
-
-  /* Sign the event */
-  int sign_result = nostr_event_sign(event, self->secret_hex);
-  if (sign_result != 0) {
-    g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_REQUEST_FAILED,
-                "Failed to sign event (code %d)", sign_result);
-    nostr_event_free(event);
-    return NULL;
-  }
-
-  /* Get event ID for tracking */
-  if (out_event_id) {
-    const char *id = nostr_event_get_id(event);
-    *out_event_id = id ? g_strdup(id) : NULL;
-  }
-
-  /* Serialize to JSON */
-  char *json = nostr_event_serialize(event);
-  nostr_event_free(event);
-
-  if (!json) {
-    g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_REQUEST_FAILED,
-                "Failed to serialize event");
-    return NULL;
-  }
-
-  /* Transfer ownership to GLib */
-  gchar *result = g_strdup(json);
-  free(json);
-  return result;
-}
-
-/* Parse and decrypt a NWC response */
-static gboolean parse_nwc_response(Nip47NwcPlugin *self,
-                                   GnostrPluginEvent *event,
-                                   const gchar *expected_request_id,
-                                   char **out_result_json,
-                                   GError **error) {
-  if (!event || !self->secret_hex || !self->wallet_pubkey_hex) {
-    g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_REQUEST_FAILED,
-                "Invalid response or connection state");
-    return FALSE;
-  }
-
-  /* Verify this is a response event */
-  if (gnostr_plugin_event_get_kind(event) != NWC_KIND_RESPONSE) {
-    return FALSE;
-  }
-
-  /* Check if response matches our request via e tag */
-  const char *ref_id = gnostr_plugin_event_get_tag_value(event, "e", 0);
-  if (expected_request_id && (!ref_id || strcmp(ref_id, expected_request_id) != 0)) {
-    /* Not our response */
-    return FALSE;
-  }
-
-  /* Decrypt content */
-  const char *encrypted_content = gnostr_plugin_event_get_content(event);
-  if (!encrypted_content || !*encrypted_content) {
-    g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_REQUEST_FAILED,
-                "Empty response content");
-    return FALSE;
-  }
-
-  char *decrypted = NULL;
-  char *decrypt_error = NULL;
-
-  /* Get sender pubkey for decryption */
-  const char *sender_pubkey = gnostr_plugin_event_get_pubkey(event);
-  if (!sender_pubkey) sender_pubkey = self->wallet_pubkey_hex;
-
-  int dec_result = nostr_nip04_decrypt(
-    encrypted_content,
-    sender_pubkey,
-    self->secret_hex,
-    &decrypted,
-    &decrypt_error);
-
-  if (dec_result != 0 || !decrypted) {
-    g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_REQUEST_FAILED,
-                "NIP-04 decryption failed: %s", decrypt_error ? decrypt_error : "unknown error");
-    if (decrypt_error) free(decrypt_error);
-    return FALSE;
-  }
-
-  /* Check for error in response */
-  extern int nostr_json_get_string_at(const char *json, const char *key1, const char *key2, char **out);
-  char *err_code = NULL;
-  char *err_msg = NULL;
-  if (nostr_json_get_string_at(decrypted, "error", "code", &err_code) == 0 ||
-      nostr_json_get_string_at(decrypted, "error", "message", &err_msg) == 0) {
-    g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_WALLET_ERROR,
-                "Wallet error [%s]: %s",
-                err_code ? err_code : "UNKNOWN",
-                err_msg ? err_msg : "Unknown error");
-    g_free(err_code);
-    g_free(err_msg);
-    free(decrypted);
-    return FALSE;
-  }
-
-  /* Extract result */
-  if (out_result_json) {
-    extern int nostr_json_get_raw(const char *json, const char *key, char **out);
-    char *result = NULL;
-    if (nostr_json_get_raw(decrypted, "result", &result) == 0 && result) {
-      *out_result_json = result;
-    } else {
-      *out_result_json = NULL;
-    }
-  }
-
-  free(decrypted);
-  return TRUE;
-}
-
-/* Event subscription callback for NWC responses */
-static void on_nwc_response_event(GnostrPluginEvent *event, gpointer user_data) {
+static void on_pair_done(GObject *source, GAsyncResult *res, gpointer user_data) {
   Nip47NwcPlugin *self = NIP47_NWC_PLUGIN(user_data);
-
-  if (gnostr_plugin_event_get_kind(event) != NWC_KIND_RESPONSE) {
-    return;
-  }
-
-  /* Check which pending request this matches */
-  const char *ref_id = gnostr_plugin_event_get_tag_value(event, "e", 0);
-  if (!ref_id) return;
-
-  GTask *task = g_hash_table_lookup(self->pending_requests, ref_id);
-  if (!task) {
-    /* Not our response or already handled */
-    return;
-  }
-
-  /* Parse the response */
   GError *error = NULL;
-  char *result_json = NULL;
-
-  if (parse_nwc_response(self, event, ref_id, &result_json, &error)) {
-    g_task_return_pointer(task, result_json, g_free);
-  } else {
-    g_task_return_error(task, error);
-  }
-
-  g_hash_table_remove(self->pending_requests, ref_id);
-}
-
-/* hq-gflmf: Context for async publish callback in NWC request flow */
-typedef struct {
-  Nip47NwcPlugin *plugin;    /* borrowed ref — lives as long as plugin is active */
-  gchar *request_event_id;
-  gchar *method;
-  GTask *caller_task;        /* the task returned to the NWC caller */
-} NwcPublishCtx;
-
-static void
-nwc_publish_ctx_free(NwcPublishCtx *ctx)
-{
-  if (!ctx) return;
-  g_free(ctx->request_event_id);
-  g_free(ctx->method);
-  g_free(ctx);
-}
-
-/* hq-gflmf: Callback when async publish completes — runs on main thread */
-static void
-on_nwc_publish_done(GObject      *source G_GNUC_UNUSED,
-                    GAsyncResult *res,
-                    gpointer      user_data)
-{
-  NwcPublishCtx *ctx = (NwcPublishCtx *)user_data;
-  GError *pub_error = NULL;
-
-  gboolean ok = gnostr_plugin_context_publish_event_finish(NULL, res, &pub_error);
-
-  if (!ok) {
-    g_warning("[NIP-47] Failed to publish %s request: %s", ctx->method,
-              pub_error ? pub_error->message : "unknown error");
-    /* Remove from pending — the timeout will be cleaned up via task data */
-    if (ctx->plugin && ctx->plugin->pending_requests) {
-      g_hash_table_remove(ctx->plugin->pending_requests, ctx->request_event_id);
+  g_autoptr(GVariant) r = g_dbus_proxy_call_finish(G_DBUS_PROXY(source), res, &error);
+  if (!r) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      error = map_wallet_error(error);
+      g_warning("[NIP-47] Wallet agent refused the pairing: %s", error->message);
+      set_error(self, error->message);
     }
-    g_task_return_error(ctx->caller_task, pub_error);
-    g_object_unref(ctx->caller_task);
-    nwc_publish_ctx_free(ctx);
-    return;
+    g_error_free(error);
+  } else {
+    /* PropertiesChanged normally arrives first; resync regardless. */
+    sync_from_proxy(self);
+    g_message("[NIP-47] Paired through the wallet agent");
+    if (self->context)
+      gnostr_plugin_context_delete_data(self->context, NWC_STORAGE_KEY_URI);
   }
-
-  g_debug("[NIP-47] Published %s request (event_id=%.16s...)",
-          ctx->method, ctx->request_event_id);
-
-  /* Task stays alive in pending_requests until response or timeout */
-  g_object_unref(ctx->caller_task);
-  nwc_publish_ctx_free(ctx);
+  g_object_unref(self);
 }
 
-/* Execute a NWC request */
-static void nwc_execute_request_async(Nip47NwcPlugin *self,
-                                      const gchar *method,
-                                      const gchar *params_json,
-                                      GCancellable *cancellable,
-                                      GAsyncReadyCallback callback,
-                                      gpointer user_data) {
-  GTask *task = g_task_new(self, cancellable, callback, user_data);
+static void wallet_pair(Nip47NwcPlugin *self, const gchar *uri) {
+  nip47_nwc_plugin_set_state(self, NIP47_NWC_STATE_CONNECTING);
+  g_dbus_proxy_call(self->proxy, "Pair", g_variant_new("(s)", uri),
+                    G_DBUS_CALL_FLAGS_NONE, WALLET_CALL_TIMEOUT_MS, self->cancellable,
+                    on_pair_done, g_object_ref(self));
+}
 
-  if (!nip47_nwc_plugin_is_connected(self)) {
-    g_task_return_new_error(task, NIP47_NWC_ERROR, NIP47_NWC_ERROR_CONNECTION_FAILED,
-                            "Not connected to wallet");
-    g_object_unref(task);
-    return;
-  }
-
-  if (!self->context) {
-    g_task_return_new_error(task, NIP47_NWC_ERROR, NIP47_NWC_ERROR_CONNECTION_FAILED,
-                            "Plugin not activated");
-    g_object_unref(task);
-    return;
-  }
-
-  /* Build and sign the request event */
+static void on_unpair_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  Nip47NwcPlugin *self = NIP47_NWC_PLUGIN(user_data);
   GError *error = NULL;
-  gchar *request_event_id = NULL;
-  gchar *event_json = build_nwc_request_json(self, method, params_json,
-                                              &request_event_id, &error);
-  if (!event_json) {
-    g_task_return_error(task, error);
-    g_object_unref(task);
+  g_autoptr(GVariant) r = g_dbus_proxy_call_finish(G_DBUS_PROXY(source), res, &error);
+  if (!r) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      error = map_wallet_error(error);
+      g_message("[NIP-47] Wallet agent did not disconnect: %s", error->message);
+    }
+    g_error_free(error);
+  }
+  sync_from_proxy(self);
+  g_object_unref(self);
+}
+
+static void on_properties_changed(GDBusProxy *proxy, GVariant *changed, GStrv invalidated,
+                                  gpointer user_data) {
+  (void)proxy; (void)changed; (void)invalidated;
+  Nip47NwcPlugin *self = NIP47_NWC_PLUGIN(user_data);
+  if (self->state == NIP47_NWC_STATE_CONNECTING)
+    return; /* on_pair_done decides */
+  sync_from_proxy(self);
+}
+
+static void on_name_owner(GObject *proxy, GParamSpec *pspec, gpointer user_data) {
+  (void)pspec;
+  Nip47NwcPlugin *self = NIP47_NWC_PLUGIN(user_data);
+  g_autofree gchar *owner = g_dbus_proxy_get_name_owner(G_DBUS_PROXY(proxy));
+  if (!owner && self->state == NIP47_NWC_STATE_CONNECTED)
+    nip47_nwc_plugin_set_state(self, NIP47_NWC_STATE_DISCONNECTED);
+}
+
+/* Move a URI saved by pre-agent versions into the agent, then delete it. */
+static void migrate_legacy_uri(Nip47NwcPlugin *self) {
+  if (!self->context) return;
+  GBytes *stored = gnostr_plugin_context_load_data(self->context, NWC_STORAGE_KEY_URI, NULL);
+  if (!stored) return;
+  gsize size = 0;
+  const gchar *data = g_bytes_get_data(stored, &size);
+  gchar *uri = (data && size > 0) ? g_strndup(data, size) : NULL;
+  g_bytes_unref(stored);
+  if (!uri || !*uri) {
+    wipe_free(uri);
     return;
   }
+  if (nip47_nwc_plugin_is_connected(self)) {
+    /* the agent already has a wallet: drop the stale plaintext copy */
+    gnostr_plugin_context_delete_data(self->context, NWC_STORAGE_KEY_URI);
+    g_message("[NIP-47] Removed legacy stored connection; the wallet agent is already paired");
+  } else {
+    g_message("[NIP-47] Moving the stored wallet connection into the wallet agent");
+    wallet_pair(self, uri);  /* deleted from plugin storage on success */
+  }
+  wipe_free(uri);
+}
 
-  /* Register as pending request */
-  g_hash_table_insert(self->pending_requests,
-                      g_strdup(request_event_id),
-                      g_object_ref(task));
+static void on_proxy_ready(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  Nip47NwcPlugin *self = NIP47_NWC_PLUGIN(user_data);
+  GError *error = NULL;
+  GDBusProxy *proxy = g_dbus_proxy_new_for_bus_finish(res, &error);
+  if (!proxy) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_warning("[NIP-47] Wallet agent unavailable: %s", error->message);
+      set_error(self, "Nostr Wallet agent (org.nostr.Wallet1) is not available");
+    }
+    g_error_free(error);
+    g_object_unref(self);
+    return;
+  }
+  self->proxy = proxy;
+  g_signal_connect(proxy, "g-properties-changed", G_CALLBACK(on_properties_changed), self);
+  g_signal_connect(proxy, "notify::g-name-owner", G_CALLBACK(on_name_owner), self);
+  sync_from_proxy(self);
 
-  /* Set up timeout */
-  NwcPendingRequest *pending = g_new0(NwcPendingRequest, 1);
-  pending->plugin = self;
-  pending->request_event_id = g_strdup(request_event_id);
-  pending->method = g_strdup(method);
-  pending->timeout_id = g_timeout_add(NWC_RESPONSE_TIMEOUT_MS,
-                                       nwc_request_timeout_cb, pending);
-
-  g_task_set_task_data(task, pending, (GDestroyNotify)nwc_pending_request_free);
-
-  /* hq-gflmf: Publish asynchronously — relay connect + publish runs on a
-   * GTask worker thread instead of blocking the main GTK thread. */
-  NwcPublishCtx *pub_ctx = g_new0(NwcPublishCtx, 1);
-  pub_ctx->plugin = self;
-  pub_ctx->request_event_id = g_strdup(request_event_id);
-  pub_ctx->method = g_strdup(method);
-  pub_ctx->caller_task = g_object_ref(task);
-
-  gnostr_plugin_context_publish_event_async(self->context, event_json,
-                                            cancellable, on_nwc_publish_done,
-                                            pub_ctx);
-
-  g_free(request_event_id);
-  g_free(event_json);
-  g_object_unref(task);
+  if (self->pending_pair_uri) {
+    gchar *uri = g_steal_pointer(&self->pending_pair_uri);
+    wallet_pair(self, uri);
+    wipe_free(uri);
+  } else {
+    migrate_legacy_uri(self);
+  }
+  g_object_unref(self);
 }
 
 /* ============================================================================
@@ -494,11 +302,22 @@ static void nip47_nwc_plugin_dispose(GObject *object) {
   if (self == default_plugin) {
     default_plugin = NULL;
   }
-
-  nip47_nwc_plugin_clear_connection(self);
-  g_clear_pointer(&self->pending_requests, g_hash_table_unref);
+  if (self->cancellable) g_cancellable_cancel(self->cancellable);
+  g_clear_object(&self->cancellable);
+  if (self->proxy) g_signal_handlers_disconnect_by_data(self->proxy, self);
+  g_clear_object(&self->proxy);
 
   G_OBJECT_CLASS(nip47_nwc_plugin_parent_class)->dispose(object);
+}
+
+static void nip47_nwc_plugin_finalize(GObject *object) {
+  Nip47NwcPlugin *self = NIP47_NWC_PLUGIN(object);
+  g_free(self->wallet_pubkey_hex);
+  g_free(self->relay);
+  g_free(self->lud16);
+  g_free(self->last_error);
+  wipe_free(self->pending_pair_uri);
+  G_OBJECT_CLASS(nip47_nwc_plugin_parent_class)->finalize(object);
 }
 
 static void nip47_nwc_plugin_get_property(GObject *object, guint prop_id,
@@ -513,7 +332,7 @@ static void nip47_nwc_plugin_get_property(GObject *object, guint prop_id,
       g_value_set_string(value, self->wallet_pubkey_hex);
       break;
     case PROP_RELAY:
-      g_value_set_string(value, self->relays ? self->relays[0] : NULL);
+      g_value_set_string(value, self->relay);
       break;
     case PROP_LUD16:
       g_value_set_string(value, self->lud16);
@@ -527,6 +346,7 @@ static void nip47_nwc_plugin_class_init(Nip47NwcPluginClass *klass) {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
 
   object_class->dispose = nip47_nwc_plugin_dispose;
+  object_class->finalize = nip47_nwc_plugin_finalize;
   object_class->get_property = nip47_nwc_plugin_get_property;
 
   properties[PROP_STATE] = g_param_spec_int(
@@ -566,8 +386,6 @@ static void nip47_nwc_plugin_class_init(Nip47NwcPluginClass *klass) {
 
 static void nip47_nwc_plugin_init(Nip47NwcPlugin *self) {
   self->state = NIP47_NWC_STATE_DISCONNECTED;
-  self->pending_requests = g_hash_table_new_full(g_str_hash, g_str_equal,
-                                                  g_free, g_object_unref);
 }
 
 /* ============================================================================
@@ -577,53 +395,29 @@ static void nip47_nwc_plugin_init(Nip47NwcPlugin *self) {
 static void nip47_nwc_plugin_activate(GnostrPlugin *plugin, GnostrPluginContext *context) {
   Nip47NwcPlugin *self = NIP47_NWC_PLUGIN(plugin);
 
-  g_debug("[NIP-47] Activating Nostr Wallet Connect plugin");
+  g_debug("[NIP-47] Activating Nostr Wallet Connect plugin (wallet agent client)");
 
   self->context = context;
   self->active = TRUE;
   default_plugin = self;
 
-  /* Subscribe to NWC response events */
-  gchar *filter_json = g_strdup_printf(
-    "{\"kinds\":[%d]}", NWC_KIND_RESPONSE);
-
-  self->response_subscription = gnostr_plugin_context_subscribe_events(
-    context, filter_json,
-    G_CALLBACK(on_nwc_response_event), self, NULL);
-
-  g_free(filter_json);
-
-  /* Load saved connection from plugin data storage */
-  GError *error = NULL;
-  GBytes *stored = gnostr_plugin_context_load_data(context, NWC_STORAGE_KEY_URI, &error);
-  if (stored) {
-    gsize size;
-    const gchar *uri = g_bytes_get_data(stored, &size);
-    if (uri && size > 0) {
-      GError *connect_error = NULL;
-      if (!nip47_nwc_plugin_connect(self, uri, &connect_error)) {
-        g_warning("[NIP-47] Failed to load saved connection: %s",
-                  connect_error ? connect_error->message : "unknown error");
-        g_clear_error(&connect_error);
-      }
-    }
-    g_bytes_unref(stored);
-  }
+  g_clear_object(&self->cancellable);
+  self->cancellable = g_cancellable_new();
+  /* Flags NONE: auto-starts the D-Bus-activatable agent. */
+  g_dbus_proxy_new_for_bus(G_BUS_TYPE_SESSION, G_DBUS_PROXY_FLAGS_NONE, NULL,
+                           WALLET_BUS_NAME, WALLET_PATH, WALLET_IFACE,
+                           self->cancellable, on_proxy_ready, g_object_ref(self));
 }
 
 static void nip47_nwc_plugin_deactivate(GnostrPlugin *plugin, GnostrPluginContext *context) {
   Nip47NwcPlugin *self = NIP47_NWC_PLUGIN(plugin);
+  (void)context;
 
   g_debug("[NIP-47] Deactivating Nostr Wallet Connect plugin");
 
-  /* Unsubscribe from events */
-  if (self->response_subscription > 0) {
-    gnostr_plugin_context_unsubscribe_events(context, self->response_subscription);
-    self->response_subscription = 0;
-  }
-
-  /* Cancel pending requests */
-  g_hash_table_remove_all(self->pending_requests);
+  if (self->cancellable) g_cancellable_cancel(self->cancellable);
+  if (self->proxy) g_signal_handlers_disconnect_by_data(self->proxy, self);
+  g_clear_object(&self->proxy);
 
   self->active = FALSE;
   self->context = NULL;
@@ -651,7 +445,7 @@ static const char *const *nip47_nwc_plugin_get_authors_impl(GnostrPlugin *plugin
 
 static const char *nip47_nwc_plugin_get_version_impl(GnostrPlugin *plugin) {
   (void)plugin;
-  return "1.0";
+  return "2.0";
 }
 
 static const int *nip47_nwc_plugin_get_supported_kinds_impl(GnostrPlugin *plugin, gsize *n_kinds) {
@@ -675,26 +469,17 @@ static void gnostr_plugin_iface_init(GnostrPluginInterface *iface) {
  * GnostrEventHandler Interface Implementation
  * ============================================================================ */
 
+/* NWC events are exchanged by the wallet agent on the pairing's relays; the
+ * app's timeline never needs to route them here. */
 static gboolean nip47_event_handler_can_handle_kind(GnostrEventHandler *handler, int kind) {
-  (void)handler;
-  return kind == NWC_KIND_INFO || kind == NWC_KIND_REQUEST || kind == NWC_KIND_RESPONSE;
+  (void)handler; (void)kind;
+  return FALSE;
 }
 
 static gboolean nip47_event_handler_handle_event(GnostrEventHandler *handler,
                                                   GnostrPluginContext *context,
                                                   GnostrPluginEvent *event) {
-  Nip47NwcPlugin *self = NIP47_NWC_PLUGIN(handler);
-  (void)context;
-
-  int kind = gnostr_plugin_event_get_kind(event);
-
-  if (kind == NWC_KIND_RESPONSE) {
-    /* Response handling is done via subscription callback */
-    on_nwc_response_event(event, self);
-    return TRUE;
-  }
-
-  /* INFO and REQUEST events would be handled by a wallet service, not a client */
+  (void)handler; (void)context; (void)event;
   return FALSE;
 }
 
@@ -729,6 +514,7 @@ static void gnostr_ui_extension_iface_init(GnostrUIExtensionInterface *iface) {
 typedef struct {
   Nip47NwcPlugin *plugin;
   GnostrPluginContext *context;
+  gulong state_handler;
   GtkWidget *uri_entry;
   GtkWidget *connect_button;
   GtkWidget *disconnect_button;
@@ -750,9 +536,23 @@ static void update_settings_page_ui(NwcSettingsPage *page) {
     gchar *status = g_strdup_printf("Connected to %.16s...", self->wallet_pubkey_hex);
     gtk_label_set_text(GTK_LABEL(page->status_label), status);
     g_free(status);
+    /* the pairing secret lives in the wallet agent, not in this entry */
+    gtk_editable_set_text(GTK_EDITABLE(page->uri_entry), "");
+  } else if (self->state == NIP47_NWC_STATE_CONNECTING) {
+    gtk_label_set_text(GTK_LABEL(page->status_label),
+                       "Waiting for approval in the Nostr Wallet agent...");
+  } else if (self->state == NIP47_NWC_STATE_ERROR && self->last_error) {
+    gtk_label_set_text(GTK_LABEL(page->status_label), self->last_error);
   } else {
     gtk_label_set_text(GTK_LABEL(page->status_label), "Not connected");
   }
+}
+
+static void
+on_plugin_state_changed(Nip47NwcPlugin *plugin, gint state, gpointer user_data)
+{
+  (void)plugin; (void)state;
+  update_settings_page_ui(user_data);
 }
 
 static void on_connect_clicked(GtkButton *button, NwcSettingsPage *page) {
@@ -760,11 +560,9 @@ static void on_connect_clicked(GtkButton *button, NwcSettingsPage *page) {
   const char *uri = gtk_editable_get_text(GTK_EDITABLE(page->uri_entry));
 
   GError *error = NULL;
+  /* Hands the URI to org.nostr.Wallet1, which stores it in the keyring after
+   * the user confirms; nothing is kept in plugin storage any more. */
   if (nip47_nwc_plugin_connect(page->plugin, uri, &error)) {
-    /* Save to plugin storage */
-    GBytes *bytes = g_bytes_new(uri, strlen(uri) + 1);
-    gnostr_plugin_context_store_data(page->context, NWC_STORAGE_KEY_URI, bytes, NULL);
-    g_bytes_unref(bytes);
     update_settings_page_ui(page);
   } else {
     gtk_label_set_text(GTK_LABEL(page->status_label),
@@ -776,7 +574,6 @@ static void on_connect_clicked(GtkButton *button, NwcSettingsPage *page) {
 static void on_disconnect_clicked(GtkButton *button, NwcSettingsPage *page) {
   (void)button;
   nip47_nwc_plugin_disconnect(page->plugin);
-  gnostr_plugin_context_delete_data(page->context, NWC_STORAGE_KEY_URI);
   gtk_editable_set_text(GTK_EDITABLE(page->uri_entry), "");
   update_settings_page_ui(page);
 }
@@ -811,6 +608,8 @@ static void on_refresh_balance_clicked(GtkButton *button, NwcSettingsPage *page)
 
 static void settings_page_destroy(GtkWidget *widget, NwcSettingsPage *page) {
   (void)widget;
+  if (page->state_handler)
+    g_signal_handler_disconnect(page->plugin, page->state_handler);
   g_free(page);
 }
 
@@ -834,7 +633,9 @@ static GtkWidget *create_nwc_settings_page(Nip47NwcPlugin *self, GnostrPluginCon
   /* Description */
   GtkWidget *desc = gtk_label_new(
     "Connect a Lightning wallet using the NIP-47 protocol. "
-    "Paste your nostr+walletconnect:// URI below.");
+    "Paste your nostr+walletconnect:// URI below. The connection is kept by "
+    "the Nostr Wallet agent (org.nostr.Wallet1) in your keyring and shared "
+    "with other apps, each within its own spending budget.");
   gtk_label_set_wrap(GTK_LABEL(desc), TRUE);
   gtk_label_set_xalign(GTK_LABEL(desc), 0);
   gtk_box_append(GTK_BOX(box), desc);
@@ -886,6 +687,8 @@ static GtkWidget *create_nwc_settings_page(Nip47NwcPlugin *self, GnostrPluginCon
 
   /* Cleanup */
   g_signal_connect(box, "destroy", G_CALLBACK(settings_page_destroy), page);
+  page->state_handler = g_signal_connect(self, "state-changed",
+                                         G_CALLBACK(on_plugin_state_changed), page);
 
   /* Initial state */
   update_settings_page_ui(page);
@@ -907,73 +710,41 @@ gboolean nip47_nwc_plugin_connect(Nip47NwcPlugin *self,
   g_return_val_if_fail(NIP47_IS_NWC_PLUGIN(self), FALSE);
   g_return_val_if_fail(connection_uri != NULL, FALSE);
 
-  /* Clear any existing connection */
-  nip47_nwc_plugin_clear_connection(self);
-  nip47_nwc_plugin_set_state(self, NIP47_NWC_STATE_CONNECTING);
-
-  /* Parse the connection URI using libnostr */
+  /* Validate locally for immediate feedback; the agent validates again. */
   NostrNwcConnection conn = {0};
   if (nostr_nwc_uri_parse(connection_uri, &conn) != 0) {
     g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_INVALID_URI,
                 "Invalid nostr+walletconnect:// URI");
-    nip47_nwc_plugin_set_state(self, NIP47_NWC_STATE_ERROR);
     return FALSE;
   }
-
-  /* Copy parsed data */
-  self->wallet_pubkey_hex = g_strdup(conn.wallet_pubkey_hex);
-  self->secret_hex = g_strdup(conn.secret_hex);
-  if (conn.lud16) {
-    self->lud16 = g_strdup(conn.lud16);
-  }
-
-  /* Derive client pubkey */
-  self->client_pubkey_hex = derive_client_pubkey(self->secret_hex);
-  if (!self->client_pubkey_hex) {
-    g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_INVALID_URI,
-                "Failed to derive client public key");
-    nostr_nwc_connection_clear(&conn);
-    nip47_nwc_plugin_clear_connection(self);
-    nip47_nwc_plugin_set_state(self, NIP47_NWC_STATE_ERROR);
-    return FALSE;
-  }
-
-  /* Copy relays */
-  if (conn.relays) {
-    gsize n_relays = 0;
-    for (gsize i = 0; conn.relays[i]; i++) n_relays++;
-    self->relays = g_new0(gchar*, n_relays + 1);
-    for (gsize i = 0; conn.relays[i]; i++) {
-      self->relays[i] = g_strdup(conn.relays[i]);
-    }
-  }
-
   nostr_nwc_connection_clear(&conn);
 
-  nip47_nwc_plugin_set_state(self, NIP47_NWC_STATE_CONNECTED);
-
-  /* Notify property changes */
-  g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_WALLET_PUBKEY]);
-  g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_RELAY]);
-  g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_LUD16]);
-
-  g_message("[NIP-47] Connected to wallet: %.16s...", self->wallet_pubkey_hex);
-
+  g_clear_pointer(&self->last_error, g_free);
+  if (!self->proxy) {
+    if (!self->active) {
+      g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_CONNECTION_FAILED,
+                  "Plugin not activated");
+      return FALSE;
+    }
+    /* proxy still being created: pair as soon as it is ready */
+    wipe_free(self->pending_pair_uri);
+    self->pending_pair_uri = g_strdup(connection_uri);
+    nip47_nwc_plugin_set_state(self, NIP47_NWC_STATE_CONNECTING);
+    return TRUE;
+  }
+  wallet_pair(self, connection_uri);
   return TRUE;
 }
 
 void nip47_nwc_plugin_disconnect(Nip47NwcPlugin *self) {
   g_return_if_fail(NIP47_IS_NWC_PLUGIN(self));
-
-  nip47_nwc_plugin_clear_connection(self);
-  nip47_nwc_plugin_set_state(self, NIP47_NWC_STATE_DISCONNECTED);
-
-  /* Notify property changes */
-  g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_WALLET_PUBKEY]);
-  g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_RELAY]);
-  g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_LUD16]);
-
-  g_message("[NIP-47] Disconnected from wallet");
+  if (!self->proxy) {
+    nip47_nwc_plugin_set_state(self, NIP47_NWC_STATE_DISCONNECTED);
+    return;
+  }
+  g_dbus_proxy_call(self->proxy, "Unpair", NULL, G_DBUS_CALL_FLAGS_NONE,
+                    WALLET_CALL_TIMEOUT_MS, self->cancellable,
+                    on_unpair_done, g_object_ref(self));
 }
 
 Nip47NwcState nip47_nwc_plugin_get_state(Nip47NwcPlugin *self) {
@@ -993,7 +764,7 @@ const gchar *nip47_nwc_plugin_get_wallet_pubkey(Nip47NwcPlugin *self) {
 
 const gchar *nip47_nwc_plugin_get_relay(Nip47NwcPlugin *self) {
   g_return_val_if_fail(NIP47_IS_NWC_PLUGIN(self), NULL);
-  return self->relays ? self->relays[0] : NULL;
+  return self->relay;
 }
 
 const gchar *nip47_nwc_plugin_get_lud16(Nip47NwcPlugin *self) {
@@ -1005,12 +776,48 @@ const gchar *nip47_nwc_plugin_get_lud16(Nip47NwcPlugin *self) {
  * Async Operations
  * ============================================================================ */
 
+static void on_wallet_call_done(GObject *source, GAsyncResult *res, gpointer user_data) {
+  GTask *task = user_data;
+  GError *error = NULL;
+  GVariant *r = g_dbus_proxy_call_finish(G_DBUS_PROXY(source), res, &error);
+  if (!r)
+    g_task_return_error(task, map_wallet_error(error));
+  else
+    g_task_return_pointer(task, r, (GDestroyNotify)g_variant_unref);
+  g_object_unref(task);
+}
+
+static void wallet_call(Nip47NwcPlugin *self, const gchar *method, GVariant *params,
+                        GCancellable *cancellable, GAsyncReadyCallback callback,
+                        gpointer user_data) {
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  if (!self->proxy || !nip47_nwc_plugin_is_connected(self)) {
+    if (params) g_variant_unref(g_variant_ref_sink(params));
+    g_task_return_new_error(task, NIP47_NWC_ERROR, NIP47_NWC_ERROR_CONNECTION_FAILED,
+                            "Not connected to wallet");
+    g_object_unref(task);
+    return;
+  }
+  g_dbus_proxy_call(self->proxy, method, params, G_DBUS_CALL_FLAGS_NONE,
+                    WALLET_CALL_TIMEOUT_MS, cancellable, on_wallet_call_done, task);
+}
+
+static gboolean amount_to_u32(gint64 amount_msat, guint32 *out, GError **error) {
+  if (amount_msat < 0 || amount_msat > (gint64)G_MAXUINT32) {
+    g_set_error(error, NIP47_NWC_ERROR, NIP47_NWC_ERROR_REQUEST_FAILED,
+                "Amount %" G_GINT64_FORMAT " msat is out of range", amount_msat);
+    return FALSE;
+  }
+  *out = (guint32)amount_msat;
+  return TRUE;
+}
+
 void nip47_nwc_plugin_get_balance_async(Nip47NwcPlugin *self,
                                         GCancellable *cancellable,
                                         GAsyncReadyCallback callback,
                                         gpointer user_data) {
   g_return_if_fail(NIP47_IS_NWC_PLUGIN(self));
-  nwc_execute_request_async(self, "get_balance", NULL, cancellable, callback, user_data);
+  wallet_call(self, "GetBalance", NULL, cancellable, callback, user_data);
 }
 
 gboolean nip47_nwc_plugin_get_balance_finish(Nip47NwcPlugin *self,
@@ -1020,23 +827,15 @@ gboolean nip47_nwc_plugin_get_balance_finish(Nip47NwcPlugin *self,
   g_return_val_if_fail(NIP47_IS_NWC_PLUGIN(self), FALSE);
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
 
-  char *response_json = g_task_propagate_pointer(G_TASK(result), error);
-  if (!response_json) return FALSE;
+  g_autoptr(GVariant) r = g_task_propagate_pointer(G_TASK(result), error);
+  if (!r) return FALSE;
 
-  /* Extract balance from response: {"balance": <msats>} */
+  guint64 bal = 0;
+  g_variant_get(r, "(t)", &bal);
   if (balance_msat) {
-    extern int nostr_json_get_int64(const char *json, const char *key, int64_t *out);
-    int64_t bal_val = 0;
-    if (nostr_json_get_int64(response_json, "balance", &bal_val) == 0) {
-      *balance_msat = bal_val;
-    } else {
-      *balance_msat = 0;
-    }
-
+    *balance_msat = (gint64)MIN(bal, (guint64)G_MAXINT64);
     g_signal_emit(self, signals[SIGNAL_BALANCE_UPDATED], 0, *balance_msat);
   }
-
-  g_free(response_json);
   return TRUE;
 }
 
@@ -1049,19 +848,16 @@ void nip47_nwc_plugin_pay_invoice_async(Nip47NwcPlugin *self,
   g_return_if_fail(NIP47_IS_NWC_PLUGIN(self));
   g_return_if_fail(bolt11 != NULL);
 
-  /* Build params JSON */
-  GString *params = g_string_new("{\"invoice\":\"");
-  g_string_append(params, bolt11);
-  g_string_append(params, "\"");
-  if (amount_msat > 0) {
-    g_string_append_printf(params, ",\"amount\":%" G_GINT64_FORMAT, amount_msat);
+  GError *error = NULL;
+  guint32 amount = 0;
+  if (amount_msat > 0 && !amount_to_u32(amount_msat, &amount, &error)) {
+    g_task_report_error(self, callback, user_data, nip47_nwc_plugin_pay_invoice_async, error);
+    return;
   }
-  g_string_append(params, "}");
-
-  g_debug("[NIP-47] Initiating pay_invoice for: %.40s...", bolt11);
-
-  nwc_execute_request_async(self, "pay_invoice", params->str, cancellable, callback, user_data);
-  g_string_free(params, TRUE);
+  g_debug("[NIP-47] Initiating pay_invoice via wallet agent for: %.40s...", bolt11);
+  /* The agent applies this app's budget and asks the user when needed. */
+  wallet_call(self, "PayInvoice", g_variant_new("(su)", bolt11, amount),
+              cancellable, callback, user_data);
 }
 
 gboolean nip47_nwc_plugin_pay_invoice_finish(Nip47NwcPlugin *self,
@@ -1071,20 +867,14 @@ gboolean nip47_nwc_plugin_pay_invoice_finish(Nip47NwcPlugin *self,
   g_return_val_if_fail(NIP47_IS_NWC_PLUGIN(self), FALSE);
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
 
-  char *response_json = g_task_propagate_pointer(G_TASK(result), error);
-  if (!response_json) return FALSE;
+  g_autoptr(GVariant) r = g_task_propagate_pointer(G_TASK(result), error);
+  if (!r) return FALSE;
 
-  if (preimage) {
-    extern int nostr_json_get_string(const char *json, const char *key, char **out);
-    char *preimage_val = NULL;
-    if (nostr_json_get_string(response_json, "preimage", &preimage_val) == 0) {
-      *preimage = preimage_val;
-    } else {
-      *preimage = NULL;
-    }
-  }
-
-  g_free(response_json);
+  const gchar *pre = NULL;
+  guint64 fees = 0;
+  g_variant_get(r, "(&st)", &pre, &fees);
+  if (preimage)
+    *preimage = (pre && *pre) ? g_strdup(pre) : NULL;
   return TRUE;
 }
 
@@ -1097,31 +887,18 @@ void nip47_nwc_plugin_make_invoice_async(Nip47NwcPlugin *self,
                                          gpointer user_data) {
   g_return_if_fail(NIP47_IS_NWC_PLUGIN(self));
 
-  /* Build params JSON */
-  GString *params = g_string_new("{");
-  g_string_append_printf(params, "\"amount\":%" G_GINT64_FORMAT, amount_msat);
-  if (description && *description) {
-    g_string_append(params, ",\"description\":\"");
-    /* Escape description for JSON */
-    for (const char *p = description; *p; p++) {
-      switch (*p) {
-        case '"': g_string_append(params, "\\\""); break;
-        case '\\': g_string_append(params, "\\\\"); break;
-        case '\n': g_string_append(params, "\\n"); break;
-        default: g_string_append_c(params, *p); break;
-      }
-    }
-    g_string_append(params, "\"");
+  GError *error = NULL;
+  guint32 amount = 0;
+  if (!amount_to_u32(amount_msat, &amount, &error)) {
+    g_task_report_error(self, callback, user_data, nip47_nwc_plugin_make_invoice_async, error);
+    return;
   }
-  if (expiry_secs > 0) {
-    g_string_append_printf(params, ",\"expiry\":%" G_GINT64_FORMAT, expiry_secs);
-  }
-  g_string_append(params, "}");
-
-  g_debug("[NIP-47] Initiating make_invoice for %" G_GINT64_FORMAT " msat", amount_msat);
-
-  nwc_execute_request_async(self, "make_invoice", params->str, cancellable, callback, user_data);
-  g_string_free(params, TRUE);
+  guint32 expiry = expiry_secs > 0 ? (guint32)MIN(expiry_secs, (gint64)G_MAXUINT32) : 0;
+  g_debug("[NIP-47] Initiating make_invoice via wallet agent for %" G_GINT64_FORMAT " msat",
+          amount_msat);
+  wallet_call(self, "MakeInvoice",
+              g_variant_new("(usu)", amount, description ? description : "", expiry),
+              cancellable, callback, user_data);
 }
 
 gboolean nip47_nwc_plugin_make_invoice_finish(Nip47NwcPlugin *self,
@@ -1132,30 +909,13 @@ gboolean nip47_nwc_plugin_make_invoice_finish(Nip47NwcPlugin *self,
   g_return_val_if_fail(NIP47_IS_NWC_PLUGIN(self), FALSE);
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
 
-  char *response_json = g_task_propagate_pointer(G_TASK(result), error);
-  if (!response_json) return FALSE;
+  g_autoptr(GVariant) r = g_task_propagate_pointer(G_TASK(result), error);
+  if (!r) return FALSE;
 
-  extern int nostr_json_get_string(const char *json, const char *key, char **out);
-
-  if (bolt11) {
-    char *invoice_val = NULL;
-    if (nostr_json_get_string(response_json, "invoice", &invoice_val) == 0) {
-      *bolt11 = invoice_val;
-    } else {
-      *bolt11 = NULL;
-    }
-  }
-
-  if (payment_hash) {
-    char *hash_val = NULL;
-    if (nostr_json_get_string(response_json, "payment_hash", &hash_val) == 0) {
-      *payment_hash = hash_val;
-    } else {
-      *payment_hash = NULL;
-    }
-  }
-
-  g_free(response_json);
+  const gchar *inv = NULL, *hash = NULL;
+  g_variant_get(r, "(&s&s)", &inv, &hash);
+  if (bolt11) *bolt11 = (inv && *inv) ? g_strdup(inv) : NULL;
+  if (payment_hash) *payment_hash = (hash && *hash) ? g_strdup(hash) : NULL;
   return TRUE;
 }
 

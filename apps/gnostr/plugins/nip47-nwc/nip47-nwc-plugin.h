@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * nip47-nwc-plugin.h - NIP-47 Nostr Wallet Connect Plugin
  *
+ * Client of the desktop wallet agent (org.nostr.Wallet1): the pairing
+ * secret, relay connection and NIP-47 protocol live in nostr-wallet-agent.
+ *
  * Copyright (C) 2026 Gnostr Contributors
  */
 
@@ -72,9 +75,12 @@ Nip47NwcPlugin *nip47_nwc_plugin_get_default(void);
  * @connection_uri: nostr+walletconnect:// URI string
  * @error: (out) (optional): Return location for error
  *
- * Parse and store a NWC connection URI.
+ * Validate a NWC connection URI and hand it to the wallet agent's Pair()
+ * (the agent asks the user to confirm and stores it in the keyring). The
+ * state becomes %NIP47_NWC_STATE_CONNECTING, then CONNECTED or ERROR
+ * ("state-changed").
  *
- * Returns: %TRUE on success, %FALSE on error
+ * Returns: %TRUE if the pairing request was sent, %FALSE on an invalid URI
  */
 gboolean nip47_nwc_plugin_connect(Nip47NwcPlugin *self,
                                   const gchar *connection_uri,
@@ -84,7 +90,7 @@ gboolean nip47_nwc_plugin_connect(Nip47NwcPlugin *self,
  * nip47_nwc_plugin_disconnect:
  * @self: The NWC plugin
  *
- * Disconnect from the wallet and clear stored connection.
+ * Ask the wallet agent to forget the pairing (Unpair; user-confirmed).
  */
 void nip47_nwc_plugin_disconnect(Nip47NwcPlugin *self);
 
@@ -177,7 +183,8 @@ gboolean nip47_nwc_plugin_get_balance_finish(Nip47NwcPlugin *self,
  * @callback: Callback when payment completes
  * @user_data: User data for callback
  *
- * Asynchronously pay a lightning invoice.
+ * Asynchronously pay a lightning invoice through the wallet agent, which
+ * applies this application's daily budget and asks the user when needed.
  */
 void nip47_nwc_plugin_pay_invoice_async(Nip47NwcPlugin *self,
                                         const gchar *bolt11,
