@@ -1,5 +1,7 @@
 #include "secret_store.h"
 
+#include <string.h>
+
 const SecretSchema gnostr_secret_schema = {
   GNOSTR_SECRET_SCHEMA_NAME,
   SECRET_SCHEMA_NONE,
@@ -14,6 +16,21 @@ const SecretSchema gnostr_secret_schema = {
   }
 };
 
+/* "npub1" + 8 data chars: enough to tell keys apart at a glance. */
+#define GNOSTR_SECRET_LABEL_NPUB_PREFIX 13
+
+gchar *gnostr_secret_store_build_label(const gchar *uid, const gchar *npub){
+  if (!npub || !*npub) return NULL;
+  gchar *short_npub = strlen(npub) > GNOSTR_SECRET_LABEL_NPUB_PREFIX
+    ? g_strdup_printf("%.*s\u2026", GNOSTR_SECRET_LABEL_NPUB_PREFIX, npub)
+    : g_strdup(npub);
+  gchar *label = (uid && *uid)
+    ? g_strdup_printf("Nostr key: %s (%s)", uid, short_npub)
+    : g_strdup_printf("Nostr key: %s", short_npub);
+  g_free(short_npub);
+  return label;
+}
+
 gboolean gnostr_secret_store_save_software_key(const gchar *npub,
                                                 const gchar *uid,
                                                 const gchar *secret,
@@ -22,18 +39,21 @@ gboolean gnostr_secret_store_save_software_key(const gchar *npub,
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "npub and secret required");
     return FALSE;
   }
-  return secret_password_store_sync(&gnostr_secret_schema,
+  gchar *label = gnostr_secret_store_build_label(uid, npub);
+  gboolean ok = secret_password_store_sync(&gnostr_secret_schema,
                                     SECRET_COLLECTION_DEFAULT,
-                                    "Nostr key",
+                                    label,
                                     secret,
                                     NULL, /* cancellable */
+                                    error,
                                     "type", "nostr-key",
                                     "npub", npub,
                                     "uid", uid ? uid : "",
                                     "curve", "secp256k1",
                                     "origin", "software",
-                                    NULL, /* end attributes */
-                                    error);
+                                    NULL); /* end attributes */
+  g_free(label);
+  return ok;
 }
 
 GHashTable *gnostr_secret_store_find_all(GError **error){

@@ -15,6 +15,13 @@ extern const SecretSchema gnostr_secret_schema;
 extern "C" {
 #endif
 
+/* Build the Seahorse-visible item label documented in
+ * org.gnostr.secret.schema.txt: "Nostr key: <uid> (<npub prefix>…)", or
+ * "Nostr key: <npub prefix>…" when uid is NULL/empty. The full npub is kept
+ * in the item attributes; the label abbreviates it so Seahorse's list stays
+ * readable. Returns NULL when npub is NULL/empty. Free with g_free(). */
+gchar *gnostr_secret_store_build_label(const gchar *uid, const gchar *npub);
+
 #ifdef GNOSTR_HAVE_LIBSECRET
 gboolean gnostr_secret_store_save_software_key(const gchar *npub,
                                                 const gchar *uid,
