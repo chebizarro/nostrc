@@ -2,12 +2,12 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Starts an NdDavServer on a dedicated GMainContext thread, issues
- * HTTP requests via libsoup client, and validates the DAV XML responses.
+ * Starts an authenticated NdDavServer on a dedicated GMainContext thread
+ * (see nd-test-harness.h), issues HTTP requests via libsoup client, and
+ * validates the DAV XML responses.
  */
 
-#include "nd-dav-server.h"
-#include "nd-token-store.h"
+#include "nd-test-harness.h"
 #include "nd-ical.h"
 #include "nd-calendar-store.h"
 #include "nd-vcard.h"
@@ -24,99 +24,32 @@
 
 /* ---- Test fixtures ---- */
 
+/* The server runs via the shared harness (tests/nd-test-harness.c) with a
+ * real token file and SQLite store in a temporary directory; f->session
+ * sends the valid bearer token on every request. */
 typedef struct {
-  NdTokenStore *token_store;
-  NdDavServer  *server;
-  SoupSession  *session;
-  guint         port;
-  gchar        *base_url;
-
-  /* Server runs on its own thread with its own GMainContext */
-  GMainLoop    *server_loop;
-  GThread      *server_thread;
-  GMutex        ready_mutex;
-  GCond         ready_cond;
-  gboolean      ready;
+  NdTestServer *ts;
+  SoupSession  *session;    /* borrowed from ts */
+  const gchar  *base_url;   /* borrowed from ts */
 } DavFixture;
-
-static gpointer
-server_thread_func(gpointer data)
-{
-  DavFixture *f = data;
-
-  /* Create everything in this thread so GMainContext is native */
-  GMainContext *ctx = g_main_context_new();
-  g_main_context_push_thread_default(ctx);
-
-  f->token_store = nd_token_store_new();
-  f->server = nd_dav_server_new(f->token_store);
-
-  GError *err = NULL;
-  gboolean started = nd_dav_server_start(f->server, "127.0.0.1", f->port, &err);
-  if (!started) {
-    f->port += 1000;
-    g_clear_error(&err);
-    started = nd_dav_server_start(f->server, "127.0.0.1", f->port, &err);
-  }
-  g_assert_no_error(err);
-  g_assert_true(started);
-
-  f->server_loop = g_main_loop_new(ctx, FALSE);
-
-  /* Signal the main thread that the server is ready */
-  g_mutex_lock(&f->ready_mutex);
-  f->ready = TRUE;
-  g_cond_signal(&f->ready_cond);
-  g_mutex_unlock(&f->ready_mutex);
-
-  g_main_loop_run(f->server_loop);
-
-  g_main_context_pop_thread_default(ctx);
-  g_main_loop_unref(f->server_loop);
-  f->server_loop = NULL;
-  g_main_context_unref(ctx);
-  return NULL;
-}
 
 static void
 dav_fixture_setup(DavFixture *f, gconstpointer data)
 {
   (void)data;
-
-  g_mutex_init(&f->ready_mutex);
-  g_cond_init(&f->ready_cond);
-  f->ready = FALSE;
-
-  f->port = 17680 + (guint)(g_test_rand_int_range(0, 1000));
-
-  /* Start the server thread — it creates server objects internally */
-  f->server_thread = g_thread_new("dav-server", server_thread_func, f);
-
-  /* Wait for the server to be ready */
-  g_mutex_lock(&f->ready_mutex);
-  while (!f->ready)
-    g_cond_wait(&f->ready_cond, &f->ready_mutex);
-  g_mutex_unlock(&f->ready_mutex);
-
-  f->base_url = g_strdup_printf("http://127.0.0.1:%u", f->port);
-  f->session = soup_session_new();
+  f->ts = nd_test_server_start(NULL);
+  f->session = f->ts->session;
+  f->base_url = f->ts->base_url;
 }
 
 static void
 dav_fixture_teardown(DavFixture *f, gconstpointer data)
 {
   (void)data;
-
-  g_main_loop_quit(f->server_loop);
-  g_thread_join(f->server_thread);
-
-  nd_dav_server_stop(f->server);
-  g_clear_object(&f->server);
-  nd_token_store_free(f->token_store);
-  g_clear_object(&f->session);
-  g_free(f->base_url);
-  g_mutex_clear(&f->ready_mutex);
-  g_cond_clear(&f->ready_cond);
+  nd_test_server_stop(f->ts);
+  f->ts = NULL;
+  f->session = NULL;
+  f->base_url = NULL;
 }
 
 /* ---- Helpers ---- */

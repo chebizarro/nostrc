@@ -1,0 +1,7 @@
+[D-BUS Service]
+Name=org.nostr.Dav
+# Activation is delegated to the nostr-dav.service systemd user unit so
+# the daemon always runs in that unit's sandbox; there is no direct Exec
+# fallback outside systemd.
+Exec=/bin/false
+SystemdService=nostr-dav.service

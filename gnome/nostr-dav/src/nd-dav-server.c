@@ -2,9 +2,10 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Scaffold implementation: answers OPTIONS, PROPFIND depth 0/1, and
- * well-known redirects with empty calendar/address book collections.
- * Authenticated via HTTP Basic (password = bearer token from NdTokenStore).
+ * Answers OPTIONS, PROPFIND depth 0/1, REPORT, GET, PUT, DELETE and the
+ * well-known redirects over SQLite-backed calendar/contact/file stores.
+ * Authenticated via HTTP Basic (password = bearer token from NdTokenStore);
+ * fails closed when no account is configured.
  */
 
 #include "nd-dav-server.h"
@@ -23,13 +24,7 @@
 
 /* ---- Error domain ---- */
 
-#define ND_DAV_SERVER_ERROR (nd_dav_server_error_quark())
 G_DEFINE_QUARK(nd-dav-server-error-quark, nd_dav_server_error)
-
-enum {
-  ND_DAV_SERVER_ERROR_BIND = 1,
-  ND_DAV_SERVER_ERROR_ALREADY_RUNNING
-};
 
 /* ---- DAV namespace URIs ---- */
 
@@ -48,8 +43,11 @@ struct _NdDavServer {
   gchar        *listen_addr;    /* owned */
   guint         listen_port;
 
-  /* Default account for auth (v1: single account) */
+  /* Account whose token authorizes requests (v1: single account).
+   * NULL means unconfigured: start() refuses and check_auth() rejects. */
   gchar        *account_id;     /* owned, nullable */
+
+  NdStoreDb    *db;             /* owned ref */
 
   /* Calendar store for NIP-52 events */
   NdCalendarStore *cal_store;    /* owned */
@@ -145,14 +143,42 @@ xml_write_displayname(xmlTextWriterPtr w, const gchar *name)
   xmlTextWriterEndElement(w);
 }
 
-/* ---- Auth helper ---- */
+/**
+ * Close the multistatus document and send it as a 207 response.
+ */
+static void
+send_multistatus(SoupServerMessage *msg, xmlTextWriterPtr w, xmlBufferPtr buf)
+{
+  xmlTextWriterEndElement(w); /* multistatus */
+  xmlTextWriterEndDocument(w);
+  xmlFreeTextWriter(w);
+
+  const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
+  gsize xml_len = xmlBufferLength(buf);
+
+  soup_server_message_set_status(msg, 207, NULL);
+  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
+  soup_message_headers_replace(hdrs, "Content-Type",
+                               "application/xml; charset=utf-8");
+  soup_server_message_set_response(msg, "application/xml; charset=utf-8",
+                                   SOUP_MEMORY_COPY, xml_str, xml_len);
+  xmlBufferFree(buf);
+}
 
 /**
- * Validate HTTP Basic auth. In v1, we accept any username and check
- * the password against the default account's bearer token.
- *
- * Returns TRUE if authenticated. Sets 401 + WWW-Authenticate on failure.
+ * Respond 500 for a store failure. Takes ownership of @err.
  */
+static void
+respond_store_error(SoupServerMessage *msg, GError *err, const gchar *what)
+{
+  g_warning("nostr-dav: %s failed: %s", what,
+            err ? err->message : "unknown error");
+  g_clear_error(&err);
+  soup_server_message_set_status(msg, 500, NULL);
+}
+
+/* ---- Auth helper ---- */
+
 static void
 set_unauthorized(SoupServerMessage *msg)
 {
@@ -162,12 +188,18 @@ set_unauthorized(SoupServerMessage *msg)
                                "Basic realm=\"nostr-dav\"");
 }
 
+/**
+ * Validate HTTP Basic auth: any username, password must equal the
+ * configured account's bearer token. Fails closed when no account is
+ * configured. Returns TRUE if authenticated; sets 401 +
+ * WWW-Authenticate on failure.
+ */
 static gboolean
 check_auth(NdDavServer *self, SoupServerMessage *msg)
 {
   if (self->account_id == NULL) {
-    /* No account configured yet — allow unauthenticated for OPTIONS/discovery */
-    return TRUE;
+    set_unauthorized(msg);
+    return FALSE;
   }
 
   SoupMessageHeaders *req_hdrs = soup_server_message_get_request_headers(msg);
@@ -355,7 +387,20 @@ handle_propfind_principal(NdDavServer *self, SoupServerMessage *msg)
 static void
 handle_propfind_calendars(NdDavServer *self, SoupServerMessage *msg, int depth)
 {
-  (void)self;
+  /* Read everything before emitting XML: a store failure must be a 500,
+   * never an empty listing that a client would sync as "all deleted". */
+  g_autofree gchar *ctag = NULL;
+  g_autoptr(GPtrArray) events = NULL;
+  if (depth >= 1) {
+    GError *err = NULL;
+    ctag = nd_calendar_store_get_ctag(self->cal_store, &err);
+    if (ctag != NULL)
+      events = nd_calendar_store_list_all(self->cal_store, &err);
+    if (events == NULL) {
+      respond_store_error(msg, err, "list calendar events");
+      return;
+    }
+  }
 
   xmlBufferPtr buf = NULL;
   xmlTextWriterPtr w = xml_begin_multistatus(&buf);
@@ -392,8 +437,7 @@ handle_propfind_calendars(NdDavServer *self, SoupServerMessage *msg, int depth)
     xmlTextWriterEndElement(w);
     xmlTextWriterEndElement(w);
 
-    /* getctag: changes with every store mutation */
-    g_autofree gchar *ctag = nd_calendar_store_get_ctag(self->cal_store);
+    /* getctag: persistent generation, bumped with every store mutation */
     xmlTextWriterStartElementNS(w, BAD_CAST "D", BAD_CAST "getctag", NULL);
     xmlTextWriterWriteString(w, BAD_CAST ctag);
     xmlTextWriterEndElement(w);
@@ -402,28 +446,13 @@ handle_propfind_calendars(NdDavServer *self, SoupServerMessage *msg, int depth)
     xml_end_response(w);
 
     /* List individual events as resources */
-    g_autoptr(GPtrArray) events = nd_calendar_store_list_all(self->cal_store);
     for (guint i = 0; i < events->len; i++) {
       const NdCalendarEvent *event = g_ptr_array_index(events, i);
       xml_write_event_response(w, event);
     }
   }
 
-  xmlTextWriterEndElement(w); /* multistatus */
-  xmlTextWriterEndDocument(w);
-  xmlFreeTextWriter(w);
-
-  const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
-  gsize xml_len = xmlBufferLength(buf);
-
-  soup_server_message_set_status(msg, 207, NULL);
-  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
-  soup_message_headers_replace(hdrs, "Content-Type",
-                               "application/xml; charset=utf-8");
-  soup_server_message_set_response(msg, "application/xml; charset=utf-8",
-                                   SOUP_MEMORY_COPY, xml_str, xml_len);
-
-  xmlBufferFree(buf);
+  send_multistatus(msg, w, buf);
 }
 
 /**
@@ -432,6 +461,19 @@ handle_propfind_calendars(NdDavServer *self, SoupServerMessage *msg, int depth)
 static void
 handle_propfind_contacts(NdDavServer *self, SoupServerMessage *msg, int depth)
 {
+  g_autofree gchar *ctag = NULL;
+  g_autoptr(GPtrArray) contacts = NULL;
+  if (depth >= 1) {
+    GError *err = NULL;
+    ctag = nd_contact_store_get_ctag(self->contact_store, &err);
+    if (ctag != NULL)
+      contacts = nd_contact_store_list_all(self->contact_store, &err);
+    if (contacts == NULL) {
+      respond_store_error(msg, err, "list contacts");
+      return;
+    }
+  }
+
   xmlBufferPtr buf = NULL;
   xmlTextWriterPtr w = xml_begin_multistatus(&buf);
 
@@ -461,7 +503,6 @@ handle_propfind_contacts(NdDavServer *self, SoupServerMessage *msg, int depth)
     xml_write_displayname(w, "Nostr Contacts");
 
     /* getctag */
-    g_autofree gchar *ctag = nd_contact_store_get_ctag(self->contact_store);
     xmlTextWriterStartElementNS(w, BAD_CAST "D", BAD_CAST "getctag", NULL);
     xmlTextWriterWriteString(w, BAD_CAST ctag);
     xmlTextWriterEndElement(w);
@@ -470,28 +511,13 @@ handle_propfind_contacts(NdDavServer *self, SoupServerMessage *msg, int depth)
     xml_end_response(w);
 
     /* List individual contacts */
-    g_autoptr(GPtrArray) contacts = nd_contact_store_list_all(self->contact_store);
     for (guint i = 0; i < contacts->len; i++) {
       const NdContact *contact = g_ptr_array_index(contacts, i);
       xml_write_contact_response(w, contact);
     }
   }
 
-  xmlTextWriterEndElement(w); /* multistatus */
-  xmlTextWriterEndDocument(w);
-  xmlFreeTextWriter(w);
-
-  const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
-  gsize xml_len = xmlBufferLength(buf);
-
-  soup_server_message_set_status(msg, 207, NULL);
-  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
-  soup_message_headers_replace(hdrs, "Content-Type",
-                               "application/xml; charset=utf-8");
-  soup_server_message_set_response(msg, "application/xml; charset=utf-8",
-                                   SOUP_MEMORY_COPY, xml_str, xml_len);
-
-  xmlBufferFree(buf);
+  send_multistatus(msg, w, buf);
 }
 
 /* ---- CalDAV resource handlers ---- */
@@ -600,15 +626,15 @@ handle_put_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
     event->uid = g_strdup(uid);
   }
 
-  /* Check if this is a create or update */
-  gboolean is_new = (nd_calendar_store_get(self->cal_store, uid) == NULL);
+  gboolean is_new = FALSE;
+  GError *store_err = NULL;
+  if (!nd_calendar_store_put(self->cal_store, event, &is_new, &store_err)) {
+    respond_store_error(msg, store_err, "store calendar event");
+    nd_calendar_event_free(event);
+    return;
+  }
 
-  /* Store the event (takes ownership) */
-  nd_calendar_store_put(self->cal_store, event);
-
-  /* Retrieve the stored event to compute ETag */
-  const NdCalendarEvent *stored = nd_calendar_store_get(self->cal_store, uid);
-  g_autofree gchar *etag = nd_ical_compute_etag(stored);
+  g_autofree gchar *etag = nd_ical_compute_etag(event);
 
   soup_server_message_set_status(msg, is_new ? 201 : 204, NULL);
   SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
@@ -619,7 +645,8 @@ handle_put_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 
   g_message("nostr-dav: %s calendar event %s (%s)",
             is_new ? "created" : "updated", uid,
-            stored->summary ? stored->summary : "untitled");
+            event->summary ? event->summary : "untitled");
+  nd_calendar_event_free(event);
 }
 
 /**
@@ -628,14 +655,19 @@ handle_put_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 static void
 handle_get_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 {
-  const NdCalendarEvent *event = nd_calendar_store_get(self->cal_store, uid);
+  GError *err = NULL;
+  NdCalendarEvent *event = nd_calendar_store_get(self->cal_store, uid, &err);
   if (event == NULL) {
-    soup_server_message_set_status(msg, 404, NULL);
+    if (err != NULL)
+      respond_store_error(msg, err, "read calendar event");
+    else
+      soup_server_message_set_status(msg, 404, NULL);
     return;
   }
 
   g_autofree gchar *ics = nd_ical_generate_vevent(event);
   g_autofree gchar *etag = nd_ical_compute_etag(event);
+  nd_calendar_event_free(event);
 
   soup_server_message_set_status(msg, 200, NULL);
   SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
@@ -652,7 +684,13 @@ handle_get_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 static void
 handle_delete_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 {
-  if (!nd_calendar_store_remove(self->cal_store, uid)) {
+  gboolean removed = FALSE;
+  GError *err = NULL;
+  if (!nd_calendar_store_remove(self->cal_store, uid, &removed, &err)) {
+    respond_store_error(msg, err, "delete calendar event");
+    return;
+  }
+  if (!removed) {
     soup_server_message_set_status(msg, 404, NULL);
     return;
   }
@@ -668,29 +706,44 @@ handle_delete_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 static void
 handle_report_calendar(NdDavServer *self, SoupServerMessage *msg)
 {
+  GError *err = NULL;
+  g_autoptr(GPtrArray) events =
+    nd_calendar_store_list_all(self->cal_store, &err);
+  if (events == NULL) {
+    respond_store_error(msg, err, "list calendar events");
+    return;
+  }
+
   xmlBufferPtr buf = NULL;
   xmlTextWriterPtr w = xml_begin_multistatus(&buf);
-
-  g_autoptr(GPtrArray) events = nd_calendar_store_list_all(self->cal_store);
   for (guint i = 0; i < events->len; i++) {
     const NdCalendarEvent *event = g_ptr_array_index(events, i);
     xml_write_event_response(w, event);
   }
+  send_multistatus(msg, w, buf);
+}
 
-  xmlTextWriterEndElement(w); /* multistatus */
-  xmlTextWriterEndDocument(w);
-  xmlFreeTextWriter(w);
+/**
+ * PROPFIND on a single event resource.
+ */
+static void
+handle_propfind_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
+{
+  GError *err = NULL;
+  NdCalendarEvent *event = nd_calendar_store_get(self->cal_store, uid, &err);
+  if (event == NULL) {
+    if (err != NULL)
+      respond_store_error(msg, err, "read calendar event");
+    else
+      soup_server_message_set_status(msg, 404, NULL);
+    return;
+  }
 
-  const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
-  gsize xml_len = xmlBufferLength(buf);
-
-  soup_server_message_set_status(msg, 207, NULL);
-  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
-  soup_message_headers_replace(hdrs, "Content-Type",
-                               "application/xml; charset=utf-8");
-  soup_server_message_set_response(msg, "application/xml; charset=utf-8",
-                                   SOUP_MEMORY_COPY, xml_str, xml_len);
-  xmlBufferFree(buf);
+  xmlBufferPtr buf = NULL;
+  xmlTextWriterPtr w = xml_begin_multistatus(&buf);
+  xml_write_event_response(w, event);
+  send_multistatus(msg, w, buf);
+  nd_calendar_event_free(event);
 }
 
 /* ---- CardDAV resource handlers ---- */
@@ -790,12 +843,15 @@ handle_put_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
     contact->uid = g_strdup(uid);
   }
 
-  gboolean is_new = (nd_contact_store_get(self->contact_store, uid) == NULL);
+  gboolean is_new = FALSE;
+  GError *store_err = NULL;
+  if (!nd_contact_store_put(self->contact_store, contact, &is_new, &store_err)) {
+    respond_store_error(msg, store_err, "store contact");
+    nd_contact_free(contact);
+    return;
+  }
 
-  nd_contact_store_put(self->contact_store, contact);
-
-  const NdContact *stored = nd_contact_store_get(self->contact_store, uid);
-  g_autofree gchar *etag = nd_vcard_compute_etag(stored);
+  g_autofree gchar *etag = nd_vcard_compute_etag(contact);
 
   soup_server_message_set_status(msg, is_new ? 201 : 204, NULL);
   SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
@@ -806,7 +862,8 @@ handle_put_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 
   g_message("nostr-dav: %s contact %s (%s)",
             is_new ? "created" : "updated", uid,
-            stored->fn ? stored->fn : "unnamed");
+            contact->fn ? contact->fn : "unnamed");
+  nd_contact_free(contact);
 }
 
 /**
@@ -815,14 +872,19 @@ handle_put_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 static void
 handle_get_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 {
-  const NdContact *contact = nd_contact_store_get(self->contact_store, uid);
+  GError *err = NULL;
+  NdContact *contact = nd_contact_store_get(self->contact_store, uid, &err);
   if (contact == NULL) {
-    soup_server_message_set_status(msg, 404, NULL);
+    if (err != NULL)
+      respond_store_error(msg, err, "read contact");
+    else
+      soup_server_message_set_status(msg, 404, NULL);
     return;
   }
 
   g_autofree gchar *vcard = nd_vcard_generate(contact);
   g_autofree gchar *etag = nd_vcard_compute_etag(contact);
+  nd_contact_free(contact);
 
   soup_server_message_set_status(msg, 200, NULL);
   SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
@@ -839,7 +901,13 @@ handle_get_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 static void
 handle_delete_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 {
-  if (!nd_contact_store_remove(self->contact_store, uid)) {
+  gboolean removed = FALSE;
+  GError *err = NULL;
+  if (!nd_contact_store_remove(self->contact_store, uid, &removed, &err)) {
+    respond_store_error(msg, err, "delete contact");
+    return;
+  }
+  if (!removed) {
     soup_server_message_set_status(msg, 404, NULL);
     return;
   }
@@ -854,29 +922,44 @@ handle_delete_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *ui
 static void
 handle_report_contacts(NdDavServer *self, SoupServerMessage *msg)
 {
+  GError *err = NULL;
+  g_autoptr(GPtrArray) contacts =
+    nd_contact_store_list_all(self->contact_store, &err);
+  if (contacts == NULL) {
+    respond_store_error(msg, err, "list contacts");
+    return;
+  }
+
   xmlBufferPtr buf = NULL;
   xmlTextWriterPtr w = xml_begin_multistatus(&buf);
-
-  g_autoptr(GPtrArray) contacts = nd_contact_store_list_all(self->contact_store);
   for (guint i = 0; i < contacts->len; i++) {
     const NdContact *contact = g_ptr_array_index(contacts, i);
     xml_write_contact_response(w, contact);
   }
+  send_multistatus(msg, w, buf);
+}
 
-  xmlTextWriterEndElement(w); /* multistatus */
-  xmlTextWriterEndDocument(w);
-  xmlFreeTextWriter(w);
+/**
+ * PROPFIND on a single contact resource.
+ */
+static void
+handle_propfind_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
+{
+  GError *err = NULL;
+  NdContact *contact = nd_contact_store_get(self->contact_store, uid, &err);
+  if (contact == NULL) {
+    if (err != NULL)
+      respond_store_error(msg, err, "read contact");
+    else
+      soup_server_message_set_status(msg, 404, NULL);
+    return;
+  }
 
-  const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
-  gsize xml_len = xmlBufferLength(buf);
-
-  soup_server_message_set_status(msg, 207, NULL);
-  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
-  soup_message_headers_replace(hdrs, "Content-Type",
-                               "application/xml; charset=utf-8");
-  soup_server_message_set_response(msg, "application/xml; charset=utf-8",
-                                   SOUP_MEMORY_COPY, xml_str, xml_len);
-  xmlBufferFree(buf);
+  xmlBufferPtr buf = NULL;
+  xmlTextWriterPtr w = xml_begin_multistatus(&buf);
+  xml_write_contact_response(w, contact);
+  send_multistatus(msg, w, buf);
+  nd_contact_free(contact);
 }
 
 /* ---- WebDAV File handlers ---- */
@@ -957,6 +1040,19 @@ xml_write_file_response(xmlTextWriterPtr w, const NdFileEntry *entry)
 static void
 handle_propfind_files(NdDavServer *self, SoupServerMessage *msg, int depth)
 {
+  g_autofree gchar *ctag = NULL;
+  g_autoptr(GPtrArray) files = NULL;
+  if (depth >= 1) {
+    GError *err = NULL;
+    ctag = nd_file_store_get_ctag(self->file_store, &err);
+    if (ctag != NULL)
+      files = nd_file_store_list_all(self->file_store, &err);
+    if (files == NULL) {
+      respond_store_error(msg, err, "list files");
+      return;
+    }
+  }
+
   xmlBufferPtr buf = NULL;
   xmlTextWriterPtr w = xml_begin_multistatus(&buf);
 
@@ -983,7 +1079,6 @@ handle_propfind_files(NdDavServer *self, SoupServerMessage *msg, int depth)
     xml_write_displayname(w, "Nostr Files");
 
     /* getctag */
-    g_autofree gchar *ctag = nd_file_store_get_ctag(self->file_store);
     xmlTextWriterStartElementNS(w, BAD_CAST "D", BAD_CAST "getctag", NULL);
     xmlTextWriterWriteString(w, BAD_CAST ctag);
     xmlTextWriterEndElement(w);
@@ -992,28 +1087,13 @@ handle_propfind_files(NdDavServer *self, SoupServerMessage *msg, int depth)
     xml_end_response(w);
 
     /* List individual files as resources */
-    g_autoptr(GPtrArray) files = nd_file_store_list_all(self->file_store);
     for (guint i = 0; i < files->len; i++) {
       const NdFileEntry *entry = g_ptr_array_index(files, i);
       xml_write_file_response(w, entry);
     }
   }
 
-  xmlTextWriterEndElement(w); /* multistatus */
-  xmlTextWriterEndDocument(w);
-  xmlFreeTextWriter(w);
-
-  const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
-  gsize xml_len = xmlBufferLength(buf);
-
-  soup_server_message_set_status(msg, 207, NULL);
-  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
-  soup_message_headers_replace(hdrs, "Content-Type",
-                               "application/xml; charset=utf-8");
-  soup_server_message_set_response(msg, "application/xml; charset=utf-8",
-                                   SOUP_MEMORY_COPY, xml_str, xml_len);
-
-  xmlBufferFree(buf);
+  send_multistatus(msg, w, buf);
 }
 
 /**
@@ -1041,17 +1121,17 @@ handle_put_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_pat
   if (content_type != NULL && !g_str_equal(content_type, "application/octet-stream"))
     mime = content_type;
 
-  /* Check if this is a create or update */
-  gboolean is_new = (nd_file_store_get(self->file_store, file_path) == NULL);
-
   NdFileEntry *entry = nd_file_entry_new(file_path, body_bytes, mime);
 
-  /* Store the entry (takes ownership) */
-  nd_file_store_put(self->file_store, entry);
+  gboolean is_new = FALSE;
+  GError *store_err = NULL;
+  if (!nd_file_store_put(self->file_store, entry, &is_new, &store_err)) {
+    respond_store_error(msg, store_err, "store file");
+    nd_file_entry_free(entry);
+    return;
+  }
 
-  /* Retrieve stored entry to compute ETag */
-  const NdFileEntry *stored = nd_file_store_get(self->file_store, file_path);
-  g_autofree gchar *etag = nd_file_entry_compute_etag(stored);
+  g_autofree gchar *etag = nd_file_entry_compute_etag(entry);
 
   soup_server_message_set_status(msg, is_new ? 201 : 204, NULL);
   SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
@@ -1062,7 +1142,8 @@ handle_put_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_pat
 
   g_message("nostr-dav: %s file %s (%s, %" G_GSIZE_FORMAT " bytes)",
             is_new ? "created" : "updated", file_path,
-            stored->mime_type, stored->size);
+            entry->mime_type, entry->size);
+  nd_file_entry_free(entry);
 }
 
 /**
@@ -1071,9 +1152,13 @@ handle_put_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_pat
 static void
 handle_get_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_path)
 {
-  const NdFileEntry *entry = nd_file_store_get(self->file_store, file_path);
+  GError *err = NULL;
+  NdFileEntry *entry = nd_file_store_get(self->file_store, file_path, &err);
   if (entry == NULL) {
-    soup_server_message_set_status(msg, 404, NULL);
+    if (err != NULL)
+      respond_store_error(msg, err, "read file");
+    else
+      soup_server_message_set_status(msg, 404, NULL);
     return;
   }
 
@@ -1092,6 +1177,7 @@ handle_get_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_pat
 
   soup_server_message_set_response(msg, entry->mime_type,
                                    SOUP_MEMORY_COPY, data, data_len);
+  nd_file_entry_free(entry);
 }
 
 /**
@@ -1100,7 +1186,13 @@ handle_get_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_pat
 static void
 handle_delete_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_path)
 {
-  if (!nd_file_store_remove(self->file_store, file_path)) {
+  gboolean removed = FALSE;
+  GError *err = NULL;
+  if (!nd_file_store_remove(self->file_store, file_path, &removed, &err)) {
+    respond_store_error(msg, err, "delete file");
+    return;
+  }
+  if (!removed) {
     soup_server_message_set_status(msg, 404, NULL);
     return;
   }
@@ -1116,29 +1208,43 @@ handle_delete_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_
 static void
 handle_report_files(NdDavServer *self, SoupServerMessage *msg)
 {
+  GError *err = NULL;
+  g_autoptr(GPtrArray) files = nd_file_store_list_all(self->file_store, &err);
+  if (files == NULL) {
+    respond_store_error(msg, err, "list files");
+    return;
+  }
+
   xmlBufferPtr buf = NULL;
   xmlTextWriterPtr w = xml_begin_multistatus(&buf);
-
-  g_autoptr(GPtrArray) files = nd_file_store_list_all(self->file_store);
   for (guint i = 0; i < files->len; i++) {
     const NdFileEntry *entry = g_ptr_array_index(files, i);
     xml_write_file_response(w, entry);
   }
+  send_multistatus(msg, w, buf);
+}
 
-  xmlTextWriterEndElement(w); /* multistatus */
-  xmlTextWriterEndDocument(w);
-  xmlFreeTextWriter(w);
+/**
+ * PROPFIND on a single file resource.
+ */
+static void
+handle_propfind_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_path)
+{
+  GError *err = NULL;
+  NdFileEntry *entry = nd_file_store_get(self->file_store, file_path, &err);
+  if (entry == NULL) {
+    if (err != NULL)
+      respond_store_error(msg, err, "read file");
+    else
+      soup_server_message_set_status(msg, 404, NULL);
+    return;
+  }
 
-  const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
-  gsize xml_len = xmlBufferLength(buf);
-
-  soup_server_message_set_status(msg, 207, NULL);
-  SoupMessageHeaders *hdrs = soup_server_message_get_response_headers(msg);
-  soup_message_headers_replace(hdrs, "Content-Type",
-                               "application/xml; charset=utf-8");
-  soup_server_message_set_response(msg, "application/xml; charset=utf-8",
-                                   SOUP_MEMORY_COPY, xml_str, xml_len);
-  xmlBufferFree(buf);
+  xmlBufferPtr buf = NULL;
+  xmlTextWriterPtr w = xml_begin_multistatus(&buf);
+  xml_write_file_response(w, entry);
+  send_multistatus(msg, w, buf);
+  nd_file_entry_free(entry);
 }
 
 /* ---- Parse Depth header ---- */
@@ -1199,7 +1305,7 @@ on_request(SoupServer        *soup_server,
   }
 
   /* === All other methods require auth === */
-  if (!g_str_equal(method, "OPTIONS") && !check_auth(self, msg))
+  if (!check_auth(self, msg))
     return;
 
   /* === PROPFIND === */
@@ -1220,29 +1326,7 @@ on_request(SoupServer        *soup_server,
       /* PROPFIND on individual event resource */
       g_autofree gchar *uid = extract_calendar_uid(path);
       if (uid != NULL) {
-        const NdCalendarEvent *event =
-          nd_calendar_store_get(self->cal_store, uid);
-        if (event == NULL) {
-          soup_server_message_set_status(msg, 404, NULL);
-          return;
-        }
-        /* Return single-resource multistatus */
-        xmlBufferPtr buf = NULL;
-        xmlTextWriterPtr w = xml_begin_multistatus(&buf);
-        xml_write_event_response(w, event);
-        xmlTextWriterEndElement(w);
-        xmlTextWriterEndDocument(w);
-        xmlFreeTextWriter(w);
-        const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
-        gsize xml_len = xmlBufferLength(buf);
-        soup_server_message_set_status(msg, 207, NULL);
-        SoupMessageHeaders *rh = soup_server_message_get_response_headers(msg);
-        soup_message_headers_replace(rh, "Content-Type",
-                                     "application/xml; charset=utf-8");
-        soup_server_message_set_response(msg,
-                                         "application/xml; charset=utf-8",
-                                         SOUP_MEMORY_COPY, xml_str, xml_len);
-        xmlBufferFree(buf);
+        handle_propfind_event(self, msg, uid);
         return;
       }
       handle_propfind_calendars(self, msg, depth);
@@ -1253,28 +1337,7 @@ on_request(SoupServer        *soup_server,
       /* PROPFIND on individual contact resource */
       g_autofree gchar *cuid = extract_contact_uid(path);
       if (cuid != NULL) {
-        const NdContact *contact =
-          nd_contact_store_get(self->contact_store, cuid);
-        if (contact == NULL) {
-          soup_server_message_set_status(msg, 404, NULL);
-          return;
-        }
-        xmlBufferPtr buf = NULL;
-        xmlTextWriterPtr w = xml_begin_multistatus(&buf);
-        xml_write_contact_response(w, contact);
-        xmlTextWriterEndElement(w);
-        xmlTextWriterEndDocument(w);
-        xmlFreeTextWriter(w);
-        const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
-        gsize xml_len = xmlBufferLength(buf);
-        soup_server_message_set_status(msg, 207, NULL);
-        SoupMessageHeaders *rh = soup_server_message_get_response_headers(msg);
-        soup_message_headers_replace(rh, "Content-Type",
-                                     "application/xml; charset=utf-8");
-        soup_server_message_set_response(msg,
-                                         "application/xml; charset=utf-8",
-                                         SOUP_MEMORY_COPY, xml_str, xml_len);
-        xmlBufferFree(buf);
+        handle_propfind_contact(self, msg, cuid);
         return;
       }
       handle_propfind_contacts(self, msg, depth);
@@ -1285,28 +1348,7 @@ on_request(SoupServer        *soup_server,
       /* PROPFIND on individual file resource */
       g_autofree gchar *fpath = extract_file_path(path);
       if (fpath != NULL) {
-        const NdFileEntry *entry =
-          nd_file_store_get(self->file_store, fpath);
-        if (entry == NULL) {
-          soup_server_message_set_status(msg, 404, NULL);
-          return;
-        }
-        xmlBufferPtr buf = NULL;
-        xmlTextWriterPtr w = xml_begin_multistatus(&buf);
-        xml_write_file_response(w, entry);
-        xmlTextWriterEndElement(w);
-        xmlTextWriterEndDocument(w);
-        xmlFreeTextWriter(w);
-        const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
-        gsize xml_len = xmlBufferLength(buf);
-        soup_server_message_set_status(msg, 207, NULL);
-        SoupMessageHeaders *rh = soup_server_message_get_response_headers(msg);
-        soup_message_headers_replace(rh, "Content-Type",
-                                     "application/xml; charset=utf-8");
-        soup_server_message_set_response(msg,
-                                         "application/xml; charset=utf-8",
-                                         SOUP_MEMORY_COPY, xml_str, xml_len);
-        xmlBufferFree(buf);
+        handle_propfind_file(self, msg, fpath);
         return;
       }
       handle_propfind_files(self, msg, depth);
@@ -1330,18 +1372,7 @@ on_request(SoupServer        *soup_server,
       /* Empty multistatus for unknown REPORTs */
       xmlBufferPtr buf = NULL;
       xmlTextWriterPtr w = xml_begin_multistatus(&buf);
-      xmlTextWriterEndElement(w);
-      xmlTextWriterEndDocument(w);
-      xmlFreeTextWriter(w);
-      const gchar *xml_str = (const gchar *)xmlBufferContent(buf);
-      gsize xml_len = xmlBufferLength(buf);
-      soup_server_message_set_status(msg, 207, NULL);
-      SoupMessageHeaders *rh = soup_server_message_get_response_headers(msg);
-      soup_message_headers_replace(rh, "Content-Type",
-                                   "application/xml; charset=utf-8");
-      soup_server_message_set_response(msg, "application/xml; charset=utf-8",
-                                       SOUP_MEMORY_COPY, xml_str, xml_len);
-      xmlBufferFree(buf);
+      send_multistatus(msg, w, buf);
     }
     return;
   }
@@ -1434,18 +1465,10 @@ nd_dav_server_finalize(GObject *obj)
   g_clear_object(&self->soup);
   g_clear_pointer(&self->listen_addr, g_free);
   g_clear_pointer(&self->account_id, g_free);
-  if (self->cal_store) {
-    nd_calendar_store_free(self->cal_store);
-    self->cal_store = NULL;
-  }
-  if (self->contact_store) {
-    nd_contact_store_free(self->contact_store);
-    self->contact_store = NULL;
-  }
-  if (self->file_store) {
-    nd_file_store_free(self->file_store);
-    self->file_store = NULL;
-  }
+  g_clear_pointer(&self->cal_store, nd_calendar_store_free);
+  g_clear_pointer(&self->contact_store, nd_contact_store_free);
+  g_clear_pointer(&self->file_store, nd_file_store_free);
+  g_clear_pointer(&self->db, nd_store_db_unref);
   G_OBJECT_CLASS(nd_dav_server_parent_class)->finalize(obj);
 }
 
@@ -1464,22 +1487,32 @@ nd_dav_server_init(NdDavServer *self)
   self->listen_addr = NULL;
   self->listen_port = 0;
   self->account_id = NULL;
-  self->cal_store = nd_calendar_store_new();
-  self->contact_store = nd_contact_store_new();
-  self->file_store = nd_file_store_new();
 }
 
 /* ---- Public API ---- */
 
 NdDavServer *
-nd_dav_server_new(NdTokenStore *token_store)
+nd_dav_server_new(NdTokenStore *token_store, NdStoreDb *db)
 {
   g_return_val_if_fail(token_store != NULL, NULL);
+  g_return_val_if_fail(db != NULL, NULL);
 
   NdDavServer *self = g_object_new(ND_TYPE_DAV_SERVER, NULL);
   self->token_store = token_store;
+  self->db = nd_store_db_ref(db);
+  self->cal_store = nd_calendar_store_new(db);
+  self->contact_store = nd_contact_store_new(db);
+  self->file_store = nd_file_store_new(db);
 
   return self;
+}
+
+void
+nd_dav_server_set_account_id(NdDavServer *self, const gchar *account_id)
+{
+  g_return_if_fail(ND_IS_DAV_SERVER(self));
+  g_free(self->account_id);
+  self->account_id = g_strdup(account_id);
 }
 
 gboolean
@@ -1497,20 +1530,38 @@ nd_dav_server_start(NdDavServer *self,
     return FALSE;
   }
 
-  self->soup = soup_server_new("server-header", "nostr-dav/1.0", NULL);
-  soup_server_add_handler(self->soup, "/", on_request, self, NULL);
+  g_return_val_if_fail(address != NULL, FALSE);
+
+  /* Fail closed: never accept a connection before auth is configured. */
+  if (self->account_id == NULL ||
+      !nd_token_store_has_token(self->token_store, self->account_id)) {
+    g_set_error_literal(error, ND_DAV_SERVER_ERROR,
+                        ND_DAV_SERVER_ERROR_NOT_CONFIGURED,
+                        "Refusing to listen: no account with a loaded "
+                        "bearer token is configured");
+    return FALSE;
+  }
 
   g_autoptr(GInetAddress) inet_addr = g_inet_address_new_from_string(address);
   if (inet_addr == NULL) {
     g_set_error(error, ND_DAV_SERVER_ERROR, ND_DAV_SERVER_ERROR_BIND,
                 "Invalid listen address: %s", address);
-    g_clear_object(&self->soup);
+    return FALSE;
+  }
+
+  if (!g_inet_address_get_is_loopback(inet_addr)) {
+    g_set_error(error, ND_DAV_SERVER_ERROR, ND_DAV_SERVER_ERROR_NOT_LOOPBACK,
+                "Refusing to listen on non-loopback address %s", address);
     return FALSE;
   }
 
   g_autoptr(GSocketAddress) sock_addr =
     G_SOCKET_ADDRESS(g_inet_socket_address_new(inet_addr, port));
 
+  self->soup = soup_server_new("server-header", "nostr-dav/1.0", NULL);
+  soup_server_add_handler(self->soup, "/", on_request, self, NULL);
+
+  /* Last step: bind. */
   GError *listen_err = NULL;
   if (!soup_server_listen(self->soup, sock_addr, 0, &listen_err)) {
     g_propagate_prefixed_error(error, listen_err,
@@ -1519,11 +1570,23 @@ nd_dav_server_start(NdDavServer *self,
     return FALSE;
   }
 
-  self->running     = TRUE;
-  self->listen_addr = g_strdup(address);
-  self->listen_port = port;
+  /* Resolve the bound port (differs from @port when @port is 0). */
+  guint bound_port = port;
+  GSList *listeners = soup_server_get_listeners(self->soup);
+  if (listeners != NULL) {
+    g_autoptr(GSocketAddress) local =
+      g_socket_get_local_address(G_SOCKET(listeners->data), NULL);
+    if (local != NULL && G_IS_INET_SOCKET_ADDRESS(local))
+      bound_port = g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(local));
+  }
+  g_slist_free(listeners);
 
-  g_message("nostr-dav: listening on http://%s:%u", address, port);
+  self->running     = TRUE;
+  g_free(self->listen_addr);
+  self->listen_addr = g_strdup(address);
+  self->listen_port = bound_port;
+
+  g_message("nostr-dav: listening on http://%s:%u", address, bound_port);
   return TRUE;
 }
 
@@ -1537,8 +1600,10 @@ nd_dav_server_stop(NdDavServer *self)
 
   if (self->soup != NULL)
     soup_server_disconnect(self->soup);
+  g_clear_object(&self->soup);
 
   self->running = FALSE;
+  self->listen_port = 0;
   g_message("nostr-dav: stopped");
 }
 
@@ -1547,4 +1612,11 @@ nd_dav_server_is_running(NdDavServer *self)
 {
   g_return_val_if_fail(ND_IS_DAV_SERVER(self), FALSE);
   return self->running;
+}
+
+guint
+nd_dav_server_get_port(NdDavServer *self)
+{
+  g_return_val_if_fail(ND_IS_DAV_SERVER(self), 0);
+  return self->running ? self->listen_port : 0;
 }

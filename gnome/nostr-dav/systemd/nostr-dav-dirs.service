@@ -1,0 +1,12 @@
+[Unit]
+Description=Create nostr-dav token and store directories
+Documentation=https://github.com/nicegnostr/nostrc/tree/master/gnome/nostr-dav
+
+# Runs outside nostr-dav.service's sandbox: that unit mounts home
+# read-only except for these two directories, which must therefore exist
+# before it starts. (systemd --user cannot run "+"-prefixed ExecStartPre=,
+# and has no *Directory= directive for $XDG_DATA_HOME.)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/mkdir -p -m 0700 %E/nostr-dav %h/.local/share/nostr-dav

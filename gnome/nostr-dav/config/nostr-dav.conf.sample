@@ -1,0 +1,24 @@
+# nostr-dav configuration
+#
+# Copy to $XDG_CONFIG_HOME/nostr-dav/nostr-dav.conf (normally
+# ~/.config/nostr-dav/nostr-dav.conf). Every key is optional; a missing
+# file means defaults. An unrecognized value makes nostr-dav refuse to
+# start rather than silently fall back to a less private default.
+#
+# The listen address (127.0.0.1) and port (7680) are fixed at compile
+# time and are intentionally not configurable.
+
+[nostr-dav]
+
+# Where nostr-dav fetches and publishes calendar/contact events:
+#
+#   session_relay_only       Only the session-local relay
+#                            ($XDG_RUNTIME_DIR/nostr/relay.sock). Never
+#                            contact the account's home relays directly;
+#                            if the session relay is down, sync pauses.
+#   session_relay_or_direct  Prefer the session relay; fall back to the
+#                            account's home relays once reconnect backoff
+#                            is exhausted. (default)
+#   direct_only              Talk to the account's home relays directly.
+#
+#nostr_dav_upstream_mode=session_relay_or_direct

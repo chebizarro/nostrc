@@ -1,0 +1,37 @@
+[Unit]
+Description=Nostr DAV Bridge (CalDAV/CardDAV/WebDAV ↔ Nostr)
+Documentation=https://github.com/nicegnostr/nostrc/tree/master/gnome/nostr-dav
+After=graphical-session.target gnostr-signer-daemon.service nostr-dav-dirs.service
+Wants=gnostr-signer-daemon.service
+# ReadWritePaths= below cannot name missing paths, and this sandbox cannot
+# create them under ProtectHome=read-only; the unsandboxed oneshot does.
+Requires=nostr-dav-dirs.service
+
+# This unit is the single activation authority for nostr-dav. D-Bus
+# activation of org.nostr.Dav is delegated here via SystemdService=.
+
+[Service]
+Type=dbus
+BusName=org.nostr.Dav
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/nostr-dav
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%E/nostr-dav %h/.local/share/nostr-dav
+RuntimeDirectory=nostr-dav
+RuntimeDirectoryMode=0700
+PrivateTmp=yes
+ProtectKernelTunables=yes
+# No ProtectKernelModules=: it drops CAP_SYS_MODULE from the bounding set,
+# which systemd --user cannot do (the unit fails with 218/CAPABILITIES),
+# and an unprivileged user service never holds that capability anyway.
+ProtectControlGroups=yes
+RestrictRealtime=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=default.target

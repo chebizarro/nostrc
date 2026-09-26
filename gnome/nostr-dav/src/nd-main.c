@@ -3,14 +3,14 @@
  * SPDX-License-Identifier: MIT
  *
  * Localhost CalDAV/CardDAV/WebDAV bridge daemon that translates between
- * the DAV wire protocol and Nostr events. Designed to be activated by
- * systemd --user or D-Bus.
+ * the DAV wire protocol and Nostr events. Started by the nostr-dav.service
+ * systemd user unit (D-Bus activation delegates to it).
  *
  * Usage:
- *   nostr-dav [--address=127.0.0.1] [--port=7680]
+ *   nostr-dav                     run the service on http://127.0.0.1:7680/
+ *   nostr-dav --show-credentials  print WebDAV URL, username, and token
  *
- * Or via environment:
- *   NOSTR_DAV_ADDRESS=127.0.0.1 NOSTR_DAV_PORT=7680 nostr-dav
+ * The listen address and port are fixed at compile time.
  */
 
 #include "nd-application.h"
@@ -25,5 +25,8 @@ main(int argc, char *argv[])
 
   g_autoptr(NdApplication) app = nd_application_new();
 
-  return g_application_run(G_APPLICATION(app), argc, argv);
+  int status = g_application_run(G_APPLICATION(app), argc, argv);
+  if (status == 0)
+    status = nd_application_get_exit_status(app);
+  return status;
 }

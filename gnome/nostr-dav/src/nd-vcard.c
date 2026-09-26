@@ -330,7 +330,8 @@ nd_vcard_to_nostr_json(const NdContact *contact)
   json_builder_end_object(b);
 
   g_autoptr(JsonGenerator) gen = json_generator_new();
-  json_generator_set_root(gen, json_builder_get_root(b));
+  g_autoptr(JsonNode) root = json_builder_get_root(b);
+  json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, FALSE);
   return json_generator_to_data(gen, NULL);
 }
