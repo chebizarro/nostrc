@@ -1,0 +1,70 @@
+# /etc/nostr-auth/servers.d/example.conf — sample enrolled-server
+# declaration consumed by:
+#
+#     nostr-smb-mount --batch
+#     nostr-smb-browse
+#
+# The batch client and the discovery hook (plan §4.1 A1/A2) both read
+# every `*.conf` under /etc/nostr-auth/servers.d and treat each file as
+# a single share stanza.  Multiple shares belong in multiple files.
+#
+# File shape: strict `key = value` lines.  Blank lines and lines
+# beginning with `#` are ignored.  Any unrecognised key is a hard parse
+# error — a typo is not silently dropped.
+#
+# NOTE ON FILENAME: This file ships as `example.conf.batch-client` so
+# the eventual server-track sample (`example.conf`, plan §4.2 B1) can
+# land in the same directory without a collision.  Rename to
+# `<yourshare>.conf` before deploying under /etc/nostr-auth/servers.d/.
+#
+# Recognised keys
+# ---------------
+#
+#     unc          //host/share                REQUIRED
+#                                              e.g. //nas.example.org/home
+#     mountpoint   /path                       REQUIRED for --mode=cifs
+#                                              ignored for --mode=gvfs
+#                                              (gvfs mounts land under
+#                                              $XDG_RUNTIME_DIR/gvfs/)
+#     mode         cifs | gvfs                 default: cifs
+#                                              gvfs is only usable in a
+#                                              graphical session with an
+#                                              active DBus session bus.
+#     creds        /path/to/credentials        default: --acquire mints
+#                                              a fresh short-lived cred
+#                                              (see acquire below)
+#     acquire      yes | no                    default: yes
+#                                              invokes nostr-smb-acquire
+#                                              first to mint a Nostr-
+#                                              backed short-lived SMB
+#                                              password
+#     acquire_args extra CLI args              passed verbatim to
+#                                              nostr-smb-acquire
+#                                              (e.g. "--socket ...")
+#     provider     provider hint               forwarded to acquire via
+#                                              NOSTR_SMB_ACQUIRE_PROVIDER
+#     ro           yes | no                    default: no
+#     uid          numeric uid=                cifs-only mount option
+#     gid          numeric gid=                cifs-only mount option
+#     label        display label               used by nostr-smb-browse
+#                                              for GNOME Files bookmarks
+#                                              (default: filename stem)
+
+# --- example stanza --------------------------------------------------
+
+# Mount //nas.example.org/home on a graphical login via gvfs so the
+# share shows up under "Other Locations" in GNOME Files.
+unc         = //nas.example.org/home
+mode        = gvfs
+acquire     = yes
+provider    = nip46
+label       = Home NAS
+
+# Alternate example (commented out): headless cifs mount.
+#
+# unc         = //nas.example.org/scratch
+# mountpoint  = /mnt/scratch
+# mode        = cifs
+# ro          = no
+# acquire     = yes
+# label       = Scratch

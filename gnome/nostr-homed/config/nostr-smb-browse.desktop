@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Nostr SMB — Enrolled shares
+Comment=Populate GNOME Files "Other Locations" with Nostr-enrolled SMB shares
+# Plan §4.1 A2 — discovery hook.  The `--autostart` mode is silent
+# when /etc/nostr-auth/servers.d is empty or absent, so this .desktop
+# is safe to install unconditionally.
+Exec=nostr-smb-browse --autostart
+Icon=folder-remote
+NoDisplay=false
+Terminal=false
+OnlyShowIn=GNOME;Unity;
+X-GNOME-Autostart-enabled=true

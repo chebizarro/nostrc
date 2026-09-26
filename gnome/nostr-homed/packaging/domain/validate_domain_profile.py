@@ -184,6 +184,44 @@ def validate_manifest(path, require_ready, root):
         if sha256_file(physical) != entry["sha256"]:
             raise ValidationError(f"installed PAM file differs from reviewed hash: {logical}")
 
+# Plan §4.3 C2 (Finding 15) tail: warn about a legacy admission gate
+# that an earlier draft proposed but the accepted plan rejected.  If
+# an operator upgraded across a preview build that shipped that key,
+# it can still be sitting in /etc/nss_nostr.conf even though nss_nostr
+# never reads it.  Report it so `apt upgrade` or a manual audit can
+# clean it up.
+LEGACY_NSS_KEYS = frozenset({"nostr_domain_qualified_names"})
+
+
+def scan_legacy_nss_conf(path):
+    """Return a list of legacy warning strings for a nss_nostr.conf file.
+
+    Never raises for a missing / unreadable file — this is a
+    best-effort audit, not a validation gate.  Only keys that look like
+    they were adopted from the rejected qualified-name design are
+    flagged.
+    """
+    warnings = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return warnings
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in LEGACY_NSS_KEYS:
+            warnings.append(
+                f"{path}:{lineno}: deprecated key '{key}' does nothing; "
+                "nss_nostr admission is bit-exact and controlled by "
+                "nsswitch ordering (see packaging/pam/nostr-winbind-policy.md)."
+            )
+    return warnings
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     base = Path(__file__).resolve().parents[2]
@@ -192,6 +230,12 @@ def main(argv=None):
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--require-activation-ready", action="store_true")
     parser.add_argument("--root", type=Path)
+    parser.add_argument(
+        "--nss-config",
+        type=Path,
+        default=Path("/etc/nss_nostr.conf"),
+        help="nss_nostr.conf path to audit for deprecated keys (best-effort).",
+    )
     args = parser.parse_args(argv)
     try:
         validate_configs(args.route, args.smb)
@@ -202,7 +246,18 @@ def main(argv=None):
     except (ValidationError, OSError, ValueError) as exc:
         print(json.dumps({"status": "invalid", "error": str(exc)}), file=sys.stderr)
         return 1
-    print(json.dumps({"status": "valid", "activation_ready": bool(args.require_activation_ready)}))
+    warnings = []
+    if args.nss_config is not None:
+        warnings.extend(scan_legacy_nss_conf(args.nss_config))
+    result = {
+        "status": "valid",
+        "activation_ready": bool(args.require_activation_ready),
+    }
+    if warnings:
+        result["warnings"] = warnings
+        for warning in warnings:
+            print(f"warning: {warning}", file=sys.stderr)
+    print(json.dumps(result))
     return 0
 
 if __name__ == "__main__":

@@ -1,0 +1,49 @@
+[Unit]
+Description=Nostr SMB credential authority — expired credential sweep
+Documentation=man:nostr-authctl(8)
+# The sweep touches the same SQLite journal the broker owns.  It is
+# safe to run while nostr-authd is up (SQLite WAL + busy_timeout on the
+# authority handle serialise us with the broker), but we tag the
+# ordering explicitly so a boot-time race does not fire the sweep
+# before the broker has laid down the journal directory.
+After=nostr-authd.service
+# We deliberately do NOT declare Requires= or PartOf= — the sweep must
+# still run when the broker is inactive so credentials cannot outlive
+# a stopped broker's expiry contract.
+
+[Service]
+Type=oneshot
+# Plan §4.1 A3: single-shot administrative CLI, no long-lived thread
+# inside the broker.  A per-shot subprocess also preserves the
+# dep-purity gate posture — no new library edges into nostr-authd.
+ExecStart=@NH_AUTHCTL_PATH@ smb-sweep --journal @NH_SMB_JOURNAL_PATH@
+
+# The sweep only reads the SMB journal + shells out to smbpasswd /
+# pdbedit through the tdbsam adapter.  The sandbox mirrors the
+# nostr-authd unit's own restrictions minus the socket-serving bits.
+User=root
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/nostr-auth
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Keep the exit code from the CLI so systemctl status shows the
+# distinguishable failure reasons defined by nostr-authctl.
+SuccessExitStatus=0
+
+[Install]
+# Timer owns the enable/start lifecycle — the .service itself has no
+# WantedBy target so an operator manually starting it once is a
+# supported break-glass operation.

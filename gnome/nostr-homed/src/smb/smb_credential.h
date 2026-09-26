@@ -122,7 +122,11 @@ typedef struct nh_smb_issue_request {
  * Lifecycle.  `journal_path` is the SQLite issuance journal file
  * (created if missing; caller owns its permissions/directory).  The
  * adapter and ctx are borrowed; they must outlive the authority.  On
- * open, any credentials whose expiry has already passed are revoked.
+ * open, any credentials whose expiry has already passed are revoked
+ * (a single idempotent nh_smb_authority_sweep_expired() pass runs at
+ * the end of the open path; failure to sweep is logged but does not
+ * fail open — the CLI/timer sweep in nostr-authctl smb-sweep is the
+ * scheduled backstop, plan §4.1 A3).
  * On close, all currently-outstanding credentials are revoked (service
  * restart is a revocation event).
  */

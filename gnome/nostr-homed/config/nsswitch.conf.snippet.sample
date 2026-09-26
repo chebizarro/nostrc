@@ -1,0 +1,61 @@
+# /etc/nsswitch.conf snippet — Nostr + winbind co-existence
+#
+# Plan §4.3 C2 (Finding 15).  DO NOT install this as
+# /etc/nsswitch.conf directly; splice the `passwd:` / `group:` /
+# `shadow:` lines into the distribution-installed nsswitch.conf.  The
+# ordering matters and is the ENTIRE point of this snippet — the C
+# side of nss_nostr does not admit qualified names like `DOMAIN\user`
+# or `user@REALM`, so the safety property comes from making sure
+# winbind sees those names first.
+#
+# Required ordering:
+#
+#     passwd: files winbind nostr
+#     group:  files winbind nostr
+#     shadow: files
+#
+# Why `winbind` comes BEFORE `nostr`:
+#
+#   1. The Nostr NSS module (libnss_nostr.so.2) admits ONLY names
+#      matching `^n_[a-z0-9_]+$` — this is enforced in
+#      gnome/nostr-homed/src/identity/identity_common.c:8-20 and MUST
+#      NOT change.  Domain-qualified names never pass that gate.
+#
+#   2. If `nostr` were listed BEFORE `winbind`, a lookup for e.g.
+#      `EXAMPLE\alice` would still be routed to nss_nostr first,
+#      returning NOTFOUND correctly — but the correct answer for that
+#      lookup is winbind's positive answer.  With `nostr` after
+#      `winbind`, `EXAMPLE\alice` hits winbind first (positive) and
+#      never reaches nostr.
+#
+#   3. `files` stays first so root and other local system accounts
+#      never depend on any network module.  This is the distribution
+#      default and MUST NOT be dropped.
+#
+#   4. `shadow` intentionally stays as `files` only — neither nostr
+#      nor winbind own the shadow database; Nostr accounts do not
+#      have local password hashes and winbind delegates auth via PAM.
+#
+# When to install this snippet:
+#
+#   - Standalone Nostr host, no winbind:      OMIT `winbind` from the
+#                                             lines above.
+#   - Nostr host that has ALSO joined a
+#     realm via `net ads join`:               Install the snippet as
+#                                             shown; winbind will
+#                                             answer for domain names,
+#                                             nostr for n_ names.
+#   - Neither: do not install nostr in
+#     nsswitch at all.
+#
+# Packaging:
+#
+#   The distribution package MUST NOT overwrite /etc/nsswitch.conf.
+#   Ship this file as `nsswitch.conf.snippet` under the package's
+#   documentation directory; a post-install helper OR the administrator
+#   splices the lines above.  See gnome/nostr-homed/docs/SAMBA_AD_LOGIN.md
+#   for the manual-join recipe that references this ordering.
+
+passwd: files winbind nostr
+group:  files winbind nostr
+shadow: files

@@ -38,7 +38,13 @@
 #include <stdio.h>
 #include <syslog.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <signal.h>
 #include <fcntl.h>
+#include <pwd.h>
+#include <time.h>
+#include <errno.h>
 #include <unistd.h>
 
 #ifndef NH_PAM_DEFAULT_SOCKET
@@ -631,9 +637,130 @@ int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
   return PAM_SUCCESS;
 }
 
+/* SMB teardown wait (plan §4.1 A4): a per-user systemctl start of
+ * nostr-smb-teardown.service is fire-and-forget from the broker's
+ * point of view, but we still bound how long we spin waiting for the
+ * child to exit so a hung GVfs cannot wedge logout.  5s is comfortably
+ * above the .service's own TimeoutStartSec but well below any
+ * user-observable "logout stuck" threshold. */
+#ifndef NH_SMB_TEARDOWN_WAIT_SECS
+#define NH_SMB_TEARDOWN_WAIT_SECS 5
+#endif
+
+/* Trigger nostr-smb-teardown.service in the desktop user's user
+ * manager.  Failures are logged (syslog) but never fatal — this hook
+ * MUST return PAM_SUCCESS regardless, per §4.1 A4.
+ *
+ * Rationale for shelling out to `systemctl` rather than linking
+ * libsystemd: the dep-purity gate (plan §5.1) forbids new library
+ * edges into pam_nostr; fork+exec of a distro-shipped systemctl is a
+ * neutral edge (execvp of a system binary is invisible to `ldd`) and
+ * keeps the pam module's closure minimal.
+ *
+ * The teardown request runs in the user's user manager via
+ *   systemctl --user --machine=<user>@.host start nostr-smb-teardown.service
+ * so the actual `gio mount -u` inside the .service executes with the
+ * user's DBUS_SESSION_BUS_ADDRESS visible — the exact context §4.1 A4
+ * requires.  `--machine=<user>@.host` addresses the user manager over
+ * the DBus service org.freedesktop.systemd1 on the local host.
+ *
+ * Failure modes we accept without complaint:
+ *   - user has no user manager (linger disabled + no active session):
+ *     systemctl exits non-zero; nothing was mounted, so nothing to
+ *     unmount.
+ *   - unit not installed on this host (SMB feature disabled):
+ *     systemctl exits non-zero; benign.
+ *   - unit hangs on GVfs: we wait NH_SMB_TEARDOWN_WAIT_SECS, then
+ *     SIGKILL the systemctl invocation and return.  The unit itself
+ *     has its own TimeoutStartSec inside the user manager.
+ */
+static void smb_teardown_start(pam_handle_t *pamh, const char *user) {
+  if (!user || !*user) return;
+  /* Only bother for users that actually have a passwd entry — this
+   * catches non-Nostr routes (PAM_IGNORE cases) before we do any
+   * work. */
+  struct passwd *pw = getpwnam(user);
+  if (!pw) return;
+
+  pid_t child = fork();
+  if (child < 0) {
+    pam_syslog(pamh, LOG_WARNING,
+        "smb-teardown: fork failed: %s", strerror(errno));
+    return;
+  }
+  if (child == 0) {
+    /* Child: exec systemctl.  The `--machine=<user>@.host` form
+     * connects to the target user's user manager without requiring us
+     * to already be in that user's session.  --no-block returns as
+     * soon as the job is enqueued; the unit's own oneshot semantics
+     * bound its own runtime inside the user manager.  We still keep
+     * the parent-side wait bounded in case systemctl itself blocks
+     * negotiating with logind. */
+    char machine[128];
+    /* getpwnam ensures pw_name matches user; use pw_name for the
+     * canonical form. */
+    snprintf(machine, sizeof machine, "--machine=%s@.host", pw->pw_name);
+    /* Close stdout/stderr — logout paths should not spew to the
+     * user's tty. */
+    int devnull = open("/dev/null", O_RDWR | O_CLOEXEC);
+    if (devnull >= 0) {
+      dup2(devnull, STDIN_FILENO);
+      dup2(devnull, STDOUT_FILENO);
+      dup2(devnull, STDERR_FILENO);
+      if (devnull > 2) close(devnull);
+    }
+    execlp("systemctl", "systemctl",
+           "--user", "--no-block", machine,
+           "start", "nostr-smb-teardown.service",
+           (char *)NULL);
+    /* execlp only returns on failure. */
+    _exit(127);
+  }
+
+  /* Parent: bounded wait.  Poll waitpid with WNOHANG so we can time
+   * out cleanly rather than sleeping past a hung child. */
+  int status = 0;
+  time_t deadline = time(NULL) + NH_SMB_TEARDOWN_WAIT_SECS;
+  for (;;) {
+    pid_t r = waitpid(child, &status, WNOHANG);
+    if (r == child) break;
+    if (r < 0 && errno != EINTR) {
+      pam_syslog(pamh, LOG_WARNING,
+          "smb-teardown: waitpid: %s", strerror(errno));
+      break;
+    }
+    if (time(NULL) >= deadline) {
+      pam_syslog(pamh, LOG_WARNING,
+          "smb-teardown: timed out after %ds; killing systemctl",
+          NH_SMB_TEARDOWN_WAIT_SECS);
+      kill(child, SIGKILL);
+      (void)waitpid(child, &status, 0);
+      return;
+    }
+    /* 100 ms polling — cheap and keeps the wall-clock tight. */
+    struct timespec ts = { 0, 100 * 1000 * 1000 };
+    nanosleep(&ts, NULL);
+  }
+  if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+    /* Downgraded to LOG_INFO: absence of the unit or no active user
+     * manager is not exceptional. */
+    pam_syslog(pamh, LOG_INFO,
+        "smb-teardown: systemctl exited %d (benign if SMB disabled or "
+        "user has no active session)", WEXITSTATUS(status));
+  }
+}
+
 int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc,
                          const char **argv) {
-  (void)pamh; (void)flags; (void)argc; (void)argv;
+  (void)flags; (void)argc; (void)argv;
+  /* Plan §4.1 A4: kick per-user SMB mount teardown via the user
+   * manager.  Fire-and-forget with a bounded wait; the return code is
+   * ALWAYS PAM_SUCCESS regardless of teardown outcome — a hung GVfs
+   * must NEVER wedge logout. */
+  const char *user = NULL;
+  if (pam_get_user(pamh, &user, NULL) == PAM_SUCCESS && user && user[0]) {
+    smb_teardown_start(pamh, user);
+  }
   return PAM_SUCCESS;
 }
 

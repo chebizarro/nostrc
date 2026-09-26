@@ -57,6 +57,10 @@ const char *nh_smb_rc_name(nh_smb_rc rc) {
   return "unknown";
 }
 
+/* Forward decl — sweep-on-open (plan §4.1 A3) calls this from open()
+ * which is defined before the wall-clock helper below. */
+static uint64_t wall_ms_now(void);
+
 static void set_error(nh_smb_authority *a, const char *fmt, ...) {
   if (!a) return;
   va_list ap;
@@ -358,6 +362,15 @@ nh_smb_rc nh_smb_authority_open(const char *journal_path,
     free(a);
     return r;
   }
+  /* Plan §4.1 A3 (Finding 3 posture): the header contract says open()
+   * revokes any already-expired credentials.  Do exactly that with one
+   * idempotent sweep pass.  We intentionally do NOT fail open() on a
+   * sweep error — the scheduled `nostr-authctl smb-sweep` timer is the
+   * durable backstop; a transient passdb hiccup here should not brick
+   * broker startup.  The error is retained in a->error via set_error()
+   * inside sweep_expired() for callers who want to log it. */
+  size_t swept = 0;
+  (void)nh_smb_authority_sweep_expired(a, wall_ms_now(), &swept);
   *out = a;
   return NH_SMB_OK;
 }

@@ -1,0 +1,21 @@
+[Unit]
+Description=Nostr SMB credential authority — scheduled sweep
+Documentation=man:nostr-authctl(8)
+
+[Timer]
+# Two-part cadence:
+#  - Fire once ~2 min after boot so credentials whose expiry passed
+#    while the machine was off get revoked promptly.
+#  - Fire every 5 min otherwise.  The default issuance lifetime is on
+#    the order of an hour; a 5-min sweep resolution keeps the observed
+#    revocation delay well below one lifetime tick.
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+# Persist so a laptop that missed a sweep window catches up on next
+# boot rather than silently deferring by 5 min.
+Persistent=true
+Unit=nostr-smb-sweep.service
+
+[Install]
+WantedBy=timers.target

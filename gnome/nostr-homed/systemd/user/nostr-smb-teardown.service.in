@@ -1,0 +1,28 @@
+[Unit]
+Description=Nostr SMB — tear down this session's SMB mounts
+Documentation=man:nostr-smb-mount(1)
+# Plan §4.1 A4 (Finding 13): PAM's pam_sm_close_session runs in the
+# privileged broker context — it cannot fork the GVfs mount helper
+# because `--mode gvfs` needs the calling desktop user's session bus.
+# The PAM hook therefore requests THIS user-scope service via
+# `systemctl --user --machine=<uid>@ start nostr-smb-teardown.service`,
+# so the actual `gio mount -u` runs where the session bus lives.
+#
+# The unit is fire-and-forget from PAM's point of view; the PAM hook
+# waits at most 5 s before returning success regardless of the result,
+# so a hung GVfs cannot wedge logout.
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+# Iterate the per-session ledger populated at mount time.  --all
+# scopes teardown to entries recorded under $XDG_SESSION_ID so a
+# concurrent parallel session's mounts are not touched.
+ExecStart=@NH_SMB_MOUNT_PATH@ --unmount --all
+# Hard bound on how long we spin on a stuck unmount.  logout must not
+# wait indefinitely.
+TimeoutStartSec=15s
+# Failure to unmount is not fatal — the sweep timer + broker restart
+# revoke the credential authority-side, and stale GVfs mounts are
+# recoverable from Files.  Log and move on.
+SuccessExitStatus=0 1 5

@@ -1092,6 +1092,111 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND NOSTR_HOMED_ENABLE_SMB)
     set_tests_properties(homed_smb_acquire
       PROPERTIES LABELS "nostr-homed;smb" TIMEOUT 120)
   endif()
+
+  # Plan §4.1 A2: enrolled-share discovery helper.  Uninstalled build
+  # ships a copy for tests to find alongside the mount helper.
+  configure_file(src/smb/nostr-smb-browse.sh
+    "${CMAKE_CURRENT_BINARY_DIR}/nostr-smb-browse" COPYONLY)
+  if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+    install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/nostr-smb-browse"
+            DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    # Autostart entry: silent when /etc/nostr-auth/servers.d is empty
+    # or absent, so shipping it unconditionally is safe.
+    install(FILES config/nostr-smb-browse.desktop
+            DESTINATION "${CMAKE_INSTALL_SYSCONFDIR}/xdg/autostart")
+    # Sample enrolled-server config: not activated by default (name
+    # deliberately does not end in `.conf`); operators rename to
+    # <share>.conf under /etc/nostr-auth/servers.d/.
+    install(FILES config/servers.d/example.conf.batch-client
+            DESTINATION "${CMAKE_INSTALL_DOCDIR}/examples/servers.d")
+  endif()
+
+  # Plan §4.1 A3: nostr-authctl smb-sweep CLI + scheduled sweep timer.
+  add_executable(nostr-authctl src/ctl/nostr-authctl.c)
+  target_compile_options(nostr-authctl PRIVATE
+    -std=c11 -Wall -Wextra -Werror -Wno-misleading-indentation)
+  target_include_directories(nostr-authctl PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/smb)
+  # tdbsam ops + the smb_credential core (already built above).
+  target_link_libraries(nostr-authctl PRIVATE
+    nostr_smb_tdbsam nostr_smb_core)
+  if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
+    install(TARGETS nostr-authctl RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR})
+    # Systemd sweep timer + templated service.
+    set(NH_AUTHCTL_PATH "${CMAKE_INSTALL_FULL_SBINDIR}/nostr-authctl")
+    set(NH_SMB_JOURNAL_PATH "/var/lib/nostr-auth/smb.db")
+    configure_file(systemd/nostr-smb-sweep.service.in
+      "${CMAKE_CURRENT_BINARY_DIR}/nostr-smb-sweep.service" @ONLY)
+    if(NOT SYSTEMD_SYSTEM_UNIT_DIR)
+      set(SYSTEMD_SYSTEM_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/system")
+    endif()
+    install(FILES
+      "${CMAKE_CURRENT_BINARY_DIR}/nostr-smb-sweep.service"
+      "${CMAKE_CURRENT_SOURCE_DIR}/systemd/nostr-smb-sweep.timer"
+      DESTINATION "${SYSTEMD_SYSTEM_UNIT_DIR}")
+    # Plan §4.1 A4: user-scope teardown unit installed under the
+    # systemd USER unit dir (the auth install block earlier resolved
+    # SYSTEMD_USER_UNIT_DIR; fall back to the standard path otherwise).
+    if(NOT SYSTEMD_USER_UNIT_DIR)
+      set(SYSTEMD_USER_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/user")
+    endif()
+    set(NH_SMB_MOUNT_PATH "${CMAKE_INSTALL_FULL_BINDIR}/nostr-smb-mount")
+    configure_file(systemd/user/nostr-smb-teardown.service.in
+      "${CMAKE_CURRENT_BINARY_DIR}/nostr-smb-teardown.service" @ONLY)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-smb-teardown.service"
+      DESTINATION "${SYSTEMD_USER_UNIT_DIR}")
+    # NSS ordering snippet + winbind-policy update ride along the auth
+    # install (they document activation posture; not activatable).
+    install(FILES config/nsswitch.conf.snippet.sample
+      DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-homed")
+  endif()
+
+  if(NOSTR_HOMED_BUILD_TESTS)
+    # Plan §4.1 A3: sweep-on-open unit test.
+    add_executable(test_sweep_on_open
+      tests/integration/test_sweep_on_open.c)
+    target_compile_options(test_sweep_on_open PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation)
+    target_link_libraries(test_sweep_on_open PRIVATE nostr_smb_core)
+    add_test(NAME homed_smb_sweep_on_open COMMAND test_sweep_on_open)
+    set_tests_properties(homed_smb_sweep_on_open
+      PROPERTIES LABELS "nostr-homed;smb" TIMEOUT 30)
+
+    # Plan §4.1 A1: batch-mount shell test — runs against the copied
+    # helper under the build dir, no install required.
+    add_test(NAME homed_smb_batch_mount
+      COMMAND bash
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_smb_batch_mount.sh)
+    set_tests_properties(homed_smb_batch_mount PROPERTIES
+      LABELS "nostr-homed;smb" TIMEOUT 60
+      ENVIRONMENT "MOUNT_HELPER=${CMAKE_CURRENT_BINARY_DIR}/nostr-smb-mount")
+
+    # Plan §4.1 A4: close-session unmount ledger test.
+    add_test(NAME homed_smb_close_session_unmount
+      COMMAND bash
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_close_session_unmount.sh)
+    set_tests_properties(homed_smb_close_session_unmount PROPERTIES
+      LABELS "nostr-homed;smb" TIMEOUT 60
+      ENVIRONMENT "MOUNT_HELPER=${CMAKE_CURRENT_BINARY_DIR}/nostr-smb-mount")
+  endif()
+endif()
+
+# Plan §4.3 C2: nss_nostr qualified-name admission unit test.  This
+# lives outside the SMB-enabled block because identity_common (the
+# admission gate) is always built when NOSTR_HOMED_ENABLE_IDENTITY_CORE
+# is on — matches the module's install condition.
+if(NOSTR_HOMED_ENABLE_IDENTITY_CORE AND NOSTR_HOMED_BUILD_TESTS)
+  add_executable(test_nss_qualified_names
+    tests/unit/test_nss_qualified_names.c)
+  target_compile_options(test_nss_qualified_names PRIVATE
+    -std=c11 -Wall -Wextra -Werror)
+  target_include_directories(test_nss_qualified_names PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+  target_link_libraries(test_nss_qualified_names PRIVATE nostr_identity_core)
+  add_test(NAME homed_nss_qualified_names COMMAND test_nss_qualified_names)
+  set_tests_properties(homed_nss_qualified_names PROPERTIES
+    LABELS "nostr-homed;nss" TIMEOUT 15)
 endif()
 
 
