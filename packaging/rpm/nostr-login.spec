@@ -96,6 +96,8 @@ BuildRequires:  pkgconfig(libsecret-1)
 # nostr-seal (nostrc-da9c): nostr-seal-gtk .nsealed double-click handler.
 BuildRequires:  pkgconfig(gtk4)
 BuildRequires:  pkgconfig(libadwaita-1) >= 1.5
+# nostr-nautilus (nostrc-xlf3): Files extension, libnautilus-extension-4.
+BuildRequires:  pkgconfig(libnautilus-extension-4) >= 43
 # nostr-share dialog (nostrc-1xak)
 BuildRequires:  pkgconfig(gdk-pixbuf-2.0)
 # nostr-wallet-agent (nostrc-yka8): libadwaita approval dialogs.
@@ -603,6 +605,19 @@ exceeds the caller's daily budget. It is also the handler for lightning:,
 bitcoin: (BIP-21 with a lightning= invoice) and nostr+walletconnect: links.
 D-Bus activated through the shipped `nostr-wallet-agent.service` user unit;
 nothing is enabled at install time.
+# --- Sub-package: nostr-nautilus (nostrc-xlf3) -------------------------------
+%package -n nostr-nautilus
+Summary:        Nostr items in the GNOME Files context menu
+Requires:       nostr-share%{?_isa} = %{version}-%{release}
+Recommends:     nostr-seal%{?_isa} = %{version}-%{release}
+Enhances:       nautilus
+%description -n nostr-nautilus
+A Files (Nautilus 43+) extension that adds "Share to Nostr…", "Upload to
+Blossom…", "Encrypt for Nostr Contact…" and "Decrypt…" to the right-click
+menu, plus "Share This Repository to Nostr…" on the background of a git
+checkout. Each item launches nostr-share or nostr-seal, which preview, sign
+through org.nostr.Signer and encrypt; the extension holds no keys and makes
+no network calls. Modern replacement for seahorse-nautilus.
 
 # --- Sub-package: nostrc-samba-server ----------------------------------------
 %package -n nostrc-samba-server
@@ -686,6 +701,7 @@ the `application/vnd.nostr.sealed` (`*.nsealed`) MIME type.
     -DNOSTR_SIGNER_WEBEXT_INSTALL_BROWSER_MANIFESTS=ON \
     -DNMH_MOZILLA_HOSTS_DIR=%{_libdir}/mozilla/native-messaging-hosts \
     -DENABLE_NOSTR_WALLET_AGENT=ON \
+    -DENABLE_NOSTR_NAUTILUS=ON \
     -DSIGNET_ENABLE=OFF \
     -DWITH_NOSTRDB=OFF \
     -DLIBNOSTR_WITH_NOSTRDB=OFF \
@@ -1306,6 +1322,11 @@ fi
 %{_datadir}/glib-2.0/schemas/org.nostr.Wallet.gschema.xml
 %dir %{_datadir}/doc/nostr-wallet-agent
 %{_datadir}/doc/nostr-wallet-agent/README.md
+%files -n nostr-nautilus
+%{_libdir}/nautilus/extensions-4/libnostr-nautilus.so
+%{_libexecdir}/nostr-nautilus-seal
+%dir %{_datadir}/doc/nostr-nautilus
+%doc %{_datadir}/doc/nostr-nautilus/README.md
 
 %files -n nostrc-samba-server
 %license LICENSE
