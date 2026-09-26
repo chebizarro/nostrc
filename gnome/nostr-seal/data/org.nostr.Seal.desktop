@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Nostr Seal
+GenericName=Sealed File Opener
+Comment=Open files sealed for your Nostr identity
+Exec=nostr-seal-gtk %f
+Icon=channel-secure-symbolic
+Terminal=false
+NoDisplay=true
+MimeType=application/vnd.nostr.sealed;
+Categories=Utility;Security;
+Keywords=nostr;encrypt;decrypt;seal;npub;
+StartupNotify=true

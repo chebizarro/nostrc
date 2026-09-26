@@ -93,6 +93,9 @@ BuildRequires:  pkgconfig(libsoup-3.0)
 BuildRequires:  pkgconfig(libxml-2.0)
 BuildRequires:  pkgconfig(json-glib-1.0)
 BuildRequires:  pkgconfig(libsecret-1)
+# nostr-seal (nostrc-da9c): nostr-seal-gtk .nsealed double-click handler.
+BuildRequires:  pkgconfig(gtk4)
+BuildRequires:  pkgconfig(libadwaita-1) >= 1.5
 # nsync is vendored in-tree at third_party/nsync (git submodule pinned to a
 # release tag) and built statically as part of the CMake configure step.
 # The vendored copy is folded into libnostrgo.so via --whole-archive, so
@@ -563,6 +566,21 @@ it after seeding the passdb via `nostr-authd` and configuring shares
 
 # --- Prep / build / install --------------------------------------------------
 
+# --- Sub-package: nostr-seal (nostrc-da9c) -----------------------------------
+%package -n nostr-seal
+Summary:        Encrypt files for Nostr public keys or a passphrase
+Requires:       libnostr%{?_isa} = %{version}-%{release}
+Requires:       shared-mime-info
+
+%description -n nostr-seal
+`nostr-seal` seals files for one or more npubs (NIP-44 v2 key agreement
+wrapping a random per-file key) or for a passphrase (NIP-49), with the body
+in the chunked, content-addressed porthome AEAD container. Opening a file
+sealed for an npub goes through org.nostr.Signer
+(`NIP44DeriveConversationKey`, approval-gated), so the nsec never leaves
+the signer. Ships the CLI, the `nostr-seal-gtk` double-click handler and
+the `application/vnd.nostr.sealed` (`*.nsealed`) MIME type.
+
 %prep
 %autosetup -n nostrc-%{version}
 
@@ -585,6 +603,7 @@ it after seeding the passdb via `nostr-authd` and configuring shares
     -DBUILD_RELAYD=ON \
     -DENABLE_NOSTR_DAV=ON \
     -DENABLE_NOSTR_DISPATCHER=ON \
+    -DENABLE_NOSTR_SEAL=ON \
     -DSIGNET_ENABLE=OFF \
     -DWITH_NOSTRDB=OFF \
     -DLIBNOSTR_WITH_NOSTRDB=OFF \
@@ -1166,6 +1185,15 @@ fi
 %{_datadir}/nostr-homed/smb-credentiald.conf.sample
 %doc %{_docdir}/nostrc/examples/servers.d/example.conf
 %doc %{_docdir}/nostrc/SAMBA_STANDALONE.md
+
+%files -n nostr-seal
+%license LICENSE
+%{_bindir}/nostr-seal
+%{_bindir}/nostr-seal-gtk
+%{_datadir}/applications/org.nostr.Seal.desktop
+%{_datadir}/mime/packages/nostr-seal.xml
+%dir %{_datadir}/doc/nostr-seal
+%doc %{_datadir}/doc/nostr-seal/README.md
 
 # --- Changelog ---------------------------------------------------------------
 

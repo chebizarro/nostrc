@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- nostr-seal (nostrc-da9c): files sealed for Nostr public keys or a
+     passphrase. Format spec: /usr/share/doc/nostr-seal/README.md -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/vnd.nostr.sealed">
+    <comment>Nostr sealed file</comment>
+    <generic-icon name="package-x-generic"/>
+    <glob pattern="*.nsealed"/>
+    <magic priority="60">
+      <match type="string" offset="0" value="NSEALED\x01"/>
+    </magic>
+  </mime-type>
+</mime-info>
