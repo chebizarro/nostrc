@@ -242,6 +242,29 @@ Description: Per-user session-scoped local Nostr relay (Wave 4 / plan §3.2)
  does NOT auto-enable anything; the user activates it with
  `systemctl --user enable --now nostr-session-relay.socket`.
 
+Package: nostrc-relayd
+Section: net
+Architecture: any
+Multi-Arch: foreign
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Network Nostr relay server daemon (Wave 4)
+ nostrc-relayd is the network-facing Nostr relay server: a
+ libwebsockets-backed relay that speaks NIP-01/11/42 over WebSockets
+ and persists events into nostrdb (LMDB) when built with NostrDB
+ support. Runs as a system daemon under systemd (`nostr-relayd.service`),
+ anchored to `/etc/nostrc` (drop a `relay.toml` alongside the shipped
+ `/usr/share/nostrc/relay.toml.example`).
+ .
+ The daemon is a HARDENED sibling of the per-user session relay in
+ `nostrc-session-relay` (which binds a Unix socket for local
+ desktop-session traffic). This package installs the *system* network
+ daemon; install both if a host runs both kinds of relay.
+ .
+ Not auto-enabled. The operator activates it with
+ `systemctl enable --now nostr-relayd.service` after seeding
+ `/etc/nostrc/relay.toml`.
+
 Package: nostr-notify
 Section: admin
 Architecture: any

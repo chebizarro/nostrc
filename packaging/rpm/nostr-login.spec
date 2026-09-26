@@ -421,6 +421,27 @@ The postinst DOES NOT auto-enable anything; the user activates the pair
 with `systemctl --user enable --now nostr-session-relay.socket`.
 
 # --- Sub-package: nostr-notify -----------------------------------------------
+# --- Sub-package: nostrc-relayd ----------------------------------------------
+%package -n nostrc-relayd
+Summary:        Network Nostr relay server daemon (Wave 4)
+%{?systemd_requires}
+
+%description -n nostrc-relayd
+Network-facing Nostr relay server: a libwebsockets-backed relay that
+speaks NIP-01/11/42 over WebSockets and persists events into nostrdb
+(LMDB) when built with NostrDB support. Runs as a system daemon under
+systemd (`nostr-relayd.service`), anchored to `/etc/nostrc` (drop a
+`relay.toml` alongside the shipped `/usr/share/nostrc/relay.toml.example`).
+
+The daemon is a HARDENED sibling of the per-user session relay in
+`nostrc-session-relay` (which binds a Unix socket for local
+desktop-session traffic). This package installs the *system* network
+daemon; install both if a host runs both kinds of relay.
+
+Not auto-enabled. The operator activates it with
+`systemctl enable --now nostr-relayd.service` after seeding
+`/etc/nostrc/relay.toml`.
+
 %package -n nostr-notify
 Summary:        Nostr NIP-29 + NIP-17 background notification daemon (Wave 4)
 Requires:       libnostr%{?_isa} = %{version}-%{release}
@@ -750,18 +771,6 @@ rm -rf %{buildroot}%{_includedir}/hanami
 find %{buildroot} -type f -name test_relay_eose -delete
 find %{buildroot} -type d -empty -name tools -delete 2>/dev/null || :
 
-#    e) Wave 4 packaging (#22b): BUILD_RELAYD=ON is now on so
-#       nostr-session-relayd (per-user session daemon) ships in
-#       nostrc-session-relay.rpm.  The sibling `nostrc-relayd` system
-#       daemon (network relay) still needs its own future
-#       `nostr-relayd` subpackage (packaging plan §2.3); until it
-#       lands, drop the artifact set here.  Mirrors debian/not-
-#       installed.
-rm -f %{buildroot}%{_sbindir}/nostrc-relayd
-rm -f %{buildroot}%{_unitdir}/nostr-relayd.service
-rm -f %{buildroot}%{_datadir}/nostrc/relay.toml.example
-rmdir --ignore-fail-on-non-empty %{buildroot}%{_datadir}/nostrc 2>/dev/null || :
-
 #    f) Wave 3 leftovers not yet folded into nostr-homed-smb: the
 #       sweep timer + service, close-session user teardown unit,
 #       browse helper + autostart entry, admin CLI nostr-authctl.
@@ -836,6 +845,15 @@ find %{buildroot} -depth -type d -empty -delete 2>/dev/null || :
 %postun -n nostrc-session-relay
 %systemd_user_postun nostr-session-relay.socket
 %systemd_user_postun nostr-session-relay.service
+
+%post -n nostrc-relayd
+%systemd_post nostr-relayd.service
+
+%preun -n nostrc-relayd
+%systemd_preun nostr-relayd.service
+
+%postun -n nostrc-relayd
+%systemd_postun_with_restart nostr-relayd.service
 
 %post -n nostr-notify
 %systemd_user_post nostr-notify.service
@@ -1055,6 +1073,13 @@ fi
 %{_libexecdir}/nostr-session-relayd
 %{_userunitdir}/nostr-session-relay.service
 %{_userunitdir}/nostr-session-relay.socket
+
+%files -n nostrc-relayd
+%license LICENSE
+%{_sbindir}/nostrc-relayd
+%{_unitdir}/nostr-relayd.service
+%dir %{_datadir}/nostrc
+%{_datadir}/nostrc/relay.toml.example
 
 %files -n nostr-notify
 %license LICENSE

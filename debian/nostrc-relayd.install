@@ -1,0 +1,3 @@
+usr/sbin/nostrc-relayd
+usr/lib/systemd/system/nostr-relayd.service
+usr/share/nostrc/relay.toml.example
