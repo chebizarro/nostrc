@@ -452,9 +452,11 @@ if (OPENSSL_FOUND)
   target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_OPENSSL=1)
 endif()
 
-# ---- Secure Key Storage (platform-native) ----
-# Linux: libsecret (GNOME Keyring / KDE Wallet)
-# macOS: Security.framework (Keychain Services)
+# ---- Identity metadata (nostrc-e5nz) ----
+# GNostr holds no private keys; src/util/keystore_*.c only read npub/label
+# metadata of the signer's key store (and detect pre-e5nz client keys).
+# Linux: libsecret, with the signer's schemas from gnome/seahorse (gnostr-secret)
+# macOS: Security.framework (Keychain Services), attributes only
 if (APPLE)
   # macOS Keychain - Security framework is always available
   target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_MACOS_KEYCHAIN=1)
@@ -462,16 +464,21 @@ if (APPLE)
   find_library(SECURITY_FRAMEWORK Security REQUIRED)
   find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
   target_link_libraries(${APP_CLIENT_BIN} PRIVATE ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
-  message(STATUS "Secure key storage: macOS Keychain (Security.framework)")
+  message(STATUS "Identity metadata: macOS Keychain (attributes only)")
 else()
   # Linux: try to find libsecret
   pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
   if (LIBSECRET_FOUND)
-    target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::LIBSECRET)
+    # nips/nip55l adds gnostr-secret when it builds against libsecret.
+    if (NOT TARGET gnostr-secret)
+      add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../gnome/seahorse
+                       ${CMAKE_BINARY_DIR}/gnome/seahorse)
+    endif()
+    target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::LIBSECRET gnostr-secret)
     target_compile_definitions(${APP_CLIENT_BIN} PRIVATE HAVE_LIBSECRET=1)
-    message(STATUS "Secure key storage: libsecret (GNOME Keyring / KDE Wallet)")
+    message(STATUS "Identity metadata: libsecret (signer schema via gnostr-secret)")
   else()
-    message(STATUS "Secure key storage: NOT AVAILABLE (install libsecret-1-dev)")
+    message(STATUS "Identity metadata: NOT AVAILABLE (install libsecret-1-dev)")
   endif()
 endif()
 
@@ -677,6 +684,7 @@ if (BUILD_TESTING)
     target_sources(gnostr-widget-test-support PRIVATE src/util/keystore_macos.c)
   elseif(LIBSECRET_FOUND)
     target_sources(gnostr-widget-test-support PRIVATE src/util/keystore_libsecret.c)
+    target_link_libraries(gnostr-widget-test-support PUBLIC gnostr-secret)
   else()
     target_sources(gnostr-widget-test-support PRIVATE src/util/keystore_stub.c)
   endif()
@@ -814,27 +822,31 @@ if (BUILD_TESTING)
     LABELS "blossom;settings;unit;gnostr"
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}")
 
-  # Secure keystore unit tests
-  add_executable(gnostr-test-keystore tests/test_keystore.c)
+  # Identity metadata shim + signer availability (nostrc-e5nz). Headless:
+  # a private GTestDBus bus with a fake activatable org.nostr.Signer, and a
+  # real gnome-keyring-daemon on it when installed (Linux/libsecret).
+  add_executable(gnostr-test-keystore
+    tests/test_keystore.c
+    src/util/keystore_libsecret.c
+    src/util/keystore_macos.c
+    src/util/keystore_stub.c
+    src/ipc/gnostr-signer-availability.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../nostr-gobject/src/gnostr-app-bridge.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../nostr-gobject/src/gnostr-identity.c)
   target_compile_features(gnostr-test-keystore PRIVATE c_std_11)
-  target_include_directories(gnostr-test-keystore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  # Include the appropriate keystore implementation based on platform
+  target_include_directories(gnostr-test-keystore PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../nostr-gobject/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../nostr-gobject/include/nostr-gobject-1.0)
   if (APPLE)
-    target_sources(gnostr-test-keystore PRIVATE
-      src/util/keystore_macos.c
-      src/util/keystore_stub.c)
     target_compile_definitions(gnostr-test-keystore PRIVATE HAVE_MACOS_KEYCHAIN=1)
     target_link_libraries(gnostr-test-keystore PRIVATE ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
   elseif (LIBSECRET_FOUND)
-    target_sources(gnostr-test-keystore PRIVATE
-      src/util/keystore_libsecret.c
-      src/util/keystore_stub.c)
     target_compile_definitions(gnostr-test-keystore PRIVATE HAVE_LIBSECRET=1)
-    target_link_libraries(gnostr-test-keystore PRIVATE PkgConfig::LIBSECRET)
-  else()
-    target_sources(gnostr-test-keystore PRIVATE src/util/keystore_stub.c)
+    target_link_libraries(gnostr-test-keystore PRIVATE PkgConfig::LIBSECRET gnostr-secret)
   endif()
-  target_link_libraries(gnostr-test-keystore PRIVATE PkgConfig::GLIB PkgConfig::GIO)
+  # nostr: gnostr-app-bridge.c references nostr_event_free.
+  target_link_libraries(gnostr-test-keystore PRIVATE nostr PkgConfig::GLIB PkgConfig::GIO)
   _gnostr_apply_sanitizers(gnostr-test-keystore)
   add_test(NAME gnostr-test-keystore COMMAND gnostr-test-keystore)
   set_tests_properties(gnostr-test-keystore PROPERTIES

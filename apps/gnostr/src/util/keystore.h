@@ -1,12 +1,23 @@
 /**
- * Secure Key Storage API
+ * Identity metadata shim (nostrc-e5nz)
  *
- * Platform-native secure storage for Nostr private keys:
- * - Linux: libsecret (GNOME Keyring / KDE Wallet)
- * - macOS: Keychain Services
+ * GNostr never holds private keys. Signing and encryption go through a
+ * signer: org.nostr.Signer over D-Bus (GNostr Signer / the nip55l daemon)
+ * or a NIP-46 remote signer (see ipc/gnostr-signer-service.h). Keys are
+ * created, imported, backed up and removed in GNostr Signer.
  *
- * Keys are identified by their npub (bech32 public key) and stored encrypted
- * with the user's authentication credentials.
+ * This module only reads *metadata* — npub and label, never secrets — and
+ * never writes or deletes anything:
+ *
+ * - Linux (HAVE_LIBSECRET): the signer's org.gnostr.Signer/identity items
+ *   (schema owned by gnome/seahorse, gnostr-secret), plus the retired client
+ *   keystore org.gnostr.NostrKey, only to tell whether keys an older GNostr
+ *   stored still wait for the signer daemon's startup migration. Searches
+ *   neither unlock collections nor load secrets.
+ * - macOS (HAVE_MACOS_KEYCHAIN): the signer daemon's Keychain items
+ *   (service "Gnostr Identity Key") and the retired client items (service
+ *   "org.gnostr.Client"), attributes only.
+ * - Elsewhere: nothing is available.
  */
 
 #ifndef GNOSTR_KEYSTORE_H
@@ -16,8 +27,8 @@
 #include <gio/gio.h>
 /* nostrc-ecrx: GnostrKeyInfo + GnostrKeystoreError + GNOSTR_KEYSTORE_ERROR
  * are defined by the nostr-gobject bridge header so both the app-side
- * keystore implementation (this file) and the library's identity
- * consumer (nostr-gobject/src/gnostr-identity.c) see the same layout. */
+ * shim (this file) and the library's identity consumer
+ * (nostr-gobject/src/gnostr-identity.c) see the same layout. */
 #include <nostr-gobject-1.0/gnostr-app-bridge.h>
 
 G_BEGIN_DECLS
@@ -25,199 +36,68 @@ G_BEGIN_DECLS
 /**
  * gnostr_keystore_available:
  *
- * Check if secure key storage is available on this platform.
- *
- * Returns: %TRUE if key storage is available, %FALSE otherwise.
+ * Returns: %TRUE if the platform key store can be queried for identity
+ *   metadata (Secret Service reachable / Keychain present).
  */
 gboolean gnostr_keystore_available(void);
 
 /**
- * gnostr_keystore_store_key:
- * @npub: The bech32-encoded public key (npub1...) used as identifier
- * @nsec: The bech32-encoded private key (nsec1...) to store
- * @label: (nullable): Human-readable label for the key
- * @error: (out) (optional): Return location for error
- *
- * Store a private key in the platform's secure storage.
- * The key is identified by its corresponding public key (npub).
- *
- * Returns: %TRUE on success, %FALSE on error.
- */
-gboolean gnostr_keystore_store_key(const char *npub,
-                                    const char *nsec,
-                                    const char *label,
-                                    GError **error);
-
-/**
- * gnostr_keystore_store_key_async:
- * @npub: The bech32-encoded public key (npub1...)
- * @nsec: The bech32-encoded private key (nsec1...)
- * @label: (nullable): Human-readable label
- * @cancellable: (nullable): A #GCancellable
- * @callback: Callback to invoke when operation completes
- * @user_data: User data for callback
- *
- * Asynchronous version of gnostr_keystore_store_key().
- */
-void gnostr_keystore_store_key_async(const char *npub,
-                                      const char *nsec,
-                                      const char *label,
-                                      GCancellable *cancellable,
-                                      GAsyncReadyCallback callback,
-                                      gpointer user_data);
-
-/**
- * gnostr_keystore_store_key_finish:
- * @result: A #GAsyncResult
- * @error: (out) (optional): Return location for error
- *
- * Finishes an async store operation.
- *
- * Returns: %TRUE on success, %FALSE on error.
- */
-gboolean gnostr_keystore_store_key_finish(GAsyncResult *result,
-                                           GError **error);
-
-/**
- * gnostr_keystore_retrieve_key:
- * @npub: The bech32-encoded public key (npub1...) identifying the key
- * @error: (out) (optional): Return location for error
- *
- * Retrieve a private key from the platform's secure storage.
- *
- * Returns: (transfer full): The nsec on success, %NULL on error. Free with g_free().
- */
-char *gnostr_keystore_retrieve_key(const char *npub, GError **error);
-
-/**
- * gnostr_keystore_retrieve_key_async:
- * @npub: The bech32-encoded public key (npub1...)
- * @cancellable: (nullable): A #GCancellable
- * @callback: Callback to invoke when operation completes
- * @user_data: User data for callback
- *
- * Asynchronous version of gnostr_keystore_retrieve_key().
- */
-void gnostr_keystore_retrieve_key_async(const char *npub,
-                                         GCancellable *cancellable,
-                                         GAsyncReadyCallback callback,
-                                         gpointer user_data);
-
-/**
- * gnostr_keystore_retrieve_key_finish:
- * @result: A #GAsyncResult
- * @error: (out) (optional): Return location for error
- *
- * Finishes an async retrieve operation.
- *
- * Returns: (transfer full): The nsec on success, %NULL on error.
- */
-char *gnostr_keystore_retrieve_key_finish(GAsyncResult *result,
-                                           GError **error);
-
-/**
- * gnostr_keystore_delete_key:
- * @npub: The bech32-encoded public key (npub1...) identifying the key to delete
- * @error: (out) (optional): Return location for error
- *
- * Delete a private key from the platform's secure storage.
- *
- * Returns: %TRUE on success, %FALSE on error.
- */
-gboolean gnostr_keystore_delete_key(const char *npub, GError **error);
-
-/**
- * gnostr_keystore_delete_key_async:
- * @npub: The bech32-encoded public key (npub1...)
- * @cancellable: (nullable): A #GCancellable
- * @callback: Callback to invoke when operation completes
- * @user_data: User data for callback
- *
- * Asynchronous version of gnostr_keystore_delete_key().
- */
-void gnostr_keystore_delete_key_async(const char *npub,
-                                       GCancellable *cancellable,
-                                       GAsyncReadyCallback callback,
-                                       gpointer user_data);
-
-/**
- * gnostr_keystore_delete_key_finish:
- * @result: A #GAsyncResult
- * @error: (out) (optional): Return location for error
- *
- * Finishes an async delete operation.
- *
- * Returns: %TRUE on success, %FALSE on error.
- */
-gboolean gnostr_keystore_delete_key_finish(GAsyncResult *result,
-                                            GError **error);
-
-/**
  * gnostr_keystore_list_keys:
- * @error: (out) (optional): Return location for error
+ * @error: (nullable): return location for a #GError
  *
- * List all stored keys (without exposing the private keys).
+ * Identities the signer holds, one entry per npub. Metadata only.
  *
- * Returns: (transfer full) (element-type GnostrKeyInfo): A list of key info,
- *          or %NULL on error. Free with g_list_free_full(list, gnostr_key_info_free).
+ * Returns: (transfer full) (element-type GnostrKeyInfo): list; free with
+ *   g_list_free_full(list, (GDestroyNotify)gnostr_key_info_free). %NULL
+ *   when there are none or on error.
  */
 GList *gnostr_keystore_list_keys(GError **error);
 
 /**
- * gnostr_keystore_list_keys_async:
- * @cancellable: (nullable): A #GCancellable
- * @callback: Callback to invoke when operation completes
- * @user_data: User data for callback
- *
- * Asynchronous version of gnostr_keystore_list_keys().
- */
-void gnostr_keystore_list_keys_async(GCancellable *cancellable,
-                                      GAsyncReadyCallback callback,
-                                      gpointer user_data);
-
-/**
- * gnostr_keystore_list_keys_finish:
- * @result: A #GAsyncResult
- * @error: (out) (optional): Return location for error
- *
- * Finishes an async list operation.
- *
- * Returns: (transfer full) (element-type GnostrKeyInfo): A list of key info.
- */
-GList *gnostr_keystore_list_keys_finish(GAsyncResult *result,
-                                         GError **error);
-
-/**
  * gnostr_keystore_has_key:
- * @npub: The bech32-encoded public key (npub1...)
+ * @npub: bech32 public key
  *
- * Check if a key exists in secure storage.
- *
- * Returns: %TRUE if the key exists, %FALSE otherwise.
+ * Returns: %TRUE if the signer's key store holds an identity for @npub.
  */
 gboolean gnostr_keystore_has_key(const char *npub);
 
 /**
- * gnostr_key_info_free:
- * @info: A #GnostrKeyInfo
+ * gnostr_keystore_list_legacy_keys:
+ * @error: (nullable): return location for a #GError
  *
- * Free a key info structure.
+ * Keys a GNostr release before nostrc-e5nz stored in the client's own
+ * keystore and that are still there (not yet imported into the signer).
+ * Only npubs are returned; @label is %NULL.
+ *
+ * Returns: (transfer full) (element-type GnostrKeyInfo): list, or %NULL.
+ */
+GList *gnostr_keystore_list_legacy_keys(GError **error);
+
+/**
+ * gnostr_keystore_legacy_migrates_automatically:
+ *
+ * Returns: %TRUE if the signer daemon imports legacy client keys by itself
+ *   when it starts (Linux: org.gnostr.NostrKey is on its migration list);
+ *   %FALSE if the user must import them in GNostr Signer by hand.
+ */
+gboolean gnostr_keystore_legacy_migrates_automatically(void);
+
+/**
+ * gnostr_key_info_free:
+ * @info: (nullable): a #GnostrKeyInfo
  */
 void gnostr_key_info_free(GnostrKeyInfo *info);
 
 /**
  * gnostr_key_info_copy:
- * @info: A #GnostrKeyInfo
+ * @info: (nullable): a #GnostrKeyInfo
  *
- * Copy a key info structure.
- *
- * Returns: (transfer full): A copy of the key info.
+ * Returns: (transfer full) (nullable): a deep copy
  */
 GnostrKeyInfo *gnostr_key_info_copy(const GnostrKeyInfo *info);
 
 /* Error domain quark. GNOSTR_KEYSTORE_ERROR macro and the enum come from
- * the bridge header included above. This function is the app-side quark
- * that the app installs into the bridge at startup. */
+ * the nostr-gobject bridge header. */
 GQuark gnostr_keystore_error_quark(void);
 
 G_END_DECLS

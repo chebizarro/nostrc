@@ -90,6 +90,8 @@ gnostr_main_window_dispose_internal(GObject *object)
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(object);
   g_debug("main-window: dispose");
 
+  gnostr_main_window_signer_banner_dispose_internal(self);
+
   /* nostrc-4bk: Destroy thread prefetch BEFORE ingest queue/thread teardown
    * to prevent late async callbacks from enqueueing into torn-down state. */
   if (self->thread_prefetch) {
@@ -266,4 +268,5 @@ gnostr_main_window_bind_template_internal(GtkWidgetClass *widget_class)
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, session_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, login_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, error_page);
+  gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, signer_banner);
 }

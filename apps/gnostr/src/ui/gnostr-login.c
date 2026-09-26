@@ -4,11 +4,17 @@
  * Provides sign-in options:
  * 1. NIP-55L: Local signer via D-Bus (gnostr-signer)
  * 2. NIP-46: Remote signer via bunker:// URI with QR code display
+ *
+ * nostrc-e5nz: GNostr never holds private keys, so there is no "import
+ * nsec" here. Adding a key means creating or importing it in GNostr Signer;
+ * this page reports whether that signer is running, installed or missing,
+ * offers to start it, and flags keys an older GNostr stored itself.
  */
 
 #include "gnostr-login.h"
 #include <adwaita.h>
 #include "../ipc/signer_ipc.h"
+#include "../ipc/gnostr-signer-availability.h"
 #include "nostr/nip46/nip46_client.h"
 #include "nostr/nip46/nip46_uri.h"
 #include <nostr-gobject-1.0/nostr_nip19.h>
@@ -50,6 +56,8 @@ struct _GnostrLogin {
   /* Choose page widgets */
   GtkWidget *lbl_local_status;
   GtkWidget *btn_local_signer;
+  GtkWidget *btn_start_signer;
+  GtkWidget *lbl_legacy_keys;
   GtkWidget *spinner_local;
   GtkWidget *btn_remote_signer;
 
@@ -87,6 +95,9 @@ struct _GnostrLogin {
   gboolean connecting_bunker;
   gboolean local_signer_available;
   gulong name_owner_handler;         /* Monitor daemon appearing/disappearing */
+  guint signer_watch_id;             /* g_bus_watch_name on org.nostr.Signer */
+  gboolean starting_signer;          /* StartServiceByName in flight */
+  gboolean recheck_pending;          /* signer changed while a check ran */
   char *nostrconnect_uri;          /* URI for QR code display */
   char *nostrconnect_secret;       /* URI ?secret= handshake token (hex) */
   uint8_t nostrconnect_secret_bytes[32]; /* Client private key bytes (NIP-44 decrypt) */
@@ -125,6 +136,11 @@ static void on_retry_bunker_clicked(GtkButton *btn, gpointer user_data);
 static void on_close_clicked(GtkButton *btn, gpointer user_data);
 static void on_done_clicked(GtkButton *btn, gpointer user_data);
 static void check_local_signer_availability(GnostrLogin *self);
+static void on_start_signer_clicked(GtkButton *btn, gpointer user_data);
+static void on_signer_name_appeared(GDBusConnection *connection, const gchar *name,
+                                    const gchar *owner, gpointer user_data);
+static void on_signer_name_vanished(GDBusConnection *connection, const gchar *name,
+                                    gpointer user_data);
 static void on_name_owner_changed(GObject *proxy, GParamSpec *pspec, gpointer user_data);
 static void save_npub_to_settings(const char *npub);
 static void save_nip46_credentials_to_settings(const char *client_secret_hex,
@@ -527,6 +543,11 @@ static gboolean on_nip46_connect_success(gpointer data) {
 static void gnostr_login_dispose(GObject *obj) {
   GnostrLogin *self = GNOSTR_LOGIN(obj);
 
+  if (self->signer_watch_id) {
+    g_bus_unwatch_name(self->signer_watch_id);
+    self->signer_watch_id = 0;
+  }
+
   /* Disconnect name owner monitoring */
   if (self->name_owner_handler > 0) {
     NostrSignerProxy *proxy = gnostr_signer_proxy_get(NULL);
@@ -584,6 +605,8 @@ static void gnostr_login_class_init(GnostrLoginClass *klass) {
 
   gtk_widget_class_bind_template_child(wclass, GnostrLogin, lbl_local_status);
   gtk_widget_class_bind_template_child(wclass, GnostrLogin, btn_local_signer);
+  gtk_widget_class_bind_template_child(wclass, GnostrLogin, btn_start_signer);
+  gtk_widget_class_bind_template_child(wclass, GnostrLogin, lbl_legacy_keys);
   gtk_widget_class_bind_template_child(wclass, GnostrLogin, spinner_local);
   gtk_widget_class_bind_template_child(wclass, GnostrLogin, btn_remote_signer);
 
@@ -612,6 +635,7 @@ static void gnostr_login_class_init(GnostrLoginClass *klass) {
 
   /* Bind template callbacks */
   gtk_widget_class_bind_template_callback(wclass, on_local_signer_clicked);
+  gtk_widget_class_bind_template_callback(wclass, on_start_signer_clicked);
   gtk_widget_class_bind_template_callback(wclass, on_remote_signer_clicked);
   gtk_widget_class_bind_template_callback(wclass, on_back_clicked);
   gtk_widget_class_bind_template_callback(wclass, on_paste_bunker_clicked);
@@ -657,6 +681,14 @@ static void gnostr_login_init(GnostrLogin *self) {
   self->connecting_bunker = FALSE;
   self->local_signer_available = FALSE;
   self->cancellable = g_cancellable_new();
+
+  /* Re-check whenever org.nostr.Signer appears or vanishes. Watching the
+   * name never auto-starts the signer. */
+  self->signer_watch_id = g_bus_watch_name(G_BUS_TYPE_SESSION, GNOSTR_SIGNER_BUS_NAME,
+                                           G_BUS_NAME_WATCHER_FLAGS_NONE,
+                                           on_signer_name_appeared,
+                                           on_signer_name_vanished,
+                                           self, NULL);
 
   /* Start checking for local signer availability */
   check_local_signer_availability(self);
@@ -730,7 +762,7 @@ static void check_local_complete(GObject *source, GAsyncResult *res, gpointer us
     g_debug("[LOGIN] D-Bus proxy creation failed: %s",
             error ? error->message : "unknown");
     gtk_label_set_text(GTK_LABEL(self->lbl_local_status),
-                       "No local signer");
+                       _("GNostr Signer could not be reached."));
     gtk_widget_set_sensitive(self->btn_local_signer, FALSE);
     g_clear_error(&error);
     return;
@@ -751,7 +783,7 @@ static void check_local_complete(GObject *source, GAsyncResult *res, gpointer us
   if (!name_owner) {
     self->local_signer_available = FALSE;
     gtk_label_set_text(GTK_LABEL(self->lbl_local_status),
-                       "Signer not running");
+                       _("GNostr Signer is not running."));
     gtk_widget_set_sensitive(self->btn_local_signer, FALSE);
     return;
   }
@@ -761,35 +793,109 @@ static void check_local_complete(GObject *source, GAsyncResult *res, gpointer us
       proxy, &npub, NULL, &error);
   if (ok && npub && *npub) {
     self->local_signer_available = TRUE;
-    gtk_label_set_text(GTK_LABEL(self->lbl_local_status), "Signer available");
+    gtk_label_set_text(GTK_LABEL(self->lbl_local_status), _("GNostr Signer is ready."));
     gtk_widget_set_sensitive(self->btn_local_signer, TRUE);
     g_free(npub);
   } else {
-    /* Daemon is running but GetPublicKey failed - still allow local signing
-     * so user can import a key through the signer daemon */
+    /* Daemon is running but GetPublicKey failed (typically: no key yet).
+     * Keys are created/imported in GNostr Signer, never here. */
     self->local_signer_available = TRUE;
     g_debug("[LOGIN] Signer detected but GetPublicKey failed: %s",
             error ? error->message : "unknown");
     gtk_label_set_text(GTK_LABEL(self->lbl_local_status),
-                       "Signer detected (no key configured)");
+                       _("GNostr Signer is running but holds no key yet. Create or "
+                         "import one in GNostr Signer."));
     gtk_widget_set_sensitive(self->btn_local_signer, TRUE);
     g_clear_error(&error);
   }
 }
 
-static gboolean check_local_idle(gpointer user_data) {
-  CheckLocalCtx *ctx = (CheckLocalCtx*)user_data;
-  GnostrLogin *self = ctx->self;
+/* nostrc-e5nz: presence + legacy keys are known before the signer proxy is
+ * touched: creating the proxy for a stopped-but-activatable signer would
+ * D-Bus-activate it synchronously on the main thread. */
+static void on_login_status_ready(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  GnostrLogin *self = GNOSTR_LOGIN(user_data); /* ref held by the query */
+  GnostrSignerStatus st = { 0 };
+  g_autoptr(GError) error = NULL;
+  gboolean ok = gnostr_signer_status_query_finish(res, &st, &error);
 
-  /* nostrc-x52i: ctx and self ref are freed by the destroy notify
-   * (check_local_ctx_free) when the idle source is removed. */
-  if (!GNOSTR_IS_LOGIN(self)) {
-    return G_SOURCE_REMOVE;
+  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) || !self->lbl_local_status) {
+    g_object_unref(self);
+    return;
   }
 
-  /* Do the D-Bus check synchronously (it's fast) then update UI */
-  check_local_complete(NULL, NULL, ctx);
-  return G_SOURCE_REMOVE;
+  g_autofree char *legacy = ok ? gnostr_signer_status_legacy_text(&st) : NULL;
+  gtk_label_set_text(GTK_LABEL(self->lbl_legacy_keys), legacy ? legacy : "");
+  gtk_widget_set_visible(self->lbl_legacy_keys, legacy != NULL);
+  gtk_widget_set_visible(self->btn_start_signer,
+                         ok && gnostr_signer_status_can_start(&st));
+  gtk_widget_set_sensitive(self->btn_start_signer, !self->starting_signer);
+
+  if (!ok || st.presence == GNOSTR_SIGNER_PRESENCE_RUNNING) {
+    /* Running (or unknown): ask the signer itself which key it holds. */
+    CheckLocalCtx *ctx = g_new0(CheckLocalCtx, 1);
+    ctx->self = g_object_ref(self);
+    check_local_complete(NULL, NULL, ctx);
+    check_local_ctx_free(ctx);
+  } else {
+    g_autofree char *text = gnostr_signer_status_login_text(&st);
+    self->checking_local = FALSE;
+    self->local_signer_available = FALSE;
+    gtk_widget_set_visible(self->spinner_local, FALSE);
+    gtk_label_set_text(GTK_LABEL(self->lbl_local_status), text ? text : "");
+    gtk_widget_set_sensitive(self->btn_local_signer, FALSE);
+  }
+  if (self->recheck_pending) {
+    self->recheck_pending = FALSE;
+    check_local_signer_availability(self);
+  }
+  g_object_unref(self);
+}
+
+static void on_signer_name_appeared(GDBusConnection *connection, const gchar *name,
+                                    const gchar *owner, gpointer user_data) {
+  (void)connection; (void)name; (void)owner;
+  /* The shared proxy may have cached "not available"; start fresh. */
+  gnostr_signer_proxy_reset();
+  check_local_signer_availability(GNOSTR_LOGIN(user_data));
+}
+
+static void on_signer_name_vanished(GDBusConnection *connection, const gchar *name,
+                                    gpointer user_data) {
+  (void)connection; (void)name;
+  check_local_signer_availability(GNOSTR_LOGIN(user_data));
+}
+
+static void on_signer_started(GObject *source, GAsyncResult *res, gpointer user_data) {
+  (void)source;
+  GnostrLogin *self = GNOSTR_LOGIN(user_data); /* ref held by the call */
+  g_autoptr(GError) error = NULL;
+  gboolean ok = gnostr_signer_start_finish(res, &error);
+  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) || !self->btn_start_signer) {
+    g_object_unref(self);
+    return;
+  }
+  self->starting_signer = FALSE;
+  gtk_widget_set_sensitive(self->btn_start_signer, TRUE);
+  if (!ok) {
+    g_autofree char *msg = g_strdup_printf(_("Could not start GNostr Signer: %s"),
+                                           error ? error->message : _("unknown error"));
+    show_toast(self, msg);
+  }
+  gnostr_signer_proxy_reset();
+  check_local_signer_availability(self);
+  g_object_unref(self);
+}
+
+static void on_start_signer_clicked(GtkButton *btn, gpointer user_data) {
+  (void)btn;
+  GnostrLogin *self = GNOSTR_LOGIN(user_data);
+  if (!GNOSTR_IS_LOGIN(self) || self->starting_signer) return;
+  self->starting_signer = TRUE;
+  gtk_widget_set_sensitive(self->btn_start_signer, FALSE);
+  gtk_label_set_text(GTK_LABEL(self->lbl_local_status), _("Starting GNostr Signer…"));
+  gnostr_signer_start_async(self->cancellable, on_signer_started, g_object_ref(self));
 }
 
 /* Re-check signer availability when daemon appears/disappears on D-Bus */
@@ -804,17 +910,19 @@ static void on_name_owner_changed(GObject *proxy, GParamSpec *pspec,
 }
 
 static void check_local_signer_availability(GnostrLogin *self) {
-  if (self->checking_local) return;
+  if (self->checking_local) {
+    /* Run again once the in-flight check lands, so a signer that appeared
+     * or vanished meanwhile is not reported stale. */
+    self->recheck_pending = TRUE;
+    return;
+  }
 
   self->checking_local = TRUE;
   gtk_widget_set_visible(self->spinner_local, TRUE);
-  gtk_label_set_text(GTK_LABEL(self->lbl_local_status), "Checking...");
+  gtk_label_set_text(GTK_LABEL(self->lbl_local_status), _("Checking availability…"));
 
-  CheckLocalCtx *ctx = g_new0(CheckLocalCtx, 1);
-  ctx->self = g_object_ref(self);
-  /* nostrc-x52i: Use _full variant with destroy notify to ensure ctx and
-   * self ref are freed even if the idle source is removed before firing. */
-  g_idle_add_full(G_PRIORITY_DEFAULT, check_local_idle, ctx, check_local_ctx_free);
+  gnostr_signer_status_query_async(self->cancellable, on_login_status_ready,
+                                   g_object_ref(self));
 }
 
 typedef struct {
@@ -847,7 +955,7 @@ static void local_sign_in_complete(GObject *source, GAsyncResult *res, gpointer 
   NostrSignerProxy *proxy = gnostr_signer_proxy_get(&error);
 
   if (!proxy) {
-    show_toast(self, "Failed to connect to local signer");
+    show_toast(self, _("Could not connect to GNostr Signer"));
     if (error) g_error_free(error);
     return;
   }
@@ -857,13 +965,14 @@ static void local_sign_in_complete(GObject *source, GAsyncResult *res, gpointer 
 
   if (!ok || !npub || !*npub) {
     /* Check for specific D-Bus errors and show user-friendly messages */
-    const char *msg = "Failed to get public key from local signer";
+    const char *msg = _("GNostr Signer did not return a public key");
     if (error) {
       /* Check for NoKeyConfigured error from daemon */
       if (g_dbus_error_is_remote_error(error)) {
         gchar *remote_error = g_dbus_error_get_remote_error(error);
         if (remote_error && strstr(remote_error, "NoKeyConfigured")) {
-          msg = "No key configured in local signer.\n\nPlease set up a key in GNostr Signer first.";
+          msg = _("GNostr Signer holds no key yet. Create or import one in GNostr "
+                  "Signer, then sign in. GNostr never stores private keys.");
         } else {
           msg = error->message;
         }

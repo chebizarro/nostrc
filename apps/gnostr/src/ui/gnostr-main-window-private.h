@@ -70,6 +70,12 @@ struct _GnostrMainWindow {
   GtkWidget *login_view;
   AdwStatusPage *error_page;
   AdwToastOverlay *toast_overlay;
+  /* nostrc-e5nz: read-only banner when no signer is available */
+  AdwBanner *signer_banner;
+  guint signer_watch_id;
+  GCancellable *signer_status_cancellable;
+  GCancellable *signer_start_cancellable;
+  gboolean signer_starting;
 
   /* Responsive mode */
   gboolean compact;
@@ -432,6 +438,10 @@ void gnostr_main_window_run_startup_bootstrap_internal(GnostrMainWindow *self,
                                                       GCallback scroll_cb,
                                                       GCallback tab_filter_cb);
 void gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self);
+/* gnostr-main-window-signer-banner.c (nostrc-e5nz) */
+void gnostr_main_window_signer_banner_start_internal(GnostrMainWindow *self);
+void gnostr_main_window_signer_banner_refresh_internal(GnostrMainWindow *self);
+void gnostr_main_window_signer_banner_dispose_internal(GnostrMainWindow *self);
 void gnostr_main_window_initial_refresh_timeout_cb_internal(gpointer data);
 void gnostr_main_window_run_startup_stage2_internal(gpointer data);
 gpointer gnostr_main_window_ingest_thread_func_internal(gpointer data);

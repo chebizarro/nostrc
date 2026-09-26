@@ -139,24 +139,14 @@ ab_neg_sync_kinds_finish(GAsyncResult *result,
   return gnostr_neg_sync_kinds_finish(result, stats_out, error);
 }
 
-/* Keystore adapters. The app's GnostrKeyInfo has the same layout as the
- * bridge's (the app header now typedefs from the bridge), so casts are
- * unnecessary. */
+/* Identity metadata adapters (nostrc-e5nz: read-only, no secrets). The
+ * app's GnostrKeyInfo has the same layout as the bridge's (the app header
+ * typedefs from the bridge), so casts are unnecessary. */
 static gboolean ab_keystore_available(void)
 { return gnostr_keystore_available(); }
 
 static gboolean ab_keystore_has_key(const char *npub)
 { return gnostr_keystore_has_key(npub); }
-
-static gboolean ab_keystore_store_key(const char *npub, const char *nsec,
-                                       const char *label, GError **error)
-{ return gnostr_keystore_store_key(npub, nsec, label, error); }
-
-static char *ab_keystore_retrieve_key(const char *npub, GError **error)
-{ return gnostr_keystore_retrieve_key(npub, error); }
-
-static gboolean ab_keystore_delete_key(const char *npub, GError **error)
-{ return gnostr_keystore_delete_key(npub, error); }
 
 static GList *ab_keystore_list_keys(GError **error)
 { return gnostr_keystore_list_keys(error); }
@@ -193,9 +183,6 @@ gnostr_signer_bridge_install_default(void)
     .neg_sync_kinds_finish                 = ab_neg_sync_kinds_finish,
     .keystore_available                    = ab_keystore_available,
     .keystore_has_key                      = ab_keystore_has_key,
-    .keystore_store_key                    = ab_keystore_store_key,
-    .keystore_retrieve_key                 = ab_keystore_retrieve_key,
-    .keystore_delete_key                   = ab_keystore_delete_key,
     .keystore_list_keys                    = ab_keystore_list_keys,
     .key_info_free                         = ab_key_info_free,
     .keystore_error_quark                  = ab_keystore_error_quark,
