@@ -1,0 +1,10 @@
+#!/usr/bin/expect -f
+set timeout 60
+log_user 1
+spawn gio mount smb://nostr@192.168.64.3/nostr-home
+expect {
+    -re "Password:" { send "test-password-for-acceptance\r"; exp_continue }
+    -re "(?i)domain\[^:]*:" { send "\r"; exp_continue }
+    -re "(?i)user\[^:]*:" { send "nostr\r"; exp_continue }
+    eof
+}
