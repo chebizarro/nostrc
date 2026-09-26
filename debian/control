@@ -29,7 +29,10 @@ Build-Depends: debhelper-compat (= 13),
                libsoup-3.0-dev,
                libxml2-dev,
                libjson-glib-dev,
-               libsecret-1-dev
+               libsecret-1-dev,
+# nostr-seal (nostrc-da9c): nostr-seal-gtk, the .nsealed double-click handler.
+               libgtk-4-dev,
+               libadwaita-1-dev (>= 1.5)
 Standards-Version: 4.6.2
 Homepage: https://github.com/chebizarro/nostrc
 Vcs-Browser: https://github.com/chebizarro/nostrc
@@ -486,3 +489,22 @@ Description: Kind-aware router for nostr: links (org.nostr.Dispatcher1)
  .
  The org.nostr.Dispatcher1 service is D-Bus activated on demand through
  a user unit and exits when idle; nothing is enabled at install time.
+
+Package: nostr-seal
+Section: utils
+Architecture: any
+Multi-Arch: foreign
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         libnostr1 (= ${binary:Version})
+Description: Encrypt files for Nostr public keys or a passphrase
+ nostr-seal seals files for one or more npubs (NIP-44 v2 key agreement
+ wrapping a random per-file key) or for a passphrase (NIP-49 scrypt +
+ XChaCha20-Poly1305), with the body in the chunked, content-addressed
+ porthome AEAD container. Files stream in bounded memory and every byte is
+ authenticated.
+ .
+ Opening a file sealed for an npub goes through the org.nostr.Signer D-Bus
+ service (NIP44DeriveConversationKey, approval-gated), so the nsec never
+ leaves the signer. Ships the nostr-seal CLI, the nostr-seal-gtk
+ double-click handler and the application/vnd.nostr.sealed (*.nsealed)
+ MIME type.
