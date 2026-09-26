@@ -18,6 +18,11 @@
  *       -> row stays `pending`, publish_attempts incremented, retries
  *          via nd_publisher_tick() on the next scheduled poll.
  *
+ * Since bead nostrc-tmsc the relay side (EVENT fan-out, OK
+ * classification, quorum verdict, OK-wait deadline, backoff curve) is
+ * libnostr-publish's NostrPublisher; this module keeps the SQLite outbox,
+ * tombstones, publish_log, DAV event builders and notifications.
+ *
  * The worker itself is deterministic and single-threaded for testing:
  * nd_publisher_tick() picks up any pending rows whose `publish_next_ts`
  * is <= now, drives them one step, and returns. Production wraps it in
@@ -148,9 +153,10 @@ gboolean nd_publisher_stage_tombstone(NdPublisher  *self,
  */
 gboolean nd_publisher_tick(NdPublisher *self, gint64 now_ts);
 
-/** Test-only: bind an already-constructed transport to a URL so tick()
- *  will use it instead of asking the factory. Ownership retained by
- *  caller. Passing @transport = NULL removes the binding. */
+/** Shares a transport (owned by the sync layer, or a test) for a URL so
+ *  tick() can send to it. The publisher takes its own ref; the caller
+ *  keeps routing the transport's OK frames into nd_publisher_record_ok().
+ *  Passing @transport = NULL removes the binding. */
 void nd_publisher_bind_transport(NdPublisher      *self,
                                  const gchar      *relay_url,
                                  NdRelayTransport *transport);

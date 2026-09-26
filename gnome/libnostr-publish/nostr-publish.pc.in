@@ -1,0 +1,11 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: nostr-publish
+Description: Shared Nostr relay publish core (signer proxy, NIP-65 outbox commit)
+Version: @NOSTR_PUBLISH_VERSION@
+Requires: glib-2.0 gio-2.0
+Requires.private: libsoup-3.0 json-glib-1.0
+Libs: -L${libdir} -lnostr-publish
+Cflags: -I${includedir}
