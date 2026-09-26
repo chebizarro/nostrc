@@ -568,6 +568,22 @@ deadline). Results open through nostr-dispatcher. NIP-05 look-ups and
 avatar caching can be disabled in ~/.config/nostr/search-provider.conf.
 The org.nostr.SearchProvider service is D-Bus activated and exits idle.
 
+# --- Sub-package: nostr-signer-webext-host (nostrc-jjyp) ---------------------
+%package -n nostr-signer-webext-host
+Summary:        NIP-07 browser bridge to the desktop Nostr signer (native host)
+Requires:       glib2
+Requires:       json-glib
+Requires:       mozilla-filesystem
+
+%description -n nostr-signer-webext-host
+Native-messaging host (org.nostr.signer_bridge) behind the "Nostr Signer
+Bridge" browser extension. The extension provides window.nostr (NIP-07);
+every call is forwarded to the desktop signer org.nostr.Signer on the
+session bus with the page origin as app_id, so web clients use the
+desktop-managed identity and the signer's approval dialogs. The host holds
+no keys. Installs the host and its Firefox / Chromium / Chrome manifests;
+the extension itself is installed separately (see the README).
+
 # --- Sub-package: nostrc-samba-server ----------------------------------------
 %package -n nostrc-samba-server
 Summary:        Dedicated Samba file-server for the Nostr auth broker (Wave 4)
@@ -646,6 +662,9 @@ the `application/vnd.nostr.sealed` (`*.nsealed`) MIME type.
     -DENABLE_NOSTR_SEAL=ON \
     -DENABLE_NOSTR_SHARE=ON \
     -DENABLE_NOSTR_SEARCH_PROVIDER=ON \
+    -DENABLE_NOSTR_SIGNER_WEBEXT_HOST=ON \
+    -DNOSTR_SIGNER_WEBEXT_INSTALL_BROWSER_MANIFESTS=ON \
+    -DNMH_MOZILLA_HOSTS_DIR=%{_libdir}/mozilla/native-messaging-hosts \
     -DSIGNET_ENABLE=OFF \
     -DWITH_NOSTRDB=OFF \
     -DLIBNOSTR_WITH_NOSTRDB=OFF \
@@ -1231,6 +1250,23 @@ fi
 %{_datadir}/gnome-shell/search-providers/org.nostr.SearchProvider.ini
 %dir %{_datadir}/doc/nostr-search-provider
 %{_datadir}/doc/nostr-search-provider/README.md
+
+%files -n nostr-signer-webext-host
+%license LICENSE
+%{_libexecdir}/nostr-signer-webext-host
+%{_libdir}/mozilla/native-messaging-hosts/org.nostr.signer_bridge.json
+%dir %{_sysconfdir}/chromium
+%dir %{_sysconfdir}/chromium/native-messaging-hosts
+%config(noreplace) %{_sysconfdir}/chromium/native-messaging-hosts/org.nostr.signer_bridge.json
+%dir %{_sysconfdir}/opt/chrome
+%dir %{_sysconfdir}/opt/chrome/native-messaging-hosts
+%config(noreplace) %{_sysconfdir}/opt/chrome/native-messaging-hosts/org.nostr.signer_bridge.json
+%dir %{_datadir}/nostr-signer-webext-host
+%{_datadir}/nostr-signer-webext-host/firefox/
+%{_datadir}/nostr-signer-webext-host/chromium/
+%{_datadir}/nostr-signer-webext-host/install-user-manifests.sh
+%dir %{_datadir}/doc/nostr-signer-webext-host
+%{_datadir}/doc/nostr-signer-webext-host/README.md
 
 %files -n nostrc-samba-server
 %license LICENSE

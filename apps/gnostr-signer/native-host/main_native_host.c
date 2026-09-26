@@ -1,331 +1,206 @@
-/* main_native_host.c - Native messaging host for NIP-07 browser extension
+/* main_native_host.c - nostr-signer-webext-host (nostrc-jjyp)
  *
- * This is the entry point for the native messaging host binary that communicates
- * with browser extensions (Chrome/Firefox) via native messaging protocol.
+ * Native-messaging host for the NIP-07 browser extension
+ * (browser-extension/nip07/). The browser launches it through the
+ * org.nostr.signer_bridge host manifest and talks to it over stdin/stdout
+ * with 4-byte length-prefixed JSON frames. Every window.nostr call is
+ * forwarded to the desktop signer daemon org.nostr.Signer on the session
+ * bus with the page origin as app_id, so web clients use the
+ * desktop-managed identity and the signer's own approval UI.
  *
- * Usage:
- *   gnostr-signer-native [OPTIONS]
+ * Threading: a reader thread blocks on stdin and hands whole frames to the
+ * main context; all routing, D-Bus I/O and stdout writes happen on the
+ * main thread, so replies never interleave.
  *
- * The host is launched by the browser when an extension requests access to
- * the window.nostr API. It communicates via stdin/stdout using the native
- * messaging protocol (4-byte length prefix + JSON).
+ * stdout hygiene: the framed channel is moved to a private descriptor and
+ * fd 1 is pointed at stderr, so a stray printf or a GLib INFO/DEBUG log
+ * line (which GLib writes to stdout) can never corrupt the protocol.
  *
- * Security:
- * - Core dumps are disabled to protect secret keys
- * - The host runs as the current user with their keychain access
- * - Origin information from extensions is passed for policy decisions
+ * Browsers pass extra arguments (Firefox: manifest path + extension id;
+ * Chromium: the caller origin, and --parent-window on Windows); they are
+ * accepted and ignored - the host manifest's allowed_extensions /
+ * allowed_origins is what restricts who may launch this binary.
  */
 #include "native_messaging.h"
+#include "nm_router.h"
 
 #include <glib.h>
+#include <glib-unix.h>
 #include <gio/gio.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
-#include <signal.h>
-
+#include <unistd.h>
+#include <sys/resource.h>
 #ifdef __linux__
 #include <sys/prctl.h>
 #endif
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <sys/resource.h>
+#ifndef NM_HOST_VERSION
+#define NM_HOST_VERSION "0.2.0"
 #endif
+#define PROGRAM_NAME "nostr-signer-webext-host"
 
-#define VERSION "0.1.0"
-#define PROGRAM_NAME "gnostr-signer-native"
-
-/* Global context for signal handling */
-static NativeMessagingContext *g_ctx = NULL;
-
-/* Signal handler for graceful shutdown */
-static void handle_signal(int sig) {
-  (void)sig;
-  /* The main loop will exit when stdin is closed */
-  exit(0);
-}
-
-/* Disable core dumps for security */
-static void disable_core_dumps(void) {
-#ifdef _WIN32
-  /* Windows: Prevent creating minidumps */
-  SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
-#else
-  struct rlimit rl;
-  rl.rlim_cur = 0;
-  rl.rlim_max = 0;
-  setrlimit(RLIMIT_CORE, &rl);
-#endif
-
-#ifdef __linux__
-  /* Linux: Also prevent ptrace attachment */
-  prctl(PR_SET_DUMPABLE, 0);
-#endif
-}
-
-/* Print usage information */
-static void print_usage(void) {
-  g_print("Usage: %s [OPTIONS]\n", PROGRAM_NAME);
-  g_print("\n");
-  g_print("NIP-07 Native Messaging Host for browser extensions\n");
-  g_print("\n");
-  g_print("This program is normally launched by a browser when an extension\n");
-  g_print("requests access to the window.nostr API. It should not typically\n");
-  g_print("be run directly.\n");
-  g_print("\n");
-  g_print("Options:\n");
-  g_print("  -h, --help       Show this help message\n");
-  g_print("  -v, --version    Show version information\n");
-  g_print("  --identity NPUB  Use specific identity for signing\n");
-  g_print("  --auto-approve   Auto-approve all requests (dangerous)\n");
-  g_print("\n");
-  g_print("Environment Variables:\n");
-  g_print("  GNOSTR_SIGNER_IDENTITY   Default identity to use\n");
-  g_print("  GNOSTR_SIGNER_DEBUG      Enable debug logging to stderr\n");
-  g_print("\n");
-}
-
-/* Print version information */
-static void print_version(void) {
-  g_print("%s version %s\n", PROGRAM_NAME, VERSION);
-}
-
-/* D-Bus approval request context */
 typedef struct {
   GMainLoop *loop;
-  gchar *request_id;
-  gboolean approved;
-  gboolean got_response;
-} ApprovalContext;
+  NmRouter *router;
+  int out_fd;
+  int exit_code;
+} Host;
 
-/* D-Bus constants */
-#define SIGNER_DBUS_NAME "org.nostr.Signer"
-#define SIGNER_DBUS_PATH "/org/nostr/signer"
-#define SIGNER_DBUS_INTERFACE "org.nostr.Signer"
+typedef struct {
+  Host *host;
+  NmFrameStatus status;
+  gchar *msg;
+  gsize len;
+} FrameEvent;
 
-/* Handle ApprovalCompleted signal */
-static void on_approval_completed(GDBusConnection *connection,
-                                  const gchar *sender_name,
-                                  const gchar *object_path,
-                                  const gchar *interface_name,
-                                  const gchar *signal_name,
-                                  GVariant *parameters,
-                                  gpointer user_data) {
-  (void)connection;
-  (void)sender_name;
-  (void)object_path;
-  (void)interface_name;
-  (void)signal_name;
+static void disable_core_dumps(void) {
+  struct rlimit rl = { 0, 0 };
+  (void)setrlimit(RLIMIT_CORE, &rl);
+#ifdef __linux__
+  (void)prctl(PR_SET_DUMPABLE, 0);
+#endif
+}
 
-  ApprovalContext *ctx = user_data;
-  const gchar *request_id = NULL;
-  gboolean decision = FALSE;
-
-  g_variant_get(parameters, "(&sb)", &request_id, &decision);
-
-  if (g_strcmp0(request_id, ctx->request_id) == 0) {
-    ctx->approved = decision;
-    ctx->got_response = TRUE;
-    g_main_loop_quit(ctx->loop);
+static void on_reply(const gchar *json, gsize len, gpointer user_data) {
+  Host *h = user_data;
+  NmFrameStatus st = nm_frame_write(h->out_fd, json, len);
+  if (st == NM_FRAME_IO) {
+    /* Browser went away; nothing left to talk to. */
+    g_main_loop_quit(h->loop);
   }
 }
 
-/* Timeout callback */
-static gboolean approval_timeout(gpointer user_data) {
-  ApprovalContext *ctx = user_data;
-  g_main_loop_quit(ctx->loop);
+static gboolean on_frame(gpointer data) {
+  FrameEvent *ev = data;
+  Host *h = ev->host;
+  switch (ev->status) {
+    case NM_FRAME_OK:
+      nm_router_handle(h->router, ev->msg, ev->len);
+      break;
+    case NM_FRAME_TOO_LARGE:
+      nm_router_reply_frame_error(h->router, NM_ERR_TOO_LARGE);
+      break;
+    case NM_FRAME_EMPTY:
+      nm_router_reply_frame_error(h->router, NM_ERR_INVALID_REQUEST);
+      break;
+    case NM_FRAME_EOF:
+      g_main_loop_quit(h->loop);
+      break;
+    case NM_FRAME_IO:
+    default:
+      h->exit_code = 1;
+      g_main_loop_quit(h->loop);
+      break;
+  }
   return G_SOURCE_REMOVE;
 }
 
-/* Request approval via D-Bus */
-static gboolean request_dbus_approval(const gchar *app_id,
-                                       const gchar *identity,
-                                       const gchar *kind,
-                                       const gchar *preview) {
-  GError *error = NULL;
-  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
-
-  if (!bus) {
-    g_printerr("[%s] Failed to connect to session bus: %s\n",
-               PROGRAM_NAME, error ? error->message : "unknown");
-    g_clear_error(&error);
-    return FALSE;
-  }
-
-  /* Generate unique request ID */
-  gchar *request_id = g_uuid_string_random();
-
-  /* Set up approval context */
-  ApprovalContext ctx = {
-    .loop = g_main_loop_new(NULL, FALSE),
-    .request_id = request_id,
-    .approved = FALSE,
-    .got_response = FALSE
-  };
-
-  /* Subscribe to ApprovalCompleted signal */
-  guint sub_id = g_dbus_connection_signal_subscribe(
-    bus,
-    SIGNER_DBUS_NAME,
-    SIGNER_DBUS_INTERFACE,
-    "ApprovalCompleted",
-    SIGNER_DBUS_PATH,
-    NULL,
-    G_DBUS_SIGNAL_FLAGS_NONE,
-    on_approval_completed,
-    &ctx,
-    NULL
-  );
-
-  /* Emit ApprovalRequested signal */
-  g_dbus_connection_emit_signal(
-    bus,
-    NULL, /* destination - broadcast */
-    SIGNER_DBUS_PATH,
-    SIGNER_DBUS_INTERFACE,
-    "ApprovalRequested",
-    g_variant_new("(sssss)",
-                  app_id ? app_id : "unknown",
-                  identity ? identity : "",
-                  kind ? kind : "event",
-                  preview ? preview : "",
-                  request_id),
-    &error
-  );
-
-  if (error) {
-    g_printerr("[%s] Failed to emit ApprovalRequested: %s\n",
-               PROGRAM_NAME, error->message);
-    g_clear_error(&error);
-    g_dbus_connection_signal_unsubscribe(bus, sub_id);
-    g_main_loop_unref(ctx.loop);
-    g_free(request_id);
-    g_object_unref(bus);
-    return FALSE;
-  }
-
-  /* Set 60 second timeout */
-  guint timeout_id = g_timeout_add_seconds(60, approval_timeout, &ctx);
-
-  /* Wait for response */
-  g_main_loop_run(ctx.loop);
-
-  /* Cleanup */
-  if (g_source_remove(timeout_id)) {
-    /* Timeout was still pending, source removed successfully */
-  }
-  g_dbus_connection_signal_unsubscribe(bus, sub_id);
-  g_main_loop_unref(ctx.loop);
-  g_free(request_id);
-  g_object_unref(bus);
-
-  if (!ctx.got_response) {
-    g_printerr("[%s] Approval request timed out\n", PROGRAM_NAME);
-    return FALSE;
-  }
-
-  return ctx.approved;
+static void frame_event_free(gpointer data) {
+  FrameEvent *ev = data;
+  g_free(ev->msg);
+  g_free(ev);
 }
 
-/* Authorization callback - requests approval via D-Bus to gnostr-signer UI */
-static gboolean auth_callback(const NativeMessagingRequest *req,
-                              const gchar *preview,
-                              gpointer user_data) {
-  gboolean auto_approve = GPOINTER_TO_INT(user_data);
-
-  if (auto_approve) {
-    return TRUE;
+static gpointer reader_thread(gpointer data) {
+  Host *h = data;
+  for (;;) {
+    FrameEvent *ev = g_new0(FrameEvent, 1);
+    ev->host = h;
+    ev->msg = nm_frame_read(STDIN_FILENO, &ev->len, &ev->status);
+    NmFrameStatus st = ev->status;
+    g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, on_frame, ev, frame_event_free);
+    if (st == NM_FRAME_EOF || st == NM_FRAME_IO) break;
   }
+  return NULL;
+}
 
-  /* Log the request */
-  g_printerr("[%s] Request: %s - %s\n", PROGRAM_NAME,
-             req->method_str ? req->method_str : "unknown",
-             preview ? preview : "");
+static gboolean on_signal(gpointer data) {
+  g_main_loop_quit(((Host *)data)->loop);
+  return G_SOURCE_REMOVE;
+}
 
-  /* Request approval via D-Bus to gnostr-signer UI */
-  gboolean approved = request_dbus_approval(
-    req->origin,      /* app_id - browser extension origin */
-    NULL,             /* identity - use default */
-    req->method_str,  /* kind - the request type */
-    preview           /* preview - human-readable content */
-  );
+static gint env_int(const gchar *name, gint fallback) {
+  const gchar *v = g_getenv(name);
+  if (!v || !*v) return fallback;
+  gint64 n = g_ascii_strtoll(v, NULL, 10);
+  return (n > 0 && n < G_MAXINT) ? (gint)n : fallback;
+}
 
-  if (!approved) {
-    g_printerr("[%s] Request denied by user\n", PROGRAM_NAME);
-  }
-
-  return approved;
+static void usage(void) {
+  g_printerr(
+    "Usage: %s [--identity NPUB]\n"
+    "\n"
+    "Native-messaging host for the NIP-07 (window.nostr) browser extension.\n"
+    "Launched by the browser via the org.nostr.signer_bridge host manifest;\n"
+    "forwards every request to org.nostr.Signer on the session bus.\n"
+    "\n"
+    "  --identity NPUB   signer identity selector (default: active identity)\n"
+    "  -h, --help        this help\n"
+    "  -v, --version     print the version\n"
+    "\n"
+    "Environment:\n"
+    "  NOSTR_SIGNER_BRIDGE_IDENTITY        same as --identity\n"
+    "  NOSTR_SIGNER_BRIDGE_CALL_TIMEOUT_MS  non-interactive call timeout (30000)\n"
+    "  NOSTR_SIGNER_BRIDGE_APPROVAL_TIMEOUT_MS  approval call timeout (120000)\n"
+    "  NOSTR_SIGNER_BRIDGE_DEBUG=1         debug logging to stderr\n",
+    PROGRAM_NAME);
 }
 
 int main(int argc, char **argv) {
-  gboolean show_help = FALSE;
-  gboolean show_version = FALSE;
-  gboolean auto_approve = FALSE;
-  gchar *identity = NULL;
+  const gchar *identity = g_getenv("NOSTR_SIGNER_BRIDGE_IDENTITY");
 
-  /* Parse command line arguments */
   for (int i = 1; i < argc; i++) {
-    if (g_strcmp0(argv[i], "-h") == 0 || g_strcmp0(argv[i], "--help") == 0) {
-      show_help = TRUE;
-    } else if (g_strcmp0(argv[i], "-v") == 0 || g_strcmp0(argv[i], "--version") == 0) {
-      show_version = TRUE;
-    } else if (g_strcmp0(argv[i], "--auto-approve") == 0) {
-      auto_approve = TRUE;
-    } else if (g_strcmp0(argv[i], "--identity") == 0 && i + 1 < argc) {
+    if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
+      usage();
+      return 0;
+    } else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--version")) {
+      g_printerr("%s %s\n", PROGRAM_NAME, NM_HOST_VERSION);
+      return 0;
+    } else if (!strcmp(argv[i], "--identity") && i + 1 < argc) {
       identity = argv[++i];
     }
+    /* Anything else is a browser-supplied argument; ignore. */
   }
 
-  if (show_help) {
-    print_usage();
-    return 0;
-  }
-
-  if (show_version) {
-    print_version();
-    return 0;
-  }
-
-  /* Security: Disable core dumps */
   disable_core_dumps();
-
-  /* Set up signal handlers */
-  signal(SIGINT, handle_signal);
-  signal(SIGTERM, handle_signal);
-#ifndef _WIN32
   signal(SIGPIPE, SIG_IGN);
-#endif
 
-  /* Check for identity from environment */
-  if (!identity) {
-    identity = (gchar *)g_getenv("GNOSTR_SIGNER_IDENTITY");
+  /* Move the protocol channel off fd 1 before anything can log. */
+  int out_fd = fcntl(STDOUT_FILENO, F_DUPFD_CLOEXEC, 3);
+  if (out_fd < 0 || dup2(STDERR_FILENO, STDOUT_FILENO) < 0) {
+    g_printerr("%s: cannot isolate stdout\n", PROGRAM_NAME);
+    return 1;
   }
 
-  /* Enable debug logging if requested */
-  if (g_getenv("GNOSTR_SIGNER_DEBUG")) {
-    g_printerr("[%s] Starting native messaging host v%s\n", PROGRAM_NAME, VERSION);
-    if (identity) {
-      g_printerr("[%s] Using identity: %s\n", PROGRAM_NAME, identity);
-    }
-  }
+  if (g_getenv("NOSTR_SIGNER_BRIDGE_DEBUG"))
+    g_log_set_debug_enabled(TRUE);
 
-  /* Create context */
-  g_ctx = native_messaging_context_new(identity);
+  Host h = { 0 };
+  h.loop = g_main_loop_new(NULL, FALSE);
+  h.out_fd = out_fd;
 
-  /* Set authorization callback */
-  native_messaging_set_authorize_cb(g_ctx, auth_callback, GINT_TO_POINTER(auto_approve));
+  NmRouterConfig cfg = {
+    .identity = identity ? identity : "",
+    .call_timeout_ms = env_int("NOSTR_SIGNER_BRIDGE_CALL_TIMEOUT_MS", 30000),
+    .approval_timeout_ms = env_int("NOSTR_SIGNER_BRIDGE_APPROVAL_TIMEOUT_MS", 120000),
+    .signer_bus_name = "org.nostr.Signer",
+  };
+  h.router = nm_router_new(NULL, &cfg, on_reply, &h);
 
-  /* Run the message loop */
-  NativeMessagingError rc = native_messaging_run(g_ctx);
+  g_unix_signal_add(SIGINT, on_signal, &h);
+  g_unix_signal_add(SIGTERM, on_signal, &h);
 
-  /* Cleanup */
-  native_messaging_context_free(g_ctx);
-  g_ctx = NULL;
+  GThread *reader = g_thread_new("nm-reader", reader_thread, &h);
+  g_thread_unref(reader); /* detached: it may be blocked in read() at exit */
 
-  if (g_getenv("GNOSTR_SIGNER_DEBUG")) {
-    g_printerr("[%s] Shutting down (rc=%d)\n", PROGRAM_NAME, rc);
-  }
+  g_debug("%s %s started", PROGRAM_NAME, NM_HOST_VERSION);
+  g_main_loop_run(h.loop);
+  g_debug("%s exiting (%u request(s) in flight)", PROGRAM_NAME, nm_router_in_flight(h.router));
 
-  return (rc == NM_OK) ? 0 : 1;
+  nm_router_free(h.router);
+  /* _exit: the reader thread may still own stdin; skip atexit teardown. */
+  _exit(h.exit_code);
 }

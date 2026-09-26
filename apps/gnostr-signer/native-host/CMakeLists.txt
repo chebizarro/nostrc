@@ -1,114 +1,128 @@
-# CMakeLists.txt for gnostr-signer-native (NIP-07 Native Messaging Host)
+# nostr-signer-webext-host — NIP-07 native-messaging host (nostrc-jjyp).
+#
+# Bridges the browser extension in browser-extension/nip07/ to the desktop
+# signer daemon org.nostr.Signer over the session bus. Headless and small on
+# purpose: GLib/GIO + json-glib only, no libnostr, no key material.
+#
+# Reached three ways:
+#   * apps/gnostr-signer (BUILD_APPS + BUILD_NATIVE_HOST) for dev builds
+#   * top level -DENABLE_NOSTR_SIGNER_WEBEXT_HOST=ON (Debian/RPM packaging,
+#     BUILD_APPS=OFF)
+#   * standalone: cmake -S apps/gnostr-signer/native-host -B build-nmh
+cmake_minimum_required(VERSION 3.20)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  project(nostr_signer_webext_host C)
+  include(CTest)
+endif()
 
-set(NATIVE_HOST_BIN "gnostr-signer-native")
+include(GNUInstallDirs)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(NMH_DEPS REQUIRED IMPORTED_TARGET
+  glib-2.0>=2.66 gio-2.0 gio-unix-2.0 json-glib-1.0)
 
-# Source files
-set(NATIVE_HOST_SRC
-  main_native_host.c
+set(NMH_VERSION "0.2.0")
+set(NMH_BIN "nostr-signer-webext-host")
+set(NMH_HOST_NAME "org.nostr.signer_bridge")
+
+# Extension identities the host manifests are pinned to. Firefox: the
+# gecko id from browser-extension/nip07/manifest.firefox.json. Chromium: the
+# id derived from the "key" in manifest.chromium.json (README "Extension
+# ids" explains how to re-derive it).
+set(NMH_FIREFOX_EXTENSION_ID "signer-bridge@gnostr.org" CACHE STRING
+    "Firefox extension id allowed to launch the NIP-07 host")
+set(NMH_CHROMIUM_EXTENSION_ID "ljigikpdhlameofnnalkmjnbeagdhbin" CACHE STRING
+    "Chromium extension id allowed to launch the NIP-07 host")
+
+option(NOSTR_SIGNER_WEBEXT_INSTALL_BROWSER_MANIFESTS
+  "Install the host manifest into the system-wide Firefox/Chromium/Chrome lookup dirs (packaging)" OFF)
+set(NMH_MOZILLA_HOSTS_DIR "/usr/lib/mozilla/native-messaging-hosts" CACHE PATH
+    "System Firefox native-messaging-hosts directory")
+set(NMH_CHROMIUM_HOSTS_DIR "/etc/chromium/native-messaging-hosts" CACHE PATH
+    "System Chromium native-messaging-hosts directory")
+set(NMH_CHROME_HOSTS_DIR "/etc/opt/chrome/native-messaging-hosts" CACHE PATH
+    "System Google Chrome native-messaging-hosts directory")
+
+set(NMH_WARN -Wall -Wextra -Wformat=2 -Wno-unused-parameter)
+
+add_library(nmh_core STATIC
   native_messaging.c
-)
+  nm_errors.c
+  nm_policy.c
+  nm_router.c
+  nm_provider_nip07.c
+  nm_provider_webln.c)
+target_include_directories(nmh_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(nmh_core PUBLIC c_std_11)
+target_compile_options(nmh_core PRIVATE ${NMH_WARN})
+target_compile_definitions(nmh_core PUBLIC NM_HOST_VERSION="${NMH_VERSION}")
+target_link_libraries(nmh_core PUBLIC PkgConfig::NMH_DEPS)
 
-# Create executable
-add_executable(${NATIVE_HOST_BIN} ${NATIVE_HOST_SRC})
-target_compile_features(${NATIVE_HOST_BIN} PRIVATE c_std_11)
+add_executable(${NMH_BIN} main_native_host.c)
+target_compile_options(${NMH_BIN} PRIVATE ${NMH_WARN})
+target_link_libraries(${NMH_BIN} PRIVATE nmh_core)
 
-# Include directories
-target_include_directories(${NATIVE_HOST_BIN} PRIVATE
-  ${CMAKE_SOURCE_DIR}/nips/nip55l/include
-  ${CMAKE_SOURCE_DIR}/nips/nip19/include
-  ${CMAKE_SOURCE_DIR}/libnostr/include
-)
+# ---- install ----------------------------------------------------------------
+# The browser execs the absolute path from the manifest, so the binary lives
+# in libexec: it is not a user command.
+install(TARGETS ${NMH_BIN} RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
 
-# Link libraries
-target_link_libraries(${NATIVE_HOST_BIN} PRIVATE
-  PkgConfig::GLIB
-  PkgConfig::JSON_GLIB
-  nostr_nip55l_core
-)
+set(NMH_HOST_PATH "${CMAKE_INSTALL_FULL_LIBEXECDIR}/${NMH_BIN}")
+configure_file(manifests/firefox/org.nostr.signer_bridge.json.in
+  ${CMAKE_CURRENT_BINARY_DIR}/firefox/${NMH_HOST_NAME}.json @ONLY)
+configure_file(manifests/chromium/org.nostr.signer_bridge.json.in
+  ${CMAKE_CURRENT_BINARY_DIR}/chromium/${NMH_HOST_NAME}.json @ONLY)
 
-# Link NIP-19 for bech32 encoding
-if(TARGET nip19)
-  target_link_libraries(${NATIVE_HOST_BIN} PRIVATE nip19)
+set(NMH_DATADIR ${CMAKE_INSTALL_DATADIR}/nostr-signer-webext-host)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/firefox/${NMH_HOST_NAME}.json
+        DESTINATION ${NMH_DATADIR}/firefox)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/chromium/${NMH_HOST_NAME}.json
+        DESTINATION ${NMH_DATADIR}/chromium)
+install(PROGRAMS install.sh DESTINATION ${NMH_DATADIR} RENAME install-user-manifests.sh)
+install(FILES README.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/nostr-signer-webext-host)
+
+if(NOSTR_SIGNER_WEBEXT_INSTALL_BROWSER_MANIFESTS)
+  install(FILES ${CMAKE_CURRENT_BINARY_DIR}/firefox/${NMH_HOST_NAME}.json
+          DESTINATION ${NMH_MOZILLA_HOSTS_DIR})
+  install(FILES ${CMAKE_CURRENT_BINARY_DIR}/chromium/${NMH_HOST_NAME}.json
+          DESTINATION ${NMH_CHROMIUM_HOSTS_DIR})
+  install(FILES ${CMAKE_CURRENT_BINARY_DIR}/chromium/${NMH_HOST_NAME}.json
+          DESTINATION ${NMH_CHROME_HOSTS_DIR})
 endif()
 
-# Link nostr core for keys
-if(TARGET nostr)
-  target_link_libraries(${NATIVE_HOST_BIN} PRIVATE nostr)
-endif()
+# ---- tests ------------------------------------------------------------------
+if(BUILD_TESTING)
+  foreach(t framing policy errors router)
+    add_executable(test_nmh_${t} tests/test_nm_${t}.c)
+    target_compile_options(test_nmh_${t} PRIVATE ${NMH_WARN})
+    target_link_libraries(test_nmh_${t} PRIVATE nmh_core)
+    add_test(NAME nostr_signer_webext_host_${t} COMMAND test_nmh_${t})
+    set_tests_properties(nostr_signer_webext_host_${t} PROPERTIES
+      LABELS "nostr-signer-webext-host" TIMEOUT 60)
+  endforeach()
 
-# Link NIP-04 for encryption
-if(TARGET nip04)
-  target_link_libraries(${NATIVE_HOST_BIN} PRIVATE nip04)
-endif()
-
-# Link libsodium for secure memory if available
-if(SODIUM_FOUND)
-  target_link_libraries(${NATIVE_HOST_BIN} PRIVATE PkgConfig::SODIUM)
-  target_compile_definitions(${NATIVE_HOST_BIN} PRIVATE GNOSTR_HAVE_SODIUM=1)
-endif()
-
-# Platform-specific settings
-if(APPLE)
-  find_library(SECURITY_FRAMEWORK Security)
-  find_library(COREFOUNDATION_FRAMEWORK CoreFoundation)
-  if(SECURITY_FRAMEWORK AND COREFOUNDATION_FRAMEWORK)
-    target_link_libraries(${NATIVE_HOST_BIN} PRIVATE
-      ${SECURITY_FRAMEWORK}
-      ${COREFOUNDATION_FRAMEWORK}
-    )
+  # End-to-end: the real host binary against the real nostr-signer-daemon
+  # on a private GTestDBus bus (mirrors nips/nip55l/tests/
+  # test_signer_dbus_contract.c). Needs the nip55l GLib daemon target.
+  if(TARGET nostr-signer-daemon)
+    add_executable(test_nmh_e2e tests/test_nm_e2e.c)
+    target_compile_options(test_nmh_e2e PRIVATE ${NMH_WARN})
+    target_link_libraries(test_nmh_e2e PRIVATE nmh_core)
+    target_compile_definitions(test_nmh_e2e PRIVATE
+      "NMH_DAEMON_PATH=\"$<TARGET_FILE:nostr-signer-daemon>\""
+      "NMH_HOST_PATH=\"$<TARGET_FILE:${NMH_BIN}>\"")
+    add_dependencies(test_nmh_e2e nostr-signer-daemon ${NMH_BIN})
+    add_test(NAME nostr_signer_webext_host_e2e COMMAND test_nmh_e2e)
+    set_tests_properties(nostr_signer_webext_host_e2e PROPERTIES
+      LABELS "nostr-signer-webext-host;dbus" TIMEOUT 120)
   endif()
-endif()
 
-if(UNIX AND NOT APPLE)
-  # Link math library on Linux
-  target_link_libraries(${NATIVE_HOST_BIN} PRIVATE m)
-endif()
-
-# Install binary
-install(TARGETS ${NATIVE_HOST_BIN}
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
-
-# Install manifest templates
-install(FILES
-  manifests/chrome/org.gnostr.signer.json
-  DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/gnostr-signer/native-host/manifests/chrome
-)
-
-install(FILES
-  manifests/firefox/org.gnostr.signer.json
-  DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/gnostr-signer/native-host/manifests/firefox
-)
-
-# Install install script
-install(PROGRAMS install.sh
-  DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/gnostr-signer/native-host
-)
-
-# Platform-specific manifest installation for development/local builds
-if(APPLE)
-  # macOS: User-level installation for development
-  set(CHROME_MANIFEST_DIR "$ENV{HOME}/Library/Application Support/Google/Chrome/NativeMessagingHosts")
-  set(CHROMIUM_MANIFEST_DIR "$ENV{HOME}/Library/Application Support/Chromium/NativeMessagingHosts")
-  set(FIREFOX_MANIFEST_DIR "$ENV{HOME}/Library/Application Support/Mozilla/NativeMessagingHosts")
-elseif(UNIX)
-  # Linux: User-level installation for development
-  set(CHROME_MANIFEST_DIR "$ENV{HOME}/.config/google-chrome/NativeMessagingHosts")
-  set(CHROMIUM_MANIFEST_DIR "$ENV{HOME}/.config/chromium/NativeMessagingHosts")
-  set(FIREFOX_MANIFEST_DIR "$ENV{HOME}/.mozilla/native-messaging-hosts")
-endif()
-
-# Custom target for local development installation
-if(UNIX)
-  add_custom_target(install-native-host-dev
-    COMMAND ${CMAKE_COMMAND} -E echo "Installing native messaging host for development..."
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${CHROME_MANIFEST_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${CHROMIUM_MANIFEST_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${FIREFOX_MANIFEST_DIR}"
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/install.sh --user --firefox-only
-    DEPENDS ${NATIVE_HOST_BIN}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    COMMENT "Installing native messaging host manifests for development"
-    VERBATIM
-  )
+  # Extension-side policy (origin derivation, event validation, permission
+  # categories) — plain Node, no browser.
+  find_program(NMH_NODE node)
+  set(NMH_EXT_TEST ${CMAKE_CURRENT_SOURCE_DIR}/../../../browser-extension/nip07/tests/policy.test.js)
+  if(NMH_NODE AND EXISTS ${NMH_EXT_TEST})
+    add_test(NAME nostr_signer_webext_extension_policy COMMAND ${NMH_NODE} ${NMH_EXT_TEST})
+    set_tests_properties(nostr_signer_webext_extension_policy PROPERTIES
+      LABELS "nostr-signer-webext-host" TIMEOUT 60)
+  endif()
 endif()

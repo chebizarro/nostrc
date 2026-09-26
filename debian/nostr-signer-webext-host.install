@@ -1,0 +1,8 @@
+usr/libexec/nostr-signer-webext-host
+usr/lib/mozilla/native-messaging-hosts/org.nostr.signer_bridge.json
+etc/chromium/native-messaging-hosts/org.nostr.signer_bridge.json
+etc/opt/chrome/native-messaging-hosts/org.nostr.signer_bridge.json
+usr/share/nostr-signer-webext-host/firefox/org.nostr.signer_bridge.json
+usr/share/nostr-signer-webext-host/chromium/org.nostr.signer_bridge.json
+usr/share/nostr-signer-webext-host/install-user-manifests.sh
+usr/share/doc/nostr-signer-webext-host/README.md

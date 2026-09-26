@@ -551,3 +551,19 @@ Description: GNOME Shell search provider for Nostr profiles and notes
  ~/.config/nostr/search-provider.conf.
  The org.nostr.SearchProvider service is D-Bus activated on demand
  through a user unit and exits when idle.
+Package: nostr-signer-webext-host
+Section: web
+Suggests: firefox | firefox-esr | chromium
+Description: NIP-07 browser bridge to the desktop Nostr signer (native host)
+ nostr-signer-webext-host is the native-messaging host
+ (org.nostr.signer_bridge) behind the "Nostr Signer Bridge" browser
+ extension. The extension provides window.nostr (NIP-07) to web pages;
+ every call is forwarded over native messaging to this host and from there
+ to the desktop signer org.nostr.Signer on the session bus, with the page
+ origin as the signer app_id, so web clients use the desktop-managed
+ identity and the signer's own approval dialogs. The host holds no keys.
+ This package installs the host binary and the host manifests for Firefox
+ (/usr/lib/mozilla/native-messaging-hosts), Chromium
+ (/etc/chromium/native-messaging-hosts) and Google Chrome
+ (/etc/opt/chrome/native-messaging-hosts). The browser extension itself is
+ installed separately; see /usr/share/doc/nostr-signer-webext-host/.

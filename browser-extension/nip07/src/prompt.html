@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'">
+  <title>Nostr signer — permission request</title>
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+  <h1>Permission request</h1>
+  <p><strong id="origin">…</strong> wants to <span id="what">…</span>.</p>
+  <p id="embedded" class="warn" hidden>This request comes from a frame embedded in <strong id="embedder"></strong>.</p>
+  <p class="note">Signing events is always confirmed separately by the desktop signer.</p>
+  <label><input type="checkbox" id="remember"> Remember for this site (<span id="ttl"></span>)</label>
+  <div class="buttons">
+    <button id="deny">Deny</button>
+    <button id="allow" class="primary">Allow</button>
+  </div>
+  <script src="prompt.js"></script>
+</body>
+</html>

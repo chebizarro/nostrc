@@ -1,9 +1,0 @@
-{
-  "name": "org.gnostr.signer",
-  "description": "GNostr Signer - NIP-07 Native Messaging Host",
-  "path": "/usr/local/bin/gnostr-signer-native",
-  "type": "stdio",
-  "allowed_origins": [
-    "chrome-extension://EXTENSION_ID_PLACEHOLDER/"
-  ]
-}

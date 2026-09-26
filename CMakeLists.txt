@@ -510,6 +510,11 @@ endif()
 
 if (ENABLE_NOSTR_SEARCH_PROVIDER)
   add_subdirectory(gnome/nostr-search-provider)
+# NIP-07 browser bridge host (nostrc-jjyp). apps/gnostr-signer adds the same
+# directory for dev builds; this path serves BUILD_APPS=OFF packaging.
+option(ENABLE_NOSTR_SIGNER_WEBEXT_HOST "Build nostr-signer-webext-host (NIP-07 native-messaging host -> org.nostr.Signer)" OFF)
+if (ENABLE_NOSTR_SIGNER_WEBEXT_HOST AND NOT TARGET nostr-signer-webext-host)
+  add_subdirectory(apps/gnostr-signer/native-host)
 endif()
 
 ## GLib demo: only if libnostr built with GLib support

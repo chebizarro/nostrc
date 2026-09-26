@@ -1,0 +1,9 @@
+{
+  "name": "@NMH_HOST_NAME@",
+  "description": "Nostr signer bridge: NIP-07 window.nostr -> org.nostr.Signer",
+  "path": "@NMH_HOST_PATH@",
+  "type": "stdio",
+  "allowed_extensions": [
+    "@NMH_FIREFOX_EXTENSION_ID@"
+  ]
+}
