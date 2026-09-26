@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Nostr Link Dispatcher
+Comment=Opens nostr: links in the application registered for the event kind
+Exec=@ND_BINDIR@/nostr-dispatcher open %u
+Terminal=false
+NoDisplay=true
+Categories=Network;
+# Sole owner of the Nostr link schemes and the event-file MIME type
+# (nostrc-1v65). Applications declare the kinds they handle with
+# X-Nostr-Kinds= instead of claiming x-scheme-handler/nostr themselves.
+MimeType=x-scheme-handler/nostr;x-scheme-handler/web+nostr;application/vnd.nostr.event+json;

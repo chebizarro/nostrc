@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Installed to /usr/share/mime/packages/nostr.xml by nostr-dispatcher. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/vnd.nostr.event+json">
+    <comment>Nostr event</comment>
+    <sub-class-of type="application/json"/>
+    <glob pattern="*.nostr"/>
+    <glob pattern="*.nevent"/>
+  </mime-type>
+</mime-info>

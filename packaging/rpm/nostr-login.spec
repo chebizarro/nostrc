@@ -493,6 +493,27 @@ Enable with `systemctl --user enable --now nostr-dav.service`. Token
 bootstrap happens through `gnostr-signer-daemon`; the token file
 lives under `$XDG_STATE_HOME/nostr-dav/`.
 
+# --- Sub-package: nostr-dispatcher (nostrc-1v65) -----------------------------
+%package -n nostr-dispatcher
+Summary:        Kind-aware router for nostr: links (org.nostr.Dispatcher1)
+Requires:       libnostr%{?_isa} = %{version}-%{release}
+Requires:       glib2
+Requires:       json-glib
+Requires:       libsoup3
+Recommends:     nostrc-session-relay%{?_isa} = %{version}-%{release}
+
+%description -n nostr-dispatcher
+`nostr-dispatcher` is the single owner of the x-scheme-handler/nostr and
+x-scheme-handler/web+nostr URI schemes and of the Nostr event file type
+(application/vnd.nostr.event+json, *.nostr / *.nevent). It resolves the
+event kind of a NIP-21 link (NIP-19 TLV, else the session relay, else the
+link's relay hints; fetched events are id- and signature-validated) and
+opens it in the application registered for that kind via X-Nostr-Kinds=
+in .desktop files or ~/.config/nostr/handlers.list.
+
+The org.nostr.Dispatcher1 service is D-Bus activated on demand through a
+user unit and exits when idle; nothing is enabled at install time.
+
 # --- Sub-package: nostrc-samba-server ----------------------------------------
 %package -n nostrc-samba-server
 Summary:        Dedicated Samba file-server for the Nostr auth broker (Wave 4)
@@ -552,6 +573,7 @@ it after seeding the passdb via `nostr-authd` and configuring shares
     -DBUILD_MARMOT_GOBJECT=OFF \
     -DBUILD_RELAYD=ON \
     -DENABLE_NOSTR_DAV=ON \
+    -DENABLE_NOSTR_DISPATCHER=ON \
     -DSIGNET_ENABLE=OFF \
     -DWITH_NOSTRDB=OFF \
     -DLIBNOSTR_WITH_NOSTRDB=OFF \
@@ -1096,6 +1118,20 @@ fi
 %{_datadir}/dbus-1/services/org.nostr.Dav.service
 %dir %{_datadir}/doc/nostr-dav
 %{_datadir}/doc/nostr-dav/nostr-dav.conf.sample
+
+%files -n nostr-dispatcher
+%license LICENSE
+%{_bindir}/nostr-dispatcher
+%{_userunitdir}/nostr-dispatcher.service
+%{_datadir}/applications/org.nostr.Dispatcher.desktop
+%{_datadir}/dbus-1/services/org.nostr.Dispatcher1.service
+%{_datadir}/dbus-1/interfaces/org.nostr.Dispatcher1.xml
+%{_datadir}/dbus-1/interfaces/org.nostr.Handler1.xml
+%{_datadir}/mime/packages/nostr.xml
+%dir %{_datadir}/nostr
+%{_datadir}/nostr/handlers.list
+%dir %{_datadir}/doc/nostr-dispatcher
+%{_datadir}/doc/nostr-dispatcher/README.md
 
 %files -n nostrc-samba-server
 %license LICENSE

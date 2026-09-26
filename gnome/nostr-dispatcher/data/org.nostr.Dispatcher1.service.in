@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.nostr.Dispatcher1
+Exec=@ND_BINDIR@/nostr-dispatcher daemon
+SystemdService=nostr-dispatcher.service

@@ -1,0 +1,34 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!--
+  org.nostr.Handler1 — OPTIONAL handoff interface for Nostr handler apps.
+
+  An app that declares X-Nostr-Kinds= in its .desktop file MAY implement
+  this interface on its GApplication object: bus name = desktop id without
+  ".desktop", object path = "/" + that name with "." -> "/" and "-" -> "_"
+  (e.g. org.example.Reader.desktop -> org.example.Reader at
+  /org/example/Reader).
+
+  When the app is already running (owns its bus name) and nostr-dispatcher
+  holds the event, the dispatcher calls OpenEvent instead of launching the
+  app with a nostr: URI, saving the app a second fetch. The dispatcher never
+  auto-starts an app through this interface; on any error (unknown object /
+  interface / method, timeout after 2 s) it falls back to the URI launch.
+
+  Contract:
+  - @event_json has ALWAYS passed NIP-01 canonical-id and Schnorr-signature
+    validation in the dispatcher. Apps should still treat it as untrusted
+    content (it is signed, not vetted).
+  - @relays are hints for follow-up queries, not provenance.
+  - Any same-user session-bus peer can call this method; do not expose
+    privileged operations through it.
+-->
+<node>
+  <interface name="org.nostr.Handler1">
+    <method name="OpenEvent">
+      <arg name="kind" type="u" direction="in"/>
+      <arg name="event_json" type="s" direction="in"/>
+      <arg name="relays" type="as" direction="in"/>
+    </method>
+  </interface>
+</node>
