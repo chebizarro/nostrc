@@ -14,6 +14,7 @@
 #include "nostr-seal.h"
 #include "nseal-private.h"
 #include "nseal-signer.h"
+#include "nseal-config.h"
 
 #include <gio/gio.h>
 #include <glib/gstdio.h>
@@ -142,6 +143,23 @@ static gboolean cmd_encrypt(int argc, char **argv) {
     g_printerr("nostr-seal: --passphrase cannot be combined with recipients\n");
     return FALSE;
   }
+
+  /* User defaults (~/.config/nostr/seal.conf): recipients only when the
+   * command line names none, and said out loud so a stale default set is
+   * noticed; work factor only when --work-factor is absent. */
+  g_autoptr(NsealConfig) conf = nseal_config_load(&e);
+  if (!conf) return fail(e);
+  g_auto(GStrv) conf_to = NULL;
+  if (!pass && !to && !to_self &&
+      (conf->default_recipients[0] || conf->include_self)) {
+    conf_to = g_strdupv(conf->default_recipients);
+    to_self = conf->include_self;
+    g_printerr("nostr-seal: no recipients given; using defaults from %s "
+               "(%u recipient%s%s)\n", conf->path,
+               g_strv_length(conf_to), g_strv_length(conf_to) == 1 ? "" : "s",
+               to_self ? " + your signer identity" : "");
+  }
+  if (pass && !work && conf->work_factor) work = conf->work_factor;
   if (work && (work < NSEAL_LOG_N_MIN || work > NSEAL_LOG_N_MAX)) {
     g_printerr("nostr-seal: --work-factor must be %d..%d\n", NSEAL_LOG_N_MIN, NSEAL_LOG_N_MAX);
     return FALSE;
@@ -152,7 +170,7 @@ static gboolean cmd_encrypt(int argc, char **argv) {
   }
 
   g_autoptr(GArray) rcpts = g_array_new(FALSE, FALSE, NSEAL_PUBKEY_LEN);
-  for (char **p = to; p && *p; p++) {
+  for (char **p = to ? to : conf_to; p && *p; p++) {
     uint8_t pk[32];
     if (!nseal_parse_pubkey(*p, pk, &e)) return fail(e);
     g_array_append_vals(rcpts, pk, 1);
