@@ -10,7 +10,8 @@
  * calls go to the wallet agent org.nostr.Wallet1 with the page origin as
  * the principal (nm_provider_webln.c).
  *
- * One process per browser connection: it exits on stdin EOF and never
+ * One process per browser connection: it exits on stdin EOF (after
+ * answering requests already in flight) and never
  * forks or execs, so nothing else ever holds its bus connection (the
  * wallet agent authorises origin assertions by this executable's pid).
  *
@@ -51,6 +52,14 @@ typedef struct {
   int out_fd;
   int exit_code;
 } Host;
+
+/* stdin closed: finish what is in flight, then exit. */
+static gboolean drain_then_quit(gpointer data) {
+  Host *h = data;
+  if (nm_router_in_flight(h->router) > 0) return G_SOURCE_CONTINUE;
+  g_main_loop_quit(h->loop);
+  return G_SOURCE_REMOVE;
+}
 
 typedef struct {
   Host *host;
@@ -94,7 +103,12 @@ static gboolean on_frame(gpointer data) {
       nm_router_reply_frame_error(h->router, NM_ERR_INVALID_REQUEST);
       break;
     case NM_FRAME_EOF:
-      g_main_loop_quit(h->loop);
+      /* No more requests. Answer the ones in flight (a scripted client may
+       * close its end right after writing; a browser that went away makes
+       * the reply write fail, which quits too). Each call is bounded by its
+       * D-Bus timeout. */
+      if (nm_router_in_flight(h->router) == 0) g_main_loop_quit(h->loop);
+      else g_timeout_add(20, drain_then_quit, h);
       break;
     case NM_FRAME_IO:
     default:

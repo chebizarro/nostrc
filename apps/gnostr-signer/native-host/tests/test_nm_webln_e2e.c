@@ -20,7 +20,8 @@
  *   the same *For methods called directly by this test process (not the
  *     bridge) -> org.nostr.Wallet1.Error.Denied, malformed origin ->
  *     InvalidArgs, plain GetInfo unaffected;
- *   agent stopped -> status available:false, calls wallet_unavailable.
+ *   agent stopped -> status available:false, calls wallet_unavailable;
+ *   stdin closed with a request in flight -> still answered, clean exit.
  *
  * Not covered here: a paired wallet (pairing is always confirmed in a
  * dialog, which a headless agent denies) — the agent's NIP-47 path is
@@ -344,6 +345,15 @@ int main(void) {
   expect_error(&e, "gone", "{\"id\":\"gone\",\"method\":\"webln.getInfo\",\"origin\":\"https://shop.example\"}",
                "wallet_unavailable", NULL);
   g_print("ok agent stopped -> status available:false, wallet_unavailable\n");
+
+  /* stdin closed right after a request (scripted client): the host still
+   * answers what is in flight before exiting */
+  send_frame(&e, "{\"id\":\"last\",\"method\":\"webln.getBalance\",\"origin\":\"https://shop.example\"}");
+  CHECK(g_output_stream_close(e.to_host, NULL, NULL));
+  r = recv_frame(&e);
+  assert_error(r, "last", "wallet_unavailable", NULL);
+  json_node_unref(r);
+  g_print("ok stdin EOF with a request in flight -> answered, then exit\n");
 
   teardown(&e);
   g_print("PASS nostr-signer-webext-host webln e2e\n");
