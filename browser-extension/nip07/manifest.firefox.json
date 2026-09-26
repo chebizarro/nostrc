@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Nostr Signer Bridge (NIP-07)",
-  "version": "0.2.0",
-  "description": "window.nostr (NIP-07) backed by the desktop signer org.nostr.Signer — your GNOME-managed Nostr identity, with the signer's own approval dialogs.",
+  "name": "Nostr Signer Bridge (NIP-07 + WebLN)",
+  "version": "0.3.0",
+  "description": "window.nostr (NIP-07) and window.webln (WebLN) backed by your GNOME desktop signer and Lightning wallet, with their own approvals.",
   "browser_specific_settings": {
     "gecko": {
       "id": "signer-bridge@gnostr.org",
@@ -25,7 +25,7 @@
     },
     {
       "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*", "http://*.localhost/*"],
-      "js": ["src/page.js"],
+      "js": ["src/page.js", "src/providers/webln.js"],
       "run_at": "document_start",
       "all_frames": true,
       "world": "MAIN"

@@ -76,7 +76,7 @@ test('validateRequest: encrypt/decrypt params', () => {
 });
 
 test('validateRequest: unknown methods and host-internal names are refused', () => {
-  for (const m of ['host.hello', 'webln.sendPayment', 'StoreKey', '__proto__', 'constructor', 'toString', 42])
+  for (const m of ['host.hello', 'webln.status', 'webln.keysend', 'StoreKey', '__proto__', 'constructor', 'toString', 42])
     assert.equal(P.validateRequest(m, {}).code, 'unknown_method', String(m));
 });
 

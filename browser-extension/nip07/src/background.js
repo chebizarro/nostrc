@@ -1,4 +1,4 @@
-/* background.js — NIP-07 bridge background (nostrc-jjyp).
+/* background.js — NIP-07 / WebLN bridge background (nostrc-jjyp).
  *
  * Firefox: event page (manifest background.scripts, policy.js loaded
  * first). Chromium: service worker (importScripts below).
@@ -6,6 +6,7 @@
  *   page.js ──postMessage──▶ content.js ──runtime.sendMessage──▶ here
  *   here ──runtime.connectNative("org.nostr.signer_bridge")──▶ host
  *   host ──D-Bus──▶ org.nostr.Signer (app_id = origin)
+ *                   org.nostr.Wallet1 (*For methods, principal = origin)
  *
  * Security-relevant duties:
  *   - the origin sent to the host comes from the browser's MessageSender
@@ -15,6 +16,11 @@
  *     nip04/nip44 encrypt/decrypt) need a per-origin grant from the user,
  *     asked in an extension-owned prompt window; signEvent is gated by the
  *     signer's own approval dialog keyed on the same origin;
+ *   - WebLN: webln.enable() asks for a per-origin 'webln' grant (same
+ *     prompt / grant store); other webln.* calls need that grant and are
+ *     otherwise approved by the wallet agent (payments always are); whether
+ *     to inject window.webln at all comes from the host's webln.status,
+ *     cached for a short while;
  *   - host request ids are generated here (never the page's id), so pages
  *     in different tabs cannot collide or answer for each other;
  *   - every call has a timeout that maps to a rejected promise.
@@ -98,9 +104,11 @@ async function loadGrants() {
   return (grants && typeof grants === 'object') ? grants : {};
 }
 
-async function saveGrant(origin, gate) {
+async function saveGrant(origin, gate, ttlMs) {
   const grants = await loadGrants();
-  grants[origin] = Object.assign({}, grants[origin], { [gate]: Date.now() + P.GRANT_TTL_MS[gate] });
+  const prev = grants[origin] && typeof grants[origin][gate] === 'number' ? grants[origin][gate] : 0;
+  const until = Math.max(prev, Date.now() + (ttlMs || P.GRANT_TTL_MS[gate]));
+  grants[origin] = Object.assign({}, grants[origin], { [gate]: until });
   await api.storage.local.set({ grants });
 }
 
@@ -121,9 +129,14 @@ function finishPrompt(id, allow, remember) {
   prompts.delete(id);
   promptByKey.delete(pr.key);
   clearTimeout(pr.timer);
-  if (allow && remember) saveGrant(pr.origin, pr.gate);
   if (pr.windowId !== undefined) api.windows.remove(pr.windowId).catch(() => {});
-  pr.resolve(!!allow);
+  /* "Remember" stores the gate's full TTL; gates with a session TTL
+   * (webln: the site keeps using the wallet after enable()) store a short
+   * grant otherwise. Stored before resolving so the page's next call sees it. */
+  let saved = Promise.resolve();
+  if (allow && remember) saved = saveGrant(pr.origin, pr.gate);
+  else if (allow && P.SESSION_TTL_MS[pr.gate]) saved = saveGrant(pr.origin, pr.gate, P.SESSION_TTL_MS[pr.gate]);
+  saved.catch(() => {}).then(() => pr.resolve(!!allow));
 }
 
 function askUser(origin, gate, method, embedder) {
@@ -171,6 +184,45 @@ function embedderOf(sender, origin) {
   }
 }
 
+/* ---- WebLN availability ------------------------------------------------- */
+
+/* webln.status from the host ({available, paired}), cached so page loads
+ * do not each spawn the host; one query in flight at a time. */
+let weblnStatus = { value: null, until: 0, inflight: null };
+
+function getWeblnStatus(force) {
+  if (!force && weblnStatus.value && Date.now() < weblnStatus.until) return Promise.resolve(weblnStatus.value);
+  if (weblnStatus.inflight) return weblnStatus.inflight;
+  const inflight = hostCall('webln.status', null, {}).then((resp) => {
+    const value = (resp.result && typeof resp.result === 'object') ? resp.result
+      : { available: false, paired: false, reason: (resp.error && resp.error.code) || 'internal' };
+    weblnStatus = { value, until: Date.now() + P.WEBLN_STATUS_TTL_MS, inflight: null };
+    return value;
+  });
+  weblnStatus.inflight = inflight;
+  return inflight;
+}
+
+function noteWalletError(resp) {
+  const code = resp && resp.error && resp.error.code;
+  if (code === 'not_paired' || code === 'wallet_unavailable' || code === 'unsupported') weblnStatus.until = 0;
+  return resp;
+}
+
+async function handleWebLN(msg, origin, params, embedder) {
+  if (msg.method === 'webln.enable') {
+    /* Cheap check first: no point asking the user when no wallet is paired. */
+    const probe = noteWalletError(await hostCall('webln.enable', origin, {}));
+    if (probe.error) return probe;
+    if (!(await permitted(origin, 'webln', msg.method, embedder)))
+      return err('rejected', 'The user rejected the request');
+    return { result: { enabled: true } };
+  }
+  if (!P.grantValid(await loadGrants(), origin, 'webln', Date.now()))
+    return err('not_enabled', 'Call webln.enable() first');
+  return noteWalletError(await hostCall(msg.method, origin, params));
+}
+
 /* ---- message handling --------------------------------------------------- */
 
 function fromExtensionPage(sender) {
@@ -178,20 +230,31 @@ function fromExtensionPage(sender) {
     sender.url.startsWith(EXT_BASE);
 }
 
-async function handleNip07(msg, sender) {
-  /* Only content-script messages from a tab frame carry a frameId. */
+/* Only content-script messages from a tab frame carry a frameId. */
+function pageOrigin(sender) {
+  if (typeof sender.frameId !== 'number' || !sender.tab) return null;
+  return P.originFromSender(sender);
+}
+
+async function handlePage(msg, sender) {
   if (typeof sender.frameId !== 'number' || !sender.tab)
     return err('origin_denied', 'Requests must come from a web page');
-  const origin = P.originFromSender(sender);
+  const origin = pageOrigin(sender);
   if (!origin) return err('origin_denied', 'Only secure (https or localhost) pages may use the signer');
   const v = P.validateRequest(msg.method, msg.params);
   if (v.error) return err(v.code, v.error);
   const gate = P.gateFor(msg.method);
   if (sender.frameId !== 0 && !P.allowedInSubframe(gate))
     return err('origin_denied', 'Decryption is only available to top-level pages, not embedded frames');
+  if (P.isWebLN(msg.method)) return handleWebLN(msg, origin, v.params, embedderOf(sender, origin));
   if (gate && !(await permitted(origin, gate, msg.method, embedderOf(sender, origin))))
     return err('rejected', 'The user rejected the request');
   return hostCall(msg.method, origin, v.params);
+}
+
+async function handleWeblnStatus(sender) {
+  if (!pageOrigin(sender)) return { result: { inject: false } };
+  return { result: { inject: P.shouldInjectWebLN(await getWeblnStatus(false)) } };
 }
 
 async function handleUi(msg, sender) {
@@ -200,7 +263,8 @@ async function handleUi(msg, sender) {
     case 'prompt:get': {
       const pr = prompts.get(msg.id);
       return pr ? { result: { origin: pr.origin, embedder: pr.embedder, gate: pr.gate, method: pr.method,
-                               ttlHours: Math.round(P.GRANT_TTL_MS[pr.gate] / 3600000) } }
+                               ttlHours: Math.round(P.GRANT_TTL_MS[pr.gate] / 3600000),
+                               sessionMinutes: P.SESSION_TTL_MS[pr.gate] ? Math.round(P.SESSION_TTL_MS[pr.gate] / 60000) : 0 } }
                 : err('not_found', 'Expired');
     }
     case 'prompt:answer':
@@ -213,6 +277,8 @@ async function handleUi(msg, sender) {
       return { result: true };
     case 'host:hello':
       return hostCall('host.hello', null, {});
+    case 'wallet:status':
+      return { result: await getWeblnStatus(true) };
   }
   return err('unknown_method', 'Unknown message');
 }
@@ -220,9 +286,11 @@ async function handleUi(msg, sender) {
 api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== 'object' || sender.id !== api.runtime.id) return false;
   let work;
-  if (msg.type === 'nip07') {
+  if (msg.type === 'page') {
     if (!P.isValidPageId(msg.id)) return false;
-    work = handleNip07(msg, sender);
+    work = handlePage(msg, sender);
+  } else if (msg.type === 'webln:status') {
+    work = handleWeblnStatus(sender);
   } else if (typeof msg.type === 'string') {
     work = handleUi(msg, sender);
   } else {
