@@ -45,7 +45,7 @@ typedef struct {
 
   /* retention */
   AdwPreferencesGroup *ret_group;
-  AdwBanner    *ret_banner;
+  GtkWidget    *ret_note;      /* first row: why the limits are read-only */
   GPtrArray    *ret_rows;      /* widgets toggled together */
   AdwSwitchRow *ret_enabled;
   AdwSpinRow   *ret_cache, *ret_high, *ret_low, *ret_minage, *ret_notes, *ret_reactions,
@@ -64,6 +64,7 @@ typedef struct {
   gchar       **signer_relays;
   gchar        *pubkey_hex;
   gboolean      dirty;
+  gboolean      signer_failed;
   GHashTable   *nip11_cache;   /* url → NssNip11Info* (or NULL sentinel) */
   GCancellable *cancel;
 } Page;
@@ -133,10 +134,12 @@ units_loaded(GtkWidget *owner, gpointer result, const GError *error, gpointer da
     sub = "Install the nostrc-session-relay package";
     break;
   case NSS_SVC_LISTENING:
-    sub = "Apps reach it at $XDG_RUNTIME_DIR/nostr/relay.sock";
+    sub = p->socket_enabled ? "Apps reach it at $XDG_RUNTIME_DIR/nostr/relay.sock"
+                            : "Started by hand — won't start at your next login";
     break;
   case NSS_SVC_RUNNING:
-    sub = "Serving apps on this computer";
+    sub = p->socket_enabled ? "Serving apps on this computer"
+                            : "Started by hand — won't start at your next login";
     break;
   case NSS_SVC_FAILED:
     sub = "journalctl --user -u nostr-session-relay.service";
@@ -357,20 +360,24 @@ retention_update_sensitivity(Page *p)
                        nss_relay_stats_has_storage(&p->stats);
   for (guint i = 0; i < p->ret_rows->len; i++)
     gtk_widget_set_sensitive(g_ptr_array_index(p->ret_rows, i), supported);
-  const gchar *msg;
-  if (!p->have_stats)
-    msg = "Storage limits can be changed once the session relay is running and "
-          "reports that it enforces them.";
-  else if (!nss_relay_stats_has_storage(&p->stats))
-    msg = "This relay stores nothing, so there is nothing to limit (no storage "
-          "backend — nostrc-prqu.5).";
-  else if (!p->stats.retention_supported)
-    msg = "The session relay doesn't enforce storage limits yet (nostrc-prqu.17). "
-          "They will be editable here once it does.";
-  else
-    msg = NULL;
-  adw_banner_set_title(p->ret_banner, msg ? msg : "");
-  adw_banner_set_revealed(p->ret_banner, msg != NULL);
+  const gchar *title = NULL, *msg = NULL;
+  if (!p->have_stats) {
+    title = "Waiting for the session relay";
+    msg = "Limits can be changed once the relay is running and reports that it "
+          "enforces them.";
+  } else if (!nss_relay_stats_has_storage(&p->stats)) {
+    title = "Nothing to limit";
+    msg = "This relay has no storage backend and keeps nothing (nostrc-prqu.5).";
+  } else if (!p->stats.retention_supported) {
+    title = "Not enforced yet";
+    msg = "The session relay doesn't apply storage limits yet (nostrc-prqu.17); "
+          "they become editable here once it does.";
+  }
+  if (title) {
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(p->ret_note), title);
+    nss_row_set_subtitle_plain(p->ret_note, msg);
+  }
+  gtk_widget_set_visible(p->ret_note, title != NULL);
 }
 
 static void
@@ -442,8 +449,10 @@ retention_build(Page *p)
   adw_preferences_group_set_description(p->ret_group,
     "How much the session relay may keep before evicting old events. Your own "
     "notes, your follows and bookmarks are never evicted.");
-  p->ret_banner = ADW_BANNER(adw_banner_new(""));
-  adw_preferences_group_add(p->ret_group, GTK_WIDGET(p->ret_banner));
+  /* A row, not an AdwBanner: non-row children of a preferences group are
+   * placed after its rows, i.e. below the controls they explain. */
+  p->ret_note = nss_status_row("", NULL, "dialog-information-symbolic");
+  adw_preferences_group_add(p->ret_group, p->ret_note);
   p->ret_rows = g_ptr_array_new();
 
   p->ret_enabled = ADW_SWITCH_ROW(adw_switch_row_new());
@@ -644,7 +653,8 @@ list_render(Page *p)
   if (p->entries->len == 0)
     nss_group_add_dynamic(p->list_group,
       nss_info_row("No relays", p->pubkey_hex ? "Add the relays you publish to and read from"
-                                              : "Waiting for the signer…"));
+                              : p->signer_failed ? "A signer is needed to load and publish your list"
+                              : "Waiting for the signer…"));
 }
 
 static void
@@ -686,6 +696,7 @@ lists_loaded(GtkWidget *owner, gpointer result, const GError *error, gpointer da
   Page *p = g_object_get_data(G_OBJECT(owner), "nss-page");
   NssUserLists *l = result;
   if (l == NULL) {
+    p->signer_failed = TRUE;
     nss_row_set_subtitle_plain(p->list_status, error ? error->message : "Signer unavailable");
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(p->list_status), "Cannot load your relay list");
     list_render(p);

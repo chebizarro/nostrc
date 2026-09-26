@@ -72,8 +72,10 @@ unit_loaded(GtkWidget *owner, gpointer result, const GError *error, gpointer dat
                            st != NSS_SVC_NOT_INSTALLED && st != NSS_SVC_MASKED);
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(p->status),
                                 nss_service_status_label(st, FALSE));
-  nss_row_set_subtitle_plain(p->status, st == NSS_SVC_NOT_INSTALLED
-                               ? "Install the nostr-notify package" : NULL);
+  nss_row_set_subtitle_plain(p->status,
+    st == NSS_SVC_NOT_INSTALLED ? "Install the nostr-notify package"
+    : st == NSS_SVC_RUNNING && !nss_unit_file_enabled(s)
+      ? "Started by hand — won't start at your next login" : NULL);
   gtk_widget_set_visible(p->restart, nss_service_can_restart(st));
 }
 
@@ -281,13 +283,10 @@ nss_page_notifications_new(NssContext *ctx)
 
   AdwPreferencesGroup *show = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
   adw_preferences_group_set_title(show, "What to show");
-  if (!nss_notify_presentation_supported()) {
-    AdwBanner *b = ADW_BANNER(adw_banner_new(
+  if (!nss_notify_presentation_supported())
+    adw_preferences_group_add(show, nss_status_row("Not configurable yet",
       "nostr-notify doesn't read these options yet (nostrc-prqu.16); they show its "
-      "current fixed behaviour."));
-    adw_banner_set_revealed(b, TRUE);
-    adw_preferences_group_add(show, GTK_WIDGET(b));
-  }
+      "current fixed behaviour.", "dialog-information-symbolic"));
   p->groups = reserved(show, "Group messages", "NIP-29 groups you are in", p->conf.notify_groups);
   p->dms = reserved(show, "Direct messages", "Encrypted NIP-17 messages to you", p->conf.notify_dms);
   p->preview = reserved(show, "Preview group messages", "Show the first line of the message",

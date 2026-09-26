@@ -30,7 +30,7 @@ service's own store, so the service stays the single source of truth.
 | Relays | relay details | NIP-11 over HTTPS (`Accept: application/nostr+json`, 5 s, 64 KiB cap) | no |
 | Notifications | on/off | systemd `--user`: `nostr-notify.service` | unit enablement |
 | Notifications | upstream mode, fallback relays | `~/.config/nostr-notify/nostr-notify.conf` `[notify]` `upstream_mode`, `home_relays` | yes |
-| Notifications | groups / DMs / preview / sound | same file, reserved keys (`nostr-notify.conf.example`) | shown disabled: the daemon does not read them yet (`nostrc-prqu.16`) |
+| Notifications | groups / DMs / preview / sound | same file, reserved keys (`nostr-notify.conf.example`) | shown disabled with a note: the daemon does not read them yet (`nostrc-prqu.16`) |
 | Wallet | pairing | `org.nostr.Wallet1` `Paired`/`Lud16`/`WalletPubkey`/`Relays`; `Pair(uri)` / `Unpair()` — the agent shows its own confirmation | via the agent |
 | Wallet | per-app budgets | listed from `$XDG_STATE_HOME/nostr-wallet/budgets.json` (read-only); changed with `SetBudget` — the agent confirms | via the agent |
 | Media servers | Blossom list | BUD-03 kind **10063**, signed + published | yes (event) |
@@ -78,7 +78,7 @@ change through `SetBudget`, where the agent's dialog decides. No
   `retention_high_watermark_pct`, `retention_low_watermark_pct`,
   `retention_min_age_days`, `retention_note_ttl_days`,
   `retention_reaction_ttl_days`, `retention_interval_mins`). The rows are
-  insensitive, with a banner, until the running relay reports
+  insensitive, under an explanatory note row, until the running relay reports
   `RetentionSupported = true` — so nothing is written while the relay cannot
   enforce it. Validation (low < high, 1–99 %, 0 or ≥ 64 MB, TTLs ≥ minimum
   age, 1 min–7 d interval) runs before any write.

@@ -122,9 +122,11 @@ maybe_screenshot(GtkWindow *win)
   Shot *s = g_new0(Shot, 1);
   s->win = win;
   s->dir = g_strdup(dir);
-  /* Tall enough to show whole pages (not persisted: window state is saved
-   * on close-request, which a screenshot run never emits). */
-  gtk_window_set_default_size(win, 820, 1500);
+  /* Tall enough to show whole pages. A size request, because GTK clamps a
+   * default size to its guess of the work area (768 px under Xvfb with no
+   * window manager). Not persisted: window state is saved on close-request,
+   * which a screenshot run never emits. */
+  gtk_widget_set_size_request(GTK_WIDGET(win), 820, 1500);
   const gchar *delay = g_getenv("NOSTR_SETTINGS_SCREENSHOT_DELAY");
   guint secs = delay ? (guint)g_ascii_strtoull(delay, NULL, 10) : 6;
   g_timeout_add_seconds(secs ? secs : 6, shot_now, s);
