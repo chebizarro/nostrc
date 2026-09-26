@@ -594,7 +594,7 @@ Description: GNOME Shell search provider for Nostr profiles and notes
  through a user unit and exits when idle.
 Package: nostr-signer-webext-host
 Section: web
-Suggests: firefox | firefox-esr | chromium
+Suggests: firefox | firefox-esr | chromium, nostr-wallet-agent
 Description: NIP-07 browser bridge to the desktop Nostr signer (native host)
  nostr-signer-webext-host is the native-messaging host
  (org.nostr.signer_bridge) behind the "Nostr Signer Bridge" browser
@@ -603,6 +603,8 @@ Description: NIP-07 browser bridge to the desktop Nostr signer (native host)
  to the desktop signer org.nostr.Signer on the session bus, with the page
  origin as the signer app_id, so web clients use the desktop-managed
  identity and the signer's own approval dialogs. The host holds no keys.
+ With nostr-wallet-agent installed and a wallet paired, the extension also
+ provides window.webln (WebLN), with per-site budgets and approvals.
  This package installs the host binary and the host manifests for Firefox
  (/usr/lib/mozilla/native-messaging-hosts), Chromium
  (/etc/chromium/native-messaging-hosts) and Google Chrome
