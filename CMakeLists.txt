@@ -464,6 +464,7 @@ endif()
 option(GNOSTR_ENABLE_SEAHORSE_HELPERS "Build Seahorse/Secret Service helpers" OFF)
 option(GNOSTR_WITH_PKCS11 "Build p11-kit module" OFF)
 option(ENABLE_NOSTR_DAV "Build localhost CalDAV/CardDAV/WebDAV bridge daemon" OFF)
+option(ENABLE_NOSTR_WALLET_AGENT "Build nostr-wallet-agent (org.nostr.Wallet1 NWC session service)" OFF)
 
 if (GNOSTR_ENABLE_SEAHORSE_HELPERS OR GNOSTR_WITH_PKCS11)
   find_package(PkgConfig REQUIRED)
@@ -484,12 +485,16 @@ if (GNOSTR_WITH_PKCS11)
 endif()
 
 option(ENABLE_LIBNOSTR_PUBLISH "Build libnostr-publish (shared relay publish core; implied by ENABLE_NOSTR_DAV)" OFF)
-if (ENABLE_LIBNOSTR_PUBLISH OR ENABLE_NOSTR_DAV)
+if (ENABLE_LIBNOSTR_PUBLISH OR ENABLE_NOSTR_DAV OR ENABLE_NOSTR_WALLET_AGENT)
   add_subdirectory(gnome/libnostr-publish)
 endif()
 
 if (ENABLE_NOSTR_DAV)
   add_subdirectory(gnome/nostr-dav)
+endif()
+
+if (ENABLE_NOSTR_WALLET_AGENT)
+  add_subdirectory(gnome/nostr-wallet-agent)
 endif()
 
 ## GLib demo: only if libnostr built with GLib support

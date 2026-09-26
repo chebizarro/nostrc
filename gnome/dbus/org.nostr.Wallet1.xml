@@ -1,0 +1,194 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!--
+  org.nostr.Wallet1 - desktop Nostr Wallet Connect (NIP-47) agent.
+
+  Owned by nostr-wallet-agent (gnome/nostr-wallet-agent, bead nostrc-yka8)
+  on the session bus at object path /org/nostr/Wallet1.
+
+  Applications never see the NWC pairing secret. They call this interface;
+  the agent identifies the caller from its D-Bus connection credentials
+  (never from a caller-supplied string), applies a per-application daily
+  budget, and asks the user through a libadwaita approval dialog whenever a
+  request is outside that budget.
+
+  Amounts are millisatoshis (msat) throughout. Methods that take a "u"
+  amount are limited to 4294967295 msat (~4.29 M sats) per call.
+
+  Errors (org.nostr.Wallet1.Error.*):
+    InvalidArgs     malformed invoice / URI / parameters
+    NotPaired       no wallet is paired
+    Denied          the user or policy refused the request
+    BudgetExceeded  over the caller's daily budget and no UI to ask
+    Timeout         the wallet did not answer in time (outcome unknown)
+    WalletError     the wallet answered with a NIP-47 error; the message
+                    starts with the NIP-47 code, e.g. "[INSUFFICIENT_BALANCE] ..."
+    RelayError      no relay accepted the request event
+    Unsupported     request not supported (e.g. on-chain, LNURL)
+    RateLimited     too many outstanding approval prompts for this caller
+    Keyring         the Secret Service refused to store/read the pairing
+    Failed          anything else
+-->
+<node>
+  <interface name="org.nostr.Wallet1">
+
+    <!--
+      GetInfo:
+      @info: always contains "paired" (b). When paired also "wallet_pubkey",
+        "client_pubkey", "lud16", "relays" (as), "encryption" ("nip44_v2" or
+        "nip04"), "methods" (as, from the wallet's kind-13194 info event) and,
+        when the wallet answers get_info, its "alias", "color", "pubkey",
+        "network", "block_height", "block_hash".
+    -->
+    <method name="GetInfo">
+      <arg name="info" type="a{sv}" direction="out"/>
+    </method>
+
+    <!-- GetBalance: @balance_msat: spendable wallet balance. -->
+    <method name="GetBalance">
+      <arg name="balance_msat" type="t" direction="out"/>
+    </method>
+
+    <!--
+      MakeInvoice:
+      @amount_msat: invoice amount (> 0)
+      @description: free-text description ("" for none)
+      @expiry: seconds until expiry (0 = wallet default)
+    -->
+    <method name="MakeInvoice">
+      <arg name="amount_msat" type="u" direction="in"/>
+      <arg name="description" type="s" direction="in"/>
+      <arg name="expiry" type="u" direction="in"/>
+      <arg name="bolt11" type="s" direction="out"/>
+      <arg name="payment_hash" type="s" direction="out"/>
+    </method>
+
+    <!--
+      PayInvoice:
+      @bolt11: BOLT-11 invoice
+      @amount_msat_or_0: amount for an amount-less invoice; must be 0 or
+        equal to the encoded amount otherwise
+      @preimage: payment preimage (hex)
+      @fees_paid_msat: routing fees reported by the wallet (0 if unknown)
+
+      Auto-approved only when the caller is identified and the amount fits
+      its remaining daily budget; otherwise the user is asked.
+    -->
+    <method name="PayInvoice">
+      <arg name="bolt11" type="s" direction="in"/>
+      <arg name="amount_msat_or_0" type="u" direction="in"/>
+      <arg name="preimage" type="s" direction="out"/>
+      <arg name="fees_paid_msat" type="t" direction="out"/>
+    </method>
+
+    <!--
+      LookupInvoice:
+      @payment_hash_or_bolt11: a 64-hex payment hash or a BOLT-11 invoice
+      @transaction: NIP-47 transaction object (type, state, invoice,
+        description, payment_hash, amount, fees_paid, created_at,
+        expires_at, settled_at ...). JSON integers map to x, strings to s,
+        booleans to b; nested objects (metadata) are JSON-encoded strings.
+        The preimage is never returned.
+    -->
+    <method name="LookupInvoice">
+      <arg name="payment_hash_or_bolt11" type="s" direction="in"/>
+      <arg name="transaction" type="a{sv}" direction="out"/>
+    </method>
+
+    <!--
+      ListTransactions:
+      @from, @until: unix-time bounds (0 = unbounded)
+      @limit: maximum number of results (0 = wallet default)
+      @type: "incoming", "outgoing" or "" for both
+    -->
+    <method name="ListTransactions">
+      <arg name="from" type="t" direction="in"/>
+      <arg name="until" type="t" direction="in"/>
+      <arg name="limit" type="u" direction="in"/>
+      <arg name="type" type="s" direction="in"/>
+      <arg name="transactions" type="aa{sv}" direction="out"/>
+    </method>
+
+    <!--
+      Pair: store @nwc_uri (nostr+walletconnect://<wallet-pubkey>?relay=...&secret=...[&lud16=...])
+      in the keyring and connect to the wallet. Always confirmed by the
+      user. Note that whoever supplies the URI also knows its secret.
+    -->
+    <method name="Pair">
+      <arg name="nwc_uri" type="s" direction="in"/>
+    </method>
+
+    <!-- Unpair: forget the pairing (keyring item deleted). User-confirmed. -->
+    <method name="Unpair"/>
+
+    <!--
+      OpenUri: scheme-handler entry point (the .desktop file's
+      `nostr-wallet-agent --open %u` forwards here). @uri is a lightning:,
+      bitcoin: (BIP-21) or nostr+walletconnect: link. Returns as soon as the
+      link is parsed; the payment/pairing is then always confirmed in a
+      dialog that names the calling application as the link's opener, and
+      the outcome is shown to the user rather than returned.
+    -->
+    <method name="OpenUri">
+      <arg name="uri" type="s" direction="in"/>
+    </method>
+
+    <!--
+      GetBudget:
+      @app_id: application id, or "" for the caller's own
+      @msat_per_day: daily limit (0 = no automatic payments)
+      @spent_today_msat: spent (including in-flight) since local midnight
+      Other applications' budgets are only visible to trusted settings apps.
+    -->
+    <method name="GetBudget">
+      <arg name="app_id" type="s" direction="in"/>
+      <arg name="msat_per_day" type="u" direction="out"/>
+      <arg name="spent_today_msat" type="t" direction="out"/>
+    </method>
+
+    <!--
+      SetBudget:
+      @app_id: application id, or "" for the caller's own
+      @msat_per_day: new daily limit. Lowering one's own budget is always
+        allowed; anything else needs user confirmation (or a sandboxed,
+        trusted settings app). A budget never grants read access.
+    -->
+    <method name="SetBudget">
+      <arg name="app_id" type="s" direction="in"/>
+      <arg name="msat_per_day" type="u" direction="in"/>
+    </method>
+
+    <!--
+      PaymentReceived: a wallet payment_received notification (NIP-47 kind
+      23196/23197). Signals reach every session-bus client, so @details is
+      minimal: "type", "amount" (x, msat), "fees_paid", "created_at",
+      "settled_at", "is_zap" (b) and, for NIP-57 zaps, "zap_request" (s, the
+      public kind-9734 event). Descriptions, payment hashes and preimages are
+      only available through LookupInvoice/ListTransactions.
+    -->
+    <signal name="PaymentReceived">
+      <arg name="details" type="a{sv}"/>
+    </signal>
+
+    <!--
+      PaymentSent: emitted after a successful PayInvoice ("type" outgoing,
+      "amount", "fees_paid", "app_id") or a wallet payment_sent notification
+      (same minimal keys as PaymentReceived).
+    -->
+    <signal name="PaymentSent">
+      <arg name="details" type="a{sv}"/>
+    </signal>
+
+    <!-- BudgetExceeded: a PayInvoice call did not fit @app_id's budget. -->
+    <signal name="BudgetExceeded">
+      <arg name="app_id" type="s"/>
+      <arg name="requested_msat" type="t"/>
+      <arg name="remaining_msat" type="t"/>
+    </signal>
+
+    <property name="Paired" type="b" access="read"/>
+    <property name="WalletPubkey" type="s" access="read"/>
+    <property name="Lud16" type="s" access="read"/>
+    <property name="Relays" type="as" access="read"/>
+  </interface>
+</node>

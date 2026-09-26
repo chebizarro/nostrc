@@ -1,0 +1,7 @@
+usr/bin/nostr-wallet-agent
+usr/lib/systemd/user/nostr-wallet-agent.service
+usr/share/dbus-1/services/org.nostr.Wallet1.service
+usr/share/dbus-1/interfaces/org.nostr.Wallet1.xml
+usr/share/applications/org.nostr.Wallet.desktop
+usr/share/glib-2.0/schemas/org.nostr.Wallet.gschema.xml
+usr/share/doc/nostr-wallet-agent/README.md

@@ -29,7 +29,10 @@ Build-Depends: debhelper-compat (= 13),
                libsoup-3.0-dev,
                libxml2-dev,
                libjson-glib-dev,
-               libsecret-1-dev
+               libsecret-1-dev,
+# nostr-wallet-agent (nostrc-yka8): libadwaita approval dialogs.
+               libgtk-4-dev,
+               libadwaita-1-dev (>= 1.4)
 Standards-Version: 4.6.2
 Homepage: https://github.com/chebizarro/nostrc
 Vcs-Browser: https://github.com/chebizarro/nostrc
@@ -328,6 +331,30 @@ Description: Localhost CalDAV / CardDAV / WebDAV bridge for Nostr (Wave 4)
  Enable with `systemctl --user enable --now nostr-dav.service`. Token
  bootstrap happens through `gnostr-signer-daemon`; the token file
  lives under `$XDG_STATE_HOME/nostr-dav/`.
+
+Package: nostr-wallet-agent
+Section: net
+Architecture: any
+Multi-Arch: foreign
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         libnostr-publish0 (= ${binary:Version})
+Recommends: gnome-keyring | org.freedesktop.secrets,
+            desktop-file-utils
+Description: Nostr Wallet Connect (NIP-47) agent for the desktop session
+ nostr-wallet-agent owns the desktop's Nostr Wallet Connect pairing and
+ exposes it as the session D-Bus service `org.nostr.Wallet1`
+ (GetBalance, MakeInvoice, PayInvoice, LookupInvoice, ListTransactions,
+ Pair, per-application budgets). Applications never see the pairing
+ secret, which is kept in the Secret Service keyring; the agent identifies
+ callers from their bus credentials and asks for approval in a libadwaita
+ dialog whenever a payment exceeds the caller's daily budget.
+ .
+ It is also the handler for lightning:, bitcoin: (BIP-21 with a
+ lightning= invoice) and nostr+walletconnect: links.
+ .
+ D-Bus activated through the shipped `nostr-wallet-agent.service` user
+ unit; nothing is enabled at install time.
 
 Package: nostrc-samba-server
 Section: admin

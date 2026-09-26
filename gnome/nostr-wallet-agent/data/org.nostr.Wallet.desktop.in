@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Nostr Wallet
+GenericName=Lightning Wallet Connect
+Comment=Pay Lightning invoices and pair Nostr Wallet Connect wallets
+Exec=@CMAKE_INSTALL_FULL_BINDIR@/nostr-wallet-agent --open %u
+Icon=wallet-symbolic
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+Categories=Network;Finance;
+Keywords=lightning;bitcoin;nostr;nwc;zap;
+MimeType=x-scheme-handler/lightning;x-scheme-handler/bitcoin;x-scheme-handler/nostr+walletconnect;
+X-GNOME-UsesNotifications=true
