@@ -2,21 +2,25 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * See nd-publisher.h for the design. Implementation notes:
+ * See nd-publisher.h for the design. Since bead nostrc-tmsc the split is:
  *
- *   * Row lifecycle mirrors the schema comment: rows stay `pending`
- *     while at least one relay in their target set has not yet
- *     acknowledged. `published` only when EVERY target relay OK'd —
- *     that is the NIP-51/65 outbox commit contract per plan Q4.
- *   * Backoff is exponential with a 60 s floor and 60 min cap; the
- *     effective delay is `min(60 * 2^attempts, 3600)` seconds.
- *   * Failure taxonomy uses the NIP-01 OK reason prefix:
- *       - "duplicate:"                        -> accepted (already there)
- *       - "invalid:" | "blocked:" | "banned:" -> permanent
- *       - everything else, incl. no OK at all -> transient
- *   * Notification dedup uses a per-row bit stored via `notified` in
- *     the in-memory PendingRow, plus the row's `publish_state` check
- *     when the tick loop re-encounters an already-failed row.
+ *   * nostr-dav (this file) owns "what to publish and where state lives":
+ *     the SQLite outbox columns on events/contacts/files, the kind-5
+ *     `tombstones` table, the `publish_log`, the DAV -> unsigned-event
+ *     builders, signing-before-persisting (so a retry never re-prompts
+ *     the signer), retry scheduling, and the failed_permanent
+ *     notification.
+ *   * libnostr-publish's NostrPublisher owns "how to publish": EVENT
+ *     fan-out to the target set, per-relay OK classification
+ *     (duplicate: = accept; invalid:/blocked:/banned:/restricted:/
+ *     auth-required: = permanent; everything else transient), the
+ *     all-ACK / numeric-quorum verdict, and the 120 s OK-wait deadline.
+ *
+ * Row lifecycle is unchanged: rows stay `pending` until every relay in
+ * their target set ACKs (`published`), a relay rejects permanently or the
+ * signer denies (`failed_permanent` + one notification for collection
+ * rows), or the attempt settles short of quorum (retry after
+ * `min(60 * 2^attempts, 3600)` s).
  */
 
 #include "nd-publisher.h"
@@ -26,6 +30,8 @@
 #include "nd-calendar-store.h"
 #include "nd-contact-store.h"
 
+#include <nostr-publish/nostr-publisher.h>
+
 #include <json-glib/json-glib.h>
 #include <sqlite3.h>
 
@@ -33,115 +39,43 @@
 
 G_DEFINE_QUARK(nd-publisher-error-quark, nd_publisher_error)
 
-#define ND_PUBLISH_BACKOFF_INITIAL_SEC 60
-#define ND_PUBLISH_BACKOFF_MAX_SEC     (60 * 60)
-
-/* Wall-clock budget for an in-flight publish attempt. A relay that
- * accepts an EVENT frame but never sends OK would otherwise pin the
- * pending row in memory forever; when @deadline is passed the tick
- * loop treats every still-waiting relay as a transient failure and
- * schedules the retry. 120 s balances "give a slow relay a chance"
- * with "do not deadlock the outbox". */
-#define ND_PUBLISH_OK_WAIT_SEC         120
-
-typedef enum {
-  ND_OK_TRANSIENT = 0,
-  ND_OK_ACCEPT,          /* OK true, or duplicate: */
-  ND_OK_PERMANENT_FAIL   /* invalid:/blocked:/banned: */
-} NdOkClass;
-
 /* Discriminator: primary outbox rows (events/contacts/files) live in
  * their own tables; kind-5 tombstones (nostrc-ls2c) live in the
  * `tombstones` table and are keyed by an AUTOINCREMENT `id`. Both
- * pathways share the same pending-row bookkeeping and settle through
- * finalize_row(); the enum lets the publisher pick the right SQL. */
+ * pathways share the same in-flight bookkeeping and settle through
+ * on_publish_done(); the enum lets the publisher pick the right SQL. */
 typedef enum {
   ND_OUTBOX_COLLECTION = 0,  /* events / contacts / files */
   ND_OUTBOX_TOMBSTONE  = 1
 } NdOutboxKind;
 
+/* One outbox row currently being published by the engine. Owned by the
+ * engine request (released through in_flight_destroy); indexed by
+ * `key` in NdPublisher.in_flight so tick() does not re-dispatch it. */
 typedef struct {
+  NdPublisher       *publisher;
   NdOutboxKind       outbox;
   NdStoreCollection  collection;  /* meaningful only for ND_OUTBOX_COLLECTION */
   gchar             *row_id;      /* uid for collections, decimal id for tombstones */
-  gchar             *event_id;
-  GHashTable        *waiting;     /* url -> bool (still waiting) */
-  GHashTable        *acked;
-  GHashTable        *failed;      /* transient failures this attempt */
-  gboolean           notified;
-  gint64             deadline;    /* wall clock; row escalates past it */
-} NdPendingRow;
+  gchar             *key;         /* "<outbox>:<collection>:<row_id>" */
+} NdInFlight;
 
 struct _NdPublisher {
-  NdStoreDb  *db;
-  NdSigner   *signer;
+  NdStoreDb      *db;
+  NdSigner       *signer;
+  NostrPublisher *engine;
 
-  NdRelayTransportFactory  factory;
-  gpointer                 factory_data;
+  gchar             *account_pubkey;
+  GStrv              home_relays;   /* default target set */
+  NostrPublishPolicy policy;        /* mapped from NdPublishQuorum */
 
-  gchar          *account_pubkey;
-  GStrv           home_relays;    /* default target set */
-  NdPublishQuorum quorum;
-
-  /* Bound transports (URL -> NdRelayTransport*, unowned by publisher).
-   * Populated by nd_publisher_bind_transport(); tick() also asks the
-   * factory when the URL is not bound. */
-  GHashTable    *bound;           /* char*(borrowed) -> NdRelayTransport*(unowned) */
-
-  /* In-flight publish state, keyed by event_id (so record_ok() O(1)). */
-  GHashTable    *in_flight;       /* char*(owned) -> NdPendingRow* */
+  GHashTable    *in_flight;       /* key(borrowed) -> NdInFlight*(borrowed) */
 
   NdPublisherNotifyCallback notify_cb;
   gpointer                  notify_data;
 };
 
 /* ---- Small helpers ---- */
-
-static void
-pending_row_free(gpointer data)
-{
-  NdPendingRow *row = data;
-  if (row == NULL) return;
-  g_free(row->row_id);
-  g_free(row->event_id);
-  g_clear_pointer(&row->waiting, g_hash_table_destroy);
-  g_clear_pointer(&row->acked,   g_hash_table_destroy);
-  g_clear_pointer(&row->failed,  g_hash_table_destroy);
-  g_free(row);
-}
-
-static NdOkClass
-classify_ok(gboolean ok, const gchar *reason)
-{
-  if (ok)
-    return ND_OK_ACCEPT;
-  if (reason == NULL)
-    return ND_OK_TRANSIENT;
-  if (g_str_has_prefix(reason, "duplicate:"))
-    return ND_OK_ACCEPT;
-  if (g_str_has_prefix(reason, "invalid:") ||
-      g_str_has_prefix(reason, "blocked:") ||
-      g_str_has_prefix(reason, "banned:") ||
-      /* NIP-42 auth handshake is not implemented in v1; a relay that
-       * refuses without a signed AUTH frame is effectively permanent
-       * for us until the follow-up bead adds AUTH. Classifying as
-       * transient would spin the outbox forever. */
-      g_str_has_prefix(reason, "restricted:") ||
-      g_str_has_prefix(reason, "auth-required:"))
-    return ND_OK_PERMANENT_FAIL;
-  return ND_OK_TRANSIENT;
-}
-
-static gint64
-backoff_delay(int attempts)
-{
-  gint64 delay = ND_PUBLISH_BACKOFF_INITIAL_SEC;
-  for (int i = 0; i < attempts && delay < ND_PUBLISH_BACKOFF_MAX_SEC; i++)
-    delay *= 2;
-  if (delay > ND_PUBLISH_BACKOFF_MAX_SEC)
-    delay = ND_PUBLISH_BACKOFF_MAX_SEC;
-  return delay;
-}
 
 static const gchar *
 collection_table(NdStoreCollection col)
@@ -554,56 +488,139 @@ build_unsigned_for_contact(NdPublisher *self, const gchar *uid, GError **error)
   return nd_vcard_to_nostr_json(contact);
 }
 
-/* Extract the `id` string from a signed event JSON. Robust against the
- * signer inserting fields in any order. */
-static gchar *
-extract_event_id(const gchar *signed_json, GError **error)
-{
-  g_autoptr(JsonParser) parser = json_parser_new();
-  if (!json_parser_load_from_data(parser, signed_json, -1, error))
-    return NULL;
-  JsonNode *root = json_parser_get_root(parser);
-  if (root == NULL || JSON_NODE_TYPE(root) != JSON_NODE_OBJECT) {
-    g_set_error_literal(error, ND_PUBLISHER_ERROR, ND_PUBLISHER_ERROR_SIGNER,
-                        "signed event is not a JSON object");
-    return NULL;
-  }
-  JsonObject *obj = json_node_get_object(root);
-  if (!json_object_has_member(obj, "id")) {
-    g_set_error_literal(error, ND_PUBLISHER_ERROR, ND_PUBLISHER_ERROR_SIGNER,
-                        "signed event has no id field");
-    return NULL;
-  }
-  return g_strdup(json_object_get_string_member(obj, "id"));
-}
-
 /* ---- In-flight bookkeeping ---- */
 
-static NdPendingRow *
-pending_new_row(NdOutboxKind outbox, NdStoreCollection col, const gchar *row_id,
-                const gchar *event_id, gint64 deadline)
+static gchar *
+in_flight_key(NdOutboxKind outbox, NdStoreCollection col, const gchar *row_id)
 {
-  NdPendingRow *row = g_new0(NdPendingRow, 1);
-  row->outbox     = outbox;
-  row->collection = col;
-  row->row_id     = g_strdup(row_id);
-  row->event_id   = g_strdup(event_id);
-  row->waiting    = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  row->acked      = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  row->failed     = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  row->deadline   = deadline;
-  return row;
+  return g_strdup_printf("%d:%d:%s", (int)outbox, (int)col, row_id);
 }
 
-static NdRelayTransport *
-resolve_transport(NdPublisher *self, const gchar *url)
+static void
+in_flight_destroy(gpointer data)
 {
-  /* v1: transports are owned by the sync layer (or the test harness)
-   * and shared with the publisher via nd_publisher_bind_transport().
-   * Falling through to the factory would leak transports because we
-   * have nowhere to store the transfer-full result. The follow-up bead
-   * folds the sync + publisher transport caches into one. */
-  return g_hash_table_lookup(self->bound, url);
+  NdInFlight *ifl = data;
+  if (ifl->publisher->in_flight != NULL)
+    g_hash_table_remove(ifl->publisher->in_flight, ifl->key);
+  g_free(ifl->row_id);
+  g_free(ifl->key);
+  g_free(ifl);
+}
+
+static int
+read_attempts(NdPublisher *self, NdOutboxKind outbox, NdStoreCollection col,
+              const gchar *row_id)
+{
+  sqlite3 *h = nd_store_db_get_handle(self->db);
+  g_autofree gchar *sql = g_strdup_printf(
+    "SELECT publish_attempts FROM %s WHERE %s = ?1",
+    outbox_table(outbox, col), outbox_key(outbox, col));
+  int attempts = 0;
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(h, sql, -1, &stmt, NULL) == SQLITE_OK) {
+    sqlite3_bind_text(stmt, 1, row_id, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+      attempts = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+  }
+  return attempts;
+}
+
+static void
+notify_failed_permanent(NdPublisher       *self,
+                        NdOutboxKind       outbox,
+                        NdStoreCollection  col,
+                        const gchar       *row_id,
+                        const gchar       *reason)
+{
+  /* Primary outbox rows fire an operator notification on permanent
+   * failure so the DAV write does not silently vanish; tombstones are
+   * best-effort cleanup and would drown the operator in noise for keys
+   * the signer no longer trusts, so we log-only there. */
+  if (outbox == ND_OUTBOX_COLLECTION && self->notify_cb != NULL)
+    self->notify_cb(self, ND_PUBLISHER_NOTIFICATION_FAILED_PERMANENT,
+                    col, row_id, reason, self->notify_data);
+}
+
+/* Engine per-relay progress -> publish_log. Timeouts were never logged
+ * per relay; the retry itself is visible through publish_attempts. */
+static void
+on_publish_relay(NostrPublisher          *engine,
+                 const gchar             *event_id,
+                 const gchar             *relay_url,
+                 NostrPublishRelayStatus  status,
+                 const gchar             *reason,
+                 gpointer                 user_data)
+{
+  (void)engine;
+  (void)event_id;
+  NdInFlight *ifl = user_data;
+  int http_status;
+  switch (status) {
+  case NOSTR_PUBLISH_RELAY_ACCEPTED:
+    http_status = 200;
+    break;
+  case NOSTR_PUBLISH_RELAY_REJECTED_TRANSIENT:
+  case NOSTR_PUBLISH_RELAY_REJECTED_PERMANENT:
+    http_status = 400;
+    break;
+  case NOSTR_PUBLISH_RELAY_UNREACHABLE:
+    http_status = 0;
+    break;
+  case NOSTR_PUBLISH_RELAY_TIMED_OUT:
+  case NOSTR_PUBLISH_RELAY_PENDING:
+  default:
+    return;
+  }
+  log_attempt(ifl->publisher, ifl->outbox, ifl->collection, ifl->row_id,
+              relay_url, http_status, reason);
+}
+
+/* Engine verdict -> outbox row state. */
+static void
+on_publish_done(NostrPublisher           *engine,
+                const NostrPublishResult *result,
+                gpointer                  user_data)
+{
+  (void)engine;
+  NdInFlight *ifl = user_data;
+  NdPublisher *self = ifl->publisher;
+  GError *err = NULL;
+  gboolean ok = TRUE;
+
+  switch (nostr_publish_result_get_verdict(result)) {
+  case NOSTR_PUBLISH_VERDICT_PUBLISHED:
+    ok = mark_published(self, ifl->outbox, ifl->collection, ifl->row_id, &err);
+    break;
+
+  case NOSTR_PUBLISH_VERDICT_FAILED_PERMANENT: {
+    const gchar *reason = nostr_publish_result_get_reason(result);
+    ok = mark_failed_permanent(self, ifl->outbox, ifl->collection,
+                               ifl->row_id, &err);
+    notify_failed_permanent(self, ifl->outbox, ifl->collection, ifl->row_id,
+                            reason ? reason : "relay rejected event");
+    break;
+  }
+
+  case NOSTR_PUBLISH_VERDICT_RETRY:
+  default: {
+    /* Re-read attempts from the DB so backoff scaling stays accurate
+     * under out-of-order events. */
+    int attempts = read_attempts(self, ifl->outbox, ifl->collection,
+                                 ifl->row_id);
+    gint64 next = nostr_publish_result_get_completed_at(result) +
+                  nostr_publish_policy_backoff_delay(&self->policy,
+                                                     (guint)attempts);
+    ok = schedule_retry(self, ifl->outbox, ifl->collection, ifl->row_id,
+                        next, &err);
+    break;
+  }
+  }
+
+  if (!ok) {
+    g_warning("nostr-dav publisher: %s", err ? err->message : "finalize failed");
+    g_clear_error(&err);
+  }
 }
 
 /* Descriptor for one dispatchable outbox row. `outbox` picks which
@@ -624,11 +641,12 @@ typedef struct {
   const gchar        *target_uid;
 } NdDispatchCtx;
 
-/* Attempt to publish a single pending row: sign if needed, iterate the
- * target list, send an EVENT frame per relay. Returns TRUE if the row
- * transitioned to in-flight (waiting for OKs); FALSE if it was already
- * settled during this attempt (e.g. signer denied) — either terminally
- * or scheduled for a later retry. */
+/* Attempt to publish a single pending row: sign if needed (persisting
+ * the signed JSON first so retries never re-prompt the signer), resolve
+ * the target set, and hand the row to the engine. Returns TRUE if the
+ * row is now in flight (waiting for OKs); FALSE if it was settled during
+ * this attempt (signer denied, no relays, or no relay reachable) —
+ * either terminally or scheduled for a later retry — or on error. */
 static gboolean
 dispatch_row(NdPublisher         *self,
              const NdDispatchCtx *ctx,
@@ -663,42 +681,31 @@ dispatch_row(NdPublisher         *self,
     signed_json = nd_signer_sign_event_json(self->signer, unsigned_json,
                                             NULL, &sign_err);
     if (signed_json == NULL) {
-      if (g_error_matches(sign_err, ND_SIGNER_ERROR, ND_SIGNER_ERROR_DENIED) ||
-          g_error_matches(sign_err, ND_SIGNER_ERROR, ND_SIGNER_ERROR_MALFORMED)) {
+      const gchar *msg = sign_err ? sign_err->message : NULL;
+      if (nostr_publish_signer_error_is_permanent(sign_err)) {
         log_attempt(self, outbox, col, row_id, NULL, 0,
-                    sign_err ? sign_err->message : "signer denied");
-        if (!mark_failed_permanent(self, outbox, col, row_id, error)) {
-          g_clear_error(&sign_err);
-          return FALSE;
-        }
-        /* Primary outbox rows fire an operator notification on permanent
-         * failure so the DAV write does not silently vanish; tombstones
-         * are best-effort cleanup and would drown the operator in noise
-         * for keys the signer no longer trusts, so we log-only there. */
-        if (outbox == ND_OUTBOX_COLLECTION && self->notify_cb != NULL)
-          self->notify_cb(self, ND_PUBLISHER_NOTIFICATION_FAILED_PERMANENT,
-                          col, row_id,
-                          sign_err ? sign_err->message : "signer denied",
-                          self->notify_data);
+                    msg ? msg : "signer denied");
+        if (mark_failed_permanent(self, outbox, col, row_id, error))
+          notify_failed_permanent(self, outbox, col, row_id,
+                                  msg ? msg : "signer denied");
         g_clear_error(&sign_err);
         return FALSE;
       }
       /* Transient signer failure — retry later. */
-      gint64 next = now_ts + backoff_delay(attempts);
+      gint64 next = now_ts +
+                    nostr_publish_policy_backoff_delay(&self->policy,
+                                                       (guint)attempts);
       log_attempt(self, outbox, col, row_id, NULL, 0,
-                  sign_err ? sign_err->message : "signer transient");
+                  msg ? msg : "signer transient");
       g_clear_error(&sign_err);
-      return schedule_retry(self, outbox, col, row_id, next, error) ? FALSE : FALSE;
+      schedule_retry(self, outbox, col, row_id, next, error);
+      return FALSE;
     }
     if (!save_signed_json(self, outbox, col, row_id, signed_json, error))
       return FALSE;
   }
 
-  g_autofree gchar *event_id = extract_event_id(signed_json, error);
-  if (event_id == NULL)
-    return FALSE;
-
-  GStrv targets = targets_from_json(ctx->targets_json);
+  g_auto(GStrv) targets = targets_from_json(ctx->targets_json);
   if (targets == NULL || targets[0] == NULL) {
     /* No target set — fall back to configured home_relays. Without any
      * relays configured, the row cannot proceed; mark it permanent so
@@ -706,93 +713,34 @@ dispatch_row(NdPublisher         *self,
     g_strfreev(targets);
     targets = self->home_relays != NULL ? g_strdupv(self->home_relays) : NULL;
     if (targets == NULL || targets[0] == NULL) {
-      g_strfreev(targets);
       log_attempt(self, outbox, col, row_id, NULL, 0, "no relays configured");
       if (!mark_failed_permanent(self, outbox, col, row_id, error))
         return FALSE;
-      if (outbox == ND_OUTBOX_COLLECTION && self->notify_cb != NULL)
-        self->notify_cb(self, ND_PUBLISHER_NOTIFICATION_FAILED_PERMANENT,
-                        col, row_id, "no relays configured",
-                        self->notify_data);
+      notify_failed_permanent(self, outbox, col, row_id,
+                              "no relays configured");
       return FALSE;
     }
   }
 
-  NdPendingRow *pending = pending_new_row(outbox, col, row_id, event_id,
-                                          now_ts + ND_PUBLISH_OK_WAIT_SEC);
-  gboolean any_sent = FALSE;
-  for (guint i = 0; targets[i] != NULL; i++) {
-    const gchar *url = targets[i];
-    NdRelayTransport *t = resolve_transport(self, url);
-    if (t == NULL) {
-      log_attempt(self, outbox, col, row_id, url, 0, "no transport");
-      g_hash_table_add(pending->failed, g_strdup(url));
-      continue;
-    }
-    g_autofree gchar *frame =
-      g_strdup_printf("[\"EVENT\",%s]", signed_json);
-    GError *send_err = NULL;
-    if (!nd_relay_transport_send_frame(t, frame, &send_err)) {
-      log_attempt(self, outbox, col, row_id, url, 0,
-                  send_err ? send_err->message : "send failed");
-      g_clear_error(&send_err);
-      g_hash_table_add(pending->failed, g_strdup(url));
-      continue;
-    }
-    g_hash_table_add(pending->waiting, g_strdup(url));
-    any_sent = TRUE;
-  }
-  g_strfreev(targets);
+  NdInFlight *ifl = g_new0(NdInFlight, 1);
+  ifl->publisher  = self;
+  ifl->outbox     = outbox;
+  ifl->collection = col;
+  ifl->row_id     = g_strdup(row_id);
+  ifl->key        = in_flight_key(outbox, col, row_id);
+  g_autofree gchar *key = g_strdup(ifl->key);
+  g_hash_table_insert(self->in_flight, ifl->key, ifl);
 
-  if (!any_sent) {
-    /* Every target unreachable — schedule a retry. */
-    pending_row_free(pending);
-    gint64 next = now_ts + backoff_delay(attempts);
-    return schedule_retry(self, outbox, col, row_id, next, error) ? FALSE : FALSE;
-  }
-
-  g_hash_table_replace(self->in_flight,
-                       g_strdup(pending->event_id), pending);
-  return TRUE;
-}
-
-/* Finalize a row after every relay has answered. Returns FALSE if a
- * DB update failed (error set).
- *
- * NB: @row is freed as a side-effect of removing it from @self->in_flight,
- * so all fields must be captured before that removal happens. */
-static gboolean
-finalize_row(NdPublisher *self, NdPendingRow *row, gint64 now_ts,
-             int prior_attempts, GError **error)
-{
-  gsize acks   = g_hash_table_size(row->acked);
-  gsize fails  = g_hash_table_size(row->failed);
-
-  gboolean quorum_all = self->quorum.all;
-  guint    quorum_n   = self->quorum.count;
-
-  gboolean met = FALSE;
-  if (quorum_all)
-    met = (fails == 0 && acks > 0);
-  else
-    met = (acks >= quorum_n);
-
-  NdOutboxKind      outbox     = row->outbox;
-  NdStoreCollection collection = row->collection;
-  g_autofree gchar *row_id = g_strdup(row->row_id);
-
-  gboolean removed_from_flight =
-    g_hash_table_remove(self->in_flight, row->event_id);
-  (void)removed_from_flight;
-  /* @row is now dangling. */
-
-  if (met)
-    return mark_published(self, outbox, collection, row_id, error);
-
-  /* Transient failure — schedule a retry. Total > 0 because we only
-   * finalise once every target has answered. */
-  gint64 next = now_ts + backoff_delay(prior_attempts);
-  return schedule_retry(self, outbox, collection, row_id, next, error);
+  /* When no relay is reachable the engine settles (RETRY) before
+   * returning; on_publish_done has then already scheduled the retry and
+   * released @ifl. */
+  if (!nostr_publisher_publish_signed(self->engine, signed_json,
+                                      (const gchar *const *)targets,
+                                      &self->policy, now_ts,
+                                      on_publish_relay, on_publish_done,
+                                      ifl, in_flight_destroy, error))
+    return FALSE;
+  return g_hash_table_contains(self->in_flight, key);
 }
 
 /* ---- Public API ---- */
@@ -806,16 +754,19 @@ nd_publisher_new(NdStoreDb              *db,
   g_return_val_if_fail(db != NULL, NULL);
   g_return_val_if_fail(signer != NULL, NULL);
 
+  /* @factory is accepted for API compatibility but deliberately not
+   * handed to the engine: transports are owned by the sync layer (or the
+   * test harness) and shared through nd_publisher_bind_transport(), so an
+   * unbound URL stays "no transport" exactly as before. */
+  (void)factory;
+  (void)factory_data;
+
   NdPublisher *self = g_new0(NdPublisher, 1);
-  self->db            = nd_store_db_ref(db);
-  self->signer        = nd_signer_ref(signer);
-  self->factory       = factory;
-  self->factory_data  = factory_data;
-  self->quorum        = ND_PUBLISH_QUORUM_DEFAULT;
-  self->bound     = g_hash_table_new_full(g_str_hash, g_str_equal,
-                                          g_free, NULL);
-  self->in_flight = g_hash_table_new_full(g_str_hash, g_str_equal,
-                                          g_free, pending_row_free);
+  self->db        = nd_store_db_ref(db);
+  self->signer    = nd_signer_ref(signer);
+  self->engine    = nostr_publisher_new(signer);
+  nd_publisher_configure(self, NULL, NULL, ND_PUBLISH_QUORUM_DEFAULT);
+  self->in_flight = g_hash_table_new(g_str_hash, g_str_equal);
   return self;
 }
 
@@ -823,7 +774,9 @@ void
 nd_publisher_free(NdPublisher *self)
 {
   if (self == NULL) return;
-  g_clear_pointer(&self->bound, g_hash_table_destroy);
+  /* Freeing the engine releases every in-flight NdInFlight through
+   * in_flight_destroy(), which unindexes it from self->in_flight. */
+  g_clear_pointer(&self->engine, nostr_publisher_free);
   g_clear_pointer(&self->in_flight, g_hash_table_destroy);
   g_clear_pointer(&self->home_relays, g_strfreev);
   g_clear_pointer(&self->account_pubkey, g_free);
@@ -839,10 +792,12 @@ nd_publisher_configure(NdPublisher      *self,
                        NdPublishQuorum   quorum)
 {
   g_return_if_fail(self != NULL);
+  gchar *pubkey = account_pubkey ? g_strdup(account_pubkey) : NULL;
   g_free(self->account_pubkey);
-  self->account_pubkey = account_pubkey ? g_strdup(account_pubkey) : NULL;
+  self->account_pubkey = pubkey;
+  GStrv relays = home_relays ? g_strdupv(home_relays) : NULL;
   g_strfreev(self->home_relays);
-  self->home_relays = home_relays ? g_strdupv(home_relays) : NULL;
+  self->home_relays = relays;
 
   /* Clamp numeric quorum to the target set size so a misconfiguration
    * ("quorum = 5, home_relays = 2") does not silently retry forever.
@@ -859,7 +814,11 @@ nd_publisher_configure(NdPublisher      *self,
     if (quorum.count == 0)
       quorum.count = 1;
   }
-  self->quorum = quorum;
+
+  /* nostr_dav_publish_quorum -> engine policy: `all` is quorum 0. The
+   * 120 s OK wait and 60 s..60 min backoff are the policy defaults. */
+  nostr_publish_policy_init(&self->policy);
+  self->policy.quorum = quorum.all ? 0 : quorum.count;
 }
 
 void
@@ -927,10 +886,7 @@ nd_publisher_bind_transport(NdPublisher      *self,
 {
   g_return_if_fail(self != NULL);
   g_return_if_fail(relay_url != NULL);
-  if (transport == NULL)
-    g_hash_table_remove(self->bound, relay_url);
-  else
-    g_hash_table_insert(self->bound, g_strdup(relay_url), transport);
+  nostr_publisher_bind_transport(self->engine, relay_url, transport);
 }
 
 typedef struct {
@@ -1050,63 +1006,14 @@ load_pending_tombstones(NdPublisher *self, gint64 now_ts)
   return rows;
 }
 
-/* Sweep every in-flight row whose OK-wait deadline has passed and turn
- * its still-waiting relays into transient failures. Prevents a silent
- * relay from pinning the row in memory forever. Called at the top of
- * every tick so the outbox eventually settles even in the absence of
- * fresh incoming OK/fail frames. */
-static void
-sweep_expired(NdPublisher *self, gint64 now_ts)
-{
-  GHashTableIter it;
-  gpointer key = NULL, value = NULL;
-  GList *expired = NULL;
-
-  g_hash_table_iter_init(&it, self->in_flight);
-  while (g_hash_table_iter_next(&it, &key, &value)) {
-    NdPendingRow *row = value;
-    if (now_ts >= row->deadline && g_hash_table_size(row->waiting) > 0)
-      expired = g_list_prepend(expired, row);
-  }
-
-  for (GList *l = expired; l != NULL; l = l->next) {
-    NdPendingRow *row = l->data;
-    /* Move every still-waiting relay into `failed` and finalize as a
-     * transient outcome (row stays pending, backoff scheduled). */
-    g_hash_table_iter_init(&it, row->waiting);
-    while (g_hash_table_iter_next(&it, &key, NULL))
-      g_hash_table_add(row->failed, g_strdup(key));
-    g_hash_table_remove_all(row->waiting);
-
-    sqlite3 *h = nd_store_db_get_handle(self->db);
-    g_autofree gchar *sql = g_strdup_printf(
-      "SELECT publish_attempts FROM %s WHERE %s = ?1",
-      outbox_table(row->outbox, row->collection),
-      outbox_key(row->outbox, row->collection));
-    int attempts = 0;
-    sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(h, sql, -1, &stmt, NULL) == SQLITE_OK) {
-      sqlite3_bind_text(stmt, 1, row->row_id, -1, SQLITE_TRANSIENT);
-      if (sqlite3_step(stmt) == SQLITE_ROW)
-        attempts = sqlite3_column_int(stmt, 0);
-      sqlite3_finalize(stmt);
-    }
-    GError *err = NULL;
-    if (!finalize_row(self, row, now_ts, attempts, &err)) {
-      g_warning("nostr-dav publisher: sweep finalize: %s",
-                err ? err->message : "unknown");
-      g_clear_error(&err);
-    }
-  }
-  g_list_free(expired);
-}
-
 gboolean
 nd_publisher_tick(NdPublisher *self, gint64 now_ts)
 {
   g_return_val_if_fail(self != NULL, FALSE);
 
-  sweep_expired(self, now_ts);
+  /* Settle in-flight rows whose OK-wait deadline has passed (silent
+   * relays count as transient failures) before loading due rows. */
+  nostr_publisher_tick(self->engine, now_ts);
 
   static const NdStoreCollection cols[] = {
     ND_STORE_COLLECTION_EVENTS,
@@ -1129,25 +1036,16 @@ nd_publisher_tick(NdPublisher *self, gint64 now_ts)
     if (rows == NULL) continue;
     for (guint i = 0; i < rows->len; i++) {
       NdOutboxRow *row = g_ptr_array_index(rows, i);
-      /* Skip rows already in-flight from a previous tick (they'll settle
-       * via record_ok). Match on (outbox, collection, row_id) so a
-       * tombstone and a collection row that happen to share an id string
-       * never alias each other. */
-      gboolean already_flying = FALSE;
-      GHashTableIter it;
-      gpointer v = NULL;
-      g_hash_table_iter_init(&it, self->in_flight);
-      while (g_hash_table_iter_next(&it, NULL, &v)) {
-        NdPendingRow *pr = v;
-        if (pr->outbox == row->outbox &&
-            pr->collection == row->col &&
-            g_str_equal(pr->row_id, row->row_id)) {
-          already_flying = TRUE;
-          more = TRUE;
-          break;
-        }
+      /* Skip rows already in flight from a previous tick (they settle
+       * via record_ok / the deadline sweep). The key includes (outbox,
+       * collection) so a tombstone and a collection row that happen to
+       * share an id string never alias each other. */
+      g_autofree gchar *key = in_flight_key(row->outbox, row->col,
+                                            row->row_id);
+      if (g_hash_table_contains(self->in_flight, key)) {
+        more = TRUE;
+        continue;
       }
-      if (already_flying) continue;
 
       NdDispatchCtx ctx = {
         .outbox               = row->outbox,
@@ -1187,64 +1085,6 @@ nd_publisher_record_ok(NdPublisher *self,
   g_return_if_fail(self != NULL);
   g_return_if_fail(event_id != NULL);
   g_return_if_fail(relay_url != NULL);
-
-  NdPendingRow *row = g_hash_table_lookup(self->in_flight, event_id);
-  if (row == NULL)
-    return;
-
-  NdOkClass cls = classify_ok(ok, reason);
-  log_attempt(self, row->outbox, row->collection, row->row_id, relay_url,
-              ok ? 200 : 400, reason);
-
-  g_hash_table_remove(row->waiting, relay_url);
-
-  if (cls == ND_OK_PERMANENT_FAIL) {
-    GError *err = NULL;
-    if (!mark_failed_permanent(self, row->outbox, row->collection,
-                               row->row_id, &err)) {
-      g_warning("nostr-dav publisher: %s",
-                err ? err->message : "mark permanent failed");
-      g_clear_error(&err);
-    }
-    if (row->outbox == ND_OUTBOX_COLLECTION &&
-        !row->notified && self->notify_cb != NULL) {
-      row->notified = TRUE;
-      self->notify_cb(self, ND_PUBLISHER_NOTIFICATION_FAILED_PERMANENT,
-                      row->collection, row->row_id,
-                      reason ? reason : "relay rejected event",
-                      self->notify_data);
-    }
-    g_hash_table_remove(self->in_flight, event_id);
-    return;
-  }
-
-  if (cls == ND_OK_ACCEPT)
-    g_hash_table_add(row->acked, g_strdup(relay_url));
-  else
-    g_hash_table_add(row->failed, g_strdup(relay_url));
-
-  if (g_hash_table_size(row->waiting) == 0) {
-    /* Every target has answered. Re-load the attempts count from the
-     * DB so backoff scaling stays accurate under out-of-order events. */
-    sqlite3 *h = nd_store_db_get_handle(self->db);
-    g_autofree gchar *sql = g_strdup_printf(
-      "SELECT publish_attempts FROM %s WHERE %s = ?1",
-      outbox_table(row->outbox, row->collection),
-      outbox_key(row->outbox, row->collection));
-    int attempts = 0;
-    sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(h, sql, -1, &stmt, NULL) == SQLITE_OK) {
-      sqlite3_bind_text(stmt, 1, row->row_id, -1, SQLITE_TRANSIENT);
-      if (sqlite3_step(stmt) == SQLITE_ROW)
-        attempts = sqlite3_column_int(stmt, 0);
-      sqlite3_finalize(stmt);
-    }
-    GError *err = NULL;
-    if (!finalize_row(self, row, g_get_real_time() / G_USEC_PER_SEC,
-                      attempts, &err)) {
-      g_warning("nostr-dav publisher: %s",
-                err ? err->message : "finalize failed");
-      g_clear_error(&err);
-    }
-  }
+  (void)nostr_publisher_record_ok(self->engine, relay_url, event_id, ok,
+                                  reason);
 }

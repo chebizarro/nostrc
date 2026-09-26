@@ -36,6 +36,12 @@ usr/lib/*/libhanami.so
 usr/lib/*/pkgconfig/hanami.pc
 usr/include/hanami/*
 
+# libnostr-publish0 (bead nostrc-tmsc) ships the runtime library only;
+# its consumers are in-tree (nostr-dav, later nostr-share / wallet agent).
+usr/lib/*/libnostr-publish.so
+usr/lib/*/pkgconfig/nostr-publish.pc
+usr/include/nostr-publish/*
+
 # Wave 3 leftovers: the sweep timer + service, close-session user
 # teardown unit, browse helper + autostart entry, and the admin
 # CLI nostr-authctl are all part of the SMB auth flow but not yet

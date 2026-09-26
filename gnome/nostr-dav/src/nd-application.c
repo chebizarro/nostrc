@@ -28,7 +28,6 @@
 
 #include <glib.h>
 #include <gio/gio.h>
-#include <json-glib/json-glib.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -48,9 +47,6 @@
 /* How long a replacement instance waits for its predecessor to exit. */
 #define ND_LOCK_WAIT_STEPS    50
 #define ND_LOCK_WAIT_STEP_US  (100 * 1000)
-
-/* NIP-42 client-auth event kind. */
-#define ND_NIP42_AUTH_KIND    22242
 
 /* Outbox tick cadence. Backoff floor is 60 s so 30 s keeps the tick
  * responsive to newly staged rows without hammering the DB. */
@@ -161,37 +157,10 @@ on_relay_auth(NdRelayTransport *transport,
   const gchar *relay_url = nd_relay_transport_get_url(transport);
   gint64 now = g_get_real_time() / G_USEC_PER_SEC;
 
-  g_autoptr(JsonBuilder) b = json_builder_new();
-  json_builder_begin_object(b);
-  json_builder_set_member_name(b, "kind");
-  json_builder_add_int_value(b, ND_NIP42_AUTH_KIND);
-  json_builder_set_member_name(b, "created_at");
-  json_builder_add_int_value(b, now);
-  json_builder_set_member_name(b, "content");
-  json_builder_add_string_value(b, "");
-  json_builder_set_member_name(b, "tags");
-  json_builder_begin_array(b);
-    json_builder_begin_array(b);
-      json_builder_add_string_value(b, "relay");
-      json_builder_add_string_value(b, relay_url ? relay_url : "");
-    json_builder_end_array(b);
-    json_builder_begin_array(b);
-      json_builder_add_string_value(b, "challenge");
-      json_builder_add_string_value(b, challenge);
-    json_builder_end_array(b);
-  json_builder_end_array(b);
-  json_builder_end_object(b);
-
-  g_autoptr(JsonNode) root = json_builder_get_root(b);
-  g_autoptr(JsonGenerator) gen = json_generator_new();
-  json_generator_set_root(gen, root);
-  g_autofree gchar *unsigned_json = json_generator_to_data(gen, NULL);
-  if (unsigned_json == NULL)
-    return NULL;
-
   GError *sign_err = NULL;
   gchar *signed_json =
-    nd_signer_sign_event_json(self->signer, unsigned_json, NULL, &sign_err);
+    nostr_publish_signer_sign_auth_event(self->signer, relay_url, challenge,
+                                         now, &sign_err);
   if (signed_json == NULL) {
     g_debug("nostr-dav: NIP-42 AUTH sign failed for %s: %s",
             relay_url ? relay_url : "(null)",
@@ -216,11 +185,10 @@ session_transport_factory(const gchar *relay_url, gpointer user_data)
      * point OK envelopes at the publisher for ACK accounting.
      *
      * Ownership: the sync layer takes ownership of the returned
-     * transport ref. The publisher's `bound` hash holds an unowned
-     * pointer; nd_publisher_free() clears the hash without touching the
-     * transports. tear_down() drops the sync (and therefore the
-     * transport refs) before it frees the publisher, so no dangling
-     * lookups. */
+     * transport ref; the publisher takes its own ref on bind. The sync
+     * layer detaches its callbacks and disconnects a transport before
+     * dropping it, so a transport the publisher still holds is merely
+     * "not connected" (sends fail -> unreachable -> retry). */
     nd_publisher_bind_transport(self->publisher, relay_url, t);
     nd_relay_transport_set_ok_callback(t, on_relay_ok, self);
   }

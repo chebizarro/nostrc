@@ -2,7 +2,8 @@
 #
 # Localhost CalDAV/CardDAV/WebDAV bridge for Nostr ↔ GNOME desktop integration.
 #
-# Requires: glib-2.0 >= 2.60, libsoup-3.0, libxml-2.0, json-glib-1.0, sqlite3
+# Requires: glib-2.0 >= 2.60, libsoup-3.0, libxml-2.0, json-glib-1.0, sqlite3,
+#           gnome/libnostr-publish (signer proxy, relay transport, publish engine)
 # Optional: libsecret-1 (mirrors the bearer token into the user keyring)
 #
 # Build: cmake -B _build -DENABLE_NOSTR_DAV=ON && cmake --build _build
@@ -24,6 +25,14 @@ pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlite3>=3.24)
 # Optional deps
 pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
 
+# Relay-side publish core (bead nostrc-tmsc). The top-level build adds it
+# before this directory; fall back to adding it here when configured
+# without the top-level switch.
+if (NOT TARGET nostr-publish)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../libnostr-publish
+                   ${CMAKE_CURRENT_BINARY_DIR}/libnostr-publish)
+endif()
+
 set(ND_WARNING_FLAGS -Wall -Wextra -Werror -Wno-misleading-indentation)
 
 # --- Core (shared by the daemon and the tests) ---
@@ -39,9 +48,6 @@ add_library(nostr-dav-core STATIC
   src/nd-contact-store.c
   src/nd-file-entry.c
   src/nd-file-store.c
-  src/nd-signer.c
-  src/nd-signer-dbus.c
-  src/nd-relay-transport.c
   src/nd-relay-sync.c
   src/nd-publisher.c
 )
@@ -51,6 +57,7 @@ target_include_directories(nostr-dav-core PUBLIC
 )
 
 target_link_libraries(nostr-dav-core PUBLIC
+  nostr-publish
   PkgConfig::GLIB
   PkgConfig::SOUP
   PkgConfig::LIBXML2

@@ -465,9 +465,20 @@ when the socket is absent.
 
 Enable with `systemctl --user enable --now nostr-notify.service`.
 
+# --- Sub-package: libnostr-publish -------------------------------------------
+%package -n libnostr-publish
+Summary:        Shared Nostr relay publish core for GNOME daemons
+
+%description -n libnostr-publish
+Relay-side publish core shared by nostr-dav (and the planned nostr-share /
+nostr-wallet-agent): org.nostr.Signer proxy, libsoup-3 NIP-01 WebSocket
+transport, NIP-65 target resolution and multi-relay OK aggregation.  Ships
+libnostr-publish.so.0; in-tree consumers only, no -devel package.
+
 # --- Sub-package: nostr-dav --------------------------------------------------
 %package -n nostr-dav
 Summary:        Localhost CalDAV / CardDAV / WebDAV bridge for Nostr (Wave 4)
+Requires:       libnostr-publish%{?_isa} = %{version}-%{release}
 Requires:       libsoup3
 Requires:       glib2
 Requires:       libxml2
@@ -761,6 +772,10 @@ rm -f  %{buildroot}%{_libdir}/pkgconfig/nostr-homed.pc
 #       in libhanami.  Matches debian/not-installed.
 rm -f  %{buildroot}%{_libdir}/pkgconfig/hanami.pc
 rm -rf %{buildroot}%{_includedir}/hanami
+#       Same for libnostr-publish (bead nostrc-tmsc): runtime lib only.
+rm -f  %{buildroot}%{_libdir}/libnostr-publish.so
+rm -f  %{buildroot}%{_libdir}/pkgconfig/nostr-publish.pc
+rm -rf %{buildroot}%{_includedir}/nostr-publish
 #
 #    d) test_relay_eose: an upstream CMake install() rule ships a build-tree
 #       binary to an ABSOLUTE build-tree path (out of DESTDIR discipline).
@@ -1087,6 +1102,11 @@ fi
 %{_userunitdir}/nostr-notify.service
 %dir %{_datadir}/nostr-notify
 %{_datadir}/nostr-notify/nostr-notify.conf.example
+
+%files -n libnostr-publish
+%license LICENSE
+%{_libdir}/libnostr-publish.so.0
+%{_libdir}/libnostr-publish.so.0.*
 
 %files -n nostr-dav
 %license LICENSE

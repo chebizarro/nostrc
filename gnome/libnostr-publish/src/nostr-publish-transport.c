@@ -1,4 +1,4 @@
-/* nd-relay-transport.c - Relay transport interface + backends
+/* nostr-publish-transport.c - Relay transport interface + backends
  *
  * SPDX-License-Identifier: MIT
  *
@@ -18,48 +18,49 @@
  *      frame in FIFO order and lets the test deliver EVENT/EOSE/OK
  *      frames back through the listener without a socket.
  *
- * The vtable approach keeps NdRelaySync free of ifdefs and lets
- * test_relay_sync run under valgrind without a network stack.
+ * The vtable approach keeps consumers (nostr-dav's relay sync, the
+ * publisher) free of ifdefs and lets their tests run under valgrind
+ * without a network stack. Moved from gnome/nostr-dav (nd-relay-transport.c).
  */
 
-#include "nd-relay-transport.h"
+#include "nostr-publish-transport.h"
 
 #include <libsoup/soup.h>
 #include <json-glib/json-glib.h>
 
 #include <string.h>
 
-/* Reconnect backoff — matches the nd-relay-sync policy so the two layers
- * evolve together. Kept private here because reconnect is a transport
+/* Reconnect backoff — matches nostr-dav's relay-sync policy so the two
+ * layers evolve together. Kept private here because reconnect is a transport
  * concern; the sync layer treats each connect/disconnect edge as a state
  * callback and does not itself schedule retries. */
-#define ND_WS_BACKOFF_INITIAL_SEC 60
-#define ND_WS_BACKOFF_MAX_SEC     (60 * 60)
+#define NP_WS_BACKOFF_INITIAL_SEC 60
+#define NP_WS_BACKOFF_MAX_SEC     (60 * 60)
 
 typedef struct {
-  gboolean (*connect_async)   (NdRelayTransport *self);
-  gboolean (*send_frame)      (NdRelayTransport *self,
+  gboolean (*connect_async)   (NostrPublishTransport *self);
+  gboolean (*send_frame)      (NostrPublishTransport *self,
                                const gchar      *frame_json,
                                GError          **error);
-  void     (*disconnect)      (NdRelayTransport *self);
-  gboolean (*is_connected)    (NdRelayTransport *self);
-  void     (*finalize)        (NdRelayTransport *self);
-} NdRelayTransportOps;
+  void     (*disconnect)      (NostrPublishTransport *self);
+  gboolean (*is_connected)    (NostrPublishTransport *self);
+  void     (*finalize)        (NostrPublishTransport *self);
+} NostrPublishTransportOps;
 
-struct _NdRelayTransport {
+struct _NostrPublishTransport {
   int                            ref_count;
-  const NdRelayTransportOps     *ops;
+  const NostrPublishTransportOps     *ops;
   gchar                         *url;
 
-  NdRelayTransportListener       listener;
+  NostrPublishTransportListener       listener;
   gpointer                       listener_data;
-  NdRelayTransportStateCallback  state_cb;
+  NostrPublishTransportStateCallback  state_cb;
   gpointer                       state_data;
 
-  NdRelayTransportOkCallback     ok_cb;
+  NostrPublishTransportOkCallback     ok_cb;
   gpointer                       ok_data;
 
-  NdRelayTransportAuthCallback   auth_cb;
+  NostrPublishTransportAuthCallback   auth_cb;
   gpointer                       auth_data;
 
   /* Backend-specific state: owned by the ops table, released by
@@ -72,7 +73,7 @@ struct _NdRelayTransport {
 
 typedef struct {
   GPtrArray *sent;   /* char* frames, FIFO */
-} NdRelayFixtureState;
+} NostrPublishFixtureState;
 
 /* ---- Envelope dispatch (shared by both backends when they receive a
  * text message) --------------------------------------------------------
@@ -85,21 +86,21 @@ typedef struct {
  * connection. */
 
 static void
-dispatch_envelope(NdRelayTransport *self, const gchar *text)
+dispatch_envelope(NostrPublishTransport *self, const gchar *text)
 {
   if (text == NULL) return;
 
   g_autoptr(JsonParser) parser = json_parser_new();
   GError *err = NULL;
   if (!json_parser_load_from_data(parser, text, -1, &err)) {
-    g_debug("nd-relay-transport(%s): malformed envelope dropped: %s",
+    g_debug("nostr-publish-transport(%s): malformed envelope dropped: %s",
             self->url, err ? err->message : "parse error");
     g_clear_error(&err);
     return;
   }
   JsonNode *root = json_parser_get_root(parser);
   if (root == NULL || JSON_NODE_TYPE(root) != JSON_NODE_ARRAY) {
-    g_debug("nd-relay-transport(%s): envelope is not a JSON array",
+    g_debug("nostr-publish-transport(%s): envelope is not a JSON array",
             self->url);
     return;
   }
@@ -156,7 +157,7 @@ dispatch_envelope(NdRelayTransport *self, const gchar *text)
     g_autofree gchar *frame = g_strdup_printf("[\"AUTH\",%s]", signed_auth);
     GError *send_err = NULL;
     if (!self->ops->send_frame(self, frame, &send_err)) {
-      g_debug("nd-relay-transport(%s): AUTH reply failed: %s",
+      g_debug("nostr-publish-transport(%s): AUTH reply failed: %s",
               self->url,
               send_err ? send_err->message : "unknown");
       g_clear_error(&send_err);
@@ -171,7 +172,7 @@ dispatch_envelope(NdRelayTransport *self, const gchar *text)
 /* ---- Fixture backend ---- */
 
 static gboolean
-fx_connect_async(NdRelayTransport *self)
+fx_connect_async(NostrPublishTransport *self)
 {
   self->fx_connected = TRUE;
   if (self->state_cb != NULL)
@@ -180,20 +181,20 @@ fx_connect_async(NdRelayTransport *self)
 }
 
 static gboolean
-fx_send_frame(NdRelayTransport *self, const gchar *frame_json, GError **error)
+fx_send_frame(NostrPublishTransport *self, const gchar *frame_json, GError **error)
 {
   if (!self->fx_connected) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
                         "fixture transport is not connected");
     return FALSE;
   }
-  NdRelayFixtureState *fx = self->backend_state;
+  NostrPublishFixtureState *fx = self->backend_state;
   g_ptr_array_add(fx->sent, g_strdup(frame_json));
   return TRUE;
 }
 
 static void
-fx_disconnect(NdRelayTransport *self)
+fx_disconnect(NostrPublishTransport *self)
 {
   gboolean was_connected = self->fx_connected;
   self->fx_connected = FALSE;
@@ -202,15 +203,15 @@ fx_disconnect(NdRelayTransport *self)
 }
 
 static gboolean
-fx_is_connected(NdRelayTransport *self)
+fx_is_connected(NostrPublishTransport *self)
 {
   return self->fx_connected;
 }
 
 static void
-fx_finalize(NdRelayTransport *self)
+fx_finalize(NostrPublishTransport *self)
 {
-  NdRelayFixtureState *fx = self->backend_state;
+  NostrPublishFixtureState *fx = self->backend_state;
   if (fx != NULL) {
     g_clear_pointer(&fx->sent, g_ptr_array_unref);
     g_free(fx);
@@ -218,7 +219,7 @@ fx_finalize(NdRelayTransport *self)
   }
 }
 
-static const NdRelayTransportOps FIXTURE_OPS = {
+static const NostrPublishTransportOps FIXTURE_OPS = {
   .connect_async = fx_connect_async,
   .send_frame    = fx_send_frame,
   .disconnect    = fx_disconnect,
@@ -250,7 +251,7 @@ static const NdRelayTransportOps FIXTURE_OPS = {
  */
 
 typedef struct {
-  NdRelayTransport         *owner;  /* weak — we live inside its ops table */
+  NostrPublishTransport         *owner;  /* weak — we live inside its ops table */
   SoupSession              *session;
   SoupWebsocketConnection  *conn;
   GCancellable             *cancellable;
@@ -263,13 +264,13 @@ typedef struct {
   guint                     backoff_sec;
   gboolean                  want_connected;
   gboolean                  connecting;   /* an async connect is in flight */
-} NdRelayWebsocket;
+} NostrPublishWebsocket;
 
-static void ws_start_connect(NdRelayTransport *self);
-static void ws_schedule_reconnect(NdRelayTransport *self, gboolean reset_backoff);
+static void ws_start_connect(NostrPublishTransport *self);
+static void ws_schedule_reconnect(NostrPublishTransport *self, gboolean reset_backoff);
 
 static void
-ws_clear_conn_signals(NdRelayWebsocket *ws)
+ws_clear_conn_signals(NostrPublishWebsocket *ws)
 {
   if (ws->conn == NULL)
     return;
@@ -288,7 +289,7 @@ ws_clear_conn_signals(NdRelayWebsocket *ws)
 }
 
 static void
-ws_drop_conn(NdRelayWebsocket *ws)
+ws_drop_conn(NostrPublishWebsocket *ws)
 {
   if (ws->conn == NULL)
     return;
@@ -310,7 +311,7 @@ on_ws_message(SoupWebsocketConnection *conn,
               gpointer                 user_data)
 {
   (void)conn;
-  NdRelayTransport *self = user_data;
+  NostrPublishTransport *self = user_data;
   if (type != SOUP_WEBSOCKET_DATA_TEXT) {
     /* NIP-01 is text; drop binary frames rather than misinterpret. */
     return;
@@ -327,8 +328,8 @@ static void
 on_ws_closed(SoupWebsocketConnection *conn, gpointer user_data)
 {
   (void)conn;
-  NdRelayTransport *self = user_data;
-  NdRelayWebsocket *ws = self->backend_state;
+  NostrPublishTransport *self = user_data;
+  NostrPublishWebsocket *ws = self->backend_state;
 
   ws_clear_conn_signals(ws);
   g_clear_object(&ws->conn);
@@ -344,8 +345,8 @@ static void
 on_ws_error(SoupWebsocketConnection *conn, GError *error, gpointer user_data)
 {
   (void)conn;
-  NdRelayTransport *self = user_data;
-  g_debug("nd-relay-transport(%s): websocket error: %s",
+  NostrPublishTransport *self = user_data;
+  g_debug("nostr-publish-transport(%s): websocket error: %s",
           self->url,
           error ? error->message : "unknown");
   /* The "closed" signal follows for an unrecoverable error; the reconnect
@@ -359,8 +360,8 @@ on_ws_connect_finish(GObject      *source,
                      GAsyncResult *result,
                      gpointer      user_data)
 {
-  NdRelayTransport *self = user_data;
-  NdRelayWebsocket *ws = self->backend_state;
+  NostrPublishTransport *self = user_data;
+  NostrPublishWebsocket *ws = self->backend_state;
 
   ws->connecting = FALSE;
 
@@ -372,11 +373,11 @@ on_ws_connect_finish(GObject      *source,
      * the connect; on failure we drop it here after handling. */
     if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_clear_error(&err);
-      nd_relay_transport_unref(self);
+      nostr_publish_transport_unref(self);
       return;
     }
 
-    g_debug("nd-relay-transport(%s): connect failed: %s",
+    g_debug("nostr-publish-transport(%s): connect failed: %s",
             self->url, err ? err->message : "unknown");
     if (self->state_cb != NULL)
       self->state_cb(self, FALSE, err, self->state_data);
@@ -384,12 +385,12 @@ on_ws_connect_finish(GObject      *source,
 
     if (ws->want_connected)
       ws_schedule_reconnect(self, FALSE);
-    nd_relay_transport_unref(self);
+    nostr_publish_transport_unref(self);
     return;
   }
 
   ws->conn = conn;
-  ws->backoff_sec = ND_WS_BACKOFF_INITIAL_SEC;   /* success → reset */
+  ws->backoff_sec = NP_WS_BACKOFF_INITIAL_SEC;   /* success → reset */
 
   ws->sig_message = g_signal_connect(conn, "message",
                                      G_CALLBACK(on_ws_message), self);
@@ -401,13 +402,13 @@ on_ws_connect_finish(GObject      *source,
   if (self->state_cb != NULL)
     self->state_cb(self, TRUE, NULL, self->state_data);
 
-  nd_relay_transport_unref(self);
+  nostr_publish_transport_unref(self);
 }
 
 static void
-ws_start_connect(NdRelayTransport *self)
+ws_start_connect(NostrPublishTransport *self)
 {
-  NdRelayWebsocket *ws = self->backend_state;
+  NostrPublishWebsocket *ws = self->backend_state;
   if (ws->connecting || ws->conn != NULL)
     return;
 
@@ -435,7 +436,7 @@ ws_start_connect(NdRelayTransport *self)
   ws->connecting = TRUE;
   /* Hold a ref until on_ws_connect_finish runs — the async op needs the
    * transport alive even if the caller unrefs mid-connect. */
-  nd_relay_transport_ref(self);
+  nostr_publish_transport_ref(self);
   soup_session_websocket_connect_async(ws->session, msg,
                                        NULL,           /* origin */
                                        NULL,           /* protocols */
@@ -448,8 +449,8 @@ ws_start_connect(NdRelayTransport *self)
 static gboolean
 on_reconnect_tick(gpointer user_data)
 {
-  NdRelayTransport *self = user_data;
-  NdRelayWebsocket *ws = self->backend_state;
+  NostrPublishTransport *self = user_data;
+  NostrPublishWebsocket *ws = self->backend_state;
   ws->reconnect_source_id = 0;
   if (ws->want_connected)
     ws_start_connect(self);
@@ -457,19 +458,19 @@ on_reconnect_tick(gpointer user_data)
 }
 
 static void
-ws_schedule_reconnect(NdRelayTransport *self, gboolean reset_backoff)
+ws_schedule_reconnect(NostrPublishTransport *self, gboolean reset_backoff)
 {
-  NdRelayWebsocket *ws = self->backend_state;
+  NostrPublishWebsocket *ws = self->backend_state;
   if (ws->reconnect_source_id != 0)
     return;   /* already armed */
   if (reset_backoff)
-    ws->backoff_sec = ND_WS_BACKOFF_INITIAL_SEC;
+    ws->backoff_sec = NP_WS_BACKOFF_INITIAL_SEC;
 
   guint delay = ws->backoff_sec;
   /* Double for the NEXT attempt (this arms with the current value). */
   guint next = ws->backoff_sec * 2u;
-  if (next > (guint)ND_WS_BACKOFF_MAX_SEC)
-    next = (guint)ND_WS_BACKOFF_MAX_SEC;
+  if (next > (guint)NP_WS_BACKOFF_MAX_SEC)
+    next = (guint)NP_WS_BACKOFF_MAX_SEC;
   ws->backoff_sec = next;
 
   ws->reconnect_source_id =
@@ -479,25 +480,25 @@ ws_schedule_reconnect(NdRelayTransport *self, gboolean reset_backoff)
 /* ---- Ops table ---- */
 
 static gboolean
-ws_connect_async(NdRelayTransport *self)
+ws_connect_async(NostrPublishTransport *self)
 {
-  NdRelayWebsocket *ws = self->backend_state;
+  NostrPublishWebsocket *ws = self->backend_state;
   ws->want_connected = TRUE;
   if (ws->backoff_sec == 0)
-    ws->backoff_sec = ND_WS_BACKOFF_INITIAL_SEC;
+    ws->backoff_sec = NP_WS_BACKOFF_INITIAL_SEC;
   ws_start_connect(self);
   return TRUE;
 }
 
 static gboolean
-ws_send_frame(NdRelayTransport *self, const gchar *frame_json, GError **error)
+ws_send_frame(NostrPublishTransport *self, const gchar *frame_json, GError **error)
 {
-  NdRelayWebsocket *ws = self->backend_state;
+  NostrPublishWebsocket *ws = self->backend_state;
   if (ws->conn == NULL ||
       soup_websocket_connection_get_state(ws->conn) !=
         SOUP_WEBSOCKET_STATE_OPEN) {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
-                "nd-relay-transport(%s): not connected", self->url);
+                "nostr-publish-transport(%s): not connected", self->url);
     return FALSE;
   }
   soup_websocket_connection_send_text(ws->conn, frame_json);
@@ -505,9 +506,9 @@ ws_send_frame(NdRelayTransport *self, const gchar *frame_json, GError **error)
 }
 
 static void
-ws_disconnect(NdRelayTransport *self)
+ws_disconnect(NostrPublishTransport *self)
 {
-  NdRelayWebsocket *ws = self->backend_state;
+  NostrPublishWebsocket *ws = self->backend_state;
   ws->want_connected = FALSE;
   if (ws->reconnect_source_id != 0) {
     g_source_remove(ws->reconnect_source_id);
@@ -519,9 +520,9 @@ ws_disconnect(NdRelayTransport *self)
 }
 
 static gboolean
-ws_is_connected(NdRelayTransport *self)
+ws_is_connected(NostrPublishTransport *self)
 {
-  NdRelayWebsocket *ws = self->backend_state;
+  NostrPublishWebsocket *ws = self->backend_state;
   if (ws->conn == NULL)
     return FALSE;
   return soup_websocket_connection_get_state(ws->conn) ==
@@ -529,9 +530,9 @@ ws_is_connected(NdRelayTransport *self)
 }
 
 static void
-ws_finalize(NdRelayTransport *self)
+ws_finalize(NostrPublishTransport *self)
 {
-  NdRelayWebsocket *ws = self->backend_state;
+  NostrPublishWebsocket *ws = self->backend_state;
   if (ws == NULL)
     return;
   if (ws->reconnect_source_id != 0) {
@@ -547,7 +548,7 @@ ws_finalize(NdRelayTransport *self)
   self->backend_state = NULL;
 }
 
-static const NdRelayTransportOps WEBSOCKET_OPS = {
+static const NostrPublishTransportOps WEBSOCKET_OPS = {
   .connect_async = ws_connect_async,
   .send_frame    = ws_send_frame,
   .disconnect    = ws_disconnect,
@@ -557,43 +558,51 @@ static const NdRelayTransportOps WEBSOCKET_OPS = {
 
 /* ---- Public API ---- */
 
-static NdRelayTransport *
-new_common(const gchar *url, const NdRelayTransportOps *ops)
+static NostrPublishTransport *
+new_common(const gchar *url, const NostrPublishTransportOps *ops)
 {
-  NdRelayTransport *self = g_new0(NdRelayTransport, 1);
+  NostrPublishTransport *self = g_new0(NostrPublishTransport, 1);
   self->ref_count = 1;
   self->ops       = ops;
   self->url       = g_strdup(url);
   return self;
 }
 
-NdRelayTransport *
-nd_relay_transport_new_websocket(const gchar *url)
+NostrPublishTransport *
+nostr_publish_transport_new_websocket(const gchar *url)
 {
   g_return_val_if_fail(url != NULL, NULL);
-  NdRelayTransport *self = new_common(url, &WEBSOCKET_OPS);
-  NdRelayWebsocket *ws = g_new0(NdRelayWebsocket, 1);
+  NostrPublishTransport *self = new_common(url, &WEBSOCKET_OPS);
+  NostrPublishWebsocket *ws = g_new0(NostrPublishWebsocket, 1);
   ws->owner       = self;
-  ws->backoff_sec = ND_WS_BACKOFF_INITIAL_SEC;
+  ws->backoff_sec = NP_WS_BACKOFF_INITIAL_SEC;
   self->backend_state = ws;
   return self;
 }
 
-NdRelayTransport *
-nd_relay_transport_new_fixture(const gchar *url)
+NostrPublishTransport *
+nostr_publish_transport_factory_websocket(const gchar *relay_url,
+                                          gpointer     user_data)
+{
+  (void)user_data;
+  return nostr_publish_transport_new_websocket(relay_url);
+}
+
+NostrPublishTransport *
+nostr_publish_transport_new_fixture(const gchar *url)
 {
   g_return_val_if_fail(url != NULL, NULL);
-  NdRelayTransport *self = new_common(url, &FIXTURE_OPS);
+  NostrPublishTransport *self = new_common(url, &FIXTURE_OPS);
   self->is_fixture = TRUE;
-  NdRelayFixtureState *fx = g_new0(NdRelayFixtureState, 1);
+  NostrPublishFixtureState *fx = g_new0(NostrPublishFixtureState, 1);
   fx->sent = g_ptr_array_new_with_free_func(g_free);
   self->backend_state = fx;
   return self;
 }
 
 void
-nd_relay_transport_set_listener(NdRelayTransport         *self,
-                                NdRelayTransportListener  listener,
+nostr_publish_transport_set_listener(NostrPublishTransport         *self,
+                                NostrPublishTransportListener  listener,
                                 gpointer                  user_data)
 {
   g_return_if_fail(self != NULL);
@@ -602,8 +611,8 @@ nd_relay_transport_set_listener(NdRelayTransport         *self,
 }
 
 void
-nd_relay_transport_set_state_callback(NdRelayTransport              *self,
-                                      NdRelayTransportStateCallback  cb,
+nostr_publish_transport_set_state_callback(NostrPublishTransport              *self,
+                                      NostrPublishTransportStateCallback  cb,
                                       gpointer                       user_data)
 {
   g_return_if_fail(self != NULL);
@@ -612,8 +621,8 @@ nd_relay_transport_set_state_callback(NdRelayTransport              *self,
 }
 
 void
-nd_relay_transport_set_ok_callback(NdRelayTransport          *self,
-                                   NdRelayTransportOkCallback cb,
+nostr_publish_transport_set_ok_callback(NostrPublishTransport          *self,
+                                   NostrPublishTransportOkCallback cb,
                                    gpointer                   user_data)
 {
   g_return_if_fail(self != NULL);
@@ -622,8 +631,8 @@ nd_relay_transport_set_ok_callback(NdRelayTransport          *self,
 }
 
 void
-nd_relay_transport_set_auth_callback(NdRelayTransport            *self,
-                                     NdRelayTransportAuthCallback cb,
+nostr_publish_transport_set_auth_callback(NostrPublishTransport            *self,
+                                     NostrPublishTransportAuthCallback cb,
                                      gpointer                     user_data)
 {
   g_return_if_fail(self != NULL);
@@ -632,14 +641,14 @@ nd_relay_transport_set_auth_callback(NdRelayTransport            *self,
 }
 
 void
-nd_relay_transport_connect_async(NdRelayTransport *self)
+nostr_publish_transport_connect_async(NostrPublishTransport *self)
 {
   g_return_if_fail(self != NULL);
   self->ops->connect_async(self);
 }
 
 gboolean
-nd_relay_transport_send_frame(NdRelayTransport *self,
+nostr_publish_transport_send_frame(NostrPublishTransport *self,
                               const gchar      *frame_json,
                               GError          **error)
 {
@@ -649,28 +658,28 @@ nd_relay_transport_send_frame(NdRelayTransport *self,
 }
 
 void
-nd_relay_transport_disconnect(NdRelayTransport *self)
+nostr_publish_transport_disconnect(NostrPublishTransport *self)
 {
   g_return_if_fail(self != NULL);
   self->ops->disconnect(self);
 }
 
 gboolean
-nd_relay_transport_is_connected(NdRelayTransport *self)
+nostr_publish_transport_is_connected(NostrPublishTransport *self)
 {
   g_return_val_if_fail(self != NULL, FALSE);
   return self->ops->is_connected(self);
 }
 
 const gchar *
-nd_relay_transport_get_url(NdRelayTransport *self)
+nostr_publish_transport_get_url(NostrPublishTransport *self)
 {
   g_return_val_if_fail(self != NULL, NULL);
   return self->url;
 }
 
-NdRelayTransport *
-nd_relay_transport_ref(NdRelayTransport *self)
+NostrPublishTransport *
+nostr_publish_transport_ref(NostrPublishTransport *self)
 {
   g_return_val_if_fail(self != NULL, NULL);
   g_atomic_int_inc(&self->ref_count);
@@ -678,7 +687,7 @@ nd_relay_transport_ref(NdRelayTransport *self)
 }
 
 void
-nd_relay_transport_unref(NdRelayTransport *self)
+nostr_publish_transport_unref(NostrPublishTransport *self)
 {
   if (self == NULL)
     return;
@@ -693,7 +702,7 @@ nd_relay_transport_unref(NdRelayTransport *self)
 /* ---- Fixture-only helpers ---- */
 
 void
-nd_relay_transport_fixture_deliver_frame(NdRelayTransport *self,
+nostr_publish_transport_fixture_deliver_frame(NostrPublishTransport *self,
                                          const gchar      *kind_hint,
                                          const gchar      *envelope_json)
 {
@@ -709,7 +718,7 @@ nd_relay_transport_fixture_deliver_frame(NdRelayTransport *self,
 }
 
 void
-nd_relay_transport_fixture_set_state(NdRelayTransport *self,
+nostr_publish_transport_fixture_set_state(NostrPublishTransport *self,
                                      gboolean          connected,
                                      GError           *error)
 {
@@ -721,13 +730,13 @@ nd_relay_transport_fixture_set_state(NdRelayTransport *self,
 }
 
 gchar **
-nd_relay_transport_fixture_take_sent(NdRelayTransport *self,
+nostr_publish_transport_fixture_take_sent(NostrPublishTransport *self,
                                      gsize            *out_len)
 {
   g_return_val_if_fail(self != NULL, NULL);
   g_return_val_if_fail(self->is_fixture, NULL);
 
-  NdRelayFixtureState *fx = self->backend_state;
+  NostrPublishFixtureState *fx = self->backend_state;
   gsize n = fx->sent->len;
   gchar **frames = g_new0(gchar *, n + 1);
   for (gsize i = 0; i < n; i++) {

@@ -481,6 +481,11 @@ if (GNOSTR_WITH_PKCS11)
   add_subdirectory(pkcs11)
 endif()
 
+option(ENABLE_LIBNOSTR_PUBLISH "Build libnostr-publish (shared relay publish core; implied by ENABLE_NOSTR_DAV)" OFF)
+if (ENABLE_LIBNOSTR_PUBLISH OR ENABLE_NOSTR_DAV)
+  add_subdirectory(gnome/libnostr-publish)
+endif()
+
 if (ENABLE_NOSTR_DAV)
   add_subdirectory(gnome/nostr-dav)
 endif()
