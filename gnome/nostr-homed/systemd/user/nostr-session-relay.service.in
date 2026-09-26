@@ -29,10 +29,14 @@ ProtectHome=read-only
 ReadWritePaths=%h/.local/share/nostr/session-relay
 ReadWritePaths=%t/nostr
 PrivateTmp=yes
-ProtectClock=yes
 ProtectHostname=yes
-ProtectKernelLogs=yes
-ProtectKernelModules=yes
+# No ProtectClock= / ProtectKernelLogs= / ProtectKernelModules=: they drop
+# CAP_SYS_TIME / CAP_WAKE_ALARM / CAP_SYSLOG / CAP_SYS_MODULE from the
+# bounding set, which an unprivileged systemd --user manager cannot do —
+# the unit then fails every start with 218/CAPABILITIES and crash-loops
+# while the .socket keeps accepting connections nobody services
+# (nostrc-q9ba). A user service never holds those capabilities anyway.
+# Same posture as nostr-notify.service (nostrc-4kb1 / nostrc-8oon).
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 LockPersonality=yes
