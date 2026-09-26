@@ -26,7 +26,10 @@ target_include_directories(nostr_nautilus_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src ${_nn_share_src})
 target_compile_options(nostr_nautilus_core PRIVATE ${_nn_warn})
 target_link_libraries(nostr_nautilus_core PUBLIC PkgConfig::NN_GIO)
-set_property(TARGET nostr_nautilus_core PROPERTY POSITION_INDEPENDENT_CODE ON)
+# Linked into the module: keep its symbols out of Nautilus' namespace (only
+# the nautilus_module_* entry points are exported).
+set_target_properties(nostr_nautilus_core PROPERTIES POSITION_INDEPENDENT_CODE ON
+                      C_VISIBILITY_PRESET hidden)
 
 # --- The Nautilus module --------------------------------------------------
 pkg_check_modules(NN_EXT QUIET IMPORTED_TARGET libnautilus-extension-4>=43 gio-unix-2.0)
