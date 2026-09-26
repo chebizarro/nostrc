@@ -897,6 +897,38 @@ if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
     DESTINATION "${CMAKE_INSTALL_DOCDIR}/examples/pam")
 endif()
 
+# ----------------------------------------------------------------------------
+# Execution-Index #21a (docs/plans/gnome-integration-and-samba-server-2026-09-25.md
+# §5.1): dep-purity gate BASELINE scaffold. Pins nostr-authd + pam_nostr.so to
+# their known-good dependency closure and fails the moment either one gains a
+# link edge to the hanami / porthome / signer-client (nip55l) / FUSE
+# namespaces, or any other shared library not already on the allowlist pinned
+# inside the script. Deliberately NOT nested inside
+# NOSTR_HOMED_ENABLE_AUTH_INSTALL above: scripts/vm-linux-ci.sh (the lab/CI
+# parity loop that actually builds these two artifacts) never sets that
+# option, so gating on it would mean the tripwire never fires where it
+# matters. Runs whenever the targets exist, matching the guard style already
+# used for homed_syncd_off_closure below.
+#
+# Item #21b (final integrated check, out of scope for #21a) reruns this same
+# script after every subsequent track lands — no CMake changes needed there,
+# it rides this test.
+# ----------------------------------------------------------------------------
+if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND TARGET nostr-authd)
+  if(NOSTR_HOMED_ENABLE_PAM AND TARGET pam_nostr)
+    add_test(NAME homed_authd_dep_purity
+      COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check-authd-dep-purity.sh
+              $<TARGET_FILE:nostr-authd> $<TARGET_FILE:pam_nostr>)
+  else()
+    add_test(NAME homed_authd_dep_purity
+      COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/check-authd-dep-purity.sh
+              $<TARGET_FILE:nostr-authd>)
+  endif()
+  set_tests_properties(homed_authd_dep_purity PROPERTIES
+    LABELS "nostr-homed;auth-runtime;dep-purity" TIMEOUT 15
+    SKIP_RETURN_CODE 77)
+endif()
+
 # B5 / D-11: headless identity-authority admin CLI. Builds nostr-homectl on
 # top of nostr_identity_core alone -- no GLib, no FUSE, no D-Bus session bus.
 # Independent of NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING; the target name
