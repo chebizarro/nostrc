@@ -37,7 +37,7 @@ static int hex32(const char *hex, uint8_t out[32]) {
   return 0;
 }
 
-#define CHECK(cond, msg) do { if (!(cond)) { fprintf(stderr, "seed: %s\n", msg); return 1; } } while (0)
+#define CHECK(cond, msg) do { if (!(cond)) { fprintf(stderr, "seed: ERROR: %s failed\n", msg); return 1; } } while (0)
 
 /* B5-profile: fetch kind-0 metadata for @username (pubkey @pubkey_hex) via
  * the shipped `nostr-homed-profile refresh` CLI. Best-effort: never blocks
@@ -92,6 +92,12 @@ int main(int argc, char **argv) {
     return 2;
   }
   const char *dir = pos[0], *username = pos[1], *passphrase = pos[2];
+  /* The authority and NSS reader both reserve the n_ namespace. Reject
+   * invalid names before opening (or creating) authority.db. */
+  if (!nh_identity_username_is_valid(username)) {
+    fprintf(stderr, "seed: ERROR: invalid username '%s': expected n_ followed by lowercase letters, digits or underscores (3-32 characters)\n", username);
+    return 2;
+  }
   const char *auth_sk = (np >= 4) ? pos[3] : "0000000000000000000000000000000000000000000000000000000000000001";
   const char *vault_sk = (np >= 5) ? pos[4] : auth_sk;
   char *pubkey = nostr_key_get_public(auth_sk);
@@ -121,7 +127,14 @@ int main(int argc, char **argv) {
   enroll.home_mode = NH_IDENTITY_HOME_CREATE;
   nh_identity_operation_state state;
   const char *op = "00000000-0000-4000-8000-000000000001";
-  CHECK(nh_identity_operation_begin_enroll(store, op, &enroll, &state) == NH_IDENTITY_OK, "enroll");
+  nh_identity_rc erc = nh_identity_operation_begin_enroll(store, op,
+                                                         &enroll, &state);
+  if (erc != NH_IDENTITY_OK) {
+    fprintf(stderr, "seed: ERROR: enroll failed: %s (%s)\n",
+            nh_identity_rc_name(erc), nh_identity_store_error_detail(store));
+    nh_identity_store_close(store);
+    return 1;
+  }
   nh_identity_home_options hopts = {0}; /* empty home (no skel) */
   nh_identity_rc hrc = nh_identity_home_prepare(store, op, &hopts, &state);
   if (hrc != NH_IDENTITY_OK) { fprintf(stderr, "seed: home prepare: %s (need root, /home writable)\n", nh_identity_rc_name(hrc)); return 1; }
@@ -146,6 +159,9 @@ int main(int argc, char **argv) {
   attestation.key_generation = account.key_generation;
   CHECK(nh_identity_provider_activate(store, "00000000-0000-4000-8000-000000000003",
           provider_id, &attestation) == NH_IDENTITY_OK, "provider activate");
+  /* Publish before activation: publish advances the operation to PROJECTED,
+   * which nh_identity_operation_activate requires. Reversing these calls
+   * leaves the account enrolling instead of active. */
   CHECK(nh_identity_store_publish_projection(store, NULL) == NH_IDENTITY_OK, "publish");
   CHECK(nh_identity_operation_activate(store, op, &state) == NH_IDENTITY_OK, "activate account");
   nh_identity_store_close(store);

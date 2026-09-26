@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(nostr_homed VERSION 0.2.1 LANGUAGES C)
+project(nostr_homed VERSION 0.2.2 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -456,6 +456,13 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME)
   # renames it to `nostr-homed-seed` in sbin.
   add_executable(nh-seed-authority tests/integration/seed_authority.c)
   target_link_libraries(nh-seed-authority PRIVATE nostr_auth_runtime)
+  if(NOSTR_HOMED_BUILD_TESTS)
+    add_test(NAME homed_seed_username
+      COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_seed_username.sh)
+    set_tests_properties(homed_seed_username PROPERTIES
+      LABELS "nostr-homed;identity" TIMEOUT 30
+      ENVIRONMENT "NH_SEED_AUTHORITY=$<TARGET_FILE:nh-seed-authority>")
+  endif()
 
   # nostrc-zcll.7 acceptance: sibling seeder that enrols a NIP-46 provider
   # (QR / nostrconnect, or pre-paired bunker) instead of a local vault.
