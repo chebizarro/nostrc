@@ -36,6 +36,9 @@ const SD_PATH = '/org/freedesktop/systemd1';
 const SD_MGR = 'org.freedesktop.systemd1.Manager';
 const SD_UNIT = 'org.freedesktop.systemd1.Unit';
 const PROPS = 'org.freedesktop.DBus.Properties';
+// systemd --user always owns its name in a real session; never ask the bus
+// to spawn something for it (e.g. a headless shell on a private bus).
+const SD_FLAGS = Gio.DBusCallFlags.NO_AUTO_START;
 
 const RELAY_NAME = 'org.nostr.SessionRelay1';
 const RELAY_PATH = '/org/nostr/SessionRelay1';
@@ -214,7 +217,7 @@ export class RelayMonitor {
         // reports LoadState "not-found" for units that do not exist.
         const r = await dbusCall(this._bus, {
             name: SD_NAME, path: SD_PATH, iface: SD_MGR, method: 'LoadUnit',
-            params: new GLib.Variant('(s)', [UNITS[key]]), reply: '(o)',
+            params: new GLib.Variant('(s)', [UNITS[key]]), reply: '(o)', flags: SD_FLAGS,
             timeout: CALL_TIMEOUT, cancellable: this._cancellable,
         });
         const [path] = r.deepUnpack();
@@ -230,7 +233,7 @@ export class RelayMonitor {
         const path = await this._unitPath(key);
         const r = await dbusCall(this._bus, {
             name: SD_NAME, path, iface: PROPS, method: 'GetAll',
-            params: new GLib.Variant('(s)', [SD_UNIT]), reply: '(a{sv})',
+            params: new GLib.Variant('(s)', [SD_UNIT]), reply: '(a{sv})', flags: SD_FLAGS,
             timeout: CALL_TIMEOUT, cancellable: this._cancellable,
         });
         const [props] = r.deepUnpack();
@@ -320,7 +323,7 @@ export class RelayMonitor {
 
     _runOp(op) {
         const base = {
-            name: SD_NAME, path: SD_PATH, iface: SD_MGR, method: op.method,
+            name: SD_NAME, path: SD_PATH, iface: SD_MGR, method: op.method, flags: SD_FLAGS,
             timeout: CALL_TIMEOUT, cancellable: this._cancellable,
         };
         switch (op.method) {
