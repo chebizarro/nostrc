@@ -522,16 +522,18 @@ endif()
 
 if (ENABLE_NOSTR_WALLET_AGENT)
   add_subdirectory(gnome/nostr-wallet-agent)
+endif()
+
 # nostr-nautilus (nostrc-xlf3): GNOME Files context menu → nostr-share /
 # nostr-seal. Defaults ON only when libnautilus-extension-4 is installed.
 set(_nostr_nautilus_default OFF)
 find_package(PkgConfig QUIET)
-endif()
-
 if (PKG_CONFIG_FOUND)
   pkg_check_modules(_NOSTR_NAUTILUS_PROBE QUIET libnautilus-extension-4>=43)
   if (_NOSTR_NAUTILUS_PROBE_FOUND)
     set(_nostr_nautilus_default ON)
+  endif()
+endif()
 option(ENABLE_NOSTR_NAUTILUS "Build the nostr-nautilus Files extension" ${_nostr_nautilus_default})
 if (ENABLE_NOSTR_NAUTILUS)
   add_subdirectory(gnome/nostr-nautilus)

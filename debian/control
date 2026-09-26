@@ -36,7 +36,6 @@ Build-Depends: debhelper-compat (= 13),
                libgdk-pixbuf-2.0-dev
 # nostr-wallet-agent (nostrc-yka8): libadwaita approval dialogs.
                libadwaita-1-dev (>= 1.4)
-               libadwaita-1-dev (>= 1.5),
 # nostr-nautilus (nostrc-xlf3): libnautilus-extension-4 (Nautilus 43+).
                libnautilus-extension-dev
 Standards-Version: 4.6.2
