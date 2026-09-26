@@ -19,7 +19,17 @@ Build-Depends: debhelper-compat (= 13),
                libgit2-dev,
                libfuse3-dev,
                libsystemd-dev,
-               chrpath
+               chrpath,
+# Wave 4 (packaging-wave4 / #22a): GLib + libsoup + libxml2 + json-glib
+# are needed by the nostr-dav bridge daemon and the notification daemon
+# (org.nostr.NotifyDaemon uses GNotification via gio-2.0). libsecret is
+# optional for the DAV token mirror but recommended so a headed install
+# keeps parity with the desktop packaging.
+               libglib2.0-dev,
+               libsoup-3.0-dev,
+               libxml2-dev,
+               libjson-glib-dev,
+               libsecret-1-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/chebizarro/nostrc
 Vcs-Browser: https://github.com/chebizarro/nostrc
@@ -209,6 +219,116 @@ Description: Inert winbind / Samba AD domain samples for nostr-homed
  validate_domain_profile.py profile validator. Nothing in this package
  activates PAM or winbind -- it is inert by design and is safe to install
  on a stock host.
+
+Package: nostrc-session-relay
+Section: admin
+Architecture: any
+Multi-Arch: foreign
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Suggests: nostr-notify (>= ${source:Version})
+Description: Per-user session-scoped local Nostr relay (Wave 4 / plan §3.2)
+ nostrc-session-relay ships the socket-activated per-user relay
+ (`nostr-session-relayd`) that hosts the desktop session's private
+ event bus. The relay is bound to `$XDG_RUNTIME_DIR/nostr/relay.sock`
+ (0600, SO_PEERCRED UID-equality admission) and started on demand by
+ the shipped user socket + service pair.
+ .
+ The socket owner is the socket unit (never the service); logging out
+ stops the pair and reclaims the fd (`PartOf=graphical-session.target`).
+ .
+ Install alongside `nostr-notify` (the natural companion — it consumes
+ the socket for NIP-17 + NIP-29 background notifications). The package
+ does NOT auto-enable anything; the user activates it with
+ `systemctl --user enable --now nostr-session-relay.socket`.
+
+Package: nostr-notify
+Section: admin
+Architecture: any
+Multi-Arch: foreign
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         libnostr1 (= ${binary:Version})
+Recommends: nostrc-session-relay (>= ${source:Version}),
+            nostr-dav (>= ${source:Version})
+Description: Nostr NIP-29 + NIP-17 background notification daemon (Wave 4)
+ nostr-notify ships `nostr-notify-daemon` — a background observer that
+ subscribes to NIP-17 DMs (kind 1059 gift-wraps) and NIP-29 group
+ events and emits `GNotification` toasts via `org.nostr.NotifyDaemon`
+ on the session bus. Owns its OWN GApplication ID (never shares
+ GNostr's `org.gnostr.Client`, per Finding 4 of the plan).
+ .
+ DM notifications are OPAQUE — the outer gift-wrap pubkey is random
+ per NIP-17 so the daemon never leaks the sender; only NIP-29 group
+ events show a ≤80-char preview. The daemon prefers the session-relay
+ socket (`Recommends: nostrc-session-relay`) and falls back to
+ `home_relays` when the socket is absent.
+ .
+ The shipped user service is opt-in — enable with
+ `systemctl --user enable --now nostr-notify.service`.
+
+Package: nostr-dav
+Section: admin
+Architecture: any
+Multi-Arch: foreign
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: gnostr-signer-daemon,
+            nostrc-session-relay (>= ${source:Version})
+Description: Localhost CalDAV / CardDAV / WebDAV bridge for Nostr (Wave 4)
+ nostr-dav is the loopback (`127.0.0.1:7680`) DAV bridge that lets
+ GNOME Evolution Data Server (Calendar / Contacts) and GNOME Files
+ speak to Nostr events. Ships the daemon (`nostr-dav`), a user
+ service unit, a support oneshot (`nostr-dav-dirs.service`) that
+ creates the token + store dirs outside the daemon sandbox, and the
+ D-Bus session activation file for `org.nostr.Dav`.
+ .
+ The WebSocket transport (plan bead tu6y) is now enabled by default;
+ the daemon uses libsoup-3 for both the HTTP DAV server and the
+ upstream WebSocket relay client.
+ .
+ Enable with `systemctl --user enable --now nostr-dav.service`. Token
+ bootstrap happens through `gnostr-signer-daemon`; the token file
+ lives under `$XDG_STATE_HOME/nostr-dav/`.
+
+Package: nostrc-samba-server
+Section: admin
+Architecture: any
+Multi-Arch: foreign
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         samba,
+         nostr-authd (>= ${source:Version}),
+         nostr-home-fuse (>= ${source:Version})
+Description: Dedicated Samba file-server for the Nostr auth broker (Wave 4)
+ nostrc-samba-server is the dedicated Samba subpackage: a standalone
+ `nostr-smbd.service` that runs its own `smbd` bound to
+ `/etc/nostr-auth/smb.conf` against a private `tdbsam` passdb at
+ `/var/lib/nostr-auth/smbpasswd`, ISOLATED from the host's default
+ `samba.service`. See `SAMBA_STANDALONE.md` for the mediation
+ contract.
+ .
+ The share path defaults to `/var/lib/nostr-auth/share-root` — the
+ FUSE mount materialized by `nostr-home-fuse.service` (Wave 4 uses
+ share-declaration v1, not a VFS plugin; a FUSE failure surfaces as
+ share-level ENOENT / EIO, not an smbd crash).
+ .
+ Ships five files:
+   * `/etc/nostr-auth/smb.conf` — dedicated standalone smb.conf
+     (renamed from `smb.conf.standalone.sample`);
+   * `/etc/nostr-auth/smb-credentiald.conf` — reserved authority
+     config for the future rename-and-lift daemon (renamed from
+     `.sample`);
+   * `/etc/nostr-auth/servers.d/example.conf` — server-identity
+     drop-in example;
+   * `/lib/systemd/system/nostr-smbd.service` — dedicated smbd
+     unit;
+   * `/usr/lib/sysusers.d/nostr-smb-share.conf` — sysusers.d entry
+     for the `nostr-smb-share` account force-user'd by the share.
+ .
+ The postinst DOES NOT auto-enable the unit — the operator activates
+ it after seeding the passdb via `nostr-authd` and configuring their
+ shares (`systemctl enable --now nostr-smbd.service`).
 
 Package: nostr-login
 Section: metapackages

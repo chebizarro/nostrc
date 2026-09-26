@@ -1,0 +1,5 @@
+usr/bin/nostr-dav
+usr/lib/systemd/user/nostr-dav.service
+usr/lib/systemd/user/nostr-dav-dirs.service
+usr/share/dbus-1/services/org.nostr.Dav.service
+usr/share/doc/nostr-dav/nostr-dav.conf.sample

@@ -36,3 +36,32 @@ usr/lib/*/pkgconfig/nostr-homed.pc
 usr/lib/*/libhanami.so
 usr/lib/*/pkgconfig/hanami.pc
 usr/include/hanami/*
+
+# Wave 4 packaging (#22a): BUILD_RELAYD=ON is now on so
+# nostr-session-relayd (the per-user session daemon) ships in
+# nostrc-session-relay.deb.  The sibling `nostrc-relayd` system
+# daemon (network relay) still needs its own future
+# `nostr-relayd` debian package (per docs/designs/packaging-plan-
+# debian-fedora.md §2.3 "Headless — servers & tools"); until that
+# package lands, deliberately drop the artifact set.  Filed as a
+# follow-up bead so we don't lose track.
+usr/sbin/nostrc-relayd
+usr/lib/systemd/system/nostr-relayd.service
+usr/share/nostrc/relay.toml.example
+
+# Wave 3 leftovers: the sweep timer + service, close-session user
+# teardown unit, browse helper + autostart entry, and the admin
+# CLI nostr-authctl are all part of the SMB auth flow but not yet
+# packaged into `nostr-homed-smb`.  Track as a follow-up bead — for
+# Wave 4 packaging (#22a) they ride under not-installed so the
+# build ships the four NEW packages without a scope creep into
+# nostr-homed-smb.  Users who need these paths can install from
+# the source tarball with `dh_auto_install` locally.
+usr/sbin/nostr-authctl
+usr/lib/systemd/system/nostr-smb-sweep.service
+usr/lib/systemd/system/nostr-smb-sweep.timer
+usr/lib/systemd/user/nostr-smb-teardown.service
+usr/bin/nostr-smb-browse
+etc/xdg/autostart/nostr-smb-browse.desktop
+usr/share/nostr-homed/nsswitch.conf.snippet.sample
+usr/share/doc/nostrc/examples/servers.d/example.conf.batch-client

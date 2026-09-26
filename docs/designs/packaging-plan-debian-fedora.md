@@ -285,6 +285,17 @@ third-party consumer materialises. *(Decision D-6.)*
 | `nostr-homed-domain` | `/usr/share/nostr-homed/domain/*`, `/usr/libexec/nostr-homed/validate_domain_profile.py` | Arch: `all`. `Depends: python3`. Inert by design (never activates PAM). |
 | **`nostr-login`** *(metapackage)* | nothing | Arch: `all`. `Depends: libnss-nostr, libpam-nostr, nostr-authd, nostr-homectl`; `Recommends: nostr-homed-smb`; `Suggests: nostr-homed-domain`. |
 
+> **Wave 4 user-unit path (correction, 2026-09):** all Wave-4 user units
+> (`nostr-session-relay.{service,socket}`, `nostr-notify.service`,
+> `nostr-dav.service`, `nostr-dav-dirs.service`) ship under
+> **`/usr/lib/systemd/user/`** (the packager path resolved from
+> `pkg_get_variable(systemd systemduserunitdir)`) — NOT `/usr/lib/systemd/system/`
+> or `~/.config/systemd/user/`. `dh_installsystemduser` and RPM's
+> `%_userunitdir` both pick that directory up automatically; enabling is
+> always opt-in per user (`systemctl --user enable --now …`). Earlier
+> revisions of this section implied a system-unit path — corrected here
+> per the gnome-integration + samba-server plan (§5.2).
+
 #### Headless — servers & tools
 
 | Package | Contents |

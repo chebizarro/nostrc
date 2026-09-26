@@ -58,4 +58,24 @@ Filters = [
     # rpm 4.19+ auto-defines %{buildroot}; explicit BuildRoot: is not
     # required and is discouraged.
     "no-buildroot-tag",
+
+    # `lib-package-without-%mklibname` is Mandriva-specific convention
+    # (that macro is only defined on Mandriva/OpenMandriva/Rosa).
+    # Fedora rpmlint pulls it in from its shared library policy check
+    # but Fedora itself does NOT use %mklibname — we ship libnostr /
+    # libnostrgo / libnostr-json under their real SONAMEd basenames
+    # (`libnostr` for libnostr.so.1 etc.) which is idiomatic Fedora.
+    "lib-package-without-%mklibname",
+
+    # `hardcoded-library-path` warns when a spec references
+    # /usr/lib/... or /usr/lib64/... instead of %{_libdir}.  The four
+    # entries below are in the %install cleanup block that drops
+    # per-NIP object files a stray upstream CMake install() rule
+    # emits at /usr/lib/lib*.{a,so} on Fedora (i.e. NOT under
+    # %{_libdir}).  The path IS deliberately hardcoded because the
+    # buggy CMake rule hardcodes it; using %{_libdir} here would
+    # silently no-op on x86_64/aarch64 (where %{_libdir}=/usr/lib64)
+    # and leak the files back into %files.  See the surrounding
+    # comment in the spec.
+    "hardcoded-library-path",
 ]

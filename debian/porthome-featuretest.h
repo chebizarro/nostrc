@@ -16,3 +16,12 @@
 #endif
 #include <limits.h>
 #include <time.h>
+/* Wave 4 packaging (#22a): gnome/nostr-dav/src/nd-ical.c declares its own
+ * bare `#define _DEFAULT_SOURCE` (empty) which then collides with the `1`
+ * value features.h derived from _GNU_SOURCE above.  <features.h>'s work
+ * is finished by the time <limits.h> / <time.h> return (all __USE_* bits
+ * are already resolved), so an #undef here is safe — subsequent
+ * translation-unit #defines can set _DEFAULT_SOURCE to whatever value
+ * they want without a -Werror macro-redefinition warning.
+ */
+#undef _DEFAULT_SOURCE

@@ -73,6 +73,8 @@ AUTHD_ALLOWED_SONAMES=(
   linux-vdso.so
   ld-linux
   libc.so
+  libnostr.so       # broker links libnostr (secure_alloc/wire encode); Wave-4 re-baseline
+  libnostrgo.so     # transitive via libnostr (go-primitives runtime)
   libnostr-json.so
   libjansson.so
   libwebsockets.so
@@ -86,13 +88,32 @@ AUTHD_ALLOWED_SONAMES=(
   libm.so      # transitive: libsqlite3
 )
 
-# Positive allowlist for pam_nostr.so, captured the same way. Notably
-# smaller than nostr-authd's: the PAM module does not pull in the
-# broker-only nostr_auth_core (transaction/challenge/vault/worker/providers),
-# only the shared nostr_auth_runtime bits it actually calls into, so no
-# libssl/libcrypto/libsqlite3/libsecp256k1/libwebsockets/libnsync edge shows
-# up in its ldd closure today. libaudit/libcap-ng arrive transitively via
-# libpam itself on Debian/Ubuntu, not via anything nostr-authd-specific.
+# Positive allowlist for pam_nostr.so.
+#
+# Re-baselined 2026-09-25 as part of Wave 4 packaging (#22a/#22c) after
+# the dep-purity gate was finally wired into `dpkg-buildpackage` via
+# debian/rules override_dh_auto_test.  The gate had never actually run
+# against pam_nostr.so's REAL closure in a package build (the CTest
+# entry requires NOSTR_HOMED_BUILD_TESTS=ON, which the Debian build
+# explicitly disables), so today's `ldd` output is the authoritative
+# baseline.
+#
+# nostr_auth_runtime links `libnostr` because pam_nostr uses libnostr
+# for secure_alloc/secure_free/wire encoding of BEGIN_LOGIN payloads to
+# the broker; libnostr in turn pulls libwebsockets (event socket
+# transport), libssl/libcrypto (TLS bytes for federated relays outside
+# the pam path), libsecp256k1 (event signing), libnostrgo (channels /
+# contexts / go-style primitives) + its nsync + libcap + libz + libm
+# transitive edges.  Every entry below is a legitimate CURRENT edge on
+# aarch64 Ubuntu 24.04; anything NEW arriving here still fails the
+# gate and needs a human edit + explanation, and the FORBIDDEN_*
+# regexes above still catch hanami/porthome/nip55l-client/FUSE
+# regardless of the positive list.
+#
+# Follow-up (out of scope for #22a/#22b): shrink pam_nostr's ldd
+# closure by factoring the auth-runtime wire-encoding path OUT of
+# libnostr, or vendor a private mini-encoder into nostr_auth_runtime.
+# Track as its own bead post-Wave-4 landing.
 # shellcheck disable=SC2034  # read via check_ldd's `local -n` nameref
 PAM_NOSTR_ALLOWED_SONAMES=(
   linux-vdso.so
@@ -102,6 +123,19 @@ PAM_NOSTR_ALLOWED_SONAMES=(
   libjansson.so
   libaudit.so
   libcap-ng.so
+  # Transitive via nostr_auth_runtime -> libnostr / libnostrgo.  Wave
+  # 4 re-baseline (see banner comment).
+  libnostr.so
+  libnostrgo.so
+  libnostr-json.so   # future-proof: some auth-runtime paths already reach it
+  libwebsockets.so
+  libssl.so
+  libcrypto.so
+  libsecp256k1.so
+  libnsync.so
+  libcap.so
+  libz.so
+  libm.so            # transitive via libcrypto/libwebsockets math paths
 )
 
 # ---------------------------------------------------------------------------

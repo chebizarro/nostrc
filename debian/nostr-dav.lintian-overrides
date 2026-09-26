@@ -1,0 +1,7 @@
+# nostr-dav is a user-facing bridge daemon (systemctl --user activation),
+# not a program the operator invokes by hand. A man page is on the
+# roadmap alongside the QUICKSTART.md that ships in
+# /usr/share/doc/nostr-dav/, and gnome/nostr-dav/docs/QUICKSTART.md is
+# the interim reference. Suppress the lintian nag until the man page
+# lands as its own follow-up bead.
+nostr-dav: no-manual-page [usr/bin/nostr-dav]

@@ -53,7 +53,8 @@ override_dh_auto_configure:
 		-DBUILD_LIBHANAMI=ON \
 		-DBUILD_LIBMARMOT=OFF \
 		-DBUILD_MARMOT_GOBJECT=OFF \
-		-DBUILD_RELAYD=OFF \
+		-DBUILD_RELAYD=ON \
+		-DENABLE_NOSTR_DAV=ON \
 		-DSIGNET_ENABLE=OFF \
 		-DWITH_NOSTRDB=OFF \
 		-DLIBNOSTR_WITH_NOSTRDB=OFF \
@@ -62,6 +63,7 @@ override_dh_auto_configure:
 		-DBUILD_TESTING_FRAMEWORK=OFF \
 		-DENABLE_NIP57=OFF \
 		-DENABLE_NIP5F=OFF \
+		-DENABLE_NIP55L_STANDALONE_ACTIVATION=OFF \
 		-DENABLE_NOSTR_HOMED=ON \
 		-DNOSTR_HOMED_ENABLE_AUTH_CORE=ON \
 		-DNOSTR_HOMED_ENABLE_IDENTITY_CORE=ON \
@@ -72,13 +74,11 @@ override_dh_auto_configure:
 		-DNOSTR_HOMED_ENABLE_CTL=ON \
 		-DNOSTR_HOMED_ENABLE_DOMAIN_CONFIG=ON \
 		-DNOSTR_HOMED_ENABLE_AUTH_INSTALL=ON \
+		-DNOSTR_HOMED_ENABLE_SESSION_RELAY_UNITS=ON \
 		-DNOSTR_HOMED_BUILD_TESTS=OFF \
 		-DNOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL=ON \
 		-DNOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL=ON \
 		-DNOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL=ON
-
-override_dh_auto_test:
-	# Tests disabled via BUILD_TESTING=OFF; nothing to run.
 
 override_dh_auto_install:
 	dh_auto_install
@@ -88,6 +88,28 @@ override_dh_auto_install:
 	install -d debian/tmp/etc/nostr-auth
 	install -m 0644 debian/tmp/usr/share/nostr-homed/auth.conf.sample \
 		debian/tmp/etc/nostr-auth/auth.conf
+	# Wave 4 / #22a (packaging plan §5.2): the samba-server subpackage
+	# owns the standalone smb.conf pair as real conffiles. CMake stages
+	# the `.sample` copies under /usr/share/nostr-homed/; rename them
+	# into /etc/nostr-auth/ so nostr-authd can drive `smbpasswd -c` /
+	# `pdbedit -s` against the operator's live copy and dh_installdeb
+	# marks them as conffiles.  The server-identity example lives
+	# alongside them under servers.d/ (drop-in dir — nostr-authd loads
+	# it at start).  Sample originals stay under /usr/share/nostr-homed
+	# for provenance; not-installed is silent — dh_missing sees both.
+	if [ -f debian/tmp/usr/share/nostr-homed/smb.conf.standalone.sample ]; then \
+		install -m 0644 debian/tmp/usr/share/nostr-homed/smb.conf.standalone.sample \
+			debian/tmp/etc/nostr-auth/smb.conf; \
+	fi
+	if [ -f debian/tmp/usr/share/nostr-homed/smb-credentiald.conf.sample ]; then \
+		install -m 0644 debian/tmp/usr/share/nostr-homed/smb-credentiald.conf.sample \
+			debian/tmp/etc/nostr-auth/smb-credentiald.conf; \
+	fi
+	install -d debian/tmp/etc/nostr-auth/servers.d
+	if [ -f debian/tmp/usr/share/doc/nostrc/examples/servers.d/example.conf ]; then \
+		install -m 0644 debian/tmp/usr/share/doc/nostrc/examples/servers.d/example.conf \
+			debian/tmp/etc/nostr-auth/servers.d/example.conf; \
+	fi
 	# nostr-homed's PROJECT_NAME is `nostr_homed` (underscore), so CMake's
 	# CMAKE_INSTALL_DOCDIR lands docs under /usr/share/doc/nostr_homed —
 	# not a valid Debian doc dir name. Rename to the owning package's dir.
@@ -135,13 +157,38 @@ override_dh_installsystemd:
 	# Do not auto-start or enable nostr-authd: an unseeded broker has no
 	# accounts, so admins must seed with nostr-homed-seed first.
 	dh_installsystemd --no-start --no-enable --name=nostr-authd
+	# Wave 4 / #22a: dedicated Samba subpackage. The operator seeds
+	# passdb + configures shares BEFORE the smbd instance is safe to
+	# run — auto-enabling ships a Samba on TCP 445/139 the operator
+	# never asked for. Ship the unit, do not start or enable it.
+	dh_installsystemd --no-start --no-enable --name=nostr-smbd
 
 override_dh_installsystemduser:
-	# Portable-home user units (nostr-home-sync, nostr-home-fuse) are
-	# opt-in per session — they need a broker seed drop (§6.1) before
-	# they do useful work, so do NOT enable them globally at package
-	# install time. Users run `systemctl --user enable
-	# nostr-home-sync.service nostr-home-fuse.service` after
-	# provisioning their portable identity. This matches the base
-	# nostr-authd posture above.
+	# Portable-home user units (nostr-home-sync, nostr-home-fuse) and
+	# the Wave-4 user units (nostr-session-relay.{service,socket},
+	# nostr-notify.service, nostr-dav.service, nostr-dav-dirs.service)
+	# are opt-in per session — the session relay socket contract is
+	# 0600 + $XDG_RUNTIME_DIR ownership, and the notifier / DAV bridge
+	# need signer + relay presence before they do useful work. Users
+	# run `systemctl --user enable --now nostr-session-relay.socket`
+	# etc. after provisioning their portable identity. This matches
+	# the base nostr-authd posture above.
 	dh_installsystemduser --no-enable
+
+override_dh_auto_test:
+	# Tests disabled at configure (BUILD_TESTING=OFF), so dh_auto_test
+	# is otherwise a no-op. Piggy-back the Wave-4 dep-purity gate here
+	# so `dpkg-buildpackage -b` fails loudly if the auth broker or PAM
+	# module accidentally gain a link edge to hanami/porthome/nip55l
+	# client/FUSE surfaces (plan §5.1 #21a; script at
+	# scripts/check-authd-dep-purity.sh). Runs against the BUILD-TREE
+	# binaries — the installed-artifact re-run is #22c and lives on
+	# the lab (see docs/reviews/wave4-packaging-smoke-*.md).
+	@AUTHD=$$(find obj-* -type f -name nostr-authd -perm -111 2>/dev/null | head -n1); \
+	PAM=$$(find obj-* -type f -name pam_nostr.so 2>/dev/null | head -n1); \
+	if [ -z "$$AUTHD" ] || [ ! -x "$$AUTHD" ]; then \
+	echo "dep-purity: nostr-authd binary not found under obj-*; skipping"; \
+	exit 0; \
+	fi; \
+	echo "dep-purity: checking $$AUTHD $$PAM"; \
+	$(CURDIR)/scripts/check-authd-dep-purity.sh $$AUTHD $$PAM || exit $$?

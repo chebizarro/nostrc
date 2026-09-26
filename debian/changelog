@@ -1,3 +1,32 @@
+nostrc (0.4.0-1) UNRELEASED; urgency=medium
+
+  * Wave 4 packaging (#22a): add the four new binary packages for the
+    GNOME-integration + Samba-server milestones.
+    - nostrc-session-relay: nostr-session-relayd + user socket/service.
+    - nostr-notify: nostr-notify-daemon + user service.
+    - nostr-dav: localhost CalDAV/CardDAV/WebDAV bridge + user service +
+      D-Bus session activation for org.nostr.Dav.
+    - nostrc-samba-server: dedicated smb.conf + smb-credentiald.conf +
+      servers.d/example.conf + nostr-smbd.service + sysusers entry.
+  * Enable BUILD_RELAYD, ENABLE_NOSTR_DAV and NOSTR_HOMED_ENABLE_SESSION_
+    RELAY_UNITS in debian/rules; add GLib/libsoup/libxml2/json-glib/
+    libsecret Build-Depends.
+  * override_dh_installsystemd names nostr-smbd explicitly with
+    --no-start --no-enable so an unseeded passdb never surfaces on
+    TCP 445/139 by accident.
+  * override_dh_auto_test now runs the pinned dep-purity gate
+    (scripts/check-authd-dep-purity.sh) against nostr-authd + pam_nostr
+    so package builds fail on any new hanami/porthome/nip55l/FUSE
+    dependency edge.
+  * ENABLE_NIP55L_STANDALONE_ACTIVATION explicit OFF; gnostr-signer's
+    debian package remains the sole owner of org.nostr.Signer.service
+    (Milestone-A D3 dedup).
+  * Rename smb.conf.standalone.sample + smb-credentiald.conf.sample into
+    /etc/nostr-auth/ as real conffiles; keep sample originals under
+    /usr/share/nostr-homed/ for provenance.
+
+ -- GNostr Project <gnostr@example.com>  Fri, 25 Sep 2026 00:00:00 +0000
+
 nostrc (0.3.0-1) UNRELEASED; urgency=medium
 
   * Initial Debian source package for the nostrc monorepo.

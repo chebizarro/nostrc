@@ -79,6 +79,16 @@ option(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL
 # pulling any auth/porthome C code.
 option(NOSTR_HOMED_ENABLE_PORTHOME_STATUS_EXTENSION
   "Install the user-session gnome-shell extension nostr-home-status@nostrc" OFF)
+# Wave 4 packaging (#22a/#22b). Ships the socket-activated per-user session
+# relay unit pair (`nostr-session-relay.{service,socket}`) and the notification
+# daemon user unit (`nostr-notify.service`) into the packager-resolved
+# `${systemduserunitdir}` — independent of the experimental FUSE/roaming
+# stack. The BINARIES themselves (`nostr-session-relayd`,
+# `nostr-notify-daemon`) are still built by their owning subtrees
+# (apps/relayd + this project's src/notify/) under their own guards; this
+# option only controls whether the unit files ship in the tree.
+option(NOSTR_HOMED_ENABLE_SESSION_RELAY_UNITS
+  "Install the Wave-4 session-relay + notify systemd --user units" OFF)
 
 if(NOSTR_HOMED_ENABLE_CTL AND NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
   message(FATAL_ERROR
@@ -762,12 +772,23 @@ if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
     systemd/user/nostrfs@.service
     DESTINATION "${SYSTEMD_USER_UNIT_DIR}")
 
-  # --- Wave 3 / #13 -----------------------------------------------------
-  # Session-scoped local relay: socket-activated, per-user. The socket unit
-  # owns the fd at $XDG_RUNTIME_DIR/nostr/relay.sock; the service unit is
-  # `Type=notify` and PartOf=graphical-session.target. Binaries live under
-  # ${CMAKE_INSTALL_FULL_LIBEXECDIR} (built by apps/relayd; enabled via
-  # NOSTR_HOMED_ENABLE_SESSION_RELAY_UNITS to keep the option explicit).
+endif()
+
+# --- Wave 4 / #22a: session-relay + notify user units ---------------------
+# Lifted OUT of the experimental-roaming block so packagers can ship the
+# unit pair independent of the FUSE/D-Bus roaming experiment (Wave 4
+# packaging landing, plan §5.2). Guarded by the option added at the top of
+# this file so a base build never emits stray user units.
+if(NOSTR_HOMED_ENABLE_SESSION_RELAY_UNITS)
+  find_package(PkgConfig REQUIRED)
+  pkg_get_variable(SYSTEMD_USER_UNIT_DIR systemd systemduserunitdir)
+  if(NOT SYSTEMD_USER_UNIT_DIR)
+    set(SYSTEMD_USER_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/user")
+  endif()
+
+  # #13 — session relay. Socket unit owns the fd; service is Type=notify
+  # and PartOf=graphical-session.target. Binary from apps/relayd/
+  # (BUILD_RELAYD=ON), installed under ${CMAKE_INSTALL_FULL_LIBEXECDIR}.
   set(NOSTR_SESSION_RELAYD_EXEC "${CMAKE_INSTALL_FULL_LIBEXECDIR}/nostr-session-relayd")
   configure_file(systemd/user/nostr-session-relay.service.in
     "${CMAKE_CURRENT_BINARY_DIR}/nostr-session-relay.service" @ONLY)
@@ -776,10 +797,9 @@ if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)
     systemd/user/nostr-session-relay.socket
     DESTINATION "${SYSTEMD_USER_UNIT_DIR}")
 
-  # --- Wave 3 / #14 -----------------------------------------------------
-  # NIP-29 + NIP-17 background notification daemon. Runs After= the session
-  # relay so the socket exists before the notifier connects, but falls back
-  # to home_relays if the socket is absent.
+  # #14 — notification daemon. Runs After= the session relay so the
+  # socket exists before the notifier connects, but the notifier falls
+  # back to home_relays if the socket is absent.
   set(NOSTR_NOTIFY_DAEMON_EXEC "${CMAKE_INSTALL_FULL_LIBEXECDIR}/nostr-notify-daemon")
   configure_file(systemd/user/nostr-notify.service.in
     "${CMAKE_CURRENT_BINARY_DIR}/nostr-notify.service" @ONLY)

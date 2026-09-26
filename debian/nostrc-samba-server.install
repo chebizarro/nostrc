@@ -1,0 +1,11 @@
+etc/nostr-auth/smb.conf
+etc/nostr-auth/smb-credentiald.conf
+etc/nostr-auth/servers.d/example.conf
+usr/lib/systemd/system/nostr-smbd.service
+usr/lib/sysusers.d/nostr-smb-share.conf
+# Sample originals retained for provenance / operator diff base.
+usr/share/nostr-homed/smb.conf.standalone.sample
+usr/share/nostr-homed/smb-credentiald.conf.sample
+usr/share/doc/nostrc/examples/servers.d/example.conf
+usr/share/doc/nostrc/SAMBA_STANDALONE.md
+

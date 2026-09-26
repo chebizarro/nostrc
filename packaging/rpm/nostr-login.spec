@@ -52,7 +52,7 @@
 # raise.  The nostr-login metapackage is a proper noarch %package -n stanza.
 
 Name:           nostrc
-Version:        0.3.0
+Version:        0.4.0
 Release:        1%{?dist}
 Summary:        Nostr protocol monorepo (headless login stack build)
 License:        MIT
@@ -83,6 +83,16 @@ BuildRequires:  pkgconfig(libgit2)
 BuildRequires:  pkgconfig(fuse3)
 BuildRequires:  pkgconfig(libsystemd)
 BuildRequires:  pam-devel
+# Wave 4 (#22b): GLib + libsoup + libxml2 + json-glib are needed by
+# nostr-dav (localhost DAV bridge) and nostr-notify-daemon (GNotification
+# via gio-2.0). libsecret is optional for the DAV keyring mirror.
+BuildRequires:  pkgconfig(glib-2.0) >= 2.60
+BuildRequires:  pkgconfig(gio-2.0)
+BuildRequires:  pkgconfig(gobject-2.0)
+BuildRequires:  pkgconfig(libsoup-3.0)
+BuildRequires:  pkgconfig(libxml-2.0)
+BuildRequires:  pkgconfig(json-glib-1.0)
+BuildRequires:  pkgconfig(libsecret-1)
 # nsync is vendored in-tree at third_party/nsync (git submodule pinned to a
 # release tag) and built statically as part of the CMake configure step.
 # The vendored copy is folded into libnostrgo.so via --whole-archive, so
@@ -384,6 +394,120 @@ snapshot.json; Recommends the companion package for that reason.
 EXPERIMENTAL: gated behind NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL
 at build time; the wire format and mount policy may change.
 
+# --- Wave 4 packaging (#22b): four new subpackages ---------------------------
+#
+# Mirror of the Debian split landed in debian/control (Wave 4 / #22a). See
+# docs/plans/gnome-integration-and-samba-server-2026-09-25.md §5.2 for the
+# split rationale.
+
+# --- Sub-package: nostrc-session-relay ---------------------------------------
+%package -n nostrc-session-relay
+Summary:        Per-user session-scoped local Nostr relay (Wave 4)
+Requires:       libnostr%{?_isa} = %{version}-%{release}
+Suggests:       nostr-notify%{?_isa} = %{version}-%{release}
+%{?systemd_requires}
+
+%description -n nostrc-session-relay
+Ships the socket-activated per-user relay (`nostr-session-relayd`) that
+hosts the desktop session's private event bus. The relay is bound to
+`$XDG_RUNTIME_DIR/nostr/relay.sock` (0600 + SO_PEERCRED UID-equality
+admission) and is started on demand by the shipped user socket + service
+pair.
+
+The socket owner is the socket unit (never the service); logging out
+stops the pair and reclaims the fd (`PartOf=graphical-session.target`).
+
+The postinst DOES NOT auto-enable anything; the user activates the pair
+with `systemctl --user enable --now nostr-session-relay.socket`.
+
+# --- Sub-package: nostr-notify -----------------------------------------------
+%package -n nostr-notify
+Summary:        Nostr NIP-29 + NIP-17 background notification daemon (Wave 4)
+Requires:       libnostr%{?_isa} = %{version}-%{release}
+Requires:       glib2
+Recommends:     nostrc-session-relay%{?_isa} = %{version}-%{release}
+Recommends:     nostr-dav%{?_isa} = %{version}-%{release}
+%{?systemd_requires}
+
+%description -n nostr-notify
+`nostr-notify-daemon` is the background observer that subscribes to
+NIP-17 direct messages (kind-1059 gift-wraps) and NIP-29 group events
+and emits `GNotification` toasts via `org.nostr.NotifyDaemon` on the
+session bus. It owns its own GApplication ID (never shares GNostr's
+`org.gnostr.Client`, per Finding 4 of the plan).
+
+DM notifications are OPAQUE — the outer gift-wrap pubkey is random per
+NIP-17 so the daemon never leaks the sender; only NIP-29 group events
+show a ≤80-char preview.  The daemon prefers the session-relay socket
+(`Recommends: nostrc-session-relay`) and falls back to `home_relays`
+when the socket is absent.
+
+Enable with `systemctl --user enable --now nostr-notify.service`.
+
+# --- Sub-package: nostr-dav --------------------------------------------------
+%package -n nostr-dav
+Summary:        Localhost CalDAV / CardDAV / WebDAV bridge for Nostr (Wave 4)
+Requires:       libsoup3
+Requires:       glib2
+Requires:       libxml2
+Requires:       sqlite
+Requires:       json-glib
+Recommends:     gnostr-signer-daemon
+Recommends:     nostrc-session-relay%{?_isa} = %{version}-%{release}
+%{?systemd_requires}
+
+%description -n nostr-dav
+`nostr-dav` is the loopback (`127.0.0.1:7680`) DAV bridge that lets
+GNOME Evolution Data Server (Calendar / Contacts) and GNOME Files
+speak to Nostr events. Ships the daemon, a user service unit, a
+support oneshot (`nostr-dav-dirs.service`) that creates the token +
+store directories outside the daemon sandbox, and the D-Bus session
+activation file for `org.nostr.Dav`.
+
+The WebSocket transport (plan bead tu6y) is now enabled by default;
+the daemon uses libsoup-3 for both the HTTP DAV server and the
+upstream WebSocket relay client.
+
+Enable with `systemctl --user enable --now nostr-dav.service`. Token
+bootstrap happens through `gnostr-signer-daemon`; the token file
+lives under `$XDG_STATE_HOME/nostr-dav/`.
+
+# --- Sub-package: nostrc-samba-server ----------------------------------------
+%package -n nostrc-samba-server
+Summary:        Dedicated Samba file-server for the Nostr auth broker (Wave 4)
+Requires:       samba
+Requires:       nostr-authd%{?_isa}    = %{version}-%{release}
+Requires:       nostr-home-fuse%{?_isa} = %{version}-%{release}
+%{?systemd_requires}
+
+%description -n nostrc-samba-server
+Dedicated Samba subpackage: a standalone `nostr-smbd.service` that runs
+its own `smbd` bound to `/etc/nostr-auth/smb.conf` against a private
+`tdbsam` passdb at `/var/lib/nostr-auth/smbpasswd`, ISOLATED from the
+host's default `samba.service`. See `SAMBA_STANDALONE.md` for the
+mediation contract.
+
+The share path defaults to `/var/lib/nostr-auth/share-root` — the FUSE
+mount materialized by `nostr-home-fuse.service` (Wave 4 uses share-
+declaration v1, not a VFS plugin; a FUSE failure surfaces as share-
+level ENOENT / EIO, not an smbd crash).
+
+Ships five files:
+  * `/etc/nostr-auth/smb.conf` — dedicated standalone smb.conf
+    (renamed from `smb.conf.standalone.sample`);
+  * `/etc/nostr-auth/smb-credentiald.conf` — reserved authority
+    config for the future rename-and-lift daemon (renamed from
+    `.sample`);
+  * `/etc/nostr-auth/servers.d/example.conf` — server-identity
+    drop-in example;
+  * `%{_unitdir}/nostr-smbd.service` — dedicated smbd unit;
+  * `%{_sysusersdir}/nostr-smb-share.conf` — sysusers.d entry for
+    the `nostr-smb-share` account force-user'd by the share.
+
+The postinst DOES NOT auto-enable the unit — the operator activates
+it after seeding the passdb via `nostr-authd` and configuring shares
+(`systemctl enable --now nostr-smbd.service`).
+
 # --- Prep / build / install --------------------------------------------------
 
 %prep
@@ -405,7 +529,8 @@ at build time; the wire format and mount policy may change.
     -DBUILD_LIBHANAMI=OFF \
     -DBUILD_LIBMARMOT=OFF \
     -DBUILD_MARMOT_GOBJECT=OFF \
-    -DBUILD_RELAYD=OFF \
+    -DBUILD_RELAYD=ON \
+    -DENABLE_NOSTR_DAV=ON \
     -DSIGNET_ENABLE=OFF \
     -DWITH_NOSTRDB=OFF \
     -DLIBNOSTR_WITH_NOSTRDB=OFF \
@@ -414,6 +539,7 @@ at build time; the wire format and mount policy may change.
     -DBUILD_TESTING_FRAMEWORK=OFF \
     -DENABLE_NIP57=OFF \
     -DENABLE_NIP5F=OFF \
+    -DENABLE_NIP55L_STANDALONE_ACTIVATION=OFF \
     -DENABLE_NOSTR_HOMED=ON \
     -DNOSTR_HOMED_ENABLE_AUTH_CORE=ON \
     -DNOSTR_HOMED_ENABLE_IDENTITY_CORE=ON \
@@ -424,6 +550,7 @@ at build time; the wire format and mount policy may change.
     -DNOSTR_HOMED_ENABLE_CTL=ON \
     -DNOSTR_HOMED_ENABLE_DOMAIN_CONFIG=ON \
     -DNOSTR_HOMED_ENABLE_AUTH_INSTALL=ON \
+    -DNOSTR_HOMED_ENABLE_SESSION_RELAY_UNITS=ON \
     -DNOSTR_HOMED_BUILD_TESTS=OFF \
     -DBUILD_LIBHANAMI=ON \
     -DNOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL=ON \
@@ -445,6 +572,30 @@ install -d %{buildroot}%{_sysconfdir}/nostr-auth
 install -m 0644 \
     %{buildroot}%{_datadir}/nostr-homed/auth.conf.sample \
     %{buildroot}%{_sysconfdir}/nostr-auth/auth.conf
+
+# 1b. Wave 4 (#22b): the samba-server subpackage owns the standalone
+#     smb.conf pair as real conffiles under /etc/nostr-auth/, plus a
+#     drop-in server-identity example under servers.d/.  CMake stages
+#     the `.sample` copies under %{_datadir}/nostr-homed/ and
+#     %{_docdir}/nostrc/examples/servers.d/; rename them into their
+#     runtime homes here so `smbpasswd -c` / `pdbedit -s` operate on
+#     the operator's live copy and rpm marks them as %config(noreplace).
+if [ -f %{buildroot}%{_datadir}/nostr-homed/smb.conf.standalone.sample ]; then
+    install -m 0644 \
+        %{buildroot}%{_datadir}/nostr-homed/smb.conf.standalone.sample \
+        %{buildroot}%{_sysconfdir}/nostr-auth/smb.conf
+fi
+if [ -f %{buildroot}%{_datadir}/nostr-homed/smb-credentiald.conf.sample ]; then
+    install -m 0644 \
+        %{buildroot}%{_datadir}/nostr-homed/smb-credentiald.conf.sample \
+        %{buildroot}%{_sysconfdir}/nostr-auth/smb-credentiald.conf
+fi
+install -d %{buildroot}%{_sysconfdir}/nostr-auth/servers.d
+if [ -f %{buildroot}%{_docdir}/nostrc/examples/servers.d/example.conf ]; then
+    install -m 0644 \
+        %{buildroot}%{_docdir}/nostrc/examples/servers.d/example.conf \
+        %{buildroot}%{_sysconfdir}/nostr-auth/servers.d/example.conf
+fi
 
 # 2. Ship /etc/pam.d/nostr-login as a real config file (the proof service
 #    consumed by pamtester(1)).  Sourced from packaging/pam/nostr-login.sample.
@@ -598,6 +749,35 @@ rm -rf %{buildroot}%{_includedir}/hanami
 #       leak)" line in debian/not-installed.
 find %{buildroot} -type f -name test_relay_eose -delete
 find %{buildroot} -type d -empty -name tools -delete 2>/dev/null || :
+
+#    e) Wave 4 packaging (#22b): BUILD_RELAYD=ON is now on so
+#       nostr-session-relayd (per-user session daemon) ships in
+#       nostrc-session-relay.rpm.  The sibling `nostrc-relayd` system
+#       daemon (network relay) still needs its own future
+#       `nostr-relayd` subpackage (packaging plan §2.3); until it
+#       lands, drop the artifact set here.  Mirrors debian/not-
+#       installed.
+rm -f %{buildroot}%{_sbindir}/nostrc-relayd
+rm -f %{buildroot}%{_unitdir}/nostr-relayd.service
+rm -f %{buildroot}%{_datadir}/nostrc/relay.toml.example
+rmdir --ignore-fail-on-non-empty %{buildroot}%{_datadir}/nostrc 2>/dev/null || :
+
+#    f) Wave 3 leftovers not yet folded into nostr-homed-smb: the
+#       sweep timer + service, close-session user teardown unit,
+#       browse helper + autostart entry, admin CLI nostr-authctl.
+#       Drop for Wave 4 packaging (#22b); tracked as a follow-up
+#       bead.  Mirrors debian/not-installed.
+rm -f %{buildroot}%{_sbindir}/nostr-authctl
+rm -f %{buildroot}%{_unitdir}/nostr-smb-sweep.service
+rm -f %{buildroot}%{_unitdir}/nostr-smb-sweep.timer
+rm -f %{buildroot}%{_userunitdir}/nostr-smb-teardown.service
+rm -f %{buildroot}%{_bindir}/nostr-smb-browse
+rm -f %{buildroot}%{_sysconfdir}/xdg/autostart/nostr-smb-browse.desktop
+rmdir --ignore-fail-on-non-empty %{buildroot}%{_sysconfdir}/xdg/autostart 2>/dev/null || :
+rmdir --ignore-fail-on-non-empty %{buildroot}%{_sysconfdir}/xdg 2>/dev/null || :
+rm -f %{buildroot}%{_datadir}/nostr-homed/nsswitch.conf.snippet.sample
+rm -f %{buildroot}%{_docdir}/nostrc/examples/servers.d/example.conf.batch-client
+
 find %{buildroot} -depth -type d -empty -delete 2>/dev/null || :
 
 # --- Scriptlets --------------------------------------------------------------
@@ -639,10 +819,82 @@ find %{buildroot} -depth -type d -empty -delete 2>/dev/null || :
 %postun -n nostr-home-fuse
 %systemd_user_postun nostr-home-fuse.service
 
+# --- Wave 4 scriptlets ------------------------------------------------------
+# All four new packages follow the same posture as nostr-authd + the
+# portable-home pair above: DO NOT auto-enable or auto-start.  The
+# operator opts in per user (session-relay + notify + dav) or after
+# passdb seeding (samba-server).
+
+%post -n nostrc-session-relay
+%systemd_user_post nostr-session-relay.socket
+%systemd_user_post nostr-session-relay.service
+
+%preun -n nostrc-session-relay
+%systemd_user_preun nostr-session-relay.socket
+%systemd_user_preun nostr-session-relay.service
+
+%postun -n nostrc-session-relay
+%systemd_user_postun nostr-session-relay.socket
+%systemd_user_postun nostr-session-relay.service
+
+%post -n nostr-notify
+%systemd_user_post nostr-notify.service
+
+%preun -n nostr-notify
+%systemd_user_preun nostr-notify.service
+
+%postun -n nostr-notify
+%systemd_user_postun nostr-notify.service
+
+%post -n nostr-dav
+%systemd_user_post nostr-dav.service
+%systemd_user_post nostr-dav-dirs.service
+
+%preun -n nostr-dav
+%systemd_user_preun nostr-dav.service
+%systemd_user_preun nostr-dav-dirs.service
+
+%postun -n nostr-dav
+%systemd_user_postun nostr-dav.service
+%systemd_user_postun nostr-dav-dirs.service
+
+%post -n nostrc-samba-server
+%systemd_post nostr-smbd.service
+%sysusers_create_compat %{_sysusersdir}/nostr-smb-share.conf
+
+%preun -n nostrc-samba-server
+%systemd_preun nostr-smbd.service
+
+%postun -n nostrc-samba-server
+%systemd_postun nostr-smbd.service
+
 # Fedora rpmbuild auto-generates ldconfig %post / %postun for any subpackage
 # owning %{_libdir}/*.so.<SOVERSION>.  We do NOT ship manual ldconfig
 # scriptlets -- rpmlint (rightly) flags them as `non-empty-%postun
 # /sbin/ldconfig` since the auto-generated block is already there.
+
+# --- %check: Wave 4 dep-purity gate (#21a/#22b) ------------------------------
+#
+# Run the pinned dep-purity gate against the installed artifacts inside
+# %{buildroot}.  Fails the RPM build the moment the auth broker or PAM
+# module gain a link edge to hanami / porthome / nip55l-client / FUSE
+# surfaces (plan §5.1 #21a).  Script exit-code 77 == "skip" (tool
+# missing); rpmbuild honours a non-zero exit here.
+#
+# The dep-purity check is the same one nightly CI runs; using the
+# INSTALLED path (not obj-*) catches strip- or RPATH-related shifts
+# that would otherwise slip through the build tree.
+
+%check
+_authd=%{buildroot}%{_sbindir}/nostr-authd
+_pam=%{buildroot}%{_libdir}/security/pam_nostr.so
+if [ -x "$_authd" ]; then
+    echo "dep-purity: checking $_authd $_pam"
+    %{_builddir}/nostrc-%{version}/scripts/check-authd-dep-purity.sh \
+        "$_authd" "$_pam" || exit $?
+else
+    echo "dep-purity: nostr-authd not staged under %%buildroot; skipping"
+fi
 
 # --- File lists --------------------------------------------------------------
 #
@@ -796,9 +1048,71 @@ find %{buildroot} -depth -type d -empty -delete 2>/dev/null || :
 # nostrc-s6ke: manpages
 %{_mandir}/man8/nostr-home-fuse.8*
 
+# --- Wave 4 (#22b) file lists -----------------------------------------------
+
+%files -n nostrc-session-relay
+%license LICENSE
+%{_libexecdir}/nostr-session-relayd
+%{_userunitdir}/nostr-session-relay.service
+%{_userunitdir}/nostr-session-relay.socket
+
+%files -n nostr-notify
+%license LICENSE
+%{_libexecdir}/nostr-notify-daemon
+%{_userunitdir}/nostr-notify.service
+%dir %{_datadir}/nostr-notify
+%{_datadir}/nostr-notify/nostr-notify.conf.example
+
+%files -n nostr-dav
+%license LICENSE
+%{_bindir}/nostr-dav
+%{_userunitdir}/nostr-dav.service
+%{_userunitdir}/nostr-dav-dirs.service
+%{_datadir}/dbus-1/services/org.nostr.Dav.service
+%dir %{_datadir}/doc/nostr-dav
+%{_datadir}/doc/nostr-dav/nostr-dav.conf.sample
+
+%files -n nostrc-samba-server
+%license LICENSE
+%dir %{_sysconfdir}/nostr-auth/servers.d
+%config(noreplace) %{_sysconfdir}/nostr-auth/smb.conf
+%config(noreplace) %{_sysconfdir}/nostr-auth/smb-credentiald.conf
+%config(noreplace) %{_sysconfdir}/nostr-auth/servers.d/example.conf
+%{_unitdir}/nostr-smbd.service
+%{_sysusersdir}/nostr-smb-share.conf
+# Sample originals retained for provenance / operator diff base.
+%{_datadir}/nostr-homed/smb.conf.standalone.sample
+%{_datadir}/nostr-homed/smb-credentiald.conf.sample
+%doc %{_docdir}/nostrc/examples/servers.d/example.conf
+%doc %{_docdir}/nostrc/SAMBA_STANDALONE.md
+
 # --- Changelog ---------------------------------------------------------------
 
 %changelog
+* Fri Sep 25 2026 GNostr Project <gnostr@example.com> - 0.4.0-1
+- Wave 4 packaging (#22b): add the four new subpackages for the
+  GNOME-integration + Samba-server milestones.
+  * nostrc-session-relay: nostr-session-relayd + user socket/service.
+  * nostr-notify: nostr-notify-daemon + user service.
+  * nostr-dav: localhost CalDAV/CardDAV/WebDAV bridge + user service +
+    D-Bus session activation for org.nostr.Dav.
+  * nostrc-samba-server: dedicated smb.conf + smb-credentiald.conf +
+    servers.d/example.conf + nostr-smbd.service + sysusers entry.
+- Enable BUILD_RELAYD, ENABLE_NOSTR_DAV and NOSTR_HOMED_ENABLE_SESSION_
+  RELAY_UNITS in %build; add BuildRequires for glib2/libsoup3/libxml2/
+  json-glib/libsecret.
+- New %check block runs scripts/check-authd-dep-purity.sh against the
+  installed nostr-authd + pam_nostr.so under %{buildroot}; rpmbuild
+  fails if either gains a link edge to hanami / porthome / nip55l-
+  client / FUSE surfaces (plan §5.1 #21a).
+- ENABLE_NIP55L_STANDALONE_ACTIVATION explicit OFF; the pre-existing
+  cleanup that removes org.nostr.Signer.service from the buildroot is
+  retained so gnostr-signer's own spec remains the sole owner
+  (Milestone-A D3 dedup).
+- Rename smb.conf.standalone.sample and smb-credentiald.conf.sample
+  into /etc/nostr-auth/ as %config(noreplace) conffiles; sample
+  originals kept under %{_datadir}/nostr-homed/ for provenance.
+
 * Tue Sep 22 2026 GNostr Project <gnostr@example.com> - 0.3.0-1
 - Initial Fedora SRPM for the nostrc monorepo.
 - Phase 1 (nostrc-rb0e.3 D2, nostrc-rb0e.10 D9): headless nostr-login stack.
