@@ -23,13 +23,6 @@ typedef void (*GnostrRelayPublishDoneCallback)(gpointer user_data);
 /* ── Keystore stubs ────────────────────────────────────────────────── */
 void gnostr_key_info_free(GnostrKeyInfo *info) { (void)info; }
 gboolean gnostr_keystore_available(void) { return FALSE; }
-gboolean gnostr_keystore_store_key(const char *npub, const char *nsec,
-                                    const char *label, GError **error)
-{ (void)npub; (void)nsec; (void)label; (void)error; return FALSE; }
-gboolean gnostr_keystore_retrieve_key(const char *npub, GError **error)
-{ (void)npub; (void)error; return FALSE; }
-gboolean gnostr_keystore_delete_key(const char *npub, GError **error)
-{ (void)npub; (void)error; return FALSE; }
 GList *gnostr_keystore_list_keys(GError **error)
 { (void)error; return NULL; }
 gboolean gnostr_keystore_has_key(const char *npub)

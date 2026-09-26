@@ -99,7 +99,7 @@ template $GnostrLogin: Adw.Bin {
                             }
 
                             Label {
-                                label: "Sign in using a local signer app or pair with a remote signer for secure key management.";
+                                label: _("GNostr never stores your private key. Sign in with GNostr Signer on this computer, or pair a remote signer.");
                                 wrap: true;
                                 max-width-chars: 45;
                                 justify: center;
@@ -108,6 +108,18 @@ template $GnostrLogin: Adw.Bin {
                                     "dim-label",
                                 ]
                             }
+                        }
+
+                        Label lbl_legacy_keys {
+                            visible: false;
+                            wrap: true;
+                            max-width-chars: 55;
+                            justify: center;
+                            halign: center;
+
+                            styles [
+                                "warning",
+                            ]
                         }
 
                         Frame {
@@ -145,7 +157,7 @@ template $GnostrLogin: Adw.Bin {
                                         valign: center;
 
                                         Label {
-                                            label: "Local Signer";
+                                            label: _("GNostr Signer");
                                             xalign: 0;
 
                                             styles [
@@ -154,8 +166,10 @@ template $GnostrLogin: Adw.Bin {
                                         }
 
                                         Label lbl_local_status {
-                                            label: "Checking availability...";
+                                            label: _("Checking availability…");
                                             xalign: 0;
+                                            wrap: true;
+                                            max-width-chars: 40;
 
                                             styles [
                                                 "dim-label",
@@ -175,10 +189,17 @@ template $GnostrLogin: Adw.Bin {
                                         spinning: true;
                                     }
 
+                                    Button btn_start_signer {
+                                        label: _("Start GNostr Signer");
+                                        visible: false;
+                                        tooltip-text: _("Start the GNostr Signer service on this computer");
+                                        clicked => $on_start_signer_clicked();
+                                    }
+
                                     Button btn_local_signer {
-                                        label: "Sign with Local Signer";
+                                        label: _("Sign In with GNostr Signer");
                                         sensitive: false;
-                                        tooltip-text: "Sign in using local signer";
+                                        tooltip-text: _("Sign in with a key held by GNostr Signer");
                                         clicked => $on_local_signer_clicked();
 
                                         styles [

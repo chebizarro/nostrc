@@ -9,6 +9,9 @@
  *   - identity → attribute table mapping (defaults, hardware flag),
  *   - legacy org.gnostr.Signer/key and org.gnostr.Key → identity mapping,
  *     including key_type → origin and the hardware-reference refusal,
+ *   - legacy org.gnostr.NostrKey (gnostr client keystore, nostrc-e5nz) →
+ *     identity mapping: import label, application filter, label is not a
+ *     selector, and the versioned migration marker,
  *   - the Seahorse label format (nostrc-djvs).
  * The end-to-end migration against a real gnome-keyring is exercised by
  * test_signer_dbus_contract (phase 3) when gnome-keyring-daemon exists.
@@ -50,7 +53,15 @@ static void test_schema_shape(void) {
   CHECK(schema_has(&gnostr_secret_legacy_signer_key_schema, "key_type"));
   CHECK(strcmp(gnostr_secret_legacy_helper_schema.name, "org.gnostr.Key") == 0);
   CHECK(schema_has(&gnostr_secret_legacy_helper_schema, "uid"));
+  CHECK(strcmp(gnostr_secret_legacy_client_schema.name, "org.gnostr.NostrKey") == 0);
+  /* Exactly what apps/gnostr's keystore_libsecret.c wrote. */
+  CHECK(schema_has(&gnostr_secret_legacy_client_schema, "npub"));
+  CHECK(schema_has(&gnostr_secret_legacy_client_schema, "application"));
+  CHECK(gnostr_secret_legacy_client_schema.attributes[2].name == NULL);
   CHECK(strcmp(gnostr_secret_migration_schema.name, "org.gnostr.Signer/migration") == 0);
+  /* Adding org.gnostr.NostrKey bumped the marker past v1 so keyrings that
+   * finished the bml6 pass are scanned again. */
+  CHECK(strcmp(GNOSTR_SECRET_MIGRATION_MARKER, "legacy-keys-v2") == 0);
 }
 
 static void test_identity_to_attributes(void) {
@@ -168,6 +179,46 @@ static void test_legacy_helper_mapping(void) {
   CHECK(!gnostr_secret_legacy_to_identity(GNOSTR_SECRET_LEGACY_HELPER_KEY, NULL, &id, &why));
 }
 
+static void test_legacy_client_mapping(void) {
+  const char *kv[] = { "npub", NPUB, "application", "org.gnostr.Client", NULL };
+  GHashTable *legacy = attrs_of(kv);
+  GnostrSecretIdentity id; const gchar *why = "unset";
+  CHECK(gnostr_secret_legacy_to_identity(GNOSTR_SECRET_LEGACY_CLIENT_KEY, legacy, &id, &why));
+  CHECK(why == NULL);
+  CHECK(strcmp(id.npub, NPUB) == 0 && strcmp(id.key_id, NPUB) == 0);
+  CHECK(strcmp(id.label, "gnostr import") == 0);
+  CHECK(strcmp(id.label, GNOSTR_SECRET_LEGACY_CLIENT_IMPORT_LABEL) == 0);
+  CHECK(strcmp(id.origin, "software") == 0);
+  CHECK(id.hardware_slot == NULL && id.created_at == NULL);
+  GHashTable *a = gnostr_secret_identity_to_attributes(&id);
+  CHECK(g_hash_table_lookup(a, "application") == NULL);
+  CHECK(strcmp(g_hash_table_lookup(a, "label"), "gnostr import") == 0);
+  CHECK(strcmp(g_hash_table_lookup(a, "hardware"), "false") == 0);
+  g_hash_table_unref(a);
+  g_hash_table_unref(legacy);
+
+  /* The client always wrote application=org.gnostr.Client: an item without
+   * it is not provably the client's, so it is not claimed. */
+  const char *bare[] = { "npub", NPUB, NULL };
+  legacy = attrs_of(bare);
+  CHECK(!gnostr_secret_legacy_to_identity(GNOSTR_SECRET_LEGACY_CLIENT_KEY, legacy, &id, &why));
+  CHECK(why != NULL && strstr(why, "application") != NULL);
+  g_hash_table_unref(legacy);
+
+  /* Another program's item under the same schema name is left alone. */
+  const char *other[] = { "npub", NPUB, "application", "org.example.Other", NULL };
+  legacy = attrs_of(other);
+  CHECK(!gnostr_secret_legacy_to_identity(GNOSTR_SECRET_LEGACY_CLIENT_KEY, legacy, &id, &why));
+  CHECK(why != NULL && strstr(why, "application") != NULL);
+  g_hash_table_unref(legacy);
+
+  /* The fixed import label must not become a shared key_id selector; the
+   * older schemas' labels still do. */
+  CHECK(!gnostr_secret_legacy_label_is_selector(GNOSTR_SECRET_LEGACY_CLIENT_KEY));
+  CHECK(gnostr_secret_legacy_label_is_selector(GNOSTR_SECRET_LEGACY_SIGNER_KEY));
+  CHECK(gnostr_secret_legacy_label_is_selector(GNOSTR_SECRET_LEGACY_HELPER_KEY));
+}
+
 static void test_label(void) {
   gchar *l = gnostr_secret_store_build_label("alice", NPUB);
   CHECK(strcmp(l, "Nostr key: alice (npub1sg6plzpt…)") == 0);
@@ -187,6 +238,7 @@ int main(void) {
   test_origin_from_key_type();
   test_legacy_signer_key_mapping();
   test_legacy_helper_mapping();
+  test_legacy_client_mapping();
   test_label();
   printf("test_keyring_schema: PASS\n");
   return 0;

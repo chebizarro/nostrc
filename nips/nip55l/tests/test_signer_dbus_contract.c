@@ -12,7 +12,11 @@
  * runs a real Secret Service on the private bus: legacy-schema items seeded
  * before the daemon starts must be migrated to org.gnostr.Signer/identity
  * and be usable for SignEvent, StoreKey must write the unified schema, and
- * the per-keyring marker must stop a second migration pass.
+ * the per-keyring marker must stop a second migration pass. The keyring
+ * starts with the v1 marker already present (a bml6 pass completed) plus
+ * gnostr-client org.gnostr.NostrKey items (nostrc-e5nz): the v2 pass must
+ * still import them, keep a label the signer already had for the same key,
+ * and leave another application's item under that schema name alone.
  * Also asserts the daemon's error path shape: malformed input →
  * Error.InvalidInput; GetRelays on a fresh install → Error.NotFound;
  * mutations without the escape hatch → Error.PermissionDenied.
@@ -776,6 +780,10 @@ typedef struct {
   TestKey legacy_helper;   /* org.gnostr.Key, nsec secret */
   TestKey legacy_hardware; /* org.gnostr.Key origin=hardware: must stay */
   TestKey pre_bml6;        /* old daemon attribute set under the same schema */
+  TestKey client;          /* org.gnostr.NostrKey (gnostr client), nsec secret */
+  TestKey client_dup;      /* org.gnostr.NostrKey whose key the signer already holds */
+  TestKey client_foreign;  /* org.gnostr.NostrKey written by another application */
+  TestKey client_hw;       /* org.gnostr.NostrKey whose npub has a hardware enrollment */
 } Phase3;
 
 /* Items of schema, optionally filtered by one attribute, secrets loaded. */
@@ -856,6 +864,43 @@ static void phase3_pre_daemon(Ctx *ctx, gpointer data) {
   seed(&gnostr_secret_schema, "Gnostr Identity Key", p->pre_bml6.sk_hex,
        "key_id", p->pre_bml6.npub, "npub", p->pre_bml6.npub,
        "owner_uid", uid_buf, "hardware", "false", NULL);
+
+  /* A keyring whose bml6 (v1) pass already completed. */
+  seed(&gnostr_secret_migration_schema, "Nostr signer migration marker (not a key)",
+       "legacy-keys-v1", "name", "legacy-keys-v1", NULL);
+  /* What apps/gnostr/src/util/keystore_libsecret.c wrote before e5nz. */
+  gchar *client_label = g_strdup_printf("GNostr: %s", p->client.npub);
+  seed(&gnostr_secret_legacy_client_schema, client_label, p->client.nsec,
+       "npub", p->client.npub, "application", "org.gnostr.Client", NULL);
+  g_free(client_label);
+  seed(&gnostr_secret_legacy_client_schema, "GNostr: dup", p->client_dup.nsec,
+       "npub", p->client_dup.npub, "application", "org.gnostr.Client", NULL);
+  seed(&gnostr_secret_legacy_client_schema, "Other: foreign", p->client_foreign.nsec,
+       "npub", p->client_foreign.npub, "application", "org.example.Other", NULL);
+  /* The same key as client_dup, already in the signer under the user's own
+   * label with key_id = npub (the {key_id, npub} a naive re-store would
+   * collide with and replace). */
+  const GnostrSecretIdentity dup = {
+    .npub = p->client_dup.npub, .label = "Alice", .owner_uid = uid_buf,
+  };
+  GError *err2 = NULL;
+  if (!gnostr_secret_store_save(&dup, p->client_dup.sk_hex, &err2)) {
+    g_printerr("seed dup: %s\n", err2 ? err2->message : "?");
+    exit(1);
+  }
+  /* A hardware enrollment of client_hw's key (key_id = npub, a token
+   * reference as secret) plus the client's software copy: importing the
+   * software copy must not prune the hardware item. */
+  const GnostrSecretIdentity hw = {
+    .npub = p->client_hw.npub, .label = "token", .origin = "hardware",
+    .hardware_slot = "9c", .owner_uid = uid_buf,
+  };
+  if (!gnostr_secret_store_save(&hw, "pkcs11:token=yubikey;id=9c", &err2)) {
+    g_printerr("seed hw: %s\n", err2 ? err2->message : "?");
+    exit(1);
+  }
+  seed(&gnostr_secret_legacy_client_schema, "GNostr: hw", p->client_hw.nsec,
+       "npub", p->client_hw.npub, "application", "org.gnostr.Client", NULL);
 }
 
 static const char *attr(GHashTable *a, const char *k) {
@@ -863,17 +908,16 @@ static const char *attr(GHashTable *a, const char *k) {
   return v ? v : "";
 }
 
-/* The single unified item for npub, checked against the expectations. A
- * non-empty label is also the key_id selector (StoreKey's convention). */
-static void check_unified(const TestKey *k, const char *want_label_attr) {
+/* The single unified item for npub, checked against the expectations. */
+static void check_unified(const TestKey *k, const char *want_label_attr,
+                          const char *want_key_id) {
   GList *items = search_items(&gnostr_secret_schema, "npub", k->npub);
   CHECK(g_list_length(items) == 1);
   SecretItem *it = items->data;
   GHashTable *a = secret_item_get_attributes(it);
   gchar uid_buf[32];
   g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
-  CHECK(g_strcmp0(attr(a, "key_id"),
-                  *want_label_attr ? want_label_attr : k->npub) == 0);
+  CHECK(g_strcmp0(attr(a, "key_id"), want_key_id) == 0);
   CHECK(g_strcmp0(attr(a, "curve"), "secp256k1") == 0);
   CHECK(g_strcmp0(attr(a, "origin"), "software") == 0);
   CHECK(g_strcmp0(attr(a, "hardware"), "false") == 0);
@@ -903,17 +947,24 @@ static void run_phase3(void) {
   test_key_new(&p.legacy_helper);
   test_key_new(&p.legacy_hardware);
   test_key_new(&p.pre_bml6);
-  gchar *acl = g_strdup_printf("contract-test:%s=allow\ncontract-test:Legacy Main=allow\n",
-                               p.legacy_signer.npub);
+  test_key_new(&p.client);
+  test_key_new(&p.client_dup);
+  test_key_new(&p.client_foreign);
+  test_key_new(&p.client_hw);
+  gchar *acl = g_strdup_printf("contract-test:%s=allow\ncontract-test:Legacy Main=allow\n"
+                               "contract-test:%s=allow\n",
+                               p.legacy_signer.npub, p.client.npub);
 
   Ctx ctx;
   ctx_setup_full(&ctx, /*allow_mutations=*/TRUE, /*write_relays=*/FALSE, acl,
                  phase3_pre_daemon, &p);
 
-  /* The daemon migrates off the main loop; the marker is its last write. */
+  /* The daemon migrates off the main loop; the marker is its last write.
+   * The pre-seeded v1 marker must not have short-circuited this pass. */
   gboolean done = FALSE;
   for (int i = 0; i < 150 && !done; i++) {
-    done = count_items(&gnostr_secret_migration_schema, NULL, NULL) == 1;
+    done = count_items(&gnostr_secret_migration_schema, "name",
+                       GNOSTR_SECRET_MIGRATION_MARKER) == 1;
     if (!done) g_usleep(100 * 1000);
   }
   CHECK(done);
@@ -921,17 +972,52 @@ static void run_phase3(void) {
   /* Legacy software keys: moved, originals gone. */
   CHECK(count_items(&gnostr_secret_legacy_signer_key_schema, NULL, NULL) == 0);
   CHECK(count_items(&gnostr_secret_legacy_helper_schema, "npub", p.legacy_helper.npub) == 0);
-  check_unified(&p.legacy_signer, "Legacy Main");
-  check_unified(&p.legacy_helper, "bob");   /* nsec normalized to hex */
+  check_unified(&p.legacy_signer, "Legacy Main", "Legacy Main");
+  check_unified(&p.legacy_helper, "bob", "bob");   /* nsec normalized to hex */
   /* Hardware reference: left in place, not copied. */
   CHECK(count_items(&gnostr_secret_legacy_helper_schema, "npub", p.legacy_hardware.npub) == 1);
   CHECK(count_items(&gnostr_secret_schema, "npub", p.legacy_hardware.npub) == 0);
 
+  /* gnostr client keystore (nostrc-e5nz): imported under the fixed label
+   * with key_id = npub, nsec normalized to hex, client copy deleted. */
+  CHECK(count_items(&gnostr_secret_legacy_client_schema, "npub", p.client.npub) == 0);
+  check_unified(&p.client, "gnostr import", p.client.npub);
+  /* Already in the signer: client copy deleted, the signer's item (and the
+   * user's label) untouched rather than replaced by the import label. */
+  CHECK(count_items(&gnostr_secret_legacy_client_schema, "npub", p.client_dup.npub) == 0);
+  check_unified(&p.client_dup, "Alice", p.client_dup.npub);
+  /* Another application's item under the schema name: not ours, left. */
+  CHECK(count_items(&gnostr_secret_legacy_client_schema, "npub", p.client_foreign.npub) == 1);
+  CHECK(count_items(&gnostr_secret_schema, "npub", p.client_foreign.npub) == 0);
+  /* Hardware enrollment present: the software copy is imported next to
+   * it and the hardware item survives the save's duplicate pruning. */
+  CHECK(count_items(&gnostr_secret_legacy_client_schema, "npub", p.client_hw.npub) == 0);
+  CHECK(count_items(&gnostr_secret_schema, "npub", p.client_hw.npub) == 2);
+  {
+    GList *items = search_items(&gnostr_secret_schema, "npub", p.client_hw.npub);
+    gboolean saw_hw = FALSE, saw_sw = FALSE;
+    for (GList *l = items; l; l = l->next) {
+      GHashTable *a = secret_item_get_attributes(l->data);
+      SecretValue *sv = secret_item_get_secret(l->data);
+      if (g_strcmp0(attr(a, "origin"), "hardware") == 0)
+        saw_hw = g_strcmp0(secret_value_get_text(sv), "pkcs11:token=yubikey;id=9c") == 0;
+      else
+        saw_sw = g_strcmp0(attr(a, "label"), "gnostr import") == 0 &&
+                 g_strcmp0(secret_value_get_text(sv), p.client_hw.sk_hex) == 0;
+      secret_value_unref(sv);
+      g_hash_table_unref(a);
+    }
+    g_list_free_full(items, g_object_unref);
+    CHECK(saw_hw && saw_sw);
+  }
+
   /* The daemon signs with a migrated key selected by npub (key_id is the
-   * legacy label, so this exercises the npub fallback lookup), and by the
-   * legacy label as selector. */
-  for (int sel = 0; sel < 2; sel++) {
-    const char *selector = sel == 0 ? p.legacy_signer.npub : "Legacy Main";
+   * legacy label, so this exercises the npub fallback lookup), by the
+   * legacy label as selector, and with the imported client key by npub. */
+  for (int sel = 0; sel < 3; sel++) {
+    const char *selector = sel == 0 ? p.legacy_signer.npub
+                         : sel == 1 ? "Legacy Main" : p.client.npub;
+    const char *want_pk = sel == 2 ? p.client.pk_hex : p.legacy_signer.pk_hex;
     int64_t now = (int64_t)time(NULL);
     gchar *tmpl = g_strdup_printf(
         "{\"kind\":1,\"created_at\":%lld,\"tags\":[],\"content\":\"migrated\"}",
@@ -943,7 +1029,7 @@ static void run_phase3(void) {
     if (!ret) { g_printerr("SignEvent(migrated): %s\n", err ? err->message : "?"); exit(1); }
     const char *signed_json = NULL;
     g_variant_get(ret, "(&s)", &signed_json);
-    assert_signed_event(signed_json, p.legacy_signer.pk_hex, 1, now);
+    assert_signed_event(signed_json, want_pk, 1, now);
     g_variant_unref(ret);
     g_free(tmpl);
   }
@@ -956,7 +1042,7 @@ static void run_phase3(void) {
                          g_variant_new("(ss)", p.pre_bml6.sk_hex, ""), "(bs)", &err);
     if (!ret) { g_printerr("StoreKey(pre-bml6): %s\n", err ? err->message : "?"); exit(1); }
     g_variant_unref(ret);
-    check_unified(&p.pre_bml6, "");
+    check_unified(&p.pre_bml6, "", p.pre_bml6.npub);
   }
 
   /* StoreKey → GetPublicKey → ClearKey against the real keyring. */
@@ -982,7 +1068,12 @@ static void run_phase3(void) {
   test_key_free(&p.legacy_helper);
   test_key_free(&p.legacy_hardware);
   test_key_free(&p.pre_bml6);
-  g_print("PASS phase 3 (real keyring: legacy migration, unified StoreKey, marker)\n");
+  test_key_free(&p.client);
+  test_key_free(&p.client_dup);
+  test_key_free(&p.client_foreign);
+  test_key_free(&p.client_hw);
+  g_print("PASS phase 3 (real keyring: legacy migration incl. gnostr client keystore "
+          "past a v1 marker, unified StoreKey, marker)\n");
 }
 #endif /* NIP55L_TEST_HAVE_LIBSECRET */
 

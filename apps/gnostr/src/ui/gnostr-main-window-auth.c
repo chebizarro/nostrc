@@ -18,7 +18,6 @@
 #include "../model/gnostr-filter-set-sync.h"
 
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
-#include <nostr-gobject-1.0/gnostr-identity.h>
 #include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/gnostr-sync-service.h>
 #include <nostr-gobject-1.0/nostr_event.h>
@@ -147,6 +146,9 @@ gnostr_main_window_update_login_ui_state_internal(GnostrMainWindow *self)
     gnostr_session_view_set_authenticated(self->session_view, signed_in);
 
   g_free(npub);
+
+  /* nostrc-e5nz: sign-in/out changes whether the session needs the local signer. */
+  gnostr_main_window_signer_banner_refresh_internal(self);
 }
 
 char *
@@ -874,20 +876,10 @@ gnostr_main_window_on_account_remove_requested_internal(GnostrSessionView *view,
     return;
   }
 
-  if (gnostr_identity_has_local_key(npub)) {
-    g_autoptr(GError) error = NULL;
-    if (!gnostr_identity_delete(npub, &error)) {
-      if (!g_settings_set_strv(settings, "known-accounts",
-                               (const char * const *)accounts)) {
-        g_warning("Failed to restore known accounts after keystore deletion error");
-      }
-      g_autofree char *message = g_strdup_printf(
-          _("Could not remove account: %s"),
-          error ? error->message : _("unknown keystore error"));
-      gnostr_main_window_show_toast(GTK_WIDGET(self), message);
-      return;
-    }
-  }
+  /* nostrc-e5nz: GNostr holds no private keys, so removing an account only
+   * forgets it here. The key stays in the signer (and a not-yet-migrated
+   * pre-e5nz client copy stays for the signer to import): deleting it from
+   * GNostr would destroy what may be the only copy. */
 
   g_autofree char *current_npub = g_settings_get_string(settings, "current-npub");
   if (g_strcmp0(current_npub, npub) == 0)
@@ -907,6 +899,9 @@ gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self)
 
   g_autofree char *npub = client_settings_get_current_npub_local();
   gboolean signed_in = (npub && *npub);
+
+  /* nostrc-e5nz: from here on, say when no signer is available. */
+  gnostr_main_window_signer_banner_start_internal(self);
 
   if (signed_in) {
     GnostrSignerService *signer = gnostr_signer_service_get_default();

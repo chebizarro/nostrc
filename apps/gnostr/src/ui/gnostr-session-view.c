@@ -814,8 +814,8 @@ static void on_account_remove_clicked(GtkButton *btn, gpointer user_data) {
   GtkAlertDialog *dialog = gtk_alert_dialog_new("%s", _("Remove Account?"));
   g_autofree char *display = truncate_npub(npub);
   g_autofree char *detail = g_strdup_printf(
-      _("This will remove %s from this device and delete any locally stored "
-        "private key. This action cannot be undone."),
+      _("GNostr will forget %s on this device. Your key is not deleted: it "
+        "stays in GNostr Signer, where you can remove it if you no longer need it."),
       display);
   gtk_alert_dialog_set_detail(dialog, detail);
   gtk_alert_dialog_set_buttons(dialog,

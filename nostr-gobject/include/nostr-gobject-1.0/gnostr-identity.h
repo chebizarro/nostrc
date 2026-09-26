@@ -2,9 +2,14 @@
  * GNostr Identity Management
  *
  * High-level identity management combining:
- * - Secure key storage (keystore)
+ * - Read-only identity metadata from the signer's key store (via the app
+ *   bridge; npub and label only, never secrets)
  * - GSettings for preferences
- * - NIP-19 encoding/decoding
+ *
+ * Clients never hold private keys (nostrc-e5nz): keys are created,
+ * imported and removed in the signer (org.nostr.Signer / NIP-46), and all
+ * signing goes through it. This API therefore has no import, export or
+ * delete of key material.
  *
  * The schema_id must be set via gnostr_identity_init() before
  * calling any GSettings-dependent functions. The library has no
@@ -23,15 +28,18 @@ G_BEGIN_DECLS
  * GNostrIdentity:
  * @npub: The bech32-encoded public key (npub1...)
  * @label: Human-readable label (e.g., NIP-05 name)
- * @has_local_key: Whether nsec is stored in secure storage
- * @signer_type: Type of signer ("local", "nip55l", "nip46", "none")
+ * @signer_holds_key: Whether the local signer's key store (org.nostr.Signer,
+ *   e.g. GNostr Signer) holds this identity. The client itself never does.
+ * @signer_type: Hint only — "nip55l" when @signer_holds_key, otherwise
+ *   "external" (NIP-46 or unknown). Do not route signing by it; the app's
+ *   signer service knows the method actually in use.
  *
  * Represents a user identity in the app.
  */
 typedef struct {
   char *npub;
   char *label;
-  gboolean has_local_key;
+  gboolean signer_holds_key;
   char *signer_type;
 } GNostrIdentity;
 
@@ -86,131 +94,27 @@ void gnostr_identity_set_current(const char *npub);
  * gnostr_identity_list_stored:
  * @error: (out) (optional): Return location for error
  *
- * List all identities with keys stored in secure storage.
+ * List the identities the local signer's key store holds (metadata only).
  *
  * Returns: (transfer full) (element-type GNostrIdentity): List of identities.
  */
 GList *gnostr_identity_list_stored(GError **error);
 
 /**
- * gnostr_identity_import_nsec:
- * @nsec: The bech32-encoded private key (nsec1...)
- * @label: (nullable): Optional label for the key
- * @error: (out) (optional): Return location for error
- *
- * Import a private key into secure storage.
- * Derives the npub from the nsec and stores both.
- *
- * Returns: (transfer full): The npub on success, %NULL on error.
- */
-char *gnostr_identity_import_nsec(const char *nsec,
-                                   const char *label,
-                                   GError **error);
-
-/**
- * gnostr_identity_import_nsec_async:
- * @nsec: The bech32-encoded private key (nsec1...)
- * @label: (nullable): Optional label
- * @cancellable: (nullable): A #GCancellable
- * @callback: Callback when complete
- * @user_data: User data for callback
- *
- * Async version of gnostr_identity_import_nsec().
- */
-void gnostr_identity_import_nsec_async(const char *nsec,
-                                        const char *label,
-                                        GCancellable *cancellable,
-                                        GAsyncReadyCallback callback,
-                                        gpointer user_data);
-
-/**
- * gnostr_identity_import_nsec_finish:
- * @result: A #GAsyncResult
- * @error: (out) (optional): Return location for error
- *
- * Finish async import operation.
- *
- * Returns: (transfer full): The npub on success, %NULL on error.
- */
-char *gnostr_identity_import_nsec_finish(GAsyncResult *result,
-                                          GError **error);
-
-/**
- * gnostr_identity_get_nsec:
- * @npub: The public key identifying the identity
- * @error: (out) (optional): Return location for error
- *
- * Retrieve the private key for an identity from secure storage.
- * WARNING: Handle the returned nsec with care and clear it when done.
- *
- * Returns: (transfer full): The nsec on success, %NULL on error.
- */
-char *gnostr_identity_get_nsec(const char *npub, GError **error);
-
-/**
- * gnostr_identity_get_nsec_async:
- * @npub: The public key identifying the identity
- * @cancellable: (nullable): A #GCancellable
- * @callback: Callback when complete
- * @user_data: User data for callback
- *
- * Async version of gnostr_identity_get_nsec().
- */
-void gnostr_identity_get_nsec_async(const char *npub,
-                                     GCancellable *cancellable,
-                                     GAsyncReadyCallback callback,
-                                     gpointer user_data);
-
-/**
- * gnostr_identity_get_nsec_finish:
- * @result: A #GAsyncResult
- * @error: (out) (optional): Return location for error
- *
- * Finish async get nsec operation.
- *
- * Returns: (transfer full): The nsec on success, %NULL on error.
- */
-char *gnostr_identity_get_nsec_finish(GAsyncResult *result,
-                                       GError **error);
-
-/**
- * gnostr_identity_delete:
- * @npub: The public key identifying the identity to delete
- * @error: (out) (optional): Return location for error
- *
- * Delete an identity from secure storage.
- *
- * Returns: %TRUE on success, %FALSE on error.
- */
-gboolean gnostr_identity_delete(const char *npub, GError **error);
-
-/**
- * gnostr_identity_has_local_key:
+ * gnostr_identity_signer_holds_key:
  * @npub: The public key to check
  *
- * Check if an identity has a locally stored private key.
- *
- * Returns: %TRUE if key is stored locally.
+ * Returns: %TRUE if the local signer's key store holds @npub.
  */
-gboolean gnostr_identity_has_local_key(const char *npub);
+gboolean gnostr_identity_signer_holds_key(const char *npub);
 
 /**
  * gnostr_identity_secure_storage_available:
  *
- * Check if secure key storage is available on this platform.
- *
- * Returns: %TRUE if secure storage is available.
+ * Returns: %TRUE if the platform key store can be queried for identity
+ *   metadata.
  */
 gboolean gnostr_identity_secure_storage_available(void);
-
-/**
- * gnostr_identity_clear_nsec:
- * @nsec: The nsec string to clear
- *
- * Securely clear an nsec string from memory.
- * Sets all bytes to zero before freeing.
- */
-void gnostr_identity_clear_nsec(char *nsec);
 
 G_END_DECLS
 

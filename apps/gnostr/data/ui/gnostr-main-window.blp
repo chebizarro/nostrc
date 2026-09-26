@@ -9,63 +9,73 @@ template $GnostrMainWindow: Adw.ApplicationWindow {
     height-request: 480;
 
     content: Adw.ToastOverlay toast_overlay {
-        Gtk.Stack main_stack {
-            transition-type: crossfade;
+        Gtk.Box {
+            orientation: vertical;
 
-            Gtk.StackPage {
-                name: "loading";
-                title: _("Loading");
+            /* nostrc-e5nz: GNostr keeps no keys; say when no signer is available. */
+            Adw.Banner signer_banner {
+                revealed: false;
+            }
 
-                child: Adw.ToolbarView loading_view {
-                    content: Gtk.Box {
-                        orientation: vertical;
-                        valign: center;
-                        vexpand: true;
-                        spacing: 24;
+            Gtk.Stack main_stack {
+                vexpand: true;
+                transition-type: crossfade;
 
-                        Adw.Spinner {
-                            height-request: 64;
-                            width-request: 64;
-                        }
+                Gtk.StackPage {
+                    name: "loading";
+                    title: _("Loading");
 
-                        Gtk.Label {
-                            halign: center;
-                            justify: center;
-                            wrap: true;
-                            wrap-mode: word_char;
-                            label: _("Loading…");
+                    child: Adw.ToolbarView loading_view {
+                        content: Gtk.Box {
+                            orientation: vertical;
+                            valign: center;
+                            vexpand: true;
+                            spacing: 24;
 
-                            styles [
-                                "title-2",
-                            ]
-                        }
+                            Adw.Spinner {
+                                height-request: 64;
+                                width-request: 64;
+                            }
+
+                            Gtk.Label {
+                                halign: center;
+                                justify: center;
+                                wrap: true;
+                                wrap-mode: word_char;
+                                label: _("Loading…");
+
+                                styles [
+                                    "title-2",
+                                ]
+                            }
+                        };
                     };
-                };
-            }
+                }
 
-            Gtk.StackPage {
-                name: "session";
-                title: _("Session");
+                Gtk.StackPage {
+                    name: "session";
+                    title: _("Session");
 
-                child: $GnostrSessionView session_view {};
-            }
+                    child: $GnostrSessionView session_view {};
+                }
 
-            Gtk.StackPage {
-                name: "login";
-                title: _("Sign In");
+                Gtk.StackPage {
+                    name: "login";
+                    title: _("Sign In");
 
-                child: $GnostrLogin login_view {};
-            }
+                    child: $GnostrLogin login_view {};
+                }
 
-            Gtk.StackPage {
-                name: "error";
-                title: _("Error");
+                Gtk.StackPage {
+                    name: "error";
+                    title: _("Error");
 
-                child: Adw.StatusPage error_page {
-                    icon-name: "dialog-error-symbolic";
-                    title: _("Something went wrong");
-                    description: _("A critical error occurred while starting GNostr.");
-                };
+                    child: Adw.StatusPage error_page {
+                        icon-name: "dialog-error-symbolic";
+                        title: _("Something went wrong");
+                        description: _("A critical error occurred while starting GNostr.");
+                    };
+                }
             }
         }
     };

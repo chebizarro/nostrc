@@ -46,9 +46,9 @@ typedef struct {
 /**
  * GnostrKeyInfo:
  *
- * Information about a stored key (does not contain the actual secret).
- * The definition lives here because both apps/gnostr's keystore
- * implementation and nostr-gobject's identity consumer read the fields.
+ * Metadata of an identity the signer holds (never the secret). The
+ * definition lives here because both apps/gnostr's keystore metadata shim
+ * and nostr-gobject's identity consumer read the fields.
  */
 typedef struct {
   char *npub;
@@ -134,13 +134,11 @@ typedef struct {
                                      GnostrNegSyncStats *stats_out,
                                      GError **error);
 
-  /* Secure keystore hooks (platform-native: libsecret / macOS Keychain). */
+  /* Identity metadata hooks (nostrc-e5nz): read-only views of the
+   * identities the signer holds. Clients never hold private keys, so there
+   * are no store / retrieve / delete hooks; keys live in the signer. */
   gboolean (*keystore_available)(void);
   gboolean (*keystore_has_key)(const char *npub);
-  gboolean (*keystore_store_key)(const char *npub, const char *nsec,
-                                  const char *label, GError **error);
-  char    *(*keystore_retrieve_key)(const char *npub, GError **error);
-  gboolean (*keystore_delete_key)(const char *npub, GError **error);
   GList   *(*keystore_list_keys)(GError **error);
   void     (*key_info_free)(GnostrKeyInfo *info);
   GQuark   (*keystore_error_quark)(void);
@@ -188,15 +186,9 @@ gboolean gnostr_app_bridge_neg_sync_kinds_finish(GAsyncResult *result,
                                                   GnostrNegSyncStats *stats_out,
                                                   GError **error);
 
-/* Keystore call-throughs. Semantics mirror the app-side keystore API. */
+/* Identity metadata call-throughs. Semantics mirror the app-side shim. */
 gboolean gnostr_app_bridge_keystore_available(void);
 gboolean gnostr_app_bridge_keystore_has_key(const char *npub);
-gboolean gnostr_app_bridge_keystore_store_key(const char *npub,
-                                               const char *nsec,
-                                               const char *label,
-                                               GError **error);
-char    *gnostr_app_bridge_keystore_retrieve_key(const char *npub, GError **error);
-gboolean gnostr_app_bridge_keystore_delete_key(const char *npub, GError **error);
 GList   *gnostr_app_bridge_keystore_list_keys(GError **error);
 void     gnostr_app_bridge_key_info_free(GnostrKeyInfo *info);
 

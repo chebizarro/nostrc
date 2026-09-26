@@ -199,37 +199,6 @@ keystore_not_installed(GError **error)
                       "gnostr keystore bridge not installed");
 }
 
-gboolean
-gnostr_app_bridge_keystore_store_key(const char *npub, const char *nsec,
-                                      const char *label, GError **error)
-{
-  if (s_bridge.keystore_store_key) {
-    return s_bridge.keystore_store_key(npub, nsec, label, error);
-  }
-  keystore_not_installed(error);
-  return FALSE;
-}
-
-char *
-gnostr_app_bridge_keystore_retrieve_key(const char *npub, GError **error)
-{
-  if (s_bridge.keystore_retrieve_key) {
-    return s_bridge.keystore_retrieve_key(npub, error);
-  }
-  keystore_not_installed(error);
-  return NULL;
-}
-
-gboolean
-gnostr_app_bridge_keystore_delete_key(const char *npub, GError **error)
-{
-  if (s_bridge.keystore_delete_key) {
-    return s_bridge.keystore_delete_key(npub, error);
-  }
-  keystore_not_installed(error);
-  return FALSE;
-}
-
 GList *
 gnostr_app_bridge_keystore_list_keys(GError **error)
 {
