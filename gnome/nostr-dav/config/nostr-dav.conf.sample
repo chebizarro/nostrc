@@ -22,3 +22,35 @@
 #   direct_only              Talk to the account's home relays directly.
 #
 #nostr_dav_upstream_mode=session_relay_or_direct
+
+# Outbox commit policy for DAV writes (plan Track 2 D5 / Q4).
+#
+#   all      A pending row transitions to `published` only after EVERY
+#            relay in its resolved target set has ACK'd. Failure to
+#            reach the full set keeps the row pending, with exponential
+#            backoff (60 s -> 60 min). This is the NIP-51/65 outbox
+#            commit definition and the default.
+#   <int>    Numeric override: transition after this many OKs. Only
+#            useful when the account's NIP-65 write list is known to
+#            be over-broad. Set to `1` for permissive `>=1 OK` behaviour.
+#
+#nostr_dav_publish_quorum=all
+
+# Account pubkey (hex64) used by the REQ filter for inbound sync and
+# stamped by the signer on outbound publishes. When unset, nostr-dav
+# still serves DAV reads/writes locally but neither subscribes nor
+# publishes.
+#account_pubkey=
+
+# Home relays used as the REQ target set for subscribe and as the
+# fallback publish target set when NIP-65 discovery is absent.
+# Comma-separated `wss://` URLs.
+#home_relays=wss://relay.example.com,wss://relay-two.example.com
+
+# Enable the outbound relay-sync + publish stack. Defaults to OFF while
+# the production WebSocket backend is a scaffold that reports
+# NOT_SUPPORTED on connect; leaving it OFF keeps DAV writes local rather
+# than spinning the outbox against a backend that cannot reach a relay.
+# The follow-up bead that lands the real WebSocket wiring will flip this
+# default to ON.
+#enable_publish=false

@@ -46,9 +46,44 @@ typedef enum {
 
 #define ND_UPSTREAM_MODE_DEFAULT ND_UPSTREAM_MODE_SESSION_RELAY_OR_DIRECT
 
+/**
+ * NdPublishQuorum:
+ *
+ * How many relays in the resolved target set (NIP-65 write list, or
+ * home_relays fallback) must ACK before a pending row transitions to
+ * `published`. `all` (default) enforces the NIP-65 outbox commit;
+ * numeric values are for operator overrides only.
+ */
 typedef struct {
-  NdUpstreamMode upstream_mode;
+  gboolean all;      /* TRUE = every relay in the target set */
+  guint    count;    /* used when all == FALSE (>= 1) */
+} NdPublishQuorum;
+
+#define ND_PUBLISH_QUORUM_DEFAULT ((NdPublishQuorum){ .all = TRUE, .count = 0 })
+
+typedef struct {
+  NdUpstreamMode   upstream_mode;
+  NdPublishQuorum  publish_quorum;
+
+  /* Account identity + relay set (v1: single account). Both are optional
+   * because a headless enrollment tool may populate the store first and
+   * fill these in later. The publish worker requires @account_pubkey to
+   * be set (hex64) and at least one entry in @home_relays before it will
+   * dispatch anything. */
+  gchar   *account_pubkey;   /* owned; hex64 or NULL */
+  GStrv    home_relays;      /* owned NULL-terminated array; NULL when
+                              * empty (matches g_key_file_get_string_list). */
+
+  /* Opt-in gate for the relay subscribe + publish stack (plan Track 2
+   * D4/D5). Defaults to FALSE because the production WebSocket transport
+   * is not yet wired — leaving it OFF keeps DAV writes local, avoids the
+   * outbox looping forever on scaffold-only transports, and matches the
+   * pre-Track-2 behaviour. The follow-up bead flips this to default ON
+   * when the WebSocket backend lands. */
+  gboolean enable_publish;
 } NdConfig;
+
+void nd_config_clear(NdConfig *config);
 
 /** Returns: (transfer full): $XDG_CONFIG_HOME/nostr-dav/nostr-dav.conf */
 gchar *nd_config_default_path(void);
@@ -68,6 +103,18 @@ gboolean nd_config_load(const gchar *path, NdConfig *config, GError **error);
 const gchar *nd_upstream_mode_to_string(NdUpstreamMode mode);
 gboolean nd_upstream_mode_from_string(const gchar    *str,
                                       NdUpstreamMode *out_mode);
+
+/**
+ * nd_publish_quorum_parse:
+ * @str: value from config file ("all" or a positive integer)
+ * @out_quorum: (out): filled on success
+ *
+ * Returns: FALSE with @error set if @str is neither `"all"` nor a
+ *   positive integer.
+ */
+gboolean nd_publish_quorum_parse(const gchar     *str,
+                                 NdPublishQuorum *out_quorum,
+                                 GError         **error);
 
 G_END_DECLS
 #endif /* ND_CONFIG_H */

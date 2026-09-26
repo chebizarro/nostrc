@@ -52,6 +52,8 @@ typedef struct {
  */
 void nd_contact_free(NdContact *contact);
 
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(NdContact, nd_contact_free)
+
 /**
  * nd_vcard_parse:
  * @vcard_text: raw vCard text

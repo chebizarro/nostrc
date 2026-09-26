@@ -21,7 +21,7 @@
 
 G_BEGIN_DECLS
 
-#define ND_STORE_DB_SCHEMA_VERSION 1
+#define ND_STORE_DB_SCHEMA_VERSION 3
 
 #define ND_STORE_DB_ERROR (nd_store_db_error_quark())
 GQuark nd_store_db_error_quark(void);
@@ -125,6 +125,34 @@ gboolean nd_store_db_count_rows(NdStoreDb        *db,
 gboolean nd_store_db_set_sql_error(NdStoreDb   *db,
                                    GError     **error,
                                    const gchar *context);
+
+/* ---- Relay subscription cursor (Track 2 D4) ---- */
+
+/**
+ * nd_store_db_get_relay_cursor:
+ * @relay_url: relay URL used as the primary key
+ * @out_since_ts: (out) (nullable): last processed created_at, or 0 if the
+ *   relay has no persisted cursor. Unset on error.
+ *
+ * Returns: TRUE on success (including "no row"); FALSE with @error set on
+ *   a SQLite failure.
+ */
+gboolean nd_store_db_get_relay_cursor(NdStoreDb   *db,
+                                      const gchar *relay_url,
+                                      gint64      *out_since_ts,
+                                      GError     **error);
+
+/**
+ * nd_store_db_set_relay_cursor:
+ * @relay_url: relay URL used as the primary key
+ * @since_ts: newest created_at successfully ingested
+ *
+ * UPSERTs the cursor row and its updated_at wall-clock timestamp.
+ */
+gboolean nd_store_db_set_relay_cursor(NdStoreDb   *db,
+                                      const gchar *relay_url,
+                                      gint64       since_ts,
+                                      GError     **error);
 
 G_END_DECLS
 #endif /* ND_STORE_DB_H */

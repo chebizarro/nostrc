@@ -98,6 +98,24 @@ static const char SCHEMA_V1[] =
   ");"
   "CREATE INDEX publish_log_target ON publish_log(target_kind, target_uid);";
 
+/* Schema v2 — relay subscription cursor (plan Track 2 D4). One row per
+ * upstream relay URL; since_ts is the newest created_at that has already
+ * been ingested, so REQ resume filters can use `since_ts + 1`. */
+static const char SCHEMA_V2[] =
+  "CREATE TABLE relay_cursor ("
+  "  relay_url  TEXT PRIMARY KEY NOT NULL,"
+  "  since_ts   INTEGER NOT NULL DEFAULT 0,"
+  "  updated_at INTEGER NOT NULL DEFAULT 0"
+  ");";
+
+/* Schema v3 — publish target set per outbox row. Stored as a JSON
+ * array of relay URLs so a NIP-65 change between attempts does not
+ * silently retarget a retry (plan Track 2 D5). */
+static const char SCHEMA_V3[] =
+  "ALTER TABLE events   ADD COLUMN publish_targets TEXT;"
+  "ALTER TABLE contacts ADD COLUMN publish_targets TEXT;"
+  "ALTER TABLE files    ADD COLUMN publish_targets TEXT;";
+
 static const gchar *
 collection_name(NdStoreCollection collection)
 {
@@ -295,6 +313,8 @@ migrate(NdStoreDb *db, GError **error)
   /* user_version is transactional: a crash mid-migration leaves the
    * previous version (and schema) intact. */
   if ((version < 1 && !db_exec(db, SCHEMA_V1, error)) ||
+      (version < 2 && !db_exec(db, SCHEMA_V2, error)) ||
+      (version < 3 && !db_exec(db, SCHEMA_V3, error)) ||
       !db_exec(db, set_version, error)) {
     nd_store_db_rollback(db);
     return FALSE;
@@ -588,6 +608,67 @@ nd_store_db_count_rows(NdStoreDb        *db,
     return FALSE;
   *out_count = (guint)count;
   return TRUE;
+}
+
+gboolean
+nd_store_db_get_relay_cursor(NdStoreDb   *db,
+                             const gchar *relay_url,
+                             gint64      *out_since_ts,
+                             GError     **error)
+{
+  g_return_val_if_fail(db != NULL, FALSE);
+  g_return_val_if_fail(relay_url != NULL, FALSE);
+
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(db->handle,
+        "SELECT since_ts FROM relay_cursor WHERE relay_url = ?1",
+        -1, &stmt, NULL) != SQLITE_OK)
+    return nd_store_db_set_sql_error(db, error, "prepare cursor read");
+
+  sqlite3_bind_text(stmt, 1, relay_url, -1, SQLITE_TRANSIENT);
+
+  gint64 value = 0;
+  gboolean ok = TRUE;
+  int rc = sqlite3_step(stmt);
+  if (rc == SQLITE_ROW)
+    value = sqlite3_column_int64(stmt, 0);
+  else if (rc != SQLITE_DONE)
+    ok = nd_store_db_set_sql_error(db, error, "cursor read");
+
+  sqlite3_finalize(stmt);
+  if (ok && out_since_ts != NULL)
+    *out_since_ts = value;
+  return ok;
+}
+
+gboolean
+nd_store_db_set_relay_cursor(NdStoreDb   *db,
+                             const gchar *relay_url,
+                             gint64       since_ts,
+                             GError     **error)
+{
+  g_return_val_if_fail(db != NULL, FALSE);
+  g_return_val_if_fail(relay_url != NULL, FALSE);
+
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(db->handle,
+        "INSERT INTO relay_cursor(relay_url, since_ts, updated_at)"
+        "  VALUES (?1, ?2, ?3)"
+        "  ON CONFLICT(relay_url) DO UPDATE SET"
+        "    since_ts = MAX(relay_cursor.since_ts, excluded.since_ts),"
+        "    updated_at = excluded.updated_at",
+        -1, &stmt, NULL) != SQLITE_OK)
+    return nd_store_db_set_sql_error(db, error, "prepare cursor upsert");
+
+  sqlite3_bind_text (stmt, 1, relay_url, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 2, since_ts);
+  sqlite3_bind_int64(stmt, 3, g_get_real_time() / G_USEC_PER_SEC);
+
+  gboolean ok = (sqlite3_step(stmt) == SQLITE_DONE);
+  if (!ok)
+    nd_store_db_set_sql_error(db, error, "cursor upsert");
+  sqlite3_finalize(stmt);
+  return ok;
 }
 
 gboolean

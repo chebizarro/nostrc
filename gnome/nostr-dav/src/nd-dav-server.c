@@ -49,6 +49,9 @@ struct _NdDavServer {
 
   NdStoreDb    *db;             /* owned ref */
 
+  /* Outbox publisher — not owned. When NULL, DAV writes stay local. */
+  NdPublisher  *publisher;
+
   /* Calendar store for NIP-52 events */
   NdCalendarStore *cal_store;    /* owned */
 
@@ -634,6 +637,15 @@ handle_put_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
     return;
   }
 
+  if (self->publisher != NULL) {
+    GError *pub_err = NULL;
+    if (!nd_publisher_stage_calendar_put(self->publisher, uid, &pub_err)) {
+      g_warning("nostr-dav: could not stage publish for %s: %s", uid,
+                pub_err ? pub_err->message : "unknown");
+      g_clear_error(&pub_err);
+    }
+  }
+
   g_autofree gchar *etag = nd_ical_compute_etag(event);
 
   soup_server_message_set_status(msg, is_new ? 201 : 204, NULL);
@@ -849,6 +861,15 @@ handle_put_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
     respond_store_error(msg, store_err, "store contact");
     nd_contact_free(contact);
     return;
+  }
+
+  if (self->publisher != NULL) {
+    GError *pub_err = NULL;
+    if (!nd_publisher_stage_contact_put(self->publisher, uid, &pub_err)) {
+      g_warning("nostr-dav: could not stage publish for %s: %s", uid,
+                pub_err ? pub_err->message : "unknown");
+      g_clear_error(&pub_err);
+    }
   }
 
   g_autofree gchar *etag = nd_vcard_compute_etag(contact);
@@ -1513,6 +1534,13 @@ nd_dav_server_set_account_id(NdDavServer *self, const gchar *account_id)
   g_return_if_fail(ND_IS_DAV_SERVER(self));
   g_free(self->account_id);
   self->account_id = g_strdup(account_id);
+}
+
+void
+nd_dav_server_set_publisher(NdDavServer *self, NdPublisher *publisher)
+{
+  g_return_if_fail(ND_IS_DAV_SERVER(self));
+  self->publisher = publisher;
 }
 
 gboolean

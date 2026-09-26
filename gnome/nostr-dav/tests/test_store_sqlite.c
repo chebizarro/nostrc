@@ -366,7 +366,9 @@ test_schema_and_permissions(void)
   g_assert_cmpint(st.st_mode & 0077, ==, 0);
 
   g_autofree gchar *version = query_text(db, "PRAGMA user_version");
-  g_assert_cmpstr(version, ==, "1");
+  g_autofree gchar *expected_version =
+    g_strdup_printf("%d", ND_STORE_DB_SCHEMA_VERSION);
+  g_assert_cmpstr(version, ==, expected_version);
   g_autofree gchar *mode = query_text(db, "PRAGMA journal_mode");
   g_assert_cmpstr(mode, ==, "wal");
 
@@ -467,7 +469,9 @@ test_corrupt_store_quarantined(void)
 
   /* Fresh, usable, and the corrupt file was kept aside. */
   g_autofree gchar *version = query_text(db, "PRAGMA user_version");
-  g_assert_cmpstr(version, ==, "1");
+  g_autofree gchar *expected_version =
+    g_strdup_printf("%d", ND_STORE_DB_SCHEMA_VERSION);
+  g_assert_cmpstr(version, ==, expected_version);
 
   gboolean found = FALSE;
   GDir *d = g_dir_open(parent, 0, NULL);

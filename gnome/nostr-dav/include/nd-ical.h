@@ -57,6 +57,8 @@ typedef struct {
  */
 void nd_calendar_event_free(NdCalendarEvent *event);
 
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(NdCalendarEvent, nd_calendar_event_free)
+
 /**
  * nd_ical_parse_vevent:
  * @ics_text: raw iCalendar text (VCALENDAR wrapper with VEVENT inside)

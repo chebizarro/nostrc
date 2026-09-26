@@ -17,6 +17,7 @@
 #include <gio/gio.h>
 #include "nd-token-store.h"
 #include "nd-store-db.h"
+#include "nd-publisher.h"
 
 G_BEGIN_DECLS
 
@@ -51,6 +52,19 @@ NdDavServer *nd_dav_server_new(NdTokenStore *token_store,
  */
 void nd_dav_server_set_account_id(NdDavServer *self,
                                   const gchar *account_id);
+
+/**
+ * nd_dav_server_set_publisher:
+ * @self: the server
+ * @publisher: (nullable): outbox publisher; ownership retained by caller
+ *
+ * When set, DAV PUT handlers stage the mutation into the publisher's
+ * outbox after the local write succeeds. Passing @publisher=NULL makes
+ * the server local-only, matching the pre-Track-2-D5 behaviour and
+ * used by tests that focus on the DAV surface.
+ */
+void nd_dav_server_set_publisher(NdDavServer *self,
+                                 NdPublisher *publisher);
 
 /**
  * nd_dav_server_start:

@@ -17,6 +17,12 @@
 #include "nd-application.h"
 #include "nd-config.h"
 #include "nd-dav-server.h"
+#include "nd-publisher.h"
+#include "nd-relay-sync.h"
+#include "nd-relay-transport.h"
+#include "nd-signer.h"
+#include "nd-calendar-store.h"
+#include "nd-contact-store.h"
 #include "nd-store-db.h"
 #include "nd-token-store.h"
 
@@ -43,14 +49,19 @@
 #define ND_LOCK_WAIT_STEP_US  (100 * 1000)
 
 struct _NdApplication {
-  GApplication   parent_instance;
+  GApplication      parent_instance;
 
-  NdConfig       config;
-  NdTokenStore  *token_store;
-  NdStoreDb     *db;
-  NdDavServer   *dav_server;
-  int            lock_fd;
-  int            exit_status;
+  NdConfig          config;
+  NdTokenStore     *token_store;
+  NdStoreDb        *db;
+  NdDavServer      *dav_server;
+  NdSigner         *signer;
+  NdPublisher      *publisher;
+  NdRelaySync      *relay_sync;
+  NdCalendarStore  *cal_store;
+  NdContactStore   *contact_store;
+  int               lock_fd;
+  int               exit_status;
 };
 
 G_DEFINE_TYPE(NdApplication, nd_application, G_TYPE_APPLICATION)
@@ -105,6 +116,17 @@ acquire_instance_lock(NdApplication *self, GError **error)
   return FALSE;
 }
 
+static NdRelayTransport *
+session_transport_factory(const gchar *relay_url, gpointer user_data)
+{
+  (void)user_data;
+  /* Real WebSocket wiring is a follow-up bead; the factory hands out a
+   * scaffold transport so the sync + publisher plumbing is testable in
+   * a running daemon (connects will fail loud, staged rows stay
+   * pending and retry). */
+  return nd_relay_transport_new_websocket(relay_url);
+}
+
 static gboolean
 bring_up(NdApplication *self, GError **error)
 {
@@ -135,6 +157,56 @@ bring_up(NdApplication *self, GError **error)
   /* 5. Account, then 6. listen — binding is the last step. */
   self->dav_server = nd_dav_server_new(self->token_store, self->db);
   nd_dav_server_set_account_id(self->dav_server, ND_ACCOUNT_ID);
+
+  /* 5a. Signer + publisher: opt-in via `enable_publish` and best-effort
+   *     on top of that. If the session bus is unreachable (headless
+   *     build, tests) or the signer proxy fails to build, the local
+   *     store still serves DAV — publishes just cannot be attempted.
+   *     The gate defaults to OFF while the WebSocket transport is a
+   *     scaffold (see nd-relay-transport.c) so the outbox does not spin
+   *     against a `NOT_SUPPORTED` backend. */
+  if (!self->config.enable_publish) {
+    g_message("nostr-dav: publish + relay-sync disabled "
+              "(enable_publish is off in %s)", config_path);
+    goto listen;
+  }
+  GDBusConnection *bus =
+    g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+  if (bus != NULL) {
+    GError *signer_err = NULL;
+    self->signer = nd_signer_new_dbus(bus, &signer_err);
+    if (self->signer == NULL) {
+      g_warning("nostr-dav: signer proxy unavailable: %s",
+                signer_err ? signer_err->message : "unknown");
+      g_clear_error(&signer_err);
+    }
+    g_object_unref(bus);
+  } else {
+    g_message("nostr-dav: session bus unreachable; publish disabled");
+  }
+
+  if (self->signer != NULL) {
+    self->cal_store     = nd_calendar_store_new(self->db);
+    self->contact_store = nd_contact_store_new(self->db);
+    self->publisher = nd_publisher_new(self->db, self->signer,
+                                        session_transport_factory, self);
+    nd_publisher_configure(self->publisher,
+                           self->config.account_pubkey,
+                           self->config.home_relays,
+                           self->config.publish_quorum);
+    nd_dav_server_set_publisher(self->dav_server, self->publisher);
+
+    self->relay_sync = nd_relay_sync_new(self->db, self->cal_store,
+                                          self->contact_store,
+                                          session_transport_factory, self);
+    nd_relay_sync_configure(self->relay_sync,
+                            self->config.account_pubkey,
+                            self->config.home_relays,
+                            self->config.upstream_mode);
+    nd_relay_sync_start(self->relay_sync);
+  }
+
+listen:
   if (!nd_dav_server_start(self->dav_server, ND_LISTEN_ADDRESS,
                            ND_LISTEN_PORT, error))
     return FALSE;
@@ -155,12 +227,30 @@ tear_down(NdApplication *self)
   if (self->dav_server)
     nd_dav_server_stop(self->dav_server);
   g_clear_object(&self->dav_server);
+  if (self->relay_sync != NULL) {
+    nd_relay_sync_free(self->relay_sync);
+    self->relay_sync = NULL;
+  }
+  if (self->publisher != NULL) {
+    nd_publisher_free(self->publisher);
+    self->publisher = NULL;
+  }
+  g_clear_pointer(&self->signer, nd_signer_unref);
+  if (self->cal_store != NULL) {
+    nd_calendar_store_free(self->cal_store);
+    self->cal_store = NULL;
+  }
+  if (self->contact_store != NULL) {
+    nd_contact_store_free(self->contact_store);
+    self->contact_store = NULL;
+  }
   g_clear_pointer(&self->db, nd_store_db_unref);
   g_clear_pointer(&self->token_store, nd_token_store_free);
   if (self->lock_fd >= 0) {
     close(self->lock_fd);
     self->lock_fd = -1;
   }
+  nd_config_clear(&self->config);
 }
 
 static int
