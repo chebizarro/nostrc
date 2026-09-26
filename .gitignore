@@ -128,3 +128,15 @@ state.json
 
 # NIP-46 one-time login bundles (secrets) — never commit
 *.login
+
+# Build-generated headers (CMake configure_file outputs)
+apps/gnostr/generated/
+
+# Python bytecode caches (integration test dirs)
+**/__pycache__/
+
+# VM CI run logs (per-run artifacts)
+vm-ci-logs/
+
+# Oracle chat + orchestrator prompt exports (per-user agent workspace)
+prompt-exports/
