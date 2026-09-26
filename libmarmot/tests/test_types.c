@@ -256,7 +256,7 @@ static void test_result_cleanup(void)
 
 static void test_kind_constants(void)
 {
-    assert(MARMOT_KIND_KEY_PACKAGE == 443);
+    assert(MARMOT_KIND_KEY_PACKAGE == 30443);  /* addressable; legacy 443 removed */
     assert(MARMOT_KIND_WELCOME == 444);
     assert(MARMOT_KIND_GROUP_MESSAGE == 445);
     assert(MARMOT_EXTENSION_TYPE == 0xF2EE);

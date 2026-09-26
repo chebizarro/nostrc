@@ -87,7 +87,7 @@ gn_key_package_manager_init(GnKeyPackageManager *self)
 /* ══════════════════════════════════════════════════════════════════════════
  * Internal: Key Package Creation Flow
  *
- * 1. marmot_gobject_client_create_key_package_unsigned_async() → unsigned kind:443 event JSON
+ * 1. marmot_gobject_client_create_key_package_unsigned_async() → unsigned kind:30443 event JSON
  * 2. gnostr_plugin_context_request_sign_event() → signed event JSON
  * 3. gnostr_plugin_context_publish_event_async() → publish to relays
  * ══════════════════════════════════════════════════════════════════════════ */

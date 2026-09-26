@@ -5,7 +5,7 @@
  * group messaging over Nostr using MLS (RFC 9420).
  *
  * This plugin handles:
- * - Key package creation and publication (kind:443)
+ * - Key package creation and publication (kind:30443)
  * - Welcome message processing (kind:444 via NIP-59)
  * - Group message encryption/decryption (kind:445)
  * - Group lifecycle management (create, join, leave)
@@ -32,7 +32,7 @@
 #include <libpeas.h>
 
 /* Marmot event kinds */
-#define MLS_KIND_KEY_PACKAGE        443
+#define MLS_KIND_KEY_PACKAGE        MARMOT_GOBJECT_KIND_KEY_PACKAGE
 #define MLS_KIND_WELCOME            444
 #define MLS_KIND_GROUP_MESSAGE      445
 #define MLS_KIND_GIFT_WRAP          1059
@@ -427,7 +427,7 @@ mls_groups_handle_event(GnostrEventHandler  *handler,
   switch (kind)
     {
     case MLS_KIND_KEY_PACKAGE:
-      g_debug("MLS: Observed key package event (kind:443)");
+      g_debug("MLS: Observed key package event (kind:%d)", kind);
       /* Key packages are fetched on-demand, not processed inline. */
       return FALSE;
 

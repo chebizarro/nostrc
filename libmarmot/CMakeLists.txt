@@ -7,7 +7,7 @@ endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 
 set(MARMOT_VERSION_MAJOR 0)
-set(MARMOT_VERSION_MINOR 1)
+set(MARMOT_VERSION_MINOR 2)
 set(MARMOT_VERSION_PATCH 0)
 declare_component_version(MARMOT
   ${MARMOT_VERSION_MAJOR}
@@ -289,5 +289,8 @@ if(BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/tests
   )
-  add_test(NAME marmot_test_interop COMMAND test_marmot_interop)
+  # The suite locates tests/vectors/mdk relative to its working directory;
+  # pin it so out-of-tree builds do not silently skip the MDK vectors.
+  add_test(NAME marmot_test_interop COMMAND test_marmot_interop
+           WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

@@ -7,7 +7,7 @@
  * Fully interoperable with Whitenoise and MDK-compatible clients.
  *
  * Event kinds handled:
- *   - 443  (MLS Key Package, MIP-00)
+ *   - 30443 (MLS Key Package, addressable)
  *   - 444  (MLS Welcome, MIP-02, via NIP-59 gift wrap)
  *   - 445  (MLS Group Message, MIP-03)
  *   - 1059 (NIP-59 Gift Wrap, for welcome delivery)

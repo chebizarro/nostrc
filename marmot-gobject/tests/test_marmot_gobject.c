@@ -1830,6 +1830,86 @@ test_multiple_client_instances(void)
     g_object_unref(s2);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * KeyPackage kind:30443 exposure and selection
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void
+test_key_package_kind_30443(void)
+{
+    g_assert_cmpint(MARMOT_GOBJECT_KIND_KEY_PACKAGE, ==, 30443);
+
+    MarmotGobjectMemoryStorage *store = NULL;
+    MarmotGobjectClient *client = new_memory_client(&store);
+    const gchar *relays[] = { "wss://relay.example.com", NULL };
+    gchar *pubkey_hex = NULL;
+    gchar *first = create_signed_key_package_sync(client, TEST_MEMBER_SK_HEX,
+                                                  relays, &pubkey_hex);
+    gchar *second = create_signed_key_package_sync(client, TEST_MEMBER_SK_HEX,
+                                                   relays, NULL);
+
+    g_assert_nonnull(strstr(first, "\"kind\":30443"));
+    g_assert_nonnull(strstr(first, "[\"d\",\""));
+    g_assert_null(strstr(first, "\"kind\":443,"));
+
+    /* Rotation reuses the account's publication slot. */
+    const gchar *d1 = strstr(first, "[\"d\",\"");
+    const gchar *d2 = strstr(second, "[\"d\",\"");
+    g_assert_nonnull(d2);
+    g_assert_cmpint(strncmp(d1, d2, 6 + 64), ==, 0);
+
+    g_free(first);
+    g_free(second);
+    g_free(pubkey_hex);
+    g_object_unref(client);
+    g_object_unref(store);
+}
+
+static void
+test_select_key_package_event(void)
+{
+    MarmotGobjectMemoryStorage *store = NULL;
+    MarmotGobjectClient *client = new_memory_client(&store);
+    gchar *pubkey_hex = NULL;
+    gchar *kp = create_signed_key_package_sync(client, TEST_MEMBER_SK_HEX,
+                                               NULL, &pubkey_hex);
+
+    /* Garbage and legacy-looking input are skipped, the signed 30443 wins. */
+    const gchar *events[] = { "not json", "{\"kind\":443}", kp, NULL };
+    GError *error = NULL;
+    gint idx = marmot_gobject_select_key_package_event(events, pubkey_hex, &error);
+    g_assert_no_error(error);
+    g_assert_cmpint(idx, ==, 2);
+
+    idx = marmot_gobject_select_key_package_event(events, NULL, &error);
+    g_assert_no_error(error);
+    g_assert_cmpint(idx, ==, 2);
+
+    /* Another author: no candidate, reported through GError. */
+    idx = marmot_gobject_select_key_package_event(events, TEST_HEX_32, &error);
+    g_assert_cmpint(idx, ==, -1);
+    g_assert_nonnull(error);
+    g_clear_error(&error);
+
+    /* Malformed owner pubkey. */
+    idx = marmot_gobject_select_key_package_event(events, "zz", &error);
+    g_assert_cmpint(idx, ==, -1);
+    g_assert_nonnull(error);
+    g_clear_error(&error);
+
+    /* Empty input. */
+    const gchar *none[] = { NULL };
+    idx = marmot_gobject_select_key_package_event(none, NULL, &error);
+    g_assert_cmpint(idx, ==, -1);
+    g_assert_nonnull(error);
+    g_clear_error(&error);
+
+    g_free(kp);
+    g_free(pubkey_hex);
+    g_object_unref(client);
+    g_object_unref(store);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -1884,6 +1964,8 @@ main(int argc, char *argv[])
     g_test_add_func("/marmot-gobject/client/get-group-not-found", test_client_get_group_not_found);
     g_test_add_func("/marmot-gobject/client/get-pending-welcomes-empty", test_client_get_pending_welcomes_empty);
     g_test_add_func("/marmot-gobject/client/get-messages-empty", test_client_get_messages_empty);
+    g_test_add_func("/marmot-gobject/key-package/kind-30443", test_key_package_kind_30443);
+    g_test_add_func("/marmot-gobject/key-package/select-event", test_select_key_package_event);
 
     /* 9. Lifecycle stress */
     g_test_add_func("/marmot-gobject/stress/group-rapid-create-destroy", test_group_rapid_create_destroy);

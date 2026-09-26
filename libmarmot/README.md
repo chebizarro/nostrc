@@ -8,7 +8,7 @@ libmarmot implements the Marmot Improvement Proposals (MIPs) for encrypted group
 
 | MIP | Description | Event Kind | Status |
 |-----|-------------|------------|--------|
-| MIP-00 | Credentials & KeyPackages | 443 | ✅ Complete |
+| MIP-00 | Credentials & KeyPackages | 30443 (addressable) | ✅ Complete |
 | MIP-01 | Group Construction (Extension 0xF2EE) | — | ✅ Complete |
 | MIP-02 | Welcome Events (NIP-59 gift-wrapped) | 444 | ✅ Complete |
 | MIP-03 | Group Messages (NIP-44 encrypted) | 445 | ✅ Complete |
@@ -100,15 +100,25 @@ Marmot *m = marmot_new(storage);
 marmot_free(m);  // also frees the storage
 ```
 
-### MIP-00: Credentials & KeyPackages (kind 443)
+### MIP-00: Credentials & KeyPackages (kind 30443)
 
 ```c
 MarmotKeyPackageResult result;
-int rc = marmot_create_key_package(m, my_pubkey, relay_urls, relay_count, &result);
-// result.event → unsigned kind:443 event to sign and publish
-// result.key_package_ref → 32-byte identifier for this key package
-marmot_key_package_result_clear(&result);
+MarmotError rc = marmot_create_key_package_unsigned(m, my_pubkey,
+                                                    relay_urls, relay_count, &result);
+// result.event_json      → unsigned kind:30443 event to sign and publish
+// result.key_package_ref → 32-byte KeyPackageRef (the event's `i` tag)
+marmot_key_package_result_free(&result);
+
+// Inviter side: pick one KeyPackage from everything the relays returned.
+size_t idx;
+rc = marmot_select_key_package_event(fetched_jsons, fetched_count,
+                                     invitee_pubkey, &idx);
+// fetched_jsons[idx] → pass to marmot_create_group() / marmot_add_members()
 ```
+
+Every KeyPackage of an account reuses that account's `d` publication slot, so a
+rotated KeyPackage replaces the previous one on relays.
 
 ### MIP-01: Group Construction
 
@@ -186,9 +196,50 @@ libmarmot is designed for byte-level interoperability with the [MDK](https://git
 - **Storage interface**: `MarmotStorage` vtable maps 1:1 to MDK's `MdkStorageProvider` trait
 - **Extension format**: TLS serialization of `NostrGroupDataExtension` (0xF2EE) is byte-identical
 - **Error codes**: `MarmotError` enum mirrors MDK's `MdkError` variants
-- **Protocol constants**: kind:443/444/445, extension type 0xF2EE
+- **Protocol constants**: kind:30443/444/445, extension type 0xF2EE
 
 Test vectors from MDK can be placed in `tests/vectors/mdk/` for automated cross-validation.
+
+## Changelog
+
+### 0.2.0 (unreleased): KeyPackages move to addressable kind 30443
+
+**Breaking wire change.** KeyPackage events are now kind **30443** instead of 443
+(`MARMOT_KIND_KEY_PACKAGE`). The reference is the Marmot spec
+([marmot-protocol/marmot](https://github.com/marmot-protocol/marmot) at `26fa6a6`),
+`transports/nostr.md` sections "KeyPackage publication" and "Event identity and
+tag cardinality". Tags and values match the MDK 0.8 events in
+`tests/vectors/mdk/protocol-vectors.json`.
+
+- **Emit.** Tags are emitted in the order `d`, `mls_protocol_version`,
+  `mls_ciphersuite`, `mls_extensions`, `mls_proposals`, `relays` (only when
+  relays are given), `i`, `encoding`. The NIP-70 `-` tag is gone: it is not
+  part of the 30443 tag set, and relays without AUTH reject protected events.
+- **Stable slot.** The `d` value is 32 random bytes, generated once per account
+  and kept in the storage backend's MLS key store (label `kp_slot`, so the
+  storage schema is unchanged). Every rotation reuses it, which lets relays
+  replace the old KeyPackage.
+- **Parse.** A KeyPackage event must be kind 30443 with exactly one `d` (64
+  lowercase hex), `i`, `mls_protocol_version` and `encoding` tag, each with a
+  single value. `mls_ciphersuite`, `mls_extensions` and `mls_proposals` must
+  each be one tag holding distinct `0x`-prefixed ids. A `relays` tag is
+  optional, but if present it must hold valid `ws`/`wss` URLs.
+- **Select.** New `marmot_select_key_package_event()`: keeps the newest
+  authenticated event per `(pubkey, d)` slot (ties go to the lower event id).
+  A slot whose newest event is invalid yields nothing; older events in that
+  slot are never used. Across slots it picks the newest valid event (ties go to
+  the lower KeyPackageRef).
+- **Legacy 443 is not accepted.** The adopted spec removed kind 443. MDK
+  accepted it only until 2026-05-31, and MDK master rejects it. Welcomes for
+  KeyPackages you already published as 443 still work, because private key
+  material is looked up by KeyPackageRef and not by event kind. Peers that
+  still publish only 443 must upgrade before you can invite them.
+- **Not yet the adopted strict profile.** Content is still the raw
+  `KeyPackage` rather than an `MLSMessage`, the `encoding`/`relays` tags remain
+  for MDK 0.8 compatibility, and there is no `app_components`/`0x8009`
+  account-identity proof (tracked as `nostrc-prqu.9`). The
+  `mls_extensions`/`mls_proposals` tags advertise more than the LeafNode
+  capabilities list (tracked as `nostrc-prqu.10`).
 
 ## Test Suite
 

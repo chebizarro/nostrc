@@ -34,6 +34,8 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sodium.h>
+#include <nostr-event.h>
+#include <nostr-tag.h>
 
 #define TEST(name) do { printf("  %-55s", #name); name(); printf("PASS\n"); } while(0)
 
@@ -520,6 +522,212 @@ test_mdk_protocol_kp_ref_tag(const char *json, size_t json_len)
     printf("PASS (%d ref tags verified)\n", verified);
 }
 
+/* ── kind:30443 KeyPackage events (MDK 0.8 transport profile) ────────────
+ *
+ * The vectors ship each KeyPackage event's kind, tags and content but no
+ * id/signature, so these checks drive the post-authentication validator
+ * (marmot_validate_key_package_event) that marmot_parse_key_package_event
+ * runs after NIP-01 id/signature verification.
+ */
+
+extern MarmotError marmot_validate_key_package_event(NostrEvent *event,
+                                                     MlsKeyPackage *kp_out,
+                                                     uint8_t nostr_pubkey_out[32]);
+
+/* Matching ']' for a '[' (vector tag values contain no brackets). */
+static const char *
+json_find_array_end(const char *start)
+{
+    int depth = 0;
+    for (const char *p = start; *p; p++) {
+        if (*p == '[') depth++;
+        else if (*p == ']') { depth--; if (depth == 0) return p; }
+    }
+    return NULL;
+}
+
+/* Build an (unsigned) event JSON from vector pieces; caller frees. */
+static char *
+mdk_kp_event_json(const char *pubkey_hex, int kind, const char *content,
+                  const char *tags_start)
+{
+    const char *tags_end = json_find_array_end(tags_start);
+    if (!tags_end) return NULL;
+    int tags_len = (int)(tags_end - tags_start + 1);
+    size_t cap = strlen(pubkey_hex) + strlen(content) + (size_t)tags_len + 128;
+    char *out = malloc(cap);
+    if (!out) return NULL;
+    snprintf(out, cap,
+             "{\"pubkey\":\"%s\",\"created_at\":1775000000,\"kind\":%d,"
+             "\"tags\":%.*s,\"content\":\"%s\"}",
+             pubkey_hex, kind, tags_len, tags_start, content);
+    return out;
+}
+
+static void
+mdk_clear_event(NostrEvent *ev)
+{
+    free(ev->id);
+    free(ev->pubkey);
+    free(ev->content);
+    free(ev->sig);
+    nostr_tags_free(ev->tags);
+    memset(ev, 0, sizeof(*ev));
+}
+
+static MarmotError
+mdk_validate_kp_event(const char *event_json, uint8_t pk_out[32])
+{
+    NostrEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    if (!nostr_event_deserialize_compact(&ev, event_json, NULL))
+        return MARMOT_ERR_DESERIALIZATION;
+    MlsKeyPackage kp;
+    memset(&kp, 0, sizeof(kp));
+    MarmotError err = marmot_validate_key_package_event(&ev, &kp, pk_out);
+    if (err == MARMOT_OK) mls_key_package_clear(&kp);
+    mdk_clear_event(&ev);
+    return err;
+}
+
+/* Check one vector event: accepted as 30443, rejected as legacy 443. */
+static void
+mdk_check_kp_event(const char *pubkey_hex, int vector_kind, const char *content,
+                   const char *tags_start)
+{
+    assert(vector_kind == 30443 && "MDK vectors publish kind:30443 KeyPackages");
+    uint8_t expected_pk[32], pk[32];
+    assert(hex_decode(expected_pk, pubkey_hex, 32));
+
+    char *ev = mdk_kp_event_json(pubkey_hex, vector_kind, content, tags_start);
+    assert(ev);
+    MarmotError err = mdk_validate_kp_event(ev, pk);
+    if (err != MARMOT_OK)
+        fprintf(stderr, "MDK 30443 event rejected: %s\n", marmot_error_string(err));
+    assert(err == MARMOT_OK && "libmarmot must accept MDK kind:30443 KeyPackage events");
+    assert(memcmp(pk, expected_pk, 32) == 0);
+    free(ev);
+
+    char *legacy = mdk_kp_event_json(pubkey_hex, 443, content, tags_start);
+    assert(legacy);
+    assert(mdk_validate_kp_event(legacy, pk) == MARMOT_ERR_UNEXPECTED_EVENT &&
+           "legacy kind:443 must be rejected");
+    free(legacy);
+}
+
+static int
+json_extract_int(const char *start, const char *end, const char *key)
+{
+    char pattern[64];
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    const char *pos = strstr(start, pattern);
+    if (!pos || pos >= end) return -1;
+    pos += strlen(pattern);
+    while (pos < end && (*pos == ' ' || *pos == ':')) pos++;
+    return atoi(pos);
+}
+
+static void
+test_mdk_protocol_kp_events_30443(const char *json, size_t json_len)
+{
+    int verified = 0;
+
+    const char *kp_section = json_find_object(json, json + json_len, "key_package");
+    const char *kp_end = json_find_object_end(kp_section);
+    const char *cases = json_find_array(kp_section, kp_end, "cases");
+    const char *pos = cases + 1;
+    while (pos < kp_end) {
+        pos = strchr(pos, '{');
+        if (!pos || pos >= kp_end) break;
+        const char *case_end = json_find_object_end(pos);
+        char *pk_hex = json_extract_string(pos, case_end, "nostr_pubkey");
+        char *content = json_extract_string(pos, case_end, "event_content_base64");
+        const char *tags = json_find_array(pos, case_end, "event_tags");
+        assert(pk_hex && content && tags);
+        /* key_package cases describe kind:30443 publications (d + i tags). */
+        mdk_check_kp_event(pk_hex, 30443, content, tags);
+        free(pk_hex);
+        free(content);
+        verified++;
+        pos = case_end + 1;
+    }
+
+    const char *gl = json_find_object(json, json + json_len, "group_lifecycle");
+    const char *gl_end = json_find_object_end(gl);
+    char *bob_hex = json_extract_string(gl, gl_end, "bob_pubkey");
+    const char *bkp = strstr(gl, "\"bob_key_package\"");
+    assert(bob_hex && bkp && bkp < gl_end);
+    while (bkp > gl && *bkp != '{') bkp--;
+    const char *bkp_end = json_find_object_end(bkp);
+    char *content = json_extract_string(bkp, bkp_end, "event_content");
+    const char *tags = json_find_array(bkp, bkp_end, "event_tags");
+    assert(content && tags);
+    mdk_check_kp_event(bob_hex, json_extract_int(bkp, bkp_end, "event_kind"), content, tags);
+    free(content);
+    free(bob_hex);
+    verified++;
+
+    assert(verified == 4);
+    printf("PASS (%d MDK kind:30443 events accepted, 443 rejected)\n", verified);
+}
+
+/* libmarmot's emitted tags match MDK's order and values (MDK's optional
+ * `client` tag aside; `d` and `i` are per-package values). */
+static void
+test_mdk_protocol_kp_tag_parity(const char *json, size_t json_len)
+{
+    const char *kp_section = json_find_object(json, json + json_len, "key_package");
+    const char *kp_end = json_find_object_end(kp_section);
+    const char *cases = json_find_array(kp_section, kp_end, "cases");
+    const char *c0 = strchr(cases, '{');
+    const char *c0_end = json_find_object_end(c0);
+    char *pk_hex = json_extract_string(c0, c0_end, "nostr_pubkey");
+    char *content = json_extract_string(c0, c0_end, "event_content_base64");
+    char *mdk_json = mdk_kp_event_json(pk_hex, 30443, content,
+                                       json_find_array(c0, c0_end, "event_tags"));
+    NostrEvent mdk;
+    memset(&mdk, 0, sizeof(mdk));
+    assert(mdk_json && nostr_event_deserialize_compact(&mdk, mdk_json, NULL));
+
+    Marmot *m = marmot_new(marmot_storage_memory_new());
+    assert(m);
+    uint8_t pk[32];
+    randombytes_buf(pk, sizeof(pk));
+    const char *relays[] = { "wss://relay.example.com" };
+    MarmotKeyPackageResult r;
+    memset(&r, 0, sizeof(r));
+    assert(marmot_create_key_package_unsigned(m, pk, relays, 1, &r) == MARMOT_OK);
+    NostrEvent ours;
+    memset(&ours, 0, sizeof(ours));
+    assert(nostr_event_deserialize_compact(&ours, r.event_json, NULL));
+    assert(ours.kind == 30443);
+
+    size_t j = 0;
+    for (size_t i = 0; i < nostr_tags_size(mdk.tags); i++) {
+        NostrTag *mt = nostr_tags_get(mdk.tags, i);
+        const char *key = nostr_tag_get_key(mt);
+        if (strcmp(key, "client") == 0) continue;
+        assert(j < nostr_tags_size(ours.tags) && "libmarmot is missing an MDK tag");
+        NostrTag *ot = nostr_tags_get(ours.tags, j++);
+        assert(strcmp(nostr_tag_get_key(ot), key) == 0 && "tag order differs from MDK");
+        assert(nostr_tag_size(ot) == nostr_tag_size(mt) && "tag arity differs from MDK");
+        if (strcmp(key, "d") == 0 || strcmp(key, "i") == 0) continue;
+        for (size_t v = 1; v < nostr_tag_size(mt); v++)
+            assert(strcmp(nostr_tag_get(ot, v), nostr_tag_get(mt, v)) == 0 &&
+                   "tag value differs from MDK");
+    }
+    assert(j == nostr_tags_size(ours.tags) && "libmarmot emits a tag MDK does not");
+
+    mdk_clear_event(&ours);
+    mdk_clear_event(&mdk);
+    marmot_key_package_result_free(&r);
+    marmot_free(m);
+    free(mdk_json);
+    free(pk_hex);
+    free(content);
+    printf("PASS (%zu tags match MDK order/values)\n", j);
+}
+
 /*
  * Test: Validate group lifecycle metadata from protocol vectors.
  */
@@ -767,6 +975,12 @@ run_protocol_vector_tests(const char *vector_dir)
 
     printf("  %-55s", "protocol: MDK KP deserializes via TLS parser");
     test_mdk_protocol_kp_deserialize(json, json_len);
+
+    printf("  %-55s", "protocol: MDK kind:30443 KP events validate");
+    test_mdk_protocol_kp_events_30443(json, json_len);
+
+    printf("  %-55s", "protocol: libmarmot 30443 tags match MDK");
+    test_mdk_protocol_kp_tag_parity(json, json_len);
 
     free(json);
 }
@@ -1094,7 +1308,7 @@ static void
 test_nostr_event_kinds(void)
 {
     /* Verify that the event kind constants match the Marmot spec */
-    assert(MARMOT_KIND_KEY_PACKAGE == 443);
+    assert(MARMOT_KIND_KEY_PACKAGE == 30443);  /* addressable; legacy 443 removed */
     assert(MARMOT_KIND_WELCOME == 444);
     assert(MARMOT_KIND_GROUP_MESSAGE == 445);
 

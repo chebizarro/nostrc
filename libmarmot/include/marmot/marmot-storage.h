@@ -265,7 +265,7 @@ MarmotStorage *marmot_storage_sqlite_new(const char *path,
  *
  * Create a nostrdb-backed persistent storage.
  *
- * This hybrid backend uses nostrdb for Nostr event storage (kind 443/444/445)
+ * This hybrid backend uses nostrdb for Nostr event storage (kind 30443/444/445)
  * and a separate LMDB environment for MLS internal state (group data, key
  * packages, exporter secrets, snapshots).
  *

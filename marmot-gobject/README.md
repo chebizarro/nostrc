@@ -117,6 +117,17 @@ When built with Meson and `introspection=true`:
 | `Marmot-1.0.typelib` | `$prefix/lib/girepository-1.0/` | Compiled GIR for runtime binding |
 | `marmot-gobject-1.0.vapi` | `$prefix/share/vala/vapi/` | Vala bindings (if `vapi=true`) |
 
+## Changelog
+
+### 1.1.0 (unreleased)
+
+- Added `MARMOT_GOBJECT_KIND_KEY_PACKAGE` (30443) and
+  `marmot_gobject_select_key_package_event()`.
+- KeyPackage events from `marmot_gobject_client_create_key_package*_async()` now
+  use kind 30443 with a stable per-account `d` slot (libmarmot 0.2.0). Relay
+  filters that fetch KeyPackages must use the new constant, because kind 443 is
+  no longer accepted.
+
 ## Tests
 
 43 test cases covering:

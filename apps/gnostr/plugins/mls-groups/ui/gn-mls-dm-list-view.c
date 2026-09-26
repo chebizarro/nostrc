@@ -186,7 +186,7 @@ show_new_dm_dialog(GnMlsDmListView *self)
   adw_preferences_group_set_title(grp, "Recipient");
   adw_preferences_group_set_description(grp,
     "Enter the Nostr public key of the person you want to message. "
-    "They must have published a key package (kind:443).");
+    "They must have published a key package (kind:30443).");
   gtk_box_append(GTK_BOX(content), GTK_WIDGET(grp));
 
   self->peer_entry = ADW_ENTRY_ROW(adw_entry_row_new());
