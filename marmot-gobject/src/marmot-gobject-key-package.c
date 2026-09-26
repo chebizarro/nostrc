@@ -5,6 +5,10 @@
  */
 
 #include "marmot-gobject-1.0/marmot-gobject-key-package.h"
+#include <marmot/marmot-types.h>
+
+/* The GObject-visible constant must track libmarmot's wire kind. */
+G_STATIC_ASSERT(MARMOT_GOBJECT_KIND_KEY_PACKAGE == MARMOT_KIND_KEY_PACKAGE);
 
 enum {
     PROP_KP_0,

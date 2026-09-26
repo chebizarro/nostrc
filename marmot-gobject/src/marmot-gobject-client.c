@@ -525,6 +525,40 @@ marmot_gobject_client_create_key_package_unsigned_finish(MarmotGobjectClient *se
     return g_task_propagate_pointer(G_TASK(result), error);
 }
 
+/* ── KeyPackage selection (kind:30443 addressable slots) ─────────── */
+
+gint
+marmot_gobject_select_key_package_event(const gchar * const *event_jsons,
+                                        const gchar *owner_pubkey_hex,
+                                        GError **error)
+{
+    g_return_val_if_fail(error == NULL || *error == NULL, -1);
+
+    uint8_t owner[32];
+    if (owner_pubkey_hex && !hex_to_bytes(owner_pubkey_hex, owner, sizeof(owner))) {
+        g_set_error(error, MARMOT_GOBJECT_ERROR, MARMOT_GOBJECT_ERROR_INVALID_HEX,
+                    "Invalid hex owner pubkey");
+        return -1;
+    }
+
+    size_t count = event_jsons ? g_strv_length((gchar **)event_jsons) : 0;
+    if (count > (size_t)G_MAXINT) {
+        g_set_error(error, MARMOT_GOBJECT_ERROR, MARMOT_GOBJECT_ERROR_INVALID_INPUT,
+                    "Too many KeyPackage events");
+        return -1;
+    }
+
+    size_t index = 0;
+    MarmotError err = marmot_select_key_package_event((const char **)event_jsons, count,
+                                                      owner_pubkey_hex ? owner : NULL,
+                                                      &index);
+    if (err != MARMOT_OK) {
+        set_marmot_error(error, err);
+        return -1;
+    }
+    return (gint)index;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-01: Group Creation (async)
  * ══════════════════════════════════════════════════════════════════════════ */

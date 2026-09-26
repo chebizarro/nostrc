@@ -13,6 +13,18 @@
 
 G_BEGIN_DECLS
 
+/**
+ * MARMOT_GOBJECT_KIND_KEY_PACKAGE:
+ *
+ * Nostr event kind of Marmot KeyPackage events: 30443, an addressable kind
+ * whose `d` tag names the account's publication slot. Use it in relay
+ * filters when fetching an account's KeyPackages. The legacy kind 443 is
+ * neither produced nor accepted.
+ *
+ * Since: 1.1
+ */
+#define MARMOT_GOBJECT_KIND_KEY_PACKAGE 30443
+
 #define MARMOT_GOBJECT_TYPE_KEY_PACKAGE (marmot_gobject_key_package_get_type())
 G_DECLARE_FINAL_TYPE(MarmotGobjectKeyPackage, marmot_gobject_key_package, MARMOT_GOBJECT, KEY_PACKAGE, GObject)
 

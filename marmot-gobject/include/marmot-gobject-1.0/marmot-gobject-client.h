@@ -78,7 +78,10 @@ MarmotGobjectClient *marmot_gobject_client_new(MarmotGobjectStorage *storage);
  * @callback: callback to invoke when complete
  * @user_data: data for @callback
  *
- * Asynchronously creates an MLS KeyPackage wrapped in a kind:443 event.
+ * Asynchronously creates an MLS KeyPackage wrapped in a signed kind:30443
+ * (#MARMOT_GOBJECT_KIND_KEY_PACKAGE, addressable) event. Every KeyPackage of
+ * an account reuses the account's stable `d` publication slot, so publishing
+ * a new one replaces the previous event on relays.
  * Requires the user's secret key for MLS credential signing.
  *
  * For signer-only flows where the caller does not hold the secret key,
@@ -102,7 +105,9 @@ void marmot_gobject_client_create_key_package_async(MarmotGobjectClient *self,
  * @user_data: data for @callback
  *
  * Asynchronously creates an MLS KeyPackage wrapped in an *unsigned*
- * kind:443 event. The caller is responsible for signing the event
+ * kind:30443 event (same tags and stable `d` slot as
+ * marmot_gobject_client_create_key_package_async()). The caller is
+ * responsible for signing the event
  * externally (e.g., via a D-Bus signer service) before publication.
  *
  * This is the preferred API for signer-only architectures where
@@ -146,6 +151,30 @@ gchar *marmot_gobject_client_create_key_package_finish(MarmotGobjectClient *self
                                                         GAsyncResult *result,
                                                         GError **error);
 
+/**
+ * marmot_gobject_select_key_package_event:
+ * @event_jsons: (array zero-terminated=1): candidate kind:30443 KeyPackage
+ *   event JSONs, e.g. everything a multi-relay fetch returned
+ * @owner_pubkey_hex: (nullable): when set, only events authored by this
+ *   account (64 hex chars) are considered
+ * @error: (nullable): return location for a #GError
+ *
+ * Chooses the KeyPackage event to consume for an invite. Within each
+ * `(pubkey, d)` slot the newest authenticated event wins (ties: lower event
+ * id), and a slot whose winner fails validation yields nothing. Across slots
+ * the newest valid event wins (ties: lower KeyPackageRef). Unsigned, forged
+ * and legacy kind:443 events are ignored. See libmarmot's
+ * marmot_select_key_package_event() for the full rules.
+ *
+ * Returns: the index into @event_jsons of the selected event, or -1 with
+ *   @error set when no valid candidate exists or an argument is invalid
+ *
+ * Since: 1.1
+ */
+gint marmot_gobject_select_key_package_event(const gchar * const *event_jsons,
+                                             const gchar *owner_pubkey_hex,
+                                             GError **error);
+
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-01: Group Creation (async)
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -154,7 +183,8 @@ gchar *marmot_gobject_client_create_key_package_finish(MarmotGobjectClient *self
  * marmot_gobject_client_create_group_async:
  * @self: a #MarmotGobjectClient
  * @creator_pubkey_hex: creator's Nostr pubkey as hex
- * @key_package_jsons: (array zero-terminated=1): JSON strings of kind:443 events
+ * @key_package_jsons: (array zero-terminated=1): JSON strings of signed
+ *   kind:30443 events (see marmot_gobject_select_key_package_event())
  * @group_name: (nullable): group name
  * @group_description: (nullable): group description
  * @admin_pubkey_hexes: (array zero-terminated=1) (nullable): admin pubkeys as hex
