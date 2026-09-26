@@ -1027,9 +1027,13 @@ load_pending_tombstones(NdPublisher *self, gint64 now_ts)
     NdOutboxRow *row = g_new0(NdOutboxRow, 1);
     row->outbox = ND_OUTBOX_TOMBSTONE;
     row->col    = ND_STORE_COLLECTION_EVENTS; /* unused for tombstones */
-    /* Stringify the AUTOINCREMENT id so it fits the row_id contract. */
+    /* Stringify the AUTOINCREMENT id so it fits the row_id contract.
+     * Cast sqlite3_int64 -> gint64 because on some 64-bit platforms
+     * (e.g. aarch64 Linux) sqlite3_int64 is `long long int` while gint64
+     * is `long int`, and G_GINT64_FORMAT ("li") triggers -Werror=format
+     * without the cast. Both are guaranteed 64-bit signed. */
     row->row_id = g_strdup_printf("%" G_GINT64_FORMAT,
-                                  sqlite3_column_int64(stmt, 0));
+                                  (gint64)sqlite3_column_int64(stmt, 0));
     const unsigned char *sj = sqlite3_column_text(stmt, 1);
     row->signed_json = sj ? g_strdup((const gchar *)sj) : NULL;
     const unsigned char *tj = sqlite3_column_text(stmt, 2);
