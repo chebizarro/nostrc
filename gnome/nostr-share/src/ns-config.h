@@ -36,6 +36,8 @@ typedef struct {
   guint           ok_wait_sec;
   guint           query_timeout_ms;
   gchar          *dav_url;            /* NULL: ask `nostr-dav --show-credentials` */
+  gint            text_kind;          /* default kind for plain text: 0 (= 1) | 1 | 30023 */
+  gboolean        keep_metadata;      /* default for --keep-metadata */
   gchar          *config_path;        /* for messages */
 } NsConfig;
 
