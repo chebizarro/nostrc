@@ -116,7 +116,7 @@ typedef enum {
  * Returns FALSE with *why_not set (static string) when the item must not be
  * migrated — currently: hardware references, which carry no private key the
  * signer daemon could use, and org.gnostr.NostrKey items whose application
- * attribute names another program. org.gnostr.NostrKey items map to
+ * attribute is not exactly org.gnostr.Client. org.gnostr.NostrKey items map to
  * label GNOSTR_SECRET_LEGACY_CLIENT_IMPORT_LABEL. */
 gboolean gnostr_secret_legacy_to_identity(GnostrSecretLegacyKind kind,
                                           GHashTable *legacy_attrs,
@@ -130,9 +130,10 @@ gboolean gnostr_secret_legacy_to_identity(GnostrSecretLegacyKind kind,
 gboolean gnostr_secret_legacy_label_is_selector(GnostrSecretLegacyKind kind);
 
 /* Store secret under gnostr_secret_schema in the default collection, then
- * delete any other item for the same {key_id, npub} whose attribute set
- * differs (e.g. one written before a schema attribute was added), so an
- * identity is always exactly one item. */
+ * delete any other software item for the same {key_id, npub} whose
+ * attribute set differs (e.g. one written before a schema attribute was
+ * added), so a software identity is always exactly one item. origin=hardware
+ * items are never pruned. */
 gboolean gnostr_secret_store_save(const GnostrSecretIdentity *id,
                                   const gchar *secret,
                                   GError **error);

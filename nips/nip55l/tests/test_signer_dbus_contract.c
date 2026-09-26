@@ -783,6 +783,7 @@ typedef struct {
   TestKey client;          /* org.gnostr.NostrKey (gnostr client), nsec secret */
   TestKey client_dup;      /* org.gnostr.NostrKey whose key the signer already holds */
   TestKey client_foreign;  /* org.gnostr.NostrKey written by another application */
+  TestKey client_hw;       /* org.gnostr.NostrKey whose npub has a hardware enrollment */
 } Phase3;
 
 /* Items of schema, optionally filtered by one attribute, secrets loaded. */
@@ -887,6 +888,19 @@ static void phase3_pre_daemon(Ctx *ctx, gpointer data) {
     g_printerr("seed dup: %s\n", err2 ? err2->message : "?");
     exit(1);
   }
+  /* A hardware enrollment of client_hw's key (key_id = npub, a token
+   * reference as secret) plus the client's software copy: importing the
+   * software copy must not prune the hardware item. */
+  const GnostrSecretIdentity hw = {
+    .npub = p->client_hw.npub, .label = "token", .origin = "hardware",
+    .hardware_slot = "9c", .owner_uid = uid_buf,
+  };
+  if (!gnostr_secret_store_save(&hw, "pkcs11:token=yubikey;id=9c", &err2)) {
+    g_printerr("seed hw: %s\n", err2 ? err2->message : "?");
+    exit(1);
+  }
+  seed(&gnostr_secret_legacy_client_schema, "GNostr: hw", p->client_hw.nsec,
+       "npub", p->client_hw.npub, "application", "org.gnostr.Client", NULL);
 }
 
 static const char *attr(GHashTable *a, const char *k) {
@@ -936,6 +950,7 @@ static void run_phase3(void) {
   test_key_new(&p.client);
   test_key_new(&p.client_dup);
   test_key_new(&p.client_foreign);
+  test_key_new(&p.client_hw);
   gchar *acl = g_strdup_printf("contract-test:%s=allow\ncontract-test:Legacy Main=allow\n"
                                "contract-test:%s=allow\n",
                                p.legacy_signer.npub, p.client.npub);
@@ -974,6 +989,27 @@ static void run_phase3(void) {
   /* Another application's item under the schema name: not ours, left. */
   CHECK(count_items(&gnostr_secret_legacy_client_schema, "npub", p.client_foreign.npub) == 1);
   CHECK(count_items(&gnostr_secret_schema, "npub", p.client_foreign.npub) == 0);
+  /* Hardware enrollment present: the software copy is imported next to
+   * it and the hardware item survives the save's duplicate pruning. */
+  CHECK(count_items(&gnostr_secret_legacy_client_schema, "npub", p.client_hw.npub) == 0);
+  CHECK(count_items(&gnostr_secret_schema, "npub", p.client_hw.npub) == 2);
+  {
+    GList *items = search_items(&gnostr_secret_schema, "npub", p.client_hw.npub);
+    gboolean saw_hw = FALSE, saw_sw = FALSE;
+    for (GList *l = items; l; l = l->next) {
+      GHashTable *a = secret_item_get_attributes(l->data);
+      SecretValue *sv = secret_item_get_secret(l->data);
+      if (g_strcmp0(attr(a, "origin"), "hardware") == 0)
+        saw_hw = g_strcmp0(secret_value_get_text(sv), "pkcs11:token=yubikey;id=9c") == 0;
+      else
+        saw_sw = g_strcmp0(attr(a, "label"), "gnostr import") == 0 &&
+                 g_strcmp0(secret_value_get_text(sv), p.client_hw.sk_hex) == 0;
+      secret_value_unref(sv);
+      g_hash_table_unref(a);
+    }
+    g_list_free_full(items, g_object_unref);
+    CHECK(saw_hw && saw_sw);
+  }
 
   /* The daemon signs with a migrated key selected by npub (key_id is the
    * legacy label, so this exercises the npub fallback lookup), by the
@@ -1035,6 +1071,7 @@ static void run_phase3(void) {
   test_key_free(&p.client);
   test_key_free(&p.client_dup);
   test_key_free(&p.client_foreign);
+  test_key_free(&p.client_hw);
   g_print("PASS phase 3 (real keyring: legacy migration incl. gnostr client keystore "
           "past a v1 marker, unified StoreKey, marker)\n");
 }

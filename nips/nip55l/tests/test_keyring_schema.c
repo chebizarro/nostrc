@@ -197,10 +197,12 @@ static void test_legacy_client_mapping(void) {
   g_hash_table_unref(a);
   g_hash_table_unref(legacy);
 
-  /* No application attribute: still the client's (the only writer). */
+  /* The client always wrote application=org.gnostr.Client: an item without
+   * it is not provably the client's, so it is not claimed. */
   const char *bare[] = { "npub", NPUB, NULL };
   legacy = attrs_of(bare);
-  CHECK(gnostr_secret_legacy_to_identity(GNOSTR_SECRET_LEGACY_CLIENT_KEY, legacy, &id, &why));
+  CHECK(!gnostr_secret_legacy_to_identity(GNOSTR_SECRET_LEGACY_CLIENT_KEY, legacy, &id, &why));
+  CHECK(why != NULL && strstr(why, "application") != NULL);
   g_hash_table_unref(legacy);
 
   /* Another program's item under the same schema name is left alone. */

@@ -1180,23 +1180,29 @@ static char *npub_from_sk_hex(const char *sk_hex){
   return npub;
 }
 
-/* TRUE when the unified schema already holds a software key for npub. */
-static gboolean unified_software_key_present(SecretService *service, const char *npub){
+/* TRUE when a unified item for npub holds a working copy of that key: its
+ * secret decodes to a private key whose npub is npub. Attributes alone are
+ * not evidence — a half-written item must not justify deleting the only
+ * good copy. Hardware references carry no private key and never match. */
+static gboolean unified_holds_same_key(SecretService *service, const char *npub){
   GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
   g_hash_table_insert(attrs, (gpointer)"npub", (gpointer)npub);
   GList *items = secret_service_search_sync(service, &gnostr_secret_schema, attrs,
-                                            SECRET_SEARCH_ALL, NULL, NULL);
+                                            SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK |
+                                            SECRET_SEARCH_LOAD_SECRETS, NULL, NULL);
   g_hash_table_unref(attrs);
-  gboolean present = FALSE;
-  for (GList *l = items; l && !present; l = l->next) {
-    GHashTable *ia = secret_item_get_attributes(l->data);
-    /* Items from before the schema gained "origin" are software keys. */
-    present = !ia || g_strcmp0(g_hash_table_lookup(ia, "origin"),
-                               GNOSTR_SECRET_ORIGIN_HARDWARE) != 0;
-    if (ia) g_hash_table_unref(ia);
+  gboolean same = FALSE;
+  for (GList *l = items; l && !same; l = l->next) {
+    SecretValue *sv = secret_item_get_secret(l->data);
+    char *hex = sv ? secret_text_to_sk_hex(secret_value_get_text(sv)) : NULL;
+    char *derived = hex ? npub_from_sk_hex(hex) : NULL;
+    same = derived && strcmp(derived, npub) == 0;
+    free(derived);
+    if (hex) { secure_wipe(hex, strlen(hex)); free(hex); }
+    if (sv) secret_value_unref(sv);
   }
   g_list_free_full(items, g_object_unref);
-  return present;
+  return same;
 }
 
 static mig_result migrate_one(SecretService *service, SecretItem *item,
@@ -1245,8 +1251,10 @@ static mig_result migrate_one(SecretService *service, SecretItem *item,
   /* A key the client also held may already have been imported into the
    * signer by hand. Re-storing it under the import label would replace that
    * item (same {key_id, npub}, different attribute set) and lose the user's
-   * label; the signer already has the key, so only the client copy goes. */
-  if (kind == GNOSTR_SECRET_LEGACY_CLIENT_KEY && unified_software_key_present(service, npub)) {
+   * label; when the signer's item provably holds the same key, only the
+   * client copy goes. Otherwise store normally (an origin=hardware item for
+   * the npub is never pruned by the save). */
+  if (kind == GNOSTR_SECRET_LEGACY_CLIENT_KEY && unified_holds_same_key(service, npub)) {
     g_message("nip55l: keyring-migration: %s already held by the signer; retiring the %s copy",
               npub, schema_name);
   } else if (!gnostr_secret_store_save(&id, sk_hex, &err)) {

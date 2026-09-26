@@ -151,8 +151,10 @@ gboolean gnostr_secret_legacy_to_identity(GnostrSecretLegacyKind kind,
       break;
     }
     case GNOSTR_SECRET_LEGACY_CLIENT_KEY: {
+      /* The client always wrote application=org.gnostr.Client; anything
+       * else under this schema name belongs to another program. */
       const gchar *app = g_hash_table_lookup(legacy_attrs, "application");
-      if (is_set(app) && strcmp(app, GNOSTR_SECRET_LEGACY_CLIENT_APPLICATION) != 0) {
+      if (g_strcmp0(app, GNOSTR_SECRET_LEGACY_CLIENT_APPLICATION) != 0) {
         if (why_not) *why_not = "application attribute is not " GNOSTR_SECRET_LEGACY_CLIENT_APPLICATION;
         return FALSE;
       }
@@ -200,7 +202,9 @@ static gboolean same_attribute_set(GHashTable *item_attrs, GHashTable *want){
  * (npub is derived from the secret by every writer), so whichever copy a
  * concurrent writer (e.g. the daemon's migration thread) leaves behind is
  * equivalent. Hardware references never reach this path (the migration
- * refuses them and StoreKey only takes private keys).
+ * refuses them and StoreKey only takes private keys), and an existing
+ * origin=hardware item is never a stale duplicate of a software store: it
+ * is a separate enrollment of the key and must survive (nostrc-e5nz).
  *
  * secret_service_get_sync(SECRET_SERVICE_NONE) returns the process-wide
  * shared SecretService, not a new connection. */
@@ -216,7 +220,8 @@ static void prune_stale_duplicates(GHashTable *stored){
   for (GList *l = items; l; l = l->next) {
     SecretItem *item = l->data;
     GHashTable *ia = secret_item_get_attributes(item);
-    gboolean stale = ia && !same_attribute_set(ia, stored);
+    gboolean stale = ia && !same_attribute_set(ia, stored) &&
+                     g_strcmp0(g_hash_table_lookup(ia, "origin"), GNOSTR_SECRET_ORIGIN_HARDWARE) != 0;
     if (ia) g_hash_table_unref(ia);
     if (!stale) continue;
     GError *err = NULL;
