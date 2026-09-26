@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Nostr Signer Bridge (NIP-07)",
+  "version": "0.2.0",
+  "description": "window.nostr (NIP-07) backed by the desktop signer org.nostr.Signer — your GNOME-managed Nostr identity, with the signer's own approval dialogs.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "signer-bridge@gnostr.org",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  },
+  "permissions": ["nativeMessaging", "storage"],
+  "background": {
+    "scripts": ["src/lib/policy.js", "src/background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*", "http://*.localhost/*"],
+      "js": ["src/content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*", "http://*.localhost/*"],
+      "js": ["src/page.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    }
+  ],
+  "options_ui": {
+    "page": "src/options.html",
+    "open_in_tab": true
+  }
+}

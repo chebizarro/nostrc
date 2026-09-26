@@ -1,0 +1,11 @@
+body { font: 14px/1.4 system-ui, sans-serif; margin: 1.2em; color: #222; background: #fff; }
+h1 { font-size: 1.2em; margin-top: 0; }
+h2 { font-size: 1.05em; }
+.note { color: #666; font-size: 0.9em; }
+.buttons { display: flex; gap: 0.6em; justify-content: flex-end; margin-top: 1.2em; }
+button { padding: 0.4em 1.1em; }
+button.primary { font-weight: 600; }
+table { border-collapse: collapse; width: 100%; }
+td, th { text-align: left; padding: 0.3em 0.5em; border-bottom: 1px solid #ddd; }
+@media (prefers-color-scheme: dark) { body { color: #eee; background: #242424; } .note { color: #aaa; } td, th { border-color: #444; } }
+.warn { color: #a15c00; }

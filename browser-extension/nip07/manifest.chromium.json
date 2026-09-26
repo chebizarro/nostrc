@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Nostr Signer Bridge (NIP-07)",
+  "version": "0.2.0",
+  "description": "window.nostr (NIP-07) backed by the desktop signer org.nostr.Signer — your GNOME-managed Nostr identity, with the signer's own approval dialogs.",
+  "minimum_chrome_version": "111",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAn2/TcK9R2zOEWGiwoKhItR0ZVeyEJQ2PdTDCUTJ2W59xRyCbP00Bu4v/KKO6k5GqczAd+ERY3xQ0RnsgAWc1w+pKIkf58qAgP5THrlXQHcdEzf180Y81BvLYJIXLHEktcX0dOI0iW0VHoa14cdll7BUqe3HIagZG5rliAMOJRas32a16AXbS7c+JzgLJuYoJFhvLfp1w959vueybWxH0McvqrQG1SsBX8UlFBEEvlcNntYJlK/Spv4yJqYBU3/Kkrgolkg8rR15mkZD98QzhO49oKtY7y9JgozvDXFVQaFeHeb28s4QRGPwVjN40v+FqcWU8Wohk3FBu3DmTyul70wIDAQAB",
+  "permissions": ["nativeMessaging", "storage"],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*", "http://*.localhost/*"],
+      "js": ["src/content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*", "http://*.localhost/*"],
+      "js": ["src/page.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    }
+  ],
+  "options_ui": {
+    "page": "src/options.html",
+    "open_in_tab": true
+  }
+}
