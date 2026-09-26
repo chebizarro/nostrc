@@ -251,7 +251,8 @@ on_add_member_clicked(GtkButton *button, gpointer user_data)
 
   /* Find key package */
   g_autofree gchar *filter = g_strdup_printf(
-    "{\"kinds\":[443],\"authors\":[\"%s\"],\"limit\":1}", pk);
+    "{\"kinds\":[%d],\"authors\":[\"%s\"],\"limit\":1}",
+    MARMOT_KIND_KEY_PACKAGE, pk);
 
   g_autoptr(GError) error = NULL;
   g_autoptr(GPtrArray) events =

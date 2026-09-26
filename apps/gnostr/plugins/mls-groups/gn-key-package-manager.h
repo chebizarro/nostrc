@@ -2,7 +2,7 @@
  * gn-key-package-manager.h - MLS Key Package Lifecycle Manager
  *
  * Manages the creation, publication, and rotation of MLS key packages
- * (kind:443 events) and key package relay lists (kind:10051).
+ * (kind:30443 events) and key package relay lists (kind:10051).
  *
  * Key packages are the entry point for MLS group membership — other users
  * fetch our key package from relays to add us to a group.

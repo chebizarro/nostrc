@@ -324,7 +324,7 @@ fetch_key_packages_and_create(GnCreateGroupDialog *self,
   set_status(self, "Fetching key packages…", TRUE);
 
   /*
-   * For each member, query local storage for their latest kind:443 event.
+   * For each member, query local storage for their latest kind:30443 event.
    * In a production implementation, this would also request from relays,
    * but for now we use what's already been synced.
    */
@@ -333,7 +333,8 @@ fetch_key_packages_and_create(GnCreateGroupDialog *self,
       const gchar *pk = g_ptr_array_index(flow->member_pubkeys, i);
 
       g_autofree gchar *filter = g_strdup_printf(
-        "{\"kinds\":[443],\"authors\":[\"%s\"],\"limit\":1}", pk);
+        "{\"kinds\":[%d],\"authors\":[\"%s\"],\"limit\":1}",
+        MARMOT_GOBJECT_KIND_KEY_PACKAGE, pk);
 
       g_autoptr(GError) error = NULL;
       g_autoptr(GPtrArray) events =
@@ -518,7 +519,7 @@ gn_create_group_dialog_init(GnCreateGroupDialog *self)
   adw_preferences_group_set_title(self->members_group, "Members");
   adw_preferences_group_set_description(self->members_group,
     "Add members by their Nostr public key (hex). "
-    "Members must have published a key package (kind:443).");
+    "Members must have published a key package (kind:30443).");
   gtk_box_append(GTK_BOX(content_box), GTK_WIDGET(self->members_group));
 
   /* Add member input row */

@@ -302,7 +302,8 @@ gn_mls_dm_manager_open_dm_async(GnMlsDmManager      *self,
 
   /* Step 2: No existing DM — fetch peer's key package */
   g_autofree gchar *filter = g_strdup_printf(
-    "{\"kinds\":[443],\"authors\":[\"%s\"],\"limit\":1}", peer_pubkey_hex);
+    "{\"kinds\":[%d],\"authors\":[\"%s\"],\"limit\":1}",
+    MARMOT_GOBJECT_KIND_KEY_PACKAGE, peer_pubkey_hex);
 
   g_autoptr(GError) kp_error = NULL;
   g_autoptr(GPtrArray) events =
@@ -312,7 +313,7 @@ gn_mls_dm_manager_open_dm_async(GnMlsDmManager      *self,
     {
       g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
                               "No key package found for peer %s. "
-                              "They must publish a key package (kind:443) first.",
+                              "They must publish a key package (kind:30443) first.",
                               peer_pubkey_hex);
       g_object_unref(task);
       return;
