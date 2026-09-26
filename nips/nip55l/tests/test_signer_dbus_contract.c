@@ -464,6 +464,24 @@ static gboolean try_store_and_clear_key(Ctx *ctx) {
   CHECK(g_strcmp0(out_npub, fresh_npub) == 0);
   g_variant_unref(ret);
 
+  /* nostrc-7g9d regression: GetPublicKey immediately after StoreKey must
+   * return the just-stored key's npub, not fall back to the env-var
+   * identity or fail with NoKeyConfigured. Papa's smoke against the lab
+   * caught the pre-fix bug where a libsecret search race returned
+   * NOT_FOUND for a key libsecret had already accepted. The in-process
+   * cache added in nostr_nip55l_store_key() closes that race. */
+  {
+    GVariant *gpk_ret = call(ctx->bus, "GetPublicKey", NULL, "(s)", &err);
+    if (!gpk_ret) {
+      g_printerr("GetPublicKey after StoreKey: %s\n", err ? err->message : "?");
+      exit(1);
+    }
+    const char *live_npub = NULL;
+    g_variant_get(gpk_ret, "(&s)", &live_npub);
+    CHECK(g_strcmp0(live_npub, fresh_npub) == 0);
+    g_variant_unref(gpk_ret);
+  }
+
   /* Clean up the stored item so the run leaves no residue in libsecret. */
   ret = call(ctx->bus, "ClearKey", g_variant_new("(s)", fresh_npub),
              "(b)", &err);

@@ -53,6 +53,47 @@ static int is_hex_64(const char *s) {
   if (!s) return 0; size_t n = strlen(s); if (n != 64) return 0; for (size_t i=0;i<n;i++){ char c=s[i]; if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'))) return 0; } return 1;
 }
 
+/* --- In-process active-account cache (nostrc-7g9d) --------------------------
+ *
+ * Between a successful StoreKey and the next GetPublicKey / SignEvent the
+ * daemon used to make a fresh libsecret round-trip through resolve_seckey_hex().
+ * On the aarch64 lab that round-trip returned NOT_FOUND for a key libsecret
+ * had just accepted — the smoke transcript in
+ * `docs/reviews/nostr-dav-publish-live-2026-09-26.md` reproduces it. The
+ * proximate cause is timing / schema quirks between store and search on the
+ * running gnome-keyring; the durable fix is to keep the just-stored key alive
+ * in-process so read APIs never depend on a re-fetch. StoreKey populates the
+ * cache from the value it verified; ClearKey wipes it; GetPublicKey and the
+ * resolver both consult the cache before falling back to env / libsecret /
+ * Keychain. The sk_hex string is zeroed with secure_wipe() on eviction.
+ *
+ * Security: the daemon already holds the secret key in memory for the
+ * duration of every signing call it services; the cache extends that lifetime
+ * to “between StoreKey and the matching ClearKey”. An attacker with the same
+ * uid could always have called SignEvent directly, so this does not enlarge
+ * the attack surface — it removes a functional bug that made publish
+ * end-to-end unusable. */
+static char *g_cached_active_sk_hex = NULL;
+static char *g_cached_active_npub  = NULL;
+
+static void signer_cache_clear(void){
+  if (g_cached_active_sk_hex) {
+    secure_wipe(g_cached_active_sk_hex, strlen(g_cached_active_sk_hex));
+    free(g_cached_active_sk_hex);
+    g_cached_active_sk_hex = NULL;
+  }
+  if (g_cached_active_npub) {
+    free(g_cached_active_npub);
+    g_cached_active_npub = NULL;
+  }
+}
+
+static void signer_cache_set(const char *sk_hex, const char *npub){
+  signer_cache_clear();
+  if (sk_hex && is_hex_64(sk_hex)) g_cached_active_sk_hex = strdup(sk_hex);
+  if (npub && *npub)               g_cached_active_npub  = strdup(npub);
+}
+
 static char *bin_to_hex(const uint8_t *buf, size_t len){
   static const char hexd[16] = { '0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f' };
   char *out = (char*)malloc(len*2+1); if(!out) return NULL;
@@ -96,6 +137,19 @@ static int resolve_seckey_secure(const char *current_user, nostr_secure_buf *out
  */
 static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
   if (!out_sk_hex) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_sk_hex=NULL;
+  /* nostrc-7g9d: honour the in-process cache before the env/libsecret path
+   * so a key freshly stored via StoreKey is visible immediately. When the
+   * caller supplies a specific selector (identity) we only match if the
+   * cached npub equals it — otherwise fall through to the selector-based
+   * lookup below. */
+  if (g_cached_active_sk_hex) {
+    if (!current_user || !*current_user ||
+        (g_cached_active_npub &&
+         strcmp(current_user, g_cached_active_npub) == 0)) {
+      *out_sk_hex = strdup(g_cached_active_sk_hex);
+      return *out_sk_hex ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
+    }
+  }
   const char *cand = current_user;
   if (!cand || !*cand) {
     cand = getenv("NOSTR_SIGNER_SECKEY_HEX");
@@ -315,6 +369,14 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
 
 int nostr_nip55l_get_public_key(char **out_npub){
   if(!out_npub) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_npub=NULL;
+  /* Fast path: return the cached active npub if StoreKey populated it.
+   * Bypasses libsecret entirely and closes the smoke-test race that
+   * saw GetPublicKey report NoKeyConfigured after a successful
+   * StoreKey (nostrc-7g9d). */
+  if (g_cached_active_npub && *g_cached_active_npub) {
+    *out_npub = strdup(g_cached_active_npub);
+    return *out_npub ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
+  }
   int rc;
   char *sk_hex=NULL; rc = resolve_seckey_hex(NULL, &sk_hex); if(rc!=0) return rc;
   char *pk_hex = nostr_key_get_public(sk_hex);
@@ -803,6 +865,12 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
                                             "hardware", "false",
                                             NULL);
   if (gerr) { g_error_free(gerr); }
+  /* Publish the just-stored key to the in-process cache so the next
+   * GetPublicKey / SignEvent never has to round-trip libsecret. This is the
+   * key half of nostrc-7g9d — without it, resolve_seckey_hex(NULL, ...)
+   * would fall back to a libsecret search that intermittently returned
+   * NOT_FOUND on the aarch64 lab. */
+  if (ok) signer_cache_set(sk_hex, npub);
   if (sk_hex) { memset(sk_hex, 0, strlen(sk_hex)); }
   free(sk_hex);
   free(npub);
@@ -857,6 +925,8 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
   if (comment) CFRelease(comment);
   if (secretData) CFRelease(secretData);
   if (query) CFRelease(query);
+  /* Populate in-process cache; see the libsecret branch for rationale. */
+  if (st == errSecSuccess) signer_cache_set(sk_hex, npub);
   free(sk_hex);
   free(npub);
   return (st == errSecSuccess) ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
@@ -866,6 +936,13 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
 }
 
 int nostr_nip55l_clear_key(const char *identity){
+  /* Best-effort: even if libsecret has nothing to remove, drop the
+   * in-process cache so the daemon stops answering with the just-cleared
+   * key. Cache eviction is coupled to the caller's intent (“no more of
+   * this account”) rather than to the storage backend's success. */
+  if (!identity || !*identity ||
+      (g_cached_active_npub && strcmp(identity, g_cached_active_npub) == 0))
+    signer_cache_clear();
 #ifdef NIP55L_HAVE_LIBSECRET
   const char *sel = (identity && *identity) ? identity : "";
   GError *gerr = NULL;

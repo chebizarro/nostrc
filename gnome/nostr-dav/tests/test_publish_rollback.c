@@ -385,6 +385,129 @@ test_signer_denial(void)
   fx_teardown(&fx);
 }
 
+/* ---- Scenario: DAV DELETE stages a kind-5 tombstone (nostrc-ls2c) ----
+ *
+ * A calendar row is staged and published (all three relays OK), then a
+ * tombstone is staged directly against the publisher (the DAV server
+ * calls the same API from its DELETE handlers). The next tick MUST:
+ *   - build a NIP-09 kind-5 event with the `a` tag pointing at the
+ *     addressable pointer (kind:pubkey:uid) of the deleted event,
+ *   - emit an EVENT frame to every home relay,
+ *   - transition the tombstone row to `published` once every relay
+ *     ACKs. */
+
+static void
+assert_frame_is_kind_5_tombstone(const gchar *frame,
+                                 int          expected_kind,
+                                 const gchar *expected_pubkey,
+                                 const gchar *expected_uid,
+                                 gchar      **out_event_id)
+{
+  g_assert_nonnull(frame);
+  g_assert_true(g_str_has_prefix(frame, "[\"EVENT\","));
+  /* Skip the ['EVENT', prefix and trailing ]. */
+  gsize len = strlen(frame);
+  g_assert_cmpuint(len, >, strlen("[\"EVENT\",]"));
+  g_autofree gchar *event_json =
+    g_strndup(frame + strlen("[\"EVENT\","),
+              len - strlen("[\"EVENT\",") - 1);
+
+  g_autoptr(JsonParser) parser = json_parser_new();
+  g_assert_true(json_parser_load_from_data(parser, event_json, -1, NULL));
+  JsonObject *obj = json_node_get_object(json_parser_get_root(parser));
+  g_assert_true(json_object_has_member(obj, "kind"));
+  g_assert_cmpint(json_object_get_int_member(obj, "kind"), ==, 5);
+
+  JsonArray *tags = json_object_get_array_member(obj, "tags");
+  g_assert_nonnull(tags);
+  g_assert_cmpuint(json_array_get_length(tags), >=, 1);
+  JsonArray *a_tag = json_array_get_array_element(tags, 0);
+  g_assert_nonnull(a_tag);
+  g_assert_cmpuint(json_array_get_length(a_tag), ==, 2);
+  g_assert_cmpstr(json_array_get_string_element(a_tag, 0), ==, "a");
+  g_autofree gchar *want_a =
+    g_strdup_printf("%d:%s:%s", expected_kind, expected_pubkey, expected_uid);
+  g_assert_cmpstr(json_array_get_string_element(a_tag, 1), ==, want_a);
+
+  if (out_event_id != NULL)
+    *out_event_id = g_strdup(json_object_get_string_member(obj, "id"));
+}
+
+static gchar *
+get_tombstone_state(NdStoreDb *db)
+{
+  sqlite3 *h = nd_store_db_get_handle(db);
+  sqlite3_stmt *stmt = NULL;
+  g_assert_true(sqlite3_prepare_v2(h,
+                  "SELECT publish_state FROM tombstones ORDER BY id DESC LIMIT 1",
+                  -1, &stmt, NULL) == SQLITE_OK);
+  gchar *state = NULL;
+  if (sqlite3_step(stmt) == SQLITE_ROW)
+    state = g_strdup((const gchar *)sqlite3_column_text(stmt, 0));
+  sqlite3_finalize(stmt);
+  return state;
+}
+
+static void
+test_dav_delete_stages_kind5_tombstone(void)
+{
+  Fx fx = {0};
+  fx_setup(&fx,
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+
+  const gchar *uid = "evt-to-delete";
+  insert_calendar_row(&fx, uid, "To be deleted");
+  GError *err = NULL;
+  g_assert_true(nd_publisher_stage_calendar_put(fx.publisher, uid, &err));
+  g_assert_no_error(err);
+
+  /* First tick sends the primary event. Drain its frames and complete
+   * the publish so the outbox is clean before we stage the tombstone. */
+  gint64 now = 2000000000;
+  g_assert_true(nd_publisher_tick(fx.publisher, now));
+  g_autofree gchar *event_id = sent_event_id(fx.r1);
+  gchar **f2 = nd_relay_transport_fixture_take_sent(fx.r2, NULL); g_strfreev(f2);
+  gchar **f3 = nd_relay_transport_fixture_take_sent(fx.r3, NULL); g_strfreev(f3);
+  nd_publisher_record_ok(fx.publisher, "wss://r1.test", event_id, TRUE, "");
+  nd_publisher_record_ok(fx.publisher, "wss://r2.test", event_id, TRUE, "");
+  nd_publisher_record_ok(fx.publisher, "wss://r3.test", event_id, TRUE, "");
+  g_autofree gchar *state = get_publish_state(fx.db, uid);
+  g_assert_cmpstr(state, ==, "published");
+
+  /* Stage the tombstone — exactly what the DAV DELETE handler will do. */
+  g_assert_true(nd_publisher_stage_tombstone(fx.publisher, ND_NIP52_KIND_TIME,
+                                             ACCOUNT_PUBKEY, uid, &err));
+  g_assert_no_error(err);
+
+  now += 3600;
+  g_assert_true(nd_publisher_tick(fx.publisher, now));
+
+  /* The tick should have signed, framed, and shipped a kind-5 event to
+   * every home relay. Verify the shape of the frame on r1 (r2 + r3 get
+   * the same payload; drain them so the fixture bookkeeping resets). */
+  gsize n1 = 0;
+  gchar **tomb1 = nd_relay_transport_fixture_take_sent(fx.r1, &n1);
+  g_assert_cmpuint(n1, ==, 1);
+  g_autofree gchar *tomb_event_id = NULL;
+  assert_frame_is_kind_5_tombstone(tomb1[0], ND_NIP52_KIND_TIME,
+                                   ACCOUNT_PUBKEY, uid, &tomb_event_id);
+  g_strfreev(tomb1);
+  gchar **tomb2 = nd_relay_transport_fixture_take_sent(fx.r2, NULL);
+  g_strfreev(tomb2);
+  gchar **tomb3 = nd_relay_transport_fixture_take_sent(fx.r3, NULL);
+  g_strfreev(tomb3);
+
+  /* Every relay ACKs the tombstone → row transitions to `published`. */
+  nd_publisher_record_ok(fx.publisher, "wss://r1.test", tomb_event_id, TRUE, "");
+  nd_publisher_record_ok(fx.publisher, "wss://r2.test", tomb_event_id, TRUE, "");
+  nd_publisher_record_ok(fx.publisher, "wss://r3.test", tomb_event_id, TRUE, "");
+
+  g_autofree gchar *tstate = get_tombstone_state(fx.db);
+  g_assert_cmpstr(tstate, ==, "published");
+
+  fx_teardown(&fx);
+}
+
 /* ---- Scenario: silent relay times out and the row retries ---- */
 
 static void
@@ -444,5 +567,7 @@ main(int argc, char **argv)
                   test_signer_denial);
   g_test_add_func("/nostr-dav/publish/ok-wait-timeout",
                   test_ok_wait_timeout);
+  g_test_add_func("/nostr-dav/publish/dav-delete-stages-kind5-tombstone",
+                  test_dav_delete_stages_kind5_tombstone);
   return g_test_run();
 }

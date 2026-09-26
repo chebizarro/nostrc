@@ -50,9 +50,20 @@ typedef enum {
   ND_OK_PERMANENT_FAIL   /* invalid:/blocked:/banned: */
 } NdOkClass;
 
+/* Discriminator: primary outbox rows (events/contacts/files) live in
+ * their own tables; kind-5 tombstones (nostrc-ls2c) live in the
+ * `tombstones` table and are keyed by an AUTOINCREMENT `id`. Both
+ * pathways share the same pending-row bookkeeping and settle through
+ * finalize_row(); the enum lets the publisher pick the right SQL. */
+typedef enum {
+  ND_OUTBOX_COLLECTION = 0,  /* events / contacts / files */
+  ND_OUTBOX_TOMBSTONE  = 1
+} NdOutboxKind;
+
 typedef struct {
-  NdStoreCollection  collection;
-  gchar             *row_id;      /* uid */
+  NdOutboxKind       outbox;
+  NdStoreCollection  collection;  /* meaningful only for ND_OUTBOX_COLLECTION */
+  gchar             *row_id;      /* uid for collections, decimal id for tombstones */
   gchar             *event_id;
   GHashTable        *waiting;     /* url -> bool (still waiting) */
   GHashTable        *acked;
@@ -149,6 +160,39 @@ collection_key(NdStoreCollection col)
   return col == ND_STORE_COLLECTION_FILES ? "path" : "uid";
 }
 
+/* Tombstones share the outbox column names but live in their own table
+ * keyed by AUTOINCREMENT `id` (stringified so the same bookkeeping
+ * plumbing that keys collections by uid works unmodified). The two
+ * helpers keep the SQL string builders symmetric with the collection
+ * versions above, and outbox_table/outbox_key give the SQL builders a
+ * single (outbox, col) → (table, key) lookup that closes both worlds. */
+static const gchar *tombstone_table(void) { return "tombstones"; }
+static const gchar *tombstone_key(void)   { return "id"; }
+
+static const gchar *
+outbox_table(NdOutboxKind outbox, NdStoreCollection col)
+{
+  return outbox == ND_OUTBOX_TOMBSTONE ? tombstone_table() : collection_table(col);
+}
+
+static const gchar *
+outbox_key(NdOutboxKind outbox, NdStoreCollection col)
+{
+  return outbox == ND_OUTBOX_TOMBSTONE ? tombstone_key() : collection_key(col);
+}
+
+/* Log a per-relay attempt uses target_kind to disambiguate rows across
+ * the different outboxes. Primary outbox rows reuse NdStoreCollection
+ * values (0-2). Tombstones live on their own so pick a value outside
+ * that range — 100 is far enough to survive any future collections. */
+#define ND_LOG_KIND_TOMBSTONE 100
+
+static int
+outbox_log_kind(NdOutboxKind outbox, NdStoreCollection col)
+{
+  return outbox == ND_OUTBOX_TOMBSTONE ? ND_LOG_KIND_TOMBSTONE : (int)col;
+}
+
 /* ---- Target-set serialisation ---- */
 
 static gchar *
@@ -223,10 +267,51 @@ stage_row(NdPublisher       *self,
   return ok;
 }
 
+/* Insert a tombstone row (nostrc-ls2c). Copies the publisher's configured
+ * home relays into publish_targets so a later NIP-65 change does not
+ * silently retarget the retry — same rationale as the primary outbox. */
+static gboolean
+stage_tombstone_row(NdPublisher *self,
+                    int          target_kind,
+                    const gchar *target_pubkey_hex,
+                    const gchar *target_uid,
+                    gint64       now_ts,
+                    GError     **error)
+{
+  g_autofree gchar *targets_json = targets_to_json(self->home_relays);
+  sqlite3 *h = nd_store_db_get_handle(self->db);
+
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(h,
+        "INSERT INTO tombstones"
+        "  (target_kind, target_pubkey, target_uid, publish_state,"
+        "   publish_attempts, publish_next_ts, publish_targets, created_at)"
+        "  VALUES (?1, ?2, ?3, 'pending', 0, ?4, ?5, ?6)",
+        -1, &stmt, NULL) != SQLITE_OK)
+    return nd_store_db_set_sql_error(self->db, error, "prepare stage tombstone");
+
+  sqlite3_bind_int  (stmt, 1, target_kind);
+  sqlite3_bind_text (stmt, 2, target_pubkey_hex, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text (stmt, 3, target_uid, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 4, now_ts);
+  if (targets_json != NULL)
+    sqlite3_bind_text(stmt, 5, targets_json, -1, SQLITE_TRANSIENT);
+  else
+    sqlite3_bind_null(stmt, 5);
+  sqlite3_bind_int64(stmt, 6, now_ts);
+
+  gboolean ok = (sqlite3_step(stmt) == SQLITE_DONE);
+  if (!ok)
+    nd_store_db_set_sql_error(self->db, error, "stage tombstone");
+  sqlite3_finalize(stmt);
+  return ok;
+}
+
 /* Log a per-relay publish attempt. Errors are non-fatal — the outbox
  * itself is authoritative and the log is for operator debugging. */
 static void
 log_attempt(NdPublisher       *self,
+            NdOutboxKind       outbox,
             NdStoreCollection  col,
             const gchar       *row_id,
             const gchar       *relay_url,
@@ -243,7 +328,7 @@ log_attempt(NdPublisher       *self,
         -1, &stmt, NULL) != SQLITE_OK)
     return;
 
-  sqlite3_bind_int  (stmt, 1, (int)col);
+  sqlite3_bind_int  (stmt, 1, outbox_log_kind(outbox, col));
   sqlite3_bind_text (stmt, 2, row_id, -1, SQLITE_TRANSIENT);
   if (relay_url != NULL)
     sqlite3_bind_text(stmt, 3, relay_url, -1, SQLITE_TRANSIENT);
@@ -261,13 +346,13 @@ log_attempt(NdPublisher       *self,
 }
 
 static gboolean
-mark_published(NdPublisher *self, NdStoreCollection col,
-               const gchar *row_id, GError **error)
+mark_published(NdPublisher *self, NdOutboxKind outbox,
+               NdStoreCollection col, const gchar *row_id, GError **error)
 {
   sqlite3 *h = nd_store_db_get_handle(self->db);
   g_autofree gchar *sql = g_strdup_printf(
     "UPDATE %s SET publish_state = 'published' WHERE %s = ?1",
-    collection_table(col), collection_key(col));
+    outbox_table(outbox, col), outbox_key(outbox, col));
   sqlite3_stmt *stmt = NULL;
   if (sqlite3_prepare_v2(h, sql, -1, &stmt, NULL) != SQLITE_OK)
     return nd_store_db_set_sql_error(self->db, error, "prepare mark published");
@@ -280,13 +365,14 @@ mark_published(NdPublisher *self, NdStoreCollection col,
 }
 
 static gboolean
-mark_failed_permanent(NdPublisher *self, NdStoreCollection col,
-                      const gchar *row_id, GError **error)
+mark_failed_permanent(NdPublisher *self, NdOutboxKind outbox,
+                      NdStoreCollection col, const gchar *row_id,
+                      GError **error)
 {
   sqlite3 *h = nd_store_db_get_handle(self->db);
   g_autofree gchar *sql = g_strdup_printf(
     "UPDATE %s SET publish_state = 'failed_permanent' WHERE %s = ?1",
-    collection_table(col), collection_key(col));
+    outbox_table(outbox, col), outbox_key(outbox, col));
   sqlite3_stmt *stmt = NULL;
   if (sqlite3_prepare_v2(h, sql, -1, &stmt, NULL) != SQLITE_OK)
     return nd_store_db_set_sql_error(self->db, error,
@@ -300,14 +386,15 @@ mark_failed_permanent(NdPublisher *self, NdStoreCollection col,
 }
 
 static gboolean
-schedule_retry(NdPublisher *self, NdStoreCollection col,
-               const gchar *row_id, gint64 next_ts, GError **error)
+schedule_retry(NdPublisher *self, NdOutboxKind outbox,
+               NdStoreCollection col, const gchar *row_id,
+               gint64 next_ts, GError **error)
 {
   sqlite3 *h = nd_store_db_get_handle(self->db);
   g_autofree gchar *sql = g_strdup_printf(
     "UPDATE %s SET publish_attempts = publish_attempts + 1, "
     "  publish_next_ts = ?1 WHERE %s = ?2",
-    collection_table(col), collection_key(col));
+    outbox_table(outbox, col), outbox_key(outbox, col));
   sqlite3_stmt *stmt = NULL;
   if (sqlite3_prepare_v2(h, sql, -1, &stmt, NULL) != SQLITE_OK)
     return nd_store_db_set_sql_error(self->db, error,
@@ -322,14 +409,14 @@ schedule_retry(NdPublisher *self, NdStoreCollection col,
 }
 
 static gboolean
-save_signed_json(NdPublisher *self, NdStoreCollection col,
-                 const gchar *row_id, const gchar *signed_json,
-                 GError **error)
+save_signed_json(NdPublisher *self, NdOutboxKind outbox,
+                 NdStoreCollection col, const gchar *row_id,
+                 const gchar *signed_json, GError **error)
 {
   sqlite3 *h = nd_store_db_get_handle(self->db);
   g_autofree gchar *sql = g_strdup_printf(
     "UPDATE %s SET signed_event_json = ?1 WHERE %s = ?2",
-    collection_table(col), collection_key(col));
+    outbox_table(outbox, col), outbox_key(outbox, col));
   sqlite3_stmt *stmt = NULL;
   if (sqlite3_prepare_v2(h, sql, -1, &stmt, NULL) != SQLITE_OK)
     return nd_store_db_set_sql_error(self->db, error,
@@ -387,6 +474,51 @@ build_unsigned_for_calendar(NdPublisher *self, const gchar *uid, GError **error)
   /* Pubkey / created_at are stamped in by the signer; the unsigned JSON
    * omits them for those fields where the signer sets them. */
   return nd_ical_event_to_nip52_json(ev);
+}
+
+/* Build the unsigned NIP-09 kind-5 tombstone for the given addressable
+ * pointer. `a` tags on parameterized-replaceable events take the form
+ * `<kind>:<pubkey>:<d-tag>`; NIP-09 requires exactly one such tag per
+ * addressable pointer being deleted. The signer stamps `id`, `pubkey`,
+ * and `sig`; `created_at` is set to now so a slow signer does not stamp
+ * a value predating the deleted event. */
+static gchar *
+build_unsigned_for_tombstone(int          target_kind,
+                             const gchar *target_pubkey_hex,
+                             const gchar *target_uid,
+                             gint64       now_ts)
+{
+  g_autofree gchar *a_value =
+    g_strdup_printf("%d:%s:%s", target_kind,
+                    target_pubkey_hex ? target_pubkey_hex : "",
+                    target_uid ? target_uid : "");
+
+  g_autoptr(JsonBuilder) b = json_builder_new();
+  json_builder_begin_object(b);
+
+  json_builder_set_member_name(b, "kind");
+  json_builder_add_int_value(b, 5);
+
+  json_builder_set_member_name(b, "created_at");
+  json_builder_add_int_value(b, now_ts);
+
+  json_builder_set_member_name(b, "content");
+  json_builder_add_string_value(b, "");
+
+  json_builder_set_member_name(b, "tags");
+  json_builder_begin_array(b);
+  json_builder_begin_array(b);
+  json_builder_add_string_value(b, "a");
+  json_builder_add_string_value(b, a_value);
+  json_builder_end_array(b);
+  json_builder_end_array(b);
+
+  json_builder_end_object(b);
+
+  g_autoptr(JsonGenerator) gen = json_generator_new();
+  g_autoptr(JsonNode) root = json_builder_get_root(b);
+  json_generator_set_root(gen, root);
+  return json_generator_to_data(gen, NULL);
 }
 
 static gchar *
@@ -448,10 +580,11 @@ extract_event_id(const gchar *signed_json, GError **error)
 /* ---- In-flight bookkeeping ---- */
 
 static NdPendingRow *
-pending_new(NdStoreCollection col, const gchar *row_id,
-            const gchar *event_id, gint64 deadline)
+pending_new_row(NdOutboxKind outbox, NdStoreCollection col, const gchar *row_id,
+                const gchar *event_id, gint64 deadline)
 {
   NdPendingRow *row = g_new0(NdPendingRow, 1);
+  row->outbox     = outbox;
   row->collection = col;
   row->row_id     = g_strdup(row_id);
   row->event_id   = g_strdup(event_id);
@@ -473,30 +606,52 @@ resolve_transport(NdPublisher *self, const gchar *url)
   return g_hash_table_lookup(self->bound, url);
 }
 
+/* Descriptor for one dispatchable outbox row. `outbox` picks which
+ * table the SQL helpers touch; `col` remains meaningful only when the
+ * outbox is a primary collection. Tombstones fill in target_kind /
+ * target_pubkey / target_uid instead of relying on an unsigned-event
+ * builder that reads back from the collection tables. */
+typedef struct {
+  NdOutboxKind        outbox;
+  NdStoreCollection   col;
+  const gchar        *row_id;
+  const gchar        *signed_json_existing;
+  const gchar        *targets_json;
+  int                 attempts;
+  /* Tombstone-only. */
+  int                 target_kind;
+  const gchar        *target_pubkey_hex;
+  const gchar        *target_uid;
+} NdDispatchCtx;
+
 /* Attempt to publish a single pending row: sign if needed, iterate the
  * target list, send an EVENT frame per relay. Returns TRUE if the row
  * transitioned to in-flight (waiting for OKs); FALSE if it was already
  * settled during this attempt (e.g. signer denied) — either terminally
  * or scheduled for a later retry. */
 static gboolean
-dispatch_row(NdPublisher       *self,
-             NdStoreCollection  col,
-             const gchar       *row_id,
-             const gchar       *signed_json_existing,
-             const gchar       *targets_json,
-             gint64             now_ts,
-             int                attempts,
-             GError           **error)
+dispatch_row(NdPublisher         *self,
+             const NdDispatchCtx *ctx,
+             gint64               now_ts,
+             GError             **error)
 {
-  g_autofree gchar *signed_json = g_strdup(signed_json_existing);
+  NdOutboxKind      outbox = ctx->outbox;
+  NdStoreCollection col    = ctx->col;
+  const gchar      *row_id = ctx->row_id;
+  int               attempts = ctx->attempts;
+  g_autofree gchar *signed_json = g_strdup(ctx->signed_json_existing);
 
   if (signed_json == NULL) {
     g_autofree gchar *unsigned_json = NULL;
-    if (col == ND_STORE_COLLECTION_EVENTS)
+    if (outbox == ND_OUTBOX_TOMBSTONE) {
+      unsigned_json = build_unsigned_for_tombstone(ctx->target_kind,
+                                                   ctx->target_pubkey_hex,
+                                                   ctx->target_uid, now_ts);
+    } else if (col == ND_STORE_COLLECTION_EVENTS) {
       unsigned_json = build_unsigned_for_calendar(self, row_id, error);
-    else if (col == ND_STORE_COLLECTION_CONTACTS)
+    } else if (col == ND_STORE_COLLECTION_CONTACTS) {
       unsigned_json = build_unsigned_for_contact(self, row_id, error);
-    else {
+    } else {
       g_set_error_literal(error, ND_PUBLISHER_ERROR, ND_PUBLISHER_ERROR_STORE,
                           "kind not yet publishable");
       return FALSE;
@@ -510,13 +665,17 @@ dispatch_row(NdPublisher       *self,
     if (signed_json == NULL) {
       if (g_error_matches(sign_err, ND_SIGNER_ERROR, ND_SIGNER_ERROR_DENIED) ||
           g_error_matches(sign_err, ND_SIGNER_ERROR, ND_SIGNER_ERROR_MALFORMED)) {
-        log_attempt(self, col, row_id, NULL, 0,
+        log_attempt(self, outbox, col, row_id, NULL, 0,
                     sign_err ? sign_err->message : "signer denied");
-        if (!mark_failed_permanent(self, col, row_id, error)) {
+        if (!mark_failed_permanent(self, outbox, col, row_id, error)) {
           g_clear_error(&sign_err);
           return FALSE;
         }
-        if (self->notify_cb != NULL)
+        /* Primary outbox rows fire an operator notification on permanent
+         * failure so the DAV write does not silently vanish; tombstones
+         * are best-effort cleanup and would drown the operator in noise
+         * for keys the signer no longer trusts, so we log-only there. */
+        if (outbox == ND_OUTBOX_COLLECTION && self->notify_cb != NULL)
           self->notify_cb(self, ND_PUBLISHER_NOTIFICATION_FAILED_PERMANENT,
                           col, row_id,
                           sign_err ? sign_err->message : "signer denied",
@@ -526,12 +685,12 @@ dispatch_row(NdPublisher       *self,
       }
       /* Transient signer failure — retry later. */
       gint64 next = now_ts + backoff_delay(attempts);
-      log_attempt(self, col, row_id, NULL, 0,
+      log_attempt(self, outbox, col, row_id, NULL, 0,
                   sign_err ? sign_err->message : "signer transient");
       g_clear_error(&sign_err);
-      return schedule_retry(self, col, row_id, next, error) ? FALSE : FALSE;
+      return schedule_retry(self, outbox, col, row_id, next, error) ? FALSE : FALSE;
     }
-    if (!save_signed_json(self, col, row_id, signed_json, error))
+    if (!save_signed_json(self, outbox, col, row_id, signed_json, error))
       return FALSE;
   }
 
@@ -539,7 +698,7 @@ dispatch_row(NdPublisher       *self,
   if (event_id == NULL)
     return FALSE;
 
-  GStrv targets = targets_from_json(targets_json);
+  GStrv targets = targets_from_json(ctx->targets_json);
   if (targets == NULL || targets[0] == NULL) {
     /* No target set — fall back to configured home_relays. Without any
      * relays configured, the row cannot proceed; mark it permanent so
@@ -548,10 +707,10 @@ dispatch_row(NdPublisher       *self,
     targets = self->home_relays != NULL ? g_strdupv(self->home_relays) : NULL;
     if (targets == NULL || targets[0] == NULL) {
       g_strfreev(targets);
-      log_attempt(self, col, row_id, NULL, 0, "no relays configured");
-      if (!mark_failed_permanent(self, col, row_id, error))
+      log_attempt(self, outbox, col, row_id, NULL, 0, "no relays configured");
+      if (!mark_failed_permanent(self, outbox, col, row_id, error))
         return FALSE;
-      if (self->notify_cb != NULL)
+      if (outbox == ND_OUTBOX_COLLECTION && self->notify_cb != NULL)
         self->notify_cb(self, ND_PUBLISHER_NOTIFICATION_FAILED_PERMANENT,
                         col, row_id, "no relays configured",
                         self->notify_data);
@@ -559,14 +718,14 @@ dispatch_row(NdPublisher       *self,
     }
   }
 
-  NdPendingRow *pending = pending_new(col, row_id, event_id,
-                                      now_ts + ND_PUBLISH_OK_WAIT_SEC);
+  NdPendingRow *pending = pending_new_row(outbox, col, row_id, event_id,
+                                          now_ts + ND_PUBLISH_OK_WAIT_SEC);
   gboolean any_sent = FALSE;
   for (guint i = 0; targets[i] != NULL; i++) {
     const gchar *url = targets[i];
     NdRelayTransport *t = resolve_transport(self, url);
     if (t == NULL) {
-      log_attempt(self, col, row_id, url, 0, "no transport");
+      log_attempt(self, outbox, col, row_id, url, 0, "no transport");
       g_hash_table_add(pending->failed, g_strdup(url));
       continue;
     }
@@ -574,7 +733,7 @@ dispatch_row(NdPublisher       *self,
       g_strdup_printf("[\"EVENT\",%s]", signed_json);
     GError *send_err = NULL;
     if (!nd_relay_transport_send_frame(t, frame, &send_err)) {
-      log_attempt(self, col, row_id, url, 0,
+      log_attempt(self, outbox, col, row_id, url, 0,
                   send_err ? send_err->message : "send failed");
       g_clear_error(&send_err);
       g_hash_table_add(pending->failed, g_strdup(url));
@@ -589,7 +748,7 @@ dispatch_row(NdPublisher       *self,
     /* Every target unreachable — schedule a retry. */
     pending_row_free(pending);
     gint64 next = now_ts + backoff_delay(attempts);
-    return schedule_retry(self, col, row_id, next, error) ? FALSE : FALSE;
+    return schedule_retry(self, outbox, col, row_id, next, error) ? FALSE : FALSE;
   }
 
   g_hash_table_replace(self->in_flight,
@@ -618,6 +777,7 @@ finalize_row(NdPublisher *self, NdPendingRow *row, gint64 now_ts,
   else
     met = (acks >= quorum_n);
 
+  NdOutboxKind      outbox     = row->outbox;
   NdStoreCollection collection = row->collection;
   g_autofree gchar *row_id = g_strdup(row->row_id);
 
@@ -627,12 +787,12 @@ finalize_row(NdPublisher *self, NdPendingRow *row, gint64 now_ts,
   /* @row is now dangling. */
 
   if (met)
-    return mark_published(self, collection, row_id, error);
+    return mark_published(self, outbox, collection, row_id, error);
 
   /* Transient failure — schedule a retry. Total > 0 because we only
    * finalise once every target has answered. */
   gint64 next = now_ts + backoff_delay(prior_attempts);
-  return schedule_retry(self, collection, row_id, next, error);
+  return schedule_retry(self, outbox, collection, row_id, next, error);
 }
 
 /* ---- Public API ---- */
@@ -732,6 +892,34 @@ nd_publisher_stage_contact_put(NdPublisher *self, const gchar *uid,
                    g_get_real_time() / G_USEC_PER_SEC, error);
 }
 
+gboolean
+nd_publisher_stage_tombstone(NdPublisher  *self,
+                             int           target_kind,
+                             const gchar  *target_pubkey_hex,
+                             const gchar  *target_uid,
+                             GError      **error)
+{
+  g_return_val_if_fail(self != NULL, FALSE);
+  g_return_val_if_fail(target_uid != NULL && *target_uid, FALSE);
+
+  /* Fall back to the configured account when the caller does not know
+   * the row's pubkey (e.g. a file DELETE where the store never captured
+   * the author). Without either, we cannot build a well-formed `a`
+   * tag — refuse rather than publishing an event that would be silently
+   * dropped by the relay. */
+  const gchar *pubkey_hex = target_pubkey_hex;
+  if (pubkey_hex == NULL || *pubkey_hex == '\0')
+    pubkey_hex = self->account_pubkey;
+  if (pubkey_hex == NULL || *pubkey_hex == '\0') {
+    g_set_error_literal(error, ND_PUBLISHER_ERROR, ND_PUBLISHER_ERROR_STORE,
+                        "stage_tombstone: no target pubkey available");
+    return FALSE;
+  }
+
+  return stage_tombstone_row(self, target_kind, pubkey_hex, target_uid,
+                             g_get_real_time() / G_USEC_PER_SEC, error);
+}
+
 void
 nd_publisher_bind_transport(NdPublisher      *self,
                             const gchar      *relay_url,
@@ -746,11 +934,16 @@ nd_publisher_bind_transport(NdPublisher      *self,
 }
 
 typedef struct {
+  NdOutboxKind      outbox;
   NdStoreCollection col;
   gchar   *row_id;
   gchar   *signed_json;
   gchar   *targets_json;
   int      attempts;
+  /* Tombstone-only. */
+  int      target_kind;
+  gchar   *target_pubkey_hex;
+  gchar   *target_uid;
 } NdOutboxRow;
 
 static void
@@ -759,6 +952,19 @@ outbox_row_clear(NdOutboxRow *row)
   g_clear_pointer(&row->row_id, g_free);
   g_clear_pointer(&row->signed_json, g_free);
   g_clear_pointer(&row->targets_json, g_free);
+  g_clear_pointer(&row->target_pubkey_hex, g_free);
+  g_clear_pointer(&row->target_uid, g_free);
+}
+
+/* Free-func for the GPtrArray of NdOutboxRow*: frees the inner strings
+ * and the struct itself. */
+static void
+outbox_row_free(gpointer data)
+{
+  NdOutboxRow *row = data;
+  if (row == NULL) return;
+  outbox_row_clear(row);
+  g_free(row);
 }
 
 /* Query outbox rows for a collection whose publish_next_ts <= now. */
@@ -780,9 +986,10 @@ load_pending(NdPublisher *self, NdStoreCollection col, gint64 now_ts)
     return NULL;
   sqlite3_bind_int64(stmt, 1, now_ts);
 
-  GPtrArray *rows = g_ptr_array_new_with_free_func(g_free);
+  GPtrArray *rows = g_ptr_array_new_with_free_func(outbox_row_free);
   while (sqlite3_step(stmt) == SQLITE_ROW) {
     NdOutboxRow *row = g_new0(NdOutboxRow, 1);
+    row->outbox = ND_OUTBOX_COLLECTION;
     row->col    = col;
     row->row_id = g_strdup((const gchar *)sqlite3_column_text(stmt, 0));
     const unsigned char *sj = sqlite3_column_text(stmt, 1);
@@ -790,6 +997,49 @@ load_pending(NdPublisher *self, NdStoreCollection col, gint64 now_ts)
     const unsigned char *tj = sqlite3_column_text(stmt, 2);
     row->targets_json = tj ? g_strdup((const gchar *)tj) : NULL;
     row->attempts = sqlite3_column_int(stmt, 3);
+    g_ptr_array_add(rows, row);
+  }
+  sqlite3_finalize(stmt);
+  return rows;
+}
+
+/* Sibling loader for the tombstones table. The tombstone-specific
+ * target_kind / target_pubkey / target_uid ride along so dispatch_row
+ * can build the unsigned NIP-09 event without another SQL round-trip. */
+static GPtrArray *
+load_pending_tombstones(NdPublisher *self, gint64 now_ts)
+{
+  sqlite3 *h = nd_store_db_get_handle(self->db);
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(h,
+        "SELECT id, signed_event_json, publish_targets, publish_attempts,"
+        "       target_kind, target_pubkey, target_uid "
+        "FROM tombstones "
+        "WHERE publish_state = 'pending' "
+        "  AND (publish_next_ts IS NULL OR publish_next_ts <= ?1) "
+        "ORDER BY publish_next_ts ASC",
+        -1, &stmt, NULL) != SQLITE_OK)
+    return NULL;
+  sqlite3_bind_int64(stmt, 1, now_ts);
+
+  GPtrArray *rows = g_ptr_array_new_with_free_func(outbox_row_free);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    NdOutboxRow *row = g_new0(NdOutboxRow, 1);
+    row->outbox = ND_OUTBOX_TOMBSTONE;
+    row->col    = ND_STORE_COLLECTION_EVENTS; /* unused for tombstones */
+    /* Stringify the AUTOINCREMENT id so it fits the row_id contract. */
+    row->row_id = g_strdup_printf("%" G_GINT64_FORMAT,
+                                  sqlite3_column_int64(stmt, 0));
+    const unsigned char *sj = sqlite3_column_text(stmt, 1);
+    row->signed_json = sj ? g_strdup((const gchar *)sj) : NULL;
+    const unsigned char *tj = sqlite3_column_text(stmt, 2);
+    row->targets_json = tj ? g_strdup((const gchar *)tj) : NULL;
+    row->attempts = sqlite3_column_int(stmt, 3);
+    row->target_kind = sqlite3_column_int(stmt, 4);
+    const unsigned char *pk = sqlite3_column_text(stmt, 5);
+    row->target_pubkey_hex = pk ? g_strdup((const gchar *)pk) : NULL;
+    const unsigned char *tu = sqlite3_column_text(stmt, 6);
+    row->target_uid = tu ? g_strdup((const gchar *)tu) : NULL;
     g_ptr_array_add(rows, row);
   }
   sqlite3_finalize(stmt);
@@ -827,8 +1077,8 @@ sweep_expired(NdPublisher *self, gint64 now_ts)
     sqlite3 *h = nd_store_db_get_handle(self->db);
     g_autofree gchar *sql = g_strdup_printf(
       "SELECT publish_attempts FROM %s WHERE %s = ?1",
-      collection_table(row->collection),
-      collection_key(row->collection));
+      outbox_table(row->outbox, row->collection),
+      outbox_key(row->outbox, row->collection));
     int attempts = 0;
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(h, sql, -1, &stmt, NULL) == SQLITE_OK) {
@@ -860,35 +1110,54 @@ nd_publisher_tick(NdPublisher *self, gint64 now_ts)
   };
   gboolean more = FALSE;
 
-  for (gsize c = 0; c < G_N_ELEMENTS(cols); c++) {
-    g_autoptr(GPtrArray) rows = load_pending(self, cols[c], now_ts);
-    if (rows == NULL)
-      continue;
+  /* Drain the primary outboxes, then the tombstone outbox. Ordering is
+   * incidental — the two share no rows — but running collections first
+   * keeps the DAV write path visible in the log ahead of any deletion
+   * artefacts staged in the same tick. */
+  GPtrArray *batches[G_N_ELEMENTS(cols) + 1] = {0};
+  gsize n_batches = 0;
+  for (gsize c = 0; c < G_N_ELEMENTS(cols); c++)
+    batches[n_batches++] = load_pending(self, cols[c], now_ts);
+  batches[n_batches++] = load_pending_tombstones(self, now_ts);
+
+  for (gsize b = 0; b < n_batches; b++) {
+    GPtrArray *rows = batches[b];
+    if (rows == NULL) continue;
     for (guint i = 0; i < rows->len; i++) {
       NdOutboxRow *row = g_ptr_array_index(rows, i);
       /* Skip rows already in-flight from a previous tick (they'll settle
-       * via record_ok). */
+       * via record_ok). Match on (outbox, collection, row_id) so a
+       * tombstone and a collection row that happen to share an id string
+       * never alias each other. */
       gboolean already_flying = FALSE;
       GHashTableIter it;
       gpointer v = NULL;
       g_hash_table_iter_init(&it, self->in_flight);
       while (g_hash_table_iter_next(&it, NULL, &v)) {
         NdPendingRow *pr = v;
-        if (pr->collection == row->col &&
+        if (pr->outbox == row->outbox &&
+            pr->collection == row->col &&
             g_str_equal(pr->row_id, row->row_id)) {
           already_flying = TRUE;
           more = TRUE;
           break;
         }
       }
-      if (already_flying) {
-        outbox_row_clear(row);
-        continue;
-      }
+      if (already_flying) continue;
 
+      NdDispatchCtx ctx = {
+        .outbox               = row->outbox,
+        .col                  = row->col,
+        .row_id               = row->row_id,
+        .signed_json_existing = row->signed_json,
+        .targets_json         = row->targets_json,
+        .attempts             = row->attempts,
+        .target_kind          = row->target_kind,
+        .target_pubkey_hex    = row->target_pubkey_hex,
+        .target_uid           = row->target_uid,
+      };
       GError *err = NULL;
-      if (!dispatch_row(self, row->col, row->row_id, row->signed_json,
-                        row->targets_json, now_ts, row->attempts, &err)) {
+      if (!dispatch_row(self, &ctx, now_ts, &err)) {
         if (err != NULL) {
           g_warning("nostr-dav publisher: %s", err->message);
           g_clear_error(&err);
@@ -897,8 +1166,9 @@ nd_publisher_tick(NdPublisher *self, gint64 now_ts)
       } else {
         more = TRUE;
       }
-      outbox_row_clear(row);
     }
+    /* outbox_row_clear() runs via the free-func registered on load. */
+    g_ptr_array_free(rows, TRUE);
   }
   return more || g_hash_table_size(self->in_flight) > 0;
 }
@@ -919,19 +1189,21 @@ nd_publisher_record_ok(NdPublisher *self,
     return;
 
   NdOkClass cls = classify_ok(ok, reason);
-  log_attempt(self, row->collection, row->row_id, relay_url,
+  log_attempt(self, row->outbox, row->collection, row->row_id, relay_url,
               ok ? 200 : 400, reason);
 
   g_hash_table_remove(row->waiting, relay_url);
 
   if (cls == ND_OK_PERMANENT_FAIL) {
     GError *err = NULL;
-    if (!mark_failed_permanent(self, row->collection, row->row_id, &err)) {
+    if (!mark_failed_permanent(self, row->outbox, row->collection,
+                               row->row_id, &err)) {
       g_warning("nostr-dav publisher: %s",
                 err ? err->message : "mark permanent failed");
       g_clear_error(&err);
     }
-    if (!row->notified && self->notify_cb != NULL) {
+    if (row->outbox == ND_OUTBOX_COLLECTION &&
+        !row->notified && self->notify_cb != NULL) {
       row->notified = TRUE;
       self->notify_cb(self, ND_PUBLISHER_NOTIFICATION_FAILED_PERMANENT,
                       row->collection, row->row_id,
@@ -953,8 +1225,8 @@ nd_publisher_record_ok(NdPublisher *self,
     sqlite3 *h = nd_store_db_get_handle(self->db);
     g_autofree gchar *sql = g_strdup_printf(
       "SELECT publish_attempts FROM %s WHERE %s = ?1",
-      collection_table(row->collection),
-      collection_key(row->collection));
+      outbox_table(row->outbox, row->collection),
+      outbox_key(row->outbox, row->collection));
     int attempts = 0;
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(h, sql, -1, &stmt, NULL) == SQLITE_OK) {

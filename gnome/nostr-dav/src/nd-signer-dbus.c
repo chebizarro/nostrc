@@ -2,8 +2,20 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Calls `org.nostr.Signer.SignEventJson (in s, out s)` on the session
- * bus. Result validated as minimally-well-formed JSON (contains `id`,
+ * Calls `org.nostr.Signer.SignEvent (in s eventJson, in s identity,
+ * in s app_id, out s signed_event)` on the session bus — the wire
+ * contract published in `nips/nip55l/dbus/org.nostr.Signer.xml`.
+ * Wave 1 Milestone A D1.a kept the method name `SignEvent` but changed
+ * its semantics: the daemon now returns the complete signed event JSON
+ * (id + pubkey + sig included) rather than a bare 128-hex signature.
+ * A pre-D1.a nostr-dav shipped with the placeholder name
+ * `SignEventJson`; every publish attempt against a modern signer landed
+ * as Error.UnknownMethod (nostrc-qqkw) until this file was corrected.
+ * We pass an empty identity so the daemon uses the active account and
+ * `app_id="nostr-dav"` so the operator's approval prompts and ACL
+ * entries surface the caller by name.
+ *
+ * Result validated as minimally-well-formed JSON (contains `id`,
  * `pubkey`, `sig` string fields) so a malformed reply lands in
  * %ND_SIGNER_ERROR_MALFORMED rather than propagating down the publisher
  * as an "unknown" transient. Full sig verification stays with
@@ -17,7 +29,8 @@
 #define ND_SIGNER_BUS_NAME       "org.nostr.Signer"
 #define ND_SIGNER_OBJECT_PATH    "/org/nostr/signer"
 #define ND_SIGNER_INTERFACE_NAME "org.nostr.Signer"
-#define ND_SIGNER_METHOD_NAME    "SignEventJson"
+#define ND_SIGNER_METHOD_NAME    "SignEvent"
+#define ND_SIGNER_APP_ID         "nostr-dav"
 
 typedef struct {
   GDBusProxy *proxy;
@@ -92,17 +105,21 @@ dbus_sign_event_json(gpointer      user_data,
   NdSignerDbus *dbus = user_data;
 
   GError *call_err = NULL;
+  /* SignEvent takes three strings: the unsigned event JSON, the
+   * identity selector (empty ⇒ active account), and an app_id used by
+   * the daemon to identify the caller in approval prompts / ACLs. */
   g_autoptr(GVariant) reply =
     g_dbus_proxy_call_sync(dbus->proxy,
                            ND_SIGNER_METHOD_NAME,
-                           g_variant_new("(s)", unsigned_json),
+                           g_variant_new("(sss)", unsigned_json, "",
+                                         ND_SIGNER_APP_ID),
                            G_DBUS_CALL_FLAGS_NONE,
                            30 * 1000, /* ms — matches signer approval UX */
                            cancellable, &call_err);
   if (reply == NULL) {
     NdSignerError code = map_dbus_error(call_err);
     g_set_error(error, ND_SIGNER_ERROR, code,
-                "SignEventJson: %s",
+                "SignEvent: %s",
                 call_err ? call_err->message : "(no reply)");
     g_clear_error(&call_err);
     return NULL;
@@ -112,7 +129,7 @@ dbus_sign_event_json(gpointer      user_data,
   g_variant_get(reply, "(&s)", &signed_json);
   if (signed_json == NULL || *signed_json == '\0') {
     g_set_error_literal(error, ND_SIGNER_ERROR, ND_SIGNER_ERROR_MALFORMED,
-                        "SignEventJson returned empty reply");
+                        "SignEvent returned empty reply");
     return NULL;
   }
 

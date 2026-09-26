@@ -116,6 +116,31 @@ static const char SCHEMA_V3[] =
   "ALTER TABLE contacts ADD COLUMN publish_targets TEXT;"
   "ALTER TABLE files    ADD COLUMN publish_targets TEXT;";
 
+/* Schema v4 — NIP-09 tombstone outbox (nostrc-ls2c). A DAV DELETE
+ * removes the addressable event locally and inserts a row here; the
+ * publisher tick signs a kind-5 event with `["a","<kind>:<pubkey>:<d>"]`
+ * and publishes it to the same relay set the original event went to.
+ * Kept separate from events/contacts/files so tombstones survive the
+ * local row's deletion (their whole point) and never surface on the
+ * DAV listing side. Same publish state / attempts / backoff plumbing
+ * as the primary outbox tables so the publisher can share code. */
+static const char SCHEMA_V4[] =
+  "CREATE TABLE tombstones ("
+  "  id                INTEGER PRIMARY KEY AUTOINCREMENT,"
+  "  target_kind       INTEGER NOT NULL,"
+  "  target_pubkey     TEXT NOT NULL,"
+  "  target_uid        TEXT NOT NULL,"
+  "  publish_state     TEXT NOT NULL DEFAULT 'pending' CHECK (publish_state IN"
+  "    ('pending', 'published', 'failed_permanent')),"
+  "  publish_attempts  INTEGER NOT NULL DEFAULT 0,"
+  "  publish_next_ts   INTEGER,"
+  "  publish_targets   TEXT,"
+  "  signed_event_json TEXT,"
+  "  created_at        INTEGER NOT NULL"
+  ");"
+  "CREATE INDEX tombstones_publish_queue"
+  "  ON tombstones(publish_state, publish_next_ts);";
+
 static const gchar *
 collection_name(NdStoreCollection collection)
 {
@@ -315,6 +340,7 @@ migrate(NdStoreDb *db, GError **error)
   if ((version < 1 && !db_exec(db, SCHEMA_V1, error)) ||
       (version < 2 && !db_exec(db, SCHEMA_V2, error)) ||
       (version < 3 && !db_exec(db, SCHEMA_V3, error)) ||
+      (version < 4 && !db_exec(db, SCHEMA_V4, error)) ||
       !db_exec(db, set_version, error)) {
     nd_store_db_rollback(db);
     return FALSE;

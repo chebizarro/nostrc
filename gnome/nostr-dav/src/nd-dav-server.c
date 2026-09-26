@@ -16,11 +16,57 @@
 #include "nd-contact-store.h"
 #include "nd-file-entry.h"
 #include "nd-file-store.h"
+#include "nd-publisher.h"
+#include "nd-store-db.h"
 
 #include <libsoup/soup.h>
 #include <libxml/xmlwriter.h>
 #include <libxml/xmlreader.h>
+#include <sqlite3.h>
 #include <string.h>
+
+/* Fetch (kind, pubkey) for a row that a DAV DELETE is about to remove
+ * so nd_publisher_stage_tombstone() can build a well-formed `a` tag
+ * from the addressable pointer the row represents. Returns FALSE when
+ * the row has vanished or the SELECT itself failed — either way the
+ * DELETE should not attempt to stage a tombstone. Contacts and files
+ * store no `kind` column because their kind is fixed by the collection;
+ * callers pass @kind_col = NULL and rely on the compile-time value. */
+static gboolean
+fetch_row_addressable(NdStoreDb   *db,
+                      const gchar *table,
+                      const gchar *key_col,
+                      const gchar *key_val,
+                      const gchar *kind_col,   /* NULL if kind is constant */
+                      int         *out_kind,   /* only set when kind_col != NULL */
+                      gchar      **out_pubkey_hex)
+{
+  if (out_pubkey_hex) *out_pubkey_hex = NULL;
+  sqlite3 *h = nd_store_db_get_handle(db);
+  g_autofree gchar *sql = kind_col
+    ? g_strdup_printf("SELECT %s, pubkey FROM %s WHERE %s = ?1",
+                      kind_col, table, key_col)
+    : g_strdup_printf("SELECT pubkey FROM %s WHERE %s = ?1",
+                      table, key_col);
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(h, sql, -1, &stmt, NULL) != SQLITE_OK)
+    return FALSE;
+  sqlite3_bind_text(stmt, 1, key_val, -1, SQLITE_TRANSIENT);
+  gboolean ok = FALSE;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    if (kind_col) {
+      if (out_kind) *out_kind = sqlite3_column_int(stmt, 0);
+      const unsigned char *pk = sqlite3_column_text(stmt, 1);
+      if (out_pubkey_hex && pk) *out_pubkey_hex = g_strdup((const gchar *)pk);
+    } else {
+      const unsigned char *pk = sqlite3_column_text(stmt, 0);
+      if (out_pubkey_hex && pk) *out_pubkey_hex = g_strdup((const gchar *)pk);
+    }
+    ok = TRUE;
+  }
+  sqlite3_finalize(stmt);
+  return ok;
+}
 
 /* ---- Error domain ---- */
 
@@ -692,10 +738,22 @@ handle_get_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 
 /**
  * Handle DELETE /calendars/nostr/<uid>.ics — remove event.
+ *
+ * NIP-09: after the local row is gone, stage a kind-5 tombstone in the
+ * outbox so the deletion propagates to the same relay set the original
+ * event went to. Address-replaceable events on Nostr are otherwise
+ * “undeletable from the outside” without a matching kind-5 (nostrc-ls2c).
  */
 static void
 handle_delete_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 {
+  /* Read the addressable coordinates BEFORE deleting; the tombstone
+   * needs kind + pubkey and the row is about to disappear. */
+  int target_kind = ND_NIP52_KIND_TIME;
+  g_autofree gchar *pubkey_hex = NULL;
+  gboolean had_row = fetch_row_addressable(self->db, "events", "uid", uid,
+                                           "kind", &target_kind, &pubkey_hex);
+
   gboolean removed = FALSE;
   GError *err = NULL;
   if (!nd_calendar_store_remove(self->cal_store, uid, &removed, &err)) {
@@ -705,6 +763,16 @@ handle_delete_event(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
   if (!removed) {
     soup_server_message_set_status(msg, 404, NULL);
     return;
+  }
+
+  if (had_row && self->publisher != NULL) {
+    GError *tomb_err = NULL;
+    if (!nd_publisher_stage_tombstone(self->publisher, target_kind,
+                                      pubkey_hex, uid, &tomb_err)) {
+      g_warning("nostr-dav: could not stage tombstone for %s: %s", uid,
+                tomb_err ? tomb_err->message : "unknown");
+      g_clear_error(&tomb_err);
+    }
   }
 
   soup_server_message_set_status(msg, 204, NULL);
@@ -918,10 +986,17 @@ handle_get_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 
 /**
  * Handle DELETE /contacts/nostr/<uid>.vcf — remove contact.
+ *
+ * See handle_delete_event() for the tombstone rationale (nostrc-ls2c).
+ * Contacts are always kind 30085 so no per-row kind lookup is needed.
  */
 static void
 handle_delete_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *uid)
 {
+  g_autofree gchar *pubkey_hex = NULL;
+  gboolean had_row = fetch_row_addressable(self->db, "contacts", "uid", uid,
+                                           NULL, NULL, &pubkey_hex);
+
   gboolean removed = FALSE;
   GError *err = NULL;
   if (!nd_contact_store_remove(self->contact_store, uid, &removed, &err)) {
@@ -931,6 +1006,16 @@ handle_delete_contact(NdDavServer *self, SoupServerMessage *msg, const gchar *ui
   if (!removed) {
     soup_server_message_set_status(msg, 404, NULL);
     return;
+  }
+
+  if (had_row && self->publisher != NULL) {
+    GError *tomb_err = NULL;
+    if (!nd_publisher_stage_tombstone(self->publisher, ND_CONTACT_KIND,
+                                      pubkey_hex, uid, &tomb_err)) {
+      g_warning("nostr-dav: could not stage tombstone for contact %s: %s",
+                uid, tomb_err ? tomb_err->message : "unknown");
+      g_clear_error(&tomb_err);
+    }
   }
 
   soup_server_message_set_status(msg, 204, NULL);
@@ -1203,10 +1288,18 @@ handle_get_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_pat
 
 /**
  * Handle DELETE /files/nostr/<path> — remove file.
+ *
+ * See handle_delete_event() for the tombstone rationale (nostrc-ls2c).
+ * NIP-94 file entries are kind 1063; the `d` tag equals the storage
+ * path we key the row by.
  */
 static void
 handle_delete_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_path)
 {
+  g_autofree gchar *pubkey_hex = NULL;
+  gboolean had_row = fetch_row_addressable(self->db, "files", "path", file_path,
+                                           NULL, NULL, &pubkey_hex);
+
   gboolean removed = FALSE;
   GError *err = NULL;
   if (!nd_file_store_remove(self->file_store, file_path, &removed, &err)) {
@@ -1216,6 +1309,16 @@ handle_delete_file(NdDavServer *self, SoupServerMessage *msg, const gchar *file_
   if (!removed) {
     soup_server_message_set_status(msg, 404, NULL);
     return;
+  }
+
+  if (had_row && self->publisher != NULL) {
+    GError *tomb_err = NULL;
+    if (!nd_publisher_stage_tombstone(self->publisher, ND_NIP94_KIND,
+                                      pubkey_hex, file_path, &tomb_err)) {
+      g_warning("nostr-dav: could not stage tombstone for file %s: %s",
+                file_path, tomb_err ? tomb_err->message : "unknown");
+      g_clear_error(&tomb_err);
+    }
   }
 
   soup_server_message_set_status(msg, 204, NULL);

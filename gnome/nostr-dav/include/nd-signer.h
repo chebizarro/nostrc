@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Abstract interface over `org.nostr.Signer.SignEventJson` (plan Track 1
+ * Abstract interface over `org.nostr.Signer.SignEvent` (plan Track 1
  * D1.a). Consumers hand an unsigned event JSON string; the signer returns
  * the fully signed JSON (id, pubkey, sig included). Two implementations:
  *   - Real DBus proxy against the session bus (see nd-signer-dbus.c);
@@ -65,8 +65,10 @@ NdSigner *nd_signer_new_from_vtable(const NdSignerVTable *vtable,
  * @error: (out) (optional): location for error
  *
  * Returns: (transfer full) (nullable): a signer that calls the
- *   `SignEventJson` method on `org.nostr.Signer` at `/org/nostr/signer`.
- *   NULL with @error set on proxy-build failure.
+ *   `SignEvent` method on `org.nostr.Signer` at `/org/nostr/signer`
+ *   with the D1.a `(in s eventJson, in s identity, in s app_id, out s
+ *   signed_event)` signature. NULL with @error set on proxy-build
+ *   failure.
  */
 NdSigner *nd_signer_new_dbus(GDBusConnection *connection, GError **error);
 

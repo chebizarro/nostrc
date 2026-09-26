@@ -21,7 +21,7 @@
 
 G_BEGIN_DECLS
 
-#define ND_STORE_DB_SCHEMA_VERSION 3
+#define ND_STORE_DB_SCHEMA_VERSION 4
 
 #define ND_STORE_DB_ERROR (nd_store_db_error_quark())
 GQuark nd_store_db_error_quark(void);

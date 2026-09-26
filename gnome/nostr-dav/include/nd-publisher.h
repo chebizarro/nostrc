@@ -113,6 +113,31 @@ gboolean nd_publisher_stage_contact_put (NdPublisher     *self,
                                           GError         **error);
 
 /**
+ * nd_publisher_stage_tombstone:
+ * @self: the publisher
+ * @target_kind: kind of the addressable event being deleted (e.g. 31922
+ *   for a NIP-52 date-based event, 30085 for a contact, 1063 for a file)
+ * @target_pubkey_hex: 64-hex x-only pubkey of the addressable event's
+ *   author — the account the publisher is configured for. NULL falls
+ *   back to the publisher's configured account_pubkey.
+ * @target_uid: the addressable event's `d`-tag value (its UID / path)
+ * @error: (out) (optional): location for error
+ *
+ * Called by the DAV DELETE handlers after the local row has been
+ * removed. Inserts a row in the `tombstones` outbox; the next
+ * nd_publisher_tick() will build a NIP-09 kind-5 event with an
+ * `[\"a\", \"<kind>:<pubkey>:<uid>\"]` tag, sign it via the configured
+ * signer, and publish it to the publisher's home relay set.
+ *
+ * Returns: TRUE on success; FALSE with @error set on a SQLite failure.
+ */
+gboolean nd_publisher_stage_tombstone(NdPublisher  *self,
+                                      int           target_kind,
+                                      const gchar  *target_pubkey_hex,
+                                      const gchar  *target_uid,
+                                      GError      **error);
+
+/**
  * nd_publisher_tick:
  * @now_ts: wall-clock time in unix seconds; tests pass a synthetic
  *   value to drive backoff deterministically

@@ -175,3 +175,114 @@ below; `nostrc-dsls` itself closes with the evidence linked.
   NoKeyConfigured for a key it just stored via StoreKey` (observed as
   an aside; separate lane from Wave-3 publish).
 
+---
+
+## Part 2 — regressions fixed (Wave 4 Quebec)
+
+Fixed under branch `fix/nostr-dav-publish-regressions` by the three
+edits below; the aarch64 lab reruns to date are captured after each.
+
+### Fix 1 — nostrc-qqkw (`SignEventJson` → `SignEvent`)
+
+- `gnome/nostr-dav/src/nd-signer-dbus.c` now calls
+  `org.nostr.Signer.SignEvent(sss) → s` with args
+  `(unsigned_json, "", "nostr-dav")` — exactly the shape declared in
+  `nips/nip55l/dbus/org.nostr.Signer.xml`. The signer answers with the
+  full signed event (D1.a semantics), and the existing shape check
+  (`id`, `pubkey`, `sig`) still validates the reply before it reaches
+  the publisher.
+- `include/nd-signer.h`'s comments are updated to reference the correct
+  method name so future readers do not chase a ghost.
+
+Lab rerun:
+
+```
+$ /tmp/nostr-dav-smoke.sh
+...
+sqlite> SELECT uid, kind, publish_state FROM events;
+smoke-1790406603      31922  published
+smoke-occ-1790406603  31923  published
+smoke-contact-1790406603 (contacts) 30085  published
+
+$ python3 -m websockets wss://relay.sharegap.net <<'EOF'
+["REQ","q",{"kinds":[31922,31923,30085],"authors":["<PK_HEX>"]}]
+EOF
+EVENT q {"kind":31922,"pubkey":"<PK_HEX>",...,"tags":[...,["d","smoke-1790406603"]], ...}
+EVENT q {"kind":31923,...,"tags":[...,["d","smoke-occ-1790406603"]], ...}
+EVENT q {"kind":30085,...,"tags":[...,["d","smoke-contact-1790406603"]], ...}
+```
+
+### Fix 2 — nostrc-ls2c (DAV DELETE stages a NIP-09 kind-5)
+
+- Schema v4 adds a dedicated `tombstones` outbox
+  (`gnome/nostr-dav/src/nd-store-db.c`) with the same `publish_state /
+  publish_attempts / publish_next_ts / publish_targets /
+  signed_event_json` columns as the primary outbox.
+- `nd-publisher.c` gets a `stage_tombstone_row` inserter, an
+  `NdDispatchCtx`-driven `dispatch_row` that knows how to build a
+  kind-5 `["a","<kind>:<pubkey>:<uid>"]` event when `outbox ==
+  ND_OUTBOX_TOMBSTONE`, and a matching `load_pending_tombstones` that
+  the tick loop drains alongside events/contacts.
+- `handle_delete_event`, `handle_delete_contact`, and
+  `handle_delete_file` in `nd-dav-server.c` read the row's `pubkey`
+  (plus `kind` for calendar events) BEFORE removing it, then call
+  `nd_publisher_stage_tombstone()` so the deletion propagates.
+- `tests/test_publish_rollback.c` gains
+  `test_dav_delete_stages_kind5_tombstone`, which publishes an event,
+  stages a tombstone, and asserts the outbox emits a kind-5 with the
+  correct `a` tag and settles to `published` after every relay OKs.
+
+Lab rerun:
+
+```
+$ curl -sS ... -X DELETE .../calendars/nostr/smoke-1790406603.ics
+HTTP 204
+
+sqlite> SELECT target_kind, target_uid, publish_state
+        FROM tombstones ORDER BY id DESC LIMIT 1;
+31922  smoke-1790406603  published
+
+# NIP-01 REQ on the relay confirms the tombstone landed and
+# the addressable event vanished from the newest-wins view.
+["REQ","q",{"kinds":[5],"authors":["<PK_HEX>"]}]
+EVENT q {"kind":5,"pubkey":"<PK_HEX>",
+         "tags":[["a","31922:<PK_HEX>:smoke-1790406603"]], ...}
+```
+
+### Fix 3 — nostrc-7g9d (`StoreKey → GetPublicKey`)
+
+- `nips/nip55l/src/core/signer_ops.c` grows a tiny in-process cache
+  (`g_cached_active_sk_hex`, `g_cached_active_npub`). `StoreKey`
+  populates it from the value it verified;
+  `GetPublicKey` and the internal `resolve_seckey_hex(NULL, ...)`
+  consult the cache before falling back to env / libsecret / Keychain;
+  `ClearKey` wipes it (with `secure_wipe`). This closes the race the
+  smoke transcript captured, where a libsecret search issued
+  immediately after a successful `secret_password_store_sync` returned
+  `NOT_FOUND`.
+- `tests/test_signer_dbus_contract.c` adds a `StoreKey → GetPublicKey`
+  chain inside `try_store_and_clear_key` that fails loudly if the
+  daemon reports `NoKeyConfigured` after a successful store — the
+  exact regression Papa's smoke caught.
+
+Lab rerun:
+
+```
+$ nostr-signer-cli store-key <hex> default
+ok npub1qvdm4j0ldtz4jfmqrda6s3xhyg0lfpzcxnqua3zezn35se26cy8s9a8hlq
+
+$ nostr-signer-cli get-pubkey
+npub1qvdm4j0ldtz4jfmqrda6s3xhyg0lfpzcxnqua3zezn35se26cy8s9a8hlq
+```
+
+### Build / gate status
+
+- `cmake --build _build --target nostr-dav-core nostr-dav
+  test-nostr-dav-publish-rollback` on the darwin dev host —
+  clean under `-Wall -Wextra -Werror` (the same flag set the aarch64
+  CI uses).
+- `homed_authd_dep_purity` unaffected (no auth-core deps changed).
+- Tests to run under the Wave-4 CI gate: `nostr-dav/publish/*` (four
+  scenarios plus the new tombstone one) and `nip55l/dbus_contract`
+  (adds the StoreKey→GetPublicKey regression check).
+
