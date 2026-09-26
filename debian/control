@@ -29,6 +29,9 @@ Build-Depends: debhelper-compat (= 13),
                libsoup-3.0-dev,
                libxml2-dev,
                libjson-glib-dev,
+# nostr-share dialog (nostrc-1xak)
+               libgtk-4-dev,
+               libadwaita-1-dev,
                libsecret-1-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/chebizarro/nostrc
@@ -328,6 +331,28 @@ Description: Localhost CalDAV / CardDAV / WebDAV bridge for Nostr (Wave 4)
  Enable with `systemctl --user enable --now nostr-dav.service`. Token
  bootstrap happens through `gnostr-signer-daemon`; the token file
  lives under `$XDG_STATE_HOME/nostr-dav/`.
+
+Package: nostr-share
+Section: net
+Architecture: any
+Multi-Arch: foreign
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: gnostr-signer-daemon, git
+Suggests: nostr-dav (>= ${source:Version}),
+          nostrc-session-relay (>= ${source:Version})
+Description: Share to Nostr from any GNOME app's Open With menu
+ nostr-share publishes whatever GNOME hands it as the right Nostr event:
+ text and links as kind-1 notes (with r tags), Markdown and long text as
+ NIP-23 articles, photos/video/audio via Blossom as kind-1 notes with
+ NIP-92 imeta (or NIP-94 kind 1063), git repositories as NIP-34
+ announcements, and .ics/.vcf files handed to nostr-dav. It registers
+ org.nostr.Share.desktop for text, URL, media, PDF, directory, calendar
+ and vCard MIME types, so it appears in every application's Open With.
+ .
+ Events are signed by org.nostr.Signer; image EXIF/XMP is stripped before
+ upload and the exact event JSON is shown before signing. The libadwaita
+ dialog opens when a display is available; `nostr-share --no-ui` and
+ `--dry-run` work headless.
 
 Package: nostrc-samba-server
 Section: admin

@@ -1,0 +1,35 @@
+# nostr-share configuration
+#
+# Copy to ~/.config/nostr-share/nostr-share.conf (or point
+# $NOSTR_SHARE_CONFIG at it). Every key is optional.
+
+[nostr-share]
+
+# Relays used to look up your kind-10002 relay list and kind-10063
+# Blossom server list, and the write relays used when you have no
+# kind-10002 event. `;` or `,` separated.
+#home_relays=wss://relay.example.com;wss://relay-two.example.com
+
+# Blossom servers (https:// only) used when you have no kind-10063 list.
+#blossom_servers=https://blossom.example.com
+
+# Where events go:
+#   session_relay_and_direct  (default) your NIP-65 write relays; when
+#                             $XDG_RUNTIME_DIR/nostr/relay.sock exists the
+#                             session relay also gets a copy so local apps
+#                             see it at once. Success = a write relay ACKed.
+#   session_relay_or_direct   session relay only when present, else direct.
+#   session_relay_only        session relay only; nothing leaves this machine
+#                             until the session relay federates upstream.
+#   direct_only               never use the session relay.
+#upstream_mode=session_relay_and_direct
+
+# Largest file to upload, in MiB.
+#max_upload_mib=100
+
+# Seconds to wait for relays to answer OK before giving up.
+#ok_wait_sec=15
+
+# nostr-dav endpoint for .ics/.vcf hand-off (default: whatever
+# `nostr-dav --show-credentials` prints).
+#dav_url=http://127.0.0.1:7680/

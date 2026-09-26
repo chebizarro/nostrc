@@ -93,6 +93,9 @@ BuildRequires:  pkgconfig(libsoup-3.0)
 BuildRequires:  pkgconfig(libxml-2.0)
 BuildRequires:  pkgconfig(json-glib-1.0)
 BuildRequires:  pkgconfig(libsecret-1)
+# nostr-share dialog (nostrc-1xak)
+BuildRequires:  pkgconfig(gtk4)
+BuildRequires:  pkgconfig(libadwaita-1)
 # nsync is vendored in-tree at third_party/nsync (git submodule pinned to a
 # release tag) and built statically as part of the CMake configure step.
 # The vendored copy is folded into libnostrgo.so via --whole-archive, so
@@ -504,6 +507,25 @@ Enable with `systemctl --user enable --now nostr-dav.service`. Token
 bootstrap happens through `gnostr-signer-daemon`; the token file
 lives under `$XDG_STATE_HOME/nostr-dav/`.
 
+# --- Sub-package: nostr-share ------------------------------------------------
+%package -n nostr-share
+Summary:        Share to Nostr from any GNOME app's Open With menu
+Requires:       libnostr-publish%{?_isa} = %{version}-%{release}
+Requires:       libhanami%{?_isa} = %{version}-%{release}
+Requires:       libnostr%{?_isa} = %{version}-%{release}
+Recommends:     gnostr-signer-daemon
+Recommends:     git
+Suggests:       nostr-dav%{?_isa} = %{version}-%{release}
+
+%description -n nostr-share
+nostr-share publishes whatever GNOME hands it as the right Nostr event:
+text and links as kind-1 notes, Markdown and long text as NIP-23
+articles, media via Blossom as kind-1 + NIP-92 imeta (or NIP-94 kind
+1063), git repositories as NIP-34 announcements, and .ics/.vcf files
+handed to nostr-dav. org.nostr.Share.desktop registers it for Open With.
+Signing goes through org.nostr.Signer; image metadata is stripped before
+upload and the exact event JSON is shown before signing.
+
 # --- Sub-package: nostrc-samba-server ----------------------------------------
 %package -n nostrc-samba-server
 Summary:        Dedicated Samba file-server for the Nostr auth broker (Wave 4)
@@ -563,6 +585,7 @@ it after seeding the passdb via `nostr-authd` and configuring shares
     -DBUILD_MARMOT_GOBJECT=OFF \
     -DBUILD_RELAYD=ON \
     -DENABLE_NOSTR_DAV=ON \
+    -DENABLE_NOSTR_SHARE=ON \
     -DSIGNET_ENABLE=OFF \
     -DWITH_NOSTRDB=OFF \
     -DLIBNOSTR_WITH_NOSTRDB=OFF \
@@ -1116,6 +1139,14 @@ fi
 %{_datadir}/dbus-1/services/org.nostr.Dav.service
 %dir %{_datadir}/doc/nostr-dav
 %{_datadir}/doc/nostr-dav/nostr-dav.conf.sample
+
+%files -n nostr-share
+%license LICENSE
+%{_bindir}/nostr-share
+%{_datadir}/applications/org.nostr.Share.desktop
+%dir %{_datadir}/nostr-share
+%{_datadir}/nostr-share/nostr-share.conf.example
+%{_datadir}/nostr-share/README.md
 
 %files -n nostrc-samba-server
 %license LICENSE

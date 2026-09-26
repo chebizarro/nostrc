@@ -484,12 +484,17 @@ if (GNOSTR_WITH_PKCS11)
 endif()
 
 option(ENABLE_LIBNOSTR_PUBLISH "Build libnostr-publish (shared relay publish core; implied by ENABLE_NOSTR_DAV)" OFF)
-if (ENABLE_LIBNOSTR_PUBLISH OR ENABLE_NOSTR_DAV)
+option(ENABLE_NOSTR_SHARE "Build nostr-share (Share to Nostr CLI + dialog; needs BUILD_LIBHANAMI)" OFF)
+if (ENABLE_LIBNOSTR_PUBLISH OR ENABLE_NOSTR_DAV OR ENABLE_NOSTR_SHARE)
   add_subdirectory(gnome/libnostr-publish)
 endif()
 
 if (ENABLE_NOSTR_DAV)
   add_subdirectory(gnome/nostr-dav)
+endif()
+
+if (ENABLE_NOSTR_SHARE)
+  add_subdirectory(gnome/nostr-share)
 endif()
 
 ## GLib demo: only if libnostr built with GLib support

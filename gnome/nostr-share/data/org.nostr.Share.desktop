@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Share to Nostr
+GenericName=Nostr Share
+Comment=Publish text, links, photos, articles and files to Nostr
+Exec=nostr-share %U
+TryExec=nostr-share
+Icon=document-send
+Terminal=false
+StartupNotify=true
+Categories=Network;
+Keywords=nostr;share;publish;post;blossom;
+MimeType=text/plain;text/uri-list;text/markdown;image/*;video/*;audio/*;application/pdf;inode/directory;text/calendar;text/vcard;

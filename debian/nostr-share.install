@@ -1,0 +1,4 @@
+usr/bin/nostr-share
+usr/share/applications/org.nostr.Share.desktop
+usr/share/nostr-share/nostr-share.conf.example
+usr/share/nostr-share/README.md
