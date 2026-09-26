@@ -25,6 +25,15 @@
 #ifdef NH_AUTH_BROKER_ENABLE_SMB
 #  include "passdb_tdbsam.h"
 #  include "smb_credential.h"
+/* Compile-time default for the DEDICATED standalone Samba config the
+ * authority selects on every write.  Ships as
+ * `/etc/nostr-auth/smb.conf` from `config/smb.conf.standalone.sample`.
+ * Overridable through the smb-credentiald.conf `smb_conf =` key or the
+ * NH_SMB_CONF env var; see docs/SAMBA_STANDALONE.md.  Plan §4.2 B3
+ * (2026-09-25). */
+#  ifndef NH_SMB_CONF_STANDALONE_PATH
+#    define NH_SMB_CONF_STANDALONE_PATH "/etc/nostr-auth/smb.conf"
+#  endif
 #endif
 
 #include <errno.h>
@@ -190,15 +199,68 @@ int main(int argc, char **argv) {
   nh_smb_authority *smb = NULL;
   nh_smb_passdb_tdbsam *tdbsam = NULL;
   if (user_socket_path) {
-    tdbsam = nh_smb_passdb_tdbsam_new(NULL, NULL);
+    /* Load the dedicated standalone-Samba config path.  Precedence:
+     *   1. NH_SMB_CONF env override (integration-test bind-mount).
+     *   2. `smb_conf` key in the shipped smb-credentiald.conf.
+     *   3. Compile-time default NH_SMB_CONF_STANDALONE_PATH.
+     * A missing / silent config file is non-fatal — the compile-time
+     * default kicks in and we surface a journal line at INFO.  This
+     * matches the auth.conf loader posture (non-fatal missing file). */
+    char smb_conf_path[512] = {0};
+    const char *env_conf = getenv("NH_SMB_CONF");
+    if (env_conf && *env_conf) {
+      snprintf(smb_conf_path, sizeof smb_conf_path, "%s", env_conf);
+    } else {
+      const char *cred_conf_path = getenv("NH_SMB_CREDENTIALD_CONF");
+      if (!cred_conf_path || !*cred_conf_path)
+        cred_conf_path = "/etc/nostr-auth/smb-credentiald.conf";
+      FILE *cf = fopen(cred_conf_path, "re");
+      if (cf) {
+        char line[512];
+        while (fgets(line, sizeof line, cf)) {
+          char *p = line;
+          while (*p == ' ' || *p == '\t') p++;
+          if (!*p || *p == '#' || *p == ';' || *p == '\n' || *p == '\r')
+            continue;
+          char *eq = strchr(p, '=');
+          if (!eq) continue;
+          *eq = '\0';
+          char *k = p, *v = eq + 1;
+          /* trim key trailing whitespace */
+          size_t klen = strlen(k);
+          while (klen > 0 && (k[klen - 1] == ' ' || k[klen - 1] == '\t'))
+            k[--klen] = '\0';
+          /* trim value leading whitespace + trailing newline/space */
+          while (*v == ' ' || *v == '\t') v++;
+          size_t vlen = strlen(v);
+          while (vlen > 0 && (v[vlen - 1] == '\n' || v[vlen - 1] == '\r' ||
+                              v[vlen - 1] == ' ' || v[vlen - 1] == '\t'))
+            v[--vlen] = '\0';
+          if (strcmp(k, "smb_conf") == 0 && v[0] == '/')
+            snprintf(smb_conf_path, sizeof smb_conf_path, "%s", v);
+        }
+        fclose(cf);
+      }
+      if (!smb_conf_path[0])
+        snprintf(smb_conf_path, sizeof smb_conf_path, "%s",
+                 NH_SMB_CONF_STANDALONE_PATH);
+    }
+
+    tdbsam = nh_smb_passdb_tdbsam_new(NULL, NULL, smb_conf_path);
     if (!tdbsam) {
       fprintf(stderr, "nostr-authd: cannot create tdbsam adapter\n");
       nh_auth_broker_free(broker); nh_identity_store_close(store); return 1;
     }
-    nh_smb_rc srr = nh_smb_authority_open(smb_journal_path,
-                                          &nh_smb_passdb_tdbsam_ops,
-                                          tdbsam, &smb);
+    nh_smb_rc srr = nh_smb_authority_open_ex(smb_journal_path,
+                                             smb_conf_path,
+                                             &nh_smb_passdb_tdbsam_ops,
+                                             tdbsam, &smb);
     if (srr != NH_SMB_OK) {
+      /* NH_SMB_RECONCILE_REQUIRED is the plan §4.2 B3 failure mode:
+       * passdb <-> journal drift the authority refuses to auto-repair.
+       * Same fail-closed treatment as any other open() error — the
+       * broker refuses to serve requests until an operator reconciles
+       * (see docs/SAMBA_STANDALONE.md §2). */
       fprintf(stderr, "nostr-authd: cannot open smb journal %s: %s\n",
               smb_journal_path, nh_smb_rc_name(srr));
       nh_smb_passdb_tdbsam_free(tdbsam);

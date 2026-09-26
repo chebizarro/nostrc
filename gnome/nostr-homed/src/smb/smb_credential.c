@@ -53,6 +53,7 @@ const char *nh_smb_rc_name(nh_smb_rc rc) {
     case NH_SMB_PASSDB_ERROR: return "passdb-error";
     case NH_SMB_NOT_FOUND: return "not-found";
     case NH_SMB_INTERNAL: return "internal";
+    case NH_SMB_RECONCILE_REQUIRED: return "reconcile-required";
   }
   return "unknown";
 }
@@ -328,10 +329,22 @@ static nh_smb_rc journal_insert(nh_smb_authority *a,
 /* Lifecycle                                                           */
 /* ------------------------------------------------------------------ */
 
+/* Forward decl for the reconciliation helper defined further down. */
+static nh_smb_rc reconcile_passdb_against_journal(nh_smb_authority *a);
+
 nh_smb_rc nh_smb_authority_open(const char *journal_path,
                                 const nh_smb_passdb_ops *passdb_ops,
                                 void *passdb_ctx,
                                 nh_smb_authority **out) {
+  return nh_smb_authority_open_ex(journal_path, NULL, passdb_ops,
+                                  passdb_ctx, out);
+}
+
+nh_smb_rc nh_smb_authority_open_ex(const char *journal_path,
+                                   const char *smb_conf_path,
+                                   const nh_smb_passdb_ops *passdb_ops,
+                                   void *passdb_ctx,
+                                   nh_smb_authority **out) {
   if (!journal_path || !passdb_ops || !passdb_ops->set_password ||
       !passdb_ops->disable || !passdb_ops->remove || !out)
     return NH_SMB_INVALID;
@@ -362,6 +375,24 @@ nh_smb_rc nh_smb_authority_open(const char *journal_path,
     free(a);
     return r;
   }
+  /* Plan §4.2 B3 (2026-09-25): reconcile the dedicated Samba passdb
+   * against the SQLite issuance journal BEFORE we commit to the
+   * "authority is ready" contract.  Drift is loud and non-recoverable
+   * here (NH_SMB_RECONCILE_REQUIRED); an operator has to intervene.
+   *
+   * Skipped when smb_conf_path is NULL/empty (portable tests,
+   * backwards-compat path via nh_smb_authority_open()) OR when the
+   * adapter didn't provide the optional enumerate op (a mock without
+   * anything to enumerate). */
+  if (smb_conf_path && *smb_conf_path && passdb_ops->enumerate) {
+    nh_smb_rc rr = reconcile_passdb_against_journal(a);
+    if (rr != NH_SMB_OK) {
+      sqlite3_close(a->db);
+      free(a);
+      return rr;
+    }
+  }
+
   /* Plan §4.1 A3 (Finding 3 posture): the header contract says open()
    * revokes any already-expired credentials.  Do exactly that with one
    * idempotent sweep pass.  We intentionally do NOT fail open() on a
@@ -373,6 +404,111 @@ nh_smb_rc nh_smb_authority_open(const char *journal_path,
   (void)nh_smb_authority_sweep_expired(a, wall_ms_now(), &swept);
   *out = a;
   return NH_SMB_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* Reconciliation                                                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Diff the passdb enumeration (via the adapter's `enumerate` op) against
+ * the set of currently-active usernames in the issuance journal.  Returns
+ * NH_SMB_OK when the two sides match, NH_SMB_RECONCILE_REQUIRED on drift.
+ *
+ * Drift criteria (plan §4.2 B3):
+ *   (a) A passdb user with no active journal row — either the passdb
+ *       was restored from an unmatched backup or a rogue smbpasswd
+ *       invocation added a user behind the authority's back.
+ *   (b) A journal-active username missing from the passdb — the passdb
+ *       lost a row and clients would silently fail auth without the
+ *       authority realising.
+ *
+ * Either case is a bug-in-need-of-a-human, not an auto-repair moment.
+ */
+static nh_smb_rc reconcile_passdb_against_journal(nh_smb_authority *a) {
+  char **passdb_users = NULL;
+  size_t passdb_count = 0;
+  int erc = a->ops->enumerate(a->ops_ctx, &passdb_users, &passdb_count);
+  if (erc != 0) {
+    set_error(a, "passdb enumerate failed (rc=%d)", erc);
+    return NH_SMB_PASSDB_ERROR;
+  }
+
+  /* Load active-journal usernames into a comparable array. */
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(a->db,
+      "SELECT username FROM credentials WHERE revoked_at_ms IS NULL",
+      -1, &stmt, NULL);
+  if (rc != SQLITE_OK) {
+    set_error(a, "reconcile prepare: %s", sqlite3_errmsg(a->db));
+    for (size_t i = 0; i < passdb_count; i++) free(passdb_users[i]);
+    free(passdb_users);
+    return NH_SMB_STORAGE_ERROR;
+  }
+  char **journal_users = NULL;
+  size_t journal_count = 0, journal_cap = 0;
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    const unsigned char *u = sqlite3_column_text(stmt, 0);
+    if (!u) continue;
+    if (journal_count == journal_cap) {
+      size_t new_cap = journal_cap ? journal_cap * 2 : 8;
+      char **grown = realloc(journal_users, new_cap * sizeof *journal_users);
+      if (!grown) {
+        sqlite3_finalize(stmt);
+        for (size_t i = 0; i < passdb_count; i++) free(passdb_users[i]);
+        free(passdb_users);
+        for (size_t i = 0; i < journal_count; i++) free(journal_users[i]);
+        free(journal_users);
+        return NH_SMB_NO_MEMORY;
+      }
+      journal_users = grown;
+      journal_cap = new_cap;
+    }
+    journal_users[journal_count] = strdup((const char *)u);
+    if (!journal_users[journal_count]) {
+      sqlite3_finalize(stmt);
+      for (size_t i = 0; i < passdb_count; i++) free(passdb_users[i]);
+      free(passdb_users);
+      for (size_t i = 0; i < journal_count; i++) free(journal_users[i]);
+      free(journal_users);
+      return NH_SMB_NO_MEMORY;
+    }
+    journal_count++;
+  }
+  sqlite3_finalize(stmt);
+
+  /* Two-way subset check.  Small lists (typically a handful of users),
+   * so an O(n*m) scan beats hashing on both cognitive load and
+   * dependency footprint. */
+  nh_smb_rc verdict = NH_SMB_OK;
+  for (size_t i = 0; i < passdb_count && verdict == NH_SMB_OK; i++) {
+    bool found = false;
+    for (size_t j = 0; j < journal_count; j++) {
+      if (strcmp(passdb_users[i], journal_users[j]) == 0) { found = true; break; }
+    }
+    if (!found) {
+      set_error(a, "reconcile drift: passdb user '%s' has no active journal row",
+                passdb_users[i]);
+      verdict = NH_SMB_RECONCILE_REQUIRED;
+    }
+  }
+  for (size_t j = 0; j < journal_count && verdict == NH_SMB_OK; j++) {
+    bool found = false;
+    for (size_t i = 0; i < passdb_count; i++) {
+      if (strcmp(journal_users[j], passdb_users[i]) == 0) { found = true; break; }
+    }
+    if (!found) {
+      set_error(a, "reconcile drift: active journal user '%s' missing from passdb",
+                journal_users[j]);
+      verdict = NH_SMB_RECONCILE_REQUIRED;
+    }
+  }
+
+  for (size_t i = 0; i < passdb_count; i++) free(passdb_users[i]);
+  free(passdb_users);
+  for (size_t i = 0; i < journal_count; i++) free(journal_users[i]);
+  free(journal_users);
+  return verdict;
 }
 
 void nh_smb_authority_close(nh_smb_authority *a) {

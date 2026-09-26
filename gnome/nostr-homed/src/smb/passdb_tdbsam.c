@@ -65,10 +65,19 @@
  * the factory.  Present to make disposable-lab acceptance easier. */
 #define NH_SMB_ENV_SMBPASSWD "NH_SMB_SMBPASSWD_PATH"
 #define NH_SMB_ENV_PDBEDIT   "NH_SMB_PDBEDIT_PATH"
+/* smb.conf standalone path env override.  Ordinarily the caller
+ * passes the path explicitly (loaded from smb-credentiald.conf by
+ * nostr-authd); this env var lets integration tests bind-mount a
+ * fixture without editing the config file. */
+#define NH_SMB_ENV_CONF      "NH_SMB_CONF"
 
 struct nh_smb_passdb_tdbsam {
   char smbpasswd_path[256];
   char pdbedit_path[256];
+  /* Dedicated Samba config for `-c` (smbpasswd) / `-s` (pdbedit).
+   * Empty string = no config selector (backwards-compat for
+   * portable tests that never touch a real Samba install). */
+  char smb_conf_path[256];
 };
 
 static void copy_path(char dst[static 256], const char *src) {
@@ -79,7 +88,8 @@ static void copy_path(char dst[static 256], const char *src) {
  * path is passed, we consult the corresponding environment variable
  * before falling back to the compile-time default. */
 nh_smb_passdb_tdbsam *nh_smb_passdb_tdbsam_new(const char *smbpasswd_path,
-                                               const char *pdbedit_path) {
+                                               const char *pdbedit_path,
+                                               const char *smb_conf_path) {
   nh_smb_passdb_tdbsam *t = calloc(1, sizeof *t);
   if (!t) return NULL;
   const char *sp = smbpasswd_path;
@@ -90,6 +100,13 @@ nh_smb_passdb_tdbsam *nh_smb_passdb_tdbsam_new(const char *smbpasswd_path,
   if (!pe || !*pe) pe = NH_SMB_PDBEDIT_PATH;
   copy_path(t->smbpasswd_path, sp);
   copy_path(t->pdbedit_path, pe);
+  /* Config selector: explicit arg > env override > empty (no flag).
+   * Empty here means the pre-Wave-3 behaviour — no `-c`/`-s` flag on
+   * the argv — which keeps existing acceptance harnesses that don't
+   * exercise the standalone Samba config working. */
+  const char *sc = smb_conf_path;
+  if (!sc || !*sc) sc = getenv(NH_SMB_ENV_CONF);
+  if (sc && *sc) copy_path(t->smb_conf_path, sc);
   return t;
 }
 
@@ -214,7 +231,12 @@ static int tdbsam_set_password(void *ctx, const char *username,
   if (memchr(password, '\n', plen) || memchr(password, '\r', plen)) return -1;
 
   /*
-   * smbpasswd -a -s USERNAME
+   * smbpasswd [-c CONF] -a -s USERNAME
+   *   -c: select the dedicated standalone Samba config (plan §4.2 B3).
+   *       Different flag from pdbedit's `-s`; per smbpasswd(8), -c is
+   *       the config selector and -s below is unrelated silent-stdin
+   *       mode.  Only emitted when the adapter was constructed with
+   *       a non-empty smb_conf_path.
    *   -a: add (username must already exist as a POSIX account)
    *   -s: silent — read the new password from stdin and read it
    *       AGAIN for confirmation.  Two newline-terminated copies.
@@ -230,13 +252,17 @@ static int tdbsam_set_password(void *ctx, const char *username,
   memcpy(blob + plen + 1, password, plen);
   blob[plen + 1 + plen] = '\n';
 
-  char *argv[] = {
-    t->smbpasswd_path,
-    (char *)"-a",
-    (char *)"-s",
-    (char *)username,
-    NULL,
-  };
+  char *argv[8];
+  size_t ai = 0;
+  argv[ai++] = t->smbpasswd_path;
+  if (t->smb_conf_path[0]) {
+    argv[ai++] = (char *)"-c";
+    argv[ai++] = t->smb_conf_path;
+  }
+  argv[ai++] = (char *)"-a";
+  argv[ai++] = (char *)"-s";
+  argv[ai++] = (char *)username;
+  argv[ai] = NULL;
   int rc = run_cmd_with_stdin(t->smbpasswd_path, argv, blob, blen);
   wipe(blob, blen);
   free(blob);
@@ -247,13 +273,19 @@ static int tdbsam_disable(void *ctx, const char *username) {
   nh_smb_passdb_tdbsam *t = ctx;
   if (!t || !username) return -1;
   if (strchr(username, '\n') || strchr(username, '\r')) return -1;
-  /* smbpasswd -d disables the account (sets the D flag).  No stdin. */
-  char *argv[] = {
-    t->smbpasswd_path,
-    (char *)"-d",
-    (char *)username,
-    NULL,
-  };
+  /* smbpasswd [-c CONF] -d USERNAME disables the account (sets the D
+   * flag).  No stdin.  `-c` selects the dedicated standalone config
+   * when the adapter was constructed with one (plan §4.2 B3). */
+  char *argv[8];
+  size_t ai = 0;
+  argv[ai++] = t->smbpasswd_path;
+  if (t->smb_conf_path[0]) {
+    argv[ai++] = (char *)"-c";
+    argv[ai++] = t->smb_conf_path;
+  }
+  argv[ai++] = (char *)"-d";
+  argv[ai++] = (char *)username;
+  argv[ai] = NULL;
   return run_cmd_with_stdin(t->smbpasswd_path, argv, NULL, 0);
 }
 
@@ -261,19 +293,163 @@ static int tdbsam_remove(void *ctx, const char *username) {
   nh_smb_passdb_tdbsam *t = ctx;
   if (!t || !username) return -1;
   if (strchr(username, '\n') || strchr(username, '\r')) return -1;
-  /* pdbedit -x -u USERNAME removes the account from the passdb.  No stdin. */
-  char *argv[] = {
-    t->pdbedit_path,
-    (char *)"-x",
-    (char *)"-u",
-    (char *)username,
-    NULL,
-  };
+  /* pdbedit [-s CONF] -x -u USERNAME removes the account from the
+   * passdb.  No stdin.  `-s` (not `-c`; pdbedit disagrees with
+   * smbpasswd on the config-selector flag — see the manpages) selects
+   * the standalone config.  Only emitted with a non-empty conf. */
+  char *argv[8];
+  size_t ai = 0;
+  argv[ai++] = t->pdbedit_path;
+  if (t->smb_conf_path[0]) {
+    argv[ai++] = (char *)"-s";
+    argv[ai++] = t->smb_conf_path;
+  }
+  argv[ai++] = (char *)"-x";
+  argv[ai++] = (char *)"-u";
+  argv[ai++] = (char *)username;
+  argv[ai] = NULL;
   return run_cmd_with_stdin(t->pdbedit_path, argv, NULL, 0);
+}
+
+/*
+ * Enumerate the dedicated passdb via `pdbedit [-s CONF] -L`.  Stdout
+ * contains one line per user of the form `username:uid:full_name`
+ * (pdbedit -L output format, stable since Samba 3.x).  We take the
+ * substring before the first `:` as the username.
+ *
+ * Returns 0 on success and populates *users_out (caller frees each
+ * entry then the array), non-zero on any failure.  The pipe read is
+ * bounded (1 MiB) so a hostile pdbedit stub can't OOM us.
+ */
+static int tdbsam_enumerate(void *ctx, char ***users_out, size_t *count_out) {
+  nh_smb_passdb_tdbsam *t = ctx;
+  if (!t || !users_out || !count_out) return -1;
+  *users_out = NULL;
+  *count_out = 0;
+
+  int outp[2] = {-1, -1};
+  if (pipe(outp) != 0) return -1;
+
+  pid_t pid = fork();
+  if (pid < 0) { close(outp[0]); close(outp[1]); return -1; }
+  if (pid == 0) {
+    /* Child: silence stdin, wire stdout to pipe, stderr to /dev/null. */
+    int devnull_r = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    if (devnull_r >= 0) { dup2(devnull_r, STDIN_FILENO); close(devnull_r); }
+    close(outp[0]);
+    if (dup2(outp[1], STDOUT_FILENO) < 0) _exit(126);
+    close(outp[1]);
+    int devnull_e = open("/dev/null", O_WRONLY | O_CLOEXEC);
+    if (devnull_e >= 0) { dup2(devnull_e, STDERR_FILENO); close(devnull_e); }
+    char *argv[6];
+    size_t ai = 0;
+    argv[ai++] = t->pdbedit_path;
+    if (t->smb_conf_path[0]) {
+      argv[ai++] = (char *)"-s";
+      argv[ai++] = t->smb_conf_path;
+    }
+    argv[ai++] = (char *)"-L";
+    argv[ai] = NULL;
+    execv(t->pdbedit_path, argv);
+    _exit(127);
+  }
+
+  close(outp[1]);
+  /* Read up to 1 MiB from the child.  1 MiB is O(50k accounts) at
+   * ~20 chars/line — well above any realistic passdb. */
+  size_t buf_cap = 4096, buf_len = 0;
+  char *buf = malloc(buf_cap);
+  if (!buf) {
+    close(outp[0]);
+    int st = 0; while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+    return -1;
+  }
+  const size_t hard_cap = 1u << 20;
+  for (;;) {
+    if (buf_len == buf_cap) {
+      if (buf_cap >= hard_cap) break;
+      size_t new_cap = buf_cap * 2;
+      if (new_cap > hard_cap) new_cap = hard_cap;
+      char *grown = realloc(buf, new_cap);
+      if (!grown) { free(buf); close(outp[0]);
+        int st = 0; while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+        return -1;
+      }
+      buf = grown;
+      buf_cap = new_cap;
+    }
+    ssize_t r = read(outp[0], buf + buf_len, buf_cap - buf_len);
+    if (r < 0) {
+      if (errno == EINTR) continue;
+      free(buf); close(outp[0]);
+      int st = 0; while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+      return -1;
+    }
+    if (r == 0) break;
+    buf_len += (size_t)r;
+  }
+  close(outp[0]);
+
+  int status = 0;
+  pid_t r;
+  while ((r = waitpid(pid, &status, 0)) < 0) {
+    if (errno != EINTR) break;
+  }
+  if (r < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    free(buf);
+    return -1;
+  }
+
+  /* Parse one username per line, stopping at the first `:`. */
+  char **users = NULL;
+  size_t count = 0, cap = 0;
+  size_t start = 0;
+  for (size_t i = 0; i <= buf_len; i++) {
+    if (i == buf_len || buf[i] == '\n') {
+      size_t end = i;
+      /* Trim trailing CR. */
+      if (end > start && buf[end - 1] == '\r') end--;
+      /* Take substring up to first `:` in [start, end). */
+      size_t colon = start;
+      while (colon < end && buf[colon] != ':') colon++;
+      if (colon > start) {
+        size_t ulen = colon - start;
+        char *u = malloc(ulen + 1);
+        if (!u) {
+          for (size_t k = 0; k < count; k++) free(users[k]);
+          free(users);
+          free(buf);
+          return -1;
+        }
+        memcpy(u, buf + start, ulen);
+        u[ulen] = '\0';
+        if (count == cap) {
+          size_t new_cap = cap ? cap * 2 : 8;
+          char **grown = realloc(users, new_cap * sizeof *users);
+          if (!grown) {
+            free(u);
+            for (size_t k = 0; k < count; k++) free(users[k]);
+            free(users);
+            free(buf);
+            return -1;
+          }
+          users = grown;
+          cap = new_cap;
+        }
+        users[count++] = u;
+      }
+      start = i + 1;
+    }
+  }
+  free(buf);
+  *users_out = users;
+  *count_out = count;
+  return 0;
 }
 
 const nh_smb_passdb_ops nh_smb_passdb_tdbsam_ops = {
   tdbsam_set_password,
   tdbsam_disable,
   tdbsam_remove,
+  tdbsam_enumerate,
 };

@@ -45,8 +45,13 @@ static int mock_remove(void *ctx, const char *u) {
   m->remove_calls++;
   return 0;
 }
+/* Designated initializers so a new op field (e.g. plan §4.2 B3's
+ * optional `enumerate`) doesn't `-Werror=missing-field-initializers`
+ * this test into a red build. */
 static const nh_smb_passdb_ops mock_ops = {
-  mock_set, mock_disable, mock_remove
+  .set_password = mock_set,
+  .disable      = mock_disable,
+  .remove       = mock_remove,
 };
 
 static void fill_account(nh_identity_account *a) {

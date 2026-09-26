@@ -68,7 +68,13 @@ int main(int argc, char **argv) {
   const char *op = argv[1];
   const char *user = argv[2];
 
-  nh_smb_passdb_tdbsam *t = nh_smb_passdb_tdbsam_new(NULL, NULL);
+  /* NULL smb_conf_path: the tdbsam_driver acceptance harness targets a
+   * fresh Samba VM whose /etc/samba/smb.conf is written by
+   * tests/acceptance/run_tdbsam.sh — no dedicated standalone config
+   * exists.  The `-c` / `-s` flags are consequently NOT forwarded and
+   * the invocations exercise the pre-Wave-3 argv shape, which is what
+   * the acceptance script's fixture expects. */
+  nh_smb_passdb_tdbsam *t = nh_smb_passdb_tdbsam_new(NULL, NULL, NULL);
   if (!t) {
     fprintf(stderr, "tdbsam_driver: FAIL alloc\n");
     return 3;

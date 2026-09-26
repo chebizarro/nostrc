@@ -1,0 +1,90 @@
+[Unit]
+Description=Nostr standalone Samba file-server (nostr-smbd)
+Documentation=file://@CMAKE_INSTALL_FULL_DOCDIR@/SAMBA_STANDALONE.md
+Documentation=https://www.samba.org/samba/docs/current/man-html/smbd.8.html
+#
+# Dedicated smbd instance bound to /etc/nostr-auth/smb.conf.  It is
+# ISOLATED from the distro's stock samba.service and reads a
+# dedicated tdbsam passdb at /var/lib/nostr-auth/smbpasswd populated
+# by nostr-authd through the passdb_tdbsam adapter.  See
+# docs/SAMBA_STANDALONE.md for the mediation contract.
+#
+# The share path (default /var/lib/nostr-auth/share-root) is
+# materialized by nostr-home-fuse.service via the porthome/FUSE sync
+# path (plan §4.2 B2 — v1 uses share-declaration, not a VFS plugin).
+# smbd reads it as a regular filesystem: a FUSE mount failure
+# manifests as a share-level ENOENT / EIO, not an smbd crash.  Total
+# failure isolation between the mount pipeline and the file server.
+After=network-online.target nostr-authd.service
+Wants=network-online.target nostr-authd.service
+# The FUSE mount that materializes the share path.  Wants= (not
+# Requires=) so an operator can start nostr-smbd for
+# diagnostics without a running FUSE; individual shares mark
+# themselves `available = no` until the mount comes back.
+Wants=nostr-home-fuse.service
+After=nostr-home-fuse.service
+
+[Service]
+Type=notify
+# -F: foreground (do not daemonize; systemd tracks the main pid).
+# -s: select the standalone config file.  Both flags are stable in
+# every supported Samba release (>= 4.15).
+ExecStart=/usr/sbin/smbd -F -s @NH_SMB_CONF_PATH@
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2s
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+NotifyAccess=main
+LimitNOFILE=16384
+
+# ────────────────────────────────────────────────────────────────
+# Capabilities — mirror the stock samba.service posture exactly.
+# Under-restricting breaks smbd in subtle ways (a Windows client
+# gets file-attribute stripping if DAC_OVERRIDE is missing, a bind
+# to 445 fails without NET_BIND_SERVICE, per-user SID mapping fails
+# without SETUID/SETGID); the plan §4.2 B1 #4 spec calls out this
+# exact set.  See:
+#   https://www.samba.org/samba/docs/current/man-html/smbd.8.html
+# for the runtime capability requirements.
+# ────────────────────────────────────────────────────────────────
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER CAP_CHOWN
+AmbientCapabilities=
+
+# Runtime + log dirs are provisioned by systemd.  RuntimeDirectory=
+# maps to /run/nostr-smbd (0755), LogsDirectory= to /var/log/nostr-samba.
+RuntimeDirectory=nostr-smbd
+RuntimeDirectoryMode=0755
+LogsDirectory=nostr-samba
+LogsDirectoryMode=0755
+# State dir hosts the dedicated tdbsam passdb + the smb.db issuance
+# journal shared with nostr-authd.  0700 keeps the passdb blob
+# root-only; nostr-authd + smbd both run as root here so this is
+# safe.  A future rename-and-lift can drop this to 0750 and add a
+# group.
+StateDirectory=nostr-auth
+StateDirectoryMode=0700
+
+# Hardening — deliberately less aggressive than nostr-authd's set
+# because smbd needs raw sockets, TCP 445 / 139 binds, and DAC
+# override to serve files on behalf of arbitrary users.  Mirrors
+# the stock samba.service posture on Ubuntu 24.04 and Fedora 40.
+NoNewPrivileges=no
+ProtectSystem=yes
+ProtectHome=no
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LockPersonality=yes
+# Deliberately do NOT set MemoryDenyWriteExecute — Samba's internal
+# ldb helpers use JIT-esque codegen on some paths.
+
+# Read/write access to the FUSE-materialized share tree.  smbd runs
+# as root but the share dir is owned by nostr-smb-share (see
+# packaging/sysusers.d/nostr-smb-share.conf); smbd force-user's to
+# that account inside the share stanza.
+ReadWritePaths=/var/lib/nostr-auth /var/log/nostr-samba /run/nostr-smbd /var/lib/nostr-auth/share-root
+
+[Install]
+WantedBy=multi-user.target

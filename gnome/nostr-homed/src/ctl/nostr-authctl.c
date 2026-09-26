@@ -81,7 +81,13 @@ static int cmd_smb_sweep(int argc, char **argv) {
     }
   }
 
-  nh_smb_passdb_tdbsam *tdbsam = nh_smb_passdb_tdbsam_new(NULL, NULL);
+  /* Sweep operates read-mostly through the same passdb adapter as the
+   * broker.  Load the standalone-Samba config from the environment
+   * (NH_SMB_CONF) or fall back to the shipped default so `smbpasswd -c`
+   * / `pdbedit -s` in the sweep-invoked revoke path targets the same
+   * dedicated tdbsam nostr-authd writes to.  NULL here means the env
+   * override + compile-time default take over inside the constructor. */
+  nh_smb_passdb_tdbsam *tdbsam = nh_smb_passdb_tdbsam_new(NULL, NULL, NULL);
   if (!tdbsam) {
     fprintf(stderr,
         "nostr-authctl smb-sweep: cannot construct tdbsam adapter\n");

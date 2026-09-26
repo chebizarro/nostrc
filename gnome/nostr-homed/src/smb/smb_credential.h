@@ -55,7 +55,16 @@ typedef enum nh_smb_rc {
   NH_SMB_STORAGE_ERROR = 3,
   NH_SMB_PASSDB_ERROR = 4,
   NH_SMB_NOT_FOUND = 5,
-  NH_SMB_INTERNAL = 6
+  NH_SMB_INTERNAL = 6,
+  /* Startup reconciliation refused readiness: the dedicated Samba
+   * passdb enumerated by `pdbedit -L -s <smb.conf.standalone>`
+   * disagrees with the SQLite issuance journal (`smb.db`).  Returned
+   * by `nh_smb_authority_open_ex()` when it is asked to reconcile and
+   * finds a passdb account absent from the active-issuance set (or
+   * vice versa).  The authority does NOT auto-repair — an operator
+   * runs `nostr-authctl smb-journal --dump` and reconciles by hand.
+   * Plan §4.2 B3 (2026-09-25). */
+  NH_SMB_RECONCILE_REQUIRED = 7
 } nh_smb_rc;
 
 /* Revocation reason recorded in the journal.  Strings are stable tokens. */
@@ -79,6 +88,17 @@ typedef struct nh_smb_passdb_ops {
   int (*set_password)(void *ctx, const char *username, const char *password);
   int (*disable)(void *ctx, const char *username);
   int (*remove)(void *ctx, const char *username);
+  /*
+   * Optional: enumerate every account currently present in the passdb.
+   * On success returns 0, sets `*users_out` to a caller-owned array of
+   * caller-owned NUL-terminated username strings, and `*count_out` to
+   * the array length.  Ownership rule: caller frees every entry then
+   * the array itself.  On failure returns non-zero and leaves *out
+   * unchanged.  When this pointer is NULL the authority skips its
+   * startup reconciliation pass (used by portable test mocks that
+   * never diverge from the journal).  Plan §4.2 B3 (2026-09-25).
+   */
+  int (*enumerate)(void *ctx, char ***users_out, size_t *count_out);
 } nh_smb_passdb_ops;
 
 /* Opaque authority handle.  Not thread safe: one owner, one event loop. */
@@ -134,6 +154,31 @@ nh_smb_rc nh_smb_authority_open(const char *journal_path,
                                 const nh_smb_passdb_ops *passdb_ops,
                                 void *passdb_ctx,
                                 nh_smb_authority **out);
+
+/*
+ * Extended open() taking the dedicated standalone-Samba config path.
+ * When `smb_conf_path` is non-NULL and non-empty AND the passdb ops
+ * table exposes `enumerate`, the authority runs a reconciliation
+ * pass: it enumerates the dedicated passdb and diffs the returned
+ * usernames against the active issuance rows in the SQLite journal.
+ * Drift (a passdb user with no active journal row, or vice versa)
+ * fails the open with NH_SMB_RECONCILE_REQUIRED — the authority does
+ * NOT auto-repair.
+ *
+ * Passing NULL / empty `smb_conf_path` is equivalent to calling the
+ * plain nh_smb_authority_open(): no reconciliation pass runs and no
+ * `-s`/`-c` flag is forwarded to the passdb adapter.  Portable tests
+ * that construct a mock passdb ops table without `enumerate` also
+ * skip reconciliation — the authority does not treat that as an
+ * error, it treats it as "reconciliation is not this adapter's job".
+ *
+ * Plan §4.2 B3 (2026-09-25).  Beads nostrc-69pw.
+ */
+nh_smb_rc nh_smb_authority_open_ex(const char *journal_path,
+                                   const char *smb_conf_path,
+                                   const nh_smb_passdb_ops *passdb_ops,
+                                   void *passdb_ctx,
+                                   nh_smb_authority **out);
 void nh_smb_authority_close(nh_smb_authority *authority);
 const char *nh_smb_authority_error_detail(const nh_smb_authority *authority);
 const char *nh_smb_rc_name(nh_smb_rc rc);

@@ -24,9 +24,20 @@ typedef struct nh_smb_passdb_tdbsam nh_smb_passdb_tdbsam;
  * defaults (/usr/bin/smbpasswd, /usr/bin/pdbedit).  Returned pointer
  * must be freed with nh_smb_passdb_tdbsam_free().  Pass the pointer as
  * the `passdb_ctx` argument to nh_smb_authority_open() alongside the
- * static ops table below. */
+ * static ops table below.
+ *
+ * `smb_conf_path` (plan §4.2 B3, 2026-09-25) selects the DEDICATED
+ * standalone Samba config the adapter forwards to smbpasswd (via
+ * `-c <path>`) and pdbedit (via `-s <path>`) on every invocation.
+ * A NULL / empty value keeps the pre-Wave-3 behaviour (no config
+ * selector — backwards-compat for portable tests that never touch
+ * a real Samba install).  Callers on the shipping path MUST pass
+ * `/etc/nostr-auth/smb.conf` (or the operator override loaded from
+ * `smb-credentiald.conf`) so the passdb writes land in the
+ * dedicated tdbsam, not the host default. */
 nh_smb_passdb_tdbsam *nh_smb_passdb_tdbsam_new(const char *smbpasswd_path,
-                                               const char *pdbedit_path);
+                                               const char *pdbedit_path,
+                                               const char *smb_conf_path);
 void nh_smb_passdb_tdbsam_free(nh_smb_passdb_tdbsam *t);
 
 extern const nh_smb_passdb_ops nh_smb_passdb_tdbsam_ops;

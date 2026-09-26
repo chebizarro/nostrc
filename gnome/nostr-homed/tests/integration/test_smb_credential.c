@@ -49,7 +49,15 @@ static int mock_remove(void *ctx, const char *u) {
   m->remove_calls++;
   return 0;
 }
-static const nh_smb_passdb_ops mock_ops = { mock_set, mock_disable, mock_remove };
+/* Designated initializers so a new op field (e.g. plan §4.2 B3's
+ * optional `enumerate`) doesn't `-Werror=missing-field-initializers`
+ * this test into a red build.  Portable mocks don't reconcile — the
+ * NULL enumerate keeps that path skipped. */
+static const nh_smb_passdb_ops mock_ops = {
+  .set_password = mock_set,
+  .disable      = mock_disable,
+  .remove       = mock_remove,
+};
 
 /* -------- Helpers -------- */
 

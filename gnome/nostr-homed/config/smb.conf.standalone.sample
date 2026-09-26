@@ -1,0 +1,150 @@
+# smb.conf — dedicated STANDALONE Samba configuration for the Nostr
+# credential authority.
+#
+# Installed to `/etc/nostr-auth/smb.conf` by the shipped packaging.
+# It is INTENTIONALLY NOT `/etc/samba/smb.conf`: the standalone
+# instance is isolated from the host's default Samba install so
+# nostr-authd can add/disable/remove passdb accounts through
+# `smbpasswd -c <this-file>` and `pdbedit -s <this-file>` without
+# racing whatever `smbd.service` the distro ships.
+#
+# The systemd unit `nostr-smbd.service` starts a dedicated smbd bound
+# to this file via `-s /etc/nostr-auth/smb.conf`.  See
+# `docs/SAMBA_STANDALONE.md` for the operator setup guide.
+#
+# References:
+#   docs/plans/gnome-integration-and-samba-server-2026-09-25.md §4.2 B1/B2/B3
+#   https://www.samba.org/samba/docs/current/man-html/smb.conf.5.html
+#
+# ────────────────────────────────────────────────────────────────
+# testparm -s <this-file> MUST parse clean.  CI runs it on the
+# shipped sample; do not remove or reflow lines without checking.
+# ────────────────────────────────────────────────────────────────
+
+[global]
+    # Explicit workgroup keeps the authority isolated from whatever
+    # domain the host was previously joined to.  Deliberately not
+    # `WORKGROUP` (the Samba compile-time default) so an operator
+    # spots it in `smbstatus`.
+    workgroup = NOSTR
+    server string = Nostr file sharing (standalone)
+
+    # Server role: standalone.  security = user forces per-user
+    # authentication against the local passdb; guest and share
+    # security are forbidden.  ADS/domain roles are handled by the
+    # winbind sample and live in a different install.
+    server role = standalone server
+    security = user
+
+    # Dedicated passdb backend at a dedicated path so the authority
+    # never touches the host's default /var/lib/samba/private tree.
+    # tdbsam is the modern format smbpasswd/pdbedit already speak;
+    # the authority journal (smb.db) sits alongside it — see B3 in
+    # the plan.  Directory /var/lib/nostr-auth is provisioned by
+    # nostr-authd.service's StateDirectory.
+    passdb backend = tdbsam:/var/lib/nostr-auth/smbpasswd
+
+    # No guest access — the entire authority mediates authenticated
+    # users only.
+    map to guest = never
+    guest ok = no
+    guest account = nobody
+    restrict anonymous = 2
+
+    # SMB2/3 only.  SMB1 is removed from the negotiated dialect list
+    # — SMB1 has years of pre-auth CVEs (EternalBlue, and every one
+    # of its siblings) and no modern client needs it.
+    server min protocol = SMB2_10
+    server max protocol = SMB3
+    client min protocol = SMB2_10
+
+    # Signing REQUIRED on both directions.  A packet that isn't
+    # signed is rejected; MITM downgrade attacks cannot succeed.
+    server signing = mandatory
+    client signing = mandatory
+    smb encrypt = desired
+
+    # No printing services — this Samba instance exists to serve
+    # user files, not to accidentally advertise a shared printer.
+    load printers = no
+    printing = bsd
+    printcap name = /dev/null
+    disable spoolss = yes
+
+    # Log to a dedicated file so a curious admin can `tail -F` the
+    # authority without wading through the distro's Samba logs.
+    log file = /var/log/nostr-samba/log.%m
+    max log size = 4096
+    log level = 1
+
+    # Bind to loopback + LAN interfaces by default; an operator
+    # tightens this to a single interface via drop-in.  `bind
+    # interfaces only = yes` keeps smbd from binding globally when
+    # the interface list changes at runtime.
+    bind interfaces only = yes
+    interfaces = 127.0.0.1/8 ::1/128
+    # To serve LAN clients, add explicit interfaces here (e.g.
+    # `interfaces = 127.0.0.1/8 ::1/128 192.168.1.0/24`) via a
+    # drop-in file under /etc/nostr-auth/smb.conf.d/ or hand-edit.
+
+    # Passdb backend keeps failed-login state; refuse the brute
+    # force by hand-off to fail2ban.  (fail2ban-jail example lives
+    # in docs/SAMBA_STANDALONE.md §Operations.)
+    max smbd processes = 128
+    deadtime = 15
+
+# ─── Shares ────────────────────────────────────────────────────────
+#
+# The share below points at the mount root materialized by the
+# existing porthome/FUSE sync path (plan §4.2 B2 — v1 uses
+# share-declaration, not a VFS plugin).  The directory is owned by
+# the dedicated `nostr-smb-share` unprivileged user provisioned by
+# packaging/sysusers.d/nostr-smb-share.conf.  smbd reads it as a
+# regular filesystem — a mount failure (nostr-home-fuse dying)
+# surfaces as a share-level error, not an smbd crash.
+#
+# The template stanza below is inert until an operator:
+#   1. Starts `nostr-home-fuse` so /var/lib/nostr-auth/share-root/
+#      is materialized as a FUSE mount.
+#   2. Confirms /var/lib/nostr-auth/share-root/ is owned by
+#      nostr-smb-share:nostr-smb-share, mode 0750.
+#   3. Removes the `available = no` line (or renames the share to
+#      match the actual user layout: one share per enrolled user,
+#      one per collaboration group, etc.).
+#   4. Restarts `nostr-smbd.service`.
+#
+# See docs/SAMBA_STANDALONE.md §Sharing for the multi-user layout.
+
+[nostr-home]
+    comment = Nostr portable-home share (via porthome/FUSE)
+    path = /var/lib/nostr-auth/share-root
+    # The share is inert by default; operators flip this after
+    # confirming the FUSE mount has come up.  Prevents a fresh
+    # install advertising an empty $path over the LAN.
+    available = no
+    browseable = yes
+    read only = no
+    # Only members of the `nostr-smb-share` group get in — matches
+    # the sysusers.d entry and the directory ACL.
+    valid users = @nostr-smb-share
+    # smbd creates files/dirs matching the mount owner so nostr-
+    # home-fuse can pick up the writes.
+    force user = nostr-smb-share
+    force group = nostr-smb-share
+    create mask = 0640
+    directory mask = 0750
+    # Nostr shares are veto'd against the classic zoo of dotfiles
+    # that porthome doesn't sync; keeps the tree clean when a
+    # Windows client sneaks a Thumbs.db in.
+    veto files = /.DS_Store/Thumbs.db/.Spotlight-V100/.Trashes/
+    delete veto files = yes
+    # Volume-level SMB features that make sense here:
+    ea support = yes
+    store dos attributes = no
+    inherit acls = yes
+    map acl inherit = yes
+    # POSIX locking cooperates with the FUSE mount's own locking
+    # semantics; leave it on so a concurrent porthome-syncd writer
+    # doesn't corrupt a client edit.
+    posix locking = yes
+    strict locking = auto

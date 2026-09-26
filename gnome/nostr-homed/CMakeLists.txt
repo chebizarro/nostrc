@@ -1149,6 +1149,40 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND NOSTR_HOMED_ENABLE_SMB)
     # install (they document activation posture; not activatable).
     install(FILES config/nsswitch.conf.snippet.sample
       DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-homed")
+
+    # ─────────────────────────────────────────────────────────────
+    # Plan §4.2 B1 (2026-09-25) — Wave 3 Hotel Samba server-side v1.
+    # Ship the five server-side files and provision the dedicated
+    # nostr-smb-share sysuser (B5).  The passdb-adapter code changes
+    # are always compiled (they ride the tdbsam library defined
+    # earlier); this block owns only the packaging surface.  Beads
+    # nostrc-69pw.  The rename-and-lift target `nostr-smb-credentiald`
+    # is NOT installed — the name is reserved in the docs so a v2
+    # split can drop the artifact in without churn.
+    # ─────────────────────────────────────────────────────────────
+    install(FILES
+            config/smb-credentiald.conf.sample
+            config/smb.conf.standalone.sample
+      DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-homed")
+    # Server-identity example lives under the sysconf servers.d dir so
+    # nostr-authd (and future nostr-smb-credentiald) can drop-in-load it.
+    # Ships as `.conf` (the batch-client sibling ships as
+    # `.conf.batch-client` — different key set, different role, same
+    # dir).  See docs/SAMBA_STANDALONE.md.
+    install(FILES config/servers.d/example.conf
+      DESTINATION "${CMAKE_INSTALL_DOCDIR}/examples/servers.d")
+    install(FILES docs/SAMBA_STANDALONE.md
+      DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+    install(FILES packaging/sysusers.d/nostr-smb-share.conf
+      DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sysusers.d")
+    # Configured dedicated smbd unit — template @NH_SMB_CONF_PATH@ +
+    # @CMAKE_INSTALL_FULL_DOCDIR@ so the shipped unit references the
+    # deployed config + docs paths, not the build-tree ones.
+    set(NH_SMB_CONF_PATH "/etc/nostr-auth/smb.conf")
+    configure_file(systemd/nostr-smbd.service.in
+      "${CMAKE_CURRENT_BINARY_DIR}/nostr-smbd.service" @ONLY)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-smbd.service"
+      DESTINATION "${SYSTEMD_SYSTEM_UNIT_DIR}")
   endif()
 
   if(NOSTR_HOMED_BUILD_TESTS)
@@ -1178,6 +1212,58 @@ if(NOSTR_HOMED_ENABLE_AUTH_RUNTIME AND NOSTR_HOMED_ENABLE_SMB)
     set_tests_properties(homed_smb_close_session_unmount PROPERTIES
       LABELS "nostr-homed;smb" TIMEOUT 60
       ENVIRONMENT "MOUNT_HELPER=${CMAKE_CURRENT_BINARY_DIR}/nostr-smb-mount")
+
+    # ─────────────────────────────────────────────────────────────
+    # Plan §4.2 B3 (2026-09-25): journal <-> passdb reconciliation.
+    # A small C probe drives nh_smb_authority_open_ex through the
+    # real tdbsam adapter; the shell tests below stub smbpasswd /
+    # pdbedit onto $PATH via NH_SMB_SMBPASSWD_PATH / NH_SMB_PDBEDIT_PATH.
+    # Beads nostrc-69pw.
+    # ─────────────────────────────────────────────────────────────
+    add_executable(smb_reconcile_probe
+      tests/integration/smb_reconcile_probe.c)
+    target_compile_options(smb_reconcile_probe PRIVATE
+      -std=c11 -Wall -Wextra -Werror -Wno-misleading-indentation)
+    target_compile_definitions(smb_reconcile_probe PRIVATE _DEFAULT_SOURCE=1)
+    target_include_directories(smb_reconcile_probe PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/smb)
+    target_link_libraries(smb_reconcile_probe PRIVATE nostr_smb_tdbsam)
+
+    add_test(NAME homed_smb_passdb_explicit_config
+      COMMAND bash
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_passdb_explicit_config.sh)
+    set_tests_properties(homed_smb_passdb_explicit_config PROPERTIES
+      LABELS "nostr-homed;smb" TIMEOUT 30
+      ENVIRONMENT "TDBSAM_DRIVER=$<TARGET_FILE:tdbsam_driver>")
+
+    add_test(NAME homed_smb_passdb_reconciliation
+      COMMAND bash
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_passdb_reconciliation.sh)
+    set_tests_properties(homed_smb_passdb_reconciliation PROPERTIES
+      LABELS "nostr-homed;smb" TIMEOUT 30
+      ENVIRONMENT "SMB_RECONCILE_PROBE=$<TARGET_FILE:smb_reconcile_probe>")
+
+    # `testparm -s` the shipped standalone smb.conf sample.  Skipped
+    # (exit 77) when the samba-common package is missing so a plain
+    # dev workstation without Samba installed doesn't red-line the
+    # test suite; the aarch64 lab (`scripts/vm-linux-ci.sh`) installs
+    # `samba-common` explicitly and turns this into a hard gate.
+    find_program(TESTPARM_EXECUTABLE testparm)
+    if(TESTPARM_EXECUTABLE)
+      add_test(NAME homed_smb_conf_standalone_testparm
+        COMMAND ${TESTPARM_EXECUTABLE} -s
+                ${CMAKE_CURRENT_SOURCE_DIR}/config/smb.conf.standalone.sample)
+      set_tests_properties(homed_smb_conf_standalone_testparm PROPERTIES
+        LABELS "nostr-homed;smb" TIMEOUT 15)
+    else()
+      # Emit a SKIP-shaped test so `ctest -L smb` records the gap.
+      add_test(NAME homed_smb_conf_standalone_testparm
+        COMMAND ${CMAKE_COMMAND} -E echo
+          "SKIP: testparm not on PATH; install samba-common to enable")
+      set_tests_properties(homed_smb_conf_standalone_testparm PROPERTIES
+        LABELS "nostr-homed;smb" TIMEOUT 5
+        SKIP_REGULAR_EXPRESSION "^SKIP: ")
+    endif()
   endif()
 endif()
 
