@@ -264,6 +264,7 @@ typedef struct {
   guint                     backoff_sec;
   gboolean                  want_connected;
   gboolean                  connecting;   /* an async connect is in flight */
+  gchar                    *socket_path;  /* non-NULL: dial this AF_UNIX path */
 } NostrPublishWebsocket;
 
 static void ws_start_connect(NostrPublishTransport *self);
@@ -415,7 +416,17 @@ ws_start_connect(NostrPublishTransport *self)
   if (ws->session == NULL) {
     /* Session attaches its GSources to the current thread-default main
      * context, which for the daemon is the GApplication's default. */
-    ws->session = soup_session_new();
+    if (ws->socket_path != NULL) {
+      /* WebSocket over a Unix-domain socket (the per-user session relay
+       * at $XDG_RUNTIME_DIR/nostr/relay.sock). The URL still drives the
+       * HTTP handshake; the connectable replaces DNS + TCP. */
+      g_autoptr(GSocketAddress) addr =
+        g_unix_socket_address_new(ws->socket_path);
+      ws->session = soup_session_new_with_options("remote-connectable",
+                                                  addr, NULL);
+    } else {
+      ws->session = soup_session_new();
+    }
   }
   if (ws->cancellable == NULL)
     ws->cancellable = g_cancellable_new();
@@ -544,6 +555,7 @@ ws_finalize(NostrPublishTransport *self)
   ws_drop_conn(ws);
   g_clear_object(&ws->cancellable);
   g_clear_object(&ws->session);
+  g_free(ws->socket_path);
   g_free(ws);
   self->backend_state = NULL;
 }
@@ -577,6 +589,19 @@ nostr_publish_transport_new_websocket(const gchar *url)
   ws->owner       = self;
   ws->backoff_sec = NP_WS_BACKOFF_INITIAL_SEC;
   self->backend_state = ws;
+  return self;
+}
+
+NostrPublishTransport *
+nostr_publish_transport_new_websocket_unix(const gchar *url,
+                                           const gchar *socket_path)
+{
+  g_return_val_if_fail(socket_path != NULL && *socket_path != '\0', NULL);
+  NostrPublishTransport *self = nostr_publish_transport_new_websocket(url);
+  if (self != NULL) {
+    NostrPublishWebsocket *ws = self->backend_state;
+    ws->socket_path = g_strdup(socket_path);
+  }
   return self;
 }
 

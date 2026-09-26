@@ -81,6 +81,23 @@ typedef void (*NostrPublishTransportStateCallback)(NostrPublishTransport *transp
 NOSTR_PUBLISH_API NostrPublishTransport *nostr_publish_transport_new_websocket(const gchar *url);
 
 /**
+ * nostr_publish_transport_new_websocket_unix:
+ * @url: `ws://…` URL used for the HTTP upgrade request line and as the
+ *   transport's identity (nostr_publish_transport_get_url())
+ * @socket_path: filesystem path of an AF_UNIX stream socket to dial
+ *   instead of resolving @url's host
+ *
+ * Same as nostr_publish_transport_new_websocket() but the connection is
+ * made over a Unix-domain socket — the per-user session relay listens on
+ * `$XDG_RUNTIME_DIR/nostr/relay.sock` and speaks NIP-01 over WebSocket.
+ *
+ * Returns: (transfer full): a not-yet-connected transport.
+ */
+NOSTR_PUBLISH_API
+NostrPublishTransport *nostr_publish_transport_new_websocket_unix(const gchar *url,
+                                                                  const gchar *socket_path);
+
+/**
  * nostr_publish_transport_factory_websocket:
  * @relay_url: relay URL
  * @user_data: ignored
