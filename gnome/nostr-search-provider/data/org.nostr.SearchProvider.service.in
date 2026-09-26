@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.nostr.SearchProvider
+Exec=@NSP_BINDIR@/nostr-search-provider daemon
+SystemdService=nostr-search-provider.service

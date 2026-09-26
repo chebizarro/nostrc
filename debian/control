@@ -29,7 +29,8 @@ Build-Depends: debhelper-compat (= 13),
                libsoup-3.0-dev,
                libxml2-dev,
                libjson-glib-dev,
-               libsecret-1-dev
+               libsecret-1-dev,
+               libgdk-pixbuf-2.0-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/chebizarro/nostrc
 Vcs-Browser: https://github.com/chebizarro/nostrc
@@ -486,3 +487,28 @@ Description: Kind-aware router for nostr: links (org.nostr.Dispatcher1)
  .
  The org.nostr.Dispatcher1 service is D-Bus activated on demand through
  a user unit and exits when idle; nothing is enabled at install time.
+
+Package: nostr-search-provider
+Section: net
+Architecture: any
+Multi-Arch: foreign
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: nostr-dispatcher (= ${binary:Version}),
+            nostrc-session-relay (>= ${source:Version})
+Enhances: gnome-shell
+Description: GNOME Shell search provider for Nostr profiles and notes
+ Type an npub, nprofile, note, nevent or naddr identifier, a NIP-05
+ address (alice@example.com) or keywords into the Activities overview
+ and get matching Nostr profiles, notes and articles from the per-user
+ session relay. Activating a result opens it through nostr-dispatcher,
+ so the application registered for the event kind handles it.
+ .
+ Searches only the local session relay (NIP-50 search when available,
+ otherwise a bounded local scan) and always answers within a deadline.
+ Typed NIP-05 addresses are resolved over HTTPS and profile pictures
+ are cached as small PNGs; both can be turned off in
+ ~/.config/nostr/search-provider.conf.
+ .
+ The org.nostr.SearchProvider service is D-Bus activated on demand
+ through a user unit and exits when idle.

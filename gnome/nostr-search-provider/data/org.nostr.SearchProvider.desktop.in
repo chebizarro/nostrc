@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Nostr
+GenericName=Nostr Search
+Comment=Find Nostr profiles and notes from the Activities overview
+Exec=@NSP_BINDIR@/nostr-search-provider launch
+Icon=system-search
+Terminal=false
+Categories=Network;
+Keywords=nostr;npub;nip05;note;
+# This entry must stay visible (no NoDisplay=true): gnome-shell ignores a
+# search provider whose DesktopId fails GDesktopAppInfo.should_show()
+# (js/ui/remoteSearch.js, verified on gnome-shell 46). It names the
+# provider in the overview and in Settings > Search; launched from the app
+# grid it opens the default Nostr application (nostr-dispatcher's
+# fallback handler).

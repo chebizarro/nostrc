@@ -1,0 +1,22 @@
+[Unit]
+Description=Nostr search provider for GNOME Shell (org.nostr.SearchProvider)
+Documentation=https://github.com/chebizarro/nostrc/blob/master/gnome/nostr-search-provider/README.md
+PartOf=graphical-session.target
+
+[Service]
+# D-Bus activated only (see org.nostr.SearchProvider.service); never
+# enabled. Exits after 60 s without searches.
+Type=dbus
+BusName=org.nostr.SearchProvider
+ExecStart=@NSP_BINDIR@/nostr-search-provider daemon
+# Results normally open through org.nostr.Dispatcher1 (a separate unit).
+# Only without nostr-dispatcher is the nostr: scheme default launched from
+# here; don't reap it on idle exit.
+KillMode=process
+Restart=no
+# Light hardening that also holds for that fallback launch. No mount
+# namespacing: it fails in user managers without user namespaces.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
