@@ -29,3 +29,17 @@ if(BUILD_TESTING)
     )
   endif()
 endif()
+
+# Install rules (added for nostrc-y4ye: without this the .so was built
+# but not installed to debian/tmp/, so dpkg-shlibdeps couldn't resolve
+# libnip34 for its consumers (libhanami0, nostr-homed-provision) and
+# the packaged .deb was silently broken on aarch64).
+include(GNUInstallDirs)
+install(TARGETS nip34
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr
+  FILES_MATCHING PATTERN "*.h")

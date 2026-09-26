@@ -42,7 +42,15 @@ ExecStartPre=/usr/bin/install -d -m 0750 -o root -g nostr-auth-greeter /run/nost
 # way. To provision the account by hand:
 #     systemd-sysusers /usr/lib/sysusers.d/nostr-home-fetch.conf
 StateDirectory=nostr-auth
-StateDirectoryMode=0700
+# 0755 (not 0700): the parent /var/lib/nostr-auth must be traversable
+# by the nostr-smb-share force-user account (nostr-smbd runs a share
+# rooted under this dir). The sensitive files inside — authority.db,
+# smbpasswd, smb.db — are 0600 at the file level, so parent
+# traversability doesn't leak contents. Matches nostr-smbd.service.in
+# (Wave 5 nostrc-45b2) so both units agree on the parent mode.
+# Discovered by nostrc-0xd3 as nostrc-hfks: race between authd (0700)
+# and smbd (0755) breaking whichever restarted second.
+StateDirectoryMode=0755
 ReadWritePaths=/var/lib/nostr-auth
 # hardening
 NoNewPrivileges=yes

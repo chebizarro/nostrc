@@ -1,2 +1,3 @@
 usr/lib/*/libhanami.so.0
 usr/lib/*/libhanami.so.0.*
+usr/lib/*/libnip34.so*
