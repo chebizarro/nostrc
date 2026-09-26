@@ -37,18 +37,22 @@ set -euo pipefail
 
 # Forbidden symbol-name namespaces. Anchored at the START of the symbol name
 # so we do not false-positive on the auth runtime's own boundary glue in
-# src/auth/auth_porthome.c (nh_auth_porthome_*, nh_auth_broker_porthome_*),
-# which is always compiled into nostr_auth_runtime and is NOT the same thing
-# as the real portable-home library's nh_porthome_* prefix.
-#   - nh_porthome_    : libnostr_porthome (portable-home crypto/manifest/Blossom)
+# src/auth/auth_porthome.c (nh_auth_porthome_*, nh_auth_broker_porthome_*).
+#
+# NOTE: `nh_porthome_` is INTENTIONALLY absent from this regex. nostr-authd
+# legitimately links libnostr_porthome for the broker-side wrap-seed cache
+# and PROVISION_HOME flow (see auth_porthome.c). The concerning cross-package
+# leaks are the porthome CONSUMERS (syncd server, FUSE mount, Blossom client),
+# which are caught by the syncd/fuse/hanami/nip55l symbol namespaces below
+# AND by FORBIDDEN_SONAME_REGEX.
 #   - nh_syncd_       : nostr-home-syncd's libnostr_syncd_core
 #   - nh_fuse_        : nostr-home-fuse status writer
-#   - nh_provision_   : nostr_provision_cli (links libnostr_porthome)
+#   - nh_provision_   : nostr_provision_cli (links libnostr_porthome + hanami)
 #   - fuse_           : libfuse3's own C API
 #   - hanami_         : libhanami (Blossom/libgit2 backend)
 #   - nostr_nip55l_   : nips/nip55l signer CLIENT API (nostr-authd/pam_nostr
 #                       must never become nip55l *consumers* — see plan §1.2 D6)
-FORBIDDEN_SYMBOL_REGEX='^(nh_porthome_|nh_syncd_|nh_fuse_|nh_provision_|fuse_|hanami_|nostr_nip55l_)'
+FORBIDDEN_SYMBOL_REGEX='^(nh_syncd_|nh_fuse_|nh_provision_|fuse_|hanami_|nostr_nip55l_)'
 
 # Forbidden shared-object name fragments — matched against ldd's SONAME
 # column regardless of version suffix.
