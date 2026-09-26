@@ -63,8 +63,10 @@ print_summary(NsShare *share)
   if (share->to.type == NS_RECIPIENT_MENTION)
     g_printerr("note: this is a PUBLIC post mentioning %s — anyone can read "
                "it; it is not a private message\n", share->to.npub);
-  g_autofree gchar *targets = ns_share_describe_targets(share);
-  g_printerr("targets: %s\n", targets);
+  if (share->pubkey_hex != NULL || share->to.type == NS_RECIPIENT_GROUP) {
+    g_autofree gchar *targets = ns_share_describe_targets(share);
+    g_printerr("targets: %s\n", targets);
+  }
   if (ns_share_needs_upload(share)) {
     g_autofree gchar *servers = ns_share_describe_servers(share);
     g_printerr("blossom: %s\n", servers);
@@ -91,11 +93,22 @@ run_dry(NsShare *share)
   GError *signer_err = err;
   err = NULL;
 
-  if (!ns_share_resolve(share, &err)) {
+  if (have_signer) {
     /* Still show what we can: unresolved targets are not fatal for a
      * preview unless we need a Blossom URL to build the event. */
-    g_printerr("nostr-share: warning: %s\n", err->message);
-    g_clear_error(&err);
+    if (!ns_share_resolve(share, &err)) {
+      g_printerr("nostr-share: warning: %s\n", err->message);
+      g_clear_error(&err);
+    }
+  } else if (ns_share_needs_upload(share)) {
+    /* No pubkey → no kind 10063 lookup; the config list still lets us
+     * show the predicted blob URL in the draft. */
+    share->servers = ns_resolve_blossom_servers(share->cfg, &share->net, NULL,
+                                                &share->servers_source, &err);
+    if (share->servers == NULL) {
+      g_printerr("nostr-share: warning: %s\n", err->message);
+      g_clear_error(&err);
+    }
   }
   if (!ns_share_build(share, &err)) {
     g_clear_error(&signer_err);
