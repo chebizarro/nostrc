@@ -80,9 +80,16 @@ shot_now(gpointer data)
   g_autoptr(GtkSnapshot) snap = gtk_snapshot_new();
   const GdkRGBA bg = { 0.98f, 0.98f, 0.984f, 1.0f };
   gtk_snapshot_append_color(snap, &bg, &GRAPHENE_RECT_INIT(0, 0, width, height));
+  /* Lay the children out ourselves: under a bare Xvfb the frame clock
+   * stops delivering frames after startup, so updates made since (e.g.
+   * the Relays page's stats poll) would otherwise leave them unallocated. */
   for (GtkWidget *c = gtk_widget_get_first_child(w); c; c = gtk_widget_get_next_sibling(c))
-    if (gtk_widget_get_visible(c))
+    if (gtk_widget_get_visible(c)) {
+      int min = 0, nat = 0;
+      gtk_widget_measure(c, GTK_ORIENTATION_VERTICAL, width, &min, &nat, NULL, NULL);
+      gtk_widget_allocate(c, width, MAX(height, min), -1, NULL);
       gtk_widget_snapshot_child(w, c, snap);
+    }
   g_autoptr(GskRenderNode) node = gtk_snapshot_free_to_node(g_steal_pointer(&snap));
   GskRenderer *r = gtk_native_get_renderer(GTK_NATIVE(w));
   g_autofree gchar *path = g_strdup_printf("%s/nostr-settings-%s.png", s->dir,
