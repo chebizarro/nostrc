@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Nostr Settings
+GenericName=Nostr Preferences
+Comment=Identity, relays, notifications, wallet and file-sharing defaults for Nostr on this computer
+Exec=@NSS_BINDIR@/nostr-settings
+Icon=preferences-system
+Terminal=false
+DBusActivatable=true
+StartupNotify=true
+Categories=Settings;GNOME;GTK;
+Keywords=nostr;relay;identity;wallet;npub;blossom;
+X-GNOME-UsesNotifications=false

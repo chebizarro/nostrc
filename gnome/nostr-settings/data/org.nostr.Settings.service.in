@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=org.nostr.Settings
+Exec=@NSS_BINDIR@/nostr-settings --gapplication-service

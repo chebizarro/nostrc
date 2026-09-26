@@ -538,6 +538,22 @@ if (ENABLE_NOSTR_NAUTILUS)
   add_subdirectory(gnome/nostr-nautilus)
 endif()
 
+# org.nostr.Settings preferences app (nostrc-janr). Self-contained block.
+option(ENABLE_NOSTR_SETTINGS "Build nostr-settings (org.nostr.Settings preferences app)" OFF)
+if (ENABLE_NOSTR_SETTINGS)
+  if (NOT TARGET nostr-publish)
+    add_subdirectory(gnome/libnostr-publish)
+  endif()
+  if (NOT TARGET gnostr-secret)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(NOSTR_SETTINGS_LIBSECRET QUIET libsecret-1)
+    if (NOSTR_SETTINGS_LIBSECRET_FOUND)
+      add_subdirectory(gnome/seahorse)
+    endif()
+  endif()
+  add_subdirectory(gnome/nostr-settings)
+endif()
+
 ## GLib demo: only if libnostr built with GLib support
 if (TARGET nostr)
   get_target_property(_nostr_defs nostr COMPILE_DEFINITIONS)

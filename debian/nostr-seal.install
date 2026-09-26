@@ -3,3 +3,4 @@ usr/bin/nostr-seal-gtk
 usr/share/applications/org.nostr.Seal.desktop
 usr/share/mime/packages/nostr-seal.xml
 usr/share/doc/nostr-seal/README.md
+usr/share/doc/nostr-seal/seal.conf.example

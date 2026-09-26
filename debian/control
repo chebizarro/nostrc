@@ -399,6 +399,28 @@ Description: Nostr items in the GNOME Files context menu
  It is the modern replacement for the retired seahorse-nautilus
  integration. Items only appear for file types the tools accept.
 
+Package: nostr-settings
+Section: gnome
+Architecture: any
+Multi-Arch: foreign
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         libnostr-publish0 (= ${binary:Version})
+Recommends: nostrc-session-relay (= ${binary:Version}),
+            nostr-notify (= ${binary:Version}),
+            nostr-wallet-agent (= ${binary:Version})
+Suggests: seahorse, nostr-seal (= ${binary:Version}),
+          nostr-share (= ${binary:Version})
+Description: Nostr Settings — preferences for Nostr on the GNOME desktop
+ A libadwaita preferences window (org.nostr.Settings) that looks like a
+ GNOME Settings panel and edits each Nostr desktop service's own
+ configuration: Identity (signer identities, keyring, Passwords and
+ Keys), Relays (session relay on/off and live statistics from
+ org.nostr.SessionRelay1, storage limits, NIP-65 relay list with NIP-11
+ details), Notifications (nostr-notify), Wallet (Nostr Wallet Connect
+ pairing and per-app budgets through org.nostr.Wallet1), Media servers
+ (BUD-03 Blossom list) and Files (nostr-seal / nostr-share defaults).
+ Lists are signed by org.nostr.Signer; the app never holds a key.
+
 Package: nostrc-samba-server
 Section: admin
 Architecture: any
