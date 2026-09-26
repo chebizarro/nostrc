@@ -99,10 +99,23 @@ void marmot_free(Marmot *m);
  * @nostr_sk: (array fixed-size=32): user's Nostr secret key (32 bytes) for signing
  * @relay_urls: (array length=relay_count): relay URL strings
  * @relay_count: number of relay URLs
- * @result: (out): result containing the kind:443 event JSON
+ * @result: (out): result containing the kind:30443 event JSON
  *
- * Create an MLS KeyPackage and wrap it in a signed kind:443 Nostr event.
- * The event id, pubkey, and Schnorr signature are produced from @nostr_sk.
+ * Create an MLS KeyPackage and wrap it in a signed kind:30443 (addressable)
+ * Nostr event. The event id, pubkey, and Schnorr signature are produced from
+ * @nostr_sk.
+ *
+ * The event's `d` tag is the account's KeyPackage publication slot: a random
+ * 32-byte id generated on the first call for @nostr_pubkey, persisted in the
+ * MLS key store, and reused by every later call. Publishing the new event
+ * therefore replaces the previous KeyPackage on relays (same
+ * `(pubkey, 30443, d)` address) instead of accumulating stale packages; the
+ * previous package is also marked inactive locally.
+ *
+ * Tags follow the MDK 0.8 Marmot transport profile pinned by
+ * `tests/vectors/mdk/protocol-vectors.json`: `d`, `mls_protocol_version`,
+ * `mls_ciphersuite`, `mls_extensions`, `mls_proposals`, `relays` (only when
+ * @relay_count > 0), `i` (KeyPackageRef) and `encoding` = `base64`.
  *
  * Returns: MARMOT_OK on success
  */
@@ -118,9 +131,10 @@ MarmotError marmot_create_key_package(Marmot *m,
  * @nostr_pubkey: (array fixed-size=32): user's Nostr public key (x-only, 32 bytes)
  * @relay_urls: (array length=relay_count): relay URL strings
  * @relay_count: number of relay URLs
- * @result: (out): result containing the unsigned kind:443 event JSON
+ * @result: (out): result containing the unsigned kind:30443 event JSON
  *
- * Create an MLS KeyPackage and wrap it in an *unsigned* kind:443 Nostr event.
+ * Create an MLS KeyPackage and wrap it in an *unsigned* kind:30443 Nostr
+ * event with the same tags and stable `d` slot as marmot_create_key_package().
  * The MLS LeafNode uses a self-signed credential derived from the pubkey.
  * The caller must sign the Nostr event externally before publishing.
  *
@@ -134,6 +148,42 @@ MarmotError marmot_create_key_package_unsigned(Marmot *m,
                                                 const char **relay_urls, size_t relay_count,
                                                 MarmotKeyPackageResult *result);
 
+/**
+ * marmot_select_key_package_event:
+ * @event_jsons: (array length=count): candidate KeyPackage event JSONs, e.g.
+ *   the union of a kind:30443 fetch across several relays
+ * @count: number of entries in @event_jsons (NULL entries are skipped)
+ * @owner_pubkey: (array fixed-size=32) (nullable): when non-NULL, only
+ *   events authored by this account are considered
+ * @out_index: (out): index into @event_jsons of the selected event
+ *
+ * Choose the KeyPackage event to consume for an invite, applying the Marmot
+ * Nostr transport's addressable-slot rules:
+ *
+ * 1. Entries that are not kind 30443, or whose NIP-01 id or signature does
+ *    not verify, are ignored; unauthenticated input can never supersede a
+ *    slot. Entries without exactly one single-valued `d` tag have no slot and
+ *    are ignored.
+ * 2. Within each `(pubkey, d)` slot the newest event by `created_at` wins;
+ *    equal timestamps are broken by the lower event id.
+ * 3. A slot winner that fails full KeyPackage validation empties its slot.
+ *    Older events in the same slot are never resurrected, since their
+ *    private init keys may already have been retired by the author.
+ * 4. Among valid slot winners the newest `created_at` wins, then the lower
+ *    KeyPackageRef (`i` tag, compared as bytes).
+ *
+ * The result can be passed directly to marmot_create_group() or
+ * marmot_add_members().
+ *
+ * Returns: MARMOT_OK on success, MARMOT_ERR_INVALID_ARG for bad arguments,
+ *   MARMOT_ERR_KEY_PACKAGE when no valid candidate remains, or
+ *   MARMOT_ERR_MEMORY
+ */
+MarmotError marmot_select_key_package_event(const char **event_jsons,
+                                             size_t count,
+                                             const uint8_t owner_pubkey[32],
+                                             size_t *out_index);
+
 /* ══════════════════════════════════════════════════════════════════════════
  * MIP-01: Group Construction
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -142,7 +192,9 @@ MarmotError marmot_create_key_package_unsigned(Marmot *m,
  * marmot_create_group:
  * @m: Marmot instance
  * @creator_pubkey: (array fixed-size=32): creator's Nostr public key (32 bytes)
- * @key_package_event_jsons: (array length=kp_count): JSON strings of kind:443 events
+ * @key_package_event_jsons: (array length=kp_count): JSON strings of signed
+ *   kind:30443 events (see marmot_select_key_package_event() for choosing one
+ *   per invitee from a relay fetch)
  * @kp_count: number of key package events (members to invite)
  * @config: group configuration (name, description, admins, relays)
  * @result: (out): result containing group, welcome rumors, evolution event
@@ -179,7 +231,8 @@ MarmotError marmot_merge_pending_commit(Marmot *m,
  * marmot_add_members:
  * @m: Marmot instance
  * @mls_group_id: the group to add members to
- * @key_package_event_jsons: (array length=kp_count): JSON strings of kind:443 events
+ * @key_package_event_jsons: (array length=kp_count): JSON strings of signed
+ *   kind:30443 events
  * @kp_count: number of members to add
  * @out_welcome_jsons: (out) (array length=out_welcome_count): welcome rumor JSONs
  * @out_welcome_count: (out): number of welcome rumors

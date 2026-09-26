@@ -68,6 +68,27 @@ static MarmotError test_mls_store_fails(void *ctx, const char *label,
     return MARMOT_ERR_STORAGE;
 }
 
+/* Stores succeed only for the KeyPackage publication slot ("kp_slot"), so
+ * the first KeyPackage key-material write ("kp_priv") is the one that fails. */
+static MarmotError test_mls_store_fails_after_slot(void *ctx, const char *label,
+                                                    const uint8_t *key, size_t key_len,
+                                                    const uint8_t *value, size_t value_len)
+{
+    (void)key; (void)key_len; (void)value; (void)value_len;
+    ((FailingStorageCtx *)ctx)->mls_store_calls++;
+    return strcmp(label, "kp_slot") == 0 ? MARMOT_OK : MARMOT_ERR_STORAGE;
+}
+
+static MarmotError test_mls_load_not_found(void *ctx, const char *label,
+                                            const uint8_t *key, size_t key_len,
+                                            uint8_t **out_value, size_t *out_value_len)
+{
+    (void)ctx; (void)label; (void)key; (void)key_len;
+    *out_value = NULL;
+    *out_value_len = 0;
+    return MARMOT_ERR_STORAGE_NOT_FOUND;
+}
+
 static MarmotError test_mls_delete_ok(void *ctx, const char *label,
                                        const uint8_t *key, size_t key_len)
 {
@@ -488,7 +509,8 @@ static void test_key_package_reports_private_store_failure(void)
 {
     FailingStorageCtx *ctx = NULL;
     MarmotStorage *s = make_test_storage(&ctx);
-    s->mls_store = test_mls_store_fails;
+    s->mls_store = test_mls_store_fails_after_slot;
+    s->mls_load = test_mls_load_not_found;
     s->mls_delete = test_mls_delete_ok;
     s->save_key_package_info = test_save_key_package_info_ok;
     s->deactivate_key_packages = test_deactivate_key_packages_ok;
@@ -503,7 +525,38 @@ static void test_key_package_reports_private_store_failure(void)
 
     MarmotError err = marmot_create_key_package_unsigned(m, pubkey, NULL, 0, &result);
     assert(err == MARMOT_ERR_STORAGE);
-    assert(ctx->mls_store_calls == 1);
+    /* kp_slot store (ok) + kp_priv store (fails) */
+    assert(ctx->mls_store_calls == 2);
+    assert(result.event_json == NULL);
+
+    marmot_key_package_result_free(&result);
+    marmot_free(m);
+}
+
+/* A KeyPackage must not be emitted when its publication slot (the kind:30443
+ * `d` tag) cannot be persisted: the next rotation could not reuse it. */
+static void test_key_package_reports_slot_store_failure(void)
+{
+    FailingStorageCtx *ctx = NULL;
+    MarmotStorage *s = make_test_storage(&ctx);
+    s->mls_store = test_mls_store_fails;
+    s->mls_load = test_mls_load_not_found;
+    s->mls_delete = test_mls_delete_ok;
+    s->save_key_package_info = test_save_key_package_info_ok;
+    s->deactivate_key_packages = test_deactivate_key_packages_ok;
+
+    Marmot *m = marmot_new(s);
+    assert(m != NULL);
+
+    uint8_t pubkey[32];
+    memset(pubkey, 0x25, sizeof(pubkey));
+    MarmotKeyPackageResult result;
+    memset(&result, 0, sizeof(result));
+
+    MarmotError err = marmot_create_key_package_unsigned(m, pubkey, NULL, 0, &result);
+    assert(err == MARMOT_ERR_STORAGE);
+    assert(ctx->mls_store_calls == 1);   /* only the slot write was attempted */
+    assert(ctx->mls_delete_calls == 0);  /* no key material to roll back */
     assert(result.event_json == NULL);
 
     marmot_key_package_result_free(&result);
@@ -532,6 +585,7 @@ int main(void)
     TEST(test_create_group_reports_save_group_failure);
     TEST(test_create_group_rolls_back_after_relay_failure);
     TEST(test_key_package_reports_private_store_failure);
+    TEST(test_key_package_reports_slot_store_failure);
     TEST(test_storage_not_persistent);
     printf("All storage tests passed.\n");
     return 0;

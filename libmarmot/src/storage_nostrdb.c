@@ -1,7 +1,7 @@
 /*
  * libmarmot - nostrdb storage backend
  *
- * Hybrid storage using nostrdb for Nostr events (kind 443/444/445)
+ * Hybrid storage using nostrdb for Nostr events (kind 30443/444/445)
  * and a separate LMDB environment for MLS internal state.
  *
  * This backend leverages nostrdb's native event indexing for messages

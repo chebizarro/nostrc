@@ -22,6 +22,9 @@
 #include <assert.h>
 #include <secp256k1.h>
 #include <secp256k1_extrakeys.h>
+#include <nostr-event.h>
+#include <nostr-tag.h>
+#include <unistd.h>
 
 /* Internal declarations needed for round-trip test */
 #include "../src/mls/mls_key_package.h"
@@ -189,8 +192,8 @@ test_create_key_package_basic(void)
            "key_package_ref is all zeros");
 
     /* Verify the event JSON contains expected fields */
-    ASSERT(strstr(result.event_json, "\"kind\":443") != NULL,
-           "event JSON missing kind:443");
+    ASSERT(strstr(result.event_json, "\"kind\":30443") != NULL,
+           "event JSON missing kind:30443");
     ASSERT(strstr(result.event_json, "\"mls_protocol_version\"") != NULL ||
            strstr(result.event_json, "mls_protocol_version") != NULL,
            "event JSON missing mls_protocol_version tag");
@@ -327,7 +330,7 @@ test_key_package_roundtrip(void)
 static void
 test_key_package_rejects_bad_signature(void)
 {
-    TEST("MIP-00: parse rejects kind:443 with bad signature");
+    TEST("MIP-00: parse rejects kind:30443 with bad signature");
 
     Marmot *m = create_test_instance();
     ASSERT(m != NULL, "failed to create instance");
@@ -474,6 +477,677 @@ test_key_package_info_storage(void)
 
     marmot_key_package_result_free(&result);
     marmot_free(m);
+    PASS();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * MIP-00: kind:30443 addressable KeyPackages
+ *
+ * Spec: marmot-protocol/marmot transports/nostr.md ("KeyPackage
+ * publication", "Event identity and tag cardinality"); tag order and values
+ * match tests/vectors/mdk/protocol-vectors.json (MDK 0.8 profile).
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void
+kp_clear_event(NostrEvent *ev)
+{
+    free(ev->id);
+    free(ev->pubkey);
+    free(ev->content);
+    free(ev->sig);
+    nostr_tags_free(ev->tags);
+    memset(ev, 0, sizeof(*ev));
+}
+
+static bool
+kp_event_from_json(const char *json, NostrEvent *ev)
+{
+    memset(ev, 0, sizeof(*ev));
+    return json && nostr_event_deserialize_compact(ev, json, NULL);
+}
+
+static NostrTag *
+kp_first_tag(NostrEvent *ev, const char *key)
+{
+    for (size_t i = 0; i < nostr_tags_size(ev->tags); i++) {
+        NostrTag *t = nostr_tags_get(ev->tags, i);
+        if (strcmp(nostr_tag_get_key(t), key) == 0) return t;
+    }
+    return NULL;
+}
+
+/* Copy of the first value of tag @key in @json (caller frees). */
+static char *
+kp_tag_value(const char *json, const char *key)
+{
+    NostrEvent ev;
+    if (!kp_event_from_json(json, &ev)) return NULL;
+    NostrTag *t = kp_first_tag(&ev, key);
+    char *v = (t && nostr_tag_size(t) >= 2) ? strdup(nostr_tag_get(t, 1)) : NULL;
+    kp_clear_event(&ev);
+    return v;
+}
+
+typedef enum {
+    KP_MUT_NONE,
+    KP_MUT_DROP,       /* remove every tag named key */
+    KP_MUT_DUPLICATE,  /* insert a copy right after the first tag named key */
+    KP_MUT_SET_VALUE,  /* replace value[1] of the first tag named key */
+    KP_MUT_ADD_VALUE,  /* append a value to the first tag named key */
+    KP_MUT_CONTENT,    /* replace the content with value (key ignored) */
+} KpMutation;
+
+/*
+ * Re-sign @json with @sk after optionally overriding kind / created_at
+ * (0 = keep) and applying one tag mutation. The result is a correctly
+ * signed event, so every rejection below is attributable to the shape rule
+ * under test rather than to a broken signature.
+ */
+static char *
+kp_resign(const char *json, const uint8_t sk[32], int kind, int64_t created_at,
+          KpMutation mut, const char *key, const char *value)
+{
+    NostrEvent ev;
+    if (!kp_event_from_json(json, &ev)) return NULL;
+    if (kind) ev.kind = kind;
+    if (created_at) ev.created_at = created_at;
+    if (mut == KP_MUT_CONTENT) {
+        free(ev.content);
+        ev.content = strdup(value);
+        key = NULL;
+    }
+
+    NostrTags *dst = nostr_tags_new(0);
+    bool first = true;
+    for (size_t i = 0; i < nostr_tags_size(ev.tags); i++) {
+        NostrTag *t = nostr_tags_get(ev.tags, i);
+        const char *k = nostr_tag_get_key(t);
+        bool match = key && strcmp(k, key) == 0;
+        if (match && mut == KP_MUT_DROP) continue;
+
+        int copies = (match && first && mut == KP_MUT_DUPLICATE) ? 2 : 1;
+        for (int c = 0; c < copies; c++) {
+            NostrTag *copy = nostr_tag_new(k, NULL);
+            for (size_t j = 1; j < nostr_tag_size(t); j++)
+                nostr_tag_append(copy, nostr_tag_get(t, j));
+            if (match && first && c == 0) {
+                if (mut == KP_MUT_SET_VALUE) nostr_tag_set(copy, 1, value);
+                if (mut == KP_MUT_ADD_VALUE) nostr_tag_append(copy, value);
+            }
+            nostr_tags_append(dst, copy);
+        }
+        if (match) first = false;
+    }
+    nostr_event_set_tags(&ev, dst);
+
+    char *sk_hex = marmot_hex_encode(sk, 32);
+    char *out = NULL;
+    if (sk_hex && nostr_event_sign(&ev, sk_hex) == 0)
+        out = nostr_event_serialize_compact(&ev);
+    free(sk_hex);
+    kp_clear_event(&ev);
+    return out;
+}
+
+static char *
+kp_event_id(const char *json)
+{
+    NostrEvent ev;
+    if (!kp_event_from_json(json, &ev)) return NULL;
+    char *id = ev.id ? strdup(ev.id) : NULL;
+    kp_clear_event(&ev);
+    return id;
+}
+
+static bool
+is_lower_hex64(const char *s)
+{
+    if (!s || strlen(s) != 64) return false;
+    for (size_t i = 0; i < 64; i++)
+        if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f')))
+            return false;
+    return true;
+}
+
+static void
+test_key_package_emits_30443_tag_set(void)
+{
+    TEST("30443: emits kind, tag order and values of MDK profile");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+
+    const char *relays[] = { "wss://relay.example.com", "wss://relay2.example.com" };
+    MarmotKeyPackageResult r;
+    memset(&r, 0, sizeof(r));
+    ASSERT_OK(marmot_create_key_package(m, pk, sk, relays, 2, &r), "create");
+
+    NostrEvent ev;
+    ASSERT(kp_event_from_json(r.event_json, &ev), "deserialize");
+    ASSERT(ev.kind == 30443, "kind must be 30443");
+
+    static const char *const expected_keys[] = {
+        "d", "mls_protocol_version", "mls_ciphersuite", "mls_extensions",
+        "mls_proposals", "relays", "i", "encoding",
+    };
+    size_t n_expected = sizeof(expected_keys) / sizeof(expected_keys[0]);
+    ASSERT(nostr_tags_size(ev.tags) == n_expected, "unexpected tag count");
+    for (size_t i = 0; i < n_expected; i++) {
+        ASSERT(strcmp(nostr_tag_get_key(nostr_tags_get(ev.tags, i)),
+                      expected_keys[i]) == 0, "tag order differs from MDK vectors");
+    }
+    ASSERT(kp_first_tag(&ev, "-") == NULL, "no NIP-70 tag on kind:30443");
+
+    NostrTag *t = kp_first_tag(&ev, "d");
+    ASSERT(nostr_tag_size(t) == 2 && is_lower_hex64(nostr_tag_get(t, 1)),
+           "d must be one 64-char lowercase hex value");
+    t = kp_first_tag(&ev, "mls_protocol_version");
+    ASSERT(nostr_tag_size(t) == 2 && strcmp(nostr_tag_get(t, 1), "1.0") == 0, "version");
+    t = kp_first_tag(&ev, "mls_ciphersuite");
+    ASSERT(nostr_tag_size(t) == 2 && strcmp(nostr_tag_get(t, 1), "0x0001") == 0, "ciphersuite");
+    t = kp_first_tag(&ev, "mls_extensions");
+    ASSERT(nostr_tag_size(t) == 3 && strcmp(nostr_tag_get(t, 1), "0x000a") == 0 &&
+           strcmp(nostr_tag_get(t, 2), "0xf2ee") == 0, "extensions");
+    t = kp_first_tag(&ev, "mls_proposals");
+    ASSERT(nostr_tag_size(t) == 2 && strcmp(nostr_tag_get(t, 1), "0x000a") == 0, "proposals");
+    t = kp_first_tag(&ev, "relays");
+    ASSERT(nostr_tag_size(t) == 3 && strcmp(nostr_tag_get(t, 2), relays[1]) == 0, "relays");
+    t = kp_first_tag(&ev, "encoding");
+    ASSERT(nostr_tag_size(t) == 2 && strcmp(nostr_tag_get(t, 1), "base64") == 0, "encoding");
+
+    char *ref_hex = marmot_hex_encode(r.key_package_ref, 32);
+    t = kp_first_tag(&ev, "i");
+    ASSERT(ref_hex && nostr_tag_size(t) == 2 && strcmp(nostr_tag_get(t, 1), ref_hex) == 0,
+           "i must be the lowercase hex KeyPackageRef");
+    free(ref_hex);
+    kp_clear_event(&ev);
+
+    /* Without relays the tag is omitted and the event still parses. */
+    MarmotKeyPackageResult r2;
+    memset(&r2, 0, sizeof(r2));
+    ASSERT_OK(marmot_create_key_package(m, pk, sk, NULL, 0, &r2), "create no relays");
+    char *relays_value = kp_tag_value(r2.event_json, "relays");
+    ASSERT(relays_value == NULL, "relays tag must be omitted without relays");
+    MlsKeyPackage kp;
+    memset(&kp, 0, sizeof(kp));
+    ASSERT_OK(marmot_parse_key_package_event(r2.event_json, &kp, NULL), "parse no relays");
+    mls_key_package_clear(&kp);
+
+    /* The unsigned variant carries the same kind and tags, just no sig. */
+    MarmotKeyPackageResult u;
+    memset(&u, 0, sizeof(u));
+    ASSERT_OK(marmot_create_key_package_unsigned(m, pk, relays, 2, &u), "create unsigned");
+    ASSERT(kp_event_from_json(u.event_json, &ev), "deserialize unsigned");
+    ASSERT(ev.kind == 30443 && nostr_tags_size(ev.tags) == n_expected,
+           "unsigned event has the same shape");
+    ASSERT(ev.sig == NULL || ev.sig[0] == '\0', "unsigned event has no signature");
+    kp_clear_event(&ev);
+
+    marmot_key_package_result_free(&r);
+    marmot_key_package_result_free(&r2);
+    marmot_key_package_result_free(&u);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_key_package_slot_stable_across_rotation(void)
+{
+    TEST("30443: d slot is stable across rotation, distinct per account");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+    uint8_t sk_a[32], pk_a[32], sk_b[32], pk_b[32];
+    generate_nostr_keypair(sk_a, pk_a);
+    generate_nostr_keypair(sk_b, pk_b);
+
+    MarmotKeyPackageResult a1, a2, a3, b1;
+    memset(&a1, 0, sizeof(a1)); memset(&a2, 0, sizeof(a2));
+    memset(&a3, 0, sizeof(a3)); memset(&b1, 0, sizeof(b1));
+    ASSERT_OK(marmot_create_key_package(m, pk_a, sk_a, NULL, 0, &a1), "a1");
+    ASSERT_OK(marmot_create_key_package(m, pk_a, sk_a, NULL, 0, &a2), "a2");
+    ASSERT_OK(marmot_create_key_package_unsigned(m, pk_a, NULL, 0, &a3), "a3");
+    ASSERT_OK(marmot_create_key_package(m, pk_b, sk_b, NULL, 0, &b1), "b1");
+
+    char *d_a1 = kp_tag_value(a1.event_json, "d");
+    char *d_a2 = kp_tag_value(a2.event_json, "d");
+    char *d_a3 = kp_tag_value(a3.event_json, "d");
+    char *d_b1 = kp_tag_value(b1.event_json, "d");
+    ASSERT(d_a1 && d_a2 && d_a3 && d_b1, "all events carry d");
+    ASSERT(strcmp(d_a1, d_a2) == 0 && strcmp(d_a1, d_a3) == 0,
+           "rotation must reuse the account's slot");
+    ASSERT(strcmp(d_a1, d_b1) != 0, "different accounts get different slots");
+    ASSERT(memcmp(a1.key_package_ref, a2.key_package_ref, 32) != 0,
+           "rotation still produces a fresh KeyPackage");
+
+    /* The slot is random, not derived from the account key. */
+    char *pk_hex = marmot_hex_encode(pk_a, 32);
+    ASSERT(pk_hex && strcmp(pk_hex, d_a1) != 0, "slot must not be the pubkey");
+    free(pk_hex);
+
+    free(d_a1); free(d_a2); free(d_a3); free(d_b1);
+    marmot_key_package_result_free(&a1);
+    marmot_key_package_result_free(&a2);
+    marmot_key_package_result_free(&a3);
+    marmot_key_package_result_free(&b1);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_key_package_slot_persists_across_restart(void)
+{
+    TEST("30443: d slot survives a restart (sqlite storage)");
+
+    char tmpl[] = "/tmp/marmot-kp-slot-XXXXXX";
+    char *dir = mkdtemp(tmpl);
+    ASSERT(dir != NULL, "mkdtemp");
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/marmot.db", dir);
+
+    MarmotStorage *s1 = marmot_storage_sqlite_new(db_path, NULL);
+    if (!s1) {
+        rmdir(dir);
+        printf("[SKIP] sqlite backend unavailable\n");
+        tests_passed++;
+        return;
+    }
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+
+    Marmot *m1 = marmot_new(s1);
+    ASSERT(m1 != NULL, "instance 1");
+    MarmotKeyPackageResult r1;
+    memset(&r1, 0, sizeof(r1));
+    ASSERT_OK(marmot_create_key_package(m1, pk, sk, NULL, 0, &r1), "create before restart");
+    marmot_free(m1);
+
+    Marmot *m2 = marmot_new(marmot_storage_sqlite_new(db_path, NULL));
+    ASSERT(m2 != NULL, "instance 2");
+    MarmotKeyPackageResult r2;
+    memset(&r2, 0, sizeof(r2));
+    ASSERT_OK(marmot_create_key_package(m2, pk, sk, NULL, 0, &r2), "create after restart");
+    marmot_free(m2);
+
+    char *d1 = kp_tag_value(r1.event_json, "d");
+    char *d2 = kp_tag_value(r2.event_json, "d");
+    ASSERT(d1 && d2 && strcmp(d1, d2) == 0, "slot must persist across restarts");
+
+    free(d1); free(d2);
+    marmot_key_package_result_free(&r1);
+    marmot_key_package_result_free(&r2);
+    unlink(db_path);
+    rmdir(dir);
+    PASS();
+}
+
+static void
+test_key_package_parse_rejects_legacy_443(void)
+{
+    TEST("30443: parse rejects legacy kind:443 (strict cutover)");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+    MarmotKeyPackageResult r;
+    memset(&r, 0, sizeof(r));
+    ASSERT_OK(marmot_create_key_package(m, pk, sk, NULL, 0, &r), "create");
+
+    /* Legacy shape: kind 443 without d; and 443 with every 30443 tag. */
+    char *legacy = kp_resign(r.event_json, sk, 443, 0, KP_MUT_DROP, "d", NULL);
+    char *legacy_d = kp_resign(r.event_json, sk, 443, 0, KP_MUT_NONE, NULL, NULL);
+    ASSERT(legacy && legacy_d, "re-sign legacy events");
+
+    MlsKeyPackage kp;
+    memset(&kp, 0, sizeof(kp));
+    ASSERT(marmot_parse_key_package_event(legacy, &kp, NULL) == MARMOT_ERR_UNEXPECTED_EVENT,
+           "kind:443 must be rejected");
+    ASSERT(marmot_parse_key_package_event(legacy_d, &kp, NULL) == MARMOT_ERR_UNEXPECTED_EVENT,
+           "kind:443 with a d tag must be rejected");
+
+    free(legacy);
+    free(legacy_d);
+    marmot_key_package_result_free(&r);
+    marmot_free(m);
+    PASS();
+}
+
+static void
+test_key_package_parse_enforces_tag_rules(void)
+{
+    TEST("30443: parse enforces d/i/id-list cardinality and format");
+
+    Marmot *m = create_test_instance();
+    ASSERT(m != NULL, "failed to create instance");
+    uint8_t sk[32], pk[32];
+    generate_nostr_keypair(sk, pk);
+    const char *relays[] = { "wss://relay.example.com" };
+    MarmotKeyPackageResult r;
+    memset(&r, 0, sizeof(r));
+    ASSERT_OK(marmot_create_key_package(m, pk, sk, relays, 1, &r), "create");
+
+    char *d = kp_tag_value(r.event_json, "d");
+    ASSERT(d != NULL, "d present");
+    char d_upper[65], d_short[65];
+    for (size_t i = 0; i < 64; i++)
+        d_upper[i] = (d[i] >= 'a' && d[i] <= 'f') ? (char)(d[i] - 32) : d[i];
+    d_upper[64] = '\0';
+    if (strcmp(d_upper, d) == 0) d_upper[0] = 'A';  /* all-digit slot */
+    memcpy(d_short, d, 62);
+    d_short[62] = '\0';
+
+    struct {
+        const char *what;
+        KpMutation mut;
+        const char *key;
+        const char *value;
+        MarmotError expect;
+    } cases[] = {
+        { "unmodified re-sign",          KP_MUT_NONE,      NULL, NULL, MARMOT_OK },
+        { "missing d",                   KP_MUT_DROP,      "d", NULL, MARMOT_ERR_VALIDATION },
+        { "duplicate d",                 KP_MUT_DUPLICATE, "d", NULL, MARMOT_ERR_VALIDATION },
+        { "d with two values",           KP_MUT_ADD_VALUE, "d", "00", MARMOT_ERR_VALIDATION },
+        { "uppercase d",                 KP_MUT_SET_VALUE, "d", d_upper, MARMOT_ERR_VALIDATION },
+        { "short d",                     KP_MUT_SET_VALUE, "d", d_short, MARMOT_ERR_VALIDATION },
+        { "duplicate i",                 KP_MUT_DUPLICATE, "i", NULL, MARMOT_ERR_VALIDATION },
+        { "wrong i",                     KP_MUT_SET_VALUE, "i", d, MARMOT_ERR_VALIDATION },
+        { "missing mls_proposals",       KP_MUT_DROP,      "mls_proposals", NULL, MARMOT_ERR_VALIDATION },
+        { "duplicate mls_extensions",    KP_MUT_DUPLICATE, "mls_extensions", NULL, MARMOT_ERR_VALIDATION },
+        { "repeated id in list",         KP_MUT_ADD_VALUE, "mls_extensions", "0xf2ee", MARMOT_ERR_VALIDATION },
+        { "uppercase id-list value",     KP_MUT_SET_VALUE, "mls_ciphersuite", "0x000A", MARMOT_ERR_VALIDATION },
+        { "missing mls_ciphersuite",     KP_MUT_DROP,      "mls_ciphersuite", NULL, MARMOT_ERR_VALIDATION },
+        { "protocol version 2.0",        KP_MUT_SET_VALUE, "mls_protocol_version", "2.0", MARMOT_ERR_VALIDATION },
+        { "non-ws relay URL",            KP_MUT_SET_VALUE, "relays", "https://relay.example.com", MARMOT_ERR_VALIDATION },
+        { "relay URL with userinfo",     KP_MUT_SET_VALUE, "relays", "wss://u:p@relay.example.com", MARMOT_ERR_VALIDATION },
+        { "no relays tag (adopted)",     KP_MUT_DROP,      "relays", NULL, MARMOT_OK },
+        { "missing encoding",            KP_MUT_DROP,      "encoding", NULL, MARMOT_ERR_VALIDATION },
+        { "extra unknown tag values ok", KP_MUT_ADD_VALUE, "mls_proposals", "0x0008", MARMOT_OK },
+        { "empty content",               KP_MUT_CONTENT,   NULL, "", MARMOT_ERR_DESERIALIZATION },
+        { "non-base64 content",          KP_MUT_CONTENT,   NULL, "!!!not-base64!!!", MARMOT_ERR_DESERIALIZATION },
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char *ev = kp_resign(r.event_json, sk, 0, 0, cases[i].mut, cases[i].key, cases[i].value);
+        ASSERT(ev != NULL, cases[i].what);
+        MlsKeyPackage kp;
+        memset(&kp, 0, sizeof(kp));
+        MarmotError err = marmot_parse_key_package_event(ev, &kp, NULL);
+        if (err == MARMOT_OK) mls_key_package_clear(&kp);
+        free(ev);
+        if (err != cases[i].expect) {
+            printf("[FAIL] %s: got %s\n", cases[i].what, marmot_error_string(err));
+            tests_failed++;
+            free(d);
+            return;
+        }
+    }
+
+    free(d);
+    marmot_key_package_result_free(&r);
+    marmot_free(m);
+    PASS();
+}
+
+/*
+ * Fixture for selection tests: one account rotating within its slot plus a
+ * second, manually opened slot. Every event is correctly signed by @sk.
+ */
+typedef struct {
+    Marmot *m;
+    uint8_t sk[32], pk[32];
+    MarmotKeyPackageResult r1, r2;
+} KpSelectFixture;
+
+static bool
+kp_select_fixture_init(KpSelectFixture *f)
+{
+    memset(f, 0, sizeof(*f));
+    f->m = create_test_instance();
+    if (!f->m) return false;
+    generate_nostr_keypair(f->sk, f->pk);
+    return marmot_create_key_package(f->m, f->pk, f->sk, NULL, 0, &f->r1) == MARMOT_OK &&
+           marmot_create_key_package(f->m, f->pk, f->sk, NULL, 0, &f->r2) == MARMOT_OK;
+}
+
+static void
+kp_select_fixture_clear(KpSelectFixture *f)
+{
+    marmot_key_package_result_free(&f->r1);
+    marmot_key_package_result_free(&f->r2);
+    marmot_free(f->m);
+}
+
+static void
+test_select_key_package_newest_in_slot(void)
+{
+    TEST("30443 select: newest in (pubkey,d) slot; tie -> lower id");
+
+    KpSelectFixture f;
+    ASSERT(kp_select_fixture_init(&f), "fixture");
+    const int64_t T = 1790000000;
+
+    char *old_ev = kp_resign(f.r1.event_json, f.sk, 0, T, KP_MUT_NONE, NULL, NULL);
+    char *new_ev = kp_resign(f.r2.event_json, f.sk, 0, T + 10, KP_MUT_NONE, NULL, NULL);
+    ASSERT(old_ev && new_ev, "re-sign");
+
+    size_t idx = 99;
+    const char *fwd[] = { old_ev, new_ev };
+    ASSERT_OK(marmot_select_key_package_event(fwd, 2, NULL, &idx), "select fwd");
+    ASSERT(idx == 1, "newer event in the slot must win");
+    const char *rev[] = { new_ev, old_ev };
+    ASSERT_OK(marmot_select_key_package_event(rev, 2, f.pk, &idx), "select rev");
+    ASSERT(idx == 0, "winner independent of input order");
+
+    /* The same event delivered by two relays is one candidate. */
+    const char *dup[] = { new_ev, new_ev, old_ev };
+    ASSERT_OK(marmot_select_key_package_event(dup, 3, NULL, &idx), "select dup");
+    ASSERT(idx == 0, "duplicate delivery keeps the first copy");
+
+    /* Equal created_at within one slot: lower event id wins. */
+    char *tie_a = kp_resign(f.r1.event_json, f.sk, 0, T + 20, KP_MUT_NONE, NULL, NULL);
+    char *tie_b = kp_resign(f.r2.event_json, f.sk, 0, T + 20, KP_MUT_NONE, NULL, NULL);
+    char *id_a = kp_event_id(tie_a), *id_b = kp_event_id(tie_b);
+    ASSERT(id_a && id_b && strcmp(id_a, id_b) != 0, "distinct ids");
+    const char *ties[] = { tie_a, tie_b };
+    ASSERT_OK(marmot_select_key_package_event(ties, 2, NULL, &idx), "select tie");
+    ASSERT(idx == (strcmp(id_a, id_b) < 0 ? 0u : 1u), "lower event id breaks the tie");
+
+    free(old_ev); free(new_ev); free(tie_a); free(tie_b); free(id_a); free(id_b);
+    kp_select_fixture_clear(&f);
+    PASS();
+}
+
+static void
+test_select_key_package_invalid_winner_empties_slot(void)
+{
+    TEST("30443 select: invalid newest never resurrects older in slot");
+
+    KpSelectFixture f;
+    ASSERT(kp_select_fixture_init(&f), "fixture");
+    const int64_t T = 1790000000;
+
+    char *old_ev = kp_resign(f.r1.event_json, f.sk, 0, T, KP_MUT_NONE, NULL, NULL);
+    /* Authenticated (author-signed) but malformed: KeyPackageRef mismatch. */
+    char *bad_new = kp_resign(f.r2.event_json, f.sk, 0, T + 10, KP_MUT_SET_VALUE, "i",
+                              "0000000000000000000000000000000000000000000000000000000000000000");
+    ASSERT(old_ev && bad_new, "re-sign");
+
+    size_t idx = 99;
+    const char *evs[] = { old_ev, bad_new };
+    ASSERT(marmot_select_key_package_event(evs, 2, NULL, &idx) == MARMOT_ERR_KEY_PACKAGE,
+           "a superseded slot must not fall back to the older event");
+
+    free(old_ev); free(bad_new);
+    kp_select_fixture_clear(&f);
+    PASS();
+}
+
+static void
+test_select_key_package_ignores_unauthenticated_and_legacy(void)
+{
+    TEST("30443 select: forged/legacy/NULL inputs cannot supersede");
+
+    KpSelectFixture f;
+    ASSERT(kp_select_fixture_init(&f), "fixture");
+    const int64_t T = 1790000000;
+
+    char *good = kp_resign(f.r1.event_json, f.sk, 0, T, KP_MUT_NONE, NULL, NULL);
+    ASSERT(good != NULL, "re-sign");
+
+    /* Newer created_at spliced in without re-signing: id no longer matches. */
+    char *forged = strdup(good);
+    char *ts = forged ? strstr(forged, "\"created_at\":1790000000") : NULL;
+    ASSERT(ts != NULL, "created_at present in compact JSON");
+    ts[strlen("\"created_at\":179")] = '9';
+
+    /* Validly signed legacy 443 in the same "slot", newer. */
+    char *legacy = kp_resign(f.r2.event_json, f.sk, 443, T + 50, KP_MUT_NONE, NULL, NULL);
+    ASSERT(legacy != NULL, "legacy re-sign");
+
+    size_t idx = 99;
+    const char *evs[] = { NULL, forged, legacy, "not json", good };
+    ASSERT_OK(marmot_select_key_package_event(evs, 5, NULL, &idx), "select");
+    ASSERT(idx == 4, "only the authenticated 30443 event is a candidate");
+
+    const char *none[] = { forged, legacy };
+    ASSERT(marmot_select_key_package_event(none, 2, NULL, &idx) == MARMOT_ERR_KEY_PACKAGE,
+           "no valid candidate");
+
+    free(good); free(forged); free(legacy);
+    kp_select_fixture_clear(&f);
+    PASS();
+}
+
+static void
+test_select_key_package_cross_slot_ranking(void)
+{
+    TEST("30443 select: across slots newest wins, tie -> lower ref");
+
+    KpSelectFixture f;
+    ASSERT(kp_select_fixture_init(&f), "fixture");
+    const int64_t T = 1790000000;
+    const char *slot2 = "5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f";
+
+    char *s1 = kp_resign(f.r1.event_json, f.sk, 0, T, KP_MUT_NONE, NULL, NULL);
+    char *s2 = kp_resign(f.r2.event_json, f.sk, 0, T + 5, KP_MUT_SET_VALUE, "d", slot2);
+    ASSERT(s1 && s2, "re-sign");
+
+    size_t idx = 99;
+    const char *evs[] = { s2, s1 };
+    ASSERT_OK(marmot_select_key_package_event(evs, 2, NULL, &idx), "select newest");
+    ASSERT(idx == 0, "newest valid candidate across slots wins");
+
+    /* Same created_at in different slots: lower KeyPackageRef wins. */
+    char *t1 = kp_resign(f.r1.event_json, f.sk, 0, T + 9, KP_MUT_NONE, NULL, NULL);
+    char *t2 = kp_resign(f.r2.event_json, f.sk, 0, T + 9, KP_MUT_SET_VALUE, "d", slot2);
+    ASSERT(t1 && t2, "re-sign tie");
+    const char *ties[] = { t1, t2 };
+    ASSERT_OK(marmot_select_key_package_event(ties, 2, NULL, &idx), "select tie");
+    size_t lower = memcmp(f.r1.key_package_ref, f.r2.key_package_ref, 32) < 0 ? 0 : 1;
+    ASSERT(idx == lower, "lower KeyPackageRef breaks cross-slot ties");
+
+    free(s1); free(s2); free(t1); free(t2);
+    kp_select_fixture_clear(&f);
+    PASS();
+}
+
+static void
+test_select_key_package_owner_filter_and_args(void)
+{
+    TEST("30443 select: owner filter and argument validation");
+
+    KpSelectFixture a, b;
+    ASSERT(kp_select_fixture_init(&a), "fixture a");
+    ASSERT(kp_select_fixture_init(&b), "fixture b");
+    const int64_t T = 1790000000;
+    char *ev_a = kp_resign(a.r1.event_json, a.sk, 0, T, KP_MUT_NONE, NULL, NULL);
+    char *ev_b = kp_resign(b.r1.event_json, b.sk, 0, T + 100, KP_MUT_NONE, NULL, NULL);
+    ASSERT(ev_a && ev_b, "re-sign");
+
+    size_t idx = 99;
+    const char *evs[] = { ev_b, ev_a };
+    ASSERT_OK(marmot_select_key_package_event(evs, 2, a.pk, &idx), "select a");
+    ASSERT(idx == 1, "owner filter excludes other authors");
+    uint8_t stranger[32];
+    memset(stranger, 0x42, sizeof(stranger));
+    ASSERT(marmot_select_key_package_event(evs, 2, stranger, &idx) == MARMOT_ERR_KEY_PACKAGE,
+           "unknown owner has no candidate");
+
+    ASSERT(marmot_select_key_package_event(evs, 2, NULL, NULL) == MARMOT_ERR_INVALID_ARG,
+           "NULL out_index");
+    ASSERT(marmot_select_key_package_event(NULL, 2, NULL, &idx) == MARMOT_ERR_INVALID_ARG,
+           "NULL array with count");
+    ASSERT(marmot_select_key_package_event(NULL, 0, NULL, &idx) == MARMOT_ERR_KEY_PACKAGE,
+           "empty input has no candidate");
+
+    free(ev_a); free(ev_b);
+    kp_select_fixture_clear(&a);
+    kp_select_fixture_clear(&b);
+    PASS();
+}
+
+static void
+test_select_then_invite_after_rotation(void)
+{
+    TEST("30443: rotate, select from relay set, invite and join");
+
+    Marmot *creator = create_test_instance();
+    Marmot *member = create_test_instance();
+    ASSERT(creator && member, "instances");
+    uint8_t creator_sk[32], creator_pk[32], member_sk[32], member_pk[32];
+    generate_nostr_keypair(creator_sk, creator_pk);
+    generate_nostr_keypair(member_sk, member_pk);
+
+    /* Member publishes, then rotates (same slot, newer event). */
+    MarmotKeyPackageResult r1, r2;
+    memset(&r1, 0, sizeof(r1));
+    memset(&r2, 0, sizeof(r2));
+    ASSERT_OK(marmot_create_key_package(member, member_pk, member_sk, NULL, 0, &r1), "kp1");
+    ASSERT_OK(marmot_create_key_package(member, member_pk, member_sk, NULL, 0, &r2), "kp2");
+    char *ev1 = kp_resign(r1.event_json, member_sk, 0, 1790000000, KP_MUT_NONE, NULL, NULL);
+    char *ev2 = kp_resign(r2.event_json, member_sk, 0, 1790000060, KP_MUT_NONE, NULL, NULL);
+    ASSERT(ev1 && ev2, "re-sign");
+
+    /* A lagging relay still serves the old event next to the new one. */
+    const char *fetched[] = { ev1, ev2 };
+    size_t idx = 99;
+    ASSERT_OK(marmot_select_key_package_event(fetched, 2, member_pk, &idx), "select");
+    ASSERT(idx == 1, "rotated KeyPackage selected");
+
+    const char *kp_jsons[] = { fetched[idx] };
+    MarmotGroupConfig config = {0};
+    config.name = "Rotation Group";
+    config.admin_pubkeys = (uint8_t (*)[32])&creator_pk;
+    config.admin_count = 1;
+    MarmotCreateGroupResult gr;
+    memset(&gr, 0, sizeof(gr));
+    ASSERT_OK(marmot_create_group(creator, creator_pk, kp_jsons, 1, &config, &gr),
+              "create_group with selected 30443");
+    ASSERT(gr.welcome_count == 1 && gr.welcome_rumor_jsons[0], "welcome produced");
+
+    /* The Welcome's e tag names the consumed 30443 event. */
+    char *welcome_e = kp_tag_value(gr.welcome_rumor_jsons[0], "e");
+    char *ev2_id = kp_event_id(ev2);
+    ASSERT(welcome_e && ev2_id && strcmp(welcome_e, ev2_id) == 0,
+           "welcome e tag references the selected KeyPackage event");
+
+    uint8_t wrapper_id[32];
+    randombytes_buf(wrapper_id, 32);
+    MarmotWelcome *welcome = NULL;
+    ASSERT_OK(marmot_process_welcome(member, wrapper_id, gr.welcome_rumor_jsons[0], &welcome),
+              "process_welcome");
+    ASSERT_OK(marmot_accept_welcome(member, welcome), "accept_welcome");
+
+    marmot_welcome_free(welcome);
+    free(welcome_e); free(ev2_id); free(ev1); free(ev2);
+    marmot_create_group_result_free(&gr);
+    marmot_key_package_result_free(&r1);
+    marmot_key_package_result_free(&r2);
+    marmot_free(creator);
+    marmot_free(member);
     PASS();
 }
 
@@ -2077,15 +2751,18 @@ test_reject_invalid_key_package_events(void)
     MlsKeyPackage kp;
     uint8_t pk[32];
 
+    /* Unsigned events are rejected before any field is trusted; the signed
+     * content/tag cases live in test_key_package_parse_enforces_tag_rules. */
+
     /* Bad base64 content */
     const char *bad_b64 =
-        "{\"kind\":443,\"content\":\"!!!not-base64!!!\","
+        "{\"kind\":30443,\"content\":\"!!!not-base64!!!\","
         "\"created_at\":1700000000,"
         "\"tags\":[[\"encoding\",\"base64\"]]}";
     MarmotError err = marmot_parse_key_package_event(bad_b64, &kp, pk);
     ASSERT(err != MARMOT_OK, "should reject bad base64");
 
-    /* Wrong kind (kind:444 instead of 443) */
+    /* Wrong kind (kind:444 instead of 30443) */
     const char *wrong_kind =
         "{\"kind\":444,\"content\":\"dGVzdA==\","
         "\"created_at\":1700000000,"
@@ -2095,7 +2772,7 @@ test_reject_invalid_key_package_events(void)
 
     /* Empty content */
     const char *empty_content =
-        "{\"kind\":443,\"content\":\"\","
+        "{\"kind\":30443,\"content\":\"\","
         "\"created_at\":1700000000,"
         "\"tags\":[[\"encoding\",\"base64\"]]}";
     err = marmot_parse_key_package_event(empty_content, &kp, pk);
@@ -2425,6 +3102,17 @@ main(void)
     test_key_package_rejects_bad_signature();
     test_key_package_rotation();
     test_key_package_info_storage();
+    test_key_package_emits_30443_tag_set();
+    test_key_package_slot_stable_across_rotation();
+    test_key_package_slot_persists_across_restart();
+    test_key_package_parse_rejects_legacy_443();
+    test_key_package_parse_enforces_tag_rules();
+    test_select_key_package_newest_in_slot();
+    test_select_key_package_invalid_winner_empties_slot();
+    test_select_key_package_ignores_unauthenticated_and_legacy();
+    test_select_key_package_cross_slot_ranking();
+    test_select_key_package_owner_filter_and_args();
+    test_select_then_invite_after_rotation();
 
     printf("\nMIP-01: Group Construction\n");
     test_create_group_basic();

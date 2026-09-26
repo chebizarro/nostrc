@@ -15,7 +15,7 @@ files already declare a version.
 | libgo | `libgo/` | 0.1.1 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 1.0.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
-| libmarmot | `libmarmot/` | 0.1.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
+| libmarmot | `libmarmot/` | 0.2.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.0.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
 | nostr-homed | `gnome/nostr-homed/` | 0.2.2 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |

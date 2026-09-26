@@ -22,8 +22,16 @@ extern "C" {
  * Nostr event kinds used by Marmot (MIP-00 through MIP-03)
  * ──────────────────────────────────────────────────────────────────────── */
 
-/** Kind 443: MLS Key Package (MIP-00) */
-#define MARMOT_KIND_KEY_PACKAGE     443
+/**
+ * Kind 30443: MLS KeyPackage (Marmot Nostr transport).
+ *
+ * Addressable (NIP-01 parameterized-replaceable): the `d` tag carries a
+ * stable, random 32-byte publication-slot id (64 lowercase hex chars), so a
+ * rotated KeyPackage replaces the previous one in the same
+ * `(pubkey, 30443, d)` slot. The legacy kind 443 was removed by the Marmot
+ * specification and is neither produced nor accepted by libmarmot.
+ */
+#define MARMOT_KIND_KEY_PACKAGE     30443
 
 /** Kind 444: MLS Welcome (MIP-02) — gift-wrapped via NIP-59 */
 #define MARMOT_KIND_WELCOME         444
@@ -542,7 +550,8 @@ typedef enum {
  * ──────────────────────────────────────────────────────────────────────── */
 
 typedef struct {
-    /** Key package event JSON (kind:443, unsigned, caller-owned) */
+    /** Key package event JSON (kind:30443; signed by marmot_create_key_package,
+     *  unsigned by marmot_create_key_package_unsigned; caller-owned) */
     char *event_json;
 
     /** Key package reference (hash, 32 bytes) */

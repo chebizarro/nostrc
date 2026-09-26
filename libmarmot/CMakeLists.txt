@@ -7,7 +7,7 @@ endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 
 set(MARMOT_VERSION_MAJOR 0)
-set(MARMOT_VERSION_MINOR 1)
+set(MARMOT_VERSION_MINOR 2)
 set(MARMOT_VERSION_PATCH 0)
 declare_component_version(MARMOT
   ${MARMOT_VERSION_MAJOR}
