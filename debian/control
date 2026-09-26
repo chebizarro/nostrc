@@ -32,10 +32,9 @@ Build-Depends: debhelper-compat (= 13),
                libsecret-1-dev,
 # nostr-seal (nostrc-da9c) .nsealed handler + nostr-share (nostrc-1xak) dialog.
                libgtk-4-dev,
-               libadwaita-1-dev (>= 1.5)
-               libgdk-pixbuf-2.0-dev
-# nostr-wallet-agent (nostrc-yka8): libadwaita approval dialogs.
-               libadwaita-1-dev (>= 1.4)
+               libadwaita-1-dev (>= 1.5),
+               libgdk-pixbuf-2.0-dev,
+# nostr-wallet-agent (nostrc-yka8): libadwaita approval dialogs (>= 1.4, above).
 # nostr-nautilus (nostrc-xlf3): libnautilus-extension-4 (Nautilus 43+).
                libnautilus-extension-dev
 Standards-Version: 4.6.2
@@ -358,7 +357,11 @@ Description: Share to Nostr from any GNOME app's Open With menu
  upload and the exact event JSON is shown before signing. The libadwaita
  dialog opens when a display is available; `nostr-share --no-ui` and
  `--dry-run` work headless.
+
 Package: nostr-wallet-agent
+Section: net
+Architecture: any
+Multi-Arch: foreign
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends},
          libnostr-publish0 (= ${binary:Version})
@@ -572,8 +575,11 @@ Description: Encrypt files for Nostr public keys or a passphrase
  leaves the signer. Ships the nostr-seal CLI, the nostr-seal-gtk
  double-click handler and the application/vnd.nostr.sealed (*.nsealed)
  MIME type.
+
 Package: nostr-search-provider
 Section: net
+Architecture: any
+Multi-Arch: foreign
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Recommends: nostr-dispatcher (= ${binary:Version}),
@@ -592,8 +598,12 @@ Description: GNOME Shell search provider for Nostr profiles and notes
  ~/.config/nostr/search-provider.conf.
  The org.nostr.SearchProvider service is D-Bus activated on demand
  through a user unit and exits when idle.
+
 Package: nostr-signer-webext-host
 Section: web
+Architecture: any
+Multi-Arch: foreign
+Depends: ${shlibs:Depends}, ${misc:Depends}
 Suggests: firefox | firefox-esr | chromium, nostr-wallet-agent
 Description: NIP-07 browser bridge to the desktop Nostr signer (native host)
  nostr-signer-webext-host is the native-messaging host
