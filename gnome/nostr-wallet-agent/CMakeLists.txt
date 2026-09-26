@@ -91,6 +91,20 @@ if (NWA_GIOUNIX_FOUND)
   target_link_libraries(nostr-wallet-agent-core PUBLIC PkgConfig::NWA_GIOUNIX)
 endif()
 target_compile_options(nostr-wallet-agent-core PRIVATE ${NWA_WARNING_FLAGS})
+# The only executable allowed to act for a web origin (*For methods): the
+# browser bridge from apps/gnostr-signer/native-host, installed by the same
+# tree with the same libexecdir.
+target_compile_definitions(nostr-wallet-agent-core PRIVATE
+  NWA_WEBEXT_HOST_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/nostr-signer-webext-host")
+# Test hook: honour NOSTR_WALLET_AGENT_ORIGIN_BRIDGES so CTest can run the
+# build-tree bridge. Off in package builds (BUILD_TESTING=OFF).
+option(NOSTR_WALLET_AGENT_ORIGIN_BRIDGE_ENV
+       "Let NOSTR_WALLET_AGENT_ORIGIN_BRIDGES replace the browser bridge path (tests only)"
+       ${BUILD_TESTING})
+if (NOSTR_WALLET_AGENT_ORIGIN_BRIDGE_ENV)
+  # PUBLIC: test_caller checks which behaviour it links against.
+  target_compile_definitions(nostr-wallet-agent-core PUBLIC NWA_ORIGIN_BRIDGE_ENV=1)
+endif()
 
 # --- Daemon ---
 add_executable(nostr-wallet-agent

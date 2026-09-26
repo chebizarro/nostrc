@@ -12,6 +12,12 @@
  * Scheme-handler links (nwa_service_open_uri) run the same pipeline with the
  * agent itself as caller (NWA_CALLER_SELF), which the policy always prompts
  * for, and report the outcome in a window instead of a D-Bus reply.
+ *
+ * GetInfoFor / GetBalanceFor / MakeInvoiceFor / PayInvoiceFor take a web
+ * origin as first argument and otherwise run the plain method; once the
+ * caller is identified as the trusted browser bridge
+ * (nwa_caller_may_assert_origin) the origin becomes the principal for
+ * policy, budget, prompt and ledger. Anyone else gets Denied.
  */
 #include "nwa-service.h"
 #include "nwa-bolt11.h"
@@ -50,6 +56,7 @@ struct _NwaService {
   guint            prompts_total;
   gboolean         ephemeral; /* NOSTR_WALLET_AGENT_EPHEMERAL: no keyring */
   GCancellable    *cancel;
+  GStrv            origin_bridges; /* executables that may assert a web origin */
 };
 
 /* ---------------------------------------------------------------------- */
@@ -146,6 +153,7 @@ typedef struct {
   gchar                 *prompt_key;
 
   gboolean               via_link; /* OpenUri / --open: always prompt */
+  gchar                 *origin;   /* *For methods: web origin to act for */
 
   /* PayInvoice */
   gchar     *bolt11;
@@ -187,6 +195,7 @@ call_free(Call *c)
   }
   g_free(c->pair_label);
   g_free(c->target_app);
+  g_free(c->origin);
   g_free(c);
 }
 
@@ -766,6 +775,9 @@ static gchar *
 caller_phrase(const NwaCaller *c, gboolean via_link)
 {
   if (c->kind == NWA_CALLER_SELF) return g_strdup("A link opened on this computer");
+  if (c->kind == NWA_CALLER_WEB_ORIGIN)
+    return c->via ? g_strdup_printf("The website %s (in %s, via the Nostr browser extension)", c->app_id, c->via)
+                  : g_strdup_printf("The website %s (via the Nostr browser extension)", c->app_id);
   if (via_link)
     return c->app_id ? g_strdup_printf("A link opened by %s (%s%s)", c->display_name, c->app_id,
                                        c->attested ? "" : ", unverified")
@@ -816,7 +828,8 @@ show_prompt(Call *c, gboolean over_budget)
                              "your balance and transaction history and create invoices. It "
                              "cannot send payments without your approval.", who);
       if (c->caller->app_id && !c->via_link)
-        remember = "Always allow this app";
+        remember = c->caller->kind == NWA_CALLER_WEB_ORIGIN ? "Always allow this site"
+                                                            : "Always allow this app";
       break;
     case NWA_OP_PAIR: {
       g_autofree gchar *cur = NULL;
@@ -996,13 +1009,56 @@ on_caller(GObject *src, GAsyncResult *res, gpointer data)
   NwaCaller *caller = nwa_caller_identify_finish(res, &err);
   if (!caller) { call_error(c, err); return; }
   c->caller = caller;
-  g_debug("nostr-wallet-agent: %s from %s app=%s kind=%s pid=%u", c->method, caller->sender,
+  g_debug("nostr-wallet-agent: %s from %s app=%s kind=%s pid=%u exe=%s", c->method, caller->sender,
           caller->app_id ? caller->app_id : "(none)", nwa_caller_kind_to_string(caller->kind),
-          caller->pid);
+          caller->pid, caller->exe ? caller->exe : "(none)");
+  if (c->origin) {
+    if (!nwa_caller_may_assert_origin(caller, (const gchar *const *)c->svc->origin_bridges)) {
+      CALL_FAIL(c, NWA_ERROR_DENIED, "only the browser bridge may act for a web origin");
+      return;
+    }
+    c->caller = nwa_caller_for_origin(caller, c->origin);
+    nwa_caller_free(caller);
+    if (g_str_equal(c->method, "GetInfo") && !c->svc->client) {
+      GVariantBuilder b;
+      g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+      g_variant_builder_add(&b, "{sv}", "paired", g_variant_new_boolean(FALSE));
+      call_return(c, g_variant_new("(a{sv})", &b), NULL);
+      return;
+    }
+  }
   if (c->target_app || g_str_equal(c->method, "GetBudget") || g_str_equal(c->method, "SetBudget")) {
     if (!resolve_budget_op(c, &err)) { call_error(c, err); return; }
   }
   run_policy(c);
+}
+
+/* "<Method>For(s origin, <Method args>…)" -> method "<Method>" with the
+ * origin stripped off. D-Bus has already checked the signature. */
+static gboolean
+unwrap_origin_call(Call *c, GError **error)
+{
+  static const gchar *const wrapped[] = { "GetInfoFor", "GetBalanceFor", "MakeInvoiceFor",
+                                          "PayInvoiceFor", NULL };
+  if (!g_strv_contains(wrapped, c->method)) return TRUE;
+  g_autoptr(GVariant) first = g_variant_get_child_value(c->params, 0);
+  const gchar *origin = g_variant_get_string(first, NULL);
+  if (!nwa_caller_is_web_origin(origin)) {
+    g_set_error_literal(error, NWA_ERROR, NWA_ERROR_INVALID_ARGS,
+                        "origin must be a serialized secure web origin (https://host[:port])");
+    return FALSE;
+  }
+  gsize n = g_variant_n_children(c->params);
+  GVariant **rest = g_new0(GVariant *, n);
+  for (gsize i = 1; i < n; i++) rest[i - 1] = g_variant_get_child_value(c->params, i);
+  GVariant *inner = g_variant_ref_sink(g_variant_new_tuple(rest, n - 1));
+  for (gsize i = 0; i + 1 < n; i++) g_variant_unref(rest[i]);
+  g_free(rest);
+  g_variant_unref(c->params);
+  c->params = inner;
+  c->origin = g_strdup(origin);
+  c->method[strlen(c->method) - strlen("For")] = '\0';
+  return TRUE;
 }
 
 typedef struct {
@@ -1027,8 +1083,15 @@ handle_method_call(GDBusConnection *bus, const gchar *sender, const gchar *path,
   GError *err = NULL;
   gboolean ok = TRUE;
 
+  if (!unwrap_origin_call(c, &err)) {
+    call_error(c, err);
+    return;
+  }
+  method = c->method;
+  params = c->params;
+
   if (g_str_equal(method, "GetInfo")) {
-    if (!s->client) {
+    if (!s->client && !c->origin) { /* *For: the caller is checked first */
       GVariantBuilder b;
       g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
       g_variant_builder_add(&b, "{sv}", "paired", g_variant_new_boolean(FALSE));
@@ -1254,6 +1317,7 @@ nwa_service_new(GDBusConnection *bus, GError **error)
   s->cancel = g_cancellable_new();
   s->prompts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   s->settings = maybe_settings();
+  s->origin_bridges = nwa_caller_origin_bridges();
   const gchar *eph = g_getenv("NOSTR_WALLET_AGENT_EPHEMERAL");
   s->ephemeral = eph && *eph && g_strcmp0(eph, "0") != 0;
 
@@ -1298,6 +1362,7 @@ nwa_service_free(NwaService *s)
   nwa_budget_store_free(s->budgets);
   g_clear_object(&s->settings);
   g_hash_table_unref(s->prompts);
+  g_strfreev(s->origin_bridges);
   g_dbus_node_info_unref(s->node);
   g_object_unref(s->cancel);
   g_object_unref(s->bus);

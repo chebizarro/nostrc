@@ -174,6 +174,50 @@ test_persistence(void)
   g_date_time_unref(clk.now);
 }
 
+/* Web origins (org.nostr.Wallet1 *For) are budget keys like any app id:
+ * opaque JSON member names in one file, never path components. */
+static void
+test_web_origin_keys(void)
+{
+  FakeClock clk = { 0 };
+  clock_set(&clk, 2026, 9, 26, 12, 0);
+  g_autofree gchar *dir = g_dir_make_tmp("nwa-budget-XXXXXX", NULL);
+  g_autofree gchar *path = g_build_filename(dir, "budgets.json", NULL);
+  static const gchar *const site = "https://snort.social";
+  static const gchar *const local = "http://localhost:5173";
+
+  NwaBudgetStore *s = nwa_budget_store_new(path, fake_now, &clk);
+  g_assert_true(nwa_budget_store_load(s, NULL));
+  nwa_budget_store_set_limit(s, site, 100000);
+  nwa_budget_store_set_allow_read(s, local, TRUE);
+  guint r = nwa_budget_store_reserve(s, site, 21000, FALSE);
+  g_assert_cmpuint(r, !=, 0);
+  nwa_budget_store_commit(s, r, 21000);
+  nwa_budget_store_free(s);
+
+  /* nothing but the one file was created */
+  g_autoptr(GDir) d = g_dir_open(dir, 0, NULL);
+  g_assert_cmpstr(g_dir_read_name(d), ==, "budgets.json");
+  g_assert_null(g_dir_read_name(d));
+
+  s = nwa_budget_store_new(path, fake_now, &clk);
+  g_assert_true(nwa_budget_store_load(s, NULL));
+  NwaBudgetInfo bi;
+  nwa_budget_store_get(s, site, &bi);
+  g_assert_cmpuint(bi.limit_msat_per_day, ==, 100000);
+  g_assert_cmpuint(bi.spent_today_msat, ==, 21000);
+  g_assert_false(bi.allow_read);
+  nwa_budget_store_get(s, local, &bi);
+  g_assert_true(bi.allow_read);
+  nwa_budget_store_get(s, "https://snort.social.evil.example", &bi);
+  g_assert_false(bi.known);
+  nwa_budget_store_free(s);
+
+  g_remove(path);
+  g_rmdir(dir);
+  g_date_time_unref(clk.now);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -181,5 +225,6 @@ main(int argc, char **argv)
   g_test_add_func("/budget/limits-and-reservations", test_limits_and_reservations);
   g_test_add_func("/budget/day-rollover", test_day_rollover);
   g_test_add_func("/budget/persistence", test_persistence);
+  g_test_add_func("/budget/web-origin-keys", test_web_origin_keys);
   return g_test_run();
 }

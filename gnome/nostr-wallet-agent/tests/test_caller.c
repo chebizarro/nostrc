@@ -5,6 +5,8 @@
 #include "nwa-caller.h"
 
 #include <glib.h>
+#include <glib/gstdio.h>
+#include <unistd.h>
 
 static void
 test_flatpak_info(void)
@@ -55,6 +57,157 @@ test_self(void)
   g_assert_true(d->app_id != c->app_id);
 }
 
+static void
+test_web_origin_syntax(void)
+{
+  static const gchar *const good[] = {
+    "https://snort.social", "https://a.example:8443", "https://xn--bcher-kva.example",
+    "https://1.2.3.4", "https://[2001:db8::1]", "https://[2001:db8::1]:8443",
+    "http://localhost", "http://localhost:5173", "http://app.localhost:3000",
+    "http://127.0.0.1:8080", "http://[::1]", "http://[::1]:3000",
+  };
+  static const gchar *const bad[] = {
+    "", "null", "snort.social", "https://", "https://Snort.social", "https://snort.social/",
+    "https://snort.social/path", "https://snort.social?q", "https://snort.social#f",
+    "https://u@snort.social", "https://snort.social:443", "https://snort.social:0",
+    "https://snort.social:08443", "https://snort.social:65536", "https://snort.social:",
+    "https://snort..social", "https://-a.example", "https://a-.example", "https://.example",
+    "https://a.example.", "https://sn%6Frt.social", "https://sn ort.social", "https://snört.social",
+    "http://snort.social", "http://localhost:80", "http://localhost.evil.com", "http://127.0.0.2",
+    "ws://localhost", "file:///etc/passwd", "exe:/usr/bin/nostr-signer-webext-host",
+    "org.mozilla.firefox", "snap.firefox", "https://[::1", "https://[zz::1]",
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(good); i++)
+    g_assert_true(nwa_caller_is_web_origin(good[i]) || (g_printerr("good: %s\n", good[i]), FALSE));
+  for (guint i = 0; i < G_N_ELEMENTS(bad); i++)
+    g_assert_false(nwa_caller_is_web_origin(bad[i]) && (g_printerr("bad: %s\n", bad[i]), TRUE));
+  g_assert_false(nwa_caller_is_web_origin(NULL));
+  g_autofree gchar *longo = g_strconcat("https://", g_strnfill(510, 'a'), NULL);
+  g_assert_false(nwa_caller_is_web_origin(longo));
+}
+
+/* A caller shaped like the bridge after identification: exe path + inode. */
+static NwaCaller *
+bridge_caller(const gchar *exe, NwaCallerKind kind)
+{
+  NwaCaller *c = g_new0(NwaCaller, 1);
+  GStatBuf st;
+  g_assert_cmpint(g_stat(exe, &st), ==, 0);
+  c->sender = g_strdup(":1.42");
+  c->kind = kind;
+  c->app_id = kind == NWA_CALLER_EXE ? g_strconcat("exe:", exe, NULL) : g_strdup("org.mozilla.firefox");
+  c->display_name = g_strdup(kind == NWA_CALLER_EXE ? "nostr-signer-webext-host" : "Firefox");
+  c->same_uid = TRUE;
+  c->exe = g_strdup(exe);
+  c->exe_dev = (guint64)st.st_dev;
+  c->exe_ino = (guint64)st.st_ino;
+  return c;
+}
+
+static void
+test_origin_bridge_gate(void)
+{
+  g_autofree gchar *dir = g_dir_make_tmp("nwa-bridge-XXXXXX", NULL);
+  g_autofree gchar *host = g_build_filename(dir, "nostr-signer-webext-host", NULL);
+  g_autofree gchar *other = g_build_filename(dir, "impostor", NULL);
+  g_autofree gchar *link = g_build_filename(dir, "link", NULL);
+  g_assert_true(g_file_set_contents(host, "#!/bin/true\n", -1, NULL));
+  g_assert_true(g_file_set_contents(other, "#!/bin/true\n", -1, NULL));
+  g_assert_cmpint(symlink(host, link), ==, 0);
+  const gchar *const bridges[] = { "relative/nostr-signer-webext-host", host, NULL };
+
+  /* the bridge in the browser's systemd scope, and as a bare executable */
+  g_autoptr(NwaCaller) scoped = bridge_caller(host, NWA_CALLER_SYSTEMD_SCOPE);
+  g_assert_true(nwa_caller_may_assert_origin(scoped, bridges));
+  g_autoptr(NwaCaller) bare = bridge_caller(host, NWA_CALLER_EXE);
+  g_assert_true(nwa_caller_may_assert_origin(bare, bridges));
+  /* sandboxed / synthetic / half-resolved kinds never qualify, whatever
+   * their exe says */
+  static const NwaCallerKind never[] = { NWA_CALLER_FLATPAK, NWA_CALLER_SNAP, NWA_CALLER_SELF,
+                                         NWA_CALLER_WEB_ORIGIN, NWA_CALLER_UNKNOWN };
+  for (guint i = 0; i < G_N_ELEMENTS(never); i++) {
+    g_autoptr(NwaCaller) c = bridge_caller(host, never[i]);
+    g_assert_false(nwa_caller_may_assert_origin(c, bridges));
+  }
+
+  /* another binary; a different path to the same file; a foreign uid */
+  g_autoptr(NwaCaller) imp = bridge_caller(other, NWA_CALLER_EXE);
+  g_assert_false(nwa_caller_may_assert_origin(imp, bridges));
+  g_autoptr(NwaCaller) via_link = bridge_caller(link, NWA_CALLER_EXE);
+  g_assert_false(nwa_caller_may_assert_origin(via_link, bridges));
+  g_autoptr(NwaCaller) foreign = bridge_caller(host, NWA_CALLER_EXE);
+  foreign->same_uid = FALSE;
+  g_assert_false(nwa_caller_may_assert_origin(foreign, bridges));
+
+  /* right path, wrong inode: the file was replaced after the bridge started
+   * (or the path names a different file in the caller's mount namespace) */
+  g_autoptr(NwaCaller) stale = bridge_caller(host, NWA_CALLER_EXE);
+  stale->exe_ino ^= 1;
+  g_assert_false(nwa_caller_may_assert_origin(stale, bridges));
+  g_autoptr(NwaCaller) noino = bridge_caller(host, NWA_CALLER_EXE);
+  noino->exe_ino = 0;
+  g_assert_false(nwa_caller_may_assert_origin(noino, bridges));
+  g_autoptr(NwaCaller) noexe = bridge_caller(host, NWA_CALLER_EXE);
+  g_clear_pointer(&noexe->exe, g_free);
+  g_assert_false(nwa_caller_may_assert_origin(noexe, bridges));
+  g_assert_false(nwa_caller_may_assert_origin(scoped, NULL));
+  const gchar *const none[] = { NULL };
+  g_assert_false(nwa_caller_may_assert_origin(scoped, none));
+
+  /* bridge list: the env override (test builds only) replaces the default */
+  g_setenv("NOSTR_WALLET_AGENT_ORIGIN_BRIDGES", "/opt/a/host:/opt/b/host", TRUE);
+  g_auto(GStrv) list = nwa_caller_origin_bridges();
+#ifdef NWA_ORIGIN_BRIDGE_ENV
+  g_assert_cmpuint(g_strv_length(list), ==, 2);
+  g_assert_cmpstr(list[1], ==, "/opt/b/host");
+#else
+  g_assert_cmpuint(g_strv_length(list), ==, 1);
+  g_assert_cmpstr(list[0], !=, "/opt/a/host");
+#endif
+  g_unsetenv("NOSTR_WALLET_AGENT_ORIGIN_BRIDGES");
+  g_auto(GStrv) def = nwa_caller_origin_bridges();
+  g_assert_cmpuint(g_strv_length(def), ==, 1);
+  g_assert_true(g_str_has_suffix(def[0], "/nostr-signer-webext-host"));
+  g_assert_true(g_path_is_absolute(def[0]));
+
+  g_unlink(link);
+  g_unlink(other);
+  g_unlink(host);
+  g_rmdir(dir);
+}
+
+static void
+test_for_origin(void)
+{
+  g_autofree gchar *dir = g_dir_make_tmp("nwa-bridge-XXXXXX", NULL);
+  g_autofree gchar *host = g_build_filename(dir, "nostr-signer-webext-host", NULL);
+  g_assert_true(g_file_set_contents(host, "x", -1, NULL));
+
+  g_autoptr(NwaCaller) scoped = bridge_caller(host, NWA_CALLER_SYSTEMD_SCOPE);
+  g_autoptr(NwaCaller) site = nwa_caller_for_origin(scoped, "https://snort.social");
+  g_assert_cmpstr(site->app_id, ==, "https://snort.social");
+  g_assert_cmpint(site->kind, ==, NWA_CALLER_WEB_ORIGIN);
+  g_assert_false(site->attested);
+  g_assert_true(site->same_uid);
+  g_assert_cmpstr(site->display_name, ==, "snort.social");
+  g_assert_cmpstr(site->via, ==, "Firefox");
+  g_assert_cmpstr(site->sender, ==, ":1.42");
+  g_assert_cmpstr(nwa_caller_kind_to_string(site->kind), ==, "website");
+  /* a principal derived from an origin cannot assert another one */
+  const gchar *const bridges[] = { host, NULL };
+  g_assert_false(nwa_caller_may_assert_origin(site, bridges));
+
+  g_autoptr(NwaCaller) bare = bridge_caller(host, NWA_CALLER_EXE);
+  g_autoptr(NwaCaller) local = nwa_caller_for_origin(bare, "http://localhost:5173");
+  g_assert_cmpstr(local->display_name, ==, "localhost:5173");
+  g_assert_null(local->via); /* no browser name to show for a bare exe identity */
+  g_autoptr(NwaCaller) copy = nwa_caller_copy(local);
+  g_assert_cmpstr(copy->exe, ==, host);
+
+  g_unlink(host);
+  g_rmdir(dir);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -62,5 +215,8 @@ main(int argc, char **argv)
   g_test_add_func("/caller/flatpak-info", test_flatpak_info);
   g_test_add_func("/caller/cgroups", test_cgroups);
   g_test_add_func("/caller/self", test_self);
+  g_test_add_func("/caller/web-origin-syntax", test_web_origin_syntax);
+  g_test_add_func("/caller/origin-bridge-gate", test_origin_bridge_gate);
+  g_test_add_func("/caller/for-origin", test_for_origin);
   return g_test_run();
 }

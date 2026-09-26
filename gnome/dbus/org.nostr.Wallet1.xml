@@ -82,6 +82,44 @@
     </method>
 
     <!--
+      Web-origin variants (browser bridge, WebLN): same arguments, results
+      and errors as GetInfo / GetBalance / MakeInvoice / PayInvoice, with the
+      page's @origin ("https://host[:port]", or http:// on a loopback host,
+      in the browser's serialized form) as first argument.
+
+      Only the trusted browser bridge may call these: an unsandboxed caller
+      whose /proc/<pid>/exe is <libexecdir>/nostr-signer-webext-host (path
+      and inode). Anyone else gets Denied; a malformed origin InvalidArgs.
+      The origin then replaces the bridge (whose identity is the browser's)
+      as the principal: policy, "Always allow this site", the daily budget,
+      the spend ledger and the approval dialog are all per origin, and the
+      dialog names the site. Origins are never "trusted" and never attested.
+    -->
+    <method name="GetInfoFor">
+      <arg name="origin" type="s" direction="in"/>
+      <arg name="info" type="a{sv}" direction="out"/>
+    </method>
+    <method name="GetBalanceFor">
+      <arg name="origin" type="s" direction="in"/>
+      <arg name="balance_msat" type="t" direction="out"/>
+    </method>
+    <method name="MakeInvoiceFor">
+      <arg name="origin" type="s" direction="in"/>
+      <arg name="amount_msat" type="u" direction="in"/>
+      <arg name="description" type="s" direction="in"/>
+      <arg name="expiry" type="u" direction="in"/>
+      <arg name="bolt11" type="s" direction="out"/>
+      <arg name="payment_hash" type="s" direction="out"/>
+    </method>
+    <method name="PayInvoiceFor">
+      <arg name="origin" type="s" direction="in"/>
+      <arg name="bolt11" type="s" direction="in"/>
+      <arg name="amount_msat_or_0" type="u" direction="in"/>
+      <arg name="preimage" type="s" direction="out"/>
+      <arg name="fees_paid_msat" type="t" direction="out"/>
+    </method>
+
+    <!--
       LookupInvoice:
       @payment_hash_or_bolt11: a 64-hex payment hash or a BOLT-11 invoice
       @transaction: NIP-47 transaction object (type, state, invoice,
