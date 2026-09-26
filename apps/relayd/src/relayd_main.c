@@ -380,8 +380,20 @@ int main(int argc, char **argv) {
 
   /* libwebsockets context */
   struct lws_context_creation_info info; memset(&info, 0, sizeof info);
-  /* Extract port from cfg.listen */
-  int port = 4848; const char *colon = strrchr(cfg.listen, ':'); if (colon) port = atoi(colon+1);
+  /* Parse host:port from cfg.listen. relayd_config_load already validated
+   * the format, so this cannot fail here. */
+  static char listen_host[RELAYD_MAX_LISTEN_LEN];
+  int port = 0;
+  if (relayd_config_parse_listen(cfg.listen, listen_host, sizeof(listen_host),
+                                 &port) != 0) {
+    fprintf(stderr, "nostrc-relayd: invalid listen '%s'\n", cfg.listen);
+    relay_policy_destroy(policy);
+    verification_budget_destroy(verification_budget);
+    if (st && st->vt && st->vt->close) st->vt->close(st);
+    free(st);
+    return 1;
+  }
+  info.iface = listen_host;
   info.port = port;
   info.protocols = protocols;
   info.options = LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE;

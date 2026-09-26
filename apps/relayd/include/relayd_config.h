@@ -58,6 +58,26 @@ int relayd_config_validate(const RelaydConfig *cfg, char *error,
                            size_t error_size);
 int relayd_config_load(const char *path, RelaydConfig *out);
 
+/*
+ * Parse a "host:port" listen string into a host and a numeric port.
+ *
+ * Accepts:
+ *   "127.0.0.1:4848", "0.0.0.0:4848", "localhost:4848",
+ *   "[::1]:4848", "[::]:4848" (bracketed IPv6)
+ *
+ * Rejects:
+ *   NULL, empty string, port-only forms ("4848"), missing port,
+ *   ports outside 1..65535, empty host, malformed IPv6 brackets.
+ *
+ * Returns 0 on success. On success `host_out` receives the un-bracketed host
+ * string and `*port_out` receives the port. Either output pointer may be NULL
+ * if the caller only wants to validate the string.
+ *
+ * Returns -1 on any malformed input.
+ */
+int relayd_config_parse_listen(const char *listen, char *host_out,
+                               size_t host_cap, int *port_out);
+
 #ifdef __cplusplus
 }
 #endif

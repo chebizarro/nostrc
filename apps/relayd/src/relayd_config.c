@@ -43,6 +43,61 @@ static int parse_supported_nips(const char *val, int *out, int *outn) {
   return *p == ']' ? 0 : -1;
 }
 
+int relayd_config_parse_listen(const char *listen, char *host_out,
+                               size_t host_cap, int *port_out) {
+  if (!listen || listen[0] == '\0') return -1;
+
+  const char *host_begin;
+  const char *host_end;
+  const char *colon;
+
+  if (listen[0] == '[') {
+    /* Bracketed IPv6 form: [addr]:port */
+    const char *close = strchr(listen, ']');
+    if (!close || close == listen + 1) return -1;
+    if (close[1] != ':') return -1;
+    host_begin = listen + 1;
+    host_end = close;
+    colon = close + 1;
+  } else {
+    /* host:port with a single colon.  Reject bracketless IPv6 (more than one
+     * colon) and port-only forms. */
+    const char *first = strchr(listen, ':');
+    const char *last = strrchr(listen, ':');
+    if (!first || first != last) return -1;
+    if (first == listen) return -1; /* empty host */
+    host_begin = listen;
+    host_end = first;
+    colon = first;
+  }
+
+  size_t host_len = (size_t)(host_end - host_begin);
+  if (host_len == 0) return -1;
+
+  /* Port digits: 1..5 decimal digits, no signs, no whitespace. */
+  const char *port_str = colon + 1;
+  if (*port_str == '\0') return -1;
+  size_t port_len = 0;
+  for (const char *p = port_str; *p; ++p) {
+    if (!isdigit((unsigned char)*p)) return -1;
+    if (++port_len > 5) return -1;
+  }
+  errno = 0;
+  char *end = NULL;
+  long port = strtol(port_str, &end, 10);
+  if (end == port_str || errno == ERANGE || *end != '\0') return -1;
+  if (port < 1 || port > 65535) return -1;
+
+  if (host_out) {
+    if (host_cap == 0) return -1;
+    if (host_len + 1 > host_cap) return -1;
+    memcpy(host_out, host_begin, host_len);
+    host_out[host_len] = '\0';
+  }
+  if (port_out) *port_out = (int)port;
+  return 0;
+}
+
 static int parse_int(const char *text, int *out) {
   if (!text || !out) return -1;
   errno = 0;
@@ -182,6 +237,11 @@ int relayd_config_validate(const RelaydConfig *cfg, char *error,
   if (strcmp(cfg->auth, "off") != 0 && strcmp(cfg->auth, "optional") != 0 &&
       strcmp(cfg->auth, "required") != 0)
     return fail(error, error_size, "auth must be off, optional, or required");
+
+  /* listen must be host:port (or [v6]:port); reject port-only or malformed. */
+  if (relayd_config_parse_listen(cfg->listen, NULL, 0, NULL) != 0)
+    return fail(error, error_size,
+                "listen must be host:port (e.g. 127.0.0.1:4848 or [::1]:4848)");
   return 0;
 }
 
