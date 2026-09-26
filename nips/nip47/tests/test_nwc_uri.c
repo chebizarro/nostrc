@@ -96,6 +96,16 @@ static void test_failure_missing_secret(void) {
   assert(rc != 0);
 }
 
+/* Regression: relays parsed, then secret missing -> the relay array used to
+ * be freed twice on the failure path. */
+static void test_failure_relay_without_secret(void) {
+  const char *bad = "nostr+walletconnect://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?relay=wss%3A%2F%2Fr.example.com&relay=wss%3A%2F%2Fs.example.com";
+  NostrNwcConnection c;
+  int rc = nostr_nwc_uri_parse(bad, &c);
+  assert(rc != 0);
+  assert(c.relays == NULL && c.wallet_pubkey_hex == NULL);
+}
+
 static void test_failure_wrong_scheme(void) {
   const char *bad = "nostr+wc://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?secret=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
   NostrNwcConnection c;
@@ -114,6 +124,7 @@ int main(void) {
   test_basic_single_relay();
   test_multi_relay_and_lud16();
   test_failure_missing_secret();
+  test_failure_relay_without_secret();
   test_failure_wrong_scheme();
   test_failure_non_hex();
   printf("test_nwc_uri: OK\n");

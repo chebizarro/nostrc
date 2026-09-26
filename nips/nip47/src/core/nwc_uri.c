@@ -143,6 +143,8 @@ int nostr_nwc_uri_parse(const char *uri, NostrNwcConnection *out) {
 
   if (rel_count>0) {
     out->relays = rels;
+    /* ownership moved to out: the fail path below must not free it twice */
+    rels = NULL; rel_count = 0;
   } else if (rels) {
     free(rels);
   }
