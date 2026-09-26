@@ -97,6 +97,38 @@ code lives in authd's *source* tree but links only its existing deps.
 
 ---
 
+## Wave 5 tail landed (2026-09-26)
+
+Two-branch Wave 5 landed post-Oscar's #16b acceptance:
+
+- **Wave 5 A — P1 packaging fixes + cleanup** (`5db84f7a`, `05183e11`):
+  - `nostrc-0vuu` FIXED: `nostr-smbd.service.in` gains `--no-process-group`
+    to escape systemd's `setsid()` EPERM abort.
+  - `nostrc-45b2` FIXED: `smb.conf.standalone.sample` pins Samba's
+    `state directory` + `private dir` to `/var/lib/nostr-auth/samba-state`;
+    parent `StateDirectoryMode` loosened to 0755. Samba's mandatory 0700
+    chmod is now isolated from the force-user parent.
+  - `nostrc-kr6h` DONE: legacy `pam_nostr.c` + `pam_nostr.h` deleted;
+    `SYSTEMD_TOPOLOGY.md` pointer updated to `pam_nostr_broker.c`.
+- **Wave 5 B — nostrc-relayd subpackage** (`8589abf8`):
+  - `nostrc-7zh1` DONE: Debian binary package `nostrc-relayd` + Fedora
+    subpackage now own `/usr/sbin/nostrc-relayd` + `nostr-relayd.service`
+    + `/usr/share/nostrc/relay.toml.example` (previously dropped via
+    `debian/not-installed` + `%install`-time rm's).
+
+Wave 6 tail (all filed as beads, requires lab time):
+
+- **`nostrc-nud0` (P1)** — re-run #16b Windows + GNOME Files matrix
+  against the FIXED shipped `.deb` to flip Q5 gate → GREEN.
+- **`nostrc-qngf` (P2)** — #22c-a Debian installed-unit acceptance on
+  the aarch64 lab.
+- **`nostrc-cr0s` (P3)** — #22c-b Fedora installed-unit acceptance
+  (blocked on a Fedora build+install VM).
+- **`nostrc-0xd3` (P1)** — #23 live smoke lab (full E2E login),
+  blocked on #22c-a + #16b re-run landing GREEN.
+
+---
+
 ## Execution Index
 
 Sizes: S = days, M = ~1 engineer-week, L = several engineer-weeks, XL =
@@ -139,8 +171,8 @@ multi-week with external acceptance.
 | 21b | Dep-purity gate — final integrated check | All tracks re-verified; installed-artifact check on lab | Green after every merge + at packaging | #21a, all tracks | S |
 | ✅ 22a | Debian packaging | LANDED (`2f2a2e82`): 4 new Debian binary packages — `nostrc-session-relay`, `nostr-notify`, `nostr-dav`, `nostrc-samba-server`. `debian/*.install` maps + `debian/rules` overrides + `debian/control` split | `debian/*.install`, `debian/rules`, `debian/control` | #13, #14, #10, #16a | M |
 | ✅ 22b | Fedora packaging | LANDED (`2f2a2e82`): mirror 4-subpackage split in `packaging/rpm/nostr-login.spec` with `%check` running dep-purity gate on staged tree | `packaging/rpm/nostr-login.spec` | #22a | M |
-| 22c | Installed-unit acceptance | On both distros: install → enable → verify signer/DAV/relay/notify boot; nostr-authd + pam_nostr unchanged closure | Both #22a + #22b landed | #22a, #22b, #21 | M |
-| 23 | Live smoke lab | aarch64 `-Werror` clean, real login | bizarro@192.168.64.3 passes smoke matrix | All tracks | All | M |
+| ⚠️ 22c | Installed-unit acceptance | SPLIT into two beads: **nostrc-qngf** (Debian arm on aarch64 lab — priority-2) + **nostrc-cr0s** (Fedora arm — priority-3, blocked on Fedora VM). Deliberately deferred from this session because Wave 5 A+B (P1 packaging fixes `nostrc-0vuu`+`nostrc-45b2` + `nostrc-7zh1` relayd subpackage) had to land first before an installed-unit run would be meaningful | Both #22a + #22b landed | #22a, #22b, #21 | M |
+| ⚠️ 23 | Live smoke lab | Filed as **nostrc-0xd3** (P1). Full E2E matrix in the bead: `-Werror` build, ctest sweep, dep-purity gate on installed artifacts, real login end-to-end (PAM → portable-home → session-bus → DAV publish + NIP-17 DM + Samba mount → session teardown). Blocked on #22c-a landing GREEN | bizarro@192.168.64.3 passes smoke matrix | All tracks | All | M |
 
 ---
 
