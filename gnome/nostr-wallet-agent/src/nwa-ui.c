@@ -286,7 +286,6 @@ nwa_ui_confirm(const gchar *title, const gchar *body, const gchar *accept_label,
   gtk_label_set_wrap(GTK_LABEL(label), TRUE);
   gtk_label_set_max_width_chars(GTK_LABEL(label), 48);
   gtk_label_set_justify(GTK_LABEL(label), GTK_JUSTIFY_CENTER);
-  gtk_label_set_selectable(GTK_LABEL(label), TRUE);
   gtk_box_append(GTK_BOX(content), label);
   AdwSwitchRow *remember = NULL;
   if (remember_label) {
@@ -322,10 +321,11 @@ nwa_ui_show_message(const gchar *title, const gchar *body, const gchar *toast)
   }
   AdwWindow *win = ADW_WINDOW(adw_window_new());
   gtk_window_set_title(GTK_WINDOW(win), title);
-  gtk_window_set_default_size(GTK_WINDOW(win), 440, 320);
+  gtk_window_set_default_size(GTK_WINDOW(win), 440, 400);
   GtkWidget *view = adw_toolbar_view_new();
   adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(view), adw_header_bar_new());
   GtkWidget *status = adw_status_page_new();
+  gtk_widget_add_css_class(status, "compact");
   adw_status_page_set_icon_name(ADW_STATUS_PAGE(status), "dialog-information-symbolic");
   adw_status_page_set_title(ADW_STATUS_PAGE(status), title);
   /* the description is Pango markup; body may carry untrusted URI text */

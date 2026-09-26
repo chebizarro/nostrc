@@ -13,23 +13,25 @@ ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/nostr-wallet-agent --gapplication-service
 Restart=on-failure
 RestartSec=5
 
-# Hardening. The agent reads /proc/<pid>/{cgroup,exe,root/.flatpak-info} of
-# its callers (same user), talks to the Secret Service over D-Bus, writes its
-# budget ledger under $XDG_STATE_HOME/nostr-wallet and opens outbound
-# WebSockets to the pairing's relays.
+# Hardening — namespace-free only. The agent identifies callers by reading
+# /proc/<pid>/{exe,root/.flatpak-info} of other processes of the same user
+# (ptrace-read access). Any mount-namespacing option (ProtectSystem=,
+# ProtectHome=, PrivateTmp=, ProtectKernel*=, ProtectControlGroups=,
+# ReadWritePaths=) makes `systemd --user` run the unit in a user namespace,
+# which loses that access and turns every caller into "unidentified"
+# (verified on Ubuntu 24.04). Seccomp/no-new-privs based options are safe.
 NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=-%S/nostr-wallet
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
 StateDirectory=nostr-wallet
 StateDirectoryMode=0700
-PrivateTmp=yes
-ProtectKernelTunables=yes
-ProtectControlGroups=yes
-RestrictRealtime=yes
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-LockPersonality=yes
-# GTK may JIT shaders under some renderers; keep W^X off for the UI.
+# GTK may JIT shaders under some renderers; W^X stays off for the UI.
 # MemoryDenyWriteExecute=yes
 
 [Install]

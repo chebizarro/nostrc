@@ -153,14 +153,11 @@ nwa_caller_parse_cgroup(const gchar *cgroup_data, NwaCallerKind *kind)
     for (gint j = (gint)g_strv_length(comps) - 1; j >= 0; j--) {
       const gchar *c = comps[j];
       if (g_str_has_prefix(c, "snap.")) {
-        const gchar *name = c + 5;
-        const gchar *dot = strchr(name, '.');
-        if (dot && dot > name) {
-          g_autofree gchar *snap = g_strndup(name, (gsize)(dot - name));
-          if (is_valid_app_id(snap)) {
-            if (kind) *kind = NWA_CALLER_SNAP;
-            return g_strconcat("snap.", snap, NULL);
-          }
+        /* "snap.<name>.<app>..." */
+        g_auto(GStrv) sp = g_strsplit(c, ".", 3);
+        if (sp[0] && sp[1] && sp[2] && *sp[1] && is_valid_app_id(sp[1])) {
+          if (kind) *kind = NWA_CALLER_SNAP;
+          return g_strconcat("snap.", sp[1], NULL);
         }
       }
       gchar *id = app_id_from_unit(c);
@@ -265,7 +262,19 @@ resolve_from_proc(guint32 pid, gchar **out_id, NwaCallerKind *out_kind, gboolean
     }
   }
   g_autofree gchar *exe_path = g_strdup_printf("/proc/%u/exe", pid);
-  g_autofree gchar *exe = g_file_read_link(exe_path, NULL);
+  GError *err = NULL;
+  g_autofree gchar *exe = g_file_read_link(exe_path, &err);
+  if (err) {
+    static gboolean warned;
+    if (!warned && (g_error_matches(err, G_FILE_ERROR, G_FILE_ERROR_ACCES) ||
+                    g_error_matches(err, G_FILE_ERROR, G_FILE_ERROR_PERM))) {
+      warned = TRUE;
+      g_warning("nostr-wallet-agent: cannot inspect caller processes (%s); every caller will be "
+                "unidentified. Is the agent running in a user namespace (systemd sandboxing)?",
+                err->message);
+    }
+    g_clear_error(&err);
+  }
   if (exe && g_path_is_absolute(exe)) {
     /* " (deleted)" suffix means the binary was replaced; keep it visible */
     *out_id = g_strconcat("exe:", exe, NULL);

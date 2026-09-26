@@ -198,6 +198,14 @@ Signals are visible to every session-bus client, so `PaymentSent` /
 app id and — for zaps — the (already public) zap request; descriptions and
 payment hashes stay behind the policy-gated methods.
 
+**Sandboxing.** Caller identification needs ptrace-read access to the
+callers' `/proc/<pid>/{exe,root}`, which a `systemd --user` unit loses as
+soon as any mount-namespacing option puts it in a user namespace. The shipped
+unit therefore uses only namespace-free hardening (`NoNewPrivileges`,
+`SystemCallFilter=@system-service`, `RestrictNamespaces`,
+`RestrictAddressFamilies`, …); if `/proc` access is denied the agent logs a
+warning and treats every caller as unidentified (fails closed).
+
 **Headless.** The agent is a plain `GApplication`; GTK/libadwaita are
 initialised only when a dialog is needed. With no display (or
 `NOSTR_WALLET_AGENT_HEADLESS=1`) everything that needs the user is denied.
