@@ -158,12 +158,11 @@ nh_smb_rc nh_smb_authority_open(const char *journal_path,
 /*
  * Extended open() taking the dedicated standalone-Samba config path.
  * When `smb_conf_path` is non-NULL and non-empty AND the passdb ops
- * table exposes `enumerate`, the authority runs a reconciliation
- * pass: it enumerates the dedicated passdb and diffs the returned
- * usernames against the active issuance rows in the SQLite journal.
- * Drift (a passdb user with no active journal row, or vice versa)
- * fails the open with NH_SMB_RECONCILE_REQUIRED — the authority does
- * NOT auto-repair.
+ * table exposes `enumerate`, the first open of an empty journal records
+ * the passdb usernames as one-time adopted accounts. Subsequent opens
+ * diff the dedicated passdb against active issuance rows plus those
+ * adopted usernames. Drift fails with NH_SMB_RECONCILE_REQUIRED; the
+ * authority does NOT auto-repair after bootstrap.
  *
  * Passing NULL / empty `smb_conf_path` is equivalent to calling the
  * plain nh_smb_authority_open(): no reconciliation pass runs and no

@@ -207,6 +207,9 @@ static const char journal_schema[] =
     " expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>issued_at_ms),"
     " revoked_at_ms INTEGER,"
     " revoke_reason INTEGER NOT NULL DEFAULT 0);"
+    "CREATE TABLE IF NOT EXISTS adopted_passdb("
+    " username TEXT PRIMARY KEY CHECK(length(username) BETWEEN 1 AND 32))"
+    " WITHOUT ROWID;"
     "CREATE UNIQUE INDEX IF NOT EXISTS credentials_one_active"
     " ON credentials(username) WHERE revoked_at_ms IS NULL;"
     "CREATE INDEX IF NOT EXISTS credentials_expiry"
@@ -295,6 +298,24 @@ static nh_smb_rc journal_mark_revoked(nh_smb_authority *a, const char *username,
   return NH_SMB_OK;
 }
 
+static nh_smb_rc journal_forget_adopted(nh_smb_authority *a,
+                                         const char *username) {
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(a->db,
+      "DELETE FROM adopted_passdb WHERE username=?", -1, &stmt, NULL);
+  if (rc == SQLITE_OK) {
+    sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
+    rc = sqlite3_step(stmt);
+  }
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_DONE) {
+    set_error(a, "forget adopted account %s: %s", username,
+              sqlite3_errmsg(a->db));
+    return NH_SMB_STORAGE_ERROR;
+  }
+  return NH_SMB_OK;
+}
+
 static nh_smb_rc journal_insert(nh_smb_authority *a,
                                 const char *credential_id,
                                 const nh_smb_issue_request *req,
@@ -331,6 +352,7 @@ static nh_smb_rc journal_insert(nh_smb_authority *a,
 
 /* Forward decl for the reconciliation helper defined further down. */
 static nh_smb_rc reconcile_passdb_against_journal(nh_smb_authority *a);
+static nh_smb_rc bootstrap_or_reconcile_passdb(nh_smb_authority *a);
 
 nh_smb_rc nh_smb_authority_open(const char *journal_path,
                                 const nh_smb_passdb_ops *passdb_ops,
@@ -385,7 +407,7 @@ nh_smb_rc nh_smb_authority_open_ex(const char *journal_path,
    * adapter didn't provide the optional enumerate op (a mock without
    * anything to enumerate). */
   if (smb_conf_path && *smb_conf_path && passdb_ops->enumerate) {
-    nh_smb_rc rr = reconcile_passdb_against_journal(a);
+    nh_smb_rc rr = bootstrap_or_reconcile_passdb(a);
     if (rr != NH_SMB_OK) {
       sqlite3_close(a->db);
       free(a);
@@ -409,6 +431,84 @@ nh_smb_rc nh_smb_authority_open_ex(const char *journal_path,
 /* ------------------------------------------------------------------ */
 /* Reconciliation                                                      */
 /* ------------------------------------------------------------------ */
+
+/* A first open can follow an operator's manual smbpasswd seed.  There is
+ * no Nostr pubkey/UID/binding to reconstruct for such accounts, so retain
+ * their names separately rather than forging credential issuance rows.  The
+ * bootstrap marker makes this a one-time exception: subsequent opens always
+ * run the normal two-way drift check, even while credentials is empty. */
+static nh_smb_rc bootstrap_or_reconcile_passdb(nh_smb_authority *a) {
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(a->db,
+      "SELECT value FROM metadata WHERE key='passdb_bootstrapped'", -1,
+      &stmt, NULL);
+  if (rc != SQLITE_OK) return NH_SMB_STORAGE_ERROR;
+  rc = sqlite3_step(stmt);
+  bool bootstrapped = rc == SQLITE_ROW;
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_ROW && rc != SQLITE_DONE) return NH_SMB_STORAGE_ERROR;
+  if (bootstrapped) return reconcile_passdb_against_journal(a);
+
+  rc = sqlite3_prepare_v2(a->db, "SELECT EXISTS(SELECT 1 FROM credentials)",
+                          -1, &stmt, NULL);
+  if (rc != SQLITE_OK) return NH_SMB_STORAGE_ERROR;
+  rc = sqlite3_step(stmt);
+  bool has_history = rc == SQLITE_ROW && sqlite3_column_int(stmt, 0) != 0;
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_ROW) return NH_SMB_STORAGE_ERROR;
+
+  /* An older journal with issuance history is never a first-boot store. */
+  if (has_history) {
+    nh_smb_rc verdict = reconcile_passdb_against_journal(a);
+    if (verdict != NH_SMB_OK) return verdict;
+    return exec_sql(a, "INSERT INTO metadata(key,value)"
+                       " VALUES('passdb_bootstrapped','1')", "mark passdb ready");
+  }
+
+  char **users = NULL;
+  size_t count = 0;
+  if (a->ops->enumerate(a->ops_ctx, &users, &count) != 0) {
+    set_error(a, "passdb enumerate failed during bootstrap");
+    return NH_SMB_PASSDB_ERROR;
+  }
+  nh_smb_rc verdict = exec_sql(a, "BEGIN IMMEDIATE", "begin passdb bootstrap");
+  if (verdict != NH_SMB_OK) goto done;
+  rc = sqlite3_prepare_v2(a->db,
+      "INSERT OR IGNORE INTO adopted_passdb(username) VALUES(?)", -1,
+      &stmt, NULL);
+  if (rc != SQLITE_OK) {
+    verdict = NH_SMB_STORAGE_ERROR;
+    goto rollback;
+  }
+  for (size_t i = 0; i < count; i++) {
+    sqlite3_reset(stmt);
+    sqlite3_clear_bindings(stmt);
+    sqlite3_bind_text(stmt, 1, users[i], -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+      verdict = NH_SMB_STORAGE_ERROR;
+      break;
+    }
+  }
+  sqlite3_finalize(stmt);
+  stmt = NULL;
+  if (verdict != NH_SMB_OK) goto rollback;
+  verdict = exec_sql(a, "INSERT INTO metadata(key,value)"
+                        " VALUES('passdb_bootstrapped','1')", "mark passdb bootstrap");
+  if (verdict != NH_SMB_OK) goto rollback;
+  verdict = exec_sql(a, "COMMIT", "commit passdb bootstrap");
+  if (verdict == NH_SMB_OK)
+    fprintf(stderr, "smb authority: first-boot passdb adoption: %zu account(s)\n", count);
+  else
+    (void)exec_sql(a, "ROLLBACK", "rollback passdb bootstrap");
+  goto done;
+rollback:
+  if (stmt) sqlite3_finalize(stmt);
+  (void)exec_sql(a, "ROLLBACK", "rollback passdb bootstrap");
+done:
+  for (size_t i = 0; i < count; i++) free(users[i]);
+  free(users);
+  return verdict;
+}
 
 /*
  * Diff the passdb enumeration (via the adapter's `enumerate` op) against
@@ -437,7 +537,8 @@ static nh_smb_rc reconcile_passdb_against_journal(nh_smb_authority *a) {
   /* Load active-journal usernames into a comparable array. */
   sqlite3_stmt *stmt = NULL;
   int rc = sqlite3_prepare_v2(a->db,
-      "SELECT username FROM credentials WHERE revoked_at_ms IS NULL",
+      "SELECT username FROM credentials WHERE revoked_at_ms IS NULL "
+      "UNION SELECT username FROM adopted_passdb",
       -1, &stmt, NULL);
   if (rc != SQLITE_OK) {
     set_error(a, "reconcile prepare: %s", sqlite3_errmsg(a->db));
@@ -624,6 +725,14 @@ nh_smb_rc nh_smb_credential_issue(nh_smb_authority *a,
     return r;
   }
 
+  /* A newly issued credential supersedes any first-boot adopted account. */
+  r = journal_forget_adopted(a, req->account.username);
+  if (r != NH_SMB_OK) {
+    secure_free(&pw);
+    (void)exec_sql(a, "ROLLBACK", "rollback issue");
+    return r;
+  }
+
   int ok = passdb_set_password(a, req->account.username, (const char *)pw.ptr);
   if (ok != 0) {
     secure_free(&pw);
@@ -691,6 +800,13 @@ nh_smb_rc nh_smb_credential_revoke(nh_smb_authority *a, const char *username,
   /* Passdb hop is outside the DB txn — passdb is not transactional. */
   int d = passdb_disable(a, username);
   int rm = passdb_remove(a, username);
+  /* Forget an adopted baseline only after Samba actually removed it.
+   * SQLite's single DELETE is atomic; a failure leaves a loud drift on
+   * the next open rather than silently trusting a stale passdb state. */
+  if (rm == 0) {
+    r = journal_forget_adopted(a, username);
+    if (r != NH_SMB_OK) return r;
+  }
   if (!marked && d != 0 && rm != 0) return NH_SMB_NOT_FOUND;
   return NH_SMB_OK;
 }

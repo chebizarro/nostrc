@@ -2,16 +2,10 @@
 #
 # test_passdb_reconciliation.sh — plan §4.2 B3 (2026-09-25).
 #
-# Startup reconciliation refuses readiness on drift.  Hand-corrupted
-# passdb fixture: our mock `pdbedit -L` returns a synthetic account
-# list including a user that is NOT in the SQLite issuance journal.
-# The authority MUST return NH_SMB_RECONCILE_REQUIRED at open time
-# rather than auto-repairing (plan §4.2 B3).
-#
-# Additionally exercises the clean case: with the passdb enumeration
-# matching the journal exactly, open() succeeds.  This anchors the
-# test to REAL behaviour — a symmetric no-drift path — so a bug that
-# unconditionally returns RECONCILE_REQUIRED doesn't silently pass.
+# An empty journal accepts the first passdb snapshot (empty or manually
+# seeded). A durable bootstrap marker then makes all later opens strict:
+# passdb addition/deletion and an existing issuance-journal mismatch
+# must return NH_SMB_RECONCILE_REQUIRED.
 #
 set -euo pipefail
 
@@ -68,40 +62,66 @@ IGNORED
 export NH_SMB_SMBPASSWD_PATH="$STUB_BIN/smbpasswd"
 export NH_SMB_PDBEDIT_PATH="$STUB_BIN/pdbedit"
 
-# ─── Case A: drift (passdb has a user with no active journal row) ──
-
+# ─── Case A: truly empty first boot, then drift ───────────────────
 JOURNAL_A="$TEST_DIR/smb.a.db"
-# Fresh journal has ZERO active credentials.  The mock's user list
-# has one — that's the exact drift the plan §4.2 B3 test spec calls
-# out (unknown account in passdb).
+export PDBEDIT_MOCK_USERS=''
+out="$("$probe" "$JOURNAL_A" "$CONF")"
+[ "$out" = ok ] || { echo "FAIL: empty first boot: $out"; exit 1; }
+[ "$(sqlite3 "$JOURNAL_A" "SELECT value FROM metadata WHERE key='passdb_bootstrapped'")" = 1 ] || {
+  echo 'FAIL: first boot did not persist bootstrap marker'; exit 1;
+}
 export PDBEDIT_MOCK_USERS='rogue_alice:1042:Alice'
+rc=0; out="$("$probe" "$JOURNAL_A" "$CONF")" || rc=$?
+[ "$rc" -eq 42 ] && [ "$out" = reconcile-required ] || {
+  echo "FAIL: post-boot added passdb user accepted: rc=$rc out=$out"; exit 1;
+}
+echo 'PASS: empty first boot accepted; later passdb addition refused'
 
-rc=0
-out="$("$probe" "$JOURNAL_A" "$CONF")" || rc=$?
-if [ "$rc" -ne 42 ]; then
-  echo "FAIL: case A expected exit 42 (RECONCILE_REQUIRED), got $rc, stdout=$out"
-  exit 1
-fi
-if [ "$out" != "reconcile-required" ]; then
-  echo "FAIL: case A expected rc name 'reconcile-required', got '$out'"
-  exit 1
-fi
-echo "PASS: case A — drift refused readiness (RECONCILE_REQUIRED)"
-
-# ─── Case B: clean (both sides empty → open succeeds) ──────────────
+# ─── Case B: operator-seeded passdb adopted once, then checked ──
 JOURNAL_B="$TEST_DIR/smb.b.db"
-export PDBEDIT_MOCK_USERS=''  # empty passdb, empty journal → match
+export PDBEDIT_MOCK_USERS='nostr:994:Nostr acceptance test user'
+out="$("$probe" "$JOURNAL_B" "$CONF")"
+[ "$out" = ok ] || { echo "FAIL: pre-seeded first boot: $out"; exit 1; }
+[ "$(sqlite3 "$JOURNAL_B" 'SELECT username FROM adopted_passdb')" = nostr ] || {
+  echo 'FAIL: pre-seeded account not recorded in journal'; exit 1;
+}
+out="$("$probe" "$JOURNAL_B" "$CONF")"
+[ "$out" = ok ] || { echo "FAIL: unchanged adopted account: $out"; exit 1; }
+export PDBEDIT_MOCK_USERS=''
+rc=0; out="$("$probe" "$JOURNAL_B" "$CONF")" || rc=$?
+[ "$rc" -eq 42 ] && [ "$out" = reconcile-required ] || {
+  echo "FAIL: post-boot deleted passdb user accepted: rc=$rc out=$out"; exit 1;
+}
+echo 'PASS: pre-seeded account adopted; later deletion refused'
 
-rc=0
-out="$("$probe" "$JOURNAL_B" "$CONF")" || rc=$?
-if [ "$rc" -ne 0 ]; then
-  echo "FAIL: case B expected exit 0 (OK), got $rc, stdout=$out"
-  exit 1
-fi
-if [ "$out" != "ok" ]; then
-  echo "FAIL: case B expected rc name 'ok', got '$out'"
-  exit 1
-fi
-echo "PASS: case B — no drift, open() accepted readiness"
+# ─── Case C: old journal with issuance history must not adopt ───
+JOURNAL_C="$TEST_DIR/smb.c.db"
+export PDBEDIT_MOCK_USERS=''
+out="$("$probe" "$JOURNAL_C" "$CONF")"
+[ "$out" = ok ] || { echo "FAIL: seed old journal schema: $out"; exit 1; }
+sqlite3 "$JOURNAL_C" "DELETE FROM metadata WHERE key='passdb_bootstrapped';
+INSERT INTO credentials(credential_id,username,uid,pubkey_hex,binding,issued_at_ms,expires_at_ms)
+VALUES('00000000-0000-4000-8000-000000000001','issued_alice',1042,
+       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+       '',1,9999999999999);"
+export PDBEDIT_MOCK_USERS='rogue_alice:1042:Alice'
+rc=0; out="$("$probe" "$JOURNAL_C" "$CONF")" || rc=$?
+[ "$rc" -eq 42 ] && [ "$out" = reconcile-required ] || {
+  echo "FAIL: existing journal drift accepted: rc=$rc out=$out"; exit 1;
+}
+echo 'PASS: existing issuance journal still refuses drift'
 
-echo "PASS: startup reconciliation refuses drift, accepts clean state"
+# ─── Case D: revoking an adopted account must not strand its baseline ──
+JOURNAL_D="$TEST_DIR/smb.d.db"
+export PDBEDIT_MOCK_USERS='nostr:994:Nostr acceptance test user'
+out="$("$probe" "$JOURNAL_D" "$CONF")"
+[ "$out" = ok ] || { echo "FAIL: seed adopted account: $out"; exit 1; }
+out="$("$probe" "$JOURNAL_D" "$CONF" revoke nostr)"
+[ "$out" = ok ] || { echo "FAIL: revoke adopted account: $out"; exit 1; }
+[ -z "$(sqlite3 "$JOURNAL_D" 'SELECT username FROM adopted_passdb')" ] || {
+  echo 'FAIL: revoke left adopted baseline behind'; exit 1;
+}
+export PDBEDIT_MOCK_USERS=''
+out="$("$probe" "$JOURNAL_D" "$CONF")"
+[ "$out" = ok ] || { echo "FAIL: restart after adopted revoke: $out"; exit 1; }
+echo 'PASS: adopted revoke removes baseline; restart accepted'
