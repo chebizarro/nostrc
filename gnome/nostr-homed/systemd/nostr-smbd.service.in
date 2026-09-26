@@ -27,9 +27,15 @@ After=nostr-home-fuse.service
 [Service]
 Type=notify
 # -F: foreground (do not daemonize; systemd tracks the main pid).
-# -s: select the standalone config file.  Both flags are stable in
-# every supported Samba release (>= 4.15).
-ExecStart=/usr/sbin/smbd -F -s @NH_SMB_CONF_PATH@
+# --no-process-group: do NOT call setsid() to become a process-group
+# leader. Under systemd smbd is already the pgid leader, so setsid()
+# returns EPERM and become_daemon() aborts with "Failed to create
+# session, error code 1". This flag mirrors Ubuntu's stock
+# /lib/systemd/system/smbd.service ExecStart posture. Discovered by
+# Wave 4 Oscar acceptance (nostrc-0vuu).
+# -s: select the standalone config file.  All three flags are stable
+# in every supported Samba release (>= 4.15).
+ExecStart=/usr/sbin/smbd -F --no-process-group -s @NH_SMB_CONF_PATH@
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=2s
@@ -58,12 +64,20 @@ RuntimeDirectoryMode=0755
 LogsDirectory=nostr-samba
 LogsDirectoryMode=0755
 # State dir hosts the dedicated tdbsam passdb + the smb.db issuance
-# journal shared with nostr-authd.  0700 keeps the passdb blob
-# root-only; nostr-authd + smbd both run as root here so this is
-# safe.  A future rename-and-lift can drop this to 0750 and add a
-# group.
+# journal shared with nostr-authd, PLUS the FUSE-materialized share
+# root traversed by force-user'd smbd children.  Mode 0755 is
+# REQUIRED for the force-user account (nostr-smb-share) to traverse
+# into share-root/; Samba's own private/state files live in the
+# `samba-state` subdir which smbd chmods to 0700 on start.  See
+# smb.conf.standalone.sample `state directory` / `private dir`.
+# Discovered by Wave 4 Oscar acceptance (nostrc-45b2): Samba's start
+# path unconditionally chmods `state directory` -> 0700 which flipped
+# the parent to 0700 on every restart and blocked traversal.  Passdb
+# blob (0600 from smbpasswd) + journal (0600 from nostr-authd) still
+# protect their contents; the parent is only traversable, not
+# readable-of-sensitive-contents.
 StateDirectory=nostr-auth
-StateDirectoryMode=0700
+StateDirectoryMode=0755
 
 # Hardening — deliberately less aggressive than nostr-authd's set
 # because smbd needs raw sockets, TCP 445 / 139 binds, and DAC

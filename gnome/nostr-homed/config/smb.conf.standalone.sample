@@ -44,6 +44,20 @@
     # nostr-authd.service's StateDirectory.
     passdb backend = tdbsam:/var/lib/nostr-auth/smbpasswd
 
+    # Pin Samba's private/state dirs to a DEDICATED subdirectory
+    # (`samba-state`) so Samba's mandatory-chmod-to-0700 on start
+    # doesn't lock down the parent /var/lib/nostr-auth (which must
+    # stay traversable by the force-user account below — the share
+    # root sits under the same parent).  Discovered by Wave 4 Oscar
+    # acceptance (nostrc-45b2): without this, every `systemctl
+    # restart nostr-smbd` reverts /var/lib/nostr-auth to 0700 and
+    # every share op returns NT_STATUS_ACCESS_DENIED.  Samba creates
+    # the subdir at 0700 on first launch; passdb (0600 file) still
+    # lives at /var/lib/nostr-auth/smbpasswd — outside samba-state —
+    # because pdbedit/smbpasswd share it with nostr-authd.
+    state directory = /var/lib/nostr-auth/samba-state
+    private dir = /var/lib/nostr-auth/samba-state
+
     # No guest access — the entire authority mediates authenticated
     # users only.
     map to guest = never
