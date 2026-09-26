@@ -15,7 +15,6 @@ usr/lib/libnip04.a
 usr/lib/libnip05.so
 usr/lib/libnip25.so
 usr/lib/libnostr_nip77.a
-usr/lib/*/libnip19.so
 usr/lib/*/libnostr_nip55l_core.so
 usr/lib/*/libnostr_nip55l_glib.so
 

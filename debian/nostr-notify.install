@@ -1,3 +1,4 @@
 usr/libexec/nostr-notify-daemon
 usr/lib/systemd/user/nostr-notify.service
 usr/share/nostr-notify/nostr-notify.conf.example
+usr/lib/*/libnip19.so*
