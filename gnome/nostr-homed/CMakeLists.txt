@@ -2398,11 +2398,13 @@ if(NOSTR_NOTIFY_GIO_FOUND)
       src/notify/notify_gnotification.c
     )
     target_include_directories(test_notify_sub PRIVATE
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/notify)
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/notify
+      ${CMAKE_SOURCE_DIR}/nips/nip19/include)
     target_compile_options(test_notify_sub PRIVATE
       -Wall -Wextra -Wno-error -Wno-unused-parameter)
+    # nip19: deep links are NIP-21 nevent URIs (nostrc-1v65).
     target_link_libraries(test_notify_sub PRIVATE
-      PkgConfig::NOSTR_NOTIFY_GIO)
+      PkgConfig::NOSTR_NOTIFY_GIO nip19 nostr)
     add_test(NAME notify_sub COMMAND test_notify_sub)
     set_tests_properties(notify_sub PROPERTIES
       LABELS "nostr-homed;notify" TIMEOUT 30)

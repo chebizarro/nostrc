@@ -14,6 +14,10 @@
  *      GTK markup is escaped so an event containing `<script>` cannot
  *      inject markup into Pango.
  *
+ *   3. Deep links are NIP-21 `nostr:nevent1…` (nostrc-1v65): event id +
+ *      kind TLV (1059 / 9..12) + the arrival relay as hint, no author TLV,
+ *      decodable with nip19 — so nostr-dispatcher can route by kind.
+ *
  * The test uses the notifier's own pure helpers (dm_title / dm_opaque_body /
  * group_preview / dm_deep_link_uri / group_deep_link_uri) — GLib's
  * `g_notification_serialize` is a private API we deliberately avoid
@@ -29,6 +33,7 @@
 #include <glib.h>
 
 #include "notify_gnotification.h"
+#include "nostr/nip19/nip19.h"
 
 #define DM_OPAQUE_BODY "You have a new encrypted direct message."
 #define DM_TITLE "Nostr message"
@@ -58,6 +63,29 @@ static int contains_hex_run(const char *s, size_t min_len) {
   return 0;
 }
 
+/* Decode a deep link and check id / kind / relay; exits on mismatch. */
+static void assert_nevent(const char *uri, const char *id, int kind,
+                          const char *relay) {
+  if (!uri || strncmp(uri, "nostr:nevent1", 13) != 0) {
+    fprintf(stderr, "test_notify_sub: not a nostr:nevent URI: %s\n",
+            uri ? uri : "(null)");
+    exit(1);
+  }
+  NostrEventPointer *p = NULL;
+  if (nostr_nip19_decode_nevent(uri + 6, &p) != 0 || !p) {
+    fprintf(stderr, "test_notify_sub: nevent does not decode: %s\n", uri);
+    exit(1);
+  }
+  if (strcmp(p->id, id) != 0 || p->kind != kind || p->author != NULL ||
+      (relay ? (p->relays_count != 1 || strcmp(p->relays[0], relay) != 0)
+             : p->relays_count != 0)) {
+    fprintf(stderr, "test_notify_sub: nevent fields wrong (kind=%d relays=%zu)\n",
+            p->kind, p->relays_count);
+    exit(1);
+  }
+  nostr_event_pointer_free(p);
+}
+
 static const char *k_giftwrap =
     "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
 
@@ -84,27 +112,22 @@ static void assert_dm_opacity(void) {
     exit(1);
   }
 
-  /* Deep-link URI DOES contain the giftwrap id — that is how GNostr
-   * routes to the correct thread on click. */
-  g_autofree char *uri = nostr_notify_dm_deep_link_uri(k_giftwrap);
-  if (!uri || !contains(uri, k_giftwrap)) {
-    fprintf(stderr,
-            "test_notify_sub: deep-link URI missing giftwrap id: %s\n",
-            uri ? uri : "(null)");
-    exit(1);
-  }
-  /* And it must be a nostr:// URI, not http/https or anything else that
-   * would hijack the click. */
-  if (strncmp(uri, "nostr://", 8) != 0) {
-    fprintf(stderr, "test_notify_sub: deep-link URI wrong scheme: %s\n", uri);
-    exit(1);
-  }
+  /* Deep-link URI encodes the giftwrap id + kind 1059 + arrival relay —
+   * that is how the dispatcher routes the click to the DM handler. */
+  g_autofree char *uri =
+      nostr_notify_dm_deep_link_uri(k_giftwrap, "wss://inbox.example.com");
+  assert_nevent(uri, k_giftwrap, 1059, "wss://inbox.example.com");
+  g_autofree char *uri_norelay = nostr_notify_dm_deep_link_uri(k_giftwrap, NULL);
+  assert_nevent(uri_norelay, k_giftwrap, 1059, NULL);
+  /* A non-websocket "relay" never becomes a hint. */
+  g_autofree char *uri_bad = nostr_notify_dm_deep_link_uri(k_giftwrap, "file:///x");
+  assert_nevent(uri_bad, k_giftwrap, 1059, NULL);
 
   /* Build the full GNotification and confirm the coalescing withdraw_id
    * does NOT leak the full giftwrap id (only an internal 8-hex prefix
    * used as a coalescing key). */
   NostrNotifyBuild build; memset(&build, 0, sizeof build);
-  GNotification *n = nostr_notify_build_dm(k_giftwrap, &build);
+  GNotification *n = nostr_notify_build_dm(k_giftwrap, "wss://inbox.example.com", &build);
   if (!n || !build.withdraw_id) {
     fprintf(stderr, "test_notify_sub: build_dm returned NULL\n");
     exit(1);
@@ -121,7 +144,7 @@ static void assert_dm_opacity(void) {
   /* Truncated event id (63 chars) MUST refuse to build — a malformed id
    * cannot advertise a broken deep link. */
   memset(&build, 0, sizeof build);
-  n = nostr_notify_build_dm("deadbeef", &build);
+  n = nostr_notify_build_dm("deadbeef", NULL, &build);
   if (n) {
     fprintf(stderr, "test_notify_sub: build_dm accepted short id\n");
     exit(1);
@@ -173,18 +196,31 @@ static void assert_group_preview_truncation(void) {
   g_autofree char *nullp = nostr_notify_group_preview(NULL);
   if (!nullp) { fprintf(stderr, "NULL preview NULL\n"); exit(1); }
 
-  /* Deep-link URIs for groups carry BOTH the h_tag AND the event id. */
+  /* Group deep links: nevent with the group-message kind and the group
+   * relay as hint (the `h` tag travels inside the signed event). */
   const char *h_tag = "test-group";
   const char *event_id =
       "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe";
-  g_autofree char *guri = nostr_notify_group_deep_link_uri(h_tag, event_id);
-  if (!guri || !contains(guri, h_tag) || !contains(guri, event_id)) {
-    fprintf(stderr, "test_notify_sub: group URI missing parts: %s\n",
-            guri ? guri : "(null)");
+  g_autofree char *guri =
+      nostr_notify_group_deep_link_uri(event_id, 9, "wss://groups.example.com");
+  assert_nevent(guri, event_id, 9, "wss://groups.example.com");
+  if (nostr_notify_group_deep_link_uri(event_id, 1, NULL) != NULL) {
+    fprintf(stderr, "test_notify_sub: group URI accepted non-NIP-29 kind\n");
     exit(1);
   }
-  if (strncmp(guri, "nostr://", 8) != 0) {
-    fprintf(stderr, "test_notify_sub: group URI wrong scheme: %s\n", guri);
+
+  NostrNotifyBuild build; memset(&build, 0, sizeof build);
+  GNotification *n = nostr_notify_build_group("Group", h_tag, event_id, 11, "hi",
+                                              "wss://groups.example.com", &build);
+  if (!n || !build.withdraw_id) {
+    fprintf(stderr, "test_notify_sub: build_group returned NULL\n");
+    exit(1);
+  }
+  nostr_notify_build_dispose(&build);
+  g_object_unref(n);
+  memset(&build, 0, sizeof build);
+  if (nostr_notify_build_group(NULL, h_tag, event_id, 1, "hi", NULL, &build)) {
+    fprintf(stderr, "test_notify_sub: build_group accepted kind 1\n");
     exit(1);
   }
 }
