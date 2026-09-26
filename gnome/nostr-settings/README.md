@@ -107,10 +107,11 @@ libadwaita 1.5 (`*_VERSION_MAX_ALLOWED`) so newer dev headers cannot leak
 symbols the oldest supported distro lacks.
 
 For offscreen verification, `NOSTR_SETTINGS_SCREENSHOT_DIR=/tmp/x
-nostr-settings` renders each page to `/tmp/x/nostr-settings-<page>.png`
-(GTK draws the snapshot itself, so any backend works, e.g. under
-`xvfb-run`) and quits; `NOSTR_SETTINGS_SCREENSHOT_DELAY` (seconds, default
-6) lets asynchronous loads settle first.
+nostr-settings --page relays` renders that page to
+`/tmp/x/nostr-settings-relays.png` and quits (GTK draws the snapshot
+itself, so any backend works, e.g. under `xvfb-run`; one page per run);
+`NOSTR_SETTINGS_SCREENSHOT_DELAY` (seconds, default 6) lets asynchronous
+loads settle first.
 
 ## Tests
 
