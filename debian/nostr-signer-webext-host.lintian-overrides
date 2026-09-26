@@ -1,0 +1,6 @@
+# Google Chrome only reads system native-messaging host manifests from
+# /etc/opt/chrome/native-messaging-hosts/ (the path is fixed by Chrome, not
+# chosen by us); Debian's gnome-browser-connector ships the same override.
+nostr-signer-webext-host: dir-or-file-in-etc-opt [etc/opt/chrome/]
+nostr-signer-webext-host: dir-or-file-in-etc-opt [etc/opt/chrome/native-messaging-hosts/]
+nostr-signer-webext-host: dir-or-file-in-etc-opt [etc/opt/chrome/native-messaging-hosts/org.nostr.signer_bridge.json]
