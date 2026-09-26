@@ -146,6 +146,7 @@ jobs:
     needs: detect-component
     if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: ubuntu-latest
+    container: ubuntu:22.04
     env:
       RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
     steps:
@@ -167,9 +168,9 @@ jobs:
         run: |
           mkdir -p appimage-tools
           cd appimage-tools
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk.sh
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-gtk.sh appimagetool-x86_64.AppImage
       - name: Prepare AppDir
         run: |
@@ -207,6 +208,7 @@ jobs:
     needs: detect-component
     if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
     runs-on: ubuntu-latest
+    container: ubuntu:22.04
     env:
       RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
     steps:
@@ -225,8 +227,8 @@ jobs:
         run: |
           mkdir -p appimage-tools
           cd appimage-tools
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage appimagetool-x86_64.AppImage
       - name: Prepare AppDir
         run: |
