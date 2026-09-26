@@ -24,7 +24,19 @@ G_BEGIN_DECLS
 #define GNOSTR_SECRET_SCHEMA_NAME                   "org.gnostr.Signer/identity"
 #define GNOSTR_SECRET_LEGACY_SIGNER_KEY_SCHEMA_NAME "org.gnostr.Signer/key"
 #define GNOSTR_SECRET_LEGACY_HELPER_SCHEMA_NAME     "org.gnostr.Key"
+#define GNOSTR_SECRET_LEGACY_CLIENT_SCHEMA_NAME     "org.gnostr.NostrKey"
 #define GNOSTR_SECRET_MIGRATION_SCHEMA_NAME         "org.gnostr.Signer/migration"
+
+/* org.gnostr.NostrKey items carry application=<this>; items another program
+ * wrote under that schema name are not the gnostr client's and are left. */
+#define GNOSTR_SECRET_LEGACY_CLIENT_APPLICATION     "org.gnostr.Client"
+/* Friendly label given to keys imported from the gnostr client keystore. */
+#define GNOSTR_SECRET_LEGACY_CLIENT_IMPORT_LABEL    "gnostr import"
+
+/* Name of the marker item the daemon writes once a migration pass leaves
+ * nothing retryable. v2 (nostrc-e5nz) added org.gnostr.NostrKey to the
+ * legacy list: keyrings that completed the v1 pass are scanned once more. */
+#define GNOSTR_SECRET_MIGRATION_MARKER              "legacy-keys-v2"
 
 #define GNOSTR_SECRET_CURVE           "secp256k1"
 #define GNOSTR_SECRET_ORIGIN_SOFTWARE "software"
@@ -52,6 +64,11 @@ extern const SecretSchema gnostr_secret_legacy_signer_key_schema;
  * {type,npub,uid,curve,origin,hardware_slot}. Secret is hex/nsec, or a
  * hardware reference when origin == "hardware". */
 extern const SecretSchema gnostr_secret_legacy_helper_schema;
+
+/* Legacy: apps/gnostr/src/util/keystore_libsecret.c (retired by nostrc-e5nz:
+ * the gnostr client no longer holds private keys) {npub,application}.
+ * Secret is nsec1 text; item label "GNostr: <label or npub>". */
+extern const SecretSchema gnostr_secret_legacy_client_schema;
 
 /* Per-keyring marker recording that a migration pass completed. {name} */
 extern const SecretSchema gnostr_secret_migration_schema;
@@ -88,7 +105,8 @@ const gchar *gnostr_secret_origin_from_key_type(const gchar *key_type);
 
 typedef enum {
   GNOSTR_SECRET_LEGACY_SIGNER_KEY, /* org.gnostr.Signer/key */
-  GNOSTR_SECRET_LEGACY_HELPER_KEY  /* org.gnostr.Key */
+  GNOSTR_SECRET_LEGACY_HELPER_KEY, /* org.gnostr.Key */
+  GNOSTR_SECRET_LEGACY_CLIENT_KEY  /* org.gnostr.NostrKey (gnostr client) */
 } GnostrSecretLegacyKind;
 
 /* Map a legacy item's attributes onto an identity. Pointers in *out borrow
@@ -97,11 +115,19 @@ typedef enum {
  * (the daemon uses the label as key_id when it differs from the npub).
  * Returns FALSE with *why_not set (static string) when the item must not be
  * migrated — currently: hardware references, which carry no private key the
- * signer daemon could use. */
+ * signer daemon could use, and org.gnostr.NostrKey items whose application
+ * attribute names another program. org.gnostr.NostrKey items map to
+ * label GNOSTR_SECRET_LEGACY_CLIENT_IMPORT_LABEL. */
 gboolean gnostr_secret_legacy_to_identity(GnostrSecretLegacyKind kind,
                                           GHashTable *legacy_attrs,
                                           GnostrSecretIdentity *out,
                                           const gchar **why_not);
+
+/* Whether a migrated item's label also becomes its key_id selector (the
+ * StoreKey convention). TRUE for org.gnostr.Signer/key and org.gnostr.Key,
+ * whose labels named the identity; FALSE for org.gnostr.NostrKey, whose
+ * fixed import label would give every imported key the same selector. */
+gboolean gnostr_secret_legacy_label_is_selector(GnostrSecretLegacyKind kind);
 
 /* Store secret under gnostr_secret_schema in the default collection, then
  * delete any other item for the same {key_id, npub} whose attribute set

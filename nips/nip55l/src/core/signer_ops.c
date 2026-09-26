@@ -1110,21 +1110,24 @@ int nostr_nip55l_clear_owner(const char *selector){
  * One-shot keyring migration (nostrc-bml6)
  *
  * Re-stores key material found under the legacy schemas
- * (org.gnostr.Signer/key from gnostr-signer's removed secret-storage.c, and
- * the Seahorse helper's former org.gnostr.Key) under the unified
+ * (org.gnostr.Signer/key from gnostr-signer's removed secret-storage.c, the
+ * Seahorse helper's former org.gnostr.Key, and — nostrc-e5nz — the gnostr
+ * client's retired org.gnostr.NostrKey keystore) under the unified
  * org.gnostr.Signer/identity schema, then deletes each original.
  *
  * Idempotent: re-storing an identical item replaces it in place, and an
  * original is only deleted after its replacement was stored. A marker item
- * (org.gnostr.Signer/migration name=legacy-keys-v1) is written once a pass
- * leaves nothing retryable behind, and short-circuits every later start.
+ * (org.gnostr.Signer/migration name=GNOSTR_SECRET_MIGRATION_MARKER) is
+ * written once a pass leaves nothing retryable behind, and short-circuits
+ * every later start. The marker name is versioned: adding a legacy schema
+ * bumps it, so keyrings that finished an earlier pass are scanned again.
  * When no legacy item exists the marker is not written: that would force an
  * unlock prompt at daemon start just to record that there was nothing to do,
- * and the two attribute-only searches it would save cost no prompt.
+ * and the attribute-only searches it would save cost no prompt.
  * ------------------------------------------------------------------------- */
 
 #ifdef NIP55L_HAVE_LIBSECRET
-#define NIP55L_MIGRATION_MARKER "legacy-keys-v1"
+#define NIP55L_MIGRATION_MARKER GNOSTR_SECRET_MIGRATION_MARKER
 
 typedef enum { MIG_OK, MIG_SKIP, MIG_RETRY } mig_result;
 
@@ -1177,7 +1180,27 @@ static char *npub_from_sk_hex(const char *sk_hex){
   return npub;
 }
 
-static mig_result migrate_one(SecretItem *item, GnostrSecretLegacyKind kind,
+/* TRUE when the unified schema already holds a software key for npub. */
+static gboolean unified_software_key_present(SecretService *service, const char *npub){
+  GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
+  g_hash_table_insert(attrs, (gpointer)"npub", (gpointer)npub);
+  GList *items = secret_service_search_sync(service, &gnostr_secret_schema, attrs,
+                                            SECRET_SEARCH_ALL, NULL, NULL);
+  g_hash_table_unref(attrs);
+  gboolean present = FALSE;
+  for (GList *l = items; l && !present; l = l->next) {
+    GHashTable *ia = secret_item_get_attributes(l->data);
+    /* Items from before the schema gained "origin" are software keys. */
+    present = !ia || g_strcmp0(g_hash_table_lookup(ia, "origin"),
+                               GNOSTR_SECRET_ORIGIN_HARDWARE) != 0;
+    if (ia) g_hash_table_unref(ia);
+  }
+  g_list_free_full(items, g_object_unref);
+  return present;
+}
+
+static mig_result migrate_one(SecretService *service, SecretItem *item,
+                              GnostrSecretLegacyKind kind,
                               const char *schema_name, const char *uid_buf){
   mig_result res = MIG_RETRY;
   GHashTable *legacy = secret_item_get_attributes(item);
@@ -1212,12 +1235,21 @@ static mig_result migrate_one(SecretItem *item, GnostrSecretLegacyKind kind,
               schema_name, id.npub, npub);
   /* Same selector convention as StoreKey: a friendly name that is not the
    * npub becomes key_id, so the legacy label keeps selecting this key; the
-   * npub still resolves through the daemon's npub fallback lookup. */
-  id.key_id = (id.label && *id.label && strcmp(id.label, npub) != 0) ? id.label : npub;
+   * npub still resolves through the daemon's npub fallback lookup. The
+   * client keystore's fixed import label is not a selector. */
+  id.key_id = (gnostr_secret_legacy_label_is_selector(kind) &&
+               id.label && *id.label && strcmp(id.label, npub) != 0) ? id.label : npub;
   id.npub = npub;
   id.owner_uid = uid_buf;
 
-  if (!gnostr_secret_store_save(&id, sk_hex, &err)) {
+  /* A key the client also held may already have been imported into the
+   * signer by hand. Re-storing it under the import label would replace that
+   * item (same {key_id, npub}, different attribute set) and lose the user's
+   * label; the signer already has the key, so only the client copy goes. */
+  if (kind == GNOSTR_SECRET_LEGACY_CLIENT_KEY && unified_software_key_present(service, npub)) {
+    g_message("nip55l: keyring-migration: %s already held by the signer; retiring the %s copy",
+              npub, schema_name);
+  } else if (!gnostr_secret_store_save(&id, sk_hex, &err)) {
     g_message("nip55l: keyring-migration: re-store of %s failed: %s; will retry",
               npub, err ? err->message : "unknown");
     g_clear_error(&err);
@@ -1251,6 +1283,7 @@ int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out){
   } sources[] = {
     { &gnostr_secret_legacy_signer_key_schema, GNOSTR_SECRET_LEGACY_SIGNER_KEY },
     { &gnostr_secret_legacy_helper_schema,     GNOSTR_SECRET_LEGACY_HELPER_KEY },
+    { &gnostr_secret_legacy_client_schema,     GNOSTR_SECRET_LEGACY_CLIENT_KEY },
   };
   int rc = 0;
   GError *err = NULL;
@@ -1289,7 +1322,7 @@ int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out){
     }
     for (GList *l = items; l; l = l->next) {
       processed++;
-      switch (migrate_one(l->data, sources[i].kind, sources[i].schema->name, uid_buf)) {
+      switch (migrate_one(service, l->data, sources[i].kind, sources[i].schema->name, uid_buf)) {
         case MIG_OK:    r.migrated++; break;
         case MIG_SKIP:  r.skipped++;  break;
         case MIG_RETRY: r.failed++;   break;

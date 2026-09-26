@@ -50,6 +50,16 @@ const SecretSchema gnostr_secret_legacy_helper_schema = {
   }
 };
 
+const SecretSchema gnostr_secret_legacy_client_schema = {
+  .name = GNOSTR_SECRET_LEGACY_CLIENT_SCHEMA_NAME,
+  .flags = SECRET_SCHEMA_NONE,
+  .attributes = {
+    { "npub",        SECRET_SCHEMA_ATTRIBUTE_STRING },
+    { "application", SECRET_SCHEMA_ATTRIBUTE_STRING },
+    { NULL, 0 }
+  }
+};
+
 const SecretSchema gnostr_secret_migration_schema = {
   .name = GNOSTR_SECRET_MIGRATION_SCHEMA_NAME,
   .flags = SECRET_SCHEMA_NONE,
@@ -140,6 +150,17 @@ gboolean gnostr_secret_legacy_to_identity(GnostrSecretLegacyKind kind,
       out->hardware_slot = g_hash_table_lookup(legacy_attrs, "hardware_slot");
       break;
     }
+    case GNOSTR_SECRET_LEGACY_CLIENT_KEY: {
+      const gchar *app = g_hash_table_lookup(legacy_attrs, "application");
+      if (is_set(app) && strcmp(app, GNOSTR_SECRET_LEGACY_CLIENT_APPLICATION) != 0) {
+        if (why_not) *why_not = "application attribute is not " GNOSTR_SECRET_LEGACY_CLIENT_APPLICATION;
+        return FALSE;
+      }
+      /* The client keystore only ever held software nsec keys. */
+      out->label = GNOSTR_SECRET_LEGACY_CLIENT_IMPORT_LABEL;
+      out->origin = GNOSTR_SECRET_ORIGIN_SOFTWARE;
+      break;
+    }
     default:
       if (why_not) *why_not = "unknown legacy schema";
       return FALSE;
@@ -149,6 +170,10 @@ gboolean gnostr_secret_legacy_to_identity(GnostrSecretLegacyKind kind,
     return FALSE;
   }
   return TRUE;
+}
+
+gboolean gnostr_secret_legacy_label_is_selector(GnostrSecretLegacyKind kind){
+  return kind != GNOSTR_SECRET_LEGACY_CLIENT_KEY;
 }
 
 /* TRUE when item_attrs carries exactly want's attributes. Namespaced keys
