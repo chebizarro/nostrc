@@ -411,10 +411,15 @@ int main(void) {
   json_node_unref(r);
   g_print("ok nip44.decrypt garbage -> Error.Internal -> internal\n");
 
-  /* WebLN stub */
+  /* WebLN with no wallet agent on this bus (test_nm_webln_e2e covers the
+   * agent): wallet_unavailable, and status says "don't inject". */
   r = call(&e, "{\"id\":\"w\",\"method\":\"webln.getInfo\",\"origin\":\"https://allowed.example\"}");
-  assert_error(r, "w", "unsupported");
+  assert_error(r, "w", "wallet_unavailable");
   json_node_unref(r);
+  r = call(&e, "{\"id\":\"ws\",\"method\":\"webln.status\"}");
+  CHECK(!json_object_get_boolean_member(json_node_get_object(result_of(r)), "available"));
+  json_node_unref(r);
+  g_print("ok webln without an agent -> wallet_unavailable / available:false\n");
 
   /* signer gone -> signer_unavailable */
   g_subprocess_force_exit(e.daemon);

@@ -39,6 +39,7 @@ Amounts are millisatoshis.
 | `OpenUri(s uri)` | | scheme-handler link (always confirmed) |
 | `GetBudget(s app_id)` | `→ u msat_per_day, t spent_today_msat` | own: always; other app: trusted only |
 | `SetBudget(s app_id, u msat_per_day)` | | lower own: always; otherwise confirm (a budget never grants read access) |
+| `GetInfoFor` / `GetBalanceFor` / `MakeInvoiceFor` / `PayInvoiceFor` `(s origin, …)` | as the plain method | as the plain method, **with the web origin as the app** — browser bridge only, see [Web origins](#web-origins-browser-bridge) |
 
 `app_id = ""` means "the caller". Signals: `PaymentReceived(a{sv})`,
 `PaymentSent(a{sv})`, `BudgetExceeded(s app_id, t requested_msat, t remaining_msat)`.
@@ -189,6 +190,65 @@ raising one's own budget (always confirmed); dialog spam (rate-limited,
 default-deny); spoofed "link" prompts (links arrive through `OpenUri`, whose
 caller is identified and named as the link's opener).
 
+<a id="web-origins-browser-bridge"></a>
+**Web origins (browser bridge).** The WebLN browser extension reaches the
+agent through its native-messaging host `nostr-signer-webext-host`
+(`apps/gnostr-signer/native-host/`). The browser spawns that host, so it
+inherits the browser's cgroup and would be identified as the browser: every
+website would share one budget and one "Always allow". The `*For` methods
+therefore take the page origin as first argument, under one rule — **only the
+bridge may assert an origin**:
+
+* the caller is same-uid, identified as a bare executable or a systemd app
+  scope (never Flatpak, Snap or unidentified), and its `/proc/<pid>/exe`
+  equals `<libexecdir>/nostr-signer-webext-host` both as a path and by
+  device/inode. Both must match: a hard link or byte copy elsewhere, a
+  replaced binary (`(deleted)`) or the same path naming a different file
+  inside another mount namespace does not qualify. The exe is read
+  under the same pidfd / PID-recheck liveness guard as the identity, and
+  the gate only runs after that guard completed;
+* the origin must be a browser-serialized secure origin (`https://host[:port]`,
+  or `http://` on localhost / `*.localhost` / `127.0.0.1` / `[::1]`;
+  lowercase, no default port, no path). Such ids contain `://`, so they can
+  never collide with a reverse-DNS, `snap.` or `exe:` app id (they are
+  opaque keys in `budgets.json`, never path components);
+* anyone else calling a `*For` method gets `Denied` (never a silent fallback
+  to their own identity); a malformed origin gets `InvalidArgs`.
+
+The origin then *is* the application for that call: policy, "Always allow
+this site", the daily budget, the spend ledger, the per-app prompt limit and
+`PaymentSent.app_id` are all keyed on it, and the dialog names the site ("The
+website https://snort.social (in Firefox, via the Nostr browser extension)").
+Settings apps see and set site budgets with
+`GetBudget`/`SetBudget("https://snort.social", …)`. The same origin string
+is the same principal whichever browser it came from.
+
+| Identity class | Set by | Can be trusted? |
+|---|---|---|
+| Flatpak | sandbox (`.flatpak-info`) | yes, if listed in `trusted-apps` |
+| snap / systemd scope / `exe:` | the process itself (unverified) | never |
+| web origin (`https://…`) | the browser, relayed by the exe-gated bridge | never (not attested) |
+
+Trust assumptions, stated plainly: **the browser is a trusted attester** of
+the origin (the extension takes it from the browser's message sender, never
+from the page, and the host re-validates it); a compromised browser is a
+compromised bridge, and the exe gate does not defend against it. Like every
+unsandboxed identity this protects site budgets against over-eager sites
+and sandboxed apps, not against malware running as you: any process of the
+same user can exec the bridge binary and feed it frames (it could equally
+edit `budgets.json`). A sandboxed app that can run commands on the host
+(`org.freedesktop.Flatpak` talk-name, `flatpak-spawn --host`, or an
+equivalent portal escape) is outside its sandbox and therefore out of scope.
+The bridge is a single short-lived process per browser connection: it exits
+on stdin EOF and never forks, so no other program inherits its bus
+connection.
+
+Test builds only (CMake `NOSTR_WALLET_AGENT_ORIGIN_BRIDGE_ENV`, default
+`BUILD_TESTING`; packages are built with it off):
+`NOSTR_WALLET_AGENT_ORIGIN_BRIDGES` (colon-separated absolute paths)
+replaces the built-in bridge path so CTest can run the build-tree host, and
+the agent logs that the override is active.
+
 **Secret handling.** The pairing URI lives only in the Secret Service item
 and in agent memory (wiped on drop); it is never returned over D-Bus, never
 logged, and never written to the budget file. Preimages are returned only to
@@ -277,7 +337,13 @@ caller identification.
   BIP-21 `bitcoin:` (lightning fallback, amounts, `req-` params) and
   `nostr+walletconnect:` parsing.
 * `test_policy` — the approval matrix above.
-* `test_caller` — Flatpak info / snap / systemd-scope parsing.
+* `test_caller` — Flatpak info / snap / systemd-scope parsing; web-origin
+  syntax, the browser-bridge gate (kinds, path + inode, replaced binary,
+  foreign uid) and the web-origin principal.
+* `test_budget` also covers web origins as opaque budget keys.
+* The `*For` methods are exercised end to end against the real agent binary
+  by `apps/gnostr-signer/native-host/tests/test_nm_webln_e2e.c` (browser
+  bridge allowed, any other caller `Denied`).
 
 ## Not supported (yet)
 

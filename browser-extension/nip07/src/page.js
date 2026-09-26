@@ -70,7 +70,6 @@
   });
 
   Object.defineProperty(window, 'nostr', { value: nostr, enumerable: true, configurable: false, writable: false });
-
-  /* WebLN: intentionally not injected until org.nostr.Wallet1 exists — see
-   * src/providers/webln.js and nostrc-yka8. */
+  /* window.webln lives in src/providers/webln.js (injected only when a
+   * wallet is paired). */
 })();

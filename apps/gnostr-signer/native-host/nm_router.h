@@ -10,8 +10,7 @@
  *
  * Providers are a small static vtable so a new API surface drops in as a
  * single file: nm_provider_nip07.c (window.nostr -> org.nostr.Signer) and
- * nm_provider_webln.c (window.webln -> org.nostr.Wallet1; currently a
- * documented stub pending nostrc-yka8).
+ * nm_provider_webln.c (window.webln -> org.nostr.Wallet1).
  */
 #ifndef APPS_GNOSTR_SIGNER_NATIVE_HOST_NM_ROUTER_H
 #define APPS_GNOSTR_SIGNER_NATIVE_HOST_NM_ROUTER_H
@@ -45,6 +44,7 @@ typedef struct {
   const gchar *name;             /* "nip07", "webln" */
   const gchar *const *methods;   /* NULL-terminated list it answers */
   gboolean requires_origin;      /* request must carry a valid origin */
+  const gchar *const *origin_optional; /* NULL-terminated exceptions (nullable) */
   void (*dispatch)(NmRequest *req);
 } NmProvider;
 
@@ -58,6 +58,8 @@ typedef struct {
   gint         call_timeout_ms;   /* non-interactive D-Bus calls */
   gint         approval_timeout_ms; /* calls that may raise an approval dialog */
   const gchar *signer_bus_name;   /* default "org.nostr.Signer" */
+  const gchar *wallet_bus_name;   /* default "org.nostr.Wallet1" */
+  gint         wallet_timeout_ms; /* Wallet1 calls: approval dialog + wallet round trip */
 } NmRouterConfig;
 
 /* @bus may be NULL: the router then connects to the session bus lazily on

@@ -25,6 +25,14 @@
  * PID reuse: when the bus returns a ProcessFD (pidfd), the identity is only
  * accepted if the process is still alive after /proc was read; otherwise the
  * identity falls back to "unidentified".
+ *
+ * Web origins (org.nostr.Wallet1 *For methods): the browser bridge
+ * nostr-signer-webext-host inherits the browser's cgroup, so every site
+ * would share the browser's identity and budget. A caller whose executable
+ * is the installed bridge (compared by path AND device/inode of
+ * /proc/<pid>/exe, never for Flatpak/Snap callers) may name the page origin
+ * it acts for; the call then runs as a NWA_CALLER_WEB_ORIGIN principal whose
+ * app id is the origin itself. See README "Web origins".
  */
 #ifndef NWA_CALLER_H
 #define NWA_CALLER_H
@@ -40,6 +48,7 @@ typedef enum {
   NWA_CALLER_SYSTEMD_SCOPE,
   NWA_CALLER_EXE,
   NWA_CALLER_SELF,          /* the agent's own scheme-handler flow */
+  NWA_CALLER_WEB_ORIGIN,    /* a web origin named by the trusted browser bridge */
 } NwaCallerKind;
 
 typedef struct {
@@ -51,6 +60,12 @@ typedef struct {
   gboolean       same_uid;
   guint32        uid;
   guint32        pid;
+  /* readlink(/proc/<pid>/exe) and the dev/inode it resolves to, for
+   * unsandboxed same-user callers; NULL / 0 otherwise. */
+  gchar         *exe;
+  guint64        exe_dev;
+  guint64        exe_ino;
+  gchar         *via;          /* WEB_ORIGIN: the bridge's display name (nullable) */
 } NwaCaller;
 
 NwaCaller *nwa_caller_new_self(void);
@@ -64,6 +79,30 @@ void       nwa_caller_identify_async(GDBusConnection *bus, const gchar *sender,
                                      GCancellable *cancellable,
                                      GAsyncReadyCallback callback, gpointer user_data);
 NwaCaller *nwa_caller_identify_finish(GAsyncResult *result, GError **error);
+
+/* ---- web origins asserted by the browser bridge ---- */
+
+/* TRUE iff @origin is a browser-serialized secure-context origin:
+ * "https://<host>[:port]" or "http://" + localhost / *.localhost /
+ * 127.0.0.1 / [::1], lowercase ASCII, no default port, no userinfo, path,
+ * query or fragment. Such ids contain "://" and so can never collide with
+ * a reverse-DNS, "snap." or "exe:" application id. */
+gboolean   nwa_caller_is_web_origin(const gchar *origin);
+
+/* Absolute paths of executables allowed to assert a web origin: the
+ * build-time NWA_WEBEXT_HOST_PATH (<libexecdir>/nostr-signer-webext-host).
+ * Test builds (NWA_ORIGIN_BRIDGE_ENV) honour NOSTR_WALLET_AGENT_ORIGIN_BRIDGES
+ * (colon-separated) instead. */
+GStrv      nwa_caller_origin_bridges(void);
+
+/* TRUE iff @c may act for a web origin: same uid, kind EXE or
+ * SYSTEMD_SCOPE (never Flatpak/Snap/self/unidentified), and its /proc/<pid>/exe is one of @bridges by path and by dev/inode (so a
+ * binary replaced on disk, "(deleted)", or a path that only exists inside
+ * another mount namespace does not qualify). */
+gboolean   nwa_caller_may_assert_origin(const NwaCaller *c, const gchar *const *bridges);
+
+/* New WEB_ORIGIN principal for @origin, acting through @bridge. */
+NwaCaller *nwa_caller_for_origin(const NwaCaller *bridge, const gchar *origin);
 
 /* ---- pure helpers (exposed for tests) ---- */
 

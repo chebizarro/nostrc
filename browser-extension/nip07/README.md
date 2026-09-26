@@ -1,23 +1,24 @@
-# Nostr Signer Bridge — NIP-07 browser extension
+# Nostr Signer Bridge — NIP-07 + WebLN browser extension
 
 `window.nostr` ([NIP-07](https://github.com/nostr-protocol/nips/blob/master/07.md))
-for Firefox and Chromium, backed by the GNOME desktop signer
-**`org.nostr.Signer`**. Web clients (snort.social, iris.to, …) use the
-desktop-managed identity and the signer's own approval dialogs; the browser
-never sees a secret key.
+and `window.webln` ([WebLN](https://www.webln.guide/)) for Firefox and
+Chromium, backed by the GNOME desktop signer **`org.nostr.Signer`** and the
+desktop wallet agent **`org.nostr.Wallet1`** (`nostr-wallet-agent`). Web
+clients (snort.social, iris.to, …) use the desktop-managed identity and
+Lightning wallet with their own approval dialogs; the browser never sees a
+secret key or the wallet's pairing secret.
 
 ```
-page (window.nostr, MAIN world)          src/page.js
+page (window.nostr / window.webln, MAIN world)   src/page.js, src/providers/webln.js
   └─ window.postMessage (nonce id) ─▶    src/content.js      (isolated world)
        └─ runtime.sendMessage ─▶         src/background.js   (origin from MessageSender)
             └─ runtime.connectNative("org.nostr.signer_bridge")
                  └─ stdio frames ─▶      nostr-signer-webext-host
                       └─ D-Bus ─▶        org.nostr.Signer    (app_id = page origin)
+                                         org.nostr.Wallet1   (*For methods, principal = page origin)
 ```
 
-Bead: `nostrc-jjyp` (NIP-07 half). The WebLN half waits on
-`nostr-wallet-agent` / `org.nostr.Wallet1` (`nostrc-yka8`) — see
-[WebLN](#webln-not-yet).
+Bead: `nostrc-jjyp`. WebLN is described in [WebLN](#webln).
 
 | API | Signer call | Who approves |
 |-----|-------------|--------------|
@@ -64,8 +65,8 @@ apps/gnostr-signer/native-host/install.sh --host "$PWD/build/nostr-signer-webext
 
 ```sh
 browser-extension/nip07/build.sh          # add --check to run the tests first
-# dist/nostr-signer-bridge-firefox-0.2.0.xpi   (unsigned)
-# dist/nostr-signer-bridge-chromium-0.2.0.zip
+# dist/nostr-signer-bridge-firefox-0.3.0.xpi   (unsigned)
+# dist/nostr-signer-bridge-chromium-0.3.0.zip
 ```
 
 **Firefox (≥ 140, incl. ESR 140)** — `about:debugging#/runtime/this-firefox` → *Load
@@ -158,8 +159,11 @@ Neither route is exercised by CI yet: `nostrc-tumh` (also covers Epiphany).
   event it gets back has the requested kind/created_at/tags/content and that
   its `id` is the NIP-01 hash of those fields before handing it to the page.
 * **The host holds no secrets.** It is a stateless forwarder: no keyring
-  access, no key material, core dumps disabled; the protocol stream is moved
-  off fd 1 so stray logging cannot corrupt it.
+  access, no key material, core dumps disabled (`RLIMIT_CORE=0`); the
+  protocol stream is moved off fd 1 so stray logging cannot corrupt it. It
+  stays *dumpable* on purpose: the wallet agent verifies the host's
+  `/proc/<pid>/exe` before accepting a web origin, which `PR_SET_DUMPABLE=0`
+  would make unreadable (every WebLN call would be refused).
 
 ### Out of scope / trust assumptions
 
@@ -176,7 +180,14 @@ Neither route is exercised by CI yet: `nostrc-tumh` (also covers Epiphany).
   boundary against local code.
 * **Other extensions** running MAIN-world scripts share the page's world and
   can observe or race the page ↔ content channel; that is inherent to
-  NIP-07.
+  NIP-07 (and WebLN).
+* **WebLN origins.** The wallet agent trusts the origin because only the
+  installed host binary may assert one (it checks the caller's executable
+  by path and inode); the host trusts it because it comes from this
+  extension, which takes it from the browser. A local process running as
+  you can exec the host and claim any site's wallet budget — the same
+  same-user trust limit as the agent's unsandboxed app budgets (see the
+  agent README, "Web origins"). Sandboxed (Flatpak/Snap) apps cannot.
 * **Identity selector changes are trust changes.** The host forwards the
   empty identity selector unless `--identity` / `NOSTR_SIGNER_BRIDGE_IDENTITY`
   is set; the signer's ACL keys include the selector, so changing it
@@ -201,8 +212,11 @@ each way.
 replies may arrive out of order. Frames that cannot be attributed to a
 request get `"id": null`. Params: `signEvent {event}`,
 `nip04/nip44.encrypt {pubkey, plaintext}`, `…decrypt {pubkey, ciphertext}`,
-none for `getPublicKey` / `getRelays`. `host.hello` (no origin) returns
-`{host, version, protocol, providers}`. At most 16 requests may be in flight.
+none for `getPublicKey` / `getRelays`; `webln.makeInvoice {amount,
+defaultAmount, minimumAmount, maximumAmount, defaultMemo}` (all optional,
+sats as integers or digit strings), `webln.sendPayment {paymentRequest}`,
+none for the other `webln.*`. `host.hello` and `webln.status` need no
+origin; `host.hello` returns `{host, version, protocol, providers}`. At most 16 requests may be in flight.
 
 ### Error codes
 
@@ -245,20 +259,97 @@ Promises from `window.nostr` reject with an `Error` whose `.code` is one of:
   remembered per-site decision is not yet honoured (signer bug
   `nostrc-eie5`).
 
-## WebLN (not yet)
+## WebLN
 
-`window.webln` is intentionally not injected. The host already routes
-`webln.*` to `apps/gnostr-signer/native-host/nm_provider_webln.c`, a
-documented stub answering `unsupported`; `src/providers/webln.js` holds the
-page-side object and the enablement checklist. Both are waiting on
-`org.nostr.Wallet1` (`nostrc-yka8`).
+`window.webln` is served by the desktop wallet agent
+[`nostr-wallet-agent`](../../gnome/nostr-wallet-agent/README.md)
+(`org.nostr.Wallet1`, a NIP-47 Nostr Wallet Connect pairing managed by
+GNOME). Install `nostr-wallet-agent` alongside the native host and pair a
+wallet there (click a `nostr+walletconnect://` link); the extension itself
+stores nothing about the wallet.
+
+| WebLN | Host method | Wallet1 call | Result | Who approves |
+|---|---|---|---|---|
+| (injection) | `webln.status` (no origin) | `Introspect` + `Paired` property | `{available, paired}` | nobody — never prompts |
+| `enable()` | `webln.enable` | (same probe) | resolves `undefined` | **extension prompt**, per site (`webln` grant) |
+| `getInfo()` | `webln.getInfo` | `GetInfoFor(origin)` | `{node: {alias, pubkey?, color?}, methods, supports: ["lightning"], version}` | wallet agent ("wallet access", per site) |
+| `getBalance()` | `webln.getBalance` | `GetBalanceFor(origin)` | `{balance, currency: "sats"}` (whole sats, rounded down) | wallet agent ("wallet access", per site) |
+| `makeInvoice(args)` | `webln.makeInvoice` | `MakeInvoiceFor(origin, msat, memo, 0)` | `{paymentRequest, rHash}` | wallet agent ("wallet access", per site) |
+| `sendPayment(bolt11)` | `webln.sendPayment` | `PayInvoiceFor(origin, bolt11, 0)` | `{preimage}` | **wallet agent**: its payment dialog, or this site's daily budget — never the extension |
+| `keysend`, `signMessage`, `verifyMessage`, `lnurl` | — | — | rejects `unsupported` (page-side) | — |
+
+Also: `isEnabled()`, the `enabled` getter, and the `webln:ready` (after
+injection) / `webln:enabled` events on `window`.
+
+* **Injected only with a paired wallet.** At document start the content
+  script asks the background, which asks the host for `webln.status`
+  (cached 30 s, one query in flight): only when the agent is reachable,
+  supports per-site calls and has a wallet paired does `src/providers/webln.js`
+  define `window.webln` (and dispatch `webln:ready`). Otherwise
+  `window.webln` stays undefined and sites fall back to QR codes / other
+  flows. An existing `window.webln` from another provider is never replaced.
+* **`enable()` is the extension's consent gate.** First use shows the same
+  prompt window as NIP-07 ("use your desktop Lightning wallet"). *Remember*
+  stores a `webln` grant for 30 days; without it the site stays enabled for
+  1 hour. Grants are listed and revocable on the options page (which also
+  shows whether a wallet is paired). Every other WebLN call needs a valid
+  grant and otherwise rejects `not_enabled`. `enable()` checks the wallet
+  before prompting, so a site is never asked about a wallet that isn't there.
+* **The wallet agent approves the rest, per site.** The host calls the
+  agent's `*For` methods with the page origin; the agent only accepts that
+  from the installed `nostr-signer-webext-host` binary (path + inode) and
+  then treats the origin as the application: `getInfo` / `getBalance` /
+  `makeInvoice` raise its "wallet access" dialog until you tick *Always
+  allow this site*, and `sendPayment` is paid automatically only within a
+  daily budget you gave **that site** in the payment dialog (*Always allow up
+  to N sats/day*) — otherwise you are asked every time. Budgets are never
+  shared between sites or with the browser. The extension never approves a
+  payment.
+* **Amounts** are sats in WebLN and msat (`uint32`) at the agent: at most
+  **4 294 967 sats per call**; more rejects `too_large`. `makeInvoice` takes
+  a number, a numeric string or `{amount | defaultAmount | minimumAmount,
+  maximumAmount, defaultMemo}` (the amount is `amount`, else
+  `defaultAmount`, else a non-zero `minimumAmount`, and must lie within
+  min…max); amount-less invoices are not supported (`invalid_request`).
+  `defaultMemo` ≤ 639 bytes.
+* **Timeouts.** Wallet calls may wait for the agent's dialog (120 s) plus the
+  wallet (60 s): the host allows 190 s, the extension 195 s. A `timeout` on
+  `sendPayment` means **outcome unknown** — the payment may still have been
+  made; don't blindly retry.
+* **Iframes** may use WebLN; the prompt names the embedding page, and the
+  agent sees the iframe's own origin.
+
+WebLN error codes (in addition to the NIP-07 ones below):
+
+| code | meaning | from `org.nostr.Wallet1` |
+|------|---------|--------------------------|
+| `not_enabled` | call `webln.enable()` first (no valid grant) | — |
+| `not_paired` | no wallet is paired with the desktop agent | `Error.NotPaired`, `GetInfo{paired:false}` |
+| `wallet_unavailable` | agent not installed/running, or no relay reached the wallet | `ServiceUnknown`, `Error.RelayError` |
+| `rejected` | you declined in the agent's dialog (or policy) | `Error.Denied`, NIP-47 `RESTRICTED` |
+| `budget_exceeded` | over the site's daily budget and no dialog possible | `Error.BudgetExceeded` |
+| `wallet_error` | the wallet refused (message starts with the NIP-47 code, e.g. `[INSUFFICIENT_BALANCE]`) | `Error.WalletError` |
+| `unsupported` | not offered (keysend, signMessage, …), wallet lacks the method (`[NOT_IMPLEMENTED]`), or agent too old | `Error.Unsupported`, `UnknownMethod` |
+| `invalid_request` / `too_large` | bad arguments / amount over 4 294 967 sats | `Error.InvalidArgs` (message passed on, e.g. "invoice has expired") |
+| `timeout` | no answer in time (payments: outcome unknown) | `Error.Timeout` |
+| `rate_limited` | too many pending wallet dialogs | `Error.RateLimited` |
+
+Not supported yet: `keysend` (not exposed by the agent), LNURL / Lightning
+addresses (agent: `nostrc-prqu.8`), `signMessage`/`verifyMessage` (not a
+NIP-47 capability).
 
 ## Tests
 
 * `node tests/policy.test.js` — origin derivation, validation, permission
   categories, page.js API shape and reply filtering.
+* `node tests/webln.test.js` — sats parsing and the 4 294 967-sat limit,
+  `makeInvoice` argument resolution, WebLN request validation / gates /
+  timeouts, the `window.webln` shape, unsupported methods, error codes, and
+  conditional injection (webln.js and content.js in a VM: nothing is
+  injected unless the host reports a paired wallet).
 * Host: `ctest -L nostr-signer-webext-host` — framing round-trip, origin
   policy, malformed events, D-Bus → NIP-07 error mapping, router, and
   `test_nmh_e2e` driving the real host against the real
-  `nostr-signer-daemon` on a private bus (see
+  `nostr-signer-daemon` on a private bus, and `test_nmh_webln_e2e` driving
+  it against the real `nostr-wallet-agent` (see
   `apps/gnostr-signer/native-host/README.md`).

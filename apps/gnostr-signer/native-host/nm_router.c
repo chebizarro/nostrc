@@ -35,6 +35,7 @@ struct _NmRouter {
   NmRouterConfig cfg;
   gchar *identity;
   gchar *bus_name;
+  gchar *wallet_bus_name;
   NmReplyFunc reply;
   gpointer reply_data;
   GHashTable *in_flight; /* id -> NULL */
@@ -50,6 +51,7 @@ static void router_unref(NmRouter *r) {
   g_hash_table_unref(r->in_flight);
   g_free(r->identity);
   g_free(r->bus_name);
+  g_free(r->wallet_bus_name);
   g_free(r);
 }
 
@@ -61,10 +63,14 @@ NmRouter *nm_router_new(GDBusConnection *bus, const NmRouterConfig *config,
   if (config) r->cfg = *config;
   r->identity = g_strdup(r->cfg.identity ? r->cfg.identity : "");
   r->bus_name = g_strdup(r->cfg.signer_bus_name ? r->cfg.signer_bus_name : "org.nostr.Signer");
+  r->wallet_bus_name = g_strdup(r->cfg.wallet_bus_name ? r->cfg.wallet_bus_name : "org.nostr.Wallet1");
   r->cfg.identity = r->identity;
   r->cfg.signer_bus_name = r->bus_name;
+  r->cfg.wallet_bus_name = r->wallet_bus_name;
   if (r->cfg.call_timeout_ms <= 0) r->cfg.call_timeout_ms = 30000;
   if (r->cfg.approval_timeout_ms <= 0) r->cfg.approval_timeout_ms = 120000;
+  /* agent approval-timeout (120 s) + request-timeout (60 s) + slack */
+  if (r->cfg.wallet_timeout_ms <= 0) r->cfg.wallet_timeout_ms = 190000;
   r->reply = reply;
   r->reply_data = reply_data;
   r->in_flight = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
@@ -284,7 +290,9 @@ void nm_router_handle(NmRouter *r, const gchar *json, gsize len) {
   }
 
   g_autofree gchar *app_id = NULL;
-  if (prov->requires_origin) {
+  gboolean origin_needed = prov->requires_origin &&
+    !(prov->origin_optional && g_strv_contains(prov->origin_optional, method));
+  if (origin_needed) {
     JsonNode *onode = json_object_get_member(obj, "origin");
     const gchar *origin = NULL;
     if (onode && JSON_NODE_HOLDS_VALUE(onode) && json_node_get_value_type(onode) == G_TYPE_STRING)

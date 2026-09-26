@@ -578,6 +578,7 @@ Summary:        NIP-07 browser bridge to the desktop Nostr signer (native host)
 Requires:       glib2
 Requires:       json-glib
 Requires:       mozilla-filesystem
+Suggests:       nostr-wallet-agent
 
 %description -n nostr-signer-webext-host
 Native-messaging host (org.nostr.signer_bridge) behind the "Nostr Signer
@@ -585,7 +586,9 @@ Bridge" browser extension. The extension provides window.nostr (NIP-07);
 every call is forwarded to the desktop signer org.nostr.Signer on the
 session bus with the page origin as app_id, so web clients use the
 desktop-managed identity and the signer's approval dialogs. The host holds
-no keys. Installs the host and its Firefox / Chromium / Chrome manifests;
+no keys. With nostr-wallet-agent and a paired wallet it also serves
+window.webln (WebLN) with per-site budgets and approvals.
+Installs the host and its Firefox / Chromium / Chrome manifests;
 the extension itself is installed separately (see the README).
 # --- Sub-package: nostr-wallet-agent ------------------------------------------
 %package -n nostr-wallet-agent

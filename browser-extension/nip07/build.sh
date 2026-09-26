@@ -1,9 +1,9 @@
 #!/bin/sh
-# build.sh — package the NIP-07 bridge extension (nostrc-jjyp).
+# build.sh — package the NIP-07 / WebLN bridge extension (nostrc-jjyp).
 #
 #   ./build.sh            -> dist/nostr-signer-bridge-firefox-<ver>.xpi  (unsigned)
 #                            dist/nostr-signer-bridge-chromium-<ver>.zip
-#   ./build.sh --check    also run tests/policy.test.js (needs node)
+#   ./build.sh --check    also run the Node tests in tests/ (needs node)
 #
 # The .xpi is unsigned: load it via about:debugging (temporary) or a
 # Firefox Developer/Nightly/ESR build with xpinstall.signatures.required
@@ -13,6 +13,7 @@ cd "$(dirname "$0")"
 
 if [ "${1:-}" = "--check" ]; then
   node tests/policy.test.js
+  node tests/webln.test.js
 fi
 
 version_of() { sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$1" | head -n1; }
@@ -27,7 +28,6 @@ for target in firefox chromium; do
   ext=zip; [ "$target" = firefox ] && ext=xpi
   stage=$(mktemp -d)
   cp -R src "$stage/src"
-  rm -rf "$stage/src/providers"          # WebLN stub is not shipped yet (nostrc-yka8)
   cp "manifest.$target.json" "$stage/manifest.json"
   cp README.md "$stage/"
   out="$PWD/dist/nostr-signer-bridge-$target-$VERSION.$ext"

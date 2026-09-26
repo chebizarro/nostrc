@@ -25,8 +25,13 @@ typedef enum {
   NM_ERR_TIMEOUT,             /* signer did not answer in time */
   NM_ERR_BUSY,                /* too many requests in flight / duplicate id */
   NM_ERR_TOO_LARGE,           /* request or response over the frame limit */
-  NM_ERR_UNSUPPORTED,         /* provider stub (WebLN) or signer lacks the method */
+  NM_ERR_UNSUPPORTED,         /* method not offered (WebLN keysend/signMessage/...) or backend lacks it */
   NM_ERR_INTERNAL,            /* anything else */
+  /* WebLN / org.nostr.Wallet1 (nm_webln.c) */
+  NM_ERR_NOT_PAIRED,          /* no wallet is paired with the wallet agent */
+  NM_ERR_WALLET_UNAVAILABLE,  /* org.nostr.Wallet1 not on the bus / wallet relay unreachable */
+  NM_ERR_BUDGET_EXCEEDED,     /* over the site's daily budget and no one to ask */
+  NM_ERR_WALLET_ERROR,        /* the wallet answered with a NIP-47 error */
   NM_ERR_N_CODES
 } NmErrorCode;
 

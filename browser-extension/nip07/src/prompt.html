@@ -10,8 +10,9 @@
   <h1>Permission request</h1>
   <p><strong id="origin">…</strong> wants to <span id="what">…</span>.</p>
   <p id="embedded" class="warn" hidden>This request comes from a frame embedded in <strong id="embedder"></strong>.</p>
-  <p class="note">Signing events is always confirmed separately by the desktop signer.</p>
+  <p class="note" id="note">Signing events is always confirmed separately by the desktop signer.</p>
   <label><input type="checkbox" id="remember"> Remember for this site (<span id="ttl"></span>)</label>
+  <p class="note" id="session" hidden></p>
   <div class="buttons">
     <button id="deny">Deny</button>
     <button id="allow" class="primary">Allow</button>
