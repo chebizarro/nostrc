@@ -9,5 +9,12 @@ Terminal=false
 Categories=Network;Chat;InstantMessaging;GTK;
 Keywords=nostr;social;decentralized;relay;notes;
 StartupWMClass=gnostr
-MimeType=x-scheme-handler/nostr;x-scheme-handler/web+nostr;
+# nostr: / web+nostr: are owned by nostr-dispatcher (org.nostr.Dispatcher),
+# which resolves the event kind and routes to the registered handler
+# (nostrc-2thp / nostrc-1v65). GNostr declares the kinds it renders instead
+# of claiming the scheme, so exactly one .desktop file owns nostr:.
+# `*` marks GNostr as a generic viewer: the dispatcher's fallback for kinds
+# no installed app declares and for links whose kind cannot be resolved.
+# See gnome/nostr-dispatcher/README.md for the X-Nostr-Kinds format.
+X-Nostr-Kinds=0;1;6;7;14;16;20;64;1059;1068;2003;9041;9735;9802;30023;30311;30402;30818;31922;31923;34550;*;
 X-GNOME-UsesNotifications=true

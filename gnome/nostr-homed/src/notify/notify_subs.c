@@ -107,6 +107,7 @@ typedef struct {
   char *event_id_hex; /* lowercase 64-char */
   char *h_tag;        /* NIP-29 only; NULL for DMs */
   char *content;      /* NIP-29 only; NULL for DMs */
+  char *relay_url;    /* relay it arrived on: deep-link relay hint */
 } DispatchedEvent;
 
 static void dispatched_event_free(gpointer p) {
@@ -115,6 +116,7 @@ static void dispatched_event_free(gpointer p) {
   g_free(e->event_id_hex);
   g_free(e->h_tag);
   g_free(e->content);
+  g_free(e->relay_url);
   g_free(e);
 }
 
@@ -206,13 +208,13 @@ static gboolean dispatch_on_main(gpointer user_data) {
   GNotification *n = NULL;
 
   if (ev->kind == 1059) {
-    n = nostr_notify_build_dm(ev->event_id_hex, &build);
+    n = nostr_notify_build_dm(ev->event_id_hex, ev->relay_url, &build);
   } else {
     /* NIP-29 preview. group_display_name is looked up from the daemon's
      * metadata cache — for v1 the cache is trivial and returns NULL, so
      * the h_tag itself is the visible title (still markup-safe). */
-    n = nostr_notify_build_group(NULL, ev->h_tag, ev->event_id_hex,
-                                 ev->content, &build);
+    n = nostr_notify_build_group(NULL, ev->h_tag, ev->event_id_hex, ev->kind,
+                                 ev->content, ev->relay_url, &build);
   }
 
   if (!n || !build.withdraw_id) {
@@ -418,6 +420,7 @@ static void *connector_thread(void *arg) {
       dev->event_id_hex = g_strdup(eid);
       dev->h_tag = h_tag; /* transferred */
       dev->content = (kind == 1059) ? NULL : g_strdup(content ? content : "");
+      dev->relay_url = g_strdup(c->url);
       free(eid);
 
       /* Advance the cursor before dispatching so a crash mid-send

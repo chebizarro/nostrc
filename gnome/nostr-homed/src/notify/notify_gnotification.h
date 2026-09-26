@@ -6,15 +6,17 @@
  * sending GApplication; sharing the ID would break both suppression and
  * activation routing — per §3.3 D4 Finding 4).
  *
- * The default action is `app.open-in-gnostr` carrying a nostr:// URI:
- *   - DM  : `nostr://open?event=<hex64_giftwrap_event_id>`
- *   - Group: `nostr://open?group=<h_tag>&event=<hex64>`
+ * The default action is `app.open-in-gnostr` carrying a NIP-21 URI
+ * `nostr:nevent1…` (event id + kind TLV + the relay the event arrived on):
+ *   - DM   : kind 1059 (the gift wrap; its random pubkey is NOT encoded)
+ *   - Group: kind 9..12 (the NIP-29 `h` tag is inside the signed event and
+ *            the relay hint is the group relay, so no extra parameter)
+ * (nostrc-1v65; replaces the invented `nostr://open?event=` form, which
+ * nostr-dispatcher still accepts for one transition release.)
  *
- * On activation the notifier launches GNostr via `Gio.DesktopAppInfo.
- * launch_uris("nostr://…")`; on failure (URI handler not registered) the
- * fallback path is a DBus call to `org.gnostr.Client` if it is running.
- * Registering the `nostr://` scheme in GNostr's `.desktop` file is a
- * required GNostr-side follow-up (tracked separately).
+ * On activation the notifier opens the URI through the `nostr:` scheme
+ * default — nostr-dispatcher, which routes by kind to the registered app —
+ * falling back to calling org.nostr.Dispatcher1.Open on the session bus.
  *
  * DM bodies are OPAQUE per §3.3 D3 Finding 14: kind-1059 gift wraps
  * have a fresh random outer pubkey so the notifier cannot derive
@@ -49,6 +51,7 @@ typedef struct {
  * leaves `*out` zeroed.
  */
 GNotification *nostr_notify_build_dm(const char *giftwrap_event_id,
+                                     const char *relay_url,
                                      NostrNotifyBuild *out);
 
 /*
@@ -58,14 +61,19 @@ GNotification *nostr_notify_build_dm(const char *giftwrap_event_id,
  *   back to the raw `h_tag`.
  * `h_tag` — group identifier (never NULL).
  * `event_id_hex` — 64-char lowercase hex event id.
+ * `kind` — the event kind (9..12); encoded in the deep link.
  * `content_utf8` — plaintext content; may be markup-safe or not. This
  *   function truncates to 80 chars, escapes GTK markup and normalizes
  *   whitespace (Finding 14 asserts ≤80 chars).
+ * `relay_url` — relay the event arrived on (deep-link relay hint); may be
+ *   NULL.
  */
 GNotification *nostr_notify_build_group(const char *group_display_name,
                                         const char *h_tag,
                                         const char *event_id_hex,
+                                        int kind,
                                         const char *content_utf8,
+                                        const char *relay_url,
                                         NostrNotifyBuild *out);
 
 /*
@@ -74,9 +82,9 @@ GNotification *nostr_notify_build_group(const char *group_display_name,
 void nostr_notify_build_dispose(NostrNotifyBuild *b);
 
 /*
- * Activate GNostr for a `nostr://` URI, either via GAppInfo dispatch or via
- * a DBus call to `org.gnostr.Client` if it owns a bus name. Returns TRUE
- * on successful dispatch (fire-and-forget).
+ * Open a `nostr:` deep link via the scheme default (nostr-dispatcher) or,
+ * failing that, org.nostr.Dispatcher1.Open. Returns TRUE on successful
+ * dispatch (fire-and-forget).
  */
 bool nostr_notify_activate_deep_link(const char *nostr_uri);
 
@@ -88,8 +96,11 @@ bool nostr_notify_activate_deep_link(const char *nostr_uri);
 const char *nostr_notify_dm_title(void);
 const char *nostr_notify_dm_opaque_body(void);
 char *nostr_notify_group_preview(const char *content_utf8);
-char *nostr_notify_dm_deep_link_uri(const char *giftwrap_event_id);
-char *nostr_notify_group_deep_link_uri(const char *h_tag,
-                                       const char *event_id_hex);
+char *nostr_notify_event_deep_link_uri(const char *event_id_hex, int kind,
+                                       const char *relay_url);
+char *nostr_notify_dm_deep_link_uri(const char *giftwrap_event_id,
+                                    const char *relay_url);
+char *nostr_notify_group_deep_link_uri(const char *event_id_hex, int kind,
+                                       const char *relay_url);
 
 #endif /* NOSTR_NOTIFY_GNOTIFICATION_H */

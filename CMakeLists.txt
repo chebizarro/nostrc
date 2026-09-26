@@ -464,6 +464,7 @@ endif()
 option(GNOSTR_ENABLE_SEAHORSE_HELPERS "Build Seahorse/Secret Service helpers" OFF)
 option(GNOSTR_WITH_PKCS11 "Build p11-kit module" OFF)
 option(ENABLE_NOSTR_DAV "Build localhost CalDAV/CardDAV/WebDAV bridge daemon" OFF)
+option(ENABLE_NOSTR_DISPATCHER "Build nostr-dispatcher (nostr: link kind router, org.nostr.Dispatcher1)" OFF)
 
 if (GNOSTR_ENABLE_SEAHORSE_HELPERS OR GNOSTR_WITH_PKCS11)
   find_package(PkgConfig REQUIRED)
@@ -490,6 +491,10 @@ endif()
 
 if (ENABLE_NOSTR_DAV)
   add_subdirectory(gnome/nostr-dav)
+endif()
+
+if (ENABLE_NOSTR_DISPATCHER)
+  add_subdirectory(gnome/nostr-dispatcher)
 endif()
 
 ## GLib demo: only if libnostr built with GLib support

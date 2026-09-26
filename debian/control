@@ -462,3 +462,27 @@ Description: Read-only portable-home FUSE overlay for nostr-homed (EXPERIMENTAL)
  .
  EXPERIMENTAL: gated behind NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL
  at build time; the wire format and mount policy may change.
+
+Package: nostr-dispatcher
+Section: net
+Architecture: any
+Multi-Arch: foreign
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: nostrc-session-relay (>= ${source:Version})
+Description: Kind-aware router for nostr: links (org.nostr.Dispatcher1)
+ nostr-dispatcher is the single owner of the x-scheme-handler/nostr and
+ x-scheme-handler/web+nostr URI schemes and of the Nostr event file type
+ (application/vnd.nostr.event+json, *.nostr / *.nevent). It resolves
+ the event kind of a NIP-21 link (NIP-19 TLV, else the session relay,
+ else the link's relay hints — every fetched event is id- and
+ signature-validated) and opens it in the application registered for
+ that kind.
+ .
+ Applications declare kinds with X-Nostr-Kinds= in their .desktop file;
+ users override with ~/.config/nostr/handlers.list (see
+ /usr/share/doc/nostr-dispatcher/README.md). Running handlers can take
+ the event directly over org.nostr.Handler1.
+ .
+ The org.nostr.Dispatcher1 service is D-Bus activated on demand through
+ a user unit and exits when idle; nothing is enabled at install time.

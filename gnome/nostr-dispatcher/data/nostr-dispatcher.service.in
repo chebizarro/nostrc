@@ -1,0 +1,22 @@
+[Unit]
+Description=Nostr link dispatcher (org.nostr.Dispatcher1)
+Documentation=https://github.com/chebizarro/nostrc/blob/master/gnome/nostr-dispatcher/README.md
+PartOf=graphical-session.target
+
+[Service]
+# D-Bus activated only (see org.nostr.Dispatcher1.service); never enabled.
+Type=dbus
+BusName=org.nostr.Dispatcher1
+ExecStart=@ND_BINDIR@/nostr-dispatcher daemon
+# Handler apps are spawned from this service. With the default
+# KillMode=control-group they would share its cgroup and be killed when
+# the dispatcher exits on idle (30 s); only reap the dispatcher itself.
+KillMode=process
+Restart=no
+
+# No sandboxing directives on purpose: every handler app launched from
+# here inherits this unit's execution environment (ProtectHome=,
+# SystemCallFilter=, RestrictAddressFamilies=, ... would silently break
+# e.g. GNostr's own storage). The dispatcher itself only reads .desktop
+# files and handlers.list, talks to the session bus, relay.sock and relay
+# hints, and writes nothing.

@@ -1,0 +1,67 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!--
+  org.nostr.Dispatcher1 — kind-aware router for nostr: / web+nostr: links.
+
+  Owned by nostr-dispatcher (gnome/nostr-dispatcher/), session bus, object
+  path /org/nostr/Dispatcher1. D-Bus activated via nostr-dispatcher.service.
+  See gnome/nostr-dispatcher/README.md for the handler registry.
+
+  Errors: org.nostr.Dispatcher1.Error.{InvalidUri,Forbidden,NotFound,
+  NoHandler,InvalidEvent,LaunchFailed}.
+-->
+<node>
+  <interface name="org.nostr.Dispatcher1">
+    <!--
+      Open:
+      @uri: nostr:<bech32> or web+nostr:<bech32> (NIP-21). nsec links are
+            rejected with Error.Forbidden.
+      @platform_data: only "activation-token" and "desktop-startup-id"
+            (both strings) are honoured; other keys are ignored.
+      @desktop_id: the handler the link was routed to.
+
+      Resolves the event kind (NIP-19 TLV, else the session relay, else the
+      link's relay hints), picks the handler and either hands the validated
+      event to it over org.nostr.Handler1.OpenEvent (when that app is
+      running) or launches it with the canonical nostr: URI.
+    -->
+    <method name="Open">
+      <arg name="uri" type="s" direction="in"/>
+      <arg name="platform_data" type="a{sv}" direction="in"/>
+      <arg name="desktop_id" type="s" direction="out"/>
+    </method>
+
+    <!--
+      OpenEvent:
+      @event_json: a NIP-01 event object (max 1 MiB). Routed by its kind.
+      @relays: relay hints (wss:// only; filtered and capped at 3).
+      @platform_data: as for Open.
+    -->
+    <method name="OpenEvent">
+      <arg name="event_json" type="s" direction="in"/>
+      <arg name="relays" type="as" direction="in"/>
+      <arg name="platform_data" type="a{sv}" direction="in"/>
+      <arg name="desktop_id" type="s" direction="out"/>
+    </method>
+
+    <!--
+      Resolve: the same resolution as Open (including fetches, honouring
+      [Dispatcher] fetch-relay-hints) without launching anything.
+      @kind: -1 if the kind could not be resolved.
+    -->
+    <method name="Resolve">
+      <arg name="uri" type="s" direction="in"/>
+      <arg name="kind" type="i" direction="out"/>
+      <arg name="desktop_id" type="s" direction="out"/>
+    </method>
+
+    <!--
+      QueryDefault: effective handler for @kind; -1 queries the fallback
+      used for links whose kind is unknown. Error.NoHandler if none.
+    -->
+    <method name="QueryDefault">
+      <arg name="kind" type="i" direction="in"/>
+      <arg name="desktop_id" type="s" direction="out"/>
+    </method>
+  </interface>
+</node>

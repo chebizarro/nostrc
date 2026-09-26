@@ -18,7 +18,10 @@
 #include "notify_gnotification.h"
 
 #include <glib.h>
+#include <stdlib.h>
 #include <string.h>
+
+#include "nostr/nip19/nip19.h" /* nostr_nip19_encode_nevent */
 
 /* Fixed constant used in the DM body — the plan asserts fully opaque. */
 static const char *const kDmOpaqueBody =
@@ -83,16 +86,54 @@ char *nostr_notify_group_preview(const char *content_utf8) {
   return truncate_utf8(content_utf8, 80);
 }
 
-char *nostr_notify_dm_deep_link_uri(const char *giftwrap_event_id) {
-  if (!giftwrap_event_id) return NULL;
-  return g_strdup_printf("nostr://open?event=%s", giftwrap_event_id);
+static bool is_hex64(const char *s) {
+  if (!s || strlen(s) != 64) return false;
+  for (const char *p = s; *p; p++)
+    if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f'))) return false;
+  return true;
 }
 
-char *nostr_notify_group_deep_link_uri(const char *h_tag,
-                                       const char *event_id_hex) {
-  if (!h_tag || !event_id_hex) return NULL;
-  return g_strdup_printf("nostr://open?group=%s&event=%s", h_tag,
-                         event_id_hex);
+/*
+ * NIP-21 deep link: `nostr:nevent1…` carrying the event id, the kind TLV
+ * (so nostr-dispatcher can route without a fetch) and the relay the event
+ * arrived on as the relay hint. No author TLV: for DMs the gift-wrap
+ * pubkey is a random throwaway key, and for groups the handler learns the
+ * author from the (signed) event it fetches. No `h` query parameter: the
+ * NIP-29 `h` tag is inside the signed event and the relay hint is the
+ * group relay, so the handler has the group context once it fetches;
+ * NIP-21 defines no query parameters and dispatchers strip them anyway.
+ */
+char *nostr_notify_event_deep_link_uri(const char *event_id_hex, int kind,
+                                       const char *relay_url) {
+  if (!is_hex64(event_id_hex) || kind <= 0) return NULL;
+  char *relays[1] = {NULL};
+  size_t n = 0;
+  if (relay_url && strlen(relay_url) <= 255 &&
+      (g_str_has_prefix(relay_url, "wss://") || g_str_has_prefix(relay_url, "ws://")))
+    relays[n++] = (char *)relay_url;
+  NostrEventPointer ptr = {
+      .id = (char *)event_id_hex,
+      .relays = n ? relays : NULL,
+      .relays_count = n,
+      .author = NULL,
+      .kind = kind,
+  };
+  char *bech = NULL;
+  if (nostr_nip19_encode_nevent(&ptr, &bech) != 0 || !bech) return NULL;
+  char *uri = g_strconcat("nostr:", bech, NULL);
+  free(bech);
+  return uri;
+}
+
+char *nostr_notify_dm_deep_link_uri(const char *giftwrap_event_id,
+                                    const char *relay_url) {
+  return nostr_notify_event_deep_link_uri(giftwrap_event_id, 1059, relay_url);
+}
+
+char *nostr_notify_group_deep_link_uri(const char *event_id_hex, int kind,
+                                       const char *relay_url) {
+  if (kind < 9 || kind > 12) return NULL;
+  return nostr_notify_event_deep_link_uri(event_id_hex, kind, relay_url);
 }
 
 static char *dm_withdraw_id(const char *giftwrap_hex) {
@@ -110,8 +151,10 @@ static char *group_withdraw_id(const char *h_tag) {
 }
 
 GNotification *nostr_notify_build_dm(const char *giftwrap_event_id,
+                                     const char *relay_url,
                                      NostrNotifyBuild *out) {
-  if (!giftwrap_event_id || strlen(giftwrap_event_id) != 64) {
+  char *uri = nostr_notify_dm_deep_link_uri(giftwrap_event_id, relay_url);
+  if (!uri) {
     /* Malformed — refuse to build. Callers should log; the notifier
      * shouldn't advertise a broken deep link. */
     if (out) memset(out, 0, sizeof *out);
@@ -126,9 +169,8 @@ GNotification *nostr_notify_build_dm(const char *giftwrap_event_id,
   g_notification_set_priority(n, G_NOTIFICATION_PRIORITY_NORMAL);
   g_notification_set_category(n, kDmCategory);
 
-  /* Deep link: only the giftwrap event id (opaque handle). GNostr unwraps
-   * and routes on click. */
-  char *uri = g_strdup_printf("nostr://open?event=%s", giftwrap_event_id);
+  /* Deep link: nevent for the gift wrap (opaque handle; kind 1059 routes it
+   * to the DM handler). The handler unwraps on click. */
   g_notification_set_default_action_and_target(n, "app.open-in-gnostr",
                                                "s", uri);
   g_free(uri);
@@ -140,9 +182,13 @@ GNotification *nostr_notify_build_dm(const char *giftwrap_event_id,
 GNotification *nostr_notify_build_group(const char *group_display_name,
                                         const char *h_tag,
                                         const char *event_id_hex,
+                                        int kind,
                                         const char *content_utf8,
+                                        const char *relay_url,
                                         NostrNotifyBuild *out) {
-  if (!h_tag || !event_id_hex || strlen(event_id_hex) != 64) {
+  char *uri = h_tag ? nostr_notify_group_deep_link_uri(event_id_hex, kind, relay_url)
+                    : NULL;
+  if (!uri) {
     if (out) memset(out, 0, sizeof *out);
     return NULL;
   }
@@ -157,8 +203,6 @@ GNotification *nostr_notify_build_group(const char *group_display_name,
   g_notification_set_priority(n, G_NOTIFICATION_PRIORITY_NORMAL);
   g_notification_set_category(n, kGroupCategory);
 
-  char *uri = g_strdup_printf("nostr://open?group=%s&event=%s", h_tag,
-                              event_id_hex);
   g_notification_set_default_action_and_target(n, "app.open-in-gnostr",
                                                "s", uri);
   g_free(uri);
@@ -174,12 +218,13 @@ void nostr_notify_build_dispose(NostrNotifyBuild *b) {
 }
 
 /*
- * Activate GNostr for a nostr:// URI.
+ * Open a `nostr:` deep link.
  *
- * Preferred path: `Gio.DesktopAppInfo.launch_uris()` if a handler for the
- * `nostr:` scheme is registered — this works whether GNostr is running or
- * not. Fallback: session-bus call to `org.gnostr.Client` if it owns a bus
- * name (GNostr registers an application ID matching that name).
+ * Preferred path: the registered `x-scheme-handler/nostr` default, which is
+ * nostr-dispatcher (org.nostr.Dispatcher.desktop); it resolves the kind and
+ * routes to the right app. Fallback: call org.nostr.Dispatcher1.Open on the
+ * session bus directly (D-Bus activatable even when the MIME database has
+ * not been refreshed yet).
  *
  * Fire-and-forget: the notifier does not observe the launched app's exit;
  * the user's click is complete after we dispatch.
@@ -201,24 +246,21 @@ bool nostr_notify_activate_deep_link(const char *nostr_uri) {
     /* Fall through to DBus. */
   }
 
-  /* Fallback: DBus Activate on `org.gnostr.Client` if it exists. */
+  /* Fallback: org.nostr.Dispatcher1.Open (auto-starts the dispatcher). */
   g_autoptr(GError) err = NULL;
   g_autoptr(GDBusConnection) bus =
       g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
   if (!bus) return false;
-  GVariant *params = g_variant_new_parsed(
-      "([%s], @a{sv} {})", nostr_uri);
-  /* org.freedesktop.Application.Open — the standard DBus activation call
-   * for URL-carrying deep links. */
   g_dbus_connection_call(bus,
-                         "org.gnostr.Client",
-                         "/org/gnostr/Client",
-                         "org.freedesktop.Application",
+                         "org.nostr.Dispatcher1",
+                         "/org/nostr/Dispatcher1",
+                         "org.nostr.Dispatcher1",
                          "Open",
-                         params,
+                         g_variant_new("(s@a{sv})", nostr_uri,
+                                       g_variant_new_array(G_VARIANT_TYPE("{sv}"), NULL, 0)),
                          NULL,
-                         G_DBUS_CALL_FLAGS_NO_AUTO_START,
-                         2000,
+                         G_DBUS_CALL_FLAGS_NONE,
+                         20000,
                          NULL,
                          NULL,
                          NULL);

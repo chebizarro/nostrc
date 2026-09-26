@@ -1,0 +1,27 @@
+# /usr/share/nostr/handlers.list — system-wide Nostr kind -> handler defaults.
+#
+# Lowest-precedence registry file read by nostr-dispatcher. Overridden by
+# $XDG_CONFIG_DIRS/nostr/handlers.list (e.g. /etc/xdg) and, above all, by
+# the user's $XDG_CONFIG_HOME/nostr/handlers.list. See
+# /usr/share/doc/nostr-dispatcher/README.md for the full format.
+#
+# Keys are kinds (N), inclusive ranges (A-B) or * (fallback for kinds no
+# app declares and for links whose kind cannot be resolved). Values are
+# ';'-separated desktop ids; the first installed one wins.
+#
+# Nothing is pinned by default: apps declare kinds with X-Nostr-Kinds= in
+# their .desktop files. Distributions may pin defaults here, e.g.
+#
+#   [Default Handlers]
+#   14=org.nostr.Groundhog.desktop;
+#   1059=org.nostr.Groundhog.desktop;
+#   30023=org.example.LongformReader.desktop;
+#   *=org.gnostr.gnostr.desktop;
+#
+#   [Removed Handlers]
+#   1=org.example.NoisyApp.desktop;
+#
+#   [Dispatcher]
+#   fetch-relay-hints=true
+
+[Default Handlers]
