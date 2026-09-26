@@ -15,8 +15,18 @@
 
 /* Generated skeleton instance */
 static NostrSigner *signer_skel = NULL;
+/* A call parked until ApproveRequest decides it. SignEvent and
+ * NIP44DeriveConversationKey share the table, the request ids and the
+ * ApprovalRequested/ApprovalCompleted signals; `kind` picks the operation
+ * ApproveRequest runs and the ACL section a remembered decision lands in. */
+typedef enum {
+  PENDING_SIGN_EVENT = 0,
+  PENDING_NIP44_CONVKEY = 1,
+} PendingKind;
 typedef struct {
-  char *event_json;
+  PendingKind kind;
+  char *event_json;   /* PENDING_SIGN_EVENT */
+  char *peer_hex;     /* PENDING_NIP44_CONVKEY */
   char *identity;
   char *app_id;
   GDBusMethodInvocation *invocation; /* kept until decision */
@@ -25,12 +35,31 @@ static void pending_free(gpointer data){
   PendingSign *ps = (PendingSign*)data;
   if (!ps) return;
   g_free(ps->event_json);
+  g_free(ps->peer_hex);
   g_free(ps->identity);
   g_free(ps->app_id);
   /* ps->invocation is finished elsewhere; do not unref here */
   g_free(ps);
 }
 static GHashTable *pending = NULL; /* id(string) -> PendingSign* */
+
+/* Parked calls are bounded so a flood of senders cannot grow the table
+ * without limit; ids are a monotonic counter, never reused (an address-based
+ * id could be recycled after a request completes and let a stale
+ * ApproveRequest decide a new call). */
+#define PENDING_MAX 64
+static gchar *next_request_id(void){
+  static guint64 counter = 0;
+  return g_strdup_printf("req-%" G_GUINT64_FORMAT, ++counter);
+}
+static gboolean pending_full(GDBusMethodInvocation *invocation){
+  if (pending && g_hash_table_size(pending) >= PENDING_MAX) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT,
+      "too many requests awaiting approval");
+    return TRUE;
+  }
+  return FALSE;
+}
 
 /* Simple ACL and rate limiter for mutation methods */
 static gboolean signer_mutations_allowed(void){
@@ -218,7 +247,8 @@ static gboolean handle_sign_event(NostrSigner *object, GDBusMethodInvocation *in
   }
   if (!rate_limit_ok_ms(sender, 100)) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "rate limited"); return TRUE; }
   if (!pending) pending = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, pending_free);
-  gchar *req_id = g_strdup_printf("%p", (void*)invocation);
+  if (pending_full(invocation)) return TRUE;
+  gchar *req_id = next_request_id();
   PendingSign *ps = g_new0(PendingSign, 1);
   ps->event_json = g_strdup(eventJson);
   ps->identity = g_strdup(identity);
@@ -240,6 +270,93 @@ static gboolean handle_sign_event(NostrSigner *object, GDBusMethodInvocation *in
   return TRUE;
 }
 
+/* ---- NIP44DeriveConversationKey (nip55l 0.3.0, nostrc-da9c) ------------- */
+#define ACL_SECTION_CONVKEY "NIP44DeriveConversationKey"
+
+static void return_convkey_error(GDBusMethodInvocation *invocation, int rc){
+  switch (rc) {
+    case NOSTR_SIGNER_ERROR_INVALID_KEY:
+    case NOSTR_SIGNER_ERROR_INVALID_ARG:
+      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
+        "peer is not a 64-hex x-only public key on secp256k1");
+      break;
+    case NOSTR_SIGNER_ERROR_NOT_FOUND:
+      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_KEY, "no key configured for this identity");
+      break;
+    default:
+      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "conversation key derivation failed");
+      break;
+  }
+}
+
+/* Derive and complete `target`. Returns the core rc so the approve path can
+ * report it to the approver. */
+static int complete_convkey(NostrSigner *object, GDBusMethodInvocation *target,
+                            const char *peer_hex, const char *identity){
+  char *hex = NULL;
+  int rc = nostr_nip55l_nip44_conversation_key(peer_hex, identity, &hex);
+  if (rc != 0 || !hex) { return_convkey_error(target, rc ? rc : NOSTR_SIGNER_ERROR_BACKEND); free(hex); return rc ? rc : NOSTR_SIGNER_ERROR_BACKEND; }
+  nostr_signer_complete_nip44_derive_conversation_key(object, target, hex);
+  memset(hex, 0, strlen(hex));
+  free(hex);
+  return 0;
+}
+
+static gboolean is_peer_hex(const char *s){
+  if (!s || strlen(s) != 64) return FALSE;
+  for (const char *p = s; *p; p++) if (!g_ascii_isxdigit(*p)) return FALSE;
+  return TRUE;
+}
+
+static void finish_convkey_request(NostrSigner *object, GDBusMethodInvocation *approver,
+                                   PendingSign *ps, gboolean decision, gboolean remember,
+                                   guint64 ttl_seconds, const char *sender){
+  const char *acl_app = (ps->app_id && *ps->app_id) ? ps->app_id : (sender ? sender : "");
+  if (decision) {
+    int rc = complete_convkey(object, ps->invocation, ps->peer_hex, ps->identity);
+    g_message("approve: convkey rc=%d app_id=%s", rc, acl_app);
+    nostr_signer_complete_approve_request(object, approver, rc == 0);
+  } else {
+    g_dbus_method_invocation_return_dbus_error(ps->invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL, "user denied");
+    nostr_signer_complete_approve_request(object, approver, TRUE);
+  }
+  if (remember)
+    acl_save_decision(ACL_SECTION_CONVKEY, acl_app, ps->identity ? ps->identity : "", decision, ttl_seconds);
+}
+
+static gboolean handle_nip44_derive_conversation_key(NostrSigner *object, GDBusMethodInvocation *invocation,
+                                                     const gchar *peerPubKey, const gchar *identity,
+                                                     const gchar *app_id)
+{
+  const gchar *sender = g_dbus_method_invocation_get_sender(invocation);
+  if (!app_id || !*app_id) app_id = sender ? sender : "";
+  if (!identity) identity = "";
+  /* Reject malformed peers before anyone is asked to approve them. */
+  if (!is_peer_hex(peerPubKey)) { return_convkey_error(invocation, NOSTR_SIGNER_ERROR_INVALID_KEY); return TRUE; }
+  gboolean acl_decision = FALSE;
+  if (acl_load_decision(ACL_SECTION_CONVKEY, app_id, identity, &acl_decision)) {
+    if (acl_decision) (void)complete_convkey(object, invocation, peerPubKey, identity);
+    else g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy");
+    return TRUE;
+  }
+  if (!rate_limit_ok_ms(sender, 100)) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "rate limited"); return TRUE; }
+  if (!pending) pending = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, pending_free);
+  if (pending_full(invocation)) return TRUE;
+  gchar *req_id = next_request_id();
+  PendingSign *ps = g_new0(PendingSign, 1);
+  ps->kind = PENDING_NIP44_CONVKEY;
+  ps->peer_hex = g_ascii_strdown(peerPubKey, -1);
+  ps->identity = g_strdup(identity);
+  ps->app_id = g_strdup(app_id);
+  ps->invocation = invocation;
+  g_hash_table_insert(pending, g_strdup(req_id), ps);
+  gchar *preview = g_strdup_printf("derive NIP-44 conversation key with %s", ps->peer_hex);
+  nostr_signer_emit_approval_requested(object, app_id, identity, "nip44_conversation_key", preview, req_id);
+  g_free(preview);
+  g_free(req_id);
+  return TRUE;
+}
+
 static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocation *invocation,
                                        const gchar *request_id, gboolean decision, gboolean remember, guint64 ttl_seconds)
 {
@@ -249,7 +366,12 @@ static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocatio
             request_id?request_id:"(null)", decision?"true":"false", remember?"true":"false", ttl_seconds);
   if (pending && request_id) {
     PendingSign *ps = g_hash_table_lookup(pending, request_id);
-    if (ps) {
+    if (ps && ps->kind == PENDING_NIP44_CONVKEY) {
+      handled = TRUE;
+      finish_convkey_request(object, invocation, ps, decision, remember, ttl_seconds, sender);
+      nostr_signer_emit_approval_completed(object, request_id, decision);
+      g_hash_table_remove(pending, request_id);
+    } else if (ps) {
       handled = TRUE;
       if (decision) {
         /* Fallback: if identity is empty, use the active identity */
@@ -567,6 +689,7 @@ guint signer_export(GDBusConnection *conn, const char *object_path) {
   g_signal_connect(signer_skel, "handle-nip44-encrypt-b64", G_CALLBACK(handle_nip44_encrypt_b64), NULL);
   g_signal_connect(signer_skel, "handle-nip44-decrypt-b64", G_CALLBACK(handle_nip44_decrypt_b64), NULL);
   g_signal_connect(signer_skel, "handle-decrypt-zap-event", G_CALLBACK(handle_decrypt_zap_event), NULL);
+  g_signal_connect(signer_skel, "handle-nip44-derive-conversation-key", G_CALLBACK(handle_nip44_derive_conversation_key), NULL);
   g_signal_connect(signer_skel, "handle-get-relays", G_CALLBACK(handle_get_relays), NULL);
   g_signal_connect(signer_skel, "handle-store-key", G_CALLBACK(handle_store_key), NULL);
   g_signal_connect(signer_skel, "handle-clear-key", G_CALLBACK(handle_clear_key), NULL);

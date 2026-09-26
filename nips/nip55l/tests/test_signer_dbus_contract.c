@@ -4,7 +4,9 @@
  * nostr-signer-daemon on it, and drives the full round-trip through the
  * generated org.nostr.Signer glue: GetPublicKey → SignEvent (with a
  * pre-populated ACL) → parse and cryptographically verify the returned
- * event → NIP44EncryptB64 → NIP44DecryptB64 → GetRelays → StoreKey /
+ * event → NIP44EncryptB64 → NIP44DecryptB64 → NIP44DeriveConversationKey
+ * (ACL allow / ACL deny / interactive ApprovalRequested → ApproveRequest
+ * approve + deny / malformed peer) → GetRelays → StoreKey /
  * ClearKey (best-effort; libsecret required and skipped clean if absent).
  * Phase 3 (nostrc-bml6, needs gnome-keyring-daemon; skipped clean if absent)
  * runs a real Secret Service on the private bus: legacy-schema items seeded
@@ -65,6 +67,7 @@
 #define ERR_INVALID  "org.nostr.Signer.Error.InvalidInput"
 #define ERR_NOT_FND  "org.nostr.Signer.Error.NotFound"
 #define ERR_PERM     "org.nostr.Signer.Error.PermissionDenied"
+#define ERR_DENIED   "org.nostr.Signer.Error.ApprovalDenied"
 
 #define CHECK(cond) do { if (!(cond)) { \
     g_printerr("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); exit(1); \
@@ -190,7 +193,13 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
     char *gnostr_dir = g_build_filename(xdg_cfg, "gnostr", NULL);
     g_mkdir_with_parents(gnostr_dir, 0700);
     char *acl = g_build_filename(gnostr_dir, "signer-acl.ini", NULL);
-    gchar *body = g_strdup_printf("[SignEvent]\ncontract-test:=allow\n%s",
+    /* NIP44DeriveConversationKey (nip55l 0.3.0): "contract-test" is
+     * pre-allowed, "contract-deny" pre-denied; any other app_id goes
+     * through ApprovalRequested. */
+    gchar *body = g_strdup_printf("[NIP44DeriveConversationKey]\n"
+                                  "contract-test:=allow\n"
+                                  "contract-deny:=deny\n"
+                                  "[SignEvent]\ncontract-test:=allow\n%s",
                                   extra_acl ? extra_acl : "");
     write_file(acl, body);
     g_free(body);
@@ -449,6 +458,188 @@ static void test_nip44_b64_roundtrip(Ctx *ctx) {
 
   g_free(payload_dup);
   g_free(b64_in);
+  free(peer_sk);
+  free(peer_pk);
+}
+
+/* ---- NIP44DeriveConversationKey (nostrc-da9c) --------------------------- */
+
+static char *expected_convkey_hex(const char *peer_sk_hex, const char *my_pk_hex) {
+  /* ECDH is symmetric: convkey(my_sk, peer_pk) == convkey(peer_sk, my_pk). */
+  uint8_t sk[32], pk[32], ck[32];
+  CHECK(nostr_hex2bin(sk, peer_sk_hex, sizeof sk));
+  CHECK(nostr_hex2bin(pk, my_pk_hex, sizeof pk));
+  CHECK(nostr_nip44_convkey(sk, pk, ck) == 0);
+  char *hex = g_malloc(65);
+  for (int i = 0; i < 32; i++) g_snprintf(hex + 2 * i, 3, "%02x", ck[i]);
+  hex[64] = '\0';
+  return hex;
+}
+
+static void expect_remote_error(GError *err, const char *name) {
+  CHECK(err != NULL);
+  gchar *remote = g_dbus_error_get_remote_error(err);
+  if (g_strcmp0(remote, name) != 0)
+    g_printerr("expected %s, got %s (%s)\n", name, remote ? remote : "(none)", err->message);
+  CHECK(g_strcmp0(remote, name) == 0);
+  g_free(remote);
+}
+
+typedef struct {
+  GMainLoop *loop;
+  char *req_id, *kind, *preview, *app_id;
+  GVariant *reply;
+  GError *err;
+  gboolean done;
+} ApprCtx;
+
+static void on_approval_requested(GDBusConnection *c, const gchar *snd, const gchar *path,
+                                  const gchar *iface, const gchar *sig, GVariant *params,
+                                  gpointer ud) {
+  (void)c; (void)snd; (void)path; (void)iface; (void)sig;
+  ApprCtx *a = ud;
+  const char *app = NULL, *id = NULL, *kind = NULL, *prev = NULL, *rid = NULL;
+  g_variant_get(params, "(&s&s&s&s&s)", &app, &id, &kind, &prev, &rid);
+  g_free(a->req_id); a->req_id = g_strdup(rid);
+  g_free(a->kind); a->kind = g_strdup(kind);
+  g_free(a->preview); a->preview = g_strdup(prev);
+  g_free(a->app_id); a->app_id = g_strdup(app);
+  g_main_loop_quit(a->loop);
+}
+
+static void on_convkey_reply(GObject *src, GAsyncResult *res, gpointer ud) {
+  ApprCtx *a = ud;
+  a->reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &a->err);
+  a->done = TRUE;
+  g_main_loop_quit(a->loop);
+}
+
+static gboolean appr_timeout(gpointer ud) {
+  ApprCtx *a = ud;
+  g_printerr("FAIL: approval round-trip timed out\n");
+  exit(1);
+  g_main_loop_quit(a->loop);
+  return G_SOURCE_REMOVE;
+}
+
+/* Interactive lane: no ACL entry for app_id, so the daemon parks the call,
+ * emits ApprovalRequested, and completes it when ApproveRequest decides. */
+static void convkey_interactive(Ctx *ctx, const char *peer_pk, const char *app_id,
+                                gboolean decision, const char *want_hex) {
+  ApprCtx a = { .loop = g_main_loop_new(NULL, FALSE) };
+  guint sub = g_dbus_connection_signal_subscribe(ctx->bus, BUS_NAME, IFACE,
+                                                 "ApprovalRequested", OBJ_PATH, NULL,
+                                                 G_DBUS_SIGNAL_FLAGS_NONE,
+                                                 on_approval_requested, &a, NULL);
+  guint to = g_timeout_add_seconds(20, appr_timeout, &a);
+  g_dbus_connection_call(ctx->bus, BUS_NAME, OBJ_PATH, IFACE, "NIP44DeriveConversationKey",
+                         g_variant_new("(sss)", peer_pk, "", app_id),
+                         G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 30000, NULL,
+                         on_convkey_reply, &a);
+  while (!a.req_id && !a.done) g_main_loop_run(a.loop);
+  CHECK(!a.done);           /* must be parked, not answered */
+  CHECK(a.req_id != NULL);
+  CHECK(g_strcmp0(a.kind, "nip44_conversation_key") == 0);
+  CHECK(g_strcmp0(a.app_id, app_id) == 0);
+  CHECK(a.preview && strstr(a.preview, peer_pk) != NULL);
+
+  GError *err = NULL;
+  GVariant *ok = call(ctx->bus, "ApproveRequest",
+                      g_variant_new("(sbbt)", a.req_id, decision, FALSE, (guint64)0),
+                      "(b)", &err);
+  if (!ok) { g_printerr("ApproveRequest: %s\n", err ? err->message : "?"); exit(1); }
+  gboolean handled = FALSE;
+  g_variant_get(ok, "(b)", &handled);
+  CHECK(handled);
+  g_variant_unref(ok);
+
+  while (!a.done) g_main_loop_run(a.loop);
+  g_source_remove(to);
+  g_dbus_connection_signal_unsubscribe(ctx->bus, sub);
+  if (decision) {
+    if (!a.reply) { g_printerr("convkey after approve: %s\n", a.err ? a.err->message : "?"); exit(1); }
+    const char *hex = NULL;
+    g_variant_get(a.reply, "(&s)", &hex);
+    CHECK(g_strcmp0(hex, want_hex) == 0);
+    g_variant_unref(a.reply);
+  } else {
+    CHECK(a.reply == NULL);
+    expect_remote_error(a.err, ERR_DENIED);
+    g_clear_error(&a.err);
+  }
+  g_free(a.req_id); g_free(a.kind); g_free(a.preview); g_free(a.app_id);
+  g_main_loop_unref(a.loop);
+}
+
+static void test_nip44_derive_conversation_key(Ctx *ctx) {
+  char *peer_sk = nostr_key_generate_private();
+  char *peer_pk = nostr_key_get_public(peer_sk);
+  CHECK(peer_sk && peer_pk);
+  char *want = expected_convkey_hex(peer_sk, ctx->pk_hex);
+
+  /* ACL allow: answered immediately, equal to the NIP-44 derivation on the
+   * peer's side, and usable with the stock NIP-44 v2 cipher. */
+  GError *err = NULL;
+  GVariant *ret = call(ctx->bus, "NIP44DeriveConversationKey",
+                       g_variant_new("(sss)", peer_pk, "", "contract-test"), "(s)", &err);
+  if (!ret) { g_printerr("NIP44DeriveConversationKey: %s\n", err ? err->message : "?"); exit(1); }
+  const char *hex = NULL;
+  g_variant_get(ret, "(&s)", &hex);
+  CHECK(strlen(hex) == 64);
+  CHECK(g_strcmp0(hex, want) == 0);
+  {
+    uint8_t ck[32], peer_sk_bin[32], my_pk_bin[32];
+    CHECK(nostr_hex2bin(ck, hex, sizeof ck));
+    CHECK(nostr_hex2bin(peer_sk_bin, peer_sk, sizeof peer_sk_bin));
+    CHECK(nostr_hex2bin(my_pk_bin, ctx->pk_hex, sizeof my_pk_bin));
+    char *payload = NULL;
+    CHECK(nostr_nip44_encrypt_v2(peer_sk_bin, my_pk_bin, (const uint8_t *)"sealed", 6, &payload) == 0);
+    uint8_t *pt = NULL; size_t pt_len = 0;
+    CHECK(nostr_nip44_decrypt_v2_with_convkey(ck, payload, &pt, &pt_len) == 0);
+    CHECK(pt_len == 6 && memcmp(pt, "sealed", 6) == 0);
+    free(pt); free(payload);
+  }
+  g_variant_unref(ret);
+
+  /* Uppercase hex peers are the same key. */
+  gchar *upper = g_ascii_strup(peer_pk, -1);
+  ret = call(ctx->bus, "NIP44DeriveConversationKey",
+             g_variant_new("(sss)", upper, "", "contract-test"), "(s)", &err);
+  CHECK(ret != NULL);
+  g_variant_get(ret, "(&s)", &hex);
+  CHECK(g_strcmp0(hex, want) == 0);
+  g_variant_unref(ret);
+  g_free(upper);
+
+  /* ACL deny: refused without prompting. */
+  ret = call(ctx->bus, "NIP44DeriveConversationKey",
+             g_variant_new("(sss)", peer_pk, "", "contract-deny"), "(s)", &err);
+  CHECK(ret == NULL);
+  expect_remote_error(err, ERR_DENIED);
+  g_clear_error(&err);
+
+  /* Malformed and off-curve peers: InvalidInput, never an approval prompt.
+   * x = 5 has no point on secp256k1 (5^3 + 7 = 132 is a non-residue). */
+  const char *bad[] = {
+    "zz", "not-hex-not-hex-not-hex-not-hex-not-hex-not-hex-not-hex-not-hex",
+    "0000000000000000000000000000000000000000000000000000000000000005",
+  };
+  for (size_t i = 0; i < G_N_ELEMENTS(bad); i++) {
+    ret = call(ctx->bus, "NIP44DeriveConversationKey",
+               g_variant_new("(sss)", bad[i], "", "contract-test"), "(s)", &err);
+    CHECK(ret == NULL);
+    expect_remote_error(err, ERR_INVALID);
+    g_clear_error(&err);
+  }
+
+  /* Interactive approve, then interactive deny (distinct app_ids with no
+   * ACL entry; the 100 ms per-sender rate limit is respected). */
+  g_usleep(150 * 1000);
+  convkey_interactive(ctx, peer_pk, "contract-ask", TRUE, want);
+  g_usleep(150 * 1000);
+  convkey_interactive(ctx, peer_pk, "contract-ask-2", FALSE, NULL);
+
+  g_free(want);
   free(peer_sk);
   free(peer_pk);
 }
@@ -809,6 +1000,7 @@ int main(void) {
     test_sign_event_ok(&ctx);
     test_sign_event_bad_json(&ctx);
     test_nip44_b64_roundtrip(&ctx);
+    test_nip44_derive_conversation_key(&ctx);
     test_get_relays_paths(&ctx, /*expect_ok=*/FALSE);
     test_store_key_denied_without_flag(&ctx);
     ctx_teardown(&ctx);

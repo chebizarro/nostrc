@@ -574,6 +574,38 @@ int nostr_nip55l_nip44_decrypt_b64(const char *cipher_b64, const char *peer_pub_
   *out_plaintext_b64 = b64; return 0;
 }
 
+/* NIP-44 v2 conversation key (nostr_nip44_convkey: HKDF-extract(SHA256,
+ * ECDH shared-x, salt "nip44-v2")) between the selected identity and a peer,
+ * as 64 lowercase hex. The secret key never leaves this process; the caller
+ * receives only the per-peer conversation key. Anyone holding it can open
+ * every NIP-44 payload exchanged with that peer, which is why the D-Bus
+ * method that exposes this is approval-gated (signer_service_g.c). */
+int nostr_nip55l_nip44_conversation_key(const char *peer_pub_hex,
+                                        const char *current_user,
+                                        char **out_convkey_hex){
+  if (!peer_pub_hex || !out_convkey_hex) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_convkey_hex = NULL;
+  if (!is_hex_64(peer_pub_hex)) return NOSTR_SIGNER_ERROR_INVALID_KEY;
+  uint8_t pkx[32];
+  if (!nostr_hex2bin(pkx, peer_pub_hex, sizeof pkx)) return NOSTR_SIGNER_ERROR_INVALID_KEY;
+  nostr_secure_buf sb = {0};
+  int rc = resolve_seckey_secure(current_user, &sb);
+  if (rc != 0) return rc;
+  uint8_t ck[32];
+  int drc = nostr_nip44_convkey((const uint8_t *)sb.ptr, pkx, ck);
+  secure_free(&sb);
+  /* convkey fails for a peer that is not a point on the curve. */
+  if (drc != 0) return NOSTR_SIGNER_ERROR_INVALID_KEY;
+  char *hex = (char *)malloc(65);
+  if (!hex) { secure_wipe(ck, sizeof ck); return NOSTR_SIGNER_ERROR_BACKEND; }
+  static const char HX[] = "0123456789abcdef";
+  for (int i = 0; i < 32; i++) { hex[2*i] = HX[ck[i] >> 4]; hex[2*i+1] = HX[ck[i] & 0xf]; }
+  hex[64] = '\0';
+  secure_wipe(ck, sizeof ck);
+  *out_convkey_hex = hex;
+  return 0;
+}
+
 int nostr_nip55l_decrypt_zap_event(const char *event_json,
                                     const char *current_user, char **out_json){
   if(!out_json || !event_json) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_json=NULL;

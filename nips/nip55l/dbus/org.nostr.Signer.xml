@@ -59,6 +59,27 @@
       <arg type="s" direction="in" name="identity" />
       <arg type="s" direction="out" name="plaintextB64" />
     </method>
+    <!-- NIP44DeriveConversationKey (nip55l 0.3.0): the NIP-44 v2
+         conversation key between `identity` and peerPubKey (64-hex x-only),
+         i.e. HKDF-extract(SHA256, ECDH shared-x, salt "nip44-v2"), as 64
+         lowercase hex. The secret key never leaves the signer, but the
+         returned key opens every NIP-44 payload exchanged with that peer, so
+         the call goes through the same approval flow as SignEvent: an ACL
+         entry in [NIP44DeriveConversationKey] keyed "<app_id>:<identity>"
+         decides it, otherwise ApprovalRequested (kind
+         "nip44_conversation_key", preview = the peer) is emitted and the
+         call completes on ApproveRequest. nostr-seal (nostrc-da9c) derives
+         with a per-file ephemeral peer, so the key it obtains opens one
+         file's key stanza and nothing else.
+         Errors: Error.InvalidInput (peer not a curve point / not 64-hex),
+         Error.ApprovalDenied, Error.RateLimited, Error.NoKeyConfigured,
+         Error.Internal. -->
+    <method name="NIP44DeriveConversationKey">
+      <arg type="s" direction="in" name="peerPubKey" />
+      <arg type="s" direction="in" name="identity" />
+      <arg type="s" direction="in" name="app_id" />
+      <arg type="s" direction="out" name="conversationKey" />
+    </method>
     <method name="DecryptZapEvent">
       <arg type="s" direction="in" name="eventJson" />
       <arg type="s" direction="in" name="identity" />

@@ -157,6 +157,45 @@ Decrypts a message using NIP-44 v2.
 
 ---
 
+#### NIP44DeriveConversationKey
+
+*Since nip55l 0.3.0.* Returns the NIP-44 v2 conversation key between the
+selected identity and a peer, so a client can open NIP-44 payloads addressed
+to that peer without ever seeing the nsec. Used by `nostr-seal` (nostrc-da9c)
+with a per-file ephemeral peer.
+
+```xml
+<method name="NIP44DeriveConversationKey">
+  <arg name="peerPubKey" type="s" direction="in"/>
+  <arg name="identity" type="s" direction="in"/>
+  <arg name="app_id" type="s" direction="in"/>
+  <arg name="conversationKey" type="s" direction="out"/>
+</method>
+```
+
+**Parameters**:
+- `peerPubKey` (string): Peer's x-only public key (64-char hex, any case)
+- `identity` (string): Identity selector (empty = active identity)
+- `app_id` (string): Requesting application (ACL key; empty = D-Bus sender)
+
+**Returns**:
+- `conversationKey` (string): 64 lowercase hex, `HKDF-extract(SHA-256, IKM = ECDH shared x, salt = "nip44-v2")`
+
+**Approval**: same flow as `SignEvent`. ACL section `[NIP44DeriveConversationKey]`,
+key `<app_id>:<identity>`; with no entry the call is held,
+`ApprovalRequested` is emitted with kind `nip44_conversation_key` and preview
+`derive NIP-44 conversation key with <peer hex>`, and `ApproveRequest`
+completes it. Grant it only for throwaway peers — the key opens every NIP-44
+payload exchanged with that peer.
+
+**Errors**:
+- `org.nostr.Signer.Error.InvalidInput`: peer is not 64-hex or not on secp256k1 (checked before prompting)
+- `org.nostr.Signer.Error.ApprovalDenied`: denied by policy or by the user
+- `org.nostr.Signer.Error.RateLimited`: more than one prompt per 100 ms from a sender
+- `org.nostr.Signer.Error.NoKeyConfigured`: no key for this identity
+
+---
+
 #### NIP04Encrypt
 
 Encrypts a message using NIP-04 (legacy, for compatibility).
@@ -330,7 +369,7 @@ Responds to a pending approval request (from UI).
 
 #### ApprovalRequested
 
-Emitted when a signing operation requires user approval.
+Emitted when a signing operation or a conversation-key export requires user approval.
 
 ```xml
 <signal name="ApprovalRequested">
@@ -345,7 +384,7 @@ Emitted when a signing operation requires user approval.
 **Arguments**:
 - `app_id`: Requesting application identifier
 - `identity`: Target identity (npub)
-- `kind`: Request type (e.g., "event")
+- `kind`: Request type: `"event"` (`SignEvent`) or `"nip44_conversation_key"` (`NIP44DeriveConversationKey`, nip55l 0.3.0)
 - `preview`: Human-readable preview of the content (truncated)
 - `request_id`: Unique ID to use with `ApproveRequest`
 
@@ -431,7 +470,7 @@ Requests exceeding the rate limit receive `org.nostr.Signer.Error.RateLimited`.
 ### Permission Model
 
 - **Key mutations disabled by default**: `StoreKey` and `ClearKey` require `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1`
-- **User approval required**: Signing operations without cached ACL decisions trigger interactive approval
+- **User approval required**: Signing operations (`SignEvent`) and conversation-key export (`NIP44DeriveConversationKey`, nip55l 0.3.0) without cached ACL decisions trigger interactive approval
 - **ACL persistence**: Decisions can be remembered with configurable TTL in `~/.config/gnostr/signer-acl.ini`
 
 ### Key Storage Security

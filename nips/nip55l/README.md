@@ -1,9 +1,11 @@
 # NIP-55L Linux Signer
 
-**Component version: 0.2.0** (tracked in `/VERSION_MANIFEST.md`; authoritative
+**Component version: 0.3.0** (tracked in `/VERSION_MANIFEST.md`; authoritative
 source `NOSTR_NIP55L_VERSION_*` in `include/nostr/nip55l/signer_ops.h`).
-0.2.0 is a breaking change for D-Bus clients: `SignEvent` now returns the
-complete signed event JSON instead of the bare signature — see below.
+0.3.0 is additive: new approval-gated `NIP44DeriveConversationKey` (used by
+`nostr-seal`, nostrc-da9c). 0.2.0 was a breaking change for D-Bus clients:
+`SignEvent` returns the complete signed event JSON instead of the bare
+signature — see below.
 
 This component provides a local signer daemon exposing a GLib/GDBus interface for Nostr signing and peer-to-peer encryption (NIP-04 and NIP-44 v2). It also ships a small CLI that talks to the DBus service.
 
@@ -99,6 +101,24 @@ Interface: `org.nostr.Signer`
 - `NIP44Decrypt(in s cipherB64, in s peerPubHex, in s currentUser) -> (s plaintext)`
 
 - `NIP44EncryptB64` / `NIP44DecryptB64`: binary-safe NIP-44 (plaintext side is base64).
+
+- `NIP44DeriveConversationKey(in s peerPubKey, in s identity, in s app_id) -> (s conversationKey)`
+  - Since 0.3.0. The NIP-44 v2 conversation key between `identity` and the
+    64-hex x-only `peerPubKey` (`HKDF-extract(SHA256, ECDH shared-x, "nip44-v2")`,
+    same as `nostr_nip44_convkey`), as 64 lowercase hex. The secret key never
+    leaves the daemon.
+  - **Approval-gated** like `SignEvent`: an ACL entry in section
+    `[NIP44DeriveConversationKey]` keyed `<app_id>:<identity>` decides it;
+    otherwise the call is parked, `ApprovalRequested(app_id, identity,
+    "nip44_conversation_key", "derive NIP-44 conversation key with <peer>",
+    request_id)` is emitted and `ApproveRequest` completes it (a remembered
+    decision is written to the same ACL section).
+  - The returned key opens every NIP-44 payload exchanged with that peer, so
+    grant it for throwaway peers: `nostr-seal` only ever asks with a per-file
+    ephemeral key.
+  - Errors: `Error.InvalidInput` (not 64-hex / not on the curve — refused
+    before any prompt), `Error.ApprovalDenied`, `Error.RateLimited`,
+    `Error.NoKeyConfigured`, `Error.Internal`.
 
 - `GetRelays() -> (s relaysJson)`
   - JSON array of the user's explicitly configured relays. Sources, first
