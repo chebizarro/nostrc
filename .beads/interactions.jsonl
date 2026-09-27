@@ -504,3 +504,4 @@
 {"id":"int-3db1e2f9","kind":"field_change","created_at":"2026-09-27T08:30:47.753627Z","actor":"Biz","issue_id":"nostrc-qp24.16","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-52ee741f","kind":"field_change","created_at":"2026-09-27T08:47:01.01336Z","actor":"Biz","issue_id":"nostrc-7xnt","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-cf340ee6","kind":"field_change","created_at":"2026-09-27T08:58:44.955084Z","actor":"Biz","issue_id":"nostrc-qp24.9","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-f2f62d83","kind":"field_change","created_at":"2026-09-27T09:13:24.341498Z","actor":"Biz","issue_id":"nostrc-j5vw","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Security leak removed; regression and full suite green; independently approved"}}
