@@ -43,6 +43,7 @@
 #include "nostr/nip19/nip19.h"  /* nostr_nip19_decode_npub */
 
 #include "notify_gnotification.h"
+#include "notify_prefs.h"
 #include "notify_subs.h"
 #include "notify_suppress.h"
 
@@ -60,6 +61,7 @@ typedef struct {
   char **home_relays;    /* NULL-terminated */
   size_t home_relays_count;
   NostrNotifyUpstreamMode upstream_mode;
+  NostrNotifyPrefs prefs;
 
   /* Grace timer for resuming subscriptions after GNostr vanishes. */
   guint resume_grace_source_id;
@@ -93,6 +95,7 @@ static char *config_path(void) {
 
 static void load_config(NostrNotifyDaemon *d) {
   d->upstream_mode = NSN_UPSTREAM_DIRECT;
+  nostr_notify_prefs_defaults(&d->prefs);
 
   g_autofree char *path = config_path();
   if (!path) return;
@@ -103,6 +106,11 @@ static void load_config(NostrNotifyDaemon *d) {
     g_clear_error(&e);
     return;
   }
+
+  nostr_notify_prefs_load(kf, &d->prefs);
+  g_message("nostr-notify: groups %s, DMs %s, group preview %s, sound %s",
+            d->prefs.notify_groups ? "on" : "off", d->prefs.notify_dms ? "on" : "off",
+            d->prefs.group_preview ? "on" : "off", d->prefs.sound ? "on" : "off");
 
   gchar *mode = g_key_file_get_string(kf, "notify", "upstream_mode", NULL);
   if (mode) {
@@ -221,6 +229,7 @@ static void start_subs(NostrNotifyDaemon *d) {
   strncpy(d->subs_ctx.user_pubkey_hex, d->user_pubkey_hex,
           sizeof(d->subs_ctx.user_pubkey_hex) - 1);
   d->subs_ctx.mode = d->upstream_mode;
+  d->subs_ctx.prefs = d->prefs;
   d->subs_ctx.home_relays = (const char **)d->home_relays;
   d->subs_ctx.home_relays_count = d->home_relays_count;
   d->subs_ctx.guard = &d->guard;

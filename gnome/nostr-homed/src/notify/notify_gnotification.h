@@ -64,7 +64,8 @@ GNotification *nostr_notify_build_dm(const char *giftwrap_event_id,
  * `kind` — the event kind (9..12); encoded in the deep link.
  * `content_utf8` — plaintext content; may be markup-safe or not. This
  *   function truncates to 80 chars, escapes GTK markup and normalizes
- *   whitespace (Finding 14 asserts ≤80 chars).
+ *   whitespace (Finding 14 asserts ≤80 chars). NULL = no preview
+ *   (group_preview = false): the body is nostr_notify_group_fixed_body().
  * `relay_url` — relay the event arrived on (deep-link relay hint); may be
  *   NULL.
  */
@@ -95,6 +96,7 @@ bool nostr_notify_activate_deep_link(const char *nostr_uri);
  */
 const char *nostr_notify_dm_title(void);
 const char *nostr_notify_dm_opaque_body(void);
+const char *nostr_notify_group_fixed_body(void);
 char *nostr_notify_group_preview(const char *content_utf8);
 char *nostr_notify_event_deep_link_uri(const char *event_id_hex, int kind,
                                        const char *relay_url);

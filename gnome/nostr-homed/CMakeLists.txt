@@ -2365,6 +2365,8 @@ if(NOSTR_NOTIFY_GIO_FOUND)
     src/notify/nostr-notify-daemon.c
     src/notify/notify_subs.c
     src/notify/notify_gnotification.c
+    src/notify/notify_prefs.c
+    src/notify/notify_sound.c
   )
   target_include_directories(nostr-notify-daemon PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/notify
@@ -2378,7 +2380,8 @@ if(NOSTR_NOTIFY_GIO_FOUND)
     PkgConfig::NOSTR_NOTIFY_GIO
     nostr
     nip19
-    Threads::Threads)
+    Threads::Threads
+    ${CMAKE_DL_LIBS})
 
   if(NOSTR_HOMED_ENABLE_AUTH_INSTALL)
     install(TARGETS nostr-notify-daemon RUNTIME
@@ -2408,6 +2411,19 @@ if(NOSTR_NOTIFY_GIO_FOUND)
     add_test(NAME notify_sub COMMAND test_notify_sub)
     set_tests_properties(notify_sub PROPERTIES
       LABELS "nostr-homed;notify" TIMEOUT 30)
+
+    # test_notify_prefs: nostr-notify.conf presentation keys (prqu.16).
+    add_executable(test_notify_prefs
+      tests/unit/test_notify_prefs.c
+      src/notify/notify_prefs.c
+      src/notify/notify_gnotification.c)
+    target_include_directories(test_notify_prefs PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/notify
+      ${CMAKE_SOURCE_DIR}/nips/nip19/include)
+    target_compile_options(test_notify_prefs PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)
+    target_link_libraries(test_notify_prefs PRIVATE PkgConfig::NOSTR_NOTIFY_GIO nip19 nostr)
+    add_test(NAME notify_prefs COMMAND test_notify_prefs)
+    set_tests_properties(notify_prefs PROPERTIES LABELS "nostr-homed;notify" TIMEOUT 30)
 
     # test_notify_suppress: exercise the generation-guard primitive
     # under concurrent snapshot + bump.

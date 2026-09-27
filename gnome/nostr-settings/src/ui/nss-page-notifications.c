@@ -200,14 +200,28 @@ render_relays(Page *p)
   }
 }
 
+/* Presentation switches: each row carries the NssNotifyConf field it edits. */
+static void
+on_presentation(AdwSwitchRow *row, GParamSpec *ps, gpointer data)
+{
+  (void)ps;
+  Page *p = data;
+  gboolean *field = g_object_get_data(G_OBJECT(row), "nss-field");
+  if (p->syncing || field == NULL)
+    return;
+  *field = adw_switch_row_get_active(row);
+  save(p);
+}
+
 static AdwSwitchRow *
-reserved(AdwPreferencesGroup *g, const gchar *title, const gchar *subtitle, gboolean v)
+reserved(Page *p, AdwPreferencesGroup *g, const gchar *title, const gchar *subtitle, gboolean *field)
 {
   AdwSwitchRow *r = ADW_SWITCH_ROW(adw_switch_row_new());
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(r), title);
   adw_action_row_set_subtitle(ADW_ACTION_ROW(r), subtitle);
-  adw_switch_row_set_active(r, v);
-  gtk_widget_set_sensitive(GTK_WIDGET(r), nss_notify_presentation_supported());
+  adw_switch_row_set_active(r, *field);
+  g_object_set_data(G_OBJECT(r), "nss-field", field);
+  g_signal_connect(r, "notify::active", G_CALLBACK(on_presentation), p);
   adw_preferences_group_add(g, GTK_WIDGET(r));
   return r;
 }
@@ -283,15 +297,13 @@ nss_page_notifications_new(NssContext *ctx)
 
   AdwPreferencesGroup *show = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
   adw_preferences_group_set_title(show, "What to show");
-  if (!nss_notify_presentation_supported())
-    adw_preferences_group_add(show, nss_status_row("Not configurable yet",
-      "nostr-notify doesn't read these options yet (nostrc-prqu.16); they show its "
-      "current fixed behaviour.", "dialog-information-symbolic"));
-  p->groups = reserved(show, "Group messages", "NIP-29 groups you are in", p->conf.notify_groups);
-  p->dms = reserved(show, "Direct messages", "Encrypted NIP-17 messages to you", p->conf.notify_dms);
-  p->preview = reserved(show, "Preview group messages", "Show the first line of the message",
-                        p->conf.group_preview);
-  p->sound = reserved(show, "Play a sound", NULL, p->conf.sound);
+  p->groups = reserved(p, show, "Group messages", "NIP-29 groups you are in", &p->conf.notify_groups);
+  p->dms = reserved(p, show, "Direct messages", "Encrypted NIP-17 messages to you", &p->conf.notify_dms);
+  p->preview = reserved(p, show, "Preview group messages",
+                        "Show the first line of the message; off shows only the group name",
+                        &p->conf.group_preview);
+  p->sound = reserved(p, show, "Play a sound", "The desktop's message sound, if available",
+                      &p->conf.sound);
   adw_preferences_group_add(show, nss_status_row("Direct message contents are never shown",
     "The notification only says a message arrived; open it in your client",
     "channel-secure-symbolic"));

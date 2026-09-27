@@ -27,6 +27,8 @@
 static const char *const kDmOpaqueBody =
     "You have a new encrypted direct message.";
 static const char *const kDmTitle = "Nostr message";
+/* group_preview = false: like DMs, say only that something arrived. */
+static const char *const kGroupFixedBody = "New message in this group.";
 static const char *const kGroupCategory = "x-nostr.group";
 static const char *const kDmCategory = "im.received";
 
@@ -81,6 +83,7 @@ static char *truncate_utf8(const char *s_in, size_t max_chars) {
  */
 const char *nostr_notify_dm_title(void) { return kDmTitle; }
 const char *nostr_notify_dm_opaque_body(void) { return kDmOpaqueBody; }
+const char *nostr_notify_group_fixed_body(void) { return kGroupFixedBody; }
 
 char *nostr_notify_group_preview(const char *content_utf8) {
   return truncate_utf8(content_utf8, 80);
@@ -196,7 +199,7 @@ GNotification *nostr_notify_build_group(const char *group_display_name,
   const char *title =
       (group_display_name && *group_display_name) ? group_display_name : h_tag;
   g_autofree char *safe_title = g_markup_escape_text(title, -1);
-  g_autofree char *body = truncate_utf8(content_utf8, 80);
+  g_autofree char *body = content_utf8 ? truncate_utf8(content_utf8, 80) : g_strdup(kGroupFixedBody);
 
   GNotification *n = g_notification_new(safe_title);
   g_notification_set_body(n, body ? body : "");

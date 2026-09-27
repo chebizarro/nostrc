@@ -30,7 +30,7 @@ service's own store, so the service stays the single source of truth.
 | Relays | relay details | NIP-11 over HTTPS (`Accept: application/nostr+json`, 5 s, 64 KiB cap) | no |
 | Notifications | on/off | systemd `--user`: `nostr-notify.service` | unit enablement |
 | Notifications | upstream mode, fallback relays | `~/.config/nostr-notify/nostr-notify.conf` `[notify]` `upstream_mode`, `home_relays` | yes |
-| Notifications | groups / DMs / preview / sound | same file, reserved keys (`nostr-notify.conf.example`) | shown disabled with a note: the daemon does not read them yet (`nostrc-prqu.16`) |
+| Notifications | groups / DMs / preview / sound | same file, `notify_groups`, `notify_dms`, `group_preview`, `sound` (`nostr-notify.conf.example`) | yes |
 | Wallet | pairing | `org.nostr.Wallet1` `Paired`/`Lud16`/`WalletPubkey`/`Relays`. *Connect with your wallet app* (default): `BeginWalletAuth` → opens the returned `nostr+walletauth://` link in the wallet app (or offers to copy it), waits for `WalletAuthFinished`, Cancel → `CancelWalletAuth`; the agent creates the key. Fallback: paste a `nostr+walletconnect://` link → `Pair(uri)`. `Unpair()`. The agent always confirms | via the agent |
 | Wallet | per-app (and per-website) read access and daily budgets | `org.nostr.Wallet1` `ListApps`, `SetReadAccess(app, b)`, `SetBudget(app, msat)`; re-listed on `AppsChanged`. A standing *GNOME Shell* row grants the panel indicator (every Shell extension shares gnome-shell's identity) | via the agent: read access applied directly (Settings is its grant admin), budgets confirmed in the agent's dialog |
 | Media servers | Blossom list | BUD-03 kind **10063**, signed + published | yes (event) |
@@ -142,7 +142,6 @@ The relay side has its own integration test,
 
 - Retention is not enforced by the relay (`nostrc-prqu.17`, blocked by
   `nostrc-8rxk`); the rows stay disabled until `RetentionSupported`.
-- nostr-notify ignores the presentation keys (`nostrc-prqu.16`).
 - The packaged session relay is cache-less (`nostrc-prqu.5`).
 - Kind-10002/10063 publishing does not retry in the background; partial
   results stay on screen with Publish enabled.

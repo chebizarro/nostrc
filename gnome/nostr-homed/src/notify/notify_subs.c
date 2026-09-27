@@ -50,6 +50,7 @@
 #include "nostr-tag.h"
 
 #include "notify_gnotification.h"
+#include "notify_sound.h"
 
 /*
  * Coalescing catalog — maps a withdraw-id (thread key) to a coalesce count
@@ -67,6 +68,7 @@
 typedef struct {
   GApplication *app;               /* NULL after subs_stop */
   NostrNotifySuppressGuard *guard; /* borrowed */
+  NostrNotifyPrefs prefs;          /* copied at start (main thread only) */
   GHashTable *live_ids;
   GMutex ids_mu;
 } NotifyDispatcher;
@@ -214,7 +216,8 @@ static gboolean dispatch_on_main(gpointer user_data) {
      * metadata cache — for v1 the cache is trivial and returns NULL, so
      * the h_tag itself is the visible title (still markup-safe). */
     n = nostr_notify_build_group(NULL, ev->h_tag, ev->event_id_hex, ev->kind,
-                                 ev->content, ev->relay_url, &build);
+                                 ev->dispatcher->prefs.group_preview ? ev->content : NULL,
+                                 ev->relay_url, &build);
   }
 
   if (!n || !build.withdraw_id) {
@@ -231,6 +234,7 @@ static gboolean dispatch_on_main(gpointer user_data) {
    * so the second check is load-bearing. Keep the builders pure. */
   if (nsn_guard_check(ev->dispatcher->guard, ev->generation_snapshot)) {
     g_application_send_notification(ev->dispatcher->app, build.withdraw_id, n);
+    if (ev->dispatcher->prefs.sound) (void)nostr_notify_play_sound();
 
     g_mutex_lock(&ev->dispatcher->ids_mu);
     g_hash_table_replace(ev->dispatcher->live_ids,
@@ -326,18 +330,25 @@ static void *connector_thread(void *arg) {
    * the daemon's cached group set; v1 subscribes broadly and drops on
    * the client side (matching the plan text's "group set discovered from
    * cached 39000-39003 metadata — minimal in-daemon cache"). */
-  NostrFilters *f_groups = nostr_filters_new();
-  {
+  /* Only what the user asked for is subscribed to (notify_groups /
+   * notify_dms): a disabled class costs no relay traffic at all. */
+  if (ctx->prefs.notify_groups) {
+    NostrFilters *f_groups = nostr_filters_new();
     NostrFilter *f = nostr_filter_new();
     const int kinds[] = {9, 10, 11, 12};
     nostr_filter_set_kinds(f, kinds, sizeof kinds / sizeof *kinds);
     nostr_filters_add(f_groups, f);
+    c->sub_groups = nostr_subscription_new(c->relay, f_groups);
+    if (!nostr_subscription_fire(c->sub_groups, &err)) {
+      fprintf(stderr, "nostr-notify: sub_groups.fire: %s\n",
+              (err && err->message) ? err->message : "?");
+      if (err) { free_error(err); err = NULL; }
+    }
   }
-  c->sub_groups = nostr_subscription_new(c->relay, f_groups);
 
   /* Filter 2: NIP-17 kind 1059 with #p = user_pubkey. */
-  NostrFilters *f_dms = nostr_filters_new();
-  {
+  if (ctx->prefs.notify_dms) {
+    NostrFilters *f_dms = nostr_filters_new();
     NostrFilter *f = nostr_filter_new();
     int kind = 1059;
     nostr_filter_set_kinds(f, &kind, 1);
@@ -346,25 +357,19 @@ static void *connector_thread(void *arg) {
     NostrTags *tags = nostr_tags_new(1, ptag);
     nostr_filter_set_tags(f, tags);
     nostr_filters_add(f_dms, f);
-  }
-  c->sub_dms = nostr_subscription_new(c->relay, f_dms);
-
-  if (!nostr_subscription_fire(c->sub_groups, &err)) {
-    fprintf(stderr, "nostr-notify: sub_groups.fire: %s\n",
-            (err && err->message) ? err->message : "?");
-    if (err) { free_error(err); err = NULL; }
-  }
-  if (!nostr_subscription_fire(c->sub_dms, &err)) {
-    fprintf(stderr, "nostr-notify: sub_dms.fire: %s\n",
-            (err && err->message) ? err->message : "?");
-    if (err) { free_error(err); err = NULL; }
+    c->sub_dms = nostr_subscription_new(c->relay, f_dms);
+    if (!nostr_subscription_fire(c->sub_dms, &err)) {
+      fprintf(stderr, "nostr-notify: sub_dms.fire: %s\n",
+              (err && err->message) ? err->message : "?");
+      if (err) { free_error(err); err = NULL; }
+    }
   }
 
-  /* Drain both subscription channels alternately until we're told to
+  /* Drain the subscription channels alternately until we're told to
    * stop. Use short-timeout receives so we can poll for stop and back
    * off on failure. */
-  GoChannel *ev_groups = nostr_subscription_get_events_channel(c->sub_groups);
-  GoChannel *ev_dms    = nostr_subscription_get_events_channel(c->sub_dms);
+  GoChannel *ev_groups = c->sub_groups ? nostr_subscription_get_events_channel(c->sub_groups) : NULL;
+  GoChannel *ev_dms    = c->sub_dms ? nostr_subscription_get_events_channel(c->sub_dms) : NULL;
 
   while (!atomic_load(&c->stop)) {
     for (int which = 0; which < 2; which++) {
@@ -490,6 +495,13 @@ bool nostr_notify_subs_start(NostrNotifySubsCtx *ctx) {
     ctx->mode = NSN_UPSTREAM_DIRECT;
   }
 
+  if (!ctx->prefs.notify_groups && !ctx->prefs.notify_dms) {
+    fprintf(stderr,
+            "nostr-notify: notify_groups and notify_dms are both off; daemon "
+            "will not subscribe.\n");
+    return false;
+  }
+
   if (ctx->home_relays_count == 0) {
     fprintf(stderr,
             "nostr-notify: no home_relays configured; daemon will not "
@@ -515,6 +527,7 @@ bool nostr_notify_subs_start(NostrNotifySubsCtx *ctx) {
   }
   g_dispatcher->app = ctx->app;
   g_dispatcher->guard = ctx->guard;
+  g_dispatcher->prefs = ctx->prefs;
 
   g_connectors_n = ctx->home_relays_count;
   g_connectors = g_new0(SubsConnector *, g_connectors_n);
