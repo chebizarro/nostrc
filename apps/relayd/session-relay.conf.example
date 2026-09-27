@@ -63,3 +63,31 @@ contact     = ""
 # because nostrdb has no delete primitive to evict with (nostrc-8rxk
 # Phase 1; nostrc-prqu.17).
 negentropy_enabled = 0
+
+# ── Upstream federation (apps/relayd/README.md "Upstream federation") ──────
+# Events local apps write to relay.sock are queued in a durable outbox
+# (outbox.sqlite3 next to the store) and forwarded to YOUR relays only: the
+# author's kind-10002 write relays, a gift wrap recipient's kind-10050 inbox
+# relays, a NIP-29 group's relay. Never forwarded: events tagged ["-"]
+# (NIP-70), kinds 13/14/22242/20000-29999, the kinds below, and events by
+# anyone but your local account(s). Status: `nostr-session-relayd --upstream`.
+federation = 1
+
+# Local account(s), comma-separated npub or hex. Empty: ask org.nostr.Signer
+# (GetPublicKey) the first time an event by an unknown author is queued.
+federation_accounts = ""
+
+# Kinds that stay on this machine, e.g. "30078, 31000-31999".
+federation_local_only_kinds = ""
+
+# ws:// (no TLS) is only used for loopback hosts unless this is 1.
+federation_allow_plaintext_ws = 0
+
+federation_backoff_initial_seconds  = 15
+federation_backoff_max_seconds      = 3600
+federation_ok_timeout_seconds       = 30
+federation_max_age_seconds          = 604800
+federation_keep_settled_seconds     = 604800
+federation_max_relays_per_event     = 16
+federation_max_inflight_per_relay   = 32
+federation_idle_disconnect_seconds  = 60

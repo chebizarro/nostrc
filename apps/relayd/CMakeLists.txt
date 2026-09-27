@@ -151,6 +151,90 @@ else()
   target_sources(nostr-session-relayd PRIVATE src/session/session_dbus.c)
   message(STATUS "nostr-session-relayd: gio-2.0 not found; org.nostr.SessionRelay1 disabled")
 endif()
+# --- Upstream federation (nostrc-7d96) -------------------------------------
+# Store-and-forward of what local apps write to relay.sock to the user's own
+# upstream relays (NIP-65 write / NIP-17 inbox / NIP-29 group relay). Outbound
+# engine: gnome/libnostr-publish (libsoup-3 transport, org.nostr.Signer for
+# NIP-42 AUTH); outbox: SQLite. The top-level CMakeLists configures
+# libnostr-publish after apps/relayd, so the wiring runs deferred at the end
+# of the top-level directory and only when the nostr-publish target exists
+# (ENABLE_LIBNOSTR_PUBLISH / ENABLE_NOSTR_DAV / ...). Without it the session
+# relay builds exactly as before and reports FederationState "unavailable".
+# nostr-authd / pam_nostr are untouched (scripts/check-authd-dep-purity.sh).
+set(NSR_RELAYD_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE INTERNAL "")
+function(nsr_wire_federation)
+  set(_dir "${NSR_RELAYD_SOURCE_DIR}")
+  if(NOT TARGET nostr-publish OR NOT TARGET nostr-session-relayd)
+    message(STATUS "nostr-session-relayd: libnostr-publish not built; upstream federation disabled")
+    return()
+  endif()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(NSR_FED_GIO QUIET IMPORTED_TARGET gio-2.0>=2.76)
+  pkg_check_modules(NSR_FED_SQLITE QUIET IMPORTED_TARGET sqlite3)
+  if(NOT NSR_FED_GIO_FOUND OR NOT NSR_FED_SQLITE_FOUND)
+    message(STATUS "nostr-session-relayd: gio-2.0/sqlite3 missing; upstream federation disabled")
+    return()
+  endif()
+  add_library(nsr_federation STATIC
+    ${_dir}/src/session/session_fed_policy.c
+    ${_dir}/src/session/session_outbox.c
+    ${_dir}/src/session/session_federation.c
+    ${_dir}/src/session/session_tee_storage.c
+    ${_dir}/src/session/session_routing.c
+  )
+  target_include_directories(nsr_federation PUBLIC
+    ${_dir}/src/session
+    ${_dir}/include
+    ${CMAKE_SOURCE_DIR}/libnostr/include
+  )
+  target_link_libraries(nsr_federation PUBLIC
+    nostr-publish nostr nostr_json PkgConfig::NSR_FED_GIO PkgConfig::NSR_FED_SQLITE)
+  target_compile_options(nsr_federation PRIVATE -Wall -Wextra -Wformat=2)
+  target_compile_definitions(nostr-session-relayd PRIVATE NSR_HAVE_FEDERATION=1)
+  target_link_libraries(nostr-session-relayd PRIVATE nsr_federation)
+  message(STATUS "nostr-session-relayd: upstream federation enabled (libnostr-publish + sqlite3)")
+
+  if(BUILD_TESTING)
+    set(_t ${_dir}/tests)
+    foreach(_unit fed_policy outbox)
+      add_executable(test_session_${_unit} ${_t}/test_session_${_unit}.c)
+      target_link_libraries(test_session_${_unit} PRIVATE nsr_federation)
+      target_compile_definitions(test_session_${_unit} PRIVATE
+        NSR_CONF_EXAMPLE="${_dir}/session-relay.conf.example")
+      add_test(NAME relayd_session_${_unit} COMMAND test_session_${_unit})
+      set_tests_properties(relayd_session_${_unit} PROPERTIES
+        TIMEOUT 60 LABELS "relay;session-relay;federation;unit")
+    endforeach()
+    pkg_check_modules(NSR_FED_SOUP QUIET IMPORTED_TARGET libsoup-3.0)
+    if(NSR_FED_SOUP_FOUND)
+      # In-process engine against fake remote relays (accept / reject /
+      # demand AUTH / drop connection / gift-wrap lane) on 127.0.0.1.
+      add_executable(test_session_federation ${_t}/test_session_federation.c)
+      target_link_libraries(test_session_federation PRIVATE
+        nsr_federation PkgConfig::NSR_FED_SOUP)
+      add_test(NAME relayd_session_federation COMMAND test_session_federation)
+      set_tests_properties(relayd_session_federation PROPERTIES
+        TIMEOUT 120 LABELS "relay;session-relay;federation;integration")
+      # The packaged daemon end to end: relay.sock -> outbox -> fake remote,
+      # observed over org.nostr.SessionRelay1 on a private GTestDBus bus with
+      # a fake org.nostr.Signer (GetPublicKey + NIP-42 AUTH signing).
+      if(UNIX AND NOT APPLE AND TARGET nostrdb_storage)
+        add_executable(test_session_relay_federation ${_t}/test_session_relay_federation.c)
+        target_link_libraries(test_session_relay_federation PRIVATE
+          nostr nostr_json PkgConfig::NSR_FED_GIO PkgConfig::NSR_FED_SOUP)
+        target_include_directories(test_session_relay_federation PRIVATE
+          ${CMAKE_SOURCE_DIR}/libnostr/include)
+        add_test(NAME relayd_session_relay_federation COMMAND test_session_relay_federation)
+        set_tests_properties(relayd_session_relay_federation PROPERTIES
+          TIMEOUT 120 SKIP_RETURN_CODE 77
+          ENVIRONMENT "NOSTR_SESSION_RELAYD=$<TARGET_FILE:nostr-session-relayd>"
+          LABELS "relay;session-relay;federation;integration")
+      endif()
+    endif()
+  endif()
+endfunction()
+cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR} CALL nsr_wire_federation)
+
 # The tree has no project VERSION; packagers may pass -DNOSTR_SESSION_RELAYD_VERSION=…
 if(NOSTR_SESSION_RELAYD_VERSION)
   target_compile_definitions(nostr-session-relayd PRIVATE

@@ -14,6 +14,9 @@
 
 #include "metrics.h"
 #include "nostr-filter.h"
+#ifdef NSR_HAVE_FEDERATION
+#include "session_federation.h"
+#endif
 
 #ifdef NSR_HAVE_GDBUS
 #include <gio/gio.h>
@@ -33,9 +36,30 @@ static const char k_introspection_xml[] =
     "    <property name='StoragePath' type='s' access='read'/>"
     "    <property name='SupportedNips' type='au' access='read'/>"
     "    <property name='RetentionSupported' type='b' access='read'/>"
+    "    <property name='FederationState' type='s' access='read'/>"
+    "    <property name='PendingUpstream' type='u' access='read'/>"
+    "    <property name='ForwardedCount' type='t' access='read'/>"
+    "    <property name='FailedUpstream' type='t' access='read'/>"
+    "    <property name='LastUpstreamError' type='s' access='read'/>"
     "    <method name='GetStats'>"
     "      <arg name='stats' type='a{sv}' direction='out'/>"
     "    </method>"
+    "    <method name='GetEventUpstream'>"
+    "      <arg name='event_id' type='s' direction='in'/>"
+    "      <arg name='state' type='s' direction='out'/>"
+    "      <arg name='detail' type='s' direction='out'/>"
+    "      <arg name='relays' type='a(sssuxx)' direction='out'/>"
+    "    </method>"
+    "    <method name='GetUpstreamRelays'>"
+    "      <arg name='relays' type='a(sa{sv})' direction='out'/>"
+    "    </method>"
+    "    <signal name='UpstreamStatusChanged'>"
+    "      <arg name='event_id' type='s'/>"
+    "      <arg name='relay_url' type='s'/>"
+    "      <arg name='relay_state' type='s'/>"
+    "      <arg name='reason' type='s'/>"
+    "      <arg name='event_state' type='s'/>"
+    "    </signal>"
     "  </interface>"
     "</node>";
 
@@ -50,6 +74,9 @@ typedef struct {
   char *storage_dir;
   char *version;
   gint64 started_us;       /* monotonic */
+  void *federation;        /* NsrFederation*, borrowed, nullable */
+  char *fed_state;         /* reported while federation == NULL */
+  char *fed_detail;
 
   /* D-Bus-thread-only caches. */
   gint64 event_count;
@@ -137,6 +164,46 @@ static GVariant *stat_nips(NsrDbus *d) {
   return g_variant_builder_end(&b);
 }
 
+/* Federation figures; zeros + the static state when there is no engine. */
+typedef struct {
+  const char *state;
+  char *detail;
+  guint32 pending, unroutable, pending_targets, relays_connected;
+  guint64 forwarded, partial, failed, skipped;
+  char *last_error;
+} FedFigures;
+
+static void fed_figures(NsrDbus *d, FedFigures *out) {
+  memset(out, 0, sizeof *out);
+#ifdef NSR_HAVE_FEDERATION
+  if (d->federation) {
+    NsrFedStatus st;
+    nsr_federation_status(d->federation, &st);
+    out->state = st.state;
+    out->detail = g_strdup(st.detail);
+    out->pending = (guint32)MIN(st.outbox.queued, G_MAXUINT32);
+    out->unroutable = (guint32)MIN(st.outbox.unroutable, G_MAXUINT32);
+    out->pending_targets = (guint32)MIN(st.outbox.pending_targets, G_MAXUINT32);
+    out->relays_connected = st.relays_connected;
+    out->forwarded = st.outbox.forwarded;
+    out->partial = st.outbox.partial;
+    out->failed = st.outbox.failed;
+    out->skipped = st.outbox.skipped;
+    out->last_error = g_strdup(st.outbox.last_error);
+    nsr_federation_status_clear(&st);
+    return;
+  }
+#endif
+  out->state = d->fed_state;
+  out->detail = g_strdup(d->fed_detail);
+  out->last_error = g_strdup("");
+}
+
+static void fed_figures_clear(FedFigures *f) {
+  g_free(f->detail);
+  g_free(f->last_error);
+}
+
 static GVariant *get_property(GDBusConnection *c, const gchar *sender,
                               const gchar *path, const gchar *iface,
                               const gchar *name, GError **error,
@@ -158,9 +225,81 @@ static GVariant *get_property(GDBusConnection *c, const gchar *sender,
   if (g_str_equal(name, "StoragePath")) return g_variant_new_string(d->storage_dir);
   if (g_str_equal(name, "SupportedNips")) return stat_nips(d);
   if (g_str_equal(name, "RetentionSupported")) return g_variant_new_boolean(FALSE);
+  if (g_str_has_prefix(name, "Federation") || g_str_has_suffix(name, "Upstream") ||
+      g_str_equal(name, "ForwardedCount") || g_str_equal(name, "LastUpstreamError")) {
+    FedFigures ff;
+    fed_figures(d, &ff);
+    GVariant *v = NULL;
+    if (g_str_equal(name, "FederationState")) v = g_variant_new_string(ff.state);
+    else if (g_str_equal(name, "PendingUpstream")) v = g_variant_new_uint32(ff.pending);
+    else if (g_str_equal(name, "ForwardedCount"))
+      v = g_variant_new_uint64(ff.forwarded + ff.partial);
+    else if (g_str_equal(name, "FailedUpstream")) v = g_variant_new_uint64(ff.failed);
+    else if (g_str_equal(name, "LastUpstreamError")) v = g_variant_new_string(ff.last_error);
+    fed_figures_clear(&ff);
+    if (v) return v;
+  }
   g_set_error(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_PROPERTY,
               "No such property: %s", name);
   return NULL;
+}
+
+static void handle_get_event_upstream(NsrDbus *d, GVariant *params,
+                                      GDBusMethodInvocation *inv) {
+  const gchar *id = NULL;
+  g_variant_get(params, "(&s)", &id);
+  GVariantBuilder rb;
+  g_variant_builder_init(&rb, G_VARIANT_TYPE("a(sssuxx)"));
+  char *state = NULL, *detail = NULL;
+#ifdef NSR_HAVE_FEDERATION
+  GPtrArray *targets = NULL;
+  if (d->federation &&
+      nsr_outbox_event_status(nsr_federation_get_outbox(d->federation), id, &state, &detail,
+                              &targets) == 0) {
+    for (guint i = 0; i < targets->len; i++) {
+      NsrOutboxTargetInfo *t = g_ptr_array_index(targets, i);
+      g_variant_builder_add(&rb, "(sssuxx)", t->relay, t->state, t->reason, t->attempts,
+                            (gint64)t->updated_at, (gint64)t->acked_at);
+    }
+    g_ptr_array_unref(targets);
+  }
+#endif
+  if (!state) {
+    /* Never queued: unknown id, a local-only event (never forwarded), or
+     * no federation engine. */
+    state = g_strdup("unknown");
+    detail = g_strdup(d->federation ? "not in the upstream outbox (never queued: local-only, "
+                                      "never stored here, or already pruned)"
+                                    : (d->fed_detail ? d->fed_detail : ""));
+  }
+  g_dbus_method_invocation_return_value(inv, g_variant_new("(ssa(sssuxx))", state, detail, &rb));
+  g_free(state);
+  g_free(detail);
+}
+
+static void handle_get_upstream_relays(NsrDbus *d, GDBusMethodInvocation *inv) {
+  GVariantBuilder b;
+  g_variant_builder_init(&b, G_VARIANT_TYPE("a(sa{sv})"));
+#ifdef NSR_HAVE_FEDERATION
+  if (d->federation) {
+    GPtrArray *relays = nsr_federation_relays(d->federation);
+    for (guint i = 0; i < relays->len; i++) {
+      NsrFedRelayInfo *r = g_ptr_array_index(relays, i);
+      GVariantBuilder p;
+      g_variant_builder_init(&p, G_VARIANT_TYPE("a{sv}"));
+      g_variant_builder_add(&p, "{sv}", "connected", g_variant_new_boolean(r->connected));
+      g_variant_builder_add(&p, "{sv}", "authenticated", g_variant_new_boolean(r->authed));
+      g_variant_builder_add(&p, "{sv}", "pending", g_variant_new_uint32(r->pending));
+      g_variant_builder_add(&p, "{sv}", "acked", g_variant_new_uint64(r->acked));
+      g_variant_builder_add(&p, "{sv}", "failed", g_variant_new_uint64(r->failed));
+      g_variant_builder_add(&p, "{sv}", "last_error", g_variant_new_string(r->last_error));
+      g_variant_builder_add(&p, "{sv}", "last_ok_at", g_variant_new_int64(r->last_ok_at));
+      g_variant_builder_add(&b, "(sa{sv})", r->url, &p);
+    }
+    g_ptr_array_unref(relays);
+  }
+#endif
+  g_dbus_method_invocation_return_value(inv, g_variant_new("(a(sa{sv}))", &b));
 }
 
 static void method_call(GDBusConnection *c, const gchar *sender,
@@ -169,6 +308,14 @@ static void method_call(GDBusConnection *c, const gchar *sender,
                         GDBusMethodInvocation *inv, gpointer user_data) {
   (void)c; (void)sender; (void)path; (void)iface; (void)params;
   NsrDbus *d = user_data;
+  if (g_str_equal(method, "GetEventUpstream")) {
+    handle_get_event_upstream(d, params, inv);
+    return;
+  }
+  if (g_str_equal(method, "GetUpstreamRelays")) {
+    handle_get_upstream_relays(d, inv);
+    return;
+  }
   if (!g_str_equal(method, "GetStats")) {
     g_dbus_method_invocation_return_error(inv, G_DBUS_ERROR,
                                           G_DBUS_ERROR_UNKNOWN_METHOD,
@@ -199,6 +346,24 @@ static void method_call(GDBusConnection *c, const gchar *sender,
   g_variant_builder_add(&b, "{sv}", "events_streamed",
                         g_variant_new_uint64((guint64)m.events_streamed));
   g_variant_builder_add(&b, "{sv}", "version", g_variant_new_string(d->version));
+  FedFigures ff;
+  fed_figures(d, &ff);
+  g_variant_builder_add(&b, "{sv}", "federation_state", g_variant_new_string(ff.state));
+  g_variant_builder_add(&b, "{sv}", "federation_detail", g_variant_new_string(ff.detail));
+  g_variant_builder_add(&b, "{sv}", "pending_upstream", g_variant_new_uint32(ff.pending));
+  g_variant_builder_add(&b, "{sv}", "unroutable_upstream", g_variant_new_uint32(ff.unroutable));
+  g_variant_builder_add(&b, "{sv}", "pending_upstream_deliveries",
+                        g_variant_new_uint32(ff.pending_targets));
+  g_variant_builder_add(&b, "{sv}", "forwarded_count",
+                        g_variant_new_uint64(ff.forwarded + ff.partial));
+  g_variant_builder_add(&b, "{sv}", "partially_forwarded_count",
+                        g_variant_new_uint64(ff.partial));
+  g_variant_builder_add(&b, "{sv}", "failed_upstream", g_variant_new_uint64(ff.failed));
+  g_variant_builder_add(&b, "{sv}", "skipped_upstream", g_variant_new_uint64(ff.skipped));
+  g_variant_builder_add(&b, "{sv}", "last_upstream_error", g_variant_new_string(ff.last_error));
+  g_variant_builder_add(&b, "{sv}", "upstream_relays_connected",
+                        g_variant_new_uint32(ff.relays_connected));
+  fed_figures_clear(&ff);
   g_dbus_method_invocation_return_value(inv, g_variant_new("(a{sv})", &b));
 }
 
@@ -280,6 +445,9 @@ void nsr_dbus_start(const NsrDbusInfo *info) {
   d->requested_backend = g_strdup(info->requested_backend ? info->requested_backend : "");
   d->storage_dir = g_strdup(info->storage_dir ? info->storage_dir : "");
   d->version = g_strdup(info->version ? info->version : "");
+  d->federation = info->federation;
+  d->fed_state = g_strdup(info->federation_state ? info->federation_state : "unavailable");
+  d->fed_detail = g_strdup(info->federation_detail ? info->federation_detail : "");
   d->started_us = g_get_monotonic_time();
   d->ctx = g_main_context_new();
   d->loop = g_main_loop_new(d->ctx, FALSE);
@@ -293,6 +461,7 @@ void nsr_dbus_start(const NsrDbusInfo *info) {
     g_dbus_node_info_unref(d->node);
     g_free(d->backend); g_free(d->requested_backend);
     g_free(d->storage_dir); g_free(d->version);
+    g_free(d->fed_state); g_free(d->fed_detail);
     g_free(d);
     return;
   }
@@ -312,7 +481,46 @@ void nsr_dbus_stop(void) {
   g_free(d->requested_backend);
   g_free(d->storage_dir);
   g_free(d->version);
+  g_free(d->fed_state);
+  g_free(d->fed_detail);
   g_free(d);
+}
+
+/* ── UpstreamStatusChanged ────────────────────────────────────────────── */
+
+typedef struct {
+  NsrDbus *d;
+  GVariant *args;
+} EmitJob;
+
+static gboolean emit_on_dbus_thread(gpointer p) {
+  EmitJob *j = p;
+  /* j->args is not floating: emit_signal takes its own reference and
+   * emit_job_free() drops ours. */
+  if (j->d->conn && j->d->reg_id)
+    g_dbus_connection_emit_signal(j->d->conn, NULL, NSR_DBUS_PATH, NSR_DBUS_IFACE,
+                                  "UpstreamStatusChanged", j->args, NULL);
+  return G_SOURCE_REMOVE;
+}
+
+static void emit_job_free(gpointer p) {
+  EmitJob *j = p;
+  g_variant_unref(j->args);
+  g_free(j);
+}
+
+void nsr_dbus_emit_upstream(const char *event_id, const char *relay_url,
+                            const char *relay_state, const char *reason,
+                            const char *event_state, void *user_data) {
+  (void)user_data;
+  NsrDbus *d = s_dbus; /* set before the federation thread starts, cleared after it stops */
+  if (!d || !event_id) return;
+  EmitJob *j = g_new0(EmitJob, 1);
+  j->d = d;
+  j->args = g_variant_ref_sink(g_variant_new(
+      "(sssss)", event_id, relay_url ? relay_url : "", relay_state ? relay_state : "",
+      reason ? reason : "", event_state ? event_state : ""));
+  g_main_context_invoke_full(d->ctx, G_PRIORITY_DEFAULT, emit_on_dbus_thread, j, emit_job_free);
 }
 
 /* ── --stats client ───────────────────────────────────────────────────── */
@@ -390,10 +598,97 @@ int nsr_dbus_print_stats(void) {
   return 0;
 }
 
+static GVariant *call_daemon(const char *method, GVariant *args, const char *reply_type) {
+  GError *err = NULL;
+  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
+  if (!bus) {
+    fprintf(stderr, "nostr-session-relayd: no session bus: %s\n", err->message);
+    g_error_free(err);
+    return NULL;
+  }
+  GVariant *r = g_dbus_connection_call_sync(bus, NSR_DBUS_NAME, NSR_DBUS_PATH, NSR_DBUS_IFACE,
+                                            method, args, G_VARIANT_TYPE(reply_type),
+                                            G_DBUS_CALL_FLAGS_NO_AUTO_START, 5000, NULL, &err);
+  g_object_unref(bus);
+  if (!r) {
+    if (g_error_matches(err, G_DBUS_ERROR, G_DBUS_ERROR_NAME_HAS_NO_OWNER) ||
+        g_error_matches(err, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN))
+      fprintf(stderr, "nostr-session-relayd: not running (no owner for %s)\n", NSR_DBUS_NAME);
+    else
+      fprintf(stderr, "nostr-session-relayd: %s: %s\n", method, err->message);
+    g_error_free(err);
+  }
+  return r;
+}
+
+int nsr_dbus_print_upstream(const char *event_id) {
+  if (event_id) {
+    GVariant *r = call_daemon("GetEventUpstream", g_variant_new("(s)", event_id),
+                              "(ssa(sssuxx))");
+    if (!r) return 1;
+    const gchar *state = NULL, *detail = NULL;
+    GVariantIter *it = NULL;
+    g_variant_get(r, "(&s&sa(sssuxx))", &state, &detail, &it);
+    printf("event: %s\nstate: %s\n", event_id, state);
+    if (detail && *detail) printf("detail: %s\n", detail);
+    const gchar *relay, *rstate, *reason;
+    guint32 attempts;
+    gint64 updated, acked;
+    while (g_variant_iter_next(it, "(&s&s&suxx)", &relay, &rstate, &reason, &attempts,
+                               &updated, &acked))
+      printf("relay: %s state=%s attempts=%" G_GUINT32_FORMAT " updated_at=%" G_GINT64_FORMAT
+             " acked_at=%" G_GINT64_FORMAT "%s%s\n",
+             relay, rstate, attempts, updated, acked, *reason ? " reason=" : "", reason);
+    g_variant_iter_free(it);
+    g_variant_unref(r);
+    return 0;
+  }
+  GVariant *r = call_daemon("GetUpstreamRelays", NULL, "(a(sa{sv}))");
+  if (!r) return 1;
+  GVariantIter *it = NULL;
+  g_variant_get(r, "(a(sa{sv}))", &it);
+  const gchar *url;
+  GVariant *props;
+  while (g_variant_iter_next(it, "(&s@a{sv})", &url, &props)) {
+    gboolean connected = FALSE, authed = FALSE;
+    guint32 pending = 0;
+    guint64 acked = 0, failed = 0;
+    gint64 last_ok = 0;
+    const gchar *last_error = "";
+    g_variant_lookup(props, "connected", "b", &connected);
+    g_variant_lookup(props, "authenticated", "b", &authed);
+    g_variant_lookup(props, "pending", "u", &pending);
+    g_variant_lookup(props, "acked", "t", &acked);
+    g_variant_lookup(props, "failed", "t", &failed);
+    g_variant_lookup(props, "last_ok_at", "x", &last_ok);
+    g_variant_lookup(props, "last_error", "&s", &last_error);
+    printf("%s connected=%s authenticated=%s pending=%" G_GUINT32_FORMAT " acked=%"
+           G_GUINT64_FORMAT " failed=%" G_GUINT64_FORMAT " last_ok_at=%" G_GINT64_FORMAT
+           "%s%s\n",
+           url, connected ? "yes" : "no", authed ? "yes" : "no", pending, acked, failed,
+           last_ok, *last_error ? " last_error=" : "", last_error);
+    g_variant_unref(props);
+  }
+  g_variant_iter_free(it);
+  g_variant_unref(r);
+  return 0;
+}
+
 #else /* !NSR_HAVE_GDBUS */
 
 void nsr_dbus_start(const NsrDbusInfo *info) { (void)info; }
 void nsr_dbus_stop(void) {}
+void nsr_dbus_emit_upstream(const char *event_id, const char *relay_url,
+                            const char *relay_state, const char *reason,
+                            const char *event_state, void *user_data) {
+  (void)event_id; (void)relay_url; (void)relay_state; (void)reason; (void)event_state;
+  (void)user_data;
+}
+int nsr_dbus_print_upstream(const char *event_id) {
+  (void)event_id;
+  fprintf(stderr, "nostr-session-relayd: built without GIO; --upstream unavailable\n");
+  return 1;
+}
 int nsr_dbus_print_stats(void) {
   fprintf(stderr,
           "nostr-session-relayd: built without GIO; --stats unavailable\n");

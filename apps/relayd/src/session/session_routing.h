@@ -9,11 +9,11 @@
  * home_relays per NIP-65.
  *
  * This header defines the routing classes and the kind→class lookup so
- * the mapping lives in exactly one place. The wire-level "actually
- * connect to upstream" client is intentionally out of scope for the
- * initial session-relay landing (§3.2 D4 says "Store-and-forward with
- * reconnect backoff for writes. No negentropy sync in v1"): a real
- * upstream federation client is tracked separately.
+ * the mapping lives in exactly one place. The upstream federation client
+ * (§3.2 D4 "store-and-forward with reconnect backoff for writes", bead
+ * nostrc-7d96) resolves a class to concrete relays in session_fed_policy.h
+ * and delivers through session_federation.h; apps/relayd/README.md
+ * "Upstream federation" is the forwarding contract.
  */
 #ifndef NOSTR_SESSION_ROUTING_H
 #define NOSTR_SESSION_ROUTING_H
@@ -29,14 +29,15 @@ typedef enum {
    * a per-class override for. */
   NSR_ROUTE_HOME_RELAYS = 0,
 
-  /* Group-scoped (NIP-29): kinds 9-12 (messages), 39000-39004 (metadata).
+  /* Group-scoped (NIP-29): kinds 9-12 (messages), 9000-9030 (moderation,
+   * join/leave requests), 39000-39004 (relay-signed metadata).
    * The write-back target is the group's own recorded relay URL; the
    * cache preserves relay-of-origin per stored event. */
   NSR_ROUTE_GROUP_RELAY = 1,
 
-  /* NIP-17 gift-wrap DMs: kind 1059 inbound (fetched from the recipient's
-   * kind-10050 inbox relays), kind 14 outbound (published to the
-   * recipient's inbox relays). */
+  /* NIP-17 gift-wrap DMs: kind 1059 wraps go to the recipient's kind-10050
+   * inbox relays; kind 13 seals and kind 14 rumors are classed here only
+   * so they are recognised -- they are never forwarded. */
   NSR_ROUTE_NIP17_INBOX = 2,
 
   /* NIP-09 tombstones (kind 5) — routed to home_relays, but flagged

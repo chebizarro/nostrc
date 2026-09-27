@@ -40,6 +40,15 @@ typedef struct {
   const char *requested_backend;
   const char *storage_dir;
   const char *version;
+  /* Upstream federation (bead nostrc-7d96). Borrowed, nullable; must
+   * outlive nsr_dbus_stop(). Only its thread-safe status accessors are
+   * used, from the D-Bus thread. */
+  struct NsrFederation *federation;
+  /* FederationState / detail reported while @federation is NULL:
+   * "disabled" (federation = 0 in session-relay.conf) or "unavailable"
+   * (built without libnostr-publish, cache-less relay, outbox unusable). */
+  const char *federation_state;
+  const char *federation_detail;
 } NsrDbusInfo;
 
 /* Spawn the D-Bus thread and request the bus name. Never fatal: a missing
@@ -54,6 +63,18 @@ void nsr_dbus_stop(void);
  * session bus and print one "key: value" line per statistic. Returns a
  * process exit status (0 ok, 1 not running / error). */
 int nsr_dbus_print_stats(void);
+
+/* Emit org.nostr.SessionRelay1.UpstreamStatusChanged. Callable from any
+ * thread (marshalled onto the D-Bus thread); a no-op before
+ * nsr_dbus_start() / after nsr_dbus_stop(). Signature matches
+ * NsrFedObserver (session_federation.h). */
+void nsr_dbus_emit_upstream(const char *event_id, const char *relay_url,
+                            const char *relay_state, const char *reason,
+                            const char *event_state, void *user_data);
+
+/* `nostr-session-relayd --upstream [EVENT_ID]`: per-relay upstream table,
+ * or one event's per-relay delivery status. Process exit status. */
+int nsr_dbus_print_upstream(const char *event_id);
 
 /* Disk usage (allocated bytes) of every regular file under @dir. Exposed
  * for tests. Returns 0 for a missing directory. */

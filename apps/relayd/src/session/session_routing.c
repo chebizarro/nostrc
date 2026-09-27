@@ -10,13 +10,18 @@
 #include "session_routing.h"
 
 NostrSessionRouteClass nostr_session_route_class(uint32_t kind) {
-  /* NIP-29 group messages (kinds 9-12) and metadata (39000-39004). */
+  /* NIP-29 group messages (kinds 9-12), moderation / join / leave requests
+   * (9000-9030: 9000-9020 moderation, 9021 join, 9022 leave) and
+   * relay-signed metadata (39000-39004). */
   if (kind >= 9 && kind <= 12) return NSR_ROUTE_GROUP_RELAY;
+  if (kind >= 9000 && kind <= 9030) return NSR_ROUTE_GROUP_RELAY;
   if (kind >= 39000 && kind <= 39004) return NSR_ROUTE_GROUP_RELAY;
 
   /* NIP-17 gift wraps + inner seals. Kind 14 is the DM rumor's kind after
-   * unwrap; the outer wrap on the wire is kind 1059. */
-  if (kind == 1059 || kind == 14) return NSR_ROUTE_NIP17_INBOX;
+   * unwrap; the outer wrap on the wire is kind 1059. Only 1059 is ever
+   * forwarded upstream (session_fed_policy.c): 13/14 carry the sender's
+   * identity / plaintext and never leave the machine. */
+  if (kind == 1059 || kind == 14 || kind == 13) return NSR_ROUTE_NIP17_INBOX;
 
   /* NIP-09 tombstones. */
   if (kind == 5) return NSR_ROUTE_TOMBSTONE;
