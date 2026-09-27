@@ -4,15 +4,16 @@
  * Private session bus (GTestDBus), the actual daemon with an env-lane key,
  * and the installed-shape CLI driven as a subprocess:
  *   encrypt --to-self --to <other>  → inspect lists both
- *   decrypt (NIP44DeriveConversationKey, ACL-allowed for org.nostr.Seal)
+ *   decrypt (NIP44DeriveConversationKey, granted to the nostr-seal CLI)
  *   decrypt of a file not sealed for the signer → "not a recipient", no output
- *   decrypt as an identity whose ACL entry is deny → "denied", no output
+ *   decrypt once the grant says deny → "denied", no output
  *   passphrase round-trip through --passphrase-file
  */
 
 #include <gio/gio.h>
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -69,13 +70,20 @@ int main(void) {
   g_autofree char *me = npub_of_hex(pk), *other = npub_of_hex(opk);
   g_setenv("NOSTR_SIGNER_SECKEY_HEX", sk, TRUE);
 
-  /* nostr-seal calls with app_id "org.nostr.Seal"; allow the active
-   * identity (selector ""), deny an explicit npub selector. */
-  g_autofree char *acl = g_build_filename(gdir, "signer-acl.ini", NULL);
-  g_autofree char *acl_body = g_strdup_printf("[NIP44DeriveConversationKey]\n"
-                                              "org.nostr.Seal:=allow\n"
-                                              "org.nostr.Seal:%s=deny\n", me);
-  CHECK(g_file_set_contents(acl, acl_body, -1, NULL));
+  /* nip55l 0.4.0 grants: [kind] "<principal>|<npub>", where the principal
+   * is derived from the caller's connection - here the CLI's executable
+   * (exe:<path>; run outside an app scope) - and on buses that report no
+   * PID (macOS) the claimed app_id ("org.nostr.Seal" for the conversation
+   * key, none for GetPublicKey). The grant covers every selector that
+   * resolves to this key. */
+  g_autofree char *cli_real = realpath(NSEAL_CLI_PATH, NULL);
+  CHECK(cli_real);
+  g_autofree char *grants = g_build_filename(gdir, "signer-grants.ini", NULL);
+  g_autofree char *grants_body = g_strdup_printf(
+      "[get_public_key]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
+      "[nip44_conversation_key]\nexe:%1$s|%2$s=allow\nclaimed:org.nostr.Seal|%2$s=allow\n",
+      cli_real, me);
+  CHECK(g_file_set_contents(grants, grants_body, -1, NULL));
 
   GTestDBus *bus = g_test_dbus_new(G_TEST_DBUS_NONE);
   g_test_dbus_up(bus);
@@ -134,8 +142,14 @@ int main(void) {
   g_autofree char *theirs_out = g_build_filename(tmp, "theirs.out", NULL);
   CHECK(!g_file_test(theirs_out, G_FILE_TEST_EXISTS));
 
-  /* The signer's policy says no for this selector. */
-  rc = run_cli(NULL, &r, "decrypt", "--identity", me, "-o", "denied.out", "report.pdf.nsealed", NULL);
+  /* The signer's policy now says no for this key (the daemon reloads a
+   * changed grants file). */
+  g_autofree char *deny_body = g_strdup_printf(
+      "[get_public_key]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
+      "[nip44_conversation_key]\nexe:%1$s|%2$s=deny\nclaimed:org.nostr.Seal|%2$s=deny\n",
+      cli_real, me);
+  CHECK(g_file_set_contents(grants, deny_body, -1, NULL));
+  rc = run_cli(NULL, &r, "decrypt", "-o", "denied.out", "report.pdf.nsealed", NULL);
   CHECK(rc != 0 && strstr(r, "denied"));
   g_free(r);
   g_autofree char *denied_out = g_build_filename(tmp, "denied.out", NULL);
