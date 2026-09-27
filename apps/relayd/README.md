@@ -66,7 +66,7 @@ still reach the network.
    | default (kind 1, 0, 3, 30023, …) | the author's kind-10002 **write** relays (`r` tags marked `write` or unmarked) |
    | kind 10002 itself | the write relays it names |
    | NIP-09 kind 5 | the author's write relays, plus every relay that acknowledged a deleted event (`e`/`a` tags; delivery records are kept ~400 days) |
-   | NIP-29 kinds 9–12, 9000–9030 | the group's relay only: relay hint in the `h` tag (`["h", id, relay]`), else the author's kind-10009 `["group", id, relay]` entry, else a `host'group-id` identifier (`wss://host`) |
+   | NIP-29: kinds 9–12, 9000–9030, 39000–39005, and **any other kind carrying an `h` tag** (NIP-29 "normal user-created events": a kind-1 note, a kind-30023 article, a kind-5 deletion… sent to a group) — except NIP-17 kinds, ephemeral kinds and user-level replaceable state (0, 3, 10000–19999, e.g. the kind-10009 group list), which keep their own row | the group's relay only, never the home relays: relay hint in the `h` tag (`["h", id, relay]`), else the author's kind-10009 `["group", id, relay]` entry, else a `host'group-id` identifier (`wss://host`) |
    | kind 1059 gift wrap | the recipient's (`p` tag) kind-10050 `relay` list; never the sender's relays, never 10002 as a fallback |
 
    Relay lists are read from the session relay itself: the relay-list

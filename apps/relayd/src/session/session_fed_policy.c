@@ -14,6 +14,7 @@
 #include <nostr-publish/nostr-publish-policy.h>
 
 #include "json.h"
+#include "nostr-kinds.h"
 #include "session_routing.h"
 
 /* ── Config ───────────────────────────────────────────────────────────── */
@@ -424,19 +425,36 @@ static void add_strv(GPtrArray *out, const NsrFedConfig *cfg, GStrv v) {
   for (guint i = 0; v && v[i]; i++) add_url(out, cfg, v[i]);
 }
 
+/* First tag @key with a non-empty value, or NULL. */
+static NostrTag *first_tag_nonempty(NostrTags *tags, const char *key) {
+  size_t n = tags ? nostr_tags_size(tags) : 0;
+  for (size_t i = 0; i < n; i++) {
+    NostrTag *t = nostr_tags_get(tags, i);
+    const char *k = t ? nostr_tag_get_key(t) : NULL;
+    if (!k || strcmp(k, key) != 0 || nostr_tag_size(t) < 2) continue;
+    const char *v = nostr_tag_get(t, 1);
+    if (v && *v) return t;
+  }
+  return NULL;
+}
+
+static gboolean kind_is_group_metadata(int kind) {
+  return kind >= NOSTR_KIND_SIMPLE_GROUP_METADATA && kind <= NOSTR_KIND_SIMPLE_GROUP_PINNED_EVENTS;
+}
+
+/* The tag naming the group an event addresses: `h` (events sent to a
+ * group), or `d` for the relay-generated 39000-39005 metadata. */
+static NostrTag *group_id_tag(NostrEvent *ev) {
+  NostrTags *tags = nostr_event_get_tags(ev);
+  return first_tag_nonempty(tags, kind_is_group_metadata(nostr_event_get_kind(ev)) ? "d" : "h");
+}
+
 static NsrFedRouteStatus resolve_group(const NsrFedConfig *cfg, NostrEvent *ev,
                                        const NsrFedLookup *lk, GPtrArray *out,
                                        char **reason) {
-  NostrTags *tags = nostr_event_get_tags(ev);
-  NostrTag *h = NULL;
-  size_t n = tags ? nostr_tags_size(tags) : 0;
-  for (size_t i = 0; i < n && !h; i++) {
-    NostrTag *t = nostr_tags_get(tags, i);
-    const char *k = t ? nostr_tag_get_key(t) : NULL;
-    if (k && strcmp(k, "h") == 0 && nostr_tag_size(t) >= 2) h = t;
-  }
+  NostrTag *h = group_id_tag(ev);
   if (!h) {
-    *reason = g_strdup("invalid: NIP-29 group kind without an h tag");
+    *reason = g_strdup("invalid: NIP-29 group event without a group id (h tag)");
     return NSR_FED_ROUTE_INVALID;
   }
   const char *gid = nostr_tag_get(h, 1);
@@ -546,7 +564,8 @@ NsrFedRouteStatus nsr_fed_resolve(const NsrFedConfig *cfg, NostrEvent *ev,
   int kind = nostr_event_get_kind(ev);
   GPtrArray *out = g_ptr_array_new_with_free_func(g_free);
   NsrFedRouteStatus st;
-  switch (nostr_session_route_class((uint32_t)kind)) {
+  gboolean has_h = first_tag_nonempty(nostr_event_get_tags(ev), "h") != NULL;
+  switch (nostr_session_route_class_event((uint32_t)kind, has_h)) {
     case NSR_ROUTE_GROUP_RELAY:
       st = resolve_group(cfg, ev, lookup, out, out_reason);
       break;

@@ -23,9 +23,10 @@
  *     exempt from the author check.
  *   - Targets come only from the user's own data: the author's kind-10002
  *     write relays, the recipient's kind-10050 inbox relays (1059), the
- *     group's relay (NIP-29 `h` tag: relay hint in the tag, the author's
- *     kind-10009 `group` entry, or a `host'group-id` identifier). There is
- *     no built-in or fallback relay.
+ *     group's relay for NIP-29 kinds and any h-tagged event
+ *     (nostr_session_route_class_event(): relay hint in the `h` tag, the
+ *     author's kind-10009 `group` entry, or a `host'group-id` identifier).
+ *     There is no built-in or fallback relay.
  */
 #ifndef NSR_SESSION_FED_POLICY_H
 #define NSR_SESSION_FED_POLICY_H
