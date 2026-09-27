@@ -1,0 +1,43 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!--
+  org.nostr.NotifyDaemon1 - unread encrypted direct messages, from
+  nostr-notify-daemon (gnome/nostr-homed/src/notify, bead nostrc-prqu.18).
+
+  Exported at /org/nostr/NotifyDaemon1 on the daemon's own connection,
+  well-known name org.nostr.NotifyDaemon (its GApplication id). The daemon
+  is a systemd user service with no D-Bus activation file; clients such as
+  the GNOME Shell extension must still call with NO_AUTO_START and treat a
+  missing name as "notifications off".
+
+  DM opacity (§3.3 D3 F14): only a count and a time. Never content, sender,
+  gift-wrap id or conversation.
+
+  "Unread" = a direct-message notification the daemon delivered and the
+  user has not yet acted on. The count goes back to 0 when:
+    - the user activates a direct-message notification (opens it),
+    - gnostr (org.gnostr.Client) appears on the bus: the user is looking at
+      the client and the daemon withdraws its notifications,
+    - a client calls MarkRead().
+  Dismissing a notification in the shell is NOT observable (GNotification /
+  org.gtk.Notifications report no dismissals), so it does not count as
+  read. The count lives in memory: it starts at 0 with the daemon.
+-->
+<node>
+  <interface name="org.nostr.NotifyDaemon1">
+    <!-- UnreadDirectMessages: delivered, not yet read DM notifications.
+         Emits org.freedesktop.DBus.Properties.PropertiesChanged. -->
+    <property name="UnreadDirectMessages" type="u" access="read">
+      <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="true"/>
+    </property>
+    <!-- LastDirectMessage: unix time the last DM notification was delivered
+         (0 = none since the daemon started). Changes with the count. -->
+    <property name="LastDirectMessage" type="t" access="read">
+      <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="true"/>
+    </property>
+    <!-- MarkRead: set UnreadDirectMessages to 0 (e.g. gnostr showed the
+         conversations). Harmless for anyone to call: it only clears a
+         count. -->
+    <method name="MarkRead"/>
+  </interface>
+</node>

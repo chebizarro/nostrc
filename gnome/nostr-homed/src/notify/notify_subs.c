@@ -51,6 +51,7 @@
 
 #include "notify_gnotification.h"
 #include "notify_sound.h"
+#include "notify_unread.h"
 
 /*
  * Coalescing catalog — maps a withdraw-id (thread key) to a coalesce count
@@ -235,6 +236,7 @@ static gboolean dispatch_on_main(gpointer user_data) {
   if (nsn_guard_check(ev->dispatcher->guard, ev->generation_snapshot)) {
     g_application_send_notification(ev->dispatcher->app, build.withdraw_id, n);
     if (ev->dispatcher->prefs.sound) (void)nostr_notify_play_sound();
+    if (ev->kind == 1059) nostr_notify_unread_add((int64_t)time(NULL));
 
     g_mutex_lock(&ev->dispatcher->ids_mu);
     g_hash_table_replace(ev->dispatcher->live_ids,

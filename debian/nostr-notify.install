@@ -1,4 +1,5 @@
 usr/libexec/nostr-notify-daemon
 usr/lib/systemd/user/nostr-notify.service
 usr/share/nostr-notify/nostr-notify.conf.example
+usr/share/dbus-1/interfaces/org.nostr.NotifyDaemon1.xml
 usr/lib/*/libnip19.so*

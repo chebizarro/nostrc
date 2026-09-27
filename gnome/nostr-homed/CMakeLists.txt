@@ -2361,14 +2361,27 @@ endif()
 
 if(NOSTR_NOTIFY_GIO_FOUND)
   find_package(Threads REQUIRED)
+  # org.nostr.NotifyDaemon1 introspection XML (unread DM count, prqu.18),
+  # embedded as a C string; the same file is installed for clients.
+  set(NOSTR_NOTIFY_DBUS_XML ${CMAKE_SOURCE_DIR}/gnome/dbus/org.nostr.NotifyDaemon1.xml)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${NOSTR_NOTIFY_DBUS_XML})
+  file(READ ${NOSTR_NOTIFY_DBUS_XML} _nnd_xml)
+  string(REPLACE "\\" "\\\\" _nnd_xml "${_nnd_xml}")
+  string(REPLACE "\"" "\\\"" _nnd_xml "${_nnd_xml}")
+  string(REPLACE "\n" "\\n\"\n\"" _nnd_xml "${_nnd_xml}")
+  file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/notify-daemon1-xml.h
+       "/* generated from gnome/dbus/org.nostr.NotifyDaemon1.xml */\n"
+       "static const char notify_daemon1_xml[] =\n\"${_nnd_xml}\";\n")
   add_executable(nostr-notify-daemon
     src/notify/nostr-notify-daemon.c
     src/notify/notify_subs.c
     src/notify/notify_gnotification.c
     src/notify/notify_prefs.c
     src/notify/notify_sound.c
+    src/notify/notify_unread.c
   )
   target_include_directories(nostr-notify-daemon PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/notify
     ${CMAKE_SOURCE_DIR}/libnostr/include
     ${CMAKE_SOURCE_DIR}/libgo/include
@@ -2391,6 +2404,8 @@ if(NOSTR_NOTIFY_GIO_FOUND)
     # notify/ or point users at it in a man page.
     install(FILES config/nostr-notify.conf.example
             DESTINATION "${CMAKE_INSTALL_DATADIR}/nostr-notify")
+    install(FILES ${NOSTR_NOTIFY_DBUS_XML}
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces")
   endif()
 
   if(NOSTR_HOMED_BUILD_TESTS)
@@ -2424,6 +2439,19 @@ if(NOSTR_NOTIFY_GIO_FOUND)
     target_link_libraries(test_notify_prefs PRIVATE PkgConfig::NOSTR_NOTIFY_GIO nip19 nostr)
     add_test(NAME notify_prefs COMMAND test_notify_prefs)
     set_tests_properties(notify_prefs PROPERTIES LABELS "nostr-homed;notify" TIMEOUT 30)
+
+    # test_notify_unread: org.nostr.NotifyDaemon1 on a private bus (prqu.18).
+    add_executable(test_notify_unread
+      tests/unit/test_notify_unread.c
+      src/notify/notify_unread.c)
+    target_include_directories(test_notify_unread PRIVATE
+      ${CMAKE_CURRENT_BINARY_DIR}
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/notify
+      ${CMAKE_SOURCE_DIR}/nips/nip19/include)
+    target_compile_options(test_notify_unread PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)
+    target_link_libraries(test_notify_unread PRIVATE PkgConfig::NOSTR_NOTIFY_GIO nip19 nostr)
+    add_test(NAME notify_unread COMMAND test_notify_unread)
+    set_tests_properties(notify_unread PROPERTIES LABELS "nostr-homed;notify;dbus" TIMEOUT 60)
 
     # test_notify_suppress: exercise the generation-guard primitive
     # under concurrent snapshot + bump.
