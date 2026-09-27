@@ -26,7 +26,7 @@ Deferred to a later wave: k95e, wu3s, hby8, prqu.1, prqu.7, prqu.9, prqu.10, rxx
 - [x] G grab-bag (dispatcher NIP-89 offers/Handler2 scopes, LaunchSearch, seal publish, FUSE units, libmarmot, nip05/25 libdir) — merged (prqu.1 prqu.7 prqu.9 prqu.10 9rvm hby8 ipvk o8mx); follow-ups 9tdc (P1→J), 5loj, 2v57, i7kv, 7kaa
 - [ ] I share/dav federation consumers (t24q eqdz k95e wu3s) — running
 - [ ] J relayd federation follow-ups (zi3j ytua jedb elgy 8cc1 abk1 tvoi) — running
-- [ ] K homed syncd inotify P1 + notify + test hygiene (lqm2 a16c a33z bn7z 2w9b) — running
+- [x] K homed syncd inotify P1 + notify + test hygiene — merged (lqm2 a16c a33z bn7z 2w9b + 51ax P1 dm.js); follow-ups 5y2t (P1 snapshot >32MiB), p8y6, ix3n, ixra
 - [ ] L gnostr follow-ups (jppi 46h7 4gf4 7n4t prjb) — running
 - [ ] M signer/nip5f/wallet follow-ups (q23h yjky 56id muhk dnbf) — running
 - Deferred: 9z5w (decision: ship an approver UI/CLI in Debian?), hd8u (Flatpak Firefox portal), a5fr (Epiphany)
