@@ -43,6 +43,32 @@ event_from_row(sqlite3_stmt *stmt, GError **error)
   return event;
 }
 
+/* Look up the stored created_at for @uid. *out_exists tells whether the row
+ * is there at all (a row may legitimately carry created_at = 0 from before
+ * nostrc-ir7c). */
+static gboolean
+lookup_created_at(NdStoreDb *db, const gchar *uid, gboolean *out_exists,
+                  gint64 *out_created_at, GError **error)
+{
+  sqlite3 *h = nd_store_db_get_handle(db);
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(h, "SELECT created_at FROM events WHERE uid = ?1",
+                         -1, &stmt, NULL) != SQLITE_OK) {
+    nd_store_db_set_sql_error(db, error, "prepare event created_at lookup");
+    return FALSE;
+  }
+  sqlite3_bind_text(stmt, 1, uid, -1, SQLITE_TRANSIENT);
+  int rc = sqlite3_step(stmt);
+  *out_exists = (rc == SQLITE_ROW);
+  *out_created_at = (rc == SQLITE_ROW) ? sqlite3_column_int64(stmt, 0) : 0;
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_ROW && rc != SQLITE_DONE) {
+    nd_store_db_set_sql_error(db, error, "event created_at lookup");
+    return FALSE;
+  }
+  return TRUE;
+}
+
 NdCalendarStore *
 nd_calendar_store_new(NdStoreDb *db)
 {
@@ -61,25 +87,36 @@ nd_calendar_store_free(NdCalendarStore *store)
 }
 
 gboolean
-nd_calendar_store_put(NdCalendarStore       *store,
-                      const NdCalendarEvent *event,
-                      gboolean              *out_created,
-                      GError               **error)
+nd_calendar_store_put(NdCalendarStore *store,
+                      NdCalendarEvent *event,
+                      gboolean        *out_created,
+                      GError         **error)
 {
   g_return_val_if_fail(store != NULL, FALSE);
   g_return_val_if_fail(event != NULL && event->uid != NULL, FALSE);
 
   sqlite3 *h = nd_store_db_get_handle(store->db);
-  g_autofree gchar *ical = nd_ical_generate_vevent(event);
-  g_autofree gchar *etag = nd_ical_compute_etag(event);
+  g_autofree gchar *ical = NULL;
+  g_autofree gchar *etag = NULL;
   gboolean existed = FALSE;
+  gint64 prev_created_at = 0;
 
   if (!nd_store_db_begin(store->db, error))
     return FALSE;
 
-  if (!nd_store_db_row_exists(store->db, ND_STORE_COLLECTION_EVENTS,
-                              event->uid, &existed, error))
+  if (!lookup_created_at(store->db, event->uid, &existed, &prev_created_at,
+                         error))
     goto fail;
+
+  /* nostrc-ir7c: a local write (DAV PUT) carries created_at = 0. Stamp it
+   * strictly after the previous version so the ETag changes on every edit,
+   * the relay-sync last-writer-wins guard sees the local copy as newest, and
+   * the publisher signs the same created_at the row (and ETag) carry. */
+  if (event->created_at <= 0)
+    event->created_at = nd_store_next_created_at(prev_created_at);
+
+  ical = nd_ical_generate_vevent(event);
+  etag = nd_ical_compute_etag(event);
 
   sqlite3_stmt *stmt = NULL;
   if (sqlite3_prepare_v2(h,

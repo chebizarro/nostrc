@@ -426,9 +426,12 @@ nd_ical_event_to_nip52_json(const NdCalendarEvent *event)
   json_builder_set_member_name(b, "content");
   json_builder_add_string_value(b, event->description ? event->description : "");
 
-  /* created_at */
+  /* created_at: the stored row's value (stamped at DAV PUT, nostrc-ir7c) so
+   * the signed event, the row's LWW guard and the ETag agree. Fall back to
+   * now only for rows predating the stamping. */
   json_builder_set_member_name(b, "created_at");
-  json_builder_add_int_value(b, (gint64)time(NULL));
+  json_builder_add_int_value(b, event->created_at > 0 ? event->created_at
+                                                      : (gint64)time(NULL));
 
   /* tags */
   json_builder_set_member_name(b, "tags");

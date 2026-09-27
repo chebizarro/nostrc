@@ -371,18 +371,12 @@ build_unsigned_for_calendar(NdPublisher *self, const gchar *uid, GError **error)
 {
   GError *err = NULL;
   g_autoptr(NdCalendarEvent) ev = NULL;
-  {
-    NdCalendarStore *store = NULL;
-    /* We do not need the store wrapper here — hit SQLite directly to
-     * avoid coupling; but sharing the store keeps parsing quirks in one
-     * place. For v1, we materialise via a fresh temporary wrapper. */
-    (void)store;
-  }
 
   sqlite3 *h = nd_store_db_get_handle(self->db);
   sqlite3_stmt *stmt = NULL;
   if (sqlite3_prepare_v2(h,
-        "SELECT ical FROM events WHERE uid = ?1", -1, &stmt, NULL) != SQLITE_OK) {
+        "SELECT ical, created_at FROM events WHERE uid = ?1",
+        -1, &stmt, NULL) != SQLITE_OK) {
     nd_store_db_set_sql_error(self->db, error, "load event for signing");
     return NULL;
   }
@@ -396,6 +390,7 @@ build_unsigned_for_calendar(NdPublisher *self, const gchar *uid, GError **error)
   }
   const gchar *ical = (const gchar *)sqlite3_column_text(stmt, 0);
   ev = nd_ical_parse_vevent(ical ? ical : "", &err);
+  gint64 row_created_at = sqlite3_column_int64(stmt, 1);
   sqlite3_finalize(stmt);
   if (ev == NULL) {
     g_propagate_prefixed_error(error, err,
@@ -405,8 +400,9 @@ build_unsigned_for_calendar(NdPublisher *self, const gchar *uid, GError **error)
   /* Force UID so the NIP-52 `d`-tag matches the row key. */
   g_free(ev->uid);
   ev->uid = g_strdup(uid);
-  /* Pubkey / created_at are stamped in by the signer; the unsigned JSON
-   * omits them for those fields where the signer sets them. */
+  /* Sign with the created_at stamped at DAV PUT (nostrc-ir7c); the signer
+   * keeps a non-zero created_at and fills in pubkey/id/sig. */
+  ev->created_at = row_created_at;
   return nd_ical_event_to_nip52_json(ev);
 }
 
@@ -461,7 +457,7 @@ build_unsigned_for_contact(NdPublisher *self, const gchar *uid, GError **error)
   sqlite3 *h = nd_store_db_get_handle(self->db);
   sqlite3_stmt *stmt = NULL;
   if (sqlite3_prepare_v2(h,
-        "SELECT vcard FROM contacts WHERE uid = ?1",
+        "SELECT vcard, created_at FROM contacts WHERE uid = ?1",
         -1, &stmt, NULL) != SQLITE_OK) {
     nd_store_db_set_sql_error(self->db, error, "load contact for signing");
     return NULL;
@@ -477,6 +473,7 @@ build_unsigned_for_contact(NdPublisher *self, const gchar *uid, GError **error)
   const gchar *vcard = (const gchar *)sqlite3_column_text(stmt, 0);
   GError *err = NULL;
   g_autoptr(NdContact) contact = nd_vcard_parse(vcard ? vcard : "", &err);
+  gint64 row_created_at = sqlite3_column_int64(stmt, 1);
   sqlite3_finalize(stmt);
   if (contact == NULL) {
     g_propagate_prefixed_error(error, err,
@@ -485,6 +482,7 @@ build_unsigned_for_contact(NdPublisher *self, const gchar *uid, GError **error)
   }
   g_free(contact->uid);
   contact->uid = g_strdup(uid);
+  contact->created_at = row_created_at; /* nostrc-ir7c */
   return nd_vcard_to_nostr_json(contact);
 }
 

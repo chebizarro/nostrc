@@ -443,6 +443,23 @@ test_put_event_updates(DavFixture *f, gconstpointer data)
   g_autoptr(SoupMessage) msg2 = make_put_ics(url, TEST_ICS_DATE_EVENT);
   g_autoptr(GBytes) body2 = send_msg(f, msg2);
   g_assert_cmpuint(soup_message_get_status(msg2), ==, 204);
+
+  /* nostrc-ir7c: every edit gets a new created_at, so the per-resource
+   * ETag changes and GET reports the ETag the PUT returned. */
+  const gchar *etag1 = soup_message_headers_get_one(
+    soup_message_get_response_headers(msg1), "ETag");
+  const gchar *etag2 = soup_message_headers_get_one(
+    soup_message_get_response_headers(msg2), "ETag");
+  g_assert_nonnull(etag1);
+  g_assert_nonnull(etag2);
+  g_assert_cmpstr(etag1, !=, etag2);
+
+  g_autoptr(SoupMessage) get_msg = soup_message_new("GET", url);
+  g_autoptr(GBytes) get_body = send_msg(f, get_msg);
+  g_assert_cmpuint(soup_message_get_status(get_msg), ==, 200);
+  g_assert_cmpstr(soup_message_headers_get_one(
+                    soup_message_get_response_headers(get_msg), "ETag"),
+                  ==, etag2);
 }
 
 static void
@@ -932,6 +949,22 @@ test_carddav_put_updates(DavFixture *f, gconstpointer data)
   g_autoptr(SoupMessage) msg2 = make_put_vcard(url, TEST_VCARD_SIMPLE);
   g_autoptr(GBytes) body2 = send_msg(f, msg2);
   g_assert_cmpuint(soup_message_get_status(msg2), ==, 204);
+
+  /* nostrc-ir7c: the ETag changes on edit and GET agrees with the PUT. */
+  const gchar *etag1 = soup_message_headers_get_one(
+    soup_message_get_response_headers(msg1), "ETag");
+  const gchar *etag2 = soup_message_headers_get_one(
+    soup_message_get_response_headers(msg2), "ETag");
+  g_assert_nonnull(etag1);
+  g_assert_nonnull(etag2);
+  g_assert_cmpstr(etag1, !=, etag2);
+
+  g_autoptr(SoupMessage) get_msg = soup_message_new("GET", url);
+  g_autoptr(GBytes) get_body = send_msg(f, get_msg);
+  g_assert_cmpuint(soup_message_get_status(get_msg), ==, 200);
+  g_assert_cmpstr(soup_message_headers_get_one(
+                    soup_message_get_response_headers(get_msg), "ETag"),
+                  ==, etag2);
 }
 
 static void

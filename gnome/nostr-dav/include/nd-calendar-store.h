@@ -30,19 +30,24 @@ void nd_calendar_store_free(NdCalendarStore *store);
 /**
  * nd_calendar_store_put:
  * @store: the store
- * @event: (transfer none): event to store
+ * @event: (transfer none) (inout): event to store
  * @out_created: (out) (optional): TRUE if no event with this UID existed
  * @error: (out) (optional): location for error
  *
  * Adds or replaces an event by UID and bumps the ctag, atomically.
  * Publish-state columns of an existing row are preserved.
  *
+ * If @event->created_at is 0 (a local write, e.g. DAV PUT) it is stamped
+ * with nd_store_next_created_at() of the stored version and written back
+ * into @event, so a subsequent nd_ical_compute_etag(@event) matches the
+ * stored ETag (nostrc-ir7c). A non-zero created_at is stored as given.
+ *
  * Returns: TRUE on success.
  */
-gboolean nd_calendar_store_put(NdCalendarStore       *store,
-                               const NdCalendarEvent *event,
-                               gboolean              *out_created,
-                               GError               **error);
+gboolean nd_calendar_store_put(NdCalendarStore *store,
+                               NdCalendarEvent *event,
+                               gboolean        *out_created,
+                               GError         **error);
 
 /**
  * nd_calendar_store_get:

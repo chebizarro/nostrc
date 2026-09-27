@@ -292,8 +292,11 @@ nd_vcard_to_nostr_json(const NdContact *contact)
   json_builder_set_member_name(b, "content");
   json_builder_add_string_value(b, vcard ? vcard : "");
 
+  /* The row's created_at (stamped at DAV PUT, nostrc-ir7c); now only for
+   * rows predating the stamping. */
   json_builder_set_member_name(b, "created_at");
-  json_builder_add_int_value(b, (gint64)time(NULL));
+  json_builder_add_int_value(b, contact->created_at > 0 ? contact->created_at
+                                                        : (gint64)time(NULL));
 
   json_builder_set_member_name(b, "tags");
   json_builder_begin_array(b);
