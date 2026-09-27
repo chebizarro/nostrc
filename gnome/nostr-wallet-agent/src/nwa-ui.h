@@ -44,6 +44,24 @@ typedef void (*NwaPaymentPromptCallback)(gboolean approved, gboolean remember,
 void nwa_ui_prompt_payment(const NwaPaymentPrompt *prompt, guint timeout_s,
                            NwaPaymentPromptCallback callback, gpointer user_data);
 
+/* LNURL-pay / Lightning address: the user picks the amount (within the
+ * recipient's range) and, when allowed, a comment. Approving is the payment
+ * confirmation (the invoice fetched afterwards is checked against it). */
+typedef struct {
+  const gchar *opener;           /* "A link opened by …" */
+  const gchar *recipient;        /* address / identifier, or the server's host */
+  const gchar *domain;           /* host that served the request */
+  const gchar *description;      /* metadata text/plain */
+  const gchar *long_description; /* nullable */
+  guint64      min_msat, max_msat;
+  guint        comment_allowed;  /* 0 = no comment field */
+} NwaLnurlPrompt;
+
+typedef void (*NwaLnurlPromptCallback)(gboolean approved, guint64 amount_msat, const gchar *comment,
+                                       gpointer user_data);
+void nwa_ui_prompt_lnurl(const NwaLnurlPrompt *prompt, guint timeout_s,
+                         NwaLnurlPromptCallback callback, gpointer user_data);
+
 /* @remember_label: when non-NULL an "always" switch (default off) is shown and
  * its state is reported as @remember. */
 typedef void (*NwaConfirmCallback)(gboolean accepted, gboolean remember, gpointer user_data);

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  *
  *   lightning:<bolt11>                  -> NWA_URI_LIGHTNING_INVOICE
- *   lightning:lnurl1... / user@host     -> NWA_URI_LNURL (unsupported: nostrc-prqu.8)
+ *   lightning:lnurl1... / user@host     -> NWA_URI_LNURL (LNURL-pay, nwa-lnurl.c)
  *   bitcoin:<addr>?...&lightning=<b11>  -> NWA_URI_LIGHTNING_INVOICE (BIP-21)
  *   bitcoin:<addr>[?amount=...]         -> NWA_URI_BITCOIN_ONCHAIN (unsupported)
  *   nostr+walletconnect://<pk>?relay=...&secret=...

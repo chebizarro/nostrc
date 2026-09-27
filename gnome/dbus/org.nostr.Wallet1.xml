@@ -213,8 +213,9 @@
 
     <!--
       OpenUri: scheme-handler entry point (the .desktop file's
-      `nostr-wallet-agent --open %u` forwards here). @uri is a lightning:,
-      bitcoin: (BIP-21) or nostr+walletconnect: link. Returns as soon as the
+      `nostr-wallet-agent --open %u` forwards here). @uri is a lightning:
+      (BOLT-11 invoice, LNURL-pay lnurl1…, or a user@host Lightning
+      address), bitcoin: (BIP-21) or nostr+walletconnect: link. Returns as soon as the
       link is parsed; the payment/pairing is then always confirmed in a
       dialog that names the calling application as the link's opener, and
       the outcome is shown to the user rather than returned.

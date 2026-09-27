@@ -4,7 +4,7 @@
 # Nostr Wallet Connect) with per-app budgets, libadwaita approval dialogs and
 # lightning: / bitcoin: / nostr+walletconnect: scheme handlers (nostrc-yka8).
 #
-# Requires: glib-2.0 >= 2.74, gio(-unix), json-glib-1.0, gtk4, libadwaita-1 >= 1.4,
+# Requires: glib-2.0 >= 2.74, gio(-unix), json-glib-1.0, libsoup-3.0, gtk4, libadwaita-1 >= 1.4,
 #           libsecret-1, gnome/libnostr-publish, libnostr + nip04 + nip44.
 # Build:    cmake -B _build -DENABLE_NOSTR_WALLET_AGENT=ON && cmake --build _build
 #
@@ -20,6 +20,7 @@ pkg_check_modules(NWA_JSON   REQUIRED IMPORTED_TARGET json-glib-1.0)
 pkg_check_modules(NWA_ADW    REQUIRED IMPORTED_TARGET gtk4 libadwaita-1>=1.4)
 pkg_check_modules(NWA_SECRET REQUIRED IMPORTED_TARGET libsecret-1)
 pkg_check_modules(NWA_GIOUNIX QUIET IMPORTED_TARGET gio-unix-2.0)
+pkg_check_modules(NWA_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
 
 foreach(_dep nostr nip04 nostr_nip44_core nostr_json)
   if (NOT TARGET ${_dep})
@@ -77,6 +78,7 @@ add_library(nostr-wallet-agent-core STATIC
   src/nwa-caller.c
   src/nwa-nwc.c
   src/nwa-walletauth.c
+  src/nwa-lnurl.c
 )
 target_include_directories(nostr-wallet-agent-core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -87,6 +89,7 @@ target_link_libraries(nostr-wallet-agent-core PUBLIC
   nostr-publish
   PkgConfig::NWA_GLIB
   PkgConfig::NWA_JSON
+  PkgConfig::NWA_SOUP
 )
 if (NWA_GIOUNIX_FOUND)
   target_link_libraries(nostr-wallet-agent-core PUBLIC PkgConfig::NWA_GIOUNIX)
@@ -156,7 +159,7 @@ install(FILES README.md
 
 # --- Tests (no network, no display, no keyring) ---
 if (BUILD_TESTING)
-  foreach(_t IN ITEMS uri budget policy nwc caller walletauth)
+  foreach(_t IN ITEMS uri budget policy nwc caller walletauth lnurl)
     add_executable(test-nostr-wallet-agent-${_t} tests/test_${_t}.c)
     target_link_libraries(test-nostr-wallet-agent-${_t} PRIVATE nostr-wallet-agent-core)
     target_compile_options(test-nostr-wallet-agent-${_t} PRIVATE ${NWA_WARNING_FLAGS})
@@ -166,7 +169,6 @@ if (BUILD_TESTING)
   # A NIP-47 wallet service + relay in one process on 127.0.0.1, for tests
   # that run the real agent binary paired (here and in the browser bridge's
   # WebLN e2e, apps/gnostr-signer/native-host). Needs the test pairing hook.
-  pkg_check_modules(NWA_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
   pkg_check_modules(NWA_GIOUNIX_T REQUIRED IMPORTED_TARGET gio-unix-2.0)
   add_executable(nwa-fixture-wallet tests/nwa-fixture-wallet.c)
   target_link_libraries(nwa-fixture-wallet PRIVATE nostr-wallet-agent-core

@@ -34,6 +34,11 @@ gboolean nwa_bolt11_is_expired(const NwaBolt11 *b, gint64 now_unix);
  * "9678785340p", "" = amount-less) into msat. Exposed for tests. */
 gboolean nwa_bolt11_parse_hrp_amount(const gchar *amount, guint64 *out_msat);
 
+/* Plain bech32 (checksum verified, one case, no length limit — LNURL bech32
+ * strings exceed BIP-173's 90 characters): *@out_hrp (lower case) and the
+ * payload as bytes. */
+gboolean nwa_bech32_decode(const gchar *str, gchar **out_hrp, GBytes **out_data, GError **error);
+
 G_END_DECLS
 
 #endif /* NWA_BOLT11_H */

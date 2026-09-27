@@ -357,7 +357,13 @@ drawn from the opener's automatic budget, and ledgered under
 | `bitcoin:<addr>?…&lightning=<bolt11>` (BIP-21) | Same, using the Lightning invoice; `amount` must match it |
 | `bitcoin:<addr>[?amount=…]` without `lightning=` | Window with a toast: *On-chain payments are not supported* |
 | `nostr+walletconnect://…` (or `nostr+walletconnect:…`) | Pair dialog → keyring |
-| `lightning:lnurl1…`, `lightning:user@host` | "Not supported yet" — **TODO `nostrc-prqu.8`** (LNURL-pay / LUD-16) |
+| `lightning:lnurl1…` (LUD-01), `lightning:user@host` (LUD-16 → `https://host/.well-known/lnurlp/user`) | LNURL-pay (LUD-06): the request is fetched, the **LNURL dialog** shows the recipient, its description (`text/plain`, `text/long-desc`), the server and an amount within `minSendable`..`maxSendable` (fixed when they are equal), plus a comment field when `commentAllowed` (LUD-12); on *Pay* the callback's invoice must be for exactly that amount and commit to the metadata (`description_hash` = sha256(metadata)), then it is paid like any link payment. LNURL-withdraw is refused |
+
+LNURL fetches (`src/nwa-lnurl.c`, libsoup): HTTPS only (`http://` for
+`.onion`; test builds also loopback), no redirects, 15 s, JSON bodies capped
+at 64 KiB; an LNURL `{"status":"ERROR"}` answer is shown with its reason; a
+LUD-16 server whose `text/identifier` names another address is refused.
+The LNURL dialog is the payment's confirmation (not an extra dialog).
 
 BIP-21 unknown `req-*` parameters make a link invalid, as the BIP requires.
 
@@ -402,6 +408,15 @@ caller identification.
 * `test_budget` — limits, reservations, commit/release, saturation, day
   rollover incl. a payment in flight across midnight, persistence + 0600
   mode, corrupt-file handling.
+* `test_lnurl` — LUD-01 vector and bech32 round trip, LUD-16 resolution
+  (onion → http, clearnet http refused, bad addresses, mixed case),
+  payRequest parsing and refusals (withdraw, range, callback scheme,
+  metadata, identifier mismatch), callback URL (comment trimmed/escaped),
+  invoice checks (amount, `h` vs `d`, wrong commitment) and the fetch against
+  an in-process libsoup server (LNURL errors, size cap, no redirects, 404).
+  `test_dbus` pays `lightning:alice@127.0.0.1:<port>` end to end (dialog →
+  callback with amount and comment → fixture wallet) and refuses an invoice
+  committing to other metadata.
 * `test_uri` — BOLT-11 spec vectors (amounts incl. pico, description hash,
   UTF-8, upper case, invalid checksum/multiplier/sub-msat), `lightning:`,
   BIP-21 `bitcoin:` (lightning fallback, amounts, `req-` params) and
@@ -439,6 +454,6 @@ caller identification.
 
 ## Not supported (yet)
 
-* LNURL-pay / withdraw and Lightning addresses — `nostrc-prqu.8`.
+* LNURL-withdraw, LUD-17 `lnurlp://` schemes, LUD-18 payer data.
 * On-chain payments — out of scope for an NWC agent (toast only).
 * `pay_keysend`, `multi_pay_*` — not exposed over D-Bus.

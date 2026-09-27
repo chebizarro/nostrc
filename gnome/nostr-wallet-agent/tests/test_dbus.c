@@ -11,6 +11,10 @@
  * The agent runs headless: anything that would need a dialog is refused.
  */
 #include "nwa-caller.h"
+#include "nwa-test-bolt11.h"
+
+#include <libsoup/soup.h>
+#include <time.h>
 
 #include <gio/gio.h>
 #include <glib/gstdio.h>
@@ -33,6 +37,8 @@ typedef struct {
   GDataInputStream *fx_out;
   GOutputStream *fx_in;
   GString *fx_lines;
+  GCancellable *fx_cancel;
+  gboolean fx_reading;
   gchar *tmpdir, *budgets, *agent_log, *uri, *self_id;
 } Env;
 
@@ -179,6 +185,11 @@ env_up(Env *e)
 static void
 env_down(Env *e)
 {
+  if (e->fx_cancel) {
+    g_cancellable_cancel(e->fx_cancel);
+    while (e->fx_reading) g_main_context_iteration(NULL, TRUE);
+    g_clear_object(&e->fx_cancel);
+  }
   if (e->agent) agent_stop(e);
   g_subprocess_send_signal(e->fixture, SIGTERM);
   g_subprocess_wait(e->fixture, NULL, NULL);
@@ -434,6 +445,134 @@ test_settings_grants(void)
   env_down(&e);
 }
 
+static gboolean log_has(Env *e, const gchar *needle);
+
+/* Wait for fixture output without blocking the main loop (the test process
+ * may be serving HTTP to the agent meanwhile). */
+static void
+on_fx_line_async(GObject *src, GAsyncResult *res, gpointer ud)
+{
+  Env *e = ud;
+  gchar *line = g_data_input_stream_read_line_finish_utf8(G_DATA_INPUT_STREAM(src), res, NULL, NULL);
+  if (line) g_string_append_printf(e->fx_lines, "%s\n", line);
+  g_free(line);
+  e->fx_reading = FALSE;
+}
+
+static gboolean
+fx_wait(Env *e, const gchar *needle, guint secs)
+{
+  if (!e->fx_cancel) e->fx_cancel = g_cancellable_new();
+  gint64 deadline = g_get_monotonic_time() + (gint64)secs * G_USEC_PER_SEC;
+  while (!strstr(e->fx_lines->str, needle) && g_get_monotonic_time() < deadline) {
+    if (!e->fx_reading) {
+      e->fx_reading = TRUE;
+      g_data_input_stream_read_line_async(e->fx_out, G_PRIORITY_DEFAULT, e->fx_cancel, on_fx_line_async, e);
+    }
+    g_main_context_iteration(NULL, FALSE);
+    g_usleep(2000);
+  }
+  return strstr(e->fx_lines->str, needle) != NULL;
+}
+
+/* ---- prqu.8: LNURL-pay / Lightning address links ---- */
+
+typedef struct {
+  gchar   *base;       /* http://127.0.0.1:<port> */
+  gchar   *metadata;
+  guint64  last_amount;
+  gchar   *last_comment;
+} Lnurl;
+
+static void
+lnurl_serve(SoupServer *srv, SoupServerMessage *msg, const char *path, GHashTable *q, gpointer data)
+{
+  (void)srv;
+  Lnurl *l = data;
+  g_autofree gchar *body = NULL;
+  if (g_str_has_prefix(path, "/.well-known/lnurlp/")) {
+    const gchar *user = path + strlen("/.well-known/lnurlp/");
+    g_autofree gchar *host = g_strdup(l->base + strlen("http://"));
+    g_free(l->metadata);
+    l->metadata = g_strdup_printf("[[\"text/plain\",\"Coffee for %s\"],[\"text/identifier\",\"%s@%s\"]]",
+                                  user, user, host);
+    g_autoptr(JsonBuilder) b = json_builder_new();
+    json_builder_begin_object(b);
+    json_builder_set_member_name(b, "tag"); json_builder_add_string_value(b, "payRequest");
+    json_builder_set_member_name(b, "callback");
+    g_autofree gchar *cb = g_strdup_printf("%s/cb/%s", l->base, user);
+    json_builder_add_string_value(b, cb);
+    json_builder_set_member_name(b, "minSendable"); json_builder_add_int_value(b, 21000);
+    json_builder_set_member_name(b, "maxSendable"); json_builder_add_int_value(b, 100000);
+    json_builder_set_member_name(b, "commentAllowed"); json_builder_add_int_value(b, 40);
+    json_builder_set_member_name(b, "metadata"); json_builder_add_string_value(b, l->metadata);
+    json_builder_end_object(b);
+    g_autoptr(JsonNode) root = json_builder_get_root(b);
+    body = json_to_string(root, FALSE);
+  } else if (g_str_has_prefix(path, "/cb/")) {
+    const gchar *amt = q ? g_hash_table_lookup(q, "amount") : NULL;
+    l->last_amount = amt ? g_ascii_strtoull(amt, NULL, 10) : 0;
+    g_free(l->last_comment);
+    l->last_comment = g_strdup(q ? g_hash_table_lookup(q, "comment") : NULL);
+    /* "mallory" answers with an invoice that commits to something else */
+    const gchar *committed = g_str_equal(path, "/cb/mallory") ? "[[\"text/plain\",\"something else\"]]" : l->metadata;
+    g_autofree gchar *h = g_compute_checksum_for_string(G_CHECKSUM_SHA256, committed, -1);
+    g_autofree gchar *inv = nwa_test_bolt11_mint(l->last_amount, NULL, h,
+      "5555555555555555555555555555555555555555555555555555555555555555", (gint64)time(NULL), 0);
+    body = g_strdup_printf("{\"pr\":\"%s\",\"routes\":[]}", inv);
+  } else {
+    soup_server_message_set_status(msg, 404, NULL);
+    return;
+  }
+  soup_server_message_set_status(msg, 200, NULL);
+  soup_server_message_set_response(msg, "application/json", SOUP_MEMORY_COPY, body, strlen(body));
+}
+
+static void
+test_lnurl_links(void)
+{
+  Env e;
+  env_up(&e);
+  Lnurl l = { 0 };
+  SoupServer *srv = soup_server_new(NULL, NULL);
+  soup_server_add_handler(srv, NULL, lnurl_serve, &l, NULL);
+  g_assert_true(soup_server_listen_local(srv, 0, SOUP_SERVER_LISTEN_IPV4_ONLY, NULL));
+  GSList *uris = soup_server_get_uris(srv);
+  l.base = g_strdup_printf("http://127.0.0.1:%d", g_uri_get_port(uris->data));
+  g_slist_free_full(uris, (GDestroyNotify)g_uri_unref);
+  const gchar *const accept[] = { "NOSTR_WALLET_AGENT_TEST_ANSWER=accept", NULL };
+  agent_start(&e, TRUE, accept);
+
+  /* lightning:user@host -> .well-known/lnurlp -> dialog (min amount, a
+   * comment) -> callback -> invoice committing to the metadata -> paid */
+  g_autofree gchar *link = g_strdup_printf("lightning:alice@%s", l.base + strlen("http://"));
+  g_autoptr(GVariant) r = call_self(&e, "OpenUri", g_variant_new("(s)", link), NULL);
+  g_assert_nonnull(r);
+  if (!fx_wait(&e, "REQUEST pay_invoice", 20)) { dump(); g_error("LNURL payment never reached the wallet"); }
+  g_assert_cmpuint(l.last_amount, ==, 21000);
+  g_assert_cmpstr(l.last_comment, ==, "sent from a test");
+  gint64 deadline = g_get_monotonic_time() + 5 * G_USEC_PER_SEC;
+  while (!log_has(&e, "Paid 21 sats") && g_get_monotonic_time() < deadline) g_main_context_iteration(NULL, FALSE);
+  g_assert_true(log_has(&e, "answering LNURL dialog"));
+  g_assert_true(log_has(&e, "Coffee for alice"));
+  g_assert_true(log_has(&e, "Paid 21 sats"));
+
+  /* an invoice that does not commit to what the user approved is refused */
+  g_autofree gchar *bad = g_strdup_printf("lightning:mallory@%s", l.base + strlen("http://"));
+  g_autoptr(GVariant) r2 = call_self(&e, "OpenUri", g_variant_new("(s)", bad), NULL);
+  g_assert_nonnull(r2);
+  deadline = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+  while (!log_has(&e, "does not commit to the payment details") && g_get_monotonic_time() < deadline)
+    g_main_context_iteration(NULL, FALSE);
+  g_assert_true(log_has(&e, "does not commit to the payment details"));
+  g_assert_cmpuint(fx_count(&e, "REQUEST pay_invoice"), ==, 1);
+
+  agent_stop(&e);
+  g_object_unref(srv);
+  g_free(l.base); g_free(l.metadata); g_free(l.last_comment);
+  env_down(&e);
+}
+
 /* ---- prqu.12: agent-generated keys (nostr+walletauth) ---- */
 
 typedef struct {
@@ -612,6 +751,7 @@ main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/dbus/wallet-auth", test_wallet_auth);
+  g_test_add_func("/dbus/lnurl-links", test_lnurl_links);
   g_test_add_func("/dbus/non-interactive-reads", test_non_interactive_reads);
   g_test_add_func("/dbus/settings-grants", test_settings_grants);
   return g_test_run();

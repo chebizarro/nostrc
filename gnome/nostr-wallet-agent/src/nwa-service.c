@@ -24,6 +24,7 @@
 #include "nwa-budget.h"
 #include "nwa-caller.h"
 #include "nwa-error.h"
+#include "nwa-lnurl.h"
 #include "nwa-nwc.h"
 #include "nwa-policy.h"
 #include "nwa-ui.h"
@@ -62,6 +63,7 @@ struct _NwaService {
   GCancellable    *cancel;
   GStrv            origin_bridges; /* executables that may assert a web origin */
   GStrv            settings_apps;  /* executables trusted as the settings app */
+  SoupSession     *soup;           /* LNURL (lazy) */
   WaFlow          *wa;             /* pending wallet-auth pairing (at most one) */
   gint64           wa_cooldown_until; /* monotonic µs */
 };
@@ -1587,6 +1589,166 @@ static const GDBusInterfaceVTable vtable = {
 /* ---------------------------------------------------------------------- */
 /* scheme handler                                                          */
 
+/* ---- LNURL-pay / Lightning address links (nostrc-prqu.8) ----
+ * target -> payRequest -> the agent's LNURL dialog (amount within the
+ * recipient's range, comment, description) -> callback -> invoice checked
+ * against the approved amount and sha256(metadata) -> PayInvoice with the
+ * dialog as the user's approval (link payments are always confirmed; this
+ * is that confirmation, not an extra one). */
+
+typedef struct {
+  NwaService  *svc;
+  NwaCaller   *caller;
+  gboolean     via_link;
+  gchar       *address;   /* LUD-16 address, NULL for lnurl1… */
+  gchar       *url;       /* the payRequest URL */
+  NwaLnurlPay  pay;
+  guint64      amount_msat;
+} LnurlJob;
+
+static void
+lnurl_job_free(LnurlJob *j)
+{
+  nwa_caller_free(j->caller);
+  g_free(j->address);
+  g_free(j->url);
+  nwa_lnurl_pay_clear(&j->pay);
+  g_free(j);
+}
+
+static void
+lnurl_fail(LnurlJob *j, const gchar *message)
+{
+  g_message("nostr-wallet-agent: LNURL payment failed: %s", message);
+  nwa_ui_show_message("Cannot pay", message, "The payment was not made");
+  lnurl_job_free(j);
+}
+
+static SoupSession *
+lnurl_session(NwaService *s)
+{
+  if (!s->soup)
+    s->soup = soup_session_new_with_options("timeout", 15, "user-agent", "nostr-wallet-agent", NULL);
+  return s->soup;
+}
+
+static void
+on_lnurl_invoice(GObject *src, GAsyncResult *res, gpointer data)
+{
+  (void)src;
+  LnurlJob *j = data;
+  GError *err = NULL;
+  g_autoptr(JsonNode) root = nwa_lnurl_fetch_json_finish(res, &err);
+  if (!root) {
+    lnurl_fail(j, err->message);
+    g_error_free(err);
+    return;
+  }
+  const gchar *pr = json_object_get_string_member_with_default(json_node_get_object(root), "pr", NULL);
+  if (!pr || !*pr) {
+    lnurl_fail(j, "the recipient's server returned no invoice");
+    return;
+  }
+  NwaService *s = j->svc;
+  Call *c = g_new0(Call, 1);
+  c->svc = s;
+  c->caller = g_steal_pointer(&j->caller);
+  c->via_link = j->via_link;
+  c->method = g_strdup("PayInvoice");
+  if (!prepare_pay(c, pr, j->amount_msat, &err) ||
+      !nwa_lnurl_check_invoice(&j->pay, j->amount_msat, &c->inv11, &err)) {
+    lnurl_job_free(j);
+    call_error(c, err);
+    return;
+  }
+  lnurl_job_free(j);
+  if (!s->client) {
+    CALL_FAIL(c, NWA_ERROR_NOT_PAIRED, "no wallet is paired");
+    return;
+  }
+  c->user_approved = TRUE; /* the LNURL dialog was the confirmation */
+  execute(c);
+}
+
+static void
+on_lnurl_answer(gboolean approved, guint64 amount_msat, const gchar *comment, gpointer data)
+{
+  LnurlJob *j = data;
+  if (!approved) {
+    lnurl_job_free(j);
+    return;
+  }
+  if (amount_msat < j->pay.min_msat || amount_msat > j->pay.max_msat) {
+    lnurl_fail(j, "the amount is outside what the recipient accepts");
+    return;
+  }
+  j->amount_msat = amount_msat;
+  g_autofree gchar *cb = nwa_lnurl_callback_url(&j->pay, amount_msat, comment);
+  nwa_lnurl_fetch_json_async(lnurl_session(j->svc), cb, j->svc->cancel, on_lnurl_invoice, j);
+}
+
+static void
+on_lnurl_pay_request(GObject *src, GAsyncResult *res, gpointer data)
+{
+  (void)src;
+  LnurlJob *j = data;
+  GError *err = NULL;
+  g_autoptr(JsonNode) root = nwa_lnurl_fetch_json_finish(res, &err);
+  if (!root || !nwa_lnurl_parse_pay(root, j->url, j->address, &j->pay, &err)) {
+    lnurl_fail(j, err->message);
+    g_error_free(err);
+    return;
+  }
+  if (!j->svc->client) {
+    lnurl_fail(j, "No wallet is connected. Connect one in Nostr Settings first.");
+    return;
+  }
+  g_autofree gchar *who = caller_phrase(j->caller, j->via_link);
+  NwaLnurlPrompt p = {
+    .opener = who,
+    .recipient = j->pay.identifier ? j->pay.identifier : j->address ? j->address : j->pay.domain,
+    .domain = j->pay.domain,
+    .description = j->pay.description,
+    .long_description = j->pay.long_description,
+    .min_msat = j->pay.min_msat,
+    .max_msat = MIN(j->pay.max_msat, (guint64)G_MAXUINT32), /* Wallet1 amounts are u msat */
+    .comment_allowed = j->pay.comment_allowed,
+  };
+  if (p.min_msat > p.max_msat) {
+    lnurl_fail(j, "the recipient's minimum is above what this wallet can pay in one request");
+    return;
+  }
+  j->pay.max_msat = p.max_msat;
+  nwa_ui_prompt_lnurl(&p, setting_uint(j->svc, "approval-timeout", 120), on_lnurl_answer, j);
+}
+
+/* @caller: (transfer full). */
+static void
+lnurl_start(NwaService *s, NwaCaller *caller, const gchar *target, gboolean via_link)
+{
+  LnurlJob *j = g_new0(LnurlJob, 1);
+  j->svc = s;
+  j->caller = caller;
+  j->via_link = via_link;
+  if (strchr(target, '@')) j->address = g_ascii_strdown(target, -1);
+  if (!s->client) {
+    lnurl_fail(j, "No wallet is connected. Connect one in Nostr Settings first.");
+    return;
+  }
+  if (!nwa_ui_available()) {
+    lnurl_fail(j, "paying a Lightning address needs the user's confirmation, but no display is available");
+    return;
+  }
+  GError *err = NULL;
+  j->url = nwa_lnurl_target_url(target, &err);
+  if (!j->url) {
+    lnurl_fail(j, err->message);
+    g_error_free(err);
+    return;
+  }
+  nwa_lnurl_fetch_json_async(lnurl_session(s), j->url, s->cancel, on_lnurl_pay_request, j);
+}
+
 /* @caller: (transfer full). */
 static void
 open_uri_dispatch(NwaService *s, NwaCaller *caller, const gchar *uri, gboolean via_link)
@@ -1626,12 +1788,9 @@ open_uri_dispatch(NwaService *s, NwaCaller *caller, const gchar *uri, gboolean v
       run_policy(c);
       break;
     case NWA_URI_LNURL:
-      /* TODO(nostrc-prqu.8): LNURL-pay / lightning addresses */
-      nwa_ui_show_message("Not supported yet",
-                          "LNURL links and Lightning addresses are not supported yet. "
-                          "Ask the recipient for a Lightning invoice instead.",
-                          "LNURL is not supported yet");
+      c->caller = NULL; /* handed to the LNURL flow */
       call_free(c);
+      lnurl_start(s, caller, u.lnurl, via_link);
       break;
     case NWA_URI_BITCOIN_ONCHAIN: {
       g_autofree gchar *amt = u.amount_msat ? nwa_ui_format_msat(u.amount_msat) : NULL;
@@ -1767,6 +1926,7 @@ nwa_service_free(NwaService *s)
     nwa_nwc_client_stop(s->client);
     g_clear_object(&s->client);
   }
+  g_clear_object(&s->soup);
   nwa_budget_store_free(s->budgets);
   g_clear_object(&s->settings);
   g_hash_table_unref(s->prompts);

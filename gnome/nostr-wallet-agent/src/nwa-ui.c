@@ -78,6 +78,11 @@ typedef struct {
   AdwSpinRow   *limit_row;
   /* confirm */
   NwaConfirmCallback confirm_cb;
+  /* lnurl */
+  NwaLnurlPromptCallback lnurl_cb;
+  AdwSpinRow  *amount_row;   /* NULL: fixed amount */
+  AdwEntryRow *comment_row;  /* nullable */
+  guint64      fixed_msat;
   gpointer user_data;
 } Dialog;
 
@@ -98,6 +103,10 @@ dialog_answer_full(Dialog *d, gboolean yes, gboolean destroy)
   } else if (d->confirm_cb) {
     gboolean remember = yes && d->remember_row && adw_switch_row_get_active(d->remember_row);
     d->confirm_cb(yes, remember, d->user_data);
+  } else if (d->lnurl_cb) {
+    guint64 msat = d->amount_row ? (guint64)adw_spin_row_get_value(d->amount_row) * 1000 : d->fixed_msat;
+    const gchar *comment = d->comment_row ? gtk_editable_get_text(GTK_EDITABLE(d->comment_row)) : NULL;
+    d->lnurl_cb(yes, yes ? msat : 0, yes ? comment : NULL, d->user_data);
   }
   if (destroy)
     gtk_window_destroy(d->window);
@@ -305,6 +314,77 @@ nwa_ui_prompt_payment(const NwaPaymentPrompt *p, guint timeout_s,
   d->limit_row = limit;
   if (remember)
     g_signal_connect(remember, "notify::active", G_CALLBACK(on_remember_toggled), d);
+  gtk_window_present(d->window);
+}
+
+void
+nwa_ui_prompt_lnurl(const NwaLnurlPrompt *p, guint timeout_s, NwaLnurlPromptCallback callback,
+                    gpointer user_data)
+{
+  /* Whole sats inside [min, max]; a range without one (sub-sat) or a single
+   * value is a fixed amount. */
+  guint64 lo = (p->min_msat + 999) / 1000, hi = p->max_msat / 1000;
+  gboolean fixed = p->min_msat == p->max_msat || lo > hi;
+  guint64 fixed_msat = p->min_msat;
+  if (test_answer()) {
+    g_message("nostr-wallet-agent: test build: answering LNURL dialog (%s, %s, %" G_GUINT64_FORMAT
+              "..%" G_GUINT64_FORMAT " msat, comment<=%u): %s", p->recipient, p->description,
+              p->min_msat, p->max_msat, p->comment_allowed, test_answer());
+    gboolean yes = g_str_equal(test_answer(), "accept");
+    callback(yes, yes ? (fixed ? fixed_msat : lo * 1000) : 0, yes ? "sent from a test" : NULL, user_data);
+    return;
+  }
+  if (!nwa_ui_available()) {
+    callback(FALSE, 0, NULL, user_data);
+    return;
+  }
+  GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+  GtkWidget *to = gtk_label_new(p->recipient);
+  gtk_label_set_wrap(GTK_LABEL(to), TRUE);
+  gtk_label_set_wrap_mode(GTK_LABEL(to), PANGO_WRAP_WORD_CHAR);
+  gtk_widget_add_css_class(to, "title-2");
+  gtk_box_append(GTK_BOX(content), to);
+  g_autofree gchar *lead = g_strdup_printf("%s asks you to pay this recipient", p->opener);
+  GtkWidget *lead_label = gtk_label_new(lead);
+  gtk_label_set_wrap(GTK_LABEL(lead_label), TRUE);
+  gtk_label_set_justify(GTK_LABEL(lead_label), GTK_JUSTIFY_CENTER);
+  gtk_widget_add_css_class(lead_label, "dim-label");
+  gtk_box_append(GTK_BOX(content), lead_label);
+
+  GtkWidget *group = adw_preferences_group_new();
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), info_row("Description", p->description));
+  if (p->long_description && *p->long_description)
+    adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), info_row("Details", p->long_description));
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), info_row("Server", p->domain));
+  AdwSpinRow *amount = NULL;
+  if (fixed) {
+    g_autofree gchar *a = nwa_ui_format_msat(fixed_msat);
+    adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), info_row("Amount", a));
+  } else {
+    amount = ADW_SPIN_ROW(adw_spin_row_new_with_range((gdouble)lo, (gdouble)hi, 1));
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(amount), "Amount (sats)");
+    g_autofree gchar *lo_s = nwa_ui_format_msat(lo * 1000);
+    g_autofree gchar *hi_s = nwa_ui_format_msat(hi * 1000);
+    g_autofree gchar *range = g_strdup_printf("Between %s and %s", lo_s, hi_s);
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(amount), range);
+    adw_spin_row_set_value(amount, (gdouble)lo);
+    adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(amount));
+  }
+  AdwEntryRow *comment = NULL;
+  if (p->comment_allowed) {
+    comment = ADW_ENTRY_ROW(adw_entry_row_new());
+    g_autofree gchar *ct = g_strdup_printf("Comment (optional, up to %u characters)", p->comment_allowed);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(comment), ct);
+    adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(comment));
+  }
+  gtk_box_append(GTK_BOX(content), group);
+
+  Dialog *d = dialog_new("Lightning Payment", content, "_Pay", FALSE, timeout_s);
+  d->lnurl_cb = callback;
+  d->user_data = user_data;
+  d->amount_row = amount;
+  d->comment_row = comment;
+  d->fixed_msat = fixed_msat;
   gtk_window_present(d->window);
 }
 
