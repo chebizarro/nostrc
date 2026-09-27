@@ -8,9 +8,11 @@ PartOf=graphical-session.target
 Type=dbus
 BusName=org.nostr.Dispatcher1
 ExecStart=@ND_BINDIR@/nostr-dispatcher daemon
-# Handler apps are spawned from this service. With the default
-# KillMode=control-group they would share its cgroup and be killed when
-# the dispatcher exits on idle (30 s); only reap the dispatcher itself.
+# Handler apps spawned from this service are moved into their own
+# app-nostr\x2ddispatcher-<app>-<pid>.scope right after fork (nostrc-prqu.7,
+# StartTransientUnit). KillMode=process stays as the safety net for the
+# rare case the move fails: with the default control-group mode such an
+# app would be killed when the dispatcher exits on idle (30 s).
 KillMode=process
 Restart=no
 

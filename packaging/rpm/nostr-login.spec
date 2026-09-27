@@ -1345,11 +1345,13 @@ fi
 %{_datadir}/dbus-1/services/org.nostr.Dispatcher1.service
 %{_datadir}/dbus-1/interfaces/org.nostr.Dispatcher1.xml
 %{_datadir}/dbus-1/interfaces/org.nostr.Handler1.xml
+%{_datadir}/dbus-1/interfaces/org.nostr.Handler2.xml
 %{_datadir}/mime/packages/nostr.xml
 %dir %{_datadir}/nostr
 %{_datadir}/nostr/handlers.list
 %dir %{_datadir}/doc/nostr-dispatcher
 %{_datadir}/doc/nostr-dispatcher/README.md
+%{_mandir}/man1/nostr-dispatcher.1*
 %files -n nostr-share
 %{_bindir}/nostr-share
 %{_datadir}/applications/org.nostr.Share.desktop

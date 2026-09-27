@@ -1,0 +1,36 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!--
+  org.nostr.Handler2 — OPTIONAL handoff interface for Nostr handler apps,
+  superseding org.nostr.Handler1 (nostrc-prqu.7).
+
+  Same discovery and contract as org.nostr.Handler1 (bus name = desktop id
+  without ".desktop", object path = "/" + that name with "." -> "/" and
+  "-" -> "_"; @event_json is ALWAYS id- and signature-validated; @relays
+  are hints, not provenance; any same-user session-bus peer can call it).
+
+  The only addition is @platform_data, shaped like
+  org.freedesktop.Application's: an a{sv} whose known keys are
+    "activation-token"    s  XDG activation token (Wayland)
+    "desktop-startup-id"  s  the same token for X11 startup notification
+  Use it to present the window you open for the event (e.g.
+  gtk_window_set_startup_id() / gdk_toplevel_set_startup_id()), exactly as
+  GApplication does for Activate/Open. Unknown keys must be ignored.
+
+  nostr-dispatcher calls Handler2.OpenEvent first and falls back to
+  Handler1.OpenEvent when the app answers UnknownMethod / UnknownInterface
+  / UnknownObject, so an app may implement either or both. As with
+  Handler1 the dispatcher never auto-starts an app through this interface
+  (NO_AUTO_START) and falls back to a URI launch on any other error or
+  after 2 s.
+-->
+<node>
+  <interface name="org.nostr.Handler2">
+    <method name="OpenEvent">
+      <arg name="kind" type="u" direction="in"/>
+      <arg name="event_json" type="s" direction="in"/>
+      <arg name="relays" type="as" direction="in"/>
+      <arg name="platform_data" type="a{sv}" direction="in"/>
+    </method>
+  </interface>
+</node>

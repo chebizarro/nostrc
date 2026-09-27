@@ -127,22 +127,6 @@ static NdTarget *target_new(NdEntity e) {
 /* Parsing                                                             */
 /* ------------------------------------------------------------------ */
 
-static NdTarget *parse_legacy_open(const char *query, GError **error) {
-  g_autoptr(GHashTable) params =
-      g_uri_parse_params(query, -1, "&", G_URI_PARAMS_NONE, NULL);
-  const char *ev = params ? g_hash_table_lookup(params, "event") : NULL;
-  if (!is_hex64(ev)) {
-    g_set_error_literal(error, ND_ERROR, ND_ERROR_INVALID_URI,
-                        "legacy nostr://open link without a valid event id");
-    return NULL;
-  }
-  /* `group=` is ignored: the NIP-29 `h` tag is inside the signed event. */
-  NdTarget *t = target_new(ND_ENTITY_EVENT);
-  t->id_hex = g_strdup(ev);
-  t->relays = g_new0(char *, 1);
-  return t;
-}
-
 static NdTarget *parse_bech32(const char *bech, GError **error) {
   NostrBech32Type type = NOSTR_B32_UNKNOWN;
   if (nostr_nip19_inspect(bech, &type) != 0) type = NOSTR_B32_UNKNOWN;
@@ -249,15 +233,11 @@ NdTarget *nd_target_parse_uri(const char *uri, GError **error) {
   else if (g_str_has_prefix(rest, "nostr:"))
     rest += strlen("nostr:");
 
-  if (g_str_has_prefix(rest, "//")) {
+  /* The notify daemon's invented `nostr://open?event=` form was accepted
+   * for one transition release and is gone (nostrc-prqu.7): it now parses
+   * as the non-NIP-19 identifier "open" and is rejected like any other. */
+  if (g_str_has_prefix(rest, "//"))
     rest += 2;
-    if (g_str_has_prefix(rest, "open?")) {
-      /* Legacy notify form. Parse from the original (case-preserved)
-       * string so percent-escapes survive; ids must be lowercase anyway. */
-      const char *q = strchr(uri, '?');
-      return parse_legacy_open(q ? q + 1 : "", error);
-    }
-  }
 
   g_autofree char *bech = g_strndup(rest, strcspn(rest, "?#/"));
   if (!*bech) {

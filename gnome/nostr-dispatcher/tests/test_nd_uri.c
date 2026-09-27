@@ -144,21 +144,16 @@ static void test_rejections(void) {
   }
 }
 
-static void test_legacy_notify_forms(void) {
+/* nostrc-prqu.7: the transition-release `nostr://open?` forms are gone. */
+static void test_legacy_notify_forms_rejected(void) {
   g_autofree char *dm = g_strdup_printf("nostr://open?event=%s", ID);
-  g_autoptr(NdTarget) a = nd_target_parse_uri(dm, NULL);
-  g_assert_nonnull(a);
-  g_assert_cmpstr(a->id_hex, ==, ID);
-  g_assert_cmpint(a->kind, ==, -1);
-
   g_autofree char *grp = g_strdup_printf("nostr://open?group=abc&event=%s", ID);
-  g_autoptr(NdTarget) b = nd_target_parse_uri(grp, NULL);
-  g_assert_nonnull(b);
-  g_assert_cmpstr(b->id_hex, ==, ID);
-
-  g_autoptr(GError) err = NULL;
-  g_assert_null(nd_target_parse_uri("nostr://open?event=nothex", &err));
-  g_assert_error(err, ND_ERROR, ND_ERROR_INVALID_URI);
+  const char *forms[] = {dm, grp, "nostr://open?event=nothex", NULL};
+  for (int i = 0; forms[i]; i++) {
+    g_autoptr(GError) err = NULL;
+    g_assert_null(nd_target_parse_uri(forms[i], &err));
+    g_assert_error(err, ND_ERROR, ND_ERROR_INVALID_URI);
+  }
 }
 
 static void test_relay_filter(void) {
@@ -197,7 +192,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/nd/uri/nevent-tlv-kind", test_nevent_tlv_kind);
   g_test_add_func("/nd/uri/naddr-profile", test_naddr_and_profiles);
   g_test_add_func("/nd/uri/rejections", test_rejections);
-  g_test_add_func("/nd/uri/legacy", test_legacy_notify_forms);
+  g_test_add_func("/nd/uri/legacy-rejected", test_legacy_notify_forms_rejected);
   g_test_add_func("/nd/uri/relay-filter", test_relay_filter);
   return g_test_run();
 }

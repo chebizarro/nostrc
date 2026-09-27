@@ -69,20 +69,21 @@ Relay hints are restricted to `wss://` (plus `ws://` to loopback). Query
 strings and fragments are never forwarded. `nsec`/`ncryptsec` links are
 refused outright, and `nrelay` links are rejected as unsupported.
 
-### 3. Optional: take the event directly (`org.nostr.Handler1`)
+### 3. Optional: take the event directly (`org.nostr.Handler2`)
 
 If your app is **already running** when a link is clicked, and the
 dispatcher already holds the event, the dispatcher hands the event to your
 app instead of launching a URI, which saves you a second fetch. Implement
-[`org.nostr.Handler1`](../dbus/org.nostr.Handler1.xml) on your
+[`org.nostr.Handler2`](../dbus/org.nostr.Handler2.xml) on your
 `GApplication` object:
 
 ```xml
-<interface name="org.nostr.Handler1">
+<interface name="org.nostr.Handler2">
   <method name="OpenEvent">
     <arg name="kind" type="u" direction="in"/>
     <arg name="event_json" type="s" direction="in"/>
     <arg name="relays" type="as" direction="in"/>
+    <arg name="platform_data" type="a{sv}" direction="in"/>
   </method>
 </interface>
 ```
@@ -92,10 +93,18 @@ app instead of launching a URI, which saves you a second fetch. Implement
   `org.example.Reader` at `/org/example/Reader`).
 - `event_json` has **always** passed canonical-id and Schnorr-signature
   validation. It is still untrusted content: signed, not vetted.
-- The dispatcher never auto-starts you through this interface. On any
-  error or a 2 s timeout, it falls back to launching the URI.
-- Any same-user session-bus peer can call it; do not expose privileged
-  operations through it.
+- `platform_data` is shaped like `org.freedesktop.Application`'s:
+  `activation-token` (and the same value as `desktop-startup-id`) lets you
+  present your window under Wayland focus-stealing prevention. Ignore
+  unknown keys.
+- The dispatcher calls `Handler2.OpenEvent` first. If your app answers
+  UnknownMethod/UnknownInterface/UnknownObject, it calls the older
+  [`org.nostr.Handler1`](../dbus/org.nostr.Handler1.xml) `OpenEvent(u s as)`
+  instead (no activation token), so either interface works.
+- The dispatcher never auto-starts you through these interfaces. On any
+  other error or a 2 s timeout, it falls back to launching the URI.
+- Any same-user session-bus peer can call them; do not expose privileged
+  operations through them.
 
 ## For users: `handlers.list`
 
@@ -172,7 +181,7 @@ tag). A hostile relay therefore cannot re-route a link by lying about its
 kind.
 
 When the kind is already known, nothing is fetched unless the chosen app
-is running and could take the event over `org.nostr.Handler1`.
+is running and could take the event over `org.nostr.Handler2`/`Handler1`.
 
 ## Deep links from nostr-notify
 
@@ -182,9 +191,9 @@ standard `nostr:nevent1…` links. Each carries the event id, the kind TLV
 relay the event arrived on. Group links carry no `h` parameter: NIP-21
 defines no query parameters, the `h` tag is inside the signed event, and
 the relay hint is the group relay. The old invented forms
-`nostr://open?event=…` and `nostr://open?group=…&event=…` are still
-accepted for one transition release. They are treated as kind-unknown
-event ids.
+`nostr://open?event=…` and `nostr://open?group=…&event=…` were accepted
+for one transition release and are now rejected as invalid URIs
+(nostrc-prqu.7).
 
 ## Service and packaging
 
@@ -193,9 +202,15 @@ event ids.
   `OpenEvent`, `Resolve` and `QueryDefault`.
 - D-Bus activated through `nostr-dispatcher.service` (user unit,
   `Type=dbus`). It exits after 30 s idle, and nothing is enabled at install
-  time. The unit uses `KillMode=process`, so apps it launches survive the
-  idle exit. It deliberately has no sandboxing directives, because launched
-  apps inherit the unit's execution environment.
+  time. Apps it launches are moved into their own transient
+  `app-nostr\x2ddispatcher-<app id>-<pid>.scope` on the user manager
+  (`StartTransientUnit`, as gnome-shell does), so they neither share the
+  dispatcher's cgroup nor get reaped with it; `NOSTR_DISPATCHER_NO_SCOPE=1`
+  disables that. `KillMode=process` stays as the safety net if the move
+  fails. The unit deliberately has no sandboxing directives, because
+  launched apps inherit the unit's execution environment.
+- `man 1 nostr-dispatcher`. libnostr's relay wire traces are debug-level
+  and only shown with `NOSTR_LOG_LEVEL=debug`.
 - `nostr-dispatcher open` forwards to the service and dispatches
   in-process only when no session bus or service is available (for
   example, headless). Event files are always handled in-process.

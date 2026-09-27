@@ -9,6 +9,7 @@
 #include <string.h>
 
 #define HANDLER1_IFACE "org.nostr.Handler1"
+#define HANDLER2_IFACE "org.nostr.Handler2"
 #define HANDOFF_TIMEOUT_MS 2000
 #define EVENT_MIME "application/vnd.nostr.event+json"
 
@@ -49,6 +50,8 @@ typedef struct {
   char **relays;         /* hints for Handler1 */
   NdOpenOptions opts;
   NdOpenResult *result;
+  GDBusConnection *bus;    /* handoff only */
+  gboolean tried_handler1;
 } OpenData;
 
 static void open_data_free(gpointer p) {
@@ -60,6 +63,7 @@ static void open_data_free(gpointer p) {
   g_strfreev(d->relays);
   g_free(d->opts.activation_token);
   nd_open_result_free(d->result);
+  g_clear_object(&d->bus);
   g_free(d);
 }
 
@@ -103,6 +107,79 @@ static char *launch_uri_for(OpenData *d, GDesktopAppInfo *info) {
   return nd_target_to_uri(d->target);
 }
 
+/* systemd unit-name escaping for one name component (systemd.unit(5),
+ * "String Escaping"): keep [A-Za-z0-9:_.], hex-escape the rest — notably
+ * '-', the XDG app-scope field separator. */
+static void append_unit_escaped(GString *out, const char *s) {
+  for (const char *p = s; *p; p++) {
+    if (g_ascii_isalnum(*p) || *p == ':' || *p == '_' || (*p == '.' && p != s))
+      g_string_append_c(out, *p);
+    else
+      g_string_append_printf(out, "\\x%02x", (guint8)*p);
+  }
+}
+
+char *nd_handler_scope_name(const char *desktop_id, GPid pid) {
+  if (!desktop_id || pid <= 0) return NULL;
+  g_autofree char *app = g_str_has_suffix(desktop_id, ".desktop")
+                             ? g_strndup(desktop_id, strlen(desktop_id) - strlen(".desktop"))
+                             : g_strdup(desktop_id);
+  if (!*app) return NULL;
+  /* XDG "Desktop Environment integration" naming, as gnome-shell does:
+   * app-<launcher>-<ApplicationID>-<RANDOM>.scope (pid as the unique part). */
+  GString *name = g_string_new("app-");
+  append_unit_escaped(name, "nostr-dispatcher");
+  g_string_append_c(name, '-');
+  append_unit_escaped(name, app);
+  g_string_append_printf(name, "-%d.scope", (int)pid);
+  if (name->len > 255) { /* systemd's unit-name limit */
+    g_string_free(name, TRUE);
+    return NULL;
+  }
+  return g_string_free(name, FALSE);
+}
+
+/* nostrc-prqu.7: move a freshly spawned handler into its own transient
+ * app scope on the user manager (org.freedesktop.systemd1
+ * StartTransientUnit), like gnome-shell does for app launches. Otherwise
+ * it lives in nostr-dispatcher.service's cgroup: resource accounting is
+ * wrong, and systemd warns that it "remains running after unit stopped"
+ * when the dispatcher exits on idle. Synchronous (1 s cap) so the CLI's
+ * in-process path cannot exit before the request is sent; best effort —
+ * no user manager (containers, non-systemd) just leaves the process where
+ * it is. */
+static void move_to_scope(GDesktopAppInfo *info, GPid pid, gpointer user_data) {
+  const char *desktop_id = user_data;
+  if (g_strcmp0(g_getenv("NOSTR_DISPATCHER_NO_SCOPE"), "1") == 0) return;
+  g_autofree char *unit = nd_handler_scope_name(desktop_id, pid);
+  if (!unit) return;
+  g_autoptr(GDBusConnection) bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+  if (!bus) return;
+  GVariantBuilder props;
+  g_variant_builder_init(&props, G_VARIANT_TYPE("a(sv)"));
+  g_variant_builder_add(&props, "(sv)", "Description",
+                        g_variant_new_take_string(g_strdup_printf(
+                            "%s launched by nostr-dispatcher",
+                            g_app_info_get_name(G_APP_INFO(info)))));
+  g_variant_builder_add(&props, "(sv)", "PIDs",
+                        g_variant_new_fixed_array(G_VARIANT_TYPE_UINT32,
+                                                  &(guint32){(guint32)pid}, 1,
+                                                  sizeof(guint32)));
+  g_variant_builder_add(&props, "(sv)", "CollectMode",
+                        g_variant_new_string("inactive-or-failed"));
+  g_autoptr(GError) err = NULL;
+  g_autoptr(GVariant) r = g_dbus_connection_call_sync(
+      bus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+      "org.freedesktop.systemd1.Manager", "StartTransientUnit",
+      g_variant_new("(ssa(sv)a(sa(sv)))", unit, "fail", &props, NULL),
+      G_VARIANT_TYPE("(o)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 1000, NULL, &err);
+  if (r)
+    g_debug("nostr-dispatcher: %s (pid %d) moved to %s", desktop_id, (int)pid, unit);
+  else
+    g_debug("nostr-dispatcher: could not move pid %d to %s: %s", (int)pid, unit,
+            err->message);
+}
+
 static void launch_uri(GTask *task) {
   OpenData *d = g_task_get_task_data(task);
   g_autoptr(GDesktopAppInfo) info = g_desktop_app_info_new(d->result->desktop_id);
@@ -126,7 +203,12 @@ static void launch_uri(GTask *task) {
   }
   GList *uris = g_list_prepend(NULL, uri);
   g_autoptr(GError) err = NULL;
-  gboolean ok = g_app_info_launch_uris(G_APP_INFO(info), uris, ctx, &err);
+  /* Same code path as g_app_info_launch_uris() (argv, no shell; D-Bus
+   * activation for DBusActivatable apps, which get no pid callback and
+   * are placed by the bus/systemd), plus the pid for move_to_scope(). */
+  gboolean ok = g_desktop_app_info_launch_uris_as_manager(
+      info, uris, ctx, G_SPAWN_SEARCH_PATH, NULL, NULL, move_to_scope,
+      d->result->desktop_id, &err);
   g_list_free(uris);
   if (!ok) {
     g_task_return_new_error(task, ND_ERROR, ND_ERROR_LAUNCH_FAILED,
@@ -138,6 +220,14 @@ static void launch_uri(GTask *task) {
   return_result(task);
 }
 
+static gboolean interface_missing(const GError *err) {
+  return g_error_matches(err, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD) ||
+         g_error_matches(err, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_INTERFACE) ||
+         g_error_matches(err, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_OBJECT);
+}
+
+static void call_handler(GTask *task, const char *iface);
+
 static void handoff_done(GObject *src, GAsyncResult *res, gpointer user_data) {
   GTask *task = user_data;
   OpenData *d = g_task_get_task_data(task);
@@ -148,15 +238,52 @@ static void handoff_done(GObject *src, GAsyncResult *res, gpointer user_data) {
     return_result(task);
     return;
   }
-  /* Any failure (no owner any more, UnknownObject/Interface/Method,
-   * timeout, handler error) degrades to the plain URI launch. */
-  g_debug("nostr-dispatcher: Handler1 handoff to %s failed (%s); launching URI",
+  /* Handler2 is tried first; an app that only implements Handler1 answers
+   * UnknownMethod/Interface/Object and gets the Handler1 call instead. */
+  if (!d->tried_handler1 && interface_missing(err)) {
+    call_handler(task, HANDLER1_IFACE);
+    return;
+  }
+  /* Any other failure (no owner any more, timeout, handler error)
+   * degrades to the plain URI launch. */
+  g_debug("nostr-dispatcher: handoff to %s failed (%s); launching URI",
           d->result->desktop_id, err->message);
   launch_uri(task);
 }
 
-/* Deliver via org.nostr.Handler1.OpenEvent if possible, else launch. The
- * Handler1 contract: event_json is ALWAYS id- and signature-validated. */
+static void call_handler(GTask *task, const char *iface) {
+  OpenData *d = g_task_get_task_data(task);
+  g_autofree char *name = nd_handler_bus_name(d->result->desktop_id);
+  g_autofree char *path = nd_handler_object_path(name);
+  const char *const empty[] = {NULL};
+  const char *const *relays = d->relays ? (const char *const *)d->relays : empty;
+  GVariant *params;
+  if (g_strcmp0(iface, HANDLER2_IFACE) == 0) {
+    /* platform_data mirrors org.freedesktop.Application: the activation
+     * token lets the (already running) handler raise its window under
+     * Wayland focus-stealing prevention (nostrc-prqu.7). */
+    GVariantBuilder pd;
+    g_variant_builder_init(&pd, G_VARIANT_TYPE_VARDICT);
+    if (d->opts.activation_token) {
+      g_variant_builder_add(&pd, "{sv}", "activation-token",
+                            g_variant_new_string(d->opts.activation_token));
+      g_variant_builder_add(&pd, "{sv}", "desktop-startup-id",
+                            g_variant_new_string(d->opts.activation_token));
+    }
+    params = g_variant_new("(us^asa{sv})", (guint32)d->event->kind, d->event->json,
+                           relays, &pd);
+  } else {
+    d->tried_handler1 = TRUE;
+    params = g_variant_new("(us^as)", (guint32)d->event->kind, d->event->json, relays);
+  }
+  g_dbus_connection_call(d->bus, name, path, iface, "OpenEvent", params, NULL,
+                         G_DBUS_CALL_FLAGS_NO_AUTO_START, HANDOFF_TIMEOUT_MS,
+                         g_task_get_cancellable(task), handoff_done, task);
+}
+
+/* Deliver via org.nostr.Handler2 / Handler1 OpenEvent if possible, else
+ * launch. The handoff contract: event_json is ALWAYS id- and
+ * signature-validated. */
 static void deliver(GTask *task) {
   OpenData *d = g_task_get_task_data(task);
   if (d->opts.dry_run) {
@@ -164,20 +291,13 @@ static void deliver(GTask *task) {
     return;
   }
   g_autofree char *name = nd_handler_bus_name(d->result->desktop_id);
-  g_autoptr(GDBusConnection) bus =
-      name ? g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL) : NULL;
-  if (d->opts.no_handoff || !d->event || !d->event->validated || !name || !bus) {
+  if (name && !d->opts.no_handoff && d->event && d->event->validated)
+    d->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+  if (!d->bus) {
     launch_uri(task);
     return;
   }
-  g_autofree char *path = nd_handler_object_path(name);
-  const char *const empty[] = {NULL};
-  const char *const *relays = d->relays ? (const char *const *)d->relays : empty;
-  g_dbus_connection_call(bus, name, path, HANDLER1_IFACE, "OpenEvent",
-                         g_variant_new("(us^as)", (guint32)d->event->kind,
-                                       d->event->json, relays),
-                         NULL, G_DBUS_CALL_FLAGS_NO_AUTO_START, HANDOFF_TIMEOUT_MS,
-                         g_task_get_cancellable(task), handoff_done, task);
+  call_handler(task, HANDLER2_IFACE);
 }
 
 static gboolean choose(GTask *task, gint kind) {

@@ -21,7 +21,8 @@ endif()
 
 # Introspection XML: gnome/dbus/ is the single source of truth; embed it.
 set(ND_IFACE_XML ${CMAKE_SOURCE_DIR}/gnome/dbus/org.nostr.Dispatcher1.xml)
-set(ND_HANDLER_XML ${CMAKE_SOURCE_DIR}/gnome/dbus/org.nostr.Handler1.xml)
+set(ND_HANDLER_XML ${CMAKE_SOURCE_DIR}/gnome/dbus/org.nostr.Handler1.xml
+                   ${CMAKE_SOURCE_DIR}/gnome/dbus/org.nostr.Handler2.xml)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${ND_IFACE_XML})
 file(READ ${ND_IFACE_XML} _nd_xml)
 string(REPLACE "\\" "\\\\" _nd_xml "${_nd_xml}")
@@ -103,6 +104,7 @@ install(FILES ${ND_IFACE_XML} ${ND_HANDLER_XML}
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/nostr-dispatcher.service
         DESTINATION ${ND_SYSTEMD_USER_UNIT_DIR})
 install(FILES README.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/nostr-dispatcher)
+install(FILES doc/nostr-dispatcher.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
 
 # ---- tests ----------------------------------------------------------------
 if(NOSTR_DISPATCHER_BUILD_TESTS)
