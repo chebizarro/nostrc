@@ -267,7 +267,11 @@ if(NOSTRC_NSYNC_VENDORED AND _nostrgo_type STREQUAL "SHARED_LIBRARY")
   endif()
 endif()
 set_property(TARGET nostrgo PROPERTY POSITION_INDEPENDENT_CODE ON)
-target_include_directories(nostrgo PUBLIC ${NSYNC_INCLUDE_DIR})
+# SYSTEM: with a system nsync this is the package prefix's include dir
+# (/opt/homebrew/include, /usr/local/include), which may also hold an older
+# installed nostrc; as a plain -I it shadowed the in-tree headers of every
+# consumer. -isystem is searched after all -I directories.
+target_include_directories(nostrgo SYSTEM PUBLIC ${NSYNC_INCLUDE_DIR})
 
 # Create the test executables for channels and contexts
 add_executable(go_context_cancel_test tests/go_context_cancel_test.c)
