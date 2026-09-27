@@ -121,10 +121,15 @@ bool        nostr_relay_subscribe(NostrRelay *relay, GoContext *ctx, NostrFilter
 /**
  * nostr_relay_prepare_subscription:
  * @relay: (nullable): relay
- * @ctx: (nullable): context
+ * @ctx: (nullable): ignored; may be NULL. The subscription's lifetime follows
+ *   the relay's connection context (see nostr_subscription_new()).
  * @filters: (nullable): filters
  *
- * Returns: (transfer none) (nullable): internal subscription pointer
+ * Creates a subscription and registers it for dispatch on @relay. Call
+ * nostr_subscription_fire() to send the REQ.
+ *
+ * Returns: (transfer none) (nullable): internal subscription pointer, or NULL
+ *   if @relay or @filters is NULL
  */
 struct NostrSubscription *nostr_relay_prepare_subscription(NostrRelay *relay, GoContext *ctx, NostrFilters *filters);
 

@@ -1649,24 +1649,27 @@ bool nostr_relay_subscribe(NostrRelay *relay, GoContext *ctx, NostrFilters *filt
 }
 
 NostrSubscription *nostr_relay_prepare_subscription(NostrRelay *relay, GoContext *ctx, NostrFilters *filters) {
-    if (!relay || !filters || !ctx) {
+    /* nostrc-prqu.4: ctx is accepted but unused (and may be NULL): the
+     * subscription's lifetime is bound to a child of the relay's connection
+     * context created by nostr_subscription_new(). Rejecting NULL broke callers
+     * such as gnostr's neg-client that have no context of their own. */
+    (void)ctx;
+    if (!relay || !filters) {
         return NULL;
     }
 
     // Create subscription - nostr_subscription_new() already generates a unique ID
     // from the global g_sub_counter and sets up the context derived from relay's
     // connection context. We use that ID directly to avoid counter desync issues.
+    // We don't create a new context here to avoid orphaning the lifecycle thread
+    // which is waiting on the original context.
     NostrSubscription *subscription = nostr_subscription_new(relay, filters);
     if (!subscription) return NULL;
-    
-    // Note: nostr_subscription_new() already creates a context derived from the relay's
-    // connection context and starts the lifecycle thread. We don't create a new context
-    // here to avoid orphaning the lifecycle thread which is waiting on the original context.
-    (void)ctx; // Mark as intentionally unused
+
     subscription->priv->match = nostr_filters_match; // Function for matching filters with events
 
     // Store subscription in relay subscriptions map using the ID set by nostr_subscription_new
-    go_hash_map_insert_int(relay->subscriptions, subscription->priv->counter, subscription);
+    nostr_subscription_register_with_relay(subscription);
 
     return subscription;
 }

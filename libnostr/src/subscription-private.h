@@ -81,6 +81,12 @@ typedef struct _SubscriptionPrivate {
 
     // Queue health metrics (nostrc-sjv)
     QueueMetrics metrics;
+
+    /* nostrc-prqu.4: set once the subscription has been inserted into
+     * relay->subscriptions (the map message_loop dispatches EVENT/EOSE/CLOSED
+     * from). Registration is one-shot: once nostr_subscription_free() or the
+     * async cleanup removes the entry, a late refire must not resurrect it. */
+    _Atomic bool registered;
 } SubscriptionPrivate;
 
 struct NostrSubscription; /* forward */
@@ -90,5 +96,10 @@ void nostr_subscription_dispatch_event(struct NostrSubscription *sub, NostrEvent
 void nostr_subscription_dispatch_eose(struct NostrSubscription *sub);
 void nostr_subscription_dispatch_closed(struct NostrSubscription *sub, const char *reason);
 bool nostr_subscription_refire_since(struct NostrSubscription *sub, int64_t since, Error **err);
+/* Insert @sub into its relay's dispatch map (idempotent, one-shot; takes the
+ * relay priv mutex). Called by nostr_relay_prepare_subscription() and lazily
+ * by nostr_subscription_fire() for subscriptions made with
+ * nostr_subscription_new() (nostrc-prqu.4). */
+void nostr_subscription_register_with_relay(struct NostrSubscription *sub);
 
 #endif // NOSTR_SUBSCRIPTION_PRIVATE_H

@@ -353,6 +353,15 @@ if(LIBNOSTR_BUILD_TESTS)
   target_include_directories(test_networking_audit PRIVATE include src)
   add_test(NAME libnostr_networking_audit COMMAND test_networking_audit)
 
+  # nostrc-prqu.4: subscription dispatch registration + NULL ctx, exercised
+  # offline and against an in-process loopback libwebsockets fixture relay.
+  find_package(Threads REQUIRED)
+  add_executable(test_subscription_dispatch tests/test_subscription_dispatch.c)
+  target_link_libraries(test_subscription_dispatch PRIVATE nostr Threads::Threads)
+  target_include_directories(test_subscription_dispatch PRIVATE include src)
+  add_test(NAME libnostr_subscription_dispatch COMMAND test_subscription_dispatch)
+  set_tests_properties(libnostr_subscription_dispatch PROPERTIES TIMEOUT 60)
+
   # The two-store transaction-scoping test exercises the nostrdb backend, so it
   # is only meaningful (and only links to something useful) when that backend is
   # compiled in. Skip it for nostrdb-OFF configurations.
