@@ -17,7 +17,29 @@
          caller is the installed browser bridge (nostr-signer-webext-host);
          from anyone else it is an unverified label. Errors common to gated
          calls: Error.ApprovalDenied (denied, timed out, or no approval agent
-         running), Error.RateLimited, Error.NoKeyConfigured. -->
+         running), Error.RateLimited, Error.NoKeyConfigured. A connection that
+         called EnableTypedApprovalErrors gets Error.ApprovalTimedOut and
+         Error.NoApprovalAgent for the last two cases instead (0.5.0).
+         Identity binding: an npub or 64-hex selector names exactly that
+         stored identity or fails with Error.NoKeyConfigured before any
+         prompt; it never falls back to another key. NIP-04/NIP-44 replies
+         carry no pubkey, so a caller relies on this service guarantee for
+         them; SignEvent replies can be checked against their pubkey. -->
+    <!-- EnableTypedApprovalErrors (nip55l 0.5.0, additive, ungated): opt the
+         calling bus connection in to typed approval errors for as long as it
+         stays connected. Afterwards its gated calls fail with
+         Error.ApprovalTimedOut when a parked request expires unanswered and
+         with Error.NoApprovalAgent when a prompt is needed but no approval
+         UI is on the bus; Error.ApprovalDenied then means only a denial (by
+         the user, by a remembered decision, or because the caller
+         disconnected or the identity changed while awaiting approval).
+         Without the opt-in all of these stay Error.ApprovalDenied, so
+         pre-0.5.0 clients are unaffected. Messages are informational and not
+         part of the contract. Opting in affects only the caller's own
+         replies; a pre-0.5.0 service answers with UnknownMethod. Method
+         calls on one connection are handled in order, so a client may send
+         this, unawaited, right before a gated call. -->
+    <method name="EnableTypedApprovalErrors" />
     <method name="GetPublicKey">
       <arg type="s" direction="out" name="npub" />
     </method>

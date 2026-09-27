@@ -1,8 +1,10 @@
 # NIP-55L Linux Signer
 
-**Component version: 0.4.0** (tracked in `/VERSION_MANIFEST.md`; authoritative
+**Component version: 0.5.0** (tracked in `/VERSION_MANIFEST.md`; authoritative
 source `NOSTR_NIP55L_VERSION_*` in `include/nostr/nip55l/signer_ops.h`).
-0.4.0 changes the ACL semantics: grants are keyed on a bus-derived caller
+0.5.0 is additive: `EnableTypedApprovalErrors` opts a bus connection in to
+`Error.ApprovalTimedOut` and `Error.NoApprovalAgent` where it would otherwise
+get `Error.ApprovalDenied` (see below). 0.4.0 changes the ACL semantics: grants are keyed on a bus-derived caller
 principal plus the resolved npub and request kind, `GetPublicKey`,
 `GetRelays`, NIP-04/NIP-44 and `DecryptZapEvent` are approval-gated, only the
 installed approval UI may call `ApproveRequest`, and `*ForApp` /
@@ -158,6 +160,15 @@ already take one) has a `…ForApp` twin with a trailing `app_id`.
   - Errors: `Error.InvalidInput` (not 64-hex / not on the curve — refused
     before any prompt), `Error.ApprovalDenied`, `Error.RateLimited`,
     `Error.NoKeyConfigured`, `Error.Internal`.
+
+- `EnableTypedApprovalErrors() -> ()`
+  - Since 0.5.0; ungated. Opts the calling bus connection in, until it
+    disconnects, to typed approval errors: an approval request that expires
+    unanswered fails with `Error.ApprovalTimedOut`, and a call that needs a
+    prompt while no approval UI is on the bus fails with
+    `Error.NoApprovalAgent`. `Error.ApprovalDenied` then means a denial only.
+    Without the opt-in (every pre-0.5.0 client, and the NIP-5F socket) those
+    cases stay `Error.ApprovalDenied`. Classify by error name, never by message.
 
 - `GetRelays() -> (s relaysJson)`
   - JSON array of the user's explicitly configured relays. Sources, first

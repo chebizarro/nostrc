@@ -94,6 +94,19 @@ static void reply_error(const Reply *r, const char *ename, const char *msg){
   else r->fn(r->ud, ename, msg, NULL);
 }
 
+/* Bus connections (unique names) that called EnableTypedApprovalErrors
+ * (nip55l 0.5.0). Forgotten when the connection leaves the bus. */
+static GHashTable *typed_senders = NULL;
+
+/* An approval failure: @typed_name for a caller that opted in to typed
+ * approval errors, Error.ApprovalDenied (the pre-0.5.0 contract) for anyone
+ * else, including every NIP-5F socket caller. The message never changes. */
+static void reply_approval_error(const Reply *r, const char *typed_name, const char *msg){
+  gboolean typed = r->invocation && typed_senders &&
+    g_hash_table_contains(typed_senders, g_dbus_method_invocation_get_sender(r->invocation));
+  reply_error(r, typed ? typed_name : ORG_NOSTR_SIGNER_ERR_APPROVAL, msg);
+}
+
 static void reply_value(const Reply *r, const char *out){
   if (r->invocation) g_dbus_method_invocation_return_value(r->invocation, g_variant_new("(s)", out));
   else r->fn(r->ud, NULL, NULL, out);
@@ -153,6 +166,15 @@ static GHashTable *pending = NULL; /* id -> Pending* (owned) */
 #define PENDING_PER_CALLER_MAX 8   /* one app cannot fill the table for the others */
 #define PENDING_CALLS_MAX 256
 #define PENDING_TTL_S 300
+static guint pending_ttl_s(void){
+#ifdef NIP55L_TEST_TRUST_ENV
+  /* Test builds only: a short TTL so the timeout path can be exercised. */
+  const char *env = g_getenv("NOSTR_SIGNER_TEST_PENDING_TTL_S");
+  guint64 v = env ? g_ascii_strtoull(env, NULL, 10) : 0;
+  if (v > 0 && v < PENDING_TTL_S) return (guint)v;
+#endif
+  return PENDING_TTL_S;
+}
 static gchar *next_request_id(void){
   static guint64 counter = 0;
   return g_strdup_printf("req-%" G_GUINT64_FORMAT, ++counter);
@@ -535,11 +557,11 @@ static gboolean is_hex64(const char *s){
   return TRUE;
 }
 
-/* Complete every call of @p with a D-Bus error. */
-static void pending_fail(Pending *p, const char *ename, const char *msg){
+/* Complete every call of @p with an approval failure (reply_approval_error). */
+static void pending_fail(Pending *p, const char *typed_name, const char *msg){
   for (guint i = 0; i < p->calls->len; i++) {
     Call *c = g_ptr_array_index(p->calls, i);
-    reply_error(&c->reply, ename, msg);
+    reply_approval_error(&c->reply, typed_name, msg);
   }
   g_ptr_array_set_size(p->calls, 0);
 }
@@ -555,8 +577,8 @@ static gboolean on_pending_timeout(gpointer data){
   if (!p) return G_SOURCE_REMOVE;
   g_hash_table_steal(pending, id);
   p->timeout_id = 0; /* this source is being removed */
-  g_message("nostr-signer: %s (%s) was not answered within %d s", p->id, op_info[p->op].kind, PENDING_TTL_S);
-  pending_fail(p, ORG_NOSTR_SIGNER_ERR_APPROVAL, "approval timed out");
+  g_message("nostr-signer: %s (%s) was not answered within %u s", p->id, op_info[p->op].kind, pending_ttl_s());
+  pending_fail(p, ORG_NOSTR_SIGNER_ERR_APPROVAL_TIMEOUT, "approval timed out");
   pending_finish(p, FALSE);
   return G_SOURCE_REMOVE;
 }
@@ -697,7 +719,7 @@ static void gate(const Reply *invocation, const SignerCaller *base, const char *
     return;
   }
   if (!approver_present(bus)) {
-    reply_error(invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL,
+    reply_approval_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_APPROVER,
       "approval required but no approval agent is running (start GNostr Signer)");
     return;
   }
@@ -713,7 +735,7 @@ static void gate(const Reply *invocation, const SignerCaller *base, const char *
   Call *c = g_new0(Call, 1);
   *c = (Call){ op, g_strdup(call.a), g_strdup(b), g_strdup(selector), *invocation };
   g_ptr_array_add(p->calls, c);
-  p->timeout_id = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, PENDING_TTL_S, on_pending_timeout,
+  p->timeout_id = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, pending_ttl_s(), on_pending_timeout,
                                              g_strdup(p->id), g_free);
   g_hash_table_insert(pending, p->id, p);
 
@@ -915,6 +937,7 @@ void signer_gate_connection_closed(const gchar *conn_key){
 static void forget_sender(const char *name){
   for (guint t = 0; t < G_N_ELEMENTS(rate_tables); t++)
     if (rate_tables[t]) g_hash_table_remove(rate_tables[t], name);
+  if (typed_senders) g_hash_table_remove(typed_senders, name);
   if (!pending) return;
   GPtrArray *gone = g_ptr_array_new();
   GHashTableIter it; gpointer k, v;
@@ -928,6 +951,21 @@ static void forget_sender(const char *name){
     pending_finish(p, FALSE);
   }
   g_ptr_array_unref(gone);
+}
+
+/* ---- EnableTypedApprovalErrors (nip55l 0.5.0) -------------------------- */
+
+/* Opt the calling connection in to typed approval errors. Ungated: it
+ * changes only which error name this caller's own failures carry. */
+static gboolean handle_enable_typed_approval_errors(NostrSigner *object, GDBusMethodInvocation *invocation)
+{
+  const char *sender = g_dbus_method_invocation_get_sender(invocation);
+  if (sender) {
+    if (!typed_senders) typed_senders = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    g_hash_table_add(typed_senders, g_strdup(sender));
+  }
+  nostr_signer_complete_enable_typed_approval_errors(object, invocation);
+  return TRUE;
 }
 
 /* ========== Generated handler glue ========== */
@@ -1119,6 +1157,7 @@ guint signer_export(GDBusConnection *conn, const char *object_path) {
     { "handle-get-approval-info",             G_CALLBACK(handle_get_approval_info) },
     { "handle-list-grants",                   G_CALLBACK(handle_list_grants) },
     { "handle-revoke-grant",                  G_CALLBACK(handle_revoke_grant) },
+    { "handle-enable-typed-approval-errors",  G_CALLBACK(handle_enable_typed_approval_errors) },
     { "handle-nip04-encrypt",                 G_CALLBACK(handle_nip04_encrypt) },
     { "handle-nip04-encrypt-for-app",         G_CALLBACK(handle_nip04_encrypt_for_app) },
     { "handle-nip04-decrypt",                 G_CALLBACK(handle_nip04_decrypt) },

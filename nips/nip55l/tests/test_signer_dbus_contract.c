@@ -31,6 +31,10 @@
  * empty selector and the npub selector alike; remembered decisions are per
  * kind; queued identical calls share one prompt; an untrusted process cannot
  * answer approvals; with no approval agent on the bus a prompt fails fast.
+ * The typed-errors phase (nip55l 0.5.0) runs the daemon with a 1 s approval
+ * TTL: after EnableTypedApprovalErrors a connection gets ApprovalTimedOut /
+ * NoApprovalAgent, while denials and every non-opted-in caller still get
+ * ApprovalDenied.
  * The bridge phase runs this process as the trusted browser bridge
  * (test-build NOSTR_SIGNER_TEST_ORIGIN_BRIDGES) so origin grants apply.
  * The NIP-5F phase (nostrc-q23h) starts the daemon's opt-in socket and
@@ -99,6 +103,8 @@
 #define ERR_NOT_FND  "org.nostr.Signer.Error.NotFound"
 #define ERR_PERM     "org.nostr.Signer.Error.PermissionDenied"
 #define ERR_DENIED   "org.nostr.Signer.Error.ApprovalDenied"
+#define ERR_TIMED_OUT "org.nostr.Signer.Error.ApprovalTimedOut"
+#define ERR_NO_AGENT  "org.nostr.Signer.Error.NoApprovalAgent"
 #define APPROVER_NAME "org.gnostr.Signer"
 
 #define CHECK(cond) do { if (!(cond)) { \
@@ -1128,6 +1134,75 @@ static void test_gating(Ctx *ctx) {
   free(peer_pk);
 }
 
+/* Typed approval errors (nip55l 0.5.0, nostrc-qp24.16). The daemon runs
+ * with a 1 s approval TTL and no grants. ctx->bus stays a pre-0.5.0 client;
+ * a second connection of this process opts in. */
+static void expect_approval_error(GError *err, const char *name, const char *msg) {
+  expect_remote_error(err, name);
+  GError *copy = g_error_copy(err);
+  g_dbus_error_strip_remote_error(copy);
+  if (g_strcmp0(copy->message, msg) != 0) g_printerr("message: want %s got %s\n", msg, copy->message);
+  CHECK(g_strcmp0(copy->message, msg) == 0);
+  g_error_free(copy);
+}
+
+static void test_typed_approval_errors(Ctx *ctx) {
+  static const char no_agent[] = "approval required but no approval agent is running (start GNostr Signer)";
+  GError *err = NULL;
+  char *peer_sk = nostr_key_generate_private();
+  char *peer_pk = nostr_key_get_public(peer_sk);
+  CHECK(peer_sk && peer_pk);
+  gchar *addr = g_dbus_address_get_for_bus_sync(G_BUS_TYPE_SESSION, NULL, &err);
+  CHECK(addr != NULL);
+  GDBusConnection *typed = g_dbus_connection_new_for_address_sync(addr,
+      G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+      NULL, NULL, &err);
+  CHECK(typed != NULL);
+  g_free(addr);
+  GVariant *r = g_dbus_connection_call_sync(typed, BUS_NAME, OBJ_PATH, IFACE, "EnableTypedApprovalErrors",
+      NULL, G_VARIANT_TYPE("()"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &err);
+  CHECK(r != NULL); g_variant_unref(r);
+
+  /* Unanswered until the TTL: ApprovalDenied for the old client,
+   * ApprovalTimedOut for the one that opted in. Same message for both. */
+  r = call(ctx->bus, "NIP44Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""), "(s)", &err);
+  CHECK(r == NULL); expect_approval_error(err, ERR_DENIED, "approval timed out"); g_clear_error(&err);
+  r = call(typed, "NIP44Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""), "(s)", &err);
+  CHECK(r == NULL); expect_approval_error(err, ERR_TIMED_OUT, "approval timed out"); g_clear_error(&err);
+
+  /* A denial stays ApprovalDenied after the opt-in. */
+  {
+    Watch w;
+    watch_start(ctx, &w);
+    w.a.pending_replies++;
+    g_dbus_connection_call(typed, BUS_NAME, OBJ_PATH, IFACE, "NIP44Encrypt",
+                           g_variant_new("(sss)", "hi", peer_pk, ""), G_VARIANT_TYPE("(s)"),
+                           G_DBUS_CALL_FLAGS_NONE, 15000, NULL, on_async_reply, &w.a);
+    watch_wait_request(&w, 1);
+    approve(ctx, w.a.req_id, FALSE, FALSE);
+    watch_wait_replies(&w);
+    CHECK(w.a.replies->pdata[0] == NULL);
+    expect_approval_error(w.a.errors->pdata[0], ERR_DENIED, "user denied");
+    watch_stop(ctx, &w);
+  }
+
+  /* No approval agent on the bus: NoApprovalAgent only after the opt-in. */
+  GVariant *rel = g_dbus_connection_call_sync(ctx->bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+      "org.freedesktop.DBus", "ReleaseName", g_variant_new("(s)", APPROVER_NAME),
+      G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &err);
+  CHECK(rel != NULL); g_variant_unref(rel);
+  g_usleep(120 * 1000); /* one new prompt per 100 ms per sender */
+  r = call(typed, "NIP44Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""), "(s)", &err);
+  CHECK(r == NULL); expect_approval_error(err, ERR_NO_AGENT, no_agent); g_clear_error(&err);
+  r = call(ctx->bus, "NIP44Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""), "(s)", &err);
+  CHECK(r == NULL); expect_approval_error(err, ERR_DENIED, no_agent); g_clear_error(&err);
+
+  CHECK(g_dbus_connection_close_sync(typed, NULL, NULL));
+  g_object_unref(typed);
+  free(peer_sk);
+  free(peer_pk);
+}
+
 /* An untrusted process cannot answer (or inspect) approval requests. */
 static void test_untrusted_approver(Ctx *ctx) {
   if (!ctx->attested) {
@@ -1575,6 +1650,12 @@ static void test_selector_not_key_material(Ctx *ctx) {
   r = call(ctx->bus, "NIP44Encrypt", g_variant_new("(sss)", "hi", opk, ctx->pk_hex), "(s)", &err);
   if (!r) { g_printerr("NIP44Encrypt(own hex pubkey selector): %s\n", err ? err->message : "?"); exit(1); }
   g_variant_unref(r);
+  /* NIP-44 replies carry no pubkey, so the caller relies on this binding:
+   * an unknown npub is refused, never served by the active key. */
+  r = call(ctx->bus, "NIP44Encrypt", g_variant_new("(sss)", "hi", opk, onpub), "(s)", &err);
+  CHECK(r == NULL); expect_remote_error(err, "org.nostr.Signer.Error.NoKeyConfigured"); g_clear_error(&err);
+  r = call(ctx->bus, "NIP44Decrypt", g_variant_new("(sss)", "AgAA", opk, onpub), "(s)", &err);
+  CHECK(r == NULL); expect_remote_error(err, "org.nostr.Signer.Error.NoKeyConfigured"); g_clear_error(&err);
   free(onpub); free(onsec); free(osk); free(opk);
 }
 
@@ -2049,6 +2130,18 @@ int main(void) {
     g_print("PASS gating (decrypt/pubkey/relays gated,%s remember round-trip, kind-keyed "
             "remember, coalescing, no-agent fail-fast)\n",
             attested ? " spoofed app_id denied," : " [unattested bus: claimed-app_id principals],");
+  }
+
+  /* Typed approval errors (nip55l 0.5.0): 1 s approval TTL, no grants. */
+  {
+    Ctx ctx;
+    g_setenv("NOSTR_SIGNER_TEST_PENDING_TTL_S", "1", TRUE);
+    ctx_setup_full(&ctx, FALSE, FALSE, NULL, &TRUST_UI, NULL, NULL);
+    g_unsetenv("NOSTR_SIGNER_TEST_PENDING_TTL_S");
+    test_typed_approval_errors(&ctx);
+    ctx_teardown(&ctx);
+    g_print("PASS typed approval errors (timeout/no-agent typed after opt-in, "
+            "ApprovalDenied for denial and for legacy callers)\n");
   }
 
   /* An approval agent is present but this process is not a trusted one. */

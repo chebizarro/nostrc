@@ -13,7 +13,8 @@ typedef enum {
   GH_SIGNER_ERROR_TIMED_OUT,
   GH_SIGNER_ERROR_CANCELLED,
   GH_SIGNER_ERROR_KEY_MISMATCH,
-  GH_SIGNER_ERROR_INVALID_RESULT
+  GH_SIGNER_ERROR_INVALID_RESULT,
+  GH_SIGNER_ERROR_NO_APPROVER
 } GhSignerError;
 #define GH_SIGNER_ERROR gh_signer_error_quark()
 GQuark gh_signer_error_quark(void);
@@ -21,7 +22,11 @@ GQuark gh_signer_error_quark(void);
 /* The org.nostr.Signer service adapter only. NIP-46 sessions are not implied.
  * Calls always use the selected npub as the signer selector. Signed events are
  * independently verified; NIP-44 replies carry no pubkey, so their key binding
- * relies on the service contract rather than an attestation in the reply. */
+ * relies on the service contract rather than an attestation in the reply.
+ * Errors are classified by D-Bus error name only. Each call opts in to typed
+ * approval errors (nip55l >= 0.5.0): Error.ApprovalTimedOut -> TIMED_OUT,
+ * Error.NoApprovalAgent -> NO_APPROVER, Error.ApprovalDenied -> DENIED. A
+ * pre-0.5.0 service reports all three as ApprovalDenied, hence DENIED. */
 GhSigner *gh_signer_new(GDBusConnection *bus, const gchar *selected_npub,
                         GError **error);
 /* Cancels pending D-Bus calls. The owning thread-default main context must

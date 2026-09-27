@@ -193,6 +193,12 @@ map_bus_error(GError *error)
   if (g_strcmp0(remote, "org.nostr.Signer.Error.ApprovalDenied") == 0)
     return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED,
                                "Signer approval denied");
+  if (g_strcmp0(remote, "org.nostr.Signer.Error.ApprovalTimedOut") == 0)
+    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_TIMED_OUT,
+                               "Signer approval timed out");
+  if (g_strcmp0(remote, "org.nostr.Signer.Error.NoApprovalAgent") == 0)
+    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_NO_APPROVER,
+                               "Signer approval agent is not running");
   if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
       g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_NAME_HAS_NO_OWNER) ||
       g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD))
@@ -284,6 +290,13 @@ start_call(GhSigner *signer, Operation op, const gchar *input, const gchar *peer
   p->op = op;
   p->request = request;
   g_ptr_array_add(signer->pending, p);
+  /* The opt-in is per bus connection and lost if the service restarts, so it
+   * precedes every gated call; the service handles one connection's calls in
+   * order. No reply is requested, so a pre-0.5.0 service's UnknownMethod
+   * error is never sent; its failures then all arrive as ApprovalDenied. */
+  g_dbus_connection_call(signer->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
+                         "EnableTypedApprovalErrors", NULL, NULL, G_DBUS_CALL_FLAGS_NONE,
+                         -1, NULL, NULL, NULL);
   g_dbus_connection_call(signer->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
                          op == OP_SIGN ? "SignEvent" :
                          op == OP_ENCRYPT ? "NIP44Encrypt" : "NIP44Decrypt",
