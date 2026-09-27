@@ -7,6 +7,7 @@
 #include "relayd_ctx.h"
 #include "relayd_conn.h"
 #include "protocol_nip50.h"
+#include "protocol_nip01.h"
 
 static void ws_send_text(struct lws *wsi, const char *s) {
   if (!wsi || !s) return;
@@ -42,7 +43,6 @@ int relayd_nip50_maybe_start_search(struct lws *wsi, ConnState *cs, const Relayd
     if (closed) { ws_send_text(wsi, closed); free(closed);}                
     return 1;
   }
-  cs->it = it; memcpy(cs->subid, subtmp, strlen(subtmp)+1);
-  lws_callback_on_writable(wsi);
+  relayd_conn_sub_push(wsi, cs, sub, sub_len, it);
   return 1;
 }

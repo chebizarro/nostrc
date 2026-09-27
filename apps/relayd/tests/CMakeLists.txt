@@ -82,6 +82,20 @@ if(UNIX AND NOT APPLE AND NOT CYGWIN)
   )
 endif()
 
+# NIP-01 REQ contract of the relay core, with and without storage: every
+# REQ ends in EOSE or CLOSED (nostrc-prqu.14). In-process server on a Unix
+# listener, scripted fake storage.
+if(UNIX AND NOT CYGWIN)
+  find_package(Threads REQUIRED)
+  add_executable(test_relay_req_contract test_relay_req_contract.c)
+  target_link_libraries(test_relay_req_contract PRIVATE
+    nostr-relay-server nostr nostr_json Threads::Threads)
+  add_test(NAME relayd_req_contract COMMAND test_relay_req_contract)
+  set_tests_properties(relayd_req_contract PROPERTIES
+    TIMEOUT 60
+    LABELS "relay;nip01;integration")
+endif()
+
 # Real NIP-01 client over relay.sock: RFC 6455 upgrade without a
 # subprotocol, then REQ/EVENT round trips against a storage-less daemon
 # (nostrc-q9ba part 2).

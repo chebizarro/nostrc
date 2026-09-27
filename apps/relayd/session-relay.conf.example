@@ -16,7 +16,8 @@ auth = "off"
 # lightly loaded so these are typically fine to leave alone.
 max_filters              = 10
 max_limit                = 500
-max_subs                 = 1
+# REQs streaming at once per connection (clamped to 16); see relay.toml.example.
+max_subs                 = 8
 max_event_bytes          = 262144
 
 rate_ops_per_sec         = 20

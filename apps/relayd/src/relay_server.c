@@ -300,9 +300,7 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
         ConnState *cs = (ConnState *)user;
         const RelaydCtx *ctx =
             (const RelaydCtx *)lws_context_user(lws_get_context(wsi));
-        if (cs && ctx && cs->it && ctx->storage && ctx->storage->vt &&
-            ctx->storage->vt->query_free)
-          ctx->storage->vt->query_free(ctx->storage, cs->it);
+        if (cs && ctx) relayd_conn_subs_free_all(cs, ctx);
         if (cs && ctx && cs->neg_state && ctx->storage && ctx->storage->vt &&
             ctx->storage->vt->set_free)
           ctx->storage->vt->set_free(ctx->storage, cs->neg_state);
