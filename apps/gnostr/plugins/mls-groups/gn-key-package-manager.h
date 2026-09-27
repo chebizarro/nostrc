@@ -2,7 +2,7 @@
  * gn-key-package-manager.h - MLS Key Package Lifecycle Manager
  *
  * Manages the creation, publication, and rotation of MLS key packages
- * (kind:30443 events) and key package relay lists (kind:10051).
+ * (kind:30443 events).
  *
  * Key packages are the entry point for MLS group membership — other users
  * fetch our key package from relays to add us to a group.
@@ -10,9 +10,10 @@
  * Lifecycle:
  *   1. On login: check if a valid key package exists on relays
  *   2. If missing/expired: create via marmot and sign via D-Bus signer
- *   3. Publish to user's relays
- *   4. Publish kind:10051 relay list for key package discovery
- *   5. Rotate when epoch changes or after a configurable interval
+ *   3. Publish to the account's kind:10002 write relays, which invitees
+ *      read it from (Marmot transports/nostr.md; there is no dedicated
+ *      KeyPackage relay list, see gn-key-package-discovery.h)
+ *   4. Rotate when epoch changes or after a configurable interval
  *
  * Copyright (C) 2026 Gnostr Contributors
  */
@@ -92,25 +93,6 @@ gboolean gn_key_package_manager_rotate_finish(GnKeyPackageManager *self,
                                                GAsyncResult        *result,
                                                GError             **error);
 
-/**
- * gn_key_package_manager_publish_relay_list_async:
- * @self: The manager
- * @relay_urls: (array zero-terminated=1): Relay URLs for key package discovery
- * @cancellable: (nullable): a GCancellable
- * @callback: Callback
- * @user_data: User data
- *
- * Publish a kind:10051 relay list for key package discovery.
- */
-void gn_key_package_manager_publish_relay_list_async(GnKeyPackageManager  *self,
-                                                      const gchar * const  *relay_urls,
-                                                      GCancellable         *cancellable,
-                                                      GAsyncReadyCallback   callback,
-                                                      gpointer              user_data);
-
-gboolean gn_key_package_manager_publish_relay_list_finish(GnKeyPackageManager *self,
-                                                           GAsyncResult        *result,
-                                                           GError             **error);
 
 G_END_DECLS
 

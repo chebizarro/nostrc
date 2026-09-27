@@ -916,6 +916,28 @@ if (BUILD_TESTING)
     LABELS "nwc;wallet;dbus;unit;gnostr"
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
 
+  # mls-groups: Marmot KeyPackage discovery on kind:10002 write relays
+  # (nostrc-prqu.11). Fake relays behind GnKpBackend; real KeyPackages.
+  if (TARGET marmot-gobject)
+    add_executable(gnostr-test-kp-discovery
+      tests/test_kp_discovery.c
+      plugins/mls-groups/gn-key-package-discovery.c)
+    target_compile_features(gnostr-test-kp-discovery PRIVATE c_std_11)
+    target_include_directories(gnostr-test-kp-discovery PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/plugins/mls-groups
+      ${PROJECT_ROOT}/marmot-gobject/include
+      ${CMAKE_BINARY_DIR}/marmot-gobject/include
+      ${PROJECT_ROOT}/libmarmot/include
+      ${PROJECT_ROOT}/libnostr/include)
+    target_link_libraries(gnostr-test-kp-discovery PRIVATE
+      PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB marmot-gobject marmot nostr)
+    _gnostr_apply_sanitizers(gnostr-test-kp-discovery)
+    add_test(NAME gnostr-test-kp-discovery COMMAND gnostr-test-kp-discovery)
+    set_tests_properties(gnostr-test-kp-discovery PROPERTIES
+      TIMEOUT 60
+      LABELS "mls;marmot;unit;gnostr")
+  endif()
+
   # nostr: link routing + org.nostr.Handler1 (nostrc-prqu.3). Headless:
   # private GTestDBus bus; checks X-Nostr-Kinds= against the routing table.
   add_executable(gnostr-test-nostr-target

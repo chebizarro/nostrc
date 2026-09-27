@@ -19,6 +19,8 @@ set(PLUGIN_SOURCES
     mls-groups-plugin.c
     gn-marmot-service.c
     gn-key-package-manager.c
+    gn-key-package-discovery.c
+    gn-key-package-discovery-plugin.c
     gn-mls-event-router.c
     # Phase 4: Models
     model/gn-group-list-model.c
