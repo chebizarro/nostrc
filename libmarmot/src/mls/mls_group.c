@@ -2012,14 +2012,18 @@ proposal_store_free(MlsProposalStore *store)
 }
 
 static int
-proposal_store_build(MlsProposalStore *store,
+proposal_store_build(MlsProposalStore *store, const MlsGroup *group,
                      const uint8_t *const *msgs, const size_t *lens, size_t n)
 {
     memset(store, 0, sizeof(*store));
     if (n == 0) return 0;
-    if (!msgs || !lens) return -1;
+    if (!group || !msgs || !lens) return -1;
+    uint8_t *group_context = NULL;
+    size_t group_context_len = 0;
+    if (mls_group_context_build(group, &group_context, &group_context_len) != 0)
+        return -1;
     store->items = calloc(n, sizeof(*store->items));
-    if (!store->items) return -1;
+    if (!store->items) { free(group_context); return -1; }
 
     for (size_t i = 0; i < n; i++) {
         MlsMLSMessage msg;
@@ -2032,9 +2036,28 @@ proposal_store_build(MlsProposalStore *store,
             msg.public_message.content.content_type != MLS_CONTENT_TYPE_PROPOSAL) {
             mls_message_clear(&msg);
             proposal_store_free(store);
+            free(group_context);
             return -1;
         }
         MlsPublicMessage *pm = &msg.public_message;
+        uint32_t sender_leaf = pm->content.sender.leaf_index;
+        if (pm->content.sender.sender_type != MLS_SENDER_TYPE_MEMBER ||
+            sender_leaf >= group->tree.n_leaves ||
+            pm->content.group_id_len != group->group_id_len ||
+            memcmp(pm->content.group_id, group->group_id, group->group_id_len) != 0 ||
+            pm->content.epoch != group->epoch ||
+            group->tree.nodes[mls_tree_leaf_to_node(sender_leaf)].type != MLS_NODE_LEAF ||
+            mls_framed_content_verify(&pm->content, &pm->auth,
+                MLS_WIRE_FORMAT_PUBLIC_MESSAGE, group_context, group_context_len,
+                group->tree.nodes[mls_tree_leaf_to_node(sender_leaf)].leaf.signature_key) != 0 ||
+            mls_public_message_verify_membership_tag(pm,
+                group->epoch_secrets.membership_key,
+                group_context, group_context_len) != 0) {
+            mls_message_clear(&msg);
+            proposal_store_free(store);
+            free(group_context);
+            return -1;
+        }
         MlsStoredProposal *slot = &store->items[store->count];
         memset(slot, 0, sizeof(*slot));
 
@@ -2046,6 +2069,7 @@ proposal_store_build(MlsProposalStore *store,
             mls_proposal_clear(&slot->prop);
             mls_message_clear(&msg);
             proposal_store_free(store);
+            free(group_context);
             return -1;
         }
         /* An Update replaces the LeafNode of the member that sent the
@@ -2057,6 +2081,7 @@ proposal_store_build(MlsProposalStore *store,
         store->count++;
         mls_message_clear(&msg);
     }
+    free(group_context);
     return 0;
 }
 
@@ -2854,7 +2879,7 @@ mls_group_process_commit_ex(MlsGroup *group,
                             size_t proposal_count)
 {
     MlsProposalStore store;
-    if (proposal_store_build(&store, proposal_msgs, proposal_lens,
+    if (proposal_store_build(&store, group, proposal_msgs, proposal_lens,
                              proposal_count) != 0)
         return MARMOT_ERR_MLS_PROCESS_MESSAGE;
     int rc = process_commit_impl(group, commit_data, commit_len, sender_leaf,
@@ -2875,7 +2900,7 @@ mls_group_process_commit_ex_with_psks(MlsGroup *group,
                                       size_t external_psk_count)
 {
     MlsProposalStore store;
-    if (proposal_store_build(&store, proposal_msgs, proposal_lens,
+    if (proposal_store_build(&store, group, proposal_msgs, proposal_lens,
                              proposal_count) != 0)
         return MARMOT_ERR_MLS_PROCESS_MESSAGE;
     int rc = process_commit_impl(group, commit_data, commit_len, sender_leaf,

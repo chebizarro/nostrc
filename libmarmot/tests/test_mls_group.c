@@ -601,6 +601,57 @@ fail:
 }
 
 static int
+build_proposal_public_message_for_test(const MlsGroup *sender,
+                                       uint64_t epoch, uint32_t claimed_sender,
+                                       uint8_t group_id_xor,
+                                       const uint8_t signing_key[MLS_SIG_SK_LEN],
+                                       const uint8_t membership_key[MLS_HASH_LEN],
+                                       uint8_t **out, size_t *out_len)
+{
+    static const uint8_t remove_body[] = {0x00, 0x03, 0x00, 0x00, 0x00, 0x01};
+    uint8_t *gc = NULL;
+    size_t gc_len = 0;
+    if (mls_group_context_build(sender, &gc, &gc_len) != 0) return -1;
+    MlsMLSMessage msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.wire_format = MLS_WIRE_FORMAT_PUBLIC_MESSAGE;
+    msg.cipher_suite = MARMOT_CIPHERSUITE;
+    MlsPublicMessage *pm = &msg.public_message;
+    pm->content.group_id = malloc(sender->group_id_len);
+    pm->content.content = malloc(sizeof(remove_body));
+    if (!pm->content.group_id || !pm->content.content) goto fail;
+    memcpy(pm->content.group_id, sender->group_id, sender->group_id_len);
+    pm->content.group_id[0] ^= group_id_xor;
+    pm->content.group_id_len = sender->group_id_len;
+    pm->content.epoch = epoch;
+    pm->content.sender.sender_type = MLS_SENDER_TYPE_MEMBER;
+    pm->content.sender.leaf_index = claimed_sender;
+    pm->content.content_type = MLS_CONTENT_TYPE_PROPOSAL;
+    memcpy(pm->content.content, remove_body, sizeof(remove_body));
+    pm->content.content_len = sizeof(remove_body);
+    if (mls_framed_content_sign(&pm->content, MLS_WIRE_FORMAT_PUBLIC_MESSAGE,
+                                gc, gc_len, signing_key, &pm->auth) != 0 ||
+        mls_public_message_compute_membership_tag(pm, membership_key,
+                                                   gc, gc_len) != 0)
+        goto fail;
+    MlsTlsBuf buf;
+    if (mls_tls_buf_init(&buf, 256) != 0) goto fail;
+    if (mls_message_serialize(&msg, &buf) != 0) {
+        mls_tls_buf_free(&buf);
+        goto fail;
+    }
+    *out = buf.data;
+    *out_len = buf.len;
+    free(gc);
+    mls_message_clear(&msg);
+    return 0;
+fail:
+    free(gc);
+    mls_message_clear(&msg);
+    return -1;
+}
+
+static int
 build_encrypt_context_for_test(const char *label,
                                const uint8_t *context, size_t context_len,
                                uint8_t **out, size_t *out_len)
@@ -935,6 +986,62 @@ TEST(test_process_valid_self_update_commit_roundtrip)
     free(ct);
     free(pt);
 
+    mls_commit_result_clear(&update);
+    mls_add_result_clear(&add_result);
+    mls_key_package_clear(&bob_kp);
+    mls_key_package_private_clear(&bob_priv);
+    mls_group_free(&alice_group);
+    mls_group_free(&bob_group);
+}
+
+TEST(test_referenced_proposal_store_requires_parent_authentication)
+{
+    MlsGroup alice_group, bob_group;
+    MlsKeyPackage bob_kp;
+    MlsKeyPackagePrivate bob_priv;
+    MlsAddResult add_result = {0};
+    assert(setup_two_member_groups(&alice_group, &bob_group,
+                                   &bob_kp, &bob_priv, &add_result) == 0);
+
+    enum { VALID, WRONG_GROUP, OLD_EPOCH, WRONG_SENDER,
+           WRONG_SIGNATURE, WRONG_MEMBERSHIP, COUNT };
+    uint8_t *proposals[COUNT] = {0};
+    size_t proposal_lens[COUNT] = {0};
+    uint8_t wrong_membership[MLS_HASH_LEN];
+    memcpy(wrong_membership, alice_group.epoch_secrets.membership_key,
+           sizeof(wrong_membership));
+    wrong_membership[0] ^= 1;
+    for (int i = 0; i < COUNT; i++) {
+        assert(build_proposal_public_message_for_test(
+            &alice_group,
+            alice_group.epoch - (i == OLD_EPOCH),
+            i == WRONG_SENDER ? 1 : 0,
+            i == WRONG_GROUP ? 1 : 0,
+            i == WRONG_SIGNATURE ? bob_priv.signature_key_private
+                                 : alice_group.own_signature_key,
+            i == WRONG_MEMBERSHIP ? wrong_membership
+                                  : alice_group.epoch_secrets.membership_key,
+            &proposals[i], &proposal_lens[i]) == 0);
+    }
+
+    MlsCommitResult update;
+    assert(mls_group_self_update(&alice_group, &update) == 0);
+    uint64_t parent_epoch = bob_group.epoch;
+    for (int i = WRONG_GROUP; i < COUNT; i++) {
+        const uint8_t *input[] = {proposals[i]};
+        assert(mls_group_process_commit_ex(&bob_group, update.commit_data,
+                                           update.commit_len, 0, input,
+                                           &proposal_lens[i], 1) ==
+               MARMOT_ERR_MLS_PROCESS_MESSAGE);
+        assert(bob_group.epoch == parent_epoch);
+    }
+    const uint8_t *valid_input[] = {proposals[VALID]};
+    assert(mls_group_process_commit_ex(&bob_group, update.commit_data,
+                                       update.commit_len, 0, valid_input,
+                                       &proposal_lens[VALID], 1) == 0);
+    assert(bob_group.epoch == alice_group.epoch);
+
+    for (int i = 0; i < COUNT; i++) free(proposals[i]);
     mls_commit_result_clear(&update);
     mls_add_result_clear(&add_result);
     mls_key_package_clear(&bob_kp);
@@ -1490,6 +1597,7 @@ int main(void)
     RUN(test_group_out_of_order_beyond_window);
     RUN(test_welcome_epoch_secrets_match);
     RUN(test_process_valid_self_update_commit_roundtrip);
+    RUN(test_referenced_proposal_store_requires_parent_authentication);
     RUN(test_bad_committer_signature_rejected);
     RUN(test_wrong_confirmation_tag_rejected);
     RUN(test_unknown_proposal_type_rejected);
