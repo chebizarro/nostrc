@@ -2,7 +2,6 @@
 #include "nd-registry.h"
 #include "nd-error.h"
 #include "nd-kinds.h"
-#include "nd-nip89.h"
 
 #include <errno.h>
 #include <gio/gio.h>
@@ -14,6 +13,7 @@
 #define GROUP_REMOVED "Removed Handlers"
 #define GROUP_DISPATCHER "Dispatcher"
 #define KEY_FETCH_HINTS "fetch-relay-hints"
+#define KEY_NIP89 "nip89-discovery"
 
 struct NdRegistry {
   GPtrArray *files;     /* GKeyFile*, precedence order */
@@ -123,14 +123,23 @@ void nd_registry_free(NdRegistry *reg) {
   g_free(reg);
 }
 
-gboolean nd_registry_fetch_relay_hints(NdRegistry *reg) {
+/* [Dispatcher] boolean: first file that sets it wins; default TRUE. */
+static gboolean dispatcher_flag(NdRegistry *reg, const char *key) {
   for (guint i = 0; reg && i < reg->files->len; i++) {
     GKeyFile *kf = g_ptr_array_index(reg->files, i);
     g_autoptr(GError) err = NULL;
-    gboolean v = g_key_file_get_boolean(kf, GROUP_DISPATCHER, KEY_FETCH_HINTS, &err);
+    gboolean v = g_key_file_get_boolean(kf, GROUP_DISPATCHER, key, &err);
     if (!err) return v;
   }
   return TRUE;
+}
+
+gboolean nd_registry_fetch_relay_hints(NdRegistry *reg) {
+  return dispatcher_flag(reg, KEY_FETCH_HINTS);
+}
+
+gboolean nd_registry_nip89_discovery(NdRegistry *reg) {
+  return dispatcher_flag(reg, KEY_NIP89);
 }
 
 /* First installed, valid desktop id from a ';' list value. */
@@ -240,11 +249,9 @@ char *nd_registry_choose(NdRegistry *reg, gint kind, NdSource *out_source) {
 
     id = lookup_declared(reg, kind, FALSE);
     if (id) { src = ND_SOURCE_DECLARED; goto out; }
-
-    id = nd_nip89_discover((guint32)kind);
-    if (id && !(nd_desktop_id_valid(id) && g_hash_table_contains(reg->installed, id)))
-      g_clear_pointer(&id, g_free);
-    if (id) { src = ND_SOURCE_NIP89; goto out; }
+    /* NIP-89 (kind 31990) is deliberately NOT a step here: a discovered
+     * handler is only ever *offered* after the no-handler error, never
+     * chosen (nd-nip89.h, nostrc-prqu.1). */
   }
 
   for (guint f = 0; f < reg->files->len && !id; f++) {

@@ -533,6 +533,7 @@ lives under `$XDG_STATE_HOME/nostr-dav/`.
 %package -n nostr-dispatcher
 Summary:        Kind-aware router for nostr: links (org.nostr.Dispatcher1)
 Requires:       libnostr%{?_isa} = %{version}-%{release}
+Requires:       libnostr-nips%{?_isa} = %{version}-%{release}
 Requires:       glib2
 Requires:       json-glib
 Requires:       libsoup3
@@ -571,6 +572,7 @@ upload and the exact event JSON is shown before signing.
 %package -n nostr-search-provider
 Summary:        GNOME Shell search provider for Nostr profiles and notes
 Requires:       libnostr%{?_isa} = %{version}-%{release}
+Requires:       libnostr-nips%{?_isa} = %{version}-%{release}
 Requires:       glib2
 Requires:       json-glib
 Requires:       libsoup3
@@ -716,6 +718,9 @@ it after seeding the passdb via `nostr-authd` and configuring shares
 %package -n nostr-seal
 Summary:        Encrypt files for Nostr public keys or a passphrase
 Requires:       libnostr%{?_isa} = %{version}-%{release}
+Requires:       libnostr-nips%{?_isa} = %{version}-%{release}
+Requires:       libnostr-publish%{?_isa} = %{version}-%{release}
+Requires:       libhanami%{?_isa} = %{version}-%{release}
 Requires:       shared-mime-info
 
 %description -n nostr-seal
@@ -954,8 +959,8 @@ rmdir --ignore-fail-on-non-empty %{buildroot}%{_datadir}/dbus-1          2>/dev/
 #       Fedora) -- purge both.  Same story as debian/not-installed.
 rm -f  %{buildroot}%{_includedir}/nip40.h
 rm -f  %{buildroot}/usr/lib/libnip04.a
-rm -f  %{buildroot}/usr/lib/libnip05.so
-rm -f  %{buildroot}/usr/lib/libnip25.so
+rm -f  %{buildroot}%{_libdir}/libnip05.so
+rm -f  %{buildroot}%{_libdir}/libnip25.so
 rm -f  %{buildroot}/usr/lib/libnostr_nip77.a
 # dev symlinks only -- the runtime libnip19.so.0 / libnip34.so.0 ship in
 # libnostr-nips (deleting the real library here was the prqu.6 bug):
@@ -1343,13 +1348,16 @@ fi
 %{_userunitdir}/nostr-dispatcher.service
 %{_datadir}/applications/org.nostr.Dispatcher.desktop
 %{_datadir}/dbus-1/services/org.nostr.Dispatcher1.service
+%{_datadir}/dbus-1/services/org.nostr.Dispatcher.service
 %{_datadir}/dbus-1/interfaces/org.nostr.Dispatcher1.xml
 %{_datadir}/dbus-1/interfaces/org.nostr.Handler1.xml
+%{_datadir}/dbus-1/interfaces/org.nostr.Handler2.xml
 %{_datadir}/mime/packages/nostr.xml
 %dir %{_datadir}/nostr
 %{_datadir}/nostr/handlers.list
 %dir %{_datadir}/doc/nostr-dispatcher
 %{_datadir}/doc/nostr-dispatcher/README.md
+%{_mandir}/man1/nostr-dispatcher.1*
 %files -n nostr-share
 %{_bindir}/nostr-share
 %{_datadir}/applications/org.nostr.Share.desktop

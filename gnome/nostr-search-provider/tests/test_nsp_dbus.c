@@ -76,6 +76,10 @@ static GPid spawn_daemon(const char *sock, const char *home) {
   env = g_environ_setenv(env, "NOSTR_SEARCH_PROVIDER_DEADLINE_MS", dl, TRUE);
   env = g_environ_setenv(env, "XDG_CACHE_HOME", home, TRUE);
   env = g_environ_setenv(env, "XDG_CONFIG_HOME", home, TRUE);
+  /* No installed applications: LaunchSearch (nostrc-prqu.15) must find
+   * nothing to launch instead of starting a real Nostr client. */
+  env = g_environ_setenv(env, "XDG_DATA_HOME", home, TRUE);
+  env = g_environ_setenv(env, "XDG_DATA_DIRS", home, TRUE);
   char *argv[] = {NSP_BINARY, "daemon", NULL};
   GPid pid = 0;
   g_autoptr(GError) err = NULL;

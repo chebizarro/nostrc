@@ -14,6 +14,7 @@ NsealConfig *nseal_config_load(GError **error) {
   const gchar *env = g_getenv("NOSTR_SEAL_CONFIG");
   cfg->path = (env && *env) ? g_strdup(env) : nseal_config_default_path();
   cfg->default_recipients = g_new0(gchar *, 1);
+  cfg->upstream = NSEAL_UPSTREAM_DIRECT_ONLY;
 
   g_autoptr(GKeyFile) kf = g_key_file_new();
   GError *local = NULL;
@@ -66,6 +67,21 @@ NsealConfig *nseal_config_load(GError **error) {
       return NULL;
     }
     cfg->work_factor = w;
+  }
+  g_autofree gchar *mode = g_key_file_get_string(kf, NSEAL_CONFIG_GROUP, "upstream_mode", NULL);
+  if (mode) {
+    g_strstrip(mode);
+    if (g_str_equal(mode, "direct_only")) cfg->upstream = NSEAL_UPSTREAM_DIRECT_ONLY;
+    else if (g_str_equal(mode, "session_relay_or_direct"))
+      cfg->upstream = NSEAL_UPSTREAM_SESSION_RELAY_OR_DIRECT;
+    else if (g_str_equal(mode, "session_relay_only"))
+      cfg->upstream = NSEAL_UPSTREAM_SESSION_RELAY_ONLY;
+    else {
+      g_set_error(error, NSEAL_ERROR, NSEAL_ERROR_ARG,
+                  "%s: upstream_mode must be direct_only, session_relay_or_direct or "
+                  "session_relay_only", cfg->path);
+      return NULL;
+    }
   }
   return g_steal_pointer(&cfg);
 }

@@ -242,7 +242,8 @@ send_done:
     }
     case LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP:
     case LWS_CALLBACK_CLIENT_ESTABLISHED: {
-        printf("WebSocket connection established\n");
+        /* nostrc-prqu.7: was an unconditional printf on stdout. */
+        nostr_rl_log(NLOG_DEBUG, "ws", "connection established");
         // Initialize timers/progress trackers and arm periodic checks
         NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
         if (priv) {

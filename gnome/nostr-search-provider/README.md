@@ -98,24 +98,30 @@ wrote, never attacker-supplied image bytes.
   `nostr:` URI, including `nsec`) and calls
   `org.nostr.Dispatcher1.Open(uri, {})`. If nostr-dispatcher is not
   installed, the `nostr:` scheme default is launched instead.
-* `LaunchSearch` (clicking the provider icon) is still a **no-op** here.
-  GNostr now has a search entry point (nostrc-prqu.15) that it can call:
-  * the GAction **`app.search`** with one string parameter (the terms),
-    also reachable while GNostr runs as
-    `org.freedesktop.Application.ActivateAction("search", [<terms>], {})`
-    on its GApplication (bus name `org.gnostr.Client`, object path
-    `/org/gnostr/Client`; its desktop id is `org.gnostr.gnostr.desktop`
-    and it is not `DBusActivatable`);
-  * on the command line, `gnostr --search TERMS`, which starts GNostr or
-    forwards to the running instance; empty `TERMS` just opens search;
-  * declared in its desktop file as `X-Nostr-Search-Arg=--search` and a
-    `search` desktop action.
+* `LaunchSearch` (clicking the provider icon) opens a Nostr client searching
+  for the terms (nostrc-prqu.15 contract). A Nostr app declares a search
+  entry point in its desktop entry with `X-Nostr-Search-Arg=<option>` and,
+  optionally, a `search` desktop action; GNostr ships
+  `X-Nostr-Search-Arg=--search` plus `[Desktop Action search]
+  Exec=gnostr --search ""`, and also exposes the GAction `app.search(s)`
+  (bus name `org.gnostr.Client`) while it runs. The provider tries, in
+  order:
+  1. GNostr (`org.gnostr.gnostr.desktop`), when installed;
+  2. nostr-dispatcher's fallback (`*`) handler
+     (`org.nostr.Dispatcher1.QueryDefault(-1)`, else the `nostr:` scheme
+     default), using its own `X-Nostr-Search-Arg` if it declares one;
+  3. that `*` handler launched plainly, dropping the terms.
 
-  To implement `LaunchSearch`, resolve the fallback (`*`) handler with
-  `org.nostr.Dispatcher1.QueryDefault(-1)`, read `X-Nostr-Search-Arg`
-  from its desktop file and spawn its executable (`g_app_info_get_executable`)
-  with `[arg, terms joined by spaces]` as argv, with no shell. A handler
-  without the key has no search entry point: keep the no-op.
+  With no terms it launches the app's `search` desktop action through
+  `GDesktopAppInfo`. With terms it builds argv from the action's `Exec`
+  (else the main `Exec`), with no shell: field codes and Flatpak's `@@`
+  markers are removed, and the terms, joined by spaces, become **one**
+  argument, `--search=TERMS` for a long option. A term that starts with `-`
+  or contains shell syntax is therefore inert. Terms must be UTF-8 without
+  control characters and at most 1 KiB. The rules live in `src/nsp-launch.c`
+  (`tests/test_nsp_launch.c`). `nostr-search-provider launch-search TERMS…`
+  runs the same code from a terminal. GNostr's `--search` forwards to a
+  running instance, so no second window opens.
 * `XUbuntuCancel` (Ubuntu's Shell) finishes in-flight searches early.
 
 ### Why the desktop entry is visible

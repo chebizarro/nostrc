@@ -6,6 +6,8 @@ Exec=@ND_BINDIR@/nostr-dispatcher open %u
 Terminal=false
 NoDisplay=true
 Categories=Network;
+# Notifications: no-handler errors and NIP-89 handler offers (nostrc-prqu.1).
+X-GNOME-UsesNotifications=true
 # Sole owner of the Nostr link schemes and the event-file MIME type
 # (nostrc-1v65). Applications declare the kinds they handle with
 # X-Nostr-Kinds= instead of claiming x-scheme-handler/nostr themselves.

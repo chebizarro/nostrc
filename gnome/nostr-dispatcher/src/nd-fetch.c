@@ -353,6 +353,230 @@ static void start_hints(GTask *task) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Blocking list collector                                             */
+/* ------------------------------------------------------------------ */
+
+#define COLLECT_SUB_ID "nostr-dispatcher-q"
+#define COLLECT_MAX_EVENTS 500
+
+typedef struct {
+  GPtrArray *out;
+  GHashTable *seen;
+  gint want_kind;
+} Collector;
+
+static void collector_add_json(Collector *c, const char *json) {
+  if (c->out->len >= COLLECT_MAX_EVENTS) return;
+  NdEvent *ev = nd_event_parse(json, -1, NULL);
+  if (!ev || !ev->validated || ev->kind != c->want_kind || !ev->id_hex ||
+      g_hash_table_contains(c->seen, ev->id_hex)) {
+    nd_event_free(ev);
+    return;
+  }
+  g_hash_table_add(c->seen, g_strdup(ev->id_hex));
+  g_ptr_array_add(c->out, ev);
+}
+
+typedef struct {
+  Collector *c;
+  SoupWebsocketConnection *ws;
+  GError *error;
+  gboolean connected, done;
+} LocalCollect;
+
+static void lc_connected(GObject *src, GAsyncResult *res, gpointer user_data) {
+  LocalCollect *lc = user_data;
+  lc->ws = soup_session_websocket_connect_finish(SOUP_SESSION(src), res, &lc->error);
+  lc->connected = TRUE;
+  if (!lc->ws) lc->done = TRUE;
+}
+
+static void lc_message(SoupWebsocketConnection *ws, gint type, GBytes *message,
+                       gpointer user_data) {
+  LocalCollect *lc = user_data;
+  if (type != SOUP_WEBSOCKET_DATA_TEXT || lc->done) return;
+  gsize len = 0;
+  const char *data = g_bytes_get_data(message, &len);
+  g_autoptr(JsonParser) p = json_parser_new();
+  if (!json_parser_load_from_data(p, data, (gssize)len, NULL)) return;
+  JsonNode *root = json_parser_get_root(p);
+  if (!JSON_NODE_HOLDS_ARRAY(root)) return;
+  JsonArray *a = json_node_get_array(root);
+  if (json_array_get_length(a) < 2) return;
+  const char *verb = json_array_get_string_element(a, 0);
+  if (!verb || g_strcmp0(json_array_get_string_element(a, 1), COLLECT_SUB_ID) != 0) return;
+  if (strcmp(verb, "EVENT") == 0 && json_array_get_length(a) >= 3) {
+    g_autofree char *evjson = json_to_string(json_array_get_element(a, 2), FALSE);
+    collector_add_json(lc->c, evjson);
+  } else if (strcmp(verb, "EOSE") == 0 || strcmp(verb, "CLOSED") == 0) {
+    lc->done = TRUE;
+  }
+}
+
+static void lc_closed(SoupWebsocketConnection *ws, gpointer user_data) {
+  ((LocalCollect *)user_data)->done = TRUE;
+}
+
+static gboolean wake_cb(gpointer data) { return G_SOURCE_CONTINUE; }
+
+static void collect_local(Collector *c, const char *socket_path, const char *filter_json,
+                          gint64 deadline, GCancellable *cancellable) {
+  GMainContext *ctx = g_main_context_new();
+  g_main_context_push_thread_default(ctx);
+  g_autoptr(GSocketAddress) addr = g_unix_socket_address_new(socket_path);
+  SoupSession *session = soup_session_new_with_options("remote-connectable", addr,
+                                                       "timeout", 2, NULL);
+  g_autoptr(SoupMessage) msg = soup_message_new("GET", "ws://localhost/");
+  LocalCollect lc = {.c = c};
+  GCancellable *connect_cancel = g_cancellable_new();
+  GSource *wake = g_timeout_source_new(100);
+  g_source_set_callback(wake, wake_cb, NULL, NULL);
+  g_source_attach(wake, ctx);
+  soup_session_websocket_connect_async(session, msg, NULL, NULL, G_PRIORITY_DEFAULT,
+                                       connect_cancel, lc_connected, &lc);
+  gulong mh = 0, ch = 0;
+  gboolean sent = FALSE;
+  while (!lc.done && g_get_monotonic_time() < deadline &&
+         !g_cancellable_is_cancelled(cancellable)) {
+    g_main_context_iteration(ctx, TRUE);
+    if (lc.ws && !sent) {
+      soup_websocket_connection_set_max_incoming_payload_size(lc.ws, 2 * ND_EVENT_MAX_JSON);
+      mh = g_signal_connect(lc.ws, "message", G_CALLBACK(lc_message), &lc);
+      ch = g_signal_connect(lc.ws, "closed", G_CALLBACK(lc_closed), &lc);
+      g_autofree char *req = g_strdup_printf("[\"REQ\",\"" COLLECT_SUB_ID "\",%s]", filter_json);
+      soup_websocket_connection_send_text(lc.ws, req);
+      sent = TRUE;
+    }
+  }
+  if (!lc.connected) /* timed out mid-handshake: the callback still runs */
+    g_cancellable_cancel(connect_cancel);
+  if (lc.ws) {
+    if (mh) g_signal_handler_disconnect(lc.ws, mh);
+    if (ch) g_signal_handler_disconnect(lc.ws, ch);
+    if (soup_websocket_connection_get_state(lc.ws) == SOUP_WEBSOCKET_STATE_OPEN) {
+      soup_websocket_connection_send_text(lc.ws, "[\"CLOSE\",\"" COLLECT_SUB_ID "\"]");
+      soup_websocket_connection_close(lc.ws, SOUP_WEBSOCKET_CLOSE_NORMAL, NULL);
+    }
+    g_clear_object(&lc.ws);
+  }
+  if (lc.error) {
+    g_debug("nostr-dispatcher: session relay query failed: %s", lc.error->message);
+    g_clear_error(&lc.error);
+  }
+  soup_session_abort(session);
+  g_object_unref(session);
+  /* Drain until the pending connect callback (if any) has run: it
+   * references &lc on this stack frame. */
+  gint64 drain_end = g_get_monotonic_time() + 3 * G_USEC_PER_SEC;
+  while (!lc.connected && g_get_monotonic_time() < drain_end)
+    g_main_context_iteration(ctx, TRUE);
+  if (lc.ws) g_clear_object(&lc.ws);
+  g_clear_error(&lc.error);
+  g_object_unref(connect_cancel);
+  g_source_destroy(wake);
+  g_source_unref(wake);
+  while (g_main_context_iteration(ctx, FALSE))
+    ;
+  g_main_context_pop_thread_default(ctx);
+  g_main_context_unref(ctx);
+}
+
+static void collect_from_relay(Collector *c, const char *url, const char *filter_json,
+                               gint64 deadline, GCancellable *cancellable) {
+  NostrFilter *f = nostr_filter_new();
+  if (nostr_filter_deserialize_compact(f, filter_json, NULL) != 1) {
+    nostr_filter_free(f);
+    return;
+  }
+  NostrFilters *fs = nostr_filters_new();
+  nostr_filters_add(fs, f);
+  nostr_filter_free(f);
+
+  Error *err = NULL;
+  NostrRelay *relay = nostr_relay_new(NULL, url, &err);
+  if (!relay) {
+    if (err) free_error(err);
+    nostr_filters_free(fs);
+    return;
+  }
+  nostr_relay_set_auto_reconnect(relay, false);
+  NostrSubscription *sub = NULL;
+  if (!nostr_relay_connect(relay, &err)) {
+    if (err) free_error(err);
+    nostr_filters_free(fs);
+    goto out;
+  }
+  if (!nostr_relay_is_established(relay)) {
+    GoChannel *ready = go_channel_create(1);
+    nostr_relay_set_state_callback(relay, on_state, ready);
+    if (!nostr_relay_is_established(relay)) {
+      gint64 left = (deadline - g_get_monotonic_time()) / 1000;
+      GoSelectCase cs[1] = {{.op = GO_SELECT_RECEIVE, .chan = ready, .recv_buf = NULL}};
+      if (left > 0) go_select_timeout(cs, 1, (uint64_t)MIN(left, HANDSHAKE_TIMEOUT_MS));
+    }
+    nostr_relay_set_state_callback(relay, NULL, NULL);
+    go_channel_free(ready);
+  }
+  if (!nostr_relay_is_established(relay)) {
+    nostr_filters_free(fs);
+    goto out;
+  }
+  sub = nostr_relay_prepare_subscription(relay, nostr_relay_get_context(relay), fs);
+  if (!sub || !nostr_subscription_fire(sub, &err)) {
+    if (err) free_error(err);
+    goto out;
+  }
+  GoChannel *events = nostr_subscription_get_events_channel(sub);
+  GoChannel *eose = nostr_subscription_get_eose_channel(sub);
+  while (!g_cancellable_is_cancelled(cancellable)) {
+    gint64 left = (deadline - g_get_monotonic_time()) / 1000;
+    if (left <= 0) break;
+    NostrEvent *e = NULL;
+    void *eose_val = NULL;
+    GoSelectCase cs[2] = {
+        {.op = GO_SELECT_RECEIVE, .chan = events, .recv_buf = (void **)&e},
+        {.op = GO_SELECT_RECEIVE, .chan = eose, .recv_buf = &eose_val},
+    };
+    GoSelectResult r = go_select_timeout(cs, 2, (uint64_t)left);
+    if (r.selected_case != 0 || !e) break; /* EOSE, closed channel, or timeout */
+    char *json = nostr_event_serialize_compact(e);
+    nostr_event_free(e);
+    if (json) collector_add_json(c, json);
+    free(json);
+  }
+out:
+  if (sub) {
+    nostr_subscription_unsubscribe(sub);
+    nostr_subscription_free(sub);
+  }
+  nostr_relay_disconnect(relay);
+  nostr_relay_unref(relay);
+}
+
+GPtrArray *nd_fetch_collect_sync(const char *filter_json, gint want_kind,
+                                 const char *socket_path, const char *const *relays,
+                                 guint budget_ms, GCancellable *cancellable) {
+  Collector c = {
+      .out = g_ptr_array_new_with_free_func((GDestroyNotify)nd_event_free),
+      .seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL),
+      .want_kind = want_kind,
+  };
+  gint64 deadline = g_get_monotonic_time() + (gint64)budget_ms * 1000;
+  if (filter_json && socket_path && g_file_test(socket_path, G_FILE_TEST_EXISTS)) {
+    gint64 local_deadline = MIN(deadline, g_get_monotonic_time() +
+                                              (gint64)LOCAL_TIMEOUT_MS_DEFAULT * 1000);
+    collect_local(&c, socket_path, filter_json, local_deadline, cancellable);
+  }
+  for (guint i = 0; filter_json && relays && relays[i]; i++) {
+    if (g_cancellable_is_cancelled(cancellable) || g_get_monotonic_time() >= deadline) break;
+    if (!nd_relay_url_acceptable(relays[i])) continue;
+    collect_from_relay(&c, relays[i], filter_json, deadline, cancellable);
+  }
+  g_hash_table_unref(c.seen);
+  return c.out;
+}
+
+/* ------------------------------------------------------------------ */
 
 void nd_fetch_event_async(const NdTarget *t, const NdFetchOptions *opts,
                           GCancellable *cancellable, GAsyncReadyCallback callback,

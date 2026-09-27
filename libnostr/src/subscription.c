@@ -752,8 +752,9 @@ bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
     sub_msg[offset++] = ']';
     sub_msg[offset] = '\0';
 
-    // TEMP DEBUG: show the exact message sent on the wire
-    fprintf(stderr, "[nostr_subscription_fire] sending: %s\n", sub_msg);
+    /* nostrc-prqu.7: wire trace at debug level only (NOSTR_LOG_LEVEL=debug);
+     * it used to go to stderr unconditionally and polluted CLI output. */
+    nostr_rl_log(NLOG_DEBUG, "sub", "sending: %s", sub_msg);
 
     // Send the subscription request via the relay
     GoChannel *write_channel = nostr_relay_write(subscription->relay, sub_msg);

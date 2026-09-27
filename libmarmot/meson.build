@@ -1,5 +1,5 @@
 project('libmarmot', 'c',
-  version: '0.2.0',
+  version: '0.3.0',
   license: 'MIT',
   default_options: [
     'c_std=c11',
@@ -56,6 +56,7 @@ marmot_sources = files(
   'src/mls/mls_group.c',
   'src/mls/mls_welcome.c',
   'src/credentials.c',
+  'src/kp_profile.c',
   'src/groups.c',
   'src/welcome.c',
   'src/messages.c',
@@ -81,6 +82,9 @@ if sqlite3_dep.found()
 endif
 if lmdb_dep.found()
   marmot_deps += lmdb_dep
+endif
+if get_option('adopted_key_package_producer')
+  marmot_c_args += '-DMARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER=1'
 endif
 
 # Library
@@ -215,6 +219,14 @@ if get_option('tests')
     dependencies: [openssl_dep, sodium_dep, secp256k1_dep, nostr_dep, nip44_dep],
   )
   test('marmot_protocol', test_protocol)
+
+  test_kp_profile = executable('test_kp_profile',
+    'tests/test_kp_profile.c',
+    include_directories: [marmot_inc, marmot_src_inc],
+    link_with: libmarmot,
+    dependencies: [openssl_dep, sodium_dep, secp256k1_dep, nostr_dep],
+  )
+  test('marmot_kp_profile', test_kp_profile)
 
   # Storage contract tests (all backends)
   test_storage_contract = executable('test_storage_contract',

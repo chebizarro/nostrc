@@ -11,10 +11,13 @@
 #     linking the whole libnostr_porthome would drag libhanami, the fetch
 #     sandbox and the provisioner into a file-encryption CLI.
 #   * NIP-44: the nostr_nip44_core static target (convkey, v2 cipher, HKDF).
-#   * NIP-49 + NIP-19 bech32: their TUs are compiled into a private static
-#     lib because the in-tree nip49/nip19 shared libraries are unversioned
-#     and not shipped by a package of their own (see nostrc-w7pk: libnip19.so
-#     rides nostr-notify); a static copy keeps nostr-seal self-contained.
+#   * NIP-49: its TUs are compiled into a private static lib (the in-tree
+#     nip49 shared library is unversioned and not shipped). NIP-19 links the
+#     shared libnip19.so.0 from libnostr-nips0 (nostrc-9rvm).
+#   * --publish (nostrc-hby8) reuses nostr-share's upload path
+#     (nostr-share-core: Blossom via libhanami, NIP-65/BUD-03 discovery,
+#     libnostr-publish) when ENABLE_NOSTR_SHARE is on; otherwise the
+#     command reports that it was built without publishing.
 cmake_minimum_required(VERSION 3.20)
 
 find_package(PkgConfig REQUIRED)
@@ -31,21 +34,20 @@ endforeach()
 set(_ns_root ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 set(_ns_porthome_crypto ${_ns_root}/gnome/nostr-homed/src/porthome/nh_porthome_crypto.c)
 
+if(NOT TARGET nip19)
+  message(FATAL_ERROR "nostr-seal requires ENABLE_NIP19=ON")
+endif()
 add_library(nostr_seal_nips STATIC
-  ${_ns_root}/nips/nip19/src/bech32.c
-  ${_ns_root}/nips/nip19/src/nip19.c
-  ${_ns_root}/nips/nip19/src/tlv.c
   ${_ns_root}/nips/nip49/src/core/nip49.c
   ${_ns_root}/nips/nip49/src/core/nip49_kdf.c
   ${_ns_root}/nips/nip49/src/core/nip49_aead.c
   ${_ns_root}/nips/nip49/src/core/nip49_bech.c)
 target_include_directories(nostr_seal_nips PUBLIC
-  ${_ns_root}/nips/nip19/include
   ${_ns_root}/nips/nip49/include)
 if(NSEAL_SODIUM_INC)
   target_include_directories(nostr_seal_nips PUBLIC ${NSEAL_SODIUM_INC})
 endif()
-target_link_libraries(nostr_seal_nips PUBLIC nostr ${NSEAL_SODIUM_LIB})
+target_link_libraries(nostr_seal_nips PUBLIC nip19 nostr ${NSEAL_SODIUM_LIB})
 set_property(TARGET nostr_seal_nips PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 add_library(nostr_seal_core STATIC
@@ -53,6 +55,7 @@ add_library(nostr_seal_core STATIC
   src/nseal-output.c
   src/nseal-signer.c
   src/nseal-config.c
+  src/nseal-publish.c
   ${_ns_porthome_crypto})
 target_include_directories(nostr_seal_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -62,6 +65,15 @@ target_compile_options(nostr_seal_core PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(nostr_seal_core PUBLIC
   nostr_seal_nips nostr_nip44_core nostr OpenSSL::Crypto PkgConfig::NSEAL_GIO)
 set_property(TARGET nostr_seal_core PROPERTY POSITION_INDEPENDENT_CODE ON)
+# Target names resolve at generate time, so nostr-share (added after this
+# directory) can still provide nostr-share-core here.
+if(ENABLE_NOSTR_SHARE)
+  target_compile_definitions(nostr_seal_core PUBLIC NSEAL_HAVE_PUBLISH=1)
+  target_link_libraries(nostr_seal_core PUBLIC nostr-share-core)
+  message(STATUS "nostr-seal: --publish enabled (nostr-share-core)")
+else()
+  message(STATUS "nostr-seal: --publish disabled (needs ENABLE_NOSTR_SHARE)")
+endif()
 
 add_executable(nostr-seal src/main.c)
 target_compile_options(nostr-seal PRIVATE -Wall -Wextra -Werror)
@@ -94,6 +106,16 @@ if(BUILD_TESTING)
   target_compile_options(test-nostr-seal PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(test-nostr-seal PRIVATE nostr_seal_core)
   add_test(NAME nostr_seal_unit COMMAND test-nostr-seal)
+
+  if(ENABLE_NOSTR_SHARE)
+    add_executable(test-nostr-seal-publish tests/test-nseal-publish.c)
+    target_compile_options(test-nostr-seal-publish PRIVATE -Wall -Wextra -Werror)
+    target_link_libraries(test-nostr-seal-publish PRIVATE nostr_seal_core)
+    target_compile_definitions(test-nostr-seal-publish PRIVATE
+      "NSEAL_CLI_PATH=\"$<TARGET_FILE:nostr-seal>\"")
+    add_test(NAME nostr_seal_publish COMMAND test-nostr-seal-publish)
+    set_tests_properties(nostr_seal_publish PROPERTIES LABELS "nostr-seal" TIMEOUT 60)
+  endif()
 
   # ~/.config/nostr/seal.conf defaults (written by org.nostr.Settings).
   add_executable(test-nostr-seal-config tests/test-nseal-config.c)

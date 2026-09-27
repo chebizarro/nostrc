@@ -4,9 +4,9 @@
  * Accepted input:
  *   nostr:<bech32>, web+nostr:<bech32> (scheme case-insensitive; a stray
  *   `//` after the scheme is tolerated; anything after `?`, `#` or `/` is
- *   dropped), a bare NIP-19 bech32 string (CLI convenience), and — for one
- *   transition release — the notify daemon's legacy invented forms
- *   `nostr://open?event=<hex64>` and `nostr://open?group=<h>&event=<hex64>`.
+ *   dropped) and a bare NIP-19 bech32 string (CLI convenience). The notify
+ *   daemon's legacy `nostr://open?event=<hex64>` form is no longer accepted
+ *   (nostrc-prqu.7; notify emits NIP-21 nevent links since nostrc-1v65).
  *
  * Entity mapping:
  *   note1     -> event, kind unknown
@@ -33,7 +33,7 @@ G_BEGIN_DECLS
 #define ND_URI_MAX_LEN 4096
 
 typedef enum {
-  ND_ENTITY_EVENT = 1,   /* note / nevent / legacy */
+  ND_ENTITY_EVENT = 1,   /* note / nevent */
   ND_ENTITY_ADDRESS,     /* naddr */
   ND_ENTITY_PROFILE,     /* npub / nprofile */
 } NdEntity;

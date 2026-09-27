@@ -227,11 +227,40 @@ The signer method itself is covered by `nip55l_dbus_contract` (ACL allow /
 deny, interactive `ApprovalRequested` → `ApproveRequest` approve and deny,
 malformed and off-curve peers).
 
+## Publishing (`--publish`, nostrc-hby8)
+
+```sh
+nostr-seal encrypt --to npub1alice… --to npub1bob… --publish report.pdf
+nostr-seal publish [--dry-run] [--identity npub1…] report.pdf.nsealed
+```
+
+1. The sealed bytes are uploaded to your Blossom servers: your kind-10063
+   (BUD-03) list, else `blossom_servers` in
+   `~/.config/nostr-share/nostr-share.conf`. This reuses nostr-share's
+   upload path (hanami client, kind-24242 auth signed through
+   `org.nostr.Signer`); nostr-seal has no second Blossom client.
+2. A NIP-94 kind-1063 event is signed through `org.nostr.Signer` (as
+   `org.nostr.Seal`). It carries `url`, `m` = `application/vnd.nostr.sealed`,
+   `x`/`ox` (SHA-256 of the sealed bytes), `size`, an `alt` text and one `p`
+   tag per recipient **read from the file's own header**, so the tags always
+   match who can open it. No file name or plaintext metadata is published.
+   A passphrase-sealed file gets no `p` tags.
+3. It is published with libnostr-publish (`NostrPublisher` and the
+   transport factory) to the targets that
+   `nostr_publish_policy_select_targets()` picks from your NIP-65 write
+   relays (kind 10002 found via the session relay or `home_relays`, else
+   `home_relays`) under `upstream_mode` in `seal.conf`. The default is
+   `direct_only`: the session relay does not forward to other relays yet,
+   so the session modes would keep the event on this machine.
+
+`--dry-run` prints the unsigned event with the predicted blob URL and the
+chosen targets, and uploads, signs and publishes nothing. It works without
+a signer. Needs a build with `-DENABLE_NOSTR_SHARE=ON` (the packages have
+it). `nostr-seal-gtk` does not offer publishing yet.
+
 ## Not yet
 
-* `--publish` (upload the sealed blob to Blossom and emit a kind-1063 event
-  p-tagging the recipients) — TODO, lands on top of the share/publish work in
-  `nostrc-1xak` / `nostrc-tmsc`.
+* A "Publish" button in `nostr-seal-gtk`.
 * `gnostr-signer-daemon` exports the same nip55l GLib service, so it serves
   `NIP44DeriveConversationKey` as-is; the gnostr-signer approval dialog shows
   it with the generic kind/preview text, and its remembered-decision store is

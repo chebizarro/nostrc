@@ -1,0 +1,189 @@
+.\" nostr-dispatcher(1) - nostrc-prqu.7
+.TH NOSTR-DISPATCHER 1 "2026-09-26" "nostrc" "User Commands"
+.SH NAME
+nostr-dispatcher \- open nostr: links in the application registered for the event kind
+.SH SYNOPSIS
+.B nostr-dispatcher open
+.IR URI | FILE
+.br
+.B nostr-dispatcher resolve
+.I URI
+.br
+.B nostr-dispatcher query-default
+.IR KIND | *
+.br
+.B nostr-dispatcher set-default
+.IR KIND | A-B | *
+.I DESKTOP-ID
+.br
+.B nostr-dispatcher discover
+.I KIND
+.RI [ URI ]
+.br
+.B nostr-dispatcher daemon
+.SH DESCRIPTION
+.B nostr-dispatcher
+is the sole desktop handler for
+.BR x-scheme-handler/nostr ,
+.B x-scheme-handler/web+nostr
+and
+.B application/vnd.nostr.event+json
+files.
+It parses a NIP-21
+.B nostr:
+link (or a bare NIP-19 identifier), learns the event kind (from the
+.B naddr
+or
+.B nevent
+TLV, or by fetching the event from the per-user session relay and then
+the link's relay hints), and hands the link to the application registered
+for that kind.
+Links carrying a secret key
+.RB ( nsec1 ,
+.BR ncryptsec1 )
+are refused.
+.PP
+Applications declare the kinds they handle with
+.B X-Nostr-Kinds=
+in their desktop entry; the user overrides the choice in
+.IR handlers.list .
+The URI handed to an application is always the dispatcher's canonical
+re-encoding, never the caller's raw string.
+.PP
+When the chosen application is already running and implements
+.B org.nostr.Handler2
+(or the older
+.BR org.nostr.Handler1 ),
+the validated event is delivered over D-Bus instead of launching a
+second instance.
+Otherwise the application is launched from its desktop entry (argv, no
+shell) and moved into its own transient
+.B app-nostr\ex2ddispatcher-\fIAPP\fB-\fIPID\fB.scope
+on the systemd user manager, like applications started from the shell.
+.SH COMMANDS
+.TP
+.BI open " URI" | FILE
+Dispatch a link or an event file.
+Links are forwarded to the
+.B org.nostr.Dispatcher1
+service (D-Bus activated) and handled in-process only when no session bus
+or service is available.
+Event files are always handled in-process.
+Prints the chosen desktop id on standard output.
+.TP
+.BI resolve " URI"
+Dry run: print
+.I kind
+TAB
+.I desktop-id
+TAB
+.I source
+without launching anything.
+.TP
+.BI query-default " KIND" | *
+Print the handler for a kind
+.RB ( *
+= the generic fallback viewer) and where the choice came from.
+.TP
+.BI set-default " KEY DESKTOP-ID"
+Write
+.I KEY=DESKTOP-ID;
+into the
+.B [Default Handlers]
+group of the user's
+.IR handlers.list .
+.I KEY
+is a kind, an inclusive range
+.IR A-B ,
+or
+.BR * .
+.TP
+.BI discover " KIND" " \fR[\fPURI\fR]\fP"
+List NIP-89 handler suggestions (kind 31990) for
+.IR KIND :
+rank, name, handler address, number of recommendations by people you
+follow, the web URL for
+.I URI
+(when given) and a desktop application id hint.
+Nothing is opened.
+.TP
+.B daemon
+Run the
+.B org.nostr.Dispatcher1
+service (normally started by D-Bus activation through
+.BR nostr-dispatcher.service ;
+exits after 30 s idle).
+.SH NIP-89 SUGGESTIONS
+When no installed application handles a link's kind (and no
+.B *
+fallback is installed),
+.B open
+fails, and the service then looks for NIP-89 handler information (kind
+31990) on the session relay and, unless
+.BR fetch-relay-hints=false ,
+on the user's NIP-65 read relays.
+The best handler, ranked by kind-31989 recommendations from the people the
+user follows, is offered in a notification ("Open in \fINAME\fP
+(\fIHOST\fP)"; "Show in Software" for a Flatpak hint).
+Nothing is ever opened without a click.
+.B [Dispatcher] nip89-discovery=false
+turns this off.
+Results are cached in
+.IR $XDG_CACHE_HOME/nostr-dispatcher/nip89/ .
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/nostr/handlers.list
+User choices; highest precedence.
+.TP
+.IR $XDG_CONFIG_DIRS/nostr/handlers.list ", " $XDG_DATA_DIRS/nostr/handlers.list
+System and vendor defaults.
+.PP
+.I handlers.list
+is a key file with the groups
+.B [Default Handlers]
+(kind token = ';'-separated desktop ids, first installed one wins),
+.B [Removed Handlers]
+(hide an application's
+.B X-Nostr-Kinds
+claim for some kinds) and
+.BR [Dispatcher] ,
+whose
+.B fetch-relay-hints=false
+stops the dispatcher from contacting relays named in links (and limits
+NIP-89 discovery to the session relay) and
+.B nip89-discovery=false
+disables NIP-89 suggestions.
+.TP
+.I $XDG_RUNTIME_DIR/nostr/relay.sock
+The per-user session relay, asked first for events.
+.SH ENVIRONMENT
+.TP
+.BR XDG_ACTIVATION_TOKEN ", " DESKTOP_STARTUP_ID
+Forwarded to the launched application, or passed as
+.B activation-token
+in
+.BR org.nostr.Handler2 's
+platform data.
+.TP
+.B NOSTR_DISPATCHER_NO_DBUS=1
+Always dispatch in-process.
+.TP
+.B NOSTR_DISPATCHER_NO_SCOPE=1
+Do not move launched applications into their own systemd scope.
+.TP
+.B NOSTR_LOG_LEVEL=debug
+Show libnostr's relay wire traces on standard error (quiet by default).
+.TP
+.B G_MESSAGES_DEBUG=nostr-dispatcher
+Show the dispatcher's own debug messages.
+.SH EXIT STATUS
+0 on success, 1 when the link cannot be opened (invalid, forbidden, not
+found, no handler, launch failure), 2 on a usage error.
+.SH SEE ALSO
+.BR xdg-open (1),
+.BR gio (1),
+.BR systemd.scope (5)
+.PP
+.I /usr/share/doc/nostr-dispatcher/README.md
+and the D-Bus interfaces in
+.IR /usr/share/dbus-1/interfaces/org.nostr.{Dispatcher1,Handler1,Handler2}.xml .

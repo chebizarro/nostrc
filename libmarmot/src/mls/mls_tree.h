@@ -193,6 +193,28 @@ int mls_leaf_node_clone(MlsLeafNode *dst, const MlsLeafNode *src);
 /** Free leaf node internals (but not the struct itself). */
 void mls_leaf_node_clear(MlsLeafNode *node);
 
+/*
+ * Marmot MLS capabilities (nostrc-prqu.10), RFC 9420 §7.2. Every leaf
+ * libmarmot creates (KeyPackage, group creator, commit path) advertises
+ * exactly what the engine supports, so an inviter can compute a group's
+ * RequiredCapabilities from the decoded LeafNode:
+ *   versions     mls10
+ *   ciphersuites 0x0001
+ *   extensions   0x000a last_resort (KeyPackage-level; OpenMLS requires it to
+ *                be listed) and 0xf2ee marmot_group_data (MDK groups require
+ *                it in GroupContext RequiredCapabilities)
+ *   proposals    none beyond the RFC 9420 defaults. SelfRemove (0x000a) is
+ *                NOT implemented, so it is not advertised; MDK computes the
+ *                group's required proposals as the intersection of the
+ *                invitees' leaf capabilities, so omitting it keeps
+ *                MDK-created groups from requiring (and sending) it.
+ *   credentials  basic
+ * The ids are sorted ascending. Replaces any capability vectors in @node.
+ */
+#define MLS_MARMOT_CAP_EXTENSION_COUNT 2
+extern const uint16_t MLS_MARMOT_CAP_EXTENSIONS[MLS_MARMOT_CAP_EXTENSION_COUNT];
+int mls_leaf_node_set_marmot_capabilities(MlsLeafNode *node);
+
 /** Free parent node internals. */
 void mls_parent_node_clear(MlsParentNode *node);
 

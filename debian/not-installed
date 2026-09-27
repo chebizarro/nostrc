@@ -14,8 +14,8 @@ usr/share/dbus-1/services/org.nostr.Signer.service
 # wildcards so the list is arch-agnostic (see debhelper #961104).
 usr/include/nip40.h
 usr/lib/libnip04.a
-usr/lib/libnip05.so
-usr/lib/libnip25.so
+usr/lib/*/libnip05.so
+usr/lib/*/libnip25.so
 usr/lib/libnostr_nip77.a
 usr/lib/*/libnostr_nip55l_core.so*
 usr/lib/*/libnostr_nip55l_glib.so*

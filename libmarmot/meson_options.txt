@@ -1,1 +1,3 @@
 option('tests', type: 'boolean', value: true, description: 'Build test executables')
+option('adopted_key_package_producer', type: 'boolean', value: false,
+       description: 'Allow producing ADOPTED-profile KeyPackages (experimental; nostrc-prqu.9)')

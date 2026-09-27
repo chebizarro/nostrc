@@ -69,20 +69,21 @@ Relay hints are restricted to `wss://` (plus `ws://` to loopback). Query
 strings and fragments are never forwarded. `nsec`/`ncryptsec` links are
 refused outright, and `nrelay` links are rejected as unsupported.
 
-### 3. Optional: take the event directly (`org.nostr.Handler1`)
+### 3. Optional: take the event directly (`org.nostr.Handler2`)
 
 If your app is **already running** when a link is clicked, and the
 dispatcher already holds the event, the dispatcher hands the event to your
 app instead of launching a URI, which saves you a second fetch. Implement
-[`org.nostr.Handler1`](../dbus/org.nostr.Handler1.xml) on your
+[`org.nostr.Handler2`](../dbus/org.nostr.Handler2.xml) on your
 `GApplication` object:
 
 ```xml
-<interface name="org.nostr.Handler1">
+<interface name="org.nostr.Handler2">
   <method name="OpenEvent">
     <arg name="kind" type="u" direction="in"/>
     <arg name="event_json" type="s" direction="in"/>
     <arg name="relays" type="as" direction="in"/>
+    <arg name="platform_data" type="a{sv}" direction="in"/>
   </method>
 </interface>
 ```
@@ -92,10 +93,18 @@ app instead of launching a URI, which saves you a second fetch. Implement
   `org.example.Reader` at `/org/example/Reader`).
 - `event_json` has **always** passed canonical-id and Schnorr-signature
   validation. It is still untrusted content: signed, not vetted.
-- The dispatcher never auto-starts you through this interface. On any
-  error or a 2 s timeout, it falls back to launching the URI.
-- Any same-user session-bus peer can call it; do not expose privileged
-  operations through it.
+- `platform_data` is shaped like `org.freedesktop.Application`'s:
+  `activation-token` (and the same value as `desktop-startup-id`) lets you
+  present your window under Wayland focus-stealing prevention. Ignore
+  unknown keys.
+- The dispatcher calls `Handler2.OpenEvent` first. If your app answers
+  UnknownMethod/UnknownInterface/UnknownObject, it calls the older
+  [`org.nostr.Handler1`](../dbus/org.nostr.Handler1.xml) `OpenEvent(u s as)`
+  instead (no activation token), so either interface works.
+- The dispatcher never auto-starts you through these interfaces. On any
+  other error or a 2 s timeout, it falls back to launching the URI.
+- Any same-user session-bus peer can call them; do not expose privileged
+  operations through them.
 
 ## For users: `handlers.list`
 
@@ -148,9 +157,10 @@ For a link whose kind is known, first match wins:
    as with per-file precedence in `mimeapps.list`. Entries naming apps that
    are not installed are skipped.
 2. `X-Nostr-Kinds=` declarations, minus `[Removed Handlers]`.
-3. NIP-89 recommendations (kind 31990). This is a **hook only** today; see
-   nostrc-prqu.1.
-4. Fallback: `*` in `[Default Handlers]`, then apps declaring `*`.
+3. Fallback: `*` in `[Default Handlers]`, then apps declaring `*`.
+
+NIP-89 is deliberately **not** a step: nothing discovered on the network is
+ever chosen or launched automatically. See "NIP-89 suggestions" below.
 
 The dispatcher's own desktop entry is never a candidate.
 
@@ -172,7 +182,58 @@ tag). A hostile relay therefore cannot re-route a link by lying about its
 kind.
 
 When the kind is already known, nothing is fetched unless the chosen app
-is running and could take the event over `org.nostr.Handler1`.
+is running and could take the event over `org.nostr.Handler2`/`Handler1`.
+
+## NIP-89 suggestions (kind 31990)
+
+When no installed app handles a link's (known) kind and there is no `*`
+fallback, `Open` fails with `NoHandler` as before. The service then looks
+for NIP-89 *handler information* events (kind 31990 tagged `["k","<kind>"]`)
+and **offers** the best one. It never opens one by itself:
+
+- **Where it looks:** first the per-user session relay. Unless
+  `fetch-relay-hints=false`, it then tries the user's NIP-65 **read** relays
+  (from the user's kind 10002 on the session relay), else the relays
+  configured in the signer (`org.nostr.Signer.GetRelays`), at most 4.
+  The user's pubkey comes from `org.nostr.Signer.GetPublicKey` with
+  `NO_AUTO_START`, so discovery never starts a signer. Without a signer it
+  still searches the session relay.
+- **Trust:** kind-31990 events are signed by anybody. Candidates are ranked
+  by kind-31989 recommendations for that kind from the user and the people
+  the user follows (kind 3, at most 250). The offer always names the web
+  handler's **host**, and an unrecommended handler says "Nobody you follow
+  recommends it: check the address before opening." Display names are
+  sanitised (no control or bidi characters, 48 characters at most).
+- **What is offered:** a notification with an "Open in <name> (<host>)"
+  button. The link goes into the handler's `web` template
+  (`https://…<bech32>…`); a template whose entity marker matches the link's
+  entity (`naddr`, `nevent`, `nprofile`, …) wins over an unmarked one, and
+  only `https://` URLs with a host and no userinfo are used. If the 31990
+  carries `["flatpak","<app-id>"]` or `["linux","<app-id>"]`, a "Show in
+  Software" button opens `appstream://<app-id>`. Clicking the banner itself
+  does nothing.
+- **Button safety:** each presented offer gets a random 128-bit token,
+  stored single-use for 24 h under
+  `$XDG_RUNTIME_DIR/nostr-dispatcher/nip89-offers/` (0600, so a click still
+  works after the service has exited on idle). The buttons
+  (`app.nip89-open`, `app.nip89-install`) carry only that token, so another
+  program on the session bus calling `ActivateAction` cannot open anything
+  that was not offered, not even another cached handler. The URL is then
+  rebuilt from the cached, re-verified 31990 rather than stored. The host
+  shown is the URL's parsed host. Look-alike (IDN) hosts are an accepted
+  risk that the always-visible host and the recommendation count mitigate.
+- **Cache:** `$XDG_CACHE_HOME/nostr-dispatcher/nip89/<kind>.json`, fresh
+  for 24 h (1 h when nothing was found). Events are re-verified on load.
+- **Switches:** `[Dispatcher] nip89-discovery=false` turns this off;
+  `fetch-relay-hints=false` keeps it on the session relay.
+- **From a terminal:** the in-process `open` prints the suggestions to
+  stderr, and `nostr-dispatcher discover KIND [URI]` lists them. Neither
+  opens anything.
+
+The service's GApplication id is `org.nostr.Dispatcher` (the desktop id),
+so GNOME Shell accepts its notifications and routes button clicks back
+through D-Bus activation (`org.nostr.Dispatcher.service`). The API stays on
+`org.nostr.Dispatcher1`, owned by the same process.
 
 ## Deep links from nostr-notify
 
@@ -182,9 +243,9 @@ standard `nostr:nevent1…` links. Each carries the event id, the kind TLV
 relay the event arrived on. Group links carry no `h` parameter: NIP-21
 defines no query parameters, the `h` tag is inside the signed event, and
 the relay hint is the group relay. The old invented forms
-`nostr://open?event=…` and `nostr://open?group=…&event=…` are still
-accepted for one transition release. They are treated as kind-unknown
-event ids.
+`nostr://open?event=…` and `nostr://open?group=…&event=…` were accepted
+for one transition release and are now rejected as invalid URIs
+(nostrc-prqu.7).
 
 ## Service and packaging
 
@@ -193,9 +254,15 @@ event ids.
   `OpenEvent`, `Resolve` and `QueryDefault`.
 - D-Bus activated through `nostr-dispatcher.service` (user unit,
   `Type=dbus`). It exits after 30 s idle, and nothing is enabled at install
-  time. The unit uses `KillMode=process`, so apps it launches survive the
-  idle exit. It deliberately has no sandboxing directives, because launched
-  apps inherit the unit's execution environment.
+  time. Apps it launches are moved into their own transient
+  `app-nostr\x2ddispatcher-<app id>-<pid>.scope` on the user manager
+  (`StartTransientUnit`, as gnome-shell does), so they neither share the
+  dispatcher's cgroup nor get reaped with it; `NOSTR_DISPATCHER_NO_SCOPE=1`
+  disables that. `KillMode=process` stays as the safety net if the move
+  fails. The unit deliberately has no sandboxing directives, because
+  launched apps inherit the unit's execution environment.
+- `man 1 nostr-dispatcher`. libnostr's relay wire traces are debug-level
+  and only shown with `NOSTR_LOG_LEVEL=debug`.
 - `nostr-dispatcher open` forwards to the service and dispatches
   in-process only when no session bus or service is available (for
   example, headless). Event files are always handled in-process.

@@ -1,0 +1,9 @@
+# The dispatcher's GApplication id (matches org.nostr.Dispatcher.desktop).
+# GNOME Shell activates notification buttons (NIP-89 "Open in …",
+# nostrc-prqu.1) through org.freedesktop.Application.ActivateAction on this
+# name after the service has exited on idle; it is the same process and
+# unit as org.nostr.Dispatcher1.
+[D-BUS Service]
+Name=org.nostr.Dispatcher
+Exec=@ND_BINDIR@/nostr-dispatcher daemon
+SystemdService=nostr-dispatcher.service

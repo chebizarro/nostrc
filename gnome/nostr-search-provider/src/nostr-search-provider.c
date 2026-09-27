@@ -8,6 +8,8 @@
  *                                         the result ids and metas (debugging)
  *   nostr-search-provider launch          open the default Nostr application
  *                                         (the .desktop entry's Exec)
+ *   nostr-search-provider launch-search TERMS…
+ *                                         what LaunchSearch does (debugging)
  *
  * Results come from the per-user session relay only. Activating a result
  * hands its nostr: URI to org.nostr.Dispatcher1.Open, so the kind→app
@@ -28,6 +30,7 @@
 #include "nsp-avatar.h"
 #include "nsp-engine.h"
 #include "nsp-introspection.h"
+#include "nsp-launch.h"
 
 #ifdef NSP_HAVE_GDESKTOPAPPINFO
 #include <gio/gdesktopappinfo.h>
@@ -148,6 +151,109 @@ static void activate_result(GApplication *app, GDBusConnection *conn, const char
 }
 
 /* ================================================================== */
+/* LaunchSearch (clicking the provider icon)                           */
+/* ================================================================== */
+
+#define GNOSTR_DESKTOP_ID "org.gnostr.gnostr.desktop"
+
+/* The application nostr-dispatcher uses for links of unknown kind (the
+ * user's general Nostr client): Dispatcher1.QueryDefault(-1), else the
+ * nostr: scheme default. Never the dispatcher itself. */
+static GAppInfo *default_nostr_app(void) {
+  g_autoptr(GAppInfo) info = NULL;
+#ifdef NSP_HAVE_GDESKTOPAPPINFO
+  g_autoptr(GDBusConnection) bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+  if (bus) {
+    g_autoptr(GVariant) r = g_dbus_connection_call_sync(
+        bus, DISPATCHER_NAME, DISPATCHER_PATH, DISPATCHER_NAME, "QueryDefault",
+        g_variant_new("(i)", -1), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, NULL);
+    const char *id = NULL;
+    if (r) g_variant_get(r, "(&s)", &id);
+    if (id) info = G_APP_INFO(g_desktop_app_info_new(id));
+  }
+#endif
+  if (!info) info = g_app_info_get_default_for_uri_scheme("nostr");
+  const char *id = info ? g_app_info_get_id(info) : NULL;
+  if (!info || g_str_has_prefix(id ? id : "", "org.nostr.Dispatcher")) return NULL;
+  return g_steal_pointer(&info);
+}
+
+#ifdef NSP_HAVE_GDESKTOPAPPINFO
+/* Launch @info's declared search entry point (nsp-launch.h) with @terms.
+ * FALSE without @error: the app declares none. No shell is involved: the
+ * terms are one argv element. */
+static gboolean launch_search_entry(GDesktopAppInfo *info, const char *const *terms,
+                                    GError **error) {
+  const char *file = g_desktop_app_info_get_filename(info);
+  g_autoptr(GKeyFile) kf = g_key_file_new();
+  if (!file || !g_key_file_load_from_file(kf, file, G_KEY_FILE_NONE, NULL)) return FALSE;
+  g_autofree char *arg = NULL, *exec = NULL;
+  gboolean has_action = FALSE;
+  if (!nsp_search_entry_from_keyfile(kf, &arg, &exec, &has_action)) return FALSE;
+  g_autofree char *joined = nsp_search_join_terms(terms);
+  const char *id = g_app_info_get_id(G_APP_INFO(info));
+  if (!*joined && has_action) {
+    /* No terms: the app's own "search" desktop action, as the Shell
+     * would launch it (startup notification, D-Bus activation). */
+    g_desktop_app_info_launch_action(info, NSP_SEARCH_ACTION, NULL);
+    g_message("nostr-search-provider: LaunchSearch -> %s [action %s]", id, NSP_SEARCH_ACTION);
+    return TRUE;
+  }
+  g_auto(GStrv) argv = nsp_search_argv(exec, arg, terms, error);
+  if (!argv) return FALSE;
+  if (!g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, error))
+    return FALSE;
+  g_message("nostr-search-provider: LaunchSearch -> %s [%s]", id, arg);
+  return TRUE;
+}
+#endif
+
+/* nostrc-prqu.15 contract (README "Activation"): GNostr's search entry
+ * point first, then the dispatcher's `*` handler (its own
+ * X-Nostr-Search-Arg if it declares one, else a plain launch that drops
+ * the terms). FALSE only when no Nostr application is installed. */
+static gboolean launch_search(const char *const *terms, GError **error) {
+  g_autoptr(GAppInfo) fallback = default_nostr_app();
+#ifdef NSP_HAVE_GDESKTOPAPPINFO
+  g_autoptr(GDesktopAppInfo) gnostr = g_desktop_app_info_new(GNOSTR_DESKTOP_ID);
+  GError *e = NULL;
+  if (gnostr && launch_search_entry(gnostr, terms, &e)) return TRUE;
+  if (e) {
+    g_warning("nostr-search-provider: %s search entry point: %s", GNOSTR_DESKTOP_ID, e->message);
+    g_clear_error(&e);
+  }
+  if (fallback && G_IS_DESKTOP_APP_INFO(fallback) &&
+      g_strcmp0(g_app_info_get_id(fallback), GNOSTR_DESKTOP_ID) != 0) {
+    if (launch_search_entry(G_DESKTOP_APP_INFO(fallback), terms, &e)) return TRUE;
+    if (e) {
+      g_warning("nostr-search-provider: %s search entry point: %s",
+                g_app_info_get_id(fallback), e->message);
+      g_clear_error(&e);
+    }
+  }
+#endif
+  if (!fallback) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                        "no Nostr application is installed");
+    return FALSE;
+  }
+  g_message("nostr-search-provider: LaunchSearch -> %s (no search entry point; "
+            "terms dropped)", g_app_info_get_id(fallback));
+  return g_app_info_launch(fallback, NULL, NULL, error);
+}
+
+static void launch_search_thread(GTask *task, gpointer src, gpointer data, GCancellable *c) {
+  g_autoptr(GError) err = NULL;
+  if (!launch_search((const char *const *)data, &err))
+    g_message("nostr-search-provider: LaunchSearch: %s", err->message);
+  g_task_return_boolean(task, TRUE);
+}
+
+static void launch_search_done(GObject *src, GAsyncResult *res, gpointer user_data) {
+  g_application_release(G_APPLICATION(user_data));
+}
+
+/* ================================================================== */
 /* Service                                                             */
 /* ================================================================== */
 
@@ -215,11 +321,16 @@ static void method_call(GDBusConnection *conn, const char *sender, const char *p
     return;
   }
   if (strcmp(method, "LaunchSearch") == 0) {
-    /* No Nostr application declares a search entry point yet (GNostr has
-     * no search action; see README), so clicking the provider icon does
-     * nothing rather than open an app that would drop the terms. */
-    g_debug("nostr-search-provider: LaunchSearch: no application declares a search action");
+    char **terms = NULL;
+    g_variant_get(params, "(^asu)", &terms, NULL);
     g_dbus_method_invocation_return_value(inv, NULL);
+    /* QueryDefault and desktop-file reads block: keep them off the main
+     * loop, and hold the service until the launch is done. */
+    g_application_hold(app);
+    GTask *task = g_task_new(NULL, NULL, launch_search_done, app);
+    g_task_set_task_data(task, terms, (GDestroyNotify)g_strfreev);
+    g_task_run_in_thread(task, launch_search_thread);
+    g_object_unref(task);
     return;
   }
   if (strcmp(method, "XUbuntuCancel") == 0) {
@@ -352,21 +463,8 @@ static int cmd_search(int n, char **terms) {
 /* Desktop entry Exec: open the application nostr-dispatcher uses for
  * links of unknown kind (the user's general Nostr client). */
 static int cmd_launch(void) {
-  g_autoptr(GDBusConnection) bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
-  g_autoptr(GAppInfo) info = NULL;
-#ifdef NSP_HAVE_GDESKTOPAPPINFO
-  if (bus) {
-    g_autoptr(GVariant) r = g_dbus_connection_call_sync(
-        bus, DISPATCHER_NAME, DISPATCHER_PATH, DISPATCHER_NAME, "QueryDefault",
-        g_variant_new("(i)", -1), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, NULL);
-    const char *id = NULL;
-    if (r) g_variant_get(r, "(&s)", &id);
-    if (id) info = G_APP_INFO(g_desktop_app_info_new(id));
-  }
-#endif
-  if (!info) info = g_app_info_get_default_for_uri_scheme("nostr");
-  if (!info || g_str_has_prefix(g_app_info_get_id(info) ? g_app_info_get_id(info) : "",
-                                "org.nostr.Dispatcher")) {
+  g_autoptr(GAppInfo) info = default_nostr_app();
+  if (!info) {
     g_printerr("nostr-search-provider: no Nostr application is installed\n");
     return 1;
   }
@@ -378,11 +476,23 @@ static int cmd_launch(void) {
   return 0;
 }
 
+static int cmd_launch_search(int n, char **terms) {
+  g_auto(GStrv) t = g_new0(char *, n + 1);
+  for (int i = 0; i < n; i++) t[i] = g_strdup(terms[i]);
+  g_autoptr(GError) err = NULL;
+  if (!launch_search((const char *const *)t, &err)) {
+    g_printerr("nostr-search-provider: %s\n", err->message);
+    return 1;
+  }
+  return 0;
+}
+
 static void usage(FILE *f) {
   fprintf(f, "Usage:\n"
              "  nostr-search-provider daemon          D-Bus service (org.nostr.SearchProvider)\n"
              "  nostr-search-provider search TERMS…   one search against the session relay\n"
-             "  nostr-search-provider launch          open the default Nostr application\n");
+             "  nostr-search-provider launch          open the default Nostr application\n"
+             "  nostr-search-provider launch-search [TERMS…]  what LaunchSearch does\n");
 }
 
 int main(int argc, char **argv) {
@@ -398,6 +508,7 @@ int main(int argc, char **argv) {
   if (!strcmp(cmd, "daemon") && argc == 2) return run_daemon(argv[0]);
   if (!strcmp(cmd, "search") && argc >= 3) return cmd_search(argc - 2, argv + 2);
   if (!strcmp(cmd, "launch") && argc == 2) return cmd_launch();
+  if (!strcmp(cmd, "launch-search")) return cmd_launch_search(argc - 2, argv + 2);
   usage(stderr);
   return 2;
 }

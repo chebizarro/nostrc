@@ -2,8 +2,9 @@
  * nd-dispatch — orchestrates one "open" request:
  *
  *   parse -> (kind known?  choose handler
- *                          -> handler running + Handler1? fetch event for
- *                             handoff, else launch the canonical URI)
+ *                          -> handler running + Handler2/Handler1? fetch event
+ *                             for handoff, else launch the canonical URI in
+ *                             its own app-*.scope)
  *            (kind unknown? fetch event (session relay, then hints)
  *                          -> kind from the validated event -> choose
  *                          -> fetch failed: fallback handler, URI launch)
@@ -17,27 +18,28 @@
 
 #include <gio/gio.h>
 #include "nd-registry.h"
+#include "nd-uri.h"
 
 G_BEGIN_DECLS
 
 typedef struct {
   char *activation_token; /* XDG activation token / startup id, or NULL */
   gboolean dry_run;       /* resolve only: never launch, never hand off */
-  gboolean no_handoff;    /* never try org.nostr.Handler1 */
+  gboolean no_handoff;    /* never try org.nostr.Handler2 / Handler1 */
 } NdOpenOptions;
 
 typedef struct {
   gint kind;           /* -1 if still unknown */
   char *desktop_id;    /* chosen handler */
   NdSource source;
-  gboolean handed_off; /* delivered via org.nostr.Handler1.OpenEvent */
+  gboolean handed_off; /* delivered via org.nostr.Handler2/Handler1 OpenEvent */
   char *launched_uri;  /* canonical URI (or file URI) passed to the app */
 } NdOpenResult;
 
 void nd_open_result_free(NdOpenResult *r);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(NdOpenResult, nd_open_result_free)
 
-/* @reg: transfer full. @uri: nostr:/web+nostr: URI or legacy form. */
+/* @reg: transfer full. @uri: nostr:/web+nostr: URI or bare NIP-19 id. */
 void nd_dispatch_open_uri_async(NdRegistry *reg, const char *uri,
                                 const NdOpenOptions *opts, GCancellable *cancellable,
                                 GAsyncReadyCallback callback, gpointer user_data);
@@ -51,11 +53,21 @@ void nd_dispatch_open_event_async(NdRegistry *reg, const char *event_json,
 
 NdOpenResult *nd_dispatch_open_finish(GAsyncResult *res, GError **error);
 
+/* After nd_dispatch_open_finish() failed with ND_ERROR_NO_HANDLER: the
+ * known kind (-1 if unknown) and the target (canonical, kind folded in;
+ * NULL for event input without an id). For NIP-89 suggestions. */
+gint nd_dispatch_open_failed_kind(GAsyncResult *res);
+NdTarget *nd_dispatch_open_failed_target(GAsyncResult *res);
+
 /* D-Bus bus name / object path a handler desktop id would own under the
  * GApplication convention ("org.example.App.desktop" -> "org.example.App",
  * "/org/example/App"). NULL if the id is not a valid well-known name. */
 char *nd_handler_bus_name(const char *desktop_id);
 char *nd_handler_object_path(const char *bus_name);
+
+/* Transient scope a launched handler is moved into (nostrc-prqu.7):
+ * "app-nostr\x2ddispatcher-<escaped app id>-<pid>.scope", or NULL. */
+char *nd_handler_scope_name(const char *desktop_id, GPid pid);
 
 G_END_DECLS
 

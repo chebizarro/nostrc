@@ -16,15 +16,11 @@ option(NOSTR_SEARCH_PROVIDER_BUILD_TESTS "Build nostr-search-provider unit tests
 
 set(NSP_WARN -Wall -Wextra -Wno-unused-parameter -Werror=format -Werror=format-security)
 
-# NIP-19 codec, linked statically (same reasoning as nostr-dispatcher:
-# libnip19.so is not a packaged library).
-file(GLOB NSP_NIP19_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/nips/nip19/src/*.c)
-add_library(nsp_nip19 STATIC ${NSP_NIP19_SOURCES})
-set_target_properties(nsp_nip19 PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(nsp_nip19
-  PUBLIC  ${CMAKE_SOURCE_DIR}/nips/nip19/include
-  PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/include ${CMAKE_SOURCE_DIR}/libgo/include)
-target_link_libraries(nsp_nip19 PUBLIC nostr)
+# NIP-19 codec: the shared libnip19.so.0 from libnostr-nips0 (nostrc-9rvm;
+# same as nostr-dispatcher).
+if(NOT TARGET nip19)
+  message(FATAL_ERROR "nostr-search-provider requires ENABLE_NIP19=ON")
+endif()
 
 # Reused, compiled in (not linked, so neither package depends on the other):
 #  - nostr-dispatcher's NIP-21 parser/encoder and validated-event admission;
@@ -45,7 +41,8 @@ add_library(nsp_core STATIC
   src/nsp-http.c
   src/nsp-nip05.c
   src/nsp-avatar.c
-  src/nsp-engine.c)
+  src/nsp-engine.c
+  src/nsp-launch.c)
 target_include_directories(nsp_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${ND_SRC}
@@ -53,7 +50,7 @@ target_include_directories(nsp_core PUBLIC
   ${CMAKE_SOURCE_DIR}/libnostr/include
   ${CMAKE_SOURCE_DIR}/libgo/include)
 target_compile_options(nsp_core PRIVATE ${NSP_WARN})
-target_link_libraries(nsp_core PUBLIC PkgConfig::NSP_DEPS nsp_nip19 nostr)
+target_link_libraries(nsp_core PUBLIC PkgConfig::NSP_DEPS nip19 nostr)
 if(NSP_PIXBUF_FOUND)
   target_compile_definitions(nsp_core PUBLIC NSP_HAVE_PIXBUF=1)
   target_link_libraries(nsp_core PUBLIC PkgConfig::NSP_PIXBUF)
@@ -109,7 +106,7 @@ if(NOSTR_SEARCH_PROVIDER_BUILD_TESTS)
   add_library(nsp_testutil STATIC tests/nsp-testutil.c)
   target_compile_options(nsp_testutil PRIVATE ${NSP_WARN})
   target_link_libraries(nsp_testutil PUBLIC nsp_core)
-  foreach(t query meta engine net)
+  foreach(t query meta engine net launch)
     add_executable(test_nsp_${t} tests/test_nsp_${t}.c)
     target_compile_options(test_nsp_${t} PRIVATE ${NSP_WARN})
     target_link_libraries(test_nsp_${t} PRIVATE nsp_testutil)
