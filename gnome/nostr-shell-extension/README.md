@@ -11,7 +11,7 @@ and 48. Bead `nostrc-33f1`.
 | Panel icon | shown while the relay listens, starts or runs | systemd |
 | Menu header | full status (`Listening — starts when an app connects`, errors) | systemd |
 | Menu | clients and uptime while running | `SessionRelay1` |
-| Menu | `Message notifications: on/off/failed` | systemd, `nostr-notify.service` |
+| Menu | `3 unread direct messages` / `No unread direct messages` while the notifier runs; else `Message notifications: on/off/failed` | `org.nostr.NotifyDaemon1` (count only), systemd `nostr-notify.service` |
 | Menu | `Wallet: 21,000 sats` / `Wallet: —` / `not paired` / `agent not running` | `org.nostr.Wallet1` |
 | Menu | **Nostr Settings** | launches `org.nostr.Settings.desktop` |
 
@@ -57,23 +57,20 @@ The toggle and the Settings *Relays* page use one model
   uses `NO_AUTO_START`; the relay ships no D-Bus activation file.
 * **Start the wallet agent.** The `org.nostr.Wallet1` proxy is created with
   `DO_NOT_AUTO_START`; with no agent running the menu says so.
-* **Prompt from the panel.** nostr-wallet-agent asks the user before any app
-  it has not been told to *Always allow* reads the wallet, and it has no
-  non-interactive mode. So the extension calls `GetBalance` automatically
-  only when the agent's grant store
-  (`$XDG_STATE_HOME/nostr-wallet/budgets.json`) has `allow_read: true` for
-  the identity the agent gives GNOME Shell. That identity is computed the
-  way `nwa-caller.c` does it (cgroup app id, else `exe:<path>`). On a normal
-  session it is `exe:/usr/bin/gnome-shell`. Without the grant the menu
-  shows `Wallet: —` and an **Allow balance access…** item. Only clicking
-  that item sends a request the agent may answer with its dialog. Tick
-  *Always allow this app* there to keep the balance visible. Nostr
-  Settings lists the grant under *Wallet → per-app budgets* but cannot set
-  it. Note: the grant is for GNOME Shell as a whole, so other extensions
-  could read the balance too. Residual risk: if the agent cannot identify
-  gnome-shell despite the grant (for example, its PID re-check fails), an
-  automatic read becomes a prompt. A *Denied* answer latches, so this
-  happens at most once until `budgets.json` changes.
+* **Prompt from the panel.** Automatic reads use the agent's
+  `GetBalanceNonInteractive`: it answers when GNOME Shell holds a read grant
+  and otherwise fails with `org.nostr.Wallet1.Error.InteractionRequired`
+  without showing anything (an older agent without the method counts the
+  same — never a fallback to the prompting call). The extension therefore
+  does not reimplement the agent's caller identification or read its grant
+  store. Without a grant the menu shows `Wallet: —` and an **Allow balance
+  access…** item; only clicking it sends the plain `GetBalance`, which the
+  agent may answer with its dialog (*Always allow this app* keeps the
+  balance visible). The grant can also be switched in Nostr Settings ›
+  Wallet (its *GNOME Shell* row); the agent's `AppsChanged` signal makes the
+  panel ask again. The grant is for GNOME Shell as a whole
+  (`exe:/usr/bin/gnome-shell`), so other extensions could read the balance
+  too.
 * **Poll fast.** A background resync and stats read run every *refresh
   interval* (default 60 s, never below 30 s), once each time Quick Settings
   opens, and after every switch. systemd's `PropertiesChanged`,
@@ -82,18 +79,20 @@ The toggle and the Settings *Relays* page use one model
   `Manager.Subscribe`/`Unsubscribe` itself: gnome-shell and all extensions
   share one bus connection and systemd tracks subscriptions per connection,
   so unsubscribing could break another subscriber. The balance is fetched
-  when the grant, the pairing or the agent changes, on
-  `PaymentReceived`/`PaymentSent`, and on menu open when it is older than
+  when the agent or the pairing changes, on `AppsChanged` (a grant changed),
+  on `PaymentReceived`/`PaymentSent`, and on menu open when it is older than
   the refresh interval.
-* **Invent an unread count.** `org.nostr.NotifyDaemon` exposes no unread
-  state (only a GApplication with an `open-in-gnostr` action), so the menu
-  shows whether message notifications are on. It does not show a count.
-  The count is tracked as a follow-up bead.
+* **Start the notifier or reveal messages.** The unread count comes from
+  nostr-notify-daemon's `org.nostr.NotifyDaemon1.UnreadDirectMessages`
+  (`DO_NOT_AUTO_START`; the daemon has no activation file anyway), updated
+  by `PropertiesChanged`. It is a number only — the daemon exposes no
+  content, sender or conversation. While the daemon is not on the bus the
+  row shows the service state instead.
 
 `disable()` destroys the indicator and the toggle, and with them both
 monitors. That cancels in-flight calls, unsubscribes every D-Bus signal,
-unwatches the relay name, disconnects the wallet proxy, cancels the
-`budgets.json` monitor, removes every timeout, and disconnects every
+unwatches the relay name, disconnects the wallet and notifier proxies,
+removes every timeout, and disconnects every
 GSettings, toggle and menu signal.
 
 ## Settings
@@ -149,9 +148,10 @@ via *Install from file*.
 | File | |
 |---|---|
 | `extension.js` | `SystemIndicator` + `QuickMenuToggle`; wiring only |
-| `lib/state.js` | pure logic: status model, plans, subtitles, formatting, wallet identity/grant — no `gi://` imports |
+| `lib/state.js` | pure logic: status model, plans, subtitles, formatting — no `gi://` imports |
 | `lib/relay.js` | systemd + `SessionRelay1` monitor and on/off plans (Gio only) |
-| `lib/wallet.js` | `Wallet1` proxy, grant check, cached balance (Gio only) |
+| `lib/wallet.js` | `Wallet1` proxy, non-interactive reads, cached balance (Gio only) |
+| `lib/dm.js` | `NotifyDaemon1` proxy: unread direct-message count (Gio only) |
 | `lib/dbus.js` | async call helpers |
 | `prefs.js` | libadwaita preferences |
 
@@ -159,20 +159,24 @@ via *Install from file*.
 
 ```sh
 node tests/run-tests.js          # lib/state.js (also: gjs -m tests/run-tests.js)
-tests/run-monitors.sh            # lib/relay.js + lib/wallet.js on a private bus (Linux)
+tests/run-monitors.sh            # lib/relay.js, lib/wallet.js, lib/dm.js on a private bus (Linux)
 ctest -R nostr-shell-extension   # all of the above + schema --strict
 ```
 
 `test-monitors.js` runs the real monitors on a private `dbus-run-session`
 bus. It uses
-fake `org.freedesktop.systemd1`, `org.nostr.SessionRelay1` and
-`org.nostr.Wallet1` services and checks:
+fake `org.freedesktop.systemd1`, `org.nostr.SessionRelay1`,
+`org.nostr.Wallet1` and `org.nostr.NotifyDaemon1` services and checks:
 
 * the exact on/off call order;
 * the plan stops at a failing step;
 * stats are read only while the relay owns its name;
-* `GetBalance` is never called without a grant for this process, is called
-  once the grant appears, and again on `PaymentReceived`;
+* automatic reads are only ever `GetBalanceNonInteractive`;
+  `InteractionRequired` shows `—` plus the grant item (not an error),
+  `AppsChanged` refetches, a revoked grant drops the balance on the next
+  payment, and the plain `GetBalance` runs once, on the explicit click;
+* the unread count appears with the notifier, follows `PropertiesChanged`
+  and disappears with it;
 * after `destroy()`, nothing runs;
-* neither the relay nor the agent is ever D-Bus-activated (both fakes are
-  activatable and would leave a marker file).
+* neither the relay, the agent nor the notifier is ever D-Bus-activated
+  (the fakes are activatable and would leave a marker file).
