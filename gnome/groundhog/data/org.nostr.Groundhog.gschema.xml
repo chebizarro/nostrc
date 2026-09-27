@@ -11,6 +11,11 @@
       <summary>Requested signer method</summary>
       <description>One of auto, local, nip46, or nip55l. This build only reports whether the org.nostr.Signer service is reachable for auto, local and nip55l; nip46 is unsupported and nothing is signed.</description>
     </key>
+    <key name="discovery-relays" type="as">
+      <default>[]</default>
+      <summary>Relays that locate the active account's relay lists</summary>
+      <description>ws:// or wss:// relays asked for the selected account's own signed NIP-65 (kind 10002) and NIP-17 inbox (kind 10050) relay lists. Empty by default: Groundhog contacts no relay until one is configured.</description>
+    </key>
     <key name="notifications-enabled" type="b">
       <default>false</default>
       <summary>Show messaging notifications</summary>

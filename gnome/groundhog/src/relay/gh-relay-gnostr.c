@@ -19,6 +19,15 @@ typedef struct {
   gboolean closed;
 } GhGnostrHandle;
 
+/* gnostr_relay_new() returns a process-wide wrapper shared by URL, so
+ * disconnecting one scope's endpoint would also cut every other scope (or the
+ * next account's scope) on that URL. Each endpoint owns its own socket. */
+static GNostrRelay *
+private_relay(const gchar *url)
+{
+  return g_object_new(GNOSTR_TYPE_RELAY, "url", url, NULL);
+}
+
 static void
 handle_unref(GhGnostrHandle *handle)
 {
@@ -166,7 +175,7 @@ retry_connect(gpointer data)
     g_signal_handlers_disconnect_by_data(handle->relay, handle);
     gnostr_relay_disconnect(handle->relay);
     g_clear_object(&handle->relay);
-    handle->relay = gnostr_relay_new(handle->url);
+    handle->relay = private_relay(handle->url);
     if (handle->relay) {
       attach_relay_signals(handle);
       g_atomic_int_inc(&handle->refs);
@@ -256,7 +265,7 @@ open_relay(GhRelayScope *scope, const gchar *url, const NostrFilters *filters,
   handle->refs = 2; /* scope handle and pending connect callback */
   handle->scope = scope;
   handle->url = g_strdup(url);
-  handle->relay = gnostr_relay_new(url);
+  handle->relay = private_relay(url);
   handle->cancellable = g_cancellable_new();
   handle->filters = nostr_filters_new();
   if (!handle->relay || !handle->filters) {

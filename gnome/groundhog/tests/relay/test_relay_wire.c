@@ -2,6 +2,8 @@
 
 #include <gio/gio.h>
 #include <libsoup/soup.h>
+#include <nostr-event.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -14,6 +16,7 @@ typedef struct {
 typedef struct {
   guint errors;
   guint eoses;
+  guint events;
   gchar *eose_url;
 } WireUpdates;
 
@@ -37,7 +40,8 @@ on_message(SoupWebsocketConnection *connection, SoupWebsocketDataType type,
     const gchar *start = comma ? strchr(comma, '"') : NULL;
     const gchar *end = start ? strchr(start + 1, '"') : NULL;
     g_assert_nonnull(end);
-    g_autofree gchar *sub_id = g_strndup(start + 1, end - start - 1);
+    gchar *sub_id = g_strndup(start + 1, end - start - 1);
+    g_object_set_data_full(G_OBJECT(connection), "sub-id", sub_id, g_free);
     g_autofree gchar *eose = g_strdup_printf("[\"EOSE\",\"%s\"]", sub_id);
     soup_websocket_connection_send_text(connection, eose);
   }
@@ -125,6 +129,8 @@ on_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
   WireUpdates *updates = data;
   if (update->notice == GH_RELAY_NOTICE_ERROR)
     updates->errors++;
+  if (update->notice == GH_RELAY_NOTICE_EVENT)
+    updates->events++;
   if (update->notice == GH_RELAY_NOTICE_EOSE) {
     updates->eoses++;
     g_free(updates->eose_url);
@@ -200,11 +206,70 @@ test_offline_at_start_reconnect(void)
   g_free(updates.eose_url);
 }
 
+static NostrFilters *
+any_filters(void)
+{
+  NostrFilters *filters = nostr_filters_new();
+  NostrFilter *filter = nostr_filter_new();
+  g_assert_true(nostr_filters_add(filters, filter));
+  nostr_filter_free(filter);
+  return filters;
+}
+
+/* Two scopes on one URL (e.g. the previous and next account) must not share
+ * a socket: cancelling one must leave the other's live REQ delivering. */
+static void
+test_same_url_scopes_isolated(void)
+{
+  WireRelay relay = {0};
+  relay_init(&relay);
+  WireUpdates old_updates = {0}, new_updates = {0};
+  GhRelayScope *old_scope = gh_relay_scope_new(1, any_filters(), on_update, &old_updates);
+  GhRelayScope *new_scope = gh_relay_scope_new(2, any_filters(), on_update, &new_updates);
+  g_assert_true(gh_relay_scope_add_url(old_scope, relay.url, NULL));
+  g_assert_true(gh_relay_scope_add_url(new_scope, relay.url, NULL));
+  gh_relay_scope_start(old_scope);
+  gh_relay_scope_start(new_scope);
+  wait_for_count(&old_updates.eoses, 1);
+  wait_for_count(&new_updates.eoses, 1);
+  g_assert_cmpuint(relay.connections->len, ==, 2);
+
+  gh_relay_scope_cancel(old_scope);
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 1);
+  nostr_event_set_created_at(event, 1700000000);
+  nostr_event_set_content(event, "after cancel");
+  g_assert_cmpint(nostr_event_sign(event,
+    "0000000000000000000000000000000000000000000000000000000000000001"), ==, 0);
+  char *json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  for (guint i = 0; i < relay.connections->len; i++) {
+    SoupWebsocketConnection *connection = g_ptr_array_index(relay.connections, i);
+    const gchar *sub_id = g_object_get_data(G_OBJECT(connection), "sub-id");
+    if (sub_id &&
+        soup_websocket_connection_get_state(connection) == SOUP_WEBSOCKET_STATE_OPEN) {
+      g_autofree gchar *frame = g_strdup_printf("[\"EVENT\",\"%s\",%s]", sub_id, json);
+      soup_websocket_connection_send_text(connection, frame);
+    }
+  }
+  free(json);
+  wait_for_count(&new_updates.events, 1);
+  g_assert_cmpuint(old_updates.events, ==, 0);
+
+  gh_relay_scope_cancel(new_scope);
+  gh_relay_scope_unref(old_scope);
+  gh_relay_scope_unref(new_scope);
+  relay_clear(&relay);
+  g_free(old_updates.eose_url);
+  g_free(new_updates.eose_url);
+}
+
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/groundhog/relay/wire-destinations", test_wire_destinations);
   g_test_add_func("/groundhog/relay/offline-at-start", test_offline_at_start_reconnect);
+  g_test_add_func("/groundhog/relay/same-url-scopes-isolated", test_same_url_scopes_isolated);
   return g_test_run();
 }

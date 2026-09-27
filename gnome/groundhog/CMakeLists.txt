@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(groundhog VERSION 0.3.1 LANGUAGES C)
+project(groundhog VERSION 0.4.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
@@ -115,6 +115,18 @@ if (TARGET nostr_gobject AND TARGET nostr)
   endif()
 endif()
 
+# Account-bound relay-list discovery: one URL-scoped live REQ per active
+# account generation, cancelled on switch. Needs the account and relay layers.
+if (TARGET groundhog-account AND TARGET groundhog-relay)
+  add_library(groundhog-account-relays STATIC src/app/gh-account-relays.c)
+  target_link_libraries(groundhog-account-relays PUBLIC groundhog-account groundhog-relay)
+  target_compile_options(groundhog-account-relays PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(groundhog PRIVATE groundhog-account-relays)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_RELAYS=1)
+else()
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_RELAYS=0)
+endif()
+
 # The account test compiles Gnostr's schema beside Groundhog's (read-only) to
 # prove a Groundhog switch never writes Gnostr's current identity.
 set(GROUNDHOG_GNOSTR_SCHEMA ${CMAKE_CURRENT_SOURCE_DIR}/../../apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml)
@@ -140,6 +152,23 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
   add_test(NAME groundhog-account COMMAND test-groundhog-account)
   set_tests_properties(groundhog-account PROPERTIES TIMEOUT 30
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
+
+  # Account switch/teardown and relay-list admission against a recording
+  # transport and, when libsoup is present, a real local WebSocket relay.
+  if (TARGET groundhog-account-relays)
+    add_executable(test-groundhog-account-relays tests/app/test_account_relays.c)
+    target_link_libraries(test-groundhog-account-relays PRIVATE groundhog-account-relays)
+    if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      target_link_libraries(test-groundhog-account-relays PRIVATE
+        PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      target_compile_definitions(test-groundhog-account-relays PRIVATE GROUNDHOG_TEST_WIRE=1)
+    endif()
+    target_compile_options(test-groundhog-account-relays PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-account-relays groundhog-test-schemas)
+    add_test(NAME groundhog-account-relays COMMAND test-groundhog-account-relays)
+    set_tests_properties(groundhog-account-relays PROPERTIES TIMEOUT 40
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
 
   # Headless check that gh-account-ui.c's focus/announcement bookkeeping
   # (added for accessibility) only reacts to a real state transition. Needs

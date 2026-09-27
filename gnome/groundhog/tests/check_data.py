@@ -37,11 +37,13 @@ keys = {key.attrib["name"]: key for key in schema.findall("key")}
 assert set(keys) == {
     "current-npub", "signer-method", "notifications-enabled",
     "notification-privacy", "sound-enabled", "window-width",
-    "window-height", "window-maximized",
+    "window-height", "window-maximized", "discovery-relays",
 }
 assert keys["current-npub"].findtext("default") == "''"
 assert keys["notification-privacy"].findtext("default") == "'hidden'"
 assert keys["notifications-enabled"].findtext("default") == "false"
+# No relay is contacted until the user configures one.
+assert keys["discovery-relays"].findtext("default") == "[]"
 
 resources = ET.parse(data / "groundhog.gresource.xml").getroot()
 files = {node.text for node in resources.iter("file")}

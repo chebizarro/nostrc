@@ -6,6 +6,9 @@
 #include "gh-account-controller.h"
 #include "gh-account-ui.h"
 #endif
+#if GROUNDHOG_HAVE_RELAYS
+#include "gh-account-relays.h"
+#endif
 
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
 
@@ -17,6 +20,11 @@ static int smoke_status = 0;
 /* Process-owned: the active account and its generation outlive windows. */
 static GSettings *app_settings;
 static GhAccountController *app_accounts;
+#endif
+#if GROUNDHOG_HAVE_RELAYS
+/* Follows app_accounts' generation: the previous account's REQs are closed
+ * before the next account's are opened. */
+static GhAccountRelays *app_relays;
 #endif
 
 static GtkWidget *
@@ -103,6 +111,9 @@ app_startup(GApplication *app, gpointer user_data)
   /* Without a session bus the signer is reported unreachable, not faked. */
   app_accounts = gh_account_controller_new(app_settings,
                                            g_application_get_dbus_connection(app));
+#if GROUNDHOG_HAVE_RELAYS
+  app_relays = gh_account_relays_new(app_accounts, app_settings, NULL, NULL);
+#endif
 }
 
 static void
@@ -110,6 +121,12 @@ app_shutdown(GApplication *app, gpointer user_data)
 {
   (void)app;
   (void)user_data;
+#if GROUNDHOG_HAVE_RELAYS
+  /* Closes the account's relay subscriptions before the account is revoked. */
+  if (app_relays)
+    g_object_run_dispose(G_OBJECT(app_relays));
+  g_clear_object(&app_relays);
+#endif
   /* Revokes the account generation even if a listing is still in flight. */
   if (app_accounts)
     g_object_run_dispose(G_OBJECT(app_accounts));
