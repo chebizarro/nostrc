@@ -494,13 +494,18 @@ static void test_probe_records_capabilities(void)
      * the auto-probe path in upload_batch. */
     setenv("NOSTR_HOMED_HANAMI_SKIP_CAPABILITY_PROBE", "1", 1);
     stub_t s; stub_init(&s);
-    /* PUT sequence for the probe:
-     *   [0]=201 (server-tag), [1]=201 (batch h1), [2]=201 (batch h2), [3]=401 (mismatch) */
-    s.n_codes = 4;
+    /* PUT sequence for the probe (hanami_server_probe_capabilities):
+     *   [0]=201 (b server-tag), [1]=201 (c batch h1), [2]=201 (c batch h2),
+     *   [3]=401 (d x-mismatch), [4]=201 (e raw random, nostrc-prli),
+     *   [5]=201 (f PNG shim, nostrc-prli). Scripting all six keeps (e)/(f)
+     * from inheriting the stub's repeat-last-code 401. */
+    s.n_codes = 6;
     s.status_codes[0] = 201;
     s.status_codes[1] = 201;
     s.status_codes[2] = 201;
     s.status_codes[3] = 401;
+    s.status_codes[4] = 201;
+    s.status_codes[5] = 201;
     stub_start(&s);
 
     char *endpoint = make_endpoint(s.port);
@@ -519,9 +524,13 @@ static void test_probe_records_capabilities(void)
     assert(caps->server_tag_ok == HANAMI_CAP_YES);
     assert(caps->batch_ok == HANAMI_CAP_YES);
     assert(caps->strict_x_binding == HANAMI_CAP_YES);
-    /* Reachability HEAD (1) + 4 probe PUTs. Deletes are best-effort. */
+    assert(caps->raw_random_ok == HANAMI_CAP_YES);
+    assert(caps->png_shim_ok == HANAMI_CAP_YES);
+    /* Reachability HEAD (1) + 6 probe PUTs (b, c×2, d, e, f). Cleanup
+     * deletes only what was stored: h1, h2, the raw blob and the shim. */
     assert(atomic_load(&s.head_count) == 1);
-    assert(atomic_load(&s.put_count) == 4);
+    assert(atomic_load(&s.put_count) == 6);
+    assert(atomic_load(&s.delete_count) == 4);
 
     hanami_blossom_client_free(cli);
     free(pk);
@@ -563,6 +572,11 @@ static void test_probe_records_permissive_shape(void)
     assert(caps->server_tag_ok == HANAMI_CAP_NO);
     assert(caps->batch_ok == HANAMI_CAP_NO);
     assert(caps->strict_x_binding == HANAMI_CAP_NO);
+    /* (e)/(f) reuse the last scripted code (415): body-sniffer rejects. */
+    assert(caps->raw_random_ok == HANAMI_CAP_NO);
+    assert(caps->png_shim_ok == HANAMI_CAP_NO);
+    assert(atomic_load(&s.put_count) == 6);
+    assert(atomic_load(&s.delete_count) == 0);
 
     hanami_blossom_client_free(cli);
     free(pk);
