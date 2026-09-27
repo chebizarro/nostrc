@@ -6,6 +6,8 @@
  *   nostr-seal encrypt --passphrase FILE|-
  *   nostr-seal decrypt [--identity npub1…] FILE.nsealed
  *   nostr-seal inspect FILE.nsealed
+ *   nostr-seal publish [--dry-run] [--identity npub1…] FILE.nsealed
+ *   nostr-seal encrypt … --publish [--dry-run] FILE
  *
  * Bead nostrc-da9c. Format: README.md. The nsec never enters this process:
  * decrypt goes through org.nostr.Signer (see nseal-signer.h).
@@ -15,6 +17,7 @@
 #include "nseal-private.h"
 #include "nseal-signer.h"
 #include "nseal-config.h"
+#include "nseal-publish.h"
 
 #include <gio/gio.h>
 #include <glib/gstdio.h>
@@ -117,7 +120,7 @@ static gboolean fail(GError *e) {
 
 static gboolean cmd_encrypt(int argc, char **argv) {
   g_auto(GStrv) to = NULL;
-  gboolean to_self = FALSE, ask_pass = FALSE, force = FALSE;
+  gboolean to_self = FALSE, ask_pass = FALSE, force = FALSE, publish = FALSE, dry_run = FALSE;
   g_autofree char *pass_file = NULL, *out = NULL, *identity = NULL;
   int work = 0, chunk_log2 = 0;
   GOptionEntry entries[] = {
@@ -130,6 +133,8 @@ static gboolean cmd_encrypt(int argc, char **argv) {
     { "chunk-size-log2", 0, 0, G_OPTION_ARG_INT, &chunk_log2, "Chunk size as log2 bytes (12-24, default 20)", "N" },
     { "output", 'o', 0, G_OPTION_ARG_FILENAME, &out, "Output path (- = stdout; default FILE.nsealed)", "PATH" },
     { "force", 'f', 0, G_OPTION_ARG_NONE, &force, "Overwrite an existing output", NULL },
+    { "publish", 0, 0, G_OPTION_ARG_NONE, &publish, "Then upload to Blossom and publish a kind-1063 event p-tagging the recipients", NULL },
+    { "dry-run", 'n', 0, G_OPTION_ARG_NONE, &dry_run, "With --publish: print the kind-1063 event, upload/publish nothing", NULL },
     G_OPTION_ENTRY_NULL
   };
   g_autoptr(GOptionContext) ctx = g_option_context_new("FILE|- — seal a file");
@@ -141,6 +146,10 @@ static gboolean cmd_encrypt(int argc, char **argv) {
   const gboolean pass = ask_pass || pass_file;
   if (pass && (to || to_self)) {
     g_printerr("nostr-seal: --passphrase cannot be combined with recipients\n");
+    return FALSE;
+  }
+  if (dry_run && !publish) {
+    g_printerr("nostr-seal: --dry-run only applies to --publish\n");
     return FALSE;
   }
 
@@ -220,6 +229,33 @@ static gboolean cmd_encrypt(int argc, char **argv) {
   ok = nseal_output_close(&o, ok, ok ? &e : NULL) && ok;
   if (!ok) return fail(e);
   if (!g_str_equal(out_path, "-")) g_printerr("sealed → %s\n", out_path);
+  if (publish) {
+    if (g_str_equal(out_path, "-")) {
+      g_printerr("nostr-seal: --publish needs an output file, not stdout\n");
+      return FALSE;
+    }
+    NsealPublishOptions po = { .dry_run = dry_run, .identity = identity };
+    if (!nseal_publish_file(out_path, &po, &e)) return fail(e);
+  }
+  return TRUE;
+}
+
+static gboolean cmd_publish(int argc, char **argv) {
+  gboolean dry_run = FALSE;
+  g_autofree char *identity = NULL;
+  GOptionEntry entries[] = {
+    { "dry-run", 'n', 0, G_OPTION_ARG_NONE, &dry_run, "Print the kind-1063 event; upload/publish nothing", NULL },
+    { "identity", 'i', 0, G_OPTION_ARG_STRING, &identity, "Signer identity to publish as (default: the signer's active identity)", "NPUB" },
+    G_OPTION_ENTRY_NULL
+  };
+  g_autoptr(GOptionContext) ctx = g_option_context_new(
+      "FILE.nsealed — upload to Blossom and publish a kind-1063 event p-tagging the recipients");
+  g_option_context_add_main_entries(ctx, entries, NULL);
+  GError *e = NULL;
+  if (!g_option_context_parse(ctx, &argc, &argv, &e)) return fail(e);
+  if (argc != 2) { g_printerr("usage: nostr-seal publish [--dry-run] [--identity NPUB] FILE.nsealed\n"); return FALSE; }
+  NsealPublishOptions po = { .dry_run = dry_run, .identity = identity };
+  if (!nseal_publish_file(argv[1], &po, &e)) return fail(e);
   return TRUE;
 }
 
@@ -316,6 +352,9 @@ static void usage(FILE *f) {
     "  encrypt --passphrase FILE                          seal with a passphrase (NIP-49)\n"
     "  decrypt [--identity NPUB] FILE.nsealed             open via org.nostr.Signer\n"
     "  inspect FILE.nsealed                               list recipients\n"
+    "  publish [--dry-run] FILE.nsealed                   Blossom upload + kind-1063 event\n"
+    "                                                     p-tagging the recipients\n"
+    "  encrypt … --publish [--dry-run] FILE               seal, then publish\n"
     "\n"
     "Run 'nostr-seal COMMAND --help' for options.\n");
 }
@@ -331,6 +370,7 @@ int main(int argc, char **argv) {
   if (g_str_equal(cmd, "encrypt") || g_str_equal(cmd, "seal")) ok = cmd_encrypt(argc - 1, argv + 1);
   else if (g_str_equal(cmd, "decrypt") || g_str_equal(cmd, "open")) ok = cmd_decrypt(argc - 1, argv + 1);
   else if (g_str_equal(cmd, "inspect")) ok = cmd_inspect(argc - 1, argv + 1);
+  else if (g_str_equal(cmd, "publish")) ok = cmd_publish(argc - 1, argv + 1);
   else { usage(stderr); return 2; }
   return ok ? 0 : 1;
 }

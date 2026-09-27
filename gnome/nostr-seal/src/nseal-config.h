@@ -10,6 +10,13 @@
  *   include_self        also seal for the signer's identity in that case
  *   work_factor         scrypt log2(N) for --passphrase without
  *                       --work-factor (16..20; default 16)
+ *   upstream_mode       where `--publish` sends the kind-1063 event
+ *                       (nostr_publish_policy_select_targets):
+ *                       direct_only (default) | session_relay_or_direct |
+ *                       session_relay_only. The default is direct_only
+ *                       because the session relay does not federate writes
+ *                       upstream yet, so a session-relay-only publish would
+ *                       never reach the recipients (nostrc-hby8).
  *
  * Written by org.nostr.Settings (Files page) or by hand. A malformed file
  * or recipient is an error, never silently skipped: sealing for the wrong
@@ -30,7 +37,15 @@ typedef struct {
   gchar  **default_recipients;  /* never NULL; validated pubkeys as given */
   gboolean include_self;
   gint     work_factor;         /* 0 = built-in default */
+  gint     upstream;            /* NostrPublishUpstream (int to keep this
+                                   header free of libnostr-publish) */
 } NsealConfig;
+
+/* NostrPublishUpstream values, mirrored so seal.conf parses without
+ * nostr-share/libnostr-publish being built. */
+#define NSEAL_UPSTREAM_SESSION_RELAY_OR_DIRECT 0
+#define NSEAL_UPSTREAM_SESSION_RELAY_ONLY      1
+#define NSEAL_UPSTREAM_DIRECT_ONLY             2
 
 /* Missing file → defaults, no error. */
 NsealConfig *nseal_config_load(GError **error);

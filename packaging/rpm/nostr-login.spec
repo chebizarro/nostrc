@@ -717,6 +717,9 @@ it after seeding the passdb via `nostr-authd` and configuring shares
 %package -n nostr-seal
 Summary:        Encrypt files for Nostr public keys or a passphrase
 Requires:       libnostr%{?_isa} = %{version}-%{release}
+Requires:       libnostr-nips%{?_isa} = %{version}-%{release}
+Requires:       libnostr-publish%{?_isa} = %{version}-%{release}
+Requires:       libhanami%{?_isa} = %{version}-%{release}
 Requires:       shared-mime-info
 
 %description -n nostr-seal
