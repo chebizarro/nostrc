@@ -206,7 +206,7 @@ if(ENABLE_FUZZING)
       target_link_options(fuzz_envelope_deserialize PRIVATE -fsanitize=fuzzer,address,undefined)
     endif()
     # Run with corpus directory, e.g.:
-    #   ./fuzz_envelope_deserialize ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters -runs=0
+    #   ./fuzz_envelope_deserialize ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/envelopes -runs=0
   else()
     add_executable(fuzz_event_driver fuzz_event_deserialize.c fuzz_driver_main.c)
     target_link_libraries(fuzz_event_driver PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
@@ -228,7 +228,7 @@ if(ENABLE_FUZZING)
       target_link_options(fuzz_envelope_driver PRIVATE -fsanitize=address,undefined)
     endif()
     # Run with a corpus directory or file list, e.g.:
-    #   ./fuzz_envelope_driver ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters
+    #   ./fuzz_envelope_driver ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/envelopes
   endif()
 endif()
 
