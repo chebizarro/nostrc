@@ -449,6 +449,10 @@ void gnostr_main_window_run_startup_bootstrap_internal(GnostrMainWindow *self,
                                                       GCallback scroll_cb,
                                                       GCallback tab_filter_cb);
 void gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self);
+/* gnostr-main-window-links.c (nostrc-46h7): route every note card's
+ * "open-nostr-target" through gnostr_main_window_open_nostr_uri(). Once per
+ * process (class init). */
+void gnostr_main_window_links_install_note_hook_internal(void);
 /* gnostr-main-window-signer-banner.c (nostrc-e5nz) */
 void gnostr_main_window_signer_banner_start_internal(GnostrMainWindow *self);
 void gnostr_main_window_signer_banner_refresh_internal(GnostrMainWindow *self);

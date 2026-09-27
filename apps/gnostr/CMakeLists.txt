@@ -869,6 +869,21 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "profile;validation;unit;gnostr")
 
+  # Read-only mode greys out per-note actions (nostrc-46h7). Real note
+  # cards: Xvfb on Linux, native on macOS.
+  include(${PROJECT_ROOT}/cmake/GnTest.cmake)
+  gn_add_gtest_xvfb(gnostr-test-publish-gate
+    SOURCES tests/test_publish_gate.c
+            src/ui/gnostr-publish-gate.c
+    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::GLIB
+    ENV     "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}" "GSETTINGS_BACKEND=memory"
+    TIMEOUT 60)
+  target_include_directories(gnostr-test-publish-gate PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gtk/include)
+  set_tests_properties(gnostr-test-publish-gate PROPERTIES
+    LABELS "gtk;widget;unit;gnostr")
+
   # GNostr Signer (NIP-55L) session restore + identity selection
   # (nostrc-vuwu). Headless: fake org.nostr.Signer on a private GTestDBus.
   add_executable(gnostr-test-signer-nip55l-identity

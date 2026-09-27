@@ -5,6 +5,10 @@
  * Entry points:
  *   gnostr_main_window_open_nostr_uri()   GApplication::open (`gnostr nostr:…`)
  *   gnostr_main_window_open_nostr_event() org.nostr.Handler1.OpenEvent
+ *   note cards (nostrc-46h7)              every NostrGtkNoteCardRow's
+ *                                         "open-nostr-target" (event and
+ *                                         address links in note content;
+ *                                         npub/nprofile use "open-profile")
  *
  * The kind -> view table and all validation live in
  * util/gnostr-nostr-target.c. Every event shown here has passed id and
@@ -23,6 +27,7 @@
 #include "../util/utils.h"
 
 #include <nostr-gtk-1.0/gnostr-thread-view.h>
+#include <nostr-gtk-1.0/nostr-note-card-row.h>
 #include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/nostr_pool.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
@@ -240,6 +245,71 @@ fetch_from_relays(GnostrMainWindow *self, GnostrNostrTarget *target /* transfer 
   nostr_filter_free(f);
   gnostr_pool_query_urls_async(pool, (const gchar **)urls->pdata, urls->len, filters,
                                NULL, on_link_fetch_done, ctx);
+}
+
+/* ---- note cards (nostrc-46h7) ------------------------------------------ */
+
+/* The window a card belongs to, or the application's main window when the
+ * card sits in another toplevel (a dialog, a popover's surface). */
+static GnostrMainWindow *
+main_window_for(GtkWidget *widget)
+{
+  GtkRoot *root = gtk_widget_get_root(widget);
+  if (GNOSTR_IS_MAIN_WINDOW(root))
+    return GNOSTR_MAIN_WINDOW(root);
+  GApplication *app = g_application_get_default();
+  if (!GTK_IS_APPLICATION(app))
+    return NULL;
+  GtkWindow *active = gtk_application_get_active_window(GTK_APPLICATION(app));
+  if (GNOSTR_IS_MAIN_WINDOW(active))
+    return GNOSTR_MAIN_WINDOW(active);
+  for (GList *l = gtk_application_get_windows(GTK_APPLICATION(app)); l; l = l->next)
+    if (GNOSTR_IS_MAIN_WINDOW(l->data))
+      return GNOSTR_MAIN_WINDOW(l->data);
+  return NULL;
+}
+
+/* Cards are created in many views (timeline, search, communities, repos,
+ * and nostr-gtk's thread view and profile pane), and none of them handled
+ * this signal. One emission hook routes them all; views must therefore not
+ * also connect "open-nostr-target" to open the link themselves. */
+static gboolean
+on_note_card_open_nostr_target(GSignalInvocationHint *hint, guint n_params,
+                               const GValue *params, gpointer data)
+{
+  (void)hint;
+  (void)data;
+  if (n_params < 2)
+    return TRUE;
+  GObject *row = g_value_get_object(&params[0]);
+  const char *target = g_value_get_string(&params[1]);
+  if (!GTK_IS_WIDGET(row) || !target || !*target)
+    return TRUE;
+  GnostrMainWindow *win = main_window_for(GTK_WIDGET(row));
+  if (!win)
+    return TRUE;
+  /* Content links may be bare bech32 ("note1…"); the router takes NIP-21. */
+  gboolean has_scheme = g_ascii_strncasecmp(target, "nostr:", 6) == 0 ||
+                        g_ascii_strncasecmp(target, "web+nostr:", 10) == 0;
+  g_autofree char *uri = has_scheme ? g_strdup(target) : g_strconcat("nostr:", target, NULL);
+  gnostr_main_window_open_nostr_uri(win, uri);
+  return TRUE; /* stay installed */
+}
+
+void
+gnostr_main_window_links_install_note_hook_internal(void)
+{
+  static gsize once = 0;
+  if (!g_once_init_enter(&once))
+    return;
+  /* The signal is created in the class's class_init: keep it loaded. */
+  g_type_class_ref(NOSTR_GTK_TYPE_NOTE_CARD_ROW);
+  guint id = g_signal_lookup("open-nostr-target", NOSTR_GTK_TYPE_NOTE_CARD_ROW);
+  if (id)
+    g_signal_add_emission_hook(id, 0, on_note_card_open_nostr_target, NULL, NULL);
+  else
+    g_warning("NostrGtkNoteCardRow has no open-nostr-target signal; note links stay inert");
+  g_once_init_leave(&once, 1);
 }
 
 /* ---- public ------------------------------------------------------------ */

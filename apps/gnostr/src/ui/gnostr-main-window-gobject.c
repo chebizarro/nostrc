@@ -269,4 +269,5 @@ gnostr_main_window_bind_template_internal(GtkWidgetClass *widget_class)
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, login_view);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, error_page);
   gtk_widget_class_bind_template_child(widget_class, GnostrMainWindow, signer_banner);
+  gnostr_main_window_links_install_note_hook_internal();
 }

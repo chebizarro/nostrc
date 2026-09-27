@@ -22,6 +22,7 @@
 #include "../ipc/gnostr-signer-availability.h"
 #include "../ipc/gnostr-signer-service.h"
 #include "../ipc/signer_ipc.h"
+#include "gnostr-publish-gate.h"
 
 #include <glib/gi18n.h>
 
@@ -53,6 +54,8 @@ set_publish_blocked(GnostrMainWindow *self, const char *reason)
   self->publish_blocked_reason = g_strdup(reason);
   if (self->session_view)
     gnostr_session_view_set_compose_blocked(self->session_view, reason);
+  /* nostrc-46h7: grey out per-note reply/repost/like/zap/pin/bookmark too. */
+  gnostr_publish_gate_set_reason(reason, GTK_WIDGET(self));
 }
 
 gboolean
@@ -265,4 +268,5 @@ gnostr_main_window_signer_banner_dispose_internal(GnostrMainWindow *self)
     g_cancellable_cancel(self->nip55l_restore_cancellable);
   g_clear_object(&self->nip55l_restore_cancellable);
   g_clear_pointer(&self->publish_blocked_reason, g_free);
+  gnostr_publish_gate_set_reason(NULL, NULL);
 }
