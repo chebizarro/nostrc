@@ -45,11 +45,14 @@ ReadWritePaths=%h
 #   ~/.config/nostr-homed/ignore     (read-only)
 #   the tree under $HOME              (read via inotify, sync path)
 PrivateTmp=yes
-PrivateDevices=yes
-ProtectClock=yes
+# No ProtectClock= / ProtectKernelLogs= / ProtectKernelModules= /
+# PrivateDevices=: each shrinks the capability bounding set, which an
+# unprivileged systemd --user manager cannot do -- the unit fails every
+# start with 218/CAPABILITIES (nostrc-ig4k; probed on systemd 255 with
+# `systemd-run --user -p <directive> /bin/true`). A user service holds none
+# of those capabilities anyway. Same posture as nostr-session-relay.service
+# (nostrc-q9ba) and nostr-notify.service (nostrc-8oon).
 ProtectHostname=yes
-ProtectKernelLogs=yes
-ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 LockPersonality=yes

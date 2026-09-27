@@ -1,7 +1,9 @@
 [Unit]
 Description=NostrFS FUSE mount for user %i
 After=network-online.target
-Requires=network-online.target
+# Wants=, not Requires=: a user manager has no network-online.target, and
+# Requires= on a missing unit fails the start outright.
+Wants=network-online.target
 BindsTo=nostr-homectl.service
 
 [Service]
@@ -20,11 +22,16 @@ RestartSec=2s
 # Sandboxing
 NoNewPrivileges=true
 PrivateTmp=true
-PrivateDevices=true
-ProtectClock=true
+# No ProtectClock= / ProtectKernelLogs= / ProtectKernelModules= /
+# PrivateDevices= / CapabilityBoundingSet= / AmbientCapabilities=: the
+# first five change the capability bounding set and the last raises an
+# ambient capability, neither of which an unprivileged systemd --user
+# manager can do -- the unit fails every start with 218/CAPABILITIES
+# (nostrc-ig4k; probed on systemd 255 with
+# `systemd-run --user -p <directive> /bin/true`). Same posture as
+# nostr-session-relay.service (nostrc-q9ba) and nostr-notify.service
+# (nostrc-8oon).
 ProtectHostname=true
-ProtectKernelLogs=true
-ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectSystem=strict
 ProtectHome=read-only
@@ -37,8 +44,8 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 UMask=0077
 DeviceAllow=/dev/fuse rwm
-CapabilityBoundingSet=CAP_SYS_ADMIN
-AmbientCapabilities=CAP_SYS_ADMIN
+# No CAP_SYS_ADMIN: a user unit cannot grant it (see above); the FUSE
+# mount goes through the setuid fusermount3 helper.
 
 [Install]
 WantedBy=default.target
