@@ -734,6 +734,7 @@ static void watch_drain(void) {
 }
 
 static void watch_stop(Ctx *ctx, Watch *w) {
+  CHECK(w->a.pending_replies == 0);
   watch_drain();
   g_source_remove(w->to);
   g_dbus_connection_signal_unsubscribe(ctx->bus, w->sub);
@@ -1401,7 +1402,11 @@ static void test_untrusted_approver(Ctx *ctx) {
   char *peer_pk = nostr_key_get_public(peer_sk);
   Watch w;
   watch_start(ctx, &w);
-  watch_call(ctx, &w, "NIP04Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""));
+  GCancellable *cancel = g_cancellable_new();
+  w.a.pending_replies++;
+  g_dbus_connection_call(ctx->bus, BUS_NAME, OBJ_PATH, IFACE, "NIP04Encrypt",
+      g_variant_new("(sss)", "hi", peer_pk, ""), G_VARIANT_TYPE("(s)"),
+      G_DBUS_CALL_FLAGS_NONE, 30000, cancel, on_async_reply, &w.a);
   watch_wait_request(&w, 1);
   GError *err = NULL;
   GVariant *ok = approve_call(ctx, w.a.req_id, TRUE, TRUE, &err);
@@ -1415,9 +1420,12 @@ static void test_untrusted_approver(Ctx *ctx) {
   CHECK(info == NULL); expect_remote_error(err, ERR_PERM); g_clear_error(&err);
   CHECK(w.a.pending_replies == 1); /* still parked, not approved */
   CHECK(!g_file_test(ctx->grants_path, G_FILE_TEST_EXISTS));
-  /* Leave it parked; the daemon is torn down with the fixture. */
-  g_source_remove(w.to);
-  g_dbus_connection_signal_unsubscribe(ctx->bus, w.sub);
+  g_cancellable_cancel(cancel);
+  watch_wait_replies(&w);
+  CHECK(w.a.replies->len == 1 && w.a.replies->pdata[0] == NULL);
+  CHECK(g_error_matches(w.a.errors->pdata[0], G_IO_ERROR, G_IO_ERROR_CANCELLED));
+  g_object_unref(cancel);
+  watch_stop(ctx, &w);
   free(peer_sk); free(peer_pk);
 }
 
