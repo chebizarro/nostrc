@@ -20,6 +20,7 @@
 #include <string.h>
 #include <assert.h>
 #include <unistd.h>
+#include "hanami_test_fs.h"
 
 static int tests_passed = 0;
 
@@ -42,9 +43,7 @@ static void setup_tmpdir(void)
 
 static void rm_rf(const char *path)
 {
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", path);
-    (void)system(cmd);
+    (void)hanami_test_rm_rf(path);
 }
 
 /* ---- Constructor tests ---- */

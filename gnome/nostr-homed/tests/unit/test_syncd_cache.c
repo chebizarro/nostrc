@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include "../nh_test_fs.h"
 
 static void hex_of(const uint8_t *buf, size_t len, char out[65]) {
     uint8_t h[32];
@@ -28,11 +29,7 @@ static void hex_of(const uint8_t *buf, size_t len, char out[65]) {
     nh_porthome_hex64(h, out);
 }
 
-static void rm_rf(const char *path) {
-    char cmd[512];
-    snprintf(cmd, sizeof cmd, "rm -rf '%s'", path);
-    (void)system(cmd);
-}
+static void rm_rf(const char *path) { (void)nh_test_rm_rf(path); }
 
 static char *tmp_dir(const char *tag) {
     char *p = malloc(256);
@@ -107,11 +104,12 @@ int main(void) {
     char shard[1024];
     snprintf(shard, sizeof shard, "%s/%c%c/%c%c",
              dir, hex[0], hex[1], hex[2], hex[3]);
-    char stale[1024];
+    char stale[sizeof shard + 96];
     snprintf(stale, sizeof stale, "%s/%s.tmp.999.deadbeef", shard, hex);
     int sfd = open(stale, O_CREAT | O_WRONLY, 0600);
     assert(sfd >= 0);
-    (void)write(sfd, "garbage", 7);
+    ssize_t wn = write(sfd, "garbage", 7);
+    assert(wn == 7);
     close(sfd);
     struct timespec back[2] = {
         { .tv_sec = time(NULL) - 7200, .tv_nsec = 0 },
@@ -128,7 +126,8 @@ int main(void) {
     snprintf(stale, sizeof stale, "%s/%s.tmp.998.cafebabe", shard, hex);
     sfd = open(stale, O_CREAT | O_WRONLY, 0600);
     assert(sfd >= 0);
-    (void)write(sfd, "in-flight", 9);
+    wn = write(sfd, "in-flight", 9);
+    assert(wn == 9);
     close(sfd);
     assert(nh_syncd_cache_cleanup_stale_tmps(c) == NH_SYNCD_CACHE_OK);
     assert(access(stale, F_OK) == 0);

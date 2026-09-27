@@ -35,6 +35,7 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+#include "../nh_test_fs.h"
 
 /* ────────── in-memory chunk store (fake Blossom) ─────────────────── */
 
@@ -123,7 +124,12 @@ static int slurp_home_file(const char *rel, char **out, size_t *out_len) {
     if (!f) return -1;
     fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
     char *buf = malloc((size_t)n + 1);
-    fread(buf, 1, (size_t)n, f); buf[n] = '\0';
+    if (!buf || fread(buf, 1, (size_t)n, f) != (size_t)n) {
+        free(buf);
+        fclose(f);
+        return -1;
+    }
+    buf[n] = '\0';
     fclose(f);
     *out = buf; *out_len = (size_t)n;
     return 0;
@@ -230,9 +236,8 @@ static void rec_notify(void *ud, const char *sum, const char *body) {
 static void setup(void) {
     snprintf(g_home,  sizeof g_home,  "/tmp/nh_reconcile_home_%d",  (int)getpid());
     snprintf(g_state, sizeof g_state, "/tmp/nh_reconcile_state_%d", (int)getpid());
-    char rm[600];
-    snprintf(rm, sizeof rm, "rm -rf %s %s", g_home, g_state);
-    (void)system(rm);
+    nh_test_rm_rf(g_home);
+    nh_test_rm_rf(g_state);
     mkdir(g_home, 0700);
     mkdir(g_state, 0700);
     /* home_key = derive(seed=all 0x11). */
@@ -241,9 +246,8 @@ static void setup(void) {
     assert(nh_porthome_key_derive(seed, g_home_key) == 0);
 }
 static void teardown(void) {
-    char rm[600];
-    snprintf(rm, sizeof rm, "rm -rf %s %s", g_home, g_state);
-    (void)system(rm);
+    nh_test_rm_rf(g_home);
+    nh_test_rm_rf(g_state);
 }
 
 /* ────────────────────────── tests ────────────────────────────── */

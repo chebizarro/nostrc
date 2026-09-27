@@ -41,6 +41,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "../nh_test_fs.h"
+
 extern int nh_syncd_state_upsert_file_(nh_syncd_state *, const char *,
                                        uint32_t, uint32_t, uint32_t,
                                        uint64_t, uint64_t,
@@ -50,9 +52,7 @@ extern int nh_syncd_state_upsert_dir_(nh_syncd_state *, const char *,
                                       uint32_t, uint32_t, uint32_t, uint64_t);
 extern void nh_syncd_state_bump_generation_(nh_syncd_state *);
 
-static void rm_rf(const char *p) {
-    char c[512]; snprintf(c, sizeof c, "rm -rf '%s'", p); (void)system(c);
-}
+static void rm_rf(const char *p) { (void)nh_test_rm_rf(p); }
 
 /* Test clock — fixed at 0, we advance manually. */
 static int64_t g_now_ms = 0;
@@ -116,8 +116,10 @@ static void write_snapshot(const char *state_dir,
 static void write_corrupt_snapshot(const char *state_dir) {
     char path[512];
     char tmp[512];
-    snprintf(path, sizeof path, "%s/snapshot.json", state_dir);
-    snprintf(tmp,  sizeof tmp,  "%s/snapshot.json.tmp.%d", state_dir, (int)getpid());
+    int pn = snprintf(path, sizeof path, "%s/snapshot.json", state_dir);
+    int tn = snprintf(tmp,  sizeof tmp,  "%s/snapshot.json.tmp.%d", state_dir, (int)getpid());
+    assert(pn > 0 && (size_t)pn < sizeof path);
+    assert(tn > 0 && (size_t)tn < sizeof tmp);
     int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
     assert(fd >= 0);
     const char *garbage = "{ this is not valid json &&& \n";

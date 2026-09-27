@@ -19,6 +19,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "../nh_test_fs.h"
+
 /* Tiny helper: cheap "contains" scan on a NUL-terminated string. */
 static int contains(const char *hay, const char *needle) {
     return hay && needle && strstr(hay, needle) != NULL;
@@ -167,9 +169,7 @@ static void test_push_dry_run(void) {
     free(out);
 
     /* Cleanup. */
-    char rm[600];
-    snprintf(rm, sizeof rm, "rm -rf -- %s", dir);
-    (void)system(rm);
+    nh_test_rm_rf(dir);
     fprintf(stderr, "OK  push_dry_run\n");
 }
 
@@ -270,8 +270,7 @@ static void test_push_real_dry_shape(void) {
     assert(nc == 2);
 
     nh_prov_free_walk(entries, n);
-    char rm[600]; snprintf(rm, sizeof rm, "rm -rf -- %s", dir);
-    (void)system(rm);
+    nh_test_rm_rf(dir);
     fprintf(stderr, "OK  push_real_dry_shape\n");
 }
 

@@ -390,8 +390,13 @@ target_link_directories(test_relay_shutdown PRIVATE ${SECP256K1_LIBRARY_DIRS})
 # GTK Application Integration Tests
 # These tests require the gnostr binary to be built
 
-# Find gnostr binary
+# Find gnostr binary. These tests only make sense when apps/ is built:
+# with BUILD_APPS=OFF (Debian/RPM feature set) they used to be registered
+# anyway and report "Not Run" because apps/gnostr does not exist
+# (nostrc-xw95). tests/ is added before apps/, so gate on the option rather
+# than on TARGET gnostr (unset BUILD_APPS defaults to ON further down).
 set(GNOSTR_BINARY "${CMAKE_BINARY_DIR}/apps/gnostr/gnostr")
+if(NOT DEFINED BUILD_APPS OR BUILD_APPS)
 
 # Test: Run gnostr with ASan/UBSan (if enabled)
 if(SANITIZE MATCHES "address" OR SANITIZE MATCHES "undefined")
@@ -445,6 +450,7 @@ if(VALGRIND_EXECUTABLE AND NOT SANITIZE)
     LABELS "valgrind;gtk"
   )
 endif()
+endif() # BUILD_APPS
 
 # ==============================================================================
 # Concurrency Test Suite (No GTK required)

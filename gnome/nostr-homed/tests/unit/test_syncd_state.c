@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include "../nh_test_fs.h"
 
 /* Not-in-header helpers from nh_syncd_state.c we exercise here. */
 extern int nh_syncd_state_upsert_file_(nh_syncd_state *s,
@@ -34,15 +35,11 @@ static char g_dir[256];
 
 static void setup(void) {
     snprintf(g_dir, sizeof g_dir, "/tmp/nh_syncd_state_%d", (int)getpid());
-    char rmcmd[512];
-    snprintf(rmcmd, sizeof rmcmd, "rm -rf %s", g_dir);
-    (void)system(rmcmd);
+    nh_test_rm_rf(g_dir);
     assert(mkdir(g_dir, 0700) == 0);
 }
 static void teardown(void) {
-    char rmcmd[512];
-    snprintf(rmcmd, sizeof rmcmd, "rm -rf %s", g_dir);
-    (void)system(rmcmd);
+    nh_test_rm_rf(g_dir);
 }
 
 static void t_missing_snapshot_is_unknown(void) {
@@ -84,7 +81,8 @@ static void t_roundtrip(void) {
     FILE *gf = fopen(gpath, "r");
     assert(gf);
     char buf[16] = {0};
-    fread(buf, 1, sizeof buf - 1, gf);
+    size_t nr = fread(buf, 1, sizeof buf - 1, gf);
+    assert(nr > 0);
     fclose(gf);
     assert(buf[0] == '2');
 

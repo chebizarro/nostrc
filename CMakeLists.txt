@@ -672,3 +672,44 @@ else()
     add_definitions(-D_POSIX_C_SOURCE=200809L)
 endif()
 
+
+# nostrc-xw95: keep assert() live in every test executable.
+# The tree builds Release, which defines NDEBUG, and under NDEBUG
+# `assert(expr)` expands to ((void)0): a test written as
+# `int r = f(); assert(r == 0);` then checks nothing and leaves `r` unused,
+# which is also why a freestanding -Werror + BUILD_TESTING build failed with
+# dozens of unused-variable errors. signet/tests already does this per
+# directory (fp-3126); this applies the same rule tree-wide to executables
+# built from a tests/ source, without touching shipped targets. -UNDEBUG is
+# appended after CMAKE_C_FLAGS_RELEASE's -DNDEBUG on the command line, so it
+# wins.
+function(nostrc_keep_test_asserts dir)
+  get_property(_targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(_t IN LISTS _targets)
+    get_target_property(_type ${_t} TYPE)
+    if(NOT _type STREQUAL "EXECUTABLE")
+      continue()
+    endif()
+    get_target_property(_srcs ${_t} SOURCES)
+    get_target_property(_sdir ${_t} SOURCE_DIR)
+    foreach(_s IN LISTS _srcs)
+      if(_s MATCHES "^\\$<")
+        continue()
+      endif()
+      if(NOT IS_ABSOLUTE "${_s}")
+        set(_s "${_sdir}/${_s}")
+      endif()
+      if(_s MATCHES "/tests/")
+        set_property(TARGET ${_t} APPEND PROPERTY COMPILE_OPTIONS -UNDEBUG)
+        break()
+      endif()
+    endforeach()
+  endforeach()
+  get_property(_subdirs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
+  foreach(_d IN LISTS _subdirs)
+    nostrc_keep_test_asserts("${_d}")
+  endforeach()
+endfunction()
+if(BUILD_TESTING AND NOT MSVC)
+  nostrc_keep_test_asserts("${CMAKE_SOURCE_DIR}")
+endif()

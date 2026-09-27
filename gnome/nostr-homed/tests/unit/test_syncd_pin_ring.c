@@ -21,8 +21,9 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "../nh_test_fs.h"
 
-static void rm_rf(const char *p) { char c[512]; snprintf(c,sizeof c,"rm -rf '%s'",p); (void)system(c); }
+static void rm_rf(const char *p) { (void)nh_test_rm_rf(p); }
 
 static const char *mk_hex(char buf[65], uint8_t seed) {
     for (int i = 0; i < 64; ++i) buf[i] = "0123456789abcdef"[(seed + i) & 0xf];

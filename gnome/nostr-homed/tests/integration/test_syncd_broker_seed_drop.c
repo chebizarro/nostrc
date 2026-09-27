@@ -29,13 +29,12 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "../nh_test_fs.h"
 
 static const char SEED_HEX[65] =
     "1122334455667788112233445566778811223344556677881122334455667788";
 
-static void rm_rf(const char *p) {
-    char c[512]; snprintf(c, sizeof c, "rm -rf '%s'", p); (void)system(c);
-}
+static void rm_rf(const char *p) { (void)nh_test_rm_rf(p); }
 
 static int write_file(const char *path, const char *data, size_t n) {
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);

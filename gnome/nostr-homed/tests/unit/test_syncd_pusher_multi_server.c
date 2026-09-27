@@ -22,6 +22,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include "../nh_test_fs.h"
 
 static const char *SRV[] = {
     "https://blossom-a.example.org",
@@ -90,17 +91,15 @@ static void write_file(const char *rel, const char *body) {
 static void setup(void) {
     snprintf(g_home,  sizeof g_home,  "/tmp/nh_multi_home_%d",  (int)getpid());
     snprintf(g_state, sizeof g_state, "/tmp/nh_multi_state_%d", (int)getpid());
-    char rm[1024];
-    snprintf(rm, sizeof rm, "rm -rf %s %s", g_home, g_state);
-    (void)system(rm);
+    nh_test_rm_rf(g_home);
+    nh_test_rm_rf(g_state);
     assert(mkdir(g_home, 0700) == 0);
     assert(mkdir(g_state, 0700) == 0);
     write_file("payload.txt", "hello multi-server world\n");
 }
 static void teardown(void) {
-    char rm[1024];
-    snprintf(rm, sizeof rm, "rm -rf %s %s", g_home, g_state);
-    (void)system(rm);
+    nh_test_rm_rf(g_home);
+    nh_test_rm_rf(g_state);
 }
 
 static uint64_t vnow(void *ud) { (void)ud; static uint64_t t = 0; t += 10ull*1000000000ull; return t; }

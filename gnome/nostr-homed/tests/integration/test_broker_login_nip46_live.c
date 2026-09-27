@@ -279,9 +279,9 @@ static int discover_user_pubkey(const char *bunker_uri,
     char *pk = NULL;
     int drc = discover_user_pubkey_inproc(bunker_uri, client_sk_hex, &pk);
     if (drc == 0 && pk) {
-      write(fds[1], pk, 64);
+      ssize_t wn = write(fds[1], pk, 64);
       free(pk);
-      _exit(0);
+      _exit(wn == 64 ? 0 : 1);
     }
     _exit(1);
   }
@@ -437,8 +437,8 @@ static nh_auth_result run_live_attempt(const nh_identity_account *account,
     nh_auth_result r =
         run_live_attempt_inproc(account, bunker_uri, client_sk_bytes, &pr);
     struct live_attempt_msg m = { (int32_t)r, (int32_t)pr };
-    write(fds[1], &m, sizeof m);
-    _exit(0);
+    ssize_t wn = write(fds[1], &m, sizeof m);
+    _exit(wn == (ssize_t)sizeof m ? 0 : 1);
   }
   close(fds[1]);
   struct live_attempt_msg m = { NH_AUTH_RESULT_INTERNAL_ERROR,

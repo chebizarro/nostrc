@@ -23,8 +23,9 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+#include "../nh_test_fs.h"
 
-static void rm_rf(const char *p) { char c[512]; snprintf(c,sizeof c,"rm -rf '%s'",p); (void)system(c); }
+static void rm_rf(const char *p) { (void)nh_test_rm_rf(p); }
 
 static void hex_of(const uint8_t *buf, size_t len, char out[65]) {
     uint8_t h[32];

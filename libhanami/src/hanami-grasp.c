@@ -633,7 +633,8 @@ hanami_error_t hanami_push_to_grasp(git_repository *repo,
         push_refspecs.count = 1;
     }
 
-    git_push_options push_opts = GIT_PUSH_OPTIONS_INIT;
+    git_push_options push_opts;
+    git_push_options_init(&push_opts, GIT_PUSH_OPTIONS_VERSION);
     rc = git_remote_push(remote, &push_refspecs, &push_opts);
 
     git_remote_free(remote);
@@ -721,7 +722,8 @@ hanami_error_t hanami_grasp_fetch(git_repository *repo,
     if (rc < 0)
         return HANAMI_ERR_LIBGIT2;
 
-    git_fetch_options fetch_opts = GIT_FETCH_OPTIONS_INIT;
+    git_fetch_options fetch_opts;
+    git_fetch_options_init(&fetch_opts, GIT_FETCH_OPTIONS_VERSION);
     rc = git_remote_fetch(remote, NULL, &fetch_opts, "grasp fetch");
 
     git_remote_free(remote);

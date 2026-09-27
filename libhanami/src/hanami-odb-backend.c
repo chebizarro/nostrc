@@ -12,6 +12,7 @@
 #include <git2/oid.h>
 #include <git2/errors.h>
 #include <git2/sys/odb_backend.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -138,8 +139,8 @@ static int blossom_odb_write(git_odb_backend *_backend, const git_oid *oid,
     oid_to_hex(oid, oid_hex, sizeof(oid_hex));
 
     hanami_index_entry_t entry = {0};
-    strncpy(entry.git_oid, oid_hex, sizeof(entry.git_oid) - 1);
-    strncpy(entry.blossom_hash, blossom_hash, sizeof(entry.blossom_hash) - 1);
+    snprintf(entry.git_oid, sizeof(entry.git_oid), "%s", oid_hex);
+    snprintf(entry.blossom_hash, sizeof(entry.blossom_hash), "%s", blossom_hash);
     entry.type = type;
     entry.size = len;
     entry.timestamp = (int64_t)time(NULL);

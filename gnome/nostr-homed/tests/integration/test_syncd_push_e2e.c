@@ -48,6 +48,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include "../nh_test_fs.h"
 
 /* Fixed fixture nsec (dev-only). Its public key doesn't matter — the
  * pusher just needs a valid secp256k1 scalar to sign the pointer
@@ -107,9 +108,8 @@ static void write_file(const char *rel, const char *contents) {
 static void setup(void) {
     snprintf(g_home,  sizeof g_home,  "/tmp/nh_syncd_e2e_home_%d",  (int)getpid());
     snprintf(g_state, sizeof g_state, "/tmp/nh_syncd_e2e_state_%d", (int)getpid());
-    char rm[1024];
-    snprintf(rm, sizeof rm, "rm -rf %s %s", g_home, g_state);
-    (void)system(rm);
+    nh_test_rm_rf(g_home);
+    nh_test_rm_rf(g_state);
     assert(mkdir(g_home, 0700) == 0);
     assert(mkdir(g_state, 0700) == 0);
     write_file("hello.txt", "hello world\n");
@@ -117,9 +117,8 @@ static void setup(void) {
     write_file("bin/run.sh", "#!/bin/sh\necho hi\n");
 }
 static void teardown(void) {
-    char rm[1024];
-    snprintf(rm, sizeof rm, "rm -rf %s %s", g_home, g_state);
-    (void)system(rm);
+    nh_test_rm_rf(g_home);
+    nh_test_rm_rf(g_state);
 }
 
 static uint64_t vnow(void *ud) { (void)ud; static uint64_t t = 0; t += 10ull * 1000000000ull; return t; }
@@ -186,7 +185,8 @@ static void t_happy_path(void) {
     /* snapshot.json + generation exist. */
     char gp[400]; snprintf(gp, sizeof gp, "%s/generation", g_state);
     FILE *gf = fopen(gp, "r"); assert(gf);
-    char gbuf[8] = {0}; fread(gbuf, 1, 7, gf); fclose(gf);
+    char gbuf[8] = {0}; size_t gn = fread(gbuf, 1, 7, gf); fclose(gf);
+    assert(gn > 0);
     assert(gbuf[0] == '1');
 
     /* Decode the sealed manifest to prove it's well-formed. */
@@ -301,7 +301,7 @@ static void t_interlock_snapshot_unknown(void) {
     nh_syncd_batcher_free(b);
     nh_syncd_state_free(state);
     nh_syncd_ignore_free(ig);
-    char rm[512]; snprintf(rm, sizeof rm, "rm -rf %s", state2); (void)system(rm);
+    nh_test_rm_rf(state2);
     printf("t_interlock_snapshot_unknown OK\n");
 }
 

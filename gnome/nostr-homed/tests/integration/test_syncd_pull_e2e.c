@@ -39,6 +39,7 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+#include "../nh_test_fs.h"
 
 /* ─── in-memory chunk store (copy of the one in unit test — kept
  *     self-contained per test binary). ─────────────────────────── */
@@ -120,8 +121,8 @@ static void write_home_file(const char *rel, const char *contents) {
 static void setup(void) {
     snprintf(g_home,  sizeof g_home,  "/tmp/nh_pull_home_%d",  (int)getpid());
     snprintf(g_state, sizeof g_state, "/tmp/nh_pull_state_%d", (int)getpid());
-    char rm[600]; snprintf(rm, sizeof rm, "rm -rf %s %s", g_home, g_state);
-    (void)system(rm);
+    nh_test_rm_rf(g_home);
+    nh_test_rm_rf(g_state);
     mkdir(g_home, 0700); mkdir(g_state, 0700);
     uint8_t seed[32];
     for (int i = 0; i < 32; i++) { seed[i] = 0x11; g_root_id[i] = (uint8_t)i; }
@@ -213,7 +214,8 @@ static void t_pull_applies_new_generation(void) {
     /* file on disk shows v2. */
     char abs[600]; snprintf(abs, sizeof abs, "%s/hello.txt", g_home);
     FILE *f = fopen(abs, "r"); assert(f); char rbuf[64] = {0};
-    fread(rbuf, 1, sizeof rbuf - 1, f); fclose(f);
+    size_t nr = fread(rbuf, 1, sizeof rbuf - 1, f); fclose(f);
+    assert(nr > 0);
     assert(strstr(rbuf, "v2 remote") != NULL);
 
     /* Second EVENT — same or earlier gen: no-op. */
@@ -231,7 +233,8 @@ static void t_pull_applies_new_generation(void) {
     assert(nh_syncd_pull_ctx_last_applied_generation(pc) == 200);
     f = fopen(abs, "r"); assert(f);
     memset(rbuf, 0, sizeof rbuf);
-    fread(rbuf, 1, sizeof rbuf - 1, f); fclose(f);
+    nr = fread(rbuf, 1, sizeof rbuf - 1, f); fclose(f);
+    assert(nr > 0);
     assert(strstr(rbuf, "v3 remote") != NULL);
 
     /* d-tag mismatch is filtered. */
@@ -258,8 +261,8 @@ int main(void) {
     setup();
     t_pull_applies_new_generation();
     /* teardown */
-    char rm[600]; snprintf(rm, sizeof rm, "rm -rf %s %s", g_home, g_state);
-    (void)system(rm);
+    nh_test_rm_rf(g_home);
+    nh_test_rm_rf(g_state);
     printf("test_syncd_pull_e2e: OK\n");
     return 0;
 }

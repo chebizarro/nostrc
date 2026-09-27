@@ -49,7 +49,10 @@ install(DIRECTORY ${NIP49_INC}/ DESTINATION include/nostr/nip49)
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_spec_source.c)
   add_executable(test_nip49_spec_source tests/test_spec_source.c)
   target_link_libraries(test_nip49_spec_source PRIVATE nostr_nip49_core)
-  add_test(NAME test_nip49_spec_source COMMAND test_nip49_spec_source)
+  # The test opens nips/nip49/SPEC_SOURCE relative to its cwd; run it from the
+  # repo root so out-of-tree builds find it (nostrc-xw95).
+  add_test(NAME test_nip49_spec_source COMMAND test_nip49_spec_source
+           WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 endif()
 
 # Optional simple payload test

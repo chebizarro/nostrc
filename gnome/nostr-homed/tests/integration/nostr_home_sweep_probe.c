@@ -134,19 +134,11 @@ typedef struct {
     json_t *files;   /* object: rel -> { chunk_addrs_hex: [...] } */
 } up_ctx;
 
-static void bytes_to_hex(const uint8_t *b, size_t n, char *out) {
-    static const char lc[] = "0123456789abcdef";
-    for (size_t i = 0; i < n; i++) {
-        out[i*2]   = lc[(b[i] >> 4) & 0xf];
-        out[i*2+1] = lc[b[i] & 0xf];
-    }
-    out[n*2] = '\0';
-}
-
 static int upload_and_record(up_ctx *uc, const char *rel,
                              const struct stat *st) {
     char abs[8192];
-    snprintf(abs, sizeof abs, "%s/%s", uc->root, rel);
+    int an = snprintf(abs, sizeof abs, "%s/%s", uc->root, rel);
+    if (an < 0 || (size_t)an >= sizeof abs) return -1;
     int fd = open(abs, O_RDONLY);
     if (fd < 0) return -1;
     size_t remaining = (size_t)st->st_size;

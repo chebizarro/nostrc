@@ -40,7 +40,7 @@
 
 typedef struct {
   char dir[512];
-  char db[512];
+  char db[512 + sizeof "/projection.db"];
 } scratch;
 
 static void scratch_init(scratch *s) {

@@ -24,10 +24,9 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include "../nh_test_fs.h"
 
-static void rm_rf(const char *p) {
-    char c[512]; snprintf(c,sizeof c,"rm -rf '%s'",p); (void)system(c);
-}
+static void rm_rf(const char *p) { (void)nh_test_rm_rf(p); }
 
 static int write_file(const char *path, const char *data) {
     int fd = open(path, O_WRONLY|O_CREAT|O_TRUNC, 0644);

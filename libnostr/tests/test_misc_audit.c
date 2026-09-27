@@ -179,7 +179,7 @@ static void test_cross_thread_aggregation(void) {
     for (int i = 0; i < AGG_THREADS; i++) {
       char needle[64];
       snprintf(needle, sizeof(needle), "nostr_agg_ctr_%d %d", i, AGG_PER_THREAD);
-      char msg[96];
+      char msg[64 + sizeof("export must include live thread counter ''")];
       snprintf(msg, sizeof(msg), "export must include live thread counter '%s'", needle);
       CHECK(strstr(buf, needle) != NULL, msg);
     }
