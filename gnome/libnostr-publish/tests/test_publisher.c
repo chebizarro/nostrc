@@ -553,6 +553,33 @@ test_publish_sign_denied(void)
   nostr_publisher_free(pub);
 }
 
+/* nostrc-k95e: NIP-44 through the signer is opt-in per signer; the vtable
+ * layout (and every positional initialiser of it) is unchanged. */
+static gchar *
+fake_nip44(gpointer user_data, const gchar *plaintext, const gchar *peer,
+           GCancellable *cancellable, GError **error)
+{
+  (void)cancellable; (void)error;
+  g_assert_nonnull(user_data);   /* the vtable's user_data */
+  return g_strdup_printf("enc(%s->%s)", plaintext, peer);
+}
+
+static void
+test_signer_nip44_hook(void)
+{
+  MockSigner *ms = NULL;
+  g_autoptr(NostrPublishSigner) signer = mock_signer_new(&ms);
+  GError *err = NULL;
+  g_assert_null(nostr_publish_signer_nip44_encrypt(signer, "hi", "ab", NULL, &err));
+  g_assert_error(err, NOSTR_PUBLISH_SIGNER_ERROR, NOSTR_PUBLISH_SIGNER_ERROR_MALFORMED);
+  g_assert_true(nostr_publish_signer_error_is_permanent(err));
+  g_clear_error(&err);
+  nostr_publish_signer_set_nip44_encrypt(signer, fake_nip44);
+  g_autofree gchar *out = nostr_publish_signer_nip44_encrypt(signer, "hi", "ab", NULL, &err);
+  g_assert_no_error(err);
+  g_assert_cmpstr(out, ==, "enc(hi->ab)");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -569,5 +596,6 @@ main(int argc, char **argv)
   g_test_add_func("/nostr-publish/publisher/bound-disconnected", test_bound_disconnected_is_unreachable);
   g_test_add_func("/nostr-publish/publisher/owned-transports", test_owned_transports);
   g_test_add_func("/nostr-publish/publisher/sign-denied", test_publish_sign_denied);
+  g_test_add_func("/nostr-publish/signer/nip44-hook", test_signer_nip44_hook);
   return g_test_run();
 }

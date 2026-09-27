@@ -22,6 +22,7 @@ struct _NostrPublishSigner {
   int             ref_count;
   NostrPublishSignerVTable  vtable;
   gpointer        user_data;
+  NostrPublishSignerNip44EncryptFunc nip44_encrypt;
 };
 
 NostrPublishSigner *
@@ -68,6 +69,34 @@ nostr_publish_signer_sign_event_json(NostrPublishSigner     *self,
 
   return self->vtable.sign_event_json(self->user_data, unsigned_json,
                                       cancellable, error);
+}
+
+void
+nostr_publish_signer_set_nip44_encrypt(NostrPublishSigner                *self,
+                                       NostrPublishSignerNip44EncryptFunc func)
+{
+  g_return_if_fail(self != NULL);
+  self->nip44_encrypt = func;
+}
+
+gchar *
+nostr_publish_signer_nip44_encrypt(NostrPublishSigner *self,
+                                   const gchar        *plaintext,
+                                   const gchar        *peer_pubkey_hex,
+                                   GCancellable       *cancellable,
+                                   GError            **error)
+{
+  g_return_val_if_fail(self != NULL, NULL);
+  g_return_val_if_fail(plaintext != NULL, NULL);
+  g_return_val_if_fail(peer_pubkey_hex != NULL, NULL);
+  if (self->nip44_encrypt == NULL) {
+    g_set_error_literal(error, NOSTR_PUBLISH_SIGNER_ERROR,
+                        NOSTR_PUBLISH_SIGNER_ERROR_MALFORMED,
+                        "this signer cannot NIP-44 encrypt");
+    return NULL;
+  }
+  return self->nip44_encrypt(self->user_data, plaintext, peer_pubkey_hex,
+                             cancellable, error);
 }
 
 gboolean

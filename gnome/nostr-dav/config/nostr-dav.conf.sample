@@ -14,20 +14,19 @@
 #
 #   session_relay_only       Only the session-local relay
 #                            ($XDG_RUNTIME_DIR/nostr/relay.sock). Never
-#                            contact the account's home relays. If the
-#                            socket is missing, publish and sync are held:
-#                            DAV edits stay local (pending) until it
-#                            appears (checked every 30 s).
-#   session_relay_or_direct  Use the session relay when its socket exists,
-#                            otherwise the account's home relays. (default)
+#                            contact the account's home relays. While the
+#                            socket is missing or the relay does not
+#                            forward upstream, publishing is held: DAV
+#                            edits stay local (pending) until it does.
+#   session_relay_or_direct  Use the session relay while it forwards
+#                            upstream, otherwise the account's home relays.
+#                            (default)
 #   direct_only              Talk to the account's home relays directly.
 #
-# NOTE: the session relay does not forward to your home relays yet
-# (nostrc-7d96). In the two session-relay modes, events you create stay in
-# the local session relay (nothing is lost, but other devices will not see
-# them) and inbound sync only sees what that relay already holds. Choose
-# direct_only if you need your home relays today. nostr-dav logs which
-# relays it uses at start-up.
+# "Forwards upstream": org.nostr.SessionRelay1 FederationState is active or
+# waiting-for-account (nostrc-7d96). Through it, an edit is published once
+# the relay reports delivery to your relays, not at its local OK
+# (nostrc-t24q). nostr-dav logs which relays it uses.
 #
 #nostr_dav_upstream_mode=session_relay_or_direct
 

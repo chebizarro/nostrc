@@ -52,6 +52,10 @@
  * responsive to newly staged rows without hammering the DB. */
 #define ND_PUBLISHER_TICK_SEC 30
 
+/* A session relay whose socket exists but whose daemon is not on the bus
+ * is started by connecting to the socket; at most this often. */
+#define ND_SESSION_NUDGE_INTERVAL_US (300 * G_USEC_PER_SEC)
+
 struct _NdApplication {
   GApplication      parent_instance;
 
@@ -66,6 +70,11 @@ struct _NdApplication {
   NdContactStore   *contact_store;
   guint             publisher_tick_id;
   gchar            *session_socket;  /* session relay socket, NULL if absent */
+  GDBusConnection  *bus;             /* session bus, NULL without one */
+  /* org.nostr.SessionRelay1 FederationState + upstream reports
+   * (nostrc-t24q); NULL in direct_only mode or without a bus. */
+  NostrPublishSessionRelay *session_relay;
+  gint64            last_nudge_us;
   int               lock_fd;
   int               exit_status;
 };
@@ -206,36 +215,118 @@ session_transport_factory(const gchar *relay_url, gpointer user_data)
   return t;
 }
 
-/* ---- Upstream routing (nostrc-862u) ---- */
+/* ---- Upstream routing (nostrc-862u, nostrc-t24q) ---- */
 
-static const gchar *
-session_relay_url(NdApplication *self)
+static NostrPublishFederation
+session_federation(NdApplication *self)
 {
-  return self->session_socket != NULL ? ND_SESSION_RELAY_URL : NULL;
+  return self->session_relay != NULL
+           ? nostr_publish_session_relay_get_federation(self->session_relay)
+           : NOSTR_PUBLISH_FEDERATION_NOT_RUNNING;
 }
 
-/* Apply nostr_dav_upstream_mode + the session relay's presence to both the
- * publisher and the relay-sync layer. Transports for new targets are
- * created by relay-sync through session_transport_factory, which binds them
- * into the publisher, so relay-sync is configured second. */
+/* The session relay may stand in for the home relays only while it
+ * forwards upstream: a disabled, unavailable, older or stopped relay
+ * would keep the events on this machine. */
+static const gchar *
+publish_session_url(NdApplication *self)
+{
+  return self->session_socket != NULL &&
+             nostr_publish_federation_forwards(session_federation(self))
+           ? ND_SESSION_RELAY_URL : NULL;
+}
+
+/* Inbound sync: session_relay_only still reads the local session relay
+ * (its cache) whatever FederationState says; session_relay_or_direct
+ * follows the publisher, so both go direct when the relay does not
+ * forward. */
+static const gchar *
+sync_session_url(NdApplication *self)
+{
+  if (self->config.upstream_mode == ND_UPSTREAM_MODE_SESSION_RELAY_ONLY)
+    return self->session_socket != NULL ? ND_SESSION_RELAY_URL : NULL;
+  return publish_session_url(self);
+}
+
+/* Apply nostr_dav_upstream_mode + the session relay's presence and
+ * FederationState to both the publisher and the relay-sync layer.
+ * Transports for new targets are created by relay-sync through
+ * session_transport_factory, which binds them into the publisher, so
+ * relay-sync is configured second. */
 static void
 apply_upstream(NdApplication *self)
 {
-  const gchar *session_url = session_relay_url(self);
-  nd_publisher_set_upstream(self->publisher, self->config.upstream_mode,
-                            session_url);
+  const gchar *pub_url = publish_session_url(self);
+  NostrPublishFederation fed = session_federation(self);
+  nd_publisher_set_upstream(self->publisher, self->config.upstream_mode, pub_url);
   nd_relay_sync_configure(self->relay_sync, self->config.account_pubkey,
                           self->config.home_relays, self->config.upstream_mode,
-                          session_url);
+                          sync_session_url(self));
 
-  if (session_url != NULL &&
-      self->config.upstream_mode != ND_UPSTREAM_MODE_DIRECT_ONLY)
-    g_message("nostr-dav: routing via the session relay (%s). It does not "
-              "forward to your home relays yet (nostrc-7d96): published "
-              "events stay in the local session relay and inbound sync sees "
-              "only what it already holds. Use nostr_dav_upstream_mode="
-              "direct_only to reach home relays directly.",
-              self->session_socket);
+  if (self->config.upstream_mode == ND_UPSTREAM_MODE_DIRECT_ONLY ||
+      self->session_socket == NULL)
+    return;
+  if (pub_url != NULL) {
+    g_message("nostr-dav: routing via the session relay (%s), which forwards "
+              "to your home relays (FederationState %s); an edit counts as "
+              "published once it confirms upstream delivery",
+              self->session_socket, nostr_publish_federation_to_string(fed));
+    /* Signals sent while we were not listening are lost: ask again. */
+    nd_publisher_resync_upstream(self->publisher);
+  } else if (fed != NOSTR_PUBLISH_FEDERATION_UNKNOWN) {
+    gboolean only = self->config.upstream_mode == ND_UPSTREAM_MODE_SESSION_RELAY_ONLY;
+    g_message("nostr-dav: the session relay (%s) does not forward upstream "
+              "(FederationState %s): %s", self->session_socket,
+              nostr_publish_federation_to_string(fed),
+              only ? "publishing is held (nostr_dav_upstream_mode=session_relay_only)"
+                   : "publishing to the home relays directly");
+    if (!only)
+      (void)nd_publisher_release_upstream(self->publisher);
+  }
+}
+
+static void
+on_federation_changed(NostrPublishSessionRelay *relay, NostrPublishFederation state,
+                      gpointer user_data)
+{
+  (void)relay;
+  (void)state;
+  apply_upstream(user_data);
+}
+
+static void
+on_upstream_update(NostrPublishSessionRelay *relay, const NostrPublishForwardUpdate *u,
+                   gpointer user_data)
+{
+  (void)relay;
+  NdApplication *self = user_data;
+  if (self->publisher != NULL)
+    nd_publisher_record_upstream(self->publisher, u);
+}
+
+static void
+query_upstream(NdPublisher *publisher, const gchar *event_id, gpointer user_data)
+{
+  (void)publisher;
+  NdApplication *self = user_data;
+  if (self->session_relay != NULL)
+    nostr_publish_session_relay_query(self->session_relay, event_id);
+}
+
+/* The relay is socket-activated with no D-Bus activation file: a socket
+ * whose daemon is not on the bus is started by connecting to it (it then
+ * appears on the bus and on_federation_changed() takes over). */
+static void
+nudge_session_relay(NdApplication *self)
+{
+  if (self->session_socket == NULL ||
+      session_federation(self) != NOSTR_PUBLISH_FEDERATION_NOT_RUNNING)
+    return;
+  gint64 now = g_get_monotonic_time();
+  if (self->last_nudge_us != 0 && now - self->last_nudge_us < ND_SESSION_NUDGE_INTERVAL_US)
+    return;
+  self->last_nudge_us = now;
+  (void)nostr_publish_session_relay_nudge(self->session_socket);
 }
 
 /* The session relay socket may appear after we started (socket units
@@ -243,12 +334,14 @@ apply_upstream(NdApplication *self)
 static void
 reprobe_session_relay(NdApplication *self)
 {
-  if (self->session_socket != NULL ||
-      self->config.upstream_mode == ND_UPSTREAM_MODE_DIRECT_ONLY)
+  if (self->config.upstream_mode == ND_UPSTREAM_MODE_DIRECT_ONLY)
     return;
-  self->session_socket = nd_session_relay_socket_path();
-  if (self->session_socket != NULL)
-    apply_upstream(self);
+  if (self->session_socket == NULL) {
+    self->session_socket = nd_session_relay_socket_path();
+    if (self->session_socket != NULL)
+      apply_upstream(self);
+  }
+  nudge_session_relay(self);
 }
 
 /* ---- Publisher outbox tick ---- */
@@ -308,17 +401,15 @@ bring_up(NdApplication *self, GError **error)
               "(enable_publish is off in %s)", config_path);
     goto listen;
   }
-  GDBusConnection *bus =
-    g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
-  if (bus != NULL) {
+  self->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+  if (self->bus != NULL) {
     GError *signer_err = NULL;
-    self->signer = nd_signer_new_dbus(bus, &signer_err);
+    self->signer = nd_signer_new_dbus(self->bus, &signer_err);
     if (self->signer == NULL) {
       g_warning("nostr-dav: signer proxy unavailable: %s",
                 signer_err ? signer_err->message : "unknown");
       g_clear_error(&signer_err);
     }
-    g_object_unref(bus);
   } else {
     g_message("nostr-dav: session bus unreachable; publish disabled");
   }
@@ -340,9 +431,16 @@ bring_up(NdApplication *self, GError **error)
     self->relay_sync = nd_relay_sync_new(self->db, self->cal_store,
                                           self->contact_store,
                                           session_transport_factory, self);
-    if (self->config.upstream_mode != ND_UPSTREAM_MODE_DIRECT_ONLY)
+    if (self->config.upstream_mode != ND_UPSTREAM_MODE_DIRECT_ONLY) {
       self->session_socket = nd_session_relay_socket_path();
+      /* FederationState arrives asynchronously; until then the session
+       * relay is not treated as forwarding (session_relay_only: held). */
+      nd_publisher_set_upstream_query_func(self->publisher, query_upstream, self);
+      self->session_relay = nostr_publish_session_relay_new(
+        self->bus, on_federation_changed, on_upstream_update, self);
+    }
     apply_upstream(self);
+    nudge_session_relay(self);
     nd_relay_sync_start(self->relay_sync);
 
     /* Drive the outbox on a periodic tick. Runs on the app's default
@@ -381,6 +479,8 @@ tear_down(NdApplication *self)
   if (self->dav_server)
     nd_dav_server_stop(self->dav_server);
   g_clear_object(&self->dav_server);
+  /* Before the publisher: its callbacks feed the publisher. */
+  g_clear_pointer(&self->session_relay, nostr_publish_session_relay_free);
   if (self->relay_sync != NULL) {
     nd_relay_sync_free(self->relay_sync);
     self->relay_sync = NULL;
@@ -399,6 +499,7 @@ tear_down(NdApplication *self)
     self->contact_store = NULL;
   }
   g_clear_pointer(&self->session_socket, g_free);
+  g_clear_object(&self->bus);
   g_clear_pointer(&self->db, nd_store_db_unref);
   g_clear_pointer(&self->token_store, nd_token_store_free);
   if (self->lock_fd >= 0) {

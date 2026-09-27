@@ -104,17 +104,25 @@ This chooses which relays nostr-dav publishes to and syncs from, and it is
 enforced for both. An unknown value stops the service from starting. That
 way a typo can never quietly fall back to a less private mode.
 
-- `session_relay_only` never contacts your home relays. Without the session
-  relay socket (`$XDG_RUNTIME_DIR/nostr/relay.sock`) publishing and sync are
-  held and your edits stay local until the socket appears.
-- `session_relay_or_direct` uses the session relay when it is running,
-  otherwise your home relays.
+The session relay (`$XDG_RUNTIME_DIR/nostr/relay.sock`) stores what it is
+given and forwards it to your kind-10002 write relays itself — while its
+`FederationState` on `org.nostr.SessionRelay1` is `active` or
+`waiting-for-account` (see `apps/relayd/README.md`, "Upstream
+federation"). nostr-dav publishes through it only then (nostrc-t24q), and
+an edit counts as published when the relay reports upstream delivery
+(`forwarded` / `partial`), not when it answers `OK`; `failed` / `skipped`
+end as a failed publish with a notification.
+
+- `session_relay_only` never contacts your home relays. Without the socket,
+  or while the relay does not forward (`disabled`, `unavailable`, too old
+  to say, not running), publishing is held and your edits stay local until
+  it does. Sync reads only the session relay's local store.
+- `session_relay_or_direct` publishes and syncs through the session relay
+  while it forwards, otherwise with your home relays directly.
 - `direct_only` always uses your home relays.
 
-The session relay does not forward to your home relays yet (nostrc-7d96).
-In the session-relay modes, events stay in the local session relay and
-other devices will not see them. Use `direct_only` if you need your home
-relays now. `journalctl --user -u nostr-dav` shows the relays in use.
+A socket whose relay is not running yet is started by connecting to it.
+`journalctl --user -u nostr-dav` shows the relays in use.
 
 ## Endpoints
 

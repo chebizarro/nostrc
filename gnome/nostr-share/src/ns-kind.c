@@ -165,6 +165,8 @@ ns_action_kind(NsAction action)
   case NS_ACTION_GIT_REPO:      return NS_KIND_GIT_REPO;
   case NS_ACTION_DAV_CALENDAR:
   case NS_ACTION_DAV_CONTACT:   return 0;
+  case NS_ACTION_PRIVATE_MESSAGE: return 14;
+  case NS_ACTION_PRIVATE_FILE:    return 15;
   }
   return 0;
 }
@@ -225,6 +227,8 @@ ns_kind_label(gint kind)
   case NS_KIND_FILE_METADATA: return "File metadata (kind 1063)";
   case NS_KIND_ARTICLE:       return "Article (kind 30023)";
   case NS_KIND_GIT_REPO:      return "Git repository (kind 30617)";
+  case 14:                    return "Private message (kind 14, NIP-17)";
+  case 15:                    return "Private file (kind 15, NIP-17)";
   default:                    return "Other";
   }
 }

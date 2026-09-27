@@ -13,16 +13,23 @@
 # Blossom servers (https:// only) used when you have no kind-10063 list.
 #blossom_servers=https://blossom.example.com
 
-# Where events go:
-#   session_relay_and_direct  (default) your NIP-65 write relays; when
-#                             $XDG_RUNTIME_DIR/nostr/relay.sock exists the
-#                             session relay also gets a copy so local apps
-#                             see it at once. Success = a write relay ACKed.
-#   session_relay_or_direct   session relay only when present, else direct.
-#   session_relay_only        session relay only; nothing leaves this machine
-#                             until the session relay federates upstream.
+# Where events go. "Forwards" = the session relay
+# ($XDG_RUNTIME_DIR/nostr/relay.sock) reports FederationState active or
+# waiting-for-account on org.nostr.SessionRelay1, i.e. it delivers what it
+# is given to your kind-10002 write relays itself.
+#   session_relay_or_direct   (default) only the session relay while it
+#                             forwards; success = it confirmed delivery to
+#                             an upstream relay. Otherwise your NIP-65
+#                             write relays directly.
+#   session_relay_only        only the session relay; refuses to publish
+#                             when it does not forward (nothing would ever
+#                             leave this machine). Never contacts your
+#                             relays from this process.
+#   session_relay_and_direct  your write relays directly, plus a local copy
+#                             in the session relay. Success = a write relay
+#                             ACKed.
 #   direct_only               never use the session relay.
-#upstream_mode=session_relay_and_direct
+#upstream_mode=session_relay_or_direct
 
 # Largest file to upload, in MiB.
 #max_upload_mib=100
@@ -34,13 +41,24 @@
 #default_text_kind=1
 
 # Default for --keep-metadata: allow uploading media whose metadata
-# (GPS, camera, timestamps) cannot be stripped — HEIC/AVIF/TIFF, video,
-# audio. Supported images (JPEG/PNG/WebP/GIF) are always stripped either
-# way. The dialog still shows the metadata banner.
+# (GPS, camera, timestamps) cannot be stripped — TIFF, WebM/MPEG video,
+# MP3/Ogg audio and the like. Supported formats (JPEG/PNG/WebP/GIF,
+# HEIC/HEIF/AVIF, MP4/MOV/3GP/M4A) are always stripped either way. The
+# dialog still shows the metadata banner.
 #keep_metadata=false
 
-# Seconds to wait for relays to answer OK before giving up.
+# Seconds to wait for relays to answer OK before giving up. Through a
+# forwarding session relay it is also how long to wait for its upstream
+# confirmation; past that the event stays queued there (exit status 5).
 #ok_wait_sec=15
+
+# --private file uploads are authorised with a throwaway key, so the
+# Blossom server cannot tie the (encrypted) blob to you. When every server
+# refuses that (401/403: paid / allow-listed servers):
+#   throwaway_then_account  (default) upload signed by your key instead;
+#                           the server learns you uploaded an opaque blob
+#   throwaway_only          fail instead
+#private_blob_auth=throwaway_then_account
 
 # nostr-dav endpoint for .ics/.vcf hand-off (default: whatever
 # `nostr-dav --show-credentials` prints).

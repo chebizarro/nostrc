@@ -46,6 +46,7 @@ typedef struct {
   AdwBanner      *banner;
   AdwComboRow    *kind_row;
   AdwEntryRow    *to_row;
+  AdwSwitchRow   *private_row;
   AdwEntryRow    *title_row;
   GtkTextView    *text;
   GtkLabel       *text_label;
@@ -59,6 +60,7 @@ typedef struct {
 } Dialog;
 
 static void refresh(Dialog *d);
+static void start_resolve(Dialog *d);
 
 /* ---- helpers ---- */
 
@@ -162,8 +164,18 @@ fill_kind_picker(Dialog *d)
   adw_combo_row_set_model(d->kind_row, G_LIST_MODEL(model));
   adw_combo_row_set_selected(d->kind_row, selected);
   g_object_unref(model);
-  gtk_widget_set_visible(GTK_WIDGET(d->kind_row), n > 1);
+  /* Private shares have fixed kinds (14 text, 15 files). */
+  gtk_widget_set_visible(GTK_WIDGET(d->kind_row), n > 1 && !d->share->private_share);
   d->updating = FALSE;
+}
+
+static void
+update_to_title(Dialog *d)
+{
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(d->to_row),
+                                d->share->private_share
+                                  ? "Recipient (npub) — private"
+                                  : "Mention (public) or group host'id");
 }
 
 /* ---- edits ---- */
@@ -232,6 +244,11 @@ on_to_apply(AdwEntryRow *row, gpointer user_data)
                            d->share->to.type == NS_RECIPIENT_GROUP;
   ns_recipient_clear(&d->share->to);
   d->share->to = r;
+  if (d->share->private_share) {
+    /* A different recipient has a different inbox: look it up again. */
+    start_resolve(d);
+    return;
+  }
   if (group_changed) {
     /* Group posts go only to the group relay. Resolving that is local;
      * going back to the user's relays needs a network lookup, which the
@@ -240,9 +257,31 @@ on_to_apply(AdwEntryRow *row, gpointer user_data)
     d->share->resolved = FALSE;
     if (r.type == NS_RECIPIENT_GROUP)
       (void)ns_resolve_targets(d->share->cfg, &d->share->net, d->share->pubkey_hex,
-                               &d->share->to, &d->share->targets, NULL);
+                               &d->share->to, FALSE, &d->share->targets, NULL);
   }
   refresh(d);
+}
+
+static void
+on_private_toggled(GObject *row, GParamSpec *pspec, gpointer user_data)
+{
+  (void)row; (void)pspec;
+  Dialog *d = user_data;
+  if (d->updating || d->state != STATE_READY)
+    return;
+  gboolean on = adw_switch_row_get_active(d->private_row);
+  GError *err = NULL;
+  if (!ns_share_set_private(d->share, on, &err)) {
+    d->updating = TRUE;
+    adw_switch_row_set_active(d->private_row, !on);
+    d->updating = FALSE;
+    set_status(d, err->message, TRUE);
+    g_clear_error(&err);
+    return;
+  }
+  update_to_title(d);
+  fill_kind_picker(d);
+  start_resolve(d);   /* inbox relays vs write relays: a network lookup */
 }
 
 static void
@@ -319,6 +358,20 @@ resolve_done(GObject *src, GAsyncResult *res, gpointer data)
     set_status(d, d->resolve_error, TRUE);
 }
 
+static void
+start_resolve(Dialog *d)
+{
+  d->state = STATE_RESOLVING;
+  set_busy(d, TRUE);
+  gtk_widget_set_sensitive(GTK_WIDGET(d->publish), FALSE);
+  refresh(d);
+  set_status(d, "Looking up relays…", FALSE);
+  GTask *task = g_task_new(NULL, NULL, resolve_done, d);
+  g_task_set_task_data(task, d, NULL);
+  g_task_run_in_thread(task, resolve_thread);
+  g_object_unref(task);
+}
+
 /* publish */
 
 typedef enum { PUB_OK, PUB_REVIEW } PubOutcome;
@@ -357,6 +410,19 @@ publish_done(GObject *src, GAsyncResult *res, gpointer data)
   Dialog *d = data;
   GError *err = NULL;
   gssize outcome = g_task_propagate_int(G_TASK(res), &err);
+  if (g_error_matches(err, NS_ERROR, NS_ERROR_QUEUED)) {
+    /* Held by the session relay, still being delivered: not a failure to
+     * retry (that would post it twice), not a confirmed publish either. */
+    d->state = STATE_DONE;
+    d->exit_code = 5;
+    set_busy(d, FALSE);
+    set_status(d, err->message, FALSE);
+    g_clear_error(&err);
+    gtk_button_set_label(d->publish, "Done");
+    gtk_widget_remove_css_class(GTK_WIDGET(d->publish), "suggested-action");
+    update_publish_sensitivity(d);
+    return;
+  }
   if (err != NULL) {
     d->state = STATE_READY;
     set_busy(d, FALSE);
@@ -585,6 +651,17 @@ build_window(Dialog *d, const GError *load_error)
   }
   g_signal_connect(d->to_row, "apply", G_CALLBACK(on_to_apply), d);
   adw_preferences_group_add(ADW_PREFERENCES_GROUP(post), GTK_WIDGET(d->to_row));
+  d->private_row = ADW_SWITCH_ROW(adw_switch_row_new());
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(d->private_row),
+                                "Private message (NIP-17)");
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(d->private_row),
+                              "Only the recipient can read it: encrypted to their npub, "
+                              "gift-wrapped to their DM inbox relays; files are "
+                              "encrypted before upload");
+  adw_switch_row_set_active(d->private_row, d->share->private_share);
+  g_signal_connect(d->private_row, "notify::active", G_CALLBACK(on_private_toggled), d);
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(post), GTK_WIDGET(d->private_row));
+  update_to_title(d);
   gtk_box_append(GTK_BOX(d->editables), post);
 
   GtkWidget *tbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);

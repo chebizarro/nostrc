@@ -29,6 +29,7 @@ set(NP_WARNING_FLAGS -Wall -Wextra -Werror -Wno-misleading-indentation)
 
 add_library(nostr-publish SHARED
   src/nostr-publish-policy.c
+  src/nostr-publish-session-relay.c
   src/nostr-publish-signer.c
   src/nostr-publish-signer-dbus.c
   src/nostr-publish-transport.c
@@ -78,13 +79,22 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/nostr-publish.pc
 # --- Tests ---
 
 if (BUILD_TESTING)
-  foreach(_np_test IN ITEMS policy publisher)
-    add_executable(test-nostr-publish-${_np_test} tests/test_${_np_test}.c)
-    target_link_libraries(test-nostr-publish-${_np_test} PRIVATE
-      nostr-publish PkgConfig::NP_JSONGLIB)
-    target_compile_options(test-nostr-publish-${_np_test} PRIVATE
+  # Fake org.nostr.SessionRelay1 on a private bus (nostrc-t24q); also
+  # linked by the nostr-dav and nostr-share tests.
+  add_library(nostr-publish-fake-session-relay STATIC tests/np-fake-session-relay.c)
+  target_include_directories(nostr-publish-fake-session-relay PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+  target_link_libraries(nostr-publish-fake-session-relay PUBLIC PkgConfig::NP_GLIB)
+  target_compile_options(nostr-publish-fake-session-relay PRIVATE ${NP_WARNING_FLAGS})
+
+  foreach(_np_test IN ITEMS policy publisher session_relay)
+    string(REPLACE "_" "-" _np_name ${_np_test})
+    add_executable(test-nostr-publish-${_np_name} tests/test_${_np_test}.c)
+    target_link_libraries(test-nostr-publish-${_np_name} PRIVATE
+      nostr-publish nostr-publish-fake-session-relay PkgConfig::NP_JSONGLIB)
+    target_compile_options(test-nostr-publish-${_np_name} PRIVATE
       ${NP_WARNING_FLAGS})
-    add_test(NAME nostr-publish-${_np_test}
-             COMMAND test-nostr-publish-${_np_test})
+    add_test(NAME nostr-publish-${_np_name}
+             COMMAND test-nostr-publish-${_np_name})
   endforeach()
 endif()

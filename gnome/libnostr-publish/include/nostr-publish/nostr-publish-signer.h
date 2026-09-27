@@ -2,9 +2,11 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Abstract interface over `org.nostr.Signer.SignEvent (sss)->s`.
+ * Abstract interface over `org.nostr.Signer.SignEvent (sss)->s` (and,
+ * optionally, `NIP44Encrypt (sss)->s`, for NIP-59 seals: nostrc-k95e).
  * Consumers hand an unsigned event JSON string; the signer returns the
- * fully signed JSON (id, pubkey, sig included). Two implementations:
+ * fully signed JSON (id, pubkey, sig included). The secret key never
+ * leaves the signer daemon. Two implementations:
  *   - the real D-Bus proxy against the session bus
  *     (nostr_publish_signer_new_dbus());
  *   - a vtable-backed double so publishers can be exercised against
@@ -50,6 +52,15 @@ typedef struct {
   /* Optional: release @user_data when the signer is finalised. */
   GDestroyNotify user_data_destroy;
 } NostrPublishSignerVTable;
+
+/* NIP-44 v2 encrypt @plaintext from the signer's key to @peer_pubkey_hex
+ * (64-hex x-only); returns the base64 payload, or NULL with @error set.
+ * Receives the vtable's @user_data. */
+typedef gchar *(*NostrPublishSignerNip44EncryptFunc)(gpointer      user_data,
+                                                     const gchar  *plaintext,
+                                                     const gchar  *peer_pubkey_hex,
+                                                     GCancellable *cancellable,
+                                                     GError      **error);
 
 /**
  * nostr_publish_signer_new_from_vtable:
@@ -102,6 +113,37 @@ gchar *nostr_publish_signer_sign_event_json(NostrPublishSigner *self,
                                             const gchar        *unsigned_json,
                                             GCancellable       *cancellable,
                                             GError            **error);
+
+/**
+ * nostr_publish_signer_set_nip44_encrypt:
+ * @func: (nullable): the NIP-44 operation (a separate setter, not a vtable
+ *   member, so existing positional vtable initialisers keep compiling)
+ *
+ * The D-Bus signer sets this itself; vtable doubles opt in here.
+ */
+NOSTR_PUBLISH_API
+void nostr_publish_signer_set_nip44_encrypt(NostrPublishSigner                *self,
+                                            NostrPublishSignerNip44EncryptFunc func);
+
+/**
+ * nostr_publish_signer_nip44_encrypt:
+ * @plaintext: UTF-8 text (NIP-44 caps it at 65535 bytes)
+ * @peer_pubkey_hex: 64-hex x-only public key of the other party
+ *
+ * NIP-44 v2 encryption by the signer's own key, e.g. the content of a
+ * NIP-59 kind-13 seal. The D-Bus implementation calls
+ * `org.nostr.Signer.NIP44Encrypt(plaintext, peer, identity="")` and may
+ * block for up to 30 s on an approval prompt.
+ *
+ * Returns: (transfer full) (nullable): the base64 NIP-44 payload, or NULL
+ *   with @error set (MALFORMED when the signer has no NIP-44 support).
+ */
+NOSTR_PUBLISH_API
+gchar *nostr_publish_signer_nip44_encrypt(NostrPublishSigner *self,
+                                          const gchar        *plaintext,
+                                          const gchar        *peer_pubkey_hex,
+                                          GCancellable       *cancellable,
+                                          GError            **error);
 
 /**
  * nostr_publish_signer_error_is_permanent:

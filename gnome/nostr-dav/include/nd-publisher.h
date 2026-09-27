@@ -23,6 +23,11 @@
  * libnostr-publish's NostrPublisher; this module keeps the SQLite outbox,
  * tombstones, publish_log, DAV event builders and notifications.
  *
+ * Through a forwarding session relay (nostrc-t24q) the relay's OK only
+ * means "held locally and queued upstream": the row stays `pending`,
+ * records the event id in `upstream_event_id`, and settles on the
+ * relay's upstream report (nd_publisher_record_upstream()).
+ *
  * The worker itself is deterministic and single-threaded for testing:
  * nd_publisher_tick() picks up any pending rows whose `publish_next_ts`
  * is <= now, drives them one step, and returns. Production wraps it in
@@ -32,6 +37,7 @@
 #define ND_PUBLISHER_H
 
 #include <glib.h>
+#include <nostr-publish/nostr-publish-session-relay.h>
 
 #include "nd-config.h"
 #include "nd-relay-transport.h"
@@ -98,7 +104,10 @@ void nd_publisher_configure(NdPublisher      *self,
  * nd_publisher_set_upstream:
  * @mode: nostr_dav_upstream_mode (default SESSION_RELAY_OR_DIRECT)
  * @session_relay_url: (nullable): ND_SESSION_RELAY_URL when the session
- *   relay socket exists, else NULL
+ *   relay socket exists *and the relay forwards upstream*
+ *   (FederationState active / waiting-for-account, nostrc-t24q), else
+ *   NULL. A relay that does not forward must not be passed: its OK would
+ *   keep the event on this machine.
  *
  * Enforces the upstream mode on publishes (nostrc-862u) through
  * nostr_publish_policy_select_targets(). SESSION_RELAY_ONLY never
@@ -106,6 +115,8 @@ void nd_publisher_configure(NdPublisher      *self,
  * wider mode — and with no session relay the publisher is *held*: rows
  * stay pending locally, nd_publisher_tick() dispatches nothing and no
  * failure is reported, until a later call supplies the session relay.
+ * A row staged for the session relay is never sent to it while no
+ * (forwarding) session relay is supplied: it goes to the current targets.
  */
 void nd_publisher_set_upstream(NdPublisher    *self,
                                NdUpstreamMode  mode,
@@ -113,6 +124,45 @@ void nd_publisher_set_upstream(NdPublisher    *self,
 
 /** TRUE while held (see nd_publisher_set_upstream()). */
 gboolean nd_publisher_is_held(NdPublisher *self);
+
+/* ---- Upstream delivery through the session relay (nostrc-t24q) ---- */
+
+/** Asks the session relay for @event_id's upstream state
+ *  (GetEventUpstream); the answer comes back through
+ *  nd_publisher_record_upstream(). */
+typedef void (*NdPublisherUpstreamQueryFunc)(NdPublisher *self,
+                                             const gchar *event_id,
+                                             gpointer     user_data);
+
+void nd_publisher_set_upstream_query_func(NdPublisher                 *self,
+                                          NdPublisherUpstreamQueryFunc func,
+                                          gpointer                     user_data);
+
+/**
+ * nd_publisher_record_upstream:
+ * @update: an UpstreamStatusChanged signal or GetEventUpstream reply
+ *
+ * Settles the row awaiting @update->event_id: forwarded / partial ->
+ * `published`; failed / skipped / unknown (never queued, or pruned) ->
+ * `failed_permanent` with one notification; superseded / cancelled ->
+ * `superseded` (tombstones: `published`); new / pending / unroutable
+ * leave it waiting. Per-relay transitions are written to publish_log.
+ * Updates for ids no row awaits are ignored.
+ */
+void nd_publisher_record_upstream(NdPublisher                     *self,
+                                  const NostrPublishForwardUpdate *update);
+
+/** Queries (through the query function) every row awaiting an upstream
+ *  verdict: after start-up or when the session relay (re)appears, since
+ *  signals sent while nobody listened are lost. */
+void nd_publisher_resync_upstream(NdPublisher *self);
+
+/** Returns every row awaiting an upstream verdict to plain `pending`, to
+ *  be published to the current targets: the session relay stopped
+ *  forwarding and the mode allows direct publishing. The signed event is
+ *  unchanged, so a late upstream copy is a harmless duplicate.
+ *  Returns: the number of rows released. */
+guint nd_publisher_release_upstream(NdPublisher *self);
 
 void nd_publisher_set_notify_callback(NdPublisher              *self,
                                       NdPublisherNotifyCallback cb,

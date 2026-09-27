@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: MIT
  *
- *   nostr-share [--kind N] [--to npub|host'group] [--title T]
+ *   nostr-share [--kind N] [--to npub|host'group [--private]] [--title T]
  *               [--dry-run] [--no-ui] [--keep-metadata]
  *               FILE… | -t TEXT | URL…
  *
@@ -11,7 +11,9 @@
  * share happens on the command line.
  *
  * Exit status: 0 ok, 1 usage, 2 bad input / metadata refusal,
- *              3 no signer, 4 upload / publish / nostr-dav failure.
+ *              3 no signer, 4 upload / publish / nostr-dav failure,
+ *              5 queued in the session relay, upstream delivery not
+ *                confirmed yet (it keeps delivering; do not re-share).
  */
 #include "ns-share.h"
 #ifdef NS_HAVE_UI
@@ -39,6 +41,7 @@ exit_code_for(const GError *e)
   case NS_ERROR_UPLOAD:
   case NS_ERROR_PUBLISH:
   case NS_ERROR_DAV:        return 4;
+  case NS_ERROR_QUEUED:     return 5;
   }
   return 1;
 }
@@ -60,9 +63,14 @@ print_progress(const gchar *msg, gpointer user_data)
 static void
 print_summary(NsShare *share)
 {
-  if (share->to.type == NS_RECIPIENT_MENTION)
+  if (share->private_share)
+    g_printerr("note: PRIVATE to %s (NIP-17): relays see only a kind-1059 gift wrap "
+               "from a throwaway key; files are uploaded AES-256-GCM encrypted (the "
+               "Blossom server sees their size, and that your key uploaded them)\n",
+               share->to.npub);
+  else if (share->to.type == NS_RECIPIENT_MENTION)
     g_printerr("note: this is a PUBLIC post mentioning %s — anyone can read "
-               "it; it is not a private message\n", share->to.npub);
+               "it; add --private to send it privately\n", share->to.npub);
   if (share->pubkey_hex != NULL || share->to.type == NS_RECIPIENT_GROUP) {
     g_autofree gchar *targets = ns_share_describe_targets(share);
     g_printerr("targets: %s\n", targets);
@@ -134,7 +142,12 @@ run_dry(NsShare *share)
 
   g_autofree gchar *out = ns_share_preview_json(share, TRUE);
   g_print("%s", out);
-  g_printerr("dry run: nothing was uploaded, published or staged\n");
+  if (share->private_share)
+    g_printerr("dry run: private posts are shown as the unsigned rumor the "
+               "recipient would read; nothing was encrypted by the signer, "
+               "uploaded or sent\n");
+  else
+    g_printerr("dry run: nothing was uploaded, published or staged\n");
   return 0;
 }
 
@@ -156,10 +169,13 @@ run_cli(NsShare *share)
   print_summary(share);
   gboolean changed = FALSE;
   if (!ns_share_upload(share, &changed, print_progress, NULL, &err) ||
-      !ns_share_build(share, &err) ||
-      !ns_share_publish(share, print_progress, NULL, &err)) {
+      !ns_share_build(share, &err))
     return fail(err);
-  }
+  gboolean published = ns_share_publish(share, print_progress, NULL, &err);
+  /* Queued posts were signed and handed off: print them like published
+   * ones, then exit 5 with the explanation. */
+  if (!published && !g_error_matches(err, NS_ERROR, NS_ERROR_QUEUED))
+    return fail(err);
   for (guint i = 0; i < share->posts->len; i++) {
     NsPost *p = g_ptr_array_index(share->posts, i);
     if (p->signed_json != NULL)
@@ -167,7 +183,7 @@ run_cli(NsShare *share)
     if (p->result != NULL)
       g_printerr("%s\n", p->result);
   }
-  return 0;
+  return published ? 0 : fail(err);
 }
 
 static gboolean
@@ -198,11 +214,16 @@ main(int argc, char **argv)
   gchar *to = NULL, *title = NULL;
   gchar **texts = NULL, **rest = NULL;
   gboolean dry_run = FALSE, no_ui = FALSE, keep_metadata = FALSE, version = FALSE;
+  gboolean private_share = FALSE;
   const GOptionEntry entries[] = {
     { "kind", 'k', 0, G_OPTION_ARG_INT, &kind,
       "Event kind (1, 1063, 30023, 30617); default depends on the input", "N" },
     { "to", 0, 0, G_OPTION_ARG_STRING, &to,
-      "Public mention (npub/hex) or NIP-29 group (host'group-id)", "WHO" },
+      "Public mention (npub/hex) or NIP-29 group (host'group-id); with --private, "
+      "the one recipient", "WHO" },
+    { "private", 0, 0, G_OPTION_ARG_NONE, &private_share,
+      "Send privately to --to (NIP-17): encrypted, gift-wrapped to their DM inbox "
+      "relays; files are encrypted before upload", NULL },
     { "text", 't', 0, G_OPTION_ARG_STRING_ARRAY, &texts,
       "Text to share (repeatable; '-' reads stdin); with files it is the caption",
       "TEXT" },
@@ -257,6 +278,7 @@ main(int argc, char **argv)
       .to            = to,
       .title         = title,
       .keep_metadata = keep_metadata || cfg->keep_metadata,
+      .private_share = private_share,
       .texts         = (const gchar *const *)texts,
       .args          = (const gchar *const *)rest,
     };

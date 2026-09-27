@@ -58,7 +58,7 @@ NsConfig *
 ns_config_load(GError **error)
 {
   NsConfig *cfg = g_new0(NsConfig, 1);
-  cfg->upstream         = NS_UPSTREAM_SESSION_RELAY_AND_DIRECT;
+  cfg->upstream         = NS_UPSTREAM_SESSION_RELAY_OR_DIRECT;   /* nostrc-t24q */
   cfg->max_upload_bytes = (guint64)NS_DEFAULT_MAX_UPLOAD_MIB * 1024u * 1024u;
   cfg->ok_wait_sec      = NS_DEFAULT_OK_WAIT_SEC;
   cfg->query_timeout_ms = NS_DEFAULT_QUERY_TIMEOUT_MS;
@@ -123,6 +123,20 @@ ns_config_load(GError **error)
       g_set_error(error, NS_ERROR, NS_ERROR_BAD_INPUT,
                   "%s: keep_metadata must be true or false", cfg->config_path);
       g_error_free(b);
+      ns_config_free(cfg);
+      return NULL;
+    }
+  }
+  g_autofree gchar *blob_auth = g_key_file_get_string(kf, NS_CONFIG_GROUP,
+                                                      "private_blob_auth", NULL);
+  if (blob_auth != NULL) {
+    g_strstrip(blob_auth);
+    if (g_str_equal(blob_auth, "throwaway_only")) {
+      cfg->private_blob_throwaway_only = TRUE;
+    } else if (!g_str_equal(blob_auth, "throwaway_then_account")) {
+      g_set_error(error, NS_ERROR, NS_ERROR_BAD_INPUT,
+                  "%s: private_blob_auth must be throwaway_then_account or "
+                  "throwaway_only", cfg->config_path);
       ns_config_free(cfg);
       return NULL;
     }
