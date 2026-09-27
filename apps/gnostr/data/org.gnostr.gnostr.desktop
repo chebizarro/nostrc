@@ -13,8 +13,16 @@ StartupWMClass=gnostr
 # which resolves the event kind and routes to the registered handler
 # (nostrc-2thp / nostrc-1v65). GNostr declares the kinds it renders instead
 # of claiming the scheme, so exactly one .desktop file owns nostr:.
+# The numbers are the kinds GNostr opens in a dedicated view (profile 0;
+# thread 1, 6, 16, 1111; DM inbox 14, 1059; article reader 30023); they
+# must match src/util/gnostr-nostr-target.c (tests/test_nostr_target.c).
 # `*` marks GNostr as a generic viewer: the dispatcher's fallback for kinds
-# no installed app declares and for links whose kind cannot be resolved.
+# no installed app declares and for links whose kind cannot be resolved;
+# those open as a single event in the thread view.
+# While GNostr runs it also owns the bus name org.gnostr.gnostr (this
+# desktop id) and implements org.nostr.Handler1 at /org/gnostr/gnostr, so
+# the dispatcher can hand it an event directly. Its GApplication id stays
+# org.gnostr.Client.
 # See gnome/nostr-dispatcher/README.md for the X-Nostr-Kinds format.
-X-Nostr-Kinds=0;1;6;7;14;16;20;64;1059;1068;2003;9041;9735;9802;30023;30311;30402;30818;31922;31923;34550;*;
+X-Nostr-Kinds=0;1;6;14;16;1059;1111;30023;*;
 X-GNOME-UsesNotifications=true

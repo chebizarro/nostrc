@@ -869,6 +869,27 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "profile;validation;unit;gnostr")
 
+  # nostr: link routing + org.nostr.Handler1 (nostrc-prqu.3). Headless:
+  # private GTestDBus bus; checks X-Nostr-Kinds= against the routing table.
+  add_executable(gnostr-test-nostr-target
+    tests/test_nostr_target.c
+    src/util/gnostr-nostr-target.c
+    src/ipc/gnostr-handler1.c)
+  target_compile_features(gnostr-test-nostr-target PRIVATE c_std_11)
+  target_include_directories(gnostr-test-nostr-target PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include
+    ${PROJECT_ROOT}/libnostr/include)
+  target_compile_definitions(gnostr-test-nostr-target PRIVATE
+    GNOSTR_DESKTOP_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/org.gnostr.gnostr.desktop")
+  target_link_libraries(gnostr-test-nostr-target PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO nostr_gobject nostr_json)
+  _gnostr_apply_sanitizers(gnostr-test-nostr-target)
+  add_test(NAME gnostr-test-nostr-target COMMAND gnostr-test-nostr-target)
+  set_tests_properties(gnostr-test-nostr-target PROPERTIES
+    TIMEOUT 30
+    LABELS "nip21;dbus;unit;gnostr")
+
   add_executable(gnostr-test-profile-cache-privacy
     tests/test_profile_cache_privacy.c
     src/model/gn-profile-list-model.c)

@@ -22,6 +22,7 @@
 #include "ipc/gnostr-signer-bridge-install.h"
 #include <go.h>          /* go(), go_fiber_compat() */
 #include "search-provider/gnostr-shell-search-provider.h"
+#include "ipc/gnostr-handler1.h"
 /* nostrc-deferred-free: Fiber scheduler removed — go_fiber_compat() is reverted
  * to OS threads (see libgo/src/go.c), so the fiber scheduler was creating idle
  * worker threads for nothing. Removing eliminates unnecessary thread contention. */
@@ -31,6 +32,9 @@ static GnostrTrayIcon *g_tray_icon = NULL;
 
 /* nostrc-sl86: GNOME Shell SearchProvider2 registration */
 static guint g_search_provider_id = 0;
+
+/* nostrc-prqu.3: org.nostr.Handler1 on the org.gnostr.gnostr alias name */
+static GnostrHandler1 *g_handler1 = NULL;
 
 /* nostrc-lx25: Relay change handler for sync service */
 static gulong s_relay_change_for_sync = 0;
@@ -181,6 +185,65 @@ static void on_activate(GApplication *app, gpointer user_data) {
   }
 }
 
+/* The main window, created (and presented) if there is none yet. */
+static GnostrMainWindow *ensure_main_window(GApplication *app) {
+  on_activate(app, NULL);
+  for (GList *l = gtk_application_get_windows(GTK_APPLICATION(app)); l; l = l->next) {
+    if (GNOSTR_IS_MAIN_WINDOW(l->data))
+      return GNOSTR_MAIN_WINDOW(l->data);
+  }
+  return NULL;
+}
+
+/* nostrc-prqu.3: `gnostr nostr:…` — nostr-dispatcher launches GNostr with
+ * one canonical NIP-21 URI (Exec=gnostr %U). A second launch is forwarded
+ * here by GApplication to the running instance. */
+static void on_open(GApplication *app, GFile **files, gint n_files,
+                    const gchar *hint, gpointer user_data) {
+  (void)hint; (void)user_data;
+  GnostrMainWindow *win = ensure_main_window(app);
+  if (!win)
+    return;
+  for (gint i = 0; i < n_files; i++) {
+    g_autofree char *uri = g_file_get_uri(files[i]);
+    gnostr_main_window_open_nostr_uri(win, uri);
+  }
+}
+
+static gboolean on_handler1_open_event(guint kind, const char *event_json,
+                                       const char *const *relays, gpointer user_data,
+                                       GError **error) {
+  GApplication *app = G_APPLICATION(user_data);
+  GnostrMainWindow *win = ensure_main_window(app);
+  if (!win) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED, "No window");
+    return FALSE;
+  }
+  return gnostr_main_window_open_nostr_event(win, kind, event_json, relays, error);
+}
+
+static gboolean on_initial_activate_idle(gpointer user_data);
+
+/* Runs in the primary instance only. */
+static void on_startup(GApplication *app, gpointer user_data) {
+  (void)user_data;
+#ifdef __APPLE__
+  /* Queued here, not before g_application_run(): a second `gnostr …` that
+   * only forwards to the running instance never initializes GTK, and
+   * creating a window there crashed on exit (seen with forwarded nostr:
+   * links). */
+  g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, on_initial_activate_idle,
+                  g_object_ref(app), (GDestroyNotify)g_object_unref);
+#endif
+  GDBusConnection *conn = g_application_get_dbus_connection(app);
+  if (!conn || g_handler1)
+    return;
+  g_autoptr(GError) error = NULL;
+  g_handler1 = gnostr_handler1_export(conn, on_handler1_open_event, app, &error);
+  if (!g_handler1)
+    g_warning("Handler1: not exported: %s", error ? error->message : "unknown");
+}
+
 static gboolean on_initial_activate_idle(gpointer user_data) {
   GApplication *app = G_APPLICATION(user_data);
   on_activate(app, NULL);
@@ -216,6 +279,8 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
 
   /* Clean up tray icon */
   g_clear_object(&g_tray_icon);
+
+  g_clear_pointer(&g_handler1, gnostr_handler1_unexport);
 
   /* nostrc-sl86: Unregister GNOME Shell search provider */
   if (g_search_provider_id > 0) {
@@ -334,7 +399,11 @@ int main(int argc, char **argv) {
     g_setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/gnostr-no-session-bus", TRUE);
   }
 #endif
-  AdwApplication *app = adw_application_new("org.gnostr.Client", G_APPLICATION_DEFAULT_FLAGS);
+  /* The application id stays org.gnostr.Client (bus name watched by
+   * nostr-notify; app id of the wallet agent's budget); the desktop id
+   * org.gnostr.gnostr is owned as an alias for org.nostr.Handler1 only
+   * (ipc/gnostr-handler1.h). HANDLES_OPEN: nostr: URIs (nostrc-prqu.3). */
+  AdwApplication *app = adw_application_new("org.gnostr.Client", G_APPLICATION_HANDLES_OPEN);
 
   /* Initialize nostr-gobject service schemas before any GSettings access.
    * These must be called after gnostr_ensure_gsettings_schemas() and before
@@ -378,6 +447,8 @@ int main(int argc, char **argv) {
   }
 
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
+  g_signal_connect(app, "open", G_CALLBACK(on_open), NULL);
+  g_signal_connect(app, "startup", G_CALLBACK(on_startup), NULL);
 
   /* Initialize subscription dispatcher BEFORE storage to register callback */
   gn_ndb_dispatcher_init();
@@ -440,12 +511,6 @@ int main(int argc, char **argv) {
 
   g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);
 
-#ifdef __APPLE__
-  g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
-                  on_initial_activate_idle,
-                  g_object_ref(app),
-                  (GDestroyNotify)g_object_unref);
-#endif
   int status = g_application_run(G_APPLICATION(app), argc, argv);
 
   /* nostrc-deferred-free: Fiber shutdown removed (scheduler not started).

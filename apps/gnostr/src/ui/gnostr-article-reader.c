@@ -396,6 +396,9 @@ GtkWidget *gnostr_article_reader_new(void) {
   return g_object_new(GNOSTR_TYPE_ARTICLE_READER, NULL);
 }
 
+static void render_article_json(GnostrArticleReader *self, const char *event_id_hex,
+                                const char *json, gssize json_len);
+
 void gnostr_article_reader_load_event(GnostrArticleReader *self,
                                        const char *event_id_hex) {
   g_return_if_fail(GNOSTR_IS_ARTICLE_READER(self));
@@ -403,6 +406,33 @@ void gnostr_article_reader_load_event(GnostrArticleReader *self,
 
   show_loading(self);
 
+  /* Fetch event JSON from NDB */
+  char *json = NULL;
+  int json_len = 0;
+  if (storage_ndb_get_note_by_id_nontxn(event_id_hex, &json, &json_len) != 0 || !json) {
+    g_clear_pointer(&self->event_id, g_free);
+    self->event_id = g_strdup(event_id_hex);
+    show_error(self, "Article not found in local database");
+    return;
+  }
+  render_article_json(self, event_id_hex, json, json_len);
+  free(json);
+}
+
+/* nostrc-prqu.3: render an event that is not (yet) in the local store, e.g.
+ * one handed over by nostr-dispatcher or fetched for a nostr:naddr link. */
+void gnostr_article_reader_load_event_json(GnostrArticleReader *self,
+                                            const char *event_id_hex,
+                                            const char *event_json) {
+  g_return_if_fail(GNOSTR_IS_ARTICLE_READER(self));
+  g_return_if_fail(event_id_hex != NULL && event_json != NULL);
+
+  show_loading(self);
+  render_article_json(self, event_id_hex, event_json, -1);
+}
+
+static void render_article_json(GnostrArticleReader *self, const char *event_id_hex,
+                                const char *json, gssize json_len) {
   /* Clear previous state */
   g_clear_pointer(&self->event_id, g_free);
   g_clear_pointer(&self->pubkey_hex, g_free);
@@ -410,29 +440,19 @@ void gnostr_article_reader_load_event(GnostrArticleReader *self,
   g_clear_pointer(&self->author_lud16, g_free);
   self->event_id = g_strdup(event_id_hex);
 
-  /* Fetch event JSON from NDB */
-  char *json = NULL;
-  int json_len = 0;
-  if (storage_ndb_get_note_by_id_nontxn(event_id_hex, &json, &json_len) != 0 || !json) {
-    show_error(self, "Article not found in local database");
-    return;
-  }
-
   /* Parse event JSON */
   g_autoptr(JsonParser) parser = json_parser_new();
   GError *error = NULL;
   if (!json_parser_load_from_data(parser, json, json_len, &error)) {
     g_warning("Failed to parse article JSON: %s", error->message);
     g_error_free(error);
-    free(json);
     show_error(self, "Failed to parse article data");
     return;
   }
 
   JsonNode *root = json_parser_get_root(parser);
-  JsonObject *obj = json_node_get_object(root);
+  JsonObject *obj = JSON_NODE_HOLDS_OBJECT(root) ? json_node_get_object(root) : NULL;
   if (!obj) {
-    free(json);
     show_error(self, "Invalid article data");
     return;
   }
@@ -544,7 +564,6 @@ void gnostr_article_reader_load_event(GnostrArticleReader *self,
 
   if (meta)
     gnostr_article_meta_free(meta);
-  free(json);
 
   show_content(self);
   g_debug("[ARTICLE-READER] Loaded article: %s", event_id_hex);
