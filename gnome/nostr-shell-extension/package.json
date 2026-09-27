@@ -1,0 +1,6 @@
+{
+  "//": "Node only: lib/*.js and tests/*.js are ES modules (gjs loads them as ESM regardless and ignores this file). Node < 22.7 does not detect ESM syntax in .js files and would parse them as CommonJS (nostrc-2w9b). Not installed or packed with the extension.",
+  "name": "gnome-shell-extension-nostr-tests",
+  "private": true,
+  "type": "module"
+}
