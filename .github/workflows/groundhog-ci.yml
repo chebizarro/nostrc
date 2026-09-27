@@ -1,0 +1,89 @@
+name: Groundhog opt-in CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+# This is a focused compile/test gate, not messaging-protocol or GNOME manual
+# accessibility acceptance. Groundhog remains opt-in and incomplete.
+jobs:
+  groundhog:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build and display dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
+            libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
+            libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev \
+            libgit2-dev libsqlite3-dev libnsync-dev \
+            desktop-file-utils appstream xvfb xauth
+
+      - name: Configure Groundhog and in-tree adapters
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON -DBUILD_GROUNDHOG=ON \
+            -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=OFF \
+            -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF
+
+      - name: Build Groundhog and every focused test target
+        run: |
+          cmake --build build --parallel 2 --target \
+            groundhog test-groundhog-shell test-groundhog-identity \
+            test-groundhog-account test-groundhog-account-ui \
+            test-groundhog-relay test-groundhog-relay-wire
+
+      - name: Require complete Groundhog test registration
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
+
+          data = json.loads(subprocess.check_output(
+              ['ctest', '--test-dir', 'build', '--show-only=json-v1'], text=True))
+          found = {test['name'] for test in data['tests']}
+          required = {
+              'groundhog-shell', 'groundhog-identity', 'groundhog-account',
+              'groundhog-account-ui', 'groundhog-relay', 'groundhog-relay-wire',
+              'groundhog-version', 'groundhog-launch', 'groundhog-schema',
+              'groundhog-data', 'groundhog-desktop', 'groundhog-metainfo',
+          }
+          missing = required - found
+          print('Groundhog tests:', ', '.join(sorted(found & required)))
+          if missing:
+              raise SystemExit('Missing Groundhog tests: ' + ', '.join(sorted(missing)))
+          PY
+
+      - name: Run all Groundhog tests under a controlled display
+        run: |
+          set -euo pipefail
+          xvfb-run -a -s '-screen 0 1280x800x24' \
+            ctest --test-dir build --output-on-failure \
+              --output-junit "$PWD/build/groundhog-ctest.xml" \
+              -R '^groundhog-' | tee build/groundhog-ctest.log
+          if grep -Eq '\*\*\*Skipped|Not Run' build/groundhog-ctest.log; then
+            echo 'Groundhog test unexpectedly skipped or did not run' >&2
+            exit 1
+          fi
+
+      - name: Upload focused test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: groundhog-ctest-linux
+          path: |
+            build/groundhog-ctest.log
+            build/groundhog-ctest.xml
+            build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
