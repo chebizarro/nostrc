@@ -43,8 +43,10 @@
 #include "nostr/nip19/nip19.h"  /* nostr_nip19_decode_npub */
 
 #include "notify_gnotification.h"
+#include "notify_prefs.h"
 #include "notify_subs.h"
 #include "notify_suppress.h"
+#include "notify_unread.h"
 
 /* Forward decl from notify_subs.c; internal, keeps the main file dumb. */
 void nostr_notify_subs_withdraw_all(void);
@@ -60,6 +62,7 @@ typedef struct {
   char **home_relays;    /* NULL-terminated */
   size_t home_relays_count;
   NostrNotifyUpstreamMode upstream_mode;
+  NostrNotifyPrefs prefs;
 
   /* Grace timer for resuming subscriptions after GNostr vanishes. */
   guint resume_grace_source_id;
@@ -93,6 +96,7 @@ static char *config_path(void) {
 
 static void load_config(NostrNotifyDaemon *d) {
   d->upstream_mode = NSN_UPSTREAM_DIRECT;
+  nostr_notify_prefs_defaults(&d->prefs);
 
   g_autofree char *path = config_path();
   if (!path) return;
@@ -103,6 +107,11 @@ static void load_config(NostrNotifyDaemon *d) {
     g_clear_error(&e);
     return;
   }
+
+  nostr_notify_prefs_load(kf, &d->prefs);
+  g_message("nostr-notify: groups %s, DMs %s, group preview %s, sound %s",
+            d->prefs.notify_groups ? "on" : "off", d->prefs.notify_dms ? "on" : "off",
+            d->prefs.group_preview ? "on" : "off", d->prefs.sound ? "on" : "off");
 
   gchar *mode = g_key_file_get_string(kf, "notify", "upstream_mode", NULL);
   if (mode) {
@@ -221,6 +230,7 @@ static void start_subs(NostrNotifyDaemon *d) {
   strncpy(d->subs_ctx.user_pubkey_hex, d->user_pubkey_hex,
           sizeof(d->subs_ctx.user_pubkey_hex) - 1);
   d->subs_ctx.mode = d->upstream_mode;
+  d->subs_ctx.prefs = d->prefs;
   d->subs_ctx.home_relays = (const char **)d->home_relays;
   d->subs_ctx.home_relays_count = d->home_relays_count;
   d->subs_ctx.guard = &d->guard;
@@ -277,8 +287,10 @@ static void on_gnostr_name_appeared(GDBusConnection *bus, const gchar *name,
     d->resume_grace_source_id = 0;
   }
 
-  /* Withdraw all live notifications; the user is looking at GNostr. */
+  /* Withdraw all live notifications; the user is looking at GNostr, which
+   * shows the conversations: nothing is unread any more. */
   nostr_notify_subs_withdraw_all();
+  nostr_notify_unread_reset();
 
   /* Stop the subscriptions so we don't burn upstream credit while
    * suppressed. New events queued in the connector thread's channel
@@ -313,6 +325,9 @@ static void on_open_in_gnostr(GSimpleAction *action, GVariant *param,
   if (!param || !g_variant_is_of_type(param, G_VARIANT_TYPE_STRING)) return;
   const gchar *uri = g_variant_get_string(param, NULL);
   if (!uri || !*uri) return;
+  /* Opening a direct-message notification reads them (the client shows
+   * the conversations); a group notification leaves the DM count alone. */
+  if (nostr_notify_uri_is_dm(uri)) nostr_notify_unread_reset();
   (void)nostr_notify_activate_deep_link(uri);
 }
 
@@ -346,6 +361,15 @@ static void on_startup(GApplication *app, gpointer user_data) {
   g_action_map_add_action(G_ACTION_MAP(app), G_ACTION(act));
   g_object_unref(act);
 
+  /* Unread DM count for the Shell extension (org.nostr.NotifyDaemon1). */
+  GDBusConnection *own_bus = g_application_get_dbus_connection(app);
+  GError *xerr = NULL;
+  if (!own_bus || !nostr_notify_unread_export(own_bus, &xerr)) {
+    g_warning("nostr-notify: cannot export org.nostr.NotifyDaemon1: %s",
+              xerr ? xerr->message : "no session bus");
+    g_clear_error(&xerr);
+  }
+
   /* Watch GNostr's bus name. `_FLAG_NONE` so we do NOT autostart GNostr;
    * the notifier's job is background observation. */
   d->gnostr_name_watch_id = g_bus_watch_name(
@@ -363,6 +387,7 @@ static void on_shutdown(GApplication *app, gpointer user_data) {
   (void)app;
   NostrNotifyDaemon *d = user_data;
   stop_subs(d);
+  nostr_notify_unread_unexport();
   if (d->gnostr_name_watch_id) {
     g_bus_unwatch_name(d->gnostr_name_watch_id);
     d->gnostr_name_watch_id = 0;

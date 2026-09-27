@@ -31,6 +31,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "notify_prefs.h"
 #include "notify_suppress.h"
 
 /* Forward declarations to avoid pulling in libnostr headers here. */
@@ -55,6 +56,10 @@ typedef struct {
   const char **home_relays;
   size_t home_relays_count;
 
+  /* Presentation keys (nostr-notify.conf [notify]): which subscriptions
+   * are made, group preview on/off, sound. */
+  NostrNotifyPrefs prefs;
+
   /* Guard shared with the daemon main. */
   NostrNotifySuppressGuard *guard;
 
@@ -74,8 +79,9 @@ typedef struct {
 
 /*
  * Start the subscription drivers. Returns TRUE if at least one upstream
- * connection is armed; returns FALSE if no upstream is available (the
- * daemon idles). Non-blocking — spawns internal worker threads.
+ * connection is armed; returns FALSE if no upstream is available or both
+ * notify_groups and notify_dms are off (the daemon idles). Non-blocking —
+ * spawns internal worker threads.
  */
 bool nostr_notify_subs_start(NostrNotifySubsCtx *ctx);
 

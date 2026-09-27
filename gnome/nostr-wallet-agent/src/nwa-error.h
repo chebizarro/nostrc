@@ -25,6 +25,7 @@ typedef enum {
   NWA_ERROR_UNSUPPORTED,
   NWA_ERROR_RATE_LIMITED,
   NWA_ERROR_KEYRING,
+  NWA_ERROR_INTERACTION_REQUIRED, /* *NonInteractive: answering needs the user */
 } NwaError;
 
 #define NWA_ERROR (nwa_error_quark())

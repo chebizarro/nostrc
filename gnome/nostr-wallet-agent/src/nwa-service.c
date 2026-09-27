@@ -24,10 +24,12 @@
 #include "nwa-budget.h"
 #include "nwa-caller.h"
 #include "nwa-error.h"
+#include "nwa-lnurl.h"
 #include "nwa-nwc.h"
 #include "nwa-policy.h"
 #include "nwa-ui.h"
 #include "nwa-uri.h"
+#include "nwa-walletauth.h"
 #include "nwa-dbus-xml.h"
 
 #include <json-glib/json-glib.h>
@@ -42,6 +44,9 @@
 #define NWA_SETTINGS_SCHEMA   "org.nostr.Wallet"
 #define MAX_PROMPTS_PER_APP   2
 #define MAX_PROMPTS_TOTAL     6
+#define WALLET_AUTH_COOLDOWN_S 60 /* after two wallets answered one request */
+
+typedef struct _WaFlow WaFlow;
 
 struct _NwaService {
   GDBusConnection *bus;
@@ -57,6 +62,10 @@ struct _NwaService {
   gboolean         ephemeral; /* NOSTR_WALLET_AGENT_EPHEMERAL: no keyring */
   GCancellable    *cancel;
   GStrv            origin_bridges; /* executables that may assert a web origin */
+  GStrv            settings_apps;  /* executables trusted as the settings app */
+  SoupSession     *soup;           /* LNURL (lazy) */
+  WaFlow          *wa;             /* pending wallet-auth pairing (at most one) */
+  gint64           wa_cooldown_until; /* monotonic µs */
 };
 
 /* ---------------------------------------------------------------------- */
@@ -80,8 +89,9 @@ setting_u64(NwaService *s, const gchar *key, guint64 def)
   return s->settings ? g_settings_get_uint64(s->settings, key) : def;
 }
 
-/* Trusted (settings) apps skip budget confirmations, so the id must be one
- * the caller cannot choose: only sandbox-attested (Flatpak) identities. */
+/* Trusted (settings) apps skip confirmations, so the id must be one the
+ * caller cannot choose: only sandbox-attested (Flatpak) identities listed
+ * in trusted-apps. */
 static gboolean
 is_trusted(NwaService *s, const NwaCaller *c)
 {
@@ -89,6 +99,29 @@ is_trusted(NwaService *s, const NwaCaller *c)
   g_auto(GStrv) trusted = s->settings ? g_settings_get_strv(s->settings, "trusted-apps")
                                       : g_strdupv((gchar *[]){ "org.nostr.Settings", NULL });
   return g_strv_contains((const gchar *const *)trusted, c->app_id);
+}
+
+/* Grant administration (ListApps, GetBudget of others, SetReadAccess for
+ * any app) additionally admits the installed, unsandboxed Nostr Settings,
+ * by the browser bridge's rule: a same-uid process whose /proc/<pid>/exe is
+ * <bindir>/nostr-settings by path and inode (nwa_caller_exe_is; resolved
+ * per call like every identity). It keeps sandboxed apps out, not malware
+ * running as the user (which could edit budgets.json). Spending limits stay
+ * with is_trusted(): a budget raise from the Settings binary is confirmed. */
+static gboolean
+is_grant_admin(NwaService *s, const NwaCaller *c)
+{
+  if (!c->app_id || c->kind == NWA_CALLER_SELF) return FALSE;
+  return is_trusted(s, c) || nwa_caller_exe_is(c, (const gchar *const *)s->settings_apps);
+}
+
+/* Grants or limits changed (never spend): settings UIs re-list. Carries no
+ * data: signals reach every session-bus client. */
+static void
+emit_apps_changed(NwaService *s)
+{
+  g_dbus_connection_emit_signal(s->bus, NULL, NWA_OBJECT_PATH, NWA_INTERFACE, "AppsChanged",
+                                NULL, NULL);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -153,6 +186,7 @@ typedef struct {
   gchar                 *prompt_key;
 
   gboolean               via_link; /* OpenUri / --open: always prompt */
+  gboolean               non_interactive; /* *NonInteractive: never prompt */
   gchar                 *origin;   /* *For methods: web origin to act for */
 
   /* PayInvoice */
@@ -168,9 +202,10 @@ typedef struct {
   gchar     *nwc_uri;
   gchar     *pair_label;
 
-  /* Budget */
+  /* Budget / read access */
   gchar     *target_app;
   guint64    new_limit;
+  gboolean   new_allow_read;
 } Call;
 
 static void
@@ -718,7 +753,33 @@ execute(Call *c)
     /* A spending limit is not a read grant (balance/history are asked for
      * separately). */
     nwa_budget_store_set_limit(s->budgets, c->target_app, c->new_limit);
+    emit_apps_changed(s);
     call_return(c, NULL, NULL);
+  } else if (g_str_equal(m, "SetReadAccess")) {
+    NwaBudgetInfo before;
+    nwa_budget_store_get(s->budgets, c->target_app, &before);
+    if (before.known && !before.allow_read == !c->new_allow_read) {
+      call_return(c, NULL, NULL); /* no change: no store write, no signal */
+      return;
+    }
+    nwa_budget_store_set_allow_read(s->budgets, c->target_app, c->new_allow_read);
+    emit_apps_changed(s);
+    call_return(c, NULL, NULL);
+  } else if (g_str_equal(m, "ListApps")) {
+    GVariantBuilder b;
+    g_variant_builder_init(&b, G_VARIANT_TYPE("a{sa{sv}}"));
+    g_auto(GStrv) ids = nwa_budget_store_list_apps(s->budgets);
+    for (guint i = 0; ids[i]; i++) {
+      NwaBudgetInfo bi;
+      nwa_budget_store_get(s->budgets, ids[i], &bi);
+      GVariantBuilder a;
+      g_variant_builder_init(&a, G_VARIANT_TYPE_VARDICT);
+      g_variant_builder_add(&a, "{sv}", "limit_msat_per_day", g_variant_new_uint64(bi.limit_msat_per_day));
+      g_variant_builder_add(&a, "{sv}", "spent_today_msat", g_variant_new_uint64(bi.spent_today_msat));
+      g_variant_builder_add(&a, "{sv}", "allow_read", g_variant_new_boolean(bi.allow_read));
+      g_variant_builder_add(&b, "{sa{sv}}", ids[i], &a);
+    }
+    call_return(c, g_variant_new("(a{sa{sv}})", &b), NULL);
   } else {
     CALL_FAIL(c, NWA_ERROR_FAILED, "unknown method %s", m);
   }
@@ -750,8 +811,10 @@ on_payment_answer(gboolean approved, gboolean remember, guint64 limit_msat, gpoi
     return;
   }
   /* "Always allow up to N/day" persists exactly that limit, nothing else. */
-  if (remember && c->caller->app_id && c->caller->kind != NWA_CALLER_SELF && !c->via_link)
+  if (remember && c->caller->app_id && c->caller->kind != NWA_CALLER_SELF && !c->via_link) {
     nwa_budget_store_set_limit(c->svc->budgets, c->caller->app_id, limit_msat);
+    emit_apps_changed(c->svc);
+  }
   c->user_approved = TRUE;
   execute(c);
 }
@@ -765,8 +828,10 @@ on_confirm_answer(gboolean accepted, gboolean remember, gpointer data)
     return;
   }
   if (remember && (c->op == NWA_OP_READ || c->op == NWA_OP_RECEIVE) &&
-      c->caller->app_id && c->caller->kind != NWA_CALLER_SELF && !c->via_link)
+      c->caller->app_id && c->caller->kind != NWA_CALLER_SELF && !c->via_link) {
     nwa_budget_store_set_allow_read(c->svc->budgets, c->caller->app_id, TRUE);
+    emit_apps_changed(c->svc);
+  }
   c->user_approved = TRUE;
   execute(c);
 }
@@ -803,6 +868,8 @@ show_prompt(Call *c, gboolean over_budget)
       .app_kind = nwa_caller_kind_to_string(c->caller->kind),
       .app_attested = c->caller->attested,
       .can_remember = c->caller->app_id != NULL && c->caller->kind != NWA_CALLER_SELF && !c->via_link,
+      .is_site = c->caller->kind == NWA_CALLER_WEB_ORIGIN,
+      .via = c->caller->via,
       .via_link = c->via_link,
       .amount_msat = c->amount_msat,
       .description = c->inv11.description,
@@ -854,6 +921,15 @@ show_prompt(Call *c, gboolean over_budget)
       body = g_strdup_printf("%s wants to disconnect your Lightning wallet. Applications "
                              "will no longer be able to pay or receive.", who);
       break;
+    case NWA_OP_READ_GRANT:
+      if (c->caller->app_id && g_strcmp0(c->caller->app_id, c->target_app) == 0)
+        body = g_strdup_printf("%s wants to see your wallet balance and transaction history, "
+                               "and create invoices, without asking you each time.", who);
+      else
+        body = g_strdup_printf("%s wants to let %s see your wallet balance and transaction "
+                               "history, and create invoices, without asking you each time.",
+                               who, c->target_app);
+      break;
     case NWA_OP_BUDGET_CHANGE: {
       g_autofree gchar *amt = nwa_ui_format_msat(c->new_limit);
       title = "Payment Budget";
@@ -883,9 +959,11 @@ run_policy(Call *c)
     .same_uid = c->caller->same_uid,
     .caller_identified = c->caller->app_id != NULL,
     .caller_trusted = is_trusted(s, c->caller),
+    .caller_grant_admin = is_grant_admin(s, c->caller),
     .is_self = c->caller->kind == NWA_CALLER_SELF || c->via_link,
     .paired = s->client != NULL,
-    .ui_available = nwa_ui_available(),
+    /* *NonInteractive never shows anything: do not even initialise GTK. */
+    .ui_available = !c->non_interactive && nwa_ui_available(),
     .always_confirm = setting_bool(s, "always-confirm-payments", FALSE),
     .allow_read = bi.allow_read,
     .amount_msat = c->charge_msat,
@@ -894,6 +972,13 @@ run_policy(Call *c)
     .max_auto_pay_msat = setting_u64(s, "max-auto-pay-msat", 0),
   };
   NwaDecision d = nwa_policy_decide(&in);
+
+  if (c->non_interactive && nwa_policy_needs_user(d)) {
+    CALL_FAIL(c, NWA_ERROR_INTERACTION_REQUIRED,
+              "reading the wallet needs the user's approval: allow it in Nostr Settings "
+              "(Wallet) or call %s", c->method);
+    return;
+  }
 
   if (c->op == NWA_OP_PAY && d.over_budget) {
     g_dbus_connection_emit_signal(s->bus, NULL, NWA_OBJECT_PATH, NWA_INTERFACE, "BudgetExceeded",
@@ -921,6 +1006,270 @@ run_policy(Call *c)
       return;
     }
   }
+}
+
+/* ---------------------------------------------------------------------- */
+/* wallet-auth pairing: agent-generated NWC client keys (nostrc-prqu.12)   */
+/*
+ * BeginWalletAuth -> NwaWalletAuth (nwa-walletauth.c) waits for the wallet's
+ * answer -> the connection is STAGED (a client on the new key, not yet the
+ * active one) and verified with a get_info round trip -> the Connect dialog,
+ * always (the `state` echo is in the URI, so it cannot authenticate the
+ * wallet against someone who saw the link; the user compares the key with
+ * their wallet app) -> keyring + install. Anything else leaves the current
+ * pairing untouched. Outcome: WalletAuthFinished(b, s), no keys or URIs.
+ */
+
+struct _WaFlow {
+  gint           ref;
+  NwaService    *svc;
+  NwaWalletAuth *auth;
+  NwaCaller     *owner;        /* who called BeginWalletAuth */
+  NwaNwcClient  *staged;
+  gchar         *nwc_uri;      /* contains our secret: wiped */
+  gchar         *wallet_pk, *relay;
+  gboolean       confirmed;    /* the wallet echoed our state */
+  gboolean       committing;   /* user accepted; being saved: not supersedable */
+  gboolean       over;
+};
+
+static WaFlow *
+wa_ref(WaFlow *f)
+{
+  f->ref++;
+  return f;
+}
+
+static void
+wa_unref(WaFlow *f)
+{
+  if (--f->ref > 0) return;
+  if (f->auth) {
+    g_signal_handlers_disconnect_by_data(f->auth, f);
+    nwa_wallet_auth_stop(f->auth);
+    g_object_unref(f->auth);
+  }
+  if (f->staged) {
+    nwa_nwc_client_stop(f->staged);
+    g_object_unref(f->staged);
+  }
+  if (f->nwc_uri) {
+    memset(f->nwc_uri, 0, strlen(f->nwc_uri));
+    g_free(f->nwc_uri);
+  }
+  nwa_caller_free(f->owner);
+  g_free(f->wallet_pk);
+  g_free(f->relay);
+  g_free(f);
+}
+
+static void
+wa_finish(WaFlow *f, gboolean ok, const gchar *message)
+{
+  if (f->over) return;
+  f->over = TRUE;
+  NwaService *s = f->svc;
+  g_message("nostr-wallet-agent: wallet connection request %s: %s", ok ? "completed" : "ended", message);
+  g_dbus_connection_emit_signal(s->bus, NULL, NWA_OBJECT_PATH, NWA_INTERFACE, "WalletAuthFinished",
+                                g_variant_new("(bs)", ok, message), NULL);
+  if (s->wa == f) {
+    s->wa = NULL;
+    wa_unref(f); /* the service's reference */
+  }
+}
+
+static void
+on_wa_saved(GObject *src, GAsyncResult *res, gpointer data)
+{
+  (void)src;
+  WaFlow *f = data;
+  GError *err = NULL;
+  g_task_propagate_pointer(G_TASK(res), &err);
+  if (!f->over) {
+    if (err) {
+      g_autofree gchar *m = g_strdup_printf("could not store the pairing in the keyring: %s", err->message);
+      wa_finish(f, FALSE, m);
+    } else {
+      g_autofree gchar *m = g_strdup_printf("connected to wallet %.12s…", f->wallet_pk);
+      install_client(f->svc, g_steal_pointer(&f->staged));
+      wa_finish(f, TRUE, m);
+    }
+  }
+  g_clear_error(&err);
+  wa_unref(f);
+}
+
+static void
+on_wa_answer(gboolean accepted, gboolean remember, gpointer data)
+{
+  (void)remember;
+  WaFlow *f = data;
+  if (!f->over) {
+    if (!accepted) {
+      wa_finish(f, FALSE, "declined");
+    } else {
+      f->committing = TRUE;
+      KeyringJob *j = g_new0(KeyringJob, 1);
+      j->op = KR_SAVE;
+      j->uri = g_strdup(f->nwc_uri);
+      j->wallet_pk = g_strdup(f->wallet_pk);
+      j->client_pk = g_strdup(nwa_nwc_client_get_client_pubkey(f->staged));
+      j->relay = g_strdup(f->relay);
+      keyring_run(f->svc, j, on_wa_saved, wa_ref(f));
+    }
+  }
+  wa_unref(f);
+}
+
+static gchar *caller_phrase(const NwaCaller *c, gboolean via_link);
+
+static void
+on_wa_info(GObject *src, GAsyncResult *res, gpointer data)
+{
+  WaFlow *f = data;
+  GError *err = NULL;
+  g_autoptr(JsonNode) r = nwa_nwc_client_request_finish(NWA_NWC_CLIENT(src), res, &err);
+  if (f->over) {
+    g_clear_error(&err);
+    wa_unref(f);
+    return;
+  }
+  if (!r) {
+    g_autofree gchar *m = g_strdup_printf("the wallet did not answer a request on the new connection (%s); "
+                                          "nothing was connected", err->message);
+    g_error_free(err);
+    wa_finish(f, FALSE, m);
+    wa_unref(f);
+    return;
+  }
+  JsonObject *o = JSON_NODE_HOLDS_OBJECT(r) ? json_node_get_object(r) : NULL;
+  const gchar *alias = o ? json_object_get_string_member_with_default(o, "alias", NULL) : NULL;
+  const gchar *lud16 = o ? json_object_get_string_member_with_default(o, "lud16", NULL) : NULL;
+  NwaService *s = f->svc;
+  g_autofree gchar *who = caller_phrase(f->owner, FALSE);
+  g_autofree gchar *cur = NULL;
+  if (s->client) {
+    const gchar *l = nwa_nwc_client_get_lud16(s->client);
+    cur = g_strdup_printf("\n\nThis replaces the wallet currently connected (%s).",
+                          l ? l : nwa_nwc_client_get_wallet_pubkey(s->client));
+  }
+  g_autofree gchar *name = alias && *alias ? g_strdup_printf("%s%s%s", alias, lud16 ? " · " : "", lud16 ? lud16 : "")
+                                           : g_strdup(lud16 && *lud16 ? lud16 : "(the wallet gave no name)");
+  g_autofree gchar *body = g_strdup_printf(
+    "%s asked your wallet app for a new connection, and a wallet answered.\n\n"
+    "Wallet: %s\nWallet key: %.12s…\nRelay: %s\nEncryption: %s\n\n%s\n\n"
+    "The connection key was created on this computer and never left it: unlike a pasted "
+    "connection link, nobody else holds it.%s",
+    who, name, f->wallet_pk, f->relay, nwa_nwc_client_get_encryption(f->staged),
+    f->confirmed ? "Check that your wallet app now lists this connection, with the same wallet key."
+                 : "This wallet did not prove that it answered this particular request. Only connect "
+                   "if your wallet app shows the same wallet key.",
+    cur ? cur : "");
+  nwa_ui_confirm("Connect Wallet", body, "_Connect", FALSE, NULL,
+                 setting_uint(s, "approval-timeout", 120), on_wa_answer, wa_ref(f));
+  wa_unref(f);
+}
+
+static void
+on_wa_authorized(NwaWalletAuth *auth, const gchar *wallet_pk, const gchar *relay, gboolean confirmed,
+                 gpointer data)
+{
+  WaFlow *f = data;
+  if (f->over) return;
+  f->wallet_pk = g_strdup(wallet_pk);
+  f->relay = g_strdup(relay);
+  f->confirmed = confirmed;
+  f->nwc_uri = nwa_wallet_auth_build_nwc_uri(auth, wallet_pk, relay);
+  GError *err = NULL;
+  f->staged = nwa_nwc_client_new(f->nwc_uri, NULL, NULL, &err);
+  if (!f->staged) {
+    wa_finish(f, FALSE, err->message);
+    g_error_free(err);
+    return;
+  }
+  nwa_nwc_client_set_timeouts(f->staged, 30, 5000);
+  nwa_nwc_client_start(f->staged);
+  nwa_nwc_client_request_async(f->staged, "get_info", NULL, NULL, on_wa_info, wa_ref(f));
+}
+
+static void
+on_wa_failed(NwaWalletAuth *auth, guint why, const gchar *message, gpointer data)
+{
+  (void)auth;
+  WaFlow *f = data;
+  /* Two wallets answering one request means someone else saw the link:
+   * refuse to start over at once, so a racer cannot simply retry. */
+  if (why == NWA_WALLET_AUTH_CONFLICT)
+    f->svc->wa_cooldown_until = g_get_monotonic_time() + WALLET_AUTH_COOLDOWN_S * G_USEC_PER_SEC;
+  wa_finish(f, FALSE, message);
+}
+
+static void
+wa_begin(Call *c)
+{
+  NwaService *s = c->svc;
+  NwaCaller *who = c->caller;
+  if (!who->same_uid) { CALL_FAIL(c, NWA_ERROR_DENIED, "caller belongs to another user"); return; }
+  if (!who->app_id) { CALL_FAIL(c, NWA_ERROR_DENIED, "the calling application could not be identified"); return; }
+  if (!nwa_ui_available()) {
+    CALL_FAIL(c, NWA_ERROR_DENIED, "connecting a wallet needs the user's confirmation, but no display is available");
+    return;
+  }
+  if (g_get_monotonic_time() < s->wa_cooldown_until) {
+    CALL_FAIL(c, NWA_ERROR_RATE_LIMITED, "two wallets answered the last request; try again in a minute");
+    return;
+  }
+  if (s->wa && s->wa->committing) {
+    CALL_FAIL(c, NWA_ERROR_RATE_LIMITED, "a wallet connection is being saved");
+    return;
+  }
+  if (s->wa && g_strcmp0(s->wa->owner->app_id, who->app_id) != 0 && !is_grant_admin(s, who)) {
+    CALL_FAIL(c, NWA_ERROR_RATE_LIMITED, "another application is connecting a wallet");
+    return;
+  }
+
+  GVariant *opts = g_variant_get_child_value(c->params, 0);
+  g_auto(GStrv) relays = NULL;
+  const gchar *name = NULL;
+  if (!g_variant_lookup(opts, "relays", "^as", &relays) || !relays || !relays[0]) {
+    g_strfreev(relays);
+    relays = s->settings ? g_settings_get_strv(s->settings, "wallet-auth-relays")
+                         : g_strdupv((gchar *[]){ "wss://relay.getalby.com/v1", NULL });
+  }
+  g_autofree gchar *default_name = g_strdup_printf("Nostr Wallet (%s)", g_get_host_name());
+  if (!g_variant_lookup(opts, "name", "&s", &name) || !*name) name = default_name;
+  GError *err = NULL;
+  NwaWalletAuth *auth = nwa_wallet_auth_new((const gchar *const *)relays, name, NULL, NULL, &err);
+  g_variant_unref(opts);
+  if (!auth) { call_error(c, err); return; }
+
+  if (s->wa) wa_finish(s->wa, FALSE, "superseded by a new connection request");
+  WaFlow *f = g_new0(WaFlow, 1);
+  f->ref = 1;
+  f->svc = s;
+  f->auth = auth;
+  f->owner = nwa_caller_copy(who);
+  g_signal_connect(auth, "authorized", G_CALLBACK(on_wa_authorized), f);
+  g_signal_connect(auth, "failed", G_CALLBACK(on_wa_failed), f);
+  s->wa = f;
+  nwa_wallet_auth_start(auth);
+  g_message("nostr-wallet-agent: %s asked for a wallet connection by request (client key %.12s…)",
+            who->display_name, nwa_wallet_auth_get_client_pubkey(auth));
+  call_return(c, g_variant_new("(s)", nwa_wallet_auth_get_uri(auth)), NULL);
+}
+
+static void
+wa_cancel(Call *c)
+{
+  NwaService *s = c->svc;
+  if (!s->wa || s->wa->committing) { call_return(c, NULL, NULL); return; }
+  if (!c->caller->same_uid || !c->caller->app_id ||
+      (g_strcmp0(s->wa->owner->app_id, c->caller->app_id) != 0 && !is_grant_admin(s, c->caller))) {
+    CALL_FAIL(c, NWA_ERROR_DENIED, "only the application that started it can cancel this request");
+    return;
+  }
+  wa_finish(s->wa, FALSE, "cancelled");
+  call_return(c, NULL, NULL);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -989,7 +1338,10 @@ resolve_budget_op(Call *c, GError **error)
     c->target_app = g_strdup(own);
   }
   gboolean is_own = own && g_str_equal(own, c->target_app);
-  if (g_str_equal(c->method, "GetBudget")) {
+  if (g_str_equal(c->method, "SetReadAccess")) {
+    c->op = c->new_allow_read ? NWA_OP_READ_GRANT
+                              : is_own ? NWA_OP_READ_REVOKE_OWN : NWA_OP_READ_REVOKE_OTHER;
+  } else if (g_str_equal(c->method, "GetBudget")) {
     c->op = is_own ? NWA_OP_BUDGET_LOWER_OWN /* read own: always allowed */ : NWA_OP_BUDGET_QUERY_OTHER;
   } else {
     NwaBudgetInfo bi;
@@ -1012,6 +1364,8 @@ on_caller(GObject *src, GAsyncResult *res, gpointer data)
   g_debug("nostr-wallet-agent: %s from %s app=%s kind=%s pid=%u exe=%s", c->method, caller->sender,
           caller->app_id ? caller->app_id : "(none)", nwa_caller_kind_to_string(caller->kind),
           caller->pid, caller->exe ? caller->exe : "(none)");
+  if (g_str_equal(c->method, "BeginWalletAuth")) { wa_begin(c); return; }
+  if (g_str_equal(c->method, "CancelWalletAuth")) { wa_cancel(c); return; }
   if (c->origin) {
     if (!nwa_caller_may_assert_origin(caller, (const gchar *const *)c->svc->origin_bridges)) {
       CALL_FAIL(c, NWA_ERROR_DENIED, "only the browser bridge may act for a web origin");
@@ -1027,7 +1381,8 @@ on_caller(GObject *src, GAsyncResult *res, gpointer data)
       return;
     }
   }
-  if (c->target_app || g_str_equal(c->method, "GetBudget") || g_str_equal(c->method, "SetBudget")) {
+  if (c->target_app || g_str_equal(c->method, "GetBudget") || g_str_equal(c->method, "SetBudget") ||
+      g_str_equal(c->method, "SetReadAccess")) {
     if (!resolve_budget_op(c, &err)) { call_error(c, err); return; }
   }
   run_policy(c);
@@ -1066,6 +1421,18 @@ typedef struct {
   gchar      *uri;
 } OpenUriJob;
 
+/* App ids arriving as arguments are opaque keys (reverse-DNS, "exe:…",
+ * "snap.…", web origins): bounded, printable, no control characters. */
+static gboolean
+app_id_arg_ok(const gchar *id)
+{
+  gsize n = strlen(id);
+  if (n == 0 || n > 512 || !g_utf8_validate(id, (gssize)n, NULL)) return FALSE;
+  for (const gchar *p = id; *p; p = g_utf8_next_char(p))
+    if (g_unichar_iscntrl(g_utf8_get_char(p))) return FALSE;
+  return TRUE;
+}
+
 static void on_open_uri_caller(GObject *src, GAsyncResult *res, gpointer data);
 
 static void
@@ -1086,6 +1453,11 @@ handle_method_call(GDBusConnection *bus, const gchar *sender, const gchar *path,
   if (!unwrap_origin_call(c, &err)) {
     call_error(c, err);
     return;
+  }
+  if (g_str_equal(c->method, "GetInfoNonInteractive") ||
+      g_str_equal(c->method, "GetBalanceNonInteractive")) {
+    c->non_interactive = TRUE;
+    c->method[strlen(c->method) - strlen("NonInteractive")] = '\0';
   }
   method = c->method;
   params = c->params;
@@ -1160,6 +1532,20 @@ handle_method_call(GDBusConnection *bus, const gchar *sender, const gchar *path,
     g_variant_get(params, "(&su)", &app, &limit);
     c->target_app = g_strdup(app);
     c->new_limit = limit;
+  } else if (g_str_equal(method, "SetReadAccess")) {
+    const gchar *app;
+    gboolean allow;
+    g_variant_get(params, "(&sb)", &app, &allow);
+    if (*app && !app_id_arg_ok(app)) {
+      g_set_error_literal(&err, NWA_ERROR, NWA_ERROR_INVALID_ARGS, "invalid application id");
+      ok = FALSE;
+    }
+    c->target_app = g_strdup(app);
+    c->new_allow_read = allow;
+  } else if (g_str_equal(method, "ListApps")) {
+    c->op = NWA_OP_BUDGET_QUERY_OTHER; /* every app's record: settings app only */
+  } else if (g_str_equal(method, "BeginWalletAuth") || g_str_equal(method, "CancelWalletAuth")) {
+    /* decided once the caller is identified (wa_begin / wa_cancel) */
   } else {
     g_set_error(&err, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD, "unknown method %s", method);
     ok = FALSE;
@@ -1203,6 +1589,166 @@ static const GDBusInterfaceVTable vtable = {
 /* ---------------------------------------------------------------------- */
 /* scheme handler                                                          */
 
+/* ---- LNURL-pay / Lightning address links (nostrc-prqu.8) ----
+ * target -> payRequest -> the agent's LNURL dialog (amount within the
+ * recipient's range, comment, description) -> callback -> invoice checked
+ * against the approved amount and sha256(metadata) -> PayInvoice with the
+ * dialog as the user's approval (link payments are always confirmed; this
+ * is that confirmation, not an extra one). */
+
+typedef struct {
+  NwaService  *svc;
+  NwaCaller   *caller;
+  gboolean     via_link;
+  gchar       *address;   /* LUD-16 address, NULL for lnurl1… */
+  gchar       *url;       /* the payRequest URL */
+  NwaLnurlPay  pay;
+  guint64      amount_msat;
+} LnurlJob;
+
+static void
+lnurl_job_free(LnurlJob *j)
+{
+  nwa_caller_free(j->caller);
+  g_free(j->address);
+  g_free(j->url);
+  nwa_lnurl_pay_clear(&j->pay);
+  g_free(j);
+}
+
+static void
+lnurl_fail(LnurlJob *j, const gchar *message)
+{
+  g_message("nostr-wallet-agent: LNURL payment failed: %s", message);
+  nwa_ui_show_message("Cannot pay", message, "The payment was not made");
+  lnurl_job_free(j);
+}
+
+static SoupSession *
+lnurl_session(NwaService *s)
+{
+  if (!s->soup)
+    s->soup = soup_session_new_with_options("timeout", 15, "user-agent", "nostr-wallet-agent", NULL);
+  return s->soup;
+}
+
+static void
+on_lnurl_invoice(GObject *src, GAsyncResult *res, gpointer data)
+{
+  (void)src;
+  LnurlJob *j = data;
+  GError *err = NULL;
+  g_autoptr(JsonNode) root = nwa_lnurl_fetch_json_finish(res, &err);
+  if (!root) {
+    lnurl_fail(j, err->message);
+    g_error_free(err);
+    return;
+  }
+  const gchar *pr = json_object_get_string_member_with_default(json_node_get_object(root), "pr", NULL);
+  if (!pr || !*pr) {
+    lnurl_fail(j, "the recipient's server returned no invoice");
+    return;
+  }
+  NwaService *s = j->svc;
+  Call *c = g_new0(Call, 1);
+  c->svc = s;
+  c->caller = g_steal_pointer(&j->caller);
+  c->via_link = j->via_link;
+  c->method = g_strdup("PayInvoice");
+  if (!prepare_pay(c, pr, j->amount_msat, &err) ||
+      !nwa_lnurl_check_invoice(&j->pay, j->amount_msat, &c->inv11, &err)) {
+    lnurl_job_free(j);
+    call_error(c, err);
+    return;
+  }
+  lnurl_job_free(j);
+  if (!s->client) {
+    CALL_FAIL(c, NWA_ERROR_NOT_PAIRED, "no wallet is paired");
+    return;
+  }
+  c->user_approved = TRUE; /* the LNURL dialog was the confirmation */
+  execute(c);
+}
+
+static void
+on_lnurl_answer(gboolean approved, guint64 amount_msat, const gchar *comment, gpointer data)
+{
+  LnurlJob *j = data;
+  if (!approved) {
+    lnurl_job_free(j);
+    return;
+  }
+  if (amount_msat < j->pay.min_msat || amount_msat > j->pay.max_msat) {
+    lnurl_fail(j, "the amount is outside what the recipient accepts");
+    return;
+  }
+  j->amount_msat = amount_msat;
+  g_autofree gchar *cb = nwa_lnurl_callback_url(&j->pay, amount_msat, comment);
+  nwa_lnurl_fetch_json_async(lnurl_session(j->svc), cb, j->svc->cancel, on_lnurl_invoice, j);
+}
+
+static void
+on_lnurl_pay_request(GObject *src, GAsyncResult *res, gpointer data)
+{
+  (void)src;
+  LnurlJob *j = data;
+  GError *err = NULL;
+  g_autoptr(JsonNode) root = nwa_lnurl_fetch_json_finish(res, &err);
+  if (!root || !nwa_lnurl_parse_pay(root, j->url, j->address, &j->pay, &err)) {
+    lnurl_fail(j, err->message);
+    g_error_free(err);
+    return;
+  }
+  if (!j->svc->client) {
+    lnurl_fail(j, "No wallet is connected. Connect one in Nostr Settings first.");
+    return;
+  }
+  g_autofree gchar *who = caller_phrase(j->caller, j->via_link);
+  NwaLnurlPrompt p = {
+    .opener = who,
+    .recipient = j->pay.identifier ? j->pay.identifier : j->address ? j->address : j->pay.domain,
+    .domain = j->pay.domain,
+    .description = j->pay.description,
+    .long_description = j->pay.long_description,
+    .min_msat = j->pay.min_msat,
+    .max_msat = MIN(j->pay.max_msat, (guint64)G_MAXUINT32), /* Wallet1 amounts are u msat */
+    .comment_allowed = j->pay.comment_allowed,
+  };
+  if (p.min_msat > p.max_msat) {
+    lnurl_fail(j, "the recipient's minimum is above what this wallet can pay in one request");
+    return;
+  }
+  j->pay.max_msat = p.max_msat;
+  nwa_ui_prompt_lnurl(&p, setting_uint(j->svc, "approval-timeout", 120), on_lnurl_answer, j);
+}
+
+/* @caller: (transfer full). */
+static void
+lnurl_start(NwaService *s, NwaCaller *caller, const gchar *target, gboolean via_link)
+{
+  LnurlJob *j = g_new0(LnurlJob, 1);
+  j->svc = s;
+  j->caller = caller;
+  j->via_link = via_link;
+  if (strchr(target, '@')) j->address = g_ascii_strdown(target, -1);
+  if (!s->client) {
+    lnurl_fail(j, "No wallet is connected. Connect one in Nostr Settings first.");
+    return;
+  }
+  if (!nwa_ui_available()) {
+    lnurl_fail(j, "paying a Lightning address needs the user's confirmation, but no display is available");
+    return;
+  }
+  GError *err = NULL;
+  j->url = nwa_lnurl_target_url(target, &err);
+  if (!j->url) {
+    lnurl_fail(j, err->message);
+    g_error_free(err);
+    return;
+  }
+  nwa_lnurl_fetch_json_async(lnurl_session(s), j->url, s->cancel, on_lnurl_pay_request, j);
+}
+
 /* @caller: (transfer full). */
 static void
 open_uri_dispatch(NwaService *s, NwaCaller *caller, const gchar *uri, gboolean via_link)
@@ -1242,12 +1788,9 @@ open_uri_dispatch(NwaService *s, NwaCaller *caller, const gchar *uri, gboolean v
       run_policy(c);
       break;
     case NWA_URI_LNURL:
-      /* TODO(nostrc-prqu.8): LNURL-pay / lightning addresses */
-      nwa_ui_show_message("Not supported yet",
-                          "LNURL links and Lightning addresses are not supported yet. "
-                          "Ask the recipient for a Lightning invoice instead.",
-                          "LNURL is not supported yet");
+      c->caller = NULL; /* handed to the LNURL flow */
       call_free(c);
+      lnurl_start(s, caller, u.lnurl, via_link);
       break;
     case NWA_URI_BITCOIN_ONCHAIN: {
       g_autofree gchar *amt = u.amount_msat ? nwa_ui_format_msat(u.amount_msat) : NULL;
@@ -1318,6 +1861,7 @@ nwa_service_new(GDBusConnection *bus, GError **error)
   s->prompts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   s->settings = maybe_settings();
   s->origin_bridges = nwa_caller_origin_bridges();
+  s->settings_apps = nwa_caller_settings_apps();
   const gchar *eph = g_getenv("NOSTR_WALLET_AGENT_EPHEMERAL");
   s->ephemeral = eph && *eph && g_strcmp0(eph, "0") != 0;
 
@@ -1337,6 +1881,25 @@ nwa_service_new(GDBusConnection *bus, GError **error)
   }
   if (s->ephemeral) {
     g_message("nostr-wallet-agent: NOSTR_WALLET_AGENT_EPHEMERAL set; pairing is not persisted");
+#ifdef NWA_ORIGIN_BRIDGE_ENV
+    /* Test builds only (same switch as NOSTR_WALLET_AGENT_ORIGIN_BRIDGES;
+     * packages are built without it): start paired, without the dialog a
+     * headless agent would deny, so CTest can run the real agent against
+     * tests/nwa-fixture-wallet. Ephemeral only: never touches the keyring. */
+    const gchar *test_uri = g_getenv("NOSTR_WALLET_AGENT_TEST_PAIR_URI");
+    if (test_uri && *test_uri) {
+      GError *perr = NULL;
+      NwaNwcClient *client = nwa_nwc_client_new(test_uri, NULL, NULL, &perr);
+      if (client) {
+        g_message("nostr-wallet-agent: test build: paired from NOSTR_WALLET_AGENT_TEST_PAIR_URI "
+                  "(wallet %.16s…)", nwa_nwc_client_get_wallet_pubkey(client));
+        install_client(s, client);
+      } else {
+        g_warning("nostr-wallet-agent: NOSTR_WALLET_AGENT_TEST_PAIR_URI: %s", perr->message);
+        g_error_free(perr);
+      }
+    }
+#endif
   } else {
     KeyringJob *j = g_new0(KeyringJob, 1);
     j->op = KR_LOOKUP;
@@ -1353,16 +1916,22 @@ nwa_service_free(NwaService *s)
 {
   if (!s) return;
   g_cancellable_cancel(s->cancel);
+  if (s->wa) {
+    s->wa->over = TRUE;
+    wa_unref(g_steal_pointer(&s->wa));
+  }
   if (s->reg_id) g_dbus_connection_unregister_object(s->bus, s->reg_id);
   if (s->client) {
     g_signal_handler_disconnect(s->client, s->notify_handler);
     nwa_nwc_client_stop(s->client);
     g_clear_object(&s->client);
   }
+  g_clear_object(&s->soup);
   nwa_budget_store_free(s->budgets);
   g_clear_object(&s->settings);
   g_hash_table_unref(s->prompts);
   g_strfreev(s->origin_bridges);
+  g_strfreev(s->settings_apps);
   g_dbus_node_info_unref(s->node);
   g_object_unref(s->cancel);
   g_object_unref(s->bus);

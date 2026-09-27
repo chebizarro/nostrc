@@ -225,7 +225,6 @@ test_notify_roundtrip(void)
   g_assert_error(e, NSS_CONFIG_ERROR, NSS_CONFIG_ERROR_PARSE);
   g_clear_error(&e);
   nss_notify_conf_clear(&c);
-  g_assert_false(nss_notify_presentation_supported());
 }
 
 /* ── nostr-seal ── */

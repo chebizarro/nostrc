@@ -13,10 +13,13 @@
 //     Off = DisableUnitFiles([socket]) → Reload → StopUnit(service) → StopUnit(socket)
 
 let _ = s => s;
+const plainNgettext = (s, p, n) => (n === 1 ? s : p);
+let ngettext = plainNgettext;
 
-/** Install the extension's gettext function (called from extension.js). */
-export function setTranslator(fn) {
+/** Install the extension's gettext / ngettext (called from extension.js). */
+export function setTranslator(fn, nfn = null) {
     _ = typeof fn === 'function' ? fn : s => s;
+    ngettext = typeof nfn === 'function' ? nfn : plainNgettext;
 }
 
 export const RELAY_SOCKET = 'nostr-session-relay.socket';
@@ -306,11 +309,12 @@ export function relayView(s, locale) {
 // ── Direct messages (nostr-notify) ────────────────────────────────────────
 
 /**
- * org.nostr.NotifyDaemon exports no unread count (only a GApplication with an
- * "open-in-gnostr" action), so the panel shows whether DM notifications are
- * delivered at all — no count is invented. Returns null to hide the row.
+ * The direct-message row: the unread count from org.nostr.NotifyDaemon1 when
+ * the notifier is running and on the bus (`unread`, from lib/dm.js), else
+ * whether DM notifications are delivered at all. Returns null to hide the
+ * row. Counts only — never content or senders.
  */
-export function dmView({available, notify}) {
+export function dmView({available, notify}, unread = null) {
     if (!available || !notify || !notify.loadState || notify.loadState === 'not-found')
         return null;
     if (masked(notify))
@@ -318,6 +322,11 @@ export function dmView({available, notify}) {
     switch (notify.activeState) {
     case 'active':
     case 'reloading':
+        if (Number.isInteger(unread) && unread > 0)
+            return ngettext('%d unread direct message', '%d unread direct messages', unread)
+                .replace('%d', String(unread));
+        if (unread === 0)
+            return _('No unread direct messages');
         return _('Message notifications: on');
     case 'activating':
         return _('Message notifications: starting…');
@@ -329,101 +338,6 @@ export function dmView({available, notify}) {
 }
 
 // ── Wallet ────────────────────────────────────────────────────────────────
-
-const APP_ID_RE = /^[A-Za-z0-9._-]{1,255}$/;
-
-function unescapeUnit(s) {
-    return s.replace(/\\x([0-9A-Fa-f]{2})/g, (_m, h) => String.fromCharCode(parseInt(h, 16)));
-}
-
-function appIdFromUnit(unit) {
-    if (!unit.startsWith('app-'))
-        return null;
-    let body;
-    if (unit.endsWith('.scope'))
-        body = unit.slice(4, -'.scope'.length);
-    else if (unit.endsWith('.service'))
-        body = unit.slice(4, -'.service'.length);
-    else
-        return null;
-    const at = body.indexOf('@');
-    if (at >= 0)
-        body = body.slice(0, at);
-    for (const part of body.split('-')) {
-        const cand = unescapeUnit(part);
-        if (cand.includes('.') && APP_ID_RE.test(cand))
-            return cand;
-    }
-    return null;
-}
-
-/**
- * Port of nwa_caller_parse_cgroup() (gnome/nostr-wallet-agent/src/nwa-caller.c):
- * the application id nostr-wallet-agent derives from /proc/<pid>/cgroup,
- * deepest component first. null when the cgroup names no application.
- */
-export function parseCgroupAppId(cgroupText) {
-    if (typeof cgroupText !== 'string')
-        return null;
-    for (const line of cgroupText.split('\n')) {
-        const a = line.indexOf(':');
-        if (a < 0)
-            continue;
-        const b = line.indexOf(':', a + 1);
-        if (b < 0)
-            continue;
-        const comps = line.slice(b + 1).split('/');
-        for (let j = comps.length - 1; j >= 0; j--) {
-            const c = comps[j];
-            if (c.startsWith('snap.')) {
-                const sp = c.split('.');
-                if (sp.length >= 3 && sp[1] && APP_ID_RE.test(sp[1]))
-                    return `snap.${sp[1]}`;
-            }
-            const id = appIdFromUnit(c);
-            if (id)
-                return id;
-        }
-    }
-    return null;
-}
-
-/**
- * The identity nostr-wallet-agent assigns to *this* process (gnome-shell):
- * the cgroup application id, else "exe:<path>". Flatpak is not considered —
- * gnome-shell never runs sandboxed.
- */
-export function walletCallerId({cgroup, exe}) {
-    const id = parseCgroupAppId(cgroup);
-    if (id)
-        return id;
-    if (typeof exe === 'string' && exe.startsWith('/'))
-        return `exe:${exe}`;
-    return null;
-}
-
-/**
- * Whether budgets.json grants `callerId` read access ("Always allow this
- * app"). Only then does the agent answer GetBalance without asking the user.
- * Any doubt → false: the panel shows "—" and never prompts.
- */
-export function readAllowed(budgetsJsonText, callerId) {
-    if (!callerId || typeof budgetsJsonText !== 'string')
-        return false;
-    let root;
-    try {
-        root = JSON.parse(budgetsJsonText);
-    } catch {
-        return false;
-    }
-    const apps = root && typeof root === 'object' ? root.apps : null;
-    if (!apps || typeof apps !== 'object' || Array.isArray(apps))
-        return false;
-    if (!Object.prototype.hasOwnProperty.call(apps, callerId))
-        return false;
-    const rec = apps[callerId];
-    return !!rec && typeof rec === 'object' && rec.allow_read === true;
-}
 
 export const WalletState = Object.freeze({
     HIDDEN: 'hidden',          // show-balance is off
@@ -483,6 +397,11 @@ export function classifyWalletError(dbusErrorName) {
     switch (dbusErrorName) {
     case 'org.nostr.Wallet1.Error.NotPaired':
         return 'unpaired';
+    // The agent would have to ask (no read grant) — or it predates the
+    // non-interactive methods: either way, never fall back to prompting.
+    case 'org.nostr.Wallet1.Error.InteractionRequired':
+    case 'org.freedesktop.DBus.Error.UnknownMethod':
+        return 'needs-grant';
     case 'org.nostr.Wallet1.Error.Denied':
     case 'org.nostr.Wallet1.Error.RateLimited':
         return 'denied';

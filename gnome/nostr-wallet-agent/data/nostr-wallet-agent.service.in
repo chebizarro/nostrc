@@ -27,6 +27,11 @@ RestrictRealtime=yes
 LockPersonality=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
+# Mesa/EGL probes memory with mincore(2) while GTK initialises for the
+# first approval dialog; it is not in @system-service, so without this the
+# agent was killed with SIGSYS the moment it had to ask the user (aarch64
+# Ubuntu 24.04 lab: audit syscall=232).
+SystemCallFilter=mincore
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 UMask=0077
 StateDirectory=nostr-wallet

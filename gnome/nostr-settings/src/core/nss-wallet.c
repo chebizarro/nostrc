@@ -95,6 +95,29 @@ nss_wallet_budgets_load(const gchar *path, const gchar *today, GError **error)
   return out;
 }
 
+GPtrArray *
+nss_wallet_apps_from_variant(GVariant *apps)
+{
+  GPtrArray *out = g_ptr_array_new_with_free_func((GDestroyNotify)nss_budget_free);
+  if (apps == NULL || !g_variant_is_of_type(apps, G_VARIANT_TYPE("a{sa{sv}}")))
+    return out;
+  GVariantIter it;
+  const gchar *id;
+  GVariant *rec;
+  g_variant_iter_init(&it, apps);
+  while (g_variant_iter_next(&it, "{&s@a{sv}}", &id, &rec)) {
+    NssBudget *b = g_new0(NssBudget, 1);
+    b->app_id = g_strdup(id);
+    (void)g_variant_lookup(rec, "limit_msat_per_day", "t", &b->limit_msat_per_day);
+    (void)g_variant_lookup(rec, "spent_today_msat", "t", &b->spent_today_msat);
+    (void)g_variant_lookup(rec, "allow_read", "b", &b->allow_read);
+    g_ptr_array_add(out, b);
+    g_variant_unref(rec);
+  }
+  g_ptr_array_sort(out, by_app);
+  return out;
+}
+
 gchar *
 nss_format_sats(guint64 msat)
 {
@@ -116,6 +139,10 @@ nss_wallet_app_label(const gchar *app_id)
 {
   if (app_id == NULL || *app_id == '\0')
     return g_strdup("Unknown app");
+  if (g_strcmp0(app_id, NSS_WALLET_SHELL_APP_ID) == 0)
+    return g_strdup("GNOME Shell");
+  if (strstr(app_id, "://") != NULL)
+    return g_strdup_printf("Website %s", app_id);
   if (g_str_has_prefix(app_id, "exe:")) {
     g_autofree gchar *base = g_path_get_basename(app_id + 4);
     return g_strdup_printf("%s (unverified)", base);

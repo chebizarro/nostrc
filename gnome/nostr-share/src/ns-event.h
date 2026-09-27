@@ -99,6 +99,9 @@ gchar *ns_event_unsigned_json(gint         kind,
  * does not parse. */
 gchar *ns_json_pretty(const gchar *json);
 
+/* The "id" of a signed event (64 lower-case hex), or NULL. */
+gchar *ns_event_id_from_signed_json(const gchar *signed_json);
+
 /* Lowercase hex SHA-256 of @data. */
 gchar *ns_sha256_hex(const guint8 *data, gsize len);
 

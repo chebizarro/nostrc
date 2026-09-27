@@ -280,23 +280,49 @@ nwa_caller_origin_bridges(void)
 #endif
 }
 
-gboolean
-nwa_caller_may_assert_origin(const NwaCaller *c, const gchar *const *bridges)
+GStrv
+nwa_caller_settings_apps(void)
 {
-  if (!c || !c->same_uid || !c->exe || c->exe_ino == 0 || !bridges) return FALSE;
+#ifdef NWA_ORIGIN_BRIDGE_ENV
+  /* Test builds only, like NOSTR_WALLET_AGENT_ORIGIN_BRIDGES. */
+  const gchar *env = g_getenv("NOSTR_WALLET_AGENT_SETTINGS_APPS");
+  if (env && *env) {
+    g_message("nostr-wallet-agent: NOSTR_WALLET_AGENT_SETTINGS_APPS overrides the settings app "
+              "path (test build): %s", env);
+    return g_strsplit(env, ":", -1);
+  }
+#endif
+#ifdef NWA_SETTINGS_PATH
+  return g_strdupv((gchar *[]){ (gchar *)NWA_SETTINGS_PATH, NULL });
+#else
+  return g_new0(gchar *, 1);
+#endif
+}
+
+gboolean
+nwa_caller_exe_is(const NwaCaller *c, const gchar *const *paths)
+{
+  if (!c || !c->same_uid || !c->exe || c->exe_ino == 0 || !paths) return FALSE;
   /* The dev/inode match is the credential; the kind is a pre-filter. Only
-   * the two shapes the bridge really has: its bare executable, or the
-   * browser's app scope it inherited. Sandboxed (Flatpak/Snap), synthetic
-   * and partially resolved callers never qualify. */
+   * the two shapes an unsandboxed program has: its bare executable, or the
+   * app scope it was launched (or inherited) in. Sandboxed (Flatpak/Snap —
+   * also when they exec a host binary: the child keeps the sandbox's
+   * identity), synthetic and partially resolved callers never qualify. */
   if (c->kind != NWA_CALLER_EXE && c->kind != NWA_CALLER_SYSTEMD_SCOPE) return FALSE;
-  for (guint i = 0; bridges[i]; i++) {
-    if (!g_path_is_absolute(bridges[i]) || strcmp(bridges[i], c->exe) != 0) continue;
+  for (guint i = 0; paths[i]; i++) {
+    if (!g_path_is_absolute(paths[i]) || strcmp(paths[i], c->exe) != 0) continue;
     GStatBuf st;
-    if (g_stat(bridges[i], &st) == 0 &&
+    if (g_stat(paths[i], &st) == 0 &&
         (guint64)st.st_dev == c->exe_dev && (guint64)st.st_ino == c->exe_ino)
       return TRUE;
   }
   return FALSE;
+}
+
+gboolean
+nwa_caller_may_assert_origin(const NwaCaller *c, const gchar *const *bridges)
+{
+  return nwa_caller_exe_is(c, bridges);
 }
 
 NwaCaller *

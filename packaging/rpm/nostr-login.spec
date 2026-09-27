@@ -1321,6 +1321,7 @@ fi
 %{_userunitdir}/nostr-notify.service
 %dir %{_datadir}/nostr-notify
 %{_datadir}/nostr-notify/nostr-notify.conf.example
+%{_datadir}/dbus-1/interfaces/org.nostr.NotifyDaemon1.xml
 
 %files -n libnostr-publish
 %license LICENSE

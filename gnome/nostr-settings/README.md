@@ -30,9 +30,9 @@ service's own store, so the service stays the single source of truth.
 | Relays | relay details | NIP-11 over HTTPS (`Accept: application/nostr+json`, 5 s, 64 KiB cap) | no |
 | Notifications | on/off | systemd `--user`: `nostr-notify.service` | unit enablement |
 | Notifications | upstream mode, fallback relays | `~/.config/nostr-notify/nostr-notify.conf` `[notify]` `upstream_mode`, `home_relays` | yes |
-| Notifications | groups / DMs / preview / sound | same file, reserved keys (`nostr-notify.conf.example`) | shown disabled with a note: the daemon does not read them yet (`nostrc-prqu.16`) |
-| Wallet | pairing | `org.nostr.Wallet1` `Paired`/`Lud16`/`WalletPubkey`/`Relays`; `Pair(uri)` / `Unpair()` — the agent shows its own confirmation | via the agent |
-| Wallet | per-app budgets | listed from `$XDG_STATE_HOME/nostr-wallet/budgets.json` (read-only); changed with `SetBudget` — the agent confirms | via the agent |
+| Notifications | groups / DMs / preview / sound | same file, `notify_groups`, `notify_dms`, `group_preview`, `sound` (`nostr-notify.conf.example`) | yes |
+| Wallet | pairing | `org.nostr.Wallet1` `Paired`/`Lud16`/`WalletPubkey`/`Relays`. *Connect with your wallet app* (default): `BeginWalletAuth` → opens the returned `nostr+walletauth://` link in the wallet app (or offers to copy it), waits for `WalletAuthFinished`, Cancel → `CancelWalletAuth`; the agent creates the key. Fallback: paste a `nostr+walletconnect://` link → `Pair(uri)`. `Unpair()`. The agent always confirms | via the agent |
+| Wallet | per-app (and per-website) read access and daily budgets | `org.nostr.Wallet1` `ListApps`, `SetReadAccess(app, b)`, `SetBudget(app, msat)`; re-listed on `AppsChanged`. A standing *GNOME Shell* row grants the panel indicator (every Shell extension shares gnome-shell's identity) | via the agent: read access applied directly (Settings is its grant admin), budgets confirmed in the agent's dialog |
 | Media servers | Blossom list | BUD-03 kind **10063**, signed + published | yes (event) |
 | Files | encryption defaults | `~/.config/nostr/seal.conf` `[seal]` `default_recipients`, `include_self`, `work_factor` (`$NOSTR_SEAL_CONFIG`) | yes |
 | Files | sharing defaults | `~/.config/nostr-share/nostr-share.conf` `[nostr-share]` `default_text_kind`, `keep_metadata` (`$NOSTR_SHARE_CONFIG`) | yes |
@@ -42,12 +42,19 @@ did not change, and replace files atomically (new files `0600`; existing
 files keep their mode). `session-relay.conf` is edited line by line because
 the relay's parser rejects `[section]` headers.
 
-**Why budgets are read from the file.** `GetBudget` for another app is
-allowed only for *trusted* callers, and trust requires a Flatpak-verified
-app id; an unsandboxed Settings app is refused. The agent's README documents
-`budgets.json` as its store, so Settings lists it read-only and sends every
-change through `SetBudget`, where the agent's dialog decides. No
-`ListBudgets` method was added to the agent.
+**How Settings proves itself to the wallet agent.** The agent trusts the
+installed Settings the way it trusts the browser bridge: an unsandboxed,
+same-user caller whose `/proc/<pid>/exe` is `<bindir>/nostr-settings` by
+path *and* inode (a copy, hard link, replaced binary or sandboxed process
+does not qualify). That caller may list every app (`ListApps`) and grant and
+revoke read access without the agent's confirmation dialog; other apps may
+only give up their own access, or ask the user. Budget changes are still
+confirmed in the agent's dialog (an unsandboxed binary is a softer identity
+than a Flatpak id, so it administers grants, not money). Like every
+unsandboxed identity this keeps sandboxed apps out, not malware already
+running as you (which could edit `budgets.json`). Settings run from a build
+tree is not trusted: the page then lists `budgets.json` read-only and the
+agent confirms each change.
 
 ## Relays page semantics
 
@@ -125,7 +132,7 @@ loads settle first.
 | `nip11` | parser hardening (types, control chars, length cap, sorted unique NIPs) and fetch against an in-process libsoup server: Accept header, 64 KiB cap, HTTP error, non-JSON, 1 s timeout, cancellation |
 | `relay_stats` | client against a mock exporting the shipped `SessionRelay1` XML on GTestDBus; proof that a stats call never D-Bus-activates the relay; storage/uptime/NIP strings incl. `none` backend and unknown count |
 | `systemd` | status model table (incl. the q9ba crash loop), exact on/off plans, and the plans replayed against a mock `org.freedesktop.systemd1` Manager (state transitions, call order, failure stops the plan, unknown unit) |
-| `wallet` | `budgets.json` enumeration (today vs. other days, corrupt file); produced by the agent's own `NwaBudgetStore` when built together; sats/app-id formatting |
+| `wallet` | `ListApps` reply parsing; `budgets.json` enumeration (fallback; today vs. other days, corrupt file), produced by the agent's own `NwaBudgetStore` when built together; sats/app-id/GNOME Shell/website labels |
 | `identity` | `GetRelays` JSON forms, signer calls against a mock (locked signer, NotFound → empty) |
 
 The relay side has its own integration test,
@@ -135,7 +142,6 @@ The relay side has its own integration test,
 
 - Retention is not enforced by the relay (`nostrc-prqu.17`, blocked by
   `nostrc-8rxk`); the rows stay disabled until `RetentionSupported`.
-- nostr-notify ignores the presentation keys (`nostrc-prqu.16`).
 - The packaged session relay is cache-less (`nostrc-prqu.5`).
 - Kind-10002/10063 publishing does not retry in the background; partial
   results stay on screen with Publish enabled.

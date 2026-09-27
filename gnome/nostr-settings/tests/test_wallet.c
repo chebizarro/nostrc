@@ -85,14 +85,46 @@ test_format(void)
   g_assert_cmpstr(l1, ==, "zapper (unverified)");
   g_autofree gchar *l2 = nss_wallet_app_label("org.gnostr.Client");
   g_assert_cmpstr(l2, ==, "org.gnostr.Client");
+  g_autofree gchar *l3 = nss_wallet_app_label(NSS_WALLET_SHELL_APP_ID);
+  g_assert_cmpstr(l3, ==, "GNOME Shell");
+  g_autofree gchar *l4 = nss_wallet_app_label("https://snort.social");
+  g_assert_cmpstr(l4, ==, "Website https://snort.social");
   g_autofree gchar *path = nss_wallet_budgets_path();
   g_assert_true(g_str_has_suffix(path, "/nostr-wallet/budgets.json"));
+}
+
+/* The shape org.nostr.Wallet1.ListApps returns (gnome/dbus/org.nostr.Wallet1.xml). */
+static void
+test_list_apps_variant(void)
+{
+  GVariant *v = g_variant_new_parsed(
+    "{'org.gnostr.Client': {'limit_msat_per_day': <uint64 21000000>, 'spent_today_msat': <uint64 1500>,"
+    " 'allow_read': <true>},"
+    " 'exe:/usr/bin/gnome-shell': {'limit_msat_per_day': <uint64 0>, 'spent_today_msat': <uint64 0>,"
+    " 'allow_read': <false>}, 'https://a.example': @a{sv} {}}");
+  g_variant_ref_sink(v);
+  g_autoptr(GPtrArray) a = nss_wallet_apps_from_variant(v);
+  g_variant_unref(v);
+  g_assert_cmpuint(a->len, ==, 3);
+  NssBudget *s = g_ptr_array_index(a, 0);
+  g_assert_cmpstr(s->app_id, ==, NSS_WALLET_SHELL_APP_ID);
+  g_assert_false(s->allow_read);
+  NssBudget *w = g_ptr_array_index(a, 1);
+  g_assert_cmpstr(w->app_id, ==, "https://a.example");   /* missing keys: zero */
+  g_assert_cmpuint(w->limit_msat_per_day, ==, 0);
+  NssBudget *g = g_ptr_array_index(a, 2);
+  g_assert_cmpuint(g->limit_msat_per_day, ==, 21000000);
+  g_assert_cmpuint(g->spent_today_msat, ==, 1500);
+  g_assert_true(g->allow_read);
+  g_autoptr(GPtrArray) none = nss_wallet_apps_from_variant(NULL);
+  g_assert_cmpuint(none->len, ==, 0);
 }
 
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/nostr-settings/wallet/list-apps", test_list_apps_variant);
   tmp = g_dir_make_tmp("nss-wallet-XXXXXX", NULL);
   g_test_add_func("/nostr-settings/wallet/budgets", test_budgets);
   g_test_add_func("/nostr-settings/wallet/format", test_format);

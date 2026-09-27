@@ -18,9 +18,10 @@ import Gio from 'gi://Gio';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {QuickMenuToggle, SystemIndicator} from 'resource:///org/gnome/shell/ui/quickSettings.js';
-import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {Extension, gettext as _, ngettext} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {RelayMonitor} from './lib/relay.js';
+import {DmMonitor} from './lib/dm.js';
 import {WalletMonitor} from './lib/wallet.js';
 import {dmView, relayView, setTranslator, walletView} from './lib/state.js';
 
@@ -93,6 +94,7 @@ class NostrIndicator extends SystemIndicator {
 
         this._relay = new RelayMonitor(() => this._sync());
         this._wallet = new WalletMonitor(() => this._sync());
+        this._dm = new DmMonitor(() => this._sync());
 
         this._toggleClickedId = this._toggle.connect('clicked', () => {
             const view = relayView(this._relay.state);
@@ -121,6 +123,7 @@ class NostrIndicator extends SystemIndicator {
 
         this._relay.start(settings.get_uint('refresh-interval'));
         this._wallet.start({showBalance: settings.get_boolean('show-balance')});
+        this._dm.start();
         this._sync();
     }
 
@@ -129,7 +132,7 @@ class NostrIndicator extends SystemIndicator {
             return;
         const relay = relayView(this._relay.state);
         const dm = this._settings.get_boolean('show-dm-status')
-            ? dmView(this._relay.state) : null;
+            ? dmView(this._relay.state, this._dm?.state.unread ?? null) : null;
         const wallet = walletView(this._wallet.state);
         this._icon.visible = relay.showIndicator;
         this._toggle.render(relay, dm, wallet);
@@ -155,6 +158,8 @@ class NostrIndicator extends SystemIndicator {
         this._relay = null;
         this._wallet?.destroy();
         this._wallet = null;
+        this._dm?.destroy();
+        this._dm = null;
 
         // Destroying the indicator also removes it from Quick Settings.
         this.quickSettingsItems.forEach(item => item.destroy());
@@ -167,7 +172,7 @@ class NostrIndicator extends SystemIndicator {
 
 export default class NostrExtension extends Extension {
     enable() {
-        setTranslator(_);
+        setTranslator(_, ngettext);
         this._settings = this.getSettings();
         this._indicator = new NostrIndicator(this, this._settings);
         Main.panel.statusArea.quickSettings.addExternalIndicator(this._indicator);

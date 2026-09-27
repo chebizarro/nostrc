@@ -31,22 +31,27 @@ Amounts are millisatoshis.
 |---|---|---|
 | `GetInfo()` | `→ a{sv}` | read (returns `{paired: false}` to anyone when unpaired) |
 | `GetBalance()` | `→ t balance_msat` | read |
+| `GetInfoNonInteractive()` / `GetBalanceNonInteractive()` | as the plain method | read, but **never prompts**: where the plain method would ask the user they fail with `InteractionRequired` (for panels/status indicators) |
 | `MakeInvoice(u amount_msat, s description, u expiry)` | `→ s bolt11, s payment_hash` | receive |
 | `PayInvoice(s bolt11, u amount_msat_or_0)` | `→ s preimage, t fees_paid_msat` | pay |
 | `LookupInvoice(s payment_hash_or_bolt11)` | `→ a{sv}` | read |
 | `ListTransactions(t from, t until, u limit, s type)` | `→ aa{sv}` | read |
 | `Pair(s nwc_uri)` / `Unpair()` | | pair / unpair |
+| `BeginWalletAuth(a{sv} options)` / `CancelWalletAuth()` | `→ s walletauth_uri` | pair by request with an agent-generated key; always confirmed (see [Pairing](#pairing)) |
 | `OpenUri(s uri)` | | scheme-handler link (always confirmed) |
 | `GetBudget(s app_id)` | `→ u msat_per_day, t spent_today_msat` | own: always; other app: trusted only |
 | `SetBudget(s app_id, u msat_per_day)` | | lower own: always; otherwise confirm (a budget never grants read access) |
+| `ListApps()` | `→ a{sa{sv}}` (`limit_msat_per_day` t, `spent_today_msat` t, `allow_read` b per app id) | grant admin only |
+| `SetReadAccess(s app_id, b allow)` | | grant: grant admin immediately, other apps only after the user agrees; revoke own: always; revoke another's: grant admin only |
 | `GetInfoFor` / `GetBalanceFor` / `MakeInvoiceFor` / `PayInvoiceFor` `(s origin, …)` | as the plain method | as the plain method, **with the web origin as the app** — browser bridge only, see [Web origins](#web-origins-browser-bridge) |
 
 `app_id = ""` means "the caller". Signals: `PaymentReceived(a{sv})`,
-`PaymentSent(a{sv})`, `BudgetExceeded(s app_id, t requested_msat, t remaining_msat)`.
+`PaymentSent(a{sv})`, `BudgetExceeded(s app_id, t requested_msat, t remaining_msat)`,
+`AppsChanged()` (a grant or limit changed; re-list with `ListApps`).
 Properties: `Paired b`, `WalletPubkey s`, `Lud16 s`, `Relays as`.
 Errors are `org.nostr.Wallet1.Error.{InvalidArgs, NotPaired, Denied,
 BudgetExceeded, Timeout, WalletError, RelayError, Unsupported, RateLimited,
-Keyring, Failed}`; `WalletError` messages start with the NIP-47 code, e.g.
+Keyring, InteractionRequired, Failed}`; `WalletError` messages start with the NIP-47 code, e.g.
 `[INSUFFICIENT_BALANCE] …`. `Timeout` means **outcome unknown** — a payment
 may still have happened.
 
@@ -57,7 +62,42 @@ gdbus call --session --dest org.nostr.Wallet1 --object-path /org/nostr/Wallet1 \
 
 ## Pairing
 
-Pair by clicking a `nostr+walletconnect://…` link (the agent is its scheme
+**Recommended: connect by request (`nostr+walletauth`, `nostrc-prqu.12`).**
+`BeginWalletAuth()` makes the agent generate the NWC client keypair and
+return a link
+
+    nostr+walletauth://<client-key>?relay=…&name=…&request_methods=…
+        &notification_types=…&pubkey=<client-key>&state=<128-bit random>
+
+(Alby Hub's form plus the NWC-08 draft's `pubkey`/`state`), which the caller
+— Nostr Settings' *Connect with your wallet app* — opens in the user's
+wallet app or shows for copying. It holds no secret. When the user approves
+there, the wallet publishes its kind-13194 info event p-tagged to the client
+key (NWC-08 wallets echo `state` in a `state` tag). The agent
+(`src/nwa-walletauth.c`) takes an answer that verifies, p-tags the key,
+lists NWC methods and is recent; with a matching `state` at once, without
+one (Alby today) after a 3 s settle window. Two *different* wallets
+answering one request fail it and new requests are refused for a minute
+(someone else saw the link and is racing the wallet). Answers carrying
+another request's `state`, malformed or stale ones are ignored; a relay hint
+in the p tag is subscribed to in addition to the requested relays (≤ 5,
+default: GSettings `wallet-auth-relays`).
+
+The answer is then *staged*: a client on the new key must get a `get_info`
+reply from the wallet before anything is shown, and the **Connect dialog is
+always shown** (`state` travels inside the link, so it binds the answer to
+the request but cannot prove the wallet's identity to someone who saw the
+link): it names the requesting app, the wallet's name, the first 12 hex of
+its key, the relay and encryption, asks the user to compare the key with
+the wallet app, and warns louder when the wallet did not echo `state`. Only
+on *Connect* is the pairing stored in the keyring and made active; decline,
+timeout, conflict, cancel or a failed check leave the current pairing
+untouched. The secret never leaves the agent. One request at a time: the
+same app (or the settings app) may replace its pending request, others get
+`RateLimited`; `CancelWalletAuth` likewise; the outcome is the
+`WalletAuthFinished(b, s)` signal. Headless, `BeginWalletAuth` is refused.
+
+**Pasted links.** Pair by clicking a `nostr+walletconnect://…` link (the agent is its scheme
 handler) or by `Pair(uri)` from an application. Pairing and unpairing are
 **always** confirmed in a dialog — trusted apps included — that names the
 requesting application, the wallet (lud16 or pubkey) and relay, warns when it
@@ -68,8 +108,8 @@ its secret.
 > NIP-47 limitation: the `secret` in a `nostr+walletconnect://` URI is known
 > to whoever produced or relayed the link, and they can use the wallet
 > directly, outside the agent's budgets; `Unpair` cannot revoke that — only
-> revoking the connection in the wallet can. Agent-generated client keys
-> (`nostr+walletauth://`) are tracked in `nostrc-prqu.12`.
+> revoking the connection in the wallet can. Connecting by request (above)
+> avoids it.
 
 The URI is stored in the Secret Service under the dedicated schema
 **`org.gnostr.WalletConnection`** (added to `gnome/seahorse/secret_store.[ch]`,
@@ -78,7 +118,8 @@ different secret class (a per-pairing client key, not a Nostr identity).
 Seahorse shows it as `Nostr Wallet Connect: <lud16> (<pubkey prefix>…)`.
 Exactly one pairing exists; pairing again replaces it, `Unpair` deletes it.
 
-The NWC client keypair is the URI's `secret`. The agent signs NIP-47 requests
+The NWC client keypair is the URI's `secret` (for a pairing by request, the
+agent-generated key, stored in the same `nostr+walletconnect://` form). The agent signs NIP-47 requests
 and NIP-42 AUTH with it and never involves the user's Nostr identity or the
 signer daemon.
 
@@ -87,8 +128,10 @@ signer daemon.
 Each application has a daily limit (msat, default **0 = never pay without
 asking**) and a separate "allowed to read" flag. The limit is set by ticking
 *Always allow up to N sats/day* in the payment dialog, by `SetBudget`, or by
-a trusted settings app; the read flag only by ticking *Always allow this app*
-in the wallet-access dialog. Neither implies the other.
+a trusted settings app; the read flag by ticking *Always allow this app* in
+the wallet-access dialog, by `SetReadAccess` (the trusted settings app's
+per-app switch; other apps only after the user agrees), and an app can give
+up its own. Neither implies the other.
 
 * **Storage:** `$XDG_STATE_HOME/nostr-wallet/budgets.json` (dir 0700, file
   0600, atomic rewrite). Budgets are deliberately *not* in GSettings: they
@@ -113,7 +156,11 @@ GSettings `org.nostr.Wallet` holds only preferences: `request-timeout` (60 s),
 ## Approval matrix
 
 Evaluated by `nwa_policy_decide()`; every row is a case in `tests/test_policy.c`.
-"Prompt" becomes **Deny** when no display is available.
+"Prompt" becomes **Deny** when no display is available. For the
+`*NonInteractive` reads, both become `InteractionRequired` (the agent does
+not even initialise GTK for them), so a status indicator can ask "may I
+read?" without reimplementing caller identification or peeking at
+`budgets.json`.
 
 | Request | Condition | Decision |
 |---|---|---|
@@ -128,11 +175,28 @@ Evaluated by `nwa_policy_decide()`; every row is a case in `tests/test_policy.c`
 | unpair | not paired | Allow (no-op) |
 | unpair | paired | Prompt |
 | budget | lower own | Allow |
-| budget | raise own, or change another app's | Trusted: Allow; identified: Prompt; unidentified: Deny |
-| budget | read another app's | Trusted: Allow; otherwise Deny |
+| budget | raise own, or change another app's | Trusted: Allow; identified (grant admin included): Prompt; unidentified: Deny |
+| budget | read another app's, `ListApps` | Trusted or grant admin: Allow; otherwise Deny |
+| read grant | `SetReadAccess(app, true)` | Trusted or grant admin: Allow; identified: Prompt; unidentified: Deny |
+| read revoke | own | Allow (identified) |
+| read revoke | another app's | Trusted or grant admin: Allow; otherwise Deny |
 
 "Trusted" means listed in `trusted-apps` **and** identified through Flatpak
 (an id the caller cannot choose); unsandboxed callers are never trusted.
+
+A **grant admin** may list apps and grant or revoke read access without a
+dialog, but not change spending limits: a trusted app, or the installed Nostr
+Settings — an unsandboxed same-uid caller whose `/proc/<pid>/exe` is
+`<bindir>/nostr-settings` by path and inode (the browser bridge's rule,
+`nwa_caller_exe_is`, re-checked on every call; a Flatpak or snap that execs
+the binary keeps its sandbox identity; test builds may replace the path with
+`NOSTR_WALLET_AGENT_SETTINGS_APPS`). That keeps sandboxed apps from granting
+themselves anything; like all unsandboxed identities it does not stop
+malware already running as the user (which could edit `budgets.json`). An
+unsandboxed binary is a softer identity than a Flatpak id (it can be driven
+through its own D-Bus surface or the accessibility bus), so a budget raise
+from Settings is still confirmed in the agent's dialog, and Settings exposes
+no action that changes grants.
 At most 2 outstanding prompts per application (6 in total); more are
 refused with `RateLimited`. Dialogs default to *Deny*, time out to *Deny*,
 and closing them is *Deny*.
@@ -217,8 +281,11 @@ bridge may assert an origin**:
 
 The origin then *is* the application for that call: policy, "Always allow
 this site", the daily budget, the spend ledger, the per-app prompt limit and
-`PaymentSent.app_id` are all keyed on it, and the dialog names the site ("The
+`PaymentSent.app_id` are all keyed on it, and the dialogs name the site ("The
 website https://snort.social (in Firefox, via the Nostr browser extension)").
+The payment dialog speaks of the *site* throughout: "The website snort.social
+(in Firefox) wants to pay…", "exceeds the site's daily budget", "Always allow
+this site".
 Settings apps see and set site budgets with
 `GetBudget`/`SetBudget("https://snort.social", …)`. The same origin string
 is the same principal whichever browser it came from.
@@ -247,7 +314,10 @@ Test builds only (CMake `NOSTR_WALLET_AGENT_ORIGIN_BRIDGE_ENV`, default
 `BUILD_TESTING`; packages are built with it off):
 `NOSTR_WALLET_AGENT_ORIGIN_BRIDGES` (colon-separated absolute paths)
 replaces the built-in bridge path so CTest can run the build-tree host, and
-the agent logs that the override is active.
+the agent logs that the override is active. With
+`NOSTR_WALLET_AGENT_EPHEMERAL=1`, `NOSTR_WALLET_AGENT_TEST_PAIR_URI` starts
+the agent paired with that URI (no dialog, no keyring) so tests can run it
+against `tests/nwa-fixture-wallet`.
 
 **Secret handling.** The pairing URI lives only in the Secret Service item
 and in agent memory (wiped on drop); it is never returned over D-Bus, never
@@ -287,7 +357,13 @@ drawn from the opener's automatic budget, and ledgered under
 | `bitcoin:<addr>?…&lightning=<bolt11>` (BIP-21) | Same, using the Lightning invoice; `amount` must match it |
 | `bitcoin:<addr>[?amount=…]` without `lightning=` | Window with a toast: *On-chain payments are not supported* |
 | `nostr+walletconnect://…` (or `nostr+walletconnect:…`) | Pair dialog → keyring |
-| `lightning:lnurl1…`, `lightning:user@host` | "Not supported yet" — **TODO `nostrc-prqu.8`** (LNURL-pay / LUD-16) |
+| `lightning:lnurl1…` (LUD-01), `lightning:user@host` (LUD-16 → `https://host/.well-known/lnurlp/user`) | LNURL-pay (LUD-06): the request is fetched, the **LNURL dialog** shows the recipient, its description (`text/plain`, `text/long-desc`), the server and an amount within `minSendable`..`maxSendable` (fixed when they are equal), plus a comment field when `commentAllowed` (LUD-12); on *Pay* the callback's invoice must be for exactly that amount and commit to the metadata (`description_hash` = sha256(metadata)), then it is paid like any link payment. LNURL-withdraw is refused |
+
+LNURL fetches (`src/nwa-lnurl.c`, libsoup): HTTPS only (`http://` for
+`.onion`; test builds also loopback), no redirects, 15 s, JSON bodies capped
+at 64 KiB; an LNURL `{"status":"ERROR"}` answer is shown with its reason; a
+LUD-16 server whose `text/identifier` names another address is refused.
+The LNURL dialog is the payment's confirmation (not an extra dialog).
 
 BIP-21 unknown `req-*` parameters make a link invalid, as the BIP requires.
 
@@ -332,22 +408,52 @@ caller identification.
 * `test_budget` — limits, reservations, commit/release, saturation, day
   rollover incl. a payment in flight across midnight, persistence + 0600
   mode, corrupt-file handling.
+* `test_lnurl` — LUD-01 vector and bech32 round trip, LUD-16 resolution
+  (onion → http, clearnet http refused, bad addresses, mixed case),
+  payRequest parsing and refusals (withdraw, range, callback scheme,
+  metadata, identifier mismatch), callback URL (comment trimmed/escaped),
+  invoice checks (amount, `h` vs `d`, wrong commitment) and the fetch against
+  an in-process libsoup server (LNURL errors, size cap, no redirects, 404).
+  `test_dbus` pays `lightning:alice@127.0.0.1:<port>` end to end (dialog →
+  callback with amount and comment → fixture wallet) and refuses an invoice
+  committing to other metadata.
 * `test_uri` — BOLT-11 spec vectors (amounts incl. pico, description hash,
   UTF-8, upper case, invalid checksum/multiplier/sub-msat), `lightning:`,
   BIP-21 `bitcoin:` (lightning fallback, amounts, `req-` params) and
   `nostr+walletconnect:` parsing.
 * `test_policy` — the approval matrix above.
+* `test_walletauth` — the pairing-by-request state machine over the fixture
+  transport: link shape (no secret, deduplicated relays), subscription,
+  `state` match / mismatch, settle window, same wallet via two relays, relay
+  hint, conflicting wallets, malformed/stale/future answers never counting,
+  a confirmed answer beating an unconfirmed one, stop and timeout.
+* `test_dbus` — the real agent paired with `nwa-fixture-wallet` on a private
+  bus (Linux): `*NonInteractive` reads, the settings app's grants, and
+  pairing by request end to end (wallet approves → staged `get_info` on the
+  new key → dialog → active; unconfirmed + declined → untouched; impostor
+  race → conflict + cooldown; supersede/cancel rules; refused headless).
+  Dialogs are answered by the test-build-only
+  `NOSTR_WALLET_AGENT_TEST_ANSWER=accept|deny`, which also logs their text.
 * `test_caller` — Flatpak info / snap / systemd-scope parsing; web-origin
   syntax, the browser-bridge gate (kinds, path + inode, replaced binary,
   foreign uid) and the web-origin principal.
 * `test_budget` also covers web origins as opaque budget keys.
 * The `*For` methods are exercised end to end against the real agent binary
   by `apps/gnostr-signer/native-host/tests/test_nm_webln_e2e.c` (browser
-  bridge allowed, any other caller `Denied`).
+  bridge allowed, any other caller `Denied`) and, paired with a wallet, by
+  `test_nm_webln_paired_e2e.c` (per-site budget auto-pay, `BudgetExceeded`,
+  per-origin read grant, invoices).
+* `nwa-fixture-wallet` (test helper, not a test): a NIP-47 wallet service
+  and the relay it uses in one process on `ws://127.0.0.1:<port>`. It prints
+  a pairing URI, answers `get_info`/`get_balance`/`make_invoice` (minting
+  invoices the agent can decode — `tests/nwa-test-bolt11.h`, zero
+  signature)/`pay_invoice`/`lookup_invoice`/`list_transactions`, and accepts
+  `nostr+walletauth://` requests on stdin.
+* `test_nwc` also checks that both spellings of the wallet's encryption tag
+  (`nip44_v2`, older `nip44-v2`) select NIP-44.
 
 ## Not supported (yet)
 
-* LNURL-pay / withdraw and Lightning addresses — `nostrc-prqu.8`.
-* Agent-generated NWC keys (`nostr+walletauth://`) — `nostrc-prqu.12`.
+* LNURL-withdraw, LUD-17 `lnurlp://` schemes, LUD-18 payer data.
 * On-chain payments — out of scope for an NWC agent (toast only).
 * `pay_keysend`, `multi_pay_*` — not exposed over D-Bus.

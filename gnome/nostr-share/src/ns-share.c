@@ -406,6 +406,8 @@ ns_share_new(NsConfig *cfg, const NsShareOptions *opts, GError **error)
   if (n_text_files == 1 && text->len == 0) {
     g_autofree gchar *body = file_text(lone);
     g_string_append(text, body);
+    share->text_path = g_strdup(lone->path);
+    share->text_path_body = g_strdup(body);
     share->text_class = lone->cls;
     if (share->title == NULL) {
       share->title = lone->cls == NS_CLASS_MARKDOWN ? ns_markdown_title(body) : NULL;
@@ -435,6 +437,8 @@ ns_share_free(NsShare *share)
   g_clear_pointer(&share->files, g_ptr_array_unref);
   g_clear_pointer(&share->urls, g_ptr_array_unref);
   g_free(share->text);
+  g_free(share->text_path);
+  g_free(share->text_path_body);
   g_free(share->title);
   ns_recipient_clear(&share->to);
   g_clear_pointer(&share->signer, nostr_publish_signer_unref);
@@ -796,6 +800,40 @@ ns_share_upload(NsShare *share, gboolean *urls_changed, NsProgressFunc progress,
 }
 
 gboolean
+ns_share_mark_published(const gchar *path, const gchar *event_id_hex)
+{
+  if (path == NULL || event_id_hex == NULL)
+    return FALSE;
+  g_autoptr(GFile) f = g_file_new_for_path(path);
+  g_autoptr(GError) err = NULL;
+  if (!g_file_set_attribute_string(f, NS_XATTR_EVENT, event_id_hex,
+                                   G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, NULL, &err)) {
+    g_debug("nostr-share: no %s on %s: %s", NS_XATTR_EVENT, path, err->message);
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/* nostrc-tepd: tag what was just published at its source — media files,
+ * a git repository, or the lone text/markdown file the post was made from
+ * (only while the post still says what the file says: an edited note is
+ * not that file). */
+static void
+mark_sources(const NsShare *share, const NsPost *p)
+{
+  g_autofree gchar *id = ns_event_id_from_signed_json(p->signed_json);
+  if (id == NULL)
+    return;
+  for (guint i = 0; p->files && i < p->files->len; i++)
+    (void)ns_share_mark_published(((NsFile *)g_ptr_array_index(p->files, i))->path, id);
+  if (p->git_dir)
+    (void)ns_share_mark_published(p->git_dir, id);
+  if ((p->files == NULL || p->files->len == 0) && p->git_dir == NULL && share->text_path &&
+      g_strcmp0(p->text, share->text_path_body) == 0)
+    (void)ns_share_mark_published(share->text_path, id);
+}
+
+gboolean
 ns_share_publish(NsShare *share, NsProgressFunc progress, gpointer user_data,
                  GError **error)
 {
@@ -851,6 +889,7 @@ ns_share_publish(NsShare *share, NsProgressFunc progress, gpointer user_data,
     ns_publish_report_clear(&rep);
     if (!ok)
       return FALSE;
+    mark_sources(share, p);
   }
   return TRUE;
 }

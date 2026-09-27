@@ -74,6 +74,8 @@ typedef struct {
   /* Inputs, read once. */
   GPtrArray          *files;          /* NsFile* (owned) */
   gchar              *text;           /* free text: -t, or a lone text file */
+  gchar              *text_path;      /* that lone text file, if any */
+  gchar              *text_path_body; /* its content as read (to tell edits apart) */
   NsInputClass        text_class;     /* TEXT / MARKDOWN / URL */
   gchar              *title;          /* --title or derived */
   GPtrArray          *urls;           /* URL arguments */
@@ -130,6 +132,14 @@ gboolean ns_share_upload(NsShare *share, gboolean *urls_changed,
  * ns_share_upload() + ns_share_build(). */
 gboolean ns_share_publish(NsShare *share, NsProgressFunc progress,
                           gpointer user_data, GError **error);
+
+/* After a successful publish, each local source (file, or git repository
+ * directory) is tagged with the event id in the extended attribute
+ * user.nostr.event (GIO "xattr::nostr.event"), which nostr-nautilus reads
+ * for its "published" emblem. Best effort: FALSE (silently) where the
+ * filesystem has no user xattrs or the file is not writable. */
+#define NS_XATTR_EVENT "xattr::nostr.event"
+gboolean ns_share_mark_published(const gchar *path, const gchar *event_id_hex);
 
 /* Human-readable summaries for the CLI and dialog. */
 gchar *ns_share_describe_targets(const NsShare *share);

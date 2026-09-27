@@ -341,12 +341,6 @@ kf_set_list(GKeyFile *kf, const gchar *group, const gchar *key,
 
 #define NOTIFY_GROUP "notify"
 
-gboolean
-nss_notify_presentation_supported(void)
-{
-  return FALSE; /* nostrc-prqu.16 */
-}
-
 gchar *
 nss_notify_conf_path(void)
 {

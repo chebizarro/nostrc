@@ -26,6 +26,8 @@
     RelayError      no relay accepted the request event
     Unsupported     request not supported (e.g. on-chain, LNURL)
     RateLimited     too many outstanding approval prompts for this caller
+    InteractionRequired  a *NonInteractive call would need the user's approval
+                    (no read grant for the caller); nothing was shown
     Keyring         the Secret Service refused to store/read the pairing
     Failed          anything else
 -->
@@ -46,6 +48,23 @@
 
     <!-- GetBalance: @balance_msat: spendable wallet balance. -->
     <method name="GetBalance">
+      <arg name="balance_msat" type="t" direction="out"/>
+    </method>
+
+    <!--
+      Non-interactive reads, for panels and status indicators that must
+      never cause a dialog (GNOME Shell extension, Settings): same results
+      as GetInfo / GetBalance, but where the plain method would ask the user
+      (the caller has no read grant, or is unidentified) they fail with
+      InteractionRequired instead, and nothing is shown. The caller's grant
+      is looked up exactly as for the plain method, so a client never has to
+      reimplement the agent's caller identification. Unpaired, both behave
+      like the plain method (GetInfo: {paired: false}; GetBalance: NotPaired).
+    -->
+    <method name="GetInfoNonInteractive">
+      <arg name="info" type="a{sv}" direction="out"/>
+    </method>
+    <method name="GetBalanceNonInteractive">
       <arg name="balance_msat" type="t" direction="out"/>
     </method>
 
@@ -156,13 +175,47 @@
       <arg name="nwc_uri" type="s" direction="in"/>
     </method>
 
+    <!--
+      BeginWalletAuth: connect a wallet by request, with a connection key the
+      agent creates (so, unlike Pair(uri), nobody else ever holds its
+      secret). Returns at once with @uri, a nostr+walletauth:// link
+      (nostr+walletauth://<client-key>?relay=…&name=…&request_methods=…
+      &notification_types=…&pubkey=<client-key>&state=<random>) for the
+      caller to open in the user's wallet app (or show / copy). No secret
+      is in it.
+      @options: "relays" (as, 1-5 ws(s):// URLs; default: the
+        wallet-auth-relays setting), "name" (s, shown by the wallet;
+        default "Nostr Wallet (<host>)").
+      When a wallet answers (its kind-13194 info event p-tagged to the key,
+      echoing `state` where the wallet supports it), the agent checks the
+      new connection with a get_info request and then ALWAYS asks the user
+      to confirm, showing the wallet's name and key; only then is it stored
+      and made the active pairing. Two different wallets answering one
+      request fail it (and new requests are refused for a minute). The
+      outcome is reported by WalletAuthFinished.
+      One request at a time: a new one from the same application (same app
+      id, as the agent identifies callers — see the security notes on
+      unverified ids) or the settings app replaces a pending one; other
+      callers get RateLimited.
+      Needs a display (Denied headless).
+    -->
+    <method name="BeginWalletAuth">
+      <arg name="options" type="a{sv}" direction="in"/>
+      <arg name="uri" type="s" direction="out"/>
+    </method>
+
+    <!-- CancelWalletAuth: abandon the pending request (its application or
+         the settings app only; a no-op when none is pending). -->
+    <method name="CancelWalletAuth"/>
+
     <!-- Unpair: forget the pairing (keyring item deleted). User-confirmed. -->
     <method name="Unpair"/>
 
     <!--
       OpenUri: scheme-handler entry point (the .desktop file's
-      `nostr-wallet-agent --open %u` forwards here). @uri is a lightning:,
-      bitcoin: (BIP-21) or nostr+walletconnect: link. Returns as soon as the
+      `nostr-wallet-agent --open %u` forwards here). @uri is a lightning:
+      (BOLT-11 invoice, LNURL-pay lnurl1…, or a user@host Lightning
+      address), bitcoin: (BIP-21) or nostr+walletconnect: link. Returns as soon as the
       link is parsed; the payment/pairing is then always confirmed in a
       dialog that names the calling application as the link's opener, and
       the outcome is shown to the user rather than returned.
@@ -197,6 +250,40 @@
     </method>
 
     <!--
+      "Grant admin" below means the settings app: the installed Nostr
+      Settings (an unsandboxed caller whose executable is
+      <bindir>/nostr-settings, checked by path and inode — the same rule as
+      the browser bridge), or a Flatpak-verified id listed in the
+      trusted-apps setting ("trusted"). A grant admin may also read other
+      apps' budgets (GetBudget); raising a budget still needs "trusted" or
+      the user's confirmation.
+
+      ListApps: every application (or web origin) the agent has a record
+      for, keyed by app id, with "limit_msat_per_day" (t),
+      "spent_today_msat" (t) and "allow_read" (b). Grant admin only; anyone
+      else gets Denied.
+    -->
+    <method name="ListApps">
+      <arg name="apps" type="a{sa{sv}}" direction="out"/>
+    </method>
+
+    <!--
+      SetReadAccess: grant or revoke @app_id's read access ("can see balance
+      and history, and create invoices", the flag the "Always allow this
+      app" switch sets). @app_id "" means the caller.
+        grant    grant admin: immediately; any other identified app: only
+                 after the user agrees in the agent's dialog
+        revoke   one's own: always; another app's: grant admin only (no
+                 dialog), everyone else Denied
+      No-op calls change nothing and emit nothing.
+      A read grant is not a spending budget, nor the reverse.
+    -->
+    <method name="SetReadAccess">
+      <arg name="app_id" type="s" direction="in"/>
+      <arg name="allow" type="b" direction="in"/>
+    </method>
+
+    <!--
       PaymentReceived: a wallet payment_received notification (NIP-47 kind
       23196/23197). Signals reach every session-bus client, so @details is
       minimal: "type", "amount" (x, msat), "fees_paid", "created_at",
@@ -215,6 +302,24 @@
     -->
     <signal name="PaymentSent">
       <arg name="details" type="a{sv}"/>
+    </signal>
+
+    <!--
+      AppsChanged: some application's read grant or daily limit changed
+      (settings UIs re-list with ListApps). No arguments: who changed what
+      is only visible through ListApps.
+    -->
+    <signal name="AppsChanged"/>
+
+    <!--
+      WalletAuthFinished: the BeginWalletAuth request ended: @success TRUE
+      once the new wallet is connected; otherwise @message says why
+      (declined, timed out, conflicting answers, cancelled, superseded).
+      Carries no keys or links.
+    -->
+    <signal name="WalletAuthFinished">
+      <arg name="success" type="b"/>
+      <arg name="message" type="s"/>
     </signal>
 
     <!-- BudgetExceeded: a PayInvoice call did not fit @app_id's budget. -->

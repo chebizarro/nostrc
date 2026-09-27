@@ -155,6 +155,26 @@ nwa_budget_store_set_allow_read(NwaBudgetStore *self, const gchar *app_id, gbool
   autosave(self);
 }
 
+static gint
+cmp_str(gconstpointer a, gconstpointer b)
+{
+  return g_strcmp0(*(const gchar *const *)a, *(const gchar *const *)b);
+}
+
+GStrv
+nwa_budget_store_list_apps(NwaBudgetStore *self)
+{
+  GPtrArray *ids = g_ptr_array_new();
+  GHashTableIter it;
+  gpointer k;
+  g_hash_table_iter_init(&it, self->apps);
+  while (g_hash_table_iter_next(&it, &k, NULL))
+    g_ptr_array_add(ids, g_strdup(k));
+  g_ptr_array_sort(ids, cmp_str);
+  g_ptr_array_add(ids, NULL);
+  return (GStrv)g_ptr_array_free(ids, FALSE);
+}
+
 guint
 nwa_budget_store_reserve(NwaBudgetStore *self, const gchar *app_id,
                          guint64 amount, gboolean force)

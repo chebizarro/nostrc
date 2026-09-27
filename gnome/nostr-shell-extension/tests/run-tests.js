@@ -190,38 +190,15 @@ eq(S.dmView({available: true, notify: unit('loaded', 'inactive', 'dead', 'disabl
 eq(S.dmView({available: true, notify: unit('loaded', 'failed', 'failed', 'enabled')}),
     'Message notifications: failed', 'dm failed');
 
-// ── wallet caller identity (port of nwa_caller_parse_cgroup) ──────────────
-eq(S.parseCgroupAppId('0::/user.slice/user-1000.slice/user@1000.service/session.slice/org.gnome.Shell@wayland.service\n'),
-    null, 'gnome-shell (session.slice) has no app id');
-eq(S.walletCallerId({cgroup: '0::/user.slice/user-1000.slice/user@1000.service/session.slice/org.gnome.Shell@wayland.service\n',
-    exe: '/usr/bin/gnome-shell'}), 'exe:/usr/bin/gnome-shell', 'gnome-shell → exe: identity');
-eq(S.parseCgroupAppId('0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-gnome-org.gnome.Console-1234.scope\n'),
-    'org.gnome.Console', 'app scope with launcher and random suffix');
-eq(S.parseCgroupAppId('0::/user.slice/user@1000.service/app.slice/app-org.nostr.Settings@ab12.service'),
-    'org.nostr.Settings', 'app service with @instance');
-eq(S.parseCgroupAppId('0::/app.slice/app-flatpak-org.foo\\x2dbar.App-99.scope'),
-    'org.foo-bar.App', '\\x2d unescaped');
-eq(S.parseCgroupAppId('0::/user.slice/snap.firefox.firefox-1a2b.scope'), 'snap.firefox', 'snap');
-eq(S.parseCgroupAppId('12:pids:/user.slice\n0::/app.slice/app-gnome-org.x.Y-1.scope/sub'),
-    'org.x.Y', 'deepest named component wins, cgroup v1 lines skipped');
-eq(S.walletCallerId({cgroup: null, exe: 'relative'}), null, 'no identity → null');
-
-// ── read grant (budgets.json) ─────────────────────────────────────────────
+// ── unread direct messages (org.nostr.NotifyDaemon1) ─────────────────────
 {
-    const file = JSON.stringify({version: 1, apps: {
-        'exe:/usr/bin/gnome-shell': {limit_msat_per_day: 0, allow_read: true, day: '', spent_msat: 0},
-        'org.other.App': {allow_read: false},
-    }});
-    eq(S.readAllowed(file, 'exe:/usr/bin/gnome-shell'), true, 'grant present');
-    eq(S.readAllowed(file, 'org.other.App'), false, 'allow_read false');
-    eq(S.readAllowed(file, 'exe:/usr/bin/gjs'), false, 'other identity');
-    eq(S.readAllowed(file, null), false, 'unknown identity fails closed');
-    eq(S.readAllowed('{not json', 'exe:/usr/bin/gnome-shell'), false, 'corrupt file fails closed');
-    eq(S.readAllowed(null, 'exe:/usr/bin/gnome-shell'), false, 'missing file fails closed');
-    eq(S.readAllowed(JSON.stringify({apps: {'exe:/usr/bin/gnome-shell': {allow_read: 'yes'}}}),
-        'exe:/usr/bin/gnome-shell'), false, 'non-boolean allow_read fails closed');
-    eq(S.readAllowed(JSON.stringify({apps: []}), 'toString'), false, 'array apps / prototype keys');
-    eq(S.readAllowed(JSON.stringify({apps: {}}), '__proto__'), false, '__proto__ key');
+    const on = {available: true, notify: unit('loaded', 'active', 'running', 'enabled')};
+    eq(S.dmView(on, 3), '3 unread direct messages', 'dm count');
+    eq(S.dmView(on, 1), '1 unread direct message', 'dm count singular');
+    eq(S.dmView(on, 0), 'No unread direct messages', 'dm none unread');
+    eq(S.dmView(on, null), 'Message notifications: on', 'daemon not on the bus → service state');
+    eq(S.dmView({available: true, notify: unit('loaded', 'failed', 'failed', 'enabled')}, 5),
+        'Message notifications: failed', 'failed service wins over a stale count');
 }
 
 // ── wallet row: degrade paths, never a prompt without a click ─────────────
@@ -248,6 +225,8 @@ eq(S.classifyWalletError('org.nostr.Wallet1.Error.Denied'), 'denied', 'Denied');
 eq(S.classifyWalletError('org.nostr.Wallet1.Error.NotPaired'), 'unpaired', 'NotPaired');
 eq(S.classifyWalletError('org.freedesktop.DBus.Error.ServiceUnknown'), 'not-running', 'ServiceUnknown');
 eq(S.classifyWalletError('org.nostr.Wallet1.Error.Timeout'), 'error', 'Timeout');
+eq(S.classifyWalletError('org.nostr.Wallet1.Error.InteractionRequired'), 'needs-grant', 'InteractionRequired');
+eq(S.classifyWalletError('org.freedesktop.DBus.Error.UnknownMethod'), 'needs-grant', 'old agent never prompts');
 
 // ── translator hook ───────────────────────────────────────────────────────
 S.setTranslator(s => `«${s}»`);

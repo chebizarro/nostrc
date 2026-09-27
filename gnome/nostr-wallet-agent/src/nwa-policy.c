@@ -68,8 +68,9 @@ nwa_policy_decide(const NwaPolicyInput *in)
       return prompt_or_deny(in);
 
     case NWA_OP_BUDGET_QUERY_OTHER:
-      return in->caller_trusted ? decision(NWA_DECISION_ALLOW, NWA_DENY_NONE)
-                                : decision(NWA_DECISION_DENY, NWA_DENY_NOT_TRUSTED);
+      return in->caller_trusted || in->caller_grant_admin
+               ? decision(NWA_DECISION_ALLOW, NWA_DENY_NONE)
+               : decision(NWA_DECISION_DENY, NWA_DENY_NOT_TRUSTED);
 
     case NWA_OP_BUDGET_LOWER_OWN:
       /* Lowering can only reduce what the caller may do. Unidentified
@@ -78,13 +79,39 @@ nwa_policy_decide(const NwaPolicyInput *in)
                                    : decision(NWA_DECISION_DENY, NWA_DENY_INVALID);
 
     case NWA_OP_BUDGET_CHANGE:
-      if (in->caller_trusted)
+    case NWA_OP_READ_GRANT: {
+      /* The settings app acts on the user's own switch; anyone else must
+       * get the user to agree in the agent's dialog. Spending limits need
+       * the stronger (sandbox-attested) trust: an unsandboxed settings
+       * binary is a softer identity than a Flatpak id, so it may manage
+       * read grants but a budget raise from it is still confirmed. */
+      gboolean admin = in->caller_trusted || (in->op == NWA_OP_READ_GRANT && in->caller_grant_admin);
+      if (admin)
         return decision(NWA_DECISION_ALLOW, NWA_DENY_NONE);
       if (!in->caller_identified)
         return decision(NWA_DECISION_DENY, NWA_DENY_INVALID);
       return prompt_or_deny(in);
+    }
+
+    case NWA_OP_READ_REVOKE_OWN:
+      /* Giving up one's own access only reduces what the caller may do. */
+      return in->caller_identified ? decision(NWA_DECISION_ALLOW, NWA_DENY_NONE)
+                                   : decision(NWA_DECISION_DENY, NWA_DENY_INVALID);
+
+    case NWA_OP_READ_REVOKE_OTHER:
+      /* No confirmation for the settings app; apps cannot revoke each other. */
+      return in->caller_trusted || in->caller_grant_admin
+               ? decision(NWA_DECISION_ALLOW, NWA_DENY_NONE)
+               : decision(NWA_DECISION_DENY, NWA_DENY_NOT_TRUSTED);
   }
   return decision(NWA_DECISION_DENY, NWA_DENY_INVALID);
+}
+
+gboolean
+nwa_policy_needs_user(NwaDecision d)
+{
+  return d.kind == NWA_DECISION_PROMPT ||
+         (d.kind == NWA_DECISION_DENY && d.reason == NWA_DENY_NO_UI);
 }
 
 const gchar *

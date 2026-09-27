@@ -83,11 +83,20 @@ site access is granted (Firefox treats MV3 host access as opt-in).
 `key`, so the id is always `ljigikpdhlameofnnalkmjnbeagdhbin`, which is what
 the host manifest allows.
 
-**Epiphany (GNOME Web)** — Epiphany loads Firefox-style WebExtensions, but its
-WebExtension layer does not currently implement `runtime.connectNative`
-(native messaging), so the bridge cannot reach the host there: every call
-rejects with `signer_unavailable`. Nothing to install on the host side
-beyond the package above; revisit when WebKit/Epiphany ship native messaging.
+**Epiphany (GNOME Web)** — not usable: Epiphany loads Firefox-style
+WebExtensions, but it does not implement native messaging. Verified against
+Epiphany 46.5 (Ubuntu 24.04, `nostrc-tumh`): the content-side shim
+(`webextensions.js` in `libephywebprocessextension.so`) declares
+`browser.runtime.connectNative` / `sendNativeMessage` and forwards them to the
+UI process, but the UI process (`libephymain.so`) registers no handler for
+either (its `runtime` handlers are `getBrowserInfo`, `getPlatformInfo`,
+`openOptionsPage`, `sendMessage`, `setUninstallURL`), so the call is
+answered with "'…' not implemented by Epiphany!"; the shim's
+`connectNative` also returns a Promise where WebExtensions return a `Port`.
+Every bridge call therefore rejects with `signer_unavailable`. Nothing on
+the host side would change that; it needs native messaging in Epiphany
+(ideally through the WebExtensions portal, as below) — tracked as a
+follow-up bead.
 
 ### Flatpak Firefox
 
@@ -95,20 +104,43 @@ A sandboxed Firefox cannot exec `/usr/libexec/...` and reads manifests from
 its own home, `~/.var/app/org.mozilla.firefox/.mozilla/native-messaging-hosts/`.
 Two routes:
 
-1. **WebExtensions portal (preferred).** Recent Firefox Flatpaks can ask
-   `xdg-desktop-portal` (`org.freedesktop.portal.WebExtensions`) to launch the
-   host *outside* the sandbox, using the host-side system manifests above. In
-   `about:config` set `widget.use-xdg-desktop-portal.native-messaging = 1`
-   (needs a portal backend with that interface). The host then runs unsandboxed
-   and reaches `org.nostr.Signer` normally.
+1. **WebExtensions portal (the supported route).** Firefox asks
+   `xdg-desktop-portal` (`org.freedesktop.portal.WebExtensions`) to start the
+   host *outside* the sandbox from the host's system manifests (above); in
+   `about:config` set `widget.use-xdg-desktop-portal.native-messaging = 1`.
+   The portal asks once ("Allow Firefox to start WebExtension backend?",
+   remembered in the permission store table `webextensions`; `flatpak
+   permission-set webextensions org.nostr.signer_bridge org.mozilla.firefox
+   yes` pre-answers it). The host then runs unsandboxed, as a child of the
+   portal, with the session bus — so the wallet agent identifies it as the
+   browser bridge (exe path + inode) exactly as with a distro Firefox, and
+   per-site WebLN works; the signer treats it the same way.
+
+   Status (`nostrc-tumh`, aarch64 Ubuntu 24.04, Flathub Firefox 156.0.1,
+   xdg-desktop-portal 1.18.4-1ubuntu2 — Ubuntu carries the WebExtensions
+   portal; upstream it is newer than 1.18): with the extension loaded
+   (`web-ext run --firefox=flatpak:org.mozilla.firefox`) Firefox made the
+   portal calls `CreateSession` → `GetManifest("org.nostr.signer_bridge",
+   "signer-bridge@gnostr.org")` → `Start` → `GetPipes`, and the portal
+   started `/usr/libexec/nostr-signer-webext-host` outside the sandbox (in
+   the session scope, with the right bus address). The round trip did **not**
+   complete: right after `GetPipes` Firefox logged
+   `subprocess_unix.worker.js: Error: Invalid process ID: 0`, no frame
+   reached the wallet agent and `window.webln` was not injected. Where that
+   breaks (Firefox's portal client vs. this portal version) is still open —
+   follow-up bead. `window.nostr` was injected and the extension's own
+   permission prompt worked inside Flatpak Firefox.
 2. **In-sandbox host.** Install the manifest with `install.sh
    --flatpak-firefox --host <path visible inside the sandbox>` and grant bus
    access: `flatpak override --user --talk-name=org.nostr.Signer
-   org.mozilla.firefox`. The host binary and its GLib/json-glib dependencies
-   must be resolvable inside the Firefox runtime, which is not generally true
-   for a distro-built binary.
-
-Neither route is exercised by CI yet: `nostrc-tumh` (also covers Epiphany).
+   --talk-name=org.nostr.Wallet1 org.mozilla.firefox`. The host binary and
+   its GLib/json-glib dependencies must be resolvable inside the Firefox
+   runtime, which is not generally true for a distro-built binary. Even
+   then the daemons see the caller as the Flatpak `org.mozilla.firefox`:
+   the wallet agent refuses per-site (`*For`) calls from any Flatpak caller
+   by design (a sandboxed process must not assert web origins), so WebLN
+   answers `rejected`, and every site shares Firefox's identity. Prefer the
+   portal.
 
 ## Security model
 

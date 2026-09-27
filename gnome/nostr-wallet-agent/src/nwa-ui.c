@@ -9,9 +9,25 @@
 
 static gint ui_state; /* 0 = untried, 1 = ready, -1 = unavailable */
 
+#ifdef NWA_ORIGIN_BRIDGE_ENV
+/* Test builds only (same switch as the other test hooks; packages are
+ * built without it): NOSTR_WALLET_AGENT_TEST_ANSWER=accept|deny answers
+ * every dialog at once without GTK and logs its text, so CTest can drive
+ * flows that end in a dialog and assert what the user would read. */
+static const gchar *
+test_answer(void)
+{
+  const gchar *a = g_getenv("NOSTR_WALLET_AGENT_TEST_ANSWER");
+  return a && (g_str_equal(a, "accept") || g_str_equal(a, "deny")) ? a : NULL;
+}
+#else
+#define test_answer() ((const gchar *)NULL)
+#endif
+
 gboolean
 nwa_ui_available(void)
 {
+  if (test_answer()) return TRUE;
   if (ui_state == 0) {
     const gchar *headless = g_getenv("NOSTR_WALLET_AGENT_HEADLESS");
     if (headless && *headless && g_strcmp0(headless, "0") != 0) {
@@ -62,6 +78,11 @@ typedef struct {
   AdwSpinRow   *limit_row;
   /* confirm */
   NwaConfirmCallback confirm_cb;
+  /* lnurl */
+  NwaLnurlPromptCallback lnurl_cb;
+  AdwSpinRow  *amount_row;   /* NULL: fixed amount */
+  AdwEntryRow *comment_row;  /* nullable */
+  guint64      fixed_msat;
   gpointer user_data;
 } Dialog;
 
@@ -82,6 +103,10 @@ dialog_answer_full(Dialog *d, gboolean yes, gboolean destroy)
   } else if (d->confirm_cb) {
     gboolean remember = yes && d->remember_row && adw_switch_row_get_active(d->remember_row);
     d->confirm_cb(yes, remember, d->user_data);
+  } else if (d->lnurl_cb) {
+    guint64 msat = d->amount_row ? (guint64)adw_spin_row_get_value(d->amount_row) * 1000 : d->fixed_msat;
+    const gchar *comment = d->comment_row ? gtk_editable_get_text(GTK_EDITABLE(d->comment_row)) : NULL;
+    d->lnurl_cb(yes, yes ? msat : 0, yes ? comment : NULL, d->user_data);
   }
   if (destroy)
     gtk_window_destroy(d->window);
@@ -188,6 +213,12 @@ void
 nwa_ui_prompt_payment(const NwaPaymentPrompt *p, guint timeout_s,
                       NwaPaymentPromptCallback callback, gpointer user_data)
 {
+  if (test_answer()) {
+    g_message("nostr-wallet-agent: test build: answering payment dialog (%" G_GUINT64_FORMAT
+              " msat, %s): %s", p->amount_msat, p->description ? p->description : "", test_answer());
+    callback(g_str_equal(test_answer(), "accept"), FALSE, 0, user_data);
+    return;
+  }
   if (!nwa_ui_available()) {
     callback(FALSE, FALSE, 0, user_data);
     return;
@@ -199,9 +230,16 @@ nwa_ui_prompt_payment(const NwaPaymentPrompt *p, guint timeout_s,
   gtk_widget_add_css_class(amount_label, "title-1");
   gtk_box_append(GTK_BOX(content), amount_label);
 
-  g_autofree gchar *lead = p->via_link
-    ? g_strdup_printf("A payment link opened by %s", p->app_name)
-    : g_strdup_printf("%s wants to pay a Lightning invoice", p->app_name);
+  const gchar *noun = p->is_site ? "site" : "app";
+  g_autofree gchar *lead = NULL;
+  if (p->via_link)
+    lead = g_strdup_printf("A payment link opened by %s", p->app_name);
+  else if (p->is_site && p->via)
+    lead = g_strdup_printf("The website %s (in %s) wants to pay a Lightning invoice", p->app_name, p->via);
+  else if (p->is_site)
+    lead = g_strdup_printf("The website %s wants to pay a Lightning invoice", p->app_name);
+  else
+    lead = g_strdup_printf("%s wants to pay a Lightning invoice", p->app_name);
   GtkWidget *lead_label = gtk_label_new(lead);
   gtk_label_set_wrap(GTK_LABEL(lead_label), TRUE);
   gtk_label_set_justify(GTK_LABEL(lead_label), GTK_JUSTIFY_CENTER);
@@ -209,17 +247,23 @@ nwa_ui_prompt_payment(const NwaPaymentPrompt *p, guint timeout_s,
   gtk_box_append(GTK_BOX(content), lead_label);
 
   if (p->over_budget) {
-    GtkWidget *warn = gtk_label_new("This payment exceeds the app's daily budget.");
+    g_autofree gchar *wtext = g_strdup_printf("This payment exceeds the %s's daily budget.", noun);
+    GtkWidget *warn = gtk_label_new(wtext);
     gtk_label_set_wrap(GTK_LABEL(warn), TRUE);
     gtk_widget_add_css_class(warn, "warning");
     gtk_box_append(GTK_BOX(content), warn);
   }
 
   GtkWidget *group = adw_preferences_group_new();
-  g_autofree gchar *who = p->app_id
-    ? g_strdup_printf("%s (%s%s)", p->app_id, p->app_kind,
-                      p->app_attested ? ", verified by sandbox" : ", unverified")
-    : g_strdup("Could not identify the requesting application");
+  g_autofree gchar *who = NULL;
+  if (p->is_site)
+    who = p->via ? g_strdup_printf("%s (website, in %s, via the Nostr browser extension)", p->app_id, p->via)
+                 : g_strdup_printf("%s (website, via the Nostr browser extension)", p->app_id);
+  else if (p->app_id)
+    who = g_strdup_printf("%s (%s%s)", p->app_id, p->app_kind,
+                          p->app_attested ? ", verified by sandbox" : ", unverified");
+  else
+    who = g_strdup("Could not identify the requesting application");
   adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), info_row("Requested by", who));
   adw_preferences_group_add(ADW_PREFERENCES_GROUP(group),
                             info_row("Description", p->description && *p->description
@@ -247,7 +291,8 @@ nwa_ui_prompt_payment(const NwaPaymentPrompt *p, guint timeout_s,
   if (p->can_remember) {
     GtkWidget *rg = adw_preferences_group_new();
     remember = ADW_SWITCH_ROW(adw_switch_row_new());
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(remember), "Always allow this app");
+    g_autofree gchar *rtitle = g_strdup_printf("Always allow this %s", noun);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(remember), rtitle);
     adw_action_row_set_subtitle(ADW_ACTION_ROW(remember),
                                 "Pay without asking while within the daily limit");
     guint64 amount_sats = (p->amount_msat + 999) / 1000;
@@ -273,10 +318,87 @@ nwa_ui_prompt_payment(const NwaPaymentPrompt *p, guint timeout_s,
 }
 
 void
+nwa_ui_prompt_lnurl(const NwaLnurlPrompt *p, guint timeout_s, NwaLnurlPromptCallback callback,
+                    gpointer user_data)
+{
+  /* Whole sats inside [min, max]; a range without one (sub-sat) or a single
+   * value is a fixed amount. */
+  guint64 lo = (p->min_msat + 999) / 1000, hi = p->max_msat / 1000;
+  gboolean fixed = p->min_msat == p->max_msat || lo > hi;
+  guint64 fixed_msat = p->min_msat;
+  if (test_answer()) {
+    g_message("nostr-wallet-agent: test build: answering LNURL dialog (%s, %s, %" G_GUINT64_FORMAT
+              "..%" G_GUINT64_FORMAT " msat, comment<=%u): %s", p->recipient, p->description,
+              p->min_msat, p->max_msat, p->comment_allowed, test_answer());
+    gboolean yes = g_str_equal(test_answer(), "accept");
+    callback(yes, yes ? (fixed ? fixed_msat : lo * 1000) : 0, yes ? "sent from a test" : NULL, user_data);
+    return;
+  }
+  if (!nwa_ui_available()) {
+    callback(FALSE, 0, NULL, user_data);
+    return;
+  }
+  GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+  GtkWidget *to = gtk_label_new(p->recipient);
+  gtk_label_set_wrap(GTK_LABEL(to), TRUE);
+  gtk_label_set_wrap_mode(GTK_LABEL(to), PANGO_WRAP_WORD_CHAR);
+  gtk_widget_add_css_class(to, "title-2");
+  gtk_box_append(GTK_BOX(content), to);
+  g_autofree gchar *lead = g_strdup_printf("%s asks you to pay this recipient", p->opener);
+  GtkWidget *lead_label = gtk_label_new(lead);
+  gtk_label_set_wrap(GTK_LABEL(lead_label), TRUE);
+  gtk_label_set_justify(GTK_LABEL(lead_label), GTK_JUSTIFY_CENTER);
+  gtk_widget_add_css_class(lead_label, "dim-label");
+  gtk_box_append(GTK_BOX(content), lead_label);
+
+  GtkWidget *group = adw_preferences_group_new();
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), info_row("Description", p->description));
+  if (p->long_description && *p->long_description)
+    adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), info_row("Details", p->long_description));
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), info_row("Server", p->domain));
+  AdwSpinRow *amount = NULL;
+  if (fixed) {
+    g_autofree gchar *a = nwa_ui_format_msat(fixed_msat);
+    adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), info_row("Amount", a));
+  } else {
+    amount = ADW_SPIN_ROW(adw_spin_row_new_with_range((gdouble)lo, (gdouble)hi, 1));
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(amount), "Amount (sats)");
+    g_autofree gchar *lo_s = nwa_ui_format_msat(lo * 1000);
+    g_autofree gchar *hi_s = nwa_ui_format_msat(hi * 1000);
+    g_autofree gchar *range = g_strdup_printf("Between %s and %s", lo_s, hi_s);
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(amount), range);
+    adw_spin_row_set_value(amount, (gdouble)lo);
+    adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(amount));
+  }
+  AdwEntryRow *comment = NULL;
+  if (p->comment_allowed) {
+    comment = ADW_ENTRY_ROW(adw_entry_row_new());
+    g_autofree gchar *ct = g_strdup_printf("Comment (optional, up to %u characters)", p->comment_allowed);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(comment), ct);
+    adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(comment));
+  }
+  gtk_box_append(GTK_BOX(content), group);
+
+  Dialog *d = dialog_new("Lightning Payment", content, "_Pay", FALSE, timeout_s);
+  d->lnurl_cb = callback;
+  d->user_data = user_data;
+  d->amount_row = amount;
+  d->comment_row = comment;
+  d->fixed_msat = fixed_msat;
+  gtk_window_present(d->window);
+}
+
+void
 nwa_ui_confirm(const gchar *title, const gchar *body, const gchar *accept_label,
                gboolean destructive, const gchar *remember_label, guint timeout_s,
                NwaConfirmCallback callback, gpointer user_data)
 {
+  if (test_answer()) {
+    g_message("nostr-wallet-agent: test build: answering dialog \"%s\": %s\n%s\n-- end of dialog",
+              title, test_answer(), body);
+    callback(g_str_equal(test_answer(), "accept"), FALSE, user_data);
+    return;
+  }
   if (!nwa_ui_available()) {
     callback(FALSE, FALSE, user_data);
     return;
@@ -315,7 +437,7 @@ add_toast_idle(gpointer data)
 void
 nwa_ui_show_message(const gchar *title, const gchar *body, const gchar *toast)
 {
-  if (!nwa_ui_available()) {
+  if (test_answer() || !nwa_ui_available()) {
     g_message("nostr-wallet-agent: %s: %s", title, toast ? toast : body);
     return;
   }

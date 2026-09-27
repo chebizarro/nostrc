@@ -71,16 +71,14 @@ typedef enum {
 typedef struct {
   NssNotifyUpstream upstream;       /* upstream_mode: direct | session_relay */
   gchar           **home_relays;    /* never NULL */
-  /* Reserved presentation keys (nostrc-prqu.16): documented in
-   * nostr-notify.conf.example, not read by the daemon yet. */
+  /* Presentation keys, read by nostr-notify-daemon at start
+   * (nostr-notify.conf.example; nostrc-prqu.16). */
   gboolean notify_groups;           /* default TRUE */
   gboolean notify_dms;              /* default TRUE */
   gboolean group_preview;           /* default TRUE */
   gboolean sound;                   /* default FALSE */
 } NssNotifyConf;
 
-/* FALSE until nostr-notify-daemon honours the reserved keys. */
-gboolean nss_notify_presentation_supported(void);
 gchar   *nss_notify_conf_path(void);
 void     nss_notify_conf_init(NssNotifyConf *c);
 void     nss_notify_conf_clear(NssNotifyConf *c);

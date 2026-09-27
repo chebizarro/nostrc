@@ -293,3 +293,38 @@ nwa_bolt11_decode(const gchar *invoice, NwaBolt11 *out, GError **error)
   *out = b;
   return TRUE;
 }
+
+gboolean
+nwa_bech32_decode(const gchar *str, gchar **out_hrp, GBytes **out_data, GError **error)
+{
+  gboolean lower = FALSE, upper = FALSE;
+  for (const gchar *p = str ? str : ""; *p; p++) {
+    lower |= g_ascii_islower(*p);
+    upper |= g_ascii_isupper(*p);
+  }
+  g_autofree gchar *s = str ? g_ascii_strdown(str, -1) : NULL;
+  const gchar *sep = s ? strrchr(s, '1') : NULL;
+  if (!s || (lower && upper) || !sep || sep == s || strlen(sep + 1) < WORDS_CHECKSUM) {
+    g_set_error_literal(error, NWA_ERROR, NWA_ERROR_INVALID_ARGS, "not a bech32 string");
+    return FALSE;
+  }
+  g_autofree gchar *hrp = g_strndup(s, (gsize)(sep - s));
+  const gchar *data = sep + 1;
+  gsize dlen = strlen(data);
+  g_autofree guint8 *words = g_new(guint8, dlen);
+  for (gsize i = 0; i < dlen; i++) {
+    gint v = bech32_value(data[i]);
+    if (v < 0) {
+      g_set_error_literal(error, NWA_ERROR, NWA_ERROR_INVALID_ARGS, "invalid bech32 character");
+      return FALSE;
+    }
+    words[i] = (guint8)v;
+  }
+  if (!bech32_verify(hrp, words, dlen)) {
+    g_set_error_literal(error, NWA_ERROR, NWA_ERROR_INVALID_ARGS, "bech32 checksum is invalid");
+    return FALSE;
+  }
+  *out_data = words_to_bytes(words, dlen - WORDS_CHECKSUM);
+  *out_hrp = g_steal_pointer(&hrp);
+  return TRUE;
+}

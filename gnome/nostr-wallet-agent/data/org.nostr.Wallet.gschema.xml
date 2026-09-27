@@ -28,6 +28,11 @@
       <summary>Largest payment approved automatically (msat)</summary>
       <description>Payments above this amount are always confirmed, whatever the daily budget. 0 means no per-payment cap.</description>
     </key>
+    <key name="wallet-auth-relays" type="as">
+      <default>['wss://relay.getalby.com/v1']</default>
+      <summary>Relays for connecting a wallet by request</summary>
+      <description>When a wallet is connected with a nostr+walletauth request (the agent creates the connection key), the wallet is asked to answer on these relays and the connection uses them unless the wallet names its own. At most 5 ws:// or wss:// URLs.</description>
+    </key>
     <key name="trusted-apps" type="as">
       <default>['org.nostr.Settings']</default>
       <summary>Wallet settings applications</summary>

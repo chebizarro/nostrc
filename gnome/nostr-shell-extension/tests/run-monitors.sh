@@ -14,7 +14,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/nostr-shellext-XXXXXX")
 trap 'rm -rf "$tmp"' EXIT INT TERM
 mkdir -p "$tmp/services"
-for name in org.nostr.SessionRelay1 org.nostr.Wallet1; do
+for name in org.nostr.SessionRelay1 org.nostr.Wallet1 org.nostr.NotifyDaemon; do
     printf '[D-BUS Service]\nName=%s\nExec=/usr/bin/touch %s/%s.activated\n' \
         "$name" "$tmp" "$name" > "$tmp/services/$name.service"
 done

@@ -18,8 +18,9 @@ import GLib from 'gi://GLib';
 import System from 'system';
 
 import {RelayMonitor} from '../lib/relay.js';
+import {DmMonitor} from '../lib/dm.js';
 import {WalletMonitor} from '../lib/wallet.js';
-import {relayView, walletView} from '../lib/state.js';
+import {dmView, relayView, walletView} from '../lib/state.js';
 
 let count = 0, failures = 0;
 
@@ -73,6 +74,7 @@ if (!tmp || !addr) {
 }
 const relayMarker = GLib.build_filenamev([tmp, 'org.nostr.SessionRelay1.activated']);
 const walletMarker = GLib.build_filenamev([tmp, 'org.nostr.Wallet1.activated']);
+const notifyMarker = GLib.build_filenamev([tmp, 'org.nostr.NotifyDaemon.activated']);
 
 const connect = () => Gio.DBusConnection.new_for_address_sync(addr,
     Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION,
@@ -261,58 +263,67 @@ ok(relayView(relayState).subtitle === 'Error' && /Access denied/.test(relayView(
 failEnable = false;
 
 // ── wallet monitor ────────────────────────────────────────────────────────
+// A fake agent with the non-interactive read (nostrc-prqu.19): it answers
+// only once "granted", else InteractionRequired — like the real agent, it
+// never prompts from GetBalanceNonInteractive. The plain GetBalance is the
+// explicit "Allow balance access…" path.
 const W_XML = `<node><interface name="org.nostr.Wallet1">
   <method name="GetBalance"><arg name="balance_msat" type="t" direction="out"/></method>
+  <method name="GetBalanceNonInteractive"><arg name="balance_msat" type="t" direction="out"/></method>
   <signal name="PaymentReceived"><arg type="a{sv}"/></signal>
   <signal name="PaymentSent"><arg type="a{sv}"/></signal>
+  <signal name="AppsChanged"/>
   <property name="Paired" type="b" access="read"/></interface></node>`;
-let balanceCalls = 0;
+let plainCalls = 0;
+let quietCalls = 0;
+let granted = false;
 let balance = 21000000;
 const walletObj = Gio.DBusExportedObject.wrapJSObject(W_XML, {
     get Paired() {
         return true;
     },
     GetBalance() {
-        balanceCalls++;
+        plainCalls++;
+        return balance;
+    },
+    GetBalanceNonInteractive() {
+        quietCalls++;
+        if (!granted) {
+            const e = new Error('reading the wallet needs the user\'s approval');
+            e.name = 'org.nostr.Wallet1.Error.InteractionRequired';
+            throw e;
+        }
         return balance;
     },
 });
-const budgets = GLib.build_filenamev([tmp, 'state', 'nostr-wallet', 'budgets.json']);
 
 let walletState = null;
 const wallet = new WalletMonitor(s => {
     walletState = s;
-}, {bus: client, budgetsPath: budgets});
+}, {bus: client});
 wallet.start({showBalance: true});
-ok(waitFor(() => walletState?.callerId, 'caller id'), 'wallet: caller id resolved from /proc/self',
-    String(walletState?.callerId));
-print(`# wallet caller id: ${walletState?.callerId}`);
-ok(walletView(walletState).label === 'Wallet: agent not running', 'wallet: agent absent → not running, not started');
 spin(300);
+ok(walletView(walletState ?? {showBalance: true}).label === 'Wallet: agent not running',
+    'wallet: agent absent → not running, not started');
 ok(!GLib.file_test(walletMarker, GLib.FileTest.EXISTS), 'wallet: agent never D-Bus-activated');
 
 const walletConn = connect();
 walletObj.export(walletConn, '/org/nostr/Wallet1');
 Gio.bus_own_name_on_connection(walletConn, 'org.nostr.Wallet1', Gio.BusNameOwnerFlags.NONE, null, null);
 ok(waitFor(() => walletState?.agentRunning && walletState.paired === true, 'paired'), 'wallet: agent appears, Paired read');
-spin(300);
-ok(balanceCalls === 0, 'wallet: no GetBalance without an allow_read grant (would prompt)');
+ok(waitFor(() => quietCalls >= 1, 'non-interactive read'), 'wallet: asks with GetBalanceNonInteractive');
+spin(200);
+ok(plainCalls === 0, 'wallet: never the prompting GetBalance on its own');
 ok(walletView(walletState).label === 'Wallet: —' && walletView(walletState).canGrant,
-    'wallet: "—" with an explicit grant action');
+    'wallet: InteractionRequired → "—" with an explicit grant action');
+ok(walletState.error === null, 'wallet: InteractionRequired is not an error');
 
-// Grant for somebody else: still nothing.
-GLib.mkdir_with_parents(GLib.path_get_dirname(budgets), 0o700);
-GLib.file_set_contents(budgets, JSON.stringify({version: 1, apps: {'exe:/usr/bin/other': {allow_read: true}}}));
-wallet.refresh(60);
-spin(800);
-ok(balanceCalls === 0, 'wallet: another app\'s grant does not count');
-
-// Grant for this process (what ticking "Always allow this app" writes).
-GLib.file_set_contents(budgets, JSON.stringify({version: 1, apps: {
-    [walletState.callerId]: {limit_msat_per_day: 0, allow_read: true, day: '', spent_msat: 0},
-}}));
-ok(waitFor(() => walletState.balanceMsat !== null, 'balance', 5000), 'wallet: grant picked up (file monitor) and balance fetched');
-ok(balanceCalls === 1, 'wallet: exactly one GetBalance', String(balanceCalls));
+// Granted elsewhere (Nostr Settings' GNOME Shell switch): the agent emits
+// AppsChanged and the monitor asks again.
+granted = true;
+walletObj.emit_signal('AppsChanged', null);
+ok(waitFor(() => walletState.balanceMsat !== null, 'balance', 5000), 'wallet: AppsChanged → balance fetched');
+ok(walletState.readAllowed === true, 'wallet: read allowed');
 ok(walletView(walletState, 'en-US').label === 'Wallet: 21,000 sats', 'wallet: label',
     walletView(walletState, 'en-US').label);
 
@@ -320,12 +331,65 @@ balance = 25000000;
 walletObj.emit_signal('PaymentReceived', new GLib.Variant('(a{sv})', [{amount: new GLib.Variant('x', 4000000)}]));
 ok(waitFor(() => walletState.balanceMsat === 25000000, 'refresh on payment'), 'wallet: refreshed on PaymentReceived');
 
+const quietBefore = quietCalls;
 wallet.refresh(3600);
 spin(300);
-ok(balanceCalls === 2, 'wallet: refresh() within max age uses the cache', String(balanceCalls));
+ok(quietCalls === quietBefore, 'wallet: refresh() within max age uses the cache', String(quietCalls));
+
+// Revoked: the next read says InteractionRequired; a payment drops the
+// balance it can no longer refresh.
+granted = false;
+walletObj.emit_signal('AppsChanged', null);
+ok(waitFor(() => walletState.readAllowed === false, 'revoked'), 'wallet: revoke noticed');
+walletObj.emit_signal('PaymentSent', new GLib.Variant('(a{sv})', [{}]));
+ok(waitFor(() => walletState.balanceMsat === null, 'dropped'), 'wallet: ungranted balance never shown stale');
+
+// The explicit click: the plain (prompting) call, exactly once.
+wallet.requestAccess();
+ok(waitFor(() => plainCalls === 1 && !walletState.granting, 'grant click'), 'wallet: requestAccess → one GetBalance');
+ok(walletState.balanceMsat === 25000000, 'wallet: approved balance shown');
 
 wallet.setShowBalance(false);
 ok(walletView(walletState).state === 'hidden', 'wallet: hidden by preference');
+
+// ── unread direct messages (org.nostr.NotifyDaemon1, prqu.18) ─────────────
+const N_XML = `<node><interface name="org.nostr.NotifyDaemon1">
+  <property name="UnreadDirectMessages" type="u" access="read"/>
+  <property name="LastDirectMessage" type="t" access="read"/>
+  <method name="MarkRead"/></interface></node>`;
+let unread = 2;
+const notifyObj = Gio.DBusExportedObject.wrapJSObject(N_XML, {
+    get UnreadDirectMessages() {
+        return unread;
+    },
+    get LastDirectMessage() {
+        return 1700000000;
+    },
+    MarkRead() {
+        unread = 0;
+    },
+});
+let dmState = null;
+const dm = new DmMonitor(s => {
+    dmState = s;
+}, {bus: client});
+dm.start();
+spin(300);
+ok((dmState?.unread ?? null) === null, 'dm: daemon absent → no count');
+ok(!GLib.file_test(notifyMarker, GLib.FileTest.EXISTS), 'dm: daemon never D-Bus-activated');
+const notifyConn = connect();
+notifyObj.export(notifyConn, '/org/nostr/NotifyDaemon1');
+Gio.bus_own_name_on_connection(notifyConn, 'org.nostr.NotifyDaemon', Gio.BusNameOwnerFlags.NONE, null, null);
+ok(waitFor(() => dmState?.unread === 2, 'count'), 'dm: count read when the daemon appears');
+const notifyOn = {available: true, notify: {loadState: 'loaded', activeState: 'active', subState: 'running',
+    unitFileState: 'enabled'}};
+ok(dmView(notifyOn, dmState.unread) === '2 unread direct messages', 'dm: row shows the count',
+    dmView(notifyOn, dmState.unread));
+unread = 3;
+notifyObj.emit_property_changed('UnreadDirectMessages', new GLib.Variant('u', 3));
+ok(waitFor(() => dmState.unread === 3, 'changed'), 'dm: PropertiesChanged updates the count');
+notifyConn.close_sync(null);
+ok(waitFor(() => dmState.unread === null, 'gone'), 'dm: daemon gone → count dropped');
 
 // ── teardown ──────────────────────────────────────────────────────────────
 calls.length = 0;
@@ -333,11 +397,13 @@ relay.destroy();
 wallet.destroy();
 spin(300);
 ok(!calls.includes('Unsubscribe'), 'relay: destroy() never calls Manager.Unsubscribe');
-const before = [relayEvents, balanceCalls];
+dm.destroy();
+const before = [relayEvents, plainCalls, quietCalls];
 walletObj.emit_signal('PaymentSent', new GLib.Variant('(a{sv})', [{}]));
 setUnit('nostr-session-relay.socket', {ActiveState: 'active', SubState: 'listening'});
 spin(600);
-ok(same([relayEvents, balanceCalls], before), 'destroy(): no further callbacks or calls');
+ok(same([relayEvents, plainCalls, quietCalls], before), 'destroy(): no further callbacks or calls');
+ok(!GLib.file_test(notifyMarker, GLib.FileTest.EXISTS), 'dm: never D-Bus-activated');
 ok(!GLib.file_test(relayMarker, GLib.FileTest.EXISTS), 'relay: never D-Bus-activated');
 ok(!GLib.file_test(walletMarker, GLib.FileTest.EXISTS), 'wallet: never D-Bus-activated');
 

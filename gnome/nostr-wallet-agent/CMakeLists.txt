@@ -4,7 +4,7 @@
 # Nostr Wallet Connect) with per-app budgets, libadwaita approval dialogs and
 # lightning: / bitcoin: / nostr+walletconnect: scheme handlers (nostrc-yka8).
 #
-# Requires: glib-2.0 >= 2.74, gio(-unix), json-glib-1.0, gtk4, libadwaita-1 >= 1.4,
+# Requires: glib-2.0 >= 2.74, gio(-unix), json-glib-1.0, libsoup-3.0, gtk4, libadwaita-1 >= 1.4,
 #           libsecret-1, gnome/libnostr-publish, libnostr + nip04 + nip44.
 # Build:    cmake -B _build -DENABLE_NOSTR_WALLET_AGENT=ON && cmake --build _build
 #
@@ -20,6 +20,7 @@ pkg_check_modules(NWA_JSON   REQUIRED IMPORTED_TARGET json-glib-1.0)
 pkg_check_modules(NWA_ADW    REQUIRED IMPORTED_TARGET gtk4 libadwaita-1>=1.4)
 pkg_check_modules(NWA_SECRET REQUIRED IMPORTED_TARGET libsecret-1)
 pkg_check_modules(NWA_GIOUNIX QUIET IMPORTED_TARGET gio-unix-2.0)
+pkg_check_modules(NWA_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
 
 foreach(_dep nostr nip04 nostr_nip44_core nostr_json)
   if (NOT TARGET ${_dep})
@@ -76,6 +77,8 @@ add_library(nostr-wallet-agent-core STATIC
   src/nwa-policy.c
   src/nwa-caller.c
   src/nwa-nwc.c
+  src/nwa-walletauth.c
+  src/nwa-lnurl.c
 )
 target_include_directories(nostr-wallet-agent-core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -86,6 +89,7 @@ target_link_libraries(nostr-wallet-agent-core PUBLIC
   nostr-publish
   PkgConfig::NWA_GLIB
   PkgConfig::NWA_JSON
+  PkgConfig::NWA_SOUP
 )
 if (NWA_GIOUNIX_FOUND)
   target_link_libraries(nostr-wallet-agent-core PUBLIC PkgConfig::NWA_GIOUNIX)
@@ -94,8 +98,11 @@ target_compile_options(nostr-wallet-agent-core PRIVATE ${NWA_WARNING_FLAGS})
 # The only executable allowed to act for a web origin (*For methods): the
 # browser bridge from apps/gnostr-signer/native-host, installed by the same
 # tree with the same libexecdir.
+# The settings app trusted to manage grants and budgets (same exe rule):
+# gnome/nostr-settings, installed by the same tree to the same bindir.
 target_compile_definitions(nostr-wallet-agent-core PRIVATE
-  NWA_WEBEXT_HOST_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/nostr-signer-webext-host")
+  NWA_WEBEXT_HOST_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/nostr-signer-webext-host"
+  NWA_SETTINGS_PATH="${CMAKE_INSTALL_FULL_BINDIR}/nostr-settings")
 # Test hook: honour NOSTR_WALLET_AGENT_ORIGIN_BRIDGES so CTest can run the
 # build-tree bridge. Off in package builds (BUILD_TESTING=OFF).
 option(NOSTR_WALLET_AGENT_ORIGIN_BRIDGE_ENV
@@ -152,12 +159,35 @@ install(FILES README.md
 
 # --- Tests (no network, no display, no keyring) ---
 if (BUILD_TESTING)
-  foreach(_t IN ITEMS uri budget policy nwc caller)
+  foreach(_t IN ITEMS uri budget policy nwc caller walletauth lnurl)
     add_executable(test-nostr-wallet-agent-${_t} tests/test_${_t}.c)
     target_link_libraries(test-nostr-wallet-agent-${_t} PRIVATE nostr-wallet-agent-core)
     target_compile_options(test-nostr-wallet-agent-${_t} PRIVATE ${NWA_WARNING_FLAGS})
     add_test(NAME nostr-wallet-agent-${_t} COMMAND test-nostr-wallet-agent-${_t})
   endforeach()
+
+  # A NIP-47 wallet service + relay in one process on 127.0.0.1, for tests
+  # that run the real agent binary paired (here and in the browser bridge's
+  # WebLN e2e, apps/gnostr-signer/native-host). Needs the test pairing hook.
+  pkg_check_modules(NWA_GIOUNIX_T REQUIRED IMPORTED_TARGET gio-unix-2.0)
+  add_executable(nwa-fixture-wallet tests/nwa-fixture-wallet.c)
+  target_link_libraries(nwa-fixture-wallet PRIVATE nostr-wallet-agent-core
+                        PkgConfig::NWA_SOUP PkgConfig::NWA_GIOUNIX_T)
+  target_compile_options(nwa-fixture-wallet PRIVATE ${NWA_WARNING_FLAGS})
+
+  # The real agent binary on a private bus, paired with the fixture wallet
+  # (callers are identified through /proc: Linux only).
+  if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOSTR_WALLET_AGENT_ORIGIN_BRIDGE_ENV)
+    add_executable(test-nostr-wallet-agent-dbus tests/test_dbus.c)
+    target_link_libraries(test-nostr-wallet-agent-dbus PRIVATE nostr-wallet-agent-core)
+    target_compile_options(test-nostr-wallet-agent-dbus PRIVATE ${NWA_WARNING_FLAGS})
+    target_compile_definitions(test-nostr-wallet-agent-dbus PRIVATE
+      "NWA_AGENT_PATH=\"$<TARGET_FILE:nostr-wallet-agent>\""
+      "NWA_FIXTURE_PATH=\"$<TARGET_FILE:nwa-fixture-wallet>\"")
+    add_dependencies(test-nostr-wallet-agent-dbus nostr-wallet-agent nwa-fixture-wallet)
+    add_test(NAME nostr-wallet-agent-dbus COMMAND test-nostr-wallet-agent-dbus)
+    set_tests_properties(nostr-wallet-agent-dbus PROPERTIES TIMEOUT 180)
+  endif()
   find_program(NWA_DESKTOP_VALIDATE desktop-file-validate)
   if (NWA_DESKTOP_VALIDATE)
     add_test(NAME nostr-wallet-agent-desktop-file
