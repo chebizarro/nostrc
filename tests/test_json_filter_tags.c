@@ -61,10 +61,33 @@ static void test_tags_roundtrip_from_hash_keys(void) {
     nostr_filter_free(f);
 }
 
+static void test_duplicate_tag_before_malformed_tail(void) {
+    const char *bad = "{\"#e\":[\"e1\",\"e1\"],\"#p\":[\"p1\"],\"li:imt}5\"\n";
+    NostrFilter *f = nostr_filter_new();
+    assert(f);
+    assert(nostr_filter_deserialize_compact(f, bad, NULL) == 0);
+    assert(tags_count_value(f->tags, "e", "e1") == 1);
+    assert(tags_count_value(f->tags, "p", "p1") == 1);
+    nostr_filter_free(f);
+
+    f = nostr_filter_new();
+    assert(f);
+    assert(nostr_filter_deserialize(f, bad) != 0);
+    nostr_filter_free(f);
+
+    f = nostr_filter_new();
+    assert(f);
+    assert(nostr_filter_deserialize(f, "{\"#e\":[\"e1\",\"e1\"],\"#p\":[\"p1\"]}") == 0);
+    assert(tags_count_value(f->tags, "e", "e1") == 1);
+    assert(tags_count_value(f->tags, "p", "p1") == 1);
+    nostr_filter_free(f);
+}
+
 int main(void) {
     nostr_json_init();
     test_tags_serialize_to_hash_keys();
     test_tags_roundtrip_from_hash_keys();
+    test_duplicate_tag_before_malformed_tail();
     nostr_json_cleanup();
     printf("test_json_filter_tags OK\n");
     return 0;

@@ -899,15 +899,15 @@ static int parse_string_array_values_as_tags(NostrFilter *filter, const char *ta
         if (filter->tags && nostr_tags_size(filter->tags) >= (size_t)nostr_limit_max_tags_per_event()) { free(val); return 0; }
         NostrTag *t = nostr_tag_new(tag_key, val, NULL);
         free(val);
-        if (t) {
-            if (!filter->tags) filter->tags = nostr_tags_new(0);
-            if (nostr_tags_size(filter->tags) < (size_t)nostr_limit_max_tags_per_event()) {
-                NostrTags *tmp = nostr_tags_append_unique(filter->tags, t);
-                if (tmp) filter->tags = tmp;
-            } else {
-                nostr_tag_free(t);
-                return 0;
-            }
+        if (!t) return 0;
+        if (!filter->tags) filter->tags = nostr_tags_new(0);
+        if (!filter->tags) { nostr_tag_free(t); return 0; }
+        if (nostr_tags_get_first(filter->tags, t)) {
+            nostr_tag_free(t);
+        } else {
+            NostrTags *tmp = nostr_tags_append_unique(filter->tags, t);
+            if (!tmp) { nostr_tag_free(t); return 0; }
+            filter->tags = tmp;
         }
         p = nostr_json_skip_ws(ps);
         if (*p == ',') { ++p; p = nostr_json_skip_ws(p); continue; }
