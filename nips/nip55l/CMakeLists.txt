@@ -202,6 +202,26 @@ if (BUILD_TESTING)
     set_tests_properties(nip55l_${t} PROPERTIES LABELS "nip55l;signer;unit" TIMEOUT 60)
   endforeach()
 
+  # macOS Keychain import of pre-e5nz GNostr client keys (nostrc-de9h). The
+  # migration is compiled into the test with NIP55L_KEYCHAIN_TEST_HOOKS so it
+  # runs against a throwaway keychain file, never the login keychain.
+  if (APPLE AND SECURITY_FRAMEWORK AND COREFOUNDATION_FRAMEWORK)
+    add_executable(test_nip55l_keychain_migration
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_keychain_migration.c
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/core/signer_ops.c)
+    target_include_directories(test_nip55l_keychain_migration PRIVATE
+      $<TARGET_PROPERTY:nostr_nip55l_core,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(test_nip55l_keychain_migration PRIVATE
+      NIP55L_HAVE_KEYCHAIN NIP55L_KEYCHAIN_TEST_HOOKS)
+    target_link_libraries(test_nip55l_keychain_migration PRIVATE
+      nostr nip04 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB}
+      ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
+    target_compile_options(test_nip55l_keychain_migration PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME nip55l_keychain_migration COMMAND test_nip55l_keychain_migration)
+    set_tests_properties(nip55l_keychain_migration PROPERTIES
+      LABELS "nip55l;signer;unit;keyring" TIMEOUT 60)
+  endif()
+
   # Unified libsecret key schema (nostrc-bml6): schema shape, identity and
   # legacy attribute mapping, Seahorse label. Pure functions, no keyring.
   if (TARGET gnostr-secret)

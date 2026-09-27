@@ -1292,6 +1292,263 @@ out:
 }
 #endif /* NIP55L_HAVE_LIBSECRET */
 
+#ifdef NIP55L_HAVE_KEYCHAIN
+/* ---- macOS Keychain: import pre-e5nz gnostr client keys (nostrc-de9h) ----
+ *
+ * Before nostrc-e5nz GNostr stored each nsec itself as a generic-password
+ * item: service "org.gnostr.Client", account = npub, data = the nsec text.
+ * Mirrors the libsecret migrate_one(): the key is re-stored in the daemon's
+ * own format (service "Gnostr Identity Key", account = key_id = npub,
+ * comment = npub, data = 32 raw bytes) and the legacy item is deleted only
+ * once the daemon's item provably holds the same key - never on attribute
+ * evidence alone. A marker item ends the one-shot pass. The attribute-only
+ * probe never prompts; reading a legacy secret may raise the Keychain's
+ * access prompt (the item belongs to GNostr), and a dismissed prompt only
+ * postpones that item to the next start. */
+#define KC_SIGNER_SERVICE        "Gnostr Identity Key"
+#define KC_LEGACY_CLIENT_SERVICE "org.gnostr.Client"
+#define KC_MARKER_SERVICE        "Gnostr Signer Migration"
+#define KC_MARKER_ACCOUNT        "legacy-client-keys-v1"
+
+#ifdef NIP55L_KEYCHAIN_TEST_HOOKS
+/* Test executables only: pin every query and write to one keychain file so a
+ * test never reads or writes the user's login keychain. */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+static SecKeychainRef kc_test_keychain = NULL;
+void nostr_nip55l_test_use_keychain(SecKeychainRef kc);
+void nostr_nip55l_test_use_keychain(SecKeychainRef kc){ kc_test_keychain = kc; }
+static void kc_scope(CFMutableDictionaryRef q, int for_add){
+  if (!kc_test_keychain) abort(); /* refuse to touch the login keychain */
+  if (for_add) {
+    CFDictionarySetValue(q, kSecUseKeychain, kc_test_keychain);
+  } else {
+    const void *kcs[1] = { kc_test_keychain };
+    CFArrayRef list = CFArrayCreate(NULL, kcs, 1, &kCFTypeArrayCallBacks);
+    CFDictionarySetValue(q, kSecMatchSearchList, list);
+    CFRelease(list);
+  }
+}
+#pragma clang diagnostic pop
+#else
+static void kc_scope(CFMutableDictionaryRef q, int for_add){ (void)q; (void)for_add; }
+#endif
+
+static CFMutableDictionaryRef kc_query(const char *service, CFStringRef attr, const char *value){
+  CFMutableDictionaryRef q = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  if (!q) return NULL;
+  CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
+  CFStringRef svc = CFStringCreateWithCString(NULL, service, kCFStringEncodingUTF8);
+  CFDictionarySetValue(q, kSecAttrService, svc);
+  CFRelease(svc);
+  if (attr && value) {
+    CFStringRef v = CFStringCreateWithCString(NULL, value, kCFStringEncodingUTF8);
+    CFDictionarySetValue(q, attr, v);
+    CFRelease(v);
+  }
+  return q;
+}
+
+static char *kc_cfstring_dup(CFTypeRef v){
+  if (!v || CFGetTypeID(v) != CFStringGetTypeID()) return NULL;
+  CFIndex max = CFStringGetMaximumSizeForEncoding(CFStringGetLength((CFStringRef)v), kCFStringEncodingUTF8) + 1;
+  char *buf = malloc((size_t)max);
+  if (buf && !CFStringGetCString((CFStringRef)v, buf, max, kCFStringEncodingUTF8)) { free(buf); buf = NULL; }
+  return buf;
+}
+
+/* nsec1... or 64-hex text (not NUL-terminated) -> lowercase 64-hex, or NULL. */
+static char *kc_text_to_sk_hex(const UInt8 *bytes, CFIndex len){
+  if (!bytes || len <= 0 || len > 200) return NULL;
+  char text[201];
+  memcpy(text, bytes, (size_t)len);
+  text[len] = '\0';
+  char *hex = NULL;
+  if (is_hex_64(text)) {
+    hex = strdup(text);
+    for (char *p = hex; p && *p; p++) if (*p >= 'A' && *p <= 'F') *p = (char)(*p - 'A' + 'a');
+  } else if (strncmp(text, "nsec1", 5) == 0) {
+    uint8_t sk[32];
+    if (nostr_nip19_decode_nsec(text, sk) == 0) hex = bin_to_hex(sk, 32);
+    secure_wipe(sk, sizeof sk);
+  }
+  secure_wipe(text, sizeof text);
+  return hex;
+}
+
+static char *kc_npub_from_sk_hex(const char *sk_hex){
+  char *npub = NULL;
+  return sk_hex_to_npub(sk_hex, &npub) == 0 ? npub : NULL;
+}
+
+/* TRUE when a daemon item for npub (by comment or account) holds a 32-byte
+ * key whose npub is npub. */
+static int kc_signer_holds(const char *npub){
+  CFStringRef attrs[2] = { kSecAttrComment, kSecAttrAccount };
+  int same = 0;
+  for (int i = 0; i < 2 && !same; i++) {
+    CFMutableDictionaryRef q = kc_query(KC_SIGNER_SERVICE, attrs[i], npub);
+    if (!q) return 0;
+    kc_scope(q, 0);
+    CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
+    CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitOne);
+    CFTypeRef res = NULL;
+    if (SecItemCopyMatching(q, &res) == errSecSuccess && res &&
+        CFGetTypeID(res) == CFDataGetTypeID() && CFDataGetLength((CFDataRef)res) == 32) {
+      char *hex = bin_to_hex(CFDataGetBytePtr((CFDataRef)res), 32);
+      char *derived = hex ? kc_npub_from_sk_hex(hex) : NULL;
+      same = derived && strcmp(derived, npub) == 0;
+      free(derived);
+      if (hex) { secure_wipe(hex, strlen(hex)); free(hex); }
+    }
+    if (res) CFRelease(res);
+    CFRelease(q);
+  }
+  return same;
+}
+
+/* The daemon's item format (see nostr_nip55l_store_key), key_id = npub. */
+static int kc_store_signer(const char *sk_hex, const char *npub){
+  uint8_t skb[32];
+  if (!nostr_hex2bin(skb, sk_hex, sizeof skb)) return 0;
+  CFMutableDictionaryRef q = kc_query(KC_SIGNER_SERVICE, kSecAttrAccount, npub);
+  if (!q) { secure_wipe(skb, sizeof skb); return 0; }
+  kc_scope(q, 0);
+  SecItemDelete(q);            /* replace a stale item for the same key_id */
+  CFRelease(q);
+  q = kc_query(KC_SIGNER_SERVICE, kSecAttrAccount, npub);
+  if (!q) { secure_wipe(skb, sizeof skb); return 0; }
+  kc_scope(q, 1);
+  CFStringRef label = CFStringCreateWithCString(NULL, "Gnostr Identity", kCFStringEncodingUTF8);
+  CFStringRef comment = CFStringCreateWithCString(NULL, npub, kCFStringEncodingUTF8);
+  CFDataRef data = CFDataCreate(NULL, skb, (CFIndex)sizeof skb);
+  secure_wipe(skb, sizeof skb);
+  CFDictionarySetValue(q, kSecAttrLabel, label);
+  CFDictionarySetValue(q, kSecAttrComment, comment);
+  CFDictionarySetValue(q, kSecValueData, data);
+  CFDictionarySetValue(q, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlock);
+  OSStatus st = SecItemAdd(q, NULL);
+  CFRelease(label); CFRelease(comment); CFRelease(data); CFRelease(q);
+  return st == errSecSuccess;
+}
+
+static int kc_marker_present(void){
+  CFMutableDictionaryRef q = kc_query(KC_MARKER_SERVICE, kSecAttrAccount, KC_MARKER_ACCOUNT);
+  if (!q) return 0;
+  kc_scope(q, 0);
+  CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitOne);
+  OSStatus st = SecItemCopyMatching(q, NULL);
+  CFRelease(q);
+  return st == errSecSuccess;
+}
+
+static int kc_marker_write(void){
+  CFMutableDictionaryRef q = kc_query(KC_MARKER_SERVICE, kSecAttrAccount, KC_MARKER_ACCOUNT);
+  if (!q) return 0;
+  kc_scope(q, 1);
+  CFStringRef label = CFStringCreateWithCString(NULL, "Nostr signer migration marker (not a key)", kCFStringEncodingUTF8);
+  CFDataRef data = CFDataCreate(NULL, (const UInt8 *)KC_MARKER_ACCOUNT, (CFIndex)strlen(KC_MARKER_ACCOUNT));
+  CFDictionarySetValue(q, kSecAttrLabel, label);
+  CFDictionarySetValue(q, kSecValueData, data);
+  OSStatus st = SecItemAdd(q, NULL);
+  CFRelease(label); CFRelease(data); CFRelease(q);
+  return st == errSecSuccess || st == errSecDuplicateItem;
+}
+
+typedef enum { KC_MIG_OK, KC_MIG_SKIP, KC_MIG_RETRY } kc_mig_result;
+
+static kc_mig_result kc_migrate_one(const char *account){
+  CFMutableDictionaryRef q = kc_query(KC_LEGACY_CLIENT_SERVICE, kSecAttrAccount, account);
+  if (!q) return KC_MIG_RETRY;
+  kc_scope(q, 0);
+  CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
+  CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitOne);
+  CFTypeRef res = NULL;
+  OSStatus st = SecItemCopyMatching(q, &res);
+  CFRelease(q);
+  if (st != errSecSuccess || !res || CFGetTypeID(res) != CFDataGetTypeID()) {
+    if (res) CFRelease(res);
+    fprintf(stderr, "nip55l: keyring-migration: %s client item secret unavailable (OSStatus %d); will retry\n",
+            account, (int)st);
+    return KC_MIG_RETRY;
+  }
+  char *sk_hex = kc_text_to_sk_hex(CFDataGetBytePtr((CFDataRef)res), CFDataGetLength((CFDataRef)res));
+  CFRelease(res);
+  char *npub = sk_hex ? kc_npub_from_sk_hex(sk_hex) : NULL;
+  kc_mig_result r = KC_MIG_RETRY;
+  if (!npub) {
+    fprintf(stderr, "nip55l: keyring-migration: leaving client item %s in place: not a secp256k1 private key\n",
+            account);
+    r = KC_MIG_SKIP;
+    goto out;
+  }
+  if (strcmp(account, npub) != 0)
+    fprintf(stderr, "nip55l: keyring-migration: client item account %s does not match its key; using %s\n",
+            account, npub);
+  if (kc_signer_holds(npub)) {
+    fprintf(stderr, "nip55l: keyring-migration: %s already held by the signer; retiring the client copy\n", npub);
+  } else if (!kc_store_signer(sk_hex, npub) || !kc_signer_holds(npub)) {
+    fprintf(stderr, "nip55l: keyring-migration: re-store of %s failed; will retry\n", npub);
+    goto out;
+  }
+  q = kc_query(KC_LEGACY_CLIENT_SERVICE, kSecAttrAccount, account);
+  if (!q) goto out;
+  kc_scope(q, 0);
+  st = SecItemDelete(q);
+  CFRelease(q);
+  if (st != errSecSuccess && st != errSecItemNotFound) {
+    fprintf(stderr, "nip55l: keyring-migration: %s migrated but client item not deleted (OSStatus %d); will retry\n",
+            npub, (int)st);
+    goto out;
+  }
+  r = KC_MIG_OK;
+out:
+  if (sk_hex) { secure_wipe(sk_hex, strlen(sk_hex)); free(sk_hex); }
+  free(npub);
+  return r;
+}
+
+static int kc_migrate_legacy_keys(nostr_nip55l_keyring_migration *r){
+  if (kc_marker_present()) { r->already_done = 1; return 0; }
+  /* Attribute-only probe: never prompts. */
+  CFMutableDictionaryRef q = kc_query(KC_LEGACY_CLIENT_SERVICE, NULL, NULL);
+  if (!q) return NOSTR_SIGNER_ERROR_BACKEND;
+  kc_scope(q, 0);
+  CFDictionarySetValue(q, kSecReturnAttributes, kCFBooleanTrue);
+  CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitAll);
+  CFTypeRef res = NULL;
+  OSStatus st = SecItemCopyMatching(q, &res);
+  CFRelease(q);
+  if (st == errSecItemNotFound) {
+    return kc_marker_write() ? (r->marker_written = 1, 0) : NOSTR_SIGNER_ERROR_BACKEND;
+  }
+  if (st != errSecSuccess || !res || CFGetTypeID(res) != CFArrayGetTypeID()) {
+    if (res) CFRelease(res);
+    return NOSTR_SIGNER_ERROR_BACKEND;
+  }
+  CFArrayRef items = (CFArrayRef)res;
+  CFIndex n = CFArrayGetCount(items);
+  r->found = (unsigned)n;
+  for (CFIndex i = 0; i < n; i++) {
+    CFDictionaryRef a = CFArrayGetValueAtIndex(items, i);
+    char *account = (a && CFGetTypeID(a) == CFDictionaryGetTypeID())
+                      ? kc_cfstring_dup(CFDictionaryGetValue(a, kSecAttrAccount)) : NULL;
+    if (!account) { r->skipped++; continue; }
+    switch (kc_migrate_one(account)) {
+      case KC_MIG_OK:    r->migrated++; break;
+      case KC_MIG_SKIP:  r->skipped++;  break;
+      case KC_MIG_RETRY: r->failed++;   break;
+    }
+    free(account);
+  }
+  CFRelease(items);
+  if (r->failed) return NOSTR_SIGNER_ERROR_BACKEND;
+  r->marker_written = kc_marker_write();
+  return r->marker_written ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
+}
+#endif /* NIP55L_HAVE_KEYCHAIN */
+
 int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out){
   nostr_nip55l_keyring_migration r;
   memset(&r, 0, sizeof r);
@@ -1377,6 +1634,10 @@ int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out){
 
 done:
   if (service) g_object_unref(service);
+  if (out) *out = r;
+  return rc;
+#elif defined(NIP55L_HAVE_KEYCHAIN)
+  int rc = kc_migrate_legacy_keys(&r);
   if (out) *out = r;
   return rc;
 #else

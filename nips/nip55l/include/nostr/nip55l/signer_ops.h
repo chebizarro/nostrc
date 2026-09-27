@@ -121,6 +121,10 @@ int nostr_nip55l_relays_from_list(const char *const *urls, size_t n, char **out_
  * the legacy libsecret schemas (org.gnostr.Signer/key, org.gnostr.Key) to the
  * unified org.gnostr.Signer/identity schema and deletes the originals.
  * Idempotent; guarded by a per-keyring marker item once a pass completes.
+ * On macOS (Keychain builds, nostrc-de9h) the same pass imports the keys
+ * GNostr stored itself before nostrc-e5nz (generic passwords, service
+ * "org.gnostr.Client", account = npub, data = nsec) into the daemon's
+ * "Gnostr Identity Key" items, guarded by a Keychain marker item.
  * The daemon runs it once at startup. Returns 0 when nothing is left to
  * retry (including "no Secret Service support compiled in"),
  * NOSTR_SIGNER_ERROR_BACKEND when the Secret Service was unreachable or some
