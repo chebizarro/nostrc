@@ -1,4 +1,5 @@
-/* Keep the shell theme-native; no custom message colors are defined. */
-.groundhog-shell-status {
-  opacity: 0.9;
-}
+/* Keep the shell theme-native; no custom message colors are defined. The
+ * status pages carrying ".groundhog-shell-status" are this build's primary
+ * content (empty/error/onboarding states), not secondary chrome, so nothing
+ * here dims their opacity: that would fight the system high-contrast theme
+ * for no offsetting benefit. */

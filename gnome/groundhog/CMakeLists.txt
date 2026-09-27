@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(groundhog VERSION 0.2.1 LANGUAGES C)
+project(groundhog VERSION 0.3.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
@@ -25,7 +25,8 @@ add_custom_command(
           ${GROUNDHOG_DATA}/icons/org.nostr.Groundhog.svg
   VERBATIM)
 
-add_executable(groundhog src/main.c ${GROUNDHOG_RESOURCE_C})
+add_executable(groundhog src/main.c src/app/gh-shell.c ${GROUNDHOG_RESOURCE_C})
+target_include_directories(groundhog PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
 target_compile_definitions(groundhog PRIVATE
   GROUNDHOG_VERSION="${PROJECT_VERSION}"
   ADW_VERSION_MIN_REQUIRED=ADW_VERSION_1_5
@@ -34,6 +35,22 @@ target_compile_definitions(groundhog PRIVATE
   GDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_14)
 target_compile_options(groundhog PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE PkgConfig::GROUNDHOG_DEPS)
+
+# Headless adaptive-layout/accessibility check for the shell chrome in
+# src/app/gh-shell.c. It never touches GResource, GSettings, or the signer,
+# so it needs no compiled resource bundle or installed schema; it only
+# needs a GTK display connection, which is why it still self-skips (77)
+# when one is unavailable, matching groundhog-launch below.
+if (BUILD_TESTING)
+  add_executable(test-groundhog-shell tests/app/test_shell_layout.c src/app/gh-shell.c)
+  target_include_directories(test-groundhog-shell PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+  target_compile_definitions(test-groundhog-shell PRIVATE GROUNDHOG_HAVE_ACCOUNTS=0)
+  target_compile_options(test-groundhog-shell PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(test-groundhog-shell PRIVATE PkgConfig::GROUNDHOG_DEPS)
+  add_test(NAME groundhog-shell COMMAND test-groundhog-shell)
+  set_tests_properties(groundhog-shell PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20
+    ENVIRONMENT "G_DEBUG=fatal-criticals")
+endif()
 
 # The identity adapter consumes the in-tree NIP-19 and event validators. Keep
 # standalone shell builds working when those parent targets are not present.
@@ -123,6 +140,23 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
   add_test(NAME groundhog-account COMMAND test-groundhog-account)
   set_tests_properties(groundhog-account PROPERTIES TIMEOUT 30
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
+
+  # Headless check that gh-account-ui.c's focus/announcement bookkeeping
+  # (added for accessibility) only reacts to a real state transition. Needs
+  # a GTK display, unlike the GTK-free tests above, so it self-skips (77);
+  # -fatal-warnings is intentionally omitted here (unlike groundhog-account
+  # above) because initializing libadwaita's bundled CSS can log
+  # non-fatal theme-parser warnings on some GTK builds.
+  add_executable(test-groundhog-account-ui tests/app/test_account_ui.c
+    src/app/gh-account-ui.c src/app/gh-shell.c)
+  target_include_directories(test-groundhog-account-ui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+  target_compile_definitions(test-groundhog-account-ui PRIVATE GROUNDHOG_HAVE_ACCOUNTS=1)
+  target_link_libraries(test-groundhog-account-ui PRIVATE groundhog-account PkgConfig::GROUNDHOG_DEPS)
+  target_compile_options(test-groundhog-account-ui PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-groundhog-account-ui groundhog-test-schemas)
+  add_test(NAME groundhog-account-ui COMMAND test-groundhog-account-ui)
+  set_tests_properties(groundhog-account-ui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
 endif()
 
 set(GROUNDHOG_BINDIR "${CMAKE_INSTALL_FULL_BINDIR}")

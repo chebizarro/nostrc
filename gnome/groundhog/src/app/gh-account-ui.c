@@ -6,12 +6,19 @@
 typedef struct {
   GhAccountController *controller;
   GSettings *settings;
+  /* Not owned: the window outlives ui, since ui is destroyed as the
+   * window's own object data (see gh_account_ui_attach). */
+  GtkWidget *window;
   AdwWindowTitle *title;
   GtkStack *stack;
   AdwBanner *banner;
   AdwToastOverlay *toasts;
   GMenu *identities_menu;
   GSimpleAction *select;
+  /* The previously visible stack page name, so update() only moves keyboard
+   * focus and announces a status change on an actual state transition, not
+   * on every redundant "changed"/network-monitor notification. */
+  gchar *last_page;
 } GhAccountUi;
 
 static void
@@ -22,6 +29,7 @@ account_ui_free(gpointer data)
   g_clear_object(&ui->settings);
   g_clear_object(&ui->identities_menu);
   g_clear_object(&ui->select);
+  g_free(ui->last_page);
   g_free(ui);
 }
 
@@ -40,6 +48,10 @@ state_page(const char *icon, const char *title, const char *description,
     gtk_widget_add_css_class(button, "pill");
     gtk_actionable_set_action_name(GTK_ACTIONABLE(button), "account.refresh");
     adw_status_page_set_child(ADW_STATUS_PAGE(page), button);
+    /* Let update() move keyboard/screen-reader focus straight to the one
+     * actionable control when this page becomes visible, instead of leaving
+     * focus wherever it was (often the header bar, several tabs away). */
+    g_object_set_data(G_OBJECT(page), "gh-state-action", button);
   }
   return page;
 }
@@ -84,10 +96,29 @@ update(GhAccountUi *ui)
                                gh_account_controller_get_signer_availability(ui->controller),
                                method, online);
   g_autofree gchar *subtitle = NULL;
+  const gchar *page_name = page_for_state(state);
 
-  gtk_stack_set_visible_child_name(ui->stack, page_for_state(state));
+  gtk_stack_set_visible_child_name(ui->stack, page_name);
   adw_banner_set_title(ui->banner, limits);
   adw_banner_set_revealed(ui->banner, TRUE);
+
+  /* Only react to an actual state transition: a keyboard/screen-reader user
+   * mid-interaction should not be interrupted by a redundant re-announce or
+   * have focus stolen every time the network monitor merely re-confirms the
+   * connection it already reported. */
+  if (g_strcmp0(ui->last_page, page_name) != 0) {
+    g_free(ui->last_page);
+    ui->last_page = g_strdup(page_name);
+
+    if (GTK_IS_ACCESSIBLE(ui->window))
+      gtk_accessible_announce(GTK_ACCESSIBLE(ui->window), limits,
+                              GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
+
+    GtkWidget *visible = gtk_stack_get_child_by_name(ui->stack, page_name);
+    GtkWidget *action = visible ? g_object_get_data(G_OBJECT(visible), "gh-state-action") : NULL;
+    if (action)
+      gtk_widget_grab_focus(action);
+  }
 
   g_menu_remove_all(ui->identities_menu);
   for (guint i = 0; identities && i < identities->len; i++) {
@@ -142,6 +173,7 @@ gh_account_ui_attach(GtkWidget *window, GhAccountController *controller,
   GhAccountUi *ui = g_new0(GhAccountUi, 1);
   ui->controller = g_object_ref(controller);
   ui->settings = g_object_ref(settings);
+  ui->window = window;
   ui->title = title;
   ui->stack = sidebar_stack;
   ui->banner = banner;

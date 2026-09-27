@@ -1,5 +1,7 @@
 #include <adwaita.h>
 
+#include "gh-shell.h"
+
 #if GROUNDHOG_HAVE_ACCOUNTS
 #include "gh-account-controller.h"
 #include "gh-account-ui.h"
@@ -18,77 +20,6 @@ static GhAccountController *app_accounts;
 #endif
 
 static GtkWidget *
-status_page(const char *icon, const char *title, const char *description)
-{
-  GtkWidget *page = adw_status_page_new();
-  adw_status_page_set_icon_name(ADW_STATUS_PAGE(page), icon);
-  adw_status_page_set_title(ADW_STATUS_PAGE(page), title);
-  adw_status_page_set_description(ADW_STATUS_PAGE(page), description);
-  gtk_widget_add_css_class(page, "groundhog-shell-status");
-  gtk_widget_set_hexpand(page, TRUE);
-  gtk_widget_set_vexpand(page, TRUE);
-  return page;
-}
-
-static AdwNavigationPage *
-sidebar_page(GtkWidget **header_out, GtkWidget **title_out, GtkWidget **stack_out)
-{
-  GtkWidget *toolbar = adw_toolbar_view_new();
-  GtkWidget *header = adw_header_bar_new();
-  GtkWidget *title = adw_window_title_new("Groundhog", "");
-  GtkWidget *stack = gtk_stack_new();
-  GtkWidget *list = gtk_list_box_new();
-
-  adw_header_bar_set_title_widget(ADW_HEADER_BAR(header), title);
-  adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), header);
-
-  /* Keep the list as the real empty model host; never fabricate conversations. */
-  gtk_stack_add_named(GTK_STACK(stack), list, "conversations");
-  gtk_stack_add_named(GTK_STACK(stack),
-                      status_page("mail-unread-symbolic", "No conversations yet",
-                                  "Messaging services are not implemented in this build, "
-                                  "so no conversations can be loaded."),
-                      "empty");
-  gtk_stack_add_named(GTK_STACK(stack),
-                      status_page("dialog-warning-symbolic", "Conversations unavailable",
-                                  "A conversation could not be loaded. Nothing was sent; "
-                                  "try again after the service is available."),
-                      "error");
-#if !GROUNDHOG_HAVE_ACCOUNTS
-  gtk_stack_add_named(GTK_STACK(stack),
-                      status_page("mail-unread-symbolic", "Welcome to Groundhog",
-                                  "Account support is not included in this build."),
-                      "onboarding");
-  gtk_stack_set_visible_child_name(GTK_STACK(stack), "onboarding");
-#endif
-  adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), stack);
-  *header_out = header;
-  *title_out = title;
-  *stack_out = stack;
-  return adw_navigation_page_new(toolbar, "Conversations");
-}
-
-static AdwNavigationPage *
-content_page(GtkWidget **banner_out)
-{
-  GtkWidget *toolbar = adw_toolbar_view_new();
-  GtkWidget *header = adw_header_bar_new();
-  GtkWidget *banner = adw_banner_new("Read-only shell: sending and receiving are not available");
-  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-
-  adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), header);
-  adw_banner_set_revealed(ADW_BANNER(banner), TRUE);
-  gtk_box_append(GTK_BOX(box), banner);
-  gtk_box_append(GTK_BOX(box),
-                 status_page("mail-read-symbolic", "No conversation selected",
-                             "Messages will appear here when conversation services "
-                             "are implemented."));
-  adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), box);
-  *banner_out = banner;
-  return adw_navigation_page_new(toolbar, "Messages");
-}
-
-static GtkWidget *
 create_window(AdwApplication *app)
 {
   GtkWidget *window = adw_application_window_new(GTK_APPLICATION(app));
@@ -103,8 +34,9 @@ create_window(AdwApplication *app)
   gtk_window_set_icon_name(GTK_WINDOW(window), GROUNDHOG_APP_ID);
   gtk_window_set_default_size(GTK_WINDOW(window), 900, 600);
   adw_navigation_split_view_set_sidebar(ADW_NAVIGATION_SPLIT_VIEW(split),
-                                        sidebar_page(&header, &title, &stack));
-  adw_navigation_split_view_set_content(ADW_NAVIGATION_SPLIT_VIEW(split), content_page(&banner));
+                                        gh_shell_sidebar_page(&header, &title, &stack));
+  adw_navigation_split_view_set_content(ADW_NAVIGATION_SPLIT_VIEW(split),
+                                        gh_shell_content_page(&banner));
   adw_navigation_split_view_set_show_content(ADW_NAVIGATION_SPLIT_VIEW(split), FALSE);
   adw_toast_overlay_set_child(ADW_TOAST_OVERLAY(toasts), split);
   adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), toasts);
