@@ -51,6 +51,10 @@ static int sd_is_socket_unix(int fd, int t, int lst, const char *path, size_t pl
 #include "nostr-storage.h"
 #include "relayd_config.h"
 #include "session_dbus.h"
+#ifdef NSR_HAVE_FEDERATION
+#include "session_federation.h"
+#include "session_tee_storage.h"
+#endif
 #ifdef NOSTRC_HAVE_NOSTRDB_STORAGE
 #include "nostrdb_storage.h"
 #endif
@@ -293,34 +297,48 @@ static int acquire_listen_fd(char *sock_path_out, size_t out_sz,
  * ("127.0.0.1:4848") and ignored by the Unix-fd listener path — the
  * validator requires *some* host:port there.
  */
-static int load_session_config(RelaydConfig *out) {
+static void session_config_path(char *path, size_t n) {
   const char *xcfg = getenv("XDG_CONFIG_HOME");
   const char *home = getenv("HOME");
-  char path[512];
   path[0] = '\0';
   if (xcfg && xcfg[0] == '/')
-    snprintf(path, sizeof path, "%s/nostr/session-relay.conf", xcfg);
+    snprintf(path, n, "%s/nostr/session-relay.conf", xcfg);
   else if (home && home[0] == '/')
-    snprintf(path, sizeof path, "%s/.config/nostr/session-relay.conf", home);
+    snprintf(path, n, "%s/.config/nostr/session-relay.conf", home);
+}
+
+static int load_session_config(RelaydConfig *out) {
+  char path[512];
+  session_config_path(path, sizeof path);
   /* relayd_config_load() apply_defaults()-first, then reads the file if it
    * exists. Missing file is not an error — we run entirely on defaults. */
   return relayd_config_load(path[0] ? path : NULL, out);
 }
 
+#ifdef NSR_HAVE_FEDERATION
+static int fed_offer(void *ud, NostrEvent *ev) { return nsr_federation_offer(ud, ev); }
+#endif
+
 static void usage(FILE *out) {
   fprintf(out,
-          "usage: nostr-session-relayd [--stats]\n"
+          "usage: nostr-session-relayd [--stats | --upstream [EVENT_ID]]\n"
           "\n"
           "Per-user session relay on $XDG_RUNTIME_DIR/nostr/relay.sock (normally\n"
-          "socket-activated by nostr-session-relay.socket).\n"
+          "socket-activated by nostr-session-relay.socket). Events local apps\n"
+          "write are forwarded to the user's own upstream relays (see the\n"
+          "federation_* keys of session-relay.conf).\n"
           "\n"
-          "  --stats   print the running daemon's org.nostr.SessionRelay1 stats\n"
-          "  --help    show this help\n");
+          "  --stats              print the running daemon's org.nostr.SessionRelay1 stats\n"
+          "  --upstream           print per-relay upstream delivery status\n"
+          "  --upstream EVENT_ID  print one event's upstream delivery status\n"
+          "  --help               show this help\n");
 }
 
 int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--stats") == 0) return nsr_dbus_print_stats();
+    if (strcmp(argv[i], "--upstream") == 0)
+      return nsr_dbus_print_upstream(i + 1 < argc ? argv[i + 1] : NULL);
     if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
       usage(stdout);
       return 0;
@@ -384,6 +402,71 @@ int main(int argc, char **argv) {
     }
   }
 
+  /* Upstream federation (bead nostrc-7d96): an outbox next to the store
+   * and a storage tee that queues what local apps write once nostrdb has
+   * stored it. Needs a store: a cache-less relay refuses EVENT anyway. */
+  NostrStorage *served = st; /* what the relay core sees */
+  void *fed = NULL;
+  const char *fed_state = "unavailable";
+  char fed_detail[640];
+  snprintf(fed_detail, sizeof fed_detail,
+           "built without libnostr-publish: no upstream federation");
+#ifdef NSR_HAVE_FEDERATION
+  NsrOutbox *outbox = NULL;
+  NostrStorage *tee = NULL;
+  {
+    char conf[512];
+    session_config_path(conf, sizeof conf);
+    NsrFedConfig fcfg;
+    char ferr[640];
+    if (nsr_fed_config_load(conf[0] ? conf : NULL, &fcfg, ferr, sizeof ferr) != 0) {
+      fprintf(stderr, "nostr-session-relayd: invalid session-relay.conf: %s\n", ferr);
+      if (st) {
+        if (st->vt && st->vt->close) st->vt->close(st);
+        free(st);
+      }
+      return 1;
+    }
+    if (!fcfg.enabled) {
+      fed_state = "disabled";
+      snprintf(fed_detail, sizeof fed_detail, "federation = 0 in session-relay.conf");
+    } else if (!st) {
+      snprintf(fed_detail, sizeof fed_detail,
+               "the relay is cache-less: nothing is stored, so nothing is forwarded");
+    } else {
+      char path[600];
+      snprintf(path, sizeof path, "%s/outbox.sqlite3", storage_dir);
+      GError *err = NULL;
+      outbox = nsr_outbox_open(path, &err);
+      if (!outbox) {
+        snprintf(fed_detail, sizeof fed_detail, "outbox: %s", err ? err->message : "?");
+        g_clear_error(&err);
+      } else {
+        NsrFederationInit fi = {
+            .cfg = &fcfg, .outbox = outbox, .storage = st, .dbus_signer = TRUE,
+        };
+        NsrFederation *f = nsr_federation_new(&fi);
+        tee = f ? nsr_tee_storage_new(st, fed_offer, f) : NULL;
+        if (!tee) {
+          nsr_federation_free(f);
+          nsr_outbox_close(outbox);
+          outbox = NULL;
+          snprintf(fed_detail, sizeof fed_detail, "out of memory");
+        } else {
+          nsr_federation_set_observer(f, nsr_dbus_emit_upstream, NULL);
+          fed = f;
+          served = tee;
+          fed_state = NULL; /* reported live by the engine */
+          fprintf(stderr, "nostr-session-relayd: upstream federation on (outbox %s)\n", path);
+        }
+      }
+    }
+    if (fed_state)
+      fprintf(stderr, "nostr-session-relayd: upstream federation %s: %s\n", fed_state,
+              fed_detail);
+  }
+#endif
+
   /* Acquire the listen fd. Prefer sd_listen_fds; fall back to a manual
    * bind under XDG_RUNTIME_DIR. `sock_path` and `owned_socket` inform the
    * shutdown unlink decision. */
@@ -392,6 +475,11 @@ int main(int argc, char **argv) {
   int listen_fd = acquire_listen_fd(sock_path, sizeof sock_path, &owned_socket);
   if (listen_fd < 0) {
     fprintf(stderr, "nostr-session-relayd: could not obtain a listen fd\n");
+#ifdef NSR_HAVE_FEDERATION
+    nsr_federation_free(fed);
+    nsr_tee_storage_free(tee);
+    nsr_outbox_close(outbox);
+#endif
     if (st) {
       if (st->vt && st->vt->close) st->vt->close(st);
       free(st);
@@ -408,8 +496,21 @@ int main(int argc, char **argv) {
       .requested_backend = driver,
       .storage_dir = storage_dir,
       .version = NSR_VERSION,
+      .federation = fed,
+      .federation_state = fed_state,
+      .federation_detail = fed_detail,
   };
   nsr_dbus_start(&dbus_info);
+#ifdef NSR_HAVE_FEDERATION
+  if (fed) {
+    GError *err = NULL;
+    if (!nsr_federation_start(fed, &err)) {
+      fprintf(stderr, "nostr-session-relayd: federation thread: %s (events stay queued)\n",
+              err ? err->message : "?");
+      g_clear_error(&err);
+    }
+  }
+#endif
 
   /* Notify systemd we're up. Harmless no-op when not under `Type=notify`. */
   (void)sd_notify(0, "READY=1\nSTATUS=session relay accepting connections");
@@ -417,7 +518,7 @@ int main(int argc, char **argv) {
   NostrRelayServerConfig server_cfg;
   memset(&server_cfg, 0, sizeof server_cfg);
   server_cfg.cfg = &cfg;
-  server_cfg.storage = st;
+  server_cfg.storage = served;
   server_cfg.stop_flag = &s_stop_flag;
   server_cfg.listener.kind = NOSTR_RELAY_LISTENER_UNIX_FD;
   server_cfg.listener.u.unix_fd.fd = listen_fd;
@@ -425,8 +526,18 @@ int main(int argc, char **argv) {
   int rc = nostr_relay_server_run(&server_cfg);
 
   (void)sd_notify(0, "STOPPING=1");
+#ifdef NSR_HAVE_FEDERATION
+  /* Engine first (it emits D-Bus signals), then D-Bus (it reads engine
+   * status), then free; storage last (both may read through it). */
+  nsr_federation_stop(fed);
+#endif
   /* Before closing storage: the D-Bus thread may be counting through it. */
   nsr_dbus_stop();
+#ifdef NSR_HAVE_FEDERATION
+  nsr_federation_free(fed);
+  nsr_tee_storage_free(tee);
+  nsr_outbox_close(outbox);
+#endif
 
   /* Only unlink when we own the socket (fallback bind). Never unlink a
    * systemd-owned socket — that fights the .socket unit's contract. */

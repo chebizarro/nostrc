@@ -60,15 +60,94 @@
          the knobs take effect. -->
     <property name="RetentionSupported" type="b" access="read"/>
 
+    <!-- ── Upstream federation (bead nostrc-7d96) ──────────────────────
+         Events local apps write to relay.sock are stored and queued in a
+         durable outbox, then forwarded to the user's own upstream relays:
+         the author's kind-10002 write relays, the recipient's kind-10050
+         inbox relays (kind-1059 gift wraps), the NIP-29 group's relay.
+         Never forwarded: NIP-70 ["-"] events, kinds 13/14/22242/20000-29999,
+         kinds in federation_local_only_kinds, other authors' events.
+         apps/relayd/README.md "Upstream federation" is the contract. -->
+
+    <!-- "active" (forwarding; local account known), "waiting-for-account"
+         (queued events wait for the relay to learn the local
+         account from org.nostr.Signer or federation_accounts), "disabled"
+         (federation = 0), "unavailable" (built without libnostr-publish,
+         cache-less relay, or the outbox could not be opened; see GetStats
+         federation_detail). -->
+    <property name="FederationState" type="s" access="read"/>
+
+    <!-- Events queued for upstream and not yet settled (awaiting a route,
+         or at least one target relay has not acknowledged / failed). -->
+    <property name="PendingUpstream" type="u" access="read"/>
+
+    <!-- Lifetime count of events acknowledged by at least one upstream
+         relay (fully or partially forwarded). -->
+    <property name="ForwardedCount" type="t" access="read"/>
+
+    <!-- Lifetime count of events that no upstream relay accepted (every
+         target rejected permanently, or retries expired). -->
+    <property name="FailedUpstream" type="t" access="read"/>
+
+    <!-- Most recent upstream delivery failure, "<relay url>: <reason>"
+         (NIP-01 OK reason or transport error); "" if none yet. -->
+    <property name="LastUpstreamError" type="s" access="read"/>
+
     <!-- Every property above plus traffic counters, in one call. Keys:
            event_count x, storage_bytes t, connected_clients u, uptime t,
            storage_backend s, requested_storage_backend s, storage_path s,
            supported_nips au, retention_supported b,
            connections_total t, subscriptions u, events_streamed t,
-           version s ("" when the build carries no version).
+           version s ("" when the build carries no version),
+           federation_state s, federation_detail s, pending_upstream u,
+           unroutable_upstream u, pending_upstream_deliveries u,
+           forwarded_count t, partially_forwarded_count t,
+           failed_upstream t, skipped_upstream t, last_upstream_error s,
+           upstream_relays_connected u.
          Unknown keys must be ignored by clients (additive evolution). -->
     <method name="GetStats">
       <arg name="stats" type="a{sv}" direction="out"/>
     </method>
+
+    <!-- Upstream delivery status of one event, by id.
+         state: new | unroutable | pending | forwarded | partial | failed |
+                skipped | superseded | cancelled, or "unknown" when the event
+                was never queued (not stored here, local-only by contract, or
+                already pruned: settled rows are kept for
+                federation_keep_settled_seconds, default 7 days).
+         detail: why (e.g. the unroutable / skipped reason).
+         relays: (url, relay_state, last_reason, attempts, updated_at,
+                  acked_at) per target; relay_state pending | acked |
+                  failed | cancelled; times are unix seconds, acked_at 0
+                  unless acked.
+         This is what a session_relay_only publisher polls (or it listens
+         for UpstreamStatusChanged) to learn whether its event left the
+         machine. -->
+    <method name="GetEventUpstream">
+      <arg name="event_id" type="s" direction="in"/>
+      <arg name="state" type="s" direction="out"/>
+      <arg name="detail" type="s" direction="out"/>
+      <arg name="relays" type="a(sssuxx)" direction="out"/>
+    </method>
+
+    <!-- Every upstream relay the outbox knows (rows still held) or holds a
+         connection to. Per relay: connected b, authenticated b (NIP-42 done
+         on the identified connection), pending u, acked t, failed t,
+         last_error s, last_ok_at x (unix s, 0 = never). -->
+    <method name="GetUpstreamRelays">
+      <arg name="relays" type="a(sa{sv})" direction="out"/>
+    </method>
+
+    <!-- Emitted on every upstream transition: a target relay's state
+         changed (relay_url set) or the event itself was classified
+         (relay_url "": skipped / unroutable / failed before routing).
+         event_state is the event's state after the change. -->
+    <signal name="UpstreamStatusChanged">
+      <arg name="event_id" type="s"/>
+      <arg name="relay_url" type="s"/>
+      <arg name="relay_state" type="s"/>
+      <arg name="reason" type="s"/>
+      <arg name="event_state" type="s"/>
+    </signal>
   </interface>
 </node>
