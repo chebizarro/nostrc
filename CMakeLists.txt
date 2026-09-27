@@ -710,6 +710,8 @@ function(nostrc_keep_test_asserts dir)
     nostrc_keep_test_asserts("${_d}")
   endforeach()
 endfunction()
-if(BUILD_TESTING AND NOT MSVC)
+# Not gated on BUILD_TESTING: several subtrees (libgo fiber, nips/*) build
+# their test executables regardless, and those must not compile to no-ops.
+if(NOT MSVC)
   nostrc_keep_test_asserts("${CMAKE_SOURCE_DIR}")
 endif()
