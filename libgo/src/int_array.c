@@ -7,16 +7,22 @@ void int_array_init(IntArray *array) {
     array->capacity = INT_ARRAY_INITIAL_CAPACITY;
 }
 
-// Append an element to the array, resizing if necessary
+// Append an element to the array, resizing if necessary.
+// nostrc-6tuz: a zero-initialised IntArray (e.g. inside a calloc'd
+// NostrFilter) has capacity 0, and doubling 0 stays 0 — realloc(NULL, 0)
+// then returned a minimal block and the write overflowed the heap. Grow to
+// at least INT_ARRAY_INITIAL_CAPACITY.
 void int_array_add(IntArray *array, int value) {
     if (array->size >= array->capacity) {
-        // Resize the array (double the capacity)
-        array->capacity *= 2;
-        array->data = realloc(array->data, array->capacity * sizeof(int));
-        if (!array->data) {
+        size_t cap = array->capacity ? array->capacity * 2 : INT_ARRAY_INITIAL_CAPACITY;
+        if (cap <= array->size) cap = array->size + 1;
+        int *data = realloc(array->data, cap * sizeof(int));
+        if (!data) {
             fprintf(stderr, "Failed to reallocate memory for IntArray\n");
             exit(EXIT_FAILURE);
         }
+        array->data = data;
+        array->capacity = cap;
     }
     array->data[array->size++] = value;
 }
