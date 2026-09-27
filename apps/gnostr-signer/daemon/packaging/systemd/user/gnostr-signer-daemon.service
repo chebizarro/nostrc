@@ -26,7 +26,9 @@ RestartSec=5s
 # Resource limits
 LimitNOFILE=4096
 LimitCORE=0
-LimitNPROC=64
+# No LimitNPROC=: RLIMIT_NPROC counts every process and thread of the uid,
+# not of this service, so on a busy session GLib could not start its worker
+# threads and aborted (nostrc-8sya). TasksMax= bounds this unit's cgroup.
 TasksMax=32
 
 # Security hardening (user service)
@@ -35,13 +37,17 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-PrivateDevices=yes
 
 # Kernel protection
 ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectKernelLogs=yes
 ProtectControlGroups=yes
+
+# nostrc-8sya: not usable in a systemd --user unit. The user manager holds no
+# capabilities, so each of these fails the start with status=218/CAPABILITIES
+# (verified with systemd-run --user on systemd 255): PrivateDevices=,
+# ProtectKernelModules=, ProtectKernelLogs=, ProtectClock= and an empty
+# CapabilityBoundingSet=. An empty AmbientCapabilities= is accepted (and is
+# the user manager's default anyway).
 
 # Memory protection
 MemoryDenyWriteExecute=yes
@@ -54,7 +60,6 @@ RestrictSUIDSGID=yes
 RemoveIPC=yes
 
 # Capability restrictions
-CapabilityBoundingSet=
 AmbientCapabilities=
 
 # System call filtering
@@ -74,7 +79,6 @@ IPAddressDeny=any
 
 # Misc hardening
 UMask=0077
-ProtectClock=yes
 ProtectHostname=yes
 
 [Install]
