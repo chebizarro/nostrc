@@ -65,6 +65,21 @@ GnostrSessionView *gnostr_main_window_get_session_view(GnostrMainWindow *self);
 /* Public: Navigate to and show profile panel for given pubkey */
 void gnostr_main_window_open_profile(GtkWidget *window, const char *pubkey_hex);
 
+/* nostrc-prqu.3: open a NIP-21 link (nostr:npub1…, nevent1…, naddr1…).
+ * Errors (invalid, nsec, nrelay, not found) are shown as a toast. */
+void gnostr_main_window_open_nostr_uri(GnostrMainWindow *self, const char *uri);
+
+/* nostrc-prqu.3: org.nostr.Handler1.OpenEvent. Re-validates @event_json
+ * (id + signature) and checks it has @kind; FALSE + @error otherwise. */
+gboolean gnostr_main_window_open_nostr_event(GnostrMainWindow *self,
+                                             guint kind,
+                                             const char *event_json,
+                                             const char *const *relays,
+                                             GError **error);
+
+/* nostrc-prqu.15: search Nostr for @terms (NULL/empty: just open search). */
+void gnostr_main_window_search(GnostrMainWindow *self, const char *terms);
+
 G_END_DECLS
 
 #endif /* GNOSTR_MAIN_WINDOW_H */

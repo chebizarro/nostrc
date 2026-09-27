@@ -39,6 +39,7 @@ struct _GnostrNwcConnect {
 
   /* State */
   gboolean connecting;
+  gboolean disconnecting;
   gboolean fetching_balance;
 };
 
@@ -59,6 +60,7 @@ static void on_paste_clicked(GtkButton *btn, gpointer user_data);
 static void on_refresh_balance_clicked(GtkButton *btn, gpointer user_data);
 static void on_close_clicked(GtkButton *btn, gpointer user_data);
 static void update_ui_for_state(GnostrNwcConnect *self);
+static void on_nwc_state_changed(GnostrNwcService *nwc, gint state, gpointer user_data);
 
 static gboolean hide_toast_timeout_cb(gpointer user_data) {
   gtk_revealer_set_reveal_child(GTK_REVEALER(user_data), FALSE);
@@ -152,6 +154,11 @@ static void gnostr_nwc_connect_init(GnostrNwcConnect *self) {
   g_signal_connect(self->btn_paste, "clicked", G_CALLBACK(on_paste_clicked), self);
   g_signal_connect(self->btn_refresh_balance, "clicked", G_CALLBACK(on_refresh_balance_clicked), self);
 
+  /* nostrc-prqu.13: pairing is confirmed in the wallet agent's own dialog;
+   * follow its outcome. Disconnected when this window is finalized. */
+  g_signal_connect_object(gnostr_nwc_service_get_default(), "state-changed",
+                          G_CALLBACK(on_nwc_state_changed), self, 0);
+
   /* Set initial UI state */
   update_ui_for_state(self);
 }
@@ -221,24 +228,18 @@ static void on_connect_clicked(GtkButton *btn, gpointer user_data) {
     return;
   }
 
-  self->connecting = TRUE;
-  update_ui_for_state(self);
-
   GnostrNwcService *nwc = gnostr_nwc_service_get_default();
   GError *error = NULL;
 
+  /* The URI goes to the Nostr Wallet agent (org.nostr.Wallet1), which keeps
+   * it in the keyring after the user confirms; GNostr stores nothing. */
   if (gnostr_nwc_service_connect(nwc, uri, &error)) {
-    /* Save to settings */
-    gnostr_nwc_service_save_to_settings(nwc);
-
-    show_toast(self, "Wallet connected!");
-    g_signal_emit(self, signals[SIGNAL_WALLET_CONNECTED], 0);
+    self->connecting = TRUE;
+    show_toast(self, _("Confirm the connection in the Nostr Wallet dialog"));
   } else {
-    show_toast(self, error ? error->message : "Connection failed");
+    show_toast(self, error ? error->message : _("Connection failed"));
     g_clear_error(&error);
   }
-
-  self->connecting = FALSE;
   update_ui_for_state(self);
 }
 
@@ -246,12 +247,28 @@ static void on_disconnect_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   GnostrNwcConnect *self = GNOSTR_NWC_CONNECT(user_data);
 
-  GnostrNwcService *nwc = gnostr_nwc_service_get_default();
-  gnostr_nwc_service_disconnect(nwc);
+  self->disconnecting = TRUE;
+  gnostr_nwc_service_disconnect(gnostr_nwc_service_get_default());
+  show_toast(self, _("Confirm in the Nostr Wallet dialog"));
+  update_ui_for_state(self);
+}
 
-  show_toast(self, "Wallet disconnected");
-  g_signal_emit(self, signals[SIGNAL_WALLET_DISCONNECTED], 0);
+static void on_nwc_state_changed(GnostrNwcService *nwc, gint state, gpointer user_data) {
+  GnostrNwcConnect *self = GNOSTR_NWC_CONNECT(user_data);
 
+  if (state == GNOSTR_NWC_STATE_CONNECTED && self->connecting) {
+    self->connecting = FALSE;
+    show_toast(self, _("Wallet connected!"));
+    g_signal_emit(self, signals[SIGNAL_WALLET_CONNECTED], 0);
+  } else if (state == GNOSTR_NWC_STATE_ERROR && self->connecting) {
+    self->connecting = FALSE;
+    const char *err = gnostr_nwc_service_get_last_error(nwc);
+    show_toast(self, err ? err : _("Connection failed"));
+  } else if (state == GNOSTR_NWC_STATE_DISCONNECTED && self->disconnecting) {
+    self->disconnecting = FALSE;
+    show_toast(self, _("Wallet disconnected"));
+    g_signal_emit(self, signals[SIGNAL_WALLET_DISCONNECTED], 0);
+  }
   update_ui_for_state(self);
 }
 

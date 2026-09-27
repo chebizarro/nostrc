@@ -30,6 +30,12 @@ GtkWidget *gnostr_article_reader_new(void);
 void gnostr_article_reader_load_event(GnostrArticleReader *self,
                                        const char *event_id_hex);
 
+/* Render @event_json (a validated kind-30023 event) without requiring it to
+ * be in the local store yet. */
+void gnostr_article_reader_load_event_json(GnostrArticleReader *self,
+                                            const char *event_id_hex,
+                                            const char *event_json);
+
 void gnostr_article_reader_clear(GnostrArticleReader *self);
 
 G_END_DECLS

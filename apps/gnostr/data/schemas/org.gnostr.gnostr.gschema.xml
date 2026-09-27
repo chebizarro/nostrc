@@ -170,11 +170,13 @@
     </key>
     <key name="nwc-connection-uri" type="s">
       <default>''</default>
-      <summary>NWC Connection URI</summary>
+      <summary>Legacy NWC connection URI (read once for migration)</summary>
       <description>
-        NIP-47 Nostr Wallet Connect URI (nostr+walletconnect://...).
-        Contains wallet pubkey, secret, relay URL, and optional lud16.
-        Empty string means no wallet connected.
+        Deprecated: GNostr no longer writes this key. Older versions stored
+        the full nostr+walletconnect:// URI here, secret included. On start
+        GNostr hands a non-empty value to the Nostr Wallet agent
+        (org.nostr.Wallet1 Pair, confirmed by the user) and then resets the
+        key. The wallet connection now lives in the agent's keyring item.
       </description>
     </key>
     <key name="blossom-server" type="s">

@@ -13,6 +13,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "gnostr-main-window-private.h"
+#include "gnostr-session-view.h"
 #include "../ipc/gnostr-signer-availability.h"
 #include "../ipc/gnostr-signer-service.h"
 #include "../ipc/signer_ipc.h"
@@ -20,8 +21,9 @@
 #include <glib/gi18n.h>
 
 /* How does the current session depend on org.nostr.Signer? A saved account
- * without NIP-46 credentials signed in through it; startup does not restore
- * such a session (only NIP-46 ones), so it is signed out until sign-in. */
+ * without NIP-46 credentials signed in through it; startup resumes such a
+ * session only once the signer runs and holds that account (nostrc-vuwu),
+ * so until then it is signed out. */
 static GnostrSignerNeed
 session_signer_need(void)
 {
@@ -38,6 +40,27 @@ session_signer_need(void)
 }
 
 static void
+set_publish_blocked(GnostrMainWindow *self, const char *reason)
+{
+  if (g_strcmp0(self->publish_blocked_reason, reason) == 0)
+    return;
+  g_free(self->publish_blocked_reason);
+  self->publish_blocked_reason = g_strdup(reason);
+  if (self->session_view)
+    gnostr_session_view_set_compose_blocked(self->session_view, reason);
+}
+
+gboolean
+gnostr_main_window_check_publish_internal(GnostrMainWindow *self)
+{
+  g_return_val_if_fail(GNOSTR_IS_MAIN_WINDOW(self), FALSE);
+  if (!self->publish_blocked_reason)
+    return TRUE;
+  gnostr_main_window_show_toast_internal(self, self->publish_blocked_reason);
+  return FALSE;
+}
+
+static void
 on_status_ready(GObject *source, GAsyncResult *res, gpointer user_data)
 {
   (void)source;
@@ -47,8 +70,11 @@ on_status_ready(GObject *source, GAsyncResult *res, gpointer user_data)
   gboolean ok = gnostr_signer_status_query_finish(res, &st, &error);
 
   if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) && self->signer_banner) {
-    g_autofree char *text = ok ? gnostr_signer_status_banner_text(&st, session_signer_need())
-                               : NULL;
+    GnostrSignerNeed need = session_signer_need();
+    g_autofree char *text = ok ? gnostr_signer_status_banner_text(&st, need) : NULL;
+    /* nostrc-lwzv: read-only keeps history visible but turns publishing off,
+     * with the banner's explanation. */
+    set_publish_blocked(self, ok && gnostr_signer_status_is_read_only(&st, need) ? text : NULL);
     if (text) {
       adw_banner_set_title(self->signer_banner, text);
       adw_banner_set_button_label(self->signer_banner,
@@ -118,6 +144,9 @@ on_signer_name_appeared(GDBusConnection *c, const gchar *name, const gchar *owne
   /* The shared proxy may have cached "not available"; start fresh. */
   gnostr_signer_proxy_reset();
   gnostr_main_window_signer_banner_refresh_internal(GNOSTR_MAIN_WINDOW(user_data));
+  /* nostrc-vuwu: a GNostr Signer session left signed out at startup
+   * (signer not running yet) resumes now, if the signer holds the account. */
+  gnostr_main_window_try_restore_nip55l_internal(GNOSTR_MAIN_WINDOW(user_data));
 }
 
 static void
@@ -157,4 +186,8 @@ gnostr_main_window_signer_banner_dispose_internal(GnostrMainWindow *self)
   if (self->signer_start_cancellable)
     g_cancellable_cancel(self->signer_start_cancellable);
   g_clear_object(&self->signer_start_cancellable);
+  if (self->nip55l_restore_cancellable)
+    g_cancellable_cancel(self->nip55l_restore_cancellable);
+  g_clear_object(&self->nip55l_restore_cancellable);
+  g_clear_pointer(&self->publish_blocked_reason, g_free);
 }

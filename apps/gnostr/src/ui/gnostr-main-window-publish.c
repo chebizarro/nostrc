@@ -820,6 +820,7 @@ void gnostr_main_window_request_repost(GtkWidget *window, const char *id_hex, co
   if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!gnostr_main_window_check_publish_internal(self)) return; /* nostrc-lwzv */
 
   g_debug("[REPOST] Request repost of id=%s pubkey=%.8s...",
             id_hex ? id_hex : "(null)",
@@ -907,6 +908,7 @@ void gnostr_main_window_request_delete_note(GtkWidget *window, const char *id_he
   if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!gnostr_main_window_check_publish_internal(self)) return; /* nostrc-lwzv */
 
   g_debug("[DELETE] Request deletion of id=%s pubkey=%.8s...",
             id_hex ? id_hex : "(null)",
@@ -1007,6 +1009,7 @@ void gnostr_main_window_request_report_note(GtkWidget *window, const char *id_he
   if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!gnostr_main_window_check_publish_internal(self)) return; /* nostrc-lwzv */
 
   g_debug("[NIP-56] Request report of id=%s pubkey=%.8s...",
             id_hex ? id_hex : "(null)",
@@ -1041,6 +1044,7 @@ void gnostr_main_window_request_label_note(GtkWidget *window, const char *id_hex
   if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!gnostr_main_window_check_publish_internal(self)) return; /* nostrc-lwzv */
 
   g_debug("[NIP-32] Request label of id=%s namespace=%s label=%s",
             id_hex ? id_hex : "(null)",
@@ -1272,6 +1276,7 @@ void gnostr_main_window_request_like(GtkWidget *window, const char *id_hex, cons
   if (!window || !GTK_IS_APPLICATION_WINDOW(window)) return;
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!gnostr_main_window_check_publish_internal(self)) return; /* nostrc-lwzv */
 
   /* Default reaction content to "+" if not specified */
   if (!reaction_content || !*reaction_content) {
@@ -1389,6 +1394,10 @@ void gnostr_main_window_handle_composer_post_requested(NostrGtkComposer *compose
     gnostr_main_window_show_toast_internal(self, "Cannot post empty note");
     return;
   }
+
+  /* nostrc-lwzv: read-only (signer not running) keeps the draft open. */
+  if (!gnostr_main_window_check_publish_internal(self))
+    return;
 
   /* Check if signer is available */
   GnostrSignerService *signer = gnostr_signer_service_get_default();

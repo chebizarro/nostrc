@@ -5,6 +5,7 @@
  */
 
 #include "gn-mls-dm-manager.h"
+#include "gn-key-package-discovery.h"
 #include <gnostr-plugin-api.h>
 #include <json-glib/json-glib.h>
 #include <marmot-gobject-1.0/marmot-gobject.h>
@@ -243,6 +244,29 @@ gn_mls_dm_manager_new(GnMarmotService     *service,
   return self;
 }
 
+static void
+on_peer_key_package(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  OpenDmData *data = user_data;
+  g_autoptr(GError) error = NULL;
+
+  data->kp_json = gn_kp_discover_finish(result, &error);
+  if (data->kp_json == NULL)
+    {
+      g_task_return_new_error(data->task, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                              "No key package found for peer %s. "
+                              "They must publish a key package (kind:30443) first.",
+                              data->peer_pubkey_hex);
+      g_object_unref(data->task);
+      open_dm_data_free(data);
+      return;
+    }
+
+  /* Step 3: Create the 2-person DM group */
+  create_dm_group(data);
+}
+
 void
 gn_mls_dm_manager_open_dm_async(GnMlsDmManager      *self,
                                   const gchar          *peer_pubkey_hex,
@@ -300,35 +324,17 @@ gn_mls_dm_manager_open_dm_async(GnMlsDmManager      *self,
         }
     }
 
-  /* Step 2: No existing DM — fetch peer's key package */
-  g_autofree gchar *filter = g_strdup_printf(
-    "{\"kinds\":[%d],\"authors\":[\"%s\"],\"limit\":1}",
-    MARMOT_GOBJECT_KIND_KEY_PACKAGE, peer_pubkey_hex);
-
-  g_autoptr(GError) kp_error = NULL;
-  g_autoptr(GPtrArray) events =
-    gnostr_plugin_context_query_events(self->plugin_context, filter, &kp_error);
-
-  if (events == NULL || events->len == 0)
-    {
-      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
-                              "No key package found for peer %s. "
-                              "They must publish a key package (kind:30443) first.",
-                              peer_pubkey_hex);
-      g_object_unref(task);
-      return;
-    }
-
-  const gchar *kp_json = g_ptr_array_index(events, 0);
-
-  /* Step 3: Create the 2-person DM group */
+  /* Step 2: No existing DM — discover the peer's key package on their
+   * kind:10002 write relays (nostrc-prqu.11); step 3 continues in
+   * on_peer_key_package(). */
   OpenDmData *data = g_new0(OpenDmData, 1);
   data->manager         = g_object_ref(self);
   data->task            = task;
   data->peer_pubkey_hex = g_strdup(peer_pubkey_hex);
-  data->kp_json         = g_strdup(kp_json);
 
-  create_dm_group(data);
+  GnKpBackend backend;
+  gn_kp_backend_init_for_plugin(&backend, self->plugin_context);
+  gn_kp_discover_async(&backend, peer_pubkey_hex, cancellable, on_peer_key_package, data);
 }
 
 MarmotGobjectGroup *

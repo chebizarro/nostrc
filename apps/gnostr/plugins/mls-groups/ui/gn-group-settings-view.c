@@ -6,6 +6,7 @@
 
 #include "gn-group-settings-view.h"
 #include "gn-member-row.h"
+#include "../gn-key-package-discovery.h"
 #include <gnostr-plugin-api.h>
 #include <json-glib/json-glib.h>
 #include <marmot/marmot.h>
@@ -219,6 +220,43 @@ on_add_member_welcome_sent(GObject      *source,
   add_member_data_free(data);
 }
 
+static void add_member_with_key_package(GnGroupSettingsView *self, const gchar *pk,
+                                        const gchar *kp_json);
+
+typedef struct {
+  GnGroupSettingsView *self;   /* strong */
+  gchar *pk;
+} MemberKpLookup;
+
+static void
+on_member_key_package(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  MemberKpLookup *lookup = user_data;
+  GnGroupSettingsView *self = lookup->self;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *kp_json = gn_kp_discover_finish(result, &error);
+
+  if (kp_json == NULL)
+    {
+      g_debug("GroupSettings: %s", error ? error->message : "no key package");
+      gtk_label_set_text(self->member_status_label,
+                         "No key package found for this pubkey. "
+                         "They must publish a key package first.");
+      gtk_widget_set_visible(GTK_WIDGET(self->member_status_label), TRUE);
+      gtk_spinner_stop(self->member_spinner);
+      gtk_widget_set_visible(GTK_WIDGET(self->member_spinner), FALSE);
+      gtk_widget_set_sensitive(GTK_WIDGET(self->add_member_button), TRUE);
+    }
+  else
+    {
+      add_member_with_key_package(self, lookup->pk, kp_json);
+    }
+  g_object_unref(lookup->self);
+  g_free(lookup->pk);
+  g_free(lookup);
+}
+
 static void
 on_add_member_clicked(GtkButton *button, gpointer user_data)
 {
@@ -249,31 +287,25 @@ on_add_member_clicked(GtkButton *button, gpointer user_data)
         }
     }
 
-  /* Find key package */
-  g_autofree gchar *filter = g_strdup_printf(
-    "{\"kinds\":[%d],\"authors\":[\"%s\"],\"limit\":1}",
-    MARMOT_KIND_KEY_PACKAGE, pk);
-
-  g_autoptr(GError) error = NULL;
-  g_autoptr(GPtrArray) events =
-    gnostr_plugin_context_query_events(self->plugin_context, filter, &error);
-
-  if (events == NULL || events->len == 0)
-    {
-      gtk_label_set_text(self->member_status_label,
-                         "No key package found for this pubkey. "
-                         "They must publish a key package first.");
-      gtk_widget_set_visible(GTK_WIDGET(self->member_status_label), TRUE);
-      return;
-    }
-
-  const gchar *kp_json = g_ptr_array_index(events, 0);
-
   /* Disable button, show spinner */
   gtk_widget_set_sensitive(GTK_WIDGET(self->add_member_button), FALSE);
   gtk_widget_set_visible(GTK_WIDGET(self->member_status_label), FALSE);
   gtk_spinner_start(self->member_spinner);
   gtk_widget_set_visible(GTK_WIDGET(self->member_spinner), TRUE);
+
+  /* nostrc-prqu.11: find the KeyPackage on the invitee's kind:10002 write
+   * relays and choose it with marmot_gobject_select_key_package_event(). */
+  MemberKpLookup *lookup = g_new0(MemberKpLookup, 1);
+  lookup->self = g_object_ref(self);
+  lookup->pk = g_ascii_strdown(pk, -1);
+  GnKpBackend backend;
+  gn_kp_backend_init_for_plugin(&backend, self->plugin_context);
+  gn_kp_discover_async(&backend, lookup->pk, NULL, on_member_key_package, lookup);
+}
+
+static void
+add_member_with_key_package(GnGroupSettingsView *self, const gchar *pk, const gchar *kp_json)
+{
 
   /*
    * MLS Add+Commit flow:

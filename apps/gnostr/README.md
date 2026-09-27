@@ -22,6 +22,20 @@ forgets it on this device; the key stays in the signer.
 GNostr still reads identity *metadata* (npub and label, never secrets) from
 the key store, see `src/util/keystore.h`.
 
+### Which identity GNostr Signer uses
+
+GNostr always asks GNostr Signer for the account it is signed in as: every
+`SignEvent` and NIP-44 call passes that account's npub as `current_user`
+(`docs/dbus-interface.md`), never `""` (the signer's default identity).
+A signed event whose `pubkey` is not that account is rejected (nostrc-vuwu).
+
+On startup a GNostr Signer session resumes only when the signer is already
+running and its `GetPublicKey()` (its active identity) is the saved account.
+GNostr never starts the signer by itself at startup; once it appears on the
+bus, for example through **Start GNostr Signer**, the session resumes. If
+the signer's active identity is a different account, GNostr stays signed
+out and asks you to sign in again rather than continue as another pubkey.
+
 ### When no signer is available
 
 If a session signs through `org.nostr.Signer` and the service is not on the
@@ -34,6 +48,17 @@ and the sign-in page explains which case applies:
 
 GNostr does not fall back to a local key. NIP-46 sessions do not depend on
 `org.nostr.Signer` and are not affected.
+
+## Lightning wallet (zaps)
+
+Zaps and the wallet settings use the desktop wallet agent,
+`org.nostr.Wallet1` (`gnome/nostr-wallet-agent`, nostrc-prqu.13): pairing a
+`nostr+walletconnect://` URI, balance, payments and invoices are D-Bus calls,
+and the agent keeps the pairing secret in the keyring and asks before paying
+beyond GNostr's budget. GNostr stores no wallet secret. A URI that an older
+GNostr saved in plaintext GSettings (`nwc-connection-uri`) is handed to the
+agent's `Pair` (you confirm it there) on the next start, and the key is then
+reset; it stays only while the agent cannot be reached.
 
 ## Migrating from GNostr releases that stored keys
 

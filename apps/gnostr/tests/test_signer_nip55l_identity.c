@@ -1,0 +1,382 @@
+/*
+ * test_signer_nip55l_identity.c — GNostr Signer (NIP-55L) session restore
+ * and identity selection (nostrc-vuwu).
+ *
+ * A fake org.nostr.Signer runs on its own thread on a private GTestDBus
+ * bus. It holds two identities (A, B), has a switchable DEFAULT identity,
+ * records every current_user selector and signs with the key the selector
+ * names (docs/dbus-interface.md). Checks that GnostrSignerService:
+ *   - restores a NIP-55L session only when the signer runs and its
+ *     GetPublicKey() is the saved account (never auto-starting it);
+ *   - passes the selected npub as current_user on SignEvent and NIP-44
+ *     calls, so a changed daemon default never changes who signs;
+ *   - rejects a signed event whose pubkey is not the selected account;
+ *   - refuses to call the signer at all when no account is selected.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+#include "ipc/gnostr-signer-service.h"
+#include "ipc/signer_ipc.h"
+
+#include <gio/gio.h>
+#include <nostr-gobject-1.0/nostr_nip19.h>
+#include <nostr-event.h>
+#include <nostr-keys.h>
+#include <string.h>
+
+#define SK_A "7f7ff03d123792d6ac594bfa67bf6d0c0ab55b6b1fdb6249303fe861f1ccba9a"
+#define SK_B "3a3e5e1f0b87d1c0e6a4b3f2d8a9c7e6f5d4c3b2a1908f7e6d5c4b3a29181716"
+
+static char *pk_a, *pk_b, *npub_a, *npub_b;
+
+/* ---- fake org.nostr.Signer (own thread + main context) --------------- */
+
+typedef struct {
+  GThread *thread;
+  GMainContext *ctx;
+  GMainLoop *loop;
+  GDBusNodeInfo *node;
+  GMutex lock;
+  GCond cond;
+  gboolean ready;
+  /* guarded by lock */
+  const char *default_sk;       /* the daemon's DEFAULT identity */
+  gboolean ignore_selector;     /* misbehave: always sign as default */
+  GPtrArray *selectors;         /* "<Method>:<current_user>" */
+} FakeSigner;
+
+static FakeSigner fake;
+
+static const char *
+sk_for_selector(const char *sel)
+{
+  if (!sel || !*sel || fake.ignore_selector) return fake.default_sk;
+  if (g_strcmp0(sel, npub_a) == 0) return SK_A;
+  if (g_strcmp0(sel, npub_b) == 0) return SK_B;
+  return NULL;
+}
+
+static void
+fake_method(GDBusConnection *c, const char *sender, const char *path, const char *iface,
+            const char *method, GVariant *params, GDBusMethodInvocation *inv, gpointer ud)
+{
+  (void)c; (void)sender; (void)path; (void)iface; (void)ud;
+  g_mutex_lock(&fake.lock);
+  if (strcmp(method, "GetPublicKey") == 0) {
+    g_autofree char *pk = nostr_key_get_public(fake.default_sk);
+    g_autoptr(GNostrNip19) n = gnostr_nip19_encode_npub(pk, NULL);
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", gnostr_nip19_get_bech32(n)));
+  } else if (strcmp(method, "SignEvent") == 0) {
+    const char *json, *sel, *app;
+    g_variant_get(params, "(&s&s&s)", &json, &sel, &app);
+    g_ptr_array_add(fake.selectors, g_strdup_printf("SignEvent:%s", sel));
+    const char *sk = sk_for_selector(sel);
+    NostrEvent *ev = nostr_event_new();
+    if (!sk || nostr_event_deserialize_compact(ev, json, NULL) != 1 || nostr_event_sign(ev, sk) != 0) {
+      g_dbus_method_invocation_return_dbus_error(inv, "org.nostr.Signer.Error.NoKeyConfigured",
+                                                 "no key for selector");
+    } else {
+      g_autofree char *out = nostr_event_serialize_compact(ev);
+      g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", out));
+    }
+    nostr_event_free(ev);
+  } else if (g_str_has_prefix(method, "NIP44")) {
+    const char *data, *peer, *sel;
+    g_variant_get(params, "(&s&s&s)", &data, &peer, &sel);
+    g_ptr_array_add(fake.selectors, g_strdup_printf("%s:%s", method, sel));
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(s)",
+        g_str_has_suffix(method, "B64") ? "aGVsbG8=" : "result"));
+  } else {
+    g_dbus_method_invocation_return_error(inv, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD, "%s", method);
+  }
+  g_mutex_unlock(&fake.lock);
+}
+
+static const GDBusInterfaceVTable fake_vtable = { fake_method, NULL, NULL, { 0 } };
+
+static void
+on_fake_name(GDBusConnection *c, const char *name, gpointer ud)
+{
+  (void)c; (void)name; (void)ud;
+  g_mutex_lock(&fake.lock);
+  fake.ready = TRUE;
+  g_cond_signal(&fake.cond);
+  g_mutex_unlock(&fake.lock);
+}
+
+static gpointer
+fake_thread(gpointer address)
+{
+  g_main_context_push_thread_default(fake.ctx);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GDBusConnection) conn = g_dbus_connection_new_for_address_sync(address,
+      G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+      NULL, NULL, &error);
+  g_assert_no_error(error);
+  guint reg = g_dbus_connection_register_object(conn, "/org/nostr/signer",
+      g_dbus_node_info_lookup_interface(fake.node, "org.nostr.Signer"), &fake_vtable,
+      NULL, NULL, &error);
+  g_assert_no_error(error);
+  guint own = g_bus_own_name_on_connection(conn, "org.nostr.Signer", G_BUS_NAME_OWNER_FLAGS_NONE,
+                                           on_fake_name, NULL, NULL, NULL);
+  g_main_loop_run(fake.loop);
+  g_bus_unown_name(own);
+  g_dbus_connection_unregister_object(conn, reg);
+  g_dbus_connection_flush_sync(conn, NULL, NULL);
+  g_main_context_pop_thread_default(fake.ctx);
+  return NULL;
+}
+
+static void
+fake_start(GTestDBus *bus)
+{
+  g_autofree char *xml = NULL;
+  g_assert_true(g_file_get_contents(SIGNER_DBUS_XML, &xml, NULL, NULL));
+  fake.node = g_dbus_node_info_new_for_xml(xml, NULL);
+  g_assert_nonnull(fake.node);
+  fake.ctx = g_main_context_new();
+  fake.loop = g_main_loop_new(fake.ctx, FALSE);
+  fake.selectors = g_ptr_array_new_with_free_func(g_free);
+  fake.thread = g_thread_new("fake-signer", fake_thread, (gpointer)g_test_dbus_get_bus_address(bus));
+  g_mutex_lock(&fake.lock);
+  while (!fake.ready)
+    g_cond_wait(&fake.cond, &fake.lock);
+  g_mutex_unlock(&fake.lock);
+}
+
+static void
+fake_stop(void)
+{
+  g_main_loop_quit(fake.loop);
+  g_thread_join(fake.thread);
+  g_main_loop_unref(fake.loop);
+  g_main_context_unref(fake.ctx);
+  g_dbus_node_info_unref(fake.node);
+  g_ptr_array_unref(fake.selectors);
+}
+
+static guint
+selectors_len(void)
+{
+  g_mutex_lock(&fake.lock);
+  guint n = fake.selectors->len;
+  g_mutex_unlock(&fake.lock);
+  return n;
+}
+
+static char *
+selector_at(guint i)
+{
+  g_mutex_lock(&fake.lock);
+  char *s = g_strdup(g_ptr_array_index(fake.selectors, i));
+  g_mutex_unlock(&fake.lock);
+  return s;
+}
+
+/* ---- helpers ----------------------------------------------------------- */
+
+typedef struct {
+  gboolean done;
+  gboolean ok;
+  GError *error;
+  char *result;
+} Wait;
+
+static void
+on_restore(GObject *src, GAsyncResult *res, gpointer ud)
+{
+  Wait *w = ud;
+  w->ok = gnostr_signer_service_restore_nip55l_finish(GNOSTR_SIGNER_SERVICE(src), res, &w->error);
+  w->done = TRUE;
+}
+
+static void
+on_signed(GnostrSignerService *s, const char *json, GError *error, gpointer ud)
+{
+  (void)s;
+  Wait *w = ud;
+  w->ok = json != NULL;
+  w->result = g_strdup(json);
+  w->error = error ? g_error_copy(error) : NULL;
+  w->done = TRUE;
+}
+
+static void
+on_bytes(GnostrSignerService *s, GBytes *bytes, GError *error, gpointer ud)
+{
+  (void)s;
+  Wait *w = ud;
+  w->ok = bytes != NULL;
+  w->error = error ? g_error_copy(error) : NULL;
+  w->done = TRUE;
+}
+
+static void
+wait_for(Wait *w)
+{
+  while (!w->done)
+    g_main_context_iteration(NULL, TRUE);
+}
+
+static void
+wait_clear(Wait *w)
+{
+  g_clear_error(&w->error);
+  g_clear_pointer(&w->result, g_free);
+  memset(w, 0, sizeof *w);
+}
+
+static char *
+signed_pubkey(const char *json)
+{
+  NostrEvent *ev = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(ev, json, NULL), ==, 1);
+  char *pk = g_strdup(nostr_event_get_pubkey(ev));
+  nostr_event_free(ev);
+  return pk;
+}
+
+/* ---- the test --------------------------------------------------------- */
+
+static void
+test_nip55l_identity(void)
+{
+  g_autoptr(GTestDBus) bus = g_test_dbus_new(G_TEST_DBUS_NONE);
+  g_test_dbus_up(bus);
+  Wait w = { 0 };
+  const char *tmpl = "{\"kind\":1,\"created_at\":1700000000,\"tags\":[],\"content\":\"hi\"}";
+
+  /* 1. Signer not running: stay signed out, never auto-start it. */
+  GnostrSignerService *svc = gnostr_signer_service_new();
+  gnostr_signer_service_restore_nip55l_async(svc, npub_a, NULL, on_restore, &w);
+  wait_for(&w);
+  g_assert_false(w.ok);
+  g_assert_error(w.error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
+  g_assert_cmpint(gnostr_signer_service_get_method(svc), ==, GNOSTR_SIGNER_METHOD_NONE);
+  wait_clear(&w);
+
+  fake.default_sk = SK_B;
+  fake_start(bus);
+  gnostr_signer_proxy_reset();
+
+  /* 2. The signer's account differs from the saved one: do not restore. */
+  gnostr_signer_service_restore_nip55l_async(svc, npub_a, NULL, on_restore, &w);
+  wait_for(&w);
+  g_assert_error(w.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  g_assert_cmpint(gnostr_signer_service_get_method(svc), ==, GNOSTR_SIGNER_METHOD_NONE);
+  g_assert_false(gnostr_signer_service_is_ready(svc));
+  wait_clear(&w);
+
+  /* 3a. A sign-out while the restore is in flight wins: no resurrection. */
+  g_mutex_lock(&fake.lock);
+  fake.default_sk = SK_A;
+  g_mutex_unlock(&fake.lock);
+  gnostr_signer_service_restore_nip55l_async(svc, npub_a, NULL, on_restore, &w);
+  gnostr_signer_service_logout(svc);
+  wait_for(&w);
+  g_assert_error(w.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_assert_cmpint(gnostr_signer_service_get_method(svc), ==, GNOSTR_SIGNER_METHOD_NONE);
+  wait_clear(&w);
+
+  /* 3. Same account: restored as NIP-55L for that account. */
+  gnostr_signer_service_restore_nip55l_async(svc, npub_a, NULL, on_restore, &w);
+  wait_for(&w);
+  g_assert_no_error(w.error);
+  g_assert_true(w.ok);
+  g_assert_cmpint(gnostr_signer_service_get_method(svc), ==, GNOSTR_SIGNER_METHOD_NIP55L);
+  g_assert_true(gnostr_signer_service_is_ready(svc));
+  g_assert_cmpstr(gnostr_signer_service_get_pubkey(svc), ==, pk_a);
+  wait_clear(&w);
+
+  /* 4. The daemon's default switches to B: GNostr still signs as A. */
+  g_mutex_lock(&fake.lock);
+  fake.default_sk = SK_B;
+  g_mutex_unlock(&fake.lock);
+  guint before = selectors_len();
+  gnostr_signer_service_sign_event_async(svc, tmpl, NULL, on_signed, &w);
+  wait_for(&w);
+  g_assert_no_error(w.error);
+  g_assert_true(w.ok);
+  g_autofree char *pk = signed_pubkey(w.result);
+  g_assert_cmpstr(pk, ==, pk_a);
+  g_autofree char *sel = selector_at(before);
+  g_autofree char *want = g_strdup_printf("SignEvent:%s", npub_a);
+  g_assert_cmpstr(sel, ==, want);
+  wait_clear(&w);
+
+  /* 5. A daemon that signs as its default anyway is caught. */
+  g_mutex_lock(&fake.lock);
+  fake.ignore_selector = TRUE;
+  g_mutex_unlock(&fake.lock);
+  g_test_expect_message(NULL, G_LOG_LEVEL_WARNING, "*NIP-55L signed as*");
+  gnostr_signer_service_sign_event_async(svc, tmpl, NULL, on_signed, &w);
+  wait_for(&w);
+  g_test_assert_expected_messages();
+  g_assert_false(w.ok);
+  g_assert_error(w.error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+  wait_clear(&w);
+  g_mutex_lock(&fake.lock);
+  fake.ignore_selector = FALSE;
+  g_mutex_unlock(&fake.lock);
+
+  /* 6. NIP-44 calls carry the selected npub too. */
+  before = selectors_len();
+  gnostr_signer_service_nip44_encrypt_async(svc, pk_b, "secret", NULL, on_signed, &w);
+  wait_for(&w);
+  g_assert_true(w.ok);
+  wait_clear(&w);
+  gnostr_signer_service_nip44_decrypt_async(svc, pk_b, "cipher", NULL, on_signed, &w);
+  wait_for(&w);
+  g_assert_true(w.ok);
+  wait_clear(&w);
+  g_autoptr(GBytes) plain = g_bytes_new_static("abc", 3);
+  gnostr_signer_service_nip44_encrypt_bytes_async(svc, pk_b, plain, NULL, on_signed, &w);
+  wait_for(&w);
+  g_assert_true(w.ok);
+  wait_clear(&w);
+  gnostr_signer_service_nip44_decrypt_bytes_async(svc, pk_b, "cipher", NULL, on_bytes, &w);
+  wait_for(&w);
+  g_assert_true(w.ok);
+  wait_clear(&w);
+  g_assert_cmpuint(selectors_len(), ==, before + 4);
+  for (guint i = before; i < before + 4; i++) {
+    g_autofree char *s = selector_at(i);
+    g_assert_true(g_str_has_suffix(s, npub_a));
+  }
+  g_object_unref(svc);
+
+  /* 7. NIP-55L without a selected account: refuse, never ask the daemon
+   * for its default identity. */
+  svc = gnostr_signer_service_new();
+  gnostr_signer_service_set_nip46_session(svc, NULL);  /* the sign-in fallback */
+  g_assert_cmpint(gnostr_signer_service_get_method(svc), ==, GNOSTR_SIGNER_METHOD_NIP55L);
+  before = selectors_len();
+  gnostr_signer_service_sign_event_async(svc, tmpl, NULL, on_signed, &w);
+  wait_for(&w);
+  g_assert_error(w.error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED);
+  wait_clear(&w);
+  gnostr_signer_service_nip44_encrypt_async(svc, pk_b, "secret", NULL, on_signed, &w);
+  wait_for(&w);
+  g_assert_error(w.error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED);
+  wait_clear(&w);
+  g_assert_cmpuint(selectors_len(), ==, before);
+  g_object_unref(svc);
+
+  gnostr_signer_proxy_shutdown();
+  fake_stop();
+  g_test_dbus_down(bus);
+}
+
+int
+main(int argc, char **argv)
+{
+  g_test_init(&argc, &argv, NULL);
+  pk_a = nostr_key_get_public(SK_A);
+  pk_b = nostr_key_get_public(SK_B);
+  g_autoptr(GNostrNip19) na = gnostr_nip19_encode_npub(pk_a, NULL);
+  g_autoptr(GNostrNip19) nb = gnostr_nip19_encode_npub(pk_b, NULL);
+  npub_a = g_strdup(gnostr_nip19_get_bech32(na));
+  npub_b = g_strdup(gnostr_nip19_get_bech32(nb));
+  g_test_add_func("/signer/nip55l/identity", test_nip55l_identity);
+  return g_test_run();
+}

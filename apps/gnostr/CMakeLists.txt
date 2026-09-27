@@ -869,6 +869,96 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "profile;validation;unit;gnostr")
 
+  # GNostr Signer (NIP-55L) session restore + identity selection
+  # (nostrc-vuwu). Headless: fake org.nostr.Signer on a private GTestDBus.
+  add_executable(gnostr-test-signer-nip55l-identity
+    tests/test_signer_nip55l_identity.c
+    src/ipc/signer_ipc.c
+    src/ipc/gnostr-signer-service.c)
+  target_compile_features(gnostr-test-signer-nip55l-identity PRIVATE c_std_11)
+  target_include_directories(gnostr-test-signer-nip55l-identity PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include
+    ${PROJECT_ROOT}/libnostr/include
+    ${PROJECT_ROOT}/libgo/include
+    ${PROJECT_ROOT}/nips/nip46/include
+    ${_NOSTR_CONFIG_DIR})
+  target_compile_definitions(gnostr-test-signer-nip55l-identity PRIVATE
+    SIGNER_DBUS_XML="${PROJECT_ROOT}/nostr-gobject/dbus/org.nostr.Signer.xml")
+  target_link_libraries(gnostr-test-signer-nip55l-identity PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr_gobject nostr libgo)
+  if (TARGET nostr_nip46_core)
+    target_link_libraries(gnostr-test-signer-nip55l-identity PRIVATE nostr_nip46_core)
+  endif()
+  _gnostr_apply_sanitizers(gnostr-test-signer-nip55l-identity)
+  add_test(NAME gnostr-test-signer-nip55l-identity COMMAND gnostr-test-signer-nip55l-identity)
+  set_tests_properties(gnostr-test-signer-nip55l-identity PROPERTIES
+    TIMEOUT 30
+    LABELS "signer;nip55l;dbus;unit;gnostr"
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
+
+  # Zap/wallet NWC service as an org.nostr.Wallet1 client + legacy GSettings
+  # URI migration (nostrc-prqu.13). Headless: fake agent on GTestDBus.
+  add_executable(gnostr-test-nwc-wallet-agent
+    tests/test_nwc_wallet_agent.c
+    src/util/nwc.c)
+  target_compile_features(gnostr-test-nwc-wallet-agent PRIVATE c_std_11)
+  target_include_directories(gnostr-test-nwc-wallet-agent PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nips/nip47/include
+    ${PROJECT_ROOT}/libnostr/include)
+  target_link_libraries(gnostr-test-nwc-wallet-agent PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO nostr_nip47_core nostr)
+  _gnostr_apply_sanitizers(gnostr-test-nwc-wallet-agent)
+  add_test(NAME gnostr-test-nwc-wallet-agent COMMAND gnostr-test-nwc-wallet-agent)
+  set_tests_properties(gnostr-test-nwc-wallet-agent PROPERTIES
+    TIMEOUT 60
+    LABELS "nwc;wallet;dbus;unit;gnostr"
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
+
+  # mls-groups: Marmot KeyPackage discovery on kind:10002 write relays
+  # (nostrc-prqu.11). Fake relays behind GnKpBackend; real KeyPackages.
+  if (TARGET marmot-gobject)
+    add_executable(gnostr-test-kp-discovery
+      tests/test_kp_discovery.c
+      plugins/mls-groups/gn-key-package-discovery.c)
+    target_compile_features(gnostr-test-kp-discovery PRIVATE c_std_11)
+    target_include_directories(gnostr-test-kp-discovery PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/plugins/mls-groups
+      ${PROJECT_ROOT}/marmot-gobject/include
+      ${CMAKE_BINARY_DIR}/marmot-gobject/include
+      ${PROJECT_ROOT}/libmarmot/include
+      ${PROJECT_ROOT}/libnostr/include)
+    target_link_libraries(gnostr-test-kp-discovery PRIVATE
+      PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB marmot-gobject marmot nostr)
+    _gnostr_apply_sanitizers(gnostr-test-kp-discovery)
+    add_test(NAME gnostr-test-kp-discovery COMMAND gnostr-test-kp-discovery)
+    set_tests_properties(gnostr-test-kp-discovery PROPERTIES
+      TIMEOUT 60
+      LABELS "mls;marmot;unit;gnostr")
+  endif()
+
+  # nostr: link routing + org.nostr.Handler1 (nostrc-prqu.3). Headless:
+  # private GTestDBus bus; checks X-Nostr-Kinds= against the routing table.
+  add_executable(gnostr-test-nostr-target
+    tests/test_nostr_target.c
+    src/util/gnostr-nostr-target.c
+    src/ipc/gnostr-handler1.c)
+  target_compile_features(gnostr-test-nostr-target PRIVATE c_std_11)
+  target_include_directories(gnostr-test-nostr-target PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include
+    ${PROJECT_ROOT}/libnostr/include)
+  target_compile_definitions(gnostr-test-nostr-target PRIVATE
+    GNOSTR_DESKTOP_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/org.gnostr.gnostr.desktop")
+  target_link_libraries(gnostr-test-nostr-target PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO nostr_gobject nostr_json)
+  _gnostr_apply_sanitizers(gnostr-test-nostr-target)
+  add_test(NAME gnostr-test-nostr-target COMMAND gnostr-test-nostr-target)
+  set_tests_properties(gnostr-test-nostr-target PROPERTIES
+    TIMEOUT 30
+    LABELS "nip21;dbus;unit;gnostr")
+
   add_executable(gnostr-test-profile-cache-privacy
     tests/test_profile_cache_privacy.c
     src/model/gn-profile-list-model.c)

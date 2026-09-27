@@ -224,6 +224,27 @@ gboolean gnostr_signer_service_restore_from_settings(GnostrSignerService *self);
  */
 void gnostr_signer_service_clear_saved_credentials(GnostrSignerService *self);
 
+/**
+ * gnostr_signer_service_restore_nip55l_async:
+ * @self: the signer service
+ * @npub: the saved account (current-npub; npub1… or 64-hex)
+ *
+ * nostrc-vuwu: resume a session that signed in through GNostr Signer
+ * (org.nostr.Signer, NIP-55L). Succeeds only when the signer is already
+ * running (it is never auto-started here) and its GetPublicKey() is @npub;
+ * then the service uses NIP-55L as @npub. Errors: G_IO_ERROR_NOT_FOUND (not
+ * running), G_IO_ERROR_PERMISSION_DENIED (the signer's account differs),
+ * G_IO_ERROR_CANCELLED (a sign-in happened meanwhile).
+ */
+void gnostr_signer_service_restore_nip55l_async(GnostrSignerService *self,
+                                                 const char *npub,
+                                                 GCancellable *cancellable,
+                                                 GAsyncReadyCallback callback,
+                                                 gpointer user_data);
+gboolean gnostr_signer_service_restore_nip55l_finish(GnostrSignerService *self,
+                                                      GAsyncResult *result,
+                                                      GError **error);
+
 /* ---- NIP-44 Encryption/Decryption (nostrc-n44s) ---- */
 
 /**

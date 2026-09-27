@@ -73,6 +73,11 @@ typedef enum {
   GNOSTR_SIGNER_NEED_ACTIVE,      /* signed in; signs through org.nostr.Signer */
 } GnostrSignerNeed;
 
+/* nostrc-lwzv: TRUE when the session signs through org.nostr.Signer and the
+ * signer is not running: GNostr can read but must not offer to publish. */
+gboolean gnostr_signer_status_is_read_only(const GnostrSignerStatus *status,
+                                           GnostrSignerNeed need);
+
 /* Main-window banner. NULL when no banner is needed: the signer is running,
  * or the session neither needs it nor has legacy keys waiting for it. */
 char *gnostr_signer_status_banner_text(const GnostrSignerStatus *status,

@@ -11,7 +11,9 @@
  *   - 444  (MLS Welcome, MIP-02, via NIP-59 gift wrap)
  *   - 445  (MLS Group Message, MIP-03)
  *   - 1059 (NIP-59 Gift Wrap, for welcome delivery)
- *   - 10051 (Key Package Relay List, MIP-00)
+ *
+ * KeyPackages are published to and discovered on kind:10002 write relays
+ * (nostrc-prqu.11); there is no kind:10051 KeyPackage relay list.
  *
  * Copyright (C) 2026 Gnostr Contributors
  */

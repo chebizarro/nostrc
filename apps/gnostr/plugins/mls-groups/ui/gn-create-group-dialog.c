@@ -6,6 +6,7 @@
 
 #include "gn-create-group-dialog.h"
 #include "gn-member-row.h"
+#include "../gn-key-package-discovery.h"
 #include <gnostr-plugin-api.h>
 #include <json-glib/json-glib.h>
 #include <marmot-gobject-1.0/marmot-gobject.h>
@@ -21,6 +22,7 @@ typedef struct
   GPtrArray           *key_package_jsons;    /* (element-type utf8) */
   gchar              **admin_pubkey_hexes;   /* NULL-terminated */
   gchar              **relay_urls;           /* NULL-terminated */
+  guint                next_member;          /* key package discovery cursor */
 } CreateGroupFlowData;
 
 static void create_group_flow_data_free(CreateGroupFlowData *data);
@@ -317,42 +319,64 @@ on_group_created(GObject      *source,
   create_group_flow_data_free(flow);
 }
 
+static void create_with_key_packages(GnCreateGroupDialog *self, CreateGroupFlowData *flow);
+static void discover_next_member(GnCreateGroupDialog *self, CreateGroupFlowData *flow);
+
+static void
+on_member_key_package(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  CreateGroupFlowData *flow = user_data;
+  GnCreateGroupDialog *self = flow->dialog;   /* ref taken in discover_next_member */
+  const gchar *pk = g_ptr_array_index(flow->member_pubkeys, flow->next_member);
+  g_autoptr(GError) error = NULL;
+  gchar *kp_json = gn_kp_discover_finish(result, &error);
+
+  if (kp_json != NULL)
+    {
+      g_ptr_array_add(flow->key_package_jsons, kp_json);
+      g_debug("CreateGroupDialog: found key package for %s", pk);
+    }
+  else
+    {
+      g_warning("CreateGroupDialog: no key package found for %s — "
+                "member will not be added: %s", pk, error ? error->message : "");
+    }
+  flow->next_member++;
+  discover_next_member(self, flow);
+  g_object_unref(self);
+}
+
+/* nostrc-prqu.11: each member's KeyPackage comes from their kind:10002 write
+ * relays (and the local store), chosen by
+ * marmot_gobject_select_key_package_event(); one member at a time. */
+static void
+discover_next_member(GnCreateGroupDialog *self, CreateGroupFlowData *flow)
+{
+  if (flow->next_member >= flow->member_pubkeys->len)
+    {
+      create_with_key_packages(self, flow);
+      return;
+    }
+  GnKpBackend backend;
+  gn_kp_backend_init_for_plugin(&backend, self->plugin_context);
+  g_object_ref(self);
+  gn_kp_discover_async(&backend, g_ptr_array_index(flow->member_pubkeys, flow->next_member),
+                       NULL, on_member_key_package, flow);
+}
+
 static void
 fetch_key_packages_and_create(GnCreateGroupDialog *self,
                               CreateGroupFlowData *flow)
 {
   set_status(self, "Fetching key packages…", TRUE);
+  flow->next_member = 0;
+  discover_next_member(self, flow);
+}
 
-  /*
-   * For each member, query local storage for their latest kind:30443 event.
-   * In a production implementation, this would also request from relays,
-   * but for now we use what's already been synced.
-   */
-  for (guint i = 0; i < flow->member_pubkeys->len; i++)
-    {
-      const gchar *pk = g_ptr_array_index(flow->member_pubkeys, i);
-
-      g_autofree gchar *filter = g_strdup_printf(
-        "{\"kinds\":[%d],\"authors\":[\"%s\"],\"limit\":1}",
-        MARMOT_GOBJECT_KIND_KEY_PACKAGE, pk);
-
-      g_autoptr(GError) error = NULL;
-      g_autoptr(GPtrArray) events =
-        gnostr_plugin_context_query_events(self->plugin_context, filter, &error);
-
-      if (events != NULL && events->len > 0)
-        {
-          const gchar *kp_json = g_ptr_array_index(events, 0);
-          g_ptr_array_add(flow->key_package_jsons, g_strdup(kp_json));
-          g_debug("CreateGroupDialog: found key package for %s", pk);
-        }
-      else
-        {
-          g_warning("CreateGroupDialog: no key package found for %s — "
-                    "member will not be added", pk);
-        }
-    }
-
+static void
+create_with_key_packages(GnCreateGroupDialog *self, CreateGroupFlowData *flow)
+{
   if (flow->key_package_jsons->len == 0 && flow->member_pubkeys->len > 0)
     {
       set_status(self, "No key packages found for any member. "

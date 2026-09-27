@@ -344,6 +344,11 @@ void gnostr_main_window_open_compose_dialog_internal(GnostrMainWindow *self,
     gnostr_main_window_compose_context_free_internal(context);
     return;
   }
+  /* nostrc-lwzv: compose, reply, quote and comment all open here. */
+  if (!gnostr_main_window_check_publish_internal(self)) {
+    gnostr_main_window_compose_context_free_internal(context);
+    return;
+  }
 
   AdwDialog *dialog = adw_dialog_new();
   adw_dialog_set_content_width(dialog, 500);
@@ -539,6 +544,7 @@ static void on_article_compose_publish(GnostrArticleComposer *composer,
 void gnostr_main_window_compose_article(GtkWidget *window) {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(window);
   if (!GNOSTR_IS_MAIN_WINDOW(self)) return;
+  if (!gnostr_main_window_check_publish_internal(self)) return; /* nostrc-lwzv */
 
   AdwDialog *dialog = adw_dialog_new();
   adw_dialog_set_title(dialog, _("Write Article"));

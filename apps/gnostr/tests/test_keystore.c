@@ -47,10 +47,16 @@ static void test_copy(void) {
   g_assert_null(gnostr_signer_status_banner_text(&st, GNOSTR_SIGNER_NEED_ACTIVE));
   g_assert_null(gnostr_signer_status_legacy_text(&st));
   g_assert_false(gnostr_signer_status_can_start(&st));
+  /* nostrc-lwzv: publishing stays on while the signer runs. */
+  g_assert_false(gnostr_signer_status_is_read_only(&st, GNOSTR_SIGNER_NEED_ACTIVE));
 
   /* Installed but stopped: start is offered; a NIP-55L session is read-only. */
   st.presence = GNOSTR_SIGNER_PRESENCE_ACTIVATABLE;
   g_assert_true(gnostr_signer_status_can_start(&st));
+  g_assert_true(gnostr_signer_status_is_read_only(&st, GNOSTR_SIGNER_NEED_ACTIVE));
+  /* Signed out, or a NIP-46 session: not "read-only" (nothing to disable). */
+  g_assert_false(gnostr_signer_status_is_read_only(&st, GNOSTR_SIGNER_NEED_SIGNED_OUT));
+  g_assert_false(gnostr_signer_status_is_read_only(&st, GNOSTR_SIGNER_NEED_NONE));
   g_autofree char *login = gnostr_signer_status_login_text(&st);
   g_assert_nonnull(strstr(login, "not running"));
   g_autofree char *banner = gnostr_signer_status_banner_text(&st, GNOSTR_SIGNER_NEED_ACTIVE);
@@ -71,6 +77,10 @@ static void test_copy(void) {
   g_assert_nonnull(strstr(login2, "not installed"));
   g_autofree char *banner2 = gnostr_signer_status_banner_text(&st, GNOSTR_SIGNER_NEED_ACTIVE);
   g_assert_nonnull(strstr(banner2, "read-only"));
+  g_assert_true(gnostr_signer_status_is_read_only(&st, GNOSTR_SIGNER_NEED_ACTIVE));
+  st.presence = GNOSTR_SIGNER_PRESENCE_NO_BUS;
+  g_assert_true(gnostr_signer_status_is_read_only(&st, GNOSTR_SIGNER_NEED_ACTIVE));
+  st.presence = GNOSTR_SIGNER_PRESENCE_NOT_INSTALLED;
 
   st.presence = GNOSTR_SIGNER_PRESENCE_NO_BUS;
   g_autofree char *login3 = gnostr_signer_status_login_text(&st);

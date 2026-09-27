@@ -176,6 +176,12 @@ char *gnostr_signer_status_legacy_text(const GnostrSignerStatus *status) {
   return g_strdup_printf("%s %s", first, tail);
 }
 
+gboolean gnostr_signer_status_is_read_only(const GnostrSignerStatus *status,
+                                           GnostrSignerNeed need) {
+  g_return_val_if_fail(status != NULL, FALSE);
+  return need == GNOSTR_SIGNER_NEED_ACTIVE && status->presence != GNOSTR_SIGNER_PRESENCE_RUNNING;
+}
+
 char *gnostr_signer_status_banner_text(const GnostrSignerStatus *status,
                                        GnostrSignerNeed need) {
   g_return_val_if_fail(status != NULL, NULL);
@@ -190,10 +196,12 @@ char *gnostr_signer_status_banner_text(const GnostrSignerStatus *status,
             "read-only: install GNostr Signer or sign in with a remote signer."));
   }
   if (need == GNOSTR_SIGNER_NEED_SIGNED_OUT) {
-    /* Nothing re-signs this account in automatically: say what to do. */
+    /* nostrc-vuwu: once the signer runs, the session resumes by itself if
+     * the signer holds this account; otherwise the user signs in again. */
     return g_strdup(startable
         ? _("You are signed out: GNostr keeps no keys of its own and GNostr Signer is "
-            "not running. Start it, then sign in again.")
+            "not running. Start it to continue; if it uses a different account, sign "
+            "in again.")
         : _("You are signed out: GNostr keeps no keys of its own and GNostr Signer is "
             "not available. Install it, or sign in with a remote signer."));
   }

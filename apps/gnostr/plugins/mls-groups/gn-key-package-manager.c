@@ -5,6 +5,7 @@
  */
 
 #include "gn-key-package-manager.h"
+#include "gn-key-package-discovery.h"
 #include <gnostr-plugin-api.h>
 #include <json-glib/json-glib.h>
 
@@ -89,18 +90,21 @@ gn_key_package_manager_init(GnKeyPackageManager *self)
  *
  * 1. marmot_gobject_client_create_key_package_unsigned_async() → unsigned kind:30443 event JSON
  * 2. gnostr_plugin_context_request_sign_event() → signed event JSON
- * 3. gnostr_plugin_context_publish_event_async() → publish to relays
+ * 3. gnostr_plugin_context_publish_event_to_relays_async() → publish to our
+ *    kind:10002 write relays (nostrc-prqu.11; no kind:10051 relay list)
  * ══════════════════════════════════════════════════════════════════════════ */
 
 typedef struct {
   GnKeyPackageManager *manager;   /* strong ref */
   GTask               *task;
+  gchar              **write_relays;   /* where the KeyPackage is published */
 } CreateKpData;
 
 static void
 create_kp_data_free(CreateKpData *data)
 {
   g_clear_object(&data->manager);
+  g_strfreev(data->write_relays);
   g_free(data);
 }
 
@@ -175,10 +179,11 @@ on_kp_signed(GObject      *source,
 
   g_info("KeyPackageManager: key package signed, publishing…");
 
-  /* Step 3: Publish the signed event */
-  gnostr_plugin_context_publish_event_async(
+  /* Step 3: Publish the signed event to our write relays */
+  gnostr_plugin_context_publish_event_to_relays_async(
     data->manager->context,
     signed_json,
+    (const char * const *)data->write_relays,
     g_task_get_cancellable(data->task),
     on_kp_published,
     data);
@@ -248,14 +253,22 @@ create_and_publish_key_package(GnKeyPackageManager *self,
       return;
     }
 
-  /* Get user's relay URLs for the key package tags */
-  gsize n_relays = 0;
-  g_auto(GStrv) relay_urls =
-    gnostr_plugin_context_get_relay_urls(self->context, &n_relays);
+  /* nostrc-prqu.11: KeyPackages are published to, and advertised on, the
+   * account's kind:10002 write relays (Marmot transports/nostr.md). Until
+   * our relay list is known locally, fall back to the configured relays. */
+  GnKpBackend backend;
+  gn_kp_backend_init_for_plugin(&backend, self->context);
+  gchar **relay_urls = gn_kp_local_write_relays(&backend, pubkey);
+  if (relay_urls[0] == NULL)
+    {
+      g_strfreev(relay_urls);
+      relay_urls = gnostr_plugin_context_get_relay_urls(self->context, NULL);
+    }
 
   CreateKpData *data = g_new0(CreateKpData, 1);
-  data->manager = g_object_ref(self);   /* strong ref for async safety */
-  data->task    = task; /* takes ownership */
+  data->manager      = g_object_ref(self);   /* strong ref for async safety */
+  data->task         = task; /* takes ownership */
+  data->write_relays = relay_urls;
 
   MarmotGobjectClient *client = gn_marmot_service_get_client(service);
 
@@ -391,98 +404,3 @@ gn_key_package_manager_rotate_finish(GnKeyPackageManager *self,
   return g_task_propagate_boolean(G_TASK(result), error);
 }
 
-void
-gn_key_package_manager_publish_relay_list_async(GnKeyPackageManager  *self,
-                                                 const gchar * const  *relay_urls,
-                                                 GCancellable         *cancellable,
-                                                 GAsyncReadyCallback   callback,
-                                                 gpointer              user_data)
-{
-  g_return_if_fail(GN_IS_KEY_PACKAGE_MANAGER(self));
-
-  GTask *task = g_task_new(self, cancellable, callback, user_data);
-  g_task_set_source_tag(task, gn_key_package_manager_publish_relay_list_async);
-
-  g_info("KeyPackageManager: publishing key package relay list (kind:10051)");
-
-  if (relay_urls == NULL || relay_urls[0] == NULL)
-    {
-      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-                              "No relay URLs provided");
-      g_object_unref(task);
-      return;
-    }
-
-  const gchar *pubkey = gnostr_plugin_context_get_user_pubkey(self->context);
-  if (pubkey == NULL)
-    {
-      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
-                              "User identity not set");
-      g_object_unref(task);
-      return;
-    }
-
-  /*
-   * Build a kind:10051 event (MLS Key Package Relay List):
-   *   {
-   *     "pubkey": "<hex>",
-   *     "kind": 10051,
-   *     "created_at": <now>,
-   *     "tags": [["relay","wss://..."], ["relay","wss://..."]],
-   *     "content": ""
-   *   }
-   */
-  g_autoptr(JsonBuilder) builder = json_builder_new();
-  json_builder_begin_object(builder);
-
-  json_builder_set_member_name(builder, "pubkey");
-  json_builder_add_string_value(builder, pubkey);
-
-  json_builder_set_member_name(builder, "kind");
-  json_builder_add_int_value(builder, 10051);
-
-  json_builder_set_member_name(builder, "created_at");
-  json_builder_add_int_value(builder, g_get_real_time() / G_USEC_PER_SEC);
-
-  json_builder_set_member_name(builder, "tags");
-  json_builder_begin_array(builder);
-  for (gsize i = 0; relay_urls[i] != NULL; i++)
-    {
-      json_builder_begin_array(builder);
-      json_builder_add_string_value(builder, "relay");
-      json_builder_add_string_value(builder, relay_urls[i]);
-      json_builder_end_array(builder);
-    }
-  json_builder_end_array(builder);
-
-  json_builder_set_member_name(builder, "content");
-  json_builder_add_string_value(builder, "");
-
-  json_builder_end_object(builder);
-
-  g_autoptr(JsonGenerator) gen = json_generator_new();
-  g_autoptr(JsonNode) root = json_builder_get_root(builder);
-  json_generator_set_root(gen, root);
-  g_autofree gchar *unsigned_json = json_generator_to_data(gen, NULL);
-
-  /* Reuse the CreateKpData + sign → publish chain */
-  CreateKpData *data = g_new0(CreateKpData, 1);
-  data->manager = g_object_ref(self);
-  data->task    = task;
-
-  gnostr_plugin_context_request_sign_event(
-    self->context,
-    unsigned_json,
-    cancellable,
-    on_kp_signed,    /* same sign → publish chain as key packages */
-    data);
-}
-
-gboolean
-gn_key_package_manager_publish_relay_list_finish(GnKeyPackageManager *self,
-                                                  GAsyncResult        *result,
-                                                  GError             **error)
-{
-  g_return_val_if_fail(GN_IS_KEY_PACKAGE_MANAGER(self), FALSE);
-  return g_task_propagate_boolean(G_TASK(result), error);
-}

@@ -63,6 +63,9 @@ void gnostr_session_view_set_relay_status(GnostrSessionView *self,
 
 /* Search bar control */
 void gnostr_session_view_set_search_mode(GnostrSessionView *self, gboolean enabled);
+/* nostrc-lwzv: disable the compose button, with @reason as its tooltip
+ * (NULL enables it again). */
+void gnostr_session_view_set_compose_blocked(GnostrSessionView *self, const char *reason);
 gboolean gnostr_session_view_get_search_mode(GnostrSessionView *self);
 const char *gnostr_session_view_get_search_text(GnostrSessionView *self);
 

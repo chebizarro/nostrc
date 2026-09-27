@@ -76,6 +76,10 @@ struct _GnostrMainWindow {
   GCancellable *signer_status_cancellable;
   GCancellable *signer_start_cancellable;
   gboolean signer_starting;
+  /* nostrc-vuwu: in-flight NIP-55L session restore */
+  GCancellable *nip55l_restore_cancellable;
+  /* nostrc-lwzv: why publishing is off (read-only: signer not running), or NULL */
+  char *publish_blocked_reason;
 
   /* Responsive mode */
   gboolean compact;
@@ -442,6 +446,9 @@ void gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self
 void gnostr_main_window_signer_banner_start_internal(GnostrMainWindow *self);
 void gnostr_main_window_signer_banner_refresh_internal(GnostrMainWindow *self);
 void gnostr_main_window_signer_banner_dispose_internal(GnostrMainWindow *self);
+void gnostr_main_window_try_restore_nip55l_internal(GnostrMainWindow *self);
+/* nostrc-lwzv: FALSE (after saying why in a toast) while GNostr is read-only. */
+gboolean gnostr_main_window_check_publish_internal(GnostrMainWindow *self);
 void gnostr_main_window_initial_refresh_timeout_cb_internal(gpointer data);
 void gnostr_main_window_run_startup_stage2_internal(gpointer data);
 gpointer gnostr_main_window_ingest_thread_func_internal(gpointer data);
