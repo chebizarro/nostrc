@@ -12,16 +12,12 @@ pkg_check_modules(ND_DEPS REQUIRED IMPORTED_TARGET
 
 option(NOSTR_DISPATCHER_BUILD_TESTS "Build nostr-dispatcher unit tests" ${BUILD_TESTING})
 
-# NIP-19 codec, linked statically. The shared libnip19.so is not a packaged
-# library (Debian ships it inside nostr-notify, the RPM drops it), so a
-# dynamic link would couple this package to an unrelated one.
-file(GLOB ND_NIP19_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/nips/nip19/src/*.c)
-add_library(nd_nip19 STATIC ${ND_NIP19_SOURCES})
-set_target_properties(nd_nip19 PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(nd_nip19
-  PUBLIC  ${CMAKE_SOURCE_DIR}/nips/nip19/include
-  PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/include ${CMAKE_SOURCE_DIR}/libgo/include)
-target_link_libraries(nd_nip19 PUBLIC nostr)
+# NIP-19 codec: the shared libnip19.so.0 (SONAME, shipped once in
+# libnostr-nips0 / libnostr-nips since nostrc-4c0o; nostrc-9rvm dropped the
+# private static copy).
+if(NOT TARGET nip19)
+  message(FATAL_ERROR "nostr-dispatcher requires ENABLE_NIP19=ON")
+endif()
 
 # Introspection XML: gnome/dbus/ is the single source of truth; embed it.
 set(ND_IFACE_XML ${CMAKE_SOURCE_DIR}/gnome/dbus/org.nostr.Dispatcher1.xml)
@@ -47,7 +43,7 @@ target_include_directories(nd_portable PUBLIC
   ${CMAKE_SOURCE_DIR}/libnostr/include
   ${CMAKE_SOURCE_DIR}/libgo/include)
 target_compile_options(nd_portable PRIVATE -Wall -Wextra -Wno-unused-parameter)
-target_link_libraries(nd_portable PUBLIC PkgConfig::ND_DEPS nd_nip19 nostr)
+target_link_libraries(nd_portable PUBLIC PkgConfig::ND_DEPS nip19 nostr)
 
 set(ND_PORTABLE_TESTS kinds uri event)
 if(NOSTR_DISPATCHER_BUILD_TESTS)

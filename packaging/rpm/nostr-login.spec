@@ -532,6 +532,7 @@ lives under `$XDG_STATE_HOME/nostr-dav/`.
 %package -n nostr-dispatcher
 Summary:        Kind-aware router for nostr: links (org.nostr.Dispatcher1)
 Requires:       libnostr%{?_isa} = %{version}-%{release}
+Requires:       libnostr-nips%{?_isa} = %{version}-%{release}
 Requires:       glib2
 Requires:       json-glib
 Requires:       libsoup3
@@ -570,6 +571,7 @@ upload and the exact event JSON is shown before signing.
 %package -n nostr-search-provider
 Summary:        GNOME Shell search provider for Nostr profiles and notes
 Requires:       libnostr%{?_isa} = %{version}-%{release}
+Requires:       libnostr-nips%{?_isa} = %{version}-%{release}
 Requires:       glib2
 Requires:       json-glib
 Requires:       libsoup3
