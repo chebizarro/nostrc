@@ -4,6 +4,10 @@
  * Tests for gift wrap functionality
  */
 
+/* The checks below are assert()s with side effects: keep them in any build
+ * type. */
+#undef NDEBUG
+
 #include "nostr/nip59/nip59.h"
 #include "nostr/nip44/nip44.h"
 #include "nostr-event.h"
@@ -13,6 +17,8 @@
 #include "nostr-utils.h"
 
 #include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -131,24 +137,86 @@ static void test_randomize_timestamp(void) {
 
     int64_t now = (int64_t)time(NULL);
     uint32_t window = 2 * 24 * 60 * 60;  /* 2 days */
+    int64_t ts = 0;
 
     /* Generate multiple timestamps and verify they're in range */
     for (int i = 0; i < 10; i++) {
-        int64_t ts = nostr_nip59_randomize_timestamp(now, window);
-        assert(ts <= now);
+        assert(nostr_nip59_randomize_timestamp(now, window, &ts) == NIP59_OK);
+        assert(ts < now);
         assert(ts >= now - (int64_t)window);
     }
 
     /* Test with zero base time (should use current time) */
-    int64_t ts = nostr_nip59_randomize_timestamp(0, window);
-    assert(ts <= time(NULL) + 1);  /* Allow 1 second tolerance */
-    assert(ts >= time(NULL) - (int64_t)window - 1);
+    int64_t before = (int64_t)time(NULL);
+    assert(nostr_nip59_randomize_timestamp(0, window, &ts) == NIP59_OK);
+    int64_t after = (int64_t)time(NULL);
+    assert(ts < after);
+    assert(ts >= before - (int64_t)window);
 
     /* Test with zero window (should use default) */
-    ts = nostr_nip59_randomize_timestamp(now, 0);
-    assert(ts <= now);
+    assert(nostr_nip59_randomize_timestamp(now, 0, &ts) == NIP59_OK);
+    assert(ts < now);
+    assert(ts >= now - (int64_t)window);
+
+    /* A one-second window has exactly one strictly-past answer. */
+    assert(nostr_nip59_randomize_timestamp(now, 1, &ts) == NIP59_OK);
+    assert(ts == now - 1);
+
+    /* Every value of a tiny window is reachable. */
+    bool seen[3] = { false, false, false };
+    for (int i = 0; i < 300; i++) {
+        assert(nostr_nip59_randomize_timestamp(now, 3, &ts) == NIP59_OK);
+        assert(ts >= now - 3 && ts <= now - 1);
+        seen[now - 1 - ts] = true;
+    }
+    assert(seen[0] && seen[1] && seen[2]);
+
+    /* Bad arguments are errors, not a timestamp. */
+    assert(nostr_nip59_randomize_timestamp(now, window, NULL) == NIP59_ERR_INVALID_ARG);
+    ts = 12345;
+    assert(nostr_nip59_randomize_timestamp(100, 1000, &ts) == NIP59_ERR_INVALID_ARG);
+    assert(ts == 0);
+    assert(nostr_nip59_randomize_timestamp(-5, 1, &ts) == NIP59_ERR_INVALID_ARG);
 
     printf("  OK: timestamps randomized within valid range\n");
+}
+
+/* Many draws from a fixed base: all inside the window, never the base
+ * itself, and spread evenly (8 buckets, each within 20% of its share:
+ * ~10 standard deviations, so this does not flake). */
+static void test_randomize_timestamp_distribution(void) {
+    printf("Testing timestamp distribution...\n");
+
+    const int64_t base = 1700000000;
+    const uint32_t window = 2 * 24 * 60 * 60;
+    enum { DRAWS = 20000, BUCKETS = 8 };
+    int counts[BUCKETS] = { 0 };
+    int64_t lo = base, hi = 0;
+    double sum = 0;
+
+    for (int i = 0; i < DRAWS; i++) {
+        int64_t ts = 0;
+        assert(nostr_nip59_randomize_timestamp(base, window, &ts) == NIP59_OK);
+        assert(ts >= base - (int64_t)window);
+        assert(ts <= base - 1);
+        int64_t offset = base - ts;               /* 1 .. window */
+        counts[(offset - 1) * BUCKETS / window]++;
+        if (ts < lo) lo = ts;
+        if (ts > hi) hi = ts;
+        sum += (double)offset;
+    }
+
+    for (int b = 0; b < BUCKETS; b++) {
+        assert(counts[b] > DRAWS / BUCKETS * 8 / 10);
+        assert(counts[b] < DRAWS / BUCKETS * 12 / 10);
+    }
+    /* Nearly the whole window is used. */
+    assert(hi - lo > (int64_t)window * 99 / 100);
+    /* Mean offset ~ window/2 (std of the mean ~350 s). */
+    double mean = sum / DRAWS;
+    assert(mean > window * 0.45 && mean < window * 0.55);
+
+    printf("  OK: %d draws uniform over the window (mean offset %.0f s)\n", DRAWS, mean);
 }
 
 static void test_wrap_unsigned_event(void) {
@@ -463,29 +531,52 @@ static void test_roundtrip_with_tags(void) {
     printf("  OK: tags preserved through roundtrip\n");
 }
 
+/* nostrc-rd8j: every wrap used to carry the real send time. Over many real
+ * wraps: each is inside [now - 2d, now), none is at the send time, they are
+ * (almost) all distinct, and they span the window. */
 static void test_timestamp_is_randomized(void) {
     printf("Testing gift wrap timestamp is randomized...\n");
+
+    enum { WRAPS = 200 };
+    const int64_t two_days = 2 * 24 * 60 * 60;
+    int64_t stamps[WRAPS];
+    int64_t lo = INT64_MAX, hi = INT64_MIN;
+    int recent = 0;
 
     NostrEvent *inner = create_test_event(ALICE_PK, "Test");
     assert(inner != NULL);
 
-    int64_t before = (int64_t)time(NULL);
+    for (int i = 0; i < WRAPS; i++) {
+        int64_t before = (int64_t)time(NULL);
+        NostrEvent *gift_wrap = nostr_nip59_wrap(inner, BOB_PK, NULL);
+        int64_t after = (int64_t)time(NULL);
+        assert(gift_wrap != NULL);
+        assert(nostr_nip59_validate_gift_wrap(gift_wrap));
 
-    NostrEvent *gift_wrap = nostr_nip59_wrap(inner, BOB_PK, NULL);
-    assert(gift_wrap != NULL);
+        int64_t t = nostr_event_get_created_at(gift_wrap);
+        assert(t < after);                   /* strictly in the past */
+        assert(t >= before - two_days);
+        if (t >= before - 60) recent++;      /* within a minute of sending */
+        stamps[i] = t;
+        if (t < lo) lo = t;
+        if (t > hi) hi = t;
+        nostr_event_free(gift_wrap);
+    }
 
-    int64_t gift_wrap_time = nostr_event_get_created_at(gift_wrap);
-
-    /* Timestamp should be in the past (randomized) */
-    assert(gift_wrap_time <= before + 1);  /* Allow 1 sec tolerance */
-
-    /* Should be within 2 days window */
-    int64_t two_days = 2 * 24 * 60 * 60;
-    assert(gift_wrap_time >= before - two_days - 1);
+    /* P(one wrap in the last minute) = 60/172800: expect 0.07 of 200. */
+    assert(recent <= 2);
+    /* 200 uniform draws over 2 days span far more than a day. */
+    assert(hi - lo > two_days / 2);
+    int dupes = 0;
+    for (int i = 0; i < WRAPS; i++)
+        for (int j = i + 1; j < WRAPS; j++)
+            if (stamps[i] == stamps[j]) dupes++;
+    /* Birthday bound: ~0.12 expected collisions. */
+    assert(dupes <= 3);
 
     nostr_event_free(inner);
-    nostr_event_free(gift_wrap);
-    printf("  OK: timestamp is randomized\n");
+    printf("  OK: %d wraps randomized across the window (%d near send time)\n",
+           WRAPS, recent);
 }
 
 static void test_nip17_compatibility(void) {
@@ -536,6 +627,7 @@ int main(void) {
 
     /* Timestamp tests */
     test_randomize_timestamp();
+    test_randomize_timestamp_distribution();
 
     /* Wrap tests */
     test_wrap_unsigned_event();

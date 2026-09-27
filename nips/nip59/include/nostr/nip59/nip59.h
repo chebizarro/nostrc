@@ -33,6 +33,7 @@ extern "C" {
 #define NIP59_ERR_DESERIALIZATION  -7
 #define NIP59_ERR_INVALID_KIND     -8
 #define NIP59_ERR_SIGNATURE        -9
+#define NIP59_ERR_RANDOMNESS      -10
 
 /**
  * nostr_nip59_create_ephemeral_key:
@@ -50,13 +51,20 @@ int nostr_nip59_create_ephemeral_key(char **sk_hex_out, char **pk_hex_out);
  * nostr_nip59_randomize_timestamp:
  * @base_time: base timestamp (use 0 for current time)
  * @window_seconds: randomization window in seconds (use 0 for default 2 days)
+ * @out_time: (out): the obfuscated timestamp
  *
- * Creates an obfuscated timestamp for metadata protection.
- * Returns a random timestamp within [base_time - window_seconds, base_time].
+ * Creates an obfuscated timestamp for metadata protection: uniform over
+ * [base_time - window_seconds, base_time - 1], drawn from the system CSPRNG,
+ * so always strictly in the past (relays may refuse future events).
  *
- * Returns: randomized timestamp
+ * There is no fallback. If randomness is unavailable this fails, and the
+ * caller must not publish: the real time is the metadata being hidden.
+ *
+ * Returns: NIP59_OK; NIP59_ERR_INVALID_ARG if @out_time is NULL or
+ * @base_time is below the window; NIP59_ERR_RANDOMNESS if the CSPRNG fails.
  */
-int64_t nostr_nip59_randomize_timestamp(int64_t base_time, uint32_t window_seconds);
+int nostr_nip59_randomize_timestamp(int64_t base_time, uint32_t window_seconds,
+                                    int64_t *out_time);
 
 /**
  * nostr_nip59_wrap:
@@ -73,10 +81,11 @@ int64_t nostr_nip59_randomize_timestamp(int64_t base_time, uint32_t window_secon
  * 2. Encrypt with NIP-44 using ephemeral key -> recipient pubkey
  * 3. Create kind 1059 event with encrypted content
  * 4. Add p-tag with recipient pubkey
- * 5. Set randomized timestamp
+ * 5. Set randomized timestamp (see nostr_nip59_randomize_timestamp())
  * 6. Sign with ephemeral key
  *
- * Returns: (transfer full) (nullable): gift wrap event ready to publish, or NULL on error
+ * Returns: (transfer full) (nullable): gift wrap event ready to publish, or
+ * NULL on error, including when no randomness is available for the timestamp
  */
 NostrEvent *nostr_nip59_wrap(NostrEvent *inner_event,
                               const char *recipient_pubkey_hex,
