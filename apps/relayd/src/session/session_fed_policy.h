@@ -24,8 +24,10 @@
  *   - Targets come only from the user's own data: the author's kind-10002
  *     write relays, the recipient's kind-10050 inbox relays (1059), the
  *     group's relay for NIP-29 kinds and any h-tagged event
- *     (nostr_session_route_class_event(): relay hint in the `h` tag, the
- *     author's kind-10009 `group` entry, or a `host'group-id` identifier).
+ *     (nostr_session_route_class_event()). A group is (relay, id): the
+ *     relay named in the `h` tag (["h", id, relay], a nostrc extension),
+ *     else the author's only kind-10009 `group` entry for that id; several
+ *     entries (forks) leave the event unroutable until it names one.
  *     There is no built-in or fallback relay.
  */
 #ifndef NSR_SESSION_FED_POLICY_H
@@ -163,10 +165,10 @@ NsrFedRouteStatus nsr_fed_resolve(const NsrFedConfig *cfg, NostrEvent *ev,
  * empty) of admitted URLs. */
 GStrv nsr_fed_write_relays_from_10002(const NsrFedConfig *cfg, const char *json);
 GStrv nsr_fed_inbox_relays_from_10050(const NsrFedConfig *cfg, const char *json);
-/* Group relay for @group_id from a kind-10009 list: first
- * ["group", <id>, <relay>, ...] whose id matches. NULL if none. */
-char *nsr_fed_group_relay_from_10009(const NsrFedConfig *cfg, const char *json,
-                                     const char *group_id);
+/* Every distinct relay a kind-10009 list names for @group_id
+ * (["group", <id>, <relay>, ...]), in list order, not admission-filtered:
+ * more than one means the user is in several NIP-29 forks of that id. */
+GStrv nsr_fed_group_relays_from_10009(const char *json, const char *group_id);
 
 /* ── Retry ─────────────────────────────────────────────────────────────── */
 

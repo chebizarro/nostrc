@@ -318,12 +318,19 @@ static void test_route_group(void) {
   assert_relays(relays, want2);
   g_strfreev(relays);
   nostr_event_free(ev);
-  /* host'id identifier; moderation kinds route the same way */
-  ev = mk(PK_A, 9021, "[[\"h\",\"relay.groups.example'xyz\"]]");
+  /* moderation kinds route the same way */
+  ev = mk(PK_A, 9021, "[[\"h\",\"abc\"]]");
   g_assert_cmpint(route(&c, ev, &l, &relays, &lane, &reason), ==, NSR_FED_ROUTE_OK);
-  const char *want3[] = {"wss://relay.groups.example", NULL};
-  assert_relays(relays, want3);
+  assert_relays(relays, want);
   g_strfreev(relays);
+  nostr_event_free(ev);
+  /* nostrc-ytua: the h tag carries the bare id; no relay is derived from a
+   * "host'id" value (a client-side reference form a group relay rejects) */
+  ev = mk(PK_A, 9021, "[[\"h\",\"relay.groups.example'xyz\"]]");
+  g_assert_cmpint(route(&c, ev, &l, &relays, &lane, &reason), ==, NSR_FED_ROUTE_UNROUTABLE);
+  g_assert_null(relays);
+  g_assert_nonnull(strstr(reason, "bare group id"));
+  g_clear_pointer(&reason, g_free);
   nostr_event_free(ev);
   /* unknown group, bad 10009 URL: unroutable */
   ev = mk(PK_A, 9, "[[\"h\",\"def\"]]");
@@ -336,6 +343,58 @@ static void test_route_group(void) {
   g_assert_cmpint(route(&c, ev, &l, &relays, &lane, &reason), ==, NSR_FED_ROUTE_INVALID);
   g_clear_pointer(&reason, g_free);
   nostr_event_free(ev);
+}
+
+/* nostrc-ytua: a NIP-29 group is (relay, id) — forks share the id on other
+ * relays (docs/nips/29.md @ db5fe3d "Forking a group"). */
+static void test_route_group_forks(void) {
+  NsrFedConfig c = cfg_default();
+  Lists forks = {.l10002 = "[[\"r\",\"wss://home.example\"]]",
+                 .l10009 = "[[\"group\",\"pizza\",\"wss://a.example\",\"Pizza\"],"
+                           "[\"group\",\"pizza\",\"wss://b.example\",\"Pizza (fork)\"],"
+                           "[\"group\",\"pasta\",\"wss://A.example/\"],"
+                           "[\"group\",\"pasta\",\"wss://a.example\"]]"};
+  GStrv relays = NULL;
+  NsrFedLane lane;
+  char *reason = NULL;
+  /* Two entries for the id, no relay named: unroutable, never the first. */
+  NostrEvent *ev = mk(PK_A, 9, "[[\"h\",\"pizza\"]]");
+  g_assert_cmpint(route(&c, ev, &forks, &relays, &lane, &reason), ==, NSR_FED_ROUTE_UNROUTABLE);
+  g_assert_null(relays);
+  g_assert_nonnull(strstr(reason, "2 relays"));
+  g_assert_nonnull(strstr(reason, "wss://a.example"));
+  g_assert_nonnull(strstr(reason, "wss://b.example"));
+  g_clear_pointer(&reason, g_free);
+  nostr_event_free(ev);
+  /* The event names its fork: routed there only. */
+  ev = mk(PK_A, 9, "[[\"h\",\"pizza\",\"wss://b.example\"]]");
+  g_assert_cmpint(route(&c, ev, &forks, &relays, &lane, &reason), ==, NSR_FED_ROUTE_OK);
+  const char *b[] = {"wss://b.example", NULL};
+  assert_relays(relays, b);
+  g_strfreev(relays);
+  nostr_event_free(ev);
+  /* Same relay listed twice (case / trailing slash): one group. */
+  ev = mk(PK_A, 1, "[[\"h\",\"pasta\"]]");
+  g_assert_cmpint(route(&c, ev, &forks, &relays, &lane, &reason), ==, NSR_FED_ROUTE_OK);
+  const char *a[] = {"wss://A.example/", NULL};
+  assert_relays(relays, a);
+  g_strfreev(relays);
+  nostr_event_free(ev);
+  /* A named relay that is not admissible is not replaced by a listed one. */
+  ev = mk(PK_A, 9, "[[\"h\",\"pasta\",\"ws://plain.example\"]]");
+  g_assert_cmpint(route(&c, ev, &forks, &relays, &lane, &reason), ==, NSR_FED_ROUTE_UNROUTABLE);
+  g_assert_null(relays);
+  g_clear_pointer(&reason, g_free);
+  nostr_event_free(ev);
+
+  GStrv v = nsr_fed_group_relays_from_10009(
+      "{\"id\":\"" FAKE_ID "\",\"pubkey\":\"" PK_A "\",\"created_at\":1,\"kind\":10009,"
+      "\"tags\":[[\"group\",\"pizza\",\"wss://a.example\"],[\"group\",\"pizza\"],"
+      "[\"group\",\"pizza\",\"wss://b.example\"],[\"group\",\"other\",\"wss://c.example\"]],"
+      "\"content\":\"\",\"sig\":\"" FAKE_SIG "\"}", "pizza");
+  const char *two[] = {"wss://a.example", "wss://b.example", NULL};
+  assert_relays(v, two);
+  g_strfreev(v);
 }
 
 /* nostrc-zi3j: an h tag makes any kind group-scoped — the event goes to the
@@ -448,6 +507,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/fed-policy/route-home", test_route_home);
   g_test_add_func("/fed-policy/route-group", test_route_group);
   g_test_add_func("/fed-policy/route-group-any-kind", test_route_group_any_kind);
+  g_test_add_func("/fed-policy/route-group-forks", test_route_group_forks);
   g_test_add_func("/fed-policy/route-inbox", test_route_inbox);
   g_test_add_func("/fed-policy/backoff", test_backoff);
   g_test_add_func("/fed-policy/ok-classes", test_ok_classes);

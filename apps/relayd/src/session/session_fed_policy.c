@@ -397,26 +397,49 @@ GStrv nsr_fed_inbox_relays_from_10050(const NsrFedConfig *cfg, const char *json)
   return finish_strv(out);
 }
 
-char *nsr_fed_group_relay_from_10009(const NsrFedConfig *cfg, const char *json,
-                                     const char *group_id) {
-  if (!group_id) return NULL;
-  char *found = NULL;
-  NostrEvent *ev = parse_event(json);
-  if (ev && nostr_event_get_kind(ev) == 10009) {
+/* Comparison key for "is this the same relay?": scheme and authority
+ * lowercased, a bare trailing "/" dropped. Only used to tell entries
+ * apart; the listed URL is what gets used. */
+static char *relay_key(const char *url) {
+  const char *sep = strstr(url, "://");
+  const char *auth = sep ? sep + 3 : url;
+  size_t auth_len = strcspn(auth, "/?#");
+  GString *k = g_string_new(NULL);
+  for (const char *c = url; c < auth + auth_len; c++) g_string_append_c(k, g_ascii_tolower(*c));
+  const char *rest = auth + auth_len;
+  if (strcmp(rest, "/") != 0) g_string_append(k, rest);
+  return g_string_free(k, FALSE);
+}
+
+GStrv nsr_fed_group_relays_from_10009(const char *json, const char *group_id) {
+  GPtrArray *out = g_ptr_array_new();
+  GPtrArray *keys = g_ptr_array_new_with_free_func(g_free);
+  NostrEvent *ev = group_id && *group_id ? parse_event(json) : NULL;
+  if (ev && nostr_event_get_kind(ev) == NOSTR_KIND_SIMPLE_GROUP_LIST) {
     NostrTags *tags = nostr_event_get_tags(ev);
     size_t n = tags ? nostr_tags_size(tags) : 0;
-    for (size_t i = 0; i < n && !found; i++) {
+    for (size_t i = 0; i < n; i++) {
       NostrTag *t = nostr_tags_get(tags, i);
       if (!t || nostr_tag_size(t) < 3) continue;
       const char *k = nostr_tag_get_key(t);
       if (!k || strcmp(k, "group") != 0) continue;
       if (g_strcmp0(nostr_tag_get(t, 1), group_id) != 0) continue;
       const char *url = nostr_tag_get(t, 2);
-      if (nsr_fed_url_acceptable(url, cfg->allow_plaintext_ws)) found = g_strdup(url);
+      if (!url || !*url) continue;
+      char *key = relay_key(url);
+      gboolean seen = FALSE;
+      for (guint j = 0; j < keys->len && !seen; j++) seen = !strcmp(keys->pdata[j], key);
+      if (seen) {
+        g_free(key);
+        continue;
+      }
+      g_ptr_array_add(keys, key);
+      g_ptr_array_add(out, g_strdup(url));
     }
   }
   if (ev) nostr_event_free(ev);
-  return found;
+  g_ptr_array_unref(keys);
+  return finish_strv(out);
 }
 
 /* ── Route resolution ─────────────────────────────────────────────────── */
@@ -449,41 +472,71 @@ static NostrTag *group_id_tag(NostrEvent *ev) {
   return first_tag_nonempty(tags, kind_is_group_metadata(nostr_event_get_kind(ev)) ? "d" : "h");
 }
 
+/* NIP-29 @ db5fe3d: a group is (relay, id). Forks keep the id and live on
+ * other relays with their own members, admins and history, so the relay is
+ * never guessed: it is the one the event names, or the only one the
+ * author's kind-10009 lists for that id. Several entries for the same id
+ * (the user is in several forks) are ambiguous: the event waits until it
+ * names one, instead of silently going to the fork listed first. There is
+ * no fallback to another relay for the same id, and none to home relays;
+ * an unreachable group relay keeps the write queued (retried until
+ * federation_max_age_seconds) — finding where a group moved is a client
+ * decision (NIP-29: consult the admins' kind 10009), not a relay reroute. */
 static NsrFedRouteStatus resolve_group(const NsrFedConfig *cfg, NostrEvent *ev,
                                        const NsrFedLookup *lk, GPtrArray *out,
                                        char **reason) {
-  NostrTag *h = group_id_tag(ev);
-  if (!h) {
+  NostrTag *g = group_id_tag(ev);
+  if (!g) {
     *reason = g_strdup("invalid: NIP-29 group event without a group id (h tag)");
     return NSR_FED_ROUTE_INVALID;
   }
-  const char *gid = nostr_tag_get(h, 1);
-  /* 1. relay hint carried by the user's own event: ["h", id, relay] */
-  if (nostr_tag_size(h) >= 3) add_url(out, cfg, nostr_tag_get(h, 2));
-  /* 2. the author's kind-10009 simple-groups list */
-  if (out->len == 0 && lk && lk->relay_list_json) {
-    char *json = lk->relay_list_json(lk->ud, nostr_event_get_pubkey(ev), 10009);
-    char *url = nsr_fed_group_relay_from_10009(cfg, json, gid);
-    if (url) add_url(out, cfg, url);
-    g_free(url);
+  const char *gid = nostr_tag_get(g, 1);
+  /* 1. The relay named by the event itself: ["h", id, relay]. Not a NIP-29
+   * shape (the h tag carries the bare id) but a nostrc extension that lets
+   * a client pick the fork; relays ignore extra tag elements. */
+  const char *named = strcmp(nostr_tag_get_key(g), "h") == 0 && nostr_tag_size(g) >= 3
+                          ? nostr_tag_get(g, 2) : NULL;
+  if (named && *named) {
+    if (!nsr_fed_url_acceptable(named, cfg->allow_plaintext_ws)) {
+      *reason = g_strdup_printf("group '%s': the relay named in the h tag (%s) is not an "
+                                "admissible relay URL", gid, named);
+      return NSR_FED_ROUTE_UNROUTABLE;
+    }
+    add_url(out, cfg, named);
+    return NSR_FED_ROUTE_OK;
+  }
+  /* 2. The author's kind-10009 simple-groups list. */
+  GStrv listed = NULL;
+  if (lk && lk->relay_list_json) {
+    char *json = lk->relay_list_json(lk->ud, nostr_event_get_pubkey(ev),
+                                     NOSTR_KIND_SIMPLE_GROUP_LIST);
+    listed = nsr_fed_group_relays_from_10009(json, gid);
     g_free(json);
   }
-  /* 3. NIP-29 group identifier "host'group-id" */
-  if (out->len == 0 && gid) {
-    const char *q = strchr(gid, '\'');
-    if (q && q > gid) {
-      char *url = g_strdup_printf("wss://%.*s", (int)(q - gid), gid);
-      add_url(out, cfg, url);
-      g_free(url);
-    }
-  }
-  if (out->len == 0) {
+  guint n = listed ? g_strv_length(listed) : 0;
+  NsrFedRouteStatus st = NSR_FED_ROUTE_UNROUTABLE;
+  if (n == 1 && nsr_fed_url_acceptable(listed[0], cfg->allow_plaintext_ws)) {
+    add_url(out, cfg, listed[0]);
+    st = NSR_FED_ROUTE_OK;
+  } else if (n == 1) {
+    *reason = g_strdup_printf("group '%s': your kind-10009 lists it on %s, which is not an "
+                              "admissible relay URL", gid, listed[0]);
+  } else if (n > 1) {
+    char *all = g_strjoinv(", ", listed);
     *reason = g_strdup_printf(
-        "no relay known for group '%s' (add it to your kind-10009 list or "
-        "use a host'id group identifier)", gid ? gid : "");
-    return NSR_FED_ROUTE_UNROUTABLE;
+        "group '%s' is listed on %u relays in your kind-10009 (%s): a NIP-29 group is "
+        "(relay, id) and forks share the id, so the event must name its relay "
+        "([\"h\", id, relay])", gid, n, all);
+    g_free(all);
+  } else {
+    /* The h tag carries the bare id; "host'id" is a client-side reference
+     * form that a group relay would reject, so no relay is derived from it. */
+    *reason = g_strdup_printf(
+        "no relay known for group '%s': add it to your kind-10009 list%s", gid,
+        strchr(gid, '\'') ? " (the h tag must carry the bare group id, not host'id)" : "");
   }
-  return NSR_FED_ROUTE_OK;
+  g_strfreev(listed);
+  return st;
 }
 
 static NsrFedRouteStatus resolve_home(const NsrFedConfig *cfg, NostrEvent *ev,
