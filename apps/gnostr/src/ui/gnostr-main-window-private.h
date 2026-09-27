@@ -76,6 +76,13 @@ struct _GnostrMainWindow {
   GCancellable *signer_status_cancellable;
   GCancellable *signer_start_cancellable;
   gboolean signer_starting;
+  /* nostrc-jppi: GNostr Signer's window (org.gnostr.Signer, the approval
+   * UI): watched so approval problems clear and a stalled restore retries
+   * when it opens; the banner button then opens it instead of starting the
+   * daemon. */
+  guint signer_approver_watch_id;
+  gulong signer_approval_handler;
+  gboolean signer_banner_opens_app;
   /* nostrc-vuwu: in-flight NIP-55L session restore */
   GCancellable *nip55l_restore_cancellable;
   /* nostrc-lwzv: why publishing is off (read-only: signer not running), or NULL */

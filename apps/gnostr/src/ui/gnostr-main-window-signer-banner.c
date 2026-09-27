@@ -10,6 +10,11 @@
  * for its absence. Keys an older GNostr stored itself are also flagged
  * while the signer that would import them is not running.
  *
+ * nostrc-jppi: with nip55l 0.4.0 the daemon may run while GNostr Signer's
+ * window - the only approval UI - is closed; a request that needs a prompt
+ * then fails at once. The banner then says so and offers to open the
+ * window, and likewise when a saved rule refuses GNostr.
+ *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "gnostr-main-window-private.h"
@@ -75,11 +80,24 @@ on_status_ready(GObject *source, GAsyncResult *res, gpointer user_data)
     /* nostrc-lwzv: read-only keeps history visible but turns publishing off,
      * with the banner's explanation. */
     set_publish_blocked(self, ok && gnostr_signer_status_is_read_only(&st, need) ? text : NULL);
+    /* nostrc-jppi: the daemon runs, but a request needed GNostr Signer's
+     * window (closed) or a saved rule refused GNostr. Not read-only: other
+     * kinds may be allowed; each failing action says why itself. */
+    gboolean approval = FALSE;
+    if (ok && !text) {
+      GnostrSignerService *signer = gnostr_signer_service_get_default();
+      text = gnostr_signer_status_approval_text(&st, gnostr_signer_service_get_approval(signer));
+      approval = text != NULL;
+    }
+    self->signer_banner_opens_app = approval;
     if (text) {
+      const char *button = NULL;
+      if (approval)
+        button = _("Open GNostr Signer");
+      else if (gnostr_signer_status_can_start(&st) && !self->signer_starting)
+        button = _("Start GNostr Signer");
       adw_banner_set_title(self->signer_banner, text);
-      adw_banner_set_button_label(self->signer_banner,
-                                  gnostr_signer_status_can_start(&st) && !self->signer_starting
-                                    ? _("Start GNostr Signer") : NULL);
+      adw_banner_set_button_label(self->signer_banner, button);
     }
     adw_banner_set_revealed(self->signer_banner, text != NULL);
   }
@@ -123,6 +141,16 @@ static void
 on_banner_button_clicked(AdwBanner *banner, gpointer user_data)
 {
   GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  if (self->signer_banner_opens_app) {
+    /* The approver watch refreshes the banner once the window is up. */
+    g_autoptr(GError) error = NULL;
+    if (!gnostr_signer_open_app(&error)) {
+      g_autofree char *msg = g_strdup_printf(_("Could not open GNostr Signer: %s"),
+                                             error->message);
+      gnostr_main_window_show_toast(GTK_WIDGET(self), msg);
+    }
+    return;
+  }
   if (self->signer_starting)
     return;
   self->signer_starting = TRUE;
@@ -156,6 +184,34 @@ on_signer_name_vanished(GDBusConnection *c, const gchar *name, gpointer user_dat
   gnostr_main_window_signer_banner_refresh_internal(GNOSTR_MAIN_WINDOW(user_data));
 }
 
+/* nostrc-jppi: GNostr Signer's window opened: prompts can be answered and
+ * rules changed there, so forget earlier approval failures and retry a
+ * restore that stalled on one. */
+static void
+on_approver_appeared(GDBusConnection *c, const gchar *name, const gchar *owner,
+                     gpointer user_data)
+{
+  (void)c; (void)name; (void)owner;
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data);
+  gnostr_signer_service_reset_approval(gnostr_signer_service_get_default());
+  gnostr_main_window_signer_banner_refresh_internal(self);
+  gnostr_main_window_try_restore_nip55l_internal(self);
+}
+
+static void
+on_approver_vanished(GDBusConnection *c, const gchar *name, gpointer user_data)
+{
+  (void)c; (void)name;
+  gnostr_main_window_signer_banner_refresh_internal(GNOSTR_MAIN_WINDOW(user_data));
+}
+
+static void
+on_approval_changed(GnostrSignerService *signer, gpointer user_data)
+{
+  (void)signer;
+  gnostr_main_window_signer_banner_refresh_internal(GNOSTR_MAIN_WINDOW(user_data));
+}
+
 void
 gnostr_main_window_signer_banner_start_internal(GnostrMainWindow *self)
 {
@@ -171,6 +227,15 @@ gnostr_main_window_signer_banner_start_internal(GnostrMainWindow *self)
                                            on_signer_name_appeared,
                                            on_signer_name_vanished,
                                            self, NULL);
+  self->signer_approver_watch_id = g_bus_watch_name(G_BUS_TYPE_SESSION,
+                                                    GNOSTR_SIGNER_APPROVER_BUS_NAME,
+                                                    G_BUS_NAME_WATCHER_FLAGS_NONE,
+                                                    on_approver_appeared,
+                                                    on_approver_vanished,
+                                                    self, NULL);
+  self->signer_approval_handler = g_signal_connect(gnostr_signer_service_get_default(),
+                                                   "approval-changed",
+                                                   G_CALLBACK(on_approval_changed), self);
 }
 
 void
@@ -179,6 +244,16 @@ gnostr_main_window_signer_banner_dispose_internal(GnostrMainWindow *self)
   if (self->signer_watch_id) {
     g_bus_unwatch_name(self->signer_watch_id);
     self->signer_watch_id = 0;
+  }
+  if (self->signer_approver_watch_id) {
+    g_bus_unwatch_name(self->signer_approver_watch_id);
+    self->signer_approver_watch_id = 0;
+  }
+  /* The signer service is a process-wide singleton that outlives us. */
+  if (self->signer_approval_handler) {
+    g_signal_handler_disconnect(gnostr_signer_service_get_default(),
+                                self->signer_approval_handler);
+    self->signer_approval_handler = 0;
   }
   if (self->signer_status_cancellable)
     g_cancellable_cancel(self->signer_status_cancellable);

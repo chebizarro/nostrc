@@ -929,8 +929,20 @@ on_nip55l_restored(GObject *source, GAsyncResult *res, gpointer user_data)
       g_warning("[AUTH] Not restoring the GNostr Signer session: %s", error->message);
       gnostr_main_window_show_toast(GTK_WIDGET(self),
           _("GNostr Signer is using a different account. Sign in again to continue."));
+    } else if (g_error_matches(error, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_DENIED) ||
+               g_error_matches(error, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_TIMED_OUT) ||
+               g_error_matches(error, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NO_KEY)) {
+      /* nostrc-jppi: the prompt for GNostr's get_public_key was refused or
+       * left unanswered: stay signed out and say so; no automatic retry. */
+      g_message("[AUTH] GNostr Signer session not restored: %s", error->message);
+      g_autofree char *msg = g_strdup_printf(_("%s You are signed out; sign in again to "
+                                               "continue."), error->message);
+      gnostr_main_window_show_toast(GTK_WIDGET(self), msg);
     } else {
-      /* Not running: the banner offers to start it; its appearance retries. */
+      /* Not running: the banner offers to start it; its appearance retries.
+       * nostrc-jppi: its window closed (NO_APPROVER) or a saved rule
+       * refusing GNostr (DENIED_BY_RULE): the service's approval state puts
+       * that on the banner, and the window opening retries. */
       g_debug("[AUTH] GNostr Signer session not restored yet: %s",
               error ? error->message : "unknown");
     }

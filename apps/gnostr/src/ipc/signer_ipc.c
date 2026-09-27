@@ -33,6 +33,7 @@ NostrSignerProxy *gnostr_signer_proxy_get(GError **error) {
   if (!g_shared_proxy) {
     return NULL;
   }
+  g_dbus_proxy_set_default_timeout(G_DBUS_PROXY(g_shared_proxy), GNOSTR_SIGNER_CALL_TIMEOUT_MS);
   return g_shared_proxy;
 }
 

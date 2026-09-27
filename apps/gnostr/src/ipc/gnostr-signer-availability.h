@@ -22,6 +22,19 @@
 G_BEGIN_DECLS
 
 #define GNOSTR_SIGNER_BUS_NAME "org.nostr.Signer"
+/* nostrc-jppi: GNostr Signer's window, the only approval UI nip55l 0.4.0
+ * accepts. The daemon (org.nostr.Signer) can run without it; a request that
+ * needs a prompt then fails at once with Error.ApprovalDenied. */
+#define GNOSTR_SIGNER_APPROVER_BUS_NAME "org.gnostr.Signer"
+
+/* nostrc-jppi: what the last approval-gated NIP-55L answers say about
+ * GNostr's standing with GNostr Signer (kept by GnostrSignerService). */
+typedef enum {
+  GNOSTR_SIGNER_APPROVAL_OK,          /* nothing to report */
+  GNOSTR_SIGNER_APPROVAL_NO_APPROVER, /* a request needed a prompt and no
+                                       * GNostr Signer window was open */
+  GNOSTR_SIGNER_APPROVAL_REFUSED,     /* a saved "deny" rule refused GNostr */
+} GnostrSignerApproval;
 
 typedef enum {
   GNOSTR_SIGNER_PRESENCE_NO_BUS,        /* no session bus: nothing can be asked */
@@ -34,8 +47,14 @@ typedef struct {
   GnostrSignerPresence presence;
   /* Keys a pre-e5nz GNostr stored in its own keystore that are still there. */
   guint legacy_keys;
-  /* The signer daemon imports those by itself when it starts (Linux). */
+  /* The signer daemon imports those by itself when it starts. */
   gboolean legacy_auto_migrates;
+  /* nostrc-jppi: GNostr Signer's window (org.gnostr.Signer) is open, so
+   * approval prompts can be shown. */
+  gboolean approver_running;
+  /* nostrc-jppi: identities in the signer's key store, read from its
+   * attributes (no D-Bus call, so no approval prompt); -1 = unknown. */
+  gint signer_keys;
 } GnostrSignerStatus;
 
 /* Query presence + legacy keys in a worker thread. */
@@ -53,14 +72,27 @@ void gnostr_signer_start_async(GCancellable *cancellable,
                                gpointer user_data);
 gboolean gnostr_signer_start_finish(GAsyncResult *result, GError **error);
 
+/* nostrc-jppi: open GNostr Signer's window (the approval UI). The desktop
+ * entry is DBusActivatable, which only works where its D-Bus service file is
+ * installed, so the gnostr-signer program on PATH is started instead when
+ * there is one; a running instance just presents its window. */
+gboolean gnostr_signer_open_app(GError **error);
+
 /* ---- Copy (pure; transfer full; NULL = nothing to show) ---- */
 
 /* TRUE when a "Start GNostr Signer" action makes sense. */
 gboolean gnostr_signer_status_can_start(const GnostrSignerStatus *status);
 
-/* Local-signer line on the sign-in page when the signer is not running.
- * NULL when it is running (the caller then asks the signer for its key). */
+/* Local-signer line on the sign-in page. NULL when the signer is running,
+ * holds a key (or its key store cannot be read) and its window is open:
+ * "ready". Never asks the signer anything: under nip55l 0.4.0 even
+ * GetPublicKey is approval-gated, so merely opening the sign-in page must
+ * not raise a prompt (nostrc-jppi). */
 char *gnostr_signer_status_login_text(const GnostrSignerStatus *status);
+
+/* nostrc-jppi: TRUE when "Open GNostr Signer" is the useful action: the
+ * daemon runs but its window, which shows approval prompts, does not. */
+gboolean gnostr_signer_status_can_open(const GnostrSignerStatus *status);
 
 /* Notice about keys an older GNostr stored itself; NULL if there are none. */
 char *gnostr_signer_status_legacy_text(const GnostrSignerStatus *status);
@@ -82,6 +114,13 @@ gboolean gnostr_signer_status_is_read_only(const GnostrSignerStatus *status,
  * or the session neither needs it nor has legacy keys waiting for it. */
 char *gnostr_signer_status_banner_text(const GnostrSignerStatus *status,
                                        GnostrSignerNeed need);
+
+/* nostrc-jppi: main-window banner for an approval problem while the signer
+ * daemon runs. NULL when there is none, when the daemon is not running (the
+ * status banner covers that), or for NO_APPROVER once GNostr Signer's
+ * window is open. */
+char *gnostr_signer_status_approval_text(const GnostrSignerStatus *status,
+                                         GnostrSignerApproval approval);
 
 G_END_DECLS
 

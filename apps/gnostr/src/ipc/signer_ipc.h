@@ -9,6 +9,14 @@ G_BEGIN_DECLS
 /* Use the exact generated proxy type */
 typedef NostrOrgNostrSigner NostrSignerProxy;
 
+/* nostrc-jppi: default timeout of calls on the shared proxy. nip55l 0.4.0
+ * parks an approval-gated call until the user answers GNostr Signer's
+ * prompt and fails it with Error.ApprovalDenied ("approval timed out")
+ * after 300 s; GDBus' default 25 s would give up while the prompt is still
+ * on screen and report a bare timeout instead. Calls are asynchronous, so
+ * the wait never blocks the UI. */
+#define GNOSTR_SIGNER_CALL_TIMEOUT_MS (310 * 1000)
+
 /* Initialize and acquire a shared proxy. Returns NULL on failure. */
 NostrSignerProxy *gnostr_signer_proxy_get(GError **error);
 

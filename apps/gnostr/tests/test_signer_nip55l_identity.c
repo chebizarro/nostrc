@@ -11,7 +11,11 @@
  *   - passes the selected npub as current_user on SignEvent and NIP-44
  *     calls, so a changed daemon default never changes who signs;
  *   - rejects a signed event whose pubkey is not the selected account;
- *   - refuses to call the signer at all when no account is selected.
+ *   - refuses to call the signer at all when no account is selected;
+ *   - nostrc-jppi: maps nip55l 0.4.0 approval errors (no approval window,
+ *     user denial, timeout, saved deny rule) to GNOSTR_SIGNER_ERROR with
+ *     user-facing text, tracks the NO_APPROVER / REFUSED state, and waits
+ *     longer than the daemon's 300 s approval expiry.
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -43,6 +47,10 @@ typedef struct {
   const char *default_sk;       /* the daemon's DEFAULT identity */
   gboolean ignore_selector;     /* misbehave: always sign as default */
   GPtrArray *selectors;         /* "<Method>:<current_user>" */
+  /* nostrc-jppi: when set, every gated method fails with
+   * org.nostr.Signer.Error.ApprovalDenied and this reason, as nip55l 0.4.0
+   * does (e.g. no approval window, a saved deny rule). */
+  const char *gate_reason;
 } FakeSigner;
 
 static FakeSigner fake;
@@ -62,7 +70,11 @@ fake_method(GDBusConnection *c, const char *sender, const char *path, const char
 {
   (void)c; (void)sender; (void)path; (void)iface; (void)ud;
   g_mutex_lock(&fake.lock);
-  if (strcmp(method, "GetPublicKey") == 0) {
+  if (fake.gate_reason) {
+    g_ptr_array_add(fake.selectors, g_strdup_printf("%s:gated", method));
+    g_dbus_method_invocation_return_dbus_error(inv, "org.nostr.Signer.Error.ApprovalDenied",
+                                               fake.gate_reason);
+  } else if (strcmp(method, "GetPublicKey") == 0) {
     g_autofree char *pk = nostr_key_get_public(fake.default_sk);
     g_autoptr(GNostrNip19) n = gnostr_nip19_encode_npub(pk, NULL);
     g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", gnostr_nip19_get_bech32(n)));
@@ -209,6 +221,12 @@ on_bytes(GnostrSignerService *s, GBytes *bytes, GError *error, gpointer ud)
   w->ok = bytes != NULL;
   w->error = error ? g_error_copy(error) : NULL;
   w->done = TRUE;
+}
+
+static void
+count_signal(guint *counter)
+{
+  (*counter)++;
 }
 
 static void
@@ -362,9 +380,140 @@ test_nip55l_identity(void)
   g_assert_cmpuint(selectors_len(), ==, before);
   g_object_unref(svc);
 
+  /* 8. nostrc-jppi: nip55l 0.4.0 gating. Calls wait out an approval prompt
+   * (the proxy's timeout exceeds the daemon's 300 s expiry) ... */
+  NostrSignerProxy *proxy = gnostr_signer_proxy_get(NULL);
+  g_assert_nonnull(proxy);
+  g_assert_cmpint(g_dbus_proxy_get_default_timeout(G_DBUS_PROXY(proxy)), ==,
+                  GNOSTR_SIGNER_CALL_TIMEOUT_MS);
+  g_assert_cmpint(GNOSTR_SIGNER_CALL_TIMEOUT_MS, >, 300 * 1000);
+
+  /* ... and a fail-fast "no approval window" becomes a clear error plus the
+   * service's NO_APPROVER state, announced once. */
+  svc = gnostr_signer_service_new();
+  guint changes = 0;
+  g_signal_connect_swapped(svc, "approval-changed", G_CALLBACK(count_signal), &changes);
+  g_mutex_lock(&fake.lock);
+  fake.default_sk = SK_A;
+  fake.gate_reason = "approval required but no approval agent is running (start GNostr Signer)";
+  g_mutex_unlock(&fake.lock);
+  /* Restore: the key store is not readable here (no app bridge), so the
+   * service asks GetPublicKey, which is gated too. */
+  gnostr_signer_service_restore_nip55l_async(svc, npub_a, NULL, on_restore, &w);
+  wait_for(&w);
+  g_assert_error(w.error, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NO_APPROVER);
+  g_assert_null(strstr(w.error->message, "GDBus.Error"));
+  g_assert_cmpint(gnostr_signer_service_get_method(svc), ==, GNOSTR_SIGNER_METHOD_NONE);
+  g_assert_cmpint(gnostr_signer_service_get_approval(svc), ==,
+                  GNOSTR_SIGNER_APPROVAL_NO_APPROVER);
+  g_assert_cmpuint(changes, ==, 1);
+  wait_clear(&w);
+
+  /* Signed in: signing and decrypting fail the same way, no new signal. */
+  g_mutex_lock(&fake.lock);
+  fake.gate_reason = NULL;
+  g_mutex_unlock(&fake.lock);
+  gnostr_signer_service_restore_nip55l_async(svc, npub_a, NULL, on_restore, &w);
+  wait_for(&w);
+  g_assert_true(w.ok);
+  wait_clear(&w);
+  g_mutex_lock(&fake.lock);
+  fake.gate_reason = "approval required but no approval agent is running (start GNostr Signer)";
+  g_mutex_unlock(&fake.lock);
+  gnostr_signer_service_sign_event_async(svc, tmpl, NULL, on_signed, &w);
+  wait_for(&w);
+  g_assert_error(w.error, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NO_APPROVER);
+  wait_clear(&w);
+  gnostr_signer_service_nip44_decrypt_async(svc, pk_b, "cipher", NULL, on_signed, &w);
+  wait_for(&w);
+  g_assert_error(w.error, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NO_APPROVER);
+  wait_clear(&w);
+  g_assert_cmpuint(changes, ==, 1);
+
+  /* The window opens (the main window resets): OK again. */
+  gnostr_signer_service_reset_approval(svc);
+  g_assert_cmpint(gnostr_signer_service_get_approval(svc), ==, GNOSTR_SIGNER_APPROVAL_OK);
+  g_assert_cmpuint(changes, ==, 2);
+
+  /* A saved deny rule: REFUSED. A one-off denial or timeout: only the
+   * error, no lasting state. */
+  g_mutex_lock(&fake.lock);
+  fake.gate_reason = "user denied";
+  g_mutex_unlock(&fake.lock);
+  gnostr_signer_service_nip44_encrypt_async(svc, pk_b, "secret", NULL, on_signed, &w);
+  wait_for(&w);
+  g_assert_error(w.error, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_DENIED);
+  wait_clear(&w);
+  g_mutex_lock(&fake.lock);
+  fake.gate_reason = "approval timed out";
+  g_mutex_unlock(&fake.lock);
+  gnostr_signer_service_nip44_decrypt_bytes_async(svc, pk_b, "cipher", NULL, on_bytes, &w);
+  wait_for(&w);
+  g_assert_error(w.error, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_TIMED_OUT);
+  wait_clear(&w);
+  g_assert_cmpint(gnostr_signer_service_get_approval(svc), ==, GNOSTR_SIGNER_APPROVAL_OK);
+  g_mutex_lock(&fake.lock);
+  fake.gate_reason = "denied by policy";
+  g_mutex_unlock(&fake.lock);
+  gnostr_signer_service_nip44_encrypt_bytes_async(svc, pk_b, plain, NULL, on_signed, &w);
+  wait_for(&w);
+  g_assert_error(w.error, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_DENIED_BY_RULE);
+  wait_clear(&w);
+  g_assert_cmpint(gnostr_signer_service_get_approval(svc), ==, GNOSTR_SIGNER_APPROVAL_REFUSED);
+  g_assert_cmpuint(changes, ==, 3);
+
+  /* Signing out forgets it. */
+  gnostr_signer_service_logout(svc);
+  g_assert_cmpint(gnostr_signer_service_get_approval(svc), ==, GNOSTR_SIGNER_APPROVAL_OK);
+  g_mutex_lock(&fake.lock);
+  fake.gate_reason = NULL;
+  g_mutex_unlock(&fake.lock);
+  g_object_unref(svc);
+
   gnostr_signer_proxy_shutdown();
   fake_stop();
   g_test_dbus_down(bus);
+}
+
+/* nostrc-jppi: nip55l 0.4.0 D-Bus errors -> user-facing GNOSTR_SIGNER_ERROR. */
+static void
+test_error_map(void)
+{
+  static const struct { const char *name, *msg; int code; } cases[] = {
+    { "org.nostr.Signer.Error.ApprovalDenied",
+      "approval required but no approval agent is running (start GNostr Signer)",
+      GNOSTR_SIGNER_ERROR_NO_APPROVER },
+    { "org.nostr.Signer.Error.ApprovalDenied", "approval timed out", GNOSTR_SIGNER_ERROR_TIMED_OUT },
+    { "org.nostr.Signer.Error.ApprovalDenied", "denied by policy", GNOSTR_SIGNER_ERROR_DENIED_BY_RULE },
+    { "org.nostr.Signer.Error.ApprovalDenied", "user denied", GNOSTR_SIGNER_ERROR_DENIED },
+    { "org.nostr.Signer.Error.ApprovalDenied", "caller disconnected", GNOSTR_SIGNER_ERROR_DENIED },
+    { "org.nostr.Signer.Error.RateLimited", "rate limited", GNOSTR_SIGNER_ERROR_RATE_LIMITED },
+    { "org.nostr.Signer.Error.NoKeyConfigured", "no key", GNOSTR_SIGNER_ERROR_NO_KEY },
+    { "org.nostr.Signer.Error.InvalidInput", "bad pubkey", GNOSTR_SIGNER_ERROR_FAILED },
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
+    g_autoptr(GError) raw = g_dbus_error_new_for_dbus_error(cases[i].name, cases[i].msg);
+    g_autoptr(GError) e = gnostr_signer_error_from_dbus(raw);
+    g_assert_error(e, GNOSTR_SIGNER_ERROR, cases[i].code);
+    g_assert_null(strstr(e->message, "GDBus.Error"));
+    g_assert_null(strstr(e->message, "org.nostr.Signer.Error"));
+  }
+  /* Unknown reasons keep the daemon's text. */
+  g_autoptr(GError) raw = g_dbus_error_new_for_dbus_error("org.nostr.Signer.Error.InvalidInput",
+                                                          "bad pubkey");
+  g_autoptr(GError) e = gnostr_signer_error_from_dbus(raw);
+  g_assert_nonnull(strstr(e->message, "bad pubkey"));
+
+  g_autoptr(GError) unknown = g_error_new_literal(G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN, "x");
+  g_autoptr(GError) e2 = gnostr_signer_error_from_dbus(unknown);
+  g_assert_error(e2, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NOT_RUNNING);
+  g_autoptr(GError) slow = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_TIMED_OUT, "x");
+  g_autoptr(GError) e3 = gnostr_signer_error_from_dbus(slow);
+  g_assert_error(e3, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_TIMED_OUT);
+  g_autoptr(GError) cancelled = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED, "x");
+  g_autoptr(GError) e4 = gnostr_signer_error_from_dbus(cancelled);
+  g_assert_error(e4, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_assert_null(gnostr_signer_error_from_dbus(NULL));
 }
 
 int
@@ -378,5 +527,6 @@ main(int argc, char **argv)
   npub_a = g_strdup(gnostr_nip19_get_bech32(na));
   npub_b = g_strdup(gnostr_nip19_get_bech32(nb));
   g_test_add_func("/signer/nip55l/identity", test_nip55l_identity);
+  g_test_add_func("/signer/nip55l/error-map", test_error_map);
   return g_test_run();
 }

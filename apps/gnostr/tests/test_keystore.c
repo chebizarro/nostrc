@@ -9,7 +9,11 @@
  *   /signer-availability/presence   private session bus (GTestDBus) with an
  *                                   activatable fake org.nostr.Signer:
  *                                   ACTIVATABLE → RUNNING once owned, and
- *                                   StartServiceByName failure is reported
+ *                                   StartServiceByName failure is reported;
+ *                                   org.gnostr.Signer (approval window)
+ *                                   owned or not (nostrc-jppi)
+ *   /keystore/macos-migration       macOS: the daemon imports legacy
+ *                                   Keychain items itself (nostrc-de9h)
  *   /keystore/identity-list         Linux + gnome-keyring-daemon: the
  *                                   client's identity list (shim → app
  *                                   bridge → gnostr_identity_list_stored)
@@ -42,17 +46,55 @@ static gboolean s_have_bus;
 /* ---- copy ---- */
 
 static void test_copy(void) {
-  GnostrSignerStatus st = { .presence = GNOSTR_SIGNER_PRESENCE_RUNNING };
+  GnostrSignerStatus st = { .presence = GNOSTR_SIGNER_PRESENCE_RUNNING,
+                            .approver_running = TRUE, .signer_keys = -1 };
   g_assert_null(gnostr_signer_status_login_text(&st));
   g_assert_null(gnostr_signer_status_banner_text(&st, GNOSTR_SIGNER_NEED_ACTIVE));
   g_assert_null(gnostr_signer_status_legacy_text(&st));
   g_assert_false(gnostr_signer_status_can_start(&st));
+  g_assert_false(gnostr_signer_status_can_open(&st));
+  st.signer_keys = 2;
+  g_assert_null(gnostr_signer_status_login_text(&st));
+
+  /* nostrc-jppi: running with an empty key store: say so, without asking
+   * the signer (GetPublicKey is approval-gated since nip55l 0.4.0). */
+  st.signer_keys = 0;
+  g_autofree char *no_key = gnostr_signer_status_login_text(&st);
+  g_assert_nonnull(strstr(no_key, "holds no key yet"));
+  st.signer_keys = 1;
+
+  /* nostrc-jppi: daemon up, approval window closed: "Open", not "Start". */
+  st.approver_running = FALSE;
+  g_assert_true(gnostr_signer_status_can_open(&st));
+  g_assert_false(gnostr_signer_status_can_start(&st));
+  g_autofree char *closed = gnostr_signer_status_login_text(&st);
+  g_assert_nonnull(strstr(closed, "open GNostr Signer first"));
+  /* Its window being closed is no reason for read-only or a banner ... */
+  g_assert_false(gnostr_signer_status_is_read_only(&st, GNOSTR_SIGNER_NEED_ACTIVE));
+  g_assert_null(gnostr_signer_status_banner_text(&st, GNOSTR_SIGNER_NEED_ACTIVE));
+  g_assert_null(gnostr_signer_status_approval_text(&st, GNOSTR_SIGNER_APPROVAL_OK));
+  /* ... until a request actually needed it. */
+  g_autofree char *need_window =
+      gnostr_signer_status_approval_text(&st, GNOSTR_SIGNER_APPROVAL_NO_APPROVER);
+  g_assert_nonnull(strstr(need_window, "Open GNostr Signer"));
+  g_autofree char *refused =
+      gnostr_signer_status_approval_text(&st, GNOSTR_SIGNER_APPROVAL_REFUSED);
+  g_assert_nonnull(strstr(refused, "refuse"));
+  /* Window open again: NO_APPROVER is moot; a deny rule still stands. */
+  st.approver_running = TRUE;
+  g_assert_null(gnostr_signer_status_approval_text(&st, GNOSTR_SIGNER_APPROVAL_NO_APPROVER));
+  g_autofree char *refused2 =
+      gnostr_signer_status_approval_text(&st, GNOSTR_SIGNER_APPROVAL_REFUSED);
+  g_assert_nonnull(refused2);
   /* nostrc-lwzv: publishing stays on while the signer runs. */
   g_assert_false(gnostr_signer_status_is_read_only(&st, GNOSTR_SIGNER_NEED_ACTIVE));
 
   /* Installed but stopped: start is offered; a NIP-55L session is read-only. */
   st.presence = GNOSTR_SIGNER_PRESENCE_ACTIVATABLE;
   g_assert_true(gnostr_signer_status_can_start(&st));
+  g_assert_false(gnostr_signer_status_can_open(&st));
+  /* The daemon's absence is the status banner's job, not the approval one. */
+  g_assert_null(gnostr_signer_status_approval_text(&st, GNOSTR_SIGNER_APPROVAL_NO_APPROVER));
   g_assert_true(gnostr_signer_status_is_read_only(&st, GNOSTR_SIGNER_NEED_ACTIVE));
   /* Signed out, or a NIP-46 session: not "read-only" (nothing to disable). */
   g_assert_false(gnostr_signer_status_is_read_only(&st, GNOSTR_SIGNER_NEED_SIGNED_OUT));
@@ -97,14 +139,17 @@ static void test_copy(void) {
   g_autofree char *banner3 = gnostr_signer_status_banner_text(&st, GNOSTR_SIGNER_NEED_NONE);
   g_assert_nonnull(strstr(banner3, "older GNostr"));
   st.legacy_keys = 1;
-  st.legacy_auto_migrates = FALSE;   /* macOS: user imports by hand */
+  /* No key-store support compiled in: the user imports by hand. (macOS
+   * imports automatically since nostrc-de9h, like Linux.) */
+  st.legacy_auto_migrates = FALSE;
   g_autofree char *legacy2 = gnostr_signer_status_legacy_text(&st);
   g_assert_nonnull(strstr(legacy2, "1 private key "));
   g_assert_nonnull(strstr(legacy2, "Import them in GNostr Signer"));
   g_assert_null(gnostr_signer_status_banner_text(&st, GNOSTR_SIGNER_NEED_NONE));
 
   /* No copy anywhere claims GNostr stores the key. */
-  const char *all[] = { login, banner, signed_out, login2, banner2, login3, legacy, banner3, legacy2 };
+  const char *all[] = { login, banner, signed_out, login2, banner2, login3, legacy, banner3, legacy2,
+                        no_key, closed, need_window, refused };
   for (guint i = 0; i < G_N_ELEMENTS(all); i++) {
     g_assert_null(strstr(all[i], "stored in GNostr"));
     g_assert_null(strstr(all[i], "locally stored"));
@@ -178,6 +223,23 @@ static void test_presence(void) {
   st = wait_status();
   g_assert_cmpint(st.presence, ==, GNOSTR_SIGNER_PRESENCE_RUNNING);
   g_assert_false(gnostr_signer_status_can_start(&st));
+  /* nostrc-jppi: the daemon alone, without GNostr Signer's window. */
+  g_assert_false(st.approver_running);
+  g_assert_true(gnostr_signer_status_can_open(&st));
+
+  /* Once org.gnostr.Signer (the approval UI) is owned too, it is seen. */
+  r = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                                  "org.freedesktop.DBus", "RequestName",
+                                  g_variant_new("(su)", GNOSTR_SIGNER_APPROVER_BUS_NAME, 4u),
+                                  G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE,
+                                  5000, NULL, NULL);
+  g_assert_nonnull(r);
+  g_variant_get(r, "(u)", &reply);
+  g_variant_unref(r);
+  g_assert_cmpuint(reply, ==, 1); /* PRIMARY_OWNER */
+  st = wait_status();
+  g_assert_true(st.approver_running);
+  g_assert_false(gnostr_signer_status_can_open(&st));
   g_object_unref(bus);
 }
 
@@ -320,6 +382,24 @@ static void test_identity_list(void) {
 }
 #endif
 
+static void test_macos_migration(void) {
+#ifdef HAVE_MACOS_KEYCHAIN
+  /* nostrc-jppi: the nip55l daemon imports "org.gnostr.Client" Keychain
+   * items on start (nostrc-de9h), so the UI says "start the signer". */
+  g_assert_true(gnostr_keystore_legacy_migrates_automatically());
+  GnostrSignerStatus st = { .presence = GNOSTR_SIGNER_PRESENCE_ACTIVATABLE, .legacy_keys = 1,
+                            .legacy_auto_migrates = gnostr_keystore_legacy_migrates_automatically() };
+  g_autofree char *legacy = gnostr_signer_status_legacy_text(&st);
+  g_assert_nonnull(strstr(legacy, "Start GNostr Signer"));
+  g_assert_nonnull(strstr(legacy, "Keychain"));
+  g_assert_null(strstr(legacy, "Import them"));
+  g_autofree char *banner = gnostr_signer_status_banner_text(&st, GNOSTR_SIGNER_NEED_NONE);
+  g_assert_nonnull(banner);
+#else
+  g_test_skip("macOS Keychain shim not built");
+#endif
+}
+
 static void test_shim_basics(void) {
   g_assert_false(gnostr_keystore_has_key(NULL));
   g_assert_false(gnostr_keystore_has_key("not-an-npub"));
@@ -390,6 +470,7 @@ int main(int argc, char *argv[]) {
   g_free(dbus_daemon);
 
   g_test_add_func("/keystore/shim-basics", test_shim_basics);
+  g_test_add_func("/keystore/macos-migration", test_macos_migration);
   g_test_add_func("/signer-availability/copy", test_copy);
   g_test_add_func("/signer-availability/presence", test_presence);
 #ifdef HAVE_LIBSECRET
