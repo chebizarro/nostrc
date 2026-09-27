@@ -60,8 +60,8 @@ void gnostr_dm_file_message_free(GnostrDmFileMessage *msg) {
   g_free(msg->file_url);
   g_free(msg->file_type);
   g_free(msg->encryption_algorithm);
-  g_free(msg->decryption_key_b64);
-  g_free(msg->decryption_nonce_b64);
+  g_free(msg->decryption_key);
+  g_free(msg->decryption_nonce);
   g_free(msg->encrypted_hash);
   g_free(msg->original_hash);
   g_free(msg->blurhash);
@@ -196,10 +196,16 @@ gboolean gnostr_dm_file_aes_gcm_encrypt(const uint8_t *plaintext,
 gboolean gnostr_dm_file_aes_gcm_decrypt(const uint8_t *ciphertext,
                                          gsize ciphertext_len,
                                          const uint8_t key[GNOSTR_DM_FILES_AES_KEY_SIZE],
-                                         const uint8_t nonce[GNOSTR_DM_FILES_AES_NONCE_SIZE],
+                                         const uint8_t *nonce,
+                                         gsize nonce_len,
                                          uint8_t *plaintext,
                                          gsize *plaintext_len) {
   if (!ciphertext || !key || !nonce || !plaintext || !plaintext_len) {
+    return FALSE;
+  }
+
+  if (nonce_len != GNOSTR_DM_FILES_AES_NONCE_SIZE &&
+      nonce_len != GNOSTR_DM_FILES_AES_NONCE_MAX_SIZE) {
     return FALSE;
   }
 
@@ -221,7 +227,7 @@ gboolean gnostr_dm_file_aes_gcm_decrypt(const uint8_t *ciphertext,
     return FALSE;
   }
 
-  if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, GNOSTR_DM_FILES_AES_NONCE_SIZE, NULL) != 1) {
+  if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, (int)nonce_len, NULL) != 1) {
     EVP_CIPHER_CTX_free(ctx);
     return FALSE;
   }
@@ -269,7 +275,7 @@ gboolean gnostr_dm_file_aes_gcm_decrypt(const uint8_t *ciphertext,
     return FALSE;
   }
 
-  err = gcry_cipher_setiv(hd, nonce, GNOSTR_DM_FILES_AES_NONCE_SIZE);
+  err = gcry_cipher_setiv(hd, nonce, nonce_len);
   if (err) {
     gcry_cipher_close(hd);
     return FALSE;
@@ -311,14 +317,88 @@ static char *compute_sha256_hex(const uint8_t *data, gsize len) {
   return result;
 }
 
-/* Convert binary data to base64 */
-static char *to_base64(const uint8_t *data, gsize len) {
-  return g_base64_encode(data, len);
+/* Lower-case hex, the decryption-key/-nonce encoding Amethyst
+ * (quartz nip17Dm/files/tags/EncryptionKey.kt: toHexKey/hexToByteArray),
+ * 0xchat (ox_common aes_encrypt_utils.dart: hexToBytes) and nostr-share write.
+ * NIP-17 itself does not name an encoding. */
+static char *to_hex(const uint8_t *data, gsize len) {
+  static const char digits[] = "0123456789abcdef";
+  char *out = g_malloc(len * 2 + 1);
+  for (gsize i = 0; i < len; i++) {
+    out[2 * i] = digits[data[i] >> 4];
+    out[2 * i + 1] = digits[data[i] & 0x0f];
+  }
+  out[len * 2] = '\0';
+  return out;
 }
 
-/* Convert base64 to binary data */
-static uint8_t *from_base64(const char *b64, gsize *out_len) {
-  return g_base64_decode(b64, out_len);
+static gboolean is_hex_string(const char *s, gsize n) {
+  for (gsize i = 0; i < n; i++) {
+    if (!g_ascii_isxdigit(s[i])) return FALSE;
+  }
+  return TRUE;
+}
+
+/* Standard base64 with padding, nothing else (g_base64_decode() silently
+ * skips junk, which would let a malformed tag decode to "some" bytes). */
+static gboolean is_base64_string(const char *s, gsize n) {
+  if (n == 0 || n % 4 != 0) return FALSE;
+  gsize pad = 0;
+  if (s[n - 1] == '=') pad++;
+  if (n >= 2 && s[n - 2] == '=') pad++;
+  for (gsize i = 0; i < n - pad; i++) {
+    char c = s[i];
+    if (!g_ascii_isalnum(c) && c != '+' && c != '/') return FALSE;
+  }
+  return TRUE;
+}
+
+/* Decode @value into @out if it is hex or base64 of exactly @len_a or @len_b
+ * bytes. The two encodings never collide at these sizes: hex of 12/16/32
+ * bytes is 24/32/64 characters, base64 of the same is 16/24/44 characters,
+ * and a 24-character base64 value of 16 bytes ends in "==". */
+static gboolean decode_secret(const char *value, gsize len_a, gsize len_b,
+                              uint8_t *out, gsize *out_len) {
+  if (!value) return FALSE;
+  gsize n = strlen(value);
+
+  if ((n == 2 * len_a || n == 2 * len_b) && is_hex_string(value, n)) {
+    for (gsize i = 0; i < n / 2; i++) {
+      out[i] = (uint8_t)((g_ascii_xdigit_value(value[2 * i]) << 4) |
+                         g_ascii_xdigit_value(value[2 * i + 1]));
+    }
+    *out_len = n / 2;
+    return TRUE;
+  }
+
+  if (!is_base64_string(value, n)) return FALSE;
+  gsize dec_len = 0;
+  guchar *dec = g_base64_decode(value, &dec_len);
+  gboolean ok = dec && (dec_len == len_a || dec_len == len_b);
+  if (ok) {
+    memcpy(out, dec, dec_len);
+    *out_len = dec_len;
+  }
+  if (dec) {
+    memset(dec, 0, dec_len);
+    g_free(dec);
+  }
+  return ok;
+}
+
+gboolean gnostr_dm_file_decode_key(const char *value,
+                                   uint8_t key[GNOSTR_DM_FILES_AES_KEY_SIZE]) {
+  gsize len = 0;
+  return key && decode_secret(value, GNOSTR_DM_FILES_AES_KEY_SIZE,
+                              GNOSTR_DM_FILES_AES_KEY_SIZE, key, &len);
+}
+
+gboolean gnostr_dm_file_decode_nonce(const char *value,
+                                     uint8_t nonce[GNOSTR_DM_FILES_AES_NONCE_MAX_SIZE],
+                                     gsize *nonce_len) {
+  return nonce && nonce_len &&
+         decode_secret(value, GNOSTR_DM_FILES_AES_NONCE_SIZE,
+                       GNOSTR_DM_FILES_AES_NONCE_MAX_SIZE, nonce, nonce_len);
 }
 
 /* ---- Async upload context ---- */
@@ -538,23 +618,16 @@ typedef struct {
   GnostrDmFileDownloadCallback callback;
   gpointer user_data;
   GCancellable *cancellable;
-  uint8_t *key;
-  gsize key_len;
-  uint8_t *nonce;
+  uint8_t key[GNOSTR_DM_FILES_AES_KEY_SIZE];
+  uint8_t nonce[GNOSTR_DM_FILES_AES_NONCE_MAX_SIZE];
   gsize nonce_len;
 } DmFileDownloadContext;
 
 static void download_ctx_free(DmFileDownloadContext *ctx) {
   if (!ctx) return;
   if (ctx->cancellable) g_object_unref(ctx->cancellable);
-  if (ctx->key) {
-    memset(ctx->key, 0, ctx->key_len);
-    g_free(ctx->key);
-  }
-  if (ctx->nonce) {
-    memset(ctx->nonce, 0, ctx->nonce_len);
-    g_free(ctx->nonce);
-  }
+  memset(ctx->key, 0, sizeof(ctx->key));
+  memset(ctx->nonce, 0, sizeof(ctx->nonce));
   /* Note: msg is not owned by context */
   g_free(ctx);
 }
@@ -622,7 +695,7 @@ static void on_download_complete(GObject *source, GAsyncResult *res, gpointer us
   gsize plaintext_len = 0;
 
   if (!gnostr_dm_file_aes_gcm_decrypt(ciphertext, ciphertext_len,
-                                       ctx->key, ctx->nonce,
+                                       ctx->key, ctx->nonce, ctx->nonce_len,
                                        plaintext, &plaintext_len)) {
     g_free(plaintext);
     g_bytes_unref(bytes);
@@ -681,7 +754,7 @@ void gnostr_dm_file_download_and_decrypt_async(GnostrDmFileMessage *msg,
     return;
   }
 
-  if (!msg->decryption_key_b64 || !msg->decryption_nonce_b64) {
+  if (!msg->decryption_key || !msg->decryption_nonce) {
     GError *err = g_error_new(GNOSTR_DM_FILE_ERROR,
                                GNOSTR_DM_FILE_ERROR_INVALID_MESSAGE,
                                "Missing decryption key or nonce");
@@ -690,33 +763,23 @@ void gnostr_dm_file_download_and_decrypt_async(GnostrDmFileMessage *msg,
     return;
   }
 
-  /* Decode key and nonce from base64 */
-  gsize key_len = 0, nonce_len = 0;
-  uint8_t *key = from_base64(msg->decryption_key_b64, &key_len);
-  uint8_t *nonce = from_base64(msg->decryption_nonce_b64, &nonce_len);
-
-  if (!key || key_len != GNOSTR_DM_FILES_AES_KEY_SIZE ||
-      !nonce || nonce_len != GNOSTR_DM_FILES_AES_NONCE_SIZE) {
-    g_free(key);
-    g_free(nonce);
+  /* Create download context; key/nonce are hex (or legacy gnostr base64) */
+  DmFileDownloadContext *ctx = g_new0(DmFileDownloadContext, 1);
+  if (!gnostr_dm_file_decode_key(msg->decryption_key, ctx->key) ||
+      !gnostr_dm_file_decode_nonce(msg->decryption_nonce, ctx->nonce,
+                                   &ctx->nonce_len)) {
+    download_ctx_free(ctx);
     GError *err = g_error_new(GNOSTR_DM_FILE_ERROR,
                                GNOSTR_DM_FILE_ERROR_INVALID_MESSAGE,
-                               "Invalid decryption key or nonce length");
+                               "Invalid decryption key or nonce");
     if (callback) callback(NULL, 0, err, user_data);
     g_error_free(err);
     return;
   }
-
-  /* Create download context */
-  DmFileDownloadContext *ctx = g_new0(DmFileDownloadContext, 1);
   ctx->msg = msg;
   ctx->callback = callback;
   ctx->user_data = user_data;
   ctx->cancellable = cancellable ? g_object_ref(cancellable) : NULL;
-  ctx->key = key;
-  ctx->key_len = key_len;
-  ctx->nonce = nonce;
-  ctx->nonce_len = nonce_len;
 
   /* nostrc-201: Use shared SoupSession to avoid TLS cleanup issues with multiple sessions */
   g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
@@ -773,9 +836,9 @@ char *gnostr_dm_file_build_rumor_json(const char *sender_pubkey,
     created_at = (gint64)time(NULL);
   }
 
-  /* Encode key and nonce as base64 */
-  char *key_b64 = to_base64(attachment->key, GNOSTR_DM_FILES_AES_KEY_SIZE);
-  char *nonce_b64 = to_base64(attachment->nonce, GNOSTR_DM_FILES_AES_NONCE_SIZE);
+  /* Encode key and nonce as lower-case hex (see to_hex()) */
+  char *key_hex = to_hex(attachment->key, GNOSTR_DM_FILES_AES_KEY_SIZE);
+  char *nonce_hex = to_hex(attachment->nonce, GNOSTR_DM_FILES_AES_NONCE_SIZE);
 
   g_autoptr(JsonBuilder) builder = json_builder_new();
 
@@ -824,13 +887,13 @@ char *gnostr_dm_file_build_rumor_json(const char *sender_pubkey,
   /* decryption-key tag */
   json_builder_begin_array(builder);
   json_builder_add_string_value(builder, "decryption-key");
-  json_builder_add_string_value(builder, key_b64);
+  json_builder_add_string_value(builder, key_hex);
   json_builder_end_array(builder);
 
   /* decryption-nonce tag */
   json_builder_begin_array(builder);
   json_builder_add_string_value(builder, "decryption-nonce");
-  json_builder_add_string_value(builder, nonce_b64);
+  json_builder_add_string_value(builder, nonce_hex);
   json_builder_end_array(builder);
 
   /* x tag: SHA-256 of encrypted file */
@@ -893,8 +956,9 @@ char *gnostr_dm_file_build_rumor_json(const char *sender_pubkey,
   json_generator_set_root(gen, json_builder_get_root(builder));
   char *json_str = json_generator_to_data(gen, NULL);
 
-  g_free(key_b64);
-  g_free(nonce_b64);
+  memset(key_hex, 0, strlen(key_hex));
+  g_free(key_hex);
+  g_free(nonce_hex);
 
   return json_str;
 }
@@ -957,9 +1021,9 @@ GnostrDmFileMessage *gnostr_dm_file_parse_message(const char *event_json) {
       } else if (strcmp(tag_name, "encryption-algorithm") == 0) {
         msg->encryption_algorithm = g_strdup(tag_value);
       } else if (strcmp(tag_name, "decryption-key") == 0) {
-        msg->decryption_key_b64 = g_strdup(tag_value);
+        msg->decryption_key = g_strdup(tag_value);
       } else if (strcmp(tag_name, "decryption-nonce") == 0) {
-        msg->decryption_nonce_b64 = g_strdup(tag_value);
+        msg->decryption_nonce = g_strdup(tag_value);
       } else if (strcmp(tag_name, "x") == 0) {
         msg->encrypted_hash = g_strdup(tag_value);
       } else if (strcmp(tag_name, "ox") == 0) {

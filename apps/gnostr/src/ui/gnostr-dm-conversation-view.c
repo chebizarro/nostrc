@@ -202,8 +202,8 @@ build_file_msg_from_dm_message(const GnostrDmMessage *msg)
     GnostrDmFileMessage *fm = g_new0(GnostrDmFileMessage, 1);
     fm->file_url = g_strdup(msg->file_url);
     fm->file_type = g_strdup(msg->file_type);
-    fm->decryption_key_b64 = g_strdup(msg->decryption_key);
-    fm->decryption_nonce_b64 = g_strdup(msg->decryption_nonce);
+    fm->decryption_key = g_strdup(msg->decryption_key);
+    fm->decryption_nonce = g_strdup(msg->decryption_nonce);
     fm->original_hash = g_strdup(msg->original_hash);
     fm->size = msg->file_size;
     fm->encryption_algorithm = g_strdup("aes-gcm");
@@ -269,8 +269,8 @@ on_file_bubble_clicked(GtkButton *button, gpointer user_data)
     GnostrDmFileMessage *fm = g_new0(GnostrDmFileMessage, 1);
     fm->file_url = g_strdup(file_url);
     fm->file_type = g_strdup(g_object_get_data(G_OBJECT(button), "dm-file-type"));
-    fm->decryption_key_b64 = g_strdup(g_object_get_data(G_OBJECT(button), "dm-file-key"));
-    fm->decryption_nonce_b64 = g_strdup(g_object_get_data(G_OBJECT(button), "dm-file-nonce"));
+    fm->decryption_key = g_strdup(g_object_get_data(G_OBJECT(button), "dm-file-key"));
+    fm->decryption_nonce = g_strdup(g_object_get_data(G_OBJECT(button), "dm-file-nonce"));
     fm->original_hash = g_strdup(g_object_get_data(G_OBJECT(button), "dm-file-hash"));
     fm->encryption_algorithm = g_strdup("aes-gcm");
 

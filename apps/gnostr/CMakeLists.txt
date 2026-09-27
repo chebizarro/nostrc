@@ -1061,6 +1061,37 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "dm;validation;unit;gnostr")
 
+  # NIP-17 kind-15 decryption-key/-nonce encoding (nostrc-qh4j): writes hex,
+  # reads hex or legacy base64, 12- or 16-byte nonces. Built without
+  # HAVE_SOUP3; the Blossom upload path it never calls stays unresolved.
+  if (OPENSSL_FOUND)
+    add_executable(gnostr-test-dm-files-key-encoding
+      tests/test_dm_files_key_encoding.c
+      src/util/dm_files.c)
+    target_compile_features(gnostr-test-dm-files-key-encoding PRIVATE c_std_11)
+    target_compile_definitions(gnostr-test-dm-files-key-encoding PRIVATE HAVE_OPENSSL=1)
+    target_include_directories(gnostr-test-dm-files-key-encoding PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/util
+      ${CMAKE_CURRENT_BINARY_DIR}
+      ${PROJECT_ROOT}/libnostr/include
+      ${_NOSTR_CONFIG_DIR}
+      ${PROJECT_ROOT}/libgo/include
+      ${PROJECT_ROOT}/nostr-gobject/include)
+    target_link_libraries(gnostr-test-dm-files-key-encoding PRIVATE
+      PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB OpenSSL::Crypto)
+    if (APPLE)
+      target_link_options(gnostr-test-dm-files-key-encoding PRIVATE -Wl,-undefined,dynamic_lookup)
+    else()
+      target_link_options(gnostr-test-dm-files-key-encoding PRIVATE -Wl,--unresolved-symbols=ignore-in-object-files)
+    endif()
+    _gnostr_apply_sanitizers(gnostr-test-dm-files-key-encoding)
+    add_test(NAME gnostr-test-dm-files-key-encoding COMMAND gnostr-test-dm-files-key-encoding)
+    set_tests_properties(gnostr-test-dm-files-key-encoding PROPERTIES
+      TIMEOUT 30
+      LABELS "dm;nip17;unit;gnostr")
+  endif()
+
   # NIP-46 E2E tests
   add_executable(gnostr-test-nip46-e2e tests/test_nip46_e2e.c)
   target_compile_features(gnostr-test-nip46-e2e PRIVATE c_std_11)

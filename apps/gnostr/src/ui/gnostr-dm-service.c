@@ -420,8 +420,8 @@ store_message(DmConversation *conv,
     if (file_msg) {
         msg->file_url = g_strdup(file_msg->file_url);
         msg->file_type = g_strdup(file_msg->file_type);
-        msg->decryption_key = g_strdup(file_msg->decryption_key_b64);
-        msg->decryption_nonce = g_strdup(file_msg->decryption_nonce_b64);
+        msg->decryption_key = g_strdup(file_msg->decryption_key);
+        msg->decryption_nonce = g_strdup(file_msg->decryption_nonce);
         msg->original_hash = g_strdup(file_msg->original_hash);
         msg->file_size = file_msg->size;
     }
