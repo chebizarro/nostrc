@@ -85,7 +85,13 @@ test_read_receive(void)
     Row r = { "first use -> prompt", in, P, NWA_DENY_NONE, FALSE };
     check(&r);
 
-    in.allow_read = TRUE;
+    /* Each op needs its own grant (nostrc-muhk). */
+    NwaPolicyInput other = in;
+    if (ops[i] == NWA_OP_READ) other.allow_receive = TRUE; else other.allow_read = TRUE;
+    r = (Row){ "the other grant does not cover it -> prompt", other, P, NWA_DENY_NONE, FALSE };
+    check(&r);
+
+    if (ops[i] == NWA_OP_READ) in.allow_read = TRUE; else in.allow_receive = TRUE;
     r = (Row){ "allowed before -> allow", in, A, NWA_DENY_NONE, FALSE };
     check(&r);
 
@@ -105,7 +111,7 @@ test_read_receive(void)
 
     in = base(ops[i]);
     in.paired = FALSE;
-    in.allow_read = TRUE;
+    in.allow_read = in.allow_receive = TRUE;
     r = (Row){ "unpaired -> deny", in, D, NWA_DENY_NOT_PAIRED, FALSE };
     check(&r);
 

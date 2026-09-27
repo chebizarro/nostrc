@@ -101,7 +101,7 @@ is_trusted(NwaService *s, const NwaCaller *c)
   return g_strv_contains((const gchar *const *)trusted, c->app_id);
 }
 
-/* Grant administration (ListApps, GetBudget of others, SetReadAccess for
+/* Grant administration (ListApps, GetBudget of others, Set*Access for
  * any app) additionally admits the installed, unsandboxed Nostr Settings,
  * by the browser bridge's rule: a same-uid process whose /proc/<pid>/exe is
  * <bindir>/nostr-settings by path and inode (nwa_caller_exe_is; resolved
@@ -205,7 +205,8 @@ typedef struct {
   /* Budget / read access */
   gchar     *target_app;
   guint64    new_limit;
-  gboolean   new_allow_read;
+  gboolean   new_allow;       /* SetReadAccess / SetReceiveAccess */
+  gboolean   access_receive;  /* SetReceiveAccess: the invoice grant */
 } Call;
 
 static void
@@ -755,14 +756,18 @@ execute(Call *c)
     nwa_budget_store_set_limit(s->budgets, c->target_app, c->new_limit);
     emit_apps_changed(s);
     call_return(c, NULL, NULL);
-  } else if (g_str_equal(m, "SetReadAccess")) {
+  } else if (g_str_equal(m, "SetReadAccess") || g_str_equal(m, "SetReceiveAccess")) {
     NwaBudgetInfo before;
     nwa_budget_store_get(s->budgets, c->target_app, &before);
-    if (before.known && !before.allow_read == !c->new_allow_read) {
+    gboolean current = c->access_receive ? before.allow_receive : before.allow_read;
+    if (before.known && !current == !c->new_allow) {
       call_return(c, NULL, NULL); /* no change: no store write, no signal */
       return;
     }
-    nwa_budget_store_set_allow_read(s->budgets, c->target_app, c->new_allow_read);
+    if (c->access_receive)
+      nwa_budget_store_set_allow_receive(s->budgets, c->target_app, c->new_allow);
+    else
+      nwa_budget_store_set_allow_read(s->budgets, c->target_app, c->new_allow);
     emit_apps_changed(s);
     call_return(c, NULL, NULL);
   } else if (g_str_equal(m, "ListApps")) {
@@ -777,6 +782,7 @@ execute(Call *c)
       g_variant_builder_add(&a, "{sv}", "limit_msat_per_day", g_variant_new_uint64(bi.limit_msat_per_day));
       g_variant_builder_add(&a, "{sv}", "spent_today_msat", g_variant_new_uint64(bi.spent_today_msat));
       g_variant_builder_add(&a, "{sv}", "allow_read", g_variant_new_boolean(bi.allow_read));
+      g_variant_builder_add(&a, "{sv}", "allow_receive", g_variant_new_boolean(bi.allow_receive));
       g_variant_builder_add(&b, "{sa{sv}}", ids[i], &a);
     }
     call_return(c, g_variant_new("(a{sa{sv}})", &b), NULL);
@@ -827,9 +833,14 @@ on_confirm_answer(gboolean accepted, gboolean remember, gpointer data)
     CALL_FAIL(c, NWA_ERROR_DENIED, "request declined");
     return;
   }
+  /* "Always allow" remembers only what was asked: reading, or creating
+   * invoices (nostrc-muhk). */
   if (remember && (c->op == NWA_OP_READ || c->op == NWA_OP_RECEIVE) &&
       c->caller->app_id && c->caller->kind != NWA_CALLER_SELF && !c->via_link) {
-    nwa_budget_store_set_allow_read(c->svc->budgets, c->caller->app_id, TRUE);
+    if (c->op == NWA_OP_READ)
+      nwa_budget_store_set_allow_read(c->svc->budgets, c->caller->app_id, TRUE);
+    else
+      nwa_budget_store_set_allow_receive(c->svc->budgets, c->caller->app_id, TRUE);
     emit_apps_changed(c->svc);
   }
   c->user_approved = TRUE;
@@ -890,14 +901,24 @@ show_prompt(Call *c, gboolean over_budget)
   gboolean destructive = FALSE;
   switch (c->op) {
     case NWA_OP_READ:
-    case NWA_OP_RECEIVE:
-      body = g_strdup_printf("%s wants to use your Lightning wallet.\n\nIt will be able to see "
-                             "your balance and transaction history and create invoices. It "
-                             "cannot send payments without your approval.", who);
+      body = g_strdup_printf("%s wants to see your Lightning wallet's balance and transaction "
+                             "history.\n\nIt cannot create invoices or send payments without "
+                             "your approval.", who);
       if (c->caller->app_id && !c->via_link)
         remember = c->caller->kind == NWA_CALLER_WEB_ORIGIN ? "Always allow this site"
                                                             : "Always allow this app";
       break;
+    case NWA_OP_RECEIVE: {
+      g_autofree gchar *amt = nwa_ui_format_msat(c->amount_msat);
+      title = "Create Invoice";
+      body = g_strdup_printf("%s wants to create an invoice for %s into your Lightning wallet: "
+                             "a payment request that others would pay to you.\n\nIt cannot see "
+                             "your balance or send payments without your approval.", who, amt);
+      if (c->caller->app_id && !c->via_link)
+        remember = c->caller->kind == NWA_CALLER_WEB_ORIGIN ? "Always let this site create invoices"
+                                                            : "Always let this app create invoices";
+      break;
+    }
     case NWA_OP_PAIR: {
       g_autofree gchar *cur = NULL;
       if (s->client) {
@@ -921,15 +942,16 @@ show_prompt(Call *c, gboolean over_budget)
       body = g_strdup_printf("%s wants to disconnect your Lightning wallet. Applications "
                              "will no longer be able to pay or receive.", who);
       break;
-    case NWA_OP_READ_GRANT:
+    case NWA_OP_READ_GRANT: {
+      const gchar *what = c->access_receive ? "create invoices into your wallet"
+                                            : "see your wallet balance and transaction history";
       if (c->caller->app_id && g_strcmp0(c->caller->app_id, c->target_app) == 0)
-        body = g_strdup_printf("%s wants to see your wallet balance and transaction history, "
-                               "and create invoices, without asking you each time.", who);
+        body = g_strdup_printf("%s wants to %s without asking you each time.", who, what);
       else
-        body = g_strdup_printf("%s wants to let %s see your wallet balance and transaction "
-                               "history, and create invoices, without asking you each time.",
-                               who, c->target_app);
+        body = g_strdup_printf("%s wants to let %s %s without asking you each time.",
+                               who, c->target_app, what);
       break;
+    }
     case NWA_OP_BUDGET_CHANGE: {
       g_autofree gchar *amt = nwa_ui_format_msat(c->new_limit);
       title = "Payment Budget";
@@ -966,6 +988,7 @@ run_policy(Call *c)
     .ui_available = !c->non_interactive && nwa_ui_available(),
     .always_confirm = setting_bool(s, "always-confirm-payments", FALSE),
     .allow_read = bi.allow_read,
+    .allow_receive = bi.allow_receive,
     .amount_msat = c->charge_msat,
     .limit_msat = bi.limit_msat_per_day,
     .remaining_msat = bi.remaining_msat,
@@ -1338,8 +1361,8 @@ resolve_budget_op(Call *c, GError **error)
     c->target_app = g_strdup(own);
   }
   gboolean is_own = own && g_str_equal(own, c->target_app);
-  if (g_str_equal(c->method, "SetReadAccess")) {
-    c->op = c->new_allow_read ? NWA_OP_READ_GRANT
+  if (g_str_equal(c->method, "SetReadAccess") || g_str_equal(c->method, "SetReceiveAccess")) {
+    c->op = c->new_allow ? NWA_OP_READ_GRANT
                               : is_own ? NWA_OP_READ_REVOKE_OWN : NWA_OP_READ_REVOKE_OTHER;
   } else if (g_str_equal(c->method, "GetBudget")) {
     c->op = is_own ? NWA_OP_BUDGET_LOWER_OWN /* read own: always allowed */ : NWA_OP_BUDGET_QUERY_OTHER;
@@ -1382,7 +1405,7 @@ on_caller(GObject *src, GAsyncResult *res, gpointer data)
     }
   }
   if (c->target_app || g_str_equal(c->method, "GetBudget") || g_str_equal(c->method, "SetBudget") ||
-      g_str_equal(c->method, "SetReadAccess")) {
+      g_str_equal(c->method, "SetReadAccess") || g_str_equal(c->method, "SetReceiveAccess")) {
     if (!resolve_budget_op(c, &err)) { call_error(c, err); return; }
   }
   run_policy(c);
@@ -1497,6 +1520,7 @@ handle_method_call(GDBusConnection *bus, const gchar *sender, const gchar *path,
     guint32 amount;
     g_variant_get(params, "(u&su)", &amount, NULL, NULL);
     c->op = NWA_OP_RECEIVE;
+    c->amount_msat = amount; /* shown in the prompt */
     if (amount == 0) {
       g_set_error_literal(&err, NWA_ERROR, NWA_ERROR_INVALID_ARGS, "amount_msat must be > 0");
       ok = FALSE;
@@ -1532,7 +1556,7 @@ handle_method_call(GDBusConnection *bus, const gchar *sender, const gchar *path,
     g_variant_get(params, "(&su)", &app, &limit);
     c->target_app = g_strdup(app);
     c->new_limit = limit;
-  } else if (g_str_equal(method, "SetReadAccess")) {
+  } else if (g_str_equal(method, "SetReadAccess") || g_str_equal(method, "SetReceiveAccess")) {
     const gchar *app;
     gboolean allow;
     g_variant_get(params, "(&sb)", &app, &allow);
@@ -1541,7 +1565,8 @@ handle_method_call(GDBusConnection *bus, const gchar *sender, const gchar *path,
       ok = FALSE;
     }
     c->target_app = g_strdup(app);
-    c->new_allow_read = allow;
+    c->new_allow = allow;
+    c->access_receive = g_str_equal(method, "SetReceiveAccess");
   } else if (g_str_equal(method, "ListApps")) {
     c->op = NWA_OP_BUDGET_QUERY_OTHER; /* every app's record: settings app only */
   } else if (g_str_equal(method, "BeginWalletAuth") || g_str_equal(method, "CancelWalletAuth")) {

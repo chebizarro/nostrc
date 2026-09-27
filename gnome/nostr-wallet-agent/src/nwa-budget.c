@@ -13,6 +13,7 @@
 typedef struct {
   guint64  limit;
   gboolean allow_read;
+  gboolean allow_receive;
   gchar   *day;
   guint64  spent;
 } AppRecord;
@@ -135,6 +136,7 @@ nwa_budget_store_get(NwaBudgetStore *self, const gchar *app_id, NwaBudgetInfo *o
   out->spent_today_msat = r->spent;
   out->remaining_msat = r->limit > r->spent ? r->limit - r->spent : 0;
   out->allow_read = r->allow_read;
+  out->allow_receive = r->allow_receive;
 }
 
 void
@@ -152,6 +154,15 @@ nwa_budget_store_set_allow_read(NwaBudgetStore *self, const gchar *app_id, gbool
   AppRecord *r = lookup(self, app_id, TRUE);
   if (!r) return;
   r->allow_read = allow;
+  autosave(self);
+}
+
+void
+nwa_budget_store_set_allow_receive(NwaBudgetStore *self, const gchar *app_id, gboolean allow)
+{
+  AppRecord *r = lookup(self, app_id, TRUE);
+  if (!r) return;
+  r->allow_receive = allow;
   autosave(self);
 }
 
@@ -240,7 +251,7 @@ nwa_budget_store_save(NwaBudgetStore *self, GError **error)
   g_autoptr(JsonBuilder) b = json_builder_new();
   json_builder_begin_object(b);
   json_builder_set_member_name(b, "version");
-  json_builder_add_int_value(b, 1);
+  json_builder_add_int_value(b, 2);
   json_builder_set_member_name(b, "apps");
   json_builder_begin_object(b);
   GHashTableIter it;
@@ -254,6 +265,8 @@ nwa_budget_store_save(NwaBudgetStore *self, GError **error)
     json_builder_add_int_value(b, (gint64)MIN(r->limit, (guint64)G_MAXINT64));
     json_builder_set_member_name(b, "allow_read");
     json_builder_add_boolean_value(b, r->allow_read);
+    json_builder_set_member_name(b, "allow_receive");
+    json_builder_add_boolean_value(b, r->allow_receive);
     json_builder_set_member_name(b, "day");
     json_builder_add_string_value(b, r->day ? r->day : "");
     json_builder_set_member_name(b, "spent_msat");
@@ -312,8 +325,10 @@ nwa_budget_store_load(NwaBudgetStore *self, GError **error)
   gboolean ok = json_parser_load_from_data(p, data, (gssize)len, NULL);
   JsonNode *root = ok ? json_parser_get_root(p) : NULL;
   JsonObject *apps = NULL;
+  gint64 version = 1;
   if (root && JSON_NODE_HOLDS_OBJECT(root)) {
     JsonObject *ro = json_node_get_object(root);
+    version = json_object_get_int_member_with_default(ro, "version", 1);
     if (json_object_has_member(ro, "apps") &&
         JSON_NODE_HOLDS_OBJECT(json_object_get_member(ro, "apps")))
       apps = json_object_get_object_member(ro, "apps");
@@ -337,6 +352,9 @@ nwa_budget_store_load(NwaBudgetStore *self, GError **error)
     r->spent = member_u64(o, "spent_msat");
     r->allow_read = json_object_has_member(o, "allow_read") &&
                     json_object_get_boolean_member_with_default(o, "allow_read", FALSE);
+    /* Version 1: allow_read also meant "may create invoices" (nostrc-muhk). */
+    r->allow_receive = version < 2 ? r->allow_read
+                                   : json_object_get_boolean_member_with_default(o, "allow_receive", FALSE);
     r->day = g_strdup(json_object_get_string_member_with_default(o, "day", ""));
     g_hash_table_replace(self->apps, g_strdup(id), r);
   }

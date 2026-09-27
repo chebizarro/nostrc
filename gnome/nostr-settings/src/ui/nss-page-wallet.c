@@ -1,11 +1,11 @@
-/* nss-page-wallet.c — org.nostr.Wallet1 pairing, per-app read access and
- * daily budgets.
+/* nss-page-wallet.c — org.nostr.Wallet1 pairing, per-app read and receive
+ * access and daily budgets.
  * SPDX-License-Identifier: MIT
  *
  * Pair / Unpair are always confirmed by the agent's own dialog; this page
  * never sees the pairing secret. As the agent's trusted settings app (see
  * nss-wallet.h) the page lists apps with ListApps and changes read access
- * (SetReadAccess) directly; budget changes (SetBudget) are confirmed by the
+ * (SetReadAccess) and receive access (SetReceiveAccess) directly; budget changes (SetBudget) are confirmed by the
  * agent's dialog. When the agent does not trust this process the page falls
  * back to budgets.json and the agent confirms every change. Grants, budgets
  * and the GNOME Shell row are rendered as AdwExpanderRows; the page
@@ -128,7 +128,7 @@ load(gpointer data, GError **error)
   return s;
 }
 
-/* ── apps: read access + budget ── */
+/* ── apps: read access, receive access + budget ── */
 
 typedef struct {
   Page       *p;
@@ -225,6 +225,18 @@ on_read_toggled(AdwSwitchRow *row, GParamSpec *ps, gpointer data)
 }
 
 static void
+on_receive_toggled(AdwSwitchRow *row, GParamSpec *ps, gpointer data)
+{
+  (void)ps;
+  AppRow *b = data;
+  gboolean allow = adw_switch_row_get_active(row);
+  gtk_widget_set_sensitive(GTK_WIDGET(row), FALSE);
+  call_app_method(b->p, "SetReceiveAccess", g_variant_new("(sb)", b->app_id, allow), FALSE,
+                  allow ? "Invoices allowed" : "Invoices revoked",
+                  allow ? "Invoices not allowed" : "Invoices not revoked");
+}
+
+static void
 on_expanded(AdwExpanderRow *row, GParamSpec *ps, gpointer data)
 {
   (void)ps;
@@ -241,9 +253,11 @@ app_row_new(Page *p, const NssBudget *bd, gboolean editable)
   g_autofree gchar *label = nss_wallet_app_label(bd->app_id);
   g_autofree gchar *spent = nss_format_sats(bd->spent_today_msat);
   g_autofree gchar *lim = nss_format_sats(bd->limit_msat_per_day);
-  g_autofree gchar *sub = g_strdup_printf("%s · budget %s/day, %s spent today",
-                                          bd->allow_read ? "Can see balance" : "Cannot see balance",
-                                          lim, spent);
+  const gchar *access = bd->allow_read && bd->allow_receive ? "Can see balance, create invoices"
+                       : bd->allow_read                      ? "Can see balance"
+                       : bd->allow_receive                   ? "Can create invoices"
+                                                             : "Cannot see balance";
+  g_autofree gchar *sub = g_strdup_printf("%s · budget %s/day, %s spent today", access, lim, spent);
   AdwExpanderRow *row = ADW_EXPANDER_ROW(adw_expander_row_new());
   adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), label);
@@ -258,15 +272,27 @@ app_row_new(Page *p, const NssBudget *bd, gboolean editable)
 
   AdwSwitchRow *read = ADW_SWITCH_ROW(adw_switch_row_new());
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(read), "Can see balance and history");
+  gboolean shell = g_strcmp0(bd->app_id, NSS_WALLET_SHELL_APP_ID) == 0;
   adw_action_row_set_subtitle(ADW_ACTION_ROW(read),
-    g_strcmp0(bd->app_id, NSS_WALLET_SHELL_APP_ID) == 0
-      ? "Applies to every GNOME Shell extension: the wallet agent identifies GNOME Shell, "
-        "not individual extensions"
-      : "Also lets it create invoices. Paying always needs a budget or your approval");
+    shell ? "Applies to every GNOME Shell extension: the wallet agent identifies GNOME Shell, "
+            "not individual extensions"
+          : "Paying always needs a budget or your approval");
   adw_switch_row_set_active(read, bd->allow_read);
   g_signal_connect(read, "notify::active", G_CALLBACK(on_read_toggled), b);
   gtk_widget_set_sensitive(GTK_WIDGET(read), editable);
   adw_expander_row_add_row(row, GTK_WIDGET(read));
+
+  /* A separate grant (nostrc-muhk): seeing the balance does not let an app
+   * create payment requests that look like yours. */
+  AdwSwitchRow *recv = ADW_SWITCH_ROW(adw_switch_row_new());
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(recv), "Can create invoices");
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(recv),
+    shell ? "Every GNOME Shell extension could request payments into your wallet"
+          : "Payment requests into your wallet, without asking you each time");
+  adw_switch_row_set_active(recv, bd->allow_receive);
+  g_signal_connect(recv, "notify::active", G_CALLBACK(on_receive_toggled), b);
+  gtk_widget_set_sensitive(GTK_WIDGET(recv), editable);
+  adw_expander_row_add_row(row, GTK_WIDGET(recv));
 
   b->spin = ADW_SPIN_ROW(adw_spin_row_new_with_range(0, G_MAXUINT32 / 1000, 100));
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(b->spin), "Pay without asking, up to (sats per day)");

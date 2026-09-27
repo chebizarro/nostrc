@@ -8,11 +8,16 @@
  * spend ledger that is rewritten on every payment, which is state, not a
  * setting.
  *
- *   { "version": 1,
+ *   { "version": 2,
  *     "apps": { "<app-id>": { "limit_msat_per_day": N,
  *                             "allow_read": true,
+ *                             "allow_receive": false,
  *                             "day": "YYYY-MM-DD",
  *                             "spent_msat": M } } }
+ *
+ * Version 1 had no "allow_receive": its "allow_read" meant read AND create
+ * invoices, so a version-1 record loads with allow_receive = allow_read
+ * (nostrc-muhk) and is written back as version 2.
  *
  * "Per day" is the local calendar day of the injected clock. Spending is
  * charged conservatively: a reservation is added to spent_msat (and saved)
@@ -39,7 +44,8 @@ typedef struct {
   guint64  limit_msat_per_day; /* 0 = no automatic payments */
   guint64  spent_today_msat;   /* includes in-flight reservations */
   guint64  remaining_msat;     /* limit - spent (saturating) */
-  gboolean allow_read;         /* user allowed balance/history/invoices */
+  gboolean allow_read;         /* user allowed balance / history / invoice lookup */
+  gboolean allow_receive;      /* user allowed creating invoices (MakeInvoice) */
 } NwaBudgetInfo;
 
 /* @path: JSON file, or NULL for an in-memory store. @clock: NULL = local time. */
@@ -54,6 +60,7 @@ gboolean nwa_budget_store_save(NwaBudgetStore *self, GError **error);
 void     nwa_budget_store_get(NwaBudgetStore *self, const gchar *app_id, NwaBudgetInfo *out);
 void     nwa_budget_store_set_limit(NwaBudgetStore *self, const gchar *app_id, guint64 limit_msat_per_day);
 void     nwa_budget_store_set_allow_read(NwaBudgetStore *self, const gchar *app_id, gboolean allow);
+void     nwa_budget_store_set_allow_receive(NwaBudgetStore *self, const gchar *app_id, gboolean allow);
 /* Every app with a record, sorted. */
 GStrv    nwa_budget_store_list_apps(NwaBudgetStore *self);
 

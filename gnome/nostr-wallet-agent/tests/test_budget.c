@@ -7,6 +7,7 @@
 
 #include <glib.h>
 #include <glib/gstdio.h>
+#include <string.h>
 
 typedef struct {
   GDateTime *now;
@@ -176,6 +177,50 @@ test_persistence(void)
 
 /* Web origins (org.nostr.Wallet1 *For) are budget keys like any app id:
  * opaque JSON member names in one file, never path components. */
+/* nostrc-muhk: version-1 files had one flag meaning read AND receive; they
+ * load with both, and version 2 keeps the two apart. */
+static void
+test_receive_migration(void)
+{
+  FakeClock clk = { 0 };
+  clock_set(&clk, 2026, 9, 26, 12, 0);
+  g_autofree gchar *dir = g_dir_make_tmp("nwa-budget-XXXXXX", NULL);
+  g_autofree gchar *path = g_build_filename(dir, "budgets.json", NULL);
+  g_assert_true(g_file_set_contents(path,
+    "{\"version\":1,\"apps\":{"
+    "\"exe:/usr/bin/gnome-shell\":{\"limit_msat_per_day\":0,\"allow_read\":true,\"day\":\"\",\"spent_msat\":0},"
+    "\"org.example.NoRead\":{\"limit_msat_per_day\":5000,\"allow_read\":false}}}", -1, NULL));
+
+  NwaBudgetStore *s = nwa_budget_store_new(path, fake_now, &clk);
+  g_assert_true(nwa_budget_store_load(s, NULL));
+  NwaBudgetInfo bi;
+  nwa_budget_store_get(s, "exe:/usr/bin/gnome-shell", &bi);
+  g_assert_true(bi.allow_read);
+  g_assert_true(bi.allow_receive);          /* v1 allow_read meant both */
+  nwa_budget_store_get(s, "org.example.NoRead", &bi);
+  g_assert_false(bi.allow_read);
+  g_assert_false(bi.allow_receive);
+  /* The user now takes invoices away from GNOME Shell, keeping reads. */
+  nwa_budget_store_set_allow_receive(s, "exe:/usr/bin/gnome-shell", FALSE);
+  nwa_budget_store_free(s);
+
+  g_autofree gchar *data = NULL;
+  g_assert_true(g_file_get_contents(path, &data, NULL, NULL));
+  g_assert_nonnull(strstr(data, "\"version\" : 2"));
+  s = nwa_budget_store_new(path, fake_now, &clk);
+  g_assert_true(nwa_budget_store_load(s, NULL));
+  nwa_budget_store_get(s, "exe:/usr/bin/gnome-shell", &bi);
+  g_assert_true(bi.allow_read);
+  g_assert_false(bi.allow_receive);         /* v2: not re-derived from allow_read */
+  nwa_budget_store_set_allow_receive(s, "org.example.Inv", TRUE);
+  nwa_budget_store_get(s, "org.example.Inv", &bi);
+  g_assert_true(bi.allow_receive);
+  g_assert_false(bi.allow_read);
+  nwa_budget_store_free(s);
+  g_assert_cmpint(g_remove(path), ==, 0);
+  g_assert_cmpint(g_rmdir(dir), ==, 0);
+}
+
 static void
 test_web_origin_keys(void)
 {
@@ -242,6 +287,7 @@ main(int argc, char **argv)
   g_test_add_func("/budget/limits-and-reservations", test_limits_and_reservations);
   g_test_add_func("/budget/day-rollover", test_day_rollover);
   g_test_add_func("/budget/persistence", test_persistence);
+  g_test_add_func("/budget/receive-migration", test_receive_migration);
   g_test_add_func("/budget/web-origin-keys", test_web_origin_keys);
   g_test_add_func("/budget/list-apps", test_list_apps);
   return g_test_run();

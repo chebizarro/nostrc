@@ -72,6 +72,8 @@ nss_wallet_budgets_load(const gchar *path, const gchar *today, GError **error)
     return NULL;
   }
   JsonObject *root = json_node_get_object(json_parser_get_root(p));
+  /* Version 1 had one flag, allow_read, meaning read AND receive. */
+  gint64 version = json_object_get_int_member_with_default(root, "version", 1);
   if (!json_object_has_member(root, "apps") ||
       !JSON_NODE_HOLDS_OBJECT(json_object_get_member(root, "apps")))
     return out;
@@ -89,6 +91,9 @@ nss_wallet_budgets_load(const gchar *path, const gchar *today, GError **error)
       ? json_object_get_string_member_with_default(o, "day", "") : "";
     b->spent_today_msat = g_strcmp0(d, today) == 0 ? member_u64(o, "spent_msat") : 0;
     b->allow_read = json_object_get_boolean_member_with_default(o, "allow_read", FALSE);
+    b->allow_receive = version < 2
+      ? b->allow_read
+      : json_object_get_boolean_member_with_default(o, "allow_receive", FALSE);
     g_ptr_array_add(out, b);
   }
   g_ptr_array_sort(out, by_app);
@@ -111,6 +116,10 @@ nss_wallet_apps_from_variant(GVariant *apps)
     (void)g_variant_lookup(rec, "limit_msat_per_day", "t", &b->limit_msat_per_day);
     (void)g_variant_lookup(rec, "spent_today_msat", "t", &b->spent_today_msat);
     (void)g_variant_lookup(rec, "allow_read", "b", &b->allow_read);
+    /* An agent without "allow_receive" still lets a read grant create
+     * invoices. */
+    if (!g_variant_lookup(rec, "allow_receive", "b", &b->allow_receive))
+      b->allow_receive = b->allow_read;
     g_ptr_array_add(out, b);
     g_variant_unref(rec);
   }
