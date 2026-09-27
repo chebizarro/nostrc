@@ -21,4 +21,5 @@ Deferred to a later wave: k95e, wu3s, hby8, prqu.1, prqu.7, prqu.9, prqu.10, rxx
 - [x] C gnostr client — merged (7 beads); follow-ups tvoi, 46h7
 - [x] D libnostr/dav/packaging — merged (12 beads incl. wr3t, w8y1, pnc7, 6tuz)
 - [ ] E wallet/notify/share/webext follow-ups
+- [x] F session-relay federation — merged 7b657793 (7d96); follow-ups t24q (dav/share consume FederationState), jedb, elgy, 8cc1, abk1
 - [ ] H NIP-29 audit + ctest failures (rxxx ohrz yk3t bvka twwl krqc) — running
