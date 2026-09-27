@@ -94,7 +94,14 @@ snapshot (and re-promoted to watches when budget frees up). Default 600;
 .B NOSTR_HOMED_SYNCD_SEED_FILE
 Override the broker seed drop path. Default:
 .IR /run/nostr-auth/session/<uid>/home_seed .
-Read-once, unlinked, mlocked.
+Read-once, unlinked, mlocked. If it is absent at start the daemon stays
+unmanaged (no watches, no scans) and waits for it: inotify on the deepest
+existing ancestor of the path, plus a backstop poll. When the drop appears
+the home becomes managed without a restart.
+.TP
+.B NOSTR_HOMED_SYNCD_SEED_POLL_SEC
+Backstop poll interval, in seconds, while waiting for the seed drop.
+Default 30; 0 relies on inotify alone.
 .TP
 .B NOSTR_HOMED_SYNCD_TEST_MODE
 When set to 1, permits the (otherwise disabled)

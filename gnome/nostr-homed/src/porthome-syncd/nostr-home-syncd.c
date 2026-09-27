@@ -49,6 +49,13 @@
  *                                  (default: /run/nostr-auth/session/
  *                                  <uid>/home_seed).  W(3): read once,
  *                                  unlink, mlock; wraps in-process wipe.
+ *                                  nostrc-p8y6: if absent at start the
+ *                                  daemon waits for it (inotify on the
+ *                                  deepest existing ancestor + a slow
+ *                                  poll) and becomes managed when it
+ *                                  appears — no restart needed.
+ *   NOSTR_HOMED_SYNCD_SEED_POLL_SEC — backstop poll for that wait
+ *                                  (default 30; 0 = inotify only).
  *
  *   NOSTR_HOMED_SYNCD_SNAPSHOT_MAX_BYTES — ceiling for snapshot.json
  *                                  (nostrc-5y2t). Default 1 GiB.
@@ -90,6 +97,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/inotify.h>
 #include <sys/mman.h>
 #include <sys/signalfd.h>
 #include <sys/stat.h>
@@ -188,17 +196,20 @@ static char *default_home(void) {
  * contain 64 hex chars (no newline required; a trailing whitespace is
  * tolerated). Never logs the seed value itself.
  * ──────────────────────────────────────────────────────────────────── */
-static int read_seed_from_broker_drop(char *out_hex /* [65] */) {
-    out_hex[0] = '\0';
+static void seed_drop_path(char *path, size_t n) {
     const char *ovr = getenv("NOSTR_HOMED_SYNCD_SEED_FILE");
-    char path[256];
     if (ovr && *ovr) {
-        snprintf(path, sizeof path, "%s", ovr);
+        snprintf(path, n, "%s", ovr);
     } else {
-        snprintf(path, sizeof path,
-                 "/run/nostr-auth/session/%u/home_seed",
+        snprintf(path, n, "/run/nostr-auth/session/%u/home_seed",
                  (unsigned)getuid());
     }
+}
+
+static int read_seed_from_broker_drop(char *out_hex /* [65] */) {
+    out_hex[0] = '\0';
+    char path[256];
+    seed_drop_path(path, sizeof path);
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) return -1;
     char buf[96];
@@ -326,7 +337,26 @@ typedef struct {
     uint32_t fallback_rescan_sec;    /* nostrc-lqm2 */
     bool     test_mode;               /* xnxd part 3 */
     bool     seed_from_broker;        /* xnxd part 3: audit-friendly flag */
+    uint32_t seed_poll_sec;           /* nostrc-p8y6 */
 } cfg_t;
+
+/* Take the broker's seed drop into cfg (mlocked heap copy). Returns
+ * true if a valid seed was read (and the drop unlinked). */
+static bool cfg_take_broker_seed(cfg_t *c) {
+    char hex[65] = {0};
+    bool ok = read_seed_from_broker_drop(hex) == 0;
+    if (ok) {
+        c->seed_hex = xstrdup(hex);
+        ok = c->seed_hex != NULL;
+        c->seed_from_broker = ok;
+        /* Best-effort mlock the heap copy; RLIMIT_MEMLOCK may reject it,
+         * in which case the wipe-on-free in free_cfg is still the durable
+         * defence. */
+        if (ok) (void)mlock(c->seed_hex, strlen(c->seed_hex) + 1);
+    }
+    memset(hex, 0, sizeof hex);
+    return ok;
+}
 
 static int load_cfg(cfg_t *c) {
     memset(c, 0, sizeof *c);
@@ -345,23 +375,11 @@ static int load_cfg(cfg_t *c) {
      * batch loop reports "seed unset" per-batch (existing behaviour). */
     const char *tm = getenv("NOSTR_HOMED_SYNCD_TEST_MODE");
     c->test_mode = (tm && *tm && strcmp(tm, "0") != 0);
-    char seed_from_drop[65] = {0};
-    if (read_seed_from_broker_drop(seed_from_drop) == 0) {
-        c->seed_hex = xstrdup(seed_from_drop);
-        c->seed_from_broker = true;
-    } else if (c->test_mode) {
+    if (!cfg_take_broker_seed(c) && c->test_mode) {
         c->seed_hex = xstrdup(getenv("NOSTR_HOMED_SYNCD_SEED_HEX"));
         c->seed_from_broker = false;
-    } else {
-        c->seed_hex = NULL;
-        c->seed_from_broker = false;
+        if (c->seed_hex) (void)mlock(c->seed_hex, strlen(c->seed_hex) + 1);
     }
-    /* Best-effort mlock the heap copy; RLIMIT_MEMLOCK may reject it,
-     * in which case the wipe-on-free in free_cfg is still the durable
-     * defence. */
-    if (c->seed_hex) (void)mlock(c->seed_hex, strlen(c->seed_hex) + 1);
-    /* Wipe the local hex buffer immediately. */
-    memset(seed_from_drop, 0, sizeof seed_from_drop);
     const char *bl = getenv("NOSTR_HOMED_SYNCD_BLOSSOM");
     const char *rl = getenv("NOSTR_HOMED_SYNCD_RELAYS");
     c->blossom = split_csv(bl, &c->n_blossom);
@@ -376,6 +394,8 @@ static int load_cfg(cfg_t *c) {
     c->rescan_interval_sec = (ri && *ri) ? (uint32_t)strtoul(ri, NULL, 10) : 0;
     const char *fr = getenv("NOSTR_HOMED_SYNCD_FALLBACK_RESCAN_SEC");
     c->fallback_rescan_sec = (fr && *fr) ? (uint32_t)strtoul(fr, NULL, 10) : 600;
+    const char *sp = getenv("NOSTR_HOMED_SYNCD_SEED_POLL_SEC");
+    c->seed_poll_sec = (sp && *sp) ? (uint32_t)strtoul(sp, NULL, 10) : 30;
     return 0;
 }
 
@@ -396,6 +416,125 @@ static void syncd_on_upload_summary(void *ud,
     if (!g_status || !r) return;
     nh_syncd_status_set_last_upload_servers(g_status,
         (uint32_t)r->succeeded, (uint32_t)r->total);
+}
+
+/* ────────────────────────────────────────────────────────────────────
+ * nostrc-p8y6 — wait for a broker seed drop that lands after start.
+ *
+ * The user unit can start before the broker has materialised the home
+ * and dropped the seed (PAM / user-manager ordering). Rather than stay
+ * unmanaged for the life of the process, watch the drop location:
+ * inotify on the deepest EXISTING ancestor of the drop path (the
+ * per-uid dir usually doesn't exist yet), re-armed one level deeper on
+ * every event. IN_ATTRIB matters: the broker mkdirs the per-uid dir
+ * 0700 root-owned and chowns it afterwards, so the first add_watch on
+ * it can fail with EACCES; the chown then fires IN_ATTRIB on the
+ * parent. A slow poll backstops anything inotify can't see (no
+ * instances left, unwatchable ancestors).
+ * ──────────────────────────────────────────────────────────────────── */
+typedef struct {
+    char path[256];
+    int  ifd;   /* inotify fd, -1 when unavailable */
+    int  wd;
+    struct timespec last_poll;
+} seed_waiter;
+
+static bool parent_dir(char *p) {
+    char *slash = strrchr(p, '/');
+    if (!slash || (slash == p && p[1] == '\0')) return false;
+    if (slash == p) slash[1] = '\0'; else *slash = '\0';
+    return true;
+}
+
+static void seed_waiter_arm(seed_waiter *sw) {
+    if (sw->ifd < 0) return;
+    char dir[256];
+    snprintf(dir, sizeof dir, "%s", sw->path);
+    while (parent_dir(dir)) {
+        int wd = inotify_add_watch(sw->ifd, dir,
+                                   IN_CREATE | IN_MOVED_TO | IN_CLOSE_WRITE |
+                                   IN_ATTRIB | IN_DELETE_SELF | IN_MOVE_SELF |
+                                   IN_ONLYDIR);
+        if (wd >= 0) {
+            if (sw->wd >= 0 && sw->wd != wd) (void)inotify_rm_watch(sw->ifd, sw->wd);
+            sw->wd = wd;
+            return;
+        }
+    }
+}
+
+static void seed_waiter_init(seed_waiter *sw) {
+    memset(sw, 0, sizeof *sw);
+    sw->wd = -1;
+    seed_drop_path(sw->path, sizeof sw->path);
+    sw->ifd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (sw->ifd < 0)
+        fprintf(stderr, "syncd: inotify for the seed drop unavailable (%s); "
+                "polling for it instead\n", strerror(errno));
+    seed_waiter_arm(sw);
+    clock_gettime(CLOCK_MONOTONIC, &sw->last_poll);
+}
+
+static void seed_waiter_close(seed_waiter *sw) {
+    if (sw->ifd >= 0) close(sw->ifd);
+    sw->ifd = -1;
+    sw->wd = -1;
+}
+
+/* Drain events, follow the path one level deeper if it grew, and try
+ * the drop. Re-arm BEFORE reading so a drop landing in between is seen
+ * either by the read or by the next event. */
+static bool seed_waiter_service(seed_waiter *sw, cfg_t *cfg) {
+    if (sw->ifd >= 0) {
+        char buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
+        while (read(sw->ifd, buf, sizeof buf) > 0) { }
+    }
+    seed_waiter_arm(sw);
+    return cfg_take_broker_seed(cfg);
+}
+
+/* Everything that only makes sense for a porthome-managed home: the
+ * additive baseline rescan when the snapshot base is unknown, and the
+ * budgeted $HOME watcher. Runs at start when the seed is present, or
+ * later when the broker drop appears (nostrc-p8y6). */
+static int start_managed(const cfg_t *cfg, nh_syncd_state *state,
+                         bool snap_unknown, nh_syncd_ignore *ig,
+                         nh_syncd_batcher *ba, nh_syncd_interlocks *ilk,
+                         nh_syncd_watcher **out_wa)
+{
+    /* I2 §6.4: if the snapshot base is unknown, do an ADDITIVE rescan
+     * of $HOME and mark NOSTR_HOME_STATE=partial. The push path will
+     * refuse to run until a real pull path rebuilds base. */
+    if (snap_unknown) {
+        fprintf(stderr,
+                "syncd: snapshot base unknown; running additive rescan + setting partial state\n");
+        (void)nh_syncd_rescan_home_additive(state, cfg->home, ig, cfg->state_dir);
+        (void)nh_syncd_partial_state_set(cfg->state_dir);
+    }
+    /* The I2 marker file is authoritative because it survives across
+     * daemon restarts. */
+    ilk->nostr_home_state = nh_syncd_partial_state_is_set(cfg->state_dir)
+                            ? "partial" : getenv("NOSTR_HOME_STATE");
+
+    nh_syncd_watcher *wa = NULL;
+    if (nh_syncd_watcher_new(cfg->home, ig, ba, &wa) != NH_SYNCD_OK) {
+        fprintf(stderr, "syncd: inotify init failed\n");
+        return -1;
+    }
+    fprintf(stderr,
+            "syncd: watching %u directories (budget %u, "
+            "fs.inotify.max_user_watches=%u); %zu subtrees on the "
+            "fallback rescan every %us\n",
+            nh_syncd_watcher_watch_count(wa),
+            nh_syncd_watcher_budget(wa),
+            nh_syncd_watcher_kernel_limit(),
+            nh_syncd_watcher_unwatched_count(wa),
+            cfg->fallback_rescan_sec);
+    /* xnxd part 2: give the watcher the state baseline so IN_Q_OVERFLOW
+     * and the periodic rescan tick both have something to diff against. */
+    nh_syncd_watcher_set_state(wa, state);
+    *out_wa = wa;
+    return 0;
 }
 
 int main(int argc, char **argv) {
@@ -494,21 +633,11 @@ int main(int argc, char **argv) {
 
     /* nostrc-lqm2: without the broker's home seed this session's home is
      * not porthome-managed — home_key can't be derived, every batch would
-     * be deferred for the life of the process (the seed is read once, at
-     * start; a drop that appears later is not picked up — nostrc-p8y6).
-     * Don't scan or watch a tree we can never push: an unmanaged home full
-     * of build trees is exactly what exhausted the user's inotify budget. */
-    const bool managed = cfg.seed_hex != NULL;
-
-    /* I2 §6.4: if the snapshot base is unknown, do an ADDITIVE rescan
-     * of $HOME and mark NOSTR_HOME_STATE=partial. The push path will
-     * refuse to run until a real pull path rebuilds base. */
-    if (snap_unknown && managed) {
-        fprintf(stderr,
-                "syncd: snapshot base unknown; running additive rescan + setting partial state\n");
-        (void)nh_syncd_rescan_home_additive(state, cfg.home, ig, cfg.state_dir);
-        (void)nh_syncd_partial_state_set(cfg.state_dir);
-    }
+     * be deferred. Don't scan or watch a tree we can never push: an
+     * unmanaged home full of build trees is exactly what exhausted the
+     * user's inotify budget. If the broker drop shows up later we pick it
+     * up and switch to managed then (nostrc-p8y6). */
+    bool managed = cfg.seed_hex != NULL;
 
     /* Interlocks now include the file marker in addition to the env
      * variable — the I2 marker file is authoritative because it
@@ -587,29 +716,23 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    /* Watcher. */
+    /* Watcher (managed) or seed waiter (not yet managed). */
     nh_syncd_watcher *wa = NULL;
-    if (!managed) {
+    seed_waiter sw = { .ifd = -1, .wd = -1 };
+    if (managed) {
+        if (start_managed(&cfg, state, snap_unknown, ig, ba, &ilk, &wa) != 0)
+            goto cleanup;
+    } else {
+        seed_waiter_init(&sw);
+        char pollbuf[32] = "off";
+        if (cfg.seed_poll_sec)
+            snprintf(pollbuf, sizeof pollbuf, "every %us", cfg.seed_poll_sec);
         fprintf(stderr,
                 "syncd: no home seed (broker drop absent) — this home is not "
-                "porthome-managed in this session; not watching it\n");
-    } else if (nh_syncd_watcher_new(cfg.home, ig, ba, &wa) != NH_SYNCD_OK) {
-        fprintf(stderr, "syncd: inotify init failed\n");
-        goto cleanup;
-    } else {
-        fprintf(stderr,
-                "syncd: watching %u directories (budget %u, "
-                "fs.inotify.max_user_watches=%u); %zu subtrees on the "
-                "fallback rescan every %us\n",
-                nh_syncd_watcher_watch_count(wa),
-                nh_syncd_watcher_budget(wa),
-                nh_syncd_watcher_kernel_limit(),
-                nh_syncd_watcher_unwatched_count(wa),
-                cfg.fallback_rescan_sec);
+                "porthome-managed yet; not watching it. Waiting for %s "
+                "(inotify%s; backstop poll %s)\n",
+                sw.path, sw.ifd >= 0 ? "" : " unavailable", pollbuf);
     }
-    /* xnxd part 2: give the watcher the state baseline so IN_Q_OVERFLOW
-     * and the periodic rescan tick both have something to diff against. */
-    nh_syncd_watcher_set_state(wa, state);
 
     /* xnxd part 2: periodic rescan tick. Independent of the 15-minute
      * force-flush. Default OFF (env unset / 0). When enabled the
@@ -620,9 +743,31 @@ int main(int argc, char **argv) {
     clock_gettime(CLOCK_MONOTONIC, &last_rescan);
     last_fallback = last_rescan;
 
-    /* Poll loop. */
-    struct pollfd pfd = { nh_syncd_watcher_fd(wa), POLLIN, 0 };
+    /* Poll loop. pfd[0]: $HOME watcher; pfd[1]: seed-drop waiter
+     * (negative fds are ignored by poll). */
+    struct pollfd pfd[2] = {
+        { nh_syncd_watcher_fd(wa), POLLIN, 0 },
+        { sw.ifd,                  POLLIN, 0 },
+    };
+    /* First pass re-checks the drop: closes the gap between load_cfg's
+     * read and arming the watch. */
+    bool seed_check = !managed;
     while (!g_stop) {
+        if (!managed && seed_check) {
+            seed_check = false;
+            if (seed_waiter_service(&sw, &cfg)) {
+                seed_waiter_close(&sw);
+                pfd[1].fd = -1;
+                fprintf(stderr, "syncd: home seed appeared — this home is now "
+                        "porthome-managed\n");
+                if (start_managed(&cfg, state, snap_unknown, ig, ba, &ilk, &wa) != 0)
+                    break;
+                managed = true;
+                pfd[0].fd = nh_syncd_watcher_fd(wa);
+                clock_gettime(CLOCK_MONOTONIC, &last_rescan);
+                last_fallback = last_rescan;
+            }
+        }
         if (g_reload) {
             g_reload = 0;
             nh_syncd_ignore_reload(ig, cfg.home);
@@ -647,9 +792,15 @@ int main(int argc, char **argv) {
         if (wa && nh_syncd_watcher_unwatched_count(wa) > 0 &&
             tick_due(&last_fallback, cfg.fallback_rescan_sec, &t))
             (void)nh_syncd_watcher_rescan_unwatched(wa);
-        int pr = poll(&pfd, 1, t);
+        /* nostrc-p8y6: backstop poll for the seed drop. */
+        if (!managed && tick_due(&sw.last_poll, cfg.seed_poll_sec, &t)) {
+            seed_check = true;
+            t = 0;
+        }
+        int pr = poll(pfd, 2, t);
         if (pr < 0) { if (errno == EINTR) continue; break; }
-        if (wa && (pfd.revents & POLLIN)) nh_syncd_watcher_drain(wa);
+        if (wa && (pfd[0].revents & POLLIN)) nh_syncd_watcher_drain(wa);
+        if (pfd[1].fd >= 0 && (pfd[1].revents & POLLIN)) seed_check = true;
         if (nh_syncd_batcher_poll(ba) == NH_SYNCD_BATCHER_READY) {
             nh_syncd_batch *batch = nh_syncd_batcher_take(ba, false);
             if (batch) {
@@ -747,6 +898,7 @@ int main(int argc, char **argv) {
 
     nh_syncd_watcher_free(wa);
 cleanup:
+    seed_waiter_close(&sw);
     if (state) nh_syncd_state_free(state);
     nh_syncd_batcher_free(ba);
     nh_syncd_ignore_free(ig);

@@ -1958,6 +1958,17 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     set_tests_properties(homed_syncd_snapshot_load PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 180)
 
+    # nostrc-p8y6: a broker seed drop that lands after start is picked up.
+    add_executable(test_syncd_seed_late
+      tests/integration/test_syncd_seed_late.c)
+    target_include_directories(test_syncd_seed_late PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration)
+    target_link_libraries(test_syncd_seed_late PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_seed_late
+      COMMAND test_syncd_seed_late $<TARGET_FILE:nostr-home-syncd>)
+    set_tests_properties(homed_syncd_seed_late PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 120)
+
     add_executable(test_syncd_push_e2e
       tests/integration/test_syncd_push_e2e.c)
     target_link_libraries(test_syncd_push_e2e PRIVATE nostr_syncd_core)
