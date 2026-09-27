@@ -946,6 +946,11 @@ static gpointer keyring_migration_thread(gpointer data) {
 }
 
 static void start_keyring_migration(void) {
+#ifdef NIP55L_TEST_TRUST_ENV
+  /* Test builds: on macOS the Keychain is the user's real login keychain
+   * (no per-bus backend as with gnome-keyring), so tests switch it off. */
+  if (g_getenv("NOSTR_SIGNER_TEST_NO_MIGRATION")) return;
+#endif
   static gsize started = 0;
   if (!g_once_init_enter(&started)) return;
   GError *err = NULL;

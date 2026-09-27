@@ -351,6 +351,11 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
     g_free(gnostr_dir);
   }
 
+#ifdef __APPLE__
+  /* The daemon's startup key migration would search (and could write) the
+   * user's login keychain; keep it off in tests (test-build switch). */
+  g_setenv("NOSTR_SIGNER_TEST_NO_MIGRATION", "1", TRUE);
+#endif
   /* Test-build trust overrides read by the daemon at call time. */
   char *exe = self_exe();
   g_setenv("NOSTR_SIGNER_TEST_APPROVERS", trust && trust->approver ? exe : "/nonexistent", TRUE);
@@ -1239,6 +1244,13 @@ static void test_store_key_denied_without_flag(Ctx *ctx) {
  * TRUE if the whole chain ran; FALSE if libsecret was unavailable so the
  * outer test could log-and-skip rather than fail. */
 static gboolean try_store_and_clear_key(Ctx *ctx) {
+#ifdef __APPLE__
+  /* The Keychain backend writes the user's real login keychain; a test
+   * must never do that. */
+  (void)ctx;
+  g_printerr("SKIP: StoreKey/ClearKey round-trip: the macOS Keychain is the login keychain\n");
+  return FALSE;
+#endif
   /* A separate key so we can tell whether the round-trip changed the
    * daemon's derived npub. */
   char *fresh_sk = nostr_key_generate_private();
