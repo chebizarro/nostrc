@@ -487,7 +487,9 @@ static NsrFedRouteStatus resolve_group(const NsrFedConfig *cfg, NostrEvent *ev,
                                        char **reason) {
   NostrTag *g = group_id_tag(ev);
   if (!g) {
-    *reason = g_strdup("invalid: NIP-29 group event without a group id (h tag)");
+    *reason = g_strdup(kind_is_group_metadata(nostr_event_get_kind(ev))
+                           ? "invalid: NIP-29 group metadata without a group id (d tag)"
+                           : "invalid: NIP-29 group event without a group id (h tag)");
     return NSR_FED_ROUTE_INVALID;
   }
   const char *gid = nostr_tag_get(g, 1);
