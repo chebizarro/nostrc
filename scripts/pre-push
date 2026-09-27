@@ -1,50 +1,72 @@
-#!/bin/bash
-#
-# Pre-push hook for nostrc
-# Enforces build verification before push
-#
-# Install: cp scripts/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
-# Or: scripts/install-hooks.sh
+#!/usr/bin/env bash
+# Validate pushed commits in temporary worktrees, never in the caller's checkout.
+set -euo pipefail
 
-set -e
+repo_root="$(git rev-parse --show-toplevel)"
+tmp="$(mktemp -d)"
+checkout=""
+cleanup() {
+    if [ -n "$checkout" ]; then
+        git -C "$repo_root" worktree remove --force "$checkout" || true
+    fi
+    rm -rf "$tmp"
+}
+trap cleanup EXIT
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+zero_oid=0000000000000000000000000000000000000000
+saw_ref=0
+while read -r local_ref local_oid remote_ref remote_oid; do
+    [ -n "${local_ref:-}" ] || continue
+    saw_ref=1
+    # A deleted ref has no candidate tree to validate.
+    [ "$local_oid" != "$zero_oid" ] || continue
 
-echo -e "${YELLOW}=== Pre-push Build Verification ===${NC}"
+    if [ -n "$checkout" ]; then
+        git -C "$repo_root" worktree remove --force "$checkout"
+        checkout=""
+    fi
+    checkout="$tmp/checkout"
+    git -c core.hooksPath=/dev/null -C "$repo_root" worktree add --detach "$checkout" "$local_oid"
+    for submodule in third_party/nsync third_party/nostrdb; do
+        if git -C "$checkout" ls-files --stage -- "$submodule" | grep -q "^160000 "; then
+            git -c core.hooksPath=/dev/null -C "$checkout" submodule update --init "$submodule"
+        fi
+    done
 
-# Check for _build directory
-if [ ! -d "_build" ]; then
-    echo -e "${RED}ERROR: _build directory not found${NC}"
-    echo "Run: cmake -B _build && cmake --build _build"
-    exit 1
-fi
+    groundhog=OFF
+    base="$remote_oid"
+    if [ "$base" = "$zero_oid" ]; then
+        base="$(git -C "$repo_root" merge-base "$local_oid" refs/remotes/origin/master 2>/dev/null || true)"
+    fi
+    if [ -z "$base" ]; then
+        # Without a known base, validate the optional component too.
+        groundhog=ON
+    # Groundhog links gnostr-secret, nip19, nostr, and nostr_gobject;
+    # nostr_gobject generates its signer proxy from NIP-55L's D-Bus XML.
+    # Include their build configuration, the copied account-test schema, and CI recipe.
+    elif ! git -C "$repo_root" diff --quiet "$base" "$local_oid" -- \
+        CMakeLists.txt cmake/ \
+        gnome/groundhog/ gnome/seahorse/ \
+        libnostr/ nostr-gobject/ nips/nip19/ nips/nip55l/ \
+        apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml \
+        .github/workflows/groundhog-ci.yml; then
+        groundhog=ON
+    fi
 
-# Clean rebuild
-echo -e "${YELLOW}Running clean build...${NC}"
-rm -rf _build
-cmake -B _build -DCMAKE_BUILD_TYPE=Debug 2>&1 | tail -5
-
-if ! cmake --build _build 2>&1; then
-    echo -e "${RED}BUILD FAILED - Push blocked${NC}"
-    echo "Fix build errors before pushing."
-    exit 1
-fi
-
-echo -e "${GREEN}Build succeeded${NC}"
-
-# Run tests if test directory exists
-if [ -d "libgo/tests" ] || [ -d "tests" ]; then
-    echo -e "${YELLOW}Running tests...${NC}"
-    if ! ctest --test-dir _build --output-on-failure 2>&1; then
-        echo -e "${RED}TESTS FAILED - Push blocked${NC}"
-        echo "Fix failing tests before pushing."
+    build="$tmp/build"
+    echo "Pre-push verification: $local_ref ($local_oid), BUILD_GROUNDHOG=$groundhog"
+    cmake -S "$checkout" -B "$build" -DCMAKE_BUILD_TYPE=Debug -DBUILD_GROUNDHOG="$groundhog"
+    cmake --build "$build"
+    test_count="$(ctest --test-dir "$build" -N | awk '/^Total Tests: [0-9]+$/ { print $3 }')"
+    if ! [[ "$test_count" =~ ^[1-9][0-9]*$ ]]; then
+        echo "No registered CTest tests for $local_ref (count=${test_count:-unknown}) - push blocked" >&2
         exit 1
     fi
-    echo -e "${GREEN}Tests passed${NC}"
-fi
+    ctest --test-dir "$build" --output-on-failure
+    rm -rf "$build"
+done
 
-echo -e "${GREEN}=== All checks passed - Push allowed ===${NC}"
-exit 0
+if [ "$saw_ref" -eq 0 ]; then
+    echo "No pre-push refs received - push blocked" >&2
+    exit 1
+fi

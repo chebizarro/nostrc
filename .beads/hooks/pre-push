@@ -1,4 +1,10 @@
 #!/usr/bin/env sh
+# --- BEGIN NOSTRC PUSH INPUT REPLAY ---
+nostrc_push_input="$(mktemp)" || exit 1
+trap 'rm -f "$nostrc_push_input"' EXIT
+cat > "$nostrc_push_input" || exit 1
+exec < "$nostrc_push_input"
+# --- END NOSTRC PUSH INPUT REPLAY ---
 # --- BEGIN BEADS INTEGRATION v1.0.3 ---
 # This section is managed by beads. Do not remove these markers.
 if command -v bd >/dev/null 2>&1; then
@@ -25,5 +31,5 @@ fi
 
 # --- BEGIN NOSTRC BUILD VERIFICATION ---
 nostrc_root="$(git rev-parse --show-toplevel)" || exit 1
-"$nostrc_root/scripts/pre-push" "$@"
+"$nostrc_root/scripts/pre-push" "$@" < "$nostrc_push_input"
 # --- END NOSTRC BUILD VERIFICATION ---
