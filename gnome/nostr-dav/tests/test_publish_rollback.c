@@ -39,6 +39,7 @@ typedef struct {
   guint    call_count;
   gboolean deny_next;
   gchar   *fixed_id;   /* returned as the signed event's id */
+  gchar   *last_unsigned; /* last payload handed to the signer */
 } MockSigner;
 
 static gchar *
@@ -48,6 +49,8 @@ mock_sign(gpointer user_data, const gchar *unsigned_json,
   (void)cancellable;
   MockSigner *m = user_data;
   m->call_count++;
+  g_free(m->last_unsigned);
+  m->last_unsigned = g_strdup(unsigned_json);
 
   if (m->deny_next) {
     m->deny_next = FALSE;
@@ -79,6 +82,7 @@ mock_free(gpointer user_data)
 {
   MockSigner *m = user_data;
   g_free(m->fixed_id);
+  g_free(m->last_unsigned);
   g_free(m);
 }
 
@@ -245,6 +249,163 @@ sent_event_id(NdRelayTransport *t)
   gchar *id = g_strndup(needle, end - needle);
   g_strfreev(frames);
   return id;
+}
+
+static gint64
+json_created_at(const gchar *json)
+{
+  g_autoptr(JsonParser) parser = json_parser_new();
+  g_assert_true(json_parser_load_from_data(parser, json, -1, NULL));
+  return json_object_get_int_member(
+    json_node_get_object(json_parser_get_root(parser)), "created_at");
+}
+
+static gint64
+row_created_at(NdStoreDb *db, const gchar *uid)
+{
+  sqlite3 *h = nd_store_db_get_handle(db);
+  sqlite3_stmt *stmt = NULL;
+  g_assert_true(sqlite3_prepare_v2(h,
+                  "SELECT created_at FROM events WHERE uid = ?1",
+                  -1, &stmt, NULL) == SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, uid, -1, SQLITE_TRANSIENT);
+  g_assert_cmpint(sqlite3_step(stmt), ==, SQLITE_ROW);
+  gint64 v = sqlite3_column_int64(stmt, 0);
+  sqlite3_finalize(stmt);
+  return v;
+}
+
+/* ---- Scenario: a DAV-style write (created_at = 0) is stamped once and
+ *      the signed event carries exactly that created_at (nostrc-ir7c) ---- */
+
+static void
+test_signs_stamped_created_at(void)
+{
+  Fx fx = {0};
+  fx_setup(&fx,
+    "abababababababababababababababababababababababababababababababab");
+
+  NdCalendarEvent ev = {0};
+  ev.uid          = (gchar *)"evt-stamp";
+  ev.summary      = (gchar *)"First";
+  ev.description  = (gchar *)"";
+  ev.kind         = ND_NIP52_KIND_TIME;
+  ev.dtstart_ts   = 1710000000;
+  ev.dtend_ts     = 1710000100;
+  ev.created_at   = 0; /* what nd_ical_parse_vevent() yields for a PUT */
+
+  GError *err = NULL;
+  gint64 before = g_get_real_time() / G_USEC_PER_SEC;
+  g_assert_true(nd_calendar_store_put(fx.cal, &ev, NULL, &err));
+  g_assert_no_error(err);
+  gint64 stamped = row_created_at(fx.db, "evt-stamp");
+  g_assert_cmpint(stamped, >=, before);
+  g_assert_cmpint(ev.created_at, ==, stamped); /* written back for the ETag */
+  g_autofree gchar *etag1 = nd_ical_compute_etag(&ev);
+
+  g_assert_true(nd_publisher_stage_calendar_put(fx.publisher, "evt-stamp",
+                                                &err));
+  g_assert_no_error(err);
+  g_assert_true(nd_publisher_tick(fx.publisher, 2000000000));
+  g_assert_nonnull(fx.signer_state->last_unsigned);
+  g_assert_cmpint(json_created_at(fx.signer_state->last_unsigned), ==,
+                  stamped);
+
+  /* An edit within the same second still moves forward, so the ETag and the
+   * relay-sync last-writer-wins guard both see a newer version. */
+  ev.summary    = (gchar *)"Edited";
+  ev.created_at = 0;
+  g_assert_true(nd_calendar_store_put(fx.cal, &ev, NULL, &err));
+  g_assert_no_error(err);
+  g_assert_cmpint(row_created_at(fx.db, "evt-stamp"), >, stamped);
+  g_autofree gchar *etag2 = nd_ical_compute_etag(&ev);
+  g_assert_cmpstr(etag1, !=, etag2);
+
+  gchar **f1 = nd_relay_transport_fixture_take_sent(fx.r1, NULL);
+  g_strfreev(f1);
+  gchar **f2 = nd_relay_transport_fixture_take_sent(fx.r2, NULL);
+  g_strfreev(f2);
+  gchar **f3 = nd_relay_transport_fixture_take_sent(fx.r3, NULL);
+  g_strfreev(f3);
+  fx_teardown(&fx);
+}
+
+/* ---- Scenario: nostr_dav_upstream_mode is enforced (nostrc-862u) ---- */
+
+static guint
+sent_count(NdRelayTransport *t)
+{
+  gsize n = 0;
+  gchar **frames = nd_relay_transport_fixture_take_sent(t, &n);
+  g_strfreev(frames);
+  return (guint)n;
+}
+
+static void
+test_upstream_session_only(void)
+{
+  Fx fx = {0};
+  fx_setup(&fx,
+    "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd");
+  NdRelayTransport *session = nd_relay_transport_new_fixture("ws://localhost/");
+  nd_relay_transport_connect_async(session);
+  nd_publisher_bind_transport(fx.publisher, "ws://localhost/", session);
+
+  /* Staged while the default mode targets the home relays... */
+  insert_calendar_row(&fx, "evt-up", "Private");
+  GError *err = NULL;
+  g_assert_true(nd_publisher_stage_calendar_put(fx.publisher, "evt-up", &err));
+  g_assert_no_error(err);
+
+  /* ...then session_relay_only with no session relay: held, not failed. */
+  nd_publisher_set_upstream(fx.publisher, ND_UPSTREAM_MODE_SESSION_RELAY_ONLY,
+                            NULL);
+  g_assert_true(nd_publisher_is_held(fx.publisher));
+  nd_publisher_tick(fx.publisher, 2000000000);
+  g_assert_cmpuint(sent_count(fx.r1) + sent_count(fx.r2) + sent_count(fx.r3) +
+                   sent_count(session), ==, 0);
+  g_autofree gchar *held_state = get_publish_state(fx.db, "evt-up");
+  g_assert_cmpstr(held_state, ==, "pending");
+  g_assert_cmpuint(fx.notify.count, ==, 0);
+
+  /* The session relay appears: only it gets the event, never the home
+   * relays the row was originally staged for. */
+  nd_publisher_set_upstream(fx.publisher, ND_UPSTREAM_MODE_SESSION_RELAY_ONLY,
+                            "ws://localhost/");
+  g_assert_false(nd_publisher_is_held(fx.publisher));
+  g_assert_true(nd_publisher_tick(fx.publisher, 2000000000));
+  g_assert_cmpuint(sent_count(session), ==, 1);
+  g_assert_cmpuint(sent_count(fx.r1) + sent_count(fx.r2) + sent_count(fx.r3),
+                   ==, 0);
+
+  nd_relay_transport_unref(session);
+  fx_teardown(&fx);
+}
+
+static void
+test_upstream_direct_only_ignores_session(void)
+{
+  Fx fx = {0};
+  fx_setup(&fx,
+    "dededededededededededededededededededededededededededededededede");
+  NdRelayTransport *session = nd_relay_transport_new_fixture("ws://localhost/");
+  nd_relay_transport_connect_async(session);
+  nd_publisher_bind_transport(fx.publisher, "ws://localhost/", session);
+  nd_publisher_set_upstream(fx.publisher, ND_UPSTREAM_MODE_DIRECT_ONLY,
+                            "ws://localhost/");
+
+  insert_calendar_row(&fx, "evt-direct", "Public");
+  GError *err = NULL;
+  g_assert_true(nd_publisher_stage_calendar_put(fx.publisher, "evt-direct",
+                                                &err));
+  g_assert_true(nd_publisher_tick(fx.publisher, 2000000000));
+  g_assert_cmpuint(sent_count(session), ==, 0);
+  g_assert_cmpuint(sent_count(fx.r1), ==, 1);
+  g_assert_cmpuint(sent_count(fx.r2), ==, 1);
+  g_assert_cmpuint(sent_count(fx.r3), ==, 1);
+
+  nd_relay_transport_unref(session);
+  fx_teardown(&fx);
 }
 
 /* ---- Scenario: permanent reject fires exactly one notification ---- */
@@ -559,6 +720,12 @@ int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/nostr-dav/publish/upstream-session-only",
+                  test_upstream_session_only);
+  g_test_add_func("/nostr-dav/publish/upstream-direct-only-ignores-session",
+                  test_upstream_direct_only_ignores_session);
+  g_test_add_func("/nostr-dav/publish/signs-stamped-created-at",
+                  test_signs_stamped_created_at);
   g_test_add_func("/nostr-dav/publish/permanent-reject-notifies-once",
                   test_permanent_reject_notifies_once);
   g_test_add_func("/nostr-dav/publish/transient-then-success",

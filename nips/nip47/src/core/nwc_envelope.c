@@ -14,11 +14,49 @@
 #include <time.h>
 #include <stdint.h>
 
-static const char *enc_label(NostrNwcEncryption enc) {
+const char *nostr_nwc_encryption_label(NostrNwcEncryption enc) {
   switch (enc) {
-    case NOSTR_NWC_ENC_NIP44_V2: return "nip44-v2";
-    case NOSTR_NWC_ENC_NIP04: return "nip04";
-    default: return "nip44-v2";
+    case NOSTR_NWC_ENC_NIP04: return NOSTR_NWC_ENC_LABEL_NIP04;
+    case NOSTR_NWC_ENC_NIP44_V2:
+    default: return NOSTR_NWC_ENC_LABEL_NIP44_V2;
+  }
+}
+
+int nostr_nwc_encryption_from_label(const char *label, NostrNwcEncryption *out_enc) {
+  if (!label) return -1;
+  NostrNwcEncryption enc;
+  if (strcmp(label, NOSTR_NWC_ENC_LABEL_NIP44_V2) == 0 || strcmp(label, "nip44-v2") == 0)
+    enc = NOSTR_NWC_ENC_NIP44_V2;
+  else if (strcmp(label, NOSTR_NWC_ENC_LABEL_NIP04) == 0)
+    enc = NOSTR_NWC_ENC_NIP04;
+  else
+    return -1;
+  if (out_enc) *out_enc = enc;
+  return 0;
+}
+
+static const char *enc_label(NostrNwcEncryption enc) {
+  return nostr_nwc_encryption_label(enc);
+}
+
+/* Record which schemes a (possibly space-separated) label list names. */
+static void scan_enc_labels(const char *list, int *has_v2, int *has_04) {
+  if (!list) return;
+  const char *p = list;
+  while (*p) {
+    while (*p == ' ' || *p == '\t') p++;
+    const char *start = p;
+    while (*p && *p != ' ' && *p != '\t') p++;
+    size_t n = (size_t)(p - start);
+    if (n == 0 || n >= 16) continue;
+    char tok[16];
+    memcpy(tok, start, n);
+    tok[n] = '\0';
+    NostrNwcEncryption enc;
+    if (nostr_nwc_encryption_from_label(tok, &enc) == 0) {
+      if (enc == NOSTR_NWC_ENC_NIP44_V2) *has_v2 = 1;
+      else *has_04 = 1;
+    }
   }
 }
 
@@ -299,18 +337,12 @@ int nostr_nwc_select_encryption(const char **client_supported, size_t client_n,
   if (!out_enc) return -1;
   int client_has_v2 = 0, client_has_04 = 0;
   int wallet_has_v2 = 0, wallet_has_04 = 0;
-  for (size_t i = 0; i < client_n; i++) {
-    const char *s = client_supported ? client_supported[i] : NULL;
-    if (!s) continue;
-    if (strcmp(s, "nip44-v2") == 0) client_has_v2 = 1;
-    else if (strcmp(s, "nip04") == 0) client_has_04 = 1;
-  }
-  for (size_t i = 0; i < wallet_n; i++) {
-    const char *s = wallet_supported ? wallet_supported[i] : NULL;
-    if (!s) continue;
-    if (strcmp(s, "nip44-v2") == 0) wallet_has_v2 = 1;
-    else if (strcmp(s, "nip04") == 0) wallet_has_04 = 1;
-  }
+  for (size_t i = 0; i < client_n; i++)
+    scan_enc_labels(client_supported ? client_supported[i] : NULL,
+                    &client_has_v2, &client_has_04);
+  for (size_t i = 0; i < wallet_n; i++)
+    scan_enc_labels(wallet_supported ? wallet_supported[i] : NULL,
+                    &wallet_has_v2, &wallet_has_04);
   if (client_has_v2 && wallet_has_v2) { *out_enc = NOSTR_NWC_ENC_NIP44_V2; return 0; }
   if (client_has_04 && wallet_has_04) { *out_enc = NOSTR_NWC_ENC_NIP04; return 0; }
   return -1;

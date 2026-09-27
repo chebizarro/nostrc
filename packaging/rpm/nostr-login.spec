@@ -185,6 +185,19 @@ Requires:       nsync-devel
 Headers under %{_includedir}/nostr/ and the nostr.pc pkg-config metadata
 for the GLib-free (headless) libnostr ABI.
 
+# --- Sub-package: libnostr-nips (libnip19.so.0 + libnip34.so.0) -------------
+%package -n libnostr-nips
+Summary:        Nostr NIP helper libraries for C (shared)
+Requires:       libnostr%{?_isa} = %{version}-%{release}
+
+%description -n libnostr-nips
+Shared NIP libraries built on libnostr that more than one nostrc program
+links, shipped once in a single aggregate package (packaging plan decision
+D-6, nostrc-4c0o): libnip19.so.0 (NIP-19 bech32 entities) and
+libnip34.so.0 (NIP-34 git collaboration events).  Consumers include
+nostr-notify, nostr-share, nostr-settings and libhanami.  Pre-1.0: no ABI
+stability promise beyond the SONAME.
+
 # --- Sub-package: libnostrgo (SONAME .so.0) ----------------------------------
 %package -n libnostrgo
 Summary:        Go-inspired concurrency primitives for C
@@ -347,6 +360,7 @@ on a stock host.
 # --- Sub-package: libhanami --------------------------------------------------
 %package -n libhanami
 Summary:        Blossom / git / SQLite helper library (nostrc portable-home)
+Requires:       libnostr-nips%{?_isa} = %{version}-%{release}
 
 %description -n libhanami
 libhanami is the shared substrate the nostrc portable-home stack links
@@ -454,6 +468,7 @@ Not auto-enabled. The operator activates it with
 %package -n nostr-notify
 Summary:        Nostr NIP-29 + NIP-17 background notification daemon (Wave 4)
 Requires:       libnostr%{?_isa} = %{version}-%{release}
+Requires:       libnostr-nips%{?_isa} = %{version}-%{release}
 Requires:       glib2
 Recommends:     nostrc-session-relay%{?_isa} = %{version}-%{release}
 Recommends:     nostr-dav%{?_isa} = %{version}-%{release}
@@ -538,6 +553,7 @@ user unit and exits when idle; nothing is enabled at install time.
 Summary:        Share to Nostr from any GNOME app's Open With menu
 Requires:       libnostr-publish%{?_isa} = %{version}-%{release}
 Requires:       libhanami%{?_isa} = %{version}-%{release}
+Requires:       libnostr-nips%{?_isa} = %{version}-%{release}
 Recommends:     gnostr-signer-daemon
 Recommends:     git
 Suggests:       nostr-dav%{?_isa} = %{version}-%{release}
@@ -627,6 +643,7 @@ no network calls. Modern replacement for seahorse-nautilus.
 Summary:        Nostr Settings: preferences for Nostr on the GNOME desktop
 Requires:       libadwaita
 Requires:       libnostr-publish%{?_isa} = %{version}-%{release}
+Requires:       libnostr-nips%{?_isa} = %{version}-%{release}
 Recommends:     nostrc-session-relay = %{version}-%{release}
 Recommends:     nostr-notify = %{version}-%{release}
 Recommends:     nostr-wallet-agent = %{version}-%{release}
@@ -925,18 +942,24 @@ rm -f  %{buildroot}%{_datadir}/dbus-1/services/org.nostr.Signer.service
 rmdir --ignore-fail-on-non-empty %{buildroot}%{_datadir}/dbus-1/services 2>/dev/null || :
 rmdir --ignore-fail-on-non-empty %{buildroot}%{_datadir}/dbus-1          2>/dev/null || :
 #
-#    b) NIP libraries (D-6): folded into libnostr, no per-NIP packages in
-#       Phase 1.  Drop stray .so / .a artifacts.  Some NIP CMakeLists use
-#       GNUInstallDirs (%{_libdir}=/usr/lib64) and some hardcode `lib`
-#       (which resolves to /usr/lib on Fedora) -- purge both.  Same story
-#       as debian/not-installed lines mixing /usr/lib/ and
-#       /usr/lib/x86_64-linux-gnu/.
+#    b) NIP libraries (D-6): the shared ones a shipped binary links
+#       (libnip19, libnip34) carry SONAMEs and ship once in libnostr-nips
+#       (nostrc-4c0o / prqu.6 -- previously this deleted libnip19.so while
+#       nostr-notify-daemon linked it).  Only their unversioned link-time
+#       symlinks are dropped (no -devel yet).  Everything else here is
+#       unused by shipped binaries or needed only by the unpackaged signer
+#       daemon (nip55l).  Some NIP CMakeLists use GNUInstallDirs
+#       (%{_libdir}=/usr/lib64) and some hardcode `lib` (/usr/lib on
+#       Fedora) -- purge both.  Same story as debian/not-installed.
 rm -f  %{buildroot}%{_includedir}/nip40.h
 rm -f  %{buildroot}/usr/lib/libnip04.a
 rm -f  %{buildroot}/usr/lib/libnip05.so
 rm -f  %{buildroot}/usr/lib/libnip25.so
 rm -f  %{buildroot}/usr/lib/libnostr_nip77.a
+# dev symlinks only -- the runtime libnip19.so.0 / libnip34.so.0 ship in
+# libnostr-nips (deleting the real library here was the prqu.6 bug):
 rm -f  %{buildroot}%{_libdir}/libnip19.so
+rm -f  %{buildroot}%{_libdir}/libnip34.so
 rm -f  %{buildroot}%{_libdir}/libnostr_nip55l_core.so
 rm -f  %{buildroot}%{_libdir}/libnostr_nip55l_glib.so
 #
@@ -1135,6 +1158,13 @@ fi
 %{_libdir}/libnostr.so
 %{_libdir}/pkgconfig/nostr.pc
 %{_includedir}/nostr/
+
+%files -n libnostr-nips
+%license LICENSE
+%{_libdir}/libnip19.so.0
+%{_libdir}/libnip19.so.0.*
+%{_libdir}/libnip34.so.0
+%{_libdir}/libnip34.so.0.*
 
 %files -n libnostrgo
 %license LICENSE

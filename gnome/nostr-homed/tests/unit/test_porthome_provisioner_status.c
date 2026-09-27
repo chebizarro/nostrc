@@ -34,6 +34,7 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+#include "../nh_test_fs.h"
 
 /* Compose the same path emit_pstat would land at when
  * NH_PORTHOME_STATUS_DIR=<root> is set. */
@@ -229,9 +230,7 @@ int main(void) {
     /* Best-effort cleanup — the child dirs may still hold the status
      * file's leftovers; rm -rf equivalent kept minimal (test harness
      * runs on a tmpfs anyway). */
-    char cmd[300];
-    snprintf(cmd, sizeof cmd, "rm -rf '%s'", root);
-    (void)system(cmd);
+    nh_test_rm_rf(root);
     printf("test_porthome_provisioner_status: all tests passed\n");
     return 0;
 }

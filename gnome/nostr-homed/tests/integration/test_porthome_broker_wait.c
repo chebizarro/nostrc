@@ -99,7 +99,7 @@ static void resolve_account_id(const char *dir, char out[NH_IDENTITY_UUID_CAP]) 
   nh_identity_account acct;
   NH_CHECK(nh_identity_store_lookup_by_name(store, "n_bob", &acct)
            == NH_IDENTITY_OK);
-  strncpy(out, acct.account_id, NH_IDENTITY_UUID_CAP - 1);
+  memcpy(out, acct.account_id, NH_IDENTITY_UUID_CAP);
   out[NH_IDENTITY_UUID_CAP - 1] = '\0';
   nh_identity_store_close(store);
 }

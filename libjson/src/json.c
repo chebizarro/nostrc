@@ -560,6 +560,8 @@ int jansson_filter_deserialize(NostrFilter *filter, json_t *json_obj) {
     json_t *limit_json = json_object_get(json_obj, "limit");
     if (json_is_integer(limit_json)) {
         filter->limit = (int)json_integer_value(limit_json);
+        /* nostrc-pnc7: explicit "limit":0 (no stored events) vs absent. */
+        filter->limit_zero = (filter->limit == 0);
     }
 
     // Deserialize `search`
@@ -568,9 +570,9 @@ int jansson_filter_deserialize(NostrFilter *filter, json_t *json_obj) {
         filter->search = strdup(json_string_value(search_json)); // Make a copy of the string
     }
 
-    // Deserialize `limit_zero`
-    json_t *limit_zero_json = json_object_get(json_obj, "limit_zero");
-    filter->limit_zero = json_is_true(limit_zero_json);
+    /* limit_zero is derived from an explicit "limit":0 above (nostrc-pnc7).
+     * There is no "limit_zero" key in NIP-01; reading one here used to
+     * clobber the flag for every real limit:0 filter. */
 
     return 0; // Success
 }
@@ -628,7 +630,7 @@ json_t *jansson_filter_serialize(const NostrFilter *filter) {
         json_object_set_new(json_obj, "until", json_integer((json_int_t)filter->until));
     }
 
-    if (filter->limit > 0) {
+    if (filter->limit > 0 || filter->limit_zero) {
         json_object_set_new(json_obj, "limit", json_integer(filter->limit));
     }
 

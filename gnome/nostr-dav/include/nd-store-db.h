@@ -95,6 +95,11 @@ gchar *nd_store_db_get_ctag(NdStoreDb        *db,
                             NdStoreCollection collection,
                             GError          **error);
 
+/** created_at for a new local version of a row whose stored version has
+ *  @prev_created_at (0 if none): max(now, prev + 1), so successive local
+ *  edits are strictly increasing even within one second (nostrc-ir7c). */
+gint64 nd_store_next_created_at(gint64 prev_created_at);
+
 /** Whether a row keyed by @key exists (call inside a transaction when
  *  the answer feeds a subsequent write). */
 gboolean nd_store_db_row_exists(NdStoreDb        *db,

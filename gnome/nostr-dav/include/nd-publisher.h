@@ -87,11 +87,32 @@ NdPublisher *nd_publisher_new(NdStoreDb              *db,
 
 void nd_publisher_free(NdPublisher *self);
 
-/** Configures the target set (v1: reuses home_relays) and the quorum. */
+/** Configures the home relays and the quorum. The actual target set is
+ *  home_relays filtered by the upstream mode (nd_publisher_set_upstream()). */
 void nd_publisher_configure(NdPublisher      *self,
                             const gchar      *account_pubkey,
                             const GStrv       home_relays,
                             NdPublishQuorum   quorum);
+
+/**
+ * nd_publisher_set_upstream:
+ * @mode: nostr_dav_upstream_mode (default SESSION_RELAY_OR_DIRECT)
+ * @session_relay_url: (nullable): ND_SESSION_RELAY_URL when the session
+ *   relay socket exists, else NULL
+ *
+ * Enforces the upstream mode on publishes (nostrc-862u) through
+ * nostr_publish_policy_select_targets(). SESSION_RELAY_ONLY never
+ * publishes to home relays — not even for rows staged earlier under a
+ * wider mode — and with no session relay the publisher is *held*: rows
+ * stay pending locally, nd_publisher_tick() dispatches nothing and no
+ * failure is reported, until a later call supplies the session relay.
+ */
+void nd_publisher_set_upstream(NdPublisher    *self,
+                               NdUpstreamMode  mode,
+                               const gchar    *session_relay_url);
+
+/** TRUE while held (see nd_publisher_set_upstream()). */
+gboolean nd_publisher_is_held(NdPublisher *self);
 
 void nd_publisher_set_notify_callback(NdPublisher              *self,
                                       NdPublisherNotifyCallback cb,

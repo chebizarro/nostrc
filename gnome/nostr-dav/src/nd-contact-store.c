@@ -53,6 +53,29 @@ bind_text_or_null(sqlite3_stmt *stmt, int idx, const gchar *value)
     sqlite3_bind_null(stmt, idx);
 }
 
+static gboolean
+lookup_created_at(NdStoreDb *db, const gchar *uid, gboolean *out_exists,
+                  gint64 *out_created_at, GError **error)
+{
+  sqlite3 *h = nd_store_db_get_handle(db);
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(h, "SELECT created_at FROM contacts WHERE uid = ?1",
+                         -1, &stmt, NULL) != SQLITE_OK) {
+    nd_store_db_set_sql_error(db, error, "prepare contact created_at lookup");
+    return FALSE;
+  }
+  sqlite3_bind_text(stmt, 1, uid, -1, SQLITE_TRANSIENT);
+  int rc = sqlite3_step(stmt);
+  *out_exists = (rc == SQLITE_ROW);
+  *out_created_at = (rc == SQLITE_ROW) ? sqlite3_column_int64(stmt, 0) : 0;
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_ROW && rc != SQLITE_DONE) {
+    nd_store_db_set_sql_error(db, error, "contact created_at lookup");
+    return FALSE;
+  }
+  return TRUE;
+}
+
 NdContactStore *
 nd_contact_store_new(NdStoreDb *db)
 {
@@ -71,25 +94,33 @@ nd_contact_store_free(NdContactStore *store)
 }
 
 gboolean
-nd_contact_store_put(NdContactStore  *store,
-                     const NdContact *contact,
-                     gboolean        *out_created,
-                     GError         **error)
+nd_contact_store_put(NdContactStore *store,
+                     NdContact      *contact,
+                     gboolean       *out_created,
+                     GError        **error)
 {
   g_return_val_if_fail(store != NULL, FALSE);
   g_return_val_if_fail(contact != NULL && contact->uid != NULL, FALSE);
 
   sqlite3 *h = nd_store_db_get_handle(store->db);
-  g_autofree gchar *vcard = nd_vcard_generate(contact);
-  g_autofree gchar *etag = nd_vcard_compute_etag(contact);
+  g_autofree gchar *vcard = NULL;
+  g_autofree gchar *etag = NULL;
   gboolean existed = FALSE;
+  gint64 prev_created_at = 0;
 
   if (!nd_store_db_begin(store->db, error))
     return FALSE;
 
-  if (!nd_store_db_row_exists(store->db, ND_STORE_COLLECTION_CONTACTS,
-                              contact->uid, &existed, error))
+  if (!lookup_created_at(store->db, contact->uid, &existed, &prev_created_at,
+                         error))
     goto fail;
+
+  /* nostrc-ir7c: see nd_calendar_store_put(). */
+  if (contact->created_at <= 0)
+    contact->created_at = nd_store_next_created_at(prev_created_at);
+
+  vcard = nd_vcard_generate(contact);
+  etag = nd_vcard_compute_etag(contact);
 
   sqlite3_stmt *stmt = NULL;
   if (sqlite3_prepare_v2(h,

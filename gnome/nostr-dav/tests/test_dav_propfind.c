@@ -21,6 +21,7 @@
 #include <libxml/xpath.h>
 #include <libxml/xpathInternals.h>
 #include <string.h>
+#include <time.h>
 
 /* ---- Test fixtures ---- */
 
@@ -443,6 +444,23 @@ test_put_event_updates(DavFixture *f, gconstpointer data)
   g_autoptr(SoupMessage) msg2 = make_put_ics(url, TEST_ICS_DATE_EVENT);
   g_autoptr(GBytes) body2 = send_msg(f, msg2);
   g_assert_cmpuint(soup_message_get_status(msg2), ==, 204);
+
+  /* nostrc-ir7c: every edit gets a new created_at, so the per-resource
+   * ETag changes and GET reports the ETag the PUT returned. */
+  const gchar *etag1 = soup_message_headers_get_one(
+    soup_message_get_response_headers(msg1), "ETag");
+  const gchar *etag2 = soup_message_headers_get_one(
+    soup_message_get_response_headers(msg2), "ETag");
+  g_assert_nonnull(etag1);
+  g_assert_nonnull(etag2);
+  g_assert_cmpstr(etag1, !=, etag2);
+
+  g_autoptr(SoupMessage) get_msg = soup_message_new("GET", url);
+  g_autoptr(GBytes) get_body = send_msg(f, get_msg);
+  g_assert_cmpuint(soup_message_get_status(get_msg), ==, 200);
+  g_assert_cmpstr(soup_message_headers_get_one(
+                    soup_message_get_response_headers(get_msg), "ETag"),
+                  ==, etag2);
 }
 
 static void
@@ -818,6 +836,58 @@ test_ical_nip52_roundtrip(void)
   nd_calendar_event_free(event2);
 }
 
+/* nostrc-w8y1: RFC 5545 §3.3.5 — a TZID parameter must carry local time
+ * (no trailing Z); UTC with Z only when there is no TZID. The parser must
+ * read TZID local time in that zone, not in the daemon's own zone. */
+static void
+test_ical_tzid_local_time(void)
+{
+  GTimeZone *ny = NULL;
+#if GLIB_CHECK_VERSION(2, 68, 0)
+  ny = g_time_zone_new_identifier("America/New_York");
+#endif
+  if (ny == NULL) {
+    g_test_skip("tzdata for America/New_York unavailable");
+    return;
+  }
+  g_time_zone_unref(ny);
+
+  /* Parse: 15:00 EDT on 2026-04-22 is 19:00Z, whatever TZ we run in. */
+  const gchar *saved_tz = g_getenv("TZ");
+  g_autofree gchar *saved = g_strdup(saved_tz);
+  g_setenv("TZ", "Asia/Tokyo", TRUE);
+  tzset();
+  GError *err = NULL;
+  NdCalendarEvent *event = nd_ical_parse_vevent(TEST_ICS_TIME_EVENT, &err);
+  g_assert_no_error(err);
+  g_assert_cmpint(event->dtstart_ts, ==, 1776884400);
+  g_assert_cmpint(event->dtend_ts, ==, 1776888000);
+
+  /* Generate: local time under TZID, never TZID + Z. */
+  g_autofree gchar *ics = nd_ical_generate_vevent(event);
+  g_assert_nonnull(strstr(ics, "DTSTART;TZID=America/New_York:20260422T150000\r\n"));
+  g_assert_nonnull(strstr(ics, "DTEND;TZID=America/New_York:20260422T160000\r\n"));
+  g_assert_null(strstr(ics, "20260422T150000Z"));
+
+  /* Round trip keeps the instant and the zone. */
+  NdCalendarEvent *again = nd_ical_parse_vevent(ics, &err);
+  g_assert_no_error(err);
+  g_assert_cmpint(again->dtstart_ts, ==, event->dtstart_ts);
+  g_assert_cmpstr(again->start_tzid, ==, "America/New_York");
+  nd_calendar_event_free(again);
+
+  /* No TZID: UTC with Z. */
+  g_clear_pointer(&event->start_tzid, g_free);
+  g_clear_pointer(&event->end_tzid, g_free);
+  g_autofree gchar *utc_ics = nd_ical_generate_vevent(event);
+  g_assert_nonnull(strstr(utc_ics, "DTSTART:20260422T190000Z\r\n"));
+  g_assert_null(strstr(utc_ics, "TZID="));
+  nd_calendar_event_free(event);
+
+  if (saved) g_setenv("TZ", saved, TRUE); else g_unsetenv("TZ");
+  tzset();
+}
+
 static void
 test_ical_etag_stable(void)
 {
@@ -932,6 +1002,22 @@ test_carddav_put_updates(DavFixture *f, gconstpointer data)
   g_autoptr(SoupMessage) msg2 = make_put_vcard(url, TEST_VCARD_SIMPLE);
   g_autoptr(GBytes) body2 = send_msg(f, msg2);
   g_assert_cmpuint(soup_message_get_status(msg2), ==, 204);
+
+  /* nostrc-ir7c: the ETag changes on edit and GET agrees with the PUT. */
+  const gchar *etag1 = soup_message_headers_get_one(
+    soup_message_get_response_headers(msg1), "ETag");
+  const gchar *etag2 = soup_message_headers_get_one(
+    soup_message_get_response_headers(msg2), "ETag");
+  g_assert_nonnull(etag1);
+  g_assert_nonnull(etag2);
+  g_assert_cmpstr(etag1, !=, etag2);
+
+  g_autoptr(SoupMessage) get_msg = soup_message_new("GET", url);
+  g_autoptr(GBytes) get_body = send_msg(f, get_msg);
+  g_assert_cmpuint(soup_message_get_status(get_msg), ==, 200);
+  g_assert_cmpstr(soup_message_headers_get_one(
+                    soup_message_get_response_headers(get_msg), "ETag"),
+                  ==, etag2);
 }
 
 static void
@@ -1638,6 +1724,7 @@ main(int argc, char *argv[])
   g_test_add_func("/ical/roundtrip-ics", test_ical_roundtrip_ics);
   g_test_add_func("/ical/nip52-roundtrip", test_ical_nip52_roundtrip);
   g_test_add_func("/ical/etag-stable", test_ical_etag_stable);
+  g_test_add_func("/ical/tzid-local-time", test_ical_tzid_local_time);
   g_test_add_func("/ical/reject-rrule", test_ical_reject_rrule);
 
   /* CardDAV contact lifecycle */

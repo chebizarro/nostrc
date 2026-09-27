@@ -550,6 +550,13 @@ nd_store_db_get_ctag(NdStoreDb        *db,
   return g_strdup_printf("%" G_GINT64_FORMAT, generation);
 }
 
+gint64
+nd_store_next_created_at(gint64 prev_created_at)
+{
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  return MAX(now, prev_created_at + 1);
+}
+
 gboolean
 nd_store_db_row_exists(NdStoreDb        *db,
                        NdStoreCollection collection,

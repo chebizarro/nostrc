@@ -13,8 +13,8 @@ int main(void) {
   char *client_sk = nostr_key_generate_private();
   char *client_pub = nostr_key_get_public(client_sk);
   if(!wallet_sk||!wallet_pk||!client_sk||!client_pub){ fprintf(stderr, "keygen failed\n"); return 1; }
-  const char *client_supported[] = {"nip44-v2", "nip04"};
-  const char *wallet_supported[] = {"nip04", "nip44-v2"};
+  const char *client_supported[] = {"nip44_v2", "nip04"};
+  const char *wallet_supported[] = {"nip04", "nip44_v2"};
 
   NostrNwcWalletSession s = {0};
   if (nostr_nwc_wallet_session_init(&s, client_pub,
@@ -24,7 +24,7 @@ int main(void) {
     return 1;
   }
 
-  printf("negotiated enc: %s\n", s.enc == NOSTR_NWC_ENC_NIP44_V2 ? "nip44-v2" : "nip04");
+  printf("negotiated enc: %s\n", s.enc == NOSTR_NWC_ENC_NIP44_V2 ? "nip44_v2" : "nip04");
 
   // Demonstrate encrypt/decrypt helpers (wallet <-> client)
   NostrNwcClientSession cs = { .wallet_pub_hex = wallet_pk, .enc = s.enc };

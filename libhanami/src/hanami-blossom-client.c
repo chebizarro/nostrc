@@ -202,7 +202,7 @@ static char *json_escape_string(const char *str)
     for (const char *p = str; *p; p++) {
         if (*p == '"' || *p == '\\')
             len += 2; /* \" or \\ */
-        else if (*p >= 0x00 && *p <= 0x1F)
+        else if ((unsigned char)*p <= 0x1F)
             len += 6; /* \uXXXX */
         else
             len += 1;
@@ -220,7 +220,7 @@ static char *json_escape_string(const char *str)
         } else if (*p == '\\') {
             *out++ = '\\';
             *out++ = '\\';
-        } else if (*p >= 0x00 && *p <= 0x1F) {
+        } else if ((unsigned char)*p <= 0x1F) {
             /* Escape control chars as \uXXXX */
             sprintf(out, "\\u%04x", (unsigned char)*p);
             out += 6;

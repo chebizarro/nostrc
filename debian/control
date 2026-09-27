@@ -73,6 +73,22 @@ Description: Nostr protocol implementation for C -- development files
  Development files for libnostr: headers under /usr/include/nostr/ and
  the nostr.pc pkg-config metadata for the GLib-free (headless) ABI.
 
+Package: libnostr-nips0
+Section: libs
+Architecture: any
+Multi-Arch: same
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Nostr NIP helper libraries for C (shared)
+ Shared NIP libraries built on libnostr that more than one nostrc
+ program links, shipped once in a single aggregate package (packaging
+ plan decision D-6): libnip19.so.0 (NIP-19 bech32 entities: npub, nsec,
+ note, nprofile, nevent, naddr, nrelay) and libnip34.so.0 (NIP-34 git
+ collaboration events).
+ .
+ Consumers include nostr-notify, nostr-share, nostr-settings and
+ libhanami0. Pre-1.0: no ABI stability promise beyond the SONAME.
+
 Package: libnostrgo0
 Section: libs
 Architecture: any

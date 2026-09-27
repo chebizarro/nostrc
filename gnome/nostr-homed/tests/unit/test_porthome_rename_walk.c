@@ -27,6 +27,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include "../nh_test_fs.h"
 
 #define FAIL(...) do { fprintf(stderr, "FAIL: " __VA_ARGS__); fprintf(stderr, "\n"); return 1; } while (0)
 #define ASSERT(cond) do { if (!(cond)) FAIL("%s:%d %s", __FILE__, __LINE__, #cond); } while (0)
@@ -164,8 +165,7 @@ static int test_flat_rename(void) {
 
     close(base);
     /* Best-effort cleanup. */
-    char rm[256]; snprintf(rm, sizeof rm, "rm -rf %s", tmp);
-    (void)system(rm);
+    nh_test_rm_rf(tmp);
     nh_porthome_manifest_dispose(&m);
     fprintf(stderr, "ok: flat rename walk (2 files)\n");
     return 0;
@@ -226,8 +226,7 @@ static int test_nested_rename(void) {
     ASSERT_EQ(strcmp(buf, "deep!"), 0);
 
     close(base);
-    char rm[256]; snprintf(rm, sizeof rm, "rm -rf %s", tmp);
-    (void)system(rm);
+    nh_test_rm_rf(tmp);
     nh_porthome_manifest_dispose(&m);
     fprintf(stderr, "ok: nested rename walk (3-deep)\n");
     return 0;
@@ -272,8 +271,7 @@ static int test_collision_refused(void) {
     ASSERT(rc == NH_PORTHOME_ERR_PATH);
 
     close(base);
-    char rmc[256]; snprintf(rmc, sizeof rmc, "rm -rf %s", tmp);
-    (void)system(rmc);
+    nh_test_rm_rf(tmp);
     nh_porthome_manifest_dispose(&m);
     fprintf(stderr, "ok: collision refused (rc=%d)\n", rc);
     return 0;

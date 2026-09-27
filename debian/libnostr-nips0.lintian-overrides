@@ -1,0 +1,3 @@
+# One aggregate package for the shared NIP libraries (packaging plan D-6):
+# it deliberately carries two SONAMEs, so the name cannot match either.
+libnostr-nips0: package-name-doesnt-match-sonames libnip19-0 libnip34-0

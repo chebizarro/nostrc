@@ -17,7 +17,7 @@ extern "C" {
  * @created_at: timestamp to set (use 0 to auto-fill with current time)
  * @methods: array of supported method strings
  * @methods_count: number of items in @methods
- * @encryptions: array of supported encryption labels (e.g. "nip44-v2", "nip04")
+ * @encryptions: array of supported encryption labels (e.g. "nip44_v2", "nip04"); emitted as one space-separated `encryption` tag per NIP-47
  * @enc_count: number of items in @encryptions
  * @notifications: whether notifications are supported (adds a tag)
  * @out_event_json: result JSON string (caller frees)

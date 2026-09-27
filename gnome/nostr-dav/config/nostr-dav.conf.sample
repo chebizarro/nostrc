@@ -14,12 +14,20 @@
 #
 #   session_relay_only       Only the session-local relay
 #                            ($XDG_RUNTIME_DIR/nostr/relay.sock). Never
-#                            contact the account's home relays directly;
-#                            if the session relay is down, sync pauses.
-#   session_relay_or_direct  Prefer the session relay; fall back to the
-#                            account's home relays once reconnect backoff
-#                            is exhausted. (default)
+#                            contact the account's home relays. If the
+#                            socket is missing, publish and sync are held:
+#                            DAV edits stay local (pending) until it
+#                            appears (checked every 30 s).
+#   session_relay_or_direct  Use the session relay when its socket exists,
+#                            otherwise the account's home relays. (default)
 #   direct_only              Talk to the account's home relays directly.
+#
+# NOTE: the session relay does not forward to your home relays yet
+# (nostrc-7d96). In the two session-relay modes, events you create stay in
+# the local session relay (nothing is lost, but other devices will not see
+# them) and inbound sync only sees what that relay already holds. Choose
+# direct_only if you need your home relays today. nostr-dav logs which
+# relays it uses at start-up.
 #
 #nostr_dav_upstream_mode=session_relay_or_direct
 

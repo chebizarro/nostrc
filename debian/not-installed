@@ -6,10 +6,12 @@ usr/bin/nostr-signer-cli
 usr/bin/nostr-signer-daemon
 usr/share/dbus-1/services/org.nostr.Signer.service
 
-# NIP libraries are aggregated (D-6): the plan calls for folding them
-# into libnostr1 or a single libnostr-nips0 package, not per-NIP debs.
-# Phase 1 does not ship them. Use ${DEB_HOST_MULTIARCH} wildcards so
-# the list is arch-agnostic (see debhelper #961104).
+# NIP libraries (D-6): the shared ones a shipped binary links (libnip19,
+# libnip34) have SONAMEs and ship once in libnostr-nips0 (nostrc-4c0o);
+# their headers ride in libnostr-dev (usr/include/nostr/). Everything
+# below is either unused by shipped binaries or only needed by packages
+# not built yet (nip55l: nostr-signer-daemon). Use ${DEB_HOST_MULTIARCH}
+# wildcards so the list is arch-agnostic (see debhelper #961104).
 usr/include/nip40.h
 usr/lib/libnip04.a
 usr/lib/libnip05.so
@@ -17,6 +19,11 @@ usr/lib/libnip25.so
 usr/lib/libnostr_nip77.a
 usr/lib/*/libnostr_nip55l_core.so
 usr/lib/*/libnostr_nip55l_glib.so
+# No libnostr-nips-dev yet: these unversioned link-time symlinks are
+# listed on purpose so dh_missing enforces that choice. Ship a -dev only
+# when a third-party consumer appears (packaging plan D-6 / §5).
+usr/lib/*/libnip19.so
+usr/lib/*/libnip34.so
 
 # nostrc-t58t: upstream now gates the test_relay_eose install rule on
 # BUILD_TESTING (tools/CMakeLists.txt), and the porthome-common CLI is

@@ -127,10 +127,37 @@ ics_date_to_iso(const gchar *ics_date)
 }
 
 /**
+ * Resolve an iCalendar TZID to a GTimeZone. Only IANA identifiers resolve;
+ * anything else (custom VTIMEZONE names, Windows zone names) yields NULL and
+ * the caller falls back to floating (process-local) time as before.
+ */
+static GTimeZone *
+tz_from_tzid(const gchar *tzid)
+{
+  if (tzid == NULL || *tzid == '\0')
+    return NULL;
+#if GLIB_CHECK_VERSION(2, 68, 0)
+  return g_time_zone_new_identifier(tzid);
+#else
+  /* g_time_zone_new() silently returns UTC for unknown identifiers. */
+  GTimeZone *tz = g_time_zone_new(tzid);
+  if (g_strcmp0(g_time_zone_get_identifier(tz), tzid) != 0) {
+    g_time_zone_unref(tz);
+    return NULL;
+  }
+  return tz;
+#endif
+}
+
+/**
  * Parse ICS datetime value (YYYYMMDDTHHMMSS[Z]) to Unix timestamp.
+ *
+ * RFC 5545 §3.3.5: a trailing Z is UTC; otherwise the value is local time
+ * in @tzid when given (nostrc-w8y1: previously the TZID was ignored and the
+ * value read in the daemon's own zone), or floating time without one.
  */
 static gint64
-ics_datetime_to_timestamp(const gchar *ics_dt)
+ics_datetime_to_timestamp(const gchar *ics_dt, const gchar *tzid)
 {
   if (ics_dt == NULL || strlen(ics_dt) < 15) return 0;
 
@@ -159,12 +186,23 @@ ics_datetime_to_timestamp(const gchar *ics_dt)
 
   gboolean utc = (strlen(ics_dt) >= 16 && ics_dt[15] == 'Z');
 
-  if (utc) {
+  if (utc)
     return (gint64)timegm(&tm);
-  } else {
-    tm.tm_isdst = -1;
-    return (gint64)mktime(&tm);
+
+  GTimeZone *tz = tz_from_tzid(tzid);
+  if (tz != NULL) {
+    GDateTime *dt = g_date_time_new(tz, tm.tm_year + 1900, tm.tm_mon + 1,
+                                    tm.tm_mday, tm.tm_hour, tm.tm_min,
+                                    (gdouble)tm.tm_sec);
+    g_time_zone_unref(tz);
+    if (dt != NULL) {
+      gint64 ts = g_date_time_to_unix(dt);
+      g_date_time_unref(dt);
+      return ts;
+    }
   }
+  tm.tm_isdst = -1;
+  return (gint64)mktime(&tm);
 }
 
 /**
@@ -189,6 +227,35 @@ timestamp_to_ics_utc(gint64 ts)
   struct tm tm;
   gmtime_r(&t, &tm);
   return g_strdup_printf("%04d%02d%02dT%02d%02d%02dZ",
+                         tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                         tm.tm_hour, tm.tm_min, tm.tm_sec);
+}
+
+/**
+ * Convert Unix timestamp to an ICS local datetime (YYYYMMDDTHHMMSS, no Z)
+ * in @tzid — the only form RFC 5545 §3.3.5 allows alongside a TZID
+ * parameter (nostrc-w8y1). An unresolvable TZID formats process-local time,
+ * the exact inverse of ics_datetime_to_timestamp()'s floating fallback, so
+ * the stored ICS still round-trips and keeps its TZID.
+ */
+static gchar *
+timestamp_to_ics_local(gint64 ts, const gchar *tzid)
+{
+  GTimeZone *tz = tz_from_tzid(tzid);
+  if (tz != NULL) {
+    GDateTime *utc = g_date_time_new_from_unix_utc(ts);
+    GDateTime *local = utc ? g_date_time_to_timezone(utc, tz) : NULL;
+    gchar *out = local ? g_date_time_format(local, "%Y%m%dT%H%M%S") : NULL;
+    if (local) g_date_time_unref(local);
+    if (utc) g_date_time_unref(utc);
+    g_time_zone_unref(tz);
+    if (out != NULL)
+      return out;
+  }
+  time_t t = (time_t)ts;
+  struct tm tm;
+  localtime_r(&t, &tm);
+  return g_strdup_printf("%04d%02d%02dT%02d%02d%02d",
                          tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
                          tm.tm_hour, tm.tm_min, tm.tm_sec);
 }
@@ -254,7 +321,7 @@ nd_ical_parse_vevent(const gchar *ics_text, GError **error)
         event->dtstart_date = ics_date_to_iso(val);
       } else {
         event->is_date_only = FALSE;
-        event->dtstart_ts = ics_datetime_to_timestamp(val);
+        event->dtstart_ts = ics_datetime_to_timestamp(val, event->start_tzid);
       }
     } else if (g_str_has_prefix(line, "DTEND")) {
       g_autofree gchar *val = extract_value(line);
@@ -264,7 +331,7 @@ nd_ical_parse_vevent(const gchar *ics_text, GError **error)
           strstr(line, "VALUE=DATE") != NULL) {
         event->dtend_date = ics_date_to_iso(val);
       } else {
-        event->dtend_ts = ics_datetime_to_timestamp(val);
+        event->dtend_ts = ics_datetime_to_timestamp(val, event->end_tzid);
       }
     } else if (g_str_has_prefix(line, "LOCATION")) {
       g_free(event->location);
@@ -357,7 +424,8 @@ nd_ical_generate_vevent(const NdCalendarEvent *event)
   } else {
     if (event->dtstart_ts > 0) {
       if (event->start_tzid) {
-        g_autofree gchar *dt = timestamp_to_ics_utc(event->dtstart_ts);
+        g_autofree gchar *dt = timestamp_to_ics_local(event->dtstart_ts,
+                                                      event->start_tzid);
         g_string_append_printf(ics, "DTSTART;TZID=%s:%s\r\n",
                                event->start_tzid, dt);
       } else {
@@ -367,7 +435,8 @@ nd_ical_generate_vevent(const NdCalendarEvent *event)
     }
     if (event->dtend_ts > 0) {
       if (event->end_tzid) {
-        g_autofree gchar *dt = timestamp_to_ics_utc(event->dtend_ts);
+        g_autofree gchar *dt = timestamp_to_ics_local(event->dtend_ts,
+                                                      event->end_tzid);
         g_string_append_printf(ics, "DTEND;TZID=%s:%s\r\n",
                                event->end_tzid, dt);
       } else {
@@ -426,9 +495,12 @@ nd_ical_event_to_nip52_json(const NdCalendarEvent *event)
   json_builder_set_member_name(b, "content");
   json_builder_add_string_value(b, event->description ? event->description : "");
 
-  /* created_at */
+  /* created_at: the stored row's value (stamped at DAV PUT, nostrc-ir7c) so
+   * the signed event, the row's LWW guard and the ETag agree. Fall back to
+   * now only for rows predating the stamping. */
   json_builder_set_member_name(b, "created_at");
-  json_builder_add_int_value(b, (gint64)time(NULL));
+  json_builder_add_int_value(b, event->created_at > 0 ? event->created_at
+                                                      : (gint64)time(NULL));
 
   /* tags */
   json_builder_set_member_name(b, "tags");

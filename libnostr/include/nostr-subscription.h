@@ -28,6 +28,9 @@ typedef struct NostrSubscription {
 
 
 /* GI-facing API (stable symbol names) */
+/* nostr_subscription_new: create a subscription on @relay. It is registered
+ * for EVENT/EOSE/CLOSED dispatch the first time nostr_subscription_fire() runs
+ * (nostr_relay_prepare_subscription() registers it immediately). */
 NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filters);
 void               nostr_subscription_free(NostrSubscription *sub);
 

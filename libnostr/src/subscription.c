@@ -134,6 +134,7 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     sub->priv->eosed = false;
     sub->priv->closed = false;
     sub->priv->unsubbed = false;
+    atomic_store(&sub->priv->registered, false);
     atomic_store(&sub->priv->events_channel_closed, false);
     atomic_store(&sub->priv->last_seen_created_at, 0);
 
@@ -642,11 +643,30 @@ bool nostr_subscription_subscribe(NostrSubscription *sub, NostrFilters *filters,
     return true;
 }
 
+void nostr_subscription_register_with_relay(NostrSubscription *sub) {
+    if (!sub || !sub->priv || !sub->relay || !sub->relay->subscriptions)
+        return;
+    bool expected = false;
+    if (!atomic_compare_exchange_strong(&sub->priv->registered, &expected, true))
+        return; /* already registered (or registered then removed): never re-insert */
+    /* Same lock relay_get_subscription_ref() and the map-remove in teardown use. */
+    nsync_mu_lock(&sub->relay->priv->mutex);
+    go_hash_map_insert_int(sub->relay->subscriptions, sub->priv->counter, sub);
+    nsync_mu_unlock(&sub->relay->priv->mutex);
+}
+
 bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
-    if (!subscription || !subscription->relay->connection) {
+    if (!subscription || !subscription->relay || !subscription->relay->connection) {
         if (err) *err = new_error(1, "subscription or connection is NULL");
         return false;
     }
+
+    /* nostrc-prqu.4: subscriptions created directly with nostr_subscription_new()
+     * were never inserted into relay->subscriptions, so message_loop could not
+     * route the relay's EVENT/EOSE/CLOSED frames to them. Register before the
+     * REQ goes out so no reply can arrive ahead of the map entry. No-op for
+     * subscriptions from nostr_relay_prepare_subscription(). */
+    nostr_subscription_register_with_relay(subscription);
 
     /* Snapshot the filters pointer to prevent TOCTOU race (nostrc-m13c).
      * Another thread could NULL subscription->filters between our check and use.

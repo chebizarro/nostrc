@@ -14,6 +14,26 @@ static char *sa_strdup(const char *s) {
     return p;
 }
 
+/* Make room for at least @needed elements. nostrc-6tuz: never derive the
+ * new capacity by doubling 0 (a zero-initialised StringArray), and keep
+ * `capacity` truthful for every growth path (the variadic helpers used to
+ * grow `data` without updating it, so a later add could "double" a stale
+ * capacity below `size` and write past the block). */
+static void sa_reserve(StringArray *array, size_t needed) {
+    if (needed <= array->capacity && array->data)
+        return;
+    size_t cap = array->capacity ? array->capacity : STRING_ARRAY_INITIAL_CAPACITY;
+    while (cap < needed)
+        cap *= 2;
+    char **data = realloc(array->data, cap * sizeof(char *));
+    if (!data) {
+        fprintf(stderr, "Failed to reallocate memory for StringArray\n");
+        exit(EXIT_FAILURE);
+    }
+    array->data = data;
+    array->capacity = cap;
+}
+
 StringArray *new_string_array(int capacity) {
     StringArray *array = (StringArray *)malloc(sizeof(StringArray));
     if (capacity == 0) {
@@ -39,7 +59,7 @@ void string_array_init_with(StringArray *arr, ...) {
 
     const char *str;
     while ((str = va_arg(args, const char *)) != NULL) {
-        arr->data = realloc(arr->data, (arr->size + 1) * sizeof(char *));
+        sa_reserve(arr, arr->size + 1);
         arr->data[arr->size] = sa_strdup(str); // Duplicate the string
         arr->size++;
     }
@@ -49,15 +69,7 @@ void string_array_init_with(StringArray *arr, ...) {
 
 // Append a string to the array, resizing if necessary
 void string_array_add(StringArray *array, const char *value) {
-    if (array->size >= array->capacity) {
-        // Resize the array (double the capacity)
-        array->capacity *= 2;
-        array->data = realloc(array->data, array->capacity * sizeof(char *));
-        if (!array->data) {
-            fprintf(stderr, "Failed to reallocate memory for StringArray\n");
-            exit(EXIT_FAILURE);
-        }
-    }
+    sa_reserve(array, array->size + 1);
     array->data[array->size++] = sa_strdup(value); // Use local strdup to allocate a copy of the string
 }
 
@@ -68,7 +80,7 @@ void string_array_add_many(StringArray *arr, ...) {
 
     const char *str;
     while ((str = va_arg(args, const char *)) != NULL) {
-        arr->data = realloc(arr->data, (arr->size + 1) * sizeof(char *));
+        sa_reserve(arr, arr->size + 1);
         arr->data[arr->size] = sa_strdup(str); // Duplicate the string
         arr->size++;
     }

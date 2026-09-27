@@ -9,7 +9,7 @@
 #include "libnostr/include/nostr-event.h"
 #include "libnostr/include/nostr-tag.h"
 #include "libnostr/include/nostr-json.h"
-#include "third_party/nostrdb/deps/flatcc/include/flatcc/portable/pbase64.h"
+#include <openssl/evp.h>
 
 static char *sha256_hex(const char *data) {
   unsigned char dg[SHA256_DIGEST_LENGTH];
@@ -21,15 +21,22 @@ static char *sha256_hex(const char *data) {
   return hex;
 }
 
+/* Unpadded base64url (what nip86's b64url_decode expects). Uses OpenSSL,
+ * which the test already links, instead of the vendored nostrdb flatcc
+ * header that is absent when nostrdb is not checked out (nostrc-xw95). */
 static char *base64url_encode(const char *input) {
   size_t inlen = strlen(input);
-  size_t outlen = base64_encoded_size(inlen, base64_mode_url);
-  uint8_t *out = (uint8_t*)malloc(outlen+1);
-  size_t src_len = inlen; size_t dst_len = outlen;
-  int rc = base64_encode(out, (const uint8_t*)input, &dst_len, &src_len, base64_mode_url);
-  if (rc != 0) { free(out); return NULL; }
-  out[dst_len] = '\0';
-  return (char*)out;
+  char *out = (char*)malloc(4 * ((inlen + 2) / 3) + 1);
+  if (!out) return NULL;
+  int n = EVP_EncodeBlock((unsigned char*)out, (const unsigned char*)input, (int)inlen);
+  if (n < 0) { free(out); return NULL; }
+  while (n > 0 && out[n-1] == '=') n--;
+  out[n] = '\0';
+  for (int i = 0; i < n; i++) {
+    if (out[i] == '+') out[i] = '-';
+    else if (out[i] == '/') out[i] = '_';
+  }
+  return out;
 }
 
 static char *build_auth_header(const char *url, const char *method, const char *json_body, const char *sk_hex) {

@@ -372,7 +372,8 @@ hanami_error_t hanami_clone(git_repository **out,
     git_object *head_obj = NULL;
     if (git_repository_head(&head_ref, local_repo) == 0) {
         if (git_reference_peel(&head_obj, head_ref, GIT_OBJECT_COMMIT) == 0) {
-            git_checkout_options co_opts = GIT_CHECKOUT_OPTIONS_INIT;
+            git_checkout_options co_opts;
+            git_checkout_options_init(&co_opts, GIT_CHECKOUT_OPTIONS_VERSION);
             co_opts.checkout_strategy = GIT_CHECKOUT_FORCE;
             git_checkout_tree(local_repo, head_obj, &co_opts);
             git_object_free(head_obj);
@@ -431,9 +432,9 @@ static int push_upload_object_cb(const git_oid *oid, void *payload)
         char oid_hex[65];
         git_oid_tostr(oid_hex, sizeof(oid_hex), oid);
         hanami_index_entry_t entry = {0};
-        strncpy(entry.git_oid, oid_hex, sizeof(entry.git_oid) - 1);
-        strncpy(entry.blossom_hash, blossom_hash,
-                sizeof(entry.blossom_hash) - 1);
+        snprintf(entry.git_oid, sizeof(entry.git_oid), "%s", oid_hex);
+        snprintf(entry.blossom_hash, sizeof(entry.blossom_hash), "%s",
+                 blossom_hash);
         entry.type = git_odb_object_type(obj);
         entry.size = size;
         entry.timestamp = (int64_t)time(NULL);

@@ -19,10 +19,13 @@ typedef struct _NdContactStore NdContactStore;
 NdContactStore *nd_contact_store_new(NdStoreDb *db);
 void nd_contact_store_free(NdContactStore *store);
 
-gboolean nd_contact_store_put(NdContactStore  *store,
-                              const NdContact *contact,
-                              gboolean        *out_created,
-                              GError         **error);
+/* Same created_at stamping contract as nd_calendar_store_put(): 0 means
+ * "local write" and is replaced (in @contact too) by
+ * nd_store_next_created_at(previous) (nostrc-ir7c). */
+gboolean nd_contact_store_put(NdContactStore *store,
+                              NdContact      *contact,
+                              gboolean       *out_created,
+                              GError        **error);
 NdContact *nd_contact_store_get(NdContactStore *store,
                                 const gchar    *uid,
                                 GError        **error);

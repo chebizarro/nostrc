@@ -60,13 +60,6 @@
 
 #define CHUNK_SIZE (4u * 1024u * 1024u)
 
-static void die(int code, const char *fmt, ...) {
-    va_list ap; va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap); fputc('\n', stderr);
-    va_end(ap);
-    exit(code);
-}
-
 /* Real BUD-02 signer for Blossom: parses the kind-24242 auth event
  * JSON built by libhanami, signs it with the operator-supplied nsec
  * via libnostr, and serialises the signed event back. blossom.sharegap.net

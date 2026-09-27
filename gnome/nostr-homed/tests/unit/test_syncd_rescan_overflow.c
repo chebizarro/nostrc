@@ -27,6 +27,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <dirent.h>
+#include "../nh_test_fs.h"
 
 extern int nh_syncd_state_upsert_file_(nh_syncd_state *s,
                                        const char *rel,
@@ -51,18 +52,14 @@ static void write_file(const char *rel, const char *body) {
 
 static void setup_tree(void) {
     snprintf(g_home, sizeof g_home, "/tmp/nh_rescan_home_%d", (int)getpid());
-    char rm[1024];
-    snprintf(rm, sizeof rm, "rm -rf %s", g_home);
-    (void)system(rm);
+    nh_test_rm_rf(g_home);
     assert(mkdir(g_home, 0700) == 0);
     write_file("keep.txt", "keep me\n");
     write_file("also.txt", "still here\n");
 }
 
 static void teardown(void) {
-    char rm[1024];
-    snprintf(rm, sizeof rm, "rm -rf %s", g_home);
-    (void)system(rm);
+    nh_test_rm_rf(g_home);
 }
 
 /* Rebuild `state` from what's on disk RIGHT NOW so its (size, mtime_ns)

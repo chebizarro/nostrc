@@ -15,6 +15,7 @@
 #define ND_CONFIG_H
 
 #include <glib.h>
+#include <nostr-publish/nostr-publish-policy.h>
 
 G_BEGIN_DECLS
 
@@ -30,13 +31,22 @@ typedef enum {
 /**
  * NdUpstreamMode:
  * @ND_UPSTREAM_MODE_SESSION_RELAY_ONLY: only talk to the session-local
- *   relay; never fall back to the account's home relays.
- * @ND_UPSTREAM_MODE_SESSION_RELAY_OR_DIRECT: prefer the session relay;
- *   fall back to home relays once reconnect backoff is exhausted.
+ *   relay; never contact the account's home relays. Without a session
+ *   relay socket, publish and sync are held (DAV edits stay local and
+ *   pending) until the socket appears.
+ * @ND_UPSTREAM_MODE_SESSION_RELAY_OR_DIRECT: use the session relay when
+ *   its socket exists, otherwise the home relays directly.
  * @ND_UPSTREAM_MODE_DIRECT_ONLY: talk to home relays directly.
  *
- * Relay upstream policy (plan Track 2 D4). Consumed by the relay sync
- * layer.
+ * Relay upstream policy (plan Track 2 D4), enforced by both the publisher
+ * (nd_publisher_set_upstream()) and the relay-sync layer
+ * (nd_relay_sync_configure()) through
+ * nostr_publish_policy_select_targets() (nostrc-862u).
+ *
+ * The session relay does not forward to upstream relays yet (nostrc-7d96):
+ * in the session-relay modes, events nostr-dav publishes stay in the local
+ * session relay and inbound sync only sees what that relay already holds.
+ * They are not lost — the daemon logs this at start-up.
  */
 typedef enum {
   ND_UPSTREAM_MODE_SESSION_RELAY_ONLY,
@@ -98,6 +108,24 @@ void nd_config_init_defaults(NdConfig *config);
  *   invalid value.
  */
 gboolean nd_config_load(const gchar *path, NdConfig *config, GError **error);
+
+/* Identity URL of the per-user session relay (same convention as
+ * nostr-share); transports for it dial nd_session_relay_socket_path(). */
+#define ND_SESSION_RELAY_URL "ws://localhost/"
+
+/**
+ * nd_session_relay_socket_path:
+ *
+ * $NOSTR_DAV_SESSION_RELAY_SOCKET if set, else
+ * $XDG_RUNTIME_DIR/nostr/relay.sock.
+ *
+ * Returns: (transfer full) (nullable): the path if it exists and is a
+ *   socket, else NULL.
+ */
+gchar *nd_session_relay_socket_path(void);
+
+/** Maps the config enum onto libnostr-publish's routing policy. */
+NostrPublishUpstream nd_upstream_mode_to_publish(NdUpstreamMode mode);
 
 const gchar *nd_upstream_mode_to_string(NdUpstreamMode mode);
 gboolean nd_upstream_mode_from_string(const gchar    *str,

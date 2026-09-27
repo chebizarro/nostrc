@@ -17,23 +17,20 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include "../nh_test_fs.h"
 
 static char g_home[256];
 
 static void setup_home(void) {
     snprintf(g_home, sizeof g_home, "/tmp/nh_syncd_ignore_%d", (int)getpid());
     /* Best-effort cleanup from a prior aborted run. */
-    char rmcmd[512];
-    snprintf(rmcmd, sizeof rmcmd, "rm -rf %s", g_home);
-    (void)system(rmcmd);
+    nh_test_rm_rf(g_home);
     assert(mkdir(g_home, 0700) == 0);
     /* No user ignore file. */
 }
 
 static void teardown_home(void) {
-    char rmcmd[512];
-    snprintf(rmcmd, sizeof rmcmd, "rm -rf %s", g_home);
-    (void)system(rmcmd);
+    nh_test_rm_rf(g_home);
 }
 
 static void t_static_prefixes(void) {

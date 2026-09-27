@@ -34,7 +34,10 @@ endif()
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_spec_source.c)
   add_executable(test_nip47_spec_source tests/test_spec_source.c)
   target_link_libraries(test_nip47_spec_source PRIVATE nostr_nip47_core)
-  add_test(NAME test_nip47_spec_source COMMAND test_nip47_spec_source)
+  # The test opens nips/nip47/SPEC_SOURCE relative to its cwd; run it from the
+  # repo root so out-of-tree builds find it (nostrc-xw95).
+  add_test(NAME test_nip47_spec_source COMMAND test_nip47_spec_source
+           WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 endif()
 
 # URI tests

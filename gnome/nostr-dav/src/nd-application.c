@@ -65,6 +65,7 @@ struct _NdApplication {
   NdCalendarStore  *cal_store;
   NdContactStore   *contact_store;
   guint             publisher_tick_id;
+  gchar            *session_socket;  /* session relay socket, NULL if absent */
   int               lock_fd;
   int               exit_status;
 };
@@ -175,7 +176,14 @@ static NdRelayTransport *
 session_transport_factory(const gchar *relay_url, gpointer user_data)
 {
   NdApplication *self = user_data;
-  NdRelayTransport *t = nd_relay_transport_new_websocket(relay_url);
+  /* The session relay speaks NIP-01 over WebSocket on an AF_UNIX socket;
+   * ND_SESSION_RELAY_URL is only its identity (nostrc-862u). */
+  NdRelayTransport *t =
+    (self != NULL && self->session_socket != NULL &&
+     g_strcmp0(relay_url, ND_SESSION_RELAY_URL) == 0)
+      ? nostr_publish_transport_new_websocket_unix(relay_url,
+                                                   self->session_socket)
+      : nd_relay_transport_new_websocket(relay_url);
   if (t == NULL)
     return NULL;
 
@@ -198,6 +206,51 @@ session_transport_factory(const gchar *relay_url, gpointer user_data)
   return t;
 }
 
+/* ---- Upstream routing (nostrc-862u) ---- */
+
+static const gchar *
+session_relay_url(NdApplication *self)
+{
+  return self->session_socket != NULL ? ND_SESSION_RELAY_URL : NULL;
+}
+
+/* Apply nostr_dav_upstream_mode + the session relay's presence to both the
+ * publisher and the relay-sync layer. Transports for new targets are
+ * created by relay-sync through session_transport_factory, which binds them
+ * into the publisher, so relay-sync is configured second. */
+static void
+apply_upstream(NdApplication *self)
+{
+  const gchar *session_url = session_relay_url(self);
+  nd_publisher_set_upstream(self->publisher, self->config.upstream_mode,
+                            session_url);
+  nd_relay_sync_configure(self->relay_sync, self->config.account_pubkey,
+                          self->config.home_relays, self->config.upstream_mode,
+                          session_url);
+
+  if (session_url != NULL &&
+      self->config.upstream_mode != ND_UPSTREAM_MODE_DIRECT_ONLY)
+    g_message("nostr-dav: routing via the session relay (%s). It does not "
+              "forward to your home relays yet (nostrc-7d96): published "
+              "events stay in the local session relay and inbound sync sees "
+              "only what it already holds. Use nostr_dav_upstream_mode="
+              "direct_only to reach home relays directly.",
+              self->session_socket);
+}
+
+/* The session relay socket may appear after we started (socket units
+ * normally start at login, but not always first). Pick it up once. */
+static void
+reprobe_session_relay(NdApplication *self)
+{
+  if (self->session_socket != NULL ||
+      self->config.upstream_mode == ND_UPSTREAM_MODE_DIRECT_ONLY)
+    return;
+  self->session_socket = nd_session_relay_socket_path();
+  if (self->session_socket != NULL)
+    apply_upstream(self);
+}
+
 /* ---- Publisher outbox tick ---- */
 
 static gboolean
@@ -206,6 +259,7 @@ publisher_tick(gpointer user_data)
   NdApplication *self = user_data;
   if (self->publisher == NULL)
     return G_SOURCE_REMOVE;
+  reprobe_session_relay(self);
   gint64 now = g_get_real_time() / G_USEC_PER_SEC;
   (void)nd_publisher_tick(self->publisher, now);
   return G_SOURCE_CONTINUE;
@@ -286,10 +340,9 @@ bring_up(NdApplication *self, GError **error)
     self->relay_sync = nd_relay_sync_new(self->db, self->cal_store,
                                           self->contact_store,
                                           session_transport_factory, self);
-    nd_relay_sync_configure(self->relay_sync,
-                            self->config.account_pubkey,
-                            self->config.home_relays,
-                            self->config.upstream_mode);
+    if (self->config.upstream_mode != ND_UPSTREAM_MODE_DIRECT_ONLY)
+      self->session_socket = nd_session_relay_socket_path();
+    apply_upstream(self);
     nd_relay_sync_start(self->relay_sync);
 
     /* Drive the outbox on a periodic tick. Runs on the app's default
@@ -309,8 +362,9 @@ listen:
   g_message("nostr-dav: bearer token file: %s (run `nostr-dav "
             "--show-credentials` to display it)",
             nd_token_store_get_path(self->token_store));
-  g_message("nostr-dav: relay upstream mode: %s",
-            nd_upstream_mode_to_string(self->config.upstream_mode));
+  g_message("nostr-dav: relay upstream mode: %s (session relay %s)",
+            nd_upstream_mode_to_string(self->config.upstream_mode),
+            self->session_socket ? self->session_socket : "not found");
   return TRUE;
 }
 
@@ -344,6 +398,7 @@ tear_down(NdApplication *self)
     nd_contact_store_free(self->contact_store);
     self->contact_store = NULL;
   }
+  g_clear_pointer(&self->session_socket, g_free);
   g_clear_pointer(&self->db, nd_store_db_unref);
   g_clear_pointer(&self->token_store, nd_token_store_free);
   if (self->lock_fd >= 0) {

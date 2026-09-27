@@ -23,8 +23,8 @@ static void test_roundtrip(NostrNwcEncryption enc){
   // Sessions (init to mirror production)
   NostrNwcClientSession cs = {0};
   NostrNwcWalletSession ws = {0};
-  const char *client_supported[] = {"nip44-v2", "nip04"};
-  const char *wallet_supported[] = {"nip04", "nip44-v2"};
+  const char *client_supported[] = {"nip44_v2", "nip04"};
+  const char *wallet_supported[] = {"nip04", "nip44_v2"};
   int rc = nostr_nwc_client_session_init(&cs, wallet_pk,
                                          client_supported, 2,
                                          wallet_supported, 2);

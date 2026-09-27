@@ -8,8 +8,8 @@
 #include "json.h"
 
 int main(void) {
-  const char *client_supported[] = {"nip44-v2", "nip04"};
-  const char *wallet_supported[] = {"nip04", "nip44-v2"};
+  const char *client_supported[] = {"nip44_v2", "nip04"};
+  const char *wallet_supported[] = {"nip04", "nip44_v2"};
   const char *wallet_pub = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const char *client_pub = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
@@ -26,7 +26,7 @@ int main(void) {
                                      client_supported, 2);
   assert(rc == 0);
 
-  /* Both should agree on nip44-v2 */
+  /* Both should agree on nip44_v2 */
   assert(cs.enc == ws.enc);
 
   /* Build a request from client */
