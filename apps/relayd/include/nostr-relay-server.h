@@ -39,14 +39,11 @@ typedef enum {
   NOSTR_RELAY_LISTENER_TCP = 0,
 
   /*
-   * Adopt a pre-bound *listening* file descriptor. This is what the future
-   * per-user session relay will use: systemd hands the daemon a Unix-domain
-   * socket via sd_listen_fds and the daemon passes that fd here rather
-   * than binding its own TCP socket.
-   *
-   * NOTE: full adoption is wired in the session-daemon change (Wave 3);
-   * calling `nostr_relay_server_run()` with this variant today returns
-   * -ENOSYS so callers can already depend on the API shape.
+   * Adopt a pre-bound *listening* Unix-domain socket. This is what the
+   * per-user session relay (nostr-session-relayd) uses: systemd hands the
+   * daemon a socket via sd_listen_fds, or the daemon binds its own under
+   * $XDG_RUNTIME_DIR, and passes that fd here. Peers whose UID differs from
+   * the server's effective UID are rejected at accept.
    */
   NOSTR_RELAY_LISTENER_UNIX_FD = 1,
 } NostrRelayListenerKind;
@@ -61,10 +58,9 @@ typedef struct {
       int port; /* 1..65535 */
     } tcp;
     struct {
-      /* Already-bound listening socket. The server takes over event-loop
-       * ownership of the fd for the duration of run(); it is not closed
-       * on shutdown so systemd can hand the same fd back on the next
-       * activation. */
+      /* Already-bound listening socket. The server services a dup of it
+       * for the duration of run(); the caller's fd is never closed, so
+       * systemd can hand the same fd back on the next activation. */
       int fd;
     } unix_fd;
   } u;
@@ -93,9 +89,8 @@ typedef struct {
  * Run the relay event loop. Blocks until SIGINT/SIGTERM, until `*stop_flag`
  * (if provided) becomes non-zero, or until a fatal startup error.
  *
- * Returns 0 on graceful shutdown; a positive value on fatal startup failure
- * (see fprintf(stderr) for the human-readable cause); -ENOSYS if a listener
- * variant not yet implemented is requested.
+ * Returns 0 on graceful shutdown, or a positive value on fatal startup
+ * failure (see fprintf(stderr) for the human-readable cause).
  *
  * The caller retains ownership of `cfg` and `storage` and is responsible for
  * destroying them after this function returns.

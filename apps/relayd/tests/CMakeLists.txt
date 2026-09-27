@@ -82,6 +82,19 @@ if(UNIX AND NOT APPLE AND NOT CYGWIN)
   )
 endif()
 
+# Real NIP-01 client over relay.sock: RFC 6455 upgrade without a
+# subprotocol, then REQ/EVENT round trips against a storage-less daemon
+# (nostrc-q9ba part 2).
+if(UNIX AND NOT CYGWIN)
+  add_executable(test_session_relay_ws test_session_relay_ws.c)
+  add_test(NAME relayd_session_relay_ws COMMAND test_session_relay_ws)
+  set_tests_properties(relayd_session_relay_ws PROPERTIES
+    TIMEOUT 60
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "NOSTR_SESSION_RELAYD=$<TARGET_FILE:nostr-session-relayd>"
+    LABELS "relay;session-relay;websocket;integration")
+endif()
+
 # org.nostr.SessionRelay1: spawn the real daemon on a private GTestDBus
 # session bus (headless; fallback-binds relay.sock in a temp runtime dir),
 # check GetStats / properties / introspection against the shipped XML and

@@ -8,11 +8,13 @@
  * listening socket is created. See `include/nostr-relay-server.h` for the
  * caller-facing contract.
  */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE /* struct ucred for SO_PEERCRED */
+#endif
 #include "nostr-relay-server.h"
 
 #include <errno.h>
 #include <fcntl.h>
-#include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -56,6 +58,29 @@ static volatile sig_atomic_t s_signal_stop = 0;
 static void handle_stop_signal(int sig) {
   (void)sig;
   s_signal_stop = 1;
+}
+
+/* Set once run() starts tearing the context down, so the Unix listener's
+ * close callback can tell an orderly shutdown from a dead listener. */
+static int s_shutting_down = 0;
+
+/* lws protocol name the pre-bound Unix listen fd is adopted under. */
+#define UNIX_LISTENER_PROTOCOL "nostr-unix-listener"
+
+/* Bound on how long the event loop may sleep inside lws_service(). Since
+ * libwebsockets 3.2 the timeout argument of lws_service() is ignored and
+ * the call sleeps until an lws-owned fd or an lws timer fires, so the loop
+ * schedules this timer to re-check stop_flag and run retention_tick(). */
+#define LOOP_WAKE_US (1000 * LWS_US_PER_MS)
+
+typedef struct {
+  lws_sorted_usec_list_t sul;
+  struct lws_context *context;
+} LoopWake;
+
+static void loop_wake_cb(lws_sorted_usec_list_t *sul) {
+  LoopWake *w = lws_container_of(sul, LoopWake, sul);
+  lws_sul_schedule(w->context, 0, &w->sul, loop_wake_cb, LOOP_WAKE_US);
 }
 
 /* Per-connection HTTP body accumulator for NIP-86 JSON-RPC POST bodies. */
@@ -330,56 +355,134 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
       relayd_nip01_on_receive(wsi, cs, ctx, cs->rx_buffer, message_len);
       break;
     }
-    default: break;
+    default:
+      /* Everything that is not a WebSocket reason is HTTP (NIP-11, CORS,
+       * the NIP-86 body path) or lws housekeeping. http_cb sees user=NULL,
+       * exactly as it did when it owned a zero-sized "http" protocol: the
+       * per-session buffer is a ConnState, not an HttpState. */
+      return http_cb(wsi, reason, NULL, in, len);
   }
   return 0;
 }
 
+static int unix_listener_cb(struct lws *wsi, enum lws_callback_reasons reason,
+                            void *user, void *in, size_t len);
+
+/*
+ * Index 0 is the vhost's default protocol. NIP-01 clients do not send
+ * Sec-WebSocket-Protocol, and libwebsockets binds such an upgrade -- and
+ * every adopted HTTP connection -- to the default protocol. When "http"
+ * sat at index 0, WebSocket clients completed the upgrade but their frames
+ * went to lws_callback_http_dummy(): nostr_cb never ran, so REQ and EVENT
+ * were never answered (nostrc-q9ba). nostr_cb therefore has to be first
+ * and forward HTTP reasons itself.
+ */
 static const struct lws_protocols protocols[] = {
-  { "http", http_cb, 0, 0 },
   { "nostr", nostr_cb, sizeof(ConnState), NOSTR_MAX_FRAME_LEN_BYTES },
+  { UNIX_LISTENER_PROTOCOL, unix_listener_cb, 0, 0 },
   { NULL, NULL, 0, 0 }
 };
 
 /*
- * Try to accept one waiting connection on `listen_fd` and hand it to lws.
- * Returns 1 if a connection was accepted (successfully or not), 0 if the
- * listener had nothing pending (EAGAIN/EWOULDBLOCK), -1 on a fatal listener
- * error that should terminate the loop.
- *
- * The listener fd is expected to already be in nonblocking mode. We loop
- * across transient EINTR only; the caller drives repeat calls via poll().
+ * The session relay's socket is 0600 inside a 0700 $XDG_RUNTIME_DIR, so only
+ * our own UID can reach it. This is the defensive second check at accept
+ * time (plan §3.2 D3): refuse any peer whose UID differs before a single
+ * byte reaches the protocol layer.
  */
-static int accept_and_adopt_once(struct lws_context *context, int listen_fd) {
+static int unix_peer_is_self(int fd) {
+#if defined(__linux__)
+  struct ucred cred;
+  socklen_t clen = sizeof cred;
+  if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &clen) != 0) return 0;
+  return cred.uid == geteuid();
+#else
+  uid_t uid;
+  gid_t gid;
+  if (getpeereid(fd, &uid, &gid) != 0) return 0;
+  return uid == geteuid();
+#endif
+}
+
+/*
+ * Accept one waiting connection on `listen_fd` and hand it to lws on `vh`.
+ * Returns 1 if a connection was taken off the queue (adopted, rejected, or
+ * failed), 0 if nothing is pending or the error is transient, -1 on a fatal
+ * listener error.
+ */
+static int accept_and_adopt_once(struct lws_vhost *vh, int listen_fd) {
   for (;;) {
-    struct sockaddr_storage peer;
-    socklen_t plen = sizeof peer;
-    int cfd = accept(listen_fd, (struct sockaddr *)&peer, &plen);
+    int cfd = accept(listen_fd, NULL, NULL);
     if (cfd >= 0) {
+      if (!unix_peer_is_self(cfd)) {
+        fprintf(stderr,
+                "nostr-relay-server: rejecting Unix peer with foreign uid\n");
+        close(cfd);
+        return 1;
+      }
       /* Match lws's usual client-fd disposition: nonblocking + CLOEXEC. */
       int flags = fcntl(cfd, F_GETFL, 0);
       if (flags >= 0) (void)fcntl(cfd, F_SETFL, flags | O_NONBLOCK);
       int fdflags = fcntl(cfd, F_GETFD, 0);
       if (fdflags >= 0) (void)fcntl(cfd, F_SETFD, fdflags | FD_CLOEXEC);
-      struct lws *w = lws_adopt_socket(context, cfd);
-      if (!w) {
-        /* Adoption failed — close so we don't leak. lws would have closed
-         * on success; on failure the fd is still ours. */
-        close(cfd);
-      }
+      /* On failure lws has already closed cfd; closing it again here could
+       * close an unrelated fd that reused the number. */
+      if (!lws_adopt_socket_vhost(vh, cfd))
+        fprintf(stderr, "nostr-relay-server: lws failed to adopt a client\n");
       return 1;
     }
     if (errno == EINTR) continue;
     if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
     if (errno == ECONNABORTED || errno == EMFILE || errno == ENFILE ||
         errno == ENOBUFS || errno == ENOMEM) {
-      /* Transient — log and back off; caller will retry on next tick. */
       fprintf(stderr, "nostr-relay-server: accept(): %s\n", strerror(errno));
       return 0;
     }
     fprintf(stderr, "nostr-relay-server: fatal accept(): %s\n",
             strerror(errno));
     return -1;
+  }
+}
+
+/*
+ * The pre-bound listen fd is adopted into lws as a raw file descriptor, so
+ * it sits in lws's own poll set and POLLIN lands here. Before this, the
+ * run loop poll()ed the listen fd itself and then called lws_service(),
+ * which (lws >= 3.2) sleeps until an lws-owned fd fires -- the listen fd
+ * was not one of them, so new clients waited for an unrelated lws wakeup
+ * and often were never accepted at all (nostrc-q9ba part 2).
+ */
+static int unix_listener_cb(struct lws *wsi, enum lws_callback_reasons reason,
+                            void *user, void *in, size_t len) {
+  (void)user;
+  (void)in;
+  (void)len;
+  switch (reason) {
+    case LWS_CALLBACK_RAW_RX_FILE: {
+      int listen_fd = (int)lws_get_socket_fd(wsi);
+      struct lws_vhost *vh = lws_get_vhost(wsi);
+      /* Drain the backlog, bounded so a connect storm cannot starve the
+       * already-adopted clients. */
+      for (int i = 0; i < 64; i++) {
+        int rc = accept_and_adopt_once(vh, listen_fd);
+        if (rc == 0) break;
+        if (rc < 0) {
+          s_signal_stop = 1;
+          return -1;
+        }
+      }
+      return 0;
+    }
+    case LWS_CALLBACK_RAW_CLOSE_FILE:
+      if (!s_shutting_down) {
+        /* A relay that can no longer accept is useless; exit so the
+         * service manager restarts it against the same socket. */
+        fprintf(stderr,
+                "nostr-relay-server: Unix listener closed; stopping\n");
+        s_signal_stop = 1;
+      }
+      return 0;
+    default:
+      return 0;
   }
 }
 
@@ -458,10 +561,10 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
    * TCP path: hand lws the host:port and let it bind.
    * Unix-fd path: pre-bound listen fd owned by the caller (systemd or the
    *   session daemon's fallback path). We disable lws's own listener
-   *   (`CONTEXT_PORT_NO_LISTEN`) and drive an accept loop below, handing
-   *   each accepted client fd to lws_adopt_socket(). This keeps the peer-
-   *   credential check at the daemon boundary — no byte crosses the lws
-   *   protocol layer until the UID is verified. */
+   *   (`CONTEXT_PORT_NO_LISTEN`) and adopt a dup of the listen fd as a raw
+   *   descriptor (unix_listener_cb), which accepts, checks the peer UID,
+   *   and hands each client fd to lws_adopt_socket_vhost(). No byte
+   *   crosses the lws protocol layer until the UID is verified. */
   struct lws_context_creation_info info; memset(&info, 0, sizeof info);
   if (listener_kind == NOSTR_RELAY_LISTENER_TCP) {
     info.iface = server_cfg->listener.u.tcp.host;
@@ -500,15 +603,42 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
   sigaction(SIGINT, &sa, &prev_int);
   sigaction(SIGTERM, &sa, &prev_term);
 
-  int listen_fd = -1;
+  s_shutting_down = 0;
   if (listener_kind == NOSTR_RELAY_LISTENER_UNIX_FD) {
-    listen_fd = server_cfg->listener.u.unix_fd.fd;
-    /* Put listener into nonblocking mode so accept() cannot stall the loop.
-     * systemd's activation fds are typically already nonblocking, but be
-     * defensive. */
-    int flags = fcntl(listen_fd, F_GETFL, 0);
-    if (flags >= 0 && !(flags & O_NONBLOCK))
-      (void)fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK);
+    int listen_fd = server_cfg->listener.u.unix_fd.fd;
+    /* lws closes the fds it adopts. Hand it a dup so the caller's fd --
+     * typically systemd's, reused on the next activation -- stays open. */
+    int lws_listen_fd = fcntl(listen_fd, F_DUPFD_CLOEXEC, 3);
+    if (lws_listen_fd >= 0) {
+      /* Nonblocking so the accept drain in unix_listener_cb cannot stall.
+       * The dup shares the open file description with the caller's fd. */
+      int flags = fcntl(lws_listen_fd, F_GETFL, 0);
+      if (flags >= 0 && !(flags & O_NONBLOCK))
+        (void)fcntl(lws_listen_fd, F_SETFL, flags | O_NONBLOCK);
+    }
+    struct lws_vhost *vh = lws_get_vhost_by_name(context, "default");
+    struct lws *listener = NULL;
+    if (lws_listen_fd >= 0 && vh) {
+      lws_sock_file_fd_type desc;
+      desc.filefd = lws_listen_fd;
+      /* On failure lws closes lws_listen_fd itself. */
+      listener = lws_adopt_descriptor_vhost(vh, LWS_ADOPT_RAW_FILE_DESC, desc,
+                                            UNIX_LISTENER_PROTOCOL, NULL);
+    } else if (lws_listen_fd >= 0) {
+      close(lws_listen_fd);
+    }
+    if (!listener) {
+      fprintf(stderr,
+              "nostr-relay-server: could not adopt Unix listen fd %d: %s\n",
+              listen_fd, lws_listen_fd < 0 ? strerror(errno) : "lws refused");
+      s_shutting_down = 1;
+      lws_context_destroy(context);
+      sigaction(SIGINT, &prev_int, NULL);
+      sigaction(SIGTERM, &prev_term, NULL);
+      relay_policy_destroy(policy);
+      verification_budget_destroy(verification_budget);
+      return 1;
+    }
     fprintf(stderr,
             "nostr-relay-server: listening on Unix fd %d (per-user session)\n",
             listen_fd);
@@ -517,37 +647,20 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
             info.iface, info.port);
   }
 
+  LoopWake wake;
+  memset(&wake, 0, sizeof wake);
+  wake.context = context;
+  lws_sul_schedule(context, 0, &wake.sul, loop_wake_cb, LOOP_WAKE_US);
+
   unsigned long long last_ret_ms = 0;
   const volatile int *external_stop = server_cfg->stop_flag;
   while (!s_signal_stop && !(external_stop && *external_stop)) {
-    /* TCP path: lws owns the listen socket and drives its own poll loop.
-     * Unix-fd path: we drive an accept-and-adopt loop for the pre-bound
-     * listen fd, and let lws service already-adopted client fds. Both
-     * paths share the same retention-tick and stop-signal handling. */
-    if (listener_kind == NOSTR_RELAY_LISTENER_UNIX_FD) {
-      struct pollfd pfd = { .fd = listen_fd, .events = POLLIN };
-      int prc = poll(&pfd, 1, 50);
-      if (prc > 0 && (pfd.revents & POLLIN)) {
-        /* Drain everything currently pending before returning to lws so a
-         * burst of connects does not starve accepted-side servicing. */
-        for (;;) {
-          int arc = accept_and_adopt_once(context, listen_fd);
-          if (arc <= 0) {
-            if (arc < 0) s_signal_stop = 1;
-            break;
-          }
-        }
-      } else if (prc < 0 && errno != EINTR) {
-        fprintf(stderr, "nostr-relay-server: poll(listen): %s\n",
-                strerror(errno));
-        s_signal_stop = 1;
-      }
-      /* Service already-adopted clients. Short timeout because the accept
-       * poll above already gave the loop its wait; we do not want to block
-       * a second time when a client fd has activity. */
-      lws_service(context, 0);
-    } else {
-      lws_service(context, 200);
+    /* One pass: sleeps until client/listener activity, a signal (EINTR),
+     * or the LoopWake timer, whichever comes first. The timeout argument
+     * is ignored by lws >= 3.2. */
+    if (lws_service(context, 0) < 0) {
+      fprintf(stderr, "nostr-relay-server: lws_service failed; stopping\n");
+      break;
     }
 
     unsigned long long now_ms = rate_limit_now_ms();
@@ -557,13 +670,15 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
     }
   }
 
+  s_shutting_down = 1;
+  lws_sul_cancel(&wake.sul);
   lws_context_destroy(context);
   sigaction(SIGINT, &prev_int, NULL);
   sigaction(SIGTERM, &prev_term, NULL);
   relay_policy_destroy(policy);
   verification_budget_destroy(verification_budget);
-  /* Note: on the Unix-fd path we deliberately do NOT close listen_fd — the
-   * caller retains ownership (typically systemd, so the same fd can be
-   * reused on the next activation cycle without a race). */
+  /* The Unix-fd path closed only its dup (inside lws_context_destroy); the
+   * caller's listen fd stays open -- typically systemd's, reused on the
+   * next activation cycle. */
   return 0;
 }
