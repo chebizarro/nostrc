@@ -196,10 +196,12 @@ char *gnostr_signer_status_banner_text(const GnostrSignerStatus *status,
             "read-only: install GNostr Signer or sign in with a remote signer."));
   }
   if (need == GNOSTR_SIGNER_NEED_SIGNED_OUT) {
-    /* Nothing re-signs this account in automatically: say what to do. */
+    /* nostrc-vuwu: once the signer runs, the session resumes by itself if
+     * the signer holds this account; otherwise the user signs in again. */
     return g_strdup(startable
         ? _("You are signed out: GNostr keeps no keys of its own and GNostr Signer is "
-            "not running. Start it, then sign in again.")
+            "not running. Start it to continue; if it uses a different account, sign "
+            "in again.")
         : _("You are signed out: GNostr keeps no keys of its own and GNostr Signer is "
             "not available. Install it, or sign in with a remote signer."));
   }
