@@ -26,3 +26,14 @@ StartupWMClass=gnostr
 # See gnome/nostr-dispatcher/README.md for the X-Nostr-Kinds format.
 X-Nostr-Kinds=0;1;6;14;16;1059;1111;30023;*;
 X-GNOME-UsesNotifications=true
+# Search entry point (nostrc-prqu.15): `gnostr --search TERMS` opens GNostr
+# (or the running instance) searching for TERMS, and the running app also
+# exposes it as the GAction app.search(s). X-Nostr-Search-Arg names the
+# option so a search provider can launch the `*` handler with the terms
+# (see gnome/nostr-search-provider/README.md).
+X-Nostr-Search-Arg=--search
+Actions=search;
+
+[Desktop Action search]
+Name=Search Nostr
+Exec=gnostr --search ""

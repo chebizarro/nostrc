@@ -180,6 +180,26 @@ test_views_match_desktop_file(void)
   g_assert_true(mime == NULL || strstr(mime, "x-scheme-handler/nostr") == NULL);
 }
 
+/* nostrc-prqu.15: the search entry point a search provider can launch. */
+static void
+test_desktop_search_action(void)
+{
+  g_autoptr(GKeyFile) kf = g_key_file_new();
+  g_assert_true(g_key_file_load_from_file(kf, GNOSTR_DESKTOP_FILE, G_KEY_FILE_NONE, NULL));
+  g_autofree char *arg = g_key_file_get_string(kf, "Desktop Entry", "X-Nostr-Search-Arg", NULL);
+  g_assert_cmpstr(arg, ==, "--search");
+  g_auto(GStrv) actions = g_key_file_get_string_list(kf, "Desktop Entry", "Actions", NULL, NULL);
+  g_assert_nonnull(actions);
+  g_assert_true(g_strv_contains((const char *const *)actions, "search"));
+  g_autofree char *exec = g_key_file_get_string(kf, "Desktop Action search", "Exec", NULL);
+  g_assert_nonnull(exec);
+  g_auto(GStrv) argv = NULL;
+  g_assert_true(g_shell_parse_argv(exec, NULL, &argv, NULL));
+  g_assert_cmpuint(g_strv_length(argv), ==, 3);
+  g_assert_cmpstr(argv[1], ==, "--search");
+  g_assert_cmpstr(argv[2], ==, "");
+}
+
 static void
 test_event_validation(void)
 {
@@ -378,6 +398,7 @@ main(int argc, char **argv)
   g_test_add_func("/nostr-target/parse-events", test_parse_events);
   g_test_add_func("/nostr-target/parse-refusals", test_parse_refusals);
   g_test_add_func("/nostr-target/views-match-desktop-file", test_views_match_desktop_file);
+  g_test_add_func("/nostr-target/desktop-search-action", test_desktop_search_action);
   g_test_add_func("/nostr-target/event-validation", test_event_validation);
   g_test_add_func("/nostr-target/pick-naddr-candidates", test_pick_naddr_candidates);
   g_test_add_func("/nostr-target/handler1-export", test_handler1_export);

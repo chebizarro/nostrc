@@ -165,6 +165,21 @@ gnostr_main_window_on_session_search_committed_internal(GnostrSessionView *sv,
     gnostr_session_view_show_page(self->session_view, "timeline");
 }
 
+/* nostrc-prqu.15: app.search / `gnostr --search TERMS` (the GNOME Shell
+ * search provider's LaunchSearch). */
+void
+gnostr_main_window_search(GnostrMainWindow *self, const char *terms)
+{
+  g_return_if_fail(GNOSTR_IS_MAIN_WINDOW(self));
+  if (!self->session_view)
+    return;
+  gnostr_session_view_set_search_mode(self->session_view, TRUE);
+  g_autofree char *text = terms ? g_strstrip(g_strdup(terms)) : NULL;
+  g_debug("search requested (%s)", text && *text ? "with terms" : "no terms");
+  if (text && *text)
+    gnostr_main_window_on_session_search_committed_internal(self->session_view, text, self);
+}
+
 void
 gnostr_main_window_on_notification_open_note_internal(GnostrNotificationsView *view,
                                                       const char *note_id,

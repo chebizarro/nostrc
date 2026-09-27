@@ -77,6 +77,9 @@ gboolean gnostr_main_window_open_nostr_event(GnostrMainWindow *self,
                                              const char *const *relays,
                                              GError **error);
 
+/* nostrc-prqu.15: search Nostr for @terms (NULL/empty: just open search). */
+void gnostr_main_window_search(GnostrMainWindow *self, const char *terms);
+
 G_END_DECLS
 
 #endif /* GNOSTR_MAIN_WINDOW_H */

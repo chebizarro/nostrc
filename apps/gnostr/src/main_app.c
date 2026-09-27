@@ -250,6 +250,33 @@ static gboolean on_initial_activate_idle(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
+/* nostrc-prqu.15: app.search(s) — reachable as `gnostr --search TERMS` and,
+ * while GNostr runs, as org.freedesktop.Application.ActivateAction on
+ * org.gnostr.Client. */
+static void on_app_search(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action;
+  GnostrMainWindow *win = ensure_main_window(G_APPLICATION(user_data));
+  if (win)
+    gnostr_main_window_search(win, param ? g_variant_get_string(param, NULL) : NULL);
+}
+
+/* `--search TERMS`: forwarded to a running instance, or applied once this
+ * one has registered. */
+static gint on_handle_local_options(GApplication *app, GVariantDict *options,
+                                    gpointer user_data) {
+  (void)user_data;
+  const char *terms = NULL;
+  if (!g_variant_dict_lookup(options, "search", "&s", &terms))
+    return -1;
+  g_autoptr(GError) error = NULL;
+  if (!g_application_register(app, NULL, &error)) {
+    g_printerr("gnostr: %s\n", error->message);
+    return 1;
+  }
+  g_action_group_activate_action(G_ACTION_GROUP(app), "search", g_variant_new_string(terms));
+  return g_application_get_is_remote(app) ? 0 : -1;
+}
+
 static void on_app_quit(GSimpleAction *action, GVariant *param, gpointer user_data) {
   (void)action; (void)param;
   GApplication *app = G_APPLICATION(user_data);
@@ -427,6 +454,7 @@ int main(int argc, char **argv) {
   /* Install app actions */
   static const GActionEntry app_entries[] = {
     { "quit", on_app_quit, NULL, NULL, NULL },
+    { "search", on_app_search, "s", NULL, NULL },
   };
   g_action_map_add_action_entries(G_ACTION_MAP(app), app_entries, G_N_ELEMENTS(app_entries), app);
   const char *quit_accels[] = { "<Primary>q", NULL };
@@ -448,6 +476,9 @@ int main(int argc, char **argv) {
 
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
   g_signal_connect(app, "open", G_CALLBACK(on_open), NULL);
+  g_application_add_main_option(G_APPLICATION(app), "search", 0, G_OPTION_FLAG_NONE,
+                                G_OPTION_ARG_STRING, "Search Nostr for TERMS", "TERMS");
+  g_signal_connect(app, "handle-local-options", G_CALLBACK(on_handle_local_options), NULL);
   g_signal_connect(app, "startup", G_CALLBACK(on_startup), NULL);
 
   /* Initialize subscription dispatcher BEFORE storage to register callback */

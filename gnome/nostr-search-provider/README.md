@@ -97,9 +97,24 @@ wrote, never attacker-supplied image bytes.
   `nostr:` URI, including `nsec`) and calls
   `org.nostr.Dispatcher1.Open(uri, {})`. If nostr-dispatcher is not
   installed, the `nostr:` scheme default is launched instead.
-* `LaunchSearch` (clicking the provider icon) is a **no-op**. No Nostr
-  application declares a search entry point yet; GNostr has no search
-  action.
+* `LaunchSearch` (clicking the provider icon) is still a **no-op** here.
+  GNostr now has a search entry point (nostrc-prqu.15) that it can call:
+  * the GAction **`app.search`** with one string parameter (the terms),
+    also reachable while GNostr runs as
+    `org.freedesktop.Application.ActivateAction("search", [<terms>], {})`
+    on its GApplication (bus name `org.gnostr.Client`, object path
+    `/org/gnostr/Client`; its desktop id is `org.gnostr.gnostr.desktop`
+    and it is not `DBusActivatable`);
+  * on the command line, `gnostr --search TERMS`, which starts GNostr or
+    forwards to the running instance; empty `TERMS` just opens search;
+  * declared in its desktop file as `X-Nostr-Search-Arg=--search` and a
+    `search` desktop action.
+
+  To implement `LaunchSearch`, resolve the fallback (`*`) handler with
+  `org.nostr.Dispatcher1.QueryDefault(-1)`, read `X-Nostr-Search-Arg`
+  from its desktop file and spawn its executable (`g_app_info_get_executable`)
+  with `[arg, terms joined by spaces]` as argv, with no shell. A handler
+  without the key has no search entry point: keep the no-op.
 * `XUbuntuCancel` (Ubuntu's Shell) finishes in-flight searches early.
 
 ### Why the desktop entry is visible
