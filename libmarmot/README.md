@@ -204,10 +204,14 @@ Test vectors from MDK can be placed in `tests/vectors/mdk/` for automated cross-
 
 ### 0.3.1 (unreleased): AppDataUpdate wire recognition (not adopted group support)
 
-The MLS draft-10 AppDataUpdate `update` and `remove` proposal bodies now have
-strict wire parsing and round-trip tests. The group engine still returns
-`MARMOT_ERR_UNSUPPORTED` for such proposals: it does **not** apply component
-state, validate the `0x8003` admin policy, or authorize component mutations.
+The MLS draft-10 AppDataUpdate `update` and `remove` proposal bodies have
+strict wire parsing and round-trip tests. An internal, non-publishing state
+transition now replaces `0x8003` admin-policy bytes for a same-epoch proposal
+only after checking canonical dictionary/policy encoding, parent-epoch sender
+and committer admin authority, and resulting-member invariants. It preserves
+other dictionary entries byte-for-byte. This helper is not wired into Commit
+processing: the group engine still returns `MARMOT_ERR_UNSUPPORTED` for
+AppDataUpdate proposals. No adopted-profile state can be admitted yet.
 To avoid silently accepting a group it cannot maintain, it also rejects a
 GroupContext `app_data_dictionary` during creation, Welcome join, local-state
 load, or a GroupContextExtensions commit. Legacy `0xF2EE` groups remain

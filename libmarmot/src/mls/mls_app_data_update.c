@@ -76,3 +76,176 @@ mls_group_extensions_supported(const uint8_t *data, size_t len)
     }
     return 0;
 }
+
+/* These helpers operate only on verified MLS candidate state. They do not
+ * admit adopted groups into the live engine or bypass the GroupContext gate. */
+static const uint8_t *
+member_identity(const MlsRatchetTree *tree, uint32_t leaf)
+{
+    if (!tree || !tree->nodes || leaf >= tree->n_leaves ||
+        (uint64_t)leaf * 2 >= tree->n_nodes)
+        return NULL;
+    const MlsNode *node = &tree->nodes[mls_tree_leaf_to_node(leaf)];
+    if (node->type != MLS_NODE_LEAF ||
+        node->leaf.credential_type != MLS_CREDENTIAL_BASIC ||
+        node->leaf.credential_identity_len != 32)
+        return NULL;
+    return node->leaf.credential_identity;
+}
+
+static int
+has_member(const MlsRatchetTree *tree, const uint8_t key[32])
+{
+    if (!tree) return 0;
+    for (uint32_t i = 0; i < tree->n_leaves; i++) {
+        const uint8_t *identity = member_identity(tree, i);
+        if (identity && memcmp(identity, key, 32) == 0) return 1;
+    }
+    return 0;
+}
+
+/* MarmotAdminPolicyV1 is a VLI-length vector of sorted, unique 32-byte keys. */
+static int
+valid_admins(const uint8_t *data, size_t len, const MlsRatchetTree *tree)
+{
+    MlsTlsReader reader;
+    size_t keys_len;
+    mls_tls_reader_init(&reader, data, len);
+    if (mls_tls_read_vli(&reader, &keys_len) != 0 ||
+        keys_len != mls_tls_reader_remaining(&reader) ||
+        keys_len == 0 || keys_len % 32 != 0)
+        return 0;
+    const uint8_t *previous = NULL;
+    while (!mls_tls_reader_done(&reader)) {
+        const uint8_t *key = reader.data + reader.pos;
+        if (previous && memcmp(previous, key, 32) >= 0) return 0;
+        if (!has_member(tree, key)) return 0;
+        previous = key;
+        reader.pos += 32;
+    }
+    return 1;
+}
+
+/* Require the candidate parent's admin-policy id in its required components. */
+static int
+admin_required(const uint8_t *data, size_t len)
+{
+    MlsTlsReader reader;
+    size_t ids_len;
+    mls_tls_reader_init(&reader, data, len);
+    if (mls_tls_read_vli(&reader, &ids_len) != 0 ||
+        ids_len != mls_tls_reader_remaining(&reader) || ids_len % 2 != 0)
+        return 0;
+    uint16_t id;
+    int found = 0;
+    while (!mls_tls_reader_done(&reader)) {
+        if (mls_tls_read_u16(&reader, &id) != 0) return 0;
+        if (id == MARMOT_COMPONENT_ADMIN_POLICY_V1) found = 1;
+    }
+    return found;
+}
+
+static int
+read_entry(MlsTlsReader *reader, uint16_t *id,
+           const uint8_t **data, size_t *len)
+{
+    if (mls_tls_read_u16(reader, id) != 0 ||
+        mls_tls_read_vli(reader, len) != 0 ||
+        *len > mls_tls_reader_remaining(reader))
+        return -1;
+    *data = reader->data + reader->pos;
+    reader->pos += *len;
+    return 0;
+}
+
+int
+mls_app_data_update_admin_policy(
+    const uint8_t *dictionary, size_t dictionary_len,
+    const MlsRatchetTree *parent_tree, const MlsRatchetTree *result_tree,
+    uint64_t parent_epoch, uint64_t proposal_epoch,
+    uint32_t sender_leaf, uint32_t committer_leaf,
+    const MlsAppDataUpdate *proposal,
+    uint8_t **result, size_t *result_len)
+{
+    if (!result || !result_len) return -1;
+    *result = NULL;
+    *result_len = 0;
+    if (!dictionary || !parent_tree || !result_tree || !proposal ||
+        proposal_epoch != parent_epoch || parent_epoch == UINT64_MAX ||
+        proposal->component_id != MARMOT_COMPONENT_ADMIN_POLICY_V1 ||
+        proposal->operation != MLS_APP_DATA_UPDATE_OP_UPDATE ||
+        !proposal->update ||
+        !member_identity(parent_tree, sender_leaf) ||
+        !member_identity(parent_tree, committer_leaf) ||
+        !valid_admins(proposal->update, proposal->update_len, result_tree))
+        return -1;
+
+    MlsTlsReader reader;
+    size_t entries_len;
+    mls_tls_reader_init(&reader, dictionary, dictionary_len);
+    if (mls_tls_read_vli(&reader, &entries_len) != 0 ||
+        entries_len != mls_tls_reader_remaining(&reader))
+        return -1;
+    size_t entries_start = reader.pos;
+    uint16_t previous = 0, id;
+    const uint8_t *data, *old_admins = NULL, *required = NULL;
+    size_t len, old_admins_len = 0, required_len = 0;
+    while (!mls_tls_reader_done(&reader)) {
+        if (read_entry(&reader, &id, &data, &len) != 0 || id <= previous)
+            return -1;
+        if (id == MLS_COMPONENT_APP_COMPONENTS) {
+            required = data;
+            required_len = len;
+        } else if (id == MARMOT_COMPONENT_ADMIN_POLICY_V1) {
+            old_admins = data;
+            old_admins_len = len;
+        }
+        previous = id;
+    }
+    if (!required || !admin_required(required, required_len) ||
+        !old_admins || !valid_admins(old_admins, old_admins_len, parent_tree))
+        return -1;
+    const uint8_t *sender = member_identity(parent_tree, sender_leaf);
+    const uint8_t *committer = member_identity(parent_tree, committer_leaf);
+    int sender_admin = 0, committer_admin = 0;
+    MlsTlsReader admins;
+    mls_tls_reader_init(&admins, old_admins, old_admins_len);
+    if (mls_tls_read_vli(&admins, &len) != 0) return -1;
+    while (!mls_tls_reader_done(&admins)) {
+        const uint8_t *key = admins.data + admins.pos;
+        if (memcmp(sender, key, 32) == 0) sender_admin = 1;
+        if (memcmp(committer, key, 32) == 0) committer_admin = 1;
+        admins.pos += 32;
+    }
+    if (!sender_admin || !committer_admin) return -1;
+
+    MlsTlsBuf entries, encoded;
+    if (mls_tls_buf_init(&entries, entries_len) != 0) return -1;
+    int rc = -1;
+    mls_tls_reader_init(&reader, dictionary + entries_start, entries_len);
+    while (!mls_tls_reader_done(&reader)) {
+        size_t start = reader.pos;
+        if (read_entry(&reader, &id, &data, &len) != 0) goto done;
+        if (id == MARMOT_COMPONENT_ADMIN_POLICY_V1) {
+            if (mls_tls_write_u16(&entries, id) != 0 ||
+                mls_tls_write_opaque32(&entries, proposal->update,
+                                       proposal->update_len) != 0)
+                goto done;
+        } else if (mls_tls_buf_append(&entries, reader.data + start,
+                                      reader.pos - start) != 0) {
+            goto done;
+        }
+    }
+    if (mls_tls_buf_init(&encoded, entries.len + 8) != 0) goto done;
+    if (mls_tls_write_vli(&encoded, entries.len) == 0 &&
+        mls_tls_buf_append(&encoded, entries.data, entries.len) == 0) {
+        *result = encoded.data;
+        *result_len = encoded.len;
+        encoded.data = NULL;
+        rc = 0;
+    }
+    mls_tls_buf_free(&encoded);
+done:
+    mls_tls_buf_free(&entries);
+    return rc;
+}

@@ -7,6 +7,7 @@
 #include "mls/mls_app_data_update.h"
 #include "mls/mls_group.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int failures;
@@ -126,10 +127,128 @@ test_malformed(void)
     mls_tls_buf_free(&buf);
 }
 
+static int
+make_admins(const uint8_t *keys, size_t count, MlsTlsBuf *out)
+{
+    if (mls_tls_buf_init(out, 1 + count * 32) != 0) return -1;
+    if (mls_tls_write_vli(out, count * 32) != 0 ||
+        mls_tls_buf_append(out, keys, count * 32) != 0) {
+        mls_tls_buf_free(out);
+        return -1;
+    }
+    return 0;
+}
+
+static int
+make_dictionary(const uint8_t *admins, size_t admins_len,
+                MlsTlsBuf *out)
+{
+    static const uint8_t required[] = {2, 0x80, 0x03};
+    static const uint8_t unknown[] = {0xca, 0xfe};
+    MlsTlsBuf entries;
+    if (mls_tls_buf_init(&entries, 64) != 0) return -1;
+    int ok = mls_tls_write_u16(&entries, MLS_COMPONENT_APP_COMPONENTS) == 0 &&
+        mls_tls_write_opaque32(&entries, required, sizeof(required)) == 0 &&
+        mls_tls_write_u16(&entries, MARMOT_COMPONENT_ADMIN_POLICY_V1) == 0 &&
+        mls_tls_write_opaque32(&entries, admins, admins_len) == 0 &&
+        mls_tls_write_u16(&entries, 0x9000) == 0 &&
+        mls_tls_write_opaque32(&entries, unknown, sizeof(unknown)) == 0;
+    if (!ok || mls_tls_buf_init(out, entries.len + 2) != 0) {
+        mls_tls_buf_free(&entries);
+        return -1;
+    }
+    ok = mls_tls_write_vli(out, entries.len) == 0 &&
+         mls_tls_buf_append(out, entries.data, entries.len) == 0;
+    mls_tls_buf_free(&entries);
+    if (!ok) { mls_tls_buf_free(out); return -1; }
+    return 0;
+}
+
+static void
+test_admin_policy_state(void)
+{
+    uint8_t keys[3][32];
+    memset(keys[0], 0x11, 32);
+    memset(keys[1], 0x22, 32);
+    memset(keys[2], 0x33, 32);
+    MlsRatchetTree tree;
+    CHECK(mls_tree_new(&tree, 2) == 0);
+    for (uint32_t i = 0; i < 2; i++) {
+        MlsNode *node = &tree.nodes[mls_tree_leaf_to_node(i)];
+        node->type = MLS_NODE_LEAF;
+        node->leaf.credential_type = MLS_CREDENTIAL_BASIC;
+        node->leaf.credential_identity = malloc(32);
+        CHECK(node->leaf.credential_identity != NULL);
+        memcpy(node->leaf.credential_identity, keys[i], 32);
+        node->leaf.credential_identity_len = 32;
+    }
+    MlsTlsBuf old, next, dictionary, expected;
+    CHECK(make_admins(keys[0], 1, &old) == 0);
+    CHECK(make_admins(keys[0], 2, &next) == 0);
+    CHECK(make_dictionary(old.data, old.len, &dictionary) == 0);
+    CHECK(make_dictionary(next.data, next.len, &expected) == 0);
+    MlsAppDataUpdate update = {MARMOT_COMPONENT_ADMIN_POLICY_V1,
+                               MLS_APP_DATA_UPDATE_OP_UPDATE,
+                               next.data, next.len};
+    uint8_t *out = NULL;
+    size_t out_len = 0;
+    CHECK(mls_app_data_update_admin_policy(dictionary.data, dictionary.len,
+          &tree, &tree, 7, 7, 0, 0, &update, &out, &out_len) == 0);
+    CHECK(out && out_len == expected.len &&
+          memcmp(out, expected.data, expected.len) == 0);
+    CHECK(dictionary.len != expected.len);
+    free(out);
+
+    /* Source-epoch and committer authority both come from the parent state. */
+    CHECK(mls_app_data_update_admin_policy(dictionary.data, dictionary.len,
+          &tree, &tree, 7, 6, 0, 0, &update, &out, &out_len) != 0 && !out);
+    CHECK(mls_app_data_update_admin_policy(dictionary.data, dictionary.len,
+          &tree, &tree, 7, 7, 1, 0, &update, &out, &out_len) != 0 && !out);
+    CHECK(mls_app_data_update_admin_policy(dictionary.data, dictionary.len,
+          &tree, &tree, 7, 7, 0, 1, &update, &out, &out_len) != 0 && !out);
+    CHECK(mls_app_data_update_admin_policy(dictionary.data, dictionary.len,
+          &tree, &tree, 7, 7, 2, 0, &update, &out, &out_len) != 0 && !out);
+
+    MlsTlsBuf absent, duplicate, reversed;
+    CHECK(make_admins(keys[2], 1, &absent) == 0);
+    update.update = absent.data; update.update_len = absent.len;
+    CHECK(mls_app_data_update_admin_policy(dictionary.data, dictionary.len,
+          &tree, &tree, 7, 7, 0, 0, &update, &out, &out_len) != 0 && !out);
+    uint8_t pair[64];
+    memcpy(pair, keys[0], 32); memcpy(pair + 32, keys[0], 32);
+    CHECK(make_admins(pair, 2, &duplicate) == 0);
+    update.update = duplicate.data; update.update_len = duplicate.len;
+    CHECK(mls_app_data_update_admin_policy(dictionary.data, dictionary.len,
+          &tree, &tree, 7, 7, 0, 0, &update, &out, &out_len) != 0 && !out);
+    memcpy(pair, keys[1], 32); memcpy(pair + 32, keys[0], 32);
+    CHECK(make_admins(pair, 2, &reversed) == 0);
+    update.update = reversed.data; update.update_len = reversed.len;
+    CHECK(mls_app_data_update_admin_policy(dictionary.data, dictionary.len,
+          &tree, &tree, 7, 7, 0, 0, &update, &out, &out_len) != 0 && !out);
+    update.operation = MLS_APP_DATA_UPDATE_OP_REMOVE;
+    update.update = NULL; update.update_len = 0;
+    CHECK(mls_app_data_update_admin_policy(dictionary.data, dictionary.len,
+          &tree, &tree, 7, 7, 0, 0, &update, &out, &out_len) != 0 && !out);
+    update.operation = MLS_APP_DATA_UPDATE_OP_UPDATE;
+    update.update = next.data; update.update_len = next.len;
+    CHECK(mls_app_data_update_admin_policy(dictionary.data, dictionary.len - 1,
+          &tree, &tree, 7, 7, 0, 0, &update, &out, &out_len) != 0 && !out);
+
+    mls_tls_buf_free(&reversed);
+    mls_tls_buf_free(&duplicate);
+    mls_tls_buf_free(&absent);
+    mls_tls_buf_free(&expected);
+    mls_tls_buf_free(&dictionary);
+    mls_tls_buf_free(&next);
+    mls_tls_buf_free(&old);
+    mls_tree_free(&tree);
+}
+
 int
 main(void)
 {
     test_vectors();
+    test_admin_policy_state();
     test_group_context_gate();
     test_malformed();
     if (failures) return 1;
