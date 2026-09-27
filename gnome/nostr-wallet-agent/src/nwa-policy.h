@@ -23,9 +23,9 @@ typedef enum {
   NWA_OP_BUDGET_QUERY_OTHER, /* GetBudget(other app) */
   NWA_OP_BUDGET_LOWER_OWN,   /* SetBudget(own, <= current) */
   NWA_OP_BUDGET_CHANGE,      /* SetBudget(own raise | other app) */
-  NWA_OP_READ_GRANT,         /* SetReadAccess(any app, TRUE) */
-  NWA_OP_READ_REVOKE_OWN,    /* SetReadAccess(own, FALSE) */
-  NWA_OP_READ_REVOKE_OTHER,  /* SetReadAccess(other app, FALSE) */
+  NWA_OP_READ_GRANT,         /* SetReadAccess / SetReceiveAccess(any app, TRUE) */
+  NWA_OP_READ_REVOKE_OWN,    /* SetReadAccess / SetReceiveAccess(own, FALSE) */
+  NWA_OP_READ_REVOKE_OTHER,  /* SetReadAccess / SetReceiveAccess(other app, FALSE) */
 } NwaOp;
 
 typedef enum {
@@ -55,7 +55,8 @@ typedef struct {
   gboolean paired;
   gboolean ui_available;
   gboolean always_confirm;    /* GSettings always-confirm-payments */
-  gboolean allow_read;        /* caller previously allowed to read/receive */
+  gboolean allow_read;        /* caller previously allowed to read (NWA_OP_READ) */
+  gboolean allow_receive;     /* caller previously allowed to create invoices (NWA_OP_RECEIVE) */
   guint64  amount_msat;       /* PAY: amount + fee reserve */
   guint64  limit_msat;        /* caller's daily limit (0 = none) */
   guint64  remaining_msat;    /* caller's remaining budget today */

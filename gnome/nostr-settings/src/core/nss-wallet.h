@@ -5,7 +5,8 @@
  * The installed Nostr Settings is the agent's "grant admin" (the agent
  * checks its executable, <bindir>/nostr-settings, by path and inode): it
  * lists every app with ListApps and grants/revokes read access
- * (SetReadAccess) without the agent's confirmation dialog. Budget changes
+ * (SetReadAccess) and receive access (SetReceiveAccess, creating invoices)
+ * without the agent's confirmation dialog. Budget changes
  * (SetBudget) are still confirmed by the agent's dialog. When the
  * agent refuses ListApps — Settings run from a build tree, or an older
  * agent — the page falls back to reading the agent's documented store,
@@ -30,7 +31,8 @@ typedef struct {
   gchar   *app_id;
   guint64  limit_msat_per_day;
   guint64  spent_today_msat;   /* 0 unless the record's day is today */
-  gboolean allow_read;
+  gboolean allow_read;         /* balance / history */
+  gboolean allow_receive;      /* create invoices (nostrc-muhk) */
 } NssBudget;
 
 void       nss_budget_free(NssBudget *b);

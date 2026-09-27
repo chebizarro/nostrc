@@ -458,6 +458,32 @@ resolve_from_proc(guint32 pid, SignerCaller *c)
 }
 #endif
 
+/* Start time of @pid (0 = gone / unknown): a PID that keeps its start time
+ * across a series of reads named one process throughout. */
+static guint64
+proc_start_time(guint32 pid)
+{
+#ifdef __linux__
+  g_autofree gchar *path = g_strdup_printf("/proc/%u/stat", pid);
+  g_autofree gchar *stat = NULL;
+  if (!g_file_get_contents(path, &stat, NULL, NULL)) return 0;
+  /* comm may contain spaces and ')': fields resume after the last ')'. */
+  const gchar *p = strrchr(stat, ')');
+  if (!p) return 0;
+  g_auto(GStrv) f = g_strsplit(p + 2, " ", 0);
+  /* f[0] is field 3 (state); starttime is field 22. */
+  if (g_strv_length(f) < 20) return 0;
+  return g_ascii_strtoull(f[19], NULL, 10);
+#elif defined(__APPLE__)
+  struct proc_bsdinfo bi;
+  if (proc_pidinfo((int)pid, PROC_PIDTBSDINFO, 0, &bi, sizeof bi) != (int)sizeof bi) return 0;
+  return (guint64)bi.pbi_start_tvsec * 1000000u + (guint64)bi.pbi_start_tvusec;
+#else
+  (void)pid;
+  return 0;
+#endif
+}
+
 static void
 clear_identity(SignerCaller *c)
 {
@@ -566,6 +592,39 @@ identify(GDBusConnection *bus, const gchar *sender)
   if (!c->principal && c->kind != SIGNER_CALLER_UNKNOWN)
     g_debug("nostr-signer: %s resolved (%s) but has no storable principal", sender,
             signer_caller_kind_to_string(c->kind));
+  return c;
+}
+
+SignerCaller *
+signer_caller_for_peer(const gchar *label, gboolean have_uid, guint32 uid, guint32 pid, gint pidfd)
+{
+  SignerCaller *c = g_new0(SignerCaller, 1);
+  c->sender = g_strdup(label);
+  c->pid = pid;
+  c->same_uid = have_uid && uid == (guint32)getuid();
+  if (c->same_uid && pid > 0) {
+    guint64 started = proc_start_time(pid);
+    resolve_from_proc(pid, c);
+    gboolean alive;
+#ifdef __linux__
+    if (pidfd >= 0) {
+      struct pollfd p = { .fd = pidfd, .events = POLLIN };
+      alive = poll(&p, 1, 0) == 0;
+    } else
+#endif
+    {
+      (void)pidfd;
+      alive = started != 0 && proc_start_time(pid) == started;
+    }
+    if (!alive) {
+      g_debug("nostr-signer: %s (pid %u) went away while being identified", label, pid);
+      clear_identity(c);
+    }
+  }
+  c->principal = signer_caller_build_principal(c->kind, c->app_id, c->exe);
+  g_debug("nostr-signer: %s: uid=%s pid=%u kind=%s principal=%s", label,
+          have_uid ? (c->same_uid ? "same" : "other") : "unknown", pid,
+          signer_caller_kind_to_string(c->kind), c->principal ? c->principal : "(none)");
   return c;
 }
 

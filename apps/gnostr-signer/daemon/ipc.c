@@ -65,18 +65,8 @@ static int npipe_write_frame(HANDLE pipe, const char *json, size_t len);
 #include <pthread.h>
 #include <stddef.h>
 #include "nostr/nip5f/nip5f.h"
+#include "nip55l_nip5f.h"
 #include "json.h"
-// Forward declarations to avoid depending on internal headers
-struct Nip5fConnArg {
-  int fd;
-  void *ud;
-  Nip5fGetPubFn get_pub;
-  Nip5fSignEventFn sign_event;
-  Nip5fNip44EncFn enc44;
-  Nip5fNip44DecFn dec44;
-  Nip5fListKeysFn list_keys;
-};
-void *nip5f_conn_thread(void *arg);
 int nip5f_read_frame(int fd, char **out_json, size_t *out_len);
 int nip5f_write_frame(int fd, const char *json, size_t len);
 #endif
@@ -653,32 +643,13 @@ static gpointer tcp_ipc_accept_thread(gpointer data) {
     }
     if (hello) free(hello);
     
-    // Spawn a detached thread to handle this connection via dispatcher
-    pthread_t thr;
-    struct Nip5fConnArg *carg = (struct Nip5fConnArg*)calloc(1, sizeof(*carg));
-    if (!carg) {
-      g_warning("tcp: failed to allocate connection arg");
-      close(cfd);
-      g_atomic_int_dec_and_test(&s->active_connections);
-      ipc_stats_connection_closed(s);
-      ipc_stats_error(s);
-      continue;
-    }
-    
-    carg->fd = cfd;
-    carg->ud = s;  // Pass server context for stats tracking
-    carg->get_pub = NULL;
-    carg->sign_event = NULL;
-    carg->enc44 = NULL;
-    carg->dec44 = NULL;
-    carg->list_keys = NULL;
-    
-    if (pthread_create(&thr, NULL, nip5f_conn_thread, carg) == 0) {
-      pthread_detach(thr);
-      g_message("tcp: spawned handler thread for connection");
+    /* Same gate as the Unix socket and D-Bus; a TCP peer has no kernel
+     * credentials, so it is unidentified: prompted every time, never
+     * remembered (nostrc-q23h). */
+    if (nip55l_nip5f_serve_unidentified(cfd)) {
+      g_message("tcp: serving connection (unidentified caller)");
     } else {
-      g_warning("tcp: failed to create handler thread: %s", g_strerror(errno));
-      free(carg);
+      g_warning("tcp: failed to create handler thread");
       close(cfd);
       g_atomic_int_dec_and_test(&s->active_connections);
       ipc_stats_connection_closed(s);

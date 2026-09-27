@@ -58,7 +58,7 @@ ctest --output-on-failure
 
 - `src/`: Main application source code
   - `accounts_store.[ch]`: Account management
-  - `policy_store.[ch]`: Permission management
+  - `signer_grants.[ch]`: Remembered decisions, listed/revoked through the daemon
   - `ui/`: GTK UI components
     - `*.ui`: UI definitions in XML format
     - `*.c`: UI controller code

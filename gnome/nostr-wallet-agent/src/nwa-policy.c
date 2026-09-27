@@ -28,12 +28,16 @@ nwa_policy_decide(const NwaPolicyInput *in)
 
   switch (in->op) {
     case NWA_OP_READ:
-    case NWA_OP_RECEIVE:
+    case NWA_OP_RECEIVE: {
       if (!in->paired)
         return decision(NWA_DECISION_DENY, NWA_DENY_NOT_PAIRED);
-      if (in->is_self || in->caller_trusted || (in->caller_identified && in->allow_read))
+      /* Separate grants: seeing the balance does not let an app create
+       * invoices that look like the user's own (nostrc-muhk). */
+      gboolean granted = in->op == NWA_OP_READ ? in->allow_read : in->allow_receive;
+      if (in->is_self || in->caller_trusted || (in->caller_identified && granted))
         return decision(NWA_DECISION_ALLOW, NWA_DENY_NONE);
       return prompt_or_deny(in);
+    }
 
     case NWA_OP_PAY: {
       if (!in->paired)

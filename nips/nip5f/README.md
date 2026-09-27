@@ -18,6 +18,21 @@ A local Unix-domain socket JSON-RPC signer service and client for Nostr.
 
 The server resolves the secret key in this order: KEY → SECKEY_HEX → NSEC. Secrets are zeroized best-effort after use.
 
+## Access control
+- Every server accepts only peers of its own uid (`SO_PEERCRED` on Linux,
+  `getpeereid` elsewhere); the socket is 0600 in a 0700 directory.
+- `nostr-signer-sockd` (no hooks) serves the key from its own environment to
+  any such peer: it is a development tool for a key you handed to it. There is
+  no per-app ACL (the old `signer-acl.ini` lookup keyed on a claimed `app_id`
+  was removed, nostrc-q23h).
+- `gnostr-signer-daemon` / `nostr-signer-daemon` start the socket with
+  `nostr_nip5f_server_start_with_hooks()` (via nips/nip55l `nip55l_nip5f.h`),
+  when `NOSTR_SIGNER_ENDPOINT=unix:<path>` is set. Then every method is
+  decided like the org.nostr.Signer D-Bus call from the same process: the
+  kernel-reported peer is the principal, grants are shared with D-Bus, and a
+  request without a grant waits for the user (error 5 when declined). See
+  `docs/dbus-interface.md`.
+
 ## JSON-RPC API
 All requests/answers are single-line JSON frames over the Unix socket.
 
@@ -45,7 +60,13 @@ All requests/answers are single-line JSON frames over the Unix socket.
 
 ### list_public_keys
 - Params: `null`
-- Result: JSON array of known pubkeys, e.g. `["<64-hex>"]`
+- Result: JSON array of known pubkeys, e.g. `["<64-hex>"]` (the gated daemon
+  lists only the active identity, under its `get_public_key` grant)
+
+### Errors
+`{"code":N,"message":"..."}`: 1 invalid request, 2 method not supported,
+3 invalid params, 4 key not found, 5 declined (by the user or a grant),
+10 internal error.
 
 ## Build & run
 ```

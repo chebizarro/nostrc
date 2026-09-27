@@ -89,6 +89,20 @@ SignerCaller *signer_caller_identify_fresh(GDBusConnection *bus, const gchar *se
 /* Drop the cache entry (call when the unique name leaves the bus). */
 void          signer_caller_forget(const gchar *sender);
 
+/* A Unix-socket peer (NIP-5F, nostrc-q23h) as the kernel reported it when
+ * the connection was accepted (SO_PEERCRED / getpeereid + LOCAL_PEERPID),
+ * resolved exactly like a bus caller, so the principal has the same shape
+ * and grants are shared between the transports. @label names the
+ * connection (the "sender" in logs and requests). @pidfd (Linux, or -1)
+ * pins the process; without one the process must still be the same one
+ * (same start time) after the reads, else the peer is unidentified. Same
+ * residual risk as a bus caller without a pidfd: a process that hands its
+ * connection to another and exits could, after PID reuse, be read as a
+ * different process. have_uid == FALSE (TCP) gives an unidentified caller.
+ * Blocking (/proc reads). Never NULL. */
+SignerCaller *signer_caller_for_peer(const gchar *label, gboolean have_uid, guint32 uid,
+                                     guint32 pid, gint pidfd);
+
 /* TRUE iff @c may name the web origin it acts for: same uid, EXE or
  * SYSTEMD_SCOPE kind, and its executable is an installed browser bridge by
  * path AND device/inode (see signer_caller_origin_bridges). */

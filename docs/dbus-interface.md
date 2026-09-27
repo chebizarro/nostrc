@@ -132,6 +132,20 @@ connection when unidentified) may park at most 8 requests. On macOS the bus does
 client PIDs: callers are keyed as `claimed:<app_id>` (the pre-0.4.0 model,
 shown as unverified) and any same-user process may answer approvals.
 
+**NIP-5F socket.** The optional Unix socket (`NOSTR_SIGNER_ENDPOINT=unix:<path>`,
+off by default) goes through the same path (nostrc-q23h). Its caller's
+principal is built from the socket peer the kernel reports at connect time
+(`SO_PEERCRED`, plus `SO_PEERPIDFD` on Linux >= 6.5; `getpeereid` +
+`LOCAL_PEERPID` on macOS) and `/proc/<pid>`, so it has the same shape as that
+process's D-Bus principal and the same grants apply to both transports. A
+socket request without a grant raises the same `ApprovalRequested` on the bus
+and waits for `ApproveRequest`; a denial is NIP-5F error 5. Only peers of the
+daemon's uid are accepted; a claimed `app_id` in the request is ignored; a
+client that hangs up while waiting drops its request. The TCP lane
+(`tcp:127.0.0.1:<port>`, build option `ENABLE_TCP_IPC`) has no peer
+credentials: its callers are unidentified, prompted every time and never
+remembered. Without a pidfd the same PID-reuse caveat as above applies.
+
 **Daemon sandboxing.** Reading callers' `/proc` entries needs the daemon
 outside any user namespace, so its systemd user unit uses only
 namespace-free hardening (see *Systemd Hardening*).
@@ -512,6 +526,32 @@ principal), `claimed_app_id` (the caller's unverified `app_id` argument),
 `identity`, `preview` (all `s`); `attested`, `verified`, `rememberable`
 (`b`); `calls` (`u`, calls that joined the request).
 Unknown request: `Error.NotFound`.
+
+#### ListGrants / RevokeGrant
+
+*Additive (nostrc-yjky).* The remembered decisions the signer keeps in
+`signer-grants.ini`, for the approval UI's permissions page (approval-UI
+callers only, like `ApproveRequest`; others get `Error.PermissionDenied`).
+The UI never reads the file itself.
+
+```xml
+<method name="ListGrants">
+  <arg name="grants" type="a(sssbt)" direction="out"/>
+</method>
+<method name="RevokeGrant">
+  <arg name="kind" type="s" direction="in"/>
+  <arg name="principal" type="s" direction="in"/>
+  <arg name="identity" type="s" direction="in"/>
+  <arg name="removed" type="b" direction="out"/>
+</method>
+```
+
+Each grant is `(kind, principal, identity, allow, expires_at)`: `identity`
+is an npub or `*`; `expires_at` is unix seconds, `0` = never (expired
+entries are listed so they can be cleaned up). Built-in defaults for
+first-party services are not listed. `RevokeGrant` removes one entry and
+returns whether it existed; the next matching call prompts again. Empty
+arguments: `Error.InvalidInput`.
 
 ---
 
@@ -1041,98 +1081,12 @@ gdbus monitor --session --dest org.nostr.Signer
 
 ## D-Bus Introspection XML
 
-The full interface definition is available at:
-`/usr/share/dbus-1/interfaces/org.nostr.Signer.xml`
-
-```xml
-<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
-  "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
-<node>
-  <interface name="org.nostr.Signer">
-    <method name="GetPublicKey">
-      <arg name="npub" type="s" direction="out"/>
-    </method>
-
-    <method name="SignEvent">
-      <arg name="event_json" type="s" direction="in"/>
-      <arg name="current_user" type="s" direction="in"/>
-      <arg name="app_id" type="s" direction="in"/>
-      <arg name="signed_event" type="s" direction="out"/>
-    </method>
-
-    <method name="NIP44Encrypt">
-      <arg name="plaintext" type="s" direction="in"/>
-      <arg name="peer_pubkey" type="s" direction="in"/>
-      <arg name="current_user" type="s" direction="in"/>
-      <arg name="ciphertext" type="s" direction="out"/>
-    </method>
-
-    <method name="NIP44Decrypt">
-      <arg name="ciphertext" type="s" direction="in"/>
-      <arg name="peer_pubkey" type="s" direction="in"/>
-      <arg name="current_user" type="s" direction="in"/>
-      <arg name="plaintext" type="s" direction="out"/>
-    </method>
-
-    <method name="NIP04Encrypt">
-      <arg name="plaintext" type="s" direction="in"/>
-      <arg name="peer_pubkey" type="s" direction="in"/>
-      <arg name="current_user" type="s" direction="in"/>
-      <arg name="ciphertext" type="s" direction="out"/>
-    </method>
-
-    <method name="NIP04Decrypt">
-      <arg name="ciphertext" type="s" direction="in"/>
-      <arg name="peer_pubkey" type="s" direction="in"/>
-      <arg name="current_user" type="s" direction="in"/>
-      <arg name="plaintext" type="s" direction="out"/>
-    </method>
-
-    <method name="DecryptZapEvent">
-      <arg name="event_json" type="s" direction="in"/>
-      <arg name="current_user" type="s" direction="in"/>
-      <arg name="decrypted_event" type="s" direction="out"/>
-    </method>
-
-    <method name="GetRelays">
-      <arg name="relays_json" type="s" direction="out"/>
-    </method>
-
-    <method name="StoreKey">
-      <arg name="key" type="s" direction="in"/>
-      <arg name="identity" type="s" direction="in"/>
-      <arg name="ok" type="b" direction="out"/>
-      <arg name="npub" type="s" direction="out"/>
-    </method>
-
-    <method name="ClearKey">
-      <arg name="identity" type="s" direction="in"/>
-      <arg name="ok" type="b" direction="out"/>
-    </method>
-
-    <method name="ApproveRequest">
-      <arg name="request_id" type="s" direction="in"/>
-      <arg name="decision" type="b" direction="in"/>
-      <arg name="remember" type="b" direction="in"/>
-      <arg name="ttl_seconds" type="t" direction="in"/>
-      <arg name="ok" type="b" direction="out"/>
-    </method>
-
-    <signal name="ApprovalRequested">
-      <arg type="s" name="app_id"/>
-      <arg type="s" name="identity"/>
-      <arg type="s" name="kind"/>
-      <arg type="s" name="preview"/>
-      <arg type="s" name="request_id"/>
-    </signal>
-
-    <signal name="ApprovalCompleted">
-      <arg type="s" name="request_id"/>
-      <arg type="b" name="decision"/>
-    </signal>
-  </interface>
-</node>
-```
+The interface definition has one copy in the tree,
+[`nips/nip55l/dbus/org.nostr.Signer.xml`](../nips/nip55l/dbus/org.nostr.Signer.xml):
+the daemon's skeleton, nostr-gobject's proxy (`signer_proxy`) and the tests
+are all generated from or checked against it (nostrc-56id). It is installed
+as `$datadir/dbus-1/interfaces/org.nostr.Signer.xml`; a running signer also
+answers `org.freedesktop.DBus.Introspectable.Introspect`.
 
 ---
 
@@ -1140,7 +1094,7 @@ The full interface definition is available at:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `NOSTR_SIGNER_ENDPOINT` | IPC endpoint (`unix:/path`, `tcp:host:port`) | `unix:$XDG_RUNTIME_DIR/gnostr/signer.sock` |
+| `NOSTR_SIGNER_ENDPOINT` | Opt-in NIP-5F endpoint (`unix:/path`, `tcp:host:port`), gated like D-Bus | Unset: D-Bus only |
 | `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS` | Enable `StoreKey`/`ClearKey` (`1` to enable) | Disabled |
 | `NOSTR_SIGNER_MAX_CONNECTIONS` | Max concurrent TCP connections | 100 |
 | `NOSTR_DEBUG` | Enable debug logging | Disabled |
@@ -1149,17 +1103,20 @@ The full interface definition is available at:
 
 ---
 
-## ACL Configuration
+## Grants file
 
-Access control decisions are stored in `~/.config/gnostr/signer-acl.ini`:
+Remembered decisions live in `$XDG_CONFIG_HOME/gnostr/signer-grants.ini`
+(see **Grants** above), shared by the D-Bus methods and the NIP-5F socket:
 
 ```ini
-[SignEvent]
-app-id:npub1abc123=allow
-other-app:npub1xyz789=deny:1706745600
+[event]
+exe:/usr/bin/gnostr|npub1abc123...=allow
+[nip44_decrypt]
+flatpak:org.example.Chat|npub1abc123...=deny:1706745600
 ```
 
-Format: `app_id:identity=decision[:expiry_unix_timestamp]`
+Format: `<principal>|<npub or *>=allow|deny[:<until-unix-ts>]`. The pre-0.4.0
+`signer-acl.ini` (keyed on a claimed `app_id`) is not read by anything.
 
 ---
 

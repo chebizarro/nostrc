@@ -47,6 +47,23 @@ test_budgets(void)
   g_assert_cmpuint(y->limit_msat_per_day, ==, 21000000);
   g_assert_cmpuint(y->spent_today_msat, ==, 1500000);
   g_assert_true(y->allow_read);
+  g_assert_true(y->allow_receive);     /* version 1: allow_read meant both */
+  g_assert_false(x->allow_receive);
+
+  /* Version 2 keeps the two grants apart (nostrc-muhk). */
+  g_assert_true(g_file_set_contents(p,
+    "{\"version\":2,\"apps\":{\"org.gnostr.Client\":{\"allow_read\":true,\"allow_receive\":false},"
+    "\"org.example.Inv\":{\"allow_read\":false,\"allow_receive\":true}}}", -1, NULL));
+  g_autoptr(GPtrArray) v2 = nss_wallet_budgets_load(p, "2026-09-26", &e);
+  g_assert_no_error(e);
+  g_assert_cmpuint(v2->len, ==, 2);
+  NssBudget *inv = g_ptr_array_index(v2, 0);
+  g_assert_cmpstr(inv->app_id, ==, "org.example.Inv");
+  g_assert_false(inv->allow_read);
+  g_assert_true(inv->allow_receive);
+  NssBudget *cl = g_ptr_array_index(v2, 1);
+  g_assert_true(cl->allow_read);
+  g_assert_false(cl->allow_receive);
 
   g_assert_true(g_file_set_contents(p, "{not json", -1, NULL));
   g_assert_null(nss_wallet_budgets_load(p, NULL, &e));
@@ -58,6 +75,7 @@ test_budgets(void)
   NwaBudgetStore *s = nwa_budget_store_new(p, fixed_clock, NULL);
   nwa_budget_store_set_limit(s, "org.example.App", 5000000);
   nwa_budget_store_set_allow_read(s, "org.example.App", TRUE);
+  nwa_budget_store_set_allow_receive(s, "org.example.App", FALSE);
   guint res = nwa_budget_store_reserve(s, "org.example.App", 1000000, FALSE);
   g_assert_cmpuint(res, !=, 0);
   g_assert_true(nwa_budget_store_save(s, &e));
@@ -69,6 +87,7 @@ test_budgets(void)
   g_assert_cmpuint(z->limit_msat_per_day, ==, 5000000);
   g_assert_cmpuint(z->spent_today_msat, >=, 1000000);   /* + fee reserve */
   g_assert_true(z->allow_read);
+  g_assert_false(z->allow_receive);   /* the agent writes version 2 */
 #endif
 }
 
@@ -101,14 +120,15 @@ test_list_apps_variant(void)
     "{'org.gnostr.Client': {'limit_msat_per_day': <uint64 21000000>, 'spent_today_msat': <uint64 1500>,"
     " 'allow_read': <true>},"
     " 'exe:/usr/bin/gnome-shell': {'limit_msat_per_day': <uint64 0>, 'spent_today_msat': <uint64 0>,"
-    " 'allow_read': <false>}, 'https://a.example': @a{sv} {}}");
+    " 'allow_read': <true>, 'allow_receive': <false>}, 'https://a.example': @a{sv} {}}");
   g_variant_ref_sink(v);
   g_autoptr(GPtrArray) a = nss_wallet_apps_from_variant(v);
   g_variant_unref(v);
   g_assert_cmpuint(a->len, ==, 3);
   NssBudget *s = g_ptr_array_index(a, 0);
   g_assert_cmpstr(s->app_id, ==, NSS_WALLET_SHELL_APP_ID);
-  g_assert_false(s->allow_read);
+  g_assert_true(s->allow_read);
+  g_assert_false(s->allow_receive);     /* split grant from a current agent */
   NssBudget *w = g_ptr_array_index(a, 1);
   g_assert_cmpstr(w->app_id, ==, "https://a.example");   /* missing keys: zero */
   g_assert_cmpuint(w->limit_msat_per_day, ==, 0);
@@ -116,6 +136,7 @@ test_list_apps_variant(void)
   g_assert_cmpuint(g->limit_msat_per_day, ==, 21000000);
   g_assert_cmpuint(g->spent_today_msat, ==, 1500);
   g_assert_true(g->allow_read);
+  g_assert_true(g->allow_receive);      /* older agent: no key, read meant both */
   g_autoptr(GPtrArray) none = nss_wallet_apps_from_variant(NULL);
   g_assert_cmpuint(none->len, ==, 0);
 }

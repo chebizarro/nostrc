@@ -41,8 +41,9 @@ Amounts are millisatoshis.
 | `OpenUri(s uri)` | | scheme-handler link (always confirmed) |
 | `GetBudget(s app_id)` | `→ u msat_per_day, t spent_today_msat` | own: always; other app: trusted only |
 | `SetBudget(s app_id, u msat_per_day)` | | lower own: always; otherwise confirm (a budget never grants read access) |
-| `ListApps()` | `→ a{sa{sv}}` (`limit_msat_per_day` t, `spent_today_msat` t, `allow_read` b per app id) | grant admin only |
+| `ListApps()` | `→ a{sa{sv}}` (`limit_msat_per_day` t, `spent_today_msat` t, `allow_read` b, `allow_receive` b per app id) | grant admin only |
 | `SetReadAccess(s app_id, b allow)` | | grant: grant admin immediately, other apps only after the user agrees; revoke own: always; revoke another's: grant admin only |
+| `SetReceiveAccess(s app_id, b allow)` | | the invoice grant (`MakeInvoice` without asking); same rules as `SetReadAccess` |
 | `GetInfoFor` / `GetBalanceFor` / `MakeInvoiceFor` / `PayInvoiceFor` `(s origin, …)` | as the plain method | as the plain method, **with the web origin as the app** — browser bridge only, see [Web origins](#web-origins-browser-bridge) |
 
 `app_id = ""` means "the caller". Signals: `PaymentReceived(a{sv})`,
@@ -126,12 +127,19 @@ signer daemon.
 ## Budgets
 
 Each application has a daily limit (msat, default **0 = never pay without
-asking**) and a separate "allowed to read" flag. The limit is set by ticking
-*Always allow up to N sats/day* in the payment dialog, by `SetBudget`, or by
-a trusted settings app; the read flag by ticking *Always allow this app* in
-the wallet-access dialog, by `SetReadAccess` (the trusted settings app's
-per-app switch; other apps only after the user agrees), and an app can give
-up its own. Neither implies the other.
+asking**) and two separate flags: "allowed to read" (balance, history,
+invoice lookup) and "allowed to receive" (create invoices). The limit is set
+by ticking *Always allow up to N sats/day* in the payment dialog, by
+`SetBudget`, or by a trusted settings app; the read flag by ticking *Always
+allow this app* in the wallet-access dialog or by `SetReadAccess`; the
+receive flag by ticking *Always let this app create invoices* in the invoice
+dialog or by `SetReceiveAccess` (each the trusted settings app's per-app
+switch; other apps only after the user agrees), and an app can give up its
+own. None implies another: a read grant for `exe:/usr/bin/gnome-shell` does
+not let every Shell extension create invoices that look like the user's own
+(nostrc-muhk). `budgets.json` version 1 had only `allow_read`, which then
+meant both; such records load with `allow_receive = allow_read` and are
+rewritten as version 2.
 
 * **Storage:** `$XDG_STATE_HOME/nostr-wallet/budgets.json` (dir 0700, file
   0600, atomic rewrite). Budgets are deliberately *not* in GSettings: they
@@ -166,8 +174,9 @@ read?" without reimplementing caller identification or peeking at
 |---|---|---|
 | any | caller runs as another Unix user | Deny |
 | read / receive / pay | not paired | Deny (`NotPaired`) |
-| read / receive | trusted app, scheme link, or identified app previously allowed | Allow |
-| read / receive | otherwise | Prompt ("use your wallet?"; remembered only if *Always allow this app* is ticked) |
+| read | trusted app, scheme link, or identified app with a read grant | Allow |
+| receive | trusted app, scheme link, or identified app with a receive grant | Allow |
+| read / receive | otherwise | Prompt ("see your balance?" / "create an invoice?"; remembers only that grant, and only if *Always allow…* is ticked) |
 | pay | identified app, amount + fee reserve ≤ remaining budget, ≤ `max-auto-pay-msat`, `always-confirm-payments` off | Allow |
 | pay | over a configured budget | Prompt + `BudgetExceeded` signal |
 | pay | no budget / unidentified caller / scheme link / always-confirm / above per-payment cap | Prompt |
@@ -177,14 +186,14 @@ read?" without reimplementing caller identification or peeking at
 | budget | lower own | Allow |
 | budget | raise own, or change another app's | Trusted: Allow; identified (grant admin included): Prompt; unidentified: Deny |
 | budget | read another app's, `ListApps` | Trusted or grant admin: Allow; otherwise Deny |
-| read grant | `SetReadAccess(app, true)` | Trusted or grant admin: Allow; identified: Prompt; unidentified: Deny |
-| read revoke | own | Allow (identified) |
-| read revoke | another app's | Trusted or grant admin: Allow; otherwise Deny |
+| read / receive grant | `SetReadAccess` / `SetReceiveAccess(app, true)` | Trusted or grant admin: Allow; identified: Prompt; unidentified: Deny |
+| read / receive revoke | own | Allow (identified) |
+| read / receive revoke | another app's | Trusted or grant admin: Allow; otherwise Deny |
 
 "Trusted" means listed in `trusted-apps` **and** identified through Flatpak
 (an id the caller cannot choose); unsandboxed callers are never trusted.
 
-A **grant admin** may list apps and grant or revoke read access without a
+A **grant admin** may list apps and grant or revoke read and receive access without a
 dialog, but not change spending limits: a trusted app, or the installed Nostr
 Settings — an unsandboxed same-uid caller whose `/proc/<pid>/exe` is
 `<bindir>/nostr-settings` by path and inode (the browser bridge's rule,

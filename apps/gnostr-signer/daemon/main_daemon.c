@@ -61,17 +61,15 @@ static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpoi
   if (!endpoint || !*endpoint) {
     endpoint = g_getenv("NOSTR_SIGNER_SOCK"); /* legacy */
   }
-  /* The NIP-5F listener answers get_public_key / nip44_encrypt /
-   * nip44_decrypt without the D-Bus approval flow (nip55l 0.4.0 gates those
-   * per verified caller), so it would be a way around it for any process
-   * that can reach the socket. Opt-in only: run it when an endpoint is
-   * configured explicitly (nostrc-y02q). */
+  /* The NIP-5F listener goes through the same approval gate as the D-Bus
+   * methods (principal from the socket peer's kernel credentials, shared
+   * signer-grants.ini, ApprovalRequested on the bus; nostrc-q23h). It stays
+   * opt-in: run it only when an endpoint is configured explicitly. */
   if (!endpoint || !*endpoint) {
     g_message("gnostr-signer: no NOSTR_SIGNER_ENDPOINT; NIP-5F socket disabled (D-Bus only)");
     g_message("gnostr-signer: daemon fully initialized and ready");
     return;
   }
-  g_warning("gnostr-signer: NIP-5F endpoint %s enabled: its requests are not approval-gated", endpoint);
 
   g_autoptr(GError) ipc_error = NULL;
   ipc_srv = gnostr_ipc_server_start(endpoint, &ipc_error);

@@ -1,5 +1,7 @@
 #include <gio/gio.h>
 
+#include "nip55l_nip5f.h"
+
 #define SIGNER_NAME  "org.nostr.Signer"
 #define SIGNER_PATH  "/org/nostr/signer"
 
@@ -20,6 +22,17 @@ static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpoi
     g_main_loop_quit(loop);
   } else {
     g_print("nostr-signer: exported at %s on %s\n", SIGNER_PATH, SIGNER_NAME);
+    /* Opt-in NIP-5F socket, gated like the D-Bus methods (nostrc-q23h). */
+    const char *ep = g_getenv("NOSTR_SIGNER_ENDPOINT");
+    if (ep && g_str_has_prefix(ep, "unix:") && ep[5]) {
+      GError *err = NULL;
+      if (!nip55l_nip5f_start(ep + 5, &err)) {
+        g_printerr("nostr-signer: NIP-5F socket: %s\n", err ? err->message : "failed");
+        g_clear_error(&err);
+      }
+    } else if (ep && *ep) {
+      g_printerr("nostr-signer: NOSTR_SIGNER_ENDPOINT=%s ignored (only unix:<path>)\n", ep);
+    }
   }
 }
 
@@ -55,6 +68,7 @@ int main(int argc, char **argv){
                                   NULL,
                                   NULL);
   g_main_loop_run(loop);
+  nip55l_nip5f_stop();
   g_bus_unown_name(owner_id);
   g_main_loop_unref(loop);
   return exit_status;

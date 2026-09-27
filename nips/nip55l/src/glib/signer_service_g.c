@@ -13,17 +13,21 @@
 #include "nip55l_dbus_names.h"
 #include "nip55l_dbus_errors.h"
 #include "signer_caller.h"
+#include "signer_gate.h"
 
 /* Generated skeleton instance */
 static NostrSigner *signer_skel = NULL;
+static GDBusConnection *signer_bus = NULL; /* the connection it is exported on */
 
 /* ==========================================================================
  * Access control (nip55l 0.4.0: nostrc-y02q, nostrc-phk4, nostrc-1e31,
  * nostrc-eie5). Every method that uses or reveals the user's key material or
- * configuration goes through gated_call():
+ * configuration goes through gate() - D-Bus methods via gated_call(), the
+ * NIP-5F socket via signer_gate_submit() (signer_gate.h, nostrc-q23h):
  *
- *   1. principal  - who is calling, derived from the bus connection
- *                   (signer_caller.h). The caller's app_id argument is only
+ *   1. principal  - who is calling, derived from the bus connection or the
+ *                   socket's kernel-reported peer (signer_caller.h), never
+ *                   from an argument. The caller's app_id argument is only
  *                   honoured as a web-origin sub-principal when the caller is
  *                   the installed browser bridge; otherwise it is a label
  *                   shown to the user ("claims to be ...").
@@ -77,13 +81,31 @@ static const OpInfo op_info[OP_COUNT] = {
   [OP_DECRYPT_ZAP]       = { "zap_decrypt",            TRUE,  TRUE,  FALSE },
 };
 
+/* Where a call's outcome goes: a D-Bus method invocation, or a callback
+ * (signer_gate.h: the NIP-5F socket). */
+typedef struct {
+  GDBusMethodInvocation *invocation;
+  SignerGateReplyFn fn;
+  gpointer ud;
+} Reply;
+
+static void reply_error(const Reply *r, const char *ename, const char *msg){
+  if (r->invocation) g_dbus_method_invocation_return_dbus_error(r->invocation, ename, msg);
+  else r->fn(r->ud, ename, msg, NULL);
+}
+
+static void reply_value(const Reply *r, const char *out){
+  if (r->invocation) g_dbus_method_invocation_return_value(r->invocation, g_variant_new("(s)", out));
+  else r->fn(r->ud, NULL, NULL, out);
+}
+
 /* One parked method call. */
 typedef struct {
   SignerOp op;
   gchar *a;          /* event JSON / peer / plaintext / ciphertext */
   gchar *b;          /* peer pubkey for the NIP-04/44 calls */
   gchar *selector;   /* identity as the caller passed it */
-  GDBusMethodInvocation *invocation;
+  Reply reply;
 } Call;
 
 static void call_free(gpointer data){
@@ -162,7 +184,7 @@ static gboolean rate_limit_ok(const char *sender){ return rate_limit_ok_ms(RATE_
 
 /* nip55l < 0.4.0 kept "<app_id>:<identity>" entries in signer-acl.ini. Those
  * were keyed on a string any caller could claim, so they are not carried
- * over; the file is left alone (nips/nip5f still reads its own entries). */
+ * over; the file is left alone and nothing reads it any more. */
 static gchar *grants_file_path(void){
   const char *conf = g_get_user_config_dir();
   if (!conf) conf = g_get_home_dir();
@@ -193,22 +215,26 @@ static GKeyFile *grants_get(void){
   return grants_kf;
 }
 
-/* Value "allow" | "deny" | "allow:<until>" | "deny:<until>". FALSE when
- * absent, expired or unparseable. */
-static gboolean grant_value(const char *val, gboolean *allow){
+/* Value "allow" | "deny" | "allow:<until>" | "deny:<until>" (until 0 =
+ * never). FALSE when absent or unparseable. */
+static gboolean grant_parse(const char *val, gboolean *allow, guint64 *until){
   if (!val) return FALSE;
-  gboolean a;
   const char *rest;
-  if (g_str_has_prefix(val, "allow")) { a = TRUE; rest = val + 5; }
-  else if (g_str_has_prefix(val, "deny")) { a = FALSE; rest = val + 4; }
+  if (g_str_has_prefix(val, "allow")) { *allow = TRUE; rest = val + 5; }
+  else if (g_str_has_prefix(val, "deny")) { *allow = FALSE; rest = val + 4; }
   else return FALSE;
-  if (*rest == ':') {
-    guint64 until = g_ascii_strtoull(rest + 1, NULL, 10);
-    guint64 now = (guint64)(g_get_real_time() / 1000000);
-    if (until > 0 && now >= until) return FALSE;
-  } else if (*rest != '\0') {
-    return FALSE;
-  }
+  *until = 0;
+  if (*rest == ':') *until = g_ascii_strtoull(rest + 1, NULL, 10);
+  else if (*rest != '\0') return FALSE;
+  return TRUE;
+}
+
+/* As grant_parse, and FALSE when expired. */
+static gboolean grant_value(const char *val, gboolean *allow){
+  gboolean a;
+  guint64 until;
+  if (!grant_parse(val, &a, &until)) return FALSE;
+  if (until > 0 && (guint64)(g_get_real_time() / 1000000) >= until) return FALSE;
   *allow = a;
   return TRUE;
 }
@@ -268,6 +294,21 @@ static gboolean grants_lookup(const char *kind, const SignerCaller *who, const c
   return FALSE;
 }
 
+static gboolean grants_write(GKeyFile *kf){
+  gsize len = 0;
+  g_autofree gchar *data = g_key_file_to_data(kf, &len, NULL);
+  g_autofree gchar *path = grants_file_path();
+  GError *err = NULL;
+  gboolean ok = data && g_file_set_contents_full(path, data, (gssize)len,
+                                                 G_FILE_SET_CONTENTS_CONSISTENT, 0600, &err);
+  if (!ok) {
+    g_warning("nostr-signer: cannot save grants to %s: %s", path, err ? err->message : "?");
+    g_clear_error(&err);
+  }
+  grants_mtime = -1; /* reload on next use */
+  return ok;
+}
+
 static gboolean grants_save(const char *kind, const char *principal, const char *npub,
                             gboolean allow, guint64 ttl_seconds){
   if (!kind || !principal || !*principal) return FALSE;
@@ -281,68 +322,71 @@ static gboolean grants_save(const char *kind, const char *principal, const char 
     val = g_strdup(allow ? "allow" : "deny");
   }
   g_key_file_set_string(kf, kind, key, val);
-  gsize len = 0;
-  g_autofree gchar *data = g_key_file_to_data(kf, &len, NULL);
-  g_autofree gchar *path = grants_file_path();
-  GError *err = NULL;
-  gboolean ok = data && g_file_set_contents_full(path, data, (gssize)len,
-                                                 G_FILE_SET_CONTENTS_CONSISTENT, 0600, &err);
-  if (!ok) {
-    g_warning("nostr-signer: cannot save grant to %s: %s", path, err ? err->message : "?");
-    g_clear_error(&err);
-  }
-  grants_mtime = -1; /* reload on next use */
-  return ok;
+  return grants_write(kf);
+}
+
+/* Remove one entry (and its section when that empties). */
+static gboolean grants_remove(const char *kind, const char *principal, const char *identity,
+                              gboolean *removed){
+  *removed = FALSE;
+  GKeyFile *kf = grants_get();
+  g_autofree gchar *key = g_strdup_printf("%s|%s", principal, identity);
+  if (!g_key_file_remove_key(kf, kind, key, NULL)) return TRUE;
+  *removed = TRUE;
+  gsize n = 0;
+  g_auto(GStrv) left = g_key_file_get_keys(kf, kind, &n, NULL);
+  if (n == 0) g_key_file_remove_group(kf, kind, NULL);
+  return grants_write(kf);
 }
 
 /* ---- errors ------------------------------------------------------------- */
 
-static void return_sign_error(GDBusMethodInvocation *invocation, int rc){
+static void return_sign_error(const Reply *invocation, int rc){
   switch (rc) {
     case NOSTR_SIGNER_ERROR_INVALID_JSON:
     case NOSTR_SIGNER_ERROR_INVALID_ARG:
-      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "event JSON is not a valid Nostr event");
+      reply_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "event JSON is not a valid Nostr event");
       break;
     case NOSTR_SIGNER_ERROR_NOT_FOUND:
-      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_KEY, "no key configured for this identity");
+      reply_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_KEY, "no key configured for this identity");
       break;
     default:
-      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "sign failed");
+      reply_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "sign failed");
       break;
   }
 }
 
-static void return_convkey_error(GDBusMethodInvocation *invocation, int rc){
+static void return_convkey_error(const Reply *invocation, int rc){
   switch (rc) {
     case NOSTR_SIGNER_ERROR_INVALID_KEY:
     case NOSTR_SIGNER_ERROR_INVALID_ARG:
-      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
+      reply_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
         "peer is not a 64-hex x-only public key on secp256k1");
       break;
     case NOSTR_SIGNER_ERROR_NOT_FOUND:
-      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_KEY, "no key configured for this identity");
+      reply_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_KEY, "no key configured for this identity");
       break;
     default:
-      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "conversation key derivation failed");
+      reply_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "conversation key derivation failed");
       break;
   }
 }
 
 /* The selector resolves to no key: answer without prompting. */
-static void return_no_key(GDBusMethodInvocation *invocation, SignerOp op, int rc){
+static void return_no_key(const Reply *invocation, SignerOp op, int rc){
   if (rc == NOSTR_SIGNER_ERROR_NOT_FOUND || rc == NOSTR_SIGNER_ERROR_INVALID_KEY) {
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_KEY,
+    reply_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_KEY,
       op == OP_GET_PUBLIC_KEY ? "No key configured. Please set up a key in GNostr Signer first."
                               : "no key configured for this identity");
   } else {
     gchar *msg = g_strdup_printf("key lookup failed (rc=%d)", rc);
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, msg);
+    reply_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, msg);
     g_free(msg);
   }
 }
 
-static void return_string(GDBusMethodInvocation *invocation, char *out, gboolean wipe){
-  g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", out));
+static void return_string(const Reply *invocation, char *out, gboolean wipe){
+  reply_value(invocation, out);
   if (wipe) memset(out, 0, strlen(out));
   free(out);
 }
@@ -415,23 +459,23 @@ static int get_relays_from_gsettings(char **out_json){
   return rc;
 }
 
-static int perform_get_relays(GDBusMethodInvocation *invocation){
+static int perform_get_relays(const Reply *invocation){
   char *out=NULL; int rc = nostr_nip55l_get_relays(&out);
   if (rc == NOSTR_SIGNER_ERROR_NOT_FOUND) rc = get_relays_from_gsettings(&out);
   if (rc == NOSTR_SIGNER_ERROR_NOT_FOUND) {
     /* Expected state, not a failure: callers fall back to their own relays. */
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_NOT_FOUND,
+    reply_error(invocation, ORG_NOSTR_SIGNER_ERR_NOT_FOUND,
       "no relays configured ($XDG_CONFIG_HOME/nostr/relays.conf or gnostr-signer relays)");
     return rc;
   }
   if (rc == NOSTR_SIGNER_ERROR_INVALID_JSON) {
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_CONFIG,
+    reply_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_CONFIG,
       "relays.conf is malformed: expected a JSON array of ws:// or wss:// URL strings");
     return rc;
   }
   if (rc!=0 || !out) {
     free(out);
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "get relays failed");
+    reply_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "get relays failed");
     return rc ? rc : NOSTR_SIGNER_ERROR_BACKEND;
   }
   return_string(invocation, out, FALSE);
@@ -440,7 +484,7 @@ static int perform_get_relays(GDBusMethodInvocation *invocation){
 
 /* Run an allowed call and complete its invocation. Returns the core rc. */
 static int perform(const Call *c, const char *claimed_app_id){
-  GDBusMethodInvocation *inv = c->invocation;
+  const Reply *inv = &c->reply;
   char *out = NULL;
   int rc = 0;
   const char *emsg = NULL;
@@ -474,7 +518,7 @@ static int perform(const Call *c, const char *claimed_app_id){
   }
   if (rc != 0 || !out) {
     free(out);
-    g_dbus_method_invocation_return_dbus_error(inv, ORG_NOSTR_SIGNER_ERR_INTERNAL, emsg);
+    reply_error(inv, ORG_NOSTR_SIGNER_ERR_INTERNAL, emsg);
     return rc ? rc : NOSTR_SIGNER_ERROR_BACKEND;
   }
   gboolean plaintext = c->op == OP_NIP04_DECRYPT || c->op == OP_NIP44_DECRYPT ||
@@ -495,7 +539,7 @@ static gboolean is_hex64(const char *s){
 static void pending_fail(Pending *p, const char *ename, const char *msg){
   for (guint i = 0; i < p->calls->len; i++) {
     Call *c = g_ptr_array_index(p->calls, i);
-    g_dbus_method_invocation_return_dbus_error(c->invocation, ename, msg);
+    reply_error(&c->reply, ename, msg);
   }
   g_ptr_array_set_size(p->calls, 0);
 }
@@ -542,6 +586,7 @@ static Pending *pending_find_joinable(const char *sender, SignerOp op, const Sig
 static gboolean approver_present(GDBusConnection *bus){
   static const gchar name[] = NIP55L_APPROVER_BUS_NAME;
   if (name[0] == '\0') return TRUE;
+  if (!bus || !signer_skel) return FALSE;
   g_autoptr(GVariant) r = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
       "org.freedesktop.DBus", "NameHasOwner", g_variant_new("(s)", name),
       G_VARIANT_TYPE("(b)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, NULL);
@@ -550,17 +595,18 @@ static gboolean approver_present(GDBusConnection *bus){
   return has;
 }
 
-static void gated_call(NostrSigner *object, GDBusMethodInvocation *invocation, SignerOp op,
-                       const char *a, const char *b, const char *selector, const char *claimed){
-  GDBusConnection *bus = g_dbus_method_invocation_get_connection(invocation);
-  const char *sender = g_dbus_method_invocation_get_sender(invocation);
+/* The access-control path for one call from @base (reached over the
+ * connection @sender), whichever transport it came by. */
+static void gate(const Reply *invocation, const SignerCaller *base, const char *sender, SignerOp op,
+                 const char *a, const char *b, const char *selector, const char *claimed){
+  GDBusConnection *bus = signer_bus;
   if (!selector) selector = "";
   if (!claimed) claimed = "";
 
   /* Reject malformed input before anyone is asked to approve it. */
   if (op == OP_CONVKEY && !is_hex64(a)) { return_convkey_error(invocation, NOSTR_SIGNER_ERROR_INVALID_KEY); return; }
   if (op_info[op].peer_arg && !is_hex64(b)) {
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
+    reply_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
       "pubKey is not a 64-hex x-only public key");
     return;
   }
@@ -568,7 +614,6 @@ static void gated_call(NostrSigner *object, GDBusMethodInvocation *invocation, S
   if (op == OP_CONVKEY) peer_lc = g_ascii_strdown(a, -1);
 
   /* 1. principal */
-  const SignerCaller *base = signer_caller_lookup(bus, sender);
   g_autoptr(SignerCaller) origin = NULL;
   const SignerCaller *who = base;
   if (base->unattested) {
@@ -589,7 +634,7 @@ static void gated_call(NostrSigner *object, GDBusMethodInvocation *invocation, S
     int rc = nostr_nip55l_normalize_selector(selector, &ns, &np);
     if (rc == NOSTR_SIGNER_ERROR_INVALID_ARG) {
       free(np); free(ns);
-      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
+      reply_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
         "identity must name a stored identity (npub, hex public key, key_id or label), not a secret key");
       return;
     }
@@ -601,13 +646,13 @@ static void gated_call(NostrSigner *object, GDBusMethodInvocation *invocation, S
     selector = sel_m;
   }
 
-  Call call = { op, (gchar *)(peer_lc ? peer_lc : a), (gchar *)b, (gchar *)selector, invocation };
+  Call call = { op, (gchar *)(peer_lc ? peer_lc : a), (gchar *)b, (gchar *)selector, *invocation };
 
   /* 3. grant */
   gboolean allow = FALSE;
   if (grants_lookup(op_info[op].kind, who, npub_m, &allow)) {
     if (allow) (void)perform(&call, claimed);
-    else g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy");
+    else reply_error(invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy");
     return;
   }
 
@@ -616,12 +661,12 @@ static void gated_call(NostrSigner *object, GDBusMethodInvocation *invocation, S
   Pending *join = pending_find_joinable(sender, op, who, npub_m, selector, claimed);
   if (join) {
     if (join->calls->len >= PENDING_CALLS_MAX) {
-      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT,
+      reply_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT,
         "too many calls awaiting approval");
       return;
     }
     Call *c = g_new0(Call, 1);
-    *c = (Call){ op, g_strdup(call.a), g_strdup(b), g_strdup(selector), invocation };
+    *c = (Call){ op, g_strdup(call.a), g_strdup(b), g_strdup(selector), *invocation };
     g_ptr_array_add(join->calls, c);
     return;
   }
@@ -638,21 +683,21 @@ static void gated_call(NostrSigner *object, GDBusMethodInvocation *invocation, S
     }
   }
   if (mine >= PENDING_PER_CALLER_MAX) {
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT,
+    reply_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT,
       "too many of this application's requests are awaiting approval");
     return;
   }
   if (g_hash_table_size(pending) >= PENDING_MAX) {
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT,
+    reply_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT,
       "too many requests awaiting approval");
     return;
   }
   if (!rate_limit_ok_ms(RATE_PROMPT, sender, 100)) {
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "rate limited");
+    reply_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "rate limited");
     return;
   }
   if (!approver_present(bus)) {
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL,
+    reply_error(invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL,
       "approval required but no approval agent is running (start GNostr Signer)");
     return;
   }
@@ -666,7 +711,7 @@ static void gated_call(NostrSigner *object, GDBusMethodInvocation *invocation, S
   p->preview = build_preview(op, call.a, b);
   p->calls = g_ptr_array_new_with_free_func(call_free);
   Call *c = g_new0(Call, 1);
-  *c = (Call){ op, g_strdup(call.a), g_strdup(b), g_strdup(selector), invocation };
+  *c = (Call){ op, g_strdup(call.a), g_strdup(b), g_strdup(selector), *invocation };
   g_ptr_array_add(p->calls, c);
   p->timeout_id = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, PENDING_TTL_S, on_pending_timeout,
                                              g_strdup(p->id), g_free);
@@ -675,10 +720,39 @@ static void gated_call(NostrSigner *object, GDBusMethodInvocation *invocation, S
   g_message("nostr-signer: %s %s by %s (claimed '%s') identity=%s",
             p->id, op_info[op].kind, who->principal ? who->principal : "(unidentified)",
             claimed, npub_m ? npub_m : "-");
-  nostr_signer_emit_approval_requested(object,
+  nostr_signer_emit_approval_requested(signer_skel,
     who->principal ? who->principal : "",
     npub_m ? npub_m : selector,
     op_info[op].kind, p->preview, p->id);
+}
+
+static void gated_call(NostrSigner *object, GDBusMethodInvocation *invocation, SignerOp op,
+                       const char *a, const char *b, const char *selector, const char *claimed){
+  (void)object;
+  const Reply reply = { invocation, NULL, NULL };
+  const char *sender = g_dbus_method_invocation_get_sender(invocation);
+  const SignerCaller *base = signer_caller_lookup(g_dbus_method_invocation_get_connection(invocation), sender);
+  gate(&reply, base, sender, op, a, b, selector, claimed);
+}
+
+void signer_gate_submit(const SignerCaller *who, const gchar *conn_key, SignerGateOp op,
+                        const gchar *a, const gchar *b, const gchar *selector,
+                        SignerGateReplyFn reply_fn, gpointer user_data){
+  g_return_if_fail(who && conn_key && reply_fn);
+  const Reply reply = { NULL, reply_fn, user_data };
+  SignerOp sop;
+  switch (op) {
+    case SIGNER_GATE_GET_PUBLIC_KEY: sop = OP_GET_PUBLIC_KEY; break;
+    case SIGNER_GATE_SIGN_EVENT:     sop = OP_SIGN_EVENT; break;
+    case SIGNER_GATE_NIP44_ENCRYPT:  sop = OP_NIP44_ENCRYPT; break;
+    case SIGNER_GATE_NIP44_DECRYPT:  sop = OP_NIP44_DECRYPT; break;
+    default:
+      reply_error(&reply, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "unknown operation");
+      return;
+  }
+  /* No app_id: a socket peer has nothing to claim, and is never unattested
+   * (the kernel reports its PID on every platform the socket runs on). */
+  gate(&reply, who, conn_key, sop, a, b, selector, "");
 }
 
 /* ---- ApproveRequest / GetApprovalInfo ----------------------------------- */
@@ -773,6 +847,54 @@ static gboolean handle_get_approval_info(NostrSigner *object, GDBusMethodInvocat
   return TRUE;
 }
 
+static void forget_sender(const char *name);
+
+/* ---- ListGrants / RevokeGrant (nostrc-yjky) ----------------------------- */
+
+static gboolean handle_list_grants(NostrSigner *object, GDBusMethodInvocation *invocation)
+{
+  if (!require_approver(invocation)) return TRUE;
+  GKeyFile *kf = grants_get();
+  GVariantBuilder b;
+  g_variant_builder_init(&b, G_VARIANT_TYPE("a(sssbt)"));
+  g_auto(GStrv) kinds = g_key_file_get_groups(kf, NULL);
+  for (guint i = 0; kinds && kinds[i]; i++) {
+    g_auto(GStrv) keys = g_key_file_get_keys(kf, kinds[i], NULL, NULL);
+    for (guint j = 0; keys && keys[j]; j++) {
+      const char *bar = strrchr(keys[j], '|');
+      g_autofree gchar *val = g_key_file_get_string(kf, kinds[i], keys[j], NULL);
+      gboolean allow;
+      guint64 until;
+      if (!bar || bar == keys[j] || !bar[1] || !grant_parse(val, &allow, &until)) continue;
+      g_autofree gchar *principal = g_strndup(keys[j], (gsize)(bar - keys[j]));
+      g_variant_builder_add(&b, "(sssbt)", kinds[i], principal, bar + 1, allow, until);
+    }
+  }
+  nostr_signer_complete_list_grants(object, invocation, g_variant_builder_end(&b));
+  return TRUE;
+}
+
+static gboolean handle_revoke_grant(NostrSigner *object, GDBusMethodInvocation *invocation,
+                                    const gchar *kind, const gchar *principal, const gchar *identity)
+{
+  if (!require_approver(invocation)) return TRUE;
+  if (!kind || !*kind || !principal || !*principal || !identity || !*identity ||
+      strchr(principal, '|') || strchr(identity, '|')) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
+                                               "kind, principal and identity are required");
+    return TRUE;
+  }
+  gboolean removed = FALSE;
+  if (!grants_remove(kind, principal, identity, &removed)) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL,
+                                               "cannot write the grants file");
+    return TRUE;
+  }
+  if (removed) g_message("nostr-signer: grant revoked: %s %s|%s", kind, principal, identity);
+  nostr_signer_complete_revoke_grant(object, invocation, removed);
+  return TRUE;
+}
+
 /* A connection left the bus: forget it, and drop requests only it was
  * waiting for (their replies have nowhere to go). */
 static void on_name_owner_changed(GDBusConnection *conn, const gchar *sender_name,
@@ -783,6 +905,14 @@ static void on_name_owner_changed(GDBusConnection *conn, const gchar *sender_nam
   g_variant_get(params, "(&s&s&s)", &name, &old_owner, &new_owner);
   if (!name || name[0] != ':' || (new_owner && *new_owner)) return;
   signer_caller_forget(name);
+  forget_sender(name);
+}
+
+void signer_gate_connection_closed(const gchar *conn_key){
+  if (conn_key) forget_sender(conn_key);
+}
+
+static void forget_sender(const char *name){
   for (guint t = 0; t < G_N_ELEMENTS(rate_tables); t++)
     if (rate_tables[t]) g_hash_table_remove(rate_tables[t], name);
   if (!pending) return;
@@ -987,6 +1117,8 @@ guint signer_export(GDBusConnection *conn, const char *object_path) {
     { "handle-sign-event",                    G_CALLBACK(handle_sign_event) },
     { "handle-approve-request",               G_CALLBACK(handle_approve_request) },
     { "handle-get-approval-info",             G_CALLBACK(handle_get_approval_info) },
+    { "handle-list-grants",                   G_CALLBACK(handle_list_grants) },
+    { "handle-revoke-grant",                  G_CALLBACK(handle_revoke_grant) },
     { "handle-nip04-encrypt",                 G_CALLBACK(handle_nip04_encrypt) },
     { "handle-nip04-encrypt-for-app",         G_CALLBACK(handle_nip04_encrypt_for_app) },
     { "handle-nip04-decrypt",                 G_CALLBACK(handle_nip04_decrypt) },
@@ -1013,6 +1145,7 @@ guint signer_export(GDBusConnection *conn, const char *object_path) {
   if (!g_dbus_interface_skeleton_export(G_DBUS_INTERFACE_SKELETON(signer_skel), conn, object_path, NULL)) {
     g_object_unref(signer_skel); signer_skel = NULL; return 0;
   }
+  g_set_object(&signer_bus, conn);
   if (conn && !name_owner_sub)
     name_owner_sub = g_dbus_connection_signal_subscribe(conn, "org.freedesktop.DBus",
         "org.freedesktop.DBus", "NameOwnerChanged", "/org/freedesktop/DBus", NULL,
@@ -1028,4 +1161,5 @@ void signer_unexport(GDBusConnection *conn, guint reg_id) {
     g_dbus_interface_skeleton_unexport(G_DBUS_INTERFACE_SKELETON(signer_skel));
     g_object_unref(signer_skel); signer_skel = NULL;
   }
+  g_clear_object(&signer_bus);
 }

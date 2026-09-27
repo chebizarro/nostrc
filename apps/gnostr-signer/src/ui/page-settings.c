@@ -20,7 +20,7 @@
 #include "../startup-timing.h"
 #include "../i18n.h"
 #include "../event_history.h"
-#include "../policy_store.h"
+#include "../signer_grants.h"
 #include <nostr-relay.h>
 #include <nostr-event.h>
 #include <json.h>
@@ -582,116 +582,29 @@ static void on_logs(GtkButton *b, gpointer user_data) {
   adw_dialog_present(dlg, GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
 }
 
-/* Forward declaration for policy remove callback */
-static void on_policy_remove_clicked(GtkButton *btn, gpointer ud);
-
-/* Create a policy entry row widget */
-static GtkWidget *create_policy_entry_row(PolicyEntry *entry, PolicyStore *store) {
-  AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
-
-  /* Title: app_id truncated */
-  g_autofree gchar *title = g_strdup(entry->app_id);
-  if (strlen(title) > 16) {
-    gchar *truncated = g_strdup_printf("%.12s...%.4s", title, title + strlen(title) - 4);
-    g_free(title);
-    title = truncated;
-  }
-  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
-
-  /* Subtitle: request kind, decision and expiration */
-  const gchar *decision_str = entry->decision ? "Allowed" : "Denied";
-  const gchar *kind = entry->kind ? entry->kind : POLICY_KIND_EVENT;
-  g_autofree gchar *subtitle = NULL;
-  if (entry->expires_at == 0) {
-    subtitle = g_strdup_printf("%s: %s (permanent)", kind, decision_str);
-  } else {
-    gint64 now = g_get_real_time() / G_USEC_PER_SEC;
-    if ((gint64)entry->expires_at > now) {
-      gint64 remaining = (gint64)entry->expires_at - now;
-      subtitle = g_strdup_printf("%s: %s (expires in %" G_GINT64_FORMAT " min)", kind, decision_str, remaining / 60);
-    } else {
-      subtitle = g_strdup_printf("%s: %s (expired)", kind, decision_str);
-    }
-  }
-  adw_action_row_set_subtitle(row, subtitle);
-
-  /* Decision icon */
-  const gchar *icon_name = entry->decision ? "emblem-ok-symbolic" : "action-unavailable-symbolic";
-  GtkImage *icon = GTK_IMAGE(gtk_image_new_from_icon_name(icon_name));
-  adw_action_row_add_prefix(row, GTK_WIDGET(icon));
-
-  /* Remove button */
-  GtkButton *btn_remove = GTK_BUTTON(gtk_button_new_from_icon_name("user-trash-symbolic"));
-  gtk_widget_set_valign(GTK_WIDGET(btn_remove), GTK_ALIGN_CENTER);
-  gtk_widget_add_css_class(GTK_WIDGET(btn_remove), "flat");
-  adw_action_row_add_suffix(row, GTK_WIDGET(btn_remove));
-
-  /* Store entry data for removal callback */
-  g_object_set_data_full(G_OBJECT(row), "app-id", g_strdup(entry->app_id), g_free);
-  g_object_set_data_full(G_OBJECT(row), "identity", g_strdup(entry->identity), g_free);
-  g_object_set_data_full(G_OBJECT(row), "kind", g_strdup(entry->kind), g_free);
-  g_object_set_data(G_OBJECT(row), "policy-store", store);
-  g_object_set_data(G_OBJECT(btn_remove), "row", row);
-
-  /* Connect remove button callback */
-  g_signal_connect(btn_remove, "clicked", G_CALLBACK(on_policy_remove_clicked), NULL);
-
-  return GTK_WIDGET(row);
-}
-
-/* Callback for policy remove button */
-static void on_policy_remove_clicked(GtkButton *btn, gpointer ud) {
-  (void)ud;
-  GtkWidget *row = GTK_WIDGET(g_object_get_data(G_OBJECT(btn), "row"));
-  const gchar *app_id = g_object_get_data(G_OBJECT(row), "app-id");
-  const gchar *identity = g_object_get_data(G_OBJECT(row), "identity");
-  const gchar *kind = g_object_get_data(G_OBJECT(row), "kind");
-  PolicyStore *ps = g_object_get_data(G_OBJECT(row), "policy-store");
-
-  if (app_id && identity && ps) {
-    policy_store_unset_for_kind(ps, kind, app_id, identity);
-    policy_store_save(ps);
-  }
-
-  GtkListBox *list = GTK_LIST_BOX(gtk_widget_get_parent(row));
-  if (list) {
-    gtk_list_box_remove(list, row);
-  }
-}
-
+/* Remembered decisions, as the signer daemon keeps them (nostrc-yjky). */
 static void on_sign_policy(GtkButton *b, gpointer user_data) {
   (void)b;
   PageSettings *self = PAGE_SETTINGS(user_data);
 
-  /* Create and load policy store */
-  PolicyStore *ps = policy_store_new();
-  policy_store_load(ps);
-
-  /* Create dialog */
   AdwDialog *dlg = adw_dialog_new();
   adw_dialog_set_title(dlg, "Sign Policy");
   adw_dialog_set_content_width(dlg, 500);
   adw_dialog_set_content_height(dlg, 500);
 
-  /* Create main box */
   GtkBox *main_box = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 0));
 
-  /* Header bar */
   AdwHeaderBar *header = ADW_HEADER_BAR(adw_header_bar_new());
   adw_header_bar_set_show_start_title_buttons(header, FALSE);
   adw_header_bar_set_show_end_title_buttons(header, FALSE);
-
-  /* Close button */
   GtkButton *btn_close = GTK_BUTTON(gtk_button_new_with_label("Close"));
   gtk_widget_add_css_class(GTK_WIDGET(btn_close), "suggested-action");
   adw_header_bar_pack_end(header, GTK_WIDGET(btn_close));
-
   gtk_box_append(main_box, GTK_WIDGET(header));
 
-  /* Description label */
   GtkLabel *desc = GTK_LABEL(gtk_label_new(
-    "Manage remembered signing decisions for applications. "
-    "Remove entries to require re-approval."));
+    "Requests you allowed or denied with \u201cRemember\u201d. "
+    "Forget one to be asked again next time."));
   gtk_label_set_wrap(desc, TRUE);
   gtk_label_set_xalign(desc, 0);
   gtk_widget_set_margin_start(GTK_WIDGET(desc), 16);
@@ -701,59 +614,19 @@ static void on_sign_policy(GtkButton *b, gpointer user_data) {
   gtk_widget_add_css_class(GTK_WIDGET(desc), "dim-label");
   gtk_box_append(main_box, GTK_WIDGET(desc));
 
-  /* Scrolled window for list */
   GtkScrolledWindow *scroll = GTK_SCROLLED_WINDOW(gtk_scrolled_window_new());
   gtk_scrolled_window_set_policy(scroll, GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
   gtk_widget_set_vexpand(GTK_WIDGET(scroll), TRUE);
 
-  /* List box for entries */
   GtkListBox *list_box = GTK_LIST_BOX(gtk_list_box_new());
   gtk_list_box_set_selection_mode(list_box, GTK_SELECTION_NONE);
   gtk_widget_add_css_class(GTK_WIDGET(list_box), "boxed-list");
   gtk_widget_set_margin_start(GTK_WIDGET(list_box), 16);
   gtk_widget_set_margin_end(GTK_WIDGET(list_box), 16);
   gtk_widget_set_margin_bottom(GTK_WIDGET(list_box), 16);
-
-  /* Load and display policy entries */
-  GPtrArray *entries = policy_store_list(ps);
-
-  if (entries && entries->len > 0) {
-    for (guint i = 0; i < entries->len; i++) {
-      PolicyEntry *entry = g_ptr_array_index(entries, i);
-      GtkWidget *row = create_policy_entry_row(entry, ps);
-      gtk_list_box_append(list_box, row);
-    }
-
-    /* Free entries (but not the policy store - keep for modifications) */
-    for (guint i = 0; i < entries->len; i++) {
-      policy_entry_free(g_ptr_array_index(entries, i));
-    }
-    g_ptr_array_free(entries, TRUE);
-  } else {
-    /* Empty state */
-    AdwStatusPage *empty = ADW_STATUS_PAGE(adw_status_page_new());
-    adw_status_page_set_icon_name(empty, "preferences-system-symbolic");
-    adw_status_page_set_title(empty, "No Policies");
-    adw_status_page_set_description(empty, "When you approve or deny signing requests, your decisions will appear here.");
-    gtk_scrolled_window_set_child(scroll, GTK_WIDGET(empty));
-    gtk_box_append(main_box, GTK_WIDGET(scroll));
-    adw_dialog_set_child(dlg, GTK_WIDGET(main_box));
-
-    /* Store policy store for cleanup */
-    g_object_set_data_full(G_OBJECT(dlg), "policy-store", ps,
-                           (GDestroyNotify)policy_store_free);
-
-    g_signal_connect_swapped(btn_close, "clicked", G_CALLBACK(adw_dialog_close), dlg);
-    adw_dialog_present(dlg, GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
-    return;
-  }
-
   gtk_scrolled_window_set_child(scroll, GTK_WIDGET(list_box));
   gtk_box_append(main_box, GTK_WIDGET(scroll));
-
-  /* Store policy store for cleanup */
-  g_object_set_data_full(G_OBJECT(dlg), "policy-store", ps,
-                         (GDestroyNotify)policy_store_free);
+  signer_grants_list_box_refresh(list_box);
 
   adw_dialog_set_child(dlg, GTK_WIDGET(main_box));
   g_signal_connect_swapped(btn_close, "clicked", G_CALLBACK(adw_dialog_close), dlg);

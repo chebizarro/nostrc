@@ -56,7 +56,8 @@ configure_file(
 # ── D-Bus signer proxy (gdbus-codegen) ──────────────────────────────
 find_program(GDBUS_CODEGEN gdbus-codegen REQUIRED)
 
-set(SIGNER_DBUS_XML ${CMAKE_CURRENT_SOURCE_DIR}/dbus/org.nostr.Signer.xml)
+# The service's own interface file is the only copy (nostrc-56id).
+set(SIGNER_DBUS_XML ${CMAKE_CURRENT_SOURCE_DIR}/../nips/nip55l/dbus/org.nostr.Signer.xml)
 set(SIGNER_PROXY_C  ${CMAKE_CURRENT_BINARY_DIR}/signer_proxy.c)
 set(SIGNER_PROXY_H  ${CMAKE_CURRENT_BINARY_DIR}/signer_proxy.h)
 

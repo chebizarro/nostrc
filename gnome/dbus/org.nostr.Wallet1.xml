@@ -260,8 +260,8 @@
 
       ListApps: every application (or web origin) the agent has a record
       for, keyed by app id, with "limit_msat_per_day" (t),
-      "spent_today_msat" (t) and "allow_read" (b). Grant admin only; anyone
-      else gets Denied.
+      "spent_today_msat" (t), "allow_read" (b) and "allow_receive" (b).
+      Grant admin only; anyone else gets Denied.
     -->
     <method name="ListApps">
       <arg name="apps" type="a{sa{sv}}" direction="out"/>
@@ -269,8 +269,9 @@
 
     <!--
       SetReadAccess: grant or revoke @app_id's read access ("can see balance
-      and history, and create invoices", the flag the "Always allow this
-      app" switch sets). @app_id "" means the caller.
+      and history", the flag the "Always allow this app" switch sets). It
+      does not cover MakeInvoice: that is SetReceiveAccess. @app_id "" means
+      the caller.
         grant    grant admin: immediately; any other identified app: only
                  after the user agrees in the agent's dialog
         revoke   one's own: always; another app's: grant admin only (no
@@ -279,6 +280,18 @@
       A read grant is not a spending budget, nor the reverse.
     -->
     <method name="SetReadAccess">
+      <arg name="app_id" type="s" direction="in"/>
+      <arg name="allow" type="b" direction="in"/>
+    </method>
+
+    <!--
+      SetReceiveAccess: grant or revoke @app_id's receive access (MakeInvoice
+      without asking: "can create invoices", the flag the invoice dialog's
+      "Always let this app create invoices" sets), with SetReadAccess's rules.
+      Additive (nostrc-muhk): before it a read grant also allowed invoices;
+      budgets.json records from then keep both.
+    -->
+    <method name="SetReceiveAccess">
       <arg name="app_id" type="s" direction="in"/>
       <arg name="allow" type="b" direction="in"/>
     </method>
@@ -305,7 +318,7 @@
     </signal>
 
     <!--
-      AppsChanged: some application's read grant or daily limit changed
+      AppsChanged: some application's read/receive grant or daily limit changed
       (settings UIs re-list with ListApps). No arguments: who changed what
       is only visible through ListApps.
     -->

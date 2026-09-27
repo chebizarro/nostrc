@@ -445,6 +445,82 @@ test_settings_grants(void)
   env_down(&e);
 }
 
+/* ---- nostrc-muhk: reading and receiving are separate grants ---- */
+
+static gboolean
+listed_flag(Env *e, const gchar *app, const gchar *flag)
+{
+  g_autoptr(GVariant) r = call_self(e, "ListApps", NULL, NULL);
+  g_assert_nonnull(r);
+  g_autoptr(GVariant) apps = g_variant_get_child_value(r, 0);
+  g_autoptr(GVariant) rec = g_variant_lookup_value(apps, app, G_VARIANT_TYPE_VARDICT);
+  g_assert_nonnull(rec);
+  gboolean v = FALSE;
+  g_assert_true(g_variant_lookup(rec, flag, "b", &v));
+  return v;
+}
+
+static void
+test_receive_grant(void)
+{
+  Env e;
+  env_up(&e);
+  if (!distinct_callers(&e)) { env_down(&e); return; }
+  /* Version 2: this process may read, not create invoices. */
+  g_autofree gchar *doc = g_strdup_printf(
+    "{\"version\":2,\"apps\":{\"%s\":{\"allow_read\":true,\"allow_receive\":false}}}", e.self_id);
+  g_assert_true(g_file_set_contents(e.budgets, doc, -1, NULL));
+  g_chmod(e.budgets, 0600);
+  g_autofree gchar *self_real = g_file_read_link("/proc/self/exe", NULL);
+  g_autofree gchar *env_settings = g_strconcat("NOSTR_WALLET_AGENT_SETTINGS_APPS=", self_real, NULL);
+  const gchar *const extra[] = { env_settings, NULL };
+  agent_start(&e, TRUE, extra);
+
+  g_autoptr(GVariant) bal = call_self(&e, "GetBalanceNonInteractive", NULL, NULL);
+  g_assert_nonnull(bal);
+  /* A read grant does not cover MakeInvoice: it needs the user (headless). */
+  assert_error(&e, "MakeInvoice", g_variant_new("(usu)", (guint32)21000, "muhk", (guint32)0),
+               "org.nostr.Wallet1.Error.Denied");
+  g_assert_true(listed_flag(&e, e.self_id, "allow_read"));
+  g_assert_false(listed_flag(&e, e.self_id, "allow_receive"));
+
+  /* The settings app grants receive without a dialog; reads unaffected. */
+  g_autoptr(GVariant) g1 = call_self(&e, "SetReceiveAccess", g_variant_new("(sb)", e.self_id, TRUE), NULL);
+  g_assert_nonnull(g1);
+  g_assert_true(listed_flag(&e, e.self_id, "allow_receive"));
+  g_autoptr(GVariant) inv = call_self(&e, "MakeInvoice",
+                                      g_variant_new("(usu)", (guint32)21000, "muhk", (guint32)0), NULL);
+  g_assert_nonnull(inv);
+  const gchar *bolt11 = NULL;
+  g_variant_get(inv, "(&s&s)", &bolt11, NULL);
+  g_assert_true(g_str_has_prefix(bolt11, "ln"));
+
+  /* Revoking read keeps receive, and the reverse. */
+  g_autoptr(GVariant) g2 = call_self(&e, "SetReadAccess", g_variant_new("(sb)", e.self_id, FALSE), NULL);
+  g_assert_nonnull(g2);
+  assert_error(&e, "GetBalanceNonInteractive", NULL, "org.nostr.Wallet1.Error.InteractionRequired");
+  g_autoptr(GVariant) inv2 = call_self(&e, "MakeInvoice",
+                                       g_variant_new("(usu)", (guint32)1000, "", (guint32)0), NULL);
+  g_assert_nonnull(inv2);
+  g_autoptr(GVariant) g3 = call_self(&e, "SetReceiveAccess", g_variant_new("(sb)", "", FALSE), NULL);
+  g_assert_nonnull(g3);
+  assert_error(&e, "MakeInvoice", g_variant_new("(usu)", (guint32)1000, "", (guint32)0),
+               "org.nostr.Wallet1.Error.Denied");
+
+  /* Another (ungranted) app cannot grant itself receive without the user. */
+  gboolean ok = TRUE;
+  const gchar *const grant_own[] = { "''", "true", NULL };
+  g_autofree gchar *o1 = call_gdbus("SetReceiveAccess", grant_own, &ok);
+  g_assert_false(ok);
+  g_assert_nonnull(strstr(o1, "org.nostr.Wallet1.Error.Denied"));
+  agent_stop(&e);
+
+  g_autofree gchar *saved = NULL;
+  g_assert_true(g_file_get_contents(e.budgets, &saved, NULL, NULL));
+  g_assert_nonnull(strstr(saved, "\"allow_receive\""));
+  env_down(&e);
+}
+
 static gboolean log_has(Env *e, const gchar *needle);
 
 /* Wait for fixture output without blocking the main loop (the test process
@@ -566,6 +642,22 @@ test_lnurl_links(void)
     g_main_context_iteration(NULL, FALSE);
   g_assert_true(log_has(&e, "does not commit to the payment details"));
   g_assert_cmpuint(fx_count(&e, "REQUEST pay_invoice"), ==, 1);
+
+  /* nostrc-dnbf: a short-lived opener (gdbus exits on the reply, like the
+   * .desktop forwarder) is identified before the reply, so the dialog can
+   * name it instead of "an unidentified application". */
+  if (g_str_has_prefix(e.self_id, "exe:")) { /* else gdbus shares our app scope */
+    g_autofree gchar *gd = gdbus_identity();
+    g_autofree gchar *want = g_strdup_printf("link opened by %s (", gd);
+    const gchar *const link_args[] = { "lightning:not-an-invoice", NULL };
+    gboolean ok = FALSE;
+    g_autofree gchar *o = call_gdbus("OpenUri", link_args, &ok);
+    g_assert_true(ok);
+    deadline = g_get_monotonic_time() + 5 * G_USEC_PER_SEC;
+    while (!log_has(&e, want) && g_get_monotonic_time() < deadline)
+      g_main_context_iteration(NULL, FALSE);
+    if (!log_has(&e, want)) { dump(); g_error("OpenUri opener not identified (want %s)", want); }
+  }
 
   agent_stop(&e);
   g_object_unref(srv);
@@ -754,5 +846,6 @@ main(int argc, char **argv)
   g_test_add_func("/dbus/lnurl-links", test_lnurl_links);
   g_test_add_func("/dbus/non-interactive-reads", test_non_interactive_reads);
   g_test_add_func("/dbus/settings-grants", test_settings_grants);
+  g_test_add_func("/dbus/receive-grant", test_receive_grant);
   return g_test_run();
 }

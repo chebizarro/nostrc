@@ -157,8 +157,9 @@ nostr_gobject_version_h = configure_file(
 gnome = import('gnome')
 
 # ── D-Bus signer proxy (gdbus-codegen) ──────────────────────────────
+# The service's own interface file is the only copy (nostrc-56id).
 signer_proxy = gnome.gdbus_codegen('signer_proxy',
-  sources: 'dbus/org.nostr.Signer.xml',
+  sources: files('../nips/nip55l/dbus/org.nostr.Signer.xml'),
   namespace: 'Nostr',
   install_header: true,
   install_dir: get_option('includedir') / 'nostr-gobject-1.0')
