@@ -9,7 +9,7 @@
     <key name="signer-method" type="s">
       <default>'auto'</default>
       <summary>Requested signer method</summary>
-      <description>One of auto, local, nip46, or nip55l; no signer is connected by this shell.</description>
+      <description>One of auto, local, nip46, or nip55l. This build only reports whether the org.nostr.Signer service is reachable for auto, local and nip55l; nip46 is unsupported and nothing is signed.</description>
     </key>
     <key name="notifications-enabled" type="b">
       <default>false</default>

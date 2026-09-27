@@ -1,11 +1,21 @@
 #include <adwaita.h>
 
+#if GROUNDHOG_HAVE_ACCOUNTS
+#include "gh-account-controller.h"
+#include "gh-account-ui.h"
+#endif
+
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
 
 GResource *groundhog_get_resource(void);
 
 static gboolean smoke_mode = FALSE;
 static int smoke_status = 0;
+#if GROUNDHOG_HAVE_ACCOUNTS
+/* Process-owned: the active account and its generation outlive windows. */
+static GSettings *app_settings;
+static GhAccountController *app_accounts;
+#endif
 
 static GtkWidget *
 status_page(const char *icon, const char *title, const char *description)
@@ -21,15 +31,14 @@ status_page(const char *icon, const char *title, const char *description)
 }
 
 static AdwNavigationPage *
-sidebar_page(void)
+sidebar_page(GtkWidget **header_out, GtkWidget **title_out, GtkWidget **stack_out)
 {
   GtkWidget *toolbar = adw_toolbar_view_new();
   GtkWidget *header = adw_header_bar_new();
-  GtkWidget *title = gtk_label_new("Groundhog");
+  GtkWidget *title = adw_window_title_new("Groundhog", "");
   GtkWidget *stack = gtk_stack_new();
   GtkWidget *list = gtk_list_box_new();
 
-  gtk_widget_add_css_class(title, "title");
   adw_header_bar_set_title_widget(ADW_HEADER_BAR(header), title);
   adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), header);
 
@@ -37,25 +46,30 @@ sidebar_page(void)
   gtk_stack_add_named(GTK_STACK(stack), list, "conversations");
   gtk_stack_add_named(GTK_STACK(stack),
                       status_page("mail-unread-symbolic", "No conversations yet",
-                                  "Conversations will appear here after an account is connected."),
+                                  "Messaging services are not implemented in this build, "
+                                  "so no conversations can be loaded."),
                       "empty");
   gtk_stack_add_named(GTK_STACK(stack),
                       status_page("dialog-warning-symbolic", "Conversations unavailable",
                                   "A conversation could not be loaded. Nothing was sent; "
                                   "try again after the service is available."),
                       "error");
+#if !GROUNDHOG_HAVE_ACCOUNTS
   gtk_stack_add_named(GTK_STACK(stack),
                       status_page("mail-unread-symbolic", "Welcome to Groundhog",
-                                  "No account is connected. Identity setup and messaging "
-                                  "will be available in a later build."),
+                                  "Account support is not included in this build."),
                       "onboarding");
   gtk_stack_set_visible_child_name(GTK_STACK(stack), "onboarding");
+#endif
   adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), stack);
+  *header_out = header;
+  *title_out = title;
+  *stack_out = stack;
   return adw_navigation_page_new(toolbar, "Conversations");
 }
 
 static AdwNavigationPage *
-content_page(void)
+content_page(GtkWidget **banner_out)
 {
   GtkWidget *toolbar = adw_toolbar_view_new();
   GtkWidget *header = adw_header_bar_new();
@@ -67,9 +81,10 @@ content_page(void)
   gtk_box_append(GTK_BOX(box), banner);
   gtk_box_append(GTK_BOX(box),
                  status_page("mail-read-symbolic", "No conversation selected",
-                             "Messages will appear here when account and conversation "
-                             "services are implemented."));
+                             "Messages will appear here when conversation services "
+                             "are implemented."));
   adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), box);
+  *banner_out = banner;
   return adw_navigation_page_new(toolbar, "Messages");
 }
 
@@ -78,6 +93,8 @@ create_window(AdwApplication *app)
 {
   GtkWidget *window = adw_application_window_new(GTK_APPLICATION(app));
   GtkWidget *split = adw_navigation_split_view_new();
+  GtkWidget *toasts = adw_toast_overlay_new();
+  GtkWidget *header, *title, *stack, *banner;
   AdwBreakpointCondition *condition;
   AdwBreakpoint *breakpoint;
   GValue collapsed = G_VALUE_INIT;
@@ -85,10 +102,21 @@ create_window(AdwApplication *app)
   gtk_window_set_title(GTK_WINDOW(window), "Groundhog");
   gtk_window_set_icon_name(GTK_WINDOW(window), GROUNDHOG_APP_ID);
   gtk_window_set_default_size(GTK_WINDOW(window), 900, 600);
-  adw_navigation_split_view_set_sidebar(ADW_NAVIGATION_SPLIT_VIEW(split), sidebar_page());
-  adw_navigation_split_view_set_content(ADW_NAVIGATION_SPLIT_VIEW(split), content_page());
+  adw_navigation_split_view_set_sidebar(ADW_NAVIGATION_SPLIT_VIEW(split),
+                                        sidebar_page(&header, &title, &stack));
+  adw_navigation_split_view_set_content(ADW_NAVIGATION_SPLIT_VIEW(split), content_page(&banner));
   adw_navigation_split_view_set_show_content(ADW_NAVIGATION_SPLIT_VIEW(split), FALSE);
-  adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), split);
+  adw_toast_overlay_set_child(ADW_TOAST_OVERLAY(toasts), split);
+  adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), toasts);
+#if GROUNDHOG_HAVE_ACCOUNTS
+  gh_account_ui_attach(window, app_accounts, app_settings, ADW_HEADER_BAR(header),
+                       ADW_WINDOW_TITLE(title), GTK_STACK(stack), ADW_BANNER(banner),
+                       ADW_TOAST_OVERLAY(toasts));
+#else
+  (void)header;
+  (void)title;
+  (void)stack;
+#endif
 
   condition = adw_breakpoint_condition_parse("max-width: 600sp");
   breakpoint = adw_breakpoint_new(condition);
@@ -99,6 +127,7 @@ create_window(AdwApplication *app)
   adw_application_window_add_breakpoint(ADW_APPLICATION_WINDOW(window), breakpoint);
 
   g_object_set_data(G_OBJECT(window), "groundhog-split", split);
+  g_object_set_data(G_OBJECT(window), "groundhog-sidebar-stack", stack);
   return window;
 }
 
@@ -119,12 +148,43 @@ smoke_check(gpointer user_data)
     adw_navigation_split_view_set_show_content(ADW_NAVIGATION_SPLIT_VIEW(split), TRUE);
     if (!adw_navigation_split_view_get_show_content(ADW_NAVIGATION_SPLIT_VIEW(split)))
       smoke_status = 1;
+#if GROUNDHOG_HAVE_ACCOUNTS
+    /* The sidebar always reflects an account state; never a blank stack. */
+    GtkStack *stack = g_object_get_data(G_OBJECT(window), "groundhog-sidebar-stack");
+    if (!gtk_stack_get_visible_child_name(stack) ||
+        !gtk_widget_activate_action(GTK_WIDGET(window), "account.refresh", NULL))
+      smoke_status = 1;
+#endif
   }
   if (window)
     gtk_window_destroy(window);
   g_application_quit(app);
   return G_SOURCE_REMOVE;
 }
+
+#if GROUNDHOG_HAVE_ACCOUNTS
+static void
+app_startup(GApplication *app, gpointer user_data)
+{
+  (void)user_data;
+  app_settings = g_settings_new(GROUNDHOG_APP_ID);
+  /* Without a session bus the signer is reported unreachable, not faked. */
+  app_accounts = gh_account_controller_new(app_settings,
+                                           g_application_get_dbus_connection(app));
+}
+
+static void
+app_shutdown(GApplication *app, gpointer user_data)
+{
+  (void)app;
+  (void)user_data;
+  /* Revokes the account generation even if a listing is still in flight. */
+  if (app_accounts)
+    g_object_run_dispose(G_OBJECT(app_accounts));
+  g_clear_object(&app_accounts);
+  g_clear_object(&app_settings);
+}
+#endif
 
 static void
 activate(GApplication *app, gpointer user_data)
@@ -173,8 +233,24 @@ main(int argc, char **argv)
     argc = 1;
   }
 
+#if GROUNDHOG_HAVE_ACCOUNTS
+  {
+    GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+    g_autoptr(GSettingsSchema) schema =
+      source ? g_settings_schema_source_lookup(source, GROUNDHOG_APP_ID, TRUE) : NULL;
+    if (!schema) {
+      g_printerr("Groundhog settings schema %s is not installed\n", GROUNDHOG_APP_ID);
+      return 1;
+    }
+  }
+#endif
+
   g_resources_register(groundhog_get_resource());
   app = adw_application_new(GROUNDHOG_APP_ID, flags);
+#if GROUNDHOG_HAVE_ACCOUNTS
+  g_signal_connect(app, "startup", G_CALLBACK(app_startup), NULL);
+  g_signal_connect(app, "shutdown", G_CALLBACK(app_shutdown), NULL);
+#endif
   g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
   status = g_application_run(G_APPLICATION(app), argc, argv);
   return smoke_mode && smoke_status != 0 ? smoke_status : status;

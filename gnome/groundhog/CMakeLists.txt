@@ -48,6 +48,16 @@ if (TARGET nostr AND TARGET nip19)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/identity)
   target_link_libraries(groundhog-identity PUBLIC gnostr-secret nip19 nostr)
   target_compile_options(groundhog-identity PRIVATE -Wall -Wextra -Werror)
+
+  # Groundhog-only active account: metadata discovery, selection, signer
+  # reachability and account generations. GTK-free so it is tested headless.
+  add_library(groundhog-account STATIC src/app/gh-account-controller.c)
+  target_include_directories(groundhog-account PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+  target_link_libraries(groundhog-account PUBLIC groundhog-identity)
+  target_compile_options(groundhog-account PRIVATE -Wall -Wextra -Werror)
+  target_sources(groundhog PRIVATE src/app/gh-account-ui.c)
+  target_link_libraries(groundhog PRIVATE groundhog-account)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ACCOUNTS=1)
   if (BUILD_TESTING)
     add_executable(test-groundhog-identity tests/identity/test_identity.c)
     target_link_libraries(test-groundhog-identity PRIVATE groundhog-identity)
@@ -58,6 +68,7 @@ if (TARGET nostr AND TARGET nip19)
   endif()
 else()
   message(STATUS "Groundhog identity adapter unavailable: in-tree nostr and nip19 targets required")
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ACCOUNTS=0)
 endif()
 
 # Groundhog-owned URL-scoped live REQ coordinator. The standalone shell build
@@ -85,6 +96,33 @@ if (TARGET nostr_gobject AND TARGET nostr)
       set_tests_properties(groundhog-relay-wire PROPERTIES TIMEOUT 20)
     endif()
   endif()
+endif()
+
+# The account test compiles Gnostr's schema beside Groundhog's (read-only) to
+# prove a Groundhog switch never writes Gnostr's current identity.
+set(GROUNDHOG_GNOSTR_SCHEMA ${CMAKE_CURRENT_SOURCE_DIR}/../../apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml)
+if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCHEMA})
+  set(GROUNDHOG_TEST_SCHEMAS ${CMAKE_CURRENT_BINARY_DIR}/test-schemas)
+  add_custom_command(
+    OUTPUT ${GROUNDHOG_TEST_SCHEMAS}/gschemas.compiled
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${GROUNDHOG_TEST_SCHEMAS}
+    COMMAND ${CMAKE_COMMAND} -E copy ${GROUNDHOG_DATA}/org.nostr.Groundhog.gschema.xml
+            ${GROUNDHOG_GNOSTR_SCHEMA} ${GROUNDHOG_TEST_SCHEMAS}
+    COMMAND ${GLIB_COMPILE_SCHEMAS} --strict ${GROUNDHOG_TEST_SCHEMAS}
+    DEPENDS ${GROUNDHOG_DATA}/org.nostr.Groundhog.gschema.xml ${GROUNDHOG_GNOSTR_SCHEMA}
+    VERBATIM)
+  add_custom_target(groundhog-test-schemas DEPENDS ${GROUNDHOG_TEST_SCHEMAS}/gschemas.compiled)
+  add_executable(test-groundhog-account tests/app/test_account_controller.c)
+  target_link_libraries(test-groundhog-account PRIVATE groundhog-account)
+  if (TARGET groundhog-relay)
+    target_link_libraries(test-groundhog-account PRIVATE groundhog-relay)
+    target_compile_definitions(test-groundhog-account PRIVATE GROUNDHOG_TEST_RELAY=1)
+  endif()
+  target_compile_options(test-groundhog-account PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-groundhog-account groundhog-test-schemas)
+  add_test(NAME groundhog-account COMMAND test-groundhog-account)
+  set_tests_properties(groundhog-account PROPERTIES TIMEOUT 30
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory")
 endif()
 
 set(GROUNDHOG_BINDIR "${CMAKE_INSTALL_FULL_BINDIR}")
