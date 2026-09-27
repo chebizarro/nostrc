@@ -23,3 +23,9 @@ Deferred to a later wave: k95e, wu3s, hby8, prqu.1, prqu.7, prqu.9, prqu.10, rxx
 - [x] E wallet/notify/share/webext follow-ups — merged 290f0273 (10 beads incl. wkzj; tumh partial: Flatpak Firefox hd8u, Epiphany a5fr); follow-ups muhk, dnbf, eqdz, a16c
 - [x] F session-relay federation — merged 7b657793 (7d96); follow-ups t24q (dav/share consume FederationState), jedb, elgy, 8cc1, abk1
 - [x] H NIP-29 audit + ctest failures — merged (rxxx ohrz yk3t bvka twwl krqc); report docs/reviews/nip29-conformance-2026-09-26.md; follow-ups lqm2 (P1 syncd inotify), zi3j, ytua (relayd), a33z (notify), 7n4t, 4gf4, prjb (plugin), bn7z, 2w9b
+- [ ] I share/dav federation consumers (t24q eqdz k95e wu3s) — running
+- [ ] J relayd federation follow-ups (zi3j ytua jedb elgy 8cc1 abk1 tvoi) — running
+- [ ] K homed syncd inotify P1 + notify + test hygiene (lqm2 a16c a33z bn7z 2w9b) — running
+- [ ] L gnostr follow-ups (jppi 46h7 4gf4 7n4t prjb) — running
+- [ ] M signer/nip5f/wallet follow-ups (q23h yjky 56id muhk dnbf) — running
+- Deferred: 9z5w (decision: ship an approver UI/CLI in Debian?), hd8u (Flatpak Firefox portal), a5fr (Epiphany), G still running
