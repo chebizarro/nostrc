@@ -473,9 +473,15 @@ static void conn_fail(RelayConn *rc, const char *why) {
 /* NIP-42 AUTH signing on a worker thread (nostrc-8cc1): org.nostr.Signer
  * may prompt for up to SIGNER_TIMEOUT_S, and creating its proxy may
  * D-Bus-activate it; neither may stall the other upstream connections.
- * The job owns everything it touches; the completion (engine context)
- * finds the connection again by key. */
+ * One short-lived thread per AUTH (rare: once per connection), not the
+ * shared GTask pool: a prompt would pin a pool thread, and per-thread state
+ * (the D-Bus call's context, crypto RNG) is released when it exits. The job
+ * owns everything it touches; the completion runs on the engine context
+ * and finds the connection again by key. */
 typedef struct {
+  NsrFederation *f;            /* completion only (engine context) */
+  GMainContext *ctx;           /* ref: the engine's */
+  GCancellable *cancel;        /* ref */
   NostrPublishSigner *signer;  /* ref; NULL: create it on the worker */
   GDBusConnection *bus;        /* ref, for creating the signer */
   char *app_id, *conn_key, *challenge, *unsigned_json;
@@ -487,6 +493,8 @@ typedef struct {
 
 static void auth_job_free(gpointer p) {
   AuthJob *j = p;
+  if (j->ctx) g_main_context_unref(j->ctx);
+  g_clear_object(&j->cancel);
   if (j->signer) nostr_publish_signer_unref(j->signer);
   if (j->created) nostr_publish_signer_unref(j->created);
   g_clear_object(&j->bus);
@@ -499,16 +507,19 @@ static void auth_job_free(gpointer p) {
   g_free(j);
 }
 
-static void auth_job_run(GTask *task, gpointer src, gpointer data, GCancellable *cancel) {
-  (void)src;
-  AuthJob *j = data;
+static gboolean on_auth_signed(gpointer p);
+
+static gpointer auth_thread(gpointer p) {
+  AuthJob *j = p;
   NostrPublishSigner *s = j->signer;
   if (!s) {
     s = j->created = nostr_publish_signer_new_dbus(j->bus, j->app_id, &j->error);
     j->proxy_failed = s == NULL;
   }
-  if (s) j->signed_json = nostr_publish_signer_sign_event_json(s, j->unsigned_json, cancel, &j->error);
-  g_task_return_boolean(task, TRUE);
+  if (s)
+    j->signed_json = nostr_publish_signer_sign_event_json(s, j->unsigned_json, j->cancel, &j->error);
+  g_main_context_invoke_full(j->ctx, G_PRIORITY_DEFAULT, on_auth_signed, j, auth_job_free);
+  return NULL;
 }
 
 static void json_str(GString *s, const char *v) {
@@ -541,20 +552,20 @@ static char *auth_event_json(const char *relay_url, const char *challenge, gint6
 
 static void start_auth(RelayConn *rc);
 
-static void on_auth_signed(GObject *src, GAsyncResult *res, gpointer ud) {
-  (void)src;
-  NsrFederation *f = ud;
-  AuthJob *j = g_task_get_task_data(G_TASK(res));
+/* Engine context; @p (AuthJob) is freed after it returns. */
+static gboolean on_auth_signed(gpointer p) {
+  AuthJob *j = p;
+  NsrFederation *f = j->f;
   f->signer_calls--;
-  if (g_atomic_int_get(&f->stopping)) return;
+  if (g_atomic_int_get(&f->stopping)) return G_SOURCE_REMOVE;
   if (j->created && !f->signer) f->signer = g_steal_pointer(&j->created);
   RelayConn *rc = g_hash_table_lookup(f->conns, j->conn_key);
-  if (!rc) return;
+  if (!rc) return G_SOURCE_REMOVE;
   rc->auth_signing = FALSE;
-  if (!rc->t) return; /* the connection dropped meanwhile: attempts already settled */
+  if (!rc->t) return G_SOURCE_REMOVE; /* the connection dropped meanwhile: attempts already settled */
   if (g_strcmp0(rc->challenge, j->challenge) != 0) {
     start_auth(rc); /* reconnected meanwhile: sign the new challenge */
-    return;
+    return G_SOURCE_REMOVE;
   }
   if (!j->signed_json) {
     NsrOutboxResult r = nostr_publish_signer_error_is_permanent(j->error) ? NSR_OUTBOX_PERMANENT
@@ -567,7 +578,7 @@ static void on_auth_signed(GObject *src, GAsyncResult *res, gpointer ud) {
     fail_table(rc, rc->await_auth, r, msg);
     g_free(msg);
     conn_pump(rc);
-    return;
+    return G_SOURCE_REMOVE;
   }
   NostrEvent *ev = nostr_event_new();
   char *auth_id = NULL;
@@ -579,7 +590,7 @@ static void on_auth_signed(GObject *src, GAsyncResult *res, gpointer ud) {
     free(auth_id);
     fail_table(rc, rc->await_auth, NSR_OUTBOX_TRANSIENT, "auth-required: sending AUTH failed");
     conn_pump(rc);
-    return;
+    return G_SOURCE_REMOVE;
   }
   g_free(frame);
   rc->auth_event_id = g_strdup(auth_id);
@@ -590,6 +601,7 @@ static void on_auth_signed(GObject *src, GAsyncResult *res, gpointer ud) {
   gpointer k, v;
   g_hash_table_iter_init(&it, rc->await_auth);
   while (g_hash_table_iter_next(&it, &k, &v)) ((Attempt *)v)->deadline = deadline;
+  return G_SOURCE_REMOVE;
 }
 
 static void start_auth(RelayConn *rc) {
@@ -623,10 +635,17 @@ static void start_auth(RelayConn *rc) {
   g_hash_table_iter_init(&it, rc->await_auth);
   while (g_hash_table_iter_next(&it, &k, &v))
     ((Attempt *)v)->deadline = MAX(((Attempt *)v)->deadline, deadline);
-  GTask *task = g_task_new(NULL, f->cancel, on_auth_signed, f);
-  g_task_set_task_data(task, j, auth_job_free);
-  g_task_run_in_thread(task, auth_job_run);
-  g_object_unref(task);
+  j->f = f;
+  j->ctx = g_main_context_ref(f->ctx);
+  j->cancel = g_object_ref(f->cancel);
+  GError *err = NULL;
+  GThread *th = g_thread_try_new("nsr-auth-sign", auth_thread, j, &err);
+  if (!th) {
+    j->error = err;
+    g_main_context_invoke_full(f->ctx, G_PRIORITY_DEFAULT, on_auth_signed, j, auth_job_free);
+    return;
+  }
+  g_thread_unref(th); /* runs detached; completes through the engine context */
 }
 
 static void on_auth_ok(RelayConn *rc, gboolean accepted, const char *reason) {

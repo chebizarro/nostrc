@@ -558,6 +558,7 @@ static void test_retarget_on_relay_list_change(void) {
 /* A fake org.nostr.Signer whose GetPublicKey "prompts" behind a gate. */
 typedef struct {
   const char *pk;
+  const char *addr; /* private connection: the singleton is the engine's */
   Gate gate;
   GThread *th;
   GMainContext *ctx;
@@ -592,7 +593,10 @@ static void pk_signer_acquired(GDBusConnection *c, const gchar *n, gpointer ud) 
 static gpointer pk_signer_thread(gpointer p) {
   PkSigner *s = p;
   g_main_context_push_thread_default(s->ctx);
-  GDBusConnection *c = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+  GDBusConnection *c = g_dbus_connection_new_for_address_sync(
+      s->addr, G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
+                   G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+      NULL, NULL, NULL);
   g_assert_nonnull(c);
   GDBusNodeInfo *node = g_dbus_node_info_new_for_xml(
       "<node><interface name='org.nostr.Signer'><method name='GetPublicKey'>"
@@ -605,6 +609,7 @@ static gpointer pk_signer_thread(gpointer p) {
   g_main_loop_run(s->loop);
   g_bus_unown_name(own);
   g_dbus_connection_unregister_object(c, reg);
+  g_dbus_connection_close_sync(c, NULL, NULL);
   g_object_unref(c);
   g_dbus_node_info_unref(node);
   while (g_main_context_iteration(s->ctx, FALSE)) {
@@ -616,16 +621,18 @@ static gpointer pk_signer_thread(gpointer p) {
 /* A GetPublicKey waiting on the user must not hold up a gift wrap (which
  * needs no local account). */
 static void test_account_probe_does_not_stall(void) {
-  if (!g_find_program_in_path("dbus-daemon")) {
+  gchar *daemon = g_find_program_in_path("dbus-daemon");
+  if (!daemon) {
     g_test_skip("no dbus-daemon");
     return;
   }
+  g_free(daemon);
   GTestDBus *bus = g_test_dbus_new(G_TEST_DBUS_NONE);
   g_test_dbus_up(bus); /* sets DBUS_SESSION_BUS_ADDRESS for this process */
   FakeRelay *A = fake_relay_start(FAKE_ACCEPT, 0);
   g_assert_nonnull(A);
   Key acct = key_new(), rcpt = key_new(), eph = key_new();
-  PkSigner sg = {.pk = acct.pk};
+  PkSigner sg = {.pk = acct.pk, .addr = g_test_dbus_get_bus_address(bus)};
   gate_init(&sg.gate);
   g_mutex_init(&sg.lock);
   g_cond_init(&sg.cond);
@@ -709,6 +716,14 @@ static void test_account_probe_does_not_stall(void) {
 }
 
 int main(int argc, char **argv) {
+  /* Keep host GIO modules out: libproxy and the network-monitor portal
+   * would open the user's session bus (and keep the process-wide
+   * connection alive past g_test_dbus_down()). The probe test starts its
+   * own bus; nothing here may talk to the real one. */
+  g_setenv("GIO_USE_VFS", "local", TRUE);
+  g_setenv("GIO_USE_PROXY_RESOLVER", "dummy", TRUE);
+  g_setenv("GIO_USE_NETWORK_MONITOR", "base", TRUE);
+  g_setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/nsr-test-bus", TRUE);
   g_test_init(&argc, &argv, NULL);
   nostr_json_init();
   g_mutex_init(&obs.lock);
