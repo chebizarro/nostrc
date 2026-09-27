@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <limits.h>
 
 #ifndef NMH_DAEMON_PATH
 #error "NMH_DAEMON_PATH must point at nostr-signer-daemon"
@@ -215,9 +216,24 @@ static void setup(E2E *e) {
   g_unsetenv("NOSTR_SIGNER_ALLOW_KEY_MUTATIONS");
   g_setenv("NOSTR_SIGNER_SECKEY_HEX", SK_HEX, TRUE);
 
-  /* ACL keys are "<app_id>:<identity>"; the host forwards identity "". */
-  g_autofree gchar *acl = g_build_filename(gdir, "signer-acl.ini", NULL);
-  write_file(acl, "[SignEvent]\nhttps://allowed.example:=allow\nhttps://denied.example:=deny\n");
+  /* nip55l 0.4.0 grants: [kind] "<principal>|<npub or *>". Web origins are
+   * principals only when asserted by the trusted bridge (this build-tree
+   * host, via the test-build NOSTR_SIGNER_TEST_ORIGIN_BRIDGES); the host
+   * calls GetPublicKey/GetRelays/NIP-04/44 without an app_id, so those run
+   * as the host itself (exe:<path>). */
+  g_autofree gchar *host_real = realpath(NMH_HOST_PATH, NULL);
+  CHECK(host_real);
+  g_autofree gchar *self_real = g_file_read_link("/proc/self/exe", NULL);
+  CHECK(self_real);
+  g_setenv("NOSTR_SIGNER_TEST_ORIGIN_BRIDGES", host_real, TRUE);
+  g_setenv("NOSTR_SIGNER_TEST_APPROVERS", self_real, TRUE);
+  g_autofree gchar *grants = g_build_filename(gdir, "signer-grants.ini", NULL);
+  g_autofree gchar *body = g_strdup_printf(
+      "[event]\nhttps://allowed.example|*=allow\nhttps://denied.example|*=deny\n"
+      "[get_public_key]\nexe:%1$s|*=allow\n[get_relays]\nexe:%1$s|*=allow\n"
+      "[nip04_encrypt]\nexe:%1$s|*=allow\n[nip04_decrypt]\nexe:%1$s|*=allow\n"
+      "[nip44_encrypt]\nexe:%1$s|*=allow\n[nip44_decrypt]\nexe:%1$s|*=allow\n", host_real);
+  write_file(grants, body);
   e->relays_path = g_build_filename(ndir, "relays.conf", NULL);
   write_file(e->relays_path, "[\"wss://relay.example\", \"wss://nos.lol\"]\n");
 
@@ -231,6 +247,12 @@ static void setup(E2E *e) {
   e->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
   CHECK(e->bus);
   wait_for_signer(e->bus);
+  /* An approval agent must be on the bus for prompts (nip55l 0.4.0). */
+  g_autoptr(GVariant) rn = g_dbus_connection_call_sync(e->bus, "org.freedesktop.DBus",
+      "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName",
+      g_variant_new("(su)", "org.gnostr.Signer", 4u), G_VARIANT_TYPE("(u)"),
+      G_DBUS_CALL_FLAGS_NONE, 5000, NULL, NULL);
+  CHECK(rn);
 
   g_dbus_connection_signal_subscribe(e->bus, "org.nostr.Signer", "org.nostr.Signer",
                                      "ApprovalRequested", "/org/nostr/signer", NULL,
