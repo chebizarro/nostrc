@@ -435,6 +435,44 @@ bool nostr_relay_is_established(NostrRelay *relay) {
 }
 
 /* GLib-style accessors (header: nostr-relay.h) */
+bool nostr_relay_wait_established(NostrRelay *relay, uint32_t timeout_ms, Error **err) {
+    if (!relay || !relay->priv) {
+        if (err) *err = new_error(1, "invalid relay");
+        return false;
+    }
+    nsync_mu_lock(&relay->priv->mutex);
+    NostrConnection *conn = relay->connection;
+    nsync_mu_unlock(&relay->priv->mutex);
+    int outcome = conn ? nostr_connection_wait_handshake(conn, timeout_ms) : -1;
+    if (outcome == 1) return true;
+
+    /* The dial set CONNECTED up front. If that connection is still the
+     * relay's and nothing has moved the state on, say what happened now;
+     * the message loop otherwise notices the dead connection only later. */
+    if (outcome < 0 && conn) {
+        NostrRelayStateCallback callback = NULL;
+        void *user_data = NULL;
+        nsync_mu_lock(&relay->priv->mutex);
+        if (relay->connection == conn &&
+            relay->priv->connection_state == NOSTR_RELAY_STATE_CONNECTED) {
+            relay->priv->connection_state = NOSTR_RELAY_STATE_DISCONNECTED;
+            callback = relay->priv->state_callback;
+            user_data = relay->priv->state_callback_user_data;
+        }
+        nsync_mu_unlock(&relay->priv->mutex);
+        if (callback)
+            callback(relay, NOSTR_RELAY_STATE_CONNECTED, NOSTR_RELAY_STATE_DISCONNECTED,
+                     user_data);
+    }
+    if (err) {
+        *err = outcome == 0
+            ? new_error(1, "no WebSocket handshake with '%s' within %u ms",
+                        relay->url, (unsigned)timeout_ms)
+            : new_error(1, "could not connect to '%s'", relay->url);
+    }
+    return false;
+}
+
 const char *nostr_relay_get_url_const(const NostrRelay *relay) {
     if (!relay) return NULL;
     return relay->url;

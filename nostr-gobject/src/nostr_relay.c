@@ -36,6 +36,10 @@ enum {
     N_PROPERTIES
 };
 
+/* nostrc-oz77: bound on waiting for a relay's WebSocket handshake in
+ * gnostr_relay_connect(); matches gnostr's OK bound for publishes. */
+#define GNOSTR_RELAY_HANDSHAKE_TIMEOUT_MS 15000u
+
 static GParamSpec *obj_properties[N_PROPERTIES] = { NULL, };
 static guint gnostr_relay_signals[GNOSTR_RELAY_SIGNALS_COUNT] = { 0 };
 
@@ -796,8 +800,11 @@ gnostr_relay_connect(GNostrRelay *self, GError **error)
     g_return_val_if_fail(self->relay != NULL, FALSE);
 
     /* nostrc-kw9r: Shared relay may already be connected by another pool.
-     * Use atomic load since this may be called from worker threads. */
-    if (__atomic_load_n(&self->state, __ATOMIC_SEQ_CST) == GNOSTR_RELAY_STATE_CONNECTED) {
+     * Use atomic load since this may be called from worker threads.
+     * nostrc-oz77: CONNECTED is set when the dial starts; only an
+     * established handshake counts. */
+    if (__atomic_load_n(&self->state, __ATOMIC_SEQ_CST) == GNOSTR_RELAY_STATE_CONNECTED &&
+        nostr_relay_is_established(self->relay)) {
         return TRUE;
     }
 
@@ -811,8 +818,13 @@ gnostr_relay_connect(GNostrRelay *self, GError **error)
      * already dispatches state changes to the main thread via g_idle_add
      * AND stores state atomically for immediate thread-safe reads. */
 
+    /* nostrc-oz77: nostr_relay_connect() only starts the dial; succeed on
+     * the WebSocket handshake, so a refused or dead relay is reported here
+     * rather than by a publish that never gets its OK. The core relay's
+     * reconnect loop keeps running for the other users of a shared relay. */
     Error *err = NULL;
-    if (nostr_relay_connect(self->relay, &err)) {
+    if (nostr_relay_connect(self->relay, &err) &&
+        nostr_relay_wait_established(self->relay, GNOSTR_RELAY_HANDSHAKE_TIMEOUT_MS, &err)) {
         return TRUE;
     } else {
         GError *g_err = g_error_new(NOSTR_ERROR,
@@ -895,7 +907,8 @@ gnostr_relay_connect_async(GNostrRelay         *self,
 
     /* nostrc-kw9r: Shared relay may already be connected — complete immediately
      * instead of spawning a redundant worker thread. */
-    if (self->state == GNOSTR_RELAY_STATE_CONNECTED) {
+    if (self->state == GNOSTR_RELAY_STATE_CONNECTED && self->relay &&
+        nostr_relay_is_established(self->relay)) {
         g_task_return_boolean(task, TRUE);
         g_object_unref(task);
         return;

@@ -249,6 +249,8 @@ send_done:
         if (priv) {
             nsync_mu_lock(&priv->mutex);
             priv->established = 1;  /* Mark handshake complete */
+            priv->handshake = 1;
+            nsync_cv_broadcast(&priv->handshake_cv);
             uint64_t now_us = (uint64_t)lws_now_usecs();
             priv->last_rx_ns = now_us;
             priv->rx_window_start_ns = now_us;
@@ -401,6 +403,11 @@ send_done:
             priv->wsi = NULL;
             conn_set_writable_pending_locked(priv, 0);
             priv->established = 0;  /* Mark handshake as incomplete */
+            if (priv->handshake == 0) {
+                /* nostrc-oz77: refused / failed before ESTABLISHED. */
+                priv->handshake = -1;
+                nsync_cv_broadcast(&priv->handshake_cv);
+            }
             /* Reset reassembly state to prevent stale partial data from
              * being prepended to the first message on reconnect. */
             priv->rx_reassembly_len = 0;
@@ -938,6 +945,7 @@ NostrConnection *nostr_connection_new(const char *url) {
     atomic_store_explicit(&conn->priv->refs, 1, memory_order_relaxed);
     atomic_store_explicit(&conn->priv->closing, 0, memory_order_relaxed);
     nsync_mu_init(&conn->priv->mutex);
+    nsync_cv_init(&conn->priv->handshake_cv);
 
     // Check for test mode: bypass real network and event loop
     const char *test_env = getenv("NOSTR_TEST_MODE");
@@ -1122,8 +1130,43 @@ void *websocket_send_coroutine(void *arg) {
     return NULL;
 }
 
+/* nostrc-oz77: lws connects asynchronously, so nostr_connection_new()
+ * returning a connection only means the dial started. This waits for the
+ * outcome of the WebSocket handshake. Returns 1 established, -1 failed
+ * (refused, TLS, upgrade, or the connection was closed), 0 timed out. */
+int nostr_connection_wait_handshake(NostrConnection *conn, uint32_t timeout_ms) {
+    if (!conn) return -1;
+    NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
+    if (!priv) return -1;   /* already closing */
+    if (priv->test_mode) {
+        priv_unref(priv);
+        return 1;
+    }
+    nsync_time deadline = nsync_time_add(nsync_time_now(), nsync_time_ms(timeout_ms));
+    nsync_mu_lock(&priv->mutex);
+    while (priv->handshake == 0) {
+        if (nsync_cv_wait_with_deadline(&priv->handshake_cv, &priv->mutex,
+                                        deadline, NULL) != 0)
+            break;  /* timed out */
+    }
+    int outcome = priv->handshake;
+    nsync_mu_unlock(&priv->mutex);
+    priv_unref(priv);
+    return outcome;
+}
+
 void nostr_connection_close(NostrConnection *conn) {
     if (!conn) return;
+    /* Wake nostr_connection_wait_handshake(): this connection will not
+     * complete a handshake any more. */
+    if (conn->priv && !conn->priv->test_mode) {
+        nsync_mu_lock(&conn->priv->mutex);
+        if (conn->priv->handshake == 0) {
+            conn->priv->handshake = -1;
+            nsync_cv_broadcast(&conn->priv->handshake_cv);
+        }
+        nsync_mu_unlock(&conn->priv->mutex);
+    }
     // Ownership note:
     // - connection_close() closes channels to wake waiters but MUST NOT free them.
     // - nostr_relay_close() is responsible for freeing conn->recv_channel/send_channel

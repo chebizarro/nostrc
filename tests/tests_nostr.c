@@ -40,7 +40,9 @@ int main(void) {
 
     GoContext *ctx = go_context_background();
     Error *err = NULL;
-    NostrRelay *relay = nostr_relay_new(ctx, "ws://192.168.1.149:8081", &err);
+    /* ctest runs this with NOSTR_TEST_MODE=1 (offline transport): nothing
+     * is dialled, and connect succeeds without a relay. */
+    NostrRelay *relay = nostr_relay_new(ctx, "ws://relay.invalid", &err);
     assert(relay != NULL);
     assert(err == NULL);
 

@@ -31,6 +31,13 @@ struct _NostrConnectionPrivate {
     uint64_t rx_window_bytes;
     int writable_pending;
     int established; /* Set when WebSocket handshake completes (LWS_CALLBACK_CLIENT_ESTABLISHED) */
+    /* nostrc-oz77: outcome of the first handshake, for
+     * nostr_connection_wait_handshake(): 0 pending, 1 established, -1 failed
+     * (refused, TLS, HTTP upgrade..., or closed first). Written under mutex
+     * by the LWS callback and nostr_connection_close(); handshake_cv is
+     * broadcast on every change. */
+    int handshake;
+    nsync_cv handshake_cv;
     /* WebSocket message reassembly buffer for fragmented frames (nostrc-8zpc) */
     char *rx_reassembly_buf;	/* Dynamically allocated reassembly buffer */
     size_t rx_reassembly_len;	/* Current bytes accumulated */
@@ -43,6 +50,9 @@ struct _NostrConnectionPrivate {
     int connect_port;
     int connect_use_ssl;
 };
+
+struct _NostrConnection;
+int nostr_connection_wait_handshake(struct _NostrConnection *conn, uint32_t timeout_ms);
 
 // Struct to hold WebSocket message
 typedef struct WebSocketMessage {

@@ -193,6 +193,12 @@ bool        nostr_relay_is_connected(NostrRelay *relay);
  *          the connection is fully established before sending messages.
  */
 bool        nostr_relay_is_established(NostrRelay *relay);
+/* nostrc-oz77: nostr_relay_connect() returns once the dial has started;
+ * lws connects asynchronously. Block (off the main thread) until the current
+ * connection's WebSocket handshake succeeds -> true, or fails (refused port,
+ * TLS or upgrade error, closed) or @timeout_ms passes -> false with @err set.
+ * The relay's own reconnect loop is left alone either way. */
+bool        nostr_relay_wait_established(NostrRelay *relay, uint32_t timeout_ms, Error **err);
 
 /**
  * nostr_relay_enable_debug_raw:
