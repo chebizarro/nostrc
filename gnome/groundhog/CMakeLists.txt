@@ -76,6 +76,9 @@ add_custom_command(
   VERBATIM)
 add_custom_target(groundhog-schema ALL
   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/gschemas.compiled)
+if (TARGET test-groundhog-identity)
+  add_dependencies(test-groundhog-identity groundhog-schema)
+endif()
 
 install(TARGETS groundhog RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop

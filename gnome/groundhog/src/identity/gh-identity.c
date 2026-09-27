@@ -57,12 +57,21 @@ gh_identity_list(GError **error)
   return result;
 }
 
+static gboolean
+write_current_npub(GSettings *settings, const gchar *npub, GError **error)
+{
+  if (g_settings_set_string(settings, "current-npub", npub)) return TRUE;
+  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                      "Groundhog could not save the selected identity");
+  return FALSE;
+}
+
 gboolean
 gh_identity_select_from_list(GSettings *settings, GPtrArray *identities,
                              const gchar *npub, GError **error)
 {
   g_return_val_if_fail(G_IS_SETTINGS(settings), FALSE);
-  if (!npub || !*npub) return g_settings_set_string(settings, "current-npub", "");
+  if (!npub || !*npub) return write_current_npub(settings, "", error);
   g_autofree gchar *pubkey = gh_identity_pubkey_hex(npub);
   if (!pubkey || !identities) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
@@ -72,7 +81,7 @@ gh_identity_select_from_list(GSettings *settings, GPtrArray *identities,
   for (guint i = 0; i < identities->len; i++) {
     const GhIdentityInfo *info = g_ptr_array_index(identities, i);
     if (g_strcmp0(info->npub, npub) == 0)
-      return g_settings_set_string(settings, "current-npub", npub);
+      return write_current_npub(settings, npub, error);
   }
   g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
                       "Selected identity is not in the signer-owned identity store");

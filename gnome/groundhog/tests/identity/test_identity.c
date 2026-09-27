@@ -17,8 +17,9 @@ static GDBusNodeInfo *node;
 static guint registration;
 static GDBusMethodInvocation *held;
 
-typedef enum { MOCK_OK, MOCK_DENIED, MOCK_TIMEOUT, MOCK_HOLD, MOCK_WRONG_KEY,
-               MOCK_CHANGED_CONTENT, MOCK_BAD_CIPHER } MockMode;
+typedef enum { MOCK_OK, MOCK_DENIED, MOCK_TIMEOUT, MOCK_DENIED_TIMEOUT_TEXT,
+               MOCK_HOLD, MOCK_WRONG_KEY, MOCK_CHANGED_CONTENT,
+               MOCK_BAD_CIPHER } MockMode;
 static MockMode mode;
 
 static gchar *
@@ -52,10 +53,15 @@ method_call(GDBusConnection *connection, const gchar *sender, const gchar *path,
     g_assert_cmpstr(b, ==, pub_two);
     g_assert_cmpstr(c, ==, npub_one);
   }
-  if (mode == MOCK_DENIED || mode == MOCK_TIMEOUT) {
+  if (mode == MOCK_DENIED || mode == MOCK_DENIED_TIMEOUT_TEXT) {
     g_dbus_method_invocation_return_dbus_error(invocation,
       "org.nostr.Signer.Error.ApprovalDenied",
-      mode == MOCK_TIMEOUT ? "approval timed out" : "approval denied");
+      mode == MOCK_DENIED_TIMEOUT_TEXT ? "user timed out, approval denied" : "approval denied");
+    return;
+  }
+  if (mode == MOCK_TIMEOUT) {
+    g_dbus_method_invocation_return_dbus_error(invocation,
+      "org.freedesktop.DBus.Error.NoReply", "transport deadline elapsed");
     return;
   }
   if (mode == MOCK_HOLD) {
@@ -211,6 +217,7 @@ test_sign(MockMode test_mode, GhSignerError expected)
 
 static void test_sign_ok(void) { test_sign(MOCK_OK, 0); }
 static void test_sign_denied(void) { test_sign(MOCK_DENIED, GH_SIGNER_ERROR_DENIED); }
+static void test_sign_denied_timeout_text(void) { test_sign(MOCK_DENIED_TIMEOUT_TEXT, GH_SIGNER_ERROR_DENIED); }
 static void test_sign_timeout(void) { test_sign(MOCK_TIMEOUT, GH_SIGNER_ERROR_TIMED_OUT); }
 static void test_sign_wrong_key(void) { test_sign(MOCK_WRONG_KEY, GH_SIGNER_ERROR_KEY_MISMATCH); }
 static void test_sign_changed(void) { test_sign(MOCK_CHANGED_CONTENT, GH_SIGNER_ERROR_INVALID_RESULT); }
@@ -349,7 +356,8 @@ main(int argc, char **argv)
   setup();
   g_test_add_func("/groundhog/identity/selection", test_selection);
   g_test_add_func("/groundhog/signer/sign", test_sign_ok);
-  g_test_add_func("/groundhog/signer/denial", test_sign_denied);
+  g_test_add_func("/groundhog/signer/sign-denied", test_sign_denied);
+  g_test_add_func("/groundhog/signer/sign-denied-timeout-text", test_sign_denied_timeout_text);
   g_test_add_func("/groundhog/signer/timeout", test_sign_timeout);
   g_test_add_func("/groundhog/signer/cancel", test_cancel);
   g_test_add_func("/groundhog/signer/switch-cancels", test_switch_cancels);

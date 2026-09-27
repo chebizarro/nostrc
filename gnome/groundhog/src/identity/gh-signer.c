@@ -190,13 +190,9 @@ map_bus_error(GError *error)
     return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_TIMED_OUT,
                                "Signer operation timed out");
   g_autofree gchar *remote = g_dbus_error_get_remote_error(error);
-  if (g_strcmp0(remote, "org.nostr.Signer.Error.ApprovalDenied") == 0) {
-    if (strstr(error->message, "timed out"))
-      return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_TIMED_OUT,
-                                 "Signer approval timed out");
+  if (g_strcmp0(remote, "org.nostr.Signer.Error.ApprovalDenied") == 0)
     return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED,
                                "Signer approval denied");
-  }
   if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
       g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_NAME_HAS_NO_OWNER) ||
       g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD))

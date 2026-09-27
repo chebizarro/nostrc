@@ -24,6 +24,8 @@ GQuark gh_signer_error_quark(void);
  * relies on the service contract rather than an attestation in the reply. */
 GhSigner *gh_signer_new(GDBusConnection *bus, const gchar *selected_npub,
                         GError **error);
+/* Cancels pending D-Bus calls. The owning thread-default main context must
+ * keep iterating until their callbacks finish before application teardown. */
 void gh_signer_free(GhSigner *signer);
 /* Cancels all outstanding calls before changing the selected public identity. */
 gboolean gh_signer_select(GhSigner *signer, const gchar *npub, GError **error);
