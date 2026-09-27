@@ -217,8 +217,11 @@ bridge may assert an origin**:
 
 The origin then *is* the application for that call: policy, "Always allow
 this site", the daily budget, the spend ledger, the per-app prompt limit and
-`PaymentSent.app_id` are all keyed on it, and the dialog names the site ("The
+`PaymentSent.app_id` are all keyed on it, and the dialogs name the site ("The
 website https://snort.social (in Firefox, via the Nostr browser extension)").
+The payment dialog speaks of the *site* throughout: "The website snort.social
+(in Firefox) wants to pay…", "exceeds the site's daily budget", "Always allow
+this site".
 Settings apps see and set site budgets with
 `GetBudget`/`SetBudget("https://snort.social", …)`. The same origin string
 is the same principal whichever browser it came from.

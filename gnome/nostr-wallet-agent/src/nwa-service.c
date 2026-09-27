@@ -803,6 +803,8 @@ show_prompt(Call *c, gboolean over_budget)
       .app_kind = nwa_caller_kind_to_string(c->caller->kind),
       .app_attested = c->caller->attested,
       .can_remember = c->caller->app_id != NULL && c->caller->kind != NWA_CALLER_SELF && !c->via_link,
+      .is_site = c->caller->kind == NWA_CALLER_WEB_ORIGIN,
+      .via = c->caller->via,
       .via_link = c->via_link,
       .amount_msat = c->amount_msat,
       .description = c->inv11.description,

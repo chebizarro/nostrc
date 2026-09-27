@@ -26,6 +26,8 @@ typedef struct {
   const gchar *app_kind;        /* "flatpak", "executable", … */
   gboolean     app_attested;
   gboolean     can_remember;    /* identified caller: offer "Always allow" */
+  gboolean     is_site;         /* a web origin (browser bridge): say "site", not "app" */
+  const gchar *via;             /* is_site: browser the page runs in (nullable) */
   gboolean     via_link;        /* opened from a lightning:/bitcoin: link */
   guint64      amount_msat;
   const gchar *description;     /* nullable */

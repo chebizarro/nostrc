@@ -199,9 +199,16 @@ nwa_ui_prompt_payment(const NwaPaymentPrompt *p, guint timeout_s,
   gtk_widget_add_css_class(amount_label, "title-1");
   gtk_box_append(GTK_BOX(content), amount_label);
 
-  g_autofree gchar *lead = p->via_link
-    ? g_strdup_printf("A payment link opened by %s", p->app_name)
-    : g_strdup_printf("%s wants to pay a Lightning invoice", p->app_name);
+  const gchar *noun = p->is_site ? "site" : "app";
+  g_autofree gchar *lead = NULL;
+  if (p->via_link)
+    lead = g_strdup_printf("A payment link opened by %s", p->app_name);
+  else if (p->is_site && p->via)
+    lead = g_strdup_printf("The website %s (in %s) wants to pay a Lightning invoice", p->app_name, p->via);
+  else if (p->is_site)
+    lead = g_strdup_printf("The website %s wants to pay a Lightning invoice", p->app_name);
+  else
+    lead = g_strdup_printf("%s wants to pay a Lightning invoice", p->app_name);
   GtkWidget *lead_label = gtk_label_new(lead);
   gtk_label_set_wrap(GTK_LABEL(lead_label), TRUE);
   gtk_label_set_justify(GTK_LABEL(lead_label), GTK_JUSTIFY_CENTER);
@@ -209,17 +216,23 @@ nwa_ui_prompt_payment(const NwaPaymentPrompt *p, guint timeout_s,
   gtk_box_append(GTK_BOX(content), lead_label);
 
   if (p->over_budget) {
-    GtkWidget *warn = gtk_label_new("This payment exceeds the app's daily budget.");
+    g_autofree gchar *wtext = g_strdup_printf("This payment exceeds the %s's daily budget.", noun);
+    GtkWidget *warn = gtk_label_new(wtext);
     gtk_label_set_wrap(GTK_LABEL(warn), TRUE);
     gtk_widget_add_css_class(warn, "warning");
     gtk_box_append(GTK_BOX(content), warn);
   }
 
   GtkWidget *group = adw_preferences_group_new();
-  g_autofree gchar *who = p->app_id
-    ? g_strdup_printf("%s (%s%s)", p->app_id, p->app_kind,
-                      p->app_attested ? ", verified by sandbox" : ", unverified")
-    : g_strdup("Could not identify the requesting application");
+  g_autofree gchar *who = NULL;
+  if (p->is_site)
+    who = p->via ? g_strdup_printf("%s (website, in %s, via the Nostr browser extension)", p->app_id, p->via)
+                 : g_strdup_printf("%s (website, via the Nostr browser extension)", p->app_id);
+  else if (p->app_id)
+    who = g_strdup_printf("%s (%s%s)", p->app_id, p->app_kind,
+                          p->app_attested ? ", verified by sandbox" : ", unverified");
+  else
+    who = g_strdup("Could not identify the requesting application");
   adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), info_row("Requested by", who));
   adw_preferences_group_add(ADW_PREFERENCES_GROUP(group),
                             info_row("Description", p->description && *p->description
@@ -247,7 +260,8 @@ nwa_ui_prompt_payment(const NwaPaymentPrompt *p, guint timeout_s,
   if (p->can_remember) {
     GtkWidget *rg = adw_preferences_group_new();
     remember = ADW_SWITCH_ROW(adw_switch_row_new());
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(remember), "Always allow this app");
+    g_autofree gchar *rtitle = g_strdup_printf("Always allow this %s", noun);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(remember), rtitle);
     adw_action_row_set_subtitle(ADW_ACTION_ROW(remember),
                                 "Pay without asking while within the daily limit");
     guint64 amount_sats = (p->amount_msat + 999) / 1000;
