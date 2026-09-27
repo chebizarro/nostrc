@@ -22,4 +22,4 @@ Deferred to a later wave: k95e, wu3s, hby8, prqu.1, prqu.7, prqu.9, prqu.10, rxx
 - [x] D libnostr/dav/packaging — merged (12 beads incl. wr3t, w8y1, pnc7, 6tuz)
 - [x] E wallet/notify/share/webext follow-ups — merged 290f0273 (10 beads incl. wkzj; tumh partial: Flatpak Firefox hd8u, Epiphany a5fr); follow-ups muhk, dnbf, eqdz, a16c
 - [x] F session-relay federation — merged 7b657793 (7d96); follow-ups t24q (dav/share consume FederationState), jedb, elgy, 8cc1, abk1
-- [ ] H NIP-29 audit + ctest failures (rxxx ohrz yk3t bvka twwl krqc) — running
+- [x] H NIP-29 audit + ctest failures — merged (rxxx ohrz yk3t bvka twwl krqc); report docs/reviews/nip29-conformance-2026-09-26.md; follow-ups lqm2 (P1 syncd inotify), zi3j, ytua (relayd), a33z (notify), 7n4t, 4gf4, prjb (plugin), bn7z, 2w9b
