@@ -17,6 +17,14 @@
 
 static _Atomic long long g_sub_counter = 1;
 
+static void free_seen_cursor_events(SeenCursorEvent *seen) {
+    while (seen) {
+        SeenCursorEvent *next = seen->next;
+        free(seen);
+        seen = next;
+    }
+}
+
 /* ========================================================================
  * Adaptive Queue Capacity (nostrc-3g8)
  * ======================================================================== */
@@ -137,6 +145,7 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     atomic_store(&sub->priv->registered, false);
     atomic_store(&sub->priv->events_channel_closed, false);
     atomic_store(&sub->priv->last_seen_created_at, 0);
+    sub->priv->seen_cursor_events = NULL;
 
     // Initialize queue metrics (nostrc-sjv)
     QueueMetrics *m = &sub->priv->metrics;
@@ -242,6 +251,7 @@ static void subscription_destroy(NostrSubscription *sub) {
         sub->priv->count_result = NULL;
     }
     free(sub->priv->id);
+    free_seen_cursor_events(sub->priv->seen_cursor_events);
     go_wait_group_destroy(&sub->priv->wg);
     free(sub->priv);
 
@@ -344,21 +354,52 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
         added = true;
     }
 
-    // Fast-path check without holding the mutex for too long
-    nsync_mu_lock(&sub->priv->sub_mutex);
-    bool is_live = atomic_load(&sub->priv->live);
-    nsync_mu_unlock(&sub->priv->sub_mutex);
-
     QueueMetrics *m = &sub->priv->metrics;
 
-    if (is_live) {
+    /* Keep the cursor and its IDs in the same critical section as enqueue.
+     * The relay may replay the cursor second after a reconnect, including an
+     * ID already delivered before the disconnect. */
+    nsync_mu_lock(&sub->priv->sub_mutex);
+    if (atomic_load(&sub->priv->live)) {
         /* nostrc-hmp: Capture fields BEFORE the send. On successful
          * try_send, ownership transfers to the consumer, which may pop
          * and free the event on another thread immediately — touching
          * `event` after a successful send is a use-after-free. */
         int64_t ev_created_at = event->created_at;
+        int64_t cursor = atomic_load(&sub->priv->last_seen_created_at);
+        SeenCursorEvent *seen = NULL;
+        if (ev_created_at >= cursor && ev_created_at > 0) {
+            if (!event->id || strlen(event->id) != 64) {
+                nsync_mu_unlock(&sub->priv->sub_mutex);
+                nostr_event_free(event);
+                atomic_fetch_add(&m->events_dropped, 1);
+                nostr_metric_counter_add("sub_event_invalid_id_drop", 1);
+                return;
+            }
+            if (ev_created_at == cursor) {
+                for (SeenCursorEvent *it = sub->priv->seen_cursor_events; it; it = it->next) {
+                    if (strcmp(it->id, event->id) == 0) {
+                        nsync_mu_unlock(&sub->priv->sub_mutex);
+                        nostr_event_free(event);
+                        nostr_metric_counter_add("sub_event_duplicate", 1);
+                        return;
+                    }
+                }
+            }
+            seen = malloc(sizeof(*seen));
+            if (!seen) {
+                nsync_mu_unlock(&sub->priv->sub_mutex);
+                nostr_event_free(event);
+                atomic_fetch_add(&m->events_dropped, 1);
+                nostr_metric_counter_add("sub_event_cursor_oom_drop", 1);
+                return;
+            }
+            memcpy(seen->id, event->id, 65);
+            seen->next = NULL;
+        }
         // Non-blocking send; if full or closed or canceled, drop to avoid hang
         if (go_channel_try_send(sub->events, event) != 0) {
+            free(seen);
             if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
                 fprintf(stderr, "[sub %s] dispatch_event: dropped (queue full/closed)\n", sub->priv->id);
             }
@@ -372,12 +413,14 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
             atomic_fetch_add(&m->events_enqueued, 1);
             atomic_store(&m->last_enqueue_time_us, now_us);
 
-            int64_t old_seen = atomic_load(&sub->priv->last_seen_created_at);
-            while (ev_created_at > old_seen) {
-                if (atomic_compare_exchange_weak(&sub->priv->last_seen_created_at,
-                                                 &old_seen, ev_created_at)) {
-                    break;
+            if (seen) {
+                if (ev_created_at > cursor) {
+                    free_seen_cursor_events(sub->priv->seen_cursor_events);
+                    sub->priv->seen_cursor_events = NULL;
+                    atomic_store(&sub->priv->last_seen_created_at, ev_created_at);
                 }
+                seen->next = sub->priv->seen_cursor_events;
+                sub->priv->seen_cursor_events = seen;
             }
 
             /* Get actual channel depth for warnings (nostrc-dw3)
@@ -426,6 +469,7 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
         nostr_rl_log(NLOG_INFO, "sub", "event drop: not live sid=%s", sub->priv->id);
         nostr_event_free(event);
     }
+    nsync_mu_unlock(&sub->priv->sub_mutex);
 
     if (added) {
         // Decrement stored event counter if needed

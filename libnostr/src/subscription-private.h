@@ -54,6 +54,11 @@ typedef struct {
     _Atomic int64_t created_time_us;       // When subscription was created
 } QueueMetrics;
 
+typedef struct _SeenCursorEvent {
+    char id[65];
+    struct _SeenCursorEvent *next;
+} SeenCursorEvent;
+
 typedef struct _SubscriptionPrivate {
     int counter;
     char *id;
@@ -66,6 +71,7 @@ typedef struct _SubscriptionPrivate {
     _Atomic bool unsubbed;
     _Atomic bool events_channel_closed;
     _Atomic int64_t last_seen_created_at;
+    SeenCursorEvent *seen_cursor_events; /* guarded by sub_mutex */
     CancelFunc cancel;
 
     /* Refcount for safe concurrent access (nostrc-nr96).

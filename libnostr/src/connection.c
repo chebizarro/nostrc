@@ -399,6 +399,7 @@ send_done:
         NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
         if (priv) {
             lws_set_timer_usecs(wsi, 0);
+            GoChannel *recv_chan = NULL;
             nsync_mu_lock(&priv->mutex);
             priv->wsi = NULL;
             conn_set_writable_pending_locked(priv, 0);
@@ -411,7 +412,17 @@ send_done:
             /* Reset reassembly state to prevent stale partial data from
              * being prepended to the first message on reconnect. */
             priv->rx_reassembly_len = 0;
+            if (conn->recv_channel) {
+                recv_chan = conn->recv_channel;
+                go_channel_ref(recv_chan);
+            }
             nsync_mu_unlock(&priv->mutex);
+            /* Wake the relay reader after it drains queued EVENT/EOSE frames.
+             * Otherwise a remote close leaves it blocked and no re-REQ occurs. */
+            if (recv_chan) {
+                go_channel_close(recv_chan);
+                go_channel_unref(recv_chan);
+            }
             priv_unref(priv);
         }
         break;

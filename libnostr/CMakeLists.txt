@@ -5,7 +5,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(NOSTR 1 0 0)
+declare_component_version(NOSTR 1 0 1)
 
 # Core Nostr library. Provides event types, relays, subscriptions, filters, and utils.
 find_library(NSYNC_LIB nsync REQUIRED)
@@ -361,6 +361,12 @@ if(LIBNOSTR_BUILD_TESTS)
   target_include_directories(test_subscription_dispatch PRIVATE include src)
   add_test(NAME libnostr_subscription_dispatch COMMAND test_subscription_dispatch)
   set_tests_properties(libnostr_subscription_dispatch PROPERTIES TIMEOUT 60)
+
+  add_executable(test_reconnect_same_second tests/test_reconnect_same_second.c)
+  target_link_libraries(test_reconnect_same_second PRIVATE nostr Threads::Threads)
+  target_include_directories(test_reconnect_same_second PRIVATE include src)
+  add_test(NAME libnostr_reconnect_same_second COMMAND test_reconnect_same_second)
+  set_tests_properties(libnostr_reconnect_same_second PROPERTIES TIMEOUT 60)
 
   # nostrc-pnc7: explicit "limit":0 is preserved through parse/serialize/REQ.
   add_executable(test_filter_limit_zero tests/test_filter_limit_zero.c)
