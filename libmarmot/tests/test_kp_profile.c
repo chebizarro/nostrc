@@ -221,16 +221,27 @@ static void test_create_and_validate(void) {
     CHECK(marmot_validate_key_package_event_json(legacy.event_json, MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8,
                                                  0, NULL, NULL) == MARMOT_OK, "MDK 0.8 event still valid");
 
-    /* Selection by profile. */
-    const char *cands[] = {legacy.event_json, r.event_json};
+    /* Selection by profile. Distinct accounts: within one (pubkey, d) slot
+     * the newest event wins regardless of profile, and two events made in
+     * the same second tie-break on the event id. */
+    uint8_t sk2[32], pk2[32];
+    char sk2_hex[65];
+    keypair(sk2, pk2, sk2_hex);
+    Marmot *m2 = marmot_new(marmot_storage_memory_new());
+    MarmotKeyPackageResult other;
+    CHECK(marmot_create_key_package(m2, pk2, sk2, relays, 1, &other) == MARMOT_OK, "create mdk (B)");
+    const char *cands[] = {other.event_json, r.event_json};
     size_t idx = 99;
-    CHECK(marmot_select_key_package_event_for_profile(cands, 2, pk, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, &idx) == MARMOT_OK && idx == 1,
+    CHECK(marmot_select_key_package_event_for_profile(cands, 2, NULL, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, &idx) == MARMOT_OK && idx == 1,
           "adopted select picks the adopted event");
     idx = 99;
-    /* Same d slot: the newer (adopted) event supersedes the MDK one; under
-     * the MDK profile the slot winner fails validation, so nothing remains. */
-    CHECK(marmot_select_key_package_event(cands, 2, pk, &idx) == MARMOT_ERR_KEY_PACKAGE ||
-          (idx == 0), "MDK select never returns the adopted event");
+    CHECK(marmot_select_key_package_event(cands, 2, NULL, &idx) == MARMOT_OK && idx == 0,
+          "MDK select picks the MDK event");
+    idx = 99;
+    CHECK(marmot_select_key_package_event_for_profile(cands, 2, pk2, MARMOT_KEY_PACKAGE_PROFILE_ADOPTED, &idx) == MARMOT_ERR_KEY_PACKAGE,
+          "adopted select finds nothing among MDK-only candidates");
+    marmot_key_package_result_free(&other);
+    marmot_free(m2);
 
     free(enc); free(rel); free(no89);
     marmot_key_package_result_free(&r);
