@@ -176,6 +176,12 @@ char *gnostr_signer_status_legacy_text(const GnostrSignerStatus *status) {
   return g_strdup_printf("%s %s", first, tail);
 }
 
+gboolean gnostr_signer_status_is_read_only(const GnostrSignerStatus *status,
+                                           GnostrSignerNeed need) {
+  g_return_val_if_fail(status != NULL, FALSE);
+  return need == GNOSTR_SIGNER_NEED_ACTIVE && status->presence != GNOSTR_SIGNER_PRESENCE_RUNNING;
+}
+
 char *gnostr_signer_status_banner_text(const GnostrSignerStatus *status,
                                        GnostrSignerNeed need) {
   g_return_val_if_fail(status != NULL, NULL);

@@ -1372,6 +1372,13 @@ gboolean gnostr_session_view_get_authenticated(GnostrSessionView *self) {
   return self->authenticated;
 }
 
+void gnostr_session_view_set_compose_blocked(GnostrSessionView *self, const char *reason) {
+  g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
+  if (!self->btn_compose) return;
+  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_compose), reason == NULL);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_compose), reason ? reason : _("Compose"));
+}
+
 void gnostr_session_view_set_authenticated(GnostrSessionView *self, gboolean authenticated) {
   g_return_if_fail(GNOSTR_IS_SESSION_VIEW(self));
 

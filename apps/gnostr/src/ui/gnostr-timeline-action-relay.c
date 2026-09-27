@@ -13,6 +13,7 @@
 
 #include "gnostr-timeline-action-relay.h"
 #include "gnostr-main-window.h"
+#include "gnostr-main-window-private.h"  /* nostrc-lwzv: publish check */
 #include "gnostr-zap-dialog.h"
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>
@@ -165,6 +166,11 @@ on_relay_zap_requested(NostrGtkNoteCardRow *row,
   /* Find parent window for the dialog */
   GtkWidget *parent_w = gtk_widget_get_ancestor(GTK_WIDGET(row), GTK_TYPE_WINDOW);
   GtkWindow *parent = parent_w ? GTK_WINDOW(parent_w) : NULL;
+
+  /* nostrc-lwzv: a zap request is signed; say why not while read-only. */
+  if (parent_w && GNOSTR_IS_MAIN_WINDOW(parent_w) &&
+      !gnostr_main_window_check_publish_internal(GNOSTR_MAIN_WINDOW(parent_w)))
+    return;
 
   GnostrZapDialog *dialog = gnostr_zap_dialog_new(parent);
 
