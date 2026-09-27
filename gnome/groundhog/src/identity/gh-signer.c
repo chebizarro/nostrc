@@ -8,6 +8,9 @@
 #define SIGNER_PATH "/org/nostr/signer"
 #define SIGNER_INTERFACE "org.nostr.Signer"
 #define MAX_RESULT (1024 * 1024)
+/* The signer can hold an approval for 300 seconds. Leave room for its typed
+ * result instead of reporting a local transport timeout at 30 seconds. */
+#define SIGNER_CALL_TIMEOUT_MS (330 * 1000)
 
 typedef enum { OP_SIGN, OP_ENCRYPT, OP_DECRYPT } Operation;
 typedef struct _Pending Pending;
@@ -305,7 +308,7 @@ start_call(GhSigner *signer, Operation op, const gchar *input, const gchar *peer
                          op == OP_ENCRYPT ? "NIP44Encrypt" : "NIP44Decrypt",
                          op == OP_SIGN ? g_variant_new("(sss)", input, signer->npub, "") :
                                          g_variant_new("(sss)", input, peer, signer->npub),
-                         G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 30000,
+                         G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, SIGNER_CALL_TIMEOUT_MS,
                          p->cancel, call_done, p);
 }
 

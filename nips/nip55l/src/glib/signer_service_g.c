@@ -844,14 +844,16 @@ static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocatio
   } else {
     pending_fail(p, ORG_NOSTR_SIGNER_ERR_APPROVAL, "user denied");
   }
-  if (remember) {
+  /* Never persist an allow for a request that failed identity binding or
+   * execution. A remembered denial is still a valid policy decision. */
+  if (remember && (!decision || ok)) {
     if (p->who->principal)
       grants_save(op_info[p->op].kind, p->who->principal, p->npub, decision, ttl_seconds);
     else
       g_message("nostr-signer: %s: caller is unidentified; decision not remembered", p->id);
   }
   nostr_signer_complete_approve_request(object, invocation, ok);
-  pending_finish(p, decision);
+  pending_finish(p, decision && ok);
   return TRUE;
 }
 

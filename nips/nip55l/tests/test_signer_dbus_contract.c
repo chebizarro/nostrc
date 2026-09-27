@@ -1170,7 +1170,8 @@ static void close_conn(GDBusConnection *c) {
 /* NIP44Encrypt on @c for @selector, parked, then answered with @decision.
  * The prompt must name @want_identity. Returns the call's error. */
 static GError *answer_parked(Ctx *ctx, GDBusConnection *c, const char *peer_pk,
-                             const char *selector, const char *want_identity, gboolean decision) {
+                             const char *selector, const char *want_identity,
+                             gboolean decision, gboolean remember, gboolean want_approve_ok) {
   g_usleep(120 * 1000); /* one new prompt per 100 ms per sender */
   Watch w;
   watch_start(ctx, &w);
@@ -1180,7 +1181,13 @@ static GError *answer_parked(Ctx *ctx, GDBusConnection *c, const char *peer_pk,
                          G_DBUS_CALL_FLAGS_NONE, 15000, NULL, on_async_reply, &w.a);
   watch_wait_request(&w, 1);
   CHECK(g_strcmp0(w.a.identity, want_identity) == 0);
-  approve(ctx, w.a.req_id, decision, FALSE);
+  GError *approve_err = NULL;
+  GVariant *approved = approve_call(ctx, w.a.req_id, decision, remember, &approve_err);
+  CHECK(approved != NULL && approve_err == NULL);
+  gboolean approve_ok = FALSE;
+  g_variant_get(approved, "(b)", &approve_ok);
+  CHECK(approve_ok == want_approve_ok);
+  g_variant_unref(approved);
   watch_wait_replies(&w);
   CHECK(w.a.replies->pdata[0] == NULL);
   GError *err = g_error_copy(w.a.errors->pdata[0]);
@@ -1212,16 +1219,16 @@ static void test_typed_approval_errors(Ctx *ctx, const char *swap_sk) {
   CHECK(r == NULL); expect_approval_error(err, ERR_TIMED_OUT, "approval timed out"); g_clear_error(&err);
 
   /* A denial stays ApprovalDenied after the opt-in (and swaps no key). */
-  err = answer_parked(ctx, typed, peer_pk, ctx->npub, ctx->npub, FALSE);
+  err = answer_parked(ctx, typed, peer_pk, ctx->npub, ctx->npub, FALSE, FALSE, TRUE);
   expect_approval_error(err, ERR_DENIED, "user denied"); g_clear_error(&err);
 
   /* Approved, but the active account switched during the prompt. With the
    * active npub as explicit selector (as Groundhog sends it) the request is
    * bound to that npub and fails rather than using the new key:
    * IdentityChanged after the opt-in, ApprovalDenied for the old client. */
-  err = answer_parked(ctx, typed, peer_pk, ctx->npub, ctx->npub, TRUE);   /* active -> swap key */
+  err = answer_parked(ctx, typed, peer_pk, ctx->npub, ctx->npub, TRUE, TRUE, FALSE); /* active -> swap key; never remember */
   expect_approval_error(err, ERR_IDENTITY, changed); g_clear_error(&err);
-  err = answer_parked(ctx, ctx->bus, peer_pk, swap_npub, swap_npub, TRUE); /* swap key -> original */
+  err = answer_parked(ctx, ctx->bus, peer_pk, swap_npub, swap_npub, TRUE, FALSE, FALSE); /* swap key -> original */
   expect_approval_error(err, ERR_DENIED, changed); g_clear_error(&err);
 
   /* No approval agent on the bus: NoApprovalAgent only after the opt-in. */
@@ -1234,6 +1241,16 @@ static void test_typed_approval_errors(Ctx *ctx, const char *swap_sk) {
   CHECK(r == NULL); expect_approval_error(err, ERR_NO_AGENT, no_agent); g_clear_error(&err);
   r = call(ctx->bus, "NIP44Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""), "(s)", &err);
   CHECK(r == NULL); expect_approval_error(err, ERR_DENIED, no_agent); g_clear_error(&err);
+  /* The rejected remembered approval must not have left an allow grant for
+   * the original identity after the test key swaps back. Use a fresh bus
+   * connection so the per-sender prompt limiter cannot mask this check. */
+  GDBusConnection *probe = open_conn();
+  r = g_dbus_connection_call_sync(probe, BUS_NAME, OBJ_PATH, IFACE, "EnableTypedApprovalErrors",
+      NULL, G_VARIANT_TYPE("()"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &err);
+  CHECK(r != NULL); g_variant_unref(r);
+  r = call(probe, "NIP44Encrypt", g_variant_new("(sss)", "hi", peer_pk, ctx->npub), "(s)", &err);
+  CHECK(r == NULL); expect_approval_error(err, ERR_NO_AGENT, no_agent); g_clear_error(&err);
+  close_conn(probe);
 
   /* An opt-in sent without a reply callback (NO_REPLY_EXPECTED, as the
    * Groundhog adapter sends it) applies to the very next call on the same
