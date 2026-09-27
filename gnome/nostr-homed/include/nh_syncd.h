@@ -62,6 +62,13 @@ typedef enum {
      * this class lets status readers surface partial-replication ambiguity
      * (some servers OK, quorum not met). */
     NH_SYNCD_ERR_INSUFFICIENT_REPLICATION = -214,
+    /* nostrc-5y2t: snapshot.json exceeds nh_syncd_snapshot_max_bytes().
+     * The file is left untouched; the daemon refuses to start. */
+    NH_SYNCD_ERR_SNAPSHOT_TOO_LARGE = -215,
+    /* nostrc-5y2t: snapshot.json is well-formed but carries a schema
+     * this build does not read (written by a newer daemon). Distinct
+     * from NH_SYNCD_ERR_JSON so it is refused, never quarantined. */
+    NH_SYNCD_ERR_SNAPSHOT_SCHEMA    = -216,
 } nh_syncd_status;
 
 /* Constant reserved for the I3 local blob cache directory (§6.5). The
@@ -133,14 +140,42 @@ typedef enum {
 
 typedef struct nh_syncd_state nh_syncd_state;
 
-/* Load state from `state_dir`. If files are missing, the returned state
- * is empty with generation=0 and `*out_snapshot_unknown = true`.
- * If files exist but the JSON is malformed, returns NH_SYNCD_ERR_JSON
- * and sets `*out_snapshot_unknown = true` (I1 push path will then
- * refuse to run — I2 owns the "rescan" additive-only reconcile). */
+/* nostrc-5y2t: snapshot.json is stream-parsed (no raw copy in memory)
+ * but still bounded, so a runaway or hostile file cannot exhaust RAM.
+ * Default 1 GiB — ~15x a 200k-entry home (64 MB). Override with
+ * NOSTR_HOMED_SYNCD_SNAPSHOT_MAX_BYTES (positive decimal bytes). */
+#define NH_SYNCD_SNAPSHOT_MAX_BYTES_DEFAULT (1ull << 30)
+uint64_t nh_syncd_snapshot_max_bytes(void);
+
+/* Load state from `state_dir`.
+ *   - snapshot.json missing: returns NH_SYNCD_OK with an empty state
+ *     (generation 0) and `*out_snapshot_unknown = true`.
+ *   - any failure: `*out` stays NULL, `*out_snapshot_unknown = true`,
+ *     a diagnostic naming the file and cause goes to stderr, and rc is
+ *       NH_SYNCD_ERR_SNAPSHOT_TOO_LARGE  over the byte ceiling
+ *       NH_SYNCD_ERR_SNAPSHOT_SCHEMA     well-formed, schema != 1
+ *       NH_SYNCD_ERR_JSON                corrupt (parse/shape error)
+ *       NH_SYNCD_ERR_IO / _OOM           open/read/alloc failure
+ *     The loader never modifies the file. A failed load must not be
+ *     papered over with an empty state: the next save would silently
+ *     replace the unreadable snapshot. The daemon quarantines only the
+ *     NH_SYNCD_ERR_JSON class (nh_syncd_state_quarantine_snapshot) and
+ *     refuses to start on the others. */
 int  nh_syncd_state_load(const char *state_dir,
                          nh_syncd_state **out,
                          bool *out_snapshot_unknown);
+
+/* Short stable class for a load rc, for logs and porthome-status
+ * last_error: "snapshot-too-large", "snapshot-schema",
+ * "snapshot-corrupt", "snapshot-oom", "snapshot-unreadable" ("" for OK). */
+const char *nh_syncd_state_load_error_class(int rc);
+
+/* Move `state_dir`/snapshot.json aside to snapshot.json.corrupt.<epoch>
+ * (suffixed .N if that exists; never overwrites an earlier one) so a
+ * corrupt snapshot is preserved for inspection instead of being
+ * overwritten by the rebuilt baseline. Caller must hold sync.lock.
+ * `*out_path` (optional) receives the heap-allocated new path. */
+int  nh_syncd_state_quarantine_snapshot(const char *state_dir, char **out_path);
 
 /* Persist to disk. Writes to `snapshot.json.tmp` then rename(2) atomic
  * swap; same for `generation.tmp`. */

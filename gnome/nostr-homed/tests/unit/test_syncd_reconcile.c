@@ -504,6 +504,32 @@ static void t_unknown_base_additive(void) {
     assert(nh_syncd_state_file_count(s) >= 2);
     /* Partial marker set. */
     assert(nh_syncd_partial_state_is_set(g_state) == 1);
+    /* Recorded hash is SHA-256 of the whole content. */
+    const nh_syncd_entry *ea = nh_syncd_state_find(s, "a.txt");
+    assert(ea);
+    uint8_t h[32]; char hex[65];
+    assert(nh_porthome_sha256((const uint8_t *)"aaa\n", 4, h) == 0);
+    nh_porthome_hex64(h, hex);
+    assert(strcmp(nh_syncd_entry_content_hash_hex(ea), hex) == 0);
+
+    /* nostrc-ixra: the rescan hash is streamed through a 1 MiB buffer;
+     * a file spanning several buffers must hash exactly like the
+     * whole-buffer digest. */
+    size_t big_n = 3u * 1024u * 1024u + 7u;
+    uint8_t *big = malloc(big_n);
+    assert(big);
+    for (size_t i = 0; i < big_n; i++) big[i] = (uint8_t)(i * 131u + (i >> 13));
+    char bpath[600]; snprintf(bpath, sizeof bpath, "%s/big.bin", g_home);
+    FILE *bf = fopen(bpath, "wb");
+    assert(bf && fwrite(big, 1, big_n, bf) == big_n);
+    fclose(bf);
+    assert(nh_syncd_rescan_home_additive(s, g_home, ig, g_state) == NH_SYNCD_OK);
+    const nh_syncd_entry *eb = nh_syncd_state_find(s, "big.bin");
+    assert(eb && nh_syncd_entry_size(eb) == big_n);
+    assert(nh_porthome_sha256(big, big_n, h) == 0);
+    nh_porthome_hex64(h, hex);
+    assert(strcmp(nh_syncd_entry_content_hash_hex(eb), hex) == 0);
+    free(big);
 
     /* Interlock trips. */
     nh_syncd_interlocks ilk = { g_home, "partial" };

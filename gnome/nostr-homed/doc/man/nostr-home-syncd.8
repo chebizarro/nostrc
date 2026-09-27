@@ -94,7 +94,14 @@ snapshot (and re-promoted to watches when budget frees up). Default 600;
 .B NOSTR_HOMED_SYNCD_SEED_FILE
 Override the broker seed drop path. Default:
 .IR /run/nostr-auth/session/<uid>/home_seed .
-Read-once, unlinked, mlocked.
+Read-once, unlinked, mlocked. If it is absent at start the daemon stays
+unmanaged (no watches, no scans) and waits for it: inotify on the deepest
+existing ancestor of the path, plus a backstop poll. When the drop appears
+the home becomes managed without a restart.
+.TP
+.B NOSTR_HOMED_SYNCD_SEED_POLL_SEC
+Backstop poll interval, in seconds, while waiting for the seed drop.
+Default 30; 0 relies on inotify alone.
 .TP
 .B NOSTR_HOMED_SYNCD_TEST_MODE
 When set to 1, permits the (otherwise disabled)
@@ -104,6 +111,14 @@ in production.
 .TP
 .B NOSTR_HOMED_SYNCD_SEED_HEX
 64-hex seed for home_key derivation. Consulted only when TEST_MODE=1.
+.TP
+.B NOSTR_HOMED_SYNCD_SNAPSHOT_MAX_BYTES
+Ceiling on the size of
+.IR snapshot.json ,
+in bytes. Default 1073741824 (1 GiB; a 200,000-entry home is about 64 MB).
+The file is stream-parsed, so this bounds memory against a runaway file
+rather than a normal home. A larger snapshot is refused (exit 7), never
+truncated or replaced.
 .SH FILES
 .TP
 .I /run/nostr-auth/session/<uid>/home_seed
@@ -114,6 +129,14 @@ process lifetime.
 .I $XDG_STATE_HOME/nostr-homed/sync.lock
 flock() sentinel that prevents two daemons for the same home from running
 concurrently. A collision is not an error: the second instance exits 0.
+.TP
+.I $XDG_STATE_HOME/nostr-homed/snapshot.json
+Local baseline of the synced tree. If it cannot be parsed it is renamed to
+.I snapshot.json.corrupt.<epoch>
+(never overwritten), the baseline is rebuilt by an additive rescan, and
+pushes stay refused (partial state) until a pull restores the base. Any
+other load failure (too large, newer schema, I/O) stops the daemon with
+exit 7 and leaves the file untouched.
 .TP
 .I $XDG_STATE_HOME/nostr-homed/porthome-status.json
 Status file; kept up to date by the daemon.
@@ -140,6 +163,16 @@ Refused to run \(em NOSTR_HOME_STATE=partial in the environment.
 .TP 4
 .B 5
 Failed to acquire sync.lock for reasons other than contention.
+.TP 4
+.B 7
+.I snapshot.json
+unusable: over the size ceiling, written by a newer schema, unreadable,
+or corrupt and could not be moved aside. The file is left untouched and
+porthome-status.json records the class in
+.BR last_error .
+With
+.BR \-\-check ,
+also returned for a corrupt snapshot (the dry run does not quarantine).
 .RE
 .SH SIGNALS
 .TP
