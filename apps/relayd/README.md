@@ -47,7 +47,14 @@ still reach the network.
    - kinds listed in `federation_local_only_kinds` (relay-side policy);
    - events not authored by a **local account** — caching another
      author's event in the session relay never rebroadcasts it (it is
-     stored, `OK true`, and settles `skipped`). When `federation_accounts`
+     stored and answered `OK true`). When its author is certainly not
+     local — `federation_accounts` is set, or the event was signed before
+     `org.nostr.Signer` last answered and by a key it never reported — it
+     is not queued at all (`unknown`; no outbox write, so bulk cache writes
+     cost no fsync); otherwise it is queued and settles `skipped` once the
+     signer answers. Relay lists (10002 / 10050 / 10009) of anyone are
+     always remembered for routing (without an fsync: they are read back
+     from the store if lost). When `federation_accounts`
      is set it is the complete, authoritative list. When it is empty, the
      local account is whatever `org.nostr.Signer.GetPublicKey` reports,
      asked lazily when an event by an unknown author is waiting; every key
@@ -56,7 +63,10 @@ still reach the network.
      account is known, queued events wait (`unroutable`,
      `FederationState` `waiting-for-account`) and never expire.
      Kind-1059 gift wraps are signed by throw-away keys and are exempt
-     from the author check.
+     from the author check — so a wrap an app caches from the user's own
+     inbox relays is sent back to them (answered `duplicate:`): it cannot
+     be told apart from the user's self-copy until clients can mark cache
+     writes (nostrc-pw0d).
 
 3. **Where events go** — only relays derived from the user's own data;
    there is no built-in, default or fallback relay:

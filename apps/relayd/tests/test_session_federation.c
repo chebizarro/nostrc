@@ -256,9 +256,10 @@ static void test_federation(void) {
   tags = g_strdup_printf("[[\"relay\",\"%s\"],[\"relay\",\"%s\"]]", A->url, E->url);
   char *inbox = offer(fed, mk(&rcpt, 10050, tags, "")); /* not ours: hint only */
   g_free(tags);
-  st = wait_state(inbox, NULL, 30);
-  g_assert_cmpstr(st, ==, "skipped");
-  g_free(st);
+  /* nostrc-elgy: federation_accounts is authoritative, so another author's
+   * event is never queued (no outbox row, no fsync); its relay list still
+   * routes the wrap below. */
+  g_assert_cmpint(nsr_outbox_event_status(ob, inbox, NULL, NULL, NULL), ==, -1);
   tags = g_strdup_printf("[[\"p\",\"%s\"]]", rcpt.pk);
   char *wrap = offer(fed, mk(&eph, 1059, tags, "ciphertext"));
   g_free(tags);
@@ -278,9 +279,7 @@ static void test_federation(void) {
   char *prot_id = offer(fed, prot);
   char *rumor = offer(fed, mk(&acct, 14, "[]", "dm plaintext"));
   char *theirs = offer(fed, mk(&rcpt, 1, "[]", "cached note of someone else"));
-  st = wait_state(theirs, NULL, 30);
-  g_assert_cmpstr(st, ==, "skipped");
-  g_free(st);
+  g_assert_cmpint(nsr_outbox_event_status(ob, theirs, NULL, NULL, NULL), ==, -1);
   g_assert_cmpint(nsr_outbox_event_status(ob, prot_id, NULL, NULL, NULL), ==, -1);
   g_assert_cmpint(nsr_outbox_event_status(ob, rumor, NULL, NULL, NULL), ==, -1);
 
@@ -315,7 +314,7 @@ static void test_federation(void) {
   g_assert_cmpstr(fs.state, ==, "active");
   g_assert_cmpuint(fs.outbox.forwarded, >=, 1);
   g_assert_cmpuint(fs.outbox.partial, >=, 3);
-  g_assert_cmpuint(fs.outbox.skipped, >=, 2);
+  g_assert_cmpuint(fs.outbox.skipped, ==, 0); /* foreign events never queued */
   g_assert_cmpstr(fs.outbox.last_error, !=, "");
   nsr_federation_status_clear(&fs);
   GPtrArray *relays = nsr_federation_relays(fed);
@@ -678,6 +677,19 @@ static void test_account_probe_does_not_stall(void) {
   nsr_federation_status(fed, &fs);
   g_assert_cmpstr(fs.state, ==, "active");
   nsr_federation_status_clear(&fs);
+
+  /* nostrc-elgy: now that the signer answered, another author's event
+   * signed before that answer is cached without an outbox row; a fresh one
+   * by an unknown key (maybe an account just added) is still queued. */
+  char *old_foreign = offer(fed, mk(&rcpt, 1, "[]", "cached, signed long ago"));
+  g_assert_cmpint(nsr_outbox_event_status(ob, old_foreign, NULL, NULL, NULL), ==, -1);
+  gint64 saved = s_clock;
+  s_clock = (gint64)time(NULL) + 5;
+  char *fresh_foreign = offer(fed, mk(&rcpt, 1, "[]", "signed just now by an unknown key"));
+  s_clock = saved;
+  g_assert_cmpint(nsr_outbox_event_status(ob, fresh_foreign, NULL, NULL, NULL), ==, 0);
+  free(old_foreign);
+  free(fresh_foreign);
 
   nsr_federation_free(fed);
   nsr_outbox_close(ob);

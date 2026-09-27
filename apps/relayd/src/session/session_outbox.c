@@ -263,6 +263,12 @@ void nsr_outbox_close(NsrOutbox *ob) {
 int nsr_outbox_ingest(NsrOutbox *ob, const NsrOutboxIngest *in, int64_t now, GError **error) {
   if (!in->enqueue && !in->hint) return 0;
   g_mutex_lock(&ob->lock);
+  /* A hint alone skips the fsync (nostrc-elgy): relay lists are read back
+   * from the local store when the hint row is missing, and a lost re-route
+   * / retarget flag falls back to the routing backoff. Only a queue row
+   * carries the "OK true = durably queued" promise. */
+  gboolean light = !in->enqueue;
+  if (light) (void)exec(ob, "PRAGMA synchronous = NORMAL");
   int rc = exec(ob, "BEGIN IMMEDIATE");
   if (rc == 0 && in->enqueue) {
     sqlite3_stmt *st = prep(ob,
@@ -319,6 +325,7 @@ int nsr_outbox_ingest(NsrOutbox *ob, const NsrOutboxIngest *in, int64_t now, GEr
                 sqlite3_errmsg(ob->db));
     (void)sqlite3_exec(ob->db, "ROLLBACK", NULL, NULL, NULL);
   }
+  if (light) (void)exec(ob, "PRAGMA synchronous = FULL");
   g_mutex_unlock(&ob->lock);
   return rc;
 }
