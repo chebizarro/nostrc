@@ -24,9 +24,12 @@ Deferred to a later wave: k95e, wu3s, hby8, prqu.1, prqu.7, prqu.9, prqu.10, rxx
 - [x] F session-relay federation — merged 7b657793 (7d96); follow-ups t24q (dav/share consume FederationState), jedb, elgy, 8cc1, abk1
 - [x] H NIP-29 audit + ctest failures — merged (rxxx ohrz yk3t bvka twwl krqc); report docs/reviews/nip29-conformance-2026-09-26.md; follow-ups lqm2 (P1 syncd inotify), zi3j, ytua (relayd), a33z (notify), 7n4t, 4gf4, prjb (plugin), bn7z, 2w9b
 - [x] G grab-bag (dispatcher NIP-89 offers/Handler2 scopes, LaunchSearch, seal publish, FUSE units, libmarmot, nip05/25 libdir) — merged (prqu.1 prqu.7 prqu.9 prqu.10 9rvm hby8 ipvk o8mx); follow-ups 9tdc (P1→J), 5loj, 2v57, i7kv, 7kaa
-- [ ] I share/dav federation consumers (t24q eqdz k95e wu3s) — running
+- [x] I share/dav federation consumers — merged b9612049 (t24q eqdz k95e wu3s + 2o4h dav stale-signature fix); follow-ups rd8j (P1 nip59 timestamps), qh4j, 0c69, e4wf
 - [x] J relayd federation follow-ups — merged 74b5158c (9tdc P1 zi3j ytua jedb elgy 8cc1 abk1 tvoi); follow-ups btzb, dm6d, nfnw, z1my, pw0d
 - [x] K homed syncd inotify P1 + notify + test hygiene — merged (lqm2 a16c a33z bn7z 2w9b + 51ax P1 dm.js); follow-ups 5y2t (P1 snapshot >32MiB), p8y6, ix3n, ixra
 - [x] L gnostr follow-ups — merged (jppi 46h7 4gf4 7n4t; prjb partial, stays open); follow-ups tw2z (M), uaba (G), jy0b, jc2o, oz77, kyvy, 1b4j, udsy
 - [x] M signer/nip5f/wallet follow-ups — merged (q23h yjky 56id muhk dnbf); follow-ups fdg3, 7o76, 41wr, tfgp, iheg
 - Deferred: 9z5w (decision: ship an approver UI/CLI in Debian?), hd8u (Flatpak Firefox portal), a5fr (Epiphany)
+- [ ] N libs: nip59 timestamps P1 (rd8j), GNostrRelay fd0/refused-connect (jc2o oz77), nip46 e2e (udsy) — running
+- [ ] O syncd: snapshot >32MiB P1 (5y2t), late seed pickup (p8y6) — running
+- [ ] P apps: gnostr kind-15 key encoding (qh4j), signer D-Bus service file (tw2z) — running
