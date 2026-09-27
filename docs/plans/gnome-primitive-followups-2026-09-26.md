@@ -17,7 +17,8 @@ Deferred to a later wave: k95e, wu3s, hby8, prqu.1, prqu.7, prqu.9, prqu.10, rxx
 
 ## Progress
 - [x] A relayd — merged; prqu.17 blocked on 8rxk
-- [ ] B signer
+- [x] B signer — merged 5ea6cfc9 (12 beads + 8sya, o8mx nip55l half, a4w5); follow-ups wkzj (E), jppi, q23h, 9z5w (decision: Debian approver UI), yjky, 56id
 - [x] C gnostr client — merged (7 beads); follow-ups tvoi, 46h7
 - [x] D libnostr/dav/packaging — merged (12 beads incl. wr3t, w8y1, pnc7, 6tuz)
 - [ ] E wallet/notify/share/webext follow-ups
+- [ ] H NIP-29 audit + ctest failures (rxxx ohrz yk3t bvka twwl krqc) — running
