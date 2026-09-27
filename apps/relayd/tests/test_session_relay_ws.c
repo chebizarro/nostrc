@@ -68,7 +68,12 @@ int main(void) {
   snprintf(path, sizeof path, "%s/nostr", state);
   mkdir(path, 0700);
   snprintf(path, sizeof path, "%s/nostr/session-relay.conf", state);
-  if (write_file(path, "storage_driver = \"none\"\n") != 0) {
+  /* The retention_* keys GNOME Settings writes (nostrc-janr) must not stop
+   * the relay from starting while retention is unimplemented (prqu.17). */
+  if (write_file(path, "storage_driver = \"none\"\n"
+                       "retention_enabled = true\n"
+                       "retention_cache_max_mb = 512\n"
+                       "retention_note_ttl_days = 30\n") != 0) {
     perror("write session-relay.conf");
     return 1;
   }
