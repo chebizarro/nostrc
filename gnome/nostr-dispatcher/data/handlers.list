@@ -23,5 +23,6 @@
 #
 #   [Dispatcher]
 #   fetch-relay-hints=true
+#   nip89-discovery=true   # offer NIP-89 (kind 31990) handlers; never auto-opens
 
 [Default Handlers]

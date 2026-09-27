@@ -2,6 +2,7 @@ usr/bin/nostr-dispatcher
 usr/lib/systemd/user/nostr-dispatcher.service
 usr/share/applications/org.nostr.Dispatcher.desktop
 usr/share/dbus-1/services/org.nostr.Dispatcher1.service
+usr/share/dbus-1/services/org.nostr.Dispatcher.service
 usr/share/dbus-1/interfaces/org.nostr.Dispatcher1.xml
 usr/share/dbus-1/interfaces/org.nostr.Handler1.xml
 usr/share/dbus-1/interfaces/org.nostr.Handler2.xml

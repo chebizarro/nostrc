@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.20)
 include(GNUInstallDirs)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ND_DEPS REQUIRED IMPORTED_TARGET
-  glib-2.0>=2.66 gio-2.0 gio-unix-2.0 json-glib-1.0 libsoup-3.0)
+  glib-2.0>=2.70 gio-2.0 gio-unix-2.0 json-glib-1.0 libsoup-3.0)
 
 option(NOSTR_DISPATCHER_BUILD_TESTS "Build nostr-dispatcher unit tests" ${BUILD_TESTING})
 
@@ -38,7 +38,8 @@ add_library(nd_portable STATIC
   src/nd-kinds.c
   src/nd-uri.c
   src/nd-event.c
-  src/nd-fetch.c)
+  src/nd-fetch.c
+  src/nd-nip89.c)
 target_include_directories(nd_portable PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_SOURCE_DIR}/libnostr/include
@@ -46,7 +47,7 @@ target_include_directories(nd_portable PUBLIC
 target_compile_options(nd_portable PRIVATE -Wall -Wextra -Wno-unused-parameter)
 target_link_libraries(nd_portable PUBLIC PkgConfig::ND_DEPS nip19 nostr)
 
-set(ND_PORTABLE_TESTS kinds uri event)
+set(ND_PORTABLE_TESTS kinds uri event nip89)
 if(NOSTR_DISPATCHER_BUILD_TESTS)
   foreach(t ${ND_PORTABLE_TESTS})
     add_executable(test_nd_${t} tests/test_nd_${t}.c)
@@ -68,7 +69,6 @@ endif()
 
 add_library(nd_core STATIC
   src/nd-registry.c
-  src/nd-nip89.c
   src/nd-dispatch.c)
 target_compile_options(nd_core PRIVATE -Wall -Wextra -Wno-unused-parameter)
 target_link_libraries(nd_core PUBLIC nd_portable)
@@ -86,6 +86,8 @@ configure_file(data/nostr-dispatcher.service.in
   ${CMAKE_CURRENT_BINARY_DIR}/nostr-dispatcher.service @ONLY)
 configure_file(data/org.nostr.Dispatcher1.service.in
   ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Dispatcher1.service @ONLY)
+configure_file(data/org.nostr.Dispatcher.service.in
+  ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Dispatcher.service @ONLY)
 
 pkg_get_variable(ND_SYSTEMD_USER_UNIT_DIR systemd systemduserunitdir)
 if(NOT ND_SYSTEMD_USER_UNIT_DIR)
@@ -98,6 +100,7 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Dispatcher.desktop
 install(FILES data/nostr.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/mime/packages)
 install(FILES data/handlers.list DESTINATION ${CMAKE_INSTALL_DATADIR}/nostr)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Dispatcher1.service
+              ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Dispatcher.service
         DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/services)
 install(FILES ${ND_IFACE_XML} ${ND_HANDLER_XML}
         DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)

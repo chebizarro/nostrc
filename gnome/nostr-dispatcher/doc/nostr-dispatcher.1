@@ -1,4 +1,4 @@
-.\" nostr-dispatcher(1) — nostrc-prqu.7
+.\" nostr-dispatcher(1) - nostrc-prqu.7
 .TH NOSTR-DISPATCHER 1 "2026-09-26" "nostrc" "User Commands"
 .SH NAME
 nostr-dispatcher \- open nostr: links in the application registered for the event kind
@@ -15,6 +15,10 @@ nostr-dispatcher \- open nostr: links in the application registered for the even
 .B nostr-dispatcher set-default
 .IR KIND | A-B | *
 .I DESKTOP-ID
+.br
+.B nostr-dispatcher discover
+.I KIND
+.RI [ URI ]
 .br
 .B nostr-dispatcher daemon
 .SH DESCRIPTION
@@ -94,12 +98,38 @@ is a kind, an inclusive range
 or
 .BR * .
 .TP
+.BI discover " KIND" " \fR[\fPURI\fR]\fP"
+List NIP-89 handler suggestions (kind 31990) for
+.IR KIND :
+rank, name, handler address, number of recommendations by people you
+follow, the web URL for
+.I URI
+(when given) and a desktop application id hint.
+Nothing is opened.
+.TP
 .B daemon
 Run the
 .B org.nostr.Dispatcher1
 service (normally started by D-Bus activation through
 .BR nostr-dispatcher.service ;
 exits after 30 s idle).
+.SH NIP-89 SUGGESTIONS
+When no installed application handles a link's kind (and no
+.B *
+fallback is installed),
+.B open
+fails, and the service then looks for NIP-89 handler information (kind
+31990) on the session relay and, unless
+.BR fetch-relay-hints=false ,
+on the user's NIP-65 read relays.
+The best handler, ranked by kind-31989 recommendations from the people the
+user follows, is offered in a notification ("Open in \fINAME\fP
+(\fIHOST\fP)"; "Show in Software" for a Flatpak hint).
+Nothing is ever opened without a click.
+.B [Dispatcher] nip89-discovery=false
+turns this off.
+Results are cached in
+.IR $XDG_CACHE_HOME/nostr-dispatcher/nip89/ .
 .SH FILES
 .TP
 .I $XDG_CONFIG_HOME/nostr/handlers.list
@@ -119,7 +149,10 @@ claim for some kinds) and
 .BR [Dispatcher] ,
 whose
 .B fetch-relay-hints=false
-stops the dispatcher from contacting relays named in links.
+stops the dispatcher from contacting relays named in links (and limits
+NIP-89 discovery to the session relay) and
+.B nip89-discovery=false
+disables NIP-89 suggestions.
 .TP
 .I $XDG_RUNTIME_DIR/nostr/relay.sock
 The per-user session relay, asked first for events.

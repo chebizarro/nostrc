@@ -157,9 +157,10 @@ For a link whose kind is known, first match wins:
    as with per-file precedence in `mimeapps.list`. Entries naming apps that
    are not installed are skipped.
 2. `X-Nostr-Kinds=` declarations, minus `[Removed Handlers]`.
-3. NIP-89 recommendations (kind 31990). This is a **hook only** today; see
-   nostrc-prqu.1.
-4. Fallback: `*` in `[Default Handlers]`, then apps declaring `*`.
+3. Fallback: `*` in `[Default Handlers]`, then apps declaring `*`.
+
+NIP-89 is deliberately **not** a step: nothing discovered on the network is
+ever chosen or launched automatically. See "NIP-89 suggestions" below.
 
 The dispatcher's own desktop entry is never a candidate.
 
@@ -182,6 +183,57 @@ kind.
 
 When the kind is already known, nothing is fetched unless the chosen app
 is running and could take the event over `org.nostr.Handler2`/`Handler1`.
+
+## NIP-89 suggestions (kind 31990)
+
+When no installed app handles a link's (known) kind and there is no `*`
+fallback, `Open` fails with `NoHandler` as before. The service then looks
+for NIP-89 *handler information* events (kind 31990 tagged `["k","<kind>"]`)
+and **offers** the best one. It never opens one by itself:
+
+- **Where it looks:** first the per-user session relay. Unless
+  `fetch-relay-hints=false`, it then tries the user's NIP-65 **read** relays
+  (from the user's kind 10002 on the session relay), else the relays
+  configured in the signer (`org.nostr.Signer.GetRelays`), at most 4.
+  The user's pubkey comes from `org.nostr.Signer.GetPublicKey` with
+  `NO_AUTO_START`, so discovery never starts a signer. Without a signer it
+  still searches the session relay.
+- **Trust:** kind-31990 events are signed by anybody. Candidates are ranked
+  by kind-31989 recommendations for that kind from the user and the people
+  the user follows (kind 3, at most 250). The offer always names the web
+  handler's **host**, and an unrecommended handler says "Nobody you follow
+  recommends it: check the address before opening." Display names are
+  sanitised (no control or bidi characters, 48 characters at most).
+- **What is offered:** a notification with an "Open in <name> (<host>)"
+  button. The link goes into the handler's `web` template
+  (`https://…<bech32>…`); a template whose entity marker matches the link's
+  entity (`naddr`, `nevent`, `nprofile`, …) wins over an unmarked one, and
+  only `https://` URLs with a host and no userinfo are used. If the 31990
+  carries `["flatpak","<app-id>"]` or `["linux","<app-id>"]`, a "Show in
+  Software" button opens `appstream://<app-id>`. Clicking the banner itself
+  does nothing.
+- **Button safety:** each presented offer gets a random 128-bit token,
+  stored single-use for 24 h under
+  `$XDG_RUNTIME_DIR/nostr-dispatcher/nip89-offers/` (0600, so a click still
+  works after the service has exited on idle). The buttons
+  (`app.nip89-open`, `app.nip89-install`) carry only that token, so another
+  program on the session bus calling `ActivateAction` cannot open anything
+  that was not offered, not even another cached handler. The URL is then
+  rebuilt from the cached, re-verified 31990 rather than stored. The host
+  shown is the URL's parsed host. Look-alike (IDN) hosts are an accepted
+  risk that the always-visible host and the recommendation count mitigate.
+- **Cache:** `$XDG_CACHE_HOME/nostr-dispatcher/nip89/<kind>.json`, fresh
+  for 24 h (1 h when nothing was found). Events are re-verified on load.
+- **Switches:** `[Dispatcher] nip89-discovery=false` turns this off;
+  `fetch-relay-hints=false` keeps it on the session relay.
+- **From a terminal:** the in-process `open` prints the suggestions to
+  stderr, and `nostr-dispatcher discover KIND [URI]` lists them. Neither
+  opens anything.
+
+The service's GApplication id is `org.nostr.Dispatcher` (the desktop id),
+so GNOME Shell accepts its notifications and routes button clicks back
+through D-Bus activation (`org.nostr.Dispatcher.service`). The API stays on
+`org.nostr.Dispatcher1`, owned by the same process.
 
 ## Deep links from nostr-notify
 

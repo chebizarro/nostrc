@@ -16,8 +16,7 @@
  *   2. X-Nostr-Kinds= declarations of installed desktop entries: exact
  *      beats narrowest range; ties broken by desktop id (byte order), so
  *      the result is deterministic. `*` is not considered here.
- *   3. NIP-89 discovery hook (stub; nd-nip89.c).
- *   4. Fallback (also the ONLY step for links whose kind is unknown):
+ *   3. Fallback (also the ONLY step for links whose kind is unknown):
  *      the `*` key of `[Default Handlers]` (file order), then installed
  *      apps declaring `*` (desktop id order).
  *
@@ -27,7 +26,13 @@
  * [Removed Associations]. It does not affect explicit defaults.
  *
  * `[Dispatcher] fetch-relay-hints=false` (first file that sets it wins)
- * disables contacting relays named in links.
+ * disables contacting relays named in links, and limits NIP-89 discovery
+ * to the session relay. `[Dispatcher] nip89-discovery=false` turns NIP-89
+ * handler suggestions off entirely (nd-nip89.h).
+ *
+ * NIP-89 is not a resolution step: when every step above fails for a
+ * known kind the open fails with ND_ERROR_NO_HANDLER, and the daemon then
+ * *offers* recommended handlers (kind 31990) without launching any.
  *
  * The dispatcher's own desktop id is never returned (loop guard).
  */
@@ -52,7 +57,7 @@ typedef enum {
   ND_SOURCE_NONE = 0,
   ND_SOURCE_HANDLERS_LIST,
   ND_SOURCE_DECLARED,
-  ND_SOURCE_NIP89,
+  ND_SOURCE_NIP89,     /* unused: NIP-89 only suggests (nd-nip89.h) */
   ND_SOURCE_FALLBACK_LIST,
   ND_SOURCE_FALLBACK_DECLARED,
 } NdSource;
@@ -77,6 +82,7 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(NdRegistry, nd_registry_free)
 char *nd_registry_choose(NdRegistry *reg, gint kind, NdSource *out_source);
 
 gboolean nd_registry_fetch_relay_hints(NdRegistry *reg);
+gboolean nd_registry_nip89_discovery(NdRegistry *reg);
 
 /* handlers.list search path, highest precedence first. */
 char **nd_registry_config_files(void);

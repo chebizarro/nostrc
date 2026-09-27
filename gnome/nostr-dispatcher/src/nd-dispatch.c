@@ -438,3 +438,17 @@ void nd_dispatch_open_event_async(NdRegistry *reg, const char *event_json,
 NdOpenResult *nd_dispatch_open_finish(GAsyncResult *res, GError **error) {
   return g_task_propagate_pointer(G_TASK(res), error);
 }
+
+gint nd_dispatch_open_failed_kind(GAsyncResult *res) {
+  OpenData *d = g_task_get_task_data(G_TASK(res));
+  return d && d->result ? d->result->kind : -1;
+}
+
+NdTarget *nd_dispatch_open_failed_target(GAsyncResult *res) {
+  OpenData *d = g_task_get_task_data(G_TASK(res));
+  if (!d || !d->target) return NULL;
+  NdTarget *t = nd_target_copy(d->target);
+  if (t->entity == ND_ENTITY_EVENT && t->kind < 0 && d->result && d->result->kind >= 0)
+    t->kind = d->result->kind;
+  return t;
+}

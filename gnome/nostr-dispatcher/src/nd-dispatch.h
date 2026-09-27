@@ -18,6 +18,7 @@
 
 #include <gio/gio.h>
 #include "nd-registry.h"
+#include "nd-uri.h"
 
 G_BEGIN_DECLS
 
@@ -51,6 +52,12 @@ void nd_dispatch_open_event_async(NdRegistry *reg, const char *event_json,
                                   GAsyncReadyCallback callback, gpointer user_data);
 
 NdOpenResult *nd_dispatch_open_finish(GAsyncResult *res, GError **error);
+
+/* After nd_dispatch_open_finish() failed with ND_ERROR_NO_HANDLER: the
+ * known kind (-1 if unknown) and the target (canonical, kind folded in;
+ * NULL for event input without an id). For NIP-89 suggestions. */
+gint nd_dispatch_open_failed_kind(GAsyncResult *res);
+NdTarget *nd_dispatch_open_failed_target(GAsyncResult *res);
 
 /* D-Bus bus name / object path a handler desktop id would own under the
  * GApplication convention ("org.example.App.desktop" -> "org.example.App",

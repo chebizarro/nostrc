@@ -1343,6 +1343,7 @@ fi
 %{_userunitdir}/nostr-dispatcher.service
 %{_datadir}/applications/org.nostr.Dispatcher.desktop
 %{_datadir}/dbus-1/services/org.nostr.Dispatcher1.service
+%{_datadir}/dbus-1/services/org.nostr.Dispatcher.service
 %{_datadir}/dbus-1/interfaces/org.nostr.Dispatcher1.xml
 %{_datadir}/dbus-1/interfaces/org.nostr.Handler1.xml
 %{_datadir}/dbus-1/interfaces/org.nostr.Handler2.xml

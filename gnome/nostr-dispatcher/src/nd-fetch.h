@@ -37,6 +37,17 @@ void nd_fetch_event_async(const NdTarget *t, const NdFetchOptions *opts,
                           GAsyncReadyCallback callback, gpointer user_data);
 NdEvent *nd_fetch_event_finish(GAsyncResult *res, GError **error);
 
+/* Blocking collector for list queries (NIP-89 discovery; run it in a
+ * worker thread). Sends one REQ with @filter_json (a NIP-01 filter object)
+ * to the session relay at @socket_path (skipped when NULL or absent), then
+ * to each of @relays in turn (libnostr client), stopping each at
+ * EOSE/CLOSED; all of it shares @budget_ms. Keeps only events that
+ * nd_event_parse() validates and whose kind is @want_kind, deduplicated by
+ * id. Returns a GPtrArray of NdEvent* (never NULL). */
+GPtrArray *nd_fetch_collect_sync(const char *filter_json, gint want_kind,
+                                 const char *socket_path, const char *const *relays,
+                                 guint budget_ms, GCancellable *cancellable);
+
 G_END_DECLS
 
 #endif /* ND_FETCH_H */
