@@ -330,6 +330,84 @@ test_signs_stamped_created_at(void)
   fx_teardown(&fx);
 }
 
+/* ---- Scenario: nostr_dav_upstream_mode is enforced (nostrc-862u) ---- */
+
+static guint
+sent_count(NdRelayTransport *t)
+{
+  gsize n = 0;
+  gchar **frames = nd_relay_transport_fixture_take_sent(t, &n);
+  g_strfreev(frames);
+  return (guint)n;
+}
+
+static void
+test_upstream_session_only(void)
+{
+  Fx fx = {0};
+  fx_setup(&fx,
+    "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd");
+  NdRelayTransport *session = nd_relay_transport_new_fixture("ws://localhost/");
+  nd_relay_transport_connect_async(session);
+  nd_publisher_bind_transport(fx.publisher, "ws://localhost/", session);
+
+  /* Staged while the default mode targets the home relays... */
+  insert_calendar_row(&fx, "evt-up", "Private");
+  GError *err = NULL;
+  g_assert_true(nd_publisher_stage_calendar_put(fx.publisher, "evt-up", &err));
+  g_assert_no_error(err);
+
+  /* ...then session_relay_only with no session relay: held, not failed. */
+  nd_publisher_set_upstream(fx.publisher, ND_UPSTREAM_MODE_SESSION_RELAY_ONLY,
+                            NULL);
+  g_assert_true(nd_publisher_is_held(fx.publisher));
+  nd_publisher_tick(fx.publisher, 2000000000);
+  g_assert_cmpuint(sent_count(fx.r1) + sent_count(fx.r2) + sent_count(fx.r3) +
+                   sent_count(session), ==, 0);
+  g_autofree gchar *held_state = get_publish_state(fx.db, "evt-up");
+  g_assert_cmpstr(held_state, ==, "pending");
+  g_assert_cmpuint(fx.notify.count, ==, 0);
+
+  /* The session relay appears: only it gets the event, never the home
+   * relays the row was originally staged for. */
+  nd_publisher_set_upstream(fx.publisher, ND_UPSTREAM_MODE_SESSION_RELAY_ONLY,
+                            "ws://localhost/");
+  g_assert_false(nd_publisher_is_held(fx.publisher));
+  g_assert_true(nd_publisher_tick(fx.publisher, 2000000000));
+  g_assert_cmpuint(sent_count(session), ==, 1);
+  g_assert_cmpuint(sent_count(fx.r1) + sent_count(fx.r2) + sent_count(fx.r3),
+                   ==, 0);
+
+  nd_relay_transport_unref(session);
+  fx_teardown(&fx);
+}
+
+static void
+test_upstream_direct_only_ignores_session(void)
+{
+  Fx fx = {0};
+  fx_setup(&fx,
+    "dededededededededededededededededededededededededededededededede");
+  NdRelayTransport *session = nd_relay_transport_new_fixture("ws://localhost/");
+  nd_relay_transport_connect_async(session);
+  nd_publisher_bind_transport(fx.publisher, "ws://localhost/", session);
+  nd_publisher_set_upstream(fx.publisher, ND_UPSTREAM_MODE_DIRECT_ONLY,
+                            "ws://localhost/");
+
+  insert_calendar_row(&fx, "evt-direct", "Public");
+  GError *err = NULL;
+  g_assert_true(nd_publisher_stage_calendar_put(fx.publisher, "evt-direct",
+                                                &err));
+  g_assert_true(nd_publisher_tick(fx.publisher, 2000000000));
+  g_assert_cmpuint(sent_count(session), ==, 0);
+  g_assert_cmpuint(sent_count(fx.r1), ==, 1);
+  g_assert_cmpuint(sent_count(fx.r2), ==, 1);
+  g_assert_cmpuint(sent_count(fx.r3), ==, 1);
+
+  nd_relay_transport_unref(session);
+  fx_teardown(&fx);
+}
+
 /* ---- Scenario: permanent reject fires exactly one notification ---- */
 
 static void
@@ -642,6 +720,10 @@ int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/nostr-dav/publish/upstream-session-only",
+                  test_upstream_session_only);
+  g_test_add_func("/nostr-dav/publish/upstream-direct-only-ignores-session",
+                  test_upstream_direct_only_ignores_session);
   g_test_add_func("/nostr-dav/publish/signs-stamped-created-at",
                   test_signs_stamped_created_at);
   g_test_add_func("/nostr-dav/publish/permanent-reject-notifies-once",

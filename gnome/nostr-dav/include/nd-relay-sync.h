@@ -2,13 +2,15 @@
  *
  * SPDX-License-Identifier: MIT
  *
- * Plan Track 2 D4: opens REQ subscriptions to the account's home_relays
- * (per nd-config) with filters `{kinds:[31922,31923,30085,5],
- * authors:[account_pubkey]}`, folds each incoming EVENT into the local
+ * Plan Track 2 D4: opens REQ subscriptions to the upstream-filtered relay
+ * set (home relays or the session relay, per nd-config's upstream mode)
+ * with filter `{kinds:[31922,31923,30085,5], authors:[account_pubkey],
+ * since:cursor-1h}`, folds each incoming EVENT into the local
  * SQLite stores (calendar/contact) via the existing parsers, and applies
  * NIP-09 kind-5 tombstones by deleting the matching addressable rows.
  *
- * Reconnect backoff is doubled 60 s -> 60 min per relay. The last
+ * Reconnect backoff (60 s -> 60 min, doubled) lives in the transport;
+ * every reconnect re-sends the REQ. The last
  * ingested `created_at` is persisted per relay in the `relay_cursor`
  * table so a restart resumes without re-processing history.
  *
@@ -63,22 +65,32 @@ void nd_relay_sync_free(NdRelaySync *self);
 /**
  * nd_relay_sync_configure:
  * @account_pubkey: (nullable): the account's hex pubkey; the REQ filter
- *   uses this as `authors[]`. NULL disables the author filter — v1 lets
- *   the caller drive `#p`-addressed variants only in that case.
+ *   uses it as `authors[]`. While NULL no REQ is sent (an author-less
+ *   filter would pull every user's calendar events).
  * @home_relays: (nullable): NULL-terminated relay URL list. NULL is a
  *   valid "no relays configured yet" state.
- * @upstream_mode: policy from nd-config (currently informational —
- *   session_relay wiring lands with Track 3 Piece A).
+ * @upstream_mode: which relays may be contacted (nostrc-862u), applied via
+ *   nostr_publish_policy_select_targets(): DIRECT_ONLY -> @home_relays;
+ *   SESSION_RELAY_ONLY -> only @session_relay_url, or nothing at all when
+ *   it is NULL (sync held); SESSION_RELAY_OR_DIRECT -> @session_relay_url
+ *   when known, else @home_relays.
+ * @session_relay_url: (nullable): ND_SESSION_RELAY_URL when the session
+ *   relay socket exists, else NULL.
  *
  * May be called before or after nd_relay_sync_start(); reconfiguration
- * disconnects transports whose URL is no longer in the list and starts
- * fresh transports for newly added URLs.
+ * CLOSEs and drops endpoints no longer in the target set, connects new
+ * ones (when started), and re-sends the REQ where the filter changed.
  */
 void nd_relay_sync_configure(NdRelaySync    *self,
                              const gchar    *account_pubkey,
                              const GStrv     home_relays,
-                             NdUpstreamMode  upstream_mode);
+                             NdUpstreamMode  upstream_mode,
+                             const gchar    *session_relay_url);
 
+/* start: connect every endpoint; each connect (and reconnect) sends
+ *   ["REQ","nd-sync",{"kinds":[31922,31923,30085,5],"authors":[pk],
+ *   "since":cursor-3600}] (nostrc-wr3t).
+ * stop: send CLOSE for the subscription and disconnect. */
 void nd_relay_sync_start(NdRelaySync *self);
 void nd_relay_sync_stop (NdRelaySync *self);
 
@@ -104,8 +116,8 @@ gboolean nd_relay_sync_ingest_event(NdRelaySync *self,
  *
  * Convenience for tests / the transport listener: parses the envelope,
  * dispatches EVENT frames through nd_relay_sync_ingest_event(), and
- * silently ignores everything else (EOSE/OK/NOTICE — those steer the
- * subscription state machine, not the store).
+ * records EOSE / handles CLOSED for the sync subscription, and ignores
+ * OK/NOTICE.
  *
  * Returns: TRUE if the envelope was recognised and processed without
  *   error; FALSE with @error set otherwise.

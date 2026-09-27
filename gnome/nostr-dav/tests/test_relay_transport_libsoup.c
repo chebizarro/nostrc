@@ -12,6 +12,11 @@
  *   2. NIP-42 AUTH: server pushes ["AUTH", <challenge>] on connect; the
  *      client's auth callback signs an event and the server sees the
  *      returning ["AUTH", …] envelope on its side.
+ *   3. NdRelaySync end to end (nostrc-wr3t): the sync layer itself sends
+ *      the REQ over the real transport as soon as it connects, and the
+ *      event the server answers with is folded into the calendar store.
+ *      Before wr3t nothing sent a REQ, so this could only pass against
+ *      the fixture.
  *
  * The test runs client + server on the same thread-default main context
  * and blocks on GAsyncQueue signals until each stage settles, so it
@@ -19,6 +24,11 @@
  */
 
 #include "nd-relay-transport.h"
+#include "nd-relay-sync.h"
+#include "nd-calendar-store.h"
+#include "nd-contact-store.h"
+#include "nd-store-db.h"
+#include "nd-test-harness.h"
 
 #include <libsoup/soup.h>
 #include <json-glib/json-glib.h>
@@ -31,6 +41,7 @@
 typedef enum {
   MODE_ECHO_REQ,      /* wait for a REQ, then push EVENT + EOSE + OK */
   MODE_AUTH_FIRST,    /* immediately push AUTH, then echo REQ path */
+  MODE_SYNC,          /* REQ -> a foldable kind-31923 EVENT + EOSE */
 } ServerMode;
 
 typedef struct {
@@ -67,6 +78,20 @@ on_server_message(SoupWebsocketConnection *conn,
   if (data == NULL) return;
   g_autofree gchar *text = g_strndup(data, size);
   push_event(sctx, g_strdup_printf("recv:%s", text));
+
+  if (sctx->mode == MODE_SYNC && g_str_has_prefix(text, "[\"REQ\",\"nd-sync\",")) {
+    const gchar *event_json =
+      "{\"id\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\","
+      "\"pubkey\":\"1111111111111111111111111111111111111111111111111111111111111111\","
+      "\"kind\":31923,\"created_at\":1710000000,\"content\":\"from relay\","
+      "\"tags\":[[\"d\",\"wire-uid\"],[\"title\",\"Over the wire\"],"
+      "[\"start\",\"1710003600\"],[\"end\",\"1710007200\"]],\"sig\":\"deadbeef\"}";
+    g_autofree gchar *event_env =
+      g_strdup_printf("[\"EVENT\",\"nd-sync\",%s]", event_json);
+    soup_websocket_connection_send_text(conn, event_env);
+    soup_websocket_connection_send_text(conn, "[\"EOSE\",\"nd-sync\"]");
+    return;
+  }
 
   if (g_str_has_prefix(text, "[\"REQ\"")) {
     /* Reply with EVENT (bare event object), EOSE, OK for a fabricated
@@ -412,12 +437,84 @@ test_nip42_auth_signs_and_sends(void)
   g_async_queue_unref(sctx.server_events);
 }
 
+/* ---- Scenario 3: NdRelaySync subscribes over a real WebSocket ---- */
+
+typedef struct {
+  NdCalendarStore *cal;
+} StoreProbe;
+
+static gboolean
+have_wire_event(gpointer data)
+{
+  StoreProbe *p = data;
+  NdCalendarEvent *ev = nd_calendar_store_get(p->cal, "wire-uid", NULL);
+  gboolean ok = ev != NULL;
+  if (ev) nd_calendar_event_free(ev);
+  return ok;
+}
+
+static void
+test_relay_sync_subscribes_over_websocket(void)
+{
+  ServerCtx sctx = { .mode = MODE_SYNC };
+  sctx.server_events = g_async_queue_new_full(g_free);
+  g_autofree gchar *url = NULL;
+  SoupServer *server = start_server(&sctx, &url);
+
+  g_autofree gchar *dir = nd_test_make_tmpdir();
+  g_autofree gchar *db_path = nd_test_db_path(dir);
+  GError *err = NULL;
+  NdStoreDb *db = nd_store_db_open(db_path, &err);
+  g_assert_no_error(err);
+  NdCalendarStore *cal = nd_calendar_store_new(db);
+  NdContactStore *contact = nd_contact_store_new(db);
+
+  NdRelaySync *sync = nd_relay_sync_new(db, cal, contact,
+                                        nostr_publish_transport_factory_websocket,
+                                        NULL);
+  const gchar *relays[] = { url, NULL };
+  nd_relay_sync_configure(sync,
+    "1111111111111111111111111111111111111111111111111111111111111111",
+    (GStrv)relays, ND_UPSTREAM_MODE_DIRECT_ONLY, NULL);
+  nd_relay_sync_start(sync);
+
+  StoreProbe probe = { cal };
+  g_assert_true(wait_for(have_wire_event, &probe, 5000));
+
+  /* The server saw exactly our REQ (with the author filter). */
+  gboolean saw_req = FALSE;
+  gchar *e;
+  while ((e = g_async_queue_try_pop(sctx.server_events)) != NULL) {
+    if (g_str_has_prefix(e, "recv:[\"REQ\",\"nd-sync\",") &&
+        strstr(e, "\"authors\":[\"1111") != NULL)
+      saw_req = TRUE;
+    g_free(e);
+  }
+  g_assert_true(saw_req);
+
+  nd_relay_sync_free(sync);
+  nd_calendar_store_free(cal);
+  nd_contact_store_free(contact);
+  nd_store_db_unref(db);
+  nd_test_rm_rf(dir);
+  if (sctx.conn) {
+    g_signal_handler_disconnect(sctx.conn, sctx.sig_msg);
+    g_signal_handler_disconnect(sctx.conn, sctx.sig_closed);
+    g_object_unref(sctx.conn);
+  }
+  soup_server_disconnect(server);
+  g_object_unref(server);
+  g_async_queue_unref(sctx.server_events);
+}
+
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/nostr-dav/transport/req-event-ok-roundtrip",
                   test_req_event_ok_roundtrip);
+  g_test_add_func("/nostr-dav/transport/relay-sync-subscribes-over-websocket",
+                  test_relay_sync_subscribes_over_websocket);
   g_test_add_func("/nostr-dav/transport/nip42-auth-signs-and-sends",
                   test_nip42_auth_signs_and_sends);
   return g_test_run();

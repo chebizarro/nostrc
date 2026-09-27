@@ -5,6 +5,9 @@
 
 #include "nd-config.h"
 
+#include <glib/gstdio.h>
+#include <sys/stat.h>
+
 G_DEFINE_QUARK(nd-config-error-quark, nd_config_error)
 
 static const struct {
@@ -15,6 +18,35 @@ static const struct {
   { ND_UPSTREAM_MODE_SESSION_RELAY_OR_DIRECT, "session_relay_or_direct" },
   { ND_UPSTREAM_MODE_DIRECT_ONLY,             "direct_only" },
 };
+
+gchar *
+nd_session_relay_socket_path(void)
+{
+  const gchar *override = g_getenv("NOSTR_DAV_SESSION_RELAY_SOCKET");
+  g_autofree gchar *path = override != NULL
+    ? g_strdup(override)
+    : g_build_filename(g_get_user_runtime_dir(), "nostr", "relay.sock", NULL);
+  if (path == NULL || *path == '\0')
+    return NULL;
+  GStatBuf st;
+  if (g_stat(path, &st) != 0 || !S_ISSOCK(st.st_mode))
+    return NULL;
+  return g_steal_pointer(&path);
+}
+
+NostrPublishUpstream
+nd_upstream_mode_to_publish(NdUpstreamMode mode)
+{
+  switch (mode) {
+  case ND_UPSTREAM_MODE_SESSION_RELAY_ONLY:
+    return NOSTR_PUBLISH_UPSTREAM_SESSION_RELAY_ONLY;
+  case ND_UPSTREAM_MODE_DIRECT_ONLY:
+    return NOSTR_PUBLISH_UPSTREAM_DIRECT_ONLY;
+  case ND_UPSTREAM_MODE_SESSION_RELAY_OR_DIRECT:
+  default:
+    return NOSTR_PUBLISH_UPSTREAM_SESSION_RELAY_OR_DIRECT;
+  }
+}
 
 const gchar *
 nd_upstream_mode_to_string(NdUpstreamMode mode)

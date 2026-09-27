@@ -10,16 +10,19 @@
  *      Idempotent per event id (in-memory LRU) so a relay that resends
  *      history does not thrash the DB.
  *
- *   2. Transport — nd_relay_sync_start()/stop() drive one
- *      NdRelayTransport per configured home relay. Backoff is
- *      exponential (60 s -> 60 min) using a GSource wall-clock timer.
- *      NIP-42 AUTH challenges are cached per-URL so a reconnect does
- *      not need a fresh signer round-trip.
+ *   2. Subscription — nd_relay_sync_start()/stop() drive one
+ *      NdRelayTransport per relay in the upstream-filtered target set
+ *      (nostr_publish_policy_select_targets(), nostrc-862u). On every
+ *      transport (re)connect the layer sends
+ *      ["REQ","nd-sync",{kinds,authors,since}] (nostrc-wr3t — before this
+ *      nothing ever sent a REQ, so a real relay delivered nothing), notes
+ *      EOSE, retries once after a CLOSED "auth-required:", and sends CLOSE
+ *      on stop. Reconnect backoff lives in the transport.
  *
- * The transport lifecycle uses the fixture backend under tests. The
- * websocket backend is a scaffold today — production wiring lands in
- * the follow-up bead — but the state-machine and cursor code here are
- * exercised end-to-end via the fixture.
+ * Cursor semantics are unchanged (advanced on ingest; EOSE-committed
+ * cursors are nostrc-tlp2): the REQ asks for `since = cursor - 1 h` so a
+ * backfill that arrived out of order before a restart is re-covered, and
+ * the id dedup makes the overlap cheap.
  */
 
 #include "nd-relay-sync.h"
@@ -38,16 +41,32 @@ G_DEFINE_QUARK(nd-relay-sync-error-quark, nd_relay_sync_error)
 #define ND_BACKOFF_INITIAL_SEC 60
 #define ND_BACKOFF_MAX_SEC     (60 * 60)
 
+/* Fixed subscription id: one filter set per relay. A REQ with the same id
+ * replaces the relay's previous subscription (NIP-01), so a re-send after
+ * reconnect or reconfigure needs no CLOSE first. */
+#define ND_SYNC_SUB_ID "nd-sync"
+
+/* Resume overlap (see file comment). */
+#define ND_SYNC_SINCE_OVERLAP_SEC 3600
+
+/* Delay before the single re-REQ after CLOSED "auth-required:", giving the
+ * transport's NIP-42 AUTH round-trip time to complete. */
+#define ND_SYNC_AUTH_RETRY_SEC 2
+
 /* In-memory dedup ring. 4096 is generous for a per-user home_relays
  * fan-in; the cursor persists the actual last-seen created_at across
  * restarts so this is a soft cache, not the durable dedup. */
 #define ND_DEDUP_CAPACITY 4096
 
 typedef struct {
+  NdRelaySync       *owner;
   gchar             *url;
   NdRelayTransport  *transport;
-  guint              backoff_sec;
   gchar             *auth_challenge;   /* NIP-42 cache; NULL if none */
+  gboolean           req_sent;         /* REQ sent on this connection */
+  gboolean           eosed;            /* EOSE seen for the current REQ */
+  gboolean           auth_retried;     /* one re-REQ per connection */
+  guint              auth_retry_id;    /* pending re-REQ timer */
 } NdRelayEndpoint;
 
 struct _NdRelaySync {
@@ -61,6 +80,8 @@ struct _NdRelaySync {
   gchar   *account_pubkey;    /* hex64 or NULL */
   GStrv    home_relays;       /* owned */
   NdUpstreamMode upstream_mode;
+  gchar   *session_relay_url; /* owned; NULL when no session relay */
+  GStrv    targets;           /* owned; upstream-filtered relay set */
 
   GHashTable *endpoints;      /* url -> NdRelayEndpoint*, owned */
   gboolean    started;
@@ -78,6 +99,8 @@ endpoint_free(gpointer data)
   NdRelayEndpoint *ep = data;
   if (ep == NULL)
     return;
+  if (ep->auth_retry_id != 0)
+    g_source_remove(ep->auth_retry_id);
   if (ep->transport != NULL) {
     nd_relay_transport_set_listener(ep->transport, NULL, NULL);
     nd_relay_transport_set_state_callback(ep->transport, NULL, NULL);
@@ -502,6 +525,8 @@ nd_relay_sync_free(NdRelaySync *self)
   }
   g_clear_pointer(&self->account_pubkey, g_free);
   g_clear_pointer(&self->home_relays, g_strfreev);
+  g_clear_pointer(&self->session_relay_url, g_free);
+  g_clear_pointer(&self->targets, g_strfreev);
   g_clear_pointer(&self->db, nd_store_db_unref);
   g_free(self);
 }
@@ -510,32 +535,153 @@ static void on_transport_listener(NdRelayTransport *transport,
                                   const gchar      *kind_hint,
                                   const gchar      *envelope_json,
                                   gpointer          user_data);
+static void on_transport_state(NdRelayTransport *transport,
+                               gboolean          connected,
+                               const GError     *error,
+                               gpointer          user_data);
 
 static NdRelayEndpoint *
 endpoint_new(NdRelaySync *self, const gchar *url)
 {
   NdRelayEndpoint *ep = g_new0(NdRelayEndpoint, 1);
-  ep->url         = g_strdup(url);
-  ep->backoff_sec = ND_BACKOFF_INITIAL_SEC;
+  ep->owner = self;
+  ep->url   = g_strdup(url);
 
   if (self->factory != NULL) {
     ep->transport = self->factory(url, self->factory_data);
     if (ep->transport != NULL) {
       nd_relay_transport_set_listener(ep->transport,
                                       on_transport_listener, self);
+      nd_relay_transport_set_state_callback(ep->transport,
+                                            on_transport_state, self);
     }
   }
   return ep;
+}
+
+/* The REQ filter: our own calendar/contact/deletion events. */
+static gchar *
+build_req_frame(NdRelaySync *self, const gchar *relay_url)
+{
+  gint64 cursor = 0;
+  GError *err = NULL;
+  if (!nd_store_db_get_relay_cursor(self->db, relay_url, &cursor, &err)) {
+    g_warning("nostr-dav: relay cursor for %s unreadable (%s); full backfill",
+              relay_url, err ? err->message : "unknown");
+    g_clear_error(&err);
+    cursor = 0;
+  }
+
+  g_autoptr(JsonBuilder) b = json_builder_new();
+  json_builder_begin_array(b);
+  json_builder_add_string_value(b, "REQ");
+  json_builder_add_string_value(b, ND_SYNC_SUB_ID);
+  json_builder_begin_object(b);
+  json_builder_set_member_name(b, "kinds");
+  json_builder_begin_array(b);
+  json_builder_add_int_value(b, ND_NIP52_KIND_DATE);
+  json_builder_add_int_value(b, ND_NIP52_KIND_TIME);
+  json_builder_add_int_value(b, ND_CONTACT_KIND);
+  json_builder_add_int_value(b, 5);
+  json_builder_end_array(b);
+  json_builder_set_member_name(b, "authors");
+  json_builder_begin_array(b);
+  json_builder_add_string_value(b, self->account_pubkey);
+  json_builder_end_array(b);
+  if (cursor > ND_SYNC_SINCE_OVERLAP_SEC) {
+    json_builder_set_member_name(b, "since");
+    json_builder_add_int_value(b, cursor - ND_SYNC_SINCE_OVERLAP_SEC);
+  }
+  json_builder_end_object(b);
+  json_builder_end_array(b);
+
+  g_autoptr(JsonGenerator) gen = json_generator_new();
+  g_autoptr(JsonNode) root = json_builder_get_root(b);
+  json_generator_set_root(gen, root);
+  return json_generator_to_data(gen, NULL);
+}
+
+static void
+endpoint_send_req(NdRelaySync *self, NdRelayEndpoint *ep)
+{
+  if (ep->transport == NULL || !nd_relay_transport_is_connected(ep->transport))
+    return;
+  if (self->account_pubkey == NULL || *self->account_pubkey == '\0') {
+    /* Without an author filter the REQ would pull every user's calendar
+     * events; wait for the account to be configured. */
+    g_message("nostr-dav: not subscribing to %s: no account_pubkey configured",
+              ep->url);
+    return;
+  }
+  g_autofree gchar *frame = build_req_frame(self, ep->url);
+  GError *err = NULL;
+  if (!nd_relay_transport_send_frame(ep->transport, frame, &err)) {
+    g_warning("nostr-dav: REQ to %s failed: %s", ep->url,
+              err ? err->message : "unknown");
+    g_clear_error(&err);
+    return;
+  }
+  ep->req_sent = TRUE;
+  ep->eosed = FALSE;
+  g_debug("nostr-dav: subscribed %s: %s", ep->url, frame);
+}
+
+static void
+endpoint_send_close(NdRelayEndpoint *ep)
+{
+  if (!ep->req_sent || ep->transport == NULL ||
+      !nd_relay_transport_is_connected(ep->transport))
+    return;
+  (void)nd_relay_transport_send_frame(ep->transport,
+                                      "[\"CLOSE\",\"" ND_SYNC_SUB_ID "\"]",
+                                      NULL);
+  ep->req_sent = FALSE;
+}
+
+static void
+on_transport_state(NdRelayTransport *transport,
+                   gboolean          connected,
+                   const GError     *error,
+                   gpointer          user_data)
+{
+  NdRelaySync *self = user_data;
+  const gchar *url = nd_relay_transport_get_url(transport);
+  NdRelayEndpoint *ep = url ? g_hash_table_lookup(self->endpoints, url) : NULL;
+  if (ep == NULL || ep->transport != transport)
+    return;
+
+  if (connected) {
+    ep->auth_retried = FALSE;
+    if (self->started)
+      endpoint_send_req(self, ep);
+  } else {
+    ep->req_sent = FALSE;
+    ep->eosed = FALSE;
+    if (error != NULL)
+      g_debug("nostr-dav: relay %s disconnected: %s", url, error->message);
+  }
+}
+
+static gboolean
+on_auth_retry(gpointer user_data)
+{
+  NdRelayEndpoint *ep = user_data;
+  ep->auth_retry_id = 0;
+  endpoint_send_req(ep->owner, ep);
+  return G_SOURCE_REMOVE;
 }
 
 void
 nd_relay_sync_configure(NdRelaySync    *self,
                         const gchar    *account_pubkey,
                         const GStrv     home_relays,
-                        NdUpstreamMode  upstream_mode)
+                        NdUpstreamMode  upstream_mode,
+                        const gchar    *session_relay_url)
 {
   g_return_if_fail(self != NULL);
 
+  gboolean pubkey_changed =
+    g_strcmp0(self->account_pubkey, account_pubkey) != 0;
   g_free(self->account_pubkey);
   self->account_pubkey = account_pubkey ? g_strdup(account_pubkey) : NULL;
 
@@ -543,32 +689,63 @@ nd_relay_sync_configure(NdRelaySync    *self,
   self->home_relays = home_relays ? g_strdupv(home_relays) : NULL;
 
   self->upstream_mode = upstream_mode;
+  g_free(self->session_relay_url);
+  self->session_relay_url =
+    (session_relay_url && *session_relay_url) ? g_strdup(session_relay_url)
+                                              : NULL;
 
-  /* Prune endpoints no longer in the list, add newcomers. */
+  /* nostrc-862u: the upstream mode decides which relays we may contact at
+   * all. SESSION_RELAY_ONLY never opens a home relay; with no session
+   * relay it opens nothing (sync is held, not redirected). */
+  NostrPublishPolicy policy;
+  nostr_publish_policy_init(&policy);
+  policy.upstream = nd_upstream_mode_to_publish(upstream_mode);
+  GError *sel_err = NULL;
+  g_strfreev(self->targets);
+  self->targets = nostr_publish_policy_select_targets(
+    &policy, (const gchar *const *)self->home_relays, self->session_relay_url,
+    &sel_err);
+  if (self->targets == NULL) {
+    if (upstream_mode == ND_UPSTREAM_MODE_SESSION_RELAY_ONLY)
+      g_message("nostr-dav: relay sync held: upstream_mode=session_relay_only "
+                "and no session relay socket");
+    g_clear_error(&sel_err);
+  }
+
+  /* Prune endpoints no longer in the set, add newcomers. */
   g_autoptr(GHashTable) desired =
     g_hash_table_new(g_str_hash, g_str_equal);
-  if (self->home_relays != NULL)
-    for (guint i = 0; self->home_relays[i] != NULL; i++)
-      g_hash_table_add(desired, self->home_relays[i]);
+  if (self->targets != NULL)
+    for (guint i = 0; self->targets[i] != NULL; i++)
+      g_hash_table_add(desired, self->targets[i]);
 
   GHashTableIter iter;
-  gpointer key = NULL;
+  gpointer key = NULL, value = NULL;
   GList *to_remove = NULL;
   g_hash_table_iter_init(&iter, self->endpoints);
-  while (g_hash_table_iter_next(&iter, &key, NULL)) {
-    if (!g_hash_table_contains(desired, key))
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    if (!g_hash_table_contains(desired, key)) {
+      endpoint_send_close(value);
       to_remove = g_list_prepend(to_remove, key);
+    }
   }
   for (GList *l = to_remove; l != NULL; l = l->next)
     g_hash_table_remove(self->endpoints, l->data);
   g_list_free(to_remove);
 
-  if (self->home_relays != NULL) {
-    for (guint i = 0; self->home_relays[i] != NULL; i++) {
-      const gchar *url = self->home_relays[i];
-      if (!g_hash_table_contains(self->endpoints, url)) {
-        NdRelayEndpoint *ep = endpoint_new(self, url);
+  if (self->targets != NULL) {
+    for (guint i = 0; self->targets[i] != NULL; i++) {
+      const gchar *url = self->targets[i];
+      NdRelayEndpoint *ep = g_hash_table_lookup(self->endpoints, url);
+      if (ep == NULL) {
+        ep = endpoint_new(self, url);
         g_hash_table_insert(self->endpoints, ep->url, ep);
+        /* Reconfiguring a running layer must also bring newcomers up. */
+        if (self->started && ep->transport != NULL)
+          nd_relay_transport_connect_async(ep->transport);
+      } else if (self->started && (pubkey_changed || !ep->req_sent)) {
+        /* Same sub id: the relay replaces the old filter. */
+        endpoint_send_req(self, ep);
       }
     }
   }
@@ -585,7 +762,11 @@ nd_relay_sync_start(NdRelaySync *self)
   g_hash_table_iter_init(&iter, self->endpoints);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     NdRelayEndpoint *ep = value;
-    if (ep->transport != NULL)
+    if (ep->transport == NULL)
+      continue;
+    if (nd_relay_transport_is_connected(ep->transport))
+      endpoint_send_req(self, ep);   /* already up: no state edge to wait for */
+    else
       nd_relay_transport_connect_async(ep->transport);
   }
 }
@@ -603,6 +784,11 @@ nd_relay_sync_stop(NdRelaySync *self)
   g_hash_table_iter_init(&iter, self->endpoints);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     NdRelayEndpoint *ep = value;
+    if (ep->auth_retry_id != 0) {
+      g_source_remove(ep->auth_retry_id);
+      ep->auth_retry_id = 0;
+    }
+    endpoint_send_close(ep);
     if (ep->transport != NULL)
       nd_relay_transport_disconnect(ep->transport);
   }
@@ -728,8 +914,36 @@ nd_relay_sync_handle_envelope(NdRelaySync *self,
     }
     return TRUE;
   }
-  /* EOSE / OK / NOTICE / CLOSED are noops here; the transport listener
-   * consumes them for its own state machine. */
+  if (g_str_equal(cmd, "EOSE") || g_str_equal(cmd, "CLOSED")) {
+    const gchar *sub_id = json_array_get_length(arr) > 1
+                            ? json_array_get_string_element(arr, 1) : NULL;
+    NdRelayEndpoint *ep = relay_url
+                            ? g_hash_table_lookup(self->endpoints, relay_url)
+                            : NULL;
+    if (ep == NULL || g_strcmp0(sub_id, ND_SYNC_SUB_ID) != 0)
+      return TRUE;
+    if (g_str_equal(cmd, "EOSE")) {
+      ep->eosed = TRUE;
+      g_debug("nostr-dav: %s: backfill complete (EOSE)", relay_url);
+      return TRUE;
+    }
+    /* ["CLOSED","nd-sync","<reason>"]: the relay ended our subscription. */
+    const gchar *reason = json_array_get_length(arr) > 2
+                            ? json_array_get_string_element(arr, 2) : NULL;
+    ep->req_sent = FALSE;
+    if (reason != NULL && g_str_has_prefix(reason, "auth-required:") &&
+        !ep->auth_retried && ep->auth_retry_id == 0) {
+      /* NIP-42: the transport answers the AUTH challenge; re-REQ once. */
+      ep->auth_retried = TRUE;
+      ep->auth_retry_id = g_timeout_add_seconds(ND_SYNC_AUTH_RETRY_SEC,
+                                                on_auth_retry, ep);
+    } else {
+      g_warning("nostr-dav: relay %s closed the sync subscription: %s",
+                relay_url, reason ? reason : "(no reason)");
+    }
+    return TRUE;
+  }
+  /* OK / NOTICE are not subscription state. */
   return TRUE;
 }
 

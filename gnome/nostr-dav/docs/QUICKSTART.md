@@ -100,9 +100,21 @@ to `~/.config/nostr-dav/nostr-dav.conf`. It has one setting today:
 nostr_dav_upstream_mode=session_relay_or_direct
 ```
 
-This chooses which relays nostr-dav uses once relay sync is enabled. An
-unknown value stops the service from starting. That way a typo can never
-quietly fall back to a less private mode.
+This chooses which relays nostr-dav publishes to and syncs from, and it is
+enforced for both. An unknown value stops the service from starting. That
+way a typo can never quietly fall back to a less private mode.
+
+- `session_relay_only` never contacts your home relays. Without the session
+  relay socket (`$XDG_RUNTIME_DIR/nostr/relay.sock`) publishing and sync are
+  held and your edits stay local until the socket appears.
+- `session_relay_or_direct` uses the session relay when it is running,
+  otherwise your home relays.
+- `direct_only` always uses your home relays.
+
+The session relay does not forward to your home relays yet (nostrc-7d96).
+In the session-relay modes, events stay in the local session relay and
+other devices will not see them. Use `direct_only` if you need your home
+relays now. `journalctl --user -u nostr-dav` shows the relays in use.
 
 ## Endpoints
 

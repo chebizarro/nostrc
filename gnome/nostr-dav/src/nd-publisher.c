@@ -66,7 +66,12 @@ struct _NdPublisher {
   NostrPublisher *engine;
 
   gchar             *account_pubkey;
-  GStrv              home_relays;   /* default target set */
+  GStrv              home_relays;   /* configured home relays */
+  NdPublishQuorum    quorum;        /* as configured, before clamping */
+  NdUpstreamMode     upstream_mode;
+  gchar             *session_relay_url;  /* NULL: no session relay */
+  GStrv              targets;       /* upstream-filtered default target set */
+  gboolean           held;          /* session_relay_only, no session relay */
   NostrPublishPolicy policy;        /* mapped from NdPublishQuorum */
 
   GHashTable    *in_flight;       /* key(borrowed) -> NdInFlight*(borrowed) */
@@ -177,7 +182,7 @@ stage_row(NdPublisher       *self,
           gint64             now_ts,
           GError           **error)
 {
-  g_autofree gchar *targets_json = targets_to_json(self->home_relays);
+  g_autofree gchar *targets_json = targets_to_json(self->targets);
   sqlite3 *h = nd_store_db_get_handle(self->db);
   g_autofree gchar *sql = g_strdup_printf(
     "UPDATE %s SET publish_state = 'pending', "
@@ -212,7 +217,7 @@ stage_tombstone_row(NdPublisher *self,
                     gint64       now_ts,
                     GError     **error)
 {
-  g_autofree gchar *targets_json = targets_to_json(self->home_relays);
+  g_autofree gchar *targets_json = targets_to_json(self->targets);
   sqlite3 *h = nd_store_db_get_handle(self->db);
 
   sqlite3_stmt *stmt = NULL;
@@ -704,12 +709,20 @@ dispatch_row(NdPublisher         *self,
   }
 
   g_auto(GStrv) targets = targets_from_json(ctx->targets_json);
-  if (targets == NULL || targets[0] == NULL) {
-    /* No target set — fall back to configured home_relays. Without any
-     * relays configured, the row cannot proceed; mark it permanent so
-     * the operator gets notified rather than looping silently. */
+  if (self->upstream_mode == ND_UPSTREAM_MODE_SESSION_RELAY_ONLY) {
+    /* nostrc-862u: a row staged under a wider mode (or before the mode
+     * was changed) must not leak to home relays now. */
     g_strfreev(targets);
-    targets = self->home_relays != NULL ? g_strdupv(self->home_relays) : NULL;
+    targets = NULL;
+  }
+  if (targets == NULL || targets[0] == NULL) {
+    /* No target set — fall back to the current upstream-filtered set.
+     * Without any relays configured, the row cannot proceed; mark it
+     * permanent so the operator gets notified rather than looping
+     * silently. (A held session_relay_only publisher never gets here:
+     * nd_publisher_tick() does not dispatch while held.) */
+    g_strfreev(targets);
+    targets = self->targets != NULL ? g_strdupv(self->targets) : NULL;
     if (targets == NULL || targets[0] == NULL) {
       log_attempt(self, outbox, col, row_id, NULL, 0, "no relays configured");
       if (!mark_failed_permanent(self, outbox, col, row_id, error))
@@ -763,6 +776,8 @@ nd_publisher_new(NdStoreDb              *db,
   self->db        = nd_store_db_ref(db);
   self->signer    = nd_signer_ref(signer);
   self->engine    = nostr_publisher_new(signer);
+  /* Explicit: the enum's zero value is SESSION_RELAY_ONLY. */
+  self->upstream_mode = ND_UPSTREAM_MODE_DEFAULT;
   nd_publisher_configure(self, NULL, NULL, ND_PUBLISH_QUORUM_DEFAULT);
   self->in_flight = g_hash_table_new(g_str_hash, g_str_equal);
   return self;
@@ -777,31 +792,47 @@ nd_publisher_free(NdPublisher *self)
   g_clear_pointer(&self->engine, nostr_publisher_free);
   g_clear_pointer(&self->in_flight, g_hash_table_destroy);
   g_clear_pointer(&self->home_relays, g_strfreev);
+  g_clear_pointer(&self->targets, g_strfreev);
+  g_clear_pointer(&self->session_relay_url, g_free);
   g_clear_pointer(&self->account_pubkey, g_free);
   g_clear_pointer(&self->signer, nd_signer_unref);
   g_clear_pointer(&self->db, nd_store_db_unref);
   g_free(self);
 }
 
-void
-nd_publisher_configure(NdPublisher      *self,
-                       const gchar      *account_pubkey,
-                       const GStrv       home_relays,
-                       NdPublishQuorum   quorum)
+/* Recompute the default target set from home_relays + upstream mode, then
+ * the engine policy (quorum is clamped to the resulting set size). */
+static void
+recompute_targets(NdPublisher *self)
 {
-  g_return_if_fail(self != NULL);
-  gchar *pubkey = account_pubkey ? g_strdup(account_pubkey) : NULL;
-  g_free(self->account_pubkey);
-  self->account_pubkey = pubkey;
-  GStrv relays = home_relays ? g_strdupv(home_relays) : NULL;
-  g_strfreev(self->home_relays);
-  self->home_relays = relays;
+  NostrPublishPolicy route;
+  nostr_publish_policy_init(&route);
+  route.upstream = nd_upstream_mode_to_publish(self->upstream_mode);
+  GError *err = NULL;
+  g_strfreev(self->targets);
+  self->targets = nostr_publish_policy_select_targets(
+    &route, (const gchar *const *)self->home_relays, self->session_relay_url,
+    &err);
+  g_clear_error(&err);
+
+  gboolean was_held = self->held;
+  /* nostrc-862u: session_relay_only with no session relay holds the outbox
+   * (rows stay pending and local) instead of widening to home relays or
+   * failing rows as "no relays configured". */
+  self->held = self->targets == NULL &&
+               self->upstream_mode == ND_UPSTREAM_MODE_SESSION_RELAY_ONLY;
+  if (self->held && !was_held)
+    g_message("nostr-dav: publishing held: upstream_mode=session_relay_only "
+              "and no session relay socket; DAV edits stay local (pending)");
+  else if (was_held && !self->held)
+    g_message("nostr-dav: publishing resumed via the session relay");
 
   /* Clamp numeric quorum to the target set size so a misconfiguration
    * ("quorum = 5, home_relays = 2") does not silently retry forever.
    * `all` never needs clamping — it always waits for every target. */
+  NdPublishQuorum quorum = self->quorum;
   if (!quorum.all) {
-    guint n = self->home_relays ? g_strv_length(self->home_relays) : 0;
+    guint n = self->targets ? g_strv_length(self->targets) : 0;
     if (n == 0)
       quorum.count = 1;
     else if (quorum.count > n) {
@@ -817,6 +848,44 @@ nd_publisher_configure(NdPublisher      *self,
    * 120 s OK wait and 60 s..60 min backoff are the policy defaults. */
   nostr_publish_policy_init(&self->policy);
   self->policy.quorum = quorum.all ? 0 : quorum.count;
+}
+
+void
+nd_publisher_configure(NdPublisher      *self,
+                       const gchar      *account_pubkey,
+                       const GStrv       home_relays,
+                       NdPublishQuorum   quorum)
+{
+  g_return_if_fail(self != NULL);
+  gchar *pubkey = account_pubkey ? g_strdup(account_pubkey) : NULL;
+  g_free(self->account_pubkey);
+  self->account_pubkey = pubkey;
+  GStrv relays = home_relays ? g_strdupv(home_relays) : NULL;
+  g_strfreev(self->home_relays);
+  self->home_relays = relays;
+  self->quorum = quorum;
+  recompute_targets(self);
+}
+
+void
+nd_publisher_set_upstream(NdPublisher    *self,
+                          NdUpstreamMode  mode,
+                          const gchar    *session_relay_url)
+{
+  g_return_if_fail(self != NULL);
+  self->upstream_mode = mode;
+  g_free(self->session_relay_url);
+  self->session_relay_url =
+    (session_relay_url && *session_relay_url) ? g_strdup(session_relay_url)
+                                              : NULL;
+  recompute_targets(self);
+}
+
+gboolean
+nd_publisher_is_held(NdPublisher *self)
+{
+  g_return_val_if_fail(self != NULL, FALSE);
+  return self->held;
 }
 
 void
@@ -1012,6 +1081,11 @@ nd_publisher_tick(NdPublisher *self, gint64 now_ts)
   /* Settle in-flight rows whose OK-wait deadline has passed (silent
    * relays count as transient failures) before loading due rows. */
   nostr_publisher_tick(self->engine, now_ts);
+
+  /* Held (session_relay_only, no session relay): leave pending rows alone;
+   * they publish once nd_publisher_set_upstream() supplies the relay. */
+  if (self->held)
+    return FALSE;
 
   static const NdStoreCollection cols[] = {
     ND_STORE_COLLECTION_EVENTS,
