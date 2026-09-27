@@ -17,7 +17,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   if (ev) {
     // Try compact fast-path first; fall back to public API parse
     if (!nostr_event_deserialize_compact(ev, buf, NULL)) {
-      (void)nostr_event_deserialize(ev, buf);
+      /* Compact parsing can leave owned partial fields; start fallback fresh. */
+      nostr_event_free(ev);
+      ev = nostr_event_new();
+      if (ev) (void)nostr_event_deserialize(ev, buf);
     }
     nostr_event_free(ev);
   }

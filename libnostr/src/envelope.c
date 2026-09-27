@@ -349,14 +349,15 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
     p = q; p = nostr_json_skip_ws(p);
 
     int ok = 0;
+    char *event_subscription_id = NULL;
+    NostrEvent *event = NULL;
     switch (base->type) {
     case NOSTR_ENVELOPE_EVENT: {
         if (strcmp(label, "EVENT") != 0) { ESET_ENV(NOSTR_JSON_ERR_LABEL_MISMATCH); break; }
-        NostrEventEnvelope *env = (NostrEventEnvelope *)base;
         // Optional sub id
         if (*p == '"') {
-            env->subscription_id = nostr_json_parse_string(&p);
-            if (!env->subscription_id) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; }
+            event_subscription_id = nostr_json_parse_string(&p);
+            if (!event_subscription_id) { ESET_ENV(NOSTR_JSON_ERR_BAD_STRING); break; }
             q = parse_comma(p); if (!q) { ESET_ENV(NOSTR_JSON_ERR_BAD_SEPARATOR); break; } p = nostr_json_skip_ws(q);
         }
         // Next must be event object
@@ -371,7 +372,7 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
             ESET_ENV(NOSTR_JSON_ERR_NESTED_EVENT);
             break;
         }
-        env->event = ev;
+        event = ev;
         ok = 1;
         break;
     }
@@ -601,6 +602,16 @@ int nostr_envelope_deserialize_compact(NostrEnvelope *base, const char *json,
         // Try to show where we are
         const char *tail = nostr_json_skip_ws(p);
         fprintf(stderr, "[compact] parse failed for type %d after label '%s' near: %.64s\n", base->type, label, tail);
+    }
+    if (base->type == NOSTR_ENVELOPE_EVENT) {
+        if (ok) {
+            NostrEventEnvelope *env = (NostrEventEnvelope *)base;
+            env->subscription_id = event_subscription_id;
+            env->event = event;
+        } else {
+            free(event_subscription_id);
+            nostr_event_free(event);
+        }
     }
     free(label);
     return ok;

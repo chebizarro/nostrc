@@ -117,17 +117,23 @@ jobs:
               -E "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit"
 
       - name: Short fuzz (libFuzzer)
-        if: matrix.sanitizer == 'asan_ubsan'
-        continue-on-error: true
+        if: runner.os == 'Linux' && matrix.sanitizer == 'asan_ubsan'
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: |
-          set -e
-          # Run each fuzzer briefly to catch obvious issues without stalling CI
-          if [ -x build/tests/fuzz_event_deserialize ]; then \
-            ./build/tests/fuzz_event_deserialize tests/fuzz_seeds/events -max_total_time=30 || exit 1; \
-          fi
-          if [ -x build/tests/fuzz_envelope_deserialize ]; then \
-            ./build/tests/fuzz_envelope_deserialize tests/fuzz_seeds/envelopes -max_total_time=30 || exit 1; \
-          fi
+          set -euo pipefail
+          for target in fuzz_event_deserialize fuzz_envelope_deserialize fuzz_filter_parse fuzz_verify_wrapper fuzz_event_parse; do
+            if [[ ! -x "build/tests/$target" ]]; then
+              echo "::error::Missing fuzz executable: build/tests/$target" >&2
+              exit 1
+            fi
+          done
+          ./build/tests/fuzz_event_deserialize tests/fuzz_seeds/events -max_total_time=30
+          ./build/tests/fuzz_envelope_deserialize tests/fuzz_seeds/envelopes -max_total_time=30
+          ./build/tests/fuzz_filter_parse tests/fuzz_seeds/filters -max_total_time=30
+          ./build/tests/fuzz_verify_wrapper tests/fuzz_seeds/events -max_total_time=30
+          ./build/tests/fuzz_event_parse tests/fuzz_seeds/events -max_total_time=30
 
       - name: Archive logs on failure
         if: failure()

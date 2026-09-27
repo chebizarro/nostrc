@@ -260,14 +260,6 @@ int jansson_envelope_deserialize(NostrEnvelope *envelope, const char *json_str) 
     if (!json_str)
         return -1;
 
-    char *first_comma = strchr(json_str, ',');
-    if (!first_comma)
-        return -1;
-
-    char label[16];
-    strncpy(label, json_str, first_comma - json_str);
-    label[first_comma - json_str] = '\0';
-
     // Parse the JSON string
     json_error_t error;
     json_t *json_obj = json_loads(json_str, 0, &error);
