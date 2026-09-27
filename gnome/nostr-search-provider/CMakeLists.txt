@@ -41,7 +41,8 @@ add_library(nsp_core STATIC
   src/nsp-http.c
   src/nsp-nip05.c
   src/nsp-avatar.c
-  src/nsp-engine.c)
+  src/nsp-engine.c
+  src/nsp-launch.c)
 target_include_directories(nsp_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${ND_SRC}
@@ -105,7 +106,7 @@ if(NOSTR_SEARCH_PROVIDER_BUILD_TESTS)
   add_library(nsp_testutil STATIC tests/nsp-testutil.c)
   target_compile_options(nsp_testutil PRIVATE ${NSP_WARN})
   target_link_libraries(nsp_testutil PUBLIC nsp_core)
-  foreach(t query meta engine net)
+  foreach(t query meta engine net launch)
     add_executable(test_nsp_${t} tests/test_nsp_${t}.c)
     target_compile_options(test_nsp_${t} PRIVATE ${NSP_WARN})
     target_link_libraries(test_nsp_${t} PRIVATE nsp_testutil)
