@@ -52,14 +52,34 @@ const gchar *gh_account_controller_get_active_npub(GhAccountController *self);
 GPtrArray *gh_account_controller_get_identities(GhAccountController *self);
 
 /* The generation changes whenever the active account (or its absence)
- * changes. It is revoked before its cancellable is cancelled, so work bound
+ * or its requested signer method changes. It is revoked before its cancellable is cancelled, so work bound
  * to either sees itself as stale; callbacks must check is_current.
- * Consumers must cancel signer operations through GhSigner: it closes each
- * operation's private bus sender so pending approvals are revoked. */
+ * The controller owns its signer and cancels its operations on revocation;
+ * GhSigner closes each private sender to revoke pending approvals. */
 guint64 gh_account_controller_get_generation(GhAccountController *self);
 GCancellable *gh_account_controller_get_cancellable(GhAccountController *self);
 gboolean gh_account_controller_is_current(GhAccountController *self,
                                           guint64 generation);
+
+/* Internal account-bound signer entry points. Results from a switched or
+ * disposed generation are always cancelled, even if the bus replied first.
+ * No signer pointer or private key escapes the controller. These do not imply
+ * a NIP-17 transport or a message-send UI. */
+void gh_account_controller_sign_async(GhAccountController *self,
+                                      const gchar *unsigned_event,
+                                      GAsyncReadyCallback callback, gpointer user_data);
+gchar *gh_account_controller_sign_finish(GAsyncResult *result, GError **error);
+void gh_account_controller_nip44_encrypt_async(GhAccountController *self,
+                                                const gchar *plaintext,
+                                                const gchar *peer_pubkey_hex,
+                                                GAsyncReadyCallback callback,
+                                                gpointer user_data);
+void gh_account_controller_nip44_decrypt_async(GhAccountController *self,
+                                                const gchar *ciphertext,
+                                                const gchar *peer_pubkey_hex,
+                                                GAsyncReadyCallback callback,
+                                                gpointer user_data);
+gchar *gh_account_controller_nip44_finish(GAsyncResult *result, GError **error);
 
 /* Why sending is unavailable, for the always-shown banner. No send path
  * exists in this build, so every result is a read-only or offline state. */

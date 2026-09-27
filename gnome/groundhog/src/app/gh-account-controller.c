@@ -1,5 +1,6 @@
 #include "gh-account-controller.h"
 #include "gh-identity.h"
+#include "gh-signer.h"
 
 #define SIGNER_BUS "org.nostr.Signer"
 
@@ -19,6 +20,7 @@ struct _GhAccountController {
   gchar *active_npub;
   guint64 generation;
   GCancellable *generation_cancel;
+  GhSigner *signer; /* active generation only; never exposes secret material */
 
   GhSignerAvailability availability;
   guint watch_id;
@@ -64,6 +66,24 @@ revoke_generation(GhAccountController *self, gboolean replace)
   }
 }
 
+static gboolean
+signer_method_supported(GhAccountController *self)
+{
+  if (!self->settings) return FALSE;
+  g_autofree gchar *method = g_settings_get_string(self->settings, "signer-method");
+  return g_strcmp0(method, "auto") == 0 ||
+         g_strcmp0(method, "local") == 0 ||
+         g_strcmp0(method, "nip55l") == 0;
+}
+
+static void
+bind_signer(GhAccountController *self)
+{
+  gh_signer_free(g_steal_pointer(&self->signer));
+  if (self->active_npub && self->bus && signer_method_supported(self))
+    self->signer = gh_signer_new(self->bus, self->active_npub, NULL);
+}
+
 /* Returns TRUE when it emitted "changed". */
 static gboolean
 update_state(GhAccountController *self)
@@ -91,6 +111,7 @@ update_state(GhAccountController *self)
     g_free(self->active_npub);
     self->active_npub = g_strdup(active);
     revoke_generation(self, TRUE);
+    bind_signer(self);
   }
   if (!account_changed && state == self->state)
     return FALSE;
@@ -230,8 +251,11 @@ on_settings_changed(GSettings *settings, const gchar *key, gpointer user_data)
   (void)settings;
   if (g_strcmp0(key, "current-npub") == 0)
     (void)update_state(self);
-  else if (g_strcmp0(key, "signer-method") == 0)
+  else if (g_strcmp0(key, "signer-method") == 0) {
+    revoke_generation(self, TRUE);
+    bind_signer(self);
     g_signal_emit(self, signals[SIGNAL_CHANGED], 0);
+  }
 }
 
 GhAccountController *
@@ -338,6 +362,110 @@ gh_account_controller_is_current(GhAccountController *self, guint64 generation)
   return self->generation_cancel && generation == self->generation;
 }
 
+typedef struct {
+  GTask *task;
+  guint64 generation;
+  gboolean sign;
+} SignerCall;
+
+static void
+signer_call_done(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  SignerCall *call = user_data;
+  GhAccountController *self = g_task_get_source_object(call->task);
+  g_autoptr(GError) error = NULL;
+  gchar *value = call->sign ? gh_signer_sign_finish(result, &error) :
+                              gh_signer_nip44_finish(result, &error);
+  (void)source;
+  if (!gh_account_controller_is_current(self, call->generation) || !self->signer) {
+    g_free(value);
+    g_task_return_new_error(call->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
+                            "Account signer generation was revoked");
+  } else if (error) {
+    g_task_return_error(call->task, g_steal_pointer(&error));
+  } else {
+    g_task_return_pointer(call->task, value, g_free);
+  }
+  g_object_unref(call->task);
+  g_free(call);
+}
+
+static SignerCall *
+new_signer_call(GhAccountController *self, gpointer tag,
+                GAsyncReadyCallback callback, gpointer user_data)
+{
+  GTask *task = g_task_new(self, NULL, callback, user_data);
+  g_task_set_source_tag(task, tag);
+  if (!self->signer || !self->settings) {
+    g_task_return_new_error(task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
+                            "No supported signer is bound to the active account");
+    g_object_unref(task);
+    return NULL;
+  }
+  SignerCall *call = g_new0(SignerCall, 1);
+  call->task = task;
+  call->generation = self->generation;
+  return call;
+}
+
+void
+gh_account_controller_sign_async(GhAccountController *self, const gchar *unsigned_event,
+                                 GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(self));
+  SignerCall *call = new_signer_call(self, gh_account_controller_sign_async,
+                                    callback, user_data);
+  if (!call) return;
+  call->sign = TRUE;
+  gh_signer_sign_async(self->signer, unsigned_event, self->generation_cancel,
+                       signer_call_done, call);
+}
+
+gchar *
+gh_account_controller_sign_finish(GAsyncResult *result, GError **error)
+{
+  g_return_val_if_fail(G_IS_TASK(result), NULL);
+  g_return_val_if_fail(g_task_get_source_tag(G_TASK(result)) ==
+                       gh_account_controller_sign_async, NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+void
+gh_account_controller_nip44_encrypt_async(GhAccountController *self,
+                                          const gchar *plaintext, const gchar *peer,
+                                          GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(self));
+  SignerCall *call = new_signer_call(self, gh_account_controller_nip44_encrypt_async,
+                                    callback, user_data);
+  if (!call) return;
+  gh_signer_nip44_encrypt_async(self->signer, plaintext, peer, self->generation_cancel,
+                                 signer_call_done, call);
+}
+
+void
+gh_account_controller_nip44_decrypt_async(GhAccountController *self,
+                                          const gchar *ciphertext, const gchar *peer,
+                                          GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(self));
+  SignerCall *call = new_signer_call(self, gh_account_controller_nip44_decrypt_async,
+                                    callback, user_data);
+  if (!call) return;
+  gh_signer_nip44_decrypt_async(self->signer, ciphertext, peer, self->generation_cancel,
+                                 signer_call_done, call);
+}
+
+gchar *
+gh_account_controller_nip44_finish(GAsyncResult *result, GError **error)
+{
+  g_return_val_if_fail(G_IS_TASK(result), NULL);
+  gpointer tag = g_task_get_source_tag(G_TASK(result));
+  g_return_val_if_fail(tag == gh_account_controller_nip44_encrypt_async ||
+                       tag == gh_account_controller_nip44_decrypt_async, NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
 gchar *
 gh_account_describe_limits(GhAccountState state, GhSignerAvailability availability,
                            const gchar *requested_method, gboolean network_available)
@@ -387,6 +515,7 @@ gh_account_controller_dispose(GObject *object)
     g_signal_handlers_disconnect_by_data(self->settings, self);
     g_clear_object(&self->settings);
     revoke_generation(self, FALSE);
+    gh_signer_free(g_steal_pointer(&self->signer));
   }
   if (self->watch_id) {
     g_bus_unwatch_name(self->watch_id);

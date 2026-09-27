@@ -17,7 +17,7 @@ void groundhog_register_resource(void);
 static gboolean smoke_mode = FALSE;
 static int smoke_status = 0;
 #if GROUNDHOG_HAVE_ACCOUNTS
-/* Process-owned: the active account and its generation outlive windows. */
+/* Process-owned: the active account, signer and generation outlive windows. */
 static GSettings *app_settings;
 static GhAccountController *app_accounts;
 #endif

@@ -1,5 +1,7 @@
 #include "gh-account-controller.h"
 #include "gh-identity.h"
+#include "gh-signer.h"
+#include "nostr-event.h"
 #include "nostr-keys.h"
 #include "nostr/nip19/nip19.h"
 #ifdef GROUNDHOG_TEST_RELAY
@@ -544,6 +546,312 @@ test_signer_activatable(void)
   bus_down(&fixture);
 }
 
+typedef struct {
+  GDBusNodeInfo *node;
+  guint registration;
+  GPtrArray *held;
+  GPtrArray *senders;
+  guint calls;
+  gchar *last_npub;
+  gboolean hold;
+} MockSigner;
+
+static void
+mock_signer_call(GDBusConnection *connection, const gchar *sender, const gchar *path,
+                 const gchar *interface, const gchar *method, GVariant *parameters,
+                 GDBusMethodInvocation *invocation, gpointer user_data)
+{
+  MockSigner *mock = user_data;
+  (void)connection; (void)sender; (void)path; (void)interface;
+  if (g_str_equal(method, "EnableTypedApprovalErrors")) {
+    g_dbus_method_invocation_return_value(invocation, NULL);
+    return;
+  }
+  const gchar *input, *peer, *npub;
+  g_variant_get(parameters, "(&s&s&s)", &input, &peer, &npub);
+  g_assert_true(g_str_equal(method, "SignEvent") ||
+                g_str_equal(method, "NIP44Encrypt") ||
+                g_str_equal(method, "NIP44Decrypt"));
+  g_free(mock->last_npub);
+  mock->last_npub = g_strdup(g_str_equal(method, "SignEvent") ? peer : npub);
+  mock->calls++;
+  g_ptr_array_add(mock->senders, g_strdup(sender));
+  if (mock->hold) {
+    g_ptr_array_add(mock->held, g_object_ref(invocation));
+    return;
+  }
+  if (g_str_equal(method, "SignEvent")) {
+    const gchar *secret = g_str_equal(peer, npub_one) ?
+      "0000000000000000000000000000000000000000000000000000000000000001" :
+      "0000000000000000000000000000000000000000000000000000000000000002";
+    NostrEvent *event = nostr_event_new();
+    g_assert_cmpint(nostr_event_deserialize_compact(event, input, NULL), ==, 1);
+    g_assert_cmpint(nostr_event_sign(event, secret), ==, 0);
+    gchar *signed_json = nostr_event_serialize_compact(event);
+    g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", signed_json));
+    free(signed_json);
+    nostr_event_free(event);
+  } else if (g_str_equal(method, "NIP44Encrypt")) {
+    guint8 payload[99] = { 2 };
+    g_autofree gchar *ciphertext = g_base64_encode(payload, sizeof payload);
+    g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", ciphertext));
+  } else {
+    g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", "plaintext"));
+  }
+}
+
+static const GDBusInterfaceVTable mock_vtable = { mock_signer_call, NULL, NULL, { 0 } };
+
+static void
+mock_signer_up(BusFixture *fixture, MockSigner *mock)
+{
+  g_autoptr(GError) error = NULL;
+  mock->held = g_ptr_array_new_with_free_func(g_object_unref);
+  mock->senders = g_ptr_array_new_with_free_func(g_free);
+  mock->node = g_dbus_node_info_new_for_xml(
+    "<node><interface name='org.nostr.Signer'>"
+    "<method name='EnableTypedApprovalErrors'/>"
+    "<method name='SignEvent'><arg type='s' direction='in'/><arg type='s' direction='in'/>"
+    "<arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
+    "<method name='NIP44Encrypt'><arg type='s' direction='in'/><arg type='s' direction='in'/>"
+    "<arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
+    "<method name='NIP44Decrypt'><arg type='s' direction='in'/><arg type='s' direction='in'/>"
+    "<arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
+    "</interface></node>", &error);
+  g_assert_no_error(error);
+  mock->registration = g_dbus_connection_register_object(fixture->owner,
+    "/org/nostr/signer", mock->node->interfaces[0], &mock_vtable, mock, NULL, &error);
+  g_assert_no_error(error);
+  g_autoptr(GVariant) reply = g_dbus_connection_call_sync(fixture->owner,
+    "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+    "RequestName", g_variant_new("(su)", "org.nostr.Signer", 4u),
+    G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(reply);
+}
+
+static void
+mock_signer_down(BusFixture *fixture, MockSigner *mock)
+{
+  while (mock->held->len) {
+    GDBusMethodInvocation *invocation = g_ptr_array_index(mock->held, 0);
+    g_dbus_method_invocation_return_dbus_error(invocation,
+      "org.nostr.Signer.Error.ApprovalDenied", "test cleanup");
+    g_ptr_array_remove_index(mock->held, 0);
+  }
+  g_dbus_connection_unregister_object(fixture->owner, mock->registration);
+  g_ptr_array_unref(mock->held);
+  g_ptr_array_unref(mock->senders);
+  g_dbus_node_info_unref(mock->node);
+  g_free(mock->last_npub);
+}
+
+typedef struct {
+  BusFixture *fixture;
+  MockSigner *mock;
+} MockSenders;
+
+static gboolean
+mock_senders_closed(gpointer data)
+{
+  MockSenders *check = data;
+  for (guint i = 0; i < check->mock->senders->len; i++) {
+    const gchar *sender = g_ptr_array_index(check->mock->senders, i);
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GVariant) reply = g_dbus_connection_call_sync(check->fixture->client,
+      "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+      "NameHasOwner", g_variant_new("(s)", sender), G_VARIANT_TYPE("(b)"),
+      G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
+    g_assert_no_error(error);
+    gboolean has_owner;
+    g_variant_get(reply, "(b)", &has_owner);
+    if (has_owner) return FALSE;
+  }
+  return TRUE;
+}
+
+typedef struct {
+  gboolean done;
+  gboolean sign;
+  gchar *value;
+  GError *error;
+} SignerWait;
+
+static void
+account_signer_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  SignerWait *wait = data;
+  (void)source;
+  wait->value = wait->sign ? gh_account_controller_sign_finish(result, &wait->error) :
+                             gh_account_controller_nip44_finish(result, &wait->error);
+  wait->done = TRUE;
+}
+
+static gboolean
+signer_done(gpointer data)
+{
+  return ((SignerWait *)data)->done;
+}
+
+static gboolean
+mock_called(gpointer data)
+{
+  return ((MockSigner *)data)->calls > 0;
+}
+
+typedef struct {
+  MockSigner *mock;
+  guint count;
+} MockCount;
+
+static gboolean
+mock_count_reached(gpointer data)
+{
+  MockCount *want = data;
+  return want->mock->calls >= want->count;
+}
+
+static gchar *
+unsigned_for(const gchar *npub)
+{
+  g_autofree gchar *pubkey = gh_identity_pubkey_hex(npub);
+  return g_strdup_printf("{\"pubkey\":\"%s\",\"created_at\":1700000000,"
+                         "\"kind\":1,\"tags\":[],\"content\":\"hello\"}", pubkey);
+}
+
+static void
+test_account_signer_invocation(void)
+{
+  BusFixture fixture = { 0 };
+  MockSigner mock = { 0 };
+  FakeStore store = { 0 };
+  bus_up(&fixture, FALSE);
+  mock_signer_up(&fixture, &mock);
+  g_autoptr(GSettings) settings = fresh_settings(npub_one);
+  GhAccountController *controller = gh_account_controller_new_full(
+    settings, fixture.client, fake_list, &store);
+  spin_until(listed, controller);
+  g_autofree gchar *request = unsigned_for(npub_one);
+  SignerWait sign = { .sign = TRUE };
+  gh_account_controller_sign_async(controller, request, account_signer_done, &sign);
+  spin_until(signer_done, &sign);
+  g_assert_no_error(sign.error);
+  g_assert_nonnull(sign.value);
+  g_assert_cmpstr(mock.last_npub, ==, npub_one);
+  g_free(sign.value);
+
+  g_autofree gchar *pubkey = gh_identity_pubkey_hex(npub_two);
+  SignerWait encrypt = { 0 };
+  gh_account_controller_nip44_encrypt_async(controller, "hello", pubkey,
+                                             account_signer_done, &encrypt);
+  spin_until(signer_done, &encrypt);
+  g_assert_no_error(encrypt.error);
+  g_assert_nonnull(encrypt.value);
+  g_assert_cmpstr(mock.last_npub, ==, npub_one);
+  SignerWait decrypt = { 0 };
+  gh_account_controller_nip44_decrypt_async(controller, encrypt.value, pubkey,
+                                             account_signer_done, &decrypt);
+  spin_until(signer_done, &decrypt);
+  g_assert_no_error(decrypt.error);
+  g_assert_cmpstr(decrypt.value, ==, "plaintext");
+  g_assert_cmpuint(mock.calls, ==, 3);
+  g_free(encrypt.value);
+  g_free(decrypt.value);
+  release_controller(controller);
+  MockSenders check = { &fixture, &mock };
+  spin_until(mock_senders_closed, &check);
+  mock_signer_down(&fixture, &mock);
+  bus_down(&fixture);
+}
+
+static void
+test_account_signer_switch_dispose(void)
+{
+  BusFixture fixture = { 0 };
+  MockSigner mock = { .hold = TRUE };
+  FakeStore store = { 0 };
+  bus_up(&fixture, FALSE);
+  mock_signer_up(&fixture, &mock);
+  g_autoptr(GSettings) settings = fresh_settings(npub_one);
+  GhAccountController *controller = gh_account_controller_new_full(
+    settings, fixture.client, fake_list, &store);
+  spin_until(listed, controller);
+  guint64 first_generation = gh_account_controller_get_generation(controller);
+  g_autofree gchar *first_request = unsigned_for(npub_one);
+  SignerWait first = { .sign = TRUE };
+  gh_account_controller_sign_async(controller, first_request, account_signer_done, &first);
+  spin_until(mock_called, &mock);
+  g_assert_cmpstr(mock.last_npub, ==, npub_one);
+  g_assert_true(gh_account_controller_select(controller, npub_two, NULL));
+  spin_until(signer_done, &first);
+  g_assert_null(first.value);
+  g_assert_error(first.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED);
+  g_clear_error(&first.error);
+  g_assert_false(gh_account_controller_is_current(controller, first_generation));
+
+  mock.hold = FALSE;
+  g_autofree gchar *second_request = unsigned_for(npub_two);
+  SignerWait second = { .sign = TRUE };
+  gh_account_controller_sign_async(controller, second_request, account_signer_done, &second);
+  spin_until(signer_done, &second);
+  g_assert_no_error(second.error);
+  g_assert_nonnull(second.value);
+  g_assert_cmpstr(mock.last_npub, ==, npub_two);
+  g_free(second.value);
+
+  mock.hold = TRUE;
+  SignerWait third = { .sign = TRUE };
+  gh_account_controller_sign_async(controller, second_request, account_signer_done, &third);
+  MockCount count = { &mock, 3 };
+  spin_until(mock_count_reached, &count);
+  g_settings_set_string(settings, "signer-method", "nip46");
+  spin_until(signer_done, &third);
+  g_assert_null(third.value);
+  g_assert_error(third.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED);
+  g_clear_error(&third.error);
+  SignerWait unsupported = { .sign = TRUE };
+  gh_account_controller_sign_async(controller, second_request, account_signer_done,
+                                   &unsupported);
+  spin_until(signer_done, &unsupported);
+  g_assert_error(unsupported.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE);
+  g_clear_error(&unsupported.error);
+  g_assert_cmpuint(mock.calls, ==, 3);
+
+  g_settings_set_string(settings, "signer-method", "auto");
+  SignerWait fourth = { .sign = TRUE };
+  gh_account_controller_sign_async(controller, second_request, account_signer_done, &fourth);
+  count.count = 4;
+  spin_until(mock_count_reached, &count);
+  g_object_run_dispose(G_OBJECT(controller));
+  spin_until(signer_done, &fourth);
+  g_assert_null(fourth.value);
+  g_assert_error(fourth.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED);
+  g_clear_error(&fourth.error);
+  release_controller(controller);
+  MockSenders check = { &fixture, &mock };
+  spin_until(mock_senders_closed, &check);
+  mock_signer_down(&fixture, &mock);
+  bus_down(&fixture);
+}
+
+static void
+test_account_signer_fail_closed(void)
+{
+  FakeStore store = { 0 };
+  g_autoptr(GSettings) settings = fresh_settings(npub_one);
+  GhAccountController *controller = gh_account_controller_new_full(settings, NULL,
+                                                                   fake_list, &store);
+  spin_until(listed, controller);
+  SignerWait wait = { .sign = TRUE };
+  g_autofree gchar *request = unsigned_for(npub_one);
+  gh_account_controller_sign_async(controller, request, account_signer_done, &wait);
+  spin_until(signer_done, &wait);
+  g_assert_null(wait.value);
+  g_assert_error(wait.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE);
+  g_clear_error(&wait.error);
+  release_controller(controller);
+}
+
 static void
 assert_limits(GhAccountState state, GhSignerAvailability availability,
               const gchar *method, gboolean online, const gchar *prefix,
@@ -597,6 +905,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account/signer-availability", test_signer_availability);
   g_test_add_func("/groundhog/account/signer-activatable", test_signer_activatable);
   g_test_add_func("/groundhog/account/limits", test_limits);
+  g_test_add_func("/groundhog/account/signer-invocation", test_account_signer_invocation);
+  g_test_add_func("/groundhog/account/signer-switch-dispose", test_account_signer_switch_dispose);
+  g_test_add_func("/groundhog/account/signer-fail-closed", test_account_signer_fail_closed);
   int status = g_test_run();
   g_free(npub_one);
   g_free(npub_two);
