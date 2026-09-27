@@ -14,10 +14,12 @@ target_include_directories(nip25
 # Install headers and library when this NIP is enabled
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
         DESTINATION include)
+# nostrc-o8mx: multiarch libdir, mirroring nips/nip19
+include(GNUInstallDirs)
 install(TARGETS nip25
-        ARCHIVE DESTINATION lib
-        LIBRARY DESTINATION lib
-        RUNTIME DESTINATION bin)
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # Add tests if available
 file(GLOB TEST_SOURCES "tests/*.c")

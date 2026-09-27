@@ -27,11 +27,12 @@ endif()
 add_executable(nip05_example examples/example.c)
 target_link_libraries(nip05_example PRIVATE nip05 nostr nostr_json CURL::libcurl)
 
-# Install rules
+# Install rules (nostrc-o8mx: multiarch libdir, mirroring nips/nip19)
+include(GNUInstallDirs)
 install(TARGETS nip05
-        ARCHIVE DESTINATION lib
-        LIBRARY DESTINATION lib
-        RUNTIME DESTINATION bin)
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES include/nip05.h DESTINATION include/nostr)
 
 # Per-test executables (avoid duplicate main)

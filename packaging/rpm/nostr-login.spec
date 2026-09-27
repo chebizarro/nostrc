@@ -953,8 +953,8 @@ rmdir --ignore-fail-on-non-empty %{buildroot}%{_datadir}/dbus-1          2>/dev/
 #       Fedora) -- purge both.  Same story as debian/not-installed.
 rm -f  %{buildroot}%{_includedir}/nip40.h
 rm -f  %{buildroot}/usr/lib/libnip04.a
-rm -f  %{buildroot}/usr/lib/libnip05.so
-rm -f  %{buildroot}/usr/lib/libnip25.so
+rm -f  %{buildroot}%{_libdir}/libnip05.so
+rm -f  %{buildroot}%{_libdir}/libnip25.so
 rm -f  %{buildroot}/usr/lib/libnostr_nip77.a
 # dev symlinks only -- the runtime libnip19.so.0 / libnip34.so.0 ship in
 # libnostr-nips (deleting the real library here was the prqu.6 bug):
