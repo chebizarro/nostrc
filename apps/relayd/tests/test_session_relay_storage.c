@@ -3,9 +3,9 @@
  * (nostrc-prqu.5).
  *
  * Built only when the relay links the nostrdb driver. Spawns the real
- * daemon with its default config (storage_driver = nostrdb) on private XDG
- * dirs, publishes a signed kind-1 event over relay.sock, reads it back with
- * a REQ by id, then restarts the daemon and reads it again from disk.
+ * daemon with the default storage driver and a test-sized rate budget on
+ * private XDG dirs, publishes a signed kind-1 event over relay.sock, reads
+ * it back with a REQ by id, then restarts the daemon and reads it from disk.
  *
  * Addressable events (nostrc-9tdc): every kind 30000-39999 EVENT runs the
  * relay core's "is a newer version stored?" query with a `#d` filter. A
@@ -178,6 +178,19 @@ int main(void) {
     return 1;
   }
   chmod(xrd, 0700);
+  /* Storage ingestion is asynchronous, so this test can issue multiple REQs
+   * per event. Keep its rate budget independent of scheduler speed. */
+  char config_dir[600], config_path[640];
+  snprintf(config_dir, sizeof config_dir, "%s/nostr", state);
+  snprintf(config_path, sizeof config_path, "%s/session-relay.conf", config_dir);
+  CHECK(mkdir(config_dir, 0700) == 0, "create config directory");
+  FILE *config = fopen(config_path, "w");
+  CHECK(config != NULL, "create session relay config");
+  if (!config) return 1;
+  CHECK(fputs("rate_ops_per_sec=100\nrate_burst=128\n", config) >= 0,
+        "write session relay config");
+  CHECK(fclose(config) == 0, "close session relay config");
+  if (g_failures) return 1;
   char sock_path[600];
   snprintf(sock_path, sizeof sock_path, "%s/nostr/relay.sock", xrd);
 

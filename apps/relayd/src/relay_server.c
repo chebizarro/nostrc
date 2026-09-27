@@ -559,7 +559,7 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
    * TCP path: hand lws the host:port and let it bind.
    * Unix-fd path: pre-bound listen fd owned by the caller (systemd or the
    *   session daemon's fallback path). We disable lws's own listener
-   *   (`CONTEXT_PORT_NO_LISTEN`) and adopt a dup of the listen fd as a raw
+   *   (`CONTEXT_PORT_NO_LISTEN_SERVER`) and adopt a dup of the listen fd as a raw
    *   descriptor (unix_listener_cb), which accepts, checks the peer UID,
    *   and hands each client fd to lws_adopt_socket_vhost(). No byte
    *   crosses the lws protocol layer until the UID is verified. */
@@ -569,7 +569,9 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
     info.port = server_cfg->listener.u.tcp.port;
   } else {
     info.iface = NULL;
-    info.port = CONTEXT_PORT_NO_LISTEN;
+    /* Keep this server vhost distinct from lws's internal no-listener
+     * system vhost, or Host selection can route upgrades to lws-stdin. */
+    info.port = CONTEXT_PORT_NO_LISTEN_SERVER;
   }
   info.protocols = protocols;
   info.options = LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE;
