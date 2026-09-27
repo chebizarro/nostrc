@@ -1,4 +1,5 @@
 #include "nostr/nip47/nwc_info.h"
+#include "nostr/nip47/nwc_envelope.h"
 /* core nostr primitives */
 #include "nostr-event.h"
 #include "nostr-tag.h"
@@ -8,8 +9,6 @@
 #include <string.h>
 #include <time.h>
 
-/* small helper */
-static char *dup_or_empty(const char *s) { return s ? strdup(s) : strdup(""); }
 
 int nostr_nwc_info_build(const char *pubkey,
                          long long created_at,
@@ -57,21 +56,45 @@ int nostr_nwc_info_build(const char *pubkey,
     free(buf);
   }
 
-  /* tags: ["encryption", enc], ... and optional ["notifications", "true"|"false"] */
+  /* tags: one ["encryption", "<scheme> <scheme> ..."] — NIP-47 carries the
+   * supported schemes as a single space-separated value (nostrc-iq04) — and
+   * ["notifications", "true"|"false"]. */
   {
-    size_t tag_count = enc_count + 1; /* +1 for notifications (we will always include) */
     NostrTags *tags = nostr_tags_new(0);
     if (!tags) goto out;
-    if (tag_count > 0) nostr_tags_reserve(tags, tag_count);
-    for (size_t i = 0; i < enc_count; i++) {
-      NostrTag *t = nostr_tag_new("encryption", encryptions[i], NULL);
-      if (!t) { nostr_tags_free(tags); goto out; }
-      nostr_tags_append(tags, t);
+    nostr_tags_reserve(tags, 2);
+    if (encryptions && enc_count > 0) {
+      size_t cap = 1;
+      for (size_t i = 0; i < enc_count; i++)
+        cap += (encryptions[i] ? strlen(encryptions[i]) : 0) + 1;
+      char *joined = (char *)malloc(cap);
+      if (!joined) { nostr_tags_free(tags); goto out; }
+      size_t len = 0;
+      for (size_t i = 0; i < enc_count; i++) {
+        if (!encryptions[i] || !*encryptions[i]) continue;
+        /* Normalise the legacy spelling so wallets parsing strictly match. */
+        NostrNwcEncryption enc;
+        const char *label = nostr_nwc_encryption_from_label(encryptions[i], &enc) == 0
+                              ? nostr_nwc_encryption_label(enc) : encryptions[i];
+        size_t n = strlen(label);
+        if (len + n + 2 > cap) {
+          char *grown = (char *)realloc(joined, len + n + 2);
+          if (!grown) { free(joined); nostr_tags_free(tags); goto out; }
+          joined = grown; cap = len + n + 2;
+        }
+        if (len) joined[len++] = ' ';
+        memcpy(joined + len, label, n);
+        len += n;
+      }
+      joined[len] = '\0';
+      NostrTag *et = len ? nostr_tag_new("encryption", joined, NULL) : NULL;
+      free(joined);
+      if (len && !et) { nostr_tags_free(tags); goto out; }
+      if (et) nostr_tags_append(tags, et);
     }
     NostrTag *t = nostr_tag_new("notifications", notifications ? "true" : "false", NULL);
     if (!t) { nostr_tags_free(tags); goto out; }
     nostr_tags_append(tags, t);
-    /* idx should equal tag_count */
     nostr_event_set_tags(ev, tags); /* takes ownership */
   }
 
@@ -99,7 +122,7 @@ int nostr_nwc_info_parse(const char *event_json,
   char *content = NULL;
   char **methods = NULL; size_t methods_n = 0;
   char **encs = NULL; size_t encs_n = 0;
-  int notifications = 0; int have_notifications = 0;
+  int notifications = 0;
 
   /* Extract content string directly and parse methods from it */
   if (nostr_json_get_string(event_json, "content", &content) != 0 || !content) goto out;
@@ -111,32 +134,33 @@ int nostr_nwc_info_parse(const char *event_json,
   if (nostr_event_deserialize(ev, event_json) != 0) { nostr_event_free(ev); goto out; }
   NostrTags *tags = (NostrTags *)nostr_event_get_tags(ev);
   if (tags) {
-    /* count encryptions first */
+    /* Each `encryption` tag value is a space-separated scheme list (NIP-47);
+     * older nostrc wallets emitted one tag per scheme. Accept both by
+     * splitting every value into tokens. */
     for (size_t i = 0; i < nostr_tags_size(tags); i++) {
       NostrTag *tag = nostr_tags_get(tags, i);
       const char *k = nostr_tag_get_key(tag);
-      if (!k) continue;
-      if (strcmp(k, "encryption") == 0 && nostr_tag_size(tag) >= 2) encs_n++;
-    }
-    if (encs_n) {
-      encs = (char **)calloc(encs_n, sizeof(char *));
-      if (!encs) { nostr_event_free(ev); goto out; }
-      size_t j = 0;
-      for (size_t i = 0; i < nostr_tags_size(tags); i++) {
-        NostrTag *tag = nostr_tags_get(tags, i);
-        const char *k = nostr_tag_get_key(tag);
-        if (!k) continue;
-        if (strcmp(k, "encryption") == 0 && nostr_tag_size(tag) >= 2) {
-          encs[j++] = dup_or_empty(nostr_tag_get_value(tag));
-        }
-        if (strcmp(k, "notifications") == 0 && nostr_tag_size(tag) >= 2) {
-          const char *v = nostr_tag_get_value(tag);
-          notifications = (v && strcmp(v, "true") == 0) ? 1 : 0;
-          have_notifications = 1;
-        }
+      if (!k || nostr_tag_size(tag) < 2) continue;
+      const char *v = nostr_tag_get_value(tag);
+      if (strcmp(k, "notifications") == 0) {
+        notifications = (v && strcmp(v, "true") == 0) ? 1 : 0;
+        continue;
+      }
+      if (strcmp(k, "encryption") != 0 || !v) continue;
+      const char *p = v;
+      while (*p) {
+        while (*p == ' ' || *p == '\t') p++;
+        const char *s = p;
+        while (*p && *p != ' ' && *p != '\t') p++;
+        if (p == s) continue;
+        char **grown = (char **)realloc(encs, (encs_n + 1) * sizeof(char *));
+        if (!grown) { nostr_event_free(ev); goto out; }
+        encs = grown;
+        encs[encs_n] = strndup(s, (size_t)(p - s));
+        if (!encs[encs_n]) { nostr_event_free(ev); goto out; }
+        encs_n++;
       }
     }
-    if (!have_notifications) { notifications = 0; }
   }
   nostr_event_free(ev);
 

@@ -6,8 +6,8 @@
 
 int main(void) {
   const char *client_pub = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
-  const char *client_supported[] = {"nip44-v2", "nip04"};
-  const char *wallet_supported[] = {"nip04", "nip44-v2"};
+  const char *client_supported[] = {"nip44_v2", "nip04"};
+  const char *wallet_supported[] = {"nip04", "nip44_v2"};
 
   NostrNwcWalletSession s = {0};
   if (nostr_nwc_wallet_session_init(&s, client_pub,

@@ -140,7 +140,7 @@ gboolean nostr_nwc_wallet_decrypt_g(gpointer session,
 const gchar *nostr_nwc_wallet_get_encryption_g(gpointer session) {
   if (!session) return NULL;
   NostrNwcWalletSession *s = (NostrNwcWalletSession *)session;
-  return (s->enc == NOSTR_NWC_ENC_NIP44_V2) ? "nip44-v2" : "nip04";
+  return (s->enc == NOSTR_NWC_ENC_NIP44_V2) ? NOSTR_NWC_ENC_LABEL_NIP44_V2 : NOSTR_NWC_ENC_LABEL_NIP04;
 }
 
 /* Get the client public key hex from the session */

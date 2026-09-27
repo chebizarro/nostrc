@@ -32,6 +32,9 @@ int main(void) {
   char *req_json = NULL;
   int rc = nostr_nwc_request_build(wallet_pub, NOSTR_NWC_ENC_NIP44_V2, &req, &req_json);
   assert(rc == 0 && req_json);
+  /* nostrc-iq04: NIP-47 request tag spelling. */
+  assert(strstr(req_json, "[\"encryption\",\"nip44_v2\"]") != NULL);
+  assert(strstr(req_json, "nip44-v2") == NULL);
 
   char *out_wallet_pub = NULL; NostrNwcEncryption out_enc = 0; NostrNwcRequestBody parsed = {0};
   rc = nostr_nwc_request_parse(req_json, &out_wallet_pub, &out_enc, &parsed);
@@ -81,8 +84,8 @@ int main(void) {
 
   /* Encryption negotiation tests */
   {
-    const char *client1[] = {"nip44-v2", "nip04"};
-    const char *wallet1[] = {"nip04", "nip44-v2"};
+    const char *client1[] = {"nip44_v2", "nip04"};
+    const char *wallet1[] = {"nip04", "nip44_v2"};
     NostrNwcEncryption sel = 0;
     rc = nostr_nwc_select_encryption(client1, 2, wallet1, 2, &sel);
     assert(rc == 0 && sel == NOSTR_NWC_ENC_NIP44_V2);
@@ -95,11 +98,33 @@ int main(void) {
     assert(rc == 0 && sel == NOSTR_NWC_ENC_NIP04);
   }
   {
-    const char *client3[] = {"nip44-v2"};
+    const char *client3[] = {"nip44_v2"};
     const char *wallet3[] = {"nip04"};
     NostrNwcEncryption sel = 0;
     rc = nostr_nwc_select_encryption(client3, 1, wallet3, 1, &sel);
     assert(rc != 0);
+  }
+  /* nostrc-iq04: legacy "nip44-v2" on one side still negotiates NIP-44, and
+   * a raw space-separated info-tag value works as a list entry. */
+  {
+    const char *client4[] = {"nip44_v2", "nip04"};
+    const char *wallet4[] = {"nip44-v2"};
+    NostrNwcEncryption sel = 0;
+    rc = nostr_nwc_select_encryption(client4, 2, wallet4, 1, &sel);
+    assert(rc == 0 && sel == NOSTR_NWC_ENC_NIP44_V2);
+    const char *wallet5[] = {"nip44_v2 nip04"};
+    sel = 0;
+    rc = nostr_nwc_select_encryption(client4, 2, wallet5, 1, &sel);
+    assert(rc == 0 && sel == NOSTR_NWC_ENC_NIP44_V2);
+  }
+  {
+    NostrNwcEncryption e = NOSTR_NWC_ENC_NIP04;
+    assert(strcmp(nostr_nwc_encryption_label(NOSTR_NWC_ENC_NIP44_V2), "nip44_v2") == 0);
+    assert(strcmp(nostr_nwc_encryption_label(NOSTR_NWC_ENC_NIP04), "nip04") == 0);
+    assert(nostr_nwc_encryption_from_label("nip44_v2", &e) == 0 && e == NOSTR_NWC_ENC_NIP44_V2);
+    e = NOSTR_NWC_ENC_NIP04;
+    assert(nostr_nwc_encryption_from_label("nip44-v2", &e) == 0 && e == NOSTR_NWC_ENC_NIP44_V2);
+    assert(nostr_nwc_encryption_from_label("nip44", &e) != 0);
   }
 
   /* Kind mismatch negatives */

@@ -1,4 +1,5 @@
 #include "nostr/nip47/nwc_client.h"
+#include "nostr/nip47/nwc_envelope.h"
 #include "nostr/nip44/nip44.h"
 #include "nostr/nip04.h"
 #include "nostr-event.h"
@@ -41,11 +42,7 @@ static int parse_peer_xonly32(const char *hex, unsigned char out32[32]){
 static int parse_sk32(const char *hex, unsigned char out32[32]){ if (!hex||!out32) return -1; return hex_to_bytes_exact(hex,out32,32); }
 
 static const char *nwc_enc_label(NostrNwcEncryption enc) {
-  switch (enc) {
-    case NOSTR_NWC_ENC_NIP44_V2: return "nip44-v2";
-    case NOSTR_NWC_ENC_NIP04: return "nip04";
-    default: return "nip44-v2";
-  }
+  return nostr_nwc_encryption_label(enc); /* "nip44_v2" per NIP-47 (nostrc-iq04) */
 }
 
 static char *nwc_json_quote_token(const char *s) {

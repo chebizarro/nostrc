@@ -109,7 +109,7 @@ gboolean nostr_nwc_client_decrypt_g(gpointer session,
  *
  * Gets the negotiated encryption scheme as a string.
  *
- * Returns: "nip44-v2" or "nip04", or %NULL if session is invalid
+ * Returns: "nip44_v2" or "nip04", or %NULL if session is invalid
  */
 const gchar *nostr_nwc_client_get_encryption_g(gpointer session);
 
@@ -264,7 +264,7 @@ gboolean nostr_nwc_response_parse_g(const gchar *event_json,
  * @out_encryption: (out): Selected encryption scheme
  * @error: Return location for error or %NULL
  *
- * Selects the best common encryption scheme (prefers nip44-v2 over nip04).
+ * Selects the best common encryption scheme (prefers nip44_v2 over nip04).
  *
  * Returns: %TRUE on success, %FALSE if no common encryption found
  */

@@ -105,7 +105,7 @@ gboolean nostr_nwc_client_decrypt_g(gpointer session,
 const gchar *nostr_nwc_client_get_encryption_g(gpointer session) {
   if (!session) return NULL;
   NostrNwcClientSession *s = (NostrNwcClientSession *)session;
-  return (s->enc == NOSTR_NWC_ENC_NIP44_V2) ? "nip44-v2" : "nip04";
+  return (s->enc == NOSTR_NWC_ENC_NIP44_V2) ? NOSTR_NWC_ENC_LABEL_NIP44_V2 : NOSTR_NWC_ENC_LABEL_NIP04;
 }
 
 /* Parse NWC URI into components */
@@ -275,7 +275,7 @@ gboolean nostr_nwc_request_parse_g(const gchar *event_json,
   }
   if (wallet_pub) free(wallet_pub);
   if (out_encryption) {
-    *out_encryption = g_strdup(enc == NOSTR_NWC_ENC_NIP44_V2 ? "nip44-v2" : "nip04");
+    *out_encryption = g_strdup(enc == NOSTR_NWC_ENC_NIP44_V2 ? NOSTR_NWC_ENC_LABEL_NIP44_V2 : NOSTR_NWC_ENC_LABEL_NIP04);
   }
   if (out_method) {
     *out_method = body.method ? g_strdup(body.method) : NULL;
@@ -318,7 +318,7 @@ gboolean nostr_nwc_response_parse_g(const gchar *event_json,
   }
   if (req_id) free(req_id);
   if (out_encryption) {
-    *out_encryption = g_strdup(enc == NOSTR_NWC_ENC_NIP44_V2 ? "nip44-v2" : "nip04");
+    *out_encryption = g_strdup(enc == NOSTR_NWC_ENC_NIP44_V2 ? NOSTR_NWC_ENC_LABEL_NIP44_V2 : NOSTR_NWC_ENC_LABEL_NIP04);
   }
   if (out_result_type) {
     *out_result_type = body.result_type ? g_strdup(body.result_type) : NULL;
@@ -351,6 +351,6 @@ gboolean nostr_nwc_select_encryption_g(const gchar *const *client_supported, gsi
     g_set_error(error, NOSTR_NWC_ERROR_QUARK, 22, "no common encryption method found");
     return FALSE;
   }
-  *out_encryption = g_strdup(enc == NOSTR_NWC_ENC_NIP44_V2 ? "nip44-v2" : "nip04");
+  *out_encryption = g_strdup(enc == NOSTR_NWC_ENC_NIP44_V2 ? NOSTR_NWC_ENC_LABEL_NIP44_V2 : NOSTR_NWC_ENC_LABEL_NIP04);
   return TRUE;
 }

@@ -5,8 +5,8 @@
 int main(void) {
   GError *err = NULL;
   const gchar *wallet_pub = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-  const gchar *client_supported[] = {"nip44-v2", "nip04"};
-  const gchar *wallet_supported[] = {"nip04", "nip44-v2"};
+  const gchar *client_supported[] = {"nip44_v2", "nip04"};
+  const gchar *wallet_supported[] = {"nip04", "nip44_v2"};
 
   gpointer s = nostr_nwc_client_session_init_g(wallet_pub,
                                                client_supported, 2,

@@ -133,7 +133,7 @@ gboolean nostr_nwc_wallet_decrypt_g(gpointer session,
  *
  * Gets the negotiated encryption scheme as a string.
  *
- * Returns: "nip44-v2" or "nip04", or %NULL if session is invalid
+ * Returns: "nip44_v2" or "nip04", or %NULL if session is invalid
  */
 const gchar *nostr_nwc_wallet_get_encryption_g(gpointer session);
 
