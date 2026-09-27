@@ -60,6 +60,33 @@ else()
   message(STATUS "Groundhog identity adapter unavailable: in-tree nostr and nip19 targets required")
 endif()
 
+# Groundhog-owned URL-scoped live REQ coordinator. The standalone shell build
+# remains usable without the in-tree relay libraries.
+if (TARGET nostr_gobject AND TARGET nostr)
+  add_library(groundhog-relay STATIC
+    src/relay/gh-relay-scope.c src/relay/gh-relay-gnostr.c)
+  target_include_directories(groundhog-relay PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/relay)
+  target_link_libraries(groundhog-relay PUBLIC nostr_gobject nostr)
+  target_compile_options(groundhog-relay PRIVATE -Wall -Wextra -Werror)
+  if (BUILD_TESTING)
+    add_executable(test-groundhog-relay tests/relay/test_relay_scope.c)
+    target_link_libraries(test-groundhog-relay PRIVATE groundhog-relay)
+    target_compile_options(test-groundhog-relay PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-relay COMMAND test-groundhog-relay)
+    set_tests_properties(groundhog-relay PROPERTIES TIMEOUT 20)
+    pkg_check_modules(GROUNDHOG_RELAY_WIRE_TEST QUIET IMPORTED_TARGET libsoup-3.0)
+    if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      add_executable(test-groundhog-relay-wire tests/relay/test_relay_wire.c)
+      target_link_libraries(test-groundhog-relay-wire PRIVATE
+        groundhog-relay PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      target_compile_options(test-groundhog-relay-wire PRIVATE -Wall -Wextra -Werror)
+      add_test(NAME groundhog-relay-wire COMMAND test-groundhog-relay-wire)
+      set_tests_properties(groundhog-relay-wire PROPERTIES TIMEOUT 20)
+    endif()
+  endif()
+endif()
+
 set(GROUNDHOG_BINDIR "${CMAKE_INSTALL_FULL_BINDIR}")
 configure_file(${GROUNDHOG_DATA}/org.nostr.Groundhog.desktop.in
                ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop @ONLY)
