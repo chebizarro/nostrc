@@ -88,6 +88,17 @@ static void on_approval_requested(GDBusConnection *c, const gchar *sender, const
   e->last_request_id = g_strdup(req_id);
 }
 
+static void assert_approval_origin(E2E *e, const gchar *origin) {
+#ifdef __APPLE__
+  /* GTestDBus on macOS does not provide caller PIDs, so the daemon exposes
+   * its explicitly unattested claimed:<app_id> principal in the prompt. */
+  g_autofree gchar *claimed = g_strconcat("claimed:", origin, NULL);
+  CHECK(g_strcmp0(e->last_app_id, claimed) == 0);
+#else
+  CHECK(g_strcmp0(e->last_app_id, origin) == 0);
+#endif
+}
+
 static void send_frame(E2E *e, const gchar *json) {
   g_autoptr(GBytes) f = nm_frame_encode(json, strlen(json));
   gsize n = 0;
@@ -245,11 +256,19 @@ static void setup(E2E *e) {
   g_setenv("NOSTR_SIGNER_TEST_ORIGIN_BRIDGES", host_real, TRUE);
   g_setenv("NOSTR_SIGNER_TEST_APPROVERS", self_real, TRUE);
   g_autofree gchar *grants = g_build_filename(gdir, "signer-grants.ini", NULL);
+  /* On a bus without caller PIDs (macOS GTestDBus), the signer deliberately
+   * uses claimed:<app_id> rather than an executable or attested web origin.
+   * Add only hermetic test grants for that fallback; Linux still exercises
+   * executable and bridge-origin principals through its own entries. */
   g_autofree gchar *body = g_strdup_printf(
       "[event]\nhttps://allowed.example|*=allow\nhttps://denied.example|*=deny\n"
-      "[get_public_key]\nexe:%1$s|*=allow\n[get_relays]\nexe:%1$s|*=allow\n"
-      "[nip04_encrypt]\nexe:%1$s|*=allow\n[nip04_decrypt]\nexe:%1$s|*=allow\n"
-      "[nip44_encrypt]\nexe:%1$s|*=allow\n[nip44_decrypt]\nexe:%1$s|*=allow\n", host_real);
+      "claimed:https://allowed.example|*=allow\nclaimed:https://denied.example|*=deny\n"
+      "[get_public_key]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
+      "[get_relays]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
+      "[nip04_encrypt]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
+      "[nip04_decrypt]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
+      "[nip44_encrypt]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
+      "[nip44_decrypt]\nexe:%1$s|*=allow\nclaimed:|*=allow\n", host_real);
   write_file(grants, body);
   e->relays_path = g_build_filename(ndir, "relays.conf", NULL);
   write_file(e->relays_path, "[\"wss://relay.example\", \"wss://nos.lol\"]\n");
@@ -352,7 +371,7 @@ int main(void) {
                  "\"params\":{\"event\":{\"kind\":7,\"created_at\":1700000001,\"tags\":[[\"e\",\"" PK_HEX "\"]],"
                  "\"content\":\"+\"}}}");
   wait_for_approval(&e);
-  CHECK(g_strcmp0(e.last_app_id, "https://prompt.example") == 0);
+  assert_approval_origin(&e, "https://prompt.example");
   r = call(&e, "{\"id\":\"pk2\",\"method\":\"getPublicKey\",\"origin\":\"https://other.example\"}");
   CHECK(g_strcmp0(reply_id(r), "pk2") == 0);
   json_node_unref(r);
@@ -369,7 +388,7 @@ int main(void) {
   send_frame(&e, "{\"id\":\"s4\",\"method\":\"signEvent\",\"origin\":\"http://localhost:5173\","
                  "\"params\":{\"event\":{\"kind\":1,\"tags\":[],\"content\":\"deny me\"}}}");
   wait_for_approval(&e);
-  CHECK(g_strcmp0(e.last_app_id, "http://localhost:5173") == 0);
+  assert_approval_origin(&e, "http://localhost:5173");
   approve(&e, FALSE);
   r = recv_frame(&e);
   assert_error(r, "s4", "rejected");
