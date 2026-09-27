@@ -22,11 +22,12 @@ extern "C" {
  * 0.5.0 (additive): org.nostr.Signer.EnableTypedApprovalErrors lets a bus
  * connection opt in to Error.ApprovalTimedOut / Error.NoApprovalAgent /
  * Error.IdentityChanged in place of Error.ApprovalDenied for those cases
- * (nostrc-qp24.16). */
+ * (nostrc-qp24.16). 0.5.1: refuse to approve a parked D-Bus request whose
+ * caller disconnected, even before its NameOwnerChanged cleanup runs. */
 #define NOSTR_NIP55L_VERSION_MAJOR 0
 #define NOSTR_NIP55L_VERSION_MINOR 5
-#define NOSTR_NIP55L_VERSION_PATCH 0
-#define NOSTR_NIP55L_VERSION_STRING "0.5.0"
+#define NOSTR_NIP55L_VERSION_PATCH 1
+#define NOSTR_NIP55L_VERSION_STRING "0.5.1"
 
 int nostr_nip55l_get_public_key(char **out_npub);
 /* npub of the key that `current_user` selects, i.e. the key sign/encrypt/

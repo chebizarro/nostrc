@@ -660,6 +660,7 @@ static void expect_remote_error(GError *err, const char *name) {
 typedef struct {
   GMainLoop *loop;
   guint n_requests;            /* ApprovalRequested seen */
+  gboolean completed;          /* matching ApprovalCompleted seen */
   char *req_id, *kind, *preview, *app_id, *identity;
   guint pending_replies;       /* async calls not yet answered */
   GPtrArray *replies;          /* GVariant* or NULL, in completion order */
@@ -680,6 +681,21 @@ static void on_approval_requested(GDBusConnection *c, const gchar *snd, const gc
   g_free(a->app_id); a->app_id = g_strdup(app);
   g_free(a->identity); a->identity = g_strdup(id);
   g_main_loop_quit(a->loop);
+}
+
+static void on_approval_completed(GDBusConnection *c, const gchar *snd, const gchar *path,
+                                  const gchar *iface, const gchar *sig, GVariant *params,
+                                  gpointer ud) {
+  (void)c; (void)snd; (void)path; (void)iface; (void)sig;
+  ApprCtx *a = ud;
+  const char *id = NULL;
+  gboolean approved = FALSE;
+  g_variant_get(params, "(&sb)", &id, &approved);
+  if (g_strcmp0(id, a->req_id) == 0) {
+    CHECK(!approved);
+    a->completed = TRUE;
+    g_main_loop_quit(a->loop);
+  }
 }
 
 static void on_async_reply(GObject *src, GAsyncResult *res, gpointer ud) {
@@ -885,6 +901,58 @@ static int grants_has(Ctx *ctx, const char *section, const char *key, const char
   }
   g_key_file_unref(kf);
   return found;
+}
+
+static GDBusConnection *open_conn(void);
+static void close_conn(GDBusConnection *c);
+
+/* A cancelled Groundhog-style private bus sender must be revoked by the
+ * actual daemon, not just lose the local D-Bus reply. */
+static void test_cancelled_private_sender(Ctx *ctx) {
+  Watch w;
+  watch_start(ctx, &w);
+  guint completed_sub = g_dbus_connection_signal_subscribe(ctx->bus, BUS_NAME, IFACE,
+      "ApprovalCompleted", OBJ_PATH, NULL, G_DBUS_SIGNAL_FLAGS_NONE,
+      on_approval_completed, &w.a, NULL);
+  GDBusConnection *private = open_conn();
+  w.a.pending_replies++;
+  g_dbus_connection_call(private, BUS_NAME, OBJ_PATH, IFACE, "SignEvent",
+      g_variant_new("(sss)", "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"abandoned\"}",
+                    ctx->npub, "cancel-test"), G_VARIANT_TYPE("(s)"),
+      G_DBUS_CALL_FLAGS_NONE, 30000, NULL, on_async_reply, &w.a);
+  watch_wait_request(&w, 1);
+  CHECK(g_strcmp0(w.a.kind, "event") == 0);
+  CHECK(g_strcmp0(w.a.identity, ctx->npub) == 0);
+  close_conn(private);
+  /* Race the approval against NameOwnerChanged delivery: the service must
+   * also check the caller's live bus name before performing or remembering. */
+  GError *err = NULL;
+  GVariant *approved = approve_call(ctx, w.a.req_id, TRUE, TRUE, &err);
+  while (!w.a.completed) g_main_loop_run(w.a.loop);
+  watch_wait_replies(&w);
+  CHECK(w.a.replies->len == 1 && w.a.replies->pdata[0] == NULL);
+  CHECK(approved != NULL);
+  gboolean ok = TRUE;
+  g_variant_get(approved, "(b)", &ok);
+  CHECK(!ok);
+  g_variant_unref(approved);
+  CHECK(err == NULL);
+  char *key = g_strdup_printf("%s|%s", pr(ctx, "cancel-test"), ctx->npub);
+  CHECK(!grants_has(ctx, "event", key, "allow"));
+  g_free(key);
+  g_dbus_connection_signal_unsubscribe(ctx->bus, completed_sub);
+  watch_stop(ctx, &w);
+
+  /* A second call by the same principal and identity must still prompt. */
+  watch_start(ctx, &w);
+  watch_call(ctx, &w, "SignEvent",
+      g_variant_new("(sss)", "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"probe\"}",
+                    ctx->npub, "cancel-test"));
+  watch_wait_request(&w, 1);
+  approve(ctx, w.a.req_id, FALSE, FALSE);
+  watch_wait_replies(&w);
+  CHECK(w.a.replies->len == 1 && w.a.replies->pdata[0] == NULL);
+  watch_stop(ctx, &w);
 }
 
 /* nostrc-y02q / phk4 / 1e31 / eie5 / f7hk. Fixture: no grants except a
@@ -2190,6 +2258,7 @@ int main(void) {
     Ctx ctx;
     ctx_setup_full(&ctx, FALSE, TRUE, "[event]\nhttps://allowed.example|*=allow\n",
                    &TRUST_UI, NULL, NULL);
+    test_cancelled_private_sender(&ctx);
     test_gating(&ctx);
     gboolean attested = ctx.attested;
     ctx_teardown(&ctx);

@@ -807,12 +807,35 @@ static void test_swap_active_key(void){
 }
 #endif
 
+static gboolean pending_bus_sender_alive(const Pending *p)
+{
+  Call *first = p->calls->len ? g_ptr_array_index(p->calls, 0) : NULL;
+  if (!first) return FALSE;
+  if (!first->reply.invocation) return TRUE; /* NIP-5F has its own close handler. */
+  const char *sender = g_dbus_method_invocation_get_sender(first->reply.invocation);
+  if (!signer_bus || !sender || sender[0] != ':') return FALSE;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_sync(signer_bus,
+    "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+    "NameHasOwner", g_variant_new("(s)", sender), G_VARIANT_TYPE("(b)"),
+    G_DBUS_CALL_FLAGS_NONE, 5000, NULL, NULL);
+  gboolean alive = FALSE;
+  if (reply) g_variant_get(reply, "(b)", &alive);
+  return alive;
+}
+
 static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocation *invocation,
                                        const gchar *request_id, gboolean decision, gboolean remember, guint64 ttl_seconds)
 {
   if (!require_approver(invocation)) return TRUE;
   Pending *p = (pending && request_id) ? g_hash_table_lookup(pending, request_id) : NULL;
   if (!p) { nostr_signer_complete_approve_request(object, invocation, FALSE); return TRUE; }
+  if (!pending_bus_sender_alive(p)) {
+    g_hash_table_steal(pending, request_id);
+    pending_fail(p, ORG_NOSTR_SIGNER_ERR_APPROVAL, "caller disconnected");
+    nostr_signer_complete_approve_request(object, invocation, FALSE);
+    pending_finish(p, FALSE);
+    return TRUE;
+  }
   g_hash_table_steal(pending, request_id);
   g_message("nostr-signer: %s %s by %s: %s%s", p->id, op_info[p->op].kind,
             p->who->principal ? p->who->principal : "(unidentified)",
