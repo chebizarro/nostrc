@@ -201,7 +201,8 @@ bool          nostr_subscription_is_live(const NostrSubscription *sub);
  * nostr_subscription_is_eosed:
  * @sub: (nullable): subscription
  *
- * Returns: whether EOSE has been observed
+ * Returns: whether EOSE has been observed for the current REQ; reconnect
+ * resets this to false until that REQ's EOSE arrives.
  */
 bool          nostr_subscription_is_eosed(const NostrSubscription *sub);
 /**
