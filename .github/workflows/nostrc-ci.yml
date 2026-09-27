@@ -62,6 +62,12 @@ jobs:
           echo "CPPFLAGS=-I/opt/homebrew/include ${CPPFLAGS}" >> $GITHUB_ENV
           echo "LDFLAGS=-L/opt/homebrew/lib ${LDFLAGS}" >> $GITHUB_ENV
 
+      - name: Install D-Bus test-bus prerequisite (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          brew install dbus
+          command -v dbus-daemon
+
       - name: Override ASAN options (macOS)
         if: startsWith(matrix.os, 'macos')
         run: echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1" >> $GITHUB_ENV
