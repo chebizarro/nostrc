@@ -8,7 +8,8 @@ nostr-home-syncd \- user-scoped portable-home sync daemon
 .B nostr-home-syncd
 is the user-scoped background daemon that watches
 .I $HOME
-via inotify, chunks and encrypts changed files, uploads them to the
+via inotify (only when the session's home is porthome-managed, i.e. the
+broker delivered a home seed), chunks and encrypts changed files, uploads them to the
 configured Blossom servers, and republishes the kind-30078 pointer when
 the batch closes. It always runs as the login user under
 .B systemd \-\-user
@@ -68,6 +69,27 @@ Periodic full-tree rescan tick. 0 or unset disables. Non-zero closes
 inotify
 .B IN_Q_OVERFLOW
 and add-watch race gaps.
+.TP
+.B NOSTR_HOMED_SYNCD_MAX_WATCHES
+Hard cap on the inotify watches the daemon holds (one per directory).
+Default: the smaller of 8192 and a quarter of
+.IR fs.inotify.max_user_watches ;
+larger values are clamped to half of it. That limit is shared by every
+process of the user, and a sync daemon that exhausts it silently breaks
+file monitoring in the rest of the session. Directories are watched
+breadth-first; those beyond the budget, and well-known noisy trees that are
+never watched (VCS metadata such as
+.IR .git ,
+.IR node_modules ,
+language and package-manager caches, anything tagged
+.IR CACHEDIR.TAG ),
+are still synced through the fallback rescan below. Reaching the budget
+logs one warning.
+.TP
+.B NOSTR_HOMED_SYNCD_FALLBACK_RESCAN_SEC
+How often the unwatched subtrees are rescanned and diffed against the
+snapshot (and re-promoted to watches when budget frees up). Default 600;
+0 disables.
 .TP
 .B NOSTR_HOMED_SYNCD_SEED_FILE
 Override the broker seed drop path. Default:

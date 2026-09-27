@@ -26,6 +26,15 @@
  *                                  tick (xnxd part 2). 0/unset disables;
  *                                  otherwise a rescan fires that often
  *                                  to close inotify add_watch race gaps.
+ *   NOSTR_HOMED_SYNCD_MAX_WATCHES — hard cap on inotify watches
+ *                                  (nostrc-lqm2). Default
+ *                                  min(8192, fs.inotify.max_user_watches/4);
+ *                                  clamped to half the kernel limit.
+ *   NOSTR_HOMED_SYNCD_FALLBACK_RESCAN_SEC — how often directories the
+ *                                  watcher could not afford (or chose not)
+ *                                  to watch are rescanned. Default 600;
+ *                                  0 disables (they then only sync on the
+ *                                  full rescan tick / IN_Q_OVERFLOW).
  *   NOSTR_HOMED_SYNCD_TEST_MODE  — when "1", allows the NOSTR_HOMED_SYNCD_SEED_HEX
  *                                  env fallback (see below) to seed
  *                                  home_key without the broker drop.
@@ -257,6 +266,24 @@ static void free_csv(char **arr) {
     free(arr);
 }
 
+/* Is a periodic tick of `interval_sec` due? If not, lower the poll
+ * timeout `*t` (ms, -1 = infinite) to when it will be. */
+static bool tick_due(struct timespec *last, uint32_t interval_sec, int *t) {
+    if (interval_sec == 0) return false;
+    struct timespec now_ts;
+    clock_gettime(CLOCK_MONOTONIC, &now_ts);
+    int64_t elapsed_ms = (int64_t)(now_ts.tv_sec - last->tv_sec) * 1000
+                       + (now_ts.tv_nsec - last->tv_nsec) / 1000000;
+    int64_t interval_ms = (int64_t)interval_sec * 1000;
+    if (elapsed_ms >= interval_ms) {
+        *last = now_ts;
+        return true;
+    }
+    int64_t until_next = interval_ms - elapsed_ms;
+    if (*t < 0 || until_next < *t) *t = (int)until_next;
+    return false;
+}
+
 static void on_signal(int sig) {
     if (sig == SIGHUP) g_reload = 1;
     else               g_stop   = 1;
@@ -285,6 +312,7 @@ typedef struct {
     char   *seed_hex;
     size_t  min_repl;
     uint32_t rescan_interval_sec;    /* xnxd part 2 */
+    uint32_t fallback_rescan_sec;    /* nostrc-lqm2 */
     bool     test_mode;               /* xnxd part 3 */
     bool     seed_from_broker;        /* xnxd part 3: audit-friendly flag */
 } cfg_t;
@@ -335,6 +363,8 @@ static int load_cfg(cfg_t *c) {
                               : NH_SYNCD_DEFAULT_MIN_REPLICATION;
     const char *ri = getenv("NOSTR_HOMED_SYNCD_RESCAN_INTERVAL_SEC");
     c->rescan_interval_sec = (ri && *ri) ? (uint32_t)strtoul(ri, NULL, 10) : 0;
+    const char *fr = getenv("NOSTR_HOMED_SYNCD_FALLBACK_RESCAN_SEC");
+    c->fallback_rescan_sec = (fr && *fr) ? (uint32_t)strtoul(fr, NULL, 10) : 600;
     return 0;
 }
 
@@ -405,10 +435,18 @@ int main(int argc, char **argv) {
         nh_syncd_lock_release(lk); free_cfg(&cfg); return 6;
     }
 
+    /* nostrc-lqm2: without the broker's home seed this session's home is
+     * not porthome-managed — home_key can't be derived, every batch would
+     * be deferred for the life of the process (the seed is read once, at
+     * start; a drop that appears later is not picked up — nostrc-p8y6).
+     * Don't scan or watch a tree we can never push: an unmanaged home full
+     * of build trees is exactly what exhausted the user's inotify budget. */
+    const bool managed = cfg.seed_hex != NULL;
+
     /* I2 §6.4: if the snapshot base is unknown, do an ADDITIVE rescan
      * of $HOME and mark NOSTR_HOME_STATE=partial. The push path will
      * refuse to run until a real pull path rebuilds base. */
-    if (snap_unknown) {
+    if (snap_unknown && managed) {
         fprintf(stderr,
                 "syncd: snapshot base unknown; running additive rescan + setting partial state\n");
         (void)nh_syncd_rescan_home_additive(state, cfg.home, ig, cfg.state_dir);
@@ -495,9 +533,23 @@ int main(int argc, char **argv) {
 
     /* Watcher. */
     nh_syncd_watcher *wa = NULL;
-    if (nh_syncd_watcher_new(cfg.home, ig, ba, &wa) != NH_SYNCD_OK) {
+    if (!managed) {
+        fprintf(stderr,
+                "syncd: no home seed (broker drop absent) — this home is not "
+                "porthome-managed in this session; not watching it\n");
+    } else if (nh_syncd_watcher_new(cfg.home, ig, ba, &wa) != NH_SYNCD_OK) {
         fprintf(stderr, "syncd: inotify init failed\n");
         goto cleanup;
+    } else {
+        fprintf(stderr,
+                "syncd: watching %u directories (budget %u, "
+                "fs.inotify.max_user_watches=%u); %zu subtrees on the "
+                "fallback rescan every %us\n",
+                nh_syncd_watcher_watch_count(wa),
+                nh_syncd_watcher_budget(wa),
+                nh_syncd_watcher_kernel_limit(),
+                nh_syncd_watcher_unwatched_count(wa),
+                cfg.fallback_rescan_sec);
     }
     /* xnxd part 2: give the watcher the state baseline so IN_Q_OVERFLOW
      * and the periodic rescan tick both have something to diff against. */
@@ -508,8 +560,9 @@ int main(int argc, char **argv) {
      * watcher's force_rescan runs on that cadence so add_watch races
      * (rmdir+mkdir on a watched dir) are closed on the next tick even
      * if IN_Q_OVERFLOW never fires. */
-    struct timespec last_rescan;
+    struct timespec last_rescan, last_fallback;
     clock_gettime(CLOCK_MONOTONIC, &last_rescan);
+    last_fallback = last_rescan;
 
     /* Poll loop. */
     struct pollfd pfd = { nh_syncd_watcher_fd(wa), POLLIN, 0 };
@@ -529,24 +582,18 @@ int main(int argc, char **argv) {
         int t = next_ms == UINT64_MAX ? -1 :
                 (next_ms > 3600000ull ? 3600000 : (int)next_ms);
         /* xnxd part 2: cap poll timeout at the rescan tick when set. */
-        if (cfg.rescan_interval_sec > 0) {
-            struct timespec now_ts;
-            clock_gettime(CLOCK_MONOTONIC, &now_ts);
-            uint64_t elapsed_ms =
-                (uint64_t)(now_ts.tv_sec  - last_rescan.tv_sec)  * 1000ull +
-                (uint64_t)((now_ts.tv_nsec - last_rescan.tv_nsec) / 1000000);
-            uint64_t interval_ms = (uint64_t)cfg.rescan_interval_sec * 1000ull;
-            if (elapsed_ms >= interval_ms) {
-                (void)nh_syncd_watcher_force_rescan(wa);
-                last_rescan = now_ts;
-            } else {
-                uint64_t until_next = interval_ms - elapsed_ms;
-                if (t < 0 || (int)until_next < t) t = (int)until_next;
-            }
+        if (wa && tick_due(&last_rescan, cfg.rescan_interval_sec, &t)) {
+            (void)nh_syncd_watcher_force_rescan(wa);
+            last_fallback = last_rescan;   /* that covered the unwatched too */
         }
+        /* nostrc-lqm2: subtrees outside the watch budget / watch-skip
+         * list are synced by rescanning just them. */
+        if (wa && nh_syncd_watcher_unwatched_count(wa) > 0 &&
+            tick_due(&last_fallback, cfg.fallback_rescan_sec, &t))
+            (void)nh_syncd_watcher_rescan_unwatched(wa);
         int pr = poll(&pfd, 1, t);
         if (pr < 0) { if (errno == EINTR) continue; break; }
-        if (pfd.revents & POLLIN) nh_syncd_watcher_drain(wa);
+        if (wa && (pfd.revents & POLLIN)) nh_syncd_watcher_drain(wa);
         if (nh_syncd_batcher_poll(ba) == NH_SYNCD_BATCHER_READY) {
             nh_syncd_batch *batch = nh_syncd_batcher_take(ba, false);
             if (batch) {

@@ -2075,6 +2075,21 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     set_tests_properties(homed_syncd_rescan_overflow PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
 
+    # nostrc-lqm2 — the watcher's inotify budget, counted in the kernel
+    # (/proc/self/fdinfo), plus the fallback rescan for what it skips.
+    add_executable(test_syncd_watcher_budget
+      tests/unit/test_syncd_watcher_budget.c
+      src/porthome-syncd/nh_syncd_watcher.c)
+    target_include_directories(test_syncd_watcher_budget PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd)
+    target_compile_options(test_syncd_watcher_budget PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation -Wno-unused-parameter)
+    target_link_libraries(test_syncd_watcher_budget PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_watcher_budget COMMAND test_syncd_watcher_budget)
+    set_tests_properties(homed_syncd_watcher_budget PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30
+      SKIP_RETURN_CODE 77)
+
     add_executable(test_syncd_pull_e2e tests/integration/test_syncd_pull_e2e.c)
     target_link_libraries(test_syncd_pull_e2e PRIVATE nostr_syncd_core)
     add_test(NAME homed_syncd_pull_e2e COMMAND test_syncd_pull_e2e)

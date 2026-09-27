@@ -725,6 +725,20 @@ int nh_syncd_rescan_diff(const nh_syncd_state    *state,
                          nh_syncd_batcher        *batcher,
                          nh_syncd_rescan_stats   *out_stats);
 
+/* nostrc-lqm2 — the same diff, restricted to the subtrees `rel_roots`
+ * ($HOME-relative; "" = the whole tree, making this nh_syncd_rescan_diff).
+ * Only entries strictly below a root are walked and swept for deletes, so
+ * the watcher's fallback rescan costs the size of the subtrees it could
+ * not afford to watch, not the whole home. Roots nested under another
+ * root are walked once. */
+int nh_syncd_rescan_diff_roots(const nh_syncd_state    *state,
+                               const char              *root_dir,
+                               const char *const       *rel_roots,
+                               size_t                   n_roots,
+                               const nh_syncd_ignore   *ignore,
+                               nh_syncd_batcher        *batcher,
+                               nh_syncd_rescan_stats   *out_stats);
+
 
 /* Pull glue: build a reconcile config and pointer callback that feeds
  * a live subscription. The callback verifies the event (kind, author,
