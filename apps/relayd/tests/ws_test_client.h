@@ -82,7 +82,12 @@ static inline int ws_open(const char *sock_path, long long *upgrade_ms) {
   struct sockaddr_un sa;
   memset(&sa, 0, sizeof sa);
   sa.sun_family = AF_UNIX;
-  snprintf(sa.sun_path, sizeof sa.sun_path, "%s", sock_path);
+  size_t plen = strlen(sock_path);
+  if (plen >= sizeof sa.sun_path) {
+    close(fd);
+    return -1;
+  }
+  memcpy(sa.sun_path, sock_path, plen + 1);
   long long t0 = now_ms();
   if (connect(fd, (struct sockaddr *)&sa, sizeof sa) != 0) {
     close(fd);

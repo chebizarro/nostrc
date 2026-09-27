@@ -3,7 +3,10 @@
 # (or $HOME/.config/nostr/session-relay.conf if XDG_CONFIG_HOME is unset).
 # All values shown are defaults; the file is optional.
 
-# Storage driver — nostrdb is the only implementation shipped in-tree.
+# Storage driver — nostrdb is the only implementation shipped in-tree; the
+# store lives under ~/.local/share/nostr/session-relay/. "none" runs
+# cache-less on purpose: REQ answers EOSE at once, EVENT is refused, and
+# org.nostr.SessionRelay1.StorageBackend reports "none".
 storage_driver = "nostrdb"
 
 # NIP-42 authentication policy. The Unix socket itself is the auth boundary,

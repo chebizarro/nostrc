@@ -109,6 +109,20 @@ if(UNIX AND NOT CYGWIN)
     LABELS "relay;session-relay;websocket;integration")
 endif()
 
+# Storage round-trip against the real daemon when it links nostrdb:
+# signed EVENT -> OK true -> REQ by id -> EVENT + EOSE, again after a restart
+# (nostrc-prqu.5).
+if(UNIX AND NOT CYGWIN AND TARGET nostrdb_storage)
+  add_executable(test_session_relay_storage test_session_relay_storage.c)
+  target_link_libraries(test_session_relay_storage PRIVATE nostr nostr_json)
+  add_test(NAME relayd_session_relay_storage COMMAND test_session_relay_storage)
+  set_tests_properties(relayd_session_relay_storage PROPERTIES
+    TIMEOUT 90
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "NOSTR_SESSION_RELAYD=$<TARGET_FILE:nostr-session-relayd>"
+    LABELS "relay;session-relay;storage;integration")
+endif()
+
 # org.nostr.SessionRelay1: spawn the real daemon on a private GTestDBus
 # session bus (headless; fallback-binds relay.sock in a temp runtime dir),
 # check GetStats / properties / introspection against the shipped XML and
