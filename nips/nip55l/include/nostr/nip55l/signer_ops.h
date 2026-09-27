@@ -12,13 +12,25 @@ extern "C" {
  * JSON (nostr_nip55l_sign_event_json) instead of the bare signature.
  * 0.3.0 (additive): org.nostr.Signer.NIP44DeriveConversationKey, an
  * approval-gated export of the NIP-44 v2 conversation key for one peer
- * (nostr_nip55l_nip44_conversation_key; used by nostr-seal, nostrc-da9c). */
+ * (nostr_nip55l_nip44_conversation_key; used by nostr-seal, nostrc-da9c).
+ * 0.4.0 (ACL semantics): grants are keyed on a bus-derived caller principal
+ * plus the npub the identity selector resolves to (never on the caller's
+ * app_id string), GetPublicKey / GetRelays / NIP-04 / NIP-44 / DecryptZapEvent
+ * go through the same approval flow as SignEvent, only the installed approval
+ * UI may call ApproveRequest, and *ForApp / GetApprovalInfo methods were
+ * added (nostrc-y02q, nostrc-phk4, nostrc-1e31, nostrc-eie5). */
 #define NOSTR_NIP55L_VERSION_MAJOR 0
-#define NOSTR_NIP55L_VERSION_MINOR 3
+#define NOSTR_NIP55L_VERSION_MINOR 4
 #define NOSTR_NIP55L_VERSION_PATCH 0
-#define NOSTR_NIP55L_VERSION_STRING "0.3.0"
+#define NOSTR_NIP55L_VERSION_STRING "0.4.0"
 
 int nostr_nip55l_get_public_key(char **out_npub);
+/* npub of the key that `current_user` selects, i.e. the key sign/encrypt/
+ * decrypt would use for the same selector (empty = the active identity).
+ * This is the canonical identity the daemon's ACL is keyed on: the selector
+ * itself may be empty, a key_id, an npub or even a secret key. NOT_FOUND /
+ * INVALID_KEY when no key matches. Caller frees *out_npub with free(). */
+int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub);
 /* Returns only the 128-hex Schnorr signature. In-process helper; the D-Bus
  * SignEvent method no longer returns this shape (see sign_event_json). */
 int nostr_nip55l_sign_event(const char *event_json,

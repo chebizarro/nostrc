@@ -21,6 +21,19 @@
  * Error.InvalidInput; GetRelays on a fresh install → Error.NotFound;
  * mutations without the escape hatch → Error.PermissionDenied.
  *
+ * Access control (nip55l 0.4.0; nostrc-y02q/phk4/1e31/eie5/f7hk): grants are
+ * keyed on the principal the daemon derives from this process's bus
+ * connection (computed here with the same signer_caller helpers and
+ * cross-checked against ApprovalRequested), never on app_id. The gating
+ * phase proves: decrypt/pubkey calls without a grant are parked and raise
+ * ApprovalRequested; a spoofed web-origin app_id from a non-bridge process
+ * does not inherit that origin's grant; remember → no second prompt, for the
+ * empty selector and the npub selector alike; remembered decisions are per
+ * kind; queued identical calls share one prompt; an untrusted process cannot
+ * answer approvals; with no approval agent on the bus a prompt fails fast.
+ * The bridge phase runs this process as the trusted browser bridge
+ * (test-build NOSTR_SIGNER_TEST_ORIGIN_BRIDGES) so origin grants apply.
+ *
  * apps/gnostr-signer/tests/test-dbus.c:55-60,117-143 was the private-bus
  * pattern reference, but that test drives a mock: the point of this one is
  * that the real daemon speaks the same contract, using the exact GLib
@@ -59,6 +72,11 @@
 #include <nostr/nip55l/signer_ops.h>
 #include "seahorse/secret_store.h"
 #endif
+#ifdef __APPLE__
+#include <libproc.h>
+#endif
+
+#include "signer_caller.h"
 
 #ifndef NIP55L_DAEMON_PATH
 #error "NIP55L_DAEMON_PATH must be defined by the build (path to nostr-signer-daemon)"
@@ -72,6 +90,7 @@
 #define ERR_NOT_FND  "org.nostr.Signer.Error.NotFound"
 #define ERR_PERM     "org.nostr.Signer.Error.PermissionDenied"
 #define ERR_DENIED   "org.nostr.Signer.Error.ApprovalDenied"
+#define APPROVER_NAME "org.gnostr.Signer"
 
 #define CHECK(cond) do { if (!(cond)) { \
     g_printerr("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); exit(1); \
@@ -132,6 +151,42 @@ static char *npub_to_hex(const char *npub) {
   return hex;
 }
 
+/* This process's executable as the daemon will see it (/proc/<pid>/exe or
+ * proc_pidpath), and the principal the daemon derives for this connection. */
+static char *self_exe(void) {
+#if defined(__linux__)
+  char *exe = g_file_read_link("/proc/self/exe", NULL);
+  CHECK(exe != NULL);
+  return exe;
+#elif defined(__APPLE__)
+  char buf[PROC_PIDPATHINFO_MAXSIZE];
+  CHECK(proc_pidpath(getpid(), buf, sizeof buf) > 0);
+  return g_strdup(buf);
+#else
+  CHECK(!"unsupported platform");
+  return NULL;
+#endif
+}
+
+static char *self_principal(void) {
+  char *exe = self_exe();
+  SignerCallerKind kind = SIGNER_CALLER_EXE;
+  char *app = NULL;
+#ifdef __linux__
+  char *cg = NULL;
+  if (g_file_get_contents("/proc/self/cgroup", &cg, NULL, NULL)) {
+    SignerCallerKind k = SIGNER_CALLER_UNKNOWN;
+    app = signer_caller_parse_cgroup(cg, &k);
+    if (app) kind = k;
+    g_free(cg);
+  }
+#endif
+  char *p = signer_caller_build_principal(kind, app, exe);
+  CHECK(p != NULL);
+  g_free(app); g_free(exe);
+  return p;
+}
+
 /* ---------------------------------------------------------------------------
  * Fixture: tmp dir tree + daemon subprocess on a private GTestDBus bus.
  * ------------------------------------------------------------------------- */
@@ -145,15 +200,69 @@ typedef struct {
   char *sk_hex;   /* the daemon's identity */
   char *pk_hex;   /* x-only pubkey hex */
   char *npub;     /* npub of the pk */
+  char *principal; /* how the daemon identifies this process (app_id "") */
+  char *grants_path;
+  gboolean attested; /* the bus reports our PID (Linux); FALSE on macOS */
 } Ctx;
+
+/* Principal the daemon assigns to a call from this process naming @app. */
+static char *pr_buf[16];
+static guint pr_next;
+static const char *pr(const Ctx *ctx, const char *app) {
+  if (ctx->attested) return ctx->principal;
+  g_free(pr_buf[pr_next]);
+  pr_buf[pr_next] = g_strconcat("claimed:", app, NULL);
+  const char *r = pr_buf[pr_next];
+  pr_next = (pr_next + 1) % G_N_ELEMENTS(pr_buf);
+  return r;
+}
+
+/* Trust knobs for one fixture (test-build daemon env overrides). */
+typedef struct {
+  gboolean approver;     /* this process may answer ApproveRequest */
+  gboolean bridge;       /* this process may assert web origins */
+  gboolean own_ui_name;  /* own org.gnostr.Signer (an approval agent is present) */
+} Trust;
+static const Trust TRUST_UI = { TRUE, FALSE, TRUE };
 
 /* pre_daemon runs on the private bus before the daemon is spawned (phase 3
  * starts a keyring and seeds legacy items there). extra_acl is appended to
  * the [SignEvent] section. */
 typedef void (*PreDaemonFn)(Ctx *ctx, gpointer data);
 
+/* Grants body: "@N" is replaced by the fixture identity's npub and "@P" by
+ * this process's principal; without PID attestation (macOS) a line with @P
+ * is emitted once per claimed app_id the phases use. */
+static char *expand_line(const Ctx *ctx, const char *line, const char *principal) {
+  GString *o = g_string_new(NULL);
+  for (const char *p = line; *p; p++) {
+    if (p[0] == '@' && p[1] == 'P') { g_string_append(o, principal); p++; }
+    else if (p[0] == '@' && p[1] == 'N') { g_string_append(o, ctx->npub); p++; }
+    else g_string_append_c(o, *p);
+  }
+  return g_string_free(o, FALSE);
+}
+
+static char *expand_grants(const Ctx *ctx, const char *tmpl) {
+  static const char *claims[] = { "claimed:", "claimed:contract-test" };
+  GString *o = g_string_new(NULL);
+  gchar **lines = g_strsplit(tmpl, "\n", -1);
+  for (guint i = 0; lines[i]; i++) {
+    if (!*lines[i]) continue;
+    guint n = (strstr(lines[i], "@P") && !ctx->attested) ? G_N_ELEMENTS(claims) : 1;
+    for (guint j = 0; j < n; j++) {
+      char *l = expand_line(ctx, lines[i], ctx->attested ? ctx->principal : claims[j]);
+      g_string_append_printf(o, "%s\n", l);
+      g_free(l);
+    }
+  }
+  g_strfreev(lines);
+  return g_string_free(o, FALSE);
+}
+
 static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_relays,
-                           const char *extra_acl, PreDaemonFn pre_daemon, gpointer data) {
+                           const char *grants, const Trust *trust,
+                           PreDaemonFn pre_daemon, gpointer data) {
   memset(ctx, 0, sizeof *ctx);
 
   /* Isolated $XDG_CONFIG_HOME / $HOME so the real user's configs are safe. */
@@ -189,27 +298,8 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
   else
     g_unsetenv("NOSTR_SIGNER_ALLOW_KEY_MUTATIONS");
 
-  /* Pre-populate the ACL so SignEvent takes the auto-approve branch and
-   * never needs an ApproveRequest reply. The daemon's key is "<app>:<id>",
-   * and identity is what the caller passes over the wire — we pass the
-   * empty string in the tests so both parts are stable. */
-  {
-    char *gnostr_dir = g_build_filename(xdg_cfg, "gnostr", NULL);
-    g_mkdir_with_parents(gnostr_dir, 0700);
-    char *acl = g_build_filename(gnostr_dir, "signer-acl.ini", NULL);
-    /* NIP44DeriveConversationKey (nip55l 0.3.0): "contract-test" is
-     * pre-allowed, "contract-deny" pre-denied; any other app_id goes
-     * through ApprovalRequested. */
-    gchar *body = g_strdup_printf("[NIP44DeriveConversationKey]\n"
-                                  "contract-test:=allow\n"
-                                  "contract-deny:=deny\n"
-                                  "[SignEvent]\ncontract-test:=allow\n%s",
-                                  extra_acl ? extra_acl : "");
-    write_file(acl, body);
-    g_free(body);
-    g_free(acl);
-    g_free(gnostr_dir);
-  }
+  char *gnostr_dir = g_build_filename(xdg_cfg, "gnostr", NULL);
+  g_mkdir_with_parents(gnostr_dir, 0700);
 
   /* Relays: leave the file absent for the first GetRelays call (NotFound
    * expected), then write it later when the test wants the happy path. */
@@ -228,11 +318,51 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
   ctx->tbus = g_test_dbus_new(G_TEST_DBUS_NONE);
   g_test_dbus_up(ctx->tbus);
 
+  /* Does the bus attest our PID? (Linux dbus-daemon: yes; macOS: no.) */
+  ctx->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+  CHECK(ctx->bus != NULL);
+  {
+    GVariant *r = g_dbus_connection_call_sync(ctx->bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+        "org.freedesktop.DBus", "GetConnectionUnixProcessID",
+        g_variant_new("(s)", g_dbus_connection_get_unique_name(ctx->bus)),
+        G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, NULL);
+    ctx->attested = r != NULL;
+    if (r) g_variant_unref(r);
+  }
+#ifdef __linux__
+  CHECK(ctx->attested);
+#endif
+  ctx->principal = ctx->attested ? self_principal() : g_strdup("claimed:");
+
+  /* Grants ($XDG_CONFIG_HOME/gnostr/signer-grants.ini): section = request
+   * kind, key "<principal>|<npub or *>". */
+  {
+    ctx->grants_path = g_build_filename(gnostr_dir, "signer-grants.ini", NULL);
+    if (grants) {
+      char *body = expand_grants(ctx, grants);
+      write_file(ctx->grants_path, body);
+      g_free(body);
+    }
+    /* The pre-0.4.0 ACL, keyed on claimed app_ids: must be ignored. */
+    char *legacy = g_build_filename(gnostr_dir, "signer-acl.ini", NULL);
+    write_file(legacy, "[SignEvent]\ncontract-legacy:=allow\n"
+                       "[NIP04Decrypt]\ncontract-legacy:=allow\n");
+    g_free(legacy);
+    g_free(gnostr_dir);
+  }
+
+  /* Test-build trust overrides read by the daemon at call time. */
+  char *exe = self_exe();
+  g_setenv("NOSTR_SIGNER_TEST_APPROVERS", trust && trust->approver ? exe : "/nonexistent", TRUE);
+  g_setenv("NOSTR_SIGNER_TEST_ORIGIN_BRIDGES", trust && trust->bridge ? exe : "/nonexistent", TRUE);
+  g_free(exe);
+
   if (pre_daemon) pre_daemon(ctx, data);
 
   GError *err = NULL;
+  /* NIP55L_TEST_DAEMON_LOG=1 keeps the daemon's stderr (debugging). */
   ctx->daemon = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
-                                 G_SUBPROCESS_FLAGS_STDERR_SILENCE,
+                                 (g_getenv("NIP55L_TEST_DAEMON_LOG") ? 0 : G_SUBPROCESS_FLAGS_STDERR_SILENCE),
                                  &err, NIP55L_DAEMON_PATH, NULL);
   if (!ctx->daemon) {
     g_printerr("spawn daemon (%s): %s\n", NIP55L_DAEMON_PATH,
@@ -241,16 +371,27 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
   }
   g_clear_error(&err);
 
-  ctx->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
-  CHECK(ctx->bus != NULL);
-
   wait_for_name(ctx->bus, 20);
+  if (trust && trust->own_ui_name) {
+    GVariant *r = g_dbus_connection_call_sync(ctx->bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+        "org.freedesktop.DBus", "RequestName", g_variant_new("(su)", APPROVER_NAME, 4u),
+        G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &err);
+    CHECK(r != NULL);
+    g_variant_unref(r);
+  }
 
   g_free(xdg_cfg); g_free(xdg_data); g_free(xdg_runtime);
 }
 
+/* Phases 1-2 run with full grants for this process: the lanes themselves
+ * are under test there, the gate is exercised in the gating phase. */
+#define ALL_KINDS_GRANT \
+  "[event]\n@P|*=allow\n[nip44_conversation_key]\n@P|@N=allow\n" \
+  "[get_public_key]\n@P|*=allow\n[get_relays]\n@P|*=allow\n" \
+  "[nip44_encrypt]\n@P|@N=allow\n[nip44_decrypt]\n@P|@N=allow\n"
+
 static void ctx_setup(Ctx *ctx, gboolean allow_mutations, gboolean write_relays) {
-  ctx_setup_full(ctx, allow_mutations, write_relays, NULL, NULL, NULL);
+  ctx_setup_full(ctx, allow_mutations, write_relays, ALL_KINDS_GRANT, &TRUST_UI, NULL, NULL);
 }
 
 static void ctx_teardown(Ctx *ctx) {
@@ -299,6 +440,8 @@ static void ctx_teardown(Ctx *ctx) {
   free(ctx->sk_hex);
   free(ctx->pk_hex);
   free(ctx->npub);
+  g_free(ctx->principal);
+  g_free(ctx->grants_path);
 }
 
 /* ---------------------------------------------------------------------------
@@ -322,7 +465,7 @@ static void assert_signed_event(const char *reply_json, const char *want_pk_hex,
 static void test_get_public_key(Ctx *ctx) {
   GError *err = NULL;
   GVariant *ret = call(ctx->bus, "GetPublicKey", NULL, "(s)", &err);
-  CHECK(ret != NULL);
+  if (!ret) { g_printerr("GetPublicKey (principal %s): %s\n", ctx->principal, err ? err->message : "?"); exit(1); }
   const char *npub = NULL;
   g_variant_get(ret, "(&s)", &npub);
   CHECK(g_strcmp0(npub, ctx->npub) == 0);
@@ -489,12 +632,15 @@ static void expect_remote_error(GError *err, const char *name) {
   g_free(remote);
 }
 
+/* ---- approval round-trips ------------------------------------------------ */
+
 typedef struct {
   GMainLoop *loop;
-  char *req_id, *kind, *preview, *app_id;
-  GVariant *reply;
-  GError *err;
-  gboolean done;
+  guint n_requests;            /* ApprovalRequested seen */
+  char *req_id, *kind, *preview, *app_id, *identity;
+  guint pending_replies;       /* async calls not yet answered */
+  GPtrArray *replies;          /* GVariant* or NULL, in completion order */
+  GPtrArray *errors;           /* GError* or NULL */
 } ApprCtx;
 
 static void on_approval_requested(GDBusConnection *c, const gchar *snd, const gchar *path,
@@ -504,75 +650,137 @@ static void on_approval_requested(GDBusConnection *c, const gchar *snd, const gc
   ApprCtx *a = ud;
   const char *app = NULL, *id = NULL, *kind = NULL, *prev = NULL, *rid = NULL;
   g_variant_get(params, "(&s&s&s&s&s)", &app, &id, &kind, &prev, &rid);
+  a->n_requests++;
   g_free(a->req_id); a->req_id = g_strdup(rid);
   g_free(a->kind); a->kind = g_strdup(kind);
   g_free(a->preview); a->preview = g_strdup(prev);
   g_free(a->app_id); a->app_id = g_strdup(app);
+  g_free(a->identity); a->identity = g_strdup(id);
   g_main_loop_quit(a->loop);
 }
 
-static void on_convkey_reply(GObject *src, GAsyncResult *res, gpointer ud) {
+static void on_async_reply(GObject *src, GAsyncResult *res, gpointer ud) {
   ApprCtx *a = ud;
-  a->reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &a->err);
-  a->done = TRUE;
+  GError *err = NULL;
+  GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &err);
+  g_ptr_array_add(a->replies, r);
+  g_ptr_array_add(a->errors, err);
+  a->pending_replies--;
   g_main_loop_quit(a->loop);
 }
 
 static gboolean appr_timeout(gpointer ud) {
-  ApprCtx *a = ud;
+  (void)ud;
   g_printerr("FAIL: approval round-trip timed out\n");
   exit(1);
-  g_main_loop_quit(a->loop);
   return G_SOURCE_REMOVE;
 }
 
-/* Interactive lane: no ACL entry for app_id, so the daemon parks the call,
- * emits ApprovalRequested, and completes it when ApproveRequest decides. */
-static void convkey_interactive(Ctx *ctx, const char *peer_pk, const char *app_id,
-                                gboolean decision, const char *want_hex) {
-  ApprCtx a = { .loop = g_main_loop_new(NULL, FALSE) };
-  guint sub = g_dbus_connection_signal_subscribe(ctx->bus, BUS_NAME, IFACE,
-                                                 "ApprovalRequested", OBJ_PATH, NULL,
-                                                 G_DBUS_SIGNAL_FLAGS_NONE,
-                                                 on_approval_requested, &a, NULL);
-  guint to = g_timeout_add_seconds(20, appr_timeout, &a);
-  g_dbus_connection_call(ctx->bus, BUS_NAME, OBJ_PATH, IFACE, "NIP44DeriveConversationKey",
-                         g_variant_new("(sss)", peer_pk, "", app_id),
+typedef struct { ApprCtx a; guint sub; guint to; } Watch;
+
+static void watch_start(Ctx *ctx, Watch *w) {
+  memset(w, 0, sizeof *w);
+  w->a.loop = g_main_loop_new(NULL, FALSE);
+  w->a.replies = g_ptr_array_new();
+  w->a.errors = g_ptr_array_new();
+  w->sub = g_dbus_connection_signal_subscribe(ctx->bus, BUS_NAME, IFACE, "ApprovalRequested",
+                                              OBJ_PATH, NULL, G_DBUS_SIGNAL_FLAGS_NONE,
+                                              on_approval_requested, &w->a, NULL);
+  w->to = g_timeout_add_seconds(20, appr_timeout, &w->a);
+}
+
+static void watch_drain(void) {
+  /* Deliver signals already received (they precede any reply on the wire). */
+  while (g_main_context_iteration(NULL, FALSE)) {}
+}
+
+static void watch_stop(Ctx *ctx, Watch *w) {
+  watch_drain();
+  g_source_remove(w->to);
+  g_dbus_connection_signal_unsubscribe(ctx->bus, w->sub);
+  for (guint i = 0; i < w->a.replies->len; i++)
+    if (w->a.replies->pdata[i]) g_variant_unref(w->a.replies->pdata[i]);
+  for (guint i = 0; i < w->a.errors->len; i++)
+    if (w->a.errors->pdata[i]) g_error_free(w->a.errors->pdata[i]);
+  g_ptr_array_unref(w->a.replies);
+  g_ptr_array_unref(w->a.errors);
+  g_free(w->a.req_id); g_free(w->a.kind); g_free(w->a.preview);
+  g_free(w->a.app_id); g_free(w->a.identity);
+  g_main_loop_unref(w->a.loop);
+}
+
+static void watch_call(Ctx *ctx, Watch *w, const char *method, GVariant *args) {
+  w->a.pending_replies++;
+  g_dbus_connection_call(ctx->bus, BUS_NAME, OBJ_PATH, IFACE, method, args,
                          G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 30000, NULL,
-                         on_convkey_reply, &a);
-  while (!a.req_id && !a.done) g_main_loop_run(a.loop);
-  CHECK(!a.done);           /* must be parked, not answered */
-  CHECK(a.req_id != NULL);
-  CHECK(g_strcmp0(a.kind, "nip44_conversation_key") == 0);
-  CHECK(g_strcmp0(a.app_id, app_id) == 0);
-  CHECK(a.preview && strstr(a.preview, peer_pk) != NULL);
+                         on_async_reply, &w->a);
+}
 
-  GError *err = NULL;
-  GVariant *ok = call(ctx->bus, "ApproveRequest",
-                      g_variant_new("(sbbt)", a.req_id, decision, FALSE, (guint64)0),
-                      "(b)", &err);
-  if (!ok) { g_printerr("ApproveRequest: %s\n", err ? err->message : "?"); exit(1); }
-  gboolean handled = FALSE;
-  g_variant_get(ok, "(b)", &handled);
-  CHECK(handled);
-  g_variant_unref(ok);
-
-  while (!a.done) g_main_loop_run(a.loop);
-  g_source_remove(to);
-  g_dbus_connection_signal_unsubscribe(ctx->bus, sub);
-  if (decision) {
-    if (!a.reply) { g_printerr("convkey after approve: %s\n", a.err ? a.err->message : "?"); exit(1); }
-    const char *hex = NULL;
-    g_variant_get(a.reply, "(&s)", &hex);
-    CHECK(g_strcmp0(hex, want_hex) == 0);
-    g_variant_unref(a.reply);
-  } else {
-    CHECK(a.reply == NULL);
-    expect_remote_error(a.err, ERR_DENIED);
-    g_clear_error(&a.err);
+/* Wait until the n-th ApprovalRequested (or an unexpected reply). */
+static void watch_wait_request(Watch *w, guint n) {
+  guint replies = w->a.replies->len;
+  while (w->a.n_requests < n && w->a.replies->len == replies) g_main_loop_run(w->a.loop);
+  if (w->a.n_requests < n) {
+    GError *e = w->a.errors->pdata[w->a.errors->len - 1];
+    g_printerr("FAIL: call answered without a prompt (%s)\n", e ? e->message : "success");
+    exit(1);
   }
-  g_free(a.req_id); g_free(a.kind); g_free(a.preview); g_free(a.app_id);
-  g_main_loop_unref(a.loop);
+}
+
+static void watch_wait_replies(Watch *w) {
+  while (w->a.pending_replies > 0) g_main_loop_run(w->a.loop);
+}
+
+static GVariant *approve_call(Ctx *ctx, const char *req_id, gboolean decision, gboolean remember,
+                              GError **err) {
+  return call(ctx->bus, "ApproveRequest",
+              g_variant_new("(sbbt)", req_id, decision, remember, (guint64)0), "(b)", err);
+}
+
+static void approve(Ctx *ctx, const char *req_id, gboolean decision, gboolean remember) {
+  GError *err = NULL;
+  GVariant *ok = approve_call(ctx, req_id, decision, remember, &err);
+  if (!ok) { g_printerr("ApproveRequest: %s\n", err ? err->message : "?"); exit(1); }
+  g_variant_unref(ok);
+}
+
+/* One gated call that must be parked: checks the ApprovalRequested shape,
+ * answers it, and returns the reply (caller unrefs) or sets *err_out. */
+static GVariant *interactive(Ctx *ctx, const char *method, GVariant *args, const char *want_kind,
+                             const char *want_app_id, gboolean decision, gboolean remember,
+                             char **preview_out, GError **err_out) {
+  g_usleep(120 * 1000); /* the daemon allows one new prompt per 100 ms per sender */
+  Watch w;
+  watch_start(ctx, &w);
+  watch_call(ctx, &w, method, args);
+  watch_wait_request(&w, 1);
+  if (g_strcmp0(w.a.kind, want_kind) != 0)
+    g_printerr("kind: want %s got %s\n", want_kind, w.a.kind);
+  CHECK(g_strcmp0(w.a.kind, want_kind) == 0);
+  if (g_strcmp0(w.a.app_id, want_app_id) != 0)
+    g_printerr("app_id: want %s got %s\n", want_app_id, w.a.app_id);
+  CHECK(g_strcmp0(w.a.app_id, want_app_id) == 0);
+  if (g_strcmp0(want_kind, "get_relays") != 0) CHECK(g_strcmp0(w.a.identity, ctx->npub) == 0);
+  if (preview_out) *preview_out = g_strdup(w.a.preview);
+  approve(ctx, w.a.req_id, decision, remember);
+  watch_wait_replies(&w);
+  GVariant *r = w.a.replies->pdata[0];
+  if (r) g_variant_ref(r);
+  if (err_out && w.a.errors->pdata[0]) *err_out = g_error_copy(w.a.errors->pdata[0]);
+  watch_stop(ctx, &w);
+  return r;
+}
+
+/* A gated call that must be answered from the grants alone. */
+static GVariant *no_prompt(Ctx *ctx, const char *method, GVariant *args, GError **err) {
+  Watch w;
+  watch_start(ctx, &w);
+  GVariant *r = call(ctx->bus, method, args, "(s)", err);
+  watch_drain();
+  if (w.a.n_requests) g_printerr("unexpected ApprovalRequested (%s) for %s\n", w.a.kind, method);
+  CHECK(w.a.n_requests == 0);
+  watch_stop(ctx, &w);
+  return r;
 }
 
 static void test_nip44_derive_conversation_key(Ctx *ctx) {
@@ -581,11 +789,11 @@ static void test_nip44_derive_conversation_key(Ctx *ctx) {
   CHECK(peer_sk && peer_pk);
   char *want = expected_convkey_hex(peer_sk, ctx->pk_hex);
 
-  /* ACL allow: answered immediately, equal to the NIP-44 derivation on the
+  /* Granted: answered immediately, equal to the NIP-44 derivation on the
    * peer's side, and usable with the stock NIP-44 v2 cipher. */
   GError *err = NULL;
-  GVariant *ret = call(ctx->bus, "NIP44DeriveConversationKey",
-                       g_variant_new("(sss)", peer_pk, "", "contract-test"), "(s)", &err);
+  GVariant *ret = no_prompt(ctx, "NIP44DeriveConversationKey",
+                            g_variant_new("(sss)", peer_pk, "", "contract-test"), &err);
   if (!ret) { g_printerr("NIP44DeriveConversationKey: %s\n", err ? err->message : "?"); exit(1); }
   const char *hex = NULL;
   g_variant_get(ret, "(&s)", &hex);
@@ -615,13 +823,6 @@ static void test_nip44_derive_conversation_key(Ctx *ctx) {
   g_variant_unref(ret);
   g_free(upper);
 
-  /* ACL deny: refused without prompting. */
-  ret = call(ctx->bus, "NIP44DeriveConversationKey",
-             g_variant_new("(sss)", peer_pk, "", "contract-deny"), "(s)", &err);
-  CHECK(ret == NULL);
-  expect_remote_error(err, ERR_DENIED);
-  g_clear_error(&err);
-
   /* Malformed and off-curve peers: InvalidInput, never an approval prompt.
    * x = 5 has no point on secp256k1 (5^3 + 7 = 132 is a non-residue). */
   const char *bad[] = {
@@ -636,16 +837,368 @@ static void test_nip44_derive_conversation_key(Ctx *ctx) {
     g_clear_error(&err);
   }
 
-  /* Interactive approve, then interactive deny (distinct app_ids with no
-   * ACL entry; the 100 ms per-sender rate limit is respected). */
-  g_usleep(150 * 1000);
-  convkey_interactive(ctx, peer_pk, "contract-ask", TRUE, want);
-  g_usleep(150 * 1000);
-  convkey_interactive(ctx, peer_pk, "contract-ask-2", FALSE, NULL);
-
   g_free(want);
   free(peer_sk);
   free(peer_pk);
+}
+
+/* Incoming NIP-44 / NIP-04 payloads addressed to the daemon's identity. */
+static char *incoming_nip44(Ctx *ctx, const char *peer_sk, const char *msg) {
+  uint8_t sk[32], pk[32];
+  CHECK(nostr_hex2bin(sk, peer_sk, 32));
+  CHECK(nostr_hex2bin(pk, ctx->pk_hex, 32));
+  char *out = NULL;
+  CHECK(nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)msg, strlen(msg), &out) == 0 && out);
+  return out;
+}
+
+static int grants_has(Ctx *ctx, const char *section, const char *key, const char *want_value) {
+  GKeyFile *kf = g_key_file_new();
+  int found = 0;
+  if (g_key_file_load_from_file(kf, ctx->grants_path, G_KEY_FILE_NONE, NULL)) {
+    char *v = g_key_file_get_string(kf, section, key, NULL);
+    found = v && (!want_value || g_str_has_prefix(v, want_value));
+    g_free(v);
+  }
+  g_key_file_unref(kf);
+  return found;
+}
+
+/* nostrc-y02q / phk4 / 1e31 / eie5 / f7hk. Fixture: no grants except a
+ * web-origin one this process must NOT inherit, approvals answered here. */
+static void test_gating(Ctx *ctx) {
+  char *peer_sk = nostr_key_generate_private();
+  char *peer_pk = nostr_key_get_public(peer_sk);
+  CHECK(peer_sk && peer_pk);
+  GError *err = NULL;
+  char *preview = NULL;
+
+  /* y02q: decrypt is parked until approved; the prompt names the verified
+   * principal (not the claimed app_id) and the resolved npub. */
+  char *ct = incoming_nip44(ctx, peer_sk, "dm one");
+  GVariant *r = interactive(ctx, "NIP44Decrypt", g_variant_new("(sss)", ct, peer_pk, ""),
+                            "nip44_decrypt", ctx->principal, TRUE, FALSE, &preview, &err);
+  if (!r) { g_printerr("NIP44Decrypt after approve: %s\n", err ? err->message : "?"); exit(1); }
+  const char *pt = NULL;
+  g_variant_get(r, "(&s)", &pt);
+  CHECK(g_strcmp0(pt, "dm one") == 0);
+  CHECK(preview && strstr(preview, peer_pk) != NULL);
+  g_variant_unref(r); g_free(preview); preview = NULL;
+  g_free(ct);
+  g_usleep(150 * 1000);
+
+  /* Allow-once is not remembered: the next decrypt prompts again; deny. */
+  ct = incoming_nip44(ctx, peer_sk, "dm two");
+  r = interactive(ctx, "NIP44Decrypt", g_variant_new("(sss)", ct, peer_pk, ""),
+                  "nip44_decrypt", ctx->principal, FALSE, FALSE, NULL, &err);
+  CHECK(r == NULL);
+  expect_remote_error(err, ERR_DENIED);
+  g_clear_error(&err);
+  g_usleep(150 * 1000);
+
+  /* NIP04Decrypt, NIP44DecryptB64, GetPublicKey and GetRelays are gated too. */
+  r = interactive(ctx, "NIP04Decrypt", g_variant_new("(sss)", "bm90LWEtcmVhbC1jaXBoZXI=?iv=AAAAAAAAAAAAAAAAAAAAAA==", peer_pk, ""),
+                  "nip04_decrypt", ctx->principal, FALSE, FALSE, NULL, &err);
+  CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
+  g_usleep(150 * 1000);
+  r = interactive(ctx, "NIP44DecryptB64", g_variant_new("(sss)", ct, peer_pk, ""),
+                  "nip44_decrypt", ctx->principal, FALSE, FALSE, NULL, &err);
+  CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
+  g_usleep(150 * 1000);
+  r = interactive(ctx, "GetPublicKey", NULL, "get_public_key", ctx->principal, TRUE, FALSE, NULL, &err);
+  CHECK(r != NULL);
+  const char *np = NULL; g_variant_get(r, "(&s)", &np);
+  CHECK(g_strcmp0(np, ctx->npub) == 0);
+  g_variant_unref(r);
+  g_usleep(150 * 1000);
+  r = interactive(ctx, "GetRelays", NULL, "get_relays", ctx->principal, FALSE, FALSE, NULL, &err);
+  CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
+  g_usleep(150 * 1000);
+  g_free(ct);
+
+  /* The pre-0.4.0 ACL entries ("contract-legacy:") are not honoured. */
+  r = interactive(ctx, "SignEvent",
+                  g_variant_new("(sss)", "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"legacy\"}",
+                                "", "contract-legacy"),
+                  "event", pr(ctx, "contract-legacy"), FALSE, FALSE, NULL, &err);
+  CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
+  g_usleep(150 * 1000);
+
+  /* phk4: claiming a web origin does not inherit its grant, and the
+   * approver sees both the verified principal and the claimed id. Needs a
+   * bus that attests PIDs. */
+  if (!ctx->attested) {
+    g_print("SKIP spoofed-app_id check: the bus does not attest caller PIDs here\n");
+  } else {
+    g_usleep(120 * 1000);
+    Watch w;
+    watch_start(ctx, &w);
+    watch_call(ctx, &w, "SignEvent",
+               g_variant_new("(sss)", "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"spoof\"}",
+                             "", "https://allowed.example"));
+    watch_wait_request(&w, 1);
+    CHECK(g_strcmp0(w.a.app_id, ctx->principal) == 0);
+    GVariant *info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", w.a.req_id), "(a{sv})", &err);
+    if (!info) { g_printerr("GetApprovalInfo: %s\n", err ? err->message : "?"); exit(1); }
+    GVariant *d = g_variant_get_child_value(info, 0);
+    const char *v = NULL;
+    CHECK(g_variant_lookup(d, "claimed_app_id", "&s", &v) && g_strcmp0(v, "https://allowed.example") == 0);
+    CHECK(g_variant_lookup(d, "principal", "&s", &v) && g_strcmp0(v, ctx->principal) == 0);
+    CHECK(g_variant_lookup(d, "principal_kind", "&s", &v) &&
+          (g_strcmp0(v, "executable") == 0 || g_strcmp0(v, "systemd-scope") == 0));
+    CHECK(g_variant_lookup(d, "kind", "&s", &v) && g_strcmp0(v, "event") == 0);
+    gboolean rememberable = FALSE;
+    CHECK(g_variant_lookup(d, "rememberable", "b", &rememberable) && rememberable);
+    g_variant_unref(d); g_variant_unref(info);
+    approve(ctx, w.a.req_id, FALSE, FALSE);
+    watch_wait_replies(&w);
+    CHECK(w.a.replies->pdata[0] == NULL);
+    expect_remote_error(w.a.errors->pdata[0], ERR_DENIED);
+    watch_stop(ctx, &w);
+  }
+  g_usleep(150 * 1000);
+
+  /* eie5: remember with the empty selector (what gnostr and the browser
+   * bridge send) → the grant is stored under the resolved npub → the next
+   * SignEvent, with "" or with the npub as selector, is not prompted. */
+  int64_t now = (int64_t)time(NULL);
+  r = interactive(ctx, "SignEvent",
+                  g_variant_new("(sss)", "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"remember me\"}",
+                                "", "contract-test"),
+                  "event", pr(ctx, "contract-test"), TRUE, TRUE, NULL, &err);
+  CHECK(r != NULL);
+  const char *signed_json = NULL;
+  g_variant_get(r, "(&s)", &signed_json);
+  assert_signed_event(signed_json, ctx->pk_hex, 1, now);
+  g_variant_unref(r);
+  {
+    char *key = g_strdup_printf("%s|%s", pr(ctx, "contract-test"), ctx->npub);
+    CHECK(grants_has(ctx, "event", key, "allow"));
+    g_free(key);
+  }
+  /* Three selector shapes for one key: empty (active), the secret itself,
+   * and (libsecret builds, whose lookup falls back to the env key) the npub. */
+#ifdef NIP55L_TEST_HAVE_LIBSECRET
+  const char *selectors[] = { "", ctx->sk_hex, ctx->npub };
+#else
+  const char *selectors[] = { "", ctx->sk_hex };
+#endif
+  for (size_t i = 0; i < G_N_ELEMENTS(selectors); i++) {
+    r = no_prompt(ctx, "SignEvent",
+                  g_variant_new("(sss)", "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"again\"}",
+                                selectors[i], ctx->attested ? "whatever-app" : "contract-test"), &err);
+    if (!r) { g_printerr("remembered SignEvent (selector #%zu): %s\n", i, err ? err->message : "?"); exit(1); }
+    g_variant_get(r, "(&s)", &signed_json);
+    assert_signed_event(signed_json, ctx->pk_hex, 1, now);
+    g_variant_unref(r);
+  }
+
+  /* f7hk: the remembered "event" allow does not cover decryption; a
+   * remembered deny for nip44_decrypt then refuses without prompting while
+   * SignEvent stays allowed. */
+  ct = incoming_nip44(ctx, peer_sk, "dm three");
+  r = interactive(ctx, "NIP44Decrypt", g_variant_new("(sss)", ct, peer_pk, ""),
+                  "nip44_decrypt", ctx->principal, FALSE, TRUE, NULL, &err);
+  CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
+  r = no_prompt(ctx, "NIP44Decrypt", g_variant_new("(sss)", ct, peer_pk, ""), &err);
+  CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
+  r = no_prompt(ctx, "SignEvent",
+                g_variant_new("(sss)", "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"still ok\"}", "",
+                              "contract-test"),
+                &err);
+  CHECK(r != NULL); g_variant_unref(r);
+  g_free(ct);
+  g_usleep(150 * 1000);
+
+  /* Convkey: remembered deny → denied by policy without a prompt. */
+  r = interactive(ctx, "NIP44DeriveConversationKey", g_variant_new("(sss)", peer_pk, "", "contract-ask"),
+                  "nip44_conversation_key", pr(ctx, "contract-ask"), FALSE, TRUE, &preview, &err);
+  CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
+  CHECK(preview && strstr(preview, peer_pk) != NULL);
+  g_free(preview); preview = NULL;
+  r = no_prompt(ctx, "NIP44DeriveConversationKey", g_variant_new("(sss)", peer_pk, "", "contract-ask"), &err);
+  CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
+  g_usleep(150 * 1000);
+
+  /* Queued identical calls share one prompt; one approval answers all. */
+  {
+    g_usleep(120 * 1000);
+    Watch w;
+    watch_start(ctx, &w);
+    char *cts[3];
+    for (int i = 0; i < 3; i++) {
+      char msg[16]; g_snprintf(msg, sizeof msg, "burst %d", i);
+      cts[i] = incoming_nip44(ctx, peer_sk, msg);
+    }
+    /* A fresh kind (encrypt) so the remembered decrypt deny does not apply. */
+    for (int i = 0; i < 3; i++)
+      watch_call(ctx, &w, "NIP44Encrypt", g_variant_new("(sss)", cts[i], peer_pk, ""));
+    watch_wait_request(&w, 1);
+    CHECK(g_strcmp0(w.a.kind, "nip44_encrypt") == 0);
+    /* Let the other two reach the daemon, then answer once. */
+    for (int i = 0; i < 20; i++) { watch_drain(); g_usleep(10 * 1000); }
+    GVariant *info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", w.a.req_id), "(a{sv})", &err);
+    CHECK(info != NULL);
+    GVariant *d = g_variant_get_child_value(info, 0);
+    guint32 ncalls = 0;
+    CHECK(g_variant_lookup(d, "calls", "u", &ncalls) && ncalls == 3);
+    g_variant_unref(d); g_variant_unref(info);
+    approve(ctx, w.a.req_id, TRUE, FALSE);
+    watch_wait_replies(&w);
+    CHECK(w.a.n_requests == 1);
+    CHECK(w.a.replies->len == 3);
+    for (guint i = 0; i < 3; i++) CHECK(w.a.replies->pdata[i] != NULL);
+    watch_stop(ctx, &w);
+    for (int i = 0; i < 3; i++) free(cts[i]);
+  }
+  g_usleep(150 * 1000);
+
+  /* One application cannot park more than 8 requests (the table is shared
+   * with every other app); the 9th is refused, the 8 still answerable.
+   * Forget the grants remembered above first (the daemon reloads the file
+   * when it changes). */
+  {
+    write_file(ctx->grants_path, "");
+    Watch w;
+    watch_start(ctx, &w);
+    for (guint i = 0; i < 9; i++) {
+      g_usleep(120 * 1000);
+      gchar *ev = g_strdup_printf("{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"cap %u\"}", i);
+      watch_call(ctx, &w, "SignEvent", g_variant_new("(sss)", ev, "", "contract-cap"));
+      g_free(ev);
+    }
+    while (w.a.n_requests < 8 || w.a.replies->len < 1) g_main_loop_run(w.a.loop);
+    CHECK(w.a.n_requests == 8);
+    CHECK(w.a.replies->len == 1 && w.a.replies->pdata[0] == NULL);
+    expect_remote_error(w.a.errors->pdata[0], "org.nostr.Signer.Error.RateLimited");
+    g_free(w.a.req_id); w.a.req_id = NULL;
+    /* Deny the parked eight by id: ids are req-N, consecutive. */
+    GVariant *info = NULL;
+    guint denied = 0;
+    for (guint n = 1; n < 200 && denied < 8; n++) {
+      gchar *id = g_strdup_printf("req-%u", n);
+      info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", id), "(a{sv})", NULL);
+      if (info) {
+        GVariant *d = g_variant_get_child_value(info, 0);
+        const char *claimed = NULL;
+        if (g_variant_lookup(d, "claimed_app_id", "&s", &claimed) && g_strcmp0(claimed, "contract-cap") == 0) {
+          approve(ctx, id, FALSE, FALSE);
+          denied++;
+        }
+        g_variant_unref(d);
+        g_variant_unref(info);
+      }
+      g_free(id);
+    }
+    CHECK(denied == 8);
+    watch_wait_replies(&w);
+    watch_stop(ctx, &w);
+  }
+
+  /* Unknown request ids are not "handled". */
+  {
+    GVariant *ok = approve_call(ctx, "req-does-not-exist", TRUE, FALSE, &err);
+    CHECK(ok != NULL);
+    gboolean handled = TRUE; g_variant_get(ok, "(b)", &handled);
+    CHECK(!handled);
+    g_variant_unref(ok);
+  }
+
+  /* No approval agent on the bus: a call that needs a prompt fails fast. */
+  {
+    GVariant *rel = g_dbus_connection_call_sync(ctx->bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+        "org.freedesktop.DBus", "ReleaseName", g_variant_new("(s)", APPROVER_NAME),
+        G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &err);
+    CHECK(rel != NULL); g_variant_unref(rel);
+    r = no_prompt(ctx, "NIP04Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""), &err);
+    CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
+  }
+
+  free(peer_sk);
+  free(peer_pk);
+}
+
+/* An untrusted process cannot answer (or inspect) approval requests. */
+static void test_untrusted_approver(Ctx *ctx) {
+  if (!ctx->attested) {
+    g_print("SKIP untrusted-approver check: the bus does not attest caller PIDs here\n");
+    return;
+  }
+  char *peer_sk = nostr_key_generate_private();
+  char *peer_pk = nostr_key_get_public(peer_sk);
+  Watch w;
+  watch_start(ctx, &w);
+  watch_call(ctx, &w, "NIP04Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""));
+  watch_wait_request(&w, 1);
+  GError *err = NULL;
+  GVariant *ok = approve_call(ctx, w.a.req_id, TRUE, TRUE, &err);
+  CHECK(ok == NULL); expect_remote_error(err, ERR_PERM); g_clear_error(&err);
+  GVariant *info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", w.a.req_id), "(a{sv})", &err);
+  CHECK(info == NULL); expect_remote_error(err, ERR_PERM); g_clear_error(&err);
+  CHECK(w.a.pending_replies == 1); /* still parked, not approved */
+  CHECK(!g_file_test(ctx->grants_path, G_FILE_TEST_EXISTS));
+  /* Leave it parked; the daemon is torn down with the fixture. */
+  g_source_remove(w.to);
+  g_dbus_connection_signal_unsubscribe(ctx->bus, w.sub);
+  free(peer_sk); free(peer_pk);
+}
+
+/* This process as the trusted browser bridge: the app_id is the principal
+ * when it is a web origin, so origin grants apply; anything else is not. */
+static void test_bridge_origins(Ctx *ctx) {
+  if (!ctx->attested) {
+    g_print("SKIP bridge check: the bus does not attest caller PIDs here\n");
+    return;
+  }
+  const char *tmpl = "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"from a site\"}";
+  GError *err = NULL;
+  GVariant *r = no_prompt(ctx, "SignEvent", g_variant_new("(sss)", tmpl, "", "https://allowed.example"), &err);
+  if (!r) { g_printerr("bridge allowed origin: %s\n", err ? err->message : "?"); exit(1); }
+  g_variant_unref(r);
+  r = no_prompt(ctx, "SignEvent", g_variant_new("(sss)", tmpl, "", "https://denied.example"), &err);
+  CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
+  r = no_prompt(ctx, "GetPublicKeyForApp", g_variant_new("(s)", "https://allowed.example"), &err);
+  CHECK(r != NULL);
+  const char *np = NULL; g_variant_get(r, "(&s)", &np);
+  CHECK(g_strcmp0(np, ctx->npub) == 0);
+  g_variant_unref(r);
+
+  /* An origin without a grant prompts as itself; the bridge is "via". */
+  {
+    g_usleep(120 * 1000);
+    Watch w;
+    watch_start(ctx, &w);
+    watch_call(ctx, &w, "SignEvent", g_variant_new("(sss)", tmpl, "", "https://prompt.example"));
+    watch_wait_request(&w, 1);
+    CHECK(g_strcmp0(w.a.app_id, "https://prompt.example") == 0);
+    GVariant *info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", w.a.req_id), "(a{sv})", &err);
+    CHECK(info != NULL);
+    GVariant *d = g_variant_get_child_value(info, 0);
+    const char *v = NULL;
+    CHECK(g_variant_lookup(d, "principal_kind", "&s", &v) && g_strcmp0(v, "website") == 0);
+    CHECK(g_variant_lookup(d, "via", "&s", &v) && g_strcmp0(v, ctx->principal) == 0);
+    g_variant_unref(d); g_variant_unref(info);
+    approve(ctx, w.a.req_id, TRUE, TRUE);
+    watch_wait_replies(&w);
+    CHECK(w.a.replies->pdata[0] != NULL);
+    watch_stop(ctx, &w);
+  }
+  char *key = g_strdup_printf("https://prompt.example|%s", ctx->npub);
+  CHECK(grants_has(ctx, "event", key, "allow"));
+  g_free(key);
+  r = no_prompt(ctx, "SignEvent", g_variant_new("(sss)", tmpl, "", "https://prompt.example"), &err);
+  CHECK(r != NULL); g_variant_unref(r);
+  g_usleep(150 * 1000);
+
+  /* Not an origin (or not normalized): the bridge's own principal. */
+  const char *not_origins[] = { "contract-test", "https://Allowed.example", "https://allowed.example/path",
+                                "http://allowed.example" };
+  for (size_t i = 0; i < G_N_ELEMENTS(not_origins); i++) {
+    r = interactive(ctx, "SignEvent", g_variant_new("(sss)", tmpl, "", not_origins[i]),
+                    "event", ctx->principal, FALSE, FALSE, NULL, &err);
+    CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
+    g_usleep(150 * 1000);
+  }
 }
 
 static void test_get_relays_paths(Ctx *ctx, gboolean expect_ok) {
@@ -736,7 +1289,9 @@ static gboolean try_store_and_clear_key(Ctx *ctx) {
     g_variant_unref(gpk_ret);
   }
 
-  /* Clean up the stored item so the run leaves no residue in libsecret. */
+  /* Clean up the stored item so the run leaves no residue in libsecret
+   * (after the 500 ms per-sender mutation interval). */
+  g_usleep(600 * 1000);
   ret = call(ctx->bus, "ClearKey", g_variant_new("(s)", fresh_npub),
              "(b)", &err);
   if (ret) {
@@ -951,12 +1506,10 @@ static void run_phase3(void) {
   test_key_new(&p.client_dup);
   test_key_new(&p.client_foreign);
   test_key_new(&p.client_hw);
-  gchar *acl = g_strdup_printf("contract-test:%s=allow\ncontract-test:Legacy Main=allow\n"
-                               "contract-test:%s=allow\n",
-                               p.legacy_signer.npub, p.client.npub);
-
+  /* Selectors resolve to different keys here, so grant any identity. */
   Ctx ctx;
-  ctx_setup_full(&ctx, /*allow_mutations=*/TRUE, /*write_relays=*/FALSE, acl,
+  ctx_setup_full(&ctx, /*allow_mutations=*/TRUE, /*write_relays=*/FALSE,
+                 "[event]\n@P|*=allow\n[get_public_key]\n@P|*=allow\n", &TRUST_UI,
                  phase3_pre_daemon, &p);
 
   /* The daemon migrates off the main loop; the marker is its last write.
@@ -1045,7 +1598,9 @@ static void run_phase3(void) {
     check_unified(&p.pre_bml6, "", p.pre_bml6.npub);
   }
 
-  /* StoreKey → GetPublicKey → ClearKey against the real keyring. */
+  /* StoreKey → GetPublicKey → ClearKey against the real keyring. Key
+   * mutations are rate-limited to one per 500 ms per sender. */
+  g_usleep(600 * 1000);
   CHECK(try_store_and_clear_key(&ctx));
 
   /* Marker: a later pass is a no-op, even with a new legacy item present. */
@@ -1063,7 +1618,6 @@ static void run_phase3(void) {
   }
 
   ctx_teardown(&ctx);
-  g_free(acl);
   test_key_free(&p.legacy_signer);
   test_key_free(&p.legacy_helper);
   test_key_free(&p.legacy_hardware);
@@ -1098,12 +1652,52 @@ int main(void) {
     g_print("PASS phase 1 (no mutations, no relays.conf)\n");
   }
 
-  /* Second fixture: mutations allowed, relays written. Exercises GetRelays
+  /* Gating (nip55l 0.4.0): no grants for this process except a web-origin
+   * one it must not inherit; this process answers approvals. */
+  {
+    Ctx ctx;
+    ctx_setup_full(&ctx, FALSE, TRUE, "[event]\nhttps://allowed.example|*=allow\n",
+                   &TRUST_UI, NULL, NULL);
+    test_gating(&ctx);
+    gboolean attested = ctx.attested;
+    ctx_teardown(&ctx);
+    g_print("PASS gating (decrypt/pubkey/relays gated,%s remember round-trip, kind-keyed "
+            "remember, coalescing, no-agent fail-fast)\n",
+            attested ? " spoofed app_id denied," : " [unattested bus: claimed-app_id principals],");
+  }
+
+  /* An approval agent is present but this process is not a trusted one. */
+  {
+    Ctx ctx;
+    const Trust untrusted = { FALSE, FALSE, TRUE };
+    ctx_setup_full(&ctx, FALSE, FALSE, NULL, &untrusted, NULL, NULL);
+    test_untrusted_approver(&ctx);
+    gboolean ran = ctx.attested;
+    ctx_teardown(&ctx);
+    if (ran) g_print("PASS untrusted approver refused\n");
+  }
+
+  /* This process as the trusted browser bridge. */
+  {
+    Ctx ctx;
+    const Trust bridge = { TRUE, TRUE, TRUE };
+    ctx_setup_full(&ctx, FALSE, FALSE,
+                   "[event]\nhttps://allowed.example|*=allow\nhttps://denied.example|*=deny\n"
+                   "[get_public_key]\nhttps://allowed.example|*=allow\n",
+                   &bridge, NULL, NULL);
+    test_bridge_origins(&ctx);
+    gboolean ran = ctx.attested;
+    ctx_teardown(&ctx);
+    if (ran) g_print("PASS bridge (origin grants, origin prompt + remember, non-origin app_id)\n");
+  }
+
+  /* Mutations allowed, relays written. Exercises GetRelays
    * and (best-effort) StoreKey/ClearKey. */
   {
     Ctx ctx;
     ctx_setup(&ctx, /*allow_mutations=*/TRUE, /*write_relays=*/TRUE);
     test_get_relays_paths(&ctx, /*expect_ok=*/TRUE);
+    g_usleep(600 * 1000); /* phase 1's StoreKey probe used this sender's mutation slot */
     gboolean stored = try_store_and_clear_key(&ctx);
     if (!stored) {
       g_print("PARTIAL phase 2: libsecret unavailable, "

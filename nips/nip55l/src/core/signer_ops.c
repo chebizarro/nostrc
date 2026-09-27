@@ -357,6 +357,26 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
   return NOSTR_SIGNER_ERROR_INVALID_KEY;
 }
 
+static int sk_hex_to_npub(const char *sk_hex, char **out_npub){
+  *out_npub = NULL;
+  char *pk_hex = nostr_key_get_public(sk_hex);
+  if (!pk_hex) return NOSTR_SIGNER_ERROR_BACKEND;
+  uint8_t pk[32]; if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) { free(pk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
+  free(pk_hex);
+  char *npub=NULL; if (nostr_nip19_encode_npub(pk, &npub)!=0 || !npub) return NOSTR_SIGNER_ERROR_BACKEND;
+  *out_npub = npub; return 0;
+}
+
+int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub){
+  if (!out_npub) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_npub = NULL;
+  char *sk_hex = NULL; int rc = resolve_seckey_hex(current_user, &sk_hex);
+  if (rc != 0 || !sk_hex) return rc ? rc : NOSTR_SIGNER_ERROR_NOT_FOUND;
+  rc = is_hex_64(sk_hex) ? sk_hex_to_npub(sk_hex, out_npub) : NOSTR_SIGNER_ERROR_INVALID_KEY;
+  secure_wipe(sk_hex, strlen(sk_hex));
+  free(sk_hex);
+  return rc;
+}
+
 int nostr_nip55l_get_public_key(char **out_npub){
   if(!out_npub) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_npub=NULL;
   /* Fast path: return the cached active npub if StoreKey populated it.
@@ -367,16 +387,7 @@ int nostr_nip55l_get_public_key(char **out_npub){
     *out_npub = strdup(g_cached_active_npub);
     return *out_npub ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
   }
-  int rc;
-  char *sk_hex=NULL; rc = resolve_seckey_hex(NULL, &sk_hex); if(rc!=0) return rc;
-  char *pk_hex = nostr_key_get_public(sk_hex);
-  if (sk_hex) { memset(sk_hex, 0, strlen(sk_hex)); }
-  free(sk_hex);
-  if (!pk_hex) return NOSTR_SIGNER_ERROR_BACKEND;
-  uint8_t pk[32]; if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) { free(pk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
-  free(pk_hex);
-  char *npub=NULL; if (nostr_nip19_encode_npub(pk, &npub)!=0 || !npub) return NOSTR_SIGNER_ERROR_BACKEND;
-  *out_npub = npub; return 0;
+  return nostr_nip55l_resolve_npub(NULL, out_npub);
 }
 
 int nostr_nip55l_sign_event_full(const char *event_json,

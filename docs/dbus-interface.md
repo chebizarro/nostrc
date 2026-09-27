@@ -37,6 +37,99 @@ OFF), for headless installs that ship no gnostr-signer. Never install both.
 
 ## Interface: org.nostr.Signer
 
+### Access control (nip55l 0.4.0)
+
+Every method that uses or reveals key material or configuration is
+approval-gated: `GetPublicKey`, `GetRelays`, `SignEvent`, `NIP04Encrypt`,
+`NIP04Decrypt`, `NIP44Encrypt`, `NIP44Decrypt`, `NIP44EncryptB64`,
+`NIP44DecryptB64`, `NIP44DeriveConversationKey`, `DecryptZapEvent` and their
+`*ForApp` variants (nostrc-y02q, nostrc-1e31). `StoreKey`/`ClearKey` keep
+their own gate (`NOSTR_SIGNER_ALLOW_KEY_MUTATIONS`).
+
+**Who is calling (principal).** Derived by the daemon from the bus
+connection, never from an argument (nostrc-phk4):
+`GetConnectionCredentials` (uid, pid, pidfd when the bus offers it) and
+`/proc/<pid>`:
+
+| Principal | Source | Verified by |
+|-----------|--------|-------------|
+| `flatpak:<app-id>` | `/proc/<pid>/root/.flatpak-info` | the sandbox (attested) |
+| `app:<app-id>;exe:<path>` | systemd app scope/service in `/proc/<pid>/cgroup` + `/proc/<pid>/exe` | kernel (unsandboxed; the scope name is choosable) |
+| `snap:<name>;exe:<path>` | snap cgroup + executable | as above |
+| `exe:<path>` | `/proc/<pid>/exe` | kernel |
+| `https://<site>` | the `app_id` argument, **only** from the installed browser bridge | bridge executable (path + inode) |
+| (none) | other uid, `/proc` unreadable, caller gone | — |
+
+A scoped caller is keyed on scope *and* executable: every program started
+from a terminal emulator shares the terminal's app scope, and every GJS or
+Python app shares its interpreter binary. An unidentified caller can still
+be prompted; nothing is remembered for it.
+
+The `app_id` argument is a sub-principal only when the caller's executable
+is `<libexecdir>/nostr-signer-webext-host` (path and device/inode, EXE or
+app-scope caller, never Flatpak/Snap) *and* the value is a browser-serialized
+secure origin (`https://host[:port]`, `http://localhost…`); the call then
+runs as that origin. From anyone else `app_id` is an unverified label that
+the approval UI shows as "calls itself …" — claiming `https://snort.social`
+does not inherit that site's grants. This is the wallet agent's rule
+(`gnome/nostr-wallet-agent/src/nwa-caller.h`).
+
+**Which identity.** A grant is keyed on the npub the identity selector
+resolves to — the key the operation will use — never on the selector
+string. So `""` (active identity), a `key_id`, the npub, or the secret key
+itself all hit the same grant (nostrc-eie5). The selector's meaning for
+choosing a key is unchanged (`""` = active identity; see each method).
+If the active identity changes while a request is pending, approving it
+fails instead of using the new key.
+
+**Grants.** `$XDG_CONFIG_HOME/gnostr/signer-grants.ini`, one section per
+request kind, key `<principal>|<npub>` (or `<principal>|*` for any
+identity), value `allow`, `deny`, `allow:<until-unix-ts>` or
+`deny:<until-unix-ts>`. Kinds: `event`, `nip44_conversation_key`,
+`get_public_key`, `get_relays`, `nip04_encrypt`, `nip04_decrypt`,
+`nip44_encrypt`, `nip44_decrypt` (also the B64 variants), `zap_decrypt`.
+Remembering one kind never covers another. The pre-0.4.0
+`~/.config/gnostr/signer-acl.ini` (keyed on the claimed `app_id`) is ignored.
+Built-in defaults cover first-party services that run without a UI
+(`get_public_key`/`get_relays` for the nostr-homed helpers and
+`nostr-notify-daemon`, `nip44_decrypt` for `nostr-homectl`), matched on the
+installed executable's path and inode; CMake `NIP55L_DEFAULT_GRANTS`. An
+explicit entry in the grants file wins.
+
+**Approval.** Without a grant the call is parked and `ApprovalRequested`
+is emitted with `app_id` = principal and `identity` = resolved npub.
+Identical calls from the same connection join the pending request, so a
+burst of DM decrypts raises one prompt. Only the installed approval UI —
+`<bindir>/gnostr-signer` (path + inode) or the `org.gnostr.Signer` Flatpak —
+may call `ApproveRequest`/`GetApprovalInfo`; others get
+`Error.PermissionDenied`. When no process owns `org.gnostr.Signer` (no
+approval UI running) a call that needs a prompt fails at once with
+`Error.ApprovalDenied`. Unanswered requests expire after 300 s, and are
+dropped when the caller disconnects.
+
+**Limits of the model.** An unsandboxed process of the same user can also
+edit the grants file or ptrace other processes, so for those callers the
+grants are a guard against mistakes and confused deputies, not a boundary.
+The boundary is against sandboxed apps and against a process claiming
+another app's or a website's identity over the bus. Accepted under that
+model: an unsandboxed same-user process can run a trusted binary itself —
+drive the browser bridge's stdin to speak for any origin, or inject code
+into a trusted executable (`LD_PRELOAD`) — and inherit its grants; only
+Flatpak-attested principals resist that. Without a pidfd from the bus
+(dbus-daemon < 1.15) a process that passes its bus socket to another and
+exits could, after PID reuse, be read as a different process. The approval
+UI protects against other processes, not against itself: gnostr-signer can
+answer its own requests. Approver checks identify the caller afresh on every
+call; after an upgrade replaces `gnostr-signer` the running instance is no
+longer trusted until restarted (logged). One application (principal, or
+connection when unidentified) may park at most 8 requests. On macOS the bus does not report
+client PIDs: callers are keyed as `claimed:<app_id>` (the pre-0.4.0 model,
+shown as unverified) and any same-user process may answer approvals.
+
+**Daemon sandboxing.** Reading callers' `/proc` entries needs the daemon
+outside any user namespace, so its systemd user unit uses only
+namespace-free hardening (see *Systemd Hardening*).
+
 ### Methods
 
 #### GetPublicKey
@@ -54,8 +147,13 @@ Returns the public key (npub) for the currently active identity.
 **Returns**:
 - `npub` (string): Bech32-encoded public key (npub1...)
 
+**Approval** (0.4.0): kind `get_public_key`. `GetPublicKeyForApp(s app_id)`
+is the same call with an `app_id`.
+
 **Errors**:
-- `org.nostr.Signer.Error.Internal`: No key configured or backend failure
+- `org.nostr.Signer.Error.NoKeyConfigured`: No key configured
+- `org.nostr.Signer.Error.ApprovalDenied`: denied, timed out, or no approval UI running
+- `org.nostr.Signer.Error.Internal`: backend failure
 
 ---
 
@@ -81,7 +179,8 @@ Signs a Nostr event and returns the complete signed event JSON. May trigger user
 **Parameters**:
 - `event_json` (string): JSON-serialized Nostr event (without signature)
 - `current_user` (string): Identity selector (npub, key_id, or empty for default)
-- `app_id` (string): Application identifier for ACL (uses D-Bus sender if empty)
+- `app_id` (string): Web origin when called by the browser bridge; otherwise
+  an unverified label (see *Access control*)
 
 **Returns**:
 - `signed_event` (string): the complete signed event JSON —
@@ -98,7 +197,7 @@ Signs a Nostr event and returns the complete signed event JSON. May trigger user
 - `org.nostr.Signer.Error.Internal`: Signing operation failed
 
 **Notes**:
-- If no ACL decision exists, emits `ApprovalRequested` signal and waits for `ApproveRequest`
+- Kind `event`. Without a grant, emits `ApprovalRequested` and waits for `ApproveRequest`
 - The `created_at` field is auto-populated if set to 0
 
 ---
@@ -124,8 +223,12 @@ Encrypts a message using NIP-44 v2 (modern, recommended).
 **Returns**:
 - `ciphertext` (string): Base64-encoded NIP-44 v2 ciphertext
 
+**Approval** (0.4.0): kind `nip44_encrypt` (shared with `NIP44EncryptB64`).
+`NIP44EncryptForApp` / `NIP44EncryptB64ForApp` take a trailing `app_id`.
+
 **Errors**:
-- `org.nostr.Signer.Error.InvalidInput`: Invalid public key format
+- `org.nostr.Signer.Error.InvalidInput`: Invalid public key format (checked before prompting)
+- `org.nostr.Signer.Error.ApprovalDenied`: denied, timed out, or no approval UI running
 - `org.nostr.Signer.Error.Internal`: Encryption failed
 
 ---
@@ -151,8 +254,14 @@ Decrypts a message using NIP-44 v2.
 **Returns**:
 - `plaintext` (string): Decrypted UTF-8 message
 
+**Approval** (0.4.0, nostrc-y02q): kind `nip44_decrypt` (shared with
+`NIP44DecryptB64`). Before 0.4.0 any session-bus client could decrypt the
+user's messages without a prompt. `NIP44DecryptForApp` /
+`NIP44DecryptB64ForApp` take a trailing `app_id`.
+
 **Errors**:
-- `org.nostr.Signer.Error.InvalidInput`: Invalid ciphertext or public key
+- `org.nostr.Signer.Error.InvalidInput`: Invalid public key (checked before prompting)
+- `org.nostr.Signer.Error.ApprovalDenied`: denied, timed out, or no approval UI running
 - `org.nostr.Signer.Error.Internal`: Decryption failed (wrong key or corrupted)
 
 ---
@@ -176,14 +285,13 @@ with a per-file ephemeral peer.
 **Parameters**:
 - `peerPubKey` (string): Peer's x-only public key (64-char hex, any case)
 - `identity` (string): Identity selector (empty = active identity)
-- `app_id` (string): Requesting application (ACL key; empty = D-Bus sender)
+- `app_id` (string): Web origin from the browser bridge, else an unverified label
 
 **Returns**:
 - `conversationKey` (string): 64 lowercase hex, `HKDF-extract(SHA-256, IKM = ECDH shared x, salt = "nip44-v2")`
 
-**Approval**: same flow as `SignEvent`. ACL section `[NIP44DeriveConversationKey]`,
-key `<app_id>:<identity>`; with no entry the call is held,
-`ApprovalRequested` is emitted with kind `nip44_conversation_key` and preview
+**Approval**: same flow as `SignEvent`, kind `nip44_conversation_key`; with
+no grant the call is held, `ApprovalRequested` is emitted with preview
 `derive NIP-44 conversation key with <peer hex>`, and `ApproveRequest`
 completes it. Grant it only for throwaway peers — the key opens every NIP-44
 payload exchanged with that peer.
@@ -214,6 +322,8 @@ Encrypts a message using NIP-04 (legacy, for compatibility).
 **Returns**:
 - `ciphertext` (string): Base64-encoded NIP-04 ciphertext with IV
 
+**Approval** (0.4.0): kind `nip04_encrypt`; `NIP04EncryptForApp` takes a trailing `app_id`.
+
 **Notes**: NIP-04 is deprecated. Prefer NIP-44 for new implementations.
 
 ---
@@ -232,6 +342,9 @@ Decrypts a message using NIP-04 (legacy).
 ```
 
 **Parameters**: Same as NIP44Decrypt
+
+**Approval** (0.4.0, nostrc-y02q): kind `nip04_decrypt`; `NIP04DecryptForApp`
+takes a trailing `app_id`.
 
 ---
 
@@ -257,6 +370,7 @@ Decrypts the content of a zap receipt event (NIP-57).
 **Notes**:
 - Extracts peer pubkey from the first `p` tag
 - Tries NIP-44 first, falls back to NIP-04
+- Approval (0.4.0): kind `zap_decrypt`; `DecryptZapEventForApp` takes a trailing `app_id`
 
 ---
 
@@ -280,6 +394,9 @@ Sources, first match wins:
 **Returns**:
 - `relays_json` (string): JSON array of normalised relay URLs (lowercase
   scheme/host, no bare trailing `/`, duplicates removed), e.g. `["wss://nos.lol"]`
+
+**Approval** (0.4.0): kind `get_relays` (identity-independent grant
+`<principal>|*`); `GetRelaysForApp(s app_id)` takes an `app_id`.
 
 **Errors**:
 - `org.nostr.Signer.Error.NotFound`: nothing configured. This is an expected
@@ -357,11 +474,38 @@ Responds to a pending approval request (from UI).
 **Parameters**:
 - `request_id` (string): ID from `ApprovalRequested` signal
 - `decision` (boolean): True to approve, false to deny
-- `remember` (boolean): Save decision to ACL file
+- `remember` (boolean): Remember the decision for (principal, identity, kind)
+  in the grants file; ignored for an unidentified caller
 - `ttl_seconds` (uint64): How long to remember (0 = forever)
 
 **Returns**:
-- `ok` (boolean): True if request was found and processed
+- `ok` (boolean): True if the request was found and every queued call succeeded
+
+**Errors**:
+- `org.nostr.Signer.Error.PermissionDenied`: the caller is not the installed
+  approval UI (0.4.0)
+
+---
+
+#### GetApprovalInfo
+
+*Since nip55l 0.4.0.* Details of a pending request for the approval UI
+(approval-UI callers only, like `ApproveRequest`).
+
+```xml
+<method name="GetApprovalInfo">
+  <arg name="request_id" type="s" direction="in"/>
+  <arg name="info" type="a{sv}" direction="out"/>
+</method>
+```
+
+Keys: `request_id`, `kind`, `principal`, `principal_kind` (`flatpak`,
+`snap`, `systemd-scope`, `executable`, `website`, `claimed`,
+`unidentified`), `app_id`, `exe`, `via` (web origins: the bridge's
+principal), `claimed_app_id` (the caller's unverified `app_id` argument),
+`identity`, `preview` (all `s`); `attested`, `verified`, `rememberable`
+(`b`); `calls` (`u`, calls that joined the request).
+Unknown request: `Error.NotFound`.
 
 ---
 
@@ -382,9 +526,13 @@ Emitted when a signing operation or a conversation-key export requires user appr
 ```
 
 **Arguments**:
-- `app_id`: Requesting application identifier
-- `identity`: Target identity (npub)
-- `kind`: Request type: `"event"` (`SignEvent`) or `"nip44_conversation_key"` (`NIP44DeriveConversationKey`, nip55l 0.3.0)
+- `app_id`: The verified principal (0.4.0; empty when unidentified) — not the
+  caller's `app_id` argument (use `GetApprovalInfo` for that)
+- `identity`: The npub the request will use (0.4.0: resolved, never empty
+  when a key exists)
+- `kind`: `event`, `nip44_conversation_key`, `get_public_key`, `get_relays`,
+  `nip04_encrypt`, `nip04_decrypt`, `nip44_encrypt`, `nip44_decrypt`,
+  `zap_decrypt`
 - `preview`: Human-readable preview of the content (truncated)
 - `request_id`: Unique ID to use with `ApproveRequest`
 
@@ -450,7 +598,8 @@ The signer implements rate limiting to prevent abuse:
 
 | Operation | Cooldown |
 |-----------|----------|
-| `SignEvent` | 100ms per D-Bus sender |
+| New approval prompt (any gated method) | 100ms per D-Bus sender; calls joining a pending request are not limited |
+| Pending requests | 64 at a time, 256 calls per request, 300 s each |
 | `StoreKey` / `ClearKey` | 500ms per D-Bus sender |
 
 Requests exceeding the rate limit receive `org.nostr.Signer.Error.RateLimited`.
@@ -470,8 +619,9 @@ Requests exceeding the rate limit receive `org.nostr.Signer.Error.RateLimited`.
 ### Permission Model
 
 - **Key mutations disabled by default**: `StoreKey` and `ClearKey` require `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1`
-- **User approval required**: Signing operations (`SignEvent`) and conversation-key export (`NIP44DeriveConversationKey`, nip55l 0.3.0) without cached ACL decisions trigger interactive approval
-- **ACL persistence**: Decisions can be remembered with configurable TTL in `~/.config/gnostr/signer-acl.ini`
+- **User approval required**: every gated method (see *Access control*) without a grant triggers interactive approval
+- **Grants**: decisions are remembered per (verified principal, resolved npub, kind), optionally with a TTL, in `~/.config/gnostr/signer-grants.ini`
+- **Approval UI only**: `ApproveRequest` is refused for any caller other than the installed gnostr-signer
 
 ### Key Storage Security
 
@@ -483,14 +633,22 @@ Requests exceeding the rate limit receive `org.nostr.Signer.Error.RateLimited`.
 
 ### Systemd Hardening
 
-The daemon service unit includes extensive hardening:
+The daemon's systemd *user* unit uses only hardening that works in a user
+unit and keeps the daemon out of a user namespace (caller identification
+reads other processes' `/proc` entries):
 
-- `NoNewPrivileges=yes`
-- `ProtectSystem=strict`
-- `PrivateDevices=yes`
-- `MemoryDenyWriteExecute=yes`
-- `SystemCallFilter` whitelist
-- `LimitCORE=0` (no core dumps with secrets)
+- `NoNewPrivileges=yes`, `MemoryDenyWriteExecute=yes`, `LockPersonality=yes`
+- `RestrictNamespaces=yes`, `RestrictRealtime=yes`, `RestrictSUIDSGID=yes`
+- `ProtectProc=invisible`, `ProcSubset=pid`
+- `SystemCallFilter` allow/deny lists, `RestrictAddressFamilies`, `IPAddressDeny=any` (localhost allowed)
+- `LimitCORE=0` (no core dumps with secrets), `TasksMax=32`
+
+Not used: `PrivateDevices=`, `ProtectKernelModules=`, `ProtectKernelLogs=`,
+`ProtectClock=`, `CapabilityBoundingSet=` (fail a user unit with
+218/CAPABILITIES; nostrc-8sya), `LimitNPROC=` (counts the whole uid), and
+`PrivateTmp=`, `ProtectSystem=`, `ProtectHome=`, `ProtectKernelTunables=`,
+`ProtectControlGroups=`, `ProtectHostname=`, `ReadWritePaths=` (each puts
+the unit in a user namespace that hides callers' `/proc`).
 
 ---
 

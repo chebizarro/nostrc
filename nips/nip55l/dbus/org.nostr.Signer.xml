@@ -1,6 +1,30 @@
 <node>
   <interface name="org.nostr.Signer">
+    <!-- Access control (nip55l 0.4.0). Every method below except StoreKey,
+         ClearKey, ApproveRequest and GetApprovalInfo is approval-gated:
+         GetPublicKey, GetRelays, SignEvent, NIP04*, NIP44* (incl. B64),
+         NIP44DeriveConversationKey and DecryptZapEvent, plus their *ForApp
+         variants. The caller is identified from its bus connection
+         (Flatpak app id, systemd app scope + executable, or executable) -
+         never from an argument. A remembered decision is keyed on
+         (that principal, the npub the identity selector resolves to,
+         request kind); without one the call is parked and
+         ApprovalRequested(app_id = principal, identity = npub, kind,
+         preview, request_id) is emitted. Kinds: event,
+         nip44_conversation_key, get_public_key, get_relays, nip04_encrypt,
+         nip04_decrypt, nip44_encrypt, nip44_decrypt, zap_decrypt.
+         An app_id argument is a web-origin sub-principal only when the
+         caller is the installed browser bridge (nostr-signer-webext-host);
+         from anyone else it is an unverified label. Errors common to gated
+         calls: Error.ApprovalDenied (denied, timed out, or no approval agent
+         running), Error.RateLimited, Error.NoKeyConfigured. -->
     <method name="GetPublicKey">
+      <arg type="s" direction="out" name="npub" />
+    </method>
+    <!-- *ForApp variants (0.4.0, additive): the same call with an app_id,
+         which lets the browser bridge ask on behalf of one web origin. -->
+    <method name="GetPublicKeyForApp">
+      <arg type="s" direction="in" name="app_id" />
       <arg type="s" direction="out" name="npub" />
     </method>
     <!-- SignEvent (nip55l 0.2.0): signs an unsigned event and returns the
@@ -23,10 +47,24 @@
       <arg type="s" direction="in" name="identity" />
       <arg type="s" direction="out" name="encryptedText" />
     </method>
+    <method name="NIP04EncryptForApp">
+      <arg type="s" direction="in" name="plaintext" />
+      <arg type="s" direction="in" name="pubKey" />
+      <arg type="s" direction="in" name="identity" />
+      <arg type="s" direction="in" name="app_id" />
+      <arg type="s" direction="out" name="encryptedText" />
+    </method>
     <method name="NIP04Decrypt">
       <arg type="s" direction="in" name="encryptedText" />
       <arg type="s" direction="in" name="pubKey" />
       <arg type="s" direction="in" name="identity" />
+      <arg type="s" direction="out" name="plaintext" />
+    </method>
+    <method name="NIP04DecryptForApp">
+      <arg type="s" direction="in" name="encryptedText" />
+      <arg type="s" direction="in" name="pubKey" />
+      <arg type="s" direction="in" name="identity" />
+      <arg type="s" direction="in" name="app_id" />
       <arg type="s" direction="out" name="plaintext" />
     </method>
     <method name="NIP44Encrypt">
@@ -35,10 +73,24 @@
       <arg type="s" direction="in" name="identity" />
       <arg type="s" direction="out" name="encryptedText" />
     </method>
+    <method name="NIP44EncryptForApp">
+      <arg type="s" direction="in" name="plaintext" />
+      <arg type="s" direction="in" name="pubKey" />
+      <arg type="s" direction="in" name="identity" />
+      <arg type="s" direction="in" name="app_id" />
+      <arg type="s" direction="out" name="encryptedText" />
+    </method>
     <method name="NIP44Decrypt">
       <arg type="s" direction="in" name="encryptedText" />
       <arg type="s" direction="in" name="pubKey" />
       <arg type="s" direction="in" name="identity" />
+      <arg type="s" direction="out" name="plaintext" />
+    </method>
+    <method name="NIP44DecryptForApp">
+      <arg type="s" direction="in" name="encryptedText" />
+      <arg type="s" direction="in" name="pubKey" />
+      <arg type="s" direction="in" name="identity" />
+      <arg type="s" direction="in" name="app_id" />
       <arg type="s" direction="out" name="plaintext" />
     </method>
     <!-- Binary-safe NIP-44: the plaintext side travels as standard base64.
@@ -53,10 +105,24 @@
       <arg type="s" direction="in" name="identity" />
       <arg type="s" direction="out" name="encryptedText" />
     </method>
+    <method name="NIP44EncryptB64ForApp">
+      <arg type="s" direction="in" name="plaintextB64" />
+      <arg type="s" direction="in" name="pubKey" />
+      <arg type="s" direction="in" name="identity" />
+      <arg type="s" direction="in" name="app_id" />
+      <arg type="s" direction="out" name="encryptedText" />
+    </method>
     <method name="NIP44DecryptB64">
       <arg type="s" direction="in" name="encryptedText" />
       <arg type="s" direction="in" name="pubKey" />
       <arg type="s" direction="in" name="identity" />
+      <arg type="s" direction="out" name="plaintextB64" />
+    </method>
+    <method name="NIP44DecryptB64ForApp">
+      <arg type="s" direction="in" name="encryptedText" />
+      <arg type="s" direction="in" name="pubKey" />
+      <arg type="s" direction="in" name="identity" />
+      <arg type="s" direction="in" name="app_id" />
       <arg type="s" direction="out" name="plaintextB64" />
     </method>
     <!-- NIP44DeriveConversationKey (nip55l 0.3.0): the NIP-44 v2
@@ -64,11 +130,8 @@
          i.e. HKDF-extract(SHA256, ECDH shared-x, salt "nip44-v2"), as 64
          lowercase hex. The secret key never leaves the signer, but the
          returned key opens every NIP-44 payload exchanged with that peer, so
-         the call goes through the same approval flow as SignEvent: an ACL
-         entry in [NIP44DeriveConversationKey] keyed "<app_id>:<identity>"
-         decides it, otherwise ApprovalRequested (kind
-         "nip44_conversation_key", preview = the peer) is emitted and the
-         call completes on ApproveRequest. nostr-seal (nostrc-da9c) derives
+         the call goes through the same approval flow as SignEvent (kind
+         "nip44_conversation_key", preview = the peer). nostr-seal (nostrc-da9c) derives
          with a per-file ephemeral peer, so the key it obtains opens one
          file's key stanza and nothing else.
          Errors: Error.InvalidInput (peer not a curve point / not 64-hex),
@@ -85,6 +148,12 @@
       <arg type="s" direction="in" name="identity" />
       <arg type="s" direction="out" name="decryptedEvent" />
     </method>
+    <method name="DecryptZapEventForApp">
+      <arg type="s" direction="in" name="eventJson" />
+      <arg type="s" direction="in" name="identity" />
+      <arg type="s" direction="in" name="app_id" />
+      <arg type="s" direction="out" name="decryptedEvent" />
+    </method>
     <!-- GetRelays: JSON array of the user's explicitly configured relay
          URLs, from $XDG_CONFIG_HOME/nostr/relays.conf, else the relays set
          in gnostr-signer. Never fetched from the network. Returns
@@ -92,6 +161,10 @@
          their own relay set - and Error.InvalidConfig for a malformed
          relays.conf. -->
     <method name="GetRelays">
+      <arg type="s" direction="out" name="relaysJson" />
+    </method>
+    <method name="GetRelaysForApp">
+      <arg type="s" direction="in" name="app_id" />
       <arg type="s" direction="out" name="relaysJson" />
     </method>
     <method name="StoreKey">
@@ -104,12 +177,29 @@
       <arg type="s" direction="in" name="identity" />
       <arg type="b" direction="out" name="ok" />
     </method>
+    <!-- ApproveRequest / GetApprovalInfo: only the installed approval UI
+         (gnostr-signer, by executable path and inode, or its Flatpak) may
+         call these; anyone else gets Error.PermissionDenied. remember=true
+         stores the decision for (principal, identity, kind), for
+         ttl_seconds or forever (0); it is ignored for an unidentified
+         caller. A decision covers every queued call that joined the
+         request. Unanswered requests expire after 300 s. -->
     <method name="ApproveRequest">
       <arg type="s" direction="in" name="request_id" />
       <arg type="b" direction="in" name="decision" />
       <arg type="b" direction="in" name="remember" />
       <arg type="t" direction="in" name="ttl_seconds" />
       <arg type="b" direction="out" name="ok" />
+    </method>
+    <!-- GetApprovalInfo (0.4.0): details of a pending request as a{sv}:
+         request_id, kind, principal, principal_kind (flatpak | snap |
+         systemd-scope | executable | website | unidentified), app_id, exe,
+         via (web origins: the bridge's principal), claimed_app_id (the
+         caller's unverified app_id argument), identity, preview (s);
+         attested, rememberable (b); calls (u). -->
+    <method name="GetApprovalInfo">
+      <arg type="s" direction="in" name="request_id" />
+      <arg type="a{sv}" direction="out" name="info" />
     </method>
     <signal name="ApprovalRequested">
       <arg type="s" name="app_id" />

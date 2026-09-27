@@ -32,54 +32,42 @@ LimitCORE=0
 TasksMax=32
 
 # Security hardening (user service)
-# Basic hardening
+#
+# nip55l 0.4.0 identifies each D-Bus caller from /proc/<pid>/{exe,cgroup,
+# root/.flatpak-info} (nostrc-phk4). Every mount-namespacing option puts a
+# systemd --user unit into a user namespace, where readlink(/proc/<pid>/exe)
+# and /proc/<pid>/root of other processes fail with EACCES; every caller
+# would then be unidentified and no approval could ever be answered.
+# Verified on systemd 255 with systemd-run --user: PrivateTmp=,
+# ProtectSystem=, ProtectHome=, ProtectKernelTunables=,
+# ProtectControlGroups=, ProtectHostname= and ReadWritePaths= all hide the
+# callers; ProtectProc=invisible, ProcSubset=pid, RestrictNamespaces=,
+# MemoryDenyWriteExecute= and the SystemCallFilter lines do not. The
+# directives that fail a user unit outright (218/CAPABILITIES) are covered
+# in nostrc-8sya: PrivateDevices=, ProtectKernelModules=,
+# ProtectKernelLogs=, ProtectClock=, CapabilityBoundingSet=.
 NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=strict
-ProtectHome=read-only
-
-# Kernel protection
-ProtectKernelTunables=yes
-ProtectControlGroups=yes
-
-# nostrc-8sya: not usable in a systemd --user unit. The user manager holds no
-# capabilities, so each of these fails the start with status=218/CAPABILITIES
-# (verified with systemd-run --user on systemd 255): PrivateDevices=,
-# ProtectKernelModules=, ProtectKernelLogs=, ProtectClock= and an empty
-# CapabilityBoundingSet=. An empty AmbientCapabilities= is accepted (and is
-# the user manager's default anyway).
-
-# Memory protection
 MemoryDenyWriteExecute=yes
 LockPersonality=yes
-
-# Namespace restrictions
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 RemoveIPC=yes
-
-# Capability restrictions
 AmbientCapabilities=
+ProtectProc=invisible
+ProcSubset=pid
 
 # System call filtering
 SystemCallArchitectures=native
 SystemCallFilter=@system-service @basic-io @network-io @signal @ipc
 SystemCallFilter=~@privileged @resources @obsolete @debug @mount @swap @reboot @module @raw-io
 
-# File system restrictions
-ReadWritePaths=%t/gnostr %h/.config/gnostr %h/.local/share/gnostr
-ProtectProc=invisible
-ProcSubset=pid
-
 # Network restrictions (allow only local IPC)
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressAllow=localhost
 IPAddressDeny=any
 
-# Misc hardening
 UMask=0077
-ProtectHostname=yes
 
 [Install]
 WantedBy=default.target
