@@ -19,10 +19,16 @@
 #include <nostr/nip44/nip44.h>
 #include <nostr-utils.h>
 
-#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Always-on check: CHECK() vanishes under -DNDEBUG (Release/RelWithDebInfo),
+ * which silently skipped every check and tripped -Werror unused warnings
+ * (nostrc-llh3, nostrc-vul2). */
+#define CHECK(c) do { if (!(c)) { \
+    fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); \
+  } } while (0)
 
 extern int nip44_base64_encode(const uint8_t *buf, size_t len, char **out_b64);
 
@@ -42,25 +48,25 @@ static void fill_blob(uint8_t *blob, size_t len) {
 static void roundtrip_width(const char *a_sk, const char *a_pk,
                             const char *b_sk, const char *b_pk, size_t width) {
   uint8_t blob[136];
-  assert(width <= sizeof(blob));
+  CHECK(width <= sizeof(blob));
   fill_blob(blob, width);
 
   char *pt_b64 = NULL;
-  assert(nip44_base64_encode(blob, width, &pt_b64) == 0 && pt_b64);
+  CHECK(nip44_base64_encode(blob, width, &pt_b64) == 0 && pt_b64);
 
   char *payload = NULL;
   int rc = nostr_nip55l_nip44_encrypt_b64(pt_b64, b_pk, a_sk, &payload);
-  assert(rc == 0 && payload);
+  CHECK(rc == 0 && payload);
   free(pt_b64);
 
   /* The recipient recovers the exact bytes, at the exact width. */
   char *out_b64 = NULL;
   rc = nostr_nip55l_nip44_decrypt_b64(payload, a_pk, b_sk, &out_b64);
-  assert(rc == 0 && out_b64);
+  CHECK(rc == 0 && out_b64);
 
   char *expect_b64 = NULL;
-  assert(nip44_base64_encode(blob, width, &expect_b64) == 0);
-  assert(strcmp(out_b64, expect_b64) == 0);
+  CHECK(nip44_base64_encode(blob, width, &expect_b64) == 0);
+  CHECK(strcmp(out_b64, expect_b64) == 0);
   free(out_b64);
   free(expect_b64);
 
@@ -68,14 +74,14 @@ static void roundtrip_width(const char *a_sk, const char *a_pk,
    * opens it, byte for byte. A recipient never has to know which lane the
    * sender used. */
   uint8_t b_sk_raw[32], a_pk_raw[32];
-  assert(nostr_hex2bin(b_sk_raw, b_sk, sizeof b_sk_raw));
-  assert(nostr_hex2bin(a_pk_raw, a_pk, sizeof a_pk_raw));
+  CHECK(nostr_hex2bin(b_sk_raw, b_sk, sizeof b_sk_raw));
+  CHECK(nostr_hex2bin(a_pk_raw, a_pk, sizeof a_pk_raw));
   uint8_t *plain = NULL;
   size_t plain_len = 0;
-  assert(nostr_nip44_decrypt_v2(b_sk_raw, a_pk_raw, payload, &plain,
+  CHECK(nostr_nip44_decrypt_v2(b_sk_raw, a_pk_raw, payload, &plain,
                                 &plain_len) == 0);
-  assert(plain_len == width);
-  assert(memcmp(plain, blob, width) == 0);
+  CHECK(plain_len == width);
+  CHECK(memcmp(plain, blob, width) == 0);
   free(plain);
   free(payload);
 
@@ -85,10 +91,10 @@ static void roundtrip_width(const char *a_sk, const char *a_pk,
 int main(void) {
   char *a_sk = nostr_key_generate_private();
   char *b_sk = nostr_key_generate_private();
-  assert(a_sk && b_sk);
+  CHECK(a_sk && b_sk);
   char *a_pk = nostr_key_get_public(a_sk);
   char *b_pk = nostr_key_get_public(b_sk);
-  assert(a_pk && b_pk);
+  CHECK(a_pk && b_pk);
 
   /* Every CORD-06 rekey blob width: a channel rotation, a member's base
    * rotation, and a staff recipient's. */
@@ -102,18 +108,18 @@ int main(void) {
    * characters outside the alphabet would turn a typo into a shorter
    * plaintext — a blob of the wrong width, encrypted and delivered. */
   char *payload = NULL;
-  assert(nostr_nip55l_nip44_encrypt_b64("AAAA AAAA", b_pk, a_sk, &payload) != 0);
-  assert(payload == NULL);
-  assert(nostr_nip55l_nip44_encrypt_b64("AAA", b_pk, a_sk, &payload) != 0);
-  assert(payload == NULL);
-  assert(nostr_nip55l_nip44_encrypt_b64("AA=A", b_pk, a_sk, &payload) != 0);
-  assert(payload == NULL);
+  CHECK(nostr_nip55l_nip44_encrypt_b64("AAAA AAAA", b_pk, a_sk, &payload) != 0);
+  CHECK(payload == NULL);
+  CHECK(nostr_nip55l_nip44_encrypt_b64("AAA", b_pk, a_sk, &payload) != 0);
+  CHECK(payload == NULL);
+  CHECK(nostr_nip55l_nip44_encrypt_b64("AA=A", b_pk, a_sk, &payload) != 0);
+  CHECK(payload == NULL);
   printf("  ok: a malformed base64 plaintext is refused, not truncated\n");
 
   /* An unopenable ciphertext is an error, never an empty plaintext. */
   char *out = NULL;
-  assert(nostr_nip55l_nip44_decrypt_b64("not-a-payload", a_pk, b_sk, &out) != 0);
-  assert(out == NULL);
+  CHECK(nostr_nip55l_nip44_decrypt_b64("not-a-payload", a_pk, b_sk, &out) != 0);
+  CHECK(out == NULL);
   printf("  ok: a malformed payload is refused\n");
 
   free(a_sk); free(b_sk); free(a_pk); free(b_pk);
