@@ -32,3 +32,13 @@ The recorder test proves the state transition, not socket-level automatic recove
 ## Verdict
 
 **APPROVED** for the original partial W6 integration **with `cd253017`**: its sole blocking finding, F1, is resolved. This is not approval of messaging readiness, Ubuntu CI, GNOME acceptance, the separate libnostr CLOSE teardown fix, or closure of the named open beads.
+
+## e8633a45 addendum — libnostr socket teardown
+
+**Scope:** exact `e8633a45^..e8633a45` only; this is a separate judgment and does not alter the earlier verdict. The close queue retains the connection/private-state owner until the LWS service thread detaches the WSI, requests `LWS_TO_KILL_ASYNC`, and defers connection cleanup (`libnostr/src/connection.c:826-870,1207-1258`). Close/error callbacks clear a peer-closed WSI before queue drain (`connection.c:397-438`); callbacks and relay teardown acquire channel refs/remove pointers under the same private mutex (`connection.c:156-178,315-327`; `relay.c:1941-1970`). The changed paths show no new UAF, lock-order inversion, worker-wait deadlock, or ordinary-operation undrained close queue; the service loop remains running after successful initialization (`connection.c:1036-1069`).
+
+The new loopback test waits for two real relay-side WebSocket `closed` signals **before** server cleanup (`gnome/groundhog/tests/relay/test_relay_wire.c:51-70,135-145,289-311`), so it does not mistake local scope cancellation or cleanup for socket closure. The parent implementation only detached opaque data and did not request WSI shutdown; that is the source-level counterfactual, not an executed parent-binary mutation. On exact `e8633a45`, the focused `groundhog-relay-wire` CTest passed 10/10 repeated macOS runs; `git diff --check e8633a45^ e8633a45` passed. No sanitizer, full-suite, or Ubuntu result is claimed.
+
+**Version:** This compatible libnostr lifecycle fix belongs to the same unreleased **1.0.2 PATCH** wave already declared in `libnostr/CMakeLists.txt` and `VERSION_MANIFEST.md:14`; it needs no second bump. The Groundhog change is test-only and needs no bump. Open beads `nostrc-qp24.4.3`, `.8.2`, `.9`, and `.15.1` remain separately tracked; this addendum is not release or messaging readiness.
+
+**Verdict for `e8633a45`: APPROVED.**
