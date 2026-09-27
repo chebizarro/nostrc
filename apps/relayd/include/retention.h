@@ -7,7 +7,8 @@ extern "C" {
 
 #include "relayd_ctx.h"
 
-/* Periodic retention maintenance. Safe to call in main loop. */
+/* Periodic retention maintenance hook; a no-op until the storage driver
+ * can delete (see retention.c). Safe to call in the main loop. */
 void retention_tick(const RelaydCtx *ctx);
 
 #ifdef __cplusplus

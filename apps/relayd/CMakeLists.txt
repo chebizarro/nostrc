@@ -157,55 +157,17 @@ if(NOSTR_SESSION_RELAYD_VERSION)
     NSR_VERSION="${NOSTR_SESSION_RELAYD_VERSION}")
 endif()
 
-# Link the same nostrdb storage the system daemon uses so the per-user
-# ~/.local/share/nostr/session-relay/ path can back a real store.
+# nostrdb storage for both daemons (the session relay's store lives under
+# ~/.local/share/nostr/session-relay/). components/nostrdb brings nostrdb
+# itself -- libnostr's in-tree target, or a private static copy when libnostr
+# has no nostrdb backend. The mains register the driver explicitly: its
+# self-registering constructor sits in a static archive member that nothing
+# else references, so the linker would otherwise drop it.
 if (TARGET nostrdb_storage)
-  target_link_libraries(nostr-session-relayd PRIVATE nostrdb_storage)
-  if (NOT TARGET nostrdb)
-    set(_NDB_VENDOR_DIR ${CMAKE_SOURCE_DIR}/third_party/nostrdb)
-    if (EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
-      if (APPLE)
-        target_link_options(nostr-session-relayd PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
-        target_link_libraries(nostr-session-relayd PRIVATE "-framework Security")
-      else()
-        target_link_options(nostr-session-relayd PRIVATE -Wl,--whole-archive ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
-      endif()
-    endif()
-    if (EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
-      if (APPLE)
-        target_link_libraries(nostr-session-relayd PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
-      else()
-        target_link_options(nostr-session-relayd PRIVATE -Wl,--whole-archive ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a -Wl,--no-whole-archive)
-      endif()
-    endif()
-  endif()
-endif()
-
-# Link nostrdb storage component if available
-if (TARGET nostrdb_storage)
-  target_link_libraries(nostrc-relayd PRIVATE nostrdb_storage)
-  # If the in-tree CMake target 'nostrdb' exists, rely on it for NDB symbols.
-  # Only fall back to vendored static archives when 'nostrdb' target is absent.
-  if (NOT TARGET nostrdb)
-    # Also link vendored static archives directly so ndb_* symbols resolve
-    set(_NDB_VENDOR_DIR ${CMAKE_SOURCE_DIR}/third_party/nostrdb)
-    if (EXISTS ${_NDB_VENDOR_DIR}/libnostrdb.a)
-      if (APPLE)
-        target_link_options(nostrc-relayd PRIVATE -Wl,-force_load,${_NDB_VENDOR_DIR}/libnostrdb.a)
-        # nostrdb uses Security framework for SecRandomCopyBytes on macOS
-        target_link_libraries(nostrc-relayd PRIVATE "-framework Security")
-      else()
-        target_link_options(nostrc-relayd PRIVATE -Wl,--whole-archive ${_NDB_VENDOR_DIR}/libnostrdb.a -Wl,--no-whole-archive)
-      endif()
-    endif()
-    if (EXISTS ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
-      if (APPLE)
-        target_link_libraries(nostrc-relayd PRIVATE ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a)
-      else()
-        target_link_options(nostrc-relayd PRIVATE -Wl,--whole-archive ${_NDB_VENDOR_DIR}/deps/lmdb/liblmdb.a -Wl,--no-whole-archive)
-      endif()
-    endif()
-  endif()
+  foreach(_relayd_exe nostr-session-relayd nostrc-relayd)
+    target_link_libraries(${_relayd_exe} PRIVATE nostrdb_storage)
+    target_compile_definitions(${_relayd_exe} PRIVATE NOSTRC_HAVE_NOSTRDB_STORAGE=1)
+  endforeach()
 endif()
 
 # Link NIP-11 module if available and set compile define. The NIP-11 handler

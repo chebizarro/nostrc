@@ -2,6 +2,7 @@
 #include <string.h>
 #include <errno.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #include "nostr-storage.h"
 #include "nostrdb_storage.h"
 #include "nostr-filter.h"
@@ -43,17 +44,12 @@ static int ndb_open(NostrStorage *st, const char *uri, const char *opts_json) {
   if (opts_json) impl->opts = strdup(opts_json);
   st->impl = impl;
 
-  /* Ensure directory exists (simple mkdir -p behavior) */
+  /* ndb_init() needs the directory to exist. Create the leaf (callers own
+   * the parents); if this fails, ndb_init reports the cause. */
   const char *path = impl->uri ? impl->uri : ".ndb";
-#ifdef _WIN32
-  (void)path; /* Caller should ensure path exists on Windows */
-#else
-  {
-    char cmd[4096];
-    /* No popen; rely on mkdir(2) via POSIX headers is not included here. Keep minimal: try to create leaf dir. */
-    /* Best-effort: if it fails, ndb_init will report the cause */
-    (void)cmd;
-  }
+#ifndef _WIN32
+  if (mkdir(path, 0700) != 0 && errno != EEXIST)
+    fprintf(stderr, "[nostrdb_storage] mkdir(%s): %s\n", path, strerror(errno));
 #endif
 
   /* Initialize nostrdb with robust defaults */
@@ -151,6 +147,25 @@ static int ndb_delete_event(NostrStorage *st, const char *id_hex) {
   return -ENOTSUP;
 }
 
+/* Convert one libnostr filter into an initialised ndb_filter. nostrdb
+ * returns nonzero on success throughout, and ndb_filter_from_json() needs a
+ * scratch buffer for its JSON tokens. Returns 0 or a negative errno. */
+static int build_ndb_filter(const NostrFilter *src, struct ndb_filter *f) {
+  if (!ndb_filter_init(f)) return -ENOMEM;
+  char *fjson = nostr_filter_serialize_compact(src);
+  if (!fjson) { ndb_filter_destroy(f); return -EIO; }
+  size_t flen = strlen(fjson);
+  /* One jsmn token per few bytes of JSON; generous and bounded by input. */
+  size_t scratch_len = flen * 16 + 4096;
+  unsigned char *scratch = (unsigned char*)malloc(scratch_len);
+  int ok = scratch && ndb_filter_from_json(fjson, (int)flen, f, scratch,
+                                           (int)scratch_len);
+  free(scratch);
+  free(fjson);
+  if (!ok) { ndb_filter_destroy(f); return -EINVAL; }
+  return 0;
+}
+
 static int build_ndb_filters(const NostrFilter *filters, size_t nfilters,
                              struct ndb_filter **out_filters) {
   if (!out_filters) return -EINVAL;
@@ -159,13 +174,12 @@ static int build_ndb_filters(const NostrFilter *filters, size_t nfilters,
   struct ndb_filter *arr = (struct ndb_filter*)calloc(nfilters, sizeof(struct ndb_filter));
   if (!arr) return -ENOMEM;
   for (size_t i = 0; i < nfilters; i++) {
-    struct ndb_filter *f = &arr[i];
-    if (ndb_filter_init_with(f, 1) != 0) { free(arr); return -EIO; }
-    char *fjson = nostr_filter_serialize_compact(&filters[i]);
-    if (!fjson) { ndb_filter_destroy(f); free(arr); return -EIO; }
-    int rc = ndb_filter_from_json(fjson, (int)strlen(fjson), f, NULL, 0);
-    free(fjson);
-    if (rc != 0) { ndb_filter_destroy(f); free(arr); return -EIO; }
+    int rc = build_ndb_filter(&filters[i], &arr[i]);
+    if (rc != 0) {
+      for (size_t j = 0; j < i; j++) ndb_filter_destroy(&arr[j]);
+      free(arr);
+      return rc;
+    }
   }
   *out_filters = arr;
   return 0;
@@ -213,11 +227,18 @@ static int ndb_query_next(NostrStorage *st, void *itp, NostrEvent *out, size_t *
   NDBIter *it = (NDBIter*)itp;
   if (it->index >= it->count) { *n = 0; return 0; }
   struct ndb_query_result *qr = &it->results[it->index++];
-  /* Convert ndb_note to JSON then to NostrEvent */
+  /* Convert ndb_note to JSON then to NostrEvent. Escaping can make the JSON
+   * larger than the stored note; grow until it fits (bounded). */
   size_t buflen = (size_t)(qr->note_size ? qr->note_size * 2 : 2048);
-  char *buf = (char*)malloc(buflen);
-  if (!buf) return -ENOMEM;
-  int w = ndb_note_json(qr->note, buf, (int)buflen);
+  char *buf = NULL;
+  int w = 0;
+  for (; buflen <= (16u << 20); buflen *= 2) {
+    char *nb = (char*)realloc(buf, buflen);
+    if (!nb) { free(buf); return -ENOMEM; }
+    buf = nb;
+    w = ndb_note_json(qr->note, buf, (int)buflen);
+    if (w > 0) break;
+  }
   if (w <= 0) { free(buf); return -EIO; }
   int ok = nostr_event_deserialize(out, buf);
   free(buf);
@@ -239,8 +260,14 @@ static int ndb_count(NostrStorage *st, const NostrFilter *filters, size_t nfilte
   struct ndb_txn txn; if (!ndb_begin_query(impl->db, &txn)) return -EIO;
   struct ndb_filter *arr = NULL; int rc = build_ndb_filters(filters, nfilters, &arr);
   if (rc != 0) { ndb_end_query(&txn); return rc; }
+  /* nostrdb has no count primitive: count by querying into a bounded
+   * buffer (ndb_query with no buffer reports 0). At the cap the result is
+   * a lower bound. */
+  enum { NDB_COUNT_CAP = 10000 };
+  struct ndb_query_result *res = (struct ndb_query_result*)calloc(NDB_COUNT_CAP, sizeof(*res));
   int count = 0;
-  rc = ndb_query(&txn, arr, (int)nfilters, NULL, 0, &count);
+  rc = res ? ndb_query(&txn, arr, (int)nfilters, res, NDB_COUNT_CAP, &count) : 0;
+  free(res);
   for (size_t i = 0; i < nfilters; i++) ndb_filter_destroy(&arr[i]);
   free(arr);
   ndb_end_query(&txn);
@@ -262,18 +289,15 @@ static int ndb_search(NostrStorage *st, const char *q, const NostrFilter *scope,
   struct ndb_text_search_results results; memset(&results, 0, sizeof(results));
   int rc;
   if (scope) {
-    struct ndb_filter f; if (ndb_filter_init_with(&f, 1) != 0) { ndb_end_query(&it->txn); free(it); return -EIO; }
-    char *fjson = nostr_filter_serialize_compact(scope);
-    if (!fjson) { ndb_filter_destroy(&f); ndb_end_query(&it->txn); free(it); return -EIO; }
-    rc = ndb_filter_from_json(fjson, (int)strlen(fjson), &f, NULL, 0);
-    free(fjson);
-    if (rc != 0) { ndb_filter_destroy(&f); ndb_end_query(&it->txn); free(it); return -EIO; }
+    struct ndb_filter f;
+    rc = build_ndb_filter(scope, &f);
+    if (rc != 0) { ndb_end_query(&it->txn); free(it); return rc; }
     rc = ndb_text_search_with(&it->txn, q, &results, &cfg, &f);
     ndb_filter_destroy(&f);
   } else {
     rc = ndb_text_search(&it->txn, q, &results, &cfg);
   }
-  if (rc != 0) { ndb_end_query(&it->txn); free(it); return -EIO; }
+  if (!rc) { ndb_end_query(&it->txn); free(it); return -EIO; } /* 1 == success */
   int count = results.num_results;
   if ((int)limit > 0 && count > (int)limit) count = (int)limit;
   it->results = (struct ndb_query_result*)calloc(count > 0 ? count : 1, sizeof(struct ndb_query_result));

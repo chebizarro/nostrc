@@ -3,7 +3,10 @@
 # (or $HOME/.config/nostr/session-relay.conf if XDG_CONFIG_HOME is unset).
 # All values shown are defaults; the file is optional.
 
-# Storage driver — nostrdb is the only implementation shipped in-tree.
+# Storage driver — nostrdb is the only implementation shipped in-tree; the
+# store lives under ~/.local/share/nostr/session-relay/. "none" runs
+# cache-less on purpose: REQ answers EOSE at once, EVENT is refused, and
+# org.nostr.SessionRelay1.StorageBackend reports "none".
 storage_driver = "nostrdb"
 
 # NIP-42 authentication policy. The Unix socket itself is the auth boundary,
@@ -16,7 +19,8 @@ auth = "off"
 # lightly loaded so these are typically fine to leave alone.
 max_filters              = 10
 max_limit                = 500
-max_subs                 = 1
+# REQs streaming at once per connection (clamped to 16); see relay.toml.example.
+max_subs                 = 8
 max_event_bytes          = 262144
 
 rate_ops_per_sec         = 20
@@ -51,7 +55,11 @@ version     = "0.1"
 description = "Per-user session-scoped local relay"
 contact     = ""
 
-# Retention policy for the local nostrdb cache is enforced by the retention
-# tick in libnostr-relay-server; default 7d / 256 MiB budget applies from
-# the shared runtime limits and does not have a config knob here yet.
+# Retention: NOT enforced yet. The store grows until you delete
+# ~/.local/share/nostr/session-relay/. The retention_* keys that GNOME
+# Settings writes here (retention_enabled, retention_cache_max_mb, ...;
+# docs/designs/nostrdb-retention-eviction-policy.md §7.1) are accepted and
+# ignored, and org.nostr.SessionRelay1.RetentionSupported reports false,
+# because nostrdb has no delete primitive to evict with (nostrc-8rxk
+# Phase 1; nostrc-prqu.17).
 negentropy_enabled = 0

@@ -71,7 +71,7 @@ Read 2026-09-26 on `master` (`28e82491`).
 | Blossom lib | `libhanami/` (Debian `libhanami0`) | libcurl client `hanami_blossom_{get,head,upload,delete,list,mirror,upload_batch}` (whole-buffer, sync); pure `hanami_bud02_{create_auth_event,create_auth_header,parse_auth_header,validate_auth_event}`; per-server capability cache (`server_tag_ok`: blossom.band rejects the `server` tag; batch default omits it; `raw_random_ok`: body-sniffing servers answer 415). Links libgit2/SQLite too (`hanami-odb-backend.h`). |
 | Local cache app | `apps/blossom-cache/` | Standalone libsoup 3 Blossom proxy on `127.0.0.1:24242` (local-blossom-cache spec): BUD-01/02/10, range requests, LRU, `?xs=`/`?as=` hints, `?cursor=`/`?limit=` listing (its own extension — BUD-02 specifies `since`/`until`), **no auth validation**. Not socket-activated; not started by anything. |
 | Dispatcher | `gnome/nostr-dispatcher/` (bead `nostrc-1v65`, closed) | The **only** desktop entry claiming `x-scheme-handler/nostr` and `web+nostr` (NIP-21 opaque URIs `nostr:nevent1…`). `nd_fetch_event_async`: session relay (1.5 s) → relay hints (4 s budget). |
-| Session relay | `apps/relayd/src/session/relayd_session_main.c` | `$XDG_RUNTIME_DIR/nostr/relay.sock`, 0600, SO_PEERCRED. Open bugs: cache-less mode never sends EOSE for a plain REQ (`nostrc-prqu.14`); no upstream federation (`nostrc-7d96`) — an event only it holds never leaves the machine. |
+| Session relay | `apps/relayd/src/session/relayd_session_main.c` | `$XDG_RUNTIME_DIR/nostr/relay.sock`, 0600, SO_PEERCRED. Every REQ ends in EOSE or CLOSED, with or without storage (`nostrc-prqu.14`, fixed); packaged builds store events in nostrdb (`nostrc-prqu.5`). Open: no upstream federation (`nostrc-7d96`) — an event only it holds never leaves the machine. |
 | Signer | `apps/gnostr-signer/data/dbus/org.nostr.Signer.xml` | `GetPublicKey() → npub`, `SignEvent(json, current_user, app_id) → signed json`, `GetRelays() → relays.conf`, `ApprovalRequested` signal (approval UI is the signer's). D-Bus-activatable (`org.nostr.Signer.service`). |
 | gvfs (verified in tree) | `daemon/gvfsbackend.h`, `daemon/mount.c`, `daemon/meson.build`, `NEWS` | Vfunc pairs `do_`/`try_` for mount, unmount, open_for_read/read/seek/close, create/replace/append_to/edit/write/truncate/close_write, query_info, query_fs_info, enumerate, set_display_name, delete, trash, make_directory, make_symlink, copy, move, **push/pull with `GFileProgressCallback`**, set_attribute, create_dir_monitor/create_file_monitor. Helpers `g_vfs_backend_set_{display_name,stable_name,icon_name,symbolic_icon_name,user_visible,default_location,mount_spec,block_requests}`, `g_vfs_backend_{handle,get}_readonly_lockdown`, `g_vfs_backend_add_auto_info`. `.mount` keys: `Type, Exec, DBusName, AutoMount, Scheme, SchemeAliases, DefaultPort, HostnameIsInetAddress, MountPerClient`; lookup dir overridable with **`GVFS_MOUNTABLE_DIR`** / **`GVFS_MOUNTABLE_EXTENSION`** (`mount.c:466–470`). Backends install to `gvfs_libexecdir`, `.mount` files to `gvfs_mounts_dir`, `libgvfsdaemon`/`libgvfscommon` to `gvfs_pkglibdir` (Debian package `gvfs-libs`); **no headers installed**. OneDrive backend landed 1.53.90 → shipped in **1.54 = GNOME 46**; 1.56 = GNOME 47; 1.58 = GNOME 49; `g_vfs_backend_set_autounmount` is 1.61.90+; Google backend deprecated 1.59.1. `gvfsd-smb` reads GSettings `org.gnome.system.smb` (precedent for D22). |
 | GIO dispatch (verified in `gappinfo.c`) | `g_app_info_launch_default_for_uri()` | Resolves `g_app_info_get_default_for_uri_scheme()` **first**; only when no scheme handler exists does it build a `GFile` and consult gvfs. `g_file_move()` falls back to copy + delete when the backend's `move` returns `G_IO_ERROR_NOT_SUPPORTED` (unless `G_FILE_COPY_NO_FALLBACK_FOR_MOVE`). Both facts drive D4 and D5. |
@@ -376,12 +376,12 @@ to **libnostr-publish** (W2a) because it is otherwise the third copy after
 `ns_net_fetch_replaceable` and `nd_fetch`; migrating those two onto it is a separate
 bead, not part of this design.
 
-**Hard dependency — `nostrc-prqu.14`.** The session relay in cache-less mode never
-sends `EOSE` for a plain `REQ`. Against it, every query runs to its full deadline
-and a kept-open subscription can never tell "stored events delivered" from "still
-streaming". The fix **must land before W2b**. Interim fallback, for the session
-socket **only** (never for remote relays): after ≥ 1 `EVENT`, 500 ms of idle is
-treated as end-of-stored-events; the fallback is deleted with the fix.
+**Dependency — `nostrc-prqu.14` (fixed on `fix/session-relay-followups`).** The
+session relay used to send nothing for a plain `REQ` when it ran cache-less, so
+every query ran to its full deadline. It now answers every `REQ` with `EOSE` (once
+the stored matches, possibly none, are sent) or a prefixed `CLOSED`, with or
+without storage; `apps/relayd/tests/test_relay_req_contract.c` is the contract.
+No idle-timeout fallback is needed.
 
 **NIP-42.** Publisher-owned publish transports answer `AUTH` for free
 (`NostrPublisher` signs with its signer). The v1 *query* helper declines challenges:
