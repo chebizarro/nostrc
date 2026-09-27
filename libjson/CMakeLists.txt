@@ -90,7 +90,30 @@ if (GLIB_FOUND)
   target_link_libraries(nostr_json PRIVATE PkgConfig::GLIB)
 endif()
 target_link_libraries(nostr_json PUBLIC PkgConfig::JANSSON)
-target_link_libraries(nostr_json PRIVATE nostrc::nsync libnostr ${LWS_LIBRARIES})
+target_link_libraries(nostr_json PRIVATE nostrc::nsync ${LWS_LIBRARIES})
+# libnostr: a shared libnostr is simply a DT_NEEDED of libnostr-json. A
+# static one (the default workspace build) must not be copied into this
+# shared library: every executable links libnostr as well, so two copies of
+# its globals (json_interface) would coexist -- ASan aborts with
+# "odr-violation" (nostrc-abk1). Consumers get the archive through the
+# INTERFACE link instead, and libnostr-json binds to the executable's copy
+# at load time (the one nostr_json_init() must configure anyway). ELF only:
+# GNU ld pulls the archive members a DSO needs into the executable, Apple's
+# ld64 does not, so macOS keeps the embedded copy (two-level namespaces, no
+# ASan ODR check there).
+get_target_property(_nj_nostr_type nostr TYPE)
+if(_nj_nostr_type STREQUAL "STATIC_LIBRARY" AND NOT APPLE)
+  target_link_libraries(nostr_json INTERFACE libnostr)
+  # Compile against libnostr's headers without linking it (CMake >= 3.27
+  # spells this $<COMPILE_ONLY:>; the tree supports 3.22).
+  target_include_directories(nostr_json PRIVATE
+    $<TARGET_PROPERTY:nostr,INTERFACE_INCLUDE_DIRECTORIES>
+    $<TARGET_PROPERTY:libgo,INTERFACE_INCLUDE_DIRECTORIES>)
+  target_compile_definitions(nostr_json PRIVATE
+    $<TARGET_PROPERTY:nostr,INTERFACE_COMPILE_DEFINITIONS>)
+else()
+  target_link_libraries(nostr_json PRIVATE libnostr)
+endif()
 
 # Install rules for libjson (nostr_json -> libnostr-json)
 include(GNUInstallDirs)
