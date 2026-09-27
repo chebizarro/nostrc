@@ -482,6 +482,44 @@ test_markdown_article(void)
   g_assert_true(has_tag(ev, "published_at", NULL));
   g_assert_cmpstr(json_object_get_string_member(ev, "content"), ==, doc);
 
+  /* published: the source file carries the event id (nostrc-tepd) */
+  g_autofree gchar *probe = tmpfile_with("probe", "x", 1);
+  gboolean xattrs = FALSE;
+  if (ns_share_mark_published(probe, "00")) {
+    g_autoptr(GFile) pf = g_file_new_for_path(probe);
+    g_autoptr(GFileInfo) pi = g_file_query_info(pf, NS_XATTR_EVENT, G_FILE_QUERY_INFO_NONE, NULL, NULL);
+    xattrs = pi && g_strcmp0(g_file_info_get_attribute_string(pi, NS_XATTR_EVENT), "00") == 0;
+  }
+  g_assert_true(ns_share_resolve(s, &err));
+  g_assert_true(ns_share_publish(s, NULL, NULL, &err));
+  g_assert_no_error(err);
+  g_autofree gchar *id = ns_event_id_from_signed_json(p->signed_json);
+  g_assert_nonnull(id);
+  g_assert_cmpuint(strlen(id), ==, 64);
+  if (xattrs) {
+    g_autoptr(GFile) gf = g_file_new_for_path(path);
+    g_autoptr(GFileInfo) info = g_file_query_info(gf, NS_XATTR_EVENT, G_FILE_QUERY_INFO_NONE, NULL, &err);
+    g_assert_no_error(err);
+    g_assert_cmpstr(g_file_info_get_attribute_string(info, NS_XATTR_EVENT), ==, id);
+  } else {
+    g_test_message("filesystem without user xattrs: nothing to check (best effort)");
+  }
+  g_assert_false(ns_share_mark_published("/nonexistent/file", id)); /* silent failure */
+  /* an edited post is not the file: no tag */
+  const gchar *doc2 = "# Draft\n\nfirst words\n";
+  g_autofree gchar *path2 = tmpfile_with("draft.md", doc2, strlen(doc2));
+  const gchar *args2[] = { path2, NULL };
+  g_autoptr(NsShare) s3 = share_new(config("wss://w1.test", NULL), NULL, args2, NULL, 0, &err);
+  g_assert_true(ns_share_set_text(s3, "# Draft\n\nrewritten in the dialog\n", &err));
+  g_assert_true(ns_share_build(s3, &err));
+  g_assert_true(ns_share_resolve(s3, &err));
+  g_assert_true(ns_share_publish(s3, NULL, NULL, &err));
+  g_autoptr(GFile) gf2 = g_file_new_for_path(path2);
+  g_autoptr(GFileInfo) info2 = g_file_query_info(gf2, NS_XATTR_EVENT, G_FILE_QUERY_INFO_NONE, NULL, NULL);
+  g_assert_null(info2 ? g_file_info_get_attribute_string(info2, NS_XATTR_EVENT) : NULL);
+  g_assert_null(ns_event_id_from_signed_json("{\"id\":\"xyz\"}"));
+  g_assert_null(ns_event_id_from_signed_json("not json"));
+
   /* long plain text stays a kind-1 note (no replaceable semantics) unless
    * the user asks for an article */
   GString *lng = g_string_new(NULL);

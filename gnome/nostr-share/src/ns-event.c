@@ -524,6 +524,25 @@ ns_event_unsigned_json(gint kind, gint64 created_at, const gchar *pubkey_hex,
 }
 
 gchar *
+ns_event_id_from_signed_json(const gchar *signed_json)
+{
+  if (signed_json == NULL)
+    return NULL;
+  g_autoptr(JsonParser) p = json_parser_new();
+  if (!json_parser_load_from_data(p, signed_json, -1, NULL) ||
+      !JSON_NODE_HOLDS_OBJECT(json_parser_get_root(p)))
+    return NULL;
+  const gchar *id = json_object_get_string_member_with_default(
+    json_node_get_object(json_parser_get_root(p)), "id", NULL);
+  if (id == NULL || strlen(id) != 64)
+    return NULL;
+  for (const gchar *c = id; *c; c++)
+    if (!g_ascii_isxdigit(*c))
+      return NULL;
+  return g_ascii_strdown(id, -1);
+}
+
+gchar *
 ns_json_pretty(const gchar *json)
 {
   g_autoptr(JsonParser) parser = json_parser_new();

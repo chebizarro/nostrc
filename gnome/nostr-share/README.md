@@ -150,6 +150,19 @@ text when `--kind` is absent, default 1), `keep_metadata` (default for
 `--keep-metadata`, default false). The Files page of Nostr Settings
 (`org.nostr.Settings`) edits the last two.
 
+### Published files are marked
+
+After a successful publish, nostr-share records the event id (64 hex) in the
+extended attribute `user.nostr.event` of what it published from: shared media
+files, a shared git repository directory, or the text/markdown file a note
+or article was made from — the latter only if the post still says what the
+file says (text edited in the dialog is not that file). File managers can
+show it cheaply (`gio info -a xattr::nostr.event FILE`, `getfattr -n
+user.nostr.event FILE`); `nostr-nautilus` uses it for its "published"
+emblem. Best effort: filesystems without user xattrs, read-only files and
+calendar/contact items handed to nostr-dav (which signs them itself) are
+skipped silently. Sharing the same file again overwrites the id.
+
 ## For app authors
 
 You do not need any Nostr code to offer "Share to Nostr":
