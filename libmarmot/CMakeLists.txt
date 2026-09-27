@@ -5,9 +5,16 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
+# nostrc-prqu.9: publishing an ADOPTED-profile KeyPackage advertises group
+# behaviour (app_data_update, app-component group state) that libmarmot's
+# group engine does not implement yet, which misleads *remote* inviters.
+# Validation/selection of ADOPTED KeyPackages is always available; producing
+# them is a build-time opt-in for interop work until Groundhog W2.
+option(MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER
+  "Allow marmot_create_key_package_for_profile(ADOPTED) (experimental)" OFF)
 
 set(MARMOT_VERSION_MAJOR 0)
-set(MARMOT_VERSION_MINOR 2)
+set(MARMOT_VERSION_MINOR 3)
 set(MARMOT_VERSION_PATCH 0)
 declare_component_version(MARMOT
   ${MARMOT_VERSION_MAJOR}
@@ -62,6 +69,7 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_group.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_welcome.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/credentials.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/kp_profile.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/groups.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/welcome.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/messages.c
@@ -86,6 +94,9 @@ set(MARMOT_PUBLIC_HEADERS
 
 # ─── Library target ──────────────────────────────────────────────────────
 add_library(marmot ${MARMOT_SOURCES})
+if(MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER)
+  target_compile_definitions(marmot PRIVATE MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER=1)
+endif()
 set(marmot_VERSION "${MARMOT_VERSION}")
 set_target_properties(marmot PROPERTIES
   C_STANDARD 11
@@ -250,6 +261,12 @@ if(BUILD_TESTING)
   target_link_libraries(test_protocol PRIVATE marmot)
   target_include_directories(test_protocol PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_protocol COMMAND test_protocol)
+
+  # Test: adopted-spec KeyPackage profile (nostrc-prqu.9)
+  add_executable(test_kp_profile ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_kp_profile.c)
+  target_link_libraries(test_kp_profile PRIVATE marmot)
+  target_include_directories(test_kp_profile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_kp_profile COMMAND test_kp_profile)
 
   # Test: Storage contract tests (all backends)
   add_executable(test_storage_contract ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_storage_contract.c)

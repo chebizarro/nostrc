@@ -144,8 +144,59 @@ leaf_node_tbs_serialize(const MlsLeafNode *node, MlsTlsBuf *buf)
  * KeyPackage creation
  * ══════════════════════════════════════════════════════════════════════════ */
 
+/* LeafNode + KeyPackage signatures (split out so a caller can add LeafNode
+ * extensions that depend on the generated signature key first; nostrc-prqu.9). */
 int
-mls_key_package_create(MlsKeyPackage *kp,
+mls_key_package_sign(MlsKeyPackage *kp, const MlsKeyPackagePrivate *priv_out)
+{
+    if (!kp || !priv_out) return -1;
+    /* Sign the leaf node (LeafNodeTBS for key_package source) */
+    {
+        MlsTlsBuf tbs_buf;
+        if (mls_tls_buf_init(&tbs_buf, 256) != 0) return -1;
+
+        if (leaf_node_tbs_serialize(&kp->leaf_node, &tbs_buf) != 0) {
+            mls_tls_buf_free(&tbs_buf);
+            return -1;
+        }
+
+        if (mls_crypto_sign_with_label(kp->leaf_node.signature,
+                                        priv_out->signature_key_private,
+                                        "LeafNodeTBS",
+                                        tbs_buf.data, tbs_buf.len) != 0) {
+            mls_tls_buf_free(&tbs_buf);
+            return -1;
+        }
+        kp->leaf_node.signature_len = MLS_SIG_LEN;
+        mls_tls_buf_free(&tbs_buf);
+    }
+
+    /* Sign the KeyPackage (KeyPackageTBS) */
+    {
+        MlsTlsBuf kp_tbs;
+        if (mls_tls_buf_init(&kp_tbs, 512) != 0) return -1;
+
+        if (key_package_tbs_serialize_for_signature(kp, &kp_tbs) != 0) {
+            mls_tls_buf_free(&kp_tbs);
+            return -1;
+        }
+
+        if (mls_crypto_sign_with_label(kp->signature,
+                                        priv_out->signature_key_private,
+                                        "KeyPackageTBS",
+                                        kp_tbs.data, kp_tbs.len) != 0) {
+            mls_tls_buf_free(&kp_tbs);
+            return -1;
+        }
+        kp->signature_len = MLS_SIG_LEN;
+        mls_tls_buf_free(&kp_tbs);
+    }
+
+    return 0;
+}
+
+int
+mls_key_package_create_unsigned(MlsKeyPackage *kp,
                         MlsKeyPackagePrivate *priv_out,
                         const uint8_t *credential_identity,
                         size_t credential_identity_len,
@@ -214,54 +265,32 @@ mls_key_package_create(MlsKeyPackage *kp,
         kp->extensions_len = extensions_len;
     }
 
-    /* Sign the leaf node (LeafNodeTBS for key_package source) */
-    {
-        MlsTlsBuf tbs_buf;
-        if (mls_tls_buf_init(&tbs_buf, 256) != 0) goto fail;
-
-        if (leaf_node_tbs_serialize(&kp->leaf_node, &tbs_buf) != 0) {
-            mls_tls_buf_free(&tbs_buf);
-            goto fail;
-        }
-
-        if (mls_crypto_sign_with_label(kp->leaf_node.signature,
-                                        priv_out->signature_key_private,
-                                        "LeafNodeTBS",
-                                        tbs_buf.data, tbs_buf.len) != 0) {
-            mls_tls_buf_free(&tbs_buf);
-            goto fail;
-        }
-        kp->leaf_node.signature_len = MLS_SIG_LEN;
-        mls_tls_buf_free(&tbs_buf);
-    }
-
-    /* Sign the KeyPackage (KeyPackageTBS) */
-    {
-        MlsTlsBuf kp_tbs;
-        if (mls_tls_buf_init(&kp_tbs, 512) != 0) goto fail;
-
-        if (key_package_tbs_serialize_for_signature(kp, &kp_tbs) != 0) {
-            mls_tls_buf_free(&kp_tbs);
-            goto fail;
-        }
-
-        if (mls_crypto_sign_with_label(kp->signature,
-                                        priv_out->signature_key_private,
-                                        "KeyPackageTBS",
-                                        kp_tbs.data, kp_tbs.len) != 0) {
-            mls_tls_buf_free(&kp_tbs);
-            goto fail;
-        }
-        kp->signature_len = MLS_SIG_LEN;
-        mls_tls_buf_free(&kp_tbs);
-    }
-
     return 0;
 
 fail:
     mls_key_package_clear(kp);
     mls_key_package_private_clear(priv_out);
     return -1;
+}
+
+int
+mls_key_package_create(MlsKeyPackage *kp,
+                        MlsKeyPackagePrivate *priv_out,
+                        const uint8_t *credential_identity,
+                        size_t credential_identity_len,
+                        const uint8_t *extensions_data,
+                        size_t extensions_len)
+{
+    if (mls_key_package_create_unsigned(kp, priv_out, credential_identity,
+                                        credential_identity_len,
+                                        extensions_data, extensions_len) != 0)
+        return -1;
+    if (mls_key_package_sign(kp, priv_out) != 0) {
+        mls_key_package_clear(kp);
+        mls_key_package_private_clear(priv_out);
+        return -1;
+    }
+    return 0;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
