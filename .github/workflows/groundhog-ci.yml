@@ -40,7 +40,7 @@ jobs:
       - name: Build Groundhog and every focused test target
         run: |
           cmake --build build --parallel 2 --target \
-            groundhog test-groundhog-shell test-groundhog-identity \
+            groundhog test-groundhog-resource test-groundhog-shell test-groundhog-identity \
             test-groundhog-account test-groundhog-account-relays \
             test-groundhog-account-ui test-groundhog-relay test-groundhog-relay-wire
 
@@ -54,7 +54,7 @@ jobs:
               ['ctest', '--test-dir', 'build', '--show-only=json-v1'], text=True))
           found = {test['name'] for test in data['tests']}
           required = {
-              'groundhog-shell', 'groundhog-identity', 'groundhog-account',
+              'groundhog-resource', 'groundhog-shell', 'groundhog-identity', 'groundhog-account',
               'groundhog-account-relays', 'groundhog-account-ui', 'groundhog-relay', 'groundhog-relay-wire',
               'groundhog-version', 'groundhog-launch', 'groundhog-schema',
               'groundhog-data', 'groundhog-desktop', 'groundhog-metainfo',
