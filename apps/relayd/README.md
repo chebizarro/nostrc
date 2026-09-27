@@ -105,7 +105,10 @@ still reach the network.
    relay signs the kind-22242 challenge response **through
    `org.nostr.Signer`** (app id `nostr-session-relay`; the relay holds no
    keys), then resends. AUTH is lazy (only after an `auth-required:`
-   refusal). **Gift wraps are never delivered over an authenticated
+   refusal). Signing happens off the delivery path: while the signer
+   prompts (up to 30 s), other connections keep delivering, and the
+   `GetPublicKey` that learns the local account does not block them
+   either. **Gift wraps are never delivered over an authenticated
    connection**: authenticating as the user would tell the inbox relay
    who sent the wrap, which NIP-17's throw-away keys exist to hide; wraps
    use separate, never-authenticated connections, and an inbox relay that

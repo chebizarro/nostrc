@@ -18,6 +18,11 @@
 #define SIGNER_IFACE "org.nostr.Signer"
 #define HOUSEKEEPING_INTERVAL_S 60
 #define ACCOUNT_REPROBE_MIN_S 30
+/* org.nostr.Signer may prompt; libnostr-publish's SignEvent timeout. */
+#define SIGNER_TIMEOUT_S 30
+/* How long an event waits for a GetPublicKey answer before re-routing
+ * checks again (the answer makes it due at once). */
+#define PROBE_WAIT_S (SIGNER_TIMEOUT_S + 15)
 
 typedef struct {
   char *event_id;
@@ -35,6 +40,7 @@ typedef struct {
   GQueue queued;            /* Attempt*: waiting for the connection */
   GHashTable *await_auth;   /* id -> Attempt*: auth-required, resend after AUTH */
   char *challenge;
+  gboolean auth_signing;    /* AUTH event at the signer (worker thread) */
   char *auth_event_id;      /* our AUTH event, OK awaited */
   gint64 last_activity;
   /* Read by the D-Bus thread: written under fed->lock. */
@@ -66,12 +72,26 @@ struct NsrFederation {
   GHashTable *conns;         /* key -> RelayConn*; mutations under lock */
   gint64 next_housekeeping;
 
-  /* Accounts (under lock). */
-  GMutex lock;
-  GPtrArray *accounts;       /* hex, learned from the signer (persisted) */
-  gint64 last_probe_ok;      /* wall s of the last successful GetPublicKey */
+  /* org.nostr.Signer calls never block the engine thread (nostrc-8cc1):
+   * NIP-42 AUTH is signed on a worker thread, GetPublicKey is an async
+   * D-Bus call; both complete on the engine context. Engine thread only. */
+  GCancellable *cancel;      /* cancelled when the engine stops */
+  guint signer_calls;        /* in flight */
+  gboolean probe_inflight;
+  guint probe_gen;           /* GetPublicKey calls started */
+  guint last_ok_gen;         /* generation of the last successful one */
+  gint64 probe_started;      /* wall s the in-flight / last call started */
+  /* Events by an unknown author waiting for an answer: id -> probe_gen
+   * when first parked. An answer only decides the events parked before
+   * that call started (a newer key may have signed a later event). */
+  GHashTable *parked;
+  gint64 last_probe_ok;      /* start (wall s) of the last successful call */
   gint64 next_probe;
   guint probe_failures;
+
+  /* Accounts (under lock: the relay and D-Bus threads read them). */
+  GMutex lock;
+  GPtrArray *accounts;       /* hex, learned from the signer (persisted) */
   char *detail;
 };
 
@@ -118,26 +138,6 @@ static GDBusConnection *get_bus(NsrFederation *f) {
   return f->bus;
 }
 
-static NostrPublishSigner *get_signer(NsrFederation *f, char **why) {
-  if (f->signer) return f->signer;
-  if (!f->dbus_signer) {
-    *why = g_strdup("no signer configured");
-    return NULL;
-  }
-  GDBusConnection *bus = get_bus(f);
-  if (!bus) {
-    *why = g_strdup("no session bus for org.nostr.Signer");
-    return NULL;
-  }
-  GError *err = NULL;
-  f->signer = nostr_publish_signer_new_dbus(bus, f->app_id, &err);
-  if (!f->signer) {
-    *why = g_strdup_printf("org.nostr.Signer: %s", err ? err->message : "?");
-    g_clear_error(&err);
-  }
-  return f->signer;
-}
-
 /* ── Accounts ─────────────────────────────────────────────────────────── */
 
 static gboolean accounts_known(NsrFederation *f) {
@@ -158,49 +158,72 @@ static gboolean is_account(NsrFederation *f, const char *pk) {
   return yes;
 }
 
-/* org.nostr.Signer.GetPublicKey. May D-Bus-activate the signer: it only
- * runs when an event by an unknown author is waiting, i.e. an app just
- * published something (and so just used the signer). */
-static gboolean probe_account(NsrFederation *f, gint64 now) {
-  GDBusConnection *bus = f->dbus_signer ? get_bus(f) : NULL;
+static void pump(NsrFederation *f);
+
+static void probe_failed(NsrFederation *f, gint64 now, const char *why) {
+  guint shift = MIN(f->probe_failures, 6u);
+  f->probe_failures++;
+  f->next_probe = now + MIN(300, 5 << shift);
+  set_detail(f, "waiting for the local account: org.nostr.Signer: %s", why);
+}
+
+static void on_probe_done(GObject *src, GAsyncResult *res, gpointer ud) {
+  NsrFederation *f = ud;
   GError *err = NULL;
-  GVariant *r = NULL;
-  /* The first call may D-Bus-activate the signer: give it time. */
-  int timeout_ms = f->last_probe_ok == 0 && f->probe_failures == 0 ? 30000 : 10000;
-  if (bus)
-    r = g_dbus_connection_call_sync(bus, SIGNER_BUS, SIGNER_PATH, SIGNER_IFACE,
-                                    "GetPublicKey", NULL, G_VARIANT_TYPE("(s)"),
-                                    G_DBUS_CALL_FLAGS_NONE, timeout_ms, NULL, &err);
-  char hex[65];
+  GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &err);
+  f->probe_inflight = FALSE;
+  f->signer_calls--;
+  if (g_atomic_int_get(&f->stopping)) {
+    if (r) g_variant_unref(r);
+    g_clear_error(&err);
+    return;
+  }
+  gint64 now = wall_now();
   const char *pk = NULL;
+  char hex[65];
   if (r) g_variant_get(r, "(&s)", &pk);
   if (r && pk && nsr_fed_parse_pubkey(pk, hex) == 0) {
-    g_variant_unref(r);
     g_mutex_lock(&f->lock);
     gboolean have = FALSE;
     for (guint i = 0; i < f->accounts->len && !have; i++)
       have = strcmp(g_ptr_array_index(f->accounts, i), hex) == 0;
     if (!have) g_ptr_array_add(f->accounts, g_strdup(hex));
-    f->last_probe_ok = now;
+    g_mutex_unlock(&f->lock);
+    f->last_probe_ok = f->probe_started;
+    f->last_ok_gen = f->probe_gen;
     f->probe_failures = 0;
     f->next_probe = now + ACCOUNT_REPROBE_MIN_S;
-    g_mutex_unlock(&f->lock);
     nsr_outbox_add_account(f->outbox, hex);
     set_detail(f, "local account from org.nostr.Signer (%.12s…)", hex);
-    nsr_outbox_reroute_all(f->outbox);
-    return TRUE;
+  } else {
+    probe_failed(f, now, err ? err->message : "GetPublicKey returned an unusable key");
   }
-  const char *why = !f->dbus_signer ? "federation_accounts is empty and the signer is disabled"
-                    : !bus          ? "no session bus"
-                    : err           ? err->message
-                                    : "GetPublicKey returned an unusable key";
-  guint shift = MIN(f->probe_failures, 6u);
-  f->probe_failures++;
-  f->next_probe = now + MIN(300, 5 << shift);
-  set_detail(f, "waiting for the local account: org.nostr.Signer: %s", why);
   if (r) g_variant_unref(r);
   g_clear_error(&err);
-  return FALSE;
+  nsr_outbox_reroute_held(f->outbox);
+  pump(f);
+}
+
+/* Ask org.nostr.Signer.GetPublicKey, asynchronously. Only runs when an
+ * event by an unknown author is waiting, i.e. an app just published
+ * something (and so just used the signer); may D-Bus-activate it. */
+static void start_probe(NsrFederation *f, gint64 now) {
+  GDBusConnection *bus = f->dbus_signer ? get_bus(f) : NULL;
+  if (!bus) {
+    probe_failed(f, now, !f->dbus_signer ? "federation_accounts is empty and the signer is disabled"
+                                         : "no session bus");
+    return;
+  }
+  /* The first call may D-Bus-activate the signer: give it time. */
+  int timeout_ms = f->last_probe_ok == 0 && f->probe_failures == 0 ? SIGNER_TIMEOUT_S * 1000
+                                                                   : 10000;
+  f->probe_inflight = TRUE;
+  f->probe_gen++;
+  f->probe_started = now;
+  f->signer_calls++;
+  g_dbus_connection_call(bus, SIGNER_BUS, SIGNER_PATH, SIGNER_IFACE, "GetPublicKey", NULL,
+                         G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, timeout_ms, f->cancel,
+                         on_probe_done, f);
 }
 
 /* ── Relay-list lookups for routing (engine thread) ───────────────────── */
@@ -257,35 +280,33 @@ static void route_one(NsrFederation *f, NsrOutboxEvent *e, gint64 now) {
     return;
   }
   if (e->kind != 1059 && !is_account(f, e->pubkey)) {
-    gboolean decided = f->cfg.n_accounts > 0;
-    g_mutex_lock(&f->lock);
-    /* Strictly after: a probe in the same second may predate the event. */
-    decided = decided || f->last_probe_ok > e->enqueued_at;
-    gint64 next_probe = f->next_probe;
-    g_mutex_unlock(&f->lock);
-    if (!decided && now >= next_probe) {
-      (void)probe_account(f, now);
+    /* Decided when the signer answered after the event was queued:
+     * strictly after in wall seconds (an answer in the same second may
+     * predate it), or by a call started after it was parked here. */
+    gpointer gen = NULL;
+    gboolean parked = g_hash_table_lookup_extended(f->parked, e->id, NULL, &gen);
+    gboolean decided = f->cfg.n_accounts > 0 || f->last_probe_ok > e->enqueued_at ||
+                       (parked && f->last_ok_gen > GPOINTER_TO_UINT(gen));
+    if (decided) {
+      g_hash_table_remove(f->parked, e->id);
+      const char *why = "not forwarded: the author is not a local account";
+      nsr_outbox_set_final(f->outbox, e->id, "skipped", why, now);
+      notify(f, e->id, "", "", why, "skipped");
+    } else {
+      if (!parked)
+        g_hash_table_insert(f->parked, g_strdup(e->id), GUINT_TO_POINTER(f->probe_gen));
+      if (!f->probe_inflight && now >= f->next_probe) start_probe(f, now);
       g_mutex_lock(&f->lock);
-      decided = f->last_probe_ok > e->enqueued_at || f->last_probe_ok == now;
-      next_probe = f->next_probe;
+      char *why = g_strdup(f->detail ? f->detail : "waiting for the local account");
       g_mutex_unlock(&f->lock);
+      nsr_outbox_set_unroutable(f->outbox, e->id, why,
+                                f->probe_inflight ? now + PROBE_WAIT_S : f->next_probe, TRUE, now);
+      g_free(why);
     }
-    if (!is_account(f, e->pubkey)) {
-      if (decided) {
-        const char *why = "not forwarded: the author is not a local account";
-        nsr_outbox_set_final(f->outbox, e->id, "skipped", why, now);
-        notify(f, e->id, "", "", why, "skipped");
-      } else {
-        g_mutex_lock(&f->lock);
-        char *why = g_strdup(f->detail ? f->detail : "waiting for the local account");
-        g_mutex_unlock(&f->lock);
-        nsr_outbox_set_unroutable(f->outbox, e->id, why, next_probe, TRUE, now);
-        g_free(why);
-      }
-      nostr_event_free(ev);
-      return;
-    }
+    nostr_event_free(ev);
+    return;
   }
+  g_hash_table_remove(f->parked, e->id);
   /* NIP-09: a deletion cancels what it deletes while still queued. */
   if (e->kind == 5) {
     size_t n = tags ? nostr_tags_size(tags) : 0;
@@ -446,58 +467,163 @@ static void conn_fail(RelayConn *rc, const char *why) {
   conn_set_error(rc, why);
 }
 
-static void start_auth(RelayConn *rc) {
-  NsrFederation *f = rc->fed;
-  if (rc->auth_event_id || !rc->challenge || !rc->t ||
-      g_hash_table_size(rc->await_auth) == 0)
-    return;
-  char *why = NULL;
-  NostrPublishSigner *signer = get_signer(f, &why);
-  if (!signer) {
-    char *msg = g_strdup_printf("auth-required: cannot answer NIP-42 AUTH (%s)", why);
-    fail_table(rc, rc->await_auth, NSR_OUTBOX_TRANSIENT, msg);
-    g_free(msg);
-    g_free(why);
+/* NIP-42 AUTH signing on a worker thread (nostrc-8cc1): org.nostr.Signer
+ * may prompt for up to SIGNER_TIMEOUT_S, and creating its proxy may
+ * D-Bus-activate it; neither may stall the other upstream connections.
+ * The job owns everything it touches; the completion (engine context)
+ * finds the connection again by key. */
+typedef struct {
+  NostrPublishSigner *signer;  /* ref; NULL: create it on the worker */
+  GDBusConnection *bus;        /* ref, for creating the signer */
+  char *app_id, *conn_key, *challenge, *unsigned_json;
+  NostrPublishSigner *created; /* out */
+  char *signed_json;           /* out */
+  GError *error;               /* out */
+  gboolean proxy_failed;       /* out: the signer could not be reached */
+} AuthJob;
+
+static void auth_job_free(gpointer p) {
+  AuthJob *j = p;
+  if (j->signer) nostr_publish_signer_unref(j->signer);
+  if (j->created) nostr_publish_signer_unref(j->created);
+  g_clear_object(&j->bus);
+  g_free(j->app_id);
+  g_free(j->conn_key);
+  g_free(j->challenge);
+  g_free(j->unsigned_json);
+  g_free(j->signed_json);
+  g_clear_error(&j->error);
+  g_free(j);
+}
+
+static void auth_job_run(GTask *task, gpointer src, gpointer data, GCancellable *cancel) {
+  (void)src;
+  AuthJob *j = data;
+  NostrPublishSigner *s = j->signer;
+  if (!s) {
+    s = j->created = nostr_publish_signer_new_dbus(j->bus, j->app_id, &j->error);
+    j->proxy_failed = s == NULL;
+  }
+  if (s) j->signed_json = nostr_publish_signer_sign_event_json(s, j->unsigned_json, cancel, &j->error);
+  g_task_return_boolean(task, TRUE);
+}
+
+static void json_str(GString *s, const char *v) {
+  g_string_append_c(s, '"');
+  for (const unsigned char *c = (const unsigned char *)v; *c; c++) {
+    if (*c == '"' || *c == '\\') {
+      g_string_append_c(s, '\\');
+      g_string_append_c(s, (char)*c);
+    } else if (*c < 0x20) {
+      g_string_append_printf(s, "\\u%04x", *c);
+    } else {
+      g_string_append_c(s, (char)*c);
+    }
+  }
+  g_string_append_c(s, '"');
+}
+
+/* Unsigned kind-22242 event (the shape nostr_publish_signer_sign_auth_event
+ * builds; that call cannot be cancelled). */
+static char *auth_event_json(const char *relay_url, const char *challenge, gint64 created_at) {
+  GString *s = g_string_new(NULL);
+  g_string_append_printf(s, "{\"kind\":22242,\"created_at\":%" G_GINT64_FORMAT
+                            ",\"content\":\"\",\"tags\":[[\"relay\",", created_at);
+  json_str(s, relay_url);
+  g_string_append(s, "],[\"challenge\",");
+  json_str(s, challenge);
+  g_string_append(s, "]]}");
+  return g_string_free(s, FALSE);
+}
+
+static void start_auth(RelayConn *rc);
+
+static void on_auth_signed(GObject *src, GAsyncResult *res, gpointer ud) {
+  (void)src;
+  NsrFederation *f = ud;
+  AuthJob *j = g_task_get_task_data(G_TASK(res));
+  f->signer_calls--;
+  if (g_atomic_int_get(&f->stopping)) return;
+  if (j->created && !f->signer) f->signer = g_steal_pointer(&j->created);
+  RelayConn *rc = g_hash_table_lookup(f->conns, j->conn_key);
+  if (!rc) return;
+  rc->auth_signing = FALSE;
+  if (!rc->t) return; /* the connection dropped meanwhile: attempts already settled */
+  if (g_strcmp0(rc->challenge, j->challenge) != 0) {
+    start_auth(rc); /* reconnected meanwhile: sign the new challenge */
     return;
   }
-  GError *err = NULL;
-  gchar *signed_json =
-      nostr_publish_signer_sign_auth_event(signer, rc->url, rc->challenge, wall_now(), &err);
-  if (!signed_json) {
-    NsrOutboxResult res = nostr_publish_signer_error_is_permanent(err) ? NSR_OUTBOX_PERMANENT
-                                                                       : NSR_OUTBOX_TRANSIENT;
-    char *msg = g_strdup_printf("auth-required: signing NIP-42 AUTH failed: %s",
-                                err ? err->message : "?");
-    g_clear_error(&err);
-    fail_table(rc, rc->await_auth, res, msg);
+  if (!j->signed_json) {
+    NsrOutboxResult r = nostr_publish_signer_error_is_permanent(j->error) ? NSR_OUTBOX_PERMANENT
+                                                                         : NSR_OUTBOX_TRANSIENT;
+    char *msg = j->proxy_failed
+                    ? g_strdup_printf("auth-required: cannot answer NIP-42 AUTH (org.nostr.Signer: %s)",
+                                      j->error ? j->error->message : "?")
+                    : g_strdup_printf("auth-required: signing NIP-42 AUTH failed: %s",
+                                      j->error ? j->error->message : "?");
+    fail_table(rc, rc->await_auth, r, msg);
     g_free(msg);
-    return;
-  }
-  if (!rc->t) { /* the connection dropped while the signer was prompting */
-    g_free(signed_json);
+    conn_pump(rc);
     return;
   }
   NostrEvent *ev = nostr_event_new();
   char *auth_id = NULL;
-  if (nostr_event_deserialize(ev, signed_json) == 0) auth_id = nostr_event_get_id(ev);
+  if (nostr_event_deserialize(ev, j->signed_json) == 0) auth_id = nostr_event_get_id(ev);
   nostr_event_free(ev);
-  char *frame = g_strdup_printf("[\"AUTH\",%s]", signed_json);
-  g_free(signed_json);
+  char *frame = g_strdup_printf("[\"AUTH\",%s]", j->signed_json);
   if (!auth_id || !nostr_publish_transport_send_frame(rc->t, frame, NULL)) {
     g_free(frame);
     free(auth_id);
     fail_table(rc, rc->await_auth, NSR_OUTBOX_TRANSIENT, "auth-required: sending AUTH failed");
+    conn_pump(rc);
     return;
   }
   g_free(frame);
   rc->auth_event_id = g_strdup(auth_id);
   free(auth_id);
-  /* The signer may have prompted: give the resend a full OK window. */
+  /* Give the resend a full OK window after the prompt. */
   gint64 deadline = wall_now() + f->cfg.ok_timeout_seconds;
   GHashTableIter it;
   gpointer k, v;
   g_hash_table_iter_init(&it, rc->await_auth);
   while (g_hash_table_iter_next(&it, &k, &v)) ((Attempt *)v)->deadline = deadline;
+}
+
+static void start_auth(RelayConn *rc) {
+  NsrFederation *f = rc->fed;
+  if (rc->auth_event_id || rc->auth_signing || !rc->challenge || !rc->t ||
+      g_hash_table_size(rc->await_auth) == 0)
+    return;
+  AuthJob *j = g_new0(AuthJob, 1);
+  if (f->signer) {
+    j->signer = nostr_publish_signer_ref(f->signer);
+  } else if (f->dbus_signer && get_bus(f)) {
+    j->bus = g_object_ref(f->bus);
+  } else {
+    fail_table(rc, rc->await_auth, NSR_OUTBOX_TRANSIENT,
+               f->dbus_signer ? "auth-required: cannot answer NIP-42 AUTH (no session bus for "
+                                "org.nostr.Signer)"
+                              : "auth-required: cannot answer NIP-42 AUTH (no signer configured)");
+    auth_job_free(j);
+    return;
+  }
+  j->app_id = g_strdup(f->app_id);
+  j->conn_key = g_strdup(rc->key);
+  j->challenge = g_strdup(rc->challenge);
+  j->unsigned_json = auth_event_json(rc->url, rc->challenge, wall_now());
+  rc->auth_signing = TRUE;
+  f->signer_calls++;
+  /* The signer may prompt: the waiting attempts outlive it. */
+  gint64 deadline = wall_now() + SIGNER_TIMEOUT_S + f->cfg.ok_timeout_seconds;
+  GHashTableIter it;
+  gpointer k, v;
+  g_hash_table_iter_init(&it, rc->await_auth);
+  while (g_hash_table_iter_next(&it, &k, &v))
+    ((Attempt *)v)->deadline = MAX(((Attempt *)v)->deadline, deadline);
+  GTask *task = g_task_new(NULL, f->cancel, on_auth_signed, f);
+  g_task_set_task_data(task, j, auth_job_free);
+  g_task_run_in_thread(task, auth_job_run);
+  g_object_unref(task);
 }
 
 static void on_auth_ok(RelayConn *rc, gboolean accepted, const char *reason) {
@@ -848,6 +974,11 @@ static gpointer engine_thread(gpointer p) {
   f->conns = g_hash_table_new(g_str_hash, g_str_equal);
   g_mutex_unlock(&f->lock);
   g_hash_table_unref(conns); /* conn_free drops transports (deferred unref) */
+  /* Signer calls in flight: cancel them and collect their completions
+   * (they see `stopping` and touch nothing). Creating the signer's proxy
+   * cannot be cancelled, so this may wait for a D-Bus activation. */
+  g_cancellable_cancel(f->cancel);
+  while (f->signer_calls > 0) g_main_context_iteration(f->ctx, TRUE);
   if (f->signer) {
     nostr_publish_signer_unref(f->signer);
     f->signer = NULL;
@@ -888,6 +1019,8 @@ NsrFederation *nsr_federation_new(const NsrFederationInit *init) {
   else
     f->detail = g_strdup("local account not known yet (asks org.nostr.Signer on first event)");
   f->conns = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, conn_free);
+  f->parked = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  f->cancel = g_cancellable_new();
   f->ctx = g_main_context_new();
   f->loop = g_main_loop_new(f->ctx, FALSE);
   return f;
@@ -931,6 +1064,8 @@ void nsr_federation_free(NsrFederation *f) {
   g_main_loop_unref(f->loop);
   g_main_context_unref(f->ctx);
   g_ptr_array_unref(f->accounts);
+  g_hash_table_unref(f->parked);
+  g_object_unref(f->cancel);
   g_mutex_clear(&f->lock);
   g_free(f->detail);
   g_free(f->app_id);

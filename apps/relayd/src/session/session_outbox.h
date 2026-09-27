@@ -150,6 +150,9 @@ int nsr_outbox_prune(NsrOutbox *ob, int64_t now, int64_t keep);
 /* Make every unroutable event due for re-routing now (e.g. the local
  * account just became known). */
 void nsr_outbox_reroute_all(NsrOutbox *ob);
+/* Only the events held for the local account (set_unroutable with
+ * @waiting_account): an org.nostr.Signer answer just came in. */
+void nsr_outbox_reroute_held(NsrOutbox *ob);
 /* Clean shutdown: a leased, still-pending target becomes due at @now
  * again instead of waiting for the lease to lapse. */
 void nsr_outbox_release_lease(NsrOutbox *ob, const char *event_id, const char *relay,

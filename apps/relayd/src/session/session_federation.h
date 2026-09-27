@@ -10,7 +10,9 @@
  * calls made from other threads are nsr_federation_offer()/_retract()
  * (relay loop, through the storage tee), nsr_federation_wake(), and the
  * read-only status accessors (D-Bus thread). Observer callbacks run on the
- * engine thread.
+ * engine thread. org.nostr.Signer never blocks the engine (nostrc-8cc1):
+ * NIP-42 AUTH is signed on a worker thread while the other connections
+ * keep going, and GetPublicKey is an asynchronous D-Bus call.
  *
  * Outbound engine. libnostr-publish's NostrPublishTransport (libsoup-3
  * WebSocket, NIP-01 envelope parsing), NostrPublishSigner

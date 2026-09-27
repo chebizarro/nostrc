@@ -707,6 +707,12 @@ void nsr_outbox_reroute_all(NsrOutbox *ob) {
   g_mutex_unlock(&ob->lock);
 }
 
+void nsr_outbox_reroute_held(NsrOutbox *ob) {
+  g_mutex_lock(&ob->lock);
+  (void)exec(ob, "UPDATE events SET next_route_at = 0 WHERE state = 'unroutable' AND hold = 1");
+  g_mutex_unlock(&ob->lock);
+}
+
 void nsr_outbox_release_lease(NsrOutbox *ob, const char *event_id, const char *relay,
                               int64_t now) {
   g_mutex_lock(&ob->lock);
