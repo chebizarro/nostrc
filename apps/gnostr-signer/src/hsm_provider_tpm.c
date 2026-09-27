@@ -796,222 +796,17 @@ cng_delete_master_key(GnHsmProviderTpm *self, GError **error)
  * Software Fallback Implementation
  * ============================================================================ */
 
-/* Store/retrieve master key using libsecret or Keychain */
-
-#ifdef __APPLE__
-
-static gboolean
-software_store_master_key(const guint8 *key, gsize len)
-{
-  CFMutableDictionaryRef query = CFDictionaryCreateMutable(
-    kCFAllocatorDefault, 0,
-    &kCFTypeDictionaryKeyCallBacks,
-    &kCFTypeDictionaryValueCallBacks);
-
-  CFStringRef service = CFStringCreateWithCString(NULL, MASTER_KEY_SERVICE, kCFStringEncodingUTF8);
-  CFStringRef account = CFStringCreateWithCString(NULL, MASTER_KEY_ACCOUNT, kCFStringEncodingUTF8);
-  CFDataRef key_data = CFDataCreate(NULL, key, len);
-
-  CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
-  CFDictionarySetValue(query, kSecAttrService, service);
-  CFDictionarySetValue(query, kSecAttrAccount, account);
-
-  /* Delete existing */
-  SecItemDelete(query);
-
-  CFDictionarySetValue(query, kSecValueData, key_data);
-  CFDictionarySetValue(query, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlock);
-
-  OSStatus status = SecItemAdd(query, NULL);
-
-  CFRelease(service);
-  CFRelease(account);
-  CFRelease(key_data);
-  CFRelease(query);
-
-  return status == errSecSuccess;
-}
-
-static gboolean
-software_load_master_key(guint8 *key_out, gsize *len_out)
-{
-  CFMutableDictionaryRef query = CFDictionaryCreateMutable(
-    kCFAllocatorDefault, 0,
-    &kCFTypeDictionaryKeyCallBacks,
-    &kCFTypeDictionaryValueCallBacks);
-
-  CFStringRef service = CFStringCreateWithCString(NULL, MASTER_KEY_SERVICE, kCFStringEncodingUTF8);
-  CFStringRef account = CFStringCreateWithCString(NULL, MASTER_KEY_ACCOUNT, kCFStringEncodingUTF8);
-
-  CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
-  CFDictionarySetValue(query, kSecAttrService, service);
-  CFDictionarySetValue(query, kSecAttrAccount, account);
-  CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue);
-
-  CFDataRef key_data = NULL;
-  OSStatus status = SecItemCopyMatching(query, (CFTypeRef *)&key_data);
-
-  CFRelease(service);
-  CFRelease(account);
-  CFRelease(query);
-
-  if (status == errSecSuccess && key_data) {
-    CFIndex len = CFDataGetLength(key_data);
-    if (len <= 32) {
-      memcpy(key_out, CFDataGetBytePtr(key_data), len);
-      *len_out = len;
-      CFRelease(key_data);
-      return TRUE;
-    }
-    CFRelease(key_data);
-  }
-
-  return FALSE;
-}
-
-static gboolean
-software_delete_master_key(void)
-{
-  CFMutableDictionaryRef query = CFDictionaryCreateMutable(
-    kCFAllocatorDefault, 0,
-    &kCFTypeDictionaryKeyCallBacks,
-    &kCFTypeDictionaryValueCallBacks);
-
-  CFStringRef service = CFStringCreateWithCString(NULL, MASTER_KEY_SERVICE, kCFStringEncodingUTF8);
-  CFStringRef account = CFStringCreateWithCString(NULL, MASTER_KEY_ACCOUNT, kCFStringEncodingUTF8);
-
-  CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
-  CFDictionarySetValue(query, kSecAttrService, service);
-  CFDictionarySetValue(query, kSecAttrAccount, account);
-
-  OSStatus status = SecItemDelete(query);
-
-  CFRelease(service);
-  CFRelease(account);
-  CFRelease(query);
-
-  return status == errSecSuccess || status == errSecItemNotFound;
-}
-
-static gboolean
-software_has_master_key(void)
-{
-  guint8 key[32];
-  gsize len;
-  return software_load_master_key(key, &len);
-}
-
-#else /* Non-Apple platforms use libsecret */
-
-#ifdef GNOSTR_HAVE_LIBSECRET
-#include <libsecret/secret.h>
-
-static const SecretSchema MASTER_KEY_SCHEMA = {
-  MASTER_KEY_SERVICE,
-  SECRET_SCHEMA_NONE,
-  {
-    { "purpose", SECRET_SCHEMA_ATTRIBUTE_STRING },
-    { NULL, 0 }
-  }
-};
-
-static gboolean
-software_store_master_key(const guint8 *key, gsize len)
-{
-  gchar *hex = bytes_to_hex(key, len);
-  GError *err = NULL;
-
-  gboolean ok = secret_password_store_sync(
-    &MASTER_KEY_SCHEMA,
-    SECRET_COLLECTION_DEFAULT,
-    "Gnostr Hardware Keystore Master Key",
-    hex,
-    NULL,
-    &err,
-    "purpose", "master-key",
-    NULL);
-
-  /* Securely zero and free */
-  memset(hex, 0, strlen(hex));
-  g_free(hex);
-
-  if (err) {
-    g_warning("Failed to store master key: %s", err->message);
-    g_error_free(err);
-    return FALSE;
-  }
-
-  return ok;
-}
-
-static gboolean
-software_load_master_key(guint8 *key_out, gsize *len_out)
-{
-  GError *err = NULL;
-
-  gchar *hex = secret_password_lookup_sync(
-    &MASTER_KEY_SCHEMA,
-    NULL,
-    &err,
-    "purpose", "master-key",
-    NULL);
-
-  if (err) {
-    g_warning("Failed to load master key: %s", err->message);
-    g_error_free(err);
-    return FALSE;
-  }
-
-  if (!hex)
-    return FALSE;
-
-  gboolean ok = hex_to_bytes(hex, key_out, 32);
-  if (ok)
-    *len_out = 32;
-
-  /* Securely zero and free */
-  memset(hex, 0, strlen(hex));
-  secret_password_free(hex);
-
-  return ok;
-}
-
-static gboolean
-software_delete_master_key(void)
-{
-  GError *err = NULL;
-
-  gboolean ok = secret_password_clear_sync(
-    &MASTER_KEY_SCHEMA,
-    NULL,
-    &err,
-    "purpose", "master-key",
-    NULL);
-
-  if (err) {
-    g_warning("Failed to delete master key: %s", err->message);
-    g_error_free(err);
-    return FALSE;
-  }
-
-  return ok;
-}
-
-static gboolean
-software_has_master_key(void)
-{
-  guint8 key[32];
-  gsize len;
-  return software_load_master_key(key, &len);
-}
-
-#else
-
-/* No libsecret - minimal implementation */
+/* nostrc-prqu.2: there is no software master-key store. The fallback used
+ * to keep a key-wrapping master key in the login keyring (libsecret schema
+ * org.gnostr.Signer.HardwareKeystore, or the macOS Keychain) - a second
+ * client-side key store next to the signer daemon, which is the only holder
+ * of key material - and generated it with a non-cryptographic PRNG. Without
+ * a hardware backend the provider now reports no master key and refuses to
+ * create one. Items written by older builds are left untouched. */
 static gboolean software_store_master_key(const guint8 *key, gsize len)
 {
   (void)key; (void)len;
-  g_warning("libsecret not available for software keystore");
+  g_message("hsm-tpm: no hardware backend; software master keys are not supported");
   return FALSE;
 }
 
@@ -1030,9 +825,6 @@ static gboolean software_has_master_key(void)
 {
   return FALSE;
 }
-
-#endif /* GNOSTR_HAVE_LIBSECRET */
-#endif /* __APPLE__ */
 
 /* ============================================================================
  * Provider Interface Implementation
