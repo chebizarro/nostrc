@@ -161,7 +161,12 @@ override_dh_makeshlibs:
 	# shared libraries — they must NOT be listed in shlibs (P5 of the
 	# packaging plan). dh_shlibdeps still runs against them for their own
 	# dependencies.
-	dh_makeshlibs -Xpam_nostr -Xlibnss_nostr
+	# libnostr-nips0 (nostrc-4c0o) makes no ABI promise beyond its SONAMEs
+	# and all its consumers come from this source, so pin them exactly
+	# (matches the RPM spec's `= %{version}-%{release}` Requires).
+	dh_makeshlibs -plibnostr-nips0 \
+		-V "libnostr-nips0 (= $$(dpkg-parsechangelog -SVersion))"
+	dh_makeshlibs -Nlibnostr-nips0 -Xpam_nostr -Xlibnss_nostr
 
 override_dh_installsystemd:
 	# Do not auto-start or enable nostr-authd: an unseeded broker has no

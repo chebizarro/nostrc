@@ -1,6 +1,11 @@
 
 project(nip19)
 
+if(NOT COMMAND declare_component_version)
+  include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/VersionHelpers.cmake")
+endif()
+include(GNUInstallDirs)
+
 # Include the header files
 include_directories(include ${CMAKE_SOURCE_DIR}/libnostr/include)
 
@@ -10,6 +15,15 @@ file(GLOB SOURCES "src/*.c")
 # Create the library
 add_library(nip19 ${SOURCES})
 target_link_libraries(nip19 nostr)
+
+# nostrc-4c0o: a real SONAME (libnip19.so.0 -> libnip19.so.0.1.0), mirroring
+# libnostr, so the shared build can ship once in libnostr-nips0 (plan D-6)
+# with ABI-based dependencies instead of a private copy per consumer.
+# Pre-1.0: bump the minor for additions, SOVERSION for any ABI break.
+declare_component_version(nip19 0 1 0)
+set_target_properties(nip19 PROPERTIES
+  COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/nostr")
+apply_versioning(nip19)
 target_include_directories(nip19
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -41,7 +55,6 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples/example.c)
 endif()
 
 # Install rules
-include(GNUInstallDirs)
 install(TARGETS nip19
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

@@ -269,9 +269,15 @@ introspection `gir1.2-<Namespace>-<version>`; `Multi-Arch: same` for libs,
 | `libhanami-dev` | headers `/usr/include/hanami/`, `hanami.pc` | same | no |
 
 NIP libraries: **do not ship as individual packages.** ~50 targets, mostly
-`OBJECT` libs with no ABI story. Fold their compiled code into `libnostr1` (or a
-single `libnostr-nips0`) and their headers into `libnostr-dev`. Revisit only if a
-third-party consumer materialises. *(Decision D-6.)*
+`OBJECT` libs with no ABI story. The shared ones that a shipped binary links
+(today `libnip19.so.0`, `libnip34.so.0`, each with its own SONAME) ship in the
+single aggregate package `libnostr-nips0` (Fedora `libnostr-nips`); their
+headers ride in `libnostr-dev`. No `-dev` package until a third-party consumer
+materialises. Consumers are pinned exactly (`dh_makeshlibs -V`, RPM
+`= %{version}-%{release}`). Because one package carries several SONAMEs, a
+SONAME bump in any of them renames the package and moves all of its
+consumers together — harmless while every consumer is in-tree.
+*(Decision D-6, implemented in nostrc-4c0o.)*
 
 #### Headless — the nostr login stack
 
@@ -869,7 +875,7 @@ existing `apps/gnostr-signer/packaging/debian/*.install`, `*.postinst`, `*.trigg
 | **D-3** ✅ | **`libgo` name collision** with gccgo's `libgo` in Debian, plus the `liblibgo.a` artifact bug. | (a) rename lib to `libnostrgo` + pkg `libnostr-go0`; (b) keep name, accept collision risk | **(a).** Rename now, before anything ships. |
 | **D-4** | **`nostr_json` naming.** Underscore in SONAME and `.pc`. | (a) rename to `libnostr-json` + `nostr-json.pc` (symlink old); (b) keep | **(a)**, with a compat symlink for one release. |
 | **D-5** | **`nostr-authd` unit argument form.** SMB build emits the 4-arg `ExecStart`, but `nostr-homed-smb` is a separate package. | (a) always ship 4-arg (daemon tolerates it); (b) base unit 2-arg + a drop-in from `nostr-homed-smb` | **(b)** is cleaner; **(a)** is cheaper. Maintainer's call. |
-| **D-6** ✅ | **NIP libraries as packages.** ~50 targets, mixed OBJECT/static, no ABI story. | (a) fold into `libnostr1`; (b) one `libnostr-nips0`; (c) per-NIP packages | **(a).** Revisit only for an external consumer. |
+| **D-6** ✅ | **NIP libraries as packages.** ~50 targets, mixed OBJECT/static, no ABI story. | (a) fold into `libnostr1`; (b) one `libnostr-nips0`; (c) per-NIP packages | **Locked: (b)** (see the Locked list at the top; the original recommendation was (a)). Implemented in nostrc-4c0o. |
 | **D-7** | **`nsswitch.conf` activation.** | (a) document only; (b) debconf prompt; (c) postinst `sed` | **(a)** for v1; Fedora uses `authselect` regardless. |
 | **D-8** | **Where `debian/` lives.** | (a) top-level `debian/`; (b) `packaging/debian/` + gbp overlay; (c) separate packaging branch | **(a)** for the first cut. |
 | **D-9** | **Retire the per-app `debian/` dirs?** `apps/gnostr-signer/packaging/debian/` declares its own source package but configures the root CMake project. | (a) collapse into one source package, keep the `.install`/maintainer scripts; (b) keep both | **(a).** Two `debian/control` files racing over one build tree is untenable. |

@@ -1,5 +1,10 @@
 project(nip34 C)
 
+if(NOT COMMAND declare_component_version)
+  include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/VersionHelpers.cmake")
+endif()
+include(GNUInstallDirs)
+
 # NIP-34: Git Stuff — Nostr events for Git collaboration
 
 file(GLOB NIP34_SOURCES "src/*.c")
@@ -14,6 +19,13 @@ target_include_directories(nip34
 )
 
 target_link_libraries(nip34 PUBLIC nostr)
+
+# nostrc-4c0o: real SONAME (libnip34.so.0), shipped once in libnostr-nips0
+# (plan D-6) instead of privately inside libhanami0. Same policy as nip19.
+declare_component_version(nip34 0 1 0)
+set_target_properties(nip34 PROPERTIES
+  COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/nostr")
+apply_versioning(nip34)
 
 # Tests
 if(BUILD_TESTING)
@@ -34,7 +46,6 @@ endif()
 # but not installed to debian/tmp/, so dpkg-shlibdeps couldn't resolve
 # libnip34 for its consumers (libhanami0, nostr-homed-provision) and
 # the packaged .deb was silently broken on aarch64).
-include(GNUInstallDirs)
 install(TARGETS nip34
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
