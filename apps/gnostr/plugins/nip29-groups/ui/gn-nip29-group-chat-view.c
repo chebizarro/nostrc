@@ -40,6 +40,11 @@ struct _GnNip29GroupChatView
   /* Model */
   GnNip29MessageListModel *msg_model;
   gulong                   sig_items_changed;
+
+  /* nostrc-7n4t: "this group may have moved or been forked" */
+  AdwBanner               *relocation_banner;
+  gchar                   *relocation_relay;
+  gulong                   sig_group_updated;
 };
 
 G_DEFINE_TYPE(GnNip29GroupChatView, gn_nip29_group_chat_view, GTK_TYPE_BOX)
@@ -271,12 +276,93 @@ on_leave_clicked(GtkButton *button, gpointer user_data)
                                            g_object_ref(self));
 }
 
+/* ── Migration / fork notice (nostrc-7n4t) ──────────────────────── */
+
+static void
+update_relocation_banner(GnNip29GroupChatView *self)
+{
+  const char *relay = NULL;
+  guint authors = 0;
+  GnNip29RelocationState st =
+    gn_nip29_group_service_get_relocation(self->service, current_group_key(self),
+                                          &relay, &authors);
+  g_clear_pointer(&self->relocation_relay, g_free);
+  g_autofree gchar *title = NULL;
+  const char *button = NULL;
+  switch (st)
+    {
+    case GN_NIP29_RELOCATION_FOUND:
+      self->relocation_relay = g_strdup(relay);
+      title = g_strdup_printf(g_dngettext(NULL,
+          "This group may have moved or been forked: %u trusted list names it on %s.",
+          "This group may have moved or been forked: %u trusted lists name it on %s.",
+          authors), authors, relay);
+      button = "Open There";
+      break;
+    case GN_NIP29_RELOCATION_CHECKING:
+      title = g_strdup("The group’s relay is not answering. Looking for it on other relays…");
+      break;
+    case GN_NIP29_RELOCATION_UNREACHABLE:
+      title = g_strdup("The group’s relay is not answering, and none of its admins list the "
+                       "group on another relay.");
+      break;
+    case GN_NIP29_RELOCATION_NONE:
+    default:
+      break;
+    }
+  if (title != NULL)
+    {
+      adw_banner_set_title(self->relocation_banner, title);
+      adw_banner_set_button_label(self->relocation_banner, button);
+    }
+  adw_banner_set_revealed(self->relocation_banner, title != NULL);
+}
+
+static void
+on_service_group_updated(GnNip29GroupService *service,
+                         const char          *group_key,
+                         gpointer             user_data)
+{
+  (void)service;
+  GnNip29GroupChatView *self = GN_NIP29_GROUP_CHAT_VIEW(user_data);
+  if (g_strcmp0(group_key, current_group_key(self)) == 0)
+    update_relocation_banner(self);
+}
+
+/* Fetch the group from the relay its admins now name. A fork is a separate
+ * group (keyed relay'id), so this adds it next to the current one. */
+static void
+on_relocation_open_clicked(AdwBanner *banner, gpointer user_data)
+{
+  (void)banner;
+  GnNip29GroupChatView *self = GN_NIP29_GROUP_CHAT_VIEW(user_data);
+  if (self->relocation_relay == NULL || self->group_item == NULL)
+    return;
+  const char *alias = gn_nip29_group_item_get_display_name(self->group_item);
+  g_autoptr(GError) error = NULL;
+  if (gn_nip29_group_service_track_group(self->service, self->relocation_relay,
+                                         gn_nip29_group_item_get_group_id(self->group_item),
+                                         alias, &error))
+    {
+      g_autofree gchar *msg = g_strdup_printf("Added the group on %s to your groups.",
+                                              self->relocation_relay);
+      set_action_status(self, msg, FALSE);
+    }
+  else
+    set_action_status(self, error ? error->message : "Could not add the group", TRUE);
+}
+
 /* ── GObject lifecycle ───────────────────────────────────────────── */
 
 static void
 gn_nip29_group_chat_view_dispose(GObject *object)
 {
   GnNip29GroupChatView *self = GN_NIP29_GROUP_CHAT_VIEW(object);
+
+  if (self->service != NULL && self->sig_group_updated > 0)
+    g_signal_handler_disconnect(self->service, self->sig_group_updated);
+  self->sig_group_updated = 0;
+  g_clear_pointer(&self->relocation_relay, g_free);
 
   if (self->msg_model != NULL && self->sig_items_changed > 0)
     {
@@ -365,6 +451,12 @@ gn_nip29_group_chat_view_new(GnNip29GroupService *service,
 
   const char *group_key = gn_nip29_group_item_get_key(group_item);
   const char *display = gn_nip29_group_item_get_display_name(group_item);
+
+  /* ── Migration / fork notice (nostrc-7n4t) ─────────────────────── */
+  self->relocation_banner = ADW_BANNER(adw_banner_new(""));
+  g_signal_connect(self->relocation_banner, "button-clicked",
+                   G_CALLBACK(on_relocation_open_clicked), self);
+  gtk_box_append(GTK_BOX(self), GTK_WIDGET(self->relocation_banner));
 
   /* ── Header bar ────────────────────────────────────────────────── */
   GtkWidget *chat_header = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
@@ -476,6 +568,10 @@ gn_nip29_group_chat_view_new(GnNip29GroupService *service,
   gtk_box_append(GTK_BOX(self), GTK_WIDGET(self->composer));
 
   /* Listen for model changes */
+  self->sig_group_updated = g_signal_connect(self->service, "group-updated",
+                                             G_CALLBACK(on_service_group_updated), self);
+  update_relocation_banner(self);
+
   self->sig_items_changed = g_signal_connect(self->msg_model, "items-changed",
                                              G_CALLBACK(on_messages_changed), self);
 

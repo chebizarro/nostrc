@@ -99,6 +99,25 @@ gboolean     gn_nip29_group_service_send_message_finish(GnNip29GroupService *sel
                                                         GAsyncResult        *result,
                                                         GError             **error);
 
+/* nostrc-7n4t: NIP-29 migration / fork detection for a tracked group. The
+ * service reads the kind:10009 of the group's admins (cached across
+ * sessions) and of the user when the group relay fails to answer (MUST)
+ * and at most every 6 h otherwise (SHOULD); "group-updated" fires when the
+ * state changes. */
+typedef enum {
+  GN_NIP29_RELOCATION_NONE,        /* nothing to report */
+  GN_NIP29_RELOCATION_CHECKING,    /* relay unreachable; lists being read */
+  GN_NIP29_RELOCATION_UNREACHABLE, /* relay unreachable; no list names another */
+  GN_NIP29_RELOCATION_FOUND,       /* trusted lists name another relay for it */
+} GnNip29RelocationState;
+
+/* @out_relay_url: (out) (transfer none) (nullable): for FOUND, the relay
+ *   most trusted authors list the group on; @out_n_authors: how many. */
+GnNip29RelocationState gn_nip29_group_service_get_relocation(GnNip29GroupService *self,
+                                                             const char          *group_key,
+                                                             const char         **out_relay_url,
+                                                             guint               *out_n_authors);
+
 /* ── UI-facing accessors (borrowed pointers, valid until next signal) ── */
 
 GList              *gn_nip29_group_service_list_group_keys    (GnNip29GroupService *self);

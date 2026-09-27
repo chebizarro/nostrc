@@ -10,6 +10,7 @@ set(PLUGIN_SOURCES
     nip29-groups-plugin.c
     gn-nip29-group-service.c
     gn-nip29-events.c
+    gn-nip29-migration.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/gnostr-plugin-api.c
 
     # GObject models
@@ -99,6 +100,21 @@ if(BUILD_TESTING)
     target_link_libraries(gnostr-test-nip29-events PRIVATE PkgConfig::GLIB PkgConfig::JSON_GLIB)
     add_test(NAME gnostr-test-nip29-events COMMAND gnostr-test-nip29-events)
     set_tests_properties(gnostr-test-nip29-events PROPERTIES
+        TIMEOUT 30
+        LABELS "nip29;plugin;unit;gnostr")
+endif()
+
+# nostrc-7n4t: migration/fork detection from trusted authors' kind:10009.
+if(BUILD_TESTING AND TARGET nostr)
+    add_executable(gnostr-test-nip29-migration
+        tests/test_nip29_migration.c
+        gn-nip29-migration.c)
+    target_include_directories(gnostr-test-nip29-migration PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PROJECT_ROOT}/libnostr/include)
+    target_link_libraries(gnostr-test-nip29-migration PRIVATE PkgConfig::GLIB nostr)
+    add_test(NAME gnostr-test-nip29-migration COMMAND gnostr-test-nip29-migration)
+    set_tests_properties(gnostr-test-nip29-migration PROPERTIES
         TIMEOUT 30
         LABELS "nip29;plugin;unit;gnostr")
 endif()
