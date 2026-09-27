@@ -259,19 +259,8 @@ generate_update_path(MlsGroup *group,
         path_out->leaf_node.credential_identity_len = old_leaf->credential_identity_len;
     }
     path_out->leaf_node.leaf_node_source = 3; /* commit */
-    /* Capabilities (RFC 9420 §7.2) */
-    path_out->leaf_node.version_count = 1;
-    path_out->leaf_node.versions = malloc(sizeof(uint16_t));
-    if (!path_out->leaf_node.versions) goto fail;
-    path_out->leaf_node.versions[0] = 1;
-    path_out->leaf_node.ciphersuite_count = 1;
-    path_out->leaf_node.ciphersuites = malloc(sizeof(uint16_t));
-    if (!path_out->leaf_node.ciphersuites) goto fail;
-    path_out->leaf_node.ciphersuites[0] = MARMOT_CIPHERSUITE;
-    path_out->leaf_node.cap_credential_count = 1;
-    path_out->leaf_node.cap_credentials = malloc(sizeof(uint16_t));
-    if (!path_out->leaf_node.cap_credentials) goto fail;
-    path_out->leaf_node.cap_credentials[0] = MLS_CREDENTIAL_BASIC;
+    /* Capabilities (RFC 9420 §7.2; nostrc-prqu.10) */
+    if (mls_leaf_node_set_marmot_capabilities(&path_out->leaf_node) != 0) goto fail;
 
     /* Generate path secrets for each filtered direct path node */
     uint8_t path_secrets[64][MLS_HASH_LEN];
@@ -1166,28 +1155,11 @@ mls_group_create(MlsGroup *group,
     memcpy(leaf->leaf.credential_identity, credential_identity, credential_identity_len);
     leaf->leaf.credential_identity_len = credential_identity_len;
 
-    /* Capabilities (RFC 9420 §7.2) */
-    leaf->leaf.version_count = 1;
-    leaf->leaf.versions = malloc(sizeof(uint16_t));
-    if (!leaf->leaf.versions) {
+    /* Capabilities (RFC 9420 §7.2; nostrc-prqu.10) */
+    if (mls_leaf_node_set_marmot_capabilities(&leaf->leaf) != 0) {
         sodium_memzero(enc_sk, sizeof(enc_sk));
         goto fail;
     }
-    leaf->leaf.versions[0] = 1;
-    leaf->leaf.ciphersuite_count = 1;
-    leaf->leaf.ciphersuites = malloc(sizeof(uint16_t));
-    if (!leaf->leaf.ciphersuites) {
-        sodium_memzero(enc_sk, sizeof(enc_sk));
-        goto fail;
-    }
-    leaf->leaf.ciphersuites[0] = MARMOT_CIPHERSUITE;
-    leaf->leaf.cap_credential_count = 1;
-    leaf->leaf.cap_credentials = malloc(sizeof(uint16_t));
-    if (!leaf->leaf.cap_credentials) {
-        sodium_memzero(enc_sk, sizeof(enc_sk));
-        goto fail;
-    }
-    leaf->leaf.cap_credentials[0] = MLS_CREDENTIAL_BASIC;
     leaf->leaf.leaf_node_source = 3; /* commit (initial group creation) */
     if (sign_leaf_node_local(&leaf->leaf, signature_key_private) != 0) {
         sodium_memzero(enc_sk, sizeof(enc_sk));

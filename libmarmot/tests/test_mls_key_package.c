@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sodium.h>
+#include <time.h>
 
 #define TEST(name) static void name(void)
 #define RUN(name) do { printf("  %-50s", #name); name(); printf("PASS\n"); } while(0)
@@ -294,6 +295,45 @@ TEST(test_null_args)
 
 /* ── Main ──────────────────────────────────────────────────────────────── */
 
+/* nostrc-prqu.10: the LeafNode advertises what the engine supports and
+ * what the kind:30443 tags claim; Lifetime is current and within bounds. */
+TEST(test_capabilities_and_lifetime)
+{
+    MlsKeyPackage kp;
+    MlsKeyPackagePrivate priv;
+    assert(mls_key_package_create(&kp, &priv, TEST_IDENTITY, 32, NULL, 0) == 0);
+
+    assert(kp.leaf_node.cap_extension_count == 2);
+    assert(kp.leaf_node.cap_extensions[0] == 0x000A); /* last_resort */
+    assert(kp.leaf_node.cap_extensions[1] == 0xF2EE); /* marmot_group_data */
+    /* SelfRemove is not implemented, so it is not advertised. */
+    assert(kp.leaf_node.proposal_count == 0);
+    assert(kp.leaf_node.version_count == 1 && kp.leaf_node.versions[0] == 1);
+    assert(kp.leaf_node.ciphersuite_count == 1 &&
+           kp.leaf_node.ciphersuites[0] == MARMOT_CIPHERSUITE);
+
+    uint64_t now = (uint64_t)time(NULL);
+    assert(kp.leaf_node.lifetime_not_before <= now);
+    assert(kp.leaf_node.lifetime_not_after > now + 83ull * 86400);
+    assert(kp.leaf_node.lifetime_not_after - kp.leaf_node.lifetime_not_before == 7261200);
+
+    /* Survives the wire and still validates. */
+    MlsTlsBuf buf;
+    assert(mls_tls_buf_init(&buf, 512) == 0);
+    assert(mls_key_package_serialize(&kp, &buf) == 0);
+    MlsTlsReader r;
+    mls_tls_reader_init(&r, buf.data, buf.len);
+    MlsKeyPackage back;
+    assert(mls_key_package_deserialize(&r, &back) == 0);
+    assert(back.leaf_node.cap_extension_count == 2 && back.leaf_node.proposal_count == 0);
+    assert(back.leaf_node.lifetime_not_after == kp.leaf_node.lifetime_not_after);
+    assert(mls_key_package_validate(&back) == 0);
+    mls_key_package_clear(&back);
+    mls_tls_buf_free(&buf);
+    mls_key_package_clear(&kp);
+    mls_key_package_private_clear(&priv);
+}
+
 int main(void)
 {
     if (sodium_init() < 0) {
@@ -315,6 +355,7 @@ int main(void)
     RUN(test_different_kp_different_ref);
     RUN(test_unique_keys_per_creation);
     RUN(test_clear_zeroes);
+    RUN(test_capabilities_and_lifetime);
     RUN(test_null_args);
     printf("All key package tests passed.\n");
     return 0;

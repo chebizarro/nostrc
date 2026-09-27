@@ -10,6 +10,7 @@
  */
 
 #include "mls_tree.h"
+#include <marmot/marmot-types.h>
 #include <sodium.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1216,4 +1217,44 @@ mls_tree_node_encryption_key(const MlsRatchetTree *tree, uint32_t node_idx)
         case MLS_NODE_PARENT: return node->parent.encryption_key;
         default:              return NULL;
     }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Marmot leaf capabilities (nostrc-prqu.10) — see mls_tree.h
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+const uint16_t MLS_MARMOT_CAP_EXTENSIONS[MLS_MARMOT_CAP_EXTENSION_COUNT] = {
+    0x000A, /* last_resort */
+    0xF2EE, /* marmot_group_data */
+};
+
+static int
+set_u16_vec(uint16_t **arr, size_t *count, const uint16_t *vals, size_t n)
+{
+    free(*arr);
+    *arr = NULL;
+    *count = 0;
+    if (n == 0) return 0;
+    *arr = malloc(n * sizeof(uint16_t));
+    if (!*arr) return -1;
+    memcpy(*arr, vals, n * sizeof(uint16_t));
+    *count = n;
+    return 0;
+}
+
+int
+mls_leaf_node_set_marmot_capabilities(MlsLeafNode *node)
+{
+    static const uint16_t versions[] = {1};
+    static const uint16_t suites[] = {MARMOT_CIPHERSUITE};
+    static const uint16_t creds[] = {MLS_CREDENTIAL_BASIC};
+    if (!node) return -1;
+    if (set_u16_vec(&node->versions, &node->version_count, versions, 1) != 0 ||
+        set_u16_vec(&node->ciphersuites, &node->ciphersuite_count, suites, 1) != 0 ||
+        set_u16_vec(&node->cap_extensions, &node->cap_extension_count,
+                    MLS_MARMOT_CAP_EXTENSIONS, MLS_MARMOT_CAP_EXTENSION_COUNT) != 0 ||
+        set_u16_vec(&node->proposals, &node->proposal_count, NULL, 0) != 0 ||
+        set_u16_vec(&node->cap_credentials, &node->cap_credential_count, creds, 1) != 0)
+        return -1;
+    return 0;
 }

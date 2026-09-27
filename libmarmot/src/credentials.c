@@ -289,6 +289,25 @@ load_or_create_key_package_slot(Marmot *m, const uint8_t owner_pubkey[32],
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * Internal: id-list tag ["name", "0x%04x", ...] from a u16 list
+ * (transports/nostr.md: lowercase, zero-padded, at least one value).
+ * ──────────────────────────────────────────────────────────────────────── */
+
+static NostrTag *
+id_list_tag_new(const char *name, const uint16_t *ids, size_t n)
+{
+    if (n == 0) return NULL;
+    char v[7];
+    snprintf(v, sizeof(v), "0x%04x", (unsigned)ids[0]);
+    NostrTag *tag = nostr_tag_new(name, v, NULL);
+    for (size_t i = 1; tag && i < n; i++) {
+        snprintf(v, sizeof(v), "0x%04x", (unsigned)ids[i]);
+        nostr_tag_append(tag, v);
+    }
+    return tag;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * Internal: build the GroupContext extensions for KeyPackage capabilities
  * ──────────────────────────────────────────────────────────────────────── */
 
@@ -458,16 +477,22 @@ create_key_package_common(Marmot *m,
     if (!tag) goto tag_fail;
     nostr_tags_append(tags, tag);
 
-    /* mls_extensions id-list tag: last_resort, marmot_group_data */
-    tag = nostr_tag_new("mls_extensions", "0x000a", "0xf2ee", NULL);
+    /* mls_extensions id-list tag, derived from the signed LeafNode
+     * capabilities so the advertisement cannot drift from what receivers
+     * validate (nostrc-prqu.10): 0x000a last_resort, 0xf2ee
+     * marmot_group_data — the exact MDK 0.8 tag value. */
+    tag = id_list_tag_new("mls_extensions", kp.leaf_node.cap_extensions,
+                          kp.leaf_node.cap_extension_count);
     if (!tag) goto tag_fail;
     nostr_tags_append(tags, tag);
 
-    /* mls_proposals id-list tag. Required by kind:30443 in both the MDK 0.8
-     * profile and the adopted spec; the value matches the MDK vectors. The
-     * tag is an advertisement and fetch filter only: receivers validate the
-     * decoded LeafNode capabilities, and libmarmot's LeafNode does not yet
-     * list non-default proposals (nostrc-prqu.10). */
+    /* mls_proposals id-list tag. MDK 0.8 parsers reject a kind:30443 whose
+     * mls_proposals is anything but exactly ["0x000a"] (SelfRemove), so the
+     * vector-compatible profile keeps it, although the LeafNode deliberately
+     * does NOT list SelfRemove (libmarmot cannot process it; nostrc-prqu.10).
+     * That is safe: the tag is an advertisement/fetch filter, and MDK derives
+     * a group's required proposals from the decoded leaves (intersection),
+     * so a group with a libmarmot member never requires SelfRemove. */
     tag = nostr_tag_new("mls_proposals", "0x000a", NULL);
     if (!tag) goto tag_fail;
     nostr_tags_append(tags, tag);

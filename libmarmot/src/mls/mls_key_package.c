@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sodium.h>
+#include <time.h>
 
 /* ══════════════════════════════════════════════════════════════════════════
  * Lifecycle
@@ -181,32 +182,22 @@ mls_key_package_create(MlsKeyPackage *kp,
            credential_identity_len);
     kp->leaf_node.credential_identity_len = credential_identity_len;
 
-    /* Capabilities (RFC 9420 §7.2) */
-    /* versions: MLS 1.0 */
-    kp->leaf_node.version_count = 1;
-    kp->leaf_node.versions = malloc(sizeof(uint16_t));
-    if (!kp->leaf_node.versions) goto fail;
-    kp->leaf_node.versions[0] = 1;  /* mls10 */
+    /* Capabilities (RFC 9420 §7.2): what the engine supports, see
+     * mls_leaf_node_set_marmot_capabilities() (nostrc-prqu.10). */
+    if (mls_leaf_node_set_marmot_capabilities(&kp->leaf_node) != 0) goto fail;
 
-    /* ciphersuites: 0x0001 */
-    kp->leaf_node.ciphersuite_count = 1;
-    kp->leaf_node.ciphersuites = malloc(sizeof(uint16_t));
-    if (!kp->leaf_node.ciphersuites) goto fail;
-    kp->leaf_node.ciphersuites[0] = MARMOT_CIPHERSUITE;
-
-    /* extensions: none */
-    kp->leaf_node.cap_extensions = NULL;
-    kp->leaf_node.cap_extension_count = 0;
-
-    /* proposals: none */
-    kp->leaf_node.proposals = NULL;
-    kp->leaf_node.proposal_count = 0;
-
-    /* credentials: basic (0x0001) */
-    kp->leaf_node.cap_credential_count = 1;
-    kp->leaf_node.cap_credentials = malloc(sizeof(uint16_t));
-    if (!kp->leaf_node.cap_credentials) goto fail;
-    kp->leaf_node.cap_credentials[0] = MLS_CREDENTIAL_BASIC;
+    /* Lifetime (RFC 9420 §7.2, key_package source). It used to be left at
+     * 0..0, i.e. already expired for any receiver that checks it (OpenMLS
+     * does when adding a member). One hour of clock-skew margin before now
+     * and 84 days after: 7,261,200 s in total, the Marmot maximum
+     * (foundation/key-packages.md) and OpenMLS's default. */
+    {
+        int64_t now = (int64_t)time(NULL);
+        kp->leaf_node.lifetime_not_before = (uint64_t)(now > MLS_KP_LIFETIME_SKEW_S
+                                                       ? now - MLS_KP_LIFETIME_SKEW_S : 0);
+        kp->leaf_node.lifetime_not_after = kp->leaf_node.lifetime_not_before +
+                                           MLS_KP_LIFETIME_MAX_S;
+    }
 
     /* Leaf node source: key_package (1) */
     kp->leaf_node.leaf_node_source = 1;

@@ -94,6 +94,12 @@ void mls_key_package_private_clear(MlsKeyPackagePrivate *priv);
  * @param extensions_len   Length of extensions
  * @return 0 on success
  */
+/* KeyPackage Lifetime (nostrc-prqu.10): not_before = now - SKEW,
+ * not_after = not_before + MAX (84 days + 1 hour = 7,261,200 s, the Marmot
+ * upper bound for not_after - not_before). */
+#define MLS_KP_LIFETIME_SKEW_S 3600
+#define MLS_KP_LIFETIME_MAX_S  7261200
+
 int mls_key_package_create(MlsKeyPackage *kp,
                             MlsKeyPackagePrivate *priv_out,
                             const uint8_t *credential_identity,
