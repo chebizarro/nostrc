@@ -97,6 +97,12 @@ If none are found: returns NOT_FOUND.
   `allow|deny[:<until>]`. The npub is what the identity selector resolves to,
   so `""`, a key_id and the npub hit the same grant. The old
   `signer-acl.ini` is not read.
+- **NIP-5F socket** — opt-in (`NOSTR_SIGNER_ENDPOINT=unix:<path>`,
+  `nip55l_nip5f.h`, `src/glib/signer_nip5f.c`): every method goes through the
+  same gate (`src/glib/signer_gate.h`). The principal comes from the socket
+  peer's kernel credentials (`SO_PEERCRED`/`SO_PEERPIDFD`, macOS
+  `LOCAL_PEERPID`) and `/proc`, the same shape as over D-Bus, so grants are
+  shared; prompts are the same `ApprovalRequested`.
 - **Approval** — without a grant: `ApprovalRequested(principal, npub, kind,
   preview, id)`; identical queued calls from one connection share it;
   `ApproveRequest` only from `<bindir>/gnostr-signer` (or its Flatpak), fails

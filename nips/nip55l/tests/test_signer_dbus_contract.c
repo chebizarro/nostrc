@@ -33,6 +33,13 @@
  * answer approvals; with no approval agent on the bus a prompt fails fast.
  * The bridge phase runs this process as the trusted browser bridge
  * (test-build NOSTR_SIGNER_TEST_ORIGIN_BRIDGES) so origin grants apply.
+ * The NIP-5F phase (nostrc-q23h) starts the daemon's opt-in socket and
+ * proves every socket method goes through the same gate: the principal is
+ * this process's (kernel peer credentials; on Linux identical to its D-Bus
+ * principal, so grants are shared), an ungranted call raises
+ * ApprovalRequested on the bus, remember/deny/grant-file entries apply,
+ * the legacy signer-acl.ini and a claimed app_id do not, and a client that
+ * hangs up while waiting drops its request.
  *
  * apps/gnostr-signer/tests/test-dbus.c:55-60,117-143 was the private-bus
  * pattern reference, but that test drives a mock: the point of this one is
@@ -57,8 +64,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include <nostr-event.h>
@@ -1206,6 +1215,269 @@ static void test_bridge_origins(Ctx *ctx) {
  * 64-hex is a public key - it must name a known identity - and an nsec is
  * refused; before, any 64-hex was used as the private key, so a pubkey
  * passed by mistake signed with a key derived from the pubkey bytes. */
+/* ---------------------------------------------------------------------------
+ * NIP-5F socket (nostrc-q23h): same gate as D-Bus
+ * ------------------------------------------------------------------------- */
+
+typedef struct { char *dir; char *path; } Nip5fSock;
+
+static void nip5f_pre_daemon(Ctx *ctx, gpointer data) {
+  (void)ctx;
+  Nip5fSock *s = data;
+  /* Short path: sun_path is 104 bytes on macOS, and $TMPDIR is long there. */
+  s->dir = g_strdup("/tmp/n5fXXXXXX");
+  CHECK(mkdtemp(s->dir) != NULL);
+  s->path = g_build_filename(s->dir, "s.sock", NULL);
+  char *ep = g_strconcat("unix:", s->path, NULL);
+  g_setenv("NOSTR_SIGNER_ENDPOINT", ep, TRUE);
+  g_free(ep);
+}
+
+static int n5f_write(int fd, const char *json) {
+  guint32 n = (guint32)strlen(json);
+  unsigned char hdr[4] = { (unsigned char)(n >> 24), (unsigned char)(n >> 16),
+                           (unsigned char)(n >> 8), (unsigned char)n };
+  if (send(fd, hdr, 4, 0) != 4) return -1;
+  return send(fd, json, n, 0) == (ssize_t)n ? 0 : -1;
+}
+
+static int read_all(int fd, void *buf, size_t n) {
+  size_t got = 0;
+  while (got < n) {
+    ssize_t r = recv(fd, (char *)buf + got, n - got, 0);
+    if (r <= 0) return -1;
+    got += (size_t)r;
+  }
+  return 0;
+}
+
+static char *n5f_read(int fd) {
+  unsigned char hdr[4];
+  if (read_all(fd, hdr, 4) != 0) return NULL;
+  guint32 n = ((guint32)hdr[0] << 24) | ((guint32)hdr[1] << 16) | ((guint32)hdr[2] << 8) | hdr[3];
+  CHECK(n > 0 && n < (1u << 20));
+  char *buf = g_malloc0(n + 1);
+  if (read_all(fd, buf, n) != 0) { g_free(buf); return NULL; }
+  return buf;
+}
+
+static int n5f_connect(const Nip5fSock *s) {
+  int fd = -1;
+  for (int i = 0; i < 100 && fd < 0; i++) { /* the daemon listens once exported */
+    fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    CHECK(fd >= 0);
+    struct sockaddr_un a;
+    memset(&a, 0, sizeof a);
+    a.sun_family = AF_UNIX;
+    g_strlcpy(a.sun_path, s->path, sizeof a.sun_path);
+    if (connect(fd, (struct sockaddr *)&a, sizeof a) != 0) {
+      close(fd); fd = -1;
+      g_usleep(50 * 1000);
+    }
+  }
+  CHECK(fd >= 0);
+  char *banner = n5f_read(fd);
+  CHECK(banner && strstr(banner, "nostr-signer"));
+  g_free(banner);
+  CHECK(n5f_write(fd, "{\"client\":\"contract-test\"}") == 0);
+  return fd;
+}
+
+/* One request on a worker thread (it may wait for the user). */
+typedef struct { int fd; char *req; char *resp; } N5fCall;
+
+static gpointer n5f_call_thread(gpointer data) {
+  N5fCall *c = data;
+  if (n5f_write(c->fd, c->req) == 0) c->resp = n5f_read(c->fd);
+  return NULL;
+}
+
+static GThread *n5f_call_start(N5fCall *c, int fd, const char *req) {
+  c->fd = fd; c->req = g_strdup(req); c->resp = NULL;
+  return g_thread_new("n5f-call", n5f_call_thread, c);
+}
+
+static char *n5f_call_finish(N5fCall *c, GThread *t) {
+  g_thread_join(t);
+  g_free(c->req);
+  CHECK(c->resp != NULL);
+  return c->resp;
+}
+
+/* A socket request that must raise ApprovalRequested for @principal; answered
+ * with @decision/@remember. Returns the response frame. */
+static char *n5f_interactive(Ctx *ctx, int fd, const char *req, const char *want_kind,
+                             const char *principal, gboolean decision, gboolean remember) {
+  g_usleep(120 * 1000); /* one new prompt per 100 ms per connection */
+  Watch w;
+  watch_start(ctx, &w);
+  N5fCall c;
+  GThread *t = n5f_call_start(&c, fd, req);
+  watch_wait_request(&w, 1);
+  if (g_strcmp0(w.a.kind, want_kind) != 0) g_printerr("kind: want %s got %s\n", want_kind, w.a.kind);
+  CHECK(g_strcmp0(w.a.kind, want_kind) == 0);
+  if (g_strcmp0(w.a.app_id, principal) != 0) g_printerr("principal: want %s got %s\n", principal, w.a.app_id);
+  CHECK(g_strcmp0(w.a.app_id, principal) == 0);
+  CHECK(g_strcmp0(w.a.identity, ctx->npub) == 0);
+  approve(ctx, w.a.req_id, decision, remember);
+  char *resp = n5f_call_finish(&c, t);
+  watch_stop(ctx, &w);
+  return resp;
+}
+
+/* A socket request that must be answered without a prompt. */
+static char *n5f_no_prompt(Ctx *ctx, int fd, const char *req) {
+  Watch w;
+  watch_start(ctx, &w);
+  N5fCall c;
+  GThread *t = n5f_call_start(&c, fd, req);
+  char *resp = n5f_call_finish(&c, t);
+  watch_drain();
+  if (w.a.n_requests) g_printerr("unexpected ApprovalRequested (%s) for %s\n", w.a.kind, req);
+  CHECK(w.a.n_requests == 0);
+  watch_stop(ctx, &w);
+  return resp;
+}
+
+/* The result string of a success frame (hex, base64 or plain words: no
+ * escapes expected). */
+static char *n5f_result_string(const char *resp) {
+  if (!strstr(resp, "\"error\":null")) g_printerr("unexpected error frame: %s\n", resp);
+  CHECK(strstr(resp, "\"error\":null") != NULL);
+  const char *p = strstr(resp, "\"result\":\"");
+  CHECK(p != NULL);
+  p += strlen("\"result\":\"");
+  const char *e = strchr(p, '"');
+  CHECK(e != NULL);
+  char *r = g_strndup(p, (gsize)(e - p));
+  CHECK(strchr(r, '\\') == NULL);
+  return r;
+}
+
+static void n5f_expect_code(const char *resp, int code) {
+  char want[32];
+  g_snprintf(want, sizeof want, "\"code\":%d", code);
+  if (!strstr(resp, want)) g_printerr("want error %d, got %s\n", code, resp);
+  CHECK(strstr(resp, want) != NULL);
+}
+
+static void test_nip5f_gating(Ctx *ctx, const Nip5fSock *sock) {
+  /* The socket principal: always this process's executable/scope (the
+   * kernel reports the peer PID on Linux and macOS alike). */
+  char *principal = self_principal();
+  if (ctx->attested) CHECK(g_strcmp0(principal, ctx->principal) == 0);
+  char *peer_sk = nostr_key_generate_private();
+  char *peer_pk = nostr_key_get_public(peer_sk);
+  CHECK(peer_sk && peer_pk);
+  int fd = n5f_connect(sock);
+
+  /* get_public_key: prompt; remembered; then answered from the grant. */
+  char *resp = n5f_interactive(ctx, fd, "{\"id\":\"1\",\"method\":\"get_public_key\",\"params\":null}",
+                               "get_public_key", principal, TRUE, TRUE);
+  char *pk = n5f_result_string(resp);
+  CHECK(g_strcmp0(pk, ctx->pk_hex) == 0);
+  g_free(pk); g_free(resp);
+  {
+    char *key = g_strdup_printf("%s|%s", principal, ctx->npub);
+    CHECK(grants_has(ctx, "get_public_key", key, "allow"));
+    g_free(key);
+  }
+  resp = n5f_no_prompt(ctx, fd, "{\"id\":\"2\",\"method\":\"list_public_keys\",\"params\":null}");
+  CHECK(strstr(resp, ctx->pk_hex) != NULL);
+  g_free(resp);
+  if (ctx->attested) {
+    /* Same principal on the bus: the socket's grant answers D-Bus too. */
+    GError *err = NULL;
+    GVariant *r = no_prompt(ctx, "GetPublicKey", NULL, &err);
+    CHECK(r != NULL);
+    const char *npub = NULL;
+    g_variant_get(r, "(&s)", &npub);
+    CHECK(g_strcmp0(npub, ctx->npub) == 0);
+    g_variant_unref(r);
+  }
+
+  /* nip44_decrypt: prompt; denied (not remembered) -> code 5, no grant. */
+  {
+    char *ct = incoming_nip44(ctx, peer_sk, "socket secret");
+    char *req = g_strdup_printf("{\"id\":\"3\",\"method\":\"nip44_decrypt\",\"params\":"
+                                "{\"peer_pub\":\"%s\",\"cipher_b64\":\"%s\"}}", peer_pk, ct);
+    resp = n5f_interactive(ctx, fd, req, "nip44_decrypt", principal, FALSE, FALSE);
+    n5f_expect_code(resp, 5);
+    g_free(resp);
+    char *key = g_strdup_printf("%s|%s", principal, ctx->npub);
+    CHECK(!grants_has(ctx, "nip44_decrypt", key, NULL));
+    g_free(key);
+    /* ... and approved once: the plaintext comes back. */
+    resp = n5f_interactive(ctx, fd, req, "nip44_decrypt", principal, TRUE, FALSE);
+    char *pt = n5f_result_string(resp);
+    CHECK(g_strcmp0(pt, "socket secret") == 0);
+    g_free(pt); g_free(resp); g_free(req); g_free(ct);
+  }
+
+  /* A grant written to signer-grants.ini for this principal applies. */
+  {
+    char *body = g_strdup_printf("[nip44_encrypt]\n%s|%s=allow\n[event]\n%s|*=deny\n",
+                                 principal, ctx->npub, principal);
+    /* Keep the remembered get_public_key grant: append. */
+    char *old = NULL;
+    CHECK(g_file_get_contents(ctx->grants_path, &old, NULL, NULL));
+    char *all = g_strconcat(old, body, NULL);
+    write_file(ctx->grants_path, all);
+    g_free(old); g_free(all); g_free(body);
+    g_usleep(1100 * 1000); /* the daemon reloads on mtime/size change */
+    char *req = g_strdup_printf("{\"id\":\"4\",\"method\":\"nip44_encrypt\",\"params\":"
+                                "{\"peer_pub\":\"%s\",\"plaintext\":\"a \\\"quoted\\\" line\\n\"}}", peer_pk);
+    resp = n5f_no_prompt(ctx, fd, req);
+    char *payload = n5f_result_string(resp);
+    uint8_t psk[32], mpk[32];
+    CHECK(nostr_hex2bin(psk, peer_sk, 32));
+    CHECK(nostr_hex2bin(mpk, ctx->pk_hex, 32));
+    uint8_t *pt = NULL;
+    size_t ptlen = 0;
+    CHECK(nostr_nip44_decrypt_v2(psk, mpk, payload, &pt, &ptlen) == 0 && pt);
+    CHECK(ptlen == strlen("a \"quoted\" line\n") && memcmp(pt, "a \"quoted\" line\n", ptlen) == 0);
+    free(pt); g_free(payload); g_free(resp); g_free(req);
+
+    /* sign_event: denied by the grants file, even though the request claims
+     * an app_id the legacy signer-acl.ini allows. */
+    resp = n5f_no_prompt(ctx, fd, "{\"id\":\"5\",\"method\":\"sign_event\",\"params\":{\"app_id\":"
+                                  "\"contract-legacy\",\"event\":{\"kind\":1,\"content\":\"x\","
+                                  "\"tags\":[],\"created_at\":0}}}");
+    n5f_expect_code(resp, 5);
+    g_free(resp);
+  }
+  close(fd);
+
+  /* A client that hangs up while its request waits: the request is dropped. */
+  {
+    fd = n5f_connect(sock);
+    g_usleep(120 * 1000);
+    Watch w;
+    watch_start(ctx, &w);
+    CHECK(n5f_write(fd, "{\"id\":\"6\",\"method\":\"nip44_decrypt\",\"params\":{\"peer_pub\":"
+                        "\"0000000000000000000000000000000000000000000000000000000000000001\","
+                        "\"cipher_b64\":\"AA==\"}}") == 0);
+    watch_wait_request(&w, 1);
+    char *rid = g_strdup(w.a.req_id);
+    close(fd);
+    gboolean gone = FALSE;
+    for (int i = 0; i < 40 && !gone; i++) {
+      g_usleep(100 * 1000);
+      GError *err = NULL;
+      GVariant *info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", rid), "(a{sv})", &err);
+      if (info) g_variant_unref(info);
+      else { expect_remote_error(err, ERR_NOT_FND); gone = TRUE; }
+      g_clear_error(&err);
+    }
+    CHECK(gone);
+    g_free(rid);
+    watch_stop(ctx, &w);
+  }
+
+  free(peer_sk); free(peer_pk);
+  g_free(principal);
+}
+
 static void test_selector_not_key_material(Ctx *ctx) {
   const char *tmpl = "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"selector\"}";
   GError *err = NULL;
@@ -1736,6 +2008,23 @@ int main(void) {
     gboolean ran = ctx.attested;
     ctx_teardown(&ctx);
     if (ran) g_print("PASS untrusted approver refused\n");
+  }
+
+  /* NIP-5F socket (nostrc-q23h): gated exactly like D-Bus. */
+  {
+    Ctx ctx;
+    Nip5fSock sock = { NULL, NULL };
+    ctx_setup_full(&ctx, FALSE, FALSE, NULL, &TRUST_UI, nip5f_pre_daemon, &sock);
+    test_nip5f_gating(&ctx, &sock);
+    gboolean attested = ctx.attested;
+    ctx_teardown(&ctx);
+    g_unsetenv("NOSTR_SIGNER_ENDPOINT");
+    g_unlink(sock.path);
+    g_rmdir(sock.dir);
+    g_free(sock.path); g_free(sock.dir);
+    g_print("PASS nip5f gating (peer-credential principal%s, prompt + remember, deny, grants "
+            "file, legacy ACL/app_id ignored, hang-up drops request)\n",
+            attested ? " = D-Bus principal, shared grant" : "");
   }
 
   /* This process as the trusted browser bridge. */

@@ -28,7 +28,7 @@ static char *make_min_event_json(const char *content, int kind, int64_t created_
   return json;
 }
 
-static int test_with_acl_bypass(void);
+static int test_builtin_roundtrip(void);
 static int test_with_authorized_client(void);
 static int test_with_unauthorized_client(void);
 
@@ -37,13 +37,13 @@ int main(void) {
 
   printf("Running NIP-5F loopback tests...\n");
 
-  /* Test 1: With NOSTR_TEST_MODE (ACL bypass) */
-  printf("\n=== Test 1: ACL bypass mode (NOSTR_TEST_MODE=1) ===\n");
-  if (test_with_acl_bypass() != 0) {
-    fprintf(stderr, "FAILED: ACL bypass test\n");
+  /* Test 1: built-in handlers (key from the server's environment) */
+  printf("\n=== Test 1: built-in handlers round-trip ===\n");
+  if (test_builtin_roundtrip() != 0) {
+    fprintf(stderr, "FAILED: built-in round-trip test\n");
     failures++;
   } else {
-    printf("PASSED: ACL bypass test\n");
+    printf("PASSED: built-in round-trip test\n");
   }
 
   /* Test 2: With proper authorization (no test mode) */
@@ -73,9 +73,8 @@ int main(void) {
   }
 }
 
-static int test_with_acl_bypass(void) {
-  /* Ensure server bypasses ACL in test mode */
-  setenv("NOSTR_TEST_MODE", "1", 1);
+static int test_builtin_roundtrip(void) {
+  /* No per-app ACL any more (nostrc-q23h): built-ins serve same-uid peers. */
   // Generate a fresh secret and set env for built-ins
   char *sk = nostr_key_generate_private();
   if (!sk) { fprintf(stderr, "failed to gen sk\n"); return 1; }
@@ -195,7 +194,6 @@ static int test_with_acl_bypass(void) {
   free(expected_pub);
   free(sk);
   unsetenv("NOSTR_SIGNER_SECKEY_HEX");
-  unsetenv("NOSTR_TEST_MODE");
   return 0;
 
 fail:
@@ -205,13 +203,11 @@ fail:
   if (expected_pub) free(expected_pub);
   if (sk) free(sk);
   unsetenv("NOSTR_SIGNER_SECKEY_HEX");
-  unsetenv("NOSTR_TEST_MODE");
   return 1;
 }
 
 static int test_with_authorized_client(void) {
-  /* Test WITHOUT NOSTR_TEST_MODE, using proper authorization token */
-  unsetenv("NOSTR_TEST_MODE");  /* Ensure test mode is OFF */
+  /* Using the proper authorization token */
   
   char *sk = nostr_key_generate_private();
   if (!sk) { fprintf(stderr, "failed to gen sk\n"); return 1; }
@@ -283,8 +279,7 @@ auth_fail:
 }
 
 static int test_with_unauthorized_client(void) {
-  /* Test that unauthorized access is rejected when NOSTR_TEST_MODE is OFF */
-  unsetenv("NOSTR_TEST_MODE");
+  /* Test that a client without the server's token is rejected */
   
   char *sk = nostr_key_generate_private();
   if (!sk) return 1;

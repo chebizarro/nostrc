@@ -1,6 +1,12 @@
 /**
  * NIP-5F Socket Connection Handler
  *
+ * One thread per connection: handshake, then request frames until the
+ * client disconnects. With server hooks installed (gnostr-signer-daemon)
+ * every method goes through hooks.request, which decides per caller; the
+ * built-in handlers (keys from the server's environment) serve only servers
+ * started without hooks, such as nostr-signer-sockd.
+ *
  * Migrated from jansson to NostrJsonInterface (nostrc-3nj)
  */
 #include <stdlib.h>
@@ -8,13 +14,12 @@
 #include <stdio.h>
 #include <unistd.h>
 #include "sock_internal.h"
-#include <glib.h>
-#include <glib/gstdio.h>
 #include "nostr/nip5f/nip5f.h"
 #include "sock_conn.h"
 #include "json.h"
 
-/* Optional logging: enable by setting NOSTR_SIGNER_LOG=1 */
+/* Optional logging: enable by setting NOSTR_SIGNER_LOG=1. Method names and
+ * ids only: request and result bodies may carry plaintext. */
 static int signer_log_enabled(void) {
   static int inited = 0; static int enabled = 0;
   if (!inited) {
@@ -25,253 +30,205 @@ static int signer_log_enabled(void) {
   return enabled;
 }
 
-/* Build a minimal error response: {"id":"<id>","result":null,"error":{"code":X,"message":"..."}} */
-static char *build_error_json(const char *id, int code, const char *msg) {
-  const char *id_field = id ? id : "";
-  /* generous overhead to avoid truncation */
-  size_t need = strlen(id_field) + strlen(msg) + 96;
-  char *buf = (char*)malloc(need);
-  if (!buf) return NULL;
-  int n = snprintf(buf, need, "{\"id\":\"%s\",\"result\":null,\"error\":{\"code\":%d,\"message\":\"%s\"}}", id_field, code, msg);
-  if (n < 0 || (size_t)n >= need) { free(buf); return NULL; }
-  return buf;
+static void wipe_free(char *p) {
+  if (!p) return;
+  volatile char *v = p;
+  while (*v) *v++ = 0;
+  free(p);
 }
 
-/* Build a minimal success response with string result: {"id":"<id>","result":...,"error":null} */
-static char *build_ok_json_raw(const char *id, const char *raw_json) {
-  const char *id_field = id ? id : "";
-  /* generous overhead to avoid truncation */
-  size_t need = strlen(id_field) + strlen(raw_json) + 64;
-  char *buf = (char*)malloc(need);
-  if (!buf) return NULL;
-  int n = snprintf(buf, need, "{\"id\":\"%s\",\"result\":%s,\"error\":null}", id_field, raw_json);
-  if (n < 0 || (size_t)n >= need) { free(buf); return NULL; }
-  return buf;
-}
-
-/* Shared ACL with DBus path: ~/.config/gnostr/signer-acl.ini */
-static gchar *acl_file_path(void){
-  const char *conf = g_get_user_config_dir();
-  if (!conf) conf = g_get_home_dir();
-  gchar *dir = g_build_filename(conf, "gnostr", NULL);
-  g_mkdir_with_parents(dir, 0700);
-  gchar *path = g_build_filename(dir, "signer-acl.ini", NULL);
-  g_free(dir);
-  return path; /* caller frees */
-}
-
-static gboolean acl_load_decision(const char *method, const char *app_id, const char *account, gboolean *decision_out){
-  if (!method || !app_id || !account || !decision_out) return FALSE;
-  gboolean found = FALSE; GError *err=NULL;
-  gchar *path = acl_file_path(); GKeyFile *kf = g_key_file_new();
-  if (g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, &err)) {
-    gchar *key = g_strdup_printf("%s:%s", app_id, account);
-    if (g_key_file_has_group(kf, method) && g_key_file_has_key(kf, method, key, NULL)) {
-      gchar *val = g_key_file_get_string(kf, method, key, NULL);
-      if (val){
-        if (g_strcmp0(val, "allow")==0) { *decision_out = TRUE; found = TRUE; }
-        else if (g_strcmp0(val, "deny")==0) { *decision_out = FALSE; found = TRUE; }
-        g_free(val);
-      }
+/* @s as a JSON string literal (malloc). */
+static char *json_quote(const char *s) {
+  if (!s) s = "";
+  size_t n = strlen(s);
+  char *o = (char*)malloc(n * 6 + 3);
+  if (!o) return NULL;
+  char *w = o;
+  *w++ = '"';
+  for (const unsigned char *p = (const unsigned char*)s; *p; p++) {
+    switch (*p) {
+      case '"':  *w++ = '\\'; *w++ = '"'; break;
+      case '\\': *w++ = '\\'; *w++ = '\\'; break;
+      case '\n': *w++ = '\\'; *w++ = 'n'; break;
+      case '\r': *w++ = '\\'; *w++ = 'r'; break;
+      case '\t': *w++ = '\\'; *w++ = 't'; break;
+      default:
+        if (*p < 0x20) { snprintf(w, 7, "\\u%04x", *p); w += 6; }
+        else *w++ = (char)*p;
     }
-    g_free(key);
   }
-  if (err) g_error_free(err);
-  g_key_file_unref(kf); g_free(path);
-  return found;
+  *w++ = '"';
+  *w = '\0';
+  return o;
+}
+
+/* {"id":"<id>","result":null,"error":{"code":X,"message":"..."}} */
+static char *build_error_json(const char *id, int code, const char *msg) {
+  char *qid = json_quote(id), *qmsg = json_quote(msg ? msg : "error");
+  char *buf = NULL;
+  if (qid && qmsg) {
+    size_t need = strlen(qid) + strlen(qmsg) + 64;
+    buf = (char*)malloc(need);
+    if (buf) snprintf(buf, need, "{\"id\":%s,\"result\":null,\"error\":{\"code\":%d,\"message\":%s}}", qid, code, qmsg);
+  }
+  free(qid); free(qmsg);
+  return buf;
+}
+
+/* {"id":"<id>","result":<raw_json>,"error":null} */
+static char *build_ok_json_raw(const char *id, const char *raw_json) {
+  char *qid = json_quote(id);
+  if (!qid) return NULL;
+  size_t need = strlen(qid) + strlen(raw_json) + 40;
+  char *buf = (char*)malloc(need);
+  if (buf) snprintf(buf, need, "{\"id\":%s,\"result\":%s,\"error\":null}", qid, raw_json);
+  free(qid);
+  return buf;
+}
+
+static void send_frame(int fd, char *json, int wipe) {
+  if (!json) return;
+  nip5f_write_frame(fd, json, strlen(json));
+  if (wipe) wipe_free(json); else free(json);
+}
+
+static void send_error(int fd, const char *id, int code, const char *msg) {
+  send_frame(fd, build_error_json(id, code, msg), 0);
+}
+
+/* Banner, then the client hello. If the server has NOSTR_SIGNER_AUTH_TOKEN
+ * set, the hello must carry the same "auth_token". Returns 0 to proceed. */
+static int handshake(int fd) {
+  const char *banner = "{\"name\":\"nostr-signer\",\"supported_methods\":[\"get_public_key\",\"sign_event\",\"nip44_encrypt\",\"nip44_decrypt\",\"list_public_keys\"]}";
+  if (nip5f_write_frame(fd, banner, strlen(banner)) != 0) return -1;
+  char *hello = NULL; size_t hlen = 0;
+  if (nip5f_read_frame(fd, &hello, &hlen) != 0) { free(hello); return -1; }
+  int ok = 1;
+  const char *srv_tok = getenv("NOSTR_SIGNER_AUTH_TOKEN");
+  if (srv_tok && *srv_tok) {
+    char *client_tok = NULL;
+    if (hello) (void)nostr_json_get_string(hello, "auth_token", &client_tok);
+    ok = client_tok && strcmp(client_tok, srv_tok) == 0;
+    free(client_tok);
+  }
+  free(hello);
+  return ok ? 0 : -1;
+}
+
+/* params.event as a JSON object, or as a string holding one. */
+static char *sign_event_param(const char *req) {
+  char *ev = NULL;
+  if (nostr_json_get_string_at(req, "params", "event", &ev) == 0 && ev) return ev;
+  free(ev);
+  ev = NULL;
+  char *params_raw = NULL;
+  if (nostr_json_get_raw(req, "params", &params_raw) == 0 && params_raw) {
+    (void)nostr_json_get_raw(params_raw, "event", &ev);
+    free(params_raw);
+  }
+  return ev;
+}
+
+/* Built-in handlers (no hooks). Returns 0 with *out raw JSON, or an error code. */
+static int builtin_call(const struct Nip5fConnArg *carg, const char *method,
+                        const char *a, const char *b, char **out) {
+  char *s = NULL;
+  int rc;
+  if (strcmp(method, "get_public_key") == 0) {
+    rc = carg->get_pub ? carg->get_pub(carg->ud, &s) : nostr_nip5f_builtin_get_public_key(&s);
+    if (rc == 0 && s) { *out = json_quote(s); free(s); return *out ? 0 : NIP5F_ERR_INTERNAL; }
+  } else if (strcmp(method, "sign_event") == 0) {
+    rc = carg->sign_event ? carg->sign_event(carg->ud, a, b, &s) : nostr_nip5f_builtin_sign_event(a, b, &s);
+    if (rc == 0 && s) { *out = s; return 0; }
+  } else if (strcmp(method, "nip44_encrypt") == 0) {
+    rc = carg->enc44 ? carg->enc44(carg->ud, a, b, &s) : nostr_nip5f_builtin_nip44_encrypt(a, b, &s);
+    if (rc == 0 && s) { *out = json_quote(s); free(s); return *out ? 0 : NIP5F_ERR_INTERNAL; }
+  } else if (strcmp(method, "nip44_decrypt") == 0) {
+    rc = carg->dec44 ? carg->dec44(carg->ud, a, b, &s) : nostr_nip5f_builtin_nip44_decrypt(a, b, &s);
+    if (rc == 0 && s) { *out = json_quote(s); wipe_free(s); return *out ? 0 : NIP5F_ERR_INTERNAL; }
+    wipe_free(s);
+    return NIP5F_ERR_INTERNAL;
+  } else if (strcmp(method, "list_public_keys") == 0) {
+    rc = carg->list_keys ? carg->list_keys(carg->ud, &s) : nostr_nip5f_builtin_list_public_keys(&s);
+    if (rc == 0 && s) { *out = s; return 0; }
+  } else {
+    return NIP5F_ERR_UNSUPPORTED;
+  }
+  free(s);
+  return NIP5F_ERR_INTERNAL;
 }
 
 void *nip5f_conn_thread(void *arg) {
   struct Nip5fConnArg *carg = (struct Nip5fConnArg*)arg;
   int fd = carg->fd;
-  if (signer_log_enabled()) fprintf(stderr, "[nip5f] client connected fd=%d\n", fd);
+  void *conn = NULL;
+  int opened = 0;
+  if (carg->handshake && handshake(fd) != 0) goto out;
+  if (carg->have_hooks && carg->hooks.open) {
+    conn = carg->hooks.open(carg->hooks_ud, &carg->peer);
+    if (!conn) goto out;
+    opened = 1;
+  }
+  if (signer_log_enabled()) fprintf(stderr, "[nip5f] client connected fd=%d pid=%d\n", fd, carg->peer.pid);
   for (;;) {
     char *req = NULL; size_t rlen = 0;
     if (nip5f_read_frame(fd, &req, &rlen) != 0) break;
-    // Extract id and method via nested lookups if needed
-    char *id = NULL; char *method = NULL;
+    char *id = NULL, *method = NULL, *a = NULL, *b = NULL, *result = NULL, *message = NULL;
+    int code = 0;
     (void)nostr_json_get_string(req, "id", &id);
     (void)nostr_json_get_string(req, "method", &method);
-    if (signer_log_enabled()) fprintf(stderr, "[nip5f] request id=%s method=%s\n", id?id:"", method?method:"<none>");
+    if (signer_log_enabled()) fprintf(stderr, "[nip5f] request id=%s method=%s\n", id ? id : "", method ? method : "<none>");
     if (!method) {
-      if (signer_log_enabled()) fprintf(stderr, "[nip5f] invalid request: raw=%.*s\n", (int)(rlen > 512 ? 512 : rlen), req ? req : "");
-      char *err = build_error_json(id, 1, "invalid request");
-      if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
-      free(id); free(req); continue;
-    }
-    // Dispatch methods
-    if (strcmp(method, "get_public_key") == 0) {
-      // Call handler if present
-      char *pub = NULL;
-      int rc = -2;
-      if (carg->get_pub) rc = carg->get_pub(carg->ud, &pub);
-      else rc = nostr_nip5f_builtin_get_public_key(&pub);
-      if (rc == 0 && pub) {
-        // Wrap as JSON string result: "<hex>"
-        size_t L = strlen(pub) + 3;
-        char *jres = (char*)malloc(L);
-        if (jres) {
-          snprintf(jres, L, "\"%s\"", pub);
-          char *ok = build_ok_json_raw(id, jres);
-          if (ok) {
-            if (signer_log_enabled()) fprintf(stderr, "[nip5f] -> %s\n", ok);
-            nip5f_write_frame(fd, ok, strlen(ok)); free(ok);
-          }
-          free(jres);
-        }
-        free(pub);
-      } else {
-        if (signer_log_enabled()) fprintf(stderr, "[nip5f] get_public_key failed\n");
-        char *err = build_error_json(id, 10, "get_public_key failed");
-        if (err) { if (signer_log_enabled()) fprintf(stderr, "[nip5f] -> %s\n", err); nip5f_write_frame(fd, err, strlen(err)); free(err); }
-      }
+      code = NIP5F_ERR_INVALID_REQUEST;
+    } else if (strcmp(method, "get_public_key") == 0 || strcmp(method, "list_public_keys") == 0) {
+      /* no params */
     } else if (strcmp(method, "sign_event") == 0) {
-      char *ev = NULL; char *pub = NULL; char *appid = NULL; int ok1=-1;
-      /* Try nested accessor: params.event */
-      ok1 = nostr_json_get_string_at(req, "params", "event", &ev);
-      if (signer_log_enabled()) {
-        int elen = ev ? (int) (strlen(ev) > 80 ? 80 : strlen(ev)) : 0;
-        fprintf(stderr, "[nip5f] sign_event params: ok1=%d ev_is_null=%d ev_snip=%.*s\n", ok1, ev?0:1, elen, ev?ev:"");
-        if (ev) fprintf(stderr, "[nip5f] sign_event params: ev_first_char=%c\n", ev[0]);
-      }
-      if (ok1 != 0 || !ev) {
-        /* Fallback: extract raw JSON for params.event using nostr_json_get_raw on params first */
-        char *params_raw = NULL;
-        if (nostr_json_get_raw(req, "params", &params_raw) == 0 && params_raw) {
-          char *event_raw = NULL;
-          if (nostr_json_get_raw(params_raw, "event", &event_raw) == 0 && event_raw) {
-            ev = event_raw;
-            ok1 = 0;
-            if (signer_log_enabled()) fprintf(stderr, "[nip5f] sign_event params: recovered raw event (nostr_json_get_raw, first=%c)\n", ev[0]);
-          }
-          free(params_raw);
-        }
-      }
-      (void)nostr_json_get_string_at(req, "params", "pubkey", &pub); // optional
-      (void)nostr_json_get_string_at(req, "params", "app_id", &appid); // optional
-      if (ok1 != 0 || !ev) {
-        char *err = build_error_json(id, 1, "invalid params");
-        if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
-      } else {
-        /* ACL pre-check: method SignEvent, app_id or fallback "uds", account fallback "default".
-           In test mode (NOSTR_TEST_MODE=1), bypass ACL to keep loopback tests hermetic. */
-        const char *test_mode = getenv("NOSTR_TEST_MODE");
-        if (!(test_mode && test_mode[0] == '1')) {
-          const char *acl_app = (appid && *appid) ? appid : "uds";
-          const char *acl_acct = "default";
-          gboolean acl_decision = FALSE;
-          if (!acl_load_decision("SignEvent", acl_app, acl_acct, &acl_decision)) {
-            /* Default-deny: require prior approval via UI */
-            char *err = build_error_json(id, 11, "approval required");
-            if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
-            if (ev) free(ev); if (pub) free(pub); if (appid) free(appid);
-            free(id); free(method); free(req);
-            continue;
-          }
-          if (!acl_decision) {
-            char *err = build_error_json(id, 13, "ACL deny");
-            if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
-            if (ev) free(ev); if (pub) free(pub); if (appid) free(appid);
-            free(id); free(method); free(req);
-            continue;
-          }
-        }
-        char *signed_json = NULL; int rc = -2;
-        if (signer_log_enabled()) fprintf(stderr, "[nip5f] sign_event dispatch: using %s, pub=%s, ev_snip=%.*s\n",
-                                          carg->sign_event?"custom":"builtin",
-                                          pub?pub:"(none)",
-                                          ev? (int) (strlen(ev) > 120 ? 120 : strlen(ev)) : 0,
-                                          ev? ev : "");
-        if (carg->sign_event) rc = carg->sign_event(carg->ud, ev, pub, &signed_json);
-        else rc = nostr_nip5f_builtin_sign_event(ev, pub, &signed_json);
-        if (signer_log_enabled()) fprintf(stderr, "[nip5f] sign_event dispatch: rc=%d, signed_json_null=%d\n", rc, signed_json?0:1);
-        if (rc == 0 && signed_json) {
-          // Return raw JSON as result
-          char *ok = build_ok_json_raw(id, signed_json);
-          if (ok) { nip5f_write_frame(fd, ok, strlen(ok)); free(ok); }
-          free(signed_json);
-        } else {
-          if (signer_log_enabled()) fprintf(stderr, "[nip5f] sign_event failed\n");
-          char *err = build_error_json(id, 10, "sign_event failed");
-          if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
-        }
-      }
-      if (ev) free(ev); if (pub) free(pub); if (appid) free(appid);
-    } else if (strcmp(method, "nip44_encrypt") == 0) {
-      char *peer = NULL; char *pt = NULL;
-      int okp = nostr_json_get_string_at(req, "params", "peer_pub", &peer);
-      int okc = nostr_json_get_string_at(req, "params", "plaintext", &pt);
-      if (okp != 0 || okc != 0 || !peer || !pt) {
-        char *err = build_error_json(id, 1, "invalid params");
-        if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
-      } else {
-        char *b64 = NULL; int rc = -2;
-        if (carg->enc44) rc = carg->enc44(carg->ud, peer, pt, &b64);
-        else rc = nostr_nip5f_builtin_nip44_encrypt(peer, pt, &b64);
-        if (rc == 0 && b64) {
-          size_t L = strlen(b64) + 3; char *jres = (char*)malloc(L);
-          if (jres) {
-            snprintf(jres, L, "\"%s\"", b64);
-            char *ok = build_ok_json_raw(id, jres);
-            if (ok) { nip5f_write_frame(fd, ok, strlen(ok)); free(ok); }
-            free(jres);
-          }
-          free(b64);
-        } else {
-          if (signer_log_enabled()) fprintf(stderr, "[nip5f] nip44_encrypt failed\n");
-          char *err = build_error_json(id, 10, "not implemented");
-          if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
-        }
-      }
-      if (peer) free(peer); if (pt) free(pt);
-    } else if (strcmp(method, "nip44_decrypt") == 0) {
-      char *peer = NULL; char *ct = NULL;
-      int okp = nostr_json_get_string_at(req, "params", "peer_pub", &peer);
-      int okc = nostr_json_get_string_at(req, "params", "cipher_b64", &ct);
-      if (okp != 0 || okc != 0 || !peer || !ct) {
-        char *err = build_error_json(id, 1, "invalid params");
-        if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
-      } else {
-        char *pt = NULL; int rc = -2;
-        if (carg->dec44) rc = carg->dec44(carg->ud, peer, ct, &pt);
-        else rc = nostr_nip5f_builtin_nip44_decrypt(peer, ct, &pt);
-        if (rc == 0 && pt) {
-          size_t L = strlen(pt) + 3; char *jres = (char*)malloc(L);
-          if (jres) {
-            snprintf(jres, L, "\"%s\"", pt);
-            char *ok = build_ok_json_raw(id, jres);
-            if (ok) { nip5f_write_frame(fd, ok, strlen(ok)); free(ok); }
-            free(jres);
-          }
-          free(pt);
-        } else {
-          if (signer_log_enabled()) fprintf(stderr, "[nip5f] nip44_decrypt failed\n");
-          char *err = build_error_json(id, 10, "not implemented");
-          if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
-        }
-      }
-      if (peer) free(peer); if (ct) free(ct);
-    } else if (strcmp(method, "list_public_keys") == 0) {
-      char *arr = NULL; int rc = -2;
-      if (carg->list_keys) rc = carg->list_keys(carg->ud, &arr);
-      else rc = nostr_nip5f_builtin_list_public_keys(&arr);
-      if (rc == 0 && arr) {
-        char *ok = build_ok_json_raw(id, arr); // raw JSON array
-        if (ok) { nip5f_write_frame(fd, ok, strlen(ok)); free(ok); }
-        free(arr);
-      } else {
-        if (signer_log_enabled()) fprintf(stderr, "[nip5f] list_public_keys failed\n");
-        char *err = build_error_json(id, 10, "not implemented");
-        if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
-      }
+      a = sign_event_param(req);
+      (void)nostr_json_get_string_at(req, "params", "pubkey", &b); /* optional */
+      if (!a) code = NIP5F_ERR_INVALID_PARAMS;
+    } else if (strcmp(method, "nip44_encrypt") == 0 || strcmp(method, "nip44_decrypt") == 0) {
+      int enc = method[6] == 'e';
+      if (nostr_json_get_string_at(req, "params", "peer_pub", &a) != 0 || !a ||
+          nostr_json_get_string_at(req, "params", enc ? "plaintext" : "cipher_b64", &b) != 0 || !b)
+        code = NIP5F_ERR_INVALID_PARAMS;
     } else {
-      if (signer_log_enabled()) fprintf(stderr, "[nip5f] unknown method: %s\n", method);
-      char *err = build_error_json(id, 2, "method not supported");
-      if (err) { nip5f_write_frame(fd, err, strlen(err)); free(err); }
+      code = NIP5F_ERR_UNSUPPORTED;
     }
-    free(id); free(method); free(req);
+    if (code == 0) {
+      if (carg->have_hooks)
+        code = carg->hooks.request(carg->hooks_ud, conn, method, a, b, &result, &message);
+      else
+        code = builtin_call(carg, method, a, b, &result);
+      if (code == 0 && !result) code = NIP5F_ERR_INTERNAL;
+    }
+    if (code == 0) {
+      send_frame(fd, build_ok_json_raw(id, result), 1);
+    } else {
+      const char *m = message;
+      if (!m) {
+        switch (code) {
+          case NIP5F_ERR_INVALID_REQUEST: m = "invalid request"; break;
+          case NIP5F_ERR_UNSUPPORTED:     m = "method not supported"; break;
+          case NIP5F_ERR_INVALID_PARAMS:  m = "invalid params"; break;
+          case NIP5F_ERR_NO_KEY:          m = "key not found"; break;
+          case NIP5F_ERR_DECLINED:        m = "declined"; break;
+          default:                        m = "internal error"; break;
+        }
+      }
+      if (signer_log_enabled()) fprintf(stderr, "[nip5f] id=%s -> error %d\n", id ? id : "", code);
+      send_error(fd, id, code, m);
+    }
+    wipe_free(result);
+    free(message);
+    wipe_free(a);
+    wipe_free(b);
+    free(id); free(method);
+    if (req) { memset(req, 0, rlen); free(req); }
   }
+out:
   if (signer_log_enabled()) fprintf(stderr, "[nip5f] client disconnected fd=%d\n", fd);
+  if (opened && carg->hooks.close) carg->hooks.close(carg->hooks_ud, conn);
+  if (carg->peer.pidfd >= 0) close(carg->peer.pidfd);
   close(fd);
   free(carg);
   return NULL;

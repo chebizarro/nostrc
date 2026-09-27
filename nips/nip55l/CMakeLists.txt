@@ -102,8 +102,14 @@ if (GIO_FOUND AND ENABLE_NIP55L)
   add_library(nostr_nip55l_glib
     ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_service_g.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_caller.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_nip5f.c
     ${GENERATED_DBUS_C}
   )
+  # The NIP-5F socket, gated like the D-Bus methods (nostrc-q23h).
+  if (TARGET nostr_nip5f_core)
+    target_link_libraries(nostr_nip55l_glib PRIVATE nostr_nip5f_core)
+    target_compile_definitions(nostr_nip55l_glib PRIVATE NIP55L_HAVE_NIP5F)
+  endif()
   # Generated gdbus code may trip -Wpedantic in some GCC versions; don't fail build on it
   if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(${GENERATED_DBUS_C} PROPERTIES COMPILE_OPTIONS "-Wno-error=pedantic")
