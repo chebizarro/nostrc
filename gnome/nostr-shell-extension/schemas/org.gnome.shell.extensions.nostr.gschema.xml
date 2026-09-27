@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="nostr-shell-extension">
+  <schema id="org.gnome.shell.extensions.nostr" path="/org/gnome/shell/extensions/nostr/">
+    <key name="refresh-interval" type="u">
+      <range min="30" max="3600"/>
+      <default>60</default>
+      <summary>Background refresh interval (seconds)</summary>
+      <description>How often the relay unit state and statistics are re-read in the background, in addition to change signals and opening Quick Settings. Never less than 30 seconds.</description>
+    </key>
+    <key name="show-balance" type="b">
+      <default>true</default>
+      <summary>Show the wallet balance</summary>
+      <description>Show the Nostr Wallet Connect balance from org.nostr.Wallet1. The balance is only read automatically when nostr-wallet-agent already allows GNOME Shell to read the wallet; the panel never triggers an approval prompt on its own.</description>
+    </key>
+    <key name="show-dm-status" type="b">
+      <default>true</default>
+      <summary>Show message notification status</summary>
+      <description>Show whether nostr-notify.service is delivering direct-message notifications. nostr-notify exposes no unread count yet.</description>
+    </key>
+  </schema>
+</schemalist>

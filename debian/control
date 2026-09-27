@@ -421,6 +421,33 @@ Description: Nostr Settings — preferences for Nostr on the GNOME desktop
  (BUD-03 Blossom list) and Files (nostr-seal / nostr-share defaults).
  Lists are signed by org.nostr.Signer; the app never holds a key.
 
+Package: gnome-shell-extension-nostr
+Section: gnome
+Architecture: all
+Depends: ${misc:Depends},
+         gnome-shell (>= 46~),
+         gnome-shell (<< 49~)
+Recommends: nostrc-session-relay (>= ${source:Version}),
+            nostr-settings (>= ${source:Version})
+Suggests: nostr-wallet-agent (>= ${source:Version}),
+          nostr-notify (>= ${source:Version})
+Enhances: gnome-shell
+Description: GNOME Shell extension: Nostr relay toggle and wallet balance
+ Adds a "Nostr Relay" Quick Settings toggle (next to Wi-Fi and Bluetooth)
+ for the per-user session relay. Switching it uses the same systemd user
+ unit operations as Nostr Settings (enable and start
+ nostr-session-relay.socket; disable, then stop), and its subtitle shows
+ the relay's event count and storage from org.nostr.SessionRelay1 while
+ it runs. Watching the panel never starts a stopped relay.
+ .
+ The toggle's menu shows whether nostr-notify delivers direct-message
+ notifications, the Nostr Wallet Connect balance from nostr-wallet-agent
+ (only once the agent allows GNOME Shell to read the wallet; the panel
+ never triggers an approval prompt by itself), and opens Nostr Settings.
+ .
+ Enable it with `gnome-extensions enable nostr@nostr.org` or the
+ Extensions app.
+
 Package: nostrc-samba-server
 Section: admin
 Architecture: any
