@@ -208,6 +208,59 @@ test_for_origin(void)
   g_rmdir(dir);
 }
 
+/* The settings app is trusted by the bridge's rule (nwa_caller_exe_is),
+ * against its own path list; the bridge is not a settings app and vice
+ * versa. */
+static void
+test_settings_app_gate(void)
+{
+  g_autofree gchar *dir = g_dir_make_tmp("nwa-settings-XXXXXX", NULL);
+  g_autofree gchar *settings = g_build_filename(dir, "nostr-settings", NULL);
+  g_autofree gchar *host = g_build_filename(dir, "nostr-signer-webext-host", NULL);
+  g_autofree gchar *copy = g_build_filename(dir, "copy-of-settings", NULL);
+  g_assert_true(g_file_set_contents(settings, "#!/bin/true\n", -1, NULL));
+  g_assert_true(g_file_set_contents(host, "#!/bin/true\n", -1, NULL));
+  g_assert_true(g_file_set_contents(copy, "#!/bin/true\n", -1, NULL));
+  const gchar *const apps[] = { settings, NULL };
+  const gchar *const bridges[] = { host, NULL };
+
+  g_autoptr(NwaCaller) s_scope = bridge_caller(settings, NWA_CALLER_SYSTEMD_SCOPE);
+  g_autoptr(NwaCaller) s_bare = bridge_caller(settings, NWA_CALLER_EXE);
+  g_assert_true(nwa_caller_exe_is(s_scope, apps));
+  g_assert_true(nwa_caller_exe_is(s_bare, apps));
+  g_assert_false(nwa_caller_may_assert_origin(s_bare, bridges));
+  g_autoptr(NwaCaller) bridge = bridge_caller(host, NWA_CALLER_EXE);
+  g_assert_false(nwa_caller_exe_is(bridge, apps));
+  g_autoptr(NwaCaller) cp = bridge_caller(copy, NWA_CALLER_EXE);
+  g_assert_false(nwa_caller_exe_is(cp, apps));
+  /* a Flatpak or snap that execs the host binary keeps its sandbox identity */
+  g_autoptr(NwaCaller) fp = bridge_caller(settings, NWA_CALLER_FLATPAK);
+  g_assert_false(nwa_caller_exe_is(fp, apps));
+  g_autoptr(NwaCaller) sn = bridge_caller(settings, NWA_CALLER_SNAP);
+  g_assert_false(nwa_caller_exe_is(sn, apps));
+  /* a web origin principal carries the bridge's exe but is never the app */
+  g_autoptr(NwaCaller) site = nwa_caller_for_origin(s_bare, "https://evil.example");
+  g_assert_false(nwa_caller_exe_is(site, apps));
+
+  g_setenv("NOSTR_WALLET_AGENT_SETTINGS_APPS", "/opt/x/nostr-settings", TRUE);
+  g_auto(GStrv) list = nwa_caller_settings_apps();
+#ifdef NWA_ORIGIN_BRIDGE_ENV
+  g_assert_cmpstr(list[0], ==, "/opt/x/nostr-settings");
+#else
+  g_assert_cmpstr(list[0], !=, "/opt/x/nostr-settings");
+#endif
+  g_unsetenv("NOSTR_WALLET_AGENT_SETTINGS_APPS");
+  g_auto(GStrv) def = nwa_caller_settings_apps();
+  g_assert_cmpuint(g_strv_length(def), ==, 1);
+  g_assert_true(g_path_is_absolute(def[0]));
+  g_assert_true(g_str_has_suffix(def[0], "/bin/nostr-settings"));
+
+  g_unlink(settings);
+  g_unlink(host);
+  g_unlink(copy);
+  g_rmdir(dir);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -218,5 +271,6 @@ main(int argc, char **argv)
   g_test_add_func("/caller/web-origin-syntax", test_web_origin_syntax);
   g_test_add_func("/caller/origin-bridge-gate", test_origin_bridge_gate);
   g_test_add_func("/caller/for-origin", test_for_origin);
+  g_test_add_func("/caller/settings-app-gate", test_settings_app_gate);
   return g_test_run();
 }

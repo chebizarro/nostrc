@@ -40,10 +40,13 @@ Amounts are millisatoshis.
 | `OpenUri(s uri)` | | scheme-handler link (always confirmed) |
 | `GetBudget(s app_id)` | `→ u msat_per_day, t spent_today_msat` | own: always; other app: trusted only |
 | `SetBudget(s app_id, u msat_per_day)` | | lower own: always; otherwise confirm (a budget never grants read access) |
+| `ListApps()` | `→ a{sa{sv}}` (`limit_msat_per_day` t, `spent_today_msat` t, `allow_read` b per app id) | grant admin only |
+| `SetReadAccess(s app_id, b allow)` | | grant: grant admin immediately, other apps only after the user agrees; revoke own: always; revoke another's: grant admin only |
 | `GetInfoFor` / `GetBalanceFor` / `MakeInvoiceFor` / `PayInvoiceFor` `(s origin, …)` | as the plain method | as the plain method, **with the web origin as the app** — browser bridge only, see [Web origins](#web-origins-browser-bridge) |
 
 `app_id = ""` means "the caller". Signals: `PaymentReceived(a{sv})`,
-`PaymentSent(a{sv})`, `BudgetExceeded(s app_id, t requested_msat, t remaining_msat)`.
+`PaymentSent(a{sv})`, `BudgetExceeded(s app_id, t requested_msat, t remaining_msat)`,
+`AppsChanged()` (a grant or limit changed; re-list with `ListApps`).
 Properties: `Paired b`, `WalletPubkey s`, `Lud16 s`, `Relays as`.
 Errors are `org.nostr.Wallet1.Error.{InvalidArgs, NotPaired, Denied,
 BudgetExceeded, Timeout, WalletError, RelayError, Unsupported, RateLimited,
@@ -88,8 +91,10 @@ signer daemon.
 Each application has a daily limit (msat, default **0 = never pay without
 asking**) and a separate "allowed to read" flag. The limit is set by ticking
 *Always allow up to N sats/day* in the payment dialog, by `SetBudget`, or by
-a trusted settings app; the read flag only by ticking *Always allow this app*
-in the wallet-access dialog. Neither implies the other.
+a trusted settings app; the read flag by ticking *Always allow this app* in
+the wallet-access dialog, by `SetReadAccess` (the trusted settings app's
+per-app switch; other apps only after the user agrees), and an app can give
+up its own. Neither implies the other.
 
 * **Storage:** `$XDG_STATE_HOME/nostr-wallet/budgets.json` (dir 0700, file
   0600, atomic rewrite). Budgets are deliberately *not* in GSettings: they
@@ -133,11 +138,28 @@ read?" without reimplementing caller identification or peeking at
 | unpair | not paired | Allow (no-op) |
 | unpair | paired | Prompt |
 | budget | lower own | Allow |
-| budget | raise own, or change another app's | Trusted: Allow; identified: Prompt; unidentified: Deny |
-| budget | read another app's | Trusted: Allow; otherwise Deny |
+| budget | raise own, or change another app's | Trusted: Allow; identified (grant admin included): Prompt; unidentified: Deny |
+| budget | read another app's, `ListApps` | Trusted or grant admin: Allow; otherwise Deny |
+| read grant | `SetReadAccess(app, true)` | Trusted or grant admin: Allow; identified: Prompt; unidentified: Deny |
+| read revoke | own | Allow (identified) |
+| read revoke | another app's | Trusted or grant admin: Allow; otherwise Deny |
 
 "Trusted" means listed in `trusted-apps` **and** identified through Flatpak
 (an id the caller cannot choose); unsandboxed callers are never trusted.
+
+A **grant admin** may list apps and grant or revoke read access without a
+dialog, but not change spending limits: a trusted app, or the installed Nostr
+Settings — an unsandboxed same-uid caller whose `/proc/<pid>/exe` is
+`<bindir>/nostr-settings` by path and inode (the browser bridge's rule,
+`nwa_caller_exe_is`, re-checked on every call; a Flatpak or snap that execs
+the binary keeps its sandbox identity; test builds may replace the path with
+`NOSTR_WALLET_AGENT_SETTINGS_APPS`). That keeps sandboxed apps from granting
+themselves anything; like all unsandboxed identities it does not stop
+malware already running as the user (which could edit `budgets.json`). An
+unsandboxed binary is a softer identity than a Flatpak id (it can be driven
+through its own D-Bus surface or the accessibility bus), so a budget raise
+from Settings is still confirmed in the agent's dialog, and Settings exposes
+no action that changes grants.
 At most 2 outstanding prompts per application (6 in total); more are
 refused with `RateLimited`. Dialogs default to *Deny*, time out to *Deny*,
 and closing them is *Deny*.

@@ -218,6 +218,23 @@ test_web_origin_keys(void)
   g_date_time_unref(clk.now);
 }
 
+static void
+test_list_apps(void)
+{
+  NwaBudgetStore *s = nwa_budget_store_new(NULL, NULL, NULL);
+  g_auto(GStrv) none = nwa_budget_store_list_apps(s);
+  g_assert_cmpuint(g_strv_length(none), ==, 0);
+  nwa_budget_store_set_allow_read(s, "org.example.B", TRUE);
+  nwa_budget_store_set_limit(s, "https://a.example", 1000);
+  nwa_budget_store_set_allow_read(s, "exe:/usr/bin/gnome-shell", FALSE);
+  g_auto(GStrv) ids = nwa_budget_store_list_apps(s);
+  g_assert_cmpuint(g_strv_length(ids), ==, 3);
+  g_assert_cmpstr(ids[0], ==, "exe:/usr/bin/gnome-shell");
+  g_assert_cmpstr(ids[1], ==, "https://a.example");
+  g_assert_cmpstr(ids[2], ==, "org.example.B");
+  nwa_budget_store_free(s);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -226,5 +243,6 @@ main(int argc, char **argv)
   g_test_add_func("/budget/day-rollover", test_day_rollover);
   g_test_add_func("/budget/persistence", test_persistence);
   g_test_add_func("/budget/web-origin-keys", test_web_origin_keys);
+  g_test_add_func("/budget/list-apps", test_list_apps);
   return g_test_run();
 }

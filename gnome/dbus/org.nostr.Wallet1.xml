@@ -216,6 +216,40 @@
     </method>
 
     <!--
+      "Grant admin" below means the settings app: the installed Nostr
+      Settings (an unsandboxed caller whose executable is
+      <bindir>/nostr-settings, checked by path and inode — the same rule as
+      the browser bridge), or a Flatpak-verified id listed in the
+      trusted-apps setting ("trusted"). A grant admin may also read other
+      apps' budgets (GetBudget); raising a budget still needs "trusted" or
+      the user's confirmation.
+
+      ListApps: every application (or web origin) the agent has a record
+      for, keyed by app id, with "limit_msat_per_day" (t),
+      "spent_today_msat" (t) and "allow_read" (b). Grant admin only; anyone
+      else gets Denied.
+    -->
+    <method name="ListApps">
+      <arg name="apps" type="a{sa{sv}}" direction="out"/>
+    </method>
+
+    <!--
+      SetReadAccess: grant or revoke @app_id's read access ("can see balance
+      and history, and create invoices", the flag the "Always allow this
+      app" switch sets). @app_id "" means the caller.
+        grant    grant admin: immediately; any other identified app: only
+                 after the user agrees in the agent's dialog
+        revoke   one's own: always; another app's: grant admin only (no
+                 dialog), everyone else Denied
+      No-op calls change nothing and emit nothing.
+      A read grant is not a spending budget, nor the reverse.
+    -->
+    <method name="SetReadAccess">
+      <arg name="app_id" type="s" direction="in"/>
+      <arg name="allow" type="b" direction="in"/>
+    </method>
+
+    <!--
       PaymentReceived: a wallet payment_received notification (NIP-47 kind
       23196/23197). Signals reach every session-bus client, so @details is
       minimal: "type", "amount" (x, msat), "fees_paid", "created_at",
@@ -235,6 +269,13 @@
     <signal name="PaymentSent">
       <arg name="details" type="a{sv}"/>
     </signal>
+
+    <!--
+      AppsChanged: some application's read grant or daily limit changed
+      (settings UIs re-list with ListApps). No arguments: who changed what
+      is only visible through ListApps.
+    -->
+    <signal name="AppsChanged"/>
 
     <!-- BudgetExceeded: a PayInvoice call did not fit @app_id's budget. -->
     <signal name="BudgetExceeded">

@@ -1,10 +1,18 @@
-/* nss-page-wallet.c — org.nostr.Wallet1 pairing + per-app budgets.
+/* nss-page-wallet.c — org.nostr.Wallet1 pairing, per-app read access and
+ * daily budgets.
  * SPDX-License-Identifier: MIT
  *
- * Pair / Unpair / SetBudget are forwarded to the agent, which shows its
- * own confirmation dialog (always, for pairing); this page never sees the
- * pairing secret. Budgets are listed from the agent's budgets.json
- * (read-only; see nss-wallet.h for why not GetBudget).
+ * Pair / Unpair are always confirmed by the agent's own dialog; this page
+ * never sees the pairing secret. As the agent's trusted settings app (see
+ * nss-wallet.h) the page lists apps with ListApps and changes read access
+ * (SetReadAccess) directly; budget changes (SetBudget) are confirmed by the
+ * agent's dialog. When the agent does not trust this process the page falls
+ * back to budgets.json and the agent confirms every change. Grants, budgets
+ * and the GNOME Shell row are rendered as AdwExpanderRows; the page
+ * re-lists on the agent's AppsChanged signal.
+ *
+ * Keep it that way: no GAction (reachable over the app's D-Bus surface)
+ * may change wallet grants — only direct widget handlers.
  */
 #include "nss-ui.h"
 #include "nss-wallet.h"
@@ -17,7 +25,10 @@ typedef struct {
   AdwEntryRow         *pair_entry;
   AdwPreferencesGroup *budgets;
   guint                props_sub;
+  guint                apps_sub;
   gboolean             busy;
+  gboolean             trusted;   /* last ListApps succeeded */
+  GHashTable          *expanded;  /* app ids whose row is open (kept across re-lists) */
 } Page;
 
 static void refresh(Page *p);
@@ -28,6 +39,9 @@ page_free(gpointer data)
   Page *p = data;
   if (p->props_sub && p->ctx->bus)
     g_dbus_connection_signal_unsubscribe(p->ctx->bus, p->props_sub);
+  if (p->apps_sub && p->ctx->bus)
+    g_dbus_connection_signal_unsubscribe(p->ctx->bus, p->apps_sub);
+  g_hash_table_unref(p->expanded);
   nss_context_unref(p->ctx);
   g_free(p);
 }
@@ -43,6 +57,8 @@ typedef struct {
   gchar    **relays;
   GPtrArray *budgets;
   gchar     *budgets_error;
+  gboolean   trusted;        /* budgets came from ListApps */
+  gchar     *untrusted_why;  /* why not (ListApps error), for the group note */
 } State;
 
 static void
@@ -56,6 +72,7 @@ state_free(gpointer p)
   if (s->budgets)
     g_ptr_array_unref(s->budgets);
   g_free(s->budgets_error);
+  g_free(s->untrusted_why);
   g_free(s);
 }
 
@@ -82,6 +99,18 @@ load(gpointer data, GError **error)
     (void)g_variant_lookup(d, "Lud16", "s", &s->lud16);
     (void)g_variant_lookup(d, "WalletPubkey", "s", &s->wallet_pubkey);
     (void)g_variant_lookup(d, "Relays", "^as", &s->relays);
+    g_autoptr(GVariant) apps = g_dbus_connection_call_sync(
+      bus, NSS_WALLET_BUS_NAME, NSS_WALLET_OBJ_PATH, NSS_WALLET_IFACE, "ListApps", NULL,
+      G_VARIANT_TYPE("(a{sa{sv}})"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, &e);
+    if (apps != NULL) {
+      g_autoptr(GVariant) body = g_variant_get_child_value(apps, 0);
+      s->budgets = nss_wallet_apps_from_variant(body);
+      s->trusted = TRUE;
+      return s;
+    }
+    g_dbus_error_strip_remote_error(e);
+    s->untrusted_why = g_strdup(e->message);
+    g_clear_error(&e);
   }
   g_autofree gchar *path = nss_wallet_budgets_path();
   s->budgets = nss_wallet_budgets_load(path, NULL, &e);
@@ -92,20 +121,20 @@ load(gpointer data, GError **error)
   return s;
 }
 
-/* ── budgets ── */
+/* ── apps: read access + budget ── */
 
 typedef struct {
-  Page    *p;
-  gchar   *app_id;
-  guint64  current_msat;
-  GtkWidget *apply;
+  Page       *p;
+  gchar      *app_id;
+  guint64     current_msat;
+  GtkWidget  *apply;
   AdwSpinRow *spin;
-} BudgetRow;
+} AppRow;
 
 static void
-budget_row_free(gpointer d)
+app_row_free(gpointer d)
 {
-  BudgetRow *b = d;
+  AppRow *b = d;
   g_free(b->app_id);
   g_free(b);
 }
@@ -114,49 +143,145 @@ static void
 on_budget_value(AdwSpinRow *row, GParamSpec *ps, gpointer data)
 {
   (void)ps;
-  BudgetRow *b = data;
+  AppRow *b = data;
   guint64 msat = (guint64)adw_spin_row_get_value(row) * 1000;
   gtk_widget_set_visible(b->apply, msat != b->current_msat);
 }
 
+typedef struct {
+  GtkWidget *page;
+  gchar     *ok_msg;
+  gchar     *fail_prefix;
+} AgentCall;
+
 static void
-set_budget_done(GObject *src, GAsyncResult *res, gpointer data)
+agent_call_done(GObject *src, GAsyncResult *res, gpointer data)
 {
-  GtkWidget *page = data;
-  Page *p = g_object_get_data(G_OBJECT(page), "nss-page");
+  AgentCall *ac = data;
+  Page *p = g_object_get_data(G_OBJECT(ac->page), "nss-page");
   g_autoptr(GError) err = NULL;
   g_autoptr(GVariant) r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &err);
   if (p) {
     if (r == NULL) {
       g_dbus_error_strip_remote_error(err);
-      nss_toast(p->ctx, "Budget not changed: %s", err->message);
-    } else {
-      nss_toast(p->ctx, "Budget updated");
+      nss_toast(p->ctx, "%s: %s", ac->fail_prefix, err->message);
+    } else if (ac->ok_msg) {
+      nss_toast(p->ctx, "%s", ac->ok_msg);
     }
-    refresh(p);
+    refresh(p); /* also reverts a switch the agent refused */
   }
-  g_object_unref(page);
+  g_object_unref(ac->page);
+  g_free(ac->ok_msg);
+  g_free(ac->fail_prefix);
+  g_free(ac);
+}
+
+static void
+call_app_method(Page *p, const gchar *method, GVariant *params, gboolean agent_confirms,
+                const gchar *ok, const gchar *fail)
+{
+  if (agent_confirms || !p->trusted)
+    nss_toast(p->ctx, "Confirm the change in the wallet dialog");
+  AgentCall *ac = g_new0(AgentCall, 1);
+  ac->page = g_object_ref(p->page);
+  ac->ok_msg = g_strdup(ok);
+  ac->fail_prefix = g_strdup(fail);
+  g_dbus_connection_call(p->ctx->bus, NSS_WALLET_BUS_NAME, NSS_WALLET_OBJ_PATH, NSS_WALLET_IFACE,
+                         method, params, NULL, G_DBUS_CALL_FLAGS_NONE,
+                         NSS_WALLET_PROMPT_TIMEOUT_MS, NULL, agent_call_done, ac);
 }
 
 static void
 on_budget_apply(GtkButton *btn, gpointer data)
 {
   (void)btn;
-  BudgetRow *b = data;
+  AppRow *b = data;
   guint64 sats = (guint64)adw_spin_row_get_value(b->spin);
   guint32 msat = (guint32)MIN(sats * 1000, (guint64)G_MAXUINT32);
   gtk_widget_set_sensitive(b->apply, FALSE);
-  nss_toast(b->p->ctx, "Confirm the change in the wallet dialog");
-  g_dbus_connection_call(b->p->ctx->bus, NSS_WALLET_BUS_NAME, NSS_WALLET_OBJ_PATH,
-                         NSS_WALLET_IFACE, "SetBudget", g_variant_new("(su)", b->app_id, msat),
-                         NULL, G_DBUS_CALL_FLAGS_NONE, NSS_WALLET_PROMPT_TIMEOUT_MS, NULL,
-                         set_budget_done, g_object_ref(b->p->page));
+  /* Lowering one's own budget is the only unconfirmed case, and Settings
+   * never changes its own. */
+  call_app_method(b->p, "SetBudget", g_variant_new("(su)", b->app_id, msat), TRUE,
+                  "Budget updated", "Budget not changed");
+}
+
+static void
+on_read_toggled(AdwSwitchRow *row, GParamSpec *ps, gpointer data)
+{
+  (void)ps;
+  AppRow *b = data;
+  gboolean allow = adw_switch_row_get_active(row);
+  gtk_widget_set_sensitive(GTK_WIDGET(row), FALSE);
+  call_app_method(b->p, "SetReadAccess", g_variant_new("(sb)", b->app_id, allow), FALSE,
+                  allow ? "Access granted" : "Access revoked",
+                  allow ? "Access not granted" : "Access not revoked");
+}
+
+static void
+on_expanded(AdwExpanderRow *row, GParamSpec *ps, gpointer data)
+{
+  (void)ps;
+  AppRow *b = data;
+  if (adw_expander_row_get_expanded(row))
+    g_hash_table_add(b->p->expanded, g_strdup(b->app_id));
+  else
+    g_hash_table_remove(b->p->expanded, b->app_id);
+}
+
+static GtkWidget *
+app_row_new(Page *p, const NssBudget *bd, gboolean editable)
+{
+  g_autofree gchar *label = nss_wallet_app_label(bd->app_id);
+  g_autofree gchar *spent = nss_format_sats(bd->spent_today_msat);
+  g_autofree gchar *lim = nss_format_sats(bd->limit_msat_per_day);
+  g_autofree gchar *sub = g_strdup_printf("%s · budget %s/day, %s spent today",
+                                          bd->allow_read ? "Can see balance" : "Cannot see balance",
+                                          lim, spent);
+  AdwExpanderRow *row = ADW_EXPANDER_ROW(adw_expander_row_new());
+  adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), label);
+  adw_expander_row_set_subtitle(row, sub);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(row), bd->app_id);
+
+  AppRow *b = g_new0(AppRow, 1);
+  b->p = p;
+  b->app_id = g_strdup(bd->app_id);
+  b->current_msat = bd->limit_msat_per_day / 1000 * 1000;
+  g_object_set_data_full(G_OBJECT(row), "nss-app", b, app_row_free);
+
+  AdwSwitchRow *read = ADW_SWITCH_ROW(adw_switch_row_new());
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(read), "Can see balance and history");
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(read),
+    g_strcmp0(bd->app_id, NSS_WALLET_SHELL_APP_ID) == 0
+      ? "Applies to every GNOME Shell extension: the wallet agent identifies GNOME Shell, "
+        "not individual extensions"
+      : "Also lets it create invoices. Paying always needs a budget or your approval");
+  adw_switch_row_set_active(read, bd->allow_read);
+  g_signal_connect(read, "notify::active", G_CALLBACK(on_read_toggled), b);
+  gtk_widget_set_sensitive(GTK_WIDGET(read), editable);
+  adw_expander_row_add_row(row, GTK_WIDGET(read));
+
+  b->spin = ADW_SPIN_ROW(adw_spin_row_new_with_range(0, G_MAXUINT32 / 1000, 100));
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(b->spin), "Pay without asking, up to (sats per day)");
+  adw_spin_row_set_value(b->spin, (double)(bd->limit_msat_per_day / 1000));
+  b->apply = gtk_button_new_with_label("Apply");
+  gtk_widget_set_valign(b->apply, GTK_ALIGN_CENTER);
+  gtk_widget_set_visible(b->apply, FALSE);
+  g_signal_connect(b->apply, "clicked", G_CALLBACK(on_budget_apply), b);
+  adw_action_row_add_suffix(ADW_ACTION_ROW(b->spin), b->apply);
+  g_signal_connect(b->spin, "notify::value", G_CALLBACK(on_budget_value), b);
+  gtk_widget_set_sensitive(GTK_WIDGET(b->spin), editable);
+  adw_expander_row_add_row(row, GTK_WIDGET(b->spin));
+  adw_expander_row_set_expanded(row, g_hash_table_contains(p->expanded, bd->app_id));
+  g_signal_connect(row, "notify::expanded", G_CALLBACK(on_expanded), b);
+  return GTK_WIDGET(row);
 }
 
 static void
 render(Page *p, State *s)
 {
   nss_group_clear_dynamic(p->budgets);
+  p->trusted = s->trusted;
   gtk_widget_set_visible(p->unpair, s->available && s->paired);
   gtk_widget_set_visible(GTK_WIDGET(p->pair_entry), s->available && !s->paired);
   if (!s->available) {
@@ -176,42 +301,25 @@ render(Page *p, State *s)
   }
 
   if (s->budgets_error) {
-    nss_group_add_dynamic(p->budgets, nss_info_row("Budgets unreadable", s->budgets_error));
+    nss_group_add_dynamic(p->budgets, nss_info_row("Apps unreadable", s->budgets_error));
     return;
   }
-  if (s->budgets->len == 0) {
-    nss_group_add_dynamic(p->budgets, nss_info_row("No app has a budget yet",
-      "Apps get one when you tick “Always allow up to …” in a payment dialog"));
-    return;
+  if (!s->trusted && s->available)
+    nss_group_add_dynamic(p->budgets, nss_info_row("The wallet agent will confirm every change",
+      s->untrusted_why ? s->untrusted_why : "This is not the installed Nostr Settings"));
+  /* GNOME Shell gets a standing row: its panel indicator asks for access
+   * here instead of prompting. */
+  gboolean shell_listed = FALSE;
+  for (guint i = 0; i < s->budgets->len; i++)
+    shell_listed |= g_strcmp0(((NssBudget *)g_ptr_array_index(s->budgets, i))->app_id,
+                              NSS_WALLET_SHELL_APP_ID) == 0;
+  if (!shell_listed) {
+    NssBudget shell = { .app_id = (gchar *)NSS_WALLET_SHELL_APP_ID };
+    nss_group_add_dynamic(p->budgets, app_row_new(p, &shell, s->available));
   }
-  for (guint i = 0; i < s->budgets->len; i++) {
-    NssBudget *bd = g_ptr_array_index(s->budgets, i);
-    g_autofree gchar *label = nss_wallet_app_label(bd->app_id);
-    g_autofree gchar *spent = nss_format_sats(bd->spent_today_msat);
-    g_autofree gchar *sub = g_strdup_printf("Spent today: %s · %s", spent,
-                                            bd->allow_read ? "can see balance and history"
-                                                           : "cannot see balance");
-    AdwSpinRow *row = ADW_SPIN_ROW(adw_spin_row_new_with_range(0, G_MAXUINT32 / 1000, 100));
-    adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), label);
-    adw_action_row_set_subtitle(ADW_ACTION_ROW(row), sub);
-    gtk_widget_set_tooltip_text(GTK_WIDGET(row), bd->app_id);
-    adw_spin_row_set_value(row, (double)(bd->limit_msat_per_day / 1000));
-    BudgetRow *b = g_new0(BudgetRow, 1);
-    b->p = p;
-    b->app_id = g_strdup(bd->app_id);
-    b->current_msat = bd->limit_msat_per_day / 1000 * 1000;
-    b->spin = row;
-    b->apply = gtk_button_new_with_label("Apply");
-    gtk_widget_set_valign(b->apply, GTK_ALIGN_CENTER);
-    gtk_widget_set_visible(b->apply, FALSE);
-    g_signal_connect(b->apply, "clicked", G_CALLBACK(on_budget_apply), b);
-    adw_action_row_add_suffix(ADW_ACTION_ROW(row), b->apply);
-    g_object_set_data_full(G_OBJECT(row), "nss-budget", b, budget_row_free);
-    g_signal_connect(row, "notify::value", G_CALLBACK(on_budget_value), b);
-    gtk_widget_set_sensitive(GTK_WIDGET(row), s->available);
-    nss_group_add_dynamic(p->budgets, GTK_WIDGET(row));
-  }
+  for (guint i = 0; i < s->budgets->len; i++)
+    nss_group_add_dynamic(p->budgets,
+                          app_row_new(p, g_ptr_array_index(s->budgets, i), s->available));
 }
 
 static void
@@ -232,7 +340,7 @@ refresh(Page *p)
 /* Signal callbacks may still run after unsubscribe (until the destroy
  * notify), so the subscription holds a weak ref to the page, not Page*. */
 static void
-on_props_changed(GDBusConnection *c, const gchar *sender, const gchar *path,
+on_agent_changed(GDBusConnection *c, const gchar *sender, const gchar *path,
                  const gchar *iface, const gchar *signal, GVariant *params, gpointer data)
 {
   (void)c; (void)sender; (void)path; (void)iface; (void)signal; (void)params;
@@ -311,6 +419,7 @@ nss_page_wallet_new(NssContext *ctx)
   Page *p = g_new0(Page, 1);
   p->ctx = nss_context_ref(ctx);
   p->page = GTK_WIDGET(page);
+  p->expanded = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   g_object_set_data_full(G_OBJECT(page), "nss-page", p, page_free);
 
   AdwPreferencesGroup *g = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
@@ -337,10 +446,10 @@ nss_page_wallet_new(NssContext *ctx)
   adw_preferences_page_add(page, g);
 
   p->budgets = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
-  adw_preferences_group_set_title(p->budgets, "Daily budgets (sats per day)");
+  adw_preferences_group_set_title(p->budgets, "Apps and websites");
   adw_preferences_group_set_description(p->budgets,
-    "Apps may pay without asking up to this amount per day; 0 always asks. "
-    "Changes are confirmed in the wallet agent's dialog.");
+    "What each app (or website, through the browser extension) may do without asking: see "
+    "your balance and history, and pay up to a daily amount (0 always asks).");
   adw_preferences_page_add(page, p->budgets);
 
   if (ctx->bus) {
@@ -348,8 +457,13 @@ nss_page_wallet_new(NssContext *ctx)
     g_weak_ref_init(wr, page);
     p->props_sub = g_dbus_connection_signal_subscribe(
       ctx->bus, NSS_WALLET_BUS_NAME, "org.freedesktop.DBus.Properties", "PropertiesChanged",
-      NSS_WALLET_OBJ_PATH, NSS_WALLET_IFACE, G_DBUS_SIGNAL_FLAGS_NONE, on_props_changed, wr,
+      NSS_WALLET_OBJ_PATH, NSS_WALLET_IFACE, G_DBUS_SIGNAL_FLAGS_NONE, on_agent_changed, wr,
       weak_ref_free);
+    GWeakRef *wr2 = g_new0(GWeakRef, 1);
+    g_weak_ref_init(wr2, page);
+    p->apps_sub = g_dbus_connection_signal_subscribe(
+      ctx->bus, NSS_WALLET_BUS_NAME, NSS_WALLET_IFACE, "AppsChanged", NSS_WALLET_OBJ_PATH, NULL,
+      G_DBUS_SIGNAL_FLAGS_NONE, on_agent_changed, wr2, weak_ref_free);
     refresh(p);
   }
   return page;

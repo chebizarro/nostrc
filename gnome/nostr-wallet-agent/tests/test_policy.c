@@ -189,6 +189,62 @@ test_budget_ops(void)
   check(&r);
 }
 
+static void
+test_read_grants(void)
+{
+  NwaPolicyInput in = base(NWA_OP_READ_GRANT);
+  Row r = { "app asks for a read grant -> prompt", in, P, NWA_DENY_NONE, FALSE };
+  check(&r);
+  in.ui_available = FALSE;
+  r = (Row){ "grant headless -> deny", in, D, NWA_DENY_NO_UI, FALSE };
+  check(&r);
+  in.caller_grant_admin = TRUE;
+  r = (Row){ "settings app grants without a dialog", in, A, NWA_DENY_NONE, FALSE };
+  check(&r);
+  in.paired = FALSE;
+  r = (Row){ "grants do not need a wallet", in, A, NWA_DENY_NONE, FALSE };
+  check(&r);
+  in = base(NWA_OP_READ_GRANT);
+  in.caller_identified = FALSE;
+  r = (Row){ "unidentified cannot grant", in, D, NWA_DENY_INVALID, FALSE };
+  check(&r);
+  in = base(NWA_OP_READ_GRANT);
+  in.caller_grant_admin = TRUE;
+  in.same_uid = FALSE;
+  r = (Row){ "foreign uid cannot grant", in, D, NWA_DENY_FOREIGN_UID, FALSE };
+  check(&r);
+
+  in = base(NWA_OP_READ_REVOKE_OWN);
+  in.ui_available = FALSE;
+  r = (Row){ "give up own access, no dialog", in, A, NWA_DENY_NONE, FALSE };
+  check(&r);
+  in.caller_identified = FALSE;
+  r = (Row){ "unidentified has nothing to revoke", in, D, NWA_DENY_INVALID, FALSE };
+  check(&r);
+
+  in = base(NWA_OP_READ_REVOKE_OTHER);
+  r = (Row){ "apps cannot revoke each other", in, D, NWA_DENY_NOT_TRUSTED, FALSE };
+  check(&r);
+  in.caller_grant_admin = TRUE;
+  in.ui_available = FALSE;
+  r = (Row){ "settings app revokes without a dialog", in, A, NWA_DENY_NONE, FALSE };
+  check(&r);
+
+  /* the exe-identified settings app administers grants, not money */
+  in = base(NWA_OP_BUDGET_CHANGE);
+  in.caller_grant_admin = TRUE;
+  r = (Row){ "settings binary raising a budget is still confirmed", in, P, NWA_DENY_NONE, FALSE };
+  check(&r);
+  in = base(NWA_OP_BUDGET_QUERY_OTHER);
+  in.caller_grant_admin = TRUE;
+  r = (Row){ "settings binary may list apps / read budgets", in, A, NWA_DENY_NONE, FALSE };
+  check(&r);
+  in = base(NWA_OP_READ);
+  in.caller_grant_admin = TRUE;
+  r = (Row){ "grant admin gets no free read", in, P, NWA_DENY_NONE, FALSE };
+  check(&r);
+}
+
 /* *NonInteractive reads fail with InteractionRequired exactly when the
  * decision would involve the user (prompt, or deny for lack of a display),
  * and never turn an allow or a hard deny into that error. */
@@ -226,5 +282,6 @@ main(int argc, char **argv)
   g_test_add_func("/policy/pairing", test_pairing);
   g_test_add_func("/policy/budget-ops", test_budget_ops);
   g_test_add_func("/policy/needs-user", test_needs_user);
+  g_test_add_func("/policy/read-grants", test_read_grants);
   return g_test_run();
 }

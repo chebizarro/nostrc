@@ -54,6 +54,8 @@ gboolean nwa_budget_store_save(NwaBudgetStore *self, GError **error);
 void     nwa_budget_store_get(NwaBudgetStore *self, const gchar *app_id, NwaBudgetInfo *out);
 void     nwa_budget_store_set_limit(NwaBudgetStore *self, const gchar *app_id, guint64 limit_msat_per_day);
 void     nwa_budget_store_set_allow_read(NwaBudgetStore *self, const gchar *app_id, gboolean allow);
+/* Every app with a record, sorted. */
+GStrv    nwa_budget_store_list_apps(NwaBudgetStore *self);
 
 /* Reserve @amount_msat for @app_id. Without @force, refuses (returns 0) when
  * the amount does not fit the remaining budget. Returns a reservation id. */

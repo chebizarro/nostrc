@@ -23,6 +23,9 @@ typedef enum {
   NWA_OP_BUDGET_QUERY_OTHER, /* GetBudget(other app) */
   NWA_OP_BUDGET_LOWER_OWN,   /* SetBudget(own, <= current) */
   NWA_OP_BUDGET_CHANGE,      /* SetBudget(own raise | other app) */
+  NWA_OP_READ_GRANT,         /* SetReadAccess(any app, TRUE) */
+  NWA_OP_READ_REVOKE_OWN,    /* SetReadAccess(own, FALSE) */
+  NWA_OP_READ_REVOKE_OTHER,  /* SetReadAccess(other app, FALSE) */
 } NwaOp;
 
 typedef enum {
@@ -45,6 +48,9 @@ typedef struct {
   gboolean same_uid;          /* caller uid == agent uid */
   gboolean caller_identified; /* an application id was resolved */
   gboolean caller_trusted;    /* listed in trusted-apps AND sandbox-attested */
+  gboolean caller_grant_admin;/* may list apps and grant/revoke read access: the
+                               * installed nostr-settings (exe path + inode), or
+                               * caller_trusted. Never raises budgets. */
   gboolean is_self;           /* scheme-handler link flow (always prompts) */
   gboolean paired;
   gboolean ui_available;

@@ -243,6 +243,25 @@ call_gdbus(const gchar *method, const gchar *const *args, gboolean *ok)
   return out;
 }
 
+/* gdbus must be a different application than this process: true unless the
+ * test runs inside an app scope both processes would share. */
+static gboolean
+distinct_callers(Env *e)
+{
+  if (g_str_has_prefix(e->self_id, "exe:")) return TRUE;
+  g_test_skip("test process runs in an app scope; gdbus would share its identity");
+  return FALSE;
+}
+
+static gchar *
+gdbus_identity(void)
+{
+  g_autofree gchar *path = g_find_program_in_path("gdbus");
+  g_assert_nonnull(path);
+  g_autofree gchar *real = realpath(path, NULL);
+  return g_strconcat("exe:", real, NULL);
+}
+
 /* ---- prqu.19: non-interactive reads ---- */
 
 static void
@@ -250,6 +269,7 @@ test_non_interactive_reads(void)
 {
   Env e;
   env_up(&e);
+  if (!distinct_callers(&e)) { env_down(&e); return; }
   g_autofree gchar *grant = g_strdup_printf("\"%s\":{\"allow_read\":true}", e.self_id);
   seed(&e, grant);
   agent_start(&e, TRUE, NULL);
@@ -292,10 +312,133 @@ test_non_interactive_reads(void)
   env_down(&e);
 }
 
+/* ---- prqu.20: the settings app grants / revokes read access ---- */
+
+static void
+on_apps_changed(GDBusConnection *c, const gchar *s, const gchar *p, const gchar *i, const gchar *sig,
+                GVariant *params, gpointer ud)
+{
+  (void)c; (void)s; (void)p; (void)i; (void)sig; (void)params;
+  (*(guint *)ud)++;
+}
+
+static gboolean
+listed_allow_read(Env *e, const gchar *app, gboolean *found)
+{
+  g_autoptr(GVariant) r = call_self(e, "ListApps", NULL, NULL);
+  g_assert_nonnull(r);
+  g_autoptr(GVariant) apps = g_variant_get_child_value(r, 0);
+  g_autoptr(GVariant) rec = g_variant_lookup_value(apps, app, G_VARIANT_TYPE_VARDICT);
+  *found = rec != NULL;
+  gboolean allow = FALSE;
+  if (rec) g_assert_true(g_variant_lookup(rec, "allow_read", "b", &allow));
+  return allow;
+}
+
+static void
+wait_count(guint *n, guint want)
+{
+  gint64 deadline = g_get_monotonic_time() + 5 * G_USEC_PER_SEC;
+  while (*n < want && g_get_monotonic_time() < deadline) g_main_context_iteration(NULL, TRUE);
+  g_assert_cmpuint(*n, >=, want);
+}
+
+static void
+test_settings_grants(void)
+{
+  Env e;
+  env_up(&e);
+  if (!distinct_callers(&e)) { env_down(&e); return; }
+  g_autofree gchar *gd = gdbus_identity();
+  seed(&e, "\"https://shop.example\":{\"allow_read\":true,\"limit_msat_per_day\":21000}");
+  g_autofree gchar *self_real = g_file_read_link("/proc/self/exe", NULL);
+  g_autofree gchar *env_settings = g_strconcat("NOSTR_WALLET_AGENT_SETTINGS_APPS=", self_real, NULL);
+  const gchar *const extra[] = { env_settings, NULL };
+  agent_start(&e, TRUE, extra);
+  guint changed = 0;
+  guint sub = g_dbus_connection_signal_subscribe(e.bus, NULL, "org.nostr.Wallet1", "AppsChanged",
+                                                 "/org/nostr/Wallet1", NULL, G_DBUS_SIGNAL_FLAGS_NONE,
+                                                 on_apps_changed, &changed, NULL);
+  gboolean found = FALSE, ok = TRUE;
+
+  /* the settings app lists every app, and grants without a dialog (headless) */
+  g_assert_true(listed_allow_read(&e, "https://shop.example", &found));
+  g_assert_true(found);
+  listed_allow_read(&e, gd, &found);
+  g_assert_false(found);
+  g_autoptr(GVariant) g1 = call_self(&e, "SetReadAccess", g_variant_new("(sb)", gd, TRUE), NULL);
+  g_assert_nonnull(g1);
+  wait_count(&changed, 1);
+  g_assert_true(listed_allow_read(&e, gd, &found));
+  g_autofree gchar *o1 = call_gdbus("GetBalanceNonInteractive", NULL, &ok);
+  g_assert_true(ok);
+  g_assert_nonnull(strstr(o1, "uint64 100000000"));
+
+  /* an app may give up its own access, without a dialog ... */
+  const gchar *const revoke_own[] = { "''", "false", NULL };
+  g_autofree gchar *o2 = call_gdbus("SetReadAccess", revoke_own, &ok);
+  g_assert_true(ok);
+  wait_count(&changed, 2);
+  g_assert_false(listed_allow_read(&e, gd, &found));
+  g_autofree gchar *o3 = call_gdbus("GetBalanceNonInteractive", NULL, &ok);
+  g_assert_nonnull(strstr(o3, "InteractionRequired"));
+  /* ... but not grant it to itself without the user (headless: Denied),
+   * list others, or revoke another app's */
+  const gchar *const grant_own[] = { "''", "true", NULL };
+  g_autofree gchar *o4 = call_gdbus("SetReadAccess", grant_own, &ok);
+  g_assert_false(ok);
+  g_assert_nonnull(strstr(o4, "org.nostr.Wallet1.Error.Denied"));
+  g_autofree gchar *o5 = call_gdbus("ListApps", NULL, &ok);
+  g_assert_false(ok);
+  g_assert_nonnull(strstr(o5, "org.nostr.Wallet1.Error.Denied"));
+  const gchar *const revoke_other[] = { "https://shop.example", "false", NULL };
+  g_autofree gchar *o6 = call_gdbus("SetReadAccess", revoke_other, &ok);
+  g_assert_false(ok);
+  g_assert_nonnull(strstr(o6, "org.nostr.Wallet1.Error.Denied"));
+  g_assert_true(listed_allow_read(&e, "https://shop.example", &found));
+
+  /* the settings app revokes another app's access (a site), no dialog */
+  g_autoptr(GVariant) g2 = call_self(&e, "SetReadAccess",
+                                     g_variant_new("(sb)", "https://shop.example", FALSE), NULL);
+  g_assert_nonnull(g2);
+  g_assert_false(listed_allow_read(&e, "https://shop.example", &found));
+  assert_error(&e, "SetReadAccess", g_variant_new("(sb)", "bad\nid", TRUE),
+               "org.nostr.Wallet1.Error.InvalidArgs");
+  /* a no-op changes nothing and signals nothing */
+  guint before = changed;
+  g_autoptr(GVariant) g3 = call_self(&e, "SetReadAccess",
+                                     g_variant_new("(sb)", "https://shop.example", FALSE), NULL);
+  g_assert_nonnull(g3);
+  /* grant admin, not money: may read another app's budget, but a raise
+   * still needs the user (headless: Denied) */
+  g_autoptr(GVariant) gb = call_self(&e, "GetBudget", g_variant_new("(s)", "https://shop.example"), NULL);
+  g_assert_nonnull(gb);
+  guint32 lim = 0;
+  g_variant_get(gb, "(ut)", &lim, NULL);
+  g_assert_cmpuint(lim, ==, 21000);
+  assert_error(&e, "SetBudget", g_variant_new("(su)", "https://shop.example", (guint32)99000000),
+               "org.nostr.Wallet1.Error.Denied");
+  g_assert_cmpuint(changed, ==, before);
+  g_dbus_connection_signal_unsubscribe(e.bus, sub);
+  agent_stop(&e);
+
+  /* The same binary is NOT the settings app without the (test-build)
+   * override: the installed <bindir>/nostr-settings is, by path + inode. */
+  agent_start(&e, TRUE, NULL);
+  assert_error(&e, "ListApps", NULL, "org.nostr.Wallet1.Error.Denied");
+  assert_error(&e, "SetReadAccess", g_variant_new("(sb)", gd, TRUE), "org.nostr.Wallet1.Error.Denied");
+  /* grants persisted across the restart */
+  g_autofree gchar *doc = NULL;
+  g_assert_true(g_file_get_contents(e.budgets, &doc, NULL, NULL));
+  g_assert_nonnull(strstr(doc, "https://shop.example"));
+  env_down(&e);
+}
+
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/dbus/non-interactive-reads", test_non_interactive_reads);
+  g_test_add_func("/dbus/settings-grants", test_settings_grants);
   return g_test_run();
 }

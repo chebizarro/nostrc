@@ -94,8 +94,11 @@ target_compile_options(nostr-wallet-agent-core PRIVATE ${NWA_WARNING_FLAGS})
 # The only executable allowed to act for a web origin (*For methods): the
 # browser bridge from apps/gnostr-signer/native-host, installed by the same
 # tree with the same libexecdir.
+# The settings app trusted to manage grants and budgets (same exe rule):
+# gnome/nostr-settings, installed by the same tree to the same bindir.
 target_compile_definitions(nostr-wallet-agent-core PRIVATE
-  NWA_WEBEXT_HOST_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/nostr-signer-webext-host")
+  NWA_WEBEXT_HOST_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/nostr-signer-webext-host"
+  NWA_SETTINGS_PATH="${CMAKE_INSTALL_FULL_BINDIR}/nostr-settings")
 # Test hook: honour NOSTR_WALLET_AGENT_ORIGIN_BRIDGES so CTest can run the
 # build-tree bridge. Off in package builds (BUILD_TESTING=OFF).
 option(NOSTR_WALLET_AGENT_ORIGIN_BRIDGE_ENV

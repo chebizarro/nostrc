@@ -57,6 +57,7 @@ struct _NwaService {
   gboolean         ephemeral; /* NOSTR_WALLET_AGENT_EPHEMERAL: no keyring */
   GCancellable    *cancel;
   GStrv            origin_bridges; /* executables that may assert a web origin */
+  GStrv            settings_apps;  /* executables trusted as the settings app */
 };
 
 /* ---------------------------------------------------------------------- */
@@ -80,8 +81,9 @@ setting_u64(NwaService *s, const gchar *key, guint64 def)
   return s->settings ? g_settings_get_uint64(s->settings, key) : def;
 }
 
-/* Trusted (settings) apps skip budget confirmations, so the id must be one
- * the caller cannot choose: only sandbox-attested (Flatpak) identities. */
+/* Trusted (settings) apps skip confirmations, so the id must be one the
+ * caller cannot choose: only sandbox-attested (Flatpak) identities listed
+ * in trusted-apps. */
 static gboolean
 is_trusted(NwaService *s, const NwaCaller *c)
 {
@@ -89,6 +91,29 @@ is_trusted(NwaService *s, const NwaCaller *c)
   g_auto(GStrv) trusted = s->settings ? g_settings_get_strv(s->settings, "trusted-apps")
                                       : g_strdupv((gchar *[]){ "org.nostr.Settings", NULL });
   return g_strv_contains((const gchar *const *)trusted, c->app_id);
+}
+
+/* Grant administration (ListApps, GetBudget of others, SetReadAccess for
+ * any app) additionally admits the installed, unsandboxed Nostr Settings,
+ * by the browser bridge's rule: a same-uid process whose /proc/<pid>/exe is
+ * <bindir>/nostr-settings by path and inode (nwa_caller_exe_is; resolved
+ * per call like every identity). It keeps sandboxed apps out, not malware
+ * running as the user (which could edit budgets.json). Spending limits stay
+ * with is_trusted(): a budget raise from the Settings binary is confirmed. */
+static gboolean
+is_grant_admin(NwaService *s, const NwaCaller *c)
+{
+  if (!c->app_id || c->kind == NWA_CALLER_SELF) return FALSE;
+  return is_trusted(s, c) || nwa_caller_exe_is(c, (const gchar *const *)s->settings_apps);
+}
+
+/* Grants or limits changed (never spend): settings UIs re-list. Carries no
+ * data: signals reach every session-bus client. */
+static void
+emit_apps_changed(NwaService *s)
+{
+  g_dbus_connection_emit_signal(s->bus, NULL, NWA_OBJECT_PATH, NWA_INTERFACE, "AppsChanged",
+                                NULL, NULL);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -169,9 +194,10 @@ typedef struct {
   gchar     *nwc_uri;
   gchar     *pair_label;
 
-  /* Budget */
+  /* Budget / read access */
   gchar     *target_app;
   guint64    new_limit;
+  gboolean   new_allow_read;
 } Call;
 
 static void
@@ -719,7 +745,33 @@ execute(Call *c)
     /* A spending limit is not a read grant (balance/history are asked for
      * separately). */
     nwa_budget_store_set_limit(s->budgets, c->target_app, c->new_limit);
+    emit_apps_changed(s);
     call_return(c, NULL, NULL);
+  } else if (g_str_equal(m, "SetReadAccess")) {
+    NwaBudgetInfo before;
+    nwa_budget_store_get(s->budgets, c->target_app, &before);
+    if (before.known && !before.allow_read == !c->new_allow_read) {
+      call_return(c, NULL, NULL); /* no change: no store write, no signal */
+      return;
+    }
+    nwa_budget_store_set_allow_read(s->budgets, c->target_app, c->new_allow_read);
+    emit_apps_changed(s);
+    call_return(c, NULL, NULL);
+  } else if (g_str_equal(m, "ListApps")) {
+    GVariantBuilder b;
+    g_variant_builder_init(&b, G_VARIANT_TYPE("a{sa{sv}}"));
+    g_auto(GStrv) ids = nwa_budget_store_list_apps(s->budgets);
+    for (guint i = 0; ids[i]; i++) {
+      NwaBudgetInfo bi;
+      nwa_budget_store_get(s->budgets, ids[i], &bi);
+      GVariantBuilder a;
+      g_variant_builder_init(&a, G_VARIANT_TYPE_VARDICT);
+      g_variant_builder_add(&a, "{sv}", "limit_msat_per_day", g_variant_new_uint64(bi.limit_msat_per_day));
+      g_variant_builder_add(&a, "{sv}", "spent_today_msat", g_variant_new_uint64(bi.spent_today_msat));
+      g_variant_builder_add(&a, "{sv}", "allow_read", g_variant_new_boolean(bi.allow_read));
+      g_variant_builder_add(&b, "{sa{sv}}", ids[i], &a);
+    }
+    call_return(c, g_variant_new("(a{sa{sv}})", &b), NULL);
   } else {
     CALL_FAIL(c, NWA_ERROR_FAILED, "unknown method %s", m);
   }
@@ -751,8 +803,10 @@ on_payment_answer(gboolean approved, gboolean remember, guint64 limit_msat, gpoi
     return;
   }
   /* "Always allow up to N/day" persists exactly that limit, nothing else. */
-  if (remember && c->caller->app_id && c->caller->kind != NWA_CALLER_SELF && !c->via_link)
+  if (remember && c->caller->app_id && c->caller->kind != NWA_CALLER_SELF && !c->via_link) {
     nwa_budget_store_set_limit(c->svc->budgets, c->caller->app_id, limit_msat);
+    emit_apps_changed(c->svc);
+  }
   c->user_approved = TRUE;
   execute(c);
 }
@@ -766,8 +820,10 @@ on_confirm_answer(gboolean accepted, gboolean remember, gpointer data)
     return;
   }
   if (remember && (c->op == NWA_OP_READ || c->op == NWA_OP_RECEIVE) &&
-      c->caller->app_id && c->caller->kind != NWA_CALLER_SELF && !c->via_link)
+      c->caller->app_id && c->caller->kind != NWA_CALLER_SELF && !c->via_link) {
     nwa_budget_store_set_allow_read(c->svc->budgets, c->caller->app_id, TRUE);
+    emit_apps_changed(c->svc);
+  }
   c->user_approved = TRUE;
   execute(c);
 }
@@ -857,6 +913,15 @@ show_prompt(Call *c, gboolean over_budget)
       body = g_strdup_printf("%s wants to disconnect your Lightning wallet. Applications "
                              "will no longer be able to pay or receive.", who);
       break;
+    case NWA_OP_READ_GRANT:
+      if (c->caller->app_id && g_strcmp0(c->caller->app_id, c->target_app) == 0)
+        body = g_strdup_printf("%s wants to see your wallet balance and transaction history, "
+                               "and create invoices, without asking you each time.", who);
+      else
+        body = g_strdup_printf("%s wants to let %s see your wallet balance and transaction "
+                               "history, and create invoices, without asking you each time.",
+                               who, c->target_app);
+      break;
     case NWA_OP_BUDGET_CHANGE: {
       g_autofree gchar *amt = nwa_ui_format_msat(c->new_limit);
       title = "Payment Budget";
@@ -886,6 +951,7 @@ run_policy(Call *c)
     .same_uid = c->caller->same_uid,
     .caller_identified = c->caller->app_id != NULL,
     .caller_trusted = is_trusted(s, c->caller),
+    .caller_grant_admin = is_grant_admin(s, c->caller),
     .is_self = c->caller->kind == NWA_CALLER_SELF || c->via_link,
     .paired = s->client != NULL,
     /* *NonInteractive never shows anything: do not even initialise GTK. */
@@ -1000,7 +1066,10 @@ resolve_budget_op(Call *c, GError **error)
     c->target_app = g_strdup(own);
   }
   gboolean is_own = own && g_str_equal(own, c->target_app);
-  if (g_str_equal(c->method, "GetBudget")) {
+  if (g_str_equal(c->method, "SetReadAccess")) {
+    c->op = c->new_allow_read ? NWA_OP_READ_GRANT
+                              : is_own ? NWA_OP_READ_REVOKE_OWN : NWA_OP_READ_REVOKE_OTHER;
+  } else if (g_str_equal(c->method, "GetBudget")) {
     c->op = is_own ? NWA_OP_BUDGET_LOWER_OWN /* read own: always allowed */ : NWA_OP_BUDGET_QUERY_OTHER;
   } else {
     NwaBudgetInfo bi;
@@ -1038,7 +1107,8 @@ on_caller(GObject *src, GAsyncResult *res, gpointer data)
       return;
     }
   }
-  if (c->target_app || g_str_equal(c->method, "GetBudget") || g_str_equal(c->method, "SetBudget")) {
+  if (c->target_app || g_str_equal(c->method, "GetBudget") || g_str_equal(c->method, "SetBudget") ||
+      g_str_equal(c->method, "SetReadAccess")) {
     if (!resolve_budget_op(c, &err)) { call_error(c, err); return; }
   }
   run_policy(c);
@@ -1076,6 +1146,18 @@ typedef struct {
   NwaService *svc;
   gchar      *uri;
 } OpenUriJob;
+
+/* App ids arriving as arguments are opaque keys (reverse-DNS, "exe:…",
+ * "snap.…", web origins): bounded, printable, no control characters. */
+static gboolean
+app_id_arg_ok(const gchar *id)
+{
+  gsize n = strlen(id);
+  if (n == 0 || n > 512 || !g_utf8_validate(id, (gssize)n, NULL)) return FALSE;
+  for (const gchar *p = id; *p; p = g_utf8_next_char(p))
+    if (g_unichar_iscntrl(g_utf8_get_char(p))) return FALSE;
+  return TRUE;
+}
 
 static void on_open_uri_caller(GObject *src, GAsyncResult *res, gpointer data);
 
@@ -1176,6 +1258,18 @@ handle_method_call(GDBusConnection *bus, const gchar *sender, const gchar *path,
     g_variant_get(params, "(&su)", &app, &limit);
     c->target_app = g_strdup(app);
     c->new_limit = limit;
+  } else if (g_str_equal(method, "SetReadAccess")) {
+    const gchar *app;
+    gboolean allow;
+    g_variant_get(params, "(&sb)", &app, &allow);
+    if (*app && !app_id_arg_ok(app)) {
+      g_set_error_literal(&err, NWA_ERROR, NWA_ERROR_INVALID_ARGS, "invalid application id");
+      ok = FALSE;
+    }
+    c->target_app = g_strdup(app);
+    c->new_allow_read = allow;
+  } else if (g_str_equal(method, "ListApps")) {
+    c->op = NWA_OP_BUDGET_QUERY_OTHER; /* every app's record: settings app only */
   } else {
     g_set_error(&err, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD, "unknown method %s", method);
     ok = FALSE;
@@ -1334,6 +1428,7 @@ nwa_service_new(GDBusConnection *bus, GError **error)
   s->prompts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   s->settings = maybe_settings();
   s->origin_bridges = nwa_caller_origin_bridges();
+  s->settings_apps = nwa_caller_settings_apps();
   const gchar *eph = g_getenv("NOSTR_WALLET_AGENT_EPHEMERAL");
   s->ephemeral = eph && *eph && g_strcmp0(eph, "0") != 0;
 
@@ -1398,6 +1493,7 @@ nwa_service_free(NwaService *s)
   g_clear_object(&s->settings);
   g_hash_table_unref(s->prompts);
   g_strfreev(s->origin_bridges);
+  g_strfreev(s->settings_apps);
   g_dbus_node_info_unref(s->node);
   g_object_unref(s->cancel);
   g_object_unref(s->bus);

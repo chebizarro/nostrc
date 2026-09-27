@@ -95,11 +95,22 @@ gboolean   nwa_caller_is_web_origin(const gchar *origin);
  * (colon-separated) instead. */
 GStrv      nwa_caller_origin_bridges(void);
 
-/* TRUE iff @c may act for a web origin: same uid, kind EXE or
- * SYSTEMD_SCOPE (never Flatpak/Snap/self/unidentified), and its /proc/<pid>/exe is one of @bridges by path and by dev/inode (so a
- * binary replaced on disk, "(deleted)", or a path that only exists inside
- * another mount namespace does not qualify). */
+/* TRUE iff @c is an unsandboxed same-uid process (kind EXE or SYSTEMD_SCOPE;
+ * never Flatpak/Snap/self/web origin/unidentified) whose /proc/<pid>/exe is
+ * one of @paths by path AND by dev/inode (so a hard link or copy elsewhere,
+ * a binary replaced on disk, "(deleted)", or a path that only exists inside
+ * another mount namespace does not qualify). The shared rule behind the
+ * browser bridge and the settings app. */
+gboolean   nwa_caller_exe_is(const NwaCaller *c, const gchar *const *paths);
+
+/* TRUE iff @c may act for a web origin: nwa_caller_exe_is(@c, @bridges). */
 gboolean   nwa_caller_may_assert_origin(const NwaCaller *c, const gchar *const *bridges);
+
+/* Absolute paths of the settings application(s) trusted to manage other
+ * applications' grants and budgets: the build-time NWA_SETTINGS_PATH
+ * (<bindir>/nostr-settings). Test builds (NWA_ORIGIN_BRIDGE_ENV) honour
+ * NOSTR_WALLET_AGENT_SETTINGS_APPS (colon-separated) instead. */
+GStrv      nwa_caller_settings_apps(void);
 
 /* New WEB_ORIGIN principal for @origin, acting through @bridge. */
 NwaCaller *nwa_caller_for_origin(const NwaCaller *bridge, const gchar *origin);

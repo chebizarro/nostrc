@@ -2,13 +2,15 @@
  * (gnome/nostr-wallet-agent, gnome/dbus/org.nostr.Wallet1.xml).
  * SPDX-License-Identifier: MIT
  *
- * Budgets are enumerated READ-ONLY from the agent's documented store,
- * $XDG_STATE_HOME/nostr-wallet/budgets.json (see the agent's README,
- * "Budgets"), because GetBudget for another app is trusted-only and
- * "trusted" requires a Flatpak-verified caller: an unsandboxed Settings
- * app would be refused. Every change still goes through SetBudget, so the
- * agent's own confirmation dialog decides. No ListBudgets method was added
- * to the agent.
+ * The installed Nostr Settings is the agent's "grant admin" (the agent
+ * checks its executable, <bindir>/nostr-settings, by path and inode): it
+ * lists every app with ListApps and grants/revokes read access
+ * (SetReadAccess) without the agent's confirmation dialog. Budget changes
+ * (SetBudget) are still confirmed by the agent's dialog. When the
+ * agent refuses ListApps — Settings run from a build tree, or an older
+ * agent — the page falls back to reading the agent's documented store,
+ * $XDG_STATE_HOME/nostr-wallet/budgets.json, and every change is then
+ * confirmed by the agent's own dialog.
  */
 #ifndef NSS_WALLET_H
 #define NSS_WALLET_H
@@ -37,9 +39,16 @@ gchar     *nss_wallet_budgets_path(void);
  * agent uses) or NULL for the current local date. Sorted by app id. */
 GPtrArray *nss_wallet_budgets_load(const gchar *path, const gchar *today, GError **error);
 
+/* ListApps reply body (a{sa{sv}}) → NssBudget* array sorted by app id. */
+GPtrArray *nss_wallet_apps_from_variant(GVariant *apps);
+
+/* The identity the agent gives GNOME Shell (and so every Shell extension). */
+#define NSS_WALLET_SHELL_APP_ID "exe:/usr/bin/gnome-shell"
+
 /* "1,000 sats" from msat (rounded down to whole sats). */
 gchar     *nss_format_sats(guint64 msat);
-/* Friendly app label: "exe:/usr/bin/foo" → "foo (unverified)", reverse-DNS kept. */
+/* Friendly app label: "exe:/usr/bin/foo" → "foo (unverified)", reverse-DNS
+ * kept, GNOME Shell named, web origins → "Website https://…". */
 gchar     *nss_wallet_app_label(const gchar *app_id);
 
 G_END_DECLS
