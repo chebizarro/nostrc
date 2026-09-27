@@ -47,7 +47,13 @@ still reach the network.
    - kinds listed in `federation_local_only_kinds` (relay-side policy);
    - events not authored by a **local account** — caching another
      author's event in the session relay never rebroadcasts it (it is
-     stored, `OK true`, and settles `skipped`). When `federation_accounts`
+     stored and answered `OK true`). With `federation_accounts` set it is
+     not queued at all (`unknown`; no outbox write, so bulk cache writes
+     cost no fsync); with accounts learned from `org.nostr.Signer` it is
+     queued and settles `skipped` once the signer has answered (an unknown
+     key may still turn out to be an account the signer reports later). Relay lists (10002 / 10050 / 10009) of anyone are
+     always remembered for routing (without an fsync: they are read back
+     from the store if lost). When `federation_accounts`
      is set it is the complete, authoritative list. When it is empty, the
      local account is whatever `org.nostr.Signer.GetPublicKey` reports,
      asked lazily when an event by an unknown author is waiting; every key
@@ -56,7 +62,10 @@ still reach the network.
      account is known, queued events wait (`unroutable`,
      `FederationState` `waiting-for-account`) and never expire.
      Kind-1059 gift wraps are signed by throw-away keys and are exempt
-     from the author check.
+     from the author check — so a wrap an app caches from the user's own
+     inbox relays is sent back to them (answered `duplicate:`): it cannot
+     be told apart from the user's self-copy until clients can mark cache
+     writes (nostrc-pw0d).
 
 3. **Where events go** — only relays derived from the user's own data;
    there is no built-in, default or fallback relay:
@@ -66,17 +75,29 @@ still reach the network.
    | default (kind 1, 0, 3, 30023, …) | the author's kind-10002 **write** relays (`r` tags marked `write` or unmarked) |
    | kind 10002 itself | the write relays it names |
    | NIP-09 kind 5 | the author's write relays, plus every relay that acknowledged a deleted event (`e`/`a` tags; delivery records are kept ~400 days) |
-   | NIP-29 kinds 9–12, 9000–9030 | the group's relay only: relay hint in the `h` tag (`["h", id, relay]`), else the author's kind-10009 `["group", id, relay]` entry, else a `host'group-id` identifier (`wss://host`) |
+   | NIP-29: kinds 9–12, 9000–9030, 39000–39005, and **any other kind carrying an `h` tag** (NIP-29 "normal user-created events": a kind-1 note, a kind-30023 article, a kind-5 deletion… sent to a group) — except NIP-17 kinds, ephemeral kinds and user-level replaceable state (0, 3, 10000–19999, e.g. the kind-10009 group list), which keep their own row | the group's relay only, never the home relays. A group is **(relay, id)** (NIP-29 forks share the id on other relays): the relay named in the `h` tag (`["h", id, relay]` — a nostrc extension, not a NIP-29 shape; relays ignore the extra element), else the author's kind-10009 `["group", id, relay]` entry when it is the only one for that id. Several entries for the id (the user is in several forks) → `unroutable` until the event names one; no entry → `unroutable`. No relay is derived from a `host'id` value (the `h` tag carries the bare id) |
    | kind 1059 gift wrap | the recipient's (`p` tag) kind-10050 `relay` list; never the sender's relays, never 10002 as a fallback |
+
+   A write for a group is never moved to another relay for the same id:
+   if the group relay stays unreachable it is retried until
+   `federation_max_age_seconds` (the publisher sees the per-relay errors).
+   Finding out whether a group moved or forked is the client's job
+   (NIP-29: consult the admins' kind 10009) — then republish with the
+   relay named in the `h` tag.
 
    Relay lists are read from the session relay itself: the relay-list
    events (10002 / 10050 / 10009, anyone's) that apps write to relay.sock
    are remembered, newest `created_at` wins. An event whose targets are not
-   known yet stays **unroutable** and is re-routed as soon as a relay list
-   arrives (and with backoff meanwhile), e.g. write the recipient's 10050
-   before the gift wrap, or the event waits. Targets are resolved **once**,
-   when the event is routed: a later relay-list change does not retarget
-   events already pending (they keep retrying the relays chosen then).
+   known yet stays **unroutable** and is re-routed as soon as the list it
+   waits for arrives — the author's 10002, the recipient's 10050, the
+   author's 10009 — (and with backoff meanwhile), e.g. write the
+   recipient's 10050 before the gift wrap, or the event waits. Pending
+   deliveries follow relay-list changes: when a newer 10002 (or a
+   recipient's newer 10050) arrives, events routed from the old list stop
+   waiting on relays the new one dropped (their target becomes
+   `cancelled`, reason `dropped from the relay list`) and gain targets on
+   relays it added; acknowledged and failed deliveries stay as they are.
+   Group writes keep their relay (a group is (relay, id); see below).
    URLs must be `wss://`, or `ws://` to a loopback host
    (`federation_allow_plaintext_ws = 1` lifts that); at most
    `federation_max_relays_per_event` targets.
@@ -98,7 +119,10 @@ still reach the network.
    relay signs the kind-22242 challenge response **through
    `org.nostr.Signer`** (app id `nostr-session-relay`; the relay holds no
    keys), then resends. AUTH is lazy (only after an `auth-required:`
-   refusal). **Gift wraps are never delivered over an authenticated
+   refusal). Signing happens off the delivery path: while the signer
+   prompts (up to 30 s), other connections keep delivering, and the
+   `GetPublicKey` that learns the local account does not block them
+   either. **Gift wraps are never delivered over an authenticated
    connection**: authenticating as the user would tell the inbox relay
    who sent the wrap, which NIP-17's throw-away keys exist to hide; wraps
    use separate, never-authenticated connections, and an inbox relay that

@@ -9,6 +9,7 @@
 #define RELAYD_WS_TEST_CLIENT_H
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,9 +74,24 @@ static inline int read_full(int fd, void *buf, size_t len) {
   return 0;
 }
 
+/* AF_UNIX stream socket with close-on-exec (the tests fork the daemon):
+ * SOCK_CLOEXEC where it exists, fcntl() on macOS. */
+static inline int unix_socket_cloexec(void) {
+#ifdef SOCK_CLOEXEC
+  return socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#else
+  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (fd >= 0 && fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
+    close(fd);
+    return -1;
+  }
+  return fd;
+#endif
+}
+
 /* Connect, upgrade, and return the socket; *upgrade_ms gets the latency. */
 static inline int ws_open(const char *sock_path, long long *upgrade_ms) {
-  int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  int fd = unix_socket_cloexec();
   if (fd < 0) return -1;
   struct timeval tv = { 3, 0 };
   setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);

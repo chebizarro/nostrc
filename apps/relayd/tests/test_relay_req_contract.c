@@ -132,7 +132,7 @@ static int server_start(Server *s, NostrStorage *storage, const char *dir,
   s->cfg.max_subs = max_subs;
   snprintf(s->sock_path, sizeof s->sock_path, "%s/relay.sock", dir);
   unlink(s->sock_path);
-  s->listen_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  s->listen_fd = unix_socket_cloexec();
   struct sockaddr_un sa;
   memset(&sa, 0, sizeof sa);
   sa.sun_family = AF_UNIX;

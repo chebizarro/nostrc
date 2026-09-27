@@ -31,7 +31,12 @@ static const char k_schema[] =
     "  next_route_at INTEGER NOT NULL DEFAULT 0,"
     "  route_attempts INTEGER NOT NULL DEFAULT 0,"
     "  hold INTEGER NOT NULL DEFAULT 0,"
-    "  settled_at INTEGER);"
+    "  settled_at INTEGER,"
+    /* v2 (nostrc-jedb): the relay list the targets came from / the event
+     * waits for, and "that list changed: re-resolve the pending targets". */
+    "  basis_pubkey TEXT,"
+    "  basis_kind INTEGER NOT NULL DEFAULT 0,"
+    "  retarget INTEGER NOT NULL DEFAULT 0);"
     "CREATE INDEX IF NOT EXISTS events_state ON events(state, next_route_at);"
     "CREATE INDEX IF NOT EXISTS events_replace ON events(replace_key);"
     "CREATE INDEX IF NOT EXISTS events_settled ON events(settled_at);"
@@ -62,8 +67,34 @@ static const char k_schema[] =
     "  acked_at INTEGER NOT NULL,"
     "  PRIMARY KEY(event_id, relay));"
     "CREATE INDEX IF NOT EXISTS delivered_replace ON delivered(replace_key);"
-    "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value);"
-    "PRAGMA user_version = 1;";
+    "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value);";
+
+static int exec(NsrOutbox *ob, const char *sql);
+
+/* v1 databases (7d96) lack the v2 columns; CREATE TABLE IF NOT EXISTS left
+ * them as they were. */
+static int migrate(NsrOutbox *ob) {
+  sqlite3_stmt *st = NULL;
+  gboolean have = FALSE;
+  if (sqlite3_prepare_v2(ob->db, "PRAGMA table_info(events)", -1, &st, NULL) != SQLITE_OK)
+    return -1;
+  while (sqlite3_step(st) == SQLITE_ROW) {
+    const unsigned char *name = sqlite3_column_text(st, 1);
+    if (name && strcmp((const char *)name, "basis_pubkey") == 0) have = TRUE;
+  }
+  sqlite3_finalize(st);
+  if (!have &&
+      exec(ob, "BEGIN IMMEDIATE;"
+               "ALTER TABLE events ADD COLUMN basis_pubkey TEXT;"
+               "ALTER TABLE events ADD COLUMN basis_kind INTEGER NOT NULL DEFAULT 0;"
+               "ALTER TABLE events ADD COLUMN retarget INTEGER NOT NULL DEFAULT 0;"
+               "COMMIT;") != 0) {
+    (void)sqlite3_exec(ob->db, "ROLLBACK", NULL, NULL, NULL);
+    return -1;
+  }
+  return exec(ob, "CREATE INDEX IF NOT EXISTS events_basis ON events(basis_pubkey, basis_kind);"
+                  "PRAGMA user_version = 2;");
+}
 
 /* ── sqlite helpers (caller holds the lock) ───────────────────────────── */
 
@@ -210,7 +241,8 @@ NsrOutbox *nsr_outbox_open(const char *path, GError **error) {
   sqlite3_busy_timeout(db, 5000);
   if (exec(ob, "PRAGMA journal_mode = WAL;") != 0 ||
       exec(ob, "PRAGMA synchronous = FULL;") != 0 ||
-      exec(ob, "PRAGMA foreign_keys = ON;") != 0 || exec(ob, k_schema) != 0) {
+      exec(ob, "PRAGMA foreign_keys = ON;") != 0 || exec(ob, k_schema) != 0 ||
+      migrate(ob) != 0) {
     g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_FAILED, "sqlite schema %s: %s", path,
                 sqlite3_errmsg(db));
     nsr_outbox_close(ob);
@@ -231,6 +263,12 @@ void nsr_outbox_close(NsrOutbox *ob) {
 int nsr_outbox_ingest(NsrOutbox *ob, const NsrOutboxIngest *in, int64_t now, GError **error) {
   if (!in->enqueue && !in->hint) return 0;
   g_mutex_lock(&ob->lock);
+  /* A hint alone skips the fsync (nostrc-elgy): relay lists are read back
+   * from the local store when the hint row is missing, and a lost re-route
+   * / retarget flag falls back to the routing backoff. Only a queue row
+   * carries the "OK true = durably queued" promise. */
+  gboolean light = !in->enqueue;
+  if (light) (void)exec(ob, "PRAGMA synchronous = NORMAL");
   int rc = exec(ob, "BEGIN IMMEDIATE");
   if (rc == 0 && in->enqueue) {
     sqlite3_stmt *st = prep(ob,
@@ -260,9 +298,26 @@ int nsr_outbox_ingest(NsrOutbox *ob, const NsrOutboxIngest *in, int64_t now, GEr
     }
     int ch = run(ob, st);
     if (ch < 0) rc = -1;
-    else if (ch > 0 &&
-             exec(ob, "UPDATE events SET next_route_at = 0 WHERE state = 'unroutable'") != 0)
-      rc = -1;
+    else if (ch > 0) {
+      /* A newer list for (pubkey, kind): route now what waits for it (rows
+       * from before v2 have no basis and are released as before), and
+       * have the engine re-resolve what is pending from it (nostrc-jedb). */
+      sqlite3_stmt *u = prep(ob,
+          "UPDATE events SET next_route_at = 0 WHERE state = 'unroutable' AND"
+          " ((basis_pubkey = ?1 AND basis_kind = ?2) OR (basis_pubkey IS NULL AND hold = 0))");
+      if (u) {
+        bind_text(u, 1, in->pubkey);
+        sqlite3_bind_int(u, 2, in->kind);
+      }
+      if (run(ob, u) < 0) rc = -1;
+      u = prep(ob, "UPDATE events SET retarget = 1 WHERE state = 'pending' AND"
+                   " basis_pubkey = ?1 AND basis_kind = ?2");
+      if (u) {
+        bind_text(u, 1, in->pubkey);
+        sqlite3_bind_int(u, 2, in->kind);
+      }
+      if (rc == 0 && run(ob, u) < 0) rc = -1;
+    }
   }
   if (rc == 0) rc = exec(ob, "COMMIT");
   if (rc != 0) {
@@ -270,6 +325,7 @@ int nsr_outbox_ingest(NsrOutbox *ob, const NsrOutboxIngest *in, int64_t now, GEr
                 sqlite3_errmsg(ob->db));
     (void)sqlite3_exec(ob->db, "ROLLBACK", NULL, NULL, NULL);
   }
+  if (light) (void)exec(ob, "PRAGMA synchronous = FULL");
   g_mutex_unlock(&ob->lock);
   return rc;
 }
@@ -314,17 +370,21 @@ GPtrArray *nsr_outbox_take_routable(NsrOutbox *ob, int64_t now, guint limit) {
 }
 
 int nsr_outbox_set_routed(NsrOutbox *ob, const char *id, const char *const *relays,
-                          NsrFedLane lane, int64_t now) {
+                          NsrFedLane lane, const NsrFedBasis *basis, int64_t now) {
   if (!relays || !relays[0]) return -1;
   g_mutex_lock(&ob->lock);
   int rc = exec(ob, "BEGIN IMMEDIATE");
   if (rc == 0) {
     sqlite3_stmt *st = prep(ob,
-        "UPDATE events SET state = 'pending', lane = ?, detail = '', hold = 0 "
-        "WHERE id = ? AND state IN ('new', 'unroutable')");
+        "UPDATE events SET state = 'pending', lane = ?, detail = '', hold = 0,"
+        " basis_pubkey = ?, basis_kind = ?, retarget = 0"
+        " WHERE id = ? AND state IN ('new', 'unroutable')");
+    gboolean b = basis && basis->kind;
     if (st) {
       sqlite3_bind_int(st, 1, (int)lane);
-      bind_text(st, 2, id);
+      bind_text(st, 2, b ? basis->pubkey : NULL);
+      sqlite3_bind_int(st, 3, b ? basis->kind : 0);
+      bind_text(st, 4, id);
     }
     if (run(ob, st) != 1) rc = -1;
   }
@@ -346,20 +406,143 @@ int nsr_outbox_set_routed(NsrOutbox *ob, const char *id, const char *const *rela
 }
 
 int nsr_outbox_set_unroutable(NsrOutbox *ob, const char *id, const char *reason,
-                              int64_t next_route_at, gboolean waiting_account, int64_t now) {
+                              int64_t next_route_at, gboolean waiting_account,
+                              const NsrFedBasis *basis, int64_t now) {
   (void)now;
+  gboolean b = basis && basis->kind;
   g_mutex_lock(&ob->lock);
   sqlite3_stmt *st = prep(ob,
       "UPDATE events SET state = 'unroutable', detail = ?, next_route_at = ?, hold = ?,"
-      " route_attempts = route_attempts + 1 WHERE id = ? AND state IN ('new', 'unroutable')");
+      " route_attempts = route_attempts + 1, basis_pubkey = ?, basis_kind = ?"
+      " WHERE id = ? AND state IN ('new', 'unroutable')");
   if (st) {
     bind_text(st, 1, reason ? reason : "");
     sqlite3_bind_int64(st, 2, next_route_at);
     sqlite3_bind_int(st, 3, waiting_account ? 1 : 0);
-    bind_text(st, 4, id);
+    bind_text(st, 4, b ? basis->pubkey : NULL);
+    sqlite3_bind_int(st, 5, b ? basis->kind : 0);
+    bind_text(st, 6, id);
   }
   int rc = run(ob, st) == 1 ? 0 : -1;
   g_mutex_unlock(&ob->lock);
+  return rc;
+}
+
+GPtrArray *nsr_outbox_take_retarget(NsrOutbox *ob, guint limit) {
+  GPtrArray *out = g_ptr_array_new_with_free_func(nsr_outbox_event_free);
+  g_mutex_lock(&ob->lock);
+  /* Take the flag with the batch: a newer list ingested while the engine
+   * re-resolves sets it again, and the event is processed once more. */
+  gboolean txn = exec(ob, "BEGIN IMMEDIATE") == 0;
+  sqlite3_stmt *st = prep(ob,
+      "SELECT id, pubkey, json, replace_key, kind, enqueued_at, route_attempts FROM events"
+      " WHERE state = 'pending' AND retarget = 1 ORDER BY enqueued_at, rowid LIMIT ?");
+  if (st) {
+    sqlite3_bind_int(st, 1, (int)limit);
+    while (sqlite3_step(st) == SQLITE_ROW) {
+      NsrOutboxEvent *e = g_new0(NsrOutboxEvent, 1);
+      e->id = col_dup(st, 0);
+      e->pubkey = col_dup(st, 1);
+      e->json = col_dup(st, 2);
+      e->replace_key = sqlite3_column_type(st, 3) == SQLITE_NULL ? NULL : col_dup(st, 3);
+      e->kind = sqlite3_column_int(st, 4);
+      e->enqueued_at = sqlite3_column_int64(st, 5);
+      e->route_attempts = (guint)sqlite3_column_int(st, 6);
+      g_ptr_array_add(out, e);
+    }
+    sqlite3_finalize(st);
+  }
+  for (guint i = 0; txn && i < out->len; i++) {
+    sqlite3_stmt *u = prep(ob, "UPDATE events SET retarget = 0 WHERE id = ?");
+    if (u) bind_text(u, 1, ((NsrOutboxEvent *)g_ptr_array_index(out, i))->id);
+    (void)run(ob, u);
+  }
+  if (txn && exec(ob, "COMMIT") != 0) (void)sqlite3_exec(ob->db, "ROLLBACK", NULL, NULL, NULL);
+  g_mutex_unlock(&ob->lock);
+  return out;
+}
+
+static gboolean strv_has(const char *const *v, const char *s) {
+  for (size_t i = 0; v && v[i]; i++)
+    if (strcmp(v[i], s) == 0) return TRUE;
+  return FALSE;
+}
+
+int nsr_outbox_retarget(NsrOutbox *ob, const char *id, const char *const *relays, int64_t now,
+                        GPtrArray **added, GPtrArray **dropped, const char **out_event_state) {
+  *added = g_ptr_array_new_with_free_func(g_free);
+  *dropped = g_ptr_array_new_with_free_func(g_free);
+  if (out_event_state) *out_event_state = NULL;
+  if (!relays || !relays[0]) return -1;
+  g_mutex_lock(&ob->lock);
+  int rc = exec(ob, "BEGIN IMMEDIATE");
+  GPtrArray *have = g_ptr_array_new_with_free_func(g_free);  /* relay */
+  GPtrArray *state = g_ptr_array_new_with_free_func(g_free); /* its target state */
+  gboolean pending = FALSE;
+  if (rc == 0) {
+    sqlite3_stmt *st = prep(ob, "SELECT state = 'pending' FROM events WHERE id = ?");
+    if (st) {
+      bind_text(st, 1, id);
+      pending = sqlite3_step(st) == SQLITE_ROW && sqlite3_column_int(st, 0);
+      sqlite3_finalize(st);
+    }
+    st = prep(ob, "SELECT relay, state FROM targets WHERE event_id = ?");
+    if (st) {
+      bind_text(st, 1, id);
+      while (sqlite3_step(st) == SQLITE_ROW) {
+        g_ptr_array_add(have, col_dup(st, 0));
+        g_ptr_array_add(state, col_dup(st, 1));
+      }
+      sqlite3_finalize(st);
+    }
+  }
+  for (guint i = 0; rc == 0 && pending && i < have->len; i++) {
+    const char *relay = have->pdata[i], *ts = state->pdata[i];
+    gboolean keep = strv_has(relays, relay);
+    const char *sql = NULL;
+    if (!keep && strcmp(ts, "pending") == 0)
+      sql = "UPDATE targets SET state = 'cancelled', last_reason = 'dropped from the relay list',"
+            " updated_at = ?1 WHERE event_id = ?2 AND relay = ?3";
+    else if (keep && strcmp(ts, "cancelled") == 0) /* listed again */
+      sql = "UPDATE targets SET state = 'pending', attempts = 0, next_attempt_at = 0,"
+            " last_reason = '', updated_at = ?1 WHERE event_id = ?2 AND relay = ?3";
+    if (!sql) continue;
+    sqlite3_stmt *u = prep(ob, sql);
+    if (u) {
+      sqlite3_bind_int64(u, 1, now);
+      bind_text(u, 2, id);
+      bind_text(u, 3, relay);
+    }
+    if (run(ob, u) != 1) rc = -1;
+    else g_ptr_array_add(keep ? *added : *dropped, g_strdup(relay));
+  }
+  for (size_t i = 0; rc == 0 && pending && relays[i]; i++) {
+    gboolean known = FALSE;
+    for (guint j = 0; j < have->len && !known; j++) known = strcmp(have->pdata[j], relays[i]) == 0;
+    if (known) continue;
+    sqlite3_stmt *u = prep(ob,
+        "INSERT OR IGNORE INTO targets(event_id, relay, state, updated_at) VALUES(?, ?, 'pending', ?)");
+    if (u) {
+      bind_text(u, 1, id);
+      bind_text(u, 2, relays[i]);
+      sqlite3_bind_int64(u, 3, now);
+    }
+    if (run(ob, u) < 0) rc = -1;
+    else g_ptr_array_add(*added, g_strdup(relays[i]));
+  }
+  const char *estate = pending ? "pending" : NULL;
+  if (rc == 0 && pending) estate = recompute(ob, id, now);
+  if (rc == 0) rc = exec(ob, "COMMIT");
+  if (rc != 0) {
+    (void)sqlite3_exec(ob->db, "ROLLBACK", NULL, NULL, NULL);
+    g_ptr_array_set_size(*added, 0);
+    g_ptr_array_set_size(*dropped, 0);
+  } else if (out_event_state) {
+    *out_event_state = estate;
+  }
+  g_mutex_unlock(&ob->lock);
+  g_ptr_array_unref(have);
+  g_ptr_array_unref(state);
   return rc;
 }
 
@@ -563,6 +746,21 @@ int nsr_outbox_record(NsrOutbox *ob, const NsrFedConfig *cfg, const char *event_
     sqlite3_finalize(st);
   }
   if (!found) {
+    /* Late / duplicate OK, or the target was cancelled meanwhile (a newer
+     * version, a deletion, a relay-list change). If the relay accepted the
+     * event it holds it regardless: remember that, so a later NIP-09
+     * deletion still goes there. */
+    if (result == NSR_OUTBOX_ACKED) {
+      sqlite3_stmt *d = prep(ob,
+          "INSERT OR IGNORE INTO delivered(event_id, relay, replace_key, acked_at)"
+          " SELECT id, ?, replace_key, ? FROM events WHERE id = ?");
+      if (d) {
+        bind_text(d, 1, relay);
+        sqlite3_bind_int64(d, 2, now);
+        bind_text(d, 3, event_id);
+      }
+      (void)run(ob, d);
+    }
     g_mutex_unlock(&ob->lock);
     return -1;
   }
@@ -704,6 +902,12 @@ int nsr_outbox_prune(NsrOutbox *ob, int64_t now, int64_t keep) {
 void nsr_outbox_reroute_all(NsrOutbox *ob) {
   g_mutex_lock(&ob->lock);
   (void)exec(ob, "UPDATE events SET next_route_at = 0 WHERE state = 'unroutable'");
+  g_mutex_unlock(&ob->lock);
+}
+
+void nsr_outbox_reroute_held(NsrOutbox *ob) {
+  g_mutex_lock(&ob->lock);
+  (void)exec(ob, "UPDATE events SET next_route_at = 0 WHERE state = 'unroutable' AND hold = 1");
   g_mutex_unlock(&ob->lock);
 }
 

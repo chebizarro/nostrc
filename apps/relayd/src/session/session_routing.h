@@ -8,8 +8,8 @@
  * on the recipient's kind-10050 inbox relays; ordinary user publish is
  * home_relays per NIP-65.
  *
- * This header defines the routing classes and the kind→class lookup so
- * the mapping lives in exactly one place. The upstream federation client
+ * This header defines the routing classes and the kind/event→class lookup
+ * so the mapping lives in exactly one place. The upstream federation client
  * (§3.2 D4 "store-and-forward with reconnect backoff for writes", bead
  * nostrc-7d96) resolves a class to concrete relays in session_fed_policy.h
  * and delivers through session_federation.h; apps/relayd/README.md
@@ -30,9 +30,10 @@ typedef enum {
   NSR_ROUTE_HOME_RELAYS = 0,
 
   /* Group-scoped (NIP-29): kinds 9-12 (messages), 9000-9030 (moderation,
-   * join/leave requests), 39000-39004 (relay-signed metadata).
-   * The write-back target is the group's own recorded relay URL; the
-   * cache preserves relay-of-origin per stored event. */
+   * join/leave requests), 39000-39005 (relay-signed metadata, group id in
+   * `d`), and any other kind carrying an `h` tag (see
+   * nostr_session_route_class_event()). The write-back target is the
+   * group's own relay, never home_relays. */
   NSR_ROUTE_GROUP_RELAY = 1,
 
   /* NIP-17 gift-wrap DMs: kind 1059 wraps go to the recipient's kind-10050
@@ -47,13 +48,32 @@ typedef enum {
 } NostrSessionRouteClass;
 
 /*
- * Map an event kind to its routing class.
- *
- * The mapping is intentionally table-driven so future NIP-29 subrange
- * assignments (39005-39009 are not yet defined per `nostr-kinds.h`) can
- * be added in one place.
+ * Map an event kind to its routing class, by kind alone. Table-driven so
+ * new NIP-29 kinds are added in one place (`nostr-kinds.h` defines
+ * 39000-39005 as of docs/nips db5fe3d).
  */
 NostrSessionRouteClass nostr_session_route_class(uint32_t kind);
+
+/*
+ * Map an event to its routing class: the kind table, plus NIP-29 "normal
+ * user-created events" — a group may accept any kind as long as it carries
+ * an `h` tag (docs/nips/29.md), so an h-tagged event is group-scoped
+ * whatever its kind (a kind-1 note, a kind-30023 article, a kind-5
+ * deletion of a group message...). Classifying by kind alone would send
+ * those to the user's home relays, leaking group content — including a
+ * private group's — outside the group relay.
+ *
+ * Exceptions, which keep their kind's class even with an `h` tag:
+ *   - NIP-17 kinds (13, 14, 1059): DM transport, never group traffic;
+ *   - user-level replaceable state (0, 3, 10000-19999): one event per
+ *     author, so it cannot belong to one group — e.g. the kind-10009 group
+ *     list and kind-10011 favorite follow sets stay on home_relays;
+ *   - ephemeral kinds (20000-29999): never forwarded.
+ *
+ * @has_h_tag: non-zero when the event has an `h` tag with a non-empty
+ *   value.
+ */
+NostrSessionRouteClass nostr_session_route_class_event(uint32_t kind, int has_h_tag);
 
 /*
  * Human-readable name for logging. Never returns NULL.

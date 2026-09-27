@@ -23,9 +23,12 @@
  *     exempt from the author check.
  *   - Targets come only from the user's own data: the author's kind-10002
  *     write relays, the recipient's kind-10050 inbox relays (1059), the
- *     group's relay (NIP-29 `h` tag: relay hint in the tag, the author's
- *     kind-10009 `group` entry, or a `host'group-id` identifier). There is
- *     no built-in or fallback relay.
+ *     group's relay for NIP-29 kinds and any h-tagged event
+ *     (nostr_session_route_class_event()). A group is (relay, id): the
+ *     relay named in the `h` tag (["h", id, relay], a nostrc extension),
+ *     else the author's only kind-10009 `group` entry for that id; several
+ *     entries (forks) leave the event unroutable until it names one.
+ *     There is no built-in or fallback relay.
  */
 #ifndef NSR_SESSION_FED_POLICY_H
 #define NSR_SESSION_FED_POLICY_H
@@ -150,22 +153,33 @@ typedef enum {
   NSR_FED_ROUTE_INVALID = 2,     /* can never be routed (e.g. 1059 w/o p) */
 } NsrFedRouteStatus;
 
+/* The relay list a resolution depends on: (pubkey, kind) of the 10002 /
+ * 10050 / 10009 it read (OK) or waits for (UNROUTABLE). kind 0 = none:
+ * nothing to follow (group writes routed to their relay keep it -- the
+ * relay is part of the group's identity -- and INVALID events). */
+typedef struct {
+  char pubkey[65];
+  int kind;
+} NsrFedBasis;
+
 /* Resolve the upstream relays for @ev (already past the static verdict and
  * the author check). *out_relays: deduplicated, admitted by
  * nsr_fed_url_acceptable(), capped at cfg->max_relays_per_event.
- * *out_reason (g_free) explains UNROUTABLE / INVALID. */
+ * *out_reason (g_free) explains UNROUTABLE / INVALID. @out_basis
+ * (nullable) gets the relay list to follow (nostrc-jedb). */
 NsrFedRouteStatus nsr_fed_resolve(const NsrFedConfig *cfg, NostrEvent *ev,
                                   const NsrFedLookup *lookup, GStrv *out_relays,
-                                  NsrFedLane *out_lane, char **out_reason);
+                                  NsrFedLane *out_lane, char **out_reason,
+                                  NsrFedBasis *out_basis);
 
 /* Individual resolvers, exposed for tests. Each returns a GStrv (maybe
  * empty) of admitted URLs. */
 GStrv nsr_fed_write_relays_from_10002(const NsrFedConfig *cfg, const char *json);
 GStrv nsr_fed_inbox_relays_from_10050(const NsrFedConfig *cfg, const char *json);
-/* Group relay for @group_id from a kind-10009 list: first
- * ["group", <id>, <relay>, ...] whose id matches. NULL if none. */
-char *nsr_fed_group_relay_from_10009(const NsrFedConfig *cfg, const char *json,
-                                     const char *group_id);
+/* Every distinct relay a kind-10009 list names for @group_id
+ * (["group", <id>, <relay>, ...]), in list order, not admission-filtered:
+ * more than one means the user is in several NIP-29 forks of that id. */
+GStrv nsr_fed_group_relays_from_10009(const char *json, const char *group_id);
 
 /* ── Retry ─────────────────────────────────────────────────────────────── */
 

@@ -18,7 +18,7 @@
  *   new         queued, not yet classified / routed
  *   unroutable  no upstream target known yet (e.g. no kind 10002 cached,
  *               or local account not known yet); re-routed with backoff and
- *               immediately whenever a relay-list event is ingested
+ *               immediately when the relay list it waits for is ingested
  *   pending     targets resolved; at least one target not yet settled
  *   forwarded   every target acknowledged (OK true / duplicate:)
  *   partial     all settled, some acknowledged, some failed
@@ -61,8 +61,9 @@ typedef struct {
 
 /* One durable transaction: optional queue row (idempotent by id) and
  * optional relay-list hint (newest created_at per (pubkey, kind) wins; a
- * newer hint makes every unroutable event due for re-routing). Called
- * after the local store accepted the event. 0 or -1. */
+ * newer hint makes the unroutable events waiting for that list due and
+ * flags the pending ones routed from it for retargeting). Called after the
+ * local store accepted the event. 0 or -1. */
 int nsr_outbox_ingest(NsrOutbox *ob, const NsrOutboxIngest *in, int64_t now, GError **error);
 
 /* ── Routing (federation thread) ──────────────────────────────────────── */
@@ -79,15 +80,36 @@ void nsr_outbox_event_free(gpointer p);
  * first). Element type NsrOutboxEvent. */
 GPtrArray *nsr_outbox_take_routable(NsrOutbox *ob, int64_t now, guint limit);
 
-/* new|unroutable -> pending with one pending target per relay. */
+/* new|unroutable -> pending with one pending target per relay. @basis
+ * (nullable / kind 0: none) is the relay list the targets came from: a newer
+ * version of it flags the event for nsr_outbox_retarget(). */
 int nsr_outbox_set_routed(NsrOutbox *ob, const char *id, const char *const *relays,
-                          NsrFedLane lane, int64_t now);
+                          NsrFedLane lane, const NsrFedBasis *basis, int64_t now);
 /* new|unroutable -> unroutable (route_attempts+1). @waiting_account: held
  * only because the local account is not known yet — such events are never
  * expired by nsr_outbox_expire() (the user's own events must not be lost
  * to a missing signer); nsr_outbox_reroute_all() releases them. */
 int nsr_outbox_set_unroutable(NsrOutbox *ob, const char *id, const char *reason,
-                              int64_t next_route_at, gboolean waiting_account, int64_t now);
+                              int64_t next_route_at, gboolean waiting_account,
+                              const NsrFedBasis *basis, int64_t now);
+/* @basis: the relay list the event waits for -- only a newer version of
+ * that (pubkey, kind) makes it due at once (nostrc-jedb). */
+
+/* ── Retargeting (nostrc-jedb) ─────────────────────────────────────────
+ * A newer relay list (hint) for (pubkey, kind) flags the pending events
+ * routed from it. The engine re-resolves them and applies the new set:
+ * still-pending targets on relays the list dropped are cancelled
+ * ("dropped from the relay list"), relays it added become pending targets
+ * (a dropped one listed again is revived), acked / failed targets are
+ * history and stay. The event state is recomputed. */
+/* Flagged pending events (the flag is cleared as they are taken: a newer
+ * list arriving meanwhile flags them again). */
+GPtrArray *nsr_outbox_take_retarget(NsrOutbox *ob, guint limit);
+/* 0 (with the relays added / dropped, g_free'd strings, and the event
+ * state), or -1. An event no longer pending is left alone. Failed targets
+ * stay failed (a permanent rejection or expiry is final). */
+int nsr_outbox_retarget(NsrOutbox *ob, const char *id, const char *const *relays, int64_t now,
+                        GPtrArray **added, GPtrArray **dropped, const char **out_event_state);
 /* Any unsettled state -> @state (skipped|failed), with @reason. */
 int nsr_outbox_set_final(NsrOutbox *ob, const char *id, const char *state,
                          const char *reason, int64_t now);
@@ -134,7 +156,9 @@ typedef enum {
  * failed ("expired: …"). Recomputes the event state; returns the new
  * target state ("acked"/"pending"/"failed") via @out_target_state and the
  * event state via @out_event_state (both static strings, may be NULL).
- * Returns 0, or -1 if the target is not pending (late / duplicate OK). */
+ * Returns 0, or -1 if the target is not pending (late / duplicate OK); an
+ * ACKED result for a non-pending target is still recorded as a delivery
+ * (see nsr_outbox_acked_relays()). */
 int nsr_outbox_record(NsrOutbox *ob, const NsrFedConfig *cfg, const char *event_id,
                       const char *relay, NsrOutboxResult result, const char *reason,
                       double jitter01, int64_t now, const char **out_target_state,
@@ -150,6 +174,9 @@ int nsr_outbox_prune(NsrOutbox *ob, int64_t now, int64_t keep);
 /* Make every unroutable event due for re-routing now (e.g. the local
  * account just became known). */
 void nsr_outbox_reroute_all(NsrOutbox *ob);
+/* Only the events held for the local account (set_unroutable with
+ * @waiting_account): an org.nostr.Signer answer just came in. */
+void nsr_outbox_reroute_held(NsrOutbox *ob);
 /* Clean shutdown: a leased, still-pending target becomes due at @now
  * again instead of waiting for the lease to lapse. */
 void nsr_outbox_release_lease(NsrOutbox *ob, const char *event_id, const char *relay,

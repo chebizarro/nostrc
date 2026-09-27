@@ -61,7 +61,7 @@ static NsrFedConfig cfg_default(void) {
 static NsrFedRouteStatus route(const NsrFedConfig *c, NostrEvent *ev, Lists *l, GStrv *relays,
                                NsrFedLane *lane, char **reason) {
   NsrFedLookup lk = {lk_list, lk_acked, l};
-  return nsr_fed_resolve(c, ev, &lk, relays, lane, reason);
+  return nsr_fed_resolve(c, ev, &lk, relays, lane, reason, NULL);
 }
 
 static void test_routing_table(void) {
@@ -72,11 +72,47 @@ static void test_routing_table(void) {
   g_assert_cmpint(nostr_session_route_class(9021), ==, NSR_ROUTE_GROUP_RELAY);
   g_assert_cmpint(nostr_session_route_class(9031), ==, NSR_ROUTE_HOME_RELAYS);
   g_assert_cmpint(nostr_session_route_class(39000), ==, NSR_ROUTE_GROUP_RELAY);
+  g_assert_cmpint(nostr_session_route_class(39005), ==, NSR_ROUTE_GROUP_RELAY); /* pins */
+  g_assert_cmpint(nostr_session_route_class(39006), ==, NSR_ROUTE_HOME_RELAYS);
+  g_assert_cmpint(nostr_session_route_class(9010), ==, NSR_ROUTE_GROUP_RELAY); /* pin list */
   g_assert_cmpint(nostr_session_route_class(1059), ==, NSR_ROUTE_NIP17_INBOX);
   g_assert_cmpint(nostr_session_route_class(14), ==, NSR_ROUTE_NIP17_INBOX);
   g_assert_cmpint(nostr_session_route_class(13), ==, NSR_ROUTE_NIP17_INBOX);
   g_assert_cmpint(nostr_session_route_class(5), ==, NSR_ROUTE_TOMBSTONE);
   g_assert_cmpint(nostr_session_route_class(10002), ==, NSR_ROUTE_HOME_RELAYS);
+}
+
+/* NIP-29 "normal user-created events": a group accepts any kind carrying
+ * an h tag, so the h tag, not the kind, makes an event group-scoped
+ * (docs/nips/29.md @ db5fe3d; nostrc-zi3j). */
+static void test_route_class_event(void) {
+  static const struct {
+    uint32_t kind;
+    int h;
+    NostrSessionRouteClass want;
+  } cases[] = {
+      {1, 0, NSR_ROUTE_HOME_RELAYS},      {1, 1, NSR_ROUTE_GROUP_RELAY},
+      {30023, 0, NSR_ROUTE_HOME_RELAYS},  {30023, 1, NSR_ROUTE_GROUP_RELAY},
+      {31922, 1, NSR_ROUTE_GROUP_RELAY},  {7, 1, NSR_ROUTE_GROUP_RELAY},
+      {1111, 1, NSR_ROUTE_GROUP_RELAY},   {5, 0, NSR_ROUTE_TOMBSTONE},
+      {5, 1, NSR_ROUTE_GROUP_RELAY},      {9, 0, NSR_ROUTE_GROUP_RELAY},
+      {9010, 0, NSR_ROUTE_GROUP_RELAY},   {9022, 1, NSR_ROUTE_GROUP_RELAY},
+      {39005, 0, NSR_ROUTE_GROUP_RELAY},  {39006, 0, NSR_ROUTE_HOME_RELAYS},
+      /* user-level replaceable state stays home, h tag or not */
+      {10009, 0, NSR_ROUTE_HOME_RELAYS},  {10009, 1, NSR_ROUTE_HOME_RELAYS},
+      {10011, 0, NSR_ROUTE_HOME_RELAYS},  {10011, 1, NSR_ROUTE_HOME_RELAYS},
+      {10002, 1, NSR_ROUTE_HOME_RELAYS},  {0, 1, NSR_ROUTE_HOME_RELAYS},
+      {3, 1, NSR_ROUTE_HOME_RELAYS},
+      /* NIP-17 transport and ephemeral kinds are never group traffic */
+      {1059, 1, NSR_ROUTE_NIP17_INBOX},   {14, 1, NSR_ROUTE_NIP17_INBOX},
+      {13, 1, NSR_ROUTE_NIP17_INBOX},     {20001, 1, NSR_ROUTE_HOME_RELAYS},
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS(cases); i++) {
+    NostrSessionRouteClass got = nostr_session_route_class_event(cases[i].kind, cases[i].h);
+    if (got != cases[i].want)
+      g_error("kind %u h=%d: class %s, want %s", cases[i].kind, cases[i].h,
+              nostr_session_route_class_name(got), nostr_session_route_class_name(cases[i].want));
+  }
 }
 
 static void test_config(void) {
@@ -282,12 +318,19 @@ static void test_route_group(void) {
   assert_relays(relays, want2);
   g_strfreev(relays);
   nostr_event_free(ev);
-  /* host'id identifier; moderation kinds route the same way */
-  ev = mk(PK_A, 9021, "[[\"h\",\"relay.groups.example'xyz\"]]");
+  /* moderation kinds route the same way */
+  ev = mk(PK_A, 9021, "[[\"h\",\"abc\"]]");
   g_assert_cmpint(route(&c, ev, &l, &relays, &lane, &reason), ==, NSR_FED_ROUTE_OK);
-  const char *want3[] = {"wss://relay.groups.example", NULL};
-  assert_relays(relays, want3);
+  assert_relays(relays, want);
   g_strfreev(relays);
+  nostr_event_free(ev);
+  /* nostrc-ytua: the h tag carries the bare id; no relay is derived from a
+   * "host'id" value (a client-side reference form a group relay rejects) */
+  ev = mk(PK_A, 9021, "[[\"h\",\"relay.groups.example'xyz\"]]");
+  g_assert_cmpint(route(&c, ev, &l, &relays, &lane, &reason), ==, NSR_FED_ROUTE_UNROUTABLE);
+  g_assert_null(relays);
+  g_assert_nonnull(strstr(reason, "bare group id"));
+  g_clear_pointer(&reason, g_free);
   nostr_event_free(ev);
   /* unknown group, bad 10009 URL: unroutable */
   ev = mk(PK_A, 9, "[[\"h\",\"def\"]]");
@@ -300,6 +343,135 @@ static void test_route_group(void) {
   g_assert_cmpint(route(&c, ev, &l, &relays, &lane, &reason), ==, NSR_FED_ROUTE_INVALID);
   g_clear_pointer(&reason, g_free);
   nostr_event_free(ev);
+}
+
+/* nostrc-ytua: a NIP-29 group is (relay, id) — forks share the id on other
+ * relays (docs/nips/29.md @ db5fe3d "Forking a group"). */
+static void test_route_group_forks(void) {
+  NsrFedConfig c = cfg_default();
+  Lists forks = {.l10002 = "[[\"r\",\"wss://home.example\"]]",
+                 .l10009 = "[[\"group\",\"pizza\",\"wss://a.example\",\"Pizza\"],"
+                           "[\"group\",\"pizza\",\"wss://b.example\",\"Pizza (fork)\"],"
+                           "[\"group\",\"pasta\",\"wss://A.example/\"],"
+                           "[\"group\",\"pasta\",\"wss://a.example\"]]"};
+  GStrv relays = NULL;
+  NsrFedLane lane;
+  char *reason = NULL;
+  /* Two entries for the id, no relay named: unroutable, never the first. */
+  NostrEvent *ev = mk(PK_A, 9, "[[\"h\",\"pizza\"]]");
+  g_assert_cmpint(route(&c, ev, &forks, &relays, &lane, &reason), ==, NSR_FED_ROUTE_UNROUTABLE);
+  g_assert_null(relays);
+  g_assert_nonnull(strstr(reason, "2 relays"));
+  g_assert_nonnull(strstr(reason, "wss://a.example"));
+  g_assert_nonnull(strstr(reason, "wss://b.example"));
+  g_clear_pointer(&reason, g_free);
+  nostr_event_free(ev);
+  /* The event names its fork: routed there only. */
+  ev = mk(PK_A, 9, "[[\"h\",\"pizza\",\"wss://b.example\"]]");
+  g_assert_cmpint(route(&c, ev, &forks, &relays, &lane, &reason), ==, NSR_FED_ROUTE_OK);
+  const char *b[] = {"wss://b.example", NULL};
+  assert_relays(relays, b);
+  g_strfreev(relays);
+  nostr_event_free(ev);
+  /* Same relay listed twice (case / trailing slash): one group. */
+  ev = mk(PK_A, 1, "[[\"h\",\"pasta\"]]");
+  g_assert_cmpint(route(&c, ev, &forks, &relays, &lane, &reason), ==, NSR_FED_ROUTE_OK);
+  const char *a[] = {"wss://A.example/", NULL};
+  assert_relays(relays, a);
+  g_strfreev(relays);
+  nostr_event_free(ev);
+  /* A named relay that is not admissible is not replaced by a listed one. */
+  ev = mk(PK_A, 9, "[[\"h\",\"pasta\",\"ws://plain.example\"]]");
+  g_assert_cmpint(route(&c, ev, &forks, &relays, &lane, &reason), ==, NSR_FED_ROUTE_UNROUTABLE);
+  g_assert_null(relays);
+  g_clear_pointer(&reason, g_free);
+  nostr_event_free(ev);
+
+  GStrv v = nsr_fed_group_relays_from_10009(
+      "{\"id\":\"" FAKE_ID "\",\"pubkey\":\"" PK_A "\",\"created_at\":1,\"kind\":10009,"
+      "\"tags\":[[\"group\",\"pizza\",\"wss://a.example\"],[\"group\",\"pizza\"],"
+      "[\"group\",\"pizza\",\"wss://b.example\"],[\"group\",\"other\",\"wss://c.example\"]],"
+      "\"content\":\"\",\"sig\":\"" FAKE_SIG "\"}", "pizza");
+  const char *two[] = {"wss://a.example", "wss://b.example", NULL};
+  assert_relays(v, two);
+  g_strfreev(v);
+}
+
+/* nostrc-zi3j: an h tag makes any kind group-scoped — the event goes to the
+ * group relay only, never to the author's home relays — while user-level
+ * lists stay home. */
+static void test_route_group_any_kind(void) {
+  NsrFedConfig c = cfg_default();
+  Lists l = {.l10002 = "[[\"r\",\"wss://home.example\"]]",
+             .l10009 = "[[\"group\",\"abc\",\"wss://groups.example\"]]"};
+  const char *group[] = {"wss://groups.example", NULL};
+  const char *home[] = {"wss://home.example", NULL};
+  struct {
+    int kind;
+    const char *tags;
+    const char *const *want;
+  } cases[] = {
+      {1, "[[\"h\",\"abc\"]]", group},
+      {30023, "[[\"d\",\"slug\"],[\"h\",\"abc\"]]", group},
+      {5, "[[\"e\",\"" FAKE_ID "\"],[\"h\",\"abc\"]]", group},
+      {39005, "[[\"d\",\"abc\"],[\"e\",\"" FAKE_ID "\"]]", group}, /* relay pins: id in d */
+      {1, "[[\"h\",\"\"]]", home},                                 /* empty h: not a group */
+      {10009, "[[\"group\",\"abc\",\"wss://groups.example\"],[\"h\",\"abc\"]]", home},
+      {10011, "[[\"h\",\"abc\"]]", home},
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS(cases); i++) {
+    NostrEvent *ev = mk(PK_A, cases[i].kind, cases[i].tags);
+    GStrv relays = NULL;
+    NsrFedLane lane;
+    char *reason = NULL;
+    NsrFedRouteStatus st = route(&c, ev, &l, &relays, &lane, &reason);
+    if (st != NSR_FED_ROUTE_OK)
+      g_error("kind %d %s: status %d (%s)", cases[i].kind, cases[i].tags, st, reason);
+    assert_relays(relays, cases[i].want);
+    g_strfreev(relays);
+    nostr_event_free(ev);
+  }
+}
+
+/* nostrc-jedb: the relay list each resolution follows. */
+static void test_route_basis(void) {
+  NsrFedConfig c = cfg_default();
+  Lists l = {.l10002 = "[[\"r\",\"wss://home.example\"]]",
+             .l10050 = "[[\"relay\",\"wss://inbox.example\"]]",
+             .l10009 = "[[\"group\",\"abc\",\"wss://groups.example\"]]"};
+  Lists none = {0};
+  struct {
+    int kind;
+    const char *tags;
+    Lists *lists;
+    NsrFedRouteStatus st;
+    const char *pk;
+    int basis_kind;
+  } cases[] = {
+      {1, "[]", &l, NSR_FED_ROUTE_OK, PK_A, 10002},
+      {1, "[]", &none, NSR_FED_ROUTE_UNROUTABLE, PK_A, 10002},
+      {5, "[[\"e\",\"" FAKE_ID "\"]]", &l, NSR_FED_ROUTE_OK, PK_A, 10002},
+      {1059, "[[\"p\",\"" PK_R "\"]]", &l, NSR_FED_ROUTE_OK, PK_R, 10050},
+      {1059, "[[\"p\",\"" PK_R "\"]]", &none, NSR_FED_ROUTE_UNROUTABLE, PK_R, 10050},
+      /* a routed group write keeps its relay: nothing to follow */
+      {9, "[[\"h\",\"abc\"]]", &l, NSR_FED_ROUTE_OK, NULL, 0},
+      {9, "[[\"h\",\"abc\"]]", &none, NSR_FED_ROUTE_UNROUTABLE, PK_A, 10009},
+      {9, "[]", &l, NSR_FED_ROUTE_INVALID, NULL, 0},
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS(cases); i++) {
+    NostrEvent *ev = mk(PK_A, cases[i].kind, cases[i].tags);
+    NsrFedLookup lk = {lk_list, lk_acked, cases[i].lists};
+    GStrv relays = NULL;
+    NsrFedLane lane;
+    char *reason = NULL;
+    NsrFedBasis b;
+    g_assert_cmpint(nsr_fed_resolve(&c, ev, &lk, &relays, &lane, &reason, &b), ==, cases[i].st);
+    g_assert_cmpint(b.kind, ==, cases[i].basis_kind);
+    if (cases[i].pk) g_assert_cmpstr(b.pubkey, ==, cases[i].pk);
+    g_strfreev(relays);
+    g_free(reason);
+    nostr_event_free(ev);
+  }
 }
 
 static void test_route_inbox(void) {
@@ -368,13 +540,17 @@ int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   nostr_json_init();
   g_test_add_func("/fed-policy/routing-table", test_routing_table);
+  g_test_add_func("/fed-policy/route-class-event", test_route_class_event);
   g_test_add_func("/fed-policy/config", test_config);
   g_test_add_func("/fed-policy/local-only", test_local_only_contract);
   g_test_add_func("/fed-policy/replace-key", test_replace_key);
   g_test_add_func("/fed-policy/urls", test_urls);
   g_test_add_func("/fed-policy/route-home", test_route_home);
   g_test_add_func("/fed-policy/route-group", test_route_group);
+  g_test_add_func("/fed-policy/route-group-any-kind", test_route_group_any_kind);
+  g_test_add_func("/fed-policy/route-group-forks", test_route_group_forks);
   g_test_add_func("/fed-policy/route-inbox", test_route_inbox);
+  g_test_add_func("/fed-policy/route-basis", test_route_basis);
   g_test_add_func("/fed-policy/backoff", test_backoff);
   g_test_add_func("/fed-policy/ok-classes", test_ok_classes);
   return g_test_run();

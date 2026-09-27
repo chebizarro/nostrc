@@ -152,6 +152,31 @@ static int fd_is_systemd_owned(int fd) {
 }
 
 /*
+ * AF_UNIX stream socket, close-on-exec and optionally non-blocking. Linux
+ * sets both atomically through socket(2) flags; macOS/BSDs without
+ * SOCK_CLOEXEC / SOCK_NONBLOCK get them through fcntl() right after
+ * creation (this process spawns no children in between).
+ */
+static int unix_stream_socket(int nonblock) {
+#if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
+  return socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | (nonblock ? SOCK_NONBLOCK : 0), 0);
+#else
+  int s = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (s < 0) return -1;
+  int fdflags = fcntl(s, F_GETFD, 0);
+  int flflags = fcntl(s, F_GETFL, 0);
+  if (fdflags < 0 || fcntl(s, F_SETFD, fdflags | FD_CLOEXEC) != 0 || flflags < 0 ||
+      (nonblock && fcntl(s, F_SETFL, flflags | O_NONBLOCK) != 0)) {
+    int e = errno;
+    close(s);
+    errno = e;
+    return -1;
+  }
+  return s;
+#endif
+}
+
+/*
  * Fallback bind path: create $XDG_RUNTIME_DIR/nostr/relay.sock with 0600.
  * `sock_path_out` returns the absolute path so we can unlink at exit.
  * `owned_out` is set to 1 iff we created the socket (fallback bind) so the
@@ -182,7 +207,7 @@ static int bind_fallback_socket(char *sock_path_out, size_t out_sz,
   /* Stale-socket recovery, per §3.4: probe for a live listener; if the
    * probe succeeds, another instance already owns it and we abort. If the
    * probe fails (ECONNREFUSED or ENOENT), unlink and retry. */
-  int probe = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  int probe = unix_stream_socket(0);
   if (probe >= 0) {
     struct sockaddr_un pa;
     memset(&pa, 0, sizeof pa);
@@ -206,7 +231,7 @@ static int bind_fallback_socket(char *sock_path_out, size_t out_sz,
     }
   }
 
-  int s = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+  int s = unix_stream_socket(1);
   if (s < 0) {
     fprintf(stderr, "nostr-session-relayd: socket(): %s\n", strerror(errno));
     return -1;
