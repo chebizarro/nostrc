@@ -166,7 +166,10 @@ already take one) has a `…ForApp` twin with a trailing `app_id`.
     disconnects, to typed approval errors: an approval request that expires
     unanswered fails with `Error.ApprovalTimedOut`, and a call that needs a
     prompt while no approval UI is on the bus fails with
-    `Error.NoApprovalAgent`. `Error.ApprovalDenied` then means a denial only.
+    `Error.NoApprovalAgent`, and an approved call whose selector no longer
+    resolves to the approved npub (the active account switched during the
+    prompt) fails with `Error.IdentityChanged`. `Error.ApprovalDenied` then
+    means a denial only.
     Without the opt-in (every pre-0.5.0 client, and the NIP-5F socket) those
     cases stay `Error.ApprovalDenied`. Classify by error name, never by message.
 

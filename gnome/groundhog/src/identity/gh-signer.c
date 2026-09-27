@@ -196,6 +196,9 @@ map_bus_error(GError *error)
   if (g_strcmp0(remote, "org.nostr.Signer.Error.ApprovalTimedOut") == 0)
     return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_TIMED_OUT,
                                "Signer approval timed out");
+  if (g_strcmp0(remote, "org.nostr.Signer.Error.IdentityChanged") == 0)
+    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_KEY_MISMATCH,
+                               "Signer identity changed during approval");
   if (g_strcmp0(remote, "org.nostr.Signer.Error.NoApprovalAgent") == 0)
     return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_NO_APPROVER,
                                "Signer approval agent is not running");

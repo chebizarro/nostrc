@@ -20,7 +20,7 @@ static GDBusMethodInvocation *held;
 typedef enum { MOCK_OK, MOCK_DENIED, MOCK_TIMEOUT, MOCK_DENIED_TIMEOUT_TEXT,
                MOCK_HOLD, MOCK_WRONG_KEY, MOCK_CHANGED_CONTENT,
                MOCK_BAD_CIPHER, MOCK_APPROVAL_TIMEOUT, MOCK_NO_AGENT,
-               MOCK_TIMEOUT_DENIED_TEXT } MockMode;
+               MOCK_TIMEOUT_DENIED_TEXT, MOCK_IDENTITY_CHANGED } MockMode;
 static MockMode mode;
 static gboolean typed_opt_in; /* EnableTypedApprovalErrors seen since the last gated call */
 
@@ -45,6 +45,9 @@ method_call(GDBusConnection *connection, const gchar *sender, const gchar *path,
 {
   (void)connection; (void)sender; (void)path; (void)interface; (void)user_data;
   if (g_str_equal(method, "EnableTypedApprovalErrors")) {
+    /* Sent without a reply callback: no reply (hence no stale one) exists. */
+    g_assert_true(g_dbus_message_get_flags(g_dbus_method_invocation_get_message(invocation)) &
+                  G_DBUS_MESSAGE_FLAGS_NO_REPLY_EXPECTED);
     typed_opt_in = TRUE;
     g_dbus_method_invocation_return_value(invocation, NULL);
     return;
@@ -73,6 +76,11 @@ method_call(GDBusConnection *connection, const gchar *sender, const gchar *path,
     g_dbus_method_invocation_return_dbus_error(invocation,
       "org.nostr.Signer.Error.ApprovalTimedOut",
       mode == MOCK_TIMEOUT_DENIED_TEXT ? "user denied" : "approval timed out");
+    return;
+  }
+  if (mode == MOCK_IDENTITY_CHANGED) {
+    g_dbus_method_invocation_return_dbus_error(invocation,
+      "org.nostr.Signer.Error.IdentityChanged", "user denied");
     return;
   }
   if (mode == MOCK_NO_AGENT) {
@@ -244,6 +252,7 @@ static void test_sign_timeout(void) { test_sign(MOCK_TIMEOUT, GH_SIGNER_ERROR_TI
 static void test_sign_approval_timeout(void) { test_sign(MOCK_APPROVAL_TIMEOUT, GH_SIGNER_ERROR_TIMED_OUT); }
 static void test_sign_approval_timeout_denied_text(void) { test_sign(MOCK_TIMEOUT_DENIED_TEXT, GH_SIGNER_ERROR_TIMED_OUT); }
 static void test_sign_no_agent(void) { test_sign(MOCK_NO_AGENT, GH_SIGNER_ERROR_NO_APPROVER); }
+static void test_sign_identity_changed(void) { test_sign(MOCK_IDENTITY_CHANGED, GH_SIGNER_ERROR_KEY_MISMATCH); }
 static void test_sign_wrong_key(void) { test_sign(MOCK_WRONG_KEY, GH_SIGNER_ERROR_KEY_MISMATCH); }
 static void test_sign_changed(void) { test_sign(MOCK_CHANGED_CONTENT, GH_SIGNER_ERROR_INVALID_RESULT); }
 
@@ -341,6 +350,7 @@ static void test_nip44_denied(void) { test_nip44_error(MOCK_DENIED, GH_SIGNER_ER
 static void test_nip44_timeout(void) { test_nip44_error(MOCK_TIMEOUT, GH_SIGNER_ERROR_TIMED_OUT); }
 static void test_nip44_approval_timeout(void) { test_nip44_error(MOCK_APPROVAL_TIMEOUT, GH_SIGNER_ERROR_TIMED_OUT); }
 static void test_nip44_no_agent(void) { test_nip44_error(MOCK_NO_AGENT, GH_SIGNER_ERROR_NO_APPROVER); }
+static void test_nip44_identity_changed(void) { test_nip44_error(MOCK_IDENTITY_CHANGED, GH_SIGNER_ERROR_KEY_MISMATCH); }
 
 static void
 test_nip44_cancel(void)
@@ -390,6 +400,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/signer/approval-timeout-denied-text",
                   test_sign_approval_timeout_denied_text);
   g_test_add_func("/groundhog/signer/no-approval-agent", test_sign_no_agent);
+  g_test_add_func("/groundhog/signer/identity-changed", test_sign_identity_changed);
   g_test_add_func("/groundhog/signer/cancel", test_cancel);
   g_test_add_func("/groundhog/signer/switch-cancels", test_switch_cancels);
   g_test_add_func("/groundhog/signer/key-mismatch", test_sign_wrong_key);
@@ -399,6 +410,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/signer/nip44-timeout", test_nip44_timeout);
   g_test_add_func("/groundhog/signer/nip44-approval-timeout", test_nip44_approval_timeout);
   g_test_add_func("/groundhog/signer/nip44-no-approval-agent", test_nip44_no_agent);
+  g_test_add_func("/groundhog/signer/nip44-identity-changed", test_nip44_identity_changed);
   g_test_add_func("/groundhog/signer/nip44-cancel", test_nip44_cancel);
   g_test_add_func("/groundhog/signer/nip44-invalid", test_bad_nip44_result);
   int status = g_test_run();

@@ -20,8 +20,9 @@ extern "C" {
  * UI may call ApproveRequest, and *ForApp / GetApprovalInfo methods were
  * added (nostrc-y02q, nostrc-phk4, nostrc-1e31, nostrc-eie5).
  * 0.5.0 (additive): org.nostr.Signer.EnableTypedApprovalErrors lets a bus
- * connection opt in to Error.ApprovalTimedOut / Error.NoApprovalAgent in
- * place of Error.ApprovalDenied for those cases (nostrc-qp24.16). */
+ * connection opt in to Error.ApprovalTimedOut / Error.NoApprovalAgent /
+ * Error.IdentityChanged in place of Error.ApprovalDenied for those cases
+ * (nostrc-qp24.16). */
 #define NOSTR_NIP55L_VERSION_MAJOR 0
 #define NOSTR_NIP55L_VERSION_MINOR 5
 #define NOSTR_NIP55L_VERSION_PATCH 0

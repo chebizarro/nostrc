@@ -792,6 +792,21 @@ static gboolean require_approver(GDBusMethodInvocation *invocation){
   return FALSE;
 }
 
+#ifdef NIP55L_TEST_TRUST_ENV
+/* Test builds only: each approving ApproveRequest swaps the env-lane active
+ * key ($NOSTR_SIGNER_SECKEY_HEX) with $NOSTR_SIGNER_TEST_SWAP_KEY_ON_APPROVE,
+ * as an account switch during the prompt would, so the approval-time
+ * identity check can be exercised without a key store. */
+static void test_swap_active_key(void){
+  const char *other = g_getenv("NOSTR_SIGNER_TEST_SWAP_KEY_ON_APPROVE");
+  if (!other || !*other) return;
+  g_autofree gchar *next = g_strdup(other);
+  g_autofree gchar *cur = g_strdup(g_getenv("NOSTR_SIGNER_SECKEY_HEX"));
+  g_setenv("NOSTR_SIGNER_TEST_SWAP_KEY_ON_APPROVE", cur ? cur : "", TRUE);
+  g_setenv("NOSTR_SIGNER_SECKEY_HEX", next, TRUE);
+}
+#endif
+
 static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocation *invocation,
                                        const gchar *request_id, gboolean decision, gboolean remember, guint64 ttl_seconds)
 {
@@ -805,6 +820,9 @@ static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocatio
 
   gboolean ok = TRUE;
   if (decision) {
+#ifdef NIP55L_TEST_TRUST_ENV
+    test_swap_active_key();
+#endif
     /* The approved identity is the one the user saw; if the selector now
      * resolves elsewhere (active account switched), do not use the new key. */
     Call *first = g_ptr_array_index(p->calls, 0);
@@ -816,7 +834,7 @@ static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocatio
       free(now_npub);
     }
     if (!same) {
-      pending_fail(p, ORG_NOSTR_SIGNER_ERR_APPROVAL, "the identity changed while awaiting approval");
+      pending_fail(p, ORG_NOSTR_SIGNER_ERR_IDENTITY_CHANGED, "the identity changed while awaiting approval");
       ok = FALSE;
     } else {
       for (guint i = 0; i < p->calls->len; i++)

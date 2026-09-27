@@ -32,9 +32,11 @@
  * kind; queued identical calls share one prompt; an untrusted process cannot
  * answer approvals; with no approval agent on the bus a prompt fails fast.
  * The typed-errors phase (nip55l 0.5.0) runs the daemon with a 1 s approval
- * TTL: after EnableTypedApprovalErrors a connection gets ApprovalTimedOut /
- * NoApprovalAgent, while denials and every non-opted-in caller still get
- * ApprovalDenied.
+ * TTL and a test-build key swap on every approval: after
+ * EnableTypedApprovalErrors a connection gets ApprovalTimedOut /
+ * NoApprovalAgent / IdentityChanged, while denials and every non-opted-in
+ * caller still get ApprovalDenied; an opt-in sent without awaiting its reply
+ * already applies to the next call on that connection.
  * The bridge phase runs this process as the trusted browser bridge
  * (test-build NOSTR_SIGNER_TEST_ORIGIN_BRIDGES) so origin grants apply.
  * The NIP-5F phase (nostrc-q23h) starts the daemon's opt-in socket and
@@ -105,6 +107,7 @@
 #define ERR_DENIED   "org.nostr.Signer.Error.ApprovalDenied"
 #define ERR_TIMED_OUT "org.nostr.Signer.Error.ApprovalTimedOut"
 #define ERR_NO_AGENT  "org.nostr.Signer.Error.NoApprovalAgent"
+#define ERR_IDENTITY  "org.nostr.Signer.Error.IdentityChanged"
 #define APPROVER_NAME "org.gnostr.Signer"
 
 #define CHECK(cond) do { if (!(cond)) { \
@@ -1135,8 +1138,9 @@ static void test_gating(Ctx *ctx) {
 }
 
 /* Typed approval errors (nip55l 0.5.0, nostrc-qp24.16). The daemon runs
- * with a 1 s approval TTL and no grants. ctx->bus stays a pre-0.5.0 client;
- * a second connection of this process opts in. */
+ * with a 1 s approval TTL, no grants, and swaps its active key with
+ * @swap_sk on every approval. ctx->bus stays a pre-0.5.0 client; other
+ * connections of this process opt in. */
 static void expect_approval_error(GError *err, const char *name, const char *msg) {
   expect_remote_error(err, name);
   GError *copy = g_error_copy(err);
@@ -1146,19 +1150,56 @@ static void expect_approval_error(GError *err, const char *name, const char *msg
   g_error_free(copy);
 }
 
-static void test_typed_approval_errors(Ctx *ctx) {
+static GDBusConnection *open_conn(void) {
+  GError *err = NULL;
+  gchar *addr = g_dbus_address_get_for_bus_sync(G_BUS_TYPE_SESSION, NULL, &err);
+  CHECK(addr != NULL);
+  GDBusConnection *c = g_dbus_connection_new_for_address_sync(addr,
+      G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+      NULL, NULL, &err);
+  CHECK(c != NULL);
+  g_free(addr);
+  return c;
+}
+
+static void close_conn(GDBusConnection *c) {
+  CHECK(g_dbus_connection_close_sync(c, NULL, NULL));
+  g_object_unref(c);
+}
+
+/* NIP44Encrypt on @c for @selector, parked, then answered with @decision.
+ * The prompt must name @want_identity. Returns the call's error. */
+static GError *answer_parked(Ctx *ctx, GDBusConnection *c, const char *peer_pk,
+                             const char *selector, const char *want_identity, gboolean decision) {
+  g_usleep(120 * 1000); /* one new prompt per 100 ms per sender */
+  Watch w;
+  watch_start(ctx, &w);
+  w.a.pending_replies++;
+  g_dbus_connection_call(c, BUS_NAME, OBJ_PATH, IFACE, "NIP44Encrypt",
+                         g_variant_new("(sss)", "hi", peer_pk, selector), G_VARIANT_TYPE("(s)"),
+                         G_DBUS_CALL_FLAGS_NONE, 15000, NULL, on_async_reply, &w.a);
+  watch_wait_request(&w, 1);
+  CHECK(g_strcmp0(w.a.identity, want_identity) == 0);
+  approve(ctx, w.a.req_id, decision, FALSE);
+  watch_wait_replies(&w);
+  CHECK(w.a.replies->pdata[0] == NULL);
+  GError *err = g_error_copy(w.a.errors->pdata[0]);
+  watch_stop(ctx, &w);
+  return err;
+}
+
+static void test_typed_approval_errors(Ctx *ctx, const char *swap_sk) {
   static const char no_agent[] = "approval required but no approval agent is running (start GNostr Signer)";
+  static const char changed[] = "the identity changed while awaiting approval";
   GError *err = NULL;
   char *peer_sk = nostr_key_generate_private();
   char *peer_pk = nostr_key_get_public(peer_sk);
-  CHECK(peer_sk && peer_pk);
-  gchar *addr = g_dbus_address_get_for_bus_sync(G_BUS_TYPE_SESSION, NULL, &err);
-  CHECK(addr != NULL);
-  GDBusConnection *typed = g_dbus_connection_new_for_address_sync(addr,
-      G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
-      NULL, NULL, &err);
-  CHECK(typed != NULL);
-  g_free(addr);
+  char *swap_pk = nostr_key_get_public(swap_sk);
+  CHECK(peer_sk && peer_pk && swap_pk);
+  uint8_t b[32];
+  char *swap_npub = NULL;
+  CHECK(nostr_hex2bin(b, swap_pk, 32) && nostr_nip19_encode_npub(b, &swap_npub) == 0);
+  GDBusConnection *typed = open_conn();
   GVariant *r = g_dbus_connection_call_sync(typed, BUS_NAME, OBJ_PATH, IFACE, "EnableTypedApprovalErrors",
       NULL, G_VARIANT_TYPE("()"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &err);
   CHECK(r != NULL); g_variant_unref(r);
@@ -1170,21 +1211,18 @@ static void test_typed_approval_errors(Ctx *ctx) {
   r = call(typed, "NIP44Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""), "(s)", &err);
   CHECK(r == NULL); expect_approval_error(err, ERR_TIMED_OUT, "approval timed out"); g_clear_error(&err);
 
-  /* A denial stays ApprovalDenied after the opt-in. */
-  {
-    Watch w;
-    watch_start(ctx, &w);
-    w.a.pending_replies++;
-    g_dbus_connection_call(typed, BUS_NAME, OBJ_PATH, IFACE, "NIP44Encrypt",
-                           g_variant_new("(sss)", "hi", peer_pk, ""), G_VARIANT_TYPE("(s)"),
-                           G_DBUS_CALL_FLAGS_NONE, 15000, NULL, on_async_reply, &w.a);
-    watch_wait_request(&w, 1);
-    approve(ctx, w.a.req_id, FALSE, FALSE);
-    watch_wait_replies(&w);
-    CHECK(w.a.replies->pdata[0] == NULL);
-    expect_approval_error(w.a.errors->pdata[0], ERR_DENIED, "user denied");
-    watch_stop(ctx, &w);
-  }
+  /* A denial stays ApprovalDenied after the opt-in (and swaps no key). */
+  err = answer_parked(ctx, typed, peer_pk, ctx->npub, ctx->npub, FALSE);
+  expect_approval_error(err, ERR_DENIED, "user denied"); g_clear_error(&err);
+
+  /* Approved, but the active account switched during the prompt. With the
+   * active npub as explicit selector (as Groundhog sends it) the request is
+   * bound to that npub and fails rather than using the new key:
+   * IdentityChanged after the opt-in, ApprovalDenied for the old client. */
+  err = answer_parked(ctx, typed, peer_pk, ctx->npub, ctx->npub, TRUE);   /* active -> swap key */
+  expect_approval_error(err, ERR_IDENTITY, changed); g_clear_error(&err);
+  err = answer_parked(ctx, ctx->bus, peer_pk, swap_npub, swap_npub, TRUE); /* swap key -> original */
+  expect_approval_error(err, ERR_DENIED, changed); g_clear_error(&err);
 
   /* No approval agent on the bus: NoApprovalAgent only after the opt-in. */
   GVariant *rel = g_dbus_connection_call_sync(ctx->bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
@@ -1197,8 +1235,19 @@ static void test_typed_approval_errors(Ctx *ctx) {
   r = call(ctx->bus, "NIP44Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""), "(s)", &err);
   CHECK(r == NULL); expect_approval_error(err, ERR_DENIED, no_agent); g_clear_error(&err);
 
-  CHECK(g_dbus_connection_close_sync(typed, NULL, NULL));
-  g_object_unref(typed);
+  /* An opt-in sent without a reply callback (NO_REPLY_EXPECTED, as the
+   * Groundhog adapter sends it) applies to the very next call on the same
+   * connection: one connection's calls are handled in order. */
+  GDBusConnection *unawaited = open_conn();
+  g_dbus_connection_call(unawaited, BUS_NAME, OBJ_PATH, IFACE, "EnableTypedApprovalErrors",
+                         NULL, NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL, NULL);
+  r = call(unawaited, "NIP44Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""), "(s)", &err);
+  CHECK(r == NULL); expect_approval_error(err, ERR_NO_AGENT, no_agent); g_clear_error(&err);
+
+  close_conn(unawaited);
+  close_conn(typed);
+  free(swap_npub);
+  free(swap_pk);
   free(peer_sk);
   free(peer_pk);
 }
@@ -2132,16 +2181,22 @@ int main(void) {
             attested ? " spoofed app_id denied," : " [unattested bus: claimed-app_id principals],");
   }
 
-  /* Typed approval errors (nip55l 0.5.0): 1 s approval TTL, no grants. */
+  /* Typed approval errors (nip55l 0.5.0): 1 s approval TTL, no grants,
+   * active key swapped on every approval (test-build hooks). */
   {
     Ctx ctx;
+    char *swap_sk = nostr_key_generate_private();
+    CHECK(swap_sk != NULL);
     g_setenv("NOSTR_SIGNER_TEST_PENDING_TTL_S", "1", TRUE);
+    g_setenv("NOSTR_SIGNER_TEST_SWAP_KEY_ON_APPROVE", swap_sk, TRUE);
     ctx_setup_full(&ctx, FALSE, FALSE, NULL, &TRUST_UI, NULL, NULL);
     g_unsetenv("NOSTR_SIGNER_TEST_PENDING_TTL_S");
-    test_typed_approval_errors(&ctx);
+    g_unsetenv("NOSTR_SIGNER_TEST_SWAP_KEY_ON_APPROVE");
+    test_typed_approval_errors(&ctx, swap_sk);
     ctx_teardown(&ctx);
-    g_print("PASS typed approval errors (timeout/no-agent typed after opt-in, "
-            "ApprovalDenied for denial and for legacy callers)\n");
+    free(swap_sk);
+    g_print("PASS typed approval errors (timeout/no-agent/identity-changed typed after opt-in, "
+            "unawaited opt-in ordered, ApprovalDenied for denial and for legacy callers)\n");
   }
 
   /* An approval agent is present but this process is not a trusted one. */

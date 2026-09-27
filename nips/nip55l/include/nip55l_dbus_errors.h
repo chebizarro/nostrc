@@ -10,6 +10,9 @@
  * receiving ApprovalDenied for these cases, as before 0.5.0. */
 #define ORG_NOSTR_SIGNER_ERR_APPROVAL_TIMEOUT "org.nostr.Signer.Error.ApprovalTimedOut"
 #define ORG_NOSTR_SIGNER_ERR_NO_APPROVER      "org.nostr.Signer.Error.NoApprovalAgent"
+/* Approved, but the identity selector no longer resolves to the npub the
+ * user approved (e.g. the active account switched during the prompt). */
+#define ORG_NOSTR_SIGNER_ERR_IDENTITY_CHANGED "org.nostr.Signer.Error.IdentityChanged"
 #define ORG_NOSTR_SIGNER_ERR_INVALID_INPUT  "org.nostr.Signer.Error.InvalidInput"
 #define ORG_NOSTR_SIGNER_ERR_INTERNAL       "org.nostr.Signer.Error.Internal"
 #define ORG_NOSTR_SIGNER_ERR_NO_KEY         "org.nostr.Signer.Error.NoKeyConfigured"

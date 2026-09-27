@@ -25,8 +25,10 @@ GQuark gh_signer_error_quark(void);
  * relies on the service contract rather than an attestation in the reply.
  * Errors are classified by D-Bus error name only. Each call opts in to typed
  * approval errors (nip55l >= 0.5.0): Error.ApprovalTimedOut -> TIMED_OUT,
- * Error.NoApprovalAgent -> NO_APPROVER, Error.ApprovalDenied -> DENIED. A
- * pre-0.5.0 service reports all three as ApprovalDenied, hence DENIED. */
+ * Error.NoApprovalAgent -> NO_APPROVER, Error.IdentityChanged (approved, but
+ * the selected npub no longer resolves to the approved key) -> KEY_MISMATCH,
+ * Error.ApprovalDenied -> DENIED. A pre-0.5.0 service reports all of these
+ * as ApprovalDenied, hence DENIED. */
 GhSigner *gh_signer_new(GDBusConnection *bus, const gchar *selected_npub,
                         GError **error);
 /* Cancels pending D-Bus calls. The owning thread-default main context must
