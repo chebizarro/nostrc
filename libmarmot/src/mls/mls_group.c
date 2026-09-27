@@ -1029,6 +1029,9 @@ mls_proposal_clear(MlsProposal *p)
     case MLS_PROPOSAL_GROUP_CONTEXT_EXT:
         free(p->group_context_extensions.extensions);
         break;
+    case MLS_PROPOSAL_APP_DATA_UPDATE:
+        mls_app_data_update_clear(&p->app_data_update);
+        break;
     default:
         break;
     }
@@ -1103,6 +1106,8 @@ mls_group_create(MlsGroup *group,
 {
     if (!group || !group_id || !credential_identity || !signature_key_private)
         return MARMOT_ERR_INVALID_ARG;
+    if (mls_group_extensions_supported(extensions_data, extensions_len) != 0)
+        return MARMOT_ERR_UNSUPPORTED;
 
     memset(group, 0, sizeof(*group));
 
@@ -2085,8 +2090,11 @@ proposal_type_apply_supported(const MlsProposal *p)
     case MLS_PROPOSAL_UPDATE:
     case MLS_PROPOSAL_REMOVE:
     case MLS_PROPOSAL_PSK:
-    case MLS_PROPOSAL_GROUP_CONTEXT_EXT:
         return 1;
+    case MLS_PROPOSAL_GROUP_CONTEXT_EXT:
+        return mls_group_extensions_supported(
+            p->group_context_extensions.extensions,
+            p->group_context_extensions.extensions_len) == 0;
     default:
         return 0;
     }
@@ -2196,7 +2204,8 @@ apply_group_context_extensions(MlsGroup *group,
                                const uint8_t *extensions,
                                size_t extensions_len)
 {
-    if (!group) return -1;
+    if (!group || mls_group_extensions_supported(extensions, extensions_len) != 0)
+        return -1;
     uint8_t *copy = NULL;
     if (extensions_len > 0) {
         if (!extensions) return -1;
@@ -3220,6 +3229,8 @@ proposal_serialize(const MlsProposal *p, MlsTlsBuf *buf)
         return mls_leaf_node_serialize(&p->update.leaf_node, buf);
     case MLS_PROPOSAL_REMOVE:
         return mls_tls_write_u32(buf, p->remove.removed_leaf);
+    case MLS_PROPOSAL_APP_DATA_UPDATE:
+        return mls_app_data_update_serialize(&p->app_data_update, buf);
     default:
         return -1;
     }
@@ -3298,6 +3309,11 @@ proposal_deserialize(MlsTlsReader *reader, MlsProposal *p)
             return -1;
         return 0;
     }
+    case MLS_PROPOSAL_APP_DATA_UPDATE:
+        /* Recognize the draft-10 wire shape, but never apply it without
+         * component state, authorization, and resulting-epoch validation. */
+        p->unsupported = true;
+        return mls_app_data_update_deserialize(reader, &p->app_data_update);
     default:
         return -1; /* Unknown proposal type */
     }
@@ -3746,7 +3762,8 @@ mls_group_deserialize(const uint8_t *data, size_t len, MlsGroup *group)
         goto fail;
 
     /* Extensions */
-    if (mls_tls_read_opaque32(&reader, &group->extensions_data, &group->extensions_len) != 0)
+    if (mls_tls_read_opaque32(&reader, &group->extensions_data, &group->extensions_len) != 0 ||
+        mls_group_extensions_supported(group->extensions_data, group->extensions_len) != 0)
         goto fail;
 
     /* Config */

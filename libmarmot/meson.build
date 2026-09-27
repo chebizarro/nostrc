@@ -1,5 +1,5 @@
 project('libmarmot', 'c',
-  version: '0.3.0',
+  version: '0.3.1',
   license: 'MIT',
   default_options: [
     'c_std=c11',
@@ -52,6 +52,7 @@ marmot_sources = files(
   'src/mls/mls_tree.c',
   'src/mls/mls_key_schedule.c',
   'src/mls/mls_framing.c',
+  'src/mls/mls_app_data_update.c',
   'src/mls/mls_key_package.c',
   'src/mls/mls_group.c',
   'src/mls/mls_welcome.c',
@@ -203,6 +204,14 @@ if get_option('tests')
     dependencies: [openssl_dep, sodium_dep],
   )
   test('marmot_mls_group', test_mls_group)
+
+  test_app_data_update = executable('test_app_data_update',
+    'tests/test_app_data_update.c',
+    include_directories: [marmot_inc, marmot_src_inc],
+    link_with: libmarmot,
+    dependencies: [openssl_dep, sodium_dep],
+  )
+  test('marmot_app_data_update', test_app_data_update)
 
   test_mls_welcome = executable('test_mls_welcome',
     'tests/test_mls_welcome.c',

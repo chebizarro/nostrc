@@ -15,7 +15,7 @@ option(MARMOT_ENABLE_ADOPTED_KEY_PACKAGE_PRODUCER
 
 set(MARMOT_VERSION_MAJOR 0)
 set(MARMOT_VERSION_MINOR 3)
-set(MARMOT_VERSION_PATCH 0)
+set(MARMOT_VERSION_PATCH 1)
 declare_component_version(MARMOT
   ${MARMOT_VERSION_MAJOR}
   ${MARMOT_VERSION_MINOR}
@@ -65,6 +65,7 @@ set(MARMOT_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_tree.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_key_schedule.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_framing.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_app_data_update.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_key_package.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_group.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/mls/mls_welcome.c
@@ -249,6 +250,12 @@ if(BUILD_TESTING)
   target_link_libraries(test_mls_group PRIVATE marmot)
   target_include_directories(test_mls_group PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_mls_group COMMAND test_mls_group)
+
+  # Test: adopted AppDataUpdate wire codec (processing remains unsupported)
+  add_executable(test_app_data_update ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_app_data_update.c)
+  target_link_libraries(test_app_data_update PRIVATE marmot)
+  target_include_directories(test_app_data_update PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME marmot_test_app_data_update COMMAND test_app_data_update)
 
   # Test: MLS Welcome
   add_executable(test_mls_welcome ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_mls_welcome.c)

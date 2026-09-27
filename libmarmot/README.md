@@ -202,6 +202,19 @@ Test vectors from MDK can be placed in `tests/vectors/mdk/` for automated cross-
 
 ## Changelog
 
+### 0.3.1 (unreleased): AppDataUpdate wire recognition (not adopted group support)
+
+The MLS draft-10 AppDataUpdate `update` and `remove` proposal bodies now have
+strict wire parsing and round-trip tests. The group engine still returns
+`MARMOT_ERR_UNSUPPORTED` for such proposals: it does **not** apply component
+state, validate the `0x8003` admin policy, or authorize component mutations.
+To avoid silently accepting a group it cannot maintain, it also rejects a
+GroupContext `app_data_dictionary` during creation, Welcome join, local-state
+load, or a GroupContextExtensions commit. Legacy `0xF2EE` groups remain
+readable; kind-30443 MDK 0.8 KeyPackage selection and the kind-443 rejection
+policy are unchanged. The adopted KeyPackage producer remains OFF by default
+and must not be treated as interoperable without a pinned independent peer.
+
 ### 0.2.0 (unreleased): KeyPackages move to addressable kind 30443
 
 **Breaking wire change.** KeyPackage events are now kind **30443** instead of 443

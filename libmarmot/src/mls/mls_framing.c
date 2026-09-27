@@ -579,6 +579,12 @@ skip_proposal_body(MlsTlsReader *reader)
         free(ext);
         return 0;
     }
+    case MLS_PROPOSAL_APP_DATA_UPDATE: {
+        MlsAppDataUpdate update;
+        int rc = mls_app_data_update_deserialize(reader, &update);
+        mls_app_data_update_clear(&update);
+        return rc;
+    }
     default:
         return -1;
     }

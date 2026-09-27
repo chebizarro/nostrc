@@ -16,6 +16,7 @@
 #include "mls_key_schedule.h"
 #include "mls_key_package.h"
 #include "mls_framing.h"
+#include "mls_app_data_update.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -35,6 +36,7 @@ extern "C" {
 #define MLS_PROPOSAL_REINIT         5
 #define MLS_PROPOSAL_EXTERNAL_INIT  6
 #define MLS_PROPOSAL_GROUP_CONTEXT_EXT 7
+#define MLS_PROPOSAL_APP_DATA_UPDATE  8
 
 #define MLS_RESUMPTION_PSK_CACHE_SIZE 8
 #define MLS_OWN_PATH_KEY_CACHE_SIZE 128
@@ -95,6 +97,9 @@ typedef struct {
             uint8_t *extensions;
             size_t   extensions_len;
         } group_context_extensions;
+
+        /** MLS extensions draft AppDataUpdate; parsed but not yet applied. */
+        MlsAppDataUpdate app_data_update;
     };
 
     /** Target leaf for an Update proposal.  An Update replaces the LeafNode of
@@ -109,7 +114,7 @@ typedef struct {
     size_t   ref_len;
 
     /** True when the proposal type is recognized but not supported for
-     *  processing (currently ReInit / ExternalInit).
+     *  processing (ReInit, ExternalInit, AppDataUpdate).
      *  Such a commit is rejected with MARMOT_ERR_UNSUPPORTED. */
     bool     unsupported;
 } MlsProposal;

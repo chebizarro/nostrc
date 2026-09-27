@@ -649,6 +649,15 @@ mls_welcome_process_parsed_with_psks(const MlsWelcome *welcome,
         mls_tls_buf_free(&tbuf);
     }
 
+    /* An adopted GroupContext needs app-component authorization and update
+     * handling before it can be safely joined. Keep legacy groups readable. */
+    if (mls_group_extensions_supported(gi.extensions_data, gi.extensions_len) != 0) {
+        mls_group_info_clear(&gi);
+        sodium_memzero(joiner_secret, sizeof(joiner_secret));
+        mls_group_free(group_out);
+        return MARMOT_ERR_UNSUPPORTED;
+    }
+
     /* Extensions */
     if (gi.extensions_data && gi.extensions_len > 0) {
         group_out->extensions_data = malloc(gi.extensions_len);
