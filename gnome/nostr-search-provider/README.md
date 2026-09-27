@@ -46,10 +46,11 @@ necessary:
   *Open Nostr profile / note / article* result that the dispatcher can
   open. Text queries return nothing. Both answer immediately.
 * **Relay without NIP-50**: falls back to the bounded scan described above.
-* **Relay that never answers**: the packaged session relay is built with
-  nostrdb **off** (`-DWITH_NOSTRDB=OFF`), runs cache-less, and answers a
-  plain REQ with no `EVENT` and **no `EOSE`**. The first such search waits
-  for the deadline. After that, a circuit breaker skips the relay for 30 s,
+* **Relay that never answers**: older session relays (before
+  `nostrc-prqu.14`) answered a plain REQ with no `EOSE` when they ran
+  cache-less; the current one always sends `EOSE` or `CLOSED`. For any relay
+  that still hangs, the first search waits for the deadline. After that, a
+  circuit breaker skips the relay for 30 s,
   so later keystrokes answer instantly. Identifier queries keep returning
   the bare *Open …* result. The relay is retried after 30 s. One timeout
   trips the breaker if the relay has never sent EOSE; three consecutive

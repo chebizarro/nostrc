@@ -82,6 +82,47 @@ if(UNIX AND NOT APPLE AND NOT CYGWIN)
   )
 endif()
 
+# NIP-01 REQ contract of the relay core, with and without storage: every
+# REQ ends in EOSE or CLOSED (nostrc-prqu.14). In-process server on a Unix
+# listener, scripted fake storage.
+if(UNIX AND NOT CYGWIN)
+  find_package(Threads REQUIRED)
+  add_executable(test_relay_req_contract test_relay_req_contract.c)
+  target_link_libraries(test_relay_req_contract PRIVATE
+    nostr-relay-server nostr nostr_json Threads::Threads)
+  add_test(NAME relayd_req_contract COMMAND test_relay_req_contract)
+  set_tests_properties(relayd_req_contract PROPERTIES
+    TIMEOUT 60
+    LABELS "relay;nip01;integration")
+endif()
+
+# Real NIP-01 client over relay.sock: RFC 6455 upgrade without a
+# subprotocol, then REQ/EVENT round trips against a storage-less daemon
+# (nostrc-q9ba part 2).
+if(UNIX AND NOT CYGWIN)
+  add_executable(test_session_relay_ws test_session_relay_ws.c)
+  add_test(NAME relayd_session_relay_ws COMMAND test_session_relay_ws)
+  set_tests_properties(relayd_session_relay_ws PROPERTIES
+    TIMEOUT 60
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "NOSTR_SESSION_RELAYD=$<TARGET_FILE:nostr-session-relayd>"
+    LABELS "relay;session-relay;websocket;integration")
+endif()
+
+# Storage round-trip against the real daemon when it links nostrdb:
+# signed EVENT -> OK true -> REQ by id -> EVENT + EOSE, again after a restart
+# (nostrc-prqu.5).
+if(UNIX AND NOT CYGWIN AND TARGET nostrdb_storage)
+  add_executable(test_session_relay_storage test_session_relay_storage.c)
+  target_link_libraries(test_session_relay_storage PRIVATE nostr nostr_json)
+  add_test(NAME relayd_session_relay_storage COMMAND test_session_relay_storage)
+  set_tests_properties(relayd_session_relay_storage PROPERTIES
+    TIMEOUT 90
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "NOSTR_SESSION_RELAYD=$<TARGET_FILE:nostr-session-relayd>"
+    LABELS "relay;session-relay;storage;integration")
+endif()
+
 # org.nostr.SessionRelay1: spawn the real daemon on a private GTestDBus
 # session bus (headless; fallback-binds relay.sock in a temp runtime dir),
 # check GetStats / properties / introspection against the shipped XML and

@@ -18,7 +18,10 @@ supported_nips = [1, 11, 42, 45]
 # Query and event limits
 max_filters = 10
 max_limit = 500
-max_subs = 1
+# REQs one connection may have streaming stored results at once (a
+# subscription ends at its EOSE); clamped to 16. Excess REQs get CLOSED
+# "rate-limited:".
+max_subs = 8
 # EVENT JSON bytes, checked before JSON allocation or signature verification.
 max_event_bytes = 262144
 

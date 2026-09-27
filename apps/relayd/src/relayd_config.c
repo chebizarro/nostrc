@@ -127,7 +127,7 @@ static void apply_defaults(RelaydConfig *cfg) {
 
   cfg->max_filters = 10;
   cfg->max_limit = 500;
-  cfg->max_subs = 1;
+  cfg->max_subs = 8;
   cfg->max_event_bytes =
       runtime_int(nostr_limit_max_event_size(), 256 * 1024);
 

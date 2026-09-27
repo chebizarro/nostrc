@@ -38,13 +38,19 @@ add_library(nostrdb_storage STATIC
 
 target_link_libraries(nostrdb_storage PUBLIC nostr)
 
-# If the in-tree CMake target 'nostrdb' exists, link against it.
-# Avoid linking vendored static archives here to prevent duplicate objects when
-# 'nostrdb' is also built in-tree by libnostr.
+# nostrdb itself: reuse libnostr's in-tree 'nostrdb' target when libnostr
+# was built with its nostrdb backend (LIBNOSTR_WITH_NOSTRDB=ON, dev builds);
+# otherwise build a private static copy so the storage driver -- and the
+# relay daemons that link it -- work while libnostr.so stays nostrdb-free
+# (the packaged build, nostrc-prqu.5).
 if (TARGET nostrdb)
   target_link_libraries(nostrdb_storage PUBLIC nostrdb)
-else()
-  message(STATUS "components/nostrdb: target 'nostrdb' not found; skipping vendored lib linkage to avoid duplicate symbols. Ensure LIBNOSTR_WITH_NOSTRDB=ON in the root build.")
+elseif (NOT ALLOW_STUB_NOSTRDB)
+  list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+  include(NostrdbVendored)
+  nostrc_add_vendored_nostrdb(nostrdb_vendored "${NDB_VENDOR_PATH}")
+  target_link_libraries(nostrdb_storage PUBLIC nostrdb_vendored)
+  message(STATUS "components/nostrdb: libnostr has no nostrdb backend; linking a private static nostrdb (nostrdb_vendored)")
 endif()
 
 # Threads may be required by LMDB or the vendored build

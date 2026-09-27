@@ -51,6 +51,9 @@ static int sd_is_socket_unix(int fd, int t, int lst, const char *path, size_t pl
 #include "nostr-storage.h"
 #include "relayd_config.h"
 #include "session_dbus.h"
+#ifdef NOSTRC_HAVE_NOSTRDB_STORAGE
+#include "nostrdb_storage.h"
+#endif
 
 #ifndef NSR_VERSION
 #define NSR_VERSION "" /* unknown: the build did not pass one */
@@ -351,13 +354,22 @@ int main(int argc, char **argv) {
   char storage_dir[512];
   if (resolve_storage_dir(storage_dir, sizeof storage_dir) != 0) return 1;
 
+#ifdef NOSTRC_HAVE_NOSTRDB_STORAGE
+  /* Explicit, so the linker keeps the driver (see apps/relayd/CMakeLists). */
+  nostr_storage_register("nostrdb", nostrdb_storage_new);
+#endif
   const char *driver =
       cfg.storage_driver[0] ? cfg.storage_driver : "nostrdb";
-  NostrStorage *st = nostr_storage_create(driver);
-  if (!st) {
+  NostrStorage *st = NULL;
+  if (strcmp(driver, "none") == 0) {
+    fprintf(stderr,
+            "nostr-session-relayd: storage_driver = \"none\": running "
+            "cache-less by configuration\n");
+  } else if (!(st = nostr_storage_create(driver))) {
     fprintf(stderr,
             "nostr-session-relayd: storage driver '%s' unavailable; the "
-            "session relay will run cache-less (queries return empty).\n",
+            "session relay will run cache-less (REQ answers EOSE at once, "
+            "EVENT is refused).\n",
             driver);
   } else if (st->vt && st->vt->open) {
     int rc_open = st->vt->open(st, storage_dir, NULL);

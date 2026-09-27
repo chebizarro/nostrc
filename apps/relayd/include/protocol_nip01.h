@@ -19,6 +19,19 @@ void relayd_nip01_on_writable(struct lws *wsi, ConnState *cs,
 void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs,
                              const RelaydCtx *ctx, const void *in, size_t len);
 
+/* Storage that can serve REQs: query + query_next + query_free. Iterators
+ * from both query() and search() are released with query_free(). */
+int relayd_storage_can_query(const NostrStorage *st);
+
+/* Queue a stored-result iterator for `sub` (caller checked capacity and
+ * that `sub` is not already pending) and schedule streaming. Takes
+ * ownership of `it`. */
+void relayd_conn_sub_push(struct lws *wsi, ConnState *cs, const char *sub,
+                          size_t sub_len, void *it);
+
+/* Release every pending iterator (connection teardown). */
+void relayd_conn_subs_free_all(ConnState *cs, const RelaydCtx *ctx);
+
 int relayd_nip01_ingress_decide_json(
     RelayPolicy *policy, VerificationBudget *verification_budget,
     RateLimitBucket *connection_verification_bucket, const char *peer_ip,

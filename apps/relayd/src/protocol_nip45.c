@@ -28,10 +28,21 @@ int relayd_handle_count(struct lws *wsi, const RelaydCtx *ctx, const char *msg, 
     const char *q1 = strchr(p+1, '"'); if (q1) { const char *q2 = strchr(q1+1, '"'); if (q2) { subid = q1+1; sublen = (size_t)(q2 - (q1+1)); p = strchr(q2, ','); } }
   }
   const char *filters_json = p ? p+1 : NULL;
-  const char *sub = subid ? subid : "sub1";
+  /* NUL-terminated copy: `subid` points into the frame, and the CLOSED
+   * builders below would otherwise take the rest of the frame as the id. */
+  char sub[128];
+  if (subid) {
+    size_t cplen = sublen < sizeof(sub) - 1 ? sublen : sizeof(sub) - 1;
+    memcpy(sub, subid, cplen);
+    sub[cplen] = '\0';
+  } else {
+    snprintf(sub, sizeof sub, "%s", "sub1");
+  }
   NostrStorage *st = ctx->storage;
   if (!st || !st->vt || !st->vt->count || !filters_json) {
-    char *closed = nostr_closed_build_json(sub, "invalid: count");
+    char *closed = nostr_closed_build_json(
+        sub, !filters_json ? "invalid: COUNT needs a filter"
+                           : "unsupported: count requires a storage backend");
     if (closed) { ws_send_text(wsi, closed); free(closed);}          
     return -EINVAL;
   }
@@ -43,30 +54,33 @@ int relayd_handle_count(struct lws *wsi, const RelaydCtx *ctx, const char *msg, 
   memcpy(fbuf, filters_json, flen); fbuf[flen] = '\0';
   /* For simplicity, expect one filter object; if array, take first element. */
   const char *fb = fbuf; while (*fb && *fb != '{' && *fb != '[') fb++;
-  NostrFilter ftmp; memset(&ftmp, 0, sizeof(ftmp)); NostrFilter *farr = &ftmp; size_t fn = 1;
+  /* nostr_filter_new(), not a zeroed struct: the deserializer appends to
+   * the filter's arrays, which need their initial capacity. */
+  NostrFilter *farr = nostr_filter_new(); size_t fn = 1;
   int ok = -1;
-  if (*fb == '{') {
-    ok = nostr_filter_deserialize(&ftmp, fb);
-  } else if (*fb == '[') {
+  if (farr && *fb == '{') {
+    ok = nostr_filter_deserialize(farr, fb);
+  } else if (farr && *fb == '[') {
     const char *q = strchr(fb, '{');
-    if (q) ok = nostr_filter_deserialize(&ftmp, q);
+    if (q) ok = nostr_filter_deserialize(farr, q);
   }
   if (ok != 0) {
+    nostr_filter_free(farr);
     char *closed = nostr_closed_build_json(sub, nostr_limits_reason_invalid_filter());
     if (closed) { ws_send_text(wsi, closed); free(closed);}          
     free(fbuf);
     return -EINVAL;
   }
-  if (ctx && ftmp.limit > ctx->cfg.max_limit) ftmp.limit = ctx->cfg.max_limit;
+  if (ctx && farr->limit > ctx->cfg.max_limit) farr->limit = ctx->cfg.max_limit;
   uint64_t cval = 0; int rc = st->vt->count(st, farr, fn, &cval);
   if (rc == 0) {
-    char body[128]; snprintf(body, sizeof(body), "[\"COUNT\",\"%.*s\",{\"count\":%llu}]", (int)(sublen ? sublen : strlen(sub)), sub, (unsigned long long)cval);
+    char body[192]; snprintf(body, sizeof(body), "[\"COUNT\",\"%s\",{\"count\":%llu}]", sub, (unsigned long long)cval);
     ws_send_text(wsi, body);
   } else {
     char *closed = nostr_closed_build_json(sub, "count-failed");
     if (closed) { ws_send_text(wsi, closed); free(closed);}          
   }
-  nostr_filter_free(&ftmp);
+  nostr_filter_free(farr);
   free(fbuf);
   return 0;
 }
