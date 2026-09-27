@@ -400,6 +400,24 @@ if(BUILD_TESTING)
                    -P ${CMAKE_SOURCE_DIR}/cmake/CheckDbusServiceFile.cmake)
   set_tests_properties(gnostr_signer_dbus_service_configured PROPERTIES LABELS "signer;packaging")
 endif()
+# The GUI's own activation file (nostrc-tw2z). org.gnostr.Signer.desktop sets
+# DBusActivatable=true, so GDesktopAppInfo / Shell launch it by activating the
+# bus name equal to the desktop-file id; without this file that silently fails.
+# Distinct from the daemon's org.nostr.Signer (object path /org/nostr/signer):
+# this is the GtkApplication id, object path /org/gnostr/Signer.
+configure_file(data/org.gnostr.Signer.service.in
+               ${CMAKE_CURRENT_BINARY_DIR}/org.gnostr.Signer.service @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.gnostr.Signer.service
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/dbus-1/services)
+if(BUILD_TESTING)
+  add_test(NAME gnostr_signer_app_dbus_service_configured
+           COMMAND ${CMAKE_COMMAND}
+                   -DSERVICE_FILE=${CMAKE_CURRENT_BINARY_DIR}/org.gnostr.Signer.service
+                   -DEXPECT_NAME=${APP_SIGNER_FLATPAK_ID}
+                   -DDESKTOP_FILE=${CMAKE_CURRENT_SOURCE_DIR}/data/${APP_SIGNER_FLATPAK_ID}.desktop
+                   -P ${CMAKE_SOURCE_DIR}/cmake/CheckDbusServiceFile.cmake)
+  set_tests_properties(gnostr_signer_app_dbus_service_configured PROPERTIES LABELS "signer;packaging")
+endif()
 # Systemd user unit (daemon) — Unix only
 if(NOT WIN32)
   install(FILES daemon/packaging/systemd/user/gnostr-signer-daemon.service
