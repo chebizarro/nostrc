@@ -689,20 +689,35 @@ static void
 test_unstrippable_media_blocked(void)
 {
   relays_reset();
-  g_autofree gchar *mp4 = tmpfile_with("clip.mp4", "\0\0\0\x18" "ftypmp42", 12);
-  const gchar *args[] = { mp4, NULL };
+  /* MP3 (ID3 tags) is not handled by the stripper: blocked without
+   * --keep-metadata. */
+  static const guint8 MP3[] = { 'I', 'D', '3', 3, 0, 0, 0, 0, 0, 10,
+                                'T', 'I', 'T', '2', 0, 0, 0, 1, 0, 0,
+                                0xFF, 0xFB, 0x90, 0x00 };
+  g_autofree gchar *mp3 = tmpfile_with("song.mp3", MP3, sizeof(MP3));
+  const gchar *args[] = { mp3, NULL };
   GError *err = NULL;
   g_autoptr(NsShare) s = share_new(config("wss://w1.test", "https://blossom.test"),
                                    NULL, args, NULL, 0, &err);
   g_assert_no_error(err);
   g_autoptr(GString) why = g_string_new(NULL);
   g_assert_true(ns_share_metadata_blocked(s, why));
-  g_assert_nonnull(strstr(why->str, "clip.mp4"));
+  g_assert_nonnull(strstr(why->str, "song.mp3"));
   g_assert_false(ns_share_upload(s, NULL, NULL, NULL, &err));
   g_assert_error(err, NS_ERROR, NS_ERROR_METADATA);
   g_clear_error(&err);
   s->keep_metadata = TRUE;
   g_assert_false(ns_share_metadata_blocked(s, NULL));
+
+  /* An MP4 is stripped now (nostrc-wu3s), so one that cannot be walked is
+   * refused outright, never uploaded half-checked. */
+  g_autofree gchar *mp4 = tmpfile_with("clip.mp4", "\0\0\0\x18" "ftypmp42", 12);
+  const gchar *args2[] = { mp4, NULL };
+  g_assert_null(share_new(config("wss://w1.test", "https://blossom.test"), NULL, args2,
+                          NULL, 0, &err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_METADATA);
+  g_assert_nonnull(strstr(err->message, "malformed"));
+  g_clear_error(&err);
 }
 
 static void

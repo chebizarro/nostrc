@@ -18,11 +18,22 @@
  *   GIF   drops comment extensions and application extensions other
  *         than the NETSCAPE2.0 / ANIMEXTS1.0 loop block (XMP lives in an
  *         application extension); stops at the trailer.
+ *   ISO-BMFF (nostrc-wu3s): MP4 / QuickTime / 3GP / M4A video and audio,
+ *         HEIF / HEIC / AVIF images. Without re-muxing (sizes and offsets
+ *         never move): udta (©xyz GPS, device, dates), moov/trak `meta`
+ *         (QuickTime location / make / model keys), XMP uuid boxes and
+ *         unknown top-level boxes become zeroed `free` boxes; timed-
+ *         metadata tracks (GPS streams) are zeroed and dropped; mvhd /
+ *         tkhd / mdhd times are zeroed; HEIF Exif and XMP items are
+ *         overwritten in place; vendor trailers are cut. See
+ *         ns-strip-isobmff.c.
  *
- * Anything else (HEIC/AVIF/TIFF/SVG images, all video and audio) is
- * reported as NS_STRIP_UNSUPPORTED. Callers must not upload those
- * without an explicit user override (--keep-metadata / the dialog's
- * acknowledgement switch).
+ * Anything else (TIFF/SVG images, MPEG/Ogg/Matroska/WebM video and other
+ * audio) is reported as NS_STRIP_UNSUPPORTED, as is an ISO-BMFF construct
+ * the walker cannot clean (compressed movie header, fragmented timed
+ * metadata, external item data). Callers must not upload those without an
+ * explicit user override (--keep-metadata / the dialog's acknowledgement
+ * switch).
  */
 #ifndef NS_STRIP_H
 #define NS_STRIP_H
@@ -48,7 +59,8 @@ NsStripResult ns_strip_metadata(const gchar  *mime,
                                 guint        *n_removed);
 
 /* Pixel dimensions from the container header (JPEG SOFn, PNG IHDR, GIF
- * logical screen, WebP VP8/VP8L/VP8X). FALSE when unknown. */
+ * logical screen, WebP VP8/VP8L/VP8X, HEIF/AVIF ispe, MP4/MOV tkhd).
+ * FALSE when unknown. */
 gboolean ns_image_dimensions(const gchar  *mime,
                              const guint8 *data,
                              gsize         len,

@@ -41,9 +41,10 @@
 #default_text_kind=1
 
 # Default for --keep-metadata: allow uploading media whose metadata
-# (GPS, camera, timestamps) cannot be stripped — HEIC/AVIF/TIFF, video,
-# audio. Supported images (JPEG/PNG/WebP/GIF) are always stripped either
-# way. The dialog still shows the metadata banner.
+# (GPS, camera, timestamps) cannot be stripped — TIFF, WebM/MPEG video,
+# MP3/Ogg audio and the like. Supported formats (JPEG/PNG/WebP/GIF,
+# HEIC/HEIF/AVIF, MP4/MOV/3GP/M4A) are always stripped either way. The
+# dialog still shows the metadata banner.
 #keep_metadata=false
 
 # Seconds to wait for relays to answer OK before giving up. Through a

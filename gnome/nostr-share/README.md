@@ -108,11 +108,24 @@ Notes:
   - PNG: drops `eXIf`, `tEXt`, `zTXt`, `iTXt`, `tIME`.
   - WebP: drops `EXIF`/`XMP ` chunks and clears the VP8X flags.
   - GIF: drops comment and non-loop application extensions (XMP).
-- **Other media** (HEIC/AVIF/TIFF, all video and audio) cannot be cleaned
+  - MP4 / QuickTime (.mov) / 3GP / M4A video and audio, HEIC / HEIF / AVIF
+    images (ISO-BMFF, bead nostrc-wu3s), without re-muxing — box sizes and
+    offsets never change: `udta` (the `©xyz` GPS position, `©mak` /
+    `©mod` device, dates, iTunes / vendor tags), QuickTime `meta` keys
+    (`com.apple.quicktime.location.ISO6709`, make, model, software,
+    creation date), XMP `uuid` boxes and unknown top-level boxes (camera
+    `uuid`s, C2PA/JUMBF manifests, previews) become zeroed `free` boxes;
+    timed-metadata tracks (GoPro GPMF, Apple `mebx`, CAMM GPS streams) have
+    their samples zeroed and are dropped; movie / track / media creation
+    and modification times are zeroed; HEIF/AVIF Exif items become an
+    empty valid Exif block and XMP items blanks, in place; vendor trailers
+    after the last box (Samsung SEF) are cut.
+- **Other media** (TIFF, WebM/Matroska/MPEG video, MP3/Ogg/FLAC audio, …)
+  and ISO-BMFF files the walker cannot fully clean (compressed movie
+  header, fragmented timed metadata, external item data) cannot be cleaned
   by nostr-share. The CLI refuses to upload them without
   `--keep-metadata`; the dialog shows a banner and keeps **Publish**
-  disabled until you flip *Upload anyway, with metadata*. Phone videos in
-  particular often carry GPS coordinates.
+  disabled until you flip *Upload anyway, with metadata*.
 - A file whose container is malformed is refused outright — we never
   upload something we could not fully walk.
 - PDFs and other documents are uploaded byte-for-byte (their author /
@@ -277,7 +290,12 @@ relay or config on the machine running them never leaks in):
 
 - `test_kind` — the kind-mapping table and `--kind` validation
 - `test_event` — URL → `r` extraction, `imeta` / 1063 / 30023 tags, `--to`
-- `test_strip` — JPEG/PNG/WebP/GIF metadata removal and dimensions
+- `test_strip` — JPEG/PNG/WebP/GIF metadata removal and dimensions;
+  ISO-BMFF fixtures assembled box by box in the test (a fast-start MP4
+  with udta / QuickTime keys / XMP / a GPS track, a QuickTime file with a
+  trailer, HEIC and AVIF with Exif in mdat and XMP in idat): same size,
+  same offsets, pixels and samples untouched, idempotent; malformed and
+  unsupported constructs refused
 - `test_share` — private shares: every layer opened with the recipient's
   key (rumor id and pubkey, untagged seal by the sender, throwaway-key
   wrap with only a `p` tag, both timestamps randomised), inbox-only

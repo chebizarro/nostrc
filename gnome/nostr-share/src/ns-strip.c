@@ -8,6 +8,7 @@
  * upload something we could not fully walk.
  */
 #include "ns-strip.h"
+#include "ns-strip-isobmff.h"
 
 #include <string.h>
 
@@ -30,7 +31,8 @@ gboolean
 ns_strip_supported(const gchar *mime)
 {
   return g_strcmp0(mime, "image/jpeg") == 0 || g_strcmp0(mime, "image/png") == 0 ||
-         g_strcmp0(mime, "image/webp") == 0 || g_strcmp0(mime, "image/gif") == 0;
+         g_strcmp0(mime, "image/webp") == 0 || g_strcmp0(mime, "image/gif") == 0 ||
+         ns_isobmff_mime(mime, NULL);
 }
 
 /* ---- JPEG ---- */
@@ -292,6 +294,9 @@ ns_strip_metadata(const gchar *mime, const guint8 *data, gsize len,
   if (g_strcmp0(mime, "image/png") == 0)  return strip_png(data, len, out, n_removed);
   if (g_strcmp0(mime, "image/webp") == 0) return strip_webp(data, len, out, n_removed);
   if (g_strcmp0(mime, "image/gif") == 0)  return strip_gif(data, len, out, n_removed);
+  gboolean is_image = FALSE;
+  if (ns_isobmff_mime(mime, &is_image))
+    return ns_strip_isobmff(is_image, data, len, out, n_removed);
   return NS_STRIP_UNSUPPORTED;
 }
 
@@ -333,7 +338,10 @@ ns_image_dimensions(const gchar *mime, const guint8 *d, gsize len,
 {
   guint w = 0, h = 0;
   gboolean ok = FALSE;
-  if (g_strcmp0(mime, "image/jpeg") == 0) {
+  gboolean iso_image = FALSE;
+  if (ns_isobmff_mime(mime, &iso_image)) {
+    ok = ns_isobmff_dimensions(iso_image, d, len, &w, &h);
+  } else if (g_strcmp0(mime, "image/jpeg") == 0) {
     ok = jpeg_dims(d, len, &w, &h);
   } else if (g_strcmp0(mime, "image/png") == 0) {
     if (len >= 24 && memcmp(d, PNG_SIG, 8) == 0 && memcmp(d + 12, "IHDR", 4) == 0) {

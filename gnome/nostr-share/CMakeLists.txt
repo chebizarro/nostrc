@@ -46,6 +46,7 @@ add_library(nostr-share-core STATIC
   src/ns-kind.c
   src/ns-event.c
   src/ns-strip.c
+  src/ns-strip-isobmff.c
   src/ns-config.c
   src/ns-net.c
   src/ns-blossom.c
