@@ -1061,9 +1061,10 @@ test_group_data_extension_roundtrip(void)
 
     /* Add 2 admins */
     ext->admin_count = 2;
-    ext->admins = calloc(2 * 32, 1);
-    randombytes_buf(ext->admins, 32);
-    randombytes_buf(ext->admins + 32, 32);
+    ext->admins = calloc(ext->admin_count, sizeof *ext->admins);
+    assert(ext->admins != NULL);
+    memset(ext->admins[0], 0x11, sizeof ext->admins[0]);
+    memset(ext->admins[1], 0x22, sizeof ext->admins[1]);
 
     /* Add 2 relays */
     ext->relay_count = 2;
