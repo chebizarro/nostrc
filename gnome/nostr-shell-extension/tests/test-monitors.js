@@ -42,6 +42,7 @@ function ok(cond, what, extra = '') {
     }
 }
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const skip = (what, reason) => print(`ok ${++count} - ${what} # SKIP ${reason}`);
 
 function waitFor(pred, what, ms = 5000) {
     const ctx = GLib.MainContext.default();
@@ -307,11 +308,50 @@ wallet.refresh(60);
 spin(800);
 ok(balanceCalls === 0, 'wallet: another app\'s grant does not count');
 
+// Can this environment deliver file-monitor events at all? The inotify
+// watch budget (fs.inotify.max_user_watches) is per user, not per bus, so
+// dbus-run-session cannot isolate it: on the shared lab a recursive
+// watcher over $HOME (nostr-home-syncd, 65k watches) exhausted it,
+// inotify_add_watch failed with ENOSPC, and GLib's inotify monitor then
+// attaches silently and never fires (nostrc-twwl). Probe with a fresh
+// file in an existing directory, which reports CREATED immediately.
+function fileMonitorDelivers() {
+    const dir = GLib.build_filenamev([tmp, 'monitor-probe']);
+    GLib.mkdir_with_parents(dir, 0o700);
+    const file = Gio.File.new_for_path(GLib.build_filenamev([dir, 'probe']));
+    const mon = file.monitor_file(Gio.FileMonitorFlags.NONE, null);
+    let fired = false;
+    const id = mon.connect('changed', () => {
+        fired = true;
+    });
+    GLib.file_set_contents(file.get_path(), 'x');
+    waitFor(() => fired, 'file monitor probe', 3000);
+    mon.disconnect(id);
+    mon.cancel();
+    return fired;
+}
+const monitorOk = fileMonitorDelivers();
+if (!monitorOk) {
+    print('# file-monitor events are not delivered here: the per-user inotify watch budget is');
+    print('# probably exhausted (find the holder: grep -c "^inotify wd" /proc/*/fdinfo/*)');
+}
+
 // Grant for this process (what ticking "Always allow this app" writes).
 GLib.file_set_contents(budgets, JSON.stringify({version: 1, apps: {
     [walletState.callerId]: {limit_msat_per_day: 0, allow_read: true, day: '', spent_msat: 0},
 }}));
-ok(waitFor(() => walletState.balanceMsat !== null, 'balance', 5000), 'wallet: grant picked up (file monitor) and balance fetched');
+const grantWhat = 'wallet: grant picked up (file monitor) and balance fetched';
+if (monitorOk) {
+    // budgets.json's directory did not exist when the monitor started, so
+    // GLib attaches the watch from its missing-file rescan (every 4 s);
+    // allow for that plus the 500 ms reload debounce.
+    ok(waitFor(() => walletState.balanceMsat !== null, 'balance', 10000), grantWhat);
+} else {
+    skip(grantWhat, 'file-monitor events not delivered in this environment');
+    wallet.refresh(60);
+    ok(waitFor(() => walletState.balanceMsat !== null, 'balance', 5000),
+        'wallet: grant picked up on refresh() and balance fetched');
+}
 ok(balanceCalls === 1, 'wallet: exactly one GetBalance', String(balanceCalls));
 ok(walletView(walletState, 'en-US').label === 'Wallet: 21,000 sats', 'wallet: label',
     walletView(walletState, 'en-US').label);
