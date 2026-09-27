@@ -32,9 +32,15 @@ G_BEGIN_DECLS
 #define NS_KIND_GIFT_WRAP       1059
 #define NS_KIND_DM_RELAYS       10050
 
-/* A rumor's JSON must fit NIP-44 (65535 bytes) once more inside the seal
- * (base64 + event envelope). */
+/* The rumor is NIP-44-encrypted into the seal, and the seal's JSON is
+ * NIP-44-encrypted into the wrap, whose plaintext limit is 65535 bytes:
+ * base64(45000 + NIP-44 overhead ≈ 45100) ≈ 60200, plus the seal's
+ * envelope (id, pubkey, sig, created_at, kind, tags ≈ 300 bytes) ≈ 60500,
+ * leaving ~5 KB of headroom for future rumor tags. */
 #define NS_PRIVATE_MAX_RUMOR_BYTES 45000
+
+/* At most this many inbox relays are taken from someone's kind 10050. */
+#define NS_PRIVATE_MAX_INBOX_RELAYS 8
 
 typedef struct {
   guint8 key[32];
@@ -77,9 +83,21 @@ gchar *ns_private_gift_wrap(NostrPublishSigner *signer,
                             const gchar        *receiver_hex,
                             GError            **error);
 
-/* Relays of a kind-10050 event (`relay` tags; ws:// and wss:// only, in
- * order, deduplicated). Empty (never NULL) when there are none. */
-GStrv ns_private_inbox_relays(const gchar *event_json);
+/* Whether nostr-share will connect to @url when it comes from someone
+ * else's event (a kind-10050 inbox, their NIP-65 list): wss:// only, and
+ * never a loopback, private, link-local or `localhost` host — a hostile
+ * list must not steer connections at local services (or at relay.sock,
+ * which ws://localhost/ maps to), and plaintext ws:// would show every
+ * path observer the wrap's recipient. @allow_loopback admits ws:// and
+ * wss:// to loopback hosts (tests only). */
+gboolean ns_private_remote_relay_ok(const gchar *url, gboolean allow_loopback);
+
+/* Relays of a kind-10050 event (`relay` tags passing
+ * ns_private_remote_relay_ok(), in order, deduplicated, at most
+ * NS_PRIVATE_MAX_INBOX_RELAYS). Empty (never NULL) when none pass;
+ * @out_dropped (optional) counts the entries refused. */
+GStrv ns_private_inbox_relays(const gchar *event_json, gboolean allow_loopback,
+                              guint *out_dropped);
 
 G_END_DECLS
 

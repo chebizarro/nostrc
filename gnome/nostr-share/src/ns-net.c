@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "ns-net.h"
+#include "ns-blossom.h"
 #include "ns-kind.h"
 #include "ns-private.h"
 
@@ -624,11 +625,14 @@ ns_resolve_targets(const NsConfig *cfg, NsNet *net, const gchar *pubkey_hex,
 
 gboolean
 ns_resolve_inbox(const NsConfig *cfg, NsNet *net, const gchar *pubkey_hex,
-                 gchar ***out_relays, gchar **out_event_json, gchar **out_source)
+                 gchar ***out_relays, gchar **out_event_json, gchar **out_source,
+                 guint *out_dropped)
 {
   *out_relays = NULL;
   *out_event_json = NULL;
   *out_source = NULL;
+  if (out_dropped)
+    *out_dropped = 0;
   g_auto(GStrv) disc = discovery_relays(cfg, net);
   g_autofree gchar *ev = ns_net_fetch_replaceable(net, (const gchar *const *)disc,
                                                   NS_KIND_DM_RELAYS, pubkey_hex,
@@ -639,9 +643,17 @@ ns_resolve_inbox(const NsConfig *cfg, NsNet *net, const gchar *pubkey_hex,
     g_autofree gchar *rl = ns_net_fetch_replaceable(net, (const gchar *const *)disc,
                                                     10002, pubkey_hex,
                                                     cfg->query_timeout_ms, NULL);
-    g_auto(GStrv) theirs = rl ? nostr_publish_nip65_relays(rl, NOSTR_PUBLISH_NIP65_WRITE,
+    g_auto(GStrv) listed = rl ? nostr_publish_nip65_relays(rl, NOSTR_PUBLISH_NIP65_WRITE,
                                                            NULL) : NULL;
-    if (theirs != NULL && theirs[0] != NULL) {
+    /* Someone else's list: the same rules as their inbox relays. */
+    g_autoptr(GStrvBuilder) ok = g_strv_builder_new();
+    for (guint i = 0, n = 0; listed && listed[i] && n < NS_PRIVATE_MAX_INBOX_RELAYS; i++)
+      if (ns_private_remote_relay_ok(listed[i], cfg->allow_loopback_relays)) {
+        g_strv_builder_add(ok, listed[i]);
+        n++;
+      }
+    g_auto(GStrv) theirs = g_strv_builder_end(ok);
+    if (theirs[0] != NULL) {
       ev = ns_net_fetch_replaceable(net, (const gchar *const *)theirs, NS_KIND_DM_RELAYS,
                                     pubkey_hex, cfg->query_timeout_ms, NULL);
       source = "their NIP-65 relays";
@@ -649,7 +661,7 @@ ns_resolve_inbox(const NsConfig *cfg, NsNet *net, const gchar *pubkey_hex,
   }
   if (ev == NULL)
     return FALSE;
-  g_auto(GStrv) relays = ns_private_inbox_relays(ev);
+  g_auto(GStrv) relays = ns_private_inbox_relays(ev, cfg->allow_loopback_relays, out_dropped);
   if (relays[0] == NULL)
     return FALSE;
   *out_relays = g_steal_pointer(&relays);
@@ -676,7 +688,7 @@ ns_resolve_blossom_servers(const NsConfig *cfg, NsNet *net, const gchar *pubkey_
   g_autoptr(GStrvBuilder) b = g_strv_builder_new();
   guint n = 0;
   for (guint i = 0; cfg->blossom_servers && cfg->blossom_servers[i]; i++)
-    if (g_str_has_prefix(cfg->blossom_servers[i], "https://")) {
+    if (ns_blossom_server_ok(cfg->blossom_servers[i], cfg->allow_loopback_relays)) {
       g_autofree gchar *norm = g_strdup(cfg->blossom_servers[i]);
       gsize len = strlen(norm);
       while (len > 8 && norm[len - 1] == '/')

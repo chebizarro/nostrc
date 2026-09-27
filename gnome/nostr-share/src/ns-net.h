@@ -95,15 +95,18 @@ gboolean ns_resolve_targets(const NsConfig    *cfg,
 /* NIP-17 inbox of @pubkey_hex (nostrc-k95e): its verified kind-10050
  * event from the discovery relays, else from @pubkey_hex's own NIP-65
  * write relays (not under session_relay_only, which asks the session
- * relay only). FALSE (no error) when there is none: NIP-17 says not to
- * send then. @out_event_json is the event itself, for the session relay's
+ * relay only; and only those passing ns_private_remote_relay_ok()). FALSE
+ * (no error) when there is none, or none of its relays passes
+ * ns_private_remote_relay_ok() (@out_dropped > 0 then): NIP-17 says not
+ * to send. @out_event_json is the event itself, for the session relay's
  * router. */
 gboolean ns_resolve_inbox(const NsConfig *cfg,
                           NsNet          *net,
                           const gchar    *pubkey_hex,
                           gchar        ***out_relays,
                           gchar         **out_event_json,
-                          gchar         **out_source);
+                          gchar         **out_source,
+                          guint          *out_dropped);
 
 /* Blossom servers: kind 10063 (BUD-03) first, config fallback. */
 gchar **ns_resolve_blossom_servers(const NsConfig *cfg,

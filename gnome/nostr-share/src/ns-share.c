@@ -559,6 +559,19 @@ ns_share_free(NsShare *share)
 gboolean
 ns_share_set_private(NsShare *share, gboolean on, GError **error)
 {
+  /* A file a failed public attempt already uploaded is public on that
+   * Blossom server: sharing it "privately" now would be a false promise. */
+  for (guint i = 0; on && i < share->files->len; i++) {
+    const NsFile *f = g_ptr_array_index(share->files, i);
+    if (f->uploaded) {
+      g_set_error(error, NS_ERROR, NS_ERROR_BAD_INPUT,
+                  "%s was already uploaded unencrypted to %s; it cannot be shared "
+                  "privately any more (delete that blob from the server if it "
+                  "should not stay public)", f->display_name,
+                  f->blob.url ? f->blob.url : "Blossom");
+      return FALSE;
+    }
+  }
   gboolean old = share->private_share;
   share->private_share = on;
   if (!replan(share, error)) {
@@ -701,19 +714,26 @@ resolve_private(NsShare *share, GError **error)
                         "a private share needs the recipient's npub");
     return FALSE;
   }
+  guint dropped = 0;
   if (!ns_resolve_inbox(share->cfg, &share->net, share->to.pubkey_hex,
                         &share->inbox_to.relays, &share->inbox_to.event_json,
-                        &share->inbox_to.source)) {
-    g_set_error(error, NS_ERROR, NS_ERROR_NO_RELAYS,
-                "%s has no kind-10050 DM relay list, i.e. has not set up private "
-                "messages, and NIP-17 says not to send any. Nothing was uploaded "
-                "or sent.", share->to.npub);
+                        &share->inbox_to.source, &dropped)) {
+    if (dropped > 0)
+      g_set_error(error, NS_ERROR, NS_ERROR_NO_RELAYS,
+                  "%s's kind-10050 DM relay list names no relay nostr-share will "
+                  "send to (wss:// to a public host only; %u refused). Nothing was "
+                  "uploaded or sent.", share->to.npub, dropped);
+    else
+      g_set_error(error, NS_ERROR, NS_ERROR_NO_RELAYS,
+                  "%s has no kind-10050 DM relay list, i.e. has not set up private "
+                  "messages, and NIP-17 says not to send any. Nothing was uploaded "
+                  "or sent.", share->to.npub);
     return FALSE;
   }
   if (g_strcmp0(share->to.pubkey_hex, share->pubkey_hex) != 0)
     (void)ns_resolve_inbox(share->cfg, &share->net, share->pubkey_hex,
                            &share->inbox_self.relays, &share->inbox_self.event_json,
-                           &share->inbox_self.source);
+                           &share->inbox_self.source, NULL);
 
   const NsConfig *cfg = share->cfg;
   NsTargets *t = &share->targets;
@@ -1028,13 +1048,36 @@ ns_share_upload(NsShare *share, gboolean *urls_changed, NsProgressFunc progress,
       NsFile *f = g_ptr_array_index(p->files, 0);
       if (f->sealed_uploaded)
         continue;
-      say(progress, user_data, "Uploading %s, encrypted (%" G_GUINT64_FORMAT " KiB)…",
-          f->display_name, f->sealed_blob.size / 1024u);
+      say(progress, user_data, "Uploading %s, encrypted, with a throwaway key "
+          "(%" G_GUINT64_FORMAT " KiB)…", f->display_name, f->sealed_blob.size / 1024u);
       g_autofree gchar *url = NULL, *server = NULL;
+      gboolean refused = FALSE;
+      GError *local = NULL;
       if (!ns_blossom_upload((const gchar *const *)share->servers, share->signer,
-                             share->pubkey_hex, f->sealed_blob.mime, f->sealed,
-                             f->sealed_blob.sha256, &url, &server, error))
-        return FALSE;
+                             share->pubkey_hex, NS_BLOSSOM_AUTH_THROWAWAY,
+                             share->cfg->allow_loopback_relays, f->sealed_blob.mime,
+                             f->sealed, f->sealed_blob.sha256, &url, &server, &refused,
+                             &local)) {
+        if (!refused || share->cfg->private_blob_throwaway_only) {
+          if (refused)
+            g_prefix_error(&local, "the Blossom servers only accept uploads signed by "
+                                   "your key and private_blob_auth=throwaway_only: ");
+          g_propagate_error(error, local);
+          return FALSE;
+        }
+        /* Every server wants to know who uploads (paid / allow-listed
+         * servers). It learns that this key uploaded an opaque blob — not
+         * what it is, nor who it is for. */
+        g_clear_error(&local);
+        say(progress, user_data, "The Blossom server only takes uploads signed by your "
+            "key: uploading the encrypted %s as you…", f->display_name);
+        if (!ns_blossom_upload((const gchar *const *)share->servers, share->signer,
+                               share->pubkey_hex, NS_BLOSSOM_AUTH_ACCOUNT,
+                               share->cfg->allow_loopback_relays, f->sealed_blob.mime,
+                               f->sealed, f->sealed_blob.sha256, &url, &server, NULL, error))
+          return FALSE;
+        f->sealed_upload_linked = TRUE;
+      }
       if (urls_changed != NULL && g_strcmp0(url, f->sealed_blob.url) != 0)
         *urls_changed = TRUE;
       g_free(f->sealed_blob.url);
@@ -1052,8 +1095,9 @@ ns_share_upload(NsShare *share, gboolean *urls_changed, NsProgressFunc progress,
           f->display_name, f->blob.size / 1024u);
       g_autofree gchar *url = NULL, *server = NULL;
       if (!ns_blossom_upload((const gchar *const *)share->servers, share->signer,
-                             share->pubkey_hex, f->blob.mime, f->bytes,
-                             f->blob.sha256, &url, &server, error))
+                             share->pubkey_hex, NS_BLOSSOM_AUTH_ACCOUNT,
+                             share->cfg->allow_loopback_relays, f->blob.mime, f->bytes,
+                             f->blob.sha256, &url, &server, NULL, error))
         return FALSE;
       if (urls_changed != NULL && g_strcmp0(url, f->blob.url) != 0)
         *urls_changed = TRUE;
@@ -1180,6 +1224,12 @@ publish_private(NsShare *share, NsPost *p, NsProgressFunc progress, gpointer use
     g_string_append_printf(r, "\n  %s", (const gchar *)g_ptr_array_index(rep.lines, k));
   }
   ns_publish_report_clear(&rep);
+  if (p->action == NS_ACTION_PRIVATE_FILE) {
+    const NsFile *f = g_ptr_array_index(p->files, 0);
+    g_string_append_printf(r, "\n  encrypted file on Blossom: %s", f->sealed_upload_linked
+                             ? "uploaded under your key (the server required it)"
+                             : "uploaded with a throwaway key");
+  }
   g_free(p->signed_json);
   p->signed_json = g_steal_pointer(&wrap);   /* what went out: opaque */
 

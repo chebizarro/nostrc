@@ -15,6 +15,7 @@
 
 #include <nostr/nip44/nip44.h>
 #include <nostr/nip59/nip59.h>
+#include <libsoup/soup.h>
 
 #include "nostr-event.h"
 #include "nostr-keys.h"
@@ -977,11 +978,13 @@ tags_of(JsonParser **keep, const gchar *json)
   return json_object_get_array_member(parse_obj(json, keep), "tags");
 }
 
+/* Strictly in the past, within two days: never the send time (which is
+ * what nips/nip59's broken randomiser produced, nostrc-rd8j). */
 static void
 assert_randomised(gint64 created_at)
 {
   gint64 now = g_get_real_time() / G_USEC_PER_SEC;
-  g_assert_cmpint(created_at, <=, now + 1);
+  g_assert_cmpint(created_at, <, now);
   g_assert_cmpint(created_at, >=, now - 2 * 24 * 3600 - 5);
 }
 
@@ -1078,8 +1081,9 @@ test_private_text(void)
   g_autofree gchar *preview = ns_share_preview_json(s, FALSE);
   g_assert_nonnull(strstr(preview, "// private (NIP-17)"));
 
-  g_assert_true(ns_share_publish(s, NULL, NULL, &err));
+  gboolean published = ns_share_publish(s, NULL, NULL, &err);
   g_assert_no_error(err);
+  g_assert_true(published);
   /* The recipient's wrap to their inbox relays, our copy to ours; not a
    * byte to the write/home relay. */
   g_assert_cmpuint(published_count("wss://inbox1.test"), ==, 1);
@@ -1234,6 +1238,258 @@ test_private_file(void)
     if (g_str_equal(json_array_get_string_element(t, 0), "decryption-nonce"))
       g_assert_cmpuint(strlen(json_array_get_string_element(t, 1)), ==, 24);
   }
+}
+
+/* ---- a fake Blossom server (BUD-02 PUT /upload) on 127.0.0.1 ---- */
+
+typedef struct {
+  SoupServer   *server;
+  GThread      *thread;
+  GMainContext *ctx;
+  GMainLoop    *loop;
+  GMutex        lock;
+  GCond         cond;
+  gboolean      ready;
+  gchar        *url;          /* http://127.0.0.1:<port> */
+  gchar        *require_pk;   /* NULL: any valid auth */
+  GPtrArray    *auth_pks;     /* pubkeys that authorised an attempt */
+  GBytes       *body;         /* last accepted upload */
+  gchar        *content_type;
+} FakeBlossom;
+
+static void
+blossom_upload(SoupServer *srv, SoupServerMessage *msg, const char *path, GHashTable *q,
+               gpointer ud)
+{
+  (void)srv; (void)path; (void)q;
+  FakeBlossom *b = ud;
+  const char *auth = soup_message_headers_get_one(soup_server_message_get_request_headers(msg),
+                                                  "Authorization");
+  gchar *pk = NULL;
+  if (auth != NULL && g_str_has_prefix(auth, "Nostr ")) {
+    gsize n = 0;
+    g_autofree guchar *json = g_base64_decode(auth + 6, &n);
+    g_autofree gchar *s = g_strndup((const gchar *)json, n);
+    NostrEvent *ev = nostr_event_new();
+    if (nostr_event_deserialize_compact(ev, s, NULL) == 1 &&
+        nostr_event_validate(ev, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+        nostr_event_get_kind(ev) == 24242)
+      pk = g_strdup(nostr_event_get_pubkey(ev));
+    nostr_event_free(ev);
+  }
+  g_mutex_lock(&b->lock);
+  if (pk != NULL)
+    g_ptr_array_add(b->auth_pks, g_strdup(pk));
+  gboolean allowed = pk != NULL && (b->require_pk == NULL || g_str_equal(pk, b->require_pk));
+  if (allowed) {
+    g_autoptr(GBytes) body = soup_message_body_flatten(soup_server_message_get_request_body(msg));
+    g_clear_pointer(&b->body, g_bytes_unref);
+    b->body = g_bytes_ref(body);
+    g_free(b->content_type);
+    b->content_type = g_strdup(soup_message_headers_get_content_type(
+      soup_server_message_get_request_headers(msg), NULL));
+    gsize n = 0;
+    const guint8 *d = g_bytes_get_data(body, &n);
+    g_autofree gchar *sha = ns_sha256_hex(d, n);
+    g_autofree gchar *reply = g_strdup_printf(
+      "{\"url\":\"%s/%s\",\"sha256\":\"%s\",\"size\":%zu,\"type\":\"application/octet-stream\"}",
+      b->url, sha, sha, n);
+    soup_server_message_set_status(msg, 200, NULL);
+    soup_server_message_set_response(msg, "application/json", SOUP_MEMORY_COPY, reply,
+                                     strlen(reply));
+  } else {
+    soup_server_message_set_status(msg, 401, NULL);
+  }
+  g_mutex_unlock(&b->lock);
+  g_free(pk);
+}
+
+static gpointer
+blossom_thread(gpointer p)
+{
+  FakeBlossom *b = p;
+  g_main_context_push_thread_default(b->ctx);
+  b->server = soup_server_new(NULL, NULL);
+  soup_server_add_handler(b->server, "/upload", blossom_upload, b, NULL);
+  g_assert_true(soup_server_listen_local(b->server, 0, SOUP_SERVER_LISTEN_IPV4_ONLY, NULL));
+  GSList *uris = soup_server_get_uris(b->server);
+  g_mutex_lock(&b->lock);
+  b->url = g_strdup_printf("http://127.0.0.1:%d", g_uri_get_port(uris->data));
+  b->ready = TRUE;
+  g_cond_signal(&b->cond);
+  g_mutex_unlock(&b->lock);
+  g_slist_free_full(uris, (GDestroyNotify)g_uri_unref);
+  g_main_loop_run(b->loop);
+  soup_server_disconnect(b->server);
+  g_clear_object(&b->server);
+  g_main_context_pop_thread_default(b->ctx);
+  return NULL;
+}
+
+static FakeBlossom *
+blossom_start(const gchar *require_pk)
+{
+  FakeBlossom *b = g_new0(FakeBlossom, 1);
+  g_mutex_init(&b->lock);
+  g_cond_init(&b->cond);
+  b->require_pk = g_strdup(require_pk);
+  b->auth_pks = g_ptr_array_new_with_free_func(g_free);
+  b->ctx = g_main_context_new();
+  b->loop = g_main_loop_new(b->ctx, FALSE);
+  b->thread = g_thread_new("fake-blossom", blossom_thread, b);
+  g_mutex_lock(&b->lock);
+  while (!b->ready)
+    g_cond_wait(&b->cond, &b->lock);
+  g_mutex_unlock(&b->lock);
+  return b;
+}
+
+static void
+blossom_stop(FakeBlossom *b)
+{
+  g_main_loop_quit(b->loop);
+  g_thread_join(b->thread);
+  g_main_loop_unref(b->loop);
+  g_main_context_unref(b->ctx);
+  g_ptr_array_unref(b->auth_pks);
+  g_clear_pointer(&b->body, g_bytes_unref);
+  g_free(b->content_type);
+  g_free(b->require_pk);
+  g_free(b->url);
+  g_mutex_clear(&b->lock);
+  g_cond_clear(&b->cond);
+  g_free(b);
+}
+
+/* Private uploads are authorised by a throwaway key; only a server that
+ * refuses it gets the account key — unless private_blob_auth forbids. */
+static void
+test_private_upload_unlinked(void)
+{
+  static const struct { gboolean strict, throwaway_only; } cases[] = {
+    { FALSE, FALSE }, { TRUE, FALSE }, { TRUE, TRUE },
+  };
+  for (gsize c = 0; c < G_N_ELEMENTS(cases); c++) {
+    relays_reset();
+    can_inboxes(FALSE);
+    FakeBlossom *b = blossom_start(cases[c].strict ? K.pk : NULL);
+    g_autofree gchar *jpg = tmpfile_with("photo.jpg", TINY_JPEG, sizeof(TINY_JPEG));
+    const gchar *args[] = { jpg, NULL };
+    GError *err = NULL;
+    g_autoptr(NsShare) s = private_share(NULL, args, b->url, &err);
+    g_assert_no_error(err);
+    s->cfg->allow_loopback_relays = TRUE;          /* the fake server is http://127.0.0.1 */
+    s->cfg->private_blob_throwaway_only = cases[c].throwaway_only;
+    NsFile *f = g_ptr_array_index(s->files, 0);
+    gboolean changed = FALSE;
+    gboolean ok = ns_share_upload(s, &changed, NULL, NULL, &err);
+    g_mutex_lock(&b->lock);
+    g_assert_cmpuint(b->auth_pks->len, >=, 1);
+    const gchar *first = g_ptr_array_index(b->auth_pks, 0);
+    g_assert_cmpstr(first, !=, K.pk);               /* tried unlinked first */
+    if (cases[c].throwaway_only) {
+      g_assert_false(ok);
+      g_assert_error(err, NS_ERROR, NS_ERROR_UPLOAD);
+      g_assert_nonnull(strstr(err->message, "throwaway_only"));
+      g_clear_error(&err);
+      g_assert_cmpuint(b->auth_pks->len, ==, 1);    /* never as the user */
+      g_assert_null(b->body);
+    } else {
+      g_assert_no_error(err);
+      g_assert_true(ok);
+      g_assert_true(f->sealed_uploaded);
+      g_assert_true(g_bytes_equal(b->body, f->sealed));   /* only ciphertext left */
+      g_assert_cmpstr(b->content_type, ==, "application/octet-stream");
+      g_assert_cmpint(f->sealed_upload_linked, ==, cases[c].strict);
+      if (cases[c].strict) {
+        g_assert_cmpuint(b->auth_pks->len, ==, 2);
+        g_assert_cmpstr(g_ptr_array_index(b->auth_pks, 1), ==, K.pk);
+      } else {
+        g_assert_cmpuint(b->auth_pks->len, ==, 1);
+      }
+      g_autofree gchar *want = g_strdup_printf("%s/%s", b->url, f->sealed_blob.sha256);
+      g_assert_cmpstr(f->sealed_blob.url, ==, want);
+    }
+    g_mutex_unlock(&b->lock);
+    blossom_stop(b);
+  }
+}
+
+/* Other people's relay lists are untrusted input (Oracle review). */
+static void
+test_private_relay_policy(void)
+{
+  static const struct { const gchar *url; gboolean ok, ok_loopback; } T[] = {
+    { "wss://relay.example.com", TRUE, TRUE },
+    { "wss://relay.example.com:4443/inbox", TRUE, TRUE },
+    { "ws://relay.example.com", FALSE, FALSE },           /* plaintext: path observers */
+    { "ws://localhost/", FALSE, FALSE },                  /* = relay.sock */
+    { "wss://localhost", FALSE, FALSE },
+    { "wss://foo.localhost", FALSE, FALSE },
+    { "ws://127.0.0.1:7777", FALSE, TRUE },
+    { "wss://127.0.0.1", FALSE, TRUE },
+    { "wss://[::1]:8080", FALSE, TRUE },
+    { "wss://10.0.0.5", FALSE, FALSE },
+    { "wss://192.168.1.2", FALSE, FALSE },
+    { "wss://169.254.1.1", FALSE, FALSE },
+    { "wss://[fd00::1]", FALSE, FALSE },
+    { "wss://0.0.0.0", FALSE, FALSE },
+    { "wss://printer.local", FALSE, FALSE },
+    { "wss://user:pw@relay.example.com", FALSE, FALSE },
+    { "https://relay.example.com", FALSE, FALSE },
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS(T); i++) {
+    g_test_message("%s", T[i].url);
+    g_assert_cmpint(ns_private_remote_relay_ok(T[i].url, FALSE), ==, T[i].ok);
+    g_assert_cmpint(ns_private_remote_relay_ok(T[i].url, TRUE), ==, T[i].ok_loopback);
+  }
+
+  /* A hostile kind 10050: only the public wss:// entries survive, capped. */
+  GString *tags = g_string_new("[[\"relay\",\"ws://localhost/\"],[\"relay\",\"ws://127.0.0.1:80\"],"
+                               "[\"relay\",\"ws://plain.example.com\"]");
+  for (int i = 0; i < 12; i++)
+    g_string_append_printf(tags, ",[\"relay\",\"wss://r%d.example.com\"]", i);
+  g_string_append(tags, "]");
+  g_autofree gchar *ev = signed_event_by(REC.sk, REC.pk, 10050, tags->str);
+  g_string_free(tags, TRUE);
+  guint dropped = 0;
+  g_auto(GStrv) relays = ns_private_inbox_relays(ev, FALSE, &dropped);
+  g_assert_cmpuint(g_strv_length(relays), ==, NS_PRIVATE_MAX_INBOX_RELAYS);
+  g_assert_cmpstr(relays[0], ==, "wss://r0.example.com");
+  g_assert_cmpuint(dropped, ==, 3 + 12 - NS_PRIVATE_MAX_INBOX_RELAYS);
+
+  /* Nothing usable: refused, and the message says why. */
+  relays_reset();
+  can("wss://home.test", 10050, signed_event_by(REC.sk, REC.pk, 10050,
+                                                "[[\"relay\",\"ws://localhost/\"]]"));
+  const gchar *texts[] = { "x", NULL };
+  GError *err = NULL;
+  g_autoptr(NsShare) s = private_share(texts, NULL, NULL, &err);
+  g_assert_false(ns_share_resolve(s, &err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_NO_RELAYS);
+  g_assert_nonnull(strstr(err->message, "wss:// to a public host only"));
+  g_clear_error(&err);
+  g_assert_cmpuint(R.published->len, ==, 0);
+}
+
+/* A file a failed public attempt uploaded in the clear cannot turn private. */
+static void
+test_private_after_public_upload(void)
+{
+  relays_reset();
+  g_autofree gchar *jpg = tmpfile_with("photo.jpg", TINY_JPEG, sizeof(TINY_JPEG));
+  const gchar *args[] = { jpg, NULL };
+  GError *err = NULL;
+  g_autoptr(NsShare) s = share_new(config("wss://w1.test", "https://blossom.test"), NULL,
+                                   args, REC.pk, 0, &err);
+  NsFile *f = g_ptr_array_index(s->files, 0);
+  f->uploaded = TRUE;             /* as ns_share_upload() leaves it */
+  f->blob.url = g_strdup("https://blossom.test/abc.jpg");
+  g_assert_false(ns_share_set_private(s, TRUE, &err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_BAD_INPUT);
+  g_assert_nonnull(strstr(err->message, "already uploaded unencrypted"));
+  g_clear_error(&err);
+  g_assert_false(s->private_share);
 }
 
 /* A forwarding session relay carries the wrap; it learns the recipient's
@@ -1393,6 +1649,9 @@ main(int argc, char **argv)
   g_test_add_func("/nostr-share/private/refusals", test_private_refusals);
   g_test_add_func("/nostr-share/private/file", test_private_file);
   g_test_add_func("/nostr-share/private/via-session-relay", test_private_via_session_relay);
+  g_test_add_func("/nostr-share/private/upload-unlinked", test_private_upload_unlinked);
+  g_test_add_func("/nostr-share/private/relay-policy", test_private_relay_policy);
+  g_test_add_func("/nostr-share/private/after-public-upload", test_private_after_public_upload);
   int rc = g_test_run();
   relays_reset();
   free(K.sk);

@@ -41,6 +41,13 @@ typedef struct {
   gchar          *dav_url;            /* NULL: ask `nostr-dav --show-credentials` */
   gint            text_kind;          /* default kind for plain text: 0 (= 1) | 1 | 30023 */
   gboolean        keep_metadata;      /* default for --keep-metadata */
+  /* --private uploads (nostrc-k95e): authorise with a throwaway key; if
+   * every server refuses that, fall back to the account key (default) or
+   * fail (private_blob_auth=throwaway_only). */
+  gboolean        private_blob_throwaway_only;
+  /* Test seam, never read from the file: admit ws:// / wss:// to loopback
+   * IP literals in other people's relay lists (fake relays on 127.0.0.1). */
+  gboolean        allow_loopback_relays;
   gchar          *config_path;        /* for messages */
 } NsConfig;
 

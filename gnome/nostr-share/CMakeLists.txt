@@ -59,7 +59,7 @@ target_include_directories(nostr-share-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/s
 target_compile_definitions(nostr-share-core PUBLIC NS_VERSION="${NOSTR_SHARE_VERSION}")
 target_compile_options(nostr-share-core PRIVATE ${NS_WARNING_FLAGS})
 target_link_libraries(nostr-share-core PUBLIC
-  nostr-publish hanami nip34 nip19 nostr nostr_nip59_core nostr_nip44_core
+  nostr-publish hanami nip34 nip19 nostr nostr_nip44_core
   OpenSSL::Crypto
   PkgConfig::NS_GLIB PkgConfig::NS_JSONGLIB PkgConfig::NS_SOUP)
 
@@ -84,8 +84,9 @@ install(FILES data/nostr-share.conf.example README.md
 if (BUILD_TESTING)
   foreach(_ns_test IN ITEMS kind event strip share)
     add_executable(test-nostr-share-${_ns_test} tests/test_${_ns_test}.c)
+    # nip59 only to open wraps the way a recipient would.
     target_link_libraries(test-nostr-share-${_ns_test} PRIVATE nostr-share-core
-      nostr-publish-fake-session-relay)
+      nostr-publish-fake-session-relay nostr_nip59_core)
     target_compile_options(test-nostr-share-${_ns_test} PRIVATE ${NS_WARNING_FLAGS})
     add_test(NAME nostr-share-${_ns_test} COMMAND test-nostr-share-${_ns_test})
     set_tests_properties(nostr-share-${_ns_test} PROPERTIES
@@ -99,7 +100,8 @@ if (BUILD_TESTING)
     add_executable(test-nostr-share-e2e tests/test_share_e2e.c tests/ns-fake-signer.c)
     target_include_directories(test-nostr-share-e2e PRIVATE
       ${CMAKE_SOURCE_DIR}/apps/relayd/tests ${CMAKE_SOURCE_DIR}/libnostr/include)
-    target_link_libraries(test-nostr-share-e2e PRIVATE nostr-share-core nostr_json)
+    target_link_libraries(test-nostr-share-e2e PRIVATE nostr-share-core nostr_json
+      nostr_nip59_core)
     # fake_remote_relay.h is header-only: not every helper is used here.
     target_compile_options(test-nostr-share-e2e PRIVATE ${NS_WARNING_FLAGS}
       -Wno-unused-function)

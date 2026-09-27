@@ -18,17 +18,36 @@
 
 G_BEGIN_DECLS
 
+/* https:// — or, with @allow_loopback_http (tests only), http:// to a
+ * loopback IP literal. */
+gboolean ns_blossom_server_ok(const gchar *server, gboolean allow_loopback_http);
+
+/* Who authorises the upload (the BUD-02 kind-24242 event). */
+typedef enum {
+  NS_BLOSSOM_AUTH_ACCOUNT,    /* the user's key, through @signer */
+  NS_BLOSSOM_AUTH_THROWAWAY,  /* a key made for this upload and wiped: the
+                               * server cannot link the blob to the user
+                               * (--private, nostrc-k95e) */
+} NsBlossomAuth;
+
 /* Upload @data to the first of @servers that accepts it. @out_url is the
  * server-reported descriptor URL (or <server>/<sha256>.<ext> when the
- * server omits it); @out_server is the server that took it. */
+ * server omits it); @out_server is the server that took it.
+ * @out_auth_refused (optional): TRUE when every server refused the
+ * authorisation (401/403) rather than failing otherwise.
+ * @allow_loopback_http: also accept http:// servers on loopback IP
+ * literals (tests only); otherwise https:// only. */
 gboolean ns_blossom_upload(const gchar *const *servers,
                            NostrPublishSigner *signer,
                            const gchar        *pubkey_hex,
+                           NsBlossomAuth       auth,
+                           gboolean            allow_loopback_http,
                            const gchar        *mime,
                            GBytes             *data,
                            const gchar        *sha256_hex,
                            gchar             **out_url,
                            gchar             **out_server,
+                           gboolean           *out_auth_refused,
                            GError            **error);
 
 G_END_DECLS

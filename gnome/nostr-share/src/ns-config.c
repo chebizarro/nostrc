@@ -127,6 +127,20 @@ ns_config_load(GError **error)
       return NULL;
     }
   }
+  g_autofree gchar *blob_auth = g_key_file_get_string(kf, NS_CONFIG_GROUP,
+                                                      "private_blob_auth", NULL);
+  if (blob_auth != NULL) {
+    g_strstrip(blob_auth);
+    if (g_str_equal(blob_auth, "throwaway_only")) {
+      cfg->private_blob_throwaway_only = TRUE;
+    } else if (!g_str_equal(blob_auth, "throwaway_then_account")) {
+      g_set_error(error, NS_ERROR, NS_ERROR_BAD_INPUT,
+                  "%s: private_blob_auth must be throwaway_then_account or "
+                  "throwaway_only", cfg->config_path);
+      ns_config_free(cfg);
+      return NULL;
+    }
+  }
   g_autofree gchar *dav = g_key_file_get_string(kf, NS_CONFIG_GROUP, "dav_url", NULL);
   if (dav != NULL && *g_strstrip(dav) != '\0')
     cfg->dav_url = g_steal_pointer(&dav);

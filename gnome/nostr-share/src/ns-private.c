@@ -6,11 +6,17 @@
 #include "ns-kind.h"
 
 #include "nostr-event.h"
-#include <nostr/nip59/nip59.h>
+#include "nostr-keys.h"
+#include "nostr-utils.h"
+#include <nostr/nip44/nip44.h>
 
+#include <gio/gio.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <string.h>
+
+/* NIP-59: seal and wrap timestamps up to two days in the past. */
+#define NS_PRIVATE_TIME_WINDOW (2 * 24 * 3600)
 
 #define NS_GCM_TAG_LEN 16
 
@@ -156,6 +162,101 @@ ns_private_rumor_json(gint kind, gint64 created_at, const gchar *sender_hex,
   return json_generator_to_data(gen, NULL);
 }
 
+/* now − uniform(1 .. window) from OpenSSL's CSPRNG; FALSE if it has none
+ * (never fall back to the real time: that is the metadata being hidden). */
+static gboolean
+random_past(gint64 now, gint64 *out)
+{
+  guint32 r = 0;
+  if (RAND_bytes((guint8 *)&r, sizeof(r)) != 1)
+    return FALSE;
+  *out = now - 1 - (gint64)(r % NS_PRIVATE_TIME_WINDOW);
+  return TRUE;
+}
+
+/* A NIP-44 v2 payload: canonical base64, 132 .. 87472 characters. */
+static gboolean
+looks_nip44(const gchar *s)
+{
+  gsize n = strlen(s);
+  if (n < 132 || n > 87472)
+    return FALSE;
+  for (gsize i = 0; i < n; i++)
+    if (!g_ascii_isalnum(s[i]) && s[i] != '+' && s[i] != '/' && s[i] != '=')
+      return FALSE;
+  return TRUE;
+}
+
+/* NIP-59 gift wrap of @seal_json for @receiver_hex from a key made for this
+ * wrap alone, then wiped. Built here rather than with nips/nip59, whose
+ * nostr_nip59_randomize_timestamp() always falls back to the real time
+ * (its RNG helper passes a 64-char key to a 4-byte nostr_hex2bin(); bead
+ * nostrc-rd8j), which would stamp every wrap with the true send time. */
+static gchar *
+wrap_seal(const gchar *seal_json, const gchar *receiver_hex, GError **error)
+{
+  gint64 at = 0;
+  guint8 rpk[32], esk_bin[32];
+  if (!random_past(g_get_real_time() / G_USEC_PER_SEC, &at) ||
+      !nostr_hex2bin(rpk, receiver_hex, sizeof(rpk))) {
+    g_set_error_literal(error, NS_ERROR, NS_ERROR_PUBLISH, "gift-wrapping failed");
+    return NULL;
+  }
+  char *esk = nostr_key_generate_private();
+  char *epk = esk ? nostr_key_get_public(esk) : NULL;
+  char *enc = NULL;
+  gchar *out = NULL;
+  if (epk != NULL && nostr_hex2bin(esk_bin, esk, sizeof(esk_bin)) &&
+      nostr_nip44_encrypt_v2(esk_bin, rpk, (const guint8 *)seal_json, strlen(seal_json),
+                             &enc) == 0 && enc != NULL) {
+    g_autoptr(JsonArray) tags = json_array_new();
+    ns_tags_add(tags, "p", receiver_hex, NULL);
+    g_autofree gchar *u = ns_event_unsigned_json(NS_KIND_GIFT_WRAP, at, epk, tags, enc, FALSE);
+    NostrEvent *ev = nostr_event_new();
+    if (nostr_event_deserialize_compact(ev, u, NULL) == 1 && nostr_event_sign(ev, esk) == 0) {
+      char *s = nostr_event_serialize_compact(ev);
+      out = g_strdup(s);
+      free(s);
+    }
+    nostr_event_free(ev);
+  }
+  OPENSSL_cleanse(esk_bin, sizeof(esk_bin));
+  if (esk != NULL) {
+    OPENSSL_cleanse(esk, strlen(esk));
+    free(esk);
+  }
+  free(epk);
+  free(enc);
+  if (out == NULL)
+    g_set_error_literal(error, NS_ERROR, NS_ERROR_PUBLISH, "gift-wrapping failed");
+  return out;
+}
+
+/* Defence in depth on what we are about to publish: a kind 1059 not by
+ * the sender, naming exactly its receiver, dated strictly in the past
+ * within the NIP-59 window. */
+static gboolean
+wrap_shape_ok(NostrEvent *wrap, const gchar *wrap_json, const gchar *sender_hex,
+              const gchar *receiver_hex, gint64 asked_at)
+{
+  gint64 t = nostr_event_get_created_at(wrap);
+  if (nostr_event_get_kind(wrap) != NS_KIND_GIFT_WRAP ||
+      g_ascii_strcasecmp(nostr_event_get_pubkey(wrap), sender_hex) == 0 ||
+      t >= asked_at || t < asked_at - NS_PRIVATE_TIME_WINDOW - 1)
+    return FALSE;
+  g_autoptr(JsonParser) p = json_parser_new();
+  if (!json_parser_load_from_data(p, wrap_json, -1, NULL))
+    return FALSE;
+  JsonArray *tags = json_object_get_array_member(json_node_get_object(json_parser_get_root(p)),
+                                                 "tags");
+  if (tags == NULL || json_array_get_length(tags) != 1)
+    return FALSE;
+  JsonArray *pt = json_array_get_array_element(tags, 0);
+  return pt != NULL && json_array_get_length(pt) >= 2 &&
+         g_strcmp0(json_array_get_string_element(pt, 0), "p") == 0 &&
+         g_ascii_strcasecmp(json_array_get_string_element(pt, 1), receiver_hex) == 0;
+}
+
 gchar *
 ns_private_gift_wrap(NostrPublishSigner *signer, const gchar *sender_hex,
                      const gchar *rumor_json, const gchar *receiver_hex,
@@ -179,10 +280,20 @@ ns_private_gift_wrap(NostrPublishSigner *signer, const gchar *sender_hex,
     g_clear_error(&local);
     return NULL;
   }
+  if (!looks_nip44(sealed_rumor)) {
+    g_set_error_literal(error, NS_ERROR, NS_ERROR_NO_SIGNER,
+                        "the signer's NIP44Encrypt did not return a NIP-44 payload");
+    return NULL;
+  }
+  gint64 seal_at = 0;
+  if (!random_past(g_get_real_time() / G_USEC_PER_SEC, &seal_at)) {
+    g_set_error_literal(error, NS_ERROR, NS_ERROR_PUBLISH,
+                        "no randomness to hide the seal's time");
+    return NULL;
+  }
   g_autoptr(JsonArray) no_tags = json_array_new();
   g_autofree gchar *seal_unsigned =
-    ns_event_unsigned_json(NS_KIND_SEAL, nostr_nip59_randomize_timestamp(0, 0), NULL,
-                           no_tags, sealed_rumor, FALSE);
+    ns_event_unsigned_json(NS_KIND_SEAL, seal_at, NULL, no_tags, sealed_rumor, FALSE);
   g_autofree gchar *seal_json =
     nostr_publish_signer_sign_event_json(signer, seal_unsigned, NULL, &local);
   if (seal_json == NULL) {
@@ -200,7 +311,7 @@ ns_private_gift_wrap(NostrPublishSigner *signer, const gchar *sender_hex,
     nostr_event_deserialize_signed(seal, seal_json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
     nostr_event_validate(seal, NULL) == NOSTR_EVENT_VALIDATION_OK &&
     nostr_event_get_kind(seal) == NS_KIND_SEAL &&
-    g_strcmp0(nostr_event_get_pubkey(seal), sender_hex) == 0;
+    g_ascii_strcasecmp(nostr_event_get_pubkey(seal), sender_hex) == 0;
   if (seal_ok) {
     g_autoptr(JsonParser) p = json_parser_new();
     seal_ok = json_parser_load_from_data(p, seal_json, -1, NULL) &&
@@ -215,26 +326,26 @@ ns_private_gift_wrap(NostrPublishSigner *signer, const gchar *sender_hex,
     return NULL;
   }
 
-  /* 3. Gift wrap from a key made for this wrap alone (nip59 generates,
-   *    uses and wipes it). */
-  NostrEvent *wrap = nostr_nip59_wrap(seal, receiver_hex, NULL);
   nostr_event_free(seal);
-  if (wrap == NULL) {
-    g_set_error_literal(error, NS_ERROR, NS_ERROR_PUBLISH, "gift-wrapping failed");
+
+  /* 3. Gift wrap from a key made for this wrap alone. */
+  gint64 asked_at = g_get_real_time() / G_USEC_PER_SEC + 1;
+  gchar *wrap_json = wrap_seal(seal_json, receiver_hex, error);
+  if (wrap_json == NULL)
     return NULL;
-  }
-  char *out = nostr_event_serialize_compact(wrap);
-  gboolean wrap_ok = out != NULL && nostr_event_get_kind(wrap) == NS_KIND_GIFT_WRAP &&
-                     g_strcmp0(nostr_event_get_pubkey(wrap), sender_hex) != 0;
+  NostrEvent *wrap = nostr_event_new();
+  gboolean ok = nostr_event_deserialize_signed(wrap, wrap_json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+                nostr_event_validate(wrap, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+                wrap_shape_ok(wrap, wrap_json, sender_hex, receiver_hex, asked_at);
   nostr_event_free(wrap);
-  if (!wrap_ok) {
-    free(out);
-    g_set_error_literal(error, NS_ERROR, NS_ERROR_PUBLISH, "gift-wrapping failed");
+  if (!ok) {
+    g_free(wrap_json);
+    g_set_error_literal(error, NS_ERROR, NS_ERROR_PUBLISH,
+                        "gift-wrapping failed (the wrap would not have hidden its time "
+                        "or recipient correctly)");
     return NULL;
   }
-  gchar *ret = g_strdup(out);
-  free(out);
-  return ret;
+  return wrap_json;
 }
 
 static const gchar *
@@ -245,9 +356,59 @@ string_at(JsonArray *a, guint i)
            ? json_node_get_string(n) : NULL;
 }
 
-GStrv
-ns_private_inbox_relays(const gchar *event_json)
+static gboolean
+host_is_local(const gchar *host)
 {
+  g_autofree gchar *h = g_ascii_strdown(host, -1);
+  if (g_str_equal(h, "localhost") || g_str_has_suffix(h, ".localhost") ||
+      g_str_has_suffix(h, ".local") || *h == '\0')
+    return TRUE;
+  gsize n = strlen(h);
+  if (h[0] == '[' && n > 2 && h[n - 1] == ']') {   /* IPv6 literal */
+    h[n - 1] = '\0';
+    memmove(h, h + 1, n - 1);
+  }
+  g_autoptr(GInetAddress) a = g_inet_address_new_from_string(h);
+  if (a == NULL)
+    return FALSE;                                   /* a DNS name */
+  if (g_inet_address_get_is_loopback(a) || g_inet_address_get_is_any(a) ||
+      g_inet_address_get_is_link_local(a) || g_inet_address_get_is_site_local(a) ||
+      g_inet_address_get_is_multicast(a))
+    return TRUE;
+  if (g_inet_address_get_family(a) == G_SOCKET_FAMILY_IPV6) {
+    const guint8 *b = g_inet_address_to_bytes(a);
+    if ((b[0] & 0xFE) == 0xFC)                      /* fc00::/7 unique local */
+      return TRUE;
+  }
+  return FALSE;
+}
+
+gboolean
+ns_private_remote_relay_ok(const gchar *url, gboolean allow_loopback)
+{
+  if (url == NULL)
+    return FALSE;
+  gboolean secure = g_str_has_prefix(url, "wss://");
+  if (!secure && !g_str_has_prefix(url, "ws://"))
+    return FALSE;
+  g_autoptr(GUri) uri = g_uri_parse(url, G_URI_FLAGS_NONE, NULL);
+  if (uri == NULL || g_uri_get_host(uri) == NULL || g_uri_get_userinfo(uri) != NULL)
+    return FALSE;
+  const gchar *host = g_uri_get_host(uri);
+  if (host_is_local(host)) {
+    /* Tests only, and only loopback IP literals: never the `localhost`
+     * name, which is how ws://localhost/ reaches relay.sock. */
+    g_autoptr(GInetAddress) a = g_inet_address_new_from_string(host);
+    return allow_loopback && a != NULL && g_inet_address_get_is_loopback(a);
+  }
+  return secure;
+}
+
+GStrv
+ns_private_inbox_relays(const gchar *event_json, gboolean allow_loopback,
+                        guint *out_dropped)
+{
+  guint dropped = 0, kept = 0;
   g_autoptr(GStrvBuilder) b = g_strv_builder_new();
   g_autoptr(GHashTable) seen = g_hash_table_new(g_str_hash, g_str_equal);
   g_autoptr(JsonParser) p = json_parser_new();
@@ -265,13 +426,19 @@ ns_private_inbox_relays(const gchar *event_json)
         continue;
       const gchar *name = string_at(t, 0);
       const gchar *url = string_at(t, 1);
-      if (g_strcmp0(name, "relay") != 0 || url == NULL ||
-          !(g_str_has_prefix(url, "wss://") || g_str_has_prefix(url, "ws://")) ||
-          g_hash_table_contains(seen, url))
+      if (g_strcmp0(name, "relay") != 0 || url == NULL || g_hash_table_contains(seen, url))
         continue;
       g_hash_table_add(seen, (gpointer)url);
+      if (!ns_private_remote_relay_ok(url, allow_loopback) ||
+          kept >= NS_PRIVATE_MAX_INBOX_RELAYS) {
+        dropped++;
+        continue;
+      }
       g_strv_builder_add(b, url);
+      kept++;
     }
   }
+  if (out_dropped)
+    *out_dropped = dropped;
   return g_strv_builder_end(b);
 }

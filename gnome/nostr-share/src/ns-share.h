@@ -45,6 +45,7 @@ typedef struct {
   NsBlobMeta    sealed_blob;
   NsFileKey     file_key;
   gboolean      sealed_uploaded;
+  gboolean      sealed_upload_linked;   /* the server required the user's key */
 } NsFile;
 
 typedef struct {

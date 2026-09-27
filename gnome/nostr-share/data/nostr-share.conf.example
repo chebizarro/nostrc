@@ -52,6 +52,14 @@
 # confirmation; past that the event stays queued there (exit status 5).
 #ok_wait_sec=15
 
+# --private file uploads are authorised with a throwaway key, so the
+# Blossom server cannot tie the (encrypted) blob to you. When every server
+# refuses that (401/403: paid / allow-listed servers):
+#   throwaway_then_account  (default) upload signed by your key instead;
+#                           the server learns you uploaded an opaque blob
+#   throwaway_only          fail instead
+#private_blob_auth=throwaway_then_account
+
 # nostr-dav endpoint for .ics/.vcf hand-off (default: whatever
 # `nostr-dav --show-credentials` prints).
 #dav_url=http://127.0.0.1:7680/

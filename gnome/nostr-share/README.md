@@ -146,7 +146,12 @@ gift wrap (bead nostrc-k95e):
   files come with it). **Each file** becomes a kind-15 file message: the
   file (metadata stripped first, as above) is encrypted with AES-256-GCM
   under a fresh key and nonce, and only that ciphertext is uploaded to
-  Blossom (`application/octet-stream`, no extension); the rumor carries
+  Blossom (`application/octet-stream`, no extension), authorised by a
+  throwaway key so the server cannot tie the blob to you. A server that
+  only takes uploads from known keys (401/403) gets the upload signed by
+  your key instead — it then learns that you uploaded an opaque blob of
+  that size — unless `private_blob_auth=throwaway_only`, which fails
+  instead. The result line says which happened. The rumor carries
   its URL, `file-type`, `encryption-algorithm aes-gcm`,
   `decryption-key` / `decryption-nonce` (hex), `x` (ciphertext), `ox`
   (plaintext), `size` and `dim`. Git repositories, calendar and contact
@@ -158,13 +163,22 @@ gift wrap (bead nostrc-k95e):
   tags and a `created_at` up to two days in the past; nostr-share checks it
   is yours before wrapping.
 - **The gift wrap** (kind 1059) comes from a throwaway key made for that
-  one wrap, carries only the recipient's `p` tag and a randomised
-  `created_at`.
+  one wrap (then wiped), carries only the recipient's `p` tag and a
+  `created_at` up to two days in the past, both timestamps drawn from
+  OpenSSL's CSPRNG. nostr-share builds the wrap itself rather than with
+  `nips/nip59`, whose timestamp randomiser currently always returns the
+  real time (bead nostrc-rd8j); every wrap is checked before it is sent
+  (by a throwaway key, only the receiver's `p`, strictly in the past).
 - **Where it goes**: only to the recipient's kind-10050 DM inbox relays —
   found on the session relay / `home_relays`, else on the recipient's own
-  NIP-65 relays, and verified. With no kind 10050 nostr-share refuses
-  before uploading anything (NIP-17: they are not set up to receive). Never
-  to your write relays, never to a fallback. Through a forwarding session
+  NIP-65 relays, and verified. Relay lists come from someone else, so only
+  `wss://` relays on public hosts are used (no plaintext `ws://`, which
+  would show path observers who the wrap is for; no loopback, private,
+  link-local or `localhost` host, which would let a hostile list aim
+  connections at local services or at relay.sock), at most 8. With no
+  usable kind 10050 nostr-share refuses before uploading anything
+  (NIP-17: they are not set up to receive). Never to your write relays,
+  never to a fallback. Through a forwarding session
   relay the wrap goes to relay.sock (after the recipient's kind 10050, so
   its router knows the inbox) and success is the relay's upstream report;
   otherwise it is published to the inbox relays directly, over
@@ -173,10 +187,14 @@ gift wrap (bead nostrc-k95e):
 - **A copy to yourself**, wrapped for your own key, goes to your own kind
   10050 when you have one, so your other clients show the conversation.
 - **What stays visible**: the recipient's pubkey (the wrap's `p` tag, as
-  in every NIP-17 message), and — for files — that *your* key uploaded an
-  opaque blob of that size (Blossom upload authorisation is a kind-24242
-  event you sign). Looking up an inbox asks relays for the recipient's
-  kind 10050.
+  in every NIP-17 message); blob sizes and upload times on Blossom (and
+  your key, on servers that insist); relays asked for the recipient's
+  kind 10050 see who is being looked up; and the recipient's wrap and your
+  own copy leave within moments of each other, so an operator who sees
+  both inboxes — or your network traffic — can pair them.
+- **After a public attempt**: if a failed public publish already uploaded
+  a file in the clear, the dialog refuses to switch that share to private
+  (the file is public on that server; delete it there if needed).
 - `--dry-run` prints the rumor the recipient would read; it neither asks
   the signer to encrypt nor uploads nor sends anything.
 - Why not a `.nsealed` blob (nostr-seal)? NIP-17 kind 15 is what the

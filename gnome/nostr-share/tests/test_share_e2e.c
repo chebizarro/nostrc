@@ -114,6 +114,7 @@ config(NsUpstreamMode mode)
   cfg->upstream = mode;
   cfg->ok_wait_sec = 20;
   cfg->query_timeout_ms = 1500;
+  cfg->allow_loopback_relays = TRUE;   /* the fake inbox relay is ws://127.0.0.1 */
   return cfg;
 }
 
