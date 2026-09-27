@@ -884,7 +884,7 @@ if (BUILD_TESTING)
     ${PROJECT_ROOT}/nips/nip46/include
     ${_NOSTR_CONFIG_DIR})
   target_compile_definitions(gnostr-test-signer-nip55l-identity PRIVATE
-    SIGNER_DBUS_XML="${PROJECT_ROOT}/nostr-gobject/dbus/org.nostr.Signer.xml")
+    SIGNER_DBUS_XML="${PROJECT_ROOT}/nips/nip55l/dbus/org.nostr.Signer.xml")
   target_link_libraries(gnostr-test-signer-nip55l-identity PRIVATE
     PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr_gobject nostr libgo)
   if (TARGET nostr_nip46_core)

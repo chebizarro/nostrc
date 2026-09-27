@@ -5,6 +5,7 @@ usr/bin/gnostr-neg
 usr/bin/nostr-signer-cli
 usr/bin/nostr-signer-daemon
 usr/share/dbus-1/services/org.nostr.Signer.service
+usr/share/dbus-1/interfaces/org.nostr.Signer.xml
 
 # NIP libraries (D-6): the shared ones a shipped binary links (libnip19,
 # libnip34) have SONAMEs and ship once in libnostr-nips0 (nostrc-4c0o);

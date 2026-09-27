@@ -1081,98 +1081,12 @@ gdbus monitor --session --dest org.nostr.Signer
 
 ## D-Bus Introspection XML
 
-The full interface definition is available at:
-`/usr/share/dbus-1/interfaces/org.nostr.Signer.xml`
-
-```xml
-<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
-  "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
-<node>
-  <interface name="org.nostr.Signer">
-    <method name="GetPublicKey">
-      <arg name="npub" type="s" direction="out"/>
-    </method>
-
-    <method name="SignEvent">
-      <arg name="event_json" type="s" direction="in"/>
-      <arg name="current_user" type="s" direction="in"/>
-      <arg name="app_id" type="s" direction="in"/>
-      <arg name="signed_event" type="s" direction="out"/>
-    </method>
-
-    <method name="NIP44Encrypt">
-      <arg name="plaintext" type="s" direction="in"/>
-      <arg name="peer_pubkey" type="s" direction="in"/>
-      <arg name="current_user" type="s" direction="in"/>
-      <arg name="ciphertext" type="s" direction="out"/>
-    </method>
-
-    <method name="NIP44Decrypt">
-      <arg name="ciphertext" type="s" direction="in"/>
-      <arg name="peer_pubkey" type="s" direction="in"/>
-      <arg name="current_user" type="s" direction="in"/>
-      <arg name="plaintext" type="s" direction="out"/>
-    </method>
-
-    <method name="NIP04Encrypt">
-      <arg name="plaintext" type="s" direction="in"/>
-      <arg name="peer_pubkey" type="s" direction="in"/>
-      <arg name="current_user" type="s" direction="in"/>
-      <arg name="ciphertext" type="s" direction="out"/>
-    </method>
-
-    <method name="NIP04Decrypt">
-      <arg name="ciphertext" type="s" direction="in"/>
-      <arg name="peer_pubkey" type="s" direction="in"/>
-      <arg name="current_user" type="s" direction="in"/>
-      <arg name="plaintext" type="s" direction="out"/>
-    </method>
-
-    <method name="DecryptZapEvent">
-      <arg name="event_json" type="s" direction="in"/>
-      <arg name="current_user" type="s" direction="in"/>
-      <arg name="decrypted_event" type="s" direction="out"/>
-    </method>
-
-    <method name="GetRelays">
-      <arg name="relays_json" type="s" direction="out"/>
-    </method>
-
-    <method name="StoreKey">
-      <arg name="key" type="s" direction="in"/>
-      <arg name="identity" type="s" direction="in"/>
-      <arg name="ok" type="b" direction="out"/>
-      <arg name="npub" type="s" direction="out"/>
-    </method>
-
-    <method name="ClearKey">
-      <arg name="identity" type="s" direction="in"/>
-      <arg name="ok" type="b" direction="out"/>
-    </method>
-
-    <method name="ApproveRequest">
-      <arg name="request_id" type="s" direction="in"/>
-      <arg name="decision" type="b" direction="in"/>
-      <arg name="remember" type="b" direction="in"/>
-      <arg name="ttl_seconds" type="t" direction="in"/>
-      <arg name="ok" type="b" direction="out"/>
-    </method>
-
-    <signal name="ApprovalRequested">
-      <arg type="s" name="app_id"/>
-      <arg type="s" name="identity"/>
-      <arg type="s" name="kind"/>
-      <arg type="s" name="preview"/>
-      <arg type="s" name="request_id"/>
-    </signal>
-
-    <signal name="ApprovalCompleted">
-      <arg type="s" name="request_id"/>
-      <arg type="b" name="decision"/>
-    </signal>
-  </interface>
-</node>
-```
+The interface definition has one copy in the tree,
+[`nips/nip55l/dbus/org.nostr.Signer.xml`](../nips/nip55l/dbus/org.nostr.Signer.xml):
+the daemon's skeleton, nostr-gobject's proxy (`signer_proxy`) and the tests
+are all generated from or checked against it (nostrc-56id). It is installed
+as `$datadir/dbus-1/interfaces/org.nostr.Signer.xml`; a running signer also
+answers `org.freedesktop.DBus.Introspectable.Introspect`.
 
 ---
 

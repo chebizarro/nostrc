@@ -177,6 +177,10 @@ if (GIO_FOUND AND ENABLE_NIP55L)
   # Ensure NIP-04 secure functions are available to executables linking the GLib target
   target_link_libraries(nostr_nip55l_glib PUBLIC nip04)
 
+  # The interface definition, for clients' gdbus-codegen / introspection.
+  # This file is the only copy in the tree (nostrc-56id).
+  install(FILES ${DBUS_XML} DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)
+
   add_executable(nostr-signer-daemon ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/daemon_main.c)
   target_link_libraries(nostr-signer-daemon PRIVATE nostr_nip55l_glib PkgConfig::GIO)
 
