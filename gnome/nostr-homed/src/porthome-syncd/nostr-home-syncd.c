@@ -50,6 +50,17 @@
  *                                  <uid>/home_seed).  W(3): read once,
  *                                  unlink, mlock; wraps in-process wipe.
  *
+ *   NOSTR_HOMED_SYNCD_SNAPSHOT_MAX_BYTES — ceiling for snapshot.json
+ *                                  (nostrc-5y2t). Default 1 GiB.
+ *
+ * snapshot.json load failures (nostrc-5y2t) never degrade to an empty
+ * baseline that a later save would write over the unreadable file:
+ *   - corrupt JSON: moved aside to snapshot.json.corrupt.<epoch>, then
+ *     the additive rescan rebuilds the baseline under the partial
+ *     marker (pushes stay refused until a pull restores the base);
+ *   - too large / unknown schema / I/O: exit 7, file untouched.
+ * `--check` reports the class and exits 7 without quarantining.
+ *
  * Signals:
  *   SIGTERM/SIGINT — flush final batch, release lock, exit 0.
  *   SIGHUP         — reload user ignore file.
@@ -424,10 +435,56 @@ int main(int argc, char **argv) {
         free_cfg(&cfg); return 5;
     }
 
+    /* Status writer before the state load, so a refusal to start is
+     * visible in porthome-status.json and not only in the journal. */
+    g_status = nh_syncd_status_writer_new();
+    (void)nh_porthome_status_ensure_dir();
+
     /* State + ignore + batcher. */
     nh_syncd_state *state = NULL;
     bool snap_unknown = false;
-    (void)nh_syncd_state_load(cfg.state_dir, &state, &snap_unknown);
+    const char *snap_note = NULL;   /* last_error to report once running */
+    struct timespec load_t0, load_t1;
+    clock_gettime(CLOCK_MONOTONIC, &load_t0);
+    int lrc = nh_syncd_state_load(cfg.state_dir, &state, &snap_unknown);
+    clock_gettime(CLOCK_MONOTONIC, &load_t1);
+    if (lrc == NH_SYNCD_OK && !snap_unknown)
+        fprintf(stderr, "syncd: loaded snapshot.json: %zu entries, generation %llu, in %.2fs\n",
+                nh_syncd_state_file_count(state),
+                (unsigned long long)nh_syncd_state_get_local_generation(state),
+                (double)(load_t1.tv_sec - load_t0.tv_sec) +
+                (double)(load_t1.tv_nsec - load_t0.tv_nsec) / 1e9);
+    const char *lclass = nh_syncd_state_load_error_class(lrc);
+    if (lrc == NH_SYNCD_ERR_JSON && !dry_run) {
+        char *moved = NULL;
+        if (nh_syncd_state_quarantine_snapshot(cfg.state_dir, &moved) == NH_SYNCD_OK) {
+            fprintf(stderr,
+                    "syncd: snapshot.json is corrupt; preserved as %s. Rebuilding "
+                    "the baseline from an additive rescan; pushes stay refused "
+                    "(partial) until a pull restores the base\n", moved);
+            free(moved);
+            snap_note = lclass;
+            lrc = nh_syncd_state_load(cfg.state_dir, &state, &snap_unknown);
+            lclass = nh_syncd_state_load_error_class(lrc);
+        } else {
+            lclass = "snapshot-quarantine-failed";
+        }
+    }
+    if (lrc != NH_SYNCD_OK) {
+        fprintf(stderr,
+                "syncd: refusing to %s — snapshot.json unusable (%s, rc=%d); "
+                "the file was left untouched\n",
+                dry_run ? "pass --check" : "run", lclass, lrc);
+        if (g_status) {
+            nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_ERROR);
+            nh_syncd_status_set_last_error(g_status, lclass);
+            (void)nh_syncd_status_emit(g_status, NULL);
+            nh_syncd_status_writer_free(g_status);
+            g_status = NULL;
+        }
+        nh_syncd_lock_release(lk); free_cfg(&cfg);
+        return 7;
+    }
 
     nh_syncd_ignore *ig = NULL;
     if (nh_syncd_ignore_new(cfg.home, &ig) != NH_SYNCD_OK) {
@@ -497,7 +554,6 @@ int main(int argc, char **argv) {
         free(cdir);
     }
     g_notifier = nh_porthome_notifier_new();
-    g_status   = nh_syncd_status_writer_new();
     if (g_cache) {
         nh_syncd_cache_set_evict_notify(g_cache, on_evict_thrash, NULL);
         nh_syncd_cache_set_auto_evict(g_cache, true);
@@ -515,7 +571,7 @@ int main(int argc, char **argv) {
                                     nh_syncd_status_notify_record,
                                     g_status);
     nh_syncd_status_set_state(g_status, NH_SYNCD_STATE_IDLE);
-    (void)nh_porthome_status_ensure_dir();
+    if (snap_note) nh_syncd_status_set_last_error(g_status, snap_note);
     syncd_status_flush();
 
     install_signals(-1);

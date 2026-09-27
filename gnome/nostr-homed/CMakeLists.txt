@@ -1943,8 +1943,20 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     add_executable(test_syncd_state tests/unit/test_syncd_state.c)
     target_link_libraries(test_syncd_state PRIVATE nostr_syncd_core)
     add_test(NAME homed_syncd_state COMMAND test_syncd_state)
+    # nostrc-5y2t: includes a 220k-entry (>32 MiB) snapshot round-trip.
     set_tests_properties(homed_syncd_state PROPERTIES
-      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 120)
+
+    # nostrc-5y2t: daemon-level snapshot.json load / refuse / quarantine.
+    add_executable(test_syncd_snapshot_load
+      tests/integration/test_syncd_snapshot_load.c)
+    target_include_directories(test_syncd_snapshot_load PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration)
+    target_link_libraries(test_syncd_snapshot_load PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_snapshot_load
+      COMMAND test_syncd_snapshot_load $<TARGET_FILE:nostr-home-syncd>)
+    set_tests_properties(homed_syncd_snapshot_load PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 180)
 
     add_executable(test_syncd_push_e2e
       tests/integration/test_syncd_push_e2e.c)

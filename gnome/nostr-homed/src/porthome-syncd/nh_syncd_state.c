@@ -6,6 +6,7 @@
  * every write goes to a `.tmp` sibling then rename(2) into place.
  */
 
+#define _GNU_SOURCE
 #include "nh_syncd.h"
 
 #include <errno.h>
@@ -16,6 +17,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 /* Simple open-addressed C hashmap keyed by string. jansson gives us
@@ -147,20 +149,37 @@ static int mkdirp(const char *path) {
     return NH_SYNCD_OK;
 }
 
-static int write_atomic(const char *dir, const char *name,
-                        const void *data, size_t len) {
+static int write_all(int fd, const void *data, size_t len) {
+    const char *p = data; size_t rem = len;
+    while (rem > 0) {
+        ssize_t w = write(fd, p, rem);
+        if (w < 0) { if (errno == EINTR) continue; return -1; }
+        rem -= (size_t)w; p += w;
+    }
+    return 0;
+}
+
+/* Fills the temp file; returns 0 on success, a NH_SYNCD_ERR_* otherwise. */
+typedef int (*write_fill_fn)(int fd, void *ud);
+
+typedef struct { const void *data; size_t len; } bytes_fill;
+static int fill_bytes(int fd, void *ud) {
+    const bytes_fill *b = ud;
+    return write_all(fd, b->data, b->len) == 0 ? NH_SYNCD_OK : NH_SYNCD_ERR_IO;
+}
+
+/* tmp sibling + fsync + rename(2): readers see the old file or the new
+ * one, never a torn write. */
+static int write_atomic_with(const char *dir, const char *name,
+                             write_fill_fn fill, void *ud) {
     char *tmp = malloc(strlen(dir) + 1 + strlen(name) + 5);
     char *fin = joinp(dir, name);
     if (!tmp || !fin) { free(tmp); free(fin); return NH_SYNCD_ERR_OOM; }
     sprintf(tmp, "%s/%s.tmp", dir, name);
-    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
     if (fd < 0) { free(tmp); free(fin); return NH_SYNCD_ERR_IO; }
-    const char *p = data; size_t rem = len;
-    while (rem > 0) {
-        ssize_t w = write(fd, p, rem);
-        if (w < 0) { if (errno == EINTR) continue; close(fd); unlink(tmp); free(tmp); free(fin); return NH_SYNCD_ERR_IO; }
-        rem -= (size_t)w; p += w;
-    }
+    int frc = fill(fd, ud);
+    if (frc != NH_SYNCD_OK) { close(fd); unlink(tmp); free(tmp); free(fin); return frc; }
     if (fsync(fd) < 0) { close(fd); unlink(tmp); free(tmp); free(fin); return NH_SYNCD_ERR_IO; }
     if (close(fd) < 0) { unlink(tmp); free(tmp); free(fin); return NH_SYNCD_ERR_IO; }
     if (rename(tmp, fin) < 0) { unlink(tmp); free(tmp); free(fin); return NH_SYNCD_ERR_IO; }
@@ -168,14 +187,22 @@ static int write_atomic(const char *dir, const char *name,
     return NH_SYNCD_OK;
 }
 
+static int write_atomic(const char *dir, const char *name,
+                        const void *data, size_t len) {
+    bytes_fill b = { data, len };
+    return write_atomic_with(dir, name, fill_bytes, &b);
+}
+
+/* Small-file reader for remote.json (a single integer). snapshot.json
+ * does NOT go through here — it is stream-parsed under its own,
+ * configurable ceiling (nostrc-5y2t); see nh_syncd_state_load. */
 static int read_file_bytes(const char *path, char **out, size_t *out_len) {
     *out = NULL; *out_len = 0;
     int fd = open(path, O_RDONLY);
     if (fd < 0) return errno == ENOENT ? -2 : NH_SYNCD_ERR_IO;
     struct stat st;
     if (fstat(fd, &st) < 0) { close(fd); return NH_SYNCD_ERR_IO; }
-    /* Hard cap so a bad file cannot exhaust memory. 32 MiB is way more
-     * than any conceivable snapshot.json. */
+    /* Hard cap so a bad file cannot exhaust memory. */
     if (st.st_size < 0 || (size_t)st.st_size > 32u * 1024u * 1024u) {
         close(fd); return NH_SYNCD_ERR_IO;
     }
@@ -208,6 +235,46 @@ static int hex64_ok(const char *s) {
 
 /* ─── save ─────────────────────────────────────────────────────────── */
 
+typedef struct {
+    int    fd;
+    int    failed;
+    size_t n;
+    char   buf[64 * 1024];
+} dump_buf;
+
+static int dump_flush(dump_buf *d) {
+    if (d->n && write_all(d->fd, d->buf, d->n) != 0) { d->failed = 1; return -1; }
+    d->n = 0;
+    return 0;
+}
+
+/* json_dump_callback emits one token at a time; batch them. */
+static int dump_cb(const char *s, size_t len, void *data) {
+    dump_buf *d = data;
+    if (d->n + len > sizeof d->buf && dump_flush(d) != 0) return -1;
+    if (len > sizeof d->buf) {
+        if (write_all(d->fd, s, len) != 0) { d->failed = 1; return -1; }
+        return 0;
+    }
+    memcpy(d->buf + d->n, s, len);
+    d->n += len;
+    return 0;
+}
+
+typedef struct { json_t *j; } json_fill;
+static int fill_json(int fd, void *ud) {
+    const json_fill *jf = ud;
+    dump_buf *d = malloc(sizeof *d);
+    if (!d) return NH_SYNCD_ERR_OOM;
+    d->fd = fd; d->failed = 0; d->n = 0;
+    int rc = json_dump_callback(jf->j, dump_cb, d, JSON_SORT_KEYS);
+    if (rc == 0) rc = dump_flush(d);
+    int failed = d->failed;
+    free(d);
+    if (rc == 0) return NH_SYNCD_OK;
+    return failed ? NH_SYNCD_ERR_IO : NH_SYNCD_ERR_JSON;
+}
+
 int nh_syncd_state_save(const nh_syncd_state *s, const char *state_dir) {
     if (!s || !state_dir) return NH_SYNCD_ERR_ARG;
     int rc = mkdirp(state_dir);
@@ -227,11 +294,13 @@ int nh_syncd_state_save(const nh_syncd_state *s, const char *state_dir) {
     /* Copy the files object (it already matches the schema). */
     json_object_set(j, "files", s->files);
 
-    char *dump = json_dumps(j, JSON_INDENT(2) | JSON_SORT_KEYS);
+    /* nostrc-5y2t: stream the dump straight into the temp file instead
+     * of materialising it with json_dumps (a 200k-entry home is a
+     * 64 MB string on top of the live tree). No JSON_INDENT: the
+     * indentation was ~1/3 of the bytes and nothing reads it by eye. */
+    json_fill jf = { j };
+    rc = write_atomic_with(state_dir, "snapshot.json", fill_json, &jf);
     json_decref(j);
-    if (!dump) return NH_SYNCD_ERR_JSON;
-    rc = write_atomic(state_dir, "snapshot.json", dump, strlen(dump));
-    free(dump);
     if (rc < 0) return rc;
 
     /* Also write the standalone generation file for external observers. */
@@ -244,55 +313,72 @@ int nh_syncd_state_save(const nh_syncd_state *s, const char *state_dir) {
 
 /* ─── load ─────────────────────────────────────────────────────────── */
 
-int nh_syncd_state_load(const char *state_dir,
-                        nh_syncd_state **out,
-                        bool *out_snapshot_unknown)
-{
-    if (!state_dir || !out) return NH_SYNCD_ERR_ARG;
-    if (out_snapshot_unknown) *out_snapshot_unknown = false;
-    *out = NULL;
+uint64_t nh_syncd_snapshot_max_bytes(void) {
+    const char *e = getenv("NOSTR_HOMED_SYNCD_SNAPSHOT_MAX_BYTES");
+    if (e && *e) {
+        char *end = NULL;
+        errno = 0;
+        unsigned long long v = strtoull(e, &end, 10);
+        if (errno == 0 && end && *end == '\0' && v > 0) return (uint64_t)v;
+        fprintf(stderr, "syncd: ignoring invalid NOSTR_HOMED_SYNCD_SNAPSHOT_MAX_BYTES=\"%s\"\n", e);
+    }
+    return NH_SYNCD_SNAPSHOT_MAX_BYTES_DEFAULT;
+}
 
-    char *snap_path = joinp(state_dir, "snapshot.json");
-    if (!snap_path) return NH_SYNCD_ERR_OOM;
-    char *buf = NULL; size_t buflen = 0;
-    int rc = read_file_bytes(snap_path, &buf, &buflen);
-    free(snap_path);
-    if (rc == -2) {
-        /* Missing — return a fresh empty state. Caller (push closure)
-         * still refuses to run until snapshot base is known via
-         * NH_SYNCD_ERR_SNAPSHOT_UNKNOWN; init happens through
-         * nh_syncd_state_new. */
-        if (out_snapshot_unknown) *out_snapshot_unknown = true;
-        nh_syncd_state *s = calloc(1, sizeof *s);
-        if (!s) return NH_SYNCD_ERR_OOM;
-        s->files = json_object();
-        s->root = strdup("");
-        s->d_tag = strdup("");
-        s->account_pubkey_hex = strdup("");
-        if (!s->files || !s->root || !s->d_tag || !s->account_pubkey_hex) {
-            nh_syncd_state_free(s);
-            return NH_SYNCD_ERR_OOM;
+const char *nh_syncd_state_load_error_class(int rc) {
+    switch (rc) {
+    case NH_SYNCD_OK:                     return "";
+    case NH_SYNCD_ERR_SNAPSHOT_TOO_LARGE: return "snapshot-too-large";
+    case NH_SYNCD_ERR_SNAPSHOT_SCHEMA:    return "snapshot-schema";
+    case NH_SYNCD_ERR_JSON:               return "snapshot-corrupt";
+    case NH_SYNCD_ERR_OOM:                return "snapshot-oom";
+    default:                              return "snapshot-unreadable";
+    }
+}
+
+static nh_syncd_state *state_empty(void) {
+    nh_syncd_state *s = calloc(1, sizeof *s);
+    if (!s) return NULL;
+    s->files = json_object();
+    s->root = strdup("");
+    s->d_tag = strdup("");
+    s->account_pubkey_hex = strdup("");
+    if (!s->files || !s->root || !s->d_tag || !s->account_pubkey_hex) {
+        nh_syncd_state_free(s);
+        return NULL;
+    }
+    return s;
+}
+
+/* json_load_callback source: read(2) straight from the fd (no stdio
+ * locking per byte), and re-check the ceiling while streaming so a
+ * file that grows after fstat cannot sneak past it. */
+typedef struct {
+    int      fd;
+    uint64_t seen;
+    uint64_t cap;
+    int      err;   /* errno of a read failure, or EFBIG */
+} snap_reader;
+
+static size_t snap_read_cb(void *buf, size_t len, void *data) {
+    snap_reader *r = data;
+    for (;;) {
+        ssize_t n = read(r->fd, buf, len);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            r->err = errno;
+            return (size_t)-1;
         }
-        *out = s;
-        return NH_SYNCD_OK;
+        r->seen += (uint64_t)n;
+        if (r->seen > r->cap) { r->err = EFBIG; return (size_t)-1; }
+        return (size_t)n;
     }
-    if (rc < 0) return rc;
+}
 
-    json_error_t je;
-    json_t *j = json_loadb(buf, buflen, 0, &je);
-    free(buf);
-    if (!j) {
-        if (out_snapshot_unknown) *out_snapshot_unknown = true;
-        return NH_SYNCD_ERR_JSON;
-    }
-    if (!json_is_object(j)) { json_decref(j); if (out_snapshot_unknown) *out_snapshot_unknown = true; return NH_SYNCD_ERR_JSON; }
-
+/* Validate the parsed document and build the state. Consumes `j`. */
+static int state_from_json(json_t *j, const char *path, nh_syncd_state **out) {
+    const char *why = NULL;
     json_t *schema = json_object_get(j, "schema");
-    if (!json_is_integer(schema) || json_integer_value(schema) != 1) {
-        json_decref(j);
-        if (out_snapshot_unknown) *out_snapshot_unknown = true;
-        return NH_SYNCD_ERR_JSON;
-    }
     json_t *jgen  = json_object_get(j, "generation");
     json_t *jroot = json_object_get(j, "root");
     json_t *jdtag = json_object_get(j, "d_tag");
@@ -300,16 +386,27 @@ int nh_syncd_state_load(const char *state_dir,
     json_t *jrid  = json_object_get(j, "root_id_hex");
     json_t *jfiles= json_object_get(j, "files");
 
-    if (!json_is_integer(jgen) || !json_is_string(jroot) ||
-        !json_is_string(jdtag) || !json_is_string(jpk) ||
-        !json_is_string(jrid) || !json_is_object(jfiles)) {
+    if (!json_is_object(j)) why = "top level is not an object";
+    else if (!json_is_integer(schema)) why = "missing/non-integer \"schema\"";
+    else if (json_integer_value(schema) != 1) {
+        /* A well-formed snapshot from a NEWER daemon (downgrade). Not
+         * corruption: refuse, never quarantine a valid file. */
+        fprintf(stderr,
+                "syncd: %s has schema %lld; this daemon only reads schema 1 — "
+                "refusing to load (or overwrite) it\n",
+                path, (long long)json_integer_value(schema));
         json_decref(j);
-        if (out_snapshot_unknown) *out_snapshot_unknown = true;
-        return NH_SYNCD_ERR_JSON;
+        return NH_SYNCD_ERR_SNAPSHOT_SCHEMA;
     }
-    if (!hex64_ok(json_string_value(jrid))) {
+    else if (!json_is_integer(jgen) || !json_is_string(jroot) ||
+             !json_is_string(jdtag) || !json_is_string(jpk) ||
+             !json_is_string(jrid) || !json_is_object(jfiles))
+        why = "missing or mistyped top-level field";
+    else if (!hex64_ok(json_string_value(jrid)))
+        why = "root_id_hex is not 64 lowercase hex";
+    if (why) {
+        fprintf(stderr, "syncd: %s is corrupt: %s\n", path, why);
         json_decref(j);
-        if (out_snapshot_unknown) *out_snapshot_unknown = true;
         return NH_SYNCD_ERR_JSON;
     }
 
@@ -321,7 +418,7 @@ int nh_syncd_state_load(const char *state_dir,
     s->account_pubkey_hex = strdup(json_string_value(jpk));
     if (nh_porthome_from_hex64(json_string_value(jrid), s->root_id) != 0) {
         json_decref(j); nh_syncd_state_free(s);
-        if (out_snapshot_unknown) *out_snapshot_unknown = true;
+        fprintf(stderr, "syncd: %s is corrupt: root_id_hex does not decode\n", path);
         return NH_SYNCD_ERR_JSON;
     }
     s->files = json_incref(jfiles);
@@ -330,7 +427,92 @@ int nh_syncd_state_load(const char *state_dir,
         nh_syncd_state_free(s);
         return NH_SYNCD_ERR_OOM;
     }
+    *out = s;
+    return NH_SYNCD_OK;
+}
 
+int nh_syncd_state_load(const char *state_dir,
+                        nh_syncd_state **out,
+                        bool *out_snapshot_unknown)
+{
+    if (!state_dir || !out) return NH_SYNCD_ERR_ARG;
+    if (out_snapshot_unknown) *out_snapshot_unknown = false;
+    *out = NULL;
+
+    char *snap_path = joinp(state_dir, "snapshot.json");
+    if (!snap_path) return NH_SYNCD_ERR_OOM;
+    int rc = NH_SYNCD_ERR_IO;
+    int fd = open(snap_path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0 && errno == ENOENT) {
+        /* Missing — return a fresh empty state. Caller (push closure)
+         * still refuses to run until snapshot base is known via
+         * NH_SYNCD_ERR_SNAPSHOT_UNKNOWN; init happens through
+         * nh_syncd_state_new. */
+        free(snap_path);
+        if (out_snapshot_unknown) *out_snapshot_unknown = true;
+        nh_syncd_state *s = state_empty();
+        if (!s) return NH_SYNCD_ERR_OOM;
+        *out = s;
+        return NH_SYNCD_OK;
+    }
+    if (fd < 0) {
+        fprintf(stderr, "syncd: cannot open %s: %s\n", snap_path, strerror(errno));
+        goto fail;
+    }
+    struct stat st;
+    if (fstat(fd, &st) < 0) {
+        fprintf(stderr, "syncd: cannot stat %s: %s\n", snap_path, strerror(errno));
+        goto fail;
+    }
+    if (!S_ISREG(st.st_mode)) {
+        fprintf(stderr, "syncd: %s is not a regular file\n", snap_path);
+        goto fail;
+    }
+    snap_reader rd = { fd, 0, nh_syncd_snapshot_max_bytes(), 0 };
+    if ((uint64_t)st.st_size > rd.cap) {
+        rd.err = EFBIG;
+    } else {
+        json_error_t je;
+        json_t *j = json_load_callback(snap_read_cb, &rd, 0, &je);
+        if (j) {
+            rc = state_from_json(j, snap_path, out);
+            goto done;
+        }
+        if (!rd.err) {
+            fprintf(stderr, "syncd: %s is corrupt: %s (line %d, column %d)\n",
+                    snap_path, je.text, je.line, je.column);
+            rc = NH_SYNCD_ERR_JSON;
+            goto done;
+        }
+    }
+    if (rd.err == EFBIG) {
+        fprintf(stderr,
+                "syncd: %s is %llu bytes, over the %llu-byte snapshot ceiling — "
+                "refusing to load (or overwrite) it; raise "
+                "NOSTR_HOMED_SYNCD_SNAPSHOT_MAX_BYTES if this home really is "
+                "that large\n",
+                snap_path,
+                (unsigned long long)((uint64_t)st.st_size > rd.seen ? (uint64_t)st.st_size : rd.seen),
+                (unsigned long long)rd.cap);
+        rc = NH_SYNCD_ERR_SNAPSHOT_TOO_LARGE;
+    } else {
+        fprintf(stderr, "syncd: read error on %s: %s\n", snap_path, strerror(rd.err));
+        rc = NH_SYNCD_ERR_IO;
+    }
+    goto done;
+fail:
+    rc = NH_SYNCD_ERR_IO;
+done:
+    if (fd >= 0) close(fd);
+    free(snap_path);
+    if (rc != NH_SYNCD_OK) {
+        /* *out stays NULL: a failed load must never look like an empty
+         * home, or the next save would overwrite the unreadable file. */
+        if (out_snapshot_unknown) *out_snapshot_unknown = true;
+        return rc;
+    }
+
+    nh_syncd_state *s = *out;
     /* Also parse remote.json if present (I2 will produce it). */
     char *remote_path = joinp(state_dir, "remote.json");
     if (remote_path) {
@@ -349,9 +531,37 @@ int nh_syncd_state_load(const char *state_dir,
         free(rbuf);
         free(remote_path);
     }
-
-    *out = s;
     return NH_SYNCD_OK;
+}
+
+int nh_syncd_state_quarantine_snapshot(const char *state_dir, char **out_path) {
+    if (out_path) *out_path = NULL;
+    if (!state_dir) return NH_SYNCD_ERR_ARG;
+    char *src = joinp(state_dir, "snapshot.json");
+    if (!src) return NH_SYNCD_ERR_OOM;
+    long long now = (long long)time(NULL);
+    /* Never clobber an earlier quarantine: the caller holds sync.lock,
+     * so check-then-rename cannot race another daemon. */
+    for (unsigned i = 0; i < 1000; i++) {
+        char *dst = NULL;
+        int n = i == 0
+            ? asprintf(&dst, "%s/snapshot.json.corrupt.%lld", state_dir, now)
+            : asprintf(&dst, "%s/snapshot.json.corrupt.%lld.%u", state_dir, now, i);
+        if (n < 0) { free(src); return NH_SYNCD_ERR_OOM; }
+        struct stat st;
+        if (lstat(dst, &st) == 0) { free(dst); continue; }
+        if (errno != ENOENT || rename(src, dst) < 0) {
+            fprintf(stderr, "syncd: cannot move %s aside to %s: %s\n",
+                    src, dst, strerror(errno));
+            free(dst); free(src);
+            return NH_SYNCD_ERR_IO;
+        }
+        free(src);
+        if (out_path) *out_path = dst; else free(dst);
+        return NH_SYNCD_OK;
+    }
+    free(src);
+    return NH_SYNCD_ERR_IO;
 }
 
 /* ─── entry accessors and updates ─────────────────────────────────── */
