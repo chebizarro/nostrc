@@ -29,7 +29,8 @@
 typedef enum {
     FIXTURE_ORDERED,
     FIXTURE_NEWEST_FIRST,
-    FIXTURE_EOSE_PRESSURE
+    FIXTURE_EOSE_PRESSURE,
+    FIXTURE_HOSTILE
 } FixtureMode;
 
 typedef struct {
@@ -42,12 +43,19 @@ typedef struct {
     int64_t created_at;
     FixtureMode mode;
     char *events[4];
+    char **stream_events;
+    char **stream_ids;
+    size_t stream_count;
 } Fixture;
 
 typedef struct {
     char *queue[6];
     size_t count;
     bool close_after_queue;
+    bool stream_active;
+    size_t stream_index;
+    char sid[128];
+    int sid_len;
 } FixtureConn;
 
 static Fixture fx;
@@ -82,6 +90,10 @@ static int callback(struct lws *wsi, enum lws_callback_reasons reason,
         const char *end = strchr(sid, '"');
         CHECK(end);
         int sid_len = (int)(end - sid);
+        CHECK(sid_len > 0 && sid_len < (int)sizeof(c->sid));
+        memcpy(c->sid, sid, (size_t)sid_len);
+        c->sid[sid_len] = '\0';
+        c->sid_len = sid_len;
         int round = atomic_fetch_add(&fx.req_count, 1);
         if (fx.mode == FIXTURE_EOSE_PRESSURE) {
             if (round < 9) {
@@ -101,7 +113,13 @@ static int callback(struct lws *wsi, enum lws_callback_reasons reason,
             if (!since || sscanf(since, "\"since\":%lld", &cursor) != 1 ||
                 cursor != fx.created_at)
                 atomic_store(&fx.bad_cursor, true);
-            if (fx.mode == FIXTURE_ORDERED) {
+            if (fx.mode == FIXTURE_HOSTILE) {
+                /* The first replayed boundary ID is retained and suppressed.
+                 * More than a cache's worth of distinct signed IDs follow. */
+                enqueue(c, "EVENT", sid, sid_len, fx.events[0]);
+                c->stream_active = true;
+                c->stream_index = 0;
+            } else if (fx.mode == FIXTURE_ORDERED) {
                 if (cursor <= fx.created_at) {
                     enqueue(c, "EVENT", sid, sid_len, fx.events[0]);
                     enqueue(c, "EVENT", sid, sid_len, fx.events[1]);
@@ -127,6 +145,23 @@ static int callback(struct lws *wsi, enum lws_callback_reasons reason,
         break;
     }
     case LWS_CALLBACK_SERVER_WRITEABLE:
+        if (!c->count && c->stream_active) {
+            /* The subscription ID is saved from the request for streaming. */
+            const char *sid = c->sid;
+            int sid_len = c->sid_len;
+            if (c->stream_index < fx.stream_count) {
+                enqueue(c, "EVENT", sid, sid_len,
+                        fx.stream_events[c->stream_index++]);
+            } else {
+                enqueue(c, "EVENT", sid, sid_len,
+                        fx.stream_events[fx.stream_count - 1]); /* retained duplicate */
+                enqueue(c, "EOSE", sid, sid_len, NULL);
+                enqueue(c, "EVENT", sid, sid_len, fx.events[0]); /* evicted replay */
+                enqueue(c, "EVENT", sid, sid_len, fx.events[1]); /* unseen */
+                enqueue(c, "EVENT", sid, sid_len, fx.events[2]); /* barrier */
+                c->stream_active = false;
+            }
+        }
         if (c->count) {
             char *msg = c->queue[0];
             memmove(&c->queue[0], &c->queue[1],
@@ -140,7 +175,7 @@ static int callback(struct lws *wsi, enum lws_callback_reasons reason,
             free(buf);
             free(msg);
             if (written != (int)n) return -1;
-            if (c->count) lws_callback_on_writable(wsi);
+            if (c->count || c->stream_active) lws_callback_on_writable(wsi);
             else if (c->close_after_queue) return -1;
         }
         break;
@@ -274,6 +309,24 @@ static void run_case(FixtureMode mode, char *ids[4]) {
         expect_event_for(sub->events, ids[2], 30000);
         CHECK(atomic_load(&fx.req_count) == 10);
         CHECK(go_channel_get_depth(sub->end_of_stored_events) == 8);
+    } else if (mode == FIXTURE_HOSTILE) {
+        expect_event(sub->events, ids[0]);
+        (void)receive(sub->end_of_stored_events);
+        for (size_t i = 0; i < fx.stream_count; i++)
+            expect_event(sub->events, fx.stream_ids[i]);
+        (void)receive(sub->end_of_stored_events);
+        expect_event(sub->events, ids[0]); /* eviction permits redelivery */
+        expect_event(sub->events, ids[1]); /* unseen same-second ID survives */
+        expect_event(sub->events, ids[2]);
+        nsync_mu_lock(&sub->priv->sub_mutex);
+        CHECK(sub->priv->replay_boundary_events);
+        CHECK(sub->priv->replay_boundary_events->count == SEEN_CURSOR_CAPACITY);
+        CHECK(atomic_load(&sub->priv->last_seen_created_at) == fx.created_at + 1);
+        nsync_mu_unlock(&sub->priv->sub_mutex);
+        CHECK(atomic_load(&fx.req_count) == 2);
+        CHECK(!atomic_load(&fx.bad_cursor));
+        void *extra = NULL;
+        CHECK(go_channel_try_receive(sub->events, &extra) != 0);
     } else {
         expect_event(sub->events, ids[0]);
         (void)receive(sub->end_of_stored_events);
@@ -312,7 +365,6 @@ int main(void) {
     fx.events[1] = signed_event(sk, fx.created_at, "second", &ids[1]);
     fx.events[2] = signed_event(sk, fx.created_at + 1, "next second", &ids[2]);
     fx.events[3] = signed_event(sk, fx.created_at + 2, "live barrier", &ids[3]);
-    free(sk);
     CHECK(strcmp(ids[0], ids[1]) != 0);
 
     run_case(FIXTURE_ORDERED, ids);
@@ -320,6 +372,34 @@ int main(void) {
     run_case(FIXTURE_EOSE_PRESSURE, ids);
 
     for (int i = 0; i < 4; i++) { free(ids[i]); free(fx.events[i]); }
+
+    /* A hostile relay pins a future second and streams more distinct, valid
+     * signed IDs than the cache can retain. The stream and replay order are
+     * fixed; no sleeps or external relay are involved. */
+    fx.created_at = 2000000000;
+    fx.events[0] = signed_event(sk, fx.created_at, "future first", &ids[0]);
+    fx.events[1] = signed_event(sk, fx.created_at, "future unseen", &ids[1]);
+    fx.events[2] = signed_event(sk, fx.created_at + 1, "future barrier", &ids[2]);
+    fx.events[3] = signed_event(sk, fx.created_at + 2, "unused", &ids[3]);
+    fx.stream_count = SEEN_CURSOR_CAPACITY + 64;
+    fx.stream_events = calloc(fx.stream_count, sizeof(*fx.stream_events));
+    fx.stream_ids = calloc(fx.stream_count, sizeof(*fx.stream_ids));
+    CHECK(fx.stream_events && fx.stream_ids);
+    for (size_t i = 0; i < fx.stream_count; i++) {
+        char content[32];
+        snprintf(content, sizeof(content), "future-%zu", i);
+        fx.stream_events[i] = signed_event(sk, fx.created_at, content,
+                                           &fx.stream_ids[i]);
+    }
+    run_case(FIXTURE_HOSTILE, ids);
+    for (size_t i = 0; i < fx.stream_count; i++) {
+        free(fx.stream_ids[i]);
+        free(fx.stream_events[i]);
+    }
+    free(fx.stream_ids);
+    free(fx.stream_events);
+    for (int i = 0; i < 4; i++) { free(ids[i]); free(fx.events[i]); }
+    free(sk);
     puts("test_reconnect_same_second: OK");
     return 0;
 }

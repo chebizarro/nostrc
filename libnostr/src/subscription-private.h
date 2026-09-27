@@ -54,10 +54,22 @@ typedef struct {
     _Atomic int64_t created_time_us;       // When subscription was created
 } QueueMetrics;
 
-typedef struct _SeenCursorEvent {
+/* Fixed-size FIFO hash cache. An evicted ID may be delivered again on replay,
+ * but an unseen same-second ID is never rejected by the dedup cache. */
+#define SEEN_CURSOR_CAPACITY 1024
+#define SEEN_CURSOR_BUCKETS 2048
+
+typedef struct {
     char id[65];
-    struct _SeenCursorEvent *next;
+    uint16_t next; /* index + 1; zero means end of chain */
 } SeenCursorEvent;
+
+typedef struct {
+    SeenCursorEvent entries[SEEN_CURSOR_CAPACITY];
+    uint16_t buckets[SEEN_CURSOR_BUCKETS];
+    uint16_t count;
+    uint16_t next_evict;
+} SeenCursorEvents;
 
 typedef struct _SubscriptionPrivate {
     int counter;
@@ -71,9 +83,9 @@ typedef struct _SubscriptionPrivate {
     _Atomic bool unsubbed;
     _Atomic bool events_channel_closed;
     _Atomic int64_t last_seen_created_at;
-    SeenCursorEvent *seen_cursor_events; /* guarded by sub_mutex */
+    SeenCursorEvents *seen_cursor_events; /* guarded by sub_mutex */
     int64_t replay_boundary_created_at;  /* current REQ's inclusive since, guarded by sub_mutex */
-    SeenCursorEvent *replay_boundary_events; /* guarded by sub_mutex */
+    SeenCursorEvents *replay_boundary_events; /* guarded by sub_mutex */
     CancelFunc cancel;
 
     /* Refcount for safe concurrent access (nostrc-nr96).

@@ -17,12 +17,53 @@
 
 static _Atomic long long g_sub_counter = 1;
 
-static void free_seen_cursor_events(SeenCursorEvent *seen) {
-    while (seen) {
-        SeenCursorEvent *next = seen->next;
-        free(seen);
-        seen = next;
+static uint16_t seen_cursor_bucket(const char *id) {
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < 64; i++)
+        hash = (hash ^ (unsigned char)id[i]) * 16777619u;
+    return (uint16_t)(hash % SEEN_CURSOR_BUCKETS);
+}
+
+static bool seen_cursor_contains(const SeenCursorEvents *seen, const char *id) {
+    if (!seen) return false;
+    uint16_t index = seen->buckets[seen_cursor_bucket(id)];
+    while (index) {
+        const SeenCursorEvent *entry = &seen->entries[index - 1];
+        if (strcmp(entry->id, id) == 0) return true;
+        index = entry->next;
     }
+    return false;
+}
+
+static void seen_cursor_add(SeenCursorEvents **seen_ptr, const char *id) {
+    SeenCursorEvents *seen = *seen_ptr;
+    if (!seen) {
+        seen = calloc(1, sizeof(*seen));
+        if (!seen) {
+            /* Cache allocation failure may cause redelivery, never event loss. */
+            nostr_metric_counter_add("sub_event_cursor_oom_untracked", 1);
+            return;
+        }
+        *seen_ptr = seen;
+    }
+
+    uint16_t index;
+    if (seen->count < SEEN_CURSOR_CAPACITY) {
+        index = seen->count++;
+    } else {
+        index = seen->next_evict;
+        uint16_t old_bucket = seen_cursor_bucket(seen->entries[index].id);
+        uint16_t *link = &seen->buckets[old_bucket];
+        while (*link && *link != index + 1)
+            link = &seen->entries[*link - 1].next;
+        if (*link) *link = seen->entries[index].next;
+        nostr_metric_counter_add("sub_event_cursor_eviction", 1);
+    }
+    seen->next_evict = (uint16_t)((index + 1) % SEEN_CURSOR_CAPACITY);
+    memcpy(seen->entries[index].id, id, 65);
+    uint16_t bucket = seen_cursor_bucket(id);
+    seen->entries[index].next = seen->buckets[bucket];
+    seen->buckets[bucket] = index + 1;
 }
 
 /* ========================================================================
@@ -253,8 +294,8 @@ static void subscription_destroy(NostrSubscription *sub) {
         sub->priv->count_result = NULL;
     }
     free(sub->priv->id);
-    free_seen_cursor_events(sub->priv->seen_cursor_events);
-    free_seen_cursor_events(sub->priv->replay_boundary_events);
+    free(sub->priv->seen_cursor_events);
+    free(sub->priv->replay_boundary_events);
     go_wait_group_destroy(&sub->priv->wg);
     free(sub->priv);
 
@@ -371,14 +412,15 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
         int64_t ev_created_at = event->created_at;
         int64_t cursor = atomic_load(&sub->priv->last_seen_created_at);
         int64_t boundary = sub->priv->replay_boundary_created_at;
-        SeenCursorEvent **ids = NULL;
+        SeenCursorEvents **ids = NULL;
         if (ev_created_at == cursor && cursor > 0) {
             ids = &sub->priv->seen_cursor_events;
         } else if (ev_created_at == boundary && boundary > 0) {
             ids = &sub->priv->replay_boundary_events;
         }
-        SeenCursorEvent *seen = NULL;
-        if ((ev_created_at >= cursor || ev_created_at == boundary) && ev_created_at > 0) {
+        char event_id[65];
+        bool track = (ev_created_at >= cursor || ev_created_at == boundary) && ev_created_at > 0;
+        if (track) {
             if (!event->id || strlen(event->id) != 64) {
                 nsync_mu_unlock(&sub->priv->sub_mutex);
                 nostr_event_free(event);
@@ -386,30 +428,16 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
                 nostr_metric_counter_add("sub_event_invalid_id_drop", 1);
                 return;
             }
-            if (ids) {
-                for (SeenCursorEvent *it = *ids; it; it = it->next) {
-                    if (strcmp(it->id, event->id) == 0) {
-                        nsync_mu_unlock(&sub->priv->sub_mutex);
-                        nostr_event_free(event);
-                        nostr_metric_counter_add("sub_event_duplicate", 1);
-                        return;
-                    }
-                }
-            }
-            seen = malloc(sizeof(*seen));
-            if (!seen) {
+            if (ids && seen_cursor_contains(*ids, event->id)) {
                 nsync_mu_unlock(&sub->priv->sub_mutex);
                 nostr_event_free(event);
-                atomic_fetch_add(&m->events_dropped, 1);
-                nostr_metric_counter_add("sub_event_cursor_oom_drop", 1);
+                nostr_metric_counter_add("sub_event_duplicate", 1);
                 return;
             }
-            memcpy(seen->id, event->id, 65);
-            seen->next = NULL;
+            memcpy(event_id, event->id, sizeof(event_id));
         }
         // Non-blocking send; if full or closed or canceled, drop to avoid hang
         if (go_channel_try_send(sub->events, event) != 0) {
-            free(seen);
             if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
                 fprintf(stderr, "[sub %s] dispatch_event: dropped (queue full/closed)\n", sub->priv->id);
             }
@@ -423,21 +451,20 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
             atomic_fetch_add(&m->events_enqueued, 1);
             atomic_store(&m->last_enqueue_time_us, now_us);
 
-            if (seen) {
+            if (track) {
                 if (ev_created_at > cursor) {
                     if (boundary > 0 && cursor == boundary) {
                         /* The previous cursor second remains in the active
                          * REQ's overlap even when newer events arrive first. */
                         sub->priv->replay_boundary_events = sub->priv->seen_cursor_events;
                     } else {
-                        free_seen_cursor_events(sub->priv->seen_cursor_events);
+                        free(sub->priv->seen_cursor_events);
                     }
                     sub->priv->seen_cursor_events = NULL;
                     atomic_store(&sub->priv->last_seen_created_at, ev_created_at);
                     ids = &sub->priv->seen_cursor_events;
                 }
-                seen->next = *ids;
-                *ids = seen;
+                if (ids) seen_cursor_add(ids, event_id);
             }
 
             /* Get actual channel depth for warnings (nostrc-dw3)
@@ -498,7 +525,7 @@ int64_t nostr_subscription_prepare_refire(NostrSubscription *sub) {
     if (!sub || !sub->priv) return 0;
     nsync_mu_lock(&sub->priv->sub_mutex);
     int64_t cursor = atomic_load(&sub->priv->last_seen_created_at);
-    free_seen_cursor_events(sub->priv->replay_boundary_events);
+    free(sub->priv->replay_boundary_events);
     sub->priv->replay_boundary_events = NULL;
     sub->priv->replay_boundary_created_at = cursor;
     atomic_store(&sub->priv->eosed, false);
