@@ -16,7 +16,7 @@ Five disjoint work items, one worktree each. Merge when verified; delete worktre
 Deferred to a later wave: k95e, wu3s, hby8, prqu.1, prqu.7, prqu.9, prqu.10, rxxx, 7d96.
 
 ## Progress
-- [ ] A relayd
+- [x] A relayd — merged; prqu.17 blocked on 8rxk
 - [ ] B signer
 - [ ] C gnostr client
 - [ ] D libnostr/dav/packaging
