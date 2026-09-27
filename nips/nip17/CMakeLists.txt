@@ -1,5 +1,8 @@
 project(nip17)
 
+# Seal and gift-wrap timestamps come from OpenSSL's CSPRNG (RAND_bytes).
+find_package(OpenSSL REQUIRED)
+
 # Core NIP-17 library
 add_library(nostr_nip17_core OBJECT
     src/nip17.c
@@ -16,6 +19,7 @@ target_link_libraries(nostr_nip17_core
     PUBLIC
         nostr
         nostr_nip44_core
+        OpenSSL::Crypto
 )
 
 # Install headers

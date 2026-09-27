@@ -415,6 +415,16 @@ if(BUILD_TESTING)
     )
   endif()
 
+  # GNostrRelay against real sockets: refused connect fails (nostrc-oz77),
+  # teardown leaves fd 0 alone (nostrc-jc2o). Mock relay from testing/.
+  if(TARGET nostr_testing)
+    gn_add_gtest(test_nostr_gobject_relay_connect
+      SOURCES tests/test_relay_connect.c
+      LIBS nostr_gobject nostr_testing
+      TIMEOUT 60
+    )
+  endif()
+
   # ── New tests (require testkit) ──────────────────────────────────
   if(TARGET gnostr-testkit)
     gn_add_gtest(test_nostr_gobject_store_contract

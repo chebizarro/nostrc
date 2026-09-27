@@ -6,9 +6,7 @@
 #include "ns-kind.h"
 
 #include "nostr-event.h"
-#include "nostr-keys.h"
-#include "nostr-utils.h"
-#include <nostr/nip44/nip44.h>
+#include <nostr/nip59/nip59.h>
 
 #include <gio/gio.h>
 #include <openssl/evp.h>
@@ -162,18 +160,6 @@ ns_private_rumor_json(gint kind, gint64 created_at, const gchar *sender_hex,
   return json_generator_to_data(gen, NULL);
 }
 
-/* now − uniform(1 .. window) from OpenSSL's CSPRNG; FALSE if it has none
- * (never fall back to the real time: that is the metadata being hidden). */
-static gboolean
-random_past(gint64 now, gint64 *out)
-{
-  guint32 r = 0;
-  if (RAND_bytes((guint8 *)&r, sizeof(r)) != 1)
-    return FALSE;
-  *out = now - 1 - (gint64)(r % NS_PRIVATE_TIME_WINDOW);
-  return TRUE;
-}
-
 /* A NIP-44 v2 payload: canonical base64, 132 .. 87472 characters. */
 static gboolean
 looks_nip44(const gchar *s)
@@ -187,46 +173,20 @@ looks_nip44(const gchar *s)
   return TRUE;
 }
 
-/* NIP-59 gift wrap of @seal_json for @receiver_hex from a key made for this
- * wrap alone, then wiped. Built here rather than with nips/nip59, whose
- * nostr_nip59_randomize_timestamp() always falls back to the real time
- * (its RNG helper passes a 64-char key to a 4-byte nostr_hex2bin(); bead
- * nostrc-rd8j), which would stamp every wrap with the true send time. */
+/* NIP-59 gift wrap of @seal for @receiver_hex. nips/nip59 makes a key for
+ * this wrap alone and wipes it, and dates the wrap from the CSPRNG; with no
+ * randomness it wraps nothing rather than stamp the send time. */
 static gchar *
-wrap_seal(const gchar *seal_json, const gchar *receiver_hex, GError **error)
+wrap_seal(NostrEvent *seal, const gchar *receiver_hex, GError **error)
 {
-  gint64 at = 0;
-  guint8 rpk[32], esk_bin[32];
-  if (!random_past(g_get_real_time() / G_USEC_PER_SEC, &at) ||
-      !nostr_hex2bin(rpk, receiver_hex, sizeof(rpk))) {
-    g_set_error_literal(error, NS_ERROR, NS_ERROR_PUBLISH, "gift-wrapping failed");
-    return NULL;
-  }
-  char *esk = nostr_key_generate_private();
-  char *epk = esk ? nostr_key_get_public(esk) : NULL;
-  char *enc = NULL;
   gchar *out = NULL;
-  if (epk != NULL && nostr_hex2bin(esk_bin, esk, sizeof(esk_bin)) &&
-      nostr_nip44_encrypt_v2(esk_bin, rpk, (const guint8 *)seal_json, strlen(seal_json),
-                             &enc) == 0 && enc != NULL) {
-    g_autoptr(JsonArray) tags = json_array_new();
-    ns_tags_add(tags, "p", receiver_hex, NULL);
-    g_autofree gchar *u = ns_event_unsigned_json(NS_KIND_GIFT_WRAP, at, epk, tags, enc, FALSE);
-    NostrEvent *ev = nostr_event_new();
-    if (nostr_event_deserialize_compact(ev, u, NULL) == 1 && nostr_event_sign(ev, esk) == 0) {
-      char *s = nostr_event_serialize_compact(ev);
-      out = g_strdup(s);
-      free(s);
-    }
-    nostr_event_free(ev);
+  NostrEvent *wrap = nostr_nip59_wrap(seal, receiver_hex, NULL);
+  if (wrap != NULL) {
+    char *s = nostr_event_serialize_compact(wrap);
+    out = g_strdup(s);
+    free(s);
+    nostr_event_free(wrap);
   }
-  OPENSSL_cleanse(esk_bin, sizeof(esk_bin));
-  if (esk != NULL) {
-    OPENSSL_cleanse(esk, strlen(esk));
-    free(esk);
-  }
-  free(epk);
-  free(enc);
   if (out == NULL)
     g_set_error_literal(error, NS_ERROR, NS_ERROR_PUBLISH, "gift-wrapping failed");
   return out;
@@ -285,8 +245,9 @@ ns_private_gift_wrap(NostrPublishSigner *signer, const gchar *sender_hex,
                         "the signer's NIP44Encrypt did not return a NIP-44 payload");
     return NULL;
   }
-  gint64 seal_at = 0;
-  if (!random_past(g_get_real_time() / G_USEC_PER_SEC, &seal_at)) {
+  int64_t seal_at = 0;
+  if (nostr_nip59_randomize_timestamp(g_get_real_time() / G_USEC_PER_SEC,
+                                      NS_PRIVATE_TIME_WINDOW, &seal_at) != NIP59_OK) {
     g_set_error_literal(error, NS_ERROR, NS_ERROR_PUBLISH,
                         "no randomness to hide the seal's time");
     return NULL;
@@ -326,11 +287,10 @@ ns_private_gift_wrap(NostrPublishSigner *signer, const gchar *sender_hex,
     return NULL;
   }
 
-  nostr_event_free(seal);
-
   /* 3. Gift wrap from a key made for this wrap alone. */
   gint64 asked_at = g_get_real_time() / G_USEC_PER_SEC + 1;
-  gchar *wrap_json = wrap_seal(seal_json, receiver_hex, error);
+  gchar *wrap_json = wrap_seal(seal, receiver_hex, error);
+  nostr_event_free(seal);
   if (wrap_json == NULL)
     return NULL;
   NostrEvent *wrap = nostr_event_new();

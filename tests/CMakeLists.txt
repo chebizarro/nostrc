@@ -314,7 +314,10 @@ add_test(NAME test_event_priority COMMAND test_event_priority)
 add_test(NAME test_nip04_aead COMMAND test_nip04_aead)
 
 # Per-test timeouts (seconds) — keep tight to surface stalls early
-set_tests_properties(test_nostr PROPERTIES TIMEOUT 20)
+# Offline transport: the relay part is an API smoke test. It used to dial a
+# fixed LAN address and pass only because a failed dial reported success
+# (nostrc-oz77).
+set_tests_properties(test_nostr PROPERTIES TIMEOUT 20 ENVIRONMENT "NOSTR_TEST_MODE=1")
 set_tests_properties(test_relay PROPERTIES TIMEOUT 30)
 set_tests_properties(test_relay_shutdown PROPERTIES TIMEOUT 30)
 set_tests_properties(test_subscription_lifecycle PROPERTIES TIMEOUT 30)

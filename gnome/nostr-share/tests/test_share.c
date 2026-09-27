@@ -979,7 +979,7 @@ tags_of(JsonParser **keep, const gchar *json)
 }
 
 /* Strictly in the past, within two days: never the send time (which is
- * what nips/nip59's broken randomiser produced, nostrc-rd8j). */
+ * what nips/nip59 produced before nostrc-rd8j). */
 static void
 assert_randomised(gint64 created_at)
 {

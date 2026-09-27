@@ -11,6 +11,9 @@
 #include "nostr-kinds.h"
 #include "nostr-keys.h"
 #include "nostr-utils.h"
+#include "secure_buf.h"
+
+#include <openssl/rand.h>
 
 #include <errno.h>
 #include <stdlib.h>
@@ -27,24 +30,35 @@ static int64_t get_current_time(void) {
     return (int64_t)time(NULL);
 }
 
+/* free() for a string that held secret material. */
+static void free_wiped(char *s) {
+    if (!s) return;
+    secure_wipe(s, strlen(s));
+    free(s);
+}
+
 /**
- * Get randomized timestamp within window for metadata protection
+ * A created_at uniformly within the two days before now, strictly in the
+ * past, from OpenSSL's CSPRNG (rejection sampling: no modulo bias).
+ * Returns -1 when randomness is unavailable: there is no fallback, since the
+ * real time is what the seal and the wrap hide.
  */
-static int64_t get_randomized_time(void) {
+static int get_randomized_time(int64_t *out) {
     int64_t now = get_current_time();
-    /* Generate ephemeral key and use first 4 bytes as random source */
-    char *rand_key = nostr_key_generate_private();
-    if (!rand_key) return now;
-
-    unsigned char rand_bytes[4];
-    nostr_hex2bin(rand_bytes, rand_key, 4);
-    free(rand_key);
-
-    uint32_t rand_val = (rand_bytes[0] << 24) | (rand_bytes[1] << 16) |
-                        (rand_bytes[2] << 8) | rand_bytes[3];
-    int64_t offset = rand_val % GW_TIME_WINDOW;
-
-    return now - offset;
+    if (now < GW_TIME_WINDOW) return -1;
+    const uint64_t span = UINT64_C(1) << 32;
+    const uint64_t limit = span - (span % GW_TIME_WINDOW);
+    for (int attempt = 0; attempt < 64; attempt++) {
+        unsigned char b[4];
+        if (RAND_bytes(b, (int)sizeof(b)) != 1) return -1;
+        uint32_t r = ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) |
+                     ((uint32_t)b[2] << 8) | (uint32_t)b[3];
+        if ((uint64_t)r < limit) {
+            *out = now - 1 - (int64_t)(r % GW_TIME_WINDOW);
+            return 0;
+        }
+    }
+    return -1;
 }
 
 NostrEvent *nostr_nip17_create_rumor(const char *sender_pubkey_hex,
@@ -90,6 +104,9 @@ NostrEvent *nostr_nip17_create_seal(NostrEvent *rumor,
         return NULL;
     }
 
+    int64_t seal_at = 0;
+    if (get_randomized_time(&seal_at) != 0) return NULL;
+
     /* Serialize rumor to JSON */
     char *rumor_json = nostr_event_serialize_compact(rumor);
     if (!rumor_json) return NULL;
@@ -104,7 +121,7 @@ NostrEvent *nostr_nip17_create_seal(NostrEvent *rumor,
     }
 
     if (!nostr_hex2bin(recipient_pk, recipient_pubkey_hex, 32)) {
-        memset(sender_sk, 0, 32);
+        secure_wipe(sender_sk, sizeof(sender_sk));
         free(rumor_json);
         return NULL;
     }
@@ -116,8 +133,8 @@ NostrEvent *nostr_nip17_create_seal(NostrEvent *rumor,
                                      strlen(rumor_json),
                                      &encrypted);
 
-    memset(sender_sk, 0, 32);
-    free(rumor_json);
+    secure_wipe(sender_sk, sizeof(sender_sk));
+    free_wiped(rumor_json);
 
     if (rc != 0 || !encrypted) {
         return NULL;
@@ -141,7 +158,7 @@ NostrEvent *nostr_nip17_create_seal(NostrEvent *rumor,
     nostr_event_set_kind(seal, NOSTR_KIND_SEAL);
     nostr_event_set_pubkey(seal, sender_pubkey);
     nostr_event_set_content(seal, encrypted);
-    nostr_event_set_created_at(seal, get_randomized_time());
+    nostr_event_set_created_at(seal, seal_at);
 
     free(sender_pubkey);
     free(encrypted);
@@ -161,20 +178,23 @@ NostrEvent *nostr_nip17_create_gift_wrap(NostrEvent *seal,
         return NULL;
     }
 
+    int64_t wrap_at = 0;
+    if (get_randomized_time(&wrap_at) != 0) return NULL;
+
     /* Generate ephemeral keypair */
     char *ephemeral_sk = nostr_key_generate_private();
     if (!ephemeral_sk) return NULL;
 
     char *ephemeral_pk = nostr_key_get_public(ephemeral_sk);
     if (!ephemeral_pk) {
-        free(ephemeral_sk);
+        free_wiped(ephemeral_sk);
         return NULL;
     }
 
     /* Serialize seal to JSON */
     char *seal_json = nostr_event_serialize_compact(seal);
     if (!seal_json) {
-        free(ephemeral_sk);
+        free_wiped(ephemeral_sk);
         free(ephemeral_pk);
         return NULL;
     }
@@ -184,15 +204,16 @@ NostrEvent *nostr_nip17_create_gift_wrap(NostrEvent *seal,
     unsigned char recipient_pk[32];
 
     if (!nostr_hex2bin(eph_sk, ephemeral_sk, 32)) {
-        free(ephemeral_sk);
+        secure_wipe(eph_sk, sizeof(eph_sk));
+        free_wiped(ephemeral_sk);
         free(ephemeral_pk);
         free(seal_json);
         return NULL;
     }
 
     if (!nostr_hex2bin(recipient_pk, recipient_pubkey_hex, 32)) {
-        memset(eph_sk, 0, 32);
-        free(ephemeral_sk);
+        secure_wipe(eph_sk, sizeof(eph_sk));
+        free_wiped(ephemeral_sk);
         free(ephemeral_pk);
         free(seal_json);
         return NULL;
@@ -205,11 +226,11 @@ NostrEvent *nostr_nip17_create_gift_wrap(NostrEvent *seal,
                                      strlen(seal_json),
                                      &encrypted);
 
-    memset(eph_sk, 0, 32);
+    secure_wipe(eph_sk, sizeof(eph_sk));
     free(seal_json);
 
     if (rc != 0 || !encrypted) {
-        free(ephemeral_sk);
+        free_wiped(ephemeral_sk);
         free(ephemeral_pk);
         return NULL;
     }
@@ -217,7 +238,7 @@ NostrEvent *nostr_nip17_create_gift_wrap(NostrEvent *seal,
     /* Create gift wrap event */
     NostrEvent *gift_wrap = nostr_event_new();
     if (!gift_wrap) {
-        free(ephemeral_sk);
+        free_wiped(ephemeral_sk);
         free(ephemeral_pk);
         free(encrypted);
         return NULL;
@@ -226,14 +247,14 @@ NostrEvent *nostr_nip17_create_gift_wrap(NostrEvent *seal,
     nostr_event_set_kind(gift_wrap, NOSTR_KIND_GIFT_WRAP);
     nostr_event_set_pubkey(gift_wrap, ephemeral_pk);
     nostr_event_set_content(gift_wrap, encrypted);
-    nostr_event_set_created_at(gift_wrap, get_randomized_time());
+    nostr_event_set_created_at(gift_wrap, wrap_at);
 
     free(encrypted);
 
     /* Add p-tag for recipient */
     NostrTag *ptag = nostr_tag_new("p", recipient_pubkey_hex, NULL);
     if (!ptag) {
-        free(ephemeral_sk);
+        free_wiped(ephemeral_sk);
         free(ephemeral_pk);
         nostr_event_free(gift_wrap);
         return NULL;
@@ -242,7 +263,7 @@ NostrEvent *nostr_nip17_create_gift_wrap(NostrEvent *seal,
     NostrTags *tags = nostr_tags_new(1, ptag);
     if (!tags) {
         nostr_tag_free(ptag);
-        free(ephemeral_sk);
+        free_wiped(ephemeral_sk);
         free(ephemeral_pk);
         nostr_event_free(gift_wrap);
         return NULL;
@@ -252,13 +273,13 @@ NostrEvent *nostr_nip17_create_gift_wrap(NostrEvent *seal,
 
     /* Sign with ephemeral key */
     if (nostr_event_sign(gift_wrap, ephemeral_sk) != 0) {
-        free(ephemeral_sk);
+        free_wiped(ephemeral_sk);
         free(ephemeral_pk);
         nostr_event_free(gift_wrap);
         return NULL;
     }
 
-    free(ephemeral_sk);
+    free_wiped(ephemeral_sk);
     free(ephemeral_pk);
 
     return gift_wrap;

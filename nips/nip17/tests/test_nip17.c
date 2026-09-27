@@ -4,15 +4,20 @@
  * Tests for gift-wrapped direct messages
  */
 
+/* assert()s with side effects below: keep them in any build type. */
+#undef NDEBUG
+
 #include "nostr/nip17/nip17.h"
 #include "nostr-event.h"
 #include "nostr-keys.h"
 #include "nostr-kinds.h"
 
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* Test keys - generated for testing only */
 static const char *ALICE_SK = NULL;
@@ -402,6 +407,44 @@ static void test_get_dm_relays_defaults(void) {
     printf("  OK: DM relay defaults work correctly\n");
 }
 
+/* nostrc-ehyf: seal and wrap times came from uninitialised stack bytes.
+ * Over many DMs both layers are inside [now - 2d, now), are not at the send
+ * time, and spread over the window. */
+static void test_timestamps_randomized(void) {
+    printf("Testing seal/gift wrap timestamps are randomized...\n");
+
+    enum { DMS = 100 };
+    const int64_t two_days = 2 * 24 * 60 * 60;
+    int64_t lo[2] = { INT64_MAX, INT64_MAX }, hi[2] = { INT64_MIN, INT64_MIN };
+    int recent = 0;
+
+    for (int i = 0; i < DMS; i++) {
+        int64_t before = (int64_t)time(NULL);
+        NostrEvent *wrap = nostr_nip17_wrap_dm(ALICE_SK, BOB_PK, "when?");
+        int64_t after = (int64_t)time(NULL);
+        assert(wrap != NULL);
+        NostrEvent *seal = nostr_nip17_unwrap_gift_wrap(wrap, BOB_SK);
+        assert(seal != NULL);
+
+        int64_t t[2] = { nostr_event_get_created_at(wrap), nostr_event_get_created_at(seal) };
+        for (int k = 0; k < 2; k++) {
+            assert(t[k] < after);
+            assert(t[k] >= before - two_days);
+            if (t[k] >= before - 60) recent++;
+            if (t[k] < lo[k]) lo[k] = t[k];
+            if (t[k] > hi[k]) hi[k] = t[k];
+        }
+        nostr_event_free(seal);
+        nostr_event_free(wrap);
+    }
+
+    /* Expect 200 * 60/172800 = 0.07 within a minute of sending. */
+    assert(recent <= 2);
+    assert(hi[0] - lo[0] > two_days / 2);
+    assert(hi[1] - lo[1] > two_days / 2);
+    printf("  OK: %d seals and wraps randomized across the window\n", DMS);
+}
+
 int main(void) {
     printf("NIP-17 Test Suite\n");
     printf("=================\n\n");
@@ -419,6 +462,7 @@ int main(void) {
     test_wrong_recipient_fails();
     test_validate_gift_wrap();
     test_validate_seal();
+    test_timestamps_randomized();
 
     /* DM relay preferences tests */
     test_create_dm_relay_list();

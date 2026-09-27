@@ -59,7 +59,7 @@ target_include_directories(nostr-share-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/s
 target_compile_definitions(nostr-share-core PUBLIC NS_VERSION="${NOSTR_SHARE_VERSION}")
 target_compile_options(nostr-share-core PRIVATE ${NS_WARNING_FLAGS})
 target_link_libraries(nostr-share-core PUBLIC
-  nostr-publish hanami nip34 nip19 nostr nostr_nip44_core
+  nostr-publish hanami nip34 nip19 nostr nostr_nip59_core
   OpenSSL::Crypto
   PkgConfig::NS_GLIB PkgConfig::NS_JSONGLIB PkgConfig::NS_SOUP)
 

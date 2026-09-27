@@ -13,6 +13,9 @@
 #include "nostr-kinds.h"
 #include "nostr-keys.h"
 #include "nostr-utils.h"
+#include "secure_buf.h"
+
+#include <openssl/rand.h>
 
 #include <errno.h>
 #include <stdlib.h>
@@ -22,6 +25,16 @@
 /* Default randomization window: 2 days in seconds */
 #define NIP59_DEFAULT_TIME_WINDOW (2 * 24 * 60 * 60)
 
+/* Timestamps are drawn from OpenSSL's CSPRNG, the generator behind
+ * nostr_key_generate_private() and every NIP-44 nonce. The failure-path
+ * test compiles this file with -DNIP59_RAND_BYTES=<stub>; production
+ * builds have no seam. */
+#ifndef NIP59_RAND_BYTES
+#define NIP59_RAND_BYTES RAND_bytes
+#else
+int NIP59_RAND_BYTES(unsigned char *buf, int num);
+#endif
+
 /**
  * Get current unix timestamp
  */
@@ -29,26 +42,33 @@ static int64_t get_current_time(void) {
     return (int64_t)time(NULL);
 }
 
-/**
- * Generate random bytes using key generation as entropy source
- */
-static int get_random_bytes(uint8_t *out, size_t len) {
-    /* Use key generation as source of randomness */
-    while (len > 0) {
-        char *rand_key = nostr_key_generate_private();
-        if (!rand_key) return -1;
+/* free() for a string that held secret material. */
+static void free_wiped(char *s) {
+    if (!s) return;
+    secure_wipe(s, strlen(s));
+    free(s);
+}
 
-        size_t copy_len = (len >= 32) ? 32 : len;
-        if (!nostr_hex2bin(out, rand_key, copy_len)) {
-            free(rand_key);
+/* A uniform draw from [1, n], n >= 1. Rejection sampling instead of a bare
+ * modulo keeps it unbiased. */
+static int random_offset(uint32_t n, uint32_t *out) {
+    /* Draws at or above the largest multiple of n below 2^32 are rejected;
+     * that is under half of them, so 64 rejections in a row mean the
+     * generator is broken, not unlucky. */
+    const uint64_t span = UINT64_C(1) << 32;
+    const uint64_t limit = span - (span % n);
+    for (int attempt = 0; attempt < 64; attempt++) {
+        unsigned char b[4];
+        if (NIP59_RAND_BYTES(b, (int)sizeof(b)) != 1)
             return -1;
+        uint32_t r = ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) |
+                     ((uint32_t)b[2] << 8) | (uint32_t)b[3];
+        if ((uint64_t)r < limit) {
+            *out = 1 + r % n;
+            return 0;
         }
-        free(rand_key);
-
-        out += copy_len;
-        len -= copy_len;
     }
-    return 0;
+    return -1;
 }
 
 int nostr_nip59_create_ephemeral_key(char **sk_hex_out, char **pk_hex_out) {
@@ -60,45 +80,38 @@ int nostr_nip59_create_ephemeral_key(char **sk_hex_out, char **pk_hex_out) {
     *pk_hex_out = NULL;
 
     /* Generate ephemeral secret key */
-    go_autofree char *sk = nostr_key_generate_private();
+    char *sk = nostr_key_generate_private();
     if (!sk) return NIP59_ERR_KEY_GENERATION;
 
     /* Derive public key */
-    go_autofree char *pk = nostr_key_get_public(sk);
-    if (!pk) return NIP59_ERR_KEY_GENERATION;
+    char *pk = nostr_key_get_public(sk);
+    if (!pk) {
+        free_wiped(sk);
+        return NIP59_ERR_KEY_GENERATION;
+    }
 
-    *sk_hex_out = go_steal_pointer(&sk);
-    *pk_hex_out = go_steal_pointer(&pk);
+    *sk_hex_out = sk;
+    *pk_hex_out = pk;
     return NIP59_OK;
 }
 
-int64_t nostr_nip59_randomize_timestamp(int64_t base_time, uint32_t window_seconds) {
-    /* Use current time if base_time is 0 */
-    if (base_time == 0) {
-        base_time = get_current_time();
-    }
+int nostr_nip59_randomize_timestamp(int64_t base_time, uint32_t window_seconds,
+                                    int64_t *out_time) {
+    if (!out_time) return NIP59_ERR_INVALID_ARG;
+    *out_time = 0;
 
-    /* Use default window if not specified */
-    if (window_seconds == 0) {
-        window_seconds = NIP59_DEFAULT_TIME_WINDOW;
-    }
+    if (base_time == 0) base_time = get_current_time();
+    if (window_seconds == 0) window_seconds = NIP59_DEFAULT_TIME_WINDOW;
 
-    /* Generate random offset */
-    uint8_t rand_bytes[4];
-    if (get_random_bytes(rand_bytes, 4) != 0) {
-        /* Fallback: just return base time if randomness fails */
-        return base_time;
-    }
+    /* Keeps the result non-negative; also catches time() failing (-1). */
+    if (base_time < (int64_t)window_seconds) return NIP59_ERR_INVALID_ARG;
 
-    uint32_t rand_val = ((uint32_t)rand_bytes[0] << 24) |
-                        ((uint32_t)rand_bytes[1] << 16) |
-                        ((uint32_t)rand_bytes[2] << 8) |
-                        (uint32_t)rand_bytes[3];
+    /* No fallback to base_time: the real time is what is being hidden. */
+    uint32_t offset = 0;
+    if (random_offset(window_seconds, &offset) != 0) return NIP59_ERR_RANDOMNESS;
 
-    /* Offset is in the past (subtract from base) */
-    int64_t offset = rand_val % window_seconds;
-
-    return base_time - offset;
+    *out_time = base_time - (int64_t)offset;
+    return NIP59_OK;
 }
 
 NostrEvent *nostr_nip59_wrap_with_key(NostrEvent *inner_event,
@@ -114,53 +127,73 @@ NostrEvent *nostr_nip59_wrap_with_key(NostrEvent *inner_event,
         return NULL;
     }
 
+    /* Without randomness there is nothing to hide the send time behind:
+     * refuse to wrap rather than stamp the real time. */
+    int64_t created_at = 0;
+    if (nostr_nip59_randomize_timestamp(0, 0, &created_at) != NIP59_OK) {
+        return NULL;
+    }
+
+    NostrEvent *result = NULL;
+    NostrEvent *gift_wrap = NULL;
+    char *inner_json = NULL;
+    char *encrypted = NULL;
+    char *eph_sk_hex = NULL;
+    char *eph_pk_hex = NULL;
+
     /* Serialize inner event to JSON */
-    go_autofree char *inner_json = nostr_event_serialize_compact(inner_event);
-    if (!inner_json) return NULL;
+    inner_json = nostr_event_serialize_compact(inner_event);
+    if (!inner_json) goto out;
 
     /* Encrypt with NIP-44 */
-    go_autofree char *encrypted = NULL;
     int rc = nostr_nip44_encrypt_v2(ephemeral_sk_bin, recipient_pk_bin,
                                      (const uint8_t *)inner_json,
                                      strlen(inner_json),
                                      &encrypted);
-    if (rc != 0 || !encrypted) return NULL;
+    if (rc != 0 || !encrypted) goto out;
 
     /* Get ephemeral pubkey */
-    go_autofree char *eph_sk_hex = nostr_bin2hex(ephemeral_sk_bin, 32);
-    if (!eph_sk_hex) return NULL;
+    eph_sk_hex = nostr_bin2hex(ephemeral_sk_bin, 32);
+    if (!eph_sk_hex) goto out;
 
-    go_autofree char *eph_pk_hex = nostr_key_get_public(eph_sk_hex);
-    if (!eph_pk_hex) return NULL;
+    eph_pk_hex = nostr_key_get_public(eph_sk_hex);
+    if (!eph_pk_hex) goto out;
 
     /* Create gift wrap event */
-    go_autoptr(NostrEvent) gift_wrap = nostr_event_new();
-    if (!gift_wrap) return NULL;
+    gift_wrap = nostr_event_new();
+    if (!gift_wrap) goto out;
 
     nostr_event_set_kind(gift_wrap, NOSTR_KIND_GIFT_WRAP);
     nostr_event_set_pubkey(gift_wrap, eph_pk_hex);
     nostr_event_set_content(gift_wrap, encrypted);
-    nostr_event_set_created_at(gift_wrap, nostr_nip59_randomize_timestamp(0, 0));
+    nostr_event_set_created_at(gift_wrap, created_at);
 
     /* Add p-tag for recipient */
     NostrTag *ptag = nostr_tag_new("p", recipient_pubkey_hex, NULL);
-    if (!ptag) return NULL;
+    if (!ptag) goto out;
 
     NostrTags *tags = nostr_tags_new(1, ptag);
     if (!tags) {
         nostr_tag_free(ptag);
-        return NULL;
+        goto out;
     }
 
     nostr_event_set_tags(gift_wrap, tags);
 
     /* Sign with ephemeral key */
-    if (nostr_event_sign(gift_wrap, eph_sk_hex) != 0) return NULL;
+    if (nostr_event_sign(gift_wrap, eph_sk_hex) != 0) goto out;
 
-    /* Clear ephemeral secret key */
-    memset(eph_sk_hex, 0, strlen(eph_sk_hex));
+    result = gift_wrap;
+    gift_wrap = NULL;
 
-    return go_steal_pointer(&gift_wrap);
+out:
+    /* The ephemeral key and the plaintext it hid, on every path. */
+    free_wiped(eph_sk_hex);
+    free_wiped(inner_json);
+    free(eph_pk_hex);
+    free(encrypted);
+    if (gift_wrap) nostr_event_free(gift_wrap);
+    return result;
 }
 
 NostrEvent *nostr_nip59_wrap(NostrEvent *inner_event,
@@ -177,6 +210,7 @@ NostrEvent *nostr_nip59_wrap(NostrEvent *inner_event,
     if (ephemeral_sk_hex) {
         /* Use provided ephemeral key */
         if (!nostr_hex2bin(eph_sk_bin, ephemeral_sk_hex, 32)) {
+            secure_wipe(eph_sk_bin, sizeof(eph_sk_bin));
             return NULL;
         }
     } else {
@@ -186,8 +220,8 @@ NostrEvent *nostr_nip59_wrap(NostrEvent *inner_event,
             return NULL;
         }
         if (!nostr_hex2bin(eph_sk_bin, generated_sk, 32)) {
-            memset(generated_sk, 0, strlen(generated_sk));
-            free(generated_sk);
+            secure_wipe(eph_sk_bin, sizeof(eph_sk_bin));
+            free_wiped(generated_sk);
             return NULL;
         }
         generated_key = true;
@@ -196,10 +230,9 @@ NostrEvent *nostr_nip59_wrap(NostrEvent *inner_event,
     NostrEvent *result = nostr_nip59_wrap_with_key(inner_event, recipient_pubkey_hex, eph_sk_bin);
 
     /* Clear sensitive data */
-    memset(eph_sk_bin, 0, 32);
-    if (generated_key && generated_sk) {
-        memset(generated_sk, 0, strlen(generated_sk));
-        free(generated_sk);
+    secure_wipe(eph_sk_bin, sizeof(eph_sk_bin));
+    if (generated_key) {
+        free_wiped(generated_sk);
     }
 
     return result;
@@ -288,7 +321,7 @@ NostrEvent *nostr_nip59_unwrap(NostrEvent *gift_wrap,
     NostrEvent *result = nostr_nip59_unwrap_with_key(gift_wrap, recipient_sk_bin);
 
     /* Clear sensitive data */
-    memset(recipient_sk_bin, 0, 32);
+    secure_wipe(recipient_sk_bin, sizeof(recipient_sk_bin));
 
     return result;
 }
