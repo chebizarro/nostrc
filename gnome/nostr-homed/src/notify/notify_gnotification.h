@@ -57,8 +57,9 @@ GNotification *nostr_notify_build_dm(const char *giftwrap_event_id,
 /*
  * Build a NIP-29 group message notification (kinds 9-12).
  *
- * `group_display_name` — from cached kind 39000/39001 metadata; NULL falls
- *   back to the raw `h_tag`.
+ * `group_display_name` — from cached kind 39000/39001 metadata, looked up
+ *   by nostr_notify_group_key(relay_url, h_tag); NULL falls back to
+ *   nostr_notify_group_fallback_title() ("<h> · <relay host>").
  * `h_tag` — group identifier (never NULL).
  * `event_id_hex` — 64-char lowercase hex event id.
  * `kind` — the event kind (9..12); encoded in the deep link.
@@ -104,5 +105,19 @@ char *nostr_notify_dm_deep_link_uri(const char *giftwrap_event_id,
                                     const char *relay_url);
 char *nostr_notify_group_deep_link_uri(const char *event_id_hex, int kind,
                                        const char *relay_url);
+
+/*
+ * NIP-29 identifies a group by (relay, id): the same `h` on two relays can
+ * be two different communities (forks). This key — "grp:<relay8>:<h>",
+ * relay8 = first 8 hex of sha256(normalized relay URL), h bounded to 64
+ * bytes — is the withdraw id of a group's notification and the key for any
+ * per-group cache (39000 display names). NULL for a NULL/empty h.
+ * (nostrc-a33z)
+ */
+char *nostr_notify_group_key(const char *relay_url, const char *h_tag);
+/* Title when no display name is cached: "<h> · <relay host>" (just <h>
+ * when the relay is unknown). Not markup-escaped. */
+char *nostr_notify_group_fallback_title(const char *h_tag,
+                                        const char *relay_url);
 
 #endif /* NOSTR_NOTIFY_GNOTIFICATION_H */

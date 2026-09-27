@@ -217,7 +217,9 @@ static gboolean dispatch_on_main(gpointer user_data) {
   } else {
     /* NIP-29 preview. group_display_name is looked up from the daemon's
      * metadata cache — for v1 the cache is trivial and returns NULL, so
-     * the h_tag itself is the visible title (still markup-safe). */
+     * the title is "<h> · <relay host>" (still markup-safe). A cache MUST
+     * be keyed by nostr_notify_group_key(relay_url, h): the same h on two
+     * relays is two groups (nostrc-a33z). */
     n = nostr_notify_build_group(NULL, ev->h_tag, ev->event_id_hex, ev->kind,
                                  ev->dispatcher->prefs.group_preview ? ev->content : NULL,
                                  ev->relay_url, &build);

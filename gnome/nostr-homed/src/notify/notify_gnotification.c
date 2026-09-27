@@ -77,7 +77,13 @@ static char *truncate_utf8(const char *s_in, size_t max_chars) {
  *                                  ID INTERNAL — never rendered in body,
  *                                  never returned to callers as a "thread
  *                                  hint").
- *   "grp:<h_tag>"                — one coalesced notification per group.
+ *   "grp:<relay8>:<h_tag>"       — one coalesced notification per group,
+ *                                  where a group is (relay, id): NIP-29
+ *                                  lets the same id name different
+ *                                  communities (forks) on different relays
+ *                                  (nostrc-a33z). relay8 = first 8 hex of
+ *                                  sha256(normalized relay URL), keeping
+ *                                  the id bounded.
  * The 8-hex prefix is a purely-internal coalescing key. It never appears
  * in the user-visible body — the DM body is the fixed opacity string.
  */
@@ -144,13 +150,44 @@ static char *dm_withdraw_id(const char *giftwrap_hex) {
   return g_strdup_printf("dm:%.8s", giftwrap_hex);
 }
 
-static char *group_withdraw_id(const char *h_tag) {
-  if (!h_tag) return g_strdup("grp:x");
+/* Relay URLs that differ only in scheme/host case or a trailing slash are
+ * the same relay. The path is kept as-is (it is case-sensitive). */
+static char *normalize_relay_url(const char *relay_url) {
+  if (!relay_url) return g_strdup("");
+  gchar *u = g_strstrip(g_strdup(relay_url));
+  size_t n = strlen(u);
+  while (n > 0 && u[n - 1] == '/') u[--n] = '\0';
+  char *sep = strstr(u, "://");
+  char *auth_end = sep ? strchr(sep + 3, '/') : NULL;
+  size_t lower_to = auth_end ? (size_t)(auth_end - u) : n;
+  for (size_t i = 0; i < lower_to; i++) u[i] = g_ascii_tolower(u[i]);
+  return u;
+}
+
+char *nostr_notify_group_key(const char *relay_url, const char *h_tag) {
+  if (!h_tag || !*h_tag) return NULL;
+  g_autofree char *norm = normalize_relay_url(relay_url);
+  g_autofree char *digest =
+      g_compute_checksum_for_string(G_CHECKSUM_SHA256, norm, -1);
   /* Bound length to a sane cap. */
-  gchar *bounded = g_strndup(h_tag, 64);
-  gchar *id = g_strdup_printf("grp:%s", bounded);
-  g_free(bounded);
-  return id;
+  g_autofree char *bounded = g_strndup(h_tag, 64);
+  return g_strdup_printf("grp:%.8s:%s", digest, bounded);
+}
+
+char *nostr_notify_group_fallback_title(const char *h_tag,
+                                        const char *relay_url) {
+  if (!h_tag) return NULL;
+  g_autofree char *norm = normalize_relay_url(relay_url);
+  const char *host = strstr(norm, "://");
+  host = host ? host + 3 : norm;
+  size_t host_len = strcspn(host, "/");
+  if (host_len == 0) return g_strdup(h_tag);
+  return g_strdup_printf("%s \xc2\xb7 %.*s", h_tag, (int)host_len, host);
+}
+
+static char *group_withdraw_id(const char *relay_url, const char *h_tag) {
+  char *id = nostr_notify_group_key(relay_url, h_tag);
+  return id ? id : g_strdup("grp:x");
 }
 
 GNotification *nostr_notify_build_dm(const char *giftwrap_event_id,
@@ -196,8 +233,13 @@ GNotification *nostr_notify_build_group(const char *group_display_name,
     return NULL;
   }
 
-  const char *title =
-      (group_display_name && *group_display_name) ? group_display_name : h_tag;
+  /* Without cached 39000 metadata, name the relay next to the bare id:
+   * the same id on two relays is two different groups (nostrc-a33z). */
+  g_autofree char *fallback =
+      (group_display_name && *group_display_name)
+          ? NULL
+          : nostr_notify_group_fallback_title(h_tag, relay_url);
+  const char *title = fallback ? fallback : group_display_name;
   g_autofree char *safe_title = g_markup_escape_text(title, -1);
   g_autofree char *body = content_utf8 ? truncate_utf8(content_utf8, 80) : g_strdup(kGroupFixedBody);
 
@@ -210,7 +252,7 @@ GNotification *nostr_notify_build_group(const char *group_display_name,
                                                "s", uri);
   g_free(uri);
 
-  if (out) out->withdraw_id = group_withdraw_id(h_tag);
+  if (out) out->withdraw_id = group_withdraw_id(relay_url, h_tag);
   return n;
 }
 
