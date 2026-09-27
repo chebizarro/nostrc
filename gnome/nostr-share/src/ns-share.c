@@ -24,7 +24,24 @@ ns_file_free(gpointer p)
   g_free(f->display_name);
   g_clear_pointer(&f->bytes, g_bytes_unref);
   ns_blob_meta_clear(&f->blob);
+  g_clear_pointer(&f->sealed, g_bytes_unref);
+  ns_blob_meta_clear(&f->sealed_blob);
+  ns_file_key_clear(&f->file_key);
   g_free(f);
+}
+
+static void
+ns_inbox_clear(NsInbox *in)
+{
+  g_clear_pointer(&in->relays, g_strfreev);
+  g_clear_pointer(&in->event_json, g_free);
+  g_clear_pointer(&in->source, g_free);
+}
+
+static gboolean
+is_private_action(NsAction a)
+{
+  return a == NS_ACTION_PRIVATE_MESSAGE || a == NS_ACTION_PRIVATE_FILE;
 }
 
 static void
@@ -214,9 +231,80 @@ text_forced(const NsShare *share, NsInputClass cls, gint forced)
   return share->cfg->text_kind;
 }
 
+/* Encrypt @f for a kind-15 file message once (fresh key and nonce). */
+static gboolean
+seal_file(NsFile *f, GError **error)
+{
+  if (f->sealed != NULL)
+    return TRUE;
+  f->sealed = ns_private_encrypt_file(f->bytes, &f->file_key, error);
+  if (f->sealed == NULL)
+    return FALSE;
+  gsize n = 0;
+  const guint8 *d = g_bytes_get_data(f->sealed, &n);
+  g_autofree gchar *sha = ns_sha256_hex(d, n);
+  g_strlcpy(f->sealed_blob.sha256, sha, sizeof(f->sealed_blob.sha256));
+  f->sealed_blob.size = n;
+  f->sealed_blob.mime = g_strdup("application/octet-stream");
+  return TRUE;
+}
+
+/* --private (nostrc-k95e): text becomes one kind-14 message per text, each
+ * file a kind-15 file message (encrypted blob). What NIP-17 cannot carry
+ * is refused rather than published in the clear. */
+static gboolean
+replan_private(NsShare *share, GError **error)
+{
+  g_autoptr(GPtrArray) posts = g_ptr_array_new_with_free_func(ns_post_free);
+  g_autofree gchar *caption = caption_with_urls(share);
+  for (guint i = 0; i < share->files->len; i++) {
+    NsFile *f = g_ptr_array_index(share->files, i);
+    NsPost *p = NULL;
+    switch (f->cls) {
+    case NS_CLASS_MEDIA:
+    case NS_CLASS_OTHER_FILE:
+      if (!seal_file(f, error))
+        return FALSE;
+      p = ns_post_new(NS_ACTION_PRIVATE_FILE, f->cls);
+      g_ptr_array_add(p->files, f);
+      break;
+    case NS_CLASS_TEXT:
+    case NS_CLASS_MARKDOWN:
+      p = ns_post_new(NS_ACTION_PRIVATE_MESSAGE, f->cls);
+      p->text = file_text(f);
+      break;
+    case NS_CLASS_URL:
+      continue;    /* folded into share->urls at load time */
+    case NS_CLASS_GIT_REPO:
+    case NS_CLASS_CALENDAR:
+    case NS_CLASS_CONTACT:
+    case NS_CLASS_DIRECTORY:
+      g_set_error(error, NS_ERROR, NS_ERROR_BAD_INPUT,
+                  "%s: a %s cannot be shared privately (text, links and files can)",
+                  f->display_name, ns_class_name(f->cls));
+      return FALSE;
+    }
+    g_ptr_array_add(posts, p);
+  }
+  if (*caption != '\0' || (posts->len == 0 && share->allow_empty)) {
+    NsPost *p = ns_post_new(NS_ACTION_PRIVATE_MESSAGE, share->text_class);
+    p->text = g_strdup(caption);
+    g_ptr_array_insert(posts, 0, p);
+  }
+  if (posts->len == 0) {
+    g_set_error_literal(error, NS_ERROR, NS_ERROR_BAD_INPUT, "nothing to share");
+    return FALSE;
+  }
+  g_clear_pointer(&share->posts, g_ptr_array_unref);
+  share->posts = g_steal_pointer(&posts);
+  return TRUE;
+}
+
 static gboolean
 replan(NsShare *share, GError **error)
 {
+  if (share->private_share)
+    return replan_private(share, error);
   g_autoptr(GPtrArray) posts = g_ptr_array_new_with_free_func(ns_post_free);
   gint forced = share->forced_kind;
   gboolean caption_used = FALSE;
@@ -364,9 +452,24 @@ ns_share_new(NsConfig *cfg, const NsShareOptions *opts, GError **error)
   share->text_class = NS_CLASS_TEXT;
   share->title = g_strdup(opts->title);
   share->allow_empty = opts->allow_empty;
+  share->private_share = opts->private_share;
 
   if (!ns_recipient_parse(opts->to, &share->to, error))
     return NULL;
+  /* The dialog may switch private on before a recipient is entered; the
+   * command line must say who, and cannot pick a kind. */
+  if (share->private_share && share->to.type != NS_RECIPIENT_MENTION) {
+    g_set_error_literal(error, NS_ERROR, NS_ERROR_BAD_INPUT,
+                        "--private needs --to with the recipient's npub (one person; "
+                        "NIP-29 groups have their own privacy model)");
+    return NULL;
+  }
+  if (share->private_share && opts->forced_kind != 0) {
+    g_set_error_literal(error, NS_ERROR, NS_ERROR_BAD_KIND,
+                        "--kind does not apply to --private: text is sent as a kind-14 "
+                        "message and each file as a kind-15 file message (NIP-17)");
+    return NULL;
+  }
 
   GString *text = g_string_new(NULL);
   for (guint i = 0; opts->texts && opts->texts[i]; i++)
@@ -446,9 +549,32 @@ ns_share_free(NsShare *share)
   g_strfreev(share->servers);
   g_free(share->servers_source);
   ns_targets_clear(&share->targets);
+  ns_inbox_clear(&share->inbox_to);
+  ns_inbox_clear(&share->inbox_self);
   ns_net_clear(&share->net);
   ns_config_free(share->cfg);
   g_free(share);
+}
+
+gboolean
+ns_share_set_private(NsShare *share, gboolean on, GError **error)
+{
+  gboolean old = share->private_share;
+  share->private_share = on;
+  if (!replan(share, error)) {
+    share->private_share = old;
+    (void)replan(share, NULL);
+    return FALSE;
+  }
+  if (on != old) {
+    /* Different destinations entirely: resolve again before publishing. */
+    ns_targets_clear(&share->targets);
+    ns_inbox_clear(&share->inbox_to);
+    ns_inbox_clear(&share->inbox_self);
+    share->inboxes_stored = FALSE;
+    share->resolved = FALSE;
+  }
+  return TRUE;
 }
 
 gboolean
@@ -503,7 +629,8 @@ ns_share_needs_upload(const NsShare *share)
 {
   for (guint i = 0; i < share->posts->len; i++) {
     const NsPost *p = g_ptr_array_index(share->posts, i);
-    if (p->action == NS_ACTION_MEDIA_NOTE || p->action == NS_ACTION_FILE_METADATA)
+    if (p->action == NS_ACTION_MEDIA_NOTE || p->action == NS_ACTION_FILE_METADATA ||
+        p->action == NS_ACTION_PRIVATE_FILE)
       return TRUE;
   }
   return FALSE;
@@ -558,14 +685,78 @@ has_git_post(const NsShare *share)
   return FALSE;
 }
 
+/* --private: the recipient's inbox (required: NIP-17 says not to send
+ * without one), ours for the copy to self, and the route — the session
+ * relay while it forwards (it routes kind 1059 to the p-tagged inbox),
+ * else the inbox relays directly. Nothing is uploaded or sent before
+ * this succeeds. */
+static gboolean
+resolve_private(NsShare *share, GError **error)
+{
+  ns_inbox_clear(&share->inbox_to);
+  ns_inbox_clear(&share->inbox_self);
+  share->inboxes_stored = FALSE;
+  if (share->to.type != NS_RECIPIENT_MENTION) {
+    g_set_error_literal(error, NS_ERROR, NS_ERROR_BAD_INPUT,
+                        "a private share needs the recipient's npub");
+    return FALSE;
+  }
+  if (!ns_resolve_inbox(share->cfg, &share->net, share->to.pubkey_hex,
+                        &share->inbox_to.relays, &share->inbox_to.event_json,
+                        &share->inbox_to.source)) {
+    g_set_error(error, NS_ERROR, NS_ERROR_NO_RELAYS,
+                "%s has no kind-10050 DM relay list, i.e. has not set up private "
+                "messages, and NIP-17 says not to send any. Nothing was uploaded "
+                "or sent.", share->to.npub);
+    return FALSE;
+  }
+  if (g_strcmp0(share->to.pubkey_hex, share->pubkey_hex) != 0)
+    (void)ns_resolve_inbox(share->cfg, &share->net, share->pubkey_hex,
+                           &share->inbox_self.relays, &share->inbox_self.event_json,
+                           &share->inbox_self.source);
+
+  const NsConfig *cfg = share->cfg;
+  NsTargets *t = &share->targets;
+  gboolean have_session = share->net.session_socket != NULL &&
+                          (cfg->upstream == NS_UPSTREAM_SESSION_RELAY_OR_DIRECT ||
+                           cfg->upstream == NS_UPSTREAM_SESSION_RELAY_ONLY);
+  NostrPublishFederation fed = have_session ? ns_net_session_federation(&share->net)
+                                            : NOSTR_PUBLISH_FEDERATION_NOT_RUNNING;
+  if (have_session && nostr_publish_federation_forwards(fed)) {
+    const gchar *one[] = { NS_SESSION_RELAY_URL, NULL };
+    t->targets = g_strdupv((gchar **)one);
+    t->direct = g_new0(gchar *, 1);
+    t->session_included = TRUE;
+    t->session_upstream = TRUE;
+    t->session_note = g_strdup_printf("the session relay forwards the gift wrap to the "
+                                      "inbox (%s)", nostr_publish_federation_to_string(fed));
+  } else if (cfg->upstream == NS_UPSTREAM_SESSION_RELAY_ONLY) {
+    g_set_error(error, NS_ERROR, NS_ERROR_NO_RELAYS,
+                "upstream_mode=session_relay_only, but the session relay %s, so "
+                "the private message could not leave this machine",
+                share->net.session_socket == NULL ? "socket is missing"
+                                                  : "does not forward upstream");
+    return FALSE;
+  } else {
+    t->targets = g_strdupv(share->inbox_to.relays);
+    t->direct = g_strdupv(share->inbox_to.relays);
+  }
+  t->write_source = g_strdup(share->inbox_to.source);
+  return TRUE;
+}
+
 gboolean
 ns_share_resolve(NsShare *share, GError **error)
 {
   ns_targets_clear(&share->targets);
-  if (ns_share_needs_relays(share) &&
-      !ns_resolve_targets(share->cfg, &share->net, share->pubkey_hex, &share->to,
-                          has_git_post(share), &share->targets, error))
+  if (share->private_share) {
+    if (!resolve_private(share, error))
+      return FALSE;
+  } else if (ns_share_needs_relays(share) &&
+             !ns_resolve_targets(share->cfg, &share->net, share->pubkey_hex, &share->to,
+                                 has_git_post(share), &share->targets, error)) {
     return FALSE;
+  }
   if (ns_share_needs_upload(share) && share->servers == NULL) {
     g_clear_pointer(&share->servers_source, g_free);
     share->servers = ns_resolve_blossom_servers(share->cfg, &share->net,
@@ -587,7 +778,14 @@ predict_urls(NsShare *share)
     return;
   for (guint i = 0; i < share->files->len; i++) {
     NsFile *f = g_ptr_array_index(share->files, i);
-    if (f->uploaded || (f->cls != NS_CLASS_MEDIA && f->cls != NS_CLASS_OTHER_FILE))
+    if (f->cls != NS_CLASS_MEDIA && f->cls != NS_CLASS_OTHER_FILE)
+      continue;
+    if (f->sealed != NULL && !f->sealed_uploaded) {
+      g_free(f->sealed_blob.url);
+      f->sealed_blob.url = ns_blossom_blob_url(share->servers[0], f->sealed_blob.sha256,
+                                               f->sealed_blob.mime);
+    }
+    if (f->uploaded)
       continue;
     g_free(f->blob.url);
     f->blob.url = ns_blossom_blob_url(share->servers[0], f->blob.sha256, f->blob.mime);
@@ -616,11 +814,40 @@ build_post(NsShare *share, NsPost *post, GError **error)
   g_autofree gchar *content = NULL;
   gint kind = post_kind(share, post);
 
-  if ((post->action == NS_ACTION_NOTE || post->action == NS_ACTION_ARTICLE) &&
+  if ((post->action == NS_ACTION_NOTE || post->action == NS_ACTION_ARTICLE ||
+       post->action == NS_ACTION_PRIVATE_MESSAGE) &&
       (post->text == NULL || strspn(post->text, " \t\r\n") == strlen(post->text))) {
     g_set_error_literal(error, NS_ERROR, NS_ERROR_BAD_INPUT,
                         "nothing to share: the text is empty");
     return FALSE;
+  }
+  if (is_private_action(post->action)) {
+    /* A NIP-17 rumor: unsigned, only the recipient's p tag (no public
+     * mention, no r tags); what the recipient reads, and what the dialog
+     * shows. It is sealed and gift-wrapped at publish time. */
+    if (share->to.type != NS_RECIPIENT_MENTION) {
+      g_set_error_literal(error, NS_ERROR, NS_ERROR_BAD_INPUT,
+                          "enter the recipient's npub for a private share");
+      return FALSE;
+    }
+    ns_tags_add(tags, "p", share->to.pubkey_hex, NULL);
+    if (post->action == NS_ACTION_PRIVATE_FILE) {
+      NsFile *f = g_ptr_array_index(post->files, 0);
+      if (f->sealed_blob.url == NULL) {
+        g_set_error_literal(error, NS_ERROR, NS_ERROR_NO_SERVERS,
+                            "no Blossom server resolved for the encrypted file");
+        return FALSE;
+      }
+      ns_tags_add_private_file(tags, &f->sealed_blob, f->blob.mime, f->blob.sha256,
+                               f->blob.width, f->blob.height, &f->file_key);
+    }
+    post->unsigned_json = ns_private_rumor_json(
+      kind, share->created_at, share->pubkey_hex, tags,
+      post->action == NS_ACTION_PRIVATE_FILE
+        ? ((NsFile *)g_ptr_array_index(post->files, 0))->sealed_blob.url
+        : post->text,
+      FALSE);
+    return TRUE;
   }
   switch (post->action) {
   case NS_ACTION_NOTE:
@@ -683,6 +910,10 @@ build_post(NsShare *share, NsPost *post, GError **error)
   case NS_ACTION_DAV_CALENDAR:
   case NS_ACTION_DAV_CONTACT:
     return TRUE;   /* nostr-dav builds the event */
+
+  case NS_ACTION_PRIVATE_MESSAGE:
+  case NS_ACTION_PRIVATE_FILE:
+    g_assert_not_reached();   /* handled above */
   }
 
   ns_tags_add_recipient(tags, &share->to);
@@ -709,7 +940,9 @@ ns_share_sign(NsShare *share, GError **error)
     return FALSE;
   for (guint i = 0; i < share->posts->len; i++) {
     NsPost *p = g_ptr_array_index(share->posts, i);
-    if (p->unsigned_json == NULL || p->signed_json != NULL)
+    /* Private posts are sealed and wrapped only when sent: a dry run shows
+     * the rumor, and asks the signer for nothing. */
+    if (p->unsigned_json == NULL || p->signed_json != NULL || is_private_action(p->action))
       continue;
     GError *local = NULL;
     p->signed_json = nostr_publish_signer_sign_event_json(share->signer,
@@ -743,6 +976,10 @@ ns_share_preview_json(const NsShare *share, gboolean signed_if_available)
                                ? "calendars/nostr/, NIP-52" : "contacts/nostr/, kind 30085");
       continue;
     }
+    if (is_private_action(p->action) && j == p->unsigned_json)
+      g_string_append_printf(s, "// private (NIP-17): only %s can read this; relays see "
+                                "a kind-1059 gift wrap from a throwaway key\n",
+                             share->to.npub ? share->to.npub : "the recipient");
     g_autofree gchar *pretty = ns_json_pretty(j);
     g_string_append(s, pretty);
     g_string_append_c(s, '\n');
@@ -786,6 +1023,25 @@ ns_share_upload(NsShare *share, gboolean *urls_changed, NsProgressFunc progress,
 
   for (guint i = 0; i < share->posts->len; i++) {
     NsPost *p = g_ptr_array_index(share->posts, i);
+    if (p->action == NS_ACTION_PRIVATE_FILE) {
+      /* Only the AES-256-GCM ciphertext leaves the machine. */
+      NsFile *f = g_ptr_array_index(p->files, 0);
+      if (f->sealed_uploaded)
+        continue;
+      say(progress, user_data, "Uploading %s, encrypted (%" G_GUINT64_FORMAT " KiB)…",
+          f->display_name, f->sealed_blob.size / 1024u);
+      g_autofree gchar *url = NULL, *server = NULL;
+      if (!ns_blossom_upload((const gchar *const *)share->servers, share->signer,
+                             share->pubkey_hex, f->sealed_blob.mime, f->sealed,
+                             f->sealed_blob.sha256, &url, &server, error))
+        return FALSE;
+      if (urls_changed != NULL && g_strcmp0(url, f->sealed_blob.url) != 0)
+        *urls_changed = TRUE;
+      g_free(f->sealed_blob.url);
+      f->sealed_blob.url = g_steal_pointer(&url);
+      f->sealed_uploaded = TRUE;
+      continue;
+    }
     if (p->action != NS_ACTION_MEDIA_NOTE && p->action != NS_ACTION_FILE_METADATA)
       continue;
     for (guint j = 0; j < p->files->len; j++) {
@@ -844,6 +1100,111 @@ mark_sources(const NsShare *share, const NsPost *p)
     (void)ns_share_mark_published(share->text_path, id);
 }
 
+/* ---- Private publishing (nostrc-k95e) ---- */
+
+/* Hand someone's kind-10050 event to the session relay, whose router
+ * sends a kind-1059 wrap to the inbox it names (it is their own signed
+ * public event; the relay never rebroadcasts another author's events). */
+static gboolean
+store_in_session_relay(NsShare *share, const gchar *event_json, GError **error)
+{
+  const gchar *one[] = { NS_SESSION_RELAY_URL, NULL };
+  NsTargets t = { 0 };
+  t.targets = (gchar **)one;
+  gchar *none[] = { NULL };
+  t.direct = none;
+  NsPublishReport rep;
+  gboolean ok = ns_net_publish(&share->net, share->cfg, event_json, &t, &rep, error);
+  ns_publish_report_clear(&rep);
+  return ok;
+}
+
+/* Seal + wrap @rumor for @receiver_hex and publish the wrap: through the
+ * session relay when it forwards, else to @inbox's relays only. */
+static gboolean
+send_wrap(NsShare *share, const gchar *rumor, const gchar *receiver_hex,
+          const NsInbox *inbox, gchar **out_wrap, NsPublishReport *rep, GError **error)
+{
+  memset(rep, 0, sizeof(*rep));
+  g_autofree gchar *wrap = ns_private_gift_wrap(share->signer, share->pubkey_hex, rumor,
+                                                receiver_hex, error);
+  if (wrap == NULL)
+    return FALSE;
+  NsTargets t = { 0 };
+  const gchar *session_only[] = { NS_SESSION_RELAY_URL, NULL };
+  gchar *none[] = { NULL };
+  if (share->targets.session_upstream) {
+    t.targets = (gchar **)session_only;
+    t.direct = none;
+    t.session_upstream = TRUE;
+  } else {
+    t.targets = inbox->relays;
+    t.direct = inbox->relays;
+  }
+  gboolean ok = ns_net_publish(&share->net, share->cfg, wrap, &t, rep, error);
+  if (out_wrap != NULL)
+    *out_wrap = g_steal_pointer(&wrap);
+  return ok;
+}
+
+static gboolean
+publish_private(NsShare *share, NsPost *p, NsProgressFunc progress, gpointer user_data,
+                GError **error)
+{
+  if (share->targets.session_upstream && !share->inboxes_stored) {
+    if (!store_in_session_relay(share, share->inbox_to.event_json, error))
+      return FALSE;
+    if (share->inbox_self.event_json != NULL)
+      (void)store_in_session_relay(share, share->inbox_self.event_json, NULL);
+    share->inboxes_stored = TRUE;
+  }
+
+  say(progress, user_data, "Sealing for %s (your signer may ask to approve encrypting "
+      "and signing)…", share->to.npub);
+  NsPublishReport rep;
+  g_autofree gchar *wrap = NULL;
+  GError *local = NULL;
+  gboolean ok = send_wrap(share, p->unsigned_json, share->to.pubkey_hex, &share->inbox_to,
+                          &wrap, &rep, &local);
+  GString *r = g_string_new(NULL);
+  g_string_append_printf(r, "kind %d, private to %s: gift wrap ", post_kind(share, p),
+                         share->to.npub);
+  if (rep.upstream)
+    g_string_append_printf(r, "%s by the session relay: %u/%u inbox relays accepted",
+                           nostr_publish_forward_state_to_string(rep.upstream_state),
+                           rep.n_accepted, rep.n_targets);
+  else
+    g_string_append_printf(r, "%u/%u inbox relays accepted", rep.n_accepted, rep.n_targets);
+  for (guint k = 0; rep.lines && k < rep.lines->len; k++) {
+    say(progress, user_data, "  %s", (const gchar *)g_ptr_array_index(rep.lines, k));
+    g_string_append_printf(r, "\n  %s", (const gchar *)g_ptr_array_index(rep.lines, k));
+  }
+  ns_publish_report_clear(&rep);
+  g_free(p->signed_json);
+  p->signed_json = g_steal_pointer(&wrap);   /* what went out: opaque */
+
+  /* NIP-17: a copy wrapped for ourselves, so our other clients show the
+   * conversation. Best effort: the recipient's copy is what counts. */
+  if (p->signed_json != NULL && share->inbox_self.relays != NULL &&
+      (ok || g_error_matches(local, NS_ERROR, NS_ERROR_QUEUED))) {
+    NsPublishReport self_rep;
+    GError *self_err = NULL;
+    gboolean self_ok = send_wrap(share, p->unsigned_json, share->pubkey_hex,
+                                 &share->inbox_self, NULL, &self_rep, &self_err);
+    g_string_append_printf(r, "\n  copy to your own inbox: %s", self_ok
+                             ? "sent" : (self_err ? self_err->message : "failed"));
+    ns_publish_report_clear(&self_rep);
+    g_clear_error(&self_err);
+  }
+  g_free(p->result);
+  p->result = g_string_free(r, FALSE);
+  if (!ok) {
+    g_propagate_error(error, local);
+    return FALSE;
+  }
+  return TRUE;
+}
+
 gboolean
 ns_share_publish(NsShare *share, NsProgressFunc progress, gpointer user_data,
                  GError **error)
@@ -872,6 +1233,24 @@ ns_share_publish(NsShare *share, NsProgressFunc progress, gpointer user_data,
       p->result = g_strdup_printf("%s → %s (nostr-dav publishes it)",
                                   f->display_name, url);
       continue;
+    }
+
+    if (is_private_action(p->action)) {
+      GError *local = NULL;
+      if (!publish_private(share, p, progress, user_data, &local)) {
+        if (g_error_matches(local, NS_ERROR, NS_ERROR_QUEUED)) {
+          say(progress, user_data, "  %s", local->message);
+          if (queued == NULL)
+            queued = local;
+          else
+            g_error_free(local);
+          continue;
+        }
+        g_propagate_error(error, local);
+        g_clear_error(&queued);
+        return FALSE;
+      }
+      continue;   /* no xattr: nothing public was published from the file */
     }
 
     if (p->signed_json == NULL) {
@@ -939,6 +1318,21 @@ ns_share_describe_targets(const NsShare *share)
     return g_strdup("nostr-dav (it publishes calendar/contact events itself)");
   if (share->targets.targets == NULL)
     return g_strdup("not resolved yet");
+  if (share->private_share) {
+    GString *s = g_string_new(NULL);
+    g_autofree gchar *inbox = g_strjoinv(", ", share->inbox_to.relays);
+    g_string_append_printf(s, "private to %s: gift-wrapped to their DM inbox (%s): %s",
+                           share->to.npub, share->inbox_to.source, inbox);
+    if (share->targets.session_upstream)
+      g_string_append_printf(s, "; via the session relay, which forwards it");
+    if (share->inbox_self.relays != NULL) {
+      g_autofree gchar *mine = g_strjoinv(", ", share->inbox_self.relays);
+      g_string_append_printf(s, "; a copy to your own inbox: %s", mine);
+    } else {
+      g_string_append(s, "; no copy to yourself (you have no kind 10050)");
+    }
+    return g_string_free(s, FALSE);
+  }
   GString *s = g_string_new(NULL);
   if (share->targets.session_included)
     g_string_append(s, share->targets.session_upstream

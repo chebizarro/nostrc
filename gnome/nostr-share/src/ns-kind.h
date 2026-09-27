@@ -59,6 +59,8 @@ typedef enum {
   NS_ACTION_GIT_REPO,       /* kind 30617 (NIP-34) */
   NS_ACTION_DAV_CALENDAR,   /* staged into nostr-dav (it owns NIP-52) */
   NS_ACTION_DAV_CONTACT,    /* staged into nostr-dav (it owns kind 30085) */
+  NS_ACTION_PRIVATE_MESSAGE,/* NIP-17 kind-14 rumor, gift-wrapped (--private) */
+  NS_ACTION_PRIVATE_FILE,   /* NIP-17 kind-15 rumor + encrypted Blossom blob */
 } NsAction;
 
 #define NS_KIND_NOTE          1

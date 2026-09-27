@@ -5,6 +5,7 @@
 #include "ns-fake-signer.h"
 
 #include <nostr/nip19/nip19.h>
+#include <nostr/nip44/nip44.h>
 #include "nostr-event.h"
 #include "nostr-keys.h"
 
@@ -16,7 +17,17 @@ static const gchar SIGNER_XML[] =
   "<method name='GetPublicKey'><arg type='s' direction='out'/></method>"
   "<method name='SignEvent'><arg type='s' direction='in'/><arg type='s' direction='in'/>"
   "<arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
+  "<method name='NIP44Encrypt'><arg type='s' direction='in'/><arg type='s' direction='in'/>"
+  "<arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
   "</interface></node>";
+
+static void
+unhex32(const gchar *hex, guint8 out[32])
+{
+  for (int i = 0; i < 32; i++)
+    out[i] = (guint8)((g_ascii_xdigit_value(hex[2 * i]) << 4) |
+                      g_ascii_xdigit_value(hex[2 * i + 1]));
+}
 
 struct _NsFakeSigner {
   gchar        *address;
@@ -39,6 +50,23 @@ signer_call(GDBusConnection *c, const gchar *sender, const gchar *path,
   NsFakeSigner *s = ud;
   if (g_str_equal(method, "GetPublicKey")) {
     g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", s->npub));
+    return;
+  }
+  if (g_str_equal(method, "NIP44Encrypt")) {
+    const gchar *plaintext = NULL, *peer = NULL, *identity = NULL;
+    g_variant_get(params, "(&s&s&s)", &plaintext, &peer, &identity);
+    guint8 sk[32], pk[32];
+    unhex32(s->sk, sk);
+    unhex32(peer, pk);
+    char *out = NULL;
+    if (strlen(peer) != 64 ||
+        nostr_nip44_encrypt_v2(sk, pk, (const guint8 *)plaintext, strlen(plaintext), &out) != 0) {
+      g_dbus_method_invocation_return_dbus_error(inv, "org.nostr.Signer.Error.InvalidInput",
+                                                 "bad peer");
+      return;
+    }
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", out));
+    free(out);
     return;
   }
   const gchar *json = NULL, *identity = NULL, *app_id = NULL;

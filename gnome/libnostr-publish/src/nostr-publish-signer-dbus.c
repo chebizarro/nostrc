@@ -143,6 +143,38 @@ dbus_sign_event_json(gpointer      user_data,
   return g_strdup(signed_json);
 }
 
+/* NIP44Encrypt (in s plaintext, in s pubKey, in s identity, out s
+ * encryptedText); the caller is identified by its bus connection. */
+static gchar *
+dbus_nip44_encrypt(gpointer      user_data,
+                   const gchar  *plaintext,
+                   const gchar  *peer_pubkey_hex,
+                   GCancellable *cancellable,
+                   GError      **error)
+{
+  NostrPublishSignerDbus *dbus = user_data;
+  GError *call_err = NULL;
+  g_autoptr(GVariant) reply =
+    g_dbus_proxy_call_sync(dbus->proxy, "NIP44Encrypt",
+                           g_variant_new("(sss)", plaintext, peer_pubkey_hex, ""),
+                           G_DBUS_CALL_FLAGS_NONE, 30 * 1000, cancellable, &call_err);
+  if (reply == NULL) {
+    g_set_error(error, NOSTR_PUBLISH_SIGNER_ERROR, map_dbus_error(call_err),
+                "NIP44Encrypt: %s", call_err ? call_err->message : "(no reply)");
+    g_clear_error(&call_err);
+    return NULL;
+  }
+  const gchar *payload = NULL;
+  g_variant_get(reply, "(&s)", &payload);
+  if (payload == NULL || *payload == '\0') {
+    g_set_error_literal(error, NOSTR_PUBLISH_SIGNER_ERROR,
+                        NOSTR_PUBLISH_SIGNER_ERROR_MALFORMED,
+                        "NIP44Encrypt returned an empty payload");
+    return NULL;
+  }
+  return g_strdup(payload);
+}
+
 static void
 dbus_free(gpointer user_data)
 {
@@ -185,5 +217,7 @@ nostr_publish_signer_new_dbus(GDBusConnection *connection,
     .sign_event_json    = dbus_sign_event_json,
     .user_data_destroy  = dbus_free,
   };
-  return nostr_publish_signer_new_from_vtable(&vt, dbus);
+  NostrPublishSigner *signer = nostr_publish_signer_new_from_vtable(&vt, dbus);
+  nostr_publish_signer_set_nip44_encrypt(signer, dbus_nip44_encrypt);
+  return signer;
 }

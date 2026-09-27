@@ -15,7 +15,7 @@ find_package(PkgConfig REQUIRED)
 
 set(NOSTR_SHARE_VERSION 0.1.0)
 
-foreach(_ns_dep nostr-publish hanami nip34 nip19 nostr)
+foreach(_ns_dep nostr-publish hanami nip34 nip19 nostr nostr_nip59_core nostr_nip44_core)
   if (NOT TARGET ${_ns_dep})
     message(FATAL_ERROR
       "nostr-share needs the '${_ns_dep}' target (enable BUILD_LIBHANAMI and "
@@ -24,6 +24,7 @@ foreach(_ns_dep nostr-publish hanami nip34 nip19 nostr)
 endforeach()
 
 pkg_check_modules(NS_GLIB     REQUIRED IMPORTED_TARGET glib-2.0>=2.70 gio-2.0 gobject-2.0)
+find_package(OpenSSL REQUIRED)   # AES-256-GCM for NIP-17 file messages
 pkg_check_modules(NS_JSONGLIB REQUIRED IMPORTED_TARGET json-glib-1.0>=1.6)
 pkg_check_modules(NS_SOUP     REQUIRED IMPORTED_TARGET libsoup-3.0)
 
@@ -50,13 +51,15 @@ add_library(nostr-share-core STATIC
   src/ns-blossom.c
   src/ns-git.c
   src/ns-dav.c
+  src/ns-private.c
   src/ns-share.c
 )
 target_include_directories(nostr-share-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_definitions(nostr-share-core PUBLIC NS_VERSION="${NOSTR_SHARE_VERSION}")
 target_compile_options(nostr-share-core PRIVATE ${NS_WARNING_FLAGS})
 target_link_libraries(nostr-share-core PUBLIC
-  nostr-publish hanami nip34 nip19 nostr
+  nostr-publish hanami nip34 nip19 nostr nostr_nip59_core nostr_nip44_core
+  OpenSSL::Crypto
   PkgConfig::NS_GLIB PkgConfig::NS_JSONGLIB PkgConfig::NS_SOUP)
 
 set(_ns_sources src/main.c)

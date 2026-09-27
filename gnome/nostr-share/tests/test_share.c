@@ -13,6 +13,9 @@
 
 #include "np-fake-session-relay.h"
 
+#include <nostr/nip44/nip44.h>
+#include <nostr/nip59/nip59.h>
+
 #include "nostr-event.h"
 #include "nostr-keys.h"
 
@@ -60,6 +63,50 @@ signed_event(gint kind, gint64 created_at, const gchar *tags_json)
     "{\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ",\"kind\":%d,"
     "\"tags\":%s,\"content\":\"\"}", K.pk, created_at, kind, tags_json);
   return sign_json(u);
+}
+
+/* An event by someone else (@sk / @pk). */
+static gchar *
+signed_event_by(const gchar *sk, const gchar *pk, gint kind, const gchar *tags_json)
+{
+  g_autofree gchar *u = g_strdup_printf(
+    "{\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ",\"kind\":%d,"
+    "\"tags\":%s,\"content\":\"\"}", pk, g_get_real_time() / G_USEC_PER_SEC - 60,
+    kind, tags_json);
+  NostrEvent *ev = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(ev, u, NULL), ==, 1);
+  g_assert_cmpint(nostr_event_sign(ev, sk), ==, 0);
+  char *s = nostr_event_serialize_compact(ev);
+  nostr_event_free(ev);
+  gchar *out = g_strdup(s);
+  free(s);
+  return out;
+}
+
+static void
+hex32(const gchar *hex, guint8 out[32])
+{
+  for (int i = 0; i < 32; i++)
+    out[i] = (guint8)((g_ascii_xdigit_value(hex[2 * i]) << 4) |
+                      g_ascii_xdigit_value(hex[2 * i + 1]));
+}
+
+/* The signer's NIP44Encrypt, done with the test key (what the daemon does
+ * with the user's key). */
+static gchar *
+mock_nip44(gpointer ud, const gchar *plaintext, const gchar *peer_hex, GCancellable *c,
+           GError **e)
+{
+  (void)ud; (void)c; (void)e;
+  guint8 sk[32], pk[32];
+  hex32(K.sk, sk);
+  hex32(peer_hex, pk);
+  char *out = NULL;
+  g_assert_cmpint(nostr_nip44_encrypt_v2(sk, pk, (const guint8 *)plaintext, strlen(plaintext),
+                                         &out), ==, 0);
+  gchar *ret = g_strdup(out);
+  free(out);
+  return ret;
 }
 
 /* ---- fixture relays ---- */
@@ -855,6 +902,365 @@ test_git_repo_announcement(void)
   g_assert_null(strstr(p->unsigned_json, "tok@"));
 }
 
+/* ---- private shares: NIP-17 over NIP-59 (nostrc-k95e) ---- */
+
+typedef struct { gchar *sk, *pk; } Who;
+static Who REC;   /* the recipient */
+
+static NsShare *
+private_share(const gchar *const *texts, const gchar *const *args, const gchar *servers,
+              GError **error)
+{
+  NsShareOptions o = { .to = REC.pk, .texts = texts, .args = args, .private_share = TRUE };
+  NsShare *s = ns_share_new(config("wss://home.test", servers), &o, error);
+  if (s == NULL)
+    return NULL;
+  s->net.factory = fixture_factory;
+  NostrPublishSignerVTable vt = { mock_sign, NULL };
+  s->signer = nostr_publish_signer_new_from_vtable(&vt, NULL);
+  nostr_publish_signer_set_nip44_encrypt(s->signer, mock_nip44);
+  s->pubkey_hex = g_strdup(K.pk);
+  return s;
+}
+
+/* The recipient's kind 10050 (one entry is not a relay), and ours. */
+static void
+can_inboxes(gboolean mine)
+{
+  can("wss://home.test", 10050,
+      signed_event_by(REC.sk, REC.pk, 10050,
+                      "[[\"relay\",\"wss://inbox1.test\"],[\"relay\",\"wss://inbox2.test\"],"
+                      "[\"relay\",\"https://not-a-relay.test\"],[\"relay\",\"wss://inbox1.test\"]]"));
+  if (mine)
+    can("wss://home.test", 10050,
+        signed_event(10050, g_get_real_time() / G_USEC_PER_SEC - 60,
+                     "[[\"relay\",\"wss://mine.test\"]]"));
+}
+
+static guint
+published_count(const gchar *url)
+{
+  g_autofree gchar *prefix = g_strdup_printf("%s ", url);
+  return published_to(prefix);
+}
+
+static gchar *
+published_json(const gchar *url)
+{
+  g_autofree gchar *prefix = g_strdup_printf("%s ", url);
+  for (guint i = 0; i < R.published->len; i++) {
+    const gchar *e = g_ptr_array_index(R.published, i);
+    if (g_str_has_prefix(e, prefix))
+      return g_strdup(e + strlen(prefix));
+  }
+  return NULL;
+}
+
+static JsonArray *
+tags_of(JsonParser **keep, const gchar *json)
+{
+  return json_object_get_array_member(parse_obj(json, keep), "tags");
+}
+
+static void
+assert_randomised(gint64 created_at)
+{
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  g_assert_cmpint(created_at, <=, now + 1);
+  g_assert_cmpint(created_at, >=, now - 2 * 24 * 3600 - 5);
+}
+
+/* Open @wrap_json as @reader and return the rumor; checks every NIP-59 /
+ * NIP-17 property of the layers on the way. @out_wrap_pk: the throwaway
+ * key it came from. */
+static gchar *
+open_wrap(const gchar *wrap_json, const gchar *reader_sk, const gchar *reader_pk,
+          gchar **out_wrap_pk)
+{
+  NostrEvent *wrap = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_signed(wrap, wrap_json, NULL), ==,
+                  NOSTR_EVENT_VALIDATION_OK);
+  g_assert_cmpint(nostr_event_validate(wrap, NULL), ==, NOSTR_EVENT_VALIDATION_OK);
+  g_assert_cmpint(nostr_event_get_kind(wrap), ==, 1059);
+  g_assert_cmpstr(nostr_event_get_pubkey(wrap), !=, K.pk);     /* not the sender */
+  g_assert_cmpstr(nostr_event_get_pubkey(wrap), !=, reader_pk);
+  assert_randomised(nostr_event_get_created_at(wrap));
+  g_autoptr(JsonParser) wp = NULL;
+  JsonArray *wt = tags_of(&wp, wrap_json);
+  g_assert_cmpuint(json_array_get_length(wt), ==, 1);           /* only ["p", reader] */
+  JsonArray *pt = json_array_get_array_element(wt, 0);
+  g_assert_cmpstr(json_array_get_string_element(pt, 0), ==, "p");
+  g_assert_cmpstr(json_array_get_string_element(pt, 1), ==, reader_pk);
+  if (out_wrap_pk)
+    *out_wrap_pk = g_strdup(nostr_event_get_pubkey(wrap));
+
+  NostrEvent *seal = nostr_nip59_unwrap(wrap, reader_sk);
+  g_assert_nonnull(seal);
+  g_assert_cmpint(nostr_event_validate(seal, NULL), ==, NOSTR_EVENT_VALIDATION_OK);
+  g_assert_cmpint(nostr_event_get_kind(seal), ==, 13);
+  g_assert_cmpstr(nostr_event_get_pubkey(seal), ==, K.pk);      /* signed by the sender */
+  assert_randomised(nostr_event_get_created_at(seal));
+  char *seal_json = nostr_event_serialize_compact(seal);
+  g_autoptr(JsonParser) sp = NULL;
+  g_assert_cmpuint(json_array_get_length(tags_of(&sp, seal_json)), ==, 0);  /* no tags */
+  free(seal_json);
+
+  guint8 rsk[32], spk[32];
+  hex32(reader_sk, rsk);
+  hex32(K.pk, spk);
+  guint8 *plain = NULL;
+  size_t plain_len = 0;
+  g_assert_cmpint(nostr_nip44_decrypt_v2(rsk, spk, nostr_event_get_content(seal), &plain,
+                                         &plain_len), ==, 0);
+  gchar *rumor = g_strndup((const gchar *)plain, plain_len);
+  free(plain);
+  nostr_event_free(seal);
+  nostr_event_free(wrap);
+
+  NostrEvent *r = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_unsigned(r, rumor, NULL), ==,
+                  NOSTR_EVENT_VALIDATION_OK);                     /* unsigned: no sig */
+  gchar id[65];
+  g_assert_cmpint(nostr_event_validate_id(r, id), ==, NOSTR_EVENT_VALIDATION_OK);
+  g_assert_cmpstr(nostr_event_get_pubkey(r), ==, K.pk);         /* seal pubkey == rumor pubkey */
+  nostr_event_free(r);
+  return rumor;
+}
+
+static void
+test_private_text(void)
+{
+  relays_reset();
+  can_inboxes(TRUE);
+  const gchar *texts[] = { "just for you https://example.com/x", NULL };
+  GError *err = NULL;
+  g_autoptr(NsShare) s = private_share(texts, NULL, NULL, &err);
+  g_assert_no_error(err);
+  g_assert_cmpuint(s->posts->len, ==, 1);
+  NsPost *p = g_ptr_array_index(s->posts, 0);
+  g_assert_cmpint(p->action, ==, NS_ACTION_PRIVATE_MESSAGE);
+  g_assert_false(ns_share_needs_upload(s));
+
+  g_assert_true(ns_share_resolve(s, &err));
+  g_assert_no_error(err);
+  g_assert_cmpuint(g_strv_length(s->targets.targets), ==, 2);   /* inbox only, deduplicated */
+  g_assert_cmpstr(s->targets.targets[0], ==, "wss://inbox1.test");
+  g_assert_cmpstr(s->targets.targets[1], ==, "wss://inbox2.test");
+  g_assert_cmpstr(s->inbox_self.relays[0], ==, "wss://mine.test");
+  g_autofree gchar *desc = ns_share_describe_targets(s);
+  g_assert_nonnull(strstr(desc, "private to npub1"));
+  g_assert_nonnull(strstr(desc, "wss://inbox2.test"));
+
+  g_assert_true(ns_share_build(s, &err));
+  g_autoptr(JsonParser) rp = NULL;
+  JsonObject *rumor = parse_obj(p->unsigned_json, &rp);
+  g_assert_cmpint(json_object_get_int_member(rumor, "kind"), ==, 14);
+  g_assert_cmpstr(json_object_get_string_member(rumor, "pubkey"), ==, K.pk);
+  g_assert_false(json_object_has_member(rumor, "sig"));
+  g_assert_cmpstr(json_object_get_string_member(rumor, "content"), ==, texts[0]);
+  g_assert_cmpuint(json_array_get_length(json_object_get_array_member(rumor, "tags")), ==, 1);
+  g_assert_true(has_tag(rumor, "p", REC.pk));          /* no public mention, no r tag */
+  g_autofree gchar *preview = ns_share_preview_json(s, FALSE);
+  g_assert_nonnull(strstr(preview, "// private (NIP-17)"));
+
+  g_assert_true(ns_share_publish(s, NULL, NULL, &err));
+  g_assert_no_error(err);
+  /* The recipient's wrap to their inbox relays, our copy to ours; not a
+   * byte to the write/home relay. */
+  g_assert_cmpuint(published_count("wss://inbox1.test"), ==, 1);
+  g_assert_cmpuint(published_count("wss://inbox2.test"), ==, 1);
+  g_assert_cmpuint(published_count("wss://mine.test"), ==, 1);
+  g_assert_cmpuint(published_count("wss://home.test"), ==, 0);
+  g_assert_cmpuint(R.published->len, ==, 3);
+  g_assert_nonnull(strstr(p->result, "2/2 inbox relays accepted"));
+  g_assert_nonnull(strstr(p->result, "copy to your own inbox: sent"));
+
+  g_autofree gchar *to_wrap = published_json("wss://inbox1.test");
+  g_autofree gchar *to_wrap2 = published_json("wss://inbox2.test");
+  g_autofree gchar *wrap_pk = NULL, *self_wrap_pk = NULL;
+  g_autofree gchar *got = open_wrap(to_wrap, REC.sk, REC.pk, &wrap_pk);
+  g_autoptr(JsonParser) gp = NULL;
+  JsonObject *g = parse_obj(got, &gp);
+  g_assert_cmpstr(json_object_get_string_member(g, "id"), ==,
+                  json_object_get_string_member(rumor, "id"));
+  g_assert_cmpstr(json_object_get_string_member(g, "content"), ==, texts[0]);
+  g_autofree gchar *wrap_id = ns_event_id_from_signed_json(to_wrap);
+  g_autofree gchar *wrap_id2 = ns_event_id_from_signed_json(to_wrap2);
+  g_autofree gchar *out_id = ns_event_id_from_signed_json(p->signed_json);
+  g_assert_cmpstr(wrap_id, ==, wrap_id2);          /* one wrap, two relays */
+  g_assert_cmpstr(out_id, ==, wrap_id);             /* stdout shows what went out */
+
+  g_autofree gchar *mine = published_json("wss://mine.test");
+  g_autofree gchar *mine_rumor = open_wrap(mine, K.sk, K.pk, &self_wrap_pk);
+  g_autoptr(JsonParser) mp = NULL;
+  g_assert_cmpstr(json_object_get_string_member(parse_obj(mine_rumor, &mp), "id"), ==,
+                  json_object_get_string_member(rumor, "id"));
+  g_assert_cmpstr(wrap_pk, !=, self_wrap_pk);       /* a fresh throwaway key per wrap */
+}
+
+static void
+test_private_needs_inbox(void)
+{
+  relays_reset();   /* the recipient has no kind 10050 anywhere */
+  const gchar *texts[] = { "hello?", NULL };
+  GError *err = NULL;
+  g_autoptr(NsShare) s = private_share(texts, NULL, NULL, &err);
+  g_assert_false(ns_share_resolve(s, &err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_NO_RELAYS);
+  g_assert_nonnull(strstr(err->message, "kind-10050"));
+  g_assert_nonnull(strstr(err->message, "Nothing was uploaded or sent"));
+  g_clear_error(&err);
+  g_assert_cmpuint(R.published->len, ==, 0);
+  /* Nor does publishing fall back to anything. */
+  g_assert_false(ns_share_publish(s, NULL, NULL, &err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_NO_RELAYS);
+  g_clear_error(&err);
+  g_assert_cmpuint(R.published->len, ==, 0);
+}
+
+static void
+test_private_refusals(void)
+{
+  const gchar *texts[] = { "x", NULL };
+  GError *err = NULL;
+  NsShareOptions none = { .texts = texts, .private_share = TRUE };
+  g_assert_null(ns_share_new(config("wss://w1.test", NULL), &none, &err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_BAD_INPUT);
+  g_assert_nonnull(strstr(err->message, "--private needs --to"));
+  g_clear_error(&err);
+  NsShareOptions group = { .texts = texts, .to = "groups.test'dev", .private_share = TRUE };
+  g_assert_null(ns_share_new(config("wss://w1.test", NULL), &group, &err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_BAD_INPUT);
+  g_clear_error(&err);
+  NsShareOptions kind = { .texts = texts, .to = REC.pk, .forced_kind = 1, .private_share = TRUE };
+  g_assert_null(ns_share_new(config("wss://w1.test", NULL), &kind, &err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_BAD_KIND);
+  g_clear_error(&err);
+
+  const gchar *ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:p@h\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+  g_autofree gchar *path = tmpfile_with("secret.ics", ics, strlen(ics));
+  const gchar *args[] = { path, NULL };
+  NsShareOptions cal = { .args = args, .to = REC.pk, .private_share = TRUE };
+  g_assert_null(ns_share_new(config("wss://w1.test", NULL), &cal, &err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_BAD_INPUT);
+  g_assert_nonnull(strstr(err->message, "cannot be shared privately"));
+  g_clear_error(&err);
+
+  /* The dialog's switch refuses the same, leaving the share public. */
+  g_autoptr(NsShare) pub = share_new(config("wss://w1.test", NULL), NULL, args, REC.pk, 0, &err);
+  g_assert_no_error(err);
+  g_assert_false(ns_share_set_private(pub, TRUE, &err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_BAD_INPUT);
+  g_clear_error(&err);
+  g_assert_false(pub->private_share);
+  g_assert_cmpint(((NsPost *)g_ptr_array_index(pub->posts, 0))->action, ==,
+                  NS_ACTION_DAV_CALENDAR);
+}
+
+static void
+test_private_file(void)
+{
+  relays_reset();
+  can_inboxes(FALSE);
+  g_autofree gchar *jpg = tmpfile_with("photo.jpg", TINY_JPEG, sizeof(TINY_JPEG));
+  const gchar *texts[] = { "look", NULL };
+  const gchar *args[] = { jpg, NULL };
+  GError *err = NULL;
+  g_autoptr(NsShare) s = private_share(texts, args, "https://blossom.test", &err);
+  g_assert_no_error(err);
+  g_assert_cmpuint(s->posts->len, ==, 2);              /* caption message + file message */
+  g_assert_cmpint(((NsPost *)g_ptr_array_index(s->posts, 0))->action, ==,
+                  NS_ACTION_PRIVATE_MESSAGE);
+  NsPost *fp = g_ptr_array_index(s->posts, 1);
+  g_assert_cmpint(fp->action, ==, NS_ACTION_PRIVATE_FILE);
+  g_assert_true(ns_share_needs_upload(s));
+
+  /* Stripped first, then AES-256-GCM: what would be uploaded opens to the
+   * cleaned bytes with the rumor's key, and only with it. */
+  NsFile *f = g_ptr_array_index(s->files, 0);
+  g_assert_true(f->stripped);
+  g_assert_nonnull(f->sealed);
+  g_assert_cmpuint(g_bytes_get_size(f->sealed), ==, g_bytes_get_size(f->bytes) + 16);
+  g_autoptr(GBytes) back = ns_private_decrypt_file(f->sealed, &f->file_key, &err);
+  g_assert_no_error(err);
+  g_assert_true(g_bytes_equal(back, f->bytes));
+  gsize n = 0;
+  guint8 *tampered = g_memdup2(g_bytes_get_data(f->sealed, &n), n);
+  tampered[3] ^= 1;
+  g_autoptr(GBytes) bad = g_bytes_new_take(tampered, n);
+  g_assert_null(ns_private_decrypt_file(bad, &f->file_key, &err));
+  g_assert_error(err, NS_ERROR, NS_ERROR_BAD_INPUT);
+  g_clear_error(&err);
+
+  g_assert_true(ns_share_resolve(s, &err));
+  g_assert_no_error(err);
+  g_assert_true(ns_share_build(s, &err));
+  g_assert_no_error(err);
+  g_autoptr(JsonParser) jp = NULL;
+  JsonObject *r = parse_obj(fp->unsigned_json, &jp);
+  g_assert_cmpint(json_object_get_int_member(r, "kind"), ==, 15);
+  g_autofree gchar *url = g_strdup_printf("https://blossom.test/%s", f->sealed_blob.sha256);
+  g_assert_cmpstr(json_object_get_string_member(r, "content"), ==, url);  /* no .jpg */
+  g_assert_true(has_tag(r, "p", REC.pk));
+  g_assert_true(has_tag(r, "file-type", "image/jpeg"));
+  g_assert_true(has_tag(r, "encryption-algorithm", "aes-gcm"));
+  g_assert_true(has_tag(r, "x", f->sealed_blob.sha256));
+  g_assert_true(has_tag(r, "ox", f->blob.sha256));
+  g_assert_cmpstr(f->sealed_blob.sha256, !=, f->blob.sha256);
+  g_assert_true(has_tag(r, "dim", "32x16"));
+  GString *k = g_string_new(NULL);
+  for (int i = 0; i < 32; i++)
+    g_string_append_printf(k, "%02x", f->file_key.key[i]);
+  g_assert_true(has_tag(r, "decryption-key", k->str));
+  g_string_free(k, TRUE);
+  JsonArray *tags = json_object_get_array_member(r, "tags");
+  for (guint i = 0; i < json_array_get_length(tags); i++) {
+    JsonArray *t = json_array_get_array_element(tags, i);
+    if (g_str_equal(json_array_get_string_element(t, 0), "decryption-nonce"))
+      g_assert_cmpuint(strlen(json_array_get_string_element(t, 1)), ==, 24);
+  }
+}
+
+/* A forwarding session relay carries the wrap; it learns the recipient's
+ * inbox from their kind 10050, handed to it first. */
+static void
+test_private_via_session_relay(void)
+{
+  if (s_bus == NULL) {
+    g_test_skip("dbus-daemon not installed: no private bus for the fake session relay");
+    return;
+  }
+  NpFakeSessionRelay *fake = np_fake_session_relay_start("active");
+  const gchar *acked[] = { "wss://inbox1.test acked", NULL };
+  np_fake_session_relay_set_reply(fake, "forwarded", "", acked);
+  relays_reset();
+  can_inboxes(FALSE);
+  const gchar *texts[] = { "via the session relay", NULL };
+  GError *err = NULL;
+  g_autoptr(NsShare) s = private_share(texts, NULL, NULL, &err);
+  s->net.session_socket = g_strdup("/run/fake/relay.sock");
+  g_assert_true(ns_share_resolve(s, &err));
+  g_assert_no_error(err);
+  g_assert_true(s->targets.session_upstream);
+  g_assert_true(ns_share_build(s, &err));
+  g_assert_true(ns_share_publish(s, NULL, NULL, &err));
+  g_assert_no_error(err);
+  g_assert_cmpuint(R.published->len, ==, 2);
+  g_autoptr(JsonParser) p0 = NULL, p1 = NULL;
+  const gchar *e0 = g_ptr_array_index(R.published, 0);
+  const gchar *e1 = g_ptr_array_index(R.published, 1);
+  g_assert_true(g_str_has_prefix(e0, NS_SESSION_RELAY_URL " "));
+  g_assert_true(g_str_has_prefix(e1, NS_SESSION_RELAY_URL " "));
+  JsonObject *inbox = parse_obj(e0 + strlen(NS_SESSION_RELAY_URL " "), &p0);
+  g_assert_cmpint(json_object_get_int_member(inbox, "kind"), ==, 10050);
+  g_assert_cmpstr(json_object_get_string_member(inbox, "pubkey"), ==, REC.pk);
+  JsonObject *wrap = parse_obj(e1 + strlen(NS_SESSION_RELAY_URL " "), &p1);
+  g_assert_cmpint(json_object_get_int_member(wrap, "kind"), ==, 1059);
+  NsPost *p = g_ptr_array_index(s->posts, 0);
+  g_assert_nonnull(strstr(p->result, "forwarded by the session relay: 1/1 inbox relays"));
+  np_fake_session_relay_stop(fake);
+}
+
 /* default_text_kind / keep_metadata (written by org.nostr.Settings). */
 static void
 test_config_text_defaults(void)
@@ -947,6 +1353,8 @@ main(int argc, char **argv)
   g_unsetenv("NOSTR_SHARE_CONFIG");
   K.sk = nostr_key_generate_private();
   K.pk = nostr_key_get_public(K.sk);
+  REC.sk = nostr_key_generate_private();
+  REC.pk = nostr_key_get_public(REC.sk);
   g_test_add_func("/nostr-share/share/session-socket-detection",
                   test_session_socket_detection);
   g_test_add_func("/nostr-share/share/url-note-publish", test_url_note_publish);
@@ -965,10 +1373,17 @@ main(int argc, char **argv)
   g_test_add_func("/nostr-share/share/git-public-urls", test_git_public_urls);
   g_test_add_func("/nostr-share/share/git-repo", test_git_repo_announcement);
   g_test_add_func("/nostr-share/share/config-text-defaults", test_config_text_defaults);
+  g_test_add_func("/nostr-share/private/text", test_private_text);
+  g_test_add_func("/nostr-share/private/needs-inbox", test_private_needs_inbox);
+  g_test_add_func("/nostr-share/private/refusals", test_private_refusals);
+  g_test_add_func("/nostr-share/private/file", test_private_file);
+  g_test_add_func("/nostr-share/private/via-session-relay", test_private_via_session_relay);
   int rc = g_test_run();
   relays_reset();
   free(K.sk);
   free(K.pk);
+  free(REC.sk);
+  free(REC.pk);
   g_clear_object(&session);
   if (s_bus != NULL) {
     g_test_dbus_down(s_bus);

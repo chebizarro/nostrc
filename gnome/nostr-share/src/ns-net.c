@@ -4,6 +4,7 @@
  */
 #include "ns-net.h"
 #include "ns-kind.h"
+#include "ns-private.h"
 
 #include <nostr/nip19/nip19.h>
 #include "nostr-event.h"
@@ -618,6 +619,42 @@ ns_resolve_targets(const NsConfig *cfg, NsNet *net, const gchar *pubkey_hex,
   }
   g_strv_builder_addv(all, (const gchar **)out->direct);
   out->targets = g_strv_builder_end(all);
+  return TRUE;
+}
+
+gboolean
+ns_resolve_inbox(const NsConfig *cfg, NsNet *net, const gchar *pubkey_hex,
+                 gchar ***out_relays, gchar **out_event_json, gchar **out_source)
+{
+  *out_relays = NULL;
+  *out_event_json = NULL;
+  *out_source = NULL;
+  g_auto(GStrv) disc = discovery_relays(cfg, net);
+  g_autofree gchar *ev = ns_net_fetch_replaceable(net, (const gchar *const *)disc,
+                                                  NS_KIND_DM_RELAYS, pubkey_hex,
+                                                  cfg->query_timeout_ms, NULL);
+  const gchar *source = "the discovery relays";
+  if (ev == NULL && cfg->upstream != NS_UPSTREAM_SESSION_RELAY_ONLY) {
+    /* Outbox model: people publish their lists to their own write relays. */
+    g_autofree gchar *rl = ns_net_fetch_replaceable(net, (const gchar *const *)disc,
+                                                    10002, pubkey_hex,
+                                                    cfg->query_timeout_ms, NULL);
+    g_auto(GStrv) theirs = rl ? nostr_publish_nip65_relays(rl, NOSTR_PUBLISH_NIP65_WRITE,
+                                                           NULL) : NULL;
+    if (theirs != NULL && theirs[0] != NULL) {
+      ev = ns_net_fetch_replaceable(net, (const gchar *const *)theirs, NS_KIND_DM_RELAYS,
+                                    pubkey_hex, cfg->query_timeout_ms, NULL);
+      source = "their NIP-65 relays";
+    }
+  }
+  if (ev == NULL)
+    return FALSE;
+  g_auto(GStrv) relays = ns_private_inbox_relays(ev);
+  if (relays[0] == NULL)
+    return FALSE;
+  *out_relays = g_steal_pointer(&relays);
+  *out_event_json = g_steal_pointer(&ev);
+  *out_source = g_strdup_printf("kind 10050 from %s", source);
   return TRUE;
 }
 

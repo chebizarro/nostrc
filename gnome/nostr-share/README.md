@@ -18,6 +18,8 @@ dialog shows:
 - a thumbnail of each file (the *cleaned* bytes that will be uploaded),
 - **Publish as**: the event kind, with a sensible default (see below),
 - **Mention / group**: an optional public mention or NIP-29 group,
+- **Private message (NIP-17)**: send it to one npub only, encrypted
+  (see *Private shares* below),
 - the text or caption, editable,
 - **Privacy**: what metadata was removed from each photo,
 - **Destination**: which relays and Blossom servers will be used,
@@ -30,7 +32,7 @@ ask for approval.
 ### Command line
 
 ```
-nostr-share [--kind N] [--to npub|host'group] [--title T]
+nostr-share [--kind N] [--to npub|host'group [--private]] [--title T]
             [--dry-run] [--no-ui] [--keep-metadata]
             FILE… | -t TEXT | URL…
 ```
@@ -40,6 +42,7 @@ nostr-share [--kind N] [--to npub|host'group] [--title T]
 | `-t, --text TEXT` | text to share; repeatable; `-t -` reads stdin. With files it is the caption |
 | `-k, --kind N` | override the kind (only kinds that make sense for the input are accepted) |
 | `--to WHO` | `npub1…`/hex → a **public** `p`-tag mention (+ `nostr:npub…` in the content; the CLI says so on stderr). `host'group-id` → NIP-29 `h` tag, published **only** to `wss://host`; notes become kind-9 group messages |
+| `--private` | with `--to npub…`: a **private** NIP-17 message instead (see *Private shares*) |
 | `--title T` | title for a long-form article |
 | `-n, --dry-run` | build and sign, print the signed event(s); upload, publish and stage nothing |
 | `--no-ui` | never open the dialog (it opens by default when a display is available) |
@@ -117,7 +120,55 @@ Notes:
 - The event JSON is shown before signing. If a Blossom server answers with
   a URL different from the predicted `https://server/<sha256>.<ext>`, the
   dialog updates the JSON and asks you to press Publish again.
-- `--to npub…` is a **public** mention, not a private message.
+- `--to npub…` alone is a **public** mention; `--private` makes it a
+  private message.
+
+### Private shares (`--private`, NIP-17)
+
+`--to npub… --private` (or the dialog's *Private message* switch) sends
+the share to that one person, as a NIP-17 direct message over NIP-59
+gift wrap (bead nostrc-k95e):
+
+- **Text and links** become one kind-14 chat message (the caption, when
+  files come with it). **Each file** becomes a kind-15 file message: the
+  file (metadata stripped first, as above) is encrypted with AES-256-GCM
+  under a fresh key and nonce, and only that ciphertext is uploaded to
+  Blossom (`application/octet-stream`, no extension); the rumor carries
+  its URL, `file-type`, `encryption-algorithm aes-gcm`,
+  `decryption-key` / `decryption-nonce` (hex), `x` (ciphertext), `ox`
+  (plaintext), `size` and `dim`. Git repositories, calendar and contact
+  files are refused: they have no private form.
+- **Sealing happens in your signer.** The rumor (unsigned, with its id) is
+  NIP-44-encrypted to the recipient and the kind-13 seal is signed by
+  `org.nostr.Signer` (`NIP44Encrypt`, `SignEvent`; the signer may ask you
+  to approve both) — your nsec never enters nostr-share. The seal has no
+  tags and a `created_at` up to two days in the past; nostr-share checks it
+  is yours before wrapping.
+- **The gift wrap** (kind 1059) comes from a throwaway key made for that
+  one wrap, carries only the recipient's `p` tag and a randomised
+  `created_at`.
+- **Where it goes**: only to the recipient's kind-10050 DM inbox relays —
+  found on the session relay / `home_relays`, else on the recipient's own
+  NIP-65 relays, and verified. With no kind 10050 nostr-share refuses
+  before uploading anything (NIP-17: they are not set up to receive). Never
+  to your write relays, never to a fallback. Through a forwarding session
+  relay the wrap goes to relay.sock (after the recipient's kind 10050, so
+  its router knows the inbox) and success is the relay's upstream report;
+  otherwise it is published to the inbox relays directly, over
+  connections that never NIP-42-authenticate (which would tell the inbox
+  relay who you are).
+- **A copy to yourself**, wrapped for your own key, goes to your own kind
+  10050 when you have one, so your other clients show the conversation.
+- **What stays visible**: the recipient's pubkey (the wrap's `p` tag, as
+  in every NIP-17 message), and — for files — that *your* key uploaded an
+  opaque blob of that size (Blossom upload authorisation is a kind-24242
+  event you sign). Looking up an inbox asks relays for the recipient's
+  kind 10050.
+- `--dry-run` prints the rumor the recipient would read; it neither asks
+  the signer to encrypt nor uploads nor sends anything.
+- Why not a `.nsealed` blob (nostr-seal)? NIP-17 kind 15 is what the
+  recipient's NIP-17 client can open; `.nsealed` would need nostr-seal on
+  their side.
 
 ### Where events go
 
@@ -227,6 +278,15 @@ relay or config on the machine running them never leaks in):
 - `test_kind` — the kind-mapping table and `--kind` validation
 - `test_event` — URL → `r` extraction, `imeta` / 1063 / 30023 tags, `--to`
 - `test_strip` — JPEG/PNG/WebP/GIF metadata removal and dimensions
+- `test_share` — private shares: every layer opened with the recipient's
+  key (rumor id and pubkey, untagged seal by the sender, throwaway-key
+  wrap with only a `p` tag, both timestamps randomised), inbox-only
+  routing and the copy to self, refusal without a kind 10050, AES-GCM file
+  messages (tamper detected), the session-relay route;
+- `test_share_e2e` (Linux, needs the built `nostr-session-relayd`) — the
+  real session relay federating to fake upstream / inbox relays: public
+  shares judged by upstream delivery, fallback and refusal with
+  `federation = 0`, and private shares arriving at the recipient's inbox;
 - `test_share` — end to end: publish through fixtures, verified kind
   10002 lookup (forged events ignored), session-relay routing gated on
   `FederationState` and upstream-delivery verdicts (a fake

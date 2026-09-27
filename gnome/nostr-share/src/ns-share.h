@@ -25,6 +25,7 @@
 #include "ns-event.h"
 #include "ns-kind.h"
 #include "ns-net.h"
+#include "ns-private.h"
 
 G_BEGIN_DECLS
 
@@ -38,6 +39,12 @@ typedef struct {
   gboolean      metadata_unverified;   /* media we could not clean */
   NsBlobMeta    blob;
   gboolean      uploaded;
+  /* --private (nostrc-k95e): the AES-256-GCM ciphertext of @bytes, what
+   * is uploaded instead, and its key (wiped on free). */
+  GBytes       *sealed;
+  NsBlobMeta    sealed_blob;
+  NsFileKey     file_key;
+  gboolean      sealed_uploaded;
 } NsFile;
 
 typedef struct {
@@ -58,9 +65,17 @@ typedef struct {
   const gchar  *title;
   gboolean      keep_metadata;
   gboolean      allow_empty;    /* dialog: start with an empty note */
+  gboolean      private_share;  /* --private: NIP-17 to the --to npub */
   const gchar *const *texts;    /* -t TEXT (joined with blank lines) */
   const gchar *const *args;     /* FILE… | URL… | file:// URIs */
 } NsShareOptions;
+
+/* Someone's NIP-17 inbox: their kind-10050 relays. */
+typedef struct {
+  gchar **relays;       /* NULL: no kind 10050 found */
+  gchar  *event_json;   /* that verified event */
+  gchar  *source;
+} NsInbox;
 
 typedef struct {
   NsConfig           *cfg;
@@ -88,6 +103,12 @@ typedef struct {
   gchar              *servers_source;
   NsTargets           targets;
   gboolean            resolved;
+
+  /* --private (nostrc-k95e) */
+  gboolean            private_share;
+  NsInbox             inbox_to;       /* the recipient's: required */
+  NsInbox             inbox_self;     /* ours: the copy to self, optional */
+  gboolean            inboxes_stored; /* given to the session relay's router */
 } NsShare;
 
 /* Takes ownership of @cfg. */
@@ -106,6 +127,10 @@ gboolean ns_share_metadata_blocked(const NsShare *share, GString *why);
  * text (dialog content field). Validated like --kind. */
 gboolean ns_share_set_kind(NsShare *share, gint kind, GError **error);
 gboolean ns_share_set_text(NsShare *share, const gchar *text, GError **error);
+
+/* Switch private (NIP-17) mode on or off (the dialog's switch). Fails,
+ * changing nothing, when an input cannot be shared that way. */
+gboolean ns_share_set_private(NsShare *share, gboolean on, GError **error);
 
 /* Primary post's class/kind (what the dialog's picker is about). */
 NsInputClass ns_share_primary_class(const NsShare *share);
