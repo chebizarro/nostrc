@@ -19,5 +19,5 @@ Deferred to a later wave: k95e, wu3s, hby8, prqu.1, prqu.7, prqu.9, prqu.10, rxx
 - [x] A relayd — merged; prqu.17 blocked on 8rxk
 - [ ] B signer
 - [ ] C gnostr client
-- [ ] D libnostr/dav/packaging
+- [x] D libnostr/dav/packaging — merged (12 beads incl. wr3t, w8y1, pnc7, 6tuz)
 - [ ] E wallet/notify/share/webext follow-ups
