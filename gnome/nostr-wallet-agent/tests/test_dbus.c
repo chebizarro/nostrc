@@ -643,6 +643,22 @@ test_lnurl_links(void)
   g_assert_true(log_has(&e, "does not commit to the payment details"));
   g_assert_cmpuint(fx_count(&e, "REQUEST pay_invoice"), ==, 1);
 
+  /* nostrc-dnbf: a short-lived opener (gdbus exits on the reply, like the
+   * .desktop forwarder) is identified before the reply, so the dialog can
+   * name it instead of "an unidentified application". */
+  if (g_str_has_prefix(e.self_id, "exe:")) { /* else gdbus shares our app scope */
+    g_autofree gchar *gd = gdbus_identity();
+    g_autofree gchar *want = g_strdup_printf("app=%s", gd);
+    const gchar *const link_args[] = { "lightning:not-an-invoice", NULL };
+    gboolean ok = FALSE;
+    g_autofree gchar *o = call_gdbus("OpenUri", link_args, &ok);
+    g_assert_true(ok);
+    deadline = g_get_monotonic_time() + 5 * G_USEC_PER_SEC;
+    while (!log_has(&e, want) && g_get_monotonic_time() < deadline)
+      g_main_context_iteration(NULL, FALSE);
+    if (!log_has(&e, want)) { dump(); g_error("OpenUri opener not identified (want %s)", want); }
+  }
+
   agent_stop(&e);
   g_object_unref(srv);
   g_free(l.base); g_free(l.metadata); g_free(l.last_comment);

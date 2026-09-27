@@ -1442,6 +1442,7 @@ unwrap_origin_call(Call *c, GError **error)
 typedef struct {
   NwaService *svc;
   gchar      *uri;
+  Call       *call;  /* answered once the caller is identified */
 } OpenUriJob;
 
 /* App ids arriving as arguments are opaque keys (reverse-DNS, "exe:…",
@@ -1537,13 +1538,18 @@ handle_method_call(GDBusConnection *bus, const gchar *sender, const gchar *path,
   } else if (g_str_equal(method, "Unpair")) {
     c->op = NWA_OP_UNPAIR;
   } else if (g_str_equal(method, "OpenUri")) {
-    /* Answer now; the link flow reports to the user, not the caller. */
+    /* Identify the caller BEFORE answering (nostrc-dnbf): openers such as
+     * the .desktop forwarder (nostr-wallet-agent --open) and gdbus exit on
+     * the reply, and without a pidfd (dbus-daemon < 1.15) the identity is
+     * only confirmed while the caller is still on the bus. The link flow
+     * itself reports to the user, not the caller, and starts after the
+     * reply. */
     const gchar *uri;
     g_variant_get(params, "(&s)", &uri);
     OpenUriJob *j = g_new0(OpenUriJob, 1);
     j->svc = s;
     j->uri = g_strdup(uri);
-    call_return(c, NULL, NULL);
+    j->call = c;
     nwa_caller_identify_async(s->bus, sender, s->cancel, on_open_uri_caller, j);
     return;
   } else if (g_str_equal(method, "GetBudget")) {
@@ -1843,6 +1849,7 @@ on_open_uri_caller(GObject *src, GAsyncResult *res, gpointer data)
   OpenUriJob *j = data;
   GError *err = NULL;
   NwaCaller *caller = nwa_caller_identify_finish(res, &err);
+  call_return(j->call, NULL, NULL); /* identified (or not): release the opener */
   if (caller) {
     g_debug("nostr-wallet-agent: OpenUri from %s app=%s", caller->sender,
             caller->app_id ? caller->app_id : "(none)");
