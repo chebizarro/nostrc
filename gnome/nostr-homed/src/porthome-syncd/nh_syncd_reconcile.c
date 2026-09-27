@@ -1364,31 +1364,68 @@ static int rescan_diff_walk(int home_fd, const char *rel_prefix,
     return 0;
 }
 
-int nh_syncd_rescan_diff(const nh_syncd_state    *state,
-                         const char              *root_dir,
-                         const nh_syncd_ignore   *ignore,
-                         nh_syncd_batcher        *batcher,
-                         nh_syncd_rescan_stats   *out_stats)
+/* nostrc-lqm2: is `rel` strictly below one of the rescanned roots?
+ * `roots` is a jansson set (key -> true); "" is the whole tree. Walks
+ * rel's proper ancestors, so the cost is O(depth) lookups per state
+ * entry rather than O(n_roots) prefix compares. */
+static int under_any_root(json_t *roots, const char *rel) {
+    if (json_object_get(roots, "")) return rel[0] != '\0';
+    size_t n = strlen(rel);
+    char *buf = malloc(n + 1);
+    if (!buf) return 0;
+    memcpy(buf, rel, n + 1);
+    int hit = 0;
+    for (char *slash = strrchr(buf, '/'); slash; slash = strrchr(buf, '/')) {
+        *slash = '\0';
+        if (json_object_get(roots, buf)) { hit = 1; break; }
+    }
+    free(buf);
+    return hit;
+}
+
+int nh_syncd_rescan_diff_roots(const nh_syncd_state    *state,
+                               const char              *root_dir,
+                               const char *const       *rel_roots,
+                               size_t                   n_roots,
+                               const nh_syncd_ignore   *ignore,
+                               nh_syncd_batcher        *batcher,
+                               nh_syncd_rescan_stats   *out_stats)
 {
-    if (!state || !root_dir) return NH_SYNCD_ERR_ARG;
+    if (!state || !root_dir || (n_roots && !rel_roots)) return NH_SYNCD_ERR_ARG;
     if (out_stats) memset(out_stats, 0, sizeof *out_stats);
+    if (n_roots == 0) return NH_SYNCD_OK;
     int fd = open(root_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (fd < 0) return NH_SYNCD_ERR_IO;
 
     json_t *seen = json_object();
-    if (!seen) { close(fd); return NH_SYNCD_ERR_OOM; }
+    json_t *roots = json_object();
+    if (!seen || !roots) {
+        json_decref(seen); json_decref(roots); close(fd);
+        return NH_SYNCD_ERR_OOM;
+    }
+    for (size_t r = 0; r < n_roots; r++)
+        if (rel_roots[r]) json_object_set_new(roots, rel_roots[r], json_true());
 
-    (void)rescan_diff_walk(fd, "", state, ignore, batcher, seen, 0, out_stats);
+    /* A root nested under another root would be walked twice; skip it. */
+    for (size_t r = 0; r < n_roots; r++) {
+        const char *root = rel_roots[r];
+        if (!root || under_any_root(roots, root)) continue;
+        (void)rescan_diff_walk(fd, root, state, ignore, batcher, seen, 0,
+                               out_stats);
+    }
     close(fd);
 
-    /* Sweep for state entries that we did NOT visit — those are
-     * DELETES. Iterate state via the public `_at` accessor. */
+    /* Sweep for state entries under a root that we did NOT visit —
+     * those are DELETES. Iterate state via the public `_at` accessor.
+     * A root itself is not swept: its own create/delete is reported by
+     * its (watched) parent directory. */
     size_t n = nh_syncd_state_file_count(state);
     for (size_t i = 0; i < n; i++) {
         const char *rel = NULL;
         const nh_syncd_entry *e = nh_syncd_state_at(state, i, &rel);
         if (!e || !rel) continue;
         if (json_object_get(seen, rel)) continue;
+        if (!under_any_root(roots, rel)) continue;
         /* Skip ignored paths — mirror the walk's filter. Path-only is
          * enough here (we have no stat data for a missing file). */
         if (ignore &&
@@ -1399,8 +1436,20 @@ int nh_syncd_rescan_diff(const nh_syncd_state    *state,
         if (out_stats) out_stats->deleted++;
     }
 
+    json_decref(roots);
     json_decref(seen);
     return NH_SYNCD_OK;
+}
+
+int nh_syncd_rescan_diff(const nh_syncd_state    *state,
+                         const char              *root_dir,
+                         const nh_syncd_ignore   *ignore,
+                         nh_syncd_batcher        *batcher,
+                         nh_syncd_rescan_stats   *out_stats)
+{
+    static const char *const whole[] = { "" };
+    return nh_syncd_rescan_diff_roots(state, root_dir, whole, 1, ignore,
+                                      batcher, out_stats);
 }
 
 

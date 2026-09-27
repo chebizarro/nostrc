@@ -225,9 +225,72 @@ static void assert_group_preview_truncation(void) {
   }
 }
 
+/* nostrc-a33z: a NIP-29 group is (relay, id). Two forks with the same h on
+ * different relays must not share a withdraw id (one would replace the
+ * other's notification) or a title. */
+static void assert_group_keyed_by_relay(void) {
+  const char *h = "fork-me";
+  const char *eid =
+      "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe";
+  NostrNotifyBuild a, b;
+  memset(&a, 0, sizeof a); memset(&b, 0, sizeof b);
+  GNotification *na = nostr_notify_build_group(NULL, h, eid, 9, "x",
+                                               "wss://relay-a.example", &a);
+  GNotification *nb = nostr_notify_build_group(NULL, h, eid, 9, "x",
+                                               "wss://relay-b.example", &b);
+  if (!na || !nb || !a.withdraw_id || !b.withdraw_id ||
+      strcmp(a.withdraw_id, b.withdraw_id) == 0) {
+    fprintf(stderr, "test_notify_sub: forks share withdraw id %s / %s\n",
+            a.withdraw_id ? a.withdraw_id : "(null)",
+            b.withdraw_id ? b.withdraw_id : "(null)");
+    exit(1);
+  }
+  /* Bounded: "grp:" + 8 hex + ":" + h. */
+  g_autofree char *want_prefix = g_strdup_printf(":%s", h);
+  if (strncmp(a.withdraw_id, "grp:", 4) != 0 || strlen(a.withdraw_id) != 4 + 8 + strlen(want_prefix) ||
+      !g_str_has_suffix(a.withdraw_id, want_prefix)) {
+    fprintf(stderr, "test_notify_sub: unexpected group key %s\n", a.withdraw_id);
+    exit(1);
+  }
+  nostr_notify_build_dispose(&a); nostr_notify_build_dispose(&b);
+  g_object_unref(na); g_object_unref(nb);
+
+  /* Same relay spelled differently, same group: coalesce. */
+  g_autofree char *k1 = nostr_notify_group_key("wss://Relay-A.example/", h);
+  g_autofree char *k2 = nostr_notify_group_key("wss://relay-a.example", h);
+  g_autofree char *k3 = nostr_notify_group_key("wss://relay-a.example", "other");
+  if (!k1 || !k2 || strcmp(k1, k2) != 0 || !k3 || strcmp(k1, k3) == 0) {
+    fprintf(stderr, "test_notify_sub: group key normalization wrong\n");
+    exit(1);
+  }
+  if (nostr_notify_group_key("wss://relay-a.example", NULL) != NULL) {
+    fprintf(stderr, "test_notify_sub: group key accepted NULL h\n");
+    exit(1);
+  }
+  /* The id is bounded even for an absurd h. */
+  char longh[300]; memset(longh, 'g', sizeof longh - 1); longh[sizeof longh - 1] = '\0';
+  g_autofree char *kl = nostr_notify_group_key("wss://r.example", longh);
+  if (!kl || strlen(kl) != 4 + 8 + 1 + 64) {
+    fprintf(stderr, "test_notify_sub: group key not bounded\n");
+    exit(1);
+  }
+
+  /* Titles tell the forks apart when no display name is cached. */
+  g_autofree char *ta = nostr_notify_group_fallback_title(h, "wss://relay-a.example/path");
+  g_autofree char *tb = nostr_notify_group_fallback_title(h, "wss://relay-b.example");
+  g_autofree char *tn = nostr_notify_group_fallback_title(h, NULL);
+  if (!ta || !tb || strcmp(ta, "fork-me \xc2\xb7 relay-a.example") != 0 ||
+      strcmp(ta, tb) == 0 || !tn || strcmp(tn, h) != 0) {
+    fprintf(stderr, "test_notify_sub: fallback titles wrong: %s / %s / %s\n",
+            ta ? ta : "(null)", tb ? tb : "(null)", tn ? tn : "(null)");
+    exit(1);
+  }
+}
+
 int main(void) {
   assert_dm_opacity();
   assert_group_preview_truncation();
+  assert_group_keyed_by_relay();
   fprintf(stderr, "test_notify_sub: OK\n");
   return 0;
 }

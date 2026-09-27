@@ -2075,6 +2075,21 @@ if(NOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL)
     set_tests_properties(homed_syncd_rescan_overflow PROPERTIES
       LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30)
 
+    # nostrc-lqm2 — the watcher's inotify budget, counted in the kernel
+    # (/proc/self/fdinfo), plus the fallback rescan for what it skips.
+    add_executable(test_syncd_watcher_budget
+      tests/unit/test_syncd_watcher_budget.c
+      src/porthome-syncd/nh_syncd_watcher.c)
+    target_include_directories(test_syncd_watcher_budget PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/porthome-syncd)
+    target_compile_options(test_syncd_watcher_budget PRIVATE
+      -Wall -Wextra -Werror -Wno-misleading-indentation -Wno-unused-parameter)
+    target_link_libraries(test_syncd_watcher_budget PRIVATE nostr_syncd_core)
+    add_test(NAME homed_syncd_watcher_budget COMMAND test_syncd_watcher_budget)
+    set_tests_properties(homed_syncd_watcher_budget PROPERTIES
+      LABELS "nostr-homed;porthome;syncd;portable" TIMEOUT 30
+      SKIP_RETURN_CODE 77)
+
     add_executable(test_syncd_pull_e2e tests/integration/test_syncd_pull_e2e.c)
     target_link_libraries(test_syncd_pull_e2e PRIVATE nostr_syncd_core)
     add_test(NAME homed_syncd_pull_e2e COMMAND test_syncd_pull_e2e)
@@ -2306,7 +2321,7 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
     add_executable(porthome-fuse-fixture
       tests/integration/porthome_fuse_fixture.c)
     target_compile_options(porthome-fuse-fixture PRIVATE
-      -Wall -Wextra -Wno-error -Wno-misleading-indentation
+      -Wall -Wextra -Werror -Wno-misleading-indentation
       -Wno-unused-parameter)
     target_include_directories(porthome-fuse-fixture PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -2366,6 +2381,7 @@ if(NOSTR_NOTIFY_GIO_FOUND)
   add_executable(nostr-notify-daemon
     src/notify/nostr-notify-daemon.c
     src/notify/notify_subs.c
+    src/notify/notify_pump.c
     src/notify/notify_gnotification.c
     src/notify/notify_prefs.c
     src/notify/notify_sound.c
@@ -2416,6 +2432,21 @@ if(NOSTR_NOTIFY_GIO_FOUND)
       PkgConfig::NOSTR_NOTIFY_GIO nip19 nostr)
     add_test(NAME notify_sub COMMAND test_notify_sub)
     set_tests_properties(notify_sub PROPERTIES
+      LABELS "nostr-homed;notify" TIMEOUT 30)
+
+    # test_notify_pump: the connector waits on the group and DM channels
+    # at once — a quiet one never delays the other (nostrc-a16c).
+    add_executable(test_notify_pump
+      tests/unit/test_notify_pump.c
+      src/notify/notify_pump.c)
+    target_include_directories(test_notify_pump PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/notify
+      ${CMAKE_SOURCE_DIR}/libgo/include)
+    target_compile_options(test_notify_pump PRIVATE
+      -Wall -Wextra -Werror -Wno-unused-parameter)
+    target_link_libraries(test_notify_pump PRIVATE nostr Threads::Threads)
+    add_test(NAME notify_pump COMMAND test_notify_pump)
+    set_tests_properties(notify_pump PROPERTIES
       LABELS "nostr-homed;notify" TIMEOUT 30)
 
     # test_notify_prefs: nostr-notify.conf presentation keys (prqu.16).

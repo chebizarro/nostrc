@@ -7,7 +7,9 @@ set(_nse_dir "${CMAKE_INSTALL_DATADIR}/gnome-shell/extensions/${NOSTR_SHELL_EXTE
 set(_nse_schema "schemas/org.gnome.shell.extensions.nostr.gschema.xml")
 
 install(FILES metadata.json extension.js prefs.js DESTINATION ${_nse_dir})
-install(FILES lib/dbus.js lib/relay.js lib/state.js lib/wallet.js DESTINATION ${_nse_dir}/lib)
+# Every module under lib/ ships: an explicit list once left out dm.js and
+# the installed extension failed to import it (nostrc-51ax).
+install(DIRECTORY lib/ DESTINATION ${_nse_dir}/lib FILES_MATCHING PATTERN "*.js")
 install(FILES icons/nostr-relay-symbolic.svg DESTINATION ${_nse_dir}/icons)
 # System-wide schema: Extension.getSettings() falls back to the default
 # schema source when the extension directory has no schemas/ subdir.

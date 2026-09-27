@@ -5,8 +5,9 @@
  *   - One "connector" thread per home_relay, spawned by
  *     nostr_notify_subs_start(). Each connects with libnostr's
  *     `nostr_relay_new()` + `nostr_relay_connect()`, fires two subs (kinds
- *     9-12 and kind 1059 with `#p`), then loops on `nostr_subscription_
- *     get_events_channel()` to receive events.
+ *     9-12 and kind 1059 with `#p`), then waits on BOTH subscriptions'
+ *     event channels at once (notify_pump: one go_select over the pair),
+ *     so a quiet subscription never delays the other (nostrc-a16c).
  *   - The connector thread is the only place that touches its NostrRelay
  *     handle. On EVENT it captures the fields the main thread needs
  *     (id, kind, first h-tag) into a small POD, snapshots the current
@@ -50,6 +51,7 @@
 #include "nostr-tag.h"
 
 #include "notify_gnotification.h"
+#include "notify_pump.h"
 #include "notify_sound.h"
 #include "notify_unread.h"
 
@@ -215,7 +217,9 @@ static gboolean dispatch_on_main(gpointer user_data) {
   } else {
     /* NIP-29 preview. group_display_name is looked up from the daemon's
      * metadata cache — for v1 the cache is trivial and returns NULL, so
-     * the h_tag itself is the visible title (still markup-safe). */
+     * the title is "<h> · <relay host>" (still markup-safe). A cache MUST
+     * be keyed by nostr_notify_group_key(relay_url, h): the same h on two
+     * relays is two groups (nostrc-a33z). */
     n = nostr_notify_build_group(NULL, ev->h_tag, ev->event_id_hex, ev->kind,
                                  ev->dispatcher->prefs.group_preview ? ev->content : NULL,
                                  ev->relay_url, &build);
@@ -306,6 +310,80 @@ static bool hex64_ok(const char *s) {
 }
 
 /*
+ * Handle one event from either subscription (connector thread): catch-up
+ * guard, field extraction, generation snapshot, cursor, post to main.
+ */
+static void connector_on_event(void *user_data, size_t idx, void *item) {
+  (void)idx;
+  SubsConnector *c = user_data;
+  NostrNotifySubsCtx *ctx = c->ctx;
+  NostrEvent *ev = (NostrEvent *)item;
+
+  int kind = nostr_event_get_kind(ev);
+  char *eid = nostr_event_get_id(ev);
+  const char *content = nostr_event_get_content(ev);
+  int64_t created_at = nostr_event_get_created_at(ev);
+
+  /* Catch-up guard: skip events older than the persisted cursor OR
+   * older than daemon_start - 10min, whichever is stricter. Prevents
+   * a notification flood on relay reconnect. */
+  int64_t oldest_ok = ctx->daemon_start_unix - 600;
+  if (ctx->last_seen_created_at > oldest_ok)
+    oldest_ok = ctx->last_seen_created_at;
+  if (created_at < oldest_ok) {
+    free(eid);
+    /* We do not touch ev — libnostr owns it via the channel. */
+    return;
+  }
+
+  /* Only forward valid hex event ids. Something rejected here is
+   * malformed and should not surface as an obscure notification. */
+  if (!hex64_ok(eid)) { free(eid); return; }
+
+  char *h_tag = NULL;
+  if (kind == 9 || kind == 10 || kind == 11 || kind == 12) {
+    h_tag = event_first_h_tag(ev);
+    /* Untagged kind-9/10/11/12 events are not in any group — drop. */
+    if (!h_tag) { free(eid); return; }
+  }
+
+  /* Snapshot the generation on the connector thread. The main-thread
+   * dispatch will re-check on delivery. This is the "at every yield
+   * boundary" contract from the plan. */
+  uint64_t gen = nsn_guard_current(c->dispatcher->guard);
+  if (!nsn_guard_check(c->dispatcher->guard, gen)) {
+    free(eid); g_free(h_tag); return;
+  }
+
+  DispatchedEvent *dev = g_new0(DispatchedEvent, 1);
+  dev->dispatcher = c->dispatcher;
+  dev->generation_snapshot = gen;
+  dev->kind = kind;
+  dev->event_id_hex = g_strdup(eid);
+  dev->h_tag = h_tag; /* transferred */
+  dev->content = (kind == 1059) ? NULL : g_strdup(content ? content : "");
+  dev->relay_url = g_strdup(c->url);
+  free(eid);
+
+  /* Advance the cursor before dispatching so a crash mid-send
+   * doesn't reflood on restart. Serialized across connectors so the
+   * max-update + persist is atomic (Oracle review Q5); without this
+   * two connectors racing on ctx->last_seen_created_at are UB per
+   * C11 and their cursor.tmp files race on the same inode. */
+  g_mutex_lock(&g_cursor_mu);
+  if (created_at > ctx->last_seen_created_at) {
+    ctx->last_seen_created_at = created_at;
+    cursor_save_locked(ctx);
+  }
+  g_mutex_unlock(&g_cursor_mu);
+
+  /* Post to the main context. */
+  g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT_IDLE,
+                             dispatch_on_main, dev,
+                             dispatched_event_free);
+}
+
+/*
  * Connector thread: pull events off the subscription channels and post to
  * the main context.
  */
@@ -367,87 +445,14 @@ static void *connector_thread(void *arg) {
     }
   }
 
-  /* Drain the subscription channels alternately until we're told to
-   * stop. Use short-timeout receives so we can poll for stop and back
-   * off on failure. */
-  GoChannel *ev_groups = c->sub_groups ? nostr_subscription_get_events_channel(c->sub_groups) : NULL;
-  GoChannel *ev_dms    = c->sub_dms ? nostr_subscription_get_events_channel(c->sub_dms) : NULL;
-
-  while (!atomic_load(&c->stop)) {
-    for (int which = 0; which < 2; which++) {
-      GoChannel *chan = which ? ev_dms : ev_groups;
-      if (!chan) continue;
-      void *out = NULL;
-      /* Non-blocking receive: rely on libnostr's channel semantics — this
-       * call blocks until an event OR the channel closes. Because we
-       * spawn one thread per connector, blocking here is fine. */
-      if (go_channel_receive(chan, &out) != 0 || !out) continue;
-      NostrEvent *ev = (NostrEvent *)out;
-
-      int kind = nostr_event_get_kind(ev);
-      char *eid = nostr_event_get_id(ev);
-      const char *content = nostr_event_get_content(ev);
-      int64_t created_at = nostr_event_get_created_at(ev);
-
-      /* Catch-up guard: skip events older than the persisted cursor OR
-       * older than daemon_start - 10min, whichever is stricter. Prevents
-       * a notification flood on relay reconnect. */
-      int64_t oldest_ok = ctx->daemon_start_unix - 600;
-      if (ctx->last_seen_created_at > oldest_ok)
-        oldest_ok = ctx->last_seen_created_at;
-      if (created_at < oldest_ok) {
-        free(eid);
-        /* We do not touch ev — libnostr owns it via the channel. */
-        continue;
-      }
-
-      /* Only forward valid hex event ids. Something rejected here is
-       * malformed and should not surface as an obscure notification. */
-      if (!hex64_ok(eid)) { free(eid); continue; }
-
-      char *h_tag = NULL;
-      if (kind == 9 || kind == 10 || kind == 11 || kind == 12) {
-        h_tag = event_first_h_tag(ev);
-        /* Untagged kind-9/10/11/12 events are not in any group — drop. */
-        if (!h_tag) { free(eid); continue; }
-      }
-
-      /* Snapshot the generation on the connector thread. The main-thread
-       * dispatch will re-check on delivery. This is the "at every yield
-       * boundary" contract from the plan. */
-      uint64_t gen = nsn_guard_current(c->dispatcher->guard);
-      if (!nsn_guard_check(c->dispatcher->guard, gen)) {
-        free(eid); g_free(h_tag); continue;
-      }
-
-      DispatchedEvent *dev = g_new0(DispatchedEvent, 1);
-      dev->dispatcher = c->dispatcher;
-      dev->generation_snapshot = gen;
-      dev->kind = kind;
-      dev->event_id_hex = g_strdup(eid);
-      dev->h_tag = h_tag; /* transferred */
-      dev->content = (kind == 1059) ? NULL : g_strdup(content ? content : "");
-      dev->relay_url = g_strdup(c->url);
-      free(eid);
-
-      /* Advance the cursor before dispatching so a crash mid-send
-       * doesn't reflood on restart. Serialized across connectors so the
-       * max-update + persist is atomic (Oracle review Q5); without this
-       * two connectors racing on ctx->last_seen_created_at are UB per
-       * C11 and their cursor.tmp files race on the same inode. */
-      g_mutex_lock(&g_cursor_mu);
-      if (created_at > ctx->last_seen_created_at) {
-        ctx->last_seen_created_at = created_at;
-        cursor_save_locked(ctx);
-      }
-      g_mutex_unlock(&g_cursor_mu);
-
-      /* Post to the main context. */
-      g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT_IDLE,
-                                 dispatch_on_main, dev,
-                                 dispatched_event_free);
-    }
-  }
+  /* Wait on both subscription channels at once until told to stop (the
+   * 1 s tick bounds stop latency; subs_stop also disconnects the relay,
+   * which closes the channels). */
+  GoChannel *chans[2] = {
+    c->sub_groups ? nostr_subscription_get_events_channel(c->sub_groups) : NULL,
+    c->sub_dms ? nostr_subscription_get_events_channel(c->sub_dms) : NULL,
+  };
+  (void)nsn_pump_run(chans, 2, &c->stop, 1000, connector_on_event, c);
 
   /* Teardown. Close subs, then relay. */
   if (c->sub_groups) {

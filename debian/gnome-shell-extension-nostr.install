@@ -2,6 +2,7 @@ usr/share/gnome-shell/extensions/nostr@nostr.org/metadata.json
 usr/share/gnome-shell/extensions/nostr@nostr.org/extension.js
 usr/share/gnome-shell/extensions/nostr@nostr.org/prefs.js
 usr/share/gnome-shell/extensions/nostr@nostr.org/lib/dbus.js
+usr/share/gnome-shell/extensions/nostr@nostr.org/lib/dm.js
 usr/share/gnome-shell/extensions/nostr@nostr.org/lib/relay.js
 usr/share/gnome-shell/extensions/nostr@nostr.org/lib/state.js
 usr/share/gnome-shell/extensions/nostr@nostr.org/lib/wallet.js
