@@ -28,6 +28,7 @@
 #include "nwa-policy.h"
 #include "nwa-ui.h"
 #include "nwa-uri.h"
+#include "nwa-walletauth.h"
 #include "nwa-dbus-xml.h"
 
 #include <json-glib/json-glib.h>
@@ -42,6 +43,9 @@
 #define NWA_SETTINGS_SCHEMA   "org.nostr.Wallet"
 #define MAX_PROMPTS_PER_APP   2
 #define MAX_PROMPTS_TOTAL     6
+#define WALLET_AUTH_COOLDOWN_S 60 /* after two wallets answered one request */
+
+typedef struct _WaFlow WaFlow;
 
 struct _NwaService {
   GDBusConnection *bus;
@@ -58,6 +62,8 @@ struct _NwaService {
   GCancellable    *cancel;
   GStrv            origin_bridges; /* executables that may assert a web origin */
   GStrv            settings_apps;  /* executables trusted as the settings app */
+  WaFlow          *wa;             /* pending wallet-auth pairing (at most one) */
+  gint64           wa_cooldown_until; /* monotonic µs */
 };
 
 /* ---------------------------------------------------------------------- */
@@ -1001,6 +1007,270 @@ run_policy(Call *c)
 }
 
 /* ---------------------------------------------------------------------- */
+/* wallet-auth pairing: agent-generated NWC client keys (nostrc-prqu.12)   */
+/*
+ * BeginWalletAuth -> NwaWalletAuth (nwa-walletauth.c) waits for the wallet's
+ * answer -> the connection is STAGED (a client on the new key, not yet the
+ * active one) and verified with a get_info round trip -> the Connect dialog,
+ * always (the `state` echo is in the URI, so it cannot authenticate the
+ * wallet against someone who saw the link; the user compares the key with
+ * their wallet app) -> keyring + install. Anything else leaves the current
+ * pairing untouched. Outcome: WalletAuthFinished(b, s), no keys or URIs.
+ */
+
+struct _WaFlow {
+  gint           ref;
+  NwaService    *svc;
+  NwaWalletAuth *auth;
+  NwaCaller     *owner;        /* who called BeginWalletAuth */
+  NwaNwcClient  *staged;
+  gchar         *nwc_uri;      /* contains our secret: wiped */
+  gchar         *wallet_pk, *relay;
+  gboolean       confirmed;    /* the wallet echoed our state */
+  gboolean       committing;   /* user accepted; being saved: not supersedable */
+  gboolean       over;
+};
+
+static WaFlow *
+wa_ref(WaFlow *f)
+{
+  f->ref++;
+  return f;
+}
+
+static void
+wa_unref(WaFlow *f)
+{
+  if (--f->ref > 0) return;
+  if (f->auth) {
+    g_signal_handlers_disconnect_by_data(f->auth, f);
+    nwa_wallet_auth_stop(f->auth);
+    g_object_unref(f->auth);
+  }
+  if (f->staged) {
+    nwa_nwc_client_stop(f->staged);
+    g_object_unref(f->staged);
+  }
+  if (f->nwc_uri) {
+    memset(f->nwc_uri, 0, strlen(f->nwc_uri));
+    g_free(f->nwc_uri);
+  }
+  nwa_caller_free(f->owner);
+  g_free(f->wallet_pk);
+  g_free(f->relay);
+  g_free(f);
+}
+
+static void
+wa_finish(WaFlow *f, gboolean ok, const gchar *message)
+{
+  if (f->over) return;
+  f->over = TRUE;
+  NwaService *s = f->svc;
+  g_message("nostr-wallet-agent: wallet connection request %s: %s", ok ? "completed" : "ended", message);
+  g_dbus_connection_emit_signal(s->bus, NULL, NWA_OBJECT_PATH, NWA_INTERFACE, "WalletAuthFinished",
+                                g_variant_new("(bs)", ok, message), NULL);
+  if (s->wa == f) {
+    s->wa = NULL;
+    wa_unref(f); /* the service's reference */
+  }
+}
+
+static void
+on_wa_saved(GObject *src, GAsyncResult *res, gpointer data)
+{
+  (void)src;
+  WaFlow *f = data;
+  GError *err = NULL;
+  g_task_propagate_pointer(G_TASK(res), &err);
+  if (!f->over) {
+    if (err) {
+      g_autofree gchar *m = g_strdup_printf("could not store the pairing in the keyring: %s", err->message);
+      wa_finish(f, FALSE, m);
+    } else {
+      g_autofree gchar *m = g_strdup_printf("connected to wallet %.12s…", f->wallet_pk);
+      install_client(f->svc, g_steal_pointer(&f->staged));
+      wa_finish(f, TRUE, m);
+    }
+  }
+  g_clear_error(&err);
+  wa_unref(f);
+}
+
+static void
+on_wa_answer(gboolean accepted, gboolean remember, gpointer data)
+{
+  (void)remember;
+  WaFlow *f = data;
+  if (!f->over) {
+    if (!accepted) {
+      wa_finish(f, FALSE, "declined");
+    } else {
+      f->committing = TRUE;
+      KeyringJob *j = g_new0(KeyringJob, 1);
+      j->op = KR_SAVE;
+      j->uri = g_strdup(f->nwc_uri);
+      j->wallet_pk = g_strdup(f->wallet_pk);
+      j->client_pk = g_strdup(nwa_nwc_client_get_client_pubkey(f->staged));
+      j->relay = g_strdup(f->relay);
+      keyring_run(f->svc, j, on_wa_saved, wa_ref(f));
+    }
+  }
+  wa_unref(f);
+}
+
+static gchar *caller_phrase(const NwaCaller *c, gboolean via_link);
+
+static void
+on_wa_info(GObject *src, GAsyncResult *res, gpointer data)
+{
+  WaFlow *f = data;
+  GError *err = NULL;
+  g_autoptr(JsonNode) r = nwa_nwc_client_request_finish(NWA_NWC_CLIENT(src), res, &err);
+  if (f->over) {
+    g_clear_error(&err);
+    wa_unref(f);
+    return;
+  }
+  if (!r) {
+    g_autofree gchar *m = g_strdup_printf("the wallet did not answer a request on the new connection (%s); "
+                                          "nothing was connected", err->message);
+    g_error_free(err);
+    wa_finish(f, FALSE, m);
+    wa_unref(f);
+    return;
+  }
+  JsonObject *o = JSON_NODE_HOLDS_OBJECT(r) ? json_node_get_object(r) : NULL;
+  const gchar *alias = o ? json_object_get_string_member_with_default(o, "alias", NULL) : NULL;
+  const gchar *lud16 = o ? json_object_get_string_member_with_default(o, "lud16", NULL) : NULL;
+  NwaService *s = f->svc;
+  g_autofree gchar *who = caller_phrase(f->owner, FALSE);
+  g_autofree gchar *cur = NULL;
+  if (s->client) {
+    const gchar *l = nwa_nwc_client_get_lud16(s->client);
+    cur = g_strdup_printf("\n\nThis replaces the wallet currently connected (%s).",
+                          l ? l : nwa_nwc_client_get_wallet_pubkey(s->client));
+  }
+  g_autofree gchar *name = alias && *alias ? g_strdup_printf("%s%s%s", alias, lud16 ? " · " : "", lud16 ? lud16 : "")
+                                           : g_strdup(lud16 && *lud16 ? lud16 : "(the wallet gave no name)");
+  g_autofree gchar *body = g_strdup_printf(
+    "%s asked your wallet app for a new connection, and a wallet answered.\n\n"
+    "Wallet: %s\nWallet key: %.12s…\nRelay: %s\nEncryption: %s\n\n%s\n\n"
+    "The connection key was created on this computer and never left it: unlike a pasted "
+    "connection link, nobody else holds it.%s",
+    who, name, f->wallet_pk, f->relay, nwa_nwc_client_get_encryption(f->staged),
+    f->confirmed ? "Check that your wallet app now lists this connection, with the same wallet key."
+                 : "This wallet did not prove that it answered this particular request. Only connect "
+                   "if your wallet app shows the same wallet key.",
+    cur ? cur : "");
+  nwa_ui_confirm("Connect Wallet", body, "_Connect", FALSE, NULL,
+                 setting_uint(s, "approval-timeout", 120), on_wa_answer, wa_ref(f));
+  wa_unref(f);
+}
+
+static void
+on_wa_authorized(NwaWalletAuth *auth, const gchar *wallet_pk, const gchar *relay, gboolean confirmed,
+                 gpointer data)
+{
+  WaFlow *f = data;
+  if (f->over) return;
+  f->wallet_pk = g_strdup(wallet_pk);
+  f->relay = g_strdup(relay);
+  f->confirmed = confirmed;
+  f->nwc_uri = nwa_wallet_auth_build_nwc_uri(auth, wallet_pk, relay);
+  GError *err = NULL;
+  f->staged = nwa_nwc_client_new(f->nwc_uri, NULL, NULL, &err);
+  if (!f->staged) {
+    wa_finish(f, FALSE, err->message);
+    g_error_free(err);
+    return;
+  }
+  nwa_nwc_client_set_timeouts(f->staged, 30, 5000);
+  nwa_nwc_client_start(f->staged);
+  nwa_nwc_client_request_async(f->staged, "get_info", NULL, NULL, on_wa_info, wa_ref(f));
+}
+
+static void
+on_wa_failed(NwaWalletAuth *auth, guint why, const gchar *message, gpointer data)
+{
+  (void)auth;
+  WaFlow *f = data;
+  /* Two wallets answering one request means someone else saw the link:
+   * refuse to start over at once, so a racer cannot simply retry. */
+  if (why == NWA_WALLET_AUTH_CONFLICT)
+    f->svc->wa_cooldown_until = g_get_monotonic_time() + WALLET_AUTH_COOLDOWN_S * G_USEC_PER_SEC;
+  wa_finish(f, FALSE, message);
+}
+
+static void
+wa_begin(Call *c)
+{
+  NwaService *s = c->svc;
+  NwaCaller *who = c->caller;
+  if (!who->same_uid) { CALL_FAIL(c, NWA_ERROR_DENIED, "caller belongs to another user"); return; }
+  if (!who->app_id) { CALL_FAIL(c, NWA_ERROR_DENIED, "the calling application could not be identified"); return; }
+  if (!nwa_ui_available()) {
+    CALL_FAIL(c, NWA_ERROR_DENIED, "connecting a wallet needs the user's confirmation, but no display is available");
+    return;
+  }
+  if (g_get_monotonic_time() < s->wa_cooldown_until) {
+    CALL_FAIL(c, NWA_ERROR_RATE_LIMITED, "two wallets answered the last request; try again in a minute");
+    return;
+  }
+  if (s->wa && s->wa->committing) {
+    CALL_FAIL(c, NWA_ERROR_RATE_LIMITED, "a wallet connection is being saved");
+    return;
+  }
+  if (s->wa && g_strcmp0(s->wa->owner->app_id, who->app_id) != 0 && !is_grant_admin(s, who)) {
+    CALL_FAIL(c, NWA_ERROR_RATE_LIMITED, "another application is connecting a wallet");
+    return;
+  }
+
+  GVariant *opts = g_variant_get_child_value(c->params, 0);
+  g_auto(GStrv) relays = NULL;
+  const gchar *name = NULL;
+  if (!g_variant_lookup(opts, "relays", "^as", &relays) || !relays || !relays[0]) {
+    g_strfreev(relays);
+    relays = s->settings ? g_settings_get_strv(s->settings, "wallet-auth-relays")
+                         : g_strdupv((gchar *[]){ "wss://relay.getalby.com/v1", NULL });
+  }
+  g_autofree gchar *default_name = g_strdup_printf("Nostr Wallet (%s)", g_get_host_name());
+  if (!g_variant_lookup(opts, "name", "&s", &name) || !*name) name = default_name;
+  GError *err = NULL;
+  NwaWalletAuth *auth = nwa_wallet_auth_new((const gchar *const *)relays, name, NULL, NULL, &err);
+  g_variant_unref(opts);
+  if (!auth) { call_error(c, err); return; }
+
+  if (s->wa) wa_finish(s->wa, FALSE, "superseded by a new connection request");
+  WaFlow *f = g_new0(WaFlow, 1);
+  f->ref = 1;
+  f->svc = s;
+  f->auth = auth;
+  f->owner = nwa_caller_copy(who);
+  g_signal_connect(auth, "authorized", G_CALLBACK(on_wa_authorized), f);
+  g_signal_connect(auth, "failed", G_CALLBACK(on_wa_failed), f);
+  s->wa = f;
+  nwa_wallet_auth_start(auth);
+  g_message("nostr-wallet-agent: %s asked for a wallet connection by request (client key %.12s…)",
+            who->display_name, nwa_wallet_auth_get_client_pubkey(auth));
+  call_return(c, g_variant_new("(s)", nwa_wallet_auth_get_uri(auth)), NULL);
+}
+
+static void
+wa_cancel(Call *c)
+{
+  NwaService *s = c->svc;
+  if (!s->wa || s->wa->committing) { call_return(c, NULL, NULL); return; }
+  if (!c->caller->same_uid || !c->caller->app_id ||
+      (g_strcmp0(s->wa->owner->app_id, c->caller->app_id) != 0 && !is_grant_admin(s, c->caller))) {
+    CALL_FAIL(c, NWA_ERROR_DENIED, "only the application that started it can cancel this request");
+    return;
+  }
+  wa_finish(s->wa, FALSE, "cancelled");
+  call_return(c, NULL, NULL);
+}
+
+/* ---------------------------------------------------------------------- */
 /* argument validation (before identifying the caller)                     */
 
 static gboolean
@@ -1092,6 +1362,8 @@ on_caller(GObject *src, GAsyncResult *res, gpointer data)
   g_debug("nostr-wallet-agent: %s from %s app=%s kind=%s pid=%u exe=%s", c->method, caller->sender,
           caller->app_id ? caller->app_id : "(none)", nwa_caller_kind_to_string(caller->kind),
           caller->pid, caller->exe ? caller->exe : "(none)");
+  if (g_str_equal(c->method, "BeginWalletAuth")) { wa_begin(c); return; }
+  if (g_str_equal(c->method, "CancelWalletAuth")) { wa_cancel(c); return; }
   if (c->origin) {
     if (!nwa_caller_may_assert_origin(caller, (const gchar *const *)c->svc->origin_bridges)) {
       CALL_FAIL(c, NWA_ERROR_DENIED, "only the browser bridge may act for a web origin");
@@ -1270,6 +1542,8 @@ handle_method_call(GDBusConnection *bus, const gchar *sender, const gchar *path,
     c->new_allow_read = allow;
   } else if (g_str_equal(method, "ListApps")) {
     c->op = NWA_OP_BUDGET_QUERY_OTHER; /* every app's record: settings app only */
+  } else if (g_str_equal(method, "BeginWalletAuth") || g_str_equal(method, "CancelWalletAuth")) {
+    /* decided once the caller is identified (wa_begin / wa_cancel) */
   } else {
     g_set_error(&err, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD, "unknown method %s", method);
     ok = FALSE;
@@ -1483,6 +1757,10 @@ nwa_service_free(NwaService *s)
 {
   if (!s) return;
   g_cancellable_cancel(s->cancel);
+  if (s->wa) {
+    s->wa->over = TRUE;
+    wa_unref(g_steal_pointer(&s->wa));
+  }
   if (s->reg_id) g_dbus_connection_unregister_object(s->bus, s->reg_id);
   if (s->client) {
     g_signal_handler_disconnect(s->client, s->notify_handler);

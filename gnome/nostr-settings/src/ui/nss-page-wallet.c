@@ -22,6 +22,10 @@ typedef struct {
   GtkWidget           *page;
   GtkWidget           *status;
   GtkWidget           *unpair;
+  GtkWidget           *auth_row;   /* "Connect with your wallet app" */
+  GtkWidget           *wait_row;   /* pending request: link, Copy, Cancel */
+  gchar               *auth_uri;
+  guint                auth_sub;
   AdwEntryRow         *pair_entry;
   AdwPreferencesGroup *budgets;
   guint                props_sub;
@@ -41,6 +45,9 @@ page_free(gpointer data)
     g_dbus_connection_signal_unsubscribe(p->ctx->bus, p->props_sub);
   if (p->apps_sub && p->ctx->bus)
     g_dbus_connection_signal_unsubscribe(p->ctx->bus, p->apps_sub);
+  if (p->auth_sub && p->ctx->bus)
+    g_dbus_connection_signal_unsubscribe(p->ctx->bus, p->auth_sub);
+  g_free(p->auth_uri);
   g_hash_table_unref(p->expanded);
   nss_context_unref(p->ctx);
   g_free(p);
@@ -284,6 +291,7 @@ render(Page *p, State *s)
   p->trusted = s->trusted;
   gtk_widget_set_visible(p->unpair, s->available && s->paired);
   gtk_widget_set_visible(GTK_WIDGET(p->pair_entry), s->available && !s->paired);
+  gtk_widget_set_visible(p->auth_row, s->available && !s->paired && p->auth_uri == NULL);
   if (!s->available) {
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(p->status), "Wallet agent not available");
     nss_row_set_subtitle_plain(p->status, s->error);
@@ -297,7 +305,7 @@ render(Page *p, State *s)
   } else {
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(p->status), "No wallet connected");
     nss_row_set_subtitle_plain(p->status,
-      "Paste a connection link from your wallet, or open a nostr+walletconnect: link");
+      "Ask your wallet app for a connection, or paste a connection link from it");
   }
 
   if (s->budgets_error) {
@@ -410,6 +418,102 @@ on_unpair(GtkButton *b, gpointer data)
   call_agent(data, "Unpair", NULL);
 }
 
+/* ── connect by request (nostr+walletauth: the agent creates the key) ── */
+
+static void
+auth_waiting(Page *p, const gchar *uri)
+{
+  g_free(p->auth_uri);
+  p->auth_uri = g_strdup(uri);
+  gtk_widget_set_visible(p->wait_row, uri != NULL);
+  gtk_widget_set_visible(p->auth_row, uri == NULL);
+  if (uri)
+    nss_row_set_subtitle_plain(p->wait_row,
+      "Approve the connection in your wallet app. If it did not open, copy the link into it.");
+}
+
+static void
+begin_done(GObject *src, GAsyncResult *res, gpointer data)
+{
+  GtkWidget *page = data;
+  Page *p = g_object_get_data(G_OBJECT(page), "nss-page");
+  g_autoptr(GError) err = NULL;
+  g_autoptr(GVariant) r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &err);
+  if (p) {
+    gtk_widget_set_sensitive(p->auth_row, TRUE);
+    if (r == NULL) {
+      g_dbus_error_strip_remote_error(err);
+      nss_toast(p->ctx, "Cannot connect a wallet: %s", err->message);
+    } else {
+      const gchar *uri = NULL;
+      g_variant_get(r, "(&s)", &uri);
+      auth_waiting(p, uri);
+      g_autoptr(GError) lerr = NULL;
+      if (!g_app_info_launch_default_for_uri(uri, NULL, &lerr))
+        nss_toast(p->ctx, "No wallet app handles connection requests here; copy the link into your wallet");
+    }
+  }
+  g_object_unref(page);
+}
+
+static void
+on_auth_clicked(GtkButton *b, gpointer data)
+{
+  (void)b;
+  Page *p = data;
+  if (p->ctx->bus == NULL)
+    return;
+  gtk_widget_set_sensitive(p->auth_row, FALSE);
+  g_dbus_connection_call(p->ctx->bus, NSS_WALLET_BUS_NAME, NSS_WALLET_OBJ_PATH, NSS_WALLET_IFACE,
+                         "BeginWalletAuth",
+                         g_variant_new_parsed("(@a{sv} {'name': <'GNOME (Nostr Wallet)'>},)"),
+                         G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 20000, NULL, begin_done,
+                         g_object_ref(p->page));
+}
+
+static void
+on_auth_copy(GtkButton *b, gpointer data)
+{
+  (void)b;
+  Page *p = data;
+  if (!p->auth_uri)
+    return;
+  gdk_clipboard_set_text(gtk_widget_get_clipboard(p->page), p->auth_uri);
+  nss_toast(p->ctx, "Link copied — it holds no secret");
+}
+
+static void
+on_auth_cancel(GtkButton *b, gpointer data)
+{
+  (void)b;
+  Page *p = data;
+  if (p->ctx->bus)
+    g_dbus_connection_call(p->ctx->bus, NSS_WALLET_BUS_NAME, NSS_WALLET_OBJ_PATH, NSS_WALLET_IFACE,
+                           "CancelWalletAuth", NULL, NULL, G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL,
+                           NULL);
+  auth_waiting(p, NULL);
+}
+
+static void
+on_auth_finished(GDBusConnection *c, const gchar *sender, const gchar *path, const gchar *iface,
+                 const gchar *signal, GVariant *params, gpointer data)
+{
+  (void)c; (void)sender; (void)path; (void)iface; (void)signal;
+  g_autoptr(GtkWidget) page = g_weak_ref_get(data);
+  Page *p = page ? g_object_get_data(G_OBJECT(page), "nss-page") : NULL;
+  if (!p || !p->auth_uri)
+    return; /* not our request */
+  gboolean ok = FALSE;
+  const gchar *msg = NULL;
+  g_variant_get(params, "(b&s)", &ok, &msg);
+  auth_waiting(p, NULL);
+  if (ok)
+    nss_toast(p->ctx, "Wallet connected");
+  else
+    nss_toast(p->ctx, "Wallet not connected: %s", msg);
+  refresh(p);
+}
+
 AdwPreferencesPage *
 nss_page_wallet_new(NssContext *ctx)
 {
@@ -426,7 +530,7 @@ nss_page_wallet_new(NssContext *ctx)
   adw_preferences_group_set_title(g, "Lightning wallet");
   adw_preferences_group_set_description(g,
     "One Nostr Wallet Connect (NIP-47) wallet shared by every app. Connecting and "
-    "disconnecting are confirmed by the wallet agent.");
+    "disconnecting are always confirmed by the wallet agent.");
   p->status = nss_info_row("Checking…", NULL);
   p->unpair = gtk_button_new_with_label("Disconnect…");
   gtk_widget_add_css_class(p->unpair, "destructive-action");
@@ -435,9 +539,33 @@ nss_page_wallet_new(NssContext *ctx)
   g_signal_connect(p->unpair, "clicked", G_CALLBACK(on_unpair), p);
   adw_action_row_add_suffix(ADW_ACTION_ROW(p->status), p->unpair);
   adw_preferences_group_add(g, p->status);
+
+  p->auth_row = adw_action_row_new();
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(p->auth_row), "Connect with your wallet app");
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(p->auth_row),
+    "Recommended: the connection key is created on this computer, so nobody else holds it");
+  GtkWidget *auth_btn = gtk_button_new_with_label("Connect…");
+  gtk_widget_add_css_class(auth_btn, "suggested-action");
+  gtk_widget_set_valign(auth_btn, GTK_ALIGN_CENTER);
+  g_signal_connect(auth_btn, "clicked", G_CALLBACK(on_auth_clicked), p);
+  adw_action_row_add_suffix(ADW_ACTION_ROW(p->auth_row), auth_btn);
+  gtk_widget_set_visible(p->auth_row, FALSE);
+  adw_preferences_group_add(g, p->auth_row);
+
+  p->wait_row = nss_info_row("Waiting for your wallet…", NULL);
+  GtkWidget *copy_btn = nss_suffix_button("edit-copy-symbolic", "Copy the connection request link");
+  g_signal_connect(copy_btn, "clicked", G_CALLBACK(on_auth_copy), p);
+  adw_action_row_add_suffix(ADW_ACTION_ROW(p->wait_row), copy_btn);
+  GtkWidget *cancel_btn = gtk_button_new_with_label("Cancel");
+  gtk_widget_set_valign(cancel_btn, GTK_ALIGN_CENTER);
+  g_signal_connect(cancel_btn, "clicked", G_CALLBACK(on_auth_cancel), p);
+  adw_action_row_add_suffix(ADW_ACTION_ROW(p->wait_row), cancel_btn);
+  gtk_widget_set_visible(p->wait_row, FALSE);
+  adw_preferences_group_add(g, p->wait_row);
+
   p->pair_entry = ADW_ENTRY_ROW(adw_password_entry_row_new());
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(p->pair_entry),
-                                "Connect a wallet (nostr+walletconnect://…)");
+                                "Or paste a connection link (nostr+walletconnect://…)");
   adw_entry_row_set_show_apply_button(p->pair_entry, TRUE);
   gtk_widget_set_visible(GTK_WIDGET(p->pair_entry), FALSE);
   g_signal_connect(p->pair_entry, "apply", G_CALLBACK(on_pair), p);
@@ -464,6 +592,11 @@ nss_page_wallet_new(NssContext *ctx)
     p->apps_sub = g_dbus_connection_signal_subscribe(
       ctx->bus, NSS_WALLET_BUS_NAME, NSS_WALLET_IFACE, "AppsChanged", NSS_WALLET_OBJ_PATH, NULL,
       G_DBUS_SIGNAL_FLAGS_NONE, on_agent_changed, wr2, weak_ref_free);
+    GWeakRef *wr3 = g_new0(GWeakRef, 1);
+    g_weak_ref_init(wr3, page);
+    p->auth_sub = g_dbus_connection_signal_subscribe(
+      ctx->bus, NSS_WALLET_BUS_NAME, NSS_WALLET_IFACE, "WalletAuthFinished", NSS_WALLET_OBJ_PATH, NULL,
+      G_DBUS_SIGNAL_FLAGS_NONE, on_auth_finished, wr3, weak_ref_free);
     refresh(p);
   }
   return page;

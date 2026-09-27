@@ -37,6 +37,7 @@ Amounts are millisatoshis.
 | `LookupInvoice(s payment_hash_or_bolt11)` | `→ a{sv}` | read |
 | `ListTransactions(t from, t until, u limit, s type)` | `→ aa{sv}` | read |
 | `Pair(s nwc_uri)` / `Unpair()` | | pair / unpair |
+| `BeginWalletAuth(a{sv} options)` / `CancelWalletAuth()` | `→ s walletauth_uri` | pair by request with an agent-generated key; always confirmed (see [Pairing](#pairing)) |
 | `OpenUri(s uri)` | | scheme-handler link (always confirmed) |
 | `GetBudget(s app_id)` | `→ u msat_per_day, t spent_today_msat` | own: always; other app: trusted only |
 | `SetBudget(s app_id, u msat_per_day)` | | lower own: always; otherwise confirm (a budget never grants read access) |
@@ -61,7 +62,42 @@ gdbus call --session --dest org.nostr.Wallet1 --object-path /org/nostr/Wallet1 \
 
 ## Pairing
 
-Pair by clicking a `nostr+walletconnect://…` link (the agent is its scheme
+**Recommended: connect by request (`nostr+walletauth`, `nostrc-prqu.12`).**
+`BeginWalletAuth()` makes the agent generate the NWC client keypair and
+return a link
+
+    nostr+walletauth://<client-key>?relay=…&name=…&request_methods=…
+        &notification_types=…&pubkey=<client-key>&state=<128-bit random>
+
+(Alby Hub's form plus the NWC-08 draft's `pubkey`/`state`), which the caller
+— Nostr Settings' *Connect with your wallet app* — opens in the user's
+wallet app or shows for copying. It holds no secret. When the user approves
+there, the wallet publishes its kind-13194 info event p-tagged to the client
+key (NWC-08 wallets echo `state` in a `state` tag). The agent
+(`src/nwa-walletauth.c`) takes an answer that verifies, p-tags the key,
+lists NWC methods and is recent; with a matching `state` at once, without
+one (Alby today) after a 3 s settle window. Two *different* wallets
+answering one request fail it and new requests are refused for a minute
+(someone else saw the link and is racing the wallet). Answers carrying
+another request's `state`, malformed or stale ones are ignored; a relay hint
+in the p tag is subscribed to in addition to the requested relays (≤ 5,
+default: GSettings `wallet-auth-relays`).
+
+The answer is then *staged*: a client on the new key must get a `get_info`
+reply from the wallet before anything is shown, and the **Connect dialog is
+always shown** (`state` travels inside the link, so it binds the answer to
+the request but cannot prove the wallet's identity to someone who saw the
+link): it names the requesting app, the wallet's name, the first 12 hex of
+its key, the relay and encryption, asks the user to compare the key with
+the wallet app, and warns louder when the wallet did not echo `state`. Only
+on *Connect* is the pairing stored in the keyring and made active; decline,
+timeout, conflict, cancel or a failed check leave the current pairing
+untouched. The secret never leaves the agent. One request at a time: the
+same app (or the settings app) may replace its pending request, others get
+`RateLimited`; `CancelWalletAuth` likewise; the outcome is the
+`WalletAuthFinished(b, s)` signal. Headless, `BeginWalletAuth` is refused.
+
+**Pasted links.** Pair by clicking a `nostr+walletconnect://…` link (the agent is its scheme
 handler) or by `Pair(uri)` from an application. Pairing and unpairing are
 **always** confirmed in a dialog — trusted apps included — that names the
 requesting application, the wallet (lud16 or pubkey) and relay, warns when it
@@ -72,8 +108,8 @@ its secret.
 > NIP-47 limitation: the `secret` in a `nostr+walletconnect://` URI is known
 > to whoever produced or relayed the link, and they can use the wallet
 > directly, outside the agent's budgets; `Unpair` cannot revoke that — only
-> revoking the connection in the wallet can. Agent-generated client keys
-> (`nostr+walletauth://`) are tracked in `nostrc-prqu.12`.
+> revoking the connection in the wallet can. Connecting by request (above)
+> avoids it.
 
 The URI is stored in the Secret Service under the dedicated schema
 **`org.gnostr.WalletConnection`** (added to `gnome/seahorse/secret_store.[ch]`,
@@ -82,7 +118,8 @@ different secret class (a per-pairing client key, not a Nostr identity).
 Seahorse shows it as `Nostr Wallet Connect: <lud16> (<pubkey prefix>…)`.
 Exactly one pairing exists; pairing again replaces it, `Unpair` deletes it.
 
-The NWC client keypair is the URI's `secret`. The agent signs NIP-47 requests
+The NWC client keypair is the URI's `secret` (for a pairing by request, the
+agent-generated key, stored in the same `nostr+walletconnect://` form). The agent signs NIP-47 requests
 and NIP-42 AUTH with it and never involves the user's Nostr identity or the
 signer daemon.
 
@@ -370,6 +407,18 @@ caller identification.
   BIP-21 `bitcoin:` (lightning fallback, amounts, `req-` params) and
   `nostr+walletconnect:` parsing.
 * `test_policy` — the approval matrix above.
+* `test_walletauth` — the pairing-by-request state machine over the fixture
+  transport: link shape (no secret, deduplicated relays), subscription,
+  `state` match / mismatch, settle window, same wallet via two relays, relay
+  hint, conflicting wallets, malformed/stale/future answers never counting,
+  a confirmed answer beating an unconfirmed one, stop and timeout.
+* `test_dbus` — the real agent paired with `nwa-fixture-wallet` on a private
+  bus (Linux): `*NonInteractive` reads, the settings app's grants, and
+  pairing by request end to end (wallet approves → staged `get_info` on the
+  new key → dialog → active; unconfirmed + declined → untouched; impostor
+  race → conflict + cooldown; supersede/cancel rules; refused headless).
+  Dialogs are answered by the test-build-only
+  `NOSTR_WALLET_AGENT_TEST_ANSWER=accept|deny`, which also logs their text.
 * `test_caller` — Flatpak info / snap / systemd-scope parsing; web-origin
   syntax, the browser-bridge gate (kinds, path + inode, replaced binary,
   foreign uid) and the web-origin principal.
@@ -391,6 +440,5 @@ caller identification.
 ## Not supported (yet)
 
 * LNURL-pay / withdraw and Lightning addresses — `nostrc-prqu.8`.
-* Agent-generated NWC keys (`nostr+walletauth://`) — `nostrc-prqu.12`.
 * On-chain payments — out of scope for an NWC agent (toast only).
 * `pay_keysend`, `multi_pay_*` — not exposed over D-Bus.

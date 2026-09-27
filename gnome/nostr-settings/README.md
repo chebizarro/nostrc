@@ -31,7 +31,7 @@ service's own store, so the service stays the single source of truth.
 | Notifications | on/off | systemd `--user`: `nostr-notify.service` | unit enablement |
 | Notifications | upstream mode, fallback relays | `~/.config/nostr-notify/nostr-notify.conf` `[notify]` `upstream_mode`, `home_relays` | yes |
 | Notifications | groups / DMs / preview / sound | same file, reserved keys (`nostr-notify.conf.example`) | shown disabled with a note: the daemon does not read them yet (`nostrc-prqu.16`) |
-| Wallet | pairing | `org.nostr.Wallet1` `Paired`/`Lud16`/`WalletPubkey`/`Relays`; `Pair(uri)` / `Unpair()` — the agent shows its own confirmation | via the agent |
+| Wallet | pairing | `org.nostr.Wallet1` `Paired`/`Lud16`/`WalletPubkey`/`Relays`. *Connect with your wallet app* (default): `BeginWalletAuth` → opens the returned `nostr+walletauth://` link in the wallet app (or offers to copy it), waits for `WalletAuthFinished`, Cancel → `CancelWalletAuth`; the agent creates the key. Fallback: paste a `nostr+walletconnect://` link → `Pair(uri)`. `Unpair()`. The agent always confirms | via the agent |
 | Wallet | per-app (and per-website) read access and daily budgets | `org.nostr.Wallet1` `ListApps`, `SetReadAccess(app, b)`, `SetBudget(app, msat)`; re-listed on `AppsChanged`. A standing *GNOME Shell* row grants the panel indicator (every Shell extension shares gnome-shell's identity) | via the agent: read access applied directly (Settings is its grant admin), budgets confirmed in the agent's dialog |
 | Media servers | Blossom list | BUD-03 kind **10063**, signed + published | yes (event) |
 | Files | encryption defaults | `~/.config/nostr/seal.conf` `[seal]` `default_recipients`, `include_self`, `work_factor` (`$NOSTR_SEAL_CONFIG`) | yes |

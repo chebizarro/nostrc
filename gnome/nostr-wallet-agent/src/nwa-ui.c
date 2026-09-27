@@ -9,9 +9,25 @@
 
 static gint ui_state; /* 0 = untried, 1 = ready, -1 = unavailable */
 
+#ifdef NWA_ORIGIN_BRIDGE_ENV
+/* Test builds only (same switch as the other test hooks; packages are
+ * built without it): NOSTR_WALLET_AGENT_TEST_ANSWER=accept|deny answers
+ * every dialog at once without GTK and logs its text, so CTest can drive
+ * flows that end in a dialog and assert what the user would read. */
+static const gchar *
+test_answer(void)
+{
+  const gchar *a = g_getenv("NOSTR_WALLET_AGENT_TEST_ANSWER");
+  return a && (g_str_equal(a, "accept") || g_str_equal(a, "deny")) ? a : NULL;
+}
+#else
+#define test_answer() ((const gchar *)NULL)
+#endif
+
 gboolean
 nwa_ui_available(void)
 {
+  if (test_answer()) return TRUE;
   if (ui_state == 0) {
     const gchar *headless = g_getenv("NOSTR_WALLET_AGENT_HEADLESS");
     if (headless && *headless && g_strcmp0(headless, "0") != 0) {
@@ -188,6 +204,12 @@ void
 nwa_ui_prompt_payment(const NwaPaymentPrompt *p, guint timeout_s,
                       NwaPaymentPromptCallback callback, gpointer user_data)
 {
+  if (test_answer()) {
+    g_message("nostr-wallet-agent: test build: answering payment dialog (%" G_GUINT64_FORMAT
+              " msat, %s): %s", p->amount_msat, p->description ? p->description : "", test_answer());
+    callback(g_str_equal(test_answer(), "accept"), FALSE, 0, user_data);
+    return;
+  }
   if (!nwa_ui_available()) {
     callback(FALSE, FALSE, 0, user_data);
     return;
@@ -291,6 +313,12 @@ nwa_ui_confirm(const gchar *title, const gchar *body, const gchar *accept_label,
                gboolean destructive, const gchar *remember_label, guint timeout_s,
                NwaConfirmCallback callback, gpointer user_data)
 {
+  if (test_answer()) {
+    g_message("nostr-wallet-agent: test build: answering dialog \"%s\": %s\n%s\n-- end of dialog",
+              title, test_answer(), body);
+    callback(g_str_equal(test_answer(), "accept"), FALSE, user_data);
+    return;
+  }
   if (!nwa_ui_available()) {
     callback(FALSE, FALSE, user_data);
     return;
@@ -329,7 +357,7 @@ add_toast_idle(gpointer data)
 void
 nwa_ui_show_message(const gchar *title, const gchar *body, const gchar *toast)
 {
-  if (!nwa_ui_available()) {
+  if (test_answer() || !nwa_ui_available()) {
     g_message("nostr-wallet-agent: %s: %s", title, toast ? toast : body);
     return;
   }

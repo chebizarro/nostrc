@@ -63,7 +63,7 @@ fx_count(Env *e, const gchar *needle)
   return n;
 }
 
-static G_GNUC_UNUSED void
+static void
 fx_command(Env *e, const gchar *cmd)
 {
   g_autofree gchar *l = g_strdup_printf("%s\n", cmd);
@@ -434,10 +434,184 @@ test_settings_grants(void)
   env_down(&e);
 }
 
+/* ---- prqu.12: agent-generated keys (nostr+walletauth) ---- */
+
+typedef struct {
+  guint n;
+  gboolean ok;
+  gchar *msg;
+} Finished;
+
+static void
+on_wa_finished(GDBusConnection *c, const gchar *s, const gchar *p, const gchar *i, const gchar *sig,
+               GVariant *params, gpointer ud)
+{
+  (void)c; (void)s; (void)p; (void)i; (void)sig;
+  Finished *f = ud;
+  g_free(f->msg);
+  g_variant_get(params, "(bs)", &f->ok, &f->msg);
+  f->n++;
+}
+
+static gchar *
+begin_auth(Env *e, const gchar *relay)
+{
+  GVariantBuilder b;
+  g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+  const gchar *const rl[] = { relay, NULL };
+  g_variant_builder_add(&b, "{sv}", "relays", g_variant_new_strv(rl, -1));
+  g_variant_builder_add(&b, "{sv}", "name", g_variant_new_string("test_dbus"));
+  g_autofree gchar *err = NULL;
+  g_autoptr(GVariant) r = call_self(e, "BeginWalletAuth", g_variant_new("(a{sv})", &b), &err);
+  if (!r) { dump(); g_error("BeginWalletAuth: %s", err); }
+  gchar *uri = NULL;
+  g_variant_get(r, "(s)", &uri);
+  return uri;
+}
+
+static gchar *
+uri_client_key(const gchar *uri)
+{
+  const gchar *pk = uri + strlen("nostr+walletauth://");
+  return g_strndup(pk, 64);
+}
+
+static gchar *
+info_string(Env *e, const gchar *key)
+{
+  g_autoptr(GVariant) r = call_self(e, "GetInfo", NULL, NULL);
+  g_assert_nonnull(r);
+  g_autoptr(GVariant) d = g_variant_get_child_value(r, 0);
+  gchar *v = NULL;
+  g_variant_lookup(d, key, "s", &v);
+  return v;
+}
+
+static gboolean
+log_has(Env *e, const gchar *needle)
+{
+  g_autofree gchar *log = NULL;
+  return g_file_get_contents(e->agent_log, &log, NULL, NULL) && strstr(log, needle);
+}
+
+static void
+wait_finished(Finished *f, guint n)
+{
+  gint64 deadline = g_get_monotonic_time() + 30 * G_USEC_PER_SEC;
+  while (f->n < n && g_get_monotonic_time() < deadline) g_main_context_iteration(NULL, TRUE);
+  if (f->n < n) { dump(); g_error("no WalletAuthFinished"); }
+}
+
+static gchar *
+fixture_relay(Env *e)
+{
+  const gchar *r = strstr(e->fx_lines->str, "RELAY ");
+  g_assert_nonnull(r);
+  return g_strndup(r + 6, strcspn(r + 6, "\n"));
+}
+
+static void
+test_wallet_auth(void)
+{
+  Env e;
+  env_up(&e);
+  if (!distinct_callers(&e)) { env_down(&e); return; }
+  g_autofree gchar *relay = fixture_relay(&e);
+  g_autofree gchar *grant = g_strdup_printf("\"%s\":{\"allow_read\":true}", e.self_id);
+  seed(&e, grant);
+  const gchar *const accept[] = { "NOSTR_WALLET_AGENT_TEST_ANSWER=accept", NULL };
+  agent_start(&e, TRUE, accept);
+  Finished fin = { 0 };
+  guint sub = g_dbus_connection_signal_subscribe(e.bus, NULL, "org.nostr.Wallet1", "WalletAuthFinished",
+                                                 "/org/nostr/Wallet1", NULL, G_DBUS_SIGNAL_FLAGS_NONE,
+                                                 on_wa_finished, &fin, NULL);
+  g_autofree gchar *old_client = info_string(&e, "client_pubkey");
+  g_autofree gchar *wallet_pk = info_string(&e, "wallet_pubkey");
+
+  /* 1. the wallet approves (echoing state): verified with get_info on the
+   *    new key, confirmed by the user, stored, made active */
+  g_autofree gchar *uri = begin_auth(&e, relay);
+  g_assert_true(g_str_has_prefix(uri, "nostr+walletauth://"));
+  g_assert_null(strstr(uri, "secret"));
+  g_assert_nonnull(strstr(uri, "&state="));
+  g_autofree gchar *new_client = uri_client_key(uri);
+  g_assert_cmpstr(new_client, !=, old_client);
+  g_autofree gchar *cmd = g_strconcat("AUTH ", uri, NULL);
+  fx_command(&e, cmd);
+  wait_finished(&fin, 1);
+  g_assert_true(fin.ok);
+  g_autofree gchar *req = g_strdup_printf("REQUEST get_info %s", new_client);
+  while (!strstr(e.fx_lines->str, req)) g_free(fx_line(&e)); /* the staged check */
+  g_autofree gchar *now_client = info_string(&e, "client_pubkey");
+  g_assert_cmpstr(now_client, ==, new_client);
+  g_autofree gchar *now_wallet = info_string(&e, "wallet_pubkey");
+  g_assert_cmpstr(now_wallet, ==, wallet_pk);
+  g_assert_true(log_has(&e, "answering dialog \"Connect Wallet\": accept"));
+  g_assert_true(log_has(&e, "Check that your wallet app now lists this connection"));
+  g_assert_true(log_has(&e, "This replaces the wallet currently connected"));
+  g_autoptr(GVariant) bal = call_self(&e, "GetBalance", NULL, NULL);
+  g_assert_nonnull(bal); /* the wallet serves the agent's own key */
+  agent_stop(&e);
+
+  /* 2. Alby-style answer without state, user declines: nothing changes */
+  const gchar *const deny[] = { "NOSTR_WALLET_AGENT_TEST_ANSWER=deny", NULL };
+  agent_start(&e, TRUE, deny);
+  g_autofree gchar *uri2 = begin_auth(&e, relay);
+  g_autofree gchar *cmd2 = g_strconcat("AUTH-NOSTATE ", uri2, NULL);
+  fx_command(&e, cmd2);
+  wait_finished(&fin, 2);
+  g_assert_false(fin.ok);
+  g_assert_cmpstr(fin.msg, ==, "declined");
+  g_assert_true(log_has(&e, "did not prove that it answered this particular request"));
+  g_autofree gchar *still = info_string(&e, "client_pubkey");
+  g_assert_cmpstr(still, ==, old_client); /* test pairing, untouched */
+
+  /* 3. an impostor races the wallet (both unconfirmed): conflict, nothing
+   *    connected, and new requests refused for a while */
+  g_autofree gchar *uri3 = begin_auth(&e, relay);
+  g_autofree gchar *imp = g_strdup("1111111111111111111111111111111111111111111111111111111111111111");
+  g_autofree gchar *cmd3a = g_strdup_printf("AUTH-AS %s %s", imp, uri3);
+  g_autofree gchar *cmd3b = g_strconcat("AUTH-NOSTATE ", uri3, NULL);
+  fx_command(&e, cmd3a);
+  fx_command(&e, cmd3b);
+  wait_finished(&fin, 3);
+  g_assert_false(fin.ok);
+  g_assert_nonnull(strstr(fin.msg, "two different wallets"));
+  assert_error(&e, "BeginWalletAuth", g_variant_new_parsed("({'name': <'again'>},)"),
+               "org.nostr.Wallet1.Error.RateLimited");
+  agent_stop(&e);
+
+  /* 4. one request at a time: others cannot supersede or cancel it */
+  agent_start(&e, TRUE, deny);
+  g_autofree gchar *uri4 = begin_auth(&e, relay);
+  gboolean ok = TRUE;
+  g_autofree gchar *rl = g_strdup_printf("{'relays': <['%s']>}", relay);
+  const gchar *const gargs[] = { rl, NULL };
+  g_autofree gchar *o1 = call_gdbus("BeginWalletAuth", gargs, &ok);
+  g_assert_false(ok);
+  g_assert_nonnull(strstr(o1, "RateLimited"));
+  g_autofree gchar *o2 = call_gdbus("CancelWalletAuth", NULL, &ok);
+  g_assert_false(ok);
+  g_assert_nonnull(strstr(o2, "Denied"));
+  g_autoptr(GVariant) cr = call_self(&e, "CancelWalletAuth", NULL, NULL);
+  g_assert_nonnull(cr);
+  wait_finished(&fin, 4);
+  g_assert_cmpstr(fin.msg, ==, "cancelled");
+  agent_stop(&e);
+
+  /* 5. headless: refused up front (the final confirmation needs a display) */
+  agent_start(&e, TRUE, NULL);
+  assert_error(&e, "BeginWalletAuth", g_variant_new_parsed("(@a{sv} {},)"), "org.nostr.Wallet1.Error.Denied");
+  g_dbus_connection_signal_unsubscribe(e.bus, sub);
+  g_free(fin.msg);
+  env_down(&e);
+}
+
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/dbus/wallet-auth", test_wallet_auth);
   g_test_add_func("/dbus/non-interactive-reads", test_non_interactive_reads);
   g_test_add_func("/dbus/settings-grants", test_settings_grants);
   return g_test_run();

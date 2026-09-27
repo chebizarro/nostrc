@@ -30,8 +30,9 @@
  *                                   the client and publish a 13194 info event
  *                                   p-tagged to it (with its `state`)
  *   AUTH-NOSTATE <uri>              same, without echoing `state` (Alby style)
- *   AUTH-AS <sk-hex> <uri>          publish the confirmation as another key
- *                                   (an impostor racing the real wallet)
+ *   AUTH-AS <sk-hex> <uri>          publish an Alby-style (no `state`)
+ *                                   answer as another key: an impostor
+ *                                   racing the real wallet
  *
  * Options: --balance MSAT (default 100000000), --encryption-tag TEXT.
  */
@@ -535,7 +536,7 @@ on_line(GObject *src, GAsyncResult *res, gpointer data)
     publish_info(NULL, client, g_str_equal(w[0], "AUTH") ? state : NULL);
     out_line("AUTHORIZED %s", client);
   } else if (w[0] && w[1] && w[2] && g_str_equal(w[0], "AUTH-AS") && parse_walletauth(w[2], &client, &state)) {
-    publish_info(w[1], client, state);
+    publish_info(w[1], client, NULL);
     out_line("IMPOSTOR %s", client);
   } else if (*line) {
     g_message("fixture-wallet: unknown command: %s", line);

@@ -76,6 +76,7 @@ add_library(nostr-wallet-agent-core STATIC
   src/nwa-policy.c
   src/nwa-caller.c
   src/nwa-nwc.c
+  src/nwa-walletauth.c
 )
 target_include_directories(nostr-wallet-agent-core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -155,7 +156,7 @@ install(FILES README.md
 
 # --- Tests (no network, no display, no keyring) ---
 if (BUILD_TESTING)
-  foreach(_t IN ITEMS uri budget policy nwc caller)
+  foreach(_t IN ITEMS uri budget policy nwc caller walletauth)
     add_executable(test-nostr-wallet-agent-${_t} tests/test_${_t}.c)
     target_link_libraries(test-nostr-wallet-agent-${_t} PRIVATE nostr-wallet-agent-core)
     target_compile_options(test-nostr-wallet-agent-${_t} PRIVATE ${NWA_WARNING_FLAGS})

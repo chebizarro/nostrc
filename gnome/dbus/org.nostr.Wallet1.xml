@@ -175,6 +175,39 @@
       <arg name="nwc_uri" type="s" direction="in"/>
     </method>
 
+    <!--
+      BeginWalletAuth: connect a wallet by request, with a connection key the
+      agent creates (so, unlike Pair(uri), nobody else ever holds its
+      secret). Returns at once with @uri, a nostr+walletauth:// link
+      (nostr+walletauth://<client-key>?relay=…&name=…&request_methods=…
+      &notification_types=…&pubkey=<client-key>&state=<random>) for the
+      caller to open in the user's wallet app (or show / copy). No secret
+      is in it.
+      @options: "relays" (as, 1-5 ws(s):// URLs; default: the
+        wallet-auth-relays setting), "name" (s, shown by the wallet;
+        default "Nostr Wallet (<host>)").
+      When a wallet answers (its kind-13194 info event p-tagged to the key,
+      echoing `state` where the wallet supports it), the agent checks the
+      new connection with a get_info request and then ALWAYS asks the user
+      to confirm, showing the wallet's name and key; only then is it stored
+      and made the active pairing. Two different wallets answering one
+      request fail it (and new requests are refused for a minute). The
+      outcome is reported by WalletAuthFinished.
+      One request at a time: a new one from the same application (same app
+      id, as the agent identifies callers — see the security notes on
+      unverified ids) or the settings app replaces a pending one; other
+      callers get RateLimited.
+      Needs a display (Denied headless).
+    -->
+    <method name="BeginWalletAuth">
+      <arg name="options" type="a{sv}" direction="in"/>
+      <arg name="uri" type="s" direction="out"/>
+    </method>
+
+    <!-- CancelWalletAuth: abandon the pending request (its application or
+         the settings app only; a no-op when none is pending). -->
+    <method name="CancelWalletAuth"/>
+
     <!-- Unpair: forget the pairing (keyring item deleted). User-confirmed. -->
     <method name="Unpair"/>
 
@@ -276,6 +309,17 @@
       is only visible through ListApps.
     -->
     <signal name="AppsChanged"/>
+
+    <!--
+      WalletAuthFinished: the BeginWalletAuth request ended: @success TRUE
+      once the new wallet is connected; otherwise @message says why
+      (declined, timed out, conflicting answers, cancelled, superseded).
+      Carries no keys or links.
+    -->
+    <signal name="WalletAuthFinished">
+      <arg name="success" type="b"/>
+      <arg name="message" type="s"/>
+    </signal>
 
     <!-- BudgetExceeded: a PayInvoice call did not fit @app_id's budget. -->
     <signal name="BudgetExceeded">
