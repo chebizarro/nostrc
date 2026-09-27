@@ -25,7 +25,8 @@ G_BEGIN_DECLS
  * AES-GCM encryption parameters
  */
 #define GNOSTR_DM_FILES_AES_KEY_SIZE    32  /* 256 bits */
-#define GNOSTR_DM_FILES_AES_NONCE_SIZE  12  /* 96 bits */
+#define GNOSTR_DM_FILES_AES_NONCE_SIZE  12  /* 96 bits: what gnostr writes */
+#define GNOSTR_DM_FILES_AES_NONCE_MAX_SIZE 16 /* 128 bits: Amethyst/0xchat default */
 #define GNOSTR_DM_FILES_AES_TAG_SIZE    16  /* 128 bits */
 
 /**
@@ -72,8 +73,13 @@ typedef struct {
   char *file_url;             /* URL of encrypted file (from content) */
   char *file_type;            /* MIME type from file-type tag */
   char *encryption_algorithm; /* Should be "aes-gcm" */
-  char *decryption_key_b64;   /* Base64-encoded decryption key */
-  char *decryption_nonce_b64; /* Base64-encoded decryption nonce */
+  /* decryption-key / decryption-nonce tag values as carried in the rumor.
+   * NIP-17 does not fix an encoding; Amethyst, 0xchat and nostr-share write
+   * lower-case hex, and so does gnostr since nostrc-qh4j. Decode with
+   * gnostr_dm_file_decode_key() / _decode_nonce(), which also accept the
+   * base64 that older gnostr builds wrote. */
+  char *decryption_key;
+  char *decryption_nonce;
   char *encrypted_hash;       /* SHA-256 of encrypted file (x tag) */
   char *original_hash;        /* SHA-256 of original file (ox tag) */
   gint64 size;                /* File size in bytes */
@@ -189,6 +195,26 @@ char *gnostr_dm_file_build_rumor_json(const char *sender_pubkey,
 GnostrDmFileMessage *gnostr_dm_file_parse_message(const char *event_json);
 
 /**
+ * Decode a kind-15 decryption-key tag value: 64 hex digits, or (as written by
+ * gnostr before nostrc-qh4j) standard base64 of 32 bytes.
+ *
+ * @return TRUE and fills @key on success; FALSE if @value is neither
+ */
+gboolean gnostr_dm_file_decode_key(const char *value,
+                                   uint8_t key[GNOSTR_DM_FILES_AES_KEY_SIZE]);
+
+/**
+ * Decode a kind-15 decryption-nonce tag value into a 12-byte (gnostr,
+ * nostr-share) or 16-byte (Amethyst, 0xchat) GCM nonce, hex or base64.
+ *
+ * @param nonce_len Output: 12 or 16
+ * @return TRUE on success, FALSE if @value is neither encoding or length
+ */
+gboolean gnostr_dm_file_decode_nonce(const char *value,
+                                     uint8_t nonce[GNOSTR_DM_FILES_AES_NONCE_MAX_SIZE],
+                                     gsize *nonce_len);
+
+/**
  * Encrypt data using AES-256-GCM.
  *
  * @param plaintext Input data to encrypt
@@ -212,7 +238,8 @@ gboolean gnostr_dm_file_aes_gcm_encrypt(const uint8_t *plaintext,
  * @param ciphertext Input encrypted data (includes auth tag)
  * @param ciphertext_len Length of ciphertext
  * @param key 32-byte AES key
- * @param nonce 12-byte GCM nonce
+ * @param nonce GCM nonce
+ * @param nonce_len 12 or 16 (see gnostr_dm_file_decode_nonce())
  * @param plaintext Output buffer (must be at least ciphertext_len - 16 bytes)
  * @param plaintext_len Output: actual plaintext length
  * @return TRUE on success (authentication passed), FALSE on error
@@ -220,7 +247,8 @@ gboolean gnostr_dm_file_aes_gcm_encrypt(const uint8_t *plaintext,
 gboolean gnostr_dm_file_aes_gcm_decrypt(const uint8_t *ciphertext,
                                          gsize ciphertext_len,
                                          const uint8_t key[GNOSTR_DM_FILES_AES_KEY_SIZE],
-                                         const uint8_t nonce[GNOSTR_DM_FILES_AES_NONCE_SIZE],
+                                         const uint8_t *nonce,
+                                         gsize nonce_len,
                                          uint8_t *plaintext,
                                          gsize *plaintext_len);
 

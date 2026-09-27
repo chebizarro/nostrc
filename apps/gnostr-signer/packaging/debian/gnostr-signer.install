@@ -1,9 +1,14 @@
 # GNostr Signer GTK application
 usr/bin/gnostr-signer
 
-# Desktop file and icons
-usr/share/applications/gnostr-signer.desktop
+# Desktop file and icons. The file id must stay org.gnostr.Signer: it is
+# DBusActivatable, and its id is the bus name the launcher activates.
+usr/share/applications/org.gnostr.Signer.desktop
 usr/share/icons/hicolor/*/apps/org.gnostr.Signer.*
+
+# D-Bus activation of the GUI (org.gnostr.Signer; the daemon's
+# org.nostr.Signer.service is in gnostr-signer-daemon)
+usr/share/dbus-1/services/org.gnostr.Signer.service
 
 # GSettings schema
 usr/share/glib-2.0/schemas/org.gnostr.Signer.gschema.xml

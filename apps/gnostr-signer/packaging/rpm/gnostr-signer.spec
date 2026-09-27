@@ -169,6 +169,11 @@ sed 's|@CMAKE_INSTALL_FULL_BINDIR@|%{_bindir}|g' \
     apps/gnostr-signer/data/org.nostr.Signer.service.in > \
     %{buildroot}%{_datadir}/dbus-1/services/%{dbus_name}.service
 
+# D-Bus activation of the GUI itself (org.gnostr.Signer, /org/gnostr/Signer)
+sed 's|@CMAKE_INSTALL_FULL_BINDIR@|%{_bindir}|g' \
+    apps/gnostr-signer/data/%{app_id}.service.in > \
+    %{buildroot}%{_datadir}/dbus-1/services/%{app_id}.service
+
 # Install systemd user unit
 install -m 0644 apps/gnostr-signer/daemon/packaging/systemd/user/gnostr-signer-daemon.service \
     %{buildroot}%{_userunitdir}/
@@ -228,6 +233,7 @@ fi
 %doc apps/gnostr-signer/ARCHITECTURE.md
 %{_bindir}/gnostr-signer
 %{_datadir}/applications/gnostr-signer.desktop
+%{_datadir}/dbus-1/services/%{app_id}.service
 %{_datadir}/glib-2.0/schemas/org.gnostr.Signer.gschema.xml
 %{_datadir}/icons/hicolor/scalable/apps/%{app_id}.svg
 %{_datadir}/metainfo/%{app_id}.metainfo.xml
