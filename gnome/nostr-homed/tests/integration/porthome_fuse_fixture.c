@@ -48,7 +48,7 @@
 #include "nostr-tag.h"
 #include "nostr-keys.h"
 
-#include <openssl/sha.h>
+#include <openssl/evp.h>
 
 #include <dirent.h>
 #include <errno.h>
@@ -223,9 +223,20 @@ static int add_symlink(up_ctx *uc, const char *rel,
     return 0;
 }
 
+/* snprintf into a fixed buffer; truncation is an error, never a silently
+ * shortened path (nostrc-bn7z). */
+#define FMT_OR_FAIL(buf, ...) \
+    do { \
+        int n_ = snprintf((buf), sizeof (buf), __VA_ARGS__); \
+        if (n_ < 0 || (size_t)n_ >= sizeof (buf)) { \
+            fprintf(stderr, "fixture: path too long: %s:%d\n", __FILE__, __LINE__); \
+            return -1; \
+        } \
+    } while (0)
+
 static int upload_file(up_ctx *uc, const char *rel, const struct stat *st) {
     char abs[8192];
-    snprintf(abs, sizeof abs, "%s/%s", uc->root, rel);
+    FMT_OR_FAIL(abs, "%s/%s", uc->root, rel);
     int fd = open(abs, O_RDONLY);
     if (fd < 0) return -1;
 
@@ -234,12 +245,15 @@ static int upload_file(up_ctx *uc, const char *rel, const struct stat *st) {
 
     /* Also compute cleartext SHA-256 for the record + emit it on stdout
      * so the shell caller can byte-compare via md5sum/sha256sum. */
-    SHA256_CTX shac; SHA256_Init(&shac);
+    EVP_MD_CTX *shac = EVP_MD_CTX_new();
+    if (!shac || EVP_DigestInit_ex(shac, EVP_sha256(), NULL) != 1) {
+        EVP_MD_CTX_free(shac); close(fd); return -1;
+    }
 
     json_t *chunks_arr = json_array();
     size_t csz = uc->chunk_size ? uc->chunk_size : DEFAULT_CHUNK_SIZE;
     uint8_t *buf = malloc(csz);
-    if (!buf) { close(fd); json_decref(chunks_arr); return -1; }
+    if (!buf) { EVP_MD_CTX_free(shac); close(fd); json_decref(chunks_arr); return -1; }
 
     size_t idx = 0;
     while (remaining > 0) {
@@ -247,15 +261,15 @@ static int upload_file(up_ctx *uc, const char *rel, const struct stat *st) {
         size_t got  = 0;
         while (got < want) {
             ssize_t r = read(fd, buf + got, want - got);
-            if (r <= 0) { free(buf); close(fd); json_decref(chunks_arr); return -1; }
+            if (r <= 0) { EVP_MD_CTX_free(shac); free(buf); close(fd); json_decref(chunks_arr); return -1; }
             got += (size_t)r;
         }
-        SHA256_Update(&shac, buf, got);
+        EVP_DigestUpdate(shac, buf, got);
 
         uint8_t *ct = NULL; size_t ctl = 0; uint8_t sha[32];
         if (nh_porthome_encrypt_chunk(uc->home_key, buf, got,
                                       &ct, &ctl, sha) != 0) {
-            free(buf); close(fd); json_decref(chunks_arr); return -1;
+            EVP_MD_CTX_free(shac); free(buf); close(fd); json_decref(chunks_arr); return -1;
         }
         char hex[65];
         int rc = nh_porthome_blossom_upload(uc->bl, ct, ctl, NULL, hex);
@@ -263,7 +277,7 @@ static int upload_file(up_ctx *uc, const char *rel, const struct stat *st) {
         if (rc != NH_PORTHOME_BLOSSOM_OK) {
             fprintf(stderr, "fixture: blossom_upload rc=%d chunk %zu of %s\n",
                     rc, idx, rel);
-            free(buf); close(fd); json_decref(chunks_arr); return -1;
+            EVP_MD_CTX_free(shac); free(buf); close(fd); json_decref(chunks_arr); return -1;
         }
         json_array_append_new(chunks_arr, json_string(hex));
         fprintf(stdout, "BLOSSOM_ADDR=%s:%zu:%s\n", rel, idx, hex);
@@ -274,7 +288,10 @@ static int upload_file(up_ctx *uc, const char *rel, const struct stat *st) {
     free(buf); close(fd);
 
     uint8_t ct_sha[32]; char ct_sha_hex[65];
-    SHA256_Final(ct_sha, &shac);
+    unsigned int ct_sha_len = 0;
+    int dig_ok = EVP_DigestFinal_ex(shac, ct_sha, &ct_sha_len) == 1 && ct_sha_len == 32;
+    EVP_MD_CTX_free(shac);
+    if (!dig_ok) { json_decref(chunks_arr); return -1; }
     bytes_to_hex(ct_sha, 32, ct_sha_hex);
 
     json_t *row = json_object();
@@ -297,8 +314,8 @@ static int upload_file(up_ctx *uc, const char *rel, const struct stat *st) {
 
 static int walk_and_upload(const char *root, const char *rel, up_ctx *uc) {
     char abs[8192];
-    if (rel[0]) snprintf(abs, sizeof abs, "%s/%s", root, rel);
-    else        snprintf(abs, sizeof abs, "%s", root);
+    if (rel[0]) FMT_OR_FAIL(abs, "%s/%s", root, rel);
+    else        FMT_OR_FAIL(abs, "%s", root);
     DIR *d = opendir(abs);
     if (!d) return -1;
     struct dirent *de;
@@ -306,10 +323,12 @@ static int walk_and_upload(const char *root, const char *rel, up_ctx *uc) {
     while ((de = readdir(d))) {
         if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
         char child[8192];
-        if (rel[0]) snprintf(child, sizeof child, "%s/%s", rel, de->d_name);
-        else        snprintf(child, sizeof child, "%s", de->d_name);
+        int cn = rel[0] ? snprintf(child, sizeof child, "%s/%s", rel, de->d_name)
+                        : snprintf(child, sizeof child, "%s", de->d_name);
+        if (cn < 0 || (size_t)cn >= sizeof child) { rc = -1; break; }
         char ca[16384];
-        snprintf(ca, sizeof ca, "%s/%s", root, child);
+        cn = snprintf(ca, sizeof ca, "%s/%s", root, child);
+        if (cn < 0 || (size_t)cn >= sizeof ca) { rc = -1; break; }
         struct stat st;
         if (lstat(ca, &st) != 0) { rc = -1; break; }
         if (S_ISDIR(st.st_mode)) {
@@ -351,10 +370,12 @@ static int write_snapshot(const args_t *a, const char *account_pk_hex,
      * determinism across generations. */
     uint8_t root_id[32];
     /* deterministic: sha256("fuse-fixture-root:" + d_tag). */
-    SHA256_CTX c; SHA256_Init(&c);
-    SHA256_Update(&c, "fuse-fixture-root:", 18);
-    SHA256_Update(&c, a->d_tag, strlen(a->d_tag));
-    SHA256_Final(root_id, &c);
+    char seed[1024];
+    FMT_OR_FAIL(seed, "fuse-fixture-root:%s", a->d_tag);
+    unsigned int root_id_len = 0;
+    if (EVP_Digest(seed, strlen(seed), root_id, &root_id_len,
+                   EVP_sha256(), NULL) != 1 || root_id_len != 32)
+        return -1;
     char root_id_hex[65]; bytes_to_hex(root_id, 32, root_id_hex);
 
     json_t *root = json_object();
@@ -369,17 +390,25 @@ static int write_snapshot(const args_t *a, const char *account_pk_hex,
     json_object_set(root, "files", files);
 
     char path[1024];
-    snprintf(path, sizeof path, "%s/snapshot.json", a->state_dir);
     char tmp[1024];
-    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    char gpath[1024];
+    char gtmp[1024];
+    /* Any truncation here would rename a clipped tmp name onto the wrong
+     * file; fail instead (nostrc-bn7z). */
+    if (snprintf(path, sizeof path, "%s/snapshot.json", a->state_dir) >= (int)sizeof path ||
+        snprintf(tmp, sizeof tmp, "%s.tmp", path) >= (int)sizeof tmp ||
+        snprintf(gpath, sizeof gpath, "%s/generation", a->state_dir) >= (int)sizeof gpath ||
+        snprintf(gtmp, sizeof gtmp, "%s.tmp", gpath) >= (int)sizeof gtmp) {
+        fprintf(stderr, "fixture: state_dir too long: %s\n", a->state_dir);
+        json_decref(root);
+        return -1;
+    }
     int rc = json_dump_file(root, tmp, JSON_INDENT(2) | JSON_SORT_KEYS);
     json_decref(root);
     if (rc != 0) return -1;
     if (rename(tmp, path) != 0) return -1;
 
     /* Sibling generation file. */
-    char gpath[1024]; snprintf(gpath, sizeof gpath, "%s/generation", a->state_dir);
-    char gtmp[1024];  snprintf(gtmp,  sizeof gtmp,  "%s.tmp", gpath);
     FILE *gf = fopen(gtmp, "w");
     if (!gf) return -1;
     fprintf(gf, "%llu\n", (unsigned long long)a->generation);

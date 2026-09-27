@@ -2321,7 +2321,7 @@ if(NOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL)
     add_executable(porthome-fuse-fixture
       tests/integration/porthome_fuse_fixture.c)
     target_compile_options(porthome-fuse-fixture PRIVATE
-      -Wall -Wextra -Wno-error -Wno-misleading-indentation
+      -Wall -Wextra -Werror -Wno-misleading-indentation
       -Wno-unused-parameter)
     target_include_directories(porthome-fuse-fixture PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/include)
