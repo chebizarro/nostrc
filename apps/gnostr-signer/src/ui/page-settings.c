@@ -598,18 +598,19 @@ static GtkWidget *create_policy_entry_row(PolicyEntry *entry, PolicyStore *store
   }
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
 
-  /* Subtitle: decision and expiration */
+  /* Subtitle: request kind, decision and expiration */
   const gchar *decision_str = entry->decision ? "Allowed" : "Denied";
+  const gchar *kind = entry->kind ? entry->kind : POLICY_KIND_EVENT;
   g_autofree gchar *subtitle = NULL;
   if (entry->expires_at == 0) {
-    subtitle = g_strdup_printf("%s (permanent)", decision_str);
+    subtitle = g_strdup_printf("%s: %s (permanent)", kind, decision_str);
   } else {
     gint64 now = g_get_real_time() / G_USEC_PER_SEC;
     if ((gint64)entry->expires_at > now) {
       gint64 remaining = (gint64)entry->expires_at - now;
-      subtitle = g_strdup_printf("%s (expires in %" G_GINT64_FORMAT " min)", decision_str, remaining / 60);
+      subtitle = g_strdup_printf("%s: %s (expires in %" G_GINT64_FORMAT " min)", kind, decision_str, remaining / 60);
     } else {
-      subtitle = g_strdup_printf("%s (expired)", decision_str);
+      subtitle = g_strdup_printf("%s: %s (expired)", kind, decision_str);
     }
   }
   adw_action_row_set_subtitle(row, subtitle);
@@ -628,6 +629,7 @@ static GtkWidget *create_policy_entry_row(PolicyEntry *entry, PolicyStore *store
   /* Store entry data for removal callback */
   g_object_set_data_full(G_OBJECT(row), "app-id", g_strdup(entry->app_id), g_free);
   g_object_set_data_full(G_OBJECT(row), "identity", g_strdup(entry->identity), g_free);
+  g_object_set_data_full(G_OBJECT(row), "kind", g_strdup(entry->kind), g_free);
   g_object_set_data(G_OBJECT(row), "policy-store", store);
   g_object_set_data(G_OBJECT(btn_remove), "row", row);
 
@@ -643,10 +645,11 @@ static void on_policy_remove_clicked(GtkButton *btn, gpointer ud) {
   GtkWidget *row = GTK_WIDGET(g_object_get_data(G_OBJECT(btn), "row"));
   const gchar *app_id = g_object_get_data(G_OBJECT(row), "app-id");
   const gchar *identity = g_object_get_data(G_OBJECT(row), "identity");
+  const gchar *kind = g_object_get_data(G_OBJECT(row), "kind");
   PolicyStore *ps = g_object_get_data(G_OBJECT(row), "policy-store");
 
   if (app_id && identity && ps) {
-    policy_store_unset(ps, app_id, identity);
+    policy_store_unset_for_kind(ps, kind, app_id, identity);
     policy_store_save(ps);
   }
 
@@ -723,10 +726,7 @@ static void on_sign_policy(GtkButton *b, gpointer user_data) {
 
     /* Free entries (but not the policy store - keep for modifications) */
     for (guint i = 0; i < entries->len; i++) {
-      PolicyEntry *entry = g_ptr_array_index(entries, i);
-      g_free(entry->app_id);
-      g_free(entry->identity);
-      g_free(entry);
+      policy_entry_free(g_ptr_array_index(entries, i));
     }
     g_ptr_array_free(entries, TRUE);
   } else {
