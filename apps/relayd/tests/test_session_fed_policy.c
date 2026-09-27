@@ -61,7 +61,7 @@ static NsrFedConfig cfg_default(void) {
 static NsrFedRouteStatus route(const NsrFedConfig *c, NostrEvent *ev, Lists *l, GStrv *relays,
                                NsrFedLane *lane, char **reason) {
   NsrFedLookup lk = {lk_list, lk_acked, l};
-  return nsr_fed_resolve(c, ev, &lk, relays, lane, reason);
+  return nsr_fed_resolve(c, ev, &lk, relays, lane, reason, NULL);
 }
 
 static void test_routing_table(void) {
@@ -433,6 +433,47 @@ static void test_route_group_any_kind(void) {
   }
 }
 
+/* nostrc-jedb: the relay list each resolution follows. */
+static void test_route_basis(void) {
+  NsrFedConfig c = cfg_default();
+  Lists l = {.l10002 = "[[\"r\",\"wss://home.example\"]]",
+             .l10050 = "[[\"relay\",\"wss://inbox.example\"]]",
+             .l10009 = "[[\"group\",\"abc\",\"wss://groups.example\"]]"};
+  Lists none = {0};
+  struct {
+    int kind;
+    const char *tags;
+    Lists *lists;
+    NsrFedRouteStatus st;
+    const char *pk;
+    int basis_kind;
+  } cases[] = {
+      {1, "[]", &l, NSR_FED_ROUTE_OK, PK_A, 10002},
+      {1, "[]", &none, NSR_FED_ROUTE_UNROUTABLE, PK_A, 10002},
+      {5, "[[\"e\",\"" FAKE_ID "\"]]", &l, NSR_FED_ROUTE_OK, PK_A, 10002},
+      {1059, "[[\"p\",\"" PK_R "\"]]", &l, NSR_FED_ROUTE_OK, PK_R, 10050},
+      {1059, "[[\"p\",\"" PK_R "\"]]", &none, NSR_FED_ROUTE_UNROUTABLE, PK_R, 10050},
+      /* a routed group write keeps its relay: nothing to follow */
+      {9, "[[\"h\",\"abc\"]]", &l, NSR_FED_ROUTE_OK, NULL, 0},
+      {9, "[[\"h\",\"abc\"]]", &none, NSR_FED_ROUTE_UNROUTABLE, PK_A, 10009},
+      {9, "[]", &l, NSR_FED_ROUTE_INVALID, NULL, 0},
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS(cases); i++) {
+    NostrEvent *ev = mk(PK_A, cases[i].kind, cases[i].tags);
+    NsrFedLookup lk = {lk_list, lk_acked, cases[i].lists};
+    GStrv relays = NULL;
+    NsrFedLane lane;
+    char *reason = NULL;
+    NsrFedBasis b;
+    g_assert_cmpint(nsr_fed_resolve(&c, ev, &lk, &relays, &lane, &reason, &b), ==, cases[i].st);
+    g_assert_cmpint(b.kind, ==, cases[i].basis_kind);
+    if (cases[i].pk) g_assert_cmpstr(b.pubkey, ==, cases[i].pk);
+    g_strfreev(relays);
+    g_free(reason);
+    nostr_event_free(ev);
+  }
+}
+
 static void test_route_inbox(void) {
   NsrFedConfig c = cfg_default();
   Lists l = {.l10002 = "[[\"r\",\"wss://home.example\"]]",
@@ -509,6 +550,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/fed-policy/route-group-any-kind", test_route_group_any_kind);
   g_test_add_func("/fed-policy/route-group-forks", test_route_group_forks);
   g_test_add_func("/fed-policy/route-inbox", test_route_inbox);
+  g_test_add_func("/fed-policy/route-basis", test_route_basis);
   g_test_add_func("/fed-policy/backoff", test_backoff);
   g_test_add_func("/fed-policy/ok-classes", test_ok_classes);
   return g_test_run();

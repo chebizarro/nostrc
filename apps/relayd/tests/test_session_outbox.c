@@ -9,9 +9,12 @@
 #include <glib/gstdio.h>
 #include <string.h>
 
+#include <sqlite3.h>
+
 #include "session_outbox.h"
 
 #define PK "7e7e9c42a91bfef19fa929e5fda1b72e0ebc1a4c1141673e2794234d86addf4e"
+#define PK2 "2222222222222222222222222222222222222222222222222222222222222222"
 #define NOW 1700000000
 
 typedef struct {
@@ -71,6 +74,49 @@ static void ingest(Fx *f, const char *id, int kind, gint64 created, const char *
   g_assert_no_error(err);
 }
 
+static void hint(Fx *f, const char *pk, int kind, gint64 created, gint64 now) {
+  char *id = g_strdup_printf("%s%d", pk, (int)created); /* any unique id */
+  NsrOutboxIngest in = {.id = id, .pubkey = pk, .kind = kind, .created_at = created,
+                        .json = "{}", .enqueue = FALSE, .hint = TRUE};
+  GError *err = NULL;
+  g_assert_cmpint(nsr_outbox_ingest(f->ob, &in, now, &err), ==, 0);
+  g_assert_no_error(err);
+  g_free(id);
+}
+
+static NsrFedBasis basis(const char *pk, int kind) {
+  NsrFedBasis b;
+  memset(&b, 0, sizeof b);
+  g_strlcpy(b.pubkey, pk, sizeof b.pubkey);
+  b.kind = kind;
+  return b;
+}
+
+static char *target_of(Fx *f, const char *id, const char *relay, char **reason) {
+  GPtrArray *t = NULL;
+  char *st = NULL, *detail = NULL, *out = NULL;
+  if (nsr_outbox_event_status(f->ob, id, &st, &detail, &t) == 0) {
+    for (guint i = 0; i < t->len; i++) {
+      NsrOutboxTargetInfo *x = g_ptr_array_index(t, i);
+      if (strcmp(x->relay, relay) == 0) {
+        out = g_strdup(x->state);
+        if (reason) *reason = g_strdup(x->reason);
+      }
+    }
+    g_ptr_array_unref(t);
+  }
+  g_free(st);
+  g_free(detail);
+  return out ? out : g_strdup("none");
+}
+
+#define ASSERT_TARGET(f, id, relay, want)          \
+  do {                                             \
+    char *_t = target_of(f, id, relay, NULL);      \
+    g_assert_cmpstr(_t, ==, want);                 \
+    g_free(_t);                                    \
+  } while (0)
+
 static char *state_of(Fx *f, const char *id) {
   char *st = NULL, *detail = NULL;
   if (nsr_outbox_event_status(f->ob, id, &st, &detail, NULL) != 0) return g_strdup("unknown");
@@ -87,7 +133,7 @@ static char *state_of(Fx *f, const char *id) {
 
 static void route2(Fx *f, const char *id, gint64 now) {
   const char *relays[] = {"wss://a.example", "wss://b.example", NULL};
-  g_assert_cmpint(nsr_outbox_set_routed(f->ob, id, relays, NSR_FED_LANE_IDENTIFIED, now), ==, 0);
+  g_assert_cmpint(nsr_outbox_set_routed(f->ob, id, relays, NSR_FED_LANE_IDENTIFIED, NULL, now), ==, 0);
 }
 
 static void test_ingest_idempotent(Fx *f, gconstpointer d) {
@@ -122,7 +168,7 @@ static void test_hints_and_reroute(Fx *f, gconstpointer d) {
 
   char *id = id_n(2);
   ingest(f, id, 1, NOW, NULL, TRUE, FALSE, NULL, NOW);
-  g_assert_cmpint(nsr_outbox_set_unroutable(f->ob, id, "no 10002", NOW + 500, FALSE, NOW), ==, 0);
+  g_assert_cmpint(nsr_outbox_set_unroutable(f->ob, id, "no 10002", NOW + 500, FALSE, NULL, NOW), ==, 0);
   ASSERT_STATE(f, id, "unroutable");
   GPtrArray *r = nsr_outbox_take_routable(f->ob, NOW + 1, 10);
   g_assert_cmpuint(r->len, ==, 0);
@@ -135,7 +181,7 @@ static void test_hints_and_reroute(Fx *f, gconstpointer d) {
   g_assert_cmpuint(((NsrOutboxEvent *)g_ptr_array_index(r, 0))->route_attempts, ==, 1);
   g_ptr_array_unref(r);
   /* reroute_all does the same */
-  g_assert_cmpint(nsr_outbox_set_unroutable(f->ob, id, "x", NOW + 500, FALSE, NOW + 1), ==, 0);
+  g_assert_cmpint(nsr_outbox_set_unroutable(f->ob, id, "x", NOW + 500, FALSE, NULL, NOW + 1), ==, 0);
   nsr_outbox_reroute_all(f->ob);
   g_assert_cmpint(nsr_outbox_next_due(f->ob), ==, 0);
   g_free(id);
@@ -248,11 +294,11 @@ static void test_partial_failed_expired(Fx *f, gconstpointer d) {
   /* an unroutable event expires too */
   char *u = id_n(7);
   ingest(f, u, 1, NOW, NULL, TRUE, FALSE, NULL, NOW);
-  nsr_outbox_set_unroutable(f->ob, u, "no 10002", NOW + 10, FALSE, NOW);
+  nsr_outbox_set_unroutable(f->ob, u, "no 10002", NOW + 10, FALSE, NULL, NOW);
   /* ...but one held for the local account never expires */
   char *h = id_n(8);
   ingest(f, h, 1, NOW, NULL, TRUE, FALSE, NULL, NOW);
-  nsr_outbox_set_unroutable(f->ob, h, "waiting for the local account", NOW + 10, TRUE, NOW);
+  nsr_outbox_set_unroutable(f->ob, h, "waiting for the local account", NOW + 10, TRUE, NULL, NOW);
   g_assert_cmpint(nsr_outbox_expire(f->ob, NOW + 2000, 1000), ==, 1);
   ASSERT_STATE(f, h, "unroutable");
   nsr_outbox_reroute_all(f->ob);
@@ -260,7 +306,7 @@ static void test_partial_failed_expired(Fx *f, gconstpointer d) {
   g_assert_cmpuint(rr->len, ==, 1);
   g_ptr_array_unref(rr);
   const char *hr[] = {"wss://a.example", NULL};
-  g_assert_cmpint(nsr_outbox_set_routed(f->ob, h, hr, NSR_FED_LANE_IDENTIFIED, NOW + 2000), ==, 0);
+  g_assert_cmpint(nsr_outbox_set_routed(f->ob, h, hr, NSR_FED_LANE_IDENTIFIED, NULL, NOW + 2000), ==, 0);
   g_free(h);
   nsr_outbox_event_status(f->ob, u, &st, &detail, NULL);
   g_assert_cmpstr(st, ==, "failed");
@@ -320,7 +366,7 @@ static void test_supersede_and_cancel(Fx *f, gconstpointer d) {
   char *v3 = id_n(13);
   ingest(f, v3, 0, NOW + 9, rk, TRUE, FALSE, NULL, NOW + 9);
   const char *one[] = {"wss://c.example", NULL};
-  g_assert_cmpint(nsr_outbox_set_routed(f->ob, v3, one, NSR_FED_LANE_IDENTIFIED, NOW + 9), ==, 0);
+  g_assert_cmpint(nsr_outbox_set_routed(f->ob, v3, one, NSR_FED_LANE_IDENTIFIED, NULL, NOW + 9), ==, 0);
   nsr_outbox_record(f->ob, &f->cfg, v3, "wss://c.example", NSR_OUTBOX_ACKED, "", 0.5, NOW + 9,
                     NULL, NULL);
   GStrv by_coord = nsr_outbox_acked_relays(f->ob, rk, TRUE);
@@ -374,11 +420,150 @@ static void test_final_states(Fx *f, gconstpointer d) {
   ASSERT_STATE(f, id, "skipped");
   /* routing a settled event is refused */
   const char *relays[] = {"wss://a.example", NULL};
-  g_assert_cmpint(nsr_outbox_set_routed(f->ob, id, relays, NSR_FED_LANE_IDENTIFIED, NOW), ==, -1);
+  g_assert_cmpint(nsr_outbox_set_routed(f->ob, id, relays, NSR_FED_LANE_IDENTIFIED, NULL, NOW), ==, -1);
   NsrOutboxStats s;
   nsr_outbox_stats(f->ob, &s);
   g_assert_cmpuint(s.skipped, ==, 1);
   nsr_outbox_stats_clear(&s);
+  g_free(id);
+}
+
+/* nostrc-jedb: a newer relay list only releases the events waiting for it,
+ * and re-resolves the pending deliveries routed from it. */
+static void test_scoped_reroute(Fx *f, gconstpointer d) {
+  (void)d;
+  char *home = id_n(40), *wrap = id_n(41);
+  ingest(f, home, 1, NOW, NULL, TRUE, FALSE, NULL, NOW);
+  ingest(f, wrap, 1059, NOW, NULL, TRUE, FALSE, NULL, NOW);
+  NsrFedBasis b1 = basis(PK, 10002), b2 = basis(PK2, 10050);
+  g_assert_cmpint(nsr_outbox_set_unroutable(f->ob, home, "no 10002", NOW + 500, FALSE, &b1, NOW),
+                  ==, 0);
+  g_assert_cmpint(nsr_outbox_set_unroutable(f->ob, wrap, "no 10050", NOW + 500, FALSE, &b2, NOW),
+                  ==, 0);
+  hint(f, PK2, 10050, NOW, NOW + 1); /* the recipient's inbox list */
+  GPtrArray *r = nsr_outbox_take_routable(f->ob, NOW + 1, 10);
+  g_assert_cmpuint(r->len, ==, 1);
+  g_assert_cmpstr(((NsrOutboxEvent *)g_ptr_array_index(r, 0))->id, ==, wrap);
+  g_ptr_array_unref(r);
+  hint(f, PK, 10050, NOW, NOW + 1); /* same author, another kind: nothing */
+  r = nsr_outbox_take_routable(f->ob, NOW + 1, 10);
+  g_assert_cmpuint(r->len, ==, 1);
+  g_ptr_array_unref(r);
+  hint(f, PK, 10002, NOW, NOW + 1);
+  r = nsr_outbox_take_routable(f->ob, NOW + 1, 10);
+  g_assert_cmpuint(r->len, ==, 2);
+  g_ptr_array_unref(r);
+  g_free(home);
+  g_free(wrap);
+}
+
+static void test_retarget(Fx *f, gconstpointer d) {
+  (void)d;
+  char *id = id_n(50), *other = id_n(51);
+  ingest(f, id, 1, NOW, NULL, TRUE, FALSE, NULL, NOW);
+  ingest(f, other, 1, NOW, NULL, TRUE, FALSE, NULL, NOW);
+  NsrFedBasis b = basis(PK, 10002);
+  const char *ab[] = {"wss://a.example", "wss://b.example", NULL};
+  g_assert_cmpint(nsr_outbox_set_routed(f->ob, id, ab, NSR_FED_LANE_IDENTIFIED, &b, NOW), ==, 0);
+  g_assert_cmpint(nsr_outbox_set_routed(f->ob, other, ab, NSR_FED_LANE_IDENTIFIED, NULL, NOW), ==, 0);
+  nsr_outbox_record(f->ob, &f->cfg, id, "wss://a.example", NSR_OUTBOX_ACKED, "", 0.5, NOW, NULL,
+                    NULL);
+  GPtrArray *t = nsr_outbox_take_retarget(f->ob, 10);
+  g_assert_cmpuint(t->len, ==, 0);
+  g_ptr_array_unref(t);
+  hint(f, PK, 10002, NOW, NOW + 1);
+  hint(f, PK, 10002, NOW, NOW + 2); /* not newer: no second flag needed */
+  t = nsr_outbox_take_retarget(f->ob, 10);
+  g_assert_cmpuint(t->len, ==, 1); /* `other` has no basis: not retargeted */
+  g_assert_cmpstr(((NsrOutboxEvent *)g_ptr_array_index(t, 0))->id, ==, id);
+  g_ptr_array_unref(t);
+
+  /* new list: a, c -- b's pending target is cancelled, c added, a stays acked */
+  GPtrArray *added = NULL, *dropped = NULL;
+  const char *es = NULL;
+  const char *ac[] = {"wss://a.example", "wss://c.example", NULL};
+  g_assert_cmpint(nsr_outbox_retarget(f->ob, id, ac, NOW + 3, &added, &dropped, &es), ==, 0);
+  g_assert_cmpuint(added->len, ==, 1);
+  g_assert_cmpstr(added->pdata[0], ==, "wss://c.example");
+  g_assert_cmpuint(dropped->len, ==, 1);
+  g_assert_cmpstr(dropped->pdata[0], ==, "wss://b.example");
+  g_assert_cmpstr(es, ==, "pending");
+  g_ptr_array_unref(added);
+  g_ptr_array_unref(dropped);
+  ASSERT_TARGET(f, id, "wss://a.example", "acked");
+  ASSERT_TARGET(f, id, "wss://c.example", "pending");
+  char *why = NULL;
+  g_free(target_of(f, id, "wss://b.example", &why));
+  g_assert_cmpstr(why, ==, "dropped from the relay list");
+  g_free(why);
+  ASSERT_TARGET(f, id, "wss://b.example", "cancelled");
+  t = nsr_outbox_take_retarget(f->ob, 10);
+  g_assert_cmpuint(t->len, ==, 0); /* flag cleared */
+  g_ptr_array_unref(t);
+  /* b listed again: revived */
+  g_assert_cmpint(nsr_outbox_retarget(f->ob, id, ab, NOW + 4, &added, &dropped, &es), ==, 0);
+  g_assert_cmpuint(added->len, ==, 1);
+  g_assert_cmpstr(added->pdata[0], ==, "wss://b.example");
+  g_assert_cmpuint(dropped->len, ==, 1); /* c */
+  g_ptr_array_unref(added);
+  g_ptr_array_unref(dropped);
+  ASSERT_TARGET(f, id, "wss://b.example", "pending");
+  /* only the acked relay left: nothing pending, the event is forwarded */
+  const char *a[] = {"wss://a.example", NULL};
+  g_assert_cmpint(nsr_outbox_retarget(f->ob, id, a, NOW + 5, &added, &dropped, &es), ==, 0);
+  g_assert_cmpstr(es, ==, "forwarded");
+  g_ptr_array_unref(added);
+  g_ptr_array_unref(dropped);
+  ASSERT_STATE(f, id, "forwarded");
+  /* a settled event is left alone */
+  g_assert_cmpint(nsr_outbox_retarget(f->ob, id, ab, NOW + 6, &added, &dropped, &es), ==, 0);
+  g_assert_cmpuint(added->len + dropped->len, ==, 0);
+  g_ptr_array_unref(added);
+  g_ptr_array_unref(dropped);
+  ASSERT_STATE(f, id, "forwarded");
+  g_free(id);
+  g_free(other);
+}
+
+/* An outbox written by the v1 schema (7d96) opens, gains the v2 columns, and
+ * its unroutable rows (no basis) are still released by any newer list. */
+static void test_migrate_v1(Fx *f, gconstpointer d) {
+  (void)d;
+  nsr_outbox_close(f->ob);
+  f->ob = NULL;
+  g_unlink(f->path);
+  sqlite3 *db = NULL;
+  g_assert_cmpint(sqlite3_open(f->path, &db), ==, SQLITE_OK);
+  char *id = id_n(60);
+  char *sql = g_strdup_printf(
+      "CREATE TABLE events(id TEXT PRIMARY KEY, pubkey TEXT NOT NULL, kind INTEGER NOT NULL,"
+      " created_at INTEGER NOT NULL, replace_key TEXT, json TEXT NOT NULL, state TEXT NOT NULL,"
+      " detail TEXT NOT NULL DEFAULT '', lane INTEGER NOT NULL DEFAULT 0,"
+      " enqueued_at INTEGER NOT NULL, next_route_at INTEGER NOT NULL DEFAULT 0,"
+      " route_attempts INTEGER NOT NULL DEFAULT 0, hold INTEGER NOT NULL DEFAULT 0,"
+      " settled_at INTEGER);"
+      "INSERT INTO events(id, pubkey, kind, created_at, json, state, enqueued_at, next_route_at)"
+      " VALUES('%s', '%s', 1, %d, '{}', 'unroutable', %d, %d);"
+      "PRAGMA user_version = 1;",
+      id, PK, NOW, NOW, NOW + 500);
+  g_assert_cmpint(sqlite3_exec(db, sql, NULL, NULL, NULL), ==, SQLITE_OK);
+  g_free(sql);
+  sqlite3_close(db);
+  fx_open(f);
+  ASSERT_STATE(f, id, "unroutable");
+  hint(f, PK2, 10050, NOW, NOW + 1); /* any newer list releases a legacy row */
+  GPtrArray *r = nsr_outbox_take_routable(f->ob, NOW + 1, 10);
+  g_assert_cmpuint(r->len, ==, 1);
+  g_ptr_array_unref(r);
+  NsrFedBasis b = basis(PK, 10002);
+  const char *one[] = {"wss://a.example", NULL};
+  g_assert_cmpint(nsr_outbox_set_routed(f->ob, id, one, NSR_FED_LANE_IDENTIFIED, &b, NOW + 1), ==, 0);
+  nsr_outbox_close(f->ob);
+  fx_open(f); /* reopening a v2 database is a no-op */
+  hint(f, PK, 10002, NOW + 1, NOW + 2);
+  GPtrArray *t = nsr_outbox_take_retarget(f->ob, 10);
+  g_assert_cmpuint(t->len, ==, 1);
+  g_ptr_array_unref(t);
   g_free(id);
 }
 
@@ -392,5 +577,8 @@ int main(int argc, char **argv) {
   T("supersede-and-cancel", test_supersede_and_cancel);
   T("restart-durability", test_restart_durability);
   T("final-states", test_final_states);
+  T("scoped-reroute", test_scoped_reroute);
+  T("retarget", test_retarget);
+  T("migrate-v1", test_migrate_v1);
   return g_test_run();
 }

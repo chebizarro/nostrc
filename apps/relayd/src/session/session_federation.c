@@ -300,7 +300,8 @@ static void route_one(NsrFederation *f, NsrOutboxEvent *e, gint64 now) {
       char *why = g_strdup(f->detail ? f->detail : "waiting for the local account");
       g_mutex_unlock(&f->lock);
       nsr_outbox_set_unroutable(f->outbox, e->id, why,
-                                f->probe_inflight ? now + PROBE_WAIT_S : f->next_probe, TRUE, now);
+                                f->probe_inflight ? now + PROBE_WAIT_S : f->next_probe, TRUE, NULL,
+                                now);
       g_free(why);
     }
     nostr_event_free(ev);
@@ -327,16 +328,18 @@ static void route_one(NsrFederation *f, NsrOutboxEvent *e, gint64 now) {
   GStrv relays = NULL;
   NsrFedLane lane = NSR_FED_LANE_IDENTIFIED;
   char *reason = NULL;
-  switch (nsr_fed_resolve(&f->cfg, ev, &lk, &relays, &lane, &reason)) {
+  NsrFedBasis basis;
+  switch (nsr_fed_resolve(&f->cfg, ev, &lk, &relays, &lane, &reason, &basis)) {
     case NSR_FED_ROUTE_OK:
-      if (nsr_outbox_set_routed(f->outbox, e->id, (const char *const *)relays, lane, now) == 0)
+      if (nsr_outbox_set_routed(f->outbox, e->id, (const char *const *)relays, lane, &basis,
+                                now) == 0)
         for (guint i = 0; relays[i]; i++) notify(f, e->id, relays[i], "pending", "", "pending");
       break;
     case NSR_FED_ROUTE_UNROUTABLE:
       nsr_outbox_set_unroutable(f->outbox, e->id, reason,
                                 now + nsr_fed_backoff_delay(&f->cfg, e->route_attempts + 1,
                                                             g_random_double()),
-                                FALSE, now);
+                                FALSE, &basis, now);
       notify(f, e->id, "", "", reason, "unroutable");
       break;
     case NSR_FED_ROUTE_INVALID:
@@ -873,6 +876,70 @@ static gint64 sweep_conns(NsrFederation *f, gint64 now) {
   return next;
 }
 
+/* ── Retargeting (nostrc-jedb) ────────────────────────────────────────── */
+
+/* Forget a not-yet-sent attempt of @id on a relay the list dropped (one
+ * already on the wire just has its late OK ignored). */
+static void drop_queued(NsrFederation *f, NsrFedLane lane, const char *url, const char *id) {
+  char *key = g_strdup_printf("%d|%s", (int)lane, url);
+  RelayConn *rc = g_hash_table_lookup(f->conns, key);
+  g_free(key);
+  if (!rc) return;
+  for (GList *l = rc->queued.head; l;) {
+    GList *next = l->next;
+    Attempt *a = l->data;
+    if (strcmp(a->event_id, id) == 0) {
+      g_queue_delete_link(&rc->queued, l);
+      attempt_free(a);
+    }
+    l = next;
+  }
+}
+
+/* A newer 10002 / 10050 re-resolves the deliveries routed from the old
+ * one: relays it dropped lose their pending targets, relays it added get
+ * one. Group writes are never retargeted (their relay is the group's
+ * identity; nsr_fed_resolve() gives them no basis). */
+static void retarget_pending(NsrFederation *f, gint64 now) {
+  GPtrArray *evs = nsr_outbox_take_retarget(f->outbox, 128);
+  for (guint i = 0; i < evs->len && !g_atomic_int_get(&f->stopping); i++) {
+    NsrOutboxEvent *e = g_ptr_array_index(evs, i);
+    NostrEvent *ev = nostr_event_new();
+    if (nostr_event_deserialize(ev, e->json) != 0) {
+      nsr_outbox_clear_retarget(f->outbox, e->id);
+      nostr_event_free(ev);
+      continue;
+    }
+    NsrFedLookup lk = {lk_relay_list, lk_acked, f};
+    GStrv relays = NULL;
+    NsrFedLane lane = NSR_FED_LANE_IDENTIFIED;
+    char *reason = NULL;
+    if (nsr_fed_resolve(&f->cfg, ev, &lk, &relays, &lane, &reason, NULL) != NSR_FED_ROUTE_OK) {
+      /* The new list names no usable relay: keep delivering where we were. */
+      g_message("nostr-session-relayd: federation: %.12s… keeps its targets: %s", e->id,
+                reason ? reason : "no route");
+      nsr_outbox_clear_retarget(f->outbox, e->id);
+    } else {
+      GPtrArray *added = NULL, *dropped = NULL;
+      const char *es = NULL;
+      if (nsr_outbox_retarget(f->outbox, e->id, (const char *const *)relays, now, &added, &dropped,
+                              &es) == 0) {
+        for (guint j = 0; j < dropped->len; j++) {
+          drop_queued(f, lane, dropped->pdata[j], e->id);
+          notify(f, e->id, dropped->pdata[j], "cancelled", "dropped from the relay list", es);
+        }
+        for (guint j = 0; j < added->len; j++) notify(f, e->id, added->pdata[j], "pending", "", es);
+      }
+      g_ptr_array_unref(added);
+      g_ptr_array_unref(dropped);
+    }
+    g_strfreev(relays);
+    g_free(reason);
+    nostr_event_free(ev);
+  }
+  g_ptr_array_unref(evs);
+}
+
 /* ── Pump & loop ──────────────────────────────────────────────────────── */
 
 static gboolean on_timer(gpointer p);
@@ -896,6 +963,7 @@ static void pump(NsrFederation *f) {
   if (g_atomic_int_get(&f->stopping)) return;
   gint64 now = wall_now();
   route_pending(f, now);
+  retarget_pending(f, now);
   if (now >= f->next_housekeeping) {
     int n = nsr_outbox_expire(f->outbox, now, f->cfg.max_age_seconds);
     if (n > 0) g_message("nostr-session-relayd: federation: %d queued event(s) expired", n);

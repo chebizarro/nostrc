@@ -608,9 +608,19 @@ static NsrFedRouteStatus resolve_inbox(const NsrFedConfig *cfg, NostrEvent *ev,
   return NSR_FED_ROUTE_OK;
 }
 
+static void set_basis(NsrFedBasis *b, const char *pubkey, int kind) {
+  if (!b) return;
+  char hex[65];
+  if (!pubkey || nsr_fed_parse_pubkey(pubkey, hex) != 0) return;
+  memcpy(b->pubkey, hex, sizeof hex);
+  b->kind = kind;
+}
+
 NsrFedRouteStatus nsr_fed_resolve(const NsrFedConfig *cfg, NostrEvent *ev,
                                   const NsrFedLookup *lookup, GStrv *out_relays,
-                                  NsrFedLane *out_lane, char **out_reason) {
+                                  NsrFedLane *out_lane, char **out_reason,
+                                  NsrFedBasis *out_basis) {
+  if (out_basis) memset(out_basis, 0, sizeof *out_basis);
   *out_relays = NULL;
   *out_reason = NULL;
   *out_lane = NSR_FED_LANE_IDENTIFIED;
@@ -621,6 +631,10 @@ NsrFedRouteStatus nsr_fed_resolve(const NsrFedConfig *cfg, NostrEvent *ev,
   switch (nostr_session_route_class_event((uint32_t)kind, has_h)) {
     case NSR_ROUTE_GROUP_RELAY:
       st = resolve_group(cfg, ev, lookup, out, out_reason);
+      /* A routed group write keeps its relay (identity); one still waiting
+       * follows the author's kind-10009 list. */
+      if (st == NSR_FED_ROUTE_UNROUTABLE)
+        set_basis(out_basis, nostr_event_get_pubkey(ev), NOSTR_KIND_SIMPLE_GROUP_LIST);
       break;
     case NSR_ROUTE_NIP17_INBOX:
       if (kind != 1059) {
@@ -630,11 +644,15 @@ NsrFedRouteStatus nsr_fed_resolve(const NsrFedConfig *cfg, NostrEvent *ev,
       }
       *out_lane = NSR_FED_LANE_ANONYMOUS;
       st = resolve_inbox(cfg, ev, lookup, out, out_reason);
+      if (st != NSR_FED_ROUTE_INVALID)
+        set_basis(out_basis, first_tag_value(nostr_event_get_tags(ev), "p"),
+                  NOSTR_KIND_DM_RELAY_LIST);
       break;
     case NSR_ROUTE_TOMBSTONE:
     case NSR_ROUTE_HOME_RELAYS:
     default:
       st = resolve_home(cfg, ev, lookup, out, out_reason);
+      set_basis(out_basis, nostr_event_get_pubkey(ev), NOSTR_KIND_RELAY_LIST_METADATA);
       break;
   }
   if (st == NSR_FED_ROUTE_OK) {

@@ -153,13 +153,24 @@ typedef enum {
   NSR_FED_ROUTE_INVALID = 2,     /* can never be routed (e.g. 1059 w/o p) */
 } NsrFedRouteStatus;
 
+/* The relay list a resolution depends on: (pubkey, kind) of the 10002 /
+ * 10050 / 10009 it read (OK) or waits for (UNROUTABLE). kind 0 = none:
+ * nothing to follow (group writes routed to their relay keep it -- the
+ * relay is part of the group's identity -- and INVALID events). */
+typedef struct {
+  char pubkey[65];
+  int kind;
+} NsrFedBasis;
+
 /* Resolve the upstream relays for @ev (already past the static verdict and
  * the author check). *out_relays: deduplicated, admitted by
  * nsr_fed_url_acceptable(), capped at cfg->max_relays_per_event.
- * *out_reason (g_free) explains UNROUTABLE / INVALID. */
+ * *out_reason (g_free) explains UNROUTABLE / INVALID. @out_basis
+ * (nullable) gets the relay list to follow (nostrc-jedb). */
 NsrFedRouteStatus nsr_fed_resolve(const NsrFedConfig *cfg, NostrEvent *ev,
                                   const NsrFedLookup *lookup, GStrv *out_relays,
-                                  NsrFedLane *out_lane, char **out_reason);
+                                  NsrFedLane *out_lane, char **out_reason,
+                                  NsrFedBasis *out_basis);
 
 /* Individual resolvers, exposed for tests. Each returns a GStrv (maybe
  * empty) of admitted URLs. */

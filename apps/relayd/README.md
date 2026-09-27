@@ -79,11 +79,16 @@ still reach the network.
    Relay lists are read from the session relay itself: the relay-list
    events (10002 / 10050 / 10009, anyone's) that apps write to relay.sock
    are remembered, newest `created_at` wins. An event whose targets are not
-   known yet stays **unroutable** and is re-routed as soon as a relay list
-   arrives (and with backoff meanwhile), e.g. write the recipient's 10050
-   before the gift wrap, or the event waits. Targets are resolved **once**,
-   when the event is routed: a later relay-list change does not retarget
-   events already pending (they keep retrying the relays chosen then).
+   known yet stays **unroutable** and is re-routed as soon as the list it
+   waits for arrives — the author's 10002, the recipient's 10050, the
+   author's 10009 — (and with backoff meanwhile), e.g. write the
+   recipient's 10050 before the gift wrap, or the event waits. Pending
+   deliveries follow relay-list changes: when a newer 10002 (or a
+   recipient's newer 10050) arrives, events routed from the old list stop
+   waiting on relays the new one dropped (their target becomes
+   `cancelled`, reason `dropped from the relay list`) and gain targets on
+   relays it added; acknowledged and failed deliveries stay as they are.
+   Group writes keep their relay (a group is (relay, id); see below).
    URLs must be `wss://`, or `ws://` to a loopback host
    (`federation_allow_plaintext_ws = 1` lifts that); at most
    `federation_max_relays_per_event` targets.

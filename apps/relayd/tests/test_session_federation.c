@@ -17,6 +17,9 @@
  *                     group relay, then goes only there
  *   restart           relay down, engine + outbox closed mid-retry,
  *                     reopened with the relay up -> delivered
+ *   retarget          (nostrc-jedb) a note pending on a relay the author's
+ *                     newer kind 10002 drops is cancelled there and goes
+ *                     to the relay the new list names
  *   signer prompts    (nostrc-8cc1) while org.nostr.Signer sits on a NIP-42
  *                     AUTH signature, or on the GetPublicKey that decides
  *                     the local account, other relays keep delivering
@@ -498,6 +501,61 @@ static void test_auth_prompt_does_not_stall(void) {
   drop_outbox();
 }
 
+/* nostrc-jedb: pending deliveries follow a relay-list change. */
+static void test_retarget_on_relay_list_change(void) {
+  FakeRelay *S = fake_relay_start(FAKE_SILENT, 0);
+  FakeRelay *A = fake_relay_start(FAKE_ACCEPT, 0);
+  g_assert_true(S && A);
+  Key acct = key_new();
+  nsr_fed_config_defaults(&s_cfg);
+  g_assert_cmpint(nsr_fed_config_apply(&s_cfg, "federation_accounts", acct.pk), ==, 1);
+  s_cfg.ok_timeout_seconds = 3;
+  s_cfg.backoff_initial_seconds = 1;
+  s_cfg.backoff_max_seconds = 2;
+  NostrPublishSignerVTable vt = {vt_sign, NULL};
+  s_signer = nostr_publish_signer_new_from_vtable(&vt, &acct);
+  fresh_outbox("nsr-fed-retarget-XXXXXX");
+  NsrOutbox *ob = NULL;
+  NsrFederation *fed = engine_up(&ob);
+
+  char *tags = g_strdup_printf("[[\"r\",\"%s\"]]", S->url);
+  char *rl1 = offer(fed, mk(&acct, 10002, tags, ""));
+  g_free(tags);
+  char *note = offer(fed, mk(&acct, 1, "[]", "retarget me"));
+  g_assert_true(fake_wait_id(S, note, 1, 20)); /* on the wire, never answered */
+  ASSERT_TARGET(ob, note, S->url, "pending");
+
+  tags = g_strdup_printf("[[\"r\",\"%s\"]]", A->url);
+  char *rl2 = offer(fed, mk(&acct, 10002, tags, "")); /* the author moved */
+  g_free(tags);
+  char *st = wait_state(note, "forwarded", 20);
+  g_assert_cmpstr(st, ==, "forwarded");
+  g_free(st);
+  ASSERT_TARGET(ob, note, A->url, "acked");
+  char *why = NULL;
+  g_free(target_state(ob, note, S->url, &why));
+  g_assert_cmpstr(why, ==, "dropped from the relay list");
+  g_free(why);
+  ASSERT_TARGET(ob, note, S->url, "cancelled");
+  char *rl1_state = NULL; /* superseded by rl2 (not signalled: see nostrc-z1my) */
+  g_assert_cmpint(nsr_outbox_event_status(ob, rl1, &rl1_state, NULL, NULL), ==, 0);
+  g_assert_cmpstr(rl1_state, ==, "superseded");
+  g_free(rl1_state);
+
+  nsr_federation_free(fed);
+  nsr_outbox_close(ob);
+  nostr_publish_signer_unref(s_signer);
+  s_signer = NULL;
+  fake_relay_stop(S);
+  fake_relay_stop(A);
+  free(acct.sk);
+  free(acct.pk);
+  free(rl1);
+  free(rl2);
+  free(note);
+  drop_outbox();
+}
+
 /* A fake org.nostr.Signer whose GetPublicKey "prompts" behind a gate. */
 typedef struct {
   const char *pk;
@@ -652,6 +710,7 @@ int main(int argc, char **argv) {
   obs.state = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   obs.reasons = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   g_test_add_func("/federation/engine", test_federation);
+  g_test_add_func("/federation/retarget-on-relay-list-change", test_retarget_on_relay_list_change);
   g_test_add_func("/federation/auth-prompt-does-not-stall", test_auth_prompt_does_not_stall);
   g_test_add_func("/federation/account-probe-does-not-stall", test_account_probe_does_not_stall);
   int rc = g_test_run();
