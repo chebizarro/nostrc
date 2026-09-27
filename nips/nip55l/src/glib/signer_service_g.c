@@ -969,6 +969,10 @@ static void on_name_owner_changed(GDBusConnection *conn, const gchar *sender_nam
   const gchar *name = NULL, *old_owner = NULL, *new_owner = NULL;
   g_variant_get(params, "(&s&s&s)", &name, &old_owner, &new_owner);
   if (!name || name[0] != ':' || (new_owner && *new_owner)) return;
+#ifdef NIP55L_TEST_TRUST_ENV
+  /* Keep the pending call until ApproveRequest in the liveness regression fixture. */
+  if (g_getenv("NOSTR_SIGNER_TEST_DEFER_OWNER_CLEANUP")) return;
+#endif
   signer_caller_forget(name);
   forget_sender(name);
 }

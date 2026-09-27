@@ -955,6 +955,60 @@ static void test_cancelled_private_sender(Ctx *ctx) {
   watch_stop(ctx, &w);
 }
 
+/* The test-build fixture defers NameOwnerChanged cleanup so only the
+ * approval-time NameHasOwner check can reject this disconnected caller. */
+static void test_disconnected_sender_before_cleanup(Ctx *ctx) {
+  Watch w;
+  watch_start(ctx, &w);
+  guint completed_sub = g_dbus_connection_signal_subscribe(ctx->bus, BUS_NAME, IFACE,
+      "ApprovalCompleted", OBJ_PATH, NULL, G_DBUS_SIGNAL_FLAGS_NONE,
+      on_approval_completed, &w.a, NULL);
+  GDBusConnection *private = open_conn();
+  char *sender = g_strdup(g_dbus_connection_get_unique_name(private));
+  CHECK(sender != NULL);
+  w.a.pending_replies++;
+  g_dbus_connection_call(private, BUS_NAME, OBJ_PATH, IFACE, "SignEvent",
+      g_variant_new("(sss)", "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"liveness\"}",
+                    ctx->npub, "liveness-test"), G_VARIANT_TYPE("(s)"),
+      G_DBUS_CALL_FLAGS_NONE, 30000, NULL, on_async_reply, &w.a);
+  watch_wait_request(&w, 1);
+  CHECK(g_strcmp0(w.a.kind, "event") == 0);
+  close_conn(private);
+
+  GError *err = NULL;
+  GVariant *owner = g_dbus_connection_call_sync(ctx->bus, "org.freedesktop.DBus",
+      "/org/freedesktop/DBus", "org.freedesktop.DBus", "NameHasOwner",
+      g_variant_new("(s)", sender), G_VARIANT_TYPE("(b)"),
+      G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &err);
+  CHECK(owner != NULL && err == NULL);
+  gboolean alive = TRUE;
+  g_variant_get(owner, "(b)", &alive);
+  CHECK(!alive);
+  g_variant_unref(owner);
+  g_free(sender);
+
+  GVariant *info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", w.a.req_id),
+                        "(a{sv})", &err);
+  CHECK(info != NULL && err == NULL); /* pending cleanup has not run */
+  g_variant_unref(info);
+
+  GVariant *approved = approve_call(ctx, w.a.req_id, TRUE, TRUE, &err);
+  CHECK(approved != NULL && err == NULL);
+  gboolean ok = TRUE;
+  g_variant_get(approved, "(b)", &ok);
+  CHECK(!ok);
+  g_variant_unref(approved);
+  while (!w.a.completed) g_main_loop_run(w.a.loop);
+  watch_wait_replies(&w);
+  CHECK(w.a.replies->len == 1 && w.a.replies->pdata[0] == NULL);
+  CHECK(w.a.errors->pdata[0] != NULL); /* no signed event was returned */
+  char *key = g_strdup_printf("%s|%s", pr(ctx, "liveness-test"), ctx->npub);
+  CHECK(!grants_has(ctx, "event", key, "allow"));
+  g_free(key);
+  g_dbus_connection_signal_unsubscribe(ctx->bus, completed_sub);
+  watch_stop(ctx, &w);
+}
+
 /* nostrc-y02q / phk4 / 1e31 / eie5 / f7hk. Fixture: no grants except a
  * web-origin one this process must NOT inherit, approvals answered here. */
 static void test_gating(Ctx *ctx) {
@@ -2265,6 +2319,18 @@ int main(void) {
     g_print("PASS gating (decrypt/pubkey/relays gated,%s remember round-trip, kind-keyed "
             "remember, coalescing, no-agent fail-fast)\n",
             attested ? " spoofed app_id denied," : " [unattested bus: claimed-app_id principals],");
+  }
+
+  /* Leave the disconnected sender's request pending to exercise the
+   * approval-time liveness guard independently of NameOwnerChanged. */
+  {
+    Ctx ctx;
+    g_setenv("NOSTR_SIGNER_TEST_DEFER_OWNER_CLEANUP", "1", TRUE);
+    ctx_setup_full(&ctx, FALSE, FALSE, NULL, &TRUST_UI, NULL, NULL);
+    g_unsetenv("NOSTR_SIGNER_TEST_DEFER_OWNER_CLEANUP");
+    test_disconnected_sender_before_cleanup(&ctx);
+    ctx_teardown(&ctx);
+    g_print("PASS disconnected sender before pending cleanup\n");
   }
 
   /* Typed approval errors (nip55l 0.5.0): 1 s approval TTL, no grants,
