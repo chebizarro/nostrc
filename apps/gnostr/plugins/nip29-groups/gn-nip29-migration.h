@@ -25,18 +25,22 @@ typedef struct
 
 void gn_nip29_relocation_free(GnNip29Relocation *relocation);
 
-/* Same relay: scheme and host case-insensitive, a trailing '/' ignored. */
+/* Same relay: scheme and host case-insensitive, a trailing '/' and the
+ * scheme's default port (ws 80, wss 443) ignored. */
 gboolean gn_nip29_relay_url_equal(const char *a, const char *b);
 
 /* @event_jsons: kind:10009 events (any authors, any order, duplicates ok).
  * Only events whose id and signature verify, whose author is in
  * @trusted_pubkeys (64-hex) and that are each author's newest kind:10009
  * count. Returns the relays other than @current_relay on which they list
- * @group_id, most authors first (ties: first seen).
+ * @group_id, most authors first (ties: first seen). @out_staying: how many
+ * of those authors still list it on @current_relay too (a fork or replica
+ * rather than a move when > 0).
  * Returns: (transfer full) (element-type GnNip29Relocation) */
 GPtrArray *gn_nip29_find_relocations(const char         *group_id,
                                      const char         *current_relay,
                                      const char * const *trusted_pubkeys,
-                                     GPtrArray          *event_jsons);
+                                     GPtrArray          *event_jsons,
+                                     guint              *out_staying);
 
 G_END_DECLS

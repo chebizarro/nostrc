@@ -91,6 +91,8 @@ typedef struct
   gint64        relocation_checked_at;   /* monotonic µs */
   gchar        *relocated_relay;         /* another relay trusted lists name */
   guint         relocated_authors;
+  guint         staying_authors;         /* of those, still listing this relay */
+  guint         empty_snapshots;         /* consecutive empty/failed snapshot queries */
 } GroupState;
 
 typedef struct
@@ -1015,7 +1017,10 @@ on_query_relays_done(GObject      *source,
           emit_error(self, error->message);
           /* nostrc-7n4t: is the group relay reachable at all? */
           if (current && data->snapshots)
-            probe_group_relay(self, state);
+            {
+              state->empty_snapshots++;
+              probe_group_relay(self, state);
+            }
         }
       query_data_free(data);
       return;
@@ -1033,12 +1038,17 @@ on_query_relays_done(GObject      *source,
       if (events == NULL || events->len == 0)
         {
           /* nostrc-7n4t: nothing about the group - down, or gone? */
+          state->empty_snapshots++;
           probe_group_relay(self, state);
         }
-      else if (state->relay_unreachable)
+      else
         {
-          state->relay_unreachable = FALSE;
-          g_signal_emit(self, signals[GROUP_UPDATED], 0, state->key);
+          state->empty_snapshots = 0;
+          if (state->relay_unreachable)
+            {
+              state->relay_unreachable = FALSE;
+              g_signal_emit(self, signals[GROUP_UPDATED], 0, state->key);
+            }
         }
     }
 
@@ -1226,11 +1236,19 @@ group_state_refresh(GroupState *state,
  * of trusted friends); an entry for the group on another relay means it
  * may have moved or been forked. The admins are cached per saved group
  * (saved-groups.json "admins") so this works while the relay is down.
- * Trusted authors here: the cached and current admins, and the user (a
- * list the user changed on another device counts too). The lists are read
- * from the user's relays; gn_nip29_find_relocations() verifies them. */
+ * Trusted authors: the cached and current admins. The user's own list is
+ * not evidence (it names a relay because the user tracked it there). The
+ * lists are read from the user's relays; gn_nip29_find_relocations()
+ * verifies them. */
 
 #define RELOCATION_CHECK_INTERVAL_US (6 * G_TIME_SPAN_HOUR)
+/* Even while the relay is down, re-ask at most this often. */
+#define RELOCATION_MUST_FLOOR_US (10 * G_TIME_SPAN_MINUTE)
+#define RELOCATION_QUERY_TIMEOUT_S 60
+/* A relay that accepts TCP but keeps returning nothing for the group
+ * (WebSocket/TLS broken behind a proxy, say) counts as unreachable for the
+ * check after this many snapshot queries in a row. */
+#define RELOCATION_EMPTY_SNAPSHOTS_MUST 2
 #define RELOCATION_LIST_LIMIT 200
 
 typedef struct
@@ -1239,6 +1257,8 @@ typedef struct
   gchar               *group_key;
   gchar              **authors;
   GCancellable        *cancellable;
+  guint                timeout_id;
+  gboolean             timed_out;
 } RelocationCheck;
 
 static void
@@ -1246,6 +1266,7 @@ relocation_check_free(RelocationCheck *check)
 {
   if (check == NULL)
     return;
+  g_clear_handle_id(&check->timeout_id, g_source_remove);
   if (check->cancellable != NULL && check->service != NULL &&
       check->service->cancellables != NULL)
     g_ptr_array_remove(check->service->cancellables, check->cancellable);
@@ -1336,13 +1357,15 @@ build_lists_filter_json(char **authors)
 static void
 relocation_check_done(GnNip29GroupService *self,
                       GroupState          *state,
-                      GPtrArray           *relocations)
+                      GPtrArray           *relocations,
+                      guint                staying)
 {
   state->relocation_checking = FALSE;
   state->relocation_checked = TRUE;
   state->relocation_checked_at = g_get_monotonic_time();
   g_clear_pointer(&state->relocated_relay, g_free);
   state->relocated_authors = 0;
+  state->staying_authors = staying;
   if (relocations != NULL && relocations->len > 0)
     {
       GnNip29Relocation *best = g_ptr_array_index(relocations, 0);
@@ -1369,6 +1392,19 @@ on_relocation_query_done(GObject      *source,
     ? gnostr_plugin_context_query_relays_finish(self->context, result, &error)
     : NULL;
   GroupState *state = g_hash_table_lookup(self->groups, check->group_key);
+  if (state != NULL && !self->shutting_down && check->timed_out &&
+      (events == NULL || events->len == 0))
+    {
+      /* Relays that never finish must not leave the check "running";
+       * lists that did arrive before the deadline are used below. */
+      g_debug("NIP-29: kind:10009 lists for %s: no answer within %d s",
+              state->key, RELOCATION_QUERY_TIMEOUT_S);
+      if (events != NULL)
+        g_ptr_array_unref(events);
+      relocation_check_done(self, state, NULL, 0);
+      relocation_check_free(check);
+      return;
+    }
   if (state == NULL || self->shutting_down ||
       g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     {
@@ -1389,15 +1425,26 @@ on_relocation_query_done(GObject      *source,
       if (ev != NULL && ev->event_json != NULL)
         g_ptr_array_add(jsons, ev->event_json);
     }
+  guint staying = 0;
   g_autoptr(GPtrArray) relocations =
     gn_nip29_find_relocations(state->group_id, state->relay_url,
-                              (const char * const *)check->authors, jsons);
+                              (const char * const *)check->authors, jsons, &staying);
   g_ptr_array_unref(jsons);
   if (events != NULL)
     g_ptr_array_unref(events);
 
-  relocation_check_done(self, state, relocations);
+  relocation_check_done(self, state, relocations, staying);
   relocation_check_free(check);
+}
+
+static gboolean
+on_relocation_query_timeout(gpointer user_data)
+{
+  RelocationCheck *check = user_data;
+  check->timeout_id = 0;
+  check->timed_out = TRUE;
+  g_cancellable_cancel(check->cancellable);
+  return G_SOURCE_REMOVE;
 }
 
 /* @must: the group relay is unreachable (checked now, whatever the
@@ -1409,8 +1456,9 @@ maybe_check_relocation(GnNip29GroupService *self,
 {
   if (self->context == NULL || self->shutting_down || state->relocation_checking)
     return;
-  if (!must && state->relocation_checked &&
-      g_get_monotonic_time() - state->relocation_checked_at < RELOCATION_CHECK_INTERVAL_US)
+  gint64 since = g_get_monotonic_time() - state->relocation_checked_at;
+  if (state->relocation_checked &&
+      since < (must ? RELOCATION_MUST_FLOOR_US : RELOCATION_CHECK_INTERVAL_US))
     return;
 
   GPtrArray *authors = g_ptr_array_new_with_free_func(g_free);
@@ -1424,17 +1472,13 @@ maybe_check_relocation(GnNip29GroupService *self,
       if (pk != NULL && strlen(pk) == 64 && !strv_ptr_array_contains(authors, pk))
         g_ptr_array_add(authors, g_ascii_strdown(pk, -1));
     }
-  if (self->current_pubkey != NULL && strlen(self->current_pubkey) == 64 &&
-      !strv_ptr_array_contains(authors, self->current_pubkey))
-    g_ptr_array_add(authors, g_ascii_strdown(self->current_pubkey, -1));
-
   gsize n_relays = 0;
   g_auto(GStrv) relays = gnostr_plugin_context_get_relay_urls(self->context, &n_relays);
   if (authors->len == 0 || relays == NULL || n_relays == 0)
     {
       /* Nobody to ask, or nowhere to ask: report "checked, nothing found". */
       g_ptr_array_unref(authors);
-      relocation_check_done(self, state, NULL);
+      relocation_check_done(self, state, NULL, 0);
       return;
     }
   g_ptr_array_add(authors, NULL);
@@ -1453,6 +1497,8 @@ maybe_check_relocation(GnNip29GroupService *self,
   state->relocation_checking = TRUE;
   check->cancellable = g_cancellable_new();
   g_ptr_array_add(self->cancellables, g_object_ref(check->cancellable));
+  check->timeout_id = g_timeout_add_seconds(RELOCATION_QUERY_TIMEOUT_S,
+                                            on_relocation_query_timeout, check);
   gnostr_plugin_context_query_relays_async(self->context, &query, check->cancellable,
                                            on_relocation_query_done, check);
 }
@@ -1511,7 +1557,9 @@ on_relay_probe_done(GObject      *source,
           state->relay_unreachable = unreachable;
           g_signal_emit(self, signals[GROUP_UPDATED], 0, state->key);
         }
-      maybe_check_relocation(self, state, unreachable);
+      maybe_check_relocation(self, state,
+                             unreachable ||
+                             state->empty_snapshots >= RELOCATION_EMPTY_SNAPSHOTS_MUST);
     }
   else if (state != NULL)
     state->relay_probing = FALSE;
@@ -1539,17 +1587,33 @@ probe_group_relay(GnNip29GroupService *self,
                                        on_relay_probe_done, probe);
 }
 
+void
+gn_nip29_group_service_dismiss_relocation(GnNip29GroupService *self,
+                                          const char          *group_key)
+{
+  g_return_if_fail(GN_IS_NIP29_GROUP_SERVICE(self));
+  GroupState *state = group_key ? g_hash_table_lookup(self->groups, group_key) : NULL;
+  if (state == NULL || state->relocated_relay == NULL)
+    return;
+  g_clear_pointer(&state->relocated_relay, g_free);
+  state->relocated_authors = state->staying_authors = 0;
+  g_signal_emit(self, signals[GROUP_UPDATED], 0, state->key);
+}
+
 GnNip29RelocationState
 gn_nip29_group_service_get_relocation(GnNip29GroupService *self,
                                       const char          *group_key,
                                       const char         **out_relay_url,
-                                      guint               *out_n_authors)
+                                      guint               *out_n_authors,
+                                      guint               *out_n_staying)
 {
   g_return_val_if_fail(GN_IS_NIP29_GROUP_SERVICE(self), GN_NIP29_RELOCATION_NONE);
   if (out_relay_url != NULL)
     *out_relay_url = NULL;
   if (out_n_authors != NULL)
     *out_n_authors = 0;
+  if (out_n_staying != NULL)
+    *out_n_staying = 0;
   GroupState *state = group_key ? g_hash_table_lookup(self->groups, group_key) : NULL;
   if (state == NULL)
     return GN_NIP29_RELOCATION_NONE;
@@ -1559,6 +1623,8 @@ gn_nip29_group_service_get_relocation(GnNip29GroupService *self,
         *out_relay_url = state->relocated_relay;
       if (out_n_authors != NULL)
         *out_n_authors = state->relocated_authors;
+      if (out_n_staying != NULL)
+        *out_n_staying = state->staying_authors;
       return GN_NIP29_RELOCATION_FOUND;
     }
   if (state->relay_unreachable)

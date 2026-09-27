@@ -66,9 +66,13 @@ test_relocations(void)
   memcpy(p, "evim", 4);
   g_ptr_array_add(events, forged);
 
+  guint staying = 99;
   g_autoptr(GPtrArray) r = gn_nip29_find_relocations("pizza", "wss://old.example",
-                                                     trusted, events);
+                                                     trusted, events, &staying);
   g_assert_cmpuint(r->len, ==, 2);
+  /* B's newest list still names the old relay too (a fork or replica);
+   * A's newest does not (A's older list did, and does not count). */
+  g_assert_cmpuint(staying, ==, 1);
   GnNip29Relocation *first = g_ptr_array_index(r, 0);
   GnNip29Relocation *second = g_ptr_array_index(r, 1);
   g_assert_true(gn_nip29_relay_url_equal(first->relay_url, "wss://relay-2.example"));
@@ -79,11 +83,11 @@ test_relocations(void)
 
   /* Another group id, or nobody trusted: nothing. */
   g_autoptr(GPtrArray) none = gn_nip29_find_relocations("pasta", "wss://old.example",
-                                                        trusted, events);
+                                                        trusted, events, NULL);
   g_assert_cmpuint(none->len, ==, 0);
   const char *nobody[] = { NULL };
   g_autoptr(GPtrArray) none2 = gn_nip29_find_relocations("pizza", "wss://old.example",
-                                                         nobody, events);
+                                                         nobody, events, NULL);
   g_assert_cmpuint(none2->len, ==, 0);
   g_ptr_array_unref(events);
 }
@@ -94,6 +98,11 @@ test_relay_equal(void)
   g_assert_true(gn_nip29_relay_url_equal("wss://Relay.Example/", "wss://relay.example"));
   g_assert_true(gn_nip29_relay_url_equal("wss://r.example/nip29/", "wss://R.example/nip29"));
   g_assert_false(gn_nip29_relay_url_equal("wss://r.example/A", "wss://r.example/a"));
+  /* Default ports are the same relay; other ports are not. */
+  g_assert_true(gn_nip29_relay_url_equal("wss://r.example:443", "wss://r.example"));
+  g_assert_true(gn_nip29_relay_url_equal("ws://r.example:80/x", "ws://r.example/x"));
+  g_assert_false(gn_nip29_relay_url_equal("wss://r.example:8443", "wss://r.example"));
+  g_assert_false(gn_nip29_relay_url_equal("ws://r.example:443", "ws://r.example"));
   g_assert_false(gn_nip29_relay_url_equal("wss://a.example", "wss://b.example"));
   g_assert_false(gn_nip29_relay_url_equal(NULL, "wss://b.example"));
   g_assert_false(gn_nip29_relay_url_equal("", ""));

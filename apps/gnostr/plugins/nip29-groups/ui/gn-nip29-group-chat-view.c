@@ -560,10 +560,10 @@ static void
 update_relocation_banner(GnNip29GroupChatView *self)
 {
   const char *relay = NULL;
-  guint authors = 0;
+  guint authors = 0, staying = 0;
   GnNip29RelocationState st =
     gn_nip29_group_service_get_relocation(self->service, current_group_key(self),
-                                          &relay, &authors);
+                                          &relay, &authors, &staying);
   g_clear_pointer(&self->relocation_relay, g_free);
   g_autofree gchar *title = NULL;
   const char *button = NULL;
@@ -571,10 +571,15 @@ update_relocation_banner(GnNip29GroupChatView *self)
     {
     case GN_NIP29_RELOCATION_FOUND:
       self->relocation_relay = g_strdup(relay);
-      title = g_strdup_printf(g_dngettext(NULL,
-          "This group may have moved or been forked: %u trusted list names it on %s.",
-          "This group may have moved or been forked: %u trusted lists name it on %s.",
-          authors), authors, relay);
+      if (staying == 0)
+        title = g_strdup_printf(g_dngettext(NULL,
+            "This group may have moved: %u of its admins lists it on %s instead.",
+            "This group may have moved: %u of its admins list it on %s instead.",
+            authors), authors, relay);
+      else
+        title = g_strdup_printf(
+            "This group may have been forked: %u of its admins list it on %s, %u still "
+            "list this relay.", authors, relay, staying);
       button = "Open There";
       break;
     case GN_NIP29_RELOCATION_CHECKING:
@@ -628,6 +633,7 @@ on_relocation_open_clicked(AdwBanner *banner, gpointer user_data)
       g_autofree gchar *msg = g_strdup_printf("Added the group on %s to your groups.",
                                               self->relocation_relay);
       set_action_status(self, msg, FALSE);
+      gn_nip29_group_service_dismiss_relocation(self->service, current_group_key(self));
     }
   else
     set_action_status(self, error ? error->message : "Could not add the group", TRUE);
