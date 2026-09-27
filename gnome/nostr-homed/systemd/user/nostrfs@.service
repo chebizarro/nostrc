@@ -19,33 +19,20 @@ EnvironmentFile=-/etc/nostr-homed/users/%i.conf
 ExecStart=/usr/bin/nostrfs --writeback --namespace=${HOMED_NAMESPACE} /home/%i
 Restart=on-failure
 RestartSec=2s
-# Sandboxing
-NoNewPrivileges=true
-PrivateTmp=true
-# No ProtectClock= / ProtectKernelLogs= / ProtectKernelModules= /
-# PrivateDevices= / CapabilityBoundingSet= / AmbientCapabilities=: the
-# first five change the capability bounding set and the last raises an
-# ambient capability, neither of which an unprivileged systemd --user
-# manager can do -- the unit fails every start with 218/CAPABILITIES
-# (nostrc-ig4k; probed on systemd 255 with
-# `systemd-run --user -p <directive> /bin/true`). Same posture as
-# nostr-session-relay.service (nostrc-q9ba) and nostr-notify.service
-# (nostrc-8oon).
-ProtectHostname=true
-ProtectKernelTunables=true
-ProtectSystem=strict
-ProtectHome=read-only
-ProtectControlGroups=true
-LockPersonality=true
-MemoryDenyWriteExecute=true
-RestrictSUIDSGID=true
-RestrictNamespaces=true
-SystemCallArchitectures=native
-SystemCallFilter=@system-service
+# Deliberately unsandboxed (nostrc-ipvk): a user unit cannot hold
+# CAP_SYS_ADMIN, so the FUSE mount goes through the setuid fusermount3
+# helper, and in a systemd --user manager NoNewPrivileges=,
+# RestrictSUIDSGID=, every seccomp-based directive (they imply
+# NoNewPrivileges=yes without CAP_SYS_ADMIN) and every namespacing
+# directive (ProtectSystem=/ProtectHome=/PrivateTmp=/Protect*=: private
+# user+mount namespace, so set-uid is void and the mount would be
+# invisible to the session) make mount(2) fail with EPERM. Probed one
+# directive at a time on systemd 255; see nostr-home-fuse.service.in
+# for the full list. CapabilityBoundingSet=/AmbientCapabilities= are
+# out as well (218/CAPABILITIES, nostrc-ig4k).
 UMask=0077
+KeyringMode=private
 DeviceAllow=/dev/fuse rwm
-# No CAP_SYS_ADMIN: a user unit cannot grant it (see above); the FUSE
-# mount goes through the setuid fusermount3 helper.
 
 [Install]
 WantedBy=default.target

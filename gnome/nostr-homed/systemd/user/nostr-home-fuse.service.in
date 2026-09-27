@@ -25,35 +25,32 @@ RestartPreventExitStatus=3 4 5
 LimitCORE=0
 
 # ─── Hardening ─────────────────────────────────────────────────────
-# NOT ProtectHome=* — this unit mounts inside $HOME.
-NoNewPrivileges=yes
-ProtectSystem=strict
-ReadWritePaths=%h
-PrivateTmp=yes
-# No ProtectClock= / ProtectKernelLogs= / ProtectKernelModules= /
-# PrivateDevices=: each shrinks the capability bounding set, which an
-# unprivileged systemd --user manager cannot do -- the unit fails every
-# start with 218/CAPABILITIES (nostrc-ig4k; probed on systemd 255 with
-# `systemd-run --user -p <directive> /bin/true`). A user service holds none
-# of those capabilities anyway. Same posture as nostr-session-relay.service
-# (nostrc-q9ba) and nostr-notify.service (nostrc-8oon).
-ProtectHostname=yes
-ProtectKernelTunables=yes
-ProtectControlGroups=yes
-LockPersonality=yes
-MemoryDenyWriteExecute=yes
-RestrictSUIDSGID=yes
-RestrictNamespaces=yes
-SystemCallArchitectures=native
-# The @mount group is required for FUSE session mount; @system-service
-# gives us the ordinary I/O syscalls.
-SystemCallFilter=@system-service @mount
+# Deliberately (almost) unsandboxed (nostrc-ipvk). A user unit cannot
+# hold CAP_SYS_ADMIN, so the mount goes through the setuid fusermount3
+# helper, and in a systemd --user manager nearly every sandboxing
+# directive defeats that helper:
+#   * NoNewPrivileges= / RestrictSUIDSGID= -- execve() ignores set-uid;
+#   * the seccomp-based ones (SystemCallFilter=, SystemCallArchitectures=,
+#     MemoryDenyWriteExecute=, LockPersonality=, RestrictNamespaces=,
+#     RestrictAddressFamilies=, RestrictRealtime=, ...) IMPLY
+#     NoNewPrivileges=yes when the manager lacks CAP_SYS_ADMIN;
+#   * the namespacing ones (ProtectSystem=, ProtectHome=, PrivateTmp=,
+#     ProtectKernelTunables=, ProtectControlGroups=, ProtectHostname=,
+#     ...) put the service in its own user+mount namespace, where the
+#     set-uid bit is meaningless and a mount would not be visible to the
+#     session anyway;
+#   * CapabilityBoundingSet= cannot be changed by a user manager
+#     (218/CAPABILITIES, nostrc-ig4k).
+# Probed one directive at a time on systemd 255 (aarch64 lab) with
+# `systemd-run --user -p <directive> <tiny fuse fs> -f <dir>`: each of
+# the above fails with "fusermount3: mount failed: Operation not
+# permitted"; only the directives below leave the mount working. The
+# daemon itself is read-only (every mutator returns EROFS) and mounts
+# without allow_other, so only this user can reach it. Tighter isolation
+# needs a system-level mount helper instead of a user unit.
 UMask=0077
+KeyringMode=private
 DeviceAllow=/dev/fuse rw
-# libcurl / libnostr websocket + AF_UNIX for D-Bus (notify-send).
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-# No CAP_* here — user-scope units cannot grant CAP_SYS_ADMIN; FUSE
-# mount goes through the setuid fusermount3 helper as usual.
 
 [Install]
 WantedBy=default.target
