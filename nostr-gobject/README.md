@@ -2,6 +2,17 @@
 
 GObject wrapper library for libnostr — provides GLib/GObject/GIO bindings for the Nostr protocol.
 
+## 2.0.0 ABI note (unreleased)
+
+The installed `signer_proxy.h` is generated from `org.nostr.Signer.xml`. Adding
+`EnableTypedApprovalErrors` inserts a handler into its public
+`NostrOrgNostrSignerIface` vtable before existing handlers. This changes the
+stable 1.0.0 ABI: rebuild any consumer that implements that interface, and do
+not load a 1.0.0 interface implementation against the 2.0.0 library. The CMake
+and Meson shared libraries use SONAME 2; `Latest release` is unchanged until
+there is a published component tag. The `nostr-gobject-1.0` package and GIR
+names remain compatibility namespaces, not a claim of ABI 1.
+
 ## What it provides
 
 - **GObject wrappers** for libnostr types: events, relays, subscriptions, pools, filters

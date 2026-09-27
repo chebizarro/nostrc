@@ -1,5 +1,5 @@
 project('nostr-gobject', 'c',
-  version: '1.0.0',
+  version: '2.0.0',
   license: 'MIT',
   meson_version: '>= 0.59.0',
   default_options: [
@@ -302,6 +302,8 @@ nostr_gobject_lib = library('nostr-gobject-1.0',
   nostr_gobject_sources + signer_proxy,
   include_directories: [nostr_gobject_inc, nip46_inc, nostr_gobject_ndb_inc],
   dependencies: nostr_gobject_deps,
+  version: meson.project_version(),
+  soversion: '2',
   install: true)
 
 # ── Declare dependency for use as subproject ─────────────────────────
