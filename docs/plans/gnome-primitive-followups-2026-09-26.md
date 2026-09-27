@@ -32,4 +32,4 @@ Deferred to a later wave: k95e, wu3s, hby8, prqu.1, prqu.7, prqu.9, prqu.10, rxx
 - Deferred: 9z5w (decision: ship an approver UI/CLI in Debian?), hd8u (Flatpak Firefox portal), a5fr (Epiphany)
 - [ ] N libs: nip59 timestamps P1 (rd8j), GNostrRelay fd0/refused-connect (jc2o oz77), nip46 e2e (udsy) — running
 - [ ] O syncd: snapshot >32MiB P1 (5y2t), late seed pickup (p8y6) — running
-- [ ] P apps: gnostr kind-15 key encoding (qh4j), signer D-Bus service file (tw2z) — running
+- [x] P apps: gnostr kind-15 hex interop (qh4j), org.gnostr.Signer D-Bus service (tw2z) — merged 5d8d9c1c
