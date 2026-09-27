@@ -199,10 +199,14 @@ stage_row(NdPublisher       *self,
 {
   g_autofree gchar *targets_json = targets_to_json(self->targets);
   sqlite3 *h = nd_store_db_get_handle(self->db);
+  /* A (re-)stage is a new version of the row: drop the signature of the
+   * previous one so the next tick signs what the store holds now. Retries
+   * of this version reuse the signature it gets then (nostrc-2o4h). */
   g_autofree gchar *sql = g_strdup_printf(
     "UPDATE %s SET publish_state = 'pending', "
     "  publish_attempts = 0, publish_next_ts = ?1, "
-    "  publish_targets = ?2, upstream_event_id = NULL "
+    "  publish_targets = ?2, upstream_event_id = NULL, "
+    "  signed_event_json = NULL "
     "WHERE %s = ?3",
     collection_table(col), collection_key(col));
 

@@ -330,6 +330,66 @@ test_signs_stamped_created_at(void)
   fx_teardown(&fx);
 }
 
+/* ---- Scenario: an edit after the first publish is signed afresh
+ *      (nostrc-2o4h): re-staging must not re-send the old signature ---- */
+
+static void
+test_edit_after_publish_resigns(void)
+{
+  Fx fx = {0};
+  fx_setup(&fx,
+    "9090909090909090909090909090909090909090909090909090909090909090");
+  const gchar *id = fx.signer_state->fixed_id;
+
+  NdCalendarEvent ev = {0};
+  ev.uid        = (gchar *)"evt-edit";
+  ev.summary    = (gchar *)"First version";
+  ev.description = (gchar *)"";
+  ev.kind       = ND_NIP52_KIND_TIME;
+  ev.dtstart_ts = 1710000000;
+  ev.dtend_ts   = 1710000100;
+  GError *err = NULL;
+  g_assert_true(nd_calendar_store_put(fx.cal, &ev, NULL, &err));
+  g_assert_true(nd_publisher_stage_calendar_put(fx.publisher, "evt-edit", &err));
+  g_assert_true(nd_publisher_tick(fx.publisher, 2000000000));
+  g_assert_cmpuint(fx.signer_state->call_count, ==, 1);
+  nd_publisher_record_ok(fx.publisher, "wss://r1.test", id, TRUE, "");
+  nd_publisher_record_ok(fx.publisher, "wss://r2.test", id, TRUE, "");
+  nd_publisher_record_ok(fx.publisher, "wss://r3.test", id, TRUE, "");
+  g_autofree gchar *first = get_publish_state(fx.db, "evt-edit");
+  g_assert_cmpstr(first, ==, "published");
+  g_strfreev(nd_relay_transport_fixture_take_sent(fx.r1, NULL));
+  g_strfreev(nd_relay_transport_fixture_take_sent(fx.r2, NULL));
+  g_strfreev(nd_relay_transport_fixture_take_sent(fx.r3, NULL));
+
+  /* The DAV client edits the event: PUT + re-stage. */
+  ev.summary    = (gchar *)"Second version";
+  ev.created_at = 0;
+  g_assert_true(nd_calendar_store_put(fx.cal, &ev, NULL, &err));
+  g_assert_true(nd_publisher_stage_calendar_put(fx.publisher, "evt-edit", &err));
+  g_assert_no_error(err);
+  g_assert_true(nd_publisher_tick(fx.publisher, 2000000100));
+  g_assert_cmpuint(fx.signer_state->call_count, ==, 2);   /* signed again */
+  g_assert_nonnull(strstr(fx.signer_state->last_unsigned, "Second version"));
+  gsize n = 0;
+  gchar **frames = nd_relay_transport_fixture_take_sent(fx.r1, &n);
+  g_assert_cmpuint(n, ==, 1);
+  g_assert_nonnull(strstr(frames[0], "Second version"));
+  g_assert_null(strstr(frames[0], "First version"));
+  g_strfreev(frames);
+
+  /* A transient retry of the same version does not prompt the signer. */
+  nd_publisher_record_ok(fx.publisher, "wss://r1.test", id, FALSE, "error: busy");
+  nd_publisher_tick(fx.publisher, 2000000100 + 200);   /* past the OK wait */
+  nd_publisher_tick(fx.publisher, 2000000100 + 200 + 3600);
+  g_assert_cmpuint(fx.signer_state->call_count, ==, 2);
+
+  g_strfreev(nd_relay_transport_fixture_take_sent(fx.r1, NULL));
+  g_strfreev(nd_relay_transport_fixture_take_sent(fx.r2, NULL));
+  g_strfreev(nd_relay_transport_fixture_take_sent(fx.r3, NULL));
+  fx_teardown(&fx);
+}
+
 /* ---- Scenario: nostr_dav_upstream_mode is enforced (nostrc-862u) ---- */
 
 static guint
@@ -953,6 +1013,8 @@ int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/nostr-dav/publish/edit-after-publish-resigns",
+                  test_edit_after_publish_resigns);
   g_test_add_func("/nostr-dav/publish/upstream-verdicts", test_upstream_verdicts);
   g_test_add_func("/nostr-dav/publish/upstream-partial-logs-relays",
                   test_upstream_partial_logs_relays);
