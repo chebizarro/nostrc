@@ -28,7 +28,7 @@ jobs:
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev \
             libgit2-dev libsqlite3-dev libnsync-dev \
-            desktop-file-utils appstream xvfb xauth
+            desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core
 
       - name: Configure Groundhog and in-tree adapters
         run: |
@@ -68,7 +68,9 @@ jobs:
       - name: Run all Groundhog tests under a controlled display
         run: |
           set -euo pipefail
-          xvfb-run -a -s '-screen 0 1280x800x24' \
+          # Give GTK a private session bus with the AT-SPI bus service installed;
+          # Xvfb alone cannot activate org.a11y.Bus for the widget tests.
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' \
             ctest --test-dir build --output-on-failure \
               --output-junit "$PWD/build/groundhog-ctest.xml" \
               -R '^groundhog-' | tee build/groundhog-ctest.log
