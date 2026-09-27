@@ -144,7 +144,9 @@ gh_account_controller_refresh(GhAccountController *self)
   g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(self));
   if (!self->settings)
     return;
-  g_cancellable_cancel(self->list_cancel);
+  /* NULL before the first listing. */
+  if (self->list_cancel)
+    g_cancellable_cancel(self->list_cancel);
   g_clear_object(&self->list_cancel);
   self->list_cancel = g_cancellable_new();
   GTask *task = g_task_new(self, self->list_cancel, list_done, NULL);
@@ -390,8 +392,10 @@ gh_account_controller_dispose(GObject *object)
     g_bus_unwatch_name(self->watch_id);
     self->watch_id = 0;
   }
-  g_cancellable_cancel(self->signer_cancel);
-  g_cancellable_cancel(self->list_cancel);
+  if (self->signer_cancel)
+    g_cancellable_cancel(self->signer_cancel);
+  if (self->list_cancel)
+    g_cancellable_cancel(self->list_cancel);
   g_clear_object(&self->list_cancel);
   g_clear_object(&self->bus);
   G_OBJECT_CLASS(gh_account_controller_parent_class)->dispose(object);

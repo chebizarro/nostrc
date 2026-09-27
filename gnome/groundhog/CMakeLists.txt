@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(groundhog VERSION 0.1.0 LANGUAGES C)
+project(groundhog VERSION 0.2.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
@@ -122,7 +122,7 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
   add_dependencies(test-groundhog-account groundhog-test-schemas)
   add_test(NAME groundhog-account COMMAND test-groundhog-account)
   set_tests_properties(groundhog-account PROPERTIES TIMEOUT 30
-    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory")
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
 endif()
 
 set(GROUNDHOG_BINDIR "${CMAKE_INSTALL_FULL_BINDIR}")

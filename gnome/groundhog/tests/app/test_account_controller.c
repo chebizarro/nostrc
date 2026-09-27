@@ -400,6 +400,42 @@ test_stale_listing(void)
   release_controller(controller);
 }
 
+/* The app's shutdown path: dispose while a listing is still in flight. */
+static void
+test_dispose_in_flight(void)
+{
+  FakeStore store = { .hold_next = TRUE };
+  g_autoptr(GSettings) settings = fresh_settings("");
+  g_settings_set_string(settings, "current-npub", npub_one);
+  GhAccountController *controller =
+    gh_account_controller_new_full(settings, NULL, fake_list, &store);
+  g_autoptr(GError) error = NULL;
+  spin_until(store_holding, &store);
+  guint64 generation = gh_account_controller_get_generation(controller);
+  g_autoptr(GCancellable) cancellable =
+    g_object_ref(gh_account_controller_get_cancellable(controller));
+
+  g_object_run_dispose(G_OBJECT(controller));
+  g_assert_true(g_cancellable_is_cancelled(cancellable));
+  g_assert_false(gh_account_controller_is_current(controller, generation));
+  g_assert_null(gh_account_controller_get_cancellable(controller));
+  g_assert_false(gh_account_controller_select(controller, npub_one, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_CLOSED);
+  gh_account_controller_refresh(controller); /* no-op once disposed */
+
+  g_mutex_lock(&store.lock);
+  store.released = TRUE;
+  g_cond_broadcast(&store.cond);
+  g_mutex_unlock(&store.lock);
+  spin_until(listing_settled, controller);
+  /* The late listing is discarded: nothing becomes active after dispose. */
+  g_assert_cmpint(gh_account_controller_get_state(controller), ==,
+                  GH_ACCOUNT_STATE_DISCOVERING);
+  g_assert_null(gh_account_controller_get_active_npub(controller));
+  g_assert_null(gh_account_controller_get_identities(controller));
+  release_controller(controller);
+}
+
 typedef struct {
   GTestDBus *bus;
   GDBusConnection *client;
@@ -557,6 +593,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account/switch-invalidates", test_switch_invalidates);
   g_test_add_func("/groundhog/account/store-states", test_store_states);
   g_test_add_func("/groundhog/account/stale-listing", test_stale_listing);
+  g_test_add_func("/groundhog/account/dispose-in-flight", test_dispose_in_flight);
   g_test_add_func("/groundhog/account/signer-availability", test_signer_availability);
   g_test_add_func("/groundhog/account/signer-activatable", test_signer_activatable);
   g_test_add_func("/groundhog/account/limits", test_limits);
