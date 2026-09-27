@@ -1,5 +1,5 @@
 project('nostr-gtk', 'c',
-  version: '1.0.0',
+  version: '1.0.1',
   license: 'GPL-3.0-or-later',
   meson_version: '>= 1.2.0',
   default_options: [
@@ -86,20 +86,29 @@ nostr_gtk_resources = gnome.compile_resources(
   dependencies: nostr_gtk_blueprint_deps)
 
 # ── Source files ─────────────────────────────────────────────────────
-nostr_gtk_sources = files(
+# Standalone core: compiled without any apps/gnostr include directory.
+nostr_gtk_core_sources = files(
   'src/nostr-gtk-init.c',
-  'src/gnostr-thread-view.c',
   'src/gnostr-composer.c',
-  'src/gnostr-profile-pane.c',
   'src/gnostr-card-visibility-policy.c',
-  'src/nostr-note-card-row.c',
-  'src/gnostr-note-embed.c',
   'src/content_renderer.c',
   'src/note-card-binding-ctx.c',
   'src/note-card-data.c',
   'src/gn-timeline-tabs.c',
   'src/gnostr-timeline-view.c',
 )
+
+# Transitional: widgets that still include apps/gnostr headers and resolve
+# Gnostr app symbols at final link time. Kept in the library for ABI; do not
+# add sources here (see CMakeLists.txt).
+nostr_gtk_gnostr_coupled_sources = files(
+  'src/gnostr-thread-view.c',
+  'src/gnostr-profile-pane.c',
+  'src/nostr-note-card-row.c',
+  'src/gnostr-note-embed.c',
+)
+
+nostr_gtk_sources = nostr_gtk_core_sources + nostr_gtk_gnostr_coupled_sources
 
 # ── Header files (public API) ───────────────────────────────────────
 nostr_gtk_headers = files(
@@ -122,12 +131,8 @@ nostr_gtk_inc = include_directories('include/nostr-gtk-1.0')
 # External: consumers use #include <nostr-gtk-1.0/nostr-gtk.h>
 nostr_gtk_pub_inc = include_directories('include')
 
-# Transitional: app-specific headers not yet moved to nostr-gobject/nostr-gtk
-nostr_gtk_app_inc = include_directories(
-  '../apps/gnostr/src',
-  '../apps/gnostr/src/ui',
-  '../apps/gnostr/src/model',
-  '../apps/gnostr/src/util',
+# Repository library headers used by the implementation.
+nostr_gtk_repo_inc = include_directories(
   '../libnostr/include',
   '../libnostr/generated',
   '../libgo/include',
@@ -136,6 +141,14 @@ nostr_gtk_app_inc = include_directories(
   '../nips/nip19/include',
   '../nips/nip10/include',
   '../nips/nip25/include',
+)
+
+# Transitional: apps/gnostr private headers, visible to the coupled sources only.
+nostr_gtk_app_inc = include_directories(
+  '../apps/gnostr/src',
+  '../apps/gnostr/src/ui',
+  '../apps/gnostr/src/model',
+  '../apps/gnostr/src/util',
 )
 
 # ── Collect all dependencies ─────────────────────────────────────────
@@ -166,9 +179,19 @@ elif host_machine.system() == 'linux'
 endif
 
 # ── Build the library ────────────────────────────────────────────────
+nostr_gtk_gnostr_coupled = static_library('nostr-gtk-gnostr-coupled',
+  nostr_gtk_gnostr_coupled_sources,
+  include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_repo_inc,
+                        nostr_gtk_app_inc],
+  dependencies: nostr_gtk_deps,
+  c_args: nostr_gtk_compile_args,
+  pic: true,
+  install: false)
+
 nostr_gtk_lib = library('nostr-gtk-1.0',
-  nostr_gtk_sources + nostr_gtk_resources,
-  include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_app_inc],
+  nostr_gtk_core_sources + nostr_gtk_resources,
+  include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_repo_inc],
+  link_whole: nostr_gtk_gnostr_coupled,
   dependencies: nostr_gtk_deps,
   c_args: nostr_gtk_compile_args,
   link_args: nostr_gtk_link_args,
@@ -201,6 +224,7 @@ if get_option('introspection')
     nsversion: '1.0',
     symbol_prefix: 'nostr_gtk',
     identifier_prefix: 'NostrGtk',
+    include_directories: [nostr_gtk_repo_inc, nostr_gtk_app_inc],
     includes: ['GLib-2.0', 'GObject-2.0', 'Gio-2.0', 'Gtk-4.0', 'Adw-1', 'GNostr-1.0'],
     extra_args: [
       '--add-include-path=' + nostr_gobject_gir_dir,

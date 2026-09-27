@@ -34,7 +34,13 @@ nostr_gtk_init (void)
    * auto-generated constructor may not be invoked by the linker. */
   g_resources_register (nostr_gtk_get_resource ());
 
-  /* Force GType registration for widgets used in UI templates */
-  g_type_ensure (nostr_gtk_profile_pane_get_type ());
-  g_type_ensure (NOSTR_GTK_TYPE_NOTE_CARD_ROW);
+  /* Force GType registration for the standalone template widgets.
+   * The Gnostr-coupled widgets (profile pane, note card row, thread view,
+   * note embed) are deliberately not referenced here: doing so would pull
+   * their objects, and therefore unresolved Gnostr app symbols, into every
+   * consumer of this static library. Their types still register on first
+   * use, and Gnostr ensures the ones its templates need before parsing. */
+  g_type_ensure (NOSTR_GTK_TYPE_COMPOSER);
+  g_type_ensure (NOSTR_GTK_TYPE_TIMELINE_TABS);
+  g_type_ensure (NOSTR_GTK_TYPE_TIMELINE_VIEW);
 }

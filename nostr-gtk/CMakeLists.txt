@@ -15,7 +15,7 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GTK_MAJOR_VERSION 1)
 set(NOSTR_GTK_MINOR_VERSION 0)
-set(NOSTR_GTK_MICRO_VERSION 0)
+set(NOSTR_GTK_MICRO_VERSION 1)
 declare_component_version(NOSTR_GTK
   ${NOSTR_GTK_MAJOR_VERSION}
   ${NOSTR_GTK_MINOR_VERSION}
@@ -107,19 +107,34 @@ add_custom_command(
   VERBATIM)
 
 # ── Source files ─────────────────────────────────────────────────────
-set(NOSTR_GTK_SOURCES
+# Standalone core: must compile and link without any apps/gnostr header or
+# symbol. nostr_gtk_init() lives here, so a consumer that only uses these
+# widgets can initialise the library without Gnostr.
+set(NOSTR_GTK_CORE_SOURCES
   src/nostr-gtk-init.c
-  src/gnostr-thread-view.c
   src/gnostr-composer.c
-  src/gnostr-profile-pane.c
   src/gnostr-card-visibility-policy.c
-  src/nostr-note-card-row.c
   src/note-card-binding-ctx.c
   src/note-card-data.c
   src/gn-timeline-tabs.c
   src/gnostr-timeline-view.c
-  src/gnostr-note-embed.c
   src/gnostr-nip05.c
+)
+
+# Transitional: these widgets still include apps/gnostr headers and resolve
+# Gnostr app symbols at final link time. They stay in the installed archive
+# to preserve the 1.x ABI, but only Gnostr (which provides those symbols) can
+# currently link them. Do not add sources to this list; decouple them instead.
+set(NOSTR_GTK_GNOSTR_COUPLED_SOURCES
+  src/gnostr-thread-view.c
+  src/gnostr-profile-pane.c
+  src/nostr-note-card-row.c
+  src/gnostr-note-embed.c
+)
+
+set(NOSTR_GTK_SOURCES
+  ${NOSTR_GTK_CORE_SOURCES}
+  ${NOSTR_GTK_GNOSTR_COUPLED_SOURCES}
   ${GRESOURCE_C}
 )
 
@@ -175,9 +190,6 @@ set_target_properties(nostr_gtk PROPERTIES
 )
 apply_versioning(nostr_gtk)
 
-# Project root for resolving app-layer include paths (transitional)
-get_filename_component(_NOSTR_GTK_PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
-
 target_include_directories(nostr_gtk
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -185,11 +197,6 @@ target_include_directories(nostr_gtk
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gtk-1.0
-    # Transitional: app-specific headers not yet moved to nostr-gobject/nostr-gtk
-    ${CMAKE_SOURCE_DIR}/apps/gnostr/src
-    ${CMAKE_SOURCE_DIR}/apps/gnostr/src/ui
-    ${CMAKE_SOURCE_DIR}/apps/gnostr/src/model
-    ${CMAKE_SOURCE_DIR}/apps/gnostr/src/util
     ${CMAKE_SOURCE_DIR}/libnostr/include
     ${CMAKE_SOURCE_DIR}/libgo/include
     # nostrdb headers (required by storage_ndb in profile pane)
@@ -202,6 +209,12 @@ target_include_directories(nostr_gtk
     # Generated config header (from libnostr)
     ${CMAKE_BINARY_DIR}/libnostr/generated
 )
+
+# Transitional: apps/gnostr private headers are visible to the coupled sources
+# only, so the standalone core cannot regress into including them.
+set_source_files_properties(${NOSTR_GTK_GNOSTR_COUPLED_SOURCES}
+  PROPERTIES INCLUDE_DIRECTORIES
+    "${CMAKE_SOURCE_DIR}/apps/gnostr/src;${CMAKE_SOURCE_DIR}/apps/gnostr/src/ui;${CMAKE_SOURCE_DIR}/apps/gnostr/src/model;${CMAKE_SOURCE_DIR}/apps/gnostr/src/util")
 
 # Public dependencies (propagated to consumers)
 target_link_libraries(nostr_gtk
@@ -345,7 +358,7 @@ Version: ${NOSTR_GTK_VERSION}
 Requires: glib-2.0 gobject-2.0 gio-2.0 gtk4 libadwaita-1
 Requires.private: nostr-gobject-1.0
 Libs: -L\${libdir} -lnostr-gtk-1.0
-Cflags: -I\${includedir}/nostr-gtk-1.0
+Cflags: -I\${includedir} -I\${includedir}/nostr-gtk-1.0
 ")
 
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-1.0.pc"
@@ -372,42 +385,57 @@ if(BUILD_TESTING)
     LIBS    gn_content_parser nip19 PkgConfig::GLIB2
   )
 
-  # Widget tests — require headless GTK rendering (Xvfb on Linux, native on macOS)
-  gn_add_gtest_xvfb(test_nostr_gtk_listview_recycle_stress
-    SOURCES tests/test_listview_recycle_stress.c
-    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
-    TIMEOUT 120
+  # Standalone core widget test: links nostr_gtk without any Gnostr app
+  # objects, so it fails to link if the core regresses into app symbols.
+  gn_add_gtest_xvfb(test_nostr_gtk_standalone_core
+    SOURCES tests/test_standalone_core.c
+    LIBS    nostr_gtk PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
   )
 
-  gn_add_gtest_xvfb(test_nostr_gtk_note_card_measure
-    SOURCES tests/test_note_card_measure.c
-    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
-  )
+  # Gnostr-coupled widget tests. They link the real Gnostr app-layer
+  # implementations from gnostr-widget-test-support (apps/gnostr), which is
+  # configured after this directory, so gate on the options that create it.
+  if(BUILD_APPS AND (NOT DEFINED BUILD_GNOSTR_APP OR BUILD_GNOSTR_APP))
+    set(_nostr_gtk_gnostr_test_libs
+      nostr_gtk gnostr-widget-test-support nostr_gobject
+      PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2)
 
-  gn_add_gtest_xvfb(test_nostr_gtk_widget_churn_leaks
-    SOURCES tests/test_widget_churn_leaks.c
-    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
-    TIMEOUT 120
-  )
+    gn_add_gtest_xvfb(test_nostr_gtk_listview_recycle_stress
+      SOURCES tests/test_listview_recycle_stress.c
+      LIBS    ${_nostr_gtk_gnostr_test_libs}
+      TIMEOUT 120
+    )
 
-  gn_add_gtest_xvfb(test_nostr_gtk_bind_latency_budget
-    SOURCES tests/test_bind_latency_budget.c
-    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
-    TIMEOUT 120
-  )
+    gn_add_gtest_xvfb(test_nostr_gtk_note_card_measure
+      SOURCES tests/test_note_card_measure.c
+      LIBS    ${_nostr_gtk_gnostr_test_libs}
+    )
 
-  gn_add_gtest_xvfb(test_nostr_gtk_thread_view_bounded
-    SOURCES tests/test_thread_view_bounded_load.c
-    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
-    TIMEOUT 120
-  )
+    gn_add_gtest_xvfb(test_nostr_gtk_widget_churn_leaks
+      SOURCES tests/test_widget_churn_leaks.c
+      LIBS    ${_nostr_gtk_gnostr_test_libs}
+      TIMEOUT 120
+    )
 
-  set_tests_properties(
-    test_nostr_gtk_listview_recycle_stress
-    test_nostr_gtk_note_card_measure
-    test_nostr_gtk_widget_churn_leaks
-    test_nostr_gtk_bind_latency_budget
-    test_nostr_gtk_thread_view_bounded
-    PROPERTIES
-      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr")
+    gn_add_gtest_xvfb(test_nostr_gtk_bind_latency_budget
+      SOURCES tests/test_bind_latency_budget.c
+      LIBS    ${_nostr_gtk_gnostr_test_libs}
+      TIMEOUT 120
+    )
+
+    gn_add_gtest_xvfb(test_nostr_gtk_thread_view_bounded
+      SOURCES tests/test_thread_view_bounded_load.c
+      LIBS    ${_nostr_gtk_gnostr_test_libs}
+      TIMEOUT 120
+    )
+
+    set_tests_properties(
+      test_nostr_gtk_listview_recycle_stress
+      test_nostr_gtk_note_card_measure
+      test_nostr_gtk_widget_churn_leaks
+      test_nostr_gtk_bind_latency_budget
+      test_nostr_gtk_thread_view_bounded
+      PROPERTIES
+        ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr")
+  endif()
 endif()
