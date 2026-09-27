@@ -35,6 +35,31 @@ target_compile_definitions(groundhog PRIVATE
 target_compile_options(groundhog PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE PkgConfig::GROUNDHOG_DEPS)
 
+# The identity adapter consumes the in-tree NIP-19 and event validators. Keep
+# standalone shell builds working when those parent targets are not present.
+if (TARGET nostr AND TARGET nip19)
+  if (NOT TARGET gnostr-secret)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../seahorse
+                     ${CMAKE_CURRENT_BINARY_DIR}/gnostr-secret)
+  endif()
+  add_library(groundhog-identity STATIC
+    src/identity/gh-identity.c src/identity/gh-signer.c)
+  target_include_directories(groundhog-identity PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/identity)
+  target_link_libraries(groundhog-identity PUBLIC gnostr-secret nip19 nostr)
+  target_compile_options(groundhog-identity PRIVATE -Wall -Wextra -Werror)
+  if (BUILD_TESTING)
+    add_executable(test-groundhog-identity tests/identity/test_identity.c)
+    target_link_libraries(test-groundhog-identity PRIVATE groundhog-identity)
+    target_compile_options(test-groundhog-identity PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-identity COMMAND test-groundhog-identity)
+    set_tests_properties(groundhog-identity PROPERTIES TIMEOUT 20
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
+  endif()
+else()
+  message(STATUS "Groundhog identity adapter unavailable: in-tree nostr and nip19 targets required")
+endif()
+
 set(GROUNDHOG_BINDIR "${CMAKE_INSTALL_FULL_BINDIR}")
 configure_file(${GROUNDHOG_DATA}/org.nostr.Groundhog.desktop.in
                ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop @ONLY)
