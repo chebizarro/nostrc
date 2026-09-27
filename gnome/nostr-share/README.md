@@ -220,7 +220,9 @@ libhanami (Blossom), `nips/nip34`, `nips/nip19`. The dialog needs gtk4 ≥
 missing (`-DNOSTR_SHARE_UI=OFF` forces that).
 
 Tests (no network; relays are libnostr-publish fixture transports and
-the signer is an in-process libnostr key):
+the signer is an in-process libnostr key; `test_share` runs with a private
+`XDG_RUNTIME_DIR` / `XDG_CONFIG_HOME` and a private D-Bus, so a session
+relay or config on the machine running them never leaks in):
 
 - `test_kind` — the kind-mapping table and `--kind` validation
 - `test_event` — URL → `r` extraction, `imeta` / 1063 / 30023 tags, `--to`

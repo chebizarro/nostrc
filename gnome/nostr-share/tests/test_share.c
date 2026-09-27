@@ -20,6 +20,9 @@
 #include <glib/gstdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 /* ---- signer ---- */
 
@@ -176,7 +179,7 @@ can(const gchar *url, gint kind, gchar *event_json)
 static NsConfig *
 config(const gchar *relays, const gchar *servers)
 {
-  NsConfig *cfg = ns_config_load(NULL);   /* NOSTR_SHARE_CONFIG=/nonexistent */
+  NsConfig *cfg = ns_config_load(NULL);   /* isolated XDG_CONFIG_HOME: no file */
   g_assert_nonnull(cfg);
   g_strfreev(cfg->home_relays);
   cfg->home_relays = g_strsplit(relays ? relays : "", ";", -1);
@@ -235,6 +238,56 @@ tmpfile_with(const gchar *name, const void *data, gsize len)
 }
 
 /* ---- tests ---- */
+
+/* nostrc-eqdz: the process runs with a private XDG_RUNTIME_DIR (see
+ * main()), so a session relay the host or lab happens to run is never
+ * picked up; the socket is found only where this test puts one. */
+static gchar *s_private;   /* private XDG_RUNTIME_DIR / XDG_CONFIG_HOME root */
+
+static void
+test_session_socket_detection(void)
+{
+  const gchar *run = g_get_user_runtime_dir();
+  g_assert_true(g_str_has_prefix(run, s_private));
+  g_assert_null(g_getenv("NOSTR_SHARE_SESSION_RELAY_SOCKET"));
+  g_assert_null(ns_session_relay_socket());
+
+  g_autofree gchar *dir = g_build_filename(run, "nostr", NULL);
+  g_autofree gchar *path = g_build_filename(dir, "relay.sock", NULL);
+  g_assert_cmpint(g_mkdir_with_parents(dir, 0700), ==, 0);
+  g_assert_true(g_file_set_contents(path, "", 0, NULL));
+  g_assert_null(ns_session_relay_socket());          /* not a socket */
+  g_assert_cmpint(g_unlink(path), ==, 0);
+
+  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  struct sockaddr_un sa = { 0 };
+  sa.sun_family = AF_UNIX;
+  g_assert_cmpuint(strlen(path), <, sizeof(sa.sun_path));
+  g_strlcpy(sa.sun_path, path, sizeof(sa.sun_path));
+  g_assert_cmpint(bind(fd, (struct sockaddr *)&sa, sizeof(sa)), ==, 0);
+  g_autofree gchar *found = ns_session_relay_socket();
+  g_assert_cmpstr(found, ==, path);
+  close(fd);
+  g_unlink(path);
+  g_rmdir(dir);
+}
+
+static void
+rm_rf(const gchar *path)
+{
+  GDir *d = g_dir_open(path, 0, NULL);
+  if (d != NULL) {
+    const gchar *name;
+    while ((name = g_dir_read_name(d)) != NULL) {
+      g_autofree gchar *child = g_build_filename(path, name, NULL);
+      rm_rf(child);
+    }
+    g_dir_close(d);
+    g_rmdir(path);
+  } else {
+    g_unlink(path);
+  }
+}
 
 static void
 test_url_note_publish(void)
@@ -868,7 +921,7 @@ main(int argc, char **argv)
   GDBusConnection *session = NULL;
   if (np_fake_session_relay_bus_available()) {
     s_bus = g_test_dbus_new(G_TEST_DBUS_NONE);
-    g_test_dbus_up(s_bus);
+    g_test_dbus_up(s_bus);   /* note: unsets XDG_RUNTIME_DIR */
     /* Held for the whole run, like a real process holds its bus: GLib's
      * shared connection is not torn down and rebuilt per share. */
     session = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
@@ -876,8 +929,26 @@ main(int argc, char **argv)
   } else {
     g_setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/ns-test-bus", TRUE);
   }
+  /* Hermetic (nostrc-eqdz): a private XDG_RUNTIME_DIR and XDG_CONFIG_HOME,
+   * set before GLib caches either, so neither a running session relay's
+   * socket ($XDG_RUNTIME_DIR/nostr/relay.sock) nor the user's
+   * nostr-share.conf can leak in, under ctest or run by hand. (Not
+   * G_TEST_OPTION_ISOLATE_DIRS: it also hides XDG_DATA_DIRS, i.e. the MIME
+   * database, and its paths are too long for an AF_UNIX socket.) */
+  s_private = g_dir_make_tmp("ns-share-XXXXXX", NULL);
+  g_assert_nonnull(s_private);
+  g_autofree gchar *priv_run = g_build_filename(s_private, "run", NULL);
+  g_autofree gchar *priv_cfg = g_build_filename(s_private, "config", NULL);
+  g_mkdir_with_parents(priv_run, 0700);
+  g_mkdir_with_parents(priv_cfg, 0700);
+  g_setenv("XDG_RUNTIME_DIR", priv_run, TRUE);
+  g_setenv("XDG_CONFIG_HOME", priv_cfg, TRUE);
+  g_unsetenv("NOSTR_SHARE_SESSION_RELAY_SOCKET");
+  g_unsetenv("NOSTR_SHARE_CONFIG");
   K.sk = nostr_key_generate_private();
   K.pk = nostr_key_get_public(K.sk);
+  g_test_add_func("/nostr-share/share/session-socket-detection",
+                  test_session_socket_detection);
   g_test_add_func("/nostr-share/share/url-note-publish", test_url_note_publish);
   g_test_add_func("/nostr-share/share/nip65-verified", test_nip65_verified);
   g_test_add_func("/nostr-share/share/session-relay-rules", test_session_relay_rules);
@@ -903,5 +974,7 @@ main(int argc, char **argv)
     g_test_dbus_down(s_bus);
     g_object_unref(s_bus);
   }
+  rm_rf(s_private);
+  g_free(s_private);
   return rc;
 }
