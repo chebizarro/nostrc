@@ -17,8 +17,6 @@ typedef struct _Pending Pending;
 struct _GhSigner {
   gint refs;
   GDBusConnection *bus; /* shared session bus, used only to verify the private one */
-  GDBusConnection *private_bus; /* all calls for the selected account */
-  gchar *address;
   gchar *npub;
   gchar *pubkey;
   GPtrArray *pending; /* non-owning; each Pending keeps signer alive */
@@ -28,12 +26,16 @@ struct _Pending {
   GhSigner *signer;
   GTask *task;
   GCancellable *cancel;
-  GDBusConnection *bus; /* account sender at the time this call began */
+  GDBusConnection *bus; /* sender private to this operation */
   GCancellable *caller;
+  GMutex bus_lock; /* caller cancellation may arrive from another thread */
+  gboolean revoked;
   gulong caller_handler;
   guint generation;
   Operation op;
   NostrEvent *request;
+  gchar *input;
+  gchar *peer;
 };
 
 G_DEFINE_QUARK(gh-signer-error-quark, gh_signer_error)
@@ -51,11 +53,7 @@ signer_unref(GhSigner *signer)
   if (!g_atomic_int_dec_and_test(&signer->refs)) return;
   g_assert(signer->pending->len == 0);
   g_ptr_array_unref(signer->pending);
-  if (signer->private_bus && !g_dbus_connection_is_closed(signer->private_bus))
-    g_dbus_connection_close_sync(signer->private_bus, NULL, NULL);
-  g_clear_object(&signer->private_bus);
   g_clear_object(&signer->bus);
-  g_free(signer->address);
   g_free(signer->npub);
   g_free(signer->pubkey);
   g_free(signer);
@@ -74,12 +72,6 @@ gh_signer_new(GDBusConnection *bus, const gchar *selected_npub, GError **error)
   GhSigner *signer = g_new0(GhSigner, 1);
   signer->refs = 1;
   signer->bus = g_object_ref(bus);
-  signer->address = g_dbus_address_get_for_bus_sync(G_BUS_TYPE_SESSION, NULL, error);
-  if (!signer->address) {
-    g_clear_object(&signer->bus);
-    g_free(signer);
-    return NULL;
-  }
   signer->npub = g_strdup(selected_npub);
   signer->pubkey = g_steal_pointer(&pubkey);
   signer->pending = g_ptr_array_new();
@@ -89,11 +81,16 @@ gh_signer_new(GDBusConnection *bus, const gchar *selected_npub, GError **error)
 static void
 cancel_pending(Pending *p)
 {
-  /* GCancellable only abandons the local reply. Closing this account's
-   * private sender makes the service discard all its pending approvals. */
-  if (p->bus && !g_dbus_connection_is_closed(p->bus))
-    g_dbus_connection_close_sync(p->bus, NULL, NULL);
+  /* Cancellation alone abandons only the reply. Closing this operation's
+   * sender also revokes its service-side approval without affecting peers. */
+  g_mutex_lock(&p->bus_lock);
+  p->revoked = TRUE;
+  GDBusConnection *bus = p->bus ? g_object_ref(p->bus) : NULL;
+  g_mutex_unlock(&p->bus_lock);
   g_cancellable_cancel(p->cancel);
+  if (bus && !g_dbus_connection_is_closed(bus))
+    g_dbus_connection_close(bus, NULL, NULL, NULL);
+  g_clear_object(&bus);
 }
 
 void
@@ -119,9 +116,6 @@ gh_signer_select(GhSigner *signer, const gchar *npub, GError **error)
   for (guint i = 0; i < signer->pending->len; i++) {
     cancel_pending(g_ptr_array_index(signer->pending, i));
   }
-  if (signer->private_bus && !g_dbus_connection_is_closed(signer->private_bus))
-    g_dbus_connection_close_sync(signer->private_bus, NULL, NULL);
-  g_clear_object(&signer->private_bus);
   g_free(signer->npub);
   g_free(signer->pubkey);
   signer->npub = g_strdup(npub);
@@ -199,7 +193,10 @@ pending_free(Pending *p)
   g_clear_object(&p->caller);
   g_clear_object(&p->cancel);
   g_clear_object(&p->bus);
+  g_mutex_clear(&p->bus_lock);
   if (p->request) nostr_event_free(p->request);
+  g_free(p->input);
+  g_free(p->peer);
   g_object_unref(p->task);
   signer_unref(p->signer);
   g_free(p);
@@ -269,7 +266,109 @@ call_done(GObject *source, GAsyncResult *result, gpointer data)
     else
       g_task_return_pointer(p->task, g_strdup(value), g_free);
   }
+  if (!g_dbus_connection_is_closed(p->bus))
+    g_dbus_connection_close(p->bus, NULL, NULL, NULL);
   pending_free(p);
+}
+
+static void
+connection_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  Pending *p = data;
+  GhSigner *signer = p->signer;
+  g_autoptr(GError) error = NULL;
+  GDBusConnection *bus = g_dbus_connection_new_for_address_finish(result, &error);
+  if (g_cancellable_is_cancelled(p->cancel) || p->generation != signer->generation) {
+    if (bus) {
+      g_dbus_connection_close(bus, NULL, NULL, NULL);
+      g_object_unref(bus);
+    }
+    g_ptr_array_remove(signer->pending, p);
+    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
+                            "Signer operation cancelled");
+    pending_free(p);
+    return;
+  }
+  if (!bus || g_strcmp0(g_dbus_connection_get_guid(bus),
+                        g_dbus_connection_get_guid(signer->bus)) != 0) {
+    if (bus) {
+      g_dbus_connection_close(bus, NULL, NULL, NULL);
+      g_object_unref(bus);
+    }
+    g_ptr_array_remove(signer->pending, p);
+    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
+                            "Cannot connect to the selected session bus");
+    pending_free(p);
+    return;
+  }
+  g_mutex_lock(&p->bus_lock);
+  if (p->revoked) {
+    g_mutex_unlock(&p->bus_lock);
+    g_dbus_connection_close(bus, NULL, NULL, NULL);
+    g_object_unref(bus);
+    g_ptr_array_remove(signer->pending, p);
+    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
+                            "Signer operation cancelled");
+    pending_free(p);
+    return;
+  }
+  p->bus = bus;
+  g_mutex_unlock(&p->bus_lock);
+  /* The opt-in is per bus connection and lost if the service restarts, so it
+   * precedes every gated call; the service handles one connection's calls in
+   * order. No reply is requested, so a pre-0.5.0 service's UnknownMethod
+   * error is never sent; its failures then all arrive as ApprovalDenied. */
+  g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
+                         "EnableTypedApprovalErrors", NULL, NULL, G_DBUS_CALL_FLAGS_NONE,
+                         -1, NULL, NULL, NULL);
+  g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
+                         p->op == OP_SIGN ? "SignEvent" :
+                         p->op == OP_ENCRYPT ? "NIP44Encrypt" : "NIP44Decrypt",
+                         p->op == OP_SIGN ? g_variant_new("(sss)", p->input, signer->npub, "") :
+                           g_variant_new("(sss)", p->input, p->peer, signer->npub),
+                         G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, SIGNER_CALL_TIMEOUT_MS,
+                         p->cancel, call_done, p);
+}
+
+static void
+address_worker(GTask *task, gpointer source, gpointer task_data, GCancellable *cancel)
+{
+  (void)source; (void)task_data;
+  g_autoptr(GError) error = NULL;
+  gchar *address = g_dbus_address_get_for_bus_sync(G_BUS_TYPE_SESSION, cancel, &error);
+  if (address)
+    g_task_return_pointer(task, address, g_free);
+  else
+    g_task_return_error(task, g_steal_pointer(&error));
+}
+
+static void
+address_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  Pending *p = data;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *address = g_task_propagate_pointer(G_TASK(result), &error);
+  if (g_cancellable_is_cancelled(p->cancel) ||
+      p->generation != p->signer->generation) {
+    g_ptr_array_remove(p->signer->pending, p);
+    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
+                            "Signer operation cancelled");
+    pending_free(p);
+    return;
+  }
+  if (!address) {
+    g_ptr_array_remove(p->signer->pending, p);
+    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
+                            "Cannot resolve the selected session bus");
+    pending_free(p);
+    return;
+  }
+  g_dbus_connection_new_for_address(address,
+    G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
+      G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+    NULL, p->cancel, connection_done, p);
 }
 
 static void
@@ -313,49 +412,20 @@ start_call(GhSigner *signer, Operation op, const gchar *input, const gchar *peer
   p->signer = signer_ref(signer);
   p->task = task;
   p->cancel = g_cancellable_new();
-  if (!signer->private_bus || g_dbus_connection_is_closed(signer->private_bus)) {
-    g_clear_object(&signer->private_bus);
-    g_autoptr(GError) bus_error = NULL;
-    signer->private_bus = g_dbus_connection_new_for_address_sync(
-      signer->address,
-      G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
-        G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
-      NULL, NULL, &bus_error);
-    if (!signer->private_bus ||
-        g_strcmp0(g_dbus_connection_get_guid(signer->private_bus),
-                  g_dbus_connection_get_guid(signer->bus)) != 0) {
-      if (signer->private_bus)
-        g_dbus_connection_close_sync(signer->private_bus, NULL, NULL);
-      g_clear_object(&signer->private_bus);
-      g_task_return_new_error(task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
-                              "Cannot connect to the selected session bus");
-      pending_free(p);
-      return;
-    }
-  }
-  p->bus = g_object_ref(signer->private_bus);
+  g_mutex_init(&p->bus_lock);
   p->caller = cancellable ? g_object_ref(cancellable) : NULL;
-  if (p->caller)
-    p->caller_handler = g_cancellable_connect(p->caller, G_CALLBACK(cancel_from_caller),
-                                               p, NULL);
   p->generation = signer->generation;
   p->op = op;
   p->request = request;
+  p->input = g_strdup(input);
+  p->peer = g_strdup(peer);
   g_ptr_array_add(signer->pending, p);
-  /* The opt-in is per bus connection and lost if the service restarts, so it
-   * precedes every gated call; the service handles one connection's calls in
-   * order. No reply is requested, so a pre-0.5.0 service's UnknownMethod
-   * error is never sent; its failures then all arrive as ApprovalDenied. */
-  g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
-                         "EnableTypedApprovalErrors", NULL, NULL, G_DBUS_CALL_FLAGS_NONE,
-                         -1, NULL, NULL, NULL);
-  g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
-                         op == OP_SIGN ? "SignEvent" :
-                         op == OP_ENCRYPT ? "NIP44Encrypt" : "NIP44Decrypt",
-                         op == OP_SIGN ? g_variant_new("(sss)", input, signer->npub, "") :
-                                         g_variant_new("(sss)", input, peer, signer->npub),
-                         G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, SIGNER_CALL_TIMEOUT_MS,
-                         p->cancel, call_done, p);
+  if (p->caller)
+    p->caller_handler = g_cancellable_connect(p->caller, G_CALLBACK(cancel_from_caller),
+                                               p, NULL);
+  GTask *lookup = g_task_new(NULL, p->cancel, address_done, p);
+  g_task_run_in_thread(lookup, address_worker);
+  g_object_unref(lookup);
 }
 
 void

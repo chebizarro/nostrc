@@ -28,9 +28,10 @@ GQuark gh_signer_error_quark(void);
  * Error.NoApprovalAgent -> NO_APPROVER, Error.IdentityChanged (approved, but
  * the selected npub no longer resolves to the approved key) -> KEY_MISMATCH,
  * Error.ApprovalDenied -> DENIED. A pre-0.5.0 service reports all of these
- * as ApprovalDenied, hence DENIED. Calls for one selected account use a
- * private connection to the same session bus. Cancelling any in-flight call
- * closes that connection, revoking all that account's pending approvals. */
+ * as ApprovalDenied, hence DENIED. Each operation uses its own private
+ * connection to the same session bus. Cancelling an operation closes only
+ * its sender, revoking that approval without cancelling same-account peers.
+ * Address lookup and connection setup run asynchronously. */
 GhSigner *gh_signer_new(GDBusConnection *bus, const gchar *selected_npub,
                         GError **error);
 /* Revokes pending service approvals and cancels their D-Bus calls. The owning

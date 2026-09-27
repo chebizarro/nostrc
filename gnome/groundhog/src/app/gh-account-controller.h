@@ -54,8 +54,8 @@ GPtrArray *gh_account_controller_get_identities(GhAccountController *self);
 /* The generation changes whenever the active account (or its absence)
  * changes. It is revoked before its cancellable is cancelled, so work bound
  * to either sees itself as stale; callbacks must check is_current.
- * Consumers must cancel signer operations through GhSigner: it closes the
- * selected account's private bus connection so pending approvals are revoked. */
+ * Consumers must cancel signer operations through GhSigner: it closes each
+ * operation's private bus sender so pending approvals are revoked. */
 guint64 gh_account_controller_get_generation(GhAccountController *self);
 GCancellable *gh_account_controller_get_cancellable(GhAccountController *self);
 gboolean gh_account_controller_is_current(GhAccountController *self,

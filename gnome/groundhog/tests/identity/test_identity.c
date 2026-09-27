@@ -15,15 +15,16 @@ static GTestDBus *test_bus;
 static GDBusConnection *server, *client;
 static GDBusNodeInfo *node;
 static guint registration;
-static GDBusMethodInvocation *held;
+static GPtrArray *held_calls;
+static GHashTable *typed_senders;
 static gchar *last_sender;
+static const gchar *expected_npub;
 
 typedef enum { MOCK_OK, MOCK_DENIED, MOCK_TIMEOUT, MOCK_DENIED_TIMEOUT_TEXT,
                MOCK_HOLD, MOCK_WRONG_KEY, MOCK_CHANGED_CONTENT,
                MOCK_BAD_CIPHER, MOCK_APPROVAL_TIMEOUT, MOCK_NO_AGENT,
                MOCK_TIMEOUT_DENIED_TEXT, MOCK_IDENTITY_CHANGED } MockMode;
 static MockMode mode;
-static gboolean typed_opt_in; /* EnableTypedApprovalErrors seen since the last gated call */
 
 static gchar *
 npub_from_hex(const gchar *hex)
@@ -49,25 +50,24 @@ method_call(GDBusConnection *connection, const gchar *sender, const gchar *path,
     /* Sent without a reply callback: no reply (hence no stale one) exists. */
     g_assert_true(g_dbus_message_get_flags(g_dbus_method_invocation_get_message(invocation)) &
                   G_DBUS_MESSAGE_FLAGS_NO_REPLY_EXPECTED);
-    typed_opt_in = TRUE;
+    g_hash_table_add(typed_senders, g_strdup(sender));
     g_dbus_method_invocation_return_value(invocation, NULL);
     return;
   }
   /* Every gated call is preceded by the typed-error opt-in on its connection. */
-  g_assert_true(typed_opt_in);
-  typed_opt_in = FALSE;
+  g_assert_true(g_hash_table_remove(typed_senders, sender));
   g_free(last_sender);
   last_sender = g_strdup(sender);
   const gchar *a, *b, *c;
   g_variant_get(parameters, "(&s&s&s)", &a, &b, &c);
   if (g_str_equal(method, "SignEvent")) {
-    g_assert_cmpstr(b, ==, npub_one);
+    g_assert_cmpstr(b, ==, expected_npub);
     g_assert_cmpstr(c, ==, "");
   } else {
     g_assert_true(g_str_equal(method, "NIP44Encrypt") ||
                   g_str_equal(method, "NIP44Decrypt"));
     g_assert_cmpstr(b, ==, pub_two);
-    g_assert_cmpstr(c, ==, npub_one);
+    g_assert_cmpstr(c, ==, expected_npub);
   }
   if (mode == MOCK_DENIED || mode == MOCK_DENIED_TIMEOUT_TEXT) {
     g_dbus_method_invocation_return_dbus_error(invocation,
@@ -98,8 +98,7 @@ method_call(GDBusConnection *connection, const gchar *sender, const gchar *path,
   }
   if (mode == MOCK_HOLD) {
     g_assert_cmpstr(sender, !=, g_dbus_connection_get_unique_name(client));
-    g_assert_null(held);
-    held = g_object_ref(invocation);
+    g_ptr_array_add(held_calls, g_object_ref(invocation));
     return;
   }
   if (g_str_equal(method, "SignEvent")) {
@@ -134,6 +133,9 @@ setup(void)
   npub_two = npub_from_hex(pub_two);
   guint8 payload[99] = { 2 };
   ciphertext = g_base64_encode(payload, sizeof payload);
+  held_calls = g_ptr_array_new_with_free_func(g_object_unref);
+  typed_senders = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  expected_npub = npub_one;
   test_bus = g_test_dbus_new(G_TEST_DBUS_NONE);
   g_test_dbus_up(test_bus);
   GError *error = NULL;
@@ -172,11 +174,14 @@ setup(void)
 static void
 teardown(void)
 {
-  if (held) {
-    g_dbus_method_invocation_return_dbus_error(held, "org.nostr.Signer.Error.ApprovalDenied",
-                                                "test cleanup");
-    g_clear_object(&held);
+  while (held_calls->len) {
+    GDBusMethodInvocation *invocation = g_ptr_array_index(held_calls, 0);
+    g_dbus_method_invocation_return_dbus_error(invocation,
+      "org.nostr.Signer.Error.ApprovalDenied", "test cleanup");
+    g_ptr_array_remove_index(held_calls, 0);
   }
+  g_clear_pointer(&held_calls, g_ptr_array_unref);
+  g_clear_pointer(&typed_senders, g_hash_table_unref);
   g_dbus_connection_unregister_object(server, registration);
   g_clear_object(&client);
   g_clear_object(&server);
@@ -188,7 +193,7 @@ teardown(void)
   g_free(npub_one); g_free(npub_two); g_free(ciphertext);
 }
 
-typedef struct { GMainLoop *loop; gchar *value; GError *error; gboolean sign; } Await;
+typedef struct { GMainLoop *loop; gchar *value; GError *error; gboolean sign; gboolean done; } Await;
 static void
 finished(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -196,7 +201,8 @@ finished(GObject *source, GAsyncResult *result, gpointer data)
   Await *wait = data;
   wait->value = wait->sign ? gh_signer_sign_finish(result, &wait->error) :
                              gh_signer_nip44_finish(result, &wait->error);
-  g_main_loop_quit(wait->loop);
+  wait->done = TRUE;
+  if (wait->loop) g_main_loop_quit(wait->loop);
 }
 
 static gchar *
@@ -262,19 +268,31 @@ static void test_sign_wrong_key(void) { test_sign(MOCK_WRONG_KEY, GH_SIGNER_ERRO
 static void test_sign_changed(void) { test_sign(MOCK_CHANGED_CONTENT, GH_SIGNER_ERROR_INVALID_RESULT); }
 
 static void
+wait_for_held_calls(guint count)
+{
+  while (held_calls->len < count) g_main_context_iteration(NULL, TRUE);
+}
+
+static void
 wait_for_held_call(void)
 {
-  /* Drive the private bus until the mock has the request, then cancel it. */
-  while (!held) g_main_context_iteration(NULL, TRUE);
+  wait_for_held_calls(1);
 }
 
 static void
 release_held_call(void)
 {
-  g_assert_nonnull(held);
-  g_dbus_method_invocation_return_dbus_error(held,
+  g_assert_cmpuint(held_calls->len, >, 0);
+  GDBusMethodInvocation *invocation = g_ptr_array_index(held_calls, 0);
+  g_dbus_method_invocation_return_dbus_error(invocation,
     "org.nostr.Signer.Error.ApprovalDenied", "cancelled request");
-  g_clear_object(&held);
+  g_ptr_array_remove_index(held_calls, 0);
+}
+
+static void
+wait_for_done(Await *wait)
+{
+  while (!wait->done) g_main_context_iteration(NULL, TRUE);
 }
 
 static void
@@ -324,6 +342,98 @@ test_switch_cancels(void)
 }
 
 static void
+test_concurrent_cancel(void)
+{
+  mode = MOCK_HOLD;
+  GhSigner *signer = gh_signer_new(client, npub_one, NULL);
+  g_autoptr(GCancellable) cancel = g_cancellable_new();
+  Await first = { 0 }, second = { 0 };
+  gh_signer_nip44_decrypt_async(signer, ciphertext, pub_two, cancel, finished, &first);
+  wait_for_held_call();
+  gh_signer_nip44_decrypt_async(signer, ciphertext, pub_two, NULL, finished, &second);
+  wait_for_held_calls(2);
+  g_autofree gchar *first_sender = g_strdup(
+    g_dbus_method_invocation_get_sender(g_ptr_array_index(held_calls, 0)));
+  g_autofree gchar *second_sender = g_strdup(
+    g_dbus_method_invocation_get_sender(g_ptr_array_index(held_calls, 1)));
+  g_assert_cmpstr(first_sender, !=, second_sender);
+  g_cancellable_cancel(cancel);
+  wait_for_done(&first);
+  g_assert_error(first.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED);
+  g_assert_null(first.value);
+  g_assert_false(second.done);
+  release_held_call();
+  GDBusMethodInvocation *survivor = g_ptr_array_index(held_calls, 0);
+  g_dbus_method_invocation_return_value(survivor, g_variant_new("(s)", "plaintext"));
+  g_ptr_array_remove_index(held_calls, 0);
+  wait_for_done(&second);
+  g_assert_no_error(second.error);
+  g_assert_cmpstr(second.value, ==, "plaintext");
+  g_clear_error(&first.error);
+  g_free(second.value);
+  gh_signer_free(signer);
+}
+
+static void
+test_concurrent_switch(void)
+{
+  mode = MOCK_HOLD;
+  GhSigner *signer = gh_signer_new(client, npub_one, NULL);
+  Await first = { 0 }, second = { 0 }, after = { 0 };
+  gh_signer_nip44_decrypt_async(signer, ciphertext, pub_two, NULL, finished, &first);
+  wait_for_held_call();
+  gh_signer_nip44_decrypt_async(signer, ciphertext, pub_two, NULL, finished, &second);
+  wait_for_held_calls(2);
+  g_autofree gchar *old_sender = g_strdup(
+    g_dbus_method_invocation_get_sender(g_ptr_array_index(held_calls, 0)));
+  g_assert_true(gh_signer_select(signer, npub_two, NULL));
+  wait_for_done(&first);
+  wait_for_done(&second);
+  g_assert_error(first.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED);
+  g_assert_error(second.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED);
+  g_assert_null(first.value);
+  g_assert_null(second.value);
+  g_clear_error(&first.error);
+  g_clear_error(&second.error);
+  release_held_call();
+  release_held_call();
+  expected_npub = npub_two;
+  mode = MOCK_OK;
+  gh_signer_nip44_encrypt_async(signer, "after switch", pub_two, NULL, finished, &after);
+  wait_for_done(&after);
+  g_assert_no_error(after.error);
+  g_assert_cmpstr(after.value, ==, ciphertext);
+  g_assert_cmpstr(last_sender, !=, old_sender);
+  g_free(after.value);
+  gh_signer_free(signer);
+  expected_npub = npub_one;
+}
+
+static void
+test_switch_during_setup(void)
+{
+  mode = MOCK_OK;
+  g_clear_pointer(&last_sender, g_free);
+  GhSigner *signer = gh_signer_new(client, npub_one, NULL);
+  Await before = { 0 }, after = { 0 };
+  gh_signer_nip44_encrypt_async(signer, "before switch", pub_two, NULL, finished, &before);
+  g_assert_true(gh_signer_select(signer, npub_two, NULL));
+  wait_for_done(&before);
+  g_assert_error(before.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED);
+  g_assert_null(before.value);
+  g_assert_null(last_sender);
+  g_clear_error(&before.error);
+  expected_npub = npub_two;
+  gh_signer_nip44_encrypt_async(signer, "after switch", pub_two, NULL, finished, &after);
+  wait_for_done(&after);
+  g_assert_no_error(after.error);
+  g_assert_cmpstr(after.value, ==, ciphertext);
+  g_free(after.value);
+  gh_signer_free(signer);
+  expected_npub = npub_one;
+}
+
+static void
 test_nip44(void)
 {
   mode = MOCK_OK;
@@ -340,7 +450,7 @@ test_nip44(void)
   g_main_loop_run(wait.loop);
   g_assert_no_error(wait.error);
   g_assert_cmpstr(wait.value, ==, "plaintext");
-  g_assert_cmpstr(last_sender, ==, account_sender);
+  g_assert_cmpstr(last_sender, !=, account_sender);
   g_free(wait.value);
   g_main_loop_unref(wait.loop);
   gh_signer_free(signer);
@@ -418,6 +528,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/signer/identity-changed", test_sign_identity_changed);
   g_test_add_func("/groundhog/signer/cancel", test_cancel);
   g_test_add_func("/groundhog/signer/switch-cancels", test_switch_cancels);
+  g_test_add_func("/groundhog/signer/concurrent-cancel", test_concurrent_cancel);
+  g_test_add_func("/groundhog/signer/concurrent-switch", test_concurrent_switch);
+  g_test_add_func("/groundhog/signer/switch-during-setup", test_switch_during_setup);
   g_test_add_func("/groundhog/signer/key-mismatch", test_sign_wrong_key);
   g_test_add_func("/groundhog/signer/payload-mismatch", test_sign_changed);
   g_test_add_func("/groundhog/signer/nip44", test_nip44);
