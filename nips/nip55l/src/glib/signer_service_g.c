@@ -579,14 +579,26 @@ static void gated_call(NostrSigner *object, GDBusMethodInvocation *invocation, S
     who = origin;
   }
 
-  /* 2. canonical identity */
+  /* 2. canonical identity. The caller's selector is normalised first: it is
+   * never read as key material (a 64-hex is a pubkey, nsec is refused) and
+   * an npub/hex must name a known identity exactly (nostrc-a4w5). */
   g_autofree char *npub_m = NULL;
+  g_autofree char *sel_m = NULL;
   if (op_info[op].has_identity) {
-    char *np = NULL;
-    int rc = nostr_nip55l_resolve_npub(selector, &np);
-    if (rc != 0 || !np) { free(np); return_no_key(invocation, op, rc ? rc : NOSTR_SIGNER_ERROR_NOT_FOUND); return; }
+    char *np = NULL, *ns = NULL;
+    int rc = nostr_nip55l_normalize_selector(selector, &ns, &np);
+    if (rc == NOSTR_SIGNER_ERROR_INVALID_ARG) {
+      free(np); free(ns);
+      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
+        "identity must name a stored identity (npub, hex public key, key_id or label), not a secret key");
+      return;
+    }
+    if (rc != 0 || !np || !ns) { free(np); free(ns); return_no_key(invocation, op, rc ? rc : NOSTR_SIGNER_ERROR_NOT_FOUND); return; }
     npub_m = g_strdup(np);
+    sel_m = g_strdup(ns);
     free(np);
+    if (ns) { memset(ns, 0, strlen(ns)); free(ns); }
+    selector = sel_m;
   }
 
   Call call = { op, (gchar *)(peer_lc ? peer_lc : a), (gchar *)b, (gchar *)selector, invocation };

@@ -981,13 +981,9 @@ static void test_gating(Ctx *ctx) {
     CHECK(grants_has(ctx, "event", key, "allow"));
     g_free(key);
   }
-  /* Three selector shapes for one key: empty (active), the secret itself,
-   * and (libsecret builds, whose lookup falls back to the env key) the npub. */
-#ifdef NIP55L_TEST_HAVE_LIBSECRET
-  const char *selectors[] = { "", ctx->sk_hex, ctx->npub };
-#else
-  const char *selectors[] = { "", ctx->sk_hex };
-#endif
+  /* Three selector shapes for one key: empty (active), its npub and its
+   * hex public key (nostrc-a4w5 maps both onto the active identity). */
+  const char *selectors[] = { "", ctx->npub, ctx->pk_hex };
   for (size_t i = 0; i < G_N_ELEMENTS(selectors); i++) {
     r = no_prompt(ctx, "SignEvent",
                   g_variant_new("(sss)", "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"again\"}",
@@ -1204,6 +1200,58 @@ static void test_bridge_origins(Ctx *ctx) {
     CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
     g_usleep(150 * 1000);
   }
+}
+
+/* nostrc-a4w5: a caller's identity selector is never key material. A bare
+ * 64-hex is a public key - it must name a known identity - and an nsec is
+ * refused; before, any 64-hex was used as the private key, so a pubkey
+ * passed by mistake signed with a key derived from the pubkey bytes. */
+static void test_selector_not_key_material(Ctx *ctx) {
+  const char *tmpl = "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"selector\"}";
+  GError *err = NULL;
+  /* The daemon key's hex pubkey and npub select the daemon key. */
+  const char *mine[] = { ctx->pk_hex, ctx->npub };
+  for (size_t i = 0; i < G_N_ELEMENTS(mine); i++) {
+    GVariant *r = call(ctx->bus, "SignEvent", g_variant_new("(sss)", tmpl, mine[i], "contract-test"), "(s)", &err);
+    if (!r) { g_printerr("SignEvent(own pubkey selector #%zu): %s\n", i, err ? err->message : "?"); exit(1); }
+    const char *js = NULL;
+    g_variant_get(r, "(&s)", &js);
+    assert_signed_event(js, ctx->pk_hex, 1, 0);
+    g_variant_unref(r);
+  }
+  /* Another key's pubkey, another key's secret, and even the daemon's own
+   * secret as hex: none names a known identity, none is used as a key. */
+  char *osk = nostr_key_generate_private();
+  char *opk = nostr_key_get_public(osk);
+  CHECK(osk && opk);
+  const char *not_known[] = { opk, osk, ctx->sk_hex };
+  for (size_t i = 0; i < G_N_ELEMENTS(not_known); i++) {
+    GVariant *r = call(ctx->bus, "SignEvent", g_variant_new("(sss)", tmpl, not_known[i], "contract-test"), "(s)", &err);
+    if (r) {
+      const char *js = NULL; g_variant_get(r, "(&s)", &js);
+      g_printerr("SignEvent with unknown hex selector #%zu signed: %s\n", i, js);
+      exit(1);
+    }
+    expect_remote_error(err, "org.nostr.Signer.Error.NoKeyConfigured");
+    g_clear_error(&err);
+  }
+  /* An unknown npub: not found (the lookup's fallbacks must not sign with
+   * some other key). An nsec: refused as input. */
+  uint8_t b[32];
+  char *onpub = NULL, *onsec = NULL;
+  CHECK(nostr_hex2bin(b, opk, 32) && nostr_nip19_encode_npub(b, &onpub) == 0);
+  CHECK(nostr_hex2bin(b, osk, 32) && nostr_nip19_encode_nsec(b, &onsec) == 0);
+  GVariant *r = call(ctx->bus, "SignEvent", g_variant_new("(sss)", tmpl, onpub, "contract-test"), "(s)", &err);
+  CHECK(r == NULL); expect_remote_error(err, "org.nostr.Signer.Error.NoKeyConfigured"); g_clear_error(&err);
+  r = call(ctx->bus, "SignEvent", g_variant_new("(sss)", tmpl, onsec, "contract-test"), "(s)", &err);
+  CHECK(r == NULL); expect_remote_error(err, ERR_INVALID); g_clear_error(&err);
+  /* Same rule for the other identity-taking methods. */
+  r = call(ctx->bus, "NIP44DeriveConversationKey", g_variant_new("(sss)", opk, osk, "contract-test"), "(s)", &err);
+  CHECK(r == NULL); expect_remote_error(err, "org.nostr.Signer.Error.NoKeyConfigured"); g_clear_error(&err);
+  r = call(ctx->bus, "NIP44Encrypt", g_variant_new("(sss)", "hi", opk, ctx->pk_hex), "(s)", &err);
+  if (!r) { g_printerr("NIP44Encrypt(own hex pubkey selector): %s\n", err ? err->message : "?"); exit(1); }
+  g_variant_unref(r);
+  free(onpub); free(onsec); free(osk); free(opk);
 }
 
 static void test_get_relays_paths(Ctx *ctx, gboolean expect_ok) {
@@ -1658,6 +1706,7 @@ int main(void) {
     test_sign_event_bad_json(&ctx);
     test_nip44_b64_roundtrip(&ctx);
     test_nip44_derive_conversation_key(&ctx);
+    test_selector_not_key_material(&ctx);
     test_get_relays_paths(&ctx, /*expect_ok=*/FALSE);
     test_store_key_denied_without_flag(&ctx);
     ctx_teardown(&ctx);

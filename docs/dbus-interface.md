@@ -74,11 +74,17 @@ the approval UI shows as "calls itself …" — claiming `https://snort.social`
 does not inherit that site's grants. This is the wallet agent's rule
 (`gnome/nostr-wallet-agent/src/nwa-caller.h`).
 
-**Which identity.** A grant is keyed on the npub the identity selector
+**Which identity.** The identity selector a caller passes is never key
+material (nostrc-a4w5): `""` is the active identity; an npub or a bare
+64-hex (read as an x-only *public* key) must name a known identity exactly
+(the active one, or a stored key with that npub), else
+`Error.NoKeyConfigured`; an `nsec` is refused with `Error.InvalidInput`;
+anything else is a `key_id`/label as before. Before 0.4.0 any 64-hex was
+used as the private key, so a pubkey passed by mistake signed with a key
+derived from the pubkey bytes. A grant is keyed on the npub the selector
 resolves to — the key the operation will use — never on the selector
-string. So `""` (active identity), a `key_id`, the npub, or the secret key
-itself all hit the same grant (nostrc-eie5). The selector's meaning for
-choosing a key is unchanged (`""` = active identity; see each method).
+string, so `""`, a `key_id`, the npub and the hex pubkey hit the same grant
+(nostrc-eie5).
 If the active identity changes while a request is pending, approving it
 fails instead of using the new key.
 

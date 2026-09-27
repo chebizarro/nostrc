@@ -377,6 +377,57 @@ int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub){
   return rc;
 }
 
+int nostr_nip55l_normalize_selector(const char *selector, char **out_selector, char **out_npub){
+  if (!out_selector || !out_npub) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_selector = NULL; *out_npub = NULL;
+  if (!selector) selector = "";
+  if (strncmp(selector, "nsec1", 5) == 0) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  /* The npub this selector names, when it names one (canonical encoding). */
+  char *want = NULL;
+  uint8_t pk[32];
+  if (is_hex_64(selector)) {
+    if (!nostr_hex2bin(pk, selector, sizeof pk)) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+    if (nostr_nip19_encode_npub(pk, &want) != 0 || !want) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  } else if (strncmp(selector, "npub1", 5) == 0 || strncmp(selector, "NPUB1", 5) == 0) {
+    if (nostr_nip19_decode_npub(selector, pk) != 0) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+    if (nostr_nip19_encode_npub(pk, &want) != 0 || !want) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  }
+  if (!want) {
+    /* "" or a key_id / label: resolved as before. */
+    char *np = NULL;
+    int rc = nostr_nip55l_resolve_npub(selector, &np);
+    if (rc != 0 || !np) { free(np); return rc ? rc : NOSTR_SIGNER_ERROR_NOT_FOUND; }
+    *out_selector = strdup(selector);
+    if (!*out_selector) { free(np); return NOSTR_SIGNER_ERROR_BACKEND; }
+    *out_npub = np;
+    return 0;
+  }
+  /* The active identity (whatever backend holds it: cache, env, keyring). */
+  char *active = NULL;
+  if (nostr_nip55l_resolve_npub("", &active) == 0 && active && strcmp(active, want) == 0) {
+    free(active);
+    *out_selector = strdup("");
+    if (!*out_selector) { free(want); return NOSTR_SIGNER_ERROR_BACKEND; }
+    *out_npub = want;
+    return 0;
+  }
+  free(active);
+  /* A stored identity whose key is exactly this npub (the lookup's
+   * fallbacks may return another key, which must not be used). */
+  char *np = NULL;
+  int rc = nostr_nip55l_resolve_npub(want, &np);
+  if (rc == 0 && np && strcmp(np, want) == 0) {
+    free(np);
+    *out_selector = strdup(want);
+    if (!*out_selector) { free(want); return NOSTR_SIGNER_ERROR_BACKEND; }
+    *out_npub = want;
+    return 0;
+  }
+  free(np);
+  free(want);
+  return NOSTR_SIGNER_ERROR_NOT_FOUND;
+}
+
 int nostr_nip55l_get_public_key(char **out_npub){
   if(!out_npub) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_npub=NULL;
   /* Fast path: return the cached active npub if StoreKey populated it.

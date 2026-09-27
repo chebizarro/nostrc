@@ -31,6 +31,21 @@ int nostr_nip55l_get_public_key(char **out_npub);
  * itself may be empty, a key_id, an npub or even a secret key. NOT_FOUND /
  * INVALID_KEY when no key matches. Caller frees *out_npub with free(). */
 int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub);
+/* Normalise an identity selector supplied by another process (the D-Bus
+ * daemon's callers, nostrc-a4w5). The in-process resolver also accepts a
+ * raw secret (64-hex or nsec) as a selector; a caller over the bus must not
+ * be able to do that - a hex *pubkey* passed by mistake would be used as a
+ * private key. This never interprets its input as key material:
+ *   NULL / ""   -> "" (the active identity)
+ *   nsec1...    -> NOSTR_SIGNER_ERROR_INVALID_ARG
+ *   64-hex      -> an x-only public key, i.e. the same as its npub
+ *   npub1...    -> must name a known identity: the active one (-> "") or a
+ *                  stored one whose key has exactly this npub; else
+ *                  NOSTR_SIGNER_ERROR_NOT_FOUND
+ *   otherwise   -> a key_id / label, resolved as before
+ * On success *out_selector is the selector to pass to the other calls and
+ * *out_npub the npub it resolves to; free both with free(). */
+int nostr_nip55l_normalize_selector(const char *selector, char **out_selector, char **out_npub);
 /* Returns only the 128-hex Schnorr signature. In-process helper; the D-Bus
  * SignEvent method no longer returns this shape (see sign_event_json). */
 int nostr_nip55l_sign_event(const char *event_json,
