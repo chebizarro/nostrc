@@ -2149,6 +2149,113 @@ gn_nip29_group_service_create_group_finish(GnNip29GroupService *self,
   return g_task_propagate_boolean(G_TASK(result), error);
 }
 
+/* ---- nostrc-prjb: admin pin list (kind:9010 update-pin-list) ----
+ * The event carries the full ordered list; the relay rewrites kind:39005
+ * from it. Sent to the group relay and confirmed by its OK, then the group
+ * is refreshed so the new pins show. */
+
+typedef struct
+{
+  gchar  *group_key;
+  gchar  *relay_url;
+  gchar **refs;
+} PinsData;
+
+static void
+pins_data_free(PinsData *data)
+{
+  g_free(data->group_key);
+  g_free(data->relay_url);
+  g_strfreev(data->refs);
+  g_free(data);
+}
+
+static void
+on_pins_acked(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnNip29GroupService *self = GN_NIP29_GROUP_SERVICE(g_task_get_source_object(task));
+  PinsData *data = g_task_get_task_data(task);
+  GError *error = NULL;
+  if (!gnostr_plugin_context_publish_event_to_relay_ack_finish(self->context, result, &error))
+    {
+      g_task_return_error(task, error);
+      g_object_unref(task);
+      return;
+    }
+  GroupState *state = g_hash_table_lookup(self->groups, data->group_key);
+  if (state != NULL)
+    group_state_refresh(state, self);
+  g_task_return_boolean(task, TRUE);
+  g_object_unref(task);
+}
+
+static void
+on_pins_signed(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GnNip29GroupService *self = GN_NIP29_GROUP_SERVICE(g_task_get_source_object(task));
+  PinsData *data = g_task_get_task_data(task);
+  GError *error = NULL;
+  g_autofree gchar *signed_json =
+    gnostr_plugin_context_request_sign_event_finish(self->context, result, &error);
+  if (signed_json == NULL)
+    {
+      g_task_return_error(task, error ? error
+                          : g_error_new_literal(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                                "Failed to sign the pin list"));
+      g_object_unref(task);
+      return;
+    }
+  gnostr_plugin_context_publish_event_to_relay_ack_async(self->context, signed_json,
+                                                         data->relay_url,
+                                                         g_task_get_cancellable(task),
+                                                         on_pins_acked, task);
+}
+
+void
+gn_nip29_group_service_set_pins_async(GnNip29GroupService *self,
+                                      const char          *group_key,
+                                      const char * const  *refs,
+                                      GCancellable        *cancellable,
+                                      GAsyncReadyCallback  callback,
+                                      gpointer             user_data)
+{
+  g_return_if_fail(GN_IS_NIP29_GROUP_SERVICE(self));
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gn_nip29_group_service_set_pins_async);
+  GroupState *state = group_key ? g_hash_table_lookup(self->groups, group_key) : NULL;
+  if (state == NULL || self->context == NULL || self->shutting_down)
+    {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                              "NIP-29 group is not tracked");
+      g_object_unref(task);
+      return;
+    }
+  PinsData *data = g_new0(PinsData, 1);
+  data->group_key = g_strdup(group_key);
+  data->relay_url = g_strdup(state->relay_url);
+  data->refs = g_strdupv((gchar **)refs);
+  g_task_set_task_data(task, data, (GDestroyNotify)pins_data_free);
+
+  g_autofree gchar *unsigned_json =
+    gn_nip29_build_update_pin_list_json(state->group_id, (const char * const *)data->refs,
+                                        (gint64)(g_get_real_time() / G_USEC_PER_SEC));
+  gnostr_plugin_context_request_sign_event(self->context, unsigned_json, cancellable,
+                                           on_pins_signed, task);
+}
+
+gboolean
+gn_nip29_group_service_set_pins_finish(GnNip29GroupService *self,
+                                       GAsyncResult        *result,
+                                       GError             **error)
+{
+  g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
+}
+
 static void
 start_group_key_action(GnNip29GroupService *self,
                        const char          *group_key,

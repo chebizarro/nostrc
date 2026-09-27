@@ -118,6 +118,19 @@ GnNip29RelocationState gn_nip29_group_service_get_relocation(GnNip29GroupService
                                                              const char         **out_relay_url,
                                                              guint               *out_n_authors);
 
+/* nostrc-prjb: replace the group's pinned list (kind:9010, the full ordered
+ * list: 64-hex event ids and "<kind>:<pubkey>:<d>" addresses). Admins only;
+ * completes on the group relay's OK, then refreshes the group. */
+void     gn_nip29_group_service_set_pins_async (GnNip29GroupService *self,
+                                                const char          *group_key,
+                                                const char * const  *refs,
+                                                GCancellable        *cancellable,
+                                                GAsyncReadyCallback  callback,
+                                                gpointer             user_data);
+gboolean gn_nip29_group_service_set_pins_finish(GnNip29GroupService *self,
+                                                GAsyncResult        *result,
+                                                GError             **error);
+
 /* ── UI-facing accessors (borrowed pointers, valid until next signal) ── */
 
 GList              *gn_nip29_group_service_list_group_keys    (GnNip29GroupService *self);
