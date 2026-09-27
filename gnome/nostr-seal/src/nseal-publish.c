@@ -215,8 +215,12 @@ gboolean nseal_publish_file(const char *path, const NsealPublishOptions *opts, G
     g_printerr("uploading %" G_GSIZE_FORMAT " bytes (approve the Blossom auth in your signer)…\n",
                len);
     g_autofree char *server = NULL;
-    if (!ns_blossom_upload((const char *const *)servers, signer, pubkey_hex, NSEAL_MIME_TYPE,
-                           bytes, sha, &url, &server, error))
+    /* Account-signed BUD-02 auth; sealed blobs are already ciphertext so a
+     * throwaway key buys nothing here.  Plaintext http:// Blossom servers
+     * (even loopback) are refused: the URL ends up in a public kind-1063. */
+    if (!ns_blossom_upload((const char *const *)servers, signer, pubkey_hex,
+                           NS_BLOSSOM_AUTH_ACCOUNT, FALSE, NSEAL_MIME_TYPE,
+                           bytes, sha, &url, &server, NULL, error))
       goto out;
     g_printerr("uploaded → %s\n", url);
 
