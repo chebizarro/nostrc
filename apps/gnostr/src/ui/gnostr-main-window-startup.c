@@ -234,7 +234,9 @@ gnostr_main_window_run_startup_bootstrap_internal(GnostrMainWindow *self,
   gnostr_profile_provider_init(0);
   gnostr_profile_provider_set_follow_list_provider(gnostr_follow_list_get_pubkeys_cached);
   gnostr_profile_service_set_relay_provider(gnostr_load_relays_into);
-  gnostr_nwc_service_load_from_settings(gnostr_nwc_service_get_default());
+  /* nostrc-prqu.13: talk to the wallet agent; migrates a legacy plaintext
+   * nwc-connection-uri into it. */
+  gnostr_nwc_service_start(gnostr_nwc_service_get_default());
 
   g_timeout_add_seconds(60, profile_provider_log_stats_cb_local, NULL);
   g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, 60, memory_stats_cb_local, g_object_ref(self), g_object_unref);

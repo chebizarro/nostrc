@@ -9,6 +9,7 @@
  */
 
 #include "gnostr-main-window-private.h"
+#include <glib/gi18n.h>
 #include <nostr-gobject-1.0/gnostr-relays.h>
 #include <nostr-gobject-1.0/nostr_pool.h>
 #include <nostr-gobject-1.0/gnostr-sync-service.h>
@@ -1274,34 +1275,25 @@ static void on_nwc_connect_clicked_settings(GtkButton *btn, gpointer user_data) 
   gtk_window_present(GTK_WINDOW(dialog));
 }
 
+static void wallet_panel_refresh(SettingsDialogCtx *ctx);
+
 static void on_nwc_disconnect_clicked_settings(GtkButton *btn, gpointer user_data) {
   (void)btn;
   SettingsDialogCtx *ctx = (SettingsDialogCtx *)user_data;
-  GnostrNwcService *nwc = gnostr_nwc_service_get_default();
-  gnostr_nwc_service_disconnect(nwc);
-  gnostr_nwc_service_save_to_settings(nwc);
-
-  /* Update UI to disconnected state */
-  GtkBuilder *b = ctx->builder;
-  GtkLabel *lbl_status = GTK_LABEL(gtk_builder_get_object(b, "lbl_nwc_status"));
-  if (lbl_status) gtk_label_set_text(lbl_status, "Not connected");
-
-  GtkWidget *balance_row = GTK_WIDGET(gtk_builder_get_object(b, "nwc_balance_row"));
-  GtkWidget *wallet_row = GTK_WIDGET(gtk_builder_get_object(b, "nwc_wallet_row"));
-  GtkWidget *relay_row = GTK_WIDGET(gtk_builder_get_object(b, "nwc_relay_row"));
-  GtkWidget *btn_disconnect = GTK_WIDGET(gtk_builder_get_object(b, "btn_nwc_disconnect"));
-  GtkWidget *btn_connect = GTK_WIDGET(gtk_builder_get_object(b, "btn_nwc_connect"));
-
-  if (balance_row) gtk_widget_set_visible(balance_row, FALSE);
-  if (wallet_row) gtk_widget_set_visible(wallet_row, FALSE);
-  if (relay_row) gtk_widget_set_visible(relay_row, FALSE);
-  if (btn_disconnect) gtk_widget_set_visible(btn_disconnect, FALSE);
-  if (btn_connect) gtk_widget_set_visible(btn_connect, TRUE);
+  /* nostrc-prqu.13: the wallet agent asks the user to confirm; the panel
+   * follows its Paired property through ::state-changed. */
+  gnostr_nwc_service_disconnect(gnostr_nwc_service_get_default());
+  GtkLabel *lbl_status = GTK_LABEL(gtk_builder_get_object(ctx->builder, "lbl_nwc_status"));
+  if (lbl_status)
+    gtk_label_set_text(lbl_status, _("Confirm in Nostr Wallet…"));
 }
 
-static void settings_dialog_setup_wallet_panel(SettingsDialogCtx *ctx) {
-  if (!ctx || !ctx->builder) return;
+static void on_nwc_state_changed_settings(GnostrNwcService *nwc, gint state, gpointer user_data) {
+  (void)nwc; (void)state;
+  wallet_panel_refresh((SettingsDialogCtx *)user_data);
+}
 
+static void wallet_panel_refresh(SettingsDialogCtx *ctx) {
   GtkBuilder *b = ctx->builder;
   GnostrNwcService *nwc = gnostr_nwc_service_get_default();
   gboolean connected = gnostr_nwc_service_is_connected(nwc);
@@ -1309,10 +1301,19 @@ static void settings_dialog_setup_wallet_panel(SettingsDialogCtx *ctx) {
   /* Status label */
   GtkLabel *lbl_status = GTK_LABEL(gtk_builder_get_object(b, "lbl_nwc_status"));
   if (lbl_status) {
-    gtk_label_set_text(lbl_status, connected ? "Connected" : "Not connected");
+    GnostrNwcState st = gnostr_nwc_service_get_state(nwc);
+    const char *err = gnostr_nwc_service_get_last_error(nwc);
+    gtk_label_set_text(lbl_status,
+                       connected ? _("Connected")
+                       : st == GNOSTR_NWC_STATE_CONNECTING ? _("Confirm in Nostr Wallet…")
+                       : st == GNOSTR_NWC_STATE_ERROR && err ? err
+                       : _("Not connected"));
     if (connected) {
       gtk_widget_remove_css_class(GTK_WIDGET(lbl_status), "dim-label");
       gtk_widget_add_css_class(GTK_WIDGET(lbl_status), "success");
+    } else {
+      gtk_widget_remove_css_class(GTK_WIDGET(lbl_status), "success");
+      gtk_widget_add_css_class(GTK_WIDGET(lbl_status), "dim-label");
     }
   }
 
@@ -1347,6 +1348,16 @@ static void settings_dialog_setup_wallet_panel(SettingsDialogCtx *ctx) {
       gtk_label_set_text(lbl_relay, relay ? relay : "Not specified");
     }
   }
+}
+
+static void settings_dialog_setup_wallet_panel(SettingsDialogCtx *ctx) {
+  if (!ctx || !ctx->builder) return;
+
+  GtkBuilder *b = ctx->builder;
+  wallet_panel_refresh(ctx);
+  /* Disconnected in on_settings_dialog_destroy. */
+  g_signal_connect(gnostr_nwc_service_get_default(), "state-changed",
+                   G_CALLBACK(on_nwc_state_changed_settings), ctx);
 
   /* Connect button handlers */
   GtkButton *btn_connect = GTK_BUTTON(gtk_builder_get_object(b, "btn_nwc_connect"));
@@ -1627,6 +1638,7 @@ static void settings_dialog_setup_mute_panel(SettingsDialogCtx *ctx) {
 static void on_settings_dialog_destroy(GtkWidget *widget, gpointer user_data) {
   (void)widget;
   SettingsDialogCtx *ctx = (SettingsDialogCtx*)user_data;
+  g_signal_handlers_disconnect_by_data(gnostr_nwc_service_get_default(), ctx);
   settings_dialog_ctx_free(ctx);
 }
 

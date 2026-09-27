@@ -49,6 +49,17 @@ and the sign-in page explains which case applies:
 GNostr does not fall back to a local key. NIP-46 sessions do not depend on
 `org.nostr.Signer` and are not affected.
 
+## Lightning wallet (zaps)
+
+Zaps and the wallet settings use the desktop wallet agent,
+`org.nostr.Wallet1` (`gnome/nostr-wallet-agent`, nostrc-prqu.13): pairing a
+`nostr+walletconnect://` URI, balance, payments and invoices are D-Bus calls,
+and the agent keeps the pairing secret in the keyring and asks before paying
+beyond GNostr's budget. GNostr stores no wallet secret. A URI that an older
+GNostr saved in plaintext GSettings (`nwc-connection-uri`) is handed to the
+agent's `Pair` (you confirm it there) on the next start, and the key is then
+reset; it stays only while the agent cannot be reached.
+
 ## Migrating from GNostr releases that stored keys
 
 Older GNostr releases kept nsec in the client's own keystore:

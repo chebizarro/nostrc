@@ -897,6 +897,25 @@ if (BUILD_TESTING)
     LABELS "signer;nip55l;dbus;unit;gnostr"
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
 
+  # Zap/wallet NWC service as an org.nostr.Wallet1 client + legacy GSettings
+  # URI migration (nostrc-prqu.13). Headless: fake agent on GTestDBus.
+  add_executable(gnostr-test-nwc-wallet-agent
+    tests/test_nwc_wallet_agent.c
+    src/util/nwc.c)
+  target_compile_features(gnostr-test-nwc-wallet-agent PRIVATE c_std_11)
+  target_include_directories(gnostr-test-nwc-wallet-agent PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nips/nip47/include
+    ${PROJECT_ROOT}/libnostr/include)
+  target_link_libraries(gnostr-test-nwc-wallet-agent PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO nostr_nip47_core nostr)
+  _gnostr_apply_sanitizers(gnostr-test-nwc-wallet-agent)
+  add_test(NAME gnostr-test-nwc-wallet-agent COMMAND gnostr-test-nwc-wallet-agent)
+  set_tests_properties(gnostr-test-nwc-wallet-agent PROPERTIES
+    TIMEOUT 60
+    LABELS "nwc;wallet;dbus;unit;gnostr"
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
+
   # nostr: link routing + org.nostr.Handler1 (nostrc-prqu.3). Headless:
   # private GTestDBus bus; checks X-Nostr-Kinds= against the routing table.
   add_executable(gnostr-test-nostr-target

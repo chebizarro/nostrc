@@ -1,8 +1,9 @@
 /**
  * gnostr NWC (Nostr Wallet Connect) Service
  *
- * NIP-47 implementation for the gnostr GTK app.
- * Provides wallet connection management, balance queries, and payment operations.
+ * Client of the desktop wallet agent, org.nostr.Wallet1 (nostrc-prqu.13):
+ * pairing, balance, payments and invoices go over D-Bus; GNostr never holds
+ * the wallet secret. See nwc.c.
  */
 
 #ifndef GNOSTR_NWC_H
@@ -50,14 +51,27 @@ GQuark gnostr_nwc_error_quark(void);
 GnostrNwcService *gnostr_nwc_service_get_default(void);
 
 /**
+ * gnostr_nwc_service_start:
+ * @self: the NWC service
+ *
+ * Connect to the wallet agent (D-Bus activating it) and move a connection
+ * URI that older GNostr versions stored in plaintext GSettings
+ * (nwc-connection-uri) into it with Pair(); the key is reset afterwards.
+ * Call once at startup.
+ */
+void gnostr_nwc_service_start(GnostrNwcService *self);
+
+/**
  * gnostr_nwc_service_connect:
  * @self: the NWC service
  * @connection_uri: nostr+walletconnect:// URI string
  * @error: (out) (optional): return location for error
  *
- * Parse and store a NWC connection URI. Does not establish relay connection.
+ * Validate @connection_uri and hand it to the wallet agent's Pair(), which
+ * asks the user to confirm. Returns at once with the state CONNECTING;
+ * watch ::state-changed for CONNECTED or ERROR (see get_last_error()).
  *
- * Returns: %TRUE on success, %FALSE on error
+ * Returns: %TRUE if the pairing request was started, %FALSE on an invalid URI
  */
 gboolean gnostr_nwc_service_connect(GnostrNwcService *self,
                                     const gchar *connection_uri,
@@ -67,9 +81,17 @@ gboolean gnostr_nwc_service_connect(GnostrNwcService *self,
  * gnostr_nwc_service_disconnect:
  * @self: the NWC service
  *
- * Disconnect from the wallet and clear stored connection.
+ * Ask the wallet agent to forget the pairing (it asks the user to confirm).
  */
 void gnostr_nwc_service_disconnect(GnostrNwcService *self);
+
+/**
+ * gnostr_nwc_service_get_last_error:
+ * @self: the NWC service
+ *
+ * Returns: (nullable) (transfer none): why the state is ERROR, if it is
+ */
+const gchar *gnostr_nwc_service_get_last_error(GnostrNwcService *self);
 
 /**
  * gnostr_nwc_service_get_state:
@@ -222,24 +244,6 @@ gboolean gnostr_nwc_service_make_invoice_finish(GnostrNwcService *self,
                                                 gchar **bolt11,
                                                 gchar **payment_hash,
                                                 GError **error);
-
-/**
- * gnostr_nwc_service_save_to_settings:
- * @self: the NWC service
- *
- * Save the current connection to GSettings for persistence.
- */
-void gnostr_nwc_service_save_to_settings(GnostrNwcService *self);
-
-/**
- * gnostr_nwc_service_load_from_settings:
- * @self: the NWC service
- *
- * Load a saved connection from GSettings.
- *
- * Returns: %TRUE if a connection was loaded
- */
-gboolean gnostr_nwc_service_load_from_settings(GnostrNwcService *self);
 
 /**
  * gnostr_nwc_format_balance:
