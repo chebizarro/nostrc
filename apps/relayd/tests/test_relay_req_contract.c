@@ -18,6 +18,7 @@
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include "nostr-json.h"
+#include "nostr-keys.h"
 #include "nostr-relay-server.h"
 #include "nostr-storage.h"
 #include "relayd_config.h"
@@ -37,6 +38,8 @@ static struct {
   int frees;
   size_t last_nfilters;
   int last_kinds[4]; /* first kind of each filter the store was handed */
+  char last_author[65]; /* first author of the first filter */
+  int puts;
 } g_fake;
 
 typedef struct { int remaining; } FakeIter;
@@ -57,6 +60,10 @@ static void *fake_query(NostrStorage *st, const NostrFilter *filters,
     g_fake.last_kinds[i] = nostr_filter_kinds_len(&filters[i])
                                ? nostr_filter_kinds_get(&filters[i], 0)
                                : -1;
+  g_fake.last_author[0] = '\0';
+  if (nfilters > 0 && nostr_filter_authors_len(&filters[0]) > 0)
+    snprintf(g_fake.last_author, sizeof g_fake.last_author, "%s",
+             nostr_filter_authors_get(&filters[0], 0));
   *err = 0;
   switch (g_fake.mode) {
     case FAKE_NULL_OK: return NULL;
@@ -88,7 +95,14 @@ static void fake_query_free(NostrStorage *st, void *it) {
   free(it);
 }
 
+static int fake_put_event(NostrStorage *st, const NostrEvent *ev) {
+  (void)st; (void)ev;
+  g_fake.puts++;
+  return 0;
+}
+
 static NostrStorageVTable g_fake_vt = {
+  .put_event = fake_put_event,
   .query = fake_query,
   .query_next = fake_query_next,
   .query_free = fake_query_free,
@@ -262,10 +276,46 @@ static void run_with_storage(const char *dir) {
     /* Nothing else is pending: a fresh REQ's EOSE is the very next frame. */
     expect_reply(fd, "[\"REQ\",\"t\",{\"kinds\":[1]}]", "[\"EOSE\",\"t\"]",
                  "no duplicate EOSE after replacement");
+
+    /* Replaceable EVENT: the stale-version check hands the store one real
+     * filter (kind + author) -- it used to pass an array of pointers
+     * reinterpreted as a filter array. An older stored version (the fake
+     * yields created_at 1700000000) does not block the new one. */
+    g_fake.mode = FAKE_ONE_EVENT;
+    char *sk = nostr_key_generate_private();
+    char *pk = sk ? nostr_key_get_public(sk) : NULL;
+    NostrEvent *ev = nostr_event_new();
+    CHECK(sk && pk && ev, "key/event setup");
+    if (sk && pk && ev) {
+      nostr_event_set_pubkey(ev, pk);
+      nostr_event_set_kind(ev, 0);
+      nostr_event_set_created_at(ev, (int64_t)time(NULL));
+      nostr_event_set_content(ev, "{}");
+      CHECK(nostr_event_sign(ev, sk) == 0, "sign");
+      char *ej = nostr_event_serialize(ev);
+      char *id = nostr_event_get_id(ev);
+      char frame[2048], prefix[128];
+      snprintf(frame, sizeof frame, "[\"EVENT\",%s]", ej);
+      snprintf(prefix, sizeof prefix, "[\"OK\",\"%s\",true", id);
+      int q0 = g_fake.queries;
+      expect_reply(fd, frame, prefix, "replaceable EVENT -> OK true");
+      CHECK(g_fake.queries == q0 + 1, "stale check did not query the store");
+      CHECK(g_fake.last_nfilters == 1 && g_fake.last_kinds[0] == 0,
+            "stale check filter: n=%zu kind=%d", g_fake.last_nfilters,
+            g_fake.last_kinds[0]);
+      CHECK(strcmp(g_fake.last_author, pk) == 0, "stale check author: %s",
+            g_fake.last_author);
+      CHECK(g_fake.puts == 1, "event not stored (%d puts)", g_fake.puts);
+      free(ej);
+      free(id);
+    }
+    nostr_event_free(ev);
+    free(pk);
+    free(sk);
     close(fd);
   }
   server_stop(&s);
-  CHECK(g_fake.frees == 8, "iterators freed %d, want 8 (a d m p q r r t)",
+  CHECK(g_fake.frees == 9, "iterators freed %d, want 9 (a d m p q r r t + stale check)",
         g_fake.frees);
 }
 

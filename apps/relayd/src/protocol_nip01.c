@@ -467,17 +467,20 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
                 nostr_filter_tags_append(ff, "d", dval, NULL);
               }
             }
-            NostrFilter *farr[1] = { ff };
-            int err = 0; void *it = st->vt->query(st, (const NostrFilter*)farr, 1, 1, 0, 0, &err);
+            /* vt->query takes an array of NostrFilter structs: pass the
+             * one filter itself (not an array of pointers to it). */
+            int err = 0; void *it = st->vt->query(st, ff, 1, 1, 0, 0, &err);
             if (it) {
-              NostrEvent prev = {0}; size_t n1 = 1;
-              if (st->vt->query_next && st->vt->query_next(st, it, &prev, &n1) == 0 && n1 > 0) {
-                if (nostr_event_get_created_at(&prev) >=
+              NostrEvent *prev = nostr_event_new(); size_t n1 = 1;
+              if (prev && st->vt->query_next &&
+                  st->vt->query_next(st, it, prev, &n1) == 0 && n1 > 0) {
+                if (nostr_event_get_created_at(prev) >=
                     nostr_event_get_created_at(ev))
                   replacement_is_stale = 1;
                 else
-                  old_replaceable_id = nostr_event_get_id(&prev);
+                  old_replaceable_id = nostr_event_get_id(prev);
               }
+              nostr_event_free(prev); /* query_next deserializes into it */
               if (st->vt->query_free) st->vt->query_free(st, it);
             }
             nostr_filter_free(ff);
