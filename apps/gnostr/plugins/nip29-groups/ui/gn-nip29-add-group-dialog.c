@@ -4,6 +4,8 @@
 
 #include "gn-nip29-add-group-dialog.h"
 
+#include <string.h>
+
 struct _GnNip29AddGroupDialog
 {
   AdwDialog parent_instance;
@@ -18,6 +20,7 @@ struct _GnNip29AddGroupDialog
   GtkEntry       *alias_entry;
   GtkEntry       *about_entry;
   GtkEntry       *picture_entry;
+  GtkEntry       *banner_entry;
   GtkCheckButton *private_check;
   GtkCheckButton *restricted_check;
   GtkCheckButton *hidden_check;
@@ -29,14 +32,26 @@ struct _GnNip29AddGroupDialog
 
 G_DEFINE_TYPE(GnNip29AddGroupDialog, gn_nip29_add_group_dialog, ADW_TYPE_DIALOG)
 
+/* A pasted naddr1… / nostr:naddr1… / relay'id (each optionally with the
+ * NIP-29 "?invite=<code>" suffix) carries its own relay. */
+static gboolean
+is_group_reference(const char *text)
+{
+  return text != NULL &&
+         (g_str_has_prefix(text, "naddr1") ||
+          g_str_has_prefix(text, "nostr:naddr1") ||
+          strchr(text, '\'') != NULL);
+}
+
 static void
 update_add_sensitivity(GnNip29AddGroupDialog *self)
 {
   const char *relay = gtk_editable_get_text(GTK_EDITABLE(self->relay_entry));
   const char *gid = gtk_editable_get_text(GTK_EDITABLE(self->group_id_entry));
 
-  gboolean ok = !self->submitting &&
-                relay != NULL && relay[0] != '\0' &&
+  gboolean has_relay = (relay != NULL && relay[0] != '\0') ||
+                       (!self->create_mode && is_group_reference(gid));
+  gboolean ok = !self->submitting && has_relay &&
                 gid != NULL && gid[0] != '\0';
   gtk_widget_set_sensitive(GTK_WIDGET(self->add_button), ok);
 }
@@ -124,6 +139,7 @@ on_add_clicked(GtkButton *button, gpointer user_data)
         alias,
         entry_text_or_null(self->about_entry),
         entry_text_or_null(self->picture_entry),
+        entry_text_or_null(self->banner_entry),
         gtk_check_button_get_active(self->private_check),
         gtk_check_button_get_active(self->restricted_check),
         gtk_check_button_get_active(self->hidden_check),
@@ -135,9 +151,13 @@ on_add_clicked(GtkButton *button, gpointer user_data)
     }
 
   g_autoptr(GError) error = NULL;
-  gboolean ok = gn_nip29_group_service_track_group(self->service,
-                                                   relay, gid, alias,
-                                                   &error);
+  gboolean ok = is_group_reference(gid)
+                  ? gn_nip29_group_service_track_group_reference(self->service,
+                                                                 gid, alias,
+                                                                 &error)
+                  : gn_nip29_group_service_track_group(self->service,
+                                                       relay, gid, alias,
+                                                       &error);
   if (ok)
     {
       adw_dialog_close(ADW_DIALOG(self));
@@ -222,6 +242,11 @@ gn_nip29_add_group_dialog_init(GnNip29AddGroupDialog *self)
   gtk_box_append(GTK_BOX(self->metadata_section), label_new_heading("Picture"));
   gtk_box_append(GTK_BOX(self->metadata_section), GTK_WIDGET(self->picture_entry));
 
+  self->banner_entry = GTK_ENTRY(gtk_entry_new());
+  gtk_entry_set_placeholder_text(self->banner_entry, "Optional banner image URL");
+  gtk_box_append(GTK_BOX(self->metadata_section), label_new_heading("Banner"));
+  gtk_box_append(GTK_BOX(self->metadata_section), GTK_WIDGET(self->banner_entry));
+
   self->private_check = GTK_CHECK_BUTTON(gtk_check_button_new_with_label("Private (members only can read)"));
   self->restricted_check = GTK_CHECK_BUTTON(gtk_check_button_new_with_label("Restricted (members only can write)"));
   self->hidden_check = GTK_CHECK_BUTTON(gtk_check_button_new_with_label("Hidden metadata"));
@@ -257,6 +282,9 @@ configure_mode(GnNip29AddGroupDialog *self,
                gboolean               create_mode)
 {
   self->create_mode = create_mode;
+  gtk_entry_set_placeholder_text(self->group_id_entry,
+                                 create_mode ? "general"
+                                             : "general, or paste naddr1…?invite=…");
   adw_dialog_set_title(ADW_DIALOG(self), create_mode ? "Create Group" : "Track Group");
   gtk_button_set_label(self->add_button, create_mode ? "Create Group" : "Track Group");
   gtk_widget_set_visible(self->metadata_section, create_mode);

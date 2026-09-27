@@ -15,7 +15,9 @@ struct _GnNip29GroupItem
   gchar   *alias;
   gchar   *name;
   gchar   *picture;
+  gchar   *banner;
   gchar   *about;
+  gchar   *parent;
 
   gboolean is_private;
   gboolean is_restricted;
@@ -29,6 +31,7 @@ struct _GnNip29GroupItem
 
   guint    admin_count;
   guint    member_count;
+  guint    pin_count;
   guint    message_count;
 };
 
@@ -45,7 +48,9 @@ gn_nip29_group_item_finalize(GObject *object)
   g_free(self->alias);
   g_free(self->name);
   g_free(self->picture);
+  g_free(self->banner);
   g_free(self->about);
+  g_free(self->parent);
 
   G_OBJECT_CLASS(gn_nip29_group_item_parent_class)->finalize(object);
 }
@@ -68,7 +73,9 @@ gn_nip29_group_item_new(const char *key,
                         const char *alias,
                         const char *name,
                         const char *picture,
+                        const char *banner,
                         const char *about,
+                        const char *parent,
                         gboolean    is_private,
                         gboolean    is_restricted,
                         gboolean    is_hidden,
@@ -79,6 +86,7 @@ gn_nip29_group_item_new(const char *key,
                         gboolean    roles_loaded,
                         guint       admin_count,
                         guint       member_count,
+                        guint       pin_count,
                         guint       message_count)
 {
   GnNip29GroupItem *self = g_object_new(GN_TYPE_NIP29_GROUP_ITEM, NULL);
@@ -89,7 +97,9 @@ gn_nip29_group_item_new(const char *key,
   self->alias = g_strdup(alias);
   self->name = g_strdup(name);
   self->picture = g_strdup(picture);
+  self->banner = g_strdup(banner);
   self->about = g_strdup(about);
+  self->parent = g_strdup(parent);
   self->is_private = is_private;
   self->is_restricted = is_restricted;
   self->is_hidden = is_hidden;
@@ -100,6 +110,7 @@ gn_nip29_group_item_new(const char *key,
   self->roles_loaded = roles_loaded;
   self->admin_count = admin_count;
   self->member_count = member_count;
+  self->pin_count = pin_count;
   self->message_count = message_count;
 
   return self;
@@ -125,6 +136,15 @@ const char *gn_nip29_group_item_get_picture(GnNip29GroupItem *self)
 
 const char *gn_nip29_group_item_get_about(GnNip29GroupItem *self)
 { return self->about; }
+
+const char *gn_nip29_group_item_get_banner(GnNip29GroupItem *self)
+{ return self->banner; }
+
+const char *gn_nip29_group_item_get_parent(GnNip29GroupItem *self)
+{ return self->parent; }
+
+guint gn_nip29_group_item_get_pin_count(GnNip29GroupItem *self)
+{ return self->pin_count; }
 
 const char *
 gn_nip29_group_item_get_display_name(GnNip29GroupItem *self)

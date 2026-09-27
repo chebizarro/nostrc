@@ -24,7 +24,9 @@ GnNip29GroupItem *gn_nip29_group_item_new(const char *key,
                                           const char *alias,
                                           const char *name,
                                           const char *picture,
+                                          const char *banner,
                                           const char *about,
+                                          const char *parent,
                                           gboolean    is_private,
                                           gboolean    is_restricted,
                                           gboolean    is_hidden,
@@ -35,6 +37,7 @@ GnNip29GroupItem *gn_nip29_group_item_new(const char *key,
                                           gboolean    roles_loaded,
                                           guint       admin_count,
                                           guint       member_count,
+                                          guint       pin_count,
                                           guint       message_count);
 
 const char *gn_nip29_group_item_get_key        (GnNip29GroupItem *self);
@@ -44,6 +47,9 @@ const char *gn_nip29_group_item_get_alias       (GnNip29GroupItem *self);
 const char *gn_nip29_group_item_get_name        (GnNip29GroupItem *self);
 const char *gn_nip29_group_item_get_picture     (GnNip29GroupItem *self);
 const char *gn_nip29_group_item_get_about       (GnNip29GroupItem *self);
+const char *gn_nip29_group_item_get_banner      (GnNip29GroupItem *self);
+/* Subgroup parent id (kind:39000 `parent`); NULL for a root group. */
+const char *gn_nip29_group_item_get_parent      (GnNip29GroupItem *self);
 const char *gn_nip29_group_item_get_display_name(GnNip29GroupItem *self);
 
 gboolean gn_nip29_group_item_get_is_private   (GnNip29GroupItem *self);
@@ -58,6 +64,8 @@ gboolean gn_nip29_group_item_get_roles_loaded          (GnNip29GroupItem *self);
 
 guint gn_nip29_group_item_get_admin_count  (GnNip29GroupItem *self);
 guint gn_nip29_group_item_get_member_count (GnNip29GroupItem *self);
+/* Entries in the relay's kind:39005 pinned-events list. */
+guint gn_nip29_group_item_get_pin_count    (GnNip29GroupItem *self);
 guint gn_nip29_group_item_get_message_count(GnNip29GroupItem *self);
 
 G_END_DECLS
