@@ -27,6 +27,6 @@ Deferred to a later wave: k95e, wu3s, hby8, prqu.1, prqu.7, prqu.9, prqu.10, rxx
 - [ ] I share/dav federation consumers (t24q eqdz k95e wu3s) — running
 - [ ] J relayd federation follow-ups (zi3j ytua jedb elgy 8cc1 abk1 tvoi) — running
 - [x] K homed syncd inotify P1 + notify + test hygiene — merged (lqm2 a16c a33z bn7z 2w9b + 51ax P1 dm.js); follow-ups 5y2t (P1 snapshot >32MiB), p8y6, ix3n, ixra
-- [ ] L gnostr follow-ups (jppi 46h7 4gf4 7n4t prjb) — running
+- [x] L gnostr follow-ups — merged (jppi 46h7 4gf4 7n4t; prjb partial, stays open); follow-ups tw2z (M), uaba (G), jy0b, jc2o, oz77, kyvy, 1b4j, udsy
 - [x] M signer/nip5f/wallet follow-ups — merged (q23h yjky 56id muhk dnbf); follow-ups fdg3, 7o76, 41wr, tfgp, iheg
 - Deferred: 9z5w (decision: ship an approver UI/CLI in Debian?), hd8u (Flatpak Firefox portal), a5fr (Epiphany)
