@@ -23,9 +23,8 @@
  *   agent stopped -> status available:false, calls wallet_unavailable;
  *   stdin closed with a request in flight -> still answered, clean exit.
  *
- * Not covered here: a paired wallet (pairing is always confirmed in a
- * dialog, which a headless agent denies) — the agent's NIP-47 path is
- * covered by gnome/nostr-wallet-agent/tests/test_nwc.c.
+ * A paired wallet (budgets, payments, invoices) is covered by
+ * test_nm_webln_paired_e2e.c.
  */
 #include "native_messaging.h"
 

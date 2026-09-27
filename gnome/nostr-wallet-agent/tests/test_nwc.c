@@ -289,6 +289,35 @@ test_subscriptions(void)
   fx_teardown(&fx);
 }
 
+/* NIP-47 spells the tag value "nip44_v2"; older nips/nip47 code (and some
+ * wallets) wrote "nip44-v2". Both select NIP-44; requests always carry the
+ * spec spelling. */
+static void
+test_encryption_tag_spellings(void)
+{
+  static const gchar *const tags[] = { "nip44_v2", "nip44-v2", "nip04 nip44-v2", "nip44_v2,nip04" };
+  for (guint i = 0; i < G_N_ELEMENTS(tags); i++) {
+    Fx fx = { 0 };
+    fx_setup(&fx, 1);
+    nwa_nwc_client_start(fx.client);
+    g_ptr_array_unref(take(&fx, 0));
+    send_info(&fx, tags[i]);
+    g_assert_cmpstr(nwa_nwc_client_get_encryption(fx.client), ==, "nip44_v2");
+    Res r = { 0 };
+    nwa_nwc_client_request_async(fx.client, "get_balance", NULL, NULL, on_done, &r);
+    g_autoptr(GPtrArray) f = take(&fx, 0);
+    WalletReq req;
+    wallet_read_request(&fx, f, &req);
+    g_assert_cmpstr(req.enc_tag, ==, "nip44_v2");
+    wallet_respond(&fx, &req, NULL, "{\"result_type\":\"get_balance\",\"result\":{\"balance\":1}}");
+    wait_for(&r);
+    g_assert_no_error(r.error);
+    res_clear(&r);
+    wallet_req_clear(&req);
+    fx_teardown(&fx);
+  }
+}
+
 static void
 test_nip44_roundtrip(void)
 {
@@ -528,6 +557,7 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/nwc/subscriptions", test_subscriptions);
   g_test_add_func("/nwc/nip44-roundtrip", test_nip44_roundtrip);
+  g_test_add_func("/nwc/encryption-tag-spellings", test_encryption_tag_spellings);
   g_test_add_func("/nwc/forged-response-ignored", test_forged_response_ignored);
   g_test_add_func("/nwc/nip04-fallbacks", test_nip04_fallbacks);
   g_test_add_func("/nwc/notifications", test_notifications);

@@ -1339,6 +1339,25 @@ nwa_service_new(GDBusConnection *bus, GError **error)
   }
   if (s->ephemeral) {
     g_message("nostr-wallet-agent: NOSTR_WALLET_AGENT_EPHEMERAL set; pairing is not persisted");
+#ifdef NWA_ORIGIN_BRIDGE_ENV
+    /* Test builds only (same switch as NOSTR_WALLET_AGENT_ORIGIN_BRIDGES;
+     * packages are built without it): start paired, without the dialog a
+     * headless agent would deny, so CTest can run the real agent against
+     * tests/nwa-fixture-wallet. Ephemeral only: never touches the keyring. */
+    const gchar *test_uri = g_getenv("NOSTR_WALLET_AGENT_TEST_PAIR_URI");
+    if (test_uri && *test_uri) {
+      GError *perr = NULL;
+      NwaNwcClient *client = nwa_nwc_client_new(test_uri, NULL, NULL, &perr);
+      if (client) {
+        g_message("nostr-wallet-agent: test build: paired from NOSTR_WALLET_AGENT_TEST_PAIR_URI "
+                  "(wallet %.16s…)", nwa_nwc_client_get_wallet_pubkey(client));
+        install_client(s, client);
+      } else {
+        g_warning("nostr-wallet-agent: NOSTR_WALLET_AGENT_TEST_PAIR_URI: %s", perr->message);
+        g_error_free(perr);
+      }
+    }
+#endif
   } else {
     KeyringJob *j = g_new0(KeyringJob, 1);
     j->op = KR_LOOKUP;

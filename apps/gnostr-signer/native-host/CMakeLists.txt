@@ -135,6 +135,20 @@ if(BUILD_TESTING)
     add_test(NAME nostr_signer_webext_host_webln_e2e COMMAND test_nmh_webln_e2e)
     set_tests_properties(nostr_signer_webext_host_webln_e2e PROPERTIES
       LABELS "nostr-signer-webext-host;dbus" TIMEOUT 120)
+
+    # Paired: the agent's test-build pairing hook + its fixture wallet
+    # process (wallet service and relay on 127.0.0.1), nostrc-4qbt.
+    add_executable(test_nmh_webln_paired_e2e tests/test_nm_webln_paired_e2e.c)
+    target_compile_options(test_nmh_webln_paired_e2e PRIVATE ${NMH_WARN})
+    target_link_libraries(test_nmh_webln_paired_e2e PRIVATE nmh_core)
+    target_compile_definitions(test_nmh_webln_paired_e2e PRIVATE
+      "NMH_AGENT_PATH=\"$<TARGET_FILE:nostr-wallet-agent>\""
+      "NMH_FIXTURE_WALLET_PATH=\"$<TARGET_FILE:nwa-fixture-wallet>\""
+      "NMH_HOST_PATH=\"$<TARGET_FILE:${NMH_BIN}>\"")
+    add_dependencies(test_nmh_webln_paired_e2e nostr-wallet-agent nwa-fixture-wallet ${NMH_BIN})
+    add_test(NAME nostr_signer_webext_host_webln_paired_e2e COMMAND test_nmh_webln_paired_e2e)
+    set_tests_properties(nostr_signer_webext_host_webln_paired_e2e PROPERTIES
+      LABELS "nostr-signer-webext-host;dbus" TIMEOUT 120)
   endif()
 
   # Extension-side policy (origin derivation, event validation, permission

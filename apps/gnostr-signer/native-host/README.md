@@ -47,7 +47,18 @@ The end-to-end tests are only built from the top-level tree:
   origin assertion accepted for the host (and the page origin as the agent's
   principal, from its log), refused (`Denied`) for any other caller, error
   mapping, host-side validation, and `wallet_unavailable` once the agent is
-  gone. No wallet is paired (pairing always needs the agent's dialog).
+  gone. No wallet is paired here.
+* `test_nmh_webln_paired_e2e` adds a paired wallet: the agent's
+  `nwa-fixture-wallet` test helper (a NIP-47 wallet service and its relay in
+  one process on `ws://127.0.0.1:<port>`) and the agent's test-build-only
+  `NOSTR_WALLET_AGENT_TEST_PAIR_URI`. With per-site grants seeded in
+  `budgets.json` it checks `getInfo` (wallet alias, methods), `getBalance`
+  with and without a read grant, `makeInvoice` → `{paymentRequest, rHash}`,
+  `sendPayment` auto-paid from the site's budget (preimage hashes to
+  `rHash`, wallet debited, spend ledgered under the origin), a payment over
+  the remaining budget → `budget_exceeded` plus the agent's
+  `BudgetExceeded(origin, …)` signal without reaching the wallet, and a site
+  without a budget → `rejected`.
 
 ## WebLN
 

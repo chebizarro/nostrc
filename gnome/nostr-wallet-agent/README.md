@@ -250,7 +250,10 @@ Test builds only (CMake `NOSTR_WALLET_AGENT_ORIGIN_BRIDGE_ENV`, default
 `BUILD_TESTING`; packages are built with it off):
 `NOSTR_WALLET_AGENT_ORIGIN_BRIDGES` (colon-separated absolute paths)
 replaces the built-in bridge path so CTest can run the build-tree host, and
-the agent logs that the override is active.
+the agent logs that the override is active. With
+`NOSTR_WALLET_AGENT_EPHEMERAL=1`, `NOSTR_WALLET_AGENT_TEST_PAIR_URI` starts
+the agent paired with that URI (no dialog, no keyring) so tests can run it
+against `tests/nwa-fixture-wallet`.
 
 **Secret handling.** The pairing URI lives only in the Secret Service item
 and in agent memory (wiped on drop); it is never returned over D-Bus, never
@@ -346,7 +349,17 @@ caller identification.
 * `test_budget` also covers web origins as opaque budget keys.
 * The `*For` methods are exercised end to end against the real agent binary
   by `apps/gnostr-signer/native-host/tests/test_nm_webln_e2e.c` (browser
-  bridge allowed, any other caller `Denied`).
+  bridge allowed, any other caller `Denied`) and, paired with a wallet, by
+  `test_nm_webln_paired_e2e.c` (per-site budget auto-pay, `BudgetExceeded`,
+  per-origin read grant, invoices).
+* `nwa-fixture-wallet` (test helper, not a test): a NIP-47 wallet service
+  and the relay it uses in one process on `ws://127.0.0.1:<port>`. It prints
+  a pairing URI, answers `get_info`/`get_balance`/`make_invoice` (minting
+  invoices the agent can decode — `tests/nwa-test-bolt11.h`, zero
+  signature)/`pay_invoice`/`lookup_invoice`/`list_transactions`, and accepts
+  `nostr+walletauth://` requests on stdin.
+* `test_nwc` also checks that both spellings of the wallet's encryption tag
+  (`nip44_v2`, older `nip44-v2`) select NIP-44.
 
 ## Not supported (yet)
 

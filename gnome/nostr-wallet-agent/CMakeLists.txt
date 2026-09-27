@@ -158,6 +158,16 @@ if (BUILD_TESTING)
     target_compile_options(test-nostr-wallet-agent-${_t} PRIVATE ${NWA_WARNING_FLAGS})
     add_test(NAME nostr-wallet-agent-${_t} COMMAND test-nostr-wallet-agent-${_t})
   endforeach()
+
+  # A NIP-47 wallet service + relay in one process on 127.0.0.1, for tests
+  # that run the real agent binary paired (here and in the browser bridge's
+  # WebLN e2e, apps/gnostr-signer/native-host). Needs the test pairing hook.
+  pkg_check_modules(NWA_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
+  pkg_check_modules(NWA_GIOUNIX_T REQUIRED IMPORTED_TARGET gio-unix-2.0)
+  add_executable(nwa-fixture-wallet tests/nwa-fixture-wallet.c)
+  target_link_libraries(nwa-fixture-wallet PRIVATE nostr-wallet-agent-core
+                        PkgConfig::NWA_SOUP PkgConfig::NWA_GIOUNIX_T)
+  target_compile_options(nwa-fixture-wallet PRIVATE ${NWA_WARNING_FLAGS})
   find_program(NWA_DESKTOP_VALIDATE desktop-file-validate)
   if (NWA_DESKTOP_VALIDATE)
     add_test(NAME nostr-wallet-agent-desktop-file
