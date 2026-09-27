@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.nostr.Groundhog" path="/org/nostr/Groundhog/">
+    <key name="current-npub" type="s">
+      <default>''</default>
+      <summary>Groundhog's selected identity</summary>
+      <description>The selected public identity; independent of Gnostr's active identity.</description>
+    </key>
+    <key name="signer-method" type="s">
+      <default>'auto'</default>
+      <summary>Requested signer method</summary>
+      <description>One of auto, local, nip46, or nip55l; no signer is connected by this shell.</description>
+    </key>
+    <key name="notifications-enabled" type="b">
+      <default>false</default>
+      <summary>Show messaging notifications</summary>
+      <description>Reserved for a future notification service; disabled in this shell.</description>
+    </key>
+    <key name="notification-privacy" type="s">
+      <default>'hidden'</default>
+      <summary>Notification content visibility</summary>
+      <description>One of hidden, sender, or preview; hidden is the privacy-preserving default.</description>
+    </key>
+    <key name="sound-enabled" type="b">
+      <default>false</default>
+      <summary>Play a notification sound</summary>
+      <description>Reserved for a future notification service.</description>
+    </key>
+    <key name="window-width" type="i"><default>900</default><summary>Window width</summary></key>
+    <key name="window-height" type="i"><default>600</default><summary>Window height</summary></key>
+    <key name="window-maximized" type="b"><default>false</default><summary>Window maximized</summary></key>
+  </schema>
+</schemalist>

@@ -453,6 +453,12 @@ if (ENABLE_NOSTRDB_DEMO)
   endif()
 endif()
 
+# Standalone Groundhog GTK4/libadwaita shell; opt-in so default builds need no new GUI dependency.
+option(BUILD_GROUNDHOG "Build the Groundhog messaging app shell" OFF)
+if (BUILD_GROUNDHOG)
+  add_subdirectory(gnome/groundhog)
+endif()
+
 # --- GNOME integration (Seahorse helpers, optional PKCS#11) ---
 # Provide toggles so non-GNOME environments/builders aren't broken by missing deps.
 # Note: the former GNOSTR_ENABLE_GOA option and its `gnome/goa/` subtree were

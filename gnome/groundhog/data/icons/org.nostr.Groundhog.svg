@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Groundhog</title>
+  <rect x="4" y="4" width="120" height="120" rx="27" fill="#76563d"/>
+  <path d="M34 36h60a18 18 0 0 1 18 18v28a18 18 0 0 1-18 18H64l-21 14v-14h-9a18 18 0 0 1-18-18V54a18 18 0 0 1 18-18z" fill="#f8f2e9"/>
+  <circle cx="44" cy="68" r="6" fill="#76563d"/>
+  <circle cx="64" cy="68" r="6" fill="#76563d"/>
+  <circle cx="84" cy="68" r="6" fill="#76563d"/>
+</svg>

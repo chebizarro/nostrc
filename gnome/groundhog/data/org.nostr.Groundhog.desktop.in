@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Groundhog
+GenericName=Messaging
+Comment=Nostr messaging (account and messaging services not yet available)
+Exec=groundhog
+Icon=org.nostr.Groundhog
+Terminal=false
+DBusActivatable=true
+StartupNotify=true
+Categories=Network;Chat;GNOME;GTK;
+Keywords=Nostr;messages;chat;

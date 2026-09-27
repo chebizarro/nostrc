@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.nostr.Groundhog</id>
+  <name>Groundhog</name>
+  <summary>A calm home for Nostr conversations</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Groundhog is a GTK4 and libadwaita shell for Nostr messaging. This preview has no account connection and cannot send, receive, or decrypt messages.</p>
+  </description>
+  <launchable type="desktop-id">org.nostr.Groundhog.desktop</launchable>
+  <url type="homepage">https://github.com/chebizarro/nostrc</url>
+  <content_rating type="oars-1.1"/>
+</component>

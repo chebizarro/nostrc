@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/org/nostr/Groundhog">
+    <file>style.css</file>
+    <file>icons/org.nostr.Groundhog.svg</file>
+  </gresource>
+</gresources>

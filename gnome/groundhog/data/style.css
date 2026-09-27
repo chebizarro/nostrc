@@ -1,0 +1,4 @@
+/* Keep the shell theme-native; no custom message colors are defined. */
+.groundhog-shell-status {
+  opacity: 0.9;
+}
