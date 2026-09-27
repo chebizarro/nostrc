@@ -527,6 +527,32 @@ principal), `claimed_app_id` (the caller's unverified `app_id` argument),
 (`b`); `calls` (`u`, calls that joined the request).
 Unknown request: `Error.NotFound`.
 
+#### ListGrants / RevokeGrant
+
+*Additive (nostrc-yjky).* The remembered decisions the signer keeps in
+`signer-grants.ini`, for the approval UI's permissions page (approval-UI
+callers only, like `ApproveRequest`; others get `Error.PermissionDenied`).
+The UI never reads the file itself.
+
+```xml
+<method name="ListGrants">
+  <arg name="grants" type="a(sssbt)" direction="out"/>
+</method>
+<method name="RevokeGrant">
+  <arg name="kind" type="s" direction="in"/>
+  <arg name="principal" type="s" direction="in"/>
+  <arg name="identity" type="s" direction="in"/>
+  <arg name="removed" type="b" direction="out"/>
+</method>
+```
+
+Each grant is `(kind, principal, identity, allow, expires_at)`: `identity`
+is an npub or `*`; `expires_at` is unix seconds, `0` = never (expired
+entries are listed so they can be cleaned up). Built-in defaults for
+first-party services are not listed. `RevokeGrant` removes one entry and
+returns whether it existed; the next matching call prompts again. Empty
+arguments: `Error.InvalidInput`.
+
 ---
 
 ### Signals

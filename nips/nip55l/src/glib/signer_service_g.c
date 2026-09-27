@@ -215,22 +215,26 @@ static GKeyFile *grants_get(void){
   return grants_kf;
 }
 
-/* Value "allow" | "deny" | "allow:<until>" | "deny:<until>". FALSE when
- * absent, expired or unparseable. */
-static gboolean grant_value(const char *val, gboolean *allow){
+/* Value "allow" | "deny" | "allow:<until>" | "deny:<until>" (until 0 =
+ * never). FALSE when absent or unparseable. */
+static gboolean grant_parse(const char *val, gboolean *allow, guint64 *until){
   if (!val) return FALSE;
-  gboolean a;
   const char *rest;
-  if (g_str_has_prefix(val, "allow")) { a = TRUE; rest = val + 5; }
-  else if (g_str_has_prefix(val, "deny")) { a = FALSE; rest = val + 4; }
+  if (g_str_has_prefix(val, "allow")) { *allow = TRUE; rest = val + 5; }
+  else if (g_str_has_prefix(val, "deny")) { *allow = FALSE; rest = val + 4; }
   else return FALSE;
-  if (*rest == ':') {
-    guint64 until = g_ascii_strtoull(rest + 1, NULL, 10);
-    guint64 now = (guint64)(g_get_real_time() / 1000000);
-    if (until > 0 && now >= until) return FALSE;
-  } else if (*rest != '\0') {
-    return FALSE;
-  }
+  *until = 0;
+  if (*rest == ':') *until = g_ascii_strtoull(rest + 1, NULL, 10);
+  else if (*rest != '\0') return FALSE;
+  return TRUE;
+}
+
+/* As grant_parse, and FALSE when expired. */
+static gboolean grant_value(const char *val, gboolean *allow){
+  gboolean a;
+  guint64 until;
+  if (!grant_parse(val, &a, &until)) return FALSE;
+  if (until > 0 && (guint64)(g_get_real_time() / 1000000) >= until) return FALSE;
   *allow = a;
   return TRUE;
 }
@@ -290,6 +294,21 @@ static gboolean grants_lookup(const char *kind, const SignerCaller *who, const c
   return FALSE;
 }
 
+static gboolean grants_write(GKeyFile *kf){
+  gsize len = 0;
+  g_autofree gchar *data = g_key_file_to_data(kf, &len, NULL);
+  g_autofree gchar *path = grants_file_path();
+  GError *err = NULL;
+  gboolean ok = data && g_file_set_contents_full(path, data, (gssize)len,
+                                                 G_FILE_SET_CONTENTS_CONSISTENT, 0600, &err);
+  if (!ok) {
+    g_warning("nostr-signer: cannot save grants to %s: %s", path, err ? err->message : "?");
+    g_clear_error(&err);
+  }
+  grants_mtime = -1; /* reload on next use */
+  return ok;
+}
+
 static gboolean grants_save(const char *kind, const char *principal, const char *npub,
                             gboolean allow, guint64 ttl_seconds){
   if (!kind || !principal || !*principal) return FALSE;
@@ -303,18 +322,21 @@ static gboolean grants_save(const char *kind, const char *principal, const char 
     val = g_strdup(allow ? "allow" : "deny");
   }
   g_key_file_set_string(kf, kind, key, val);
-  gsize len = 0;
-  g_autofree gchar *data = g_key_file_to_data(kf, &len, NULL);
-  g_autofree gchar *path = grants_file_path();
-  GError *err = NULL;
-  gboolean ok = data && g_file_set_contents_full(path, data, (gssize)len,
-                                                 G_FILE_SET_CONTENTS_CONSISTENT, 0600, &err);
-  if (!ok) {
-    g_warning("nostr-signer: cannot save grant to %s: %s", path, err ? err->message : "?");
-    g_clear_error(&err);
-  }
-  grants_mtime = -1; /* reload on next use */
-  return ok;
+  return grants_write(kf);
+}
+
+/* Remove one entry (and its section when that empties). */
+static gboolean grants_remove(const char *kind, const char *principal, const char *identity,
+                              gboolean *removed){
+  *removed = FALSE;
+  GKeyFile *kf = grants_get();
+  g_autofree gchar *key = g_strdup_printf("%s|%s", principal, identity);
+  if (!g_key_file_remove_key(kf, kind, key, NULL)) return TRUE;
+  *removed = TRUE;
+  gsize n = 0;
+  g_auto(GStrv) left = g_key_file_get_keys(kf, kind, &n, NULL);
+  if (n == 0) g_key_file_remove_group(kf, kind, NULL);
+  return grants_write(kf);
 }
 
 /* ---- errors ------------------------------------------------------------- */
@@ -827,6 +849,52 @@ static gboolean handle_get_approval_info(NostrSigner *object, GDBusMethodInvocat
 
 static void forget_sender(const char *name);
 
+/* ---- ListGrants / RevokeGrant (nostrc-yjky) ----------------------------- */
+
+static gboolean handle_list_grants(NostrSigner *object, GDBusMethodInvocation *invocation)
+{
+  if (!require_approver(invocation)) return TRUE;
+  GKeyFile *kf = grants_get();
+  GVariantBuilder b;
+  g_variant_builder_init(&b, G_VARIANT_TYPE("a(sssbt)"));
+  g_auto(GStrv) kinds = g_key_file_get_groups(kf, NULL);
+  for (guint i = 0; kinds && kinds[i]; i++) {
+    g_auto(GStrv) keys = g_key_file_get_keys(kf, kinds[i], NULL, NULL);
+    for (guint j = 0; keys && keys[j]; j++) {
+      const char *bar = strrchr(keys[j], '|');
+      g_autofree gchar *val = g_key_file_get_string(kf, kinds[i], keys[j], NULL);
+      gboolean allow;
+      guint64 until;
+      if (!bar || bar == keys[j] || !bar[1] || !grant_parse(val, &allow, &until)) continue;
+      g_autofree gchar *principal = g_strndup(keys[j], (gsize)(bar - keys[j]));
+      g_variant_builder_add(&b, "(sssbt)", kinds[i], principal, bar + 1, allow, until);
+    }
+  }
+  nostr_signer_complete_list_grants(object, invocation, g_variant_builder_end(&b));
+  return TRUE;
+}
+
+static gboolean handle_revoke_grant(NostrSigner *object, GDBusMethodInvocation *invocation,
+                                    const gchar *kind, const gchar *principal, const gchar *identity)
+{
+  if (!require_approver(invocation)) return TRUE;
+  if (!kind || !*kind || !principal || !*principal || !identity || !*identity ||
+      strchr(principal, '|') || strchr(identity, '|')) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
+                                               "kind, principal and identity are required");
+    return TRUE;
+  }
+  gboolean removed = FALSE;
+  if (!grants_remove(kind, principal, identity, &removed)) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL,
+                                               "cannot write the grants file");
+    return TRUE;
+  }
+  if (removed) g_message("nostr-signer: grant revoked: %s %s|%s", kind, principal, identity);
+  nostr_signer_complete_revoke_grant(object, invocation, removed);
+  return TRUE;
+}
+
 /* A connection left the bus: forget it, and drop requests only it was
  * waiting for (their replies have nowhere to go). */
 static void on_name_owner_changed(GDBusConnection *conn, const gchar *sender_name,
@@ -1049,6 +1117,8 @@ guint signer_export(GDBusConnection *conn, const char *object_path) {
     { "handle-sign-event",                    G_CALLBACK(handle_sign_event) },
     { "handle-approve-request",               G_CALLBACK(handle_approve_request) },
     { "handle-get-approval-info",             G_CALLBACK(handle_get_approval_info) },
+    { "handle-list-grants",                   G_CALLBACK(handle_list_grants) },
+    { "handle-revoke-grant",                  G_CALLBACK(handle_revoke_grant) },
     { "handle-nip04-encrypt",                 G_CALLBACK(handle_nip04_encrypt) },
     { "handle-nip04-encrypt-for-app",         G_CALLBACK(handle_nip04_encrypt_for_app) },
     { "handle-nip04-decrypt",                 G_CALLBACK(handle_nip04_decrypt) },

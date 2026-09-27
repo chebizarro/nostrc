@@ -12,6 +12,37 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <property name="description">Configure approval policies and network connectivity options</property>
     </accessibility>
     <child>
+      <object class="AdwPreferencesGroup" id="group_grants">
+        <property name="title" translatable="yes">Remembered decisions</property>
+        <property name="description" translatable="yes">Requests you allowed or denied with “Remember”. Forget one to be asked again next time.</property>
+        <accessibility>
+          <property name="label">Remembered decisions</property>
+          <property name="description">Applications' remembered approvals and denials, with a button to forget each</property>
+        </accessibility>
+        <property name="header-suffix">
+          <object class="GtkButton" id="btn_refresh_grants">
+            <property name="icon-name">view-refresh-symbolic</property>
+            <property name="valign">3</property>
+            <property name="tooltip-text" translatable="yes">Refresh</property>
+            <style>
+              <class name="flat"/>
+            </style>
+            <accessibility>
+              <property name="label">Refresh remembered decisions</property>
+            </accessibility>
+          </object>
+        </property>
+        <child>
+          <object class="GtkListBox" id="list_grants">
+            <property name="selection-mode">0</property>
+            <style>
+              <class name="boxed-list"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
       <object class="AdwPreferencesGroup" id="group_policy">
         <property name="title" translatable="yes">Approval policy</property>
         <accessibility>

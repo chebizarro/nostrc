@@ -7,6 +7,38 @@ template $PagePermissions: Adw.PreferencesPage {
     description: "Configure approval policies and network connectivity options";
   }
 
+  Adw.PreferencesGroup group_grants {
+    title: _("Remembered decisions");
+    description: _("Requests you allowed or denied with “Remember”. Forget one to be asked again next time.");
+
+    accessibility {
+      label: "Remembered decisions";
+      description: "Applications' remembered approvals and denials, with a button to forget each";
+    }
+
+    header-suffix: Button btn_refresh_grants {
+      icon-name: "view-refresh-symbolic";
+      valign: center;
+      tooltip-text: _("Refresh");
+
+      styles [
+        "flat",
+      ]
+
+      accessibility {
+        label: "Refresh remembered decisions";
+      }
+    };
+
+    ListBox list_grants {
+      selection-mode: none;
+
+      styles [
+        "boxed-list",
+      ]
+    }
+  }
+
   Adw.PreferencesGroup group_policy {
     title: _("Approval policy");
 

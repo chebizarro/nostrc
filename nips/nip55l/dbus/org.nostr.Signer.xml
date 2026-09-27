@@ -201,6 +201,24 @@
       <arg type="s" direction="in" name="request_id" />
       <arg type="a{sv}" direction="out" name="info" />
     </method>
+    <!-- ListGrants / RevokeGrant (additive; nostrc-yjky): the remembered
+         decisions in $XDG_CONFIG_HOME/gnostr/signer-grants.ini, which the
+         signer owns, for the approval UI's permissions page. Approval UI only,
+         like ApproveRequest (else Error.PermissionDenied). A grant is
+         (kind, principal, identity, allow, expires_at): identity is an npub
+         or "*" (any identity), expires_at unix seconds or 0 = never; expired
+         entries are listed too so they can be cleaned up. Built-in defaults
+         for first-party services are not grants and are not listed.
+         RevokeGrant removes one entry; returns whether it existed. -->
+    <method name="ListGrants">
+      <arg type="a(sssbt)" direction="out" name="grants" />
+    </method>
+    <method name="RevokeGrant">
+      <arg type="s" direction="in" name="kind" />
+      <arg type="s" direction="in" name="principal" />
+      <arg type="s" direction="in" name="identity" />
+      <arg type="b" direction="out" name="removed" />
+    </method>
     <signal name="ApprovalRequested">
       <arg type="s" name="app_id" />
       <arg type="s" name="identity" />

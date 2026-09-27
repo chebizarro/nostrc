@@ -1145,6 +1145,11 @@ static void test_untrusted_approver(Ctx *ctx) {
   CHECK(ok == NULL); expect_remote_error(err, ERR_PERM); g_clear_error(&err);
   GVariant *info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", w.a.req_id), "(a{sv})", &err);
   CHECK(info == NULL); expect_remote_error(err, ERR_PERM); g_clear_error(&err);
+  /* Nor list or revoke grants (nostrc-yjky). */
+  info = call(ctx->bus, "ListGrants", NULL, "(a(sssbt))", &err);
+  CHECK(info == NULL); expect_remote_error(err, ERR_PERM); g_clear_error(&err);
+  info = call(ctx->bus, "RevokeGrant", g_variant_new("(sss)", "event", ctx->principal, "*"), "(b)", &err);
+  CHECK(info == NULL); expect_remote_error(err, ERR_PERM); g_clear_error(&err);
   CHECK(w.a.pending_replies == 1); /* still parked, not approved */
   CHECK(!g_file_test(ctx->grants_path, G_FILE_TEST_EXISTS));
   /* Leave it parked; the daemon is torn down with the fixture. */
@@ -1361,6 +1366,52 @@ static void n5f_expect_code(const char *resp, int code) {
   CHECK(strstr(resp, want) != NULL);
 }
 
+/* ListGrants / RevokeGrant (nostrc-yjky): the approval UI sees the grant
+ * the socket call just remembered, and revoking it brings the prompt back. */
+static void test_list_and_revoke_grant(Ctx *ctx, int fd, const char *principal) {
+  GError *err = NULL;
+  GVariant *r = call(ctx->bus, "ListGrants", NULL, "(a(sssbt))", &err);
+  if (!r) g_printerr("ListGrants: %s\n", err ? err->message : "?");
+  CHECK(r != NULL);
+  GVariantIter *it = NULL;
+  g_variant_get(r, "(a(sssbt))", &it);
+  const char *k, *p, *id;
+  gboolean allow;
+  guint64 until;
+  gboolean found = FALSE;
+  while (g_variant_iter_next(it, "(&s&s&sbt)", &k, &p, &id, &allow, &until))
+    if (g_strcmp0(k, "get_public_key") == 0 && g_strcmp0(p, principal) == 0 &&
+        g_strcmp0(id, ctx->npub) == 0 && allow && until == 0)
+      found = TRUE;
+  g_variant_iter_free(it);
+  g_variant_unref(r);
+  CHECK(found);
+
+  r = call(ctx->bus, "RevokeGrant", g_variant_new("(sss)", "get_public_key", principal, ctx->npub), "(b)", &err);
+  CHECK(r != NULL);
+  gboolean removed = FALSE;
+  g_variant_get(r, "(b)", &removed);
+  g_variant_unref(r);
+  CHECK(removed);
+  char *key = g_strdup_printf("%s|%s", principal, ctx->npub);
+  CHECK(!grants_has(ctx, "get_public_key", key, NULL));
+  g_free(key);
+  r = call(ctx->bus, "RevokeGrant", g_variant_new("(sss)", "get_public_key", principal, ctx->npub), "(b)", &err);
+  CHECK(r != NULL);
+  g_variant_get(r, "(b)", &removed);
+  g_variant_unref(r);
+  CHECK(!removed);
+  r = call(ctx->bus, "RevokeGrant", g_variant_new("(sss)", "get_public_key", "", ctx->npub), "(b)", &err);
+  CHECK(r == NULL); expect_remote_error(err, ERR_INVALID); g_clear_error(&err);
+
+  /* Revoked: the next call prompts again (remember it for the checks after). */
+  char *resp = n5f_interactive(ctx, fd, "{\"id\":\"1r\",\"method\":\"get_public_key\",\"params\":null}",
+                               "get_public_key", principal, TRUE, TRUE);
+  char *pk = n5f_result_string(resp);
+  CHECK(g_strcmp0(pk, ctx->pk_hex) == 0);
+  g_free(pk); g_free(resp);
+}
+
 static void test_nip5f_gating(Ctx *ctx, const Nip5fSock *sock) {
   /* The socket principal: always this process's executable/scope (the
    * kernel reports the peer PID on Linux and macOS alike). */
@@ -1385,6 +1436,7 @@ static void test_nip5f_gating(Ctx *ctx, const Nip5fSock *sock) {
   resp = n5f_no_prompt(ctx, fd, "{\"id\":\"2\",\"method\":\"list_public_keys\",\"params\":null}");
   CHECK(strstr(resp, ctx->pk_hex) != NULL);
   g_free(resp);
+  test_list_and_revoke_grant(ctx, fd, principal);
   if (ctx->attested) {
     /* Same principal on the bus: the socket's grant answers D-Bus too. */
     GError *err = NULL;
@@ -2022,7 +2074,8 @@ int main(void) {
     g_unlink(sock.path);
     g_rmdir(sock.dir);
     g_free(sock.path); g_free(sock.dir);
-    g_print("PASS nip5f gating (peer-credential principal%s, prompt + remember, deny, grants "
+    g_print("PASS nip5f gating (peer-credential principal%s, prompt + remember, ListGrants/"
+            "RevokeGrant, deny, grants "
             "file, legacy ACL/app_id ignored, hang-up drops request)\n",
             attested ? " = D-Bus principal, shared grant" : "");
   }
