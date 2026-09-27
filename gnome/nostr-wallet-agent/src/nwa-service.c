@@ -1851,8 +1851,9 @@ on_open_uri_caller(GObject *src, GAsyncResult *res, gpointer data)
   NwaCaller *caller = nwa_caller_identify_finish(res, &err);
   call_return(j->call, NULL, NULL); /* identified (or not): release the opener */
   if (caller) {
-    g_debug("nostr-wallet-agent: OpenUri from %s app=%s", caller->sender,
-            caller->app_id ? caller->app_id : "(none)");
+    /* Who asked to open a payment link (never the link itself). */
+    g_message("nostr-wallet-agent: link opened by %s (%s)",
+              caller->app_id ? caller->app_id : "an unidentified application", caller->sender);
     open_uri_dispatch(j->svc, caller, j->uri, TRUE);
   } else {
     g_message("nostr-wallet-agent: OpenUri: %s", err->message);

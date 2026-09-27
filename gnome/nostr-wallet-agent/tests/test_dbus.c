@@ -648,7 +648,7 @@ test_lnurl_links(void)
    * name it instead of "an unidentified application". */
   if (g_str_has_prefix(e.self_id, "exe:")) { /* else gdbus shares our app scope */
     g_autofree gchar *gd = gdbus_identity();
-    g_autofree gchar *want = g_strdup_printf("app=%s", gd);
+    g_autofree gchar *want = g_strdup_printf("link opened by %s (", gd);
     const gchar *const link_args[] = { "lightning:not-an-invoice", NULL };
     gboolean ok = FALSE;
     g_autofree gchar *o = call_gdbus("OpenUri", link_args, &ok);
