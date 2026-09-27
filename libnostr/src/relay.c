@@ -964,11 +964,7 @@ static void relay_refire_subscriptions(NostrRelay *r) {
         /* A reconnect starts a new stored-event phase for this REQ.  Preserve
          * the cursor second inclusively; subscription dispatch suppresses IDs
          * already enqueued at that second. */
-        nsync_mu_lock(&sub->priv->sub_mutex);
-        int64_t last_seen = atomic_load(&sub->priv->last_seen_created_at);
-        atomic_store(&sub->priv->eosed, false);
-        sub->priv->match = nostr_filters_match;
-        nsync_mu_unlock(&sub->priv->sub_mutex);
+        int64_t last_seen = nostr_subscription_prepare_refire(sub);
         Error *err = NULL;
         bool fired = last_seen > 0
             ? nostr_subscription_refire_since(sub, last_seen, &err)

@@ -26,6 +26,12 @@
     abort(); \
 } } while (0)
 
+typedef enum {
+    FIXTURE_ORDERED,
+    FIXTURE_NEWEST_FIRST,
+    FIXTURE_EOSE_PRESSURE
+} FixtureMode;
+
 typedef struct {
     struct lws_context *ctx;
     pthread_t thread;
@@ -34,7 +40,8 @@ typedef struct {
     atomic_bool bad_cursor;
     int port;
     int64_t created_at;
-    char *events[3];
+    FixtureMode mode;
+    char *events[4];
 } Fixture;
 
 typedef struct {
@@ -76,7 +83,15 @@ static int callback(struct lws *wsi, enum lws_callback_reasons reason,
         CHECK(end);
         int sid_len = (int)(end - sid);
         int round = atomic_fetch_add(&fx.req_count, 1);
-        if (round == 0) {
+        if (fx.mode == FIXTURE_EOSE_PRESSURE) {
+            if (round < 9) {
+                enqueue(c, "EOSE", sid, sid_len, NULL);
+                c->close_after_queue = true;
+            } else if (round == 9) {
+                enqueue(c, "EOSE", sid, sid_len, NULL);
+                enqueue(c, "EVENT", sid, sid_len, fx.events[2]);
+            }
+        } else if (round == 0) {
             enqueue(c, "EVENT", sid, sid_len, fx.events[0]);
             enqueue(c, "EOSE", sid, sid_len, NULL);
             c->close_after_queue = true;
@@ -86,13 +101,26 @@ static int callback(struct lws *wsi, enum lws_callback_reasons reason,
             if (!since || sscanf(since, "\"since\":%lld", &cursor) != 1 ||
                 cursor != fx.created_at)
                 atomic_store(&fx.bad_cursor, true);
-            if (cursor <= fx.created_at) {
-                enqueue(c, "EVENT", sid, sid_len, fx.events[0]); /* replay */
-                enqueue(c, "EVENT", sid, sid_len, fx.events[1]); /* same second */
+            if (fx.mode == FIXTURE_ORDERED) {
+                if (cursor <= fx.created_at) {
+                    enqueue(c, "EVENT", sid, sid_len, fx.events[0]);
+                    enqueue(c, "EVENT", sid, sid_len, fx.events[1]);
+                }
+                enqueue(c, "EOSE", sid, sid_len, NULL);
+                enqueue(c, "EVENT", sid, sid_len, fx.events[0]); /* live duplicate */
+                enqueue(c, "EVENT", sid, sid_len, fx.events[2]); /* barrier */
+            } else {
+                /* Stored events newest-first: advancing to T+1 must not
+                 * forget the already delivered boundary ID at T. */
+                enqueue(c, "EVENT", sid, sid_len, fx.events[2]);
+                if (cursor <= fx.created_at) {
+                    enqueue(c, "EVENT", sid, sid_len, fx.events[1]);
+                    enqueue(c, "EVENT", sid, sid_len, fx.events[0]);
+                }
+                enqueue(c, "EOSE", sid, sid_len, NULL);
+                enqueue(c, "EVENT", sid, sid_len, fx.events[0]); /* live replay */
+                enqueue(c, "EVENT", sid, sid_len, fx.events[3]); /* barrier */
             }
-            enqueue(c, "EOSE", sid, sid_len, NULL);
-            enqueue(c, "EVENT", sid, sid_len, fx.events[0]); /* live duplicate */
-            enqueue(c, "EVENT", sid, sid_len, fx.events[2]); /* live barrier */
         }
         free(request);
         if (c->count) lws_callback_on_writable(wsi);
@@ -186,11 +214,11 @@ static char *signed_event(const char *sk, int64_t created_at,
     return json;
 }
 
-static void *receive(GoChannel *channel) {
+static void *receive_for(GoChannel *channel, uint64_t timeout_ms) {
     void *value = NULL;
     GoSelectCase c = { .op = GO_SELECT_RECEIVE, .chan = channel,
                        .recv_buf = &value };
-    GoSelectResult result = go_select_timeout(&c, 1, 10000);
+    GoSelectResult result = go_select_timeout(&c, 1, timeout_ms);
     if (result.selected_case != 0)
         fprintf(stderr, "receive timeout: requests=%d bad_cursor=%d\n",
                 atomic_load(&fx.req_count), atomic_load(&fx.bad_cursor));
@@ -199,24 +227,26 @@ static void *receive(GoChannel *channel) {
     return value;
 }
 
-static void expect_event(GoChannel *channel, const char *id) {
-    NostrEvent *ev = receive(channel);
+static void *receive(GoChannel *channel) {
+    return receive_for(channel, 10000);
+}
+
+static void expect_event_for(GoChannel *channel, const char *id,
+                             uint64_t timeout_ms) {
+    NostrEvent *ev = receive_for(channel, timeout_ms);
     CHECK(ev);
     CHECK(ev->id && strcmp(ev->id, id) == 0);
     nostr_event_free(ev);
 }
 
-int main(void) {
-    unsetenv("NOSTR_TEST_MODE");
-    fx.created_at = 1700000000;
-    char *sk = nostr_key_generate_private();
-    CHECK(sk);
-    char *ids[3];
-    fx.events[0] = signed_event(sk, fx.created_at, "first", &ids[0]);
-    fx.events[1] = signed_event(sk, fx.created_at, "second", &ids[1]);
-    fx.events[2] = signed_event(sk, fx.created_at + 1, "live barrier", &ids[2]);
-    free(sk);
-    CHECK(strcmp(ids[0], ids[1]) != 0);
+static void expect_event(GoChannel *channel, const char *id) {
+    expect_event_for(channel, id, 10000);
+}
+
+static void run_case(FixtureMode mode, char *ids[4]) {
+    fx.mode = mode;
+    atomic_store(&fx.req_count, 0);
+    atomic_store(&fx.bad_cursor, false);
     fixture_start();
 
     char url[64];
@@ -238,16 +268,30 @@ int main(void) {
     CHECK(nostr_subscription_fire(sub, &err));
     CHECK(!err);
 
-    expect_event(sub->events, ids[0]);
-    (void)receive(sub->end_of_stored_events);
-    expect_event(sub->events, ids[1]);
-    (void)receive(sub->end_of_stored_events);
-    expect_event(sub->events, ids[2]);
-    CHECK(atomic_load(&fx.req_count) == 2);
-    CHECK(!atomic_load(&fx.bad_cursor));
-    void *extra = NULL;
-    CHECK(go_channel_try_receive(sub->events, &extra) != 0);
-    CHECK(go_channel_try_receive(sub->end_of_stored_events, &extra) != 0);
+    if (mode == FIXTURE_EOSE_PRESSURE) {
+        /* Nine disconnects with no EOSE consumer must not strand the reader
+         * at the ninth signal. The tenth REQ supplies this event barrier. */
+        expect_event_for(sub->events, ids[2], 30000);
+        CHECK(atomic_load(&fx.req_count) == 10);
+        CHECK(go_channel_get_depth(sub->end_of_stored_events) == 8);
+    } else {
+        expect_event(sub->events, ids[0]);
+        (void)receive(sub->end_of_stored_events);
+        if (mode == FIXTURE_NEWEST_FIRST) {
+            expect_event(sub->events, ids[2]);
+            expect_event(sub->events, ids[1]);
+        } else {
+            expect_event(sub->events, ids[1]);
+        }
+        (void)receive(sub->end_of_stored_events);
+        if (mode == FIXTURE_ORDERED) expect_event(sub->events, ids[2]);
+        else expect_event(sub->events, ids[3]);
+        CHECK(atomic_load(&fx.req_count) == 2);
+        CHECK(!atomic_load(&fx.bad_cursor));
+        void *extra = NULL;
+        CHECK(go_channel_try_receive(sub->events, &extra) != 0);
+        CHECK(go_channel_try_receive(sub->end_of_stored_events, &extra) != 0);
+    }
 
     nostr_subscription_unsubscribe(sub);
     nostr_subscription_free(sub);
@@ -255,7 +299,27 @@ int main(void) {
     nostr_relay_close(relay, NULL);
     nostr_relay_free(relay);
     fixture_stop();
-    for (int i = 0; i < 3; i++) { free(ids[i]); free(fx.events[i]); }
+    printf("  [ok] reconnect case %d\n", (int)mode);
+}
+
+int main(void) {
+    unsetenv("NOSTR_TEST_MODE");
+    fx.created_at = 1700000000;
+    char *sk = nostr_key_generate_private();
+    CHECK(sk);
+    char *ids[4];
+    fx.events[0] = signed_event(sk, fx.created_at, "first", &ids[0]);
+    fx.events[1] = signed_event(sk, fx.created_at, "second", &ids[1]);
+    fx.events[2] = signed_event(sk, fx.created_at + 1, "next second", &ids[2]);
+    fx.events[3] = signed_event(sk, fx.created_at + 2, "live barrier", &ids[3]);
+    free(sk);
+    CHECK(strcmp(ids[0], ids[1]) != 0);
+
+    run_case(FIXTURE_ORDERED, ids);
+    run_case(FIXTURE_NEWEST_FIRST, ids);
+    run_case(FIXTURE_EOSE_PRESSURE, ids);
+
+    for (int i = 0; i < 4; i++) { free(ids[i]); free(fx.events[i]); }
     puts("test_reconnect_same_second: OK");
     return 0;
 }

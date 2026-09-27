@@ -72,6 +72,8 @@ typedef struct _SubscriptionPrivate {
     _Atomic bool events_channel_closed;
     _Atomic int64_t last_seen_created_at;
     SeenCursorEvent *seen_cursor_events; /* guarded by sub_mutex */
+    int64_t replay_boundary_created_at;  /* current REQ's inclusive since, guarded by sub_mutex */
+    SeenCursorEvent *replay_boundary_events; /* guarded by sub_mutex */
     CancelFunc cancel;
 
     /* Refcount for safe concurrent access (nostrc-nr96).
@@ -100,6 +102,7 @@ struct NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters
 void *nostr_subscription_start(void *arg);
 void nostr_subscription_dispatch_event(struct NostrSubscription *sub, NostrEvent *event);
 void nostr_subscription_dispatch_eose(struct NostrSubscription *sub);
+int64_t nostr_subscription_prepare_refire(struct NostrSubscription *sub);
 void nostr_subscription_dispatch_closed(struct NostrSubscription *sub, const char *reason);
 bool nostr_subscription_refire_since(struct NostrSubscription *sub, int64_t since, Error **err);
 /* Insert @sub into its relay's dispatch map (idempotent, one-shot; takes the

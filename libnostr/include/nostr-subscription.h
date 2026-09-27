@@ -166,6 +166,9 @@ GoChannel    *nostr_subscription_get_events_channel(const NostrSubscription *sub
  * nostr_subscription_get_eose_channel:
  * @sub: (nullable): subscription
  *
+ * A full channel coalesces later reconnect EOSE notifications rather than
+ * blocking relay event processing. Drain promptly if observing each REQ phase.
+ *
  * Returns: (transfer none) (nullable): EOSE notification channel
  */
 GoChannel    *nostr_subscription_get_eose_channel(const NostrSubscription *sub);

@@ -146,6 +146,8 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     atomic_store(&sub->priv->events_channel_closed, false);
     atomic_store(&sub->priv->last_seen_created_at, 0);
     sub->priv->seen_cursor_events = NULL;
+    sub->priv->replay_boundary_created_at = 0;
+    sub->priv->replay_boundary_events = NULL;
 
     // Initialize queue metrics (nostrc-sjv)
     QueueMetrics *m = &sub->priv->metrics;
@@ -252,6 +254,7 @@ static void subscription_destroy(NostrSubscription *sub) {
     }
     free(sub->priv->id);
     free_seen_cursor_events(sub->priv->seen_cursor_events);
+    free_seen_cursor_events(sub->priv->replay_boundary_events);
     go_wait_group_destroy(&sub->priv->wg);
     free(sub->priv);
 
@@ -367,8 +370,15 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
          * `event` after a successful send is a use-after-free. */
         int64_t ev_created_at = event->created_at;
         int64_t cursor = atomic_load(&sub->priv->last_seen_created_at);
+        int64_t boundary = sub->priv->replay_boundary_created_at;
+        SeenCursorEvent **ids = NULL;
+        if (ev_created_at == cursor && cursor > 0) {
+            ids = &sub->priv->seen_cursor_events;
+        } else if (ev_created_at == boundary && boundary > 0) {
+            ids = &sub->priv->replay_boundary_events;
+        }
         SeenCursorEvent *seen = NULL;
-        if (ev_created_at >= cursor && ev_created_at > 0) {
+        if ((ev_created_at >= cursor || ev_created_at == boundary) && ev_created_at > 0) {
             if (!event->id || strlen(event->id) != 64) {
                 nsync_mu_unlock(&sub->priv->sub_mutex);
                 nostr_event_free(event);
@@ -376,8 +386,8 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
                 nostr_metric_counter_add("sub_event_invalid_id_drop", 1);
                 return;
             }
-            if (ev_created_at == cursor) {
-                for (SeenCursorEvent *it = sub->priv->seen_cursor_events; it; it = it->next) {
+            if (ids) {
+                for (SeenCursorEvent *it = *ids; it; it = it->next) {
                     if (strcmp(it->id, event->id) == 0) {
                         nsync_mu_unlock(&sub->priv->sub_mutex);
                         nostr_event_free(event);
@@ -415,12 +425,19 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
 
             if (seen) {
                 if (ev_created_at > cursor) {
-                    free_seen_cursor_events(sub->priv->seen_cursor_events);
+                    if (boundary > 0 && cursor == boundary) {
+                        /* The previous cursor second remains in the active
+                         * REQ's overlap even when newer events arrive first. */
+                        sub->priv->replay_boundary_events = sub->priv->seen_cursor_events;
+                    } else {
+                        free_seen_cursor_events(sub->priv->seen_cursor_events);
+                    }
                     sub->priv->seen_cursor_events = NULL;
                     atomic_store(&sub->priv->last_seen_created_at, ev_created_at);
+                    ids = &sub->priv->seen_cursor_events;
                 }
-                seen->next = sub->priv->seen_cursor_events;
-                sub->priv->seen_cursor_events = seen;
+                seen->next = *ids;
+                *ids = seen;
             }
 
             /* Get actual channel depth for warnings (nostrc-dw3)
@@ -477,6 +494,19 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
 }
 
 
+int64_t nostr_subscription_prepare_refire(NostrSubscription *sub) {
+    if (!sub || !sub->priv) return 0;
+    nsync_mu_lock(&sub->priv->sub_mutex);
+    int64_t cursor = atomic_load(&sub->priv->last_seen_created_at);
+    free_seen_cursor_events(sub->priv->replay_boundary_events);
+    sub->priv->replay_boundary_events = NULL;
+    sub->priv->replay_boundary_created_at = cursor;
+    atomic_store(&sub->priv->eosed, false);
+    sub->priv->match = nostr_filters_match;
+    nsync_mu_unlock(&sub->priv->sub_mutex);
+    return cursor;
+}
+
 void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
     if (!sub)
         return;
@@ -497,17 +527,22 @@ void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
         fprintf(stderr, "[RELAY_POOL] Subscription %s received %llu events before EOSE\n",
                 sub->priv->id ? sub->priv->id : "unknown", (unsigned long long)event_count);
 
-        // CRITICAL: Must use blocking send for EOSE to ensure delivery!
-        // The goroutine polling loop DEPENDS on receiving EOSE to complete.
-        // Non-blocking try_send can drop the signal if timing is off.
-        // The channel has buffer=8, so this won't deadlock in normal operation.
-        if (getenv("NOSTR_DEBUG_EOSE")) {
-            fprintf(stderr, "[EOSE_SIGNAL] sid=%s sending to channel (BLOCKING)\n", sub->priv->id ? sub->priv->id : "null");
-        }
-        go_channel_send(sub->end_of_stored_events, NULL);
-        nostr_metric_counter_add("sub_eose_signal", 1);
-        if (getenv("NOSTR_DEBUG_EOSE")) {
-            fprintf(stderr, "[EOSE_SIGNAL] sid=%s sent successfully\n", sub->priv->id ? sub->priv->id : "null");
+        /* One queued EOSE wakes consumers. If they have not drained earlier
+         * reconnect signals, coalesce rather than blocking the relay reader
+         * before it can process the next EVENT or reconnect. The first EOSE
+         * still enqueues immediately on the empty channel. */
+        if (go_channel_try_send(sub->end_of_stored_events, NULL) == 0) {
+            nostr_metric_counter_add("sub_eose_signal", 1);
+            if (getenv("NOSTR_DEBUG_EOSE")) {
+                fprintf(stderr, "[EOSE_SIGNAL] sid=%s queued\n",
+                        sub->priv->id ? sub->priv->id : "null");
+            }
+        } else if (!go_channel_is_closed(sub->end_of_stored_events)) {
+            nostr_metric_counter_add("sub_eose_coalesced", 1);
+            if (getenv("NOSTR_DEBUG_EOSE")) {
+                fprintf(stderr, "[EOSE_SIGNAL] sid=%s coalesced\n",
+                        sub->priv->id ? sub->priv->id : "null");
+            }
         }
         if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
             fprintf(stderr, "[sub %s] dispatch_eose: signaled EOSE\n", sub->priv->id);
