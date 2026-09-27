@@ -396,6 +396,16 @@ send_done:
     }
     case LWS_CALLBACK_CLIENT_CLOSED:
     case LWS_CALLBACK_CLIENT_CONNECTION_ERROR: {
+        /* A close request can race a peer close before the service loop drains
+         * it. The owner keeps priv alive until then; clear the WSI so the
+         * queued request never acts on a destroyed socket. */
+        NostrConnectionPrivate *closing_priv = conn->priv;
+        if (closing_priv && atomic_load_explicit(&closing_priv->closing, memory_order_acquire)) {
+            nsync_mu_lock(&closing_priv->mutex);
+            if (closing_priv->wsi == wsi) closing_priv->wsi = NULL;
+            nsync_mu_unlock(&closing_priv->mutex);
+            break;
+        }
         NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
         if (priv) {
             lws_set_timer_usecs(wsi, 0);
@@ -584,6 +594,7 @@ static struct lws_context *g_lws_context = NULL;
 static pthread_t g_lws_service_thread;
 static int g_lws_running = 0;
 static pthread_mutex_t g_lws_mutex = PTHREAD_MUTEX_INITIALIZER;
+static NostrConnectionPrivate *g_close_requests = NULL; /* guarded by g_lws_mutex */
 
 /* nostrc-priv-refcount: Refcounted lifetime management for NostrConnectionPrivate.
  *
@@ -821,6 +832,13 @@ static void *lws_service_loop(void *arg) {
         int running = g_lws_running;
         struct lws_context *ctx = g_lws_context;
         GoChannel *queue = g_conn_request_queue;
+        /* Leave requests owned by the queue if the service loop is stopping;
+         * never unlink entries that this iteration will not process. */
+        NostrConnectionPrivate *close_requests = NULL;
+        if (running && ctx) {
+            close_requests = g_close_requests;
+            g_close_requests = NULL;
+        }
         /* nostrc-conn-graveyard: Opportunistically reap old deferred connections.
          * This ensures connections are freed even while other connections are active,
          * as long as they've been dead for at least CONN_GRAVEYARD_DELAY_NS. */
@@ -829,6 +847,26 @@ static void *lws_service_loop(void *arg) {
 
         if (!running || !ctx) {
             break;
+        }
+
+        /* Only the LWS service thread may shut down a WSI. A queued Nostr
+         * CLOSE may have been abandoned by relay cancellation, so socket
+         * shutdown is the non-blocking teardown guarantee. */
+        while (close_requests) {
+            NostrConnectionPrivate *priv = close_requests;
+            close_requests = priv->close_next;
+            NostrConnection *conn = priv->close_conn;
+            struct lws *wsi = priv->wsi; /* callbacks run on this same thread */
+            if (wsi) {
+                lws_set_opaque_user_data(wsi, NULL);
+                priv->wsi = NULL;
+                lws_wsi_close(wsi, LWS_TO_KILL_ASYNC);
+            }
+            conn->priv = NULL;
+            priv_close_and_unref(priv);
+            pthread_mutex_lock(&g_lws_mutex);
+            deferred_cleanup_add(conn, NULL);
+            pthread_mutex_unlock(&g_lws_mutex);
         }
 
         /* nostrc-snap: Process AT MOST ONE connection request per iteration.
@@ -1168,6 +1206,8 @@ int nostr_connection_wait_handshake(NostrConnection *conn, uint32_t timeout_ms) 
 
 void nostr_connection_close(NostrConnection *conn) {
     if (!conn) return;
+    NostrConnectionPrivate *priv = conn->priv;
+    if (priv && atomic_exchange_explicit(&priv->closing, 1, memory_order_acq_rel)) return;
     /* Wake nostr_connection_wait_handshake(): this connection will not
      * complete a handshake any more. */
     if (conn->priv && !conn->priv->test_mode) {
@@ -1194,20 +1234,6 @@ void nostr_connection_close(NostrConnection *conn) {
         free(conn);
         return;
     } else if (conn->priv) {
-        /* Detach the connection from WSI to prevent callbacks from accessing freed memory.
-         * We cannot safely call lws_close_reason() from this thread - that must be done
-         * from the service thread. Instead, we just detach and let the WSI close naturally. */
-        pthread_mutex_lock(&g_lws_mutex);
-        if (conn->priv->wsi) {
-            lws_set_opaque_user_data(conn->priv->wsi, NULL);
-            /* Wake up service thread to process the detachment */
-            if (g_lws_context) {
-                lws_cancel_service(g_lws_context);
-            }
-            conn->priv->wsi = NULL;
-        }
-        pthread_mutex_unlock(&g_lws_mutex);
-
         /* Clear any pending-write accounting for this connection so the
          * global writable-pending count cannot leak a permanently non-zero
          * value (which would re-enable the service-loop POLLOUT sweep
@@ -1216,24 +1242,14 @@ void nostr_connection_close(NostrConnection *conn) {
         conn_set_writable_pending_locked(conn->priv, 0);
         nsync_mu_unlock(&conn->priv->mutex);
 
-        /* nostrc-priv-refcount: Release priv via refcounting, not deferred cleanup.
-         *
-         * With refcounting, we set the closing flag and release our ref.
-         * Any in-flight callbacks that acquired a ref via priv_try_ref() will
-         * keep priv alive until they call priv_unref(). New callbacks will
-         * fail priv_try_ref() (returns NULL) and bail out cleanly.
-         *
-         * The priv struct is freed when the last ref is released AND closing
-         * is set. This is lifetime correctness, not timing-based delay. */
-        priv_close_and_unref(conn->priv);
-        conn->priv = NULL;
-        
-        /* The conn struct still needs deferred cleanup because LWS callbacks
-         * capture conn from lws_get_opaque_user_data() before we can NULL it.
-         * We defer conn (but not priv, which is now refcounted); the service
-         * loop reaps it once the grace period has passed. */
+        /* Keep the owner's private-state reference until the service thread
+         * has detached and requested actual WSI shutdown. This also lets a
+         * peer-close callback clear priv->wsi before the request is handled. */
         pthread_mutex_lock(&g_lws_mutex);
-        deferred_cleanup_add(conn, NULL);  /* NULL priv - it's refcounted */
+        priv->close_conn = conn;
+        priv->close_next = g_close_requests;
+        g_close_requests = priv;
+        if (g_lws_context) lws_cancel_service(g_lws_context);
         pthread_mutex_unlock(&g_lws_mutex);
     } else {
         /* No priv (shouldn't happen in practice) — safe to free conn

@@ -15,6 +15,8 @@ struct _NostrConnectionPrivate {
      * The priv struct is freed when refs drops to 0 AND closing is set. */
     atomic_int refs;
     atomic_int closing;
+    struct _NostrConnectionPrivate *close_next; /* service-thread close queue */
+    struct _NostrConnection *close_conn;
     struct lws *wsi;
     int enable_compression;
     struct lws_context *context;

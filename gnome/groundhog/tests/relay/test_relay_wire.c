@@ -11,6 +11,7 @@ typedef struct {
   GPtrArray *connections;
   gchar *url;
   guint reqs;
+  guint closed_sockets;
 } WireRelay;
 
 typedef struct {
@@ -48,6 +49,14 @@ on_message(SoupWebsocketConnection *connection, SoupWebsocketDataType type,
 }
 
 static void
+on_socket_closed(SoupWebsocketConnection *connection, gpointer data)
+{
+  (void)connection;
+  WireRelay *relay = data;
+  relay->closed_sockets++;
+}
+
+static void
 on_websocket(SoupServer *server, SoupServerMessage *message,
              const char *path, SoupWebsocketConnection *connection,
              gpointer data)
@@ -58,6 +67,7 @@ on_websocket(SoupServer *server, SoupServerMessage *message,
   WireRelay *relay = data;
   g_ptr_array_add(relay->connections, g_object_ref(connection));
   g_signal_connect(connection, "message", G_CALLBACK(on_message), relay);
+  g_signal_connect(connection, "closed", G_CALLBACK(on_socket_closed), relay);
 }
 
 static void
@@ -120,6 +130,18 @@ static void
 wait_for_reqs(WireRelay *relay, guint count)
 {
   wait_for_count(&relay->reqs, count);
+}
+
+static void
+wait_for_close(WireRelay *relay, guint count)
+{
+  WaitState wait = {0};
+  guint timeout_source = g_timeout_add(3000, expire, &wait);
+  while (relay->closed_sockets < count && !wait.timed_out)
+    g_main_context_iteration(NULL, TRUE);
+  if (!wait.timed_out)
+    g_source_remove(timeout_source);
+  g_assert_cmpuint(relay->closed_sockets, ==, count);
 }
 
 static void
@@ -264,6 +286,30 @@ test_same_url_scopes_isolated(void)
   g_free(new_updates.eose_url);
 }
 
+/* Cancellation must close the relay-side socket even if the queued Nostr
+ * CLOSE loses the race with relay teardown. Requiring the real socket's closed
+ * signal makes this fail against the former detach-only implementation. The
+ * deadline is only a failure bound; WebSocket signals drive progress. */
+static void
+test_cancel_closes_relay_subscription(void)
+{
+  WireRelay relay = {0};
+  relay_init(&relay);
+  GhRelayScope *first = gh_relay_scope_new(1, any_filters(), NULL, NULL);
+  GhRelayScope *second = gh_relay_scope_new(2, any_filters(), NULL, NULL);
+  g_assert_true(gh_relay_scope_add_url(first, relay.url, NULL));
+  g_assert_true(gh_relay_scope_add_url(second, relay.url, NULL));
+  gh_relay_scope_start(first);
+  gh_relay_scope_start(second);
+  wait_for_reqs(&relay, 2);
+  gh_relay_scope_cancel(first);
+  gh_relay_scope_cancel(second);
+  wait_for_close(&relay, 2);
+  gh_relay_scope_unref(first);
+  gh_relay_scope_unref(second);
+  relay_clear(&relay);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -271,5 +317,6 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/relay/wire-destinations", test_wire_destinations);
   g_test_add_func("/groundhog/relay/offline-at-start", test_offline_at_start_reconnect);
   g_test_add_func("/groundhog/relay/same-url-scopes-isolated", test_same_url_scopes_isolated);
+  g_test_add_func("/groundhog/relay/cancel-closes-subscription", test_cancel_closes_relay_subscription);
   return g_test_run();
 }
