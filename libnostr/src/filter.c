@@ -1052,6 +1052,9 @@ int nostr_filter_deserialize_compact(NostrFilter *filter, const char *json,
             int64_t val = 0;
             if (!parse_int64_value(&p, &val)) JFAIL_FI(NOSTR_JSON_ERR_BAD_NUMBER, p);
             filter->limit = (int)val;
+            /* nostrc-pnc7: NIP-01 "limit":0 = no stored events, EOSE now.
+             * Without the flag it is indistinguishable from "no limit". */
+            filter->limit_zero = (val == 0);
             touched = 1;
         } else if (strcmp(key, "search") == 0) {
             free(key);

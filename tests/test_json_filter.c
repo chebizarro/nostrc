@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include "json.h"
@@ -95,10 +96,41 @@ static void test_filter_minimal_absent_fields(void) {
     nostr_filter_free(f);
 }
 
+/* nostrc-pnc7: "limit":0 must set limit_zero and serialize back, on both
+ * the compact fast path and the jansson backend (force_fallback). */
+static void test_filter_limit_zero_both_paths(void) {
+    nostr_set_json_interface(jansson_impl);
+    for (int fallback = 0; fallback <= 1; fallback++) {
+        nostr_json_force_fallback(fallback != 0);
+
+        NostrFilter *z = nostr_filter_new();
+        assert(nostr_filter_deserialize(z, "{\"kinds\":[1],\"limit\":0}") == 0);
+        if (!(z->limit == 0 && z->limit_zero)) {
+            fprintf(stderr, "limit:0 lost (fallback=%d)\n", fallback);
+            abort();
+        }
+        char *s = nostr_filter_serialize(z);
+        if (!s || !strstr(s, "\"limit\":0")) {
+            fprintf(stderr, "limit:0 not serialized (fallback=%d): %s\n",
+                    fallback, s ? s : "(null)");
+            abort();
+        }
+        free(s);
+        nostr_filter_free(z);
+
+        NostrFilter *a = nostr_filter_new();
+        assert(nostr_filter_deserialize(a, "{\"kinds\":[1]}") == 0);
+        if (a->limit_zero) { fprintf(stderr, "absent limit set limit_zero\n"); abort(); }
+        nostr_filter_free(a);
+    }
+    nostr_json_force_fallback(false);
+}
+
 int main(void) {
     nostr_json_init();
     test_filter_roundtrip_full();
     test_filter_minimal_absent_fields();
+    test_filter_limit_zero_both_paths();
     nostr_json_cleanup();
     printf("test_json_filter OK\n");
     return 0;
