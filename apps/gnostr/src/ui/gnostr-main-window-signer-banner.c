@@ -20,8 +20,9 @@
 #include <glib/gi18n.h>
 
 /* How does the current session depend on org.nostr.Signer? A saved account
- * without NIP-46 credentials signed in through it; startup does not restore
- * such a session (only NIP-46 ones), so it is signed out until sign-in. */
+ * without NIP-46 credentials signed in through it; startup resumes such a
+ * session only once the signer runs and holds that account (nostrc-vuwu),
+ * so until then it is signed out. */
 static GnostrSignerNeed
 session_signer_need(void)
 {
@@ -118,6 +119,9 @@ on_signer_name_appeared(GDBusConnection *c, const gchar *name, const gchar *owne
   /* The shared proxy may have cached "not available"; start fresh. */
   gnostr_signer_proxy_reset();
   gnostr_main_window_signer_banner_refresh_internal(GNOSTR_MAIN_WINDOW(user_data));
+  /* nostrc-vuwu: a GNostr Signer session left signed out at startup
+   * (signer not running yet) resumes now, if the signer holds the account. */
+  gnostr_main_window_try_restore_nip55l_internal(GNOSTR_MAIN_WINDOW(user_data));
 }
 
 static void
@@ -157,4 +161,7 @@ gnostr_main_window_signer_banner_dispose_internal(GnostrMainWindow *self)
   if (self->signer_start_cancellable)
     g_cancellable_cancel(self->signer_start_cancellable);
   g_clear_object(&self->signer_start_cancellable);
+  if (self->nip55l_restore_cancellable)
+    g_cancellable_cancel(self->nip55l_restore_cancellable);
+  g_clear_object(&self->nip55l_restore_cancellable);
 }

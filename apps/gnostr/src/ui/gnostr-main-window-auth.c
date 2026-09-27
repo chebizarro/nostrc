@@ -892,6 +892,80 @@ gnostr_main_window_on_account_remove_requested_internal(GnostrSessionView *view,
   gnostr_main_window_show_toast(GTK_WIDGET(self), _("Account removed"));
 }
 
+static void start_signed_in_services(GnostrMainWindow *self);
+
+/* nostrc-vuwu: a saved account without NIP-46 credentials signed in through
+ * GNostr Signer (org.nostr.Signer, NIP-55L). */
+static gboolean
+saved_account_uses_local_signer(char **out_npub)
+{
+  g_autoptr(GSettings) settings = g_settings_new("org.gnostr.Client");
+  g_autofree char *npub = g_settings_get_string(settings, "current-npub");
+  g_autofree char *nip46 = g_settings_get_string(settings, "nip46-client-secret");
+  if (!npub || !*npub || (nip46 && *nip46))
+    return FALSE;
+  if (out_npub)
+    *out_npub = g_steal_pointer(&npub);
+  return TRUE;
+}
+
+static void
+on_nip55l_restored(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  GnostrMainWindow *self = GNOSTR_MAIN_WINDOW(user_data); /* ref held by the call */
+  g_autoptr(GError) error = NULL;
+  gboolean ok = gnostr_signer_service_restore_nip55l_finish(GNOSTR_SIGNER_SERVICE(source),
+                                                            res, &error);
+  /* Already NULL after dispose; otherwise allow later retries. */
+  g_clear_object(&self->nip55l_restore_cancellable);
+  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    /* Window gone, or a sign-in / sign-out superseded the restore. */
+    g_object_unref(self);
+    return;
+  }
+
+  if (!ok) {
+    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED)) {
+      g_warning("[AUTH] Not restoring the GNostr Signer session: %s", error->message);
+      gnostr_main_window_show_toast(GTK_WIDGET(self),
+          _("GNostr Signer is using a different account. Sign in again to continue."));
+    } else {
+      /* Not running: the banner offers to start it; its appearance retries. */
+      g_debug("[AUTH] GNostr Signer session not restored yet: %s",
+              error ? error->message : "unknown");
+    }
+    g_object_unref(self);
+    return;
+  }
+
+  const char *hex = gnostr_signer_service_get_pubkey(gnostr_signer_service_get_default());
+  g_free(self->user_pubkey_hex);
+  self->user_pubkey_hex = g_strdup(hex);
+  g_message("[AUTH] Restored GNostr Signer (NIP-55L) session for %.16s...", hex);
+  if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view))
+    gnostr_session_view_set_authenticated(self->session_view, TRUE);
+  start_signed_in_services(self);
+  g_object_unref(self);
+}
+
+/* nostrc-vuwu: resume a NIP-55L session once GNostr Signer is running and
+ * confirms it holds the saved account. Called at startup and whenever
+ * org.nostr.Signer appears on the bus. */
+void
+gnostr_main_window_try_restore_nip55l_internal(GnostrMainWindow *self)
+{
+  g_return_if_fail(GNOSTR_IS_MAIN_WINDOW(self));
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  g_autofree char *npub = NULL;
+  if (self->nip55l_restore_cancellable ||
+      gnostr_signer_service_get_method(signer) != GNOSTR_SIGNER_METHOD_NONE ||
+      !saved_account_uses_local_signer(&npub))
+    return;
+  self->nip55l_restore_cancellable = g_cancellable_new();
+  gnostr_signer_service_restore_nip55l_async(signer, npub, self->nip55l_restore_cancellable,
+                                             on_nip55l_restored, g_object_ref(self));
+}
+
 void
 gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self)
 {
@@ -925,12 +999,16 @@ gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self)
           g_debug("[AUTH] Restored user_pubkey_hex from raw hex in settings: %.16s...", npub);
         }
       }
-    } else {
-      g_debug("[MAIN] No NIP-46 credentials to restore, checking NIP-55L fallback");
+    } else if (saved_account_uses_local_signer(NULL)) {
+      /* nostrc-vuwu: signed in through GNostr Signer. Stay signed out until
+       * the signer confirms it holds this account (async; never as the
+       * signer's default identity). */
+      g_debug("[MAIN] Restoring the GNostr Signer (NIP-55L) session");
+      gnostr_main_window_try_restore_nip55l_internal(self);
     }
 
     if (!gnostr_signer_service_is_available(signer)) {
-      g_warning("[MAIN] Signer not available after restore - clearing signed-in state");
+      g_debug("[MAIN] No signer session yet - showing signed-out state");
       signed_in = FALSE;
     }
   }
@@ -944,6 +1022,14 @@ gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self)
     return;
   }
 
+  start_signed_in_services(self);
+}
+
+/* Everything a signed-in session starts, after NIP-46 restore (sync) or
+ * NIP-55L restore (async, nostrc-vuwu). */
+static void
+start_signed_in_services(GnostrMainWindow *self)
+{
   gnostr_main_window_refresh_card_visibility_policy_internal(self);
 
   if (self->dm_service) {

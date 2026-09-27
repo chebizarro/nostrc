@@ -22,6 +22,20 @@ forgets it on this device; the key stays in the signer.
 GNostr still reads identity *metadata* (npub and label, never secrets) from
 the key store, see `src/util/keystore.h`.
 
+### Which identity GNostr Signer uses
+
+GNostr always asks GNostr Signer for the account it is signed in as: every
+`SignEvent` and NIP-44 call passes that account's npub as `current_user`
+(`docs/dbus-interface.md`), never `""` (the signer's default identity).
+A signed event whose `pubkey` is not that account is rejected (nostrc-vuwu).
+
+On startup a GNostr Signer session resumes only when the signer is already
+running and its `GetPublicKey()` (its active identity) is the saved account.
+GNostr never starts the signer by itself at startup; once it appears on the
+bus, for example through **Start GNostr Signer**, the session resumes. If
+the signer's active identity is a different account, GNostr stays signed
+out and asks you to sign in again rather than continue as another pubkey.
+
 ### When no signer is available
 
 If a session signs through `org.nostr.Signer` and the service is not on the

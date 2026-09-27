@@ -19,6 +19,7 @@
 #include "context.h"
 #include "error.h"
 #include "secure_buf.h"
+#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
@@ -50,6 +51,10 @@ struct _GnostrSignerService {
 
   /* Cancellable for pending operations */
   GCancellable *pending_cancellable;
+
+  /* nostrc-vuwu: bumped by every sign-in / sign-out (main context only), so
+   * an in-flight NIP-55L restore never resurrects a session the user left. */
+  guint auth_generation;
 };
 
 /* Signal IDs */
@@ -205,6 +210,7 @@ gnostr_signer_service_set_nip46_session(GnostrSignerService *self,
     self->method = GNOSTR_SIGNER_METHOD_NIP46;
   }
   g_mutex_unlock(&self->session_mutex);
+  self->auth_generation++;
 
   if (old_session) {
     g_message("[SIGNER_SERVICE] Replacing NIP-46 session %p with %p",
@@ -298,6 +304,7 @@ gnostr_signer_service_clear(GnostrSignerService *self)
 
   self->nip55l_proxy = NULL;
   self->method = GNOSTR_SIGNER_METHOD_NONE;
+  self->auth_generation++;
 
   set_state(self, GNOSTR_SIGNER_STATE_DISCONNECTED);
 
@@ -311,6 +318,85 @@ void
 gnostr_signer_service_logout(GnostrSignerService *self)
 {
   gnostr_signer_service_clear(self);
+}
+
+/* ---- nostrc-vuwu: NIP-55L identity selection ----
+ *
+ * Proxy lifetime: gnostr_signer_proxy_reset() (run when the signer
+ * reappears) drops the shared proxy, so every NIP-55L call re-fetches it
+ * into self->nip55l_proxy right before use. An in-flight call is safe
+ * across a reset: g_dbus_proxy_call()'s GTask holds a reference to the
+ * proxy, and the completion callbacks only use their `source` argument.
+ *
+ * org.nostr.Signer (docs/dbus-interface.md) takes a `current_user` identity
+ * selector on SignEvent / NIP44* / NIP04*: an npub or key_id selects that
+ * identity, "" selects the daemon's DEFAULT one. GNostr always passes the
+ * npub of the account it is signed in as, so it never signs or decrypts as
+ * a different identity when the daemon's default differs. Never pass a
+ * hex key: the daemon's resolver accepts 64-hex as a raw secret key. */
+static char *
+nip55l_current_user(GnostrSignerService *self, char **out_pubkey_hex, GError **error)
+{
+  g_mutex_lock(&self->session_mutex);
+  g_autofree char *hex = self->pubkey_hex ? g_ascii_strdown(self->pubkey_hex, -1) : NULL;
+  g_mutex_unlock(&self->session_mutex);
+
+  g_autoptr(GNostrNip19) n19 = hex ? gnostr_nip19_encode_npub(hex, NULL) : NULL;
+  const char *npub = n19 ? gnostr_nip19_get_bech32(n19) : NULL;
+  if (!npub || !g_str_has_prefix(npub, "npub1")) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                        "No account is selected for GNostr Signer - please sign in again");
+    return NULL;
+  }
+  if (out_pubkey_hex)
+    *out_pubkey_hex = g_steal_pointer(&hex);
+  return g_strdup(npub);
+}
+
+/* The local signer must have signed as the selected account, the kind that
+ * was asked for, with a valid signature. */
+static gboolean
+nip55l_check_signed_event(const char *signed_json, const char *expected_pubkey,
+                          int expected_kind, GError **error)
+{
+  NostrEvent *ev = nostr_event_new();
+  gboolean parsed = ev && signed_json &&
+      nostr_event_deserialize_compact(ev, signed_json, NULL) == 1;
+  const char *pk = parsed ? nostr_event_get_pubkey(ev) : NULL;
+  gboolean ok = FALSE;
+
+  if (!parsed || !pk || !*pk) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                        "Signer returned an invalid signed event");
+  } else if (!expected_pubkey || g_ascii_strcasecmp(pk, expected_pubkey) != 0) {
+    g_warning("[SIGNER_SERVICE] NIP-55L signed as %.8s..., expected %.8s...",
+              pk, expected_pubkey ? expected_pubkey : "(none)");
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                        "Signer returned an event for a different identity");
+  } else if (expected_kind >= 0 && nostr_event_get_kind(ev) != expected_kind) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                        "Signer returned an event of the wrong kind");
+  } else if (!nostr_event_check_signature(ev)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                        "Signer returned an event with an invalid signature");
+  } else {
+    ok = TRUE;
+  }
+  if (ev)
+    nostr_event_free(ev);
+  return ok;
+}
+
+static int
+template_kind(const char *event_json)
+{
+  NostrEvent *ev = nostr_event_new();
+  int kind = -1;
+  if (ev && nostr_event_deserialize_compact(ev, event_json, NULL) == 1)
+    kind = nostr_event_get_kind(ev);
+  if (ev)
+    nostr_event_free(ev);
+  return kind;
 }
 
 /* ---- Async Signing Implementation ---- */
@@ -347,6 +433,12 @@ on_nip55l_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data)
 
   gboolean ok = nostr_org_nostr_signer_call_sign_event_finish(
       proxy, &signed_event_json, res, &error);
+
+  if (ok && !nip55l_check_signed_event(signed_event_json, ctx->expected_pubkey,
+                                       ctx->expected_kind, &error)) {
+    ok = FALSE;
+    g_clear_pointer(&signed_event_json, g_free);
+  }
 
   if (!ok) {
     if (!error) {
@@ -718,7 +810,8 @@ gnostr_signer_service_sign_event_async(GnostrSignerService *self,
 
     case GNOSTR_SIGNER_METHOD_NIP55L:
       g_debug("[SIGNER_SERVICE] Signing via NIP-55L local signer");
-      if (!self->nip55l_proxy) {
+      /* Re-fetch: the shared proxy is replaced when the signer restarts. */
+      {
         GError *error = NULL;
         self->nip55l_proxy = gnostr_signer_proxy_get(&error);
         if (!self->nip55l_proxy) {
@@ -732,14 +825,27 @@ gnostr_signer_service_sign_event_async(GnostrSignerService *self,
           return;
         }
       }
-      nostr_org_nostr_signer_call_sign_event(
-          self->nip55l_proxy,
-          event_json,
-          "",  /* current_user: empty = use default */
-          "",  /* app_id: empty = use default */
-          cancellable,
-          on_nip55l_sign_complete,
-          ctx);
+      {
+        /* nostrc-vuwu: sign as the selected account, never the default. */
+        GError *sel_error = NULL;
+        g_autofree char *current_user =
+            nip55l_current_user(self, &ctx->expected_pubkey, &sel_error);
+        if (!current_user) {
+          callback(self, NULL, sel_error, user_data);
+          g_error_free(sel_error);
+          sign_context_free(ctx);
+          return;
+        }
+        ctx->expected_kind = template_kind(event_json);
+        nostr_org_nostr_signer_call_sign_event(
+            self->nip55l_proxy,
+            event_json,
+            current_user,
+            "",  /* app_id: empty = the daemon identifies the D-Bus caller */
+            cancellable,
+            on_nip55l_sign_complete,
+            ctx);
+      }
       break;
 
     case GNOSTR_SIGNER_METHOD_NONE:
@@ -939,6 +1045,172 @@ gnostr_signer_service_restore_from_settings(GnostrSignerService *self)
             signer_pubkey, n_relays);
 
   return TRUE;
+}
+
+/* ---- nostrc-vuwu: NIP-55L session restore ---- */
+
+typedef struct {
+  char *pubkey_hex;          /* the saved account */
+  NostrSignerProxy *proxy;   /* borrowed: shared via signer_ipc */
+  guint generation;          /* self->auth_generation when started */
+} Nip55lRestore;
+
+static void
+nip55l_restore_free(Nip55lRestore *r)
+{
+  g_free(r->pubkey_hex);
+  g_free(r);
+}
+
+static char *
+pubkey_hex_from_npub_or_hex(const char *s)
+{
+  if (!s || !*s)
+    return NULL;
+  if (g_str_has_prefix(s, "npub1")) {
+    g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(s, NULL);
+    const char *hex = n19 && gnostr_nip19_get_entity_type(n19) == GNOSTR_BECH32_NPUB
+                      ? gnostr_nip19_get_pubkey(n19) : NULL;
+    return hex ? g_ascii_strdown(hex, -1) : NULL;
+  }
+  if (strlen(s) == 64) {
+    for (const char *p = s; *p; p++)
+      if (!g_ascii_isxdigit(*p))
+        return NULL;
+    return g_ascii_strdown(s, -1);
+  }
+  return NULL;
+}
+
+static void
+on_restore_pubkey(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  GTask *task = G_TASK(user_data);
+  GnostrSignerService *self = g_task_get_source_object(task);
+  Nip55lRestore *r = g_task_get_task_data(task);
+  GError *error = NULL;
+  g_autofree char *npub = NULL;
+
+  if (!nostr_org_nostr_signer_call_get_public_key_finish(NOSTR_ORG_NOSTR_SIGNER(source),
+                                                         &npub, res, &error)) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  g_autofree char *active_hex = pubkey_hex_from_npub_or_hex(npub);
+  if (!active_hex || g_strcmp0(active_hex, r->pubkey_hex) != 0) {
+    /* Groundhog rule: never silently continue as a different pubkey. */
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                            "GNostr Signer is using a different account");
+    g_object_unref(task);
+    return;
+  }
+  if (self->method != GNOSTR_SIGNER_METHOD_NONE || self->auth_generation != r->generation) {
+    /* A sign-in or sign-out happened meanwhile; it wins. */
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                            "Superseded by a newer sign-in");
+    g_object_unref(task);
+    return;
+  }
+
+  self->nip55l_proxy = NULL;  /* fetched on use */
+  self->method = GNOSTR_SIGNER_METHOD_NIP55L;
+  gnostr_signer_service_set_pubkey(self, r->pubkey_hex);
+  set_state(self, GNOSTR_SIGNER_STATE_CONNECTED);
+  g_message("[SIGNER_SERVICE] NIP-55L session restored for %.16s...", r->pubkey_hex);
+  g_task_return_boolean(task, TRUE);
+  g_object_unref(task);
+}
+
+static void
+on_restore_has_owner(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  GTask *task = G_TASK(user_data);
+  Nip55lRestore *r = g_task_get_task_data(task);
+  GError *error = NULL;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), res, &error);
+  gboolean running = FALSE;
+  if (reply)
+    g_variant_get(reply, "(b)", &running);
+  if (!running) {
+    if (error)
+      g_task_return_error(task, error);
+    else
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                              "GNostr Signer is not running");
+    g_object_unref(task);
+    return;
+  }
+
+  /* The signer is running, so creating the proxy activates nothing. A
+   * failure cached from before it started is dropped and retried once. */
+  r->proxy = gnostr_signer_proxy_get(NULL);
+  if (!r->proxy) {
+    gnostr_signer_proxy_reset();
+    r->proxy = gnostr_signer_proxy_get(&error);
+  }
+  if (!r->proxy) {
+    g_task_return_error(task, error ? error
+                        : g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED, "No signer proxy"));
+    g_object_unref(task);
+    return;
+  }
+  nostr_org_nostr_signer_call_get_public_key(r->proxy, g_task_get_cancellable(task),
+                                             on_restore_pubkey, task);
+}
+
+static void
+on_restore_bus(GObject *source, GAsyncResult *res, gpointer user_data)
+{
+  (void)source;
+  GTask *task = G_TASK(user_data);
+  GError *error = NULL;
+  g_autoptr(GDBusConnection) bus = g_bus_get_finish(res, &error);
+  if (!bus) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  g_dbus_connection_call(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                         "org.freedesktop.DBus", "NameHasOwner",
+                         g_variant_new("(s)", "org.nostr.Signer"), G_VARIANT_TYPE("(b)"),
+                         G_DBUS_CALL_FLAGS_NONE, 5000, g_task_get_cancellable(task),
+                         on_restore_has_owner, task);
+}
+
+void
+gnostr_signer_service_restore_nip55l_async(GnostrSignerService *self,
+                                            const char *npub,
+                                            GCancellable *cancellable,
+                                            GAsyncReadyCallback callback,
+                                            gpointer user_data)
+{
+  g_return_if_fail(GNOSTR_IS_SIGNER_SERVICE(self));
+
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gnostr_signer_service_restore_nip55l_async);
+  g_autofree char *hex = pubkey_hex_from_npub_or_hex(npub);
+  if (!hex) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                            "No valid saved account");
+    g_object_unref(task);
+    return;
+  }
+  Nip55lRestore *r = g_new0(Nip55lRestore, 1);
+  r->pubkey_hex = g_steal_pointer(&hex);
+  r->generation = self->auth_generation;
+  g_task_set_task_data(task, r, (GDestroyNotify)nip55l_restore_free);
+  /* Never auto-start the signer at startup: ask the bus who is running. */
+  g_bus_get(G_BUS_TYPE_SESSION, cancellable, on_restore_bus, task);
+}
+
+gboolean
+gnostr_signer_service_restore_nip55l_finish(GnostrSignerService *self,
+                                             GAsyncResult *result,
+                                             GError **error)
+{
+  g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
 }
 
 void
@@ -1158,7 +1430,8 @@ gnostr_signer_service_nip44_encrypt_async(GnostrSignerService *self,
 
     case GNOSTR_SIGNER_METHOD_NIP55L:
       g_debug("[SIGNER_SERVICE] NIP-44 encrypt via NIP-55L local signer");
-      if (!self->nip55l_proxy) {
+      /* Re-fetch: the shared proxy is replaced when the signer restarts. */
+      {
         GError *error = NULL;
         self->nip55l_proxy = gnostr_signer_proxy_get(&error);
         if (!self->nip55l_proxy) {
@@ -1172,14 +1445,24 @@ gnostr_signer_service_nip44_encrypt_async(GnostrSignerService *self,
           return;
         }
       }
-      nostr_org_nostr_signer_call_nip44_encrypt(
-          self->nip55l_proxy,
-          plaintext,
-          peer_pubkey,
-          "",  /* current_user: empty = use default */
-          cancellable,
-          on_nip55l_nip44_encrypt_complete,
-          ctx);
+      {
+        GError *sel_error = NULL;
+        g_autofree char *current_user = nip55l_current_user(self, NULL, &sel_error);
+        if (!current_user) {
+          callback(self, NULL, sel_error, user_data);
+          g_error_free(sel_error);
+          nip44_context_free(ctx);
+          return;
+        }
+        nostr_org_nostr_signer_call_nip44_encrypt(
+            self->nip55l_proxy,
+            plaintext,
+            peer_pubkey,
+            current_user,  /* nostrc-vuwu: the selected account */
+            cancellable,
+            on_nip55l_nip44_encrypt_complete,
+            ctx);
+      }
       break;
 
     case GNOSTR_SIGNER_METHOD_NONE:
@@ -1238,7 +1521,8 @@ gnostr_signer_service_nip44_decrypt_async(GnostrSignerService *self,
 
     case GNOSTR_SIGNER_METHOD_NIP55L:
       g_debug("[SIGNER_SERVICE] NIP-44 decrypt via NIP-55L local signer");
-      if (!self->nip55l_proxy) {
+      /* Re-fetch: the shared proxy is replaced when the signer restarts. */
+      {
         GError *error = NULL;
         self->nip55l_proxy = gnostr_signer_proxy_get(&error);
         if (!self->nip55l_proxy) {
@@ -1252,14 +1536,24 @@ gnostr_signer_service_nip44_decrypt_async(GnostrSignerService *self,
           return;
         }
       }
-      nostr_org_nostr_signer_call_nip44_decrypt(
-          self->nip55l_proxy,
-          ciphertext,
-          peer_pubkey,
-          "",  /* current_user: empty = use default */
-          cancellable,
-          on_nip55l_nip44_decrypt_complete,
-          ctx);
+      {
+        GError *sel_error = NULL;
+        g_autofree char *current_user = nip55l_current_user(self, NULL, &sel_error);
+        if (!current_user) {
+          callback(self, NULL, sel_error, user_data);
+          g_error_free(sel_error);
+          nip44_context_free(ctx);
+          return;
+        }
+        nostr_org_nostr_signer_call_nip44_decrypt(
+            self->nip55l_proxy,
+            ciphertext,
+            peer_pubkey,
+            current_user,  /* nostrc-vuwu: the selected account */
+            cancellable,
+            on_nip55l_nip44_decrypt_complete,
+            ctx);
+      }
       break;
 
     case GNOSTR_SIGNER_METHOD_NONE:
@@ -1521,16 +1815,25 @@ nip44_bytes_begin(GnostrSignerService *self, const char *peer_pubkey,
   return ctx;
 }
 
-/* Returns the proxy, or NULL after reporting the failure through @ctx. */
+/* Returns the proxy and, in @out_current_user, the selected account's npub
+ * (nostrc-vuwu); or NULL after reporting the failure through @ctx. */
 static NostrSignerProxy *
-nip44_bytes_nip55l_proxy(Nip44BytesContext *ctx)
+nip44_bytes_nip55l_proxy(Nip44BytesContext *ctx, char **out_current_user)
 {
   GnostrSignerService *self = ctx->service;
-  if (self->nip55l_proxy) return self->nip55l_proxy;
+  GError *sel_error = NULL;
+  *out_current_user = nip55l_current_user(self, NULL, &sel_error);
+  if (!*out_current_user) {
+    nip44_bytes_fail(ctx, sel_error);
+    g_error_free(sel_error);
+    nip44_bytes_context_free(ctx);
+    return NULL;
+  }
 
   GError *error = NULL;
   self->nip55l_proxy = gnostr_signer_proxy_get(&error);
   if (!self->nip55l_proxy) {
+    g_clear_pointer(out_current_user, g_free);
     GError *cb_error = g_error_new(G_IO_ERROR, G_IO_ERROR_FAILED,
                                    "Failed to connect to local signer: %s",
                                    error ? error->message : "unknown");
@@ -1571,13 +1874,14 @@ gnostr_signer_service_nip44_encrypt_bytes_async(GnostrSignerService *self,
     }
 
     case GNOSTR_SIGNER_METHOD_NIP55L: {
-      NostrSignerProxy *proxy = nip44_bytes_nip55l_proxy(ctx);
+      g_autofree char *current_user = NULL;
+      NostrSignerProxy *proxy = nip44_bytes_nip55l_proxy(ctx, &current_user);
       if (!proxy) return;
       gsize len = 0;
       const guchar *bytes = g_bytes_get_data(plaintext, &len);
       char *b64 = g_base64_encode(bytes, len);
       nostr_org_nostr_signer_call_nip44_encrypt_b64(
-          proxy, b64, peer_pubkey, "" /* current_user: default */,
+          proxy, b64, peer_pubkey, current_user,
           cancellable, on_nip55l_nip44_encrypt_b64_complete, ctx);
       /* The encoded plaintext is as sensitive as the plaintext itself. */
       memset(b64, 0, strlen(b64));
@@ -1625,10 +1929,11 @@ gnostr_signer_service_nip44_decrypt_bytes_async(GnostrSignerService *self,
     }
 
     case GNOSTR_SIGNER_METHOD_NIP55L: {
-      NostrSignerProxy *proxy = nip44_bytes_nip55l_proxy(ctx);
+      g_autofree char *current_user = NULL;
+      NostrSignerProxy *proxy = nip44_bytes_nip55l_proxy(ctx, &current_user);
       if (!proxy) return;
       nostr_org_nostr_signer_call_nip44_decrypt_b64(
-          proxy, ciphertext, peer_pubkey, "" /* current_user: default */,
+          proxy, ciphertext, peer_pubkey, current_user,
           cancellable, on_nip55l_nip44_decrypt_b64_complete, ctx);
       break;
     }

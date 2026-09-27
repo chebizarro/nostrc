@@ -869,6 +869,34 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "profile;validation;unit;gnostr")
 
+  # GNostr Signer (NIP-55L) session restore + identity selection
+  # (nostrc-vuwu). Headless: fake org.nostr.Signer on a private GTestDBus.
+  add_executable(gnostr-test-signer-nip55l-identity
+    tests/test_signer_nip55l_identity.c
+    src/ipc/signer_ipc.c
+    src/ipc/gnostr-signer-service.c)
+  target_compile_features(gnostr-test-signer-nip55l-identity PRIVATE c_std_11)
+  target_include_directories(gnostr-test-signer-nip55l-identity PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gobject/include
+    ${PROJECT_ROOT}/libnostr/include
+    ${PROJECT_ROOT}/libgo/include
+    ${PROJECT_ROOT}/nips/nip46/include
+    ${_NOSTR_CONFIG_DIR})
+  target_compile_definitions(gnostr-test-signer-nip55l-identity PRIVATE
+    SIGNER_DBUS_XML="${PROJECT_ROOT}/nostr-gobject/dbus/org.nostr.Signer.xml")
+  target_link_libraries(gnostr-test-signer-nip55l-identity PRIVATE
+    PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr_gobject nostr libgo)
+  if (TARGET nostr_nip46_core)
+    target_link_libraries(gnostr-test-signer-nip55l-identity PRIVATE nostr_nip46_core)
+  endif()
+  _gnostr_apply_sanitizers(gnostr-test-signer-nip55l-identity)
+  add_test(NAME gnostr-test-signer-nip55l-identity COMMAND gnostr-test-signer-nip55l-identity)
+  set_tests_properties(gnostr-test-signer-nip55l-identity PROPERTIES
+    TIMEOUT 30
+    LABELS "signer;nip55l;dbus;unit;gnostr"
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
+
   # nostr: link routing + org.nostr.Handler1 (nostrc-prqu.3). Headless:
   # private GTestDBus bus; checks X-Nostr-Kinds= against the routing table.
   add_executable(gnostr-test-nostr-target

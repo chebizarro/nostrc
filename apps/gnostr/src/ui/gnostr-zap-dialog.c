@@ -7,10 +7,9 @@
 #include "gnostr-zap-dialog.h"
 #include "../util/zap.h"
 #include "../util/nwc.h"
-#include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include <glib/gi18n.h>
-#include <nostr-gobject-1.0/nostr_nip19.h>
+
 
 /* QR code generation - using qrencode if available */
 #ifdef HAVE_QRENCODE
@@ -712,57 +711,7 @@ static void initiate_zap_signing(GnostrZapDialog *self, const gchar *sender_pubk
   /* Note: self reference transferred to callback */
 }
 
-/* Callback when signer returns sender pubkey */
-static void on_get_pubkey_for_zap(GObject *source, GAsyncResult *res, gpointer user_data) {
-  GnostrZapDialog *self = GNOSTR_ZAP_DIALOG(user_data);
-  if (!GNOSTR_IS_ZAP_DIALOG(self)) {
-    return;
-  }
 
-  NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
-
-  GError *error = NULL;
-  gchar *npub = NULL;
-  gboolean ok = nostr_org_nostr_signer_call_get_public_key_finish(proxy, &npub, res, &error);
-
-  if (!ok || !npub || !*npub) {
-    set_processing(self, FALSE, NULL);
-    g_autofree gchar *msg = g_strdup_printf("Failed to get pubkey: %s", error ? error->message : "unknown error");
-    show_toast(self, msg);
-    g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, msg);
-    g_clear_error(&error);
-    g_object_unref(self);
-    return;
-  }
-
-  /* The signer returns npub (bech32) or hex pubkey - we need hex.
-   * If it starts with "npub1", decode it using NIP-19; otherwise assume hex. */
-  gchar *sender_pubkey_hex = NULL;
-  if (g_str_has_prefix(npub, "npub1")) {
-    g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(npub, NULL);
-    if (n19) {
-      sender_pubkey_hex = g_strdup(gnostr_nip19_get_pubkey(n19));
-      g_debug("[ZAP] Decoded npub to hex: %s", sender_pubkey_hex);
-    } else {
-      set_processing(self, FALSE, NULL);
-      show_toast(self, "Failed to decode signer public key");
-      g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, "Failed to decode signer public key");
-      g_free(npub);
-      g_object_unref(self);
-      return;
-    }
-  } else {
-    /* Assume hex */
-    sender_pubkey_hex = g_strdup(npub);
-  }
-  g_free(npub);
-
-  gint64 amount_msat = gnostr_zap_sats_to_msat(get_selected_amount_sats(self));
-
-  /* Now initiate signing with the pubkey */
-  initiate_zap_signing(self, sender_pubkey_hex, amount_msat);
-  g_free(sender_pubkey_hex);
-}
 
 /* LNURL info callback */
 static void on_lnurl_info_received(GnostrLnurlPayInfo *info, GError *error, gpointer user_data) {
@@ -805,29 +754,23 @@ static void on_lnurl_info_received(GnostrLnurlPayInfo *info, GError *error, gpoi
     return;
   }
 
-  set_processing(self, TRUE, "Getting sender identity...");
-
-  /* Get the sender's pubkey from the signer via D-Bus IPC */
-  GError *proxy_err = NULL;
-  NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
-  if (!proxy) {
+  /* nostrc-vuwu: the zap request is from the signed-in account (the one the
+   * signer service signs as), not whatever the local signer's default
+   * identity is. */
+  GnostrSignerService *signer = gnostr_signer_service_get_default();
+  const char *sender_pubkey_hex = gnostr_signer_service_get_pubkey(signer);
+  if (!gnostr_signer_service_is_ready(signer) || !sender_pubkey_hex || !*sender_pubkey_hex) {
     set_processing(self, FALSE, NULL);
-    g_autofree gchar *msg = g_strdup_printf("Signer not available: %s", proxy_err ? proxy_err->message : "not connected");
+    const char *msg = "Sign in to send zaps";
     show_toast(self, msg);
     g_signal_emit(self, signals[SIGNAL_ZAP_FAILED], 0, msg);
-    g_clear_error(&proxy_err);
     g_object_unref(self);
     return;
   }
 
-  /* Request pubkey asynchronously */
-  nostr_org_nostr_signer_call_get_public_key(
-    proxy,
-    self->cancellable,
-    on_get_pubkey_for_zap,
-    self
-  );
-  /* Note: self reference transferred to callback */
+  /* initiate_zap_signing keeps the self reference */
+  g_autofree gchar *sender = g_strdup(sender_pubkey_hex);
+  initiate_zap_signing(self, sender, amount_msat);
 }
 
 static void on_zap_clicked(GtkButton *btn, gpointer user_data) {

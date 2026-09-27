@@ -8,7 +8,6 @@
 
 #include "bookmarks.h"
 #include <nostr-gobject-1.0/gnostr-relays.h>
-#include "../ipc/signer_ipc.h"
 #include "../ipc/gnostr-signer-service.h"
 #include <glib.h>
 #include <nostr-gobject-1.0/nostr_json.h>
@@ -310,30 +309,22 @@ static void parse_private_entries(GnostrBookmarks *self, const char *decrypted_j
 }
 
 /* Callback when private entries are decrypted */
-static void on_private_entries_decrypted(GObject *source, GAsyncResult *res, gpointer user_data) {
+static void on_private_entries_decrypted(GnostrSignerService *service, const char *decrypted_json,
+                                         GError *error, gpointer user_data) {
+    (void)service;
     DecryptPrivateContext *ctx = (DecryptPrivateContext *)user_data;
     if (!ctx) return;
 
-    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
-    GError *error = NULL;
-    char *decrypted_json = NULL;
-
-    gboolean ok = nostr_org_nostr_signer_call_nip44_decrypt_finish(
-        proxy, &decrypted_json, res, &error);
-
-    if (!ok || !decrypted_json || !*decrypted_json) {
+    if (error || !decrypted_json || !*decrypted_json) {
         /* Not an error - just means no private entries or decryption failed */
         g_debug("bookmarks: no private entries to decrypt or decryption failed: %s",
                 error ? error->message : "empty result");
-        g_clear_error(&error);
         decrypt_private_ctx_free(ctx);
         return;
     }
 
-    g_debug("bookmarks: decrypted private entries: %.100s...", decrypted_json);
+    g_debug("bookmarks: decrypted private entries");
     parse_private_entries(ctx->bookmarks, decrypted_json);
-
-    g_free(decrypted_json);
     decrypt_private_ctx_free(ctx);
 }
 
@@ -343,12 +334,15 @@ static void decrypt_private_entries_async(GnostrBookmarks *self,
                                            const char *user_pubkey) {
     if (!self || !encrypted_content || !*encrypted_content || !user_pubkey) return;
 
-    GError *error = NULL;
-    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&error);
-    if (!proxy) {
-        g_debug("bookmarks: cannot decrypt private entries - signer not available: %s",
-                error ? error->message : "unknown");
-        g_clear_error(&error);
+    /* nostrc-vuwu: decrypt through the signer service, as the signed-in
+     * account (NIP-46 or NIP-55L). Only that account's own list can be
+     * decrypted; the old direct D-Bus call passed the hex pubkey as the
+     * identity selector, which the signer daemon reads as a secret key. */
+    GnostrSignerService *signer = gnostr_signer_service_get_default();
+    const char *own = gnostr_signer_service_get_pubkey(signer);
+    if (!gnostr_signer_service_is_ready(signer) || !own ||
+        g_ascii_strcasecmp(own, user_pubkey) != 0) {
+        g_debug("bookmarks: not decrypting private entries (signer not ready or not our list)");
         return;
     }
 
@@ -357,15 +351,9 @@ static void decrypt_private_entries_async(GnostrBookmarks *self,
     ctx->encrypted_content = g_strdup(encrypted_content);
     ctx->user_pubkey = g_strdup(user_pubkey);
 
-    /* NIP-44 decrypt: for bookmark list, we encrypt to ourselves */
-    nostr_org_nostr_signer_call_nip44_decrypt(
-        proxy,
-        encrypted_content,
-        user_pubkey,      /* peer pubkey = self (encrypted to self) */
-        user_pubkey,      /* identity = current user */
-        NULL,             /* GCancellable */
-        on_private_entries_decrypted,
-        ctx);
+    /* NIP-44 decrypt: the bookmark list is encrypted to ourselves */
+    gnostr_signer_service_nip44_decrypt_async(signer, user_pubkey, encrypted_content,
+                                              NULL, on_private_entries_decrypted, ctx);
 }
 
 /* Internal helper: load bookmarks from event tags into hash table (does not clear first) */
@@ -825,21 +813,15 @@ static void on_bookmarks_sign_complete(GObject *source, GAsyncResult *res, gpoin
 static void bookmarks_publish_done(guint success_count, guint fail_count, gpointer user_data);
 
 /* Callback when private tags are encrypted */
-static void on_private_tags_encrypted(GObject *source, GAsyncResult *res, gpointer user_data) {
+static void on_private_tags_encrypted(GnostrSignerService *service, const char *encrypted_content,
+                                      GError *error, gpointer user_data) {
+    (void)service;
     SaveContext *ctx = (SaveContext *)user_data;
     if (!ctx) return;
 
-    NostrSignerProxy *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
-    GError *error = NULL;
-    char *encrypted_content = NULL;
-
-    gboolean ok = nostr_org_nostr_signer_call_nip44_encrypt_finish(
-        proxy, &encrypted_content, res, &error);
-
-    if (!ok || !encrypted_content) {
+    if (error || !encrypted_content) {
         g_warning("bookmarks: failed to encrypt private entries: %s",
                   error ? error->message : "unknown");
-        g_clear_error(&error);
         /* Proceed without private entries - still save public ones */
         proceed_to_sign(ctx, "");
         return;
@@ -847,7 +829,6 @@ static void on_private_tags_encrypted(GObject *source, GAsyncResult *res, gpoint
 
     g_debug("bookmarks: encrypted private entries");
     proceed_to_sign(ctx, encrypted_content);
-    g_free(encrypted_content);
 }
 
 /* Build and sign the event with given content */
@@ -1077,27 +1058,15 @@ void gnostr_bookmarks_save_async(GnostrBookmarks *self,
     ctx->private_tags_json = build_private_tags_json(self);
     g_mutex_unlock(&self->lock);
 
-    /* Note: Private entry encryption still uses the D-Bus proxy directly
-     * because the unified signer service doesn't yet support NIP-44 encrypt.
-     * This is a separate issue to address in a future task. */
-    GError *proxy_err = NULL;
-    NostrSignerProxy *proxy = gnostr_signer_proxy_get(&proxy_err);
-
-    /* If there are private entries and we have user pubkey and proxy, encrypt them first */
-    if (ctx->private_tags_json && ctx->user_pubkey && proxy) {
+    /* nostrc-vuwu: encrypt through the signer service as the signed-in
+     * account (NIP-46 or NIP-55L), to ourselves. */
+    if (ctx->private_tags_json && ctx->user_pubkey) {
         g_message("bookmarks: encrypting private entries");
-        nostr_org_nostr_signer_call_nip44_encrypt(
-            proxy,
-            ctx->private_tags_json,
-            ctx->user_pubkey,  /* encrypt to self */
-            ctx->user_pubkey,  /* identity = current user */
-            NULL,              /* GCancellable */
-            on_private_tags_encrypted,
-            ctx
-        );
+        gnostr_signer_service_nip44_encrypt_async(signer, ctx->user_pubkey,
+                                                  ctx->private_tags_json, NULL,
+                                                  on_private_tags_encrypted, ctx);
     } else {
-        g_clear_error(&proxy_err);
-        /* No private entries or no pubkey/proxy - proceed directly to sign */
+        /* No private entries or no pubkey - proceed directly to sign */
         proceed_to_sign(ctx, "");
     }
 }
