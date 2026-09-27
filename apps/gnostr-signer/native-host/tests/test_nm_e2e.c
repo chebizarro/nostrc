@@ -27,6 +27,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <limits.h>
+#ifdef __APPLE__
+#include <libproc.h>
+#endif
 
 #ifndef NMH_DAEMON_PATH
 #error "NMH_DAEMON_PATH must point at nostr-signer-daemon"
@@ -195,6 +198,21 @@ static void approve(E2E *e, gboolean decision) {
   g_clear_pointer(&e->last_request_id, g_free);
 }
 
+static gchar *self_exe(void) {
+#if defined(__linux__)
+  gchar *exe = g_file_read_link("/proc/self/exe", NULL);
+  CHECK(exe != NULL);
+  return exe;
+#elif defined(__APPLE__)
+  char path[PROC_PIDPATHINFO_MAXSIZE];
+  CHECK(proc_pidpath(getpid(), path, sizeof path) > 0);
+  return g_strdup(path);
+#else
+  CHECK(!"unsupported platform");
+  return NULL;
+#endif
+}
+
 static void setup(E2E *e) {
   memset(e, 0, sizeof *e);
   e->tmpdir = g_dir_make_tmp("nmh_e2e_XXXXXX", NULL);
@@ -223,8 +241,7 @@ static void setup(E2E *e) {
    * as the host itself (exe:<path>). */
   g_autofree gchar *host_real = realpath(NMH_HOST_PATH, NULL);
   CHECK(host_real);
-  g_autofree gchar *self_real = g_file_read_link("/proc/self/exe", NULL);
-  CHECK(self_real);
+  g_autofree gchar *self_real = self_exe();
   g_setenv("NOSTR_SIGNER_TEST_ORIGIN_BRIDGES", host_real, TRUE);
   g_setenv("NOSTR_SIGNER_TEST_APPROVERS", self_real, TRUE);
   g_autofree gchar *grants = g_build_filename(gdir, "signer-grants.ini", NULL);
