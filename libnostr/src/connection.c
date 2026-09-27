@@ -549,11 +549,22 @@ static const lws_retry_bo_t g_retry_bo = {
     .jitter_percent          = 5,
 };
 
-/* Shared libwebsockets context & service thread */
+/* Shared libwebsockets context & service thread.
+ *
+ * nostrc-jc2o: created on first use and kept for the life of the process,
+ * never destroyed when the last connection closes. lws_context_destroy()
+ * is not safe to run mid-process: an lws built with LWS_WITH_PLUGINS
+ * (Homebrew's, for one) always loads the protocol plugins in its
+ * test-server plugin dir and mounts all of them on its internal "system"
+ * vhost, whatever the creation info says. One of them, lws_raw_test, keeps
+ * a zero-initialised fifo fd when it has no "fifo-path" pvo and close()s it
+ * on PROTOCOL_DESTROY, so every context teardown closed the process's fd 0.
+ * The next context then opened /dev/urandom as fd 0 ("ZERO RANDOM FD"),
+ * client TLS init failed and every later connection with it. Keeping one
+ * context also spares each reconnect a context + TLS re-init. */
 static struct lws_context *g_lws_context = NULL;
 static pthread_t g_lws_service_thread;
 static int g_lws_running = 0;
-static int g_lws_refcount = 0;
 static pthread_mutex_t g_lws_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* nostrc-priv-refcount: Refcounted lifetime management for NostrConnectionPrivate.
@@ -979,7 +990,6 @@ NostrConnection *nostr_connection_new(const char *url) {
             return NULL;
         }
         g_lws_running = 1;
-        g_lws_refcount = 0; /* will increment below */
         int thread_rc = pthread_create(&g_lws_service_thread, NULL, lws_service_loop, NULL);
         if (thread_rc != 0) {
             struct lws_context *failed_ctx = g_lws_context;
@@ -999,7 +1009,6 @@ NostrConnection *nostr_connection_new(const char *url) {
     if (!g_conn_request_queue) {
         g_conn_request_queue = go_channel_create(32);
     }
-    g_lws_refcount++;
     pthread_mutex_unlock(&g_lws_mutex);
 
     /* Phase 3: Enqueue connection request + block on result.
@@ -1007,7 +1016,7 @@ NostrConnection *nostr_connection_new(const char *url) {
      * synchronous DNS — without holding g_lws_mutex, so other connections
      * and the service loop remain unblocked. */
     ConnectionRequest *req = calloc(1, sizeof(ConnectionRequest));
-    if (!req) goto fail_decref;
+    if (!req) goto fail;
     parse_ws_url(url, &req->use_ssl, req->host, sizeof req->host,
                  &req->port, req->path, sizeof req->path);
     req->conn = conn;
@@ -1015,7 +1024,7 @@ NostrConnection *nostr_connection_new(const char *url) {
     atomic_init(&req->refs, 1);      /* caller ownership */
     atomic_init(&req->cancelled, 0);
     atomic_init(&req->started, 0);
-    if (!req->result) { connection_request_unref(req); goto fail_decref; }
+    if (!req->result) { connection_request_unref(req); goto fail; }
 
     connection_request_ref(req);     /* queued/service ownership */
     GoSelectCase enqueue_case = {
@@ -1030,7 +1039,7 @@ NostrConnection *nostr_connection_new(const char *url) {
         connection_request_cancel(req);
         connection_request_unref(req); /* queued/service ownership was not transferred */
         connection_request_unref(req); /* caller ownership */
-        goto fail_decref;
+        goto fail;
     }
 
     /* Wake the service thread so it drains the queue promptly */
@@ -1060,51 +1069,18 @@ NostrConnection *nostr_connection_new(const char *url) {
             (void)go_channel_receive(req->result, &result_val);
         } else {
             connection_request_unref(req); /* caller ownership */
-            goto fail_decref;
+            goto fail;
         }
     }
     intptr_t ok = (intptr_t)result_val;
     connection_request_unref(req); /* caller ownership */
 
-    if (!ok) goto fail_decref;
+    if (!ok) goto fail;
 
     return conn;
 
-fail_decref:
-    /* Decrement refcount; destroy context if last.
-     * Same combined critical section as nostr_connection_close(). */
-    {
-        struct lws_context *ctx_to_destroy = NULL;
-        GoChannel *queue_to_drain = NULL;
-        pthread_mutex_lock(&g_lws_mutex);
-        if (g_lws_refcount > 0) g_lws_refcount--;
-        if (g_lws_refcount == 0 && g_lws_context) {
-            ctx_to_destroy = g_lws_context;
-            g_lws_context = NULL;
-            g_lws_running = 0;
-            if (g_conn_request_queue) {
-                go_channel_close(g_conn_request_queue);
-                queue_to_drain = g_conn_request_queue;
-                g_conn_request_queue = NULL;
-            }
-        }
-        pthread_mutex_unlock(&g_lws_mutex);
-        if (ctx_to_destroy) {
-            lws_cancel_service(ctx_to_destroy);
-            pthread_join(g_lws_service_thread, NULL);
-            if (queue_to_drain) {
-                ConnectionRequest *pend = NULL;
-                while (go_channel_try_receive(queue_to_drain, (void **)&pend) == 0 && pend) {
-                    connection_request_cancel(pend);
-                    (void)go_channel_send(pend->result, (void *)(intptr_t)0);
-                    connection_request_unref(pend);
-                    pend = NULL;
-                }
-                go_channel_free(queue_to_drain);
-            }
-            lws_context_destroy(ctx_to_destroy);
-        }
-    }
+fail:
+    /* The shared context stays up (see g_lws_context). */
     if (conn->recv_channel) { go_channel_close(conn->recv_channel); go_channel_free(conn->recv_channel); }
     if (conn->send_channel) { go_channel_close(conn->send_channel); go_channel_free(conn->send_channel); }
     free(priv);
@@ -1186,52 +1162,6 @@ void nostr_connection_close(NostrConnection *conn) {
         conn_set_writable_pending_locked(conn->priv, 0);
         nsync_mu_unlock(&conn->priv->mutex);
 
-        /* Drop our ref to the shared context; stop/destroy if last.
-         * hq-5ejm4 fix (boris review): Queue close/drain and context
-         * teardown MUST happen in the SAME critical section to prevent:
-         *  - TOCTOU: another thread recreating context+queue between unlock/relock
-         *  - UAF: service loop using stale queue pointer after free */
-        struct lws_context *ctx_to_destroy = NULL;
-        GoChannel *queue_to_drain = NULL;
-        int should_free_priv = 0;
-        pthread_mutex_lock(&g_lws_mutex);
-        if (g_lws_refcount > 0) g_lws_refcount--;
-        if (g_lws_refcount == 0 && g_lws_context) {
-            ctx_to_destroy = g_lws_context;
-            g_lws_context = NULL;
-            g_lws_running = 0;  /* Service loop will exit on next iteration */
-            should_free_priv = 1;
-            /* Close the queue to unblock any callers stuck in go_channel_send,
-             * then take ownership for post-join drain+free. */
-            if (g_conn_request_queue) {
-                go_channel_close(g_conn_request_queue);
-                queue_to_drain = g_conn_request_queue;
-                g_conn_request_queue = NULL;
-            }
-        }
-        pthread_mutex_unlock(&g_lws_mutex);
-        if (ctx_to_destroy) {
-            lws_cancel_service(ctx_to_destroy);
-            pthread_join(g_lws_service_thread, NULL);
-            /* Service thread is stopped — safe to drain + free the queue.
-             * No other thread can access queue_to_drain since we NULLed
-             * g_conn_request_queue under the mutex. */
-            if (queue_to_drain) {
-                ConnectionRequest *pend = NULL;
-                while (go_channel_try_receive(queue_to_drain, (void **)&pend) == 0 && pend) {
-                    connection_request_cancel(pend);
-                    (void)go_channel_send(pend->result, (void *)(intptr_t)0);
-                    connection_request_unref(pend);
-                    pend = NULL;
-                }
-                go_channel_free(queue_to_drain);
-            }
-            lws_context_destroy(ctx_to_destroy);
-            /* Process deferred cleanup queue now that service thread is stopped */
-            pthread_mutex_lock(&g_lws_mutex);
-            deferred_cleanup_process();
-            pthread_mutex_unlock(&g_lws_mutex);
-        }
         /* nostrc-priv-refcount: Release priv via refcounting, not deferred cleanup.
          *
          * With refcounting, we set the closing flag and release our ref.
@@ -1246,20 +1176,11 @@ void nostr_connection_close(NostrConnection *conn) {
         
         /* The conn struct still needs deferred cleanup because LWS callbacks
          * capture conn from lws_get_opaque_user_data() before we can NULL it.
-         * We defer conn (but not priv, which is now refcounted). */
-        if (should_free_priv) {
-            /* Service thread has stopped (pthread_join above) — safe to
-             * free conn immediately. */
-            // Do not free channels here; the owner (relay) will free them
-            // after worker threads exit.
-            free(conn);
-        } else {
-            /* Service thread still running — defer conn only.
-             * priv is handled by refcounting. */
-            pthread_mutex_lock(&g_lws_mutex);
-            deferred_cleanup_add(conn, NULL);  /* NULL priv - it's refcounted */
-            pthread_mutex_unlock(&g_lws_mutex);
-        }
+         * We defer conn (but not priv, which is now refcounted); the service
+         * loop reaps it once the grace period has passed. */
+        pthread_mutex_lock(&g_lws_mutex);
+        deferred_cleanup_add(conn, NULL);  /* NULL priv - it's refcounted */
+        pthread_mutex_unlock(&g_lws_mutex);
     } else {
         /* No priv (shouldn't happen in practice) — safe to free conn
          * immediately since no LWS service thread involvement. */
