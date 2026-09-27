@@ -15,8 +15,9 @@ ExecStart=/usr/bin/gnostr-signer-daemon
 # NIP-46 bunker mode: see gnostr-signer-daemon.service.d/bunker.conf.example
 ExecReload=/bin/kill -HUP $MAINPID
 
-# Set endpoint with unix socket by default under XDG_RUNTIME_DIR
-Environment=NOSTR_SIGNER_ENDPOINT=unix:%t/gnostr/signer.sock
+# No NIP-5F socket by default: it is not approval-gated (nip55l 0.4.0
+# gates reads/decrypts over D-Bus per verified caller). To opt in, add
+# Environment=NOSTR_SIGNER_ENDPOINT=unix:%t/gnostr/signer.sock in a drop-in.
 Environment=G_MESSAGES_DEBUG=
 
 # Restart policy
