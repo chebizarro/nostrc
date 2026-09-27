@@ -223,7 +223,9 @@ gnostr_signer_error_from_dbus(const GError *error)
                        ? remote + strlen(NIP55L_DBUS_ERROR_PREFIX) : NULL;
 
   if (g_strcmp0(name, "ApprovalDenied") == 0) {
-    /* The daemon's reasons (nips/nip55l/src/glib/signer_service_g.c). */
+    /* The daemon's reasons, nips/nip55l/src/glib/signer_service_g.c. The
+     * test /signer/nip55l/error-map-contract reads that file and fails if
+     * these phrases disappear from it. */
     if (strstr(why, "no approval agent"))
       return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NO_APPROVER,
           _("GNostr Signer needs your approval for this, but its window is closed. "
@@ -272,13 +274,17 @@ set_approval(GnostrSignerService *self, GnostrSignerApproval approval)
 typedef struct {
   GnostrSignerService *self;
   GnostrSignerApproval approval;
+  guint generation;           /* self->auth_generation of the failed call */
 } ApprovalUpdate;
 
 static gboolean
 approval_update_invoke(gpointer data)
 {
   ApprovalUpdate *u = data;
-  set_approval(u->self, u->approval);
+  /* A sign-in/out since the call reset the state: this is about the old
+   * session. */
+  if (u->generation == u->self->auth_generation)
+    set_approval(u->self, u->approval);
   return G_SOURCE_REMOVE;
 }
 
@@ -311,6 +317,7 @@ nip55l_call_failed(GnostrSignerService *self, GError *error)
     ApprovalUpdate *u = g_new0(ApprovalUpdate, 1);
     u->self = g_object_ref(self);
     u->approval = approval;
+    u->generation = self->auth_generation;
     /* Completions normally run on the main context already. */
     g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT, approval_update_invoke, u,
                                approval_update_free);

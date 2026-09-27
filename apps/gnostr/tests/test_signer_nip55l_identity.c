@@ -516,6 +516,35 @@ test_error_map(void)
   g_assert_null(gnostr_signer_error_from_dbus(NULL));
 }
 
+/* The mapping keys on the daemon's reason text: keep it honest against the
+ * daemon source it was written for (nostrc-jppi). */
+static void
+test_error_map_contract(void)
+{
+  g_autofree char *src = NULL;
+  if (!g_file_get_contents(NIP55L_SIGNER_SERVICE_SRC, &src, NULL, NULL)) {
+    g_test_skip("nip55l daemon source not found");
+    return;
+  }
+  static const struct { const char *phrase; int code; } reasons[] = {
+    { "approval required but no approval agent is running (start GNostr Signer)",
+      GNOSTR_SIGNER_ERROR_NO_APPROVER },
+    { "approval timed out", GNOSTR_SIGNER_ERROR_TIMED_OUT },
+    { "denied by policy", GNOSTR_SIGNER_ERROR_DENIED_BY_RULE },
+    { "user denied", GNOSTR_SIGNER_ERROR_DENIED },
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(reasons); i++) {
+    g_autofree char *quoted = g_strdup_printf("\"%s\"", reasons[i].phrase);
+    if (!strstr(src, quoted))
+      g_error("nip55l no longer says %s; update gnostr_signer_error_from_dbus()", quoted);
+    g_autoptr(GError) raw = g_dbus_error_new_for_dbus_error(
+        "org.nostr.Signer.Error.ApprovalDenied", reasons[i].phrase);
+    g_autoptr(GError) e = gnostr_signer_error_from_dbus(raw);
+    g_assert_error(e, GNOSTR_SIGNER_ERROR, reasons[i].code);
+  }
+  g_assert_nonnull(strstr(src, "ORG_NOSTR_SIGNER_ERR_APPROVAL"));
+}
+
 int
 main(int argc, char **argv)
 {
@@ -528,5 +557,6 @@ main(int argc, char **argv)
   npub_b = g_strdup(gnostr_nip19_get_bech32(nb));
   g_test_add_func("/signer/nip55l/identity", test_nip55l_identity);
   g_test_add_func("/signer/nip55l/error-map", test_error_map);
+  g_test_add_func("/signer/nip55l/error-map-contract", test_error_map_contract);
   return g_test_run();
 }
