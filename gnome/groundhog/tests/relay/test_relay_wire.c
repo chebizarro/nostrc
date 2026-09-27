@@ -9,9 +9,17 @@ typedef struct {
   GPtrArray *connections;
   gchar *url;
   guint reqs;
-  guint timeout_source;
-  gboolean timed_out;
 } WireRelay;
+
+typedef struct {
+  guint errors;
+  guint eoses;
+  gchar *eose_url;
+} WireUpdates;
+
+typedef struct {
+  gboolean timed_out;
+} WaitState;
 
 static void
 on_message(SoupWebsocketConnection *connection, SoupWebsocketDataType type,
@@ -22,8 +30,17 @@ on_message(SoupWebsocketConnection *connection, SoupWebsocketDataType type,
   gsize length;
   const gchar *bytes = g_bytes_get_data(message, &length);
   if (type == SOUP_WEBSOCKET_DATA_TEXT && length >= 6 &&
-      memcmp(bytes, "[\"REQ\"", 6) == 0)
+      memcmp(bytes, "[\"REQ\"", 6) == 0) {
     relay->reqs++;
+    g_autofree gchar *text = g_strndup(bytes, length);
+    const gchar *comma = strchr(text, ',');
+    const gchar *start = comma ? strchr(comma, '"') : NULL;
+    const gchar *end = start ? strchr(start + 1, '"') : NULL;
+    g_assert_nonnull(end);
+    g_autofree gchar *sub_id = g_strndup(start + 1, end - start - 1);
+    g_autofree gchar *eose = g_strdup_printf("[\"EOSE\",\"%s\"]", sub_id);
+    soup_websocket_connection_send_text(connection, eose);
+  }
 }
 
 static void
@@ -40,20 +57,27 @@ on_websocket(SoupServer *server, SoupServerMessage *message,
 }
 
 static void
-relay_init(WireRelay *relay)
+relay_init_port(WireRelay *relay, guint16 port)
 {
   relay->server = soup_server_new(NULL, NULL);
   relay->connections = g_ptr_array_new_with_free_func(g_object_unref);
   soup_server_add_websocket_handler(relay->server, "/relay", NULL, NULL,
                                     on_websocket, relay, NULL);
   g_autoptr(GError) error = NULL;
-  g_assert_true(soup_server_listen_local(relay->server, 0,
+  g_assert_true(soup_server_listen_local(relay->server, port,
                                          SOUP_SERVER_LISTEN_IPV4_ONLY, &error));
   GSList *uris = soup_server_get_uris(relay->server);
   g_assert_nonnull(uris);
+  g_free(relay->url);
   relay->url = g_strdup_printf("ws://127.0.0.1:%d/relay",
                                 g_uri_get_port(uris->data));
   g_slist_free_full(uris, (GDestroyNotify)g_uri_unref);
+}
+
+static void
+relay_init(WireRelay *relay)
+{
+  relay_init_port(relay, 0);
 }
 
 static void
@@ -71,23 +95,41 @@ relay_clear(WireRelay *relay)
 static gboolean
 expire(gpointer data)
 {
-  WireRelay *relay = data;
-  relay->timed_out = TRUE;
-  relay->timeout_source = 0;
+  WaitState *wait = data;
+  wait->timed_out = TRUE;
   return G_SOURCE_REMOVE;
+}
+
+static void
+wait_for_count(const guint *counter, guint count)
+{
+  WaitState wait = {0};
+  guint timeout_source = g_timeout_add_seconds(18, expire, &wait);
+  while (*counter < count && !wait.timed_out)
+    g_main_context_iteration(NULL, TRUE);
+  if (!wait.timed_out)
+    g_source_remove(timeout_source);
+  g_assert_cmpuint(*counter, ==, count);
 }
 
 static void
 wait_for_reqs(WireRelay *relay, guint count)
 {
-  relay->timed_out = FALSE;
-  relay->timeout_source = g_timeout_add_seconds(5, expire, relay);
-  while (relay->reqs < count && !relay->timed_out)
-    g_main_context_iteration(NULL, TRUE);
-  if (relay->timeout_source)
-    g_source_remove(relay->timeout_source);
-  relay->timeout_source = 0;
-  g_assert_cmpuint(relay->reqs, ==, count);
+  wait_for_count(&relay->reqs, count);
+}
+
+static void
+on_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
+{
+  (void)scope;
+  WireUpdates *updates = data;
+  if (update->notice == GH_RELAY_NOTICE_ERROR)
+    updates->errors++;
+  if (update->notice == GH_RELAY_NOTICE_EOSE) {
+    updates->eoses++;
+    g_free(updates->eose_url);
+    updates->eose_url = g_strdup(update->url);
+  }
 }
 
 static void
@@ -127,10 +169,42 @@ test_wire_destinations(void)
   relay_clear(&group);
 }
 
+static void
+test_offline_at_start_reconnect(void)
+{
+  g_autoptr(GSocketListener) reservation = g_socket_listener_new();
+  g_autoptr(GError) error = NULL;
+  guint16 port = g_socket_listener_add_any_inet_port(reservation, NULL, &error);
+  g_assert_no_error(error);
+  g_assert_cmpuint(port, >, 0);
+  g_socket_listener_close(reservation);
+
+  WireRelay relay = { .url = g_strdup_printf("ws://127.0.0.1:%u/relay", port) };
+  WireUpdates updates = {0};
+  NostrFilters *filters = nostr_filters_new();
+  NostrFilter *filter = nostr_filter_new();
+  g_assert_true(nostr_filters_add(filters, filter));
+  nostr_filter_free(filter);
+  GhRelayScope *scope = gh_relay_scope_new(7, filters, on_update, &updates);
+  g_assert_true(gh_relay_scope_add_url(scope, relay.url, NULL));
+  gh_relay_scope_start(scope);
+  /* The first dial must fail before the server is made available. */
+  wait_for_count(&updates.errors, 1);
+  relay_init_port(&relay, port);
+  wait_for_reqs(&relay, 1);
+  wait_for_count(&updates.eoses, 1);
+  g_assert_cmpstr(updates.eose_url, ==, relay.url);
+  gh_relay_scope_cancel(scope);
+  gh_relay_scope_unref(scope);
+  relay_clear(&relay);
+  g_free(updates.eose_url);
+}
+
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/groundhog/relay/wire-destinations", test_wire_destinations);
+  g_test_add_func("/groundhog/relay/offline-at-start", test_offline_at_start_reconnect);
   return g_test_run();
 }

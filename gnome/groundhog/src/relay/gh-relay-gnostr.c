@@ -3,6 +3,7 @@
 #include <gio/gio.h>
 #include <nostr-gobject-1.0/nostr_relay.h>
 #include <nostr-gobject-1.0/nostr_subscription.h>
+#include <nostr-relay.h>
 
 typedef struct {
   gint refs;
@@ -12,6 +13,9 @@ typedef struct {
   GNostrSubscription *subscription;
   NostrFilters *filters;
   GCancellable *cancellable;
+  guint retry_source;
+  guint retry_delay_seconds;
+  gboolean connect_pending;
   gboolean closed;
 } GhGnostrHandle;
 
@@ -81,15 +85,142 @@ on_auth(GNostrRelay *relay, const gchar *challenge, gpointer data)
 }
 
 static void
+reset_subscription(GhGnostrHandle *handle)
+{
+  if (!handle->subscription)
+    return;
+  g_signal_handlers_disconnect_by_data(handle->subscription, handle);
+  gnostr_subscription_close(handle->subscription);
+  g_clear_object(&handle->subscription);
+}
+
+static void
+ensure_subscription(GhGnostrHandle *handle)
+{
+  if (handle->closed || handle->subscription ||
+      !nostr_relay_is_established(gnostr_relay_get_core_relay(handle->relay)))
+    return;
+
+  NostrFilters *copy = nostr_filters_new();
+  if (!copy)
+    return;
+  for (size_t i = 0; i < handle->filters->count; i++) {
+    NostrFilter *filter = nostr_filter_copy(&handle->filters->filters[i]);
+    if (!filter || !nostr_filters_add(copy, filter)) {
+      if (filter)
+        nostr_filter_free(filter);
+      nostr_filters_free(copy);
+      gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_ERROR,
+                             NULL, FALSE, "filter copy failed");
+      return;
+    }
+    nostr_filter_free(filter); /* contents moved into the vector */
+  }
+
+  handle->subscription = gnostr_subscription_new(handle->relay, copy);
+  if (!handle->subscription) {
+    nostr_filters_free(copy); /* constructor only takes ownership on success */
+    gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_ERROR,
+                           NULL, FALSE, "subscription creation failed");
+    return;
+  }
+  g_signal_connect(handle->subscription, "event", G_CALLBACK(on_event), handle);
+  g_signal_connect(handle->subscription, "eose", G_CALLBACK(on_eose), handle);
+  g_signal_connect(handle->subscription, "closed", G_CALLBACK(on_closed), handle);
+  g_autoptr(GError) error = NULL;
+  if (!gnostr_subscription_fire(handle->subscription, &error)) {
+    reset_subscription(handle);
+    gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_ERROR,
+                           NULL, FALSE, error ? error->message : "REQ failed");
+  }
+}
+
+static void on_connected(GObject *source, GAsyncResult *result, gpointer data);
+static void on_state(GNostrRelay *relay, GNostrRelayState old_state,
+                     GNostrRelayState new_state, gpointer data);
+
+static void
+attach_relay_signals(GhGnostrHandle *handle)
+{
+  g_signal_connect(handle->relay, "ok", G_CALLBACK(on_ok), handle);
+  g_signal_connect(handle->relay, "auth-challenge", G_CALLBACK(on_auth), handle);
+  g_signal_connect(handle->relay, "state-changed", G_CALLBACK(on_state), handle);
+}
+
+static gboolean
+retry_connect(gpointer data)
+{
+  GhGnostrHandle *handle = data;
+  handle->retry_source = 0;
+  if (!handle->closed &&
+      nostr_relay_is_established(gnostr_relay_get_core_relay(handle->relay))) {
+    handle->retry_delay_seconds = 1;
+    ensure_subscription(handle);
+    return G_SOURCE_REMOVE;
+  }
+  if (!handle->closed) {
+    /* A failed first dial can leave a dead core connection attached. A new
+     * wrapper is required; calling connect_async on that connection only
+     * waits on the same failed handshake again. */
+    reset_subscription(handle);
+    g_signal_handlers_disconnect_by_data(handle->relay, handle);
+    gnostr_relay_disconnect(handle->relay);
+    g_clear_object(&handle->relay);
+    handle->relay = gnostr_relay_new(handle->url);
+    if (handle->relay) {
+      attach_relay_signals(handle);
+      g_atomic_int_inc(&handle->refs);
+      gh_relay_scope_ref(handle->scope);
+      handle->connect_pending = TRUE;
+      gnostr_relay_connect_async(handle->relay, handle->cancellable,
+                                  on_connected, handle);
+    }
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static void
+schedule_retry(GhGnostrHandle *handle)
+{
+  if (handle->closed || handle->retry_source)
+    return;
+  guint delay = handle->retry_delay_seconds ? handle->retry_delay_seconds : 1;
+  handle->retry_delay_seconds = MIN(delay * 2, 30);
+  g_atomic_int_inc(&handle->refs); /* held by the timeout source */
+  handle->retry_source = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, delay,
+    retry_connect, handle, (GDestroyNotify)handle_unref);
+}
+
+static void
 on_state(GNostrRelay *relay, GNostrRelayState old_state,
          GNostrRelayState new_state, gpointer data)
 {
   (void)relay;
   GhGnostrHandle *handle = data;
-  if (!handle->closed && old_state == GNOSTR_RELAY_STATE_CONNECTED &&
-      new_state != GNOSTR_RELAY_STATE_CONNECTED)
+  g_atomic_int_inc(&handle->refs); /* a status callback may cancel the scope */
+  if (handle->closed) {
+    handle_unref(handle);
+    return;
+  }
+  if (old_state == GNOSTR_RELAY_STATE_CONNECTED &&
+      new_state != GNOSTR_RELAY_STATE_CONNECTED) {
+    reset_subscription(handle);
     gh_relay_scope_notice(handle->scope, handle->url,
                            GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+    if (!handle->connect_pending)
+      schedule_retry(handle);
+  }
+  if (new_state == GNOSTR_RELAY_STATE_CONNECTED) {
+    ensure_subscription(handle);
+    if (handle->subscription) {
+      if (handle->retry_source) {
+        g_source_remove(handle->retry_source);
+        handle->retry_source = 0;
+      }
+      handle->retry_delay_seconds = 1;
+    }
+  }
+  handle_unref(handle);
 }
 
 static void
@@ -99,27 +230,17 @@ on_connected(GObject *source, GAsyncResult *result, gpointer data)
   g_autoptr(GError) error = NULL;
   gboolean connected = gnostr_relay_connect_finish(GNOSTR_RELAY(source), result,
                                                      &error);
+  handle->connect_pending = FALSE;
   if (!handle->closed) {
-    if (!connected) {
+    if (connected ||
+        nostr_relay_is_established(gnostr_relay_get_core_relay(handle->relay))) {
+      handle->retry_delay_seconds = 1;
+      ensure_subscription(handle);
+    } else {
       gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_ERROR,
                              NULL, FALSE,
                              error ? error->message : "relay connection failed");
-    } else {
-      handle->subscription = gnostr_subscription_new(handle->relay,
-                                                       handle->filters);
-      if (!handle->subscription) {
-        gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_ERROR,
-                               NULL, FALSE, "subscription creation failed");
-      } else {
-        handle->filters = NULL; /* subscription takes ownership on success */
-        g_signal_connect(handle->subscription, "event", G_CALLBACK(on_event), handle);
-        g_signal_connect(handle->subscription, "eose", G_CALLBACK(on_eose), handle);
-        g_signal_connect(handle->subscription, "closed", G_CALLBACK(on_closed), handle);
-        if (!gnostr_subscription_fire(handle->subscription, &error))
-          gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_ERROR,
-                                 NULL, FALSE,
-                                 error ? error->message : "REQ failed");
-      }
+      schedule_retry(handle);
     }
   }
   gh_relay_scope_unref(handle->scope); /* async operation's lifetime pin */
@@ -158,10 +279,9 @@ open_relay(GhRelayScope *scope, const gchar *url, const NostrFilters *filters,
     }
     nostr_filter_free(copy); /* contents moved into the vector */
   }
-  g_signal_connect(handle->relay, "ok", G_CALLBACK(on_ok), handle);
-  g_signal_connect(handle->relay, "auth-challenge", G_CALLBACK(on_auth), handle);
-  g_signal_connect(handle->relay, "state-changed", G_CALLBACK(on_state), handle);
+  attach_relay_signals(handle);
   gh_relay_scope_ref(scope);
+  handle->connect_pending = TRUE;
   gnostr_relay_connect_async(handle->relay, handle->cancellable, on_connected,
                               handle);
   return handle;
@@ -173,11 +293,12 @@ close_relay(gpointer data, gpointer user_data)
   (void)user_data;
   GhGnostrHandle *handle = data;
   handle->closed = TRUE;
-  g_cancellable_cancel(handle->cancellable);
-  if (handle->subscription) {
-    g_signal_handlers_disconnect_by_data(handle->subscription, handle);
-    gnostr_subscription_close(handle->subscription);
+  if (handle->retry_source) {
+    g_source_remove(handle->retry_source);
+    handle->retry_source = 0;
   }
+  g_cancellable_cancel(handle->cancellable);
+  reset_subscription(handle);
   g_signal_handlers_disconnect_by_data(handle->relay, handle);
   gnostr_relay_disconnect(handle->relay);
   handle_unref(handle);
