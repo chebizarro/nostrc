@@ -92,7 +92,9 @@ int gnostr_uds_sockd_start(const char *socket_path, GError **error) {
     g_warning("uds_sockd: failed to set socket permissions: %s", g_strerror(errno));
   }
 
-  /* Use builtin handlers; no custom ACL at UDS layer (DBus path handles approvals) */
+  /* Builtin handlers: this layer has no approval flow (only sign_event
+   * checks a claimed-app ACL), which is why the listener is opt-in; see
+   * main_daemon.c. */
   (void)nostr_nip5f_server_set_handlers(h,
     /*get_pub*/ NULL,
     /*sign_event*/ NULL,

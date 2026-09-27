@@ -1,8 +1,13 @@
 # NIP-55L Linux Signer
 
-**Component version: 0.3.0** (tracked in `/VERSION_MANIFEST.md`; authoritative
+**Component version: 0.4.0** (tracked in `/VERSION_MANIFEST.md`; authoritative
 source `NOSTR_NIP55L_VERSION_*` in `include/nostr/nip55l/signer_ops.h`).
-0.3.0 is additive: new approval-gated `NIP44DeriveConversationKey` (used by
+0.4.0 changes the ACL semantics: grants are keyed on a bus-derived caller
+principal plus the resolved npub and request kind, `GetPublicKey`,
+`GetRelays`, NIP-04/NIP-44 and `DecryptZapEvent` are approval-gated, only the
+installed approval UI may call `ApproveRequest`, and `*ForApp` /
+`GetApprovalInfo` were added (see *Access control* below and
+`docs/dbus-interface.md`). 0.3.0 was additive: new approval-gated `NIP44DeriveConversationKey` (used by
 `nostr-seal`, nostrc-da9c). 0.2.0 was a breaking change for D-Bus clients:
 `SignEvent` returns the complete signed event JSON instead of the bare
 signature — see below.
@@ -79,9 +84,41 @@ The daemon resolves the signing key in this order:
 
 If none are found: returns NOT_FOUND.
 
+## Access control (0.4.0)
+
+- **Principal** — derived from the D-Bus connection (`GetConnectionCredentials`
+  + `/proc/<pid>`): `flatpak:<id>`, `app:<id>;exe:<path>`, `snap:<name>;exe:<path>`,
+  `exe:<path>`; never from an argument (`src/glib/signer_caller.[ch]`).
+- **Web origins** — an `app_id` like `https://site` is the principal only when
+  the caller is the installed `nostr-signer-webext-host` (path + inode); from
+  anyone else it is an unverified label. Same rule as the wallet agent.
+- **Grants** — `$XDG_CONFIG_HOME/gnostr/signer-grants.ini`, section = request
+  kind, key `<principal>|<npub>` or `<principal>|*`, value
+  `allow|deny[:<until>]`. The npub is what the identity selector resolves to,
+  so `""`, a key_id and the npub hit the same grant. The old
+  `signer-acl.ini` is not read.
+- **Approval** — without a grant: `ApprovalRequested(principal, npub, kind,
+  preview, id)`; identical queued calls from one connection share it;
+  `ApproveRequest` only from `<bindir>/gnostr-signer` (or its Flatpak), fails
+  fast when no approval UI owns `org.gnostr.Signer`, expires after 300 s.
+- **Defaults** — first-party headless services (nostr-homed helpers,
+  `nostr-notify-daemon`) are granted `get_public_key`/`get_relays`, and
+  `nostr-homectl` `nip44_decrypt`, by executable (CMake `NIP55L_DEFAULT_GRANTS`).
+- **Trust lists** (CMake cache): `NIP55L_ORIGIN_BRIDGE_PATHS`,
+  `NIP55L_APPROVER_PATHS`, `NIP55L_APPROVER_FLATPAK_ID`,
+  `NIP55L_APPROVER_BUS_NAME`. Test builds (`NIP55L_TEST_TRUST_ENV`, default
+  `BUILD_TESTING`) honour `NOSTR_SIGNER_TEST_ORIGIN_BRIDGES` /
+  `NOSTR_SIGNER_TEST_APPROVERS`.
+- **macOS** — the bus reports no client PIDs, so callers are keyed as
+  `claimed:<app_id>` and any same-user process may approve (unverified).
+
 ## DBus API
 
 Interface: `org.nostr.Signer`
+
+Every method below except `StoreKey`/`ClearKey` is approval-gated (0.4.0);
+each gated method except `SignEvent` and `NIP44DeriveConversationKey` (which
+already take one) has a `…ForApp` twin with a trailing `app_id`.
 
 - `GetPublicKey() -> (s npub)`
   - Returns the `npub1...` for the current secret key.
@@ -107,12 +144,8 @@ Interface: `org.nostr.Signer`
     64-hex x-only `peerPubKey` (`HKDF-extract(SHA256, ECDH shared-x, "nip44-v2")`,
     same as `nostr_nip44_convkey`), as 64 lowercase hex. The secret key never
     leaves the daemon.
-  - **Approval-gated** like `SignEvent`: an ACL entry in section
-    `[NIP44DeriveConversationKey]` keyed `<app_id>:<identity>` decides it;
-    otherwise the call is parked, `ApprovalRequested(app_id, identity,
-    "nip44_conversation_key", "derive NIP-44 conversation key with <peer>",
-    request_id)` is emitted and `ApproveRequest` completes it (a remembered
-    decision is written to the same ACL section).
+  - **Approval-gated** like `SignEvent`, kind `nip44_conversation_key`,
+    preview `derive NIP-44 conversation key with <peer>`.
   - The returned key opens every NIP-44 payload exchanged with that peer, so
     grant it for throwaway peers: `nostr-seal` only ever asks with a per-file
     ephemeral key.
@@ -187,6 +220,9 @@ nostr-signer-cli nip44-decrypt "$C" <peer_hex>
 
 - Secrets never leave the local machine. No network calls are made by the signer.
 - Key mutations over DBus are opt-in via `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1` and rate-limited.
+- Reading, signing, encrypting and decrypting are approval-gated per verified
+  caller (see *Access control*). Against unsandboxed same-user processes this
+  is a guard, not a boundary (they can edit the grants file too).
 - On macOS, libsecret typically has no Secret Service provider by default; store/clear may return NOT_FOUND. Linux desktops with keyrings (e.g., GNOME Keyring) provide this service.
 
 ## Roadmap

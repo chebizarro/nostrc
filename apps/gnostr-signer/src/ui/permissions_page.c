@@ -23,8 +23,9 @@ static void on_remove_clicked(GtkButton *btn, gpointer user_data) {
   PermsPage *pp = (PermsPage*)user_data;
   const gchar *identity = g_object_get_data(G_OBJECT(btn), "identity");
   const gchar *app_id = g_object_get_data(G_OBJECT(btn), "app_id");
+  const gchar *kind = g_object_get_data(G_OBJECT(btn), "kind");
   if (pp && pp->ps && identity && app_id) {
-    policy_store_unset(pp->ps, app_id, identity);
+    policy_store_unset_for_kind(pp->ps, kind, app_id, identity);
     policy_store_save(pp->ps);
     // Refresh
     if (pp->page)
@@ -38,9 +39,10 @@ static void on_switch_active_notify(GObject *object, GParamSpec *pspec, gpointer
   GtkSwitch *self = GTK_SWITCH(object);
   const gchar *identity = g_object_get_data(G_OBJECT(self), "identity");
   const gchar *app_id = g_object_get_data(G_OBJECT(self), "app_id");
+  const gchar *kind = g_object_get_data(G_OBJECT(self), "kind");
   if (!pp || !pp->ps || !identity || !app_id) return;
   gboolean allow = gtk_switch_get_active(self);
-  policy_store_set(pp->ps, app_id, identity, allow);
+  policy_store_set_for_kind(pp->ps, kind, app_id, identity, allow, 0);
   policy_store_save(pp->ps);
   if (pp->page) gnostr_permissions_page_refresh(pp->page, pp->ps);
 }
@@ -60,24 +62,25 @@ void gnostr_permissions_page_refresh(GtkWidget *page, PolicyStore *ps) {
       gtk_switch_set_active(GTK_SWITCH(sw), e->decision);
       g_object_set_data_full(G_OBJECT(sw), "identity", g_strdup(e->identity), g_free);
       g_object_set_data_full(G_OBJECT(sw), "app_id", g_strdup(e->app_id), g_free);
+      g_object_set_data_full(G_OBJECT(sw), "kind", g_strdup(e->kind), g_free);
       /* notify::active handler to persist change */
       g_signal_connect(sw, "notify::active", G_CALLBACK(on_switch_active_notify), pp);
       gtk_widget_set_margin_end(sw, 8);
 
-      g_autofree gchar *label_text = g_strdup_printf("%s — %s", e->identity, e->app_id);
+      g_autofree gchar *label_text = g_strdup_printf("%s — %s — %s", e->identity, e->app_id, e->kind);
       GtkWidget *lbl = gtk_label_new(label_text);
       gtk_widget_set_hexpand(lbl, TRUE);
       gtk_widget_set_halign(lbl, GTK_ALIGN_START);
       GtkWidget *btn = gtk_button_new_with_label("Remove");
       g_object_set_data_full(G_OBJECT(btn), "identity", g_strdup(e->identity), g_free);
       g_object_set_data_full(G_OBJECT(btn), "app_id", g_strdup(e->app_id), g_free);
+      g_object_set_data_full(G_OBJECT(btn), "kind", g_strdup(e->kind), g_free);
       g_signal_connect(btn, "clicked", G_CALLBACK(on_remove_clicked), pp);
       gtk_box_append(GTK_BOX(row), sw);
       gtk_box_append(GTK_BOX(row), lbl);
       gtk_box_append(GTK_BOX(row), btn);
       gtk_list_box_append(GTK_LIST_BOX(pp->list), row);
-      /* Free entry */
-      g_free(e->identity); g_free(e->app_id); g_free(e);
+      policy_entry_free(e);
     }
     g_ptr_array_free(items, TRUE);
   }
@@ -100,8 +103,8 @@ static void on_reset_confirm_done(GObject *source, GAsyncResult *res, gpointer u
     if (items) {
       for (guint i = 0; i < items->len; i++) {
         PolicyEntry *e = g_ptr_array_index(items, i);
-        policy_store_unset(rc->pp->ps, e->app_id, e->identity);
-        g_free(e->identity); g_free(e->app_id); g_free(e);
+        policy_store_unset_for_kind(rc->pp->ps, e->kind, e->app_id, e->identity);
+        policy_entry_free(e);
       }
       g_ptr_array_free(items, TRUE);
     }

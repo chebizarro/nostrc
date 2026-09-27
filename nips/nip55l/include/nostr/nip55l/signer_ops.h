@@ -12,13 +12,40 @@ extern "C" {
  * JSON (nostr_nip55l_sign_event_json) instead of the bare signature.
  * 0.3.0 (additive): org.nostr.Signer.NIP44DeriveConversationKey, an
  * approval-gated export of the NIP-44 v2 conversation key for one peer
- * (nostr_nip55l_nip44_conversation_key; used by nostr-seal, nostrc-da9c). */
+ * (nostr_nip55l_nip44_conversation_key; used by nostr-seal, nostrc-da9c).
+ * 0.4.0 (ACL semantics): grants are keyed on a bus-derived caller principal
+ * plus the npub the identity selector resolves to (never on the caller's
+ * app_id string), GetPublicKey / GetRelays / NIP-04 / NIP-44 / DecryptZapEvent
+ * go through the same approval flow as SignEvent, only the installed approval
+ * UI may call ApproveRequest, and *ForApp / GetApprovalInfo methods were
+ * added (nostrc-y02q, nostrc-phk4, nostrc-1e31, nostrc-eie5). */
 #define NOSTR_NIP55L_VERSION_MAJOR 0
-#define NOSTR_NIP55L_VERSION_MINOR 3
+#define NOSTR_NIP55L_VERSION_MINOR 4
 #define NOSTR_NIP55L_VERSION_PATCH 0
-#define NOSTR_NIP55L_VERSION_STRING "0.3.0"
+#define NOSTR_NIP55L_VERSION_STRING "0.4.0"
 
 int nostr_nip55l_get_public_key(char **out_npub);
+/* npub of the key that `current_user` selects, i.e. the key sign/encrypt/
+ * decrypt would use for the same selector (empty = the active identity).
+ * This is the canonical identity the daemon's ACL is keyed on: the selector
+ * itself may be empty, a key_id, an npub or even a secret key. NOT_FOUND /
+ * INVALID_KEY when no key matches. Caller frees *out_npub with free(). */
+int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub);
+/* Normalise an identity selector supplied by another process (the D-Bus
+ * daemon's callers, nostrc-a4w5). The in-process resolver also accepts a
+ * raw secret (64-hex or nsec) as a selector; a caller over the bus must not
+ * be able to do that - a hex *pubkey* passed by mistake would be used as a
+ * private key. This never interprets its input as key material:
+ *   NULL / ""   -> "" (the active identity)
+ *   nsec1...    -> NOSTR_SIGNER_ERROR_INVALID_ARG
+ *   64-hex      -> an x-only public key, i.e. the same as its npub
+ *   npub1...    -> must name a known identity: the active one (-> "") or a
+ *                  stored one whose key has exactly this npub; else
+ *                  NOSTR_SIGNER_ERROR_NOT_FOUND
+ *   otherwise   -> a key_id / label, resolved as before
+ * On success *out_selector is the selector to pass to the other calls and
+ * *out_npub the npub it resolves to; free both with free(). */
+int nostr_nip55l_normalize_selector(const char *selector, char **out_selector, char **out_npub);
 /* Returns only the 128-hex Schnorr signature. In-process helper; the D-Bus
  * SignEvent method no longer returns this shape (see sign_event_json). */
 int nostr_nip55l_sign_event(const char *event_json,
@@ -109,6 +136,10 @@ int nostr_nip55l_relays_from_list(const char *const *urls, size_t n, char **out_
  * the legacy libsecret schemas (org.gnostr.Signer/key, org.gnostr.Key) to the
  * unified org.gnostr.Signer/identity schema and deletes the originals.
  * Idempotent; guarded by a per-keyring marker item once a pass completes.
+ * On macOS (Keychain builds, nostrc-de9h) the same pass imports the keys
+ * GNostr stored itself before nostrc-e5nz (generic passwords, service
+ * "org.gnostr.Client", account = npub, data = nsec) into the daemon's
+ * "Gnostr Identity Key" items, guarded by a Keychain marker item.
  * The daemon runs it once at startup. Returns 0 when nothing is left to
  * retry (including "no Secret Service support compiled in"),
  * NOSTR_SIGNER_ERROR_BACKEND when the Secret Service was unreachable or some

@@ -13,7 +13,6 @@
 #include "nostr/nip55l/signer_ops.h"
 #include "nostr/nip55l/error.h"
 
-#include <assert.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,13 +21,20 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+/* Always-on check: CHECK() vanishes under -DNDEBUG (Release/RelWithDebInfo),
+ * which silently skipped every check and tripped -Werror unused warnings
+ * (nostrc-llh3, nostrc-vul2). */
+#define CHECK(c) do { if (!(c)) { \
+    fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); \
+  } } while (0)
+
 static char scratch[512];
 
 static void set_scratch(void) {
   const char *base = getenv("TMPDIR");
   if (!base || !*base) base = "/tmp";
   snprintf(scratch, sizeof scratch, "%s/nip55l_relays_XXXXXX", base);
-  assert(mkdtemp(scratch));
+  CHECK(mkdtemp(scratch));
   /* Isolate: no HOME/XDG fallback can reach the user's own config. */
   setenv("XDG_CONFIG_HOME", scratch, 1);
   unsetenv("HOME");
@@ -41,7 +47,7 @@ static void write_conf(const char *body) {
   char path[700];
   snprintf(path, sizeof path, "%s/relays.conf", dir);
   FILE *fp = fopen(path, "wb");
-  assert(fp);
+  CHECK(fp);
   if (body) fwrite(body, 1, strlen(body), fp);
   fclose(fp);
   chmod(path, 0600);
@@ -59,22 +65,22 @@ int main(void) {
   /* No file: NOT_FOUND. Callers must fall back, never treat this as fatal. */
   char *out = NULL;
   int rc = nostr_nip55l_get_relays(&out);
-  assert(rc == NOSTR_SIGNER_ERROR_NOT_FOUND);
-  assert(out == NULL);
+  CHECK(rc == NOSTR_SIGNER_ERROR_NOT_FOUND);
+  CHECK(out == NULL);
 
   /* Empty JSON array: still NOT_FOUND. */
   write_conf("[]");
   out = NULL;
   rc = nostr_nip55l_get_relays(&out);
-  assert(rc == NOSTR_SIGNER_ERROR_NOT_FOUND);
-  assert(out == NULL);
+  CHECK(rc == NOSTR_SIGNER_ERROR_NOT_FOUND);
+  CHECK(out == NULL);
 
   /* Normal case: two relays, order preserved, whitespace tolerated. */
   write_conf("[ \"wss://relay.example\", \"wss://nos.lol\" ]");
   out = NULL;
   rc = nostr_nip55l_get_relays(&out);
-  assert(rc == 0 && out);
-  assert(strcmp(out, "[\"wss://relay.example\",\"wss://nos.lol\"]") == 0);
+  CHECK(rc == 0 && out);
+  CHECK(strcmp(out, "[\"wss://relay.example\",\"wss://nos.lol\"]") == 0);
   free(out);
 
   /* Normalisation: uppercase scheme+host lowered, bare trailing "/"
@@ -82,53 +88,53 @@ int main(void) {
   write_conf("[\"WSS://Nos.Lol/\", \"wss://nos.lol\", \"ws://LocalHost:4848/\"]");
   out = NULL;
   rc = nostr_nip55l_get_relays(&out);
-  assert(rc == 0 && out);
-  assert(strcmp(out, "[\"wss://nos.lol\",\"ws://localhost:4848\"]") == 0);
+  CHECK(rc == 0 && out);
+  CHECK(strcmp(out, "[\"wss://nos.lol\",\"ws://localhost:4848\"]") == 0);
   free(out);
 
   /* Malformed: not an array. */
   write_conf("{\"relays\":[]}");
   out = NULL;
   rc = nostr_nip55l_get_relays(&out);
-  assert(rc == NOSTR_SIGNER_ERROR_INVALID_JSON);
-  assert(out == NULL);
+  CHECK(rc == NOSTR_SIGNER_ERROR_INVALID_JSON);
+  CHECK(out == NULL);
 
   /* Malformed: non-relay URL. */
   write_conf("[\"http://example.com\"]");
   out = NULL;
   rc = nostr_nip55l_get_relays(&out);
-  assert(rc == NOSTR_SIGNER_ERROR_INVALID_JSON);
-  assert(out == NULL);
+  CHECK(rc == NOSTR_SIGNER_ERROR_INVALID_JSON);
+  CHECK(out == NULL);
 
   /* Malformed: JSON escape in a URL (relay URLs never need one; the
    * signer refuses them rather than decoding). */
   write_conf("[\"wss://example.com/\\u002f\"]");
   out = NULL;
   rc = nostr_nip55l_get_relays(&out);
-  assert(rc == NOSTR_SIGNER_ERROR_INVALID_JSON);
-  assert(out == NULL);
+  CHECK(rc == NOSTR_SIGNER_ERROR_INVALID_JSON);
+  CHECK(out == NULL);
 
   remove_conf();
 
   /* Direct helper: an empty list returns NOT_FOUND. */
   out = NULL;
   rc = nostr_nip55l_relays_from_list(NULL, 0, &out);
-  assert(rc == NOSTR_SIGNER_ERROR_NOT_FOUND);
-  assert(out == NULL);
+  CHECK(rc == NOSTR_SIGNER_ERROR_NOT_FOUND);
+  CHECK(out == NULL);
 
   /* Direct helper: a bad entry is refused as INVALID_ARG. */
   const char *bad[] = { "wss://ok.example", "not-a-url" };
   out = NULL;
   rc = nostr_nip55l_relays_from_list(bad, 2, &out);
-  assert(rc == NOSTR_SIGNER_ERROR_INVALID_ARG);
-  assert(out == NULL);
+  CHECK(rc == NOSTR_SIGNER_ERROR_INVALID_ARG);
+  CHECK(out == NULL);
 
   /* Direct helper: normal case matches the file path. */
   const char *good[] = { "wss://a.example", "wss://a.example", "ws://b:4848" };
   out = NULL;
   rc = nostr_nip55l_relays_from_list(good, 3, &out);
-  assert(rc == 0 && out);
-  assert(strcmp(out, "[\"wss://a.example\",\"ws://b:4848\"]") == 0);
+  CHECK(rc == 0 && out);
+  CHECK(strcmp(out, "[\"wss://a.example\",\"ws://b:4848\"]") == 0);
   free(out);
 
   /* Clean up */

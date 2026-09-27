@@ -7,6 +7,24 @@ set(NIP55L_CORE_SRC
 )
 
 add_library(nostr_nip55l_core ${NIP55L_CORE_SRC})
+
+# nostrc-o8mx: real SONAMEs for the shared build (libnostr_nip55l_core.so.0
+# -> .so.0.4.0, same for _glib), like libnip19/libnip34 (nostrc-4c0o). The
+# version comes from NOSTR_NIP55L_VERSION_* in signer_ops.h, the component's
+# single source of truth. Pre-1.0: SOVERSION changes on any ABI break.
+file(STRINGS ${NIP55L_INC}/nostr/nip55l/signer_ops.h _nip55l_ver
+     REGEX "^#define NOSTR_NIP55L_VERSION_(MAJOR|MINOR|PATCH) [0-9]+")
+foreach(_part MAJOR MINOR PATCH)
+  string(REGEX REPLACE ".*NOSTR_NIP55L_VERSION_${_part} ([0-9]+).*" "\\1"
+         NIP55L_VERSION_${_part} "${_nip55l_ver}")
+endforeach()
+set(NIP55L_VERSION "${NIP55L_VERSION_MAJOR}.${NIP55L_VERSION_MINOR}.${NIP55L_VERSION_PATCH}")
+if (NOT NIP55L_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+  message(FATAL_ERROR "nip55l: cannot parse NOSTR_NIP55L_VERSION_* from signer_ops.h")
+endif()
+set(NIP55L_SOVERSION 0)
+set_target_properties(nostr_nip55l_core PROPERTIES
+  VERSION ${NIP55L_VERSION} SOVERSION ${NIP55L_SOVERSION})
 target_include_directories(nostr_nip55l_core PUBLIC
   ${NIP55L_INC}
   ${CMAKE_SOURCE_DIR}/libnostr/include
@@ -83,6 +101,7 @@ if (GIO_FOUND AND ENABLE_NIP55L)
 
   add_library(nostr_nip55l_glib
     ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_service_g.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_caller.c
     ${GENERATED_DBUS_C}
   )
   # Generated gdbus code may trip -Wpedantic in some GCC versions; don't fail build on it
@@ -96,11 +115,59 @@ if (GIO_FOUND AND ENABLE_NIP55L)
     PRIVATE
       ${GENERATED_DIR}
   )
+  set_target_properties(nostr_nip55l_glib PROPERTIES
+    VERSION ${NIP55L_VERSION} SOVERSION ${NIP55L_SOVERSION})
   # Fail-fast hygiene for GLib signer target
   target_compile_options(nostr_nip55l_glib PRIVATE -Wall -Wextra -Wpedantic -Werror)
   target_include_directories(nostr_nip55l_glib PUBLIC ${NIP55L_INC})
   target_compile_definitions(nostr_nip55l_glib PRIVATE -DNIP55L_HAVE_GIO)
   target_link_libraries(nostr_nip55l_glib PUBLIC nostr_nip55l_core PkgConfig::GIO)
+
+  # --- Caller identity and trust (nip55l 0.4.0: nostrc-phk4, nostrc-1e31) ---
+  # ProcessFD from GetConnectionCredentials (pidfd) needs GUnixFDList.
+  pkg_check_modules(NIP55L_GIOUNIX QUIET IMPORTED_TARGET gio-unix-2.0)
+  if (NIP55L_GIOUNIX_FOUND)
+    target_link_libraries(nostr_nip55l_glib PRIVATE PkgConfig::NIP55L_GIOUNIX)
+    target_compile_definitions(nostr_nip55l_glib PRIVATE NIP55L_HAVE_GIO_UNIX)
+  endif()
+  include(GNUInstallDirs)
+  # Executables that may name the web origin they act for (the browser
+  # bridge) and executables that may answer ApproveRequest (the approval UI).
+  # Colon-separated absolute paths; matched by path AND device/inode.
+  set(NIP55L_ORIGIN_BRIDGE_PATHS "${CMAKE_INSTALL_FULL_LIBEXECDIR}/nostr-signer-webext-host"
+      CACHE STRING "Executables allowed to assert a web origin as app_id (colon-separated)")
+  set(NIP55L_APPROVER_PATHS "${CMAKE_INSTALL_FULL_BINDIR}/gnostr-signer"
+      CACHE STRING "Executables allowed to call ApproveRequest (colon-separated)")
+  set(NIP55L_APPROVER_FLATPAK_ID "org.gnostr.Signer"
+      CACHE STRING "Flatpak app id allowed to call ApproveRequest (empty = none)")
+  # Bus name the approval UI owns; without an owner, calls that need a prompt
+  # fail at once instead of waiting for an answer that cannot come.
+  set(NIP55L_APPROVER_BUS_NAME "org.gnostr.Signer"
+      CACHE STRING "Well-known name of the approval UI (empty = do not check)")
+  # First-party services that run without a UI and read the npub / relays
+  # (nostr-homed session helpers) or open the secrets envelope at login
+  # (nostr-homectl). "<kind>[,<kind>]@<exe>[:<exe>]" groups, "+"-separated.
+  set(_nip55l_bin "${CMAKE_INSTALL_FULL_BINDIR}")
+  set(_nip55l_readers "${_nip55l_bin}/nostr-homectl:${_nip55l_bin}/nostrfs:${_nip55l_bin}/nostr-home-fuse:${_nip55l_bin}/nostr-home-syncd:${_nip55l_bin}/nostr-home-fetch:${_nip55l_bin}/nostr-homed-provision:${_nip55l_bin}/nostr-home-status:${CMAKE_INSTALL_FULL_LIBEXECDIR}/nostr-notify-daemon")
+  set(NIP55L_DEFAULT_GRANTS
+      "get_public_key,get_relays@${_nip55l_readers}+nip44_decrypt@${_nip55l_bin}/nostr-homectl"
+      CACHE STRING "Built-in grants for first-party headless services")
+  target_compile_definitions(nostr_nip55l_glib PRIVATE
+    "NIP55L_ORIGIN_BRIDGE_PATHS=\"${NIP55L_ORIGIN_BRIDGE_PATHS}\""
+    "NIP55L_APPROVER_PATHS=\"${NIP55L_APPROVER_PATHS}\""
+    "NIP55L_APPROVER_FLATPAK_ID=\"${NIP55L_APPROVER_FLATPAK_ID}\""
+    "NIP55L_APPROVER_BUS_NAME=\"${NIP55L_APPROVER_BUS_NAME}\""
+    "NIP55L_DEFAULT_GRANTS=\"${NIP55L_DEFAULT_GRANTS}\"")
+  # Test builds only: NOSTR_SIGNER_TEST_ORIGIN_BRIDGES / NOSTR_SIGNER_TEST_APPROVERS
+  # replace the two executable lists so CTest can drive the real daemon from
+  # build-tree binaries. Distro packages configure BUILD_TESTING=OFF.
+  if (NOT DEFINED NIP55L_TEST_TRUST_ENV)
+    set(NIP55L_TEST_TRUST_ENV ${BUILD_TESTING})
+  endif()
+  option(NIP55L_TEST_TRUST_ENV "Honour NOSTR_SIGNER_TEST_* trust overrides (test builds)" ${NIP55L_TEST_TRUST_ENV})
+  if (NIP55L_TEST_TRUST_ENV)
+    target_compile_definitions(nostr_nip55l_glib PRIVATE NIP55L_TEST_TRUST_ENV=1)
+  endif()
   # Ensure NIP-04 secure functions are available to executables linking the GLib target
   target_link_libraries(nostr_nip55l_glib PUBLIC nip04)
 
@@ -155,6 +222,26 @@ if (BUILD_TESTING)
     set_tests_properties(nip55l_${t} PROPERTIES LABELS "nip55l;signer;unit" TIMEOUT 60)
   endforeach()
 
+  # macOS Keychain import of pre-e5nz GNostr client keys (nostrc-de9h). The
+  # migration is compiled into the test with NIP55L_KEYCHAIN_TEST_HOOKS so it
+  # runs against a throwaway keychain file, never the login keychain.
+  if (APPLE AND SECURITY_FRAMEWORK AND COREFOUNDATION_FRAMEWORK)
+    add_executable(test_nip55l_keychain_migration
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_keychain_migration.c
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/core/signer_ops.c)
+    target_include_directories(test_nip55l_keychain_migration PRIVATE
+      $<TARGET_PROPERTY:nostr_nip55l_core,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(test_nip55l_keychain_migration PRIVATE
+      NIP55L_HAVE_KEYCHAIN NIP55L_KEYCHAIN_TEST_HOOKS)
+    target_link_libraries(test_nip55l_keychain_migration PRIVATE
+      nostr nip04 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB}
+      ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
+    target_compile_options(test_nip55l_keychain_migration PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME nip55l_keychain_migration COMMAND test_nip55l_keychain_migration)
+    set_tests_properties(nip55l_keychain_migration PROPERTIES
+      LABELS "nip55l;signer;unit;keyring" TIMEOUT 60)
+  endif()
+
   # Unified libsecret key schema (nostrc-bml6): schema shape, identity and
   # legacy attribute mapping, Seahorse label. Pure functions, no keyring.
   if (TARGET gnostr-secret)
@@ -177,7 +264,10 @@ if (BUILD_TESTING)
     add_executable(test_nip55l_dbus_contract
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_signer_dbus_contract.c)
     target_link_libraries(test_nip55l_dbus_contract PRIVATE
-      nostr_nip55l_core nostr nostr_nip44_core PkgConfig::GIO)
+      nostr_nip55l_core nostr nostr_nip44_core PkgConfig::GIO nostr_nip55l_glib)
+    # signer_caller.h: the test derives its own principal the daemon's way.
+    target_include_directories(test_nip55l_dbus_contract PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/glib)
     target_compile_options(test_nip55l_dbus_contract PRIVATE
       -Wall -Wextra -Werror)
     # The test locates the daemon by absolute build path.

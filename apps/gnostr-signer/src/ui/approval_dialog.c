@@ -48,6 +48,9 @@ struct _GnostrApprovalDialog {
   GtkDropDown *ttl_dropdown;
   GtkButton *btn_deny;
   GtkButton *btn_approve;
+  GtkLabel *subtitle_label;
+  GtkLabel *label_kind_caption;
+  GtkLabel *label_content_caption;
 
   /* State */
   GnostrApprovalCallback callback;
@@ -330,6 +333,12 @@ static void gnostr_approval_dialog_class_init(GnostrApprovalDialogClass *klass) 
                                        btn_deny);
   gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
                                        btn_approve);
+  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
+                                       subtitle_label);
+  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
+                                       label_kind_caption);
+  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
+                                       label_content_caption);
 }
 
 /* Callback for Ctrl+A keyboard shortcut (Approve) */
@@ -762,6 +771,128 @@ void gnostr_show_approval_dialog_full(GtkWidget *parent,
   gnostr_approval_dialog_set_accounts(dialog, as, identity_npub);
   gnostr_approval_dialog_set_callback(dialog, cb, user_data);
 
+  adw_dialog_present(ADW_DIALOG(dialog), parent);
+}
+
+/* ---- kind-aware requests (nostrc-f7hk) ----
+ * org.nostr.Signer raises ApprovalRequested for several request kinds; each
+ * gets copy that says what approving actually hands over. */
+typedef struct {
+  const char *kind;
+  const char *title;
+  const char *action;           /* approve button */
+  const char *body;             /* %s = requesting application */
+  const char *icon;
+  const char *what;             /* "Request:" row */
+  const char *content_caption;  /* NULL = no content row */
+} RequestCopy;
+
+static const RequestCopy request_copy[] = {
+  { "event", "Sign an event?", "Sign",
+    "%s wants to publish an event signed with your key.",
+    "document-edit-symbolic", "Event signature", "Content:" },
+  { "nip44_conversation_key", "Share a decryption key?", "Share Key",
+    "%s asks for the NIP-44 key shared between your identity and the public key below. "
+    "Whoever holds it can read every NIP-44 message exchanged with that key \u2014 for "
+    "example, to open a file sealed for you.",
+    "dialog-password-symbolic", "NIP-44 conversation key", "Details:" },
+  { "nip04_decrypt", "Decrypt a message?", "Decrypt",
+    "%s wants to read a private message (NIP-04) that was sent to you.",
+    "mail-read-symbolic", "Decrypt (NIP-04)", "Details:" },
+  { "nip44_decrypt", "Decrypt a message?", "Decrypt",
+    "%s wants to read a private message (NIP-44) that was sent to you.",
+    "mail-read-symbolic", "Decrypt (NIP-44)", "Details:" },
+  { "nip04_encrypt", "Encrypt a message?", "Encrypt",
+    "%s wants to encrypt a message as you (NIP-04). Encrypting does not send it.",
+    "mail-send-symbolic", "Encrypt (NIP-04)", "Details:" },
+  { "nip44_encrypt", "Encrypt a message?", "Encrypt",
+    "%s wants to encrypt a message as you (NIP-44). Encrypting does not send it.",
+    "mail-send-symbolic", "Encrypt (NIP-44)", "Details:" },
+  { "get_public_key", "Share your public key?", "Share",
+    "%s wants to know which Nostr identity (npub) you use.",
+    "avatar-default-symbolic", "Public key", NULL },
+  { "get_relays", "Share your relay list?", "Share",
+    "%s wants to read the relays you configured.",
+    "network-server-symbolic", "Relay list", NULL },
+  { "zap_decrypt", "Decrypt a private zap?", "Decrypt",
+    "%s wants to read who sent you a private zap and its message.",
+    "starred-symbolic", "Private zap", "Details:" },
+};
+
+/**
+ * gnostr_approval_dialog_set_request:
+ * @kind: ApprovalRequested kind
+ * @app_display: human-readable name of the requesting application
+ * @claimed_app_id: (nullable): the app_id the caller passed (unverified)
+ * @verified: whether the signer identified the caller from its connection
+ * @preview: the signer's preview text
+ */
+void gnostr_approval_dialog_set_request(GnostrApprovalDialog *self, const char *kind,
+                                        const char *app_display, const char *claimed_app_id,
+                                        gboolean verified, const char *preview) {
+  g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
+  static const RequestCopy generic = { NULL, "Allow this request?", "Allow",
+                                       "%s sent a request to the signer.",
+                                       "dialog-question-symbolic", NULL, "Details:" };
+  const RequestCopy *c = &generic;
+  for (gsize i = 0; i < G_N_ELEMENTS(request_copy); i++)
+    if (g_strcmp0(kind, request_copy[i].kind) == 0) { c = &request_copy[i]; break; }
+  const char *app = (app_display && *app_display) ? app_display : "An unidentified application";
+
+  gtk_label_set_text(self->header_title, c->title);
+  gtk_image_set_from_icon_name(self->header_icon, c->icon);
+  GString *sub = g_string_new(NULL);
+  g_string_append_printf(sub, c->body, app);
+  if (!verified)
+    g_string_append(sub, "\nThe signer could not verify which application this is.");
+  if (claimed_app_id && *claimed_app_id && g_strcmp0(claimed_app_id, app_display) != 0)
+    g_string_append_printf(sub, "\nIt calls itself \u201c%s\u201d; that name is not verified.",
+                           claimed_app_id);
+  gtk_label_set_text(self->subtitle_label, sub->str);
+  gtk_label_set_wrap(self->subtitle_label, TRUE);
+  g_string_free(sub, TRUE);
+
+  gtk_label_set_text(self->label_kind_caption, "Request:");
+  g_autofree gchar *what = c->what ? g_strdup(c->what) : g_strdup(kind ? kind : "unknown");
+  gtk_label_set_text(self->label_event_kind, what);
+  g_autofree gchar *kind_desc = g_strdup_printf("Request type: %s", what);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->label_event_kind),
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, kind_desc, -1);
+
+  gnostr_approval_dialog_set_app_name(self, app);
+  g_autofree gchar *dialog_label = g_strdup_printf("%s \u2014 %s", c->title, app);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self), GTK_ACCESSIBLE_PROPERTY_LABEL, dialog_label, -1);
+
+  if (c->content_caption) {
+    gtk_label_set_text(self->label_content_caption, c->content_caption);
+    gtk_widget_set_visible(GTK_WIDGET(self->label_content_caption), TRUE);
+    gnostr_approval_dialog_set_content(self, preview);
+  } else {
+    gtk_widget_set_visible(GTK_WIDGET(self->label_content_caption), FALSE);
+    gtk_widget_set_visible(GTK_WIDGET(self->content_frame), FALSE);
+  }
+
+  gtk_button_set_label(self->btn_approve, c->action);
+  g_autofree gchar *approve_desc = g_strdup_printf("%s. Keyboard shortcut: Ctrl+A.", c->action);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_approve),
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, approve_desc, -1);
+
+  /* The signer resolves the identity itself (ApprovalRequested carries the
+   * npub it will use); picking another account here would not change it. */
+  gtk_widget_set_visible(GTK_WIDGET(self->identity_selector_box), FALSE);
+}
+
+void gnostr_show_approval_request_dialog(GtkWidget *parent, const char *identity_npub,
+                                         const char *kind, const char *app_display,
+                                         const char *claimed_app_id, gboolean verified,
+                                         const char *preview, AccountsStore *as,
+                                         GnostrApprovalCallback cb, gpointer user_data) {
+  GnostrApprovalDialog *dialog = gnostr_approval_dialog_new();
+  gnostr_approval_dialog_set_identity(dialog, identity_npub);
+  gnostr_approval_dialog_set_timestamp(dialog, 0);
+  gnostr_approval_dialog_set_accounts(dialog, as, identity_npub);
+  gnostr_approval_dialog_set_request(dialog, kind, app_display, claimed_app_id, verified, preview);
+  gnostr_approval_dialog_set_callback(dialog, cb, user_data);
   adw_dialog_present(ADW_DIALOG(dialog), parent);
 }
 

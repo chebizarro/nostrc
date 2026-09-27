@@ -8,13 +8,34 @@ typedef struct {
 } PolicyVal;
 
 struct _PolicyStore {
-  GHashTable *map; /* key: composite "identity|app_id", value: PolicyVal* */
+  GHashTable *map; /* key: "identity|kind|app_id", value: PolicyVal* */
   gchar *path;     /* ~/.config/gnostr-signer/policy.ini */
 };
 
-static gchar *make_key(const gchar *app_id, const gchar *identity) {
-  /* Keyed by identity then app for intuitive grouping */
-  return g_strdup_printf("%s|%s", identity ? identity : "", app_id ? app_id : "");
+/* On disk: group = identity, key = "<kind>|<app_id>" (legacy: "<app_id>").
+ * Kinds contain no '|' and app ids (signer principals) never do. */
+static gboolean is_kind(const gchar *s, gsize n) {
+  if (n == 0 || n > 64) return FALSE;
+  for (gsize i = 0; i < n; i++)
+    if (!(g_ascii_islower(s[i]) || g_ascii_isdigit(s[i]) || s[i] == '_')) return FALSE;
+  return TRUE;
+}
+
+static gchar *make_key(const gchar *kind, const gchar *app_id, const gchar *identity) {
+  return g_strdup_printf("%s|%s|%s", identity ? identity : "",
+                         (kind && *kind) ? kind : POLICY_KIND_EVENT, app_id ? app_id : "");
+}
+
+/* Split "identity|kind|app" (identity never contains '|'). */
+static gboolean split_key(const gchar *ckey, gchar **identity, gchar **kind, const gchar **app) {
+  const gchar *b1 = strchr(ckey, '|');
+  if (!b1) return FALSE;
+  const gchar *b2 = strchr(b1 + 1, '|');
+  if (!b2) return FALSE;
+  *identity = g_strndup(ckey, (gsize)(b1 - ckey));
+  *kind = g_strndup(b1 + 1, (gsize)(b2 - b1 - 1));
+  *app = b2 + 1;
+  return TRUE;
 }
 
 static const char *config_path(void) {
@@ -27,6 +48,14 @@ static const char *config_path(void) {
     g_free(dir);
   }
   return p;
+}
+
+void policy_entry_free(PolicyEntry *e) {
+  if (!e) return;
+  g_free(e->app_id);
+  g_free(e->identity);
+  g_free(e->kind);
+  g_free(e);
 }
 
 PolicyStore *policy_store_new(void) {
@@ -55,23 +84,24 @@ void policy_store_load(PolicyStore *ps) {
   gsize ngroups = 0;
   gchar **groups = g_key_file_get_groups(kf, &ngroups);
   for (gsize i = 0; i < ngroups; i++) {
-    const gchar *group = groups[i]; /* group format: identity */
+    const gchar *group = groups[i]; /* identity */
     gsize nkeys = 0;
     gchar **keys = g_key_file_get_keys(kf, group, &nkeys, NULL);
     for (gsize j = 0; j < nkeys; j++) {
       const gchar *app_key = keys[j];
-      /* Skip metadata keys of the form '<app>.expires' */
-      const gchar *dot = strrchr(app_key, '.');
-      if (dot && g_strcmp0(dot, ".expires") == 0) continue;
+      /* Skip metadata keys of the form '<key>.expires' */
+      if (g_str_has_suffix(app_key, ".expires")) continue;
       gboolean val = g_key_file_get_boolean(kf, group, app_key, NULL);
-      /* Try to read optional expires */
       g_autofree gchar *expkey = g_strdup_printf("%s.expires", app_key);
       guint64 expires_at = 0;
       if (g_key_file_has_key(kf, group, expkey, NULL)) {
         gchar *s = g_key_file_get_string(kf, group, expkey, NULL);
         if (s) { expires_at = g_ascii_strtoull(s, NULL, 10); g_free(s); }
       }
-      gchar *ckey = g_strdup_printf("%s|%s", group, app_key);
+      const gchar *bar = strchr(app_key, '|');
+      gchar *ckey = (bar && is_kind(app_key, (gsize)(bar - app_key)))
+                      ? g_strdup_printf("%s|%s", group, app_key)
+                      : make_key(POLICY_KIND_EVENT, app_key, group);
       PolicyVal *pv = g_new0(PolicyVal, 1);
       pv->decision = val ? TRUE : FALSE;
       pv->expires_at = expires_at;
@@ -86,92 +116,100 @@ void policy_store_load(PolicyStore *ps) {
 void policy_store_save(PolicyStore *ps) {
   if (!ps) return;
   GKeyFile *kf = g_key_file_new();
-  /* Reconstruct grouped by identity */
   GHashTableIter it; gpointer key, vptr;
   g_hash_table_iter_init(&it, ps->map);
   while (g_hash_table_iter_next(&it, &key, &vptr)) {
-    const gchar *ckey = key; /* identity|app */
-    const gchar *bar = strchr(ckey, '|');
-    if (!bar) continue;
-    gchar *identity = g_strndup(ckey, bar - ckey);
+    gchar *identity = NULL, *kind = NULL;
+    const gchar *app = NULL;
+    if (!split_key(key, &identity, &kind, &app)) continue;
     /* Skip invalid/empty group names to satisfy GLib assertions */
-    if (!identity || identity[0] == '\0') { g_free(identity); continue; }
-    const gchar *app = bar + 1;
-    PolicyVal *pv = vptr;
-    g_key_file_set_boolean(kf, identity, app, pv ? pv->decision : FALSE);
-    if (pv && pv->expires_at != 0) {
-      g_autofree gchar *expkey = g_strdup_printf("%s.expires", app);
-      gchar buf[32]; g_snprintf(buf, sizeof(buf), "%" G_GUINT64_FORMAT, pv->expires_at);
-      g_key_file_set_string(kf, identity, expkey, buf);
+    if (identity[0] != '\0') {
+      PolicyVal *pv = vptr;
+      g_autofree gchar *k = g_strdup_printf("%s|%s", kind, app);
+      g_key_file_set_boolean(kf, identity, k, pv ? pv->decision : FALSE);
+      if (pv && pv->expires_at != 0) {
+        g_autofree gchar *expkey = g_strdup_printf("%s.expires", k);
+        gchar buf[32]; g_snprintf(buf, sizeof(buf), "%" G_GUINT64_FORMAT, pv->expires_at);
+        g_key_file_set_string(kf, identity, expkey, buf);
+      }
     }
     g_free(identity);
+    g_free(kind);
   }
   gsize len = 0;
   gchar *data = g_key_file_to_data(kf, &len, NULL);
   if (data) {
     GError *err = NULL;
     if (!g_file_set_contents(ps->path, data, len, &err)) {
-      if (err) { g_warning("policy_store: save failed: %s", err->message); g_clear_error(&err);}    
+      if (err) { g_warning("policy_store: save failed: %s", err->message); g_clear_error(&err);}
     }
     g_free(data);
   }
   g_key_file_unref(kf);
 }
 
-gboolean policy_store_get(PolicyStore *ps, const gchar *app_id, const gchar *identity, gboolean *out_decision) {
+gboolean policy_store_get_for_kind(PolicyStore *ps, const gchar *kind, const gchar *app_id,
+                                   const gchar *identity, gboolean *out_decision) {
   if (!ps) return FALSE;
-  gchar *ckey = make_key(app_id, identity);
+  gchar *ckey = make_key(kind, app_id, identity);
   PolicyVal *pv = g_hash_table_lookup(ps->map, ckey);
-  g_free(ckey);
-  if (pv == NULL) return FALSE;
-  /* Enforce expiry */
-  guint64 now = (guint64)time(NULL);
-  if (pv->expires_at != 0 && now >= pv->expires_at) {
-    /* prune expired entry */
-    gchar *rmkey = make_key(app_id, identity);
-    g_hash_table_remove(ps->map, rmkey);
-    g_free(rmkey);
-    return FALSE;
+  gboolean found = FALSE;
+  if (pv) {
+    guint64 now = (guint64)time(NULL);
+    if (pv->expires_at != 0 && now >= pv->expires_at) {
+      g_hash_table_remove(ps->map, ckey); /* prune expired entry */
+    } else {
+      if (out_decision) *out_decision = pv->decision ? TRUE : FALSE;
+      found = TRUE;
+    }
   }
-  if (out_decision) *out_decision = pv->decision ? TRUE : FALSE;
-  return TRUE;
+  g_free(ckey);
+  return found;
 }
 
-void policy_store_set(PolicyStore *ps, const gchar *app_id, const gchar *identity, gboolean decision) {
+void policy_store_set_for_kind(PolicyStore *ps, const gchar *kind, const gchar *app_id,
+                               const gchar *identity, gboolean decision, guint64 ttl_seconds) {
   if (!ps) return;
-  gchar *ckey = make_key(app_id, identity);
   PolicyVal *pv = g_new0(PolicyVal, 1);
   pv->decision = decision ? TRUE : FALSE;
-  pv->expires_at = 0; /* forever */
-  g_hash_table_replace(ps->map, ckey, pv);
+  pv->expires_at = ttl_seconds == 0 ? 0 : (guint64)time(NULL) + ttl_seconds;
+  g_hash_table_replace(ps->map, make_key(kind, app_id, identity), pv);
 }
 
-void policy_store_set_with_ttl(PolicyStore *ps, const gchar *app_id, const gchar *identity, gboolean decision, guint64 ttl_seconds) {
-  if (!ps) return;
-  gchar *ckey = make_key(app_id, identity);
-  PolicyVal *pv = g_new0(PolicyVal, 1);
-  pv->decision = decision ? TRUE : FALSE;
-  if (ttl_seconds == 0) pv->expires_at = 0; else pv->expires_at = (guint64)time(NULL) + ttl_seconds;
-  g_hash_table_replace(ps->map, ckey, pv);
-}
-
-gboolean policy_store_unset(PolicyStore *ps, const gchar *app_id, const gchar *identity) {
+gboolean policy_store_unset_for_kind(PolicyStore *ps, const gchar *kind, const gchar *app_id,
+                                     const gchar *identity) {
   if (!ps) return FALSE;
-  gchar *ckey = make_key(app_id, identity);
+  gchar *ckey = make_key(kind, app_id, identity);
   gboolean removed = g_hash_table_remove(ps->map, ckey);
   g_free(ckey);
   return removed;
 }
 
+gboolean policy_store_get(PolicyStore *ps, const gchar *app_id, const gchar *identity, gboolean *out_decision) {
+  return policy_store_get_for_kind(ps, POLICY_KIND_EVENT, app_id, identity, out_decision);
+}
+
+void policy_store_set(PolicyStore *ps, const gchar *app_id, const gchar *identity, gboolean decision) {
+  policy_store_set_for_kind(ps, POLICY_KIND_EVENT, app_id, identity, decision, 0);
+}
+
+void policy_store_set_with_ttl(PolicyStore *ps, const gchar *app_id, const gchar *identity, gboolean decision, guint64 ttl_seconds) {
+  policy_store_set_for_kind(ps, POLICY_KIND_EVENT, app_id, identity, decision, ttl_seconds);
+}
+
+gboolean policy_store_unset(PolicyStore *ps, const gchar *app_id, const gchar *identity) {
+  return policy_store_unset_for_kind(ps, POLICY_KIND_EVENT, app_id, identity);
+}
+
 static void list_accum(gpointer key, gpointer value, gpointer user_data) {
   GPtrArray *arr = user_data;
-  const gchar *ckey = key; /* identity|app */
-  const gchar *bar = strchr(ckey, '|');
-  if (!bar) return;
+  gchar *identity = NULL, *kind = NULL;
+  const gchar *app = NULL;
+  if (!split_key(key, &identity, &kind, &app)) return;
   PolicyEntry *e = g_new0(PolicyEntry, 1);
-  e->identity = g_strdup(ckey);
-  e->identity[bar - ckey] = '\0';
-  e->app_id = g_strdup(bar + 1);
+  e->identity = identity;
+  e->kind = kind;
+  e->app_id = g_strdup(app);
   PolicyVal *pv = value;
   e->decision = pv ? pv->decision : FALSE;
   e->expires_at = pv ? pv->expires_at : 0;

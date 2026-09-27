@@ -1,6 +1,7 @@
 #include <gtk/gtk.h>
 #include <adwaita.h>
 #include <gio/gio.h>
+#include <string.h>
 #include "policy_store.h"
 #include "accounts_store.h"
 #include "settings_manager.h"
@@ -22,10 +23,7 @@ void gnostr_settings_page_refresh(GtkWidget *page, AccountsStore *as);
 void gnostr_settings_open_import_dialog_with_callback(GtkWindow *parent, AccountsStore *as, const char *initial_identity,
                                                       void (*on_success)(const char*, gpointer), gpointer user_data);
 // Approval dialog API
-void gnostr_show_approval_dialog(GtkWindow *parent, const char *identity_npub,
-                                 const char *app_name, const char *preview,
-                                 AccountsStore *as,
-                                 void (*cb)(gboolean, gboolean, const char*, guint64, gpointer), gpointer user_data);
+#include "ui/approval_dialog.h"
 
 typedef struct {
   GtkLabel *status;
@@ -132,12 +130,21 @@ static void on_app_lock(GSimpleAction *action, GVariant *param, gpointer user_da
 typedef struct {
   AppUI *ui;
   gchar *request_id;
-  gchar *app_id;
+  gchar *app_id;      /* principal verified by the signer ("" = unidentified) */
   gchar *identity;
+  gchar *kind;        /* ApprovalRequested kind: remembered decisions are per kind */
+  gchar *preview;
   gboolean decision;
   gboolean remember;
   guint64 ttl_seconds;
 } ApproveCtx;
+
+static void approve_ctx_free(ApproveCtx *c) {
+  if (!c) return;
+  g_free(c->request_id); g_free(c->app_id); g_free(c->identity);
+  g_free(c->kind); g_free(c->preview);
+  g_free(c);
+}
 
 typedef struct {
   AppUI *ui;
@@ -163,6 +170,7 @@ static void on_import_success_retry(const char *identity, gpointer user_data){
   /* Re-send ApproveRequest with the same decision/remember */
   ApproveCtx *n = g_new0(ApproveCtx, 1);
   n->ui = rc2->ui; n->request_id = rc2->request_id; n->app_id = rc2->app_id; n->identity = rc2->identity; n->decision = rc2->decision; n->remember = rc2->remember; n->ttl_seconds = rc2->ttl_seconds;
+  n->kind = g_strdup(POLICY_KIND_EVENT);
   rc2->request_id = NULL; rc2->app_id = NULL; rc2->identity = NULL;
   g_dbus_connection_call(n->ui->bus,
                          SIGNER_NAME,
@@ -198,7 +206,10 @@ static void approve_call_done(GObject *source, GAsyncResult *res, gpointer user_
   if (ctx && ctx->ui && ctx->ui->pending && ctx->request_id) {
     g_hash_table_remove(ctx->ui->pending, ctx->request_id);
   }
-  if (!ok && ctx && ctx->ui && ctx->ui->win && ctx->ui->accounts) {
+  /* The import-and-retry path is for a signature the signer could not make
+   * (no key); other kinds fail for reasons an import does not fix. */
+  if (!ok && ctx && ctx->ui && ctx->ui->win && ctx->ui->accounts &&
+      g_strcmp0(ctx->kind, POLICY_KIND_EVENT) == 0) {
     /* Likely missing session secret for selected identity: prompt import, then retry */
     RetryCtx *rc = g_new0(RetryCtx, 1);
     rc->ui = ctx->ui;
@@ -208,30 +219,28 @@ static void approve_call_done(GObject *source, GAsyncResult *res, gpointer user_
     rc->decision = ctx->decision;
     rc->remember = ctx->remember;
     /* free the original ctx now */
-    g_free(ctx->request_id); g_free(ctx->app_id); g_free(ctx->identity); g_free(ctx);
+    approve_ctx_free(ctx);
     gnostr_settings_open_import_dialog_with_callback(rc->ui->win, rc->ui->accounts, rc->identity, on_import_success_retry, rc);
     return;
   }
-  if (ctx){ g_free(ctx->request_id); g_free(ctx->app_id); g_free(ctx->identity); g_free(ctx); }
+  approve_ctx_free(ctx);
 }
 
 static void on_user_decision(gboolean decision, gboolean remember, gpointer user_data){
   ApproveCtx *ctx = (ApproveCtx*)user_data;
-  if (!ctx || !ctx->ui || !ctx->ui->bus) { if (ctx) { g_free(ctx->request_id); g_free(ctx->app_id); g_free(ctx);} return; }
+  if (!ctx || !ctx->ui || !ctx->ui->bus) { approve_ctx_free(ctx); return; }
   ctx->decision = decision;
   ctx->remember = remember;
-  g_message("user_decision: request_id=%s decision=%s remember=%s identity=%s ttl=%" G_GUINT64_FORMAT,
-            ctx->request_id?ctx->request_id:"(null)", decision?"accept":"reject", remember?"true":"false",
+  g_message("user_decision: request_id=%s kind=%s decision=%s remember=%s identity=%s ttl=%" G_GUINT64_FORMAT,
+            ctx->request_id?ctx->request_id:"(null)", ctx->kind?ctx->kind:"(null)",
+            decision?"accept":"reject", remember?"true":"false",
             ctx->identity?ctx->identity:"(null)", ctx->ttl_seconds);
-  if (remember && ctx->ui->policy && ctx->identity && ctx->identity[0] != '\0') {
-    extern void policy_store_set(struct _PolicyStore*, const gchar*, const gchar*, gboolean);
-    extern void policy_store_set_with_ttl(struct _PolicyStore*, const gchar*, const gchar*, gboolean, guint64);
-    extern void policy_store_save(struct _PolicyStore*);
-    if (ctx->ttl_seconds > 0) {
-      policy_store_set_with_ttl(ctx->ui->policy, ctx->app_id, ctx->identity, decision, ctx->ttl_seconds);
-    } else {
-      policy_store_set(ctx->ui->policy, ctx->app_id, ctx->identity, decision);
-    }
+  /* Remembered per (principal, identity, kind) — nostrc-f7hk. Nothing is
+   * remembered for a caller the signer could not identify. */
+  if (remember && ctx->ui->policy && ctx->identity && ctx->identity[0] != '\0' &&
+      ctx->app_id && ctx->app_id[0] != '\0') {
+    policy_store_set_for_kind(ctx->ui->policy, ctx->kind, ctx->app_id, ctx->identity,
+                              decision, ctx->ttl_seconds);
     policy_store_save(ctx->ui->policy);
     if (ctx->ui->perms_page) {
       gnostr_permissions_page_refresh(ctx->ui->perms_page, ctx->ui->policy);
@@ -283,6 +292,74 @@ static void on_user_decision_with_identity(gboolean decision, gboolean remember,
   on_user_decision(decision, remember, ctx);
 }
 
+/* Human-readable name for a signer principal (ApprovalRequested app_id):
+ *   flatpak:<id> | app:<id>;exe:<path> | snap:<name>;exe:<path> |
+ *   exe:<path> | https://<site> | claimed:<app_id> (unverified) | "" */
+static gchar *desktop_name_for(const gchar *app_id) {
+  g_autofree gchar *want = g_strconcat(app_id, ".desktop", NULL);
+  GList *all = g_app_info_get_all();
+  gchar *name = NULL;
+  for (GList *l = all; l && !name; l = l->next)
+    if (g_strcmp0(g_app_info_get_id(l->data), want) == 0)
+      name = g_strdup(g_app_info_get_display_name(l->data));
+  g_list_free_full(all, g_object_unref);
+  return name;
+}
+
+static gchar *principal_display_name(const gchar *principal) {
+  if (!principal || !*principal) return g_strdup("An unidentified application");
+  if (strstr(principal, "://") && !g_str_has_prefix(principal, "claimed:"))
+    return g_strdup(strstr(principal, "://") + 3);
+  if (g_str_has_prefix(principal, "claimed:"))
+    return g_strdup(principal[8] ? principal + 8 : "An unidentified application");
+  const gchar *exe = strstr(principal, "exe:");
+  g_autofree gchar *base = exe ? g_path_get_basename(exe + 4) : NULL;
+  const gchar *id = NULL;
+  gsize idlen = 0;
+  if (g_str_has_prefix(principal, "flatpak:")) { id = principal + 8; idlen = strlen(id); }
+  else if (g_str_has_prefix(principal, "app:") || g_str_has_prefix(principal, "snap:")) {
+    id = strchr(principal, ':') + 1;
+    const gchar *semi = strchr(id, ';');
+    idlen = semi ? (gsize)(semi - id) : strlen(id);
+  }
+  if (id) {
+    g_autofree gchar *app = g_strndup(id, idlen);
+    g_autofree gchar *pretty = desktop_name_for(app);
+    const gchar *label = pretty ? pretty : app;
+    return base ? g_strdup_printf("%s (%s)", label, base) : g_strdup(label);
+  }
+  return base ? g_strdup(base) : g_strdup(principal);
+}
+
+static void show_request_dialog(ApproveCtx *ctx, const gchar *claimed, gboolean verified) {
+  g_autofree gchar *display = principal_display_name(ctx->app_id);
+  gnostr_show_approval_request_dialog(ctx->ui->win ? GTK_WIDGET(ctx->ui->win) : NULL,
+                                      ctx->identity, ctx->kind, display, claimed, verified,
+                                      ctx->preview, ctx->ui->accounts,
+                                      on_user_decision_with_identity, ctx);
+}
+
+static void on_approval_info(GObject *source, GAsyncResult *res, gpointer user_data) {
+  ApproveCtx *ctx = user_data;
+  GError *err = NULL;
+  GVariant *ret = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), res, &err);
+  const gchar *claimed = NULL;
+  gboolean verified = ctx->app_id && *ctx->app_id && !g_str_has_prefix(ctx->app_id, "claimed:");
+  GVariant *info = NULL;
+  if (ret) {
+    info = g_variant_get_child_value(ret, 0);
+    g_variant_lookup(info, "claimed_app_id", "&s", &claimed);
+    g_variant_lookup(info, "verified", "b", &verified);
+  } else {
+    /* nip55l < 0.4.0 has no GetApprovalInfo: the signal is all there is. */
+    g_debug("GetApprovalInfo: %s", err ? err->message : "?");
+    g_clear_error(&err);
+  }
+  show_request_dialog(ctx, claimed, verified);
+  if (info) g_variant_unref(info);
+  if (ret) g_variant_unref(ret);
+}
+
 static void on_approval_requested(GDBusConnection *connection,
                                   const gchar *sender_name,
                                   const gchar *object_path,
@@ -306,38 +383,36 @@ static void on_approval_requested(GDBusConnection *connection,
     /* Insert as pending now to avoid races; remove in approve_call_done */
     g_hash_table_insert(ui->pending, g_strdup(request_id), GINT_TO_POINTER(1));
   }
-  /* Resolve identity: if missing, use active identity */
+  /* nip55l >= 0.4.0 sends the npub it resolved; older signers may send the
+   * caller's selector, often empty: fall back to the active identity. */
   gchar *effective_identity = NULL;
   if (identity && identity[0] != '\0') {
     effective_identity = g_strdup(identity);
   } else if (ui->accounts) {
     accounts_store_get_active(ui->accounts, &effective_identity, NULL);
   }
-  const gchar *acct = effective_identity ? effective_identity : identity;
-  /* Auto-approve/deny if remembered */
-  if (ui->policy) {
-    extern gboolean policy_store_get(struct _PolicyStore*, const gchar*, const gchar*, gboolean*);
-    gboolean remembered = FALSE, remembered_decision = FALSE;
-    remembered = policy_store_get(ui->policy, app_id, acct, &remembered_decision);
-    if (remembered) {
-      ApproveCtx *actx = g_new0(ApproveCtx, 1);
-      actx->ui = ui;
-      actx->request_id = g_strdup(request_id);
-      actx->app_id = g_strdup(app_id);
-      actx->identity = g_strdup(acct);
-      /* Directly call ApproveRequest with remembered decision (remember=false as it's already stored) */
-      on_user_decision(remembered_decision, FALSE, actx);
-      g_free(effective_identity);
-      return;
-    }
-  }
   ApproveCtx *ctx = g_new0(ApproveCtx, 1);
   ctx->ui = ui;
   ctx->request_id = g_strdup(request_id);
   ctx->app_id = g_strdup(app_id);
-  ctx->identity = g_strdup(acct);
-  gnostr_show_approval_dialog(ui->win, acct, app_id, preview, ui->accounts, on_user_decision_with_identity, ctx);
-  g_free(effective_identity);
+  ctx->identity = effective_identity ? effective_identity : g_strdup(identity);
+  ctx->kind = g_strdup((kind && *kind) ? kind : POLICY_KIND_EVENT);
+  ctx->preview = g_strdup(preview);
+  /* Auto-answer a remembered decision for this principal, identity and kind. */
+  gboolean remembered_decision = FALSE;
+  if (ui->policy && app_id && *app_id &&
+      policy_store_get_for_kind(ui->policy, ctx->kind, app_id, ctx->identity, &remembered_decision)) {
+    /* remember=false: already stored */
+    on_user_decision(remembered_decision, FALSE, ctx);
+    return;
+  }
+  if (ui->bus) {
+    g_dbus_connection_call(ui->bus, SIGNER_NAME, SIGNER_PATH, SIGNER_NAME, "GetApprovalInfo",
+                           g_variant_new("(s)", request_id), G_VARIANT_TYPE("(a{sv})"),
+                           G_DBUS_CALL_FLAGS_NONE, 5000, NULL, on_approval_info, ctx);
+  } else {
+    show_request_dialog(ctx, NULL, FALSE);
+  }
 }
 
 static void name_appeared(GDBusConnection *conn, const gchar *name, const char *owner, gpointer user_data) {

@@ -21,12 +21,18 @@
 #include <nostr-keys.h>
 #include <nostr-utils.h>
 
-#include <assert.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+/* Always-on check: CHECK() vanishes under -DNDEBUG (Release/RelWithDebInfo),
+ * which silently skipped every check and tripped -Werror unused warnings
+ * (nostrc-llh3, nostrc-vul2). */
+#define CHECK(c) do { if (!(c)) { \
+    fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); \
+  } } while (0)
 
 static char *sign_or_die(const char *tmpl, const char *sk_selector) {
   char *out = NULL;
@@ -39,23 +45,23 @@ static char *sign_or_die(const char *tmpl, const char *sk_selector) {
 }
 
 static void assert_verified_signed_event(const char *json, const char *want_pk_hex, int want_kind, int64_t not_before) {
-  assert(json && json[0] == '{');
+  CHECK(json && json[0] == '{');
   NostrEvent *ev = nostr_event_new();
-  assert(ev);
-  assert(nostr_event_deserialize_signed(ev, json, NULL) == NOSTR_EVENT_VALIDATION_OK);
-  assert(nostr_event_validate(ev, NULL) == NOSTR_EVENT_VALIDATION_OK);
+  CHECK(ev);
+  CHECK(nostr_event_deserialize_signed(ev, json, NULL) == NOSTR_EVENT_VALIDATION_OK);
+  CHECK(nostr_event_validate(ev, NULL) == NOSTR_EVENT_VALIDATION_OK);
   const char *pk = nostr_event_get_pubkey(ev);
-  assert(pk && strcmp(pk, want_pk_hex) == 0);
-  assert(nostr_event_get_kind(ev) == want_kind);
-  assert(nostr_event_get_created_at(ev) >= not_before);
+  CHECK(pk && strcmp(pk, want_pk_hex) == 0);
+  CHECK(nostr_event_get_kind(ev) == want_kind);
+  CHECK(nostr_event_get_created_at(ev) >= not_before);
   nostr_event_free(ev);
 }
 
 int main(void) {
   char *sk_hex = nostr_key_generate_private();
-  assert(sk_hex);
+  CHECK(sk_hex);
   char *pk_hex = nostr_key_get_public(sk_hex);
-  assert(pk_hex);
+  CHECK(pk_hex);
 
   /* Template with the caller's own pubkey and a real timestamp. */
   int64_t now = (int64_t)time(NULL);
@@ -88,8 +94,8 @@ int main(void) {
    * signed as an empty event. */
   char *out_c = NULL;
   int rc = nostr_nip55l_sign_event_json("{not json", sk_hex, "test", &out_c);
-  assert(rc == NOSTR_SIGNER_ERROR_INVALID_JSON);
-  assert(out_c == NULL);
+  CHECK(rc == NOSTR_SIGNER_ERROR_INVALID_JSON);
+  CHECK(out_c == NULL);
 
   free(sk_hex); free(pk_hex);
   printf("test_nip55l_sign_event_json: PASS\n");

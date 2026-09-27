@@ -15,8 +15,9 @@ ExecStart=/usr/bin/gnostr-signer-daemon
 # NIP-46 bunker mode: see gnostr-signer-daemon.service.d/bunker.conf.example
 ExecReload=/bin/kill -HUP $MAINPID
 
-# Set endpoint with unix socket by default under XDG_RUNTIME_DIR
-Environment=NOSTR_SIGNER_ENDPOINT=unix:%t/gnostr/signer.sock
+# No NIP-5F socket by default: it is not approval-gated (nip55l 0.4.0
+# gates reads/decrypts over D-Bus per verified caller). To opt in, add
+# Environment=NOSTR_SIGNER_ENDPOINT=unix:%t/gnostr/signer.sock in a drop-in.
 Environment=G_MESSAGES_DEBUG=
 
 # Restart policy
@@ -26,56 +27,48 @@ RestartSec=5s
 # Resource limits
 LimitNOFILE=4096
 LimitCORE=0
-LimitNPROC=64
+# No LimitNPROC=: RLIMIT_NPROC counts every process and thread of the uid,
+# not of this service, so on a busy session GLib could not start its worker
+# threads and aborted (nostrc-8sya). TasksMax= bounds this unit's cgroup.
 TasksMax=32
 
 # Security hardening (user service)
-# Basic hardening
+#
+# nip55l 0.4.0 identifies each D-Bus caller from /proc/<pid>/{exe,cgroup,
+# root/.flatpak-info} (nostrc-phk4). Every mount-namespacing option puts a
+# systemd --user unit into a user namespace, where readlink(/proc/<pid>/exe)
+# and /proc/<pid>/root of other processes fail with EACCES; every caller
+# would then be unidentified and no approval could ever be answered.
+# Verified on systemd 255 with systemd-run --user: PrivateTmp=,
+# ProtectSystem=, ProtectHome=, ProtectKernelTunables=,
+# ProtectControlGroups=, ProtectHostname= and ReadWritePaths= all hide the
+# callers; ProtectProc=invisible, ProcSubset=pid, RestrictNamespaces=,
+# MemoryDenyWriteExecute= and the SystemCallFilter lines do not. The
+# directives that fail a user unit outright (218/CAPABILITIES) are covered
+# in nostrc-8sya: PrivateDevices=, ProtectKernelModules=,
+# ProtectKernelLogs=, ProtectClock=, CapabilityBoundingSet=.
 NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=strict
-ProtectHome=read-only
-PrivateDevices=yes
-
-# Kernel protection
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectKernelLogs=yes
-ProtectControlGroups=yes
-
-# Memory protection
 MemoryDenyWriteExecute=yes
 LockPersonality=yes
-
-# Namespace restrictions
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 RemoveIPC=yes
-
-# Capability restrictions
-CapabilityBoundingSet=
 AmbientCapabilities=
+ProtectProc=invisible
+ProcSubset=pid
 
 # System call filtering
 SystemCallArchitectures=native
 SystemCallFilter=@system-service @basic-io @network-io @signal @ipc
 SystemCallFilter=~@privileged @resources @obsolete @debug @mount @swap @reboot @module @raw-io
 
-# File system restrictions
-ReadWritePaths=%t/gnostr %h/.config/gnostr %h/.local/share/gnostr
-ProtectProc=invisible
-ProcSubset=pid
-
 # Network restrictions (allow only local IPC)
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressAllow=localhost
 IPAddressDeny=any
 
-# Misc hardening
 UMask=0077
-ProtectClock=yes
-ProtectHostname=yes
 
 [Install]
 WantedBy=default.target

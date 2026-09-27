@@ -12,182 +12,291 @@
 #include "nostr/nip55l/error.h"
 #include "nip55l_dbus_names.h"
 #include "nip55l_dbus_errors.h"
+#include "signer_caller.h"
 
 /* Generated skeleton instance */
 static NostrSigner *signer_skel = NULL;
-/* A call parked until ApproveRequest decides it. SignEvent and
- * NIP44DeriveConversationKey share the table, the request ids and the
- * ApprovalRequested/ApprovalCompleted signals; `kind` picks the operation
- * ApproveRequest runs and the ACL section a remembered decision lands in. */
-typedef enum {
-  PENDING_SIGN_EVENT = 0,
-  PENDING_NIP44_CONVKEY = 1,
-} PendingKind;
-typedef struct {
-  PendingKind kind;
-  char *event_json;   /* PENDING_SIGN_EVENT */
-  char *peer_hex;     /* PENDING_NIP44_CONVKEY */
-  char *identity;
-  char *app_id;
-  GDBusMethodInvocation *invocation; /* kept until decision */
-} PendingSign;
-static void pending_free(gpointer data){
-  PendingSign *ps = (PendingSign*)data;
-  if (!ps) return;
-  g_free(ps->event_json);
-  g_free(ps->peer_hex);
-  g_free(ps->identity);
-  g_free(ps->app_id);
-  /* ps->invocation is finished elsewhere; do not unref here */
-  g_free(ps);
-}
-static GHashTable *pending = NULL; /* id(string) -> PendingSign* */
 
-/* Parked calls are bounded so a flood of senders cannot grow the table
- * without limit; ids are a monotonic counter, never reused (an address-based
- * id could be recycled after a request completes and let a stale
- * ApproveRequest decide a new call). */
+/* ==========================================================================
+ * Access control (nip55l 0.4.0: nostrc-y02q, nostrc-phk4, nostrc-1e31,
+ * nostrc-eie5). Every method that uses or reveals the user's key material or
+ * configuration goes through gated_call():
+ *
+ *   1. principal  - who is calling, derived from the bus connection
+ *                   (signer_caller.h). The caller's app_id argument is only
+ *                   honoured as a web-origin sub-principal when the caller is
+ *                   the installed browser bridge; otherwise it is a label
+ *                   shown to the user ("claims to be ...").
+ *   2. identity   - the npub the identity selector resolves to (the key the
+ *                   operation will actually use). One canonical form for the
+ *                   ACL key, for lookup and for "remember" alike.
+ *   3. grant      - $XDG_CONFIG_HOME/gnostr/signer-grants.ini, section = the
+ *                   request kind, key "<principal>|<npub>" (or "|*" for any
+ *                   identity), value allow|deny[:<until-unix-ts>]; then the
+ *                   built-in defaults for first-party headless services.
+ *   4. approval   - ApprovalRequested(principal, npub, kind, preview, id);
+ *                   answered by ApproveRequest, which only the installed
+ *                   approval UI may call. Identical queued calls from one
+ *                   connection share a request, so a burst of DM decrypts
+ *                   raises one prompt.
+ * ======================================================================== */
+
+typedef enum {
+  OP_SIGN_EVENT = 0,
+  OP_CONVKEY,
+  OP_GET_PUBLIC_KEY,
+  OP_GET_RELAYS,
+  OP_NIP04_ENCRYPT,
+  OP_NIP04_DECRYPT,
+  OP_NIP44_ENCRYPT,
+  OP_NIP44_DECRYPT,
+  OP_NIP44_ENCRYPT_B64,
+  OP_NIP44_DECRYPT_B64,
+  OP_DECRYPT_ZAP,
+  OP_COUNT
+} SignerOp;
+
+typedef struct {
+  const char *kind;     /* ApprovalRequested kind == grants section */
+  gboolean has_identity;
+  gboolean coalesce;    /* queued calls may share one approval */
+  gboolean peer_arg;    /* argument b is a 64-hex peer key */
+} OpInfo;
+
+static const OpInfo op_info[OP_COUNT] = {
+  [OP_SIGN_EVENT]        = { "event",                  TRUE,  FALSE, FALSE },
+  [OP_CONVKEY]           = { "nip44_conversation_key", TRUE,  FALSE, FALSE },
+  [OP_GET_PUBLIC_KEY]    = { "get_public_key",         TRUE,  TRUE,  FALSE },
+  [OP_GET_RELAYS]        = { "get_relays",             FALSE, TRUE,  FALSE },
+  [OP_NIP04_ENCRYPT]     = { "nip04_encrypt",          TRUE,  TRUE,  TRUE  },
+  [OP_NIP04_DECRYPT]     = { "nip04_decrypt",          TRUE,  TRUE,  TRUE  },
+  [OP_NIP44_ENCRYPT]     = { "nip44_encrypt",          TRUE,  TRUE,  TRUE  },
+  [OP_NIP44_DECRYPT]     = { "nip44_decrypt",          TRUE,  TRUE,  TRUE  },
+  [OP_NIP44_ENCRYPT_B64] = { "nip44_encrypt",          TRUE,  TRUE,  TRUE  },
+  [OP_NIP44_DECRYPT_B64] = { "nip44_decrypt",          TRUE,  TRUE,  TRUE  },
+  [OP_DECRYPT_ZAP]       = { "zap_decrypt",            TRUE,  TRUE,  FALSE },
+};
+
+/* One parked method call. */
+typedef struct {
+  SignerOp op;
+  gchar *a;          /* event JSON / peer / plaintext / ciphertext */
+  gchar *b;          /* peer pubkey for the NIP-04/44 calls */
+  gchar *selector;   /* identity as the caller passed it */
+  GDBusMethodInvocation *invocation;
+} Call;
+
+static void call_free(gpointer data){
+  Call *c = data;
+  if (!c) return;
+  if (c->a) { memset(c->a, 0, strlen(c->a)); g_free(c->a); }
+  g_free(c->b);
+  /* A selector may be the secret key itself. */
+  if (c->selector) { memset(c->selector, 0, strlen(c->selector)); g_free(c->selector); }
+  g_free(c);
+}
+
+/* A request awaiting ApproveRequest: one or more coalesced calls. */
+typedef struct {
+  gchar *id;
+  SignerOp op;
+  SignerCaller *who;     /* principal (copy) */
+  gchar *claimed;        /* caller-supplied app_id */
+  gchar *npub;           /* ACL identity; NULL for identity-less kinds */
+  gchar *preview;
+  GPtrArray *calls;      /* Call* */
+  guint timeout_id;
+} Pending;
+
+static void pending_free(gpointer data){
+  Pending *p = data;
+  if (!p) return;
+  if (p->timeout_id) g_source_remove(p->timeout_id);
+  g_free(p->id);
+  signer_caller_free(p->who);
+  g_free(p->claimed);
+  g_free(p->npub);
+  g_free(p->preview);
+  if (p->calls) g_ptr_array_unref(p->calls);
+  g_free(p);
+}
+
+static GHashTable *pending = NULL; /* id -> Pending* (owned) */
+
+/* Parked requests are bounded so a flood cannot grow the table without
+ * limit; ids are a monotonic counter, never reused (an address-based id could
+ * be recycled after a request completes and let a stale ApproveRequest decide
+ * a new call). Unanswered requests expire so a missing UI cannot pin them. */
 #define PENDING_MAX 64
+#define PENDING_PER_CALLER_MAX 8   /* one app cannot fill the table for the others */
+#define PENDING_CALLS_MAX 256
+#define PENDING_TTL_S 300
 static gchar *next_request_id(void){
   static guint64 counter = 0;
   return g_strdup_printf("req-%" G_GUINT64_FORMAT, ++counter);
 }
-static gboolean pending_full(GDBusMethodInvocation *invocation){
-  if (pending && g_hash_table_size(pending) >= PENDING_MAX) {
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT,
-      "too many requests awaiting approval");
-    return TRUE;
-  }
-  return FALSE;
-}
 
-/* Simple ACL and rate limiter for mutation methods */
+/* Key mutations stay behind the explicit escape hatch. */
 static gboolean signer_mutations_allowed(void){
   const char *env = g_getenv("NOSTR_SIGNER_ALLOW_KEY_MUTATIONS");
   return (env && g_strcmp0(env, "1")==0);
 }
 
-static gboolean rate_limit_ok(const char *sender){
-  static GHashTable *last_call = NULL;
-  if (!last_call) last_call = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+/* Per-sender minimum interval; entries leave when the sender disconnects. */
+static GHashTable *rate_tables[2];
+static gboolean rate_limit_ok_ms(guint table, const char *sender, guint interval_ms){
+  if (!rate_tables[table]) rate_tables[table] = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   if (!sender) sender = "";
-  gpointer v = g_hash_table_lookup(last_call, sender);
+  gint64 *prev = g_hash_table_lookup(rate_tables[table], sender);
   gint64 now = g_get_monotonic_time();
-  const gint64 interval_us = 500 * 1000; /* 500ms */
-  if (v){
-    gint64 prev = GPOINTER_TO_INT(v);
-    if (now - prev < interval_us) return FALSE;
-  }
-  g_hash_table_insert(last_call, g_strdup(sender), GINT_TO_POINTER((int)now));
+  if (prev && now - *prev < (gint64)interval_ms * 1000) return FALSE;
+  gint64 *v = g_new(gint64, 1); *v = now;
+  g_hash_table_insert(rate_tables[table], g_strdup(sender), v);
   return TRUE;
 }
+#define RATE_PROMPT   0
+#define RATE_MUTATION 1
+static gboolean rate_limit_ok(const char *sender){ return rate_limit_ok_ms(RATE_MUTATION, sender, 500); }
 
-static gboolean rate_limit_ok_ms(const char *sender, guint interval_ms){
-  static GHashTable *last_call = NULL;
-  if (!last_call) last_call = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  if (!sender) sender = "";
-  gpointer v = g_hash_table_lookup(last_call, sender);
-  gint64 now = g_get_monotonic_time();
-  const gint64 interval_us = ((gint64)interval_ms) * 1000;
-  if (v){
-    gint64 prev = GPOINTER_TO_INT(v);
-    if (now - prev < interval_us) return FALSE;
-  }
-  g_hash_table_insert(last_call, g_strdup(sender), GINT_TO_POINTER((int)now));
-  return TRUE;
-}
+/* ---- grants ------------------------------------------------------------- */
 
-/* ACL persistence: ~/.config/gnostr/signer-acl.ini
- * Format: INI sections by method; key is "app_id:identity"; value is "allow"/"deny". */
-static gchar *acl_file_path(void){
+/* nip55l < 0.4.0 kept "<app_id>:<identity>" entries in signer-acl.ini. Those
+ * were keyed on a string any caller could claim, so they are not carried
+ * over; the file is left alone (nips/nip5f still reads its own entries). */
+static gchar *grants_file_path(void){
   const char *conf = g_get_user_config_dir();
   if (!conf) conf = g_get_home_dir();
   gchar *dir = g_build_filename(conf, "gnostr", NULL);
   g_mkdir_with_parents(dir, 0700);
-  gchar *path = g_build_filename(dir, "signer-acl.ini", NULL);
+  gchar *path = g_build_filename(dir, "signer-grants.ini", NULL);
   g_free(dir);
-  return path; /* caller frees */
+  return path;
 }
 
-static gboolean acl_load_decision(const char *method, const char *app_id, const char *identity, gboolean *decision_out){
-  if (!method || !app_id || !identity || !decision_out) return FALSE;
-  GKeyFile *kf = g_key_file_new();
-  GError *err=NULL;
-  if (!g_key_file_load_from_file(kf, acl_file_path(), G_KEY_FILE_NONE, &err)){
-    if (err) g_clear_error(&err);
-    g_key_file_unref(kf); return FALSE;
+static GKeyFile *grants_kf = NULL;
+static gint64 grants_mtime = -1;
+static goffset grants_size = -1;
+
+/* The grants file, reloaded when it changes on disk. Borrowed; never NULL. */
+static GKeyFile *grants_get(void){
+  gchar *path = grants_file_path();
+  GStatBuf st;
+  gint64 mtime = -2; goffset size = -2;
+  if (g_stat(path, &st) == 0) { mtime = (gint64)st.st_mtime; size = (goffset)st.st_size; }
+  if (!grants_kf || mtime != grants_mtime || size != grants_size) {
+    if (grants_kf) g_key_file_unref(grants_kf);
+    grants_kf = g_key_file_new();
+    if (mtime != -2) g_key_file_load_from_file(grants_kf, path, G_KEY_FILE_NONE, NULL);
+    grants_mtime = mtime; grants_size = size;
   }
-  gboolean found = FALSE; gboolean allow = FALSE; gboolean expired = FALSE;
-  gchar *key = g_strdup_printf("%s:%s", app_id, identity);
-  gchar *val = g_key_file_get_string(kf, method, key, NULL);
-  if (val){
-    /* Format: "allow" | "deny" | "allow:<until_unixts>" | "deny:<until_unixts>" */
-    const char *p = strchr(val, ':');
-    guint64 until = 0;
-    if (p){
-      allow = (g_ascii_strncasecmp(val, "allow", 5)==0);
-      until = g_ascii_strtoull(p+1, NULL, 10);
-      guint64 now = (guint64)(g_get_real_time() / 1000000);
-      expired = (until > 0 && now >= until);
-    } else {
-      allow = (g_strcmp0(val, "allow")==0);
-    }
-    found = TRUE;
-    g_free(val);
-  }
-  g_free(key);
-  g_key_file_unref(kf);
-  if (!found || expired) return FALSE;
-  *decision_out = allow;
-  return TRUE;
+  g_free(path);
+  return grants_kf;
 }
 
-static gboolean acl_save_decision(const char *method, const char *app_id, const char *identity, gboolean allow, guint64 ttl_seconds){
-  if (!method || !app_id || !identity) return FALSE;
-  GKeyFile *kf = g_key_file_new();
-  GError *err=NULL;
-  g_key_file_load_from_file(kf, acl_file_path(), G_KEY_FILE_NONE, NULL);
-  gchar *key = g_strdup_printf("%s:%s", app_id, identity);
-  gchar *val = NULL;
-  if (ttl_seconds > 0){
+/* Value "allow" | "deny" | "allow:<until>" | "deny:<until>". FALSE when
+ * absent, expired or unparseable. */
+static gboolean grant_value(const char *val, gboolean *allow){
+  if (!val) return FALSE;
+  gboolean a;
+  const char *rest;
+  if (g_str_has_prefix(val, "allow")) { a = TRUE; rest = val + 5; }
+  else if (g_str_has_prefix(val, "deny")) { a = FALSE; rest = val + 4; }
+  else return FALSE;
+  if (*rest == ':') {
+    guint64 until = g_ascii_strtoull(rest + 1, NULL, 10);
     guint64 now = (guint64)(g_get_real_time() / 1000000);
-    guint64 until = now + ttl_seconds;
-    val = g_strdup_printf("%s:%" G_GUINT64_FORMAT, allow?"allow":"deny", until);
-  } else {
-    val = g_strdup(allow?"allow":"deny");
+    if (until > 0 && now >= until) return FALSE;
+  } else if (*rest != '\0') {
+    return FALSE;
   }
-  g_key_file_set_string(kf, method, key, val);
-  g_free(val);
-  g_free(key);
-  gsize len=0; gchar *data = g_key_file_to_data(kf, &len, NULL);
-  if (data){
-    if (!g_file_set_contents(acl_file_path(), data, len, &err)){
-      if (err){ g_clear_error(&err);}    
-    }
-    g_free(data);
-  }
-  g_key_file_unref(kf);
+  *allow = a;
   return TRUE;
 }
 
-static gchar *build_event_preview(const char *event_json){
-  if (!event_json) return g_strdup("");
-  const char *p = strstr(event_json, "\"content\"");
-  if (!p) return g_strndup(event_json, MIN((gsize)64, strlen(event_json)));
-  p = strchr(p, ':'); if (!p) return g_strndup(event_json, MIN((gsize)64, strlen(event_json)));
-  p++;
-  while (*p==' '){ p++; }
-  if (*p!='\"') return g_strndup(event_json, MIN((gsize)64, strlen(event_json)));
-  p++;
-  const char *start = p; const char *end = start;
-  while (*end && *end!='\"') end++;
-  gsize len = (gsize)(end-start);
-  if (len > 96) len = 96;
-  gchar *frag = g_strndup(start, len);
-  for (gsize i=0;i<len;i++){ if (frag[i]=='\n' || frag[i]=='\r') frag[i]=' '; }
-  return frag;
+static gboolean grants_lookup_file(const char *kind, const char *principal, const char *npub,
+                                   gboolean *allow){
+  GKeyFile *kf = grants_get();
+  const char *ids[2] = { npub, "*" };
+  for (int i = 0; i < 2; i++) {
+    if (!ids[i] || !*ids[i]) continue;
+    g_autofree gchar *key = g_strdup_printf("%s|%s", principal, ids[i]);
+    g_autofree gchar *val = g_key_file_get_string(kf, kind, key, NULL);
+    if (grant_value(val, allow)) return TRUE;
+  }
+  return FALSE;
 }
-/* Map a core signing failure onto the D-Bus error a caller can act on. */
+
+/* Built-in grants for first-party services that run without a UI (the
+ * nostr-homed session helpers read the npub/relays and open the secrets
+ * envelope at login). Matched on the caller's executable by path AND
+ * device/inode, for unsandboxed same-user callers only; an explicit entry in
+ * the grants file (e.g. a deny) takes precedence.
+ * NIP55L_DEFAULT_GRANTS: "<kind>[,<kind>...]@<exe>[:<exe>...]" groups
+ * separated by '+'. */
+#ifndef NIP55L_DEFAULT_GRANTS
+#define NIP55L_DEFAULT_GRANTS ""
+#endif
+static gboolean grants_lookup_default(const char *kind, const SignerCaller *who){
+  if (!who || !who->same_uid || !who->exe || who->exe_ino == 0) return FALSE;
+  if (who->kind != SIGNER_CALLER_EXE && who->kind != SIGNER_CALLER_SYSTEMD_SCOPE) return FALSE;
+  gboolean hit = FALSE;
+  g_auto(GStrv) groups = g_strsplit(NIP55L_DEFAULT_GRANTS, "+", -1);
+  for (guint i = 0; groups[i] && !hit; i++) {
+    gchar *at = strchr(groups[i], '@');
+    if (!at) continue;
+    *at = '\0';
+    g_auto(GStrv) kinds = g_strsplit(groups[i], ",", -1);
+    if (!g_strv_contains((const gchar * const *)kinds, kind)) continue;
+    g_auto(GStrv) exes = g_strsplit(at + 1, ":", -1);
+    for (guint j = 0; exes[j] && !hit; j++) {
+      if (g_strcmp0(exes[j], who->exe) != 0) continue;
+      GStatBuf st;
+      hit = g_stat(exes[j], &st) == 0 && (guint64)st.st_dev == who->exe_dev &&
+            (guint64)st.st_ino == who->exe_ino;
+    }
+  }
+  return hit;
+}
+
+static gboolean grants_lookup(const char *kind, const SignerCaller *who, const char *npub,
+                              gboolean *allow){
+  if (who->principal && grants_lookup_file(kind, who->principal, npub, allow)) return TRUE;
+  if (who->kind != SIGNER_CALLER_WEB_ORIGIN && grants_lookup_default(kind, who)) {
+    *allow = TRUE;
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static gboolean grants_save(const char *kind, const char *principal, const char *npub,
+                            gboolean allow, guint64 ttl_seconds){
+  if (!kind || !principal || !*principal) return FALSE;
+  GKeyFile *kf = grants_get();
+  g_autofree gchar *key = g_strdup_printf("%s|%s", principal, (npub && *npub) ? npub : "*");
+  g_autofree gchar *val = NULL;
+  if (ttl_seconds > 0) {
+    guint64 until = (guint64)(g_get_real_time() / 1000000) + ttl_seconds;
+    val = g_strdup_printf("%s:%" G_GUINT64_FORMAT, allow ? "allow" : "deny", until);
+  } else {
+    val = g_strdup(allow ? "allow" : "deny");
+  }
+  g_key_file_set_string(kf, kind, key, val);
+  gsize len = 0;
+  g_autofree gchar *data = g_key_file_to_data(kf, &len, NULL);
+  g_autofree gchar *path = grants_file_path();
+  GError *err = NULL;
+  gboolean ok = data && g_file_set_contents_full(path, data, (gssize)len,
+                                                 G_FILE_SET_CONTENTS_CONSISTENT, 0600, &err);
+  if (!ok) {
+    g_warning("nostr-signer: cannot save grant to %s: %s", path, err ? err->message : "?");
+    g_clear_error(&err);
+  }
+  grants_mtime = -1; /* reload on next use */
+  return ok;
+}
+
+/* ---- errors ------------------------------------------------------------- */
+
 static void return_sign_error(GDBusMethodInvocation *invocation, int rc){
   switch (rc) {
     case NOSTR_SIGNER_ERROR_INVALID_JSON:
@@ -202,76 +311,6 @@ static void return_sign_error(GDBusMethodInvocation *invocation, int rc){
       break;
   }
 }
-
-/* ========== Generated handler glue ========== */
-static gboolean handle_get_public_key(NostrSigner *object, GDBusMethodInvocation *invocation)
-{
-  (void)object;
-  char *npub = NULL; int rc = nostr_nip55l_get_public_key(&npub);
-  if (rc!=0 || !npub) {
-    /* NOSTR_SIGNER_ERROR_NOT_FOUND (6) means no key is configured */
-    if (rc == 6) {
-      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_KEY,
-        "No key configured. Please set up a key in GNostr Signer first.");
-    } else {
-      gchar *msg = g_strdup_printf("get_public_key failed (rc=%d)", rc);
-      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, msg);
-      g_free(msg);
-    }
-    return TRUE;
-  }
-  nostr_signer_complete_get_public_key(object, invocation, npub);
-  free(npub);
-  return TRUE;
-}
-
-static gboolean handle_sign_event(NostrSigner *object, GDBusMethodInvocation *invocation,
-                                  const gchar *eventJson, const gchar *identity, const gchar *app_id)
-{
-  (void)object;
-  const gchar *sender = g_dbus_method_invocation_get_sender(invocation);
-  if (!app_id || !*app_id) app_id = sender ? sender : "";
-  g_message("handle_sign_event: app_id=%s identity=%s sender=%s", app_id?app_id:"(null)", identity?identity:"(null)", sender?sender:"(null)");
-  gboolean acl_decision = FALSE;
-  if (acl_load_decision("SignEvent", app_id, identity, &acl_decision)) {
-    if (acl_decision) {
-      /* nip55l 0.2.0 contract: SignEvent returns the complete signed event. */
-      char *signed_json=NULL; int rc = nostr_nip55l_sign_event_json(eventJson, identity, app_id, &signed_json);
-      if (rc!=0 || !signed_json) { return_sign_error(invocation, rc); return TRUE; }
-      nostr_signer_complete_sign_event(object, invocation, signed_json);
-      free(signed_json); return TRUE;
-    } else {
-      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy");
-      return TRUE;
-    }
-  }
-  if (!rate_limit_ok_ms(sender, 100)) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "rate limited"); return TRUE; }
-  if (!pending) pending = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, pending_free);
-  if (pending_full(invocation)) return TRUE;
-  gchar *req_id = next_request_id();
-  PendingSign *ps = g_new0(PendingSign, 1);
-  ps->event_json = g_strdup(eventJson);
-  ps->identity = g_strdup(identity);
-  ps->app_id = g_strdup(app_id);
-  ps->invocation = invocation; /* keep */
-  g_hash_table_insert(pending, g_strdup(req_id), ps);
-
-  gchar *preview = build_event_preview(eventJson);
-  g_message("emit ApprovalRequested: app_id=%s identity=%s request_id=%s", app_id?app_id:"(null)", identity?identity:"(null)", req_id?req_id:"(null)");
-  nostr_signer_emit_approval_requested(object,
-    app_id?app_id:"",
-    identity?identity:"",
-    "event",
-    preview?preview:"",
-    req_id);
-  g_free(preview);
-  g_free(req_id);
-  /* Do not complete invocation yet; ApproveRequest will finish it */
-  return TRUE;
-}
-
-/* ---- NIP44DeriveConversationKey (nip55l 0.3.0, nostrc-da9c) ------------- */
-#define ACL_SECTION_CONVKEY "NIP44DeriveConversationKey"
 
 static void return_convkey_error(GDBusMethodInvocation *invocation, int rc){
   switch (rc) {
@@ -289,214 +328,62 @@ static void return_convkey_error(GDBusMethodInvocation *invocation, int rc){
   }
 }
 
-/* Derive and complete `target`. Returns the core rc so the approve path can
- * report it to the approver. */
-static int complete_convkey(NostrSigner *object, GDBusMethodInvocation *target,
-                            const char *peer_hex, const char *identity){
-  char *hex = NULL;
-  int rc = nostr_nip55l_nip44_conversation_key(peer_hex, identity, &hex);
-  if (rc != 0 || !hex) { return_convkey_error(target, rc ? rc : NOSTR_SIGNER_ERROR_BACKEND); free(hex); return rc ? rc : NOSTR_SIGNER_ERROR_BACKEND; }
-  nostr_signer_complete_nip44_derive_conversation_key(object, target, hex);
-  memset(hex, 0, strlen(hex));
-  free(hex);
-  return 0;
-}
-
-static gboolean is_peer_hex(const char *s){
-  if (!s || strlen(s) != 64) return FALSE;
-  for (const char *p = s; *p; p++) if (!g_ascii_isxdigit(*p)) return FALSE;
-  return TRUE;
-}
-
-static void finish_convkey_request(NostrSigner *object, GDBusMethodInvocation *approver,
-                                   PendingSign *ps, gboolean decision, gboolean remember,
-                                   guint64 ttl_seconds, const char *sender){
-  const char *acl_app = (ps->app_id && *ps->app_id) ? ps->app_id : (sender ? sender : "");
-  if (decision) {
-    int rc = complete_convkey(object, ps->invocation, ps->peer_hex, ps->identity);
-    g_message("approve: convkey rc=%d app_id=%s", rc, acl_app);
-    nostr_signer_complete_approve_request(object, approver, rc == 0);
+/* The selector resolves to no key: answer without prompting. */
+static void return_no_key(GDBusMethodInvocation *invocation, SignerOp op, int rc){
+  if (rc == NOSTR_SIGNER_ERROR_NOT_FOUND || rc == NOSTR_SIGNER_ERROR_INVALID_KEY) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_KEY,
+      op == OP_GET_PUBLIC_KEY ? "No key configured. Please set up a key in GNostr Signer first."
+                              : "no key configured for this identity");
   } else {
-    g_dbus_method_invocation_return_dbus_error(ps->invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL, "user denied");
-    nostr_signer_complete_approve_request(object, approver, TRUE);
+    gchar *msg = g_strdup_printf("key lookup failed (rc=%d)", rc);
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, msg);
+    g_free(msg);
   }
-  if (remember)
-    acl_save_decision(ACL_SECTION_CONVKEY, acl_app, ps->identity ? ps->identity : "", decision, ttl_seconds);
 }
 
-static gboolean handle_nip44_derive_conversation_key(NostrSigner *object, GDBusMethodInvocation *invocation,
-                                                     const gchar *peerPubKey, const gchar *identity,
-                                                     const gchar *app_id)
-{
-  const gchar *sender = g_dbus_method_invocation_get_sender(invocation);
-  if (!app_id || !*app_id) app_id = sender ? sender : "";
-  if (!identity) identity = "";
-  /* Reject malformed peers before anyone is asked to approve them. */
-  if (!is_peer_hex(peerPubKey)) { return_convkey_error(invocation, NOSTR_SIGNER_ERROR_INVALID_KEY); return TRUE; }
-  gboolean acl_decision = FALSE;
-  if (acl_load_decision(ACL_SECTION_CONVKEY, app_id, identity, &acl_decision)) {
-    if (acl_decision) (void)complete_convkey(object, invocation, peerPubKey, identity);
-    else g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy");
-    return TRUE;
+static void return_string(GDBusMethodInvocation *invocation, char *out, gboolean wipe){
+  g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", out));
+  if (wipe) memset(out, 0, strlen(out));
+  free(out);
+}
+
+/* ---- performing an allowed call ----------------------------------------- */
+
+static gchar *build_event_preview(const char *event_json){
+  if (!event_json) return g_strdup("");
+  const char *p = strstr(event_json, "\"content\"");
+  if (!p) return g_strndup(event_json, MIN((gsize)64, strlen(event_json)));
+  p = strchr(p, ':'); if (!p) return g_strndup(event_json, MIN((gsize)64, strlen(event_json)));
+  p++;
+  while (*p==' '){ p++; }
+  if (*p!='\"') return g_strndup(event_json, MIN((gsize)64, strlen(event_json)));
+  p++;
+  const char *start = p; const char *end = start;
+  while (*end && *end!='\"') end++;
+  gsize len = (gsize)(end-start);
+  if (len > 96) len = 96;
+  gchar *frag = g_strndup(start, len);
+  for (gsize i=0;i<len;i++){ if (frag[i]=='\n' || frag[i]=='\r') frag[i]=' '; }
+  if (!g_utf8_validate(frag, -1, NULL)) { gchar *v = g_utf8_make_valid(frag, -1); g_free(frag); frag = v; }
+  return frag;
+}
+
+static gchar *build_preview(SignerOp op, const char *a, const char *b){
+  switch (op) {
+    case OP_SIGN_EVENT:        return build_event_preview(a);
+    case OP_CONVKEY:           return g_strdup_printf("derive NIP-44 conversation key with %s", a);
+    case OP_GET_PUBLIC_KEY:    return g_strdup("read your public key");
+    case OP_GET_RELAYS:        return g_strdup("read your relay list");
+    case OP_NIP04_ENCRYPT:
+    case OP_NIP44_ENCRYPT:
+    case OP_NIP44_ENCRYPT_B64: return g_strdup_printf("encrypt a message for %s", b);
+    case OP_NIP04_DECRYPT:
+    case OP_NIP44_DECRYPT:
+    case OP_NIP44_DECRYPT_B64: return g_strdup_printf("decrypt a message from %s", b);
+    case OP_DECRYPT_ZAP:       return g_strdup("decrypt a private zap");
+    case OP_COUNT:             break;
   }
-  if (!rate_limit_ok_ms(sender, 100)) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "rate limited"); return TRUE; }
-  if (!pending) pending = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, pending_free);
-  if (pending_full(invocation)) return TRUE;
-  gchar *req_id = next_request_id();
-  PendingSign *ps = g_new0(PendingSign, 1);
-  ps->kind = PENDING_NIP44_CONVKEY;
-  ps->peer_hex = g_ascii_strdown(peerPubKey, -1);
-  ps->identity = g_strdup(identity);
-  ps->app_id = g_strdup(app_id);
-  ps->invocation = invocation;
-  g_hash_table_insert(pending, g_strdup(req_id), ps);
-  gchar *preview = g_strdup_printf("derive NIP-44 conversation key with %s", ps->peer_hex);
-  nostr_signer_emit_approval_requested(object, app_id, identity, "nip44_conversation_key", preview, req_id);
-  g_free(preview);
-  g_free(req_id);
-  return TRUE;
-}
-
-static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocation *invocation,
-                                       const gchar *request_id, gboolean decision, gboolean remember, guint64 ttl_seconds)
-{
-  (void)object;
-  gboolean handled = FALSE; const gchar *sender = g_dbus_method_invocation_get_sender(invocation);
-  g_message("handle_approve_request: request_id=%s decision=%s remember=%s ttl=%" G_GUINT64_FORMAT,
-            request_id?request_id:"(null)", decision?"true":"false", remember?"true":"false", ttl_seconds);
-  if (pending && request_id) {
-    PendingSign *ps = g_hash_table_lookup(pending, request_id);
-    if (ps && ps->kind == PENDING_NIP44_CONVKEY) {
-      handled = TRUE;
-      finish_convkey_request(object, invocation, ps, decision, remember, ttl_seconds, sender);
-      nostr_signer_emit_approval_completed(object, request_id, decision);
-      g_hash_table_remove(pending, request_id);
-    } else if (ps) {
-      handled = TRUE;
-      if (decision) {
-        /* Fallback: if identity is empty, use the active identity */
-        if (!ps->identity || !*ps->identity) {
-          char *npub = NULL; int grc = nostr_nip55l_get_public_key(&npub);
-          if (grc==0 && npub) {
-            g_free(ps->identity);
-            ps->identity = g_strdup(npub);
-            g_message("approve: identity empty; using active npub=%s", ps->identity);
-            free(npub);
-          } else {
-            g_message("approve: identity empty and active npub unavailable (rc=%d)", grc);
-          }
-        }
-        char *signed_json=NULL; int rc = nostr_nip55l_sign_event_json(ps->event_json, ps->identity, ps->app_id, &signed_json);
-        g_message("approve: signing rc=%d app_id=%s identity=%s", rc, ps->app_id?ps->app_id:"(null)", ps->identity?ps->identity:"(null)");
-        if (rc==0 && signed_json) {
-          nostr_signer_complete_approve_request(object, invocation, TRUE);
-          nostr_signer_complete_sign_event(object, ps->invocation, signed_json);
-          g_message("approve: sign success, returning signed event");
-          free(signed_json);
-          if (remember) {
-            acl_save_decision("SignEvent",
-                              (ps->app_id && *ps->app_id) ? ps->app_id : (sender?sender:""),
-                              ps->identity ? ps->identity : "",
-                              decision,
-                              ttl_seconds);
-          }
-        } else {
-          g_message("approve: sign failed, returning error");
-          return_sign_error(ps->invocation, rc);
-          nostr_signer_complete_approve_request(object, invocation, FALSE);
-        }
-      } else {
-        g_message("approve: user denied");
-        g_dbus_method_invocation_return_dbus_error(ps->invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL, "user denied");
-        if (remember) {
-          acl_save_decision("SignEvent",
-                            (ps->app_id && *ps->app_id) ? ps->app_id : (sender?sender:""),
-                            ps->identity ? ps->identity : "",
-                            decision,
-                            ttl_seconds);
-        }
-        nostr_signer_complete_approve_request(object, invocation, TRUE);
-      }
-      nostr_signer_emit_approval_completed(object, request_id, decision);
-      g_hash_table_remove(pending, request_id);
-    }
-  }
-  if (!handled) nostr_signer_complete_approve_request(object, invocation, FALSE);
-  return TRUE;
-}
-
-static gboolean handle_nip04_encrypt(NostrSigner *object, GDBusMethodInvocation *invocation,
-                                     const gchar *plaintext, const gchar *pubKey, const gchar *identity)
-{
-  (void)object;
-  char *out=NULL; int rc = nostr_nip55l_nip04_encrypt(plaintext, pubKey, identity, &out);
-  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "nip04 encrypt failed"); return TRUE; }
-  nostr_signer_complete_nip04_encrypt(object, invocation, out);
-  free(out); return TRUE;
-}
-
-static gboolean handle_nip04_decrypt(NostrSigner *object, GDBusMethodInvocation *invocation,
-                                     const gchar *cipher, const gchar *pubKey, const gchar *identity)
-{
-  (void)object;
-  char *out=NULL; int rc = nostr_nip55l_nip04_decrypt(cipher, pubKey, identity, &out);
-  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "nip04 decrypt failed"); return TRUE; }
-  nostr_signer_complete_nip04_decrypt(object, invocation, out);
-  free(out); return TRUE;
-}
-
-static gboolean handle_nip44_encrypt(NostrSigner *object, GDBusMethodInvocation *invocation,
-                                     const gchar *plaintext, const gchar *pubKey, const gchar *identity)
-{
-  (void)object;
-  char *out=NULL; int rc = nostr_nip55l_nip44_encrypt(plaintext, pubKey, identity, &out);
-  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "nip44 encrypt failed"); return TRUE; }
-  nostr_signer_complete_nip44_encrypt(object, invocation, out);
-  free(out); return TRUE;
-}
-
-static gboolean handle_nip44_decrypt(NostrSigner *object, GDBusMethodInvocation *invocation,
-                                     const gchar *cipher, const gchar *pubKey, const gchar *identity)
-{
-  (void)object;
-  char *out=NULL; int rc = nostr_nip55l_nip44_decrypt(cipher, pubKey, identity, &out);
-  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "nip44 decrypt failed"); return TRUE; }
-  nostr_signer_complete_nip44_decrypt(object, invocation, out);
-  free(out); return TRUE;
-}
-
-/* Binary-safe NIP-44: the plaintext side is standard base64 in and out, so a
- * payload that is not valid UTF-8 survives a transport made of strings. The
- * ciphertext is an ordinary NIP-44 v2 payload, identical to what NIP44Encrypt
- * would return for the same bytes. */
-static gboolean handle_nip44_encrypt_b64(NostrSigner *object, GDBusMethodInvocation *invocation,
-                                         const gchar *plaintextB64, const gchar *pubKey, const gchar *identity)
-{
-  (void)object;
-  char *out=NULL; int rc = nostr_nip55l_nip44_encrypt_b64(plaintextB64, pubKey, identity, &out);
-  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "nip44 encrypt failed"); return TRUE; }
-  nostr_signer_complete_nip44_encrypt_b64(object, invocation, out);
-  free(out); return TRUE;
-}
-
-static gboolean handle_nip44_decrypt_b64(NostrSigner *object, GDBusMethodInvocation *invocation,
-                                         const gchar *cipher, const gchar *pubKey, const gchar *identity)
-{
-  (void)object;
-  char *out=NULL; int rc = nostr_nip55l_nip44_decrypt_b64(cipher, pubKey, identity, &out);
-  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "nip44 decrypt failed"); return TRUE; }
-  nostr_signer_complete_nip44_decrypt_b64(object, invocation, out);
-  free(out); return TRUE;
-}
-
-static gboolean handle_decrypt_zap_event(NostrSigner *object, GDBusMethodInvocation *invocation,
-                                         const gchar *eventJson, const gchar *identity)
-{
-  (void)object;
-  char *out=NULL; int rc = nostr_nip55l_decrypt_zap_event(eventJson, identity, &out);
-  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "zap decrypt failed"); return TRUE; }
-  nostr_signer_complete_decrypt_zap_event(object, invocation, out);
-  free(out); return TRUE;
+  return g_strdup("");
 }
 
 /* GetRelays source 2: the relay set a user configured in the gnostr-signer
@@ -528,26 +415,435 @@ static int get_relays_from_gsettings(char **out_json){
   return rc;
 }
 
-static gboolean handle_get_relays(NostrSigner *object, GDBusMethodInvocation *invocation)
-{
-  (void)object;
+static int perform_get_relays(GDBusMethodInvocation *invocation){
   char *out=NULL; int rc = nostr_nip55l_get_relays(&out);
   if (rc == NOSTR_SIGNER_ERROR_NOT_FOUND) rc = get_relays_from_gsettings(&out);
   if (rc == NOSTR_SIGNER_ERROR_NOT_FOUND) {
     /* Expected state, not a failure: callers fall back to their own relays. */
     g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_NOT_FOUND,
       "no relays configured ($XDG_CONFIG_HOME/nostr/relays.conf or gnostr-signer relays)");
-    return TRUE;
+    return rc;
   }
   if (rc == NOSTR_SIGNER_ERROR_INVALID_JSON) {
     g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_CONFIG,
       "relays.conf is malformed: expected a JSON array of ws:// or wss:// URL strings");
+    return rc;
+  }
+  if (rc!=0 || !out) {
+    free(out);
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "get relays failed");
+    return rc ? rc : NOSTR_SIGNER_ERROR_BACKEND;
+  }
+  return_string(invocation, out, FALSE);
+  return 0;
+}
+
+/* Run an allowed call and complete its invocation. Returns the core rc. */
+static int perform(const Call *c, const char *claimed_app_id){
+  GDBusMethodInvocation *inv = c->invocation;
+  char *out = NULL;
+  int rc = 0;
+  const char *emsg = NULL;
+  switch (c->op) {
+    case OP_SIGN_EVENT:
+      /* nip55l 0.2.0 contract: SignEvent returns the complete signed event. */
+      rc = nostr_nip55l_sign_event_json(c->a, c->selector, claimed_app_id, &out);
+      if (rc != 0 || !out) { free(out); rc = rc ? rc : NOSTR_SIGNER_ERROR_BACKEND; return_sign_error(inv, rc); return rc; }
+      return_string(inv, out, FALSE);
+      return 0;
+    case OP_CONVKEY:
+      rc = nostr_nip55l_nip44_conversation_key(c->a, c->selector, &out);
+      if (rc != 0 || !out) { free(out); rc = rc ? rc : NOSTR_SIGNER_ERROR_BACKEND; return_convkey_error(inv, rc); return rc; }
+      return_string(inv, out, TRUE);
+      return 0;
+    case OP_GET_PUBLIC_KEY:
+      rc = nostr_nip55l_get_public_key(&out);
+      if (rc != 0 || !out) { free(out); rc = rc ? rc : NOSTR_SIGNER_ERROR_BACKEND; return_no_key(inv, c->op, rc); return rc; }
+      return_string(inv, out, FALSE);
+      return 0;
+    case OP_GET_RELAYS:
+      return perform_get_relays(inv);
+    case OP_NIP04_ENCRYPT:     rc = nostr_nip55l_nip04_encrypt(c->a, c->b, c->selector, &out);     emsg = "nip04 encrypt failed"; break;
+    case OP_NIP04_DECRYPT:     rc = nostr_nip55l_nip04_decrypt(c->a, c->b, c->selector, &out);     emsg = "nip04 decrypt failed"; break;
+    case OP_NIP44_ENCRYPT:     rc = nostr_nip55l_nip44_encrypt(c->a, c->b, c->selector, &out);     emsg = "nip44 encrypt failed"; break;
+    case OP_NIP44_DECRYPT:     rc = nostr_nip55l_nip44_decrypt(c->a, c->b, c->selector, &out);     emsg = "nip44 decrypt failed"; break;
+    case OP_NIP44_ENCRYPT_B64: rc = nostr_nip55l_nip44_encrypt_b64(c->a, c->b, c->selector, &out); emsg = "nip44 encrypt failed"; break;
+    case OP_NIP44_DECRYPT_B64: rc = nostr_nip55l_nip44_decrypt_b64(c->a, c->b, c->selector, &out); emsg = "nip44 decrypt failed"; break;
+    case OP_DECRYPT_ZAP:       rc = nostr_nip55l_decrypt_zap_event(c->a, c->selector, &out);       emsg = "zap decrypt failed"; break;
+    case OP_COUNT:             rc = NOSTR_SIGNER_ERROR_INVALID_ARG; emsg = "unknown operation"; break;
+  }
+  if (rc != 0 || !out) {
+    free(out);
+    g_dbus_method_invocation_return_dbus_error(inv, ORG_NOSTR_SIGNER_ERR_INTERNAL, emsg);
+    return rc ? rc : NOSTR_SIGNER_ERROR_BACKEND;
+  }
+  gboolean plaintext = c->op == OP_NIP04_DECRYPT || c->op == OP_NIP44_DECRYPT ||
+                       c->op == OP_NIP44_DECRYPT_B64 || c->op == OP_DECRYPT_ZAP;
+  return_string(inv, out, plaintext);
+  return 0;
+}
+
+/* ---- request lifecycle -------------------------------------------------- */
+
+static gboolean is_hex64(const char *s){
+  if (!s || strlen(s) != 64) return FALSE;
+  for (const char *p = s; *p; p++) if (!g_ascii_isxdigit(*p)) return FALSE;
+  return TRUE;
+}
+
+/* Complete every call of @p with a D-Bus error. */
+static void pending_fail(Pending *p, const char *ename, const char *msg){
+  for (guint i = 0; i < p->calls->len; i++) {
+    Call *c = g_ptr_array_index(p->calls, i);
+    g_dbus_method_invocation_return_dbus_error(c->invocation, ename, msg);
+  }
+  g_ptr_array_set_size(p->calls, 0);
+}
+
+static void pending_finish(Pending *p, gboolean decision){
+  if (signer_skel) nostr_signer_emit_approval_completed(signer_skel, p->id, decision);
+  pending_free(p);
+}
+
+static gboolean on_pending_timeout(gpointer data){
+  const char *id = data;
+  Pending *p = pending ? g_hash_table_lookup(pending, id) : NULL;
+  if (!p) return G_SOURCE_REMOVE;
+  g_hash_table_steal(pending, id);
+  p->timeout_id = 0; /* this source is being removed */
+  g_message("nostr-signer: %s (%s) was not answered within %d s", p->id, op_info[p->op].kind, PENDING_TTL_S);
+  pending_fail(p, ORG_NOSTR_SIGNER_ERR_APPROVAL, "approval timed out");
+  pending_finish(p, FALSE);
+  return G_SOURCE_REMOVE;
+}
+
+/* An identical request from the same connection that new calls may join. */
+static Pending *pending_find_joinable(const char *sender, SignerOp op, const SignerCaller *who,
+                                      const char *npub, const char *selector, const char *claimed){
+  if (!pending || !op_info[op].coalesce) return NULL;
+  GHashTableIter it; gpointer k, v;
+  g_hash_table_iter_init(&it, pending);
+  while (g_hash_table_iter_next(&it, &k, &v)) {
+    Pending *p = v;
+    Call *first = p->calls->len ? g_ptr_array_index(p->calls, 0) : NULL;
+    if (first && first->op == op && g_strcmp0(p->who->sender, sender) == 0 &&
+        g_strcmp0(p->who->principal, who->principal) == 0 && g_strcmp0(p->npub, npub) == 0 &&
+        g_strcmp0(first->selector, selector) == 0 && g_strcmp0(p->claimed, claimed) == 0)
+      return p;
+  }
+  return NULL;
+}
+
+#ifndef NIP55L_APPROVER_BUS_NAME
+#define NIP55L_APPROVER_BUS_NAME "org.gnostr.Signer"
+#endif
+/* Is an approval UI on the bus? Without one a prompt could never be
+ * answered, so the call fails at once instead of hanging until it expires. */
+static gboolean approver_present(GDBusConnection *bus){
+  static const gchar name[] = NIP55L_APPROVER_BUS_NAME;
+  if (name[0] == '\0') return TRUE;
+  g_autoptr(GVariant) r = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+      "org.freedesktop.DBus", "NameHasOwner", g_variant_new("(s)", name),
+      G_VARIANT_TYPE("(b)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, NULL);
+  gboolean has = FALSE;
+  if (r) g_variant_get(r, "(b)", &has);
+  return has;
+}
+
+static void gated_call(NostrSigner *object, GDBusMethodInvocation *invocation, SignerOp op,
+                       const char *a, const char *b, const char *selector, const char *claimed){
+  GDBusConnection *bus = g_dbus_method_invocation_get_connection(invocation);
+  const char *sender = g_dbus_method_invocation_get_sender(invocation);
+  if (!selector) selector = "";
+  if (!claimed) claimed = "";
+
+  /* Reject malformed input before anyone is asked to approve it. */
+  if (op == OP_CONVKEY && !is_hex64(a)) { return_convkey_error(invocation, NOSTR_SIGNER_ERROR_INVALID_KEY); return; }
+  if (op_info[op].peer_arg && !is_hex64(b)) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
+      "pubKey is not a 64-hex x-only public key");
+    return;
+  }
+  g_autofree gchar *peer_lc = NULL;
+  if (op == OP_CONVKEY) peer_lc = g_ascii_strdown(a, -1);
+
+  /* 1. principal */
+  const SignerCaller *base = signer_caller_lookup(bus, sender);
+  g_autoptr(SignerCaller) origin = NULL;
+  const SignerCaller *who = base;
+  if (base->unattested) {
+    origin = signer_caller_for_claim(base, claimed);
+    who = origin;
+  } else if (*claimed && signer_caller_is_web_origin(claimed) && signer_caller_may_assert_origin(base)) {
+    origin = signer_caller_for_origin(base, claimed);
+    who = origin;
+  }
+
+  /* 2. canonical identity. The caller's selector is normalised first: it is
+   * never read as key material (a 64-hex is a pubkey, nsec is refused) and
+   * an npub/hex must name a known identity exactly (nostrc-a4w5). */
+  g_autofree char *npub_m = NULL;
+  g_autofree char *sel_m = NULL;
+  if (op_info[op].has_identity) {
+    char *np = NULL, *ns = NULL;
+    int rc = nostr_nip55l_normalize_selector(selector, &ns, &np);
+    if (rc == NOSTR_SIGNER_ERROR_INVALID_ARG) {
+      free(np); free(ns);
+      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
+        "identity must name a stored identity (npub, hex public key, key_id or label), not a secret key");
+      return;
+    }
+    if (rc != 0 || !np || !ns) { free(np); free(ns); return_no_key(invocation, op, rc ? rc : NOSTR_SIGNER_ERROR_NOT_FOUND); return; }
+    npub_m = g_strdup(np);
+    sel_m = g_strdup(ns);
+    free(np);
+    if (ns) { memset(ns, 0, strlen(ns)); free(ns); }
+    selector = sel_m;
+  }
+
+  Call call = { op, (gchar *)(peer_lc ? peer_lc : a), (gchar *)b, (gchar *)selector, invocation };
+
+  /* 3. grant */
+  gboolean allow = FALSE;
+  if (grants_lookup(op_info[op].kind, who, npub_m, &allow)) {
+    if (allow) (void)perform(&call, claimed);
+    else g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy");
+    return;
+  }
+
+  /* 4. approval */
+  if (!pending) pending = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, pending_free);
+  Pending *join = pending_find_joinable(sender, op, who, npub_m, selector, claimed);
+  if (join) {
+    if (join->calls->len >= PENDING_CALLS_MAX) {
+      g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT,
+        "too many calls awaiting approval");
+      return;
+    }
+    Call *c = g_new0(Call, 1);
+    *c = (Call){ op, g_strdup(call.a), g_strdup(b), g_strdup(selector), invocation };
+    g_ptr_array_add(join->calls, c);
+    return;
+  }
+  guint mine = 0;
+  {
+    GHashTableIter it; gpointer k, v;
+    g_hash_table_iter_init(&it, pending);
+    while (g_hash_table_iter_next(&it, &k, &v)) {
+      const SignerCaller *o = ((Pending *)v)->who;
+      /* Same principal, or (unidentified) the same connection. */
+      if (who->principal ? g_strcmp0(o->principal, who->principal) == 0
+                         : (!o->principal && g_strcmp0(o->sender, sender) == 0))
+        mine++;
+    }
+  }
+  if (mine >= PENDING_PER_CALLER_MAX) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT,
+      "too many of this application's requests are awaiting approval");
+    return;
+  }
+  if (g_hash_table_size(pending) >= PENDING_MAX) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT,
+      "too many requests awaiting approval");
+    return;
+  }
+  if (!rate_limit_ok_ms(RATE_PROMPT, sender, 100)) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "rate limited");
+    return;
+  }
+  if (!approver_present(bus)) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_APPROVAL,
+      "approval required but no approval agent is running (start GNostr Signer)");
+    return;
+  }
+
+  Pending *p = g_new0(Pending, 1);
+  p->id = next_request_id();
+  p->op = op;
+  p->who = signer_caller_copy(who);
+  p->claimed = g_strdup(claimed);
+  p->npub = g_strdup(npub_m);
+  p->preview = build_preview(op, call.a, b);
+  p->calls = g_ptr_array_new_with_free_func(call_free);
+  Call *c = g_new0(Call, 1);
+  *c = (Call){ op, g_strdup(call.a), g_strdup(b), g_strdup(selector), invocation };
+  g_ptr_array_add(p->calls, c);
+  p->timeout_id = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, PENDING_TTL_S, on_pending_timeout,
+                                             g_strdup(p->id), g_free);
+  g_hash_table_insert(pending, p->id, p);
+
+  g_message("nostr-signer: %s %s by %s (claimed '%s') identity=%s",
+            p->id, op_info[op].kind, who->principal ? who->principal : "(unidentified)",
+            claimed, npub_m ? npub_m : "-");
+  nostr_signer_emit_approval_requested(object,
+    who->principal ? who->principal : "",
+    npub_m ? npub_m : selector,
+    op_info[op].kind, p->preview, p->id);
+}
+
+/* ---- ApproveRequest / GetApprovalInfo ----------------------------------- */
+
+static gboolean require_approver(GDBusMethodInvocation *invocation){
+  /* Identified afresh: a cached identity could predate an exec. */
+  g_autoptr(SignerCaller) c = signer_caller_identify_fresh(
+      g_dbus_method_invocation_get_connection(invocation),
+      g_dbus_method_invocation_get_sender(invocation));
+  if (signer_caller_is_approver(c)) return TRUE;
+  g_message("nostr-signer: refused approval call from %s (%s)",
+            c->principal ? c->principal : "(unidentified)", c->sender ? c->sender : "?");
+  g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_PERMISSION,
+    "only the signer's approval UI may answer approval requests");
+  return FALSE;
+}
+
+static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocation *invocation,
+                                       const gchar *request_id, gboolean decision, gboolean remember, guint64 ttl_seconds)
+{
+  if (!require_approver(invocation)) return TRUE;
+  Pending *p = (pending && request_id) ? g_hash_table_lookup(pending, request_id) : NULL;
+  if (!p) { nostr_signer_complete_approve_request(object, invocation, FALSE); return TRUE; }
+  g_hash_table_steal(pending, request_id);
+  g_message("nostr-signer: %s %s by %s: %s%s", p->id, op_info[p->op].kind,
+            p->who->principal ? p->who->principal : "(unidentified)",
+            decision ? "approved" : "denied", remember ? " (remembered)" : "");
+
+  gboolean ok = TRUE;
+  if (decision) {
+    /* The approved identity is the one the user saw; if the selector now
+     * resolves elsewhere (active account switched), do not use the new key. */
+    Call *first = g_ptr_array_index(p->calls, 0);
+    gboolean same = TRUE;
+    if (p->npub) {
+      char *now_npub = NULL;
+      same = nostr_nip55l_resolve_npub(first->selector, &now_npub) == 0 && now_npub &&
+             strcmp(now_npub, p->npub) == 0;
+      free(now_npub);
+    }
+    if (!same) {
+      pending_fail(p, ORG_NOSTR_SIGNER_ERR_APPROVAL, "the identity changed while awaiting approval");
+      ok = FALSE;
+    } else {
+      for (guint i = 0; i < p->calls->len; i++)
+        if (perform(g_ptr_array_index(p->calls, i), p->claimed) != 0) ok = FALSE;
+      g_ptr_array_set_size(p->calls, 0);
+    }
+  } else {
+    pending_fail(p, ORG_NOSTR_SIGNER_ERR_APPROVAL, "user denied");
+  }
+  if (remember) {
+    if (p->who->principal)
+      grants_save(op_info[p->op].kind, p->who->principal, p->npub, decision, ttl_seconds);
+    else
+      g_message("nostr-signer: %s: caller is unidentified; decision not remembered", p->id);
+  }
+  nostr_signer_complete_approve_request(object, invocation, ok);
+  pending_finish(p, decision);
+  return TRUE;
+}
+
+static gboolean handle_get_approval_info(NostrSigner *object, GDBusMethodInvocation *invocation,
+                                         const gchar *request_id)
+{
+  if (!require_approver(invocation)) return TRUE;
+  Pending *p = (pending && request_id) ? g_hash_table_lookup(pending, request_id) : NULL;
+  if (!p) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_NOT_FOUND,
+      "no such pending request");
     return TRUE;
   }
-  if (rc!=0 || !out) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "get relays failed"); return TRUE; }
-  nostr_signer_complete_get_relays(object, invocation, out);
-  free(out); return TRUE;
+  GVariantBuilder b;
+  g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
+#define PUT_S(k, v) g_variant_builder_add(&b, "{sv}", k, g_variant_new_string((v) ? (v) : ""))
+  PUT_S("request_id", p->id);
+  PUT_S("kind", op_info[p->op].kind);
+  PUT_S("principal", p->who->principal);
+  PUT_S("principal_kind", p->who->unattested ? "claimed" : signer_caller_kind_to_string(p->who->kind));
+  PUT_S("app_id", p->who->app_id);
+  PUT_S("exe", p->who->exe);
+  PUT_S("via", p->who->via);
+  PUT_S("claimed_app_id", p->claimed);
+  PUT_S("identity", p->npub);
+  PUT_S("preview", p->preview);
+#undef PUT_S
+  g_variant_builder_add(&b, "{sv}", "attested", g_variant_new_boolean(p->who->attested));
+  g_variant_builder_add(&b, "{sv}", "verified", g_variant_new_boolean(!p->who->unattested && p->who->principal != NULL));
+  g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(p->who->principal != NULL));
+  g_variant_builder_add(&b, "{sv}", "calls", g_variant_new_uint32(p->calls->len));
+  nostr_signer_complete_get_approval_info(object, invocation, g_variant_builder_end(&b));
+  return TRUE;
 }
+
+/* A connection left the bus: forget it, and drop requests only it was
+ * waiting for (their replies have nowhere to go). */
+static void on_name_owner_changed(GDBusConnection *conn, const gchar *sender_name,
+                                  const gchar *object_path, const gchar *interface_name,
+                                  const gchar *signal_name, GVariant *params, gpointer user_data){
+  (void)conn; (void)sender_name; (void)object_path; (void)interface_name; (void)signal_name; (void)user_data;
+  const gchar *name = NULL, *old_owner = NULL, *new_owner = NULL;
+  g_variant_get(params, "(&s&s&s)", &name, &old_owner, &new_owner);
+  if (!name || name[0] != ':' || (new_owner && *new_owner)) return;
+  signer_caller_forget(name);
+  for (guint t = 0; t < G_N_ELEMENTS(rate_tables); t++)
+    if (rate_tables[t]) g_hash_table_remove(rate_tables[t], name);
+  if (!pending) return;
+  GPtrArray *gone = g_ptr_array_new();
+  GHashTableIter it; gpointer k, v;
+  g_hash_table_iter_init(&it, pending);
+  while (g_hash_table_iter_next(&it, &k, &v))
+    if (g_strcmp0(((Pending *)v)->who->sender, name) == 0) g_ptr_array_add(gone, v);
+  for (guint i = 0; i < gone->len; i++) {
+    Pending *p = g_ptr_array_index(gone, i);
+    g_hash_table_steal(pending, p->id);
+    pending_fail(p, ORG_NOSTR_SIGNER_ERR_APPROVAL, "caller disconnected");
+    pending_finish(p, FALSE);
+  }
+  g_ptr_array_unref(gone);
+}
+
+/* ========== Generated handler glue ========== */
+
+static gboolean handle_get_public_key(NostrSigner *o, GDBusMethodInvocation *inv)
+{ gated_call(o, inv, OP_GET_PUBLIC_KEY, NULL, NULL, "", ""); return TRUE; }
+static gboolean handle_get_public_key_for_app(NostrSigner *o, GDBusMethodInvocation *inv, const gchar *app_id)
+{ gated_call(o, inv, OP_GET_PUBLIC_KEY, NULL, NULL, "", app_id); return TRUE; }
+
+static gboolean handle_get_relays(NostrSigner *o, GDBusMethodInvocation *inv)
+{ gated_call(o, inv, OP_GET_RELAYS, NULL, NULL, "", ""); return TRUE; }
+static gboolean handle_get_relays_for_app(NostrSigner *o, GDBusMethodInvocation *inv, const gchar *app_id)
+{ gated_call(o, inv, OP_GET_RELAYS, NULL, NULL, "", app_id); return TRUE; }
+
+static gboolean handle_sign_event(NostrSigner *o, GDBusMethodInvocation *inv,
+                                  const gchar *eventJson, const gchar *identity, const gchar *app_id)
+{ gated_call(o, inv, OP_SIGN_EVENT, eventJson, NULL, identity, app_id); return TRUE; }
+
+static gboolean handle_nip44_derive_conversation_key(NostrSigner *o, GDBusMethodInvocation *inv,
+                                                     const gchar *peerPubKey, const gchar *identity,
+                                                     const gchar *app_id)
+{ gated_call(o, inv, OP_CONVKEY, peerPubKey, NULL, identity, app_id); return TRUE; }
+
+#define CRYPT_HANDLERS(name, OP)                                                            \
+  static gboolean handle_##name(NostrSigner *o, GDBusMethodInvocation *inv,                 \
+                                const gchar *text, const gchar *pubKey, const gchar *identity) \
+  { gated_call(o, inv, OP, text, pubKey, identity, ""); return TRUE; }                      \
+  static gboolean handle_##name##_for_app(NostrSigner *o, GDBusMethodInvocation *inv,       \
+                                          const gchar *text, const gchar *pubKey,           \
+                                          const gchar *identity, const gchar *app_id)       \
+  { gated_call(o, inv, OP, text, pubKey, identity, app_id); return TRUE; }
+CRYPT_HANDLERS(nip04_encrypt, OP_NIP04_ENCRYPT)
+CRYPT_HANDLERS(nip04_decrypt, OP_NIP04_DECRYPT)
+CRYPT_HANDLERS(nip44_encrypt, OP_NIP44_ENCRYPT)
+CRYPT_HANDLERS(nip44_decrypt, OP_NIP44_DECRYPT)
+CRYPT_HANDLERS(nip44_encrypt_b64, OP_NIP44_ENCRYPT_B64)
+CRYPT_HANDLERS(nip44_decrypt_b64, OP_NIP44_DECRYPT_B64)
+#undef CRYPT_HANDLERS
+
+static gboolean handle_decrypt_zap_event(NostrSigner *o, GDBusMethodInvocation *inv,
+                                         const gchar *eventJson, const gchar *identity)
+{ gated_call(o, inv, OP_DECRYPT_ZAP, eventJson, NULL, identity, ""); return TRUE; }
+static gboolean handle_decrypt_zap_event_for_app(NostrSigner *o, GDBusMethodInvocation *inv,
+                                                 const gchar *eventJson, const gchar *identity,
+                                                 const gchar *app_id)
+{ gated_call(o, inv, OP_DECRYPT_ZAP, eventJson, NULL, identity, app_id); return TRUE; }
 
 static gboolean handle_store_key(NostrSigner *object, GDBusMethodInvocation *invocation,
                                   const gchar *key, const gchar *identity)
@@ -662,6 +958,11 @@ static gpointer keyring_migration_thread(gpointer data) {
 }
 
 static void start_keyring_migration(void) {
+#ifdef NIP55L_TEST_TRUST_ENV
+  /* Test builds: on macOS the Keychain is the user's real login keychain
+   * (no per-bus backend as with gnome-keyring), so tests switch it off. */
+  if (g_getenv("NOSTR_SIGNER_TEST_NO_MIGRATION")) return;
+#endif
   static gsize started = 0;
   if (!g_once_init_enter(&started)) return;
   GError *err = NULL;
@@ -674,35 +975,55 @@ static void start_keyring_migration(void) {
   g_once_init_leave(&started, 1);
 }
 
+static guint name_owner_sub = 0;
+
 guint signer_export(GDBusConnection *conn, const char *object_path) {
-  (void)conn;
   if (signer_skel) return 1;
   signer_skel = nostr_signer_skeleton_new();
   /* Connect gdbus-codegen handler signals */
-  g_signal_connect(signer_skel, "handle-get-public-key", G_CALLBACK(handle_get_public_key), NULL);
-  g_signal_connect(signer_skel, "handle-sign-event", G_CALLBACK(handle_sign_event), NULL);
-  g_signal_connect(signer_skel, "handle-approve-request", G_CALLBACK(handle_approve_request), NULL);
-  g_signal_connect(signer_skel, "handle-nip04-encrypt", G_CALLBACK(handle_nip04_encrypt), NULL);
-  g_signal_connect(signer_skel, "handle-nip04-decrypt", G_CALLBACK(handle_nip04_decrypt), NULL);
-  g_signal_connect(signer_skel, "handle-nip44-encrypt", G_CALLBACK(handle_nip44_encrypt), NULL);
-  g_signal_connect(signer_skel, "handle-nip44-decrypt", G_CALLBACK(handle_nip44_decrypt), NULL);
-  g_signal_connect(signer_skel, "handle-nip44-encrypt-b64", G_CALLBACK(handle_nip44_encrypt_b64), NULL);
-  g_signal_connect(signer_skel, "handle-nip44-decrypt-b64", G_CALLBACK(handle_nip44_decrypt_b64), NULL);
-  g_signal_connect(signer_skel, "handle-decrypt-zap-event", G_CALLBACK(handle_decrypt_zap_event), NULL);
-  g_signal_connect(signer_skel, "handle-nip44-derive-conversation-key", G_CALLBACK(handle_nip44_derive_conversation_key), NULL);
-  g_signal_connect(signer_skel, "handle-get-relays", G_CALLBACK(handle_get_relays), NULL);
-  g_signal_connect(signer_skel, "handle-store-key", G_CALLBACK(handle_store_key), NULL);
-  g_signal_connect(signer_skel, "handle-clear-key", G_CALLBACK(handle_clear_key), NULL);
+  static const struct { const char *signal; GCallback cb; } handlers[] = {
+    { "handle-get-public-key",                G_CALLBACK(handle_get_public_key) },
+    { "handle-get-public-key-for-app",        G_CALLBACK(handle_get_public_key_for_app) },
+    { "handle-sign-event",                    G_CALLBACK(handle_sign_event) },
+    { "handle-approve-request",               G_CALLBACK(handle_approve_request) },
+    { "handle-get-approval-info",             G_CALLBACK(handle_get_approval_info) },
+    { "handle-nip04-encrypt",                 G_CALLBACK(handle_nip04_encrypt) },
+    { "handle-nip04-encrypt-for-app",         G_CALLBACK(handle_nip04_encrypt_for_app) },
+    { "handle-nip04-decrypt",                 G_CALLBACK(handle_nip04_decrypt) },
+    { "handle-nip04-decrypt-for-app",         G_CALLBACK(handle_nip04_decrypt_for_app) },
+    { "handle-nip44-encrypt",                 G_CALLBACK(handle_nip44_encrypt) },
+    { "handle-nip44-encrypt-for-app",         G_CALLBACK(handle_nip44_encrypt_for_app) },
+    { "handle-nip44-decrypt",                 G_CALLBACK(handle_nip44_decrypt) },
+    { "handle-nip44-decrypt-for-app",         G_CALLBACK(handle_nip44_decrypt_for_app) },
+    { "handle-nip44-encrypt-b64",             G_CALLBACK(handle_nip44_encrypt_b64) },
+    { "handle-nip44-encrypt-b64-for-app",     G_CALLBACK(handle_nip44_encrypt_b64_for_app) },
+    { "handle-nip44-decrypt-b64",             G_CALLBACK(handle_nip44_decrypt_b64) },
+    { "handle-nip44-decrypt-b64-for-app",     G_CALLBACK(handle_nip44_decrypt_b64_for_app) },
+    { "handle-decrypt-zap-event",             G_CALLBACK(handle_decrypt_zap_event) },
+    { "handle-decrypt-zap-event-for-app",     G_CALLBACK(handle_decrypt_zap_event_for_app) },
+    { "handle-nip44-derive-conversation-key", G_CALLBACK(handle_nip44_derive_conversation_key) },
+    { "handle-get-relays",                    G_CALLBACK(handle_get_relays) },
+    { "handle-get-relays-for-app",            G_CALLBACK(handle_get_relays_for_app) },
+    { "handle-store-key",                     G_CALLBACK(handle_store_key) },
+    { "handle-clear-key",                     G_CALLBACK(handle_clear_key) },
+  };
+  for (gsize i = 0; i < G_N_ELEMENTS(handlers); i++)
+    g_signal_connect(signer_skel, handlers[i].signal, handlers[i].cb, NULL);
 
   if (!g_dbus_interface_skeleton_export(G_DBUS_INTERFACE_SKELETON(signer_skel), conn, object_path, NULL)) {
     g_object_unref(signer_skel); signer_skel = NULL; return 0;
   }
+  if (conn && !name_owner_sub)
+    name_owner_sub = g_dbus_connection_signal_subscribe(conn, "org.freedesktop.DBus",
+        "org.freedesktop.DBus", "NameOwnerChanged", "/org/freedesktop/DBus", NULL,
+        G_DBUS_SIGNAL_FLAGS_NONE, on_name_owner_changed, NULL, NULL);
   start_keyring_migration();
   return 1; /* dummy reg id */
 }
 
 void signer_unexport(GDBusConnection *conn, guint reg_id) {
-  (void)conn; (void)reg_id;
+  (void)reg_id;
+  if (conn && name_owner_sub) { g_dbus_connection_signal_unsubscribe(conn, name_owner_sub); name_owner_sub = 0; }
   if (signer_skel) {
     g_dbus_interface_skeleton_unexport(G_DBUS_INTERFACE_SKELETON(signer_skel));
     g_object_unref(signer_skel); signer_skel = NULL;

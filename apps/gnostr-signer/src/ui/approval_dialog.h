@@ -196,6 +196,27 @@ gboolean gnostr_show_approval_dialog_with_session(GtkWidget *parent,
                                                   GnostrApprovalCallback cb,
                                                   gpointer user_data);
 
+/**
+ * gnostr_approval_dialog_set_request:
+ * @self: a #GnostrApprovalDialog
+ * @kind: org.nostr.Signer ApprovalRequested kind (event, nip44_decrypt, ...)
+ * @app_display: human-readable name of the requesting application
+ * @claimed_app_id: (nullable): the app_id argument the caller passed (unverified)
+ * @verified: whether the signer identified the caller from its bus connection
+ * @preview: the signer's preview text
+ *
+ * Kind-aware title, explanation, content row and action label (nostrc-f7hk).
+ */
+void gnostr_approval_dialog_set_request(GnostrApprovalDialog *self, const char *kind,
+                                        const char *app_display, const char *claimed_app_id,
+                                        gboolean verified, const char *preview);
+
+void gnostr_show_approval_request_dialog(GtkWidget *parent, const char *identity_npub,
+                                         const char *kind, const char *app_display,
+                                         const char *claimed_app_id, gboolean verified,
+                                         const char *preview, AccountsStore *as,
+                                         GnostrApprovalCallback cb, gpointer user_data);
+
 G_END_DECLS
 
 #endif /* GNOSTR_APPROVAL_DIALOG_H */

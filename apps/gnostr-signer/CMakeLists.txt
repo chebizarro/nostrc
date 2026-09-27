@@ -329,6 +329,9 @@ endif()
 if (SODIUM_FOUND)
   target_link_libraries(gnostr_signer_bunker_core PUBLIC PkgConfig::SODIUM)
   target_compile_definitions(gnostr_signer_bunker_core PRIVATE GNOSTR_HAVE_SODIUM=1 HAVE_SODIUM=1)
+  # GNOSTR_HAVE_SODIUM makes key_provider.c register the ed25519 provider
+  # (nostrc-8x29: it was missing here, so the daemon failed to link).
+  target_sources(gnostr_signer_bunker_core PRIVATE src/key_provider_ed25519.c)
 endif()
 if (SECP256K1_FOUND)
   target_link_libraries(gnostr_signer_bunker_core PUBLIC PkgConfig::SECP256K1)
