@@ -61,6 +61,46 @@ static void test_tags_roundtrip_from_hash_keys(void) {
     nostr_filter_free(f);
 }
 
+static void test_jansson_duplicate_tags(void) {
+    NostrFilter *f = nostr_filter_new();
+    assert(f);
+    nostr_json_force_fallback(true);
+    assert(nostr_filter_deserialize(f, "{\"#e\":[\"same\",\"same\"]}") == 0);
+    assert(tags_count_value(f->tags, "e", "same") == 1);
+    nostr_filter_free(f);
+
+    f = nostr_filter_new();
+    assert(f);
+    assert(nostr_filter_deserialize(f, "{\"tags\":[[\"e\",\"same\"],[\"e\",\"same\"]]}") == 0);
+    assert(tags_count_value(f->tags, "e", "same") == 1);
+    nostr_filter_free(f);
+    nostr_json_force_fallback(false);
+}
+
+static void test_duplicate_public_tag_append(void) {
+    NostrFilter *f = nostr_filter_new();
+    assert(f);
+    nostr_filter_tags_append(f, "e", "same", NULL);
+    nostr_filter_tags_append(f, "e", "same", NULL);
+    assert(tags_count_value(f->tags, "e", "same") == 1);
+    nostr_filter_free(f);
+}
+
+static void test_partial_compact_search_then_fallback(void) {
+    const char *json = "{\"search\":\"needle\",\"limit\":1.5}";
+    NostrFilter *probe = nostr_filter_new();
+    assert(probe);
+    assert(nostr_filter_deserialize_compact(probe, json, NULL) == 0);
+    assert(probe->search && strcmp(probe->search, "needle") == 0);
+    nostr_filter_free(probe);
+
+    NostrFilter *f = nostr_filter_new();
+    assert(f);
+    assert(nostr_filter_deserialize(f, json) == 0);
+    assert(f->search && strcmp(f->search, "needle") == 0);
+    nostr_filter_free(f);
+}
+
 static void test_duplicate_tag_before_malformed_tail(void) {
     const char *bad = "{\"#e\":[\"e1\",\"e1\"],\"#p\":[\"p1\"],\"li:imt}5\"\n";
     NostrFilter *f = nostr_filter_new();
@@ -87,6 +127,9 @@ int main(void) {
     nostr_json_init();
     test_tags_serialize_to_hash_keys();
     test_tags_roundtrip_from_hash_keys();
+    test_jansson_duplicate_tags();
+    test_duplicate_public_tag_append();
+    test_partial_compact_search_then_fallback();
     test_duplicate_tag_before_malformed_tail();
     nostr_json_cleanup();
     printf("test_json_filter_tags OK\n");

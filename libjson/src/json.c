@@ -527,11 +527,15 @@ int jansson_filter_deserialize(NostrFilter *filter, json_t *json_obj) {
                 if (!tag) continue;
                 nostr_tag_add(tag, tag_name);
                 nostr_tag_add(tag, v);
-                NostrTags *nt = nostr_tags_append_unique(filter->tags, tag);
-                if (nt) {
-                    filter->tags = nt;
-                } else {
+                if (nostr_tags_get_first(filter->tags, tag)) {
                     nostr_tag_free(tag);
+                } else {
+                    NostrTags *nt = nostr_tags_append_unique(filter->tags, tag);
+                    if (nt) {
+                        filter->tags = nt;
+                    } else {
+                        nostr_tag_free(tag);
+                    }
                 }
             }
         }
@@ -559,6 +563,7 @@ int jansson_filter_deserialize(NostrFilter *filter, json_t *json_obj) {
     // Deserialize `search`
     json_t *search_json = json_object_get(json_obj, "search");
     if (json_is_string(search_json)) {
+        free(filter->search);
         filter->search = strdup(json_string_value(search_json)); // Make a copy of the string
     }
 
@@ -686,6 +691,10 @@ NostrTags *jansson_tags_deserialize(json_t *json_array) {
             nostr_tag_free(tag);
             nostr_tags_free(tags);
             return NULL;
+        }
+        if (nostr_tags_get_first(tags, tag)) {
+            nostr_tag_free(tag);
+            continue;
         }
         NostrTags *new_tags = nostr_tags_append_unique(tags, tag);
         if (!new_tags) {

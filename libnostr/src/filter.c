@@ -614,11 +614,14 @@ void nostr_filter_tags_append(NostrFilter *filter, const char *key, const char *
     }
     if (!t) return;
     if (!filter->tags) filter->tags = nostr_tags_new(0);
-    if (nostr_tags_size(filter->tags) < (size_t)nostr_limit_max_tags_per_event()) {
-        filter->tags = nostr_tags_append_unique(filter->tags, t);
-    } else {
+    if (!filter->tags || nostr_tags_size(filter->tags) >= (size_t)nostr_limit_max_tags_per_event() ||
+        nostr_tags_get_first(filter->tags, t)) {
         nostr_tag_free(t);
+        return;
     }
+    NostrTags *next = nostr_tags_append_unique(filter->tags, t);
+    if (next) filter->tags = next;
+    else nostr_tag_free(t);
 }
 
 /* === Compact JSON fast-path for NostrFilter === */
