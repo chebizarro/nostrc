@@ -30,6 +30,6 @@ Deferred to a later wave: k95e, wu3s, hby8, prqu.1, prqu.7, prqu.9, prqu.10, rxx
 - [x] L gnostr follow-ups — merged (jppi 46h7 4gf4 7n4t; prjb partial, stays open); follow-ups tw2z (M), uaba (G), jy0b, jc2o, oz77, kyvy, 1b4j, udsy
 - [x] M signer/nip5f/wallet follow-ups — merged (q23h yjky 56id muhk dnbf); follow-ups fdg3, 7o76, 41wr, tfgp, iheg
 - Deferred: 9z5w (decision: ship an approver UI/CLI in Debian?), hd8u (Flatpak Firefox portal), a5fr (Epiphany)
-- [ ] N libs: nip59 timestamps P1 (rd8j), GNostrRelay fd0/refused-connect (jc2o oz77), nip46 e2e (udsy) — running
+- [x] N libs: nip59/nip17 CSPRNG timestamps (rd8j ehyf P1s), lws context fd0 (jc2o), refused connect (oz77), nip46 e2e test (udsy, applied by orchestrator) — merged e011e74d; follow-ups dcqz, k1ym (P2), hg1n
 - [x] O syncd: snapshot >32MiB P1 (5y2t), late seed pickup (p8y6), streamed hash (ixra partial) — merged e6c61828; follow-ups 6oaq, 1xbk; found 4o0z (P1 master build break, fixed by orchestrator)
 - [x] P apps: gnostr kind-15 hex interop (qh4j), org.gnostr.Signer D-Bus service (tw2z) — merged 5d8d9c1c

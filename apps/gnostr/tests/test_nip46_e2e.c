@@ -281,7 +281,7 @@ static int test_client_connect_bunker_uri(void) {
 
     /* Verify secret was extracted */
     char *sec = NULL;
-    nostr_nip46_session_get_secret(s, &sec);
+    nostr_nip46_session_get_connect_token(s, &sec);
     if (!sec || strcmp(sec, "sec") != 0) {
         free(sec);
         nostr_nip46_session_free(s);
@@ -783,7 +783,7 @@ static int test_session_state_on_reconnect(void) {
 
     /* Verify old secret was replaced */
     char *sec = NULL;
-    nostr_nip46_session_get_secret(s, &sec);
+    nostr_nip46_session_get_connect_token(s, &sec);
     if (!sec || strcmp(sec, "secret2") != 0) {
         free(sec);
         nostr_nip46_session_free(s);
