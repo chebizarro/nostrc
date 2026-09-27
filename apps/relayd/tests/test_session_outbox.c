@@ -350,7 +350,8 @@ static void test_supersede_and_cancel(Fx *f, gconstpointer d) {
   g_assert_cmpint(nsr_outbox_supersede(f->ob, rk, v2, NOW + 5, NOW + 5), ==, 1);
   ASSERT_STATE(f, v1, "superseded");
   ASSERT_STATE(f, v2, "new");
-  /* late result for a cancelled target is ignored */
+  /* a late result for a cancelled target does not revive it (the OK is
+   * still remembered as a delivery: see below) */
   g_assert_cmpint(nsr_outbox_record(f->ob, &f->cfg, v1, "wss://a.example", NSR_OUTBOX_ACKED, "",
                                     0.5, NOW + 6, NULL, NULL), ==, -1);
   /* an older version never supersedes a newer one */
@@ -370,8 +371,9 @@ static void test_supersede_and_cancel(Fx *f, gconstpointer d) {
   nsr_outbox_record(f->ob, &f->cfg, v3, "wss://c.example", NSR_OUTBOX_ACKED, "", 0.5, NOW + 9,
                     NULL, NULL);
   GStrv by_coord = nsr_outbox_acked_relays(f->ob, rk, TRUE);
-  g_assert_cmpuint(g_strv_length(by_coord), ==, 1);
-  g_assert_cmpstr(by_coord[0], ==, "wss://c.example");
+  g_assert_cmpuint(g_strv_length(by_coord), ==, 2); /* v1's late OK at a, v3 at c */
+  g_assert_cmpstr(by_coord[0], ==, "wss://a.example");
+  g_assert_cmpstr(by_coord[1], ==, "wss://c.example");
   g_strfreev(by_coord);
   g_free(v3);
   ASSERT_STATE(f, v2, "cancelled");
@@ -477,6 +479,15 @@ static void test_retarget(Fx *f, gconstpointer d) {
   g_assert_cmpuint(t->len, ==, 1); /* `other` has no basis: not retargeted */
   g_assert_cmpstr(((NsrOutboxEvent *)g_ptr_array_index(t, 0))->id, ==, id);
   g_ptr_array_unref(t);
+  /* Taking clears the flag; a newer list arriving while the engine
+   * re-resolves flags the event again (no lost update). */
+  t = nsr_outbox_take_retarget(f->ob, 10);
+  g_assert_cmpuint(t->len, ==, 0);
+  g_ptr_array_unref(t);
+  hint(f, PK, 10002, NOW + 1, NOW + 2);
+  t = nsr_outbox_take_retarget(f->ob, 10);
+  g_assert_cmpuint(t->len, ==, 1);
+  g_ptr_array_unref(t);
 
   /* new list: a, c -- b's pending target is cancelled, c added, a stays acked */
   GPtrArray *added = NULL, *dropped = NULL;
@@ -497,9 +508,14 @@ static void test_retarget(Fx *f, gconstpointer d) {
   g_assert_cmpstr(why, ==, "dropped from the relay list");
   g_free(why);
   ASSERT_TARGET(f, id, "wss://b.example", "cancelled");
-  t = nsr_outbox_take_retarget(f->ob, 10);
-  g_assert_cmpuint(t->len, ==, 0); /* flag cleared */
-  g_ptr_array_unref(t);
+  /* b had the event on the wire: its late OK is not a pending result, but
+   * the delivery is remembered (a later NIP-09 deletion goes there too). */
+  g_assert_cmpint(nsr_outbox_record(f->ob, &f->cfg, id, "wss://b.example", NSR_OUTBOX_ACKED, "",
+                                    0.5, NOW + 3, NULL, NULL), ==, -1);
+  ASSERT_TARGET(f, id, "wss://b.example", "cancelled");
+  GStrv acked = nsr_outbox_acked_relays(f->ob, id, FALSE);
+  g_assert_true(g_strv_contains((const gchar *const *)acked, "wss://b.example"));
+  g_strfreev(acked);
   /* b listed again: revived */
   g_assert_cmpint(nsr_outbox_retarget(f->ob, id, ab, NOW + 4, &added, &dropped, &es), ==, 0);
   g_assert_cmpuint(added->len, ==, 1);

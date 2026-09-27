@@ -102,13 +102,14 @@ int nsr_outbox_set_unroutable(NsrOutbox *ob, const char *id, const char *reason,
  * ("dropped from the relay list"), relays it added become pending targets
  * (a dropped one listed again is revived), acked / failed targets are
  * history and stay. The event state is recomputed. */
+/* Flagged pending events (the flag is cleared as they are taken: a newer
+ * list arriving meanwhile flags them again). */
 GPtrArray *nsr_outbox_take_retarget(NsrOutbox *ob, guint limit);
 /* 0 (with the relays added / dropped, g_free'd strings, and the event
- * state), or -1. An event no longer pending just loses the flag. */
+ * state), or -1. An event no longer pending is left alone. Failed targets
+ * stay failed (a permanent rejection or expiry is final). */
 int nsr_outbox_retarget(NsrOutbox *ob, const char *id, const char *const *relays, int64_t now,
                         GPtrArray **added, GPtrArray **dropped, const char **out_event_state);
-/* Keep the targets (the new list resolves to nothing usable). */
-void nsr_outbox_clear_retarget(NsrOutbox *ob, const char *id);
 /* Any unsettled state -> @state (skipped|failed), with @reason. */
 int nsr_outbox_set_final(NsrOutbox *ob, const char *id, const char *state,
                          const char *reason, int64_t now);
@@ -155,7 +156,9 @@ typedef enum {
  * failed ("expired: …"). Recomputes the event state; returns the new
  * target state ("acked"/"pending"/"failed") via @out_target_state and the
  * event state via @out_event_state (both static strings, may be NULL).
- * Returns 0, or -1 if the target is not pending (late / duplicate OK). */
+ * Returns 0, or -1 if the target is not pending (late / duplicate OK); an
+ * ACKED result for a non-pending target is still recorded as a delivery
+ * (see nsr_outbox_acked_relays()). */
 int nsr_outbox_record(NsrOutbox *ob, const NsrFedConfig *cfg, const char *event_id,
                       const char *relay, NsrOutboxResult result, const char *reason,
                       double jitter01, int64_t now, const char **out_target_state,

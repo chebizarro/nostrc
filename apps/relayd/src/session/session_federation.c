@@ -907,7 +907,6 @@ static void retarget_pending(NsrFederation *f, gint64 now) {
     NsrOutboxEvent *e = g_ptr_array_index(evs, i);
     NostrEvent *ev = nostr_event_new();
     if (nostr_event_deserialize(ev, e->json) != 0) {
-      nsr_outbox_clear_retarget(f->outbox, e->id);
       nostr_event_free(ev);
       continue;
     }
@@ -916,10 +915,10 @@ static void retarget_pending(NsrFederation *f, gint64 now) {
     NsrFedLane lane = NSR_FED_LANE_IDENTIFIED;
     char *reason = NULL;
     if (nsr_fed_resolve(&f->cfg, ev, &lk, &relays, &lane, &reason, NULL) != NSR_FED_ROUTE_OK) {
-      /* The new list names no usable relay: keep delivering where we were. */
+      /* The new list names no usable relay (e.g. only read relays): keep
+       * delivering where the author's previous list pointed. */
       g_message("nostr-session-relayd: federation: %.12s… keeps its targets: %s", e->id,
                 reason ? reason : "no route");
-      nsr_outbox_clear_retarget(f->outbox, e->id);
     } else {
       GPtrArray *added = NULL, *dropped = NULL;
       const char *es = NULL;

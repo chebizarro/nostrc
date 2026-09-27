@@ -431,6 +431,9 @@ int nsr_outbox_set_unroutable(NsrOutbox *ob, const char *id, const char *reason,
 GPtrArray *nsr_outbox_take_retarget(NsrOutbox *ob, guint limit) {
   GPtrArray *out = g_ptr_array_new_with_free_func(nsr_outbox_event_free);
   g_mutex_lock(&ob->lock);
+  /* Take the flag with the batch: a newer list ingested while the engine
+   * re-resolves sets it again, and the event is processed once more. */
+  gboolean txn = exec(ob, "BEGIN IMMEDIATE") == 0;
   sqlite3_stmt *st = prep(ob,
       "SELECT id, pubkey, json, replace_key, kind, enqueued_at, route_attempts FROM events"
       " WHERE state = 'pending' AND retarget = 1 ORDER BY enqueued_at, rowid LIMIT ?");
@@ -449,16 +452,14 @@ GPtrArray *nsr_outbox_take_retarget(NsrOutbox *ob, guint limit) {
     }
     sqlite3_finalize(st);
   }
+  for (guint i = 0; txn && i < out->len; i++) {
+    sqlite3_stmt *u = prep(ob, "UPDATE events SET retarget = 0 WHERE id = ?");
+    if (u) bind_text(u, 1, ((NsrOutboxEvent *)g_ptr_array_index(out, i))->id);
+    (void)run(ob, u);
+  }
+  if (txn && exec(ob, "COMMIT") != 0) (void)sqlite3_exec(ob->db, "ROLLBACK", NULL, NULL, NULL);
   g_mutex_unlock(&ob->lock);
   return out;
-}
-
-void nsr_outbox_clear_retarget(NsrOutbox *ob, const char *id) {
-  g_mutex_lock(&ob->lock);
-  sqlite3_stmt *st = prep(ob, "UPDATE events SET retarget = 0 WHERE id = ?");
-  if (st) bind_text(st, 1, id);
-  (void)run(ob, st);
-  g_mutex_unlock(&ob->lock);
 }
 
 static gboolean strv_has(const char *const *v, const char *s) {
@@ -528,11 +529,6 @@ int nsr_outbox_retarget(NsrOutbox *ob, const char *id, const char *const *relays
     }
     if (run(ob, u) < 0) rc = -1;
     else g_ptr_array_add(*added, g_strdup(relays[i]));
-  }
-  if (rc == 0) {
-    sqlite3_stmt *u = prep(ob, "UPDATE events SET retarget = 0 WHERE id = ?");
-    if (u) bind_text(u, 1, id);
-    if (run(ob, u) < 0) rc = -1;
   }
   const char *estate = pending ? "pending" : NULL;
   if (rc == 0 && pending) estate = recompute(ob, id, now);
@@ -750,6 +746,21 @@ int nsr_outbox_record(NsrOutbox *ob, const NsrFedConfig *cfg, const char *event_
     sqlite3_finalize(st);
   }
   if (!found) {
+    /* Late / duplicate OK, or the target was cancelled meanwhile (a newer
+     * version, a deletion, a relay-list change). If the relay accepted the
+     * event it holds it regardless: remember that, so a later NIP-09
+     * deletion still goes there. */
+    if (result == NSR_OUTBOX_ACKED) {
+      sqlite3_stmt *d = prep(ob,
+          "INSERT OR IGNORE INTO delivered(event_id, relay, replace_key, acked_at)"
+          " SELECT id, ?, replace_key, ? FROM events WHERE id = ?");
+      if (d) {
+        bind_text(d, 1, relay);
+        sqlite3_bind_int64(d, 2, now);
+        bind_text(d, 3, event_id);
+      }
+      (void)run(ob, d);
+    }
     g_mutex_unlock(&ob->lock);
     return -1;
   }
