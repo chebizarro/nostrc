@@ -21,6 +21,7 @@
 #include <nostr-keys.h>
 #include <string.h>
 #include "nostr/testing/mock_relay_server.h"
+#include <nostr-gobject-1.0/nostr_relay.h>
 
 #define SK "7f7ff03d123792d6ac594bfa67bf6d0c0ab55b6b1fdb6249303fe861f1ccba9a"
 
@@ -78,6 +79,10 @@ test_publish_ack(void)
   const char *url = nostr_mock_server_get_url(server);
   GnostrPluginContext *ctx = gnostr_plugin_context_new(NULL, "test");
   GError *error = NULL;
+  /* gnostr_relay_new() hands out one shared relay per URL; in the app the
+   * pool keeps it alive. Do the same, so rounds do not race the teardown
+   * of the previous round's connection (see nostrc-jc2o). */
+  g_autoptr(GNostrRelay) shared = gnostr_relay_new(url);
 
 
 
