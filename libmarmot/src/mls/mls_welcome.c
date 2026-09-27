@@ -582,7 +582,6 @@ mls_welcome_process_parsed_with_psks(const MlsWelcome *welcome,
 
     /* Parse GroupInfo. MDK vectors may carry it as an MLSMessage/group_info
      * wrapper; GroupInfo itself starts after the 4-byte MLSMessage header. */
-    { FILE *dbg = fopen("/tmp/gi.bin", "wb"); if (dbg) { fwrite(gi_data, 1, gi_len, dbg); fclose(dbg); } }
     const uint8_t *gi_parse = gi_data;
     size_t gi_parse_len = gi_len;
     if (gi_parse_len >= 4 && gi_parse[0] == 0x00 && gi_parse[1] == 0x01 &&
@@ -596,21 +595,8 @@ mls_welcome_process_parsed_with_psks(const MlsWelcome *welcome,
     int gi_parse_rc = mls_group_info_deserialize(&gi_reader, &gi);
     if (gi_parse_rc != 0 || !mls_tls_reader_done(&gi_reader)) {
         size_t pos = gi_reader.pos;
-        fprintf(stderr, "welcome invalid: groupinfo parse rc=%d gi_len=%zu parse_len=%zu prefix=%02x%02x%02x%02x%02x%02x%02x%02x pos=%zu remprefix=%02x%02x%02x%02x%02x%02x%02x%02x\n",
-                gi_parse_rc, gi_len, gi_parse_len,
-                gi_len > 0 ? gi_data[0] : 0, gi_len > 1 ? gi_data[1] : 0,
-                gi_len > 2 ? gi_data[2] : 0, gi_len > 3 ? gi_data[3] : 0,
-                gi_len > 4 ? gi_data[4] : 0, gi_len > 5 ? gi_data[5] : 0,
-                gi_len > 6 ? gi_data[6] : 0, gi_len > 7 ? gi_data[7] : 0,
-                pos,
-                pos + 0 < gi_parse_len ? gi_parse[pos + 0] : 0,
-                pos + 1 < gi_parse_len ? gi_parse[pos + 1] : 0,
-                pos + 2 < gi_parse_len ? gi_parse[pos + 2] : 0,
-                pos + 3 < gi_parse_len ? gi_parse[pos + 3] : 0,
-                pos + 4 < gi_parse_len ? gi_parse[pos + 4] : 0,
-                pos + 5 < gi_parse_len ? gi_parse[pos + 5] : 0,
-                pos + 6 < gi_parse_len ? gi_parse[pos + 6] : 0,
-                pos + 7 < gi_parse_len ? gi_parse[pos + 7] : 0);
+        fprintf(stderr, "welcome invalid: groupinfo parse rc=%d gi_len=%zu parse_len=%zu pos=%zu\n",
+                gi_parse_rc, gi_len, gi_parse_len, pos);
         free(gi_data);
         sodium_memzero(joiner_secret, sizeof(joiner_secret));
         return MARMOT_ERR_WELCOME_INVALID;

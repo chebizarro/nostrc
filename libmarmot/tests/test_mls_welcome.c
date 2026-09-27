@@ -9,10 +9,14 @@
 #include "mls/mls_welcome.h"
 #include "mls/mls_group.h"
 #include "mls/mls_key_package.h"
+#include "mls/mls-internal.h"
 #include <assert.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <sodium.h>
 
 #define TEST(name) static void name(void)
@@ -210,6 +214,133 @@ TEST(test_add_and_welcome_integration)
     mls_group_free(&alice_group);
 }
 
+static void
+assert_dump_unchanged(const char *path, const struct stat *before, int existed)
+{
+    struct stat after;
+    if (!existed) {
+        int created = stat(path, &after) == 0;
+        if (created) unlink(path);
+        assert(!created);
+        return;
+    }
+    assert(stat(path, &after) == 0);
+    assert(after.st_ino == before->st_ino);
+    assert(after.st_size == before->st_size);
+#ifdef __APPLE__
+    assert(after.st_mtimespec.tv_sec == before->st_mtimespec.tv_sec);
+    assert(after.st_mtimespec.tv_nsec == before->st_mtimespec.tv_nsec);
+#else
+    assert(after.st_mtim.tv_sec == before->st_mtim.tv_sec);
+    assert(after.st_mtim.tv_nsec == before->st_mtim.tv_nsec);
+#endif
+}
+
+TEST(test_welcome_group_info_stays_private)
+{
+    const char *dump_path = "/tmp/gi.bin";
+    struct stat dump_before;
+    int dump_existed = stat(dump_path, &dump_before) == 0;
+    if (!dump_existed) assert(errno == ENOENT);
+
+    MlsGroup alice_group;
+    uint8_t alice_sk[MLS_SIG_SK_LEN];
+    assert(create_alice_group(&alice_group, alice_sk) == 0);
+
+    MlsKeyPackage bob_kp;
+    MlsKeyPackagePrivate bob_priv;
+    assert(mls_key_package_create(&bob_kp, &bob_priv, BOB_ID, 32, NULL, 0) == 0);
+
+    MlsAddResult add_result;
+    assert(mls_group_add_member(&alice_group, &bob_kp, &add_result) == 0);
+
+    MlsGroup bob_group;
+    assert(mls_welcome_process(add_result.welcome_data, add_result.welcome_len,
+                               &bob_kp, &bob_priv, NULL, 0, &bob_group) == 0);
+    mls_group_free(&bob_group);
+    assert_dump_unchanged(dump_path, &dump_before, dump_existed);
+
+    MlsWelcome welcome;
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, add_result.welcome_data, add_result.welcome_len);
+    assert(mls_welcome_deserialize(&reader, &welcome) == 0);
+    assert(welcome.secret_count == 1);
+
+    /* Authenticate a deliberately malformed GroupInfo so processing reaches
+     * the parser, rather than failing at HPKE or AEAD decryption. */
+    static const uint8_t malformed_info[] = "LEAKTEST";
+    uint8_t welcome_key[MLS_AEAD_KEY_LEN];
+    uint8_t welcome_nonce[MLS_AEAD_NONCE_LEN];
+    assert(mls_crypto_expand_with_label(welcome_key, sizeof(welcome_key),
+               alice_group.epoch_secrets.welcome_secret, "key", NULL, 0) == 0);
+    assert(mls_crypto_expand_with_label(welcome_nonce, sizeof(welcome_nonce),
+               alice_group.epoch_secrets.welcome_secret, "nonce", NULL, 0) == 0);
+    free(welcome.encrypted_group_info);
+    welcome.encrypted_group_info = malloc(sizeof(malformed_info) + MLS_AEAD_TAG_LEN);
+    assert(welcome.encrypted_group_info != NULL);
+    assert(mls_crypto_aead_encrypt(welcome.encrypted_group_info,
+               &welcome.encrypted_group_info_len, welcome_key, welcome_nonce,
+               malformed_info, sizeof(malformed_info), NULL, 0) == 0);
+    sodium_memzero(welcome_key, sizeof(welcome_key));
+    sodium_memzero(welcome_nonce, sizeof(welcome_nonce));
+
+    MlsTlsBuf group_secrets;
+    assert(mls_tls_buf_init(&group_secrets, MLS_HASH_LEN + 16) == 0);
+    assert(mls_tls_write_opaque16(&group_secrets,
+               alice_group.epoch_secrets.joiner_secret, MLS_HASH_LEN) == 0);
+    assert(mls_tls_write_u8(&group_secrets, 0) == 0);
+    assert(mls_tls_write_opaque32(&group_secrets, NULL, 0) == 0);
+
+    MlsTlsBuf hpke_info;
+    assert(mls_tls_buf_init(&hpke_info, 64) == 0);
+    static const uint8_t hpke_label[] = "MLS 1.0 Welcome";
+    assert(mls_tls_write_opaque16(&hpke_info, hpke_label,
+               sizeof(hpke_label) - 1) == 0);
+    assert(mls_tls_write_opaque32(&hpke_info, welcome.encrypted_group_info,
+               welcome.encrypted_group_info_len) == 0);
+
+    MlsEncryptedGroupSecrets *egs = &welcome.secrets[0];
+    free(egs->encrypted_joiner_secret);
+    egs->encrypted_joiner_secret = malloc(group_secrets.len + MLS_AEAD_TAG_LEN);
+    assert(egs->encrypted_joiner_secret != NULL);
+    assert(mls_crypto_hpke_seal_base(egs->kem_output,
+               egs->encrypted_joiner_secret, &egs->encrypted_joiner_secret_len,
+               bob_kp.init_key, hpke_info.data, hpke_info.len, NULL, 0,
+               group_secrets.data, group_secrets.len) == 0);
+    mls_tls_buf_free(&hpke_info);
+    sodium_memzero(group_secrets.data, group_secrets.len);
+    mls_tls_buf_free(&group_secrets);
+
+    FILE *diagnostics = tmpfile();
+    assert(diagnostics != NULL);
+    fflush(stderr);
+    int saved_stderr = dup(STDERR_FILENO);
+    assert(saved_stderr >= 0);
+    assert(dup2(fileno(diagnostics), STDERR_FILENO) >= 0);
+    int rc = mls_welcome_process_parsed(&welcome, &bob_kp, &bob_priv,
+                                        NULL, 0, &bob_group);
+    fflush(stderr);
+    assert(dup2(saved_stderr, STDERR_FILENO) >= 0);
+    close(saved_stderr);
+    assert(rc == MARMOT_ERR_WELCOME_INVALID);
+
+    assert(fseek(diagnostics, 0, SEEK_SET) == 0);
+    char message[512] = {0};
+    size_t message_len = fread(message, 1, sizeof(message) - 1, diagnostics);
+    message[message_len] = '\0';
+    fclose(diagnostics);
+    assert(strstr(message, "groupinfo parse rc=") != NULL);
+    assert(strstr(message, "4c45414b54455354") == NULL);
+    assert(strstr(message, "prefix=") == NULL);
+    assert_dump_unchanged(dump_path, &dump_before, dump_existed);
+
+    mls_welcome_clear(&welcome);
+    mls_add_result_clear(&add_result);
+    mls_key_package_clear(&bob_kp);
+    mls_key_package_private_clear(&bob_priv);
+    mls_group_free(&alice_group);
+}
+
 /* ── Clear tests ───────────────────────────────────────────────────────── */
 
 TEST(test_welcome_clear_null_safe)
@@ -255,6 +386,7 @@ int main(void)
 
     printf(" Integration:\n");
     RUN(test_add_and_welcome_integration);
+    RUN(test_welcome_group_info_stays_private);
 
     printf(" Cleanup:\n");
     RUN(test_welcome_clear_null_safe);
