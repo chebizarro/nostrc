@@ -17,8 +17,8 @@ usr/lib/libnip04.a
 usr/lib/libnip05.so
 usr/lib/libnip25.so
 usr/lib/libnostr_nip77.a
-usr/lib/*/libnostr_nip55l_core.so
-usr/lib/*/libnostr_nip55l_glib.so
+usr/lib/*/libnostr_nip55l_core.so*
+usr/lib/*/libnostr_nip55l_glib.so*
 # No libnostr-nips-dev yet: these unversioned link-time symlinks are
 # listed on purpose so dh_missing enforces that choice. Ship a -dev only
 # when a third-party consumer appears (packaging plan D-6 / §5).

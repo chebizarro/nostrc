@@ -960,8 +960,8 @@ rm -f  %{buildroot}/usr/lib/libnostr_nip77.a
 # libnostr-nips (deleting the real library here was the prqu.6 bug):
 rm -f  %{buildroot}%{_libdir}/libnip19.so
 rm -f  %{buildroot}%{_libdir}/libnip34.so
-rm -f  %{buildroot}%{_libdir}/libnostr_nip55l_core.so
-rm -f  %{buildroot}%{_libdir}/libnostr_nip55l_glib.so
+rm -f  %{buildroot}%{_libdir}/libnostr_nip55l_core.so*
+rm -f  %{buildroot}%{_libdir}/libnostr_nip55l_glib.so*
 #
 #    c) nostr-homed.pc: multiarch-specific pkg-config for the nostr-homed
 #       framework; deferred to a future -devel package (matches the Debian

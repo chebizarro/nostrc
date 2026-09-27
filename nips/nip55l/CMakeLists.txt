@@ -7,6 +7,24 @@ set(NIP55L_CORE_SRC
 )
 
 add_library(nostr_nip55l_core ${NIP55L_CORE_SRC})
+
+# nostrc-o8mx: real SONAMEs for the shared build (libnostr_nip55l_core.so.0
+# -> .so.0.4.0, same for _glib), like libnip19/libnip34 (nostrc-4c0o). The
+# version comes from NOSTR_NIP55L_VERSION_* in signer_ops.h, the component's
+# single source of truth. Pre-1.0: SOVERSION changes on any ABI break.
+file(STRINGS ${NIP55L_INC}/nostr/nip55l/signer_ops.h _nip55l_ver
+     REGEX "^#define NOSTR_NIP55L_VERSION_(MAJOR|MINOR|PATCH) [0-9]+")
+foreach(_part MAJOR MINOR PATCH)
+  string(REGEX REPLACE ".*NOSTR_NIP55L_VERSION_${_part} ([0-9]+).*" "\\1"
+         NIP55L_VERSION_${_part} "${_nip55l_ver}")
+endforeach()
+set(NIP55L_VERSION "${NIP55L_VERSION_MAJOR}.${NIP55L_VERSION_MINOR}.${NIP55L_VERSION_PATCH}")
+if (NOT NIP55L_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+  message(FATAL_ERROR "nip55l: cannot parse NOSTR_NIP55L_VERSION_* from signer_ops.h")
+endif()
+set(NIP55L_SOVERSION 0)
+set_target_properties(nostr_nip55l_core PROPERTIES
+  VERSION ${NIP55L_VERSION} SOVERSION ${NIP55L_SOVERSION})
 target_include_directories(nostr_nip55l_core PUBLIC
   ${NIP55L_INC}
   ${CMAKE_SOURCE_DIR}/libnostr/include
@@ -97,6 +115,8 @@ if (GIO_FOUND AND ENABLE_NIP55L)
     PRIVATE
       ${GENERATED_DIR}
   )
+  set_target_properties(nostr_nip55l_glib PROPERTIES
+    VERSION ${NIP55L_VERSION} SOVERSION ${NIP55L_SOVERSION})
   # Fail-fast hygiene for GLib signer target
   target_compile_options(nostr_nip55l_glib PRIVATE -Wall -Wextra -Wpedantic -Werror)
   target_include_directories(nostr_nip55l_glib PUBLIC ${NIP55L_INC})
