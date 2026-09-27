@@ -41,8 +41,8 @@ jobs:
         run: |
           cmake --build build --parallel 2 --target \
             groundhog test-groundhog-shell test-groundhog-identity \
-            test-groundhog-account test-groundhog-account-ui \
-            test-groundhog-relay test-groundhog-relay-wire
+            test-groundhog-account test-groundhog-account-relays \
+            test-groundhog-account-ui test-groundhog-relay test-groundhog-relay-wire
 
       - name: Require complete Groundhog test registration
         run: |
@@ -55,7 +55,7 @@ jobs:
           found = {test['name'] for test in data['tests']}
           required = {
               'groundhog-shell', 'groundhog-identity', 'groundhog-account',
-              'groundhog-account-ui', 'groundhog-relay', 'groundhog-relay-wire',
+              'groundhog-account-relays', 'groundhog-account-ui', 'groundhog-relay', 'groundhog-relay-wire',
               'groundhog-version', 'groundhog-launch', 'groundhog-schema',
               'groundhog-data', 'groundhog-desktop', 'groundhog-metainfo',
           }
