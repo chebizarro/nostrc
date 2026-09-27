@@ -40,7 +40,8 @@ typedef struct {
 
 /* Servers that decide per caller (gnostr-signer-daemon) install hooks; then
  * every method goes through @request and the built-in handlers are never used.
- *   open    - called once per connection, on its thread, before any request.
+ *   open    - called once per connection, on its thread, right after accept
+ *             (before the handshake: nothing read from the client yet).
  *             Returns per-connection state, or NULL to refuse the connection.
  *   request - one request. May block (e.g. while the user is asked). Params:
  *               get_public_key, list_public_keys: a = b = NULL

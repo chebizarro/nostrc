@@ -163,12 +163,15 @@ void *nip5f_conn_thread(void *arg) {
   int fd = carg->fd;
   void *conn = NULL;
   int opened = 0;
-  if (carg->handshake && handshake(fd) != 0) goto out;
+  /* Identify the peer before reading a byte from it: the client decides
+   * when its hello arrives, and the process behind the connect-time
+   * credentials must be read while it is still that process. */
   if (carg->have_hooks && carg->hooks.open) {
     conn = carg->hooks.open(carg->hooks_ud, &carg->peer);
     if (!conn) goto out;
     opened = 1;
   }
+  if (carg->handshake && handshake(fd) != 0) goto out;
   if (signer_log_enabled()) fprintf(stderr, "[nip5f] client connected fd=%d pid=%d\n", fd, carg->peer.pid);
   for (;;) {
     char *req = NULL; size_t rlen = 0;
