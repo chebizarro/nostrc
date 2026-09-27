@@ -1415,6 +1415,7 @@ fi
 %{_datadir}/gnome-shell/extensions/nostr@nostr.org/prefs.js
 %dir %{_datadir}/gnome-shell/extensions/nostr@nostr.org/lib
 %{_datadir}/gnome-shell/extensions/nostr@nostr.org/lib/dbus.js
+%{_datadir}/gnome-shell/extensions/nostr@nostr.org/lib/dm.js
 %{_datadir}/gnome-shell/extensions/nostr@nostr.org/lib/relay.js
 %{_datadir}/gnome-shell/extensions/nostr@nostr.org/lib/state.js
 %{_datadir}/gnome-shell/extensions/nostr@nostr.org/lib/wallet.js
