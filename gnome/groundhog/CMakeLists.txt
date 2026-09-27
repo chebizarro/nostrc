@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(groundhog VERSION 0.4.0 LANGUAGES C)
+project(groundhog VERSION 0.4.1 LANGUAGES C)
 
 include(GNUInstallDirs)
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
@@ -36,12 +36,19 @@ target_compile_definitions(groundhog PRIVATE
 target_compile_options(groundhog PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE PkgConfig::GROUNDHOG_DEPS)
 
-# Headless adaptive-layout/accessibility check for the shell chrome in
-# src/app/gh-shell.c. It never touches GResource, GSettings, or the signer,
-# so it needs no compiled resource bundle or installed schema; it only
-# needs a GTK display connection, which is why it still self-skips (77)
-# when one is unavailable, matching groundhog-launch below.
 if (BUILD_TESTING)
+  add_executable(test-groundhog-resource tests/app/test_resource.c ${GROUNDHOG_RESOURCE_C})
+  target_link_libraries(test-groundhog-resource PRIVATE PkgConfig::GROUNDHOG_DEPS)
+  target_compile_options(test-groundhog-resource PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME groundhog-resource COMMAND test-groundhog-resource)
+  set_tests_properties(groundhog-resource PROPERTIES TIMEOUT 10
+    ENVIRONMENT "G_DEBUG=fatal-criticals")
+
+  # Headless adaptive-layout/accessibility check for the shell chrome in
+  # src/app/gh-shell.c. It never touches GResource, GSettings, or the signer,
+  # so it needs no compiled resource bundle or installed schema; it only
+  # needs a GTK display connection, which is why it still self-skips (77)
+  # when one is unavailable, matching groundhog-launch below.
   add_executable(test-groundhog-shell tests/app/test_shell_layout.c src/app/gh-shell.c)
   target_include_directories(test-groundhog-shell PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
   target_compile_definitions(test-groundhog-shell PRIVATE GROUNDHOG_HAVE_ACCOUNTS=0)

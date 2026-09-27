@@ -12,7 +12,7 @@
 
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
 
-GResource *groundhog_get_resource(void);
+void groundhog_register_resource(void);
 
 static gboolean smoke_mode = FALSE;
 static int smoke_status = 0;
@@ -194,7 +194,7 @@ main(int argc, char **argv)
   }
 #endif
 
-  g_resources_register(groundhog_get_resource());
+  groundhog_register_resource();
   app = adw_application_new(GROUNDHOG_APP_ID, flags);
 #if GROUNDHOG_HAVE_ACCOUNTS
   g_signal_connect(app, "startup", G_CALLBACK(app_startup), NULL);
