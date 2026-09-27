@@ -500,3 +500,4 @@
 {"id":"int-2510af6d","kind":"field_change","created_at":"2026-09-27T07:21:28.222542Z","actor":"Biz","issue_id":"nostrc-qp24.8","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-521993d6","kind":"field_change","created_at":"2026-09-27T07:39:05.907233Z","actor":"Biz","issue_id":"nostrc-qp24.3","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-d764d20c","kind":"field_change","created_at":"2026-09-27T08:04:53.214336Z","actor":"Biz","issue_id":"nostrc-nfwk","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-00a3a4f0","kind":"field_change","created_at":"2026-09-27T08:20:27.675828Z","actor":"Biz","issue_id":"nostrc-qp24.4","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
